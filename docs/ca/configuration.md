@@ -543,6 +543,60 @@ keystores:
     password: "${CA_KEY_PASSWORD}"
 ```
 
+## Hardware Attestation Trust Anchors
+
+`SignCSR` accepts an optional hardware-attestation certificate chain
+(`attestation_format` + `attestation_chain`) proving the CSR's private key was
+generated inside a hardware device. The chain is entirely client-supplied, so it
+is only meaningful when it terminates at a trust anchor the operator configured
+for that attestation format.
+
+Anchors live in the top-level `attestation` section of the daemon config and are
+declared per format:
+
+```yaml
+attestation:
+  formats:
+    yubikey-piv:
+      external_root_paths:
+        - /etc/xkms/anchors/yubico-piv-root-ca.pem
+    tpm2:
+      external_root_paths:
+        - /etc/xkms/anchors/infineon-tpm-root.pem
+        - /etc/xkms/anchors/nuvoton-tpm-root.pem
+    android-key:
+      embedded_roots:
+        - google-hardware-attestation
+```
+
+Each format entry is a trust store (`embedded_roots` and/or
+`external_root_paths`, see `pkg/attestation/truststore`).
+
+Verification semantics:
+
+- The chain is ordered leaf-first. For YubiKey PIV: slot attestation cert, then
+  the f9 attestation cert, anchored at the Yubico PIV Root CA. For TPM 2.0: the
+  AK/IAK cert, then the EK cert, anchored at the TPM manufacturer root.
+- Every certificate must be signed by its successor and be temporally valid, and
+  the chain must pass X.509 path validation against the anchors configured for
+  the requested format.
+- Anchors never cross formats: a TPM manufacturer root cannot validate a chain
+  presented as `yubikey-piv`.
+- Anchors are matched from the configured trust store only. A client may ship
+  its own root in the chain, but that root is treated as an intermediate and can
+  never anchor the path.
+
+The gate fails closed:
+
+- No `attestation` section configured, and a CSR carries an attestation →
+  `ErrAttestationNotConfigured`.
+- A format with no configured anchors → `ErrAttestationFormatNotConfigured`.
+- A declared format whose trust store resolves to zero roots → the daemon
+  refuses to start.
+
+CSRs that carry no `attestation_format` are unaffected; the attestation gate is
+skipped entirely for them.
+
 ## See Also
 
 - [Architecture](architecture.md)

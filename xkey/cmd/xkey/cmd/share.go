@@ -22,6 +22,7 @@ import (
 	"log/slog"
 	"os"
 	"path/filepath"
+	"strings"
 	"text/tabwriter"
 	"time"
 
@@ -119,17 +120,25 @@ type ShareService interface {
 // It is a package-level variable to allow tests to inject mock clients.
 var shareClientFactory = defaultShareClientFactory
 
-// defaultShareClientFactory creates a real transport client for share operations.
+// defaultShareClientFactory creates a real transport client for the share
+// commands that talk to an xkmsd server. Unlike the other command groups, a
+// share is bound to the server that issued it, so the endpoint URL comes from
+// the command's --server flag rather than the global --xkmsd-url chain. The
+// remaining connection material - bearer token and TLS trust bundle - is
+// resolved by the shared helper in xkmsd_client.go, so scheme dispatch and
+// credential precedence stay defined in exactly one place.
 func defaultShareClientFactory(serverURL string) (ShareService, error) {
+	serverURL = strings.TrimSpace(serverURL)
 	if serverURL == "" {
 		return nil, ErrShareMissingServer
 	}
-	// TODO: Create transport client from serverURL once SDK client factory is available.
-	// The transport layer supports unix://, grpc://, rest://, quic://, and mcp:// schemes.
-	return nil, &ShareError{
-		Operation: "connect",
-		Message:   fmt.Sprintf("transport client creation for %s requires a running xkmsd server", serverURL),
+
+	endpoint := XKMSdEndpoint{
+		URL:       serverURL,
+		Token:     strings.TrimSpace(os.Getenv(envXKMSdToken)),
+		TLSCAFile: resolveXKMSdTLSCAFile(shareCmd),
 	}
+	return endpoint.Client()
 }
 
 // shareCmd is the parent command for Shamir share management.
@@ -144,6 +153,11 @@ submit it back to the server when a quorum is needed to unseal the barrier.
 
 Local shares are stored in ~/.xkey/shares/ by default, encrypted by the
 local barrier when active.
+
+The receive and unseal subcommands connect to the server named by --server.
+The URL scheme selects the transport (unix://, http(s)://, grpc(s)://,
+quic://, mcp(s)://). XKMSD_TOKEN supplies the bearer token and --tls-ca or
+XKMSD_TLS_CA the trust bundle for TLS-bearing transports.
 
 Commands:
   list      List locally stored shares
@@ -279,6 +293,11 @@ func init() {
 	shareCmd.AddCommand(shareExportCmd)
 	shareCmd.AddCommand(shareUnsealCmd)
 	shareCmd.AddCommand(shareDeleteCmd)
+
+	// Server-facing subcommands (receive, unseal) verify TLS-bearing
+	// transports against this bundle; XKMSD_TLS_CA and the xkey config supply
+	// the same value when the flag is absent.
+	shareCmd.PersistentFlags().String(tlsCAFlagName, "", "PEM CA bundle used to verify the xkmsd server")
 
 	// shareReceiveCmd flags.
 	shareReceiveCmd.Flags().String("server", "", "xkmsd server URL (e.g., grpc://host:9090)")

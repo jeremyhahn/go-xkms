@@ -230,6 +230,16 @@ func (t *IPCTransport) Encrypt(_ context.Context, _ *transport.EncryptRequest) (
 	return nil, ErrIPCNotImplemented
 }
 
+// EncryptAsym is not implemented in the IPC transport MVP.
+//
+// The module routes CKM_RSA_PKCS_OAEP here rather than through Encrypt so the
+// caller's chosen OAEP hash has a field to travel in. Neither operation is
+// carried by this transport, so both refuse the same way: a typed sentinel,
+// never a fabricated ciphertext.
+func (t *IPCTransport) EncryptAsym(_ context.Context, _ *transport.EncryptAsymRequest) (*transport.EncryptAsymResponse, error) {
+	return nil, ErrIPCNotImplemented
+}
+
 // Decrypt is not implemented in the IPC transport MVP.
 func (t *IPCTransport) Decrypt(_ context.Context, _ *transport.DecryptRequest) (*transport.DecryptResponse, error) {
 	return nil, ErrIPCNotImplemented
@@ -257,6 +267,17 @@ func (t *IPCTransport) UnwrapKeyByID(_ context.Context, _ *transport.UnwrapKeyBy
 
 // ExportKeyMaterial is not implemented in the IPC transport MVP.
 func (t *IPCTransport) ExportKeyMaterial(_ context.Context, _ *transport.ExportKeyMaterialRequest) (*transport.ExportKeyMaterialResponse, error) {
+	return nil, ErrIPCNotImplemented
+}
+
+// GetImportParameters is not implemented in the IPC transport MVP. The import
+// ceremony it begins requires backend key-wrapping the IPC path does not carry.
+func (t *IPCTransport) GetImportParameters(_ context.Context, _ *transport.GetImportParametersRequest) (*transport.GetImportParametersResponse, error) {
+	return nil, ErrIPCNotImplemented
+}
+
+// ImportKey is not implemented in the IPC transport MVP.
+func (t *IPCTransport) ImportKey(_ context.Context, _ *transport.ImportKeyRequest) (*transport.ImportKeyResponse, error) {
 	return nil, ErrIPCNotImplemented
 }
 

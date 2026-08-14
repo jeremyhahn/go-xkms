@@ -82,6 +82,13 @@ var (
 	// ErrInvalidHashFunction indicates an unsupported or invalid hash function.
 	ErrInvalidHashFunction = errors.New("keystore: invalid hash function")
 
+	// ErrInvalidKDFAlgorithm indicates a key derivation function algorithm name
+	// that this binary does not implement. It exists so an unrecognized name is
+	// refused rather than answered with the HKDF default: a caller that asked
+	// for SP 800-108 and silently received HKDF keying material has no way to
+	// tell from the response that it derived the wrong key.
+	ErrInvalidKDFAlgorithm = errors.New("keystore: invalid KDF algorithm")
+
 	// ErrInvalidSignature indicates a malformed or undecodable signature value.
 	ErrInvalidSignature = errors.New("keystore: invalid signature encoding")
 
@@ -249,6 +256,17 @@ var (
 	// and unwrap because no blobs were ever persisted with SHA-1 OAEP in this
 	// codebase — the wrap path has always defaulted to SHA-256.
 	ErrWeakOAEPHash = errors.New("keystore: RSA-OAEP hash must be SHA-256 or stronger")
+
+	// ErrLegacyWrapDisabled indicates a wrap or unwrap named one of the
+	// key-wrap constructions that authenticate nothing — RSA_PKCS1_V1_5,
+	// AES_CBC_PAD or AES_CBC — while the process-wide policy refuses them.
+	//
+	// It is a policy refusal, not a missing feature, and the two must stay
+	// distinguishable: an operator who sees "unsupported algorithm" goes
+	// looking for an unimplemented mechanism, while this one is answered by a
+	// configuration setting. The wrapping ErrValidation carries the mechanism
+	// name, why it is gated, and the setting that enables it.
+	ErrLegacyWrapDisabled = errors.New("keystore: unauthenticated key wrapping is disabled by policy")
 )
 
 // Sealing errors
@@ -571,6 +589,21 @@ func (e *ErrUserOperation) Error() string {
 // Unwrap returns the underlying error.
 func (e *ErrUserOperation) Unwrap() error { return e.Err }
 
+// ErrAuditOperation represents a failure of an audit-plane operation carried
+// out against the embedded go-qrdb node's audit chain.
+type ErrAuditOperation struct {
+	Operation string
+	Err       error
+}
+
+// Error returns the error message.
+func (e *ErrAuditOperation) Error() string {
+	return fmt.Sprintf("audit: failed to %s: %v", e.Operation, e.Err)
+}
+
+// Unwrap returns the underlying error.
+func (e *ErrAuditOperation) Unwrap() error { return e.Err }
+
 // ErrWebAuthnCeremony represents a failure during a WebAuthn/FIDO2 ceremony
 // (registration or authentication) carried out through the WebAuthn service.
 type ErrWebAuthnCeremony struct {
@@ -847,15 +880,31 @@ type ErrNotLeader struct {
 	LeaderID uint64
 
 	// LeaderAddress is the leader's advertised Raft address, or empty if
-	// unknown. NOTE: this is the Raft peer address, not the xkms API address;
-	// transparent forwarding is not yet possible (see AsNotLeader).
+	// unknown. It identifies the leader on the consensus plane and is NOT
+	// dialable as an xkms API endpoint; LeaderAPIAddress is.
 	LeaderAddress string
+
+	// LeaderAPIAddress is the address a client should dial to reach the leader
+	// over the SAME API protocol the failed request used. It is resolved from
+	// the cluster registry, where every replica publishes its client-facing
+	// endpoints from its own configuration.
+	//
+	// It is empty when the leader advertises no endpoint for that protocol —
+	// the replica predates API advertisement, its operator configured no
+	// advertise host, or it does not serve that protocol. Callers must treat an
+	// empty value as "unknown" and fall back to surfacing the Raft coordinates
+	// as a hint, which is the pre-advertisement behavior.
+	LeaderAPIAddress string
 }
 
 // Error returns a human-readable description of the not-leader condition.
 func (e *ErrNotLeader) Error() string {
 	if e.LeaderID == 0 {
 		return fmt.Sprintf("keystore: not leader for shard %d, leader unknown", e.ShardID)
+	}
+	if e.LeaderAPIAddress != "" {
+		return fmt.Sprintf("keystore: not leader for shard %d, leader is replica %d at %s (api %s)",
+			e.ShardID, e.LeaderID, e.LeaderAddress, e.LeaderAPIAddress)
 	}
 	return fmt.Sprintf("keystore: not leader for shard %d, leader is replica %d at %s",
 		e.ShardID, e.LeaderID, e.LeaderAddress)
@@ -866,10 +915,10 @@ func (e *ErrNotLeader) Error() string {
 // the transport-layer NotLeaderError that the embedded qrdb client surfaces.
 // The boolean reports whether a not-leader condition was found.
 //
-// TODO(cluster): transparent leader-forwarding needs a raft->API address map.
-// LeaderAddress is the Raft peer address, which is not directly dialable as an
-// xkms API endpoint; until that map exists, callers surface the typed redirect
-// to the client instead of forwarding the request server-side.
+// The returned error carries only the consensus-plane coordinates qrdb reports.
+// A transport that knows which API protocol it speaks enriches the result with
+// the leader's dialable API address via ClusterLeaderEndpoint before writing the
+// redirect, because only the transport knows its own protocol.
 func AsNotLeader(err error) (*ErrNotLeader, bool) {
 	if err == nil {
 		return nil, false
@@ -910,3 +959,77 @@ func (e *ClusterMembersError) Error() string {
 }
 
 func (e *ClusterMembersError) Unwrap() error { return e.Err }
+
+// ClusterNotClusteredError is returned by membership mutation on a node that
+// runs standalone. Reads degrade gracefully to a single-node view, but a
+// mutation has no Raft group to reconfigure, so it fails explicitly rather than
+// silently succeeding.
+type ClusterNotClusteredError struct {
+	// Operation is the attempted mutation ("add_replica"/"remove_replica").
+	Operation string
+}
+
+func (e *ClusterNotClusteredError) Error() string {
+	return fmt.Sprintf("keystore: cannot %s: node is not clustered", e.Operation)
+}
+
+// ClusterReplicaInvalidError is returned when a membership mutation is asked to
+// act on an unusable replica identifier or Raft address.
+type ClusterReplicaInvalidError struct {
+	// ReplicaID is the offending replica identifier.
+	ReplicaID uint64
+
+	// Reason explains why the request was rejected.
+	Reason string
+}
+
+func (e *ClusterReplicaInvalidError) Error() string {
+	return fmt.Sprintf("keystore: invalid cluster replica %d: %s", e.ReplicaID, e.Reason)
+}
+
+// ClusterAddReplicaError is returned when the embedded go-qrdb node fails to
+// add a replica to the shard's Raft group.
+type ClusterAddReplicaError struct {
+	ShardID   uint64
+	ReplicaID uint64
+	Err       error
+}
+
+func (e *ClusterAddReplicaError) Error() string {
+	return fmt.Sprintf("keystore: failed to add replica %d to shard %d: %v",
+		e.ReplicaID, e.ShardID, e.Err)
+}
+
+func (e *ClusterAddReplicaError) Unwrap() error { return e.Err }
+
+// ClusterRemoveReplicaError is returned when the embedded go-qrdb node fails to
+// remove a replica from the shard's Raft group.
+type ClusterRemoveReplicaError struct {
+	ShardID   uint64
+	ReplicaID uint64
+	Err       error
+}
+
+func (e *ClusterRemoveReplicaError) Error() string {
+	return fmt.Sprintf("keystore: failed to remove replica %d from shard %d: %v",
+		e.ReplicaID, e.ShardID, e.Err)
+}
+
+func (e *ClusterRemoveReplicaError) Unwrap() error { return e.Err }
+
+// ClusterLeaderEndpointError is returned when the leader's dialable API address
+// for a protocol cannot be resolved. It is advisory: a transport that fails to
+// resolve an endpoint still returns the not-leader redirect with the Raft
+// coordinates, which is the pre-advertisement behavior.
+type ClusterLeaderEndpointError struct {
+	ShardID  uint64
+	Protocol string
+	Err      error
+}
+
+func (e *ClusterLeaderEndpointError) Error() string {
+	return fmt.Sprintf("keystore: failed to resolve %s leader endpoint for shard %d: %v",
+		e.Protocol, e.ShardID, e.Err)
+}
+
+func (e *ClusterLeaderEndpointError) Unwrap() error { return e.Err }

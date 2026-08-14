@@ -31,9 +31,6 @@ import (
 	caerrors "github.com/jeremyhahn/go-xkms/pkg/acme/errors"
 )
 
-// mockCA implements the CertificateAuthority interface for testing
-type mockCA struct{}
-
 func TestVerify_Success(t *testing.T) {
 	expectedKeyAuth := "test-token.test-thumbprint"
 
@@ -55,9 +52,8 @@ func TestVerify_Success(t *testing.T) {
 	}
 
 	resolver := net.DefaultResolver
-	ca := &mockCA{}
 
-	err = Verify(resolver, ca, host, port, "test-token", expectedKeyAuth)
+	err = Verify(resolver, host, port, "test-token", expectedKeyAuth)
 	if err != nil {
 		t.Errorf("Verify() failed: %v", err)
 	}
@@ -81,9 +77,8 @@ func TestVerify_KeyAuthMismatch(t *testing.T) {
 	}
 
 	resolver := net.DefaultResolver
-	ca := &mockCA{}
 
-	err = Verify(resolver, ca, host, port, "test-token", expectedKeyAuth)
+	err = Verify(resolver, host, port, "test-token", expectedKeyAuth)
 	if err == nil {
 		t.Error("Verify() should have failed with key authorization mismatch")
 	}
@@ -108,9 +103,8 @@ func TestVerify_HTTPError(t *testing.T) {
 	}
 
 	resolver := net.DefaultResolver
-	ca := &mockCA{}
 
-	err = Verify(resolver, ca, host, port, "test-token", expectedKeyAuth)
+	err = Verify(resolver, host, port, "test-token", expectedKeyAuth)
 	if err == nil {
 		t.Error("Verify() should have failed with HTTP error")
 	}
@@ -121,10 +115,9 @@ func TestVerify_HTTPError(t *testing.T) {
 
 func TestVerify_NetworkError(t *testing.T) {
 	resolver := net.DefaultResolver
-	ca := &mockCA{}
 
 	// Use an invalid host/port combination to trigger a network error
-	err := Verify(resolver, ca, "invalid-host-that-does-not-exist", "9999", "test-token", "test-keyauth")
+	err := Verify(resolver, "invalid-host-that-does-not-exist", "9999", "test-token", "test-keyauth")
 	if err == nil {
 		t.Error("Verify() should have failed with network error")
 	}
@@ -147,9 +140,8 @@ func TestVerify_WithWhitespace(t *testing.T) {
 	}
 
 	resolver := net.DefaultResolver
-	ca := &mockCA{}
 
-	err = Verify(resolver, ca, host, port, "test-token", expectedKeyAuth)
+	err = Verify(resolver, host, port, "test-token", expectedKeyAuth)
 	if err != nil {
 		t.Errorf("Verify() should handle whitespace trimming: %v", err)
 	}
@@ -338,9 +330,8 @@ func TestVerify_FollowRedirectsDisabled(t *testing.T) {
 	}
 
 	resolver := net.DefaultResolver
-	ca := &mockCA{}
 
-	err = Verify(resolver, ca, host, port, "test-token", expectedKeyAuth)
+	err = Verify(resolver, host, port, "test-token", expectedKeyAuth)
 	if err == nil {
 		t.Error("Verify() should fail on redirect (RFC 8555 compliance)")
 	}
@@ -361,9 +352,8 @@ func TestVerify_ReadBodyError(t *testing.T) {
 	host, port, _ := net.SplitHostPort(strings.TrimPrefix(ts.URL, "http://"))
 
 	resolver := net.DefaultResolver
-	ca := &mockCA{}
 
-	err := Verify(resolver, ca, host, port, "test-token", "expected-keyauth")
+	err := Verify(resolver, host, port, "test-token", "expected-keyauth")
 	if err == nil {
 		t.Error("Verify() should fail when body reading fails due to content-length mismatch")
 	}
@@ -678,9 +668,8 @@ func TestVerify_HTTPStatusCodes(t *testing.T) {
 			}
 
 			resolver := net.DefaultResolver
-			ca := &mockCA{}
 
-			err = Verify(resolver, ca, host, port, "test-token", expectedKeyAuth)
+			err = Verify(resolver, host, port, "test-token", expectedKeyAuth)
 
 			if tc.shouldFail && err == nil {
 				t.Error("Expected Verify to fail but it succeeded")
@@ -718,9 +707,7 @@ func TestVerify_CustomResolver(t *testing.T) {
 		},
 	}
 
-	ca := &mockCA{}
-
-	err = Verify(customResolver, ca, host, port, "test-token", expectedKeyAuth)
+	err = Verify(customResolver, host, port, "test-token", expectedKeyAuth)
 	if err != nil {
 		t.Errorf("Verify with custom resolver failed: %v", err)
 	}
@@ -740,9 +727,8 @@ func TestVerify_EmptyResponse(t *testing.T) {
 	}
 
 	resolver := net.DefaultResolver
-	ca := &mockCA{}
 
-	err = Verify(resolver, ca, host, port, "test-token", "expected-keyauth")
+	err = Verify(resolver, host, port, "test-token", "expected-keyauth")
 	if err == nil {
 		t.Error("Verify should fail with empty response")
 	}
@@ -1027,18 +1013,12 @@ func TestSetup_ServeErrorNotServerClosed(t *testing.T) {
 	shutdownOnce = sync.Once{}
 	serverMu.Unlock()
 
-	// Create a listener that we'll close to cause a Serve error
-	listener, err := net.Listen("tcp", ":19801")
-	if err != nil {
-		t.Skipf("Port 19801 already in use: %v", err)
-	}
-
-	// Setup will create its own listener, so we need a different approach
-	// We'll occupy the port first, then have Setup fail
-	_ = listener.Close()
+	// Reserve an ephemeral port and release it, so Setup binds a port that is
+	// known to be free rather than a hard-coded one a concurrent run may hold.
+	port := reserveEphemeralPort(t)
 
 	// Start Setup on the port
-	Setup("19801", "test-keyauth")
+	Setup(port, "test-keyauth")
 
 	// Give the goroutine time to start and bind
 	time.Sleep(100 * time.Millisecond)
@@ -1150,11 +1130,9 @@ func TestSetup_ListenerBindErrorTriggersHandler(t *testing.T) {
 		serverMu.Unlock()
 	}()
 
-	// Occupy a port
-	listener, err := net.Listen("tcp", ":19803")
-	if err != nil {
-		t.Skipf("Port 19803 already in use: %v", err)
-	}
+	// Occupy an ephemeral port for the duration of the test so Setup's bind is
+	// guaranteed to fail.
+	listener, port := occupyEphemeralPort(t)
 	defer func() { _ = listener.Close() }()
 
 	// Track fatal handler
@@ -1172,20 +1150,24 @@ func TestSetup_ListenerBindErrorTriggersHandler(t *testing.T) {
 	shutdownOnce = sync.Once{}
 	serverMu.Unlock()
 
-	// Try to bind to the same port
-	Setup("19803", "test-keyauth")
+	// Bind the port that is already occupied: the listen must fail and the
+	// failure must reach the fatal handler rather than being swallowed.
+	Setup(port, "test-keyauth")
 
-	// Give time for the goroutine to try to bind
-	time.Sleep(200 * time.Millisecond)
+	deadline := time.Now().Add(5 * time.Second)
+	for atomic.LoadInt32(&fatalCalled) == 0 && time.Now().Before(deadline) {
+		time.Sleep(10 * time.Millisecond)
+	}
 
-	// Check if fatal handler was called
-	if atomic.LoadInt32(&fatalCalled) == 1 {
-		msgMu.Lock()
-		msg := fatalMsg
-		msgMu.Unlock()
-		t.Logf("Fatal handler called with: %s", msg)
-	} else {
-		t.Log("Fatal handler not called (may be port binding race)")
+	if atomic.LoadInt32(&fatalCalled) != 1 {
+		t.Fatalf("Setup on occupied port %s must report the bind failure through the fatal handler", port)
+	}
+
+	msgMu.Lock()
+	msg := fatalMsg
+	msgMu.Unlock()
+	if msg == "" {
+		t.Error("fatal handler was called without a message")
 	}
 }
 
@@ -1377,10 +1359,41 @@ func BenchmarkVerify(b *testing.B) {
 	}
 
 	resolver := net.DefaultResolver
-	ca := &mockCA{}
 
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
-		_ = Verify(resolver, ca, host, port, "bench-token", expectedKeyAuth)
+		_ = Verify(resolver, host, port, "bench-token", expectedKeyAuth)
 	}
+}
+
+// reserveEphemeralPort binds port 0, records the port the kernel assigned, and
+// releases it. The returned port is free at the moment of return, which is the
+// closest a test can get to "a port nobody else is using" without hard-coding
+// a number that a concurrent run may already hold.
+func reserveEphemeralPort(t *testing.T) string {
+	t.Helper()
+
+	listener, port := occupyEphemeralPort(t)
+	if err := listener.Close(); err != nil {
+		t.Fatalf("close reservation listener: %v", err)
+	}
+	return port
+}
+
+// occupyEphemeralPort binds port 0 and returns the still-open listener along
+// with the port the kernel assigned.
+func occupyEphemeralPort(t *testing.T) (net.Listener, string) {
+	t.Helper()
+
+	listener, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("listen: %v", err)
+	}
+
+	_, port, err := net.SplitHostPort(listener.Addr().String())
+	if err != nil {
+		_ = listener.Close()
+		t.Fatalf("split listener address: %v", err)
+	}
+	return listener, port
 }

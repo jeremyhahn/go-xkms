@@ -25,6 +25,66 @@ import (
 // issuance, signing, revocation, and management operations.
 type TrustedCA = pkgca.TrustedCA
 
+// ---------------------------------------------------------------------------
+// TrustedCA sub-interface aliases
+//
+// TrustedCA is composed of these narrower, cohesive interfaces (see
+// pkg/ca/interface.go). Consumers that only need one slice of CA behavior
+// should depend on the narrow alias instead of the full TrustedCA surface.
+// ---------------------------------------------------------------------------
+
+// CALifecycle initializes and reports on the CA's operational state.
+type CALifecycle = pkgca.CALifecycle
+
+// CAIssuer creates CSRs and turns them into issued certificates.
+type CAIssuer = pkgca.CAIssuer
+
+// CATrustChain retrieves and verifies the CA's own certificate chain.
+type CATrustChain = pkgca.CATrustChain
+
+// CARevoker marks certificates revoked, reports revocation status, and
+// generates CRLs.
+type CARevoker = pkgca.CARevoker
+
+// CATLSConfig builds tls.Certificate/tls.Config/PEM-bundle values for the
+// CA's own keys.
+type CATLSConfig = pkgca.CATLSConfig
+
+// CATrustPools builds x509.CertPool values for TLS trust configuration.
+type CATrustPools = pkgca.CATrustPools
+
+// CAStores exposes the CA's underlying keystore and certificate store.
+type CAStores = pkgca.CAStores
+
+// CAIdentityInfo reports the CA's static and derived configuration.
+type CAIdentityInfo = pkgca.CAIdentityInfo
+
+// CASigningIdentity retrieves the CA's signing key material and performs raw
+// signing operations against it.
+type CASigningIdentity = pkgca.CASigningIdentity
+
+// CACertificateAccessor reads and writes individual issued certificates by
+// Common Name or KeyAttributes.
+type CACertificateAccessor = pkgca.CACertificateAccessor
+
+// CAObjectStore is a raw key/value passthrough to the CA's underlying object
+// store.
+type CAObjectStore = pkgca.CAObjectStore
+
+// CAChainImporter fetches and imports issuer certificates and CRLs
+// discovered via a certificate's AIA/CDP extensions.
+type CAChainImporter = pkgca.CAChainImporter
+
+// CACrossSigner stores and retrieves cross-signed certificates.
+type CACrossSigner = pkgca.CACrossSigner
+
+// CAAttestation stores and verifies TPM attestation evidence tied to a key.
+type CAAttestation = pkgca.CAAttestation
+
+// CATCGEnrollment verifies packed TCG-CSR-IDEVID blobs submitted for TPM
+// device-identity enrollment.
+type CATCGEnrollment = pkgca.CATCGEnrollment
+
 // TCGCA extends TrustedCA with TCG Trusted Computing certificate operations
 // for TPM device identity (IDevID), attestation key (AK), and endorsement
 // key (EK) per TCG TPM 2.0 Keys for Device Identity and Attestation.
@@ -45,6 +105,23 @@ type CertificateProvider = pkgca.CertificateProvider
 // ---------------------------------------------------------------------------
 // Struct and concrete type aliases
 // ---------------------------------------------------------------------------
+
+// Issuer is the signing identity for one certificate issuance: the key that
+// signs, the certificate that will appear as the issuer, and (optionally) the
+// configured identity whose revocation and Authority Information Access
+// endpoints are stamped onto what it issues. A nil Certificate requests a
+// self-signed certificate.
+//
+// Issuer.Issue is the single certificate-issuance path in go-xkms (see
+// pkg/ca.Issuer). Callers that build certificates outside a running
+// TrustedCA — for example an offline CLI operating on CA material loaded
+// from files — construct an Issuer directly instead of hand-rolling an
+// x509.Certificate template and x509.CreateCertificate call.
+type Issuer = pkgca.Issuer
+
+// CertificateSpec describes the certificate an Issuer should issue. See
+// pkg/ca.CertificateSpec for the full field documentation.
+type CertificateSpec = pkgca.CertificateSpec
 
 // TrustedCAParams holds the parameters for creating a new TrustedCA instance.
 type TrustedCAParams = pkgca.Params

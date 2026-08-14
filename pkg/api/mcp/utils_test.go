@@ -104,11 +104,16 @@ func TestParseHashAlgorithm(t *testing.T) {
 		expected crypto.Hash
 		wantErr  bool
 	}{
-		{"SHA1", "SHA1", crypto.SHA1, false},
+		// SHA-1 is one of the collision-broken digests the process-wide
+		// weak-hash policy refuses. This transport used to admit it from its
+		// own private table, so a caller could get a SHA-1 signature here that
+		// REST and gRPC refuse.
+		{"SHA1 is refused by the weak-hash policy", "SHA1", 0, true},
 		{"SHA224", "SHA224", crypto.SHA224, false},
 		{"SHA256", "SHA256", crypto.SHA256, false},
 		{"SHA384", "SHA384", crypto.SHA384, false},
 		{"SHA512", "SHA512", crypto.SHA512, false},
+		{"SHA3-256", "SHA3-256", crypto.SHA3_256, false},
 		{"sha256 lowercase", "sha256", crypto.SHA256, false},
 		{"empty defaults to SHA256", "", crypto.SHA256, false},
 		{"unsupported", "MD5", 0, true},

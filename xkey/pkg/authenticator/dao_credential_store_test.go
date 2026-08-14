@@ -639,3 +639,44 @@ func TestDAOCredentialStore_Concurrency(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, goroutines, count)
 }
+
+// TestDAOCredentialStore_LoadByRPID_FallsBackWhenIndexingUnsupported is the
+// regression test for the index-capability contract.
+//
+// The KVStoreAdapter cannot maintain a secondary index — the entity encoding is
+// the DAO's choice and is never communicated to the store — so every index
+// query reports xkms.ErrIndexingNotSupported. It used to return (nil, nil)
+// instead, which made "this store cannot index" indistinguishable from "the
+// index matched nothing": a genuine empty match silently paid for a full scan,
+// and a broken index would have looked like an empty result forever.
+//
+// LoadByRPID must therefore detect the sentinel and scan, rather than keying
+// off an empty slice or propagating the error to the caller. This test runs
+// against the real adapter-backed store, so it fails if either half regresses.
+func TestDAOCredentialStore_LoadByRPID_FallsBackWhenIndexingUnsupported(t *testing.T) {
+	store := newTestDAOCredentialStore(t)
+
+	target := testCredential("fallback.example", true)
+	other := testCredential("unrelated.example", true)
+	require.NoError(t, store.Store(target))
+	require.NoError(t, store.Store(other))
+
+	// Confirm the premise: the underlying store really does refuse index
+	// queries. If this ever starts succeeding, the fallback below is no longer
+	// the path under test and this test must be revisited.
+	_, err := store.dao.QueryByIndex(context.Background(), "RPID", "fallback.example")
+	require.ErrorIs(t, err, xkms.ErrIndexingNotSupported,
+		"precondition: the KVStoreAdapter must refuse index queries")
+
+	// Despite that, the lookup must succeed via the scan fallback.
+	creds, err := store.LoadByRPID("fallback.example")
+	require.NoError(t, err, "LoadByRPID must fall back to a scan, not surface the sentinel")
+	require.Len(t, creds, 1)
+	assert.Equal(t, "fallback.example", creds[0].RPID)
+
+	// An RPID with no credentials must report empty, not an error -- the other
+	// half of the contract the old (nil, nil) return conflated.
+	none, err := store.LoadByRPID("absent.example")
+	require.NoError(t, err)
+	assert.Empty(t, none)
+}

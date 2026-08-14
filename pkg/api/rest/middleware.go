@@ -16,6 +16,8 @@ package rest
 import (
 	"log/slog"
 	"net/http"
+	"strconv"
+	"strings"
 	"time"
 
 	"github.com/jeremyhahn/go-xkms/pkg/auth"
@@ -101,24 +103,101 @@ const corsAllowHeaders = "Content-Type, Authorization, " +
 // ceremony.
 const corsExposeHeaders = webauthnhttp.HeaderSessionID + ", " + webauthnhttp.HeaderUserID
 
-// CORSMiddleware adds CORS headers to responses.
-func CORSMiddleware(next http.Handler) http.Handler {
-	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		// Set CORS headers
-		w.Header().Set("Access-Control-Allow-Origin", "*")
-		w.Header().Set("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, OPTIONS")
-		w.Header().Set("Access-Control-Allow-Headers", corsAllowHeaders)
-		w.Header().Set("Access-Control-Expose-Headers", corsExposeHeaders)
-		w.Header().Set("Access-Control-Max-Age", "3600")
+// CORSOptions configures cross-origin resource sharing for the REST router.
+// A nil options value — or one with an empty AllowedOrigins list — disables
+// CORS entirely: no CORS headers are emitted and preflight requests fall
+// through to the router. The embedded web UI is served same-origin and needs
+// no CORS; only deployments that intentionally serve browser clients from
+// another origin should enable it.
+type CORSOptions struct {
+	// AllowedOrigins lists the exact origins (scheme://host[:port]) permitted
+	// to make cross-origin requests. The wildcard "*" is honored but reported
+	// as a compliance gap by config.ComplianceGaps.
+	AllowedOrigins []string
 
-		// Handle preflight requests
-		if r.Method == http.MethodOptions {
-			w.WriteHeader(http.StatusOK)
-			return
+	// AllowCredentials sets Access-Control-Allow-Credentials on allowed
+	// responses. It is ignored for the wildcard origin: the Fetch standard
+	// forbids credentials with "Access-Control-Allow-Origin: *".
+	AllowCredentials bool
+
+	// MaxAgeSeconds caps how long browsers may cache a preflight response.
+	// Values <= 0 default to 3600.
+	MaxAgeSeconds int
+}
+
+// allowsOrigin reports whether origin is in the allowlist, and whether the
+// match was the wildcard entry.
+func (o *CORSOptions) allowsOrigin(origin string) (allowed, wildcard bool) {
+	for _, a := range o.AllowedOrigins {
+		if a == "*" {
+			return true, true
 		}
+		if strings.EqualFold(strings.TrimRight(a, "/"), origin) {
+			return true, false
+		}
+	}
+	return false, false
+}
 
-		next.ServeHTTP(w, r)
-	})
+// NewCORSMiddleware returns middleware emitting CORS headers per opts. With
+// nil opts (or no allowed origins) it is a pass-through: same-origin browsers
+// need no CORS headers, and omitting them fails closed for everyone else.
+func NewCORSMiddleware(opts *CORSOptions) func(http.Handler) http.Handler {
+	if opts == nil || len(opts.AllowedOrigins) == 0 {
+		return func(next http.Handler) http.Handler { return next }
+	}
+
+	maxAge := opts.MaxAgeSeconds
+	if maxAge <= 0 {
+		maxAge = 3600
+	}
+	maxAgeValue := strconv.Itoa(maxAge)
+
+	return func(next http.Handler) http.Handler {
+		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			origin := r.Header.Get("Origin")
+			if origin == "" {
+				// Same-origin or non-browser request: no CORS headers apply.
+				next.ServeHTTP(w, r)
+				return
+			}
+
+			allowed, wildcard := opts.allowsOrigin(origin)
+			if !allowed {
+				// Not allow-listed: emit nothing and let the browser's
+				// same-origin policy block the response. Preflights still
+				// fall through so the 404/405 semantics stay unchanged.
+				next.ServeHTTP(w, r)
+				return
+			}
+
+			h := w.Header()
+			if wildcard {
+				// The Fetch standard forbids credentials with the wildcard
+				// origin, so wildcard responses never carry the credentials
+				// header — credentialed cross-origin access requires listing
+				// the origin explicitly.
+				h.Set("Access-Control-Allow-Origin", "*")
+			} else {
+				h.Set("Access-Control-Allow-Origin", origin)
+				h.Add("Vary", "Origin")
+				if opts.AllowCredentials {
+					h.Set("Access-Control-Allow-Credentials", "true")
+				}
+			}
+			h.Set("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, OPTIONS")
+			h.Set("Access-Control-Allow-Headers", corsAllowHeaders)
+			h.Set("Access-Control-Expose-Headers", corsExposeHeaders)
+			h.Set("Access-Control-Max-Age", maxAgeValue)
+
+			if r.Method == http.MethodOptions {
+				w.WriteHeader(http.StatusNoContent)
+				return
+			}
+
+			next.ServeHTTP(w, r)
+		})
+	}
 }
 
 // RecoveryMiddleware recovers from panics and returns a 500 error.
@@ -149,9 +228,25 @@ func ContentTypeMiddleware(next http.Handler) http.Handler {
 }
 
 // AuthenticationMiddleware authenticates HTTP requests.
+//
+// The single exemption is the init ceremony claim surface: while the ceremony
+// has not yet reached the operational state, the exact paths named by
+// publicCeremonyPaths are served without an identity assertion because the
+// officer's first credential is the certificate those routes hand out. See
+// middleware_init_public.go for the full rationale and the fail-closed
+// conditions.
 func (s *Server) AuthenticationMiddleware() func(http.Handler) http.Handler {
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			if s.isPublicCeremonyRequest(r) {
+				s.logger.Debug("Serving init ceremony route without authentication",
+					slog.String("method", r.Method),
+					slog.String("path", r.URL.Path),
+					slog.String("remote_addr", r.RemoteAddr))
+				next.ServeHTTP(w, r)
+				return
+			}
+
 			// Authenticate the request
 			identity, err := s.authenticator.AuthenticateHTTP(r)
 			if err != nil {
@@ -176,4 +271,17 @@ func (s *Server) AuthenticationMiddleware() func(http.Handler) http.Handler {
 			next.ServeHTTP(w, r)
 		})
 	}
+}
+
+// SecurityHeadersMiddleware sets the browser security headers for the
+// embedded web UI: a same-origin Content Security Policy that also refuses
+// framing, MIME-type sniffing protection, and a no-referrer policy. It is
+// applied to the UI mount only; API responses are not browser documents.
+func SecurityHeadersMiddleware(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Security-Policy", "default-src 'self'; frame-ancestors 'none'")
+		w.Header().Set("X-Content-Type-Options", "nosniff")
+		w.Header().Set("Referrer-Policy", "no-referrer")
+		next.ServeHTTP(w, r)
+	})
 }

@@ -1,0 +1,95 @@
+// Copyright (c) 2025 Jeremy Hahn
+// Copyright (c) 2025 Automate The Things, LLC
+//
+// This file is part of go-xkms.
+//
+// go-xkms is dual-licensed:
+//
+// 1. GNU Affero General Public License v3.0 (AGPL-3.0)
+//    See LICENSE file or visit https://www.gnu.org/licenses/agpl-3.0.html
+//
+// 2. Commercial License
+//    Contact licensing@automatethethings.com for commercial licensing options.
+
+package rest
+
+import (
+	"errors"
+	"net/http"
+
+	"github.com/jeremyhahn/go-xkms/pkg/xkms"
+)
+
+// keyOpSentinelStatus maps the service-layer sentinels raised by the
+// hardware-capability key operations (AttestKey, DeriveKeyECDH,
+// ExportKeyMaterial, WrapKeyByID, UnwrapKeyByID) onto HTTP status codes. It is
+// an ordered slice rather than a map because a single error can satisfy
+// errors.Is for more than one entry: xkms.ErrOperationWrap deliberately
+// exposes both its sentinel and its cause. The first match wins, so the most
+// specific sentinel is listed first. This mirrors
+// pkg/api/grpc/errors_keyops.go's keyOpSentinelCodes so both transports report
+// the same capability boundaries under their own status vocabularies.
+var keyOpSentinelStatus = []struct {
+	sentinel error
+	status   int
+}{
+	// A digest this service refuses (SHA-1 and the other collision-broken
+	// names) or cannot resolve is a fault in the request, not in the server.
+	// ResolveOAEPHash reports the weak-hash refusal as ErrOperationWrap rather
+	// than ErrValidation, so without these two entries it fell through to the
+	// catch-all and a caller that named a bad digest was told the server had
+	// failed.
+	{xkms.ErrWeakOAEPHash, http.StatusBadRequest},
+	{xkms.ErrInvalidHashFunction, http.StatusBadRequest},
+	{xkms.ErrOperationNotSupported, http.StatusNotImplemented},
+	{xkms.ErrExportKeyMaterialFailed, http.StatusPreconditionFailed},
+	{xkms.ErrBackendNotFound, http.StatusNotFound},
+	{xkms.ErrKeyNotFound, http.StatusNotFound},
+	{xkms.ErrNotInitialized, http.StatusServiceUnavailable},
+}
+
+// mapKeyOpError converts an error returned by the xkms service layer's key
+// and crypto operations into an HTTP status response. Validation failures
+// report the offending field verbatim so callers see the same wire-level
+// field name they sent; capability boundaries (a backend that cannot attest,
+// or cannot export) become 501 or 412; unresolved backends and keys become
+// 404. A clustered not-leader condition is surfaced as 421, exactly as
+// handleError does for the rest of the package. Anything else is a 500.
+func mapKeyOpError(w http.ResponseWriter, err error) {
+	if nl, ok := xkms.AsNotLeader(err); ok {
+		writeNotLeader(w, nl)
+		return
+	}
+
+	var role *xkms.ErrRoleLookup
+	if errors.As(err, &role) {
+		writeError(w, role, http.StatusNotFound)
+		return
+	}
+
+	var validation *xkms.ErrValidation
+	if errors.As(err, &validation) {
+		writeErrorWithMessage(w, validation, keyOpValidationMessage(validation), http.StatusBadRequest)
+		return
+	}
+
+	for _, entry := range keyOpSentinelStatus {
+		if errors.Is(err, entry.sentinel) {
+			writeError(w, err, entry.status)
+			return
+		}
+	}
+
+	writeError(w, err, http.StatusInternalServerError)
+}
+
+// keyOpValidationMessage renders a service-layer validation error for the
+// wire. The Detail carries the caller-facing message ("key_id is required");
+// the sentinel is only used when a validation error carries no detail. This
+// mirrors pkg/api/grpc/errors_keyops.go's validationMessage.
+func keyOpValidationMessage(err *xkms.ErrValidation) string {
+	if err.Detail != "" {
+		return err.Detail
+	}
+	return err.Sentinel.Error()
+}

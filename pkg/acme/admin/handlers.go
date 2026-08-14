@@ -15,103 +15,132 @@ package admin
 
 import (
 	"encoding/json"
+	"errors"
 	"log/slog"
 	"net/http"
 	"strconv"
+	"time"
 
 	"github.com/gorilla/mux"
+
+	"github.com/jeremyhahn/go-xkms/pkg/acme/audit"
+	caerrors "github.com/jeremyhahn/go-xkms/pkg/acme/errors"
+	"github.com/jeremyhahn/go-xkms/pkg/auth"
+	xkmssdk "github.com/jeremyhahn/go-xkms/sdk/go"
 )
 
-// AlgorithmInfo describes a supported signing or key encapsulation algorithm.
-type AlgorithmInfo struct {
-	Algorithm string   `json:"algorithm"`
-	Curves    []string `json:"curves,omitempty"`
-	KeySizes  []int    `json:"key_sizes,omitempty"`
-	Backends  []string `json:"backends"`
-}
+// AlgorithmInfo and AlgorithmsResponse are the canonical xkms algorithm
+// discovery types, re-exported so the admin API reports exactly what the
+// key management service reports.
+type (
+	AlgorithmInfo      = xkmssdk.AlgorithmInfo
+	AlgorithmsResponse = xkmssdk.AlgorithmsResponse
+)
 
-// AlgorithmsResponse lists the available cryptographic algorithms.
-type AlgorithmsResponse struct {
-	Signing          []AlgorithmInfo `json:"signing"`
-	KeyEncapsulation []AlgorithmInfo `json:"key_encapsulation"`
-}
-
-// softwareSigningAlgorithms is the static set of signing algorithms supported
-// by the software backend. This will be replaced by a dynamic query to go-xkms
-// once the SDK provides the canonical version.
-var softwareSigningAlgorithms = []AlgorithmInfo{
-	{
-		Algorithm: "ECDSA",
-		Curves:    []string{"P-224", "P-256", "P-384", "P-521"},
-		Backends:  []string{"software"},
-	},
-	{
-		Algorithm: "RSA",
-		KeySizes:  []int{2048, 3072, 4096},
-		Backends:  []string{"software"},
-	},
-	{
-		Algorithm: "Ed25519",
-		Backends:  []string{"software"},
-	},
-}
+// AlgorithmDiscoverer reports the cryptographic algorithms this deployment can
+// actually perform. The default implementation inspects the backends
+// configured on the xkms service, so a software-only deployment never
+// advertises hardware or post-quantum algorithms it cannot execute.
+type AlgorithmDiscoverer func() *AlgorithmsResponse
 
 // Handlers provides HTTP handlers for admin API endpoints
 type Handlers struct {
-	service Service
-	logger  *slog.Logger
+	service            Service
+	logger             *slog.Logger
+	auditQuerier       audit.Querier
+	discoverAlgorithms AlgorithmDiscoverer
 }
 
-// NewHandlers creates a new handlers instance
-func NewHandlers(service Service, logger *slog.Logger) *Handlers {
-	return &Handlers{
-		service: service,
-		logger:  logger,
+// HandlerOption configures optional Handlers dependencies.
+type HandlerOption func(*Handlers)
+
+// WithAuditQuerier wires the audit trail read path into GET /admin/audit.
+// Without it the endpoint reports that no audit trail is configured rather
+// than claiming the trail is empty.
+func WithAuditQuerier(querier audit.Querier) HandlerOption {
+	return func(h *Handlers) {
+		h.auditQuerier = querier
 	}
 }
 
-// RegisterRoutes registers all admin API routes with the router
-func (h *Handlers) RegisterRoutes(router *mux.Router, authMiddleware AuthHandler) {
+// WithAlgorithmDiscoverer overrides the capability source behind
+// GET /admin/algorithms.
+func WithAlgorithmDiscoverer(discoverer AlgorithmDiscoverer) HandlerOption {
+	return func(h *Handlers) {
+		if discoverer != nil {
+			h.discoverAlgorithms = discoverer
+		}
+	}
+}
+
+// NewHandlers creates a new handlers instance
+func NewHandlers(service Service, logger *slog.Logger, opts ...HandlerOption) *Handlers {
+	h := &Handlers{
+		service:            service,
+		logger:             logger,
+		discoverAlgorithms: xkmssdk.ServiceDiscoverAlgorithms,
+	}
+
+	for _, opt := range opts {
+		opt(h)
+	}
+
+	return h
+}
+
+// RegisterRoutes registers all admin API routes with the router.
+//
+// Every route is decorated with the exact go-qrdb resource:action grant it
+// requires; gate resolves each one through the hosted qrdb node's RBAC service
+// (see PermissionGate). Registration is fail-closed by construction: a route
+// without a decorator is unreachable because there is no undecorated
+// registration path, and a nil gate denies every request.
+func (h *Handlers) RegisterRoutes(router *mux.Router, authMiddleware AuthHandler, gate *PermissionGate) {
 	// Apply auth middleware to all routes
 	adminRouter := router.PathPrefix("/admin").Subrouter()
 	if authMiddleware != nil {
 		adminRouter.Use(authMiddleware.Authenticate)
 	}
 
-	// Certificate Management (viewer access required)
+	// Certificate management.
 	// Note: /certificates/expiring must be registered BEFORE /certificates/{serial}
 	// to avoid gorilla/mux matching "expiring" as a serial number
-	adminRouter.HandleFunc("/certificates", h.ListCertificates).Methods("GET")
-	adminRouter.HandleFunc("/certificates/expiring", h.ListExpiringCertificates).Methods("GET")
-	adminRouter.HandleFunc("/certificates/{serial}", h.GetCertificate).Methods("GET")
+	adminRouter.Handle("/certificates",
+		gate.Wrap(auth.ResourceCerts, auth.ActionList, h.ListCertificates)).Methods("GET")
+	adminRouter.Handle("/certificates/expiring",
+		gate.Wrap(auth.ResourceCerts, auth.ActionList, h.ListExpiringCertificates)).Methods("GET")
+	adminRouter.Handle("/certificates/{serial}",
+		gate.Wrap(auth.ResourceCerts, auth.ActionRead, h.GetCertificate)).Methods("GET")
+	adminRouter.Handle("/certificates/{serial}/revoke",
+		gate.Wrap(auth.ResourceCerts, auth.ActionRevoke, h.RevokeCertificate)).Methods("POST")
 
-	// Certificate revocation (admin access required)
-	revokeRouter := adminRouter.PathPrefix("/certificates/{serial}/revoke").Subrouter()
-	revokeRouter.Use(RequireRole(RoleAdmin))
-	revokeRouter.HandleFunc("", h.RevokeCertificate).Methods("POST")
+	// ACME account management.
+	adminRouter.Handle("/accounts",
+		gate.Wrap(auth.ResourceACMEAccounts, auth.ActionList, h.ListAccounts)).Methods("GET")
+	adminRouter.Handle("/accounts/{id}",
+		gate.Wrap(auth.ResourceACMEAccounts, auth.ActionRead, h.GetAccount)).Methods("GET")
+	adminRouter.Handle("/accounts/{id}",
+		gate.Wrap(auth.ResourceACMEAccounts, auth.ActionDisable, h.DisableAccount)).Methods("DELETE")
 
-	// Account Management (viewer access required for GET, admin for DELETE)
-	adminRouter.HandleFunc("/accounts", h.ListAccounts).Methods("GET")
-	adminRouter.HandleFunc("/accounts/{id}", h.GetAccount).Methods("GET")
+	// ACME order management.
+	adminRouter.Handle("/orders",
+		gate.Wrap(auth.ResourceACMEOrders, auth.ActionList, h.ListOrders)).Methods("GET")
+	adminRouter.Handle("/orders/{id}",
+		gate.Wrap(auth.ResourceACMEOrders, auth.ActionRead, h.GetOrder)).Methods("GET")
 
-	// Account deletion (admin access required)
-	deleteRouter := adminRouter.PathPrefix("/accounts/{id}").Subrouter()
-	deleteRouter.Use(RequireRole(RoleAdmin))
-	deleteRouter.HandleFunc("", h.DisableAccount).Methods("DELETE")
+	// Audit trail.
+	adminRouter.Handle("/audit",
+		gate.Wrap(auth.ResourceAudit, auth.ActionRead, h.ListAuditLogs)).Methods("GET")
 
-	// Order Management (viewer access required)
-	adminRouter.HandleFunc("/orders", h.ListOrders).Methods("GET")
-	adminRouter.HandleFunc("/orders/{id}", h.GetOrder).Methods("GET")
+	// CA status and statistics.
+	adminRouter.Handle("/status",
+		gate.Wrap(auth.ResourceAdmin, auth.ActionStatus, h.GetStatus)).Methods("GET")
+	adminRouter.Handle("/stats",
+		gate.Wrap(auth.ResourceAdmin, auth.ActionStatus, h.GetStats)).Methods("GET")
 
-	// Audit Log (viewer access required)
-	adminRouter.HandleFunc("/audit", h.ListAuditLogs).Methods("GET")
-
-	// CA Status and Stats (viewer access required)
-	adminRouter.HandleFunc("/status", h.GetStatus).Methods("GET")
-	adminRouter.HandleFunc("/stats", h.GetStats).Methods("GET")
-
-	// Algorithms (no special role required)
-	adminRouter.HandleFunc("/algorithms", h.GetAlgorithms).Methods("GET")
+	// Algorithm capability discovery.
+	adminRouter.Handle("/algorithms",
+		gate.Wrap(auth.ResourceAdmin, auth.ActionCapabilities, h.GetAlgorithms)).Methods("GET")
 }
 
 // ListCertificates handles GET /admin/certificates
@@ -372,32 +401,115 @@ func (h *Handlers) GetStats(w http.ResponseWriter, r *http.Request) {
 }
 
 // ListAuditLogs handles GET /admin/audit.
+//
+// The audit trail is a compliance control, so this endpoint never invents an
+// answer: it either reports the events the configured trail holds, or it
+// reports that no trail is configured. It never returns "no events" for a
+// server whose audit trail it cannot read.
 func (h *Handlers) ListAuditLogs(w http.ResponseWriter, r *http.Request) {
-	query := r.URL.Query()
-	page := parseInt(query.Get("page"), 1)
-	perPage := parseInt(query.Get("per_page"), 25)
+	if h.auditQuerier == nil {
+		h.logger.Warn("audit log query rejected: no audit trail is configured")
+		writeProblem(w, http.StatusNotImplemented, "urn:trusted-ca:error:not-implemented",
+			"Audit log querying is unavailable: this server has no audit trail configured")
+		return
+	}
+
+	req, err := parseListAuditLogsRequest(r.URL.Query())
+	if err != nil {
+		writeProblem(w, http.StatusBadRequest, "urn:trusted-ca:error:bad-request", err.Error())
+		return
+	}
+
+	result, err := h.auditQuerier.Query(r.Context(), req.auditQuery())
+	if err != nil {
+		if errors.Is(err, audit.ErrQueryWindowExceeded) || errors.Is(err, audit.ErrInvalidTimeRange) {
+			writeProblem(w, http.StatusBadRequest, "urn:trusted-ca:error:bad-request", err.Error())
+			return
+		}
+
+		h.logger.Error("failed to list audit logs", slog.String("error", err.Error()))
+		writeProblem(w, http.StatusInternalServerError, "urn:trusted-ca:error:internal", "Failed to list audit logs")
+		return
+	}
+
+	if result.Malformed > 0 {
+		h.logger.Warn("audit trail contains records that could not be decoded",
+			slog.Int("malformed", result.Malformed))
+	}
 
 	writeJSON(w, http.StatusOK, ListResponse{
-		Items:   []interface{}{},
-		Total:   0,
-		Page:    page,
-		PerPage: perPage,
+		Items:   result.Events,
+		Total:   result.Total,
+		Page:    result.Page,
+		PerPage: result.PerPage,
 	})
 }
 
+// parseListAuditLogsRequest builds an audit log request from query parameters.
+func parseListAuditLogsRequest(query map[string][]string) (ListAuditLogsRequest, error) {
+	get := func(key string) string {
+		if values, ok := query[key]; ok && len(values) > 0 {
+			return values[0]
+		}
+		return ""
+	}
+
+	req := ListAuditLogsRequest{
+		Page:      parseInt(get("page"), 1),
+		PerPage:   parseInt(get("per_page"), audit.DefaultQueryPageSize),
+		EventType: get("event_type"),
+		Actor:     get("actor"),
+		Action:    get("action"),
+		Resource:  get("resource"),
+		Result:    get("result"),
+		RequestID: get("request_id"),
+	}
+
+	startTime, err := parseTimestamp(get("start_time"))
+	if err != nil {
+		return ListAuditLogsRequest{}, err
+	}
+	req.StartTime = startTime
+
+	endTime, err := parseTimestamp(get("end_time"))
+	if err != nil {
+		return ListAuditLogsRequest{}, err
+	}
+	req.EndTime = endTime
+
+	return req, nil
+}
+
+// parseTimestamp parses an optional RFC 3339 query parameter.
+func parseTimestamp(value string) (time.Time, error) {
+	if value == "" {
+		return time.Time{}, nil
+	}
+
+	parsed, err := time.Parse(time.RFC3339, value)
+	if err != nil {
+		return time.Time{}, caerrors.MalformedError("timestamp %q must be RFC 3339", value)
+	}
+
+	return parsed, nil
+}
+
 // GetAlgorithms handles GET /admin/algorithms.
-// Returns the available cryptographic algorithms for CA key generation.
 //
-// TODO: Replace with go-xkms SDK call when available via embedded transport.
-// The go-xkms server exposes GET /api/v1/algorithms with dynamic algorithm
-// discovery based on configured backends. The static list here matches what
-// go-xkms returns for software-only backends. Once go-xkms's embedded
-// transport supports algorithm discovery, this handler should delegate to it.
+// The response is derived from the backends this deployment has configured,
+// so it lists only algorithms the server can actually execute: hardware
+// algorithms appear when a hardware backend is loaded, and key encapsulation
+// algorithms appear when a backend supports them.
 func (h *Handlers) GetAlgorithms(w http.ResponseWriter, r *http.Request) {
-	writeJSON(w, http.StatusOK, &AlgorithmsResponse{
-		Signing:          softwareSigningAlgorithms,
-		KeyEncapsulation: []AlgorithmInfo{},
-	})
+	response := h.discoverAlgorithms()
+	if response == nil {
+		response = &AlgorithmsResponse{
+			Signing:          []AlgorithmInfo{},
+			KeyEncapsulation: []AlgorithmInfo{},
+		}
+	}
+
+	writeJSON(w, http.StatusOK, response)
 }
 
 // Helper functions

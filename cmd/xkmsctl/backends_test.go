@@ -1001,6 +1001,18 @@ func (m *mockBackendsClient) ListShares(_ context.Context) (*transport.ListShare
 	return nil, nil
 }
 
+func (m *mockBackendsClient) Algorithms(_ context.Context) (*transport.AlgorithmsResponse, error) {
+	return nil, nil
+}
+
+func (m *mockBackendsClient) GetShare(_ context.Context, _, _ string, _ int) (*transport.ShareInfo, error) {
+	return nil, nil
+}
+
+func (m *mockBackendsClient) DeleteShare(_ context.Context, _, _ string, _ int) error {
+	return nil
+}
+
 func (m *mockBackendsClient) GetShareCollectionStatus(_ context.Context, _ string) (*transport.ShareCollectionStatus, error) {
 	return nil, nil
 }
@@ -1055,7 +1067,11 @@ func (m *mockBackendsClient) ClaimCertComplete(_ context.Context, _ *transport.C
 	return nil, nil
 }
 
-func (m *mockBackendsClient) ClaimShare(_ context.Context, _ *transport.ClaimShareRequest) (*transport.ClaimShareResponse, error) {
+func (m *mockBackendsClient) ClaimShareBegin(_ context.Context, _ *transport.ClaimShareBeginRequest) (*transport.ClaimShareBeginResponse, error) {
+	return nil, nil
+}
+
+func (m *mockBackendsClient) ClaimShareComplete(_ context.Context, _ *transport.ClaimShareCompleteRequest) (*transport.ClaimShareCompleteResponse, error) {
 	return nil, nil
 }
 
@@ -1101,5 +1117,9 @@ func (m *mockBackendsClient) BindUserCert(_ context.Context, _, _ string, _ int6
 }
 
 func (m *mockBackendsClient) ListUserCredentials(_ context.Context, _ string) (*transport.ListUserCredentialsResponse, error) {
+	return nil, nil
+}
+
+func (m *mockBackendsClient) QueryAudit(_ context.Context, _ *transport.AuditFilter) (*transport.AuditPage, error) {
 	return nil, nil
 }

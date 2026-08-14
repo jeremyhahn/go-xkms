@@ -12,7 +12,7 @@ package main
 import (
     "log"
 
-    "github.com/jeremyhahn/go-xkms/xkey/pkg/fido2/authenticator"
+    "github.com/jeremyhahn/go-xkms/xkey/pkg/authenticator"
 )
 
 func main() {
@@ -636,18 +636,23 @@ func resetAuthenticator(auth *authenticator.Authenticator) error {
 
 ## Using Key Backends
 
+Both examples below use the same adapter. There is no `keybackend/software` or
+`keybackend/tpm2` package — `NewBackendAdapter` wraps any go-xkms `KeyProvider`
+and the backend is selected by `BackendType`.
+
 ### Software Key Backend
 
 ```go
 import (
-    "github.com/jeremyhahn/go-xkms/xkey/pkg/fido2/authenticator"
-    "github.com/jeremyhahn/go-xkms/xkey/pkg/fido2/authenticator/keybackend/software"
+    xkms "github.com/jeremyhahn/go-xkms/sdk/go"
+    "github.com/jeremyhahn/go-xkms/xkey/pkg/authenticator"
+    "github.com/jeremyhahn/go-xkms/xkey/pkg/authenticator/keybackend"
 )
 
-func setupWithSoftwareBackend() (*authenticator.Authenticator, error) {
+func setupWithSoftwareBackend(provider xkms.KeyProvider) (*authenticator.Authenticator, error) {
     config := authenticator.DefaultConfig()
     config.Storage = authenticator.NewMemoryStorage()
-    config.KeyBackend = software.NewSoftwareKeyBackend()
+    config.KeyBackend = keybackend.NewBackendAdapter(provider, xkms.BackendTypeSoftware)
 
     return authenticator.NewAuthenticator(config)
 }
@@ -655,23 +660,20 @@ func setupWithSoftwareBackend() (*authenticator.Authenticator, error) {
 
 ### TPM2 Key Backend
 
+Same wiring, a different backend type and an attestation format. The TPM device
+path belongs to the go-xkms provider configuration, not to the adapter.
+
 ```go
 import (
-    "github.com/jeremyhahn/go-xkms/xkey/pkg/fido2/authenticator"
-    "github.com/jeremyhahn/go-xkms/xkey/pkg/fido2/authenticator/keybackend/tpm2"
+    xkms "github.com/jeremyhahn/go-xkms/sdk/go"
+    "github.com/jeremyhahn/go-xkms/xkey/pkg/authenticator"
+    "github.com/jeremyhahn/go-xkms/xkey/pkg/authenticator/keybackend"
 )
 
-func setupWithTPM2Backend() (*authenticator.Authenticator, error) {
-    tpmBackend, err := tpm2.NewTPM2KeyBackend(&tpm2.TPM2Config{
-        DevicePath: "/dev/tpmrm0",
-    })
-    if err != nil {
-        return nil, err
-    }
-
+func setupWithTPM2Backend(provider xkms.KeyProvider) (*authenticator.Authenticator, error) {
     config := authenticator.DefaultConfig()
     config.Storage = authenticator.NewMemoryStorage()
-    config.KeyBackend = tpmBackend
+    config.KeyBackend = keybackend.NewBackendAdapter(provider, xkms.BackendTypeTPM2)
     config.AttestationFormat = "tpm"
 
     return authenticator.NewAuthenticator(config)

@@ -31,12 +31,17 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// skipIfRoot skips the test if running as root, since root bypasses file permission checks
-func skipIfRoot(t *testing.T) {
+// sealDirectory replaces an existing directory with a regular file so every
+// subsequent write beneath it fails with ENOTDIR.
+//
+// Tests use this instead of chmod 0500: root ignores permission bits, so a
+// read-only directory stops failing the moment the suite runs as uid 0, which
+// is how it runs in CI containers. ENOTDIR is enforced for every user.
+func sealDirectory(t *testing.T, dir string) {
 	t.Helper()
-	if os.Geteuid() == 0 {
-		t.Skip("Skipping test that relies on file permissions (running as root)")
-	}
+
+	require.NoError(t, os.RemoveAll(dir))
+	require.NoError(t, os.WriteFile(dir, []byte("not a directory"), 0600))
 }
 
 func TestNewFileBackupAdapter(t *testing.T) {
@@ -245,6 +250,8 @@ func TestFileBackupAdapter_RestoreBackup(t *testing.T) {
 
 	// Test restoring a basic backup
 	t.Run("BasicRestore", func(t *testing.T) {
+		adapter, store := newRestoreAdapter(t)
+
 		// Create a backup first
 		data := createTestBackupData(t, 3)
 		createOpts := &BackupOptions{
@@ -259,10 +266,13 @@ func TestFileBackupAdapter_RestoreBackup(t *testing.T) {
 		count, err := adapter.RestoreBackup(ctx, metadata.ID, restoreOpts)
 		require.NoError(t, err)
 		assert.Equal(t, 3, count)
+		assert.Equal(t, 3, store.count(), "restored keys must land in the target")
 	})
 
 	// Test restoring an encrypted backup
 	t.Run("EncryptedRestore", func(t *testing.T) {
+		adapter, store := newRestoreAdapter(t)
+
 		data := createTestBackupData(t, 2)
 		encKey := make([]byte, 32)
 		_, err := rand.Read(encKey)
@@ -283,6 +293,7 @@ func TestFileBackupAdapter_RestoreBackup(t *testing.T) {
 		count, err := adapter.RestoreBackup(ctx, metadata.ID, restoreOpts)
 		require.NoError(t, err)
 		assert.Equal(t, 2, count)
+		assert.Equal(t, 2, store.count(), "restored keys must land in the target")
 
 		// Try to restore with wrong key
 		wrongKey := make([]byte, 32)
@@ -297,6 +308,8 @@ func TestFileBackupAdapter_RestoreBackup(t *testing.T) {
 
 	// Test restoring a compressed backup
 	t.Run("CompressedRestore", func(t *testing.T) {
+		adapter, store := newRestoreAdapter(t)
+
 		data := createTestBackupData(t, 4)
 		createOpts := &BackupOptions{
 			Format:   BackupFormatJSON,
@@ -310,10 +323,13 @@ func TestFileBackupAdapter_RestoreBackup(t *testing.T) {
 		count, err := adapter.RestoreBackup(ctx, metadata.ID, restoreOpts)
 		require.NoError(t, err)
 		assert.Equal(t, 4, count)
+		assert.Equal(t, 4, store.count(), "restored keys must land in the target")
 	})
 
 	// Test restoring specific keys
 	t.Run("FilteredRestore", func(t *testing.T) {
+		adapter, store := newRestoreAdapter(t)
+
 		data := createTestBackupData(t, 5)
 		createOpts := &BackupOptions{
 			Format: BackupFormatJSON,
@@ -328,6 +344,7 @@ func TestFileBackupAdapter_RestoreBackup(t *testing.T) {
 		count, err := adapter.RestoreBackup(ctx, metadata.ID, restoreOpts)
 		require.NoError(t, err)
 		assert.Equal(t, 2, count)
+		assert.Equal(t, 2, store.count(), "only the selected keys land in the target")
 	})
 
 	// Test dry run restore
@@ -1384,7 +1401,6 @@ func TestFileBackupAdapter_ExportBackup_ReadError(t *testing.T) {
 }
 
 func TestFileBackupAdapter_ImportBackup_FileWriteError(t *testing.T) {
-	skipIfRoot(t)
 	tempDir := t.TempDir()
 	adapter, err := NewFileBackupAdapter(tempDir)
 	require.NoError(t, err)
@@ -1404,12 +1420,10 @@ func TestFileBackupAdapter_ImportBackup_FileWriteError(t *testing.T) {
 	_, err = adapter.ExportBackup(ctx, metadata.ID, exportPath)
 	require.NoError(t, err)
 
-	// Make the import directory read-only
-	err = os.Chmod(tempDir, 0500)
-	require.NoError(t, err)
-	defer func() { _ = os.Chmod(tempDir, 0700) }()
+	// Make the import directory unwritable for every user.
+	sealDirectory(t, tempDir)
 
-	// Import should fail due to permission error
+	// Import should fail because the destination cannot be written.
 	_, err = adapter.ImportBackup(ctx, exportPath)
 	assert.Error(t, err)
 }
@@ -1597,9 +1611,8 @@ func TestFileBackupAdapter_GetBackupMetadata_InvalidJSON(t *testing.T) {
 }
 
 func TestFileBackupAdapter_CreateBackup_CompressedAndEncrypted(t *testing.T) {
-	tempDir := t.TempDir()
-	adapter, err := NewFileBackupAdapter(tempDir)
-	require.NoError(t, err)
+	adapter, store := newRestoreAdapter(t)
+	var err error
 
 	ctx := context.Background()
 
@@ -1627,6 +1640,7 @@ func TestFileBackupAdapter_CreateBackup_CompressedAndEncrypted(t *testing.T) {
 	count, err := adapter.RestoreBackup(ctx, metadata.ID, restoreOpts)
 	require.NoError(t, err)
 	assert.Equal(t, 3, count)
+	assert.Equal(t, 3, store.count(), "restored keys must land in the target")
 }
 
 func TestFileBackupAdapter_ListBackups_EdgeCases(t *testing.T) {
@@ -1750,21 +1764,20 @@ func TestFileBackupAdapter_LoadIndexWithInvalidJSON(t *testing.T) {
 }
 
 func TestFileBackupAdapter_LoadIndexWithUnreadableFiles(t *testing.T) {
-	skipIfRoot(t)
-
 	tempDir := t.TempDir()
 
 	// Create a valid JSON file
-	validJSON, _ := json.Marshal(&BackupMetadata{ID: "valid-backup", Version: "1.0"})
+	validJSON, err := json.Marshal(&BackupMetadata{ID: "valid-backup", Version: "1.0"})
+	require.NoError(t, err)
 	validPath := filepath.Join(tempDir, "valid.json")
-	err := os.WriteFile(validPath, validJSON, 0600)
-	require.NoError(t, err)
+	require.NoError(t, os.WriteFile(validPath, validJSON, 0600))
 
-	// Create an unreadable JSON file
+	// Create a JSON entry that cannot be read by anybody: a symlink whose
+	// target does not exist reads as ENOENT for root as well, whereas a
+	// mode-0000 file is readable by root and would silently stop testing the
+	// skip-unreadable branch.
 	unreadablePath := filepath.Join(tempDir, "unreadable.json")
-	err = os.WriteFile(unreadablePath, []byte("content"), 0000)
-	require.NoError(t, err)
-	defer func() { _ = os.Chmod(unreadablePath, 0600) }()
+	require.NoError(t, os.Symlink(filepath.Join(tempDir, "missing-target"), unreadablePath))
 
 	// Create adapter - should skip unreadable files
 	adapter, err := NewFileBackupAdapter(tempDir)
@@ -1944,8 +1957,6 @@ func TestFileBackupAdapter_CreateBackup_GzipWriteError(t *testing.T) {
 }
 
 func TestFileBackupAdapter_ImportBackup_MetadataWriteError(t *testing.T) {
-	skipIfRoot(t)
-
 	tempDir := t.TempDir()
 	adapter, err := NewFileBackupAdapter(tempDir)
 	require.NoError(t, err)
@@ -1965,15 +1976,11 @@ func TestFileBackupAdapter_ImportBackup_MetadataWriteError(t *testing.T) {
 	_, err = adapter.ExportBackup(ctx, metadata.ID, exportPath)
 	require.NoError(t, err)
 
-	// Create new adapter in read-only directory
-	readOnlyDir := t.TempDir()
-	adapter2, err := NewFileBackupAdapter(readOnlyDir)
+	// Create a new adapter, then make its directory unwritable for every user.
+	sealedDir := t.TempDir()
+	adapter2, err := NewFileBackupAdapter(sealedDir)
 	require.NoError(t, err)
-
-	// Make directory read-only
-	err = os.Chmod(readOnlyDir, 0500)
-	require.NoError(t, err)
-	defer func() { _ = os.Chmod(readOnlyDir, 0700) }()
+	sealDirectory(t, sealedDir)
 
 	// Import should fail
 	_, err = adapter2.ImportBackup(ctx, exportPath)
@@ -1981,8 +1988,6 @@ func TestFileBackupAdapter_ImportBackup_MetadataWriteError(t *testing.T) {
 }
 
 func TestFileBackupAdapter_ExportBackup_DestinationWriteError(t *testing.T) {
-	skipIfRoot(t)
-
 	tempDir := t.TempDir()
 	adapter, err := NewFileBackupAdapter(tempDir)
 	require.NoError(t, err)
@@ -1998,20 +2003,16 @@ func TestFileBackupAdapter_ExportBackup_DestinationWriteError(t *testing.T) {
 	metadata, err := adapter.CreateBackup(ctx, data, opts)
 	require.NoError(t, err)
 
-	// Try to export to a read-only directory
-	readOnlyDir := t.TempDir()
-	err = os.Chmod(readOnlyDir, 0500)
-	require.NoError(t, err)
-	defer func() { _ = os.Chmod(readOnlyDir, 0700) }()
+	// Try to export beneath a regular file: unwritable for every user.
+	sealedDir := t.TempDir()
+	sealDirectory(t, sealedDir)
 
-	exportPath := filepath.Join(readOnlyDir, "export.backup")
+	exportPath := filepath.Join(sealedDir, "export.backup")
 	_, err = adapter.ExportBackup(ctx, metadata.ID, exportPath)
 	assert.Error(t, err)
 }
 
 func TestFileBackupAdapter_DeleteBackup_MetadataRemoveError(t *testing.T) {
-	skipIfRoot(t)
-
 	tempDir := t.TempDir()
 	adapter, err := NewFileBackupAdapter(tempDir)
 	require.NoError(t, err)
@@ -2027,16 +2028,16 @@ func TestFileBackupAdapter_DeleteBackup_MetadataRemoveError(t *testing.T) {
 	metadata, err := adapter.CreateBackup(ctx, data, opts)
 	require.NoError(t, err)
 
-	// Make metadata file read-only to cause deletion error
+	// Replace the metadata file with a non-empty directory: os.Remove then
+	// fails with ENOTEMPTY, which the kernel enforces for every user. A
+	// read-only parent directory would not stop root.
 	metadataPath := adapter.getMetadataPath(metadata.ID)
-	err = os.Chmod(filepath.Dir(metadataPath), 0500)
-	if err == nil {
-		defer func() { _ = os.Chmod(filepath.Dir(metadataPath), 0700) }()
+	require.NoError(t, os.Remove(metadataPath))
+	require.NoError(t, os.MkdirAll(filepath.Join(metadataPath, "child"), 0700))
+	require.NoError(t, os.WriteFile(filepath.Join(metadataPath, "child", "f"), []byte("x"), 0600))
 
-		// Delete should fail
-		err = adapter.DeleteBackup(ctx, metadata.ID)
-		assert.Error(t, err)
-	}
+	require.Error(t, adapter.DeleteBackup(ctx, metadata.ID),
+		"DeleteBackup must surface a failure to remove the metadata file")
 }
 
 func TestFileBackupAdapter_CreateBackup_CompressionWithWriteClose(t *testing.T) {
@@ -2057,18 +2058,14 @@ func TestFileBackupAdapter_CreateBackup_CompressionWithWriteClose(t *testing.T) 
 }
 
 func TestFileBackupAdapter_CreateBackup_BackupFileWriteError(t *testing.T) {
-	skipIfRoot(t)
-
 	tempDir := t.TempDir()
 	adapter, err := NewFileBackupAdapter(tempDir)
 	require.NoError(t, err)
 
 	ctx := context.Background()
 
-	// Make the directory read-only
-	err = os.Chmod(tempDir, 0500)
-	require.NoError(t, err)
-	defer func() { _ = os.Chmod(tempDir, 0700) }()
+	// Make the backup directory unwritable for every user.
+	sealDirectory(t, tempDir)
 
 	data := createTestBackupData(t, 1)
 	opts := &BackupOptions{
@@ -2268,9 +2265,8 @@ func TestFileBackupAdapter_CreateBackup_CompressedWithAlgorithm(t *testing.T) {
 }
 
 func TestFileBackupAdapter_RestoreBackup_NilOptions(t *testing.T) {
-	tempDir := t.TempDir()
-	adapter, err := NewFileBackupAdapter(tempDir)
-	require.NoError(t, err)
+	adapter, store := newRestoreAdapter(t)
+	var err error
 
 	ctx := context.Background()
 
@@ -2287,6 +2283,7 @@ func TestFileBackupAdapter_RestoreBackup_NilOptions(t *testing.T) {
 	count, err := adapter.RestoreBackup(ctx, metadata.ID, nil)
 	require.NoError(t, err)
 	assert.Equal(t, 2, count)
+	assert.Equal(t, 2, store.count(), "restored keys must land in the target")
 }
 
 func TestFileBackupAdapter_ListBackups_WithOffsetAndLimit(t *testing.T) {

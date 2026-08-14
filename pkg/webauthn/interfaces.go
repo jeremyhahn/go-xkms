@@ -92,6 +92,19 @@ type JWTGenerator interface {
 	GenerateToken(ctx context.Context, user User) (string, error)
 }
 
+// TokenPairGenerator is an optional extension of JWTGenerator. Generators
+// that implement it mint an access/refresh pair at ceremony completion, so
+// browser and desktop sessions renew without a new hardware ceremony. The
+// ceremony handlers detect it with a type assertion; plain JWTGenerator
+// implementations keep working unchanged.
+type TokenPairGenerator interface {
+	JWTGenerator
+
+	// GenerateTokenPair creates the access and refresh tokens for the
+	// authenticated user.
+	GenerateTokenPair(ctx context.Context, user User) (access, refresh string, err error)
+}
+
 // SessionDataWrapper wraps webauthn.SessionData with additional metadata.
 type SessionDataWrapper struct {
 	*webauthn.SessionData

@@ -414,9 +414,29 @@ gcc -o example example.c -L/usr/lib -lxkms
 
 ---
 
+## Two-Call Output Convention
+
+Every terminal cryptographic operation (`Sign`, `Encrypt`, `Decrypt`, `Digest`, and their `*Final` counterparts)
+follows the PKCS#11 v3.2 §5.2 two-call pattern, but the split is implemented across two layers:
+
+1. **The Go `*Module` method always computes and returns the full result.** It does not special-case a `nil`
+   output buffer -- there is no buffer at this layer. Instead, on success it caches the result on the session's
+   operation state (`cacheResult` in `pkg/pkcs11/module/module.go`) and leaves the operation active rather than
+   terminating it.
+2. **The CGO export in `cmd/pkcs11-module/exports.go` implements the size-query and short-buffer behavior.** It
+   compares the caller's buffer length against the result: a `NULL` output pointer or a buffer that is too small
+   returns the required length (`CKR_BUFFER_TOO_SMALL` in the latter case) and leaves the operation active. Only
+   once the export has copied the result into a caller buffer large enough to hold it does it call
+   `Module.FinishOperation` to terminate the operation.
+
+A second call after a length query or a `CKR_BUFFER_TOO_SMALL` result -- whether repeating `Sign` or calling it
+again with a larger buffer -- returns the bytes `cachedResult` already computed rather than re-running the backend
+operation. `FinishOperation` must be called exactly once, after the output has actually been copied out; calling
+it before that would let the application discard a result it never received.
+
 ## PKCS#11 v3.2 Go API Reference
 
-The following functions were added in the v3.2 upgrade. All are methods on `*Module` in `pkg/pkcs11/module/`. All v3.2 functions perform input validation (session existence, mechanism presence, key handle validity) before returning `CKR_FUNCTION_NOT_SUPPORTED` pending hardware backend integration.
+The following functions were added in the v3.2 upgrade. All are methods on `*Module` in `pkg/pkcs11/module/`. All v3.2 functions perform input validation (session existence, mechanism presence, key handle validity) before use.
 
 ### KEM Operations
 
@@ -436,7 +456,8 @@ func (m *Module) EncapsulateKey(sessionHandle SessionHandle, mechanism *Mechanis
 
 **Returns:** shared secret key handle, KEM ciphertext, error
 
-**Status:** Returns `CKR_FUNCTION_NOT_SUPPORTED` pending KEM-capable backend integration.
+**Status:** Implemented. Dispatches ML-KEM encapsulation via the public key's `CKA_PARAMETER_SET` (or its material
+length as a fallback) to the concrete ML-KEM level; see [Mechanism Conformance](mechanisms.md#ml-kem-fips-203-and-ml-dsa-fips-204-standard-dispatch).
 
 #### DecapsulateKey
 
@@ -455,7 +476,7 @@ func (m *Module) DecapsulateKey(sessionHandle SessionHandle, mechanism *Mechanis
 
 **Returns:** shared secret key handle, error
 
-**Status:** Returns `CKR_FUNCTION_NOT_SUPPORTED` pending KEM-capable backend integration.
+**Status:** Implemented, mirroring `EncapsulateKey`'s mechanism dispatch.
 
 ### Authenticated Key Wrapping
 
@@ -476,7 +497,7 @@ func (m *Module) WrapKeyAuthenticated(sessionHandle SessionHandle, mechanism *Me
 
 **Returns:** wrapped key material (ciphertext with integrated auth tag), error
 
-**Status:** Returns `CKR_FUNCTION_NOT_SUPPORTED` pending backend integration.
+**Status:** Implemented for `CKM_AES_GCM`, the only wrapping mechanism this call currently accepts.
 
 #### UnwrapKeyAuthenticated
 
@@ -496,7 +517,7 @@ func (m *Module) UnwrapKeyAuthenticated(sessionHandle SessionHandle, mechanism *
 
 **Returns:** unwrapped key handle, error
 
-**Status:** Returns `CKR_FUNCTION_NOT_SUPPORTED` pending backend integration.
+**Status:** Implemented for `CKM_AES_GCM`, mirroring `WrapKeyAuthenticated`.
 
 ### Signature-First Verification
 
@@ -516,7 +537,8 @@ func (m *Module) VerifySignatureInit(sessionHandle SessionHandle, mechanism *Mec
 - `keyHandle` - Public key handle
 - `signature` - Signature to verify against
 
-**Status:** Returns `CKR_FUNCTION_NOT_SUPPORTED` pending PQC backend integration.
+**Status:** Implemented for ML-DSA via `circl`. Calling `VerifySignatureInit` with a nil mechanism cancels an
+active operation and returns `nil` (PKCS#11 v3.2 §5.15.7).
 
 #### VerifySignature
 
@@ -530,7 +552,7 @@ func (m *Module) VerifySignature(sessionHandle SessionHandle, data []byte) error
 - `sessionHandle` - Active session handle
 - `data` - Data to verify the signature against
 
-**Status:** Returns `CKR_FUNCTION_NOT_SUPPORTED` pending PQC backend integration.
+**Status:** Implemented.
 
 #### VerifySignatureUpdate
 
@@ -544,7 +566,7 @@ func (m *Module) VerifySignatureUpdate(sessionHandle SessionHandle, part []byte)
 - `sessionHandle` - Active session handle
 - `part` - Data chunk to feed into verification
 
-**Status:** Returns `CKR_FUNCTION_NOT_SUPPORTED` pending PQC backend integration.
+**Status:** Implemented.
 
 #### VerifySignatureFinal
 
@@ -559,82 +581,14 @@ func (m *Module) VerifySignatureFinal(sessionHandle SessionHandle) error
 
 **Returns:** nil if signature is valid, `PKCS11Error` otherwise.
 
-**Status:** Returns `CKR_FUNCTION_NOT_SUPPORTED` pending PQC backend integration.
+**Status:** Implemented.
 
-#### MessageVerifySignatureInit
+#### Message-Based Signature-First Verification
 
-Initialize a message-based signature-first verification session.
-
-```go
-func (m *Module) MessageVerifySignatureInit(sessionHandle SessionHandle, mechanism *Mechanism, keyHandle ObjectHandle) error
-```
-
-**Parameters:**
-- `sessionHandle` - Active session handle
-- `mechanism` - Verification mechanism
-- `keyHandle` - Public key handle
-
-**Status:** Returns `CKR_FUNCTION_NOT_SUPPORTED` pending PQC backend integration.
-
-#### VerifyMessageSignature
-
-Verify a complete message with signature-first ordering.
-
-```go
-func (m *Module) VerifyMessageSignature(sessionHandle SessionHandle, parameter []byte, data []byte, signature []byte) error
-```
-
-**Parameters:**
-- `sessionHandle` - Active session handle
-- `parameter` - Mechanism-specific parameter
-- `data` - Complete message data
-- `signature` - Signature to verify
-
-**Status:** Returns `CKR_FUNCTION_NOT_SUPPORTED` pending PQC backend integration.
-
-#### VerifyMessageSignatureBegin
-
-Start streaming message signature-first verification. The signature is provided upfront.
-
-```go
-func (m *Module) VerifyMessageSignatureBegin(sessionHandle SessionHandle, parameter []byte, signature []byte) error
-```
-
-**Parameters:**
-- `sessionHandle` - Active session handle
-- `parameter` - Mechanism-specific parameter
-- `signature` - Signature to verify against
-
-**Status:** Returns `CKR_FUNCTION_NOT_SUPPORTED` pending PQC backend integration.
-
-#### VerifyMessageSignatureNext
-
-Feed a chunk of data to streaming message signature-first verification.
-
-```go
-func (m *Module) VerifyMessageSignatureNext(sessionHandle SessionHandle, parameter []byte, data []byte, isLast bool) error
-```
-
-**Parameters:**
-- `sessionHandle` - Active session handle
-- `parameter` - Mechanism-specific parameter
-- `data` - Message data chunk
-- `isLast` - True if this is the final chunk
-
-**Status:** Returns `CKR_FUNCTION_NOT_SUPPORTED` pending PQC backend integration.
-
-#### MessageVerifySignatureFinal
-
-Finalize a message-based signature-first verification session.
-
-```go
-func (m *Module) MessageVerifySignatureFinal(sessionHandle SessionHandle) error
-```
-
-**Parameters:**
-- `sessionHandle` - Active session handle
-
-**Status:** Returns `CKR_FUNCTION_NOT_SUPPORTED` pending PQC backend integration.
+The message-based signature-first entry points (`C_MessageVerifySignatureInit`, `C_VerifyMessageSignature`,
+`C_VerifyMessageSignatureBegin`, `C_VerifyMessageSignatureNext`, `C_MessageVerifySignatureFinal`) are **not yet
+implemented** -- there is no corresponding `*Module` method or CGO export for them. Only the single-part and
+multi-part (non-message) forms documented above exist today.
 
 ### Async Operations
 

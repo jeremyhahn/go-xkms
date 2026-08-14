@@ -79,18 +79,17 @@ type PasswordStoreClientService interface {
 // to allow tests to inject mock clients.
 var passwordClientFactory = defaultPasswordClientFactory
 
-// defaultPasswordClientFactory creates a real transport client from the global xkmsdURL.
+// defaultPasswordClientFactory creates a real transport client for the
+// password-store session commands, resolving the xkmsd endpoint through the
+// shared helper (see xkmsd_client.go) so every xkey command group honors the
+// same --xkmsd-url / XKMSD_URL / config precedence, scheme dispatch, token
+// and TLS-CA handling.
 func defaultPasswordClientFactory() (PasswordStoreClientService, error) {
-	if xkmsdURL == "" {
-		return nil, &PasswordStoreError{
-			Operation: "connect",
-			Message:   "xkmsd URL is required; use --xkmsd-url or set XKEY_XKMSD_URL",
-		}
+	client, err := newXKMSdClient(PasswordCmd)
+	if err != nil {
+		return nil, &PasswordStoreError{Operation: "connect", Message: err.Error()}
 	}
-	return nil, &PasswordStoreError{
-		Operation: "connect",
-		Message:   "transport client creation requires a running xkmsd server",
-	}
+	return client, nil
 }
 
 // PasswordCmd represents the password parent command.
@@ -345,6 +344,7 @@ Examples:
 
 // runPasswordAdd executes the password add command.
 func runPasswordAdd(cmd *cobra.Command, args []string) error {
+	out := cmd.OutOrStdout()
 	name, _ := cmd.Flags().GetString("name")
 	password, _ := cmd.Flags().GetString("password")
 	generate, _ := cmd.Flags().GetBool("generate")
@@ -398,9 +398,9 @@ func runPasswordAdd(cmd *cobra.Command, args []string) error {
 		return &SentinelCauseError{Sentinel: ErrPasswordAddFailed, Cause: err}
 	}
 
-	fmt.Printf("Added password: %s\n", pw.Name)
+	fmt.Fprintf(out, "Added password: %s\n", pw.Name)
 	if generate {
-		fmt.Printf("Generated: %s\n", password)
+		fmt.Fprintf(out, "Generated: %s\n", password)
 	}
 
 	return nil
@@ -408,13 +408,14 @@ func runPasswordAdd(cmd *cobra.Command, args []string) error {
 
 // runPasswordList executes the password list command.
 func runPasswordList(cmd *cobra.Command, args []string) error {
+	out := cmd.OutOrStdout()
 	storePath, _ := cmd.Flags().GetString("store")
 	showPasswords, _ := cmd.Flags().GetBool("show-passwords")
 
 	store, err := openPasswordStore(storePath)
 	if err != nil {
 		if os.IsNotExist(err) {
-			fmt.Println("No passwords found.")
+			fmt.Fprintln(out, "No passwords found.")
 			return nil
 		}
 		return err
@@ -427,34 +428,34 @@ func runPasswordList(cmd *cobra.Command, args []string) error {
 	}
 
 	if len(passwords) == 0 {
-		fmt.Println("No passwords found.")
+		fmt.Fprintln(out, "No passwords found.")
 		return nil
 	}
 
-	fmt.Printf("Static Passwords (%d):\n\n", len(passwords))
+	fmt.Fprintf(out, "Static Passwords (%d):\n\n", len(passwords))
 
 	for _, pw := range passwords {
-		fmt.Printf("  Name:       %s\n", pw.Name)
+		fmt.Fprintf(out, "  Name:       %s\n", pw.Name)
 		if pw.Title != "" {
-			fmt.Printf("  Title:      %s\n", pw.Title)
+			fmt.Fprintf(out, "  Title:      %s\n", pw.Title)
 		}
 		if pw.Username != "" {
-			fmt.Printf("  Username:   %s\n", pw.Username)
+			fmt.Fprintf(out, "  Username:   %s\n", pw.Username)
 		}
 		if showPasswords {
-			fmt.Printf("  Password:   %s\n", pw.Password)
+			fmt.Fprintf(out, "  Password:   %s\n", pw.Password)
 		} else {
-			fmt.Printf("  Password:   ********\n")
+			fmt.Fprintf(out, "  Password:   ********\n")
 		}
 		if pw.URL != "" {
-			fmt.Printf("  URL:        %s\n", pw.URL)
+			fmt.Fprintf(out, "  URL:        %s\n", pw.URL)
 		}
 		if pw.Notes != "" {
-			fmt.Printf("  Notes:      %s\n", pw.Notes)
+			fmt.Fprintf(out, "  Notes:      %s\n", pw.Notes)
 		}
-		fmt.Printf("  Created:    %s\n", pw.CreatedAt.Format("2006-01-02 15:04:05"))
-		fmt.Printf("  Updated:    %s\n", pw.UpdatedAt.Format("2006-01-02 15:04:05"))
-		fmt.Println()
+		fmt.Fprintf(out, "  Created:    %s\n", pw.CreatedAt.Format("2006-01-02 15:04:05"))
+		fmt.Fprintf(out, "  Updated:    %s\n", pw.UpdatedAt.Format("2006-01-02 15:04:05"))
+		fmt.Fprintln(out)
 	}
 
 	return nil
@@ -462,6 +463,7 @@ func runPasswordList(cmd *cobra.Command, args []string) error {
 
 // runPasswordGet executes the password get command.
 func runPasswordGet(cmd *cobra.Command, args []string) error {
+	out := cmd.OutOrStdout()
 	storePath, _ := cmd.Flags().GetString("store")
 
 	if len(args) == 0 {
@@ -479,12 +481,13 @@ func runPasswordGet(cmd *cobra.Command, args []string) error {
 		return &SentinelCauseError{Sentinel: ErrPasswordGetFailed, Cause: err}
 	}
 
-	fmt.Print(pw.Password)
+	fmt.Fprint(out, pw.Password)
 	return nil
 }
 
 // runPasswordRemove executes the password remove command.
 func runPasswordRemove(cmd *cobra.Command, args []string) error {
+	out := cmd.OutOrStdout()
 	storePath, _ := cmd.Flags().GetString("store")
 	force, _ := cmd.Flags().GetBool("force")
 
@@ -508,7 +511,7 @@ func runPasswordRemove(cmd *cobra.Command, args []string) error {
 		}
 
 		if !force {
-			fmt.Printf("Remove password '%s'? [y/N]: ", pw.Name)
+			fmt.Fprintf(out, "Remove password '%s'? [y/N]: ", pw.Name)
 			confirm, readErr := reader.ReadString('\n')
 			if readErr != nil {
 				fmt.Fprintf(os.Stderr, "  %s: failed to read input\n", name)
@@ -516,7 +519,7 @@ func runPasswordRemove(cmd *cobra.Command, args []string) error {
 			}
 			confirm = strings.TrimSpace(strings.ToLower(confirm))
 			if confirm != "y" && confirm != "yes" {
-				fmt.Printf("Skipped %s\n", pw.Name)
+				fmt.Fprintf(out, "Skipped %s\n", pw.Name)
 				continue
 			}
 		}
@@ -526,7 +529,7 @@ func runPasswordRemove(cmd *cobra.Command, args []string) error {
 			continue
 		}
 
-		fmt.Printf("Removed: %s\n", pw.Name)
+		fmt.Fprintf(out, "Removed: %s\n", pw.Name)
 	}
 
 	return nil
@@ -536,6 +539,7 @@ func runPasswordRemove(cmd *cobra.Command, args []string) error {
 // running xkey daemon and instructs it to type the named password via
 // the virtual HID keyboard.
 func runPasswordType(cmd *cobra.Command, args []string) error {
+	out := cmd.OutOrStdout()
 	if len(args) == 0 {
 		return ErrPasswordMissingTypeArg
 	}
@@ -560,7 +564,7 @@ func runPasswordType(cmd *cobra.Command, args []string) error {
 		return &DetailError{Err: ErrPasswordTypeFailed, Detail: fmt.Sprintf(": %s", resp.Error)}
 	}
 
-	fmt.Printf("Typed password: %s\n", args[0])
+	fmt.Fprintf(out, "Typed password: %s\n", args[0])
 	return nil
 }
 

@@ -21,7 +21,6 @@ import (
 	"crypto/ecdsa"
 	"crypto/elliptic"
 	"crypto/rand"
-	"crypto/rsa"
 	"crypto/x509"
 	"errors"
 	"io"
@@ -441,36 +440,6 @@ func TestBackend_Verify_ECDSASignatureValidation(t *testing.T) {
 
 		if ecdsa.VerifyASN1(&privateKey.PublicKey, digest, corruptedSig) {
 			t.Error("corrupted signature should not verify")
-		}
-	})
-}
-
-// TestBackend_Verify_RSAKeyType tests the RSA branch in Verify
-func TestBackend_Verify_RSAKeyType(t *testing.T) {
-	// Generate RSA key to test the RSA type switch branch
-	privateKey, err := rsa.GenerateKey(rand.Reader, 2048)
-	if err != nil {
-		t.Fatalf("failed to generate RSA key: %v", err)
-	}
-
-	// Verify we have an RSA public key
-	pubKey := privateKey.Public()
-	if _, ok := pubKey.(*rsa.PublicKey); !ok {
-		t.Error("expected RSA public key type")
-	}
-
-	// The Verify method would return "RSA verification requires hash algorithm specification"
-	// for RSA keys. We test this logic exists.
-	t.Run("RSA key type check", func(t *testing.T) {
-		switch pubKey.(type) {
-		case *rsa.PublicKey:
-			// This is the branch in Verify that returns the error
-			expectedErr := "RSA verification requires hash algorithm specification"
-			if len(expectedErr) == 0 {
-				t.Error("Expected error message defined")
-			}
-		default:
-			t.Error("Expected RSA public key")
 		}
 	})
 }

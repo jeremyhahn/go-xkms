@@ -122,7 +122,7 @@ Behavior:
 | Case                        | Action                                    |
 |-----------------------------|-------------------------------------------|
 | No identity (unauthenticated) | Pass through (auth middleware handles rejection) |
-| Empty TenantID             | Pass through (system-level operation)              |
+| Cross-tenant-scoped TenantID (`""` or the reserved `system` tenant) | Pass through (system-level or bootstrap operation) |
 | SO role (Security Officer) | Pass through (cross-tenant access allowed)        |
 | No barrier registry        | Pass through (tenant enforcement disabled)        |
 | Tenant not in registry     | Return 403 Forbidden                              |
@@ -138,45 +138,74 @@ r = r.WithContext(ctx)
 tb, _ := auth.GetTenantBarrier(r.Context())
 ```
 
-### gRPC Interceptors
+### The Shared Tenant Gate (pkg/api/tenantgate)
 
-gRPC uses unary and stream interceptors for the same tenant enforcement:
+REST, gRPC (network and Unix domain socket), QUIC, and MCP all enforce tenant
+scoping through one transport-neutral function, `tenantgate.Access`, instead
+of five hand-mirrored copies of the same decision:
 
 ```go
-// In gRPC server options
-grpc.ChainUnaryInterceptor(
-    s.TenantInterceptor(),
-    // ... other interceptors
-)
+// pkg/api/tenantgate
+func Access(identity *auth.Identity, registry *seal.BarrierRegistry) (*seal.TenantBarrier, error)
 ```
 
-Interceptors follow the same logic as REST middleware, extracting identity from metadata and validating tenant barriers.
+Each transport calls `tenantgate.Access` with the caller's identity and the
+process's `*seal.BarrierRegistry`, then maps the result onto its own wire
+shape:
+
+| Transport | Gate | Not found | Sealed |
+|-----------|------|-----------|--------|
+| REST | `Server.TenantMiddleware()` | 403 | 503 |
+| gRPC (network + Unix socket) | `grpc.TenantUnaryInterceptor` / `TenantStreamInterceptor` | `PermissionDenied` | `Unavailable` |
+| QUIC | `Server.tenantMiddleware` | 403 | 503 |
+| MCP | `Server.tenantAccess` (called from `handleRequest` before `authorizeMethod`) | JSON-RPC -32003 | JSON-RPC -32004 |
+
+The Unix domain socket gRPC listener chains the identical
+`grpc.TenantUnaryInterceptor` / `TenantStreamInterceptor` constructors the
+network gRPC server uses, configured with its own `*seal.BarrierRegistry`
+captured at construction time. That listener sets no authentication
+interceptor -- its trust boundary is the socket's file mode and directory
+permissions, not identity -- so in practice every call there carries a nil
+identity and the gate is a no-op passthrough; it is wired for parity with
+every other transport rather than because enforcement is needed today.
+
+`tenantgate` cannot live in `pkg/auth` (which already owns
+`auth.IsCrossTenant`): `pkg/auth` would have to import `pkg/seal` for
+`*seal.BarrierRegistry` / `*seal.TenantBarrier`, but `pkg/seal` already
+imports `pkg/audit`, and `pkg/audit` imports `pkg/auth` -- `auth -> seal`
+would close that cycle. `pkg/api/tenantgate` sits above both, mirroring how
+`pkg/api/initgate` is the transport-neutral seam for the init-ceremony
+public-method table.
 
 ## Identity Model
 
-The auth.Identity type tracks tenancy:
+The auth.Identity type (a qrdb-shaped alias, `pkg/auth.Identity`) tracks tenancy:
 
 ```go
 type Identity struct {
-    UserID   string
+    Subject  string
     Roles    []string
-    TenantID string  // Empty = system-level, else = tenant-scoped
+    TenantID string  // "" or the reserved "system" tenant = system-level
+    Metadata map[string]string
 }
 
-// Check cross-tenant access
-func (id *Identity) IsCrossTenant() bool {
-    return id.TenantID == ""
-}
-
-// SO role gets cross-tenant privileges
-func (id *Identity) HasRole(role string) bool {
-    for _, r := range id.Roles {
-        if r == role {
-            return true
-        }
+// IsCrossTenant reports whether the identity has cross-tenant scope: a nil
+// identity, an identity rooted in the reserved system tenant, or one with an
+// empty TenantID are all treated as platform-scoped. Anything else is bound
+// to its own tenant. This is pkg/auth.IsCrossTenant, not a method on
+// Identity -- Identity is a type alias for qrdb's identity shape and defines
+// no xkms-local methods.
+func IsCrossTenant(id *Identity) bool {
+    if id == nil {
+        return true
     }
-    return false
+    return id.TenantID == qrdbsdk.SystemTenantID || id.TenantID == ""
 }
+
+// HasRole reports whether id carries role. tenantgate.Access uses it
+// (identity.HasRole("so")) to give the Security Officer role cross-tenant
+// access regardless of its own TenantID.
+func (id *Identity) HasRole(role string) bool
 ```
 
 ### JWT Extraction

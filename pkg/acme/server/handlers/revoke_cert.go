@@ -21,6 +21,7 @@ import (
 	"net/http"
 
 	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
+	"github.com/jeremyhahn/go-xkms/pkg/acme/audit"
 	"github.com/jeremyhahn/go-xkms/pkg/acme/common"
 	"github.com/jeremyhahn/go-xkms/pkg/acme/entities"
 )
@@ -146,6 +147,21 @@ func (s *RestService) RevokeCertHandler(w http.ResponseWriter, r *http.Request) 
 				slog.Uint64("account_id", account.ID),
 				slog.String("domain", domain),
 				slog.String("serial", cert.SerialNumber.String()))
+
+			// An account trying to revoke a certificate it never proved control
+			// over is a security event, so it is recorded even though nothing
+			// changed.
+			s.recordAudit(s.auditLog.LogWithContext(auditContext(r),
+				audit.EventAuthorizationFailed,
+				auditAccountRef(account.ID),
+				"certificate:"+cert.SerialNumber.String(),
+				"revoke",
+				audit.ResultFailure,
+				map[string]interface{}{
+					"serial_number":     cert.SerialNumber.String(),
+					"domain":            domain,
+					"unauthorized_kind": "no valid authorization for certificate domain",
+				}))
 			writeError(w, common.Unauthorized("Account not authorized for certificate domain: "+domain))
 			return
 		}
@@ -163,6 +179,8 @@ func (s *RestService) RevokeCertHandler(w http.ResponseWriter, r *http.Request) 
 	}
 
 	s.logger.Debug("Revoking certificate", slog.String("serial", cert.SerialNumber.String()))
+	s.recordAudit(audit.LogCertificateRevoked(auditContext(r), s.auditLog,
+		auditAccountID(account.ID), cert.SerialNumber.String(), reason))
 
 	// Revoke the certificate
 	// Note: The CA interface doesn't expose a Revoke method

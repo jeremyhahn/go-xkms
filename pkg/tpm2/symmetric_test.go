@@ -244,6 +244,80 @@ func TestSymmetricDecryptInvalidTag(t *testing.T) {
 	assert.Error(t, err, "decryption should fail with corrupted tag")
 }
 
+// TestSymmetricDecrypt_WrongNonceLength verifies that Decrypt returns an
+// error instead of panicking when the encrypted data carries a nonce that
+// is not exactly the GCM nonce size. crypto/cipher.AEAD.Open panics on a
+// mismatched nonce length, so a caller-controlled nonce must be validated
+// before it reaches Open.
+func TestSymmetricDecrypt_WrongNonceLength(t *testing.T) {
+	_, tpmInterface := createSim(false, false)
+	defer func() { _ = tpmInterface.Close() }()
+
+	tpmObj, ok := tpmInterface.(*TPM2)
+	require.True(t, ok, "expected *TPM2 type")
+
+	attrs := &types.KeyAttributes{
+		CN:                 "test-wrong-nonce-length",
+		KeyType:            types.KeyTypeEncryption,
+		KeyAlgorithm:       x509.UnknownPublicKeyAlgorithm,
+		SymmetricAlgorithm: types.SymmetricAES256GCM,
+	}
+
+	_, err := tpmObj.GenerateSymmetricKey(attrs)
+	require.NoError(t, err)
+
+	encrypter, err := tpmObj.SymmetricEncrypter(attrs)
+	require.NoError(t, err)
+
+	encryptedData, err := encrypter.Encrypt([]byte("test message"), nil)
+	require.NoError(t, err)
+
+	tests := []struct {
+		name      string
+		nonceSize int
+	}{
+		{name: "16-byte AES-CBC-style IV", nonceSize: 16},
+		{name: "empty nonce", nonceSize: 0},
+		{name: "single byte nonce", nonceSize: 1},
+		{name: "oversized nonce", nonceSize: 32},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			tampered := *encryptedData
+			tampered.Nonce = make([]byte, tt.nonceSize)
+			_, err := encrypter.Decrypt(&tampered, nil)
+			assert.Error(t, err, "decrypt should reject a wrong-length nonce, not panic")
+		})
+	}
+}
+
+// TestSymmetricDecrypt_NilData verifies that Decrypt rejects nil
+// EncryptedData with a typed error instead of a nil-pointer panic.
+func TestSymmetricDecrypt_NilData(t *testing.T) {
+	_, tpmInterface := createSim(false, false)
+	defer func() { _ = tpmInterface.Close() }()
+
+	tpmObj, ok := tpmInterface.(*TPM2)
+	require.True(t, ok, "expected *TPM2 type")
+
+	attrs := &types.KeyAttributes{
+		CN:                 "test-nil-data",
+		KeyType:            types.KeyTypeEncryption,
+		KeyAlgorithm:       x509.UnknownPublicKeyAlgorithm,
+		SymmetricAlgorithm: types.SymmetricAES256GCM,
+	}
+
+	_, err := tpmObj.GenerateSymmetricKey(attrs)
+	require.NoError(t, err)
+
+	encrypter, err := tpmObj.SymmetricEncrypter(attrs)
+	require.NoError(t, err)
+
+	_, err = encrypter.Decrypt(nil, nil)
+	assert.Error(t, err, "decrypt should reject nil data, not panic")
+}
+
 // TestNonceReuse tests that the TPM2 backend detects and prevents nonce reuse
 func TestNonceReuse(t *testing.T) {
 	_, tpm := createSimWithTracker(false, false)

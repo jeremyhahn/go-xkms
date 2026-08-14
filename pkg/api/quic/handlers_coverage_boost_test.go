@@ -199,7 +199,8 @@ func TestHandleInit_MethodNotAllowed(t *testing.T) {
 	}{
 		{"ClaimCertBegin", server.handleClaimCertBegin, http.MethodGet},
 		{"ClaimCertComplete", server.handleClaimCertComplete, http.MethodGet},
-		{"ClaimShare", server.handleClaimShare, http.MethodGet},
+		{"ClaimShareBegin", server.handleClaimShareBegin, http.MethodGet},
+		{"ClaimShareComplete", server.handleClaimShareComplete, http.MethodGet},
 		{"SignCSRInit", server.handleSignCSRInit, http.MethodGet},
 		{"CredentialSubmit", server.handleCredentialSubmit, http.MethodGet},
 		{"CredentialStrategy", server.handleCredentialStrategy, http.MethodPost},

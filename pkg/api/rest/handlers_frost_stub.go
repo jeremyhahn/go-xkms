@@ -66,3 +66,7 @@ func (h *HandlerContext) FrostAggregateHandler(w http.ResponseWriter, r *http.Re
 func (h *HandlerContext) FrostVerifyHandler(w http.ResponseWriter, r *http.Request) {
 	writeError(w, errFrostNotCompiled, http.StatusNotImplemented)
 }
+
+// frostEnabled reports whether FROST threshold-signature support was
+// compiled into this binary (the "frost" build tag).
+const frostEnabled = false

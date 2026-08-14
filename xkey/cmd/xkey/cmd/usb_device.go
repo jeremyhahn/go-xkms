@@ -193,10 +193,9 @@ func init() {
 	_ = viper.BindPFlag("usb.device.transport", usbDeviceStartCmd.Flags().Lookup("transport"))
 	_ = viper.BindPFlag("usb.device.udc", usbDeviceStartCmd.Flags().Lookup("udc"))
 
-	// Add to LUKS exempt list.
-	luksExemptCommands["device"] = true
-	luksExemptCommands["start"] = true
-	luksExemptCommands["stop"] = true
+	// `usb device ...` is covered by the LUKS-exempt `usb` group in
+	// root.go. It must NOT register bare leaf names here: "device" would
+	// have exempted the unrelated top-level `device` command group.
 }
 
 // runUSBDeviceStart starts the virtual CCID device.

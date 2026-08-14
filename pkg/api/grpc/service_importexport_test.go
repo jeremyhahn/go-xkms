@@ -17,12 +17,14 @@ import (
 	"context"
 	"crypto/rand"
 	"crypto/rsa"
+	"crypto/sha256"
 	"crypto/x509"
 	"testing"
 
 	pb "github.com/jeremyhahn/go-xkms/pkg/api/grpc/proto/xkmsv1"
 	"github.com/jeremyhahn/go-xkms/pkg/backend"
 	"github.com/jeremyhahn/go-xkms/pkg/types"
+	"github.com/jeremyhahn/go-xkms/pkg/xkms"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/mock"
 	"google.golang.org/grpc/codes"
@@ -573,5 +575,125 @@ func TestKeyTypeValidation(t *testing.T) {
 				assert.NotEmpty(t, string(keyType))
 			}
 		})
+	}
+}
+
+// TestImportKeySymmetricRoundTripsThroughARealBackend is the end-to-end half of
+// TestImportKey, which only ever reaches argument validation and "backend not
+// found" and so proved nothing about the attributes a successful import stores.
+//
+// Those attributes are what decides whether the key can be used afterwards.
+// types.KeyAttributes.ID() encodes the key type, so a symmetric key imported
+// under the wrong one is stored beneath an identifier nothing else constructs:
+// ListKeys reported such a key as RSA, and every later operation failed with
+// "key not found: <backend>:encryption:<cn>:rsa". Exportability is equally
+// invisible at import time and equally fatal later -- a key the backend will
+// not release cannot be read back or wrapped.
+//
+// The assertions are therefore made after the import, against the real software
+// backend, on the properties a subsequent operation depends on.
+func TestImportKeySymmetricRoundTripsThroughARealBackend(t *testing.T) {
+	service := setupFinalGapsTest(t)
+	defer xkms.Reset()
+
+	ctx := context.Background()
+	const keyID = "grpc-symmetric-import"
+
+	material := make([]byte, 32)
+	if _, err := rand.Read(material); err != nil {
+		t.Fatalf("generating key material failed: %v", err)
+	}
+
+	// The import ceremony, driven exactly as a client drives it.
+	params, err := service.GetImportParameters(ctx, &pb.GetImportParametersRequest{
+		Backend:           "software",
+		KeyId:             keyID,
+		WrappingAlgorithm: "RSAES_OAEP_SHA_256",
+		KeyType:           "symmetric",
+		KeySize:           256,
+	})
+	if err != nil {
+		t.Fatalf("GetImportParameters: %v", err)
+	}
+
+	parsed, err := x509.ParsePKIXPublicKey(params.WrappingPublicKey)
+	if err != nil {
+		t.Fatalf("parsing the wrapping public key: %v", err)
+	}
+	rsaPub, ok := parsed.(*rsa.PublicKey)
+	if !ok {
+		t.Fatalf("the wrapping public key is %T, not an RSA key", parsed)
+	}
+	wrapped, err := rsa.EncryptOAEP(sha256.New(), rand.Reader, rsaPub, material, nil)
+	if err != nil {
+		t.Fatalf("wrapping the key material: %v", err)
+	}
+
+	resp, err := service.ImportKey(ctx, &pb.ImportKeyRequest{
+		KeyId:       keyID,
+		Backend:     "software",
+		WrappedKey:  wrapped,
+		Algorithm:   params.Algorithm,
+		ImportToken: params.ImportToken,
+		KeyType:     "symmetric",
+		KeySize:     256,
+	})
+	if err != nil {
+		t.Fatalf("ImportKey: %v", err)
+	}
+	assert.True(t, resp.Success)
+
+	// The key must be discoverable as the symmetric key it is. Reporting it as
+	// RSA here is what made every later operation fail.
+	listed, err := service.ListKeys(ctx, &pb.ListKeysRequest{Backend: "software"})
+	if err != nil {
+		t.Fatalf("ListKeys: %v", err)
+	}
+	var found *pb.KeyInfo
+	for _, k := range listed.Keys {
+		if k.KeyId == keyID {
+			found = k
+			break
+		}
+	}
+	if found == nil {
+		t.Fatal("the imported key is not listed at all")
+	}
+	assert.Equal(t, "aes256-gcm", found.Algorithm,
+		"an imported symmetric key must be stored under the key type every other path uses for symmetric material")
+
+	// Exportability is the other attribute the request cannot carry. Reading
+	// the material back is what proves it was recorded, and that the bytes that
+	// went in are the bytes the backend holds.
+	exported, err := service.ExportKeyMaterial(ctx, &pb.ExportKeyMaterialRequest{
+		Backend: "software",
+		KeyId:   keyID,
+	})
+	if err != nil {
+		t.Fatalf("ExportKeyMaterial on the imported key: %v", err)
+	}
+	assert.Equal(t, material, exported.KeyMaterial,
+		"the backend must hold exactly the material that was imported")
+}
+
+// TestImportKeySymmetricRejectsAnUnsupportedKeySize is the bad-input half: a
+// size with no AES algorithm must be refused at the boundary rather than stored
+// under attributes the rest of the system cannot interpret.
+func TestImportKeySymmetricRejectsAnUnsupportedKeySize(t *testing.T) {
+	service := setupFinalGapsTest(t)
+	defer xkms.Reset()
+
+	for _, size := range []int32{0, 1, 64, 127, 255, 512} {
+		_, err := service.ImportKey(context.Background(), &pb.ImportKeyRequest{
+			KeyId:       "grpc-bad-size",
+			Backend:     "software",
+			WrappedKey:  []byte("wrapped-key-data"),
+			Algorithm:   "RSAES_OAEP_SHA_256",
+			ImportToken: []byte("token"),
+			KeyType:     "symmetric",
+			KeySize:     size,
+		})
+		assert.Equal(t, codes.InvalidArgument, status.Code(err),
+			"key size %d has no AES algorithm and must be refused", size)
 	}
 }

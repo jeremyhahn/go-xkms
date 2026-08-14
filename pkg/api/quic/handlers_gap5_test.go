@@ -30,6 +30,7 @@ import (
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 
 	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
@@ -45,52 +46,6 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
-
-// ============================================================================
-// extendedKeyStore wraps MockKeyStore so KeyProvider returns an
-// ExtendedMockBackend, providing both SymmetricKeyProvider and
-// ImportExportBackend on the "software" backend.
-// ============================================================================
-
-type extendedKeyStore struct {
-	*xkmsmocks.MockKeyStore
-	ext *backendmocks.ExtendedMockBackend
-}
-
-func (k *extendedKeyStore) KeyProvider() types.KeyProvider {
-	return k.ext
-}
-
-// createTestServerWithExtended builds a server whose "software" backend
-// KeyProvider satisfies both SymmetricKeyProvider and ImportExportBackend.
-func createTestServerWithExtended(t *testing.T) (*Server, *xkmsmocks.MockKeyStore, *backendmocks.ExtendedMockBackend) {
-	t.Helper()
-	xkms.Reset()
-
-	inner := xkmsmocks.NewMockKeyStore()
-	ext := backendmocks.NewExtendedMockBackend()
-	ks := &extendedKeyStore{MockKeyStore: inner, ext: ext}
-
-	err := xkms.Initialize(&xkms.ServiceConfig{
-		Backends:       map[string]xkms.Backend{"software": ks},
-		DefaultBackend: "software",
-	})
-	require.NoError(t, err)
-
-	svc, _ := xkms.Get()
-
-	cfg := &Config{
-		Addr:          "localhost:8444",
-		Authenticator: auth.NewNoOpAuthenticator(),
-		Logger:        slog.New(slog.NewTextHandler(io.Discard, nil)),
-		XKMSService:   svc,
-	}
-
-	server, err := NewServer(cfg)
-	require.NoError(t, err)
-
-	return server, inner, ext
-}
 
 // ============================================================================
 // handleEncrypt — symmetric success path
@@ -1076,8 +1031,11 @@ func TestHandleAsymmetricEncrypt_NotRSA(t *testing.T) {
 	req := httptest.NewRequest(http.MethodPost, "/test", bytes.NewReader(body))
 	rec := httptest.NewRecorder()
 	server.handleAsymmetricEncrypt(rec, req, "ed25519-asym-enc", "software")
-	// Ed25519 is not RSA → 400
-	assert.Equal(t, http.StatusBadRequest, rec.Code)
+	// Ed25519 is not RSA, so the service refuses rather than encrypting under
+	// something else. It reports the refusal as xkms.ErrEncryptionFailed,
+	// which maps to 500 here and to codes.Internal over gRPC.
+	assert.Equal(t, http.StatusInternalServerError, rec.Code)
+	assert.Contains(t, rec.Body.String(), "key is not RSA")
 }
 
 // ============================================================================
@@ -1204,7 +1162,13 @@ func TestHandleSign_SignerError(t *testing.T) {
 	req := httptest.NewRequest(http.MethodPost, "/test", bytes.NewReader(body))
 	rec := httptest.NewRecorder()
 	server.handleSign(rec, req, "rsa-signer-err", "software")
-	assert.Equal(t, http.StatusInternalServerError, rec.Code)
+	// The signer failure here IS a key-not-found condition: the key is listed
+	// but absent from the store. The service wraps it as ErrSigningFailed over
+	// a cause of ErrKeyNotFound, and sendKeyOpError reports the most specific
+	// sentinel it can match, so the caller is told the key is missing rather
+	// than that the server broke. TestHandleSign_SignError below covers a
+	// genuine backend fault, which is still a 500.
+	assert.Equal(t, http.StatusNotFound, rec.Code)
 }
 
 // ============================================================================
@@ -1280,8 +1244,13 @@ func TestHandleVerify_DefaultSignatureType(t *testing.T) {
 	req := httptest.NewRequest(http.MethodPost, "/test", bytes.NewReader(body))
 	rec := httptest.NewRecorder()
 	server.handleVerify(rec, req, "rsa-deftype", "software")
-	// Verification completes (valid=false) because sigBytes will be marshaled JSON of map.
-	assert.Equal(t, http.StatusOK, rec.Code)
+	// A JSON object is not one of the three signature encodings this transport
+	// accepts. It used to be marshaled back to JSON and unmarshaled into a byte
+	// slice, an operation that fails, whose error was discarded; the empty
+	// slice that survived was then reported as an invalid signature. That
+	// answer is indistinguishable from a genuine verification failure, so the
+	// malformed encoding is now refused outright.
+	assert.Equal(t, http.StatusBadRequest, rec.Code)
 }
 
 // ============================================================================
@@ -1424,9 +1393,20 @@ func TestHandleGenerateKey_StoreTypeUnknown(t *testing.T) {
 	xkms.Reset()
 	defer xkms.Reset()
 
-	// Register a backend under the name "custom-backend". ParseStoreType("custom-backend")
-	// returns StoreUnknown → 400 "invalid backend".
+	// Register a backend under a name that is not a store-type name. The
+	// handler used to derive the store type by parsing the registered name,
+	// so ParseStoreType("custom-backend") answered StoreUnknown and the
+	// request was refused with 400 -- even though lookupBackend had just
+	// resolved the backend. The store type now comes from the resolved
+	// backend itself, so a backend is usable under any name.
 	inner := xkmsmocks.NewMockKeyStore()
+
+	var generatedAttrs *types.KeyAttributes
+	inner.GenerateRSAFunc = func(attrs *types.KeyAttributes) (crypto.PrivateKey, error) {
+		generatedAttrs = attrs
+		return rsa.GenerateKey(rand.Reader, 2048)
+	}
+
 	err := xkms.Initialize(&xkms.ServiceConfig{
 		Backends:       map[string]xkms.Backend{"custom-backend": inner},
 		DefaultBackend: "custom-backend",
@@ -1452,7 +1432,50 @@ func TestHandleGenerateKey_StoreTypeUnknown(t *testing.T) {
 	req := httptest.NewRequest(http.MethodPost, "/api/v1/keys", bytes.NewReader(body))
 	w := httptest.NewRecorder()
 	server.handler.ServeHTTP(w, req)
-	assert.Equal(t, http.StatusBadRequest, w.Code)
+	require.Equal(t, http.StatusCreated, w.Code)
+
+	// The key was generated against the backend's own store type, not against
+	// a type parsed out of its registration name.
+	require.Len(t, inner.GenerateRSACalls, 1)
+	assert.Equal(t, "unknown-store-key", inner.GenerateRSACalls[0])
+	require.NotNil(t, generatedAttrs)
+	assert.Equal(t, types.StoreSoftware, generatedAttrs.StoreType)
+}
+
+// TestHandleGenerateKey_UnregisteredBackend is the bad-input companion: a
+// backend nobody registered is still refused, and as 404 rather than 400 --
+// the refusal belongs to the lookup, not to any name parsing.
+func TestHandleGenerateKey_UnregisteredBackend(t *testing.T) {
+	xkms.Reset()
+	defer xkms.Reset()
+
+	inner := xkmsmocks.NewMockKeyStore()
+	err := xkms.Initialize(&xkms.ServiceConfig{
+		Backends:       map[string]xkms.Backend{"custom-backend": inner},
+		DefaultBackend: "custom-backend",
+	})
+	require.NoError(t, err)
+
+	svc, _ := xkms.Get()
+	server, err := NewServer(&Config{
+		Addr:          "localhost:8444",
+		Authenticator: auth.NewNoOpAuthenticator(),
+		Logger:        slog.New(slog.NewTextHandler(io.Discard, nil)),
+		XKMSService:   svc,
+	})
+	require.NoError(t, err)
+
+	body, _ := json.Marshal(GenerateKeyRequest{
+		KeyID:     "no-such-backend-key",
+		Backend:   "not-registered",
+		Algorithm: "rsa",
+		KeySize:   2048,
+	})
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/keys", bytes.NewReader(body))
+	w := httptest.NewRecorder()
+	server.handler.ServeHTTP(w, req)
+	assert.Equal(t, http.StatusNotFound, w.Code)
+	assert.Empty(t, inner.GenerateRSACalls)
 }
 
 // ============================================================================
@@ -1551,6 +1574,7 @@ func createPasswordTestServerWithManager(t *testing.T) *Server {
 
 	// Wire the manager into the server.
 	server.SetPasswordManager(mgr)
+	wireUnlockServicer(t, mgr)
 	// Rebuild routes so the new manager is picked up.
 	mux := http.NewServeMux()
 	server.setupPasswordRoutes(mux)
@@ -1600,11 +1624,61 @@ func createPasswordTestServerWithUnsealedTenant(t *testing.T, tenantID string) *
 	require.NoError(t, err)
 
 	server.SetPasswordManager(mgr)
+
+	wireUnlockServicer(t, mgr)
+
 	newHandler := http.NewServeMux()
 	server.setupRoutes(newHandler)
 	server.handler = newHandler
 
 	return server
+}
+
+// quicTestUserPIN is the user PIN provisioned for password-store unlock tests.
+const quicTestUserPIN = "123456"
+
+// wireUnlockServicer mirrors the production wiring for the unlock endpoint,
+// which delegates to the service layer: the service needs the same password
+// store manager the server holds, plus a PIN backend to verify the caller's
+// user PIN against. Without it the servicer reports "not configured" and no
+// unlock can ever succeed.
+func wireUnlockServicer(t *testing.T, mgr *staticpw.TenantPasswordStoreManager) {
+	t.Helper()
+	svc, err := xkms.Get()
+	require.NoError(t, err)
+	svc.SetPasswordStoreManager(mgr)
+	svc.SetPINManager(&quicUnlockPINBackend{userPIN: quicTestUserPIN})
+}
+
+// quicUnlockPINBackend is a minimal qrdbsdk.PINBackend so the unlock path can
+// exercise the real service-layer credential check.
+type quicUnlockPINBackend struct {
+	userPIN string
+}
+
+func (b *quicUnlockPINBackend) UserPINSet() bool { return b.userPIN != "" }
+
+func (b *quicUnlockPINBackend) VerifyUserPIN(pin string) error {
+	if pin != b.userPIN {
+		return errors.New("pin: verification failed")
+	}
+	return nil
+}
+
+func (b *quicUnlockPINBackend) Strategy() qrdbsdk.PINStrategyID             { return "software" }
+func (b *quicUnlockPINBackend) SetSOPIN(_, _ string) error                  { return nil }
+func (b *quicUnlockPINBackend) SetUserPIN(_, _ string) error                { return nil }
+func (b *quicUnlockPINBackend) ChangeSOPIN(_, _ string) error               { return nil }
+func (b *quicUnlockPINBackend) ChangeUserPIN(_, _ string) error             { return nil }
+func (b *quicUnlockPINBackend) VerifySOPIN(_ string) error                  { return nil }
+func (b *quicUnlockPINBackend) IsInitialized() bool                         { return true }
+func (b *quicUnlockPINBackend) SOPINSet() bool                              { return true }
+func (b *quicUnlockPINBackend) GetLockoutStatus() *qrdbsdk.PINLockoutStatus { return nil }
+func (b *quicUnlockPINBackend) ResetLockout(_ string) error                 { return nil }
+
+// quicUnlockBody renders an unlock request body carrying the provisioned PIN.
+func quicUnlockBody() io.Reader {
+	return strings.NewReader(`{"user_pin":"` + quicTestUserPIN + `"}`)
 }
 
 // ============================================================================
@@ -1621,7 +1695,7 @@ func TestPasswordUnlockHandler_Success(t *testing.T) {
 	identity := &auth.Identity{Subject: "user1", TenantID: tenantID}
 
 	// First unlock: tenant is sealed-by-default in manager state → clears lock → 200.
-	req := httptest.NewRequest(http.MethodPost, "/api/v1/passwords/unlock", nil)
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/passwords/unlock", quicUnlockBody())
 	req = req.WithContext(auth.WithIdentity(req.Context(), identity))
 	w := httptest.NewRecorder()
 	server.handler.ServeHTTP(w, req)
@@ -1646,12 +1720,12 @@ func TestPasswordUnlockHandler_AlreadyUnlocked(t *testing.T) {
 	identity := &auth.Identity{Subject: "user1", TenantID: tenantID}
 
 	// First unlock succeeds.
-	req1 := httptest.NewRequest(http.MethodPost, "/api/v1/passwords/unlock", nil)
+	req1 := httptest.NewRequest(http.MethodPost, "/api/v1/passwords/unlock", quicUnlockBody())
 	req1 = req1.WithContext(auth.WithIdentity(req1.Context(), identity))
 	server.handler.ServeHTTP(httptest.NewRecorder(), req1)
 
 	// Second unlock → ErrStoreNotLocked → 409.
-	req2 := httptest.NewRequest(http.MethodPost, "/api/v1/passwords/unlock", nil)
+	req2 := httptest.NewRequest(http.MethodPost, "/api/v1/passwords/unlock", quicUnlockBody())
 	req2 = req2.WithContext(auth.WithIdentity(req2.Context(), identity))
 	w := httptest.NewRecorder()
 	server.handler.ServeHTTP(w, req2)
@@ -1686,12 +1760,13 @@ func TestPasswordUnlockHandler_TenantSealed(t *testing.T) {
 	require.NoError(t, err)
 
 	server.SetPasswordManager(mgr)
+	wireUnlockServicer(t, mgr)
 	newHandler := http.NewServeMux()
 	server.setupRoutes(newHandler)
 	server.handler = newHandler
 
 	identity := &auth.Identity{Subject: "user1", TenantID: "sealed-tenant"}
-	req := httptest.NewRequest(http.MethodPost, "/api/v1/passwords/unlock", nil)
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/passwords/unlock", quicUnlockBody())
 	req = req.WithContext(auth.WithIdentity(req.Context(), identity))
 	w := httptest.NewRecorder()
 	server.handler.ServeHTTP(w, req)
@@ -1713,7 +1788,7 @@ func TestPasswordLockHandler_Success(t *testing.T) {
 	identity := &auth.Identity{Subject: "user1", TenantID: tenantID}
 
 	// Unlock first so we have something to lock.
-	unlockReq := httptest.NewRequest(http.MethodPost, "/api/v1/passwords/unlock", nil)
+	unlockReq := httptest.NewRequest(http.MethodPost, "/api/v1/passwords/unlock", quicUnlockBody())
 	unlockReq = unlockReq.WithContext(auth.WithIdentity(unlockReq.Context(), identity))
 	server.handler.ServeHTTP(httptest.NewRecorder(), unlockReq)
 
@@ -1805,7 +1880,7 @@ func TestPasswordUnlockHandler_TenantNotFound(t *testing.T) {
 	server := createPasswordTestServerWithManager(t)
 
 	// Tenant "unknown-tenant" not registered in registry → ErrTenantNotFound → 404.
-	req := httptest.NewRequest(http.MethodPost, "/api/v1/passwords/unlock", nil)
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/passwords/unlock", quicUnlockBody())
 	identity := &auth.Identity{Subject: "user1", TenantID: "unknown-tenant"}
 	req = req.WithContext(auth.WithIdentity(req.Context(), identity))
 	w := httptest.NewRecorder()
@@ -2707,8 +2782,12 @@ func TestHandleVerify_BadBody(t *testing.T) {
 // handleVerify — findKeyByID returns error (ListKeys fails)
 // ============================================================================
 
-// TestHandleVerify_FindKeyByIDError makes ListKeys return an error so that
-// findKeyByID fails inside handleVerify → 404.
+// TestHandleVerify_FindKeyByIDError makes ListKeys return an error so the key
+// lookup inside handleVerify fails.
+//
+// The keystore being unreadable is a server fault, not a missing key, and it
+// is now reported as one. This handler used to collapse both conditions into
+// 404, telling a caller its key did not exist whenever the store was broken.
 func TestHandleVerify_FindKeyByIDError(t *testing.T) {
 	server, mockKS := createTestServer(t)
 	defer xkms.Reset()
@@ -2721,7 +2800,7 @@ func TestHandleVerify_FindKeyByIDError(t *testing.T) {
 	req := httptest.NewRequest(http.MethodPost, "/test", bytes.NewReader(body))
 	rec := httptest.NewRecorder()
 	server.handleVerify(rec, req, "some-key", "software")
-	assert.Equal(t, http.StatusNotFound, rec.Code)
+	assert.Equal(t, http.StatusInternalServerError, rec.Code)
 }
 
 // ============================================================================
@@ -2752,7 +2831,7 @@ func TestGetPasswordHandler_EmptyPasswordID(t *testing.T) {
 	defer xkms.Reset()
 
 	store := staticpw.NewStore(storage.New())
-	handlers := NewPasswordHandlers(store, nil)
+	handlers := NewPasswordHandlers(store, nil, nil)
 
 	req := httptest.NewRequest(http.MethodGet, "/api/v1/passwords/", nil)
 	w := httptest.NewRecorder()
@@ -2772,7 +2851,7 @@ func TestUpdatePasswordHandler_EmptyPasswordID(t *testing.T) {
 	defer xkms.Reset()
 
 	store := staticpw.NewStore(storage.New())
-	handlers := NewPasswordHandlers(store, nil)
+	handlers := NewPasswordHandlers(store, nil, nil)
 
 	body, _ := json.Marshal(PasswordUpdateRequest{})
 	req := httptest.NewRequest(http.MethodPut, "/api/v1/passwords/", bytes.NewReader(body))
@@ -2793,7 +2872,7 @@ func TestDeletePasswordHandler_EmptyPasswordID(t *testing.T) {
 	defer xkms.Reset()
 
 	store := staticpw.NewStore(storage.New())
-	handlers := NewPasswordHandlers(store, nil)
+	handlers := NewPasswordHandlers(store, nil, nil)
 
 	req := httptest.NewRequest(http.MethodDelete, "/api/v1/passwords/", nil)
 	w := httptest.NewRecorder()
@@ -3127,11 +3206,12 @@ func TestHandleGenerateKey_SymmetricNoSymProvider(t *testing.T) {
 // handleGenerateKey — valid symmetric algorithm in req.Algorithm (e.g. "aes256-gcm")
 // ============================================================================
 
-// TestHandleGenerateKey_SymmetricAlgorithmField exercises the req.Algorithm != ""
-// branch inside the symmetric case. Using Algorithm: "symmetric" enters the
-// symmetric switch arm (EqualFold("Symmetric","symmetric")=true) AND hits the
-// req.Algorithm != "" branch → sets attrs.SymmetricAlgorithm → "symmetric" is
-// not a valid SymmetricAlgorithm → 400.
+// TestHandleGenerateKey_SymmetricAlgorithmField exercises the bare name
+// "symmetric" in req.Algorithm. It used to be copied verbatim into
+// attrs.SymmetricAlgorithm, where it failed IsValid and became a 400 -- so the
+// one spelling this transport claimed to support was the one it rejected. It
+// names no cipher, so it selects the AES-256-GCM default, exactly as the
+// service layer resolves it.
 func TestHandleGenerateKey_SymmetricAlgorithmField(t *testing.T) {
 	server, _, _ := createTestServerWithExtended(t)
 	defer xkms.Reset()
@@ -3139,12 +3219,12 @@ func TestHandleGenerateKey_SymmetricAlgorithmField(t *testing.T) {
 	body, _ := json.Marshal(GenerateKeyRequest{
 		KeyID:     "sym-algo-field",
 		Backend:   "software",
-		Algorithm: "symmetric", // EqualFold matches "Symmetric"; invalid SymmetricAlgorithm → 400
+		Algorithm: "symmetric",
 	})
 	req := httptest.NewRequest(http.MethodPost, "/api/v1/keys", bytes.NewReader(body))
 	w := httptest.NewRecorder()
 	server.handler.ServeHTTP(w, req)
-	assert.Equal(t, http.StatusBadRequest, w.Code)
+	assert.Equal(t, http.StatusCreated, w.Code)
 }
 
 // ============================================================================

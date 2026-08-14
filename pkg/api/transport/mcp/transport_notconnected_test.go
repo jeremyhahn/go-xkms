@@ -341,7 +341,7 @@ func TestAllMethods_NotConnected(t *testing.T) {
 	_, err = tr.ClaimCertComplete(ctx, &transport.ClaimCertCompleteRequest{})
 	assert.ErrorIs(t, err, ErrNotConnected)
 
-	_, err = tr.ClaimShare(ctx, &transport.ClaimShareRequest{})
+	_, err = tr.ClaimShareBegin(ctx, &transport.ClaimShareBeginRequest{})
 	assert.ErrorIs(t, err, ErrNotConnected)
 
 	_, err = tr.SignCSRInit(ctx, &transport.SignCSRInitRequest{})

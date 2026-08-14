@@ -89,15 +89,17 @@ func init() {
 }
 
 func runWipe(cmd *cobra.Command, args []string) error {
-	// Check for root privileges
-	if os.Geteuid() != 0 {
-		return luks.ErrPermissionDenied
-	}
-
-	// Validate wipe standard
+	// Validate arguments before checking privileges: an unrecognised
+	// --standard is a usage error and must be reported as such regardless
+	// of who is running the command.
 	standard, ok := wipeStandardMap[wipeStandard]
 	if !ok {
 		return ErrWipeInvalidStandard
+	}
+
+	// Check for root privileges
+	if os.Geteuid() != 0 {
+		return luks.ErrPermissionDenied
 	}
 
 	// Get volume

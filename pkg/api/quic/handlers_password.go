@@ -14,31 +14,53 @@
 package quic
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
+	"io"
 	"net/http"
 	"strings"
 
+	"github.com/jeremyhahn/go-xkms/pkg/api/transport"
 	"github.com/jeremyhahn/go-xkms/pkg/auth"
 	"github.com/jeremyhahn/go-xkms/pkg/seal"
 	"github.com/jeremyhahn/go-xkms/pkg/staticpw"
+	"github.com/jeremyhahn/go-xkms/pkg/xkms"
 )
+
+// PasswordUnlockServicer is the service-layer seam used by the unlock
+// endpoint. It keeps the handler free of password store business logic;
+// *xkms.XKMSService satisfies it.
+type PasswordUnlockServicer interface {
+	// PasswordStoreUnlock opens a session on the tenant password store. The
+	// servicer verifies the caller's user PIN before unlocking; the handler
+	// must never call TenantPasswordStoreManager.UnlockTenant directly or the
+	// credential check is bypassed entirely.
+	PasswordStoreUnlock(ctx context.Context, req *transport.PasswordStoreUnlockRequest) error
+}
+
+// Compile-time check that the canonical servicer satisfies the seam.
+var _ PasswordUnlockServicer = (*xkms.XKMSService)(nil)
 
 // PasswordHandlers provides HTTP handlers for password store operations
 // over the QUIC transport. When a TenantPasswordStoreManager is provided,
 // operations are routed to per-tenant encrypted stores based on the
 // authenticated identity.
 type PasswordHandlers struct {
-	store   staticpw.Store
-	manager *staticpw.TenantPasswordStoreManager
+	store    staticpw.Store
+	manager  *staticpw.TenantPasswordStoreManager
+	servicer PasswordUnlockServicer
 }
 
 // NewPasswordHandlers creates a new PasswordHandlers instance. The manager
-// parameter may be nil for single-tenant (backward compatible) mode.
-func NewPasswordHandlers(store staticpw.Store, manager *staticpw.TenantPasswordStoreManager) *PasswordHandlers {
+// parameter may be nil for single-tenant (backward compatible) mode. The
+// servicer may be nil only when no manager is configured; the unlock endpoint
+// requires it and reports 501 without it rather than unlocking uncredentialed.
+func NewPasswordHandlers(store staticpw.Store, manager *staticpw.TenantPasswordStoreManager, servicer PasswordUnlockServicer) *PasswordHandlers {
 	return &PasswordHandlers{
-		store:   store,
-		manager: manager,
+		store:    store,
+		manager:  manager,
+		servicer: servicer,
 	}
 }
 
@@ -455,29 +477,37 @@ func (h *PasswordHandlers) DeletePasswordHandler(w http.ResponseWriter, r *http.
 // UnlockHandler handles POST /api/v1/passwords/unlock requests.
 // When a TenantPasswordStoreManager is configured, it unlocks the
 // tenant's session allowing password store access.
+//
+// The unlock itself is performed by the service layer, which verifies the
+// caller's user PIN first. The handler must not call
+// TenantPasswordStoreManager.UnlockTenant directly: that path carries no
+// credential check, so any authenticated tenant user could open the store.
 func (h *PasswordHandlers) UnlockHandler(w http.ResponseWriter, r *http.Request) {
-	if h.manager == nil {
+	if h.manager == nil || h.servicer == nil {
 		passwordWriteJSONError(w, "Password store unlock requires server integration", http.StatusNotImplemented)
 		return
 	}
 
 	identity := auth.GetIdentity(r.Context())
-	if identity == nil || identity.TenantID == "" {
+	if auth.IsCrossTenant(identity) {
 		passwordWriteJSONError(w, "Tenant identity required", http.StatusUnauthorized)
 		return
 	}
 
-	if err := h.manager.UnlockTenant(identity.TenantID); err != nil {
-		switch {
-		case errors.Is(err, staticpw.ErrStoreNotLocked):
-			passwordWriteJSONError(w, "Store is already unlocked", http.StatusConflict)
-		case errors.Is(err, seal.ErrTenantSealed):
-			passwordWriteJSONError(w, "Tenant barrier is sealed", http.StatusServiceUnavailable)
-		case errors.Is(err, seal.ErrTenantNotFound):
-			passwordWriteJSONError(w, "Tenant not found", http.StatusNotFound)
-		default:
-			passwordWriteJSONError(w, "Failed to unlock store", http.StatusInternalServerError)
+	// The user PIN is optional on the wire so an unprovisioned deployment gets
+	// the servicer's precise "not provisioned" answer rather than a decode
+	// failure. An absent body is an unlock attempt with no PIN, which the
+	// servicer rejects.
+	var unlockReq transport.PasswordStoreUnlockRequest
+	if r.Body != nil {
+		if err := json.NewDecoder(r.Body).Decode(&unlockReq); err != nil && !errors.Is(err, io.EOF) {
+			passwordWriteJSONError(w, "Invalid request body", http.StatusBadRequest)
+			return
 		}
+	}
+
+	if err := h.servicer.PasswordStoreUnlock(r.Context(), &unlockReq); err != nil {
+		passwordWriteUnlockError(w, err)
 		return
 	}
 
@@ -508,7 +538,7 @@ func (h *PasswordHandlers) LockHandler(w http.ResponseWriter, r *http.Request) {
 	}
 
 	identity := auth.GetIdentity(r.Context())
-	if identity == nil || identity.TenantID == "" {
+	if auth.IsCrossTenant(identity) {
 		passwordWriteJSONError(w, "Tenant identity required", http.StatusUnauthorized)
 		return
 	}
@@ -640,6 +670,33 @@ func passwordHandleStoreError(w http.ResponseWriter, err error) {
 }
 
 // passwordWriteJSONError writes an error response in the standard JSON format.
+// passwordWriteUnlockError maps the errors returned by
+// XKMSService.PasswordStoreUnlock onto HTTP statuses. The user-PIN sentinels
+// are distinguished from one another so an operator can tell "you sent no PIN"
+// from "this deployment has no PIN to check" from "your PIN was wrong"; the
+// last of those must not leak any detail beyond 401.
+func passwordWriteUnlockError(w http.ResponseWriter, err error) {
+	switch {
+	case errors.Is(err, xkms.ErrPasswordStoreUserPINRequired):
+		passwordWriteJSONError(w, "User PIN is required to unlock the password store", http.StatusBadRequest)
+	case errors.Is(err, xkms.ErrPasswordStoreUserPINNotProvisioned):
+		passwordWriteJSONError(w, "User PIN is not provisioned; enable PIN management and set a user PIN", http.StatusPreconditionFailed)
+	case errors.Is(err, staticpw.ErrStoreNotLocked):
+		passwordWriteJSONError(w, "Store is already unlocked", http.StatusConflict)
+	case errors.Is(err, seal.ErrTenantSealed):
+		passwordWriteJSONError(w, "Tenant barrier is sealed", http.StatusServiceUnavailable)
+	case errors.Is(err, seal.ErrTenantNotFound):
+		passwordWriteJSONError(w, "Tenant not found", http.StatusNotFound)
+	case errors.Is(err, xkms.ErrNotConfigured), errors.Is(err, xkms.ErrOperationNotSupported):
+		passwordWriteJSONError(w, "Password store unlock requires server integration", http.StatusNotImplemented)
+	default:
+		// Any remaining error is a failed PIN verification from the PIN
+		// backend. Report it as an authentication failure without echoing the
+		// backend's message, which can carry retry counters and lockout state.
+		passwordWriteJSONError(w, "User PIN verification failed", http.StatusUnauthorized)
+	}
+}
+
 func passwordWriteJSONError(w http.ResponseWriter, message string, status int) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(status)
@@ -663,11 +720,18 @@ func passwordWriteJSON(w http.ResponseWriter, data interface{}, status int) {
 func (s *Server) setupPasswordRoutes(mux *http.ServeMux) {
 	// Password handlers will be nil if no store/manager is configured.
 	// This is fine - the handlers will return appropriate errors.
-	handlers := NewPasswordHandlers(s.passwordStore, s.passwordManager)
+	// Assigning a nil *xkms.XKMSService straight into the interface would
+	// produce a non-nil interface holding a nil pointer, defeating the
+	// handler's h.servicer == nil guard and panicking on the first call.
+	var unlockServicer PasswordUnlockServicer
+	if s.xkmsService != nil {
+		unlockServicer = s.xkmsService
+	}
+	handlers := NewPasswordHandlers(s.passwordStore, s.passwordManager, unlockServicer)
 
 	// Password CRUD operations
 	mux.HandleFunc("/api/v1/passwords", func(w http.ResponseWriter, r *http.Request) {
-		if !s.authorize(w, r, "passwords", operationForMethod(r.Method)) {
+		if !s.authorize(w, r, auth.ResourcePasswords, operationForMethod(r.Method)) {
 			return
 		}
 		switch r.Method {
@@ -698,7 +762,7 @@ func (s *Server) setupPasswordRoutes(mux *http.ServeMux) {
 				s.sendError(w, http.StatusMethodNotAllowed, "method not allowed")
 				return
 			}
-			if !s.authorize(w, r, "passwords", "unlock") {
+			if !s.authorize(w, r, auth.ResourcePasswords, auth.ActionUnlock) {
 				return
 			}
 			handlers.UnlockHandler(w, r)
@@ -708,7 +772,7 @@ func (s *Server) setupPasswordRoutes(mux *http.ServeMux) {
 				s.sendError(w, http.StatusMethodNotAllowed, "method not allowed")
 				return
 			}
-			if !s.authorize(w, r, "passwords", "lock") {
+			if !s.authorize(w, r, auth.ResourcePasswords, auth.ActionLock) {
 				return
 			}
 			handlers.LockHandler(w, r)
@@ -718,7 +782,7 @@ func (s *Server) setupPasswordRoutes(mux *http.ServeMux) {
 				s.sendError(w, http.StatusMethodNotAllowed, "method not allowed")
 				return
 			}
-			if !s.authorize(w, r, "passwords", "read") {
+			if !s.authorize(w, r, auth.ResourcePasswords, auth.ActionRead) {
 				return
 			}
 			handlers.StatusHandler(w, r)
@@ -728,7 +792,7 @@ func (s *Server) setupPasswordRoutes(mux *http.ServeMux) {
 				s.sendError(w, http.StatusMethodNotAllowed, "method not allowed")
 				return
 			}
-			if !s.authorize(w, r, "passwords", "generate") {
+			if !s.authorize(w, r, auth.ResourcePasswords, auth.ActionGenerate) {
 				return
 			}
 			handlers.GeneratePasswordHandler(w, r)
@@ -738,7 +802,7 @@ func (s *Server) setupPasswordRoutes(mux *http.ServeMux) {
 		// Otherwise, treat as password ID
 		passwordID := parts[0]
 
-		if !s.authorize(w, r, "passwords", operationForMethod(r.Method)) {
+		if !s.authorize(w, r, auth.ResourcePasswords, operationForMethod(r.Method)) {
 			return
 		}
 
@@ -755,16 +819,25 @@ func (s *Server) setupPasswordRoutes(mux *http.ServeMux) {
 	})
 }
 
-// operationForMethod maps HTTP methods to authorization operations.
+// methodActions maps an HTTP method to the canonical authorization action the
+// password-vault routes require for it. The values are pkg/auth constants
+// rather than literals: this helper feeds Server.authorize, so a retyped string
+// here would silently ask qrdb for a permission no role grants.
+var methodActions = map[string]string{
+	http.MethodGet:    auth.ActionRead,
+	http.MethodHead:   auth.ActionRead,
+	http.MethodPost:   auth.ActionWrite,
+	http.MethodPut:    auth.ActionWrite,
+	http.MethodPatch:  auth.ActionWrite,
+	http.MethodDelete: auth.ActionDelete,
+}
+
+// operationForMethod returns the authorization action for an HTTP method.
+// An unrecognized method falls back to the least-privileged action so an
+// unmapped verb can never be granted more than read access.
 func operationForMethod(method string) string {
-	switch method {
-	case http.MethodGet, http.MethodHead:
-		return "read"
-	case http.MethodPost, http.MethodPut, http.MethodPatch:
-		return "write"
-	case http.MethodDelete:
-		return "delete"
-	default:
-		return "read"
+	if action, ok := methodActions[method]; ok {
+		return action
 	}
+	return auth.ActionRead
 }

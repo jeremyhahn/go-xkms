@@ -25,8 +25,10 @@ import (
 	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
 	qrdbtransport "github.com/jeremyhahn/go-qrdb/sdk/go/transport"
 	"github.com/jeremyhahn/go-xkms/pkg/api/transport"
+	"github.com/jeremyhahn/go-xkms/pkg/attestation"
 	"github.com/jeremyhahn/go-xkms/pkg/backend"
 	"github.com/jeremyhahn/go-xkms/pkg/ca/provider"
+	"github.com/jeremyhahn/go-xkms/pkg/pkcs11state"
 	"github.com/jeremyhahn/go-xkms/pkg/seal"
 	"github.com/jeremyhahn/go-xkms/pkg/seal/policy"
 	credentialspkg "github.com/jeremyhahn/go-xkms/pkg/server/credentials"
@@ -92,22 +94,36 @@ type XKMSService struct {
 	pinManager    qrdbsdk.PINBackend
 	passwordStore *staticpw.BackendStore
 
+	// pkcs11StateStore persists a remote-mode PKCS#11 module's durable token and
+	// object state (token metadata, PIN hashes, lockout counters, object
+	// metadata, handle counter) in the embedded qrdb node. Nil unless the
+	// deployment enables it.
+	pkcs11StateStore *pkcs11state.Store
+
 	// users and roles are the embedded qrdb node's identity clients. xkms
 	// presents its own user-management API on top of them, so callers only
 	// ever see xkms users; qrdb is an internal implementation detail.
-	users             qrdbtransport.UserClient
-	roles             qrdbtransport.RoleClient
-	platformStore     seal.PlatformStore
-	policyManager     *policy.Manager
-	webauthnService   *webauthn.Service
-	custodians        qrdbtransport.CustodianGroupClient
-	shares            qrdbtransport.ShareClient
+	users           qrdbtransport.UserClient
+	roles           qrdbtransport.RoleClient
+	platformStore   seal.PlatformStore
+	policyManager   *policy.Manager
+	webauthnService *webauthn.Service
+	custodians      qrdbtransport.CustodianGroupClient
+	shares          qrdbtransport.ShareClient
+	userAuthFactors qrdbtransport.UserAuthFactorClient
+
+	// audit is the embedded qrdb node's audit client, used READ-ONLY here:
+	// QueryAudit serves the audit viewer. Emission goes through pkg/audit's
+	// Logger seam instead, so an API caller can never write to the chain.
+	audit             qrdbtransport.AuditClient
 	credentialService *credentialspkg.Service
 
 	// cluster reads Raft shard leadership and membership from the embedded
-	// go-qrdb node's cluster client. It is nil when the node runs standalone
-	// (non-clustered), in which case the servicer reports single-node status.
-	cluster ClusterReader
+	// go-qrdb node's cluster client, resolves leader API endpoints, and applies
+	// membership mutations. It is nil when the node runs standalone
+	// (non-clustered), in which case the servicer reports single-node status
+	// and refuses membership mutation.
+	cluster ClusterClient
 
 	// clusterShardID is the Raft shard (group) identifier the servicer reports
 	// on. It is sourced from xkms Config.Cluster.ShardID (default 1).
@@ -131,6 +147,26 @@ type XKMSService struct {
 	// The concrete type is *ca.CA which implements provider.CA (and optionally
 	// provider.TCGCA for TCG operations).
 	ca provider.CA
+
+	// attestationVerifiers holds the hardware-attestation verifiers keyed by
+	// normalized attestation format ("tpm2", "yubikey-piv", ...). Each verifier
+	// carries the trust anchors for that format's device vendor, so a YubiKey
+	// chain can only be anchored by a YubiKey anchor and a TPM chain only by a
+	// TPM manufacturer anchor. The map is nil until wired by the server from
+	// operator config; attestation-gated CSR signing fails closed while it is
+	// nil or lacks an entry for the requested format.
+	attestationVerifiers map[string]*attestation.Verifier
+
+	// androidEnrollmentPolicy gates CSRs presenting Android key attestation.
+	// Nil makes every such CSR fail closed: chain provenance alone does not
+	// say the evidence is fresh, covers the key being certified, or comes
+	// from an application this CA has agreed to enroll.
+	androidEnrollmentPolicy *AndroidEnrollmentPolicy
+
+	// allowUnboundAttestation permits formats whose key-binding mechanism this
+	// server does not verify. Off by default; see
+	// AllowUnboundAttestationFormats for why it should stay off.
+	allowUnboundAttestation bool
 
 	// spiffeTrustDomain is the operator-configured SPIFFE trust domain used to
 	// stamp tenant-scoped SPIFFE SANs onto broker-issued client certificates.
@@ -195,6 +231,9 @@ func (s *XKMSService) SetPINManager(p qrdbsdk.PINBackend) { s.pinManager = p }
 // SetPasswordStore sets the static password management subsystem.
 func (s *XKMSService) SetPasswordStore(p *staticpw.BackendStore) { s.passwordStore = p }
 
+// SetPKCS11StateStore wires the remote-mode PKCS#11 state persistence store.
+func (s *XKMSService) SetPKCS11StateStore(p *pkcs11state.Store) { s.pkcs11StateStore = p }
+
 // SetUserClients wires the embedded qrdb node's user and role clients into the
 // service so xkms can present its own user-management API backed by qrdb.
 func (s *XKMSService) SetUserClients(users qrdbtransport.UserClient, roles qrdbtransport.RoleClient) {
@@ -225,13 +264,29 @@ func (s *XKMSService) SetShareClient(c qrdbtransport.ShareClient) {
 	s.shares = c
 }
 
+// SetUserAuthFactorClient wires the embedded qrdb node's user-side auth-factor
+// client into the service. Identity is qrdb's to own, so xkms stores no factor
+// state; it presents the surface on its own API so an operator reaches one
+// endpoint instead of two.
+func (s *XKMSService) SetUserAuthFactorClient(c qrdbtransport.UserAuthFactorClient) {
+	s.userAuthFactors = c
+}
+
+// SetAuditClient wires the embedded qrdb node's audit client into the service
+// so the audit chain can be queried. Only the read half is exposed on the
+// xkms API; events are emitted through pkg/audit's Logger seam.
+func (s *XKMSService) SetAuditClient(c qrdbtransport.AuditClient) {
+	s.audit = c
+}
+
 // SetClusterClient wires the embedded qrdb node's cluster client into the
 // service along with the Raft shard and this node's replica identifier. xkms
-// presents its own read-only cluster API on top of it; qrdb is an internal
-// implementation detail. Passing a nil reader configures the service for a
-// standalone (non-clustered) node, in which case ClusterStatus reports a
-// single-node, non-clustered status and ClusterMembers returns an empty set.
-func (s *XKMSService) SetClusterClient(c ClusterReader, shardID, nodeID uint64) {
+// presents its own cluster API on top of it; qrdb is an internal implementation
+// detail. Passing a nil client configures the service for a standalone
+// (non-clustered) node, in which case ClusterStatus reports a single-node,
+// non-clustered status, ClusterMembers returns an empty set, and membership
+// mutation fails with a *ClusterNotClusteredError.
+func (s *XKMSService) SetClusterClient(c ClusterClient, shardID, nodeID uint64) {
 	s.cluster = c
 	s.clusterShardID = shardID
 	s.clusterNodeID = nodeID
@@ -301,6 +356,14 @@ func (s *XKMSService) LookupBackend(name string) (Backend, error) {
 		}
 	}
 	return b, nil
+}
+
+// DefaultBackendName returns the resolved default backend name, or the empty
+// string when none is configured.
+func (s *XKMSService) DefaultBackendName() string {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	return s.defaultBackend
 }
 
 // LookupDefaultBackend returns the raw Backend interface for the configured

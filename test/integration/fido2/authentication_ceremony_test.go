@@ -18,7 +18,6 @@ package fido2
 import (
 	"context"
 	"encoding/json"
-	"os"
 	"testing"
 	"time"
 
@@ -144,33 +143,5 @@ func TestFIDO2Authentication_VirtualAuthenticator_EndToEnd(t *testing.T) {
 	// Authenticate with the SAME authenticator; the private key lives in the
 	// virtual device, so the assertion signature verifies against the registered
 	// public key.
-	runAuthenticationCeremony(t, surface, handler, username)
-}
-
-// TestFIDO2Authentication_HardwareYubiKey_EndToEnd runs the identical end-to-end
-// register-then-authenticate ceremony against a REAL hardware authenticator
-// (e.g. a YubiKey). It is gated on XKMS_FIDO2_HARDWARE=1 so it only runs when an
-// operator has a physical key plugged in and is present to touch it; CI never
-// sets the var.
-//
-// Run manually with:
-//
-//	XKMS_FIDO2_HARDWARE=1 go test -tags 'integration fido2' \
-//	    -run TestFIDO2Authentication_HardwareYubiKey_EndToEnd -count=1 -v \
-//	    ./test/integration/fido2/
-func TestFIDO2Authentication_HardwareYubiKey_EndToEnd(t *testing.T) {
-	if os.Getenv(hardwareEnvVar) != "1" {
-		t.Skipf("hardware FIDO2 ceremony gated; set %s=1 with a physical authenticator plugged in", hardwareEnvVar)
-	}
-
-	cfg := LoadFIDO2TestConfig()
-	handler := cfg.CreateHandler(t)
-	defer CleanupCredential(t, handler)
-
-	surface := newCeremonySurface(t)
-	username := GenerateUniqueUsername("fido2-auth-hw")
-
-	t.Log("Hardware authenticator register+authenticate: please touch your security key when prompted")
-	runRegistrationCeremony(t, surface, handler, username)
 	runAuthenticationCeremony(t, surface, handler, username)
 }

@@ -14,6 +14,8 @@
 package grpc
 
 import (
+	"context"
+	"errors"
 	"fmt"
 	"strconv"
 
@@ -21,8 +23,16 @@ import (
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 
+	"github.com/jeremyhahn/go-xkms/pkg/api/transport"
 	"github.com/jeremyhahn/go-xkms/pkg/xkms"
 )
+
+// ErrAuthenticatorRequired is returned by NewServer when ServerConfig carries no
+// Authenticator. The constructor refuses to substitute a NoOp authenticator
+// because doing so would silently disable authentication; a caller that really
+// wants an unauthenticated server must pass auth.NewNoOpAuthenticator()
+// explicitly.
+var ErrAuthenticatorRequired = errors.New("grpc: authenticator is required")
 
 // notLeaderReason is the ErrorInfo.Reason set on a not-leader gRPC status so
 // clients can branch on it programmatically without parsing the message.
@@ -34,23 +44,48 @@ const notLeaderReason = "NOT_LEADER"
 // leader's coordinates. It returns (nil, false) when err is not a not-leader
 // condition.
 //
-// TODO(cluster): transparent leader-forwarding needs a raft->API address map;
-// until then the leader's Raft address is surfaced to the client as a hint.
-func notLeaderStatus(err error) (error, bool) {
+// AsNotLeader only ever returns the Raft-plane coordinates go-qrdb reports
+// (ShardID/LeaderID/LeaderAddress); it never knows which API protocol carried
+// the failed request, so it cannot fill in LeaderAPIAddress itself. This gRPC
+// layer does know its own protocol, so when xkmsService is non-nil it resolves
+// the leader's dialable gRPC endpoint here via XKMSService.ClusterLeaderEndpoint
+// and folds it into the leader_api_address metadata key, emitted only when
+// non-empty -- mirroring the QUIC transport's sendNotLeader so both layers
+// degrade identically. Resolution failure is advisory: it is captured into a
+// named resolveErr (never discarded with _) and the status falls back to the
+// pre-advertisement redirect that carries only the Raft coordinates. A
+// resolution failure must never turn a legitimate not-leader condition into a
+// harder failure than the caller already has.
+func notLeaderStatus(ctx context.Context, xkmsService *xkms.XKMSService, err error) (error, bool) {
 	nl, ok := xkms.AsNotLeader(err)
 	if !ok {
 		return nil, false
 	}
 
+	leaderAPIAddress := nl.LeaderAPIAddress
+	if leaderAPIAddress == "" && xkmsService != nil {
+		addr, resolveErr := xkmsService.ClusterLeaderEndpoint(ctx, transport.APIProtocolGRPC)
+		if resolveErr != nil {
+			leaderAPIAddress = ""
+		} else {
+			leaderAPIAddress = addr
+		}
+	}
+
+	metadata := map[string]string{
+		"shard_id":       strconv.FormatUint(nl.ShardID, 10),
+		"leader_id":      strconv.FormatUint(nl.LeaderID, 10),
+		"leader_address": nl.LeaderAddress,
+	}
+	if leaderAPIAddress != "" {
+		metadata["leader_api_address"] = leaderAPIAddress
+	}
+
 	st := status.New(codes.FailedPrecondition, nl.Error())
 	detail := &errdetails.ErrorInfo{
-		Reason: notLeaderReason,
-		Domain: "xkms.cluster",
-		Metadata: map[string]string{
-			"shard_id":       strconv.FormatUint(nl.ShardID, 10),
-			"leader_id":      strconv.FormatUint(nl.LeaderID, 10),
-			"leader_address": nl.LeaderAddress,
-		},
+		Reason:   notLeaderReason,
+		Domain:   "xkms.cluster",
+		Metadata: metadata,
 	}
 	if withDetails, derr := st.WithDetails(detail); derr == nil {
 		st = withDetails
@@ -65,8 +100,11 @@ func notLeaderStatus(err error) (error, bool) {
 // use this at the point they would otherwise restringify the servicer error,
 // so the not-leader signal is preserved end to end (the error-handling
 // interceptor also catches any raw not-leader error that slips through).
-func wrapWriteError(err error, fallbackCode codes.Code, format string, args ...interface{}) error {
-	if translated, ok := notLeaderStatus(err); ok {
+// xkmsService is threaded through so a not-leader translation can resolve the
+// leader's dialable gRPC endpoint; it may be nil, in which case the redirect
+// carries only the Raft coordinates.
+func wrapWriteError(ctx context.Context, xkmsService *xkms.XKMSService, err error, fallbackCode codes.Code, format string, args ...interface{}) error {
+	if translated, ok := notLeaderStatus(ctx, xkmsService, err); ok {
 		return translated
 	}
 	return status.Error(fallbackCode, fmt.Sprintf(format, args...))

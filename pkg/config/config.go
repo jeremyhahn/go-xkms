@@ -39,10 +39,13 @@ type Config struct {
 	TLS         TLSConfig                 `yaml:"tls"`
 	Auth        AuthConfig                `yaml:"auth"`
 	WebAuthn    *WebAuthnConfig           `yaml:"webauthn,omitempty"`
+	CORS        CORSConfig                `yaml:"cors"`
+	UI          UIConfig                  `yaml:"ui"`
 	RateLimit   RateLimitConfig           `yaml:"ratelimit"`
 	Metrics     MetricsConfig             `yaml:"metrics"`
 	Health      HealthConfig              `yaml:"health"`
 	Storage     StorageConfig             `yaml:"storage"`
+	Crypto      CryptoConfig              `yaml:"crypto"`
 	Cluster     ClusterConfig             `yaml:"cluster"`
 	RNG         RNGConfig                 `yaml:"rng"`
 	Default     DefaultConfig             `yaml:"default_backend"`
@@ -53,9 +56,63 @@ type Config struct {
 	Credentials CredentialsConfig         `yaml:"credentials"`
 	CA          *ca.MultiIdentityCAConfig `yaml:"ca,omitempty"`
 	ACME        *ACMEConfig               `yaml:"acme,omitempty"`
+	// Attestation configures the hardware-attestation trust anchors used to
+	// verify attestation chains presented with a CSR. When nil, attestation-
+	// gated CSR signing fails closed.
+	Attestation *AttestationConfig `yaml:"attestation,omitempty"`
 	// Trust configures the ordered strategy-chain trust resolver. When
 	// nil, trust resolution falls back to the OS system trust store.
 	Trust *resolver.Config `yaml:"trust,omitempty"`
+}
+
+// CryptoConfig carries process-wide cryptographic policy.
+//
+// A configuration setting here can only ever choose within what the deployed
+// binary already permits: FIPS mode is selected by the Go toolchain (GOFIPS140
+// at build time, GODEBUG=fips140=on|only at run time), pkg/types reads it from
+// crypto/fips140.Enabled(), and the validated module's approved-algorithm
+// boundary overrides anything written in YAML. What this struct decides is the
+// posture of a NON-FIPS deployment, which would otherwise have no way to say
+// whether it needs the legacy mechanisms its peers still use.
+type CryptoConfig struct {
+	// AllowWeakHashes re-admits the collision-broken digests (MD4, MD5, SHA-1,
+	// MD5+SHA1, RIPEMD-160) to the general-purpose hash tables in pkg/types,
+	// and therefore to the signing, certificate, and TPM attestation paths.
+	//
+	// It defaults to false: a signature over a broken digest is forgeable by
+	// anyone who can influence the signed message, so refusing is the only safe
+	// default. Setting it true is the documented escape hatch for legacy
+	// interop and for PKCS#11 conformance deployments, which must be able to
+	// perform the SHA-1/MD5 mechanisms the specification defines. server.New
+	// applies it to pkg/types before any transport starts, and the daemon logs
+	// the re-admitted digests by name on every start.
+	//
+	// In FIPS mode it is ignored; types.SetAllowWeakHashes refuses to loosen
+	// the policy inside the validated module's boundary.
+	AllowWeakHashes bool `yaml:"allow_weak_hashes"`
+
+	// AllowLegacyKeyWrap re-admits the key-wrap constructions that
+	// authenticate nothing — RSA_PKCS1_V1_5 (CKM_RSA_PKCS), AES_CBC_PAD
+	// (CKM_AES_CBC_PAD) and AES_CBC (CKM_AES_CBC) — to C_WrapKey and
+	// C_UnwrapKey.
+	//
+	// It defaults to false for a sharper reason than the digests: C_UnwrapKey
+	// is reachable over every transport with a caller-designated key and a
+	// caller-supplied blob, so each of these is a remote decryption oracle.
+	// PKCS#1 v1.5 is the Bleichenbacher/Marvin shape; PKCS#7 unpadding is the
+	// Vaudenay padding-oracle shape (measured in this codebase: 215 random
+	// blobs before one was accepted); unpadded CBC checks nothing at all, so a
+	// random blob unwraps into attacker-chosen plaintext as a usable key on
+	// the first try.
+	//
+	// PKCS#11 v3.2 sanctions all three, so refusing them is a deployment
+	// policy rather than a conformance deviation, and an operator who must
+	// interoperate with an application that requires one can set it true.
+	// server.New applies it to pkg/types before any transport starts.
+	//
+	// In FIPS mode it is ignored, and it never re-admits RSAES_OAEP_SHA_1,
+	// which stays refused in both postures.
+	AllowLegacyKeyWrap bool `yaml:"allow_legacy_key_wrap"`
 }
 
 // BarrierConfig configures the barrier (seal/unseal) subsystem. The barrier is
@@ -68,8 +125,8 @@ type Config struct {
 // front door.
 type BarrierConfig struct {
 	// Enabled turns the node barrier on. When false the node boots unsealed
-	// with a plaintext data plane (development/insecure — refused by
-	// ComplianceGaps unless --insecure).
+	// with a plaintext data plane, which ComplianceGaps reports and the daemon
+	// refuses to start on — there is no override.
 	Enabled bool `yaml:"enabled"`
 
 	// Strategy selects the seal strategy using the canonical stack vocabulary:
@@ -228,6 +285,40 @@ type AuthConfig struct {
 
 	// Audit logging
 	Audit *AuditConfig `yaml:"audit,omitempty"`
+
+	// PIVLogin enables the browser cert-login exchange: a TLS client
+	// certificate (PIV smart card or mTLS identity) is exchanged for a
+	// bearer token pair at POST /api/v1/auth/login/piv.
+	PIVLogin *PIVLoginConfig `yaml:"piv_login,omitempty"`
+
+	// Session tunes the token pairs minted by the login flows (WebAuthn
+	// passkey login, PIV/mTLS cert login).
+	Session *SessionConfig `yaml:"session,omitempty"`
+}
+
+// PIVLoginConfig configures the TLS-client-certificate login exchange.
+type PIVLoginConfig struct {
+	// Enabled turns the endpoint on. Requires tls.client_auth to request
+	// client certificates ("verify", "require", or "request").
+	Enabled bool `yaml:"enabled"`
+
+	// TrustedIssuers optionally restricts which certificate issuer
+	// distinguished names are accepted (exact string match on the issuer DN).
+	// Empty means any issuer the TLS layer verified.
+	TrustedIssuers []string `yaml:"trusted_issuers,omitempty"`
+}
+
+// SessionConfig tunes issued token lifetimes and login rate limiting.
+type SessionConfig struct {
+	// AccessTokenTTL is the access token lifetime (Go duration, e.g. "15m").
+	AccessTokenTTL string `yaml:"access_token_ttl"`
+
+	// RefreshTokenTTL is the rotating refresh token lifetime (e.g. "8h").
+	RefreshTokenTTL string `yaml:"refresh_token_ttl"`
+
+	// LoginRatePerMin caps per-client login and refresh attempts per minute.
+	// Zero uses the default (10).
+	LoginRatePerMin int `yaml:"login_rate_per_min"`
 }
 
 // CompositeAuthConfig configures composite authentication that chains
@@ -268,6 +359,20 @@ type WebAuthnConfig struct {
 	ResidentKey             string `yaml:"resident_key"`             // "discouraged", "preferred", "required"
 	UserVerification        string `yaml:"user_verification"`        // "discouraged", "preferred", "required"
 
+	// AllowPublicRegistration controls whether an unknown email may create an
+	// account through the WebAuthn registration ceremony (open self-service
+	// sign-up). Unset means true: the platform is intended to be publicly
+	// reachable, so omitting the key leaves registration open.
+	//
+	// A *bool, not a bool: with a plain bool the zero value is false, so every
+	// config written before this field existed would silently switch to closed
+	// registration on upgrade.
+	//
+	// Turning it off still lets accounts provisioned through the authorized
+	// user-creation path enroll their first passkey; only implicit account
+	// creation is withheld.
+	AllowPublicRegistration *bool `yaml:"allow_public_registration,omitempty"`
+
 	// JWT settings for token generation after successful authentication
 	JWTKeyID     string   `yaml:"jwt_key_id"`     // Key ID in xkms for JWT signing
 	JWTIssuer    string   `yaml:"jwt_issuer"`     // JWT issuer claim
@@ -282,6 +387,53 @@ type JWTConfig struct {
 	Issuer        string   `yaml:"issuer"`
 	Audience      []string `yaml:"audience"`
 	Algorithm     string   `yaml:"algorithm"` // HS256, RS256, etc.
+}
+
+// CORSConfig controls cross-origin browser access to the REST API. Disabled
+// by default: the embedded web UI is served same-origin from the daemon, so
+// no CORS headers are needed and none are emitted. Enable it only when a
+// browser client is intentionally served from another origin. Listing the
+// wildcard "*" is reported as a compliance gap.
+type CORSConfig struct {
+	// Enabled turns CORS header emission on.
+	Enabled bool `yaml:"enabled"`
+
+	// AllowedOrigins lists the exact origins (scheme://host[:port]) allowed
+	// to make cross-origin requests.
+	AllowedOrigins []string `yaml:"allowed_origins"`
+
+	// AllowCredentials sets Access-Control-Allow-Credentials for allowed
+	// origins. Ignored for the wildcard origin per the Fetch standard.
+	AllowCredentials bool `yaml:"allow_credentials"`
+
+	// MaxAgeSeconds caps how long browsers may cache preflight responses.
+	// Values <= 0 default to 3600.
+	MaxAgeSeconds int `yaml:"max_age_seconds"`
+}
+
+// UIConfig configures the embedded web UI served by the REST transport.
+type UIConfig struct {
+	// Enabled toggles the UI mount. A nil value means enabled, so existing
+	// configuration files without a ui section keep serving the UI; only an
+	// explicit `enabled: false` turns it off.
+	Enabled *bool `yaml:"enabled,omitempty"`
+
+	// PathPrefix is the URL prefix the UI is mounted under. Empty selects
+	// the default "/ui/".
+	PathPrefix string `yaml:"path_prefix,omitempty"`
+
+	// RedirectRoot redirects GET / to the UI prefix.
+	RedirectRoot bool `yaml:"redirect_root,omitempty"`
+}
+
+// UIEnabled reports whether the embedded web UI should be served. An unset
+// (nil) flag means enabled so configurations predating the ui section do not
+// silently disable the UI.
+func (c *Config) UIEnabled() bool {
+	if c.UI.Enabled == nil {
+		return true
+	}
+	return *c.UI.Enabled
 }
 
 // RateLimitConfig controls rate limiting
@@ -369,6 +521,24 @@ type ClusterConfig struct {
 
 	// ListenAddress is the Raft bind address. Defaults to RaftAddress.
 	ListenAddress string `yaml:"listen_address"`
+
+	// AdvertiseHost is the host or IP that clients should use to reach THIS
+	// node's xkms APIs. It is published into the cluster registry alongside the
+	// ports of the enabled protocols, so a client that has been told "you are
+	// talking to a follower, the leader is replica N" can turn N into an
+	// address it can actually dial.
+	//
+	// It is distinct from Server.Host, which is a bind address and is commonly
+	// a wildcard that no remote client can dial. When AdvertiseHost is unset the
+	// node falls back to the host portion of RaftAddress, which is by definition
+	// an address peers already use to reach this node. Deployments where the
+	// API and Raft planes are reached over different addresses (NAT, split
+	// networking) must set it explicitly.
+	//
+	// When neither AdvertiseHost nor a concrete RaftAddress host is available,
+	// the node advertises nothing rather than an address no client can dial;
+	// clients then see no endpoint and fall back to the leader hint alone.
+	AdvertiseHost string `yaml:"advertise_host"`
 
 	// Peers lists the initial cluster members as comma-separated
 	// "nodeID=address" pairs (e.g., "1=10.0.0.1:63001,2=10.0.0.2:63001").
@@ -1233,9 +1403,46 @@ func (c *Config) ComplianceGaps() []string {
 		// from disabled auth for FedRAMP IA-2 / PCI 8.x / HIPAA.
 		gaps = append(gaps, "authentication is no-op (auth.type=\""+c.Auth.Type+"\"): access is effectively anonymous")
 	}
+	// RBAC is the authorization engine for every transport (REST, gRPC, QUIC,
+	// MCP), and it is backed exclusively by the qrdb identity plane, which only
+	// exists when qrdb is the storage backend. Enabling RBAC against any other
+	// backend leaves the Authorizer nil, so each transport falls back to
+	// allow-all: every authenticated caller gets every permission, regardless of
+	// role. That is an access control the operator explicitly asked for that
+	// silently does nothing — FedRAMP AC-3/AC-6, PCI-DSS v4 7.x, and HIPAA
+	// §164.312(a)(1) all require it to actually be enforced.
+	if c.Auth.EnableRBAC && !strings.EqualFold(strings.TrimSpace(c.Storage.Backend), "qrdb") {
+		gaps = append(gaps, "RBAC enabled without an identity plane (auth.enable_rbac=true, storage.backend=\""+
+			c.Storage.Backend+"\"): the qrdb-backed authorizer cannot be built, so every transport authorizes "+
+			"all requests. Set storage.backend=\"qrdb\" or disable auth.enable_rbac")
+	}
 	if c.CA == nil {
 		gaps = append(gaps, "no CA configured (ca is unset): no certificate provisioning or mTLS trust anchor")
 	}
+	// A wildcard CORS origin lets any website script drive the API with the
+	// victim's ambient network position (and, with credentials, their session).
+	// FedRAMP AC-4/SC-7 boundary-protection controls and PCI-DSS v4 6.4.x
+	// require the access boundary to be explicit, not "every origin".
+	if c.CORS.Enabled {
+		for _, origin := range c.CORS.AllowedOrigins {
+			if strings.TrimSpace(origin) == "*" {
+				gaps = append(gaps, "CORS allows every origin (cors.allowed_origins contains \"*\"): "+
+					"any website can script cross-origin requests against the API. List explicit origins instead")
+				break
+			}
+		}
+	}
+	// Algorithm policy is deliberately NOT a compliance gap. Which algorithms
+	// are approved is a property of the deployed binary and its runtime, not
+	// of a configuration file: build with GOFIPS140=<version> and/or run with
+	// GODEBUG=fips140=on|only, and the Go validated module refuses the
+	// non-approved digests and key-wrap constructions itself
+	// (pkg/types.FIPSMode reports it). xkms is not a FIPS-only implementation
+	// — PKCS#11 and TLS both define SHA-1/MD5 mechanisms, and a
+	// conformance-complete module has to be able to offer them outside FIPS
+	// mode — so refusing them here would make the daemon unable to serve its
+	// own specification while doing nothing a FIPS deployment does not
+	// already do at the module boundary.
 	// The cluster ACME node-local CA signing keystore lives outside the barrier
 	// (it must exist before the replicated datastore) and is protected by the
 	// standard seal strategies instead. Plaintext ("none") protection writes the
@@ -1245,6 +1452,14 @@ func (c *Config) ComplianceGaps() []string {
 		strings.EqualFold(strings.TrimSpace(c.Cluster.RaftEnrollment.CAKeyProtection), "none") {
 		gaps = append(gaps, "cluster CA key protection is plaintext (cluster.raft_enrollment.ca_key_protection=\"none\"): "+
 			"the node-local cluster CA signing key would be stored in the clear. Use \"tpm2\"/\"pkcs11\", \"passphrase\", or auto")
+	}
+	// An ACME CA that issues and revokes certificates without recording who
+	// asked for what has no accountability record: FedRAMP AU-2/AU-3/AU-9,
+	// PCI-DSS v4 10.2, and HIPAA 164.312(b) all require one. The trail is on
+	// by default, so this only fires when the operator explicitly turned it off.
+	if c.ACME != nil && c.ACME.Enabled && !c.ACME.Audit.IsEnabled() {
+		gaps = append(gaps, "ACME audit trail disabled (acme.audit.enabled=false): certificate issuance, "+
+			"revocation, account creation, and TPM enrollment would go unrecorded")
 	}
 	return gaps
 }
@@ -1317,6 +1532,35 @@ func (c *Config) Validate() error {
 	}
 	if !validFormats[strings.ToLower(c.Logging.Format)] {
 		return &errs.Message{Msg: fmt.Sprintf("invalid log format: %s (must be json, text, or console)", c.Logging.Format)}
+	}
+
+	// PIV/mTLS cert login exchanges a TLS-verified client certificate for a
+	// bearer token, so the TLS layer must actually request client certs —
+	// otherwise the endpoint can never succeed and the operator config is a
+	// contradiction. "verify" (VerifyClientCertIfGiven) is the web posture:
+	// passkey-only users are not blocked by the handshake.
+	if c.Auth.PIVLogin != nil && c.Auth.PIVLogin.Enabled {
+		switch strings.ToLower(strings.TrimSpace(c.TLS.ClientAuth)) {
+		case "", "none":
+			return &errs.Message{Msg: "auth.piv_login.enabled requires tls.client_auth to request client certificates (use \"verify\", \"request\", or \"require_and_verify\")"}
+		}
+		if !c.TLS.Enabled {
+			return &errs.Message{Msg: "auth.piv_login.enabled requires tls.enabled"}
+		}
+	}
+
+	// Session TTLs must parse as Go durations when set.
+	if c.Auth.Session != nil {
+		if v := c.Auth.Session.AccessTokenTTL; v != "" {
+			if _, err := time.ParseDuration(v); err != nil {
+				return &errs.Message{Msg: fmt.Sprintf("invalid auth.session.access_token_ttl: %s", v)}
+			}
+		}
+		if v := c.Auth.Session.RefreshTokenTTL; v != "" {
+			if _, err := time.ParseDuration(v); err != nil {
+				return &errs.Message{Msg: fmt.Sprintf("invalid auth.session.refresh_token_ttl: %s", v)}
+			}
+		}
 	}
 
 	// Validate TLS settings.

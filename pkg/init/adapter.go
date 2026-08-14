@@ -74,15 +74,40 @@ func (a *CeremonyAdapter) ClaimCertComplete(ctx context.Context, req *transport.
 	}, nil
 }
 
-// ClaimShare retrieves the Shamir share for the named officer.
-func (a *CeremonyAdapter) ClaimShare(ctx context.Context, req *transport.ClaimShareRequest) (*transport.ClaimShareResponse, error) {
-	shareJSON, err := a.cs.ClaimShare(ctx, req.Username)
+// ClaimShareBegin starts the Shamir share claim handshake for the named
+// officer. req.CallerCertThumbprint is set by the transport from the verified
+// mTLS peer certificate — never decoded from the request body — and is matched
+// against the officer's enrolment record before any nonce is issued.
+func (a *CeremonyAdapter) ClaimShareBegin(ctx context.Context, req *transport.ClaimShareBeginRequest) (*transport.ClaimShareBeginResponse, error) {
+	challenge, err := a.cs.BeginClaimShare(ctx, req.Username, req.CallerCertThumbprint)
 	if err != nil {
 		return nil, err
 	}
 
-	return &transport.ClaimShareResponse{
-		Share: json.RawMessage(shareJSON),
+	return &transport.ClaimShareBeginResponse{
+		Nonce:     hex.EncodeToString(challenge.Nonce),
+		Username:  challenge.Username,
+		ExpiresAt: challenge.ExpiresAt,
+	}, nil
+}
+
+// ClaimShareComplete completes the Shamir share claim handshake by verifying
+// the officer's signature over the challenge nonce and re-verifying the caller
+// certificate thumbprint. The share is released exactly once.
+func (a *CeremonyAdapter) ClaimShareComplete(ctx context.Context, req *transport.ClaimShareCompleteRequest) (*transport.ClaimShareCompleteResponse, error) {
+	signature, err := base64.StdEncoding.DecodeString(req.Signature)
+	if err != nil {
+		return nil, ErrChallengeVerificationFailed
+	}
+
+	result, err := a.cs.CompleteClaimShare(ctx, req.Username, req.Nonce, signature, req.CallerCertThumbprint)
+	if err != nil {
+		return nil, err
+	}
+
+	return &transport.ClaimShareCompleteResponse{
+		ShareIndex: result.ShareIndex,
+		Share:      json.RawMessage(result.ShareBytes),
 	}, nil
 }
 

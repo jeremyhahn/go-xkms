@@ -556,7 +556,7 @@ export interface BackendTPMKey {
   id: string;
   algorithm: string;
   key_size: number;
-  handle: string;
+  persistent: boolean;
   purpose: string;
 }
 

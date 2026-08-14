@@ -871,10 +871,10 @@ if err != nil {
 
 ## Additional Resources
 
-- [Design Document](design/symmetric-encryption.md) - Detailed architecture and implementation
-- [Backend Documentation](backends/) - Backend-specific details
-- [API Specifications](architecture/API_SPECIFICATIONS.md) - Complete API reference
-- [Examples](../examples/) - Working code examples
+- [Design Document](../architecture/symmetric-encryption.md) - Detailed architecture and implementation
+- [Backend Documentation](../backends/) - Backend-specific details
+- [API Specifications](../architecture/api-specifications.md) - Complete API reference
+- [Examples](../../examples/) - Working code examples
 
 ## Support
 

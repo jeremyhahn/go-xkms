@@ -22,7 +22,20 @@ import (
 	"github.com/go-webauthn/webauthn/protocol"
 
 	"github.com/jeremyhahn/go-xkms/pkg/api/transport"
+	xkmswebauthn "github.com/jeremyhahn/go-xkms/pkg/webauthn"
 )
+
+// NewFIDO2Servicer wraps a WebAuthn relying-party service in the canonical
+// FIDO2 transport-servicer adapter — the same ceremony adaptation the
+// XKMSService singleton performs (options marshaling, attestation/assertion
+// parsing, user resolution). It exists for downstream composers (e.g.
+// go-quicbaas) that manage per-tenant *webauthn.Service instances and need
+// the transport wire shape without initializing the XKMSService singleton.
+func NewFIDO2Servicer(w *xkmswebauthn.Service) transport.FIDO2Servicer {
+	s := &XKMSService{}
+	s.SetWebAuthn(w)
+	return s
+}
 
 // BeginRegistration begins a WebAuthn registration ceremony by delegating to
 // the wired WebAuthn relying-party service. It mirrors the browser ceremony

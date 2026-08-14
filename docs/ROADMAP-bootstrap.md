@@ -81,14 +81,20 @@ Progress tracker for the multi-phase implementation plan.
 
 ## Part 3: Bootstrap & Authentication
 
-### Phase 10: Bootstrap Authentication
-- [x] Create `pkg/server/bootstrap.go` (setup token generation, atomic init)
-- [x] Create `pkg/api/rest/handlers_bootstrap.go` (`POST /api/v1/init`)
-- [x] Setup token: JWT with TTL, one-time use
-- [x] Atomic init: create admin + register FIDO2 + destroy token (all-or-nothing)
-- [x] `--threshold` mode: ceremony with invitation tokens
-- [x] Server first-boot output: setup token + SPKI pin + hostname
-- [x] Tests for bootstrap flow, token lifecycle, threshold mode
+### Phase 10: Bootstrap Authentication -- SUPERSEDED
+
+This phase was checked off against a token-based design that has since been
+removed. `pkg/server/bootstrap.go`, `pkg/api/rest/handlers_bootstrap.go`,
+`POST /api/v1/init`, JWT setup tokens and invitation tokens do not exist in the
+tree, and admin enrollment is now cert-based (CSR-sign or
+generate-and-distribute) by architectural rule -- never an invite token.
+
+What actually shipped: `xkmsd init` runs the trust-root ceremony
+(`cmd/xkmsd/init_ceremony.go`) through `pkg/init`'s `CeremonyService`, emitting a
+CA bundle, an SPKI pin, and the first admin's certificate bundle. Multi-admin is
+the M-of-N Security Officer ceremony (`awaiting_init -> enrolling ->
+operational`) with challenge-response certificate and Shamir-share claims. See
+[Bootstrap Authentication](auth/bootstrap.md) for the real flow.
 
 ### Phase 10a: Purge InsecureSkipVerify
 - [x] SDK `WithTLSInsecureSkipVerify()` deprecated in favor of `WithSPKIPin`
@@ -132,12 +138,13 @@ Progress tracker for the multi-phase implementation plan.
 - [ ] CA cert resolution from trust store by server URL
 - [ ] Tests for SDK auth flow
 
-### Phase 14: Configurable MFA Policy
-- [ ] Create `pkg/auth/policy/types.go` (MFAPolicy, MFALevel, OperationPolicy)
-- [ ] Create `pkg/auth/policy/engine.go` (policy evaluation)
-- [ ] Create `pkg/auth/policy/errors.go`
-- [ ] Per-operation: barrier_unseal, key_export, tenant_create can require 3FA
-- [ ] Tests for policy engine, level evaluation
+### Phase 14: Configurable MFA Policy -- WITHDRAWN
+
+`pkg/auth/policy` was built and then deleted as dead code (no importers), along
+with `pkg/keypolicy`. Do not recreate either package from this roadmap. Should
+per-operation step-up authentication be wanted again, it belongs in the qrdb
+identity plane alongside the rest of the authorization model, not in a second
+xkms-local policy engine.
 
 ---
 
@@ -224,9 +231,8 @@ Progress tracker for the multi-phase implementation plan.
 - [x] `xkmsctl tenant create --name=acme --barrier-mode=shamir` works
 - [ ] Tenant isolation enforced (cross-tenant access denied)
 - [x] Single-tenant backward compatibility
-- [x] `xkmsd` first boot prints setup token
-- [x] `xkmsctl init --setup-token=<token>` configures system
-- [x] `xkmsctl init --setup-token=<token> --threshold=3 --admins=5` works
+- [x] `xkmsd init` runs the trust-root ceremony (CA bundle + SPKI pin + admin cert bundle)
+- [ ] `xkmsctl init claim-cert` / `claim-share` complete an M-of-N officer ceremony end to end
 - [x] `xkey auth register --server=URL` FIDO2 pairing works
 - [x] `xkey share receive --server=URL` share distribution works
 - [x] `xkey share unseal --server=URL` barrier unsealing works

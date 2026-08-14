@@ -21,7 +21,6 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
-	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -480,18 +479,25 @@ func TestGetHostname(t *testing.T) {
 
 // --- Command execution tests ---
 
+// The three create tests below previously asserted the STUB behavior: they
+// ran against an empty HOME and expected the output file to be a plaintext
+// `backupManifest`. Backups are now real sealed envelopes over real store
+// data, so each seeds the stores and asserts the file is ciphertext.
+
 func TestBackupCreate_WithPassword(t *testing.T) {
 	tempDir := t.TempDir()
 	t.Setenv("HOME", tempDir)
+	seedBackupStores(t, tempDir)
 
 	outputFile := filepath.Join(tempDir, "test-backup.xkb")
 
 	var buf bytes.Buffer
 	backupCreateCmd.SetOut(&buf)
 
-	// Reset flags for this test
-	require.NoError(t, backupCreateCmd.Flags().Set("output", outputFile))
-	require.NoError(t, backupCreateCmd.Flags().Set("password", "test-password"))
+	setBackupFlags(t, backupCreateCmd, map[string]string{
+		"output":   outputFile,
+		"password": "test-password",
+	})
 
 	err := runBackupCreate(backupCreateCmd, []string{})
 	require.NoError(t, err)
@@ -501,32 +507,40 @@ func TestBackupCreate_WithPassword(t *testing.T) {
 	assert.Contains(t, output, "Backup created")
 	assert.Contains(t, output, outputFile)
 
-	// Verify the file was created
-	_, err = os.Stat(outputFile)
-	require.NoError(t, err)
-
-	// Verify the file contains valid JSON manifest
 	data, err := os.ReadFile(outputFile)
 	require.NoError(t, err)
 
-	var manifest backupManifest
-	err = json.Unmarshal(data, &manifest)
-	require.NoError(t, err)
-	assert.Equal(t, 1, manifest.Version)
-	assert.False(t, manifest.CreatedAt.IsZero())
+	// The file must be a sealed envelope carrying ciphertext — not the
+	// plaintext manifest the pre-fix implementation wrote. (The envelope is
+	// itself JSON, so parsing it as a manifest "succeeds" with zero fields;
+	// assert on the envelope shape and the absence of plaintext instead.)
+	var envelope struct {
+		Magic      string `json:"magic"`
+		Ciphertext []byte `json:"ciphertext"`
+	}
+	require.NoError(t, json.Unmarshal(data, &envelope))
+	assert.Equal(t, "XKBK", envelope.Magic, "backup file is not a sealed XKBK envelope")
+	assert.NotEmpty(t, envelope.Ciphertext, "sealed envelope carries no ciphertext")
+	assert.NotContains(t, string(data), "UnitTestEntry",
+		"seeded secret leaked into the backup file in plaintext")
+	assert.NotContains(t, string(data), "s3cret-value",
+		"seeded password leaked into the backup file in plaintext")
 }
 
 func TestBackupCreate_WithRandomKey(t *testing.T) {
 	tempDir := t.TempDir()
 	t.Setenv("HOME", tempDir)
+	seedBackupStores(t, tempDir)
 
 	outputFile := filepath.Join(tempDir, "random-key-backup.xkb")
 
 	var buf bytes.Buffer
 	backupCreateCmd.SetOut(&buf)
 
-	require.NoError(t, backupCreateCmd.Flags().Set("output", outputFile))
-	require.NoError(t, backupCreateCmd.Flags().Set("password", ""))
+	setBackupFlags(t, backupCreateCmd, map[string]string{
+		"output":   outputFile,
+		"password": "",
+	})
 
 	err := runBackupCreate(backupCreateCmd, []string{})
 	require.NoError(t, err)
@@ -539,12 +553,15 @@ func TestBackupCreate_WithRandomKey(t *testing.T) {
 func TestBackupCreate_DefaultOutput(t *testing.T) {
 	tempDir := t.TempDir()
 	t.Setenv("HOME", tempDir)
+	seedBackupStores(t, tempDir)
 
 	var buf bytes.Buffer
 	backupCreateCmd.SetOut(&buf)
 
-	require.NoError(t, backupCreateCmd.Flags().Set("output", ""))
-	require.NoError(t, backupCreateCmd.Flags().Set("password", "p"))
+	setBackupFlags(t, backupCreateCmd, map[string]string{
+		"output":   "",
+		"password": "p",
+	})
 
 	err := runBackupCreate(backupCreateCmd, []string{})
 	require.NoError(t, err)
@@ -583,41 +600,83 @@ func TestBackupRestore_NoKey(t *testing.T) {
 	assert.ErrorIs(t, err, ErrBackupKeyRequired)
 }
 
+// TestBackupRestore_WithPassword previously fabricated a PLAINTEXT manifest
+// and asserted that restore accepted it — the false-confidence bug itself (a
+// hand-written file restored under any password). It now drives a real
+// create→restore round trip and asserts the seeded data actually lands.
 func TestBackupRestore_WithPassword(t *testing.T) {
-	tempDir := t.TempDir()
+	sourceHome := t.TempDir()
+	t.Setenv("HOME", sourceHome)
+	seedBackupStores(t, sourceHome)
 
-	// Create a valid manifest file
-	manifest := backupManifest{
-		CreatedAt:    time.Now().UTC(),
-		DeviceName:   "test-host",
-		TrustCerts:   3,
-		OATHAccounts: 5,
-		Passwords:    2,
-		Version:      1,
-	}
-	data, err := json.Marshal(manifest)
-	require.NoError(t, err)
+	backupFile := filepath.Join(t.TempDir(), "test.xkb")
 
-	backupFile := filepath.Join(tempDir, "test.xkb")
-	err = os.WriteFile(backupFile, data, 0600)
-	require.NoError(t, err)
+	var createBuf bytes.Buffer
+	backupCreateCmd.SetOut(&createBuf)
+	setBackupFlags(t, backupCreateCmd, map[string]string{
+		"output":   backupFile,
+		"password": "test-password",
+	})
+	require.NoError(t, runBackupCreate(backupCreateCmd, []string{}))
+
+	// Restore into a SECOND clean home so we prove data movement, not
+	// merely that the command exited zero.
+	targetHome := t.TempDir()
+	t.Setenv("HOME", targetHome)
 
 	var buf bytes.Buffer
 	backupRestoreCmd.SetOut(&buf)
+	setBackupFlags(t, backupRestoreCmd, map[string]string{
+		"password": "test-password",
+		"key":      "",
+	})
 
-	require.NoError(t, backupRestoreCmd.Flags().Set("password", "test-password"))
-	require.NoError(t, backupRestoreCmd.Flags().Set("key", ""))
-
-	err = runBackupRestore(backupRestoreCmd, []string{backupFile})
-	require.NoError(t, err)
+	require.NoError(t, runBackupRestore(backupRestoreCmd, []string{backupFile}))
 
 	output := buf.String()
 	assert.Contains(t, output, "Restoring from")
-	assert.Contains(t, output, "test-host")
-	assert.Contains(t, output, "Trust certs:  3")
-	assert.Contains(t, output, "OATH:         5")
-	assert.Contains(t, output, "Passwords:    2")
 	assert.Contains(t, output, "Restore completed successfully")
+
+	// The seeded entries must exist in the target home's stores.
+	passwordStore, err := openPasswordStore(filepath.Join(backupTestDataDir(targetHome), backupPasswordStoreDir))
+	require.NoError(t, err)
+	defer func() { _ = passwordStore.Close() }()
+	entries, err := passwordStore.List()
+	require.NoError(t, err)
+	require.NotEmpty(t, entries, "restore reported success but restored no passwords")
+}
+
+// TestBackupRestore_WrongPasswordRejected pins the security fix: a backup
+// must not restore under the wrong password. The pre-fix code never
+// decrypted, so it "succeeded" with any password at all.
+func TestBackupRestore_WrongPasswordRejected(t *testing.T) {
+	sourceHome := t.TempDir()
+	t.Setenv("HOME", sourceHome)
+	seedBackupStores(t, sourceHome)
+
+	backupFile := filepath.Join(t.TempDir(), "sealed.xkb")
+
+	var createBuf bytes.Buffer
+	backupCreateCmd.SetOut(&createBuf)
+	setBackupFlags(t, backupCreateCmd, map[string]string{
+		"output":   backupFile,
+		"password": "correct-horse",
+	})
+	require.NoError(t, runBackupCreate(backupCreateCmd, []string{}))
+
+	targetHome := t.TempDir()
+	t.Setenv("HOME", targetHome)
+
+	var buf bytes.Buffer
+	backupRestoreCmd.SetOut(&buf)
+	setBackupFlags(t, backupRestoreCmd, map[string]string{
+		"password": "definitely-wrong",
+		"key":      "",
+	})
+
+	err := runBackupRestore(backupRestoreCmd, []string{backupFile})
+	require.Error(t, err, "restore must reject an incorrect password")
+	assert.NotContains(t, buf.String(), "Restore completed successfully")
 }
 
 func TestBackupRestore_InvalidJSON(t *testing.T) {
@@ -667,41 +726,69 @@ func TestBackupContents_NoKey(t *testing.T) {
 	assert.ErrorIs(t, err, ErrBackupKeyRequired)
 }
 
+// TestBackupContents_WithPassword previously hand-wrote a PLAINTEXT manifest
+// with invented counts and asserted they were echoed back — the stub never
+// decrypted anything. It now inspects a real sealed backup and asserts the
+// counts reflect the actually-archived data.
 func TestBackupContents_WithPassword(t *testing.T) {
-	tempDir := t.TempDir()
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	seedBackupStores(t, home)
 
-	manifest := backupManifest{
-		CreatedAt:    time.Now().UTC(),
-		DeviceName:   "my-laptop",
-		TrustCerts:   10,
-		OATHAccounts: 7,
-		Passwords:    4,
-		Version:      1,
-	}
-	data, err := json.Marshal(manifest)
-	require.NoError(t, err)
+	backupFile := filepath.Join(t.TempDir(), "contents-test.xkb")
 
-	backupFile := filepath.Join(tempDir, "contents-test.xkb")
-	err = os.WriteFile(backupFile, data, 0600)
-	require.NoError(t, err)
+	var createBuf bytes.Buffer
+	backupCreateCmd.SetOut(&createBuf)
+	setBackupFlags(t, backupCreateCmd, map[string]string{
+		"output":   backupFile,
+		"password": "my-password",
+	})
+	require.NoError(t, runBackupCreate(backupCreateCmd, []string{}))
 
 	var buf bytes.Buffer
 	backupContentsCmd.SetOut(&buf)
+	setBackupFlags(t, backupContentsCmd, map[string]string{
+		"password": "my-password",
+		"key":      "",
+	})
 
-	require.NoError(t, backupContentsCmd.Flags().Set("password", "my-password"))
-	require.NoError(t, backupContentsCmd.Flags().Set("key", ""))
-
-	err = runBackupContents(backupContentsCmd, []string{backupFile})
-	require.NoError(t, err)
+	require.NoError(t, runBackupContents(backupContentsCmd, []string{backupFile}))
 
 	output := buf.String()
 	assert.Contains(t, output, "Backup Contents")
 	assert.Contains(t, output, "contents-test.xkb")
-	assert.Contains(t, output, "my-laptop")
-	assert.Contains(t, output, "Trust certs:  10")
-	assert.Contains(t, output, "OATH:         7")
-	assert.Contains(t, output, "Passwords:    4")
-	assert.Contains(t, output, "Version:      1")
+	// seedBackupStores writes exactly one entry to each of the three stores.
+	assert.Contains(t, output, "Trust certs:  1")
+	assert.Contains(t, output, "OATH:         1")
+	assert.Contains(t, output, "Passwords:    1")
+}
+
+// TestBackupContents_WrongPasswordRejected pins that inspection also requires
+// the correct key — the stub echoed a plaintext manifest to anyone.
+func TestBackupContents_WrongPasswordRejected(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	seedBackupStores(t, home)
+
+	backupFile := filepath.Join(t.TempDir(), "sealed-contents.xkb")
+
+	var createBuf bytes.Buffer
+	backupCreateCmd.SetOut(&createBuf)
+	setBackupFlags(t, backupCreateCmd, map[string]string{
+		"output":   backupFile,
+		"password": "right-key",
+	})
+	require.NoError(t, runBackupCreate(backupCreateCmd, []string{}))
+
+	var buf bytes.Buffer
+	backupContentsCmd.SetOut(&buf)
+	setBackupFlags(t, backupContentsCmd, map[string]string{
+		"password": "wrong-key",
+		"key":      "",
+	})
+
+	require.Error(t, runBackupContents(backupContentsCmd, []string{backupFile}),
+		"contents must reject an incorrect password")
 }
 
 func TestBackupContents_InvalidJSON(t *testing.T) {

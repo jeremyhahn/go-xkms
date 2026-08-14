@@ -311,7 +311,7 @@ func (s *Suite) testInitPIN(t *testing.T) {
 		rv := m.Login(sh, module.CKU_SO, []byte("12345678"))
 		requireRV(t, module.CKR_OK, rv, "Login as SO should succeed")
 
-		rv = m.InitPIN(sh, []byte("userpin"))
+		rv = m.InitPIN(sh, suiteUserPIN())
 		requireRV(t, module.CKR_OK, rv, "InitPIN after SO login should return CKR_OK")
 	})
 
@@ -325,7 +325,7 @@ func (s *Suite) testInitPIN(t *testing.T) {
 		defer func() { m.CloseSession(sh) }()
 
 		// Attempt InitPIN without being logged in as SO.
-		rv := m.InitPIN(sh, []byte("userpin"))
+		rv := m.InitPIN(sh, suiteUserPIN())
 		requireRV(t, module.CKR_USER_NOT_LOGGED_IN, rv,
 			"InitPIN without SO login should return CKR_USER_NOT_LOGGED_IN")
 	})
@@ -334,7 +334,7 @@ func (s *Suite) testInitPIN(t *testing.T) {
 		m, cleanup := s.createInitializedModule(t)
 		defer cleanup()
 
-		rv := m.InitPIN(module.SessionHandle(0xDEADBEEF), []byte("userpin"))
+		rv := m.InitPIN(module.SessionHandle(0xDEADBEEF), suiteUserPIN())
 		requireRV(t, module.CKR_SESSION_HANDLE_INVALID, rv,
 			"InitPIN with invalid session handle should return CKR_SESSION_HANDLE_INVALID")
 	})
@@ -357,7 +357,7 @@ func (s *Suite) testSetPIN(t *testing.T) {
 
 		loginAsUser(t, m, sh)
 
-		rv := m.SetPIN(sh, []byte("userpin"), []byte("newuserpin"))
+		rv := m.SetPIN(sh, suiteUserPIN(), []byte("newuserpin"))
 		requireRV(t, module.CKR_OK, rv, "SetPIN with valid old and new PINs should return CKR_OK")
 
 		// Verify the new PIN works: logout, close session, re-open, and login with new PIN.
@@ -414,9 +414,6 @@ func (s *Suite) testWaitForSlotEvent(t *testing.T) {
 		defer cleanup()
 
 		_, rv := m.WaitForSlotEvent(false)
-		if s.skipIfUnsupported(t, rv) {
-			return
-		}
 		requireRV(t, module.CKR_NO_EVENT, rv,
 			"WaitForSlotEvent(false) should return CKR_NO_EVENT when no slot event is pending")
 	})

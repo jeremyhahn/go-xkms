@@ -73,8 +73,8 @@ pin:
 **Related documentation:**
 - [Barrier Architecture](../seal/README.md)
 - [PIN Management](../seal/pin.md)
-- [CLI Barrier Commands](../usage/cli/barrier.md)
-- [CLI PIN Commands](../usage/cli/pin.md)
+- [CLI Barrier Commands](../../xkey/docs/usage/cli/barrier.md)
+- [CLI PIN Commands](../../xkey/docs/usage/cli/pin.md)
 
 ### Backend-Specific Configuration
 - [TPM2 Session Encryption](tpm2-session-encryption.md) - TPM 2.0 session encryption configuration
@@ -130,4 +130,4 @@ The Policies tab provides comprehensive policy lifecycle management:
 
 - [Architecture Overview](../architecture/overview.md)
 - [Backend Documentation](../backends/)
-- [Getting Started Guide](../usage/getting-started.md)
+- [Getting Started Guide](../../xkey/docs/usage/getting-started.md)

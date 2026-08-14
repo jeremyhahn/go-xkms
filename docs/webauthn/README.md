@@ -64,6 +64,48 @@ in `memory_stores.go` for development; production wiring goes through
 `qrdb_userstore.go`, which composes the qrdb user store into the WebAuthn
 contract.
 
+## Registration policy: `allow_public_registration`
+
+`BeginRegistration` looks the email up and, when it finds nothing, creates the
+account. That implicit creation *is* public sign-up, and
+`webauthn.allow_public_registration` is the switch for it:
+
+```yaml
+webauthn:
+  enabled: true
+  rp_id: kms.example.com
+  # Omit for open sign-up (the default). Set false to require that accounts be
+  # provisioned before a passkey can be enrolled.
+  allow_public_registration: false
+```
+
+| Value | Unknown email | Existing account |
+|---|---|---|
+| unset (default) | account created, enrollment proceeds | enrollment proceeds |
+| `true` | account created, enrollment proceeds | enrollment proceeds |
+| `false` | refused with `ErrPublicRegistrationDisabled` | enrollment proceeds |
+
+Two properties follow from gating only that one branch.
+
+**Closed deployments need no second enrollment path.** An administrator
+provisions the account through the ordinary authorized user-creation API
+(`XKMSService.CreateUser`, backed by the qrdb user store), and the user then
+enrolls their first passkey through this same endpoint — `GetByEmail` finds
+the account and the ceremony runs unchanged. There is no invite token and no
+separate enrollment endpoint, consistent with the project rule that enrollment
+is administratively provisioned rather than token-based.
+
+**Omitting the key cannot close registration by accident.** The field is a
+`*bool`, so an absent key is `nil` and means open. A plain `bool` would default
+to `false` and silently switch every pre-existing deployment to closed
+registration on upgrade. `SetDefaults` deliberately leaves it `nil`.
+
+Note that with the flag off, an unknown email produces a different error than a
+known one, so an unauthenticated caller can test whether an address has an
+account. This is accepted rather than masked: closed registration already
+implies a known user population, and collapsing the two cases into one generic
+error would make genuine enrollment failures hard to diagnose.
+
 ## HTTP handlers (`pkg/webauthn/http`)
 
 The HTTP layer is the composable bridge between the RP service and any
@@ -96,6 +138,6 @@ the alias only changes the import path.
 
 - [Headless WebAuthn Client](client.md) — the "browser" implementation used
   by `xkmsctl` and integration tests.
-- [Bootstrap Authentication](../auth/bootstrap.md) — how FIDO2 attestation
-  is bound to the first admin during first-boot.
+- [Bootstrap Authentication](../auth/bootstrap.md) — how `xkmsctl admin create
+  --method fido2` binds an attestation to an admin account.
 - [QuicBaaS SDK — `fido2` re-export](https://github.com/jeremyhahn/go-quicbaas/tree/master/sdk/go/xkms/fido2)

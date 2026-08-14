@@ -30,35 +30,50 @@ type (
 	ClusterStatusResponse = transport.ClusterStatusResponse
 	// ListClusterMembersResponse wraps the cluster membership response.
 	ListClusterMembersResponse = transport.ListClusterMembersResponse
+	// ClusterReplicaResponse acknowledges a membership mutation.
+	ClusterReplicaResponse = transport.ClusterReplicaResponse
 )
 
 // ErrClusterUnsupported is returned by Cluster when the underlying client
-// transport cannot reach the read-only cluster REST endpoints. The cluster
-// surface is served over REST; clients connected via a transport that does not
-// implement the cluster reader (e.g. an embedded service without the cluster
-// endpoints) receive this error.
+// transport cannot reach the cluster endpoints. Clients connected via a
+// transport that does not implement the cluster reader (e.g. an embedded
+// service without the cluster endpoints) receive this error.
 var ErrClusterUnsupported = errors.New("xkms: cluster surface not supported by this transport")
 
-// ClusterClient is a thin read-only facade over the cluster REST endpoints. It
-// is obtained from Cluster(client). Membership mutation (add/remove replica) is
-// intentionally absent: it requires a Raft replica-mutation API that is not yet
-// surfaced through the xkms SDK.
+// ErrClusterMutationUnsupported is returned by AddReplica and RemoveReplica
+// when the client's transport can read the cluster surface but cannot mutate
+// membership. It is distinct from ErrClusterUnsupported so a caller can tell
+// "this transport has no cluster surface at all" from "this transport can look
+// but not touch".
+var ErrClusterMutationUnsupported = errors.New("xkms: cluster membership mutation not supported by this transport")
+
+// ClusterClient is a facade over the cluster endpoints, obtained from
+// Cluster(client).
 //
-// TODO(cluster): add/remove require a Raft replica-mutation API (qrdb
-// AddReplica/RemoveReplica) not yet exposed via the xkms SDK.
+// Reads are available on every transport that exposes the cluster surface.
+// Membership mutation additionally requires a transport that implements
+// ClusterMutator, and is authorized server-side against go-qrdb's canonical
+// membership permissions ("admin:add_member" / "admin:remove_member") — the
+// same permissions qrdb enforces on its own control plane.
 type ClusterClient struct {
-	reader transport.ClusterReader
+	reader  transport.ClusterReader
+	mutator transport.ClusterMutator
 }
 
-// Cluster returns a read-only ClusterClient for the given xkms client. It
-// returns ErrClusterUnsupported when the client's transport does not expose the
-// cluster reader surface.
+// Cluster returns a ClusterClient for the given xkms client. It returns
+// ErrClusterUnsupported when the client's transport does not expose the cluster
+// reader surface. A transport that reads but cannot mutate yields a client
+// whose AddReplica/RemoveReplica return ErrClusterMutationUnsupported.
 func Cluster(c Client) (*ClusterClient, error) {
 	reader, ok := c.(transport.ClusterReader)
 	if !ok {
 		return nil, ErrClusterUnsupported
 	}
-	return &ClusterClient{reader: reader}, nil
+	cc := &ClusterClient{reader: reader}
+	if mutator, ok := c.(transport.ClusterMutator); ok {
+		cc.mutator = mutator
+	}
+	return cc, nil
 }
 
 // Status returns the Raft leadership status for the configured shard. A
@@ -69,6 +84,40 @@ func (cc *ClusterClient) Status(ctx context.Context) (*ClusterStatusResponse, er
 
 // Members returns the Raft replicas for the configured shard. A standalone node
 // returns an empty membership set.
+//
+// Each member carries the API endpoints that replica advertised, which is what
+// lets a caller turn a replica ID into an address it can dial. A replica that
+// advertises nothing has no endpoints; callers must treat that as unknown and
+// degrade, not as an error.
 func (cc *ClusterClient) Members(ctx context.Context) (*ListClusterMembersResponse, error) {
 	return cc.reader.ClusterMembers(ctx)
+}
+
+// AddReplica adds a replica to the configured shard's Raft group.
+//
+// The operation is idempotent: adding a replica that is already a member
+// succeeds without changing the configuration.
+//
+// It returns ErrClusterMutationUnsupported when the client's transport cannot
+// mutate membership. Authorization happens server-side; a caller without the
+// membership permission is denied there rather than here.
+func (cc *ClusterClient) AddReplica(ctx context.Context, replicaID uint64, raftAddr string) (*ClusterReplicaResponse, error) {
+	if cc.mutator == nil {
+		return nil, ErrClusterMutationUnsupported
+	}
+	return cc.mutator.AddClusterReplica(ctx, replicaID, raftAddr)
+}
+
+// RemoveReplica removes a replica from the configured shard's Raft group.
+//
+// The operation is idempotent: removing a replica that is already absent
+// succeeds.
+//
+// It returns ErrClusterMutationUnsupported when the client's transport cannot
+// mutate membership.
+func (cc *ClusterClient) RemoveReplica(ctx context.Context, replicaID uint64) (*ClusterReplicaResponse, error) {
+	if cc.mutator == nil {
+		return nil, ErrClusterMutationUnsupported
+	}
+	return cc.mutator.RemoveClusterReplica(ctx, replicaID)
 }

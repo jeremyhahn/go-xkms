@@ -112,15 +112,16 @@ func (h *Handler) FinishRegistration(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	token, user, err := h.service.FinishRegistration(r.Context(), sessionID, response)
+	pair, user, err := h.service.FinishRegistrationPair(r.Context(), sessionID, response)
 	if err != nil {
 		h.handleServiceError(w, err)
 		return
 	}
 
 	h.writeJSON(w, http.StatusOK, AuthResponse{
-		Token:  token,
-		UserID: base64.RawURLEncoding.EncodeToString(user.WebAuthnID()),
+		Token:        pair.AccessToken,
+		RefreshToken: pair.RefreshToken,
+		UserID:       base64.RawURLEncoding.EncodeToString(user.WebAuthnID()),
 	})
 }
 
@@ -221,15 +222,16 @@ func (h *Handler) FinishLogin(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	token, user, err := h.service.FinishLogin(r.Context(), sessionID, userID, response)
+	pair, user, err := h.service.FinishLoginPair(r.Context(), sessionID, userID, response)
 	if err != nil {
 		h.handleServiceError(w, err)
 		return
 	}
 
 	h.writeJSON(w, http.StatusOK, AuthResponse{
-		Token:  token,
-		UserID: base64.RawURLEncoding.EncodeToString(user.WebAuthnID()),
+		Token:        pair.AccessToken,
+		RefreshToken: pair.RefreshToken,
+		UserID:       base64.RawURLEncoding.EncodeToString(user.WebAuthnID()),
 	})
 }
 
@@ -285,7 +287,14 @@ func (h *Handler) RegistrationStatus(w http.ResponseWriter, r *http.Request) {
 }
 
 // handleServiceError maps service errors to HTTP responses.
+//
+// Client-facing messages stay deliberately generic so a forged credential
+// learns nothing, but the underlying cause is logged: without it, an
+// authenticator interop failure surfaces only as "verification failed" with no
+// way to tell a bad signature from a user-handle or origin mismatch.
 func (h *Handler) handleServiceError(w http.ResponseWriter, err error) {
+	h.logger.Debug("webauthn service error", "error", err)
+
 	switch {
 	case errors.Is(err, webauthn.ErrSessionNotFound):
 		h.writeError(w, http.StatusBadRequest, ErrorCodeInvalidSession, "session not found")

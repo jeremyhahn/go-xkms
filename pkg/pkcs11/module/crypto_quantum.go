@@ -30,6 +30,7 @@ import (
 	"github.com/jeremyhahn/go-xkms/pkg/quantum/mldsa65"
 	"github.com/jeremyhahn/go-xkms/pkg/quantum/mldsa87"
 	"github.com/jeremyhahn/go-xkms/pkg/quantum/mlkem1024"
+	"github.com/jeremyhahn/go-xkms/pkg/quantum/mlkem512"
 )
 
 // Seed sizes for quantum key storage. The PKCS#11 module stores seeds (not
@@ -93,7 +94,7 @@ func newQuantumSignOperation(mech *Mechanism, keyHandle ObjectHandle, keyID, bac
 		keyID:         keyID,
 		backend:       backend,
 		data:          new(bytes.Buffer),
-		securityLvl:   GetMLDSASecurityLevel(mech.Type),
+		securityLvl:   ResolveMLDSASecurityLevel(mech.Type, len(secretKey)),
 		secretKey:     secretKey,
 	}
 }
@@ -148,7 +149,7 @@ func newQuantumVerifyOperation(mech *Mechanism, keyHandle ObjectHandle, keyID, b
 		keyID:         keyID,
 		backend:       backend,
 		data:          new(bytes.Buffer),
-		securityLvl:   GetMLDSASecurityLevel(mech.Type),
+		securityLvl:   ResolveMLDSASecurityLevel(mech.Type, len(publicKey)),
 		publicKey:     publicKey,
 	}
 }
@@ -200,7 +201,7 @@ func newEncapsulateOperation(mech *Mechanism, keyHandle ObjectHandle, keyID, bac
 		keyHandle:     keyHandle,
 		keyID:         keyID,
 		backend:       backend,
-		securityLvl:   GetMLKEMSecurityLevel(mech.Type),
+		securityLvl:   ResolveMLKEMSecurityLevel(mech.Type, len(publicKey)),
 		publicKey:     publicKey,
 	}
 }
@@ -252,7 +253,7 @@ func newDecapsulateOperation(mech *Mechanism, keyHandle ObjectHandle, keyID, bac
 		keyHandle:     keyHandle,
 		keyID:         keyID,
 		backend:       backend,
-		securityLvl:   GetMLKEMSecurityLevel(mech.Type),
+		securityLvl:   ResolveMLKEMSecurityLevel(mech.Type, len(secretKey)),
 		secretKey:     secretKey,
 	}
 }
@@ -423,18 +424,61 @@ func (qcm *QuantumCryptoManager) generateMLDSA87KeyPair() (*QuantumKeyPair, erro
 // ML-KEM Key Generation
 // ---------------------------------------------------------------------------
 
-// GenerateMLKEMKeyPair generates an ML-KEM key pair for the specified security level.
-// Supports ML-KEM-768 (level 768) and ML-KEM-1024 (level 1024).
+// GenerateMLKEMKeyPair generates an ML-KEM key pair for the specified security
+// level. All three FIPS 203 parameter sets are supported: 512, 768 and 1024.
 func (qcm *QuantumCryptoManager) GenerateMLKEMKeyPair(securityLevel int) (*QuantumKeyPair, error) {
 	switch securityLevel {
+	case 512:
+		return qcm.generateMLKEM512KeyPair()
 	case 768:
 		return qcm.generateMLKEM768KeyPair()
 	case 1024:
 		return qcm.generateMLKEM1024KeyPair()
 	default:
 		return nil, NewPKCS11ErrorWithMessage(CKR_MECHANISM_INVALID,
-			"invalid ML-KEM security level (supported: 768, 1024)")
+			"invalid ML-KEM security level (supported: 512, 768, 1024)")
 	}
+}
+
+// generateMLKEM512KeyPair generates an ML-KEM-512 key pair.
+func (qcm *QuantumCryptoManager) generateMLKEM512KeyPair() (*QuantumKeyPair, error) {
+	kem, err := mlkem512.New()
+	if err != nil {
+		return nil, NewPKCS11ErrorFull(CKR_FUNCTION_FAILED,
+			"failed to initialize ML-KEM-512", err)
+	}
+
+	publicKey, err := kem.GenerateKeyPair()
+	if err != nil {
+		kem.Clean()
+		return nil, NewPKCS11ErrorFull(CKR_FUNCTION_FAILED,
+			"failed to generate ML-KEM-512 key pair", err)
+	}
+
+	// ExportSecretKey returns the 64-byte seed. Copy before Clean().
+	exportedKey := kem.ExportSecretKey()
+	if exportedKey == nil {
+		kem.Clean()
+		return nil, NewPKCS11ErrorWithMessage(CKR_FUNCTION_FAILED,
+			"failed to export ML-KEM-512 seed")
+	}
+
+	secretKey := make([]byte, len(exportedKey))
+	copy(secretKey, exportedKey)
+
+	pubKeyCopy := make([]byte, len(publicKey))
+	copy(pubKeyCopy, publicKey)
+
+	kem.Clean()
+
+	return &QuantumKeyPair{
+		PublicKey:  pubKeyCopy,
+		SecretKey:  secretKey,
+		KeyType:    CKK_VENDOR_ML_KEM,
+		Mechanism:  CKM_VENDOR_ML_KEM_512_KEY_GEN,
+		PublicSize: MLKEM512PublicKeySize,
+		SecretSize: mlkemSeedSize,
+	}, nil
 }
 
 // generateMLKEM768KeyPair generates an ML-KEM-768 (Kyber768) key pair.
@@ -884,6 +928,8 @@ func (qcm *QuantumCryptoManager) Encapsulate(op *EncapsulateOperation) (*Encapsu
 	op.finalized = true
 
 	switch op.securityLvl {
+	case 512:
+		return qcm.encapsulateMLKEM512(op.publicKey)
 	case 768:
 		return qcm.encapsulateMLKEM768(op.publicKey)
 	case 1024:
@@ -892,6 +938,27 @@ func (qcm *QuantumCryptoManager) Encapsulate(op *EncapsulateOperation) (*Encapsu
 		return nil, NewPKCS11ErrorWithMessage(CKR_MECHANISM_INVALID,
 			"invalid ML-KEM security level")
 	}
+}
+
+// encapsulateMLKEM512 performs encapsulation using ML-KEM-512.
+func (qcm *QuantumCryptoManager) encapsulateMLKEM512(publicKey []byte) (*EncapsulateResult, error) {
+	kem, err := mlkem512.New()
+	if err != nil {
+		return nil, NewPKCS11ErrorFull(CKR_FUNCTION_FAILED,
+			"failed to initialize ML-KEM-512", err)
+	}
+	defer kem.Clean()
+
+	ciphertext, sharedSecret, err := kem.Encapsulate(publicKey)
+	if err != nil {
+		return nil, NewPKCS11ErrorFull(CKR_FUNCTION_FAILED,
+			"ML-KEM-512 encapsulation failed", err)
+	}
+
+	return &EncapsulateResult{
+		Ciphertext:   ciphertext,
+		SharedSecret: sharedSecret,
+	}, nil
 }
 
 // encapsulateMLKEM768 performs encapsulation using ML-KEM-768.
@@ -982,6 +1049,8 @@ func (qcm *QuantumCryptoManager) Decapsulate(op *DecapsulateOperation, ciphertex
 	op.finalized = true
 
 	switch op.securityLvl {
+	case 512:
+		return qcm.decapsulateMLKEM512(op.secretKey, ciphertext)
 	case 768:
 		return qcm.decapsulateMLKEM768(op.secretKey, ciphertext)
 	case 1024:
@@ -990,6 +1059,24 @@ func (qcm *QuantumCryptoManager) Decapsulate(op *DecapsulateOperation, ciphertex
 		return nil, NewPKCS11ErrorWithMessage(CKR_MECHANISM_INVALID,
 			"invalid ML-KEM security level")
 	}
+}
+
+// decapsulateMLKEM512 performs decapsulation using ML-KEM-512.
+func (qcm *QuantumCryptoManager) decapsulateMLKEM512(secretKey, ciphertext []byte) ([]byte, error) {
+	kem, err := mlkem512.Create(secretKey)
+	if err != nil {
+		return nil, NewPKCS11ErrorFull(CKR_KEY_HANDLE_INVALID,
+			"failed to create ML-KEM-512 decapsulator", err)
+	}
+	defer kem.Clean()
+
+	sharedSecret, err := kem.Decapsulate(ciphertext)
+	if err != nil {
+		return nil, NewPKCS11ErrorFull(CKR_FUNCTION_FAILED,
+			"ML-KEM-512 decapsulation failed", err)
+	}
+
+	return sharedSecret, nil
 }
 
 // decapsulateMLKEM768 performs decapsulation using ML-KEM-768.

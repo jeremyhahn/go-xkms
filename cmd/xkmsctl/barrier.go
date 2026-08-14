@@ -461,6 +461,84 @@ Example:
 	RunE: runBarrierRecoveryRecoverCmd,
 }
 
+// barrierRecoveryDeleteKeysCmd deletes all stored recovery keys.
+var barrierRecoveryDeleteKeysCmd = &cobra.Command{
+	Use:   "delete-keys",
+	Short: "Delete all stored recovery keys",
+	Long: `Delete every stored recovery key. After deletion the barrier can no
+longer be recovered with the previously generated recovery keys; generate a
+fresh set with 'barrier recovery generate' if recovery capability is still
+required.
+
+Example:
+  xkmsctl barrier recovery delete-keys`,
+	RunE: runBarrierRecoveryDeleteKeysCmd,
+}
+
+// barrierRecoveryRootTokenCmd generates a root token from Shamir shares.
+var barrierRecoveryRootTokenCmd = &cobra.Command{
+	Use:   "root-token",
+	Short: "Generate a root token from Shamir shares",
+	Long: `Generate a privileged root token by submitting M-of-N Shamir shares.
+
+--share is repeatable: pass each share as its own --share flag.
+
+Example:
+  xkmsctl barrier recovery root-token --share s-a --share s-b --share s-c`,
+	RunE: runBarrierRecoveryRootTokenCmd,
+}
+
+// runBarrierRecoveryDeleteKeysCmd deletes all recovery keys via the SDK.
+func runBarrierRecoveryDeleteKeysCmd(cmd *cobra.Command, _ []string) error {
+	cfg := getConfig()
+	printer := NewPrinter(cfg.OutputFormat, cmd.OutOrStdout())
+
+	cl, cleanup, err := createBarrierClient(cfg)
+	if err != nil {
+		return err
+	}
+	defer cleanup()
+
+	if err := cl.BarrierDeleteRecoveryKeys(context.Background()); err != nil {
+		return &WrappedError{Sentinel: ErrDeleteRecoveryKeysFailed, Err: err}
+	}
+	return printer.PrintSuccess("Recovery keys deleted")
+}
+
+// runBarrierRecoveryRootTokenCmd generates a root token via the SDK.
+func runBarrierRecoveryRootTokenCmd(cmd *cobra.Command, _ []string) error {
+	if len(barrierRecoveryShs) == 0 {
+		return &BarrierRecoverySharesRequiredError{}
+	}
+
+	cfg := getConfig()
+	printer := NewPrinter(cfg.OutputFormat, cmd.OutOrStdout())
+
+	cl, cleanup, err := createBarrierClient(cfg)
+	if err != nil {
+		return err
+	}
+	defer cleanup()
+
+	resp, err := cl.BarrierGenerateRootToken(context.Background(), &transport.BarrierGenerateRootTokenRequest{
+		Shares: barrierRecoveryShs,
+	})
+	if err != nil {
+		return &WrappedError{Sentinel: ErrGenerateRootTokenFailed, Err: err}
+	}
+
+	switch printer.format {
+	case OutputFormatJSON:
+		return printer.PrintJSON(resp)
+	default:
+		_, _ = fmt.Fprintf(printer.writer, "Root Token:\n  Token:      %s\n", resp.Token)
+		if resp.CreatedAt != "" {
+			_, _ = fmt.Fprintf(printer.writer, "  Created At: %s\n", resp.CreatedAt)
+		}
+		return nil
+	}
+}
+
 // barrierEnableEncryptionCmd migrates an unencrypted barrier to a keyed strategy.
 var barrierEnableEncryptionCmd = &cobra.Command{
 	Use:   "enable-encryption",
@@ -1232,6 +1310,10 @@ func init() {
 	// Build subcommand tree
 	barrierRecoveryCmd.AddCommand(barrierRecoveryGenerateCmd)
 	barrierRecoveryCmd.AddCommand(barrierRecoveryRecoverCmd)
+	barrierRecoveryCmd.AddCommand(barrierRecoveryDeleteKeysCmd)
+	barrierRecoveryCmd.AddCommand(barrierRecoveryRootTokenCmd)
+	barrierRecoveryRootTokenCmd.Flags().StringSliceVar(&barrierRecoveryShs, "share", nil,
+		"Shamir share (repeatable); pass each share as its own --share flag")
 
 	barrierCmd.AddCommand(barrierStatusCmd)
 	barrierCmd.AddCommand(barrierInitCmd)

@@ -80,19 +80,18 @@ func TestDeriveECDHWithX25519_LowOrderPoint(t *testing.T) {
 	assert.Contains(t, err.Error(), "X25519 ECDH operation failed")
 }
 
-// TestApplyHKDF_KeyLengthExceedsMax verifies applyHKDF surfaces the real
-// HKDF "output too long" failure when the caller requests more derived
-// key material than is available for the given hash (255 * hash size).
-func TestApplyHKDF_KeyLengthExceedsMax(t *testing.T) {
-	params := &types.KDFParams{
+// TestApplyKDF_KeyLengthExceedsHKDFMax verifies applyKDF surfaces the real
+// HKDF "output too long" failure when the caller requests more derived key
+// material than is available for the given hash (255 * hash size).
+func TestApplyKDF_KeyLengthExceedsHKDFMax(t *testing.T) {
+	sb := newSoftwareBackendForKDF(t)
+
+	_, err := sb.applyKDF([]byte("shared-secret-material"), &types.KDFParams{
 		Algorithm: types.KDFAlgorithmHKDF,
 		Hash:      "SHA-256",
 		KeyLength: 255*32 + 1, // one byte past HKDF-SHA256's maximum output
-	}
-
-	_, err := applyHKDF([]byte("shared-secret-material"), params)
+	})
 	require.Error(t, err)
-	assert.Contains(t, err.Error(), "HKDF derivation failed")
 }
 
 // TestParseNISTPublicKey_DERNonECDSAKey verifies parseNISTPublicKey

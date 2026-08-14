@@ -49,8 +49,9 @@ func TestGetSessionValidationFlags(t *testing.T) {
 		m := initializeTestModule(t)
 		defer m.Finalize()
 
-		sessionHandle, rv := m.OpenSession(0, CKF_SERIAL_SESSION|CKF_RW_SESSION)
-		require.Equal(t, CKR_OK, rv)
+		// CKF_LOGIN_REQUIRED gates key-bearing operations, so the fixture
+		// authenticates before exercising them.
+		sessionHandle := loginAsNormalUser(t, m)
 
 		flags, err := m.GetSessionValidationFlags(sessionHandle, CKS_LAST_VALIDATION_OK)
 		require.NoError(t, err)
@@ -61,8 +62,9 @@ func TestGetSessionValidationFlags(t *testing.T) {
 		m := initializeTestModule(t)
 		defer m.Finalize()
 
-		sessionHandle, rv := m.OpenSession(0, CKF_SERIAL_SESSION|CKF_RW_SESSION)
-		require.Equal(t, CKR_OK, rv)
+		// CKF_LOGIN_REQUIRED gates key-bearing operations, so the fixture
+		// authenticates before exercising them.
+		sessionHandle := loginAsNormalUser(t, m)
 
 		flags, err := m.GetSessionValidationFlags(sessionHandle, 0)
 		require.Error(t, err)
@@ -76,8 +78,9 @@ func TestGetSessionValidationFlags(t *testing.T) {
 		m := initializeTestModule(t)
 		defer m.Finalize()
 
-		sessionHandle, rv := m.OpenSession(0, CKF_SERIAL_SESSION|CKF_RW_SESSION)
-		require.Equal(t, CKR_OK, rv)
+		// CKF_LOGIN_REQUIRED gates key-bearing operations, so the fixture
+		// authenticates before exercising them.
+		sessionHandle := loginAsNormalUser(t, m)
 
 		flags, err := m.GetSessionValidationFlags(sessionHandle, 0xDEADBEEF)
 		require.Error(t, err)

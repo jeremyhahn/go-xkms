@@ -18,9 +18,12 @@ package pkcs11
 import (
 	"bytes"
 	"context"
+	"crypto/aes"
+	"crypto/cipher"
 	"crypto/rand"
 	"crypto/x509"
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"testing"
@@ -28,6 +31,9 @@ import (
 	"github.com/jeremyhahn/go-xkms/pkg/backend"
 	"github.com/jeremyhahn/go-xkms/pkg/storage"
 	"github.com/jeremyhahn/go-xkms/pkg/types"
+	"github.com/miekg/pkcs11"
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 // newTestBackend creates a Backend for testing without full validation.
@@ -234,237 +240,6 @@ func TestPKCS11SymmetricKey_Interface(t *testing.T) {
 	var _ types.SymmetricKey = key
 }
 
-// TestSoftwareEncrypter_EncryptDecrypt tests the software fallback encrypter.
-func TestSoftwareEncrypter_EncryptDecrypt(t *testing.T) {
-	// Generate a random AES-256 key
-	key := make([]byte, 32)
-	if _, err := rand.Read(key); err != nil {
-		t.Fatalf("failed to generate key: %v", err)
-	}
-
-	attrs := &types.KeyAttributes{
-		SymmetricAlgorithm: types.SymmetricAES256GCM,
-	}
-
-	encrypter := &softwareEncrypter{
-		key:   key,
-		attrs: attrs,
-	}
-
-	tests := []struct {
-		name      string
-		plaintext []byte
-		opts      *types.EncryptOptions
-	}{
-		{
-			name:      "simple encryption",
-			plaintext: []byte("Hello, World!"),
-			opts:      nil,
-		},
-		{
-			name:      "with AAD",
-			plaintext: []byte("Secret message"),
-			opts: &types.EncryptOptions{
-				AdditionalData: []byte("context info"),
-			},
-		},
-		{
-			name:      "empty plaintext",
-			plaintext: []byte{},
-			opts:      nil,
-		},
-		{
-			name:      "large plaintext",
-			plaintext: make([]byte, 1024),
-			opts:      nil,
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			// Encrypt
-			encrypted, err := encrypter.Encrypt(tt.plaintext, tt.opts)
-			if err != nil {
-				t.Fatalf("Encrypt() error = %v", err)
-			}
-
-			// Verify encrypted data structure
-			if len(encrypted.Nonce) != 12 {
-				t.Errorf("Nonce length = %d, want 12", len(encrypted.Nonce))
-			}
-			if len(encrypted.Tag) != 16 {
-				t.Errorf("Tag length = %d, want 16", len(encrypted.Tag))
-			}
-			if encrypted.Algorithm != "aes256-gcm" {
-				t.Errorf("Algorithm = %v, want aes256-gcm", encrypted.Algorithm)
-			}
-
-			// Decrypt
-			decryptOpts := &types.DecryptOptions{}
-			if tt.opts != nil {
-				decryptOpts.AdditionalData = tt.opts.AdditionalData
-			}
-
-			decrypted, err := encrypter.Decrypt(encrypted, decryptOpts)
-
-			// Verify plaintext matches
-			if !bytes.Equal(decrypted, tt.plaintext) {
-				t.Errorf("Decrypted plaintext doesn't match original")
-			}
-		})
-	}
-}
-
-// TestSoftwareEncrypter_AADMismatch verifies AAD verification.
-func TestSoftwareEncrypter_AADMismatch(t *testing.T) {
-	key := make([]byte, 32)
-	if _, err := rand.Read(key); err != nil {
-		t.Fatalf("failed to generate key: %v", err)
-	}
-
-	attrs := &types.KeyAttributes{
-		SymmetricAlgorithm: types.SymmetricAES256GCM,
-	}
-
-	encrypter := &softwareEncrypter{
-		key:   key,
-		attrs: attrs,
-	}
-
-	plaintext := []byte("Secret message")
-
-	// Encrypt with AAD
-	encrypted, err := encrypter.Encrypt(plaintext, &types.EncryptOptions{
-		AdditionalData: []byte("original AAD"),
-	})
-
-	// Try to decrypt with different AAD
-	_, err = encrypter.Decrypt(encrypted, &types.DecryptOptions{
-		AdditionalData: []byte("different AAD"),
-	})
-	if err == nil {
-		t.Error("Decrypt() should fail with mismatched AAD")
-	}
-
-	// Decrypt with correct AAD should work
-	decrypted, err := encrypter.Decrypt(encrypted, &types.DecryptOptions{
-		AdditionalData: []byte("original AAD"),
-	})
-
-	if !bytes.Equal(decrypted, plaintext) {
-		t.Error("Decrypted plaintext doesn't match")
-	}
-}
-
-// TestSoftwareEncrypter_CustomNonce verifies custom nonce usage.
-func TestSoftwareEncrypter_CustomNonce(t *testing.T) {
-	key := make([]byte, 32)
-	if _, err := rand.Read(key); err != nil {
-		t.Fatalf("failed to generate key: %v", err)
-	}
-
-	attrs := &types.KeyAttributes{
-		SymmetricAlgorithm: types.SymmetricAES256GCM,
-	}
-
-	encrypter := &softwareEncrypter{
-		key:   key,
-		attrs: attrs,
-	}
-
-	// Generate custom nonce
-	customNonce := make([]byte, 12)
-	if _, err := rand.Read(customNonce); err != nil {
-		t.Fatalf("failed to generate nonce: %v", err)
-	}
-
-	plaintext := []byte("Test message")
-
-	// Encrypt with custom nonce
-	encrypted, err := encrypter.Encrypt(plaintext, &types.EncryptOptions{
-		Nonce: customNonce,
-	})
-	if err != nil {
-		t.Fatalf("Encrypt() error = %v", err)
-	}
-
-	// Verify nonce matches
-	if !bytes.Equal(encrypted.Nonce, customNonce) {
-		t.Error("Encrypted data should use custom nonce")
-	}
-
-	// Decrypt
-	decrypted, err := encrypter.Decrypt(encrypted, nil)
-
-	if !bytes.Equal(decrypted, plaintext) {
-		t.Error("Decrypted plaintext doesn't match")
-	}
-}
-
-// TestSoftwareEncrypter_TamperedCiphertext verifies authentication.
-func TestSoftwareEncrypter_TamperedCiphertext(t *testing.T) {
-	key := make([]byte, 32)
-	if _, err := rand.Read(key); err != nil {
-		t.Fatalf("failed to generate key: %v", err)
-	}
-
-	attrs := &types.KeyAttributes{
-		SymmetricAlgorithm: types.SymmetricAES256GCM,
-	}
-
-	encrypter := &softwareEncrypter{
-		key:   key,
-		attrs: attrs,
-	}
-
-	plaintext := []byte("Secret message")
-
-	// Encrypt
-	encrypted, err := encrypter.Encrypt(plaintext, nil)
-
-	// Tamper with ciphertext
-	if len(encrypted.Ciphertext) > 0 {
-		encrypted.Ciphertext[0] ^= 0xFF
-	}
-
-	// Decrypt should fail
-	_, err = encrypter.Decrypt(encrypted, nil)
-	if err == nil {
-		t.Error("Decrypt() should fail with tampered ciphertext")
-	}
-}
-
-// TestSoftwareEncrypter_TamperedTag verifies tag verification.
-func TestSoftwareEncrypter_TamperedTag(t *testing.T) {
-	key := make([]byte, 32)
-	if _, err := rand.Read(key); err != nil {
-		t.Fatalf("failed to generate key: %v", err)
-	}
-
-	attrs := &types.KeyAttributes{
-		SymmetricAlgorithm: types.SymmetricAES256GCM,
-	}
-
-	encrypter := &softwareEncrypter{
-		key:   key,
-		attrs: attrs,
-	}
-
-	plaintext := []byte("Secret message")
-
-	// Encrypt
-	encrypted, err := encrypter.Encrypt(plaintext, nil)
-
-	// Tamper with tag
-	encrypted.Tag[0] ^= 0xFF
-
-	// Decrypt should fail
-	_, err = encrypter.Decrypt(encrypted, nil)
-	if err == nil {
-		t.Error("Decrypt() should fail with tampered tag")
-	}
-}
-
 // TestBackend_GenerateSymmetricKey_AllKeySizes tests all supported key sizes.
 func TestBackend_GenerateSymmetricKey_AllKeySizes(t *testing.T) {
 	tempDir := t.TempDir()
@@ -526,47 +301,6 @@ func TestBackend_GetSymmetricKey_KeySizeInference(t *testing.T) {
 	if err == nil {
 		t.Error("GetSymmetricKey() should fail (not initialized)")
 	}
-}
-
-// TestSoftwareEncrypter_ErrorHandling tests error conditions.
-func TestSoftwareEncrypter_ErrorHandling(t *testing.T) {
-	t.Run("encrypt with invalid key", func(t *testing.T) {
-		attrs := &types.KeyAttributes{
-			SymmetricAlgorithm: types.SymmetricAES256GCM,
-		}
-
-		encrypter := &softwareEncrypter{
-			key:   []byte("too short"), // Invalid key size
-			attrs: attrs,
-		}
-
-		_, err := encrypter.Encrypt([]byte("test"), nil)
-		if err == nil {
-			t.Error("Encrypt() should fail with invalid key size")
-		}
-	})
-
-	t.Run("decrypt with invalid key", func(t *testing.T) {
-		attrs := &types.KeyAttributes{
-			SymmetricAlgorithm: types.SymmetricAES256GCM,
-		}
-
-		encrypter := &softwareEncrypter{
-			key:   []byte("too short"),
-			attrs: attrs,
-		}
-
-		data := &types.EncryptedData{
-			Ciphertext: []byte("test"),
-			Nonce:      make([]byte, 12),
-			Tag:        make([]byte, 16),
-		}
-
-		_, err := encrypter.Decrypt(data, nil)
-		if err == nil {
-			t.Error("Decrypt() should fail with invalid key size")
-		}
-	})
 }
 
 // TestBackend_SymmetricInterface verifies symmetric methods exist.
@@ -805,4 +539,860 @@ func TestGetTracker_DefaultTracker(t *testing.T) {
 	if err := tracker.SetAEADOptions(keyID, opts); err != nil {
 		t.Errorf("Default tracker SetAEADOptions() failed: %v", err)
 	}
+}
+
+// =============================================================================
+// Real-token AES-GCM (SoftHSM2)
+//
+// These tests verify the ciphertext the token produces against crypto/cipher
+// computed independently over the same key, nonce, plaintext and AAD.
+// decrypt(encrypt(x)) == x is not sufficient: it holds even when the mechanism,
+// the tag placement or the AAD binding is wrong on both sides at once.
+// =============================================================================
+
+// symmetricAttrs builds the attributes addressing an AES key on the token.
+func symmetricAttrs(cn string, algorithm types.SymmetricAlgorithm) *types.KeyAttributes {
+	return &types.KeyAttributes{
+		CN:                 cn,
+		KeyType:            backend.KEY_TYPE_SECRET,
+		StoreType:          backend.STORE_PKCS11,
+		SymmetricAlgorithm: algorithm,
+	}
+}
+
+// installKnownAESKey imports an AES key with caller-chosen bytes onto the token
+// under the label the backend looks the key up by, and returns its attributes.
+//
+// A generated key is sealed in the token by design (CKA_SENSITIVE), so there is
+// no way to check the token's arithmetic against a software implementation
+// unless the test chooses the key material itself. Importing is the only way to
+// obtain an oracle; TestGenerateSymmetricKey_KeyIsNonExtractable covers the
+// generated key's protection separately.
+func installKnownAESKey(t *testing.T, b *Backend, cn string, key []byte) *types.KeyAttributes {
+	t.Helper()
+	return installAESKeyWithUsage(t, b, cn, key, true, true)
+}
+
+// installAESKeyWithUsage imports an AES key with explicit CKA_ENCRYPT and
+// CKA_DECRYPT settings, so a test can observe what the token does when the key
+// is not permitted to perform the operation being asked of it.
+func installAESKeyWithUsage(t *testing.T, b *Backend, cn string, key []byte, canEncrypt, canDecrypt bool) *types.KeyAttributes {
+	t.Helper()
+
+	var algorithm types.SymmetricAlgorithm
+	switch len(key) {
+	case 16:
+		algorithm = types.SymmetricAES128GCM
+	case 32:
+		algorithm = types.SymmetricAES256GCM
+	default:
+		t.Fatalf("unsupported test key length %d", len(key))
+	}
+
+	attrs := symmetricAttrs(cn, algorithm)
+	label := createKeyID(attrs)
+
+	template := []*pkcs11.Attribute{
+		pkcs11.NewAttribute(pkcs11.CKA_CLASS, pkcs11.CKO_SECRET_KEY),
+		pkcs11.NewAttribute(pkcs11.CKA_KEY_TYPE, pkcs11.CKK_AES),
+		pkcs11.NewAttribute(pkcs11.CKA_TOKEN, true),
+		pkcs11.NewAttribute(pkcs11.CKA_LABEL, label),
+		pkcs11.NewAttribute(pkcs11.CKA_ID, []byte(label)),
+		pkcs11.NewAttribute(pkcs11.CKA_ENCRYPT, canEncrypt),
+		pkcs11.NewAttribute(pkcs11.CKA_DECRYPT, canDecrypt),
+		pkcs11.NewAttribute(pkcs11.CKA_VALUE, key),
+	}
+
+	require.NoError(t, b.pool.WithSession(func(session pkcs11.SessionHandle) error {
+		_, err := b.p11ctx.CreateObject(session, template)
+		return err
+	}), "the token must accept the imported AES key")
+
+	return attrs
+}
+
+// softwareGCM returns the AES-GCM AEAD for a known key, used as the oracle.
+func softwareGCM(t *testing.T, key []byte) cipher.AEAD {
+	t.Helper()
+
+	block, err := aes.NewCipher(key)
+	require.NoError(t, err)
+	aead, err := cipher.NewGCM(block)
+	require.NoError(t, err)
+	return aead
+}
+
+// TestSymmetricEncrypter_MatchesSoftwareGCM asserts the token's ciphertext is
+// byte-identical to AES-GCM computed in software over the same inputs.
+//
+// This is what distinguishes CKM_AES_GCM from every other mechanism the token
+// could have been asked for, and it pins the split point between ciphertext and
+// tag: the tag is the trailing 16 bytes of the C_Encrypt output, not a prefix.
+func TestSymmetricEncrypter_MatchesSoftwareGCM(t *testing.T) {
+	for _, tc := range []struct {
+		name    string
+		keySize int
+	}{
+		{"AES-128", 16},
+		{"AES-256", 32},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			b := newProvisionedBackend(t, "sym-oracle")
+
+			key := make([]byte, tc.keySize)
+			_, err := rand.Read(key)
+			require.NoError(t, err)
+
+			attrs := installKnownAESKey(t, b, "sym-oracle-"+tc.name, key)
+			encrypter, err := b.SymmetricEncrypter(context.Background(), attrs)
+			require.NoError(t, err)
+
+			nonce := bytes.Repeat([]byte{0xA5}, 12)
+			aad := []byte("associated data that is authenticated but not encrypted")
+
+			for _, plaintext := range [][]byte{
+				[]byte("the quick brown fox"),
+				{}, // GCM over an empty message is still a tag
+				bytes.Repeat([]byte{0x00}, 4096),
+			} {
+				encrypted, err := encrypter.Encrypt(plaintext, &types.EncryptOptions{
+					Nonce:          nonce,
+					AdditionalData: aad,
+				})
+				require.NoError(t, err)
+
+				// Oracle: the same AEAD computed by crypto/cipher.
+				want := softwareGCM(t, key).Seal(nil, nonce, plaintext, aad)
+
+				assert.Equal(t, want[:len(want)-16], encrypted.Ciphertext,
+					"the token's ciphertext differs from AES-GCM")
+				assert.Equal(t, want[len(want)-16:], encrypted.Tag,
+					"the token's authentication tag differs from AES-GCM")
+				assert.Equal(t, nonce, encrypted.Nonce)
+				assert.Equal(t, string(attrs.SymmetricAlgorithm), encrypted.Algorithm)
+			}
+		})
+	}
+}
+
+// TestSymmetricEncrypter_DecryptsSoftwareCiphertext runs the oracle in the
+// other direction: ciphertext sealed by crypto/cipher must open on the token.
+// Together with the previous test this proves interoperability rather than
+// self-consistency.
+func TestSymmetricEncrypter_DecryptsSoftwareCiphertext(t *testing.T) {
+	b := newProvisionedBackend(t, "sym-open")
+
+	key := make([]byte, 32)
+	_, err := rand.Read(key)
+	require.NoError(t, err)
+
+	attrs := installKnownAESKey(t, b, "sym-open-key", key)
+	encrypter, err := b.SymmetricEncrypter(context.Background(), attrs)
+	require.NoError(t, err)
+
+	nonce := bytes.Repeat([]byte{0x11}, 12)
+	aad := []byte("bound context")
+	plaintext := []byte("sealed in software, opened in hardware")
+
+	sealed := softwareGCM(t, key).Seal(nil, nonce, plaintext, aad)
+
+	opened, err := encrypter.Decrypt(&types.EncryptedData{
+		Ciphertext: sealed[:len(sealed)-16],
+		Nonce:      nonce,
+		Tag:        sealed[len(sealed)-16:],
+	}, &types.DecryptOptions{AdditionalData: aad})
+	require.NoError(t, err)
+	assert.Equal(t, plaintext, opened)
+}
+
+// TestSymmetricEncrypter_AADIsAuthenticated verifies the additional data is
+// bound to the ciphertext on both halves. A backend that dropped the AAD would
+// still round-trip, so the failing case is the one that carries the signal.
+func TestSymmetricEncrypter_AADIsAuthenticated(t *testing.T) {
+	b := newProvisionedBackend(t, "sym-aad")
+
+	key := make([]byte, 32)
+	_, err := rand.Read(key)
+	require.NoError(t, err)
+
+	attrs := installKnownAESKey(t, b, "sym-aad-key", key)
+	encrypter, err := b.SymmetricEncrypter(context.Background(), attrs)
+	require.NoError(t, err)
+
+	encrypted, err := encrypter.Encrypt([]byte("message"), &types.EncryptOptions{
+		AdditionalData: []byte("original context"),
+	})
+	require.NoError(t, err)
+
+	_, err = encrypter.Decrypt(encrypted, &types.DecryptOptions{
+		AdditionalData: []byte("different context"),
+	})
+	require.Error(t, err, "decryption must fail when the AAD does not match")
+
+	_, err = encrypter.Decrypt(encrypted, &types.DecryptOptions{})
+	require.Error(t, err, "decryption must fail when the AAD is dropped entirely")
+
+	opened, err := encrypter.Decrypt(encrypted, &types.DecryptOptions{
+		AdditionalData: []byte("original context"),
+	})
+	require.NoError(t, err)
+	assert.Equal(t, []byte("message"), opened)
+}
+
+// TestSymmetricEncrypter_RejectsTamperedCiphertextAndTag verifies the token
+// enforces integrity, which is the entire reason for using an AEAD.
+func TestSymmetricEncrypter_RejectsTamperedCiphertextAndTag(t *testing.T) {
+	b := newProvisionedBackend(t, "sym-tamper")
+
+	key := make([]byte, 32)
+	_, err := rand.Read(key)
+	require.NoError(t, err)
+
+	attrs := installKnownAESKey(t, b, "sym-tamper-key", key)
+	encrypter, err := b.SymmetricEncrypter(context.Background(), attrs)
+	require.NoError(t, err)
+
+	for _, tc := range []struct {
+		name   string
+		tamper func(*types.EncryptedData)
+	}{
+		{"flipped ciphertext bit", func(d *types.EncryptedData) { d.Ciphertext[0] ^= 0x01 }},
+		{"flipped tag bit", func(d *types.EncryptedData) { d.Tag[0] ^= 0x01 }},
+		{"flipped nonce bit", func(d *types.EncryptedData) { d.Nonce[0] ^= 0x01 }},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			encrypted, err := encrypter.Encrypt([]byte("authenticated payload"), nil)
+			require.NoError(t, err)
+
+			tc.tamper(encrypted)
+
+			_, err = encrypter.Decrypt(encrypted, nil)
+			assert.Error(t, err, "a modified message must not authenticate")
+		})
+	}
+}
+
+// TestSymmetricEncrypter_Encrypt_WrongNonceLength is the regression test for a
+// remote denial of service. A caller-supplied nonce of the wrong length must be
+// rejected with ErrInvalidNonceLength before it reaches any AEAD.
+func TestSymmetricEncrypter_Encrypt_WrongNonceLength(t *testing.T) {
+	b := newProvisionedBackend(t, "sym-nonce-enc")
+
+	key := make([]byte, 32)
+	_, err := rand.Read(key)
+	require.NoError(t, err)
+
+	attrs := installKnownAESKey(t, b, "sym-nonce-enc-key", key)
+	encrypter, err := b.SymmetricEncrypter(context.Background(), attrs)
+	require.NoError(t, err)
+
+	for _, size := range []int{0, 1, 8, 11, 13, 16, 32} {
+		t.Run(nonceSizeName(size), func(t *testing.T) {
+			_, err := encrypter.Encrypt([]byte("payload"), &types.EncryptOptions{
+				Nonce: make([]byte, size),
+			})
+			assert.ErrorIs(t, err, ErrInvalidNonceLength)
+		})
+	}
+}
+
+// TestSymmetricEncrypter_Decrypt_WrongNonceLength is the paired half of the
+// test above. The decrypt side is the one that was missed when the encrypt side
+// was guarded, and it is the more exposed of the two: the nonce arrives inside
+// the ciphertext envelope a peer supplies.
+func TestSymmetricEncrypter_Decrypt_WrongNonceLength(t *testing.T) {
+	b := newProvisionedBackend(t, "sym-nonce-dec")
+
+	key := make([]byte, 32)
+	_, err := rand.Read(key)
+	require.NoError(t, err)
+
+	attrs := installKnownAESKey(t, b, "sym-nonce-dec-key", key)
+	encrypter, err := b.SymmetricEncrypter(context.Background(), attrs)
+	require.NoError(t, err)
+
+	for _, size := range []int{0, 1, 8, 11, 13, 16, 32} {
+		t.Run(nonceSizeName(size), func(t *testing.T) {
+			_, err := encrypter.Decrypt(&types.EncryptedData{
+				Ciphertext: []byte("ciphertext"),
+				Nonce:      make([]byte, size),
+				Tag:        make([]byte, 16),
+			}, nil)
+			assert.ErrorIs(t, err, ErrInvalidNonceLength)
+		})
+	}
+}
+
+// nonceSizeName labels a subtest by nonce length.
+func nonceSizeName(size int) string {
+	return fmt.Sprintf("%d-byte nonce", size)
+}
+
+// TestSymmetricEncrypter_Decrypt_WrongTagLength verifies a short tag is refused
+// rather than passed to the token as ulTagBits.
+//
+// PKCS#11 v3.2 6.13.7 lets ulTagBits be anything from 0 to 128, so a caller who
+// controls the tag length could otherwise ask the token to verify only a few
+// tag bits and forge messages cheaply. The tag length is a property of the
+// backend, not of the message.
+func TestSymmetricEncrypter_Decrypt_WrongTagLength(t *testing.T) {
+	b := newProvisionedBackend(t, "sym-tag")
+
+	key := make([]byte, 32)
+	_, err := rand.Read(key)
+	require.NoError(t, err)
+
+	attrs := installKnownAESKey(t, b, "sym-tag-key", key)
+	encrypter, err := b.SymmetricEncrypter(context.Background(), attrs)
+	require.NoError(t, err)
+
+	for _, size := range []int{0, 1, 4, 8, 15, 17, 32} {
+		t.Run(fmt.Sprintf("%d-byte tag", size), func(t *testing.T) {
+			_, err := encrypter.Decrypt(&types.EncryptedData{
+				Ciphertext: []byte("ciphertext"),
+				Nonce:      make([]byte, 12),
+				Tag:        make([]byte, size),
+			}, nil)
+			assert.ErrorIs(t, err, ErrInvalidTagLength)
+		})
+	}
+}
+
+// TestSymmetricEncrypter_Decrypt_NilData verifies a nil envelope is a typed
+// error rather than a nil-pointer dereference. The software encrypter already
+// guarded this; the token-backed one did not.
+func TestSymmetricEncrypter_Decrypt_NilData(t *testing.T) {
+	b := newProvisionedBackend(t, "sym-nil")
+
+	key := make([]byte, 32)
+	_, err := rand.Read(key)
+	require.NoError(t, err)
+
+	attrs := installKnownAESKey(t, b, "sym-nil-key", key)
+	encrypter, err := b.SymmetricEncrypter(context.Background(), attrs)
+	require.NoError(t, err)
+
+	_, err = encrypter.Decrypt(nil, nil)
+	assert.ErrorIs(t, err, ErrNilEncryptedData)
+}
+
+// TestSymmetricEncrypter_RejectsNonAEADModes verifies both halves refuse a
+// cipher mode this backend does not implement.
+//
+// Silently substituting AES-GCM for a requested AES-CBC is the worst outcome
+// available: encrypt and decrypt agree with each other, the round trip passes,
+// and the caller's EncryptedData carries a Nonce and Tag where it expected an
+// IV.
+func TestSymmetricEncrypter_RejectsNonAEADModes(t *testing.T) {
+	b := newProvisionedBackend(t, "sym-mode")
+
+	key := make([]byte, 32)
+	_, err := rand.Read(key)
+	require.NoError(t, err)
+
+	attrs := installKnownAESKey(t, b, "sym-mode-key", key)
+	encrypter, err := b.SymmetricEncrypter(context.Background(), attrs)
+	require.NoError(t, err)
+
+	for _, mode := range []types.CipherMode{types.CipherModeCBC, types.CipherModeCBCPad, "ctr"} {
+		t.Run(string(mode), func(t *testing.T) {
+			_, err := encrypter.Encrypt([]byte("payload"), &types.EncryptOptions{Mode: mode})
+			assert.ErrorIs(t, err, ErrUnsupportedCipherMode)
+
+			_, err = encrypter.Decrypt(&types.EncryptedData{
+				Ciphertext: []byte("ciphertext"),
+				Nonce:      make([]byte, 12),
+				Tag:        make([]byte, 16),
+			}, &types.DecryptOptions{Mode: mode})
+			assert.ErrorIs(t, err, ErrUnsupportedCipherMode)
+		})
+	}
+}
+
+// TestSymmetricEncrypter_DecryptDoesNotMutateInput verifies Decrypt leaves the
+// caller's envelope untouched.
+//
+// Encrypt hands back a Ciphertext and a Tag that are two windows onto one
+// array, so reconstructing ciphertext||tag with append writes through the
+// caller's buffer whenever it has spare capacity. The observable symptom is a
+// second Decrypt of the same envelope failing after the first succeeded.
+func TestSymmetricEncrypter_DecryptDoesNotMutateInput(t *testing.T) {
+	b := newProvisionedBackend(t, "sym-alias")
+
+	key := make([]byte, 32)
+	_, err := rand.Read(key)
+	require.NoError(t, err)
+
+	attrs := installKnownAESKey(t, b, "sym-alias-key", key)
+	encrypter, err := b.SymmetricEncrypter(context.Background(), attrs)
+	require.NoError(t, err)
+
+	plaintext := []byte("decrypt me twice")
+	encrypted, err := encrypter.Encrypt(plaintext, nil)
+	require.NoError(t, err)
+
+	ciphertextBefore := bytes.Clone(encrypted.Ciphertext)
+	tagBefore := bytes.Clone(encrypted.Tag)
+
+	first, err := encrypter.Decrypt(encrypted, nil)
+	require.NoError(t, err)
+	assert.Equal(t, plaintext, first)
+
+	assert.Equal(t, ciphertextBefore, encrypted.Ciphertext, "Decrypt modified the caller's ciphertext")
+	assert.Equal(t, tagBefore, encrypted.Tag, "Decrypt modified the caller's tag")
+
+	second, err := encrypter.Decrypt(encrypted, nil)
+	require.NoError(t, err, "the envelope must survive being decrypted twice")
+	assert.Equal(t, plaintext, second)
+}
+
+// TestSymmetricEncrypter_GeneratesFreshNonces verifies that omitting the nonce
+// yields a fresh 96-bit nonce per message. Repeating a nonce under one GCM key
+// is a total loss of confidentiality and authenticity, so this is the single
+// most important property of the generated-nonce path.
+func TestSymmetricEncrypter_GeneratesFreshNonces(t *testing.T) {
+	b := newProvisionedBackend(t, "sym-freshnonce")
+
+	key := make([]byte, 32)
+	_, err := rand.Read(key)
+	require.NoError(t, err)
+
+	attrs := installKnownAESKey(t, b, "sym-freshnonce-key", key)
+	encrypter, err := b.SymmetricEncrypter(context.Background(), attrs)
+	require.NoError(t, err)
+
+	plaintext := []byte("the same message every time")
+	seen := make(map[string]struct{}, 16)
+
+	for i := 0; i < 16; i++ {
+		encrypted, err := encrypter.Encrypt(plaintext, nil)
+		require.NoError(t, err)
+		require.Len(t, encrypted.Nonce, 12, "the generated nonce must be 96 bits")
+
+		_, repeated := seen[string(encrypted.Nonce)]
+		require.False(t, repeated, "a generated nonce repeated within one key")
+		seen[string(encrypted.Nonce)] = struct{}{}
+
+		// Each message must still verify against the oracle under its own nonce.
+		want := softwareGCM(t, key).Seal(nil, encrypted.Nonce, plaintext, nil)
+		assert.Equal(t, want[len(want)-16:], encrypted.Tag)
+	}
+}
+
+// TestSymmetricEncrypter_HonoursTokenLabel is the regression test for slot
+// resolution in the symmetric path, which used to take the module's first slot
+// and ignore the configured token label entirely.
+func TestSymmetricEncrypter_HonoursTokenLabel(t *testing.T) {
+	b := newProvisionedBackend(t, "sym-tokenlabel")
+
+	key := make([]byte, 32)
+	_, err := rand.Read(key)
+	require.NoError(t, err)
+
+	attrs := installKnownAESKey(t, b, "sym-tokenlabel-key", key)
+	encrypter, err := b.SymmetricEncrypter(context.Background(), attrs)
+	require.NoError(t, err)
+
+	encrypted, err := encrypter.Encrypt([]byte("payload"), nil)
+	require.NoError(t, err, "encryption works while the label is correct")
+
+	b.config.TokenLabel = "a-token-that-is-not-present"
+
+	_, err = encrypter.Encrypt([]byte("payload"), nil)
+	assert.ErrorIs(t, err, ErrTokenNotFound, "Encrypt must not fall through to the first slot")
+
+	_, err = encrypter.Decrypt(encrypted, nil)
+	assert.ErrorIs(t, err, ErrTokenNotFound, "Decrypt must not fall through to the first slot")
+}
+
+// TestSymmetricEncrypter_KeyDeletedFromToken verifies the encrypter reports a
+// missing key rather than operating on some other object once the key it was
+// created for is gone.
+func TestSymmetricEncrypter_KeyDeletedFromToken(t *testing.T) {
+	b := newProvisionedBackend(t, "sym-deleted")
+
+	key := make([]byte, 32)
+	_, err := rand.Read(key)
+	require.NoError(t, err)
+
+	attrs := installKnownAESKey(t, b, "sym-deleted-key", key)
+	encrypter, err := b.SymmetricEncrypter(context.Background(), attrs)
+	require.NoError(t, err)
+
+	// C_DestroyObject on a token object needs a read/write session, which the
+	// pool provides; the introspection helper opens a read-only one.
+	require.NoError(t, b.pool.WithSession(func(session pkcs11.SessionHandle) error {
+		handle := findSingleObject(t, b, session, []*pkcs11.Attribute{
+			pkcs11.NewAttribute(pkcs11.CKA_CLASS, pkcs11.CKO_SECRET_KEY),
+			pkcs11.NewAttribute(pkcs11.CKA_LABEL, createKeyID(attrs)),
+		})
+		return b.p11ctx.DestroyObject(session, handle)
+	}))
+
+	_, err = encrypter.Encrypt([]byte("payload"), nil)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "key not found")
+
+	_, err = encrypter.Decrypt(&types.EncryptedData{
+		Ciphertext: []byte("ciphertext"),
+		Nonce:      make([]byte, 12),
+		Tag:        make([]byte, 16),
+	}, nil)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "key not found")
+}
+
+// TestGenerateSymmetricKey_OnToken verifies key generation for the sizes the
+// token key generation path supports, and that the generated key is usable.
+func TestGenerateSymmetricKey_OnToken(t *testing.T) {
+	for _, tc := range []struct {
+		algorithm types.SymmetricAlgorithm
+		keySize   int
+	}{
+		{types.SymmetricAES128GCM, 128},
+		{types.SymmetricAES192GCM, 192},
+		{types.SymmetricAES256GCM, 256},
+	} {
+		t.Run(string(tc.algorithm), func(t *testing.T) {
+			b := newProvisionedBackend(t, "sym-generate")
+			attrs := symmetricAttrs("generated-"+string(tc.algorithm), tc.algorithm)
+
+			key, err := b.GenerateSymmetricKey(context.Background(), attrs)
+			require.NoError(t, err)
+
+			assert.Equal(t, string(tc.algorithm), key.Algorithm(),
+				"a generated key must report the algorithm it was asked for")
+			assert.Equal(t, tc.keySize, key.KeySize())
+
+			// The whole point of an HSM key: the material is not retrievable.
+			_, err = key.Raw()
+			assert.ErrorIs(t, err, backend.ErrNotSupported)
+
+			// A looked-up handle to the same key must describe it identically.
+			fetched, err := b.GetSymmetricKey(context.Background(), attrs)
+			require.NoError(t, err)
+			assert.Equal(t, key.Algorithm(), fetched.Algorithm(),
+				"Algorithm() must not depend on whether the key was generated or fetched")
+			assert.Equal(t, key.KeySize(), fetched.KeySize())
+
+			// And it must actually encrypt and decrypt.
+			encrypter, err := b.SymmetricEncrypter(context.Background(), attrs)
+			require.NoError(t, err)
+
+			encrypted, err := encrypter.Encrypt([]byte("round trip"), &types.EncryptOptions{
+				AdditionalData: []byte("aad"),
+			})
+			require.NoError(t, err)
+
+			opened, err := encrypter.Decrypt(encrypted, &types.DecryptOptions{
+				AdditionalData: []byte("aad"),
+			})
+			require.NoError(t, err)
+			assert.Equal(t, []byte("round trip"), opened)
+		})
+	}
+}
+
+// TestGenerateSymmetricKey_KeyIsNonExtractable verifies the generated key
+// object carries the protection attributes that make it an HSM key rather than
+// a byte slice that happens to live on a token.
+func TestGenerateSymmetricKey_KeyIsNonExtractable(t *testing.T) {
+	b := newProvisionedBackend(t, "sym-sealed")
+	attrs := symmetricAttrs("sealed-key", types.SymmetricAES256GCM)
+
+	_, err := b.GenerateSymmetricKey(context.Background(), attrs)
+	require.NoError(t, err)
+
+	session := openIntrospectionSession(t, b)
+	handle := findSingleObject(t, b, session, []*pkcs11.Attribute{
+		pkcs11.NewAttribute(pkcs11.CKA_CLASS, pkcs11.CKO_SECRET_KEY),
+		pkcs11.NewAttribute(pkcs11.CKA_LABEL, createKeyID(attrs)),
+	})
+
+	values, err := b.p11ctx.GetAttributeValue(session, handle, []*pkcs11.Attribute{
+		pkcs11.NewAttribute(pkcs11.CKA_SENSITIVE, nil),
+		pkcs11.NewAttribute(pkcs11.CKA_EXTRACTABLE, nil),
+		pkcs11.NewAttribute(pkcs11.CKA_TOKEN, nil),
+	})
+	require.NoError(t, err)
+	require.Len(t, values, 3)
+
+	assert.Equal(t, []byte{1}, values[0].Value, "CKA_SENSITIVE must be true")
+	assert.Equal(t, []byte{0}, values[1].Value, "CKA_EXTRACTABLE must be false")
+	assert.Equal(t, []byte{1}, values[2].Value, "CKA_TOKEN must be true so the key survives the session")
+
+	// Reading CKA_VALUE of a sensitive key must be refused by the token.
+	_, err = b.p11ctx.GetAttributeValue(session, handle, []*pkcs11.Attribute{
+		pkcs11.NewAttribute(pkcs11.CKA_VALUE, nil),
+	})
+	assert.Error(t, err, "the token must refuse to export a sensitive key")
+}
+
+// TestGenerateSymmetricKey_RejectsNonAESAlgorithms verifies the backend refuses
+// algorithms it does not implement instead of quietly generating an AES key.
+//
+// types.SymmetricAlgorithm.KeySize reports 256 bits for both ChaCha20-Poly1305
+// variants, so without an explicit check they sail through the key size
+// validation and the caller receives an AES-GCM key under a ChaCha20 label.
+func TestGenerateSymmetricKey_RejectsNonAESAlgorithms(t *testing.T) {
+	b := newProvisionedBackend(t, "sym-badalg")
+
+	for _, algorithm := range []types.SymmetricAlgorithm{
+		types.SymmetricChaCha20Poly1305,
+		types.SymmetricXChaCha20Poly1305,
+	} {
+		t.Run(string(algorithm), func(t *testing.T) {
+			attrs := symmetricAttrs("badalg-"+string(algorithm), algorithm)
+
+			_, err := b.GenerateSymmetricKey(context.Background(), attrs)
+			assert.ErrorIs(t, err, backend.ErrInvalidAlgorithm)
+
+			_, err = b.GetSymmetricKey(context.Background(), attrs)
+			assert.ErrorIs(t, err, backend.ErrInvalidAlgorithm)
+		})
+	}
+}
+
+// TestGenerateSymmetricKey_AES192IsGeneratedNotRefused guards the layer gap
+// that previously made types.SymmetricAES192GCM unusable.
+//
+// GenerateSymmetricKey accepts 128, 192 and 256 bit keys, but the underlying
+// Backend.GenerateSecretKey in pkcs11.go once accepted only 128 and 256, so an
+// algorithm the backend advertised was refused on generation. FIPS 197 defines
+// AES-192 and SoftHSM2 supports it, so that was a code limit rather than a
+// token limit. This asserts the key is generated at the right size and is
+// actually usable, which is what an advertised algorithm has to mean.
+func TestGenerateSymmetricKey_AES192IsGeneratedNotRefused(t *testing.T) {
+	b := newProvisionedBackend(t, "sym-aes192")
+	attrs := symmetricAttrs("aes192-key", types.SymmetricAES192GCM)
+
+	key, err := b.GenerateSymmetricKey(context.Background(), attrs)
+	require.NoError(t, err)
+	assert.Equal(t, string(types.SymmetricAES192GCM), key.Algorithm())
+	assert.Equal(t, 192, key.KeySize())
+
+	encrypter, err := b.SymmetricEncrypter(context.Background(), attrs)
+	require.NoError(t, err)
+
+	encrypted, err := encrypter.Encrypt([]byte("aes-192 round trip"), &types.EncryptOptions{
+		AdditionalData: []byte("aad"),
+	})
+	require.NoError(t, err)
+
+	opened, err := encrypter.Decrypt(encrypted, &types.DecryptOptions{
+		AdditionalData: []byte("aad"),
+	})
+	require.NoError(t, err)
+	assert.Equal(t, []byte("aes-192 round trip"), opened)
+}
+
+// TestGetSymmetricKey_NotOnToken verifies the lookup reports the canonical
+// key-not-found error rather than a PKCS#11 status code.
+func TestGetSymmetricKey_NotOnToken(t *testing.T) {
+	b := newProvisionedBackend(t, "sym-absent")
+	attrs := symmetricAttrs("a-key-that-was-never-generated", types.SymmetricAES256GCM)
+
+	_, err := b.GetSymmetricKey(context.Background(), attrs)
+	assert.ErrorIs(t, err, backend.ErrKeyNotFound)
+
+	_, err = b.SymmetricEncrypter(context.Background(), attrs)
+	assert.ErrorIs(t, err, backend.ErrKeyNotFound)
+}
+
+// TestGenerateSymmetricKey_InitializesAEADTracking verifies key generation
+// registers the AEAD safety options that the nonce and byte limits depend on.
+// Without them the tracker has no configuration for the key and enforces
+// nothing.
+func TestGenerateSymmetricKey_InitializesAEADTracking(t *testing.T) {
+	b := newProvisionedBackend(t, "sym-tracking")
+	attrs := symmetricAttrs("tracked-key", types.SymmetricAES256GCM)
+
+	_, err := b.GenerateSymmetricKey(context.Background(), attrs)
+	require.NoError(t, err)
+
+	tracker := b.GetTracker()
+	require.NotNil(t, tracker)
+
+	opts, err := tracker.GetAEADOptions(createKeyID(attrs))
+	require.NoError(t, err, "generation must register AEAD options for the new key")
+	assert.Equal(t, types.DefaultAEADOptions().NonceTracking, opts.NonceTracking)
+}
+
+// TestSymmetricEncrypter_RejectsNonceReuse verifies the tracker refuses a
+// second encryption under a nonce already used with the same key.
+//
+// Nonce reuse under one GCM key reveals the XOR of the two plaintexts and leaks
+// the authentication subkey, so this check must run before the token is asked
+// to encrypt, not after.
+func TestSymmetricEncrypter_RejectsNonceReuse(t *testing.T) {
+	b := newProvisionedBackend(t, "sym-noncereuse")
+
+	key := make([]byte, 32)
+	_, err := rand.Read(key)
+	require.NoError(t, err)
+
+	attrs := installKnownAESKey(t, b, "sym-noncereuse-key", key)
+	require.NoError(t, b.GetTracker().SetAEADOptions(createKeyID(attrs), &types.AEADOptions{
+		NonceTracking: true,
+	}))
+
+	encrypter, err := b.SymmetricEncrypter(context.Background(), attrs)
+	require.NoError(t, err)
+
+	nonce := bytes.Repeat([]byte{0x7F}, 12)
+
+	_, err = encrypter.Encrypt([]byte("first message"), &types.EncryptOptions{Nonce: nonce})
+	require.NoError(t, err)
+
+	_, err = encrypter.Encrypt([]byte("second message"), &types.EncryptOptions{Nonce: nonce})
+	assert.ErrorIs(t, err, backend.ErrNonceReused)
+}
+
+// TestSymmetricEncrypter_EnforcesBytesLimit verifies the per-key byte budget is
+// enforced on the encrypt path, and that a request rejected for a malformed
+// nonce does not consume any of that budget.
+func TestSymmetricEncrypter_EnforcesBytesLimit(t *testing.T) {
+	b := newProvisionedBackend(t, "sym-byteslimit")
+
+	key := make([]byte, 32)
+	_, err := rand.Read(key)
+	require.NoError(t, err)
+
+	attrs := installKnownAESKey(t, b, "sym-byteslimit-key", key)
+	keyID := createKeyID(attrs)
+	require.NoError(t, b.GetTracker().SetAEADOptions(keyID, &types.AEADOptions{
+		BytesTracking:      true,
+		BytesTrackingLimit: 64,
+	}))
+
+	encrypter, err := b.SymmetricEncrypter(context.Background(), attrs)
+	require.NoError(t, err)
+
+	// A request rejected for a bad nonce must not be counted: validation runs
+	// before the tracker is touched.
+	_, err = encrypter.Encrypt(make([]byte, 64), &types.EncryptOptions{Nonce: make([]byte, 16)})
+	require.ErrorIs(t, err, ErrInvalidNonceLength)
+
+	counted, err := b.GetTracker().GetBytesEncrypted(keyID)
+	require.NoError(t, err)
+	assert.Zero(t, counted, "a rejected request consumed part of the key's byte budget")
+
+	_, err = encrypter.Encrypt(make([]byte, 64), nil)
+	require.NoError(t, err)
+
+	_, err = encrypter.Encrypt([]byte("one byte over"), nil)
+	assert.ErrorIs(t, err, backend.ErrBytesLimitExceeded)
+}
+
+// TestSymmetricEncrypter_ContextNotInitialized verifies both halves refuse to
+// operate when the backend has no PKCS#11 context, rather than dereferencing
+// it.
+func TestSymmetricEncrypter_ContextNotInitialized(t *testing.T) {
+	encrypter := &pkcs11SymmetricEncrypter{
+		backend: &Backend{config: &Config{Library: "unused", TokenLabel: "unused"}},
+		attrs:   symmetricAttrs("no-context-key", types.SymmetricAES256GCM),
+	}
+
+	_, err := encrypter.Encrypt([]byte("payload"), nil)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "PKCS#11 context not initialized")
+
+	_, err = encrypter.Decrypt(&types.EncryptedData{
+		Ciphertext: []byte("ciphertext"),
+		Nonce:      make([]byte, 12),
+		Tag:        make([]byte, 16),
+	}, nil)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "PKCS#11 context not initialized")
+}
+
+// TestGenerateSymmetricKey_RejectsInvalidAttributes exercises the validation
+// that runs on an initialized backend, where the not-initialized check no
+// longer short-circuits it.
+func TestGenerateSymmetricKey_RejectsInvalidAttributes(t *testing.T) {
+	b := newProvisionedBackend(t, "sym-validate")
+
+	cases := []struct {
+		name  string
+		attrs *types.KeyAttributes
+		check func(t *testing.T, err error)
+	}{
+		{
+			name: "missing CN",
+			attrs: &types.KeyAttributes{
+				KeyType:            backend.KEY_TYPE_SECRET,
+				StoreType:          backend.STORE_PKCS11,
+				SymmetricAlgorithm: types.SymmetricAES256GCM,
+			},
+			check: func(t *testing.T, err error) {
+				assert.Contains(t, err.Error(), "invalid attributes")
+			},
+		},
+		{
+			name: "asymmetric attributes",
+			attrs: &types.KeyAttributes{
+				CN:            "rsa-not-symmetric",
+				KeyType:       backend.KEY_TYPE_TLS,
+				StoreType:     backend.STORE_PKCS11,
+				KeyAlgorithm:  x509.RSA,
+				RSAAttributes: &types.RSAAttributes{KeySize: 2048},
+			},
+			check: func(t *testing.T, err error) {
+				assert.ErrorIs(t, err, backend.ErrInvalidAlgorithm)
+				assert.Contains(t, err.Error(), "asymmetric algorithm")
+			},
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			_, err := b.GenerateSymmetricKey(context.Background(), tc.attrs)
+			require.Error(t, err)
+			tc.check(t, err)
+
+			_, err = b.GetSymmetricKey(context.Background(), tc.attrs)
+			require.Error(t, err)
+			tc.check(t, err)
+		})
+	}
+}
+
+// TestSymmetricEncrypter_KeyUsageIsEnforced verifies the token's key usage
+// flags are respected: a key without CKA_ENCRYPT cannot encrypt and a key
+// without CKA_DECRYPT cannot decrypt.
+//
+// PKCS#11 gates C_EncryptInit and C_DecryptInit on those attributes, and the
+// resulting CKR_KEY_FUNCTION_NOT_PERMITTED must reach the caller rather than
+// being retried or worked around in software.
+func TestSymmetricEncrypter_KeyUsageIsEnforced(t *testing.T) {
+	key := make([]byte, 32)
+	_, err := rand.Read(key)
+	require.NoError(t, err)
+
+	t.Run("decrypt-only key cannot encrypt", func(t *testing.T) {
+		b := newProvisionedBackend(t, "sym-usage-dec")
+		attrs := installAESKeyWithUsage(t, b, "decrypt-only-key", key, false, true)
+
+		encrypter, err := b.SymmetricEncrypter(context.Background(), attrs)
+		require.NoError(t, err)
+
+		_, err = encrypter.Encrypt([]byte("payload"), nil)
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "failed to initialize encryption")
+	})
+
+	t.Run("encrypt-only key cannot decrypt", func(t *testing.T) {
+		b := newProvisionedBackend(t, "sym-usage-enc")
+		attrs := installAESKeyWithUsage(t, b, "encrypt-only-key", key, true, false)
+
+		encrypter, err := b.SymmetricEncrypter(context.Background(), attrs)
+		require.NoError(t, err)
+
+		encrypted, err := encrypter.Encrypt([]byte("payload"), nil)
+		require.NoError(t, err)
+
+		_, err = encrypter.Decrypt(encrypted, nil)
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "failed to initialize decryption")
+	})
 }

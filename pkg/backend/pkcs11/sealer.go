@@ -36,6 +36,25 @@ func (b *Backend) CanSeal() bool {
 	return b.pool != nil && b.p11ctx != nil
 }
 
+// checkInitialized reports whether the backend has an active PKCS#11 context.
+//
+// It takes and releases the read lock itself rather than leaving it held. Seal
+// and Unseal must not hold b.mu across their call to SymmetricEncrypter, which
+// reacquires the same RWMutex through GetSymmetricKey: sync.RWMutex documents
+// that a recursive read lock deadlocks if a writer blocks between the two
+// acquisitions, and GenerateSymmetricKey, Initialize and Close are all writers.
+// The window is small, which is exactly what makes it the kind of deadlock that
+// only appears under load in production.
+func (b *Backend) checkInitialized() error {
+	b.mu.RLock()
+	defer b.mu.RUnlock()
+
+	if b.pool == nil || b.p11ctx == nil {
+		return ErrNotInitialized
+	}
+	return nil
+}
+
 // Seal encrypts/protects data using an HSM-resident symmetric key.
 //
 // The sealing process:
@@ -57,11 +76,8 @@ func (b *Backend) Seal(ctx context.Context, data []byte, opts *types.SealOptions
 		return nil, &errs.Message{Msg: "seal options with KeyAttributes required"}
 	}
 
-	b.mu.RLock()
-	defer b.mu.RUnlock()
-
-	if b.pool == nil || b.p11ctx == nil {
-		return nil, ErrNotInitialized
+	if err := b.checkInitialized(); err != nil {
+		return nil, err
 	}
 
 	keyAttrs := opts.KeyAttributes
@@ -134,11 +150,8 @@ func (b *Backend) Unseal(ctx context.Context, sealed *types.SealedData, opts *ty
 		return nil, &errs.Message{Msg: "unseal options with KeyAttributes required"}
 	}
 
-	b.mu.RLock()
-	defer b.mu.RUnlock()
-
-	if b.pool == nil || b.p11ctx == nil {
-		return nil, ErrNotInitialized
+	if err := b.checkInitialized(); err != nil {
+		return nil, err
 	}
 
 	keyAttrs := opts.KeyAttributes

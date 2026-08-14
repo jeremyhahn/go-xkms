@@ -1,5 +1,11 @@
 # Bootstrap CLI Commands
 
+> **Scope:** this page documents the go-xkms **server** CLI `xkmsctl bootstrap`
+> (source: `cmd/xkmsctl/`), **not** the `xkey` desktop CLI. It lives under
+> `xkey/docs/` for historical reasons.
+> There is no `xkey` equivalent. For the xkey command tree see
+> [the xkey CLI reference](README.md).
+
 The `bootstrap` command group provides tools for secure CA bundle retrieval and DANE/TLSA record management. These commands support the bootstrap workflow where a new node obtains CA certificates before TLS is configured.
 
 For protocol details, see the [CA Bundle Bootstrap documentation](../../ca/bootstrap.md).

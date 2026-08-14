@@ -243,6 +243,21 @@ func (s *Server) initEmbeddedQRDBNode() error {
 		}
 	}
 
+	// Publish this node's client-facing API endpoints so peers can redirect a
+	// client to it when it leads. Advertisement is not required to serve, so a
+	// failure degrades the cluster to leader hints without an API address
+	// rather than preventing startup.
+	if err := s.startClusterAdvertiser(); err != nil {
+		s.logger.Warn("cluster: failed to advertise this node's API endpoints; "+
+			"clients will not be redirected to it when it leads", "error", err)
+	}
+
+	// First-boot deliberately does NOT run here. The node and its unsealed
+	// barrier are only half of what it needs: the administrator's certificate
+	// is issued by the CA, and the CA is initialized later in New. Bootstrapping
+	// from here produced an administrator with no bound certificate — an
+	// identity nobody can authenticate as. New calls runFirstBoot once both are
+	// ready.
 	return nil
 }
 
@@ -284,6 +299,12 @@ func (s *Server) stopQRDBNode() error {
 	node := s.qrdbNode
 	if node == nil {
 		return nil
+	}
+	// Deregister before the node closes so the registry entry goes away while
+	// the KV that holds it is still writable; peers then stop redirecting
+	// clients here immediately instead of waiting for the lease to expire.
+	if err := s.stopClusterAdvertiser(); err != nil {
+		s.logger.Warn("cluster: failed to withdraw this node's advertisement", "error", err)
 	}
 	sink := s.qrdbAuditSink
 	s.qrdbNode = nil

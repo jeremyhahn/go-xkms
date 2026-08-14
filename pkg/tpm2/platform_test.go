@@ -1023,8 +1023,12 @@ func TestPlatformKeyStore_BuildSRKAttrsNoPlatformSRKConfig(t *testing.T) {
 
 func TestPlatformKeyStore_EvictionFailsWithClearError(t *testing.T) {
 	// When the SRK already exists with different auth and eviction fails
-	// (hierarchy auth from prior installation), Initialize must return
-	// ErrPlatformKeyStoreEvictSRK with a clear message.
+	// because the owner hierarchy rejected the operation, Initialize must
+	// report ErrPlatformSRKHierarchyAuth: the TPM only says TPM_RC_BAD_AUTH,
+	// which names neither the hierarchy nor what to supply.
+	//
+	// Eviction failures that are NOT authorization problems still surface as
+	// ErrPlatformKeyStoreEvictSRK; see the sibling test below.
 	mock := &mockTPMForPKS{
 		config:        testConfigForPKS(false),
 		readHandleErr: nil,                           // SRK handle exists
@@ -1037,9 +1041,29 @@ func TestPlatformKeyStore_EvictionFailsWithClearError(t *testing.T) {
 
 	err := pks.Initialize("", "userpin1")
 	require.Error(t, err, "Initialize must fail when eviction fails")
-	require.ErrorIs(t, err, ErrPlatformKeyStoreEvictSRK,
-		"error must indicate eviction failure")
+	require.ErrorIs(t, err, ErrPlatformSRKHierarchyAuth,
+		"an auth-rejected eviction must name the owner hierarchy")
 	assert.False(t, pks.IsAuthReady(), "auth must NOT be ready after eviction failure")
+}
+
+// TestPlatformKeyStore_NonAuthEvictionFailureKeepsGenericError is the companion
+// guard: the hierarchy-auth diagnosis must not swallow unrelated eviction
+// failures, which still report ErrPlatformKeyStoreEvictSRK.
+func TestPlatformKeyStore_NonAuthEvictionFailureKeepsGenericError(t *testing.T) {
+	mock := &mockTPMForPKS{
+		config:        testConfigForPKS(false),
+		readHandleErr: nil,
+		verifyAuthErr: errors.New("TPM_RC_BAD_AUTH"),
+		deleteKeyErr:  errors.New("TPM_RC_NV_SPACE"), // not an auth problem
+	}
+	pks := newTestPlatformKeyStore(t, mock)
+
+	err := pks.Initialize("", "userpin1")
+	require.Error(t, err)
+	require.ErrorIs(t, err, ErrPlatformKeyStoreEvictSRK,
+		"a non-auth eviction failure must keep the generic eviction error")
+	assert.NotErrorIs(t, err, ErrPlatformSRKHierarchyAuth,
+		"a non-auth failure must not be reported as a hierarchy auth problem")
 }
 
 func TestPlatformKeyStore_EvictionSucceedsWithSOPIN(t *testing.T) {

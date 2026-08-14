@@ -50,14 +50,39 @@ type ClaimCertCompleteResponse struct {
 	CACertPEM string `json:"ca_cert_pem"`
 }
 
-// ClaimShareRequest contains parameters for claiming a Shamir share.
-type ClaimShareRequest struct {
-	Username string `json:"username"`
+// ClaimShareBeginRequest contains parameters for beginning a Shamir share
+// claim.
+//
+// CallerCertThumbprint is deliberately excluded from JSON: it is NEVER read
+// from the request body. Each transport computes it from the verified mTLS
+// peer certificate and assigns it after decoding, so a client cannot assert
+// another officer's identity by putting a thumbprint on the wire.
+type ClaimShareBeginRequest struct {
+	Username             string `json:"username"`
+	CallerCertThumbprint string `json:"-"`
 }
 
-// ClaimShareResponse contains the claimed Shamir share.
-type ClaimShareResponse struct {
-	Share json.RawMessage `json:"share"`
+// ClaimShareBeginResponse contains the challenge for a Shamir share claim.
+type ClaimShareBeginResponse struct {
+	Nonce     string    `json:"nonce"`
+	Username  string    `json:"username"`
+	ExpiresAt time.Time `json:"expires_at"`
+}
+
+// ClaimShareCompleteRequest contains parameters for completing a Shamir share
+// claim. CallerCertThumbprint carries the same never-from-the-wire contract as
+// ClaimShareBeginRequest.
+type ClaimShareCompleteRequest struct {
+	Username             string `json:"username"`
+	Nonce                string `json:"nonce"`
+	Signature            string `json:"signature"` // base64-encoded
+	CallerCertThumbprint string `json:"-"`
+}
+
+// ClaimShareCompleteResponse contains the claimed Shamir share.
+type ClaimShareCompleteResponse struct {
+	ShareIndex int             `json:"share_index"`
+	Share      json.RawMessage `json:"share"`
 }
 
 // SignCSRInitRequest contains parameters for SO-authorized CSR signing during init.

@@ -91,21 +91,19 @@ func (m *mockSerializer) Serialize(key interface{}) ([]byte, error) {
 // - The TPM doesn't have an EK certificate yet (that's what this challenge issues)
 // - Validation is handled via EAB and server policy during CSR processing
 func TestVerify_ReturnsNil(t *testing.T) {
-	ca := &mockCA{}
 	resolver := net.DefaultResolver
 
 	// Verify should always return nil regardless of inputs
-	err := Verify(resolver, ca, "127.0.0.1", "8080", "token", "keyauth")
+	err := Verify(resolver, "127.0.0.1", "8080", "token", "keyauth")
 	if err != nil {
 		t.Errorf("Verify() should return nil, got: %v", err)
 	}
 }
 
 func TestVerify_ReturnsNilWithEmptyParams(t *testing.T) {
-	ca := &mockCA{}
 
 	// Even with empty parameters, Verify should return nil
-	err := Verify(nil, ca, "", "", "", "")
+	err := Verify(nil, "", "", "", "")
 	if err != nil {
 		t.Errorf("Verify() should return nil even with empty params, got: %v", err)
 	}
@@ -114,7 +112,7 @@ func TestVerify_ReturnsNilWithEmptyParams(t *testing.T) {
 func TestVerify_ReturnsNilWithNilCA(t *testing.T) {
 	// Verify should return nil even with nil CA
 	// (though in practice CA should never be nil)
-	err := Verify(nil, nil, "domain", "port", "token", "keyauth")
+	err := Verify(nil, "domain", "port", "token", "keyauth")
 	if err != nil {
 		t.Errorf("Verify() should return nil even with nil CA, got: %v", err)
 	}
@@ -350,10 +348,9 @@ func BenchmarkSetup(b *testing.B) {
 }
 
 func BenchmarkVerify(b *testing.B) {
-	ca := &mockCA{}
 
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
-		_ = Verify(nil, ca, "domain", "port", "token", "keyauth")
+		_ = Verify(nil, "domain", "port", "token", "keyauth")
 	}
 }

@@ -45,7 +45,36 @@ const (
 
 	// AlgorithmSP800108DoublePipeline represents NIST SP 800-108 Double-Pipeline Mode KDF
 	AlgorithmSP800108DoublePipeline KDFAlgorithm = "SP800-108-DOUBLE-PIPELINE"
+
+	// AlgorithmX963 represents the ANSI X9.63 concatenation KDF
+	AlgorithmX963 KDFAlgorithm = "X963"
+
+	// AlgorithmSP80056A represents the NIST SP 800-56A concatenation KDF
+	AlgorithmSP80056A KDFAlgorithm = "SP800-56A"
 )
+
+// adapterFactory provides O(1) construction of the canonical adapter for an
+// algorithm. It is the single dispatch table for key derivation in go-xkms.
+var adapterFactory = map[KDFAlgorithm]func() KDFAdapter{
+	AlgorithmHKDF:                   func() KDFAdapter { return NewHKDFAdapter() },
+	AlgorithmSP800108Counter:        func() KDFAdapter { return NewSP800108CounterAdapter() },
+	AlgorithmSP800108Feedback:       func() KDFAdapter { return NewSP800108FeedbackAdapter() },
+	AlgorithmSP800108DoublePipeline: func() KDFAdapter { return NewSP800108DoublePipelineAdapter() },
+	AlgorithmX963:                   func() KDFAdapter { return NewX963Adapter() },
+	AlgorithmSP80056A:               func() KDFAdapter { return NewSP80056AAdapter() },
+}
+
+// NewAdapter returns the canonical adapter for algorithm. It returns
+// ErrUnsupportedAlgorithm for algorithms this package does not implement and
+// for the password-based KDFs, whose cost parameters make them unsuitable for
+// the generic key-agreement path; construct those adapters directly.
+func NewAdapter(algorithm KDFAlgorithm) (KDFAdapter, error) {
+	factory, ok := adapterFactory[algorithm]
+	if !ok {
+		return nil, ErrUnsupportedAlgorithm
+	}
+	return factory(), nil
+}
 
 // String returns the string representation of the KDF algorithm
 func (a KDFAlgorithm) String() string {
@@ -98,6 +127,17 @@ type KDFParams struct {
 
 	// IV is the initial value for feedback mode (SP800-108 Feedback only)
 	IV []byte
+
+	// FixedInput, when non-empty, is used verbatim as the SP800-108 fixed
+	// input data in place of the Label || 0x00 || Context || [L]_2 assembly.
+	// SP 800-108r1 recommends that encoding but permits any agreed format,
+	// and protocols that specify their own fixed input data (and the NIST
+	// CAVP KDF108 vectors) supply the assembled blob directly.
+	//
+	// It is mutually exclusive with Label and Context, and requires a
+	// CounterLocation of "before" or "after": "middle" has no defined split
+	// point in an opaque blob. (SP800-108 only)
+	FixedInput []byte
 }
 
 // KDFAdapter is the interface for key derivation function adapters
@@ -152,6 +192,20 @@ var (
 
 	// ErrInvalidCounterLength indicates the counter length is invalid (SP800-108)
 	ErrInvalidCounterLength = errors.New("kdf: invalid counter length (must be 8, 16, 24, or 32)")
+
+	// ErrInvalidCounterLocation indicates the counter location is not one of
+	// the placements SP 800-108 defines for the fixed input data (SP800-108)
+	ErrInvalidCounterLocation = errors.New("kdf: invalid counter location (must be \"before\", \"middle\", or \"after\")")
+
+	// ErrIVNotPermitted indicates an initial value was supplied for a mode
+	// that has no chaining value. Only Feedback Mode consumes an IV
+	// (SP800-108)
+	ErrIVNotPermitted = errors.New("kdf: initial value is only permitted in SP800-108 feedback mode")
+
+	// ErrFixedInputConflict indicates FixedInput was combined with Label or
+	// Context, which describe two different ways to build the same fixed
+	// input data (SP800-108)
+	ErrFixedInputConflict = errors.New("kdf: FixedInput cannot be combined with Label or Context")
 
 	// ErrOutputTooLong indicates the requested output exceeds maximum allowed
 	ErrOutputTooLong = errors.New("kdf: requested output length exceeds maximum")

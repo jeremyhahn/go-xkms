@@ -19,6 +19,7 @@ import (
 	"net/http"
 
 	"github.com/jeremyhahn/go-xkms/pkg/api/transport"
+	"github.com/jeremyhahn/go-xkms/pkg/auth"
 )
 
 // handleIssueEKCertificate issues an Endorsement Key certificate for a TPM.
@@ -29,7 +30,7 @@ func (s *Server) handleIssueEKCertificate(w http.ResponseWriter, r *http.Request
 		return
 	}
 
-	if !s.authorize(w, r, "certs", "generate") {
+	if !s.authorize(w, r, auth.ResourceCerts, auth.ActionGenerate) {
 		return
 	}
 
@@ -63,7 +64,7 @@ func (s *Server) handleIssueAKCertificate(w http.ResponseWriter, r *http.Request
 		return
 	}
 
-	if !s.authorize(w, r, "certs", "generate") {
+	if !s.authorize(w, r, auth.ResourceCerts, auth.ActionGenerate) {
 		return
 	}
 
@@ -97,7 +98,7 @@ func (s *Server) handleSignTCGCSR(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if !s.authorize(w, r, "certs", "generate") {
+	if !s.authorize(w, r, auth.ResourceCerts, auth.ActionGenerate) {
 		return
 	}
 
@@ -132,7 +133,7 @@ func (s *Server) handleEnrollDevice(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if !s.authorize(w, r, "certs", "generate") {
+	if !s.authorize(w, r, auth.ResourceCerts, auth.ActionGenerate) {
 		return
 	}
 

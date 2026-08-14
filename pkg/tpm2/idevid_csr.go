@@ -8,6 +8,7 @@ import (
 	"crypto/x509"
 	"encoding/binary"
 	"errors"
+	"io"
 	"log/slog"
 	"math/big"
 	"os"
@@ -55,28 +56,54 @@ func (tpm *TPM2) CreateTCG_CSR_IDEVID(
 		return TCG_CSR_IDEVID{}, err
 	}
 
+	// Size the TCG_IDEVID_CONTENT structure for the CSR's Contents header.
+	//
+	// Per TCG "TPM 2.0 Keys for Device Identity and Attestation" section 13.1,
+	// Contents is the size of the TCG_IDEVID_CONTENT structure, and a padded
+	// structure is a multiple of 16 bytes. Three separate errors used to make
+	// this wrong, and only xkms's own tolerance hid them: UnmarshalIDevIDCSR
+	// ignores Contents and re-reads the individual length fields, so a
+	// spec-conformant third-party CA slicing the message by Contents was the
+	// only party that ever saw the damage.
+	//
+	//  1. The payload sum omitted SigningPubSZ, SgnCertifyInfoSZ and
+	//     SgnCertifyInfoSignatureSZ, and counted 10 header fields where the
+	//     structure has 16 -- together understating a real CSR by ~709 bytes.
+	//  2. The pad was contents%16, the remainder, where alignment needs
+	//     (16 - contents%16) % 16. Padded structures came out unaligned.
+	//  3. contents was assigned only inside the padding branch, so with
+	//     padding disabled the header advertised a size of zero.
+	//
+	// Accumulate in uint64 so a hostile or corrupt set of lengths reports an
+	// overflow instead of wrapping into a plausible small size.
+	const idevidContentSizeFields = 16
+	payloadSz := uint64(content.ProdModelSz) + uint64(content.ProdSerialSz) +
+		uint64(content.ProdCaDataSz) + uint64(content.BootEvntLogSz) +
+		uint64(content.EkCertSZ) + uint64(content.AttestPubSZ) +
+		uint64(content.AtCreateTktSZ) + uint64(content.AtCertifyInfoSZ) +
+		uint64(content.AtCertifyInfoSignatureSZ) + uint64(content.SigningPubSZ) +
+		uint64(content.SgnCertifyInfoSZ) + uint64(content.SgnCertifyInfoSignatureSZ)
+
+	baseSz := payloadSz + uint64(idevidContentSizeFields*4)
+
 	var padding []byte
 	var padSz uint32
-	var contents uint32
 	if tpm.config.IDevID.Pad {
-		// // Payload is followed by padSz bytes of random data here
-		// to make the structure size a multiple of 16 bytes.
-		numSizeFields := 10
-		sz := content.ProdModelSz + content.ProdSerialSz +
-			content.ProdCaDataSz + content.BootEvntLogSz +
-			content.EkCertSZ + content.AttestPubSZ + content.AtCreateTktSZ +
-			content.AtCertifyInfoSZ + content.AtCertifyInfoSignatureSZ +
-			content.PadSz
-		if numSizeFields*4 > math.MaxUint32 {
-			return TCG_CSR_IDEVID{}, &errs.Message{Msg: fmt.Sprintf("size fields overflow: %d", numSizeFields*4)}
-		}
-		contents = sz + uint32(numSizeFields*4) // #nosec G115 -- CSR size calculation
-		padSz = uint32(contents % 16)
+		// Payload is followed by padSz bytes here to make the structure a
+		// multiple of 16 bytes.
+		padSz = uint32((16 - baseSz%16) % 16) // #nosec G115 -- result is < 16
 		padding = make([]byte, padSz)
 		for i := uint32(0); i < padSz; i++ {
 			padding[i] = '='
 		}
 	}
+
+	totalSz := baseSz + uint64(padSz)
+	if totalSz > math.MaxUint32 {
+		return TCG_CSR_IDEVID{}, &errs.Message{
+			Msg: fmt.Sprintf("TCG_IDEVID_CONTENT size overflows uint32: %d", totalSz)}
+	}
+	contents := uint32(totalSz) // #nosec G115 -- bounds checked above
 
 	binary.BigEndian.PutUint32(tcgContent.StructVer[:], 0x00000100)
 	binary.BigEndian.PutUint32(tcgContent.HashAlgoId[:], content.HashAlgoId)
@@ -172,6 +199,16 @@ func (tpm *TPM2) createIDevIDContent(
 
 	if ekCert == nil {
 		return nil, ErrInvalidEKCert
+	}
+	// Under EnrollmentStrategyIAK there is no IDevID key, and
+	// IDevIDAttributes() reports that with ErrIDevIDConfigNil. Passing that nil
+	// through reached the idevidAttrs.Hash dereference below and panicked;
+	// library code must return the error instead.
+	if idevidAttrs == nil {
+		return nil, ErrIDevIDConfigNil
+	}
+	if akAttrs == nil {
+		return nil, ErrIAKConfigNil
 	}
 	ekCertRaw := ekCert.Raw
 
@@ -290,9 +327,21 @@ func (tpm *TPM2) createIDevIDContent(
 //
 // Returns the packed ProdCaData bytes, its size, and any error.
 func (tpm *TPM2) createProdCaData() ([]byte, uint32, error) {
-	// Check if TPM device is available (may be nil in unit tests)
-	if tpm.device == nil {
-		tpm.logger.Debug("tpm: no TPM device available, skipping ProdCaData creation")
+	// Gate on the transport, not on tpm.device.
+	//
+	// tpm.device holds an *os.File and is populated only by the raw
+	// os.OpenFile branch of NewTPM2 (tpm.go). A unix-socket TPM (".sock"), a
+	// TCP/mssim TPM, the in-process simulator and an injected transport all
+	// leave it nil while being perfectly capable of producing a quote, so this
+	// guard used to drop the attestation from every enrollment CSR on those
+	// deployments -- no quote, no PCRs -- announced by nothing louder than a
+	// Debug line. A CA that expects to verify platform state received a CSR
+	// that silently carried none.
+	//
+	// tpm.transport is assigned on every path in NewTPM2 and is what the
+	// commands below actually travel over, so it is the honest predicate.
+	if tpm.transport == nil {
+		tpm.logger.Debug("tpm: no TPM transport available, skipping ProdCaData creation")
 		return nil, 0, nil
 	}
 
@@ -563,7 +612,7 @@ func UnmarshalIDevIDCSR(csrBytes []byte) (*TCG_CSR_IDEVID, error) {
 	}
 
 	csrContentBytes := make([]byte, 0)
-	if _, err := reader.Read(csrContentBytes); err != nil {
+	if _, err := io.ReadFull(reader, csrContentBytes); err != nil {
 		return nil, err
 	}
 
@@ -574,7 +623,7 @@ func UnmarshalIDevIDCSR(csrBytes []byte) (*TCG_CSR_IDEVID, error) {
 	csr.CsrContents = *csrContents
 
 	csr.Signature = make([]byte, bytesToUint32(sigSz))
-	if _, err := reader.Read(csr.Signature); err != nil {
+	if _, err := io.ReadFull(reader, csr.Signature); err != nil {
 		return nil, err
 	}
 
@@ -649,67 +698,67 @@ func UnpackIDevIDContent(reader *bytes.Reader) (*TCG_IDEVID_CONTENT, error) {
 	}
 
 	content.ProdModel = make([]byte, bytesToUint32(content.ProdModelSz))
-	if _, err := reader.Read(content.ProdModel); err != nil {
+	if _, err := io.ReadFull(reader, content.ProdModel); err != nil {
 		return nil, err
 	}
 
 	content.ProdSerial = make([]byte, bytesToUint32(content.ProdSerialSz))
-	if _, err := reader.Read(content.ProdSerial); err != nil {
+	if _, err := io.ReadFull(reader, content.ProdSerial); err != nil {
 		return nil, err
 	}
 
 	content.ProdCaData = make([]byte, bytesToUint32(content.ProdCaDataSz))
-	if _, err := reader.Read(content.ProdCaData); err != nil {
+	if _, err := io.ReadFull(reader, content.ProdCaData); err != nil {
 		return nil, err
 	}
 
 	content.BootEvntLog = make([]byte, bytesToUint32(content.BootEvntLogSz))
-	if _, err := reader.Read(content.BootEvntLog); err != nil {
+	if _, err := io.ReadFull(reader, content.BootEvntLog); err != nil {
 		return nil, err
 	}
 
 	content.EkCert = make([]byte, bytesToUint32(content.EkCertSZ))
-	if _, err := reader.Read(content.EkCert); err != nil {
+	if _, err := io.ReadFull(reader, content.EkCert); err != nil {
 		return nil, err
 	}
 
 	content.AttestPub = make([]byte, bytesToUint32(content.AttestPubSZ))
-	if _, err := reader.Read(content.AttestPub); err != nil {
+	if _, err := io.ReadFull(reader, content.AttestPub); err != nil {
 		return nil, err
 	}
 
 	content.AtCreateTkt = make([]byte, bytesToUint32(content.AtCreateTktSZ))
-	if _, err := reader.Read(content.AtCreateTkt); err != nil {
+	if _, err := io.ReadFull(reader, content.AtCreateTkt); err != nil {
 		return nil, err
 	}
 
 	content.AtCertifyInfo = make([]byte, bytesToUint32(content.AtCertifyInfoSZ))
-	if _, err := reader.Read(content.AtCertifyInfo); err != nil {
+	if _, err := io.ReadFull(reader, content.AtCertifyInfo); err != nil {
 		return nil, err
 	}
 
 	content.AtCertifyInfoSig = make([]byte, bytesToUint32(content.AtCertifyInfoSignatureSZ))
-	if _, err := reader.Read(content.AtCertifyInfoSig); err != nil {
+	if _, err := io.ReadFull(reader, content.AtCertifyInfoSig); err != nil {
 		return nil, err
 	}
 
 	content.SigningPub = make([]byte, bytesToUint32(content.SigningPubSZ))
-	if _, err := reader.Read(content.SigningPub); err != nil {
+	if _, err := io.ReadFull(reader, content.SigningPub); err != nil {
 		return nil, err
 	}
 
 	content.SgnCertifyInfo = make([]byte, bytesToUint32(content.SgnCertifyInfoSZ))
-	if _, err := reader.Read(content.SgnCertifyInfo); err != nil {
+	if _, err := io.ReadFull(reader, content.SgnCertifyInfo); err != nil {
 		return nil, err
 	}
 
 	content.SgnCertifyInfoSig = make([]byte, bytesToUint32(content.SgnCertifyInfoSignatureSZ))
-	if _, err := reader.Read(content.SgnCertifyInfoSig); err != nil {
+	if _, err := io.ReadFull(reader, content.SgnCertifyInfoSig); err != nil {
 		return nil, err
 	}
 
 	content.Pad = make([]byte, bytesToUint32(content.PadSz))
-	if _, err := reader.Read(content.Pad); err != nil {
+	if _, err := io.ReadFull(reader, content.Pad); err != nil {
 		return nil, err
 	}
 
@@ -1088,14 +1137,18 @@ func (tpm *TPM2) VerifyTCG_CSR_IDevID(
 	if err != nil {
 		return nil, nil, err
 	}
+	// TPM2_LoadExternal occupies a transient object slot until it is flushed
+	// (TCG TPM 2.0 Library Part 3, section 12.3). Deferring the flush rather
+	// than issuing it after KeyAttributes means a malformed public area -- which
+	// is attacker-supplied here, since it arrives inside a TCG-CSR-IDEVID -- can
+	// no longer strand a slot per rejected CSR.
+	defer tpm.Flush(iakLoadRsp.ObjectHandle)
 
 	// Load default TPM attributes for the IAK
 	iakAttrs, err := tpm.KeyAttributes(iakLoadRsp.ObjectHandle)
 	if err != nil {
 		return nil, nil, err
 	}
-
-	tpm.Flush(iakLoadRsp.ObjectHandle)
 
 	iakPub := iakAttrs.TPMAttributes.Public
 
@@ -1122,14 +1175,14 @@ func (tpm *TPM2) VerifyTCG_CSR_IDevID(
 	if err != nil {
 		return nil, nil, err
 	}
+	// Same slot-per-rejected-CSR reasoning as the IAK public area above.
+	defer tpm.Flush(idevidLoadRsp.ObjectHandle)
 
 	// Load default TPM attributes for the IDevID
 	idevidAttrs, err := tpm.KeyAttributes(idevidLoadRsp.ObjectHandle)
 	if err != nil {
 		return nil, nil, err
 	}
-
-	tpm.Flush(idevidLoadRsp.ObjectHandle)
 
 	idevidAttrs.Parent = ekAttrs
 	idevidAttrs.SignatureAlgorithm = signatureAlgorithm

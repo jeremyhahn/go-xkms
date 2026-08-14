@@ -20,11 +20,18 @@ import (
 	"strings"
 	"time"
 
-	"github.com/jeremyhahn/go-xkms/pkg/acme/auth"
+	acmeauth "github.com/jeremyhahn/go-xkms/pkg/acme/auth"
+	"github.com/jeremyhahn/go-xkms/pkg/auth"
 )
 
 // AuthHandler is the interface for authentication middleware.
 // Both token-based and mTLS authentication implement this interface.
+//
+// Every implementation must publish two things on the request context: the
+// AuthenticatedUser record (for tenant scoping and audit attribution) and the
+// canonical auth.Identity (for the qrdb-backed PermissionGate). Publishing only
+// the former would leave every privileged route unauthorizable and therefore
+// denied.
 type AuthHandler interface {
 	// Authenticate wraps an http.Handler with authentication.
 	Authenticate(next http.Handler) http.Handler
@@ -37,20 +44,18 @@ const (
 	// ContextKeyUser is the context key for the authenticated user.
 	ContextKeyUser contextKey = "user"
 
-	// ContextKeyRole is the context key for the user's role.
-	ContextKeyRole contextKey = "role"
-
 	// ContextKeyTenantID is the context key for the tenant ID.
 	ContextKeyTenantID contextKey = "tenant_id"
 )
 
-// AuthenticatedUser represents the authenticated user from QRDB.
+// AuthenticatedUser is the authenticated principal on an ACME admin request.
+// It carries attribution and tenant scope only: authorization is decided by the
+// qrdb RBAC engine through PermissionGate, never by inspecting these fields.
 type AuthenticatedUser struct {
 	UserID      string
 	Username    string
 	Email       string
 	TenantID    string
-	Role        Role
 	Roles       []string
 	Groups      []string
 	Permissions []string
@@ -59,13 +64,38 @@ type AuthenticatedUser struct {
 	ExpiresAt   time.Time
 }
 
+// identity converts the authenticated user into the canonical qrdb-shaped
+// identity the Authorizer consumes.
+func (u *AuthenticatedUser) identity() *auth.Identity {
+	return &auth.Identity{
+		Subject:  u.UserID,
+		TenantID: u.TenantID,
+		Roles:    u.Roles,
+		Metadata: map[string]string{
+			"auth_method": "acme-admin",
+			"username":    u.Username,
+			"session_id":  u.SessionID,
+		},
+	}
+}
+
+// withUser publishes both the AuthenticatedUser record and the canonical
+// auth.Identity on the request context. Both are required: handlers read the
+// user for tenant scoping and audit attribution, and the PermissionGate reads
+// the identity to resolve the caller's qrdb role grants.
+func withUser(ctx context.Context, user *AuthenticatedUser) context.Context {
+	ctx = context.WithValue(ctx, ContextKeyUser, user)
+	ctx = context.WithValue(ctx, ContextKeyTenantID, user.TenantID)
+	return auth.WithIdentity(ctx, user.identity())
+}
+
 // AuthMiddleware provides JWT authentication using QRDB Auth.
 type AuthMiddleware struct {
-	client auth.Client
+	client acmeauth.Client
 }
 
 // NewAuthMiddleware creates a new authentication middleware.
-func NewAuthMiddleware(client auth.Client) *AuthMiddleware {
+func NewAuthMiddleware(client acmeauth.Client) *AuthMiddleware {
 	return &AuthMiddleware{client: client}
 }
 
@@ -74,30 +104,26 @@ func (am *AuthMiddleware) Authenticate(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		token := extractBearerToken(r)
 		if token == "" {
-			writeProblem(w, http.StatusUnauthorized, "urn:trusted-ca:error:unauthorized", "Missing or invalid Authorization header")
+			writeProblem(w, http.StatusUnauthorized, problemUnauthorized, "Missing or invalid Authorization header")
 			return
 		}
 
 		claims, err := am.client.ValidateToken(r.Context(), token)
 		if err != nil || claims == nil || !claims.Valid {
-			writeProblem(w, http.StatusUnauthorized, "urn:trusted-ca:error:unauthorized", "Invalid token")
+			writeProblem(w, http.StatusUnauthorized, problemUnauthorized, "Invalid token")
 			return
 		}
 
 		if !claims.ExpiresAt.IsZero() && time.Now().After(claims.ExpiresAt) {
-			writeProblem(w, http.StatusUnauthorized, "urn:trusted-ca:error:unauthorized", "Token expired")
+			writeProblem(w, http.StatusUnauthorized, problemUnauthorized, "Token expired")
 			return
 		}
-
-		// Get highest role from claims
-		role := getHighestRole(claims.Roles)
 
 		user := &AuthenticatedUser{
 			UserID:      claims.UserID,
 			Username:    claims.Username,
 			Email:       claims.Email,
 			TenantID:    claims.TenantID,
-			Role:        role,
 			Roles:       claims.Roles,
 			Groups:      claims.Groups,
 			Permissions: claims.Permissions,
@@ -106,98 +132,31 @@ func (am *AuthMiddleware) Authenticate(next http.Handler) http.Handler {
 			ExpiresAt:   claims.ExpiresAt,
 		}
 
-		ctx := context.WithValue(r.Context(), ContextKeyUser, user)
-		ctx = context.WithValue(ctx, ContextKeyRole, role)
-		ctx = context.WithValue(ctx, ContextKeyTenantID, claims.TenantID)
-
-		next.ServeHTTP(w, r.WithContext(ctx))
+		next.ServeHTTP(w, r.WithContext(withUser(r.Context(), user)))
 	})
 }
 
-// RequireRole creates a middleware that requires a minimum role level.
-func RequireRole(minRole Role) func(http.Handler) http.Handler {
-	return func(next http.Handler) http.Handler {
-		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			role, ok := r.Context().Value(ContextKeyRole).(Role)
-			if !ok {
-				writeProblem(w, http.StatusUnauthorized, "urn:trusted-ca:error:unauthorized", "Authentication required")
-				return
-			}
-
-			if role.Level() < minRole.Level() {
-				writeProblem(w, http.StatusForbidden, "urn:trusted-ca:error:forbidden", "Insufficient privileges")
-				return
-			}
-
-			next.ServeHTTP(w, r)
-		})
-	}
-}
-
-// RequireOperation creates a middleware that requires permission for a specific operation.
-func RequireOperation(operation string) func(http.Handler) http.Handler {
-	return func(next http.Handler) http.Handler {
-		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			role, ok := r.Context().Value(ContextKeyRole).(Role)
-			if !ok {
-				writeProblem(w, http.StatusUnauthorized, "urn:trusted-ca:error:unauthorized", "Authentication required")
-				return
-			}
-
-			if !HasPermissionForOperation(role, operation) {
-				writeProblem(w, http.StatusForbidden, "urn:trusted-ca:error:forbidden", "Insufficient privileges for operation: "+operation)
-				return
-			}
-
-			next.ServeHTTP(w, r)
-		})
-	}
-}
-
-// RequireTenant creates a middleware that validates tenant access.
+// RequireTenant creates a middleware that validates tenant access. Cross-tenant
+// reach is decided by qrdb's system-tenant rule (see RequireTenantScope), not by
+// a local role name.
 func RequireTenant(getTenantID func(r *http.Request) string) func(http.Handler) http.Handler {
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			user := GetUserFromContext(r.Context())
-			if user == nil {
-				writeProblem(w, http.StatusUnauthorized, "urn:trusted-ca:error:unauthorized", "Authentication required")
-				return
-			}
-
 			tenantID := getTenantID(r)
 			if tenantID == "" {
 				writeProblem(w, http.StatusBadRequest, "urn:trusted-ca:error:bad-request", "Tenant ID is required")
 				return
 			}
 
-			// Super-admins can access any tenant
-			if user.Role != RoleSuperAdmin && user.TenantID != tenantID {
-				writeProblem(w, http.StatusForbidden, "urn:trusted-ca:error:forbidden", "Cannot access tenant")
-				return
+			switch err := RequireTenantScope(r.Context(), tenantID); {
+			case err == nil:
+				next.ServeHTTP(w, r)
+			case err == auth.ErrUnauthenticated:
+				writeProblem(w, http.StatusUnauthorized, problemUnauthorized, "Authentication required")
+			default:
+				writeProblem(w, http.StatusForbidden, problemForbidden, "Cannot access tenant")
 			}
-
-			next.ServeHTTP(w, r)
 		})
-	}
-}
-
-// HasPermissionForOperation checks if a role can perform a specific operation.
-func HasPermissionForOperation(role Role, operation string) bool {
-	switch operation {
-	case "manage_tenants", "manage_root_ca", "system_config":
-		return role.CanManageTenants()
-	case "manage_tenant_ca", "create_intermediate_ca", "create_root_ca":
-		return role.CanManageTenantCA()
-	case "create_eab", "endorse_01":
-		return role.CanCreateEAB()
-	case "revoke_certificate", "disable_account":
-		return role.CanRevokeAccess()
-	case "read", "list", "get":
-		return role.Level() >= RoleViewer.Level()
-	case "write", "create", "update":
-		return role.Level() >= RoleOperator.Level()
-	default:
-		return false
 	}
 }
 
@@ -210,12 +169,6 @@ func GetUserFromContext(ctx context.Context) *AuthenticatedUser {
 	return user
 }
 
-// GetRoleFromContext extracts the role from context.
-func GetRoleFromContext(ctx context.Context) (Role, bool) {
-	role, ok := ctx.Value(ContextKeyRole).(Role)
-	return role, ok
-}
-
 // GetTenantIDFromContext extracts the tenant ID from context.
 func GetTenantIDFromContext(ctx context.Context) string {
 	tenantID, ok := ctx.Value(ContextKeyTenantID).(string)
@@ -223,22 +176,6 @@ func GetTenantIDFromContext(ctx context.Context) string {
 		return ""
 	}
 	return tenantID
-}
-
-// getHighestRole returns the highest privilege role from a list.
-func getHighestRole(roles []string) Role {
-	var highestRole Role
-	var highestLevel int
-
-	for _, roleName := range roles {
-		role := Role(roleName)
-		if role.IsValid() && role.Level() > highestLevel {
-			highestLevel = role.Level()
-			highestRole = role
-		}
-	}
-
-	return highestRole
 }
 
 // extractBearerToken extracts the Bearer token from Authorization header.
@@ -293,7 +230,7 @@ func (m *MTLSAuthMiddleware) Authenticate(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		// Check for verified client certificate
 		if r.TLS == nil || len(r.TLS.PeerCertificates) == 0 {
-			writeProblem(w, http.StatusUnauthorized, "urn:trusted-ca:error:unauthorized", "Client certificate required")
+			writeProblem(w, http.StatusUnauthorized, problemUnauthorized, "Client certificate required")
 			return
 		}
 
@@ -303,19 +240,13 @@ func (m *MTLSAuthMiddleware) Authenticate(next http.Handler) http.Handler {
 		// Verify certificate is not expired
 		now := time.Now()
 		if now.Before(clientCert.NotBefore) || now.After(clientCert.NotAfter) {
-			writeProblem(w, http.StatusUnauthorized, "urn:trusted-ca:error:unauthorized", "Client certificate expired or not yet valid")
+			writeProblem(w, http.StatusUnauthorized, problemUnauthorized, "Client certificate expired or not yet valid")
 			return
 		}
 
-		// Extract identity from certificate
 		user := m.extractUserFromCertificate(clientCert)
 
-		// Add user to context
-		ctx := context.WithValue(r.Context(), ContextKeyUser, user)
-		ctx = context.WithValue(ctx, ContextKeyRole, user.Role)
-		ctx = context.WithValue(ctx, ContextKeyTenantID, user.TenantID)
-
-		next.ServeHTTP(w, r.WithContext(ctx))
+		next.ServeHTTP(w, r.WithContext(withUser(r.Context(), user)))
 	})
 }
 
@@ -340,9 +271,6 @@ func (m *MTLSAuthMiddleware) extractUserFromCertificate(cert *x509.Certificate) 
 	// Use certificate serial number as session ID
 	sessionID := cert.SerialNumber.String()
 
-	// Get highest role
-	role := getHighestRole(roles)
-
 	// Use CN as username, or first email SAN if available
 	username := cert.Subject.CommonName
 	email := ""
@@ -354,36 +282,38 @@ func (m *MTLSAuthMiddleware) extractUserFromCertificate(cert *x509.Certificate) 
 	}
 
 	return &AuthenticatedUser{
-		UserID:      cert.Subject.CommonName,
-		Username:    username,
-		Email:       email,
-		TenantID:    tenantID,
-		Role:        role,
-		Roles:       roles,
-		Groups:      cert.Subject.OrganizationalUnit,
-		Permissions: derivePermissionsFromRole(role),
-		SessionID:   sessionID,
-		IssuedAt:    cert.NotBefore,
-		ExpiresAt:   cert.NotAfter,
+		UserID:    cert.Subject.CommonName,
+		Username:  username,
+		Email:     email,
+		TenantID:  tenantID,
+		Roles:     roles,
+		Groups:    cert.Subject.OrganizationalUnit,
+		SessionID: sessionID,
+		IssuedAt:  cert.NotBefore,
+		ExpiresAt: cert.NotAfter,
 	}
 }
 
-// defaultRoleExtractor extracts roles from certificate Organizational Unit (OU).
-// Standard OUs: "super-admin", "admin", "operator", "viewer"
+// defaultRoleExtractor reads role names from the certificate's Organizational
+// Unit values and hands them to qrdb verbatim. It deliberately mints no
+// fallback role: a certificate that names no role yields an identity with no
+// roles, and the qrdb authorizer denies every privileged operation. The
+// previous "default to viewer" fallback silently granted the whole read surface
+// of the ACME admin API to any client certificate the CA had ever issued.
 func defaultRoleExtractor(cert *x509.Certificate) []string {
+	if len(cert.Subject.OrganizationalUnit) == 0 {
+		return nil
+	}
 	roles := make([]string, 0, len(cert.Subject.OrganizationalUnit))
 	for _, ou := range cert.Subject.OrganizationalUnit {
-		// Check if OU is a valid role
-		if Role(ou).IsValid() {
-			roles = append(roles, ou)
+		if ou == "" {
+			continue
 		}
+		roles = append(roles, ou)
 	}
-
-	// Default to viewer if no valid roles found
 	if len(roles) == 0 {
-		roles = append(roles, string(RoleViewer))
+		return nil
 	}
-
 	return roles
 }
 
@@ -393,63 +323,4 @@ func defaultTenantExtractor(cert *x509.Certificate) string {
 		return cert.Subject.Organization[0]
 	}
 	return "default"
-}
-
-// derivePermissionsFromRole returns permissions based on role.
-func derivePermissionsFromRole(role Role) []string {
-	switch role {
-	case RoleSuperAdmin:
-		return []string{"*"}
-	case RoleAdmin:
-		return []string{
-			"read", "write", "create", "update", "delete",
-			"manage_tenant_ca", "create_eab", "revoke_certificate", "disable_account",
-		}
-	case RoleOperator:
-		return []string{
-			"read", "write", "create", "update",
-			"create_eab", "revoke_certificate",
-		}
-	case RoleViewer:
-		return []string{"read", "list", "get"}
-	default:
-		return []string{}
-	}
-}
-
-// DevModeAuthMiddleware provides authentication bypass for development/testing.
-// This middleware grants super-admin access to all requests.
-// WARNING: Only use this in development environments without TLS.
-type DevModeAuthMiddleware struct{}
-
-// NewDevModeAuthMiddleware creates a new development mode auth middleware.
-func NewDevModeAuthMiddleware() *DevModeAuthMiddleware {
-	return &DevModeAuthMiddleware{}
-}
-
-// Authenticate grants super-admin access to all requests (development mode only).
-func (m *DevModeAuthMiddleware) Authenticate(next http.Handler) http.Handler {
-	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		// Create a default super-admin user for development
-		user := &AuthenticatedUser{
-			UserID:      "dev-admin",
-			Username:    "dev-admin",
-			Email:       "dev@localhost",
-			TenantID:    "default",
-			Role:        RoleSuperAdmin,
-			Roles:       []string{string(RoleSuperAdmin)},
-			Groups:      []string{"super-admin"},
-			Permissions: []string{"*"},
-			SessionID:   "dev-session",
-			IssuedAt:    time.Now(),
-			ExpiresAt:   time.Now().Add(24 * time.Hour),
-		}
-
-		// Add user to context
-		ctx := context.WithValue(r.Context(), ContextKeyUser, user)
-		ctx = context.WithValue(ctx, ContextKeyRole, user.Role)
-		ctx = context.WithValue(ctx, ContextKeyTenantID, user.TenantID)
-
-		next.ServeHTTP(w, r.WithContext(ctx))
-	})
 }

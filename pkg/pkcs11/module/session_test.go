@@ -331,6 +331,50 @@ func TestSessionManager_OpenSession_MissingSerialFlag(t *testing.T) {
 	}
 }
 
+// TestSessionManager_OpenSession_AsyncFlagRefused verifies that asking for an
+// asynchronous session is refused rather than quietly satisfied with a
+// synchronous one.
+//
+// PKCS#11 v3.2 §5.6.1 introduced CKF_ASYNC_SESSION and says a token that does
+// not support asynchronous operations should return
+// CKR_SESSION_ASYNC_NOT_SUPPORTED. This token does not advertise
+// CKF_ASYNC_SESSION_SUPPORTED. Downgrading the request instead would hand back
+// CKR_OK on a session that cannot do what the caller asked for, and the
+// application would only discover it later when the async collection calls
+// failed.
+func TestSessionManager_OpenSession_AsyncFlagRefused(t *testing.T) {
+	manager := NewSessionManager(0, 10)
+
+	for _, flags := range []SessionFlag{
+		CKF_SERIAL_SESSION | SessionFlag(CKF_ASYNC_SESSION),
+		CKF_SERIAL_SESSION | CKF_RW_SESSION | SessionFlag(CKF_ASYNC_SESSION),
+	} {
+		_, err := manager.OpenSession(flags)
+		if err == nil {
+			t.Fatalf("expected error for CKF_ASYNC_SESSION in flags %#x", uint32(flags))
+		}
+
+		var pkcs11Err *PKCS11Error
+		if !errors.As(err, &pkcs11Err) {
+			t.Fatalf("expected PKCS11Error, got %T", err)
+		}
+		if pkcs11Err.Code != CKR_SESSION_ASYNC_NOT_SUPPORTED {
+			t.Errorf("expected CKR_SESSION_ASYNC_NOT_SUPPORTED, got %s", pkcs11Err.Code)
+		}
+	}
+
+	// The refusal must not consume a session slot.
+	if manager.SessionCount() != 0 {
+		t.Errorf("a refused session must not be counted, got %d", manager.SessionCount())
+	}
+
+	// A synchronous request on the same manager still succeeds, proving the
+	// check is scoped to the async flag rather than rejecting broadly.
+	if _, err := manager.OpenSession(CKF_SERIAL_SESSION); err != nil {
+		t.Fatalf("synchronous session must still open: %v", err)
+	}
+}
+
 // TestSessionManager_OpenSession_MaxSessions tests session count limit.
 func TestSessionManager_OpenSession_MaxSessions(t *testing.T) {
 	manager := NewSessionManager(0, 3)
@@ -415,7 +459,7 @@ func TestSessionManager_CloseSession_InvalidHandle(t *testing.T) {
 // TestSessionManager_CloseAllSessions tests closing all sessions.
 func TestSessionManager_CloseAllSessions(t *testing.T) {
 	manager := NewSessionManager(0, 10)
-	manager.SetUserPIN(hashPin("userpin"))
+	manager.SetUserPIN(mustHashPin("userpin"))
 
 	// Open several sessions
 	handles := make([]SessionHandle, 5)
@@ -509,7 +553,7 @@ func TestSessionManager_GetSessionInfo(t *testing.T) {
 // TestSessionManager_Login_UserSuccess tests successful user login.
 func TestSessionManager_Login_UserSuccess(t *testing.T) {
 	manager := NewSessionManager(0, 10)
-	manager.SetUserPIN(hashPin("userpin"))
+	manager.SetUserPIN(mustHashPin("userpin"))
 
 	handle, err := manager.OpenSession(CKF_RW_SESSION | CKF_SERIAL_SESSION)
 	if err != nil {
@@ -543,7 +587,7 @@ func TestSessionManager_Login_UserSuccess(t *testing.T) {
 // TestSessionManager_Login_SOSuccess tests successful SO login.
 func TestSessionManager_Login_SOSuccess(t *testing.T) {
 	manager := NewSessionManager(0, 10)
-	manager.SetSOPIN(hashPin("sopin"))
+	manager.SetSOPIN(mustHashPin("sopin"))
 
 	handle, err := manager.OpenSession(CKF_RW_SESSION | CKF_SERIAL_SESSION)
 	if err != nil {
@@ -600,7 +644,7 @@ func TestSessionManager_Login_InvalidUserType(t *testing.T) {
 // TestSessionManager_Login_AlreadyLoggedIn tests login when already logged in.
 func TestSessionManager_Login_AlreadyLoggedIn(t *testing.T) {
 	manager := NewSessionManager(0, 10)
-	manager.SetUserPIN(hashPin("userpin"))
+	manager.SetUserPIN(mustHashPin("userpin"))
 
 	handle, err := manager.OpenSession(CKF_RW_SESSION | CKF_SERIAL_SESSION)
 	if err != nil {
@@ -631,8 +675,8 @@ func TestSessionManager_Login_AlreadyLoggedIn(t *testing.T) {
 // TestSessionManager_Login_AnotherUserLoggedIn tests login when different user is logged in.
 func TestSessionManager_Login_AnotherUserLoggedIn(t *testing.T) {
 	manager := NewSessionManager(0, 10)
-	manager.SetUserPIN(hashPin("userpin"))
-	manager.SetSOPIN(hashPin("sopin"))
+	manager.SetUserPIN(mustHashPin("userpin"))
+	manager.SetSOPIN(mustHashPin("sopin"))
 
 	handle, err := manager.OpenSession(CKF_RW_SESSION | CKF_SERIAL_SESSION)
 	if err != nil {
@@ -660,10 +704,16 @@ func TestSessionManager_Login_AnotherUserLoggedIn(t *testing.T) {
 	}
 }
 
-// TestSessionManager_Login_SORequiresRWSession tests SO login requires RW session.
-func TestSessionManager_Login_SORequiresRWSession(t *testing.T) {
+// TestSessionManager_Login_SOOnROSession checks the code C_Login answers when
+// the Security Officer tries to log in on a read-only session.
+//
+// C_Login's return table (PKCS#11 v3.2 §5.6.8) lists CKR_SESSION_READ_ONLY_EXISTS
+// and does not list CKR_SESSION_READ_ONLY, so the read-only session the caller
+// is holding open is reported as an existing read-only session and nothing
+// else. SoftHSM 2.6 answers the same code for the same call.
+func TestSessionManager_Login_SOOnROSession(t *testing.T) {
 	manager := NewSessionManager(0, 10)
-	manager.SetSOPIN(hashPin("sopin"))
+	manager.SetSOPIN(mustHashPin("sopin"))
 
 	handle, err := manager.OpenSession(CKF_SERIAL_SESSION) // RO session
 	if err != nil {
@@ -679,15 +729,54 @@ func TestSessionManager_Login_SORequiresRWSession(t *testing.T) {
 	if !errors.As(err, &pkcs11Err) {
 		t.Fatalf("expected PKCS11Error, got %T", err)
 	}
-	if pkcs11Err.Code != CKR_SESSION_READ_ONLY {
-		t.Errorf("expected CKR_SESSION_READ_ONLY, got %s", pkcs11Err.Code)
+	if pkcs11Err.Code != CKR_SESSION_READ_ONLY_EXISTS {
+		t.Errorf("expected CKR_SESSION_READ_ONLY_EXISTS, got %s", pkcs11Err.Code)
+	}
+
+	if manager.IsLoggedIn() {
+		t.Error("expected the refused SO login to leave the token logged out")
+	}
+}
+
+// TestSessionManager_Login_SOSucceedsOnceROSessionsClose is the success half of
+// the read-only rule: the same SO login that is refused while a read-only
+// session is open is accepted once that session is closed and only a read-write
+// session remains.
+func TestSessionManager_Login_SOSucceedsOnceROSessionsClose(t *testing.T) {
+	manager := NewSessionManager(0, 10)
+	manager.SetSOPIN(mustHashPin("sopin"))
+
+	roHandle, err := manager.OpenSession(CKF_SERIAL_SESSION)
+	if err != nil {
+		t.Fatalf("OpenSession (RO) failed: %v", err)
+	}
+	rwHandle, err := manager.OpenSession(CKF_RW_SESSION | CKF_SERIAL_SESSION)
+	if err != nil {
+		t.Fatalf("OpenSession (RW) failed: %v", err)
+	}
+
+	if err := manager.Login(rwHandle, CKU_SO, []byte("sopin")); err == nil {
+		t.Fatal("expected SO login to be refused while a RO session is open")
+	}
+
+	if err := manager.CloseSession(roHandle); err != nil {
+		t.Fatalf("CloseSession failed: %v", err)
+	}
+
+	if err := manager.Login(rwHandle, CKU_SO, []byte("sopin")); err != nil {
+		t.Fatalf("SO login should succeed once no RO session remains: %v", err)
+	}
+
+	userType, ok := manager.GetLoggedInUserType()
+	if !ok || userType != CKU_SO {
+		t.Errorf("expected CKU_SO logged in, got %s (ok=%t)", userType, ok)
 	}
 }
 
 // TestSessionManager_Login_SOBlockedByROSession tests SO login blocked by existing RO session.
 func TestSessionManager_Login_SOBlockedByROSession(t *testing.T) {
 	manager := NewSessionManager(0, 10)
-	manager.SetSOPIN(hashPin("sopin"))
+	manager.SetSOPIN(mustHashPin("sopin"))
 
 	// Open RO session first
 	_, err := manager.OpenSession(CKF_SERIAL_SESSION)
@@ -719,7 +808,7 @@ func TestSessionManager_Login_SOBlockedByROSession(t *testing.T) {
 // TestSessionManager_Login_IncorrectPIN tests login with wrong PIN.
 func TestSessionManager_Login_IncorrectPIN(t *testing.T) {
 	manager := NewSessionManager(0, 10)
-	manager.SetUserPIN(hashPin("correctpin"))
+	manager.SetUserPIN(mustHashPin("correctpin"))
 
 	handle, err := manager.OpenSession(CKF_RW_SESSION | CKF_SERIAL_SESSION)
 	if err != nil {
@@ -740,10 +829,16 @@ func TestSessionManager_Login_IncorrectPIN(t *testing.T) {
 	}
 }
 
-// TestSessionManager_Login_EmptyPIN tests login with empty PIN.
+// TestSessionManager_Login_EmptyPIN checks that an empty PIN presented to
+// C_Login is reported as an incorrect PIN.
+//
+// CKR_PIN_LEN_RANGE is absent from C_Login's return table (PKCS#11 v3.2
+// §5.6.8); it belongs to C_InitPIN and C_SetPIN, where a PIN is established
+// against the token's length policy. An empty PIN offered for authentication
+// simply matches no verifier.
 func TestSessionManager_Login_EmptyPIN(t *testing.T) {
 	manager := NewSessionManager(0, 10)
-	manager.SetUserPIN(hashPin("userpin"))
+	manager.SetUserPIN(mustHashPin("userpin"))
 
 	handle, err := manager.OpenSession(CKF_RW_SESSION | CKF_SERIAL_SESSION)
 	if err != nil {
@@ -759,8 +854,45 @@ func TestSessionManager_Login_EmptyPIN(t *testing.T) {
 	if !errors.As(err, &pkcs11Err) {
 		t.Fatalf("expected PKCS11Error, got %T", err)
 	}
-	if pkcs11Err.Code != CKR_PIN_LEN_RANGE {
-		t.Errorf("expected CKR_PIN_LEN_RANGE, got %s", pkcs11Err.Code)
+	if pkcs11Err.Code != CKR_PIN_INCORRECT {
+		t.Errorf("expected CKR_PIN_INCORRECT, got %s", pkcs11Err.Code)
+	}
+
+	// The correct PIN still works: one empty attempt must not lock the token.
+	if err := manager.Login(handle, CKU_USER, []byte("userpin")); err != nil {
+		t.Fatalf("Login with the correct PIN should succeed: %v", err)
+	}
+}
+
+// TestSessionManager_Login_EmptyPINCountsTowardLockout checks that repeated
+// empty PINs consume the lockout budget like any other wrong guess, so an empty
+// PIN cannot be used as a free probe.
+func TestSessionManager_Login_EmptyPINCountsTowardLockout(t *testing.T) {
+	manager := NewSessionManager(0, 10)
+	manager.SetUserPIN(mustHashPin("userpin"))
+
+	handle, err := manager.OpenSession(CKF_RW_SESSION | CKF_SERIAL_SESSION)
+	if err != nil {
+		t.Fatalf("OpenSession failed: %v", err)
+	}
+
+	for attempt := 1; attempt < MaxPINAttempts; attempt++ {
+		err := manager.Login(handle, CKU_USER, nil)
+		var pkcs11Err *PKCS11Error
+		if !errors.As(err, &pkcs11Err) || pkcs11Err.Code != CKR_PIN_INCORRECT {
+			t.Fatalf("attempt %d: expected CKR_PIN_INCORRECT, got %v", attempt, err)
+		}
+	}
+
+	err = manager.Login(handle, CKU_USER, nil)
+	var pkcs11Err *PKCS11Error
+	if !errors.As(err, &pkcs11Err) || pkcs11Err.Code != CKR_PIN_LOCKED {
+		t.Fatalf("final attempt: expected CKR_PIN_LOCKED, got %v", err)
+	}
+
+	failed, locked := manager.PINAttemptStatus(CKU_USER)
+	if failed != MaxPINAttempts || !locked {
+		t.Errorf("expected %d failed attempts and a locked PIN, got %d/%t", MaxPINAttempts, failed, locked)
 	}
 }
 
@@ -788,33 +920,6 @@ func TestSessionManager_Login_PINNotInitialized(t *testing.T) {
 	}
 }
 
-// TestSessionManager_Login_CustomValidator tests using custom PIN validator.
-func TestSessionManager_Login_CustomValidator(t *testing.T) {
-	manager := NewSessionManager(0, 10)
-
-	// Set custom validator
-	manager.SetPINValidator(func(userType UserType, pin []byte) bool {
-		return string(pin) == "custom-valid-pin"
-	})
-
-	handle, err := manager.OpenSession(CKF_RW_SESSION | CKF_SERIAL_SESSION)
-	if err != nil {
-		t.Fatalf("OpenSession failed: %v", err)
-	}
-
-	// Wrong PIN
-	err = manager.Login(handle, CKU_USER, []byte("wrong"))
-	if err == nil {
-		t.Fatal("expected error for wrong PIN")
-	}
-
-	// Correct PIN
-	err = manager.Login(handle, CKU_USER, []byte("custom-valid-pin"))
-	if err != nil {
-		t.Fatalf("Login with custom validator failed: %v", err)
-	}
-}
-
 // TestSessionManager_Login_InvalidSessionHandle tests login with invalid session.
 func TestSessionManager_Login_InvalidSessionHandle(t *testing.T) {
 	manager := NewSessionManager(0, 10)
@@ -836,7 +941,7 @@ func TestSessionManager_Login_InvalidSessionHandle(t *testing.T) {
 // TestSessionManager_Logout_Success tests successful logout.
 func TestSessionManager_Logout_Success(t *testing.T) {
 	manager := NewSessionManager(0, 10)
-	manager.SetUserPIN(hashPin("userpin"))
+	manager.SetUserPIN(mustHashPin("userpin"))
 
 	handle, err := manager.OpenSession(CKF_RW_SESSION | CKF_SERIAL_SESSION)
 	if err != nil {
@@ -908,7 +1013,7 @@ func TestSessionManager_Logout_InvalidSessionHandle(t *testing.T) {
 // TestSessionManager_OpenSession_SOLoggedInBlocksRO tests RO session blocked when SO logged in.
 func TestSessionManager_OpenSession_SOLoggedInBlocksRO(t *testing.T) {
 	manager := NewSessionManager(0, 10)
-	manager.SetSOPIN(hashPin("sopin"))
+	manager.SetSOPIN(mustHashPin("sopin"))
 
 	// Open RW session and login as SO
 	handle, err := manager.OpenSession(CKF_RW_SESSION | CKF_SERIAL_SESSION)
@@ -939,7 +1044,7 @@ func TestSessionManager_OpenSession_SOLoggedInBlocksRO(t *testing.T) {
 // TestSessionManager_LoginState_AffectsAllSessions tests login state affects all sessions.
 func TestSessionManager_LoginState_AffectsAllSessions(t *testing.T) {
 	manager := NewSessionManager(0, 10)
-	manager.SetUserPIN(hashPin("userpin"))
+	manager.SetUserPIN(mustHashPin("userpin"))
 
 	// Open multiple sessions
 	handle1, err := manager.OpenSession(CKF_RW_SESSION | CKF_SERIAL_SESSION)
@@ -1237,7 +1342,7 @@ func TestSessionManager_GetOperationState_NotInitialized(t *testing.T) {
 // TestSessionManager_ConcurrentSessions tests concurrent session operations.
 func TestSessionManager_ConcurrentSessions(t *testing.T) {
 	manager := NewSessionManager(0, 1000)
-	manager.SetUserPIN(hashPin("userpin"))
+	manager.SetUserPIN(mustHashPin("userpin"))
 
 	var wg sync.WaitGroup
 	numGoroutines := 50
@@ -1273,30 +1378,6 @@ func TestSessionManager_ConcurrentSessions(t *testing.T) {
 
 	if manager.SessionCount() != 0 {
 		t.Errorf("expected 0 sessions after concurrent test, got %d", manager.SessionCount())
-	}
-}
-
-// TestComparePINs tests the constant-time PIN comparison.
-func TestComparePINs(t *testing.T) {
-	tests := []struct {
-		name     string
-		a        []byte
-		b        []byte
-		expected bool
-	}{
-		{"equal", []byte("password"), []byte("password"), true},
-		{"different length", []byte("short"), []byte("longer"), false},
-		{"different content", []byte("password1"), []byte("password2"), false},
-		{"empty equal", []byte{}, []byte{}, true},
-		{"one empty", []byte("pin"), []byte{}, false},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			if got := comparePINs(tt.a, tt.b); got != tt.expected {
-				t.Errorf("comparePINs(%q, %q) = %v, want %v", tt.a, tt.b, got, tt.expected)
-			}
-		})
 	}
 }
 
@@ -1488,26 +1569,180 @@ func TestSessionManager_SetOperationState_InvalidHandle(t *testing.T) {
 }
 
 // TestSessionManager_Login_ContextSpecific tests context-specific login.
+// Per PKCS#11 v3.2 §5.6.8, CKU_CONTEXT_SPECIFIC re-authentication for a
+// CKA_ALWAYS_AUTHENTICATE key is only valid while the normal user is already
+// logged in, validates the user PIN, and does not itself alter the token's
+// login state.
 func TestSessionManager_Login_ContextSpecific(t *testing.T) {
 	manager := NewSessionManager(0, 10)
-
-	// Set custom validator that accepts context-specific
-	manager.SetPINValidator(func(userType UserType, pin []byte) bool {
-		return userType == CKU_CONTEXT_SPECIFIC && string(pin) == "context-pin"
-	})
+	manager.SetUserPIN(mustHashPin("userpin"))
 
 	handle, err := manager.OpenSession(CKF_RW_SESSION | CKF_SERIAL_SESSION)
 	if err != nil {
 		t.Fatalf("OpenSession failed: %v", err)
 	}
 
-	err = manager.Login(handle, CKU_CONTEXT_SPECIFIC, []byte("context-pin"))
+	// The normal user must be logged in first.
+	if err := manager.Login(handle, CKU_USER, []byte("userpin")); err != nil {
+		t.Fatalf("Login (user) failed: %v", err)
+	}
+
+	err = manager.Login(handle, CKU_CONTEXT_SPECIFIC, []byte("userpin"))
 	if err != nil {
-		t.Fatalf("Login failed: %v", err)
+		t.Fatalf("Login (context-specific) failed: %v", err)
 	}
 
 	if !manager.IsLoggedIn() {
 		t.Error("expected logged in")
+	}
+
+	// Context-specific re-authentication must not change the session's
+	// login state.
+	session, _ := manager.GetSession(handle)
+	if session.State() != CKS_RW_USER_FUNCTIONS {
+		t.Errorf("expected CKS_RW_USER_FUNCTIONS after context-specific login, got %s", session.State())
+	}
+}
+
+// TestSessionManager_Login_ContextSpecific_RequiresUserLoggedIn tests that
+// CKU_CONTEXT_SPECIFIC login is rejected when the normal user is not already
+// logged in, closing the CKA_ALWAYS_AUTHENTICATE bypass where re-authentication
+// could previously stand in for the initial login.
+func TestSessionManager_Login_ContextSpecific_RequiresUserLoggedIn(t *testing.T) {
+	manager := NewSessionManager(0, 10)
+	manager.SetUserPIN(mustHashPin("userpin"))
+
+	handle, err := manager.OpenSession(CKF_RW_SESSION | CKF_SERIAL_SESSION)
+	if err != nil {
+		t.Fatalf("OpenSession failed: %v", err)
+	}
+
+	err = manager.Login(handle, CKU_CONTEXT_SPECIFIC, []byte("userpin"))
+	if err == nil {
+		t.Fatal("expected error for context-specific login without a prior user login")
+	}
+
+	var pkcs11Err *PKCS11Error
+	if !errors.As(err, &pkcs11Err) {
+		t.Fatalf("expected PKCS11Error, got %T", err)
+	}
+	if pkcs11Err.Code != CKR_USER_NOT_LOGGED_IN {
+		t.Errorf("expected CKR_USER_NOT_LOGGED_IN, got %s", pkcs11Err.Code)
+	}
+	if manager.IsLoggedIn() {
+		t.Error("expected not logged in after rejected context-specific login")
+	}
+}
+
+// TestSessionManager_Login_ContextSpecific_GrantsNothingOnItsOwn pins the
+// division of labour the CKA_ALWAYS_AUTHENTICATE binding rests on.
+//
+// PKCS#11 v3.2 §4.10 authenticates "the active key", so the authorization a
+// re-authentication produces names a key. A session manager holds sessions and
+// PINs, not objects: it cannot tell whether the active operation's key carries
+// CKA_ALWAYS_AUTHENTICATE, and it cannot mint an authorization for a key it
+// cannot resolve. It validates the PIN and stops there; Module.loginContextSpecific
+// makes the grant.
+//
+// The test is written against the state the login leaves behind rather than its
+// return value, because the defect this replaces was invisible from the return
+// value: the manager answered nil either way and granted for a whole operation
+// category.
+func TestSessionManager_Login_ContextSpecific_GrantsNothingOnItsOwn(t *testing.T) {
+	const signingKey = ObjectHandle(100)
+
+	manager := NewSessionManager(0, 10)
+	manager.SetUserPIN(mustHashPin("userpin"))
+
+	handle, err := manager.OpenSession(CKF_RW_SESSION | CKF_SERIAL_SESSION)
+	if err != nil {
+		t.Fatalf("OpenSession failed: %v", err)
+	}
+	if err := manager.Login(handle, CKU_USER, []byte("userpin")); err != nil {
+		t.Fatalf("Login (user) failed: %v", err)
+	}
+	if err := manager.InitializeOperation(handle, OperationSign, CKM_RSA_PKCS, signingKey); err != nil {
+		t.Fatalf("InitializeOperation failed: %v", err)
+	}
+
+	session, err := manager.GetSession(handle)
+	if err != nil {
+		t.Fatalf("GetSession failed: %v", err)
+	}
+
+	if err := manager.Login(handle, CKU_CONTEXT_SPECIFIC, []byte("userpin")); err != nil {
+		t.Fatalf("Login (context-specific) failed: %v", err)
+	}
+
+	if session.ConsumeContextAuthentication(OperationSign, signingKey) {
+		t.Error("the session manager must not grant a context authorization: it cannot see the key one would be bound to")
+	}
+
+	// The PIN is still validated here, which is the part that does belong to
+	// this layer.
+	if err := manager.Login(handle, CKU_CONTEXT_SPECIFIC, []byte("wrongpin")); err == nil {
+		t.Error("expected a wrong PIN to be refused by the context-specific login")
+	}
+}
+
+// TestSession_ContextAuthenticationIsBoundToItsKey proves an authorization
+// granted for one key does not admit a use of another.
+//
+// PKCS#11 v3.2 §4.10 puts "the active key" into an authenticated state that
+// "lasts until the cryptographic operation has ... been completed". An
+// authorization recorded against the operation category alone was spendable by
+// any key in that category, so re-authenticating for a key that requires nothing
+// satisfied the requirement of a key that does.
+func TestSession_ContextAuthenticationIsBoundToItsKey(t *testing.T) {
+	const (
+		authenticated = ObjectHandle(41)
+		other         = ObjectHandle(42)
+	)
+
+	session := NewSession(1, 0, CKF_RW_SESSION|CKF_SERIAL_SESSION)
+	session.GrantContextAuthentication(OperationSign, authenticated)
+
+	if session.ConsumeContextAuthentication(OperationSign, other) {
+		t.Error("a grant made for one key must not answer for another")
+	}
+	if session.ConsumeContextAuthentication(OperationDecrypt, authenticated) {
+		t.Error("a grant made in one operation category must not answer for another")
+	}
+
+	if !session.ConsumeContextAuthentication(OperationSign, authenticated) {
+		t.Error("expected the grant to admit the key it was made for")
+	}
+	if session.ConsumeContextAuthentication(OperationSign, authenticated) {
+		t.Error("expected the authorization to be consumed after a single use")
+	}
+}
+
+// TestSession_ActiveOperationKey covers the accessor the re-authentication gate
+// reads to find the key an initiated operation names, in both its states.
+func TestSession_ActiveOperationKey(t *testing.T) {
+	const signingKey = ObjectHandle(77)
+
+	session := NewSession(1, 0, CKF_RW_SESSION|CKF_SERIAL_SESSION)
+
+	if _, active := session.ActiveOperationKey(OperationSign); active {
+		t.Error("expected no active sign operation on a fresh session")
+	}
+
+	session.SetOperationByType(OperationSign, &OperationState{
+		Mechanism: CKM_RSA_PKCS,
+		KeyHandle: signingKey,
+	})
+
+	keyHandle, active := session.ActiveOperationKey(OperationSign)
+	if !active {
+		t.Fatal("expected the initiated sign operation to be reported active")
+	}
+	if keyHandle != signingKey {
+		t.Errorf("expected key handle %d, got %d", signingKey, keyHandle)
+	}
+
+	if _, active := session.ActiveOperationKey(OperationDecrypt); active {
+		t.Error("an active sign operation must not be reported as an active decrypt operation")
 	}
 }
 
@@ -1529,33 +1764,30 @@ func TestSession_ROUserFunctions(t *testing.T) {
 	}
 }
 
-// TestSessionManager_validatePIN_InvalidUserType tests validatePIN with invalid user type.
-func TestSessionManager_validatePIN_InvalidUserType(t *testing.T) {
-	manager := NewSessionManager(0, 10)
-	// No custom validator, and no PINs set
+// TestSessionManager_validatePINLocked_InvalidUserType covers the default arm of
+// the user-type switch.
+//
+// The refusal now lives in preparePINVerificationLocked, the locked half of the
+// prepare/finish split every PIN path shares. It is called directly, holding
+// the lock the way the login and SetPIN paths do, so the arm stays covered even
+// though the old validatePINLocked wrapper was removed.
+func TestSessionManager_validatePINLocked_InvalidUserType(t *testing.T) {
+	manager := NewSessionManager(0, 0)
+	manager.SetUserPIN(mustHashPin("user-pin-1234"))
 
-	// Try to validate with an invalid user type directly
-	// This tests the default path with an unsupported user type
-	manager.SetUserPIN(hashPin("userpin"))
-	manager.SetSOPIN(hashPin("sopin"))
+	manager.mu.Lock()
+	_, err := manager.preparePINVerificationLocked(UserType(99), []byte("anypin"))
+	manager.mu.Unlock()
 
-	handle, err := manager.OpenSession(CKF_RW_SESSION | CKF_SERIAL_SESSION)
-	if err != nil {
-		t.Fatalf("OpenSession failed: %v", err)
-	}
-
-	// CONTEXT_SPECIFIC login without custom validator will fail
-	err = manager.Login(handle, CKU_CONTEXT_SPECIFIC, []byte("anypin"))
 	if err == nil {
-		t.Fatal("expected error for context-specific login without validator")
+		t.Fatal("an unrecognised user type must be refused")
 	}
-
-	var pkcs11Err *PKCS11Error
-	if !errors.As(err, &pkcs11Err) {
-		t.Fatalf("expected PKCS11Error, got %T", err)
+	var pkcsErr *PKCS11Error
+	if !errors.As(err, &pkcsErr) {
+		t.Fatalf("got %T, want *PKCS11Error", err)
 	}
-	if pkcs11Err.Code != CKR_USER_TYPE_INVALID {
-		t.Errorf("expected CKR_USER_TYPE_INVALID, got %s", pkcs11Err.Code)
+	if pkcsErr.Code != CKR_USER_TYPE_INVALID {
+		t.Errorf("got %s, want CKR_USER_TYPE_INVALID", pkcsErr.Code)
 	}
 }
 
@@ -2447,4 +2679,186 @@ func TestSession_SetOperationIfAbsent(t *testing.T) {
 			t.Errorf("expected %d failures, got %d", n-1, failures)
 		}
 	})
+}
+
+// TestSessionManager_PINLockout_UserPIN tests that MaxPINAttempts consecutive
+// wrong user PINs locks the PIN, and that a correct PIN is then rejected with
+// CKR_PIN_LOCKED rather than being allowed through -- without a lockout an
+// attacker with session access could brute force a short PIN online.
+func TestSessionManager_PINLockout_UserPIN(t *testing.T) {
+	manager := NewSessionManager(0, 10)
+	manager.SetUserPIN(mustHashPin("correctpin"))
+
+	handle, err := manager.OpenSession(CKF_RW_SESSION | CKF_SERIAL_SESSION)
+	if err != nil {
+		t.Fatalf("OpenSession failed: %v", err)
+	}
+
+	for i := uint32(1); i <= MaxPINAttempts; i++ {
+		err := manager.Login(handle, CKU_USER, []byte("wrongpin"))
+		if err == nil {
+			t.Fatalf("attempt %d: expected error for wrong PIN", i)
+		}
+		var pkcs11Err *PKCS11Error
+		if !errors.As(err, &pkcs11Err) {
+			t.Fatalf("attempt %d: expected PKCS11Error, got %T", i, err)
+		}
+		if i < MaxPINAttempts {
+			if pkcs11Err.Code != CKR_PIN_INCORRECT {
+				t.Errorf("attempt %d: expected CKR_PIN_INCORRECT, got %s", i, pkcs11Err.Code)
+			}
+		} else {
+			if pkcs11Err.Code != CKR_PIN_LOCKED {
+				t.Errorf("attempt %d: expected CKR_PIN_LOCKED, got %s", i, pkcs11Err.Code)
+			}
+		}
+	}
+
+	failed, locked := manager.PINAttemptStatus(CKU_USER)
+	if !locked {
+		t.Error("expected PIN to be locked after MaxPINAttempts failures")
+	}
+	if failed != MaxPINAttempts {
+		t.Errorf("expected %d failed attempts, got %d", MaxPINAttempts, failed)
+	}
+
+	// The correct PIN must still be refused while locked.
+	err = manager.Login(handle, CKU_USER, []byte("correctpin"))
+	if err == nil {
+		t.Fatal("expected locked PIN to reject the correct PIN")
+	}
+	var pkcs11Err *PKCS11Error
+	if !errors.As(err, &pkcs11Err) || pkcs11Err.Code != CKR_PIN_LOCKED {
+		t.Errorf("expected CKR_PIN_LOCKED for correct PIN while locked, got %v", err)
+	}
+	if manager.IsLoggedIn() {
+		t.Error("expected not logged in while PIN is locked")
+	}
+}
+
+// TestSessionManager_PINLockout_ResetOnSuccess tests that a successful login
+// clears the failed-attempt counter, and that ResetPINAttempts un-blocks a
+// locked PIN for an authorized party (e.g. after C_SetPIN / C_InitPIN).
+func TestSessionManager_PINLockout_ResetOnSuccess(t *testing.T) {
+	manager := NewSessionManager(0, 10)
+	manager.SetUserPIN(mustHashPin("correctpin"))
+
+	handle, err := manager.OpenSession(CKF_RW_SESSION | CKF_SERIAL_SESSION)
+	if err != nil {
+		t.Fatalf("OpenSession failed: %v", err)
+	}
+
+	// Two failures, then a success, must reset the counter to zero.
+	_ = manager.Login(handle, CKU_USER, []byte("wrongpin"))
+	_ = manager.Login(handle, CKU_USER, []byte("wrongpin"))
+
+	if failed, _ := manager.PINAttemptStatus(CKU_USER); failed != 2 {
+		t.Fatalf("expected 2 failed attempts before success, got %d", failed)
+	}
+
+	if err := manager.Login(handle, CKU_USER, []byte("correctpin")); err != nil {
+		t.Fatalf("Login with correct PIN failed: %v", err)
+	}
+
+	failed, locked := manager.PINAttemptStatus(CKU_USER)
+	if failed != 0 || locked {
+		t.Errorf("expected counter reset to (0, false) after success, got (%d, %v)", failed, locked)
+	}
+
+	// Separately, ResetPINAttempts must clear a locked counter directly.
+	manager2 := NewSessionManager(0, 10)
+	manager2.SetUserPIN(mustHashPin("correctpin"))
+	handle2, err := manager2.OpenSession(CKF_RW_SESSION | CKF_SERIAL_SESSION)
+	if err != nil {
+		t.Fatalf("OpenSession failed: %v", err)
+	}
+	for i := uint32(0); i < MaxPINAttempts; i++ {
+		_ = manager2.Login(handle2, CKU_USER, []byte("wrongpin"))
+	}
+	if _, locked := manager2.PINAttemptStatus(CKU_USER); !locked {
+		t.Fatal("expected PIN to be locked before ResetPINAttempts")
+	}
+
+	manager2.ResetPINAttempts(CKU_USER)
+
+	if failed, locked := manager2.PINAttemptStatus(CKU_USER); failed != 0 || locked {
+		t.Errorf("expected (0, false) after ResetPINAttempts, got (%d, %v)", failed, locked)
+	}
+	if err := manager2.Login(handle2, CKU_USER, []byte("correctpin")); err != nil {
+		t.Errorf("expected login to succeed after ResetPINAttempts, got %v", err)
+	}
+}
+
+// TestApplyPINStatusFlags tests that the CK_TOKEN_INFO PIN status bits
+// (CKF_USER_PIN_COUNT_LOW, CKF_USER_PIN_FINAL_TRY, CKF_USER_PIN_LOCKED, and
+// their SO equivalents) track the live failed-attempt counters, as consumed
+// by Module.GetTokenInfo for C_GetTokenInfo.
+func TestApplyPINStatusFlags(t *testing.T) {
+	manager := NewSessionManager(0, 10)
+	manager.SetUserPIN(mustHashPin("userpin"))
+	manager.SetSOPIN(mustHashPin("sopin"))
+
+	handle, err := manager.OpenSession(CKF_RW_SESSION | CKF_SERIAL_SESSION)
+	if err != nil {
+		t.Fatalf("OpenSession failed: %v", err)
+	}
+
+	// No failures yet: none of the PIN status bits should be set.
+	flags := applyPINStatusFlags(0, manager)
+	if flags != 0 {
+		t.Errorf("expected no PIN status flags initially, got %#x", flags)
+	}
+
+	// One failure: COUNT_LOW only.
+	_ = manager.Login(handle, CKU_USER, []byte("wrongpin"))
+	flags = applyPINStatusFlags(0, manager)
+	if flags&CKF_USER_PIN_COUNT_LOW == 0 {
+		t.Error("expected CKF_USER_PIN_COUNT_LOW after one failure")
+	}
+	if flags&CKF_USER_PIN_FINAL_TRY != 0 {
+		t.Error("did not expect CKF_USER_PIN_FINAL_TRY after only one failure")
+	}
+	if flags&CKF_USER_PIN_LOCKED != 0 {
+		t.Error("did not expect CKF_USER_PIN_LOCKED after only one failure")
+	}
+
+	// MaxPINAttempts-1 failures total: the next wrong PIN is the last try.
+	for {
+		failed, _ := manager.PINAttemptStatus(CKU_USER)
+		if failed >= MaxPINAttempts-1 {
+			break
+		}
+		_ = manager.Login(handle, CKU_USER, []byte("wrongpin"))
+	}
+	flags = applyPINStatusFlags(0, manager)
+	if flags&CKF_USER_PIN_FINAL_TRY == 0 {
+		t.Error("expected CKF_USER_PIN_FINAL_TRY at MaxPINAttempts-1 failures")
+	}
+
+	// One more failure locks the PIN. applyPINStatusFlags treats LOCKED as
+	// its own exclusive state -- once locked, COUNT_LOW/FINAL_TRY are no
+	// longer set alongside it.
+	_ = manager.Login(handle, CKU_USER, []byte("wrongpin"))
+	flags = applyPINStatusFlags(0, manager)
+	if flags&CKF_USER_PIN_LOCKED == 0 {
+		t.Error("expected CKF_USER_PIN_LOCKED after MaxPINAttempts failures")
+	}
+	if flags&CKF_USER_PIN_COUNT_LOW != 0 {
+		t.Error("did not expect CKF_USER_PIN_COUNT_LOW once CKF_USER_PIN_LOCKED is set")
+	}
+	if flags&CKF_USER_PIN_FINAL_TRY != 0 {
+		t.Error("did not expect CKF_USER_PIN_FINAL_TRY once CKF_USER_PIN_LOCKED is set")
+	}
+
+	// The SO side must be independent and still clear.
+	if flags&(CKF_SO_PIN_COUNT_LOW|CKF_SO_PIN_FINAL_TRY|CKF_SO_PIN_LOCKED) != 0 {
+		t.Errorf("expected no SO PIN status flags, got %#x", flags)
+	}
+
+	// Failing the SO PIN sets only the SO flags.
+	_ = manager.Login(handle, CKU_SO, []byte("wrongsopin"))
+	flags = applyPINStatusFlags(0, manager)
+	if flags&CKF_SO_PIN_COUNT_LOW == 0 {
+		t.Error("expected CKF_SO_PIN_COUNT_LOW after one SO failure")
+	}
 }

@@ -15,12 +15,20 @@ package quic
 
 import (
 	"bytes"
+	"crypto/ecdsa"
+	"crypto/elliptic"
+	"crypto/rand"
+	"crypto/tls"
+	"crypto/x509"
+	"crypto/x509/pkix"
 	"encoding/json"
 	"io"
 	"log/slog"
+	"math/big"
 	"net/http"
 	"net/http/httptest"
 	"testing"
+	"time"
 
 	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
 	"github.com/jeremyhahn/go-xkms/pkg/api/transport"
@@ -63,11 +71,19 @@ func createNilSvcServer(t *testing.T) *Server {
 	mux.HandleFunc("/api/v1/init/status", s.handleGetInitStatus)
 	mux.HandleFunc("/api/v1/init/claim-cert/begin", s.handleClaimCertBegin)
 	mux.HandleFunc("/api/v1/init/claim-cert/complete", s.handleClaimCertComplete)
-	mux.HandleFunc("/api/v1/init/claim-share", s.handleClaimShare)
+	mux.HandleFunc("/api/v1/init/claim-share/begin", s.handleClaimShareBegin)
+	mux.HandleFunc("/api/v1/init/claim-share/complete", s.handleClaimShareComplete)
 	mux.HandleFunc("/api/v1/init/sign-csr", s.handleSignCSRInit)
 	mux.HandleFunc("/api/v1/credentials/submit", s.handleCredentialSubmit)
 	mux.HandleFunc("/api/v1/credentials/strategy", s.handleCredentialStrategy)
 	mux.HandleFunc("/api/v1/backends", s.handleListBackends)
+	mux.HandleFunc("/api/v1/attest", s.handleAttestKey)
+	mux.HandleFunc("/api/v1/keys/derive-ecdh", s.handleDeriveKeyECDH)
+	mux.HandleFunc("/api/v1/keys/wrap-by-id", s.handleWrapKeyByID)
+	mux.HandleFunc("/api/v1/keys/unwrap-by-id", s.handleUnwrapKeyByID)
+	mux.HandleFunc("/api/v1/keys/", func(w http.ResponseWriter, r *http.Request) {
+		s.handleExportKeyMaterial(w, r, "sym-key", "software")
+	})
 	return s
 }
 
@@ -526,16 +542,35 @@ func TestHandleClaimShare_BadBody(t *testing.T) {
 	server, _ := createTestServer(t)
 	defer xkms.Reset()
 
-	req := httptest.NewRequest(http.MethodPost, "/api/v1/init/claim-share", bytes.NewReader([]byte("{invalid")))
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/init/claim-share/begin", bytes.NewReader([]byte("{invalid")))
+	withGapTestPeerCert(t, req)
 	w := httptest.NewRecorder()
 	server.handler.ServeHTTP(w, req)
 	assert.Equal(t, http.StatusBadRequest, w.Code)
 }
 
+// TestHandleClaimShare_NoClientCert proves both share-claim routes fail closed
+// with 401 when the request carries no mTLS peer certificate, and that no
+// share material appears in the response.
+func TestHandleClaimShare_NoClientCert(t *testing.T) {
+	server, _ := createTestServer(t)
+	defer xkms.Reset()
+
+	for _, path := range []string{"/api/v1/init/claim-share/begin", "/api/v1/init/claim-share/complete"} {
+		body, _ := json.Marshal(transport.ClaimShareBeginRequest{Username: "officer-A"})
+		req := httptest.NewRequest(http.MethodPost, path, bytes.NewReader(body))
+		w := httptest.NewRecorder()
+		server.handler.ServeHTTP(w, req)
+		assert.Equal(t, http.StatusUnauthorized, w.Code, path)
+		assert.NotContains(t, w.Body.String(), `"share"`, "share material leaked on refusal for %s", path)
+	}
+}
+
 func TestHandleClaimShare_NilSvc(t *testing.T) {
 	s := createNilSvcServer(t)
-	body, _ := json.Marshal(transport.ClaimShareRequest{})
-	req := httptest.NewRequest(http.MethodPost, "/api/v1/init/claim-share", bytes.NewReader(body))
+	body, _ := json.Marshal(transport.ClaimShareBeginRequest{})
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/init/claim-share/begin", bytes.NewReader(body))
+	withGapTestPeerCert(t, req)
 	w := httptest.NewRecorder()
 	s.handler.ServeHTTP(w, req)
 	assert.Equal(t, http.StatusServiceUnavailable, w.Code)
@@ -545,10 +580,31 @@ func TestHandleClaimShare_MethodNotAllowed(t *testing.T) {
 	server, _ := createTestServer(t)
 	defer xkms.Reset()
 
-	req := httptest.NewRequest(http.MethodGet, "/api/v1/init/claim-share", nil)
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/init/claim-share/begin", nil)
+	withGapTestPeerCert(t, req)
 	w := httptest.NewRecorder()
 	server.handler.ServeHTTP(w, req)
 	assert.Equal(t, http.StatusMethodNotAllowed, w.Code)
+}
+
+// withGapTestPeerCert attaches a throwaway self-signed leaf as the mTLS peer
+// certificate so the share-claim handlers get past the client-certificate
+// gate and reach the behaviour under test.
+func withGapTestPeerCert(t *testing.T, r *http.Request) {
+	t.Helper()
+	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	require.NoError(t, err)
+	tmpl := &x509.Certificate{
+		SerialNumber: big.NewInt(1),
+		Subject:      pkix.Name{CommonName: "officer-A"},
+		NotBefore:    time.Now().Add(-time.Minute),
+		NotAfter:     time.Now().Add(time.Hour),
+	}
+	der, err := x509.CreateCertificate(rand.Reader, tmpl, tmpl, &key.PublicKey, key)
+	require.NoError(t, err)
+	leaf, err := x509.ParseCertificate(der)
+	require.NoError(t, err)
+	r.TLS = &tls.ConnectionState{PeerCertificates: []*x509.Certificate{leaf}}
 }
 
 func TestHandleSignCSRInit_BadBody(t *testing.T) {

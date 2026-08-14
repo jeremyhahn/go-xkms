@@ -105,8 +105,8 @@ The CA-instance mode is preferred for production: the server manages its own PKI
 ```yaml
 server:
   rest_port: 8443
-  grpc_port: 50051
-  quic_port: 4433
+  grpc_port: 9443
+  quic_port: 8444
 
 tls:
   enabled: true

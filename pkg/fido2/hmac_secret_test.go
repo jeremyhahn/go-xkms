@@ -284,12 +284,14 @@ func TestParseAuthDataExtensions(t *testing.T) {
 		name        string
 		authData    []byte
 		expectError bool
+		expectedErr error
 		expectNil   bool
 	}{
 		{
 			name:        "too short",
 			authData:    make([]byte, 30),
 			expectError: true,
+			expectedErr: ErrAuthDataTooShort,
 		},
 		{
 			name: "no extensions flag",
@@ -302,14 +304,18 @@ func TestParseAuthDataExtensions(t *testing.T) {
 			expectNil:   true,
 		},
 		{
-			name: "extensions flag set",
+			// The ED flag promises an extension map, but the three
+			// trailing zero bytes decode as CBOR unsigned zero rather
+			// than a map, so this must be rejected.
+			name: "extensions flag set over non-map payload",
 			authData: func() []byte {
 				data := make([]byte, 40)
 				data[32] = 0x80 // flags with ED bit
 				return data
 			}(),
-			expectError: false,
-			expectNil:   false,
+			expectError: true,
+			expectedErr: ErrInvalidExtensions,
+			expectNil:   true,
 		},
 	}
 
@@ -319,25 +325,28 @@ func TestParseAuthDataExtensions(t *testing.T) {
 
 			if tt.expectError {
 				assert.Error(t, err)
+				assert.ErrorIs(t, err, tt.expectedErr)
 			} else {
 				assert.NoError(t, err)
-				if tt.expectNil {
-					assert.Nil(t, extensions)
-				}
+			}
+			if tt.expectNil {
+				assert.Nil(t, extensions)
 			}
 		})
 	}
 }
 
 func TestParseAuthDataExtensions_WithAttestedData(t *testing.T) {
-	// Create auth data with AT and ED flags
+	// Create auth data with AT and ED flags. The COSE public key position
+	// holds CBOR unsigned zero, which is well-formed but is not a
+	// COSE_Key map, so the extension map cannot be located.
 	authData := make([]byte, 100)
 	authData[32] = 0xC0                             // AT | ED flags
 	binary.BigEndian.PutUint16(authData[53:55], 32) // Cred ID length
 
 	extensions, err := ParseAuthDataExtensions(authData)
-	assert.NoError(t, err)
-	assert.Nil(t, extensions) // May be nil if offset is at end
+	assert.ErrorIs(t, err, ErrInvalidCOSEKey)
+	assert.Nil(t, extensions)
 }
 
 func TestParseAuthDataExtensions_InvalidAttestedData(t *testing.T) {
@@ -346,8 +355,7 @@ func TestParseAuthDataExtensions_InvalidAttestedData(t *testing.T) {
 	authData[32] = 0xC0 // AT | ED flags
 
 	_, err := ParseAuthDataExtensions(authData)
-	assert.Error(t, err)
-	assert.Contains(t, err.Error(), "invalid attested credential data")
+	assert.ErrorIs(t, err, ErrInvalidAttestedCredentialData)
 }
 
 func TestParseAuthDataExtensions_InvalidCredIDLength(t *testing.T) {
@@ -357,8 +365,7 @@ func TestParseAuthDataExtensions_InvalidCredIDLength(t *testing.T) {
 	binary.BigEndian.PutUint16(authData[53:55], 1000) // Too large
 
 	_, err := ParseAuthDataExtensions(authData)
-	assert.Error(t, err)
-	assert.Contains(t, err.Error(), "invalid credential ID length")
+	assert.ErrorIs(t, err, ErrInvalidAttestedCredentialData)
 }
 
 func TestHMACSecretExtension_FullFlow(t *testing.T) {

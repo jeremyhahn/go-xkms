@@ -17,9 +17,9 @@ package ca
 
 import (
 	"context"
-	"os"
 	"testing"
 
+	"github.com/jeremyhahn/go-xkms/internal/softhsmtest"
 	pkcs11backend "github.com/jeremyhahn/go-xkms/pkg/backend/pkcs11"
 	"github.com/jeremyhahn/go-xkms/pkg/storage"
 	"github.com/jeremyhahn/go-xkms/pkg/types"
@@ -27,48 +27,31 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-const (
-	softHSMTokenLabel = "quicbaas-dev"
-	softHSMPIN        = "1234"
-)
+// softHSMTokenLabel names the private token this test provisions. Nothing is
+// shared with the host's SoftHSM store.
+const softHSMTokenLabel = "ca-multi-keystore"
 
-// softHSMLibraryPath returns the first SoftHSM library path that exists, or ""
-// when SoftHSM is not installed.
-func softHSMLibraryPath() string {
-	for _, p := range []string{
-		"/usr/lib/softhsm/libsofthsm2.so",
-		"/usr/lib/x86_64-linux-gnu/softhsm/libsofthsm2.so",
-		"/usr/local/lib/softhsm/libsofthsm2.so",
-	} {
-		if _, err := os.Stat(p); err == nil {
-			return p
-		}
-	}
-	return ""
-}
-
-// newSoftHSMCABackend constructs a PKCS#11 xkms.Backend against the SoftHSM
-// "quicbaas-dev" token. Constructing the backend proves it compiles and wires;
-// the caller probes a real operation to decide whether the token is usable.
+// newSoftHSMCABackend provisions a private SoftHSM2 token under t.TempDir()
+// and returns a PKCS#11-backed xkms.Backend bound to it.
 func newSoftHSMCABackend(t *testing.T) xkms.Backend {
 	t.Helper()
 
-	lib := softHSMLibraryPath()
-	if lib == "" {
-		t.Skip("SoftHSM library not found")
-	}
+	token := softhsmtest.Provision(t, softHSMTokenLabel)
 
-	// Backend construction must always succeed (no token I/O yet) — this is the
-	// "the pkcs11 backend constructs" guarantee.
 	p11, err := pkcs11backend.NewBackend(&pkcs11backend.Config{
 		CN:          "ca-multi-keystore-pkcs11",
-		Library:     lib,
-		TokenLabel:  softHSMTokenLabel,
-		PIN:         softHSMPIN,
+		Library:     token.Library,
+		TokenLabel:  token.Label,
+		PIN:         token.UserPIN,
+		SOPIN:       token.SOPIN,
 		KeyStorage:  storage.NewMemory(),
 		CertStorage: storage.NewMemory(),
 	})
 	require.NoError(t, err, "pkcs11 backend must construct")
+
+	// The token is already initialized by softhsmtest; establish the session
+	// pool so key operations can run.
+	require.NoError(t, p11.Login(), "pkcs11 backend must log in to the provisioned token")
 
 	backend, err := xkms.New(&xkms.BackendConfig{
 		Backend:     p11,
@@ -78,21 +61,19 @@ func newSoftHSMCABackend(t *testing.T) xkms.Backend {
 	return backend
 }
 
-// TestCA_PKCS11Key_InitAndSign routes a secondary CA key to a SoftHSM PKCS#11
-// backend. The backend construction is always exercised; the live init/sign
-// portion skips when the "quicbaas-dev" token is unavailable so the build stays
-// green on machines without a provisioned HSM token.
+// TestCA_PKCS11Key_InitAndSign routes a secondary CA key to a PKCS#11 backend
+// bound to a private SoftHSM2 token, and proves the key physically lands in
+// the HSM rather than the software keystore.
 func TestCA_PKCS11Key_InitAndSign(t *testing.T) {
 	p11Backend := newSoftHSMCABackend(t)
 
-	// Probe the token with a real key generation. If it fails the token is not
-	// provisioned in this environment; skip the live portion.
+	// The provisioned token must be live: prove it with a real key generation
+	// before relying on it for the CA hierarchy.
 	probeAttrs, err := types.KeyAttributesFromConfig(keyConfig(types.AlgorithmECDSA, types.StorePKCS11))
 	require.NoError(t, err)
 	probeAttrs.CN = "pkcs11-probe"
-	if _, err := p11Backend.GenerateECDSA(context.Background(), probeAttrs); err != nil {
-		t.Skipf("SoftHSM token %q not usable (construct OK, live op skipped): %v", softHSMTokenLabel, err)
-	}
+	_, err = p11Backend.GenerateECDSA(context.Background(), probeAttrs)
+	require.NoError(t, err, "provisioned SoftHSM token must accept key generation")
 	defer func() { _ = p11Backend.DeleteKey(context.Background(), probeAttrs) }()
 
 	swBackend := newInMemoryBackend(t)

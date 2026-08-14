@@ -541,9 +541,9 @@ curl -H "Authorization: Bearer $API_KEY" \
 admin:
   api_keys:
     - key: "${ADMIN_OPERATOR_KEY}"
-      role: operator  # May not have permission for action
+      role: operator  # May not hold the resource:action the route requires
 
-# Use super-admin key for full access
+# Use an so or admin key, or grant the missing permission in go-qrdb
 ```
 
 ## Debugging Commands

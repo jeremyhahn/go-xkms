@@ -46,5 +46,24 @@ var StorageOpenEngine = storage.OpenEngine
 // NewKVStoreAdapter adapts a storage.Backend to the go-qrdb KVStore interface.
 var NewKVStoreAdapter = kvadapter.New
 
+// ErrIndexingNotSupported is reported by every secondary-index operation on a
+// KVStoreAdapter. The adapter cannot maintain an index: doing so requires
+// decoding each entity payload to read the indexed fields, and the encoding is
+// chosen by the DAO (JSON, CBOR, MsgPack) and never communicated to the store.
+//
+// It is an error rather than an empty result so a caller can never mistake
+// "this store cannot answer index queries" for "the index matched nothing".
+// Callers that can degrade gracefully detect it with errors.Is and fall back to
+// a scan:
+//
+//	entities, err := dao.QueryByIndex(ctx, "RPID", rpID)
+//	if errors.Is(err, xkms.ErrIndexingNotSupported) {
+//	        return scanFallback(rpID)
+//	}
+//
+// It is re-exported here because consumers outside this module reach xkms only
+// through the SDK and must be able to recognize the sentinel.
+var ErrIndexingNotSupported = kvadapter.ErrIndexingNotSupported
+
 // NewPINStoreAdapter adapts a storage.Backend to the PIN-store interface.
 var NewPINStoreAdapter = pinadapter.New

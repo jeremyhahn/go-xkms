@@ -17,490 +17,373 @@ package server
 
 import (
 	"context"
+	"errors"
+	"io"
+	"log/slog"
+	"strings"
 	"testing"
 
+	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
+	qrdbtransport "github.com/jeremyhahn/go-qrdb/sdk/go/transport"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
+
+	"github.com/jeremyhahn/go-xkms/pkg/acme/admin"
+	"github.com/jeremyhahn/go-xkms/pkg/auth"
 )
 
-func TestMethodRoles_AllMethodsMapped(t *testing.T) {
-	// Verify all expected methods have role mappings
-	expectedMethods := []string{
-		// Tenant management
-		"/admin.v1.AdminService/CreateTenant",
-		"/admin.v1.AdminService/UpdateTenant",
+// errTestDenied is the deny sentinel the test RBAC client returns, standing in
+// for qrdb's PermissionDeniedError.
+var errTestDenied = errors.New("test: permission denied")
+
+// qrdbRoleRBAC resolves authorization exactly as go-qrdb's canonical built-in
+// roles define it. Using the real role definitions means these tests fail if a
+// grant is ever dropped from qrdb's admin, operator, or auditor role.
+type qrdbRoleRBAC struct {
+	requested []string
+}
+
+func (q *qrdbRoleRBAC) Authorize(_ context.Context, id *qrdbtransport.Identity, resource, action string) error {
+	want := resource + ":" + action
+	q.requested = append(q.requested, want)
+
+	if id == nil {
+		return errTestDenied
+	}
+	held := make(map[string]struct{}, len(id.Roles))
+	for _, r := range id.Roles {
+		held[r] = struct{}{}
+	}
+	for _, r := range qrdbsdk.BuiltInRoles(id.TenantID) {
+		if _, ok := held[r.Name]; !ok {
+			continue
+		}
+		for _, p := range r.Permissions {
+			if string(p) == want {
+				return nil
+			}
+			if strings.HasSuffix(string(p), ":*") && strings.TrimSuffix(string(p), ":*") == resource {
+				return nil
+			}
+		}
+	}
+	return errTestDenied
+}
+
+func (q *qrdbRoleRBAC) ListPermissions(_ context.Context, _ *qrdbtransport.Identity) ([]qrdbtransport.PermissionInfo, error) {
+	return nil, nil
+}
+
+func testLogger() *slog.Logger {
+	return slog.New(slog.NewTextHandler(io.Discard, nil))
+}
+
+// newTestGate returns a PermissionGate backed by qrdb's canonical role
+// definitions, plus the recording client behind it.
+func newTestGate() (*admin.PermissionGate, *qrdbRoleRBAC) {
+	client := &qrdbRoleRBAC{}
+	return admin.NewPermissionGate(auth.NewAuthorizer(client), testLogger()), client
+}
+
+// okHandler records that the handler ran.
+func okHandler(ran *bool) grpc.UnaryHandler {
+	return func(ctx context.Context, req interface{}) (interface{}, error) {
+		*ran = true
+		return "ok", nil
+	}
+}
+
+// TestMethodPermissions_CoversEveryAdminServiceMethod verifies the permission
+// table names every method the AdminService gRPC surface exposes. A method
+// added without a mapping is denied at runtime; this test makes that visible at
+// build time.
+func TestMethodPermissions_CoversEveryAdminServiceMethod(t *testing.T) {
+	expected := []string{
+		"CreateTenant", "UpdateTenant", "DeleteTenant", "GetTenant", "ListTenants",
+		"CreateEAB", "DeleteEAB", "GetEAB", "ListEABs",
+		"CreateTenantRole", "UpdateTenantRole", "DeleteTenantRole", "GetTenantRole", "ListTenantRoles",
+		"CreateTenantUser", "UpdateTenantUser", "DeleteTenantUser", "GetTenantUser", "ListTenantUsers",
+		"RevokeCertificate", "GetCertificate", "ListCertificates",
+		"GetStatus", "GetStats",
+	}
+
+	for _, name := range expected {
+		full := "/admin.v1.AdminService/" + name
+		perm, ok := MethodPermissions[full]
+		require.True(t, ok, "method %s has no permission mapping", full)
+		assert.NotEmpty(t, perm.Resource, "method %s has an empty resource", full)
+		assert.NotEmpty(t, perm.Action, "method %s has an empty action", full)
+	}
+
+	assert.Len(t, MethodPermissions, len(expected))
+}
+
+// grpcAuthzCase pairs a gRPC method with the grant it must request and with a
+// canonical qrdb role that does and does not hold it.
+type grpcAuthzCase struct {
+	method      string
+	resource    string
+	action      string
+	allowedRole string
+	deniedRole  string
+}
+
+var grpcAuthzCases = []grpcAuthzCase{
+	{"/admin.v1.AdminService/CreateTenant", auth.ResourceTenants, auth.ActionCreate, qrdbsdk.RoleNameAdmin, qrdbsdk.RoleNameAuditor},
+	{"/admin.v1.AdminService/UpdateTenant", auth.ResourceTenants, auth.ActionUpdate, qrdbsdk.RoleNameAdmin, qrdbsdk.RoleNameAuditor},
+	{"/admin.v1.AdminService/DeleteTenant", auth.ResourceTenants, auth.ActionDelete, qrdbsdk.RoleNameAdmin, qrdbsdk.RoleNameOperator},
+	{"/admin.v1.AdminService/GetTenant", auth.ResourceTenants, auth.ActionRead, qrdbsdk.RoleNameAuditor, qrdbsdk.RoleNameUser},
+	{"/admin.v1.AdminService/ListTenants", auth.ResourceTenants, auth.ActionList, qrdbsdk.RoleNameAuditor, qrdbsdk.RoleNameUser},
+
+	{"/admin.v1.AdminService/CreateEAB", auth.ResourceACMEEAB, auth.ActionCreate, qrdbsdk.RoleNameAdmin, qrdbsdk.RoleNameOperator},
+	{"/admin.v1.AdminService/DeleteEAB", auth.ResourceACMEEAB, auth.ActionDelete, qrdbsdk.RoleNameAdmin, qrdbsdk.RoleNameOperator},
+	{"/admin.v1.AdminService/GetEAB", auth.ResourceACMEEAB, auth.ActionRead, qrdbsdk.RoleNameOperator, qrdbsdk.RoleNameUser},
+	{"/admin.v1.AdminService/ListEABs", auth.ResourceACMEEAB, auth.ActionList, qrdbsdk.RoleNameOperator, qrdbsdk.RoleNameUser},
+
+	{"/admin.v1.AdminService/CreateTenantRole", auth.ResourceRoles, auth.ActionCreate, qrdbsdk.RoleNameSO, qrdbsdk.RoleNameAdmin},
+	{"/admin.v1.AdminService/UpdateTenantRole", auth.ResourceRoles, auth.ActionUpdate, qrdbsdk.RoleNameSO, qrdbsdk.RoleNameAdmin},
+	{"/admin.v1.AdminService/DeleteTenantRole", auth.ResourceRoles, auth.ActionDelete, qrdbsdk.RoleNameSO, qrdbsdk.RoleNameAdmin},
+	{"/admin.v1.AdminService/GetTenantRole", auth.ResourceRoles, auth.ActionRead, qrdbsdk.RoleNameAdmin, qrdbsdk.RoleNameUser},
+	{"/admin.v1.AdminService/ListTenantRoles", auth.ResourceRoles, auth.ActionList, qrdbsdk.RoleNameAdmin, qrdbsdk.RoleNameUser},
+
+	{"/admin.v1.AdminService/CreateTenantUser", auth.ResourceUsers, auth.ActionCreate, qrdbsdk.RoleNameAdmin, qrdbsdk.RoleNameAuditor},
+	{"/admin.v1.AdminService/UpdateTenantUser", auth.ResourceUsers, auth.ActionUpdate, qrdbsdk.RoleNameAdmin, qrdbsdk.RoleNameAuditor},
+	{"/admin.v1.AdminService/DeleteTenantUser", auth.ResourceUsers, auth.ActionDelete, qrdbsdk.RoleNameAdmin, qrdbsdk.RoleNameOperator},
+	{"/admin.v1.AdminService/GetTenantUser", auth.ResourceUsers, auth.ActionRead, qrdbsdk.RoleNameAuditor, qrdbsdk.RoleNameUser},
+	{"/admin.v1.AdminService/ListTenantUsers", auth.ResourceUsers, auth.ActionList, qrdbsdk.RoleNameAuditor, qrdbsdk.RoleNameUser},
+
+	{"/admin.v1.AdminService/RevokeCertificate", auth.ResourceCerts, auth.ActionRevoke, qrdbsdk.RoleNameAdmin, qrdbsdk.RoleNameAuditor},
+	{"/admin.v1.AdminService/GetCertificate", auth.ResourceCerts, auth.ActionRead, qrdbsdk.RoleNameAuditor, qrdbsdk.RoleNameUser},
+	{"/admin.v1.AdminService/ListCertificates", auth.ResourceCerts, auth.ActionList, qrdbsdk.RoleNameAuditor, qrdbsdk.RoleNameUser},
+
+	{"/admin.v1.AdminService/GetStatus", auth.ResourceAdmin, auth.ActionStatus, qrdbsdk.RoleNameOperator, qrdbsdk.RoleNameCustodian},
+	{"/admin.v1.AdminService/GetStats", auth.ResourceAdmin, auth.ActionStatus, qrdbsdk.RoleNameOperator, qrdbsdk.RoleNameCustodian},
+}
+
+// TestUnaryAuthorizationInterceptor_RequestsExactPermission verifies each method
+// asks the authorizer for exactly the resource:action its table entry declares.
+func TestUnaryAuthorizationInterceptor_RequestsExactPermission(t *testing.T) {
+	for _, tc := range grpcAuthzCases {
+		t.Run(tc.method, func(t *testing.T) {
+			gate, client := newTestGate()
+			interceptor := UnaryAuthorizationInterceptor(DefaultRoleMapping(), gate, testLogger())
+
+			ctx := auth.WithIdentity(context.Background(), &auth.Identity{
+				Subject: "tester", TenantID: "t1", Roles: []string{tc.allowedRole},
+			})
+
+			ran := false
+			_, err := interceptor(ctx, nil, &grpc.UnaryServerInfo{FullMethod: tc.method}, okHandler(&ran))
+
+			require.NoError(t, err)
+			assert.True(t, ran)
+			assert.Equal(t, []string{tc.resource + ":" + tc.action}, client.requested)
+		})
+	}
+}
+
+// TestUnaryAuthorizationInterceptor_DeniesWithoutGrant verifies each method is
+// refused when the caller's canonical role lacks its grant, and that the
+// handler never runs.
+func TestUnaryAuthorizationInterceptor_DeniesWithoutGrant(t *testing.T) {
+	for _, tc := range grpcAuthzCases {
+		t.Run(tc.method, func(t *testing.T) {
+			gate, _ := newTestGate()
+			interceptor := UnaryAuthorizationInterceptor(DefaultRoleMapping(), gate, testLogger())
+
+			ctx := auth.WithIdentity(context.Background(), &auth.Identity{
+				Subject: "tester", TenantID: "t1", Roles: []string{tc.deniedRole},
+			})
+
+			ran := false
+			_, err := interceptor(ctx, nil, &grpc.UnaryServerInfo{FullMethod: tc.method}, okHandler(&ran))
+
+			require.Error(t, err)
+			assert.Equal(t, codes.PermissionDenied, status.Code(err))
+			assert.False(t, ran, "handler must not run on denial")
+		})
+	}
+}
+
+// TestUnaryAuthorizationInterceptor_TCPWithoutIdentityIsDenied is the fail-open
+// regression test. The previous interceptor passed every call with no peer
+// credentials — that is, every TCP call — straight to the handler, on the
+// assumption that "TLS client certificate authentication handles authorization
+// at a different layer". No such layer existed.
+func TestUnaryAuthorizationInterceptor_TCPWithoutIdentityIsDenied(t *testing.T) {
+	gate, _ := newTestGate()
+	interceptor := UnaryAuthorizationInterceptor(DefaultRoleMapping(), gate, testLogger())
+
+	for _, method := range []string{
 		"/admin.v1.AdminService/DeleteTenant",
-		"/admin.v1.AdminService/GetTenant",
-		"/admin.v1.AdminService/ListTenants",
-		// EAB management
-		"/admin.v1.AdminService/CreateEAB",
-		"/admin.v1.AdminService/DeleteEAB",
-		"/admin.v1.AdminService/GetEAB",
-		"/admin.v1.AdminService/ListEABs",
-		// Role management (RBAC)
-		"/admin.v1.AdminService/CreateTenantRole",
-		"/admin.v1.AdminService/UpdateTenantRole",
-		"/admin.v1.AdminService/DeleteTenantRole",
-		"/admin.v1.AdminService/GetTenantRole",
-		"/admin.v1.AdminService/ListTenantRoles",
-		// User management (RBAC)
-		"/admin.v1.AdminService/CreateTenantUser",
-		"/admin.v1.AdminService/UpdateTenantUser",
-		"/admin.v1.AdminService/DeleteTenantUser",
-		"/admin.v1.AdminService/GetTenantUser",
-		"/admin.v1.AdminService/ListTenantUsers",
-		// Certificate management
 		"/admin.v1.AdminService/RevokeCertificate",
-		"/admin.v1.AdminService/GetCertificate",
-		"/admin.v1.AdminService/ListCertificates",
-		// Status operations
-		"/admin.v1.AdminService/GetStatus",
-		"/admin.v1.AdminService/GetStats",
-	}
-
-	for _, method := range expectedMethods {
-		t.Run(method, func(t *testing.T) {
-			role, exists := MethodRoles[method]
-			assert.True(t, exists, "Method %s should be in MethodRoles map", method)
-			assert.NotEqual(t, RoleNone, role, "Method %s should have a non-none role", method)
-		})
-	}
-}
-
-func TestMethodRoles_AdminMethods(t *testing.T) {
-	adminMethods := []string{
-		"/admin.v1.AdminService/CreateTenant",
-		"/admin.v1.AdminService/UpdateTenant",
-		"/admin.v1.AdminService/DeleteTenant",
-		"/admin.v1.AdminService/CreateEAB",
-		"/admin.v1.AdminService/DeleteEAB",
-		"/admin.v1.AdminService/CreateTenantRole",
-		"/admin.v1.AdminService/UpdateTenantRole",
-		"/admin.v1.AdminService/DeleteTenantRole",
 		"/admin.v1.AdminService/CreateTenantUser",
-		"/admin.v1.AdminService/UpdateTenantUser",
-		"/admin.v1.AdminService/DeleteTenantUser",
-		"/admin.v1.AdminService/RevokeCertificate",
-	}
-
-	for _, method := range adminMethods {
-		t.Run(method, func(t *testing.T) {
-			role, exists := MethodRoles[method]
-			require.True(t, exists, "Method %s should exist", method)
-			assert.Equal(t, RoleAdmin, role, "Method %s should require RoleAdmin", method)
-		})
-	}
-}
-
-func TestMethodRoles_OperatorMethods(t *testing.T) {
-	operatorMethods := []string{
-		"/admin.v1.AdminService/GetTenant",
-		"/admin.v1.AdminService/ListTenants",
-		"/admin.v1.AdminService/GetEAB",
-		"/admin.v1.AdminService/ListEABs",
-		"/admin.v1.AdminService/GetTenantRole",
-		"/admin.v1.AdminService/ListTenantRoles",
-		"/admin.v1.AdminService/GetTenantUser",
-		"/admin.v1.AdminService/ListTenantUsers",
-	}
-
-	for _, method := range operatorMethods {
-		t.Run(method, func(t *testing.T) {
-			role, exists := MethodRoles[method]
-			require.True(t, exists, "Method %s should exist", method)
-			assert.Equal(t, RoleOperator, role, "Method %s should require RoleOperator", method)
-		})
-	}
-}
-
-func TestMethodRoles_ViewerMethods(t *testing.T) {
-	viewerMethods := []string{
-		"/admin.v1.AdminService/GetCertificate",
 		"/admin.v1.AdminService/ListCertificates",
-		"/admin.v1.AdminService/GetStatus",
-		"/admin.v1.AdminService/GetStats",
-	}
-
-	for _, method := range viewerMethods {
+	} {
 		t.Run(method, func(t *testing.T) {
-			role, exists := MethodRoles[method]
-			require.True(t, exists, "Method %s should exist", method)
-			assert.Equal(t, RoleViewer, role, "Method %s should require RoleViewer", method)
+			ran := false
+			_, err := interceptor(context.Background(), nil,
+				&grpc.UnaryServerInfo{FullMethod: method}, okHandler(&ran))
+
+			require.Error(t, err)
+			assert.Equal(t, codes.Unauthenticated, status.Code(err))
+			assert.False(t, ran)
 		})
 	}
 }
 
-// mockUnaryHandler is a test handler that records invocations
-type mockUnaryHandler struct {
-	called   bool
-	response interface{}
-	err      error
+// TestUnaryAuthorizationInterceptor_UnixPeerCredentialsResolveIdentity verifies
+// a Unix-socket caller's kernel-reported credentials are mapped to canonical
+// qrdb roles and evaluated by the authorizer.
+func TestUnaryAuthorizationInterceptor_UnixPeerCredentialsResolveIdentity(t *testing.T) {
+	gate, client := newTestGate()
+	interceptor := UnaryAuthorizationInterceptor(DefaultRoleMapping(), gate, testLogger())
+
+	// root -> admin, which holds certs:revoke.
+	ctx := context.WithValue(context.Background(), peerCredentialsKey{},
+		&PeerCredentials{PID: 1, UID: 0, GID: 0})
+
+	ran := false
+	_, err := interceptor(ctx, nil,
+		&grpc.UnaryServerInfo{FullMethod: "/admin.v1.AdminService/RevokeCertificate"}, okHandler(&ran))
+
+	require.NoError(t, err)
+	assert.True(t, ran)
+	assert.Equal(t, []string{"certs:revoke"}, client.requested)
 }
 
-func (h *mockUnaryHandler) Handler(ctx context.Context, req interface{}) (interface{}, error) {
-	h.called = true
-	return h.response, h.err
-}
+// TestUnaryAuthorizationInterceptor_UnmappedPeerIsDenied verifies a local peer
+// that matches no role mapping entry reaches nothing.
+func TestUnaryAuthorizationInterceptor_UnmappedPeerIsDenied(t *testing.T) {
+	gate, _ := newTestGate()
+	interceptor := UnaryAuthorizationInterceptor(DefaultRoleMapping(), gate, testLogger())
 
-func TestUnaryAuthorizationInterceptor_NoCredentials(t *testing.T) {
-	// No peer credentials = TCP connection, should pass through
-	interceptor := UnaryAuthorizationInterceptor(nil)
+	ctx := context.WithValue(context.Background(), peerCredentialsKey{},
+		&PeerCredentials{PID: 2, UID: 4242, GID: 4242})
 
-	handler := &mockUnaryHandler{response: "success"}
-	info := &grpc.UnaryServerInfo{
-		FullMethod: "/admin.v1.AdminService/CreateTenant", // Admin-only method
-	}
-
-	// Context without peer credentials (simulates TCP connection)
-	ctx := context.Background()
-
-	resp, err := interceptor(ctx, "request", info, handler.Handler)
-
-	assert.NoError(t, err, "TCP connections should pass through")
-	assert.True(t, handler.called, "Handler should be called")
-	assert.Equal(t, "success", resp)
-}
-
-func TestUnaryAuthorizationInterceptor_AdminAccess(t *testing.T) {
-	rm := DefaultRoleMapping()
-	interceptor := UnaryAuthorizationInterceptor(rm)
-
-	// Admin credentials (root user)
-	creds := &PeerCredentials{PID: 1234, UID: 0, GID: 0}
-	ctx := context.WithValue(context.Background(), peerCredentialsKey{}, creds)
-
-	methods := []string{
-		"/admin.v1.AdminService/CreateTenant",
-		"/admin.v1.AdminService/GetTenant",
-		"/admin.v1.AdminService/GetCertificate",
-		"/admin.v1.AdminService/GetStatus",
-		"/some/unknown/Method", // Unknown methods default to viewer
-	}
-
-	for _, method := range methods {
-		t.Run(method, func(t *testing.T) {
-			handler := &mockUnaryHandler{response: "success"}
-			info := &grpc.UnaryServerInfo{FullMethod: method}
-
-			resp, err := interceptor(ctx, "request", info, handler.Handler)
-
-			assert.NoError(t, err, "Admin should have access to %s", method)
-			assert.True(t, handler.called, "Handler should be called")
-			assert.Equal(t, "success", resp)
-		})
-	}
-}
-
-func TestUnaryAuthorizationInterceptor_OperatorAccess(t *testing.T) {
-	rm := DefaultRoleMapping()
-	interceptor := UnaryAuthorizationInterceptor(rm)
-
-	// Operator credentials (wheel group)
-	creds := &PeerCredentials{PID: 1234, UID: 1000, GID: 10}
-	ctx := context.WithValue(context.Background(), peerCredentialsKey{}, creds)
-
-	t.Run("operator can access operator methods", func(t *testing.T) {
-		handler := &mockUnaryHandler{response: "success"}
-		info := &grpc.UnaryServerInfo{FullMethod: "/admin.v1.AdminService/GetTenant"}
-
-		resp, err := interceptor(ctx, "request", info, handler.Handler)
-
-		assert.NoError(t, err)
-		assert.True(t, handler.called)
-		assert.Equal(t, "success", resp)
-	})
-
-	t.Run("operator can access viewer methods", func(t *testing.T) {
-		handler := &mockUnaryHandler{response: "success"}
-		info := &grpc.UnaryServerInfo{FullMethod: "/admin.v1.AdminService/GetStatus"}
-
-		resp, err := interceptor(ctx, "request", info, handler.Handler)
-
-		assert.NoError(t, err)
-		assert.True(t, handler.called)
-		assert.Equal(t, "success", resp)
-	})
-
-	t.Run("operator cannot access admin methods", func(t *testing.T) {
-		handler := &mockUnaryHandler{response: "success"}
-		info := &grpc.UnaryServerInfo{FullMethod: "/admin.v1.AdminService/CreateTenant"}
-
-		resp, err := interceptor(ctx, "request", info, handler.Handler)
-
-		assert.Error(t, err)
-		assert.False(t, handler.called, "Handler should not be called when permission denied")
-		assert.Nil(t, resp)
-
-		st, ok := status.FromError(err)
-		require.True(t, ok)
-		assert.Equal(t, codes.PermissionDenied, st.Code())
-	})
-}
-
-func TestUnaryAuthorizationInterceptor_ViewerAccess(t *testing.T) {
-	rm := DefaultRoleMapping()
-	interceptor := UnaryAuthorizationInterceptor(rm)
-
-	// Viewer credentials (regular user)
-	creds := &PeerCredentials{PID: 1234, UID: 1000, GID: 1000}
-	ctx := context.WithValue(context.Background(), peerCredentialsKey{}, creds)
-
-	t.Run("viewer can access viewer methods", func(t *testing.T) {
-		handler := &mockUnaryHandler{response: "success"}
-		info := &grpc.UnaryServerInfo{FullMethod: "/admin.v1.AdminService/GetStatus"}
-
-		resp, err := interceptor(ctx, "request", info, handler.Handler)
-
-		assert.NoError(t, err)
-		assert.True(t, handler.called)
-		assert.Equal(t, "success", resp)
-	})
-
-	t.Run("viewer cannot access operator methods", func(t *testing.T) {
-		handler := &mockUnaryHandler{response: "success"}
-		info := &grpc.UnaryServerInfo{FullMethod: "/admin.v1.AdminService/GetTenant"}
-
-		_, err := interceptor(ctx, "request", info, handler.Handler)
-
-		assert.Error(t, err)
-		assert.False(t, handler.called)
-
-		st, ok := status.FromError(err)
-		require.True(t, ok)
-		assert.Equal(t, codes.PermissionDenied, st.Code())
-	})
-
-	t.Run("viewer cannot access admin methods", func(t *testing.T) {
-		handler := &mockUnaryHandler{response: "success"}
-		info := &grpc.UnaryServerInfo{FullMethod: "/admin.v1.AdminService/CreateTenant"}
-
-		_, err := interceptor(ctx, "request", info, handler.Handler)
-
-		assert.Error(t, err)
-		assert.False(t, handler.called)
-
-		st, ok := status.FromError(err)
-		require.True(t, ok)
-		assert.Equal(t, codes.PermissionDenied, st.Code())
-	})
-}
-
-func TestUnaryAuthorizationInterceptor_PermissionDenied(t *testing.T) {
-	rm := DefaultRoleMapping()
-	interceptor := UnaryAuthorizationInterceptor(rm)
-
-	// Regular viewer
-	creds := &PeerCredentials{PID: 1234, UID: 1000, GID: 1000}
-	ctx := context.WithValue(context.Background(), peerCredentialsKey{}, creds)
-
-	handler := &mockUnaryHandler{response: "success"}
-	info := &grpc.UnaryServerInfo{FullMethod: "/admin.v1.AdminService/CreateTenant"}
-
-	resp, err := interceptor(ctx, "request", info, handler.Handler)
+	ran := false
+	_, err := interceptor(ctx, nil,
+		&grpc.UnaryServerInfo{FullMethod: "/admin.v1.AdminService/ListCertificates"}, okHandler(&ran))
 
 	require.Error(t, err)
-	assert.Nil(t, resp)
-	assert.False(t, handler.called)
-
-	// Verify it's a proper gRPC status error
-	st, ok := status.FromError(err)
-	require.True(t, ok, "Error should be a gRPC status")
-	assert.Equal(t, codes.PermissionDenied, st.Code())
-	assert.Contains(t, st.Message(), "permission denied")
-	assert.Contains(t, st.Message(), "viewer")
-	assert.Contains(t, st.Message(), "admin")
+	assert.Equal(t, codes.PermissionDenied, status.Code(err))
+	assert.False(t, ran)
 }
 
-func TestUnaryAuthorizationInterceptor_UnknownMethod(t *testing.T) {
-	rm := DefaultRoleMapping()
-	interceptor := UnaryAuthorizationInterceptor(rm)
+// TestUnaryAuthorizationInterceptor_UnmappedMethodIsDenied verifies a method
+// with no permission mapping is denied rather than admitted. The previous
+// interceptor defaulted an unlisted method to the viewer role and served it.
+func TestUnaryAuthorizationInterceptor_UnmappedMethodIsDenied(t *testing.T) {
+	gate, client := newTestGate()
+	interceptor := UnaryAuthorizationInterceptor(DefaultRoleMapping(), gate, testLogger())
 
-	// Viewer should be able to access unknown methods (default to viewer)
-	creds := &PeerCredentials{PID: 1234, UID: 1000, GID: 1000}
-	ctx := context.WithValue(context.Background(), peerCredentialsKey{}, creds)
+	ctx := auth.WithIdentity(context.Background(), &auth.Identity{
+		Subject: "root", TenantID: "", Roles: []string{qrdbsdk.RoleNameAdmin},
+	})
 
-	handler := &mockUnaryHandler{response: "success"}
-	info := &grpc.UnaryServerInfo{FullMethod: "/some.service/UnknownMethod"}
+	ran := false
+	_, err := interceptor(ctx, nil,
+		&grpc.UnaryServerInfo{FullMethod: "/admin.v1.AdminService/SomeFutureMethod"}, okHandler(&ran))
 
-	resp, err := interceptor(ctx, "request", info, handler.Handler)
-
-	assert.NoError(t, err, "Unknown methods should default to viewer role requirement")
-	assert.True(t, handler.called)
-	assert.Equal(t, "success", resp)
+	require.Error(t, err)
+	assert.Equal(t, codes.PermissionDenied, status.Code(err))
+	assert.Contains(t, err.Error(), admin.ErrOperationUnmapped.Error())
+	assert.False(t, ran)
+	assert.Empty(t, client.requested, "an unmapped method must not reach the authorizer")
 }
 
-func TestUnaryAuthorizationInterceptor_NilRoleMapping(t *testing.T) {
-	// Passing nil should use default mapping
-	interceptor := UnaryAuthorizationInterceptor(nil)
+// TestUnaryAuthorizationInterceptor_NilRoleMappingUsesDefaults verifies the
+// constructor substitutes the default mapping rather than leaving a nil deref
+// or an implicit allow.
+func TestUnaryAuthorizationInterceptor_NilRoleMappingUsesDefaults(t *testing.T) {
+	gate, _ := newTestGate()
+	interceptor := UnaryAuthorizationInterceptor(nil, gate, nil)
 
-	// Root user should get admin role with default mapping
-	creds := &PeerCredentials{PID: 1234, UID: 0, GID: 0}
-	ctx := context.WithValue(context.Background(), peerCredentialsKey{}, creds)
+	ctx := context.WithValue(context.Background(), peerCredentialsKey{},
+		&PeerCredentials{PID: 1, UID: 0, GID: 0})
 
-	handler := &mockUnaryHandler{response: "success"}
-	info := &grpc.UnaryServerInfo{FullMethod: "/admin.v1.AdminService/CreateTenant"}
+	ran := false
+	_, err := interceptor(ctx, nil,
+		&grpc.UnaryServerInfo{FullMethod: "/admin.v1.AdminService/ListCertificates"}, okHandler(&ran))
 
-	resp, err := interceptor(ctx, "request", info, handler.Handler)
-
-	assert.NoError(t, err, "Root user should have admin access with default mapping")
-	assert.True(t, handler.called)
-	assert.Equal(t, "success", resp)
+	require.NoError(t, err)
+	assert.True(t, ran)
 }
 
-func TestUnaryAuthorizationInterceptor_HandlerError(t *testing.T) {
-	rm := DefaultRoleMapping()
-	interceptor := UnaryAuthorizationInterceptor(rm)
+// TestUnaryAuthorizationInterceptor_NilGateDenies verifies an unwired gate fails
+// closed rather than serving the whole admin surface.
+func TestUnaryAuthorizationInterceptor_NilGateDenies(t *testing.T) {
+	interceptor := UnaryAuthorizationInterceptor(DefaultRoleMapping(), nil, testLogger())
 
-	creds := &PeerCredentials{PID: 1234, UID: 0, GID: 0}
-	ctx := context.WithValue(context.Background(), peerCredentialsKey{}, creds)
+	ctx := auth.WithIdentity(context.Background(), &auth.Identity{
+		Subject: "root", Roles: []string{qrdbsdk.RoleNameAdmin},
+	})
 
-	expectedErr := status.Error(codes.Internal, "handler error")
-	handler := &mockUnaryHandler{response: nil, err: expectedErr}
-	info := &grpc.UnaryServerInfo{FullMethod: "/admin.v1.AdminService/GetStatus"}
+	ran := false
+	_, err := interceptor(ctx, nil,
+		&grpc.UnaryServerInfo{FullMethod: "/admin.v1.AdminService/ListCertificates"}, okHandler(&ran))
 
-	resp, err := interceptor(ctx, "request", info, handler.Handler)
-
-	assert.Error(t, err)
-	assert.Equal(t, expectedErr, err, "Handler error should be propagated")
-	assert.True(t, handler.called)
-	assert.Nil(t, resp)
+	require.Error(t, err)
+	assert.Equal(t, codes.PermissionDenied, status.Code(err))
+	assert.False(t, ran)
 }
 
-func TestGetAuthorizationInfo_NotInContext(t *testing.T) {
-	ctx := context.Background()
-	info := GetAuthorizationInfo(ctx)
-	assert.Nil(t, info, "GetAuthorizationInfo should return nil when not in context")
+// TestUnaryAuthorizationInterceptor_HandlerErrorPropagates verifies an
+// authorized call's handler error is returned unchanged.
+func TestUnaryAuthorizationInterceptor_HandlerErrorPropagates(t *testing.T) {
+	gate, _ := newTestGate()
+	interceptor := UnaryAuthorizationInterceptor(DefaultRoleMapping(), gate, testLogger())
+
+	ctx := auth.WithIdentity(context.Background(), &auth.Identity{
+		Subject: "root", TenantID: "t1", Roles: []string{qrdbsdk.RoleNameAdmin},
+	})
+
+	sentinel := errors.New("handler failed")
+	_, err := interceptor(ctx, nil,
+		&grpc.UnaryServerInfo{FullMethod: "/admin.v1.AdminService/ListCertificates"},
+		func(context.Context, interface{}) (interface{}, error) { return nil, sentinel })
+
+	require.ErrorIs(t, err, sentinel)
 }
 
-func TestGetAuthorizationInfo_InContext(t *testing.T) {
-	authInfo := &AuthorizationInfo{
-		Role:         RoleOperator,
-		Method:       "/admin.v1.AdminService/GetTenant",
-		RequiredRole: RoleOperator,
+// TestUnaryAuthorizationInterceptor_QRDBAdminReachesGRPCSurface is the
+// unification regression on the gRPC transport: a caller holding qrdb's
+// canonical admin role reaches the ACME admin gRPC methods an Admin should
+// reach, and revoking that role removes access.
+func TestUnaryAuthorizationInterceptor_QRDBAdminReachesGRPCSurface(t *testing.T) {
+	// SO-exclusive role mutation stays with the Security Officer.
+	soOnly := map[string]bool{
+		"/admin.v1.AdminService/CreateTenantRole": true,
+		"/admin.v1.AdminService/UpdateTenantRole": true,
+		"/admin.v1.AdminService/DeleteTenantRole": true,
 	}
 
-	ctx := context.WithValue(context.Background(), authorizationContextKey{}, authInfo)
-	info := GetAuthorizationInfo(ctx)
+	for method := range MethodPermissions {
+		if soOnly[method] {
+			continue
+		}
+		t.Run(method, func(t *testing.T) {
+			gate, _ := newTestGate()
+			interceptor := UnaryAuthorizationInterceptor(DefaultRoleMapping(), gate, testLogger())
 
-	require.NotNil(t, info)
-	assert.Equal(t, RoleOperator, info.Role)
-	assert.Equal(t, "/admin.v1.AdminService/GetTenant", info.Method)
-	assert.Equal(t, RoleOperator, info.RequiredRole)
-}
+			granted := auth.WithIdentity(context.Background(), &auth.Identity{
+				Subject: "someone", TenantID: "t1", Roles: []string{qrdbsdk.RoleNameAdmin},
+			})
+			ran := false
+			_, err := interceptor(granted, nil, &grpc.UnaryServerInfo{FullMethod: method}, okHandler(&ran))
+			require.NoError(t, err, "qrdb admin must reach %s", method)
+			assert.True(t, ran)
 
-func TestGetAuthorizationInfo_WrongType(t *testing.T) {
-	// Wrong type in context should return nil
-	ctx := context.WithValue(context.Background(), authorizationContextKey{}, "not an AuthorizationInfo")
-	info := GetAuthorizationInfo(ctx)
-	assert.Nil(t, info, "GetAuthorizationInfo should return nil for wrong type")
-}
-
-func TestUnaryAuthorizationInterceptor_CustomRoleMapping(t *testing.T) {
-	// Custom mapping where UID 1000 is admin
-	rm := &RoleMapping{
-		AdminUIDs: []uint32{1000},
-	}
-	interceptor := UnaryAuthorizationInterceptor(rm)
-
-	creds := &PeerCredentials{PID: 1234, UID: 1000, GID: 1000}
-	ctx := context.WithValue(context.Background(), peerCredentialsKey{}, creds)
-
-	handler := &mockUnaryHandler{response: "success"}
-	info := &grpc.UnaryServerInfo{FullMethod: "/admin.v1.AdminService/CreateTenant"}
-
-	resp, err := interceptor(ctx, "request", info, handler.Handler)
-
-	assert.NoError(t, err, "Custom admin should have access")
-	assert.True(t, handler.called)
-	assert.Equal(t, "success", resp)
-}
-
-func TestUnaryAuthorizationInterceptor_AllMethodRoles(t *testing.T) {
-	// Test each method in MethodRoles with appropriate role
-	rm := DefaultRoleMapping()
-
-	testCases := []struct {
-		method    string
-		role      Role
-		canAccess bool
-	}{
-		// Admin methods - viewer cannot access
-		{"/admin.v1.AdminService/CreateTenant", RoleViewer, false},
-		{"/admin.v1.AdminService/UpdateTenant", RoleViewer, false},
-		{"/admin.v1.AdminService/DeleteTenant", RoleViewer, false},
-		{"/admin.v1.AdminService/CreateEAB", RoleViewer, false},
-		{"/admin.v1.AdminService/DeleteEAB", RoleViewer, false},
-		{"/admin.v1.AdminService/CreateTenantRole", RoleViewer, false},
-		{"/admin.v1.AdminService/UpdateTenantRole", RoleViewer, false},
-		{"/admin.v1.AdminService/DeleteTenantRole", RoleViewer, false},
-		{"/admin.v1.AdminService/CreateTenantUser", RoleViewer, false},
-		{"/admin.v1.AdminService/UpdateTenantUser", RoleViewer, false},
-		{"/admin.v1.AdminService/DeleteTenantUser", RoleViewer, false},
-		{"/admin.v1.AdminService/RevokeCertificate", RoleViewer, false},
-
-		// Operator methods - viewer cannot access
-		{"/admin.v1.AdminService/GetTenant", RoleViewer, false},
-		{"/admin.v1.AdminService/ListTenants", RoleViewer, false},
-		{"/admin.v1.AdminService/GetEAB", RoleViewer, false},
-		{"/admin.v1.AdminService/ListEABs", RoleViewer, false},
-		{"/admin.v1.AdminService/GetTenantRole", RoleViewer, false},
-		{"/admin.v1.AdminService/ListTenantRoles", RoleViewer, false},
-		{"/admin.v1.AdminService/GetTenantUser", RoleViewer, false},
-		{"/admin.v1.AdminService/ListTenantUsers", RoleViewer, false},
-
-		// Viewer methods - viewer can access
-		{"/admin.v1.AdminService/GetCertificate", RoleViewer, true},
-		{"/admin.v1.AdminService/ListCertificates", RoleViewer, true},
-		{"/admin.v1.AdminService/GetStatus", RoleViewer, true},
-		{"/admin.v1.AdminService/GetStats", RoleViewer, true},
-	}
-
-	for _, tc := range testCases {
-		t.Run(tc.method+"_"+string(tc.role), func(t *testing.T) {
-			interceptor := UnaryAuthorizationInterceptor(rm)
-
-			var creds *PeerCredentials
-			switch tc.role {
-			case RoleAdmin:
-				creds = &PeerCredentials{PID: 1234, UID: 0, GID: 0}
-			case RoleOperator:
-				creds = &PeerCredentials{PID: 1234, UID: 1000, GID: 10}
-			case RoleViewer:
-				creds = &PeerCredentials{PID: 1234, UID: 1000, GID: 1000}
-			}
-			ctx := context.WithValue(context.Background(), peerCredentialsKey{}, creds)
-
-			handler := &mockUnaryHandler{response: "success"}
-			info := &grpc.UnaryServerInfo{FullMethod: tc.method}
-
-			resp, err := interceptor(ctx, "request", info, handler.Handler)
-
-			if tc.canAccess {
-				assert.NoError(t, err)
-				assert.True(t, handler.called)
-				assert.Equal(t, "success", resp)
-			} else {
-				assert.Error(t, err)
-				assert.False(t, handler.called)
-				st, ok := status.FromError(err)
-				require.True(t, ok)
-				assert.Equal(t, codes.PermissionDenied, st.Code())
-			}
+			revoked := auth.WithIdentity(context.Background(), &auth.Identity{
+				Subject: "someone", TenantID: "t1", Roles: nil,
+			})
+			ran = false
+			_, err = interceptor(revoked, nil, &grpc.UnaryServerInfo{FullMethod: method}, okHandler(&ran))
+			require.Error(t, err, "revoking the role must remove access to %s", method)
+			assert.False(t, ran)
 		})
 	}
-}
-
-func TestAuthorizationInfo_Fields(t *testing.T) {
-	info := &AuthorizationInfo{
-		Role:         RoleAdmin,
-		Method:       "/test/Method",
-		RequiredRole: RoleOperator,
-	}
-
-	assert.Equal(t, RoleAdmin, info.Role)
-	assert.Equal(t, "/test/Method", info.Method)
-	assert.Equal(t, RoleOperator, info.RequiredRole)
 }

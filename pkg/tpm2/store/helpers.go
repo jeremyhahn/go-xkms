@@ -139,16 +139,24 @@ func ParseCurve(s string) (elliptic.Curve, error) {
 	}
 }
 
-// AvailableHashes returns a map of available hash functions.
-// Uses standard Go crypto.Hash.String() format (e.g., "SHA-256").
+// AvailableHashes returns the hash functions this binary may use, keyed by
+// standard Go crypto.Hash.String() format (e.g. "SHA-256") and by the common
+// aliases types.AvailableHashes recognizes.
+//
+// It delegates rather than declaring its own table. This package previously
+// carried a hand-maintained copy that had to agree with types.AvailableHashes
+// and had no mechanism to keep it in agreement: the copy admitted SHA-1
+// unconditionally and omitted SHA-3 entirely, so a TPM configured with
+// hash "SHA3-256" was rejected while one configured with "SHA-1" signed and
+// attested with a digest NIST SP 800-131A Rev. 2 disallows. There is now one
+// table, in pkg/types, and one weak-hash policy governing it.
+//
+// The set returned here is intentionally wider than what a TPM can execute;
+// which of these algorithms the device actually supports is decided by
+// tpm2.ParseCryptoHashAlgID, which returns ErrInvalidHashFunction for anything
+// with no TPM_ALG_ID.
 func AvailableHashes() map[string]crypto.Hash {
-	return map[string]crypto.Hash{
-		"SHA-1":   crypto.SHA1,
-		"SHA-224": crypto.SHA224,
-		"SHA-256": crypto.SHA256,
-		"SHA-384": crypto.SHA384,
-		"SHA-512": crypto.SHA512,
-	}
+	return types.AvailableHashes()
 }
 
 // ECCConfig contains ECC configuration from config files

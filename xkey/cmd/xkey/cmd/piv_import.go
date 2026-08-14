@@ -87,6 +87,7 @@ func init() {
 
 // runPivImport executes the piv import command.
 func runPivImport(cmd *cobra.Command, args []string) error {
+	out := cmd.OutOrStdout()
 	logger := slog.Default()
 	cfg := buildPIVConfig()
 
@@ -142,8 +143,8 @@ func runPivImport(cmd *cobra.Command, args []string) error {
 
 	// Print success message with certificate info
 	slotName := xkms.PIVSlotName(slot)
-	fmt.Printf("Certificate imported into slot %s (%s)\n", slot, slotName)
-	fmt.Print(formatCertInfo(cert))
+	fmt.Fprintf(out, "Certificate imported into slot %s (%s)\n", slot, slotName)
+	fmt.Fprint(out, formatCertInfo(cert))
 
 	return nil
 }

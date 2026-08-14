@@ -401,14 +401,18 @@ func (s *PhoneService) Pair(address string) (*PairedDevice, error) {
 		return nil, ErrPhonePairFailed
 	}
 
-	// Perform Noise XX handshake.
+	// Perform Noise XX handshake. The identity exchange runs on every
+	// connection, pairing included: the phone answers an unknown key with
+	// "new device" and both sides fall back to an empty prologue, so pairing
+	// and reconnecting negotiate the same way.
 	s.log.Info("performing Noise handshake")
 	handshakeCfg := &phone.HandshakeConfig{
-		Transport:           transport,
-		Session:             session,
-		Logger:              s.log,
-		StripEnvelopeHeader: false,
-		EnvelopeHeaderSize:  0,
+		Transport:            transport,
+		Session:              session,
+		Logger:               s.log,
+		StripEnvelopeHeader:  false,
+		EnvelopeHeaderSize:   0,
+		LocalStaticPublicKey: session.LocalStaticPublicKey(),
 	}
 	if err := phone.PerformHandshake(connectCtx, handshakeCfg); err != nil {
 		_ = transport.Disconnect()

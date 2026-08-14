@@ -15,14 +15,16 @@
 //
 // Identity itself is qrdb-shaped: xkms aliases qrdb's auth.Identity so the
 // platform identity model lives in qrdb (Subject, TenantID, Roles, Metadata)
-// and downstream xkms code never re-models it. Authorization that depends on
-// xkms-domain permissions (keys, certs, secrets, ...) is handled by
-// pkg/keyrbac and pkg/keyauthz; this package owns only authentication and
-// the request-scoped tenant barrier.
+// and downstream xkms code never re-models it. Authorization is the Authorizer
+// in authorize.go, which delegates every resource:action decision to the hosted
+// qrdb node's RBAC service; permissions.go holds the resource and action
+// identifiers the transports pass in. Beyond that, this package owns only
+// authentication and the request-scoped tenant barrier.
 package auth
 
 import (
 	"context"
+	"crypto/tls"
 	"net/http"
 
 	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
@@ -76,6 +78,21 @@ func WithIdentity(ctx context.Context, id *Identity) context.Context {
 	return qrdbsdk.WithIdentity(ctx, id)
 }
 
+// WithTLSState stores the mTLS connection state on the context. It delegates
+// to qrdb's auth.WithTLSState so xkms and qrdb share one carrier for the
+// verified peer certificate. Transports that terminate TLS on a raw socket
+// (MCP) must install it; HTTP-shaped transports read *http.Request.TLS.
+func WithTLSState(ctx context.Context, state *tls.ConnectionState) context.Context {
+	return qrdbsdk.WithTLSState(ctx, state)
+}
+
+// TLSStateFromContext retrieves the mTLS connection state stored by
+// WithTLSState. It returns nil when the context carries none, so callers that
+// bind an operation to the caller's certificate fail closed.
+func TLSStateFromContext(ctx context.Context) *tls.ConnectionState {
+	return qrdbsdk.TLSStateFromContext(ctx)
+}
+
 // GetIdentity retrieves the Identity stored in the context. Returns nil
 // when no identity is present.
 func GetIdentity(ctx context.Context) *Identity {
@@ -87,11 +104,14 @@ func GetIdentity(ctx context.Context) *Identity {
 // is treated as platform-scoped, anything else is bound to its own tenant.
 // A nil identity is treated as system-scoped (no auth context => platform
 // boot / internal pipeline).
+//
+// The rule belongs to go-qrdb, which owns the tenant model, so this delegates
+// to the predicate exported by its SDK rather than restating it. Re-deriving
+// the comparison here is what let it drift once already: enforcement sites
+// hand-rolled `TenantID == ""` and silently rejected identities in the
+// reserved "system" tenant, which the rule says ARE platform-scoped.
 func IsCrossTenant(id *Identity) bool {
-	if id == nil {
-		return true
-	}
-	return id.TenantID == qrdbsdk.SystemTenantID || id.TenantID == ""
+	return qrdbsdk.IdentityIsSystemTenant(id)
 }
 
 // FirstRole returns the first role on the identity, or "" if the identity

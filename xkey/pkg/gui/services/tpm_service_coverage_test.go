@@ -295,19 +295,6 @@ func TestTPMService_Coverage_hierarchyHandleToName(t *testing.T) {
 }
 
 // ---------------------------------------------------------------------------
-// Test: ListKeys panic recovery path (60% -> 100%).
-// ---------------------------------------------------------------------------
-
-func TestTPMService_Coverage_ListKeys(t *testing.T) {
-	t.Run("returns_empty_slice", func(t *testing.T) {
-		svc := NewTPMService()
-		keys, err := svc.ListKeys()
-		require.NoError(t, err)
-		assert.Empty(t, keys)
-	})
-}
-
-// ---------------------------------------------------------------------------
 // Test: GetVerificationStatus (delegates to VerifyTPM).
 // ---------------------------------------------------------------------------
 

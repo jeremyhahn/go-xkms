@@ -22,7 +22,32 @@ xkey CLI / GUI
 
 ## CLI Commands
 
-All commands require a running xkmsd server. Specify the server URL with `--xkmsd-url` or `XKEY_XKMSD_URL`.
+All commands require a running xkmsd server.
+
+### Server selection
+
+The endpoint is resolved once, in `cmd/xkey/cmd/xkmsd_client.go`, and shared by
+every command group that talks to xkmsd (`platform-store`, `ca`):
+
+1. `--xkmsd-url`
+2. `XKMSD_URL`, then `XKEY_XKMSD_URL`
+3. the `xkmsd_url` config key
+4. `xkmsd.address` in the xkey config
+
+The URL scheme selects the SDK transport:
+
+| Scheme | Transport |
+|--------|-----------|
+| `unix://` | gRPC over a Unix domain socket |
+| `http://`, `https://` | REST |
+| `grpc://`, `grpcs://` | gRPC |
+| `quic://` | HTTP/3 |
+| `mcp://`, `mcps://` | JSON-RPC |
+
+`XKMSD_TOKEN` supplies a bearer token. `--tls-ca`, `XKMSD_TLS_CA`, or
+`xkmsd.tls_ca_file` supplies the CA bundle used to verify the TLS-bearing
+transports (`https`, `grpcs`, `quic`, `mcps`); without one the system trust
+store is used.
 
 ### `xkey platform-store put <name>`
 

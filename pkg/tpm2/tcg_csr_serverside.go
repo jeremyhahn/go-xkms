@@ -117,6 +117,28 @@ func VerifyTCG_CSR_IDevID_Stateless(
 		return nil, nil, err
 	}
 
+	// The IAK must have certified the IDevID.
+	//
+	// Everything above concerns the IDevID's *possession*: the CSR is signed by
+	// it, so the requester holds the private half. That is equally true of a key
+	// generated in software. Only this certification shows the IDevID lives in
+	// the same TPM as the attestation key -- which is the entire claim an IDevID
+	// certificate makes.
+	//
+	// No qualifying data is demanded: the certification is produced when the
+	// IDevID is created, long before a CA chooses a challenge. Freshness in this
+	// ceremony comes from credential activation and the quote, both bound to
+	// values the CA picks per session.
+	if _, err := VerifyCertifyRaw(
+		unpacked.CsrContents.SgnCertifyInfo,
+		unpacked.CsrContents.SgnCertifyInfoSig,
+		unpacked.CsrContents.AttestPub,
+		unpacked.CsrContents.SigningPub,
+		nil,
+	); err != nil {
+		return nil, nil, err
+	}
+
 	return pubKey, unpacked, nil
 }
 

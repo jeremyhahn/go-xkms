@@ -136,7 +136,25 @@ var (
 )
 ```
 
+## Hash selection
+
+Digest strength is enforced separately from `GOFIPS140`, and it is
+purpose-scoped the way SP 800-131A Rev. 2 is:
+
+- **Signing, certificates, TPM attestation** -- MD4, MD5, SHA-1, MD5+SHA1 and
+  RIPEMD-160 are refused by default. `crypto.allow_weak_hashes` re-admits them
+  outside FIPS mode, applied by `server.New` and warned about on every start;
+  under `GOFIPS140` / `GODEBUG=fips140` the setting is ignored. See
+  [Weak hash policy](../crypto/weak-hashes.md).
+- **Key derivation** -- the approved set is per construction. The ANSI X9.63 /
+  SP 800-56A concatenation KDFs accept SHA-1, SHA-224 and SHA3-224 in a fully
+  compliant deployment, because SP 800-56A Rev. 3 approves them for KDF use and
+  SP 800-131A Rev. 2 bars SHA-1 only from signature generation. See
+  [Key Derivation Functions](../crypto/kdf.md).
+
 ## See Also
 
+- [Weak hash policy](../crypto/weak-hashes.md) -- signature-side digest policy
+- [Key Derivation Functions](../crypto/kdf.md) -- per-construction hash sets
 - [Configuration: AEAD](../configuration/aead-auto-selection.md) -- authenticated encryption setup
 - [Architecture: Symmetric Encryption](../architecture/symmetric-encryption.md) -- symmetric key architecture

@@ -53,6 +53,10 @@ func (m *testTenantDAO) SaveWithCondition(_ context.Context, _ *entities.Tenant,
 	panic("not implemented")
 }
 
+func (m *testTenantDAO) SaveIfAbsent(_ context.Context, _ *entities.Tenant) (bool, error) {
+	panic("not implemented")
+}
+
 func (m *testTenantDAO) Get(_ context.Context, id uint64) (*entities.Tenant, error) {
 	if m.getError != nil {
 		return nil, m.getError

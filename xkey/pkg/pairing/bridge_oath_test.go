@@ -44,8 +44,9 @@ func TestBridge_DispatchMap_TotalHandlerCount_WithOATH(t *testing.T) {
 	b, err := NewBridge(client, &BridgeConfig{Logger: testLogger()})
 	require.NoError(t, err)
 
-	// 16 original + 3 sharing + 3 backup + 2 OATH + 3 PIV + 5 sync = 32 total handlers.
-	assert.Len(t, b.handlers, 32)
+	// 16 original + 3 sharing + 3 backup + 2 OATH + 3 PIV + 5 sync
+	// + 1 enrollment-certificate store = 33 total handlers.
+	assert.Len(t, b.handlers, 33)
 }
 
 // --- handleOATHAdd tests ---

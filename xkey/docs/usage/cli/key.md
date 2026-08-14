@@ -1,5 +1,11 @@
 # CLI Key Command Reference
 
+> **Scope:** this page documents the go-xkms **server** CLI `xkmsctl key`
+> (source: `cmd/xkmsctl/`), **not** the `xkey` desktop CLI. It lives under
+> `xkey/docs/` for historical reasons.
+> There is no `xkey` equivalent. For the xkey command tree see
+> [the xkey CLI reference](README.md).
+
 ## Overview
 
 The `key` command group provides comprehensive key management operations for cryptographic keys across all supported backends. It supports both asymmetric (RSA, ECDSA, Ed25519) and symmetric (AES-GCM) key operations including generation, rotation, encryption, decryption, signing, verification, and secure import/export.

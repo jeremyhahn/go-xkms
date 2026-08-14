@@ -27,6 +27,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/jeremyhahn/go-xkms/pkg/auth"
+
 	"github.com/jeremyhahn/go-xkms/pkg/ratelimit"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -188,7 +190,7 @@ func TestServer_SendError(t *testing.T) {
 	svc := setupTestXKMS(t)
 	defer cleanupXKMS()
 
-	server, err := NewServer(&Config{Addr: "localhost:0", XKMSService: svc})
+	server, err := NewServer(&Config{Addr: "localhost:0", XKMSService: svc, Authenticator: auth.NewNoOpAuthenticator()})
 	require.NoError(t, err)
 
 	t.Run("sends error response", func(t *testing.T) {
@@ -284,9 +286,10 @@ func TestServer_HandleConnection_RateLimit(t *testing.T) {
 	defer limiter.Stop()
 
 	config := &Config{
-		Addr:        "localhost:0",
-		RateLimiter: limiter,
-		XKMSService: svc,
+		Authenticator: auth.NewNoOpAuthenticator(),
+		Addr:          "localhost:0",
+		RateLimiter:   limiter,
+		XKMSService:   svc,
 	}
 
 	server, err := NewServer(config)
@@ -380,7 +383,13 @@ func TestHandler_RotateKey_InvalidBackend(t *testing.T) {
 
 		_, err := server.handleRotateKey(context.Background(), req)
 		require.Error(t, err)
-		assert.Contains(t, err.Error(), "invalid backend")
+		// The wording is the service layer's, shared with sign/verify/encrypt
+		// in this package. It used to be a local "invalid backend: <name>"
+		// produced by a types.ParseStoreType gate, which also rejected every
+		// registered backend name that is not itself a store type. What is
+		// under test is that an unregistered backend is refused rather than
+		// quietly served by the default one.
+		assert.Contains(t, err.Error(), "backend not found")
 	})
 }
 

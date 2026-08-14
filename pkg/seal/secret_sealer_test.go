@@ -73,3 +73,45 @@ func TestSecretSealer_DeterministicKeyDerivation(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, []byte("persisted"), got)
 }
+
+// TestSecretSealer_Unseal_WrongNonceLength verifies that Unseal returns an
+// error instead of panicking when the sealed data carries a nonce that is
+// not exactly the GCM nonce size. crypto/cipher.AEAD.Open panics on a
+// mismatched nonce length, so a corrupted or tampered sealed blob must be
+// rejected before it reaches Open.
+func TestSecretSealer_Unseal_WrongNonceLength(t *testing.T) {
+	sealer, err := NewSecretSealer([]byte("a-strong-node-protection-secret"))
+	require.NoError(t, err)
+
+	sealed, err := sealer.Seal(context.Background(), []byte("data"), nil)
+	require.NoError(t, err)
+
+	tests := []struct {
+		name      string
+		nonceSize int
+	}{
+		{name: "16-byte AES-CBC-style IV", nonceSize: 16},
+		{name: "empty nonce", nonceSize: 0},
+		{name: "single byte nonce", nonceSize: 1},
+		{name: "oversized nonce", nonceSize: 32},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			tampered := *sealed
+			tampered.Nonce = make([]byte, tt.nonceSize)
+			_, err := sealer.Unseal(context.Background(), &tampered, nil)
+			require.Error(t, err, "unseal should reject a wrong-length nonce, not panic")
+		})
+	}
+}
+
+// TestSecretSealer_Unseal_NilSealedData verifies that Unseal rejects nil
+// SealedData with an error instead of a nil-pointer panic.
+func TestSecretSealer_Unseal_NilSealedData(t *testing.T) {
+	sealer, err := NewSecretSealer([]byte("a-strong-node-protection-secret"))
+	require.NoError(t, err)
+
+	_, err = sealer.Unseal(context.Background(), nil, nil)
+	require.Error(t, err)
+}

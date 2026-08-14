@@ -182,16 +182,16 @@ The go-xkms role model extends the PKCS#11 two-role model (SO + User):
 
 ## Mapping to Existing RBAC
 
-The init system roles map to the RBAC permission model documented in [RBAC](../architecture/rbac.md):
+The init system roles are the same six qrdb role names used everywhere else in
+xkms — `so`, `admin`, `operator`, `user`, `auditor`, `custodian` (see
+`cmd/xkmsctl/roles.go`). Their grants are records in the qrdb identity plane,
+not constants in xkms; the intent behind each role and the resource:action
+vocabulary the grants are written in are documented in
+[RBAC](../architecture/rbac.md).
 
-| Init Role | RBAC Role | Key Differences |
-|-----------|-----------|-----------------|
-| SO | (custom) | Has `system:*`, `certificates:*`, `barrier:*`; explicitly **denied** `keys:sign`, `keys:encrypt`, `keys:decrypt` |
-| Admin | `admin` | Has `keys:*` except `keys:sign`, `keys:decrypt`; adds `keys:wrap` |
-| Operator | `operator` | Has `keys:*` including crypto operations |
-| User | `user` | Has `keys:sign`, `keys:verify`, `keys:encrypt`, `keys:decrypt` |
-| Auditor | `auditor` | Has `audit:*`, plus read/list on keys, certs, tenants |
-| Custodian | (custom) | Has only `barrier:unseal-share` |
+Grants for a role are read back at runtime with
+`xkms.Auth(qrdbClient).Permissions()` / `.RBAC().ListPermissions(...)` rather
+than from a table in this document.
 
 ## Related Documentation
 

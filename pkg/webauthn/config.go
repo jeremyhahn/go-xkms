@@ -64,8 +64,37 @@ type Config struct {
 	// Default: "" (any)
 	AuthenticatorAttachment string `yaml:"authenticator_attachment" json:"authenticator_attachment" mapstructure:"authenticator_attachment"`
 
+	// AllowPublicRegistration controls whether BeginRegistration may create an
+	// account for an email it has never seen — that is, whether the relying
+	// party accepts open self-service sign-up.
+	//
+	// Default: true (nil means true). The platform is intended to be publicly
+	// reachable, so omitting the key leaves registration open.
+	//
+	// It is a *bool rather than a bool on purpose. A plain bool has the zero
+	// value false, so every deployment whose config predates this field — and
+	// every config that simply omits it — would silently switch to closed
+	// registration, which is both a behavior regression and the opposite of
+	// the intended default. nil also distinguishes "the operator never
+	// considered this" from "the operator explicitly chose open", which is
+	// what a compliance profile needs in order to flag the latter.
+	//
+	// Turning it off does NOT disable enrollment for accounts that already
+	// exist: a user provisioned through the authorized CreateUser path still
+	// enrolls their first passkey through the same BeginRegistration entry
+	// point. Only implicit account creation is withheld. See
+	// Service.BeginRegistration.
+	AllowPublicRegistration *bool `yaml:"allow_public_registration,omitempty" json:"allow_public_registration,omitempty" mapstructure:"allow_public_registration"`
+
 	// Debug enables debug logging.
 	Debug bool `yaml:"debug" json:"debug" mapstructure:"debug"`
+}
+
+// PublicRegistrationAllowed reports whether BeginRegistration may create an
+// account for an unknown email. An unset AllowPublicRegistration means yes,
+// so a config that never mentions the field keeps open registration.
+func (c *Config) PublicRegistrationAllowed() bool {
+	return c == nil || c.AllowPublicRegistration == nil || *c.AllowPublicRegistration
 }
 
 // Validate validates the configuration and returns an error if invalid.

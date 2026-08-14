@@ -153,13 +153,31 @@ func (g *backendPIVKeyGenerator) GeneratePIVKey(slot pivcert.PIVSlot, algorithm 
 // can locate the key by CKA_ID instead of relying on a CN convention that may
 // not match the certificate subject users choose when generating the key.
 func (g *backendPIVKeyGenerator) GetPIVSigner(slot pivcert.PIVSlot, cn string) (crypto.Signer, error) {
-	attrs := &types.KeyAttributes{
-		CN:      cn,
-		PIVSlot: string(slot),
-	}
 	// context.Background() is correct here: GetPIVSigner implements the
 	// PIVKeyGenerator interface, which carries no request context.
-	return g.backend.Signer(context.Background(), attrs)
+	ctx := context.Background()
+
+	// Resolve the stored key's full attributes by CN so the backend's
+	// Signer receives the algorithm, store type, and key type it validates
+	// against — a CN+slot shell fails attribute validation on backends
+	// that persist keys (e.g. software/pkcs8).
+	if stored, err := g.backend.ListKeys(ctx); err == nil {
+		for _, ka := range stored {
+			if ka != nil && ka.CN == cn {
+				return g.backend.Signer(ctx, ka)
+			}
+		}
+	}
+
+	// Fall back to the CN+slot shell for backends whose ListKeys does not
+	// enumerate slot keys (e.g. hardware tokens resolving by CKA_ID).
+	attrs := &types.KeyAttributes{
+		CN:        cn,
+		PIVSlot:   string(slot),
+		StoreType: g.storeType,
+		KeyType:   types.KeyTypeSigning,
+	}
+	return g.backend.Signer(ctx, attrs)
 }
 
 // Verify interface compliance at compile time.

@@ -113,6 +113,10 @@ func (m *mockTenantDAOSimple) SaveWithCondition(_ context.Context, _ *entities.T
 	panic("not implemented")
 }
 
+func (m *mockTenantDAOSimple) SaveIfAbsent(_ context.Context, _ *entities.Tenant) (bool, error) {
+	panic("not implemented")
+}
+
 func (m *mockTenantDAOSimple) Get(_ context.Context, id uint64) (*entities.Tenant, error) {
 	if m.getErr != nil {
 		return nil, m.getErr

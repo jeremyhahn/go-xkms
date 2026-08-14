@@ -1,0 +1,50 @@
+@import "tailwindcss";
+
+/* Scan the shared login package's components so their daisyUI utility
+ * classes survive Tailwind's content purge. The path resolves through the
+ * file: dependency to sdk/ts/svelte-auth/src. */
+@source "../../sdk/ts/svelte-auth/src/**/*.svelte";
+
+@plugin "daisyui" {
+  themes: xkms-dark --default, xkms-light;
+}
+
+@theme {
+  /* xKMS brand tokens */
+  --color-brand-cyan: oklch(0.72 0.14 210);
+  --color-brand-violet: oklch(0.58 0.2 285);
+}
+
+/* xKMS Dark Theme */
+[data-theme="xkms-dark"] {
+  --color-primary: oklch(0.68 0.15 235);
+  --color-primary-content: oklch(0.98 0.005 240);
+  --color-secondary: oklch(0.58 0.2 285);
+  --color-accent: oklch(0.72 0.14 210);
+  --color-neutral: oklch(0.2 0.02 260);
+  --color-base-100: oklch(0.15 0.02 260);
+  --color-base-200: oklch(0.13 0.02 260);
+  --color-base-300: oklch(0.1 0.02 260);
+  --color-base-content: oklch(0.9 0.01 240);
+  --color-info: oklch(0.7 0.15 230);
+  --color-success: oklch(0.7 0.18 150);
+  --color-warning: oklch(0.75 0.18 85);
+  --color-error: oklch(0.62 0.22 25);
+}
+
+/* xKMS Light Theme */
+[data-theme="xkms-light"] {
+  --color-primary: oklch(0.5 0.18 245);
+  --color-primary-content: oklch(0.98 0.005 240);
+  --color-secondary: oklch(0.52 0.2 285);
+  --color-accent: oklch(0.6 0.14 210);
+  --color-neutral: oklch(0.25 0.02 260);
+  --color-base-100: oklch(0.98 0.005 240);
+  --color-base-200: oklch(0.95 0.005 240);
+  --color-base-300: oklch(0.89 0.01 240);
+  --color-base-content: oklch(0.2 0.02 260);
+  --color-info: oklch(0.55 0.18 240);
+  --color-success: oklch(0.55 0.18 150);
+  --color-warning: oklch(0.6 0.16 85);
+  --color-error: oklch(0.52 0.22 25);
+}

@@ -1388,13 +1388,13 @@ func TestClaimCertComplete_Connected(t *testing.T) {
 	assert.NotNil(t, resp)
 }
 
-func TestClaimShare_Connected(t *testing.T) {
+func TestClaimShareBegin_Connected(t *testing.T) {
 	srv := newFullMockServer(t)
 	defer srv.Close()
 	tr := connectFullMock(t, srv)
 	defer tr.Close()
 
-	resp, err := tr.ClaimShare(context.Background(), &transport.ClaimShareRequest{})
+	resp, err := tr.ClaimShareBegin(context.Background(), &transport.ClaimShareBeginRequest{})
 	require.NoError(t, err)
 	assert.NotNil(t, resp)
 }

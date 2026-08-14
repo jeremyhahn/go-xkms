@@ -425,8 +425,8 @@ func TestClaimCertComplete_NotConnected(t *testing.T) {
 	assert.ErrorIs(t, err, ErrNotConnected)
 }
 
-func TestClaimShare_NotConnected(t *testing.T) {
-	_, err := newDisconnected(t).ClaimShare(context.Background(), &transport.ClaimShareRequest{})
+func TestClaimShareBegin_NotConnected(t *testing.T) {
+	_, err := newDisconnected(t).ClaimShareBegin(context.Background(), &transport.ClaimShareBeginRequest{})
 	assert.ErrorIs(t, err, ErrNotConnected)
 }
 

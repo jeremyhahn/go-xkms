@@ -15,7 +15,6 @@ package tpm2
 
 import (
 	"crypto/aes"
-	"crypto/cipher"
 	"fmt"
 	"log/slog"
 	"sync"
@@ -24,6 +23,7 @@ import (
 
 	"github.com/google/go-tpm/tpm2"
 	kbackend "github.com/jeremyhahn/go-xkms/pkg/backend"
+	"github.com/jeremyhahn/go-xkms/pkg/crypto/aead"
 	"github.com/jeremyhahn/go-xkms/pkg/types"
 )
 
@@ -326,8 +326,11 @@ func (e *tpm2AESEncrypter) Encrypt(plaintext []byte, opts *types.EncryptOptions)
 		return nil, &errs.Wrapped{Msg: "tpm2: failed to create cipher", Err: err}
 	}
 
-	// Create GCM mode
-	gcm, err := cipher.NewGCM(block)
+	// Create GCM mode at the requested tag length. NIST SP 800-38D section
+	// 5.2.1.2 defines a t-bit tag as the leading t bits of the full tag; a
+	// caller that asked for one and got 128 bits back has a ciphertext its
+	// peer cannot authenticate.
+	gcm, err := aead.NewGCM(block, opts.TagSize)
 	if err != nil {
 		return nil, &errs.Wrapped{Msg: "tpm2: failed to create GCM", Err: err}
 	}
@@ -397,6 +400,10 @@ func (e *tpm2AESEncrypter) Decrypt(data *types.EncryptedData, opts *types.Decryp
 		opts = &types.DecryptOptions{}
 	}
 
+	if data == nil {
+		return nil, &errs.Message{Msg: "tpm2: encrypted data is nil"}
+	}
+
 	// Load the TPM key to get key material
 	keyMaterial, err := e.loadKeyMaterial()
 	if err != nil {
@@ -415,10 +422,27 @@ func (e *tpm2AESEncrypter) Decrypt(data *types.EncryptedData, opts *types.Decryp
 		return nil, &errs.Wrapped{Msg: "tpm2: failed to create cipher", Err: err}
 	}
 
-	// Create GCM mode
-	gcm, err := cipher.NewGCM(block)
+	// The tag length comes from the request, never from the tag that arrived:
+	// SP 800-38D section 5.2.2 verifies a t-bit tag by recomputing it at t
+	// bits, and inferring t from the bundle would let an attacker choose how
+	// many bits get checked.
+	gcm, err := aead.NewGCM(block, opts.TagSize)
 	if err != nil {
 		return nil, &errs.Wrapped{Msg: "tpm2: failed to create GCM", Err: err}
+	}
+
+	if len(data.Tag) != gcm.Overhead() {
+		return nil, &errs.Message{Msg: fmt.Sprintf(
+			"tpm2: authentication tag is %d bytes, want %d", len(data.Tag), gcm.Overhead())}
+	}
+
+	// crypto/cipher panics rather than returning an error when the nonce is
+	// not exactly NonceSize bytes. The nonce arrives from the caller, so
+	// without this check any request carrying a short nonce takes the whole
+	// daemon down.
+	if len(data.Nonce) != gcm.NonceSize() {
+		return nil, &errs.Message{Msg: fmt.Sprintf(
+			"tpm2: nonce is %d bytes, want %d", len(data.Nonce), gcm.NonceSize())}
 	}
 
 	// Reconstruct ciphertext with tag (GCM expects tag appended)

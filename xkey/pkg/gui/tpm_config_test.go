@@ -134,12 +134,11 @@ tpm:
 // DefaultTPMConfig when the config file contains invalid YAML.
 func TestLoadTPMConfig_InvalidYAML(t *testing.T) {
 	tmpDir := t.TempDir()
-	t.Setenv("HOME", tmpDir)
+	config.SetConfigDir(tmpDir)
+	defer config.ResetConfigDir()
 
-	configDir := filepath.Join(tmpDir, ".xkey")
-	require.NoError(t, os.MkdirAll(configDir, 0700))
 	require.NoError(t, os.WriteFile(
-		filepath.Join(configDir, "config.yaml"),
+		filepath.Join(tmpDir, "xkey.yaml"),
 		[]byte("{{{{not valid yaml!!!!"),
 		0600,
 	))
@@ -152,35 +151,30 @@ func TestLoadTPMConfig_InvalidYAML(t *testing.T) {
 	assert.Equal(t, xkms.DefaultTPMConfig.EK.Handle, cfg.EK.Handle)
 }
 
-// TestLoadTPMConfig_EtcFallback verifies that loadTPMConfig falls back to
-// /etc/xkey/config.yaml when ~/.xkey/config.yaml does not exist.
-// This test is skipped when /etc/xkey/config.yaml already exists on the host
-// to avoid interference.
-func TestLoadTPMConfig_EtcFallback(t *testing.T) {
-	// Skip if /etc/xkey/config.yaml exists on the host -- we can't
-	// safely test the fallback without mocking the filesystem.
-	if _, err := os.Stat("/etc/xkey/config.yaml"); err == nil {
-		t.Skip("/etc/xkey/config.yaml exists on host, skipping fallback test")
-	}
-
+// TestLoadTPMConfig_MissingUserConfig verifies that loadTPMConfig returns
+// DefaultTPMConfig when the resolved config path does not exist. loadTPMConfig
+// consults config.ConfigPath() only; it has no /etc fallback, so the config
+// directory is redirected into a temp dir and left empty.
+func TestLoadTPMConfig_MissingUserConfig(t *testing.T) {
 	tmpDir := t.TempDir()
-	t.Setenv("HOME", tmpDir)
+	config.SetConfigDir(tmpDir)
+	defer config.ResetConfigDir()
 
-	// No ~/.xkey/config.yaml, and /etc/xkey/config.yaml doesn't exist.
 	cfg := loadTPMConfig(testLogger())
 	assert.Equal(t, xkms.DefaultTPMConfig.Device, cfg.Device)
+	assert.Equal(t, xkms.DefaultTPMConfig.Hash, cfg.Hash)
+	assert.NotNil(t, cfg.EK)
 }
 
 // TestLoadTPMConfig_NoTPMSection verifies that a config file without a "tpm"
 // section returns DefaultTPMConfig.
 func TestLoadTPMConfig_NoTPMSection(t *testing.T) {
 	tmpDir := t.TempDir()
-	t.Setenv("HOME", tmpDir)
+	config.SetConfigDir(tmpDir)
+	defer config.ResetConfigDir()
 
-	configDir := filepath.Join(tmpDir, ".xkey")
-	require.NoError(t, os.MkdirAll(configDir, 0700))
 	require.NoError(t, os.WriteFile(
-		filepath.Join(configDir, "config.yaml"),
+		filepath.Join(tmpDir, "xkey.yaml"),
 		[]byte("other:\n  key: value\n"),
 		0600,
 	))

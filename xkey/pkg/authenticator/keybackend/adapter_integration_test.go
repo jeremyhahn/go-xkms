@@ -562,7 +562,14 @@ func TestAllBackends_MultipleAlgorithms(t *testing.T) {
 			for _, alg := range allAlgorithms {
 				t.Run(alg.name, func(t *testing.T) {
 					if !supported[alg.algorithm] {
-						t.Skipf("%s does not support %s", be.name, alg.name)
+						// The backend does not advertise this algorithm, so
+						// assert Capabilities() is truthful: generation must
+						// be refused rather than silently succeeding.
+						_, _, err := adapter.GenerateCredentialKey(alg.algorithm, randomCredentialID(t))
+						require.Error(t, err,
+							"%s does not advertise %s, so GenerateCredentialKey must reject it",
+							be.name, alg.name)
+						return
 					}
 
 					credID := randomCredentialID(t)

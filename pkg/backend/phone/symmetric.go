@@ -16,6 +16,7 @@ package phone
 import (
 	"context"
 
+	"github.com/jeremyhahn/go-xkms/pkg/crypto/aead"
 	"github.com/jeremyhahn/go-xkms/pkg/types"
 	phoneproto "github.com/jeremyhahn/go-xkms/xkey/pkg/phone"
 )
@@ -199,6 +200,15 @@ func (e *phoneSymmetricEncrypter) Encrypt(plaintext []byte, opts *types.EncryptO
 		return nil, ErrSymmetricEncryptFailed
 	}
 
+	// The paired device performs the AEAD and returns a fixed-length tag; the
+	// local protocol carries no tag-length field, so the length is not this
+	// backend's to choose.
+	if opts != nil {
+		if err := aead.RequireDefaultTagSize(opts.TagSize, "the paired phone"); err != nil {
+			return nil, err
+		}
+	}
+
 	params := &phoneproto.LocalSymmetricEncryptParams{
 		KeyID:     e.keyID,
 		Plaintext: plaintext,
@@ -233,6 +243,13 @@ func (e *phoneSymmetricEncrypter) Encrypt(plaintext []byte, opts *types.EncryptO
 func (e *phoneSymmetricEncrypter) Decrypt(data *types.EncryptedData, opts *types.DecryptOptions) ([]byte, error) {
 	if data == nil {
 		return nil, ErrSymmetricDecryptFailed
+	}
+
+	// See the matching check in Encrypt.
+	if opts != nil {
+		if err := aead.RequireDefaultTagSize(opts.TagSize, "the paired phone"); err != nil {
+			return nil, err
+		}
 	}
 
 	params := &phoneproto.LocalSymmetricDecryptParams{

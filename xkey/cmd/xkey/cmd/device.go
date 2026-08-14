@@ -273,21 +273,22 @@ func init() {
 
 // runDeviceList executes the device list command.
 func runDeviceList(cmd *cobra.Command, args []string) error {
+	out := cmd.OutOrStdout()
 	cfg, err := loadDevicesConfig()
 	if err != nil {
 		if errors.Is(err, os.ErrNotExist) {
-			fmt.Println("No paired devices.")
+			fmt.Fprintln(out, "No paired devices.")
 			return nil
 		}
 		return &SentinelCauseError{Sentinel: ErrDeviceConfigLoadFailed, Cause: err}
 	}
 
 	if len(cfg.Devices) == 0 {
-		fmt.Println("No paired devices.")
+		fmt.Fprintln(out, "No paired devices.")
 		return nil
 	}
 
-	fmt.Printf("Paired Devices (%d):\n\n", len(cfg.Devices))
+	fmt.Fprintf(out, "Paired Devices (%d):\n\n", len(cfg.Devices))
 
 	for i, device := range cfg.Devices {
 		defaultMarker := ""
@@ -295,11 +296,11 @@ func runDeviceList(cmd *cobra.Command, args []string) error {
 			defaultMarker = " (default)"
 		}
 
-		fmt.Printf("%d. %s%s\n", i+1, device.Name, defaultMarker)
-		fmt.Printf("   Address:   %s\n", device.Address)
-		fmt.Printf("   Paired:    %s\n", device.PairedAt.Format(time.RFC3339))
-		fmt.Printf("   Key (hex): %s...\n", truncateKey(device.NoisePublicKey))
-		fmt.Println()
+		fmt.Fprintf(out, "%d. %s%s\n", i+1, device.Name, defaultMarker)
+		fmt.Fprintf(out, "   Address:   %s\n", device.Address)
+		fmt.Fprintf(out, "   Paired:    %s\n", device.PairedAt.Format(time.RFC3339))
+		fmt.Fprintf(out, "   Key (hex): %s...\n", truncateKey(device.NoisePublicKey))
+		fmt.Fprintln(out)
 	}
 
 	return nil
@@ -307,6 +308,7 @@ func runDeviceList(cmd *cobra.Command, args []string) error {
 
 // runDeviceUnpair executes the device unpair command.
 func runDeviceUnpair(cmd *cobra.Command, args []string) error {
+	out := cmd.OutOrStdout()
 	deviceName := args[0]
 	force, _ := cmd.Flags().GetBool("force")
 
@@ -333,7 +335,7 @@ func runDeviceUnpair(cmd *cobra.Command, args []string) error {
 
 	// Confirm unless force flag is set
 	if !force {
-		fmt.Printf("Remove pairing with \"%s\"? [y/N]: ", deviceName)
+		fmt.Fprintf(out, "Remove pairing with \"%s\"? [y/N]: ", deviceName)
 		var response string
 		if _, err := fmt.Scanln(&response); err != nil || (response != "y" && response != "Y") {
 			return ErrDevicePairingCancelled
@@ -357,31 +359,32 @@ func runDeviceUnpair(cmd *cobra.Command, args []string) error {
 		return &SentinelCauseError{Sentinel: ErrDeviceConfigSaveFailed, Cause: err}
 	}
 
-	fmt.Printf("Device \"%s\" unpaired successfully.\n", deviceName)
+	fmt.Fprintf(out, "Device \"%s\" unpaired successfully.\n", deviceName)
 	return nil
 }
 
 // runDeviceStatus executes the device status command.
 func runDeviceStatus(cmd *cobra.Command, args []string) error {
+	out := cmd.OutOrStdout()
 	logger := slog.Default()
 	deviceFilter, _ := cmd.Flags().GetString("device")
 
 	cfg, err := loadDevicesConfig()
 	if err != nil {
 		if errors.Is(err, os.ErrNotExist) {
-			fmt.Println("No paired devices.")
+			fmt.Fprintln(out, "No paired devices.")
 			return nil
 		}
 		return &SentinelCauseError{Sentinel: ErrDeviceConfigLoadFailed, Cause: err}
 	}
 
 	if len(cfg.Devices) == 0 {
-		fmt.Println("No paired devices.")
+		fmt.Fprintln(out, "No paired devices.")
 		return nil
 	}
 
-	fmt.Println("Device Status:")
-	fmt.Println()
+	fmt.Fprintln(out, "Device Status:")
+	fmt.Fprintln(out)
 
 	for _, device := range cfg.Devices {
 		// Filter by device name if specified
@@ -397,11 +400,11 @@ func runDeviceStatus(cmd *cobra.Command, args []string) error {
 			defaultMarker = " (default)"
 		}
 
-		fmt.Printf("Device: %s%s\n", device.Name, defaultMarker)
-		fmt.Printf("  Address:    %s\n", device.Address)
-		fmt.Printf("  Status:     %s\n", status)
-		fmt.Printf("  Paired:     %s\n", device.PairedAt.Format(time.RFC3339))
-		fmt.Println()
+		fmt.Fprintf(out, "Device: %s%s\n", device.Name, defaultMarker)
+		fmt.Fprintf(out, "  Address:    %s\n", device.Address)
+		fmt.Fprintf(out, "  Status:     %s\n", status)
+		fmt.Fprintf(out, "  Paired:     %s\n", device.PairedAt.Format(time.RFC3339))
+		fmt.Fprintln(out)
 	}
 
 	return nil

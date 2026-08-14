@@ -22,11 +22,21 @@
 package module
 
 import (
-	"crypto/sha256"
+	"crypto/rand"
 	"crypto/subtle"
+	"io"
+	"runtime"
+	"sort"
 	"sync"
 	"time"
+
+	"golang.org/x/crypto/argon2"
 )
+
+// entropySource is the reader hashPin and generateSerialNumber draw randomness
+// from. It defaults to crypto/rand and is a package var only so a test can
+// substitute a failing reader to exercise the ErrEntropyUnavailable path.
+var entropySource io.Reader = rand.Reader
 
 // SlotID represents a PKCS#11 slot identifier (CK_SLOT_ID).
 type SlotID uint64
@@ -438,7 +448,17 @@ func NewToken() *Token {
 		UserLoggedIn: false,
 	}
 	token.Info.SetManufacturerID("go-xkms")
-	token.Info.SetModel("Virtual Token")
+	token.Info.SetModel(tokenModel())
+	// CK_TOKEN_INFO's character fields are blank-padded and are not
+	// NUL-terminated (v3.2 §3.2), and a token reports a label and a serial
+	// number before C_InitToken supplies real ones. Left at their zero value
+	// these two were 32 and 16 NUL bytes: pkcs11-tool rendered the label as a
+	// run of control characters, p11-kit percent-encoded it into the token URI
+	// thirty-two times over, and an application comparing against its own
+	// space-padded constant -- the idiomatic C comparison, since the field is
+	// not NUL-terminated -- failed to match a token it should have.
+	token.Info.SetLabel("")
+	token.Info.SetSerialNumber("")
 	return token
 }
 
@@ -450,8 +470,7 @@ func (t *Token) VerifySOPin(pin string) bool {
 	if len(t.SOPinHash) == 0 {
 		return false
 	}
-	pinHash := hashPin(pin)
-	return subtle.ConstantTimeCompare(pinHash, t.SOPinHash) == 1
+	return verifyPin(t.SOPinHash, pin)
 }
 
 // VerifyUserPin verifies the user PIN.
@@ -462,25 +481,47 @@ func (t *Token) VerifyUserPin(pin string) bool {
 	if len(t.UserPinHash) == 0 {
 		return false
 	}
-	pinHash := hashPin(pin)
-	return subtle.ConstantTimeCompare(pinHash, t.UserPinHash) == 1
+	return verifyPin(t.UserPinHash, pin)
 }
 
 // SetSOPin sets the Security Officer PIN (stores hash only).
-func (t *Token) SetSOPin(pin string) {
+func (t *Token) SetSOPin(pin string) error {
 	t.mu.Lock()
 	defer t.mu.Unlock()
 
-	t.SOPinHash = hashPin(pin)
+	h, err := hashPin(pin)
+	if err != nil {
+		return err
+	}
+	t.SOPinHash = h
+	return nil
 }
 
 // SetUserPin sets the user PIN (stores hash only).
-func (t *Token) SetUserPin(pin string) {
+func (t *Token) SetUserPin(pin string) error {
 	t.mu.Lock()
 	defer t.mu.Unlock()
 
-	t.UserPinHash = hashPin(pin)
+	h, err := hashPin(pin)
+	if err != nil {
+		return err
+	}
+	t.UserPinHash = h
 	t.Info.Flags |= CKF_USER_PIN_INITIALIZED
+	return nil
+}
+
+// ClearUserPin removes the normal user's PIN, disabling user access until the
+// Security Officer sets a new one. C_InitToken requires this (v3.2 §5.5.7).
+func (t *Token) ClearUserPin() {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+
+	for i := range t.UserPinHash {
+		t.UserPinHash[i] = 0
+	}
+	t.UserPinHash = nil
+	t.Info.Flags &^= CKF_USER_PIN_INITIALIZED
 }
 
 // IsSOLoggedIn returns whether the Security Officer is logged in.
@@ -732,164 +773,6 @@ func (sm *SlotManager) GetMechanismInfo(slotID SlotID, mechanism MechanismType) 
 	return &info, nil
 }
 
-// InitToken initializes the token in the specified slot.
-// This is the implementation of C_InitToken.
-func (sm *SlotManager) InitToken(slotID SlotID, soPin, label string) error {
-	sm.mu.Lock()
-	defer sm.mu.Unlock()
-
-	slot, ok := sm.slots[slotID]
-	if !ok {
-		return NewPKCS11Error(CKR_SLOT_ID_INVALID)
-	}
-
-	slot.mu.Lock()
-	defer slot.mu.Unlock()
-
-	if slot.Token == nil {
-		return NewPKCS11Error(CKR_TOKEN_NOT_PRESENT)
-	}
-
-	token := slot.Token
-	token.mu.Lock()
-	defer token.mu.Unlock()
-
-	// Validate PIN length
-	pinLen := uint64(len(soPin))
-	if pinLen < token.Info.MinPinLen || pinLen > token.Info.MaxPinLen {
-		return NewPKCS11Error(CKR_PIN_LEN_RANGE)
-	}
-
-	// If token is already initialized, verify the SO PIN
-	if token.Initialized {
-		if len(token.SOPinHash) > 0 {
-			pinHash := hashPin(soPin)
-			if subtle.ConstantTimeCompare(pinHash, token.SOPinHash) != 1 {
-				return NewPKCS11Error(CKR_PIN_INCORRECT)
-			}
-		}
-	}
-
-	// Initialize the token
-	token.Info.SetLabel(label)
-	token.SOPinHash = hashPin(soPin)
-	token.UserPinHash = nil
-	token.Initialized = true
-	token.SOLoggedIn = false
-	token.UserLoggedIn = false
-	token.Info.Flags |= CKF_TOKEN_INITIALIZED
-	token.Info.Flags &^= CKF_USER_PIN_INITIALIZED
-
-	// Generate a serial number if not set
-	if token.Info.GetSerialNumber() == "" {
-		token.Info.SetSerialNumber(generateSerialNumber())
-	}
-
-	return nil
-}
-
-// InitPIN initializes the user PIN.
-// This is the implementation of C_InitPIN (called while SO is logged in).
-func (sm *SlotManager) InitPIN(slotID SlotID, pin string) error {
-	sm.mu.RLock()
-	defer sm.mu.RUnlock()
-
-	slot, ok := sm.slots[slotID]
-	if !ok {
-		return NewPKCS11Error(CKR_SLOT_ID_INVALID)
-	}
-
-	slot.mu.RLock()
-	defer slot.mu.RUnlock()
-
-	if slot.Token == nil {
-		return NewPKCS11Error(CKR_TOKEN_NOT_PRESENT)
-	}
-
-	token := slot.Token
-	token.mu.Lock()
-	defer token.mu.Unlock()
-
-	// Verify SO is logged in
-	if !token.SOLoggedIn {
-		return NewPKCS11Error(CKR_USER_NOT_LOGGED_IN)
-	}
-
-	// Validate PIN length
-	pinLen := uint64(len(pin))
-	if pinLen < token.Info.MinPinLen || pinLen > token.Info.MaxPinLen {
-		return NewPKCS11Error(CKR_PIN_LEN_RANGE)
-	}
-
-	// Set the user PIN
-	token.UserPinHash = hashPin(pin)
-	token.Info.Flags |= CKF_USER_PIN_INITIALIZED
-
-	return nil
-}
-
-// SetPIN changes the PIN.
-// This is the implementation of C_SetPIN.
-func (sm *SlotManager) SetPIN(slotID SlotID, oldPin, newPin string, userType UserType) error {
-	sm.mu.RLock()
-	defer sm.mu.RUnlock()
-
-	slot, ok := sm.slots[slotID]
-	if !ok {
-		return NewPKCS11Error(CKR_SLOT_ID_INVALID)
-	}
-
-	slot.mu.RLock()
-	defer slot.mu.RUnlock()
-
-	if slot.Token == nil {
-		return NewPKCS11Error(CKR_TOKEN_NOT_PRESENT)
-	}
-
-	token := slot.Token
-	token.mu.Lock()
-	defer token.mu.Unlock()
-
-	// Validate new PIN length
-	newPinLen := uint64(len(newPin))
-	if newPinLen < token.Info.MinPinLen || newPinLen > token.Info.MaxPinLen {
-		return NewPKCS11Error(CKR_PIN_LEN_RANGE)
-	}
-
-	switch userType {
-	case CKU_SO:
-		// Verify old SO PIN
-		if len(token.SOPinHash) > 0 {
-			oldHash := hashPin(oldPin)
-			if subtle.ConstantTimeCompare(oldHash, token.SOPinHash) != 1 {
-				return NewPKCS11Error(CKR_PIN_INCORRECT)
-			}
-		}
-		// Set new SO PIN
-		token.SOPinHash = hashPin(newPin)
-
-	case CKU_USER:
-		// Check if user PIN is initialized
-		if !token.Info.Flags.Has(CKF_USER_PIN_INITIALIZED) {
-			return NewPKCS11Error(CKR_USER_PIN_NOT_INITIALIZED)
-		}
-		// Verify old user PIN
-		if len(token.UserPinHash) > 0 {
-			oldHash := hashPin(oldPin)
-			if subtle.ConstantTimeCompare(oldHash, token.UserPinHash) != 1 {
-				return NewPKCS11Error(CKR_PIN_INCORRECT)
-			}
-		}
-		// Set new user PIN
-		token.UserPinHash = hashPin(newPin)
-
-	default:
-		return NewPKCS11Error(CKR_USER_TYPE_INVALID)
-	}
-
-	return nil
-}
-
 // GetSlot returns the slot with the specified ID.
 func (sm *SlotManager) GetSlot(slotID SlotID) (*Slot, error) {
 	sm.mu.RLock()
@@ -902,18 +785,152 @@ func (sm *SlotManager) GetSlot(slotID SlotID) (*Slot, error) {
 	return slot, nil
 }
 
-// hashPin hashes a PIN using SHA-256.
-// In production, a proper key derivation function like Argon2 should be used.
-func hashPin(pin string) []byte {
-	hash := sha256.Sum256([]byte(pin))
-	return hash[:]
+// PIN hashing parameters. PKCS#11 PINs are short and drawn from a small
+// alphabet, so the stored form must be salted — otherwise one precomputed table
+// breaks every token — and memory-hard, so that an attacker who obtains the
+// stored hashes cannot test candidates at hardware speed.
+const (
+	// pinHashVersion identifies the encoding of a stored PIN hash, so the
+	// parameters below can be strengthened later without invalidating tokens
+	// that were provisioned under the old ones.
+	pinHashVersion = 0x01
+
+	pinSaltLen     = 16
+	pinKeyLen      = 32
+	pinArgonTime   = 1
+	pinArgonMemory = 64 * 1024 // KiB
+	pinArgonLanes  = 4
+)
+
+// pinHashSlots admits a bounded number of Argon2id derivations at a time.
+//
+// Memory hardness is the whole point of pinArgonMemory, so the parameter must
+// not be weakened; what has to be bounded instead is how many derivations run
+// concurrently. Each one allocates its own pinArgonMemory KiB scratch buffer,
+// so without admission control N simultaneous C_Login calls cost N times that —
+// an unauthenticated caller could exhaust the host's memory simply by opening
+// sessions and guessing PINs. Callers queue on this channel instead, which caps
+// the token's PIN-hashing footprint at maxPinHashConcurrency scratch buffers no
+// matter how many logins arrive.
+//
+// A buffered channel is used rather than a mutex or golang.org/x/sync/semaphore
+// (an indirect dependency only) because a counting semaphore is exactly the
+// primitive needed and a channel send/receive is the lock-free form of it.
+var pinHashSlots = make(chan struct{}, maxPinHashConcurrency())
+
+// maxPinHashConcurrency returns the number of Argon2id derivations permitted to
+// run at once on this machine.
+func maxPinHashConcurrency() int {
+	return pinHashConcurrencyFor(runtime.NumCPU())
 }
 
-// generateSerialNumber generates a unique serial number for a token.
-func generateSerialNumber() string {
-	now := time.Now()
-	// Format: YYYYMMDDHHmmssnn (16 chars)
-	return now.Format("20060102150405") + "00"
+// pinHashConcurrencyFor computes the admission limit for a machine with the
+// given number of CPUs.
+//
+// Argon2id already parallelises each derivation across pinArgonLanes lanes, so
+// admitting more than one derivation per lane-group buys no additional
+// throughput while multiplying the resident memory linearly. The result is
+// floored at 1 so the gate always admits somebody: a zero-capacity channel
+// would block every login forever, turning a memory-exhaustion defect into a
+// total denial of service on a single-core or misreporting host.
+func pinHashConcurrencyFor(numCPU int) int {
+	limit := numCPU / pinArgonLanes
+	if limit < 1 {
+		return 1
+	}
+	return limit
+}
+
+// derivePinKey runs one Argon2id derivation under the admission gate.
+//
+// The gate is released with defer so a derivation that panics — hashPin panics
+// when the system entropy source fails — still returns its slot rather than
+// permanently shrinking the token's login capacity. Nothing inside the gated
+// region acquires a token or slot lock, so a caller that already holds one
+// while waiting here cannot deadlock against the goroutine ahead of it.
+func derivePinKey(pin string, salt []byte) []byte {
+	pinHashSlots <- struct{}{}
+	defer func() { <-pinHashSlots }()
+
+	return argon2.IDKey([]byte(pin), salt, pinArgonTime, pinArgonMemory, pinArgonLanes, pinKeyLen)
+}
+
+// hashPin derives a verifier for a PIN using Argon2id with a fresh random salt.
+//
+// The result is self-describing — version, salt length, salt, derived key — so
+// verifyPin can recover the salt without a second stored field. Because the
+// salt is random, two calls with the same PIN return different bytes; compare
+// with verifyPin, never by comparing two hashPin results.
+func hashPin(pin string) ([]byte, error) {
+	salt := make([]byte, pinSaltLen)
+	if _, err := io.ReadFull(entropySource, salt); err != nil {
+		// The only way crypto/rand fails is a broken system entropy source, at
+		// which point no security property of this module holds. It is returned
+		// rather than panicked so an embedded Go caller gets a clean error.
+		return nil, ErrEntropyUnavailable
+	}
+	return encodePinHash(salt, derivePinKey(pin, salt)), nil
+}
+
+// encodePinHash packs a salt and derived key into the stored representation.
+func encodePinHash(salt, key []byte) []byte {
+	out := make([]byte, 0, 2+len(salt)+len(key))
+	out = append(out, pinHashVersion, byte(len(salt)))
+	out = append(out, salt...)
+	return append(out, key...)
+}
+
+// verifyPin reports whether pin matches a stored verifier produced by hashPin.
+// The comparison is constant time, and an unparsable or empty stored value
+// simply fails to verify rather than erroring, so a caller cannot distinguish
+// "no PIN set" from "wrong PIN" by timing or by return type.
+func verifyPin(stored []byte, pin string) bool {
+	if len(stored) < 2 || stored[0] != pinHashVersion {
+		return false
+	}
+
+	saltLen := int(stored[1])
+	if saltLen == 0 || len(stored) != 2+saltLen+pinKeyLen {
+		return false
+	}
+
+	salt := stored[2 : 2+saltLen]
+	expected := stored[2+saltLen:]
+	candidate := derivePinKey(pin, salt)
+
+	return subtle.ConstantTimeCompare(candidate, expected) == 1
+}
+
+// serialNumberHexDigits is the alphabet generateSerialNumber renders into.
+// Upper case because CK_TOKEN_INFO.serialNumber is displayed verbatim by
+// pkcs11-tool and p11-kit.
+const serialNumberHexDigits = "0123456789ABCDEF"
+
+// generateSerialNumber returns a unique 16-character serial number for a token.
+//
+// The value has to distinguish this token from every other one an application
+// might address, because CK_TOKEN_INFO.serialNumber is what pkcs11:serial=
+// selects on and what a fleet inventory identifies a token by. It is therefore
+// drawn from the system CSPRNG rather than from the clock: the previous
+// implementation formatted the time to one-second resolution and appended a
+// literal "00", so two hosts provisioned by the same automation run in the same
+// second received byte-identical serials, and re-provisioning a token reused the
+// old one.
+func generateSerialNumber() (string, error) {
+	var raw [8]byte
+	if _, err := io.ReadFull(entropySource, raw[:]); err != nil {
+		// A token that cannot reach the system entropy source cannot serve any
+		// of its purpose, and a predictable identifier would be worse than
+		// stopping. Returned rather than panicked, as hashPin does.
+		return "", ErrEntropyUnavailable
+	}
+
+	out := make([]byte, 16)
+	for i, b := range raw {
+		out[2*i] = serialNumberHexDigits[b>>4]
+		out[2*i+1] = serialNumberHexDigits[b&0x0F]
+	}
+	return string(out), nil
 }
 
 // trimPaddedString trims trailing spaces and null bytes from a padded string.
@@ -936,233 +953,72 @@ func setPaddedString(b []byte, s string) {
 	copy(b, s)
 }
 
-// defaultSupportedMechanisms returns the list of mechanisms supported by the virtual token.
+// defaultSupportedMechanisms returns the mechanism types the virtual token
+// advertises through C_GetMechanismList.
+//
+// It projects from defaultMechanismInfo rather than carrying its own list. A
+// second hardcoded table was exactly the disagreement the projection exists to
+// make unrepresentable, and it had already drifted: the registry applies the
+// FIPS filter and the literal did not, so under FIPS C_GetMechanismList offered
+// CKM_SHA1_RSA_PKCS while C_GetMechanismInfo on that same mechanism answered
+// CKR_MECHANISM_INVALID. The two agreed outside FIPS only by coincidence of
+// having identical membership, which is why nothing caught it.
+//
+// The result is sorted so the list is stable across calls; Go map iteration
+// order is randomized, and an application diffing the list between calls would
+// otherwise see it churn.
 func defaultSupportedMechanisms() []MechanismType {
-	return []MechanismType{
-		// RSA mechanisms
-		CKM_RSA_PKCS_KEY_PAIR_GEN,
-		CKM_RSA_PKCS,
-		CKM_RSA_PKCS_OAEP,
-		CKM_RSA_PKCS_PSS,
-		CKM_SHA1_RSA_PKCS,
-		CKM_SHA256_RSA_PKCS,
-		CKM_SHA384_RSA_PKCS,
-		CKM_SHA512_RSA_PKCS,
-		CKM_SHA256_RSA_PKCS_PSS,
-		CKM_SHA384_RSA_PKCS_PSS,
-		CKM_SHA512_RSA_PKCS_PSS,
+	info := defaultMechanismInfo()
 
-		// EC mechanisms
-		CKM_EC_KEY_PAIR_GEN,
-		CKM_ECDSA,
-		CKM_ECDSA_SHA256,
-		CKM_ECDSA_SHA384,
-		CKM_ECDSA_SHA512,
-		CKM_ECDH1_DERIVE,
-
-		// Edwards curve mechanisms (Ed25519)
-		CKM_EC_EDWARDS_KEY_PAIR_GEN,
-		CKM_EDDSA,
-
-		// AES mechanisms
-		CKM_AES_KEY_GEN,
-		CKM_AES_ECB,
-		CKM_AES_CBC,
-		CKM_AES_CBC_PAD,
-		CKM_AES_GCM,
-		CKM_AES_KEY_WRAP,
-		CKM_AES_KEY_WRAP_PAD,
-
-		// Digest mechanisms
-		CKM_SHA_1,
-		CKM_SHA256,
-		CKM_SHA384,
-		CKM_SHA512,
+	mechs := make([]MechanismType, 0, len(info))
+	for mechType := range info {
+		mechs = append(mechs, mechType)
 	}
+	sort.Slice(mechs, func(i, j int) bool { return mechs[i] < mechs[j] })
+
+	return mechs
 }
 
-// defaultMechanismInfo returns the default mechanism info map.
+// defaultMechanismInfo returns the mechanisms the token advertises, projected
+// from the one mechanism registry.
+//
+// It used to be a second hardcoded table, maintained by hand alongside
+// mechanismRegistry, and the two had drifted: they disagreed on the key-size
+// range and the capability flags of nearly every RSA and EC mechanism, and the
+// registry held dozens of implemented mechanisms this table never listed, so no
+// application could discover them. Whichever table a reader consulted, it could
+// be the wrong one. Projecting from the registry makes that class of
+// disagreement unrepresentable.
+//
+// Advertising is opt-in: a mechanism appears here only if its descriptor sets
+// Advertised, so the advertised surface stays a deliberate choice rather than
+// an accident of which table someone edited last.
 func defaultMechanismInfo() map[MechanismType]MechanismInfo {
-	return map[MechanismType]MechanismInfo{
-		// RSA key generation
-		CKM_RSA_PKCS_KEY_PAIR_GEN: {
-			MinKeySize: 2048,
-			MaxKeySize: 4096,
-			Flags:      CKF_GENERATE_KEY_PAIR,
-		},
-		// RSA PKCS#1 v1.5
-		CKM_RSA_PKCS: {
-			MinKeySize: 2048,
-			MaxKeySize: 4096,
-			Flags:      CKF_ENCRYPT | CKF_DECRYPT | CKF_SIGN | CKF_VERIFY | CKF_WRAP | CKF_UNWRAP,
-		},
-		// RSA OAEP
-		CKM_RSA_PKCS_OAEP: {
-			MinKeySize: 2048,
-			MaxKeySize: 4096,
-			Flags:      CKF_ENCRYPT | CKF_DECRYPT | CKF_WRAP | CKF_UNWRAP,
-		},
-		// RSA PSS
-		CKM_RSA_PKCS_PSS: {
-			MinKeySize: 2048,
-			MaxKeySize: 4096,
-			Flags:      CKF_SIGN | CKF_VERIFY,
-		},
-		// RSA with SHA-1
-		CKM_SHA1_RSA_PKCS: {
-			MinKeySize: 2048,
-			MaxKeySize: 4096,
-			Flags:      CKF_SIGN | CKF_VERIFY,
-		},
-		// RSA with SHA-256
-		CKM_SHA256_RSA_PKCS: {
-			MinKeySize: 2048,
-			MaxKeySize: 4096,
-			Flags:      CKF_SIGN | CKF_VERIFY,
-		},
-		// RSA with SHA-384
-		CKM_SHA384_RSA_PKCS: {
-			MinKeySize: 2048,
-			MaxKeySize: 4096,
-			Flags:      CKF_SIGN | CKF_VERIFY,
-		},
-		// RSA with SHA-512
-		CKM_SHA512_RSA_PKCS: {
-			MinKeySize: 2048,
-			MaxKeySize: 4096,
-			Flags:      CKF_SIGN | CKF_VERIFY,
-		},
-		// RSA PSS with SHA-256
-		CKM_SHA256_RSA_PKCS_PSS: {
-			MinKeySize: 2048,
-			MaxKeySize: 4096,
-			Flags:      CKF_SIGN | CKF_VERIFY,
-		},
-		// RSA PSS with SHA-384
-		CKM_SHA384_RSA_PKCS_PSS: {
-			MinKeySize: 2048,
-			MaxKeySize: 4096,
-			Flags:      CKF_SIGN | CKF_VERIFY,
-		},
-		// RSA PSS with SHA-512
-		CKM_SHA512_RSA_PKCS_PSS: {
-			MinKeySize: 2048,
-			MaxKeySize: 4096,
-			Flags:      CKF_SIGN | CKF_VERIFY,
-		},
-		// EC key generation
-		CKM_EC_KEY_PAIR_GEN: {
-			MinKeySize: 256,
-			MaxKeySize: 521,
-			Flags:      CKF_GENERATE_KEY_PAIR | CKF_EC_F_P,
-		},
-		// ECDSA
-		CKM_ECDSA: {
-			MinKeySize: 256,
-			MaxKeySize: 521,
-			Flags:      CKF_SIGN | CKF_VERIFY | CKF_EC_F_P,
-		},
-		// ECDSA with SHA-256
-		CKM_ECDSA_SHA256: {
-			MinKeySize: 256,
-			MaxKeySize: 521,
-			Flags:      CKF_SIGN | CKF_VERIFY | CKF_EC_F_P,
-		},
-		// ECDSA with SHA-384
-		CKM_ECDSA_SHA384: {
-			MinKeySize: 256,
-			MaxKeySize: 521,
-			Flags:      CKF_SIGN | CKF_VERIFY | CKF_EC_F_P,
-		},
-		// ECDSA with SHA-512
-		CKM_ECDSA_SHA512: {
-			MinKeySize: 256,
-			MaxKeySize: 521,
-			Flags:      CKF_SIGN | CKF_VERIFY | CKF_EC_F_P,
-		},
-		// ECDH key derivation
-		CKM_ECDH1_DERIVE: {
-			MinKeySize: 256,
-			MaxKeySize: 521,
-			Flags:      CKF_DERIVE | CKF_EC_F_P,
-		},
-		// Edwards curve key generation (Ed25519)
-		CKM_EC_EDWARDS_KEY_PAIR_GEN: {
-			MinKeySize: 255, // Ed25519 key size
-			MaxKeySize: 255,
-			Flags:      CKF_GENERATE_KEY_PAIR | CKF_EC_F_P,
-		},
-		// EdDSA signature
-		CKM_EDDSA: {
-			MinKeySize: 255, // Ed25519 key size
-			MaxKeySize: 255,
-			Flags:      CKF_SIGN | CKF_VERIFY | CKF_EC_F_P,
-		},
-		// AES key generation
-		CKM_AES_KEY_GEN: {
-			MinKeySize: 128,
-			MaxKeySize: 256,
-			Flags:      CKF_GENERATE,
-		},
-		// AES ECB
-		CKM_AES_ECB: {
-			MinKeySize: 128,
-			MaxKeySize: 256,
-			Flags:      CKF_ENCRYPT | CKF_DECRYPT,
-		},
-		// AES CBC
-		CKM_AES_CBC: {
-			MinKeySize: 128,
-			MaxKeySize: 256,
-			Flags:      CKF_ENCRYPT | CKF_DECRYPT,
-		},
-		// AES CBC with PKCS#7 padding
-		CKM_AES_CBC_PAD: {
-			MinKeySize: 128,
-			MaxKeySize: 256,
-			Flags:      CKF_ENCRYPT | CKF_DECRYPT,
-		},
-		// AES GCM
-		CKM_AES_GCM: {
-			MinKeySize: 128,
-			MaxKeySize: 256,
-			Flags:      CKF_ENCRYPT | CKF_DECRYPT,
-		},
-		// AES Key Wrap
-		CKM_AES_KEY_WRAP: {
-			MinKeySize: 128,
-			MaxKeySize: 256,
-			Flags:      CKF_WRAP | CKF_UNWRAP,
-		},
-		// AES Key Wrap with Padding
-		CKM_AES_KEY_WRAP_PAD: {
-			MinKeySize: 128,
-			MaxKeySize: 256,
-			Flags:      CKF_WRAP | CKF_UNWRAP,
-		},
-		// SHA-1
-		CKM_SHA_1: {
-			MinKeySize: 0,
-			MaxKeySize: 0,
-			Flags:      CKF_DIGEST,
-		},
-		// SHA-256
-		CKM_SHA256: {
-			MinKeySize: 0,
-			MaxKeySize: 0,
-			Flags:      CKF_DIGEST,
-		},
-		// SHA-384
-		CKM_SHA384: {
-			MinKeySize: 0,
-			MaxKeySize: 0,
-			Flags:      CKF_DIGEST,
-		},
-		// SHA-512
-		CKM_SHA512: {
-			MinKeySize: 0,
-			MaxKeySize: 0,
-			Flags:      CKF_DIGEST,
-		},
+	info := make(map[MechanismType]MechanismInfo, len(mechanismRegistry))
+	for mechType, desc := range mechanismRegistry {
+		if !desc.Advertised {
+			continue
+		}
+		// In FIPS mode the module offers only approved algorithms, and
+		// GetMechanismDescriptor refuses the rest, so withholding them here
+		// keeps C_GetMechanismList honest about what the module will do.
+		if !desc.FIPSApproved && fipsModeEnabled() {
+			continue
+		}
+		// The advertised key-size range is the effective one, not the raw
+		// registry field: a mechanism whose ceiling narrows under FIPS must
+		// narrow here too, or C_GetMechanismList describes a maximum
+		// C_GetMechanismInfo and the module's own validation both reject.
+		minKeySize, maxKeySize := effectiveKeySizeRange(desc)
+		info[mechType] = MechanismInfo{
+			MinKeySize: minKeySize,
+			MaxKeySize: maxKeySize,
+			// The advertised flags are the effective ones: a SHA-1 signature
+			// mechanism drops CKF_SIGN when weak-hash signing is not allowed, so
+			// C_GetMechanismInfo never claims a signing capability the token
+			// will then refuse. Same single source as the *Init path.
+			Flags: effectiveMechanismFlags(desc),
+		}
 	}
+	return info
 }

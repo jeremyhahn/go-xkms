@@ -25,8 +25,10 @@ import (
 
 	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
 	qrdbtransport "github.com/jeremyhahn/go-qrdb/sdk/go/transport"
+
 	pb "github.com/jeremyhahn/go-xkms/pkg/api/grpc/proto/xkmsv1"
 	"github.com/jeremyhahn/go-xkms/pkg/api/transport"
+	"github.com/jeremyhahn/go-xkms/pkg/auth"
 	"github.com/jeremyhahn/go-xkms/pkg/seal"
 	"github.com/jeremyhahn/go-xkms/pkg/xkms"
 )
@@ -246,7 +248,7 @@ func (s *Service) CreateCustodianGroup(ctx context.Context, req *pb.CreateCustod
 		return nil, status.Error(codes.FailedPrecondition, ErrCustodianClientNotConfigured.Error())
 	}
 
-	if err := s.authorize(ctx, "ceremony", "enroll_custodian", "create-group"); err != nil {
+	if err := s.authorize(ctx, auth.ResourceCeremony, auth.ActionEnrollCustodian, "create-group"); err != nil {
 		return nil, err
 	}
 
@@ -289,7 +291,7 @@ func (s *Service) GetCustodianGroup(ctx context.Context, req *pb.GetCustodianGro
 		return nil, status.Error(codes.FailedPrecondition, ErrCustodianClientNotConfigured.Error())
 	}
 
-	if err := s.authorize(ctx, "ceremony", "status", "get-group"); err != nil {
+	if err := s.authorize(ctx, auth.ResourceCeremony, auth.ActionStatus, "get-group"); err != nil {
 		return nil, err
 	}
 
@@ -314,7 +316,7 @@ func (s *Service) ListCustodianGroups(ctx context.Context, _ *pb.ListCustodianGr
 		return nil, status.Error(codes.FailedPrecondition, ErrCustodianClientNotConfigured.Error())
 	}
 
-	if err := s.authorize(ctx, "ceremony", "status", "list-groups"); err != nil {
+	if err := s.authorize(ctx, auth.ResourceCeremony, auth.ActionStatus, "list-groups"); err != nil {
 		return nil, err
 	}
 
@@ -339,7 +341,7 @@ func (s *Service) DeleteCustodianGroup(ctx context.Context, req *pb.DeleteCustod
 		return nil, status.Error(codes.FailedPrecondition, ErrCustodianClientNotConfigured.Error())
 	}
 
-	if err := s.authorize(ctx, "ceremony", "revoke_custodian", "delete-group"); err != nil {
+	if err := s.authorize(ctx, auth.ResourceCeremony, auth.ActionRevokeCustodian, "delete-group"); err != nil {
 		return nil, err
 	}
 
@@ -361,7 +363,7 @@ func (s *Service) AddCustodianMember(ctx context.Context, req *pb.AddCustodianMe
 		return nil, status.Error(codes.FailedPrecondition, ErrCustodianClientNotConfigured.Error())
 	}
 
-	if err := s.authorize(ctx, "ceremony", "enroll_custodian", "add-member"); err != nil {
+	if err := s.authorize(ctx, auth.ResourceCeremony, auth.ActionEnrollCustodian, "add-member"); err != nil {
 		return nil, err
 	}
 
@@ -403,7 +405,7 @@ func (s *Service) RemoveCustodianMember(ctx context.Context, req *pb.RemoveCusto
 		return nil, status.Error(codes.FailedPrecondition, ErrCustodianClientNotConfigured.Error())
 	}
 
-	if err := s.authorize(ctx, "ceremony", "revoke_custodian", "remove-member"); err != nil {
+	if err := s.authorize(ctx, auth.ResourceCeremony, auth.ActionRevokeCustodian, "remove-member"); err != nil {
 		return nil, err
 	}
 
@@ -433,7 +435,7 @@ func (s *Service) DistributeShares(ctx context.Context, req *pb.DistributeShares
 		return nil, status.Error(codes.FailedPrecondition, ErrCustodianClientNotConfigured.Error())
 	}
 
-	if err := s.authorize(ctx, "ceremony", "claim_share_begin", "distribute-shares"); err != nil {
+	if err := s.authorize(ctx, auth.ResourceCeremony, auth.ActionClaimShareBegin, "distribute-shares"); err != nil {
 		return nil, err
 	}
 
@@ -463,7 +465,7 @@ func (s *Service) SubmitShare(ctx context.Context, req *pb.SubmitShareRequest) (
 		return nil, status.Error(codes.FailedPrecondition, ErrShareClientNotConfigured.Error())
 	}
 
-	if err := s.authorize(ctx, "barrier", "unseal-share", "submit"); err != nil {
+	if err := s.authorize(ctx, auth.ResourceBarrier, auth.ActionUnsealShare, "submit"); err != nil {
 		return nil, err
 	}
 
@@ -508,7 +510,7 @@ func (s *Service) ListShares(ctx context.Context, _ *pb.ListSharesRequest) (*pb.
 		return nil, status.Error(codes.FailedPrecondition, ErrShareClientNotConfigured.Error())
 	}
 
-	if err := s.authorize(ctx, "ceremony", "status", "list"); err != nil {
+	if err := s.authorize(ctx, auth.ResourceCeremony, auth.ActionStatus, "list"); err != nil {
 		return nil, err
 	}
 
@@ -527,6 +529,66 @@ func (s *Service) ListShares(ctx context.Context, _ *pb.ListSharesRequest) (*pb.
 	}, nil
 }
 
+// GetShare returns a single stored share addressed by (server_url, group_id,
+// share_index). Sensitive share material is never included in the response.
+// The request is passed through to the embedded go-qrdb node's share client.
+func (s *Service) GetShare(ctx context.Context, req *pb.GetShareRequest) (*pb.ShareInfo, error) {
+	if shareClient == nil {
+		return nil, status.Error(codes.FailedPrecondition, ErrShareClientNotConfigured.Error())
+	}
+
+	if err := s.authorize(ctx, auth.ResourceCeremony, auth.ActionStatus, "get"); err != nil {
+		return nil, err
+	}
+
+	serverURL, groupID, shareIndex, err := shareCoordinates(req.GetServerUrl(), req.GetGroupId(), req.GetShareIndex())
+	if err != nil {
+		return nil, err
+	}
+
+	info, err := shareClient.GetShare(ctx, serverURL, groupID, shareIndex)
+	if err != nil {
+		return nil, mapShareError(err, "get share")
+	}
+
+	return shareInfoToProto(info), nil
+}
+
+// DeleteShare removes a single stored share addressed by (server_url,
+// group_id, share_index). The request is passed through to the embedded
+// go-qrdb node's share client.
+func (s *Service) DeleteShare(ctx context.Context, req *pb.DeleteShareRequest) (*emptypb.Empty, error) {
+	if shareClient == nil {
+		return nil, status.Error(codes.FailedPrecondition, ErrShareClientNotConfigured.Error())
+	}
+
+	if err := s.authorize(ctx, auth.ResourceBarrier, auth.ActionUnsealShare, "delete"); err != nil {
+		return nil, err
+	}
+
+	serverURL, groupID, shareIndex, err := shareCoordinates(req.GetServerUrl(), req.GetGroupId(), req.GetShareIndex())
+	if err != nil {
+		return nil, err
+	}
+
+	if err := shareClient.DeleteShare(ctx, serverURL, groupID, shareIndex); err != nil {
+		return nil, mapShareError(err, "delete share")
+	}
+
+	return &emptypb.Empty{}, nil
+}
+
+// shareCoordinates validates the triple that addresses a single share.
+func shareCoordinates(serverURL, groupID string, shareIndex int32) (string, string, int, error) {
+	if serverURL == "" {
+		return "", "", 0, status.Error(codes.InvalidArgument, "server_url is required")
+	}
+	if groupID == "" {
+		return "", "", 0, status.Error(codes.InvalidArgument, "group_id is required")
+	}
+	return serverURL, groupID, int(shareIndex), nil
+}
+
 // GetShareCollectionStatus returns the share collection status for a group. The
 // request is passed through to the embedded go-qrdb node's share client, which
 // reports threshold progress for the group.
@@ -535,7 +597,7 @@ func (s *Service) GetShareCollectionStatus(ctx context.Context, req *pb.GetShare
 		return nil, status.Error(codes.FailedPrecondition, ErrShareClientNotConfigured.Error())
 	}
 
-	if err := s.authorize(ctx, "ceremony", "status", "collection-status"); err != nil {
+	if err := s.authorize(ctx, auth.ResourceCeremony, auth.ActionStatus, "collection-status"); err != nil {
 		return nil, err
 	}
 
@@ -565,7 +627,7 @@ func (s *Service) GetShareCollectionStatus(ctx context.Context, req *pb.GetShare
 // sealed by the composed hardware strategies (the security and isolation
 // invariants live in exactly one place).
 func (s *Service) CreateTenant(ctx context.Context, req *pb.CreateTenantRequest) (*pb.CreateTenantResponse, error) {
-	if err := s.authorize(ctx, "tenants", "create", "create"); err != nil {
+	if err := s.authorize(ctx, auth.ResourceTenants, auth.ActionCreate, "create"); err != nil {
 		return nil, err
 	}
 
@@ -649,7 +711,7 @@ func (s *Service) tenantSealedStatus(tenantID string) string {
 // GetTenant retrieves a tenant by ID, delegating to the XKMSService servicer so
 // the isolation metadata surfaces alongside the live sealed state.
 func (s *Service) GetTenant(ctx context.Context, req *pb.GetTenantRequest) (*pb.GetTenantResponse, error) {
-	if err := s.authorize(ctx, "tenants", "read", "get"); err != nil {
+	if err := s.authorize(ctx, auth.ResourceTenants, auth.ActionRead, "get"); err != nil {
 		return nil, err
 	}
 
@@ -691,7 +753,7 @@ func (s *Service) GetTenant(ctx context.Context, req *pb.GetTenantRequest) (*pb.
 
 // ListTenants returns all tenants, delegating to the XKMSService servicer.
 func (s *Service) ListTenants(ctx context.Context, _ *pb.ListTenantsRequest) (*pb.ListTenantsResponse, error) {
-	if err := s.authorize(ctx, "tenants", "list", "list"); err != nil {
+	if err := s.authorize(ctx, auth.ResourceTenants, auth.ActionList, "list"); err != nil {
 		return nil, err
 	}
 
@@ -734,7 +796,7 @@ func (s *Service) ListTenants(ctx context.Context, _ *pb.ListTenantsRequest) (*p
 
 // DeleteTenant deletes a tenant, delegating to the XKMSService servicer.
 func (s *Service) DeleteTenant(ctx context.Context, req *pb.DeleteTenantRequest) (*emptypb.Empty, error) {
-	if err := s.authorize(ctx, "tenants", "delete", "delete"); err != nil {
+	if err := s.authorize(ctx, auth.ResourceTenants, auth.ActionDelete, "delete"); err != nil {
 		return nil, err
 	}
 
@@ -770,7 +832,7 @@ func (s *Service) TenantBarrierInit(ctx context.Context, req *pb.TenantBarrierIn
 		return nil, status.Error(codes.FailedPrecondition, ErrBarrierRegistryNotConfigured.Error())
 	}
 
-	if err := s.authorize(ctx, "tenant_barrier", "init", "barrier-init"); err != nil {
+	if err := s.authorize(ctx, auth.ResourceTenantBarrier, auth.ActionInit, "barrier-init"); err != nil {
 		return nil, err
 	}
 
@@ -804,7 +866,7 @@ func (s *Service) TenantBarrierUnseal(ctx context.Context, req *pb.TenantBarrier
 		return nil, status.Error(codes.FailedPrecondition, ErrBarrierRegistryNotConfigured.Error())
 	}
 
-	if err := s.authorize(ctx, "tenant_barrier", "unseal", "barrier-unseal"); err != nil {
+	if err := s.authorize(ctx, auth.ResourceTenantBarrier, auth.ActionUnseal, "barrier-unseal"); err != nil {
 		return nil, err
 	}
 
@@ -837,7 +899,7 @@ func (s *Service) TenantBarrierUnseal(ctx context.Context, req *pb.TenantBarrier
 // TenantBarrierStatus reports the current state of a per-tenant barrier,
 // delegating to the XKMSService servicer.
 func (s *Service) TenantBarrierStatus(ctx context.Context, req *pb.TenantBarrierStatusRequest) (*pb.TenantBarrierStatusResponse, error) {
-	if err := s.authorize(ctx, "tenant_barrier", "read", "barrier-status"); err != nil {
+	if err := s.authorize(ctx, auth.ResourceTenantBarrier, auth.ActionStatus, "barrier-status"); err != nil {
 		return nil, err
 	}
 	tenantID := req.GetTenantId()
@@ -866,7 +928,7 @@ func (s *Service) TenantBarrierStatus(ctx context.Context, req *pb.TenantBarrier
 // UpdateTenantEntitlements updates a tenant's feature entitlements, delegating
 // to the XKMSService servicer.
 func (s *Service) UpdateTenantEntitlements(ctx context.Context, req *pb.UpdateTenantEntitlementsRequest) (*pb.UpdateTenantEntitlementsResponse, error) {
-	if err := s.authorize(ctx, "tenants", "update", "update-entitlements"); err != nil {
+	if err := s.authorize(ctx, auth.ResourceTenants, auth.ActionUpdate, "update-entitlements"); err != nil {
 		return nil, err
 	}
 	tenantID := req.GetTenantId()
@@ -890,7 +952,7 @@ func (s *Service) UpdateTenantEntitlements(ctx context.Context, req *pb.UpdateTe
 // UpdateTenantQuotas updates a tenant's resource quotas, delegating to the
 // XKMSService servicer.
 func (s *Service) UpdateTenantQuotas(ctx context.Context, req *pb.UpdateTenantQuotasRequest) (*pb.UpdateTenantQuotasResponse, error) {
-	if err := s.authorize(ctx, "tenants", "update", "update-quotas"); err != nil {
+	if err := s.authorize(ctx, auth.ResourceTenants, auth.ActionUpdate, "update-quotas"); err != nil {
 		return nil, err
 	}
 	tenantID := req.GetTenantId()

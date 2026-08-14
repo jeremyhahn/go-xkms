@@ -27,6 +27,7 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/jeremyhahn/go-xkms/pkg/backend"
+	"github.com/jeremyhahn/go-xkms/pkg/crypto/kdf"
 	"github.com/jeremyhahn/go-xkms/pkg/crypto/wrapping"
 	"github.com/jeremyhahn/go-xkms/pkg/keyprovider/pkcs8"
 	"github.com/jeremyhahn/go-xkms/pkg/keyprovider/quantum"
@@ -444,6 +445,25 @@ func (b *SoftwareBackend) GetSymmetricKey(ctx context.Context, attrs *types.KeyA
 	return b.symmetricBackend.GetSymmetricKey(ctx, attrs)
 }
 
+// DeriveFromSymmetricKey runs the key derivation function selected by params
+// over the symmetric key named by attrs, implementing
+// types.SymmetricKeyDeriver. It is what answers PKCS#11 C_DeriveKey
+// (v3.2 §5.18.5) for this backend.
+//
+// Like every other symmetric operation here it is delegated to the symmetric
+// backend, which owns the key material: the derivation runs where the key
+// lives, and the base key's bytes never reach this facade or any caller of it.
+func (b *SoftwareBackend) DeriveFromSymmetricKey(ctx context.Context, attrs *types.KeyAttributes, params *kdf.KDFParams) ([]byte, error) {
+	b.mu.RLock()
+	defer b.mu.RUnlock()
+
+	if b.closed {
+		return nil, ErrStorageClosed
+	}
+
+	return b.symmetricBackend.DeriveFromSymmetricKey(ctx, attrs, params)
+}
+
 // SymmetricEncrypter creates a SymmetricEncrypter for the given key.
 // This operation is delegated to the symmetric backend.
 func (b *SoftwareBackend) SymmetricEncrypter(ctx context.Context, attrs *types.KeyAttributes) (types.SymmetricEncrypter, error) {
@@ -855,6 +875,17 @@ func (b *SoftwareBackend) importSymmetricKey(ctx context.Context, attrs *types.K
 		return &errs.Wrapped{Msg: "failed to store symmetric key", Err: err}
 	}
 
+	// The key identifier encodes only partition, store type, CN and algorithm,
+	// so anything else about the key -- Exportable in particular -- has to be
+	// recorded alongside it or it is lost the moment the attributes are
+	// reconstructed. This path stores the bytes itself instead of delegating to
+	// the symmetric backend's own ImportKey, so it has to record the metadata
+	// itself too; omitting it made every key imported through C_UnwrapKey read
+	// back as non-exportable regardless of what the caller requested.
+	if err := b.symmetricBackend.SaveKeyMetadata(ctx, keyID, attrs); err != nil {
+		return &errs.Wrapped{Msg: "failed to store symmetric key metadata", Err: err}
+	}
+
 	return nil
 }
 
@@ -1042,6 +1073,7 @@ func (b *SoftwareBackend) Unseal(ctx context.Context, sealed *types.SealedData, 
 // Verify interface compliance at compile time
 var _ types.KeyProvider = (*SoftwareBackend)(nil)
 var _ types.SymmetricKeyProvider = (*SoftwareBackend)(nil)
+var _ types.SymmetricKeyDeriver = (*SoftwareBackend)(nil)
 var _ types.SymmetricKeyProviderWithTracking = (*SoftwareBackend)(nil)
 var _ types.KeyAgreement = (*SoftwareBackend)(nil)
 var _ backend.ImportExportBackend = (*SoftwareBackend)(nil)

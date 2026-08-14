@@ -54,7 +54,7 @@ func NewDAOStore(kvStore qrdbsdk.KVStore) (*DAOStore, error) {
 		func() *AgentEntity { return &AgentEntity{} },
 	)
 	if err != nil {
-		return nil, &AgentError{Operation: "new_dao_store", Err: ErrDAOCreation}
+		return nil, &AgentError{Operation: "new_dao_store", Err: ErrDAOCreation, Cause: err}
 	}
 
 	return &DAOStore{dao: agentDAO}, nil
@@ -73,7 +73,7 @@ func (s *DAOStore) SaveAgent(agent *AgentInfo) error {
 	// Check if an entity with this DeviceID already exists.
 	existing, err := s.findByDeviceID(ctx, agent.ID)
 	if err != nil && !errors.Is(err, ErrAgentNotFound) {
-		return &AgentError{Operation: "save_agent", Err: ErrStoreWrite}
+		return &AgentError{Operation: "save_agent", Err: ErrStoreWrite, Cause: err}
 	}
 
 	entity := AgentEntityFromInfo(agent)
@@ -83,7 +83,7 @@ func (s *DAOStore) SaveAgent(agent *AgentInfo) error {
 	}
 
 	if err := s.dao.Save(ctx, entity); err != nil {
-		return &AgentError{Operation: "save_agent", Err: ErrStoreWrite}
+		return &AgentError{Operation: "save_agent", Err: ErrStoreWrite, Cause: err}
 	}
 
 	return nil
@@ -114,7 +114,7 @@ func (s *DAOStore) ListAgents() ([]*AgentInfo, error) {
 		PageSize: 10000,
 	})
 	if err != nil {
-		return nil, &AgentError{Operation: "list_agents", Err: ErrStoreRead}
+		return nil, &AgentError{Operation: "list_agents", Err: ErrStoreRead, Cause: err}
 	}
 
 	agents := make([]*AgentInfo, 0, len(result.Entities))
@@ -139,7 +139,7 @@ func (s *DAOStore) DeleteAgent(id string) error {
 	}
 
 	if err := s.dao.Delete(ctx, entity); err != nil {
-		return &AgentError{Operation: "delete_agent", Err: ErrStoreDelete}
+		return &AgentError{Operation: "delete_agent", Err: ErrStoreDelete, Cause: err}
 	}
 
 	return nil

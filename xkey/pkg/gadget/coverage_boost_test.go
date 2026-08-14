@@ -18,6 +18,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"syscall"
 	"testing"
 )
 
@@ -374,25 +375,46 @@ func TestHIDGadgetTransport_ReadError(t *testing.T) {
 // OSFileSystem Mount/Unmount error paths (filesystem.go)
 // ---------------------------------------------------------------------------
 
+// TestOSFileSystem_Mount_Error verifies Mount surfaces the syscall error. The
+// target lives under a regular file, so mount(2) fails with ENOTDIR for every
+// uid including root. Relying on a permission failure would let this actually
+// mount a filesystem on the host when the tests run as root.
 func TestOSFileSystem_Mount_Error(t *testing.T) {
 	fs := &OSFileSystem{}
-	err := fs.Mount("src", "/tmp/nonexistent-mount-"+t.Name(), "tmpfs", 0, "")
-	if err == nil {
-		// If running as root, mount might succeed; unmount and skip.
-		_ = fs.Unmount("/tmp/nonexistent-mount-"+t.Name(), 0)
-		t.Skip("running as root, Mount succeeded")
+
+	blocker := filepath.Join(t.TempDir(), "not-a-directory")
+	if err := os.WriteFile(blocker, []byte("x"), 0600); err != nil {
+		t.Fatalf("failed to create blocking file: %v", err)
 	}
-	// We just verify an error is returned (permission denied or similar).
-	t.Logf("Mount error (expected): %v", err)
+	target := filepath.Join(blocker, "mnt")
+
+	err := fs.Mount("src", target, "tmpfs", 0, "")
+	if err == nil {
+		_ = fs.Unmount(target, 0)
+		t.Fatal("Mount() succeeded for a target under a regular file, want error")
+	}
+	if !errors.Is(err, syscall.ENOTDIR) {
+		t.Errorf("Mount() error = %v, want ENOTDIR", err)
+	}
 }
 
+// TestOSFileSystem_Unmount_Error verifies Unmount surfaces the syscall error
+// for a path that is not a mount point. umount(2) rejects this for every uid.
 func TestOSFileSystem_Unmount_Error(t *testing.T) {
 	fs := &OSFileSystem{}
-	err := fs.Unmount("/tmp/definitely-not-mounted-"+t.Name(), 0)
-	if err == nil {
-		t.Skip("unexpected: Unmount succeeded")
+
+	notMounted := filepath.Join(t.TempDir(), "not-mounted")
+	if err := os.MkdirAll(notMounted, 0700); err != nil {
+		t.Fatalf("failed to create directory: %v", err)
 	}
-	t.Logf("Unmount error (expected): %v", err)
+
+	err := fs.Unmount(notMounted, 0)
+	if err == nil {
+		t.Fatal("Unmount() succeeded for a path that is not a mount point, want error")
+	}
+	if !errors.Is(err, syscall.EINVAL) && !errors.Is(err, syscall.EPERM) {
+		t.Errorf("Unmount() error = %v, want EINVAL or EPERM", err)
+	}
 }
 
 // ---------------------------------------------------------------------------

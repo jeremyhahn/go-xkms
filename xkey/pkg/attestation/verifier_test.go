@@ -396,9 +396,11 @@ func TestVerifyTPMAttestation_StoreError(t *testing.T) {
 // --- VerifyAndroidAttestation tests ---
 
 func TestVerifyAndroidAttestation_Success(t *testing.T) {
+	challenge := []byte("challenge-generated-by-this-host")
+
 	rootCA := generateTestCA(t, "Google Hardware Attestation Root")
 	intermediateCA := generateIntermediateCA(t, rootCA, "Google Attestation Intermediate")
-	leaf := generateLeafCert(t, intermediateCA, "Android Key")
+	leaf := generateAttestedLeaf(t, intermediateCA, "Android Key", challenge, androidSecurityLevelTrustedEnv)
 
 	store := newMockTrustStore()
 	store.addCertForPurpose(rootCA.cert, truststore.PurposeAndroidHardware)
@@ -410,7 +412,7 @@ func TestVerifyAndroidAttestation_Success(t *testing.T) {
 
 	chain := []*x509.Certificate{leaf, intermediateCA.cert, rootCA.cert}
 
-	result, err := v.VerifyAndroidAttestation(chain, nil)
+	result, err := v.VerifyAndroidAttestation(chain, challenge)
 	if err != nil {
 		t.Fatalf("VerifyAndroidAttestation() error: %v", err)
 	}
@@ -423,8 +425,10 @@ func TestVerifyAndroidAttestation_Success(t *testing.T) {
 }
 
 func TestVerifyAndroidAttestation_TwoCertChain(t *testing.T) {
+	challenge := []byte("challenge-generated-by-this-host")
+
 	rootCA := generateTestCA(t, "Android Root CA")
-	leaf := generateLeafCert(t, rootCA, "Android Leaf")
+	leaf := generateAttestedLeaf(t, rootCA, "Android Leaf", challenge, androidSecurityLevelTrustedEnv)
 
 	store := newMockTrustStore()
 	store.addCertForPurpose(rootCA.cert, truststore.PurposeAndroidHardware)
@@ -436,7 +440,7 @@ func TestVerifyAndroidAttestation_TwoCertChain(t *testing.T) {
 
 	chain := []*x509.Certificate{leaf, rootCA.cert}
 
-	result, err := v.VerifyAndroidAttestation(chain, nil)
+	result, err := v.VerifyAndroidAttestation(chain, challenge)
 	if err != nil {
 		t.Fatalf("VerifyAndroidAttestation() error: %v", err)
 	}
@@ -464,8 +468,10 @@ func TestVerifyAndroidAttestation_EmptyChain(t *testing.T) {
 }
 
 func TestVerifyAndroidAttestation_SingleCert(t *testing.T) {
-	// Single self-signed cert in a chain. The root is also the leaf.
-	rootCA := generateTestCA(t, "Self-Signed Android Root")
+	// Single self-signed cert in a chain. The root is also the leaf, so it
+	// carries the attestation extension itself.
+	challenge := []byte("challenge-generated-by-this-host")
+	rootCA := generateAttestedSelfSignedCA(t, "Self-Signed Android Root", challenge)
 
 	store := newMockTrustStore()
 	store.addCertForPurpose(rootCA.cert, truststore.PurposeAndroidHardware)
@@ -477,7 +483,7 @@ func TestVerifyAndroidAttestation_SingleCert(t *testing.T) {
 
 	chain := []*x509.Certificate{rootCA.cert}
 
-	result, err := v.VerifyAndroidAttestation(chain, nil)
+	result, err := v.VerifyAndroidAttestation(chain, challenge)
 	if err != nil {
 		t.Fatalf("VerifyAndroidAttestation() error: %v", err)
 	}
@@ -498,10 +504,11 @@ func TestVerifyAndroidAttestation_InvalidChain(t *testing.T) {
 		t.Fatalf("NewVerifier() error: %v", err)
 	}
 
-	leaf := generateLeafCert(t, untrustedCA, "Wrong Android Leaf")
+	challenge := []byte("challenge-generated-by-this-host")
+	leaf := generateAttestedLeaf(t, untrustedCA, "Wrong Android Leaf", challenge, androidSecurityLevelTrustedEnv)
 	chain := []*x509.Certificate{leaf}
 
-	result, err := v.VerifyAndroidAttestation(chain, nil)
+	result, err := v.VerifyAndroidAttestation(chain, challenge)
 	if !errors.Is(err, ErrChainVerification) {
 		t.Errorf("error = %v, want %v", err, ErrChainVerification)
 	}
@@ -514,9 +521,11 @@ func TestVerifyAndroidAttestation_InvalidChain(t *testing.T) {
 }
 
 func TestVerifyAndroidAttestation_WithNonce(t *testing.T) {
-	// Nonce is accepted but not yet verified (TODO for Android extension parsing).
+	// The nonce supplied by the caller must be the challenge recorded in the
+	// device's attestation extension.
 	rootCA := generateTestCA(t, "Android Root CA")
-	leaf := generateLeafCert(t, rootCA, "Android Leaf")
+	nonce := []byte("test-nonce-value")
+	leaf := generateAttestedLeaf(t, rootCA, "Android Leaf", nonce, androidSecurityLevelTrustedEnv)
 
 	store := newMockTrustStore()
 	store.addCertForPurpose(rootCA.cert, truststore.PurposeAndroidHardware)
@@ -527,7 +536,6 @@ func TestVerifyAndroidAttestation_WithNonce(t *testing.T) {
 	}
 
 	chain := []*x509.Certificate{leaf, rootCA.cert}
-	nonce := []byte("test-nonce-value")
 
 	result, err := v.VerifyAndroidAttestation(chain, nonce)
 	if err != nil {
@@ -795,10 +803,11 @@ func TestBuildTrustPool_EmptyStoreWithLoader(t *testing.T) {
 		t.Fatalf("NewVerifier() error: %v", err)
 	}
 
-	leaf := generateLeafCert(t, embeddedCA, "Embedded-Only Leaf")
+	challenge := []byte("challenge-generated-by-this-host")
+	leaf := generateAttestedLeaf(t, embeddedCA, "Embedded-Only Leaf", challenge, androidSecurityLevelTrustedEnv)
 	chain := []*x509.Certificate{leaf}
 
-	result, err := v.VerifyAndroidAttestation(chain, nil)
+	result, err := v.VerifyAndroidAttestation(chain, challenge)
 	if err != nil {
 		t.Fatalf("VerifyAndroidAttestation() error: %v", err)
 	}
@@ -974,9 +983,11 @@ func TestVerifyChain_ThreeLevelChain(t *testing.T) {
 }
 
 func TestVerifyAndroidAttestation_ThreeLevelChain(t *testing.T) {
+	challenge := []byte("challenge-generated-by-this-host")
+
 	rootCA := generateTestCA(t, "Android Root")
 	intermediateCA := generateIntermediateCA(t, rootCA, "Android Intermediate")
-	leaf := generateLeafCert(t, intermediateCA, "Android Key Leaf")
+	leaf := generateAttestedLeaf(t, intermediateCA, "Android Key Leaf", challenge, androidSecurityLevelTrustedEnv)
 
 	store := newMockTrustStore()
 	store.addCertForPurpose(rootCA.cert, truststore.PurposeAndroidHardware)
@@ -988,7 +999,7 @@ func TestVerifyAndroidAttestation_ThreeLevelChain(t *testing.T) {
 
 	chain := []*x509.Certificate{leaf, intermediateCA.cert, rootCA.cert}
 
-	result, err := v.VerifyAndroidAttestation(chain, nil)
+	result, err := v.VerifyAndroidAttestation(chain, challenge)
 	if err != nil {
 		t.Fatalf("VerifyAndroidAttestation() error: %v", err)
 	}
@@ -1032,9 +1043,10 @@ func TestEmbeddedLoader_PurposeFiltering(t *testing.T) {
 	}
 
 	// Android leaf should verify against Android embedded root.
-	androidLeaf := generateLeafCert(t, androidCA, "Android Leaf")
+	challenge := []byte("challenge-generated-by-this-host")
+	androidLeaf := generateAttestedLeaf(t, androidCA, "Android Leaf", challenge, androidSecurityLevelTrustedEnv)
 	chain := []*x509.Certificate{androidLeaf}
-	result, err = v.VerifyAndroidAttestation(chain, nil)
+	result, err = v.VerifyAndroidAttestation(chain, challenge)
 	if err != nil {
 		t.Fatalf("VerifyAndroidAttestation() error: %v", err)
 	}

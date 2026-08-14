@@ -24,6 +24,7 @@ import (
 	"github.com/jeremyhahn/go-xkms/pkg/errs"
 
 	"github.com/jeremyhahn/go-xkms/pkg/backend"
+	"github.com/jeremyhahn/go-xkms/pkg/crypto/aead"
 	"github.com/jeremyhahn/go-xkms/pkg/storage"
 	"github.com/jeremyhahn/go-xkms/pkg/types"
 )
@@ -129,9 +130,15 @@ func (b *Backend) GenerateSymmetricKey(ctx context.Context, attrs *types.KeyAttr
 		return nil, &errs.Wrapped{Msg: "failed to store metadata", Err: err}
 	}
 
-	// Initialize AEAD tracking options after successful key generation
+	// Initialize AEAD tracking options after successful key generation.
+	// The caller's policy wins; the default only applies when none was given.
+	// Discarding it would silently downgrade a conservative nonce or bytes
+	// limit to the default.
 	if b.tracker != nil {
-		aeadOpts := types.DefaultAEADOptions()
+		aeadOpts := attrs.AEADOptions
+		if aeadOpts == nil {
+			aeadOpts = types.DefaultAEADOptions()
+		}
 		if err := b.tracker.SetAEADOptions(attrs.CN, aeadOpts); err != nil {
 			fmt.Printf("Warning: failed to set AEAD options: %v\n", err)
 		}
@@ -248,6 +255,15 @@ func (b *Backend) SymmetricEncrypter(ctx context.Context, attrs *types.KeyAttrib
 // Vault Transit handles nonce generation and authentication automatically.
 // Additional authenticated data (AAD) is supported via the context parameter.
 func (e *vaultSymmetricEncrypter) Encrypt(plaintext []byte, opts *types.EncryptOptions) (*types.EncryptedData, error) {
+	// Vault Transit returns a self-describing ciphertext string and never
+	// exposes the authentication tag, so the tag length is not this backend's
+	// to choose.
+	if opts != nil {
+		if err := aead.RequireDefaultTagSize(opts.TagSize, "Vault Transit"); err != nil {
+			return nil, err
+		}
+	}
+
 	// Track bytes encrypted (Vault manages nonces server-side)
 	keyID := e.attrs.CN
 	if e.backend.tracker != nil {
@@ -306,6 +322,13 @@ func (e *vaultSymmetricEncrypter) Encrypt(plaintext []byte, opts *types.EncryptO
 // Vault Transit automatically verifies authentication before decrypting.
 // Additional authenticated data (AAD) must match what was provided during encryption.
 func (e *vaultSymmetricEncrypter) Decrypt(data *types.EncryptedData, opts *types.DecryptOptions) ([]byte, error) {
+	// See the matching check in Encrypt.
+	if opts != nil {
+		if err := aead.RequireDefaultTagSize(opts.TagSize, "Vault Transit"); err != nil {
+			return nil, err
+		}
+	}
+
 	ctx := context.Background()
 	logical := e.backend.client.Logical()
 

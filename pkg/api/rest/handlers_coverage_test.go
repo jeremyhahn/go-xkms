@@ -55,7 +55,8 @@ func TestDecryptHandler_AsymmetricSuccess(t *testing.T) {
 	ctx := newTestHandlerContext()
 	router := createRouterWithHandler(http.MethodPost, "/api/v1/keys/{id}/decrypt", ctx.DecryptHandler)
 
-	body, _ := json.Marshal(DecryptRequest{Ciphertext: ciphertext})
+	// The padding has to be stated; an unnamed padding is PKCS#1 v1.5.
+	body, _ := json.Marshal(DecryptRequest{Ciphertext: ciphertext, Padding: "oaep", Hash: "SHA-256"})
 	req := httptest.NewRequest(http.MethodPost,
 		"/api/v1/keys/decrypt-key/decrypt?backend=test-backend",
 		strings.NewReader(string(body)))

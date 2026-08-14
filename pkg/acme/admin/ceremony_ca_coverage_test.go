@@ -43,18 +43,19 @@ import (
 // ==========================================================================
 
 type stubCeremonyClient struct {
-	initResp          *db.CeremonyInitializeResponse
-	initErr           error
-	statusResp        *db.CeremonyStatusResponse
-	statusErr         error
-	claimBeginResp    *db.ClaimCertBeginResponse
-	claimBeginErr     error
-	claimCompleteResp *db.ClaimCertCompleteResponse
-	claimCompleteErr  error
-	claimShareResp    *db.ClaimShareResponse
-	claimShareErr     error
-	signCSRResp       *db.SignCSRInitResponse
-	signCSRErr        error
+	initResp            *db.CeremonyInitializeResponse
+	initErr             error
+	statusResp          *db.CeremonyStatusResponse
+	statusErr           error
+	claimBeginResp      *db.ClaimCertBeginResponse
+	claimBeginErr       error
+	claimCompleteResp   *db.ClaimCertCompleteResponse
+	claimCompleteErr    error
+	claimBeginShareResp *db.BeginClaimShareResponse
+	claimShareResp      *db.CompleteClaimShareResponse
+	claimShareErr       error
+	signCSRResp         *db.SignCSRInitResponse
+	signCSRErr          error
 }
 
 func newStubCeremonyClient() *stubCeremonyClient {
@@ -76,8 +77,13 @@ func newStubCeremonyClient() *stubCeremonyClient {
 			CertPEM:   "-----BEGIN CERTIFICATE-----\n-----END CERTIFICATE-----",
 			CACertPEM: "-----BEGIN CERTIFICATE-----\n-----END CERTIFICATE-----",
 		},
-		claimShareResp: &db.ClaimShareResponse{
-			ShareJSON: `{"index":1,"value":"abc"}`,
+		claimBeginShareResp: &db.BeginClaimShareResponse{
+			NonceHex:  "deadbeef",
+			ExpiresAt: "2025-12-31T00:00:00Z",
+		},
+		claimShareResp: &db.CompleteClaimShareResponse{
+			ShareIndex: 1,
+			ShareJSON:  `{"index":1,"value":"abc"}`,
 		},
 		signCSRResp: &db.SignCSRInitResponse{
 			CertPEM: "-----BEGIN CERTIFICATE-----\n-----END CERTIFICATE-----",
@@ -97,7 +103,10 @@ func (s *stubCeremonyClient) CeremonyClaimCertBegin(_ context.Context, _ *db.Cla
 func (s *stubCeremonyClient) CeremonyClaimCertComplete(_ context.Context, _ *db.ClaimCertCompleteRequest) (*db.ClaimCertCompleteResponse, error) {
 	return s.claimCompleteResp, s.claimCompleteErr
 }
-func (s *stubCeremonyClient) CeremonyClaimShare(_ context.Context, _ *db.ClaimShareRequest) (*db.ClaimShareResponse, error) {
+func (s *stubCeremonyClient) CeremonyBeginClaimShare(_ context.Context, _ *db.BeginClaimShareRequest) (*db.BeginClaimShareResponse, error) {
+	return s.claimBeginShareResp, s.claimShareErr
+}
+func (s *stubCeremonyClient) CeremonyCompleteClaimShare(_ context.Context, _ *db.CompleteClaimShareRequest) (*db.CompleteClaimShareResponse, error) {
 	return s.claimShareResp, s.claimShareErr
 }
 func (s *stubCeremonyClient) CeremonySignCSR(_ context.Context, _ *db.SignCSRInitRequest) (*db.SignCSRInitResponse, error) {
@@ -175,8 +184,15 @@ func TestCeremonyService_NilClient_AllOps(t *testing.T) {
 		assert.True(t, errors.As(err, &e))
 	})
 
-	t.Run("ClaimShare returns CeremonyNotAvailableError", func(t *testing.T) {
-		_, err := svc.ClaimShare(ctx, &ClaimShareRequest{Username: "alice"})
+	t.Run("BeginClaimShare returns CeremonyNotAvailableError", func(t *testing.T) {
+		_, err := svc.BeginClaimShare(ctx, &BeginClaimShareRequest{Username: "alice"})
+		require.Error(t, err)
+		var e *CeremonyNotAvailableError
+		assert.True(t, errors.As(err, &e))
+	})
+
+	t.Run("CompleteClaimShare returns CeremonyNotAvailableError", func(t *testing.T) {
+		_, err := svc.CompleteClaimShare(ctx, &CompleteClaimShareRequest{Username: "alice"})
 		require.Error(t, err)
 		var e *CeremonyNotAvailableError
 		assert.True(t, errors.As(err, &e))
@@ -300,7 +316,15 @@ func TestCeremonyService_ClaimShare_Success(t *testing.T) {
 	stub := newStubCeremonyClient()
 	svc := NewCeremonyService(stub, nil, slog.Default())
 
-	resp, err := svc.ClaimShare(context.Background(), &ClaimShareRequest{Username: "alice"})
+	begun, err := svc.BeginClaimShare(context.Background(), &BeginClaimShareRequest{Username: "alice"})
+	require.NoError(t, err)
+	assert.NotEmpty(t, begun.NonceHex)
+
+	resp, err := svc.CompleteClaimShare(context.Background(), &CompleteClaimShareRequest{
+		Username:  "alice",
+		NonceHex:  begun.NonceHex,
+		Signature: []byte("sig"),
+	})
 	require.NoError(t, err)
 	assert.NotEmpty(t, resp.ShareJSON)
 }
@@ -310,8 +334,12 @@ func TestCeremonyService_ClaimShare_Error(t *testing.T) {
 	stub.claimShareErr = errors.New("claim share failed")
 	svc := NewCeremonyService(stub, nil, slog.Default())
 
-	_, err := svc.ClaimShare(context.Background(), &ClaimShareRequest{Username: "alice"})
+	_, err := svc.BeginClaimShare(context.Background(), &BeginClaimShareRequest{Username: "alice"})
 	require.Error(t, err)
+
+	resp, err := svc.CompleteClaimShare(context.Background(), &CompleteClaimShareRequest{Username: "alice"})
+	require.Error(t, err)
+	assert.Nil(t, resp, "no share material may accompany a refusal")
 }
 
 func TestCeremonyService_SignCSR_Success(t *testing.T) {
@@ -457,7 +485,10 @@ func TestCeremonyService_CAAdapter_WithoutProvider(t *testing.T) {
 // Handlers — ListAuditLogs and GetAlgorithms
 // ==========================================================================
 
-func TestHandlers_ListAuditLogs(t *testing.T) {
+// TestHandlers_ListAuditLogs_RouteWithoutTrail verifies the registered route
+// reports that no audit trail is configured. Trail-backed coverage lives in
+// handlers_audit_algorithms_test.go.
+func TestHandlers_ListAuditLogs_RouteWithoutTrail(t *testing.T) {
 	testCA, storageFactory, cleanup := createTestInfrastructure(t)
 	defer cleanup()
 
@@ -465,7 +496,7 @@ func TestHandlers_ListAuditLogs(t *testing.T) {
 	h := NewHandlers(svc, slog.Default())
 
 	router := mux.NewRouter()
-	h.RegisterRoutes(router, nil)
+	h.RegisterRoutes(router, nil, newPermissiveGate())
 
 	tests := []struct {
 		name  string
@@ -477,14 +508,14 @@ func TestHandlers_ListAuditLogs(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			req := httptest.NewRequest(http.MethodGet, tt.query, nil)
+			req := authenticated(httptest.NewRequest(http.MethodGet, tt.query, nil))
 			w := httptest.NewRecorder()
 			router.ServeHTTP(w, req)
-			assert.Equal(t, http.StatusOK, w.Code)
+			assert.Equal(t, http.StatusNotImplemented, w.Code)
 
-			var resp ListResponse
-			require.NoError(t, json.NewDecoder(w.Body).Decode(&resp))
-			assert.Equal(t, 0, resp.Total)
+			var problem ProblemDetail
+			require.NoError(t, json.NewDecoder(w.Body).Decode(&problem))
+			assert.Equal(t, http.StatusNotImplemented, problem.Status)
 		})
 	}
 }
@@ -497,9 +528,9 @@ func TestHandlers_GetAlgorithms(t *testing.T) {
 	h := NewHandlers(svc, slog.Default())
 
 	router := mux.NewRouter()
-	h.RegisterRoutes(router, nil)
+	h.RegisterRoutes(router, nil, newPermissiveGate())
 
-	req := httptest.NewRequest(http.MethodGet, "/admin/algorithms", nil)
+	req := authenticated(httptest.NewRequest(http.MethodGet, "/admin/algorithms", nil))
 	w := httptest.NewRecorder()
 	router.ServeHTTP(w, req)
 
@@ -508,4 +539,11 @@ func TestHandlers_GetAlgorithms(t *testing.T) {
 	require.NoError(t, json.NewDecoder(w.Body).Decode(&resp))
 	assert.NotEmpty(t, resp.Signing)
 	assert.NotNil(t, resp.KeyEncapsulation)
+
+	// createTestInfrastructure configures exactly one backend, so the default
+	// discoverer must report that backend and no other.
+	for _, info := range resp.Signing {
+		assert.Equal(t, []string{"software"}, info.Backends,
+			"algorithm %s must be reported against the configured backend only", info.Algorithm)
+	}
 }

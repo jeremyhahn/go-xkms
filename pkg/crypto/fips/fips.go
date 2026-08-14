@@ -19,7 +19,10 @@
 // its cryptographic choices based on the runtime FIPS policy.
 package fips
 
-import "os"
+import (
+	"crypto/fips140"
+	"os"
+)
 
 const (
 	// EnvGOFIPS140 is the environment variable that controls FIPS 140 mode.
@@ -32,10 +35,40 @@ const (
 	KDFPBKDF2 = "pbkdf2"
 )
 
-// Enabled reports whether FIPS 140 mode is active. It returns true when the
-// GOFIPS140 environment variable is set to a non-empty value.
+// Compiled reports whether this binary was built as a FIPS 140-3 module — that
+// is, compiled with GOFIPS140 set to an enabling value. It is the build-time
+// truth, distinct from Enabled which also honours the runtime GOFIPS140
+// environment variable: a shared library built with GOFIPS140=latest carries no
+// such environment variable in the process that dlopen()s it, so only Compiled
+// can tell a FIPS build from a non-FIPS one after the fact. Use it for anything
+// that must describe the artifact itself — a token or library label a user
+// reads to know they hold a FIPS module — rather than a per-process policy.
+func Compiled() bool {
+	return fips140.Enabled()
+}
+
+// Enabled reports whether FIPS 140 mode is active.
+//
+// The Go toolchain accepts "off", "latest", "inprocess", "certified" and a
+// "v1.Y.Z" version for GOFIPS140, and only "off" means disabled. Testing for a
+// non-empty value therefore read GOFIPS140=off — the one spelling a user
+// reaches for to turn FIPS OFF — as a request to turn it ON, which silently
+// enabled a compliance control the operator had explicitly declined. An
+// unrecognized value is treated as disabled rather than assumed to be an
+// enabling spelling, because the toolchain would refuse to build with it
+// anyway.
 func Enabled() bool {
-	return os.Getenv(EnvGOFIPS140) != ""
+	switch os.Getenv(EnvGOFIPS140) {
+	case "", "off":
+		return false
+	default:
+		// Any other value enables. The toolchain's accepted spellings are
+		// "latest", "inprocess", "certified" and "v1.Y.Z", and it refuses to
+		// build with anything else, so an unrecognized value cannot reach a
+		// real FIPS deployment. Treating it as enabled keeps this control
+		// failing toward more restriction rather than less.
+		return true
+	}
 }
 
 // DefaultKDF returns the default key derivation function identifier.

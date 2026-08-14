@@ -13,7 +13,11 @@
 
 package initialize
 
-import qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
+import (
+	"errors"
+
+	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
+)
 
 // --- Re-exported errors from go-qrdb/sdk/go ceremony ---
 
@@ -70,6 +74,19 @@ var (
 	// ErrShareAlreadyClaimed is returned when a share has already been claimed
 	// by a security officer.
 	ErrShareAlreadyClaimed = qrdbsdk.ErrCeremonyShareAlreadyClaimed
+
+	// ErrCertThumbprintMismatch is returned when the caller's mTLS certificate
+	// thumbprint does not match the thumbprint recorded for the officer at
+	// enrollment. This is the refusal that keeps anyone who merely knows an
+	// enrolled officer's username from taking that officer's Shamir share.
+	ErrCertThumbprintMismatch = qrdbsdk.ErrCeremonyCertThumbprintMismatch
+
+	// ErrOfficerNotFound is returned when no officer is enrolled under the
+	// requested username.
+	ErrOfficerNotFound = qrdbsdk.ErrCeremonyOfficerNotFound
+
+	// ErrNoPendingShare is returned when the officer has no unclaimed share.
+	ErrNoPendingShare = qrdbsdk.ErrCeremonyNoPendingShare
 
 	// ErrShareNotFound is returned when no share is found for the specified
 	// security officer.
@@ -165,3 +182,40 @@ type CABundleError = qrdbsdk.CeremonyCABundleError
 
 // SPKIPinError wraps an error from SPKI pin computation.
 type SPKIPinError = qrdbsdk.CeremonySPKIPinError
+
+// ErrNoLocalFIDO2Ceremony indicates a passkey factor was planned but this
+// build has no attached-authenticator driver wired. It surfaces at preflight,
+// before the ceremony changes any state.
+var ErrNoLocalFIDO2Ceremony = errors.New("init: no local FIDO2 ceremony is available to enroll a passkey")
+
+// ErrPasskeyRPIDRequired indicates a passkey enrollment was attempted without
+// a WebAuthn relying-party ID. A credential enrolled against the wrong RP ID
+// verifies at enrollment and fails at every subsequent login, so it is refused
+// rather than guessed.
+var ErrPasskeyRPIDRequired = errors.New("init: WebAuthn relying-party ID is required to enroll a passkey")
+
+// ErrAdminCertRequired indicates an mTLS factor was planned but no
+// administrator certificate was supplied to bind it to. Enrolling the factor
+// without one would record a login credential nobody holds.
+var ErrAdminCertRequired = errors.New("init: administrator certificate is required to enroll the mtls factor")
+
+// ErrRandomSource indicates the system random source failed.
+var ErrRandomSource = errors.New("init: random source failed")
+
+// RandomSourceError wraps a failure reading the system random source. A
+// ceremony that cannot generate a fresh challenge must abort rather than reuse
+// or weaken one.
+type RandomSourceError struct {
+	Err error
+}
+
+// Error describes the random-source failure.
+func (e *RandomSourceError) Error() string {
+	return ErrRandomSource.Error() + ": " + e.Err.Error()
+}
+
+// Unwrap returns the underlying error.
+func (e *RandomSourceError) Unwrap() error { return e.Err }
+
+// Is reports RandomSourceError as ErrRandomSource for errors.Is.
+func (e *RandomSourceError) Is(target error) bool { return target == ErrRandomSource }

@@ -365,11 +365,11 @@ func (tpm *TPM2) Install(soPIN types.Password, opts *InstallOptions) error {
 		if err != nil {
 			if err == tpm2.TPMRC(0x18b) {
 				tpm.logger.Info("Creating Shared SRK")
-				policyDigest, pdErr := tpm.PlatformPolicyDigest()
-				if pdErr != nil {
-					return pdErr
-				}
-				ssrkAttrs, err = SRKAttributesFromConfig(*tpm.config.SSRK, &policyDigest)
+				// No platform policy digest is read here: the Shared SRK never
+				// carries one. The policy this SRK would have been given is
+				// created below, by CreatePlatformPolicy, so it could only ever
+				// have described a PCR state that this key outlives.
+				ssrkAttrs, err = SRKAttributesFromConfig(*tpm.config.SSRK)
 				if err != nil {
 					return err
 				}
@@ -593,8 +593,12 @@ func (tpm *TPM2) ProvisionOwner(
 		return nil, err
 	}
 
-	// Create Shared SRK
-	srkAttrs, err := SRKAttributesFromConfig(*tpm.config.SSRK, &tpm.policyDigest)
+	// Create Shared SRK. It takes no platform policy: this runs before
+	// CreatePlatformPolicy extends the golden measurement into the platform
+	// PCR, so a policy computed here would be stale the moment provisioning
+	// returns. The Platform SRK, created after that extend, is the
+	// platform-bound storage parent.
+	srkAttrs, err := SRKAttributesFromConfig(*tpm.config.SSRK)
 	if err != nil {
 		return nil, err
 	}

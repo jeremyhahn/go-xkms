@@ -38,6 +38,19 @@ type SSHKnownHostsStore = sshknownhosts.Store
 // known-hosts store.
 var NewSSHKnownHostsBackendStore = sshknownhosts.NewBackendStore
 
+// SSHKnownHostsPin is a single pinned host-key envelope persisted by an
+// SSHKnownHostsStore.
+type SSHKnownHostsPin = sshknownhosts.Pin
+
+// SSHPinFromPublicKey builds an SSHKnownHostsPin from a host public key,
+// filling the OpenSSH SHA256 fingerprint, algorithm, and wire-format key.
+// The caller persists it via SSHKnownHostsStore.Add.
+var SSHPinFromPublicKey = sshknownhosts.PinFromPublicKey
+
+// SSHImportKnownHostsFile imports an OpenSSH known_hosts file into an
+// SSHKnownHostsStore under the given scope/owner, returning the count added.
+var SSHImportKnownHostsFile = sshknownhosts.ImportKnownHostsFile
+
 // SSHScope identifies the ownership scope of an SSH asset.
 type SSHScope = sshscope.Scope
 

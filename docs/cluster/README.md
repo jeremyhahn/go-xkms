@@ -43,6 +43,7 @@ Cluster settings are configured via the `cluster:` block in `xkmsd.yaml` and ove
 | DeploymentID | `deployment_id` | (config only) | uint64 | Isolates clusters that share a network. Optional; omit or set to 0 if not needed. Two clusters with different DeploymentIDs will not interfere. |
 | RaftAddress | `raft_address` | `XKMS_CLUSTER_RAFT_ADDRESS` | string | This node's advertised address for Raft peer communication (e.g., "10.0.0.1:63001"). Must be reachable by all other cluster members. |
 | ListenAddress | `listen_address` | `XKMS_CLUSTER_LISTEN_ADDRESS` | string | The address to bind for Raft communication. Defaults to RaftAddress. Use when the advertised address differs from the bind address (e.g., behind a load balancer). |
+| AdvertiseHost | `advertise_host` | (config only) | string | Host or IP that clients use to reach **this node's xkms APIs**. Published into the cluster registry with the ports of the enabled protocols so a client can be redirected to the leader. Distinct from `server.host`, which is a bind address and is often a wildcard no client can dial. Defaults to the host portion of `raft_address`; set explicitly when the API and Raft planes are reached over different addresses (NAT, split networking). If no concrete host is available the node advertises nothing and clients fall back to the leader hint alone. |
 | Peers | `peers` | `XKMS_CLUSTER_PEERS` | string | Comma-separated list of initial cluster members in `nodeID=address` format (e.g., `1=10.0.0.1:63001,2=10.0.0.2:63001,3=10.0.0.3:63001`). Must include this node's own NodeID and address when bootstrapping. |
 | Join | `join` | `XKMS_CLUSTER_JOIN` | bool | If `true`, the node joins an existing cluster; if `false`, it bootstraps a new cluster. The first node to boot should have `join: false` and a complete Peers list; subsequent nodes should have `join: true`. |
 | RaftTLS.CACertFile | `raft_tls.ca_cert_file` | `XKMS_CLUSTER_RAFT_CA_CERT` | string | Path to the PEM CA certificate used to verify Raft peer certificates. Enables mutual TLS on the inter-node Raft transport when all three `raft_tls.*` paths are set. |
@@ -66,6 +67,10 @@ cluster:
   shard_id: 1
   raft_address: "10.0.0.1:63001"
   listen_address: "10.0.0.1:63001"
+  # Optional: host clients use to reach THIS node's xkms APIs. Defaults to the
+  # host portion of raft_address; set it when the API and Raft planes are
+  # reached over different addresses.
+  advertise_host: "10.0.0.1"
   peers: "1=10.0.0.1:63001,2=10.0.0.2:63001,3=10.0.0.3:63001"
   join: false  # First node bootstraps
 ```
@@ -75,6 +80,7 @@ The second and third nodes would use identical YAML except:
 ```yaml
 cluster:
   node_id: 2  # or 3 for node3
+  advertise_host: "10.0.0.2"  # or 10.0.0.3
   join: true
 ```
 
@@ -298,27 +304,98 @@ xkms client APIs (REST, gRPC, QUIC, Unix socket) operate independently of Raft:
 The not-leader rejection is surfaced per protocol:
 
 - **REST**: HTTP `421 Misdirected Request`. The leader is echoed in the
-  `X-XKMS-Leader-ID` and `X-XKMS-Leader-Address` response headers and in the
-  JSON body (`{"error": ..., "shard_id": ..., "leader_id": ..., "leader_address": ...}`).
+  `X-XKMS-Leader-ID`, `X-XKMS-Leader-Address` and `X-XKMS-Leader-API-Address`
+  response headers and in the JSON body (`{"error": ..., "shard_id": ...,
+  "leader_id": ..., "leader_address": ..., "leader_api_address": ...}`).
 - **gRPC / Unix**: `FailedPrecondition` with an `ErrorInfo` detail whose
   `Reason` is `NOT_LEADER`, `Domain` is `xkms.cluster`, and `Metadata` carries
-  `shard_id`, `leader_id`, and `leader_address`.
+  `shard_id`, `leader_id`, `leader_address` and `leader_api_address`.
 - **QUIC**: same `421 Misdirected Request` mapping as REST (HTTP/3).
 
-The leader address in the redirect is the Raft peer address. Until a Raft→API
-address map exists, xkms surfaces the typed redirect to the client rather than
-forwarding the request server-side, so clients reconnect to the leader's xkms
-API endpoint to retry the write.
+`leader_address` is the leader's **Raft peer** address, which is not dialable as
+an API endpoint. `leader_api_address` is the address to dial to reach the leader
+over the **same API protocol the failed request used** — see
+[Leader redirect](#leader-redirect).
+
+### Leader redirect
+
+xkms **redirects the client** to the leader rather than forwarding the request
+server-side. The SDK follows that redirect automatically, so a write sent to a
+follower still succeeds from the caller's point of view.
+
+This is a security decision, not just a simplicity one. xkms identities are
+bound to the caller's credentials — an mTLS client certificate (matched by its
+SPKI thumbprint) or a session token. A follower does not hold the caller's
+private key, so it cannot re-present the caller's identity to the leader.
+Forwarding server-side would therefore require either dialing the leader with
+the *node's* own identity while asserting "I am acting for user X" — an
+impersonation channel, where compromising one node forges any identity
+cluster-wide — or a full delegation/token-exchange protocol.
+
+With a redirect the caller re-presents its **own** credentials to the leader.
+The leader runs exactly the same authenticate-then-authorize path it runs for a
+directly-dialed request, so the caller's identity and permissions are enforced
+at the leader by construction and are never delegated in transit.
+
+Redirect behaviour:
+
+- exactly **one** hop — a second not-leader response is returned to the caller
+  rather than chased, so a leadership flap cannot cause a redirect loop;
+- the retry reuses the same TLS configuration and credentials, and only the
+  scheme and host change; path, query, headers and body are preserved;
+- the client's configured address is never permanently repointed, so a
+  transient leadership change does not stick;
+- a not-leader response carrying **no** API address is returned to the caller
+  unchanged — the pre-advertisement behaviour;
+- the **Unix socket** transport does not follow redirects. A local socket client
+  has no network credentials and the leader is remote, so it surfaces the typed
+  not-leader error instead of hanging.
+
+### Advertised API endpoints
+
+For a redirect to be actionable, a client must be able to turn "the leader is
+replica N" into an address. Each node publishes its own client-facing API
+endpoints into the cluster registry, keyed by protocol:
+
+```yaml
+cluster:
+  advertise_host: "10.0.0.1"   # host clients use to reach THIS node's APIs
+```
+
+- Endpoints are a **protocol-keyed set** (`rest`, `grpc`, `quic`, `mcp`), not a
+  single address, because a redirected client must reach the leader over the
+  same protocol it is already speaking: codec, streaming semantics, TLS
+  configuration and credential presentation all differ per protocol. Omitting a
+  protocol is how a node states that it does not serve it.
+- Values come from the node's **own configuration** — `advertise_host` plus the
+  configured port of each enabled protocol. They are never derived from the Raft
+  address by port arithmetic, which would break under NAT, split networking and
+  non-default ports.
+- When `advertise_host` is unset, the host portion of `raft_address` is used,
+  since that is by definition an address peers already reach this node on. If
+  neither yields a concrete host (for example a wildcard bind address), the node
+  advertises **nothing** rather than an address no client can dial.
+- The Unix socket is never advertised: a socket path is meaningful only on the
+  node that owns it.
+- Advertisement is **backward compatible**. A replica that advertises nothing —
+  because it predates this feature, has no advertise host, or serves no remote
+  protocol — is listed normally with no endpoints, and clients fall back to
+  today's behaviour. Membership listing never fails because endpoint discovery
+  did.
+
+`xkmsctl cluster members` shows the advertised endpoints under each replica.
 
 ## Cluster Inspection (CLI)
 
-The read-only cluster surface is exposed over REST and through `xkmsctl`:
+The read-only cluster surface is exposed over REST, gRPC and the Unix socket,
+and through `xkmsctl`:
 
 ```bash
 # Raft leadership status for the server's configured shard
 xkmsctl cluster status
 
-# Raft replicas for the configured shard (NODE ID, ADDRESS, leader marker)
+# Raft replicas for the configured shard, with each replica's advertised
+# API endpoints
 xkmsctl cluster members
 
 # JSON output and an explicit shard
@@ -332,9 +409,44 @@ When RBAC is enabled, both require the `backends:read` permission. A standalone
 non-clustered result (the node is its own leader) and `members` returns an empty
 set, so the commands work whether or not clustering is enabled.
 
-Membership **mutation** (adding or removing a replica) is not yet exposed: it
-requires a Raft replica-mutation API (qrdb `AddReplica` / `RemoveReplica`) that
-is not yet surfaced through the xkms SDK.
+## Membership Management (CLI)
+
+Replicas can be added to and removed from the shard's Raft group at runtime:
+
+```bash
+# Add a replica: <replica-id> <raft-address>
+xkmsctl cluster add 2 10.0.0.2:63001
+
+# Remove a replica
+xkmsctl cluster remove 2
+
+xkmsctl cluster add 3 node3.internal:63001 --output json
+```
+
+These map to `POST /api/v1/cluster/members` and
+`DELETE /api/v1/cluster/members/{replicaID}`, and to the `AddClusterReplica` /
+`RemoveClusterReplica` gRPC RPCs.
+
+Notes:
+
+- **Privileged and fail-closed.** Membership mutation is authorized against the
+  canonical go-qrdb membership permissions — `admin:add_member` and
+  `admin:remove_member` — the same permissions qrdb enforces on its own control
+  plane. If no authorizer is configured on a network listener, the request is
+  **denied**; a mutation endpoint is never silently open. The Unix socket is the
+  one deliberate exception and declares its local-IPC trust explicitly, since
+  its trust boundary is the filesystem socket mode.
+- **Idempotent.** Adding a replica that is already a member, or removing one
+  that is already absent, succeeds without changing the configuration, so both
+  commands are safe to retry.
+- **Rejected on a standalone node.** There is no Raft group to reconfigure, so
+  the request fails explicitly (HTTP `409 Conflict` / gRPC `FailedPrecondition`)
+  rather than silently succeeding.
+- The Raft address is the new replica's **peer** address (`host:port`) on the
+  consensus plane, not an API address. A replica ID of `0` is rejected: Raft
+  reserves it to mean "no replica".
+- Removing a replica does not stop the process running it; shut that node down
+  separately.
 
 ## Storage Backend
 

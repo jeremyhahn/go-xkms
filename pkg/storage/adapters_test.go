@@ -1033,3 +1033,204 @@ func TestAdaptersWithCustomErrors(t *testing.T) {
 		assert.ErrorIs(t, err, customErr)
 	})
 }
+
+// TestSaveKeyMetadata tests the SaveKeyMetadata adapter function.
+func TestSaveKeyMetadata(t *testing.T) {
+	ctx := context.Background()
+
+	tests := []struct {
+		name      string
+		id        string
+		metadata  []byte
+		setupFunc func() Backend
+		wantErr   error
+	}{
+		{
+			name:     "successful save",
+			id:       "test-key",
+			metadata: []byte(`{"schema_version":1,"exportable":true}`),
+			setupFunc: func() Backend {
+				return newMockBackend()
+			},
+			wantErr: nil,
+		},
+		{
+			name:     "empty ID",
+			id:       "",
+			metadata: []byte(`{"schema_version":1,"exportable":true}`),
+			setupFunc: func() Backend {
+				return newMockBackend()
+			},
+			wantErr: ErrInvalidID,
+		},
+		{
+			name:     "backend closed",
+			id:       "test-key",
+			metadata: []byte(`{"schema_version":1,"exportable":true}`),
+			setupFunc: func() Backend {
+				return &errorMockBackend{putErr: ErrClosed}
+			},
+			wantErr: ErrClosed,
+		},
+		{
+			name:     "overwrite existing metadata",
+			id:       "test-key",
+			metadata: []byte(`{"schema_version":1,"exportable":false}`),
+			setupFunc: func() Backend {
+				b := newMockBackend()
+				_ = b.Put(ctx, MetadataPath("test-key"), []byte(`{"schema_version":1,"exportable":true}`))
+				return b
+			},
+			wantErr: nil,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			backend := tt.setupFunc()
+			err := SaveKeyMetadata(ctx, backend, tt.id, tt.metadata)
+			if tt.wantErr != nil {
+				assert.ErrorIs(t, err, tt.wantErr)
+			} else {
+				assert.NoError(t, err)
+				// Verify the metadata was saved correctly, and that it landed on the
+				// same path/backend key material would use -- proving there is no
+				// separate, unsealed metadata channel.
+				if tt.id != "" {
+					data, err := backend.Get(ctx, MetadataPath(tt.id))
+					assert.NoError(t, err)
+					assert.Equal(t, tt.metadata, data)
+				}
+			}
+		})
+	}
+}
+
+// TestGetKeyMetadata tests the GetKeyMetadata adapter function.
+func TestGetKeyMetadata(t *testing.T) {
+	ctx := context.Background()
+
+	tests := []struct {
+		name      string
+		id        string
+		setupFunc func() Backend
+		wantData  []byte
+		wantErr   error
+	}{
+		{
+			name: "successful get",
+			id:   "test-key",
+			setupFunc: func() Backend {
+				b := newMockBackend()
+				_ = b.Put(ctx, MetadataPath("test-key"), []byte(`{"schema_version":1,"exportable":true}`))
+				return b
+			},
+			wantData: []byte(`{"schema_version":1,"exportable":true}`),
+			wantErr:  nil,
+		},
+		{
+			name: "empty ID",
+			id:   "",
+			setupFunc: func() Backend {
+				return newMockBackend()
+			},
+			wantData: nil,
+			wantErr:  ErrInvalidID,
+		},
+		{
+			name: "metadata not found",
+			id:   "nonexistent",
+			setupFunc: func() Backend {
+				return newMockBackend()
+			},
+			wantData: nil,
+			wantErr:  ErrNotFound,
+		},
+		{
+			name: "backend closed",
+			id:   "test-key",
+			setupFunc: func() Backend {
+				return &errorMockBackend{getErr: ErrClosed}
+			},
+			wantData: nil,
+			wantErr:  ErrClosed,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			backend := tt.setupFunc()
+			data, err := GetKeyMetadata(ctx, backend, tt.id)
+			if tt.wantErr != nil {
+				assert.ErrorIs(t, err, tt.wantErr)
+				assert.Nil(t, data)
+			} else {
+				assert.NoError(t, err)
+				assert.Equal(t, tt.wantData, data)
+			}
+		})
+	}
+}
+
+// TestDeleteKeyMetadata tests the DeleteKeyMetadata adapter function.
+func TestDeleteKeyMetadata(t *testing.T) {
+	ctx := context.Background()
+
+	tests := []struct {
+		name      string
+		id        string
+		setupFunc func() Backend
+		wantErr   error
+	}{
+		{
+			name: "successful delete",
+			id:   "test-key",
+			setupFunc: func() Backend {
+				b := newMockBackend()
+				_ = b.Put(ctx, MetadataPath("test-key"), []byte(`{"schema_version":1,"exportable":true}`))
+				return b
+			},
+			wantErr: nil,
+		},
+		{
+			name: "empty ID",
+			id:   "",
+			setupFunc: func() Backend {
+				return newMockBackend()
+			},
+			wantErr: ErrInvalidID,
+		},
+		{
+			name: "metadata not found",
+			id:   "nonexistent",
+			setupFunc: func() Backend {
+				return newMockBackend()
+			},
+			wantErr: ErrNotFound,
+		},
+		{
+			name: "backend closed",
+			id:   "test-key",
+			setupFunc: func() Backend {
+				return &errorMockBackend{deleteErr: ErrClosed}
+			},
+			wantErr: ErrClosed,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			backend := tt.setupFunc()
+			err := DeleteKeyMetadata(ctx, backend, tt.id)
+			if tt.wantErr != nil {
+				assert.ErrorIs(t, err, tt.wantErr)
+			} else {
+				assert.NoError(t, err)
+				// Verify the metadata was deleted
+				exists, err := backend.Exists(ctx, MetadataPath(tt.id))
+				assert.NoError(t, err)
+				assert.False(t, exists)
+			}
+		})
+	}
+}

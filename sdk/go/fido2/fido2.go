@@ -36,6 +36,22 @@ type (
 	WebAuthnRegistrationOptions   = pkgfido2.WebAuthnRegistrationOptions
 	EnrollmentConfig              = pkgfido2.EnrollmentConfig
 	AuthenticationConfig          = pkgfido2.AuthenticationConfig
+	DerivationMode                = pkgfido2.DerivationMode
+)
+
+// Re-exported hmac-secret derivation modes.
+const (
+	// DerivationModeCTAP2 is the default: the hmac-secret output is
+	// extracted from the authenticator data extension map and decrypted
+	// with the PIN/UV auth shared secret.
+	DerivationModeCTAP2 = pkgfido2.DerivationModeCTAP2
+
+	// DerivationModeLegacyInsecure reproduces the derivation go-xkms used
+	// before the hmac-secret extension was parsed correctly. The key it
+	// produces is not bound to the authenticator.
+	//
+	// Deprecated: migration only. Re-enroll the volume immediately.
+	DerivationModeLegacyInsecure = pkgfido2.DerivationModeLegacyInsecure
 )
 
 // Re-exported constructors, defaults, and helpers.

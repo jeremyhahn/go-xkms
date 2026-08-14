@@ -1,0 +1,234 @@
+// Copyright (c) 2025 Jeremy Hahn
+// Copyright (c) 2025 Automate The Things, LLC
+//
+// This file is part of go-xkms.
+//
+// go-xkms is dual-licensed:
+//
+// 1. GNU Affero General Public License v3.0 (AGPL-3.0)
+//    See LICENSE file or visit https://www.gnu.org/licenses/agpl-3.0.html
+//
+// 2. Commercial License
+//    Contact licensing@automatethethings.com for commercial licensing options.
+
+package server
+
+import (
+	"context"
+	"crypto/fips140"
+	"errors"
+	"log/slog"
+	"os"
+	"path/filepath"
+
+	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
+
+	"github.com/jeremyhahn/go-xkms/pkg/daemon"
+	initialize "github.com/jeremyhahn/go-xkms/pkg/init"
+)
+
+// AdminCredentialError reports a failure to write the bootstrap administrator's
+// certificate or private key to disk.
+type AdminCredentialError struct {
+	Path string
+	Err  error
+}
+
+// Error implements error.
+func (e *AdminCredentialError) Error() string {
+	return "server: writing admin credential to " + e.Path + ": " + e.Err.Error()
+}
+
+// Unwrap exposes the underlying cause.
+func (e *AdminCredentialError) Unwrap() error { return e.Err }
+
+// FirstBootError wraps a failure of the canonical first-boot bootstrap.
+type FirstBootError struct {
+	Op    string
+	Cause error
+}
+
+// Error implements error.
+func (e *FirstBootError) Error() string {
+	return "server: first-boot " + e.Op + " failed: " + e.Cause.Error()
+}
+
+// Unwrap exposes the underlying cause for errors.Is / errors.As.
+func (e *FirstBootError) Unwrap() error { return e.Cause }
+
+// ErrFirstBootServicesUnavailable is returned when the embedded qrdb node
+// exposes none of the identity services first-boot requires.
+//
+// It is a refusal rather than a skip: silently continuing would start a daemon
+// with no system tenant, no roles and no administrator, which presents as an
+// authentication failure at the first request rather than as the bootstrap
+// having never run.
+var ErrFirstBootServicesUnavailable = errors.New("server: qrdb node exposes no identity services for first-boot")
+
+// runFirstBoot executes qrdb's canonical first-boot bootstrap against the
+// embedded node.
+//
+// This is deliberately the SAME process qrdbd runs (go-qrdb cmd/qrdbd
+// runFirstBoot) and that quicbaas runs (runBootstrapSystem): one system tenant,
+// the built-in roles, one administrator, and the administrator's client
+// certificate — created by qrdb, not by xkms. xkms adds exactly one thing on
+// top, and it is not a second bootstrap: the FIDO2 and PIV login factors it
+// registers into the node's factor registry, which qrdb defines the vocabulary
+// for but does not implement.
+//
+// It calls FirstBootInitialize directly rather than BootstrapSystem, which is
+// the one place xkms legitimately differs from qrdbd — and it is a difference in
+// what has ALREADY happened, not in what gets created. BootstrapSystem's extra
+// job is initializing and unsealing the system barrier; by the time this runs,
+// initEmbeddedQRDBNode has adopted a node whose barrier is already unsealed and
+// fails closed if it is not. Routing through BootstrapSystem would re-run a
+// no-op against a barrier registry xkms wraps in its own type.
+//
+// It is idempotent: a node whose administrator already exists is a no-op, so
+// this is safe on every start and on every node of a cluster.
+func (s *Server) runFirstBoot(ctx context.Context) error {
+	if s.qrdbNode == nil {
+		// No embedded node: this deployment stores identity elsewhere and has
+		// no first-boot of its own to run.
+		return nil
+	}
+
+	svcs := s.qrdbNode.Services()
+	if svcs == nil || svcs.Tenant == nil || svcs.User == nil || svcs.Role == nil {
+		return ErrFirstBootServicesUnavailable
+	}
+
+	deps := qrdbsdk.FirstBootDependencies{
+		Tenants: svcs.Tenant,
+		Users:   svcs.User,
+		Roles:   svcs.Role,
+		Logger:  s.logger,
+
+		// SeparationOfDuties follows the daemon's compliance posture, derived
+		// the same way qrdbd derives it (cmd/qrdbd: fips140.Enabled() ||
+		// config). xkms exposes no separate config knob, so FIPS mode is the
+		// whole signal here; adding one is a config change, not a bootstrap
+		// decision.
+		//
+		// Under strict separation the bootstrap admin receives only the
+		// Admin@system grant and is NOT also made Owner, so the FIPS 140-3 /
+		// PCI-DSS least-privilege split survives bootstrap.
+		SeparationOfDuties: fips140.Enabled(),
+	}
+
+	// The administrator's certificate comes from xkms's TrustedCA, wrapped in
+	// the firstboot adapter that already implements both of qrdb's seams:
+	// GenerateAdminCert (Path A) and SignAdminCSR (Path B). This is the
+	// ownership chain the architecture prescribes — qrdb owns the bootstrap,
+	// xkms owns the CA that issues for it — and it is why the node's own
+	// CertProv is deliberately NOT used: that is qrdb's dev/single-node
+	// fallback, and a deployment running xkms has a production CA.
+	//
+	// A nil CA is not a silent downgrade: first-boot then creates the
+	// administrator without a bound certificate and the operator enrolls one
+	// afterwards, which is the documented behaviour when no CA is injected.
+	if s.ca != nil {
+		adapter := initialize.NewCAAdapter(s.ca, s.firstBootTrustDomain())
+		deps.CA = adapter
+		deps.Signer = adapter
+	}
+
+	result, err := qrdbsdk.FirstBootInitialize(ctx, deps)
+	if err != nil {
+		return &FirstBootError{Op: "initialize", Cause: err}
+	}
+
+	if result != nil && result.AdminCreated {
+		s.logger.Info("first-boot: system tenant, roles and administrator created",
+			slog.String("admin_thumbprint", result.AdminCertThumbprint))
+	}
+
+	if err := s.persistAdminCredential(result); err != nil {
+		return &FirstBootError{Op: "persist admin credential", Cause: err}
+	}
+
+	return nil
+}
+
+// Admin credential filenames, matching the names qrdbd writes so an operator
+// finds the same two files whichever daemon of the stack they bootstrapped.
+const (
+	adminCertFilename = "admin-cert.pem"
+	adminKeyFilename  = "admin-key.pem"
+)
+
+// persistAdminCredential writes the administrator's certificate and private key
+// into the data directory.
+//
+// Without this the bootstrap is self-defeating: first-boot creates the only
+// account on the daemon and binds a certificate to it, adaptive authentication
+// stops serving anonymous requests the moment that account exists, and the one
+// credential that could authenticate would be discarded when this function
+// returned — leaving a daemon nobody can log into.
+//
+// It is idempotent in the same way qrdbd's is: if both files are already there
+// they are left alone, so a restart never overwrites the credential an operator
+// has already taken delivery of.
+func (s *Server) persistAdminCredential(result *qrdbsdk.FirstBootResult) error {
+	if result == nil || len(result.AdminCertPEM) == 0 || len(result.AdminKeyPEM) == 0 {
+		// No credential was issued — first-boot ran without a CA, or the admin
+		// already existed on an earlier boot. Nothing to write.
+		return nil
+	}
+
+	dir := s.config.Storage.Path
+	if dir == "" {
+		// An in-memory deployment has no directory to write to. The credential
+		// is reported rather than dropped silently, because it is the only way
+		// in and it does not survive this process.
+		s.logger.Warn("first-boot: no storage path configured; the admin credential cannot be persisted",
+			slog.String("thumbprint", result.AdminCertThumbprint))
+		return nil
+	}
+
+	certPath := filepath.Join(dir, adminCertFilename)
+	keyPath := filepath.Join(dir, adminKeyFilename)
+
+	if fileExists(certPath) && fileExists(keyPath) {
+		s.logger.Info("first-boot: admin credential already present", slog.String("cert", certPath))
+		return nil
+	}
+
+	if err := os.MkdirAll(dir, 0o700); err != nil {
+		return &AdminCredentialError{Path: dir, Err: err}
+	}
+	if err := os.WriteFile(certPath, result.AdminCertPEM, 0o644); err != nil { //nolint:gosec // a certificate is public
+		return &AdminCredentialError{Path: certPath, Err: err}
+	}
+	// The private key is owner-read-only: it authenticates as the highest
+	// privilege account on the daemon.
+	if err := os.WriteFile(keyPath, result.AdminKeyPEM, 0o600); err != nil {
+		return &AdminCredentialError{Path: keyPath, Err: err}
+	}
+
+	s.logger.Info("first-boot: admin credential written",
+		slog.String("cert", certPath),
+		slog.String("key", keyPath))
+	return nil
+}
+
+// fileExists reports whether path names an existing file.
+func fileExists(path string) bool {
+	info, err := os.Stat(path)
+	return err == nil && !info.IsDir()
+}
+
+// firstBootTrustDomain returns the SPIFFE trust domain stamped into the
+// administrator's certificate.
+//
+// It reuses the operator's cluster enrollment trust domain so a node
+// certificate and an administrator certificate issued by the same deployment
+// live in one trust domain; a deployment that has not configured one gets the
+// same default the enrollment path uses, rather than an empty domain that would
+// produce an unusable SPIFFE ID.
+func (s *Server) firstBootTrustDomain() string {
+	if td := s.config.Cluster.RaftEnrollment.TrustDomain; td != "" {
+		return td
+	}
+	return daemon.DefaultTrustDomain
+}

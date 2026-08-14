@@ -16,8 +16,11 @@ package symmetric
 import (
 	"bytes"
 	"context"
+	"crypto/aes"
+	"crypto/cipher"
 	"crypto/rand"
 	"crypto/x509"
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"strings"
@@ -4824,11 +4827,11 @@ func TestListKeys_WithInvalidMetadata(t *testing.T) {
 		t.Fatalf("Failed to generate key: %v", err)
 	}
 
-	// Corrupt the metadata
+	// Corrupt the metadata record, written through the same storage.MetadataPath
+	// convention the backend itself uses to save it.
 	keyID := attrs.ID()
-	metaKey := "meta/" + keyID
 	invalidJSON := []byte("not valid json")
-	if err := s.Put(context.Background(), metaKey, invalidJSON); err != nil {
+	if err := s.Put(context.Background(), storage.MetadataPath(keyID), invalidJSON); err != nil {
 		t.Fatal(err)
 	}
 
@@ -4842,9 +4845,13 @@ func TestListKeys_WithInvalidMetadata(t *testing.T) {
 		t.Errorf("Expected 1 key, got %d", len(keys))
 	}
 
-	// Key should still be listed, just without metadata
+	// Key should still be listed, just without metadata, and must fall back
+	// to the safe Exportable=false default rather than erroring or guessing.
 	if keys[0].CN != "test-key" {
 		t.Errorf("Expected CN 'test-key', got '%s'", keys[0].CN)
+	}
+	if keys[0].Exportable {
+		t.Error("key with corrupt metadata should default to Exportable=false")
 	}
 }
 
@@ -5231,5 +5238,676 @@ func TestGenerateSymmetricKey_NonSymmetricEd25519(t *testing.T) {
 	}
 	if !errors.Is(err, backend.ErrInvalidAlgorithm) {
 		t.Errorf("expected ErrInvalidAlgorithm, got: %v", err)
+	}
+}
+
+// ============================================================================
+// AES-CBC / AES-CBC-PAD (types.CipherModeCBC / types.CipherModeCBCPad)
+// ============================================================================
+//
+// CKM_AES_CBC and CKM_AES_CBC_PAD are advertised by the PKCS#11 module but,
+// before this test file, had no implementation behind them: the encrypt
+// request carried no mode/mechanism field, so softwareSymmetricEncrypter
+// always built AES-GCM, and a caller-supplied 16-byte CBC IV was rejected as
+// an invalid 12-byte GCM nonce. These tests exercise the real AES-CBC and
+// AES-CBC-PAD implementation added to encryptCBC/decryptCBC.
+
+// mustHexDecode decodes a hex string or fails the test. Test helper only.
+func mustHexDecode(t *testing.T, s string) []byte {
+	t.Helper()
+	b, err := hex.DecodeString(s)
+	if err != nil {
+		t.Fatalf("mustHexDecode(%q): %v", s, err)
+	}
+	return b
+}
+
+// newCBCTestEncrypter builds a softwareSymmetricEncrypter directly around a
+// known raw AES key, bypassing key generation/storage so known-answer
+// vectors can be run against an exact, caller-chosen key. This is valid
+// because the test lives in package symmetric and softwareSymmetricEncrypter
+// only reads e.key.Raw() and e.attrs.SymmetricAlgorithm for the CBC path.
+func newCBCTestEncrypter(t *testing.T, alg types.SymmetricAlgorithm, rawKey []byte) *softwareSymmetricEncrypter {
+	t.Helper()
+	key, err := NewAESKey(string(alg), rawKey)
+	if err != nil {
+		t.Fatalf("NewAESKey() failed: %v", err)
+	}
+	return &softwareSymmetricEncrypter{
+		key:   key,
+		attrs: &types.KeyAttributes{CN: "cbc-test-key", SymmetricAlgorithm: alg},
+	}
+}
+
+// TestSymmetricEncrypter_CBC_KnownAnswer_NIST_SP80038A verifies unpadded
+// AES-128-CBC encryption against the published NIST SP 800-38A Appendix
+// F.2.2 (CBC-AES128.Encrypt) known-answer vector, and independently against
+// crypto/aes + crypto/cipher used directly as an oracle. A plain
+// decrypt(encrypt(x)) == x round trip would pass even if encryptCBC used the
+// wrong mode entirely (e.g. ECB, or GCM truncated to the same length), so
+// this compares against ground truth on both sides.
+func TestSymmetricEncrypter_CBC_KnownAnswer_NIST_SP80038A(t *testing.T) {
+	key := mustHexDecode(t, "2b7e151628aed2a6abf7158809cf4f3c")
+	iv := mustHexDecode(t, "000102030405060708090a0b0c0d0e0f")
+	plaintext := mustHexDecode(t,
+		"6bc1bee22e409f96e93d7e117393172a"+
+			"ae2d8a571e03ac9c9eb76fac45af8e51"+
+			"30c81c46a35ce411e5fbc1191a0a52ef"+
+			"f69f2445df4f9b17ad2b417be66c3710")
+	wantCiphertext := mustHexDecode(t,
+		"7649abac8119b246cee98e9b12e9197d"+
+			"5086cb9b507219ee95db113a917678b2"+
+			"73bed6b8e3c1743b7116e69e22229516"+
+			"3ff1caa1681fac09120eca307586e1a7")
+
+	encrypter := newCBCTestEncrypter(t, types.SymmetricAES128GCM, key)
+
+	encrypted, err := encrypter.Encrypt(plaintext, &types.EncryptOptions{
+		Mode: types.CipherModeCBC,
+		IV:   iv,
+	})
+	if err != nil {
+		t.Fatalf("Encrypt() failed: %v", err)
+	}
+	if !bytes.Equal(encrypted.IV, iv) {
+		t.Errorf("EncryptedData.IV = %x, want %x", encrypted.IV, iv)
+	}
+	if len(encrypted.Nonce) != 0 {
+		t.Errorf("EncryptedData.Nonce = %x, want empty (CBC uses IV, not Nonce)", encrypted.Nonce)
+	}
+	if !bytes.Equal(encrypted.Ciphertext, wantCiphertext) {
+		t.Errorf("ciphertext = %x\nwant (NIST SP 800-38A F.2.2) %x", encrypted.Ciphertext, wantCiphertext)
+	}
+
+	// Independent oracle: crypto/aes + crypto/cipher directly.
+	block, err := aes.NewCipher(key)
+	if err != nil {
+		t.Fatalf("aes.NewCipher() failed: %v", err)
+	}
+	oracle := make([]byte, len(plaintext))
+	cipher.NewCBCEncrypter(block, iv).CryptBlocks(oracle, plaintext)
+	if !bytes.Equal(encrypted.Ciphertext, oracle) {
+		t.Errorf("ciphertext does not match crypto/cipher oracle:\ngot    %x\noracle %x", encrypted.Ciphertext, oracle)
+	}
+
+	decrypted, err := encrypter.Decrypt(&types.EncryptedData{
+		Ciphertext: wantCiphertext,
+		IV:         iv,
+	}, &types.DecryptOptions{Mode: types.CipherModeCBC})
+	if err != nil {
+		t.Fatalf("Decrypt() failed: %v", err)
+	}
+	if !bytes.Equal(decrypted, plaintext) {
+		t.Errorf("decrypted = %x, want %x", decrypted, plaintext)
+	}
+}
+
+// TestSymmetricEncrypter_CBCPad_KnownAnswer verifies AES-128-CBC-PAD against
+// a vector computed independently with crypto/aes + crypto/cipher: the same
+// NIST SP 800-38A plaintext above (already block-aligned), PKCS#7 padded
+// with one full extra block of 0x10 bytes per RFC 5652 6.3, then CBC
+// encrypted with the same key/IV. This is the oracle the test also asserts
+// against directly, not just a round trip through our own code.
+func TestSymmetricEncrypter_CBCPad_KnownAnswer(t *testing.T) {
+	key := mustHexDecode(t, "2b7e151628aed2a6abf7158809cf4f3c")
+	iv := mustHexDecode(t, "000102030405060708090a0b0c0d0e0f")
+	plaintext := mustHexDecode(t,
+		"6bc1bee22e409f96e93d7e117393172a"+
+			"ae2d8a571e03ac9c9eb76fac45af8e51"+
+			"30c81c46a35ce411e5fbc1191a0a52ef"+
+			"f69f2445df4f9b17ad2b417be66c3710")
+	wantCiphertext := mustHexDecode(t,
+		"7649abac8119b246cee98e9b12e9197d"+
+			"5086cb9b507219ee95db113a917678b2"+
+			"73bed6b8e3c1743b7116e69e22229516"+
+			"3ff1caa1681fac09120eca307586e1a7"+
+			"8cb82807230e1321d3fae00d18cc2012")
+
+	encrypter := newCBCTestEncrypter(t, types.SymmetricAES128GCM, key)
+
+	encrypted, err := encrypter.Encrypt(plaintext, &types.EncryptOptions{
+		Mode: types.CipherModeCBCPad,
+		IV:   iv,
+	})
+	if err != nil {
+		t.Fatalf("Encrypt() failed: %v", err)
+	}
+	if len(encrypted.Ciphertext) != len(plaintext)+aes.BlockSize {
+		t.Errorf("ciphertext length = %d, want %d (plaintext + one full pad block, since input was already block-aligned)",
+			len(encrypted.Ciphertext), len(plaintext)+aes.BlockSize)
+	}
+	if !bytes.Equal(encrypted.Ciphertext, wantCiphertext) {
+		t.Errorf("ciphertext = %x\nwant %x", encrypted.Ciphertext, wantCiphertext)
+	}
+
+	decrypted, err := encrypter.Decrypt(&types.EncryptedData{
+		Ciphertext: wantCiphertext,
+		IV:         iv,
+	}, &types.DecryptOptions{Mode: types.CipherModeCBCPad})
+	if err != nil {
+		t.Fatalf("Decrypt() failed: %v", err)
+	}
+	if !bytes.Equal(decrypted, plaintext) {
+		t.Errorf("decrypted = %x, want %x", decrypted, plaintext)
+	}
+}
+
+// TestSymmetricEncrypter_CBCPad_RoundTrip_VariousSizes table-drives
+// CBC-PAD across sizes that exercise every padding-length case (0 through a
+// full extra block), verifying against an independent crypto/aes +
+// crypto/cipher oracle in addition to the round trip.
+func TestSymmetricEncrypter_CBCPad_RoundTrip_VariousSizes(t *testing.T) {
+	key := mustHexDecode(t, "000102030405060708090a0b0c0d0e0f")
+	iv := mustHexDecode(t, "0f0e0d0c0b0a09080706050403020100")
+	block, err := aes.NewCipher(key)
+	if err != nil {
+		t.Fatalf("aes.NewCipher() failed: %v", err)
+	}
+
+	sizes := []int{0, 1, 5, 15, 16, 17, 31, 32, 33, 100}
+	for _, size := range sizes {
+		t.Run(fmt.Sprintf("size=%d", size), func(t *testing.T) {
+			plaintext := make([]byte, size)
+			for i := range plaintext {
+				plaintext[i] = byte(i)
+			}
+
+			encrypter := newCBCTestEncrypter(t, types.SymmetricAES256GCM, key)
+			encrypted, err := encrypter.Encrypt(plaintext, &types.EncryptOptions{
+				Mode: types.CipherModeCBCPad,
+				IV:   iv,
+			})
+			if err != nil {
+				t.Fatalf("Encrypt() failed: %v", err)
+			}
+
+			padLen := aes.BlockSize - (size % aes.BlockSize)
+			if len(encrypted.Ciphertext) != size+padLen {
+				t.Errorf("ciphertext length = %d, want %d", len(encrypted.Ciphertext), size+padLen)
+			}
+
+			// Oracle: pad and encrypt independently with crypto/aes + crypto/cipher.
+			padded := make([]byte, size+padLen)
+			copy(padded, plaintext)
+			for i := size; i < len(padded); i++ {
+				padded[i] = byte(padLen)
+			}
+			oracle := make([]byte, len(padded))
+			cipher.NewCBCEncrypter(block, iv).CryptBlocks(oracle, padded)
+			if !bytes.Equal(encrypted.Ciphertext, oracle) {
+				t.Fatalf("ciphertext does not match crypto/cipher oracle:\ngot    %x\noracle %x", encrypted.Ciphertext, oracle)
+			}
+
+			decrypted, err := encrypter.Decrypt(&types.EncryptedData{
+				Ciphertext: encrypted.Ciphertext,
+				IV:         iv,
+			}, &types.DecryptOptions{Mode: types.CipherModeCBCPad})
+			if err != nil {
+				t.Fatalf("Decrypt() failed: %v", err)
+			}
+			if !bytes.Equal(decrypted, plaintext) {
+				t.Errorf("decrypted = %x, want %x", decrypted, plaintext)
+			}
+		})
+	}
+}
+
+// TestSymmetricEncrypter_CBC_Unpadded_RoundTrip_BlockAlignedSizes verifies
+// unpadded AES-CBC for exactly block-aligned plaintexts.
+func TestSymmetricEncrypter_CBC_Unpadded_RoundTrip_BlockAlignedSizes(t *testing.T) {
+	key := mustHexDecode(t, "101112131415161718191a1b1c1d1e1f")
+	iv := mustHexDecode(t, "202122232425262728292a2b2c2d2e2f")
+
+	for _, blocks := range []int{1, 2, 3, 10} {
+		t.Run(fmt.Sprintf("blocks=%d", blocks), func(t *testing.T) {
+			plaintext := make([]byte, blocks*aes.BlockSize)
+			for i := range plaintext {
+				plaintext[i] = byte(i * 7)
+			}
+
+			encrypter := newCBCTestEncrypter(t, types.SymmetricAES256GCM, key)
+			encrypted, err := encrypter.Encrypt(plaintext, &types.EncryptOptions{
+				Mode: types.CipherModeCBC,
+				IV:   iv,
+			})
+			if err != nil {
+				t.Fatalf("Encrypt() failed: %v", err)
+			}
+			if len(encrypted.Ciphertext) != len(plaintext) {
+				t.Errorf("ciphertext length = %d, want %d (unpadded CBC does not grow)", len(encrypted.Ciphertext), len(plaintext))
+			}
+
+			decrypted, err := encrypter.Decrypt(encrypted, &types.DecryptOptions{Mode: types.CipherModeCBC})
+			if err != nil {
+				t.Fatalf("Decrypt() failed: %v", err)
+			}
+			if !bytes.Equal(decrypted, plaintext) {
+				t.Errorf("decrypted = %x, want %x", decrypted, plaintext)
+			}
+		})
+	}
+}
+
+// TestSymmetricEncrypter_CBC_Unpadded_RejectsNonBlockAligned verifies that
+// unpadded AES-CBC rejects plaintext that is not a whole number of AES
+// blocks with a typed error rather than calling
+// cipher.BlockMode.CryptBlocks, which panics on such input.
+func TestSymmetricEncrypter_CBC_Unpadded_RejectsNonBlockAligned(t *testing.T) {
+	key := mustHexDecode(t, "202122232425262728292a2b2c2d2e2f")
+	iv := mustHexDecode(t, "000102030405060708090a0b0c0d0e0f")
+
+	for _, size := range []int{0, 1, 15, 17, 31, 33} {
+		t.Run(fmt.Sprintf("size=%d", size), func(t *testing.T) {
+			encrypter := newCBCTestEncrypter(t, types.SymmetricAES256GCM, key)
+			_, err := encrypter.Encrypt(make([]byte, size), &types.EncryptOptions{
+				Mode: types.CipherModeCBC,
+				IV:   iv,
+			})
+			if !errors.Is(err, ErrPlaintextNotBlockAligned) {
+				t.Errorf("Encrypt() error = %v, want ErrPlaintextNotBlockAligned", err)
+			}
+		})
+	}
+}
+
+// TestSymmetricEncrypter_CBC_Decrypt_RejectsNonBlockAligned verifies AES-CBC
+// decryption (both padded and unpadded) rejects a ciphertext whose length is
+// not a whole number of AES blocks with a typed error, instead of calling
+// cipher.BlockMode.CryptBlocks, which panics on such input. Every length in
+// this table is exercised through the public Decrypt entry point with no
+// recover(), so the test itself fails loudly (rather than silently) if the
+// implementation ever regresses to a panic.
+func TestSymmetricEncrypter_CBC_Decrypt_RejectsNonBlockAligned(t *testing.T) {
+	key := mustHexDecode(t, "303132333435363738393a3b3c3d3e3f")
+	iv := mustHexDecode(t, "000102030405060708090a0b0c0d0e0f")
+
+	modes := []types.CipherMode{types.CipherModeCBC, types.CipherModeCBCPad}
+	for _, mode := range modes {
+		for _, size := range []int{0, 1, 15, 17, 31, 33} {
+			t.Run(fmt.Sprintf("mode=%s/size=%d", mode, size), func(t *testing.T) {
+				encrypter := newCBCTestEncrypter(t, types.SymmetricAES256GCM, key)
+				_, err := encrypter.Decrypt(&types.EncryptedData{
+					Ciphertext: make([]byte, size),
+					IV:         iv,
+				}, &types.DecryptOptions{Mode: mode})
+				if !errors.Is(err, ErrCiphertextNotBlockAligned) {
+					t.Errorf("Decrypt() error = %v, want ErrCiphertextNotBlockAligned", err)
+				}
+			})
+		}
+	}
+}
+
+// TestSymmetricEncrypter_CBC_InvalidIVSize verifies that a caller-supplied
+// IV of the wrong length is rejected with a typed error on both encrypt and
+// decrypt, rather than reaching cipher.NewCBCEncrypter/NewCBCDecrypter,
+// which panic on a mismatched IV length.
+func TestSymmetricEncrypter_CBC_InvalidIVSize(t *testing.T) {
+	key := mustHexDecode(t, "404142434445464748494a4b4c4d4e4f")
+	plaintext := make([]byte, aes.BlockSize)
+
+	for _, ivSize := range []int{1, 8, 15, 17, 32} {
+		t.Run(fmt.Sprintf("encrypt/ivSize=%d", ivSize), func(t *testing.T) {
+			encrypter := newCBCTestEncrypter(t, types.SymmetricAES256GCM, key)
+			_, err := encrypter.Encrypt(plaintext, &types.EncryptOptions{
+				Mode: types.CipherModeCBC,
+				IV:   make([]byte, ivSize),
+			})
+			if !errors.Is(err, ErrInvalidIVSize) {
+				t.Errorf("Encrypt() error = %v, want ErrInvalidIVSize", err)
+			}
+		})
+
+		t.Run(fmt.Sprintf("decrypt/ivSize=%d", ivSize), func(t *testing.T) {
+			encrypter := newCBCTestEncrypter(t, types.SymmetricAES256GCM, key)
+			_, err := encrypter.Decrypt(&types.EncryptedData{
+				Ciphertext: make([]byte, aes.BlockSize),
+				IV:         make([]byte, ivSize),
+			}, &types.DecryptOptions{Mode: types.CipherModeCBC})
+			if !errors.Is(err, ErrInvalidIVSize) {
+				t.Errorf("Decrypt() error = %v, want ErrInvalidIVSize", err)
+			}
+		})
+	}
+}
+
+// TestSymmetricEncrypter_CBC_AutoGeneratedIV verifies that Encrypt generates
+// a random 16-byte IV when none is supplied, that it round-trips, and that
+// successive calls do not repeat the same IV.
+func TestSymmetricEncrypter_CBC_AutoGeneratedIV(t *testing.T) {
+	plaintext := []byte("exactly16bytes!!")
+	if len(plaintext) != aes.BlockSize {
+		t.Fatalf("test setup error: plaintext must be exactly one AES block, got %d bytes", len(plaintext))
+	}
+
+	storageBackend := storage.New()
+	config := &Config{KeyStorage: storageBackend}
+	b, err := NewBackend(config)
+	if err != nil {
+		t.Fatalf("NewBackend() failed: %v", err)
+	}
+	defer func() { _ = b.Close() }()
+
+	attrs := &types.KeyAttributes{
+		CN:                 "cbc-autoiv-key",
+		KeyType:            backend.KEY_TYPE_SECRET,
+		StoreType:          backend.STORE_SW,
+		SymmetricAlgorithm: types.SymmetricAES256GCM,
+	}
+	if _, err := b.GenerateSymmetricKey(context.Background(), attrs); err != nil {
+		t.Fatalf("GenerateSymmetricKey() failed: %v", err)
+	}
+
+	encrypter, err := b.SymmetricEncrypter(context.Background(), attrs)
+	if err != nil {
+		t.Fatalf("SymmetricEncrypter() failed: %v", err)
+	}
+
+	seenIVs := make(map[string]bool)
+	for i := 0; i < 5; i++ {
+		encrypted, err := encrypter.Encrypt(plaintext, &types.EncryptOptions{Mode: types.CipherModeCBC})
+		if err != nil {
+			t.Fatalf("Encrypt() failed: %v", err)
+		}
+		if len(encrypted.IV) != aes.BlockSize {
+			t.Fatalf("IV length = %d, want %d", len(encrypted.IV), aes.BlockSize)
+		}
+		if seenIVs[string(encrypted.IV)] {
+			t.Fatalf("IV %x repeated across encryptions", encrypted.IV)
+		}
+		seenIVs[string(encrypted.IV)] = true
+
+		decrypted, err := encrypter.Decrypt(encrypted, &types.DecryptOptions{Mode: types.CipherModeCBC})
+		if err != nil {
+			t.Fatalf("Decrypt() failed: %v", err)
+		}
+		if !bytes.Equal(decrypted, plaintext) {
+			t.Errorf("decrypted = %x, want %x", decrypted, plaintext)
+		}
+	}
+}
+
+// TestSymmetricEncrypter_CBC_PaddingOracle_IndistinguishableErrors is the
+// security-critical test: it proves CBC-PAD unpadding does not leak *why*
+// padding validation failed. A padding oracle (Vaudenay, 2002) lets an
+// attacker recover plaintext one byte at a time from a decryption service
+// that reveals, by content or timing, whether a corrupted ciphertext failed
+// because the claimed padding length was out of range ("length failure") or
+// because the padding bytes didn't match the claimed length ("content
+// failure").
+//
+// The test builds a real, validly-encrypted CBC-PAD ciphertext whose final
+// plaintext block is a full pad block (16 bytes of 0x10, produced by
+// PKCS#7-padding an already block-aligned message), then exploits CBC's
+// well-known malleability: flipping a bit in ciphertext block C[i-1] flips
+// the *same* bit, deterministically, in decrypted plaintext block P[i]
+// (since P[i] = D(C[i]) XOR C[i-1]), without needing the key. Only the last
+// byte of the last-but-one ciphertext block is touched, so exactly one
+// plaintext byte in the final block changes in each case:
+//
+//   - lengthFailureCiphertext flips that byte so the decrypted padding-length
+//     byte becomes 0x00 -- out of the valid [1, blockSize] range.
+//   - contentFailureCiphertext flips it so the decrypted padding-length byte
+//     becomes 0x02 -- in range, but the byte at the position that claims
+//     ("two bytes of 0x02 padding") is unchanged at 0x10, so it mismatches.
+//
+// Both must decrypt to the identical error value.
+func TestSymmetricEncrypter_CBC_PaddingOracle_IndistinguishableErrors(t *testing.T) {
+	key := mustHexDecode(t, "606162636465666768696a6b6c6d6e6f")
+	iv := mustHexDecode(t, "707172737475767778797a7b7c7d7e7f")
+
+	// A block-aligned plaintext so PKCS#7 appends one full pad block
+	// (16 bytes, each 0x10) as the final plaintext block.
+	plaintext := make([]byte, aes.BlockSize)
+	for i := range plaintext {
+		plaintext[i] = byte(0xA0 + i)
+	}
+
+	encrypter := newCBCTestEncrypter(t, types.SymmetricAES256GCM, key)
+	encrypted, err := encrypter.Encrypt(plaintext, &types.EncryptOptions{
+		Mode: types.CipherModeCBCPad,
+		IV:   iv,
+	})
+	if err != nil {
+		t.Fatalf("Encrypt() failed: %v", err)
+	}
+	if len(encrypted.Ciphertext) != 2*aes.BlockSize {
+		t.Fatalf("test setup error: expected exactly two ciphertext blocks, got %d bytes", len(encrypted.Ciphertext))
+	}
+
+	// C[0] is the first ciphertext block; flipping its last byte flips the
+	// same bit position in decrypted P[1]'s last byte (the claimed
+	// padding-length byte), leaving P[1]'s other 15 bytes -- including the
+	// second-to-last, which padding-length 2 would also need to check --
+	// untouched at their original 0x10 value.
+	const lastBlockLastByte = aes.BlockSize - 1
+	const originalPadLenByte = 0x10 // the valid, unmodified padding length (16)
+
+	lengthFailureCT := append([]byte(nil), encrypted.Ciphertext...)
+	lengthFailureCT[lastBlockLastByte] ^= originalPadLenByte ^ 0x00 // decrypted padLen byte becomes 0x00
+
+	contentFailureCT := append([]byte(nil), encrypted.Ciphertext...)
+	contentFailureCT[lastBlockLastByte] ^= originalPadLenByte ^ 0x02 // decrypted padLen byte becomes 0x02, but P[1][14] stays 0x10 != 0x02
+
+	_, lengthErr := encrypter.Decrypt(&types.EncryptedData{
+		Ciphertext: lengthFailureCT,
+		IV:         iv,
+	}, &types.DecryptOptions{Mode: types.CipherModeCBCPad})
+	if lengthErr == nil {
+		t.Fatal("expected an error decrypting the length-failure ciphertext, got nil")
+	}
+
+	_, contentErr := encrypter.Decrypt(&types.EncryptedData{
+		Ciphertext: contentFailureCT,
+		IV:         iv,
+	}, &types.DecryptOptions{Mode: types.CipherModeCBCPad})
+	if contentErr == nil {
+		t.Fatal("expected an error decrypting the content-failure ciphertext, got nil")
+	}
+
+	// The two failure modes MUST be indistinguishable: identical error
+	// value, not just similarly-worded messages.
+	if lengthErr != contentErr {
+		t.Fatalf("padding-oracle leak: length failure and content failure returned different errors:\nlength:  %v\ncontent: %v", lengthErr, contentErr)
+	}
+	if !errors.Is(lengthErr, ErrInvalidPadding) || !errors.Is(contentErr, ErrInvalidPadding) {
+		t.Fatalf("expected both failures to be ErrInvalidPadding, got length=%v content=%v", lengthErr, contentErr)
+	}
+	if lengthErr.Error() != contentErr.Error() {
+		t.Fatalf("padding-oracle leak: error text differs:\nlength:  %q\ncontent: %q", lengthErr.Error(), contentErr.Error())
+	}
+}
+
+// TestSymmetricEncrypter_CBCPad_Decrypt_CorruptedCiphertextFails is a
+// broader (non-deterministic-position) sanity check that CBC-PAD decryption
+// of tampered ciphertext reliably fails rather than silently returning
+// wrong plaintext, complementing the precise oracle test above.
+func TestSymmetricEncrypter_CBCPad_Decrypt_CorruptedCiphertextFails(t *testing.T) {
+	key := mustHexDecode(t, "808182838485868788898a8b8c8d8e8f")
+	iv := mustHexDecode(t, "909192939495969798999a9b9c9d9e9f")
+	plaintext := []byte("tamper-evident CBC-PAD message")
+
+	encrypter := newCBCTestEncrypter(t, types.SymmetricAES256GCM, key)
+	encrypted, err := encrypter.Encrypt(plaintext, &types.EncryptOptions{
+		Mode: types.CipherModeCBCPad,
+		IV:   iv,
+	})
+	if err != nil {
+		t.Fatalf("Encrypt() failed: %v", err)
+	}
+
+	corrupted := append([]byte(nil), encrypted.Ciphertext...)
+	corrupted[len(corrupted)-1] ^= 0xFF
+
+	_, err = encrypter.Decrypt(&types.EncryptedData{
+		Ciphertext: corrupted,
+		IV:         iv,
+	}, &types.DecryptOptions{Mode: types.CipherModeCBCPad})
+	if err == nil {
+		t.Fatal("expected an error decrypting corrupted ciphertext, got nil")
+	}
+}
+
+// TestSymmetricEncrypter_CBC_RequiresAESKey verifies that CBC modes are
+// rejected for ChaCha20-Poly1305/XChaCha20-Poly1305 keys, which have no CBC
+// mode, on both encrypt and decrypt.
+func TestSymmetricEncrypter_CBC_RequiresAESKey(t *testing.T) {
+	key := make([]byte, 32)
+	chachaKey, err := NewChaCha20Key(string(types.SymmetricChaCha20Poly1305), key)
+	if err != nil {
+		t.Fatalf("NewChaCha20Key() failed: %v", err)
+	}
+	encrypter := &softwareSymmetricEncrypter{
+		key:   chachaKey,
+		attrs: &types.KeyAttributes{CN: "chacha-key", SymmetricAlgorithm: types.SymmetricChaCha20Poly1305},
+	}
+
+	_, err = encrypter.Encrypt(make([]byte, aes.BlockSize), &types.EncryptOptions{
+		Mode: types.CipherModeCBC,
+		IV:   make([]byte, aes.BlockSize),
+	})
+	if !errors.Is(err, ErrCBCRequiresAES) {
+		t.Errorf("Encrypt() error = %v, want ErrCBCRequiresAES", err)
+	}
+
+	_, err = encrypter.Decrypt(&types.EncryptedData{
+		Ciphertext: make([]byte, aes.BlockSize),
+		IV:         make([]byte, aes.BlockSize),
+	}, &types.DecryptOptions{Mode: types.CipherModeCBC})
+	if !errors.Is(err, ErrCBCRequiresAES) {
+		t.Errorf("Decrypt() error = %v, want ErrCBCRequiresAES", err)
+	}
+}
+
+// TestSymmetricEncrypter_CBC_AdditionalDataRejected verifies that
+// AdditionalData is rejected for the non-AEAD CBC modes on both encrypt and
+// decrypt, rather than being silently ignored (which would misrepresent to
+// the caller what was actually authenticated).
+func TestSymmetricEncrypter_CBC_AdditionalDataRejected(t *testing.T) {
+	key := mustHexDecode(t, "a0a1a2a3a4a5a6a7a8a9aaabacadaeaf")
+	iv := mustHexDecode(t, "b0b1b2b3b4b5b6b7b8b9babbbcbdbebf")
+	encrypter := newCBCTestEncrypter(t, types.SymmetricAES256GCM, key)
+
+	_, err := encrypter.Encrypt(make([]byte, aes.BlockSize), &types.EncryptOptions{
+		Mode:           types.CipherModeCBC,
+		IV:             iv,
+		AdditionalData: []byte("aad"),
+	})
+	if !errors.Is(err, ErrAdditionalDataNotSupported) {
+		t.Errorf("Encrypt() error = %v, want ErrAdditionalDataNotSupported", err)
+	}
+
+	_, err = encrypter.Decrypt(&types.EncryptedData{
+		Ciphertext: make([]byte, aes.BlockSize),
+		IV:         iv,
+	}, &types.DecryptOptions{
+		Mode:           types.CipherModeCBC,
+		AdditionalData: []byte("aad"),
+	})
+	if !errors.Is(err, ErrAdditionalDataNotSupported) {
+		t.Errorf("Decrypt() error = %v, want ErrAdditionalDataNotSupported", err)
+	}
+}
+
+// TestSymmetricEncrypter_CBC_TagRejected verifies that a decrypt request
+// carrying an AEAD tag alongside a CBC mode is rejected rather than
+// silently ignored: AES-CBC produces no tag, so a caller-supplied one can
+// only indicate a request built for the wrong mode.
+func TestSymmetricEncrypter_CBC_TagRejected(t *testing.T) {
+	key := mustHexDecode(t, "c0c1c2c3c4c5c6c7c8c9cacbcccdcecf")
+	iv := mustHexDecode(t, "d0d1d2d3d4d5d6d7d8d9dadbdcdddedf")
+	encrypter := newCBCTestEncrypter(t, types.SymmetricAES256GCM, key)
+
+	_, err := encrypter.Decrypt(&types.EncryptedData{
+		Ciphertext: make([]byte, aes.BlockSize),
+		IV:         iv,
+		Tag:        make([]byte, 16),
+	}, &types.DecryptOptions{Mode: types.CipherModeCBC})
+	if err == nil {
+		t.Fatal("expected an error decrypting with a tag present under CBC mode, got nil")
+	}
+}
+
+// TestSymmetricEncrypter_UnsupportedCipherMode verifies that an unrecognized
+// Mode value is rejected with a typed error on both encrypt and decrypt,
+// instead of silently falling back to AES-GCM (which is exactly the
+// original defect this feature closes: a caller asking for one mode must
+// never silently get another).
+func TestSymmetricEncrypter_UnsupportedCipherMode(t *testing.T) {
+	key := mustHexDecode(t, "e0e1e2e3e4e5e6e7e8e9eaebecedeeef")
+	encrypter := newCBCTestEncrypter(t, types.SymmetricAES256GCM, key)
+
+	_, err := encrypter.Encrypt(make([]byte, aes.BlockSize), &types.EncryptOptions{
+		Mode: types.CipherMode("ofb"),
+	})
+	if !errors.Is(err, ErrUnsupportedCipherMode) {
+		t.Errorf("Encrypt() error = %v, want ErrUnsupportedCipherMode", err)
+	}
+
+	_, err = encrypter.Decrypt(&types.EncryptedData{
+		Ciphertext: make([]byte, aes.BlockSize),
+	}, &types.DecryptOptions{Mode: types.CipherMode("ofb")})
+	if !errors.Is(err, ErrUnsupportedCipherMode) {
+		t.Errorf("Decrypt() error = %v, want ErrUnsupportedCipherMode", err)
+	}
+}
+
+// TestSymmetricEncrypter_CBC_FullBackendRoundTrip exercises AES-CBC and
+// AES-CBC-PAD through the public backend API end to end (GenerateSymmetricKey
+// -> SymmetricEncrypter -> Encrypt/Decrypt), mirroring how the daemon's
+// transport layer actually reaches this code, rather than only the
+// package-internal fixtures used by the vector tests above.
+func TestSymmetricEncrypter_CBC_FullBackendRoundTrip(t *testing.T) {
+	for _, mode := range []types.CipherMode{types.CipherModeCBC, types.CipherModeCBCPad} {
+		t.Run(string(mode), func(t *testing.T) {
+			storageBackend := storage.New()
+			config := &Config{KeyStorage: storageBackend}
+			b, err := NewBackend(config)
+			if err != nil {
+				t.Fatalf("NewBackend() failed: %v", err)
+			}
+			defer func() { _ = b.Close() }()
+
+			attrs := &types.KeyAttributes{
+				CN:                 "cbc-full-round-trip-" + string(mode),
+				KeyType:            backend.KEY_TYPE_SECRET,
+				StoreType:          backend.STORE_SW,
+				SymmetricAlgorithm: types.SymmetricAES256GCM,
+			}
+			if _, err := b.GenerateSymmetricKey(context.Background(), attrs); err != nil {
+				t.Fatalf("GenerateSymmetricKey() failed: %v", err)
+			}
+
+			encrypter, err := b.SymmetricEncrypter(context.Background(), attrs)
+			if err != nil {
+				t.Fatalf("SymmetricEncrypter() failed: %v", err)
+			}
+
+			var plaintext []byte
+			if mode == types.CipherModeCBC {
+				plaintext = bytes.Repeat([]byte("A"), aes.BlockSize*3) // block-aligned for unpadded CBC
+			} else {
+				plaintext = []byte("arbitrary length message for CBC-PAD")
+			}
+
+			encrypted, err := encrypter.Encrypt(plaintext, &types.EncryptOptions{Mode: mode})
+			if err != nil {
+				t.Fatalf("Encrypt() failed: %v", err)
+			}
+			if bytes.Equal(encrypted.Ciphertext, plaintext) {
+				t.Error("ciphertext equals plaintext (encryption may have failed)")
+			}
+			if len(encrypted.Tag) != 0 {
+				t.Errorf("Tag = %x, want empty (CBC modes produce no authentication tag)", encrypted.Tag)
+			}
+
+			decrypted, err := encrypter.Decrypt(encrypted, &types.DecryptOptions{Mode: mode})
+			if err != nil {
+				t.Fatalf("Decrypt() failed: %v", err)
+			}
+			if !bytes.Equal(decrypted, plaintext) {
+				t.Errorf("decrypted = %q, want %q", decrypted, plaintext)
+			}
+		})
 	}
 }

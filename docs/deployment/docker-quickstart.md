@@ -296,7 +296,7 @@ make docker-help
 - Review [configuration examples](../../examples/config/)
 - Configure [TLS and mTLS](docker.md#security-considerations)
 - Setup [cloud backends](docker.md#backends) (AWS KMS, GCP KMS, Azure KV)
-- Deploy to [Kubernetes](../kubernetes.md)
+- Deploy as a service: [deploy/README.md](../../deploy/README.md) covers the systemd and OpenRC units. There is no Kubernetes manifest or guide in the repository yet.
 
 ## Resources
 

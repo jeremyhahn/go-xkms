@@ -32,19 +32,26 @@ const storagePrefix = "ssh/authorized_keys/"
 const envelopeVersion = 1
 
 // Store is the persistence interface for authorized_keys Entries.
-// Implementations MUST be safe for concurrent use.
+// Writes take an Entry — the parsed line — while reads return a Record,
+// which pairs that Entry with the store metadata (scope, owner, name,
+// add time) it was filed under. Implementations MUST be safe for
+// concurrent use.
 type Store interface {
 	// Add persists entry under (scope, owner, name). Returns
 	// *DuplicateError if a record already exists at that path;
 	// non-idempotent by design.
 	Add(ctx context.Context, sc scope.Scope, owner, name string, entry *Entry) error
 
-	// Get loads the entry at (scope, owner, name). Returns
-	// *NotFoundError on miss.
-	Get(ctx context.Context, sc scope.Scope, owner, name string) (*Entry, error)
+	// Get loads the record at (scope, owner, name). Returns
+	// *NotFoundError on miss. The returned Record carries the stored
+	// coordinates, which are authoritative over the arguments.
+	Get(ctx context.Context, sc scope.Scope, owner, name string) (*Record, error)
 
-	// List enumerates entries under (scope, owner).
-	List(ctx context.Context, sc scope.Scope, owner string) ([]*Entry, error)
+	// List enumerates records under (scope, owner). An empty scope
+	// enumerates every scope; an empty owner every owner within scope.
+	// Each Record carries the name it was stored under, so a listed
+	// record can be fed straight back into Get or Remove.
+	List(ctx context.Context, sc scope.Scope, owner string) ([]*Record, error)
 
 	// Remove deletes the entry. Returns *NotFoundError on miss.
 	Remove(ctx context.Context, sc scope.Scope, owner, name string) error
@@ -118,7 +125,7 @@ func (s *BackendStore) Add(ctx context.Context, sc scope.Scope, owner, name stri
 }
 
 // Get implements Store.Get.
-func (s *BackendStore) Get(ctx context.Context, sc scope.Scope, owner, name string) (*Entry, error) {
+func (s *BackendStore) Get(ctx context.Context, sc scope.Scope, owner, name string) (*Record, error) {
 	path, err := buildPath(sc, owner, name)
 	if err != nil {
 		return nil, err
@@ -134,7 +141,7 @@ func (s *BackendStore) Get(ctx context.Context, sc scope.Scope, owner, name stri
 }
 
 // List implements Store.List.
-func (s *BackendStore) List(ctx context.Context, sc scope.Scope, owner string) ([]*Entry, error) {
+func (s *BackendStore) List(ctx context.Context, sc scope.Scope, owner string) ([]*Record, error) {
 	prefix := storagePrefix
 	if sc != "" {
 		if !sc.Valid() {
@@ -148,13 +155,13 @@ func (s *BackendStore) List(ctx context.Context, sc scope.Scope, owner string) (
 			prefix += owner + "/"
 		}
 	}
-	var out []*Entry
+	var out []*Record
 	err := s.backend.Scan(ctx, prefix, func(_ string, value []byte) error {
-		entry, derr := decodeEnvelope(value)
+		rec, derr := decodeEnvelope(value)
 		if derr != nil {
 			return derr
 		}
-		out = append(out, entry)
+		out = append(out, rec)
 		return nil
 	})
 	if err != nil {
@@ -219,12 +226,34 @@ func validateName(name string) error {
 	return nil
 }
 
-// decodeEnvelope reads a JSON envelope and rehydrates an *Entry by
-// re-parsing the stored authorized_keys line.
-func decodeEnvelope(data []byte) (*Entry, error) {
+// decodeEnvelope reads a JSON envelope and rehydrates a *Record: the
+// Entry comes from re-parsing the stored authorized_keys line, the
+// coordinates from the envelope's own metadata fields. Every envelope
+// ever written carries scope/owner/name, so this reads pre-existing
+// data unchanged — no migration and no re-write required.
+func decodeEnvelope(data []byte) (*Record, error) {
 	var env storedEnvelope
 	if jerr := json.Unmarshal(data, &env); jerr != nil {
 		return nil, &SerializationError{Op: "unmarshal envelope", Err: jerr}
 	}
-	return ParseLine(env.Line)
+	// Add stamps every envelope with the format version, but nothing read it
+	// back, so a future bump would have been misparsed as v1 and silently
+	// mishandled. Refuse a newer format instead: a binary that predates the
+	// bump cannot know what changed. Versions at or below the current one stay
+	// readable, which keeps every envelope written so far (v1, and a zero value
+	// from any envelope written before the field existed) working untouched.
+	if env.Version > envelopeVersion {
+		return nil, &UnsupportedVersionError{Found: env.Version, Supported: envelopeVersion}
+	}
+	entry, err := ParseLine(env.Line)
+	if err != nil {
+		return nil, err
+	}
+	return &Record{
+		Scope:   scope.Scope(env.Scope),
+		Owner:   env.Owner,
+		Name:    env.Name,
+		AddedAt: env.AddedAt,
+		Entry:   entry,
+	}, nil
 }

@@ -137,7 +137,7 @@ func TestRegisterRoutes(t *testing.T) {
 	router := mux.NewRouter()
 
 	// Register routes without auth middleware
-	handlers.RegisterRoutes(router, nil)
+	handlers.RegisterRoutes(router, nil, newPermissiveGate())
 
 	// Verify routes are registered
 	tests := []struct {
@@ -171,9 +171,11 @@ func TestRegisterRoutes_WithAuth(t *testing.T) {
 	handlers := NewHandlers(&mockService{}, slog.Default())
 	router := mux.NewRouter()
 
-	// Register with auth middleware
-	authMiddleware := NewDevModeAuthMiddleware()
-	handlers.RegisterRoutes(router, authMiddleware)
+	// Register with mTLS auth middleware. The development-mode bypass that
+	// granted super-admin with a wildcard permission set to every request was
+	// deleted along with the parallel role model.
+	authMiddleware := NewMTLSAuthMiddleware(nil)
+	handlers.RegisterRoutes(router, authMiddleware, newPermissiveGate())
 
 	req := httptest.NewRequest("GET", "/admin/status", nil)
 	var match mux.RouteMatch

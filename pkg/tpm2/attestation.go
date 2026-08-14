@@ -41,6 +41,25 @@ type CertifyResult struct {
 
 	// Nonce is the echoed qualifying data from the caller
 	Nonce []byte
+
+	// CertifyInfoSignature is the signature as a marshalled TPMT_SIGNATURE.
+	//
+	// [Signature] above carries the raw signature value, which is what a
+	// local caller comparing against a crypto.PublicKey wants. A *remote*
+	// verifier needs the algorithm and hash too, and those live in the
+	// TPMT_SIGNATURE -- so this is the form that travels, and the form
+	// [VerifyCertify] takes.
+	CertifyInfoSignature []byte
+
+	// AttestingKeyPublicArea is the IAK's marshalled TPMT_PUBLIC.
+	//
+	// Needed by a verifier because the certified Name is a digest over the
+	// public *area*, not over the public key: it cannot be recomputed from a
+	// crypto.PublicKey alone.
+	AttestingKeyPublicArea []byte
+
+	// AttestedKeyPublicArea is the certified key's marshalled TPMT_PUBLIC.
+	AttestedKeyPublicArea []byte
 }
 
 // CertifyKey performs TPM2_Certify on a key, producing a signed
@@ -231,12 +250,15 @@ func (tpm *TPM2) CertifyKey(
 		slog.Int("signature_len", len(signature)))
 
 	return &CertifyResult{
-		CertifyInfo:        rspCert.CertifyInfo.Bytes(),
-		Signature:          signature,
-		SignatureAlgorithm: tpm.iakAttrs.SignatureAlgorithm,
-		AttestingKeyPublic: iakPubKey,
-		AttestedKeyPublic:  targetPubKey,
-		Nonce:              nonce,
+		CertifyInfo:            rspCert.CertifyInfo.Bytes(),
+		Signature:              signature,
+		SignatureAlgorithm:     tpm.iakAttrs.SignatureAlgorithm,
+		AttestingKeyPublic:     iakPubKey,
+		AttestedKeyPublic:      targetPubKey,
+		Nonce:                  nonce,
+		CertifyInfoSignature:   tpm2.Marshal(rspCert.Signature),
+		AttestingKeyPublicArea: tpm2.Marshal(*iakPub),
+		AttestedKeyPublicArea:  tpm2.Marshal(*targetPub),
 	}, nil
 }
 
@@ -283,18 +305,30 @@ func (tpm *TPM2) extractPublicKey(pub *tpm2.TPMTPublic) (crypto.PublicKey, error
 // Returns an Attestation Key Profile (EK, AK, AK Name, TCG_CSR_IDEVID)
 func (tpm *TPM2) AKProfile() (AKProfile, error) {
 
-	if tpm.ekAttrs == nil {
+	// Resolve through the accessors rather than reading the caches directly.
+	// EKAttributes/IAKAttributes populate ekAttrs/iakAttrs lazily on first use,
+	// so reading the fields made this report ErrNotInitialized on a fully
+	// provisioned TPM until some other call happened to warm them -- the result
+	// depended on call order rather than on TPM state.
+	ekAttrs, err := tpm.EKAttributes()
+	if err != nil {
+		return AKProfile{}, err
+	}
+
+	iakAttrs, err := tpm.IAKAttributes()
+	if err != nil {
+		return AKProfile{}, err
+	}
+
+	if ekAttrs.TPMAttributes == nil || iakAttrs.TPMAttributes == nil {
 		return AKProfile{}, ErrNotInitialized
 	}
 
-	if tpm.iakAttrs == nil {
-		return AKProfile{}, ErrNotInitialized
-	}
 	return AKProfile{
-		EKPub:              tpm.ekAttrs.TPMAttributes.PublicKeyBytes,
-		AKPub:              tpm.iakAttrs.TPMAttributes.PublicKeyBytes,
-		AKName:             tpm.iakAttrs.TPMAttributes.Name,
-		SignatureAlgorithm: tpm.iakAttrs.SignatureAlgorithm,
+		EKPub:              ekAttrs.TPMAttributes.PublicKeyBytes,
+		AKPub:              iakAttrs.TPMAttributes.PublicKeyBytes,
+		AKName:             iakAttrs.TPMAttributes.Name,
+		SignatureAlgorithm: iakAttrs.SignatureAlgorithm,
 	}, nil
 }
 

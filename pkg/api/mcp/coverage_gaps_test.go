@@ -16,6 +16,7 @@ package mcp
 import (
 	"context"
 	"encoding/json"
+	"github.com/jeremyhahn/go-xkms/pkg/auth"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -28,7 +29,7 @@ func TestServiceUnavailable(t *testing.T) {
 	svc := setupTestXKMS(t)
 	defer cleanupXKMS()
 
-	server, err := NewServer(&Config{Addr: "localhost:0", XKMSService: svc})
+	server, err := NewServer(&Config{Addr: "localhost:0", XKMSService: svc, Authenticator: auth.NewNoOpAuthenticator()})
 	require.NoError(t, err)
 
 	// Simulate a not-initialized service by nilling the injected field directly.
@@ -57,7 +58,8 @@ func TestServiceUnavailable(t *testing.T) {
 		{"handleGetInitStatus", server.handleGetInitStatus},
 		{"handleClaimCertBegin", server.handleClaimCertBegin},
 		{"handleClaimCertComplete", server.handleClaimCertComplete},
-		{"handleClaimShare", server.handleClaimShare},
+		{"handleClaimShareBegin", server.handleClaimShareBegin},
+		{"handleClaimShareComplete", server.handleClaimShareComplete},
 	}
 
 	for _, h := range handlers {
@@ -73,7 +75,7 @@ func TestPIV_InvalidParams(t *testing.T) {
 	svc := setupTestXKMS(t)
 	defer cleanupXKMS()
 
-	server, err := NewServer(&Config{Addr: "localhost:0", XKMSService: svc})
+	server, err := NewServer(&Config{Addr: "localhost:0", XKMSService: svc, Authenticator: auth.NewNoOpAuthenticator()})
 	require.NoError(t, err)
 
 	ctx := context.Background()
@@ -285,7 +287,8 @@ func TestInitCredentials_InvalidParams(t *testing.T) {
 	}{
 		{"handleClaimCertBegin", server.handleClaimCertBegin},
 		{"handleClaimCertComplete", server.handleClaimCertComplete},
-		{"handleClaimShare", server.handleClaimShare},
+		{"handleClaimShareBegin", server.handleClaimShareBegin},
+		{"handleClaimShareComplete", server.handleClaimShareComplete},
 	}
 
 	for _, h := range handlers {

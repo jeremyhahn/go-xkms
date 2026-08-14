@@ -43,9 +43,6 @@ func (s *Suite) testGenerateRandom(t *testing.T) {
 		sh := openRWSession(t, m)
 
 		data, rv := m.GenerateRandom(sh, 32)
-		if s.skipIfUnsupported(t, rv) {
-			return
-		}
 		requireRV(t, module.CKR_OK, rv, "GenerateRandom(32) should return CKR_OK")
 
 		if len(data) != 32 {
@@ -72,9 +69,6 @@ func (s *Suite) testGenerateRandom(t *testing.T) {
 		sh := openRWSession(t, m)
 
 		data, rv := m.GenerateRandom(sh, 0)
-		if s.skipIfUnsupported(t, rv) {
-			return
-		}
 		requireRV(t, module.CKR_OK, rv, "GenerateRandom(0) should return CKR_OK")
 
 		if len(data) != 0 {
@@ -89,9 +83,6 @@ func (s *Suite) testGenerateRandom(t *testing.T) {
 		invalidSession := module.SessionHandle(0xDEADBEEF)
 
 		_, rv := m.GenerateRandom(invalidSession, 32)
-		if s.skipIfUnsupported(t, rv) {
-			return
-		}
 		requireRV(t, module.CKR_SESSION_HANDLE_INVALID, rv,
 			"GenerateRandom with invalid session should return CKR_SESSION_HANDLE_INVALID")
 	})
@@ -108,18 +99,20 @@ func (s *Suite) testSeedRandom(t *testing.T) {
 
 		seed := []byte("conformance-test-seed-entropy-data")
 		rv := m.SeedRandom(sh, seed)
-		if s.skipIfUnsupported(t, rv) {
-			return
-		}
 
-		// Per PKCS#11, SeedRandom may return CKR_RANDOM_SEED_NOT_SUPPORTED
-		// if the token's RNG does not accept external seed data. Both
-		// CKR_OK and CKR_RANDOM_SEED_NOT_SUPPORTED are acceptable.
-		if rv == module.CKR_RANDOM_SEED_NOT_SUPPORTED {
-			t.Skipf("SeedRandom returned CKR_RANDOM_SEED_NOT_SUPPORTED; token RNG does not accept seeds")
-			return
+		// Per PKCS#11 v3.0 §5.15, C_SeedRandom may return
+		// CKR_RANDOM_SEED_NOT_SUPPORTED when the token's RNG does not accept
+		// external seed material. Both that and CKR_OK are conformant, so the
+		// assertion is that the token answers with one of them -- anything else
+		// is a defect.
+		//
+		// This used to skip on CKR_RANDOM_SEED_NOT_SUPPORTED, which reported no
+		// result at all for the most common token behaviour and left the error
+		// cases below unreached on those tokens.
+		if rv != module.CKR_OK && rv != module.CKR_RANDOM_SEED_NOT_SUPPORTED {
+			t.Fatalf("SeedRandom with a valid seed returned 0x%X; PKCS#11 permits only "+
+				"CKR_OK or CKR_RANDOM_SEED_NOT_SUPPORTED", rv)
 		}
-		requireRV(t, module.CKR_OK, rv, "SeedRandom with valid seed should return CKR_OK")
 	})
 
 	t.Run("invalid_session_returns_session_handle_invalid", func(t *testing.T) {
@@ -129,9 +122,6 @@ func (s *Suite) testSeedRandom(t *testing.T) {
 		invalidSession := module.SessionHandle(0xDEADBEEF)
 
 		rv := m.SeedRandom(invalidSession, []byte("seed"))
-		if s.skipIfUnsupported(t, rv) {
-			return
-		}
 		requireRV(t, module.CKR_SESSION_HANDLE_INVALID, rv,
 			"SeedRandom with invalid session should return CKR_SESSION_HANDLE_INVALID")
 	})

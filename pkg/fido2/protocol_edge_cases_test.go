@@ -279,13 +279,16 @@ func (d *RetryMockDevice) Write(data []byte) (int, error) {
 		return 0, &errs.Message{Msg: "packet too short"}
 	}
 
-	cmd := data[4]
+	cmd, payload, complete := d.assembler.accept(data)
+	if !complete {
+		return len(data), nil
+	}
 
 	switch cmd {
 	case CTAPHID_INIT:
-		d.generateInitResponseRetry(data[7:])
+		d.generateInitResponseRetry(payload)
 	case CTAPHID_CBOR:
-		d.generateCBORResponseRetry(data[7:])
+		d.generateCBORResponseRetry(payload)
 	}
 
 	return len(data), nil
@@ -324,8 +327,8 @@ func (d *RetryMockDevice) generateCBORResponseRetry(payload []byte) {
 	switch ctapCmd {
 	case CmdGetInfo:
 		d.generateGetInfoResponse()
-	case CmdGetAssertion:
-		d.generateGetAssertionResponse()
+	case CmdClientPIN, CmdGetAssertion:
+		writeCTAPHIDResponse(d.readBuf, 0x12345678, d.sim.respond(payload))
 	}
 }
 
@@ -338,33 +341,6 @@ func (d *RetryMockDevice) generateGetInfoResponse() {
 	}
 
 	encoded, _ := cbor.Marshal(info)
-	fullPayload := append([]byte{StatusOK}, encoded...)
-	d.writeHIDPacketsRetry(0x12345678, fullPayload)
-}
-
-func (d *RetryMockDevice) generateGetAssertionResponse() {
-	// Generate standard GetAssertion response
-	authData := make([]byte, 37+32)
-	copy(authData[0:32], make([]byte, 32))
-	authData[32] = 0x81 // UP + ED
-	binary.BigEndian.PutUint32(authData[33:37], 2)
-
-	hmacOutput := make([]byte, 32)
-	for i := range hmacOutput {
-		hmacOutput[i] = byte(i + 100)
-	}
-	copy(authData[37:], hmacOutput)
-
-	respMap := map[int]interface{}{
-		0x01: map[string]interface{}{
-			"type": "public-key",
-			"id":   make([]byte, 32),
-		},
-		0x02: authData,
-		0x03: make([]byte, 64),
-	}
-
-	encoded, _ := cbor.Marshal(respMap)
 	fullPayload := append([]byte{StatusOK}, encoded...)
 	d.writeHIDPacketsRetry(0x12345678, fullPayload)
 }
@@ -610,9 +586,9 @@ func TestDeriveSecret_ShortAuthData(t *testing.T) {
 		Salt:           make([]byte, 32),
 	}
 
-	_, err = hmacExt.DeriveSecret(authConfig)
-	assert.Error(t, err)
-	assert.Contains(t, err.Error(), "invalid authenticator data length")
+	result, err := hmacExt.DeriveSecret(authConfig)
+	assert.ErrorIs(t, err, ErrAuthDataTooShort)
+	assert.Nil(t, result)
 }
 
 // DeriveSecretShortAuthDataMockDevice returns GetAssertion with short auth data
@@ -671,6 +647,8 @@ func (d *DeriveSecretShortAuthDataMockDevice) generateCBORResponseDerive(payload
 	switch ctapCmd {
 	case CmdGetInfo:
 		d.generateGetInfoResponseDerive()
+	case CmdClientPIN:
+		writeCTAPHIDResponse(d.readBuf, 0x12345678, d.sim.respond(payload))
 	case CmdGetAssertion:
 		d.generateGetAssertionShortAuthDataResponse()
 	}
@@ -798,8 +776,10 @@ func TestParseAuthDataExtensions_WithAttestedCredData(t *testing.T) {
 	authData[53] = 0x00
 	authData[54] = 0x10 // 16 bytes credential ID
 
+	// The COSE public key position holds CBOR unsigned zero, which is
+	// well-formed but is not a COSE_Key map.
 	extensions, err := ParseAuthDataExtensions(authData)
-	assert.NoError(t, err)
+	assert.ErrorIs(t, err, ErrInvalidCOSEKey)
 	assert.Nil(t, extensions)
 }
 
@@ -1135,13 +1115,16 @@ func (d *UserPresenceRetryMockDevice) Write(data []byte) (int, error) {
 		return 0, &errs.Message{Msg: "packet too short"}
 	}
 
-	cmd := data[4]
+	cmd, payload, complete := d.assembler.accept(data)
+	if !complete {
+		return len(data), nil
+	}
 
 	switch cmd {
 	case CTAPHID_INIT:
-		d.generateInitResponseUP(data[7:])
+		d.generateInitResponseUP(payload)
 	case CTAPHID_CBOR:
-		d.generateCBORResponseUP(data[7:])
+		d.generateCBORResponseUP(payload)
 	}
 
 	return len(data), nil
@@ -1179,8 +1162,8 @@ func (d *UserPresenceRetryMockDevice) generateCBORResponseUP(payload []byte) {
 	switch ctapCmd {
 	case CmdGetInfo:
 		d.generateGetInfoResponseUP()
-	case CmdGetAssertion:
-		d.generateGetAssertionResponseUP()
+	case CmdClientPIN, CmdGetAssertion:
+		writeCTAPHIDResponse(d.readBuf, 0x12345678, d.sim.respond(payload))
 	}
 }
 
@@ -1193,33 +1176,6 @@ func (d *UserPresenceRetryMockDevice) generateGetInfoResponseUP() {
 	}
 
 	encoded, _ := cbor.Marshal(info)
-	fullPayload := append([]byte{StatusOK}, encoded...)
-	d.writeHIDPacketsUP(0x12345678, fullPayload)
-}
-
-func (d *UserPresenceRetryMockDevice) generateGetAssertionResponseUP() {
-	// Always succeed - retry logic is in DeriveSecret, not here
-	authData := make([]byte, 37+32)
-	copy(authData[0:32], make([]byte, 32))
-	authData[32] = 0x81 // UP + ED
-	binary.BigEndian.PutUint32(authData[33:37], 2)
-
-	hmacOutput := make([]byte, 32)
-	for i := range hmacOutput {
-		hmacOutput[i] = byte(i + 100)
-	}
-	copy(authData[37:], hmacOutput)
-
-	respMap := map[int]interface{}{
-		0x01: map[string]interface{}{
-			"type": "public-key",
-			"id":   make([]byte, 32),
-		},
-		0x02: authData,
-		0x03: make([]byte, 64),
-	}
-
-	encoded, _ := cbor.Marshal(respMap)
 	fullPayload := append([]byte{StatusOK}, encoded...)
 	d.writeHIDPacketsUP(0x12345678, fullPayload)
 }
@@ -1905,11 +1861,12 @@ func TestDeriveSecret_NoExtensionData(t *testing.T) {
 		Salt:           make([]byte, 32),
 	}
 
-	// Should succeed with fallback HMAC derivation
+	// Authenticator data without the ED flag carries no hmac-secret
+	// output. There is no genuine secret to return, so the derivation must
+	// fail rather than fabricate one.
 	result, err := hmacExt.DeriveSecret(authConfig)
-	require.NoError(t, err)
-	require.NotNil(t, result)
-	assert.NotEmpty(t, result.HMACSecret)
+	assert.ErrorIs(t, err, ErrHMACSecretMissing)
+	assert.Nil(t, result)
 }
 
 // NoExtensionDataMockDevice returns GetAssertion without extension data flag
@@ -1966,6 +1923,8 @@ func (d *NoExtensionDataMockDevice) generateCBORResponseNE(payload []byte) {
 	switch ctapCmd {
 	case CmdGetInfo:
 		d.generateGetInfoResponseNE()
+	case CmdClientPIN:
+		writeCTAPHIDResponse(d.readBuf, 0x12345678, d.sim.respond(payload))
 	case CmdGetAssertion:
 		d.generateGetAssertionNoExtResponse()
 	}
@@ -2132,6 +2091,8 @@ func (d *UserPresenceTimeoutMockDevice) generateCBORResponseTO(payload []byte) {
 	switch ctapCmd {
 	case CmdGetInfo:
 		d.generateGetInfoResponseTO()
+	case CmdClientPIN:
+		writeCTAPHIDResponse(d.readBuf, 0x12345678, d.sim.respond(payload))
 	case CmdGetAssertion:
 		d.generateTimeoutResponse()
 	}
@@ -2565,13 +2526,16 @@ func (d *CloseErrorCTAPDevice) Write(data []byte) (int, error) {
 		return 0, &errs.Message{Msg: "packet too short"}
 	}
 
-	cmd := data[4]
+	cmd, payload, complete := d.assembler.accept(data)
+	if !complete {
+		return len(data), nil
+	}
 
 	switch cmd {
 	case CTAPHID_INIT:
-		d.generateInitResponseCE(data[7:])
+		d.generateInitResponseCE(payload)
 	case CTAPHID_CBOR:
-		d.generateCBORResponseCE(data[7:])
+		d.generateCBORResponseCE(payload)
 	}
 
 	return len(data), nil
@@ -2609,8 +2573,8 @@ func (d *CloseErrorCTAPDevice) generateCBORResponseCE(payload []byte) {
 	switch ctapCmd {
 	case CmdGetInfo:
 		d.generateGetInfoResponseCE()
-	case CmdGetAssertion:
-		d.generateGetAssertionResponseCE()
+	case CmdClientPIN, CmdGetAssertion:
+		writeCTAPHIDResponse(d.readBuf, 0x12345678, d.sim.respond(payload))
 	}
 }
 
@@ -2623,32 +2587,6 @@ func (d *CloseErrorCTAPDevice) generateGetInfoResponseCE() {
 	}
 
 	encoded, _ := cbor.Marshal(info)
-	fullPayload := append([]byte{StatusOK}, encoded...)
-	d.writeHIDPacketsCE(0x12345678, fullPayload)
-}
-
-func (d *CloseErrorCTAPDevice) generateGetAssertionResponseCE() {
-	authData := make([]byte, 37+32)
-	copy(authData[0:32], make([]byte, 32))
-	authData[32] = 0x81 // UP + ED
-	binary.BigEndian.PutUint32(authData[33:37], 2)
-
-	hmacOutput := make([]byte, 32)
-	for i := range hmacOutput {
-		hmacOutput[i] = byte(i + 100)
-	}
-	copy(authData[37:], hmacOutput)
-
-	respMap := map[int]interface{}{
-		0x01: map[string]interface{}{
-			"type": "public-key",
-			"id":   make([]byte, 32),
-		},
-		0x02: authData,
-		0x03: make([]byte, 64),
-	}
-
-	encoded, _ := cbor.Marshal(respMap)
 	fullPayload := append([]byte{StatusOK}, encoded...)
 	d.writeHIDPacketsCE(0x12345678, fullPayload)
 }

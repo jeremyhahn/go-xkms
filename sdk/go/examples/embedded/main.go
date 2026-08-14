@@ -42,6 +42,10 @@ func (m *MockXKMSService) ListBackends(ctx context.Context, opts ...xkms.ListOpt
 	}, nil
 }
 
+func (m *MockXKMSService) Algorithms(ctx context.Context) (*transport.AlgorithmsResponse, error) {
+	return nil, &mockUnsupportedError{capability: "algorithm discovery"}
+}
+
 func (m *MockXKMSService) GetBackend(ctx context.Context, backendID string) (*xkms.BackendInfo, error) {
 	return &xkms.BackendInfo{ID: backendID, Type: "software"}, nil
 }
@@ -321,7 +325,11 @@ func (m *MockXKMSService) ClaimCertComplete(ctx context.Context, req *transport.
 	return nil, &mockUnsupportedError{capability: "init ceremony"}
 }
 
-func (m *MockXKMSService) ClaimShare(ctx context.Context, req *transport.ClaimShareRequest) (*transport.ClaimShareResponse, error) {
+func (m *MockXKMSService) ClaimShareBegin(ctx context.Context, req *transport.ClaimShareBeginRequest) (*transport.ClaimShareBeginResponse, error) {
+	return nil, &mockUnsupportedError{capability: "init ceremony"}
+}
+
+func (m *MockXKMSService) ClaimShareComplete(ctx context.Context, req *transport.ClaimShareCompleteRequest) (*transport.ClaimShareCompleteResponse, error) {
 	return nil, &mockUnsupportedError{capability: "init ceremony"}
 }
 
@@ -674,6 +682,14 @@ func (m *MockXKMSService) ListShares(ctx context.Context) (*transport.ListShares
 	return nil, &mockUnsupportedError{capability: "share"}
 }
 
+func (m *MockXKMSService) GetShare(ctx context.Context, serverURL, groupID string, shareIndex int) (*transport.ShareInfo, error) {
+	return nil, &mockUnsupportedError{capability: "share"}
+}
+
+func (m *MockXKMSService) DeleteShare(ctx context.Context, serverURL, groupID string, shareIndex int) error {
+	return &mockUnsupportedError{capability: "share"}
+}
+
 func (m *MockXKMSService) GetShareCollectionStatus(ctx context.Context, groupID string) (*transport.ShareCollectionStatus, error) {
 	return nil, &mockUnsupportedError{capability: "share"}
 }
@@ -712,4 +728,8 @@ func (m *MockXKMSService) UpdateTenantEntitlements(_ context.Context, _ *transpo
 
 func (m *MockXKMSService) UpdateTenantQuotas(_ context.Context, _ *transport.UpdateTenantQuotasRequest) (*transport.UpdateTenantQuotasResponse, error) {
 	return nil, nil
+}
+
+func (m *MockXKMSService) QueryAudit(ctx context.Context, filter *transport.AuditFilter) (*transport.AuditPage, error) {
+	return nil, &mockUnsupportedError{capability: "audit"}
 }

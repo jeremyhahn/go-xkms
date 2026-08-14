@@ -39,7 +39,6 @@ var canonicalInitFlagNames = []string{
 	"threshold",
 	"hostname",
 	"sans",
-	"admin-bundle",
 }
 
 // canonicalBarrierVerbs lists the canonical 9-verb barrier surface.

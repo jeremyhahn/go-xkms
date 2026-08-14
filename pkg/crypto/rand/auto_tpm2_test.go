@@ -17,14 +17,14 @@ import (
 	"testing"
 )
 
-// TestAutoResolver_TPM2InitializationPath tests TPM2 initialization when available
+// TestAutoResolver_TPM2InitializationPath proves the auto resolver survives a
+// TPM2 device that cannot be opened: it must fall back to software rather than
+// failing construction.
+//
+// The device path is deliberately nonexistent, so this never touches the
+// host's real TPM.
 func TestAutoResolver_TPM2InitializationPath(t *testing.T) {
-	// This test only runs when tpm2 build tag is enabled
-	// and tpm2Available() returns true
-
-	if !tpm2Available() {
-		t.Skip("TPM2 not available")
-	}
+	requireTPM2Compiled(t)
 
 	// Test that auto resolver attempts TPM2 initialization
 	cfg := &Config{
@@ -57,11 +57,10 @@ func TestAutoResolver_TPM2InitializationPath(t *testing.T) {
 	}
 }
 
-// TestAutoResolver_TPM2CloseOnInitFailure tests that failed TPM2 resolvers are closed
+// TestAutoResolver_TPM2CloseOnInitFailure tests that failed TPM2 resolvers are
+// closed rather than leaked.
 func TestAutoResolver_TPM2CloseOnInitFailure(t *testing.T) {
-	if !tpm2Available() {
-		t.Skip("TPM2 not available")
-	}
+	requireTPM2Compiled(t)
 
 	// Test with invalid config to trigger initialization failure
 	cfg := &Config{
@@ -84,11 +83,10 @@ func TestAutoResolver_TPM2CloseOnInitFailure(t *testing.T) {
 	}
 }
 
-// TestAutoResolver_TPM2PriorityWhenPKCS11Unavailable tests TPM2 is tried when PKCS11 fails
+// TestAutoResolver_TPM2PriorityWhenPKCS11Unavailable tests TPM2 is tried when
+// PKCS#11 fails, and that software still backstops both.
 func TestAutoResolver_TPM2PriorityWhenPKCS11Unavailable(t *testing.T) {
-	if !tpm2Available() {
-		t.Skip("TPM2 not available")
-	}
+	requireTPM2Compiled(t)
 
 	// Configure both PKCS11 (will fail) and TPM2 (will also fail but exercises path)
 	cfg := &Config{
@@ -120,5 +118,16 @@ func TestAutoResolver_TPM2PriorityWhenPKCS11Unavailable(t *testing.T) {
 	}
 	if len(data) != 16 {
 		t.Errorf("Expected 16 bytes, got %d", len(data))
+	}
+}
+
+// requireTPM2Compiled asserts that the TPM2 source is part of this build. It
+// is the contract these tests depend on: without the TPM2 branch compiled in,
+// newAutoResolver would never reach the code they exercise.
+func requireTPM2Compiled(t *testing.T) {
+	t.Helper()
+
+	if !tpm2Available() {
+		t.Fatal("TPM2 support must be compiled into this build for these tests to mean anything")
 	}
 }

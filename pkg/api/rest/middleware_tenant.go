@@ -14,19 +14,22 @@
 package rest
 
 import (
+	"errors"
 	"log/slog"
 	"net/http"
 
+	"github.com/jeremyhahn/go-xkms/pkg/api/tenantgate"
 	"github.com/jeremyhahn/go-xkms/pkg/auth"
 )
 
-// TenantMiddleware enforces tenant isolation for REST API requests.
-// It extracts tenant context from the authenticated identity, validates
-// cross-tenant access, and injects the TenantBarrier into the request
-// context for downstream handlers.
+// TenantMiddleware enforces tenant isolation for REST API requests. It
+// delegates the decision to tenantgate.Access -- the transport-neutral gate
+// shared with gRPC, QUIC, MCP, and the Unix domain socket listener -- and
+// maps the result onto the REST wire shape.
 //
-// Behavior:
-//   - No identity or empty TenantID: passes through (system-level or bootstrap access)
+// Behavior (see tenantgate.Access):
+//   - Cross-tenant-scoped identity (nil, empty TenantID, or the reserved
+//     system tenant): passes through (system-level or bootstrap access)
 //   - SO role: passes through with cross-tenant access
 //   - No barrier registry configured: passes through
 //   - Tenant not found in registry: returns 403 Forbidden
@@ -37,48 +40,31 @@ func (s *Server) TenantMiddleware() func(http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			identity := auth.GetIdentity(r.Context())
 
-			// System-level or unauthenticated requests pass through.
-			// Authentication middleware handles unauthenticated rejection;
-			// this middleware only enforces tenant scoping.
-			if identity == nil || identity.TenantID == "" {
-				next.ServeHTTP(w, r)
-				return
-			}
-
-			// Security Officer role gets cross-tenant access per FIPS 140-2/3
-			// separation of duties model.
-			if identity.HasRole("so") {
-				next.ServeHTTP(w, r)
-				return
-			}
-
-			// No barrier registry configured; tenant enforcement disabled.
-			if s.barrierRegistry == nil {
-				next.ServeHTTP(w, r)
-				return
-			}
-
-			// Look up the tenant barrier from the registry.
-			tb, err := s.barrierRegistry.Tenant(identity.TenantID)
+			tb, err := tenantgate.Access(identity, s.barrierRegistry)
 			if err != nil {
-				s.logger.Warn("tenant barrier not found",
-					slog.String("tenant_id", identity.TenantID),
-					slog.String("error", err.Error()))
-				writeErrorWithMessage(w, ErrForbidden, "tenant not found", http.StatusForbidden)
+				var notFound *tenantgate.ErrTenantNotFound
+				var sealed *tenantgate.ErrTenantSealed
+				switch {
+				case errors.As(err, &notFound):
+					s.logger.Warn("tenant barrier not found",
+						slog.String("tenant_id", notFound.TenantID),
+						slog.String("error", notFound.Err.Error()))
+					writeErrorWithMessage(w, ErrForbidden, "tenant not found", http.StatusForbidden)
+				case errors.As(err, &sealed):
+					s.logger.Warn("tenant barrier is sealed",
+						slog.String("tenant_id", sealed.TenantID))
+					writeErrorWithMessage(w, ErrServiceUnavailable, "tenant barrier is sealed", http.StatusServiceUnavailable)
+				default:
+					s.logger.Error("tenant access check failed", slog.String("error", err.Error()))
+					writeErrorWithMessage(w, ErrInternalError, "tenant access check failed", http.StatusInternalServerError)
+				}
 				return
 			}
 
-			// Reject requests when the tenant barrier is sealed.
-			if tb.IsSealed() {
-				s.logger.Warn("tenant barrier is sealed",
-					slog.String("tenant_id", identity.TenantID))
-				writeErrorWithMessage(w, ErrServiceUnavailable, "tenant barrier is sealed", http.StatusServiceUnavailable)
-				return
+			if tb != nil {
+				ctx := auth.WithTenantBarrier(r.Context(), tb)
+				r = r.WithContext(ctx)
 			}
-
-			// Inject tenant barrier into context for downstream handlers.
-			ctx := auth.WithTenantBarrier(r.Context(), tb)
-			r = r.WithContext(ctx)
 
 			next.ServeHTTP(w, r)
 		})

@@ -688,6 +688,7 @@ All algorithms (ECCP256, ECCP384, RSA2048, RSA4096, Ed25519) can be used for any
 - [NIST SP 800-73-4](https://csrc.nist.gov/publications/detail/sp/800-73/4/final) -- Interfaces for Personal Identity Verification
 - [NIST SP 800-76-2](https://csrc.nist.gov/publications/detail/sp/800-76/2/final) -- Biometric Specifications for PIV
 - [Certificate Storage Architecture](certificate-storage-architecture.md) -- Detailed storage design
+- [TPM 2.0 NV Certificate Storage](tpm2-nv-storage.md) -- Slot to NV index mapping and error semantics
 - [PKCS #11 PIV Integration](../pkcs11/module/piv.md) -- PKCS #11 object mapping
 - [CA Integration Guide](../ca/README.md) -- Certificate authority operations
 - [Attestation Guide](../attestation/README.md) -- Hardware key attestation

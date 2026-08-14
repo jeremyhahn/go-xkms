@@ -115,7 +115,18 @@ func NewCallbackProvider(fn func(ctx context.Context, prompt string) ([]byte, er
 
 // CatchInterrupt wires SIGINT/SIGTERM to purge all mlocked memory before
 // process exit. Call once, early in main().
+//
+// The installed handler hard os.Exit(1)s from inside the signal handler, so a
+// daemon that drives its own graceful shutdown must use EnablePurge instead:
+// CatchInterrupt's exit always wins the race and the shutdown path (including
+// storage Close) never runs.
 func CatchInterrupt() { qrdbsecure.CatchInterrupt() }
+
+// EnablePurge arms the secure subsystem so Purge works, WITHOUT installing
+// memguard's process signal handler. Use it in daemons that own their own
+// SIGINT/SIGTERM handling and drive a graceful shutdown, paired with a
+// deferred Purge in main().
+func EnablePurge() { qrdbsecure.EnablePurge() }
 
 // Purge performs an immediate, synchronous wipe of all mlocked memory.
 // Returns NotInitializedError if CatchInterrupt has not run.

@@ -140,15 +140,14 @@ func CreateHybridCertificate(
 	// Add the quantum alt public key and algorithm extensions
 	workingTemplate.ExtraExtensions = append(workingTemplate.ExtraExtensions, altPubKeyExt, altSigAlgExt)
 
+	// The classical half is signed through the CA's canonical issuer so that
+	// hybrid certificates are produced by the same signing path as every other
+	// certificate this project issues.
+	issuer := &Issuer{Signer: classicalKey, Certificate: parent}
+
 	// Step 1: Create the initial certificate with classical signature.
 	// This gives us a properly structured TBS to sign with the quantum key.
-	initialDER, err := x509.CreateCertificate(
-		rand.Reader,
-		&workingTemplate,
-		parent,
-		classicalKey.Public(),
-		classicalKey,
-	)
+	initialDER, err := issuer.Sign(rand.Reader, &workingTemplate, classicalKey.Public())
 	if err != nil {
 		return nil, &HybridCertError{Op: "create", Err: &errs.Wrapped{Msg: "create initial certificate", Err: err}}
 	}
@@ -175,13 +174,7 @@ func CreateHybridCertificate(
 	// This produces the final certificate with all three hybrid extensions.
 	workingTemplate.ExtraExtensions = append(workingTemplate.ExtraExtensions, altSigValueExt)
 
-	finalDER, err := x509.CreateCertificate(
-		rand.Reader,
-		&workingTemplate,
-		parent,
-		classicalKey.Public(),
-		classicalKey,
-	)
+	finalDER, err := issuer.Sign(rand.Reader, &workingTemplate, classicalKey.Public())
 	if err != nil {
 		return nil, &HybridCertError{Op: "create", Err: &errs.Wrapped{Msg: "create final certificate", Err: err}}
 	}
@@ -398,58 +391,10 @@ func extractTBS(certDER []byte) ([]byte, error) {
 // quantum signature verification because the quantum key signs the TBS
 // before the altSignatureValue extension is added.
 func extractTBSWithoutExtension(certDER []byte, excludeOID asn1.ObjectIdentifier) ([]byte, error) {
-	// Parse the certificate to get its extensions
-	cert, err := x509.ParseCertificate(certDER)
-	if err != nil {
-		return nil, &errs.Wrapped{Msg: "parse certificate", Err: err}
-	}
-
-	// Build a new template without the excluded extension
-	filteredExtensions := make([]pkix.Extension, 0, len(cert.Extensions))
-	for _, ext := range cert.Extensions {
-		if !ext.Id.Equal(excludeOID) {
-			filteredExtensions = append(filteredExtensions, ext)
-		}
-	}
-
-	// Rebuild the certificate template from the parsed cert,
-	// using only the filtered extensions as ExtraExtensions.
-	// We create a new template that matches the original minus the excluded extension.
-	rebuiltTemplate := &x509.Certificate{
-		SerialNumber:          cert.SerialNumber,
-		Subject:               cert.Subject,
-		NotBefore:             cert.NotBefore,
-		NotAfter:              cert.NotAfter,
-		KeyUsage:              cert.KeyUsage,
-		BasicConstraintsValid: cert.BasicConstraintsValid,
-		IsCA:                  cert.IsCA,
-		MaxPathLen:            cert.MaxPathLen,
-		MaxPathLenZero:        cert.MaxPathLenZero,
-		SignatureAlgorithm:    cert.SignatureAlgorithm,
-		DNSNames:              cert.DNSNames,
-		EmailAddresses:        cert.EmailAddresses,
-		IPAddresses:           cert.IPAddresses,
-		URIs:                  cert.URIs,
-		ExtKeyUsage:           cert.ExtKeyUsage,
-	}
-
-	// Add filtered extensions as ExtraExtensions. We need to separate the
-	// "standard" extensions that x509.CreateCertificate handles automatically
-	// from the non-standard ones we need to pass as ExtraExtensions.
-	for _, ext := range filteredExtensions {
-		if !isStandardExtension(ext.Id) {
-			rebuiltTemplate.ExtraExtensions = append(rebuiltTemplate.ExtraExtensions, ext)
-		}
-	}
-
-	// We need a dummy issuer cert to create the certificate. Use the same cert
-	// as parent since we only need the TBS.
-	// Create a temporary certificate to get the TBS using a dummy signer.
-	// Instead of re-signing, we can reconstruct the TBS from the original
-	// certificate's raw TBS data. The TBS in the original cert contains the
-	// altSignatureValue extension. We need to remove it.
-	//
-	// Alternative approach: parse the TBS ASN.1 and rebuild extensions.
+	// The TBS is rebuilt from the certificate's own ASN.1 rather than by
+	// re-encoding a reconstructed template: verification has to hash exactly
+	// the bytes the issuer signed, and a re-encoded template is not guaranteed
+	// to reproduce them.
 	return rebuildTBSWithoutExtension(certDER, excludeOID)
 }
 

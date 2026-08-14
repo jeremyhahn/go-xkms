@@ -535,8 +535,8 @@ func init() {
 ## See Also
 
 - [Security Levels](./security-levels.md)
-- [Backend Registry](../backend-registry.md)
-- [Storage Abstraction](../storage-abstraction.md)
-- [Build System](../build-system.md)
-- [Getting Started](../getting-started.md)
+- Backend Registry - no standalone document yet; the registry is `pkg/xkms/registry.go` with one `register_*.go` per backend
+- [Storage Architecture](./storage.md)
+- [Build System](../configuration/build-system.md)
+- [Getting Started](../../xkey/docs/usage/getting-started.md)
 - [PKCS#11 Manager](../pkcs11/manager.md)

@@ -310,12 +310,9 @@ func TestAdminService_GetBackendInfo_EmptyID(t *testing.T) {
 
 func TestAdminService_GetAuditLogs(t *testing.T) {
 	t.Run("non admin returns error", func(t *testing.T) {
+		asUnprivileged(t)
 		svc := NewAdminService()
 		svc.SetContext(context.Background())
-		// We are typically not root in tests, so IsAdmin() returns false.
-		if svc.IsAdmin() {
-			t.Skip("test requires non-root user")
-		}
 		_, err := svc.GetAuditLogs(nil)
 		assert.True(t, errors.Is(err, ErrAdminNotAuthorized))
 	})
@@ -329,19 +326,15 @@ func TestAdminService_ExportAuditLogs_InvalidFormat(t *testing.T) {
 }
 
 func TestAdminService_ExportAuditLogs_NotAuthorized(t *testing.T) {
+	asUnprivileged(t)
 	svc := NewAdminService()
-	if svc.IsAdmin() {
-		t.Skip("test requires non-root user")
-	}
 	_, err := svc.ExportAuditLogs("json")
 	assert.True(t, errors.Is(err, ErrAdminNotAuthorized))
 }
 
 func TestAdminService_ExportAuditLogs_CSV_NotAuthorized(t *testing.T) {
+	asUnprivileged(t)
 	svc := NewAdminService()
-	if svc.IsAdmin() {
-		t.Skip("test requires non-root user")
-	}
 	_, err := svc.ExportAuditLogs("csv")
 	assert.True(t, errors.Is(err, ErrAdminNotAuthorized))
 }

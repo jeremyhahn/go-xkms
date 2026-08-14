@@ -50,7 +50,7 @@ type mockCA struct {
 	verifyReceivedSigAlg interface{}
 }
 
-func (m *mockCA) VerifyTCG_CSR_IDevIDBytes(packedCSR []byte, sigAlg interface{}) ([]byte, []byte, []byte, error) {
+func (m *mockCA) VerifyTCG_CSR_IDevIDBytes(packedCSR []byte, sigAlg x509.SignatureAlgorithm) ([]byte, []byte, []byte, error) {
 	m.verifyCallCount++
 	m.verifyReceivedCSR = packedCSR
 	m.verifyReceivedSigAlg = sigAlg
@@ -531,9 +531,7 @@ func TestSetup_Success(t *testing.T) {
 		createIDevIDCSR:    tcgCSR,
 	}
 
-	ca := &mockCA{}
-
-	packedCSR, err := Setup("9080", "test-keyauth", ca, tpm)
+	packedCSR, err := Setup("9080", "test-keyauth", tpm)
 	if err != nil {
 		t.Errorf("Setup() failed: %v", err)
 	}
@@ -560,9 +558,7 @@ func TestSetup_EKCertError(t *testing.T) {
 		ekCertError: caerrors.KeyGenerationFailureError("failed to retrieve EK certificate"),
 	}
 
-	ca := &mockCA{}
-
-	_, err := Setup("8081", "test-keyauth", ca, tpm)
+	_, err := Setup("8081", "test-keyauth", tpm)
 	if err == nil {
 		t.Error("Setup() should fail when EK certificate retrieval fails")
 	}
@@ -574,9 +570,7 @@ func TestSetup_IAKAttrsError(t *testing.T) {
 		iakAttrsError: caerrors.KeyGenerationFailureError("failed to retrieve IAK attributes"),
 	}
 
-	ca := &mockCA{}
-
-	_, err := Setup("8082", "test-keyauth", ca, tpm)
+	_, err := Setup("8082", "test-keyauth", tpm)
 	if err == nil {
 		t.Error("Setup() should fail when IAK attributes retrieval fails")
 	}
@@ -589,9 +583,7 @@ func TestSetup_CreateIDevIDError(t *testing.T) {
 		createIDevIDError: caerrors.KeyGenerationFailureError("failed to create IDevID"),
 	}
 
-	ca := &mockCA{}
-
-	_, err := Setup("8083", "test-keyauth", ca, tpm)
+	_, err := Setup("8083", "test-keyauth", tpm)
 	if err == nil {
 		t.Error("Setup() should fail when IDevID creation fails")
 	}
@@ -605,9 +597,7 @@ func TestSetup_InvalidTypeAssertion(t *testing.T) {
 		createIDevIDCSR:    "not-a-tcg-csr", // Wrong type
 	}
 
-	ca := &mockCA{}
-
-	_, err := Setup("8084", "test-keyauth", ca, tpm)
+	_, err := Setup("8084", "test-keyauth", tpm)
 	if err == nil {
 		t.Error("Setup() should fail when CreateIDevID returns unexpected type")
 	}
@@ -1132,9 +1122,11 @@ func TestHandleShutdown_ShutdownOnceLogic(t *testing.T) {
 	// Create a test server with local state
 	var localOnce sync.Once
 	mux := http.NewServeMux()
-	listener, err := net.Listen("tcp", ":19913")
+	// Bind an ephemeral port: the test needs a listening socket, not a
+	// specific number, so nothing can collide with a concurrent run.
+	listener, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
-		t.Skipf("Port 19913 already in use: %v", err)
+		t.Fatalf("listen: %v", err)
 	}
 	defer func() { _ = listener.Close() }()
 
@@ -1180,9 +1172,11 @@ func TestHandleShutdown_ShutdownOnceLogic(t *testing.T) {
 func TestHandleShutdown_SignalHandling(t *testing.T) {
 	// Create a test server with local state
 	mux := http.NewServeMux()
-	listener, err := net.Listen("tcp", ":19914")
+	// Bind an ephemeral port: the test needs a listening socket, not a
+	// specific number, so nothing can collide with a concurrent run.
+	listener, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
-		t.Skipf("Port 19914 already in use: %v", err)
+		t.Fatalf("listen: %v", err)
 	}
 
 	testServer := &http.Server{
@@ -1236,9 +1230,11 @@ func TestHandleShutdown_SignalHandling(t *testing.T) {
 func TestHandleShutdown_ShutdownError(t *testing.T) {
 	// Create a test server with local state
 	mux := http.NewServeMux()
-	listener, err := net.Listen("tcp", ":19915")
+	// Bind an ephemeral port: the test needs a listening socket, not a
+	// specific number, so nothing can collide with a concurrent run.
+	listener, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
-		t.Skipf("Port 19915 already in use: %v", err)
+		t.Fatalf("listen: %v", err)
 	}
 	defer func() { _ = listener.Close() }()
 

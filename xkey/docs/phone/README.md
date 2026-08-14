@@ -83,6 +83,6 @@ phone:
 
 ## See Also
 
-- [xkey Phone Backend](backend.md) - Full phone backend reference
+- [xkey Phone Backend](backend/README.md) - Full phone backend reference
 - [xkey Architecture](../architecture.md) - Component design
 - [BLE Documentation](../ble/README.md) - BLE transport details

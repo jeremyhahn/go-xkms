@@ -40,6 +40,12 @@ type credentialStrategyResponse struct {
 	AutoUnseal bool   `json:"auto_unseal"`
 }
 
+// credentialListResponse is the server's reply to a credential listing. It
+// carries names only; values never cross the seal boundary.
+type credentialListResponse struct {
+	Names []string `json:"names"`
+}
+
 // credentialCmd is the top-level command for managing backend credentials.
 var credentialCmd = &cobra.Command{
 	Use:   "credential",
@@ -52,7 +58,12 @@ operational mode.
 
 Subcommands:
   submit    Submit a backend credential
-  strategy  Check the configured credential strategy`,
+  list      List the names of the credentials the server holds
+  strategy  Check the configured credential strategy
+
+There is no separate "rotate" verb: rotation is submitting a new value for an
+existing name, which "submit" already does. A credential value has no read
+path out of the server, so nothing is lost by replacing one in place.`,
 }
 
 // credentialSubmitCmd submits a backend credential.
@@ -69,6 +80,23 @@ Example:
     --tls-cert so.pem --tls-key so-key.pem --tls-ca ca.pem \
     --name "pkcs11-user-pin" --value "user123"`,
 	RunE: runCredentialSubmit,
+}
+
+// credentialListCmd lists the credentials the server already holds.
+var credentialListCmd = &cobra.Command{
+	Use:     "list",
+	Aliases: []string{"ls"},
+	Short:   "List the credentials the server holds",
+	Long: `List the names of the backend credentials the server has been given.
+
+Names only — a credential value has no read path out of the server. Use this
+to see which credentials are still outstanding before a backend can unseal.
+mTLS authentication is required.
+
+Example:
+  xkmsctl credential list --server https://xkmsd:8443 \
+    --tls-cert so.pem --tls-key so-key.pem --tls-ca ca.pem`,
+	RunE: runCredentialList,
 }
 
 // credentialStrategyCmd checks the credential strategy.
@@ -189,6 +217,54 @@ func runCredentialStrategy(cmd *cobra.Command, args []string) error {
 	}
 }
 
+// runCredentialList lists the names of the credentials the server holds.
+func runCredentialList(cmd *cobra.Command, args []string) error {
+	cfg := getConfig()
+	if cfg.Server == "" {
+		return ErrServerRequired
+	}
+
+	httpClient, err := createInitHTTPClient(cfg, false)
+	if err != nil {
+		return err
+	}
+
+	printer := NewPrinter(cfg.OutputFormat, os.Stdout)
+
+	printVerbose("Listing submitted credentials")
+
+	url := cfg.Server + "/api/v1/credentials"
+	resp, err := doInitRequest(httpClient, http.MethodGet, url, nil)
+	if err != nil {
+		return err
+	}
+
+	body, err := checkServerResponse(resp)
+	if err != nil {
+		return err
+	}
+
+	var result credentialListResponse
+	if err := json.Unmarshal(body, &result); err != nil {
+		return &WrappedDetailError{Sentinel: ErrHTTPRequestFailed, Detail: "failed to parse list response", Err: err}
+	}
+
+	switch printer.format {
+	case OutputFormatJSON:
+		return printer.PrintJSON(map[string]interface{}{"names": result.Names})
+	default:
+		if len(result.Names) == 0 {
+			_, _ = fmt.Fprintf(printer.writer, "No credentials submitted.\n")
+			return nil
+		}
+		_, _ = fmt.Fprintf(printer.writer, "Submitted credentials:\n")
+		for _, name := range result.Names {
+			_, _ = fmt.Fprintf(printer.writer, "  %s\n", name)
+		}
+		return nil
+	}
+}
+
 func init() {
 	// credential submit flags
 	credentialSubmitCmd.Flags().String("name", "", "credential name (e.g., pkcs11-user-pin)")
@@ -197,4 +273,5 @@ func init() {
 	// Build subcommand tree
 	credentialCmd.AddCommand(credentialSubmitCmd)
 	credentialCmd.AddCommand(credentialStrategyCmd)
+	credentialCmd.AddCommand(credentialListCmd)
 }

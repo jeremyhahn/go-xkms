@@ -19,14 +19,14 @@ import (
 	"testing"
 )
 
-// TestAutoResolver_PKCS11InitializationPath tests PKCS11 initialization when available
+// TestAutoResolver_PKCS11InitializationPath proves the auto resolver survives a
+// PKCS#11 module that cannot be loaded: it must fall back to software rather
+// than failing construction.
+//
+// The module path is deliberately nonexistent, so this never touches a real
+// HSM or the host's token store.
 func TestAutoResolver_PKCS11InitializationPath(t *testing.T) {
-	// This test only runs when pkcs11 build tag is enabled
-	// and pkcs11Available() returns true
-
-	if !pkcs11Available() {
-		t.Skip("PKCS11 not available")
-	}
+	requirePKCS11Compiled(t)
 
 	// Test that auto resolver attempts PKCS11 initialization
 	cfg := &Config{
@@ -60,11 +60,10 @@ func TestAutoResolver_PKCS11InitializationPath(t *testing.T) {
 	}
 }
 
-// TestAutoResolver_PKCS11CloseOnInitFailure tests that failed PKCS11 resolvers are closed
+// TestAutoResolver_PKCS11CloseOnInitFailure tests that failed PKCS#11 resolvers
+// are closed rather than leaked.
 func TestAutoResolver_PKCS11CloseOnInitFailure(t *testing.T) {
-	if !pkcs11Available() {
-		t.Skip("PKCS11 not available")
-	}
+	requirePKCS11Compiled(t)
 
 	// Test with invalid config to trigger initialization failure
 	cfg := &Config{
@@ -84,5 +83,17 @@ func TestAutoResolver_PKCS11CloseOnInitFailure(t *testing.T) {
 	// Verify fallback to software works
 	if !resolver.Available() {
 		t.Error("Should be available via software fallback")
+	}
+}
+
+// requirePKCS11Compiled asserts the pkcs11 build tag really selected the real
+// implementation. This file only compiles under that tag, so a false here
+// means the tag no longer selects pkcs11.go and these tests would silently
+// stop exercising the PKCS#11 branch of newAutoResolver.
+func requirePKCS11Compiled(t *testing.T) {
+	t.Helper()
+
+	if !pkcs11Available() {
+		t.Fatal("the pkcs11 build tag must select the real PKCS#11 implementation")
 	}
 }

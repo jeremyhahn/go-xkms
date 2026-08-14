@@ -93,16 +93,40 @@ import (
 // CA's private key. This allows the CA to be used directly in contexts that
 // require a crypto.Signer, such as certificate signing or TLS configuration.
 //
+// TrustedCA is composed of a set of smaller, cohesive sub-interfaces (CALifecycle,
+// CAIssuer, CATrustChain, CARevoker, CATLSConfig, CATrustPools, CAStores,
+// CAIdentityInfo, CASigningIdentity, CACertificateAccessor, CAObjectStore,
+// CAChainImporter, CACrossSigner, CAAttestation, CATCGEnrollment). Consumers
+// that only need one slice of CA behavior should depend on the narrower
+// sub-interface instead of the full TrustedCA surface; this composition is
+// purely organizational and does not change TrustedCA's method set.
+//
 // All methods are thread-safe and can be called concurrently from multiple
 // goroutines. The implementation uses the underlying keystore's synchronization
 // mechanisms to ensure safe concurrent access.
 type TrustedCA interface {
 	crypto.Signer
 
-	// ========================================================================
-	// Lifecycle Operations
-	// ========================================================================
+	CALifecycle
+	CAIssuer
+	CATrustChain
+	CARevoker
+	CATLSConfig
+	CATrustPools
+	CAStores
+	CAIdentityInfo
+	CASigningIdentity
+	CACertificateAccessor
+	CAObjectStore
+	CAChainImporter
+	CACrossSigner
+	CAAttestation
+	CATCGEnrollment
+}
 
+// CALifecycle initializes and reports on the CA's on-disk/keystore-backed
+// operational state, the prerequisite for every other CA operation.
+type CALifecycle interface {
 	// Init initializes a new Certificate Authority by generating the root
 	// and/or intermediate certificates based on the CA configuration.
 	//
@@ -144,11 +168,11 @@ type TrustedCA interface {
 	//
 	// Thread-safe: Yes
 	IsInitialized() bool
+}
 
-	// ========================================================================
-	// CSR Operations
-	// ========================================================================
-
+// CAIssuer creates CSRs and turns them into issued certificates, either
+// directly or via a named profile; it is the CA's certificate-minting surface.
+type CAIssuer interface {
 	// SignCSR signs a certificate signing request and returns the issued certificate.
 	//
 	// The CSR must be provided in PEM-encoded format. The SignOptions parameter
@@ -181,10 +205,6 @@ type TrustedCA interface {
 	//
 	// Thread-safe: Yes
 	CreateCSR(ctx context.Context, request *CertificateRequest) ([]byte, error)
-
-	// ========================================================================
-	// Certificate Issuance
-	// ========================================================================
 
 	// IssueCertificate generates a new key pair and issues a certificate.
 	//
@@ -219,11 +239,12 @@ type TrustedCA interface {
 	//
 	// Thread-safe: Yes
 	IssueCertificateWithProfile(ctx context.Context, request *CertificateRequest, profile string) (*IssuedCertificate, error)
+}
 
-	// ========================================================================
-	// Trust Chain Operations
-	// ========================================================================
-
+// CATrustChain retrieves and verifies the CA's own certificate chain: the
+// CA's certificate, its PEM bundle (whole or filtered), chain-walking
+// helpers, and full certificate verification against that chain.
+type CATrustChain interface {
 	// CACertificate returns the CA's certificate.
 	//
 	// For a root CA, this returns the self-signed root certificate.
@@ -246,6 +267,9 @@ type TrustedCA interface {
 	//
 	// Thread-safe: Yes
 	CABundle() ([]byte, error)
+
+	// CABundleFiltered returns a CA bundle filtered by store type and algorithm.
+	CABundleFiltered(storeType types.StoreType, keyAlgorithm x509.PublicKeyAlgorithm) ([]byte, error)
 
 	// Verify verifies a certificate against the CA's trust chain.
 	//
@@ -270,10 +294,22 @@ type TrustedCA interface {
 	// Thread-safe: Yes
 	Verify(cert *x509.Certificate, xsigner ...crypto.Signer) ([][]*x509.Certificate, error)
 
-	// ========================================================================
-	// Revocation Operations
-	// ========================================================================
+	// TrustedRoot returns the root CA certificate.
+	TrustedRoot() (*x509.Certificate, error)
 
+	// TrustedIntermediate returns the intermediate CA certificate, if any.
+	TrustedIntermediate() (*x509.Certificate, error)
+
+	// RootCertificate walks the chain from childCert to find the root CA.
+	RootCertificate(childCert *x509.Certificate) (*x509.Certificate, error)
+
+	// ParseBundle parses a PEM-encoded certificate bundle.
+	ParseBundle(bundle []byte) ([]*x509.Certificate, error)
+}
+
+// CARevoker marks certificates revoked, reports revocation status, and
+// generates CRLs.
+type CARevoker interface {
 	// Revoke marks a certificate as revoked.
 	//
 	// The serial number identifies the certificate to revoke. The reason
@@ -299,6 +335,9 @@ type TrustedCA interface {
 	// Thread-safe: Yes
 	Revoke(ctx context.Context, serial *big.Int, reason int) error
 
+	// RevokeCert revokes a certificate and optionally deletes its signing key.
+	RevokeCert(ctx context.Context, cert *x509.Certificate, opts RevokeOptions) error
+
 	// GenerateCRL generates a Certificate Revocation List.
 	//
 	// The CRL contains all certificates that have been revoked by this CA.
@@ -322,11 +361,12 @@ type TrustedCA interface {
 	//
 	// Thread-safe: Yes
 	IsRevoked(serial *big.Int) (bool, error)
+}
 
-	// ========================================================================
-	// TLS Helpers
-	// ========================================================================
-
+// CATLSConfig builds tls.Certificate/tls.Config/PEM-bundle values for the
+// CA's own keys, covering client, server, quantum-safe and cross-signed
+// variants.
+type CATLSConfig interface {
 	// TLSCertificate returns a TLS certificate for the given key attributes.
 	//
 	// This retrieves the private key and certificate for the specified key
@@ -395,10 +435,20 @@ type TrustedCA interface {
 	// Thread-safe: Yes
 	QuantumSafeTLSConfig(ctx context.Context, attrs *types.KeyAttributes) (*tls.Config, error)
 
-	// ========================================================================
-	// Trust Pool Builders
-	// ========================================================================
+	// TLSBundle returns a PEM bundle (chain + private key).
+	TLSBundle(ctx context.Context, attrs *types.KeyAttributes) ([]byte, error)
 
+	// TLSBundleWithCrossSigner prepends cross-signed certificates.
+	TLSBundleWithCrossSigner(ctx context.Context, attrs *types.KeyAttributes, xsigner crypto.Signer) ([]byte, error)
+
+	// TLSConfigWithXSigner augments RootCAs with cross-signed certificates.
+	TLSConfigWithXSigner(ctx context.Context, attrs *types.KeyAttributes, xsigner crypto.Signer) (*tls.Config, error)
+}
+
+// CATrustPools builds x509.CertPool values (root, intermediate, full bundle,
+// OS trust store, and their cross-sign-aware variants) for use as
+// tls.Config.RootCAs/ClientCAs.
+type CATrustPools interface {
 	// TrustedRootCertPool returns a certificate pool containing the root CA
 	// certificate that anchors the given certificate's trust chain.
 	//
@@ -443,10 +493,18 @@ type TrustedCA interface {
 	// Thread-safe: Yes
 	OSTrustStore() (*x509.CertPool, error)
 
-	// ========================================================================
-	// Storage Access
-	// ========================================================================
+	// TrustedRootCertPoolWithXSigner is the cross-sign-aware variant of
+	// TrustedRootCertPool.
+	TrustedRootCertPoolWithXSigner(cert *x509.Certificate, xsigner crypto.Signer) (*x509.CertPool, error)
 
+	// TrustedIntermediateCertPoolWithXSigner is the cross-sign-aware variant
+	// of TrustedIntermediateCertPool.
+	TrustedIntermediateCertPoolWithXSigner(cert *x509.Certificate, xsigner crypto.Signer) (*x509.CertPool, error)
+}
+
+// CAStores exposes the CA's underlying keystore and certificate store for
+// advanced operations not covered by the rest of TrustedCA.
+type CAStores interface {
 	// KeyStore returns the underlying keystore.
 	//
 	// This provides direct access to the keystore for advanced operations
@@ -470,11 +528,12 @@ type TrustedCA interface {
 	//
 	// Thread-safe: Yes (the CertStore itself is thread-safe)
 	CertStore() certstore.CertStore
+}
 
-	// ========================================================================
-	// Configuration
-	// ========================================================================
-
+// CAIdentityInfo reports the CA's static and derived configuration: its
+// identity, default algorithms and validity periods, and per-store key
+// attributes, without touching key material.
+type CAIdentityInfo interface {
 	// Config returns the issuing CA identity configuration.
 	//
 	// Returns the Identity of the CA that is configured for issuing
@@ -493,10 +552,35 @@ type TrustedCA interface {
 	// Thread-safe: Yes
 	Identity() string
 
-	// ========================================================================
-	// Signing Identity Accessors
-	// ========================================================================
+	// IssuingIdentity returns a value copy of the Identity this CA uses
+	// to sign certificates (the intermediate identity when configured,
+	// otherwise the root identity). Returns a zero-value Identity when
+	// no identity has been configured so callers can safely read fields
+	// such as Keys without a nil check.
+	IssuingIdentity() Identity
 
+	// CAKeyAttributes returns the KeyAttributes for the CA's signing key.
+	CAKeyAttributes(storeType types.StoreType) (*types.KeyAttributes, error)
+
+	// DefaultKeyAlgorithm returns the CA's default public-key algorithm.
+	DefaultKeyAlgorithm() x509.PublicKeyAlgorithm
+
+	// DefaultSignatureAlgorithm returns the CA's default signature algorithm.
+	DefaultSignatureAlgorithm() x509.SignatureAlgorithm
+
+	// DefaultValidityPeriod returns the default validity in days.
+	DefaultValidityPeriod() int
+
+	// Hash returns the CA's signing hash function.
+	Hash() crypto.Hash
+
+	// IsAutoImportingIssuerCAs reports whether AIA auto-import is enabled.
+	IsAutoImportingIssuerCAs() bool
+}
+
+// CASigningIdentity retrieves the CA's signing key material and performs raw
+// signing operations against it, independent of certificate issuance.
+type CASigningIdentity interface {
 	// Signer returns a crypto.Signer backed by the CA's issuing identity key.
 	Signer(ctx context.Context) (crypto.Signer, error)
 
@@ -510,15 +594,17 @@ type TrustedCA interface {
 	// SignedBlob signs arbitrary data using the CA's signing key.
 	SignedBlob(ctx context.Context, data []byte) ([]byte, error)
 
-	// ========================================================================
-	// Certificate Retrieval & Import
-	// ========================================================================
+	// CASigner returns a crypto.Signer filtered by storeType/algorithm.
+	CASigner(ctx context.Context, storeType types.StoreType, algo x509.PublicKeyAlgorithm) (crypto.Signer, error)
+}
 
-	// Issued reports whether a certificate for the given CN has been issued.
-	Issued(ctx context.Context, cn string) (bool, error)
-
+// CACertificateAccessor reads and writes individual issued certificates by
+// Common Name or KeyAttributes.
+type CACertificateAccessor interface {
 	// Exists reports whether a certificate for cn exists with the specified
-	// public-key algorithm.
+	// public-key algorithm. This is the single existence check: an
+	// algorithm-agnostic variant (Issued) previously sat alongside it, which
+	// meant two ways to ask the same question and no reason to prefer either.
 	Exists(ctx context.Context, cn string, algo x509.PublicKeyAlgorithm) (bool, error)
 
 	// Certificate retrieves a certificate using its KeyAttributes.
@@ -535,27 +621,22 @@ type TrustedCA interface {
 
 	// PEM is a KeyAttributes-keyed alias for CertificatePEM.
 	PEM(ctx context.Context, attrs *types.KeyAttributes) ([]byte, error)
+}
 
-	// ========================================================================
-	// Object Store Helpers
-	// ========================================================================
-
+// CAObjectStore is a raw key/value passthrough to the CA's underlying object
+// store, for blob data that does not fit the certificate/key model.
+type CAObjectStore interface {
 	// Blob returns raw blob data stored in the CA's object store.
 	Blob(key []byte) ([]byte, error)
 
 	// ImportBlob stores raw blob data in the CA's object store.
 	ImportBlob(key, data []byte) error
+}
 
-	// ========================================================================
-	// Trust Chain Extensions
-	// ========================================================================
-
-	// TrustedRoot returns the root CA certificate.
-	TrustedRoot() (*x509.Certificate, error)
-
-	// TrustedIntermediate returns the intermediate CA certificate, if any.
-	TrustedIntermediate() (*x509.Certificate, error)
-
+// CAChainImporter fetches and imports issuer certificates and CRLs
+// discovered via a certificate's AIA/CDP extensions, implementing xkms's
+// AIA-driven root import capability.
+type CAChainImporter interface {
 	// ImportDistributionCRLs downloads and imports CRLs listed in the
 	// certificate's CRLDistributionPoints extension.
 	ImportDistributionCRLs(cert *x509.Certificate) error
@@ -563,25 +644,11 @@ type TrustedCA interface {
 	// ImportIssuingCAs recursively imports issuing CA certificates from the
 	// certificate's AuthorityInformationAccess (AIA) extension.
 	ImportIssuingCAs(ctx context.Context, cert *x509.Certificate) error
+}
 
-	// ParseBundle parses a PEM-encoded certificate bundle.
-	ParseBundle(bundle []byte) ([]*x509.Certificate, error)
-
-	// RootCertificate walks the chain from childCert to find the root CA.
-	RootCertificate(childCert *x509.Certificate) (*x509.Certificate, error)
-
-	// TrustedRootCertPoolWithXSigner is the cross-sign-aware variant of
-	// TrustedRootCertPool.
-	TrustedRootCertPoolWithXSigner(cert *x509.Certificate, xsigner crypto.Signer) (*x509.CertPool, error)
-
-	// TrustedIntermediateCertPoolWithXSigner is the cross-sign-aware variant
-	// of TrustedIntermediateCertPool.
-	TrustedIntermediateCertPoolWithXSigner(cert *x509.Certificate, xsigner crypto.Signer) (*x509.CertPool, error)
-
-	// ========================================================================
-	// Cross-Signing
-	// ========================================================================
-
+// CACrossSigner stores and retrieves cross-signed certificates, implementing
+// xkms's cross-signed root pool capability.
+type CACrossSigner interface {
 	// ImportXSignedCertificate persists a cross-signed certificate.
 	ImportXSignedCertificate(issuerCN string, cert *x509.Certificate) error
 
@@ -598,11 +665,12 @@ type TrustedCA interface {
 	// CrossSignedPEM returns every cross-signed certificate found for the
 	// subject identified by attrs.CN.
 	CrossSignedPEM(attrs *types.KeyAttributes) ([]byte, error)
+}
 
-	// ========================================================================
-	// Attestation (TPM)
-	// ========================================================================
-
+// CAAttestation stores and verifies TPM attestation evidence (quotes, event
+// logs, PCR snapshots, and AK certificates) tied to a key, per xkms's TPM
+// 2.0 attestation ownership.
+type CAAttestation interface {
 	// ImportAttestation stores a TPM attestation blob (quote/event log/PCRs)
 	// together with a CA-produced signature.
 	ImportAttestation(ctx context.Context, akAttrs *types.KeyAttributes, blobType string, data []byte) error
@@ -630,73 +698,37 @@ type TrustedCA interface {
 
 	// VerifyAttestationPCRs checks a previously-stored PCR snapshot blob.
 	VerifyAttestationPCRs(akAttrs *types.KeyAttributes, pcrs []byte) error
+}
 
-	// ========================================================================
-	// TCG Enrollment Verification
-	// ========================================================================
-
+// CATCGEnrollment verifies packed TCG-CSR-IDEVID blobs submitted for TPM
+// device-identity enrollment.
+type CATCGEnrollment interface {
 	// VerifyTCG_CSR_IDevIDBytes verifies a packed TCG-CSR-IDEVID and returns
 	// the MakeCredential challenge components for ActivateCredential.
 	VerifyTCG_CSR_IDevIDBytes(packedCSR []byte, sigAlg x509.SignatureAlgorithm) (blob []byte, secret []byte, plain []byte, err error)
-
-	// ========================================================================
-	// TLS Extensions
-	// ========================================================================
-
-	// TLSBundle returns a PEM bundle (chain + private key).
-	TLSBundle(ctx context.Context, attrs *types.KeyAttributes) ([]byte, error)
-
-	// TLSBundleWithCrossSigner prepends cross-signed certificates.
-	TLSBundleWithCrossSigner(ctx context.Context, attrs *types.KeyAttributes, xsigner crypto.Signer) ([]byte, error)
-
-	// TLSConfigWithXSigner augments RootCAs with cross-signed certificates.
-	TLSConfigWithXSigner(ctx context.Context, attrs *types.KeyAttributes, xsigner crypto.Signer) (*tls.Config, error)
-
-	// ========================================================================
-	// Configuration & Metadata
-	// ========================================================================
-
-	// CAKeyAttributes returns the KeyAttributes for the CA's signing key.
-	CAKeyAttributes(storeType types.StoreType) (*types.KeyAttributes, error)
-
-	// CASigner returns a crypto.Signer filtered by storeType/algorithm.
-	CASigner(ctx context.Context, storeType types.StoreType, algo x509.PublicKeyAlgorithm) (crypto.Signer, error)
-
-	// CAConfig returns the flat CAConfig supplied at construction time.
-	CAConfig() CAConfig
-
-	// DefaultKeyAlgorithm returns the CA's default public-key algorithm.
-	DefaultKeyAlgorithm() x509.PublicKeyAlgorithm
-
-	// DefaultSignatureAlgorithm returns the CA's default signature algorithm.
-	DefaultSignatureAlgorithm() x509.SignatureAlgorithm
-
-	// DefaultValidityPeriod returns the default validity in days.
-	DefaultValidityPeriod() int
-
-	// Hash returns the CA's signing hash function.
-	Hash() crypto.Hash
-
-	// IssuingIdentity returns a value copy of the Identity this CA uses
-	// to sign certificates (the intermediate identity when configured,
-	// otherwise the root identity). Returns a zero-value Identity when
-	// no identity has been configured so callers can safely read fields
-	// such as Keys without a nil check.
-	IssuingIdentity() Identity
-
-	// IsAutoImportingIssuerCAs reports whether AIA auto-import is enabled.
-	IsAutoImportingIssuerCAs() bool
-
-	// ========================================================================
-	// Extended Revocation & Filtered Bundle
-	// ========================================================================
-
-	// CABundleFiltered returns a CA bundle filtered by store type and algorithm.
-	CABundleFiltered(storeType types.StoreType, keyAlgorithm x509.PublicKeyAlgorithm) ([]byte, error)
-
-	// RevokeCert revokes a certificate and optionally deletes its signing key.
-	RevokeCert(ctx context.Context, cert *x509.Certificate, opts RevokeOptions) error
 }
+
+// Compile-time assertions that *CA satisfies TrustedCA and every
+// sub-interface it composes. These pin the composition so an edit to
+// TrustedCA's method set cannot silently drop a sub-interface's methods.
+var (
+	_ TrustedCA             = (*CA)(nil)
+	_ CALifecycle           = (*CA)(nil)
+	_ CAIssuer              = (*CA)(nil)
+	_ CATrustChain          = (*CA)(nil)
+	_ CARevoker             = (*CA)(nil)
+	_ CATLSConfig           = (*CA)(nil)
+	_ CATrustPools          = (*CA)(nil)
+	_ CAStores              = (*CA)(nil)
+	_ CAIdentityInfo        = (*CA)(nil)
+	_ CASigningIdentity     = (*CA)(nil)
+	_ CACertificateAccessor = (*CA)(nil)
+	_ CAObjectStore         = (*CA)(nil)
+	_ CAChainImporter       = (*CA)(nil)
+	_ CACrossSigner         = (*CA)(nil)
+	_ CAAttestation         = (*CA)(nil)
+	_ CATCGEnrollment       = (*CA)(nil)
+)
 
 // ProfileProvider defines the interface for certificate profile providers.
 //

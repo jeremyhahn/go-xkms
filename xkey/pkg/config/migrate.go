@@ -213,6 +213,9 @@ func migrateCLIConfig(cfg *Config, path string) error {
 	if v.IsSet("phone.attestation_policy") {
 		cfg.Phone.AttestationPolicy = v.GetString("phone.attestation_policy")
 	}
+	if v.IsSet("phone.tpm_enrollment") {
+		cfg.Phone.TPMEnrollment = v.GetBool("phone.tpm_enrollment")
+	}
 
 	// XKMSD section.
 	if v.IsSet("xkmsd.address") {

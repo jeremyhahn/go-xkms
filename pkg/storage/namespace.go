@@ -37,6 +37,15 @@ func CertChainPath(id string) string {
 	return "certs/" + id + "-chain.pem"
 }
 
+// MetadataPath returns the storage path for a key's metadata record with
+// the given ID. Metadata (e.g. the Exportable attribute) is written through
+// the same Backend as the key material itself -- see SaveKeyMetadata -- so
+// it inherits whatever barrier encryption protects the key it describes.
+// The path follows the convention: meta/{id}.json
+func MetadataPath(id string) string {
+	return "meta/" + id + ".json"
+}
+
 // TenantKeyPath returns a tenant-namespaced key path.
 // When tenantID is empty, returns the standard KeyPath (backward compatible).
 func TenantKeyPath(tenantID, id string) string {
@@ -64,6 +73,15 @@ func TenantCertChainPath(tenantID, id string) string {
 	return tenantID + "/certs/" + id + "-chain.pem"
 }
 
+// TenantMetadataPath returns a tenant-namespaced metadata path.
+// When tenantID is empty, returns the standard MetadataPath (backward compatible).
+func TenantMetadataPath(tenantID, id string) string {
+	if tenantID == "" {
+		return MetadataPath(id)
+	}
+	return tenantID + "/meta/" + id + ".json"
+}
+
 // TenantKeyPrefix returns the key listing prefix for a tenant.
 // When tenantID is empty, returns "keys/" (backward compatible).
 func TenantKeyPrefix(tenantID string) string {
@@ -89,16 +107,24 @@ type ErrInvalidTenantID struct {
 
 // Error returns the error message for an invalid tenant ID.
 func (e *ErrInvalidTenantID) Error() string {
-	return fmt.Sprintf("invalid tenant ID: %q (must not contain path separators or '..')", e.TenantID)
+	return fmt.Sprintf("invalid tenant ID: %q (must not contain path separators, '..', or ':')", e.TenantID)
 }
 
 // ValidateTenantID validates a tenant identifier.
-// Returns error if the tenant ID contains path traversal characters.
+//
+// It rejects path traversal characters, and also ':' — the separator
+// types.KeyAttributes.ID() uses to join the tenant, partition, store, key type,
+// CN and algorithm into a storage identifier. That identifier is already
+// ambiguous at five segments (a leading token may be a tenant or a partition),
+// so a tenant ID carrying its own colon changes the segment count of every key
+// it prefixes and makes the reading of the fields after it wrong. Rejecting the
+// separator at the boundary is what keeps the identifier parseable.
 func ValidateTenantID(tenantID string) error {
 	if tenantID == "" {
 		return nil // empty = single-tenant, always valid
 	}
-	if strings.Contains(tenantID, "..") || strings.Contains(tenantID, "/") || strings.Contains(tenantID, "\\") {
+	if strings.Contains(tenantID, "..") || strings.Contains(tenantID, "/") ||
+		strings.Contains(tenantID, "\\") || strings.Contains(tenantID, ":") {
 		return &ErrInvalidTenantID{TenantID: tenantID}
 	}
 	return nil

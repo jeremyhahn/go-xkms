@@ -20,6 +20,7 @@ import (
 	"fmt"
 	"net/http"
 	"os/exec"
+	"strings"
 	"testing"
 	"time"
 )
@@ -29,10 +30,22 @@ func nodeContainer(nodeIdx int) string {
 	return fmt.Sprintf("cluster-node%d", nodeIdx)
 }
 
-// dockerAvailable reports whether the docker CLI + daemon socket are reachable
-// from inside the test container (required for the chaos tests).
-func dockerAvailable() bool {
-	return exec.Command("docker", "version", "--format", "{{.Server.Version}}").Run() == nil
+// requireDocker asserts that the docker CLI and the daemon socket are reachable
+// from inside the test container.
+//
+// The cluster harness (test/integration/cluster/Dockerfile.test and the `test`
+// service in docker-compose.yml) installs the docker client and bind-mounts
+// /var/run/docker.sock precisely so the chaos tests can kill and restart nodes.
+// If docker is unreachable the harness is broken, not the environment, so this
+// is a hard failure rather than a reason to declare the chaos coverage passed.
+func requireDocker(t *testing.T) {
+	t.Helper()
+	out, err := exec.Command("docker", "version", "--format", "{{.Server.Version}}").CombinedOutput()
+	if err != nil {
+		t.Fatalf("docker control unavailable: %v (%s); the cluster harness must mount /var/run/docker.sock "+
+			"and provide the docker CLI - see test/integration/cluster/Dockerfile.test",
+			err, strings.TrimSpace(string(out)))
+	}
 }
 
 // dockerAction runs `docker <action> <container>` and fails the test on error.
@@ -86,9 +99,7 @@ func restoreCluster(t *testing.T, ctx context.Context, nodes [3]string, containe
 // re-elects a new leader and continues to serve crypto operations on the
 // surviving nodes using key material that was replicated before the failure.
 func TestCluster_LeaderFailover(t *testing.T) {
-	if !dockerAvailable() {
-		t.Skip("docker control unavailable in this environment; chaos test requires the docker socket")
-	}
+	requireDocker(t)
 	nodes := nodeURLs(t)
 	ctx := context.Background()
 	waitAllReady(t, ctx, nodes)
@@ -135,9 +146,7 @@ func TestCluster_LeaderFailover(t *testing.T) {
 // surviving majority, then restarts the follower and asserts it rejoins and
 // catches up — the state written while it was down becomes visible on it.
 func TestCluster_NodeRestartRejoin(t *testing.T) {
-	if !dockerAvailable() {
-		t.Skip("docker control unavailable in this environment; chaos test requires the docker socket")
-	}
+	requireDocker(t)
 	nodes := nodeURLs(t)
 	ctx := context.Background()
 	waitAllReady(t, ctx, nodes)

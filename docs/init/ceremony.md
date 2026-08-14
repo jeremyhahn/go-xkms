@@ -171,57 +171,85 @@ xkmsctl init claim-cert \
 
 ## Shamir Share Claim Protocol
 
-After claiming their certificate, each SO claims their sealed Shamir share. This step requires mTLS authentication with the newly obtained certificate.
+After claiming their certificate, each SO claims their sealed Shamir share.
+This is a **two round-trip challenge-response over mTLS**, mirroring the
+certificate claim. The username alone proves nothing: the server derives the
+caller's certificate thumbprint from the verified TLS peer chain and matches it
+against the thumbprint recorded for that officer at enrollment. A caller who
+knows an enrolled officer's username but cannot present that officer's
+certificate is refused and receives no share bytes.
 
 ### Protocol Flow
 
 ```
 SO (xkmsctl)                              Server (xkmsd)
     |                                          |
-    |-- claim-share(mTLS cert, username) ----->|
+    |-- claim-share/begin(username) ---------->|
+    |     [mTLS: officer certificate]          |
     |                                          |
-    |   verify mTLS client cert against CA     |
-    |   look up sealed share for username      |
+    |   derive thumbprint from peer cert       |
+    |   match against enrolled officer record  |
+    |   refuse if absent or mismatched         |
+    |   mint single-use nonce (5 min TTL)      |
     |                                          |
-    |<---- sealed share (encrypted blob) ------|
+    |<---- nonce ------------------------------|
     |                                          |
-    |   unseal with SO private key             |
+    |   sign nonce with officer private key    |
+    |                                          |
+    |-- claim-share/complete(nonce, sig) ----->|
+    |     [mTLS: officer certificate]          |
+    |                                          |
+    |   re-verify thumbprint                   |
+    |   verify signature over the nonce        |
+    |   burn the nonce                         |
+    |   release the share exactly once         |
+    |   destroy the sealed enclave             |
+    |                                          |
+    |<---- share_index + share ----------------|
+    |                                          |
     |   store share in local secure storage    |
     |   zeroize plaintext share from memory    |
-    |                                          |
-    |-- ack ---------------------------------->|
-    |                                          |
-    |   delete sealed share from server        |
-    |   zeroize server-side copy               |
-    |                                          |
 ```
+
+### Security Properties
+
+| Property | Enforcement |
+|----------|-------------|
+| Identity binding | Caller certificate thumbprint (`ceremony.CertThumbprint`, hex SHA-256 of the leaf DER) must equal the officer's enrolment thumbprint. |
+| Thumbprint integrity | The thumbprint is derived from the TLS peer chain only. It is never read from the request body: the wire types tag it `json:"-"`. |
+| Key possession | The nonce must be signed by the private key matching the officer's enrolled public key. |
+| Replay resistance | Each nonce is single-use and expires in 5 minutes; a re-`begin` supersedes the previous nonce. |
+| Exactly-once release | The sealed enclave is destroyed on the first successful claim. |
+| No partial leakage | Every refusal path returns before any share bytes are written to the response. |
 
 ### Step-by-Step
 
-1. SO connects with mTLS using their newly claimed certificate:
+1. SO connects with mTLS using their newly claimed certificate. The server is
+   still pinned by the SPKI pin published by the initialization ceremony:
 
 ```bash
 xkmsctl init claim-share \
   --server https://xkmsd.example.com:8443 \
-  --tls-cert admin2.pem \
-  --tls-key admin2-key.pem \
-  --tls-ca ca.pem \
-  --username admin2@example.com
+  --spki-pin <SPKI-PIN> \
+  --cert admin2.pem \
+  --key admin2-key.pem \
+  --username admin2@example.com \
+  --output admin2-share.json
 ```
 
-2. Server verifies the client certificate against the CA.
+2. `claim-share/begin` verifies the presented certificate's thumbprint against
+   the officer registry and returns a single-use nonce.
 
-3. Server looks up the sealed share for the authenticated username.
+3. The client signs the raw nonce bytes with the private key matching the
+   certificate.
 
-4. Server sends the sealed share (encrypted with the SO's public key).
+4. `claim-share/complete` re-verifies the thumbprint, verifies the signature,
+   burns the nonce, and releases the share exactly once.
 
-5. Client decrypts the share with their private key.
+5. Client stores the share in local secure storage (e.g.
+   `xkey share store barrier <share>`).
 
-6. Client stores the share in local secure storage (e.g., `xkey share store barrier <share>`).
-
-7. Client zeroizes the plaintext share from memory.
-
-8. Client sends acknowledgment to server.
+6. Client zeroizes the plaintext share from memory.
 
 9. Server deletes the sealed share and zeroizes its copy.
 

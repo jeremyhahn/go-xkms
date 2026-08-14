@@ -76,6 +76,8 @@ func TestClusterCmd_Subcommands(t *testing.T) {
 	expected := map[string]bool{
 		"status":  false,
 		"members": false,
+		"add":     false,
+		"remove":  false,
 	}
 	for _, cmd := range subcommands {
 		if _, ok := expected[cmd.Name()]; ok {
@@ -87,8 +89,8 @@ func TestClusterCmd_Subcommands(t *testing.T) {
 			t.Errorf("expected subcommand %q not found", name)
 		}
 	}
-	if len(subcommands) != 2 {
-		t.Errorf("expected 2 subcommands, got %d", len(subcommands))
+	if len(subcommands) != 4 {
+		t.Errorf("expected 4 subcommands, got %d", len(subcommands))
 	}
 }
 

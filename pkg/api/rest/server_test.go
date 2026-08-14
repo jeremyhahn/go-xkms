@@ -102,8 +102,9 @@ func TestNewServer_NilConfig(t *testing.T) {
 // TestNewServer_NoBackends tests that NewServer returns error with no backends
 func TestNewServer_NoBackends(t *testing.T) {
 	cfg := &Config{
-		Port:     8443,
-		Backends: map[string]xkms.Backend{},
+		Authenticator: auth.NewNoOpAuthenticator(),
+		Port:          8443,
+		Backends:      map[string]xkms.Backend{},
 	}
 
 	server, err := NewServer(cfg)
@@ -117,6 +118,7 @@ func TestNewServer_Defaults(t *testing.T) {
 	ks := newMockKeyStore()
 
 	cfg := &Config{
+		Authenticator: auth.NewNoOpAuthenticator(),
 		Backends: map[string]xkms.Backend{
 			"test": ks,
 		},
@@ -135,7 +137,8 @@ func TestNewServer_CustomPort(t *testing.T) {
 	ks := newMockKeyStore()
 
 	cfg := &Config{
-		Port: 9000,
+		Authenticator: auth.NewNoOpAuthenticator(),
+		Port:          9000,
 		Backends: map[string]xkms.Backend{
 			"test": ks,
 		},
@@ -154,6 +157,7 @@ func TestNewServer_WithLogger(t *testing.T) {
 	log := testLogger()
 
 	cfg := &Config{
+		Authenticator: auth.NewNoOpAuthenticator(),
 		Backends: map[string]xkms.Backend{
 			"test": ks,
 		},
@@ -189,6 +193,7 @@ func TestNewServer_WithWebAuthn(t *testing.T) {
 	ks := newMockKeyStore()
 
 	cfg := &Config{
+		Authenticator: auth.NewNoOpAuthenticator(),
 		Backends: map[string]xkms.Backend{
 			"test": ks,
 		},
@@ -214,6 +219,7 @@ func TestNewServer_WithInvalidWebAuthn(t *testing.T) {
 	ks := newMockKeyStore()
 
 	cfg := &Config{
+		Authenticator: auth.NewNoOpAuthenticator(),
 		Backends: map[string]xkms.Backend{
 			"test": ks,
 		},
@@ -235,6 +241,7 @@ func TestNewServer_WithTimeouts(t *testing.T) {
 	ks := newMockKeyStore()
 
 	cfg := &Config{
+		Authenticator: auth.NewNoOpAuthenticator(),
 		Backends: map[string]xkms.Backend{
 			"test": ks,
 		},
@@ -256,6 +263,7 @@ func TestServer_SetHealthChecker(t *testing.T) {
 	ks := newMockKeyStore()
 
 	cfg := &Config{
+		Authenticator: auth.NewNoOpAuthenticator(),
 		Backends: map[string]xkms.Backend{
 			"test": ks,
 		},
@@ -275,6 +283,7 @@ func TestSetupRouter_HealthEndpoints(t *testing.T) {
 	ks := newMockKeyStore()
 
 	cfg := &Config{
+		Authenticator: auth.NewNoOpAuthenticator(),
 		Backends: map[string]xkms.Backend{
 			"test": ks,
 		},
@@ -298,6 +307,7 @@ func TestSetupRouter_LivenessProbe(t *testing.T) {
 	ks := newMockKeyStore()
 
 	cfg := &Config{
+		Authenticator: auth.NewNoOpAuthenticator(),
 		Backends: map[string]xkms.Backend{
 			"test": ks,
 		},
@@ -320,6 +330,7 @@ func TestSetupRouter_ReadinessProbe(t *testing.T) {
 	ks := newMockKeyStore()
 
 	cfg := &Config{
+		Authenticator: auth.NewNoOpAuthenticator(),
 		Backends: map[string]xkms.Backend{
 			"test": ks,
 		},
@@ -342,6 +353,7 @@ func TestSetupRouter_StartupProbe(t *testing.T) {
 	ks := newMockKeyStore()
 
 	cfg := &Config{
+		Authenticator: auth.NewNoOpAuthenticator(),
 		Backends: map[string]xkms.Backend{
 			"test": ks,
 		},
@@ -364,6 +376,7 @@ func TestSetupRouter_HealthHead(t *testing.T) {
 	ks := newMockKeyStore()
 
 	cfg := &Config{
+		Authenticator: auth.NewNoOpAuthenticator(),
 		Backends: map[string]xkms.Backend{
 			"test": ks,
 		},
@@ -386,6 +399,7 @@ func TestSetupRouter_WebAuthnRoutes(t *testing.T) {
 	ks := newMockKeyStore()
 
 	cfg := &Config{
+		Authenticator: auth.NewNoOpAuthenticator(),
 		Backends: map[string]xkms.Backend{
 			"test": ks,
 		},
@@ -436,6 +450,7 @@ func TestSetupRouter_WebAuthnNotMountedWithoutConfig(t *testing.T) {
 	ks := newMockKeyStore()
 
 	cfg := &Config{
+		Authenticator: auth.NewNoOpAuthenticator(),
 		Backends: map[string]xkms.Backend{
 			"test": ks,
 		},
@@ -493,27 +508,56 @@ func TestSetupRouter_APIRoutes(t *testing.T) {
 	})
 }
 
-// TestSetupRouter_CORSMiddleware tests that CORS middleware is applied
+// TestSetupRouter_CORSMiddleware tests the router's CORS behavior: disabled
+// (no headers) by default, headers emitted only when an allowlist is
+// configured.
 func TestSetupRouter_CORSMiddleware(t *testing.T) {
 	ks := newMockKeyStore()
 
-	cfg := &Config{
-		Backends: map[string]xkms.Backend{
-			"test": ks,
-		},
-		Logger: testLogger(),
-	}
+	t.Run("Disabled by default", func(t *testing.T) {
+		cfg := &Config{
+			Authenticator: auth.NewNoOpAuthenticator(),
+			Backends: map[string]xkms.Backend{
+				"test": ks,
+			},
+			Logger: testLogger(),
+		}
 
-	server, err := NewServer(cfg)
-	require.NoError(t, err)
+		server, err := NewServer(cfg)
+		require.NoError(t, err)
 
-	req := httptest.NewRequest(http.MethodOptions, "/health", nil)
-	w := httptest.NewRecorder()
+		req := httptest.NewRequest(http.MethodGet, "/health", nil)
+		req.Header.Set("Origin", "https://app.example")
+		w := httptest.NewRecorder()
 
-	server.server.Handler.ServeHTTP(w, req)
+		server.server.Handler.ServeHTTP(w, req)
 
-	assert.Equal(t, http.StatusOK, w.Code)
-	assert.Equal(t, "*", w.Header().Get("Access-Control-Allow-Origin"))
+		assert.Equal(t, http.StatusOK, w.Code)
+		assert.Empty(t, w.Header().Get("Access-Control-Allow-Origin"))
+	})
+
+	t.Run("Configured allowlist emits headers", func(t *testing.T) {
+		cfg := &Config{
+			Authenticator: auth.NewNoOpAuthenticator(),
+			Backends: map[string]xkms.Backend{
+				"test": ks,
+			},
+			Logger: testLogger(),
+			CORS:   &CORSOptions{AllowedOrigins: []string{"https://app.example"}},
+		}
+
+		server, err := NewServer(cfg)
+		require.NoError(t, err)
+
+		req := httptest.NewRequest(http.MethodOptions, "/health", nil)
+		req.Header.Set("Origin", "https://app.example")
+		w := httptest.NewRecorder()
+
+		server.server.Handler.ServeHTTP(w, req)
+
+		assert.Equal(t, http.StatusNoContent, w.Code)
+		assert.Equal(t, "https://app.example", w.Header().Get("Access-Control-Allow-Origin"))
+	})
 }
 
 // TestSetupRouter_CorrelationMiddleware tests that correlation middleware is applied
@@ -521,6 +565,7 @@ func TestSetupRouter_CorrelationMiddleware(t *testing.T) {
 	ks := newMockKeyStore()
 
 	cfg := &Config{
+		Authenticator: auth.NewNoOpAuthenticator(),
 		Backends: map[string]xkms.Backend{
 			"test": ks,
 		},
@@ -557,6 +602,7 @@ func TestWebAuthnStores_IntegrationWithServer(t *testing.T) {
 	ks := newMockKeyStore()
 
 	cfg := &Config{
+		Authenticator: auth.NewNoOpAuthenticator(),
 		Backends: map[string]xkms.Backend{
 			"test": ks,
 		},
@@ -583,6 +629,7 @@ func TestWebAuthnRoutes_BeginRegistration(t *testing.T) {
 	ks := newMockKeyStore()
 
 	cfg := &Config{
+		Authenticator: auth.NewNoOpAuthenticator(),
 		Backends: map[string]xkms.Backend{
 			"test": ks,
 		},
@@ -656,6 +703,7 @@ func TestWebAuthnRoutes_RegistrationStatus(t *testing.T) {
 	ks := newMockKeyStore()
 
 	cfg := &Config{
+		Authenticator: auth.NewNoOpAuthenticator(),
 		Backends: map[string]xkms.Backend{
 			"test": ks,
 		},
@@ -704,6 +752,7 @@ func TestWebAuthnRoutes_BeginLogin(t *testing.T) {
 	ks := newMockKeyStore()
 
 	cfg := &Config{
+		Authenticator: auth.NewNoOpAuthenticator(),
 		Backends: map[string]xkms.Backend{
 			"test": ks,
 		},
@@ -750,6 +799,7 @@ func TestWebAuthnRoutes_FinishRegistration(t *testing.T) {
 	ks := newMockKeyStore()
 
 	cfg := &Config{
+		Authenticator: auth.NewNoOpAuthenticator(),
 		Backends: map[string]xkms.Backend{
 			"test": ks,
 		},
@@ -791,6 +841,7 @@ func TestWebAuthnRoutes_FinishLogin(t *testing.T) {
 	ks := newMockKeyStore()
 
 	cfg := &Config{
+		Authenticator: auth.NewNoOpAuthenticator(),
 		Backends: map[string]xkms.Backend{
 			"test": ks,
 		},
@@ -832,6 +883,7 @@ func TestServer_Version(t *testing.T) {
 	ks := newMockKeyStore()
 
 	cfg := &Config{
+		Authenticator: auth.NewNoOpAuthenticator(),
 		Backends: map[string]xkms.Backend{
 			"test": ks,
 		},
@@ -858,6 +910,7 @@ func TestServer_DefaultVersion(t *testing.T) {
 	ks := newMockKeyStore()
 
 	cfg := &Config{
+		Authenticator: auth.NewNoOpAuthenticator(),
 		Backends: map[string]xkms.Backend{
 			"test": ks,
 		},

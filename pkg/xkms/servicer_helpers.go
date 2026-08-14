@@ -25,6 +25,7 @@ import (
 
 	"github.com/jeremyhahn/go-xkms/pkg/storage"
 	"github.com/jeremyhahn/go-xkms/pkg/types"
+	"strings"
 )
 
 // resolveBackend returns the backend for the given name, or the default backend
@@ -115,17 +116,90 @@ func algorithmString(attrs *types.KeyAttributes) string {
 	return ""
 }
 
-// parseHash converts a hash algorithm name string to a crypto.Hash value.
-// Returns crypto.SHA256 as the default if the input is empty or unrecognized.
-func parseHash(hash string) crypto.Hash {
+// ResolveHash converts a caller-supplied hash algorithm name to a crypto.Hash.
+//
+// An empty name selects the SHA-256 default, which is the documented behaviour
+// for a request that does not specify one. A name that is present but does not
+// resolve — misspelled, not linked into this binary, or one of the
+// collision-broken digests the weak-hash policy refuses — is an error.
+//
+// The sentinel name "NONE" (case-insensitive) resolves to crypto.Hash(0) and
+// means "do not hash; the caller has already produced the exact bytes to
+// pad and sign/verify". This is distinct from the empty string, which means
+// "the caller expressed no preference, apply the SHA-256 default": PKCS#11's
+// raw CKM_RSA_PKCS mechanism hands the server a complete DigestInfo that the
+// caller built itself, and the server's job is to apply PKCS#1 v1.5 padding
+// only. Treating an unspecified hash and an explicitly-none hash as the same
+// case previously caused that DigestInfo to be re-hashed with SHA-256 and
+// signed, producing a signature over the wrong bytes with no error raised.
+// Callers that receive crypto.Hash(0) back from this function must not hash
+// with it — passing it to Hash.New() panics — they must use the input bytes
+// directly, which is exactly what rsa.SignPKCS1v15 and rsa.VerifyPKCS1v15 do
+// when given a zero crypto.Hash.
+//
+// It must not substitute a default for a name the caller did supply. Doing so
+// signs, verifies, or encrypts under a digest the caller did not choose and
+// reports success, which is indistinguishable to the caller from having got
+// what it asked for.
+//
+// It is exported because the transports need the same answer the service layer
+// gives. REST, gRPC, QUIC and MCP each used to carry their own hash table, and
+// two of them answered an unresolvable name with SHA-256 and HTTP 200 / OK.
+// Every transport now resolves here, so there is one hash vocabulary, one
+// default, and one refusal in the process. The returned error is an
+// *ErrValidation, which both transports' keyop error maps already render as a
+// client error (HTTP 400 / codes.InvalidArgument).
+func ResolveHash(hash string) (crypto.Hash, error) {
 	if hash == "" {
-		return crypto.SHA256
+		return crypto.SHA256, nil
+	}
+	if strings.EqualFold(hash, "NONE") {
+		return crypto.Hash(0), nil
 	}
 	h := types.ParseHash(hash)
 	if h == 0 {
-		return crypto.SHA256
+		return 0, &ErrValidation{Sentinel: ErrInvalidHashFunction, Detail: "unsupported hash algorithm: " + hash}
 	}
-	return h
+	return h, nil
+}
+
+// oaepBareDigestSizes are the bare digest-size spellings the transports have
+// always accepted for an OAEP hash ("256" meaning SHA-256). They are normalized
+// to canonical names so there is still exactly one hash table in the process.
+var oaepBareDigestSizes = map[string]string{
+	"1":   "SHA-1",
+	"256": "SHA-256",
+	"384": "SHA-384",
+	"512": "SHA-512",
+}
+
+// ResolveOAEPHash resolves the hash for an RSA-OAEP operation.
+//
+// It is ResolveHash plus an unconditional refusal of the collision-broken
+// digests. OAEP has no legacy ciphertexts in this codebase to read back, so the
+// weak-hash escape hatch that exists for signing (crypto.allow_weak_hashes,
+// reported by Config.ComplianceGaps) deliberately does not apply here: a
+// SHA-1 OAEP request is refused even in a deployment that has opted into weak
+// hashes elsewhere.
+//
+// It is exported for the same reason ResolveHash is. The REST transport used to
+// carry its own OAEP hash switch that accepted SHA-1 while gRPC and the service
+// layer refused it, so the same request was encrypted under a broken digest or
+// rejected depending only on which port it arrived on.
+func ResolveOAEPHash(hash string) (crypto.Hash, error) {
+	name := strings.TrimSpace(hash)
+	if canonical, ok := oaepBareDigestSizes[name]; ok {
+		name = canonical
+	}
+
+	if types.IsWeakHashName(name) {
+		return 0, &ErrOperationWrap{
+			Sentinel: ErrWeakOAEPHash,
+			Detail:   "RSA-OAEP hash must be SHA-256 or stronger; " + name + " is rejected",
+		}
+	}
+
+	return ResolveHash(name)
 }
 
 // pubKeyPEM extracts the public key from a private key and encodes it as PEM.

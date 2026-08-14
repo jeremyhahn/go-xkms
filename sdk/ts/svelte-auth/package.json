@@ -1,0 +1,40 @@
+{
+  "name": "@go-xkms/svelte-auth",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Reusable Svelte 5 passwordless-login surface for go-xkms: token store, 401-recovery fetch layer, CredentialProvider seam, and LoginPanel / RegisterPanel components.",
+  "main": "src/index.ts",
+  "types": "src/index.ts",
+  "exports": {
+    ".": {
+      "types": "./src/index.ts",
+      "svelte": "./src/index.ts",
+      "default": "./src/index.ts"
+    },
+    "./components/*.svelte": "./src/components/*.svelte"
+  },
+  "scripts": {
+    "check": "svelte-check --tsconfig ./tsconfig.json",
+    "typecheck": "svelte-check --tsconfig ./tsconfig.json",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "test:coverage": "vitest run --coverage"
+  },
+  "peerDependencies": {
+    "svelte": "^5.0.0",
+    "@go-xkms/sdk": "*"
+  },
+  "devDependencies": {
+    "@go-xkms/sdk": "file:..",
+    "@sveltejs/vite-plugin-svelte": "^5.0.0",
+    "@testing-library/svelte": "^5.0.0",
+    "@vitest/coverage-v8": "^2.1.9",
+    "jsdom": "^25.0.0",
+    "svelte": "^5.55.5",
+    "svelte-check": "^4.0.0",
+    "typescript": "^5.7.0",
+    "vite": "^6.0.0",
+    "vitest": "^2.0.0"
+  }
+}

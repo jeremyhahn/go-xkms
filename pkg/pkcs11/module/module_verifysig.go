@@ -52,6 +52,19 @@ func (m *Module) VerifySignatureInit(sessionHandle SessionHandle, mechanism *Mec
 		return NewPKCS11Error(CKR_CRYPTOKI_NOT_INITIALIZED)
 	}
 
+	// Per PKCS#11 v3.2 §5.15.7: "C_VerifySignatureInit can be called with
+	// pMechanism set to NULL_PTR to terminate an active signature verification
+	// operation." Termination runs through the module's one cancellation path
+	// so this initializer answers a NULL mechanism exactly as every other one
+	// does; terminateInitOperation must be reached before m.mu is taken,
+	// because it acquires the lock itself.
+	if mechanism == nil {
+		if rv := m.terminateInitOperation(sessionHandle, OperationVerifySignature); rv != CKR_OK {
+			return NewPKCS11Error(rv)
+		}
+		return nil
+	}
+
 	m.mu.RLock()
 	defer m.mu.RUnlock()
 
@@ -61,18 +74,9 @@ func (m *Module) VerifySignatureInit(sessionHandle SessionHandle, mechanism *Mec
 		return NewPKCS11Error(CKR_SESSION_HANDLE_INVALID)
 	}
 
-	// Per PKCS#11 v3.2 spec section 5.15.7: calling C_VerifySignatureInit
-	// with a NULL mechanism cancels an active signature-first verification
-	// operation and returns CKR_OK.
-	if mechanism == nil {
-		if session.HasOperationType(OperationVerifySignature) {
-			session.ClearOperationType(OperationVerifySignature)
-		}
-		return nil
-	}
-
-	// Validate key handle exists and retrieve the key object
-	keyObj, err := m.objectManager.GetObject(keyHandle)
+	// Resolve through the session's access context: a verification key must be
+	// one this session may actually see.
+	keyObj, err := m.objectManager.GetObjectFor(NewAccessContext(sessionHandle, session), keyHandle)
 	if err != nil {
 		return NewPKCS11Error(CKR_KEY_HANDLE_INVALID)
 	}
@@ -85,6 +89,15 @@ func (m *Module) VerifySignatureInit(sessionHandle SessionHandle, mechanism *Mec
 	// Validate key has CKA_VERIFY attribute set to true
 	if !isBoolAttributeTrue(keyObj, CKA_VERIFY) {
 		return NewPKCS11Error(CKR_KEY_FUNCTION_NOT_PERMITTED)
+	}
+
+	// CKA_ALLOWED_MECHANISMS on the key names the mechanisms that key may be
+	// used with (v3.2 §4.8.2). C_VerifySignatureInit resolves its own key
+	// rather than going through resolveOperationKey, so the rule has to be
+	// applied here as well or a key restricted to one signature mechanism could
+	// still verify under another through this entry point.
+	if mechErr := keyObj.CheckAllowedMechanism(mechanism.Type); mechErr != nil {
+		return mechErr
 	}
 
 	// Fast-fail if an operation is already active (spec-required error priority)
@@ -102,7 +115,16 @@ func (m *Module) VerifySignatureInit(sessionHandle SessionHandle, mechanism *Mec
 		return initErr
 	}
 
-	// Store the signature and crypto operation in session state.
+	// Store the signature and crypto operation in session state. CryptoOp is
+	// always a *verifySigMultiPartState, even for what turns out to be a
+	// single-part call: VerifySignature, VerifySignatureUpdate and
+	// VerifySignatureFinal all read through this one wrapper, so a caller can
+	// go straight to the terminal single-part call or feed any number of
+	// Update calls first without VerifySignatureInit having to guess which
+	// one is coming. VerifySignatureUpdate is what sets MultiPart true; a
+	// straight-to-VerifySignature caller never triggers that, so op.MultiPart
+	// stays false and the terminal single-part check below is unaffected.
+	//
 	// SetOperationIfAbsent atomically checks for absence and sets, preventing
 	// TOCTOU races where concurrent Init calls both pass the HasOperationType check.
 	sigCopy := make([]byte, len(signature))
@@ -112,7 +134,7 @@ func (m *Module) VerifySignatureInit(sessionHandle SessionHandle, mechanism *Mec
 		Mechanism: mechanism.Type,
 		KeyHandle: keyHandle,
 		Data:      sigCopy,
-		CryptoOp:  cryptoOp,
+		CryptoOp:  &verifySigMultiPartState{quantumOp: cryptoOp},
 	})
 }
 
@@ -149,8 +171,26 @@ func (m *Module) VerifySignature(sessionHandle SessionHandle, data []byte) error
 		return err
 	}
 
+	// C_VerifySignature cannot terminate a multiple-part operation (v3.2
+	// §5.15.8): it verifies only its own argument, so any parts already fed
+	// through C_VerifySignatureUpdate would be silently dropped. The operation
+	// has been consumed above, which matches the spec's rule that the active
+	// operation is terminated in every non-success case here.
+	if op.MultiPart {
+		return NewPKCS11Error(CKR_OPERATION_ACTIVE)
+	}
+
+	// VerifySignatureInit always stores CryptoOp as a *verifySigMultiPartState
+	// (see its comment), so this unwraps the same wrapper VerifySignatureFinal
+	// consumes; op.MultiPart being false here just means no Update call has
+	// touched it yet.
+	acc, ok := op.CryptoOp.(*verifySigMultiPartState)
+	if !ok {
+		return NewPKCS11Error(CKR_OPERATION_NOT_INITIALIZED)
+	}
+
 	// Perform verification with the stored signature and the provided data
-	return verifySigVerify(m.quantumCrypto, op.CryptoOp, data, op.Data)
+	return verifySigVerify(m.quantumCrypto, acc.quantumOp, data, op.Data)
 }
 
 // VerifySignatureUpdate feeds data to a multi-part signature-first verification
@@ -191,6 +231,7 @@ func (m *Module) VerifySignatureUpdate(sessionHandle SessionHandle, part []byte)
 			return NewPKCS11Error(CKR_OPERATION_NOT_INITIALIZED)
 		}
 		acc.accumulatedData = append(acc.accumulatedData, part...)
+		op.MultiPart = true
 		return nil
 	})
 	if err != nil {
@@ -242,10 +283,13 @@ func (m *Module) VerifySignatureFinal(sessionHandle SessionHandle) error {
 }
 
 // verifySigMultiPartState wraps the quantum operation and an accumulation buffer
-// for multi-part signature-first verification. Single-part operations store the
-// raw quantum operation directly; multi-part operations use this wrapper so that
-// data can be accumulated across VerifySignatureUpdate calls while keeping the
-// signature in OperationState.Data.
+// for signature-first verification. VerifySignatureInit stores every operation
+// behind this wrapper, whether the caller ends up going straight to the
+// single-part VerifySignature or feeding one or more VerifySignatureUpdate
+// calls first, so that VerifySignature, VerifySignatureUpdate and
+// VerifySignatureFinal all read the underlying quantum operation through the
+// same CryptoOp type. accumulatedData is only populated once Update has run;
+// the signature itself lives in OperationState.Data regardless.
 type verifySigMultiPartState struct {
 	quantumOp       interface{}
 	accumulatedData []byte

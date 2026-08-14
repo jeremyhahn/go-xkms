@@ -16,6 +16,7 @@ package chacha20poly1305
 import (
 	"crypto/cipher"
 	"crypto/rand"
+	"errors"
 	"fmt"
 
 	"github.com/jeremyhahn/go-xkms/pkg/errs"
@@ -23,6 +24,13 @@ import (
 	"github.com/jeremyhahn/go-xkms/pkg/types"
 	"golang.org/x/crypto/chacha20poly1305"
 )
+
+// ErrTagSizeNotSupported is returned when types.EncryptOptions.TagSize or
+// types.DecryptOptions.TagSize asks for anything other than Poly1305's full
+// 16-byte tag. Poly1305 is a one-time MAC (RFC 8439 section 2.5) with no
+// truncation construction of the kind NIST SP 800-38D defines for GCM, so
+// there is no shorter tag this cipher can honestly produce.
+var ErrTagSizeNotSupported = errors.New("chacha20poly1305: only the full 16-byte authentication tag is supported")
 
 // AEAD provides ChaCha20-Poly1305 authenticated encryption with associated data.
 // This interface provides operations compatible with the existing AES-GCM implementation
@@ -133,6 +141,15 @@ func (c *chacha20poly1305AEAD) Encrypt(plaintext []byte, opts *types.EncryptOpti
 		opts = &types.EncryptOptions{}
 	}
 
+	// Poly1305 is a one-time MAC whose 16-byte output has no bit-by-bit
+	// truncation defined for it (RFC 8439 section 2.5), unlike GCM's leading-t-
+	// bits construction. There is no shorter tag to give, so a request for one
+	// is refused rather than answered with the full tag.
+	if opts.TagSize != 0 && opts.TagSize != c.aead.Overhead() {
+		return nil, &errs.Detail{Err: ErrTagSizeNotSupported, Detail: fmt.Sprintf(
+			"%d bytes requested; ChaCha20-Poly1305 produces only %d", opts.TagSize, c.aead.Overhead())}
+	}
+
 	// Generate or validate nonce
 	nonce := opts.Nonce
 	nonceSize := c.aead.NonceSize()
@@ -188,6 +205,12 @@ func (c *chacha20poly1305AEAD) Decrypt(data *types.EncryptedData, opts *types.De
 
 	if opts == nil {
 		opts = &types.DecryptOptions{}
+	}
+
+	// See the matching check in Encrypt: Poly1305 has no truncated form.
+	if opts.TagSize != 0 && opts.TagSize != c.aead.Overhead() {
+		return nil, &errs.Detail{Err: ErrTagSizeNotSupported, Detail: fmt.Sprintf(
+			"%d bytes requested; ChaCha20-Poly1305 produces only %d", opts.TagSize, c.aead.Overhead())}
 	}
 
 	// Validate nonce size

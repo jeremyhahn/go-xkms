@@ -512,10 +512,20 @@ func importCert(t *testing.T, mod *pkcs11module.Module, session pkcs11module.Ses
 	certDER []byte, certID []byte) pkcs11module.ObjectHandle {
 	t.Helper()
 
+	// PKCS#11 v3.2 Table 13 requires CKA_SUBJECT on an X.509 certificate
+	// created with C_CreateObject, so it is taken from the certificate itself
+	// rather than invented — the two must agree for a search by subject to
+	// find this object.
+	parsed, err := x509.ParseCertificate(certDER)
+	if err != nil {
+		t.Fatalf("ParseCertificate() error: %v", err)
+	}
+
 	certTemplate := []pkcs11module.Attribute{
 		pkcs11module.NewUint32Attribute(pkcs11module.CKA_CLASS, uint32(pkcs11module.CKO_CERTIFICATE)),
 		pkcs11module.NewUint32Attribute(pkcs11module.CKA_CERTIFICATE_TYPE, pkcs11module.CKC_X_509),
 		pkcs11module.NewAttribute(pkcs11module.CKA_VALUE, certDER),
+		pkcs11module.NewAttribute(pkcs11module.CKA_SUBJECT, parsed.RawSubject),
 		pkcs11module.NewAttribute(pkcs11module.CKA_ID, certID),
 		pkcs11module.NewStringAttribute(pkcs11module.CKA_LABEL, "test-tls-cert"),
 		{Type: pkcs11module.CKA_TOKEN, Value: []byte{1}},
@@ -547,6 +557,14 @@ func importCertAndKey(t *testing.T, mod *pkcs11module.Module, session pkcs11modu
 		pkcs11module.NewStringAttribute(pkcs11module.CKA_LABEL, "test-tls-key"),
 		{Type: pkcs11module.CKA_TOKEN, Value: []byte{1}},
 		{Type: pkcs11module.CKA_SIGN, Value: []byte{1}},
+		// This fixture's key exists only as its own CKA_VALUE: it is imported
+		// raw rather than generated in the token, so the module has no backend
+		// copy to fall back on. The module refuses to persist such a key while
+		// it also claims protection, because withholding CKA_VALUE on reload
+		// would silently destroy the only copy. Declare it unprotected, which
+		// is the truth for a throwaway test key.
+		{Type: pkcs11module.CKA_SENSITIVE, Value: []byte{0}},
+		{Type: pkcs11module.CKA_EXTRACTABLE, Value: []byte{1}},
 	}
 
 	keyHandle, rv := mod.CreateObject(session, keyTemplate)

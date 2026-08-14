@@ -1164,98 +1164,8 @@ func TestNistCurveToECDH_AllCurves(t *testing.T) {
 	}
 }
 
-func TestGetHashFunc_AllAlgorithms(t *testing.T) {
-	tests := []struct {
-		name        string
-		algorithm   string
-		shouldError bool
-	}{
-		{"SHA-256", "SHA-256", false},
-		{"SHA-384", "SHA-384", false},
-		{"SHA-512", "SHA-512", false},
-		{"SHA3-256", "SHA3-256", false},
-		{"SHA3-384", "SHA3-384", false},
-		{"SHA3-512", "SHA3-512", false},
-		{"unsupported", "MD5", true},
-		{"empty", "", true},
-		{"invalid", "invalid-hash", true},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			hashFunc, err := getHashFunc(tt.algorithm)
-			if tt.shouldError {
-				assert.Error(t, err)
-			} else {
-				require.NoError(t, err)
-				assert.NotNil(t, hashFunc)
-			}
-		})
-	}
-}
-
-func TestApplyHKDF_Success(t *testing.T) {
-	params := &types.KDFParams{
-		Algorithm: types.KDFAlgorithmHKDF,
-		Hash:      "SHA-256",
-		Salt:      []byte("test-salt"),
-		Info:      []byte("test-info"),
-		KeyLength: 32,
-	}
-	sharedSecret := make([]byte, 32)
-	_, err := rand.Read(sharedSecret)
-	require.NoError(t, err)
-
-	derived, err := applyHKDF(sharedSecret, params)
-	require.NoError(t, err)
-	assert.Len(t, derived, 32)
-}
-
-func TestApplyHKDF_InvalidHash(t *testing.T) {
-	params := &types.KDFParams{
-		Algorithm: types.KDFAlgorithmHKDF,
-		Hash:      "invalid-hash",
-		KeyLength: 32,
-	}
-	sharedSecret := make([]byte, 32)
-	_, err := rand.Read(sharedSecret)
-	require.NoError(t, err)
-
-	_, err = applyHKDF(sharedSecret, params)
-	assert.Error(t, err)
-}
-
-func TestApplyKDF_UnsupportedAlgorithm(t *testing.T) {
-	s := storage.New()
-	config := &Config{KeyStorage: s}
-	b, err := NewBackend(config)
-	require.NoError(t, err)
-	defer func() { _ = b.Close() }()
-
-	sb := b.(*SoftwareBackend)
-
-	params := &types.KDFParams{
-		Algorithm: "unsupported-kdf",
-		Hash:      "SHA-256",
-		KeyLength: 32,
-	}
-	sharedSecret := make([]byte, 32)
-	_, err = rand.Read(sharedSecret)
-	require.NoError(t, err)
-
-	_, err = sb.applyKDF(sharedSecret, params)
-	assert.Error(t, err)
-	assert.ErrorIs(t, err, ErrUnsupportedKDFAlgorithm)
-}
-
 func TestApplyKDF_HKDF(t *testing.T) {
-	s := storage.New()
-	config := &Config{KeyStorage: s}
-	b, err := NewBackend(config)
-	require.NoError(t, err)
-	defer func() { _ = b.Close() }()
-
-	sb := b.(*SoftwareBackend)
+	sb := newSoftwareBackendForKDF(t)
 
 	params := &types.KDFParams{
 		Algorithm: types.KDFAlgorithmHKDF,
@@ -1265,12 +1175,71 @@ func TestApplyKDF_HKDF(t *testing.T) {
 		KeyLength: 32,
 	}
 	sharedSecret := make([]byte, 32)
-	_, err = rand.Read(sharedSecret)
+	_, err := rand.Read(sharedSecret)
 	require.NoError(t, err)
 
 	derived, err := sb.applyKDF(sharedSecret, params)
 	require.NoError(t, err)
 	assert.Len(t, derived, 32)
+
+	// Deterministic for identical inputs.
+	again, err := sb.applyKDF(sharedSecret, params)
+	require.NoError(t, err)
+	assert.Equal(t, derived, again)
+}
+
+func TestApplyKDF_ApprovedHashes(t *testing.T) {
+	sb := newSoftwareBackendForKDF(t)
+
+	for _, hash := range []string{"SHA-256", "SHA-384", "SHA-512", "SHA3-256", "SHA3-384", "SHA3-512"} {
+		t.Run(hash, func(t *testing.T) {
+			derived, err := sb.applyKDF([]byte("shared-secret-material"), &types.KDFParams{
+				Algorithm: types.KDFAlgorithmHKDF,
+				Hash:      hash,
+				KeyLength: 32,
+			})
+			require.NoError(t, err)
+			assert.Len(t, derived, 32)
+		})
+	}
+}
+
+func TestApplyKDF_UnapprovedHashes(t *testing.T) {
+	sb := newSoftwareBackendForKDF(t)
+
+	// MD5, SHA-1, and friends are real hashes but are not approved KDF
+	// pseudorandom functions; misspellings and case variants must not be
+	// silently coerced onto an approved hash either.
+	for _, hash := range []string{"MD5", "SHA-1", "MD4", "SHA-224", "", "invalid-hash", "sha256", "sha-256"} {
+		t.Run(hash, func(t *testing.T) {
+			_, err := sb.applyKDF([]byte("shared-secret-material"), &types.KDFParams{
+				Algorithm: types.KDFAlgorithmHKDF,
+				Hash:      hash,
+				KeyLength: 32,
+			})
+			assert.ErrorIs(t, err, types.ErrUnsupportedKDFHash)
+		})
+	}
+}
+
+func TestApplyKDF_UnsupportedAlgorithm(t *testing.T) {
+	sb := newSoftwareBackendForKDF(t)
+
+	for _, algorithm := range []types.KDFAlgorithm{"unsupported-kdf", "", "PBKDF2"} {
+		_, err := sb.applyKDF([]byte("shared-secret-material"), &types.KDFParams{
+			Algorithm: algorithm,
+			Hash:      "SHA-256",
+			KeyLength: 32,
+		})
+		assert.ErrorIs(t, err, types.ErrUnsupportedKDFAlgorithm)
+	}
+}
+
+func TestApplyKDF_NilParams(t *testing.T) {
+	sb := newSoftwareBackendForKDF(t)
+
+	_, err := sb.applyKDF([]byte("shared-secret-material"), nil)
+	assert.ErrorIs(t, err, ErrInvalidKDFParams)
 }
 
 func TestParseNISTPublicKey_EmptyData(t *testing.T) {

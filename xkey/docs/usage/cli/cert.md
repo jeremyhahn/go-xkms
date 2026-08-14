@@ -1,5 +1,11 @@
 # Certificate Management CLI
 
+> **Scope:** this page documents the go-xkms **server** CLI `xkmsctl cert`
+> (source: `cmd/xkmsctl/`), **not** the `xkey` desktop CLI. It lives under
+> `xkey/docs/` for historical reasons.
+> `xkey` has its own `xkey cert` command group with a different surface —
+> see [the xkey CLI reference](README.md).
+
 The `cert` command group provides comprehensive X.509 certificate management capabilities, including storage, retrieval, chain management, and certificate generation for both Certificate Authorities and end-entity certificates.
 
 ## Table of Contents

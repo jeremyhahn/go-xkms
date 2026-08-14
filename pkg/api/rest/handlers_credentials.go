@@ -37,6 +37,10 @@ type credentialServicer interface {
 
 	// AutoUnsealAvailable reports whether automatic unsealing is available.
 	AutoUnsealAvailable() bool
+
+	// ListCredentials returns the names of the stored credentials. Values
+	// are never returned.
+	ListCredentials(ctx context.Context) ([]string, error)
 }
 
 // CredentialSubmitRequest is the request body for submitting a credential.
@@ -54,6 +58,13 @@ type CredentialSubmitResponse struct {
 type CredentialStrategyResponse struct {
 	Strategy   string `json:"strategy"`
 	AutoUnseal bool   `json:"auto_unseal"`
+}
+
+// CredentialListResponse is the response for the credential listing endpoint.
+// It carries names only — a credential value has no read path out of the seal
+// boundary, and this endpoint does not create one.
+type CredentialListResponse struct {
+	Names []string `json:"names"`
 }
 
 // Typed errors for credential handlers.
@@ -141,6 +152,29 @@ func (h *CredentialHandlers) HandleGetStrategy(w http.ResponseWriter, r *http.Re
 		AutoUnseal: h.credService.AutoUnsealAvailable(),
 	}
 	writeJSON(w, resp, http.StatusOK)
+}
+
+// HandleList returns the names of the stored credentials.
+// GET /api/v1/credentials
+//
+// Names only. An operator uses this to see which credentials the server has
+// already been given — and therefore which are still outstanding before a
+// backend can unseal — without any value crossing the seal boundary.
+func (h *CredentialHandlers) HandleList(w http.ResponseWriter, r *http.Request) {
+	names, err := h.credService.ListCredentials(r.Context())
+	if err != nil {
+		h.logger.Error("failed to list credentials", "error", err)
+		writeError(w, err, mapCredentialError(err))
+		return
+	}
+
+	// An empty store must serialize as [] rather than null so a client can
+	// iterate the result without a nil check.
+	if names == nil {
+		names = []string{}
+	}
+
+	writeJSON(w, CredentialListResponse{Names: names}, http.StatusOK)
 }
 
 // mapCredentialError maps a credential error to the appropriate HTTP status code.

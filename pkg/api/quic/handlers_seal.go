@@ -18,6 +18,7 @@ import (
 	"fmt"
 	"net/http"
 
+	"github.com/jeremyhahn/go-xkms/pkg/auth"
 	"github.com/jeremyhahn/go-xkms/pkg/types"
 )
 
@@ -70,7 +71,7 @@ func (s *Server) handleSeal(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if !s.authorize(w, r, "keys", "encrypt") {
+	if !s.authorize(w, r, auth.ResourceKeys, auth.ActionEncrypt) {
 		return
 	}
 
@@ -151,7 +152,7 @@ func (s *Server) handleUnseal(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if !s.authorize(w, r, "keys", "decrypt") {
+	if !s.authorize(w, r, auth.ResourceKeys, auth.ActionDecrypt) {
 		return
 	}
 
@@ -237,7 +238,7 @@ func (s *Server) handleCanSeal(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if !s.authorize(w, r, "keys", "get") {
+	if !s.authorize(w, r, auth.ResourceKeys, auth.ActionGet) {
 		return
 	}
 

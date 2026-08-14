@@ -36,9 +36,13 @@ tls:
   # No client auth for integration tests
   client_auth: none
 
-# Auth disabled for integration tests
+# Adaptive authentication: anonymous until the first user is provisioned, then
+# enforced. This keeps the integration suites able to exercise the API without
+# pre-seeding credentials while still satisfying the secure-by-default gate
+# (the daemon has no insecure override).
 auth:
-  enabled: false
+  enabled: true
+  type: "adaptive"
 
 # WebAuthn/FIDO2 authentication enabled for integration tests
 webauthn:
@@ -109,3 +113,11 @@ backends:
     library: "/usr/lib/softhsm/libsofthsm2.so"
     token: "test-token"
     pin: "123456"
+
+# Encryption-at-rest. Required by the secure-by-default gate (the daemon has
+# no insecure override). The passphrase auto-unseals the barrier at container
+# start so the suites need no unseal ceremony.
+barrier:
+  enabled: true
+  strategy: "passphrase"
+  passphrase: "integration-test-passphrase"

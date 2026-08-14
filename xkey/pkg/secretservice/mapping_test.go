@@ -14,9 +14,11 @@
 package secretservice
 
 import (
+	"errors"
 	"testing"
 
 	"github.com/godbus/dbus/v5"
+	"github.com/stretchr/testify/assert"
 )
 
 func TestPathMapper_CollectionPathRoundTrip(t *testing.T) {
@@ -301,4 +303,108 @@ func TestPathMapper_PromptPath(t *testing.T) {
 	if path != expected {
 		t.Errorf("PromptPath() = %q, want %q", path, expected)
 	}
+}
+
+// TestPathMapper_FolderFromCollectionPath_Variants covers the collection-path
+// decoding branches a real libsecret client can exercise: alias paths,
+// configured collection mappings, foreign paths, and malformed escapes.
+func TestPathMapper_FolderFromCollectionPath_Variants(t *testing.T) {
+	cfg := DefaultConfig()
+	cfg.CollectionFolderMap = map[string]string{"work": "Work/Team"}
+	m := NewPathMapper(cfg)
+
+	tests := []struct {
+		name string
+		path dbus.ObjectPath
+		want string
+	}{
+		{
+			name: "alias path resolves through the alias table",
+			path: dbus.ObjectPath(AliasPathPrefix + DefaultCollection),
+			want: cfg.DefaultCollectionFolder,
+		},
+		{
+			name: "alias path for a configured collection",
+			path: dbus.ObjectPath(AliasPathPrefix + "work"),
+			want: "Work/Team",
+		},
+		{
+			name: "foreign path yields no folder",
+			path: dbus.ObjectPath("/org/freedesktop/secrets/session/1"),
+			want: "",
+		},
+		{
+			name: "login collection maps to the default folder",
+			path: dbus.ObjectPath(CollectionPathPrefix + LoginCollection),
+			want: cfg.DefaultCollectionFolder,
+		},
+		{
+			name: "configured collection name maps to its folder",
+			path: dbus.ObjectPath(CollectionPathPrefix + "work"),
+			want: "Work/Team",
+		},
+		{
+			name: "malformed percent escape is returned verbatim",
+			path: dbus.ObjectPath(CollectionPathPrefix + "bad%zzescape"),
+			want: "bad%zzescape",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			assert.Equal(t, tt.want, m.FolderFromCollectionPath(tt.path))
+		})
+	}
+}
+
+func TestPathMapper_PasswordIDFromItemPath_Invalid(t *testing.T) {
+	m := NewPathMapper(DefaultConfig())
+
+	tests := []struct {
+		name string
+		path dbus.ObjectPath
+	}{
+		{"no separator", "noslash"},
+		{"trailing separator", "/org/freedesktop/secrets/collection/login/"},
+		{"item segment is not hex", "/org/freedesktop/secrets/collection/login/zzzz"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			collection, id, err := m.PasswordIDFromItemPath(tt.path)
+			assert.ErrorIs(t, err, ErrItemNotFound)
+			assert.Empty(t, collection)
+			assert.Empty(t, id)
+		})
+	}
+}
+
+func TestPathMapper_CollectionNameFromPath_ForeignPath(t *testing.T) {
+	m := NewPathMapper(DefaultConfig())
+
+	assert.Equal(t, "", m.CollectionNameFromPath("/com/example/other"))
+	assert.False(t, m.IsDefaultCollection("/com/example/other"))
+}
+
+func TestAttributesToSearchCriteria_PassesThroughUnknownKeys(t *testing.T) {
+	criteria := AttributesToSearchCriteria(ItemAttributes{
+		"Application": "example.com",
+		"custom_key":  "custom_value",
+		"host":        "vault.example.com",
+	})
+
+	assert.Equal(t, map[string]string{
+		"service":    "example.com",
+		"custom_key": "custom_value",
+		"url":        "vault.example.com",
+	}, criteria)
+}
+
+func TestWrappedError_ErrorAndUnwrap(t *testing.T) {
+	cause := errors.New("export failed")
+	err := &WrappedError{Msg: "failed to export Service", Err: cause}
+
+	assert.Equal(t, "failed to export Service: export failed", err.Error())
+	assert.ErrorIs(t, err, cause)
+	assert.NotErrorIs(t, err, ErrDBusUnavailable)
 }

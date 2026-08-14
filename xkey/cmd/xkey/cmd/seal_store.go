@@ -59,20 +59,17 @@ type SealStoreService interface {
 	SealStoreStatus(ctx context.Context) (*transport.SealStoreStatusResponse, error)
 }
 
-// defaultClientFactory creates a real transport client from the global xkmsdURL.
-// This is the production implementation; tests override clientFactory with a
-// function that returns a mock.
+// defaultClientFactory creates a real SDK transport client for the resolved
+// xkmsd endpoint (see resolveXKMSdEndpoint for the URL/token/CA precedence).
+// The returned client is not connected yet; connectSealStore completes the
+// handshake. This is the production implementation; tests override
+// clientFactory with a function that returns a mock.
 func defaultClientFactory() (SealStoreService, error) {
-	if xkmsdURL == "" {
-		return nil, &SealStoreError{
-			Operation: "connect",
-			Message:   "xkmsd URL is required; use --xkmsd-url or set XKEY_XKMSD_URL",
-		}
+	client, err := newXKMSdClient(platformStoreCmd)
+	if err != nil {
+		return nil, err
 	}
-	return nil, &SealStoreError{
-		Operation: "connect",
-		Message:   "transport client creation requires a running xkmsd server",
-	}
+	return client, nil
 }
 
 // platformStoreCmd is the parent command for platform store operations.
@@ -87,7 +84,11 @@ secrets that are sealed using the best available cryptographic mechanism
 rest and can only be retrieved on the same machine.
 
 This command wraps the xkmsd SDK transport, requiring a running xkmsd
-server (specify with --xkmsd-url).
+server. The server is selected with --xkmsd-url, the XKMSD_URL environment
+variable, or the xkmsd_url config key; the URL scheme picks the transport
+(unix://, http://, https://, grpc://, grpcs://, quic://, mcp://, mcps://).
+XKMSD_TOKEN supplies a bearer token and --tls-ca / XKMSD_TLS_CA the CA
+bundle used to verify TLS transports.
 
 Commands:
   put       Store a secret
@@ -244,6 +245,11 @@ func init() {
 	platformStoreCmd.AddCommand(platformStoreListCmd)
 	platformStoreCmd.AddCommand(platformStoreResealCmd)
 	platformStoreCmd.AddCommand(platformStoreStatusCmd)
+
+	// Shared connection flag: the CA bundle used to verify TLS-bearing
+	// transports (https/grpcs/quic/mcps).
+	platformStoreCmd.PersistentFlags().String("tls-ca", "",
+		"TLS CA certificate file used to verify the xkmsd server")
 
 	// platform-store put flags.
 	platformStorePutCmd.Flags().String("value", "", "Secret value to store")

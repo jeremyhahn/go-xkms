@@ -105,9 +105,16 @@ func requiredEnv(t *testing.T, key string) string {
 // HTTP helpers
 // ──────────────────────────────────────────────────────────────────────────────
 
-// httpClient is a plain HTTP client; the cluster test nodes run without TLS
-// (config.node.yaml sets tls.enabled=false). The per-request context deadline
-// is the authoritative timeout; the client Timeout is a backstop.
+// httpClient is a plain HTTP client. The per-request context deadline is the
+// authoritative timeout; the client Timeout is a backstop.
+//
+// NOTE: config.node.yaml now sets tls.enabled=true (the daemon offers no
+// insecure override), so these nodes serve HTTPS and this client cannot reach
+// them. Disabling verification is not the fix and is rejected by the
+// InsecureSkipVerify allowlist that `make check-insecure-tls` enforces: each
+// node mints its serving certificate at boot, so the harness must obtain the
+// root the way any first-contact client does — through the SPKI trust
+// bootstrap over /v1/ca/bundle that pkg/trust owns — and install it as RootCAs.
 var httpClient = &http.Client{Timeout: 2 * requestTimeout}
 
 // get performs a GET against url with a bounded context and returns the

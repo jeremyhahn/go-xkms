@@ -15,12 +15,14 @@ package module
 
 import (
 	"context"
+	"crypto/ecdh"
 	"crypto/ecdsa"
 	"crypto/ed25519"
 	"crypto/elliptic"
 	"crypto/rand"
 	"crypto/rsa"
 	"crypto/x509"
+	"encoding/asn1"
 	"encoding/pem"
 	"testing"
 
@@ -50,21 +52,118 @@ func initializeTestModule(t *testing.T) *Module {
 	return m
 }
 
+// loginAsSO initializes the token and logs the given session in as Security
+// Officer. The token's CKF_LOGIN_REQUIRED flag is set from creation (see
+// NewToken), so resolveOperationKey refuses every Sign/Verify/Encrypt/
+// Decrypt/Derive/Wrap/Unwrap *Init call from an unauthenticated session.
+// Test fixtures that need to exercise those entry points authenticate first
+// through this helper; SO login satisfies the requirement just as user login
+// would (v3.2 §5.4 - CKF_LOGIN_REQUIRED is a token-wide gate, not specific to
+// CKU_USER).
+func loginAsSO(t *testing.T, m *Module) SessionHandle {
+	t.Helper()
+
+	rv := m.InitToken(0, []byte("so-pin-1234"), "Test Token")
+	require.Equal(t, CKR_OK, rv)
+
+	handle, rv := m.OpenSession(0, CKF_SERIAL_SESSION|CKF_RW_SESSION)
+	require.Equal(t, CKR_OK, rv)
+
+	rv = m.Login(handle, CKU_SO, []byte("so-pin-1234"))
+	require.Equal(t, CKR_OK, rv)
+
+	return handle
+}
+
+// loginAsNormalUser provisions the token and returns a read-write session with
+// the normal user authenticated.
+//
+// Most fixtures need this rather than loginAsSO: the Security Officer may
+// initialize the token and set the user's PIN, but it may not access private
+// objects (v3.2 §4.2), and secret and private keys default to CKA_PRIVATE.
+// A fixture that logs in as SO and then creates or uses a key object is
+// correctly refused.
+func loginAsNormalUser(t *testing.T, m *Module) SessionHandle {
+	t.Helper()
+
+	// Provision the token once. C_InitToken refuses to run while a session is
+	// open, so a module that is already provisioned is reused as-is.
+	if info, rv := m.GetTokenInfo(0); rv != CKR_OK || !info.Flags.Has(CKF_USER_PIN_INITIALIZED) {
+		rv := m.InitToken(0, []byte("so-pin-1234"), "Test Token")
+		require.Equal(t, CKR_OK, rv)
+
+		soSession, rv := m.OpenSession(0, CKF_SERIAL_SESSION|CKF_RW_SESSION)
+		require.Equal(t, CKR_OK, rv)
+
+		rv = m.Login(soSession, CKU_SO, []byte("so-pin-1234"))
+		require.Equal(t, CKR_OK, rv)
+
+		rv = m.InitPIN(soSession, []byte("user-pin-1234"))
+		require.Equal(t, CKR_OK, rv)
+
+		require.Equal(t, CKR_OK, m.Logout(soSession))
+		require.Equal(t, CKR_OK, m.CloseSession(soSession))
+	}
+
+	handle, rv := m.OpenSession(0, CKF_SERIAL_SESSION|CKF_RW_SESSION)
+	require.Equal(t, CKR_OK, rv)
+
+	// The login state is token-wide, so a second session on an already
+	// authenticated token is logged in as soon as it opens.
+	if rv := m.Login(handle, CKU_USER, []byte("user-pin-1234")); rv != CKR_OK {
+		require.Equal(t, CKR_USER_ALREADY_LOGGED_IN, rv)
+	}
+
+	return handle
+}
+
+// loginAsNormalUserReadOnly provisions the token the same way as
+// loginAsNormalUser but returns an authenticated READ-ONLY session.
+//
+// It exists to separate the two rules that a read-only session mixes together:
+// PKCS#11 v3.2 §5.7.1 restricts only which OBJECTS may be created, while
+// CKF_LOGIN_REQUIRED restricts who may call at all. Testing the object rule
+// needs a session that has already satisfied the login rule.
+func loginAsNormalUserReadOnly(t *testing.T, m *Module) SessionHandle {
+	t.Helper()
+
+	// Provisioning needs a R/W SO session, so borrow the shared path and close
+	// the R/W session it hands back before opening the read-only one.
+	rwSession := loginAsNormalUser(t, m)
+	require.Equal(t, CKR_OK, m.CloseSession(rwSession))
+
+	handle, rv := m.OpenSession(0, CKF_SERIAL_SESSION)
+	require.Equal(t, CKR_OK, rv)
+
+	if rv := m.Login(handle, CKU_USER, []byte("user-pin-1234")); rv != CKR_OK {
+		require.Equal(t, CKR_USER_ALREADY_LOGGED_IN, rv)
+	}
+
+	return handle
+}
+
 // createTestModuleWithKey creates an initialized module with a test key object.
 func createTestModuleWithKey(t *testing.T) (*Module, SessionHandle, ObjectHandle) {
 	t.Helper()
 	m := initializeTestModule(t)
 
-	handle, rv := m.OpenSession(0, CKF_SERIAL_SESSION|CKF_RW_SESSION)
-	require.Equal(t, CKR_OK, rv)
+	handle := loginAsNormalUser(t, m)
 
-	// Create a public key object for testing
+	// Create a public key object for testing. All four usage attributes are
+	// enabled so this general-purpose fixture works across the Sign/Verify/
+	// Encrypt/Decrypt operation-mismatch tests that share it.
 	template := []Attribute{
 		NewUint32Attribute(CKA_CLASS, uint32(CKO_PUBLIC_KEY)),
 		NewUint32Attribute(CKA_KEY_TYPE, uint32(CKK_RSA)),
+		// An RSA public key must carry its modulus and public exponent when it
+		// is created with C_CreateObject (v3.2 §6.1.2, Table 13 footnote 1).
+		NewAttribute(CKA_MODULUS, make([]byte, 256)),
+		NewAttribute(CKA_PUBLIC_EXPONENT, []byte{0x01, 0x00, 0x01}),
 		NewStringAttribute(CKA_LABEL, "test-key"),
 		NewBoolAttribute(CKA_SIGN, true),
 		NewBoolAttribute(CKA_VERIFY, true),
+		NewBoolAttribute(CKA_ENCRYPT, true),
+		NewBoolAttribute(CKA_DECRYPT, true),
 		NewBoolAttribute(CKA_TOKEN, false),
 		NewBoolAttribute(CKA_MODIFIABLE, true),
 		NewBoolAttribute(CKA_COPYABLE, true),
@@ -438,6 +537,66 @@ func TestInitToken(t *testing.T) {
 		rv := m.InitToken(0, []byte("so-pin-1234"), "Test Token")
 		assert.Equal(t, CKR_SESSION_EXISTS, rv)
 	})
+
+	t.Run("fails to reinitialize an initialized token with the wrong SO PIN", func(t *testing.T) {
+		// Per v3.2 SS5.5.7, re-initializing an already-initialized token
+		// requires proving knowledge of the existing SO PIN. Without this, any
+		// local caller could seize a provisioned token by simply choosing a
+		// new PIN.
+		m := initializeTestModule(t)
+		defer m.Finalize()
+
+		rv := m.InitToken(0, []byte("so-pin-original"), "Test Token")
+		require.Equal(t, CKR_OK, rv)
+
+		rv = m.InitToken(0, []byte("wrong-so-pin"), "Test Token")
+		assert.Equal(t, CKR_PIN_INCORRECT, rv)
+
+		// The rejected attempt must not have taken effect: the original SO PIN
+		// still authenticates.
+		handle, rv := m.OpenSession(0, CKF_SERIAL_SESSION|CKF_RW_SESSION)
+		require.Equal(t, CKR_OK, rv)
+		rv = m.Login(handle, CKU_SO, []byte("so-pin-original"))
+		assert.Equal(t, CKR_OK, rv)
+	})
+
+	t.Run("reinitializing with the correct SO PIN destroys existing objects", func(t *testing.T) {
+		// C_InitToken destroys every destroyable object on the token and
+		// disables the normal user until the SO sets a new PIN (v3.2 SS5.5.7).
+		m := initializeTestModule(t)
+		defer m.Finalize()
+
+		rv := m.InitToken(0, []byte("so-pin-1234"), "Test Token")
+		require.Equal(t, CKR_OK, rv)
+
+		handle, rv := m.OpenSession(0, CKF_SERIAL_SESSION|CKF_RW_SESSION)
+		require.Equal(t, CKR_OK, rv)
+		rv = m.Login(handle, CKU_SO, []byte("so-pin-1234"))
+		require.Equal(t, CKR_OK, rv)
+
+		template := []Attribute{
+			NewUint32Attribute(CKA_CLASS, uint32(CKO_DATA)),
+			NewStringAttribute(CKA_LABEL, "should-be-destroyed"),
+			NewAttribute(CKA_VALUE, []byte("secret")),
+			NewBoolAttribute(CKA_DESTROYABLE, true),
+		}
+		objHandle, rv := m.CreateObject(handle, template)
+		require.Equal(t, CKR_OK, rv)
+
+		rv = m.CloseSession(handle)
+		require.Equal(t, CKR_OK, rv)
+
+		// Re-initialize with the correct SO PIN.
+		rv = m.InitToken(0, []byte("so-pin-1234"), "Test Token")
+		require.Equal(t, CKR_OK, rv)
+
+		// CKF_LOGIN_REQUIRED gates key-bearing operations, so the fixture
+		// authenticates before exercising them.
+		handle2, _ := m.OpenSession(0, CKF_SERIAL_SESSION|CKF_RW_SESSION)
+
+		_, rv = m.GetAttributeValue(handle2, objHandle, []Attribute{{Type: CKA_LABEL}})
+		assert.Equal(t, CKR_OBJECT_HANDLE_INVALID, rv)
+	})
 }
 
 // TestLoginLogout tests user authentication.
@@ -502,7 +661,7 @@ func TestCreateObject(t *testing.T) {
 		m := initializeTestModule(t)
 		defer m.Finalize()
 
-		handle, _ := m.OpenSession(0, CKF_SERIAL_SESSION|CKF_RW_SESSION)
+		handle := loginAsNormalUser(t, m)
 
 		template := []Attribute{
 			NewUint32Attribute(CKA_CLASS, uint32(CKO_DATA)),
@@ -529,7 +688,7 @@ func TestFindObjects(t *testing.T) {
 		m := initializeTestModule(t)
 		defer m.Finalize()
 
-		handle, _ := m.OpenSession(0, CKF_SERIAL_SESSION|CKF_RW_SESSION)
+		handle := loginAsNormalUser(t, m)
 
 		// Create some objects
 		template := []Attribute{
@@ -692,10 +851,13 @@ func TestHelperFunctions(t *testing.T) {
 	t.Run("extractCurveFromParams", func(t *testing.T) {
 		// P-256 OID
 		p256OID := []byte{0x06, 0x08, 0x2a, 0x86, 0x48, 0xce, 0x3d, 0x03, 0x01, 0x07}
-		assert.Equal(t, "P-256", extractCurveFromParams(p256OID))
+		curve, ok := extractCurveFromParams(p256OID)
+		assert.True(t, ok)
+		assert.Equal(t, "P-256", curve)
 
-		// Unknown defaults to P-256
-		assert.Equal(t, "P-256", extractCurveFromParams([]byte{0x00}))
+		// An unrecognised curve is reported, not silently replaced.
+		_, ok = extractCurveFromParams([]byte{0x00})
+		assert.False(t, ok)
 	})
 
 	t.Run("bytesEqual", func(t *testing.T) {
@@ -750,7 +912,7 @@ func TestCopyObject(t *testing.T) {
 		m := initializeTestModule(t)
 		defer m.Finalize()
 
-		handle, _ := m.OpenSession(0, CKF_SERIAL_SESSION|CKF_RW_SESSION)
+		handle := loginAsNormalUser(t, m)
 
 		// Create original object
 		template := []Attribute{
@@ -778,7 +940,7 @@ func TestCopyObject(t *testing.T) {
 		m := initializeTestModule(t)
 		defer m.Finalize()
 
-		handle, _ := m.OpenSession(0, CKF_SERIAL_SESSION|CKF_RW_SESSION)
+		handle := loginAsNormalUser(t, m)
 
 		_, rv := m.CopyObject(handle, 9999, nil)
 		assert.Equal(t, CKR_OBJECT_HANDLE_INVALID, rv)
@@ -806,7 +968,7 @@ func TestDestroyObject(t *testing.T) {
 		m := initializeTestModule(t)
 		defer m.Finalize()
 
-		handle, _ := m.OpenSession(0, CKF_SERIAL_SESSION|CKF_RW_SESSION)
+		handle := loginAsNormalUser(t, m)
 
 		// Create object
 		template := []Attribute{
@@ -831,7 +993,7 @@ func TestDestroyObject(t *testing.T) {
 		m := initializeTestModule(t)
 		defer m.Finalize()
 
-		handle, _ := m.OpenSession(0, CKF_SERIAL_SESSION|CKF_RW_SESSION)
+		handle := loginAsNormalUser(t, m)
 
 		rv := m.DestroyObject(handle, 9999)
 		assert.Equal(t, CKR_OBJECT_HANDLE_INVALID, rv)
@@ -859,7 +1021,7 @@ func TestGetAttributeValue(t *testing.T) {
 		m := initializeTestModule(t)
 		defer m.Finalize()
 
-		handle, _ := m.OpenSession(0, CKF_SERIAL_SESSION|CKF_RW_SESSION)
+		handle := loginAsNormalUser(t, m)
 
 		// Create object
 		template := []Attribute{
@@ -888,7 +1050,7 @@ func TestGetAttributeValue(t *testing.T) {
 		m := initializeTestModule(t)
 		defer m.Finalize()
 
-		handle, _ := m.OpenSession(0, CKF_SERIAL_SESSION|CKF_RW_SESSION)
+		handle := loginAsNormalUser(t, m)
 
 		_, rv := m.GetAttributeValue(handle, 9999, []Attribute{{Type: CKA_LABEL}})
 		assert.Equal(t, CKR_OBJECT_HANDLE_INVALID, rv)
@@ -916,11 +1078,14 @@ func TestSetAttributeValue(t *testing.T) {
 		m := initializeTestModule(t)
 		defer m.Finalize()
 
-		// Create object in RW session first
+		// A token object, so it survives the creating session being closed:
+		// session objects are destroyed with their session, and the read-only
+		// rule this test exercises applies only to token objects (v3.2 5.7.4).
 		rwHandle, _ := m.OpenSession(0, CKF_SERIAL_SESSION|CKF_RW_SESSION)
 		template := []Attribute{
 			NewUint32Attribute(CKA_CLASS, uint32(CKO_DATA)),
 			NewStringAttribute(CKA_LABEL, "test-label"),
+			NewBoolAttribute(CKA_TOKEN, true),
 			NewBoolAttribute(CKA_MODIFIABLE, true),
 		}
 		objHandle, _ := m.CreateObject(rwHandle, template)
@@ -940,7 +1105,7 @@ func TestSetAttributeValue(t *testing.T) {
 		m := initializeTestModule(t)
 		defer m.Finalize()
 
-		handle, _ := m.OpenSession(0, CKF_SERIAL_SESSION|CKF_RW_SESSION)
+		handle := loginAsNormalUser(t, m)
 
 		// Create modifiable object
 		template := []Attribute{
@@ -968,7 +1133,7 @@ func TestSetAttributeValue(t *testing.T) {
 		m := initializeTestModule(t)
 		defer m.Finalize()
 
-		handle, _ := m.OpenSession(0, CKF_SERIAL_SESSION|CKF_RW_SESSION)
+		handle := loginAsNormalUser(t, m)
 
 		rv := m.SetAttributeValue(handle, 9999, []Attribute{
 			NewStringAttribute(CKA_LABEL, "new-label"),
@@ -1166,7 +1331,26 @@ func TestSetPIN(t *testing.T) {
 		assert.Equal(t, CKR_SESSION_HANDLE_INVALID, rv)
 	})
 
-	t.Run("fails when not logged in", func(t *testing.T) {
+	t.Run("fails with read-only session", func(t *testing.T) {
+		// C_SetPIN is valid only from R/W Public, R/W User or R/W SO Functions
+		// (v3.2 SS5.5.9); a read-only session must be rejected before any PIN
+		// verification is attempted.
+		m := initializeTestModule(t)
+		defer m.Finalize()
+
+		m.InitToken(0, []byte("so-pin"), "Test Token")
+		handle, _ := m.OpenSession(0, CKF_SERIAL_SESSION)
+
+		rv := m.SetPIN(handle, []byte("old-pin-12345"), []byte("new-pin-12345"))
+		assert.Equal(t, CKR_SESSION_READ_ONLY, rv)
+	})
+
+	t.Run("fails from public session when old PIN is wrong", func(t *testing.T) {
+		// A R/W public session (no CKU_SO or CKU_USER login) now falls through
+		// to verifying the normal user's PIN rather than being rejected
+		// outright with CKR_USER_NOT_LOGGED_IN. With no user PIN provisioned
+		// (C_InitToken clears it) verification always fails, so the result is
+		// CKR_PIN_INCORRECT.
 		m := initializeTestModule(t)
 		defer m.Finalize()
 
@@ -1174,7 +1358,32 @@ func TestSetPIN(t *testing.T) {
 		handle, _ := m.OpenSession(0, CKF_SERIAL_SESSION|CKF_RW_SESSION)
 
 		rv := m.SetPIN(handle, []byte("old-pin-12345"), []byte("new-pin-12345"))
-		assert.Equal(t, CKR_USER_NOT_LOGGED_IN, rv)
+		assert.Equal(t, CKR_PIN_INCORRECT, rv)
+	})
+
+	t.Run("public session changes user PIN by supplying the correct old PIN", func(t *testing.T) {
+		// Per v3.2 SS5.5.9, a R/W public session may change the normal user's
+		// PIN by proving knowledge of the old one, without ever logging in as
+		// that user. Previously this path was wrongly rejected with
+		// CKR_USER_NOT_LOGGED_IN.
+		m := initializeTestModule(t)
+		defer m.Finalize()
+
+		m.InitToken(0, []byte("so-pin"), "Test Token")
+		handle, _ := m.OpenSession(0, CKF_SERIAL_SESSION|CKF_RW_SESSION)
+		rv := m.Login(handle, CKU_SO, []byte("so-pin"))
+		require.Equal(t, CKR_OK, rv)
+		rv = m.InitPIN(handle, []byte("user-pin-old"))
+		require.Equal(t, CKR_OK, rv)
+		rv = m.Logout(handle)
+		require.Equal(t, CKR_OK, rv)
+
+		// handle is now a R/W public session: nobody is logged in.
+		rv = m.SetPIN(handle, []byte("user-pin-old"), []byte("user-pin-new"))
+		assert.Equal(t, CKR_OK, rv)
+
+		rv = m.Login(handle, CKU_USER, []byte("user-pin-new"))
+		assert.Equal(t, CKR_OK, rv)
 	})
 
 	t.Run("changes SO PIN successfully", func(t *testing.T) {
@@ -1257,14 +1466,12 @@ func TestLoginUser(t *testing.T) {
 		m := initializeTestModule(t)
 		defer m.Finalize()
 
-		m.InitToken(0, []byte("so-pin"), "Test Token")
-		handle, _ := m.OpenSession(0, CKF_SERIAL_SESSION|CKF_RW_SESSION)
-		m.Login(handle, CKU_SO, []byte("so-pin"))
-		m.InitPIN(handle, []byte("user-pin"))
-		m.Logout(handle)
+		// loginAsNormalUser provisions the token and leaves the session
+		// authenticated, so log out first to exercise LoginUser itself.
+		handle := loginAsNormalUser(t, m)
+		require.Equal(t, CKR_OK, m.Logout(handle))
 
-		// Use LoginUser with username
-		rv := m.LoginUser(handle, CKU_USER, []byte("user-pin"), "testuser")
+		rv := m.LoginUser(handle, CKU_USER, []byte("user-pin-1234"), "testuser")
 		assert.Equal(t, CKR_OK, rv)
 	})
 
@@ -1282,22 +1489,29 @@ func TestLoginUser(t *testing.T) {
 		assert.Equal(t, CKR_OPERATION_NOT_INITIALIZED, rv)
 	})
 
-	t.Run("context-specific login succeeds with active operation", func(t *testing.T) {
+	t.Run("context-specific login fails when the active operation has no key to authenticate", func(t *testing.T) {
 		m := initializeTestModule(t)
 		defer m.Finalize()
 
-		m.InitToken(0, []byte("so-pin"), "Test Token")
-		handle, _ := m.OpenSession(0, CKF_SERIAL_SESSION|CKF_RW_SESSION)
-		m.Login(handle, CKU_SO, []byte("so-pin"))
-		m.InitPIN(handle, []byte("user-pin"))
-		m.Logout(handle)
+		// An active C_DigestInit used to satisfy this call, because the check
+		// was "some operation is active". A digest names no key, so there is no
+		// CKA_ALWAYS_AUTHENTICATE to re-authenticate for and nothing the login
+		// could grant. PKCS#11 v3.2 §4.10 gives the answer for exactly that:
+		// "C_Login will return CKR_OPERATION_NOT_INITIALIZED ... if an attempt
+		// is made to re-authenticate when CKA_ALWAYS_AUTHENTICATE is set to
+		// CK_FALSE."
+		handle := loginAsNormalUser(t, m)
 
-		// Start an operation (e.g., digest)
 		rv := m.DigestInit(handle, &Mechanism{Type: CKM_SHA256})
 		require.Equal(t, CKR_OK, rv)
 
-		// Context-specific login with active operation
-		rv = m.LoginUser(handle, CKU_CONTEXT_SPECIFIC, []byte("user-pin"), "context")
+		rv = m.LoginUser(handle, CKU_CONTEXT_SPECIFIC, []byte("user-pin-1234"), "context")
+		assert.Equal(t, CKR_OPERATION_NOT_INITIALIZED, rv)
+
+		// The refusal must not disturb the operation it declined to
+		// authenticate: §4.10 says "the active cryptographic operation will not
+		// be affected".
+		_, rv = m.Digest(handle, []byte("payload"))
 		assert.Equal(t, CKR_OK, rv)
 	})
 }
@@ -1319,19 +1533,50 @@ func TestSessionCancel(t *testing.T) {
 		assert.Equal(t, CKR_SESSION_HANDLE_INVALID, rv)
 	})
 
-	t.Run("fails when no operation active", func(t *testing.T) {
-		// Per OASIS PKCS#11 v3.0 Section 5.16.1:
-		// CKR_OPERATION_NOT_INITIALIZED is returned if no operation is active
+	t.Run("succeeds when no operation active", func(t *testing.T) {
+		// PKCS#11 v3.2 C_SessionCancel: "If no flags are set, the session state
+		// will not be modified and CKR_OK will be returned." A zero flags
+		// argument names no operation at all, so there is nothing that could
+		// fail to be cancelled.
 		m := initializeTestModule(t)
 		defer m.Finalize()
 
 		handle, _ := m.OpenSession(0, CKF_SERIAL_SESSION)
 
 		rv := m.SessionCancel(handle, 0)
-		assert.Equal(t, CKR_OPERATION_NOT_INITIALIZED, rv)
+		assert.Equal(t, CKR_OK, rv)
+
+		// The same holds for a flag naming an operation that is not running:
+		// "the operation flag will be ignored and C_SessionCancel will behave
+		// as if the operation flag was not set."
+		rv = m.SessionCancel(handle, uint64(CKF_DIGEST))
+		assert.Equal(t, CKR_OK, rv)
 	})
 
-	t.Run("cancels active operation", func(t *testing.T) {
+	t.Run("a zero flags argument cancels nothing", func(t *testing.T) {
+		// The spec is explicit that flags=0 leaves the session state
+		// unmodified. Reading it as "cancel everything" would silently destroy
+		// operations the application never named -- including the other half of
+		// a dual-function flow.
+		m := initializeTestModule(t)
+		defer m.Finalize()
+
+		handle, _ := m.OpenSession(0, CKF_SERIAL_SESSION)
+
+		rv := m.DigestInit(handle, &Mechanism{Type: CKM_SHA256})
+		require.Equal(t, CKR_OK, rv)
+
+		rv = m.SessionCancel(handle, 0)
+		assert.Equal(t, CKR_OK, rv)
+
+		// The digest must still be usable.
+		_, rv = m.Digest(handle, []byte("data"))
+		assert.Equal(t, CKR_OK, rv,
+			"flags=0 must not modify the session state, so the digest operation "+
+				"must have survived")
+	})
+
+	t.Run("cancels the operation named by the flags", func(t *testing.T) {
 		m := initializeTestModule(t)
 		defer m.Finalize()
 
@@ -1341,13 +1586,40 @@ func TestSessionCancel(t *testing.T) {
 		rv := m.DigestInit(handle, &Mechanism{Type: CKM_SHA256})
 		require.Equal(t, CKR_OK, rv)
 
-		// Cancel it
-		rv = m.SessionCancel(handle, 0)
+		// Cancel it by naming its category
+		rv = m.SessionCancel(handle, uint64(CKF_DIGEST))
 		assert.Equal(t, CKR_OK, rv)
 
 		// Verify operation was cancelled by trying to use it
 		_, rv = m.Digest(handle, []byte("data"))
 		assert.Equal(t, CKR_OPERATION_NOT_INITIALIZED, rv)
+	})
+
+	t.Run("cancels only the selected operation category", func(t *testing.T) {
+		// Per OASIS PKCS#11 v3.0 Section 5.16.1, the flags select which
+		// operation categories to cancel. Cancelling every category regardless
+		// of the flags would destroy the other half of a dual-function flow
+		// the application asked to keep active.
+		m, handle, keyHandle := createTestModuleWithEncryptableKey(t)
+		defer m.Finalize()
+
+		rv := m.DigestInit(handle, &Mechanism{Type: CKM_SHA256})
+		require.Equal(t, CKR_OK, rv)
+
+		rv = m.EncryptInit(handle, &Mechanism{Type: CKM_AES_ECB}, keyHandle)
+		require.Equal(t, CKR_OK, rv)
+
+		// Cancel only the digest operation.
+		rv = m.SessionCancel(handle, uint64(CKF_DIGEST))
+		assert.Equal(t, CKR_OK, rv)
+
+		// Digest is gone.
+		_, rv = m.Digest(handle, []byte("data"))
+		assert.Equal(t, CKR_OPERATION_NOT_INITIALIZED, rv)
+
+		// Encrypt must still be active and usable.
+		_, rv = m.Encrypt(handle, []byte("data"))
+		assert.Equal(t, CKR_OK, rv)
 	})
 }
 
@@ -1562,9 +1834,12 @@ func TestSignRecoverInit(t *testing.T) {
 		m := initializeTestModule(t)
 		defer m.Finalize()
 
-		handle, _ := m.OpenSession(0, CKF_SERIAL_SESSION|CKF_RW_SESSION)
+		// Deliberately unauthenticated: the token sets CKF_LOGIN_REQUIRED, and
+		// the login gate is checked before the key handle is resolved.
+		handle, rv := m.OpenSession(0, CKF_SERIAL_SESSION|CKF_RW_SESSION)
+		require.Equal(t, CKR_OK, rv)
 
-		rv := m.SignRecoverInit(handle, &Mechanism{Type: CKM_RSA_PKCS}, 1)
+		rv = m.SignRecoverInit(handle, &Mechanism{Type: CKM_RSA_PKCS}, 1)
 		assert.Equal(t, CKR_USER_NOT_LOGGED_IN, rv)
 	})
 
@@ -1572,12 +1847,34 @@ func TestSignRecoverInit(t *testing.T) {
 		m := initializeTestModule(t)
 		defer m.Finalize()
 
-		m.InitToken(0, []byte("so-pin"), "Test Token")
-		handle, _ := m.OpenSession(0, CKF_SERIAL_SESSION|CKF_RW_SESSION)
-		m.Login(handle, CKU_SO, []byte("so-pin"))
+		handle := loginAsNormalUser(t, m)
 
-		// ECDSA doesn't support sign-recover
-		rv := m.SignRecoverInit(handle, &Mechanism{Type: CKM_ECDSA}, 1)
+		// The key must exist and carry CKA_SIGN_RECOVER. C_SignRecoverInit
+		// validates the key before the mechanism (see validateInitMechanism),
+		// so passing a handle that resolves to nothing would be answered with
+		// CKR_KEY_HANDLE_INVALID and this case would never reach the mechanism
+		// check it exists to cover.
+		keyHandle, rv := m.CreateObject(handle, []Attribute{
+			NewUint32Attribute(CKA_CLASS, uint32(CKO_PRIVATE_KEY)),
+			NewUint32Attribute(CKA_KEY_TYPE, uint32(CKK_RSA)),
+			NewStringAttribute(CKA_LABEL, "test-sign-recover-key"),
+			NewBoolAttribute(CKA_SIGN, true),
+			NewBoolAttribute(CKA_SIGN_RECOVER, true),
+			NewBoolAttribute(CKA_TOKEN, false),
+		})
+		require.Equal(t, CKR_OK, rv)
+
+		// CKM_RSA_X_509 does not support sign-recover, and the key above is an
+		// RSA key, so the mechanism check is what this case reaches.
+		//
+		// It used to pass CKM_ECDSA against this same RSA key. That now trips
+		// the mechanism/key-type rule first -- resolveOperationKey validates the
+		// key before the mechanism, as the comment above says -- and answers
+		// CKR_KEY_TYPE_INCONSISTENT, which would have made this case stop
+		// covering the mechanism check it exists for. Both codes genuinely
+		// applied to that pairing (§5.1.7 permits either), so the fix is to
+		// present a mismatch of only one kind.
+		rv = m.SignRecoverInit(handle, &Mechanism{Type: CKM_RSA_X_509}, keyHandle)
 		assert.Equal(t, CKR_MECHANISM_INVALID, rv)
 	})
 
@@ -1585,8 +1882,7 @@ func TestSignRecoverInit(t *testing.T) {
 		m := initializeTestModule(t)
 		defer m.Finalize()
 
-		m.InitToken(0, []byte("so-pin"), "Test Token")
-		handle, _ := m.OpenSession(0, CKF_SERIAL_SESSION|CKF_RW_SESSION)
+		handle := loginAsNormalUser(t, m)
 		m.Login(handle, CKU_SO, []byte("so-pin"))
 
 		rv := m.SignRecoverInit(handle, &Mechanism{Type: CKM_RSA_PKCS}, 9999)
@@ -1615,7 +1911,7 @@ func TestSignRecover(t *testing.T) {
 		m := initializeTestModule(t)
 		defer m.Finalize()
 
-		handle, _ := m.OpenSession(0, CKF_SERIAL_SESSION|CKF_RW_SESSION)
+		handle := loginAsNormalUser(t, m)
 
 		_, rv := m.SignRecover(handle, []byte("data"))
 		assert.Equal(t, CKR_OPERATION_NOT_INITIALIZED, rv)
@@ -1643,10 +1939,31 @@ func TestVerifyRecoverInit(t *testing.T) {
 		m := initializeTestModule(t)
 		defer m.Finalize()
 
-		handle, _ := m.OpenSession(0, CKF_SERIAL_SESSION|CKF_RW_SESSION)
+		handle := loginAsNormalUser(t, m)
 
-		// ECDSA doesn't support verify-recover
-		rv := m.VerifyRecoverInit(handle, &Mechanism{Type: CKM_ECDSA}, 1)
+		// The key must exist and carry CKA_VERIFY_RECOVER. C_VerifyRecoverInit
+		// validates the key before the mechanism (see validateInitMechanism),
+		// so passing a handle that resolves to nothing would be answered with
+		// CKR_KEY_HANDLE_INVALID and this case would never reach the mechanism
+		// check it exists to cover.
+		keyHandle, rv := m.CreateObject(handle, []Attribute{
+			NewUint32Attribute(CKA_CLASS, uint32(CKO_PUBLIC_KEY)),
+			NewUint32Attribute(CKA_KEY_TYPE, uint32(CKK_RSA)),
+			// Required at creation (v3.2 §6.1.2 footnote 1).
+			NewAttribute(CKA_MODULUS, make([]byte, 256)),
+			NewAttribute(CKA_PUBLIC_EXPONENT, []byte{0x01, 0x00, 0x01}),
+			NewStringAttribute(CKA_LABEL, "test-verify-recover-key"),
+			NewBoolAttribute(CKA_VERIFY, true),
+			NewBoolAttribute(CKA_VERIFY_RECOVER, true),
+			NewBoolAttribute(CKA_TOKEN, false),
+		})
+		require.Equal(t, CKR_OK, rv)
+
+		// CKM_AES_GCM supports neither verify-recover nor an RSA key; the key
+		// type is what makes this an RSA-only case, so the mechanism check is
+		// reached. See the sign-recover case above for why CKM_ECDSA against
+		// this RSA key no longer probes the mechanism check.
+		rv = m.VerifyRecoverInit(handle, &Mechanism{Type: CKM_SHA256}, keyHandle)
 		assert.Equal(t, CKR_MECHANISM_INVALID, rv)
 	})
 
@@ -1654,7 +1971,7 @@ func TestVerifyRecoverInit(t *testing.T) {
 		m := initializeTestModule(t)
 		defer m.Finalize()
 
-		handle, _ := m.OpenSession(0, CKF_SERIAL_SESSION|CKF_RW_SESSION)
+		handle := loginAsNormalUser(t, m)
 
 		rv := m.VerifyRecoverInit(handle, &Mechanism{Type: CKM_RSA_PKCS}, 9999)
 		assert.Equal(t, CKR_KEY_HANDLE_INVALID, rv)
@@ -1682,7 +1999,7 @@ func TestVerifyRecover(t *testing.T) {
 		m := initializeTestModule(t)
 		defer m.Finalize()
 
-		handle, _ := m.OpenSession(0, CKF_SERIAL_SESSION|CKF_RW_SESSION)
+		handle := loginAsNormalUser(t, m)
 
 		_, rv := m.VerifyRecover(handle, []byte("signature"))
 		assert.Equal(t, CKR_OPERATION_NOT_INITIALIZED, rv)
@@ -1710,7 +2027,7 @@ func TestSign(t *testing.T) {
 		m := initializeTestModule(t)
 		defer m.Finalize()
 
-		handle, _ := m.OpenSession(0, CKF_SERIAL_SESSION|CKF_RW_SESSION)
+		handle := loginAsNormalUser(t, m)
 
 		_, rv := m.Sign(handle, []byte("data"))
 		assert.Equal(t, CKR_OPERATION_NOT_INITIALIZED, rv)
@@ -1738,7 +2055,7 @@ func TestVerify(t *testing.T) {
 		m := initializeTestModule(t)
 		defer m.Finalize()
 
-		handle, _ := m.OpenSession(0, CKF_SERIAL_SESSION|CKF_RW_SESSION)
+		handle := loginAsNormalUser(t, m)
 
 		rv := m.Verify(handle, []byte("data"), []byte("signature"))
 		assert.Equal(t, CKR_OPERATION_NOT_INITIALIZED, rv)
@@ -1863,23 +2180,61 @@ func TestExtractCurveFromParams(t *testing.T) {
 			expected: "P-521",
 		},
 		{
-			name:     "Unknown defaults to P-256",
-			params:   []byte{0x00, 0x01, 0x02},
-			expected: "P-256",
+			// PKCS#11 v3.2 §6.3.5's own sample encoding for Edwards25519.
+			name:     "Ed25519 curveName PrintableString",
+			params:   []byte{0x13, 0x0c, 0x65, 0x64, 0x77, 0x61, 0x72, 0x64, 0x73, 0x32, 0x35, 0x35, 0x31, 0x39},
+			expected: "Ed25519",
 		},
 		{
-			name:     "Empty params defaults to P-256",
-			params:   []byte{},
-			expected: "P-256",
+			// RFC 8410 id-Ed25519, 1.3.101.112 — the encoding the module
+			// publishes, and the one OpenSSL can build a key from.
+			name:     "Ed25519 OID",
+			params:   []byte{0x06, 0x03, 0x2b, 0x65, 0x70},
+			expected: "Ed25519",
+		},
+		{
+			name:     "X25519 OID",
+			params:   []byte{0x06, 0x03, 0x2b, 0x65, 0x6e},
+			expected: "X25519",
 		},
 	}
 
 	for _, tc := range testCases {
 		t.Run(tc.name, func(t *testing.T) {
-			result := extractCurveFromParams(tc.params)
+			result, ok := extractCurveFromParams(tc.params)
+			assert.True(t, ok, "the curve must be recognised")
 			assert.Equal(t, tc.expected, result)
 		})
 	}
+
+	// An unrecognised curve must be reported rather than guessed. Defaulting to
+	// P-256 meant a caller asking for a curve the module does not implement
+	// silently received a key on a different one — including every Edwards
+	// caller, whose encoding the old parser could not read at all.
+	t.Run("an unrecognised curve is rejected", func(t *testing.T) {
+		for _, params := range [][]byte{{0x00, 0x01, 0x02}, {}, nil} {
+			_, ok := extractCurveFromParams(params)
+			assert.False(t, ok, "params %x must not resolve to a curve", params)
+		}
+	})
+
+	// The published encoding is canonical regardless of which the caller used,
+	// so a consumer always sees one it can parse.
+	t.Run("canonicalECParams normalises both encodings", func(t *testing.T) {
+		oid := []byte{0x06, 0x03, 0x2b, 0x65, 0x70}
+		name := []byte{0x13, 0x0c, 0x65, 0x64, 0x77, 0x61, 0x72, 0x64, 0x73, 0x32, 0x35, 0x35, 0x31, 0x39}
+
+		fromOID, ok := canonicalECParams(oid)
+		assert.True(t, ok)
+		assert.Equal(t, oid, fromOID)
+
+		fromName, ok := canonicalECParams(name)
+		assert.True(t, ok)
+		assert.Equal(t, oid, fromName, "the curveName form must publish as the OID form")
+
+		_, ok = canonicalECParams([]byte{0xff})
+		assert.False(t, ok)
+	})
 }
 
 // TestMechanismToKeyTypeFromMech tests mechanism to key type conversion.
@@ -2014,7 +2369,46 @@ func TestGenerateKey(t *testing.T) {
 		}
 
 		_, rv := m.GenerateKey(handle, &Mechanism{Type: CKM_AES_KEY_GEN}, template)
-		assert.Equal(t, CKR_SESSION_READ_ONLY, rv)
+
+		// Not CKR_SESSION_READ_ONLY. PKCS#11 v3.2 §5.7.1 restricts only what a
+		// read-only session may CREATE -- "Only session objects can be created
+		// during a read-only session" -- and this template asks for a session
+		// key (CKA_TOKEN defaults to false), which is permitted. The login
+		// check therefore runs first and is what refuses this call. SoftHSM
+		// agrees: a session key in a R/O session returns CKR_OK there, and only
+		// a token key returns CKR_SESSION_READ_ONLY.
+		assert.Equal(t, CKR_USER_NOT_LOGGED_IN, rv)
+	})
+
+	t.Run("read-only session may create a session key but not a token key", func(t *testing.T) {
+		m := initializeTestModule(t)
+		defer m.Finalize()
+
+		handle := loginAsNormalUserReadOnly(t, m)
+
+		sessionKey := []Attribute{
+			NewUint32Attribute(CKA_CLASS, uint32(CKO_SECRET_KEY)),
+			NewUint32Attribute(CKA_KEY_TYPE, uint32(CKK_AES)),
+			NewBoolAttribute(CKA_ENCRYPT, true),
+			NewUint32Attribute(CKA_VALUE_LEN, 32),
+			NewBoolAttribute(CKA_TOKEN, false),
+		}
+
+		_, rv := m.GenerateKey(handle, &Mechanism{Type: CKM_AES_KEY_GEN}, sessionKey)
+		assert.Equal(t, CKR_OK, rv,
+			"a session key is legal in a read-only session (v3.2 5.7.1)")
+
+		tokenKey := []Attribute{
+			NewUint32Attribute(CKA_CLASS, uint32(CKO_SECRET_KEY)),
+			NewUint32Attribute(CKA_KEY_TYPE, uint32(CKK_AES)),
+			NewBoolAttribute(CKA_ENCRYPT, true),
+			NewUint32Attribute(CKA_VALUE_LEN, 32),
+			NewBoolAttribute(CKA_TOKEN, true),
+		}
+
+		_, rv = m.GenerateKey(handle, &Mechanism{Type: CKM_AES_KEY_GEN}, tokenKey)
+		assert.Equal(t, CKR_SESSION_READ_ONLY, rv,
+			"a token key is what a read-only session may not create")
 	})
 }
 
@@ -2051,7 +2445,11 @@ func TestGenerateKeyPair(t *testing.T) {
 		}
 
 		_, _, rv := m.GenerateKeyPair(handle, &Mechanism{Type: CKM_RSA_PKCS_KEY_PAIR_GEN}, pubTemplate, privTemplate)
-		assert.Equal(t, CKR_SESSION_READ_ONLY, rv)
+
+		// See TestGenerateKey: v3.2 §5.7.1 restricts only token-object
+		// creation, and neither template asks for one, so the login check is
+		// what legitimately refuses this call.
+		assert.Equal(t, CKR_USER_NOT_LOGGED_IN, rv)
 	})
 }
 
@@ -2145,7 +2543,11 @@ func TestDeriveKey(t *testing.T) {
 		handle, _ := m.OpenSession(0, CKF_SERIAL_SESSION) // Read-only session
 
 		_, rv := m.DeriveKey(handle, &Mechanism{Type: CKM_ECDH1_DERIVE}, 1, nil)
-		assert.Equal(t, CKR_SESSION_READ_ONLY, rv)
+
+		// See TestGenerateKey: v3.2 5.7.1 restricts only token-object creation,
+		// so the unconditional read-only refusal was wrong and the login check
+		// is what legitimately rejects this call.
+		assert.Equal(t, CKR_USER_NOT_LOGGED_IN, rv)
 	})
 }
 
@@ -2162,8 +2564,11 @@ func TestMessageEncryptInit(t *testing.T) {
 		m := initializeTestModule(t)
 		defer m.Finalize()
 
+		// A nil mechanism is C_MessageEncryptInit's request to terminate an
+		// active operation, not a malformed argument, so the only thing left to
+		// refuse is the session handle itself.
 		rv := m.MessageEncryptInit(9999, nil, 1)
-		assert.Equal(t, CKR_ARGUMENTS_BAD, rv)
+		assert.Equal(t, CKR_SESSION_HANDLE_INVALID, rv)
 	})
 }
 
@@ -2172,7 +2577,7 @@ func TestEncryptMessage(t *testing.T) {
 	t.Run("fails when not initialized", func(t *testing.T) {
 		m := createTestModule(t)
 
-		_, rv := m.EncryptMessage(1, nil, nil)
+		_, rv := m.EncryptMessage(1, nil, nil, nil)
 		assert.Equal(t, CKR_CRYPTOKI_NOT_INITIALIZED, rv)
 	})
 
@@ -2180,7 +2585,7 @@ func TestEncryptMessage(t *testing.T) {
 		m := initializeTestModule(t)
 		defer m.Finalize()
 
-		_, rv := m.EncryptMessage(9999, nil, nil)
+		_, rv := m.EncryptMessage(9999, nil, nil, nil)
 		assert.Equal(t, CKR_SESSION_HANDLE_INVALID, rv)
 	})
 }
@@ -2190,7 +2595,7 @@ func TestEncryptMessageBegin(t *testing.T) {
 	t.Run("fails when not initialized", func(t *testing.T) {
 		m := createTestModule(t)
 
-		rv := m.EncryptMessageBegin(1, nil)
+		rv := m.EncryptMessageBegin(1, nil, nil)
 		assert.Equal(t, CKR_CRYPTOKI_NOT_INITIALIZED, rv)
 	})
 
@@ -2198,7 +2603,7 @@ func TestEncryptMessageBegin(t *testing.T) {
 		m := initializeTestModule(t)
 		defer m.Finalize()
 
-		rv := m.EncryptMessageBegin(9999, nil)
+		rv := m.EncryptMessageBegin(9999, nil, nil)
 		assert.Equal(t, CKR_SESSION_HANDLE_INVALID, rv)
 	})
 }
@@ -2208,7 +2613,7 @@ func TestEncryptMessageNext(t *testing.T) {
 	t.Run("fails when not initialized", func(t *testing.T) {
 		m := createTestModule(t)
 
-		_, rv := m.EncryptMessageNext(1, nil, false)
+		_, rv := m.EncryptMessageNext(1, nil, nil, false)
 		assert.Equal(t, CKR_CRYPTOKI_NOT_INITIALIZED, rv)
 	})
 
@@ -2216,7 +2621,7 @@ func TestEncryptMessageNext(t *testing.T) {
 		m := initializeTestModule(t)
 		defer m.Finalize()
 
-		_, rv := m.EncryptMessageNext(9999, nil, false)
+		_, rv := m.EncryptMessageNext(9999, nil, nil, false)
 		assert.Equal(t, CKR_SESSION_HANDLE_INVALID, rv)
 	})
 }
@@ -2252,8 +2657,11 @@ func TestMessageDecryptInit(t *testing.T) {
 		m := initializeTestModule(t)
 		defer m.Finalize()
 
+		// A nil mechanism is C_MessageDecryptInit's request to terminate an
+		// active operation, not a malformed argument, so the only thing left to
+		// refuse is the session handle itself.
 		rv := m.MessageDecryptInit(9999, nil, 1)
-		assert.Equal(t, CKR_ARGUMENTS_BAD, rv)
+		assert.Equal(t, CKR_SESSION_HANDLE_INVALID, rv)
 	})
 }
 
@@ -2262,7 +2670,7 @@ func TestDecryptMessage(t *testing.T) {
 	t.Run("fails when not initialized", func(t *testing.T) {
 		m := createTestModule(t)
 
-		_, rv := m.DecryptMessage(1, nil, nil)
+		_, rv := m.DecryptMessage(1, nil, nil, nil)
 		assert.Equal(t, CKR_CRYPTOKI_NOT_INITIALIZED, rv)
 	})
 
@@ -2270,7 +2678,7 @@ func TestDecryptMessage(t *testing.T) {
 		m := initializeTestModule(t)
 		defer m.Finalize()
 
-		_, rv := m.DecryptMessage(9999, nil, nil)
+		_, rv := m.DecryptMessage(9999, nil, nil, nil)
 		assert.Equal(t, CKR_SESSION_HANDLE_INVALID, rv)
 	})
 }
@@ -2280,7 +2688,7 @@ func TestDecryptMessageBegin(t *testing.T) {
 	t.Run("fails when not initialized", func(t *testing.T) {
 		m := createTestModule(t)
 
-		rv := m.DecryptMessageBegin(1, nil)
+		rv := m.DecryptMessageBegin(1, nil, nil)
 		assert.Equal(t, CKR_CRYPTOKI_NOT_INITIALIZED, rv)
 	})
 
@@ -2288,7 +2696,7 @@ func TestDecryptMessageBegin(t *testing.T) {
 		m := initializeTestModule(t)
 		defer m.Finalize()
 
-		rv := m.DecryptMessageBegin(9999, nil)
+		rv := m.DecryptMessageBegin(9999, nil, nil)
 		assert.Equal(t, CKR_SESSION_HANDLE_INVALID, rv)
 	})
 }
@@ -2298,7 +2706,7 @@ func TestDecryptMessageNext(t *testing.T) {
 	t.Run("fails when not initialized", func(t *testing.T) {
 		m := createTestModule(t)
 
-		_, rv := m.DecryptMessageNext(1, nil, false)
+		_, rv := m.DecryptMessageNext(1, nil, nil, false)
 		assert.Equal(t, CKR_CRYPTOKI_NOT_INITIALIZED, rv)
 	})
 
@@ -2306,7 +2714,7 @@ func TestDecryptMessageNext(t *testing.T) {
 		m := initializeTestModule(t)
 		defer m.Finalize()
 
-		_, rv := m.DecryptMessageNext(9999, nil, false)
+		_, rv := m.DecryptMessageNext(9999, nil, nil, false)
 		assert.Equal(t, CKR_SESSION_HANDLE_INVALID, rv)
 	})
 }
@@ -2342,8 +2750,11 @@ func TestMessageSignInit(t *testing.T) {
 		m := initializeTestModule(t)
 		defer m.Finalize()
 
+		// A nil mechanism is C_MessageSignInit's request to terminate an
+		// active operation, not a malformed argument, so the only thing left to
+		// refuse is the session handle itself.
 		rv := m.MessageSignInit(9999, nil, 1)
-		assert.Equal(t, CKR_ARGUMENTS_BAD, rv)
+		assert.Equal(t, CKR_SESSION_HANDLE_INVALID, rv)
 	})
 }
 
@@ -2432,8 +2843,11 @@ func TestMessageVerifyInit(t *testing.T) {
 		m := initializeTestModule(t)
 		defer m.Finalize()
 
+		// A nil mechanism is C_MessageVerifyInit's request to terminate an
+		// active operation, not a malformed argument, so the only thing left to
+		// refuse is the session handle itself.
 		rv := m.MessageVerifyInit(9999, nil, 1)
-		assert.Equal(t, CKR_ARGUMENTS_BAD, rv)
+		assert.Equal(t, CKR_SESSION_HANDLE_INVALID, rv)
 	})
 }
 
@@ -2478,7 +2892,7 @@ func TestVerifyMessageNext(t *testing.T) {
 	t.Run("fails when not initialized", func(t *testing.T) {
 		m := createTestModule(t)
 
-		rv := m.VerifyMessageNext(1, nil, nil)
+		rv := m.VerifyMessageNext(1, nil, nil, false)
 		assert.Equal(t, CKR_CRYPTOKI_NOT_INITIALIZED, rv)
 	})
 
@@ -2486,7 +2900,7 @@ func TestVerifyMessageNext(t *testing.T) {
 		m := initializeTestModule(t)
 		defer m.Finalize()
 
-		rv := m.VerifyMessageNext(9999, nil, nil)
+		rv := m.VerifyMessageNext(9999, nil, nil, false)
 		assert.Equal(t, CKR_SESSION_HANDLE_INVALID, rv)
 	})
 }
@@ -2662,13 +3076,23 @@ func TestGetOperationStateBytes(t *testing.T) {
 		assert.Equal(t, CKR_STATE_UNSAVEABLE, rv)
 	})
 
-	t.Run("returns serialized state for simple operation", func(t *testing.T) {
+	t.Run("refuses to save an operation planted without crypto state", func(t *testing.T) {
+		// This reached the serializer by planting an operation directly into the
+		// session manager, bypassing the *Init that every real operation goes
+		// through — and every real *Init sets CryptoOp, so the serialized branch
+		// was unreachable through the public API. It asserted the shape of dead
+		// code.
+		//
+		// The refusal is now unconditional, which is what PKCS#11 v3.2 §5.6.6
+		// provides for: the running state of every operation this module
+		// supports lives in the crypto manager or the backend and cannot leave
+		// the token, so CKR_STATE_UNSAVEABLE is the honest answer regardless of
+		// how the operation was established.
 		m := initializeTestModule(t)
 		defer m.Finalize()
 
-		handle, _ := m.OpenSession(0, CKF_SERIAL_SESSION|CKF_RW_SESSION)
+		handle := loginAsNormalUser(t, m)
 
-		// Manually set an operation state without CryptoOp via session manager
 		slotID := SlotID(0)
 		m.mu.Lock()
 		sm := m.sessionManagers[slotID]
@@ -2676,10 +3100,8 @@ func TestGetOperationStateBytes(t *testing.T) {
 		m.mu.Unlock()
 
 		state, rv := m.GetOperationStateBytes(handle)
-		assert.Equal(t, CKR_OK, rv)
-		assert.NotEmpty(t, state)
-		// First byte should be operation type
-		assert.Equal(t, byte(OperationFindObjects), state[0])
+		assert.Equal(t, CKR_STATE_UNSAVEABLE, rv)
+		assert.Empty(t, state, "a refusal must not hand back a partial state blob")
 	})
 }
 
@@ -2710,8 +3132,12 @@ func TestSign_WithInitializedOperation(t *testing.T) {
 		require.Equal(t, CKR_OK, rv)
 
 		// Now Sign should fail due to invalid key handle
+		// CKR_FUNCTION_FAILED, not CKR_KEY_HANDLE_INVALID: this function takes
+		// no key handle argument, so PKCS#11 v3.2 omits CKR_KEY_HANDLE_INVALID
+		// from its return table and a conforming application never learns to
+		// expect it. See terminalKeyGoneRV.
 		_, rv = m.Sign(handle, []byte("data"))
-		assert.Equal(t, CKR_KEY_HANDLE_INVALID, rv)
+		assert.Equal(t, CKR_FUNCTION_FAILED, rv)
 	})
 }
 
@@ -2742,8 +3168,12 @@ func TestVerify_WithInitializedOperation(t *testing.T) {
 		require.Equal(t, CKR_OK, rv)
 
 		// Now Verify should fail due to invalid key handle
+		// CKR_FUNCTION_FAILED, not CKR_KEY_HANDLE_INVALID: this function takes
+		// no key handle argument, so PKCS#11 v3.2 omits CKR_KEY_HANDLE_INVALID
+		// from its return table and a conforming application never learns to
+		// expect it. See terminalKeyGoneRV.
 		rv = m.Verify(handle, []byte("data"), []byte("signature"))
-		assert.Equal(t, CKR_KEY_HANDLE_INVALID, rv)
+		assert.Equal(t, CKR_FUNCTION_FAILED, rv)
 	})
 }
 
@@ -2774,8 +3204,12 @@ func TestEncrypt_WithInitializedOperation(t *testing.T) {
 		require.Equal(t, CKR_OK, rv)
 
 		// Now Encrypt should fail due to invalid key handle
+		// CKR_FUNCTION_FAILED, not CKR_KEY_HANDLE_INVALID: this function takes
+		// no key handle argument, so PKCS#11 v3.2 omits CKR_KEY_HANDLE_INVALID
+		// from its return table and a conforming application never learns to
+		// expect it. See terminalKeyGoneRV.
 		_, rv = m.Encrypt(handle, []byte("data"))
-		assert.Equal(t, CKR_KEY_HANDLE_INVALID, rv)
+		assert.Equal(t, CKR_FUNCTION_FAILED, rv)
 	})
 }
 
@@ -2784,8 +3218,7 @@ func createTestModuleWithEncryptableKey(t *testing.T) (*Module, SessionHandle, O
 	t.Helper()
 	m := initializeTestModule(t)
 
-	handle, rv := m.OpenSession(0, CKF_SERIAL_SESSION|CKF_RW_SESSION)
-	require.Equal(t, CKR_OK, rv)
+	handle := loginAsNormalUser(t, m)
 
 	// Create a secret key object for encryption
 	template := []Attribute{
@@ -2834,8 +3267,12 @@ func TestDecrypt_WithInitializedOperation(t *testing.T) {
 		require.Equal(t, CKR_OK, rv)
 
 		// Now Decrypt should fail due to invalid key handle
+		// CKR_FUNCTION_FAILED, not CKR_KEY_HANDLE_INVALID: this function takes
+		// no key handle argument, so PKCS#11 v3.2 omits CKR_KEY_HANDLE_INVALID
+		// from its return table and a conforming application never learns to
+		// expect it. See terminalKeyGoneRV.
 		_, rv = m.Decrypt(handle, []byte("data"))
-		assert.Equal(t, CKR_KEY_HANDLE_INVALID, rv)
+		assert.Equal(t, CKR_FUNCTION_FAILED, rv)
 	})
 }
 
@@ -3151,15 +3588,19 @@ func TestSetOperationStateBytes(t *testing.T) {
 		state := make([]byte, 13)
 		state[0] = byte(OperationFindObjects)
 
+		// §5.6.7 explicitly permits restoring over an active operation, so an
+		// active operation is never the reason to refuse. The refusal here is
+		// about the state itself: no blob can be valid saved state when
+		// C_GetOperationState never produces any.
 		rv = m.SetOperationStateBytes(handle, state, 0, 0)
-		assert.Equal(t, CKR_OPERATION_ACTIVE, rv)
+		assert.Equal(t, CKR_SAVED_STATE_INVALID, rv)
 	})
 
-	t.Run("succeeds with valid state", func(t *testing.T) {
+	t.Run("refuses a hand-built state blob", func(t *testing.T) {
 		m := initializeTestModule(t)
 		defer m.Finalize()
 
-		handle, _ := m.OpenSession(0, CKF_SERIAL_SESSION|CKF_RW_SESSION)
+		handle := loginAsNormalUser(t, m)
 
 		// Create valid state bytes
 		// Format: [type][mech(4bytes)][keyHandle(8bytes)][data...]
@@ -3178,7 +3619,8 @@ func TestSetOperationStateBytes(t *testing.T) {
 		state[14] = 0x02
 
 		rv := m.SetOperationStateBytes(handle, state, 0, 0)
-		assert.Equal(t, CKR_OK, rv)
+		assert.Equal(t, CKR_SAVED_STATE_INVALID, rv,
+			"a hand-built blob is not saved state; this module produces none")
 	})
 }
 
@@ -3188,17 +3630,19 @@ func TestSignRecoverInit_SuccessPath(t *testing.T) {
 		m := initializeTestModule(t)
 		defer m.Finalize()
 
-		// Init token and login as SO
-		m.InitToken(0, []byte("so-pin"), "Test Token")
-		handle, _ := m.OpenSession(0, CKF_SERIAL_SESSION|CKF_RW_SESSION)
-		m.Login(handle, CKU_SO, []byte("so-pin"))
+		// Private key objects default to CKA_PRIVATE, which only the normal
+		// user may create or use -- the SO may not (v3.2 4.2).
+		handle := loginAsNormalUser(t, m)
 
-		// Create RSA key
+		// Create RSA key. CKA_SIGN_RECOVER is the gating attribute for
+		// SignRecoverInit (v3.2 SS5.14.5), not CKA_SIGN, so it must be set
+		// explicitly even though the key can also sign normally.
 		template := []Attribute{
 			NewUint32Attribute(CKA_CLASS, uint32(CKO_PRIVATE_KEY)),
 			NewUint32Attribute(CKA_KEY_TYPE, uint32(CKK_RSA)),
 			NewStringAttribute(CKA_LABEL, "test-sign-recover-key"),
 			NewBoolAttribute(CKA_SIGN, true),
+			NewBoolAttribute(CKA_SIGN_RECOVER, true),
 			NewBoolAttribute(CKA_TOKEN, false),
 			NewBoolAttribute(CKA_MODIFIABLE, true),
 			NewBoolAttribute(CKA_COPYABLE, true),
@@ -3213,14 +3657,42 @@ func TestSignRecoverInit_SuccessPath(t *testing.T) {
 		assert.Equal(t, CKR_OK, rv)
 	})
 
+	t.Run("fails when key CKA_SIGN is true but CKA_SIGN_RECOVER is not", func(t *testing.T) {
+		// Regression test: SignRecoverInit must gate on CKA_SIGN_RECOVER, not
+		// CKA_SIGN. A key that can sign normally must still be refused for
+		// sign-recover unless CKA_SIGN_RECOVER is explicitly CK_TRUE.
+		m := initializeTestModule(t)
+		defer m.Finalize()
+
+		// Private key objects default to CKA_PRIVATE, which only the normal
+		// user may create or use -- the SO may not (v3.2 4.2).
+		handle := loginAsNormalUser(t, m)
+
+		template := []Attribute{
+			NewUint32Attribute(CKA_CLASS, uint32(CKO_PRIVATE_KEY)),
+			NewUint32Attribute(CKA_KEY_TYPE, uint32(CKK_RSA)),
+			NewStringAttribute(CKA_LABEL, "test-sign-not-recover-key"),
+			NewBoolAttribute(CKA_SIGN, true),
+			NewBoolAttribute(CKA_TOKEN, false),
+			NewBoolAttribute(CKA_MODIFIABLE, true),
+			NewBoolAttribute(CKA_COPYABLE, true),
+			NewBoolAttribute(CKA_DESTROYABLE, true),
+		}
+
+		keyHandle, rv := m.CreateObject(handle, template)
+		require.Equal(t, CKR_OK, rv)
+
+		rv = m.SignRecoverInit(handle, &Mechanism{Type: CKM_RSA_PKCS}, keyHandle)
+		assert.Equal(t, CKR_KEY_FUNCTION_NOT_PERMITTED, rv)
+	})
+
 	t.Run("fails when key CKA_SIGN is false", func(t *testing.T) {
 		m := initializeTestModule(t)
 		defer m.Finalize()
 
-		// Init token and login as SO
-		m.InitToken(0, []byte("so-pin"), "Test Token")
-		handle, _ := m.OpenSession(0, CKF_SERIAL_SESSION|CKF_RW_SESSION)
-		m.Login(handle, CKU_SO, []byte("so-pin"))
+		// Private key objects default to CKA_PRIVATE, which only the normal
+		// user may create or use -- the SO may not (v3.2 4.2).
+		handle := loginAsNormalUser(t, m)
 
 		// Create RSA key with CKA_SIGN = false
 		template := []Attribute{
@@ -3249,14 +3721,16 @@ func TestVerifyRecoverInit_SuccessPath(t *testing.T) {
 		m := initializeTestModule(t)
 		defer m.Finalize()
 
-		handle, _ := m.OpenSession(0, CKF_SERIAL_SESSION|CKF_RW_SESSION)
+		handle := loginAsNormalUser(t, m)
 
-		// Create RSA public key for verify
+		// Create RSA public key for verify. CKA_VERIFY_RECOVER is the gating
+		// attribute for VerifyRecoverInit (v3.2 SS5.14.5), not CKA_VERIFY.
 		template := []Attribute{
 			NewUint32Attribute(CKA_CLASS, uint32(CKO_PUBLIC_KEY)),
 			NewUint32Attribute(CKA_KEY_TYPE, uint32(CKK_RSA)),
 			NewStringAttribute(CKA_LABEL, "test-verify-recover-key"),
 			NewBoolAttribute(CKA_VERIFY, true),
+			NewBoolAttribute(CKA_VERIFY_RECOVER, true),
 			NewBoolAttribute(CKA_TOKEN, false),
 			NewBoolAttribute(CKA_MODIFIABLE, true),
 			NewBoolAttribute(CKA_COPYABLE, true),
@@ -3278,12 +3752,15 @@ func TestVerifyRecoverInit_SuccessPath(t *testing.T) {
 		m := initializeTestModule(t)
 		defer m.Finalize()
 
-		handle, _ := m.OpenSession(0, CKF_SERIAL_SESSION|CKF_RW_SESSION)
+		handle := loginAsNormalUser(t, m)
 
 		// Create RSA key with CKA_VERIFY_RECOVER = false
 		template := []Attribute{
 			NewUint32Attribute(CKA_CLASS, uint32(CKO_PUBLIC_KEY)),
 			NewUint32Attribute(CKA_KEY_TYPE, uint32(CKK_RSA)),
+			// Required at creation (v3.2 §6.1.2 footnote 1).
+			NewAttribute(CKA_MODULUS, make([]byte, 256)),
+			NewAttribute(CKA_PUBLIC_EXPONENT, []byte{0x01, 0x00, 0x01}),
 			NewStringAttribute(CKA_LABEL, "test-no-verify-recover-key"),
 			NewBoolAttribute(CKA_VERIFY_RECOVER, false),
 			NewBoolAttribute(CKA_TOKEN, false),
@@ -3307,7 +3784,7 @@ func TestSetOperationStateBytes_InvalidKeyHandle(t *testing.T) {
 		m := initializeTestModule(t)
 		defer m.Finalize()
 
-		handle, _ := m.OpenSession(0, CKF_SERIAL_SESSION|CKF_RW_SESSION)
+		handle := loginAsNormalUser(t, m)
 
 		// Create valid state bytes with non-zero key handle
 		mechType := uint32(CKM_SHA_1)
@@ -3328,7 +3805,7 @@ func TestSetOperationStateBytes_InvalidKeyHandle(t *testing.T) {
 		state[12] = byte(keyHandle)
 
 		rv := m.SetOperationStateBytes(handle, state, 0, 0)
-		assert.Equal(t, CKR_KEY_HANDLE_INVALID, rv)
+		assert.Equal(t, CKR_SAVED_STATE_INVALID, rv)
 	})
 }
 
@@ -3341,8 +3818,7 @@ func createTestModuleWithSecretKey(t *testing.T) (*Module, SessionHandle, Object
 	t.Helper()
 	m := initializeTestModule(t)
 
-	handle, rv := m.OpenSession(0, CKF_SERIAL_SESSION|CKF_RW_SESSION)
-	require.Equal(t, CKR_OK, rv)
+	handle := loginAsNormalUser(t, m)
 
 	// Create a secret key object with CKA_VALUE for testing
 	template := []Attribute{
@@ -3368,7 +3844,7 @@ func TestGenerateKeyExtended(t *testing.T) {
 		m := initializeTestModule(t)
 		defer m.Finalize()
 
-		handle, _ := m.OpenSession(0, CKF_SERIAL_SESSION|CKF_RW_SESSION)
+		handle := loginAsNormalUser(t, m)
 
 		template := []Attribute{
 			NewUint32Attribute(CKA_CLASS, uint32(CKO_SECRET_KEY)),
@@ -3388,7 +3864,7 @@ func TestGenerateKeyExtended(t *testing.T) {
 		m := initializeTestModule(t)
 		defer m.Finalize()
 
-		handle, _ := m.OpenSession(0, CKF_SERIAL_SESSION|CKF_RW_SESSION)
+		handle := loginAsNormalUser(t, m)
 
 		template := []Attribute{
 			NewUint32Attribute(CKA_CLASS, uint32(CKO_SECRET_KEY)),
@@ -3409,7 +3885,7 @@ func TestGenerateKeyPairExtended(t *testing.T) {
 		m := initializeTestModule(t)
 		defer m.Finalize()
 
-		handle, _ := m.OpenSession(0, CKF_SERIAL_SESSION|CKF_RW_SESSION)
+		handle := loginAsNormalUser(t, m)
 
 		pubTemplate := []Attribute{
 			NewUint32Attribute(CKA_CLASS, uint32(CKO_PUBLIC_KEY)),
@@ -3434,7 +3910,7 @@ func TestGenerateKeyPairExtended(t *testing.T) {
 		m := initializeTestModule(t)
 		defer m.Finalize()
 
-		handle, _ := m.OpenSession(0, CKF_SERIAL_SESSION|CKF_RW_SESSION)
+		handle := loginAsNormalUser(t, m)
 
 		// P-256 OID
 		p256OID := []byte{0x06, 0x08, 0x2a, 0x86, 0x48, 0xce, 0x3d, 0x03, 0x01, 0x07}
@@ -3462,7 +3938,7 @@ func TestGenerateKeyPairExtended(t *testing.T) {
 		m := initializeTestModule(t)
 		defer m.Finalize()
 
-		handle, _ := m.OpenSession(0, CKF_SERIAL_SESSION|CKF_RW_SESSION)
+		handle := loginAsNormalUser(t, m)
 
 		pubTemplate := []Attribute{
 			NewUint32Attribute(CKA_CLASS, uint32(CKO_PUBLIC_KEY)),
@@ -3487,7 +3963,7 @@ func TestDeriveKeyExtended(t *testing.T) {
 		m := initializeTestModule(t)
 		defer m.Finalize()
 
-		handle, _ := m.OpenSession(0, CKF_SERIAL_SESSION|CKF_RW_SESSION)
+		handle := loginAsNormalUser(t, m)
 
 		template := []Attribute{
 			NewUint32Attribute(CKA_CLASS, uint32(CKO_SECRET_KEY)),
@@ -3531,7 +4007,7 @@ func TestDeriveKeyExtended(t *testing.T) {
 		m := initializeTestModule(t)
 		defer m.Finalize()
 
-		handle, _ := m.OpenSession(0, CKF_SERIAL_SESSION|CKF_RW_SESSION)
+		handle := loginAsNormalUser(t, m)
 
 		// Create a key with CKA_DERIVE set to false
 		keyTemplate := []Attribute{
@@ -3549,8 +4025,32 @@ func TestDeriveKeyExtended(t *testing.T) {
 			NewUint32Attribute(CKA_KEY_TYPE, uint32(CKK_AES)),
 		}
 
+		// CKR_KEY_FUNCTION_NOT_PERMITTED: v3.2 §5.1.6 defines it as a key used
+		// for a purpose its attributes do not allow, which is what a base key
+		// without CKA_DERIVE is. See
+		// TestDeriveKeyKeyUsageIsKeyFunctionNotPermitted for why §5.18.5's
+		// return list does not settle it the other way.
 		_, rv = m.DeriveKey(handle, &Mechanism{Type: CKM_HKDF_DERIVE}, keyHandle, deriveTemplate)
 		assert.Equal(t, CKR_KEY_FUNCTION_NOT_PERMITTED, rv)
+	})
+
+	t.Run("fails with HKDF mechanism missing CK_HKDF_PARAMS", func(t *testing.T) {
+		m, handle, keyHandle := createTestModuleWithSecretKey(t)
+		defer m.Finalize()
+
+		template := []Attribute{
+			NewUint32Attribute(CKA_CLASS, uint32(CKO_SECRET_KEY)),
+			NewUint32Attribute(CKA_KEY_TYPE, uint32(CKK_AES)),
+			NewUint32Attribute(CKA_VALUE_LEN, 32),
+		}
+
+		// CKM_HKDF_DERIVE requires CK_HKDF_PARAMS (v3.2 section 6.62.2).
+		// A mechanism with no typed parameter -- the shape the cgo
+		// boundary used to hand off before it parsed the struct -- must
+		// be refused rather than silently derived under fabricated
+		// salt/info/hash defaults.
+		_, rv := m.DeriveKey(handle, &Mechanism{Type: CKM_HKDF_DERIVE}, keyHandle, template)
+		assert.Equal(t, CKR_MECHANISM_PARAM_INVALID, rv)
 	})
 
 	t.Run("derives key with HKDF mechanism", func(t *testing.T) {
@@ -3563,21 +4063,32 @@ func TestDeriveKeyExtended(t *testing.T) {
 			NewUint32Attribute(CKA_VALUE_LEN, 32),
 		}
 
-		derivedHandle, rv := m.DeriveKey(handle, &Mechanism{Type: CKM_HKDF_DERIVE}, keyHandle, template)
+		mech := &Mechanism{
+			Type: CKM_HKDF_DERIVE,
+			TypedParameter: &HKDFParams{
+				Extract:     true,
+				Expand:      true,
+				PRFHashMech: CKM_SHA256,
+				SaltType:    CKF_HKDF_SALT_DATA,
+				Salt:        []byte("test-salt"),
+				Info:        []byte("test-info"),
+			},
+		}
+
+		derivedHandle, rv := m.DeriveKey(handle, mech, keyHandle, template)
 		assert.Equal(t, CKR_OK, rv)
 		assert.NotEqual(t, ObjectHandle(InvalidHandle), derivedHandle)
 	})
 }
 
-// TestMapECDHKDFType tests the KDF type mapping for ECDH key derivation.
-func TestMapECDHKDFType(t *testing.T) {
+// TestECDHKDF tests the KDF type mapping for ECDH key derivation.
+func TestECDHKDF(t *testing.T) {
 	testCases := []struct {
 		name         string
 		kdfType      KDFType
 		expectedAlg  string
 		expectedHash string
 	}{
-		{"CKD_NULL", CKD_NULL, "", ""},
 		{"CKD_SHA1_KDF", CKD_SHA1_KDF, "X963", "SHA-1"},
 		{"CKD_SHA1_KDF_ASN1", CKD_SHA1_KDF_ASN1, "X963", "SHA-1"},
 		{"CKD_SHA1_KDF_CONCATENATE", CKD_SHA1_KDF_CONCATENATE, "X963", "SHA-1"},
@@ -3594,14 +4105,46 @@ func TestMapECDHKDFType(t *testing.T) {
 		{"CKD_SHA3_256_KDF", CKD_SHA3_256_KDF, "X963", "SHA3-256"},
 		{"CKD_SHA3_384_KDF", CKD_SHA3_384_KDF, "X963", "SHA3-384"},
 		{"CKD_SHA3_512_KDF", CKD_SHA3_512_KDF, "X963", "SHA3-512"},
-		{"unknown KDF defaults to HKDF", KDFType(0xFFFF), "HKDF", "SHA-256"},
+
+		// CKD_NULL applies no key derivation function at all, so it names the
+		// raw algorithm and no hash. It is the form TLS key exchange and
+		// OpenSSL's pkcs11-provider request; refusing it, as this module used
+		// to, makes the token unusable for both.
+		{"CKD_NULL", CKD_NULL, KDFAlgorithmRaw, ""},
 	}
 
 	for _, tc := range testCases {
 		t.Run(tc.name, func(t *testing.T) {
-			alg, hash := mapECDHKDFType(tc.kdfType)
+			alg, hash, ok := ECDHKDF(tc.kdfType)
+			assert.True(t, ok, "supported KDF type must resolve")
 			assert.Equal(t, tc.expectedAlg, alg, "algorithm mismatch")
 			assert.Equal(t, tc.expectedHash, hash, "hash mismatch")
+		})
+	}
+
+	// A KDF type this module does not implement must not resolve to a
+	// substitute. The previous mapping answered every unlisted CK_EC_KDF_TYPE
+	// — the BLAKE2b types among them — with HKDF-SHA-256, so C_DeriveKey
+	// returned key material derived by a function the caller never named,
+	// under CKR_OK.
+	unsupported := []struct {
+		name    string
+		kdfType KDFType
+	}{
+		{"CKD_CPDIVERSIFY_KDF", CKD_CPDIVERSIFY_KDF},
+		{"CKD_BLAKE2B_160_KDF", CKD_BLAKE2B_160_KDF},
+		{"CKD_BLAKE2B_256_KDF", CKD_BLAKE2B_256_KDF},
+		{"CKD_BLAKE2B_384_KDF", CKD_BLAKE2B_384_KDF},
+		{"CKD_BLAKE2B_512_KDF", CKD_BLAKE2B_512_KDF},
+		{"reserved value", KDFType(0xFFFF)},
+		{"zero", KDFType(0)},
+	}
+	for _, tc := range unsupported {
+		t.Run("unsupported/"+tc.name, func(t *testing.T) {
+			alg, hash, ok := ECDHKDF(tc.kdfType)
+			assert.False(t, ok, "unimplemented KDF type must not resolve")
+			assert.Empty(t, alg, "unimplemented KDF type must not name an algorithm")
+			assert.Empty(t, hash, "unimplemented KDF type must not name a hash")
 		})
 	}
 }
@@ -3612,11 +4155,12 @@ func TestDigestKeyExtended(t *testing.T) {
 		m := initializeTestModule(t)
 		defer m.Finalize()
 
-		handle, rv := m.OpenSession(0, CKF_SERIAL_SESSION|CKF_RW_SESSION)
-		require.Equal(t, CKR_OK, rv)
+		// CKF_LOGIN_REQUIRED gates key-bearing operations, so the fixture
+		// authenticates before exercising them.
+		handle := loginAsNormalUser(t, m)
 
 		// Initialize digest
-		rv = m.DigestInit(handle, &Mechanism{Type: CKM_SHA256})
+		rv := m.DigestInit(handle, &Mechanism{Type: CKM_SHA256})
 		require.Equal(t, CKR_OK, rv)
 
 		// Try to digest an invalid key
@@ -3628,8 +4172,9 @@ func TestDigestKeyExtended(t *testing.T) {
 		m := initializeTestModule(t)
 		defer m.Finalize()
 
-		handle, rv := m.OpenSession(0, CKF_SERIAL_SESSION|CKF_RW_SESSION)
-		require.Equal(t, CKR_OK, rv)
+		// CKF_LOGIN_REQUIRED gates key-bearing operations, so the fixture
+		// authenticates before exercising them.
+		handle := loginAsNormalUser(t, m)
 
 		// Create a secret key with CKA_EXTRACTABLE=true
 		keyTemplate := []Attribute{
@@ -3660,8 +4205,9 @@ func TestDigestKeyExtended(t *testing.T) {
 		m := initializeTestModule(t)
 		defer m.Finalize()
 
-		handle, rv := m.OpenSession(0, CKF_SERIAL_SESSION|CKF_RW_SESSION)
-		require.Equal(t, CKR_OK, rv)
+		// CKF_LOGIN_REQUIRED gates key-bearing operations, so the fixture
+		// authenticates before exercising them.
+		handle := loginAsNormalUser(t, m)
 
 		// Create a data object (not a secret key)
 		objTemplate := []Attribute{
@@ -3692,9 +4238,9 @@ func TestEncryptMessageExtended(t *testing.T) {
 		m := initializeTestModule(t)
 		defer m.Finalize()
 
-		handle, _ := m.OpenSession(0, CKF_SERIAL_SESSION|CKF_RW_SESSION)
+		handle := loginAsNormalUser(t, m)
 
-		_, rv := m.EncryptMessage(handle, []byte("aad"), []byte("plaintext"))
+		_, rv := m.EncryptMessage(handle, nil, []byte("aad"), []byte("plaintext"))
 		assert.Equal(t, CKR_OPERATION_NOT_INITIALIZED, rv)
 	})
 
@@ -3702,10 +4248,10 @@ func TestEncryptMessageExtended(t *testing.T) {
 		m, handle, keyHandle := createTestModuleWithSecretKey(t)
 		defer m.Finalize()
 
-		rv := m.EncryptInit(handle, &Mechanism{Type: CKM_AES_GCM}, keyHandle)
+		rv := m.EncryptInit(handle, NewMechanismWithTypedParams(CKM_AES_GCM, NewAESGCMParams(testGCMIV(), 128)), keyHandle)
 		require.Equal(t, CKR_OK, rv)
 
-		ciphertext, rv := m.EncryptMessage(handle, []byte("additional-data"), []byte("secret-message"))
+		ciphertext, rv := m.EncryptMessage(handle, nil, []byte("additional-data"), []byte("secret-message"))
 		assert.Equal(t, CKR_OK, rv)
 		assert.NotEmpty(t, ciphertext)
 	})
@@ -3717,9 +4263,9 @@ func TestDecryptMessageExtended(t *testing.T) {
 		m := initializeTestModule(t)
 		defer m.Finalize()
 
-		handle, _ := m.OpenSession(0, CKF_SERIAL_SESSION|CKF_RW_SESSION)
+		handle := loginAsNormalUser(t, m)
 
-		_, rv := m.DecryptMessage(handle, []byte("aad"), []byte("ciphertext"))
+		_, rv := m.DecryptMessage(handle, nil, []byte("aad"), []byte("ciphertext"))
 		assert.Equal(t, CKR_OPERATION_NOT_INITIALIZED, rv)
 	})
 
@@ -3727,10 +4273,10 @@ func TestDecryptMessageExtended(t *testing.T) {
 		m, handle, keyHandle := createTestModuleWithSecretKey(t)
 		defer m.Finalize()
 
-		rv := m.DecryptInit(handle, &Mechanism{Type: CKM_AES_GCM}, keyHandle)
+		rv := m.DecryptInit(handle, NewMechanismWithTypedParams(CKM_AES_GCM, NewAESGCMParams(testGCMIV(), 128)), keyHandle)
 		require.Equal(t, CKR_OK, rv)
 
-		plaintext, rv := m.DecryptMessage(handle, []byte("additional-data"), []byte("encrypted-data"))
+		plaintext, rv := m.DecryptMessage(handle, nil, []byte("additional-data"), append([]byte("encrypted-data"), make([]byte, GCMTagSize)...))
 		assert.Equal(t, CKR_OK, rv)
 		assert.NotNil(t, plaintext)
 	})
@@ -3742,9 +4288,9 @@ func TestEncryptMessageBeginExtended(t *testing.T) {
 		m := initializeTestModule(t)
 		defer m.Finalize()
 
-		handle, _ := m.OpenSession(0, CKF_SERIAL_SESSION|CKF_RW_SESSION)
+		handle := loginAsNormalUser(t, m)
 
-		rv := m.EncryptMessageBegin(handle, []byte("aad"))
+		rv := m.EncryptMessageBegin(handle, nil, []byte("aad"))
 		assert.Equal(t, CKR_OPERATION_NOT_INITIALIZED, rv)
 	})
 
@@ -3752,10 +4298,10 @@ func TestEncryptMessageBeginExtended(t *testing.T) {
 		m, handle, keyHandle := createTestModuleWithSecretKey(t)
 		defer m.Finalize()
 
-		rv := m.EncryptInit(handle, &Mechanism{Type: CKM_AES_GCM}, keyHandle)
+		rv := m.EncryptInit(handle, NewMechanismWithTypedParams(CKM_AES_GCM, NewAESGCMParams(testGCMIV(), 128)), keyHandle)
 		require.Equal(t, CKR_OK, rv)
 
-		rv = m.EncryptMessageBegin(handle, []byte("associated-data"))
+		rv = m.EncryptMessageBegin(handle, nil, []byte("associated-data"))
 		assert.Equal(t, CKR_OK, rv)
 	})
 
@@ -3763,10 +4309,10 @@ func TestEncryptMessageBeginExtended(t *testing.T) {
 		m, handle, keyHandle := createTestModuleWithSecretKey(t)
 		defer m.Finalize()
 
-		rv := m.EncryptInit(handle, &Mechanism{Type: CKM_AES_GCM}, keyHandle)
+		rv := m.EncryptInit(handle, NewMechanismWithTypedParams(CKM_AES_GCM, NewAESGCMParams(testGCMIV(), 128)), keyHandle)
 		require.Equal(t, CKR_OK, rv)
 
-		rv = m.EncryptMessageBegin(handle, nil)
+		rv = m.EncryptMessageBegin(handle, nil, nil)
 		assert.Equal(t, CKR_OK, rv)
 	})
 }
@@ -3777,9 +4323,9 @@ func TestDecryptMessageBeginExtended(t *testing.T) {
 		m := initializeTestModule(t)
 		defer m.Finalize()
 
-		handle, _ := m.OpenSession(0, CKF_SERIAL_SESSION|CKF_RW_SESSION)
+		handle := loginAsNormalUser(t, m)
 
-		rv := m.DecryptMessageBegin(handle, []byte("aad"))
+		rv := m.DecryptMessageBegin(handle, nil, []byte("aad"))
 		assert.Equal(t, CKR_OPERATION_NOT_INITIALIZED, rv)
 	})
 
@@ -3787,10 +4333,10 @@ func TestDecryptMessageBeginExtended(t *testing.T) {
 		m, handle, keyHandle := createTestModuleWithSecretKey(t)
 		defer m.Finalize()
 
-		rv := m.DecryptInit(handle, &Mechanism{Type: CKM_AES_GCM}, keyHandle)
+		rv := m.DecryptInit(handle, NewMechanismWithTypedParams(CKM_AES_GCM, NewAESGCMParams(testGCMIV(), 128)), keyHandle)
 		require.Equal(t, CKR_OK, rv)
 
-		rv = m.DecryptMessageBegin(handle, []byte("associated-data"))
+		rv = m.DecryptMessageBegin(handle, nil, []byte("associated-data"))
 		assert.Equal(t, CKR_OK, rv)
 	})
 
@@ -3798,10 +4344,10 @@ func TestDecryptMessageBeginExtended(t *testing.T) {
 		m, handle, keyHandle := createTestModuleWithSecretKey(t)
 		defer m.Finalize()
 
-		rv := m.DecryptInit(handle, &Mechanism{Type: CKM_AES_GCM}, keyHandle)
+		rv := m.DecryptInit(handle, NewMechanismWithTypedParams(CKM_AES_GCM, NewAESGCMParams(testGCMIV(), 128)), keyHandle)
 		require.Equal(t, CKR_OK, rv)
 
-		rv = m.DecryptMessageBegin(handle, nil)
+		rv = m.DecryptMessageBegin(handle, nil, nil)
 		assert.Equal(t, CKR_OK, rv)
 	})
 }
@@ -3812,9 +4358,9 @@ func TestEncryptMessageNextExtended(t *testing.T) {
 		m := initializeTestModule(t)
 		defer m.Finalize()
 
-		handle, _ := m.OpenSession(0, CKF_SERIAL_SESSION|CKF_RW_SESSION)
+		handle := loginAsNormalUser(t, m)
 
-		_, rv := m.EncryptMessageNext(handle, []byte("data"), false)
+		_, rv := m.EncryptMessageNext(handle, nil, []byte("data"), false)
 		assert.Equal(t, CKR_OPERATION_NOT_INITIALIZED, rv)
 	})
 
@@ -3822,10 +4368,10 @@ func TestEncryptMessageNextExtended(t *testing.T) {
 		m, handle, keyHandle := createTestModuleWithSecretKey(t)
 		defer m.Finalize()
 
-		rv := m.EncryptInit(handle, &Mechanism{Type: CKM_AES_GCM}, keyHandle)
+		rv := m.EncryptInit(handle, NewMechanismWithTypedParams(CKM_AES_GCM, NewAESGCMParams(testGCMIV(), 128)), keyHandle)
 		require.Equal(t, CKR_OK, rv)
 
-		result, rv := m.EncryptMessageNext(handle, []byte("part1"), false)
+		result, rv := m.EncryptMessageNext(handle, nil, []byte("part1"), false)
 		assert.Equal(t, CKR_OK, rv)
 		assert.Nil(t, result) // Non-final should return nil
 	})
@@ -3834,15 +4380,15 @@ func TestEncryptMessageNextExtended(t *testing.T) {
 		m, handle, keyHandle := createTestModuleWithSecretKey(t)
 		defer m.Finalize()
 
-		rv := m.EncryptInit(handle, &Mechanism{Type: CKM_AES_GCM}, keyHandle)
+		rv := m.EncryptInit(handle, NewMechanismWithTypedParams(CKM_AES_GCM, NewAESGCMParams(testGCMIV(), 128)), keyHandle)
 		require.Equal(t, CKR_OK, rv)
 
 		// First part
-		_, rv = m.EncryptMessageNext(handle, []byte("part1"), false)
+		_, rv = m.EncryptMessageNext(handle, nil, []byte("part1"), false)
 		require.Equal(t, CKR_OK, rv)
 
 		// Final part
-		ciphertext, rv := m.EncryptMessageNext(handle, []byte("part2"), true)
+		ciphertext, rv := m.EncryptMessageNext(handle, nil, []byte("part2"), true)
 		assert.Equal(t, CKR_OK, rv)
 		assert.NotNil(t, ciphertext)
 	})
@@ -3854,9 +4400,9 @@ func TestDecryptMessageNextExtended(t *testing.T) {
 		m := initializeTestModule(t)
 		defer m.Finalize()
 
-		handle, _ := m.OpenSession(0, CKF_SERIAL_SESSION|CKF_RW_SESSION)
+		handle := loginAsNormalUser(t, m)
 
-		_, rv := m.DecryptMessageNext(handle, []byte("data"), false)
+		_, rv := m.DecryptMessageNext(handle, nil, []byte("data"), false)
 		assert.Equal(t, CKR_OPERATION_NOT_INITIALIZED, rv)
 	})
 
@@ -3864,10 +4410,10 @@ func TestDecryptMessageNextExtended(t *testing.T) {
 		m, handle, keyHandle := createTestModuleWithSecretKey(t)
 		defer m.Finalize()
 
-		rv := m.DecryptInit(handle, &Mechanism{Type: CKM_AES_GCM}, keyHandle)
+		rv := m.DecryptInit(handle, NewMechanismWithTypedParams(CKM_AES_GCM, NewAESGCMParams(testGCMIV(), 128)), keyHandle)
 		require.Equal(t, CKR_OK, rv)
 
-		result, rv := m.DecryptMessageNext(handle, []byte("encrypted-part1"), false)
+		result, rv := m.DecryptMessageNext(handle, nil, []byte("encrypted-part1"), false)
 		assert.Equal(t, CKR_OK, rv)
 		assert.Nil(t, result) // Non-final should return nil
 	})
@@ -3876,15 +4422,15 @@ func TestDecryptMessageNextExtended(t *testing.T) {
 		m, handle, keyHandle := createTestModuleWithSecretKey(t)
 		defer m.Finalize()
 
-		rv := m.DecryptInit(handle, &Mechanism{Type: CKM_AES_GCM}, keyHandle)
+		rv := m.DecryptInit(handle, NewMechanismWithTypedParams(CKM_AES_GCM, NewAESGCMParams(testGCMIV(), 128)), keyHandle)
 		require.Equal(t, CKR_OK, rv)
 
 		// First part
-		_, rv = m.DecryptMessageNext(handle, []byte("encrypted-part1"), false)
+		_, rv = m.DecryptMessageNext(handle, nil, []byte("encrypted-part1"), false)
 		require.Equal(t, CKR_OK, rv)
 
 		// Final part
-		plaintext, rv := m.DecryptMessageNext(handle, []byte("encrypted-part2"), true)
+		plaintext, rv := m.DecryptMessageNext(handle, nil, []byte("encrypted-part2"), true)
 		assert.Equal(t, CKR_OK, rv)
 		assert.NotNil(t, plaintext)
 	})
@@ -3896,7 +4442,7 @@ func TestMessageEncryptFinalExtended(t *testing.T) {
 		m, handle, keyHandle := createTestModuleWithSecretKey(t)
 		defer m.Finalize()
 
-		rv := m.EncryptInit(handle, &Mechanism{Type: CKM_AES_GCM}, keyHandle)
+		rv := m.EncryptInit(handle, NewMechanismWithTypedParams(CKM_AES_GCM, NewAESGCMParams(testGCMIV(), 128)), keyHandle)
 		require.Equal(t, CKR_OK, rv)
 
 		rv = m.MessageEncryptFinal(handle)
@@ -3910,7 +4456,7 @@ func TestMessageDecryptFinalExtended(t *testing.T) {
 		m, handle, keyHandle := createTestModuleWithSecretKey(t)
 		defer m.Finalize()
 
-		rv := m.DecryptInit(handle, &Mechanism{Type: CKM_AES_GCM}, keyHandle)
+		rv := m.DecryptInit(handle, NewMechanismWithTypedParams(CKM_AES_GCM, NewAESGCMParams(testGCMIV(), 128)), keyHandle)
 		require.Equal(t, CKR_OK, rv)
 
 		rv = m.MessageDecryptFinal(handle)
@@ -3927,8 +4473,7 @@ func createTestModuleWithSigningKey(t *testing.T) (*Module, SessionHandle, Objec
 	t.Helper()
 	m := initializeTestModule(t)
 
-	handle, rv := m.OpenSession(0, CKF_SERIAL_SESSION|CKF_RW_SESSION)
-	require.Equal(t, CKR_OK, rv)
+	handle := loginAsNormalUser(t, m)
 
 	template := []Attribute{
 		NewUint32Attribute(CKA_CLASS, uint32(CKO_PRIVATE_KEY)),
@@ -3949,12 +4494,14 @@ func createTestModuleWithVerifyKey(t *testing.T) (*Module, SessionHandle, Object
 	t.Helper()
 	m := initializeTestModule(t)
 
-	handle, rv := m.OpenSession(0, CKF_SERIAL_SESSION|CKF_RW_SESSION)
-	require.Equal(t, CKR_OK, rv)
+	handle := loginAsNormalUser(t, m)
 
 	template := []Attribute{
 		NewUint32Attribute(CKA_CLASS, uint32(CKO_PUBLIC_KEY)),
 		NewUint32Attribute(CKA_KEY_TYPE, uint32(CKK_RSA)),
+		// Required at creation (v3.2 §6.1.2 footnote 1).
+		NewAttribute(CKA_MODULUS, make([]byte, 256)),
+		NewAttribute(CKA_PUBLIC_EXPONENT, []byte{0x01, 0x00, 0x01}),
 		NewStringAttribute(CKA_LABEL, "test-verify-key"),
 		NewBoolAttribute(CKA_VERIFY, true),
 		NewBoolAttribute(CKA_TOKEN, false),
@@ -3972,7 +4519,7 @@ func TestSignMessageBeginExtended(t *testing.T) {
 		m := initializeTestModule(t)
 		defer m.Finalize()
 
-		handle, _ := m.OpenSession(0, CKF_SERIAL_SESSION|CKF_RW_SESSION)
+		handle := loginAsNormalUser(t, m)
 
 		rv := m.SignMessageBegin(handle)
 		assert.Equal(t, CKR_OPERATION_NOT_INITIALIZED, rv)
@@ -3996,7 +4543,7 @@ func TestVerifyMessageBeginExtended(t *testing.T) {
 		m := initializeTestModule(t)
 		defer m.Finalize()
 
-		handle, _ := m.OpenSession(0, CKF_SERIAL_SESSION|CKF_RW_SESSION)
+		handle := loginAsNormalUser(t, m)
 
 		rv := m.VerifyMessageBegin(handle)
 		assert.Equal(t, CKR_OPERATION_NOT_INITIALIZED, rv)
@@ -4020,7 +4567,7 @@ func TestSignMessageNextExtended(t *testing.T) {
 		m := initializeTestModule(t)
 		defer m.Finalize()
 
-		handle, _ := m.OpenSession(0, CKF_SERIAL_SESSION|CKF_RW_SESSION)
+		handle := loginAsNormalUser(t, m)
 
 		_, rv := m.SignMessageNext(handle, []byte("data"), false)
 		assert.Equal(t, CKR_OPERATION_NOT_INITIALIZED, rv)
@@ -4062,9 +4609,9 @@ func TestVerifyMessageNextExtended(t *testing.T) {
 		m := initializeTestModule(t)
 		defer m.Finalize()
 
-		handle, _ := m.OpenSession(0, CKF_SERIAL_SESSION|CKF_RW_SESSION)
+		handle := loginAsNormalUser(t, m)
 
-		rv := m.VerifyMessageNext(handle, []byte("data"), nil)
+		rv := m.VerifyMessageNext(handle, []byte("data"), nil, false)
 		assert.Equal(t, CKR_OPERATION_NOT_INITIALIZED, rv)
 	})
 
@@ -4075,7 +4622,7 @@ func TestVerifyMessageNextExtended(t *testing.T) {
 		rv := m.VerifyInit(handle, &Mechanism{Type: CKM_RSA_PKCS}, keyHandle)
 		require.Equal(t, CKR_OK, rv)
 
-		rv = m.VerifyMessageNext(handle, []byte("data-part1"), nil)
+		rv = m.VerifyMessageNext(handle, []byte("data-part1"), nil, false)
 		assert.Equal(t, CKR_OK, rv)
 	})
 
@@ -4087,11 +4634,11 @@ func TestVerifyMessageNextExtended(t *testing.T) {
 		require.Equal(t, CKR_OK, rv)
 
 		// First part without signature
-		rv = m.VerifyMessageNext(handle, []byte("data-part1"), nil)
+		rv = m.VerifyMessageNext(handle, []byte("data-part1"), nil, false)
 		require.Equal(t, CKR_OK, rv)
 
 		// Final part with signature - triggers verification
-		rv = m.VerifyMessageNext(handle, []byte("data-part2"), []byte("mock-signature"))
+		rv = m.VerifyMessageNext(handle, []byte("data-part2"), []byte("mock-signature"), true)
 		// This will likely succeed with mock or fail signature verification
 		assert.True(t, rv == CKR_OK || rv == CKR_SIGNATURE_INVALID)
 	})
@@ -4131,7 +4678,7 @@ func TestSignMessageExtended(t *testing.T) {
 		m := initializeTestModule(t)
 		defer m.Finalize()
 
-		handle, _ := m.OpenSession(0, CKF_SERIAL_SESSION|CKF_RW_SESSION)
+		handle := loginAsNormalUser(t, m)
 
 		_, rv := m.SignMessage(handle, []byte("data"))
 		assert.Equal(t, CKR_OPERATION_NOT_INITIALIZED, rv)
@@ -4156,7 +4703,7 @@ func TestVerifyMessageExtended(t *testing.T) {
 		m := initializeTestModule(t)
 		defer m.Finalize()
 
-		handle, _ := m.OpenSession(0, CKF_SERIAL_SESSION|CKF_RW_SESSION)
+		handle := loginAsNormalUser(t, m)
 
 		rv := m.VerifyMessage(handle, []byte("data"), []byte("signature"))
 		assert.Equal(t, CKR_OPERATION_NOT_INITIALIZED, rv)
@@ -4181,8 +4728,7 @@ func TestSign_SuccessPath(t *testing.T) {
 		m := initializeTestModule(t)
 		defer m.Finalize()
 
-		handle, rv := m.OpenSession(0, CKF_SERIAL_SESSION|CKF_RW_SESSION)
-		require.Equal(t, CKR_OK, rv)
+		handle := loginAsNormalUser(t, m)
 
 		// Create RSA private key with required attributes for signing
 		template := []Attribute{
@@ -4216,13 +4762,15 @@ func TestVerify_SuccessPath(t *testing.T) {
 		m := initializeTestModule(t)
 		defer m.Finalize()
 
-		handle, rv := m.OpenSession(0, CKF_SERIAL_SESSION|CKF_RW_SESSION)
-		require.Equal(t, CKR_OK, rv)
+		handle := loginAsNormalUser(t, m)
 
 		// Create RSA public key with required attributes for verification
 		template := []Attribute{
 			NewUint32Attribute(CKA_CLASS, uint32(CKO_PUBLIC_KEY)),
 			NewUint32Attribute(CKA_KEY_TYPE, uint32(CKK_RSA)),
+			// Required at creation (v3.2 §6.1.2 footnote 1).
+			NewAttribute(CKA_MODULUS, make([]byte, 256)),
+			NewAttribute(CKA_PUBLIC_EXPONENT, []byte{0x01, 0x00, 0x01}),
 			NewStringAttribute(CKA_LABEL, "test-verify-key"),
 			NewBoolAttribute(CKA_VERIFY, true),
 			NewBoolAttribute(CKA_TOKEN, false),
@@ -4250,8 +4798,7 @@ func TestEncrypt_SuccessPath(t *testing.T) {
 		m := initializeTestModule(t)
 		defer m.Finalize()
 
-		handle, rv := m.OpenSession(0, CKF_SERIAL_SESSION|CKF_RW_SESSION)
-		require.Equal(t, CKR_OK, rv)
+		handle := loginAsNormalUser(t, m)
 
 		// Create AES secret key for encryption
 		template := []Attribute{
@@ -4287,8 +4834,7 @@ func TestDecrypt_SuccessPath(t *testing.T) {
 		m := initializeTestModule(t)
 		defer m.Finalize()
 
-		handle, rv := m.OpenSession(0, CKF_SERIAL_SESSION|CKF_RW_SESSION)
-		require.Equal(t, CKR_OK, rv)
+		handle := loginAsNormalUser(t, m)
 
 		// Create AES secret key for decryption
 		template := []Attribute{
@@ -4324,18 +4870,18 @@ func TestSignRecover_SuccessPath(t *testing.T) {
 		m := initializeTestModule(t)
 		defer m.Finalize()
 
-		// Init token and login as SO to create private key
-		m.InitToken(0, []byte("so-pin"), "Test Token")
-		handle, rv := m.OpenSession(0, CKF_SERIAL_SESSION|CKF_RW_SESSION)
-		require.Equal(t, CKR_OK, rv)
-		m.Login(handle, CKU_SO, []byte("so-pin"))
+		// Private key objects default to CKA_PRIVATE, which only the normal
+		// user may create or use (v3.2 4.2).
+		handle := loginAsNormalUser(t, m)
 
-		// Create RSA private key
+		// Create RSA private key. CKA_SIGN_RECOVER is the gating attribute for
+		// SignRecoverInit, distinct from CKA_SIGN.
 		template := []Attribute{
 			NewUint32Attribute(CKA_CLASS, uint32(CKO_PRIVATE_KEY)),
 			NewUint32Attribute(CKA_KEY_TYPE, uint32(CKK_RSA)),
 			NewStringAttribute(CKA_LABEL, "test-sign-recover-key"),
 			NewBoolAttribute(CKA_SIGN, true),
+			NewBoolAttribute(CKA_SIGN_RECOVER, true),
 			NewBoolAttribute(CKA_TOKEN, false),
 			NewBoolAttribute(CKA_MODIFIABLE, true),
 			NewBoolAttribute(CKA_COPYABLE, true),
@@ -4362,15 +4908,16 @@ func TestVerifyRecover_SuccessPath(t *testing.T) {
 		m := initializeTestModule(t)
 		defer m.Finalize()
 
-		handle, rv := m.OpenSession(0, CKF_SERIAL_SESSION|CKF_RW_SESSION)
-		require.Equal(t, CKR_OK, rv)
+		handle := loginAsNormalUser(t, m)
 
-		// Create RSA public key with modulus and exponent for verify recover
+		// Create RSA public key with modulus and exponent for verify recover.
+		// CKA_VERIFY_RECOVER is the gating attribute for VerifyRecoverInit.
 		template := []Attribute{
 			NewUint32Attribute(CKA_CLASS, uint32(CKO_PUBLIC_KEY)),
 			NewUint32Attribute(CKA_KEY_TYPE, uint32(CKK_RSA)),
 			NewStringAttribute(CKA_LABEL, "test-verify-recover-key"),
 			NewBoolAttribute(CKA_VERIFY, true),
+			NewBoolAttribute(CKA_VERIFY_RECOVER, true),
 			NewBoolAttribute(CKA_TOKEN, false),
 			NewBoolAttribute(CKA_MODIFIABLE, true),
 			NewBoolAttribute(CKA_COPYABLE, true),
@@ -4402,13 +4949,14 @@ func TestDualOperations_SuccessPaths(t *testing.T) {
 		m := initializeTestModule(t)
 		defer m.Finalize()
 
-		handle, rv := m.OpenSession(0, CKF_SERIAL_SESSION|CKF_RW_SESSION)
-		require.Equal(t, CKR_OK, rv)
+		handle := loginAsNormalUser(t, m)
 
 		// Create AES key for encryption
 		template := []Attribute{
 			NewUint32Attribute(CKA_CLASS, uint32(CKO_SECRET_KEY)),
 			NewUint32Attribute(CKA_KEY_TYPE, uint32(CKK_AES)),
+			// Required at creation (v3.2 §6.10.1 footnote 1).
+			NewAttribute(CKA_VALUE, make([]byte, 32)),
 			NewStringAttribute(CKA_LABEL, "test-aes-dual-key"),
 			NewBoolAttribute(CKA_ENCRYPT, true),
 			NewBoolAttribute(CKA_DECRYPT, true),
@@ -4416,7 +4964,6 @@ func TestDualOperations_SuccessPaths(t *testing.T) {
 			NewBoolAttribute(CKA_MODIFIABLE, true),
 			NewBoolAttribute(CKA_COPYABLE, true),
 			NewBoolAttribute(CKA_DESTROYABLE, true),
-			NewAttribute(CKA_VALUE, make([]byte, 32)),
 		}
 
 		keyHandle, rv := m.CreateObject(handle, template)
@@ -4439,8 +4986,7 @@ func TestDualOperations_SuccessPaths(t *testing.T) {
 		m := initializeTestModule(t)
 		defer m.Finalize()
 
-		handle, rv := m.OpenSession(0, CKF_SERIAL_SESSION|CKF_RW_SESSION)
-		require.Equal(t, CKR_OK, rv)
+		handle := loginAsNormalUser(t, m)
 
 		// Create keys for both operations
 		rsaTemplate := []Attribute{
@@ -4459,6 +5005,8 @@ func TestDualOperations_SuccessPaths(t *testing.T) {
 		aesTemplate := []Attribute{
 			NewUint32Attribute(CKA_CLASS, uint32(CKO_SECRET_KEY)),
 			NewUint32Attribute(CKA_KEY_TYPE, uint32(CKK_AES)),
+			// Required at creation (v3.2 §6.10.1 footnote 1).
+			NewAttribute(CKA_VALUE, make([]byte, 32)),
 			NewStringAttribute(CKA_LABEL, "test-aes-dual-key2"),
 			NewBoolAttribute(CKA_ENCRYPT, true),
 			NewBoolAttribute(CKA_DECRYPT, true),
@@ -4466,7 +5014,6 @@ func TestDualOperations_SuccessPaths(t *testing.T) {
 			NewBoolAttribute(CKA_MODIFIABLE, true),
 			NewBoolAttribute(CKA_COPYABLE, true),
 			NewBoolAttribute(CKA_DESTROYABLE, true),
-			NewAttribute(CKA_VALUE, make([]byte, 32)),
 		}
 		aesKeyHandle, rv := m.CreateObject(handle, aesTemplate)
 		require.Equal(t, CKR_OK, rv)
@@ -4488,13 +5035,14 @@ func TestDualOperations_SuccessPaths(t *testing.T) {
 		m := initializeTestModule(t)
 		defer m.Finalize()
 
-		handle, rv := m.OpenSession(0, CKF_SERIAL_SESSION|CKF_RW_SESSION)
-		require.Equal(t, CKR_OK, rv)
+		handle := loginAsNormalUser(t, m)
 
 		// Create AES key for decryption
 		template := []Attribute{
 			NewUint32Attribute(CKA_CLASS, uint32(CKO_SECRET_KEY)),
 			NewUint32Attribute(CKA_KEY_TYPE, uint32(CKK_AES)),
+			// Required at creation (v3.2 §6.10.1 footnote 1).
+			NewAttribute(CKA_VALUE, make([]byte, 32)),
 			NewStringAttribute(CKA_LABEL, "test-aes-decrypt-dual-key"),
 			NewBoolAttribute(CKA_ENCRYPT, true),
 			NewBoolAttribute(CKA_DECRYPT, true),
@@ -4502,7 +5050,6 @@ func TestDualOperations_SuccessPaths(t *testing.T) {
 			NewBoolAttribute(CKA_MODIFIABLE, true),
 			NewBoolAttribute(CKA_COPYABLE, true),
 			NewBoolAttribute(CKA_DESTROYABLE, true),
-			NewAttribute(CKA_VALUE, make([]byte, 32)),
 		}
 
 		keyHandle, rv := m.CreateObject(handle, template)
@@ -4525,13 +5072,14 @@ func TestDualOperations_SuccessPaths(t *testing.T) {
 		m := initializeTestModule(t)
 		defer m.Finalize()
 
-		handle, rv := m.OpenSession(0, CKF_SERIAL_SESSION|CKF_RW_SESSION)
-		require.Equal(t, CKR_OK, rv)
+		handle := loginAsNormalUser(t, m)
 
 		// Create AES key for decryption
 		aesTemplate := []Attribute{
 			NewUint32Attribute(CKA_CLASS, uint32(CKO_SECRET_KEY)),
 			NewUint32Attribute(CKA_KEY_TYPE, uint32(CKK_AES)),
+			// Required at creation (v3.2 §6.10.1 footnote 1).
+			NewAttribute(CKA_VALUE, make([]byte, 32)),
 			NewStringAttribute(CKA_LABEL, "test-aes-decrypt-verify-key"),
 			NewBoolAttribute(CKA_ENCRYPT, true),
 			NewBoolAttribute(CKA_DECRYPT, true),
@@ -4539,7 +5087,6 @@ func TestDualOperations_SuccessPaths(t *testing.T) {
 			NewBoolAttribute(CKA_MODIFIABLE, true),
 			NewBoolAttribute(CKA_COPYABLE, true),
 			NewBoolAttribute(CKA_DESTROYABLE, true),
-			NewAttribute(CKA_VALUE, make([]byte, 32)),
 		}
 		aesKeyHandle, rv := m.CreateObject(handle, aesTemplate)
 		require.Equal(t, CKR_OK, rv)
@@ -4548,6 +5095,8 @@ func TestDualOperations_SuccessPaths(t *testing.T) {
 		rsaTemplate := []Attribute{
 			NewUint32Attribute(CKA_CLASS, uint32(CKO_PUBLIC_KEY)),
 			NewUint32Attribute(CKA_KEY_TYPE, uint32(CKK_RSA)),
+			NewAttribute(CKA_MODULUS, make([]byte, 256)),
+			NewAttribute(CKA_PUBLIC_EXPONENT, []byte{0x01, 0x00, 0x01}),
 			NewStringAttribute(CKA_LABEL, "test-rsa-verify-key"),
 			NewBoolAttribute(CKA_VERIFY, true),
 			NewBoolAttribute(CKA_TOKEN, false),
@@ -4788,91 +5337,510 @@ func TestGetSlotIDFromSession(t *testing.T) {
 // ----------------------------------------------------------------
 
 func TestExtractPublicKeyComponentsFromPEM(t *testing.T) {
-	t.Run("returns nil for empty PEM data", func(t *testing.T) {
-		modulus, exponent, ecPoint := extractPublicKeyComponentsFromPEM("")
+	pemFor := func(t *testing.T, pub any) string {
+		t.Helper()
+		der, err := x509.MarshalPKIXPublicKey(pub)
+		require.NoError(t, err)
+		return string(pem.EncodeToMemory(&pem.Block{Type: "PUBLIC KEY", Bytes: der}))
+	}
+
+	t.Run("returns nothing for empty PEM data", func(t *testing.T) {
+		modulus, exponent, ecPoint, err := extractPublicKeyComponentsFromPEM("")
+		require.NoError(t, err, "an absent public key is not an error")
 		assert.Nil(t, modulus)
 		assert.Nil(t, exponent)
 		assert.Nil(t, ecPoint)
 	})
 
-	t.Run("returns nil for invalid PEM data", func(t *testing.T) {
-		modulus, exponent, ecPoint := extractPublicKeyComponentsFromPEM("not a PEM")
-		assert.Nil(t, modulus)
-		assert.Nil(t, exponent)
-		assert.Nil(t, ecPoint)
+	t.Run("reports invalid PEM data", func(t *testing.T) {
+		_, _, _, err := extractPublicKeyComponentsFromPEM("not a PEM")
+		assert.Error(t, err)
 	})
 
 	t.Run("extracts RSA public key components", func(t *testing.T) {
-		// Generate a real RSA key for testing
 		rsaKey, err := rsa.GenerateKey(rand.Reader, 2048)
 		require.NoError(t, err)
 
-		pubKeyBytes, err := x509.MarshalPKIXPublicKey(&rsaKey.PublicKey)
+		modulus, exponent, ecPoint, err := extractPublicKeyComponentsFromPEM(pemFor(t, &rsaKey.PublicKey))
 		require.NoError(t, err)
-
-		pemBlock := &pem.Block{
-			Type:  "PUBLIC KEY",
-			Bytes: pubKeyBytes,
-		}
-		rsaPEM := string(pem.EncodeToMemory(pemBlock))
-
-		modulus, exponent, ecPoint := extractPublicKeyComponentsFromPEM(rsaPEM)
 		assert.NotNil(t, modulus, "expected modulus for RSA key")
-		assert.NotNil(t, exponent, "expected public exponent for RSA key")
 		assert.Nil(t, ecPoint, "expected nil EC point for RSA key")
-		// Exponent should be 65537 (0x010001) for standard RSA keys
 		assert.Equal(t, []byte{0x01, 0x00, 0x01}, exponent)
 	})
 
-	t.Run("extracts EC public key point", func(t *testing.T) {
-		// Generate a real EC key for testing
+	t.Run("extracts a Weierstrass EC point DER-wrapped", func(t *testing.T) {
+		// PKCS#11 v3.2 §6.3.3 Table 64: the short-Weierstrass CKA_EC_POINT is
+		// the DER encoding of the ANSI X9.62 ECPoint, so it arrives inside an
+		// OCTET STRING rather than as the bare point.
 		ecKey, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
 		require.NoError(t, err)
 
-		pubKeyBytes, err := x509.MarshalPKIXPublicKey(&ecKey.PublicKey)
+		modulus, exponent, ecPoint, err := extractPublicKeyComponentsFromPEM(pemFor(t, &ecKey.PublicKey))
 		require.NoError(t, err)
+		assert.Nil(t, modulus)
+		assert.Nil(t, exponent)
+		require.NotEmpty(t, ecPoint)
+		assert.Equal(t, byte(0x04), ecPoint[0], "the point must be wrapped in an ASN.1 OCTET STRING")
 
-		pemBlock := &pem.Block{
-			Type:  "PUBLIC KEY",
-			Bytes: pubKeyBytes,
-		}
-		ecPEM := string(pem.EncodeToMemory(pemBlock))
-
-		modulus, exponent, ecPoint := extractPublicKeyComponentsFromPEM(ecPEM)
-		assert.Nil(t, modulus, "expected nil modulus for EC key")
-		assert.Nil(t, exponent, "expected nil exponent for EC key")
-		assert.NotNil(t, ecPoint, "expected EC point for EC key")
-		assert.True(t, len(ecPoint) > 0, "EC point should not be empty")
+		var unwrapped []byte
+		_, unmarshalErr := asn1.Unmarshal(ecPoint, &unwrapped)
+		require.NoError(t, unmarshalErr)
+		assert.Equal(t, byte(0x04), unwrapped[0], "the unwrapped point must be uncompressed")
 	})
 
-	t.Run("returns nil for unsupported key type", func(t *testing.T) {
-		// Generate an Ed25519 key which should fall through to default case
+	t.Run("extracts an Edwards public point DER-wrapped", func(t *testing.T) {
+		// PKCS#11 v3.2 §6.3.5 Table 66 defines the Edwards CKA_EC_POINT as the
+		// raw RFC 8032 public key bytes -- NOT DER-wrapped like the Weierstrass
+		// one. This case previously fell through to a default that returned
+		// nothing at all, so an Ed25519 public key object carried no point: it
+		// could be signed with, but never verified against or exported.
 		pubKey, _, err := ed25519.GenerateKey(rand.Reader)
 		require.NoError(t, err)
 
-		pubKeyBytes, err := x509.MarshalPKIXPublicKey(pubKey)
+		modulus, exponent, ecPoint, err := extractPublicKeyComponentsFromPEM(pemFor(t, pubKey))
 		require.NoError(t, err)
-
-		pemBlock := &pem.Block{
-			Type:  "PUBLIC KEY",
-			Bytes: pubKeyBytes,
-		}
-		ed25519PEM := string(pem.EncodeToMemory(pemBlock))
-
-		modulus, exponent, ecPoint := extractPublicKeyComponentsFromPEM(ed25519PEM)
 		assert.Nil(t, modulus)
 		assert.Nil(t, exponent)
-		assert.Nil(t, ecPoint)
+		var unwrapped []byte
+		_, unmarshalErr := asn1.Unmarshal(ecPoint, &unwrapped)
+		require.NoError(t, unmarshalErr, "the point must be a DER OCTET STRING")
+		assert.Equal(t, []byte(pubKey), unwrapped,
+			"the wrapped point must be the RFC 8032 public key bytes")
+		assert.Len(t, unwrapped, ed25519.PublicKeySize)
 	})
 
-	t.Run("returns nil for invalid ASN.1 in PEM block", func(t *testing.T) {
-		// Create a PEM with invalid ASN.1 content
+	t.Run("extracts a Montgomery public point DER-wrapped", func(t *testing.T) {
+		// §6.3.7 Table 68 gives X25519 the same raw treatment, per RFC 7748.
+		priv, err := ecdh.X25519().GenerateKey(rand.Reader)
+		require.NoError(t, err)
+		pub := priv.PublicKey()
+
+		_, _, ecPoint, err := extractPublicKeyComponentsFromPEM(pemFor(t, pub))
+		require.NoError(t, err)
+
+		var unwrapped []byte
+		_, unmarshalErr := asn1.Unmarshal(ecPoint, &unwrapped)
+		require.NoError(t, unmarshalErr)
+		assert.Equal(t, pub.Bytes(), unwrapped)
+	})
+
+	t.Run("reports invalid ASN.1 in the PEM block", func(t *testing.T) {
 		invalidPEM := `-----BEGIN PUBLIC KEY-----
 aW52YWxpZCBBU04uMSBkYXRh
 -----END PUBLIC KEY-----`
-		modulus, exponent, ecPoint := extractPublicKeyComponentsFromPEM(invalidPEM)
-		assert.Nil(t, modulus)
-		assert.Nil(t, exponent)
-		assert.Nil(t, ecPoint)
+		_, _, _, err := extractPublicKeyComponentsFromPEM(invalidPEM)
+		assert.Error(t, err)
 	})
+}
+
+// TestSignTwoCallConvention exercises the §5.2 two-call convention: Sign
+// caches its output and stays active - repeated calls return the identical
+// bytes without re-running the backend - until the caller confirms receipt
+// via FinishOperation.
+func TestSignTwoCallConvention(t *testing.T) {
+	m, handle, keyHandle := createTestModuleWithKey(t)
+	defer m.Finalize()
+
+	rv := m.SignInit(handle, &Mechanism{Type: CKM_RSA_PKCS}, keyHandle)
+	require.Equal(t, CKR_OK, rv)
+
+	first, rv := m.Sign(handle, []byte("data"))
+	require.Equal(t, CKR_OK, rv)
+	require.NotEmpty(t, first)
+
+	// A second call - standing in for a length query followed by the actual
+	// fetch, or a retry after CKR_BUFFER_TOO_SMALL - must return the
+	// identical bytes without re-running the backend operation, and the
+	// operation must still be active.
+	second, rv := m.Sign(handle, []byte("data"))
+	assert.Equal(t, CKR_OK, rv)
+	assert.Equal(t, first, second)
+
+	// The operation is still active: SignRecover (a different operation
+	// type) is unaffected, and a third Sign call still succeeds.
+	third, rv := m.Sign(handle, []byte("data"))
+	assert.Equal(t, CKR_OK, rv)
+	assert.Equal(t, first, third)
+
+	// Only FinishOperation terminates it.
+	rv = m.FinishOperation(handle, OperationSign)
+	require.Equal(t, CKR_OK, rv)
+
+	_, rv = m.Sign(handle, []byte("data"))
+	assert.Equal(t, CKR_OPERATION_NOT_INITIALIZED, rv)
+}
+
+// TestFinishOperationIsTypeScoped verifies that finishing one operation
+// category does not tear down a concurrently active operation of a
+// different category. Blanket finalization was replaced by type-scoped
+// finalization everywhere except C_SessionCancel with flags == 0.
+func TestFinishOperationIsTypeScoped(t *testing.T) {
+	m, handle, keyHandle := createTestModuleWithEncryptableKey(t)
+	defer m.Finalize()
+
+	rv := m.DigestInit(handle, &Mechanism{Type: CKM_SHA256})
+	require.Equal(t, CKR_OK, rv)
+
+	rv = m.EncryptInit(handle, &Mechanism{Type: CKM_AES_ECB}, keyHandle)
+	require.Equal(t, CKR_OK, rv)
+
+	_, rv = m.DigestFinal(handle)
+	require.Equal(t, CKR_OK, rv)
+
+	rv = m.FinishOperation(handle, OperationDigest)
+	require.Equal(t, CKR_OK, rv)
+
+	// The concurrently active Encrypt operation must be unaffected by
+	// finishing the Digest.
+	_, rv = m.Encrypt(handle, []byte("data"))
+	assert.Equal(t, CKR_OK, rv)
+}
+
+// TestSecretKeyProtectionDefaults covers the protection attributes
+// C_GenerateKey fills in for a generated secret key.
+//
+// PKCS#11 v3.2 §4.9 footnote 9 makes these defaults token-specific, so a
+// silent template gets this token's protective choice. An explicit request is
+// honoured rather than refused: footnote 7 already governs when a value may be
+// revealed, and refusing CKA_SENSITIVE=CK_FALSE broke every standard tool --
+// pkcs11-tool --keygen sends exactly that by default.
+func TestSecretKeyProtectionDefaults(t *testing.T) {
+	boolValue := func(attrs []Attribute, attrType AttributeType) (bool, bool) {
+		attr, ok := attributeByType(attrs, attrType)
+		if !ok {
+			return false, false
+		}
+		return boolAttributeIsTrue(attr.Value), true
+	}
+
+	t.Run("a silent template gets the protective defaults", func(t *testing.T) {
+		got := secretKeyProtectionDefaults([]Attribute{
+			NewStringAttribute(CKA_LABEL, "generated"),
+		})
+
+		sensitive, ok := boolValue(got, CKA_SENSITIVE)
+		require.True(t, ok, "CKA_SENSITIVE must be defaulted")
+		assert.True(t, sensitive)
+
+		extractable, ok := boolValue(got, CKA_EXTRACTABLE)
+		require.True(t, ok, "CKA_EXTRACTABLE must be defaulted")
+		assert.False(t, extractable)
+
+		_, kept := attributeByType(got, CKA_LABEL)
+		assert.True(t, kept, "the caller's attributes must survive")
+	})
+
+	t.Run("an explicit non-sensitive request is honoured", func(t *testing.T) {
+		// This is pkcs11-tool --keygen's default template. Refusing it made the
+		// token unusable from the standard CLI, and nothing in the spec
+		// requires the refusal: CKA_SENSITIVE=CK_FALSE on its own does not
+		// oblige the token to reveal anything, because footnote 7 also requires
+		// CKA_EXTRACTABLE=CK_TRUE before a value may be revealed.
+		got := secretKeyProtectionDefaults([]Attribute{
+			NewBoolAttribute(CKA_SENSITIVE, false),
+		})
+
+		sensitive, ok := boolValue(got, CKA_SENSITIVE)
+		require.True(t, ok)
+		assert.False(t, sensitive, "the caller's CKA_SENSITIVE must not be overridden")
+	})
+
+	t.Run("an explicit extractable request is honoured", func(t *testing.T) {
+		got := secretKeyProtectionDefaults([]Attribute{
+			NewBoolAttribute(CKA_EXTRACTABLE, true),
+		})
+
+		extractable, ok := boolValue(got, CKA_EXTRACTABLE)
+		require.True(t, ok)
+		assert.True(t, extractable, "an extractable key must stay wrappable")
+	})
+
+	t.Run("nothing is duplicated when the template is complete", func(t *testing.T) {
+		got := secretKeyProtectionDefaults([]Attribute{
+			NewBoolAttribute(CKA_SENSITIVE, false),
+			NewBoolAttribute(CKA_EXTRACTABLE, true),
+		})
+
+		assert.Len(t, got, 2, "a complete template must be returned unchanged")
+	})
+}
+
+// signableKeyTemplate returns the template for an RSA key the mock backend can
+// sign with. Private key objects default to CKA_PRIVATE, so the object is
+// exactly the kind C_Logout revokes access to (v3.2 §4.2).
+func signableKeyTemplate(label string) []Attribute {
+	return []Attribute{
+		NewUint32Attribute(CKA_CLASS, uint32(CKO_PRIVATE_KEY)),
+		NewUint32Attribute(CKA_KEY_TYPE, uint32(CKK_RSA)),
+		NewStringAttribute(CKA_LABEL, label),
+		NewBoolAttribute(CKA_SIGN, true),
+		NewBoolAttribute(CKA_DECRYPT, true),
+		NewBoolAttribute(CKA_TOKEN, false),
+		NewBoolAttribute(CKA_DESTROYABLE, true),
+	}
+}
+
+// TestLogoutRevokesOperationsBoundToPrivateKeys covers the window between
+// C_SignInit and C_Sign in which C_Logout withdraws the authentication the
+// operation depends on.
+//
+// PKCS#11 v3.2 §5.6.10 has C_Logout destroy the application's private session
+// objects and invalidate its handles to private objects, so the operation
+// cannot complete. What the caller is told matters: CKR_USER_NOT_LOGGED_IN is
+// in C_Sign's return table (§5.13.2) and says "authenticate and start again",
+// whereas CKR_FUNCTION_FAILED is §5.1's "no detailed information available" and
+// is also the value the C ABI substitutes when a panic escapes an entry point.
+// Reporting the latter for a rejection the module diagnosed itself makes a
+// routine race indistinguishable from a crash.
+func TestLogoutRevokesOperationsBoundToPrivateKeys(t *testing.T) {
+	t.Run("C_Sign names the authentication failure", func(t *testing.T) {
+		m := initializeTestModule(t)
+		defer m.Finalize()
+
+		session := loginAsNormalUser(t, m)
+
+		keyHandle, rv := m.CreateObject(session, signableKeyTemplate("logout-race-sign"))
+		require.Equal(t, CKR_OK, rv)
+
+		require.Equal(t, CKR_OK, m.SignInit(session, &Mechanism{Type: CKM_RSA_PKCS}, keyHandle))
+		require.Equal(t, CKR_OK, m.Logout(session))
+
+		signature, rv := m.Sign(session, []byte("data signed across a logout"))
+		assert.Equal(t, CKR_USER_NOT_LOGGED_IN, rv,
+			"a logout-induced rejection must be reported as such, not as the catch-all")
+		assert.Nil(t, signature, "no signature may be produced without authentication")
+	})
+
+	t.Run("the revoked operation is terminated", func(t *testing.T) {
+		// The application's recovery is to log in and initialize again, which
+		// only works if the dead operation released its slot: C_SignInit
+		// answers CKR_OPERATION_ACTIVE while one is still live.
+		m := initializeTestModule(t)
+		defer m.Finalize()
+
+		session := loginAsNormalUser(t, m)
+
+		keyHandle, rv := m.CreateObject(session, signableKeyTemplate("logout-race-restart"))
+		require.Equal(t, CKR_OK, rv)
+
+		require.Equal(t, CKR_OK, m.SignInit(session, &Mechanism{Type: CKM_RSA_PKCS}, keyHandle))
+		require.Equal(t, CKR_OK, m.Logout(session))
+
+		_, rv = m.Sign(session, []byte("data signed across a logout"))
+		require.Equal(t, CKR_USER_NOT_LOGGED_IN, rv)
+
+		require.Equal(t, CKR_OK, m.Login(session, CKU_USER, []byte("user-pin-1234")))
+
+		newKey, rv := m.CreateObject(session, signableKeyTemplate("logout-race-restart-2"))
+		require.Equal(t, CKR_OK, rv)
+
+		assert.Equal(t, CKR_OK, m.SignInit(session, &Mechanism{Type: CKM_RSA_PKCS}, newKey),
+			"the operation slot must be free after the revoked operation was refused")
+	})
+
+	t.Run("a second login does not resurrect the operation", func(t *testing.T) {
+		// The new session is a different authentication than the one the
+		// C_SignInit was accepted under, so the operation stays dead. Letting
+		// it through would be the silent failure: a signature produced under
+		// an authentication the caller never asked for.
+		m := initializeTestModule(t)
+		defer m.Finalize()
+
+		session := loginAsNormalUser(t, m)
+
+		keyHandle, rv := m.CreateObject(session, signableKeyTemplate("logout-race-relogin"))
+		require.Equal(t, CKR_OK, rv)
+
+		require.Equal(t, CKR_OK, m.SignInit(session, &Mechanism{Type: CKM_RSA_PKCS}, keyHandle))
+		require.Equal(t, CKR_OK, m.Logout(session))
+		require.Equal(t, CKR_OK, m.Login(session, CKU_USER, []byte("user-pin-1234")))
+
+		signature, rv := m.Sign(session, []byte("data signed across a logout"))
+		assert.Equal(t, CKR_USER_NOT_LOGGED_IN, rv)
+		assert.Nil(t, signature)
+	})
+
+	t.Run("C_SignFinal refuses a multi-part signature", func(t *testing.T) {
+		// SignFinal never resolved the key, so before the revocation was
+		// recorded it went straight to the backend and returned a signature
+		// made with a key the application was no longer entitled to use.
+		m := initializeTestModule(t)
+		defer m.Finalize()
+
+		session := loginAsNormalUser(t, m)
+
+		keyHandle, rv := m.CreateObject(session, signableKeyTemplate("logout-race-multipart"))
+		require.Equal(t, CKR_OK, rv)
+
+		require.Equal(t, CKR_OK, m.SignInit(session, &Mechanism{Type: CKM_RSA_PKCS}, keyHandle))
+		require.Equal(t, CKR_OK, m.SignUpdate(session, []byte("first part")))
+		require.Equal(t, CKR_OK, m.Logout(session))
+
+		assert.Equal(t, CKR_USER_NOT_LOGGED_IN, m.SignUpdate(session, []byte("second part")))
+
+		signature, rv := m.SignFinal(session)
+		assert.Equal(t, CKR_OPERATION_NOT_INITIALIZED, rv,
+			"the refused C_SignUpdate terminated the operation")
+		assert.Nil(t, signature)
+	})
+
+	t.Run("C_Decrypt names the authentication failure", func(t *testing.T) {
+		m := initializeTestModule(t)
+		defer m.Finalize()
+
+		session := loginAsNormalUser(t, m)
+
+		keyHandle, rv := m.CreateObject(session, signableKeyTemplate("logout-race-decrypt"))
+		require.Equal(t, CKR_OK, rv)
+
+		require.Equal(t, CKR_OK, m.DecryptInit(session, &Mechanism{Type: CKM_RSA_PKCS}, keyHandle))
+		require.Equal(t, CKR_OK, m.Logout(session))
+
+		plaintext, rv := m.Decrypt(session, []byte("ciphertext"))
+		assert.Equal(t, CKR_USER_NOT_LOGGED_IN, rv)
+		assert.Nil(t, plaintext, "no plaintext may be recovered without authentication")
+	})
+
+	t.Run("an operation on a public key is left alone", func(t *testing.T) {
+		// Only private objects depend on the login, so a verification against
+		// a public key must survive the logout untouched. Revoking it too
+		// would turn a correctness fix into a regression for every
+		// unauthenticated public-key operation.
+		m := initializeTestModule(t)
+		defer m.Finalize()
+
+		session := loginAsNormalUser(t, m)
+
+		keyHandle, rv := m.CreateObject(session, []Attribute{
+			NewUint32Attribute(CKA_CLASS, uint32(CKO_PUBLIC_KEY)),
+			NewUint32Attribute(CKA_KEY_TYPE, uint32(CKK_RSA)),
+			// Required at creation (v3.2 §6.1.2 footnote 1).
+			NewAttribute(CKA_MODULUS, make([]byte, 256)),
+			NewAttribute(CKA_PUBLIC_EXPONENT, []byte{0x01, 0x00, 0x01}),
+			NewStringAttribute(CKA_LABEL, "logout-race-public"),
+			NewBoolAttribute(CKA_VERIFY, true),
+			NewBoolAttribute(CKA_PRIVATE, false),
+			NewBoolAttribute(CKA_TOKEN, false),
+		})
+		require.Equal(t, CKR_OK, rv)
+
+		require.Equal(t, CKR_OK, m.VerifyInit(session, &Mechanism{Type: CKM_RSA_PKCS}, keyHandle))
+		require.Equal(t, CKR_OK, m.Logout(session))
+
+		assert.Equal(t, CKR_OK, m.Verify(session, []byte("data"), []byte("mock-signature")),
+			"a public-key verification does not depend on the login")
+	})
+}
+
+// TestRequireOperationAuthorization covers the guard itself, including the
+// paths a live operation takes through it.
+func TestRequireOperationAuthorization(t *testing.T) {
+	newSession := func() *Session {
+		return NewSession(SessionHandle(1), 0, CKF_SERIAL_SESSION|CKF_RW_SESSION)
+	}
+
+	t.Run("an operation that was never revoked proceeds", func(t *testing.T) {
+		session := newSession()
+		session.SetOperationByType(OperationSign, &OperationState{Type: OperationSign})
+
+		assert.Equal(t, CKR_OK,
+			requireOperationAuthorization(session, OperationSign, session.GetOperationByType(OperationSign)))
+		assert.True(t, session.HasOperationType(OperationSign),
+			"an authorized operation must stay active")
+	})
+
+	t.Run("a missing operation is not the guard's concern", func(t *testing.T) {
+		// The callers report CKR_OPERATION_NOT_INITIALIZED themselves before
+		// reaching this point; the guard must not invent a second verdict.
+		assert.Equal(t, CKR_OK, requireOperationAuthorization(newSession(), OperationSign, nil))
+	})
+
+	t.Run("a revoked operation is refused and terminated", func(t *testing.T) {
+		session := newSession()
+		session.SetOperationByType(OperationSign, &OperationState{Type: OperationSign, AuthRevoked: true})
+
+		assert.Equal(t, CKR_USER_NOT_LOGGED_IN,
+			requireOperationAuthorization(session, OperationSign, session.GetOperationByType(OperationSign)))
+		assert.False(t, session.HasOperationType(OperationSign),
+			"a refused operation must release its slot")
+	})
+}
+
+// TestRevokeOperationAuthorization covers the session-side marking, which runs
+// under the session lock against the live operation state.
+func TestRevokeOperationAuthorization(t *testing.T) {
+	t.Run("only the operations the predicate selects are marked", func(t *testing.T) {
+		session := NewSession(SessionHandle(1), 0, CKF_SERIAL_SESSION)
+		session.SetOperationByType(OperationSign, &OperationState{Type: OperationSign, KeyHandle: 7})
+		session.SetOperationByType(OperationVerify, &OperationState{Type: OperationVerify, KeyHandle: 9})
+
+		session.RevokeOperationAuthorization(func(op *OperationState) bool {
+			return op.KeyHandle == 7
+		})
+
+		assert.True(t, session.GetOperationByType(OperationSign).AuthRevoked)
+		assert.False(t, session.GetOperationByType(OperationVerify).AuthRevoked)
+	})
+
+	t.Run("a session with no operations is a no-op", func(t *testing.T) {
+		session := NewSession(SessionHandle(1), 0, CKF_SERIAL_SESSION)
+
+		called := false
+		session.RevokeOperationAuthorization(func(*OperationState) bool {
+			called = true
+			return true
+		})
+
+		assert.False(t, called, "the predicate has nothing to decide about")
+	})
+}
+
+// TestRevokeLoginBoundOperationsUnknownSession covers C_Logout's per-session
+// sweep meeting a session that is no longer there. C_Logout reports on the
+// session it was called with, never on another session's disappearance.
+func TestRevokeLoginBoundOperationsUnknownSession(t *testing.T) {
+	m := initializeTestModule(t)
+	defer m.Finalize()
+
+	session := loginAsNormalUser(t, m)
+
+	sm, ok := m.sessionManagers[0]
+	require.True(t, ok)
+
+	assert.NotPanics(t, func() {
+		m.revokeLoginBoundOperations(sm, SessionHandle(0xDEADBEEF))
+	})
+
+	assert.Equal(t, CKR_OK, m.Logout(session))
+}
+
+// createSecretKeyWithoutValue returns a secret key object whose CKA_VALUE has
+// been removed after creation.
+//
+// It cannot be built by C_CreateObject: v3.2 Table 13 footnote 1 requires
+// CKA_VALUE at creation for an AES key and the module enforces that. But an
+// object can still REACH this state by paths the creation check never sees --
+// restore-from-storage, the PIV mirror, C_UnwrapKey -- and the wrap, unwrap and
+// derive gates are the defence for those. This helper reproduces the state
+// directly so those gates stay covered now that the front door is shut.
+func createSecretKeyWithoutValue(t *testing.T, m *Module, session SessionHandle, extra ...Attribute) ObjectHandle {
+	t.Helper()
+
+	handle, rv := m.CreateObject(session, append([]Attribute{
+		NewUint32Attribute(CKA_CLASS, uint32(CKO_SECRET_KEY)),
+		NewUint32Attribute(CKA_KEY_TYPE, uint32(CKK_AES)),
+		NewAttribute(CKA_VALUE, make([]byte, 32)),
+	}, extra...))
+	require.Equal(t, CKR_OK, rv)
+
+	obj, err := m.objectManager.getObjectUnchecked(handle)
+	require.NoError(t, err)
+	// Both the local value AND the backend identity go. Creating the object with
+	// material causes the module to import it and record a KeyID, so removing
+	// only CKA_VALUE would leave a key that still resolves through the backend --
+	// which is not the state under test.
+	delete(obj.Attributes, CKA_VALUE)
+	obj.KeyID = ""
+
+	return handle
 }

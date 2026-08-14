@@ -7,12 +7,9 @@ import (
 	"crypto"
 	"crypto/rand"
 	"crypto/rsa"
+	"crypto/sha256"
 	"crypto/x509"
 	"crypto/x509/pkix"
-	"encoding/binary"
-	"encoding/hex"
-	"fmt"
-	"log/slog"
 	"math/big"
 	"testing"
 	"time"
@@ -24,118 +21,97 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// createSimulatorTPM creates a TPM2 instance using the simulator for CSR tests.
-// Returns nil if the simulator is not available.
-func createSimulatorTPM(t *testing.T, strategy EnrollmentStrategy) TrustedPlatformModule {
-	t.Helper()
+// This file covers the two device-identity enrollment ceremonies end to end on
+// a real (simulated) TPM that owns both an IAK and an IDevID key:
+//
+//   - EnrollmentStrategyIAK                    -- the IAK signs the CSR
+//   - EnrollmentStrategyIAK_IDEVID_SINGLE_PASS -- the IDevID signs the CSR
+//
+// The sibling file idevid_csr_roundtrip_simulator_test.go covers the wire codec
+// and the nil/typed-error guards using an IAK-only device; this file covers what
+// that device cannot express -- which key actually signs, and what happens when
+// the CA verifies with the wrong ceremony, the wrong algorithm or the wrong
+// padding configuration.
+//
+// Each test owns exactly one simulator via newSimHarness; the go-tpm-tools
+// simulator is a process-global singleton so only one may be live at a time.
 
-	logger := slog.Default()
+// identityHarness is a provisioned simulator-backed TPM2 that owns a complete
+// device identity: an EK, an IAK created by Provision, and an IDevID minted on
+// top of them. Provision deliberately stops after the IAK (see Provision in
+// provision.go), so the IDevID is created here -- that is exactly why the tests
+// this file replaces used to skip with "IDevID not available".
+type identityHarness struct {
+	*simHarness
 
-	tempDir := t.TempDir()
+	// IAK is the restricted attestation key that Provision created.
+	IAK *types.KeyAttributes
 
-	buf := make([]byte, 8)
-	_, err := rand.Reader.Read(buf)
-	if err != nil {
-		t.Skipf("failed to read random bytes: %v", err)
-		return nil
-	}
-	hexVal := hex.EncodeToString(buf)
-	testDir := fmt.Sprintf("%s/%s", tempDir, hexVal)
+	// IDevID is the unrestricted device identity signing key.
+	IDevID *types.KeyAttributes
 
-	storageFactory, err := store.NewStorageFactory(logger, testDir)
-	if err != nil {
-		t.Skipf("failed to create storage factory: %v", err)
-		return nil
-	}
-
-	blobStore := storageFactory.BlobStore()
-	fileBackend := storageFactory.KeyBackend()
-
-	config := &Config{
-		EncryptSession: false,
-		UseEntropy:     false,
-		Device:         "/dev/tpmrm0",
-		UseSimulator:   true,
-		Hash:           "SHA-256",
-		EK: &EKConfig{
-			CertHandle:    0x01C00002,
-			Handle:        0x81010001,
-			HierarchyAuth: store.DEFAULT_PASSWORD,
-			RSAConfig: &store.RSAConfig{
-				KeySize: 2048,
-			},
-		},
-		IdentityProvisioningStrategy: string(strategy),
-		FileIntegrity:                []string{},
-		IAK: &IAKConfig{
-			CN:           "test-iak",
-			Debug:        true,
-			Hash:         crypto.SHA256.String(),
-			Handle:       uint32(0x81010002),
-			KeyAlgorithm: x509.RSA.String(),
-			RSAConfig: &store.RSAConfig{
-				KeySize: 2048,
-			},
-			SignatureAlgorithm: x509.SHA256WithRSAPSS.String(),
-		},
-		IDevID: &IDevIDConfig{
-			CN:           "test-idevid",
-			Debug:        true,
-			Hash:         crypto.SHA256.String(),
-			Handle:       0x81020000,
-			KeyAlgorithm: x509.RSA.String(),
-			Model:        "TestModel",
-			Serial:       "TestSerial123",
-			Pad:          true,
-			RSAConfig: &store.RSAConfig{
-				KeySize: 2048,
-			},
-			SignatureAlgorithm: x509.SHA256WithRSAPSS.String(),
-		},
-		PlatformPCR:     16,
-		PlatformPCRBank: PCRBankSHA256,
-		GoldenPCRs:      []uint{16},
-		SSRK: &SRKConfig{
-			Handle:        0x81000001,
-			HierarchyAuth: store.DEFAULT_PASSWORD,
-			KeyAlgorithm:  x509.RSA.String(),
-			RSAConfig: &store.RSAConfig{
-				KeySize: 2048,
-			},
-		},
-		PlatformSRK: &PlatformSRKConfig{
-			SRKAuth:        "testme",
-			SRKHandle:      0x81000002,
-			PlatformPolicy: false,
-		},
-	}
-
-	params := &Params{
-		Logger:       logger,
-		DebugSecrets: true,
-		Config:       config,
-		BlobStore:    blobStore,
-		Backend:      fileBackend,
-		FQDN:         "test.example.com",
-	}
-
-	tpm, err := NewTPM2(params)
-	if err != nil {
-		if err == ErrNotInitialized {
-			if provisionErr := tpm.Provision(nil); provisionErr != nil {
-				t.Skipf("failed to provision TPM: %v", provisionErr)
-				return nil
-			}
-		} else {
-			t.Skipf("failed to create TPM2: %v", err)
-			return nil
-		}
-	}
-
-	return tpm
+	// EKCert is a throwaway certificate over the TPM's real EK public key. A
+	// simulator has no manufacturer certificate in NV RAM, and the CSR
+	// structure requires one, so the test acts as the manufacturer.
+	EKCert *x509.Certificate
 }
 
-// createTestEKCertificate creates a test EK certificate for CSR tests
+// newIdentityHarness provisions a TPM, mints an IDevID and returns everything a
+// device identity CSR needs. Any failure here is a broken test environment, not
+// a reason to stop testing, so every step is fatal.
+func newIdentityHarness(t *testing.T, strategy EnrollmentStrategy, pad bool) *identityHarness {
+	t.Helper()
+
+	h := newSimHarness(t, func(c *Config) {
+		c.IdentityProvisioningStrategy = string(strategy)
+		c.IDevID = &IDevIDConfig{
+			CN:                 "device-id-001",
+			Debug:              true,
+			Hash:               crypto.SHA256.String(),
+			Handle:             0x81020000,
+			KeyAlgorithm:       x509.RSA.String(),
+			Manufacturer:       "ATT",
+			Model:              "xkms-test-device",
+			Pad:                pad,
+			RSAConfig:          &store.RSAConfig{KeySize: 2048},
+			Serial:             "SN-0000-0001",
+			SignatureAlgorithm: x509.SHA256WithRSAPSS.String(),
+		}
+	})
+
+	iakAttrs, err := h.TPM.IAKAttributes()
+	require.NoError(t, err, "provisioning must leave a usable IAK behind")
+
+	ekPub, err := h.TPM.EKRSA()
+	require.NoError(t, err, "the provisioned EK must be readable")
+	ekCert := selfSignedCertForKey(t, ekPub)
+
+	idevidAttrs, csr, err := h.TPM.CreateIDevID(iakAttrs, ekCert, nil)
+	require.NoError(t, err, "the TPM must be able to mint an IDevID under strategy %q", strategy)
+	require.NotNil(t, idevidAttrs)
+	require.NotNil(t, csr, "CreateIDevID must return the enrollment CSR it produced")
+
+	return &identityHarness{
+		simHarness: h,
+		IAK:        iakAttrs,
+		IDevID:     idevidAttrs,
+		EKCert:     ekCert,
+	}
+}
+
+// csr builds a fresh TCG-CSR-IDEVID from the harness under its configured
+// enrollment strategy.
+func (h *identityHarness) csr(t *testing.T) *TCG_CSR_IDEVID {
+	t.Helper()
+
+	csr, err := h.TPM.CreateTCG_CSR_IDEVID(h.EKCert, h.IAK, h.IDevID)
+	require.NoError(t, err, "the TPM must be able to produce a device identity CSR")
+	return &csr
+}
+
+// createTestEKCertificate creates a throwaway EK certificate over a freshly
+// generated key. Callers that need the certificate to carry the TPM's real EK
+// public key must use selfSignedCertForKey instead.
 func createTestEKCertificate(t *testing.T) *x509.Certificate {
 	t.Helper()
 
@@ -164,376 +140,385 @@ func createTestEKCertificate(t *testing.T) *x509.Certificate {
 	return cert
 }
 
-// TestCSRCreateTCG_CSR_IDEVID_InvalidEnrollmentStrategy tests that invalid strategy returns error
-func TestCSRCreateTCG_CSR_IDEVID_InvalidEnrollmentStrategy(t *testing.T) {
-	// Use the simulator to have a valid transport
-	tpm := createSimulatorTPM(t, EnrollmentStrategyIAK)
-	if tpm == nil {
-		t.Skip("TPM simulator not available")
-	}
-	defer func() { _ = tpm.Close() }()
+// TestTCGCSR_IAKStrategy_IsSignedByTheIAK covers Section 6.1.2 of the TCG device
+// identity specification: under EnrollmentStrategyIAK the attestation key signs
+// the CSR, even on a device that also owns an IDevID.
+//
+// The signer is chosen by a switch in CreateTCG_CSR_IDEVID, and nothing in the
+// CSR names it -- the CA infers it from its own configured strategy. If the two
+// switches ever disagree, a genuine device would be refused enrollment (or, far
+// worse, a CSR signed by an unrestricted key would be accepted as attestation
+// evidence). Asserting that the IAK verifies AND the IDevID does not pins the
+// choice from both directions.
+func TestTCGCSR_IAKStrategy_IsSignedByTheIAK(t *testing.T) {
+	h := newIdentityHarness(t, EnrollmentStrategyIAK, false)
+	csr := h.csr(t)
 
-	// Override the strategy to an invalid one
-	tpmImpl := tpm.(*TPM2)
-	tpmImpl.config.IdentityProvisioningStrategy = "INVALID_STRATEGY"
+	t.Run("carries the device identity the CA will certify", func(t *testing.T) {
+		assert.Equal(t, uint32(0x00000100), bytesToUint32(csr.StructVer),
+			"the structure version must be 1.0")
+		assert.NotEmpty(t, csr.Signature, "the CSR must be signed")
 
-	akAttrs, err := tpm.IAKAttributes()
-	if err != nil {
-		t.Skipf("IAK not available: %v", err)
-	}
+		assert.Equal(t, []byte("xkms-test-device"), csr.CsrContents.ProdModel)
+		assert.Equal(t, []byte("SN-0000-0001"), csr.CsrContents.ProdSerial)
+		assert.Equal(t, h.EKCert.Raw, csr.CsrContents.EkCert,
+			"the CA authenticates the device through this EK certificate")
+		assert.Equal(t, h.IAK.TPMAttributes.BPublic.Bytes(), csr.CsrContents.AttestPub,
+			"the attestation public area must be the device's IAK")
+		assert.Equal(t, h.IDevID.TPMAttributes.BPublic.Bytes(), csr.CsrContents.SigningPub,
+			"the signing public area must be the device's IDevID")
+	})
 
-	// Create mock idevidAttrs since IDevID may not be configured
-	idevidAttrs := &types.KeyAttributes{
-		Hash: crypto.SHA256,
-		TPMAttributes: &types.TPMAttributes{
-			HashAlg: tpm2.TPMAlgSHA256,
-		},
-	}
+	t.Run("verifies under the IAK", func(t *testing.T) {
+		attrs, unpacked, err := h.TPM.VerifyTCG_CSR_IAK(csr, x509.SHA256WithRSAPSS)
+		require.NoError(t, err, "a CSR signed by the IAK must verify under the IAK")
+		require.NotNil(t, attrs)
+		require.NotNil(t, unpacked)
+		assert.Equal(t, x509.RSA, attrs.KeyAlgorithm)
+		assert.True(t, attrs.TPMAttributes.Public.ObjectAttributes.Restricted,
+			"the enrolling key must be reported as a restricted attestation key")
+	})
 
-	ekCert := createTestEKCertificate(t)
+	t.Run("does not verify under the IDevID", func(t *testing.T) {
+		attrs, unpacked, err := h.TPM.VerifyTCG_CSR_IDevID(csr, x509.SHA256WithRSAPSS)
+		require.Error(t, err,
+			"the IDevID did not sign this CSR, so the single-pass verifier must reject it")
+		assert.ErrorIs(t, err, ErrInvalidSignature)
+		assert.Nil(t, attrs)
+		assert.Nil(t, unpacked)
+	})
 
-	// The invalid strategy should cause CreateTCG_CSR_IDEVID to fail
-	_, err = tpm.CreateTCG_CSR_IDEVID(ekCert, akAttrs, idevidAttrs)
-	require.Error(t, err)
-}
+	t.Run("VerifyTCGCSR routes to the IAK verifier", func(t *testing.T) {
+		// The subtest above establishes that the single-pass verifier rejects
+		// this CSR, so a success here can only come from routing to the IAK
+		// verifier that the configured strategy selects.
+		attrs, unpacked, err := h.TPM.VerifyTCGCSR(csr, x509.SHA256WithRSAPSS)
+		require.NoError(t, err)
+		require.NotNil(t, attrs)
+		require.NotNil(t, unpacked)
+	})
 
-// TestCSRCreateTCG_CSR_IDEVID_NilEKCert tests that nil EK cert returns error
-func TestCSRCreateTCG_CSR_IDEVID_NilEKCert(t *testing.T) {
-	tpm := createSimulatorTPM(t, EnrollmentStrategyIAK)
-	if tpm == nil {
-		t.Skip("TPM simulator not available")
-	}
-	defer func() { _ = tpm.Close() }()
-
-	akAttrs, err := tpm.IAKAttributes()
-	if err != nil {
-		t.Skipf("IAK not available: %v", err)
-	}
-
-	idevidAttrs, err := tpm.IDevIDAttributes()
-	if err != nil {
-		t.Skipf("IDevID not available: %v", err)
-	}
-
-	// Pass nil EK cert - should fail in createIDevIDContent
-	_, err = tpm.CreateTCG_CSR_IDEVID(nil, akAttrs, idevidAttrs)
-	require.Error(t, err)
-	assert.Equal(t, ErrInvalidEKCert, err)
-}
-
-// TestCSRCreateTCG_CSR_IDEVID_WithSimulator tests full CSR creation with simulator
-func TestCSRCreateTCG_CSR_IDEVID_WithSimulator(t *testing.T) {
-	tpm := createSimulatorTPM(t, EnrollmentStrategyIAK_IDEVID_SINGLE_PASS)
-	if tpm == nil {
-		t.Skip("TPM simulator not available")
-	}
-	defer func() { _ = tpm.Close() }()
-
-	// Get the required attributes
-	akAttrs, err := tpm.IAKAttributes()
-	if err != nil {
-		t.Skipf("IAK not available: %v", err)
-	}
-
-	idevidAttrs, err := tpm.IDevIDAttributes()
-	if err != nil {
-		t.Skipf("IDevID not available: %v", err)
-	}
-
-	ekCert, err := tpm.EKCertificate()
-	if err != nil {
-		// Create a test certificate if EK cert not available
-		ekCert = createTestEKCertificate(t)
-	}
-
-	// Create the CSR
-	csr, err := tpm.CreateTCG_CSR_IDEVID(ekCert, akAttrs, idevidAttrs)
-	require.NoError(t, err)
-
-	// Verify CSR structure
-	structVer := binary.BigEndian.Uint32(csr.StructVer[:])
-	assert.Equal(t, uint32(0x00000100), structVer)
-
-	// Verify signature is present
-	assert.NotEmpty(t, csr.Signature)
-
-	// Verify contents
-	assert.NotEmpty(t, csr.CsrContents.ProdModel)
-	assert.NotEmpty(t, csr.CsrContents.EkCert)
-	assert.NotEmpty(t, csr.CsrContents.AttestPub)
-}
-
-// TestCSRCreateTCG_CSR_IDEVID_WithIAKStrategy tests CSR creation with IAK strategy
-func TestCSRCreateTCG_CSR_IDEVID_WithIAKStrategy(t *testing.T) {
-	tpm := createSimulatorTPM(t, EnrollmentStrategyIAK)
-	if tpm == nil {
-		t.Skip("TPM simulator not available")
-	}
-	defer func() { _ = tpm.Close() }()
-
-	akAttrs, err := tpm.IAKAttributes()
-	if err != nil {
-		t.Skipf("IAK not available: %v", err)
-	}
-
-	idevidAttrs, err := tpm.IDevIDAttributes()
-	if err != nil {
-		t.Skipf("IDevID not available: %v", err)
-	}
-
-	ekCert, err := tpm.EKCertificate()
-	if err != nil {
-		ekCert = createTestEKCertificate(t)
-	}
-
-	// Create CSR with IAK strategy (uses AK for signing)
-	csr, err := tpm.CreateTCG_CSR_IDEVID(ekCert, akAttrs, idevidAttrs)
-	require.NoError(t, err)
-
-	// Verify CSR was created
-	assert.NotNil(t, csr.Signature)
-	assert.NotEmpty(t, csr.CsrContents.AttestPub)
-}
-
-// TestCSRVerifyTCGCSR_StrategySelection tests that VerifyTCGCSR routes correctly
-func TestCSRVerifyTCGCSR_StrategySelection(t *testing.T) {
-	t.Run("IAK strategy routes correctly", func(t *testing.T) {
-		tpm := createSimulatorTPM(t, EnrollmentStrategyIAK)
-		if tpm == nil {
-			t.Skip("TPM simulator not available")
+	t.Run("the caller's signature algorithm governs verification", func(t *testing.T) {
+		// The CSR is signed with RSA-PSS. A CA that asked for a different
+		// algorithm must not have its request quietly reinterpreted: an
+		// algorithm-confusion hole here would let a PKCS#1 v1.5 forgery be
+		// checked as PSS, or vice versa.
+		for name, algorithm := range map[string]x509.SignatureAlgorithm{
+			"PKCS#1 v1.5 against a PSS signature": x509.SHA256WithRSA,
+			"ECDSA against an RSA signature":      x509.ECDSAWithSHA256,
+		} {
+			t.Run(name, func(t *testing.T) {
+				attrs, _, err := h.TPM.VerifyTCG_CSR_IAK(csr, algorithm)
+				require.Error(t, err)
+				assert.ErrorIs(t, err, ErrInvalidSignature)
+				assert.Nil(t, attrs)
+			})
 		}
-		defer func() { _ = tpm.Close() }()
-
-		// Create a test CSR
-		csr := createTestCSRIDevID()
-
-		// This will fail verification but should route to correct method
-		_, _, err := tpm.VerifyTCGCSR(csr, x509.SHA256WithRSAPSS)
-		// Error is expected since CSR has mock data
-		assert.Error(t, err)
 	})
 
-	t.Run("IDevID single pass strategy routes correctly", func(t *testing.T) {
-		tpm := createSimulatorTPM(t, EnrollmentStrategyIAK_IDEVID_SINGLE_PASS)
-		if tpm == nil {
-			t.Skip("TPM simulator not available")
+	t.Run("an unrecognised in-range hash algorithm is rejected", func(t *testing.T) {
+		// 0xFFFF fits the uint16 the field is narrowed to, so it passes the
+		// explicit range guard and reaches TPMAlgID.Hash(). That lookup must
+		// fail closed rather than fall back to a default digest.
+		bad := *csr
+		bad.CsrContents = csr.CsrContents
+		bad.CsrContents.HashAlgoId = [4]byte{0x00, 0x00, 0xFF, 0xFF}
+
+		attrs, unpacked, err := h.TPM.VerifyTCG_CSR_IAK(&bad, x509.SHA256WithRSAPSS)
+		require.Error(t, err, "an unknown TPM algorithm ID must be rejected")
+		assert.NotErrorIs(t, err, ErrInvalidSignature,
+			"the hash algorithm must be rejected before any signature check")
+		assert.Nil(t, attrs)
+		assert.Nil(t, unpacked)
+	})
+}
+
+// TestTCGCSR_SinglePassStrategy_IsSignedByTheIDevID is the Section 6.2.2
+// counterpart: under EnrollmentStrategyIAK_IDEVID_SINGLE_PASS the IDevID signs
+// the CSR and the IAK only attests to the IDevID's TPM residency.
+//
+// Padding is enabled here. CreateTCG_CSR_IDEVID only appends the Pad field when
+// config.IDevID.Pad is set, and the sibling roundtrip file explicitly requires
+// the unpadded shape, so this is the only place the padded wire form is
+// exercised against a real signature.
+func TestTCGCSR_SinglePassStrategy_IsSignedByTheIDevID(t *testing.T) {
+	h := newIdentityHarness(t, EnrollmentStrategyIAK_IDEVID_SINGLE_PASS, true)
+	csr := h.csr(t)
+
+	t.Run("verifies under the IDevID", func(t *testing.T) {
+		attrs, unpacked, err := h.TPM.VerifyTCG_CSR_IDevID(csr, x509.SHA256WithRSAPSS)
+		require.NoError(t, err, "a CSR signed by the IDevID must verify under the IDevID")
+		require.NotNil(t, attrs)
+		require.NotNil(t, unpacked)
+		assert.False(t, attrs.TPMAttributes.Public.ObjectAttributes.Restricted,
+			"the IDevID is an unrestricted signing key")
+		assert.True(t, attrs.TPMAttributes.Public.ObjectAttributes.FixedTPM,
+			"the IDevID must be bound to the TPM that reported it")
+	})
+
+	t.Run("does not verify under the IAK", func(t *testing.T) {
+		attrs, unpacked, err := h.TPM.VerifyTCG_CSR_IAK(csr, x509.SHA256WithRSAPSS)
+		require.Error(t, err,
+			"the IAK did not sign this CSR, so the IAK verifier must reject it")
+		assert.ErrorIs(t, err, ErrInvalidSignature)
+		assert.Nil(t, attrs)
+		assert.Nil(t, unpacked)
+	})
+
+	t.Run("VerifyTCGCSR routes to the single-pass verifier", func(t *testing.T) {
+		attrs, unpacked, err := h.TPM.VerifyTCGCSR(csr, x509.SHA256WithRSAPSS)
+		require.NoError(t, err)
+		require.NotNil(t, attrs)
+		require.NotNil(t, unpacked)
+	})
+
+	t.Run("a tampered signature is rejected", func(t *testing.T) {
+		bad := *csr
+		bad.Signature = append([]byte(nil), csr.Signature...)
+		require.NotEmpty(t, bad.Signature)
+		bad.Signature[0] ^= 0xFF
+
+		attrs, _, err := h.TPM.VerifyTCG_CSR_IDevID(&bad, x509.SHA256WithRSAPSS)
+		require.Error(t, err)
+		assert.ErrorIs(t, err, ErrInvalidSignature)
+		assert.Nil(t, attrs)
+	})
+
+	t.Run("a CSR declaring more payload than it carries is rejected", func(t *testing.T) {
+		// UnpackIDevIDCSR copies each payload into a buffer sized by the
+		// declared length. A declared length larger than the payload must be
+		// reported as corruption rather than silently zero-filled, because the
+		// verifier would otherwise hash bytes the device never signed.
+		bad := *csr
+		bad.CsrContents = csr.CsrContents
+		bad.CsrContents.ProdModelSz = [4]byte{0x00, 0x00, 0x03, 0xE8} // 1000
+
+		attrs, unpacked, err := h.TPM.VerifyTCG_CSR_IDevID(&bad, x509.SHA256WithRSAPSS)
+		require.Error(t, err)
+		assert.ErrorIs(t, err, store.ErrCorruptCopy)
+		assert.Nil(t, attrs)
+		assert.Nil(t, unpacked)
+	})
+
+	t.Run("the padded wire form is signature stable", func(t *testing.T) {
+		padSz := bytesToUint32(csr.CsrContents.PadSz)
+		require.Equal(t, int(padSz), len(csr.CsrContents.Pad),
+			"the declared padding size must match the padding carried")
+		for i, b := range csr.CsrContents.Pad {
+			require.Equal(t, byte('='), b, "padding byte %d must be the '=' filler", i)
 		}
-		defer func() { _ = tpm.Close() }()
 
-		csr := createTestCSRIDevID()
+		encoded, err := csr.Marshal()
+		require.NoError(t, err)
 
-		_, _, err := tpm.VerifyTCGCSR(csr, x509.SHA256WithRSAPSS)
-		assert.Error(t, err)
+		decoded, err := UnmarshalIDevIDCSR(encoded)
+		require.NoError(t, err, "a padded CSR must survive the wire")
+		require.NotNil(t, decoded)
+		assert.Equal(t, csr.CsrContents.PadSz, decoded.CsrContents.PadSz)
+		assert.Equal(t, csr.CsrContents.Pad, decoded.CsrContents.Pad,
+			"padding is covered by the signature, so it must round-trip exactly")
+
+		// The decisive assertion: the signature still verifies over the decoded
+		// structure. Any padding byte lost, added or reordered in transit would
+		// change the digest and break enrollment for every padded device.
+		attrs, _, err := h.TPM.VerifyTCG_CSR_IDevID(decoded, x509.SHA256WithRSAPSS)
+		require.NoError(t, err, "a padded CSR must still verify after a wire round trip")
+		require.NotNil(t, attrs)
 	})
 }
 
-// TestCSRVerifyTCG_CSR_IAK_Attributes tests IAK attribute validation
-func TestCSRVerifyTCG_CSR_IAK_Attributes(t *testing.T) {
-	tpm := createSimulatorTPM(t, EnrollmentStrategyIAK)
-	if tpm == nil {
-		t.Skip("TPM simulator not available")
-	}
-	defer func() { _ = tpm.Close() }()
+// TestCreateProdCaData covers the attestation payload the device carries to its
+// CA in the CSR's ProdCaData field: a TPM2_Quote over the configured golden PCRs
+// plus the encoded PCR values.
+//
+// The test this replaces could not assert anything at all. It skipped itself
+// with "Cannot access TPM2 internal methods" whenever a type assertion that
+// always succeeds appeared to fail, and then treated any error as "acceptable"
+// -- so a createProdCaData that returned an error on every call would still
+// have passed. The tests live in package tpm2, so the internals were reachable
+// all along.
+func TestCreateProdCaData(t *testing.T) {
+	h := newSimHarness(t, nil)
 
-	t.Run("invalid hash algorithm returns error", func(t *testing.T) {
-		csr := createTestCSRIDevID()
-		// Set invalid hash algorithm
-		binary.BigEndian.PutUint32(csr.CsrContents.HashAlgoId[:], 0xFFFF)
-
-		_, _, err := tpm.VerifyTCG_CSR_IAK(csr, x509.SHA256WithRSAPSS)
-		require.Error(t, err)
-	})
-
-	t.Run("hash algorithm overflow check", func(t *testing.T) {
-		csr := createTestCSRIDevID()
-		// Set hash algorithm to max uint32 to trigger overflow check
-		binary.BigEndian.PutUint32(csr.CsrContents.HashAlgoId[:], 0x7FFFFFFF)
-
-		_, _, err := tpm.VerifyTCG_CSR_IAK(csr, x509.SHA256WithRSAPSS)
-		require.Error(t, err)
-	})
-}
-
-// TestCSRVerifyTCG_CSR_IDevID_Attributes tests IDevID attribute validation
-func TestCSRVerifyTCG_CSR_IDevID_Attributes(t *testing.T) {
-	tpm := createSimulatorTPM(t, EnrollmentStrategyIAK_IDEVID_SINGLE_PASS)
-	if tpm == nil {
-		t.Skip("TPM simulator not available")
-	}
-	defer func() { _ = tpm.Close() }()
-
-	t.Run("invalid hash algorithm returns error", func(t *testing.T) {
-		csr := createTestCSRIDevID()
-		binary.BigEndian.PutUint32(csr.CsrContents.HashAlgoId[:], 0xFFFF)
-
-		_, _, err := tpm.VerifyTCG_CSR_IDevID(csr, x509.SHA256WithRSAPSS)
-		require.Error(t, err)
-	})
-
-	t.Run("CSR unpack error handling", func(t *testing.T) {
-		csr := &TCG_CSR_IDEVID{}
-		// Set mismatched size
-		binary.BigEndian.PutUint32(csr.CsrContents.ProdModelSz[:], 1000)
-		csr.CsrContents.ProdModel = []byte("short")
-
-		_, _, err := tpm.VerifyTCG_CSR_IDevID(csr, x509.SHA256WithRSAPSS)
-		require.Error(t, err)
-	})
-}
-
-// TestCSRCreateProdCaData_WithSimulator tests createProdCaData with simulator
-func TestCSRCreateProdCaData_WithSimulator(t *testing.T) {
-	tpm := createSimulatorTPM(t, EnrollmentStrategyIAK)
-	if tpm == nil {
-		t.Skip("TPM simulator not available")
-	}
-	defer func() { _ = tpm.Close() }()
-
-	// Access the internal TPM2 struct to call createProdCaData
-	tpm2Instance, ok := tpm.(*TPM2)
-	if !ok {
-		t.Skip("Cannot access TPM2 internal methods")
-	}
-
-	data, size, err := tpm2Instance.createProdCaData()
-	// May return error if Quote fails, which is acceptable
-	if err != nil {
-		t.Logf("createProdCaData returned error (acceptable): %v", err)
-		return
-	}
-
-	// If successful, verify data structure
-	if data != nil {
-		assert.Greater(t, size, uint32(0))
-		assert.Equal(t, int(size), len(data))
-	}
-}
-
-// TestCSRPackUnpackCSRRoundTrip tests pack/unpack round trip
-func TestCSRPackUnpackCSRRoundTrip(t *testing.T) {
-	tpm := createSimulatorTPM(t, EnrollmentStrategyIAK_IDEVID_SINGLE_PASS)
-	if tpm == nil {
-		t.Skip("TPM simulator not available")
-	}
-	defer func() { _ = tpm.Close() }()
-
-	akAttrs, err := tpm.IAKAttributes()
-	if err != nil {
-		t.Skipf("IAK not available: %v", err)
-	}
-
-	idevidAttrs, err := tpm.IDevIDAttributes()
-	if err != nil {
-		t.Skipf("IDevID not available: %v", err)
-	}
-
-	ekCert, err := tpm.EKCertificate()
-	if err != nil {
-		ekCert = createTestEKCertificate(t)
-	}
-
-	// Create CSR
-	originalCSR, err := tpm.CreateTCG_CSR_IDEVID(ekCert, akAttrs, idevidAttrs)
+	// Quote signs with the cached IAK attributes, which IAKAttributes populates.
+	iakAttrs, err := h.TPM.IAKAttributes()
 	require.NoError(t, err)
 
-	// Pack it
-	packed, err := PackIDevIDCSR(&originalCSR)
-	require.NoError(t, err)
+	t.Run("transport-backed TPM still attests", func(t *testing.T) {
+		// This is the regression guard for a silent attestation loss.
+		//
+		// createProdCaData used to short-circuit on a nil tpm.device, but that
+		// field is populated only by the raw os.OpenFile branch of NewTPM2. A
+		// unix-socket (".sock") TPM, a TCP/mssim TPM, the in-process simulator
+		// and any injected transport all leave it nil while being perfectly
+		// able to quote -- so every enrollment CSR from those deployments
+		// carried no quote and no PCRs, announced by nothing louder than a
+		// Debug line. The guard now tests tpm.transport, which is what the
+		// commands actually travel over and is set on every path.
+		require.Nil(t, h.TPM.device,
+			"precondition: the harness supplies a transport, not a character device")
+		require.NotNil(t, h.TPM.transport, "precondition: the harness has a transport")
 
-	// Unmarshal it
-	unmarshalled, err := UnmarshalIDevIDCSR(packed)
-	require.NoError(t, err)
+		data, size, err := h.TPM.createProdCaData()
+		require.NoError(t, err)
+		assert.NotEmpty(t, data,
+			"a transport-backed TPM must attest; dropping it silently strips the CSR's quote")
+		assert.Equal(t, len(data), int(size))
+	})
 
-	// Verify key fields match
-	assert.Equal(t, originalCSR.StructVer, unmarshalled.StructVer)
-	assert.Equal(t, originalCSR.SigSz, unmarshalled.SigSz)
-	assert.Equal(t, originalCSR.Signature, unmarshalled.Signature)
-	assert.Equal(t, originalCSR.CsrContents.ProdModel, unmarshalled.CsrContents.ProdModel)
-	assert.Equal(t, originalCSR.CsrContents.ProdSerial, unmarshalled.CsrContents.ProdSerial)
+	t.Run("no transport yields no attestation", func(t *testing.T) {
+		// The honest short-circuit: with nothing to talk to, there is no quote
+		// to produce. Restored after the subtest so the rest keeps working.
+		saved := h.TPM.transport
+		h.TPM.transport = nil
+		t.Cleanup(func() { h.TPM.transport = saved })
+
+		data, size, err := h.TPM.createProdCaData()
+		require.NoError(t, err)
+		assert.Nil(t, data)
+		assert.Zero(t, size)
+	})
+
+	t.Run("produces a verifiable quote over the golden PCRs", func(t *testing.T) {
+		// No device workaround needed: the guard tests tpm.transport, which the
+		// harness owns. Opening os.DevNull purely to satisfy a nil-check used
+		// to be required here, which was itself a symptom of the defect.
+		data, size, err := h.TPM.createProdCaData()
+		require.NoError(t, err, "a provisioned TPM must be able to quote its golden PCRs")
+		require.NotEmpty(t, data)
+		require.Equal(t, len(data), int(size),
+			"the returned size must describe the returned bytes")
+
+		parsed, err := UnpackProdCaData(data)
+		require.NoError(t, err, "the CA must be able to parse what the device packed")
+		require.NotNil(t, parsed)
+		assert.Equal(t, ProdCaDataVersion, parsed.Version)
+		assert.Equal(t, int(parsed.QuotedSz), len(parsed.Quoted))
+		assert.Equal(t, int(parsed.SignatureSz), len(parsed.Signature))
+		assert.Equal(t, int(parsed.NonceSz), len(parsed.Nonce))
+		assert.Equal(t, int(parsed.PCRsSz), len(parsed.PCRs))
+		require.NotEmpty(t, parsed.PCRs, "the quoted PCR values must be carried")
+
+		// The quoted blob must be a genuine TPMS_ATTEST produced by this TPM
+		// over the nonce the device generated, not a replayed or fabricated
+		// structure. TPM_GENERATED_VALUE is the field the TPM refuses to
+		// produce over externally supplied data.
+		attest, err := tpm2.Unmarshal[tpm2.TPMSAttest](parsed.Quoted)
+		require.NoError(t, err, "the quoted bytes must be a TPMS_ATTEST structure")
+		assert.Equal(t, tpm2.TPMGeneratedValue, attest.Magic,
+			"the quote must carry TPM_GENERATED_VALUE")
+		assert.Equal(t, tpm2.TPMSTAttestQuote, attest.Type)
+		assert.Equal(t, parsed.Nonce, attest.ExtraData.Buffer,
+			"the quote must be bound to the nonce carried alongside it")
+
+		quoteInfo, err := attest.Attested.Quote()
+		require.NoError(t, err)
+		require.NotEmpty(t, quoteInfo.PCRSelect.PCRSelections,
+			"the quote must name the PCRs it covers")
+		require.NotEmpty(t, quoteInfo.PCRDigest.Buffer)
+
+		// Finally, the quote signature must verify under the IAK public key the
+		// CA will be given. Without this the CA has no reason to believe the
+		// PCR digest describes the enrolling device.
+		rsaDetail, err := iakAttrs.TPMAttributes.Public.Parameters.RSADetail()
+		require.NoError(t, err)
+		rsaUnique, err := iakAttrs.TPMAttributes.Public.Unique.RSA()
+		require.NoError(t, err)
+		iakPub, err := tpm2.RSAPub(rsaDetail, rsaUnique)
+		require.NoError(t, err)
+
+		digest := sha256.Sum256(parsed.Quoted)
+		require.NoError(t,
+			rsa.VerifyPSS(iakPub, crypto.SHA256, digest[:], parsed.Signature, &rsa.PSSOptions{
+				SaltLength: rsa.PSSSaltLengthEqualsHash,
+				Hash:       crypto.SHA256,
+			}),
+			"the quote must be signed by the device's IAK")
+	})
 }
 
-// TestCSRCreateIDevIDContent_MissingEventLog tests content creation without event log
-func TestCSRCreateIDevIDContent_MissingEventLog(t *testing.T) {
-	tpm := createSimulatorTPM(t, EnrollmentStrategyIAK)
-	if tpm == nil {
-		t.Skip("TPM simulator not available")
-	}
-	defer func() { _ = tpm.Close() }()
+// TestTCGCSR_SigningKeyMustBeCertifiedByTheAttestationKey covers the binding
+// that makes an IDevID certificate mean what it says.
+//
+// Everything else in the CSR concerns *possession*: it is signed by the IDevID,
+// so the requester holds that private key. A key generated in software is
+// possessed just as fully. Only sgnCertifyInfo -- the IAK's TPM2_Certify over
+// the IDevID -- shows the signing key lives in the same TPM as the attestation
+// key, which is the whole claim being made.
+//
+// Before this was verified, a device with a genuine TPM could present a real EK,
+// a real IAK, pass credential activation, and still be certified for a signing
+// key the TPM had never seen.
+func TestTCGCSR_SigningKeyMustBeCertifiedByTheAttestationKey(t *testing.T) {
+	h := newIdentityHarness(t, EnrollmentStrategyIAK_IDEVID_SINGLE_PASS, true)
 
-	akAttrs, err := tpm.IAKAttributes()
-	if err != nil {
-		t.Skipf("IAK not available: %v", err)
-	}
+	t.Run("a genuine CSR carries a valid certification", func(t *testing.T) {
+		csr := h.csr(t)
 
-	idevidAttrs, err := tpm.IDevIDAttributes()
-	if err != nil {
-		t.Skipf("IDevID not available: %v", err)
-	}
+		_, unpacked, err := h.TPM.VerifyTCG_CSR_IDevID(csr, x509.SHA256WithRSAPSS)
+		require.NoError(t, err)
+		require.NotEmpty(t, unpacked.CsrContents.SgnCertifyInfo,
+			"a real TPM must emit the IAK's certification of the IDevID")
+		require.NotEmpty(t, unpacked.CsrContents.SgnCertifyInfoSig)
 
-	// The simulator won't have a real event log, so this tests the code path
-	// that handles missing event logs
-	ekCert := createTestEKCertificate(t)
+		// The same evidence must satisfy the standalone verifier, which is what
+		// a CA with no TPM of its own runs.
+		verified, err := VerifyCertifyRaw(
+			unpacked.CsrContents.SgnCertifyInfo,
+			unpacked.CsrContents.SgnCertifyInfoSig,
+			unpacked.CsrContents.AttestPub,
+			unpacked.CsrContents.SigningPub,
+			nil,
+		)
+		require.NoError(t, err)
+		require.NotEmpty(t, verified.SubjectName)
+	})
 
-	csr, err := tpm.CreateTCG_CSR_IDEVID(ekCert, akAttrs, idevidAttrs)
-	require.NoError(t, err)
+	t.Run("a CSR whose certification is stripped is refused", func(t *testing.T) {
+		csr := h.csr(t)
+		stripped := *csr
+		stripped.CsrContents.SgnCertifyInfo = nil
+		stripped.CsrContents.SgnCertifyInfoSig = nil
 
-	// Boot event log may be empty in simulator
-	// but CSR should still be created
-	assert.NotNil(t, csr.Signature)
-}
+		_, _, err := VerifyTCG_CSR_IDevID_Stateless(&stripped, x509.SHA256WithRSAPSS)
 
-// TestCSRVerifyInvalidSignature tests verification with invalid signature
-func TestCSRVerifyInvalidSignature(t *testing.T) {
-	tpm := createSimulatorTPM(t, EnrollmentStrategyIAK)
-	if tpm == nil {
-		t.Skip("TPM simulator not available")
-	}
-	defer func() { _ = tpm.Close() }()
+		// Absence must refuse rather than skip: an omitted proof is exactly
+		// what an attacker submitting a software key would send.
+		require.Error(t, err, "a CSR with no certification must not verify")
+	})
 
-	// Create a CSR with corrupt signature
-	csr := createTestCSRIDevID()
-	csr.Signature = []byte("invalid-signature")
+	t.Run("a CSR certifying a different key is refused", func(t *testing.T) {
+		csr := h.csr(t)
 
-	// Both verification methods should fail
-	_, _, err := tpm.VerifyTCG_CSR_IAK(csr, x509.SHA256WithRSAPSS)
-	require.Error(t, err)
+		// Swap in the IAK's own public area as the signing key. It is a real
+		// key in this very TPM -- just not the one the certification covers,
+		// which is precisely the substitution the Name check exists to catch.
+		swapped := *csr
+		swapped.CsrContents.SigningPub = csr.CsrContents.AttestPub
 
-	_, _, err = tpm.VerifyTCG_CSR_IDevID(csr, x509.SHA256WithRSAPSS)
-	require.Error(t, err)
-}
+		_, _, err := VerifyTCG_CSR_IDevID_Stateless(&swapped, x509.SHA256WithRSAPSS)
 
-// TestCSRVerifyWithECDSA tests verification with ECDSA signature algorithm
-func TestCSRVerifyWithECDSA(t *testing.T) {
-	tpm := createSimulatorTPM(t, EnrollmentStrategyIAK)
-	if tpm == nil {
-		t.Skip("TPM simulator not available")
-	}
-	defer func() { _ = tpm.Close() }()
+		require.Error(t, err,
+			"a certification of one key must not certify another")
+	})
 
-	csr := createTestCSRIDevID()
+	t.Run("a CSR with a tampered certification is refused", func(t *testing.T) {
+		csr := h.csr(t)
+		tampered := *csr
+		body := make([]byte, len(csr.CsrContents.SgnCertifyInfo))
+		copy(body, csr.CsrContents.SgnCertifyInfo)
+		require.NotEmpty(t, body)
+		body[len(body)-1] ^= 0xFF
+		tampered.CsrContents.SgnCertifyInfo = body
 
-	// Try verification with ECDSA - will fail but exercises code path
-	_, _, err := tpm.VerifyTCG_CSR_IAK(csr, x509.ECDSAWithSHA256)
-	require.Error(t, err)
+		_, _, err := VerifyTCG_CSR_IDevID_Stateless(&tampered, x509.SHA256WithRSAPSS)
 
-	_, _, err = tpm.VerifyTCG_CSR_IDevID(csr, x509.ECDSAWithSHA256)
-	require.Error(t, err)
-}
-
-// TestCSRVerifyWithPKCS1v15 tests verification with PKCS1v15 signature algorithm
-func TestCSRVerifyWithPKCS1v15(t *testing.T) {
-	tpm := createSimulatorTPM(t, EnrollmentStrategyIAK)
-	if tpm == nil {
-		t.Skip("TPM simulator not available")
-	}
-	defer func() { _ = tpm.Close() }()
-
-	csr := createTestCSRIDevID()
-
-	// Try verification with PKCS1v15 - exercises different code path
-	_, _, err := tpm.VerifyTCG_CSR_IAK(csr, x509.SHA256WithRSA)
-	require.Error(t, err)
-
-	_, _, err = tpm.VerifyTCG_CSR_IDevID(csr, x509.SHA256WithRSA)
-	require.Error(t, err)
+		// Refused by the CSR's own self-signature, which covers the packed
+		// contents and therefore the certification inside them. That check runs
+		// first, so tampering never reaches the certify verifier -- the CSR is
+		// rejected either way, just earlier and for a reason that is equally
+		// true.
+		require.Error(t, err)
+		assert.ErrorIs(t, err, ErrInvalidSignature)
+	})
 }

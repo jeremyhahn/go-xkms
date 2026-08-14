@@ -20,6 +20,11 @@ import (
 	"errors"
 	"flag"
 	"fmt"
+	"io"
+
+	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
+
+	pkgfido2 "github.com/jeremyhahn/go-xkms/pkg/fido2"
 	"log/slog"
 	"os"
 	"strconv"
@@ -110,6 +115,10 @@ var (
 	// ErrSharesRequiresShamir is returned when --shares or --threshold
 	// is supplied with a non-shamir barrier strategy.
 	ErrSharesRequiresShamir = errors.New("init: --shares / --threshold are only valid when --barrier-strategy=shamir")
+
+	// ErrPasskeyPINReadFailed is returned when --passkey-pin-stdin is set but
+	// standard input cannot be read.
+	ErrPasskeyPINReadFailed = errors.New("init: failed to read the passkey PIN from standard input")
 )
 
 // validBarrierStrategies is the set of canonical --barrier-strategy
@@ -154,7 +163,9 @@ type initFlags struct {
 	dataDir            string
 	hostname           string
 	sans               string
-	adminBundle        string
+	adminFactors       stringSlice
+	passkeyDevice      string
+	passkeyPINStdin    bool
 }
 
 // parseOfficerFlag parses a single "--so" flag value in the format
@@ -306,6 +317,29 @@ func runInit(args []string) {
 		os.Exit(1)
 	}
 
+	// A freshly constructed barrier is SEALED. The ceremony stores the SO and
+	// user PINs through the credential service, which for the "barrier"
+	// strategy writes through this barrier — so it has to be initialized and
+	// unsealed first, or every ceremony fails at the first credential write
+	// with "barrier is sealed".
+	//
+	// The secret is the SO PIN: it is the credential the operator already has
+	// to present to run this ceremony, so deriving the init barrier from it
+	// introduces no new secret to manage. This barrier is backed by in-memory
+	// storage and lives only for the duration of the command — the durable
+	// artifacts are the CA bundle, SPKI pin, and admin bundle written to disk.
+	barrierCreds := seal.Credentials{Secret: []byte(flags.soPin)}
+	if berr := barrier.Initialize(context.Background(), barrierCreds); berr != nil {
+		logger.Error("barrier initialization failed", slog.Any("error", berr))
+		os.Exit(1)
+	}
+	// Initialize may leave the barrier already unsealed; that is success, not
+	// a failure to tolerate silently elsewhere.
+	if berr := barrier.Unseal(context.Background(), barrierCreds); berr != nil && !errors.Is(berr, seal.ErrAlreadyUnsealed) {
+		logger.Error("barrier unseal failed", slog.Any("error", berr))
+		os.Exit(1)
+	}
+
 	// Create platform store backed by in-memory storage.
 	platformStore, err := seal.NewPlatformStore(memBackend, logger)
 	if err != nil {
@@ -375,13 +409,52 @@ func runInit(args []string) {
 	// the same in-memory tier the rest of init uses, run
 	// CeremonyService.Initialize against it via the CAAdapter (built by
 	// the wrapper at the qrdb boundary), and persist the durable
-	// artifacts (CA bundle, SPKI pin, and — in single-admin mode — the
-	// SO admin client bundle).
+	// artifacts (CA bundle, SPKI pin).
+	// Parse the requested login factors through the shared parser so
+	// --admin-factor means the same thing here as in every other daemon in
+	// the stack. A bad value fails before the ceremony touches anything.
+	plan, planErr := qrdbsdk.ParseAdminFactors(flags.adminFactors)
+	if planErr != nil {
+		logger.Error("invalid --admin-factor", slog.Any("error", planErr))
+		os.Exit(1)
+	}
+
+	passkeyPIN, pinErr := resolvePasskeyPIN(flags, os.Stdin)
+	if pinErr != nil {
+		logger.Error("passkey PIN unavailable", slog.Any("error", pinErr))
+		os.Exit(1)
+	}
+
+	rpID, rpName := resolveRelyingParty(cfg, hostname)
 	env := &ceremonyEnv{
-		logger:          logger,
-		hostname:        hostname,
-		dataDir:         dataDir,
-		adminBundlePath: flags.adminBundle,
+		logger:           logger,
+		hostname:         hostname,
+		dataDir:          dataDir,
+		enrollmentPlan:   plan,
+		passkeyDevice:    flags.passkeyDevice,
+		passkeyPIN:       passkeyPIN,
+		relyingPartyID:   rpID,
+		relyingPartyName: rpName,
+	}
+
+	// Open the authenticator only when a passkey is actually planned, so a
+	// host with no FIDO2 support can still run an mTLS-only ceremony.
+	if plan.Includes(qrdbsdk.FactorFIDO2) {
+		handler, herr := pkgfido2.NewHandler(nil, pkgfido2.NewDefaultEnumerator())
+		if herr != nil {
+			logger.Error("FIDO2 subsystem unavailable", slog.Any("error", herr))
+			os.Exit(1)
+		}
+		env.fido2Handler = handler
+		defer func() { _ = handler.Close() }()
+	}
+
+	// Refuse before the ceremony changes any state when a planned factor
+	// cannot succeed. A missing security key costs one retry; discovering it
+	// midway leaves an initialized barrier with a half-enrolled administrator.
+	if pfErr := preflightAdminFactors(context.Background(), env); pfErr != nil {
+		logger.Error("admin factor preflight failed", slog.Any("error", pfErr))
+		os.Exit(1)
 	}
 	result, err := executeCeremony(context.Background(), cs, env)
 	if err != nil {
@@ -418,7 +491,7 @@ func parseInitFlags(args []string) (*initFlags, error) {
 		_, _ = fmt.Fprintln(fs.Output(), "  XKMS_THRESHOLD           equivalent to --threshold")
 		_, _ = fmt.Fprintln(fs.Output(), "  XKMS_HOSTNAME            equivalent to --hostname")
 		_, _ = fmt.Fprintln(fs.Output(), "  XKMS_SANS                equivalent to --sans")
-		_, _ = fmt.Fprintln(fs.Output(), "  XKMS_ADMIN_BUNDLE        equivalent to --admin-bundle")
+		_, _ = fmt.Fprintln(fs.Output(), "  XKMS_PASSKEY_PIN         FIDO2 authenticator PIN (prefer --passkey-pin-stdin)")
 		_, _ = fmt.Fprintln(fs.Output(), "")
 		_, _ = fmt.Fprintln(fs.Output(), "Flags:")
 		fs.PrintDefaults()
@@ -444,8 +517,16 @@ func parseInitFlags(args []string) (*initFlags, error) {
 		"FQDN written into the admin/server certificate CN")
 	fs.StringVar(&flags.sans, "sans", "",
 		"Comma-separated additional DNS / IP SANs")
-	fs.StringVar(&flags.adminBundle, "admin-bundle", "-",
-		"Path for the admin client cert+key bundle (default: stdout, one-shot)")
+	fs.Var(&flags.adminFactors, "admin-factor",
+		"Login factor to enroll for the administrator; repeatable or comma-separated ("+
+			strings.Join(qrdbsdk.AdminFactorNames(), "|")+"). Defaults to mtls.")
+	fs.StringVar(&flags.passkeyDevice, "passkey-device", "",
+		"Select one FIDO2 authenticator when several are attached: a device path, "+
+			"or part of the product, manufacturer, or serial number.")
+	fs.BoolVar(&flags.passkeyPINStdin, "passkey-pin-stdin", false,
+		"Read the FIDO2 authenticator's CTAP2 PIN from standard input. Required when "+
+			"the key has a PIN set. There is deliberately no --passkey-pin flag: a PIN "+
+			"on the command line is readable from /proc by every process on the host.")
 
 	if err := fs.Parse(args); err != nil {
 		return nil, err
@@ -495,11 +576,26 @@ func resolveInitEnvFallbacks(f *initFlags) {
 	if f.sans == "" {
 		f.sans = os.Getenv("XKMS_SANS")
 	}
-	if f.adminBundle == "-" {
-		if v := os.Getenv("XKMS_ADMIN_BUNDLE"); v != "" {
-			f.adminBundle = v
+}
+
+// resolvePasskeyPIN returns the CTAP2 PIN of the authenticator being enrolled.
+//
+// --passkey-pin-stdin wins over XKMS_PASSKEY_PIN so an operator can override an
+// inherited environment without unsetting it. There is no flag form on purpose:
+// a PIN in argv is world-readable through /proc for the life of the process.
+//
+// An empty result is not an error. A key with no PIN configured enrolls without
+// one, and a key that does have one refuses with a CTAP error that names the
+// cause far more precisely than a guess here could.
+func resolvePasskeyPIN(flags *initFlags, stdin io.Reader) (string, error) {
+	if flags.passkeyPINStdin {
+		data, err := io.ReadAll(stdin)
+		if err != nil {
+			return "", &WrappedError{Sentinel: ErrPasskeyPINReadFailed, Err: err}
 		}
+		return strings.TrimRight(string(data), "\r\n"), nil
 	}
+	return os.Getenv("XKMS_PASSKEY_PIN"), nil
 }
 
 // validateInitFlags checks that all required flags are present and
@@ -590,9 +686,6 @@ func printInitSummary(cfg *initialize.CeremonyConfig, credStrategy string, offic
 	if flags.barrierStrategy == "shamir" {
 		fmt.Printf("  Shamir Mode:          %d-of-%d\n", flags.threshold, flags.shares)
 	}
-	if flags.adminBundle != "-" {
-		fmt.Printf("  Admin Bundle:         %s\n", flags.adminBundle)
-	}
 	fmt.Println()
 
 	if cfg.Threshold >= 2 && len(officers) > 0 {
@@ -607,4 +700,24 @@ func printInitSummary(cfg *initialize.CeremonyConfig, credStrategy string, offic
 
 	fmt.Println()
 	fmt.Println("=== Validation Passed ===")
+}
+
+// resolveRelyingParty determines the WebAuthn relying party an enrolled
+// passkey is scoped to.
+//
+// The configured rp_id wins; otherwise the ceremony hostname is used. Getting
+// this wrong is silent: the credential enrolls cleanly and fails at every
+// login, because the browser computes the RP ID from the URL bar and the
+// server compares it to what was stored.
+func resolveRelyingParty(cfg *config.Config, hostname string) (string, string) {
+	// WebAuthn is an optional config section, so it is nil far more often than
+	// it is populated — every config without a webauthn block reaches here.
+	if cfg != nil && cfg.WebAuthn != nil && cfg.WebAuthn.RPID != "" {
+		name := cfg.WebAuthn.RPDisplayName
+		if name == "" {
+			name = cfg.WebAuthn.RPID
+		}
+		return cfg.WebAuthn.RPID, name
+	}
+	return hostname, hostname
 }

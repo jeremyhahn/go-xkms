@@ -204,12 +204,28 @@ type UserAuthFactorClientFactory func(ctx context.Context) (qrdbtransport.UserAu
 // Tests can override this to inject an in-process embedded client.
 var userAuthFactorClientFactory UserAuthFactorClientFactory = defaultUserAuthFactorClientFactory
 
-// defaultUserAuthFactorClientFactory dials qrdb using the standard
-// xkmsctl configuration. When no qrdb endpoint is configured the
-// factory returns AuthFactorMissingClientError so the caller can
-// surface a clear operator-facing message rather than a stack trace.
+// defaultUserAuthFactorClientFactory builds a client against xkmsd's
+// auth-factor endpoints, which proxy the embedded qrdb node.
+//
+// The CLI reaches identity through the server it already talks to rather than
+// a second connection to qrdb: xkmsd holds the node, and factor state stays
+// qrdb's either way. When no server is configured the factory reports
+// AuthFactorMissingClientError so the caller sees a clear operator-facing
+// message instead of a stack trace.
 func defaultUserAuthFactorClientFactory(_ context.Context) (qrdbtransport.UserAuthFactorClient, func() error, error) {
-	return nil, nil, &AuthFactorMissingClientError{}
+	cfg := getConfig()
+	if cfg == nil || cfg.Server == "" {
+		return nil, nil, &AuthFactorMissingClientError{}
+	}
+
+	client, err := newAuthFactorRESTClient(cfg)
+	if err != nil {
+		return nil, nil, err
+	}
+
+	// The HTTP client owns no long-lived resource that needs releasing; the
+	// closer exists so callers can keep one uniform shape.
+	return client, func() error { return nil }, nil
 }
 
 // SetUserAuthFactorClientFactory replaces the active factory. Intended

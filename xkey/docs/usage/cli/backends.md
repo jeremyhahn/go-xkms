@@ -1,5 +1,11 @@
 # Backends CLI Command
 
+> **Scope:** this page documents the go-xkms **server** CLI `xkmsctl backends`
+> (source: `cmd/xkmsctl/`), **not** the `xkey` desktop CLI. It lives under
+> `xkey/docs/` for historical reasons.
+> There is no `xkey` equivalent. For the xkey command tree see
+> [the xkey CLI reference](README.md).
+
 The `backends` command provides tools to discover and inspect available cryptographic backends in your go-xkms installation.
 
 ## Overview

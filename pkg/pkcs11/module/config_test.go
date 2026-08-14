@@ -58,6 +58,16 @@ func TestConfig_SetDefaults(t *testing.T) {
 				if c.Timeout != DefaultTimeout {
 					t.Errorf("Timeout = %v, want %v", c.Timeout, DefaultTimeout)
 				}
+				// SetDefaults must also fill DefaultBackend and StorageType --
+				// previously a no-op for these two fields, which left
+				// Validate()'s backend-availability check failing on a config
+				// that only ever set Target.
+				if c.DefaultBackend != DefaultBackend {
+					t.Errorf("DefaultBackend = %q, want %q", c.DefaultBackend, DefaultBackend)
+				}
+				if c.StorageType != StorageTypeMemory {
+					t.Errorf("StorageType = %q, want %q", c.StorageType, StorageTypeMemory)
+				}
 			},
 		},
 		{
@@ -86,6 +96,12 @@ func TestConfig_SetDefaults(t *testing.T) {
 				}
 				if c.Timeout != DefaultTimeout {
 					t.Errorf("Timeout = %v, want %v", c.Timeout, DefaultTimeout)
+				}
+				if c.DefaultBackend != DefaultBackend {
+					t.Errorf("DefaultBackend = %q, want %q", c.DefaultBackend, DefaultBackend)
+				}
+				if c.StorageType != StorageTypeMemory {
+					t.Errorf("StorageType = %q, want %q", c.StorageType, StorageTypeMemory)
 				}
 			},
 		},
@@ -131,24 +147,33 @@ func TestConfig_Validate(t *testing.T) {
 		{
 			name: "valid unix socket target",
 			config: &Config{
-				Target:  "unix:///var/run/xkms.sock",
-				Timeout: 30 * time.Second,
+				Target:         "unix:///var/run/xkms.sock",
+				Timeout:        30 * time.Second,
+				DefaultBackend: DefaultBackend,
 			},
 			wantErr: false,
 		},
 		{
+			// A dns:/// target is remote (not unix://), so the mandatory-TLS
+			// guard requires either TLS or the explicit test/dev opt-out; this
+			// case is about target-format acceptance, not transport security,
+			// so it uses the opt-out.
 			name: "valid dns target",
 			config: &Config{
-				Target:  "dns:///localhost:9000",
-				Timeout: 30 * time.Second,
+				Target:                 "dns:///localhost:9000",
+				Timeout:                30 * time.Second,
+				AllowInsecureTransport: true,
+				DefaultBackend:         DefaultBackend,
 			},
 			wantErr: false,
 		},
 		{
 			name: "valid host:port target",
 			config: &Config{
-				Target:  "localhost:9000",
-				Timeout: 30 * time.Second,
+				Target:                 "localhost:9000",
+				Timeout:                30 * time.Second,
+				AllowInsecureTransport: true,
+				DefaultBackend:         DefaultBackend,
 			},
 			wantErr: false,
 		},
@@ -198,10 +223,15 @@ func TestConfig_Validate(t *testing.T) {
 			errType: ErrInvalidTarget,
 		},
 		{
+			// The target is remote and TLS is disabled, so without the
+			// opt-out this would trip the mandatory-TLS guard before ever
+			// reaching the timeout check. Set the opt-out so the case still
+			// isolates timeout validation.
 			name: "negative timeout",
 			config: &Config{
-				Target:  "localhost:9000",
-				Timeout: -1 * time.Second,
+				Target:                 "localhost:9000",
+				Timeout:                -1 * time.Second,
+				AllowInsecureTransport: true,
 			},
 			wantErr: true,
 			errType: ErrInvalidTimeout,
@@ -209,8 +239,10 @@ func TestConfig_Validate(t *testing.T) {
 		{
 			name: "zero timeout is valid",
 			config: &Config{
-				Target:  "localhost:9000",
-				Timeout: 0,
+				Target:                 "localhost:9000",
+				Timeout:                0,
+				AllowInsecureTransport: true,
+				DefaultBackend:         DefaultBackend,
 			},
 			wantErr: false,
 		},
@@ -225,6 +257,7 @@ func TestConfig_Validate(t *testing.T) {
 					KeyFile:  keyFile,
 					CAFile:   caFile,
 				},
+				DefaultBackend: DefaultBackend,
 			},
 			wantErr: false,
 		},
@@ -307,6 +340,8 @@ func TestConfig_Validate(t *testing.T) {
 					CertFile: "/nonexistent/cert.pem",
 					KeyFile:  "/nonexistent/key.pem",
 				},
+				AllowInsecureTransport: true,
+				DefaultBackend:         DefaultBackend,
 			},
 			wantErr: false,
 		},
@@ -353,9 +388,16 @@ func TestConfig_Validate_TargetFormats(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
+			// This test is about target-format acceptance, not transport
+			// security or backend availability, so the mandatory-TLS guard
+			// and the compiled-backend check are opted out of / satisfied
+			// unconditionally. Neither affects the wantErr:true cases, which
+			// all fail earlier in validateTarget.
 			cfg := &Config{
-				Target:  tt.target,
-				Timeout: 30 * time.Second,
+				Target:                 tt.target,
+				Timeout:                30 * time.Second,
+				AllowInsecureTransport: true,
+				DefaultBackend:         DefaultBackend,
 			}
 			err := cfg.Validate()
 			// Handle empty target special case
@@ -596,6 +638,57 @@ tls_cert = '/path/with spaces/cert.pem'
 		}
 	})
 
+	// TestLoadFromFile/rejects group- and world-readable config files is a
+	// regression test for the config-file permission check: the INI format
+	// accepts so_pin/user_pin in cleartext (see setField), so a config file
+	// readable by anyone other than its owner leaks a credential to every
+	// other account on the host.
+	t.Run("rejects group- and world-readable config files", func(t *testing.T) {
+		tempDir := t.TempDir()
+
+		modes := []os.FileMode{0640, 0644, 0664, 0666}
+		for _, mode := range modes {
+			mode := mode
+			t.Run(mode.String(), func(t *testing.T) {
+				configFile := filepath.Join(tempDir, "insecure-"+mode.String()+".conf")
+				content := "target = unix:///var/run/xkms.sock\n"
+				if err := os.WriteFile(configFile, []byte(content), mode); err != nil {
+					t.Fatalf("failed to write config file: %v", err)
+				}
+				// os.WriteFile applies umask, so pin the exact mode we want
+				// to test regardless of the host's umask.
+				if err := os.Chmod(configFile, mode); err != nil {
+					t.Fatalf("failed to chmod config file: %v", err)
+				}
+
+				_, err := LoadFromFile(configFile)
+				if err == nil {
+					t.Fatalf("LoadFromFile() expected error for config file with mode %s", mode)
+				}
+				if !errors.Is(err, ErrConfigFilePermissions) {
+					t.Errorf("LoadFromFile() error = %v, want ErrConfigFilePermissions", err)
+				}
+			})
+		}
+	})
+
+	t.Run("accepts an owner-only-readable config file", func(t *testing.T) {
+		tempDir := t.TempDir()
+		configFile := filepath.Join(tempDir, "secure.conf")
+		content := "target = unix:///var/run/xkms.sock\n"
+		if err := os.WriteFile(configFile, []byte(content), 0600); err != nil {
+			t.Fatalf("failed to write config file: %v", err)
+		}
+
+		cfg, err := LoadFromFile(configFile)
+		if err != nil {
+			t.Fatalf("LoadFromFile() unexpected error for mode 0600: %v", err)
+		}
+		if cfg.Target != "unix:///var/run/xkms.sock" {
+			t.Errorf("Target = %q, want %q", cfg.Target, "unix:///var/run/xkms.sock")
+		}
+	})
+
 	t.Run("invalid line format", func(t *testing.T) {
 		tempDir := t.TempDir()
 		configFile := filepath.Join(tempDir, "pkcs11.conf")
@@ -659,7 +752,7 @@ timeout = invalid
 
 func TestLoadWithPath(t *testing.T) {
 	// Save and restore environment
-	envVars := []string{EnvTarget, EnvTLSEnabled, EnvTLSCert, EnvTLSKey, EnvTLSCA, EnvTimeout}
+	envVars := []string{EnvTarget, EnvTLSEnabled, EnvTLSCert, EnvTLSKey, EnvTLSCA, EnvTimeout, EnvAllowInsecureTransport}
 	saved := make(map[string]string)
 	for _, k := range envVars {
 		saved[k] = os.Getenv(k)
@@ -679,8 +772,13 @@ func TestLoadWithPath(t *testing.T) {
 		tempDir := t.TempDir()
 		configFile := filepath.Join(tempDir, "pkcs11.conf")
 
+		// target is a remote (non-unix://) address with TLS disabled, so the
+		// mandatory-TLS guard requires the explicit opt-out for Validate() to
+		// succeed; DefaultBackend is left unset here to prove SetDefaults()
+		// fills it in before Validate() runs.
 		content := `target = localhost:8000
 timeout = 20s
+allow_insecure_transport = true
 `
 		if err := os.WriteFile(configFile, []byte(content), 0600); err != nil {
 			t.Fatalf("failed to write config file: %v", err)
@@ -708,6 +806,11 @@ timeout = 20s
 
 	t.Run("file does not exist uses defaults and env", func(t *testing.T) {
 		_ = os.Setenv(EnvTarget, "localhost:7000")
+		// localhost:7000 is remote with TLS disabled; opt out of the
+		// mandatory-TLS guard so this case still isolates env-override
+		// behavior. DefaultBackend needs no such override: DefaultConfig()
+		// already fills it via SetDefaults().
+		_ = os.Setenv(EnvAllowInsecureTransport, "true")
 
 		cfg, err := LoadWithPath("/nonexistent/config.conf")
 		if err != nil {
@@ -722,6 +825,7 @@ timeout = 20s
 		}
 
 		_ = os.Unsetenv(EnvTarget)
+		_ = os.Unsetenv(EnvAllowInsecureTransport)
 	})
 
 	t.Run("validation error", func(t *testing.T) {
@@ -876,6 +980,11 @@ func TestValidateTarget(t *testing.T) {
 		{"no port", "hostname", true},
 		{"empty host", ":9000", true},
 		{"multiple colons", "a:b:c", true},
+		{"rest valid", "rest://host:9000", false},
+		{"quic valid", "quic://host:8443", false},
+		{"rest missing port", "rest://host", true},
+		{"quic empty", "quic://", true},
+		{"mcp rejected", "mcp://host:9000", true},
 	}
 
 	for _, tt := range tests {
@@ -885,6 +994,19 @@ func TestValidateTarget(t *testing.T) {
 				t.Errorf("validateTarget(%q) error = %v, wantErr %v", tt.target, err, tt.wantErr)
 			}
 		})
+	}
+}
+
+// An MCP target is refused with the specific ErrMCPTargetNotSupported so a
+// caller learns why, not merely that the format was unrecognized. MCP is an
+// AI/LLM transport, not a cryptographic data plane.
+func TestValidateTarget_MCPRejectedWithSpecificError(t *testing.T) {
+	err := validateTarget("mcp://xkms:9000")
+	if err == nil {
+		t.Fatal("validateTarget accepted an mcp:// target")
+	}
+	if !errors.Is(err, ErrMCPTargetNotSupported) {
+		t.Errorf("validateTarget(mcp://...) = %v, want ErrMCPTargetNotSupported", err)
 	}
 }
 
@@ -1093,10 +1215,16 @@ func TestConfig_Validate_Storage(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
+			// This test isolates storage validation; the opt-out and a
+			// compiled backend keep the mandatory-TLS guard and the
+			// backend-availability check out of the way for the same reason
+			// as TestConfig_Validate_TargetFormats.
 			cfg := &Config{
-				Target:      "localhost:9090",
-				StorageType: tt.storageType,
-				StoragePath: tt.storagePath,
+				Target:                 "localhost:9090",
+				StorageType:            tt.storageType,
+				StoragePath:            tt.storagePath,
+				AllowInsecureTransport: true,
+				DefaultBackend:         DefaultBackend,
 			}
 
 			err := cfg.Validate()
@@ -1188,4 +1316,131 @@ func TestApplyEnvOverrides_Storage(t *testing.T) {
 	if cfg.StoragePath != "/override/path" {
 		t.Errorf("StoragePath = %q, want %q", cfg.StoragePath, "/override/path")
 	}
+}
+
+// TestConfig_Validate_RejectsPlaintextRemoteTarget is a dedicated regression
+// test for the mandatory-TLS guard: a non-unix:// target with TLS disabled
+// sends every PKCS#11 operation -- including raw exported key material --
+// over a plaintext gRPC channel, and must be refused unless the operator
+// deliberately sets AllowInsecureTransport.
+func TestConfig_Validate_RejectsPlaintextRemoteTarget(t *testing.T) {
+	t.Run("remote target without TLS or opt-out is rejected", func(t *testing.T) {
+		cfg := &Config{
+			Target:         "localhost:9000",
+			Timeout:        30 * time.Second,
+			DefaultBackend: DefaultBackend,
+		}
+		err := cfg.Validate()
+		if err == nil {
+			t.Fatal("expected error for plaintext remote target")
+		}
+		if !errors.Is(err, ErrInsecureRemoteTarget) {
+			t.Errorf("Validate() error = %v, want ErrInsecureRemoteTarget", err)
+		}
+	})
+
+	t.Run("remote target with AllowInsecureTransport is accepted", func(t *testing.T) {
+		cfg := &Config{
+			Target:                 "localhost:9000",
+			Timeout:                30 * time.Second,
+			AllowInsecureTransport: true,
+			DefaultBackend:         DefaultBackend,
+		}
+		if err := cfg.Validate(); err != nil {
+			t.Errorf("Validate() unexpected error with AllowInsecureTransport: %v", err)
+		}
+	})
+
+	t.Run("remote target with TLS enabled is accepted without the opt-out", func(t *testing.T) {
+		cfg := &Config{
+			Target:         "localhost:9000",
+			Timeout:        30 * time.Second,
+			TLS:            TLSConfig{Enabled: true},
+			DefaultBackend: DefaultBackend,
+		}
+		if err := cfg.Validate(); err != nil {
+			t.Errorf("Validate() unexpected error with TLS enabled: %v", err)
+		}
+	})
+
+	t.Run("unix socket target needs neither TLS nor the opt-out", func(t *testing.T) {
+		cfg := &Config{
+			Target:         "unix:///var/run/xkms.sock",
+			Timeout:        30 * time.Second,
+			DefaultBackend: DefaultBackend,
+		}
+		if err := cfg.Validate(); err != nil {
+			t.Errorf("Validate() unexpected error for a local unix socket target: %v", err)
+		}
+	})
+}
+
+// TestConfig_Validate_AcceptsABackendThisBinaryDoesNotHost is the regression
+// test for the module adjudicating its server's capabilities from its own
+// build tags. The shared library is built with no build tags, so its registry
+// holds only "software"; a daemon serving vault, tpm2 or pkcs8 was
+// unreachable because C_Initialize refused the configuration naming them.
+//
+// The names below are exactly the ones the old check rejected in every build:
+// backends the xkms daemon implements that have no BackendType constant here,
+// so no build tag can ever register them.
+func TestConfig_Validate_AcceptsABackendThisBinaryDoesNotHost(t *testing.T) {
+	for _, name := range []string{"vault", "pkcs8", "symmetric", "frost", "phone"} {
+		t.Run(name, func(t *testing.T) {
+			if IsBackendAvailable(BackendType(name)) {
+				t.Fatalf("%q is registered in this build; the test no longer exercises a backend the module does not host", name)
+			}
+
+			cfg := &Config{
+				Target:         "unix:///var/run/xkms.sock",
+				Timeout:        30 * time.Second,
+				DefaultBackend: name,
+			}
+			if err := cfg.Validate(); err != nil {
+				t.Errorf("Validate() error = %v; the daemon, not the module, decides whether %q is serviceable", err, name)
+			}
+
+			cfg.DefaultBackend = string(BackendSoftware)
+			cfg.PIVBackends = []string{name}
+			if err := cfg.Validate(); err != nil {
+				t.Errorf("Validate() error = %v for piv_backends=%q", err, name)
+			}
+		})
+	}
+}
+
+// TestConfig_Validate_RejectsBlankBackendName covers the one backend-name
+// defect the module can settle without the daemon: a name that identifies
+// nothing. Every request built from it would ask the service to resolve "".
+func TestConfig_Validate_RejectsBlankBackendName(t *testing.T) {
+	t.Run("default backend", func(t *testing.T) {
+		cfg := &Config{
+			Target:         "unix:///var/run/xkms.sock",
+			Timeout:        30 * time.Second,
+			DefaultBackend: "   ",
+		}
+		err := cfg.Validate()
+		if !errors.Is(err, ErrEmptyBackendName) {
+			t.Errorf("Validate() error = %v, want ErrEmptyBackendName", err)
+		}
+		if err != nil && !strings.Contains(err.Error(), "default_backend") {
+			t.Errorf("Validate() error = %v, want it to name the default_backend field", err)
+		}
+	})
+
+	t.Run("piv backend entry", func(t *testing.T) {
+		cfg := &Config{
+			Target:         "unix:///var/run/xkms.sock",
+			Timeout:        30 * time.Second,
+			DefaultBackend: string(BackendSoftware),
+			PIVBackends:    []string{string(BackendSoftware), ""},
+		}
+		err := cfg.Validate()
+		if !errors.Is(err, ErrEmptyBackendName) {
+			t.Errorf("Validate() error = %v, want ErrEmptyBackendName", err)
+		}
+		if err != nil && !strings.Contains(err.Error(), "piv_backends[1]") {
+			t.Errorf("Validate() error = %v, want it to name the offending entry", err)
+		}
+	})
 }

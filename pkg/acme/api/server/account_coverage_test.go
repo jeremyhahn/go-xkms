@@ -279,7 +279,7 @@ func TestMCP_ListAccounts_Success(t *testing.T) {
 	}
 	body, _ := json.Marshal(mcpReq)
 
-	req := httptest.NewRequest(http.MethodPost, "/mcp", bytes.NewBuffer(body))
+	req := mcpAuthenticatedRequest(httptest.NewRequest(http.MethodPost, "/mcp", bytes.NewBuffer(body)))
 	rec := httptest.NewRecorder()
 
 	server.handleMCP(rec, req)
@@ -318,7 +318,7 @@ func TestMCP_ListAccounts_Error(t *testing.T) {
 	}
 	body, _ := json.Marshal(mcpReq)
 
-	req := httptest.NewRequest(http.MethodPost, "/mcp", bytes.NewBuffer(body))
+	req := mcpAuthenticatedRequest(httptest.NewRequest(http.MethodPost, "/mcp", bytes.NewBuffer(body)))
 	rec := httptest.NewRecorder()
 
 	server.handleMCP(rec, req)
@@ -343,7 +343,7 @@ func TestMCP_ListAccounts_InvalidParams(t *testing.T) {
 	}
 	body, _ := json.Marshal(mcpReq)
 
-	req := httptest.NewRequest(http.MethodPost, "/mcp", bytes.NewBuffer(body))
+	req := mcpAuthenticatedRequest(httptest.NewRequest(http.MethodPost, "/mcp", bytes.NewBuffer(body)))
 	rec := httptest.NewRecorder()
 
 	server.handleMCP(rec, req)
@@ -381,7 +381,7 @@ func TestMCP_GetAccount_Success(t *testing.T) {
 	}
 	body, _ := json.Marshal(mcpReq)
 
-	req := httptest.NewRequest(http.MethodPost, "/mcp", bytes.NewBuffer(body))
+	req := mcpAuthenticatedRequest(httptest.NewRequest(http.MethodPost, "/mcp", bytes.NewBuffer(body)))
 	rec := httptest.NewRecorder()
 
 	server.handleMCP(rec, req)
@@ -413,7 +413,7 @@ func TestMCP_GetAccount_NotFound(t *testing.T) {
 	}
 	body, _ := json.Marshal(mcpReq)
 
-	req := httptest.NewRequest(http.MethodPost, "/mcp", bytes.NewBuffer(body))
+	req := mcpAuthenticatedRequest(httptest.NewRequest(http.MethodPost, "/mcp", bytes.NewBuffer(body)))
 	rec := httptest.NewRecorder()
 
 	server.handleMCP(rec, req)
@@ -438,7 +438,7 @@ func TestMCP_GetAccount_InvalidParams(t *testing.T) {
 	}
 	body, _ := json.Marshal(mcpReq)
 
-	req := httptest.NewRequest(http.MethodPost, "/mcp", bytes.NewBuffer(body))
+	req := mcpAuthenticatedRequest(httptest.NewRequest(http.MethodPost, "/mcp", bytes.NewBuffer(body)))
 	rec := httptest.NewRecorder()
 
 	server.handleMCP(rec, req)
@@ -467,7 +467,7 @@ func TestMCP_DisableAccount_Success(t *testing.T) {
 	}
 	body, _ := json.Marshal(mcpReq)
 
-	req := httptest.NewRequest(http.MethodPost, "/mcp", bytes.NewBuffer(body))
+	req := mcpAuthenticatedRequest(httptest.NewRequest(http.MethodPost, "/mcp", bytes.NewBuffer(body)))
 	rec := httptest.NewRecorder()
 
 	server.handleMCP(rec, req)
@@ -498,7 +498,7 @@ func TestMCP_DisableAccount_Error(t *testing.T) {
 	}
 	body, _ := json.Marshal(mcpReq)
 
-	req := httptest.NewRequest(http.MethodPost, "/mcp", bytes.NewBuffer(body))
+	req := mcpAuthenticatedRequest(httptest.NewRequest(http.MethodPost, "/mcp", bytes.NewBuffer(body)))
 	rec := httptest.NewRecorder()
 
 	server.handleMCP(rec, req)
@@ -523,7 +523,7 @@ func TestMCP_DisableAccount_InvalidParams(t *testing.T) {
 	}
 	body, _ := json.Marshal(mcpReq)
 
-	req := httptest.NewRequest(http.MethodPost, "/mcp", bytes.NewBuffer(body))
+	req := mcpAuthenticatedRequest(httptest.NewRequest(http.MethodPost, "/mcp", bytes.NewBuffer(body)))
 	rec := httptest.NewRecorder()
 
 	server.handleMCP(rec, req)
@@ -634,7 +634,7 @@ func TestMCP_OrderNotFoundError(t *testing.T) {
 	}
 	body, _ := json.Marshal(mcpReq)
 
-	req := httptest.NewRequest(http.MethodPost, "/mcp", bytes.NewBuffer(body))
+	req := mcpAuthenticatedRequest(httptest.NewRequest(http.MethodPost, "/mcp", bytes.NewBuffer(body)))
 	rec := httptest.NewRecorder()
 
 	server.handleMCP(rec, req)
@@ -668,7 +668,7 @@ func TestMCP_TenantNotFoundError(t *testing.T) {
 	}
 	body, _ := json.Marshal(mcpReq)
 
-	req := httptest.NewRequest(http.MethodPost, "/mcp", bytes.NewBuffer(body))
+	req := mcpAuthenticatedRequest(httptest.NewRequest(http.MethodPost, "/mcp", bytes.NewBuffer(body)))
 	rec := httptest.NewRecorder()
 
 	server.handleMCP(rec, req)

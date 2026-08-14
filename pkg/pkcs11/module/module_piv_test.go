@@ -254,6 +254,7 @@ func newTestModule(client PKCS11Transport) *Module {
 	m := &Module{
 		client:        client,
 		objectManager: NewObjectManager(),
+		slotManager:   NewSlotManager(),
 		config: &Config{
 			Target:         "unix:///tmp/test.sock",
 			Timeout:        5 * time.Second,
@@ -1470,7 +1471,7 @@ func findPIVObject(t *testing.T, om *ObjectManager, label string, class ObjectCl
 		NewUint32Attribute(CKA_CLASS, uint32(class)),
 	}
 
-	err := om.FindObjectsInit(SessionHandle(1), template)
+	err := om.FindObjectsInit(fullAccessCtx(SessionHandle(1)), template)
 	if err != nil {
 		t.Fatalf("FindObjectsInit failed: %v", err)
 	}
@@ -1485,7 +1486,7 @@ func findPIVObject(t *testing.T, om *ObjectManager, label string, class ObjectCl
 		t.Fatalf("no object found with label %q and class %v", label, class)
 	}
 
-	obj, err := om.GetObject(handles[0])
+	obj, err := om.getObjectUnchecked(handles[0])
 	if err != nil {
 		t.Fatalf("GetObject failed: %v", err)
 	}
@@ -1501,7 +1502,7 @@ func verifyPIVObjectsByLabel(t *testing.T, om *ObjectManager, label string, clas
 			NewStringAttribute(CKA_LABEL, label),
 			NewUint32Attribute(CKA_CLASS, uint32(class)),
 		}
-		err := om.FindObjectsInit(SessionHandle(100+SessionHandle(class)), template)
+		err := om.FindObjectsInit(fullAccessCtx(SessionHandle(100+SessionHandle(class))), template)
 		if err != nil {
 			t.Fatalf("FindObjectsInit failed for class %v: %v", class, err)
 		}
@@ -1586,5 +1587,131 @@ func verifyPIVObjectIDConsistency(t *testing.T, om *ObjectManager, label string)
 			t.Fatalf("CKA_ID mismatch at byte %d: cert=%02x, pub=%02x, priv=%02x",
 				i, certID[i], pubID[i], privID[i])
 		}
+	}
+}
+
+// TestPIVSlotPolicyFollowsSP80073 pins the per-slot PIN rules NIST SP 800-73-4
+// Part 1 §3.2.1 assigns to PIV key references.
+//
+// Every slot used to receive one identical attribute set, which told
+// applications the opposite of the card's own rules on both of the slots where
+// they differ: 9C, the digital signature key, requires PIN verification
+// immediately before EACH signature -- PKCS#11 v3.2 §4.10's
+// CKA_ALWAYS_AUTHENTICATE -- and got unlimited signing after one login; 9E, the
+// card authentication key, requires no PIN at all and was marked CKA_PRIVATE, so
+// a client that never logged in could not see it.
+func TestPIVSlotPolicyFollowsSP80073(t *testing.T) {
+	cases := []struct {
+		slot               string
+		private            bool
+		alwaysAuthenticate bool
+		why                string
+	}{
+		{"9c", true, true, "the digital signature key requires a PIN before each signature"},
+		{"9C", true, true, "the slot reference is spelled both ways by cards and callers"},
+		{"9e", false, false, "the card authentication key requires no PIN"},
+		{"9a", true, false, "PIV authentication takes the default: private, PIN once per login"},
+		{"9d", true, false, "key management takes the default"},
+		{"82", true, false, "a retired key reference takes the default"},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.slot, func(t *testing.T) {
+			policy := policyForPIVSlot(tc.slot)
+
+			if policy.private != tc.private {
+				t.Errorf("slot %s: CKA_PRIVATE = %v, want %v (%s)",
+					tc.slot, policy.private, tc.private, tc.why)
+			}
+			if policy.alwaysAuthenticate != tc.alwaysAuthenticate {
+				t.Errorf("slot %s: CKA_ALWAYS_AUTHENTICATE = %v, want %v (%s)",
+					tc.slot, policy.alwaysAuthenticate, tc.alwaysAuthenticate, tc.why)
+			}
+		})
+	}
+}
+
+// TestPIVObjectsAreReplacedNotAccumulated pins that reloading a slot leaves one
+// trio of objects rather than two.
+//
+// The card holds one certificate and one key per slot, so a second trio gives
+// C_FindObjects two answers for one CKA_ID. OpenSSH pairs a certificate to its
+// key by CKA_ID and would bind whichever the handle order surfaced first, which
+// may be the stale one -- an authentication failure that looks like a card
+// fault.
+func TestPIVObjectsAreReplacedNotAccumulated(t *testing.T) {
+	_, certDER := generateTestRSACert(t)
+
+	mc := newPIVMockClient()
+	mc.listPIVSlotsResp = &transport.ListPIVSlotsResponse{
+		Slots: []transport.PIVSlotStatus{
+			{Slot: "9a", Name: "Authentication", HasCert: true},
+		},
+	}
+	mc.getPIVCertResp = &transport.GetPIVCertificateResponse{
+		Slot:        "9a",
+		Certificate: certDER,
+		Format:      "der",
+	}
+
+	m := newTestModule(mc)
+
+	if err := m.LoadPIVObjects(context.Background(), "tpm2"); err != nil {
+		t.Fatalf("first LoadPIVObjects: %v", err)
+	}
+	afterFirst := m.objectManager.Size()
+	if afterFirst != 3 {
+		t.Fatalf("first load created %d objects, want 3 (certificate, public key, private key)", afterFirst)
+	}
+
+	if err := m.LoadPIVObjects(context.Background(), "tpm2"); err != nil {
+		t.Fatalf("second LoadPIVObjects: %v", err)
+	}
+	if got := m.objectManager.Size(); got != afterFirst {
+		t.Errorf("second load left %d objects, want %d; a slot's objects must be "+
+			"replaced rather than accumulated", got, afterFirst)
+	}
+}
+
+// TestDeletePIVCertificateRemovesObjects pins the promise this function's own
+// doc comment makes.
+//
+// It used to call the transport and return, leaving the mirror objects in place.
+// LoadPIVObjects runs once during Module.Initialize, so the "refreshed on the
+// next LoadPIVObjects call" escape hatch never fired in a running token: the
+// deleted certificate stayed findable and its private-key handle stayed
+// usable-looking, so C_Sign failed deep in the backend instead of the key simply
+// being absent.
+func TestDeletePIVCertificateRemovesObjects(t *testing.T) {
+	_, certDER := generateTestRSACert(t)
+
+	mc := newPIVMockClient()
+	mc.listPIVSlotsResp = &transport.ListPIVSlotsResponse{
+		Slots: []transport.PIVSlotStatus{
+			{Slot: "9a", Name: "Authentication", HasCert: true},
+		},
+	}
+	mc.getPIVCertResp = &transport.GetPIVCertificateResponse{
+		Slot:        "9a",
+		Certificate: certDER,
+		Format:      "der",
+	}
+
+	m := newTestModule(mc)
+
+	if err := m.LoadPIVObjects(context.Background(), "tpm2"); err != nil {
+		t.Fatalf("LoadPIVObjects: %v", err)
+	}
+	if m.objectManager.Size() == 0 {
+		t.Fatal("precondition: the slot's objects must exist before the delete")
+	}
+
+	if err := m.DeletePIVCertificate(context.Background(), "tpm2", "9a"); err != nil {
+		t.Fatalf("DeletePIVCertificate: %v", err)
+	}
+
+	if got := m.objectManager.Size(); got != 0 {
+		t.Errorf("%d objects survived the delete; a deleted credential must not stay "+
+			"findable with a usable-looking private key handle", got)
 	}
 }

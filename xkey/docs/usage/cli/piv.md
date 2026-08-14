@@ -1,5 +1,11 @@
 # CLI Reference: PIV Commands
 
+> **Scope:** this page documents the go-xkms **server** CLI `xkmsctl piv`
+> (source: `cmd/xkmsctl/`), **not** the `xkey` desktop CLI. It lives under
+> `xkey/docs/` for historical reasons.
+> `xkey` has its own `xkey piv` command group with a different surface —
+> see [the xkey CLI reference](README.md).
+
 PIV commands manage Personal Identity Verification (PIV) certificates and keys across backends. PIV provides standardized smart card slots for authentication, digital signatures, key management, and card authentication, following the NIST SP 800-73 specification.
 
 ## Commands

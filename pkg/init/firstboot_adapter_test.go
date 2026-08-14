@@ -1,0 +1,217 @@
+// Copyright (c) 2025 Jeremy Hahn
+// Copyright (c) 2025 Automate The Things, LLC
+//
+// This file is part of go-xkms.
+//
+// go-xkms is dual-licensed:
+//
+// 1. GNU Affero General Public License v3.0 (AGPL-3.0)
+//    See LICENSE file or visit https://www.gnu.org/licenses/agpl-3.0.html
+//
+// 2. Commercial License
+//    Contact licensing@automatethethings.com for commercial licensing options.
+
+package initialize
+
+import (
+	"context"
+	"crypto/ecdsa"
+	"crypto/elliptic"
+	"crypto/rand"
+	"crypto/x509"
+	"crypto/x509/pkix"
+	"encoding/pem"
+	"errors"
+	"testing"
+
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
+
+	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
+	"github.com/jeremyhahn/go-xkms/pkg/ca"
+)
+
+// recordingCA wraps the ceremony mockCA and records the request and options
+// the adapter passes down. The mock deliberately ignores SignOptions when
+// self-signing, so the adapter's contract — WHAT it asks the CA for — has to
+// be asserted on the recorded values, not on the mock's output.
+type recordingCA struct {
+	*mockCA
+
+	lastIssueReq *ca.CertificateRequest
+	lastSignOpts *ca.SignOptions
+	issueErr     error
+	signErr      error
+}
+
+func (r *recordingCA) IssueCertificate(ctx context.Context, req *ca.CertificateRequest) (*ca.IssuedCertificate, error) {
+	r.lastIssueReq = req
+	if r.issueErr != nil {
+		return nil, r.issueErr
+	}
+	return r.mockCA.IssueCertificate(ctx, req)
+}
+
+func (r *recordingCA) SignCSR(ctx context.Context, csrPEM []byte, opts *ca.SignOptions) (*x509.Certificate, error) {
+	r.lastSignOpts = opts
+	if r.signErr != nil {
+		return nil, r.signErr
+	}
+	return r.mockCA.SignCSR(ctx, csrPEM, opts)
+}
+
+func newRecordingCA(t *testing.T) *recordingCA {
+	t.Helper()
+	return &recordingCA{mockCA: newMockCA(t)}
+}
+
+// adminCSR builds a PEM-encoded CSR the way a Path B admin would: their own
+// key, their own subject.
+func adminCSR(t *testing.T, cn string) []byte {
+	t.Helper()
+	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	require.NoError(t, err)
+	der, err := x509.CreateCertificateRequest(rand.Reader, &x509.CertificateRequest{
+		Subject: pkix.Name{CommonName: cn},
+	}, key)
+	require.NoError(t, err)
+	return pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE REQUEST", Bytes: der})
+}
+
+// TestGenerateAdminCert_PathA proves the generate-and-distribute seam: both
+// PEM blobs come back, the subject encodes tenant (OU) and admin (CN) per the
+// qrdb contract, the certificate shape is read from the canonical client
+// profile rather than restated, and the SPIFFE SAN carries the admin's own
+// tenant — not the system tenant the ceremony path pins.
+func TestGenerateAdminCert_PathA(t *testing.T) {
+	rec := newRecordingCA(t)
+	adapter := NewCAAdapter(rec, "example.org")
+
+	certPEM, keyPEM, err := adapter.GenerateAdminCert(context.Background(), "tenant-42", "admin")
+	require.NoError(t, err)
+	assert.NotEmpty(t, certPEM, "Path A must return the certificate PEM")
+	assert.NotEmpty(t, keyPEM, "Path A must return the private key PEM (generate-and-distribute)")
+
+	req := rec.lastIssueReq
+	require.NotNil(t, req)
+	assert.Equal(t, "admin", req.Subject.CommonName)
+	assert.Equal(t, "tenant-42", req.Subject.OrganizationalUnit,
+		"the seam contract says tenantID identifies the OU")
+
+	// The shape must be the canonical client profile's, read live so a profile
+	// change propagates here instead of stranding admin certs on an old shape.
+	profile := ca.NewClientProfile()
+	assert.Equal(t, profile.KeyUsage(), req.KeyUsage)
+	assert.Equal(t, profile.ExtKeyUsage(), req.ExtKeyUsage)
+
+	require.NotNil(t, req.SANS)
+	require.Len(t, req.SANS.URIs, 1)
+	assert.Equal(t, "spiffe://example.org/tenant/tenant-42/user/admin", req.SANS.URIs[0],
+		"the admin cert must carry the admin's tenant, not the system tenant")
+}
+
+// TestGenerateAdminCert_EmptyTenantFallsBackToSystem pins the fallback: an
+// admin cert with no tenant is a control-plane identity and lands in the
+// system tenant, matching the ceremony SO certificates.
+func TestGenerateAdminCert_EmptyTenantFallsBackToSystem(t *testing.T) {
+	rec := newRecordingCA(t)
+	adapter := NewCAAdapter(rec, "example.org")
+
+	_, _, err := adapter.GenerateAdminCert(context.Background(), "", "admin")
+	require.NoError(t, err)
+
+	require.NotNil(t, rec.lastIssueReq.SANS)
+	require.Len(t, rec.lastIssueReq.SANS.URIs, 1)
+	assert.Equal(t, "spiffe://example.org/tenant/system/user/admin", rec.lastIssueReq.SANS.URIs[0])
+}
+
+// TestGenerateAdminCert_PropagatesIssueError proves a CA failure surfaces
+// instead of returning empty blobs as success.
+func TestGenerateAdminCert_PropagatesIssueError(t *testing.T) {
+	rec := newRecordingCA(t)
+	rec.issueErr = errors.New("keystore sealed")
+	adapter := NewCAAdapter(rec, "")
+
+	certPEM, keyPEM, err := adapter.GenerateAdminCert(context.Background(), "t", "admin")
+
+	require.Error(t, err)
+	assert.True(t, errors.Is(err, rec.issueErr))
+	assert.Nil(t, certPEM)
+	assert.Nil(t, keyPEM)
+}
+
+// TestSignAdminCSR_PathB proves the CSR-sign seam: the result is a PEM
+// certificate over the CSR's own subject and key (the private key never
+// leaves the admin), the requested shape comes from the canonical client
+// profile, and the SPIFFE identity carries the admin's tenant and name.
+func TestSignAdminCSR_PathB(t *testing.T) {
+	rec := newRecordingCA(t)
+	adapter := NewCAAdapter(rec, "example.org")
+
+	certPEM, err := adapter.SignAdminCSR(context.Background(), "tenant-7", "ops-admin", adminCSR(t, "ops-admin"))
+	require.NoError(t, err)
+
+	block, _ := pem.Decode(certPEM)
+	require.NotNil(t, block, "SignAdminCSR must return PEM")
+	require.Equal(t, "CERTIFICATE", block.Type)
+	cert, err := x509.ParseCertificate(block.Bytes)
+	require.NoError(t, err)
+	assert.Equal(t, "ops-admin", cert.Subject.CommonName,
+		"Path B keeps the CSR's subject; the CA must not rewrite it")
+
+	opts := rec.lastSignOpts
+	require.NotNil(t, opts)
+	profile := ca.NewClientProfile()
+	assert.Equal(t, profile.KeyUsage(), opts.KeyUsage)
+	assert.Equal(t, profile.ExtKeyUsage(), opts.ExtKeyUsage)
+	assert.Equal(t, "example.org", opts.SPIFFETrustDomain)
+	assert.Equal(t, "tenant-7", opts.TenantID, "the admin's own tenant, not system")
+	assert.Equal(t, "ops-admin", opts.SPIFFEName)
+}
+
+// TestSignAdminCSR_NoTrustDomainOmitsSPIFFE pins the legacy behavior: with no
+// trust domain configured, no SPIFFE fields are requested at all.
+func TestSignAdminCSR_NoTrustDomainOmitsSPIFFE(t *testing.T) {
+	rec := newRecordingCA(t)
+	adapter := NewCAAdapter(rec, "")
+
+	_, err := adapter.SignAdminCSR(context.Background(), "tenant-7", "ops-admin", adminCSR(t, "ops-admin"))
+	require.NoError(t, err)
+
+	opts := rec.lastSignOpts
+	require.NotNil(t, opts)
+	assert.Empty(t, opts.SPIFFETrustDomain)
+	assert.Empty(t, opts.TenantID)
+	assert.Empty(t, opts.SPIFFEName)
+}
+
+// TestSignAdminCSR_PropagatesSignError proves a signing failure surfaces.
+func TestSignAdminCSR_PropagatesSignError(t *testing.T) {
+	rec := newRecordingCA(t)
+	rec.signErr = errors.New("csr rejected")
+	adapter := NewCAAdapter(rec, "")
+
+	certPEM, err := adapter.SignAdminCSR(context.Background(), "t", "a", adminCSR(t, "a"))
+
+	require.Error(t, err)
+	assert.True(t, errors.Is(err, rec.signErr))
+	assert.Nil(t, certPEM)
+}
+
+// TestCeremonyIssuePath_StillPinsSystemTenant guards the refactor of the
+// SPIFFE stamping into a shared helper: the ceremony's IssueCertificate path
+// must still pin the SYSTEM tenant regardless of what the firstboot admin
+// paths do, because SO certificates are control-plane identities.
+func TestCeremonyIssuePath_StillPinsSystemTenant(t *testing.T) {
+	rec := newRecordingCA(t)
+	adapter := NewCAAdapter(rec, "example.org")
+
+	_, err := adapter.IssueCertificate(context.Background(), &qrdbsdk.IssueCertRequest{
+		CommonName: "so-officer",
+	})
+	require.NoError(t, err)
+
+	require.NotNil(t, rec.lastIssueReq.SANS)
+	require.Len(t, rec.lastIssueReq.SANS.URIs, 1)
+	assert.Equal(t, "spiffe://example.org/tenant/system/user/so-officer", rec.lastIssueReq.SANS.URIs[0])
+}

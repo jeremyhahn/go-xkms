@@ -197,11 +197,12 @@ func TestAdminService_Coverage_TestBackendConnection(t *testing.T) {
 		assert.Contains(t, result.Message, "Region")
 	})
 
-	t.Run("awskms valid config", func(t *testing.T) {
+	t.Run("awskms complete config still requires a live probe", func(t *testing.T) {
+		svc.SetCloudTester(newFakeCloudTester())
 		result := svc.TestBackendConnection("awskms", map[string]string{
 			"region": "us-east-1",
 		})
-		assert.True(t, result.Success)
+		assert.False(t, result.Success)
 	})
 
 	t.Run("gcpkms missing project", func(t *testing.T) {
@@ -227,13 +228,14 @@ func TestAdminService_Coverage_TestBackendConnection(t *testing.T) {
 		assert.Contains(t, result.Message, "Key Ring")
 	})
 
-	t.Run("gcpkms valid config", func(t *testing.T) {
+	t.Run("gcpkms complete config still requires a live probe", func(t *testing.T) {
+		svc.SetCloudTester(newFakeCloudTester())
 		result := svc.TestBackendConnection("gcpkms", map[string]string{
 			"project":  "my-project",
 			"location": "us-central1",
 			"keyring":  "my-keyring",
 		})
-		assert.True(t, result.Success)
+		assert.False(t, result.Success)
 	})
 
 	t.Run("azurekv missing vault_url", func(t *testing.T) {
@@ -242,11 +244,12 @@ func TestAdminService_Coverage_TestBackendConnection(t *testing.T) {
 		assert.Contains(t, result.Message, "Vault URL")
 	})
 
-	t.Run("azurekv valid config", func(t *testing.T) {
+	t.Run("azurekv complete config still requires a live probe", func(t *testing.T) {
+		svc.SetCloudTester(newFakeCloudTester())
 		result := svc.TestBackendConnection("azurekv", map[string]string{
 			"vault_url": "https://myvault.vault.azure.net",
 		})
-		assert.True(t, result.Success)
+		assert.False(t, result.Success)
 	})
 
 	t.Run("vault missing address", func(t *testing.T) {
@@ -255,11 +258,12 @@ func TestAdminService_Coverage_TestBackendConnection(t *testing.T) {
 		assert.Contains(t, result.Message, "Vault address")
 	})
 
-	t.Run("vault valid config", func(t *testing.T) {
+	t.Run("vault complete config still requires a live probe", func(t *testing.T) {
+		svc.SetCloudTester(newFakeCloudTester())
 		result := svc.TestBackendConnection("vault", map[string]string{
 			"address": "https://vault.example.com:8200",
 		})
-		assert.True(t, result.Success)
+		assert.False(t, result.Success)
 	})
 }
 
@@ -288,10 +292,11 @@ func TestAdminService_Coverage_IsPKCS11Available(t *testing.T) {
 func TestAdminService_Coverage_CloudAvailability(t *testing.T) {
 	svc := NewAdminService()
 
-	// These currently return true as placeholders.
+	// Availability tracks the providers the connection tester can probe.
+	svc.SetCloudTester(newFakeCloudTester(CloudProviderAWSKMS, CloudProviderVault))
 	assert.True(t, svc.isAWSKMSAvailable())
-	assert.True(t, svc.isGCPKMSAvailable())
-	assert.True(t, svc.isAzureKVAvailable())
+	assert.False(t, svc.isGCPKMSAvailable())
+	assert.False(t, svc.isAzureKVAvailable())
 	assert.True(t, svc.isVaultAvailable())
 }
 
@@ -312,11 +317,11 @@ func TestAdminService_Coverage_GetAvailableBackendTypes(t *testing.T) {
 
 		// PKCS#11 should be unavailable without tester.
 		assert.False(t, typeMap["pkcs11"].Available)
-		// Cloud backends are currently always available.
-		assert.True(t, typeMap["awskms"].Available)
-		assert.True(t, typeMap["gcpkms"].Available)
-		assert.True(t, typeMap["azurekv"].Available)
-		assert.True(t, typeMap["vault"].Available)
+		// Cloud backends are only available when compiled into this build.
+		for _, provider := range allCloudProviders() {
+			_, compiled := cloudProbes[provider]
+			assert.Equal(t, compiled, typeMap[string(provider)].Available)
+		}
 	})
 
 	t.Run("with pkcs11 tester available", func(t *testing.T) {

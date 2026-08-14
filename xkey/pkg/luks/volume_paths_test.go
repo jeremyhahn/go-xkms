@@ -1,0 +1,252 @@
+// Copyright (c) 2025 Jeremy Hahn
+// Copyright (c) 2025 Automate The Things, LLC
+//
+// This file is part of go-xkms.
+//
+// go-xkms is dual-licensed:
+//
+// 1. GNU Affero General Public License v3.0 (AGPL-3.0)
+//    See LICENSE file or visit https://www.gnu.org/licenses/agpl-3.0.html
+//
+// 2. Commercial License
+//    Contact licensing@automatethethings.com for commercial licensing options.
+
+package luks
+
+import (
+	"errors"
+	"os"
+	"path/filepath"
+	"testing"
+
+	"github.com/jeremyhahn/go-xkms/xkey/pkg/xhome"
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
+)
+
+// TestVolume_Create_ParentIsFile verifies Create reports a typed create_dir
+// error when the container's parent path is not a directory. This is the
+// deterministic (privilege-independent) failure of the very first step of
+// container creation.
+func TestVolume_Create_ParentIsFile(t *testing.T) {
+	t.Parallel()
+
+	dir := t.TempDir()
+	blocker := filepath.Join(dir, "not-a-directory")
+	require.NoError(t, os.WriteFile(blocker, []byte("x"), 0600))
+
+	v := NewVolumeWithPaths(filepath.Join(blocker, "vault.luks"), filepath.Join(dir, "mnt"))
+
+	err := v.Create(1<<20, "passphrase")
+	require.Error(t, err)
+
+	var volErr *VolumeError
+	require.ErrorAs(t, err, &volErr)
+	assert.Equal(t, "create_dir", volErr.Operation)
+	assert.Equal(t, blocker, volErr.Path)
+	assert.NotNil(t, volErr.Unwrap())
+}
+
+// TestVolume_Create_NegativeSizeCleansUp verifies that a failed truncate does
+// not leave a partially created container file behind. A leftover zero-byte
+// file would make every later Create return ErrVolumeAlreadyExists.
+func TestVolume_Create_NegativeSizeCleansUp(t *testing.T) {
+	t.Parallel()
+
+	dir := t.TempDir()
+	luksPath := filepath.Join(dir, "sub", "vault.luks")
+
+	v := NewVolumeWithPaths(luksPath, filepath.Join(dir, "mnt"))
+
+	err := v.Create(-1, "passphrase")
+	require.Error(t, err)
+
+	var volErr *VolumeError
+	require.ErrorAs(t, err, &volErr)
+	assert.Equal(t, "truncate", volErr.Operation)
+
+	_, statErr := os.Stat(luksPath)
+	assert.True(t, os.IsNotExist(statErr), "the partially created container must be removed")
+	assert.False(t, v.Exists())
+}
+
+// TestVolume_Unlock_AlreadyMounted uses the root filesystem, which is always a
+// mount point, to verify Unlock refuses to stack a second mount.
+func TestVolume_Unlock_AlreadyMounted(t *testing.T) {
+	t.Parallel()
+
+	luksPath := filepath.Join(t.TempDir(), "vault.luks")
+	require.NoError(t, os.WriteFile(luksPath, []byte("container"), 0600))
+
+	v := NewVolumeWithPaths(luksPath, "/")
+	require.True(t, v.IsMounted(), "/ must be reported as mounted")
+
+	assert.ErrorIs(t, v.Unlock("passphrase"), ErrVolumeAlreadyMounted)
+	assert.Empty(t, v.LoopDevice, "no loop device may be attached when the mount check fails")
+}
+
+func TestVolume_GetMountPoint(t *testing.T) {
+	t.Parallel()
+
+	v := NewVolumeWithPaths("/tmp/vault.luks", "/tmp/mnt")
+	assert.Equal(t, "/tmp/mnt", v.GetMountPoint())
+	assert.Equal(t, v.MountPoint, v.GetMountPoint())
+}
+
+func TestNewVolumeFromHome(t *testing.T) {
+	t.Parallel()
+
+	base := t.TempDir()
+	xhome.SetRoot(base)
+	t.Cleanup(xhome.ResetRoot)
+
+	home, err := xhome.Resolve()
+	require.NoError(t, err)
+
+	v := NewVolumeFromHome(home)
+	require.NotNil(t, v)
+	assert.Equal(t, home.LUKSPath(), v.LUKSPath)
+	assert.Equal(t, home.MountPoint(), v.MountPoint)
+	assert.Equal(t, MapperName, v.MapperName)
+}
+
+// TestDefaultPaths_WithoutHomeDirectory covers the error branches of the
+// default path helpers when the home directory cannot be resolved.
+func TestDefaultPaths_WithoutHomeDirectory(t *testing.T) {
+	t.Setenv("HOME", "")
+
+	luksPath, err := GetDefaultLUKSPath()
+	require.Error(t, err)
+	assert.Empty(t, luksPath)
+
+	var volErr *VolumeError
+	require.ErrorAs(t, err, &volErr)
+	assert.Equal(t, "get_home", volErr.Operation)
+
+	dataDir, err := GetDefaultDataDir()
+	require.Error(t, err)
+	assert.Empty(t, dataDir)
+
+	volume, err := NewVolume()
+	require.Error(t, err)
+	assert.Nil(t, volume)
+
+	// ExpandPath must degrade gracefully rather than panic or drop the path.
+	assert.Equal(t, "~/vault.luks", ExpandPath("~/vault.luks"))
+	assert.Equal(t, "/abs/vault.luks", ExpandPath("/abs/vault.luks"))
+}
+
+func TestCopyFile_SourceIsDirectory(t *testing.T) {
+	t.Parallel()
+
+	dir := t.TempDir()
+	srcDir := filepath.Join(dir, "src")
+	require.NoError(t, os.Mkdir(srcDir, 0700))
+
+	err := copyFile(srcDir, filepath.Join(dir, "dst"))
+	assert.Error(t, err, "copying a directory as a file must fail rather than create an empty file")
+}
+
+func TestCopyDir_NestedTreeAndFailurePropagation(t *testing.T) {
+	t.Parallel()
+
+	dir := t.TempDir()
+	src := filepath.Join(dir, "src")
+	dst := filepath.Join(dir, "dst")
+
+	require.NoError(t, os.MkdirAll(filepath.Join(src, "a", "b"), 0700))
+	require.NoError(t, os.WriteFile(filepath.Join(src, "top.txt"), []byte("top"), 0600))
+	require.NoError(t, os.WriteFile(filepath.Join(src, "a", "mid.txt"), []byte("mid"), 0600))
+	require.NoError(t, os.WriteFile(filepath.Join(src, "a", "b", "leaf.txt"), []byte("leaf"), 0640))
+	require.NoError(t, os.MkdirAll(dst, 0700))
+
+	require.NoError(t, copyDir(src, dst))
+
+	for path, want := range map[string]string{
+		"top.txt":      "top",
+		"a/mid.txt":    "mid",
+		"a/b/leaf.txt": "leaf",
+	} {
+		got, err := os.ReadFile(filepath.Join(dst, path))
+		require.NoError(t, err, path)
+		assert.Equal(t, want, string(got), path)
+	}
+
+	info, err := os.Stat(filepath.Join(dst, "a", "b", "leaf.txt"))
+	require.NoError(t, err)
+	assert.Equal(t, os.FileMode(0640), info.Mode().Perm(), "file permissions must be preserved")
+
+	// A missing nested source directory must surface as an error rather than
+	// silently copying a partial tree.
+	assert.Error(t, copyDir(filepath.Join(src, "does-not-exist"), dst))
+}
+
+func TestWrappedAndMessageErrors(t *testing.T) {
+	t.Parallel()
+
+	cause := errors.New("underlying failure")
+
+	wrapped := &WrappedError{Msg: "failed to stat file", Err: cause}
+	assert.Equal(t, "failed to stat file: underlying failure", wrapped.Error())
+	assert.ErrorIs(t, wrapped, cause)
+
+	msg := &MessageError{Msg: "unknown pattern: 9"}
+	assert.Equal(t, "unknown pattern: 9", msg.Error())
+	assert.NotErrorIs(t, msg, cause)
+}
+
+func TestCopyDir_DestinationBlockedByFile(t *testing.T) {
+	t.Parallel()
+
+	dir := t.TempDir()
+	src := filepath.Join(dir, "src")
+	dst := filepath.Join(dir, "dst")
+
+	require.NoError(t, os.MkdirAll(filepath.Join(src, "sub"), 0700))
+	require.NoError(t, os.WriteFile(filepath.Join(src, "sub", "file.txt"), []byte("x"), 0600))
+	require.NoError(t, os.MkdirAll(dst, 0700))
+
+	// A regular file occupies the path where the sub-directory must go.
+	require.NoError(t, os.WriteFile(filepath.Join(dst, "sub"), []byte("blocker"), 0600))
+
+	assert.Error(t, copyDir(src, dst), "a blocked destination directory must abort the copy")
+}
+
+func TestCopyDir_FileCopyFailurePropagates(t *testing.T) {
+	t.Parallel()
+
+	dir := t.TempDir()
+	src := filepath.Join(dir, "src")
+	dst := filepath.Join(dir, "dst")
+
+	require.NoError(t, os.MkdirAll(src, 0700))
+	require.NoError(t, os.WriteFile(filepath.Join(src, "entry"), []byte("payload"), 0600))
+	require.NoError(t, os.MkdirAll(filepath.Join(dst, "entry"), 0700))
+
+	assert.Error(t, copyDir(src, dst), "a file that cannot be written must abort the copy")
+}
+
+// TestChownHelpers_NoopWhenNotElevated verifies the best-effort ownership
+// helpers do nothing (and never error) when the process was not elevated via
+// sudo or pkexec, which is the case for the unprivileged GUI process.
+func TestChownHelpers_NoopWhenNotElevated(t *testing.T) {
+	dir := t.TempDir()
+	file := filepath.Join(dir, "file.txt")
+	require.NoError(t, os.WriteFile(file, []byte("x"), 0600))
+
+	before, err := os.Stat(file)
+	require.NoError(t, err)
+
+	// No SUDO_UID / PKEXEC_UID: the calling user cannot be resolved, so both
+	// helpers must return without touching the tree.
+	t.Setenv("SUDO_UID", "")
+	t.Setenv("SUDO_GID", "")
+	t.Setenv("PKEXEC_UID", "")
+
+	ChownToCallingUser(file)
+	chownTreeToCallingUser(dir)
+
+	after, err := os.Stat(file)
+	require.NoError(t, err)
+	assert.Equal(t, before.Mode(), after.Mode())
+}

@@ -41,12 +41,44 @@ var (
 	// pinDataDir is the --data-dir flag for pin commands.
 	pinDataDir string
 
-	// pinStdinReader is a shared buffered reader for piped stdin input.
-	// It is initialized once on first use to prevent multiple bufio.NewReader
+	// pinStdinMu guards pinStdin and pinStdinReader.
+	pinStdinMu sync.Mutex
+
+	// pinStdin is the source of piped PIN input. It is a variable so that
+	// tests can substitute a deterministic reader; production always reads
+	// os.Stdin.
+	pinStdin io.Reader = os.Stdin
+
+	// pinStdinReader is a shared buffered reader over pinStdin. It is
+	// created lazily on first use to prevent multiple bufio.NewReader
 	// instances from consuming data from the same underlying reader.
-	pinStdinReader     *bufio.Reader
-	pinStdinReaderOnce sync.Once
+	pinStdinReader *bufio.Reader
 )
+
+// pinInputIsTerminal reports whether PIN input can be prompted for
+// interactively. It is a variable so tests can exercise both the terminal
+// and the piped-stdin branches.
+var pinInputIsTerminal = func() bool {
+	return term.IsTerminal(int(os.Stdin.Fd()))
+}
+
+// setPINStdin points piped PIN input at r, discarding any data buffered
+// from the previous source, and returns a function that restores the
+// previous source. Only tests call it.
+func setPINStdin(r io.Reader) func() {
+	pinStdinMu.Lock()
+	previous := pinStdin
+	pinStdin = r
+	pinStdinReader = nil
+	pinStdinMu.Unlock()
+
+	return func() {
+		pinStdinMu.Lock()
+		pinStdin = previous
+		pinStdinReader = nil
+		pinStdinMu.Unlock()
+	}
+}
 
 // pinCmd is the parent command for PIN management operations.
 var pinCmd = &cobra.Command{
@@ -97,9 +129,11 @@ func init() {
 
 // getPINStdinReader returns the shared buffered reader for piped stdin.
 func getPINStdinReader() *bufio.Reader {
-	pinStdinReaderOnce.Do(func() {
-		pinStdinReader = bufio.NewReader(os.Stdin)
-	})
+	pinStdinMu.Lock()
+	defer pinStdinMu.Unlock()
+	if pinStdinReader == nil {
+		pinStdinReader = bufio.NewReader(pinStdin)
+	}
 	return pinStdinReader
 }
 
@@ -176,7 +210,7 @@ func createPINService(dataDir string) (*qrdbsdk.PINService, error) {
 
 // readPIN reads a PIN from terminal or piped stdin.
 func readPIN(out io.Writer, prompt string) (string, error) {
-	if term.IsTerminal(int(os.Stdin.Fd())) {
+	if pinInputIsTerminal() {
 		_, _ = fmt.Fprint(out, prompt)
 		pinBytes, err := term.ReadPassword(int(os.Stdin.Fd()))
 		_, _ = fmt.Fprintln(out)
@@ -195,7 +229,7 @@ func readPIN(out io.Writer, prompt string) (string, error) {
 
 // readAndConfirmPIN reads a PIN with confirmation.
 func readAndConfirmPIN(out io.Writer, prompt string) (string, error) {
-	if term.IsTerminal(int(os.Stdin.Fd())) {
+	if pinInputIsTerminal() {
 		return readPINFromTerminal(out, prompt)
 	}
 	return readPINFromStdin()
@@ -255,7 +289,11 @@ func readLineFromPipedStdin() (string, error) {
 	if err != nil && err != io.EOF {
 		return "", &PINCommandError{Operation: "read_pin", Err: err}
 	}
-	line = strings.TrimSuffix(line, "\n")
+	// Trim BOTH \n and a preceding \r: CRLF input (a Windows console, or a
+	// CRLF file/here-doc piped in) would otherwise store a PIN with a
+	// trailing carriage return that can never be re-entered from a
+	// terminal — permanently locking the SO/user PIN.
+	line = strings.TrimRight(line, "\r\n")
 	if line == "" {
 		return "", ErrPINCmdEmpty
 	}

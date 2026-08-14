@@ -19,10 +19,14 @@ import (
 	"fmt"
 	"log/slog"
 	"os"
+	"os/user"
 	"path/filepath"
+	"strings"
 	"time"
 
+	"github.com/golang-jwt/jwt/v5"
 	xkms "github.com/jeremyhahn/go-xkms/sdk/go"
+	"github.com/jeremyhahn/go-xkms/sdk/go/transport"
 	"github.com/jeremyhahn/go-xkms/xkey/pkg/serverregistry"
 	"github.com/jeremyhahn/go-xkms/xkey/pkg/tokenstore"
 	"github.com/spf13/cobra"
@@ -68,7 +72,81 @@ var (
 
 	// ErrAuthTokenListFailed indicates listing tokens failed.
 	ErrAuthTokenListFailed = errors.New("auth: failed to list tokens")
+
+	// ErrAuthUsernameRequired indicates no username could be resolved for the
+	// WebAuthn ceremony.
+	ErrAuthUsernameRequired = errors.New("auth: --username is required (no account name could be derived from the environment)")
+
+	// ErrAuthBeginRegistrationFailed indicates the server refused to start the
+	// WebAuthn registration ceremony.
+	ErrAuthBeginRegistrationFailed = errors.New("auth: server refused to begin WebAuthn registration")
+
+	// ErrAuthFinishRegistrationFailed indicates the server rejected the
+	// attestation produced by the authenticator.
+	ErrAuthFinishRegistrationFailed = errors.New("auth: server refused to complete WebAuthn registration")
+
+	// ErrAuthRegistrationRejected indicates the server completed the ceremony
+	// but reported it unsuccessful.
+	ErrAuthRegistrationRejected = errors.New("auth: server rejected the WebAuthn registration")
+
+	// ErrAuthBeginAuthenticationFailed indicates the server refused to start
+	// the WebAuthn authentication ceremony.
+	ErrAuthBeginAuthenticationFailed = errors.New("auth: server refused to begin WebAuthn authentication")
+
+	// ErrAuthFinishAuthenticationFailed indicates the server rejected the
+	// assertion produced by the authenticator.
+	ErrAuthFinishAuthenticationFailed = errors.New("auth: server refused to complete WebAuthn authentication")
+
+	// ErrAuthLoginRejected indicates the server completed the ceremony but
+	// reported the login unsuccessful.
+	ErrAuthLoginRejected = errors.New("auth: server rejected the WebAuthn login")
+
+	// ErrAuthNoToken indicates a successful login returned no JWT, leaving
+	// nothing to store for subsequent API calls.
+	ErrAuthNoToken = errors.New("auth: server accepted the login but issued no token")
+
+	// ErrAuthTokenSaveFailed indicates the issued token could not be persisted.
+	ErrAuthTokenSaveFailed = errors.New("auth: failed to store the issued token")
 )
+
+// AuthClientService is the subset of the SDK transport client the auth
+// commands use: the connection lifecycle plus both WebAuthn ceremonies. It
+// exists so tests can inject a server double.
+type AuthClientService interface {
+	Connect(ctx context.Context) error
+	Close() error
+	BeginRegistration(ctx context.Context, req *transport.BeginRegistrationRequest) (*transport.BeginRegistrationResponse, error)
+	FinishRegistration(ctx context.Context, req *transport.FinishRegistrationRequest) (*transport.FinishRegistrationResponse, error)
+	BeginAuthentication(ctx context.Context, req *transport.BeginAuthenticationRequest) (*transport.BeginAuthenticationResponse, error)
+	FinishAuthentication(ctx context.Context, req *transport.FinishAuthenticationRequest) (*transport.FinishAuthenticationResponse, error)
+}
+
+// authClientFactory creates the transport client used by the auth commands.
+// It is a package-level variable so tests can inject a server double.
+var authClientFactory = defaultAuthClientFactory
+
+// defaultAuthClientFactory builds the REST SDK client an xkms server serves
+// its WebAuthn ceremony endpoints on. The SPKI pin implements
+// trust-on-first-use certificate pinning; the setup token authorizes a
+// pre-approved enrollment.
+func defaultAuthClientFactory(serverURL, spkiPin, setupToken string) (AuthClientService, error) {
+	clientOpts := []xkms.Option{
+		xkms.WithProtocol(xkms.ProtocolREST),
+		xkms.WithAddress(serverURL),
+	}
+	if spkiPin != "" {
+		clientOpts = append(clientOpts, xkms.WithSPKIPin(spkiPin))
+	}
+	if setupToken != "" {
+		clientOpts = append(clientOpts, xkms.WithJWTToken(setupToken))
+	}
+
+	client, err := xkms.NewWithOptions(clientOpts...)
+	if err != nil {
+		return nil, errors.Join(ErrAuthClientCreationFailed, err)
+	}
+	return client, nil
+}
 
 // authCmd is the parent command for server authentication management.
 var authCmd = &cobra.Command{
@@ -113,21 +191,30 @@ var authRegisterCmd = &cobra.Command{
 	Long: `Register with a new xkms server.
 
 This command establishes a connection to the server, verifies its identity
-using the provided SPKI pin or TLS certificate, and registers the server
-in the local server registry. Future authentication commands use the stored
-server entry for connection parameters.
+using the provided SPKI pin or TLS certificate, records the server in the
+local server registry, and then enrolls a WebAuthn credential by running the
+registration ceremony against the local FIDO2 authenticator.
+
+The ceremony requires an attached CTAP2 authenticator - a security key, or
+the xKey virtual authenticator started with "xkey fido2". Registration fails
+if no authenticator can be opened; no credential is ever fabricated locally.
 
 Flags:
-  --server      Server URL (required)
-  --spki-pin    SPKI SHA-256 pin for certificate pinning (trust-on-first-use)
-  --setup-token Pre-authorized enrollment token
+  --server       Server URL (required)
+  --spki-pin     SPKI SHA-256 pin for certificate pinning (trust-on-first-use)
+  --setup-token  Pre-authorized enrollment token
+  --username     Account name to enroll (default: current OS user)
+  --display-name Human-readable account name (default: username)
 
 Examples:
   # Register with SPKI pin
   xkey auth register --server https://xkms.example.com:8443 --spki-pin abc123
 
   # Register with setup token
-  xkey auth register --server https://xkms.example.com:8443 --setup-token TOKEN`,
+  xkey auth register --server https://xkms.example.com:8443 --setup-token TOKEN
+
+  # Enroll a specific account name
+  xkey auth register --server https://xkms.example.com:8443 --username alice`,
 	RunE: runAuthRegister,
 }
 
@@ -138,15 +225,24 @@ var authLoginCmd = &cobra.Command{
 	Long: `Authenticate to a registered server using WebAuthn.
 
 This command loads the server entry from the registry, establishes a
-connection, and performs WebAuthn authentication. On success, the resulting
-JWT token is stored in the token store for subsequent API calls.
+connection, and runs the WebAuthn assertion ceremony against the local FIDO2
+authenticator. On success the issued JWT is stored in the token store for
+subsequent API calls and printed by "xkey auth token".
+
+The ceremony requires an attached CTAP2 authenticator - a security key, or
+the xKey virtual authenticator started with "xkey fido2". Login fails if no
+authenticator can be opened or the server rejects the assertion.
 
 Flags:
-  --server  Server URL (required)
+  --server    Server URL (required)
+  --username  Account name to authenticate (default: current OS user)
 
 Examples:
   # Login to a registered server
-  xkey auth login --server https://xkms.example.com:8443`,
+  xkey auth login --server https://xkms.example.com:8443
+
+  # Login as a specific account
+  xkey auth login --server https://xkms.example.com:8443 --username alice`,
 	RunE: runAuthLogin,
 }
 
@@ -208,9 +304,12 @@ func init() {
 	authRegisterCmd.Flags().String("server", "", "Server URL (required)")
 	authRegisterCmd.Flags().String("spki-pin", "", "SPKI SHA-256 pin for certificate pinning")
 	authRegisterCmd.Flags().String("setup-token", "", "Pre-authorized enrollment token")
+	authRegisterCmd.Flags().String("username", "", "Account name to enroll (default: current OS user)")
+	authRegisterCmd.Flags().String("display-name", "", "Human-readable account name (default: username)")
 
 	// Login command flags
 	authLoginCmd.Flags().String("server", "", "Server URL (required)")
+	authLoginCmd.Flags().String("username", "", "Account name to authenticate (default: current OS user)")
 
 	// Status command flags
 	authStatusCmd.Flags().String("server", "", "Filter to a specific server URL")
@@ -219,7 +318,9 @@ func init() {
 	authTokenCmd.Flags().String("server", "", "Server URL (required)")
 }
 
-// runAuthRegister executes the auth register command.
+// runAuthRegister executes the auth register command: it records the server
+// in the local registry and enrolls a WebAuthn credential on it using the
+// local FIDO2 authenticator.
 func runAuthRegister(cmd *cobra.Command, args []string) error {
 	logger := slog.Default()
 
@@ -231,26 +332,22 @@ func runAuthRegister(cmd *cobra.Command, args []string) error {
 	spkiPin, _ := cmd.Flags().GetString("spki-pin")
 	setupToken, _ := cmd.Flags().GetString("setup-token")
 
-	// Build SDK client options
-	clientOpts := []xkms.Option{
-		xkms.WithProtocol(xkms.ProtocolREST),
-		xkms.WithAddress(serverURL),
+	username, err := resolveAuthUsername(cmd)
+	if err != nil {
+		return err
 	}
-	if spkiPin != "" {
-		clientOpts = append(clientOpts, xkms.WithSPKIPin(spkiPin))
-	}
-	if setupToken != "" {
-		clientOpts = append(clientOpts, xkms.WithJWTToken(setupToken))
+	displayName, _ := cmd.Flags().GetString("display-name")
+	if displayName == "" {
+		displayName = username
 	}
 
-	// Create SDK client
-	client, err := xkms.NewWithOptions(clientOpts...)
+	client, err := authClientFactory(serverURL, spkiPin, setupToken)
 	if err != nil {
-		return errors.Join(ErrAuthClientCreationFailed, err)
+		return err
 	}
 	defer func() { _ = client.Close() }()
 
-	// Verify connection to the server
+	// Verify connection to the server.
 	ctx, cancel := context.WithTimeout(context.Background(), defaultAuthTimeout)
 	defer cancel()
 
@@ -262,40 +359,87 @@ func runAuthRegister(cmd *cobra.Command, args []string) error {
 
 	logger.Info("connected to server", slog.String("url", serverURL))
 
-	// Open storage and create server registry
+	// Open storage and create server registry.
 	registry, cleanup, err := openServerRegistry(logger)
 	if err != nil {
 		return err
 	}
 	defer cleanup()
 
-	// Register the server entry
+	// Record the server entry. An already-registered server is not an error:
+	// the operator asked to enroll a credential, so the ceremony still runs.
 	entry := &serverregistry.ServerEntry{
 		URL:      serverURL,
 		Name:     serverURL,
 		Protocol: serverregistry.ProtocolREST,
 	}
 
+	out := cmd.OutOrStdout()
+
 	if err := registry.Register(ctx, entry); err != nil {
-		if errors.Is(err, serverregistry.ErrServerExists) {
-			fmt.Fprintf(os.Stderr, "Server already registered: %s\n", serverURL)
-			fmt.Fprintf(os.Stderr, "Use 'xkey auth login' to authenticate.\n")
-			return nil
+		if !errors.Is(err, serverregistry.ErrServerExists) {
+			return errors.Join(ErrAuthRegistrationFailed, err)
 		}
-		return errors.Join(ErrAuthRegistrationFailed, err)
+		_, _ = fmt.Fprintf(out, "Server already registered: %s\n", serverURL)
+	} else {
+		_, _ = fmt.Fprintf(out, "Server registered: %s\n", serverURL)
 	}
 
-	fmt.Printf("Server registered: %s\n", serverURL)
+	// WebAuthn registration ceremony.
+	begin, err := client.BeginRegistration(ctx, &transport.BeginRegistrationRequest{
+		Username:    username,
+		DisplayName: displayName,
+	})
+	if err != nil {
+		return errors.Join(ErrAuthBeginRegistrationFailed, err)
+	}
 
-	// TODO: Full WebAuthn registration flow will be wired here.
-	// The client.BeginRegistration/FinishRegistration calls will use
-	// the local FIDO2 authenticator to create a credential on the server.
-	fmt.Println("WebAuthn registration not yet implemented")
+	ceremony, err := webauthnCeremonyFactory()
+	if err != nil {
+		return err
+	}
+	defer func() {
+		if closeErr := ceremony.Close(); closeErr != nil {
+			logger.Warn("failed to close authenticator", slog.Any("error", closeErr))
+		}
+	}()
 
+	_, _ = fmt.Fprintf(out, "Registering credential for %q - touch your authenticator...\n", username)
+
+	attestation, err := ceremony.Register(ctx, []byte(begin.OptionsJSON), webauthnOrigin(serverURL))
+	if err != nil {
+		return err
+	}
+
+	finish, err := client.FinishRegistration(ctx, &transport.FinishRegistrationRequest{
+		SessionID:       begin.SessionID,
+		AttestationJSON: string(attestation),
+	})
+	if err != nil {
+		return errors.Join(ErrAuthFinishRegistrationFailed, err)
+	}
+	if !finish.Success {
+		return &DetailError{Err: ErrAuthRegistrationRejected, Detail: authServerDetail(finish.Message)}
+	}
+
+	_, _ = fmt.Fprintf(out, "Credential registered: %s\n", finish.CredentialID)
+
+	// Some servers issue a session token alongside registration; keep it so
+	// the operator does not have to log in again immediately.
+	if finish.Token != "" {
+		if err := storeAuthToken(ctx, logger, serverURL, finish.Token); err != nil {
+			return err
+		}
+		_, _ = fmt.Fprintln(out, "Token stored. Use 'xkey auth token --server "+serverURL+"' to print it.")
+		return nil
+	}
+
+	_, _ = fmt.Fprintln(out, "Use 'xkey auth login --server "+serverURL+"' to obtain a token.")
 	return nil
 }
 
-// runAuthLogin executes the auth login command.
+// runAuthLogin executes the auth login command: it performs the WebAuthn
+// assertion ceremony against a registered server and stores the issued JWT.
 func runAuthLogin(cmd *cobra.Command, args []string) error {
 	logger := slog.Default()
 
@@ -304,7 +448,12 @@ func runAuthLogin(cmd *cobra.Command, args []string) error {
 		return ErrAuthServerRequired
 	}
 
-	// Open server registry and look up the server
+	username, err := resolveAuthUsername(cmd)
+	if err != nil {
+		return err
+	}
+
+	// Open server registry and look up the server.
 	registry, registryCleanup, err := openServerRegistry(logger)
 	if err != nil {
 		return err
@@ -319,15 +468,9 @@ func runAuthLogin(cmd *cobra.Command, args []string) error {
 		return errors.Join(ErrAuthServerLookupFailed, err)
 	}
 
-	// Build SDK client for the registered server
-	clientOpts := []xkms.Option{
-		xkms.WithProtocol(xkms.ProtocolREST),
-		xkms.WithAddress(serverEntry.URL),
-	}
-
-	client, err := xkms.NewWithOptions(clientOpts...)
+	client, err := authClientFactory(serverEntry.URL, "", "")
 	if err != nil {
-		return errors.Join(ErrAuthClientCreationFailed, err)
+		return err
 	}
 	defer func() { _ = client.Close() }()
 
@@ -339,23 +482,140 @@ func runAuthLogin(cmd *cobra.Command, args []string) error {
 
 	logger.Info("connected to server", slog.String("url", serverEntry.URL))
 
-	// TODO: Full WebAuthn authentication flow will be wired here.
-	// The client.BeginAuthentication/FinishAuthentication calls will use
-	// the local FIDO2 authenticator to perform assertion and receive a JWT.
-	fmt.Println("WebAuthn login not yet implemented")
+	// WebAuthn authentication ceremony.
+	begin, err := client.BeginAuthentication(ctx, &transport.BeginAuthenticationRequest{Username: username})
+	if err != nil {
+		return errors.Join(ErrAuthBeginAuthenticationFailed, err)
+	}
 
-	// Update last connected time on the server entry
+	ceremony, err := webauthnCeremonyFactory()
+	if err != nil {
+		return err
+	}
+	defer func() {
+		if closeErr := ceremony.Close(); closeErr != nil {
+			logger.Warn("failed to close authenticator", slog.Any("error", closeErr))
+		}
+	}()
+
+	out := cmd.OutOrStdout()
+	_, _ = fmt.Fprintf(out, "Authenticating as %q - touch your authenticator...\n", username)
+
+	assertion, err := ceremony.Assert(ctx, []byte(begin.OptionsJSON), webauthnOrigin(serverEntry.URL))
+	if err != nil {
+		return err
+	}
+
+	finish, err := client.FinishAuthentication(ctx, &transport.FinishAuthenticationRequest{
+		SessionID:     begin.SessionID,
+		Username:      username,
+		AssertionJSON: string(assertion),
+	})
+	if err != nil {
+		return errors.Join(ErrAuthFinishAuthenticationFailed, err)
+	}
+	if !finish.Success {
+		return &DetailError{Err: ErrAuthLoginRejected, Detail: authServerDetail(finish.Message)}
+	}
+	if finish.Token == "" {
+		return ErrAuthNoToken
+	}
+
+	if err := storeAuthToken(ctx, logger, serverEntry.URL, finish.Token); err != nil {
+		return err
+	}
+
+	// Record the successful connection on the server entry.
+	serverEntry.LastConnectedAt = time.Now().UTC()
 	if updateErr := registry.Update(ctx, serverEntry); updateErr != nil {
 		logger.Warn("failed to update server last connected time",
 			slog.String("url", serverEntry.URL),
 			slog.Any("error", updateErr))
 	}
 
+	_, _ = fmt.Fprintf(out, "Authenticated to %s as %q. Token stored.\n", serverEntry.URL, username)
 	return nil
+}
+
+// resolveAuthUsername returns the account name for a WebAuthn ceremony: the
+// --username flag when given, otherwise the current operating system user.
+func resolveAuthUsername(cmd *cobra.Command) (string, error) {
+	username, _ := cmd.Flags().GetString("username")
+	username = strings.TrimSpace(username)
+	if username != "" {
+		return username, nil
+	}
+
+	if current, err := user.Current(); err == nil && current.Username != "" {
+		return current.Username, nil
+	}
+	if envUser := strings.TrimSpace(os.Getenv("USER")); envUser != "" {
+		return envUser, nil
+	}
+	return "", ErrAuthUsernameRequired
+}
+
+// authServerDetail formats a server-supplied failure message as error detail.
+func authServerDetail(message string) string {
+	if message == "" {
+		return ""
+	}
+	return ": " + message
+}
+
+// storeAuthToken persists a server-issued JWT in the token store, carrying
+// over the expiry, issuer, and subject claims so "auth status" can report
+// token validity without another round trip.
+func storeAuthToken(ctx context.Context, logger *slog.Logger, serverURL, token string) error {
+	tokens, cleanup, err := openTokenStore(logger)
+	if err != nil {
+		return err
+	}
+	defer cleanup()
+
+	entry := &tokenstore.TokenEntry{
+		ServerURL: serverURL,
+		TokenType: tokenstore.TypeBearer,
+		Source:    tokenstore.SourceFIDO2,
+		Token:     token,
+		IssuedAt:  time.Now().UTC(),
+	}
+	applyJWTClaims(entry, token)
+
+	if err := tokens.Save(ctx, entry); err != nil {
+		return errors.Join(ErrAuthTokenSaveFailed, err)
+	}
+	return nil
+}
+
+// applyJWTClaims copies the registered claims of a JWT onto a token entry.
+// The token was just issued by the server this client authenticated to over
+// a verified channel, so the claims are read without re-verifying the
+// signature; they are metadata for local display only and never grant access.
+// A token that is not a JWT simply leaves the metadata unset.
+func applyJWTClaims(entry *tokenstore.TokenEntry, token string) {
+	parsed, _, err := jwt.NewParser().ParseUnverified(token, jwt.MapClaims{})
+	if err != nil {
+		return
+	}
+
+	if expiry, err := parsed.Claims.GetExpirationTime(); err == nil && expiry != nil {
+		entry.ExpiresAt = expiry.Time.UTC()
+	}
+	if issuedAt, err := parsed.Claims.GetIssuedAt(); err == nil && issuedAt != nil {
+		entry.IssuedAt = issuedAt.Time.UTC()
+	}
+	if issuer, err := parsed.Claims.GetIssuer(); err == nil {
+		entry.Issuer = issuer
+	}
+	if subject, err := parsed.Claims.GetSubject(); err == nil {
+		entry.Subject = subject
+	}
 }
 
 // runAuthStatus executes the auth status command.
 func runAuthStatus(cmd *cobra.Command, args []string) error {
+	out := cmd.OutOrStdout()
 	logger := slog.Default()
 
 	serverFilter, _ := cmd.Flags().GetString("server")
@@ -383,12 +643,12 @@ func runAuthStatus(cmd *cobra.Command, args []string) error {
 	}
 
 	if len(servers) == 0 {
-		fmt.Println("No servers registered.")
-		fmt.Println("Use 'xkey auth register --server URL' to register a server.")
+		fmt.Fprintln(out, "No servers registered.")
+		fmt.Fprintln(out, "Use 'xkey auth register --server URL' to register a server.")
 		return nil
 	}
 
-	fmt.Printf("Registered Servers (%d):\n\n", len(servers))
+	fmt.Fprintf(out, "Registered Servers (%d):\n\n", len(servers))
 
 	for _, server := range servers {
 		// Apply filter if specified
@@ -396,34 +656,34 @@ func runAuthStatus(cmd *cobra.Command, args []string) error {
 			continue
 		}
 
-		fmt.Printf("  Server:         %s\n", server.URL)
-		fmt.Printf("  Protocol:       %s\n", server.Protocol)
-		fmt.Printf("  Registered:     %s\n", server.RegisteredAt.Format(time.RFC3339))
+		fmt.Fprintf(out, "  Server:         %s\n", server.URL)
+		fmt.Fprintf(out, "  Protocol:       %s\n", server.Protocol)
+		fmt.Fprintf(out, "  Registered:     %s\n", server.RegisteredAt.Format(time.RFC3339))
 
 		if !server.LastConnectedAt.IsZero() {
-			fmt.Printf("  Last Connected: %s\n", server.LastConnectedAt.Format(time.RFC3339))
+			fmt.Fprintf(out, "  Last Connected: %s\n", server.LastConnectedAt.Format(time.RFC3339))
 		} else {
-			fmt.Printf("  Last Connected: never\n")
+			fmt.Fprintf(out, "  Last Connected: never\n")
 		}
 
 		// Check token status
 		token, tokenErr := tokens.Load(ctx, server.URL)
 		if tokenErr != nil {
-			fmt.Printf("  Token:          none\n")
+			fmt.Fprintf(out, "  Token:          none\n")
 		} else if token.IsExpired() {
-			fmt.Printf("  Token:          expired (was: %s, expired: %s)\n",
+			fmt.Fprintf(out, "  Token:          expired (was: %s, expired: %s)\n",
 				token.Source, token.ExpiresAt.Format(time.RFC3339))
 		} else {
 			remaining := time.Until(token.ExpiresAt)
-			fmt.Printf("  Token:          valid (%s, expires in %s)\n",
+			fmt.Fprintf(out, "  Token:          valid (%s, expires in %s)\n",
 				token.Source, remaining.Truncate(time.Second))
 		}
 
 		if server.CAFingerprint != "" {
-			fmt.Printf("  CA Fingerprint: %s\n", server.CAFingerprint)
+			fmt.Fprintf(out, "  CA Fingerprint: %s\n", server.CAFingerprint)
 		}
 
-		fmt.Println()
+		fmt.Fprintln(out)
 	}
 
 	return nil
@@ -431,6 +691,7 @@ func runAuthStatus(cmd *cobra.Command, args []string) error {
 
 // runAuthToken executes the auth token command.
 func runAuthToken(cmd *cobra.Command, args []string) error {
+	out := cmd.OutOrStdout()
 	logger := slog.Default()
 
 	serverURL, _ := cmd.Flags().GetString("server")
@@ -458,7 +719,7 @@ func runAuthToken(cmd *cobra.Command, args []string) error {
 	}
 
 	// Print raw token to stdout for piping
-	fmt.Print(entry.Token)
+	fmt.Fprint(out, entry.Token)
 
 	return nil
 }

@@ -85,16 +85,13 @@ const (
 )
 
 // NewClusterCAKeyStrategy returns the cluster CA key strategy for the given name
-// (empty selects the barrier default). It fails closed for unknown or
-// not-yet-implemented strategies.
+// (empty selects the barrier default). It fails closed for unknown strategies.
 var NewClusterCAKeyStrategy = pkgclusterca.NewKeyStrategy
 
 // Cluster CA key strategy error sentinels.
 var (
-	ErrUnknownKeyStrategy        = pkgclusterca.ErrUnknownKeyStrategy
-	ErrKeyStrategyNotImplemented = pkgclusterca.ErrKeyStrategyNotImplemented
-	ErrIssuanceNotLocal          = pkgclusterca.ErrIssuanceNotLocal
-	ErrStrategyMisconfigured     = pkgclusterca.ErrStrategyMisconfigured
+	ErrUnknownKeyStrategy    = pkgclusterca.ErrUnknownKeyStrategy
+	ErrStrategyMisconfigured = pkgclusterca.ErrStrategyMisconfigured
 )
 
 // Enrollment secret delivery — the decoupled seam that lets a custody strategy

@@ -346,15 +346,6 @@ func TestBlob_ImportRoundtrip_B7(t *testing.T) {
 // ca_extensions.go — Issued / Exists
 // =============================================================================
 
-func TestIssued_Found_B7(t *testing.T) {
-	t.Parallel()
-	ca := setupTestCA(t)
-	issueCertAndSaveToKeyStore(t, ca, "issued-test-b7")
-	found, err := ca.Issued(context.Background(), "issued-test-b7")
-	require.NoError(t, err)
-	assert.True(t, found)
-}
-
 func TestExists_AlgorithmMismatch_B7(t *testing.T) {
 	t.Parallel()
 	ca := setupTestCA(t)

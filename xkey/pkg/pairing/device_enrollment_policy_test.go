@@ -1,0 +1,332 @@
+// Copyright (c) 2026 Jeremy Hahn
+// Copyright (c) 2026 Automate The Things, LLC
+//
+// This file is part of go-xkms.
+//
+// go-xkms is dual-licensed:
+//
+// 1. GNU Affero General Public License v3.0 (AGPL-3.0)
+//    See LICENSE file or visit https://www.gnu.org/licenses/agpl-3.0.html
+//
+// 2. Commercial License
+//    Contact licensing@automatethethings.com for commercial licensing options.
+
+package pairing
+
+import (
+	"crypto/ecdsa"
+	"crypto/elliptic"
+	"crypto/rand"
+	"crypto/x509"
+	"crypto/x509/pkix"
+	"encoding/base64"
+	"errors"
+	"math/big"
+	"testing"
+	"time"
+
+	android "github.com/jeremyhahn/go-xkms/pkg/attestation/android"
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
+)
+
+const testPackage = "com.automatethethings.xkey"
+
+// newTestPolicy returns a policy that would accept a well-formed request, so
+// each test can spoil exactly one thing and see that refusal.
+func newTestPolicy() *EnrollmentPolicy {
+	p := NewEnrollmentPolicy()
+	p.TrustedRoots = x509.NewCertPool()
+	p.AllowedApplications = []AllowedApplication{{
+		PackageName:    testPackage,
+		SigningDigests: []string{"aa" + hexRepeat(31)},
+	}}
+	return p
+}
+
+func hexRepeat(n int) string {
+	out := make([]byte, 0, n*2)
+	for i := 0; i < n; i++ {
+		out = append(out, 'b', 'b')
+	}
+	return string(out)
+}
+
+// signedCSR builds a CSR for a freshly generated key, and returns both so a
+// test can attach the matching or a mismatching certificate.
+func signedCSR(t *testing.T) ([]byte, *ecdsa.PrivateKey) {
+	t.Helper()
+	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	require.NoError(t, err)
+
+	der, err := x509.CreateCertificateRequest(rand.Reader, &x509.CertificateRequest{
+		Subject:            pkix.Name{CommonName: "test device"},
+		SignatureAlgorithm: x509.ECDSAWithSHA256,
+	}, key)
+	require.NoError(t, err)
+	return der, key
+}
+
+// selfSignedFor produces a certificate carrying key's public half, standing in
+// for an attestation leaf where only the key matters.
+func selfSignedFor(t *testing.T, key *ecdsa.PrivateKey) *x509.Certificate {
+	t.Helper()
+	tmpl := &x509.Certificate{
+		SerialNumber: big.NewInt(1),
+		Subject:      pkix.Name{CommonName: "leaf"},
+		NotBefore:    time.Now().Add(-time.Hour),
+		NotAfter:     time.Now().Add(time.Hour),
+	}
+	der, err := x509.CreateCertificate(rand.Reader, tmpl, tmpl, &key.PublicKey, key)
+	require.NoError(t, err)
+	cert, err := x509.ParseCertificate(der)
+	require.NoError(t, err)
+	return cert
+}
+
+func TestEnrollmentPolicy_DefaultsFailClosed(t *testing.T) {
+	p := NewEnrollmentPolicy()
+
+	// A policy nobody has configured must enroll nothing. The dangerous
+	// default is the permissive one: a CA that trusts everything until told
+	// otherwise hands out credentials during the window before it is set up.
+	assert.Nil(t, p.TrustedRoots, "no roots are trusted until configured")
+	assert.Empty(t, p.AllowedApplications, "no application is allowed until listed")
+	assert.True(t, p.RequireVerifiedBoot, "verified boot is demanded by default")
+	assert.Equal(t, SecurityLevelTEE, p.MinSecurityLevel,
+		"software-held keys are refused by default")
+	assert.Equal(t, DefaultEnrollmentValidity, p.Validity)
+
+	_, err := p.Evaluate(&LocalGetDeviceEnrollmentRequestResult{
+		AttestationChain: []string{"ignored"},
+	}, []byte("nonce"), time.Now())
+	assert.ErrorIs(t, err, ErrEnrollmentChainUntrusted)
+}
+
+func TestEnrollmentPolicy_RefusesMissingEvidence(t *testing.T) {
+	p := newTestPolicy()
+
+	_, err := p.Evaluate(nil, []byte("nonce"), time.Now())
+	assert.ErrorIs(t, err, ErrEnrollmentNoEvidence)
+
+	_, err = p.Evaluate(&LocalGetDeviceEnrollmentRequestResult{}, []byte("nonce"), time.Now())
+	assert.ErrorIs(t, err, ErrEnrollmentNoEvidence)
+}
+
+func TestEnrollmentPolicy_RefusesAnUnknownFormat(t *testing.T) {
+	p := newTestPolicy()
+
+	_, err := p.Evaluate(&LocalGetDeviceEnrollmentRequestResult{
+		Format:           "tpm2-quote",
+		AttestationChain: []string{"ignored"},
+	}, []byte("nonce"), time.Now())
+
+	// Refusing an unrecognised format is the point: evidence this CA cannot
+	// verify must not be waved through on the assumption it resembles evidence
+	// it can.
+	assert.ErrorIs(t, err, ErrEnrollmentUnknownFormat)
+}
+
+func TestEnrollmentPolicy_RefusesAnEmptyAllowList(t *testing.T) {
+	p := NewEnrollmentPolicy()
+	p.TrustedRoots = x509.NewCertPool()
+
+	_, err := p.Evaluate(&LocalGetDeviceEnrollmentRequestResult{
+		AttestationChain: []string{"ignored"},
+	}, []byte("nonce"), time.Now())
+
+	assert.ErrorIs(t, err, ErrEnrollmentApplicationDenied)
+}
+
+func TestDecodeAttestationChain_RefusesALoneCertificate(t *testing.T) {
+	_, key := signedCSR(t)
+	leaf := selfSignedFor(t, key)
+
+	_, err := decodeAttestationChain([]string{
+		base64.StdEncoding.EncodeToString(leaf.Raw),
+	})
+
+	// One certificate is self-signed, so it attests nothing. Accepting it
+	// would let a device vouch for itself.
+	assert.ErrorIs(t, err, ErrEnrollmentChainUntrusted)
+}
+
+func TestCSRMatchesAttestedKey_AcceptsTheAttestedKey(t *testing.T) {
+	csrDER, key := signedCSR(t)
+	leaf := selfSignedFor(t, key)
+
+	assert.NoError(t, csrMatchesAttestedKey(csrDER, leaf))
+}
+
+// TestCSRMatchesAttestedKey_RefusesEvidenceForADifferentKey covers the check
+// that is easiest to leave out and fatal to omit.
+//
+// Everything else can pass -- a genuine chain to a Google root, a fresh
+// challenge, a locked bootloader -- while the key being certified is one the
+// caller made in software, because nothing tied the evidence to the request.
+func TestCSRMatchesAttestedKey_RefusesEvidenceForADifferentKey(t *testing.T) {
+	csrDER, _ := signedCSR(t)
+
+	otherKey, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	require.NoError(t, err)
+	foreignLeaf := selfSignedFor(t, otherKey)
+
+	err = csrMatchesAttestedKey(csrDER, foreignLeaf)
+	assert.ErrorIs(t, err, ErrEnrollmentKeyMismatch)
+}
+
+func TestCSRMatchesAttestedKey_RefusesAnUnsignedCSR(t *testing.T) {
+	csrDER, key := signedCSR(t)
+	leaf := selfSignedFor(t, key)
+
+	// Corrupt the signature: the requester must hold the private half of the
+	// key it asks to have certified.
+	tampered := make([]byte, len(csrDER))
+	copy(tampered, csrDER)
+	tampered[len(tampered)-1] ^= 0xFF
+
+	err := csrMatchesAttestedKey(tampered, leaf)
+	assert.ErrorIs(t, err, ErrEnrollmentKeyMismatch)
+}
+
+func TestEnrollmentPolicy_MatchApplication(t *testing.T) {
+	const goodDigest = "aabbccddeeff00112233445566778899aabbccddeeff00112233445566778899"
+
+	digest := func(hexStr string) []byte {
+		out := make([]byte, len(hexStr)/2)
+		for i := range out {
+			var b byte
+			for j := 0; j < 2; j++ {
+				c := hexStr[i*2+j]
+				var v byte
+				switch {
+				case c >= '0' && c <= '9':
+					v = c - '0'
+				case c >= 'a' && c <= 'f':
+					v = c - 'a' + 10
+				}
+				b = b<<4 | v
+			}
+			out[i] = b
+		}
+		return out
+	}
+
+	appID := &android.AttestationApplicationID{
+		Packages:         []android.AttestationPackageInfo{{Name: testPackage, Version: 1}},
+		SignatureDigests: [][]byte{digest(goodDigest)},
+	}
+
+	t.Run("accepts a pinned build", func(t *testing.T) {
+		p := NewEnrollmentPolicy()
+		p.AllowedApplications = []AllowedApplication{{
+			PackageName:    testPackage,
+			SigningDigests: []string{goodDigest},
+		}}
+
+		pkg, got, err := p.matchApplication(appID)
+		require.NoError(t, err)
+		assert.Equal(t, testPackage, pkg)
+		assert.Equal(t, goodDigest, got)
+	})
+
+	t.Run("refuses a rebuild signed with another key", func(t *testing.T) {
+		p := NewEnrollmentPolicy()
+		p.AllowedApplications = []AllowedApplication{{
+			PackageName:    testPackage,
+			SigningDigests: []string{"00" + goodDigest[2:]},
+		}}
+
+		// The package name is trivially forgeable -- anybody can build an APK
+		// claiming it. The signing digest is what makes it an identity.
+		_, _, err := p.matchApplication(appID)
+		assert.ErrorIs(t, err, ErrEnrollmentApplicationDenied)
+	})
+
+	t.Run("refuses an unpinned entry unless explicitly allowed", func(t *testing.T) {
+		p := NewEnrollmentPolicy()
+		p.AllowedApplications = []AllowedApplication{{PackageName: testPackage}}
+
+		_, _, err := p.matchApplication(appID)
+		assert.ErrorIs(t, err, ErrEnrollmentApplicationDenied)
+
+		p.AllowUnpinnedSignatures = true
+		pkg, _, err := p.matchApplication(appID)
+		require.NoError(t, err)
+		assert.Equal(t, testPackage, pkg)
+	})
+
+	t.Run("refuses an unlisted package", func(t *testing.T) {
+		p := NewEnrollmentPolicy()
+		p.AllowedApplications = []AllowedApplication{{
+			PackageName:    "com.example.other",
+			SigningDigests: []string{goodDigest},
+		}}
+
+		_, _, err := p.matchApplication(appID)
+		assert.ErrorIs(t, err, ErrEnrollmentApplicationDenied)
+	})
+
+	t.Run("refuses evidence naming no application", func(t *testing.T) {
+		p := newTestPolicy()
+
+		_, _, err := p.matchApplication(nil)
+		assert.ErrorIs(t, err, ErrEnrollmentApplicationDenied)
+	})
+}
+
+// TestEnrollmentPolicy_ValidityIsTheReattestationCadence records the design
+// decision: there is no separate "re-attest every N days" knob.
+//
+// The credential's expiry is the cadence. Expressed that way it is enforceable
+// by any RFC 5280 verifier, and it belongs to the relying party rather than to
+// the device being judged.
+func TestEnrollmentPolicy_ValidityIsTheReattestationCadence(t *testing.T) {
+	p := NewEnrollmentPolicy()
+	assert.Equal(t, DefaultEnrollmentValidity, p.effectiveValidity())
+
+	p.Validity = 30 * 24 * time.Hour
+	assert.Equal(t, 30*24*time.Hour, p.effectiveValidity())
+
+	// A misconfigured zero or negative validity must not issue a credential
+	// that has already expired.
+	p.Validity = 0
+	assert.Equal(t, DefaultEnrollmentValidity, p.effectiveValidity())
+	p.Validity = -time.Hour
+	assert.Equal(t, DefaultEnrollmentValidity, p.effectiveValidity())
+}
+
+func TestSecurityRank_UnknownLevelsRankAsSoftware(t *testing.T) {
+	assert.Equal(t, 2, securityRank(SecurityLevelStrongBox))
+	assert.Equal(t, 1, securityRank(SecurityLevelTEE))
+	assert.Equal(t, 0, securityRank(SecurityLevelSoftware))
+
+	// A typo in configuration must not silently weaken the policy by ranking
+	// above the levels it is compared against.
+	assert.Equal(t, 0, securityRank("Trusted_Environment"))
+	assert.Equal(t, 0, securityRank(""))
+}
+
+func TestEnrollmentPolicy_ErrorsAreDistinguishable(t *testing.T) {
+	// Each refusal carries its own sentinel so an operator can tell a device
+	// that failed the boot check from one whose application is not allowed,
+	// without parsing the message.
+	sentinels := []error{
+		ErrEnrollmentNoEvidence,
+		ErrEnrollmentUnknownFormat,
+		ErrEnrollmentChainUntrusted,
+		ErrEnrollmentStaleChallenge,
+		ErrEnrollmentKeyMismatch,
+		ErrEnrollmentBootState,
+		ErrEnrollmentSecurityLevel,
+		ErrEnrollmentApplicationDenied,
+	}
+	for i, a := range sentinels {
+		for j, b := range sentinels {
+			if i != j {
+				assert.False(t, errors.Is(a, b),
+					"%v and %v must not be the same sentinel", a, b)
+			}
+		}
+	}
+}

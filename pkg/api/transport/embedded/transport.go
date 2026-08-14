@@ -14,6 +14,21 @@
 // Package embedded provides an embedded (in-process) transport implementation
 // for the xkms SDK. This transport makes direct function calls without
 // any network overhead.
+//
+// # Init ceremony gate decision (pkg/api/initgate)
+//
+// The embedded transport deliberately carries NO pre-operational init
+// ceremony authentication gate, unlike REST, QUIC and MCP. It is inherently
+// operator-local: the constructor is handed the live *xkms.XKMSService by
+// the composition root inside the daemon's own process, so possession of the
+// service object IS the authorization — the same trust model as `xkmsd init`
+// running in-process before any listener exists. No authentication layer
+// exists on this path for ANY operation (key ops included, which are far
+// more sensitive than ceremony status), so a ceremony-only exemption gate
+// would assert nothing: there is no authentication here to be exempt FROM.
+// An attacker who can construct this transport already executes arbitrary
+// code inside the daemon process. See pkg/api/initgate for the canonical
+// table the wire transports derive their gates from.
 package embedded
 
 import (
@@ -145,6 +160,14 @@ func (t *Transport) GetBackend(ctx context.Context, backendID string) (*transpor
 		return nil, ErrNotConnected
 	}
 	return t.service.GetBackend(ctx, backendID)
+}
+
+// Algorithms reports the algorithms this build supports.
+func (t *Transport) Algorithms(ctx context.Context) (*transport.AlgorithmsResponse, error) {
+	if !t.connected {
+		return nil, ErrNotConnected
+	}
+	return t.service.Algorithms(ctx)
 }
 
 // GenerateKey generates a new key.
@@ -1039,6 +1062,23 @@ func (t *Transport) ListShares(ctx context.Context) (*transport.ListSharesRespon
 	return t.service.ListShares(ctx)
 }
 
+// GetShare returns a single stored share. Share material is never included
+// in the response — the servicer returns metadata only.
+func (t *Transport) GetShare(ctx context.Context, serverURL, groupID string, shareIndex int) (*transport.ShareInfo, error) {
+	if !t.connected {
+		return nil, ErrNotConnected
+	}
+	return t.service.GetShare(ctx, serverURL, groupID, shareIndex)
+}
+
+// DeleteShare removes a single stored share.
+func (t *Transport) DeleteShare(ctx context.Context, serverURL, groupID string, shareIndex int) error {
+	if !t.connected {
+		return ErrNotConnected
+	}
+	return t.service.DeleteShare(ctx, serverURL, groupID, shareIndex)
+}
+
 // GetShareCollectionStatus returns the collection status for a group.
 func (t *Transport) GetShareCollectionStatus(ctx context.Context, groupID string) (*transport.ShareCollectionStatus, error) {
 	if !t.connected {
@@ -1144,11 +1184,20 @@ func (t *Transport) ClaimCertComplete(ctx context.Context, req *transport.ClaimC
 }
 
 // ClaimShare retrieves the Shamir share for the named officer.
-func (t *Transport) ClaimShare(ctx context.Context, req *transport.ClaimShareRequest) (*transport.ClaimShareResponse, error) {
+func (t *Transport) ClaimShareBegin(ctx context.Context, req *transport.ClaimShareBeginRequest) (*transport.ClaimShareBeginResponse, error) {
 	if !t.connected {
 		return nil, ErrNotConnected
 	}
-	return t.service.ClaimShare(ctx, req)
+	return t.service.ClaimShareBegin(ctx, req)
+}
+
+// ClaimShareComplete completes the Shamir share claim handshake for the named
+// officer.
+func (t *Transport) ClaimShareComplete(ctx context.Context, req *transport.ClaimShareCompleteRequest) (*transport.ClaimShareCompleteResponse, error) {
+	if !t.connected {
+		return nil, ErrNotConnected
+	}
+	return t.service.ClaimShareComplete(ctx, req)
 }
 
 // SignCSRInit signs a CSR during initialization with SO authorization.
@@ -1242,4 +1291,13 @@ func (t *Transport) ListUserCredentials(ctx context.Context, username string) (*
 		return nil, ErrNotConnected
 	}
 	return t.service.ListUserCredentials(ctx, username)
+}
+
+// QueryAudit returns one page of audit events from the embedded qrdb node's
+// tamper-evident audit chain.
+func (t *Transport) QueryAudit(ctx context.Context, filter *transport.AuditFilter) (*transport.AuditPage, error) {
+	if !t.connected {
+		return nil, ErrNotConnected
+	}
+	return t.service.QueryAudit(ctx, filter)
 }

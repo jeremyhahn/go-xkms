@@ -19,6 +19,9 @@ package module
 import (
 	"errors"
 	"fmt"
+
+	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/status"
 )
 
 // CK_RV represents a PKCS#11 return value (Cryptoki Return Value).
@@ -346,12 +349,12 @@ const (
 	// according to the token's validation policy.
 	CKR_OPERATION_NOT_VALIDATED CK_RV = 0x00000207
 
-	// CKR_OPERATION_INCOMPATIBLE indicates the operation is incompatible with
-	// the current session state or token capabilities.
-	// NOTE: This return value is NOT in the final PKCS#11 v3.2 CSD01 spec.
-	// It appeared in early drafts but was removed. Retained for forward
-	// compatibility with implementations that may use this code.
-	CKR_OPERATION_INCOMPATIBLE CK_RV = 0x00000208
+	// CKR_TOKEN_NOT_INITIALIZED indicates the token is in factory state and
+	// C_InitToken (or an out-of-band initialization method) must be called
+	// before any other token-related operation can complete.
+	// Reference: PKCS#11 v3.2 section 5.1.3, "Cryptoki function return values
+	// for functions that use a token".
+	CKR_TOKEN_NOT_INITIALIZED CK_RV = 0x00000208
 
 	// CKR_PARAMETER_SET_NOT_SUPPORTED indicates the requested parameter set is
 	// not supported by the token.
@@ -466,7 +469,7 @@ var ckrNames = map[CK_RV]string{
 	CKR_SESSION_ASYNC_NOT_SUPPORTED:      "CKR_SESSION_ASYNC_NOT_SUPPORTED",
 	CKR_SEED_RANDOM_REQUIRED:             "CKR_SEED_RANDOM_REQUIRED",
 	CKR_OPERATION_NOT_VALIDATED:          "CKR_OPERATION_NOT_VALIDATED",
-	CKR_OPERATION_INCOMPATIBLE:           "CKR_OPERATION_INCOMPATIBLE",
+	CKR_TOKEN_NOT_INITIALIZED:            "CKR_TOKEN_NOT_INITIALIZED",
 	CKR_PARAMETER_SET_NOT_SUPPORTED:      "CKR_PARAMETER_SET_NOT_SUPPORTED",
 	CKR_VENDOR_DEFINED:                   "CKR_VENDOR_DEFINED",
 }
@@ -856,8 +859,9 @@ var (
 	// ErrOperationNotValidated indicates the operation has not been validated.
 	ErrOperationNotValidated = errors.New("pkcs11: operation not validated")
 
-	// ErrOperationIncompatible indicates the operation is incompatible with the session state.
-	ErrOperationIncompatible = errors.New("pkcs11: operation incompatible")
+	// ErrTokenNotInitialized indicates the token is still in factory state and
+	// requires C_InitToken before any other token-related operation.
+	ErrTokenNotInitialized = errors.New("pkcs11: token not initialized")
 
 	// ErrParameterSetNotSupported indicates the parameter set is not supported.
 	ErrParameterSetNotSupported = errors.New("pkcs11: parameter set not supported")
@@ -970,14 +974,20 @@ var sentinelErrors = map[CK_RV]error{
 	CKR_SESSION_ASYNC_NOT_SUPPORTED:      ErrSessionAsyncNotSupported,
 	CKR_SEED_RANDOM_REQUIRED:             ErrSeedRandomRequired,
 	CKR_OPERATION_NOT_VALIDATED:          ErrOperationNotValidated,
-	CKR_OPERATION_INCOMPATIBLE:           ErrOperationIncompatible,
+	CKR_TOKEN_NOT_INITIALIZED:            ErrTokenNotInitialized,
 	CKR_PARAMETER_SET_NOT_SUPPORTED:      ErrParameterSetNotSupported,
 	CKR_VENDOR_DEFINED:                   ErrVendorDefined,
 }
 
 // errorToCKR maps sentinel errors back to CK_RV codes.
+// errorToCKR maps sentinel errors back to CK_RV codes.
+//
+// ErrOK is deliberately absent. FromError answers CKR_OK for a nil error and
+// for nothing else: with the sentinel in this table, any non-nil error that
+// happened to wrap ErrOK -- directly or through fmt.Errorf's %w -- was reported
+// to the application as a successful call, because every C_* entry point ends in
+// return C.CK_RV(FromError(err)).
 var errorToCKR = map[error]CK_RV{
-	ErrOK:                            CKR_OK,
 	ErrCancel:                        CKR_CANCEL,
 	ErrHostMemory:                    CKR_HOST_MEMORY,
 	ErrSlotIDInvalid:                 CKR_SLOT_ID_INVALID,
@@ -1079,7 +1089,7 @@ var errorToCKR = map[error]CK_RV{
 	ErrSessionAsyncNotSupported:      CKR_SESSION_ASYNC_NOT_SUPPORTED,
 	ErrSeedRandomRequired:            CKR_SEED_RANDOM_REQUIRED,
 	ErrOperationNotValidated:         CKR_OPERATION_NOT_VALIDATED,
-	ErrOperationIncompatible:         CKR_OPERATION_INCOMPATIBLE,
+	ErrTokenNotInitialized:           CKR_TOKEN_NOT_INITIALIZED,
 	ErrParameterSetNotSupported:      CKR_PARAMETER_SET_NOT_SUPPORTED,
 	ErrVendorDefined:                 CKR_VENDOR_DEFINED,
 }
@@ -1104,10 +1114,106 @@ func ToErrorWithMessage(rv CK_RV, message string) error {
 	return NewPKCS11ErrorWithMessage(rv, message)
 }
 
+// grpcStatusCKR maps the gRPC status codes an xkms daemon returns onto the
+// CK_RV that states the same fact to a PKCS#11 application.
+//
+// The module is a client of a service that already classifies its own failures
+// — pkg/api/grpc/errors_keyops.go turns a backend capability refusal into
+// codes.Unimplemented and an export refusal into codes.FailedPrecondition —
+// and every one of those classifications used to be discarded at this
+// boundary, because the module knew only its own sentinels. An application got
+// CKR_FUNCTION_FAILED for "this token does not do that" and CKR_FUNCTION_FAILED
+// for "something broke", which are different problems with different remedies.
+//
+// Only codes with a faithful Cryptoki equivalent are listed. The ones
+// deliberately absent, and why:
+//
+//	NotFound           The daemon uses it for an unresolved backend, an
+//	                   unresolved key and an unresolved role alike. Those map
+//	                   to different CK_RVs (a missing token is not a missing
+//	                   object) and the wire cannot tell them apart, so the
+//	                   call site's own fallback — which does know which
+//	                   operation was in flight — is the better answer.
+//	PermissionDenied   Cryptoki has no "authorized user, forbidden object"
+//	                   code. CKR_ACTION_PROHIBITED is reserved by v3.2 for
+//	                   C_CopyObject/C_SetAttributeValue/C_DestroyObject and
+//	                   CKR_USER_NOT_LOGGED_IN would send a logged-in caller
+//	                   to log in again.
+//	Internal, Unknown  These mean "something broke", which is exactly what
+//	                   the CKR_FUNCTION_FAILED fallback already says.
+//	DeadlineExceeded   The operation may still be running on the token; no
+//	                   CK_RV asserts that, and CKR_FUNCTION_CANCELED would
+//	                   claim it stopped.
+//	ResourceExhausted  Most often a gRPC message-size or rate limit, not the
+//	                   token resource CKR_TOKEN_RESOURCE_EXCEEDED describes.
+//
+// Unimplemented becomes CKR_FUNCTION_NOT_SUPPORTED rather than the more
+// specific CKR_MECHANISM_INVALID because this function has no call-site
+// context: it serves C_Sign and C_Encrypt as well as their *Init counterparts,
+// and CKR_MECHANISM_INVALID is only a legal return for the functions that take
+// a CK_MECHANISM. CKR_FUNCTION_NOT_SUPPORTED is legal for every function
+// (v3.2 §5.1) and states the true fact — this token cannot perform the
+// requested function.
+//
+// FailedPrecondition keeps CKR_ATTRIBUTE_SENSITIVE: on the key and crypto RPCs
+// this module calls, the daemon raises it only for ErrExportKeyMaterialFailed,
+// which is a key refusing to release its material. That is the same answer
+// Module.secretKeyValue already gives for a local export refusal.
+//
+// InvalidArgument becomes CKR_ARGUMENTS_BAD and not the more specific
+// CKR_MECHANISM_INVALID, even though several conditions behind it are
+// mechanism refusals — the legacy key-wrap policy gate
+// (xkms.ErrLegacyWrapDisabled, raised for CKM_RSA_PKCS, CKM_AES_CBC_PAD and
+// unpadded CKM_AES_CBC unless crypto.allow_legacy_key_wrap is set) among them.
+// The daemon collapses that gate into the same InvalidArgument as every other
+// field-validation failure: pkg/api/grpc/errors_keyops.go tests
+// errors.As(err, *xkms.ErrValidation) before its sentinel table, and the gate
+// wraps its sentinel in an ErrValidation, so the sentinel identity does not
+// survive the wire. Reporting CKR_MECHANISM_INVALID for the whole code would
+// therefore also claim it for "key_id is required" and for an out-of-range key
+// size, where it is simply false; a true vague code beats a false specific
+// one. Distinguishing the policy refusal requires a signal the daemon does not
+// yet send — a status detail naming the reason — and that belongs in the
+// daemon's classifier, not in a guess made here.
+var grpcStatusCKR = map[codes.Code]CK_RV{
+	codes.Unimplemented:      CKR_FUNCTION_NOT_SUPPORTED,
+	codes.FailedPrecondition: CKR_ATTRIBUTE_SENSITIVE,
+	codes.InvalidArgument:    CKR_ARGUMENTS_BAD,
+	codes.Unauthenticated:    CKR_USER_NOT_LOGGED_IN,
+	codes.Unavailable:        CKR_DEVICE_ERROR,
+	codes.Canceled:           CKR_FUNCTION_CANCELED,
+}
+
+// grpcCKR reports the CK_RV for an error carrying a gRPC status, and whether
+// that status is one this module translates.
+//
+// errors.As is used rather than status.FromError so a status wrapped in
+// additional context is still recognised; status.FromError only matches an
+// error that is itself a status.
+func grpcCKR(err error) (CK_RV, bool) {
+	var carrier interface{ GRPCStatus() *status.Status }
+	if !errors.As(err, &carrier) {
+		return CKR_GENERAL_ERROR, false
+	}
+
+	s := carrier.GRPCStatus()
+	if s == nil {
+		return CKR_GENERAL_ERROR, false
+	}
+
+	rv, ok := grpcStatusCKR[s.Code()]
+	if !ok {
+		return CKR_GENERAL_ERROR, false
+	}
+	return rv, true
+}
+
 // FromError converts a Go error to a CK_RV return value.
 // Returns CKR_OK for nil errors.
 // For PKCS11Error, returns the embedded code.
 // For known sentinel errors, returns the corresponding CK_RV.
+// For an error carrying a translatable gRPC status, returns the CK_RV that
+// states the same fact (see grpcStatusCKR).
 // For unknown errors, returns CKR_GENERAL_ERROR.
 func FromError(err error) CK_RV {
 	if err == nil {
@@ -1125,6 +1231,11 @@ func FromError(err error) CK_RV {
 		if errors.Is(err, sentinel) {
 			return rv
 		}
+	}
+
+	// Check for a classification the daemon already made on the wire.
+	if rv, ok := grpcCKR(err); ok {
+		return rv
 	}
 
 	// Unknown error
@@ -1235,6 +1346,10 @@ func IsCryptographicError(err error) bool {
 }
 
 // IsDeviceError returns true if the error is related to device/token issues.
+// The membership follows PKCS#11 v3.2 section 5.1.3, which enumerates the
+// return values any function that uses a token may produce; CKR_TOKEN_NOT_INITIALIZED
+// belongs to that group because it reports token state, not a policy or
+// validation outcome.
 func IsDeviceError(err error) bool {
 	rv := FromError(err)
 	switch rv {
@@ -1243,6 +1358,7 @@ func IsDeviceError(err error) bool {
 		CKR_DEVICE_REMOVED,
 		CKR_TOKEN_NOT_PRESENT,
 		CKR_TOKEN_NOT_RECOGNIZED,
+		CKR_TOKEN_NOT_INITIALIZED,
 		CKR_TOKEN_WRITE_PROTECTED,
 		CKR_TOKEN_RESOURCE_EXCEEDED,
 		CKR_SLOT_ID_INVALID:
@@ -1268,7 +1384,6 @@ func IsValidationError(err error) bool {
 	rv := FromError(err)
 	switch rv {
 	case CKR_OPERATION_NOT_VALIDATED,
-		CKR_OPERATION_INCOMPATIBLE,
 		CKR_PARAMETER_SET_NOT_SUPPORTED:
 		return true
 	}
@@ -1285,6 +1400,18 @@ var (
 
 	// ErrInvalidTarget indicates the gRPC target format is invalid.
 	ErrInvalidTarget = errors.New("pkcs11/module: invalid target format")
+
+	// ErrMCPTargetNotSupported indicates the target names the MCP transport,
+	// which is an AI/LLM-oriented transport rather than a cryptographic data
+	// plane. The module talks to xkmsd over gRPC, REST, QUIC or Unix, never MCP.
+	ErrMCPTargetNotSupported = errors.New("pkcs11/module: MCP transport is not supported; use gRPC, REST, QUIC or Unix")
+
+	// ErrRESTClientMustBeInjected indicates a rest:// target was configured
+	// without injecting a REST client. The module cannot construct one itself
+	// (an import cycle: pkg/auth backs its PKCS#11 TLS with this module, and
+	// pkg/api/rest tests import transport/rest), so the composition root builds
+	// the REST client and passes it via module.WithClient.
+	ErrRESTClientMustBeInjected = errors.New("pkcs11/module: a rest:// target requires a REST client injected via WithClient")
 
 	// ErrInvalidTimeout indicates an invalid timeout value.
 	ErrInvalidTimeout = errors.New("pkcs11/module: timeout must be non-negative")
@@ -1319,6 +1446,45 @@ var (
 	// ErrStoragePathRequired indicates a storage path is required for file storage.
 	ErrStoragePathRequired = errors.New("pkcs11/module: storage path is required for file storage")
 
+	// ErrEntropyUnavailable indicates the system entropy source (crypto/rand)
+	// failed. It is catastrophic — no security property of the token holds — but
+	// it is returned rather than panicked so an embedded Go host (xkey, the
+	// offline .so's own callers) gets a clean CKR_DEVICE_ERROR instead of a
+	// crash. The C ABI maps it to CKR_DEVICE_ERROR like any other device fault.
+	ErrEntropyUnavailable = errors.New("pkcs11/module: system entropy source unavailable")
+
+	// ErrRemoteClientRequired indicates a remote storage backend was requested
+	// without a transport client to carry its RPCs.
+	ErrRemoteClientRequired = errors.New("pkcs11/module: remote storage requires a transport client")
+
+	// ErrRemoteTokenRequired indicates remote storage was requested without a
+	// token label to namespace the records under.
+	ErrRemoteTokenRequired = errors.New("pkcs11/module: remote storage requires a token label")
+
+	// ErrRemoteClientUnsupported indicates the active transport does not carry
+	// the PKCS#11-state RPCs, so it cannot back remote storage. gRPC and Unix do;
+	// a transport that does not implement them cannot be used with StorageType
+	// "remote".
+	ErrRemoteClientUnsupported = errors.New("pkcs11/module: active transport does not support remote PKCS#11 state persistence")
+
 	// ErrStorageInit indicates storage initialization failed.
 	ErrStorageInit = errors.New("pkcs11/module: failed to initialize storage")
+
+	// ErrInsecureRemoteTarget indicates a non-local (non unix://) gRPC target
+	// is configured with TLS disabled and without an explicit opt-out, so the
+	// connection would carry PKCS#11 traffic -- including raw exported key
+	// material -- in the clear.
+	ErrInsecureRemoteTarget = errors.New("pkcs11/module: TLS is disabled for a non-local target; " +
+		"set tls.enabled=true or explicitly set allow_insecure_transport=true (unsafe, test/dev only)")
+
+	// ErrConfigFilePermissions indicates the configuration file is readable
+	// by users other than its owner, which risks leaking the cleartext
+	// so_pin/user_pin values it may contain.
+	ErrConfigFilePermissions = errors.New("pkcs11/module: config file must not be group- or world-readable")
+
+	// ErrEmptyBackendName indicates a configured backend name is blank. It is
+	// the only backend-name defect this module can adjudicate locally: which
+	// backends exist is a property of the xkms service, not of this binary's
+	// build tags. See Config.validateBackends.
+	ErrEmptyBackendName = errors.New("pkcs11/module: backend name is empty")
 )

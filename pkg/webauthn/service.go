@@ -125,11 +125,23 @@ func (s *Service) BeginRegistration(ctx context.Context, email, displayName stri
 		return nil, "", ErrNotConfigured
 	}
 
-	// Try to get existing user or create new one
+	// Try to get existing user or create new one.
+	//
+	// The implicit Create below is precisely what "public registration" means:
+	// an email nobody has seen before becomes an account. When the relying
+	// party has open sign-up turned off, that one branch is withheld and
+	// everything else is untouched — an account provisioned through the
+	// authorized user-creation path is found by GetByEmail and enrolls its
+	// first passkey here exactly as before. That is what lets a closed
+	// deployment onboard users without a separate enrollment endpoint or an
+	// invite token.
 	user, err := s.users.GetByEmail(ctx, email)
 	if err != nil {
 		if !IsUserNotFound(err) {
 			return nil, "", WrapError("get user by email", err)
+		}
+		if !s.config.PublicRegistrationAllowed() {
+			return nil, "", ErrPublicRegistrationDisabled
 		}
 		// Create new user
 		user, err = s.users.Create(ctx, email, displayName)
@@ -174,38 +186,71 @@ func (s *Service) BeginRegistration(ctx context.Context, email, displayName stri
 // FinishRegistration completes the WebAuthn registration ceremony.
 // Returns a token (JWT if configured, otherwise base64 user ID) and the user.
 func (s *Service) FinishRegistration(ctx context.Context, sessionID string, response *protocol.ParsedCredentialCreationData) (string, User, error) {
+	user, err := s.finishRegistrationUser(ctx, sessionID, response)
+	if err != nil {
+		return "", nil, err
+	}
+
+	token, err := s.generateToken(ctx, user)
+	if err != nil {
+		return "", nil, WrapError("generate token", err)
+	}
+
+	return token, user, nil
+}
+
+// FinishRegistrationPair completes the registration ceremony and returns an
+// access/refresh token pair. The refresh token is empty when the configured
+// generator does not implement TokenPairGenerator.
+func (s *Service) FinishRegistrationPair(ctx context.Context, sessionID string, response *protocol.ParsedCredentialCreationData) (*TokenPair, User, error) {
+	user, err := s.finishRegistrationUser(ctx, sessionID, response)
+	if err != nil {
+		return nil, nil, err
+	}
+
+	pair, err := s.mintTokens(ctx, user)
+	if err != nil {
+		return nil, nil, WrapError("generate token", err)
+	}
+
+	return pair, user, nil
+}
+
+// finishRegistrationUser runs the registration ceremony through credential
+// storage, returning the enrolled user. Token minting is the caller's choice.
+func (s *Service) finishRegistrationUser(ctx context.Context, sessionID string, response *protocol.ParsedCredentialCreationData) (User, error) {
 	if !s.configured {
-		return "", nil, ErrNotConfigured
+		return nil, ErrNotConfigured
 	}
 
 	// Get session
 	session, err := s.sessions.Get(ctx, sessionID)
 	if err != nil {
-		return "", nil, WrapError("get session", err)
+		return nil, WrapError("get session", err)
 	}
 
 	// Get user
 	user, err := s.users.GetByID(ctx, session.UserID)
 	if err != nil {
-		return "", nil, WrapError("get user", err)
+		return nil, WrapError("get user", err)
 	}
 
 	// Finish registration
 	credential, err := s.webauthn.CreateCredential(user, *session, response)
 	if err != nil {
-		return "", nil, verificationError("create credential", err)
+		return nil, verificationError("create credential", err)
 	}
 
 	// Convert and store credential
 	cred := FromWebAuthnCredential(user.WebAuthnID(), credential)
 	if err := s.creds.Save(ctx, cred); err != nil {
-		return "", nil, WrapError("save credential", err)
+		return nil, WrapError("save credential", err)
 	}
 
 	// Add credential to user
 	user.AddCredential(cred)
 	if err := s.users.Save(ctx, user); err != nil {
-		return "", nil, WrapError("save user", err)
+		return nil, WrapError("save user", err)
 	}
 
 	// Delete session - best-effort cleanup, don't fail the operation
@@ -215,13 +260,7 @@ func (s *Service) FinishRegistration(ctx context.Context, sessionID string, resp
 			"error", err)
 	}
 
-	// Generate token
-	token, err := s.generateToken(ctx, user)
-	if err != nil {
-		return "", nil, WrapError("generate token", err)
-	}
-
-	return token, user, nil
+	return user, nil
 }
 
 // BeginLogin starts the WebAuthn authentication ceremony.
@@ -278,72 +317,9 @@ func (s *Service) FinishLogin(ctx context.Context, sessionID string, userID []by
 		return "", nil, ErrNotConfigured
 	}
 
-	// Get session
-	session, err := s.sessions.Get(ctx, sessionID)
+	user, err := s.finishLoginUser(ctx, sessionID, userID, response)
 	if err != nil {
-		return "", nil, WrapError("get session", err)
-	}
-
-	var user User
-	var credential *webauthn.Credential
-
-	if userID == nil {
-		// Discoverable credentials flow - find user by credential
-		credential, err = s.webauthn.ValidateDiscoverableLogin(
-			s.discoverableUserHandler(ctx),
-			*session,
-			response,
-		)
-		if err != nil {
-			return "", nil, verificationError("validate discoverable login", err)
-		}
-
-		// Get user from credential
-		cred, credErr := s.creds.GetByCredentialID(ctx, credential.ID)
-		if credErr != nil {
-			return "", nil, WrapError("get credential", credErr)
-		}
-		user, err = s.users.GetByID(ctx, cred.UserID)
-		if err != nil {
-			return "", nil, WrapError("get user", err)
-		}
-	} else {
-		// User-identified flow
-		user, err = s.users.GetByID(ctx, userID)
-		if err != nil {
-			return "", nil, WrapError("get user", err)
-		}
-
-		credential, err = s.webauthn.ValidateLogin(user, *session, response)
-		if err != nil {
-			return "", nil, verificationError("validate login", err)
-		}
-	}
-
-	// Update credential sign counter
-	cred, err := s.creds.GetByCredentialID(ctx, credential.ID)
-	if err != nil {
-		return "", nil, WrapError("get credential for update", err)
-	}
-	cred.Authenticator.SignCount = credential.Authenticator.SignCount
-	cred.Authenticator.CloneWarning = credential.Authenticator.CloneWarning
-	cred.LastUsedAt = time.Now().UTC()
-
-	if err := s.creds.Update(ctx, cred); err != nil {
-		return "", nil, WrapError("update credential", err)
-	}
-
-	// Update user's credential
-	user.UpdateCredential(cred)
-	if err := s.users.Save(ctx, user); err != nil {
-		return "", nil, WrapError("save user", err)
-	}
-
-	// Delete session - best-effort cleanup, don't fail the operation
-	if err := s.sessions.Delete(ctx, sessionID); err != nil {
-		s.logger.Warn("failed to delete login session after completion",
-			"session_id", sessionID,
-			"error", err)
+		return "", nil, err
 	}
 
 	// Generate token
@@ -353,6 +329,111 @@ func (s *Service) FinishLogin(ctx context.Context, sessionID string, userID []by
 	}
 
 	return token, user, nil
+}
+
+// FinishLoginPair completes the login ceremony and returns an access/refresh
+// token pair. The refresh token is empty when the configured generator does
+// not implement TokenPairGenerator.
+func (s *Service) FinishLoginPair(ctx context.Context, sessionID string, userID []byte, response *protocol.ParsedCredentialAssertionData) (*TokenPair, User, error) {
+	user, err := s.finishLoginUser(ctx, sessionID, userID, response)
+	if err != nil {
+		return nil, nil, err
+	}
+
+	pair, err := s.mintTokens(ctx, user)
+	if err != nil {
+		return nil, nil, WrapError("generate token", err)
+	}
+
+	return pair, user, nil
+}
+
+// finishLoginUser runs the login ceremony through credential-counter update,
+// returning the authenticated user. Token minting is the caller's choice.
+func (s *Service) finishLoginUser(ctx context.Context, sessionID string, userID []byte, response *protocol.ParsedCredentialAssertionData) (User, error) {
+	if !s.configured {
+		return nil, ErrNotConfigured
+	}
+
+	// Get session
+	session, err := s.sessions.Get(ctx, sessionID)
+	if err != nil {
+		return nil, WrapError("get session", err)
+	}
+
+	var user User
+	var credential *webauthn.Credential
+
+	// The session records which ceremony was started: BeginLogin stores the
+	// user handle, BeginDiscoverableLogin leaves it empty. Prefer it over the
+	// caller-supplied userID, which transports derive from a client-controlled
+	// header — a client that omits the header would otherwise be routed into
+	// discoverable validation and rejected with "session was not initiated as
+	// a client-side discoverable login".
+	if len(userID) == 0 {
+		userID = session.UserID
+	}
+
+	if len(userID) == 0 {
+		// Discoverable credentials flow - find user by credential
+		credential, err = s.webauthn.ValidateDiscoverableLogin(
+			s.discoverableUserHandler(ctx),
+			*session,
+			response,
+		)
+		if err != nil {
+			return nil, verificationError("validate discoverable login", err)
+		}
+
+		// Get user from credential
+		cred, credErr := s.creds.GetByCredentialID(ctx, credential.ID)
+		if credErr != nil {
+			return nil, WrapError("get credential", credErr)
+		}
+		user, err = s.users.GetByID(ctx, cred.UserID)
+		if err != nil {
+			return nil, WrapError("get user", err)
+		}
+	} else {
+		// User-identified flow
+		user, err = s.users.GetByID(ctx, userID)
+		if err != nil {
+			return nil, WrapError("get user", err)
+		}
+
+		credential, err = s.webauthn.ValidateLogin(user, *session, response)
+		if err != nil {
+			return nil, verificationError("validate login", err)
+		}
+	}
+
+	// Update credential sign counter
+	cred, err := s.creds.GetByCredentialID(ctx, credential.ID)
+	if err != nil {
+		return nil, WrapError("get credential for update", err)
+	}
+	cred.Authenticator.SignCount = credential.Authenticator.SignCount
+	cred.Authenticator.CloneWarning = credential.Authenticator.CloneWarning
+	cred.LastUsedAt = time.Now().UTC()
+
+	if err := s.creds.Update(ctx, cred); err != nil {
+		return nil, WrapError("update credential", err)
+	}
+
+	// Update user's credential
+	user.UpdateCredential(cred)
+	if err := s.users.Save(ctx, user); err != nil {
+		return nil, WrapError("save user", err)
+	}
+
+	// Delete session - best-effort cleanup, don't fail the operation
+	if err := s.sessions.Delete(ctx, sessionID); err != nil {
+		s.logger.Warn("failed to delete login session after completion",
+			"session_id", sessionID,
+			"error", err)
+	}
+
+	return user, nil
 }
 
 // IsRegistered checks if a user has any registered credentials.
@@ -436,6 +517,36 @@ func (s *Service) generateToken(ctx context.Context, user User) (string, error) 
 	}
 	// Default: return base64-encoded user ID
 	return base64.RawURLEncoding.EncodeToString(user.WebAuthnID()), nil
+}
+
+// TokenPair carries the access token and, when the configured generator
+// supports rotation, the refresh token minted at ceremony completion.
+type TokenPair struct {
+	// AccessToken is the bearer token for subsequent API requests.
+	AccessToken string
+
+	// RefreshToken renews the access token without a new hardware ceremony.
+	// Empty when the generator does not implement TokenPairGenerator.
+	RefreshToken string
+}
+
+// mintTokens mints the richest token shape the configured generator
+// supports: an access/refresh pair via TokenPairGenerator, otherwise the
+// single access token via JWTGenerator (or the base64 user-ID fallback).
+func (s *Service) mintTokens(ctx context.Context, user User) (*TokenPair, error) {
+	if pg, ok := s.jwtGen.(TokenPairGenerator); ok {
+		access, refresh, err := pg.GenerateTokenPair(ctx, user)
+		if err != nil {
+			return nil, err
+		}
+		return &TokenPair{AccessToken: access, RefreshToken: refresh}, nil
+	}
+
+	access, err := s.generateToken(ctx, user)
+	if err != nil {
+		return nil, err
+	}
+	return &TokenPair{AccessToken: access}, nil
 }
 
 // discoverableUserHandler returns a handler for discoverable credential login.

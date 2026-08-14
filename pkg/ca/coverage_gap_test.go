@@ -102,16 +102,6 @@ func TestPubKey_Success(t *testing.T) {
 // ca_extensions.go — Issued (55%) — nil-store paths
 // =============================================================================
 
-func TestIssued_NilStores(t *testing.T) {
-	ca := &CA{
-		config:      &MultiIdentityCAConfig{},
-		revocations: make(map[string]*RevocationInfo),
-	}
-	ok, err := ca.Issued(context.Background(), "anything")
-	require.NoError(t, err)
-	assert.False(t, ok)
-}
-
 // =============================================================================
 // ca_extensions.go — Certificate (82%) — nil attrs guard
 // =============================================================================
@@ -194,12 +184,6 @@ func TestImportBlob_NilKey(t *testing.T) {
 // =============================================================================
 // ca_extensions.go — CAConfig (66%) — nil caConfig branch
 // =============================================================================
-
-func TestCAConfig_NilCaConfig(t *testing.T) {
-	ca := &CA{config: &MultiIdentityCAConfig{}}
-	cfg := ca.CAConfig()
-	assert.Empty(t, cfg.Identity)
-}
 
 // =============================================================================
 // ca_extensions.go — DefaultKeyAlgorithm (50%)

@@ -15,6 +15,7 @@ package clusterca
 
 import (
 	"context"
+	"errors"
 
 	softwarebackend "github.com/jeremyhahn/go-xkms/pkg/backend/software"
 	"github.com/jeremyhahn/go-xkms/pkg/storage"
@@ -37,6 +38,31 @@ type barrierStrategy struct {
 	// RuntimeBackend so the first node can copy the node-local key blobs into
 	// the replicated store during promotion.
 	bootstrapKeyStorage storage.Backend
+
+	// bootstrapCertStorage is the node-local cert store opened alongside
+	// bootstrapKeyStorage. It is retained purely so its handle can be
+	// released once the node-local set is no longer needed; promotion itself
+	// only copies key blobs.
+	bootstrapCertStorage storage.Backend
+}
+
+// closeBootstrapStorage releases the node-local storage handles opened during
+// BootstrapBackends. Both stores write asynchronously into NodeLocalDataDir,
+// so callers that own that directory's lifetime must close them before
+// removing it.
+func (s *barrierStrategy) closeBootstrapStorage() error {
+	var errs []error
+	if s.bootstrapKeyStorage != nil {
+		if err := s.bootstrapKeyStorage.Close(); err != nil {
+			errs = append(errs, err)
+		}
+	}
+	if s.bootstrapCertStorage != nil {
+		if err := s.bootstrapCertStorage.Close(); err != nil {
+			errs = append(errs, err)
+		}
+	}
+	return errors.Join(errs...)
 }
 
 // Name reports the strategy identifier.
@@ -58,6 +84,7 @@ func (s *barrierStrategy) BootstrapBackends(ctx context.Context, deps *StrategyD
 		return nil, err
 	}
 	s.bootstrapKeyStorage = set.keyStorage
+	s.bootstrapCertStorage = set.certStorage
 	return set.resolve, nil
 }
 

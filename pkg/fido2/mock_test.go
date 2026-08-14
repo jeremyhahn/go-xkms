@@ -39,6 +39,29 @@ type MockHIDDevice struct {
 	responses        [][]byte // Pre-configured responses
 	writeCount       int
 	generateResponse func([]byte) // Optional custom response generator
+
+	// sim answers the CTAP2 commands that carry real cryptography, so
+	// hmac-secret derivation is exercised end to end rather than against
+	// canned bytes.
+	sim *authenticatorSim
+
+	// assembler reassembles multi-packet CTAPHID messages.
+	assembler ctapHIDAssembler
+
+	// assertionFailures holds CTAP status codes that successive
+	// authenticatorGetAssertion calls return before the simulator answers
+	// normally. It lets a test drive the platform's retry path over the real
+	// CTAPHID framing instead of a hand-rolled protocol mock.
+	assertionFailures []byte
+}
+
+// FailNextAssertions makes the next len(statuses) authenticatorGetAssertion
+// calls fail with the given CTAP status codes, in order, after which the
+// simulator answers normally.
+func (m *MockHIDDevice) FailNextAssertions(statuses ...byte) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.assertionFailures = append(m.assertionFailures, statuses...)
 }
 
 // NewMockHIDDevice creates a mock HID device
@@ -53,6 +76,7 @@ func NewMockHIDDevice(path string) *MockHIDDevice {
 		readBuf:      new(bytes.Buffer),
 		writeBuf:     new(bytes.Buffer),
 		responses:    make([][]byte, 0),
+		sim:          newAuthenticatorSim(),
 	}
 }
 
@@ -122,7 +146,8 @@ func (m *MockHIDDevice) SetResponse(response []byte) {
 	m.responses = append(m.responses, response)
 }
 
-// defaultGenerateResponse generates mock responses based on CTAPHID commands
+// defaultGenerateResponse reassembles the CTAPHID message being written
+// and generates a response once it is complete.
 func (m *MockHIDDevice) defaultGenerateResponse(packet []byte) {
 	if len(packet) < HIDPacketSize {
 		return
@@ -136,19 +161,20 @@ func (m *MockHIDDevice) defaultGenerateResponse(packet []byte) {
 		return
 	}
 
-	// Parse CTAPHID packet
 	cid := binary.BigEndian.Uint32(packet[0:4])
-	cmd := packet[4]
+
+	cmd, payload, complete := m.assembler.accept(packet)
+	if !complete {
+		return
+	}
 
 	switch cmd {
 	case CTAPHID_INIT:
-		m.generateInitResponse(cid, packet[7:])
+		m.generateInitResponse(cid, payload)
 	case CTAPHID_CBOR:
-		m.generateCBORResponse(cid, packet[7:])
+		m.generateCBORResponse(cid, payload)
 	case CTAPHID_PING:
-		// Read payload length from bytes 5-7
-		payloadLen := int(binary.BigEndian.Uint16(packet[5:7]))
-		m.generatePingResponse(cid, packet[7:7+payloadLen])
+		m.generatePingResponse(cid, payload)
 	}
 }
 
@@ -196,6 +222,8 @@ func (m *MockHIDDevice) generateCBORResponse(cid uint32, payload []byte) {
 		m.generateMakeCredentialResponse(cid, payload[1:])
 	case CmdGetAssertion:
 		m.generateGetAssertionResponse(cid, payload[1:])
+	case CmdClientPIN:
+		m.generateClientPINResponse(cid, payload[1:])
 	}
 }
 
@@ -256,8 +284,8 @@ func (m *MockHIDDevice) generateGetInfoResponse(cid uint32) {
 			"up":   true,
 			"plat": false,
 		},
-		0x05: uint64(1200), // maxMsgSize
-		0x06: []uint64{1},  // pinProtocols
+		0x05: uint64(1200),   // maxMsgSize
+		0x06: []uint64{1, 2}, // pinProtocols
 	}
 
 	encoded, _ := cbor.Marshal(info)
@@ -266,6 +294,13 @@ func (m *MockHIDDevice) generateGetInfoResponse(cid uint32) {
 
 // generateMakeCredentialResponse generates MakeCredential response
 func (m *MockHIDDevice) generateMakeCredentialResponse(cid uint32, reqData []byte) {
+	// A simulator with a PIN set enforces it exactly as a real key does, so
+	// the platform's PIN/UV auth path is exercised rather than assumed.
+	if status := m.sim.authorizeMakeCredential(reqData); status != StatusOK {
+		m.writeCBORError(cid, status)
+		return
+	}
+
 	// Generate mock authenticator data
 	authData := make([]byte, 37+16+2+32) // Base + AAGUID + credIDLen + credID
 
@@ -291,6 +326,17 @@ func (m *MockHIDDevice) generateMakeCredentialResponse(cid uint32, reqData []byt
 	}
 	copy(authData[55:87], credID)
 
+	// Credential public key. Attested credential data is only well-formed
+	// with one, and without it the WebAuthn server parser rejects the
+	// attestation — which would let a registration test "pass" against
+	// bytes no relying party could ever accept.
+	coseKey, err := m.sim.credentialPublicKey()
+	if err != nil {
+		m.writeCBORError(cid, StatusOtherError)
+		return
+	}
+	authData = append(authData, coseKey...)
+
 	// Build response
 	respMap := map[int]interface{}{
 		0x01: "none",                   // fmt
@@ -302,39 +348,43 @@ func (m *MockHIDDevice) generateMakeCredentialResponse(cid uint32, reqData []byt
 	m.writeHIDPackets(cid, encoded)
 }
 
-// generateGetAssertionResponse generates GetAssertion response
+// generateGetAssertionResponse generates a GetAssertion response whose
+// hmac-secret output is the simulator's genuine, encrypted secret.
 func (m *MockHIDDevice) generateGetAssertionResponse(cid uint32, reqData []byte) {
-	// Generate mock authenticator data with HMAC-secret extension
-	authData := make([]byte, 37+32) // Base + HMAC output
-
-	// RP ID hash
-	copy(authData[0:32], make([]byte, 32))
-
-	// Flags: UP + ED (extension data)
-	authData[32] = 0x81
-
-	// Sign counter
-	binary.BigEndian.PutUint32(authData[33:37], 2)
-
-	// HMAC-secret output (32 bytes)
-	hmacOutput := make([]byte, 32)
-	for i := range hmacOutput {
-		hmacOutput[i] = byte(i + 100)
-	}
-	copy(authData[37:], hmacOutput)
-
-	// Build response
-	respMap := map[int]interface{}{
-		0x01: map[string]interface{}{ // credential
-			"type": "public-key",
-			"id":   make([]byte, 32),
-		},
-		0x02: authData,         // authData
-		0x03: make([]byte, 64), // signature
+	if len(m.assertionFailures) > 0 {
+		status := m.assertionFailures[0]
+		m.assertionFailures = m.assertionFailures[1:]
+		m.writeCBORError(cid, status)
+		return
 	}
 
-	encoded, _ := cbor.Marshal(respMap)
+	encoded, err := m.sim.getAssertion(reqData)
+	if err != nil {
+		m.writeCBORError(cid, StatusInvalidParameter)
+		return
+	}
 	m.writeHIDPackets(cid, encoded)
+}
+
+// generateClientPINResponse answers authenticatorClientPIN, which the
+// platform uses to fetch the authenticator's key agreement key.
+func (m *MockHIDDevice) generateClientPINResponse(cid uint32, reqData []byte) {
+	encoded, err := m.sim.clientPIN(reqData)
+	if err != nil {
+		m.writeCBORError(cid, simStatus(err))
+		return
+	}
+	m.writeHIDPackets(cid, encoded)
+}
+
+// writeCBORError writes a CTAP status-only response.
+func (m *MockHIDDevice) writeCBORError(cid uint32, status byte) {
+	packet := make([]byte, HIDPacketSize)
+	binary.BigEndian.PutUint32(packet[0:4], cid)
+	packet[4] = CTAPHID_CBOR
+	binary.BigEndian.PutUint16(packet[5:7], 1)
+	packet[7] = status
+	m.readBuf.Write(packet)
 }
 
 // generatePingResponse generates CTAPHID_PING response

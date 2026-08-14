@@ -18,20 +18,14 @@ import (
 	"crypto/ecdh"
 	"crypto/ecdsa"
 	"crypto/elliptic"
-	"crypto/sha256"
-	"crypto/sha512"
 	"crypto/x509"
 	"fmt"
-	"hash"
-	"io"
 
 	"github.com/jeremyhahn/go-xkms/pkg/errs"
 
 	"github.com/jeremyhahn/go-xkms/pkg/backend"
 	"github.com/jeremyhahn/go-xkms/pkg/crypto/x25519"
 	"github.com/jeremyhahn/go-xkms/pkg/types"
-	"golang.org/x/crypto/hkdf"
-	"golang.org/x/crypto/sha3"
 )
 
 // supportedCurves defines the elliptic curves supported for key agreement.
@@ -177,53 +171,15 @@ func (b *SoftwareBackend) deriveECDHWithX25519(privateKey *x25519.PrivateKeyStor
 	return sharedSecret, nil
 }
 
-// applyKDF applies the key derivation function to the shared secret.
+// applyKDF derives a key from an ECDH shared secret using the canonical KDF
+// implementation in pkg/crypto/kdf, reached through types.KDFParams.Derive.
+// Every backend derives through that one entry point, so the same parameters
+// yield the same bytes here as on the TPM 2.0, PKCS#11, and phone backends.
 func (b *SoftwareBackend) applyKDF(sharedSecret []byte, params *types.KDFParams) ([]byte, error) {
-	switch params.Algorithm {
-	case types.KDFAlgorithmHKDF:
-		return applyHKDF(sharedSecret, params)
-	default:
-		return nil, &errs.Detail{Err: ErrUnsupportedKDFAlgorithm, Detail: fmt.Sprintf("%s", params.Algorithm)}
+	if params == nil {
+		return nil, ErrInvalidKDFParams
 	}
-}
-
-// applyHKDF applies HKDF to derive a key from the shared secret.
-func applyHKDF(sharedSecret []byte, params *types.KDFParams) ([]byte, error) {
-	hashFunc, err := getHashFunc(params.Hash)
-	if err != nil {
-		return nil, err
-	}
-
-	// Create HKDF reader
-	reader := hkdf.New(hashFunc, sharedSecret, params.Salt, params.Info)
-
-	// Derive key
-	derivedKey := make([]byte, params.KeyLength)
-	if _, err := io.ReadFull(reader, derivedKey); err != nil {
-		return nil, &errs.Wrapped{Msg: "HKDF derivation failed", Err: err}
-	}
-
-	return derivedKey, nil
-}
-
-// getHashFunc returns the hash function for the specified algorithm name.
-func getHashFunc(name string) (func() hash.Hash, error) {
-	switch name {
-	case "SHA-256":
-		return sha256.New, nil
-	case "SHA-384":
-		return sha512.New384, nil
-	case "SHA-512":
-		return sha512.New, nil
-	case "SHA3-256":
-		return sha3.New256, nil
-	case "SHA3-384":
-		return sha3.New384, nil
-	case "SHA3-512":
-		return sha3.New512, nil
-	default:
-		return nil, &errs.Message{Msg: fmt.Sprintf("unsupported hash algorithm: %s", name)}
-	}
+	return params.Derive(sharedSecret)
 }
 
 // parseNISTPublicKey parses a NIST curve public key from various formats.

@@ -128,7 +128,7 @@ func (s *StorageService) CreateVolume(params CreateVolumeParams) error {
 		return err
 	}
 
-	if os.Geteuid() == 0 {
+	if geteuid() == 0 {
 		vol, err := luks.NewVolume()
 		if err != nil {
 			return err
@@ -156,7 +156,7 @@ func (s *StorageService) UnlockVolume(passphrase string) error {
 		return err
 	}
 
-	if os.Geteuid() == 0 {
+	if geteuid() == 0 {
 		vol, err := luks.NewVolume()
 		if err != nil {
 			return err
@@ -174,7 +174,7 @@ func (s *StorageService) UnlockVolume(passphrase string) error {
 
 // LockVolume unmounts and locks the encrypted volume.
 func (s *StorageService) LockVolume() error {
-	if os.Geteuid() == 0 {
+	if geteuid() == 0 {
 		vol, err := luks.NewVolume()
 		if err != nil {
 			return err
@@ -205,7 +205,7 @@ func (s *StorageService) MigrateToEncrypted(sizeGB int, passphrase string, backu
 		return err
 	}
 
-	if os.Geteuid() == 0 {
+	if geteuid() == 0 {
 		return s.migrateToEncryptedDirect(sizeGB, passphrase, backupOriginal)
 	}
 
@@ -341,7 +341,7 @@ func (s *StorageService) migrateToEncryptedDirect(sizeGB int, passphrase string,
 // WipeVolume securely wipes the encrypted volume using the named standard.
 // Supported standards: "nist", "dod3", "dod7".
 func (s *StorageService) WipeVolume(standard string) error {
-	if os.Geteuid() == 0 {
+	if geteuid() == 0 {
 		std, ok := wipeStandards[standard]
 		if !ok {
 			return ErrStorageInvalidStandard

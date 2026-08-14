@@ -1,0 +1,108 @@
+# xkmsd config for the live web-console E2E tier (test/integration/web).
+#
+# This is a SECURE config (TLS + barrier + auth + CA all on) — the daemon's
+# secure-by-default gate in cmd/xkmsd/main.go (cfg.ComplianceGaps()) refuses
+# to start otherwise. See configs/xkmsd-local.yaml, which this is modeled on.
+# The narrower REST-only protocol set and the webauthn block mirror
+# test/integration/webauthn-browser/config.yaml.
+#
+# WebAuthn requires a secure context; TLS on localhost plus Chrome's
+# --ignore-certificate-errors (set in playwright.config.ts `use.ignoreHTTPSErrors`)
+# satisfies that against the daemon's self-issued cert.
+server:
+  host: "127.0.0.1"
+  rest_port: 18463
+
+protocols:
+  unix: false
+  rest: true
+  grpc: false
+  quic: false
+  mcp: false
+  noise: false
+
+logging:
+  level: "info"
+  format: "json"
+
+tls:
+  enabled: true
+  server_cn: "localhost"
+
+# Adaptive: anonymous while zero users exist (so the SPA's own /register
+# ceremony can create the first operator), required auth afterwards.
+auth:
+  enabled: true
+  type: "adaptive"
+
+# Passphrase auto-unseal — a real deployment provisions this via `xkmsctl
+# init`; this tier only needs the barrier UNSEALED so BarrierView and the
+# key/cert lifecycle work, not to exercise the seal ceremony itself.
+barrier:
+  enabled: true
+  strategy: "passphrase"
+  passphrase: "e2e-web-console-passphrase"
+
+ratelimit:
+  enabled: false
+
+metrics:
+  enabled: false
+
+health:
+  enabled: true
+  path: "/health"
+
+storage:
+  backend: "file"
+  path: "./.runtime/data"
+
+default_backend: "software"
+
+backends:
+  software:
+    enabled: true
+    path: "./.runtime/data/software"
+
+# Auto-initialized self-signed root CA on first start (ECDSA P-256, software).
+ca:
+  identity:
+    - subject:
+        cn: "xkms Web E2E Root CA"
+        organization: "go-xkms Web E2E"
+        country: "US"
+      valid: 10
+      keys:
+        - algorithm: "ECDSA"
+          ecc:
+            curve: "P-256"
+          hash: "SHA-256"
+          signature-algorithm: "ECDSAWithSHA256"
+          store: "software"
+          key-type: "CA"
+      keystore-type: "software"
+      is-root: true
+      max-path-length: 1
+  selected-ca: 0
+  default-validity-days: 365
+  include-localhost-sans: true
+  home-dir: "./.runtime/ca"
+
+webauthn:
+  enabled: true
+  rp_id: "localhost"
+  rp_origins:
+    - "https://localhost:18463"
+  rp_display_name: "xKMS Web Console E2E"
+  attestation_preference: "none"
+  authenticator_attachment: ""
+  resident_key: "preferred"
+  user_verification: "preferred"
+  # allow_public_registration is unset -> defaults to true, which the SPA's
+  # own /register screen needs to create its first (and only) operator.
+
+# Embedded web UI, served at the default /ui/ prefix. Requires the daemon to
+# be built with `-tags ui` AND web/dist to be staged BEFORE that build (see
+# run-server.sh) — the SPA is go:embed'd at compile time, not read at runtime.
+ui:
+  enabled: true

@@ -1220,52 +1220,37 @@ func (ca *CA) createRootCertificate(ctx context.Context) error {
 		return &errs.Wrapped{Msg: "failed to determine signature algorithm", Err: err}
 	}
 
-	// Create certificate template
+	// A root is a self-signed CA certificate: a nil Issuer.Certificate makes
+	// the template its own parent, and the CA profile supplies the key usage,
+	// basic constraints and path length every CA certificate carries.
+	caProfile, err := ca.Profiles().Get(ProfileNameCA)
+	if err != nil {
+		return err
+	}
+
 	now := time.Now()
 	validityDays := rootIdentity.GetValidityDays()
 
-	template := &x509.Certificate{
-		SerialNumber:          serial,
-		Subject:               rootIdentity.Subject.ToPkixName(),
-		NotBefore:             now,
-		NotAfter:              now.AddDate(0, 0, validityDays),
-		KeyUsage:              x509.KeyUsageCertSign | x509.KeyUsageCRLSign | x509.KeyUsageDigitalSignature,
-		BasicConstraintsValid: true,
-		IsCA:                  true,
-		MaxPathLen:            rootIdentity.MaxPathLength,
-		MaxPathLenZero:        rootIdentity.MaxPathLengthZero,
-		SignatureAlgorithm:    sigAlgo,
-	}
-
-	// Add Subject Alternative Names if configured
-	if rootIdentity.SANS != nil {
-		template.DNSNames = rootIdentity.SANS.DNS
-		template.EmailAddresses = rootIdentity.SANS.Email
-		template.IPAddresses = rootIdentity.SANS.ParseIPs()
-		template.URIs = rootIdentity.SANS.ParseURIs()
-	}
-
-	// Apply CRL distribution points, OCSP servers, and issuing certificate URLs
-	if len(rootIdentity.CRLDistributionPoints) > 0 {
-		template.CRLDistributionPoints = rootIdentity.CRLDistributionPoints
-	}
-	if len(rootIdentity.OCSPServers) > 0 {
-		template.OCSPServer = rootIdentity.OCSPServers
-	}
-	if len(rootIdentity.IssuingCertificateURLs) > 0 {
-		template.IssuingCertificateURL = rootIdentity.IssuingCertificateURLs
-	}
-
-	// Self-sign the certificate
-	certDER, err := x509.CreateCertificate(rand.Reader, template, template, signer.Public(), signer)
+	issuer := &Issuer{Signer: signer, Identity: rootIdentity}
+	cert, err := issuer.Issue(rand.Reader, &CertificateSpec{
+		Serial:             serial,
+		Subject:            rootIdentity.Subject.ToPkixName(),
+		NotBefore:          now,
+		NotAfter:           now.AddDate(0, 0, validityDays),
+		SignatureAlgorithm: sigAlgo,
+		Profile:            caProfile,
+		Request: &CertificateRequest{
+			Subject:        rootIdentity.Subject,
+			SANS:           rootIdentity.SANS,
+			Valid:          validityDays,
+			IsCA:           true,
+			MaxPathLen:     rootIdentity.MaxPathLength,
+			MaxPathLenZero: rootIdentity.MaxPathLengthZero,
+		},
+		SANS: rootIdentity.SANS,
+	})
 	if err != nil {
 		return &errs.Wrapped{Msg: "failed to create root certificate", Err: err}
-	}
-
-	// Parse the certificate
-	cert, err := x509.ParseCertificate(certDER)
-	if err != nil {
-		return &errs.Wrapped{Msg: "failed to parse root certificate", Err: err}
 	}
 
 	// Store the certificate
@@ -1410,52 +1395,37 @@ func (ca *CA) createSingleIntermediateCertificate(
 	// Determine signature algorithm based on parent key type
 	sigAlgo := determineSignatureAlgorithm(parentSigner.Public())
 
-	// Create certificate template
+	// An intermediate is a CA certificate signed by its parent. It is issued
+	// with the same CA profile as the root, so the two cannot drift apart.
+	caProfile, err := ca.Profiles().Get(ProfileNameCA)
+	if err != nil {
+		return nil, err
+	}
+
 	now := time.Now()
 	validityDays := identity.GetValidityDays()
 
-	template := &x509.Certificate{
-		SerialNumber:          serial,
-		Subject:               identity.Subject.ToPkixName(),
-		NotBefore:             now,
-		NotAfter:              now.AddDate(0, 0, validityDays),
-		KeyUsage:              x509.KeyUsageCertSign | x509.KeyUsageCRLSign | x509.KeyUsageDigitalSignature,
-		BasicConstraintsValid: true,
-		IsCA:                  true,
-		MaxPathLen:            identity.MaxPathLength,
-		MaxPathLenZero:        identity.MaxPathLengthZero,
-		SignatureAlgorithm:    sigAlgo,
-	}
-
-	// Add Subject Alternative Names if configured
-	if identity.SANS != nil {
-		template.DNSNames = identity.SANS.DNS
-		template.EmailAddresses = identity.SANS.Email
-		template.IPAddresses = identity.SANS.ParseIPs()
-		template.URIs = identity.SANS.ParseURIs()
-	}
-
-	// Apply CRL distribution points, OCSP servers, and issuing certificate URLs
-	if len(identity.CRLDistributionPoints) > 0 {
-		template.CRLDistributionPoints = identity.CRLDistributionPoints
-	}
-	if len(identity.OCSPServers) > 0 {
-		template.OCSPServer = identity.OCSPServers
-	}
-	if len(identity.IssuingCertificateURLs) > 0 {
-		template.IssuingCertificateURL = identity.IssuingCertificateURLs
-	}
-
-	// Sign with parent CA
-	certDER, err := x509.CreateCertificate(rand.Reader, template, parentCert, signer.Public(), parentSigner)
+	issuer := &Issuer{Signer: parentSigner, Certificate: parentCert, Identity: identity}
+	cert, err := issuer.Issue(rand.Reader, &CertificateSpec{
+		Serial:             serial,
+		Subject:            identity.Subject.ToPkixName(),
+		NotBefore:          now,
+		NotAfter:           now.AddDate(0, 0, validityDays),
+		PublicKey:          signer.Public(),
+		SignatureAlgorithm: sigAlgo,
+		Profile:            caProfile,
+		Request: &CertificateRequest{
+			Subject:        identity.Subject,
+			SANS:           identity.SANS,
+			Valid:          validityDays,
+			IsCA:           true,
+			MaxPathLen:     identity.MaxPathLength,
+			MaxPathLenZero: identity.MaxPathLengthZero,
+		},
+		SANS: identity.SANS,
+	})
 	if err != nil {
 		return nil, &errs.Wrapped{Msg: "failed to create intermediate certificate", Err: err}
-	}
-
-	// Parse the certificate
-	cert, err := x509.ParseCertificate(certDER)
-	if err != nil {
-		return nil, &errs.Wrapped{Msg: "failed to parse intermediate certificate", Err: err}
 	}
 
 	return cert, nil
@@ -1509,6 +1479,21 @@ func determineSignatureAlgorithm(pub crypto.PublicKey) x509.SignatureAlgorithm {
 //
 // Thread-safe: Yes
 func (ca *CA) SignCSR(ctx context.Context, csrPEM []byte, opts *SignOptions) (*x509.Certificate, error) {
+	return ca.signCSR(ctx, csrPEM, opts, nil)
+}
+
+// signCSR is the single end-entity issuance implementation shared by SignCSR
+// and IssueCertificateWithProfile.
+//
+// request carries the originating CertificateRequest when issuance started
+// from IssueCertificateWithProfile, so the selected profile sees the caller's
+// full issuance context (CA flag, path length, tenant). Direct CSR signing has
+// no CertificateRequest, so one is reconstructed from the certificate spec and
+// the sign options; profiles are always invoked with a non-nil request.
+//
+// The certificate itself is built and signed by Issuer.Issue, the single
+// implementer of CA certificate creation in this project.
+func (ca *CA) signCSR(ctx context.Context, csrPEM []byte, opts *SignOptions, request *CertificateRequest) (*x509.Certificate, error) {
 	if !ca.initialized.Load() {
 		return nil, ErrNotInitialized
 	}
@@ -1597,12 +1582,16 @@ func (ca *CA) SignCSR(ctx context.Context, csrPEM []byte, opts *SignOptions) (*x
 		extKeyUsage = opts.ExtKeyUsage
 	}
 
-	// Apply profile if specified
+	// Resolve the requested profile. Its key usage, extended key usage and
+	// default validity seed the template here; the profile's Apply runs once
+	// the template is complete so extensions it owns land on the certificate.
+	var profile ProfileProvider
 	if opts != nil && opts.Profile != "" {
-		profile, err := ca.profiles.Get(opts.Profile)
+		resolved, err := ca.Profiles().Get(opts.Profile)
 		if err != nil {
 			return nil, err
 		}
+		profile = resolved
 		keyUsage = profile.KeyUsage()
 		extKeyUsage = profile.ExtKeyUsage()
 		if opts.ValidityDays == 0 {
@@ -1610,29 +1599,25 @@ func (ca *CA) SignCSR(ctx context.Context, csrPEM []byte, opts *SignOptions) (*x
 		}
 	}
 
-	// Create certificate template
-	template := &x509.Certificate{
-		SerialNumber:          serial,
-		Subject:               subject,
-		NotBefore:             notBefore,
-		NotAfter:              notBefore.AddDate(0, 0, validityDays),
-		KeyUsage:              keyUsage,
-		ExtKeyUsage:           extKeyUsage,
-		BasicConstraintsValid: true,
-		IsCA:                  false,
-		DNSNames:              csr.DNSNames,
-		EmailAddresses:        csr.EmailAddresses,
-		IPAddresses:           csr.IPAddresses,
-		URIs:                  csr.URIs,
-		SignatureAlgorithm:    determineSignatureAlgorithm(signer.Public()),
+	// A caller that named no profile still gets one: the CA's TLS leaf profile
+	// carrying whatever key usage and extended key usage the caller asked for.
+	// Expressing the "no profile" case as a profile is what lets Issuer.Issue
+	// require a profile unconditionally, so no path can bypass Profile.Apply.
+	if profile == nil {
+		profile = newTLSLeafProfile(keyUsage, extKeyUsage, validityDays)
 	}
 
-	// Add SANs from options
+	// Assemble the subject alternative names in issuance order: the CSR's own
+	// names, then the caller's additions, then the synthesized SPIFFE identity.
+	dnsNames := csr.DNSNames
+	emailAddresses := csr.EmailAddresses
+	ipAddresses := csr.IPAddresses
+	uris := csr.URIs
 	if opts != nil && opts.SANS != nil {
-		template.DNSNames = append(template.DNSNames, opts.SANS.DNS...)
-		template.EmailAddresses = append(template.EmailAddresses, opts.SANS.Email...)
-		template.IPAddresses = append(template.IPAddresses, opts.SANS.ParseIPs()...)
-		template.URIs = append(template.URIs, opts.SANS.ParseURIs()...)
+		dnsNames = append(dnsNames, opts.SANS.DNS...)
+		emailAddresses = append(emailAddresses, opts.SANS.Email...)
+		ipAddresses = append(ipAddresses, opts.SANS.ParseIPs()...)
+		uris = append(uris, opts.SANS.ParseURIs()...)
 	}
 
 	// Synthesize a tenant-scoped SPIFFE URI SAN when requested. This binds the
@@ -1652,24 +1637,47 @@ func (ca *CA) SignCSR(ctx context.Context, csrPEM []byte, opts *SignOptions) (*x
 		if err != nil {
 			return nil, &errs.Detail{Err: ErrSigningFailed, Detail: fmt.Sprintf("%v", err)}
 		}
-		template.URIs = append(template.URIs, spiffeURI)
+		uris = append(uris, spiffeURI)
 	}
 
-	// Append caller-supplied extensions (e.g. SDN network-zone extension).
-	if opts != nil && len(opts.ExtraExtensions) > 0 {
-		template.ExtraExtensions = append(template.ExtraExtensions, opts.ExtraExtensions...)
+	spec := &CertificateSpec{
+		Serial:             serial,
+		Subject:            subject,
+		NotBefore:          notBefore,
+		NotAfter:           notBefore.AddDate(0, 0, validityDays),
+		PublicKey:          csr.PublicKey,
+		SignatureAlgorithm: determineSignatureAlgorithm(signer.Public()),
+		Profile:            profile,
+		DNSNames:           dnsNames,
+		EmailAddresses:     emailAddresses,
+		IPAddresses:        ipAddresses,
+		URIs:               uris,
 	}
 
-	// Sign the certificate
-	certDER, err := x509.CreateCertificate(rand.Reader, template, issuingCert, csr.PublicKey, signer)
+	// Profiles receive the issuance context so they can make context-sensitive
+	// decisions — a CA profile reads MaxPathLen, a tenant-aware profile reads
+	// TenantID.
+	spec.Request = request
+	if spec.Request == nil {
+		spec.Request = certificateRequestFromSpec(spec, opts, validityDays, keyUsage, extKeyUsage)
+	}
+
+	if opts != nil {
+		spec.ExtraExtensions = opts.ExtraExtensions
+	}
+
+	// Certificates signed with a caller-supplied Signer belong to a different
+	// issuer whose CRL and OCSP services this CA cannot speak for, so that
+	// path carries no identity and keeps whatever the caller or its profile
+	// supplied.
+	issuer := &Issuer{Signer: signer, Certificate: issuingCert}
+	if opts == nil || opts.Signer == nil {
+		issuer.Identity = ca.config.IssuingIdentity()
+	}
+
+	cert, err := issuer.Issue(rand.Reader, spec)
 	if err != nil {
-		return nil, &errs.Detail{Err: ErrSigningFailed, Detail: fmt.Sprintf("%v", err)}
-	}
-
-	// Parse the certificate
-	cert, err := x509.ParseCertificate(certDER)
-	if err != nil {
-		return nil, &errs.Wrapped{Msg: "failed to parse issued certificate", Err: err}
+		return nil, err
 	}
 
 	// Store the certificate
@@ -1755,8 +1763,9 @@ func (ca *CA) IssueCertificateWithProfile(ctx context.Context, request *Certific
 		ExtraExtensions:   request.ExtraExtensions,
 	}
 
-	// Sign the CSR
-	cert, err := ca.SignCSR(ctx, csrPEM, opts)
+	// Sign the CSR, forwarding the originating request so the profile sees the
+	// caller's full issuance context.
+	cert, err := ca.signCSR(ctx, csrPEM, opts, request)
 	if err != nil {
 		return nil, err
 	}

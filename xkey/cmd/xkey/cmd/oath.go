@@ -211,6 +211,7 @@ Examples:
 
 // runOATHAdd executes the oath add command.
 func runOATHAdd(cmd *cobra.Command, args []string) error {
+	out := cmd.OutOrStdout()
 	name, _ := cmd.Flags().GetString("name")
 	issuer, _ := cmd.Flags().GetString("issuer")
 	secret, _ := cmd.Flags().GetString("secret")
@@ -269,12 +270,13 @@ func runOATHAdd(cmd *cobra.Command, args []string) error {
 		return &SentinelCauseError{Sentinel: ErrOATHAddFailed, Cause: err}
 	}
 
-	fmt.Printf("Added OATH credential: %s\n", cred.Name)
+	fmt.Fprintf(out, "Added OATH credential: %s\n", cred.Name)
 	return nil
 }
 
 // runOATHList executes the oath list command.
 func runOATHList(cmd *cobra.Command, args []string) error {
+	out := cmd.OutOrStdout()
 	storePath, _ := cmd.Flags().GetString("store")
 	showSecrets, _ := cmd.Flags().GetBool("secrets")
 	showURI, _ := cmd.Flags().GetBool("uri")
@@ -283,7 +285,7 @@ func runOATHList(cmd *cobra.Command, args []string) error {
 	if err != nil {
 		// If file doesn't exist, just show empty list
 		if os.IsNotExist(err) {
-			fmt.Println("No OATH credentials found.")
+			fmt.Fprintln(out, "No OATH credentials found.")
 			return nil
 		}
 		return &SentinelCauseError{Sentinel: ErrOATHStoreOpenFailed, Cause: err}
@@ -296,32 +298,32 @@ func runOATHList(cmd *cobra.Command, args []string) error {
 	}
 
 	if len(creds) == 0 {
-		fmt.Println("No OATH credentials found.")
+		fmt.Fprintln(out, "No OATH credentials found.")
 		return nil
 	}
 
-	fmt.Printf("OATH Credentials (%d):\n\n", len(creds))
+	fmt.Fprintf(out, "OATH Credentials (%d):\n\n", len(creds))
 
 	for _, cred := range creds {
-		fmt.Printf("  Name:      %s\n", cred.Name)
+		fmt.Fprintf(out, "  Name:      %s\n", cred.Name)
 		if cred.Issuer != "" {
-			fmt.Printf("  Issuer:    %s\n", cred.Issuer)
+			fmt.Fprintf(out, "  Issuer:    %s\n", cred.Issuer)
 		}
-		fmt.Printf("  Type:      %s\n", strings.ToUpper(cred.Type))
-		fmt.Printf("  Algorithm: %s\n", cred.Algorithm)
-		fmt.Printf("  Digits:    %d\n", cred.Digits)
+		fmt.Fprintf(out, "  Type:      %s\n", strings.ToUpper(cred.Type))
+		fmt.Fprintf(out, "  Algorithm: %s\n", cred.Algorithm)
+		fmt.Fprintf(out, "  Digits:    %d\n", cred.Digits)
 		if cred.Type == oath.TypeTOTP {
-			fmt.Printf("  Period:    %ds\n", cred.Period)
+			fmt.Fprintf(out, "  Period:    %ds\n", cred.Period)
 		} else {
-			fmt.Printf("  Counter:   %d\n", cred.Counter)
+			fmt.Fprintf(out, "  Counter:   %d\n", cred.Counter)
 		}
 		if showSecrets {
-			fmt.Printf("  Secret:    %s\n", cred.Secret)
+			fmt.Fprintf(out, "  Secret:    %s\n", cred.Secret)
 		}
 		if showURI {
-			fmt.Printf("  URI:       %s\n", cred.ToURI())
+			fmt.Fprintf(out, "  URI:       %s\n", cred.ToURI())
 		}
-		fmt.Println()
+		fmt.Fprintln(out)
 	}
 
 	return nil
@@ -329,6 +331,7 @@ func runOATHList(cmd *cobra.Command, args []string) error {
 
 // runOATHGenerate executes the oath generate command.
 func runOATHGenerate(cmd *cobra.Command, args []string) error {
+	out := cmd.OutOrStdout()
 	storePath, _ := cmd.Flags().GetString("store")
 	all, _ := cmd.Flags().GetBool("all")
 
@@ -346,7 +349,7 @@ func runOATHGenerate(cmd *cobra.Command, args []string) error {
 		}
 
 		if len(creds) == 0 {
-			fmt.Println("No OATH credentials found.")
+			fmt.Fprintln(out, "No OATH credentials found.")
 			return nil
 		}
 
@@ -373,9 +376,9 @@ func runOATHGenerate(cmd *cobra.Command, args []string) error {
 
 			if cred.Type == oath.TypeTOTP {
 				remaining := gen.TimeRemaining()
-				fmt.Printf("  %-*s  %s  (expires in %ds)\n", maxLen, cred.Name, code, remaining)
+				fmt.Fprintf(out, "  %-*s  %s  (expires in %ds)\n", maxLen, cred.Name, code, remaining)
 			} else {
-				fmt.Printf("  %-*s  %s\n", maxLen, cred.Name, code)
+				fmt.Fprintf(out, "  %-*s  %s\n", maxLen, cred.Name, code)
 				// Update counter for HOTP
 				gen.IncrementCounter()
 				_ = store.Update(cred)
@@ -411,9 +414,9 @@ func runOATHGenerate(cmd *cobra.Command, args []string) error {
 
 		if cred.Type == oath.TypeTOTP {
 			remaining := gen.TimeRemaining()
-			fmt.Printf("%s  (expires in %ds)\n", code, remaining)
+			fmt.Fprintf(out, "%s  (expires in %ds)\n", code, remaining)
 		} else {
-			fmt.Printf("%s\n", code)
+			fmt.Fprintf(out, "%s\n", code)
 			// Update counter for HOTP
 			gen.IncrementCounter()
 			_ = store.Update(cred)
@@ -425,6 +428,7 @@ func runOATHGenerate(cmd *cobra.Command, args []string) error {
 
 // runOATHRemove executes the oath remove command.
 func runOATHRemove(cmd *cobra.Command, args []string) error {
+	out := cmd.OutOrStdout()
 	storePath, _ := cmd.Flags().GetString("store")
 	force, _ := cmd.Flags().GetBool("force")
 
@@ -448,7 +452,7 @@ func runOATHRemove(cmd *cobra.Command, args []string) error {
 		}
 
 		if !force {
-			fmt.Printf("Remove credential '%s'? [y/N]: ", cred.Name)
+			fmt.Fprintf(out, "Remove credential '%s'? [y/N]: ", cred.Name)
 			confirm, err := reader.ReadString('\n')
 			if err != nil {
 				fmt.Fprintf(os.Stderr, "  %s: failed to read input\n", name)
@@ -456,7 +460,7 @@ func runOATHRemove(cmd *cobra.Command, args []string) error {
 			}
 			confirm = strings.TrimSpace(strings.ToLower(confirm))
 			if confirm != "y" && confirm != "yes" {
-				fmt.Printf("Skipped %s\n", cred.Name)
+				fmt.Fprintf(out, "Skipped %s\n", cred.Name)
 				continue
 			}
 		}
@@ -466,7 +470,7 @@ func runOATHRemove(cmd *cobra.Command, args []string) error {
 			continue
 		}
 
-		fmt.Printf("Removed: %s\n", cred.Name)
+		fmt.Fprintf(out, "Removed: %s\n", cred.Name)
 	}
 
 	return nil
@@ -474,6 +478,7 @@ func runOATHRemove(cmd *cobra.Command, args []string) error {
 
 // runOATHScan executes the oath scan command.
 func runOATHScan(cmd *cobra.Command, args []string) error {
+	out := cmd.OutOrStdout()
 	storePath, _ := cmd.Flags().GetString("store")
 	nameOverride, _ := cmd.Flags().GetString("name")
 	displayIndex, _ := cmd.Flags().GetInt("display")
@@ -485,12 +490,12 @@ func runOATHScan(cmd *cobra.Command, args []string) error {
 	if listDisplays {
 		n := qrscan.NumDisplays()
 		if n == 0 {
-			fmt.Println("No displays found.")
+			fmt.Fprintln(out, "No displays found.")
 			return nil
 		}
-		fmt.Printf("Found %d display(s):\n", n)
+		fmt.Fprintf(out, "Found %d display(s):\n", n)
 		for i := 0; i < n; i++ {
-			fmt.Printf("  Display %d\n", i)
+			fmt.Fprintf(out, "  Display %d\n", i)
 		}
 		return nil
 	}
@@ -501,7 +506,7 @@ func runOATHScan(cmd *cobra.Command, args []string) error {
 		return ErrOATHScanFailed
 	}
 
-	fmt.Printf("Scanning %d display(s) for QR codes...\n", n)
+	fmt.Fprintf(out, "Scanning %d display(s) for QR codes...\n", n)
 
 	// Scan for QR codes
 	scanner := qrscan.NewScanner()
@@ -513,7 +518,7 @@ func runOATHScan(cmd *cobra.Command, args []string) error {
 			return ErrOATHNoQRFound
 		}
 		if errors.Is(err, qrscan.ErrInvalidQRContent) {
-			fmt.Println("Found QR code(s) but none contain valid otpauth:// URIs.")
+			fmt.Fprintln(out, "Found QR code(s) but none contain valid otpauth:// URIs.")
 			return ErrOATHNoQRFound
 		}
 		return &SentinelCauseError{Sentinel: ErrOATHScanFailed, Cause: err}
@@ -525,22 +530,22 @@ func runOATHScan(cmd *cobra.Command, args []string) error {
 		if scanIndex >= 0 && scanIndex < len(results) {
 			selectedResult = results[scanIndex]
 		} else {
-			fmt.Printf("\nFound %d QR codes with otpauth:// URIs:\n\n", len(results))
+			fmt.Fprintf(out, "\nFound %d QR codes with otpauth:// URIs:\n\n", len(results))
 			for i, r := range results {
 				// Parse to show friendly info
 				cred, parseErr := oath.ParseURI(r.URI)
 				if parseErr != nil {
-					fmt.Printf("  [%d] (parse error: %v)\n", i, parseErr)
+					fmt.Fprintf(out, "  [%d] (parse error: %v)\n", i, parseErr)
 					continue
 				}
-				fmt.Printf("  [%d] %s", i, cred.Name)
+				fmt.Fprintf(out, "  [%d] %s", i, cred.Name)
 				if cred.Issuer != "" {
-					fmt.Printf(" (%s)", cred.Issuer)
+					fmt.Fprintf(out, " (%s)", cred.Issuer)
 				}
-				fmt.Printf(" - %s %d-digit\n", strings.ToUpper(cred.Type), cred.Digits)
+				fmt.Fprintf(out, " - %s %d-digit\n", strings.ToUpper(cred.Type), cred.Digits)
 			}
-			fmt.Println()
-			fmt.Println("Use --index <N> to select which one to add.")
+			fmt.Fprintln(out)
+			fmt.Fprintln(out, "Use --index <N> to select which one to add.")
 			return ErrOATHMultipleQRFound
 		}
 	} else {
@@ -559,30 +564,30 @@ func runOATHScan(cmd *cobra.Command, args []string) error {
 	}
 
 	// Show what we found
-	fmt.Printf("\nFound credential:\n")
-	fmt.Printf("  Name:      %s\n", cred.Name)
+	fmt.Fprintf(out, "\nFound credential:\n")
+	fmt.Fprintf(out, "  Name:      %s\n", cred.Name)
 	if cred.Issuer != "" {
-		fmt.Printf("  Issuer:    %s\n", cred.Issuer)
+		fmt.Fprintf(out, "  Issuer:    %s\n", cred.Issuer)
 	}
-	fmt.Printf("  Type:      %s\n", strings.ToUpper(cred.Type))
-	fmt.Printf("  Algorithm: %s\n", cred.Algorithm)
-	fmt.Printf("  Digits:    %d\n", cred.Digits)
+	fmt.Fprintf(out, "  Type:      %s\n", strings.ToUpper(cred.Type))
+	fmt.Fprintf(out, "  Algorithm: %s\n", cred.Algorithm)
+	fmt.Fprintf(out, "  Digits:    %d\n", cred.Digits)
 	if cred.Type == oath.TypeTOTP {
-		fmt.Printf("  Period:    %ds\n", cred.Period)
+		fmt.Fprintf(out, "  Period:    %ds\n", cred.Period)
 	}
-	fmt.Println()
+	fmt.Fprintln(out)
 
 	// Confirm unless --yes was specified
 	if !autoConfirm {
 		reader := bufio.NewReader(os.Stdin)
-		fmt.Print("Add this credential? [Y/n]: ")
+		fmt.Fprint(out, "Add this credential? [Y/n]: ")
 		confirm, err := reader.ReadString('\n')
 		if err != nil {
 			return &WrappedError{Msg: "failed to read input", Err: err}
 		}
 		confirm = strings.TrimSpace(strings.ToLower(confirm))
 		if confirm != "" && confirm != "y" && confirm != "yes" {
-			fmt.Println("Cancelled.")
+			fmt.Fprintln(out, "Cancelled.")
 			return nil
 		}
 	}
@@ -598,7 +603,7 @@ func runOATHScan(cmd *cobra.Command, args []string) error {
 		return &SentinelCauseError{Sentinel: ErrOATHAddFailed, Cause: err}
 	}
 
-	fmt.Printf("Added OATH credential: %s\n", cred.Name)
+	fmt.Fprintf(out, "Added OATH credential: %s\n", cred.Name)
 	return nil
 }
 

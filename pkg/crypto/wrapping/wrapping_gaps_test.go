@@ -109,7 +109,7 @@ func TestUnwrapRSAAES_CorruptedMaterial(t *testing.T) {
 }
 
 // TestAESKWP_SpecialCaseErrors exercises the single-block AIV/MLI validation
-// branches of unwrapKeyWithAESKWP.
+// branches of UnwrapAESKWP.
 func TestAESKWP_SpecialCaseErrors(t *testing.T) {
 	key := make([]byte, 32)
 	_, err := rand.Read(key)
@@ -123,7 +123,7 @@ func TestAESKWP_SpecialCaseErrors(t *testing.T) {
 		require.NoError(t, err)
 		out := make([]byte, 16)
 		block.Encrypt(out, in)
-		_, err = unwrapKeyWithAESKWP(out, key)
+		_, err = UnwrapAESKWP(out, key)
 		require.Error(t, err)
 		var mErr *MalformedWrappedKeyError
 		assert.True(t, errors.As(err, &mErr), "expected MalformedWrappedKeyError, got %v", err)
@@ -137,7 +137,7 @@ func TestAESKWP_SpecialCaseErrors(t *testing.T) {
 		require.NoError(t, err)
 		out := make([]byte, 16)
 		block.Encrypt(out, in)
-		_, err = unwrapKeyWithAESKWP(out, key)
+		_, err = UnwrapAESKWP(out, key)
 		require.Error(t, err)
 		var mErr *MalformedWrappedKeyError
 		assert.True(t, errors.As(err, &mErr), "expected MalformedWrappedKeyError, got %v", err)

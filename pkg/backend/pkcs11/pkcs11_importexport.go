@@ -16,11 +16,14 @@
 package pkcs11
 
 import (
+	"bytes"
 	"context"
 	"crypto"
 	"crypto/rsa"
 	"crypto/x509"
+	"encoding/binary"
 	"encoding/json"
+	"errors"
 	"fmt"
 
 	"github.com/jeremyhahn/go-xkms/pkg/errs"
@@ -29,6 +32,7 @@ import (
 	"github.com/jeremyhahn/go-xkms/pkg/crypto/wrapping"
 	"github.com/jeremyhahn/go-xkms/pkg/storage"
 	"github.com/jeremyhahn/go-xkms/pkg/types"
+	secure "github.com/jeremyhahn/go-xkms/sdk/go/secure"
 	"github.com/miekg/pkcs11"
 )
 
@@ -43,6 +47,31 @@ const (
 	// wrappingKeySize is the size of the RSA wrapping key in bits
 	wrappingKeySize = 4096
 )
+
+// ErrImportedKeyUnaddressable is returned when C_UnwrapKey created a key object
+// but the token would not give it the CKA_LABEL and CKA_ID the backend
+// addresses keys by. Such an object can never be found again, so ImportKey
+// destroys it and reports this rather than claiming success.
+var ErrImportedKeyUnaddressable = errors.New("pkcs11: imported key could not be labelled with its CKA_LABEL/CKA_ID")
+
+// ErrImportTokenMismatch is returned when the import token carried by the
+// wrapped material does not name this backend's own wrapping key. The token
+// selects the private key that C_UnwrapKey — and, on the hybrid path,
+// C_Decrypt — runs under, and GetImportParameters only ever issues
+// wrappingKeyLabel, so any other value is refused rather than honoured.
+var ErrImportTokenMismatch = errors.New("pkcs11: import token does not name the backend wrapping key")
+
+// ErrImportRollbackFailed is returned when a stage of ImportKey after
+// C_UnwrapKey failed and the key object the unwrap created could not be
+// destroyed, leaving key material on the token that the backend does not
+// track.
+var ErrImportRollbackFailed = errors.New("pkcs11: imported key could not be rolled back after a failed import")
+
+// ErrEphemeralKEKNotDestroyed is returned when the temporary key-encryption
+// key that the hybrid import installs on the token could not be destroyed. The
+// object is session-only, so the session teardown still bounds its lifetime,
+// but the import is failed rather than reported as clean.
+var ErrEphemeralKEKNotDestroyed = errors.New("pkcs11: ephemeral key-encryption key could not be destroyed")
 
 // GetImportParameters retrieves the parameters needed to import a key into the PKCS#11 HSM.
 // This method finds or creates a wrapping key in the HSM and returns its public key.
@@ -179,15 +208,29 @@ func (b *Backend) UnwrapKey(ctx context.Context, wrapped *backend.WrappedKeyMate
 // The imported key is marked as:
 //   - CKA_TOKEN: true (stored permanently in the token)
 //   - CKA_PRIVATE: true (requires authentication to access - for private keys)
-//   - CKA_SENSITIVE: true (cannot be extracted in plaintext - for private keys)
-//   - CKA_EXTRACTABLE: false (can only be exported in wrapped form - for private keys)
+//   - CKA_SENSITIVE: true (the value is never revealed in plaintext)
+//   - CKA_EXTRACTABLE: attrs.Exportable (false seals the key in the token for
+//     good; true still only permits export in wrapped form, through ExportKey)
+//
+// The key is addressed by createKeyID(attrs) in both CKA_LABEL and CKA_ID, the
+// identifier every other operation on this backend uses.
+//
+// wrapped.ImportToken must name this backend's own wrapping key; anything else
+// is refused with ErrImportTokenMismatch rather than used as an unwrapping
+// key. See the check itself for why.
+//
+// The call is all-or-nothing. If any stage after C_UnwrapKey fails — the
+// token refusing the key's identity, metadata that will not marshal, a
+// storage backend that will not accept it — the key object is destroyed
+// before the error is returned, so a failed ImportKey never leaves key
+// material on the token that the backend cannot address or account for.
 //
 // HSM Compatibility Note:
 // While the PKCS#11 2.40 specification supports C_UnwrapKey with CKM_RSA_PKCS_OAEP for secret keys,
 // some HSM implementations (including SoftHSM2) may return CKR_ARGUMENTS_BAD when attempting this
 // operation. This is a known limitation of certain HSM implementations. Production hardware HSMs
 // with complete PKCS#11 2.40 support should work correctly.
-func (b *Backend) ImportKey(ctx context.Context, attrs *types.KeyAttributes, wrapped *backend.WrappedKeyMaterial) error {
+func (b *Backend) ImportKey(ctx context.Context, attrs *types.KeyAttributes, wrapped *backend.WrappedKeyMaterial) (err error) {
 	b.mu.Lock()
 	defer b.mu.Unlock()
 
@@ -201,6 +244,25 @@ func (b *Backend) ImportKey(ctx context.Context, attrs *types.KeyAttributes, wra
 
 	if wrapped == nil {
 		return &errs.Detail{Err: backend.ErrInvalidAttributes, Detail: "wrapped key material cannot be nil"}
+	}
+
+	// The import token names the private key that C_UnwrapKey — and, on the
+	// hybrid path, C_Decrypt — is run under, and it reaches this method
+	// straight from the caller: the REST and gRPC handlers copy
+	// ImportKeyRequest.ImportToken through untouched. GetImportParameters
+	// only ever issues this backend's own wrapping key label, so any other
+	// value is a request to press some other private key on the token into
+	// service as an unwrapping and decryption key. Honouring it would turn
+	// every CKA_DECRYPT private key on the token — including the RSA keys
+	// this backend itself imports — into an RSA-OAEP decryption oracle for
+	// attacker-chosen ciphertext, with success and failure distinguishable
+	// from which stage of the import reported the error. Pin it to the one
+	// key this ceremony is defined over.
+	//
+	// The supplied token is deliberately not echoed into the error: it is
+	// caller-controlled and would otherwise reach the logs verbatim.
+	if !bytes.Equal(wrapped.ImportToken, []byte(wrappingKeyLabel)) {
+		return &errs.Detail{Err: ErrImportTokenMismatch, Detail: wrappingKeyLabel}
 	}
 
 	// Initialize low-level PKCS#11 context if not already done
@@ -250,36 +312,31 @@ func (b *Backend) ImportKey(ctx context.Context, attrs *types.KeyAttributes, wra
 		defer b.p11ctx.Logout(session)
 	}
 
-	// Find the wrapping key (private key handle)
-	wrappingKeyID := wrapped.ImportToken // This is the wrapping key label
+	// Find the wrapping key (private key handle). The label is the package
+	// constant, never wrapped.ImportToken, which was only checked for equality
+	// against it above.
+	wrappingKeyID := []byte(wrappingKeyLabel)
 	wrappingKeyTemplate := []*pkcs11.Attribute{
 		pkcs11.NewAttribute(pkcs11.CKA_CLASS, pkcs11.CKO_PRIVATE_KEY),
 		pkcs11.NewAttribute(pkcs11.CKA_LABEL, wrappingKeyID),
 	}
 
-	if err := b.p11ctx.FindObjectsInit(session, wrappingKeyTemplate); err != nil {
-		return &errs.Wrapped{Msg: "failed to init wrapping key search", Err: err}
-	}
-
-	wrappingKeyHandles, _, err := b.p11ctx.FindObjects(session, 1)
+	wrappingKeyHandle, err := b.findOneObject(session, wrappingKeyTemplate)
 	if err != nil {
-		b.p11ctx.FindObjectsFinal(session)
-		return &errs.Wrapped{Msg: "failed to find wrapping key", Err: err}
+		return err
 	}
 
-	if err := b.p11ctx.FindObjectsFinal(session); err != nil {
-		return &errs.Wrapped{Msg: "failed to finalize wrapping key search", Err: err}
-	}
-
-	if len(wrappingKeyHandles) == 0 {
+	if wrappingKeyHandle == 0 {
 		return &errs.Detail{Err: backend.ErrKeyNotFound, Detail: "wrapping key not found in HSM"}
 	}
 
-	wrappingKeyHandle := wrappingKeyHandles[0]
-
-	// Create key ID and label
+	// Create key ID and label. Every other object this backend creates or looks
+	// up — generated key pairs, generated secret keys, the symmetric
+	// encrypter/decrypter, ExportKeyMaterial — addresses a key by
+	// createKeyID(attrs) in both CKA_LABEL and CKA_ID, so an imported key must
+	// use the same identifier or it is unreachable through the rest of the API.
 	keyID := []byte(createKeyID(attrs))
-	keyLabel := []byte(attrs.CN)
+	keyLabel := keyID
 
 	// Build the key template based on key type
 	keyTemplate, err := b.buildImportKeyTemplate(attrs, keyID, keyLabel)
@@ -287,7 +344,40 @@ func (b *Backend) ImportKey(ctx context.Context, attrs *types.KeyAttributes, wra
 		return &errs.Wrapped{Msg: "failed to build key template", Err: err}
 	}
 
+	// Every stage from C_UnwrapKey onwards can still fail, and a failure that
+	// leaves the unwrapped key on the token is worse than no import at all:
+	// the object is unreachable through the metadata index the rest of the
+	// backend consults, and a retry would put a second object under the same
+	// CKA_ID for later lookups to choose between. PKCS#11 3.2 §5.1 requires a
+	// function call to accomplish "either its entire goal, or nothing at all",
+	// so the key is rolled back on every failing path — and, because the
+	// rollback is deferred, on a panic as well. It is armed the moment a
+	// handle exists and disarmed only once the import is complete.
+	//
+	// Defers run LIFO, so this rollback runs before the session logout and
+	// close registered above it, while the session is still usable.
 	var keyHandle pkcs11.ObjectHandle
+	committed := false
+
+	defer func() {
+		if committed || keyHandle == 0 {
+			return
+		}
+
+		destroyErr := b.p11ctx.DestroyObject(session, keyHandle)
+		if destroyErr == nil {
+			return
+		}
+
+		// Report the rollback failure without discarding whatever failed
+		// first: an orphaned key object on the token is an operator-visible
+		// event, but it is not the root cause.
+		if err == nil {
+			err = &errs.Joined{Lead: ErrImportRollbackFailed, Cause: destroyErr}
+			return
+		}
+		err = &errs.Joined{Lead: err, Detail: ErrImportRollbackFailed.Error(), Cause: destroyErr}
+	}()
 
 	// Determine the unwrapping mechanism based on the wrapping algorithm
 	switch wrapped.Algorithm {
@@ -330,18 +420,15 @@ func (b *Backend) ImportKey(ctx context.Context, attrs *types.KeyAttributes, wra
 		return &errs.Detail{Err: backend.ErrInvalidAlgorithm, Detail: fmt.Sprintf("%s", wrapped.Algorithm)}
 	}
 
-	// Set label and ID attributes after unwrap (not allowed during C_UnwrapKey on SoftHSM2)
-	// These attributes are needed to find the key later
-	setAttrs := []*pkcs11.Attribute{
-		pkcs11.NewAttribute(pkcs11.CKA_LABEL, keyLabel),
-		pkcs11.NewAttribute(pkcs11.CKA_ID, keyID),
-	}
-
-	// Try to set label and ID - log warning if it fails but don't fail the import
-	// SetAttributeValue may not be supported for all key types on all HSMs
-	if err := b.p11ctx.SetAttributeValue(session, keyHandle, setAttrs); err != nil {
-		// Log warning - the key was imported successfully even if we can't set the label/ID
-		fmt.Printf("warning: failed to set label/ID attributes on imported key (key was imported successfully): %v\n", err)
+	// CKA_LABEL and CKA_ID are part of the C_UnwrapKey template, so a token that
+	// honoured the template has already applied them. Confirm it: a key the
+	// backend cannot address afterwards is an orphaned token object, and
+	// PKCS#11 3.2 §5.1 requires a function call to accomplish "either its
+	// entire goal, or nothing at all". Destroy the object and fail rather than
+	// leave unreachable key material behind. The deferred rollback above
+	// performs the destroy.
+	if identityErr := b.verifyImportedKeyIdentity(session, keyHandle, keyID, keyLabel); identityErr != nil {
+		return identityErr
 	}
 
 	// Store metadata about the imported key
@@ -354,15 +441,49 @@ func (b *Backend) ImportKey(ctx context.Context, attrs *types.KeyAttributes, wra
 		"imported":      true,
 	}
 
-	metadataBytes, err := json.Marshal(metadata)
-	if err != nil {
-		return &errs.Wrapped{Msg: "failed to marshal metadata", Err: err}
+	metadataBytes, marshalErr := json.Marshal(metadata)
+	if marshalErr != nil {
+		return &errs.Wrapped{Msg: "failed to marshal metadata", Err: marshalErr}
 	}
 
 	if b.config.KeyStorage != nil {
-		if err := storage.SaveKey(ctx, b.config.KeyStorage, attrs.ID(), metadataBytes); err != nil {
-			return &errs.Wrapped{Msg: "failed to save metadata", Err: err}
+		if saveErr := storage.SaveKey(ctx, b.config.KeyStorage, attrs.ID(), metadataBytes); saveErr != nil {
+			return &errs.Wrapped{Msg: "failed to save metadata", Err: saveErr}
 		}
+	}
+
+	// The key is on the token and the backend can find it again. Disarm the
+	// rollback; from here the import is the caller's to undo with DeleteKey.
+	committed = true
+
+	return nil
+}
+
+// verifyImportedKeyIdentity confirms that the freshly unwrapped object carries
+// the CKA_LABEL and CKA_ID the backend addresses it by, repairing them with
+// C_SetAttributeValue if the token dropped them from the C_UnwrapKey template.
+//
+// Both attributes are modifiable after object creation (PKCS#11 3.2 §4.9 marks
+// CKA_LABEL and CKA_ID footnote 8, "may be modified after object is created"),
+// so a token that refuses them in an unwrap template can still be corrected
+// here. If it cannot, the caller destroys the object.
+func (b *Backend) verifyImportedKeyIdentity(session pkcs11.SessionHandle, keyHandle pkcs11.ObjectHandle, keyID, keyLabel []byte) error {
+	identity := []*pkcs11.Attribute{
+		pkcs11.NewAttribute(pkcs11.CKA_LABEL, keyLabel),
+		pkcs11.NewAttribute(pkcs11.CKA_ID, keyID),
+	}
+
+	current, err := b.p11ctx.GetAttributeValue(session, keyHandle, []*pkcs11.Attribute{
+		pkcs11.NewAttribute(pkcs11.CKA_LABEL, nil),
+		pkcs11.NewAttribute(pkcs11.CKA_ID, nil),
+	})
+	if err == nil && len(current) == 2 &&
+		bytes.Equal(current[0].Value, keyLabel) && bytes.Equal(current[1].Value, keyID) {
+		return nil
+	}
+
+	if err := b.p11ctx.SetAttributeValue(session, keyHandle, identity); err != nil {
+		return &errs.Joined{Lead: ErrImportedKeyUnaddressable, Cause: err}
 	}
 
 	return nil
@@ -372,27 +493,41 @@ func (b *Backend) ImportKey(ctx context.Context, attrs *types.KeyAttributes, wra
 // SoftHSM2 Compatibility Workaround:
 //  1. Parse the wrapped key material to extract wrapped AES key and wrapped target key
 //  2. Use C_Decrypt with CKM_RSA_PKCS_OAEP to decrypt the AES key (workaround for SoftHSM2)
-//  3. Use C_CreateObject to import the decrypted AES key as a temporary session object
-//  4. Use C_UnwrapKey with CKM_AES_KEY_WRAP_PAD to unwrap the target key using the AES key
-//  5. Destroy the temporary AES key
+//  3. Hand the plaintext key-encryption key to unwrapWithEphemeralKEK, which
+//     installs it, unwraps the target key under it, destroys the temporary
+//     token object and wipes the host-side plaintext
+//
+// Step 2 is the only stage of the whole ceremony in which plaintext key
+// material exists outside the token. It is deliberately a single expression
+// wide: the decrypt is immediately followed by the call that takes ownership
+// of the result, so there is no statement in between that could return early
+// and strand the plaintext for the garbage collector.
+//
+// Note that this detour exists only because SoftHSM2 rejects C_UnwrapKey with
+// CKM_RSA_PKCS_OAEP for secret keys. A token that implements that call would
+// keep the key-encryption key inside the hardware boundary from end to end,
+// and would never need step 2 at all.
 func (b *Backend) importKeyHybrid(session pkcs11.SessionHandle, attrs *types.KeyAttributes, wrapped *backend.WrappedKeyMaterial, wrappingKeyHandle pkcs11.ObjectHandle, keyID, keyLabel []byte, keyTemplate []*pkcs11.Attribute) (pkcs11.ObjectHandle, error) {
 	// Parse the hybrid wrapped format: [4-byte length][wrapped AES key][wrapped key material]
 	if len(wrapped.WrappedKey) < 4 {
 		return 0, &errs.Message{Msg: "wrapped key too short for hybrid format"}
 	}
 
-	// Extract wrapped AES key length
-	wrappedAESKeyLen := uint32(wrapped.WrappedKey[0])<<24 | uint32(wrapped.WrappedKey[1])<<16 | uint32(wrapped.WrappedKey[2])<<8 | uint32(wrapped.WrappedKey[3])
+	// Extract the wrapped AES key length. The arithmetic is deliberately done
+	// in uint64: the length is attacker-controlled, and computing 4+length in
+	// uint32 wraps for any prefix above 0xFFFFFFFB, which turns the bounds
+	// check below into a no-op and makes the slice expression panic.
+	wrappedAESKeyLen := uint64(binary.BigEndian.Uint32(wrapped.WrappedKey[:4]))
 
-	if len(wrapped.WrappedKey) < int(4+wrappedAESKeyLen) {
+	if wrappedAESKeyLen == 0 || uint64(len(wrapped.WrappedKey)) < 4+wrappedAESKeyLen {
 		return 0, &errs.Message{Msg: "wrapped key corrupted: insufficient data"}
 	}
 
 	wrappedAESKey := wrapped.WrappedKey[4 : 4+wrappedAESKeyLen]
 	wrappedTargetKey := wrapped.WrappedKey[4+wrappedAESKeyLen:]
 
-	// Step 1: Unwrap the AES key using RSA-OAEP with SHA-256
-	// Must match the hash used in wrapping.WrapRSAAES
+	// Step 1: recover the AES key-encryption key with RSA-OAEP. The hash must
+	// match the one wrapping.WrapRSAAES used.
 	var hashMech, mgfMech uint
 	switch wrapped.Algorithm {
 	case backend.WrappingAlgorithmRSA_AES_KEY_WRAP_SHA_256:
@@ -424,85 +559,175 @@ func (b *Backend) importKeyHybrid(session pkcs11.SessionHandle, attrs *types.Key
 		return 0, &errs.Wrapped{Msg: "failed to decrypt AES key", Err: err}
 	}
 
-	// Create the AES key as a session object
-	aesKeyTemplate := []*pkcs11.Attribute{
-		pkcs11.NewAttribute(pkcs11.CKA_CLASS, pkcs11.CKO_SECRET_KEY),
-		pkcs11.NewAttribute(pkcs11.CKA_KEY_TYPE, pkcs11.CKK_AES),
-		pkcs11.NewAttribute(pkcs11.CKA_TOKEN, false), // Temporary key
-		pkcs11.NewAttribute(pkcs11.CKA_UNWRAP, true),
-		pkcs11.NewAttribute(pkcs11.CKA_VALUE, aesKeyBytes),
+	// Step 2: hand the plaintext key-encryption key straight to the stage that
+	// consumes and erases it. Nothing between the decrypt above and this call
+	// may fail, so the KEK cannot escape down an error path.
+	return b.unwrapWithEphemeralKEK(session, aesKeyBytes, wrappedTargetKey, keyTemplate)
+}
+
+// unwrapWithEphemeralKEK completes the second stage of a hybrid import. It
+// installs kek as a session-only AES key on the token, unwraps the target key
+// under it with CKM_AES_KEY_WRAP_PAD, and destroys the temporary object before
+// returning.
+//
+// This function takes ownership of kek and wipes it on every path — success,
+// error and panic alike. kek is the one point in the whole ceremony where a
+// plaintext key-encryption key exists in host memory rather than inside the
+// token, so the caller must not use kek after this call and must not retain
+// another reference to it.
+//
+// What the wipe does and does not buy: zeroization in a garbage-collected
+// runtime narrows the exposure window, it does not guarantee erasure. The Go
+// runtime may already have copied the backing array while growing or moving
+// the heap, and this function can only reach the array it was handed; the
+// copies it cannot see stay readable until they are collected and reused.
+// Wiping still removes the copy that would otherwise survive for an unbounded
+// time after the import — the copy most likely to be paged to swap or written
+// into a core dump — so it is a real reduction in exposure, not a proof of
+// absence. secure.Wipe is used rather than a hand-written loop because it is
+// the wipe the rest of go-xkms uses (pkg/crypto/wrapping, the other half of
+// this ceremony, wipes through the same package) and because it is written to
+// resist being optimized away.
+func (b *Backend) unwrapWithEphemeralKEK(session pkcs11.SessionHandle, kek, wrappedTargetKey []byte, keyTemplate []*pkcs11.Attribute) (handle pkcs11.ObjectHandle, err error) {
+	defer secure.Wipe(kek)
+
+	kekHandle, createErr := b.p11ctx.CreateObject(session, ephemeralKEKTemplate(kek))
+	if createErr != nil {
+		return 0, &errs.Wrapped{Msg: "failed to create AES key object", Err: createErr}
 	}
 
-	aesKeyHandle, err := b.p11ctx.CreateObject(session, aesKeyTemplate)
-	if err != nil {
-		return 0, &errs.Wrapped{Msg: "failed to create AES key object", Err: err}
-	}
+	// Deferred so the KEK object is destroyed on the unwrap's error paths and
+	// on a panic, not only on success. A destroy that fails is reported rather
+	// than swallowed: the caller's rollback then removes the target key too,
+	// so the import still resolves to all or nothing.
+	defer func() {
+		destroyErr := b.p11ctx.DestroyObject(session, kekHandle)
+		if destroyErr == nil {
+			return
+		}
+		if err != nil {
+			err = &errs.Joined{Lead: err, Detail: ErrEphemeralKEKNotDestroyed.Error(), Cause: destroyErr}
+			return
+		}
+		err = &errs.Joined{Lead: ErrEphemeralKEKNotDestroyed, Cause: destroyErr}
+	}()
 
-	// Ensure we destroy the temporary AES key when done
-	defer b.p11ctx.DestroyObject(session, aesKeyHandle)
-
-	// Step 2: Unwrap the target key using the AES key with AES-KWP
 	targetUnwrapMech := pkcs11.NewMechanism(pkcs11.CKM_AES_KEY_WRAP_PAD, nil)
 
-	targetKeyHandle, err := b.p11ctx.UnwrapKey(session, []*pkcs11.Mechanism{targetUnwrapMech}, aesKeyHandle, wrappedTargetKey, keyTemplate)
-	if err != nil {
-		return 0, &errs.Wrapped{Msg: "failed to unwrap target key with AES-KWP", Err: err}
+	targetKeyHandle, unwrapErr := b.p11ctx.UnwrapKey(session, []*pkcs11.Mechanism{targetUnwrapMech}, kekHandle, wrappedTargetKey, keyTemplate)
+	if unwrapErr != nil {
+		return 0, &errs.Wrapped{Msg: "failed to unwrap target key with AES-KWP", Err: unwrapErr}
 	}
 
 	return targetKeyHandle, nil
 }
 
-// buildImportKeyTemplate builds the PKCS#11 attribute template for importing a key.
-func (b *Backend) buildImportKeyTemplate(attrs *types.KeyAttributes, keyID, keyLabel []byte) ([]*pkcs11.Attribute, error) {
-	var template []*pkcs11.Attribute
+// ephemeralKEKTemplate builds the object template for the temporary AES
+// key-encryption key that a hybrid import installs on the token.
+//
+// Every protection attribute is written explicitly rather than left to the
+// token's defaults. PKCS#11 3.2 §4.9 gives a secret key created by
+// C_CreateObject CKA_SENSITIVE CK_FALSE and CKA_EXTRACTABLE CK_TRUE by
+// default, which would leave the key-encryption key — the value that protects
+// the key material being imported — readable in plaintext through
+// C_GetAttributeValue for as long as the object lives. The two attributes are
+// one-way on a created object, so setting them here is the only chance to set
+// them at all.
+//
+// CKA_TOKEN is false so the object is session-only and cannot survive the
+// session even if C_DestroyObject fails, and CKA_UNWRAP is the sole usage the
+// object is granted: it exists to run one CKM_AES_KEY_WRAP_PAD unwrap and
+// nothing else.
+func ephemeralKEKTemplate(kek []byte) []*pkcs11.Attribute {
+	return []*pkcs11.Attribute{
+		pkcs11.NewAttribute(pkcs11.CKA_CLASS, pkcs11.CKO_SECRET_KEY),
+		pkcs11.NewAttribute(pkcs11.CKA_KEY_TYPE, pkcs11.CKK_AES),
+		pkcs11.NewAttribute(pkcs11.CKA_TOKEN, false),
+		pkcs11.NewAttribute(pkcs11.CKA_PRIVATE, true),
+		pkcs11.NewAttribute(pkcs11.CKA_SENSITIVE, true),
+		pkcs11.NewAttribute(pkcs11.CKA_EXTRACTABLE, false),
+		pkcs11.NewAttribute(pkcs11.CKA_UNWRAP, true),
+		pkcs11.NewAttribute(pkcs11.CKA_VALUE, kek),
+	}
+}
 
-	// Add key-type-specific attributes
+// keyObjectClass reports the PKCS#11 object class that holds the key described
+// by attrs: CKO_PRIVATE_KEY for an asymmetric algorithm, CKO_SECRET_KEY for a
+// symmetric one. It returns backend.ErrInvalidAlgorithm for anything the
+// import/export ceremony cannot represent.
+//
+// Import and export must agree on the class, otherwise C_FindObjectsInit for an
+// export would match a sibling object (an RSA key pair stores its public and
+// private halves under the same CKA_ID) and the export would read attributes
+// off the wrong object.
+func keyObjectClass(attrs *types.KeyAttributes) (uint, error) {
 	switch attrs.KeyAlgorithm {
-	case x509.RSA:
-		template = []*pkcs11.Attribute{
-			pkcs11.NewAttribute(pkcs11.CKA_CLASS, pkcs11.CKO_PRIVATE_KEY),
-			pkcs11.NewAttribute(pkcs11.CKA_KEY_TYPE, pkcs11.CKK_RSA),
-			pkcs11.NewAttribute(pkcs11.CKA_TOKEN, true),
-			pkcs11.NewAttribute(pkcs11.CKA_PRIVATE, true),
-			pkcs11.NewAttribute(pkcs11.CKA_SENSITIVE, true),
-			pkcs11.NewAttribute(pkcs11.CKA_EXTRACTABLE, false),
-			pkcs11.NewAttribute(pkcs11.CKA_LABEL, keyLabel),
-			pkcs11.NewAttribute(pkcs11.CKA_ID, keyID),
-			pkcs11.NewAttribute(pkcs11.CKA_SIGN, true),
-			pkcs11.NewAttribute(pkcs11.CKA_DECRYPT, true),
-		}
-
-	case x509.ECDSA:
-		template = []*pkcs11.Attribute{
-			pkcs11.NewAttribute(pkcs11.CKA_CLASS, pkcs11.CKO_PRIVATE_KEY),
-			pkcs11.NewAttribute(pkcs11.CKA_KEY_TYPE, pkcs11.CKK_ECDSA),
-			pkcs11.NewAttribute(pkcs11.CKA_TOKEN, true),
-			pkcs11.NewAttribute(pkcs11.CKA_PRIVATE, true),
-			pkcs11.NewAttribute(pkcs11.CKA_SENSITIVE, true),
-			pkcs11.NewAttribute(pkcs11.CKA_EXTRACTABLE, false),
-			pkcs11.NewAttribute(pkcs11.CKA_LABEL, keyLabel),
-			pkcs11.NewAttribute(pkcs11.CKA_ID, keyID),
-			pkcs11.NewAttribute(pkcs11.CKA_SIGN, true),
-		}
-
-	default:
-		// Check for symmetric algorithms
-		switch attrs.SymmetricAlgorithm {
-		case types.SymmetricAES128GCM, types.SymmetricAES192GCM, types.SymmetricAES256GCM:
-			// For secret keys being unwrapped, use minimal required attributes
-			// Some HSMs are strict about which attributes can be set during C_UnwrapKey
-			// SoftHSM2 requires minimal attributes: only class, type, and token flag
-			template = []*pkcs11.Attribute{
-				pkcs11.NewAttribute(pkcs11.CKA_CLASS, pkcs11.CKO_SECRET_KEY),
-				pkcs11.NewAttribute(pkcs11.CKA_KEY_TYPE, pkcs11.CKK_AES),
-				pkcs11.NewAttribute(pkcs11.CKA_TOKEN, true),
-			}
-		default:
-			return nil, &errs.Detail{Err: backend.ErrInvalidAlgorithm, Detail: fmt.Sprintf("unsupported key algorithm for import: %v (symmetric: %v)", attrs.KeyAlgorithm, attrs.SymmetricAlgorithm)}
-		}
+	case x509.RSA, x509.ECDSA:
+		return pkcs11.CKO_PRIVATE_KEY, nil
 	}
 
-	return template, nil
+	switch attrs.SymmetricAlgorithm {
+	case types.SymmetricAES128GCM, types.SymmetricAES192GCM, types.SymmetricAES256GCM:
+		return pkcs11.CKO_SECRET_KEY, nil
+	}
+
+	return 0, &errs.Detail{Err: backend.ErrInvalidAlgorithm, Detail: fmt.Sprintf("unsupported key algorithm for import/export: %v (symmetric: %v)", attrs.KeyAlgorithm, attrs.SymmetricAlgorithm)}
+}
+
+// buildImportKeyTemplate builds the PKCS#11 attribute template for the key
+// object that C_UnwrapKey creates.
+//
+// Both protection flags are always written explicitly rather than left to the
+// token. PKCS#11 3.2 §5.18.4 states that a key produced by C_UnwrapKey has
+// "the CKA_EXTRACTABLE attribute ... by default set to CK_TRUE", and the
+// §4.9 Common Secret Key Attributes table gives CKA_SENSITIVE a default of
+// CK_FALSE. Relying on those defaults would make the protection level of an
+// imported key vary from token to token — SoftHSM2 happens to be stricter than
+// the specification requires, so a template that passes there would silently
+// import a plaintext-readable key on a conforming HSM.
+//
+// CKA_EXTRACTABLE carries the caller's attrs.Exportable policy: a key imported
+// without it can never leave the token again, in any form. CKA_SENSITIVE is
+// CK_TRUE unconditionally, so even an exportable key leaves only through
+// C_WrapKey — per the footnote to the §4.9 attribute tables, a key whose
+// CKA_SENSITIVE is CK_TRUE never reveals its value in plaintext.
+func (b *Backend) buildImportKeyTemplate(attrs *types.KeyAttributes, keyID, keyLabel []byte) ([]*pkcs11.Attribute, error) {
+	class, err := keyObjectClass(attrs)
+	if err != nil {
+		return nil, err
+	}
+
+	template := []*pkcs11.Attribute{
+		pkcs11.NewAttribute(pkcs11.CKA_CLASS, class),
+		pkcs11.NewAttribute(pkcs11.CKA_TOKEN, true),
+		pkcs11.NewAttribute(pkcs11.CKA_SENSITIVE, true),
+		pkcs11.NewAttribute(pkcs11.CKA_EXTRACTABLE, attrs.Exportable),
+		pkcs11.NewAttribute(pkcs11.CKA_LABEL, keyLabel),
+		pkcs11.NewAttribute(pkcs11.CKA_ID, keyID),
+	}
+
+	switch attrs.KeyAlgorithm {
+	case x509.RSA:
+		return append(template,
+			pkcs11.NewAttribute(pkcs11.CKA_KEY_TYPE, pkcs11.CKK_RSA),
+			pkcs11.NewAttribute(pkcs11.CKA_PRIVATE, true),
+			pkcs11.NewAttribute(pkcs11.CKA_SIGN, true),
+			pkcs11.NewAttribute(pkcs11.CKA_DECRYPT, true),
+		), nil
+
+	case x509.ECDSA:
+		return append(template,
+			pkcs11.NewAttribute(pkcs11.CKA_KEY_TYPE, pkcs11.CKK_ECDSA),
+			pkcs11.NewAttribute(pkcs11.CKA_PRIVATE, true),
+			pkcs11.NewAttribute(pkcs11.CKA_SIGN, true),
+		), nil
+	}
+
+	return append(template,
+		pkcs11.NewAttribute(pkcs11.CKA_KEY_TYPE, pkcs11.CKK_AES),
+		pkcs11.NewAttribute(pkcs11.CKA_ENCRYPT, true),
+		pkcs11.NewAttribute(pkcs11.CKA_DECRYPT, true),
+	), nil
 }
 
 // ExportKey exports a key in wrapped form for secure transport.
@@ -584,28 +809,29 @@ func (b *Backend) ExportKey(ctx context.Context, attrs *types.KeyAttributes, alg
 		defer b.p11ctx.Logout(session)
 	}
 
-	// Find the key to export
+	// Find the key to export. The class is part of the template because an RSA
+	// or ECDSA key pair stores both halves under the same CKA_ID, and only the
+	// private half is the export target.
+	keyClass, err := keyObjectClass(attrs)
+	if err != nil {
+		return nil, err
+	}
+
 	keyID := []byte(createKeyID(attrs))
 	keyTemplate := []*pkcs11.Attribute{
-		pkcs11.NewAttribute(pkcs11.CKA_LABEL, []byte(attrs.CN)),
+		pkcs11.NewAttribute(pkcs11.CKA_CLASS, keyClass),
+		pkcs11.NewAttribute(pkcs11.CKA_LABEL, keyID),
 		pkcs11.NewAttribute(pkcs11.CKA_ID, keyID),
 	}
 
-	if err := b.p11ctx.FindObjectsInit(session, keyTemplate); err != nil {
-		return nil, &errs.Wrapped{Msg: "failed to init key search", Err: err}
-	}
-	defer b.p11ctx.FindObjectsFinal(session)
-
-	keyHandles, _, err := b.p11ctx.FindObjects(session, 1)
+	keyHandle, err := b.findOneObject(session, keyTemplate)
 	if err != nil {
-		return nil, &errs.Wrapped{Msg: "failed to find key", Err: err}
+		return nil, err
 	}
 
-	if len(keyHandles) == 0 {
+	if keyHandle == 0 {
 		return nil, &errs.Detail{Err: backend.ErrKeyNotFound, Detail: fmt.Sprintf("%s", attrs.CN)}
 	}
-
-	keyHandle := keyHandles[0]
 
 	// Check if key is extractable (CKA_EXTRACTABLE attribute in HSM)
 	// This provides defense-in-depth: we check attrs.Exportable above (policy),
@@ -626,32 +852,38 @@ func (b *Backend) ExportKey(ctx context.Context, attrs *types.KeyAttributes, alg
 		return nil, backend.ErrKeyNotExportable
 	}
 
-	// Find the wrapping key
+	// Find the wrapping key. This is a second C_FindObjectsInit on the same
+	// session; PKCS#11 3.2 §5.7.7 allows "at most one search operation ...
+	// active at a given time in a given session", so findOneObject finalizes
+	// the previous search before this one starts.
 	wrappingKeyID := []byte(wrappingKeyLabel)
 	wrappingKeyTemplate := []*pkcs11.Attribute{
 		pkcs11.NewAttribute(pkcs11.CKA_CLASS, pkcs11.CKO_PUBLIC_KEY),
 		pkcs11.NewAttribute(pkcs11.CKA_LABEL, wrappingKeyID),
 	}
 
-	if err := b.p11ctx.FindObjectsInit(session, wrappingKeyTemplate); err != nil {
-		return nil, &errs.Wrapped{Msg: "failed to init wrapping key search", Err: err}
-	}
-	defer b.p11ctx.FindObjectsFinal(session)
-
-	wrappingKeyHandles, _, err := b.p11ctx.FindObjects(session, 1)
+	wrappingKeyHandle, err := b.findOneObject(session, wrappingKeyTemplate)
 	if err != nil {
-		return nil, &errs.Wrapped{Msg: "failed to find wrapping key", Err: err}
+		return nil, err
 	}
 
-	if len(wrappingKeyHandles) == 0 {
+	if wrappingKeyHandle == 0 {
 		return nil, &errs.Detail{Err: backend.ErrKeyNotFound, Detail: "wrapping key not found in HSM"}
 	}
 
-	wrappingKeyHandle := wrappingKeyHandles[0]
-
-	// Determine the wrapping mechanism
+	// Determine the wrapping mechanism. The hashes offered here mirror the
+	// direct-OAEP branch of ImportKey so that a key exported from one token can
+	// be imported into another without renegotiating the algorithm.
 	var wrapMechanism *pkcs11.Mechanism
 	switch algorithm {
+	case backend.WrappingAlgorithmRSAES_OAEP_SHA_1:
+		wrapMechanism = pkcs11.NewMechanism(pkcs11.CKM_RSA_PKCS_OAEP, pkcs11.NewOAEPParams(
+			pkcs11.CKM_SHA_1,
+			pkcs11.CKG_MGF1_SHA1,
+			pkcs11.CKZ_DATA_SPECIFIED,
+			[]byte{}, // Empty label, matching wrapping.WrapRSAOAEP.
+		))
+
 	case backend.WrappingAlgorithmRSAES_OAEP_SHA_256:
 		wrapMechanism = pkcs11.NewMechanism(pkcs11.CKM_RSA_PKCS_OAEP, pkcs11.NewOAEPParams(
 			pkcs11.CKM_SHA256,
@@ -676,6 +908,40 @@ func (b *Backend) ExportKey(ctx context.Context, attrs *types.KeyAttributes, alg
 		ImportToken: wrappingKeyID,
 		Metadata:    make(map[string]string),
 	}, nil
+}
+
+// findOneObject runs a complete C_FindObjectsInit / C_FindObjects /
+// C_FindObjectsFinal cycle and returns the first matching object handle, or
+// CK_INVALID_HANDLE (0) when nothing matches.
+//
+// The search is finalized before this function returns, which is what makes
+// consecutive lookups on one session legal: PKCS#11 3.2 §5.7.7 permits "at
+// most one search operation ... active at a given time in a given session",
+// and a second C_FindObjectsInit while a search is still open fails with
+// CKR_OPERATION_ACTIVE.
+func (b *Backend) findOneObject(session pkcs11.SessionHandle, template []*pkcs11.Attribute) (pkcs11.ObjectHandle, error) {
+	if err := b.p11ctx.FindObjectsInit(session, template); err != nil {
+		return 0, &errs.Wrapped{Msg: "failed to init object search", Err: err}
+	}
+
+	handles, _, findErr := b.p11ctx.FindObjects(session, 1)
+
+	// C_FindObjectsFinal must run even when C_FindObjects failed, otherwise the
+	// session is left with a search operation active and every later search on
+	// it returns CKR_OPERATION_ACTIVE.
+	if err := b.p11ctx.FindObjectsFinal(session); err != nil {
+		return 0, &errs.Wrapped{Msg: "failed to finalize object search", Err: err}
+	}
+
+	if findErr != nil {
+		return 0, &errs.Wrapped{Msg: "failed to find object", Err: findErr}
+	}
+
+	if len(handles) == 0 {
+		return 0, nil
+	}
+
+	return handles[0], nil
 }
 
 // generateWrappingKeyPair generates an RSA key pair with wrap/unwrap/encrypt/decrypt capabilities.
@@ -788,25 +1054,14 @@ func (b *Backend) ExportKeyMaterial(ctx context.Context, attrs *types.KeyAttribu
 		pkcs11.NewAttribute(pkcs11.CKA_LABEL, keyLabel),
 	}
 
-	if err := b.p11ctx.FindObjectsInit(session, template); err != nil {
-		return nil, &errs.Wrapped{Msg: "failed to init key search", Err: err}
-	}
-
-	handles, _, err := b.p11ctx.FindObjects(session, 1)
+	keyHandle, err := b.findOneObject(session, template)
 	if err != nil {
-		b.p11ctx.FindObjectsFinal(session)
-		return nil, &errs.Wrapped{Msg: "failed to find key", Err: err}
+		return nil, err
 	}
 
-	if err := b.p11ctx.FindObjectsFinal(session); err != nil {
-		return nil, &errs.Wrapped{Msg: "failed to finalize key search", Err: err}
-	}
-
-	if len(handles) == 0 {
+	if keyHandle == 0 {
 		return nil, &errs.Detail{Err: backend.ErrKeyNotFound, Detail: fmt.Sprintf("%s", attrs.CN)}
 	}
-
-	keyHandle := handles[0]
 
 	// Check if the key is extractable
 	extractableAttr, err := b.p11ctx.GetAttributeValue(session, keyHandle, []*pkcs11.Attribute{

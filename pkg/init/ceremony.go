@@ -36,7 +36,6 @@ import (
 	"log/slog"
 
 	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
-	"github.com/jeremyhahn/go-xkms/pkg/ca"
 	"github.com/jeremyhahn/go-xkms/pkg/seal"
 )
 
@@ -73,6 +72,18 @@ type InitResult = qrdbsdk.InitResult
 
 // ClaimCertResult contains the result of a successful certificate claim.
 type ClaimCertResult = qrdbsdk.ClaimCertResult
+
+// ShareClaimResult contains the result of a successful Shamir share claim.
+// ShareBytes is released exactly once per officer per distribution round.
+type ShareClaimResult = qrdbsdk.ShareClaimResult
+
+// CertThumbprint returns the canonical officer-claim binding identifier for a
+// DER-encoded certificate: the lowercase hex SHA-256 of the certificate. The
+// ceremony records it per officer at enrollment; transports derive the
+// caller's value from the verified mTLS peer certificate and pass it to
+// BeginClaimShare / CompleteClaimShare. There is exactly one encoding in this
+// stack for this binding and this is it.
+var CertThumbprint = qrdbsdk.CertThumbprint
 
 // SignCSRInitResult contains the result of a successful CSR signing
 // during the init ceremony.
@@ -158,12 +169,14 @@ func validateCeremonyConfig(config *CeremonyConfig) error {
 // Initialize performs the init ceremony. It initializes the barrier with the
 // SO credentials, optionally seals the User PIN via the credential service,
 // and in M-of-N mode splits the barrier master key into Shamir shares and
-// issues certificates for each officer. In single-admin mode, an SO admin
-// certificate is issued and the system transitions directly to operational.
+// issues certificates for each officer. In single-admin mode the system
+// transitions directly to operational. The SO identity is CSR-based; the
+// server never holds officer private keys.
 //
-// The caInstance parameter is go-xkms's TrustedCA, which is adapted to go-qrdb's
-// CeremonyCA interface via CAAdapter.
-func (cs *CeremonyService) Initialize(ctx context.Context, caInstance ca.TrustedCA) (*InitResult, error) {
+// The caInstance parameter is CeremonyCA, the narrow slice of go-xkms's
+// TrustedCA the ceremony needs (any ca.TrustedCA satisfies it); it is
+// adapted to go-qrdb's CeremonyCA interface via CAAdapter.
+func (cs *CeremonyService) Initialize(ctx context.Context, caInstance CeremonyCA) (*InitResult, error) {
 	adapter := NewCAAdapter(caInstance, cs.spiffeTrustDomain)
 	// nil InitializeOptions: this layer carries no per-request PIN override,
 	// so the underlying ceremony service uses its configured SO/User PINs
@@ -171,14 +184,6 @@ func (cs *CeremonyService) Initialize(ctx context.Context, caInstance ca.Trusted
 	result, err := cs.inner.Initialize(ctx, adapter, nil)
 	if err != nil {
 		return nil, mapInitError(err)
-	}
-
-	// In M-of-N mode, the upstream issues an SO certificate during the
-	// common initialization path but M-of-N mode should not expose it.
-	// Clear the SO cert/key fields when in enrolling state.
-	if result != nil && result.State == StateEnrolling {
-		result.SOCertPEM = nil
-		result.SOKeyPEM = nil
 	}
 
 	// Convert SPKI pin from base64 to hex encoding.
@@ -216,11 +221,38 @@ func (cs *CeremonyService) CompleteClaimCert(
 	return result, nil
 }
 
-// ClaimShare retrieves the sealed Shamir share for the named officer, deletes
-// it from sealed storage, and returns the share as JSON. If all shares and
+// BeginClaimShare starts the Shamir share claim handshake for the named
+// officer. callerCertThumbprint is the thumbprint of the mTLS client
+// certificate the caller presented, computed with qrdbsdk.CertThumbprint by
+// the transport from the verified TLS peer chain. It must match the thumbprint
+// recorded for the officer at enrollment or the handshake is refused with
+// ErrCertThumbprintMismatch — a caller who merely knows the username gets
+// nothing. On success a single-use nonce is returned for the officer to sign.
+func (cs *CeremonyService) BeginClaimShare(
+	ctx context.Context,
+	username string,
+	callerCertThumbprint string,
+) (*ChallengeResponse, error) {
+	challenge, err := cs.inner.BeginClaimShare(ctx, username, callerCertThumbprint)
+	if err != nil {
+		return nil, mapClaimShareError(err)
+	}
+	return challenge, nil
+}
+
+// CompleteClaimShare completes the Shamir share claim handshake. It verifies
+// the officer's signature over the challenge nonce AND re-verifies
+// callerCertThumbprint against the enrolled officer record before releasing
+// the sealed share exactly once and destroying its enclave. If all shares and
 // certificates have been claimed, the ceremony transitions to operational.
-func (cs *CeremonyService) ClaimShare(ctx context.Context, username string) ([]byte, error) {
-	result, err := cs.inner.ClaimShare(ctx, username)
+func (cs *CeremonyService) CompleteClaimShare(
+	ctx context.Context,
+	username string,
+	nonceHex string,
+	signature []byte,
+	callerCertThumbprint string,
+) (*ShareClaimResult, error) {
+	result, err := cs.inner.CompleteClaimShare(ctx, username, nonceHex, signature, callerCertThumbprint)
 	if err != nil {
 		return nil, mapClaimShareError(err)
 	}
@@ -373,9 +405,11 @@ func mapClaimCertError(err error) error {
 	return err
 }
 
-// mapClaimShareError maps upstream ClaimShare errors to xkms-layer errors.
+// mapClaimShareError maps upstream share-claim errors to xkms-layer errors.
 // ErrUserNotFound is mapped to ErrShareNotFound since the share lookup
-// failed for the given username.
+// failed for the given username. ErrCertThumbprintMismatch is deliberately
+// passed through unchanged so transports can render it as an authentication
+// failure rather than a not-found.
 func mapClaimShareError(err error) error {
 	if err == nil {
 		return nil
@@ -400,4 +434,64 @@ func mapSPKIPinError(err error) error {
 		return ErrInitFailed
 	}
 	return err
+}
+
+// ---------------------------------------------------------------------------
+// Security Officer enrolment
+//
+// Step 1 of go-qrdb's Security Officer distribution model. go-qrdb owns the
+// registry, the CSR signing, and the thumbprint binding; go-xkms exposes them
+// here so xkmsd and everything composed on top of it offer the SAME officer
+// flow rather than each project reaching past this layer for it.
+//
+// No method here returns share bytes. Registration assigns a share INDEX;
+// splitting happens later at initialization, and each share is released to its
+// officer exactly once through the live claim handshake.
+// ---------------------------------------------------------------------------
+
+// RegisterOfficerRequest carries one officer's enrolment material.
+type RegisterOfficerRequest = qrdbsdk.RegisterOfficerRequest
+
+// RegisterOfficerResult returns the signed certificate and the officer's
+// assigned Shamir share index.
+type RegisterOfficerResult = qrdbsdk.RegisterOfficerResult
+
+// OfficerStatus is a non-secret view of an enrolled officer.
+type OfficerStatus = qrdbsdk.CeremonyOfficerStatus
+
+// AuthenticatorType identifies what backs an officer's signing credential.
+// This is the seam that makes the officer flow hardware-capable: go-xkms
+// supplies the PIV / FIDO2 / PKCS#11 implementations behind it.
+type AuthenticatorType = qrdbsdk.AuthenticatorType
+
+// EnrollExternalOfficerRequest enrols an officer holding externally-issued key
+// material.
+type EnrollExternalOfficerRequest = qrdbsdk.EnrollExternalOfficerRequest
+
+// EnrollExternalOfficerResponse reports the outcome of an external enrolment.
+type EnrollExternalOfficerResponse = qrdbsdk.EnrollExternalOfficerResponse
+
+// RegisterOfficer validates and signs an officer CSR, persists the public
+// enrolment record, and returns the signed certificate and share index.
+func (cs *CeremonyService) RegisterOfficer(
+	ctx context.Context,
+	req RegisterOfficerRequest,
+) (*RegisterOfficerResult, error) {
+	return cs.inner.RegisterOfficer(ctx, req)
+}
+
+// OfficerClaimStatus reports per-officer enrolment and claim state. It never
+// returns share material.
+func (cs *CeremonyService) OfficerClaimStatus(ctx context.Context) ([]*OfficerStatus, error) {
+	return cs.inner.OfficerClaimStatus(ctx)
+}
+
+// EnrollExternalOfficer enrols an officer whose key material was issued
+// elsewhere, validating a supplied certificate against the configured external
+// CA pool.
+func (cs *CeremonyService) EnrollExternalOfficer(
+	ctx context.Context,
+	req EnrollExternalOfficerRequest,
+) (*EnrollExternalOfficerResponse, error) {
+	return cs.inner.EnrollExternalOfficer(ctx, req)
 }

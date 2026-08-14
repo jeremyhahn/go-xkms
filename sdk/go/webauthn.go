@@ -16,6 +16,7 @@ package xkms
 import (
 	webauthn "github.com/jeremyhahn/go-xkms/pkg/webauthn"
 	webauthnhttp "github.com/jeremyhahn/go-xkms/pkg/webauthn/http"
+	pkgxkms "github.com/jeremyhahn/go-xkms/pkg/xkms"
 )
 
 // WebAuthn relying-party re-exports (from pkg/webauthn and
@@ -67,3 +68,12 @@ type WebAuthnHTTPHandler = webauthnhttp.Handler
 
 // NewWebAuthnHTTPHandler constructs the WebAuthn ceremony HTTP handler.
 var NewWebAuthnHTTPHandler = webauthnhttp.NewHandler
+
+// NewWebAuthnFIDO2Servicer wraps a WebAuthnService in the canonical FIDO2
+// transport-servicer adapter — the same ceremony adaptation (options
+// marshaling, attestation/assertion parsing, user resolution) the
+// XKMSService singleton performs. Composers that manage per-tenant
+// relying-party services use it to expose the transport FIDO2 wire shape
+// (BeginRegistration / FinishRegistration / BeginAuthentication /
+// FinishAuthentication) without initializing the singleton.
+var NewWebAuthnFIDO2Servicer = pkgxkms.NewFIDO2Servicer

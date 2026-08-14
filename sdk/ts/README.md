@@ -1,21 +1,70 @@
 # @go-xkms/sdk (TypeScript)
 
-The TypeScript SDK for go-xkms. Its first capability is a framework-agnostic
-**embedded SSH console** client (xterm.js + the go-xkms console WebSocket
-protocol), reusable by any web UI — xkey (Svelte), the future xkms web UI, and
-go-trusted-platform's device view (React).
+The TypeScript SDK for go-xkms: a framework-free **REST client** for the
+entire xkmsd HTTP surface, the **WebAuthn wire bridge** (go-webauthn
+base64url JSON ⇄ browser BufferSource), and — on the separate
+`@go-xkms/sdk/ssh-console` subpath — a framework-agnostic **embedded SSH
+console** client (xterm.js + the go-xkms console WebSocket protocol), reusable
+by any web UI: xkey (Svelte), the xkms web UI, and go-trusted-platform's device
+view (React).
+
+## REST client
+
+```ts
+import { createClient, XkmsApiError } from '@go-xkms/sdk';
+
+const xkms = createClient({
+  baseURL: 'https://xkms.example.com:8443',
+  token: () => sessionStore.accessToken, // resolved per request
+});
+
+const { backends } = await xkms.backends.list();
+const key = await xkms.keys.generate({ key_id: 'web-1', key_type: 'ecdsa' });
+const sig = await xkms.keys.sign('web-1', { backend: 'tpm2', data: b64 });
+
+try {
+  await xkms.tenants.get('missing');
+} catch (err) {
+  if (err instanceof XkmsApiError) console.log(err.status, err.code, err.correlationId);
+}
+```
+
+Domain clients: `health`, `capabilities`, `auth`, `backends`, `keys`, `certs`,
+`seal`, `frost`, `barrier`, `pin`, `piv`, `ca`, `cluster`, `custodian`,
+`shares`, `tenants`, `passwords`, `platform`, `policies`, `init`,
+`credentials`, `users`, `ssh`. Every request/response type mirrors the Go
+DTO json tags exactly; Go `[]byte` members are standard-base64 strings.
+
+### Authentication
+
+- `auth.loginCert()` — POST `/api/v1/auth/login/piv` with
+  `credentials: 'include'` (mTLS certificate exchange) → token pair.
+- `auth.refresh(rt)` / `auth.me()` / `auth.validate()` / `auth.logout(rt)`.
+- WebAuthn ceremonies: `auth.webAuthnRegisterBegin/Finish`,
+  `auth.webAuthnBeginLogin/FinishLogin`, session correlation via the
+  `X-Session-Id` / `X-User-Id` headers, with `parseCreationOptions`,
+  `parseRequestOptions`, `encodeAttestationResponse`,
+  `encodeAssertionResponse` bridging the browser credential API.
 
 ## SSH console
 
+The console is a **client-side** terminal, and it lives on its own subpath so
+that consumers which only use the REST client never pull xterm into their
+bundle. xkmsd serves no console endpoint: it stores SSH keys and signs
+authentication challenges with them, and never terminates an SSH session — a
+console there would let an authenticated caller proxy an interactive shell to
+any reachable host through the appliance. The bridge this client connects to
+runs on the operator's own machine (xkey's loopback service).
+
 ```ts
-import { SSHConsoleClient } from '@go-xkms/sdk';
+import { SSHConsoleClient } from '@go-xkms/sdk/ssh-console';
 
 const client = new SSHConsoleClient({ fontSize: 13 });
 client.onError = (msg) => console.error(msg);
 client.onClose = () => console.log('session ended');
 
-// `url` comes from the host app (xkey loopback service, or the xkms REST
-// /xkms/v1/ssh/console endpoint) and already carries a one-time token.
+// `url` comes from the host app (xkey's loopback service) and already carries
+// a one-time token.
 client.open(document.getElementById('terminal')!, { url });
 
 // On container resize:
@@ -31,7 +80,8 @@ app provides (the bundle keeps them external).
 ## WebSocket protocol
 
 The client connects to a WebSocket served by the go-xkms console bridge
-(`pkg/ssh/console.NewWSHandler`, re-exported as `sshclient.NewConsoleWSHandler`):
+(`pkg/ssh/console.NewWSHandler`, re-exported as `sshclient.NewConsoleWSHandler`)
+running in the client-side host app:
 
 | Frame | Direction | Meaning |
 |-------|-----------|---------|
@@ -48,6 +98,7 @@ encoding and are tested independently of the DOM.
 
 ```bash
 npm install
-npm run build   # tsup → dist (ESM + CJS + d.ts)
-npm test        # vitest (protocol unit tests)
+npm run build      # tsup → dist (ESM + CJS + d.ts)
+npm test           # vitest (REST clients, webauthn bridge, console protocol)
+npm run typecheck  # tsc --noEmit
 ```

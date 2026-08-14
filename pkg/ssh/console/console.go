@@ -23,7 +23,9 @@ import (
 	"context"
 	"errors"
 	"io"
+	"net"
 	"sync"
+	"sync/atomic"
 
 	"golang.org/x/crypto/ssh"
 
@@ -41,14 +43,39 @@ const (
 
 // Console is an interactive PTY-backed SSH session. Read drains the remote
 // terminal output; Write feeds keystrokes to the remote shell; Resize informs
-// the remote of a new window size. Close terminates the session and the
-// underlying connection. A single Console must not have its methods called
-// concurrently except that Read may run concurrently with Write/Resize (the
-// usual terminal pump pattern).
+// the remote of a new window size.
+//
+// The two shutdown operations are deliberately separate, the way net.TCPConn
+// separates CloseWrite from Close:
+//
+//   - CloseWrite performs a HALF close. It sends an SSH channel EOF so the
+//     remote command's stdin reports EOF (what feeding a script into a shell
+//     needs) and leaves the session readable.
+//   - Close performs a FULL teardown. It closes the session — which tears the
+//     channel down and releases any Read or Write still in flight — and, for a
+//     Console created by Dial, the underlying connection as well.
+//
+// Concurrency contract:
+//
+//   - Read, Write, Resize and Close may all be called concurrently from
+//     different goroutines. That is the terminal-pump pattern every consumer
+//     uses: an output pump reading, an input pump writing, a control path
+//     resizing, and a UI "disconnect" closing. Close never blocks on a Write.
+//   - CloseWrite must be sequenced after the caller's final Write (it is the
+//     "no more input" signal, so by definition no write is outstanding). Calls
+//     to Write after CloseWrite return *WriteClosedError rather than racing the
+//     channel's EOF flag.
+//   - After Close, every operation returns *ClosedError. Close itself is
+//     idempotent.
 type Console interface {
 	io.ReadWriteCloser
+
 	// Resize sets the remote PTY window to rows x cols characters.
 	Resize(rows, cols int) error
+
+	// CloseWrite half-closes the session: it signals EOF to the remote
+	// command's stdin and leaves the read side open. It is idempotent.
+	CloseWrite() error
 }
 
 // Config tunes the PTY. Zero values select sensible defaults
@@ -319,7 +346,14 @@ func open(client *ssh.Client, cfg Config, ownClient bool) (Console, error) {
 	return c, nil
 }
 
+var _ Console = (*sshConsole)(nil)
+
 // sshConsole is the concrete Console.
+//
+// client, sess, stdin and out are written once during construction and only
+// read afterwards, so no lock is needed to reach them. All mutable state is
+// held in atomics and a sync.Once, which is what lets Close run concurrently
+// with an in-flight Read or Write without either side blocking the other.
 type sshConsole struct {
 	client    *ssh.Client
 	ownClient bool
@@ -327,21 +361,56 @@ type sshConsole struct {
 	stdin     io.WriteCloser
 	out       io.Reader
 
-	mu     sync.Mutex
-	closed bool
+	// closed is set before teardown begins so a concurrent Read/Write/Resize
+	// reports the typed closed error instead of touching a dying channel.
+	closed atomic.Bool
+
+	// writeClosed is set by CloseWrite (and by Close) and gates every later
+	// Write. It is what keeps a post-half-close Write away from the
+	// channel's EOF flag inside x/crypto/ssh.
+	writeClosed atomic.Bool
+
+	closeOnce sync.Once
+	closeErr  error
+
+	writeCloseOnce sync.Once
+	writeCloseErr  error
 }
 
-// Read drains remote terminal output.
-func (c *sshConsole) Read(p []byte) (int, error) { return c.out.Read(p) }
+// Read drains remote terminal output. Once the console is closed it reports
+// *ClosedError rather than whatever transport-level error the teardown
+// happened to produce.
+func (c *sshConsole) Read(p []byte) (int, error) {
+	if c.closed.Load() {
+		return 0, &ClosedError{}
+	}
+	n, err := c.out.Read(p)
+	if err != nil && c.closed.Load() {
+		return n, &ClosedError{}
+	}
+	return n, err
+}
 
 // Write feeds keystrokes to the remote shell.
-func (c *sshConsole) Write(p []byte) (int, error) { return c.stdin.Write(p) }
+func (c *sshConsole) Write(p []byte) (int, error) {
+	if c.closed.Load() {
+		return 0, &ClosedError{}
+	}
+	if c.writeClosed.Load() {
+		return 0, &WriteClosedError{}
+	}
+	n, err := c.stdin.Write(p)
+	if err != nil && c.closed.Load() {
+		// A concurrent Close released this write; report the teardown
+		// rather than the transport's incidental error.
+		return n, &ClosedError{}
+	}
+	return n, err
+}
 
 // Resize informs the remote PTY of a new window size.
 func (c *sshConsole) Resize(rows, cols int) error {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-	if c.closed || c.sess == nil {
+	if c.closed.Load() {
 		return &ClosedError{}
 	}
 	if rows <= 0 {
@@ -353,31 +422,62 @@ func (c *sshConsole) Resize(rows, cols int) error {
 	return c.sess.WindowChange(rows, cols)
 }
 
-// Close terminates the session (and the connection when this Console owns it).
-func (c *sshConsole) Close() error {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-	if c.closed {
-		return nil
+// CloseWrite half-closes the console: it closes the session's stdin, which
+// sends an SSH channel EOF so the remote command sees end-of-input, and leaves
+// the read side open so trailing output can still be drained. Callers that
+// want the whole session gone call Close instead (Close does NOT send EOF —
+// it tears the channel down).
+//
+// It must be sequenced after the caller's last Write; subsequent writes are
+// rejected with *WriteClosedError.
+func (c *sshConsole) CloseWrite() error {
+	if c.closed.Load() {
+		return &ClosedError{}
 	}
-	c.closed = true
-	_ = c.stdin.Close()
-	var err error
-	if c.sess != nil {
-		err = c.sess.Close()
-		// Closing stdin above signals EOF to the remote command, which may
-		// tear the session down before Session.Close sends its own close
-		// message; x/crypto/ssh reports that already-closed channel as
-		// io.EOF. The session is terminated either way, so it is a clean
-		// close, not an error.
-		if errors.Is(err, io.EOF) {
-			err = nil
+	c.writeCloseOnce.Do(func() {
+		c.writeClosed.Store(true)
+		if err := c.stdin.Close(); err != nil && !errors.Is(err, io.EOF) {
+			// io.EOF means the remote already closed the channel, which
+			// is the state CloseWrite is trying to reach.
+			c.writeCloseErr = err
 		}
-		c.sess = nil
-	}
-	if c.ownClient && c.client != nil {
-		_ = c.client.Close()
-		c.client = nil
-	}
-	return err
+	})
+	return c.writeCloseErr
+}
+
+// Close terminates the session (and the connection when this Console owns it).
+//
+// It closes the SESSION, never the stdin pipe: closing stdin sends an SSH
+// channel EOF, and x/crypto/ssh mutates the channel's EOF flag without
+// synchronizing it against an in-flight write, so a "disconnect" racing the
+// keystroke pump was a genuine data race. Closing the session tears the
+// channel down instead, which releases any pending Read/Write with an error
+// and can never block on the remote.
+//
+// Close is idempotent and safe to call from any goroutine at any time.
+func (c *sshConsole) Close() error {
+	c.closeOnce.Do(func() {
+		// Publish the closed state first so a concurrent Read/Write/Resize
+		// takes the fast path instead of entering a channel being torn down.
+		c.closed.Store(true)
+		c.writeClosed.Store(true)
+
+		if c.sess != nil {
+			// The remote may already have closed the channel (the shell
+			// exited, or the peer hung up); x/crypto/ssh reports that as
+			// io.EOF. The session is terminated either way, so it is a
+			// clean close, not an error.
+			if err := c.sess.Close(); err != nil && !errors.Is(err, io.EOF) {
+				c.closeErr = err
+			}
+		}
+		if c.ownClient && c.client != nil {
+			// Closing the connection is what releases a write blocked in
+			// SSH flow control against a remote that stopped reading.
+			if err := c.client.Close(); err != nil && !errors.Is(err, net.ErrClosed) {
+				c.closeErr = errors.Join(c.closeErr, err)
+			}
+		}
+	})
+	return c.closeErr
 }

@@ -15,8 +15,12 @@ package hardware
 
 import (
 	"crypto/x509"
+	"encoding/binary"
 	"encoding/pem"
+	"errors"
 	"fmt"
+	"strconv"
+	"strings"
 	"sync"
 
 	"github.com/jeremyhahn/go-xkms/pkg/errs"
@@ -28,22 +32,58 @@ import (
 	"github.com/jeremyhahn/go-xkms/pkg/storage"
 )
 
+const (
+	// certRecordMagic identifies an NV blob that carries an ID header.
+	certRecordMagic = "XKC1"
+
+	// certRecordHeaderSize is the size of the magic plus the ID length field.
+	certRecordHeaderSize = len(certRecordMagic) + 2
+
+	// maxCertIDLength is the largest certificate ID the header can encode.
+	maxCertIDLength = 1<<16 - 1
+
+	// certIndexSpan is the size of the NV index range certificates are hashed
+	// into, starting at the configured base index.
+	certIndexSpan = 0x00400000
+
+	// nvHandleQueryCount is the number of NV handles requested per
+	// TPM2_GetCapability call when enumerating certificates.
+	nvHandleQueryCount = 256
+)
+
 // TPM2CertStorage implements HardwareCertStorage for TPM 2.0 devices.
 // Certificates are stored in TPM NV (Non-Volatile) RAM.
 //
 // Thread Safety:
-// All operations are protected by a read-write mutex for concurrent access.
+// All operations are serialized by a mutex. A TPM transport carries one
+// command and its response at a time, so even read operations must hold the
+// lock exclusively: two concurrent readers would interleave their commands on
+// the wire and receive each other's responses.
 //
 // Certificate Storage:
 //   - Each certificate is stored in a dedicated NV index
 //   - NV indices are derived from a base index + hash(ID)
-//   - Certificates are stored as PEM-encoded data
+//   - Certificates are stored as a self-describing record that carries the
+//     certificate ID alongside the PEM-encoded data
 //   - NV index attributes provide access control
 //
 // NV Index Layout:
 //
 //	Base Index: 0x01800000 (TPM_NV_INDEX_FIRST)
 //	Cert Index: Base + (xxhash64 of ID % 0x003FFFFF)
+//
+// NV Record Layout:
+//
+//	 0..3  magic "XKC1"
+//	 4..5  certificate ID length (big endian uint16)
+//	 6..n  certificate ID
+//	n+1..  PEM-encoded certificate or chain
+//
+// Storing the ID in NV RAM is what makes ListCerts report the same IDs that
+// GetCert accepts: the hash that maps an ID onto an NV index is one-way, so
+// the ID has to be persisted next to the certificate. Because the record
+// lives in the TPM itself, the mapping survives process restarts without any
+// host-side index file or in-memory table.
 //
 // Limitations:
 //   - Limited NV RAM capacity (typically 2KB-8KB total)
@@ -55,7 +95,7 @@ type TPM2CertStorage struct {
 	baseIndex uint32              // Base NV index for certificates
 	maxSize   int                 // Maximum certificate size (bytes)
 	ownerAuth []byte              // Owner hierarchy password
-	mu        sync.RWMutex        // Protects concurrent access
+	mu        sync.Mutex          // Serializes TPM access
 	closed    bool                // Tracks if storage is closed
 }
 
@@ -149,16 +189,40 @@ func (t *TPM2CertStorage) SaveCert(id string, cert *x509.Certificate) error {
 		Bytes: cert.Raw,
 	})
 
-	if len(pemData) > t.maxSize {
+	return t.saveRecord(id, pemData, "write certificate to NV RAM")
+}
+
+// saveRecord writes a certificate record (ID header plus PEM payload) to the
+// NV index derived from the ID. Callers must hold the write lock.
+func (t *TPM2CertStorage) saveRecord(id string, pemData []byte, op string) error {
+	record, err := encodeCertRecord(id, pemData)
+	if err != nil {
+		return err
+	}
+
+	if len(record) > t.maxSize {
 		return ErrCertificateTooLarge
 	}
 
-	// Compute NV index for this certificate
 	nvIndex := t.certIndexFromID(id)
 
+	// Refuse to clobber a different certificate that hashed to the same index.
+	existing, err := t.readNVIndex(nvIndex)
+	if err != nil && !errors.Is(err, storage.ErrNotFound) {
+		return NewOperationError(op, err)
+	}
+	if err == nil {
+		if existingID, _, ok := decodeCertRecord(existing); ok && existingID != id {
+			return &errs.Detail{
+				Err:    ErrNVIndexUnavailable,
+				Detail: fmt.Sprintf("index %#x holds certificate %q", nvIndex, existingID),
+			}
+		}
+	}
+
 	// Write to NV RAM (creates if doesn't exist)
-	if err := t.writeNVIndex(nvIndex, pemData); err != nil {
-		return NewOperationError("write certificate to NV RAM", err)
+	if err := t.writeNVIndex(nvIndex, record); err != nil {
+		return NewOperationError(op, err)
 	}
 
 	return nil
@@ -170,24 +234,24 @@ func (t *TPM2CertStorage) GetCert(id string) (*x509.Certificate, error) {
 		return nil, storage.ErrInvalidID
 	}
 
-	t.mu.RLock()
-	defer t.mu.RUnlock()
+	t.mu.Lock()
+	defer t.mu.Unlock()
 
 	if t.closed {
 		return nil, ErrStorageClosed
 	}
 
-	// Compute NV index
-	nvIndex := t.certIndexFromID(id)
-
-	// Read from NV RAM
-	pemData, err := t.readNVIndex(nvIndex)
+	// Resolve the ID to the NV index that actually holds it
+	_, payload, err := t.lookupCert(id)
 	if err != nil {
+		if errors.Is(err, storage.ErrNotFound) {
+			return nil, storage.ErrNotFound
+		}
 		return nil, NewOperationError("read certificate from NV RAM", err)
 	}
 
 	// Decode PEM
-	block, _ := pem.Decode(pemData)
+	block, _ := pem.Decode(payload)
 	if block == nil {
 		return nil, ErrInvalidCertificate
 	}
@@ -214,11 +278,18 @@ func (t *TPM2CertStorage) DeleteCert(id string) error {
 		return ErrStorageClosed
 	}
 
-	// Compute NV index
-	nvIndex := t.certIndexFromID(id)
+	// Resolve the ID to the NV index that actually holds it. Deletion is
+	// idempotent: an ID that is not stored is not an error.
+	index, _, err := t.lookupCert(id)
+	if err != nil {
+		if errors.Is(err, storage.ErrNotFound) {
+			return nil
+		}
+		return NewOperationError("delete certificate from NV RAM", err)
+	}
 
 	// Delete NV index
-	if err := t.deleteNVIndex(nvIndex); err != nil {
+	if err := t.deleteNVIndex(index); err != nil {
 		return NewOperationError("delete certificate from NV RAM", err)
 	}
 
@@ -252,19 +323,7 @@ func (t *TPM2CertStorage) SaveCertChain(id string, chain []*x509.Certificate) er
 		pemData = append(pemData, pemBlock...)
 	}
 
-	if len(pemData) > t.maxSize {
-		return ErrCertificateTooLarge
-	}
-
-	// Compute NV index
-	nvIndex := t.certIndexFromID(id)
-
-	// Write to NV RAM
-	if err := t.writeNVIndex(nvIndex, pemData); err != nil {
-		return NewOperationError("write certificate chain to NV RAM", err)
-	}
-
-	return nil
+	return t.saveRecord(id, pemData, "write certificate chain to NV RAM")
 }
 
 // GetCertChain retrieves and parses a certificate chain bundle.
@@ -273,25 +332,25 @@ func (t *TPM2CertStorage) GetCertChain(id string) ([]*x509.Certificate, error) {
 		return nil, storage.ErrInvalidID
 	}
 
-	t.mu.RLock()
-	defer t.mu.RUnlock()
+	t.mu.Lock()
+	defer t.mu.Unlock()
 
 	if t.closed {
 		return nil, ErrStorageClosed
 	}
 
-	// Compute NV index
-	nvIndex := t.certIndexFromID(id)
-
-	// Read from NV RAM
-	pemData, err := t.readNVIndex(nvIndex)
+	// Resolve the ID to the NV index that actually holds it
+	_, payload, err := t.lookupCert(id)
 	if err != nil {
+		if errors.Is(err, storage.ErrNotFound) {
+			return nil, storage.ErrNotFound
+		}
 		return nil, NewOperationError("read certificate chain from NV RAM", err)
 	}
 
 	// Parse all PEM blocks
 	var chain []*x509.Certificate
-	remaining := pemData
+	remaining := payload
 	for len(remaining) > 0 {
 		block, rest := pem.Decode(remaining)
 		if block == nil {
@@ -314,45 +373,21 @@ func (t *TPM2CertStorage) GetCertChain(id string) ([]*x509.Certificate, error) {
 	return chain, nil
 }
 
-// ListCerts returns certificate IDs by scanning defined NV indices.
-// Note: This is expensive as it requires querying TPM capabilities.
+// ListCerts returns the certificate IDs stored in TPM NV RAM.
+//
+// Every ID returned here is accepted by GetCert, GetCertChain, CertExists and
+// DeleteCert: the ID is read back out of the record header stored in NV RAM.
+// Records written before the header existed cannot report their original ID,
+// so they are reported by NV handle ("0x01800000"), a form the lookup path
+// also accepts.
+//
+// Note: This is expensive as it requires querying TPM capabilities and reading
+// every NV index in the certificate range.
 func (t *TPM2CertStorage) ListCerts() ([]string, error) {
-	t.mu.RLock()
-	defer t.mu.RUnlock()
+	t.mu.Lock()
+	defer t.mu.Unlock()
 
-	if t.closed {
-		return nil, ErrStorageClosed
-	}
-
-	// Query TPM for NV indices in our range
-	// TPM2_GetCapability with TPM_CAP_HANDLES
-	capResp, err := tpm2.GetCapability{
-		Capability:    tpm2.TPMCapHandles,
-		Property:      t.baseIndex,
-		PropertyCount: 256, // Max indices to query
-	}.Execute(t.tpm)
-
-	if err != nil {
-		return nil, NewOperationError("query NV indices", err)
-	}
-
-	handles, err := capResp.CapabilityData.Data.Handles()
-	if err != nil {
-		return nil, NewOperationError("get NV handles", err)
-	}
-
-	// Note: We cannot reverse the hash to get original IDs
-	// This is a limitation of the hash-based index scheme
-	// Return indices as hex strings for now
-	var certIDs []string
-	for _, handle := range handles.Handle {
-		// Only include indices in our range
-		if handle >= tpm2.TPMHandle(t.baseIndex) && handle < tpm2.TPMHandle(t.baseIndex+0x00400000) {
-			certIDs = append(certIDs, fmt.Sprintf("0x%08x", handle))
-		}
-	}
-
-	return certIDs, nil
+	return t.listCertsUnlocked()
 }
 
 // CertExists checks if an NV index exists for the certificate.
@@ -361,24 +396,19 @@ func (t *TPM2CertStorage) CertExists(id string) (bool, error) {
 		return false, storage.ErrInvalidID
 	}
 
-	t.mu.RLock()
-	defer t.mu.RUnlock()
+	t.mu.Lock()
+	defer t.mu.Unlock()
 
 	if t.closed {
 		return false, ErrStorageClosed
 	}
 
-	// Compute NV index
-	nvIndex := t.certIndexFromID(id)
-
-	// Try to read NV public to check existence
-	_, err := tpm2.NVReadPublic{
-		NVIndex: tpm2.TPMHandle(nvIndex),
-	}.Execute(t.tpm)
-
-	if err != nil {
-		// Index doesn't exist
-		return false, nil
+	// Resolve the ID to the NV index that actually holds it
+	if _, _, err := t.lookupCert(id); err != nil {
+		if errors.Is(err, storage.ErrNotFound) {
+			return false, nil
+		}
+		return false, NewOperationError("check certificate in NV RAM", err)
 	}
 
 	return true, nil
@@ -400,8 +430,8 @@ func (t *TPM2CertStorage) Close() error {
 // GetCapacity queries TPM NV RAM capacity and usage.
 // Note: This is an approximation based on max cert size and available space.
 func (t *TPM2CertStorage) GetCapacity() (total int, available int, err error) {
-	t.mu.RLock()
-	defer t.mu.RUnlock()
+	t.mu.Lock()
+	defer t.mu.Unlock()
 
 	if t.closed {
 		return 0, 0, ErrStorageClosed
@@ -450,8 +480,134 @@ func (t *TPM2CertStorage) certIndexFromID(id string) uint32 {
 
 	// Map to NV index range (0x01800000 - 0x01BFFFFF)
 	// Use modulo to wrap into 0x00400000 range
-	offset := hash % 0x00400000
+	offset := hash % certIndexSpan
 	return t.baseIndex + offset
+}
+
+// lookupCert resolves a certificate ID to the NV index that holds it and
+// returns that index along with the PEM payload stored there.
+//
+// IDs are resolved by hash first, and the ID in the record header must match:
+// an index whose record belongs to a different ID is a hash collision, not a
+// hit. An ID in NV handle form ("0x01800000"), as reported by ListCerts for
+// records without an ID header, resolves directly to that index.
+//
+// Returns storage.ErrNotFound if no NV index holds the certificate.
+func (t *TPM2CertStorage) lookupCert(id string) (uint32, []byte, error) {
+	hashedIndex := t.certIndexFromID(id)
+
+	data, err := t.readNVIndex(hashedIndex)
+	switch {
+	case err == nil:
+		recordID, payload, ok := decodeCertRecord(data)
+		if !ok {
+			// A record without an ID header can only have been filed under the
+			// hash of this ID, so the index binding is the identity.
+			return hashedIndex, data, nil
+		}
+		if recordID == id {
+			return hashedIndex, payload, nil
+		}
+		// Hash collision: this index belongs to a different certificate.
+	case !errors.Is(err, storage.ErrNotFound):
+		return 0, nil, err
+	}
+
+	handleIndex, ok := t.indexFromNVHandle(id)
+	if !ok {
+		return 0, nil, storage.ErrNotFound
+	}
+
+	data, err = t.readNVIndex(handleIndex)
+	if err != nil {
+		return 0, nil, err
+	}
+
+	_, payload, ok := decodeCertRecord(data)
+	if !ok {
+		return handleIndex, data, nil
+	}
+
+	return handleIndex, payload, nil
+}
+
+// indexFromNVHandle parses an NV handle string ("0x01800000") and reports
+// whether it names an index inside this storage's certificate range.
+func (t *TPM2CertStorage) indexFromNVHandle(id string) (uint32, bool) {
+	if !strings.HasPrefix(id, "0x") {
+		return 0, false
+	}
+
+	value, err := strconv.ParseUint(id[2:], 16, 32)
+	if err != nil {
+		return 0, false
+	}
+
+	index := uint32(value)
+	if index < t.baseIndex || index >= t.baseIndex+certIndexSpan {
+		return 0, false
+	}
+
+	return index, true
+}
+
+// formatNVHandle renders an NV index in the handle form accepted by lookupCert.
+func formatNVHandle(index uint32) string {
+	return fmt.Sprintf("0x%08x", index)
+}
+
+// encodeCertRecord serializes a certificate ID and its PEM payload into the NV
+// record format.
+func encodeCertRecord(id string, payload []byte) ([]byte, error) {
+	if len(id) > maxCertIDLength {
+		return nil, &errs.Detail{
+			Err:    storage.ErrInvalidID,
+			Detail: fmt.Sprintf("certificate ID exceeds %d bytes", maxCertIDLength),
+		}
+	}
+
+	record := make([]byte, 0, certRecordHeaderSize+len(id)+len(payload))
+	record = append(record, certRecordMagic...)
+	record = binary.BigEndian.AppendUint16(record, uint16(len(id)))
+	record = append(record, id...)
+	record = append(record, payload...)
+
+	return record, nil
+}
+
+// decodeCertRecord splits an NV blob into its certificate ID and PEM payload.
+// The final return value reports whether the blob carries an ID header; blobs
+// written before the header existed are returned to the caller untouched.
+func decodeCertRecord(data []byte) (string, []byte, bool) {
+	if len(data) < certRecordHeaderSize || string(data[:len(certRecordMagic)]) != certRecordMagic {
+		return "", data, false
+	}
+
+	idLen := int(binary.BigEndian.Uint16(data[len(certRecordMagic):certRecordHeaderSize]))
+	if certRecordHeaderSize+idLen > len(data) {
+		// Truncated header: treat the blob as opaque so the caller fails on
+		// the PEM decode rather than reporting a bogus ID.
+		return "", data, false
+	}
+
+	id := string(data[certRecordHeaderSize : certRecordHeaderSize+idLen])
+	if id == "" {
+		return "", data, false
+	}
+
+	return id, data[certRecordHeaderSize+idLen:], true
+}
+
+// isMissingNVIndex reports whether an NVReadPublic failure means the index is
+// undefined rather than that the TPM could not be reached. An undefined index
+// answers with TPM_RC_HANDLE; a transport or device failure carries no TPM
+// response code at all and must never be mistaken for an absent certificate.
+func isMissingNVIndex(err error) bool {
+	var rc tpm2.TPMRC
+	if !errors.As(err, &rc) {
+		return false
+	}
+	return errors.Is(rc, tpm2.TPMRCHandle) || errors.Is(rc, tpm2.TPMRCValue)
 }
 
 // readNVIndex reads data from an NV index with authorization.
@@ -462,7 +618,10 @@ func (t *TPM2CertStorage) readNVIndex(index uint32) ([]byte, error) {
 	}.Execute(t.tpm)
 
 	if err != nil {
-		return nil, storage.ErrNotFound
+		if isMissingNVIndex(err) {
+			return nil, storage.ErrNotFound
+		}
+		return nil, NewOperationError("read NV public", err)
 	}
 
 	nvPublic, err := readPubResp.NVPublic.Contents()
@@ -633,8 +792,11 @@ func (t *TPM2CertStorage) deleteNVIndex(index uint32) error {
 	}.Execute(t.tpm)
 
 	if err != nil {
-		// Index doesn't exist, treat as success (idempotent)
-		return nil
+		if isMissingNVIndex(err) {
+			// Index doesn't exist, treat as success (idempotent)
+			return nil
+		}
+		return NewOperationError("read NV public before undefine", err)
 	}
 
 	// Undefine the index
@@ -662,10 +824,12 @@ func (t *TPM2CertStorage) listCertsUnlocked() ([]string, error) {
 		return nil, ErrStorageClosed
 	}
 
+	// Query TPM for NV indices in our range
+	// TPM2_GetCapability with TPM_CAP_HANDLES
 	capResp, err := tpm2.GetCapability{
 		Capability:    tpm2.TPMCapHandles,
 		Property:      t.baseIndex,
-		PropertyCount: 256,
+		PropertyCount: nvHandleQueryCount,
 	}.Execute(t.tpm)
 
 	if err != nil {
@@ -679,9 +843,26 @@ func (t *TPM2CertStorage) listCertsUnlocked() ([]string, error) {
 
 	var certIDs []string
 	for _, handle := range handles.Handle {
-		if handle >= tpm2.TPMHandle(t.baseIndex) && handle < tpm2.TPMHandle(t.baseIndex+0x00400000) {
-			certIDs = append(certIDs, fmt.Sprintf("0x%08x", handle))
+		// Only include indices in our range
+		if handle < tpm2.TPMHandle(t.baseIndex) || handle >= tpm2.TPMHandle(t.baseIndex+certIndexSpan) {
+			continue
 		}
+
+		// Read the record back to recover the certificate ID. Indices that
+		// cannot be read belong to another subsystem, not to this storage.
+		data, err := t.readNVIndex(uint32(handle))
+		if err != nil {
+			continue
+		}
+
+		if recordID, _, ok := decodeCertRecord(data); ok {
+			certIDs = append(certIDs, recordID)
+			continue
+		}
+
+		// Legacy blob without an ID header: report the handle, which the
+		// lookup path resolves directly.
+		certIDs = append(certIDs, formatNVHandle(uint32(handle)))
 	}
 
 	return certIDs, nil

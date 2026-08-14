@@ -153,6 +153,6 @@ Tenant barriers are isolated -- cross-tenant access is denied.
 
 ## See Also
 
-- [Getting Started](../usage/getting-started.md) -- End-to-end setup walkthrough
-- [xkey auth](../usage/cli/auth.md) -- Authentication commands
-- [xkey share](../usage/cli/share.md) -- Share management commands
+- [Getting Started](../../xkey/docs/usage/getting-started.md) -- End-to-end setup walkthrough
+- [xkey auth](../../xkey/docs/usage/cli/auth.md) -- Authentication commands
+- [xkey share](../../xkey/docs/usage/cli/share.md) -- Share management commands

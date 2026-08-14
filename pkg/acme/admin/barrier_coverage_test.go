@@ -26,6 +26,7 @@ import (
 	"testing"
 
 	"github.com/gorilla/mux"
+	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
 	db "github.com/jeremyhahn/go-qrdb/sdk/go/transport"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -564,7 +565,7 @@ var _ BarrierService = (*stubBarrierService)(nil)
 func newBarrierHandlerRouter(svc BarrierService) *mux.Router {
 	router := mux.NewRouter()
 	h := NewBarrierHandlers(svc, slog.Default())
-	h.RegisterRoutes(router, newTestAuthMiddleware(RoleSuperAdmin))
+	h.RegisterRoutes(router, newTestAuthMiddleware(qrdbsdk.RoleNameSO), newPermissiveGate())
 	return router
 }
 

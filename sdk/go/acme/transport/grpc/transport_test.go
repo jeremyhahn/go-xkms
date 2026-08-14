@@ -1626,9 +1626,11 @@ func TestPool_Put_UnknownConnection(t *testing.T) {
 	pool := grpcTransport.pool
 
 	// Create a separate connection not from pool.
+	// grpc.NewClient only validates the target and dial options; it does not
+	// connect, so this cannot fail for a well-formed address.
 	otherConn, err := grpc.NewClient("localhost:9999", grpc.WithTransportCredentials(insecure.NewCredentials()))
 	if err != nil {
-		t.Skipf("Cannot create separate connection: %v", err)
+		t.Fatalf("grpc.NewClient() error = %v", err)
 	}
 	defer otherConn.Close()
 

@@ -36,6 +36,11 @@ type BackendService interface {
 
 	// GetBackend returns information about a specific backend.
 	GetBackend(ctx context.Context, backendID string) (*BackendInfo, error)
+
+	// Algorithms reports the cryptographic algorithms the server supports and
+	// which backends provide each one. It reflects compiled-in capability and
+	// reads no state, so it is served without authentication.
+	Algorithms(ctx context.Context) (*AlgorithmsResponse, error)
 }
 
 // KeyService handles key lifecycle management.
@@ -432,8 +437,16 @@ type InitCeremonyService interface {
 	// ClaimCertComplete completes the certificate claim by verifying the officer's signature.
 	ClaimCertComplete(ctx context.Context, req *ClaimCertCompleteRequest) (*ClaimCertCompleteResponse, error)
 
-	// ClaimShare retrieves the Shamir share for the named officer.
-	ClaimShare(ctx context.Context, req *ClaimShareRequest) (*ClaimShareResponse, error)
+	// ClaimShareBegin starts the Shamir share claim handshake for the named
+	// officer. The caller must present an mTLS client certificate matching the
+	// officer's enrolment record; the server derives the thumbprint from the
+	// verified peer chain, never from the request body.
+	ClaimShareBegin(ctx context.Context, req *ClaimShareBeginRequest) (*ClaimShareBeginResponse, error)
+
+	// ClaimShareComplete completes the Shamir share claim handshake by
+	// submitting a signature over the challenge nonce. The share is released
+	// exactly once.
+	ClaimShareComplete(ctx context.Context, req *ClaimShareCompleteRequest) (*ClaimShareCompleteResponse, error)
 
 	// SignCSRInit signs a CSR during initialization with SO authorization.
 	SignCSRInit(ctx context.Context, req *SignCSRInitRequest) (*SignCSRInitResponse, error)
@@ -473,6 +486,17 @@ type CustodianGroupService interface {
 	DistributeShares(ctx context.Context, req *DistributeSharesRequest) (*DistributeSharesResponse, error)
 }
 
+// AuditService reads the tamper-evident audit chain owned by the embedded
+// qrdb node. There is deliberately no emit method: audit events are written
+// by the server as a side effect of the audited operation, never on a
+// caller's request, so a client cannot forge a record.
+type AuditService interface {
+	// QueryAudit returns one page of audit events matching the filter. Pass
+	// AuditPage.Next back as AuditFilter.Cursor to continue; an empty Next
+	// means the last page.
+	QueryAudit(ctx context.Context, filter *AuditFilter) (*AuditPage, error)
+}
+
 // ShareService handles Shamir share submission and status tracking.
 type ShareService interface {
 	// SubmitShare submits a received Shamir share back to the server.
@@ -480,6 +504,15 @@ type ShareService interface {
 
 	// ListShares lists shares available for the authenticated user.
 	ListShares(ctx context.Context) (*ListSharesResponse, error)
+
+	// GetShare returns a single share addressed by the triple
+	// (serverURL, groupID, shareIndex). Sensitive share material is never
+	// included in the response — only the share's metadata.
+	GetShare(ctx context.Context, serverURL, groupID string, shareIndex int) (*ShareInfo, error)
+
+	// DeleteShare removes a single share addressed by the triple
+	// (serverURL, groupID, shareIndex).
+	DeleteShare(ctx context.Context, serverURL, groupID string, shareIndex int) error
 
 	// GetShareCollectionStatus returns the collection status for a group.
 	GetShareCollectionStatus(ctx context.Context, groupID string) (*ShareCollectionStatus, error)
@@ -544,4 +577,5 @@ type Client interface {
 	TenantService
 	InitCeremonyService
 	CredentialManagementService
+	AuditService
 }

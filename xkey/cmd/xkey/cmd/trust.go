@@ -361,6 +361,7 @@ func openTrustStore() (*truststore.FileStore, error) {
 
 // runTrustList executes the trust list command.
 func runTrustList(cmd *cobra.Command, args []string) error {
+	out := cmd.OutOrStdout()
 	store, err := openTrustStore()
 	if err != nil {
 		return err
@@ -373,11 +374,11 @@ func runTrustList(cmd *cobra.Command, args []string) error {
 	}
 
 	if len(certs) == 0 {
-		fmt.Println("No trusted certificates found.")
+		fmt.Fprintln(out, "No trusted certificates found.")
 		return nil
 	}
 
-	fmt.Printf("Trusted Certificates (%d):\n\n", len(certs))
+	fmt.Fprintf(out, "Trusted Certificates (%d):\n\n", len(certs))
 
 	w := tabwriter.NewWriter(os.Stdout, 0, 0, 2, ' ', 0)
 	_, _ = fmt.Fprintf(w, "FINGERPRINT\tSUBJECT\tPURPOSE\tSOURCE\tALGORITHM\tNOT BEFORE\tNOT AFTER\n")
@@ -413,6 +414,7 @@ func runTrustList(cmd *cobra.Command, args []string) error {
 
 // runTrustAdd executes the trust add command.
 func runTrustAdd(cmd *cobra.Command, args []string) error {
+	out := cmd.OutOrStdout()
 	pemFile := args[0]
 
 	pemData, err := os.ReadFile(pemFile)
@@ -456,7 +458,7 @@ func runTrustAdd(cmd *cobra.Command, args []string) error {
 	}
 
 	fmt.Fprintf(os.Stderr, "Importing certificates from %s\n", pemFile)
-	fmt.Printf("Certificates added: %d\n", added)
+	fmt.Fprintf(out, "Certificates added: %d\n", added)
 
 	return nil
 }
@@ -498,6 +500,7 @@ func addPEMWithOptions(store *truststore.FileStore, pemData []byte, opts *trusts
 
 // runTrustRemove executes the trust remove command.
 func runTrustRemove(cmd *cobra.Command, args []string) error {
+	out := cmd.OutOrStdout()
 	fingerprint := strings.ToLower(strings.TrimSpace(args[0]))
 
 	store, err := openTrustStore()
@@ -513,12 +516,13 @@ func runTrustRemove(cmd *cobra.Command, args []string) error {
 		return &SentinelCauseError{Sentinel: ErrTrustRemoveFailed, Cause: err}
 	}
 
-	fmt.Printf("Certificate removed: %s\n", fingerprint)
+	fmt.Fprintf(out, "Certificate removed: %s\n", fingerprint)
 	return nil
 }
 
 // runTrustShow executes the trust show command.
 func runTrustShow(cmd *cobra.Command, args []string) error {
+	out := cmd.OutOrStdout()
 	fingerprint := strings.ToLower(strings.TrimSpace(args[0]))
 
 	store, err := openTrustStore()
@@ -544,47 +548,47 @@ func runTrustShow(cmd *cobra.Command, args []string) error {
 		return &DetailError{Err: ErrTrustCertificateNotFound, Detail: fmt.Sprintf(": %s", fingerprint)}
 	}
 
-	fmt.Printf("Trusted Certificate Details\n")
-	fmt.Printf("===========================\n\n")
+	fmt.Fprintf(out, "Trusted Certificate Details\n")
+	fmt.Fprintf(out, "===========================\n\n")
 
-	fmt.Printf("Subject:        %s\n", cert.Subject.String())
-	fmt.Printf("Issuer:         %s\n", cert.Issuer.String())
-	fmt.Printf("Serial Number:  %s\n", cert.SerialNumber.String())
-	fmt.Printf("Algorithm:      %s\n", cert.PublicKeyAlgorithm.String())
-	fmt.Printf("Key Info:       %s\n", formatPublicKeyInfo(cert))
-	fmt.Printf("Signature:      %s\n", cert.SignatureAlgorithm.String())
-	fmt.Printf("Not Before:     %s\n", cert.NotBefore.Format(time.RFC3339))
-	fmt.Printf("Not After:      %s\n", cert.NotAfter.Format(time.RFC3339))
-	fmt.Printf("Fingerprint:    %s\n", fingerprint)
+	fmt.Fprintf(out, "Subject:        %s\n", cert.Subject.String())
+	fmt.Fprintf(out, "Issuer:         %s\n", cert.Issuer.String())
+	fmt.Fprintf(out, "Serial Number:  %s\n", cert.SerialNumber.String())
+	fmt.Fprintf(out, "Algorithm:      %s\n", cert.PublicKeyAlgorithm.String())
+	fmt.Fprintf(out, "Key Info:       %s\n", formatPublicKeyInfo(cert))
+	fmt.Fprintf(out, "Signature:      %s\n", cert.SignatureAlgorithm.String())
+	fmt.Fprintf(out, "Not Before:     %s\n", cert.NotBefore.Format(time.RFC3339))
+	fmt.Fprintf(out, "Not After:      %s\n", cert.NotAfter.Format(time.RFC3339))
+	fmt.Fprintf(out, "Fingerprint:    %s\n", fingerprint)
 
 	meta, metaErr := store.Metadata(fingerprint)
 	if metaErr == nil && meta != nil {
-		fmt.Printf("Purpose:        %s\n", meta.Purpose)
+		fmt.Fprintf(out, "Purpose:        %s\n", meta.Purpose)
 		if meta.Source != "" {
-			fmt.Printf("Source:         %s\n", meta.Source)
+			fmt.Fprintf(out, "Source:         %s\n", meta.Source)
 		}
 		if len(meta.Tags) > 0 {
-			fmt.Printf("Tags:           %s\n", strings.Join(meta.Tags, ", "))
+			fmt.Fprintf(out, "Tags:           %s\n", strings.Join(meta.Tags, ", "))
 		}
-		fmt.Printf("System Install: %t\n", meta.SystemInstalled)
+		fmt.Fprintf(out, "System Install: %t\n", meta.SystemInstalled)
 	}
 
-	fmt.Printf("Is CA:          %t\n", cert.IsCA)
+	fmt.Fprintf(out, "Is CA:          %t\n", cert.IsCA)
 
 	if cert.KeyUsage != 0 {
-		fmt.Printf("Key Usage:      %s\n", formatKeyUsage(cert.KeyUsage))
+		fmt.Fprintf(out, "Key Usage:      %s\n", formatKeyUsage(cert.KeyUsage))
 	}
 
 	if len(cert.ExtKeyUsage) > 0 {
-		fmt.Printf("Ext Key Usage:  %s\n", formatExtKeyUsage(cert.ExtKeyUsage))
+		fmt.Fprintf(out, "Ext Key Usage:  %s\n", formatExtKeyUsage(cert.ExtKeyUsage))
 	}
 
 	if len(cert.DNSNames) > 0 {
-		fmt.Printf("DNS Names:      %s\n", strings.Join(cert.DNSNames, ", "))
+		fmt.Fprintf(out, "DNS Names:      %s\n", strings.Join(cert.DNSNames, ", "))
 	}
 
 	if len(cert.EmailAddresses) > 0 {
-		fmt.Printf("Email:          %s\n", strings.Join(cert.EmailAddresses, ", "))
+		fmt.Fprintf(out, "Email:          %s\n", strings.Join(cert.EmailAddresses, ", "))
 	}
 
 	if len(cert.IPAddresses) > 0 {
@@ -592,7 +596,7 @@ func runTrustShow(cmd *cobra.Command, args []string) error {
 		for i, ip := range cert.IPAddresses {
 			ips[i] = ip.String()
 		}
-		fmt.Printf("IP Addresses:   %s\n", strings.Join(ips, ", "))
+		fmt.Fprintf(out, "IP Addresses:   %s\n", strings.Join(ips, ", "))
 	}
 
 	if len(cert.URIs) > 0 {
@@ -600,7 +604,7 @@ func runTrustShow(cmd *cobra.Command, args []string) error {
 		for i, u := range cert.URIs {
 			uris[i] = u.String()
 		}
-		fmt.Printf("URIs:           %s\n", strings.Join(uris, ", "))
+		fmt.Fprintf(out, "URIs:           %s\n", strings.Join(uris, ", "))
 	}
 
 	return nil
@@ -609,6 +613,7 @@ func runTrustShow(cmd *cobra.Command, args []string) error {
 // runTrustClassify executes the trust classify command to reclassify a
 // certificate's purpose in the trust store.
 func runTrustClassify(cmd *cobra.Command, args []string) error {
+	out := cmd.OutOrStdout()
 	fingerprint := strings.ToLower(strings.TrimSpace(args[0]))
 	purposeStr, _ := cmd.Flags().GetString("purpose")
 	if purposeStr == "" {
@@ -630,12 +635,13 @@ func runTrustClassify(cmd *cobra.Command, args []string) error {
 		return &SentinelCauseError{Sentinel: ErrTrustClassifyFailed, Cause: err}
 	}
 
-	fmt.Printf("Certificate %s classified as %s\n", fingerprint, purpose)
+	fmt.Fprintf(out, "Certificate %s classified as %s\n", fingerprint, purpose)
 	return nil
 }
 
 // runTrustInstall installs a certificate from the trust store to the OS trust store.
 func runTrustInstall(cmd *cobra.Command, args []string) error {
+	out := cmd.OutOrStdout()
 	fingerprint := strings.ToLower(strings.TrimSpace(args[0]))
 
 	store, err := openTrustStore()
@@ -679,12 +685,13 @@ func runTrustInstall(cmd *cobra.Command, args []string) error {
 		return &DetailError{Err: ErrTrustInstallFailed, Detail: fmt.Sprintf(": failed to update metadata: %v", err)}
 	}
 
-	fmt.Printf("Certificate %s installed to OS trust store as %s\n", fingerprint, label)
+	fmt.Fprintf(out, "Certificate %s installed to OS trust store as %s\n", fingerprint, label)
 	return nil
 }
 
 // runTrustUninstall removes a certificate from the OS trust store.
 func runTrustUninstall(cmd *cobra.Command, args []string) error {
+	out := cmd.OutOrStdout()
 	fingerprint := strings.ToLower(strings.TrimSpace(args[0]))
 
 	store, err := openTrustStore()
@@ -719,12 +726,13 @@ func runTrustUninstall(cmd *cobra.Command, args []string) error {
 		return &DetailError{Err: ErrTrustUninstallFailed, Detail: fmt.Sprintf(": failed to update metadata: %v", err)}
 	}
 
-	fmt.Printf("Certificate %s removed from OS trust store\n", fingerprint)
+	fmt.Fprintf(out, "Certificate %s removed from OS trust store\n", fingerprint)
 	return nil
 }
 
 // runTrustBootstrap executes the trust bootstrap command.
 func runTrustBootstrap(cmd *cobra.Command, args []string) error {
+	out := cmd.OutOrStdout()
 	timeout, err := cmd.Flags().GetDuration("timeout")
 	if err != nil {
 		timeout = 60 * time.Second
@@ -761,7 +769,7 @@ func runTrustBootstrap(cmd *cobra.Command, args []string) error {
 		return &SentinelCauseError{Sentinel: ErrTrustAddFailed, Cause: err}
 	}
 
-	fmt.Printf("Certificates imported: %d\n", added)
+	fmt.Fprintf(out, "Certificates imported: %d\n", added)
 	return nil
 }
 

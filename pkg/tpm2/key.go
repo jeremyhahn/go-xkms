@@ -616,14 +616,43 @@ func (tpm *TPM2) CreateSRK(
 		slog.Bool("has_parent", srkAttrs.Parent != nil),
 	)
 
+	// The platform policy this SRK is being created under, captured once so
+	// the AuthPolicy baked into the template and the record written after the
+	// key is persisted describe the same PCR state.
+	//
+	// Only the Platform SRK reaches this branch. The Shared SRK cannot ask for
+	// a platform policy -- SRKConfig has no field for it -- because Provision
+	// creates it before CreatePlatformPolicy extends the golden measurement,
+	// which would leave it bound to a PCR state it outlives. This branch is
+	// therefore reached with the platform PCR already in its steady state.
+	//
+	// This affects AUTHORIZATION of the persisted SRK only; it does not touch
+	// DERIVATION. TPM2_CreatePrimary derives the key from the storage seed and
+	// the template, AuthPolicy included, so the digest below must be -- and is
+	// -- bit for bit what the live-PCR computation produced before: the pin
+	// holds the platform PCR as it reads right now. What the record adds is the
+	// ability to rebuild this policy's PolicyPCR branch digest later, when the
+	// measurements have moved and the PolicyAuthValue branch is the only way
+	// back in.
+	//
+	// Re-deriving an SRK on a changed platform remains what it always was: a
+	// different template yields a different primary key. That is a
+	// provisioning-time concern and is deliberately left alone.
+	var policyPin *store.PlatformPolicyPin
+
 	if srkAttrs.PlatformPolicy {
 		template := srkAttrs.TPMAttributes.Template
-		policyDigest, err := tpm.PlatformPolicyDigest()
+		pin, err := tpm.capturePlatformPolicyPin()
+		if err != nil {
+			return err
+		}
+		policyDigest, err := platformPolicyDigestFromPin(pin)
 		if err != nil {
 			return err
 		}
 		template.AuthPolicy = policyDigest
 		srkAttrs.TPMAttributes.Template = template
+		policyPin = pin
 	}
 
 	// Create SRK
@@ -708,6 +737,17 @@ func (tpm *TPM2) CreateSRK(
 	srkAttrs.KeyType = types.KeyTypeStorage
 	srkAttrs.TPMAttributes.Name = primaryKey.Name
 	srkAttrs.TPMAttributes.Public = *pub
+
+	// Record the platform policy pin now that the SRK exists at its handle.
+	// Recording earlier would leave a record describing a key that was never
+	// created; recording it at all is what lets CreateSession rebuild this
+	// SRK's PolicyPCR branch digest after the platform measurements change,
+	// so a caller holding the SRK's PIN can still authorize TPM2_Load.
+	if policyPin != nil {
+		if err := tpm.recordPrimaryPolicyPin(srkAttrs, policyPin); err != nil {
+			return err
+		}
+	}
 
 	srkHierName, _ := HierarchyName(hierarchy)
 	tpm.logger.Debug("tpm: SRK Hierarchy", slog.String("hierarchy", srkHierName))

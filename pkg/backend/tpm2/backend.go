@@ -19,6 +19,7 @@ import (
 	"crypto/ecdsa"
 	"crypto/elliptic"
 	"crypto/x509"
+	"errors"
 	"fmt"
 	"io"
 	"log/slog"
@@ -35,7 +36,6 @@ import (
 	pkgtpm2 "github.com/jeremyhahn/go-xkms/pkg/tpm2"
 	"github.com/jeremyhahn/go-xkms/pkg/tpm2/store"
 	"github.com/jeremyhahn/go-xkms/pkg/types"
-	"golang.org/x/crypto/hkdf"
 )
 
 // Backend implements types.KeyProvider for TPM 2.0 hardware security modules.
@@ -225,7 +225,7 @@ func provisionSimulatorEKSRK(tpm pkgtpm2.TrustedPlatformModule, cfg *pkgtpm2.Con
 	if err := tpm.CreateEK(ekAttrs); err != nil {
 		return &errs.Wrapped{Msg: "create EK", Err: err}
 	}
-	srkAttrs, err := pkgtpm2.SRKAttributesFromConfig(*cfg.SSRK, nil)
+	srkAttrs, err := pkgtpm2.SRKAttributesFromConfig(*cfg.SSRK)
 	if err != nil {
 		return &errs.Wrapped{Msg: "SRK attributes", Err: err}
 	}
@@ -606,6 +606,26 @@ func (s *tpm2Signer) Sign(rand io.Reader, digest []byte, opts crypto.SignerOpts)
 	// Sign using TPM
 	signature, err := s.backend.tpm.Sign(rand, digest, signerOpts)
 	if err != nil {
+		// A TPM that cannot perform the requested operation at all is a
+		// capability boundary, not a device fault, and callers have to be able
+		// to tell the two apart -- "this token cannot do raw RSA" is actionable
+		// (retry naming a digest, or use another backend) where "something
+		// broke" is not. Joining ErrUnsupportedOperation puts the refusal on the
+		// backend's own capability sentinel so every layer above classifies it
+		// the same way it classifies any other unsupported operation.
+		//
+		// ErrSignSchemeMismatch belongs in the same class: a key created with a
+		// fixed scheme genuinely cannot sign under another digest, so the
+		// request is unsupported for that key rather than broken. Keys created
+		// before this package moved to TPM_ALG_NULL templates are the ones that
+		// produce it, and an application that meets it should either name the
+		// digest the key was created with or rotate to a new key.
+		if errors.Is(err, pkgtpm2.ErrRawRSASignUnsupported) ||
+			errors.Is(err, pkgtpm2.ErrSchemeHashUnresolved) ||
+			errors.Is(err, pkgtpm2.ErrSignSchemeMismatch) {
+
+			return nil, errors.Join(ErrUnsupportedOperation, err)
+		}
 		return nil, &errs.Wrapped{Msg: "TPM sign failed", Err: err}
 	}
 
@@ -799,38 +819,15 @@ func (b *Backend) parsePeerPublicKey(peerPublicKey []byte) (*tpm2.TPMSECCPoint, 
 	return nil, nil, &errs.Detail{Err: ErrUnsupportedKeyAlgorithm, Detail: "unable to parse public key (not DER or SEC1 format)"}
 }
 
-// applyKDF applies the specified KDF to derive a key from the shared secret.
+// applyKDF derives a key from an ECDH shared secret using the canonical KDF
+// implementation in pkg/crypto/kdf, reached through types.KDFParams.Derive.
+// Every backend derives through that one entry point, so the same parameters
+// yield the same bytes here as on the software, PKCS#11, and phone backends.
 func (b *Backend) applyKDF(sharedSecret []byte, params *types.KDFParams) ([]byte, error) {
-	// Get hash function
-	hashFunc, err := types.AvailableHashes()[params.Hash]
-	if !err {
-		return nil, &errs.Message{Msg: fmt.Sprintf("unsupported hash algorithm: %s", params.Hash)}
+	if params == nil {
+		return nil, ErrInvalidKDFParams
 	}
-
-	switch params.Algorithm {
-	case types.KDFAlgorithmHKDF:
-		// Use HKDF (RFC 5869)
-		kdf := hkdf.New(hashFunc.New, sharedSecret, params.Salt, params.Info)
-		key := make([]byte, params.KeyLength)
-		if _, err := io.ReadFull(kdf, key); err != nil {
-			return nil, &errs.Wrapped{Msg: "HKDF key derivation failed", Err: err}
-		}
-		return key, nil
-
-	case types.KDFAlgorithmSP800108Counter, types.KDFAlgorithmSP800108Feedback:
-		// Use NIST SP 800-108 KDF
-		// For simplicity, we use HKDF as a fallback since SP800-108 requires more context
-		// The actual implementation would use the kdf adapter package
-		kdf := hkdf.New(hashFunc.New, sharedSecret, params.Salt, params.Info)
-		key := make([]byte, params.KeyLength)
-		if _, err := io.ReadFull(kdf, key); err != nil {
-			return nil, &errs.Wrapped{Msg: "SP800-108 key derivation failed", Err: err}
-		}
-		return key, nil
-
-	default:
-		return nil, &errs.Message{Msg: fmt.Sprintf("unsupported KDF algorithm: %s", params.Algorithm)}
-	}
+	return params.Derive(sharedSecret)
 }
 
 // GenerateSymmetricKey generates a new symmetric key in the TPM.

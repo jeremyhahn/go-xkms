@@ -121,6 +121,23 @@
 //	    TLSKeyFile:            "/path/to/client-key.pem",
 //	})
 //
+// TLS material is applied in descending order of specificity, and the more
+// specific setting always wins:
+//
+//  1. TLSConfig: a caller-built *tls.Config (for example hardware-backed mTLS).
+//  2. TLSCertFile + TLSKeyFile: mTLS, optionally verified with TLSCAFile.
+//  3. TLSCAFile: server verification against a private CA bundle.
+//  4. TLSEnabled: server verification against the host system root pool.
+//
+// TLSEnabled alone is sufficient for a server whose certificate chains to a
+// public root; no CA bundle is required. The client never downgrades to
+// plaintext when TLS is requested: half-configured client-certificate
+// material (a certificate without its key, or the reverse) fails closed with
+// ErrIncompleteTLSMaterial instead of connecting without the credential.
+//
+// The URL schemes https, grpcs, mcps, and quic imply TLS; http, grpc, mcp,
+// and unix do not.
+//
 // # Error Handling
 //
 // The SDK defines typed errors for common failure cases:
@@ -132,4 +149,5 @@
 //   - ErrKeyNotFound: Requested key does not exist
 //   - ErrCertificateNotFound: Requested certificate does not exist
 //   - ErrBackendNotFound: Requested backend does not exist
+//   - ErrIncompleteTLSMaterial: Half-configured TLS client certificate
 package xkms

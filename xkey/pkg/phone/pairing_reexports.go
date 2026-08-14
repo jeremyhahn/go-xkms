@@ -82,6 +82,15 @@ type LocalSetKeyPolicyResult = pairing.LocalSetKeyPolicyResult
 type LocalAttestKeyParams = pairing.LocalAttestKeyParams
 type LocalAttestKeyResult = pairing.LocalAttestKeyResult
 type LocalAttestDeviceParams = pairing.LocalAttestDeviceParams
+
+// Android-native device enrollment, this host acting as the CA.
+type LocalGetDeviceEnrollmentRequestParams = pairing.LocalGetDeviceEnrollmentRequestParams
+type LocalGetDeviceEnrollmentRequestResult = pairing.LocalGetDeviceEnrollmentRequestResult
+type LocalStoreDeviceCredentialParams = pairing.LocalStoreDeviceCredentialParams
+type LocalStoreDeviceCredentialResult = pairing.LocalStoreDeviceCredentialResult
+type EnrollmentPolicy = pairing.EnrollmentPolicy
+type EnrollmentDecision = pairing.EnrollmentDecision
+type AllowedApplication = pairing.AllowedApplication
 type LocalAttestDeviceResult = pairing.LocalAttestDeviceResult
 type Fido2CredentialInfo = pairing.Fido2CredentialInfo
 type LocalListFido2CredentialsParams = pairing.LocalListFido2CredentialsParams
@@ -240,6 +249,12 @@ type Fragment = pairing.Fragment
 type Bridge = pairing.Bridge
 type BridgeConfig = pairing.BridgeConfig
 
+// TCG device enrollment types. The bridge answers the enrollment methods from
+// a TPMEnroller; OpenTPMEnroller produces one from this host's TPM.
+type TPMEnroller = pairing.TPMEnroller
+type TPMEnrollerCloser = pairing.TPMEnrollerCloser
+type TPMEnrollerConfig = pairing.TPMEnrollerConfig
+
 // Sharing policy types.
 type SharingPolicy = pairing.SharingPolicy
 type SharingPolicyStore = pairing.SharingPolicyStore
@@ -309,6 +324,34 @@ var NewBridge = pairing.NewBridge
 
 // DefaultBridgeConfig returns the default bridge configuration.
 var DefaultBridgeConfig = pairing.DefaultBridgeConfig
+
+// OpenTPMEnroller opens this host's TPM for TCG device enrollment.
+var OpenTPMEnroller = pairing.OpenTPMEnroller
+
+// TPM enrollment error re-exports. A caller distinguishes a host that has no
+// TPM from one whose TPM cannot be reached with errors.Is against these.
+var (
+	ErrTPMNotConfigured = pairing.ErrTPMNotConfigured
+	ErrTPMUnavailable   = pairing.ErrTPMUnavailable
+
+	// Device enrollment refusals. Each is a distinct sentinel so a caller can
+	// tell an untrusted chain from a denied application without reading prose.
+	ErrEnrollmentNoEvidence        = pairing.ErrEnrollmentNoEvidence
+	ErrEnrollmentUnknownFormat     = pairing.ErrEnrollmentUnknownFormat
+	ErrEnrollmentChainUntrusted    = pairing.ErrEnrollmentChainUntrusted
+	ErrEnrollmentStaleChallenge    = pairing.ErrEnrollmentStaleChallenge
+	ErrEnrollmentKeyMismatch       = pairing.ErrEnrollmentKeyMismatch
+	ErrEnrollmentBootState         = pairing.ErrEnrollmentBootState
+	ErrEnrollmentSecurityLevel     = pairing.ErrEnrollmentSecurityLevel
+	ErrEnrollmentApplicationDenied = pairing.ErrEnrollmentApplicationDenied
+)
+
+// NewEnrollmentPolicy returns a device enrollment policy that fails closed.
+var NewEnrollmentPolicy = pairing.NewEnrollmentPolicy
+
+// DefaultEnrollmentValidity is the default LDevID lifetime, and so the default
+// re-attestation cadence.
+const DefaultEnrollmentValidity = pairing.DefaultEnrollmentValidity
 
 // NewFragmenter creates a new message fragmenter.
 var NewFragmenter = pairing.NewFragmenter
@@ -389,22 +432,26 @@ const (
 
 // Local method name re-exports.
 const (
-	MethodLocalGenerateKey          = pairing.MethodLocalGenerateKey
-	MethodLocalSign                 = pairing.MethodLocalSign
-	MethodLocalDecrypt              = pairing.MethodLocalDecrypt
-	MethodLocalSymmetricEncrypt     = pairing.MethodLocalSymmetricEncrypt
-	MethodLocalSymmetricDecrypt     = pairing.MethodLocalSymmetricDecrypt
-	MethodLocalHMAC                 = pairing.MethodLocalHMAC
-	MethodLocalECDH                 = pairing.MethodLocalECDH
-	MethodLocalGetPublicKey         = pairing.MethodLocalGetPublicKey
-	MethodLocalListKeys             = pairing.MethodLocalListKeys
-	MethodLocalGetKeyInfo           = pairing.MethodLocalGetKeyInfo
-	MethodLocalDeleteKey            = pairing.MethodLocalDeleteKey
-	MethodLocalSetKeyPolicy         = pairing.MethodLocalSetKeyPolicy
-	MethodLocalAttestKey            = pairing.MethodLocalAttestKey
-	MethodLocalAttestDevice         = pairing.MethodLocalAttestDevice
-	MethodLocalListFido2Credentials = pairing.MethodLocalListFido2Credentials
-	MethodLocalSignFido2Assertion   = pairing.MethodLocalSignFido2Assertion
+	MethodLocalGenerateKey      = pairing.MethodLocalGenerateKey
+	MethodLocalSign             = pairing.MethodLocalSign
+	MethodLocalDecrypt          = pairing.MethodLocalDecrypt
+	MethodLocalSymmetricEncrypt = pairing.MethodLocalSymmetricEncrypt
+	MethodLocalSymmetricDecrypt = pairing.MethodLocalSymmetricDecrypt
+	MethodLocalHMAC             = pairing.MethodLocalHMAC
+	MethodLocalECDH             = pairing.MethodLocalECDH
+	MethodLocalGetPublicKey     = pairing.MethodLocalGetPublicKey
+	MethodLocalListKeys         = pairing.MethodLocalListKeys
+	MethodLocalGetKeyInfo       = pairing.MethodLocalGetKeyInfo
+	MethodLocalDeleteKey        = pairing.MethodLocalDeleteKey
+	MethodLocalSetKeyPolicy     = pairing.MethodLocalSetKeyPolicy
+	MethodLocalAttestKey        = pairing.MethodLocalAttestKey
+	MethodLocalAttestDevice     = pairing.MethodLocalAttestDevice
+
+	MethodLocalGetDeviceEnrollmentRequest = pairing.MethodLocalGetDeviceEnrollmentRequest
+	MethodLocalStoreDeviceCredential      = pairing.MethodLocalStoreDeviceCredential
+	AttestationFormatAndroidKey           = pairing.AttestationFormatAndroidKey
+	MethodLocalListFido2Credentials       = pairing.MethodLocalListFido2Credentials
+	MethodLocalSignFido2Assertion         = pairing.MethodLocalSignFido2Assertion
 )
 
 // Remote method name re-exports.

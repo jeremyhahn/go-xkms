@@ -300,9 +300,18 @@ func (d *Daemon) exportObjects() error {
 
 // OpenSession opens a session for encrypted communication.
 // Returns the server's public output and the session object path.
-func (d *Daemon) OpenSession(algorithm string, input dbus.Variant) (dbus.Variant, dbus.ObjectPath, *dbus.Error) {
+//
+// sender is supplied by the D-Bus message dispatcher and carries the unique
+// connection name of the calling client (for example ":1.42"). godbus strips
+// parameters of type dbus.Sender from the wire signature, so the method is
+// still exported as OpenSession(sv) -> (vo). It is recorded on the session
+// and in the audit trail so a session can be attributed to its client.
+func (d *Daemon) OpenSession(sender dbus.Sender, algorithm string, input dbus.Variant) (dbus.Variant, dbus.ObjectPath, *dbus.Error) {
+	client := string(sender)
+
 	d.logger.Debug("OpenSession called",
-		slog.String("algorithm", algorithm))
+		slog.String("algorithm", algorithm),
+		slog.String("client", client))
 
 	sessionID := strconv.FormatUint(d.sessionCount.Add(1), 10)
 	sessionPath := d.mapper.SessionPath(sessionID)
@@ -311,7 +320,7 @@ func (d *Daemon) OpenSession(algorithm string, input dbus.Variant) (dbus.Variant
 		Path:       sessionPath,
 		Algorithm:  algorithm,
 		CreatedAt:  time.Now(),
-		ClientPath: "", // TODO: get sender
+		ClientPath: client,
 	}
 
 	var output dbus.Variant
@@ -345,7 +354,8 @@ func (d *Daemon) OpenSession(algorithm string, input dbus.Variant) (dbus.Variant
 		output = dbus.MakeVariant(PublicKeyToBytes(keyPair.Public))
 
 	default:
-		d.logSecretServiceEvent(audit.OpSecretServiceSessionOpened, false, ErrInvalidAlgorithm, map[string]any{"algorithm": algorithm})
+		d.logSecretServiceEvent(audit.OpSecretServiceSessionOpened, false, ErrInvalidAlgorithm,
+			map[string]any{"algorithm": algorithm, "client": client})
 		return dbus.Variant{}, "/", dbus.MakeFailedError(ErrInvalidAlgorithm)
 	}
 
@@ -356,9 +366,11 @@ func (d *Daemon) OpenSession(algorithm string, input dbus.Variant) (dbus.Variant
 
 	d.logger.Debug("session opened",
 		slog.String("path", string(sessionPath)),
-		slog.String("algorithm", algorithm))
+		slog.String("algorithm", algorithm),
+		slog.String("client", client))
 
-	d.logSecretServiceEvent(audit.OpSecretServiceSessionOpened, true, nil, map[string]any{"algorithm": algorithm})
+	d.logSecretServiceEvent(audit.OpSecretServiceSessionOpened, true, nil,
+		map[string]any{"algorithm": algorithm, "client": client})
 	return output, sessionPath, nil
 }
 

@@ -481,6 +481,9 @@ func (n *noopClient) Health(context.Context) (*transport.HealthResponse, error) 
 func (n *noopClient) ListBackends(context.Context, ...transport.ListOption) (*transport.ListBackendsResponse, error) {
 	return nil, nil
 }
+func (n *noopClient) Algorithms(context.Context) (*transport.AlgorithmsResponse, error) {
+	return nil, nil
+}
 func (n *noopClient) GetBackend(context.Context, string) (*transport.BackendInfo, error) {
 	return nil, nil
 }
@@ -792,6 +795,12 @@ func (n *noopClient) SubmitShare(context.Context, *transport.SubmitShareRequest)
 func (n *noopClient) ListShares(context.Context) (*transport.ListSharesResponse, error) {
 	return nil, nil
 }
+func (n *noopClient) GetShare(context.Context, string, string, int) (*transport.ShareInfo, error) {
+	return nil, nil
+}
+func (n *noopClient) DeleteShare(context.Context, string, string, int) error {
+	return nil
+}
 func (n *noopClient) GetShareCollectionStatus(context.Context, string) (*transport.ShareCollectionStatus, error) {
 	return nil, nil
 }
@@ -829,7 +838,10 @@ func (n *noopClient) ClaimCertBegin(context.Context, *transport.ClaimCertBeginRe
 func (n *noopClient) ClaimCertComplete(context.Context, *transport.ClaimCertCompleteRequest) (*transport.ClaimCertCompleteResponse, error) {
 	return nil, nil
 }
-func (n *noopClient) ClaimShare(context.Context, *transport.ClaimShareRequest) (*transport.ClaimShareResponse, error) {
+func (n *noopClient) ClaimShareBegin(context.Context, *transport.ClaimShareBeginRequest) (*transport.ClaimShareBeginResponse, error) {
+	return nil, nil
+}
+func (n *noopClient) ClaimShareComplete(context.Context, *transport.ClaimShareCompleteRequest) (*transport.ClaimShareCompleteResponse, error) {
 	return nil, nil
 }
 func (n *noopClient) SignCSRInit(context.Context, *transport.SignCSRInitRequest) (*transport.SignCSRInitResponse, error) {
@@ -871,5 +883,9 @@ func (n *noopClient) BindUserCert(context.Context, string, string, int64) error 
 }
 
 func (n *noopClient) ListUserCredentials(context.Context, string) (*transport.ListUserCredentialsResponse, error) {
+	return nil, nil
+}
+
+func (n *noopClient) QueryAudit(context.Context, *transport.AuditFilter) (*transport.AuditPage, error) {
 	return nil, nil
 }

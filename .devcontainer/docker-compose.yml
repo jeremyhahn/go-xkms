@@ -1,8 +1,23 @@
+# Compose project name. This MUST be set explicitly.
+#
+# Without it, compose derives the project name from the directory holding this
+# file — ".devcontainer" → "devcontainer" — which is exactly the name
+# go-trusted-platform's stack (build/docker/devcontainer) already uses. Both
+# projects then share a namespace: `docker compose exec devcontainer ...` run
+# from go-xkms attaches to go-trusted-platform's container, `up -d xkms-server`
+# silently matches nothing, and the volumes collide. Naming the project pins
+# every container, image, volume and network to go-xkms.
+name: go-xkms
+
 services:
   devcontainer:
     build:
       context: .
       dockerfile: Dockerfile
+    # Explicit image + container name so this container can never be confused
+    # with another project's devcontainer.
+    image: go-xkms-dev:latest
+    container_name: go-xkms-devcontainer
     # Privileged mode required for QEMU with KVM acceleration
     privileged: true
     # Capabilities for QEMU/KVM and hardware testing
@@ -37,6 +52,12 @@ services:
       - /var/run/docker.sock:/var/run/docker.sock
       # Shared socket volume for xkms server communication
       - xkms-socket:/var/run/xkms
+      # The xkms-server's state directory, read-only. The daemon initializes its
+      # CA here on first start and issues its own TLS server certificate from it,
+      # so this is where the gRPC-over-TCP lane of the PKCS#11 suites gets the
+      # root it must trust. See scripts/ensure-server-ca.sh, which normalizes it
+      # into XKMS_GRPC_TLS_CA.
+      - xkms-data:/xkms-data:ro
     environment:
       - GOPATH=/go
       # Workspace lives at /tmp/go.work (materialized by ensure-gowork.sh); set
@@ -52,7 +73,21 @@ services:
       - XKMS_UNIX_SOCKET=/var/run/xkms/xkms.sock
       - XKMS_GRPC_ADDR=xkms-server:9443
       - XKMS_GRPC_TLS_ENABLED=true
-      - XKMS_GRPC_TLS_CA=/etc/xkms/certs/ca.crt
+      # Written by scripts/ensure-server-ca.sh from the read-only xkms-data
+      # mount. It must be a path the unprivileged container user can write, so
+      # it is NOT /etc/xkms/certs/ca.crt (the module's compiled-in default,
+      # which nothing in this stack ever creates).
+      - XKMS_GRPC_TLS_CA=/tmp/xkms/ca.crt
+      - XKMS_SERVER_STATE_DIR=/xkms-data
+      # The same trust anchor again, under the names the PKCS#11 MODULE reads
+      # (pkg/pkcs11/module/config.go). The XKMS_GRPC_TLS_* pair above is read by
+      # the Go test harness, which configures an in-process module; the
+      # pkcs11-tool lanes instead load the module in a separate process that has
+      # only the environment to go on. Enabling TLS here is safe for the unix
+      # lane: the module applies TLS only to gRPC/TCP targets and a unix://
+      # target never reaches createGRPCClient's TLS branch.
+      - XKMS_PKCS11_TLS_ENABLED=true
+      - XKMS_PKCS11_TLS_CA=/tmp/xkms/ca.crt
       # Legacy endpoints (KEYSTORE_* prefix)
       - KEYSTORE_UNIX_SOCKET=/var/run/xkms/xkms.sock
       - KEYSTORE_REST_URL=https://xkms-server:8443
@@ -129,17 +164,29 @@ services:
     build:
       context: ..
       dockerfile: Dockerfile
+      # The root Dockerfile COPYs all six in-house siblings so the build-time
+      # Go workspace resolves the complete module closure locally. Every one of
+      # them must be declared here or the build fails on the missing context.
       additional_contexts:
+        go-codec: ../../go-codec
+        go-frost: ../../go-frost
+        go-objstore: ../../go-objstore
         go-qrdb: ../../go-qrdb
         go-quicraft: ../../go-quicraft
+        go-truststrap: ../../go-truststrap
     image: go-xkms-server:dev
     container_name: xkms-dev-server
+    # Host ports are offset into a private block: this stack runs alongside
+    # other project stacks (go-trusted-platform publishes 8443/9445/10443/3000)
+    # and must not fight them for a host port. Nothing in the test path uses
+    # these — tests reach the server over the shared xkms-socket volume or by
+    # service DNS on the xkms-dev network — they exist for host-side debugging.
     ports:
-      - "8443:8443"   # REST API
-      - "9443:9443"   # gRPC
-      - "8444:8444"   # QUIC
-      - "8445:8445"   # MCP
-      - "9090:9090"   # Metrics
+      - "${XKMS_HOST_REST_PORT:-28443}:8443"    # REST API
+      - "${XKMS_HOST_GRPC_PORT:-29443}:9443"    # gRPC
+      - "${XKMS_HOST_QUIC_PORT:-28444}:8444"    # QUIC
+      - "${XKMS_HOST_MCP_PORT:-28445}:8445"     # MCP
+      - "${XKMS_HOST_METRICS_PORT:-29090}:9090" # Metrics
     volumes:
       - xkms-data:/data
       - xkms-socket:/var/run/xkms
@@ -165,7 +212,15 @@ services:
       start_period: 10s
     networks:
       - xkms-dev
-    command: ["/app/xkmsd"]
+    # xkmsd has no insecure override: it refuses to start whenever
+    # ComplianceGaps() is non-empty. The integration config therefore ships a
+    # compliant posture — TLS from the embedded CA, adaptive auth (anonymous
+    # only until the first user exists), and a barrier with a development
+    # passphrase that auto-unseals — so the suites need no unseal ceremony and
+    # no pre-seeded credentials. This instance is reachable only from the
+    # private xkms-dev network and the xkms-socket volume, over a throwaway
+    # data volume.
+    command: ["/app/xkmsd", "-config", "/etc/xkms/xkmsd.yaml"]
 
   # Virtual FIDO2 Authenticator Service (for WebAuthn testing without hardware)
   # Uses software CTAP2 implementation with socket-based interface

@@ -982,83 +982,72 @@ func TestResolveTCGSigner_RSASigner(t *testing.T) {
 }
 
 // =============================================================================
-// addSANsToTemplate Tests
+// Subject Alternative Name Merging (Issuer.Template)
 // =============================================================================
+//
+// Subject alternative names supplied through CertificateSpec.SANS are merged
+// onto the template by the canonical issuer. These tests cover that merge for
+// the TCG paths, which are the ones that pass SANS in the CA's configuration
+// representation rather than as parsed values.
 
-func TestAddSANsToTemplate(t *testing.T) {
-	template := &x509.Certificate{}
+// templateWithSANs builds a template through the canonical issuer carrying
+// only the supplied subject alternative names.
+func templateWithSANs(t *testing.T, spec *CertificateSpec) *x509.Certificate {
+	t.Helper()
+	key := generateTestECDSAKey(t)
+	spec.Serial = big.NewInt(1)
+	spec.Profile = NewTCGDeviceIdentityProfile()
+	template, err := (&Issuer{Signer: key}).Template(spec)
+	if err != nil {
+		t.Fatalf("Template() error = %v", err)
+	}
+	return template
+}
 
-	sans := &SubjectAlternativeNames{
-		DNS:   []string{"foo.example.com", "bar.example.com"},
-		IPs:   []string{"10.0.0.1", "192.168.1.1"},
-		Email: []string{"test@example.com", "admin@example.com"},
-		URIs:  []string{"https://example.com/device", "urn:uuid:12345"},
-	}
+func TestIssuerTemplate_MergesSANs(t *testing.T) {
+	template := templateWithSANs(t, &CertificateSpec{
+		SANS: &SubjectAlternativeNames{
+			DNS:   []string{"foo.example.com", "bar.example.com"},
+			IPs:   []string{"10.0.0.1", "192.168.1.1"},
+			Email: []string{"test@example.com", "admin@example.com"},
+			URIs:  []string{"https://example.com/device", "urn:uuid:12345"},
+		},
+	})
 
-	addSANsToTemplate(template, sans)
-
-	// Verify DNS names
-	if len(template.DNSNames) != 2 {
-		t.Fatalf("len(DNSNames) = %d, want 2", len(template.DNSNames))
+	if len(template.DNSNames) != 2 || template.DNSNames[0] != "foo.example.com" {
+		t.Errorf("DNSNames = %v, want the two configured names in order", template.DNSNames)
 	}
-	if template.DNSNames[0] != "foo.example.com" {
-		t.Errorf("DNSNames[0] = %q, want %q", template.DNSNames[0], "foo.example.com")
+	if len(template.IPAddresses) != 2 || template.IPAddresses[0].String() != "10.0.0.1" {
+		t.Errorf("IPAddresses = %v, want the two configured addresses in order", template.IPAddresses)
 	}
-	if template.DNSNames[1] != "bar.example.com" {
-		t.Errorf("DNSNames[1] = %q, want %q", template.DNSNames[1], "bar.example.com")
+	if len(template.EmailAddresses) != 2 || template.EmailAddresses[1] != "admin@example.com" {
+		t.Errorf("EmailAddresses = %v, want the two configured addresses in order", template.EmailAddresses)
 	}
-
-	// Verify IP addresses
-	if len(template.IPAddresses) != 2 {
-		t.Fatalf("len(IPAddresses) = %d, want 2", len(template.IPAddresses))
-	}
-	if !template.IPAddresses[0].Equal(net.ParseIP("10.0.0.1")) {
-		t.Errorf("IPAddresses[0] = %v, want 10.0.0.1", template.IPAddresses[0])
-	}
-	if !template.IPAddresses[1].Equal(net.ParseIP("192.168.1.1")) {
-		t.Errorf("IPAddresses[1] = %v, want 192.168.1.1", template.IPAddresses[1])
-	}
-
-	// Verify email addresses
-	if len(template.EmailAddresses) != 2 {
-		t.Fatalf("len(EmailAddresses) = %d, want 2", len(template.EmailAddresses))
-	}
-	if template.EmailAddresses[0] != "test@example.com" {
-		t.Errorf("EmailAddresses[0] = %q, want %q", template.EmailAddresses[0], "test@example.com")
-	}
-
-	// Verify URIs
 	if len(template.URIs) != 2 {
 		t.Fatalf("len(URIs) = %d, want 2", len(template.URIs))
 	}
 	if template.URIs[0].String() != "https://example.com/device" {
-		t.Errorf("URIs[0] = %q, want %q", template.URIs[0].String(), "https://example.com/device")
+		t.Errorf("URIs[0] = %q, want https://example.com/device", template.URIs[0].String())
 	}
 	if template.URIs[1].String() != "urn:uuid:12345" {
-		t.Errorf("URIs[1] = %q, want %q", template.URIs[1].String(), "urn:uuid:12345")
+		t.Errorf("URIs[1] = %q, want urn:uuid:12345", template.URIs[1].String())
 	}
 }
 
-func TestAddSANsToTemplate_NilSANs(t *testing.T) {
-	template := &x509.Certificate{
+func TestIssuerTemplate_NilSANsLeavesNamesUntouched(t *testing.T) {
+	template := templateWithSANs(t, &CertificateSpec{
 		DNSNames: []string{"existing.example.com"},
-	}
+	})
 
-	// Calling with nil should be a no-op
-	addSANsToTemplate(template, nil)
-
-	// Existing fields should be untouched
 	if len(template.DNSNames) != 1 || template.DNSNames[0] != "existing.example.com" {
-		t.Errorf("DNSNames = %v, should be unchanged after nil SANs", template.DNSNames)
+		t.Errorf("DNSNames = %v, should be unchanged when no SANS are supplied", template.DNSNames)
 	}
 }
 
-func TestAddSANsToTemplate_EmptySANs(t *testing.T) {
-	template := &x509.Certificate{}
-
-	// Empty SANs struct should be safe
-	sans := &SubjectAlternativeNames{}
-	addSANsToTemplate(template, sans)
+func TestIssuerTemplate_EmptySANsAddNothing(t *testing.T) {
+	template := templateWithSANs(t, &CertificateSpec{
+		SANS: &SubjectAlternativeNames{},
+	})
 
 	if len(template.DNSNames) != 0 {
 		t.Errorf("DNSNames should be empty, got %v", template.DNSNames)
@@ -1074,18 +1063,15 @@ func TestAddSANsToTemplate_EmptySANs(t *testing.T) {
 	}
 }
 
-func TestAddSANsToTemplate_AppendsToExisting(t *testing.T) {
-	template := &x509.Certificate{
+func TestIssuerTemplate_SANsAppendToExistingNames(t *testing.T) {
+	template := templateWithSANs(t, &CertificateSpec{
 		DNSNames:       []string{"existing.example.com"},
 		EmailAddresses: []string{"existing@example.com"},
-	}
-
-	sans := &SubjectAlternativeNames{
-		DNS:   []string{"new.example.com"},
-		Email: []string{"new@example.com"},
-	}
-
-	addSANsToTemplate(template, sans)
+		SANS: &SubjectAlternativeNames{
+			DNS:   []string{"new.example.com"},
+			Email: []string{"new@example.com"},
+		},
+	})
 
 	if len(template.DNSNames) != 2 {
 		t.Fatalf("len(DNSNames) = %d, want 2", len(template.DNSNames))
@@ -1096,7 +1082,6 @@ func TestAddSANsToTemplate_AppendsToExisting(t *testing.T) {
 	if template.DNSNames[1] != "new.example.com" {
 		t.Errorf("DNSNames[1] = %q, want new.example.com", template.DNSNames[1])
 	}
-
 	if len(template.EmailAddresses) != 2 {
 		t.Fatalf("len(EmailAddresses) = %d, want 2", len(template.EmailAddresses))
 	}

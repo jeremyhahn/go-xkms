@@ -46,6 +46,13 @@ var (
 	// ErrAccessDenied is returned when the authorizer denies access to the
 	// requested resource.
 	ErrAccessDenied = errors.New("access denied")
+
+	// ErrAuthenticatorRequired is returned by NewServer when Config carries no
+	// Authenticator. The constructor refuses to substitute a NoOp authenticator
+	// because doing so would silently disable authentication; a caller that
+	// really wants an unauthenticated server must pass
+	// auth.NewNoOpAuthenticator() explicitly.
+	ErrAuthenticatorRequired = errors.New("quic: authenticator is required")
 )
 
 // Server represents a QUIC/HTTP3 server
@@ -61,6 +68,7 @@ type Server struct {
 	logger          *slog.Logger
 	rateLimiter     *ratelimit.Limiter
 	barrier         *seal.Barrier
+	barrierRegistry *seal.BarrierRegistry
 	pinManager      qrdbsdk.PINBackend
 	passwordStore   staticpw.Store
 	passwordManager *staticpw.TenantPasswordStoreManager
@@ -77,15 +85,18 @@ type Server struct {
 
 // Config holds the QUIC server configuration
 type Config struct {
-	Addr            string
-	Version         string
-	TLSConfig       *tls.Config
-	Authenticator   auth.Authenticator
-	Authorizer      *auth.Authorizer
-	AuditLogger     audit.Logger
-	Logger          *slog.Logger
-	RateLimiter     *ratelimit.Limiter
-	Barrier         *seal.Barrier
+	Addr          string
+	Version       string
+	TLSConfig     *tls.Config
+	Authenticator auth.Authenticator
+	Authorizer    *auth.Authorizer
+	AuditLogger   audit.Logger
+	Logger        *slog.Logger
+	RateLimiter   *ratelimit.Limiter
+	Barrier       *seal.Barrier
+	// BarrierRegistry gates per-tenant requests the same way REST, gRPC, and
+	// MCP do (see pkg/api/tenantgate). Nil disables tenant enforcement.
+	BarrierRegistry *seal.BarrierRegistry
 	PINManager      qrdbsdk.PINBackend
 	PasswordStore   staticpw.Store
 	PasswordManager *staticpw.TenantPasswordStoreManager
@@ -108,10 +119,13 @@ func NewServer(config *Config) (*Server, error) {
 		config.Addr = "localhost:8444"
 	}
 
-	// Set up authenticator (default to NoOp if not provided)
+	// The authenticator is mandatory. Substituting a NoOp authenticator for a
+	// missing one would silently disable authentication for every route, so an
+	// omitted authenticator is an error: selecting auth.NewNoOpAuthenticator()
+	// must always be an explicit caller decision.
 	authenticator := config.Authenticator
 	if authenticator == nil {
-		authenticator = auth.NewNoOpAuthenticator()
+		return nil, ErrAuthenticatorRequired
 	}
 
 	// Set up authorizer (default to a disabled authorizer if not provided).
@@ -157,6 +171,7 @@ func NewServer(config *Config) (*Server, error) {
 		logger:          log,
 		rateLimiter:     config.RateLimiter,
 		barrier:         config.Barrier,
+		barrierRegistry: config.BarrierRegistry,
 		pinManager:      config.PINManager,
 		passwordStore:   config.PasswordStore,
 		passwordManager: config.PasswordManager,
@@ -177,9 +192,13 @@ func NewServer(config *Config) (*Server, error) {
 	mux := http.NewServeMux()
 	s.setupRoutes(mux)
 
-	// Wrap with middleware (correlation first, then rate limit, then auth, then logging)
+	// Wrap with middleware (correlation first, then rate limit, then auth, then
+	// tenant scoping, then logging). Tenant scoping runs immediately after
+	// authentication establishes identity, mirroring the REST TenantMiddleware
+	// placement in the /api/v1 route group.
 	var handler http.Handler = mux
 	handler = s.loggingMiddleware(handler)
+	handler = s.tenantMiddleware(handler)
 	handler = s.authenticationMiddleware(handler)
 
 	// Rate limiting middleware (if configured)
@@ -244,6 +263,10 @@ func (s *Server) setupRoutes(mux *http.ServeMux) {
 	// Health endpoint
 	mux.HandleFunc("/health", s.handleHealth)
 
+	// Public algorithm discovery endpoint (no auth required), mirroring the
+	// REST route: it reports compiled-in capability and reads no state.
+	mux.HandleFunc("/api/v1/algorithms", s.handleAlgorithms)
+
 	// API v1 endpoints
 	mux.HandleFunc("/api/v1/backends", s.handleListBackends)
 	mux.HandleFunc("/api/v1/backends/", s.handleBackendOperations)
@@ -251,9 +274,15 @@ func (s *Server) setupRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("/api/v1/keys/", s.handleKeyOperations)
 	mux.HandleFunc("/api/v1/keys/copy", s.handleCopyKey)
 	mux.HandleFunc("/api/v1/keys/import-params", s.handleGetImportParams)
+	mux.HandleFunc("/api/v1/keys/wrap-by-id", s.handleWrapKeyByID)
+	mux.HandleFunc("/api/v1/keys/unwrap-by-id", s.handleUnwrapKeyByID)
+	mux.HandleFunc("/api/v1/keys/derive-ecdh", s.handleDeriveKeyECDH)
 	mux.HandleFunc("/api/v1/certs", s.handleCerts)
 	mux.HandleFunc("/api/v1/certs/", s.handleCertOperations)
 	mux.HandleFunc("/api/v1/tls/", s.handleTLSCertificate)
+
+	// Key attestation endpoint (proves a key resides in hardware).
+	mux.HandleFunc("/api/v1/attest", s.handleAttestKey)
 
 	// CA endpoints
 	mux.HandleFunc("/api/v1/ca/bundle", s.handleGetCABundle)
@@ -279,7 +308,8 @@ func (s *Server) setupRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("/api/v1/init/status", s.handleGetInitStatus)
 	mux.HandleFunc("/api/v1/init/claim-cert/begin", s.handleClaimCertBegin)
 	mux.HandleFunc("/api/v1/init/claim-cert/complete", s.handleClaimCertComplete)
-	mux.HandleFunc("/api/v1/init/claim-share", s.handleClaimShare)
+	mux.HandleFunc("/api/v1/init/claim-share/begin", s.handleClaimShareBegin)
+	mux.HandleFunc("/api/v1/init/claim-share/complete", s.handleClaimShareComplete)
 	mux.HandleFunc("/api/v1/init/sign-csr", s.handleSignCSRInit)
 
 	// Credential management endpoints
@@ -298,6 +328,21 @@ func (s *Server) setupRoutes(mux *http.ServeMux) {
 	// Password management endpoints
 	s.setupPasswordRoutes(mux)
 
+	// PKCS#11 remote-state endpoints
+	s.setupPKCS11StateRoutes(mux)
+
+	// Shamir share endpoints. Share state lives in the embedded go-qrdb
+	// node, reached through the XKMS service.
+	if s.xkmsService != nil {
+		s.setupShareRoutes(mux)
+	}
+
+	// Audit read endpoint. Audit state lives in the embedded go-qrdb node,
+	// reached through the XKMS service.
+	if s.xkmsService != nil {
+		s.setupAuditRoutes(mux)
+	}
+
 	// SSH key, known-hosts, and authorized-keys endpoints (optional).
 	if s.sshClient != nil {
 		s.setupSSHRoutes(mux)
@@ -308,6 +353,12 @@ func (s *Server) setupRoutes(mux *http.ServeMux) {
 // configured after server creation.
 func (s *Server) SetBarrier(barrier *seal.Barrier) {
 	s.barrier = barrier
+}
+
+// SetBarrierRegistry sets the tenant barrier registry on the server. This
+// allows tenant enforcement to be configured after server creation.
+func (s *Server) SetBarrierRegistry(registry *seal.BarrierRegistry) {
+	s.barrierRegistry = registry
 }
 
 // SetPINManager sets the PIN backend on the server. This allows the PIN
@@ -484,11 +535,24 @@ func (s *Server) loggingMiddleware(next http.Handler) http.Handler {
 	})
 }
 
-// authenticationMiddleware authenticates HTTP requests
+// authenticationMiddleware authenticates HTTP requests.
+//
+// Two exemptions exist: the health endpoint, and the init ceremony claim
+// surface while the ceremony has not yet reached the operational state. The
+// latter is an exact-path allowlist that fails closed -- see
+// isPublicCeremonyRequest in init_public.go.
 func (s *Server) authenticationMiddleware(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		// Skip authentication for health endpoint
 		if r.URL.Path == "/health" {
+			next.ServeHTTP(w, r)
+			return
+		}
+
+		if s.isPublicCeremonyRequest(r) {
+			s.logger.Debug("Serving init ceremony route without authentication",
+				slog.String("method", r.Method),
+				slog.String("path", r.URL.Path))
 			next.ServeHTTP(w, r)
 			return
 		}

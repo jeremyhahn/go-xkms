@@ -21,7 +21,6 @@ import (
 	"crypto/ecdsa"
 	"crypto/elliptic"
 	"crypto/rand"
-	"crypto/rsa"
 	"crypto/x509"
 	"errors"
 	"os"
@@ -1832,25 +1831,6 @@ func TestBackend_Verify_UnsupportedKeyType(t *testing.T) {
 	}
 }
 
-// TestBackend_Verify_RSAWithValidPublicKey tests RSA verification logic with actual key.
-func TestBackend_Verify_RSAWithValidPublicKey(t *testing.T) {
-	// Generate a real RSA key to test the verification branch
-	privateKey, err := rsa.GenerateKey(rand.Reader, 2048)
-	if err != nil {
-		t.Fatalf("failed to generate RSA key: %v", err)
-	}
-
-	// The Backend.Verify method will hit the RSA branch and return
-	// "RSA verification requires hash algorithm specification"
-	// This tests that code path
-
-	digest := make([]byte, 32)
-	// RSA verification through the backend requires knowing the hash algorithm
-	// which is not currently implemented in the Verify method
-	_ = privateKey
-	_ = digest
-}
-
 // TestBackend_InitializeToken_CKRAlreadyInitialized tests the specific PKCS11 error code path.
 func TestBackend_InitializeToken_CKRAlreadyInitialized(t *testing.T) {
 	// This test verifies we handle pkcs11.CKR_CRYPTOKI_ALREADY_INITIALIZED correctly
@@ -1938,8 +1918,14 @@ func TestCapabilities_QuantumDetection(t *testing.T) {
 		if caps.QuantumSigning {
 			t.Error("Capabilities().QuantumSigning should be false when only ML-KEM is supported")
 		}
-		if !caps.KeyEncapsulation {
-			t.Error("Capabilities().KeyEncapsulation should be true when ML-KEM is supported")
+		// KeyEncapsulation stays false even when the token supports ML-KEM:
+		// this backend implements no Encapsulate/Decapsulate, so advertising it
+		// would publish an algorithm no caller could ever use.
+		if caps.KeyEncapsulation {
+			t.Error("Capabilities().KeyEncapsulation must stay false until Encapsulate/Decapsulate exist")
+		}
+		if !b.supportsMLKEM {
+			t.Error("supportsMLKEM must still record the token's own ML-KEM support")
 		}
 	})
 
@@ -1958,8 +1944,9 @@ func TestCapabilities_QuantumDetection(t *testing.T) {
 		if !caps.QuantumSigning {
 			t.Error("Capabilities().QuantumSigning should be true when both ML-DSA and ML-KEM are supported")
 		}
-		if !caps.KeyEncapsulation {
-			t.Error("Capabilities().KeyEncapsulation should be true when both ML-DSA and ML-KEM are supported")
+		// See above: the token's ML-KEM support is recorded, not advertised.
+		if caps.KeyEncapsulation {
+			t.Error("Capabilities().KeyEncapsulation must stay false until Encapsulate/Decapsulate exist")
 		}
 	})
 }
@@ -2406,7 +2393,7 @@ func TestPkcs11MLDSASigner_Public(t *testing.T) {
 			privateHandle: pkcs11.ObjectHandle(2),
 			label:         "test-key",
 			algorithm:     "ML-DSA-44",
-			signMechanism: CKM_ML_DSA,
+			family:        quantumFamilyMLDSA,
 		}
 
 		pubKey := signer.Public()
@@ -2434,7 +2421,7 @@ func TestPkcs11MLDSASigner_Public(t *testing.T) {
 			privateHandle: pkcs11.ObjectHandle(6),
 			label:         "cached-key",
 			algorithm:     "ML-DSA-65",
-			signMechanism: CKM_ML_DSA,
+			family:        quantumFamilyMLDSA,
 		}
 
 		// First call initializes the cached public key
@@ -2457,7 +2444,7 @@ func TestPkcs11MLDSASigner_Sign_NilP11Ctx(t *testing.T) {
 		privateHandle: pkcs11.ObjectHandle(2),
 		label:         "test",
 		algorithm:     "ML-DSA-44",
-		signMechanism: CKM_ML_DSA,
+		family:        quantumFamilyMLDSA,
 	}
 
 	digest := make([]byte, 32)

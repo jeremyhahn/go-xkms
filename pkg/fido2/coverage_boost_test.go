@@ -812,10 +812,10 @@ func TestParseAuthDataExtensions_EdgeCases(t *testing.T) {
 	assert.NoError(t, err)
 	assert.Nil(t, result)
 
-	// Test with extensions included but no attested credential data
+	// Test with the extensions flag set but no extension map present
 	authData[32] = 0x80 // Extensions included
 	result, err = ParseAuthDataExtensions(authData)
-	assert.NoError(t, err)
+	assert.ErrorIs(t, err, ErrInvalidExtensions)
 	assert.Nil(t, result)
 }
 
@@ -826,8 +826,7 @@ func TestParseAuthDataExtensions_WithInvalidAttestedCredData(t *testing.T) {
 	authData[32] = 0xC0 // Extensions + attested credential data flags
 
 	_, err := ParseAuthDataExtensions(authData)
-	assert.Error(t, err)
-	assert.Contains(t, err.Error(), "invalid attested credential data")
+	assert.ErrorIs(t, err, ErrInvalidAttestedCredentialData)
 }
 
 // TestParseAuthDataExtensions_WithInvalidCredIDLength tests invalid credential ID length.
@@ -841,8 +840,7 @@ func TestParseAuthDataExtensions_WithInvalidCredIDLength(t *testing.T) {
 	authData[54] = 0xE7 // 999 in big endian
 
 	_, err := ParseAuthDataExtensions(authData)
-	assert.Error(t, err)
-	assert.Contains(t, err.Error(), "invalid credential ID length")
+	assert.ErrorIs(t, err, ErrInvalidAttestedCredentialData)
 }
 
 // TestGenerateDerivedKey_ValidSecret tests GenerateDerivedKey with valid input.
@@ -1013,6 +1011,8 @@ func (d *GetAssertionErrorDeviceCB) gaeCBORResp(payload []byte) {
 		}
 		encoded, _ := cbor.Marshal(info)
 		d.gaeWritePkts(0x12345678, append([]byte{StatusOK}, encoded...))
+	case CmdClientPIN:
+		writeCTAPHIDResponse(d.readBuf, 0x12345678, d.sim.respond(payload))
 	case CmdGetAssertion:
 		// Return error status
 		d.gaeWritePkts(0x12345678, []byte{StatusNoCredentials})

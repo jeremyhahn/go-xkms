@@ -14,6 +14,7 @@
 package storage
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"fmt"
@@ -76,6 +77,7 @@ type engineBackend struct {
 
 // Compile-time assertion that engineBackend satisfies Backend.
 var _ Backend = (*engineBackend)(nil)
+var _ CompareAndSwapper = (*engineBackend)(nil)
 
 // NewEngineBackend wraps a go-qrdb storage engine as an xkms Backend.
 func NewEngineBackend(eng qrdbsdk.Storage) Backend {
@@ -127,6 +129,50 @@ func (b *engineBackend) PutIfAbsent(_ context.Context, key string, value []byte)
 		return false, mapErr("put-if-absent", key, err)
 	}
 	return true, nil
+}
+
+// CompareAndSwap atomically stores newValue at key only if the current value
+// equals expected (or, when expected is nil, only if the key is absent),
+// returning the current value when it does not swap.
+//
+// It shares putIfAbsentMu with PutIfAbsent so the get-compare-set is
+// linearizable for this single-writer, process-local engine — the same genuine
+// (not best-effort) guarantee PutIfAbsent gives. A clustered Backend implements
+// CompareAndSwap via a consensus compare-and-swap instead (see
+// pkg/storage/qrdb).
+func (b *engineBackend) CompareAndSwap(_ context.Context, key string, expected, newValue []byte) (bool, []byte, error) {
+	b.putIfAbsentMu.Lock()
+	defer b.putIfAbsentMu.Unlock()
+
+	exists, err := b.eng.Exists([]byte(key))
+	if err != nil {
+		return false, nil, mapErr("compare-and-swap", key, err)
+	}
+
+	var current []byte
+	if exists {
+		current, err = b.eng.Get([]byte(key))
+		if err != nil {
+			return false, nil, mapErr("compare-and-swap", key, err)
+		}
+	}
+
+	if expected == nil {
+		// Require the key to be absent.
+		if exists {
+			return false, current, nil
+		}
+	} else {
+		// Require the current value to equal expected exactly.
+		if !exists || !bytes.Equal(current, expected) {
+			return false, current, nil
+		}
+	}
+
+	if err := b.eng.Set([]byte(key), newValue); err != nil {
+		return false, nil, mapErr("compare-and-swap", key, err)
+	}
+	return true, nil, nil
 }
 
 // Delete removes key. The go-qrdb engine deletes idempotently (no error on a

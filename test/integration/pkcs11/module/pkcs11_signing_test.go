@@ -17,11 +17,94 @@
 package module
 
 import (
+	"bytes"
+	"crypto/ecdsa"
+	"crypto/elliptic"
 	"crypto/sha256"
+	"encoding/asn1"
+	"math/big"
 	"testing"
 
 	"github.com/jeremyhahn/go-xkms/pkg/pkcs11/module"
 )
+
+// tokenP256PublicKey reads CKA_EC_POINT off a public key object and returns the
+// P-256 public key it encodes.
+//
+// PKCS#11 v3.2 §6.3.3 defines CKA_EC_POINT as "DER-encoding of ANSI X9.62
+// ECPoint value Q", which is an ASN.1 OCTET STRING wrapping the X9.62 point.
+// Unwrapping it here rather than accepting whatever shape the module hands back
+// is deliberate: a module that returns the bare point, or a point on the wrong
+// curve, breaks every external consumer (OpenSSL, ssh-keygen, pkcs11-tool) and
+// would otherwise go unnoticed because no in-module test needs the attribute.
+func tokenP256PublicKey(t *testing.T, env *TestEnvironment, session module.SessionHandle, pub module.ObjectHandle) *ecdsa.PublicKey {
+	t.Helper()
+
+	attrs, rv := env.Module.GetAttributeValue(session, pub, []module.Attribute{
+		{Type: module.CKA_EC_POINT},
+	})
+	RequireOK(t, rv, "GetAttributeValue CKA_EC_POINT")
+
+	if len(attrs) != 1 {
+		t.Fatalf("expected exactly one attribute back for CKA_EC_POINT, got %d", len(attrs))
+	}
+	if attrs[0].Unavailable {
+		t.Fatal("the token reported CKA_EC_POINT as unavailable; an EC public key " +
+			"object must expose its point (PKCS#11 v3.2 §6.3.3)")
+	}
+
+	var point []byte
+	rest, err := asn1.Unmarshal(attrs[0].Value, &point)
+	if err != nil {
+		t.Fatalf("CKA_EC_POINT is not a DER OCTET STRING as PKCS#11 v3.2 §6.3.3 "+
+			"requires: %v (raw value: %x)", err, attrs[0].Value)
+	}
+	if len(rest) != 0 {
+		t.Fatalf("CKA_EC_POINT has %d trailing bytes after the DER OCTET STRING; "+
+			"the attribute must contain exactly one ECPoint (raw value: %x)",
+			len(rest), attrs[0].Value)
+	}
+
+	x, y := elliptic.Unmarshal(elliptic.P256(), point)
+	if x == nil {
+		t.Fatalf("CKA_EC_POINT does not decode as an uncompressed X9.62 point on "+
+			"P-256: %x", point)
+	}
+
+	return &ecdsa.PublicKey{Curve: elliptic.P256(), X: x, Y: y}
+}
+
+// requireRawECDSASignature asserts that sig is the raw r||s encoding PKCS#11
+// mandates and that it verifies over digest under pub.
+//
+// PKCS#11 v3.2 §6.3.1 ("EC Signatures") states that an ECDSA signature is "the
+// concatenation of the ECDSA values r and s" and that "for signatures created
+// by a token, the resulting signature is always of length 2 nLen" — 64 bytes on
+// P-256. DER is therefore wrong here, and this assertion is what separates the
+// two: a DER signature is 70-72 bytes and would be accepted by any length range
+// spanning both. This codebase has already shipped one IEEE-P1363-versus-DER
+// defect (Azure ECDSA returned P1363 where callers expected DER), so the
+// encoding is pinned rather than tolerated. ecdsa.Verify then proves the
+// signature is over the digest the caller supplied, catching a module that
+// hashes the digest a second time.
+func requireRawECDSASignature(t *testing.T, pub *ecdsa.PublicKey, digest, sig []byte) {
+	t.Helper()
+
+	const nLen = 32 // P-256 base point order length in octets
+	if len(sig) != 2*nLen {
+		t.Fatalf("CKM_ECDSA over P-256 must return %d bytes of raw r||s "+
+			"(PKCS#11 v3.2 §6.3.1); got %d bytes: %x. A length of 70-72 means the "+
+			"module returned ASN.1 DER, which no PKCS#11 caller expects",
+			2*nLen, len(sig), sig)
+	}
+
+	r := new(big.Int).SetBytes(sig[:nLen])
+	s := new(big.Int).SetBytes(sig[nLen:])
+	if !ecdsa.Verify(pub, digest, r, s) {
+		t.Fatalf("the signature the token produced does not verify against its own "+
+			"public key over the digest that was signed (r=%x s=%x)", sig[:nLen], sig[nLen:])
+	}
+}
 
 // TestRSASign tests RSA PKCS#1 v1.5 signing via C_SignInit and C_Sign.
 func TestRSASign(t *testing.T) {
@@ -156,7 +239,11 @@ func TestRSAPSSSign(t *testing.T) {
 		data := []byte("Test data for RSA-PSS signing")
 
 		// Initialize PSS signing
-		pssMech := &module.Mechanism{Type: module.CKM_SHA256_RSA_PKCS_PSS}
+		// CKM_*_RSA_PKCS_PSS requires CK_RSA_PKCS_PSS_PARAMS (v3.2 §6.1.10);
+		// without it the salt length and MGF are undefined and the module
+		// refuses rather than choosing them for the caller.
+		pssMech := module.NewMechanismWithTypedParams(module.CKM_SHA256_RSA_PKCS_PSS,
+			module.NewRSAPSSParams(module.CKM_SHA256))
 		rv = env.Module.SignInit(session, pssMech, privHandle)
 		RequireOK(t, rv, "SignInit RSA-PSS")
 
@@ -183,7 +270,7 @@ func TestECDSASign(t *testing.T) {
 
 		mechanism := &module.Mechanism{Type: module.CKM_EC_KEY_PAIR_GEN}
 
-		_, privHandle, rv := env.Module.GenerateKeyPair(session, mechanism, pubTemplate, privTemplate)
+		pubHandle, privHandle, rv := env.Module.GenerateKeyPair(session, mechanism, pubTemplate, privTemplate)
 		RequireOK(t, rv, "GenerateKeyPair EC")
 
 		// Hash data (ECDSA signs hashes)
@@ -198,15 +285,24 @@ func TestECDSASign(t *testing.T) {
 		// Sign
 		signature, rv := env.Module.Sign(session, hash[:])
 		RequireOK(t, rv, "Sign ECDSA")
+		RequireOK(t, env.Module.FinishOperation(session, module.OperationSign),
+			"FinishOperation after signing")
 
-		if len(signature) == 0 {
-			t.Error("expected non-empty signature")
-		}
+		// The encoding and the mathematics are both checked outside the module,
+		// against the public key the token published. Without this the subtest
+		// accepted any byte string of any length.
+		pub := tokenP256PublicKey(t, env, session, pubHandle)
+		requireRawECDSASignature(t, pub, hash[:], signature)
 
-		// P-256 ECDSA signature is ~64 bytes (two 32-byte integers)
-		// But DER encoding can vary, so just check it's reasonable
-		if len(signature) < 64 || len(signature) > 72 {
-			t.Logf("ECDSA signature length: %d (expected ~64-72)", len(signature))
+		// A signature must be bound to the message. Verifying the same signature
+		// over a different digest must fail; if it succeeds the module is
+		// signing something other than the caller's input.
+		otherHash := sha256.Sum256([]byte("a different message"))
+		r := new(big.Int).SetBytes(signature[:32])
+		s := new(big.Int).SetBytes(signature[32:])
+		if ecdsa.Verify(pub, otherHash[:], r, s) {
+			t.Error("the signature verified over a digest that was never signed; " +
+				"the signature is not bound to its message")
 		}
 
 		t.Logf("Generated ECDSA signature of %d bytes", len(signature))
@@ -221,7 +317,7 @@ func TestECDSASign(t *testing.T) {
 
 		mechanism := &module.Mechanism{Type: module.CKM_EC_KEY_PAIR_GEN}
 
-		_, privHandle, rv := env.Module.GenerateKeyPair(session, mechanism, pubTemplate, privTemplate)
+		pubHandle, privHandle, rv := env.Module.GenerateKeyPair(session, mechanism, pubTemplate, privTemplate)
 		RequireOK(t, rv, "GenerateKeyPair EC")
 
 		// Data to sign (mechanism handles hashing)
@@ -235,10 +331,17 @@ func TestECDSASign(t *testing.T) {
 		// Sign
 		signature, rv := env.Module.Sign(session, data)
 		RequireOK(t, rv, "Sign ECDSA_SHA256")
+		RequireOK(t, env.Module.FinishOperation(session, module.OperationSign),
+			"FinishOperation after signing")
 
-		if len(signature) == 0 {
-			t.Error("expected non-empty signature")
-		}
+		// CKM_ECDSA_SHA256 hashes the message itself (PKCS#11 v3.2 §6.3.13), so
+		// the signature must verify over SHA-256 of the input and nothing else.
+		// Checking only that the signature is non-empty could not tell a correct
+		// implementation from one that hashes the message twice, or signs the
+		// raw message.
+		digest := sha256.Sum256(data)
+		pub := tokenP256PublicKey(t, env, session, pubHandle)
+		requireRawECDSASignature(t, pub, digest[:], signature)
 
 		t.Logf("Generated ECDSA-SHA256 signature of %d bytes", len(signature))
 	})
@@ -517,6 +620,18 @@ func TestDigestOperations(t *testing.T) {
 	})
 }
 
+// signingGCMIV returns a fixed AES-GCM initialization vector for these tests.
+//
+// A conformance test asserts a control rule rather than confidentiality, and a
+// fixed IV keeps a failure reproducible. Production code must never reuse a
+// GCM IV under one key.
+func signingGCMIV() []byte {
+	return []byte{
+		0x00, 0x01, 0x02, 0x03, 0x04, 0x05,
+		0x06, 0x07, 0x08, 0x09, 0x0a, 0x0b,
+	}
+}
+
 // TestEncryptDecryptOperations tests encryption and decryption.
 func TestEncryptDecryptOperations(t *testing.T) {
 	t.Run("AES_GCM_EncryptDecrypt", func(t *testing.T) {
@@ -532,21 +647,37 @@ func TestEncryptDecryptOperations(t *testing.T) {
 		plaintext := []byte("Test plaintext for AES-GCM encryption")
 
 		// Encrypt
-		encMech := &module.Mechanism{Type: module.CKM_AES_GCM}
+		// AES-GCM requires CK_GCM_PARAMS (v3.2 §6.13.5): the IV, the AAD and
+		// the tag length all travel there, and the module will not invent them.
+		encMech := module.NewMechanismWithTypedParams(module.CKM_AES_GCM,
+			module.NewAESGCMParams(signingGCMIV(), 128))
 		rv = env.Module.EncryptInit(session, encMech, keyHandle)
 		RequireOK(t, rv, "EncryptInit")
 
 		ciphertext, rv := env.Module.Encrypt(session, plaintext)
 		RequireOK(t, rv, "Encrypt")
+		RequireOK(t, env.Module.FinishOperation(session, module.OperationEncrypt),
+			"FinishOperation after encrypting")
 
-		if len(ciphertext) == 0 {
-			t.Error("expected non-empty ciphertext")
+		// PKCS#11 v3.2 §6.13.2 has C_Encrypt for CKM_AES_GCM return "ciphertext
+		// and authentication tag output", and C_Decrypt take "the ciphertext,
+		// including the appended tag". With ulTagBits = 128 that is exactly
+		// len(plaintext)+16: the IV is an input carried in CK_GCM_PARAMS and is
+		// not prepended.
+		//
+		// These two assertions replaced a bare t.Logf warning. That mattered:
+		// a module that returned the plaintext unchanged satisfied the warning
+		// and then satisfied the roundtrip comparison below trivially, so a
+		// completely non-encrypting AES-GCM path was green.
+		const gcmTagLen = 16
+		if len(ciphertext) != len(plaintext)+gcmTagLen {
+			t.Fatalf("AES-GCM ciphertext must be the plaintext length plus the %d-byte "+
+				"tag (PKCS#11 v3.2 §6.13.2); got %d for a %d-byte plaintext",
+				gcmTagLen, len(ciphertext), len(plaintext))
 		}
-
-		// Ciphertext should be longer due to IV and auth tag
-		if len(ciphertext) <= len(plaintext) {
-			t.Logf("Warning: ciphertext length (%d) is not longer than plaintext (%d)",
-				len(ciphertext), len(plaintext))
+		if bytes.Equal(ciphertext[:len(plaintext)], plaintext) {
+			t.Fatalf("the ciphertext body is byte-for-byte identical to the plaintext; "+
+				"the key stream was never applied: %x", ciphertext)
 		}
 
 		// Decrypt
@@ -555,9 +686,11 @@ func TestEncryptDecryptOperations(t *testing.T) {
 
 		decrypted, rv := env.Module.Decrypt(session, ciphertext)
 		RequireOK(t, rv, "Decrypt")
+		RequireOK(t, env.Module.FinishOperation(session, module.OperationDecrypt),
+			"FinishOperation after decrypting")
 
 		// Verify decrypted matches original
-		if string(decrypted) != string(plaintext) {
+		if !bytes.Equal(decrypted, plaintext) {
 			t.Errorf("decrypted text does not match original")
 			t.Logf("Original:  %s", string(plaintext))
 			t.Logf("Decrypted: %s", string(decrypted))
@@ -566,10 +699,72 @@ func TestEncryptDecryptOperations(t *testing.T) {
 		t.Log("AES-GCM encrypt/decrypt roundtrip succeeded")
 	})
 
+	t.Run("AES_GCM_RejectsTamperedCiphertext", func(t *testing.T) {
+		env, session := SetupAuthenticatedModule(t)
+
+		keyTemplate := BuildAESKeyTemplate("test-aes-gcm-tamper", 32)
+		keyHandle, rv := env.Module.GenerateKey(session,
+			&module.Mechanism{Type: module.CKM_AES_KEY_GEN}, keyTemplate)
+		RequireOK(t, rv, "GenerateKey AES")
+
+		plaintext := []byte("Authenticated data that must not decrypt once altered")
+
+		encMech := module.NewMechanismWithTypedParams(module.CKM_AES_GCM,
+			module.NewAESGCMParams(signingGCMIV(), 128))
+		rv = env.Module.EncryptInit(session, encMech, keyHandle)
+		RequireOK(t, rv, "EncryptInit")
+
+		ciphertext, rv := env.Module.Encrypt(session, plaintext)
+		RequireOK(t, rv, "Encrypt")
+		RequireOK(t, env.Module.FinishOperation(session, module.OperationEncrypt),
+			"FinishOperation after encrypting")
+
+		// Flip one bit in the ciphertext body. GCM is authenticated encryption,
+		// so the tag check must reject this; a module that decrypts it anyway
+		// is running raw CTR mode and offers no integrity at all. The
+		// confidentiality assertions above cannot catch that on their own.
+		//
+		// The expected code is CKR_ENCRYPTED_DATA_INVALID: PKCS#11 v3.2 §3.2
+		// defines it as "the encrypted input to a decryption operation has been
+		// determined to be invalid ciphertext", and §5.10.2 lists it among
+		// C_Decrypt's return values. CKR_AEAD_DECRYPT_FAILED is the code the
+		// spec names for an AEAD authenticity failure, but only for the
+		// message-based functions (§5.10.6, §5.10.8); it is not a C_Decrypt
+		// return value. CKR_FUNCTION_FAILED is not acceptable here: it is the
+		// generic "some problem occurred" code, and returning it makes a
+		// tampered ciphertext indistinguishable from a device malfunction, so a
+		// caller cannot tell an attack from an outage.
+		tampered := make([]byte, len(ciphertext))
+		copy(tampered, ciphertext)
+		tampered[0] ^= 0x01
+
+		rv = env.Module.DecryptInit(session, encMech, keyHandle)
+		RequireOK(t, rv, "DecryptInit")
+
+		_, rv = env.Module.Decrypt(session, tampered)
+		RequireReturnValue(t, rv, module.CKR_ENCRYPTED_DATA_INVALID,
+			"Decrypt of a bit-flipped AES-GCM ciphertext")
+
+		// Flipping a bit in the tag itself must be rejected for the same reason.
+		tamperedTag := make([]byte, len(ciphertext))
+		copy(tamperedTag, ciphertext)
+		tamperedTag[len(tamperedTag)-1] ^= 0x80
+
+		rv = env.Module.DecryptInit(session, encMech, keyHandle)
+		RequireOK(t, rv, "DecryptInit for the tag-tamper case")
+
+		_, rv = env.Module.Decrypt(session, tamperedTag)
+		RequireReturnValue(t, rv, module.CKR_ENCRYPTED_DATA_INVALID,
+			"Decrypt of an AES-GCM ciphertext with a corrupted tag")
+	})
+
 	t.Run("EncryptWithInvalidKey", func(t *testing.T) {
 		env, session := SetupAuthenticatedModule(t)
 
-		encMech := &module.Mechanism{Type: module.CKM_AES_GCM}
+		// AES-GCM requires CK_GCM_PARAMS (v3.2 §6.13.5): the IV, the AAD and
+		// the tag length all travel there, and the module will not invent them.
+		encMech := module.NewMechanismWithTypedParams(module.CKM_AES_GCM,
+			module.NewAESGCMParams(signingGCMIV(), 128))
 		rv := env.Module.EncryptInit(session, encMech, module.ObjectHandle(99999))
 		RequireReturnValue(t, rv, module.CKR_KEY_HANDLE_INVALID, "EncryptInit invalid key")
 	})

@@ -692,6 +692,19 @@ func newFIDO2Device(cfg *FIDO2Config, logger *slog.Logger) (*fido2Device, error)
 		Logger:                     logger,
 	}
 
+	// Apply the persisted authenticator profile (`xkey fido2 profile set`).
+	// Without this the saved settings would never reach GetInfo, which is
+	// what made `profile set` a no-op. A missing profile is not an error —
+	// it simply leaves the authenticator's built-in defaults in place.
+	if profile, perr := loadFIDO2Profile(context.Background(), cfg); perr != nil {
+		logger.Warn("fido2: could not load authenticator profile; using defaults", "error", perr)
+	} else if profile != nil {
+		if len(profile.Transports) > 0 {
+			authConfig.Transports = profile.Transports
+		}
+		authConfig.EnableEnterpriseAttestation = profile.EnterpriseAttestation
+	}
+
 	// Create the authenticator
 	auth, err := authenticator.NewAuthenticator(authConfig)
 	if err != nil {

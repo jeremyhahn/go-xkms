@@ -281,9 +281,36 @@ func TestReadPCRs_Simulator(t *testing.T) {
 	}
 }
 
-// Test PCR Extend operation
+// pcrValue returns the value of a single PCR in a named bank.
+//
+// ReadPCRs builds its result by ranging over a map[string]tpm2.TPMAlgID, so the
+// order of the returned []PCRBank is randomised by the Go runtime on every run.
+// Callers must therefore select a bank by Algorithm and never by index. Doing
+// the latter is what made TestPCRExtend_Simulator "fail in the suite but pass
+// alone": banks[0] was the SHA-384 bank roughly three runs in four, and that
+// bank is untouched by a SHA-256-only extend.
+func pcrValue(t *testing.T, banks []PCRBank, algorithm string, pcrIndex uint) []byte {
+	t.Helper()
+
+	for _, bank := range banks {
+		if bank.Algorithm != algorithm {
+			continue
+		}
+		for _, pcr := range bank.PCRs {
+			if pcr.ID == int32(pcrIndex) {
+				return pcr.Value
+			}
+		}
+		t.Fatalf("PCR %d missing from the %s bank", pcrIndex, algorithm)
+	}
+
+	t.Fatalf("bank %s missing from ReadPCRs result", algorithm)
+	return nil
+}
+
+// TestPCRExtend_Simulator pins the TCG extend semantics for PCR 16:
+// PCRnew = H(PCRold || digest), applied to the extended bank only.
 func TestPCRExtend_Simulator(t *testing.T) {
-	t.Skip("Test isolation issue - passes alone but fails in suite")
 	_, tpm := createSim(false, false)
 	defer func() { _ = tpm.Close() }()
 
@@ -292,8 +319,8 @@ func TestPCRExtend_Simulator(t *testing.T) {
 
 	initialBanks, err := tpm.ReadPCRs([]uint{pcrIndex})
 	require.NoError(t, err)
-	require.GreaterOrEqual(t, len(initialBanks), 1)
-	initialValue := initialBanks[0].PCRs[0].Value
+	initialValue := pcrValue(t, initialBanks, "SHA256", pcrIndex)
+	initialSHA384 := pcrValue(t, initialBanks, "SHA384", pcrIndex)
 
 	extendData := make([]byte, 32)
 	_, err = rand.Read(extendData)
@@ -317,10 +344,21 @@ func TestPCRExtend_Simulator(t *testing.T) {
 
 	finalBanks, err := tpm.ReadPCRs([]uint{pcrIndex})
 	require.NoError(t, err)
-	require.GreaterOrEqual(t, len(finalBanks), 1)
-	finalValue := finalBanks[0].PCRs[0].Value
+	finalValue := pcrValue(t, finalBanks, "SHA256", pcrIndex)
 
-	assert.NotEqual(t, initialValue, finalValue)
+	assert.NotEqual(t, initialValue, finalValue,
+		"extending a PCR must change its value")
+
+	// The extend is defined exactly, so assert the exact result rather than
+	// merely "something changed": a TPM that stored the digest verbatim, or
+	// hashed the operands in the wrong order, would pass a NotEqual check.
+	expected := sha256.Sum256(append(append([]byte{}, initialValue...), extendData...))
+	assert.Equal(t, expected[:], finalValue,
+		"PCR must be extended as H(old || digest)")
+
+	// A SHA-256-only extend must leave every other bank alone.
+	assert.Equal(t, initialSHA384, pcrValue(t, finalBanks, "SHA384", pcrIndex),
+		"extending the SHA-256 bank must not disturb the SHA-384 bank")
 }
 
 // Test IsPlatformPCRExtended method

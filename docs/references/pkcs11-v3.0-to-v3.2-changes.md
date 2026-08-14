@@ -172,6 +172,7 @@ Source: OASIS PKCS#11 Specification v3.2 CSD01 (`pkcs11-spec-v3.2.html`) and `pk
 | `CKR_SESSION_ASYNC_NOT_SUPPORTED` | `0x00000205` | Token does not support asynchronous sessions |
 | `CKR_SEED_RANDOM_REQUIRED` | `0x00000206` | `C_SeedRandom` must be called before `C_GenerateRandom` |
 | `CKR_OPERATION_NOT_VALIDATED` | `0x00000207` | Operation violates validation policy/FIPS mode constraints |
+| `CKR_TOKEN_NOT_INITIALIZED` | `0x00000208` | Token is in factory state; `C_InitToken` (or out-of-band initialization) must run first (section 5.1.3) |
 | `CKR_PARAMETER_SET_NOT_SUPPORTED` | `0x00000209` | Requested parameter set (e.g., ML-KEM-768) is not supported by this token |
 
 ### 1.7 New Parameter Set Constants (CKP_*)

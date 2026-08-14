@@ -17,7 +17,6 @@ package pkcs11
 
 import (
 	"encoding/asn1"
-	"os"
 	"strconv"
 	"strings"
 	"testing"
@@ -28,51 +27,32 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-const (
-	slotModelSoftHSMLib   = "/usr/lib/softhsm/libsofthsm2.so"
-	slotModelSoftHSMToken = "e2e-piv-test"
-	slotModelSoftHSMPIN   = "123456"
-)
-
-// skipIfNoSoftHSMSlotModel skips when SoftHSM is not installed.
-// Named distinctly to avoid redeclaration with the integration test file.
-func skipIfNoSoftHSMSlotModel(t *testing.T) {
-	t.Helper()
-	if _, err := os.Stat(slotModelSoftHSMLib); err != nil {
-		t.Skip("SoftHSM not available at", slotModelSoftHSMLib)
-	}
-}
-
-// newSlotModelTestPool creates a standalonePool for unit tests against SoftHSM.
+// newSlotModelTestPool provisions a private SoftHSM2 token carrying the four
+// primary PIV slots and returns a session pool bound to it.
 func newSlotModelTestPool(t *testing.T) *standalonePool {
 	t.Helper()
 
-	ctx := p11.New(slotModelSoftHSMLib)
+	tok := provisionPIVToken(t)
+
+	ctx := p11.New(tok.Library)
 	require.NotNil(t, ctx, "load SoftHSM library")
 
-	err := ctx.Initialize()
-	if err != nil {
+	if err := ctx.Initialize(); err != nil {
 		// Already initialized is fine in a multi-test process.
 		if !isPKCS11Error(err, p11.CKR_CRYPTOKI_ALREADY_INITIALIZED) {
 			t.Fatalf("PKCS#11 Initialize: %v", err)
 		}
 	}
 
-	cfg := &pivcert.PKCS11StorageConfig{
-		LibraryPath: slotModelSoftHSMLib,
-		TokenLabel:  slotModelSoftHSMToken,
-		PIN:         slotModelSoftHSMPIN,
-		SlotID:      -1,
-	}
-	slotID, err := resolveSlot(ctx, cfg)
-	require.NoError(t, err, "resolve SoftHSM slot")
+	slotID, err := resolveSlot(ctx, tok.config())
+	require.NoError(t, err, "resolve provisioned token slot")
 
-	pool, err := newSessionPool(ctx, slotID, slotModelSoftHSMPIN, 2)
+	pool, err := newSessionPool(ctx, slotID, tok.UserPIN, 2)
 	require.NoError(t, err, "create session pool")
 
 	t.Cleanup(func() {
 		pool.Close()
-		ctx.Finalize()
+		require.NoError(t, ctx.Finalize())
 		ctx.Destroy()
 	})
 
@@ -103,8 +83,6 @@ func TestPIVSlotModel_NilPool(t *testing.T) {
 
 // TestPIVSlotModel_AllSlots verifies that AllSlots returns the full 25-slot set.
 func TestPIVSlotModel_AllSlots(t *testing.T) {
-	skipIfNoSoftHSMSlotModel(t)
-
 	pool := newSlotModelTestPool(t)
 	model, err := NewPIVSlotModel(pool)
 	require.NoError(t, err)
@@ -117,8 +95,6 @@ func TestPIVSlotModel_AllSlots(t *testing.T) {
 // the pre-provisioned PIV keys on the SoftHSM e2e-piv-test token. The token
 // has private keys with CKA_IDs 0x01-0x04 mapped to slots 9a, 9c, 9d, 9e.
 func TestPIVSlotModel_Refresh_FindsPreloadedKeys(t *testing.T) {
-	skipIfNoSoftHSMSlotModel(t)
-
 	pool := newSlotModelTestPool(t)
 	model, err := NewPIVSlotModel(pool)
 	require.NoError(t, err)
@@ -131,8 +107,6 @@ func TestPIVSlotModel_Refresh_FindsPreloadedKeys(t *testing.T) {
 
 // TestPIVSlotModel_IsOccupied checks known-occupied and likely-free slots.
 func TestPIVSlotModel_IsOccupied(t *testing.T) {
-	skipIfNoSoftHSMSlotModel(t)
-
 	pool := newSlotModelTestPool(t)
 	model, err := NewPIVSlotModel(pool)
 	require.NoError(t, err)
@@ -149,8 +123,6 @@ func TestPIVSlotModel_IsOccupied(t *testing.T) {
 
 // TestPIVSlotModel_AvailableSlots verifies count consistency.
 func TestPIVSlotModel_AvailableSlots(t *testing.T) {
-	skipIfNoSoftHSMSlotModel(t)
-
 	pool := newSlotModelTestPool(t)
 	model, err := NewPIVSlotModel(pool)
 	require.NoError(t, err)
@@ -169,8 +141,6 @@ func TestPIVSlotModel_AvailableSlots(t *testing.T) {
 // returns a retired slot (82-95) rather than a primary slot when retired slots
 // are free.
 func TestPIVSlotModel_NextAvailable_PrefersRetired(t *testing.T) {
-	skipIfNoSoftHSMSlotModel(t)
-
 	pool := newSlotModelTestPool(t)
 	model, err := NewPIVSlotModel(pool)
 	require.NoError(t, err)
@@ -185,8 +155,6 @@ func TestPIVSlotModel_NextAvailable_PrefersRetired(t *testing.T) {
 // TestPIVSlotModel_SlotOccupancy verifies occupancy info for a known-occupied
 // slot (9a) and a known-free slot.
 func TestPIVSlotModel_SlotOccupancy(t *testing.T) {
-	skipIfNoSoftHSMSlotModel(t)
-
 	pool := newSlotModelTestPool(t)
 	model, err := NewPIVSlotModel(pool)
 	require.NoError(t, err)
@@ -208,8 +176,6 @@ func TestPIVSlotModel_SlotOccupancy(t *testing.T) {
 // TestPIVSlotModel_SlotOccupancy_FreeSlot verifies that an unoccupied slot
 // reports correctly.
 func TestPIVSlotModel_SlotOccupancy_FreeSlot(t *testing.T) {
-	skipIfNoSoftHSMSlotModel(t)
-
 	pool := newSlotModelTestPool(t)
 	model, err := NewPIVSlotModel(pool)
 	require.NoError(t, err)
@@ -217,9 +183,8 @@ func TestPIVSlotModel_SlotOccupancy_FreeSlot(t *testing.T) {
 	// Find a free slot to test.
 	available, err := model.AvailableSlots()
 	require.NoError(t, err)
-	if len(available) == 0 {
-		t.Skip("all slots occupied, cannot test free slot occupancy")
-	}
+	require.NotEmpty(t, available,
+		"a freshly provisioned token occupies only the 4 primary PIV slots, leaving 21 free")
 
 	info, err := model.SlotOccupancy(available[0])
 	require.NoError(t, err)
@@ -231,8 +196,6 @@ func TestPIVSlotModel_SlotOccupancy_FreeSlot(t *testing.T) {
 // TestPIVSlotModel_Refresh_Idempotent verifies that calling Refresh multiple
 // times produces consistent results.
 func TestPIVSlotModel_Refresh_Idempotent(t *testing.T) {
-	skipIfNoSoftHSMSlotModel(t)
-
 	pool := newSlotModelTestPool(t)
 	model, err := NewPIVSlotModel(pool)
 	require.NoError(t, err)

@@ -2,6 +2,7 @@ package tpm2
 
 import (
 	"crypto"
+	"crypto/elliptic"
 	"crypto/x509"
 	"errors"
 	"strings"
@@ -72,6 +73,13 @@ const (
 	EnrollmentStrategyIAK                    = EnrollmentStrategy("IAK")
 	EnrollmentStrategyIAK_IDEVID_SINGLE_PASS = EnrollmentStrategy("IAK_IDEVID_SINGLE_PASS")
 
+	// EnrollmentStrategyUnknown is what ParseIdentityProvisioningStrategy
+	// returns for a configured value it does not recognize. It matches no
+	// branch in any strategy switch, so the caller falls through to
+	// ErrInvalidEnrollmentStrategy and the enrollment fails closed instead of
+	// silently running a different device-identity ceremony.
+	EnrollmentStrategyUnknown = EnrollmentStrategy("UNKNOWN")
+
 	binaryMeasurementsFileNameTemplate = "/sys/kernel/security/%s/binary_bios_measurements"
 )
 
@@ -105,37 +113,127 @@ var (
 	ErrInvalidSessionAuthorization     = errors.New("tpm: invalid session authorization")
 	ErrMissingMeasurementLog           = errors.New("tpm: binary measurement log not found")
 	ErrRSAPSSNotSupported              = errors.New("tpm: RSA-PSS / FIPS 140-2 not supported by this TPM")
-	ErrInvalidEnrollmentStrategy       = errors.New("tpm: invalid enrollment strategy")
-	ErrInvalidCryptoHashAlgID          = errors.New("tpm: crypto.Hash doesn't map to a supported TPMAlgID")
-	ErrCurveNotSupported               = errors.New("tpm: ECC curve not supported by TPM")
-	ErrInvalidKeySize                  = errors.New("tpm: invalid key size")
-	ErrInvalidNVExtendData             = errors.New("tpm: invalid NV extend data - data cannot be nil or empty")
-	ErrIAKNotProvisioned               = errors.New("tpm: IAK not provisioned")
-	ErrTransportNotInitialized         = errors.New("tpm: transport not initialized")
-	ErrInstallTransportNotInitialized  = errors.New("tpm: TPM transport not initialized")
-	ErrLockoutResetFailed              = errors.New("tpm: dictionary attack lockout reset failed")
-	ErrEKNotInitialized                = errors.New("tpm: endorsement key not initialized")
-	ErrEKPublicRead                    = errors.New("tpm: failed to read endorsement key public area")
-	ErrEKRSAParse                      = errors.New("tpm: failed to parse RSA endorsement key")
-	ErrEKECCParse                      = errors.New("tpm: failed to parse ECC endorsement key")
-	ErrSRKPublicRead                   = errors.New("tpm: failed to read storage root key public area")
-	ErrIAKNotInitialized               = errors.New("tpm: initial attestation key not initialized")
-	ErrIAKPublicParse                  = errors.New("tpm: failed to parse IAK public key")
-	ErrIDevIDNotInitialized            = errors.New("tpm: initial device identifier not initialized")
-	ErrIDevIDPublicParse               = errors.New("tpm: failed to parse IDevID public key")
-	ErrGoldenMeasurements              = errors.New("tpm: failed to compute golden measurements")
-	ErrPolicyDigest                    = errors.New("tpm: failed to compute platform policy digest")
-	ErrIAKConfigFailed                 = errors.New("tpm: failed to create IAK attributes from config")
-	ErrCSRFieldTooLarge                = errors.New("tpm: CSR field exceeds maximum size")
-	ErrNVSecretTooLarge                = errors.New("tpm: NV secret data exceeds maximum size")
-	ErrNVReadNotAuthorized             = errors.New("tpm: NV index has no readable attribute (AuthRead or OwnerRead) matching the provided credentials")
-	ErrInvalidHierarchy                = errors.New("tpm: invalid hierarchy")
-	ErrFactoryReset                    = errors.New("tpm: factory reset failed")
-	ErrForceClear                      = errors.New("tpm: force clear via PPI failed")
-	ErrEKConfigNil                     = errors.New("tpm: EK config is nil")
-	ErrIAKConfigNil                    = errors.New("tpm: IAK config is nil")
-	ErrIDevIDConfigNil                 = errors.New("tpm: IDevID config is nil")
-	ErrSSRKConfigNil                   = errors.New("tpm: SSRK config is nil")
+
+	// ErrRawRSASignUnsupported reports that a TPM cannot produce a PKCS#1 v1.5
+	// signature over a caller-supplied DigestInfo -- the operation PKCS#11 calls
+	// raw CKM_RSA_PKCS and Go spells crypto.Hash(0).
+	//
+	// This is a property of the TPM 2.0 command set, not a gap in this package.
+	// TPM2_Sign does not pad the caller's bytes: for an RSASSA scheme it builds
+	// the DigestInfo itself from the OID of the scheme's hash algorithm and
+	// requires the supplied digest to be exactly that algorithm's digest size
+	// (TCG TPM 2.0 Library Part 3, section 12.1, encoded by Part 4's
+	// RSASSA_Encode). Handing it a complete 51-byte SHA-256 DigestInfo is
+	// answered with TPM_RC_SIZE; handing it a bare 32-byte digest would succeed
+	// but produce a signature over a DigestInfo the caller did not build, which
+	// is a different signature from the one that was asked for.
+	//
+	// The only command that performs the bare private-key exponentiation is
+	// TPM2_RSA_Decrypt with a TPM_ALG_NULL scheme (Part 3, section 14.3), and it
+	// requires the key to have the decrypt attribute SET. The signing keys this
+	// package creates have it CLEAR, so the TPM answers TPM_RC_ATTRIBUTES.
+	// Setting it to route raw signing through TPM2_RSA_Decrypt would turn every
+	// signing key into a raw private-key-operation oracle -- a signature forgery
+	// primitive -- so it is deliberately not done.
+	//
+	// A caller that needs PKCS#1 v1.5 from a TPM key must name the digest
+	// algorithm, which lets the TPM build the DigestInfo; a caller that needs the
+	// digest signed verbatim must use a backend that can, such as software or
+	// PKCS#11.
+	ErrRawRSASignUnsupported = errors.New("tpm: raw RSA PKCS#1 v1.5 signing is not supported by this token: TPM2_Sign builds its own DigestInfo, and TPM2_RSA_Decrypt is not permitted on a sign-only key")
+
+	// ErrSchemeHashUnresolved reports that the hash algorithm for a TPM2_Sign
+	// TPMT_SIG_SCHEME could not be determined.
+	//
+	// It is returned when the caller asked for hash "NONE" (crypto.Hash(0),
+	// meaning the digest is already built) and neither source of an answer is
+	// available: the key's public area names no scheme hash of its own -- it was
+	// created with TPM_ALG_NULL -- and the digest's length matches no digest
+	// algorithm this package supports, so the TPM would reject every possible
+	// choice with TPM_RC_SIZE. It is also returned for a malformed public area
+	// whose scheme names an algorithm but no hash.
+	ErrSchemeHashUnresolved = errors.New("tpm: cannot resolve the signature scheme hash for hash \"NONE\": the key names no scheme hash and the digest length matches no supported digest algorithm")
+
+	// ErrSignSchemeMismatch reports that a key's public area fixes a signature
+	// scheme that cannot satisfy the request.
+	//
+	// A key created with a scheme other than TPM_ALG_NULL can only be signed
+	// with under exactly that scheme, hash algorithm included: TPM2_Sign
+	// requires inScheme to be TPM_ALG_NULL or to match the key, and answers
+	// anything else with TPM_RC_SCHEME (TCG TPM 2.0 Library Part 3, section
+	// 12.1). Keys created before this package moved to TPM_ALG_NULL templates
+	// have this shape, so a request for a digest other than the one they were
+	// created with is reported here, naming the constraint, instead of letting a
+	// bare TPM response code reach the caller.
+	ErrSignSchemeMismatch = errors.New("tpm: the key's public area fixes a signature scheme that does not match the requested one; a key created with a fixed scheme can only sign under that scheme")
+
+	// ErrDigestLengthMismatch reports that the digest handed to TPM2_Sign is not
+	// the length the signature scheme's hash algorithm produces.
+	//
+	// TPM2_Sign signs the digest it is given and requires it to be exactly the
+	// size of the hash named in inScheme, answering anything else with
+	// TPM_RC_SIZE (TCG TPM 2.0 Library Part 3, section 12.1). Reporting it here
+	// tells the caller which length was expected; the TPM's own response code
+	// names only a command parameter number.
+	ErrDigestLengthMismatch = errors.New("tpm: the digest is not the length the signature scheme's hash algorithm produces")
+
+	// ErrAlgorithmNotSupported reports that the TPM does not implement a
+	// requested algorithm, as reported by TPM2_GetCapability with TPM_CAP_ALGS.
+	// See AlgorithmNotSupportedError for the detail.
+	ErrAlgorithmNotSupported = errors.New("tpm: algorithm not implemented by this TPM")
+
+	// ErrSchemeNotImplemented reports that a scheme is legal in TPM 2.0 but is
+	// not one this package can operate a key with. See
+	// SchemeNotImplementedError.
+	ErrSchemeNotImplemented = errors.New("tpm: signature scheme not implemented by this package")
+
+	// ErrSchemeHashRequired reports that a key template named a signature or
+	// encryption scheme without the hash algorithm that scheme requires
+	// (TCG TPM 2.0 Library Part 2, section 11.2.1.2).
+	ErrSchemeHashRequired = errors.New("tpm: a key template that names a scheme must also name the scheme's hash algorithm")
+
+	// ErrSchemeHashUnexpected reports that a key template named a scheme hash
+	// while leaving the scheme itself TPM_ALG_NULL. A scheme-less key fixes no
+	// hash, so the two cannot both be present.
+	ErrSchemeHashUnexpected = errors.New("tpm: a key template with a TPM_ALG_NULL scheme must not name a scheme hash")
+
+	// ErrRestrictedSchemeRequired reports that a restricted signing key was
+	// requested without a scheme. A restricted signing key must name one: it may
+	// only sign data the TPM produced, and the scheme is part of what the
+	// verifier relies on (TCG TPM 2.0 Library Part 1, section 25.2.3).
+	ErrRestrictedSchemeRequired = errors.New("tpm: a restricted signing key must name a signature scheme; TPM_ALG_NULL is not permitted")
+
+	ErrInvalidEnrollmentStrategy      = errors.New("tpm: invalid enrollment strategy")
+	ErrInvalidCryptoHashAlgID         = errors.New("tpm: crypto.Hash doesn't map to a supported TPMAlgID")
+	ErrCurveNotSupported              = errors.New("tpm: ECC curve not supported by TPM")
+	ErrInvalidKeySize                 = errors.New("tpm: invalid key size")
+	ErrInvalidNVExtendData            = errors.New("tpm: invalid NV extend data - data cannot be nil or empty")
+	ErrIAKNotProvisioned              = errors.New("tpm: IAK not provisioned")
+	ErrTransportNotInitialized        = errors.New("tpm: transport not initialized")
+	ErrInstallTransportNotInitialized = errors.New("tpm: TPM transport not initialized")
+	ErrLockoutResetFailed             = errors.New("tpm: dictionary attack lockout reset failed")
+	ErrEKNotInitialized               = errors.New("tpm: endorsement key not initialized")
+	ErrEKPublicRead                   = errors.New("tpm: failed to read endorsement key public area")
+	ErrEKRSAParse                     = errors.New("tpm: failed to parse RSA endorsement key")
+	ErrEKECCParse                     = errors.New("tpm: failed to parse ECC endorsement key")
+	ErrSRKPublicRead                  = errors.New("tpm: failed to read storage root key public area")
+	ErrIAKNotInitialized              = errors.New("tpm: initial attestation key not initialized")
+	ErrIAKPublicParse                 = errors.New("tpm: failed to parse IAK public key")
+	ErrIDevIDNotInitialized           = errors.New("tpm: initial device identifier not initialized")
+	ErrIDevIDPublicParse              = errors.New("tpm: failed to parse IDevID public key")
+	ErrGoldenMeasurements             = errors.New("tpm: failed to compute golden measurements")
+	ErrPolicyDigest                   = errors.New("tpm: failed to compute platform policy digest")
+	ErrIAKConfigFailed                = errors.New("tpm: failed to create IAK attributes from config")
+	ErrCSRFieldTooLarge               = errors.New("tpm: CSR field exceeds maximum size")
+	ErrNVSecretTooLarge               = errors.New("tpm: NV secret data exceeds maximum size")
+	ErrNVReadNotAuthorized            = errors.New("tpm: NV index has no readable attribute (AuthRead or OwnerRead) matching the provided credentials")
+	ErrInvalidHierarchy               = errors.New("tpm: invalid hierarchy")
+	ErrFactoryReset                   = errors.New("tpm: factory reset failed")
+	ErrForceClear                     = errors.New("tpm: force clear via PPI failed")
+	ErrEKConfigNil                    = errors.New("tpm: EK config is nil")
+	ErrIAKConfigNil                   = errors.New("tpm: IAK config is nil")
+	ErrIDevIDConfigNil                = errors.New("tpm: IDevID config is nil")
+	ErrSSRKConfigNil                  = errors.New("tpm: SSRK config is nil")
 
 	// Handle enumeration errors
 	ErrListPersistentHandles = errors.New("tpm: list persistent handles")
@@ -154,162 +252,74 @@ var (
 	// TPM_RC errors
 	ErrCommandNotSupported = tpm2.TPMRC(0xb0143)
 
-	// RSA SSA Template
-	RSASSATemplate = tpm2.TPMTPublic{
-		Type:    tpm2.TPMAlgRSA,
-		NameAlg: tpm2.TPMAlgSHA256,
-		ObjectAttributes: tpm2.TPMAObject{
-			SignEncrypt:         true,
-			FixedTPM:            true,
-			FixedParent:         true,
-			SensitiveDataOrigin: true,
-			UserWithAuth:        true,
-		},
-		AuthPolicy: tpm2.TPM2BDigest{},
-		Parameters: tpm2.NewTPMUPublicParms(
-			tpm2.TPMAlgRSA,
-			&tpm2.TPMSRSAParms{
-				Scheme: tpm2.TPMTRSAScheme{
-					Scheme: tpm2.TPMAlgRSASSA,
-					Details: tpm2.NewTPMUAsymScheme(
-						tpm2.TPMAlgRSASSA,
-						&tpm2.TPMSSigSchemeRSASSA{
-							HashAlg: tpm2.TPMAlgSHA256,
-						},
-					),
-				},
-				KeyBits: 2048,
-			},
-		),
-		Unique: tpm2.NewTPMUPublicID(
-			tpm2.TPMAlgRSA,
-			&tpm2.TPM2BPublicKeyRSA{
-				Buffer: make([]byte, 256),
-			},
-		),
-	}
+	// RSASSATemplate is the general-purpose RSA signing key template.
+	//
+	// Its TPMT_RSA_SCHEME is TPM_ALG_NULL, which leaves both the padding scheme
+	// and the digest algorithm to be chosen per operation: TPM2_Sign takes the
+	// scheme from inScheme when the key names none, and requires inScheme to
+	// match exactly when the key does name one (TCG TPM 2.0 Library Part 2,
+	// section 12.2.3.5; Part 3, section 12.1). Naming RSASSA/SHA-256 here made
+	// every key created from this template able to sign under SHA-256 and
+	// nothing else -- a request for SHA-384 or SHA-512 came back TPM_RC_SCHEME
+	// even though the TPM is perfectly able to perform it -- and it also barred
+	// the RSA-PSS signatures TLS 1.3 requires of the same key.
+	//
+	// A scheme of TPM_ALG_NULL is only permitted on an unrestricted key (Part 1,
+	// section 25.2.3), which is why the restricted attestation templates below
+	// keep their fixed schemes.
+	RSASSATemplate = mustKeyTemplate(KeyTemplateSpec{
+		Algorithm: x509.RSA,
+		KeyBits:   DefaultRSAKeyBits,
+		NameAlg:   tpm2.TPMAlgSHA256,
+	})
 
-	// RSA PSS Template
-	RSAPSSTemplate = tpm2.TPMTPublic{
-		Type:    tpm2.TPMAlgRSA,
-		NameAlg: tpm2.TPMAlgSHA256,
-		ObjectAttributes: tpm2.TPMAObject{
-			SignEncrypt:         true,
-			FixedTPM:            true,
-			FixedParent:         true,
-			SensitiveDataOrigin: true,
-			UserWithAuth:        true,
-		},
-		AuthPolicy: tpm2.TPM2BDigest{},
-		Parameters: tpm2.NewTPMUPublicParms(
-			tpm2.TPMAlgRSA,
-			&tpm2.TPMSRSAParms{
-				Scheme: tpm2.TPMTRSAScheme{
-					Scheme: tpm2.TPMAlgRSAPSS,
-					Details: tpm2.NewTPMUAsymScheme(
-						tpm2.TPMAlgRSAPSS,
-						&tpm2.TPMSSigSchemeRSAPSS{
-							HashAlg: tpm2.TPMAlgSHA256,
-						},
-					),
-				},
-				KeyBits: 2048,
-			},
-		),
-		Unique: tpm2.NewTPMUPublicID(
-			tpm2.TPMAlgRSA,
-			&tpm2.TPM2BPublicKeyRSA{
-				Buffer: make([]byte, 256),
-			},
-		),
-	}
+	// RSAPSSTemplate pins a key to RSA-PSS over SHA-256.
+	//
+	// It keeps a fixed scheme deliberately, and is the one asymmetric signing
+	// template that does. RSASSATemplate above is the general-purpose key: with
+	// TPM_ALG_NULL it can produce both PKCS#1 v1.5 and PSS signatures under any
+	// digest the TPM implements. This template is for the caller that wants the
+	// device itself to refuse anything but PSS/SHA-256, which is a property only
+	// the key's public area can carry -- TPMT_RSA_SCHEME has no way to say
+	// "RSA-PSS under any digest" (TCG TPM 2.0 Library Part 2, section 12.2.3.5).
+	// Keys created from it therefore sign under SHA-256 and no other digest, by
+	// design rather than by accident.
+	RSAPSSTemplate = mustKeyTemplate(KeyTemplateSpec{
+		Algorithm:  x509.RSA,
+		KeyBits:    DefaultRSAKeyBits,
+		NameAlg:    tpm2.TPMAlgSHA256,
+		Scheme:     tpm2.TPMAlgRSAPSS,
+		SchemeHash: tpm2.TPMAlgSHA256,
+	})
 
-	// ECC P256 Template
-	ECCP256Template = tpm2.TPMTPublic{
-		Type:    tpm2.TPMAlgECC,
-		NameAlg: tpm2.TPMAlgSHA256,
-		ObjectAttributes: tpm2.TPMAObject{
-			SignEncrypt:         true,
-			FixedTPM:            true,
-			FixedParent:         true,
-			SensitiveDataOrigin: true,
-			UserWithAuth:        true,
-		},
-		AuthPolicy: tpm2.TPM2BDigest{},
-		Parameters: tpm2.NewTPMUPublicParms(
-			tpm2.TPMAlgECC,
-			&tpm2.TPMSECCParms{
-				CurveID: tpm2.TPMECCNistP256,
-				Scheme: tpm2.TPMTECCScheme{
-					Scheme: tpm2.TPMAlgECDSA,
-					Details: tpm2.NewTPMUAsymScheme(
-						tpm2.TPMAlgECDSA,
-						&tpm2.TPMSSigSchemeECDSA{
-							HashAlg: tpm2.TPMAlgSHA256,
-						},
-					),
-				},
-			},
-		),
-	}
+	// ECCP256Template is the general-purpose ECC P-256 signing key template.
+	//
+	// Like RSASSATemplate its scheme is TPM_ALG_NULL, so the digest is chosen
+	// per operation. For ECDSA the scheme's hash never enters the signature
+	// computation -- Part 4's CryptEccSign consumes the digest directly,
+	// truncated to the order of the curve -- so a P-256 key naming ECDSA/SHA-256
+	// was refusing SHA-384 and SHA-512 digests it is entirely capable of
+	// signing, purely because inScheme has to match the key (Part 3, section
+	// 12.1).
+	ECCP256Template = mustKeyTemplate(KeyTemplateSpec{
+		Algorithm: x509.ECDSA,
+		Curve:     elliptic.P256(),
+		NameAlg:   tpm2.TPMAlgSHA256,
+	})
 
 	// ECC P384 Template
-	ECCP384Template = tpm2.TPMTPublic{
-		Type:    tpm2.TPMAlgECC,
-		NameAlg: tpm2.TPMAlgSHA384,
-		ObjectAttributes: tpm2.TPMAObject{
-			SignEncrypt:         true,
-			FixedTPM:            true,
-			FixedParent:         true,
-			SensitiveDataOrigin: true,
-			UserWithAuth:        true,
-		},
-		AuthPolicy: tpm2.TPM2BDigest{},
-		Parameters: tpm2.NewTPMUPublicParms(
-			tpm2.TPMAlgECC,
-			&tpm2.TPMSECCParms{
-				CurveID: tpm2.TPMECCNistP384,
-				Scheme: tpm2.TPMTECCScheme{
-					Scheme: tpm2.TPMAlgECDSA,
-					Details: tpm2.NewTPMUAsymScheme(
-						tpm2.TPMAlgECDSA,
-						&tpm2.TPMSSigSchemeECDSA{
-							HashAlg: tpm2.TPMAlgSHA384,
-						},
-					),
-				},
-			},
-		),
-	}
+	ECCP384Template = mustKeyTemplate(KeyTemplateSpec{
+		Algorithm: x509.ECDSA,
+		Curve:     elliptic.P384(),
+		NameAlg:   tpm2.TPMAlgSHA384,
+	})
 
 	// ECC P521 Template
-	ECCP521Template = tpm2.TPMTPublic{
-		Type:    tpm2.TPMAlgECC,
-		NameAlg: tpm2.TPMAlgSHA512,
-		ObjectAttributes: tpm2.TPMAObject{
-			SignEncrypt:         true,
-			FixedTPM:            true,
-			FixedParent:         true,
-			SensitiveDataOrigin: true,
-			UserWithAuth:        true,
-		},
-		AuthPolicy: tpm2.TPM2BDigest{},
-		Parameters: tpm2.NewTPMUPublicParms(
-			tpm2.TPMAlgECC,
-			&tpm2.TPMSECCParms{
-				CurveID: tpm2.TPMECCNistP521,
-				Scheme: tpm2.TPMTECCScheme{
-					Scheme: tpm2.TPMAlgECDSA,
-					Details: tpm2.NewTPMUAsymScheme(
-						tpm2.TPMAlgECDSA,
-						&tpm2.TPMSSigSchemeECDSA{
-							HashAlg: tpm2.TPMAlgSHA512,
-						},
-					),
-				},
-			},
-		),
-	}
+	ECCP521Template = mustKeyTemplate(KeyTemplateSpec{
+		Algorithm: x509.ECDSA,
+		Curve:     elliptic.P521(),
+		NameAlg:   tpm2.TPMAlgSHA512,
+	})
 
 	// Attestation Key
 	// See TPM 2.0 Keys for Device Identity and Attestation

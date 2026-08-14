@@ -26,6 +26,14 @@ import (
 // XKMSService singleton (which shares one WebAuthn relying-party service with
 // the REST browser ceremony). It returns the JSON-marshaled options plus an
 // opaque session ID.
+//
+// Deliberately ungated: a WebAuthn ceremony runs BEFORE the caller has an
+// identity to authorize -- requiring a permission to log in would be
+// circular. The REST transport leaves the same four ceremonies ungated
+// against the same relying-party service, so the transports agree. This is
+// recorded explicitly because an ungated RPC is otherwise indistinguishable
+// from a missing gate, which is exactly the bug that the SSH surface in
+// service_ssh.go had.
 func (s *Service) BeginRegistration(ctx context.Context, req *pb.BeginRegistrationRequest) (*pb.BeginRegistrationResponse, error) {
 	if req == nil || req.Username == "" {
 		return nil, status.Error(codes.InvalidArgument, "username is required")
@@ -51,6 +59,14 @@ func (s *Service) BeginRegistration(ctx context.Context, req *pb.BeginRegistrati
 // the XKMSService singleton. The request carries the session ID from
 // BeginRegistration and the authenticator attestation as WebAuthn
 // PublicKeyCredential JSON.
+//
+// Deliberately ungated: a WebAuthn ceremony runs BEFORE the caller has an
+// identity to authorize -- requiring a permission to log in would be
+// circular. The REST transport leaves the same four ceremonies ungated
+// against the same relying-party service, so the transports agree. This is
+// recorded explicitly because an ungated RPC is otherwise indistinguishable
+// from a missing gate, which is exactly the bug that the SSH surface in
+// service_ssh.go had.
 func (s *Service) FinishRegistration(ctx context.Context, req *pb.FinishRegistrationRequest) (*pb.FinishRegistrationResponse, error) {
 	if req == nil || req.SessionId == "" {
 		return nil, status.Error(codes.InvalidArgument, "session_id is required")
@@ -78,6 +94,14 @@ func (s *Service) FinishRegistration(ctx context.Context, req *pb.FinishRegistra
 // delegating to the XKMSService singleton (which shares one WebAuthn
 // relying-party service with the REST browser ceremony). It returns the
 // JSON-marshaled assertion options plus an opaque session ID.
+//
+// Deliberately ungated: a WebAuthn ceremony runs BEFORE the caller has an
+// identity to authorize -- requiring a permission to log in would be
+// circular. The REST transport leaves the same four ceremonies ungated
+// against the same relying-party service, so the transports agree. This is
+// recorded explicitly because an ungated RPC is otherwise indistinguishable
+// from a missing gate, which is exactly the bug that the SSH surface in
+// service_ssh.go had.
 func (s *Service) BeginAuthentication(ctx context.Context, req *pb.BeginAuthenticationRequest) (*pb.BeginAuthenticationResponse, error) {
 	if req == nil || req.Username == "" {
 		return nil, status.Error(codes.InvalidArgument, "username is required")
@@ -102,6 +126,14 @@ func (s *Service) BeginAuthentication(ctx context.Context, req *pb.BeginAuthenti
 // delegating to the XKMSService singleton. The request carries the session ID
 // from BeginAuthentication and the authenticator assertion as WebAuthn
 // PublicKeyCredential JSON.
+//
+// Deliberately ungated: a WebAuthn ceremony runs BEFORE the caller has an
+// identity to authorize -- requiring a permission to log in would be
+// circular. The REST transport leaves the same four ceremonies ungated
+// against the same relying-party service, so the transports agree. This is
+// recorded explicitly because an ungated RPC is otherwise indistinguishable
+// from a missing gate, which is exactly the bug that the SSH surface in
+// service_ssh.go had.
 func (s *Service) FinishAuthentication(ctx context.Context, req *pb.FinishAuthenticationRequest) (*pb.FinishAuthenticationResponse, error) {
 	if req == nil || req.SessionId == "" {
 		return nil, status.Error(codes.InvalidArgument, "session_id is required")

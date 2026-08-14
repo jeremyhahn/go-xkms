@@ -164,10 +164,11 @@ func TestGenerateManifest_FirefoxIgnoresOverride(t *testing.T) {
 
 // --- ManifestPath tests ---
 
+// TestManifestPath_CurrentPlatform verifies ManifestPath yields an absolute
+// manifest path for both browser families. browserDir treats every non-darwin
+// platform as Linux, so this holds on any GOOS.
 func TestManifestPath_CurrentPlatform(t *testing.T) {
-	if runtime.GOOS != "linux" && runtime.GOOS != "darwin" {
-		t.Skipf("unsupported platform %s", runtime.GOOS)
-	}
+	overrideHomeDir(t, "/home/testuser")
 
 	for _, browser := range []Browser{BrowserChrome, BrowserFirefox} {
 		path, err := ManifestPath(browser)
@@ -178,30 +179,32 @@ func TestManifestPath_CurrentPlatform(t *testing.T) {
 	}
 }
 
-func TestManifestPath_LinuxChrome(t *testing.T) {
-	if runtime.GOOS != "linux" {
-		t.Skip("linux-only test")
-	}
+func TestManifestPath_Chrome(t *testing.T) {
+	overrideHomeDir(t, "/home/testuser")
 
 	path, err := ManifestPath(BrowserChrome)
 	require.NoError(t, err)
+	if runtime.GOOS == "darwin" {
+		assert.Contains(t, path, "Library/Application Support/Google/Chrome/NativeMessagingHosts")
+		return
+	}
 	assert.Contains(t, path, ".config/google-chrome/NativeMessagingHosts")
 }
 
-func TestManifestPath_LinuxFirefox(t *testing.T) {
-	if runtime.GOOS != "linux" {
-		t.Skip("linux-only test")
-	}
+func TestManifestPath_Firefox(t *testing.T) {
+	overrideHomeDir(t, "/home/testuser")
 
 	path, err := ManifestPath(BrowserFirefox)
 	require.NoError(t, err)
+	if runtime.GOOS == "darwin" {
+		assert.Contains(t, path, "Library/Application Support/Mozilla/NativeMessagingHosts")
+		return
+	}
 	assert.Contains(t, path, ".mozilla/native-messaging-hosts")
 }
 
 func TestManifestPath_InvalidBrowser(t *testing.T) {
-	if runtime.GOOS != "linux" && runtime.GOOS != "darwin" {
-		t.Skipf("unsupported platform %s", runtime.GOOS)
-	}
+	overrideHomeDir(t, "/home/testuser")
 
 	_, err := ManifestPath(Browser("safari"))
 	require.Error(t, err)
@@ -235,10 +238,6 @@ func TestManifestPaths_Chrome(t *testing.T) {
 }
 
 func TestManifestPaths_Firefox(t *testing.T) {
-	if runtime.GOOS != "linux" && runtime.GOOS != "darwin" {
-		t.Skipf("unsupported platform %s", runtime.GOOS)
-	}
-
 	overrideHomeDir(t, "/home/testuser")
 
 	ffCount := len(firefoxBrowsers)
@@ -762,11 +761,10 @@ func TestKnownBrowsersTable_HasExpectedEntries(t *testing.T) {
 	assert.True(t, names["Waterfox"])
 }
 
+// TestKnownBrowsersTable_LinuxPaths asserts the Linux directory column of the
+// known-browser table. The table is plain data compiled on every platform, so
+// this runs everywhere.
 func TestKnownBrowsersTable_LinuxPaths(t *testing.T) {
-	if runtime.GOOS != "linux" {
-		t.Skip("linux-only test")
-	}
-
 	expectedLinuxDirs := map[string]string{
 		"Chrome":    ".config/google-chrome/NativeMessagingHosts",
 		"Brave":     ".config/BraveSoftware/Brave-Browser/NativeMessagingHosts",
@@ -786,15 +784,19 @@ func TestKnownBrowsersTable_LinuxPaths(t *testing.T) {
 	}
 }
 
-func TestBrowserDir_Linux(t *testing.T) {
-	if runtime.GOOS != "linux" {
-		t.Skip("linux-only test")
-	}
-
+// TestBrowserDir verifies browserDir roots every known browser under the
+// supplied home directory and selects the platform-appropriate column.
+func TestBrowserDir(t *testing.T) {
 	for _, kb := range knownBrowsers {
 		dir := browserDir(kb, "/home/testuser")
 		assert.True(t, filepath.IsAbs(dir))
 		assert.Contains(t, dir, "/home/testuser")
+
+		if runtime.GOOS == "darwin" {
+			assert.Equal(t, filepath.Join("/home/testuser", kb.DarwinDir), dir)
+			continue
+		}
+		assert.Equal(t, filepath.Join("/home/testuser", kb.LinuxDir), dir)
 	}
 }
 

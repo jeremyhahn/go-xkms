@@ -62,6 +62,10 @@ func (m *mockStorage) SaveWithCondition(_ context.Context, _ *entities.ACMEAccou
 	panic("not implemented")
 }
 
+func (m *mockStorage) SaveIfAbsent(_ context.Context, _ *entities.ACMEAccount) (bool, error) {
+	panic("not implemented")
+}
+
 func (m *mockStorage) Get(_ context.Context, id uint64) (*entities.ACMEAccount, error) {
 	if acc, ok := m.accounts[id]; ok {
 		return acc, nil
@@ -142,6 +146,10 @@ func (m *mockCertStorage) SaveWithCondition(_ context.Context, _ *entities.ACMEC
 	panic("not implemented")
 }
 
+func (m *mockCertStorage) SaveIfAbsent(_ context.Context, _ *entities.ACMECertificate) (bool, error) {
+	panic("not implemented")
+}
+
 func (m *mockCertStorage) Get(_ context.Context, id uint64) (*entities.ACMECertificate, error) {
 	if cert, ok := m.certificates[id]; ok {
 		return cert, nil
@@ -218,6 +226,10 @@ func (m *mockOrderStorage) Save(_ context.Context, order *entities.ACMEOrder) er
 }
 
 func (m *mockOrderStorage) SaveWithCondition(_ context.Context, _ *entities.ACMEOrder, _ qrdbsdk.Condition) error {
+	panic("not implemented")
+}
+
+func (m *mockOrderStorage) SaveIfAbsent(_ context.Context, _ *entities.ACMEOrder) (bool, error) {
 	panic("not implemented")
 }
 

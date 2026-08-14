@@ -786,11 +786,9 @@ func TestFA_AdminService_GetBackendInfo_ListError(t *testing.T) {
 // TestFA_AdminService_GetAuditLogs_NonAdmin covers L226-228: GetAuditLogs
 // when not admin.
 func TestFA_AdminService_GetAuditLogs_NonAdmin(t *testing.T) {
+	asUnprivileged(t)
 	svc := NewAdminService()
 	svc.SetContext(context.Background())
-	if svc.IsAdmin() {
-		t.Skip("test requires non-root user")
-	}
 	_, err := svc.GetAuditLogs(nil)
 	assert.ErrorIs(t, err, ErrAdminNotAuthorized)
 }
@@ -798,21 +796,17 @@ func TestFA_AdminService_GetAuditLogs_NonAdmin(t *testing.T) {
 // TestFA_AdminService_ExportAuditLogs_NonAdmin covers L238-239: ExportAuditLogs
 // when not admin.
 func TestFA_AdminService_ExportAuditLogs_NonAdmin(t *testing.T) {
+	asUnprivileged(t)
 	svc := NewAdminService()
 	svc.SetContext(context.Background())
-	if svc.IsAdmin() {
-		t.Skip("test requires non-root user")
-	}
 	_, err := svc.ExportAuditLogs("json")
 	assert.ErrorIs(t, err, ErrAdminNotAuthorized)
 }
 
 // TestFA_AdminService_ExportAuditLogs_InvalidFormat covers L245-246.
 func TestFA_AdminService_ExportAuditLogs_InvalidFormat(t *testing.T) {
+	asUnprivileged(t)
 	svc := NewAdminService()
-	if svc.IsAdmin() {
-		t.Skip("test requires non-root user")
-	}
 	_, err := svc.ExportAuditLogs("xml")
 	// Non-admin gets ErrAdminNotAuthorized first.
 	assert.Error(t, err)

@@ -538,3 +538,141 @@ func getString(m map[string]interface{}, key string) string {
 	}
 	return ""
 }
+
+// The two tests below live in this frost-tagged file rather than in
+// protocol_parity_test.go so a build without -tags frost EXCLUDES them
+// outright. A capability probe that skipped at runtime would have reported a
+// pass for FROST coverage that never ran.
+
+// TestProtocolParity_FrostOperations tests FROST operations across all protocols
+func TestProtocolParity_FrostOperations(t *testing.T) {
+	runner := commands.NewTestRunner()
+	runner.RequireCLI(t)
+
+	protocols := commands.CLIProtocols()
+	keyDir := commands.CreateTempKeyDir(t)
+	runner = runner.WithKeyDir(keyDir)
+
+	for _, protocol := range protocols {
+		t.Run(string(protocol), func(t *testing.T) {
+			if !isProtocolAvailable(t, runner, protocol) {
+				t.Fatalf("Protocol %s not available - server must be running", protocol)
+			}
+
+			keyID := commands.GenerateUniqueKeyID(fmt.Sprintf("frost-%s", protocol))
+
+			// Step 1: Generate FROST key (participant mode)
+			t.Run("keygen", func(t *testing.T) {
+				args := []string{
+					"--protocol", "embedded",
+					"--key-dir", keyDir,
+					"frost", "keygen",
+					"--key-id", keyID,
+					"--algorithm", "FROST-Ed25519-SHA512",
+					"--threshold", "2",
+					"--total", "3",
+					"--participants", "alice,bob,charlie",
+					"--participant-id", "1",
+				}
+				stdout, stderr, err := runner.RunCommand(t, args...)
+				if err != nil {
+					t.Logf("stdout: %s", stdout)
+					t.Logf("stderr: %s", stderr)
+					t.Fatalf("FROST keygen failed: %v", err)
+				}
+				t.Logf("[%s] Generated FROST key: %s", protocol, keyID)
+			})
+
+			// Step 2: List FROST keys
+			t.Run("list", func(t *testing.T) {
+				args := []string{
+					"--protocol", "embedded",
+					"--key-dir", keyDir,
+					"frost", "list",
+				}
+				stdout, stderr, err := runner.RunCommand(t, args...)
+				if err != nil {
+					t.Logf("stdout: %s", stdout)
+					t.Logf("stderr: %s", stderr)
+					t.Fatalf("FROST list failed: %v", err)
+				}
+				assertContains(t, stdout+stderr, keyID, "FROST key should be in list")
+			})
+
+			// Step 3: Get FROST key info
+			t.Run("info", func(t *testing.T) {
+				args := []string{
+					"--protocol", "embedded",
+					"--key-dir", keyDir,
+					"frost", "info", keyID,
+				}
+				stdout, stderr, err := runner.RunCommand(t, args...)
+				if err != nil {
+					t.Logf("stdout: %s", stdout)
+					t.Logf("stderr: %s", stderr)
+					t.Fatalf("FROST info failed: %v", err)
+				}
+				assertContains(t, stdout+stderr, keyID, "Should show key ID")
+				assertContains(t, stdout+stderr, "FROST", "Should show FROST type")
+			})
+
+			// Note: Round 1 test skipped - requires --key-id and --output flags
+			// which write to files, not suitable for simple integration tests
+
+			// Step 5: Delete FROST key
+			t.Run("delete", func(t *testing.T) {
+				args := []string{
+					"--protocol", "embedded",
+					"--key-dir", keyDir,
+					"frost", "delete", keyID,
+					"--force", // Skip confirmation prompt
+				}
+				stdout, stderr, err := runner.RunCommand(t, args...)
+				if err != nil {
+					t.Logf("stdout: %s", stdout)
+					t.Logf("stderr: %s", stderr)
+					t.Fatalf("FROST delete failed: %v", err)
+				}
+				t.Logf("[%s] Deleted FROST key: %s", protocol, keyID)
+			})
+		})
+	}
+}
+
+// TestProtocolParity_FrostTrustedDealer tests FROST trusted dealer mode
+func TestProtocolParity_FrostTrustedDealer(t *testing.T) {
+	runner := commands.NewTestRunner()
+	runner.RequireCLI(t)
+
+	keyDir := commands.CreateTempKeyDir(t)
+	keyID := commands.GenerateUniqueKeyID("frost-dealer")
+	exportDir := filepath.Join(keyDir, "frost-packages")
+	if err := os.MkdirAll(exportDir, 0755); err != nil {
+		t.Fatalf("Failed to create export dir: %v", err)
+	}
+
+	// Generate keys using trusted dealer
+	t.Run("dealer-keygen", func(t *testing.T) {
+		args := []string{
+			"--protocol", "embedded",
+			"--key-dir", keyDir,
+			"frost", "keygen",
+			"--key-id", keyID,
+			"--algorithm", "FROST-Ed25519-SHA512",
+			"--threshold", "2",
+			"--total", "3",
+			"--participants", "alice,bob,charlie",
+			"--export-dir", exportDir, // export-dir triggers dealer mode
+		}
+		stdout, stderr, err := runner.RunCommand(t, args...)
+		if err != nil {
+			t.Logf("stdout: %s", stdout)
+			t.Logf("stderr: %s", stderr)
+			t.Fatalf("FROST dealer keygen failed: %v", err)
+		}
+		// Dealer mode should output packages
+		output := stdout + stderr
+		assertContains(t, output, "exported_files", "Should output exported files info")
+		t.Logf("FROST dealer keygen complete")
+	})
+}

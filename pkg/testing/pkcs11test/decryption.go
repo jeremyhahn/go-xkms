@@ -14,6 +14,7 @@
 package pkcs11test
 
 import (
+	"bytes"
 	"testing"
 
 	"github.com/jeremyhahn/go-xkms/pkg/pkcs11/module"
@@ -41,18 +42,12 @@ func (s *Suite) RunDecryptionTests(t *testing.T) {
 func (s *Suite) encryptTestData(t *testing.T, m *module.Module, sh module.SessionHandle, key module.ObjectHandle, plaintext []byte) ([]byte, bool) {
 	t.Helper()
 
-	mech := &module.Mechanism{Type: module.CKM_AES_GCM}
+	mech := module.NewMechanismWithTypedParams(module.CKM_AES_GCM, module.NewAESGCMParams(suiteGCMIV(), 128))
 
 	rv := m.EncryptInit(sh, mech, key)
-	if s.skipIfUnsupported(t, rv) {
-		return nil, false
-	}
 	requireRV(t, module.CKR_OK, rv, "EncryptInit for test data failed")
 
 	ciphertext, rv := m.Encrypt(sh, plaintext)
-	if s.skipIfUnsupported(t, rv) {
-		return nil, false
-	}
 	requireRV(t, module.CKR_OK, rv, "Encrypt for test data failed")
 
 	return ciphertext, true
@@ -66,24 +61,15 @@ func (s *Suite) encryptTestData(t *testing.T, m *module.Module, sh module.Sessio
 func (s *Suite) encryptTestDataMultiPart(t *testing.T, m *module.Module, sh module.SessionHandle, key module.ObjectHandle, plaintext []byte) ([]byte, bool) {
 	t.Helper()
 
-	mech := &module.Mechanism{Type: module.CKM_AES_GCM}
+	mech := module.NewMechanismWithTypedParams(module.CKM_AES_GCM, module.NewAESGCMParams(suiteGCMIV(), 128))
 
 	rv := m.EncryptInit(sh, mech, key)
-	if s.skipIfUnsupported(t, rv) {
-		return nil, false
-	}
 	requireRV(t, module.CKR_OK, rv, "EncryptInit for multi-part test data failed")
 
 	_, rv = m.EncryptUpdate(sh, plaintext)
-	if s.skipIfUnsupported(t, rv) {
-		return nil, false
-	}
 	requireRV(t, module.CKR_OK, rv, "EncryptUpdate for multi-part test data failed")
 
 	ciphertext, rv := m.EncryptFinal(sh)
-	if s.skipIfUnsupported(t, rv) {
-		return nil, false
-	}
 	requireRV(t, module.CKR_OK, rv, "EncryptFinal for multi-part test data failed")
 
 	return ciphertext, true
@@ -96,44 +82,41 @@ func (s *Suite) testDecryptInit(t *testing.T) {
 		m, cleanup := s.createInitializedModule(t)
 		defer cleanup()
 
-		sh := openRWSession(t, m)
+		sh := openAuthenticatedRWSession(t, m)
 		key := generateSecretKey(t, m, sh)
-		mech := &module.Mechanism{Type: module.CKM_AES_GCM}
+		mech := module.NewMechanismWithTypedParams(module.CKM_AES_GCM, module.NewAESGCMParams(suiteGCMIV(), 128))
 
 		rv := m.DecryptInit(sh, mech, key)
-		if s.skipIfUnsupported(t, rv) {
-			return
-		}
 		requireRV(t, module.CKR_OK, rv, "DecryptInit with valid session, mechanism, and key should succeed")
 	})
 
-	t.Run("nil_mechanism_returns_arguments_bad", func(t *testing.T) {
+	// PKCS#11 v3.2 §5.10.1: "C_DecryptInit can be called with pMechanism set to
+	// NULL_PTR to terminate an active decryption operation." A NULL mechanism is
+	// therefore a cancellation request, not a malformed argument, and the module
+	// answers CKR_OK whether or not an operation was active -- §5.6.5 settles the
+	// latter for C_SessionCancel, which ignores a flag naming an inactive
+	// operation.
+	t.Run("nil_mechanism_terminates_operation", func(t *testing.T) {
 		m, cleanup := s.createInitializedModule(t)
 		defer cleanup()
 
-		sh := openRWSession(t, m)
+		sh := openAuthenticatedRWSession(t, m)
 		key := generateSecretKey(t, m, sh)
 
 		rv := m.DecryptInit(sh, nil, key)
-		if s.skipIfUnsupported(t, rv) {
-			return
-		}
-		requireRV(t, module.CKR_ARGUMENTS_BAD, rv,
-			"DecryptInit with nil mechanism should return CKR_ARGUMENTS_BAD")
+		requireRV(t, module.CKR_OK, rv,
+			"DecryptInit with nil mechanism terminates the operation and returns CKR_OK")
 	})
 
 	t.Run("invalid_key_handle_returns_key_handle_invalid", func(t *testing.T) {
 		m, cleanup := s.createInitializedModule(t)
 		defer cleanup()
 
-		sh := openRWSession(t, m)
+		sh := openAuthenticatedRWSession(t, m)
 		invalidKey := module.ObjectHandle(0xBADF00D)
-		mech := &module.Mechanism{Type: module.CKM_AES_GCM}
+		mech := module.NewMechanismWithTypedParams(module.CKM_AES_GCM, module.NewAESGCMParams(suiteGCMIV(), 128))
 
 		rv := m.DecryptInit(sh, mech, invalidKey)
-		if s.skipIfUnsupported(t, rv) {
-			return
-		}
 		requireRV(t, module.CKR_KEY_HANDLE_INVALID, rv,
 			"DecryptInit with invalid key handle should return CKR_KEY_HANDLE_INVALID")
 	})
@@ -143,12 +126,9 @@ func (s *Suite) testDecryptInit(t *testing.T) {
 		defer cleanup()
 
 		invalidSession := module.SessionHandle(0xDEADBEEF)
-		mech := &module.Mechanism{Type: module.CKM_AES_GCM}
+		mech := module.NewMechanismWithTypedParams(module.CKM_AES_GCM, module.NewAESGCMParams(suiteGCMIV(), 128))
 
 		rv := m.DecryptInit(invalidSession, mech, module.ObjectHandle(1))
-		if s.skipIfUnsupported(t, rv) {
-			return
-		}
 		requireRV(t, module.CKR_SESSION_HANDLE_INVALID, rv,
 			"DecryptInit with invalid session should return CKR_SESSION_HANDLE_INVALID")
 	})
@@ -157,14 +137,11 @@ func (s *Suite) testDecryptInit(t *testing.T) {
 		m, cleanup := s.createInitializedModule(t)
 		defer cleanup()
 
-		sh := openRWSession(t, m)
+		sh := openAuthenticatedRWSession(t, m)
 		key := generateSecretKey(t, m, sh)
-		mech := &module.Mechanism{Type: module.CKM_AES_GCM}
+		mech := module.NewMechanismWithTypedParams(module.CKM_AES_GCM, module.NewAESGCMParams(suiteGCMIV(), 128))
 
 		rv := m.DecryptInit(sh, mech, key)
-		if s.skipIfUnsupported(t, rv) {
-			return
-		}
 		requireRV(t, module.CKR_OK, rv, "first DecryptInit should succeed")
 
 		rv = m.DecryptInit(sh, mech, key)
@@ -180,7 +157,7 @@ func (s *Suite) testDecrypt(t *testing.T) {
 		m, cleanup := s.createInitializedModule(t)
 		defer cleanup()
 
-		sh := openRWSession(t, m)
+		sh := openAuthenticatedRWSession(t, m)
 		key := generateSecretKey(t, m, sh)
 		plaintext := []byte("conformance-test-plaintext-data")
 
@@ -190,21 +167,94 @@ func (s *Suite) testDecrypt(t *testing.T) {
 			return
 		}
 
-		mech := &module.Mechanism{Type: module.CKM_AES_GCM}
+		mech := module.NewMechanismWithTypedParams(module.CKM_AES_GCM, module.NewAESGCMParams(suiteGCMIV(), 128))
 		rv := m.DecryptInit(sh, mech, key)
-		if s.skipIfUnsupported(t, rv) {
-			return
-		}
 		requireRV(t, module.CKR_OK, rv, "DecryptInit should succeed")
 
 		result, rv := m.Decrypt(sh, ciphertext)
-		if s.skipIfUnsupported(t, rv) {
-			return
-		}
 		requireRV(t, module.CKR_OK, rv, "Decrypt should succeed")
 
-		if len(result) == 0 {
-			t.Fatal("Decrypt returned empty plaintext; expected non-empty result")
+		// Comparing against the plaintext is the whole point of the round
+		// trip. Checking only that the result is non-empty accepts a decrypt
+		// that hands back the ciphertext, a constant, or the plaintext of
+		// some other message.
+		if !bytes.Equal(result, plaintext) {
+			t.Fatalf("Decrypt did not recover the plaintext\n got %q\nwant %q", result, plaintext)
+		}
+	})
+
+	// The two negative tests below are the ones that make this file able to
+	// fail. Everything else here checks return codes around an operation that
+	// was handed well-formed input; a C_Decrypt that never looks at the
+	// AES-GCM authentication tag satisfies all of it.
+	//
+	// PKCS#11 v3.2 §5.10.2 lists CKR_ENCRYPTED_DATA_INVALID as the code for a
+	// ciphertext that cannot be decrypted, and also permits the generic
+	// CKR_FUNCTION_FAILED, so these tests pin the security property -- the call
+	// MUST NOT succeed and MUST NOT hand back data -- rather than one of the
+	// two codes the spec allows.
+	t.Run("decrypt_with_tampered_ciphertext_fails", func(t *testing.T) {
+		m, cleanup := s.createInitializedModule(t)
+		defer cleanup()
+
+		sh := openAuthenticatedRWSession(t, m)
+		key := generateSecretKey(t, m, sh)
+		plaintext := []byte("authenticated-decryption-test-data")
+
+		ciphertext, ok := s.encryptTestData(t, m, sh, key, plaintext)
+		if !ok {
+			return
+		}
+
+		// Flip a bit in the ciphertext body. AES-GCM authenticates every byte
+		// it covers, so the tag check must fail; a decrypt that ignores the
+		// tag would return CKR_OK and hand back corrupted plaintext.
+		tampered := append([]byte(nil), ciphertext...)
+		tampered[0] ^= 0x01
+
+		mech := module.NewMechanismWithTypedParams(module.CKM_AES_GCM, module.NewAESGCMParams(suiteGCMIV(), 128))
+		rv := m.DecryptInit(sh, mech, key)
+		requireRV(t, module.CKR_OK, rv, "DecryptInit should succeed")
+
+		result, rv := m.Decrypt(sh, tampered)
+		if rv == module.CKR_OK {
+			t.Fatalf("Decrypt accepted a ciphertext its authentication tag no longer "+
+				"covers and returned %q", result)
+		}
+		if len(result) != 0 {
+			t.Fatalf("Decrypt returned %d bytes of unauthenticated plaintext alongside %s",
+				len(result), rv)
+		}
+	})
+
+	t.Run("decrypt_under_a_different_key_fails", func(t *testing.T) {
+		m, cleanup := s.createInitializedModule(t)
+		defer cleanup()
+
+		sh := openAuthenticatedRWSession(t, m)
+		key := generateSecretKey(t, m, sh)
+		other := generateSecretKey(t, m, sh)
+		plaintext := []byte("wrong-key-decryption-test-data")
+
+		ciphertext, ok := s.encryptTestData(t, m, sh, key, plaintext)
+		if !ok {
+			return
+		}
+
+		mech := module.NewMechanismWithTypedParams(module.CKM_AES_GCM, module.NewAESGCMParams(suiteGCMIV(), 128))
+		rv := m.DecryptInit(sh, mech, other)
+		requireRV(t, module.CKR_OK, rv, "DecryptInit with the other key should succeed")
+
+		// A decrypt that ignores which key C_DecryptInit named would return
+		// the plaintext here, which is silent key substitution.
+		result, rv := m.Decrypt(sh, ciphertext)
+		if rv == module.CKR_OK {
+			t.Fatalf("Decrypt under a key the ciphertext was not encrypted with "+
+				"returned %q instead of failing", result)
+		}
+		if len(result) != 0 {
+			t.Fatalf("Decrypt returned %d bytes under the wrong key alongside %s",
+				len(result), rv)
 		}
 	})
 
@@ -212,12 +262,9 @@ func (s *Suite) testDecrypt(t *testing.T) {
 		m, cleanup := s.createInitializedModule(t)
 		defer cleanup()
 
-		sh := openRWSession(t, m)
+		sh := openAuthenticatedRWSession(t, m)
 
 		_, rv := m.Decrypt(sh, []byte("dummy-ciphertext"))
-		if s.skipIfUnsupported(t, rv) {
-			return
-		}
 		requireRV(t, module.CKR_OPERATION_NOT_INITIALIZED, rv,
 			"Decrypt without DecryptInit should return CKR_OPERATION_NOT_INITIALIZED")
 	})
@@ -229,9 +276,6 @@ func (s *Suite) testDecrypt(t *testing.T) {
 		invalidSession := module.SessionHandle(0xDEADBEEF)
 
 		_, rv := m.Decrypt(invalidSession, []byte("dummy-ciphertext"))
-		if s.skipIfUnsupported(t, rv) {
-			return
-		}
 		requireRV(t, module.CKR_SESSION_HANDLE_INVALID, rv,
 			"Decrypt with invalid session should return CKR_SESSION_HANDLE_INVALID")
 	})
@@ -240,7 +284,7 @@ func (s *Suite) testDecrypt(t *testing.T) {
 		m, cleanup := s.createInitializedModule(t)
 		defer cleanup()
 
-		sh := openRWSession(t, m)
+		sh := openAuthenticatedRWSession(t, m)
 		key := generateSecretKey(t, m, sh)
 		plaintext := []byte("state-cleanup-test-data")
 
@@ -250,23 +294,34 @@ func (s *Suite) testDecrypt(t *testing.T) {
 			return
 		}
 
-		mech := &module.Mechanism{Type: module.CKM_AES_GCM}
+		mech := module.NewMechanismWithTypedParams(module.CKM_AES_GCM, module.NewAESGCMParams(suiteGCMIV(), 128))
 		rv := m.DecryptInit(sh, mech, key)
-		if s.skipIfUnsupported(t, rv) {
-			return
-		}
 		requireRV(t, module.CKR_OK, rv, "DecryptInit should succeed")
 
-		_, rv = m.Decrypt(sh, ciphertext)
-		if s.skipIfUnsupported(t, rv) {
-			return
-		}
+		first, rv := m.Decrypt(sh, ciphertext)
 		requireRV(t, module.CKR_OK, rv, "first Decrypt should succeed")
+		if !bytes.Equal(first, plaintext) {
+			t.Fatalf("Decrypt did not recover the plaintext\n got %q\nwant %q", first, plaintext)
+		}
 
-		// The operation has been consumed; a second Decrypt must fail.
+		// The operation stays active until the caller confirms it received the
+		// plaintext, so the two-call buffer convention can retry it (v3.2 5.2).
+		// Comparing the two outputs is what proves the retry served the cached
+		// plaintext; discarding them would let a module that silently re-ran
+		// the backend decryption -- consuming a second round trip and, for a
+		// stateful mechanism, different state -- pass.
+		second, rv := m.Decrypt(sh, ciphertext)
+		requireRV(t, module.CKR_OK, rv, "repeated Decrypt should return the cached plaintext")
+		if !bytes.Equal(first, second) {
+			t.Fatalf("repeated Decrypt returned different bytes: %q vs %q", first, second)
+		}
+
+		requireRV(t, module.CKR_OK, m.FinishOperation(sh, module.OperationDecrypt),
+			"FinishOperation should terminate the decryption operation")
+
 		_, rv = m.Decrypt(sh, ciphertext)
 		requireRV(t, module.CKR_OPERATION_NOT_INITIALIZED, rv,
-			"second Decrypt after completed operation should return CKR_OPERATION_NOT_INITIALIZED")
+			"Decrypt after FinishOperation should return CKR_OPERATION_NOT_INITIALIZED")
 	})
 }
 
@@ -278,7 +333,7 @@ func (s *Suite) testDecryptMultiPart(t *testing.T) {
 		m, cleanup := s.createInitializedModule(t)
 		defer cleanup()
 
-		sh := openRWSession(t, m)
+		sh := openAuthenticatedRWSession(t, m)
 		key := generateSecretKey(t, m, sh)
 		plaintext := []byte("multi-part-decryption-test-data")
 
@@ -288,36 +343,35 @@ func (s *Suite) testDecryptMultiPart(t *testing.T) {
 			return
 		}
 
-		mech := &module.Mechanism{Type: module.CKM_AES_GCM}
+		mech := module.NewMechanismWithTypedParams(module.CKM_AES_GCM, module.NewAESGCMParams(suiteGCMIV(), 128))
 		rv := m.DecryptInit(sh, mech, key)
-		if s.skipIfUnsupported(t, rv) {
-			return
-		}
 		requireRV(t, module.CKR_OK, rv, "DecryptInit for multi-part should succeed")
 
-		_, rv = m.DecryptUpdate(sh, ciphertext)
-		if s.skipIfUnsupported(t, rv) {
-			return
-		}
+		part, rv := m.DecryptUpdate(sh, ciphertext)
 		requireRV(t, module.CKR_OK, rv, "DecryptUpdate should succeed")
 
-		_, rv = m.DecryptFinal(sh)
-		if s.skipIfUnsupported(t, rv) {
-			return
-		}
+		final, rv := m.DecryptFinal(sh)
 		requireRV(t, module.CKR_OK, rv, "DecryptFinal should succeed")
+
+		// The recovered data is whatever the update and the final call
+		// produced, concatenated (v3.2 §5.10.3, §5.10.4). Checking only the
+		// return codes accepts a chain that recovers nothing at all.
+		recovered := make([]byte, 0, len(part)+len(final))
+		recovered = append(recovered, part...)
+		recovered = append(recovered, final...)
+		if !bytes.Equal(recovered, plaintext) {
+			t.Fatalf("the multi-part decryption did not recover the plaintext\n got %q\nwant %q",
+				recovered, plaintext)
+		}
 	})
 
 	t.Run("update_without_init_returns_operation_not_initialized", func(t *testing.T) {
 		m, cleanup := s.createInitializedModule(t)
 		defer cleanup()
 
-		sh := openRWSession(t, m)
+		sh := openAuthenticatedRWSession(t, m)
 
 		_, rv := m.DecryptUpdate(sh, []byte("dummy-ciphertext"))
-		if s.skipIfUnsupported(t, rv) {
-			return
-		}
 		requireRV(t, module.CKR_OPERATION_NOT_INITIALIZED, rv,
 			"DecryptUpdate without DecryptInit should return CKR_OPERATION_NOT_INITIALIZED")
 	})
@@ -326,12 +380,9 @@ func (s *Suite) testDecryptMultiPart(t *testing.T) {
 		m, cleanup := s.createInitializedModule(t)
 		defer cleanup()
 
-		sh := openRWSession(t, m)
+		sh := openAuthenticatedRWSession(t, m)
 
 		_, rv := m.DecryptFinal(sh)
-		if s.skipIfUnsupported(t, rv) {
-			return
-		}
 		requireRV(t, module.CKR_OPERATION_NOT_INITIALIZED, rv,
 			"DecryptFinal without DecryptInit should return CKR_OPERATION_NOT_INITIALIZED")
 	})

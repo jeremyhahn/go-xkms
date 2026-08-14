@@ -1,0 +1,46 @@
+# Copyright (c) 2025 Jeremy Hahn
+# Copyright (c) 2025 Automate The Things, LLC
+#
+# This file is part of go-xkms.
+#
+# go-xkms is dual-licensed:
+#
+# 1. GNU Affero General Public License v3.0 (AGPL-3.0)
+#    See LICENSE file or visit https://www.gnu.org/licenses/agpl-3.0.html
+#
+# 2. Commercial License
+#    Contact licensing@automatethethings.com for commercial licensing options.
+
+services:
+  ble-tests:
+    build:
+      context: ../../../..
+      dockerfile: xkey/test/integration/ble/Dockerfile
+      additional_contexts:
+        go-qrdb: ../../../../../go-qrdb
+        go-quicraft: ../../../../../go-quicraft
+        go-truststrap: ../../../../../go-truststrap
+        go-codec: ../../../../../go-codec
+        go-frost: ../../../../../go-frost
+        go-objstore: ../../../../../go-objstore
+    # Privileged plus CAP_NET_ADMIN: loading hci_vhci and attaching emulated
+    # controllers to it are host-kernel operations.
+    privileged: true
+    cap_add:
+      - NET_ADMIN
+    # AF_BLUETOOTH sockets are only permitted in the initial network
+    # namespace (net/bluetooth/af_bluetooth.c rejects every other netns with
+    # EAFNOSUPPORT), so the container must share the host's network namespace.
+    # Without this, hciconfig reports "Address family not supported by
+    # protocol" and bluetoothd cannot open the management socket.
+    network_mode: host
+    volumes:
+      - /lib/modules:/lib/modules:ro
+      - /dev:/dev
+      # Only one bluetoothd can exist per machine: it binds the ATT and SDP
+      # L2CAP sockets on BDADDR_ANY, and the initial network namespace is the
+      # only one where Bluetooth sockets work at all. When the host already
+      # runs bluetoothd, the entrypoint drives it over this socket instead of
+      # starting a second daemon that could not register an adapter. When the
+      # host has none, the entrypoint starts its own.
+      - /run/dbus:/host/run/dbus:ro

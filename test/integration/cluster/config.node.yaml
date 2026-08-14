@@ -15,11 +15,25 @@ logging:
   level: "debug"
   format: "json"
 
+# TLS is served with a certificate minted by the node's own embedded CA
+# (see the ca block below) — no certificate files are provisioned.
 tls:
-  enabled: false
+  enabled: true
+  server_cn: "localhost"
 
+# Adaptive authentication: anonymous until the first user is provisioned, then
+# enforced. Satisfies the secure-by-default gate (the daemon has no insecure
+# override) without pre-seeding credentials into the cluster fixtures.
 auth:
-  enabled: false
+  enabled: true
+  type: "adaptive"
+
+# Encryption-at-rest, auto-unsealed at node start so a 4-node cluster can form
+# without an unseal ceremony per node.
+barrier:
+  enabled: true
+  strategy: "passphrase"
+  passphrase: "integration-test-passphrase"
 
 ratelimit:
   enabled: false
@@ -39,3 +53,30 @@ backends:
   pkcs8:
     enabled: true
     path: "/data/keys/pkcs8"
+  # The CA root identity below names keystore-type "software", and a standalone
+  # node resolves that keystore straight out of the configured backends (only a
+  # clustered node routes the CA key through the cluster key-custody strategy
+  # instead). There is no "pkcs8" StoreType, so the software backend has to be
+  # enabled for the CA to have anywhere to keep its root key.
+  software:
+    enabled: true
+    path: "/data/keys/software"
+
+# Embedded CA. Each node mints its own TLS server certificate from this root,
+# so the cluster serves TLS with no externally provisioned key material and
+# satisfies the secure-by-default gate.
+ca:
+  enabled: true
+  identity:
+    - subject:
+        cn: "Cluster Integration Test Root CA"
+        organization: "XKMS Integration Tests"
+      valid: 10
+      keys:
+        - algorithm: "ECDSA"
+          ecc-curve: "P-256"
+          key_type: "CA"
+      keystore-type: "software"
+      is-root: true
+  selected-ca: 0
+  default-validity-days: 365

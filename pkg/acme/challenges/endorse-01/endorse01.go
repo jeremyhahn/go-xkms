@@ -51,8 +51,9 @@ import (
 // does not have an EK certificate yet - that's what this challenge issues!
 // For TPMs with manufacturer EK certificates, use enroll-01 directly.
 
-// CertificateAuthority defines the CA interface needed for endorse-01 operations
-type CertificateAuthority interface {
+// CSRCreator generates the Certificate Signing Request used to request an
+// EK certificate during endorse-01 setup.
+type CSRCreator interface {
 	// CreateCSR generates a Certificate Signing Request
 	CreateCSR(req CertificateRequest) ([]byte, error)
 
@@ -106,7 +107,6 @@ type KeyAttributesWithCN interface {
 //
 // Parameters:
 //   - resolver: DNS resolver (not used in endorse-01)
-//   - ca: Certificate Authority (not used in verification)
 //   - domain: Domain/identifier (not used in endorse-01)
 //   - port: HTTP port (not used in endorse-01)
 //   - challengeToken: Challenge token (not used in endorse-01)
@@ -120,7 +120,6 @@ type KeyAttributesWithCN interface {
 // by creating EAB credentials with purpose="endorse-01".
 func Verify(
 	resolver *net.Resolver,
-	ca CertificateAuthority,
 	domain, port, challengeToken, expectedKeyAuth string) error {
 
 	// The endorse-01 challenge verification relies on:
@@ -147,7 +146,7 @@ func Verify(
 //
 // Parameters:
 //   - challengeToken: Challenge token (reserved for future use)
-//   - certAuthority: Certificate Authority for CSR generation
+//   - certAuthority: CSR creator used to generate the EK certificate request
 //   - tpm: Trusted Platform Module for EK retrieval
 //   - serializer: Key serializer for encoding EK public key
 //
@@ -161,7 +160,7 @@ func Verify(
 // - EK key attributes for validation
 func Setup(
 	challengeToken string,
-	certAuthority CertificateAuthority,
+	certAuthority CSRCreator,
 	tpm TrustedPlatformModule,
 	serializer Serializer) ([]byte, error) {
 

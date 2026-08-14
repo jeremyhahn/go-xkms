@@ -21,6 +21,7 @@ import (
 
 	"github.com/go-jose/go-jose/v4"
 	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
+	"github.com/jeremyhahn/go-xkms/pkg/acme/audit"
 	"github.com/jeremyhahn/go-xkms/pkg/acme/common"
 	"github.com/jeremyhahn/go-xkms/pkg/acme/entities"
 	"github.com/jeremyhahn/go-xkms/pkg/acme/server"
@@ -222,6 +223,11 @@ func (s *RestService) KeyChangeHandler(w http.ResponseWriter, r *http.Request) {
 		writeError(w, common.ServerInternal("Failed to update account"))
 		return
 	}
+
+	s.recordAudit(audit.LogKeyChange(auditContext(r), s.auditLog,
+		auditAccountID(persistedAccount.ID),
+		auditKeyFingerprint(oldPublicKey),
+		auditKeyFingerprint(publicKey)))
 
 	// Respond with success
 	response := KeyChangeResponse{Message: "Key-change completed successfully"}

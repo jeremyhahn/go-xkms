@@ -1034,26 +1034,73 @@ func TestCommandDescriptionsNoExtraKeys(t *testing.T) {
 // SupportedCommandsInfo tests (unit-level, no TPM required)
 // ---------------------------------------------------------------------------
 
-func TestCommandInfo_VendorCommand(t *testing.T) {
-	// A command code not in commandNames should produce a "Vendor Command" entry.
-	unknownCC := tpm2.TPMCC(0x0307)
-	_, nameOK := commandNames[unknownCC]
-	if nameOK {
-		t.Skip("0x0307 is in commandNames; pick a different vendor code")
+// TPM 2.0 Structures, Part 2, Table 12: the assigned command code range runs
+// from TPM_CC_FIRST to TPM_CC_LAST. Anything outside it is vendor-specific or
+// unassigned, which is precisely the case SupportedCommandsInfo reports as
+// "Vendor Command (0xNNNN)".
+const (
+	tpmCCFirst = tpm2.TPMCC(0x0000011F) // TPM_CC_NV_UndefineSpaceSpecial
+	tpmCCLast  = tpm2.TPMCC(0x00000198) // TPM_CC_ACT_SetTimeout
+)
+
+// TestCommandNamesWithinAssignedRange pins the invariant that makes
+// SupportedCommandsInfo's fallback correct: commandNames must describe only
+// codes the TPM 2.0 specification actually assigns. If an out-of-range entry
+// were ever added, a genuine vendor command would silently be reported under a
+// standard name instead of "Vendor Command (0xNNNN)".
+//
+// This replaces the former TestCommandInfo_VendorCommand, which was deleted
+// because it could not fail: it assigned name := expectedName and then checked
+// name != expectedName, exercising no product code at all.
+func TestCommandNamesWithinAssignedRange(t *testing.T) {
+	if len(commandNames) == 0 {
+		t.Fatal("commandNames is empty; the command code table is missing")
 	}
 
-	code := fmt.Sprintf("0x%04X", uint32(unknownCC))
-	expectedName := fmt.Sprintf("Vendor Command (%s)", code)
-	expectedDesc := "Vendor-specific or implementation-defined TPM command"
-
-	// Simulate the logic from SupportedCommandsInfo for a vendor command.
-	name := expectedName
-	desc := expectedDesc
-	if name != expectedName {
-		t.Errorf("vendor command name: got %q, want %q", name, expectedName)
+	for cc, name := range commandNames {
+		if cc < tpmCCFirst || cc > tpmCCLast {
+			t.Errorf("commandNames has out-of-range command code 0x%04X (%q); "+
+				"assigned range is [0x%04X, 0x%04X]",
+				uint32(cc), name, uint32(tpmCCFirst), uint32(tpmCCLast))
+		}
 	}
-	if desc != expectedDesc {
-		t.Errorf("vendor command description: got %q, want %q", desc, expectedDesc)
+}
+
+// TestVendorCommandCodeIsUnassigned proves a vendor command code exists that
+// the lookup tables do not claim, so the "Vendor Command" branch of
+// SupportedCommandsInfo is reachable rather than dead code.
+//
+// The code is chosen at run time from just above TPM_CC_LAST instead of being
+// hardcoded, so the test can never need a skip guard to protect a hardcoded
+// constant from colliding with a newly added command name.
+func TestVendorCommandCodeIsUnassigned(t *testing.T) {
+	var vendorCC tpm2.TPMCC
+	found := false
+	for cc := tpmCCLast + 1; cc <= tpmCCLast+0x1000; cc++ {
+		if _, named := commandNames[cc]; named {
+			continue
+		}
+		if _, described := commandDescriptions[cc]; described {
+			continue
+		}
+		vendorCC = cc
+		found = true
+		break
+	}
+
+	if !found {
+		t.Fatal("no unassigned command code found above TPM_CC_LAST; " +
+			"commandNames claims the entire vendor range")
+	}
+
+	if _, ok := commandNames[vendorCC]; ok {
+		t.Errorf("command code 0x%04X must not be in commandNames", uint32(vendorCC))
+	}
+	if _, ok := commandDescriptions[vendorCC]; ok {
+		t.Errorf("command code 0x%04X must not be in commandDescriptions", uint32(vendorCC))
+	}
+	if vendorCC <= tpmCCLast {
+		t.Errorf("chosen vendor code 0x%04X is inside the assigned range", uint32(vendorCC))
 	}
 }
 

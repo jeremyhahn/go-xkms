@@ -328,6 +328,14 @@ func (s *FileTokenStore) decryptToken(encToken *encryptedToken) (*TokenResponse,
 	if s.gcm == nil || encToken.Nonce == nil {
 		plaintext = encToken.Ciphertext
 	} else {
+		// crypto/cipher panics rather than returning an error when the nonce
+		// is not exactly NonceSize bytes. The nonce is read back from the
+		// on-disk token file, so a corrupted or tampered file must not be
+		// able to crash the process.
+		if len(encToken.Nonce) != s.gcm.NonceSize() {
+			return nil, ErrDecryptionFailed
+		}
+
 		// Decrypt
 		var err error
 		plaintext, err = s.gcm.Open(nil, encToken.Nonce, encToken.Ciphertext, nil)

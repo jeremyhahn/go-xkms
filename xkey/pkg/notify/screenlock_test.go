@@ -15,6 +15,7 @@ package notify
 
 import (
 	"context"
+	"errors"
 	"log/slog"
 	"sync/atomic"
 	"testing"
@@ -292,4 +293,53 @@ func TestNewScreenLockMonitor_Unavailable(t *testing.T) {
 		// If a system bus happens to be available, just close cleanly.
 		require.NoError(t, m.Close())
 	}
+}
+
+// TestNewScreenLockMonitor_SystemBusUnavailable verifies the constructor fails
+// with the documented sentinel when the system bus cannot be reached, so the
+// GUI can continue without lock-on-screensaver rather than crashing.
+func TestNewScreenLockMonitor_SystemBusUnavailable(t *testing.T) {
+	t.Setenv("DBUS_SYSTEM_BUS_ADDRESS", "unix:path=/nonexistent/xkey-test-system-bus")
+
+	var called atomic.Int32
+	monitor, err := NewScreenLockMonitor(slog.New(slog.DiscardHandler), func() { called.Add(1) })
+
+	assert.ErrorIs(t, err, ErrScreenLockUnavailable)
+	assert.Nil(t, monitor)
+	assert.Zero(t, called.Load())
+}
+
+// TestScreenLockMonitor_CloseReportsMatchRemovalFailure verifies Close still
+// tears the monitor down when RemoveMatch fails on the bus.
+func TestScreenLockMonitor_CloseReportsMatchRemovalFailure(t *testing.T) {
+	conn := &mockSystemBusConn{busObj: &mockSystemBusBusObject{callErr: errors.New("bus gone")}}
+	signalCh := make(chan *dbus.Signal, 1)
+
+	monitor := newScreenLockMonitorWithConn(conn, signalCh, func() {}, slog.New(slog.DiscardHandler))
+
+	require.NoError(t, monitor.Close(), "a failed RemoveMatch must not fail Close")
+	assert.True(t, conn.removedSignal)
+	assert.True(t, conn.closed)
+
+	require.NoError(t, monitor.Close(), "Close must be idempotent")
+}
+
+// TestScreenLockMonitor_IgnoresSignalsAfterClose verifies the listener stops
+// invoking the callback once the monitor is closed, so a late Lock signal
+// cannot re-lock the app after teardown.
+func TestScreenLockMonitor_IgnoresSignalsAfterClose(t *testing.T) {
+	conn := &mockSystemBusConn{busObj: &mockSystemBusBusObject{}}
+	signalCh := make(chan *dbus.Signal, 2)
+
+	var called atomic.Int32
+	monitor := newScreenLockMonitorWithConn(conn, signalCh, func() { called.Add(1) }, slog.New(slog.DiscardHandler))
+
+	// Mark closed without closing the channel, then deliver a Lock signal.
+	monitor.closed.Store(true)
+	signalCh <- &dbus.Signal{Name: logindLockSignalName}
+
+	assert.False(t, waitForCallback(&called, 1, 100*time.Millisecond),
+		"a signal delivered after close must not invoke the callback")
+
+	close(signalCh)
 }

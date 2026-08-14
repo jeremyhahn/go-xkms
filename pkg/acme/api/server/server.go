@@ -33,8 +33,10 @@ import (
 	db "github.com/jeremyhahn/go-qrdb/sdk/go/transport"
 	adminv1 "github.com/jeremyhahn/go-xkms/api/proto/admin/v1"
 	"github.com/jeremyhahn/go-xkms/pkg/acme/admin"
+	"github.com/jeremyhahn/go-xkms/pkg/acme/audit"
 	caerrors "github.com/jeremyhahn/go-xkms/pkg/acme/errors"
 	"github.com/jeremyhahn/go-xkms/pkg/acme/gui/webui"
+	"github.com/jeremyhahn/go-xkms/pkg/auth"
 	"github.com/quic-go/quic-go/http3"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials"
@@ -88,6 +90,25 @@ type ServerConfig struct {
 	IdleTimeout time.Duration
 	// Role mapping for gRPC Unix socket authentication
 	GRPCRoleMapping *RoleMapping
+
+	// Authorizer is the qrdb-backed authorization seam every ACME admin
+	// protocol surface (REST, gRPC, MCP) delegates its decisions to. It is
+	// the same *auth.Authorizer the xkms REST/gRPC/QUIC/MCP transports use, so
+	// a role grant means the same thing on the ACME admin API as it does
+	// everywhere else in the stack.
+	//
+	// A nil Authorizer (or one built without an RBAC client) leaves
+	// authorization disabled and every authenticated caller allowed, matching
+	// the documented stack-wide "RBAC disabled => allow all" behavior.
+	// Authentication is mandatory either way.
+	Authorizer *auth.Authorizer
+
+	// AuditQuerier serves GET /admin/audit. It must read the same trail the
+	// ACME server writes — construct it from the same audit configuration the
+	// FileAuditLogger was built from (see NewFileQuerier). When nil the
+	// endpoint reports that no audit trail is configured rather than claiming
+	// the trail is empty.
+	AuditQuerier audit.Querier
 }
 
 // DefaultConfig returns a default server configuration.
@@ -115,6 +136,7 @@ type MultiProtocolServer struct {
 	adminService   admin.Service
 	tenantService  admin.TenantService
 	authMiddleware admin.AuthHandler
+	gate           *admin.PermissionGate
 	router         *mux.Router
 
 	// MCP method dispatch map for O(1) routing
@@ -168,6 +190,7 @@ func NewMultiProtocolServer(
 		adminService:   adminService,
 		tenantService:  tenantService,
 		authMiddleware: authMiddleware,
+		gate:           admin.NewPermissionGate(config.Authorizer, config.Logger),
 	}
 
 	// Initialize MCP method dispatch map
@@ -596,20 +619,26 @@ func (s *MultiProtocolServer) mcpListUsers(ctx context.Context, params json.RawM
 func (s *MultiProtocolServer) buildRouter() {
 	s.router = mux.NewRouter()
 
-	// Create admin handlers
-	adminHandlers := admin.NewHandlers(s.adminService, s.logger)
-	adminHandlers.RegisterRoutes(s.router, s.authMiddleware)
+	// Create admin handlers. The audit querier is only supplied when the
+	// deployment actually keeps a trail, so GET /admin/audit reports the truth
+	// either way.
+	var adminOpts []admin.HandlerOption
+	if s.config.AuditQuerier != nil {
+		adminOpts = append(adminOpts, admin.WithAuditQuerier(s.config.AuditQuerier))
+	}
+	adminHandlers := admin.NewHandlers(s.adminService, s.logger, adminOpts...)
+	adminHandlers.RegisterRoutes(s.router, s.authMiddleware, s.gate)
 
 	// Create tenant handlers if tenant service is available
 	if s.tenantService != nil {
 		tenantHandlers := admin.NewTenantHandlers(s.tenantService, s.logger)
-		tenantHandlers.RegisterRoutes(s.router, s.authMiddleware)
+		tenantHandlers.RegisterRoutes(s.router, s.authMiddleware, s.gate)
 	}
 
 	// Register barrier and setup handlers if the admin service supports them
 	if taSvc, ok := s.adminService.(admin.TenantAwareService); ok {
 		if barrierSvc := taSvc.BarrierSvc(); barrierSvc != nil {
-			admin.NewBarrierHandlers(barrierSvc, s.logger).RegisterRoutes(s.router, s.authMiddleware)
+			admin.NewBarrierHandlers(barrierSvc, s.logger).RegisterRoutes(s.router, s.authMiddleware, s.gate)
 		}
 		if setupSvc := taSvc.SetupSvc(); setupSvc != nil {
 			admin.NewSetupHandlers(setupSvc, s.logger).RegisterRoutes(s.router)
@@ -622,8 +651,14 @@ func (s *MultiProtocolServer) buildRouter() {
 		_, _ = w.Write([]byte(`{"status":"healthy"}`))
 	}).Methods("GET")
 
-	// MCP endpoint for JSON-RPC over HTTP
-	s.router.HandleFunc("/mcp", s.handleMCP).Methods("POST")
+	// MCP endpoint for JSON-RPC over HTTP. It carries the same authentication
+	// middleware as the REST admin routes; per-method authorization happens in
+	// handleMCP against MCPMethodPermissions.
+	mcpRouter := s.router.PathPrefix("/mcp").Subrouter()
+	if s.authMiddleware != nil {
+		mcpRouter.Use(s.authMiddleware.Authenticate)
+	}
+	mcpRouter.HandleFunc("", s.handleMCP).Methods("POST")
 
 	// Admin web UI (SPA) - registered last so API routes take priority
 	if err := webui.RegisterRoutes(s.router, webui.AdminAssets, s.logger); err != nil {
@@ -760,10 +795,13 @@ func (s *MultiProtocolServer) startGRPC(_ context.Context) error {
 			tcpOpts = append(tcpOpts, grpc.Creds(creds))
 		}
 
-		// Add interceptors
+		// Add interceptors. The mTLS identity interceptor is the
+		// authentication layer for TCP callers; without it the authorization
+		// interceptor would have no identity to evaluate and would deny.
 		tcpOpts = append(tcpOpts, grpc.ChainUnaryInterceptor(
 			UnaryPeerCredentialsInterceptor(),
-			UnaryAuthorizationInterceptor(roleMapping),
+			UnaryMTLSIdentityInterceptor(nil, nil, s.logger),
+			UnaryAuthorizationInterceptor(roleMapping, s.gate, s.logger),
 		))
 
 		// Create gRPC server for TCP
@@ -800,7 +838,7 @@ func (s *MultiProtocolServer) startGRPC(_ context.Context) error {
 		// Add interceptors for Unix socket authentication
 		unixOpts = append(unixOpts, grpc.ChainUnaryInterceptor(
 			UnaryPeerCredentialsInterceptor(),
-			UnaryAuthorizationInterceptor(roleMapping),
+			UnaryAuthorizationInterceptor(roleMapping, s.gate, s.logger),
 		))
 
 		// Create separate gRPC server for Unix socket (no TLS)
@@ -1040,6 +1078,18 @@ func (s *MultiProtocolServer) handleMCP(w http.ResponseWriter, r *http.Request) 
 
 	if req.JSONRPC != "2.0" {
 		s.writeMCPError(w, req.ID, -32600, "Invalid Request", nil)
+		return
+	}
+
+	// Authorize before dispatch. A denial never reaches service code.
+	if err := s.authorizeMCPMethod(r.Context(), req.Method); err != nil {
+		code := -32003
+		message := "Forbidden"
+		if errors.Is(err, auth.ErrUnauthenticated) {
+			code = -32002
+			message = "Unauthorized"
+		}
+		s.writeMCPError(w, req.ID, code, message, err.Error())
 		return
 	}
 

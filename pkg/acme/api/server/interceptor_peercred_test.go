@@ -418,13 +418,12 @@ func TestErrorTypes(t *testing.T) {
 
 	t.Run("ErrPermissionDenied", func(t *testing.T) {
 		err := ErrPermissionDenied{
-			UID:      1000,
-			GID:      1000,
-			Role:     RoleViewer,
+			Subject:  "uid:1000",
 			Method:   "/test/Method",
-			Required: RoleAdmin,
+			Resource: "certs",
+			Action:   "revoke",
 		}
-		expected := "permission denied for uid=1000 gid=1000 role=viewer: method /test/Method requires role admin"
+		expected := "permission denied for uid:1000: method /test/Method requires certs:revoke"
 		assert.Equal(t, expected, err.Error())
 	})
 }

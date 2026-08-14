@@ -1729,9 +1729,9 @@ func TestKeyAlgorithmName_DSA(t *testing.T) {
 	cert := &x509.Certificate{
 		PublicKeyAlgorithm: x509.DSA,
 	}
-	name := keyAlgorithmName(cert)
+	name := pivcert.KeyAlgorithmName(cert)
 	if name != "DSA" {
-		t.Errorf("keyAlgorithmName() = %q, want %q", name, "DSA")
+		t.Errorf("pivcert.KeyAlgorithmName() = %q, want %q", name, "DSA")
 	}
 }
 
@@ -1740,9 +1740,9 @@ func TestKeyAlgorithmName_Unknown(t *testing.T) {
 	cert := &x509.Certificate{
 		PublicKeyAlgorithm: x509.PublicKeyAlgorithm(99),
 	}
-	name := keyAlgorithmName(cert)
+	name := pivcert.KeyAlgorithmName(cert)
 	if name != "Unknown" {
-		t.Errorf("keyAlgorithmName() = %q, want %q", name, "Unknown")
+		t.Errorf("pivcert.KeyAlgorithmName() = %q, want %q", name, "Unknown")
 	}
 }
 
@@ -1753,86 +1753,101 @@ func TestKeySize_UnknownAlgorithm(t *testing.T) {
 		PublicKeyAlgorithm: x509.PublicKeyAlgorithm(99),
 		PublicKey:          "not-a-real-key", // string has no Size() or Params() method
 	}
-	size := keySize(cert)
+	size := pivcert.KeySize(cert)
 	if size != 0 {
-		t.Errorf("keySize() = %d, want 0", size)
+		t.Errorf("pivcert.KeySize() = %d, want 0", size)
 	}
 }
 
 // TestKeySize_Ed25519 verifies that an Ed25519 key returns 256 bits.
 func TestKeySize_Ed25519(t *testing.T) {
 	cert := generateEd25519Certificate(t, "ed25519-keysize")
-	size := keySize(cert)
+	size := pivcert.KeySize(cert)
 	if size != 256 {
-		t.Errorf("keySize() = %d, want 256", size)
+		t.Errorf("pivcert.KeySize() = %d, want 256", size)
 	}
 }
 
 // TestKeySize_RSA verifies that an RSA-2048 key returns 2048 bits via Size()*8.
 func TestKeySize_RSA(t *testing.T) {
 	cert := generateRSACertificate(t, "rsa-keysize")
-	size := keySize(cert)
+	size := pivcert.KeySize(cert)
 	if size != 2048 {
-		t.Errorf("keySize() = %d, want 2048", size)
+		t.Errorf("pivcert.KeySize() = %d, want 2048", size)
 	}
 }
 
-// mockParamsKey implements the interface { Params() interface{ BitSize() int } }
-// to test the Params()-based key size detection branch in keySize().
-type mockParamsKey struct {
-	bitSize int
-}
-
-type mockParams struct {
-	bits int
-}
-
-func (p *mockParams) BitSize() int {
-	return p.bits
-}
-
-func (k *mockParamsKey) Params() interface{ BitSize() int } {
-	if k.bitSize == 0 {
-		return nil
-	}
-	return &mockParams{bits: k.bitSize}
-}
-
-// TestKeySize_ECDSA verifies that standard library ECDSA keys fall through
-// to the default branch (Params() method doesn't match the expected interface).
+// TestKeySize_ECDSA verifies a real standard-library ECDSA certificate reports
+// its curve size.
+//
+// This previously asserted 0. The file backend carried its own keySize whose
+// ECDSA case was `interface{ Params() interface{ BitSize() int } }`, which
+// *ecdsa.PublicKey cannot satisfy — its Params returns *elliptic.CurveParams,
+// and Go requires an exact method signature match. Every ECDSA certificate fell
+// through to the default branch and was recorded with KeySize 0, and the test
+// pinned that wrong answer in place. The backend now uses the canonical
+// pivcert.KeySize, which type-switches on the concrete key types.
 func TestKeySize_ECDSA(t *testing.T) {
 	cert := generateTestCertificate(t, "ecdsa-keysize")
-	size := keySize(cert)
-	// Standard library ECDSA keys don't satisfy the Params() interface
-	// (BitSize is a field, not a method), so they fall through to default.
-	if size != 0 {
-		t.Errorf("keySize() = %d, want 0 for standard ECDSA key", size)
+	if size := pivcert.KeySize(cert); size != 256 {
+		t.Errorf("KeySize() = %d, want 256 for a P-256 ECDSA key", size)
 	}
 }
 
-// TestKeySize_MockParamsKey verifies that a key satisfying the Params() interface
-// with a BitSize() method returns the correct key size.
-func TestKeySize_MockParamsKey(t *testing.T) {
+// TestKeySize_ECDSA_P384 covers a second curve so the result tracks the actual
+// curve rather than a constant.
+func TestKeySize_ECDSA_P384(t *testing.T) {
+	key, err := ecdsa.GenerateKey(elliptic.P384(), rand.Reader)
+	if err != nil {
+		t.Fatalf("generate P-384 key: %v", err)
+	}
 	cert := &x509.Certificate{
 		PublicKeyAlgorithm: x509.ECDSA,
-		PublicKey:          &mockParamsKey{bitSize: 384},
+		PublicKey:          &key.PublicKey,
 	}
-	size := keySize(cert)
-	if size != 384 {
-		t.Errorf("keySize() = %d, want 384", size)
+	if size := pivcert.KeySize(cert); size != 384 {
+		t.Errorf("KeySize() = %d, want 384 for a P-384 ECDSA key", size)
 	}
 }
 
-// TestKeySize_MockParamsKeyNilParams verifies that a key whose Params() returns
-// nil results in key size 0.
-func TestKeySize_MockParamsKeyNilParams(t *testing.T) {
+// TestKeySize_ECDSA_NilCurve verifies a malformed ECDSA key with no curve
+// reports 0 rather than panicking.
+func TestKeySize_ECDSA_NilCurve(t *testing.T) {
 	cert := &x509.Certificate{
 		PublicKeyAlgorithm: x509.ECDSA,
-		PublicKey:          &mockParamsKey{bitSize: 0}, // Params() returns nil
+		PublicKey:          &ecdsa.PublicKey{},
 	}
-	size := keySize(cert)
-	if size != 0 {
-		t.Errorf("keySize() = %d, want 0", size)
+	if size := pivcert.KeySize(cert); size != 0 {
+		t.Errorf("KeySize() = %d, want 0 for an ECDSA key with no curve", size)
+	}
+}
+
+// TestStoredMetadata_RecordsECDSAKeySize is the end-to-end guard: the value the
+// backend actually persists for an ECDSA certificate must be the curve size,
+// not 0. This is what a caller reading slot metadata sees.
+func TestStoredMetadata_RecordsECDSAKeySize(t *testing.T) {
+	fb, err := NewFileBackend(createValidConfig())
+	if err != nil {
+		t.Fatalf("NewFileBackend: %v", err)
+	}
+	cert := generateTestCertificate(t, "ecdsa-metadata")
+
+	if err := fb.Store(pivcert.PIVSlotAuthentication, cert); err != nil {
+		t.Fatalf("Store: %v", err)
+	}
+
+	infos, listErr := fb.List()
+	if listErr != nil {
+		t.Fatalf("List: %v", listErr)
+	}
+	if len(infos) != 1 {
+		t.Fatalf("List returned %d slots, want 1", len(infos))
+	}
+	if infos[0].KeySize != 256 {
+		t.Errorf("persisted KeySize = %d, want 256", infos[0].KeySize)
+	}
+	if infos[0].Algorithm != "ECDSA" {
+		t.Errorf("persisted Algorithm = %q, want %q", infos[0].Algorithm, "ECDSA")
 	}
 }
 

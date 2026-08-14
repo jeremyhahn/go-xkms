@@ -8,6 +8,7 @@ import (
 	"encoding/binary"
 	"encoding/hex"
 	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 )
@@ -178,36 +179,172 @@ func TestParseEventLog_ErrorHandling(t *testing.T) {
 	}
 }
 
-func TestParseRealEventLog(t *testing.T) {
-	// Test with the real EFI event log from the host system
-	eventLogPath := "../test/integration/testdata/real_eventlog.bin"
+// writeEventLogFixture writes an event log to the test's own temporary
+// directory and returns its absolute path.
+//
+// ParseEventLogWithOptions rejects relative paths outright, so the path must be
+// absolute; t.TempDir() always is, and it is removed when the test finishes.
+func writeEventLogFixture(t *testing.T, data []byte) string {
+	t.Helper()
 
-	// Check if file exists
-	if _, err := os.Stat(eventLogPath); os.IsNotExist(err) {
-		t.Skip("Real event log file not available")
+	path := filepath.Join(t.TempDir(), "binary_bios_measurements")
+	if err := os.WriteFile(path, data, 0o600); err != nil {
+		t.Fatalf("failed to write event log fixture: %v", err)
 	}
+	return path
+}
 
-	events, err := ParseEventLog(eventLogPath)
+// bootSequenceEventLog builds a synthetic TCG event log shaped like an early
+// UEFI boot: a firmware version measurement into PCR 0, a secure-boot variable
+// measurement into PCR 7, the PCR 0 separator, and a boot application
+// measurement into PCR 4. Digests are deterministic so assertions can name
+// exact values.
+//
+// The digests are agile (SHA-1 + SHA-256) for the first event, matching what a
+// real TPM 2.0 platform emits, and single-bank thereafter.
+func bootSequenceEventLog() []byte {
+	sha1Of := func(s string) []byte { sum := sha1.Sum([]byte(s)); return sum[:] }
+	sha256Of := func(s string) []byte { sum := sha256.Sum256([]byte(s)); return sum[:] }
+
+	buf := new(bytes.Buffer)
+
+	// PCR 0, EV_S_CRTM_VERSION, agile digests.
+	buf.Write(createEventLogEntry(0, 0x80000002, []struct {
+		algID  uint16
+		digest []byte
+	}{
+		{algID: AlgSHA1, digest: sha1Of("firmware-v1.2.3")},
+		{algID: AlgSHA256, digest: sha256Of("firmware-v1.2.3")},
+	}, []byte("firmware-v1.2.3")))
+
+	// PCR 7, EV_EFI_VARIABLE_DRIVER_CONFIG, SHA-256 only.
+	buf.Write(createEventLogEntry(7, 0x0000000D, []struct {
+		algID  uint16
+		digest []byte
+	}{
+		{algID: AlgSHA256, digest: sha256Of("SecureBoot")},
+	}, []byte("SecureBoot")))
+
+	// PCR 0, EV_SEPARATOR, no event data.
+	buf.Write(createEventLogEntry(0, 0x00000004, []struct {
+		algID  uint16
+		digest []byte
+	}{
+		{algID: AlgSHA256, digest: sha256Of("separator")},
+	}, nil))
+
+	// PCR 4, EV_EFI_BOOT_SERVICES_APPLICATION, SHA-384 digest.
+	sha384Sum := sha512.Sum384([]byte("\\EFI\\BOOT\\BOOTX64.EFI"))
+	buf.Write(createEventLogEntry(4, 0x00000006, []struct {
+		algID  uint16
+		digest []byte
+	}{
+		{algID: AlgSHA384, digest: sha384Sum[:]},
+	}, []byte("\\EFI\\BOOT\\BOOTX64.EFI")))
+
+	return buf.Bytes()
+}
+
+// TestParseEventLog_BootSequence parses a synthetic but structurally faithful
+// multi-event boot log and asserts every parsed field.
+//
+// This replaces the former TestParseRealEventLog, which was deleted because it
+// depended on a host-specific artifact
+// (../test/integration/testdata/real_eventlog.bin) that is not in the
+// repository, so it skipped on every machine and asserted nothing. It was also
+// broken independently of the missing file: it passed a relative path, which
+// ParseEventLogWithOptions rejects outright, so the test could never have
+// passed even where the fixture existed.
+func TestParseEventLog_BootSequence(t *testing.T) {
+	path := writeEventLogFixture(t, bootSequenceEventLog())
+
+	events, err := ParseEventLog(path)
 	if err != nil {
-		t.Logf("Parse error: %v", err)
+		t.Fatalf("parsing a well-formed boot log must succeed: %v", err)
 	}
 
-	// Log what we got
-	t.Logf("Parsed %d events", len(events))
-	for i, ev := range events {
-		if i >= 10 {
-			t.Logf("... and %d more events", len(events)-10)
-			break
+	if len(events) != 4 {
+		t.Fatalf("expected 4 events, got %d", len(events))
+	}
+
+	expected := []struct {
+		eventNum    int
+		pcrIndex    int
+		eventType   string
+		digestCount int
+		algorithms  []string
+		eventSize   int
+		eventString string
+	}{
+		{1, 0, "EV_S_CRTM_VERSION", 2, []string{"sha1", "sha256"}, 15, "firmware-v1.2.3"},
+		{2, 7, "EV_EFI_VARIABLE_DRIVER_CONFIG", 1, []string{"sha256"}, 10, "SecureBoot"},
+		{3, 0, "EV_SEPARATOR", 1, []string{"sha256"}, 0, ""},
+		{4, 4, "EV_EFI_BOOT_SERVICES_APPLICATION", 1, []string{"sha384"}, 21, `\EFI\BOOT\BOOTX64.EFI`},
+	}
+
+	for i, want := range expected {
+		got := events[i]
+		if got.EventNum != want.eventNum {
+			t.Errorf("event %d: EventNum = %d, want %d", i, got.EventNum, want.eventNum)
 		}
-		t.Logf("Event %d: PCR=%d Type=%s DigestCount=%d",
-			ev.EventNum, ev.PCRIndex, ev.EventType, ev.DigestCount)
+		if got.PCRIndex != want.pcrIndex {
+			t.Errorf("event %d: PCRIndex = %d, want %d", i, got.PCRIndex, want.pcrIndex)
+		}
+		if got.EventType != want.eventType {
+			t.Errorf("event %d: EventType = %q, want %q", i, got.EventType, want.eventType)
+		}
+		if got.DigestCount != want.digestCount {
+			t.Errorf("event %d: DigestCount = %d, want %d", i, got.DigestCount, want.digestCount)
+		}
+		if got.EventSize != want.eventSize {
+			t.Errorf("event %d: EventSize = %d, want %d", i, got.EventSize, want.eventSize)
+		}
+		if got.EventString != want.eventString {
+			t.Errorf("event %d: EventString = %q, want %q", i, got.EventString, want.eventString)
+		}
+		if len(got.Digests) != len(want.algorithms) {
+			t.Fatalf("event %d: got %d digests, want %d", i, len(got.Digests), len(want.algorithms))
+		}
+		for j, alg := range want.algorithms {
+			if got.Digests[j].AlgorithmId != alg {
+				t.Errorf("event %d digest %d: AlgorithmId = %q, want %q",
+					i, j, got.Digests[j].AlgorithmId, alg)
+			}
+		}
 	}
 
-	if err != nil {
-		t.Errorf("Should parse real event log without error: %v", err)
+	// The first event's digests must survive the round trip byte for byte;
+	// a parser that mis-sized the SHA-1 digest would shift every later field.
+	wantSHA1 := sha1.Sum([]byte("firmware-v1.2.3"))
+	if got := events[0].Digests[0].Digest; got != hex.EncodeToString(wantSHA1[:]) {
+		t.Errorf("event 0 SHA-1 digest = %s, want %s", got, hex.EncodeToString(wantSHA1[:]))
 	}
-	if len(events) == 0 {
-		t.Error("Should have events")
+	wantSHA256 := sha256.Sum256([]byte("firmware-v1.2.3"))
+	if got := events[0].Digests[1].Digest; got != hex.EncodeToString(wantSHA256[:]) {
+		t.Errorf("event 0 SHA-256 digest = %s, want %s", got, hex.EncodeToString(wantSHA256[:]))
+	}
+}
+
+// TestParseEventLog_TruncatedUnknownAlgorithmDigest covers the one truncation
+// path TestParseEventLog_TruncatedData does not reach: a digest whose algorithm
+// is unknown, where SkipUnknownAlgorithms makes the parser estimate the digest
+// size and skip that many bytes.
+//
+// A log that promises a 32-byte vendor digest but supplies 10 bytes is
+// truncated, and a parser that accepts it would report attestation evidence it
+// never actually read.
+func TestParseEventLog_TruncatedUnknownAlgorithmDigest(t *testing.T) {
+	buf := new(bytes.Buffer)
+	_ = binary.Write(buf, binary.LittleEndian, uint32(0))          // PCR index
+	_ = binary.Write(buf, binary.LittleEndian, uint32(0x00000003)) // EV_NO_ACTION
+	_ = binary.Write(buf, binary.LittleEndian, uint32(1))          // Digest count
+	_ = binary.Write(buf, binary.LittleEndian, uint16(0x2000))     // Vendor algorithm
+	buf.Write(make([]byte, 10))                                    // 10 bytes, not the estimated 32
+
+	path := writeEventLogFixture(t, buf.Bytes())
+
+	if _, err := ParseEventLog(path); err == nil {
+		t.Error("expected an error for a truncated vendor-algorithm digest, got nil")
 	}
 }
 

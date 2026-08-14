@@ -226,6 +226,7 @@ func TestWrapKeyWithValidBackend(t *testing.T) {
 		// Wrap some key material
 		keyMaterial := []byte("this-is-a-32-byte-key-material!!")
 		wrapResp, err := service.WrapKey(context.Background(), &pb.WrapKeyRequest{
+			Backend:           "software",
 			KeyMaterial:       keyMaterial,
 			WrappingPublicKey: paramsResp.WrappingPublicKey,
 			Algorithm:         paramsResp.Algorithm,
@@ -262,6 +263,7 @@ func TestUnwrapKeyWithValidBackend(t *testing.T) {
 		// Wrap key material first
 		originalKeyMaterial := []byte("this-is-a-32-byte-key-material!!")
 		wrapResp, err := service.WrapKey(context.Background(), &pb.WrapKeyRequest{
+			Backend:           "software",
 			KeyMaterial:       originalKeyMaterial,
 			WrappingPublicKey: paramsResp.WrappingPublicKey,
 			Algorithm:         paramsResp.Algorithm,
@@ -273,6 +275,7 @@ func TestUnwrapKeyWithValidBackend(t *testing.T) {
 
 		// Unwrap key material
 		unwrapResp, err := service.UnwrapKey(context.Background(), &pb.UnwrapKeyRequest{
+			Backend:           "software",
 			WrappedKey:        wrapResp.WrappedKey,
 			Algorithm:         wrapResp.Algorithm,
 			ImportToken:       wrapResp.ImportToken,
@@ -475,19 +478,25 @@ func TestSignWithDifferentHashes(t *testing.T) {
 		}
 	})
 
-	t.Run("signs with unknown hash falls back to SHA256", func(t *testing.T) {
+	// A hash name the caller did supply that does not resolve must produce an
+	// error and no signature. Falling back to SHA-256 returns a valid-looking
+	// signature over a digest the caller never chose, and nothing in the
+	// response distinguishes it from the signature that was asked for.
+	t.Run("unknown hash is refused and yields no signature", func(t *testing.T) {
 		resp, err := service.Sign(context.Background(), &pb.SignRequest{
 			KeyId:   "hash-test-key",
 			Backend: "software",
 			Data:    testData,
 			Hash:    "UNKNOWN",
 		})
-		if err != nil {
-			t.Fatalf("Sign failed: %v", err)
+		if err == nil {
+			t.Fatal("Sign with an unresolvable hash must return an error")
 		}
-
-		if len(resp.Signature) == 0 {
-			t.Error("Expected non-empty signature")
+		if status.Code(err) != codes.InvalidArgument {
+			t.Errorf("Expected InvalidArgument, got %v", status.Code(err))
+		}
+		if resp != nil {
+			t.Errorf("Expected no response when the hash is refused, got %v", resp)
 		}
 	})
 }

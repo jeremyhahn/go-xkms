@@ -1493,7 +1493,11 @@ func (m *mockPIVClient) ClaimCertBegin(_ context.Context, _ *transport.ClaimCert
 func (m *mockPIVClient) ClaimCertComplete(_ context.Context, _ *transport.ClaimCertCompleteRequest) (*transport.ClaimCertCompleteResponse, error) {
 	return nil, errMockNotImplemented
 }
-func (m *mockPIVClient) ClaimShare(_ context.Context, _ *transport.ClaimShareRequest) (*transport.ClaimShareResponse, error) {
+func (m *mockPIVClient) ClaimShareBegin(_ context.Context, _ *transport.ClaimShareBeginRequest) (*transport.ClaimShareBeginResponse, error) {
+	return nil, errMockNotImplemented
+}
+
+func (m *mockPIVClient) ClaimShareComplete(_ context.Context, _ *transport.ClaimShareCompleteRequest) (*transport.ClaimShareCompleteResponse, error) {
 	return nil, errMockNotImplemented
 }
 func (m *mockPIVClient) SignCSRInit(_ context.Context, _ *transport.SignCSRInitRequest) (*transport.SignCSRInitResponse, error) {

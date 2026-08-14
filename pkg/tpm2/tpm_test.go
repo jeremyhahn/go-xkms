@@ -1288,35 +1288,27 @@ func TestActivateCredential_CovTPM(t *testing.T) {
 	assert.Equal(t, secret, recoveredSecret)
 }
 
-// TestMakeCredentialWithExternalEK_CovTPM tests MakeCredentialWithExternalEK
-func TestMakeCredentialWithExternalEK_CovTPM(t *testing.T) {
-	_, tpm := createSim(false, false)
-	defer func() { _ = tpm.Close() }()
-
-	// Get EK certificate
-	ekCert, err := tpm.EKCertificate()
-	if err != nil {
-		// No EK cert in simulator - skip
-		t.Skip("EK certificate not available in simulator")
-	}
-
-	iakAttrs, err := tpm.IAKAttributes()
-	require.NoError(t, err)
-
-	// Get IAK public bytes
-	iakKey, iakErr := tpm.IAK()
-	require.NoError(t, iakErr)
-	_, iakPub := iakKey.(interface{ Public() interface{} })
-	_ = iakPub
-
-	secret := []byte("external-ek-secret")
-	credential, encrypted, _, err := tpm.MakeCredentialWithExternalEK(ekCert, tpm2.Marshal(iakAttrs.TPMAttributes.Public), secret)
-
-	if err == nil {
-		assert.NotEmpty(t, credential)
-		assert.NotEmpty(t, encrypted)
-	}
-}
+// TestMakeCredentialWithExternalEK_CovTPM was deleted rather than un-skipped.
+//
+// It skipped on every run ("EK certificate not available in simulator") because
+// no manufacturer EK certificate is provisioned into a simulator's NV RAM, and
+// its assertions were in any case unfalsifiable: every one of them sat inside
+// an "if err == nil" guard, so the test passed whether or not
+// MakeCredentialWithExternalEK worked.
+//
+// The same API is covered properly, and far more strictly, in
+// attestation_certify_simulator_test.go, which mints an EK certificate over the
+// simulator's real EK public key instead of demanding a manufacturer one:
+//
+//   - TestMakeCredentialWithExternalEK_ActivatesOnTheOwningTPM drives the full
+//     make-then-activate ceremony and asserts the secret is recovered.
+//   - TestMakeCredentialWithExternalEK_WrongEKCannotActivate proves the
+//     credential is bound to the EK it was made for.
+//   - TestMakeCredentialWithExternalEK_InvalidInputs covers the nil
+//     certificate, empty and malformed IAK public area, and unsupported
+//     certificate key type paths.
+//
+// Reviving the skipped test would only have duplicated that coverage.
 
 // TestProvision tests the Provision method
 func TestProvision(t *testing.T) {

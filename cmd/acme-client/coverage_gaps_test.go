@@ -754,15 +754,22 @@ func TestVersionCmd_PersistentPreRunE(t *testing.T) {
 
 func TestExpandPath_HomeDirUnset(t *testing.T) {
 	origHome, hadHome := os.LookupEnv("HOME")
-	os.Unsetenv("HOME")
+	if err := os.Unsetenv("HOME"); err != nil {
+		t.Fatalf("unset HOME: %v", err)
+	}
 	t.Cleanup(func() {
 		if hadHome {
-			os.Setenv("HOME", origHome)
+			if err := os.Setenv("HOME", origHome); err != nil {
+				t.Errorf("restore HOME: %v", err)
+			}
 		}
 	})
 
+	// Without $HOME the home directory is unresolvable on the platforms this
+	// binary targets. If that ever stops being true the assertion below would
+	// silently test nothing, so fail loudly instead.
 	if _, err := os.UserHomeDir(); err == nil {
-		t.Skip("os.UserHomeDir() still resolves without $HOME on this platform")
+		t.Fatal("os.UserHomeDir() resolved without $HOME: this test can no longer reach the failure branch")
 	}
 
 	got := expandPath("~/foo")

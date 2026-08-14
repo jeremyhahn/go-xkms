@@ -28,6 +28,7 @@ import (
 	"github.com/spf13/cobra"
 	"github.com/spf13/viper"
 
+	"github.com/jeremyhahn/go-xkms/sdk/go/transport"
 	"github.com/jeremyhahn/go-xkms/xkey/pkg/phone"
 )
 
@@ -47,7 +48,29 @@ var (
 
 	// ErrSharePolicyStoreFailed indicates the sharing policy store could not be loaded.
 	ErrSharePolicyStoreFailed = errors.New("device: sharing policy store failed")
+
+	// ErrShareKeyLoadFailed indicates the key material to share could not be
+	// read from the backend.
+	ErrShareKeyLoadFailed = errors.New("device: failed to load key material")
+
+	// ErrShareNoPublicKey indicates the backend holds no public key for the
+	// requested key, so there is nothing to share.
+	ErrShareNoPublicKey = errors.New("device: backend returned no public key")
+
+	// ErrShareNoKeyMaterial indicates the backend would not export the key
+	// material the sharing policy asked to send.
+	ErrShareNoKeyMaterial = errors.New("device: backend returned no exportable key material")
 )
+
+// sharedKeyMaterial holds everything a share request needs about a key held
+// by a local xkmsd backend.
+type sharedKeyMaterial struct {
+	Algorithm      string
+	PublicKeyPEM   []byte
+	CertificatePEM []byte
+	KeyMaterial    []byte
+	KeySize        int
+}
 
 // deviceShareCmd shares a key with a paired phone device.
 var deviceShareCmd = &cobra.Command{
@@ -159,6 +182,20 @@ func runDeviceShare(cmd *cobra.Command, args []string) error {
 		return &SentinelCauseError{Sentinel: ErrSharePolicyStoreFailed, Cause: err}
 	}
 
+	// Read the key material before any radio work. Sending a share request
+	// with nothing in it makes the phone reject it with a confusing
+	// "missing public_key_pem", so an unreadable key must fail here.
+	material, err := loadSharedKeyMaterial(backend, keyID, policy.ShareSymmetric, logger)
+	if err != nil {
+		return err
+	}
+	if policy.SharePublic && len(material.PublicKeyPEM) == 0 {
+		return &DetailError{Err: ErrShareNoPublicKey, Detail: fmt.Sprintf(": %s/%s", backend, keyID)}
+	}
+	if policy.ShareSymmetric && len(material.KeyMaterial) == 0 {
+		return &DetailError{Err: ErrShareNoKeyMaterial, Detail: fmt.Sprintf(": %s/%s", backend, keyID)}
+	}
+
 	fmt.Fprintf(cmd.OutOrStdout(), "Sharing key \"%s\" (backend: %s) with device \"%s\"...\n\n",
 		keyID, backend, device.Name)
 
@@ -205,10 +242,12 @@ func runDeviceShare(cmd *cobra.Command, args []string) error {
 		fmt.Fprintln(cmd.OutOrStdout(), "Sending public key to phone...")
 
 		req := phone.NewRequest(phone.MethodLocalSharePublicKey, &phone.LocalSharePublicKeyParams{
-			Backend:   backend,
-			KeyID:     keyID,
-			Algorithm: "", // Phone will detect from the key
-			Label:     label,
+			Backend:        backend,
+			KeyID:          keyID,
+			PublicKeyPEM:   material.PublicKeyPEM,
+			CertificatePEM: material.CertificatePEM,
+			Algorithm:      material.Algorithm,
+			Label:          label,
 		})
 
 		resp, err := phoneBackend.SendRequest(ctx, req)
@@ -236,9 +275,12 @@ func runDeviceShare(cmd *cobra.Command, args []string) error {
 		fmt.Fprintln(cmd.OutOrStdout(), "Sending symmetric key material to phone...")
 
 		req := phone.NewRequest(phone.MethodLocalShareSymmetric, &phone.LocalShareSymmetricParams{
-			Backend: backend,
-			KeyID:   keyID,
-			Label:   label,
+			Backend:    backend,
+			KeyID:      keyID,
+			WrappedKey: material.KeyMaterial,
+			Algorithm:  material.Algorithm,
+			KeySize:    material.KeySize,
+			Label:      label,
 		})
 
 		resp, err := phoneBackend.SendRequest(ctx, req)
@@ -265,6 +307,54 @@ func runDeviceShare(cmd *cobra.Command, args []string) error {
 	fmt.Fprintln(cmd.OutOrStdout(), "Key sharing completed successfully.")
 
 	return nil
+}
+
+// loadSharedKeyMaterial reads a key from a local xkmsd backend so it can be
+// sent to the phone. The public key and certificate are always fetched; raw
+// key material is exported only when the sharing policy asks for it.
+func loadSharedKeyMaterial(backend, keyID string, includeSecret bool, logger *slog.Logger) (*sharedKeyMaterial, error) {
+	client, err := dialXKMSd(loadXKMSdBridgeConfig(), logger)
+	if err != nil {
+		return nil, &SentinelCauseError{Sentinel: ErrShareKeyLoadFailed, Cause: err}
+	}
+	defer func() { _ = client.Close() }()
+
+	ctx, cancel := context.WithTimeout(context.Background(), defaultXKMSdRequestTimeout)
+	defer cancel()
+
+	key, err := client.GetKey(ctx, backend, keyID)
+	if err != nil {
+		return nil, &SentinelCauseError{Sentinel: ErrShareKeyLoadFailed, Cause: err}
+	}
+
+	material := &sharedKeyMaterial{Algorithm: key.Algorithm}
+	if key.PublicKeyPEM != "" {
+		material.PublicKeyPEM = []byte(key.PublicKeyPEM)
+	}
+
+	// A missing certificate is normal, so it never fails the share.
+	if cert, certErr := client.GetCertificate(ctx, backend, keyID); certErr == nil && cert != nil {
+		material.CertificatePEM = []byte(cert.CertificatePEM)
+	}
+
+	if !includeSecret {
+		return material, nil
+	}
+
+	export, err := client.ExportKeyMaterial(ctx, &transport.ExportKeyMaterialRequest{
+		Backend: backend,
+		KeyID:   keyID,
+	})
+	if err != nil {
+		return nil, &SentinelCauseError{Sentinel: ErrShareKeyLoadFailed, Cause: err}
+	}
+	material.KeyMaterial = export.KeyMaterial
+	material.KeySize = export.KeySize
+	if material.Algorithm == "" {
+		material.Algorithm = export.KeyType
+	}
+
+	return material, nil
 }
 
 // runDeviceImport imports a shared key from a paired phone device.

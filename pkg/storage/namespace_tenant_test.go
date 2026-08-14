@@ -183,6 +183,64 @@ func TestTenantCertChainPath_BackwardCompatible(t *testing.T) {
 	}
 }
 
+// TestTenantMetadataPath tests TenantMetadataPath with empty and non-empty tenant IDs.
+func TestTenantMetadataPath(t *testing.T) {
+	tests := []struct {
+		name     string
+		tenantID string
+		id       string
+		expect   string
+	}{
+		{
+			name:     "empty tenant falls back to MetadataPath",
+			tenantID: "",
+			id:       "key1",
+			expect:   "meta/key1.json",
+		},
+		{
+			name:     "tenant namespaces metadata path",
+			tenantID: "tenant-abc",
+			id:       "key1",
+			expect:   "tenant-abc/meta/key1.json",
+		},
+		{
+			name:     "UUID tenant ID",
+			tenantID: "550e8400-e29b-41d4-a716-446655440000",
+			id:       "my-key",
+			expect:   "550e8400-e29b-41d4-a716-446655440000/meta/my-key.json",
+		},
+		{
+			name:     "empty ID with tenant",
+			tenantID: "tenant-x",
+			id:       "",
+			expect:   "tenant-x/meta/.json",
+		},
+		{
+			name:     "empty ID without tenant",
+			tenantID: "",
+			id:       "",
+			expect:   "meta/.json",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result := TenantMetadataPath(tt.tenantID, tt.id)
+			assert.Equal(t, tt.expect, result)
+		})
+	}
+}
+
+// TestTenantMetadataPath_BackwardCompatible verifies that TenantMetadataPath with
+// empty tenant produces the same result as MetadataPath.
+func TestTenantMetadataPath_BackwardCompatible(t *testing.T) {
+	ids := []string{"key1", "my-uuid-key", "test_key_123", ""}
+	for _, id := range ids {
+		assert.Equal(t, MetadataPath(id), TenantMetadataPath("", id),
+			"TenantMetadataPath with empty tenant must match MetadataPath for id=%q", id)
+	}
+}
+
 // TestTenantKeyPrefix tests TenantKeyPrefix with empty and non-empty tenant IDs.
 func TestTenantKeyPrefix(t *testing.T) {
 	tests := []struct {
@@ -317,6 +375,23 @@ func TestValidateTenantID(t *testing.T) {
 		{
 			name:      "trailing forward slash",
 			tenantID:  "tenant/",
+			expectErr: true,
+		},
+		// ':' joins the fields of types.KeyAttributes.ID(). That identifier is
+		// already ambiguous at five segments -- a leading token may be a tenant
+		// or a partition -- so a tenant carrying its own colon changes the
+		// segment count of every key it prefixes and shifts the reading of the
+		// store, key type, CN and algorithm that follow it. Two tenants can
+		// then also collide: "a:b" prefixing "sw:signing:cn:rsa" produces the
+		// same string as tenant "a" with partition "b".
+		{
+			name:      "colon (the key identifier separator)",
+			tenantID:  "tenant:evil",
+			expectErr: true,
+		},
+		{
+			name:      "leading colon",
+			tenantID:  ":tenant",
 			expectErr: true,
 		},
 	}

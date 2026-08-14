@@ -16,10 +16,12 @@ package grpc
 import (
 	"context"
 
-	pb "github.com/jeremyhahn/go-xkms/pkg/api/grpc/proto/xkmsv1"
-	"github.com/jeremyhahn/go-xkms/pkg/api/transport"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
+
+	pb "github.com/jeremyhahn/go-xkms/pkg/api/grpc/proto/xkmsv1"
+	"github.com/jeremyhahn/go-xkms/pkg/api/transport"
+	"github.com/jeremyhahn/go-xkms/pkg/auth"
 )
 
 // grpcCAMethodIssueEK issues an Endorsement Key certificate.
@@ -49,7 +51,7 @@ func (s *Service) IssueEKCertificate(ctx context.Context, req *pb.IssueEKCertifi
 		return nil, status.Error(codes.Unavailable, ErrCANotConfigured.Error())
 	}
 
-	if err := s.authorize(ctx, "certs", "generate", ""); err != nil {
+	if err := s.authorize(ctx, auth.ResourceCerts, auth.ActionGenerate, ""); err != nil {
 		return nil, err
 	}
 
@@ -89,7 +91,7 @@ func (s *Service) IssueAKCertificate(ctx context.Context, req *pb.IssueAKCertifi
 		return nil, status.Error(codes.Unavailable, ErrCANotConfigured.Error())
 	}
 
-	if err := s.authorize(ctx, "certs", "generate", ""); err != nil {
+	if err := s.authorize(ctx, auth.ResourceCerts, auth.ActionGenerate, ""); err != nil {
 		return nil, err
 	}
 
@@ -129,7 +131,7 @@ func (s *Service) SignTCGCSR(ctx context.Context, req *pb.SignTCGCSRRequest) (*p
 		return nil, status.Error(codes.Unavailable, ErrCANotConfigured.Error())
 	}
 
-	if err := s.authorize(ctx, "certs", "generate", ""); err != nil {
+	if err := s.authorize(ctx, auth.ResourceCerts, auth.ActionGenerate, ""); err != nil {
 		return nil, err
 	}
 
@@ -152,7 +154,7 @@ func (s *Service) SignTCGCSR(ctx context.Context, req *pb.SignTCGCSRRequest) (*p
 		TCGCSR:       req.GetTcgCsr(),
 	})
 	if err != nil {
-		return nil, wrapWriteError(err, codes.Internal, "failed to sign TCG CSR: %v", err)
+		return nil, wrapWriteError(ctx, s.xkmsService, err, codes.Internal, "failed to sign TCG CSR: %v", err)
 	}
 
 	return &pb.SignTCGCSRResponse{
@@ -168,7 +170,7 @@ func (s *Service) EnrollDevice(ctx context.Context, req *pb.EnrollDeviceRequest)
 		return nil, status.Error(codes.Unavailable, ErrCANotConfigured.Error())
 	}
 
-	if err := s.authorize(ctx, "certs", "generate", ""); err != nil {
+	if err := s.authorize(ctx, auth.ResourceCerts, auth.ActionGenerate, ""); err != nil {
 		return nil, err
 	}
 

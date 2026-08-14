@@ -19,10 +19,17 @@ import (
 	"errors"
 
 	"github.com/jeremyhahn/go-xkms/pkg/api/transport"
+	"github.com/jeremyhahn/go-xkms/pkg/auth"
+	initialize "github.com/jeremyhahn/go-xkms/pkg/init"
 )
 
 // ErrXKMSServiceUnavailable is returned when the xkms service is not available.
 var ErrXKMSServiceUnavailable = errors.New("xkms service unavailable")
+
+// ErrClientCertRequired is returned when a share-claim method is invoked over
+// a session that carries no verified mTLS peer certificate. The officer's
+// certificate thumbprint is the authentication for these methods.
+var ErrClientCertRequired = errors.New("client certificate required")
 
 // handleGetInitStatus handles the init.getStatus method.
 func (s *Server) handleGetInitStatus(ctx context.Context, req *JSONRPCRequest) (interface{}, error) {
@@ -63,19 +70,67 @@ func (s *Server) handleClaimCertComplete(ctx context.Context, req *JSONRPCReques
 	return svc.ClaimCertComplete(ctx, &params)
 }
 
-// handleClaimShare handles the init.claimShare method.
-func (s *Server) handleClaimShare(ctx context.Context, req *JSONRPCRequest) (interface{}, error) {
+// callerCertThumbprint derives the caller's certificate thumbprint from the
+// verified mTLS peer chain carried on the connection context by the MCP
+// server's handshake path. It fails closed with ErrClientCertRequired when the
+// session carries no peer certificate, so the share-claim methods never fall
+// back to trusting a username.
+//
+// The value is computed with initialize.CertThumbprint, the single canonical
+// binding identifier the ceremony records for each officer at enrollment.
+func callerCertThumbprint(ctx context.Context) (string, error) {
+	state := auth.TLSStateFromContext(ctx)
+	if state == nil || len(state.PeerCertificates) == 0 {
+		return "", ErrClientCertRequired
+	}
+	return initialize.CertThumbprint(state.PeerCertificates[0].Raw), nil
+}
+
+// handleClaimShareBegin handles the init.claimShareBegin method. The officer
+// has no account yet; the certificate claim-cert issued them is their
+// credential, and its thumbprint is the authentication here.
+func (s *Server) handleClaimShareBegin(ctx context.Context, req *JSONRPCRequest) (interface{}, error) {
 	svc := s.xkmsService
 	if svc == nil {
 		return nil, ErrXKMSServiceUnavailable
 	}
 
-	var params transport.ClaimShareRequest
-	if err := json.Unmarshal(req.Params, &params); err != nil {
+	thumbprint, err := callerCertThumbprint(ctx)
+	if err != nil {
 		return nil, err
 	}
 
-	return svc.ClaimShare(ctx, &params)
+	var params transport.ClaimShareBeginRequest
+	if decErr := json.Unmarshal(req.Params, &params); decErr != nil {
+		return nil, decErr
+	}
+	// Never from the wire: overwrite whatever decoding produced.
+	params.CallerCertThumbprint = thumbprint
+
+	return svc.ClaimShareBegin(ctx, &params)
+}
+
+// handleClaimShareComplete handles the init.claimShareComplete method,
+// releasing the share exactly once after both the nonce signature and the
+// caller certificate thumbprint verify.
+func (s *Server) handleClaimShareComplete(ctx context.Context, req *JSONRPCRequest) (interface{}, error) {
+	svc := s.xkmsService
+	if svc == nil {
+		return nil, ErrXKMSServiceUnavailable
+	}
+
+	thumbprint, err := callerCertThumbprint(ctx)
+	if err != nil {
+		return nil, err
+	}
+
+	var params transport.ClaimShareCompleteRequest
+	if decErr := json.Unmarshal(req.Params, &params); decErr != nil {
+		return nil, decErr
+	}
+	params.CallerCertThumbprint = thumbprint
+
+	return svc.ClaimShareComplete(ctx, &params)
 }
 
 // handleSignCSRInit handles the init.signCSR method.

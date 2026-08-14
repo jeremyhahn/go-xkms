@@ -20,9 +20,7 @@ import (
 	"crypto/rand"
 	"crypto/x509"
 	"crypto/x509/pkix"
-	"io"
 	"math/big"
-	"os"
 	"testing"
 	"time"
 
@@ -197,9 +195,9 @@ func TestVerifyEKCertificate_PrintsVerified(t *testing.T) {
 
 	viper.Set("trust.store_path", dir)
 
-	output := captureStdout(t, func() {
-		verifyEKCertificate(ekLeaf)
-	})
+	var buf bytes.Buffer
+	verifyEKCertificate(&buf, ekLeaf)
+	output := buf.String()
 
 	assert.Contains(t, output, "EK Certificate Verification:")
 	assert.Contains(t, output, "VERIFIED")
@@ -231,9 +229,9 @@ func TestVerifyEKCertificate_PrintsNotVerified(t *testing.T) {
 
 	viper.Set("trust.store_path", dir)
 
-	output := captureStdout(t, func() {
-		verifyEKCertificate(ekLeaf)
-	})
+	var buf bytes.Buffer
+	verifyEKCertificate(&buf, ekLeaf)
+	output := buf.String()
 
 	assert.Contains(t, output, "EK Certificate Verification:")
 	assert.Contains(t, output, "NOT VERIFIED")
@@ -249,9 +247,9 @@ func TestVerifyEKCertificate_PrintsSkipped(t *testing.T) {
 
 	cert := generateTrustTestCert(t)
 
-	output := captureStdout(t, func() {
-		verifyEKCertificate(cert)
-	})
+	var buf bytes.Buffer
+	verifyEKCertificate(&buf, cert)
+	output := buf.String()
 
 	assert.Contains(t, output, "EK Certificate Verification:")
 	assert.Contains(t, output, "Skipped (trust store not available)")
@@ -338,27 +336,4 @@ func TestTPMEKCmdFlags(t *testing.T) {
 	forceFlag := tpmEKRestoreCmd.Flags().Lookup("force")
 	require.NotNil(t, forceFlag)
 	assert.Equal(t, "false", forceFlag.DefValue)
-}
-
-// captureStdout redirects os.Stdout to a pipe for the duration of fn(),
-// returning the captured output as a string.
-func captureStdout(t *testing.T, fn func()) string {
-	t.Helper()
-
-	origStdout := os.Stdout
-	r, w, err := os.Pipe()
-	require.NoError(t, err)
-
-	os.Stdout = w
-
-	fn()
-
-	require.NoError(t, w.Close())
-	os.Stdout = origStdout
-
-	var buf bytes.Buffer
-	_, err = io.Copy(&buf, r)
-	require.NoError(t, err)
-
-	return buf.String()
 }

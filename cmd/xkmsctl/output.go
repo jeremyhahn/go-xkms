@@ -20,6 +20,7 @@ import (
 	"encoding/pem"
 	"fmt"
 	"io"
+	"os"
 	"strings"
 	"time"
 
@@ -539,6 +540,23 @@ func (p *Printer) PrintMessage(message string) error {
 		})
 	case OutputFormatTable, OutputFormatText:
 		_, _ = fmt.Fprintln(p.writer, message)
+		return nil
+	default:
+		return &WrappedDetailError{Sentinel: ErrUnknownOutputFormat, Detail: string(p.format)}
+	}
+}
+
+// PrintWarning prints a security warning. A warning is not data, so in JSON
+// mode it goes to standard error rather than into the structured output
+// stream, where it would corrupt the document; either way the operator sees
+// it.
+func (p *Printer) PrintWarning(message string) error {
+	switch p.format {
+	case OutputFormatJSON:
+		_, _ = fmt.Fprintln(os.Stderr, "WARNING: "+message)
+		return nil
+	case OutputFormatTable, OutputFormatText:
+		_, _ = fmt.Fprintln(p.writer, "WARNING: "+message)
 		return nil
 	default:
 		return &WrappedDetailError{Sentinel: ErrUnknownOutputFormat, Detail: string(p.format)}

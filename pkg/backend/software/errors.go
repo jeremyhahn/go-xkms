@@ -34,9 +34,6 @@ var (
 	// ErrInvalidKDFParams indicates that the KDF parameters are invalid
 	ErrInvalidKDFParams = errors.New("invalid KDF parameters")
 
-	// ErrUnsupportedKDFAlgorithm indicates that the KDF algorithm is not supported
-	ErrUnsupportedKDFAlgorithm = errors.New("unsupported KDF algorithm")
-
 	// ErrDerivationModeNotSupported indicates that the key derivation mode is not supported
 	// by this backend. Software backend only supports EXPORT mode.
 	ErrDerivationModeNotSupported = errors.New("derivation mode not supported")

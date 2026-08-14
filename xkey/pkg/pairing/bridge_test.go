@@ -1461,7 +1461,7 @@ func TestBridge_AttestDevice_ListBackendsError(t *testing.T) {
 
 // --- TCG-CSR-IDEVID Handler Tests ---
 
-func TestBridge_GetTCGCSRIDevID_ReturnsTPM2DirectAccessRequired(t *testing.T) {
+func TestBridge_GetTCGCSRIDevID_WithoutATPM_ReportsUnsupported(t *testing.T) {
 	client := &mockTransportClient{}
 	b, err := NewBridge(client, &BridgeConfig{Logger: testLogger()})
 	require.NoError(t, err)
@@ -1501,7 +1501,7 @@ func TestBridge_GetTCGCSRIDevID_BackendDenied(t *testing.T) {
 	assertErrorResponse(t, resp, req.ID, ErrorCodeBackendDenied)
 }
 
-func TestBridge_ActivateCredential_ReturnsTPM2DirectAccessRequired(t *testing.T) {
+func TestBridge_ActivateCredential_WithoutATPM_ReportsUnsupported(t *testing.T) {
 	client := &mockTransportClient{}
 	b, err := NewBridge(client, &BridgeConfig{Logger: testLogger()})
 	require.NoError(t, err)
@@ -1534,7 +1534,7 @@ func TestBridge_ActivateCredential_BackendDenied(t *testing.T) {
 	assertErrorResponse(t, resp, req.ID, ErrorCodeBackendDenied)
 }
 
-func TestBridge_GetAttestationQuote_ReturnsTPM2DirectAccessRequired(t *testing.T) {
+func TestBridge_GetAttestationQuote_WithoutATPM_ReportsUnsupported(t *testing.T) {
 	client := &mockTransportClient{}
 	b, err := NewBridge(client, &BridgeConfig{Logger: testLogger()})
 	require.NoError(t, err)
@@ -1608,6 +1608,7 @@ func TestMapErrorToRPC_BridgeErrors(t *testing.T) {
 		{"invalid params", ErrBridgeInvalidParams, ErrorCodeInvalidParams},
 		{"attestation not supported", ErrAttestationNotSupported, ErrorCodeAttestUnsupported},
 		{"tpm2 direct access", ErrTPM2DirectAccessRequired, ErrorCodeAttestUnsupported},
+		{"no TPM configured", ErrTPMNotConfigured, ErrorCodeAttestUnsupported},
 		{"share denied", ErrShareDenied, ErrorCodeShareDenied},
 		{"share not exportable", ErrShareNotExportable, ErrorCodeShareNotExportable},
 		{"invalid public key", ErrInvalidPublicKey, ErrorCodeInvalidPublicKey},

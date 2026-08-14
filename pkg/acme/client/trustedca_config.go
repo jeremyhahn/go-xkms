@@ -17,6 +17,7 @@ import (
 	"net/url"
 	"strings"
 
+	"github.com/jeremyhahn/go-xkms/pkg/acme/audit"
 	"github.com/jeremyhahn/go-xkms/pkg/acme/errors"
 )
 
@@ -55,7 +56,16 @@ type TrustedCAConfig struct {
 
 	// Multi-tenancy configuration
 	MultiTenant MultiTenantConfig `yaml:"multi_tenant" json:"multi_tenant"`
+
+	// Audit configures the audit trail recording every issuance, revocation,
+	// account, and enrollment decision. DefaultTrustedCAConfig enables it; the
+	// admin API's GET /admin/audit reads back exactly this trail.
+	Audit audit.Config `yaml:"audit" json:"audit"`
 }
+
+// DefaultAuditLogPath is the audit trail written by a TrustedCA that did not
+// have a log path configured.
+const DefaultAuditLogPath = "trusted-ca-audit.log"
 
 // ACMEConfig holds ACME server configuration.
 type TCAACMEConfig struct {
@@ -173,6 +183,18 @@ func DefaultTrustedCAConfig() *TrustedCAConfig {
 				AllowCrossTenantSuperAdmin: true,
 			},
 		},
+		// The audit trail is a compliance control, so it is on by default and
+		// has to be switched off deliberately.
+		Audit: audit.Config{
+			Enabled:              true,
+			LogPath:              DefaultAuditLogPath,
+			MaxSizeMB:            100,
+			MaxAgeDays:           365,
+			MaxBackups:           10,
+			Format:               "json",
+			BufferSize:           100,
+			FlushIntervalSeconds: 5,
+		},
 	}
 }
 
@@ -183,6 +205,9 @@ func (c *TrustedCAConfig) Validate() error {
 		return err
 	}
 	if err := c.CA.Validate(); err != nil {
+		return err
+	}
+	if err := c.Audit.Validate(); err != nil {
 		return err
 	}
 	if err := c.Admin.Validate(); err != nil {

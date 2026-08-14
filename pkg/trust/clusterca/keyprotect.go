@@ -84,7 +84,7 @@ type KeyProtection struct {
 	SealStrategyID string
 
 	// AllowInsecure permits plaintext CA keys (KeyProtectNone / the last
-	// resort of KeyProtectAuto). Sourced from --insecure / development mode.
+	// resort of KeyProtectAuto). Sourced from development mode.
 	AllowInsecure bool
 
 	// Logger receives protection-selection diagnostics.

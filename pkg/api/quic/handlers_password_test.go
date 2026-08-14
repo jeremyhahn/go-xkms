@@ -1007,14 +1007,14 @@ func TestNewPasswordHandlers(t *testing.T) {
 	t.Run("with_store", func(t *testing.T) {
 		memBackend := storage.NewMemory()
 		store := staticpw.NewStore(memBackend)
-		handlers := NewPasswordHandlers(store, nil)
+		handlers := NewPasswordHandlers(store, nil, nil)
 		assert.NotNil(t, handlers)
 		assert.NotNil(t, handlers.store)
 		assert.Nil(t, handlers.manager)
 	})
 
 	t.Run("both_nil", func(t *testing.T) {
-		handlers := NewPasswordHandlers(nil, nil)
+		handlers := NewPasswordHandlers(nil, nil, nil)
 		assert.NotNil(t, handlers)
 		assert.Nil(t, handlers.store)
 		assert.Nil(t, handlers.manager)

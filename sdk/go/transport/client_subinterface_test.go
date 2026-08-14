@@ -30,6 +30,9 @@ func (s *stubClient) Health(context.Context) (*HealthResponse, error) {
 	panic("stub")
 }
 
+func (s *stubClient) Algorithms(context.Context) (*AlgorithmsResponse, error) {
+	panic("stub")
+}
 func (s *stubClient) ListBackends(context.Context, ...ListOption) (*ListBackendsResponse, error) {
 	panic("stub")
 }
@@ -354,6 +357,10 @@ func (s *stubClient) SubmitShare(context.Context, *SubmitShareRequest) (*SubmitS
 	panic("stub")
 }
 func (s *stubClient) ListShares(context.Context) (*ListSharesResponse, error) { panic("stub") }
+func (s *stubClient) GetShare(context.Context, string, string, int) (*ShareInfo, error) {
+	panic("stub")
+}
+func (s *stubClient) DeleteShare(context.Context, string, string, int) error { panic("stub") }
 func (s *stubClient) GetShareCollectionStatus(context.Context, string) (*ShareCollectionStatus, error) {
 	panic("stub")
 }
@@ -393,7 +400,10 @@ func (s *stubClient) ClaimCertBegin(context.Context, *ClaimCertBeginRequest) (*C
 func (s *stubClient) ClaimCertComplete(context.Context, *ClaimCertCompleteRequest) (*ClaimCertCompleteResponse, error) {
 	panic("stub")
 }
-func (s *stubClient) ClaimShare(context.Context, *ClaimShareRequest) (*ClaimShareResponse, error) {
+func (s *stubClient) ClaimShareBegin(context.Context, *ClaimShareBeginRequest) (*ClaimShareBeginResponse, error) {
+	panic("stub")
+}
+func (s *stubClient) ClaimShareComplete(context.Context, *ClaimShareCompleteRequest) (*ClaimShareCompleteResponse, error) {
 	panic("stub")
 }
 func (s *stubClient) SignCSRInit(context.Context, *SignCSRInitRequest) (*SignCSRInitResponse, error) {
@@ -440,6 +450,11 @@ func (s *stubClient) ListUserCredentials(context.Context, string) (*ListUserCred
 	panic("stub")
 }
 
+// AuditService stub.
+func (s *stubClient) QueryAudit(context.Context, *AuditFilter) (*AuditPage, error) {
+	panic("stub")
+}
+
 // Compile-time assertions: stubClient must satisfy Client and every sub-interface.
 var (
 	_ Client                      = (*stubClient)(nil)
@@ -463,6 +478,7 @@ var (
 	_ TenantService               = (*stubClient)(nil)
 	_ InitCeremonyService         = (*stubClient)(nil)
 	_ CredentialManagementService = (*stubClient)(nil)
+	_ AuditService                = (*stubClient)(nil)
 )
 
 // TestClientComposesAllSubInterfaces verifies that a value satisfying the

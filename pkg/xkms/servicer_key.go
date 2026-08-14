@@ -18,13 +18,27 @@ import (
 	"crypto"
 	"crypto/elliptic"
 	"crypto/x509"
+	"errors"
+	"fmt"
+	"sort"
 	"strings"
 
 	"github.com/jeremyhahn/go-xkms/pkg/api/transport"
 	"github.com/jeremyhahn/go-xkms/pkg/backend"
 	"github.com/jeremyhahn/go-xkms/pkg/types"
 	"github.com/jeremyhahn/go-xkms/pkg/validation"
+	secure "github.com/jeremyhahn/go-xkms/sdk/go/secure"
 )
+
+// unwrapSymmetricAlgorithms maps the requested symmetric key size in bits to
+// the symmetric algorithm used for a key created by UnwrapKeyByID. A zero size
+// selects the AES-256-GCM default.
+var unwrapSymmetricAlgorithms = map[int]types.SymmetricAlgorithm{
+	0:   types.SymmetricAES256GCM,
+	128: types.SymmetricAES128GCM,
+	192: types.SymmetricAES192GCM,
+	256: types.SymmetricAES256GCM,
+}
 
 // =========================================================================
 // KeyServicer Implementation
@@ -107,6 +121,14 @@ func (s *XKMSService) GenerateKey(ctx context.Context, req *transport.GenerateKe
 
 // ListKeys lists all keys in the specified backend, or across all backends
 // if the backend name is empty.
+//
+// The list options are honoured: the response carries the requested page and
+// the pagination metadata describing it. They used to be accepted and ignored,
+// so every caller that asked for a page received the entire key list with a
+// zero-valued PageResponse claiming it was page 0 of 0 -- which for a token
+// holding thousands of keys is both the wrong answer and the expensive one.
+//
+// When no options are given the full list is returned, as before.
 func (s *XKMSService) ListKeys(ctx context.Context, backendName string, opts ...transport.ListOption) (*transport.ListKeysResponse, error) {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
@@ -127,8 +149,18 @@ func (s *XKMSService) ListKeys(ctx context.Context, backendName string, opts ...
 		}
 		allKeys = attrsToKeyInfoList(keys, backendName)
 	} else {
-		for name, b := range s.backends {
-			keys, err := b.ListKeys(ctx)
+		// Backends are visited in name order. Ranging the map directly gave a
+		// different concatenation on each call, and a page boundary drawn
+		// across an order that changes between requests silently skips and
+		// repeats keys as the caller walks the pages.
+		names := make([]string, 0, len(s.backends))
+		for name := range s.backends {
+			names = append(names, name)
+		}
+		sort.Strings(names)
+
+		for _, name := range names {
+			keys, err := s.backends[name].ListKeys(ctx)
 			if err != nil {
 				continue
 			}
@@ -136,7 +168,9 @@ func (s *XKMSService) ListKeys(ctx context.Context, backendName string, opts ...
 		}
 	}
 
-	return &transport.ListKeysResponse{Keys: allKeys}, nil
+	page, pagination := transport.ApplyPagination(allKeys, transport.BuildPageRequest(opts...))
+
+	return &transport.ListKeysResponse{Keys: page, PageResponse: pagination}, nil
 }
 
 // GetKey retrieves key information for a specific key in a backend.
@@ -223,12 +257,16 @@ func (s *XKMSService) ImportKey(ctx context.Context, req *transport.ImportKeyReq
 		}
 	}
 
-	attrs := buildImportKeyAttributes(req, backendName)
+	attrs, err := buildImportKeyAttributes(req, backendName)
+	if err != nil {
+		return nil, err
+	}
 
 	wrapped := &backend.WrappedKeyMaterial{
 		WrappedKey:  req.WrappedKeyMaterial,
 		Algorithm:   backend.WrappingAlgorithm(req.Algorithm),
 		ImportToken: req.ImportToken,
+		Metadata:    req.Metadata,
 	}
 
 	if err := importExport.ImportKey(ctx, attrs, wrapped); err != nil {
@@ -350,8 +388,21 @@ func (s *XKMSService) GetImportParameters(ctx context.Context, req *transport.Ge
 		}
 	}
 
+	// The request's key template decides which kind of key the ceremony is
+	// for, and the backend answers with a matching KeySpec -- "RSA_2048",
+	// "AES_256" -- which an AWS-KMS-style import then carries back into
+	// WrapKey. Only the common name used to be passed, so every ceremony was
+	// negotiated for a key of unknown kind however precisely the caller had
+	// described it. The template is optional here because a caller that has
+	// not chosen a key kind yet can still ask for a wrapping key.
 	attrs := &types.KeyAttributes{
-		CN: req.KeyID,
+		CN:        req.KeyID,
+		StoreType: types.ParseStoreType(backendName),
+	}
+	if req.KeyType != "" {
+		if err := applyKeyTemplate(attrs, "key type", req.KeyType, req.KeySize, req.Curve); err != nil {
+			return nil, err
+		}
 	}
 
 	algorithm := backend.WrappingAlgorithm(req.Algorithm)
@@ -370,6 +421,7 @@ func (s *XKMSService) GetImportParameters(ctx context.Context, req *transport.Ge
 		WrappingPublicKey: wrappingPubKeyBytes,
 		ImportToken:       params.ImportToken,
 		Algorithm:         string(params.Algorithm),
+		KeySpec:           params.KeySpec,
 	}
 
 	if params.ExpiresAt != nil {
@@ -461,10 +513,75 @@ func (s *XKMSService) CopyKey(ctx context.Context, req *transport.CopyKeyRequest
 	}, nil
 }
 
-// ExportKeyMaterial exports raw symmetric key bytes.
-// This operation is not yet supported.
+// ExportKeyMaterial exports raw symmetric key bytes for extractable keys.
+//
+// SECURITY WARNING: this returns plaintext key material with no cryptographic
+// protection. It only succeeds for symmetric keys created with exportable=true
+// on a backend implementing backend.ImportExportBackend; asymmetric keys and
+// hardware-resident keys are rejected by the backend. Use ExportKey for secure
+// key transport between backends.
 func (s *XKMSService) ExportKeyMaterial(ctx context.Context, req *transport.ExportKeyMaterialRequest) (*transport.ExportKeyMaterialResponse, error) {
-	return nil, ErrOperationNotSupported
+	if req == nil {
+		return nil, ErrNilRequest
+	}
+	if req.KeyID == "" {
+		return nil, requiredField("key_id")
+	}
+	if req.Backend == "" {
+		return nil, requiredField("backend")
+	}
+
+	b, err := s.resolveTenantBackend(req.Backend, req.TenantID)
+	if err != nil {
+		return nil, roleLookupError("backend", req.Backend, err)
+	}
+
+	importExport, ok := b.KeyProvider().(backend.ImportExportBackend)
+	if !ok {
+		return nil, &ErrBackendUnsupported{
+			Sentinel: ErrOperationNotSupported,
+			Backend:  req.Backend,
+			Detail:   "does not support import/export operations",
+		}
+	}
+
+	attrs, err := findKeyAttrs(ctx, b, req.KeyID)
+	if err != nil {
+		return nil, roleLookupError("key", req.KeyID, err)
+	}
+
+	// A sensitive key's plaintext is never released, whatever the caller says.
+	//
+	// This is decided here rather than in each backend because it is an
+	// authorization question about the key, not a capability question about the
+	// store: every ImportExportBackend can physically produce the bytes, and one
+	// that forgot the check would silently become the way around it. The
+	// backends keep their own Exportable check as a second line.
+	//
+	// It matters most for a PKCS#11 caller. That module holds CKA_SENSITIVE in
+	// its own object store so it can answer C_GetAttributeValue locally, and
+	// that store is client-side state. attrs.Sensitive comes from the backend's
+	// record, fixed when the key was created, so clearing the client's copy
+	// changes nothing here.
+	if attrs.Sensitive {
+		return nil, &ErrOperationWrap{
+			Sentinel: ErrExportKeyMaterialFailed,
+			Err:      ErrKeySensitive,
+		}
+	}
+
+	keyMaterial, err := importExport.ExportKeyMaterial(ctx, attrs)
+	if err != nil {
+		return nil, &ErrOperationWrap{Sentinel: ErrExportKeyMaterialFailed, Err: err}
+	}
+
+	// KeySize is documented as bits, and types.SymmetricAlgorithm.KeySize()
+	// already returns bits (128/192/256), so it is reported verbatim.
+	return &transport.ExportKeyMaterialResponse{
+		KeyMaterial: keyMaterial,
+		KeyType:     string(attrs.SymmetricAlgorithm),
+		KeySize:     attrs.SymmetricAlgorithm.KeySize(),
+	}, nil
 }
 
 // WrapKey wraps key material for secure transport using the specified parameters.
@@ -498,10 +615,16 @@ func (s *XKMSService) WrapKey(ctx context.Context, req *transport.WrapKeyRequest
 		return nil, &ErrKeyOperation{Operation: "parse wrapping public key", Err: err}
 	}
 
+	// KeySpec comes back from GetImportParameters and names the kind of key
+	// the ceremony is for. A backend whose wrapping is key-spec aware -- AWS
+	// KMS most visibly -- needs it to wrap for the right target, so dropping
+	// it made this method unusable for those ceremonies and forced the gRPC
+	// transport to keep building its own parameters.
 	params := &backend.ImportParameters{
 		WrappingPublicKey: wrappingPubKey,
 		ImportToken:       req.ImportToken,
 		Algorithm:         backend.WrappingAlgorithm(req.Algorithm),
+		KeySpec:           req.KeySpec,
 	}
 
 	wrapped, err := importExport.WrapKey(ctx, req.KeyMaterial, params)
@@ -509,9 +632,12 @@ func (s *XKMSService) WrapKey(ctx context.Context, req *transport.WrapKeyRequest
 		return nil, &ErrOperationWrap{Sentinel: ErrOperationFailed, Err: err}
 	}
 
+	// The backend's metadata travels with the blob to ImportKey, so it is
+	// returned rather than discarded.
 	return &transport.WrapKeyResponse{
 		WrappedKeyMaterial: wrapped.WrappedKey,
 		Algorithm:          string(wrapped.Algorithm),
+		Metadata:           wrapped.Metadata,
 	}, nil
 }
 
@@ -544,11 +670,25 @@ func (s *XKMSService) UnwrapKey(ctx context.Context, req *transport.UnwrapKeyReq
 		WrappedKey:  req.WrappedKeyMaterial,
 		Algorithm:   backend.WrappingAlgorithm(req.Algorithm),
 		ImportToken: req.ImportToken,
+		Metadata:    req.Metadata,
 	}
 
 	params := &backend.ImportParameters{
 		Algorithm:   backend.WrappingAlgorithm(req.Algorithm),
 		ImportToken: req.ImportToken,
+		KeySpec:     req.KeySpec,
+	}
+
+	// A backend holding more than one wrapping key pair selects the matching
+	// private key from the public key the material was wrapped under, so the
+	// request may name it. It is optional: backends that key their ceremony
+	// entirely off the import token do not need it.
+	if len(req.WrappingPublicKey) > 0 {
+		wrappingPubKey, parseErr := x509.ParsePKIXPublicKey(req.WrappingPublicKey)
+		if parseErr != nil {
+			return nil, &ErrKeyOperation{Operation: "parse wrapping public key", Err: parseErr}
+		}
+		params.WrappingPublicKey = wrappingPubKey
 	}
 
 	keyMaterial, err := importExport.UnwrapKey(ctx, wrapped, params)
@@ -561,37 +701,470 @@ func (s *XKMSService) UnwrapKey(ctx context.Context, req *transport.UnwrapKeyReq
 	}, nil
 }
 
-// WrapKeyByID wraps a key using another key, both identified by their IDs.
-// This operation is not yet supported.
+// WrapKeyByID wraps a server-side target key with a server-side wrapping key,
+// both identified by key ID and backend. This is the service-layer primitive
+// behind PKCS#11 C_WrapKey.
+//
+// The target is named either by req.TargetKeyID -- a backend-resident key,
+// which must be extractable and whose raw material is exported here -- or by
+// req.TargetKeyMaterial, plaintext the caller already holds. See
+// wrapTargetKeyMaterial for why both forms exist and why they must converge
+// here rather than in the caller. Either way the material is encrypted
+// directly under the wrapping key named by req.WrappingKeyID via
+// wrapKeyMaterial (servicer_wrapkey.go), so both produce the same framing and
+// UnwrapKeyByID reverses both. This is deliberately independent of
+// backend.ImportExportBackend.GetImportParameters/WrapKey, which serve a
+// different feature (the key-IMPORT ceremony: bringing externally generated
+// material into a backend) and always wrap under a freshly generated
+// ephemeral key pair -- never the caller's own designated wrapping key, and
+// never a symmetric one, since that ceremony's ImportParameters models only
+// an RSA wrapping public key. Only the target backend needs
+// backend.ImportExportBackend now, for ExportKeyMaterial.
 func (s *XKMSService) WrapKeyByID(ctx context.Context, req *transport.WrapKeyByIDRequest) (*transport.WrapKeyByIDResponse, error) {
-	return nil, ErrOperationNotSupported
+	if req == nil {
+		return nil, ErrNilRequest
+	}
+	if req.WrappingKeyID == "" {
+		return nil, requiredField("wrapping_key_id")
+	}
+	if req.WrappingKeyBackend == "" {
+		return nil, requiredField("wrapping_key_backend")
+	}
+	if req.Algorithm == "" {
+		return nil, requiredField("algorithm")
+	}
+
+	keyMaterial, err := s.wrapTargetKeyMaterial(ctx, req)
+	if err != nil {
+		return nil, err
+	}
+	// The plaintext of the key being wrapped is the most sensitive value this
+	// call touches, and every path below it can fail. Deferring the wipe is
+	// what covers the failure paths too.
+	defer secure.Wipe(keyMaterial)
+
+	wrappingBackend, err := s.resolveTenantBackend(req.WrappingKeyBackend, req.TenantID)
+	if err != nil {
+		return nil, roleLookupError("wrapping key backend", req.WrappingKeyBackend, err)
+	}
+
+	wrappingAttrs, err := findKeyAttrs(ctx, wrappingBackend, req.WrappingKeyID)
+	if err != nil {
+		return nil, roleLookupError("wrapping key", req.WrappingKeyID, err)
+	}
+
+	wrapped, err := wrapKeyMaterial(ctx, wrappingBackend, wrappingAttrs, req.Algorithm, wrapParams{
+		iv:        req.IV,
+		aad:       req.AAD,
+		tagBits:   req.TagBits,
+		oaepLabel: req.OAEPLabel,
+	}, keyMaterial)
+	if err != nil {
+		return nil, &ErrKeyOperation{Operation: "wrap key", KeyID: req.TargetKeyID, Err: err}
+	}
+
+	return &transport.WrapKeyByIDResponse{
+		WrappedKey: wrapped,
+		Algorithm:  req.Algorithm,
+	}, nil
 }
 
-// UnwrapKeyByID unwraps key material and imports it as a new key.
-// This operation is not yet supported.
+// wrapTargetKeyMaterial resolves the plaintext a WrapKeyByID request names.
+//
+// A request identifies its target one of two ways, and exactly one must be
+// used. TargetKeyID names a key resident in a backend, whose material is
+// exported here; TargetKeyMaterial carries the plaintext directly, for a
+// PKCS#11 C_WrapKey whose target was imported with C_CreateObject and CKA_VALUE
+// and so exists only in the caller's own object store.
+//
+// The second form exists so both cases run through the one wrap implementation
+// in servicer_wrapkey.go. A caller that encrypted such a key itself produced a
+// blob framed differently from the one UnwrapKeyByID parses -- no nonce prefix
+// for AES-GCM, no IV prefix for AES-CBC, and no possible blob at all for
+// AES-KW, which is not an encryption mechanism -- so the wrap succeeded and the
+// key was unrecoverable. It grants no capability the API lacked: a caller with
+// plaintext and a wrapping key could already reach the same ciphertext through
+// Encrypt.
+//
+// Whichever form the request took, the returned slice belongs to the caller
+// and must be wiped once the wrap is done: the request-carried plaintext is
+// copied rather than aliased, so that wiping it cannot reach back into a
+// request the caller still holds.
+func (s *XKMSService) wrapTargetKeyMaterial(ctx context.Context, req *transport.WrapKeyByIDRequest) ([]byte, error) {
+	if req.TargetKeyID != "" && len(req.TargetKeyMaterial) > 0 {
+		return nil, &ErrValidation{
+			Sentinel: ErrInvalidKeyAttributes,
+			Detail:   "target_key_id and target_key_material are mutually exclusive",
+		}
+	}
+
+	if len(req.TargetKeyMaterial) > 0 {
+		owned := make([]byte, len(req.TargetKeyMaterial))
+		copy(owned, req.TargetKeyMaterial)
+		return owned, nil
+	}
+
+	if req.TargetKeyID == "" {
+		return nil, requiredField("target_key_id")
+	}
+	if req.TargetKeyBackend == "" {
+		return nil, requiredField("target_key_backend")
+	}
+
+	targetBackend, err := s.resolveTenantBackend(req.TargetKeyBackend, req.TenantID)
+	if err != nil {
+		return nil, roleLookupError("target key backend", req.TargetKeyBackend, err)
+	}
+
+	targetImportExport, ok := targetBackend.KeyProvider().(backend.ImportExportBackend)
+	if !ok {
+		return nil, &ErrBackendUnsupported{
+			Sentinel: ErrOperationNotSupported,
+			Backend:  req.TargetKeyBackend,
+			Detail:   "target key backend does not support import/export operations",
+		}
+	}
+
+	targetAttrs, err := findKeyAttrs(ctx, targetBackend, req.TargetKeyID)
+	if err != nil {
+		return nil, roleLookupError("target key", req.TargetKeyID, err)
+	}
+
+	// Only symmetric keys created with Exportable=true can be released here.
+	keyMaterial, err := targetImportExport.ExportKeyMaterial(ctx, targetAttrs)
+	if err != nil {
+		return nil, &ErrOperationWrap{Sentinel: ErrExportKeyMaterialFailed, Detail: "target key", Err: err}
+	}
+	return keyMaterial, nil
+}
+
+// UnwrapKeyByID unwraps key material with a server-side unwrapping key and
+// imports the result as a new key. This is the service-layer primitive behind
+// PKCS#11 C_UnwrapKey.
+//
+// The unwrapping key named by req.UnwrappingKeyID is used directly via
+// unwrapKeyMaterial (servicer_wrapkey.go) -- never a freshly generated
+// ephemeral key, and never routed through
+// backend.ImportExportBackend.GetImportParameters/UnwrapKey, the unrelated
+// key-IMPORT ceremony (see the WrapKeyByID doc comment for why the two must
+// not be conflated). The recovered plaintext material is then imported into
+// the target backend using the key template carried in the request, exactly
+// as before.
 func (s *XKMSService) UnwrapKeyByID(ctx context.Context, req *transport.UnwrapKeyByIDRequest) (*transport.UnwrapKeyByIDResponse, error) {
-	return nil, ErrOperationNotSupported
+	if req == nil {
+		return nil, ErrNilRequest
+	}
+	if len(req.WrappedKey) == 0 {
+		return nil, requiredField("wrapped_key")
+	}
+	if req.UnwrappingKeyID == "" {
+		return nil, requiredField("unwrapping_key_id")
+	}
+	if req.UnwrappingKeyBackend == "" {
+		return nil, requiredField("unwrapping_key_backend")
+	}
+	if req.Algorithm == "" {
+		return nil, requiredField("algorithm")
+	}
+	if req.TargetKeyID == "" {
+		return nil, requiredField("target_key_id")
+	}
+	if req.TargetKeyBackend == "" {
+		return nil, requiredField("target_key_backend")
+	}
+
+	unwrappingBackend, err := s.resolveTenantBackend(req.UnwrappingKeyBackend, req.TenantID)
+	if err != nil {
+		return nil, roleLookupError("unwrapping key backend", req.UnwrappingKeyBackend, err)
+	}
+
+	// Confirm the destination can accept an import before looking up keys or
+	// decrypting. Import capability is a property of the backend, not of any
+	// particular key, so a request that could never succeed is refused with
+	// that specific reason rather than with whichever key lookup or
+	// decryption happened to fail first. The unwrapping backend is still
+	// resolved first, above: it is the subject of the operation, so its
+	// errors take precedence.
+	targetBackend, err := s.resolveTenantBackend(req.TargetKeyBackend, req.TenantID)
+	if err != nil {
+		return nil, roleLookupError("target key backend", req.TargetKeyBackend, err)
+	}
+
+	targetImportExport, ok := targetBackend.KeyProvider().(backend.ImportExportBackend)
+	if !ok {
+		return nil, &ErrBackendUnsupported{
+			Sentinel: ErrOperationNotSupported,
+			Backend:  req.TargetKeyBackend,
+			Detail:   "target key backend does not support import/export operations",
+		}
+	}
+
+	unwrappingAttrs, err := findKeyAttrs(ctx, unwrappingBackend, req.UnwrappingKeyID)
+	if err != nil {
+		return nil, roleLookupError("unwrapping key", req.UnwrappingKeyID, err)
+	}
+
+	keyMaterial, err := unwrapKeyMaterial(ctx, unwrappingBackend, unwrappingAttrs, req.Algorithm, wrapParams{
+		iv:        req.IV,
+		aad:       req.AAD,
+		tagBits:   req.TagBits,
+		oaepLabel: req.OAEPLabel,
+	}, req.WrappedKey)
+	if err != nil {
+		return nil, &ErrKeyOperation{Operation: "unwrap key", KeyID: req.TargetKeyID, Err: err}
+	}
+	// The recovered plaintext outlives nothing beyond the import below, so it
+	// is wiped on the way out rather than left for the garbage collector.
+	defer secure.Wipe(keyMaterial)
+
+	targetAttrs, err := unwrapTargetAttributes(req, len(keyMaterial))
+	if err != nil {
+		return nil, err
+	}
+
+	// The recovered material is re-wrapped under the target backend's own
+	// import key and fed through its normal import ceremony, rather than
+	// handed over in the clear.
+	//
+	// ImportKey's contract is that the material arrives wrapped with parameters
+	// from GetImportParameters, and every backend enforces it. That is not an
+	// obstacle to route around: for a TPM, an HSM or a cloud KMS the ceremony
+	// is the whole reason plaintext key material never crosses the boundary.
+	// Re-wrapping keeps C_UnwrapKey working the same way on all of them.
+	if err := importKeyMaterial(ctx, targetImportExport, targetAttrs, keyMaterial); err != nil {
+		return nil, &ErrKeyOperation{Operation: "import unwrapped key", KeyID: req.TargetKeyID, Err: err}
+	}
+
+	return &transport.UnwrapKeyByIDResponse{
+		KeyID:   req.TargetKeyID,
+		Backend: req.TargetKeyBackend,
+		Success: true,
+		Message: "key " + req.TargetKeyID + " successfully unwrapped and imported into backend " + req.TargetKeyBackend,
+	}, nil
+}
+
+// importKeyMaterial stores recovered key material in a backend by running it
+// through that backend's own import ceremony.
+//
+// The material is wrapped under a public key the backend generates for this
+// purpose and only the backend can unwrap, so it is never handed over in the
+// clear. RSA-OAEP with SHA-256 is the wrapping algorithm: SHA-1 is refused
+// project-wide, and the hybrid RSA+AES variants exist for material too large
+// for a single RSA block, which a key being unwrapped here is not.
+func importKeyMaterial(ctx context.Context, target backend.ImportExportBackend, attrs *types.KeyAttributes, material []byte) error {
+	const algorithm = backend.WrappingAlgorithmRSAES_OAEP_SHA_256
+
+	params, err := target.GetImportParameters(ctx, attrs, algorithm)
+	if err != nil {
+		return &ErrKeyOperation{Operation: "obtain import parameters", KeyID: attrs.CN, Err: err}
+	}
+
+	wrapped, err := target.WrapKey(ctx, material, params)
+	if err != nil {
+		return &ErrKeyOperation{Operation: "wrap key material for import", KeyID: attrs.CN, Err: err}
+	}
+
+	return target.ImportKey(ctx, attrs, wrapped)
+}
+
+// unwrapTargetAttributes builds the key attributes for the key an
+// UnwrapKeyByID request creates, from the request's key template.
+func unwrapTargetAttributes(req *transport.UnwrapKeyByIDRequest, materialLen int) (*types.KeyAttributes, error) {
+	attrs := &types.KeyAttributes{
+		CN:         req.TargetKeyID,
+		StoreType:  types.StoreType(req.TargetKeyBackend),
+		Partition:  types.Partition(req.TargetPartition),
+		Exportable: req.TargetExportable,
+	}
+
+	keyType := req.TargetKeyType
+	if keyType == "" {
+		if req.TargetKeySize <= 0 {
+			return nil, requiredField("target_key_type")
+		}
+		// A bare key size is only meaningful for symmetric material.
+		keyType = string(types.AlgorithmSymmetric)
+	}
+
+	keySize := req.TargetKeySize
+	if keySize == 0 && isSymmetricKeyTypeName(keyType) {
+		// PKCS#11 v3.2 §5.18.6 does not require the unwrap template to carry
+		// CKA_VALUE_LEN: the recovered material's own length settles the key
+		// size, and a caller unwrapping a key it did not create has no reason
+		// to know that length in advance. Demanding it made C_UnwrapKey fail
+		// for every template that legitimately omitted it.
+		keySize = materialLen * 8
+	}
+
+	if err := applyKeyTemplate(attrs, "target key type", keyType, keySize, req.TargetCurve); err != nil {
+		return nil, err
+	}
+
+	return attrs, nil
 }
 
 // =========================================================================
 // Internal helpers (unique to servicer_key.go)
 // =========================================================================
 
+// errAlgorithmNotAsymmetric reports that a name does not name one of the
+// asymmetric algorithms this service creates.
+//
+// It never reaches a caller of the service: applyAsymmetricAlgorithm's own
+// callers translate it into the validation sentinel their vocabulary uses,
+// because the same condition is an unsupported ALGORITHM to GenerateKey and an
+// unsupported KEY TYPE to the import ceremony, and the transports map those two
+// sentinels to different wire errors.
+var errAlgorithmNotAsymmetric = errors.New("keystore: not an asymmetric algorithm")
+
+// applyAsymmetricAlgorithm sets the algorithm-bearing attributes named by an
+// algorithm string, a key size in bits and a curve name.
+//
+// The names come from types.ParseKeyAlgorithmString, so "rsa", "ecdsa" (also
+// "ec" and "ecc") and "ed25519" all resolve and the service speaks one
+// algorithm vocabulary. A zero key size selects RSA-2048 and an empty curve
+// selects P-256, the documented defaults for an unspecified parameter.
+//
+// A curve that is present but unsupported is an error rather than a
+// substitution. GenerateKey used to answer an unparseable curve with a P-256
+// key and report success, so a caller that asked for P-384 and got a P-256 key
+// had no way to tell -- a dropped parameter is not a default.
+//
+// Any other algorithm name returns errAlgorithmNotAsymmetric. The attributes
+// are left untouched whenever an error is returned.
+func applyAsymmetricAlgorithm(attrs *types.KeyAttributes, algorithm string, keySize int, curve string) error {
+	switch types.ParseKeyAlgorithmString(algorithm) {
+	case types.AlgorithmRSA:
+		if keySize == 0 {
+			keySize = types.RSAKeySize2048
+		}
+		attrs.KeyAlgorithm = x509.RSA
+		attrs.RSAAttributes = &types.RSAAttributes{KeySize: keySize}
+		return nil
+
+	case types.AlgorithmECDSA:
+		if curve == "" {
+			curve = string(types.CurveP256)
+		}
+		parsed := parseCurveString(curve)
+		if parsed == nil {
+			return &ErrValidation{Sentinel: ErrInvalidCurve, Detail: "invalid curve: " + curve}
+		}
+		attrs.KeyAlgorithm = x509.ECDSA
+		attrs.ECCAttributes = &types.ECCAttributes{Curve: parsed}
+		return nil
+
+	case types.AlgorithmEd25519:
+		attrs.KeyAlgorithm = x509.Ed25519
+		return nil
+
+	default:
+		return errAlgorithmNotAsymmetric
+	}
+}
+
+// isSymmetricKeyTypeName reports whether a key-type string names symmetric
+// material.
+func isSymmetricKeyTypeName(keyType string) bool {
+	return types.AlgorithmSymmetric.Equals(keyType) || types.AlgorithmAES.Equals(keyType)
+}
+
+// applyKeyTemplate sets the algorithm-bearing attributes for the key an import
+// ceremony creates. ImportKey, GetImportParameters and UnwrapKeyByID all name
+// their key the same way -- a key-type string plus an optional size and curve --
+// so all three resolve it here and cannot drift apart.
+//
+// The key-type string names the ALGORITHM in these requests ("rsa", "ecdsa",
+// "ed25519", "symmetric"/"aes"), not the key's purpose: the wire carries one
+// field for it, and the purpose follows from it (KeyTypeSecret for symmetric
+// material, KeyTypeSigning for asymmetric). A name that resolves to neither is
+// rejected.
+//
+// The asymmetric case used to fall through to types.ParseCLIKeyType instead,
+// which assigns a purpose and no algorithm at all. types.KeyAttributes.ID()
+// then ended in "unknown", storing the key under an identifier nothing else
+// constructs: an Ed25519 import succeeded and was reported as RSA by ListKeys
+// from that point on, and every later operation missed it. An RSA import failed
+// outright, its attributes claiming no algorithm at all.
+//
+// field is how the caller's own request spells this parameter ("key type",
+// "target key type"), so the refusal names the field the caller sent rather
+// than a name only this function uses.
+func applyKeyTemplate(attrs *types.KeyAttributes, field, keyType string, keySize int, curve string) error {
+	if isSymmetricKeyTypeName(keyType) {
+		symmetric, ok := unwrapSymmetricAlgorithms[keySize]
+		if !ok {
+			return &ErrValidation{
+				Sentinel: ErrInvalidKeyAttributes,
+				Detail:   fmt.Sprintf("invalid key size for symmetric key: %d (must be 128, 192, or 256)", keySize),
+			}
+		}
+		attrs.KeyType = types.KeyTypeSecret
+		attrs.SymmetricAlgorithm = symmetric
+		return nil
+	}
+
+	if err := applyAsymmetricAlgorithm(attrs, keyType, keySize, curve); err != nil {
+		if errors.Is(err, errAlgorithmNotAsymmetric) {
+			return &ErrValidation{Sentinel: ErrInvalidKeyType, Detail: "unsupported " + field + ": " + keyType}
+		}
+		return err
+	}
+	attrs.KeyType = types.KeyTypeSigning
+	return nil
+}
+
+// resolveKeyHash resolves the digest a request designates for the key it
+// creates.
+//
+// It is ResolveHash with the "NONE" sentinel refused. NONE means "the caller
+// has already produced the exact bytes to sign", which is a property of one
+// operation and says nothing about a key; recording it would leave
+// types.KeyAttributes.Hash at crypto.Hash(0), whose New method panics wherever
+// the attribute is later used. An empty name selects the SHA-256 default,
+// matching ResolveHash and the transports that already set this attribute.
+func resolveKeyHash(hash string) (crypto.Hash, error) {
+	h, err := ResolveHash(hash)
+	if err != nil {
+		return 0, err
+	}
+	if h == 0 {
+		return 0, &ErrValidation{
+			Sentinel: ErrInvalidHashFunction,
+			Detail:   `hash "NONE" names no digest and cannot be a key attribute`,
+		}
+	}
+	return h, nil
+}
+
 // buildKeyAttributes constructs a types.KeyAttributes from a GenerateKeyRequest.
+//
+// The key's purpose is read with types.ParseKeyType, the vocabulary the
+// transports already use for the same field. It used to be read with
+// types.ParseCLIKeyType, which knows six of the thirteen names: a request for a
+// "ca", "attestation", "idevid" or "storage" key silently became a signing key
+// here while the same string became the named purpose in every transport that
+// built its own attributes. The purpose is part of types.KeyAttributes.ID(), so
+// the two paths stored the same request's key in two different places.
 func buildKeyAttributes(req *transport.GenerateKeyRequest, backendName string) (*types.KeyAttributes, error) {
 	attrs := &types.KeyAttributes{
 		CN:        req.KeyID,
 		StoreType: types.ParseStoreType(backendName),
+		Partition: types.Partition(req.Partition),
 	}
 
-	// Parse key type
-	if req.KeyType != "" {
-		kt := types.ParseCLIKeyType(req.KeyType)
-		if kt != "" {
-			attrs.KeyType = kt.ToKeyType()
-		}
+	// The request's hash was accepted and then discarded, so a caller that
+	// asked for an SHA-384 key received one whose attributes named no digest
+	// at all.
+	hash, err := resolveKeyHash(req.Hash)
+	if err != nil {
+		return nil, err
 	}
-	// Default to signing key type if not specified
+	attrs.Hash = hash
+
+	attrs.KeyType = types.ParseKeyType(req.KeyType)
+	// Default to signing key type if not specified or not a purpose name (the
+	// field doubles as the algorithm for callers that send only a key type).
 	if attrs.KeyType == 0 {
 		attrs.KeyType = types.KeyTypeSigning
 	}
@@ -602,86 +1175,138 @@ func buildKeyAttributes(req *transport.GenerateKeyRequest, backendName string) (
 		algorithm = req.KeyType
 	}
 
+	// Exportability is set before the symmetric branch returns, not after the
+	// asymmetric parsing. It used to be assigned only at the end of this
+	// function, which the symmetric early return skipped, so every symmetric
+	// key generated through this API was stored non-exportable no matter what
+	// the request asked for.
+	//
+	// The request is the authority. PKCS#11 v3.2 Table 30 makes a secret key
+	// CKA_EXTRACTABLE by default, so the PKCS#11 module sends Exportable=true
+	// unless the application's template says CK_FALSE; dropping the field made
+	// C_GetAttributeValue(CKA_VALUE) fail on a key whose own attributes said it
+	// was readable.
+	attrs.Exportable = req.Exportable
+
+	// Sensitivity is recorded alongside exportability and for the same reason:
+	// it has to be assigned before the symmetric branch returns, because that
+	// branch is the one that matters. CKA_SENSITIVE only ever withholds the
+	// plaintext of a secret key, and secret keys leave this function early.
+	attrs.Sensitive = req.Sensitive
+
 	// Check for symmetric algorithms first
-	symAlgo := parseSymmetricAlgorithm(algorithm)
-	if symAlgo != "" {
+	if symAlgo := ParseSymmetricAlgorithm(algorithm); symAlgo != "" {
 		attrs.SymmetricAlgorithm = symAlgo
 		attrs.KeyType = types.KeyTypeSecret
 		return attrs, nil
 	}
 
-	// Asymmetric algorithm parsing
-	if types.AlgorithmRSA.Equals(algorithm) {
-		attrs.KeyAlgorithm = x509.RSA
-		keySize := req.KeySize
-		if keySize == 0 {
-			keySize = types.RSAKeySize2048
-		}
-		attrs.RSAAttributes = &types.RSAAttributes{KeySize: keySize}
-	} else if types.AlgorithmECDSA.Equals(algorithm) || strings.EqualFold(algorithm, "ec") || strings.EqualFold(algorithm, "ecc") {
-		attrs.KeyAlgorithm = x509.ECDSA
-		curve := parseCurveString(req.Curve)
-		if curve == nil {
-			curve = elliptic.P256()
-		}
-		attrs.ECCAttributes = &types.ECCAttributes{Curve: curve}
-	} else if types.AlgorithmEd25519.Equals(algorithm) {
-		attrs.KeyAlgorithm = x509.Ed25519
-	} else if algorithm != "" {
-		return nil, &ErrValidation{Sentinel: ErrUnsupportedKeyAlgorithm, Detail: algorithm}
-	} else {
+	if algorithm == "" {
 		// No algorithm specified, default to ECDSA P-256
 		attrs.KeyAlgorithm = x509.ECDSA
 		attrs.ECCAttributes = &types.ECCAttributes{Curve: elliptic.P256()}
+		return attrs, nil
 	}
 
-	if req.Exportable {
-		attrs.Exportable = true
+	if err := applyAsymmetricAlgorithm(attrs, algorithm, req.KeySize, req.Curve); err != nil {
+		if errors.Is(err, errAlgorithmNotAsymmetric) {
+			return nil, &ErrValidation{Sentinel: ErrUnsupportedKeyAlgorithm, Detail: algorithm}
+		}
+		return nil, err
 	}
 
 	return attrs, nil
 }
 
 // buildImportKeyAttributes constructs key attributes from an ImportKeyRequest.
-func buildImportKeyAttributes(req *transport.ImportKeyRequest, backendName string) *types.KeyAttributes {
+//
+// req.KeyType names the algorithm, and applyKeyTemplate resolves it, so an
+// import describes its key exactly as UnwrapKeyByID and GetImportParameters
+// describe theirs. Only the symmetric case used to be handled here; an
+// asymmetric request produced attributes carrying a purpose and no algorithm,
+// which either failed the backend's key-type check (RSA) or stored the key
+// under an identifier no other code path constructs (ECDSA, Ed25519). See
+// applyKeyTemplate for what that cost.
+//
+// A symmetric request cannot be answered by the generic key-type mapping
+// because types.KeyAttributes.IsSymmetric is defined as SymmetricAlgorithm !=
+// "" and every backend's ImportKey dispatches on it. Without the symmetric
+// branch, an AES import reached the asymmetric path and its raw key bytes were
+// handed to x509.ParsePKCS8PrivateKey, so ImportKey could not import a secret
+// key at all -- through any transport, for any caller.
+//
+// The size is taken from KeySize with AESKeySize as the fallback. Both name the
+// same quantity, but only KeySize survives every transport -- the gRPC
+// ImportKeyRequest message has key_size and no aes_key_size field -- so reading
+// AESKeySize first would make the same call behave differently over gRPC than
+// over the unix socket. A zero size selects the AES-256 default, exactly as it
+// does for UnwrapKeyByID, which shares the unwrapSymmetricAlgorithms table.
+//
+// Exportability is set here for symmetric material rather than taken from the
+// request because ImportKeyRequest carries no field for it. PKCS#11 v3.2 §4.9
+// Table 30 makes a secret key CKA_EXTRACTABLE by default, and an imported key
+// that the backend will not release afterwards cannot be read back with
+// C_GetAttributeValue(CKA_VALUE) or wrapped as a C_WrapKey target. Callers that
+// must keep a key unextractable do not import it: the PKCS#11 module refuses to
+// send CKA_EXTRACTABLE=CK_FALSE material here and keeps such a key local
+// instead (see Module.CreateObject), so this default never widens a protection
+// an application actually asked for. Asymmetric private keys stay
+// non-exportable, which is what every backend's ExportKeyMaterial requires of
+// them anyway.
+func buildImportKeyAttributes(req *transport.ImportKeyRequest, backendName string) (*types.KeyAttributes, error) {
+	if req.KeyType == "" {
+		// There is no honest default. The algorithm cannot be recovered from
+		// the wrapped material at this layer, and guessing one stores the key
+		// under an identifier that does not describe it.
+		return nil, requiredField("key_type")
+	}
+
 	attrs := &types.KeyAttributes{
 		CN:        req.KeyID,
 		StoreType: types.ParseStoreType(backendName),
+		Partition: types.Partition(req.Partition),
 	}
 
-	if req.KeyType != "" {
-		kt := types.ParseCLIKeyType(req.KeyType)
-		if kt != "" {
-			attrs.KeyType = kt.ToKeyType()
-		}
+	hash, err := resolveKeyHash(req.Hash)
+	if err != nil {
+		return nil, err
 	}
-	if attrs.KeyType == 0 {
-		attrs.KeyType = types.KeyTypeSigning
+	attrs.Hash = hash
+
+	keySize := req.KeySize
+	if keySize == 0 && isSymmetricKeyTypeName(req.KeyType) {
+		keySize = req.AESKeySize
 	}
 
-	return attrs
+	if err := applyKeyTemplate(attrs, "key type", req.KeyType, keySize, req.Curve); err != nil {
+		return nil, err
+	}
+
+	if attrs.IsSymmetric() {
+		attrs.Exportable = true
+	}
+
+	return attrs, nil
 }
 
-// parseCurveString converts a curve name string to an elliptic.Curve.
+// parseCurveString converts a curve name string to an elliptic.Curve, or nil
+// when the name is not one of the supported NIST curves. It delegates to
+// types.ParseCurve so the project has one curve-name table.
 func parseCurveString(curve string) elliptic.Curve {
-	ec := types.ParseEllipticCurve(curve)
-	switch ec {
-	case types.CurveP224:
-		return elliptic.P224()
-	case types.CurveP256:
-		return elliptic.P256()
-	case types.CurveP384:
-		return elliptic.P384()
-	case types.CurveP521:
-		return elliptic.P521()
-	default:
+	parsed, err := types.ParseCurve(curve)
+	if err != nil {
 		return nil
 	}
+	return parsed
 }
 
-// parseSymmetricAlgorithm attempts to parse an algorithm string as a symmetric algorithm.
+// ParseSymmetricAlgorithm attempts to parse an algorithm string as a symmetric algorithm.
 // Returns empty string if the algorithm is not a recognized symmetric algorithm.
-func parseSymmetricAlgorithm(algo string) types.SymmetricAlgorithm {
+//
+// It is exported because the gRPC and QUIC transports each carried a private
+// copy of this mapping, which is how the same algorithm name could resolve
+// differently depending on which socket the request arrived on.
+func ParseSymmetricAlgorithm(algo string) types.SymmetricAlgorithm {
 	lower := strings.ToLower(algo)
 	switch {
 	case strings.Contains(lower, "aes") || strings.Contains(lower, "chacha"):

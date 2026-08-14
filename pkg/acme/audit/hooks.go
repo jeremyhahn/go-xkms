@@ -109,6 +109,30 @@ func extractClientIP(r *http.Request) string {
 	return r.RemoteAddr
 }
 
+// ClientIP returns the address of the client that sent r, preferring the
+// forwarding headers a reverse proxy sets over the transport-level peer
+// address. Handlers use it to stamp audit events with the true origin of a
+// request rather than the address of the proxy in front of the CA.
+func ClientIP(r *http.Request) string {
+	return extractClientIP(r)
+}
+
+// RequestContext returns a context carrying the request attributes that every
+// audit event recorded while handling r should reference: the correlation ID
+// (the client's X-Request-ID when it supplied one), the client address, and
+// the user agent. Passing the result to the Log* helpers below is what ties an
+// audit record back to the request that caused it.
+func RequestContext(ctx context.Context, r *http.Request) context.Context {
+	requestID := r.Header.Get("X-Request-ID")
+	if requestID == "" {
+		requestID = generateRequestID()
+	}
+
+	ctx = ContextWithRequestID(ctx, requestID)
+	ctx = ContextWithSourceIP(ctx, extractClientIP(r))
+	return ContextWithUserAgent(ctx, r.UserAgent())
+}
+
 // extractActorFromRequest extracts the actor (account ID or system) from request
 func extractActorFromRequest(r *http.Request) string {
 	// Try to get account ID from context or headers

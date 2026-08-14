@@ -155,12 +155,10 @@ func TestNewCeremonyCA_Success(t *testing.T) {
 
 func TestExecuteCeremony_SingleAdmin_WritesArtifacts(t *testing.T) {
 	dataDir := t.TempDir()
-	bundlePath := filepath.Join(dataDir, "admin.bundle")
 	env := &ceremonyEnv{
-		logger:          silentLogger(),
-		hostname:        "test.example.com",
-		dataDir:         dataDir,
-		adminBundlePath: bundlePath,
+		logger:   silentLogger(),
+		hostname: "test.example.com",
+		dataDir:  dataDir,
 	}
 	cs := buildCeremonyService(t, nil)
 
@@ -180,9 +178,6 @@ func TestExecuteCeremony_SingleAdmin_WritesArtifacts(t *testing.T) {
 	}
 	if len(result.CACertPEM) == 0 {
 		t.Error("expected non-empty CA cert PEM")
-	}
-	if len(result.SOCertPEM) == 0 {
-		t.Error("expected non-empty SO cert PEM in single-admin mode")
 	}
 
 	// CA bundle persisted.
@@ -205,37 +200,18 @@ func TestExecuteCeremony_SingleAdmin_WritesArtifacts(t *testing.T) {
 	if string(pinBytes) != want {
 		t.Errorf("SPKI pin file mismatch: want %q got %q", want, string(pinBytes))
 	}
-
-	// Admin bundle: cert+key concatenated, 0600 perms.
-	bundleBytes, err := os.ReadFile(bundlePath)
-	if err != nil {
-		t.Fatalf("read admin bundle: %v", err)
-	}
-	expected := append(append([]byte{}, result.SOCertPEM...), result.SOKeyPEM...)
-	if string(bundleBytes) != string(expected) {
-		t.Error("admin bundle content does not match cert+key concatenation")
-	}
-	info, err := os.Stat(bundlePath)
-	if err != nil {
-		t.Fatalf("stat admin bundle: %v", err)
-	}
-	if info.Mode().Perm() != 0o600 {
-		t.Errorf("admin bundle perms: want 0600 got %o", info.Mode().Perm())
-	}
 }
 
 // =============================================================================
 // executeCeremony — M-of-N mode
 // =============================================================================
 
-func TestExecuteCeremony_MofN_ClearsSOAndOmitsBundle(t *testing.T) {
+func TestExecuteCeremony_MofN_ReachesEnrolling(t *testing.T) {
 	dataDir := t.TempDir()
-	bundlePath := filepath.Join(dataDir, "admin.bundle")
 	env := &ceremonyEnv{
-		logger:          silentLogger(),
-		hostname:        "node.example.com",
-		dataDir:         dataDir,
-		adminBundlePath: bundlePath,
+		logger:   silentLogger(),
+		hostname: "node.example.com",
+		dataDir:  dataDir,
 	}
 
 	officers := []initialize.OfficerConfig{
@@ -251,19 +227,12 @@ func TestExecuteCeremony_MofN_ClearsSOAndOmitsBundle(t *testing.T) {
 	if result.State != initialize.StateEnrolling {
 		t.Errorf("expected StateEnrolling, got %s", result.State)
 	}
-	if len(result.SOCertPEM) != 0 || len(result.SOKeyPEM) != 0 {
-		t.Error("SO cert/key must be cleared in M-of-N mode")
-	}
 	// CA bundle still persisted.
 	if _, err := os.Stat(filepath.Join(dataDir, "ca-bundle.pem")); err != nil {
 		t.Errorf("ca-bundle.pem should exist: %v", err)
 	}
 	if _, err := os.Stat(filepath.Join(dataDir, "spki-pin.txt")); err != nil {
 		t.Errorf("spki-pin.txt should exist: %v", err)
-	}
-	// Admin bundle must NOT be created in M-of-N mode.
-	if _, err := os.Stat(bundlePath); !os.IsNotExist(err) {
-		t.Errorf("admin bundle should not exist in M-of-N mode; stat err=%v", err)
 	}
 }
 
@@ -274,10 +243,9 @@ func TestExecuteCeremony_MofN_ClearsSOAndOmitsBundle(t *testing.T) {
 func TestExecuteCeremony_AlreadyInitialized(t *testing.T) {
 	dataDir := t.TempDir()
 	env := &ceremonyEnv{
-		logger:          silentLogger(),
-		hostname:        "localhost",
-		dataDir:         dataDir,
-		adminBundlePath: filepath.Join(dataDir, "admin.bundle"),
+		logger:   silentLogger(),
+		hostname: "localhost",
+		dataDir:  dataDir,
 	}
 	cs := buildCeremonyService(t, nil)
 
@@ -292,106 +260,6 @@ func TestExecuteCeremony_AlreadyInitialized(t *testing.T) {
 	}
 	if !errors.Is(err, ErrCeremonyInitFailed) {
 		t.Errorf("expected ErrCeremonyInitFailed, got %v", err)
-	}
-}
-
-// =============================================================================
-// writeAdminBundle
-// =============================================================================
-
-func TestWriteAdminBundle_File(t *testing.T) {
-	dir := t.TempDir()
-	path := filepath.Join(dir, "bundle.pem")
-	result := &initialize.InitResult{
-		SOCertPEM: []byte("-----BEGIN CERTIFICATE-----\nABC\n-----END CERTIFICATE-----\n"),
-		SOKeyPEM:  []byte("-----BEGIN EC PRIVATE KEY-----\nXYZ\n-----END EC PRIVATE KEY-----\n"),
-	}
-	if err := writeAdminBundle(path, result); err != nil {
-		t.Fatalf("writeAdminBundle: %v", err)
-	}
-	got, err := os.ReadFile(path)
-	if err != nil {
-		t.Fatalf("read bundle: %v", err)
-	}
-	want := string(result.SOCertPEM) + string(result.SOKeyPEM)
-	if string(got) != want {
-		t.Errorf("bundle content mismatch: want %q got %q", want, string(got))
-	}
-	info, err := os.Stat(path)
-	if err != nil {
-		t.Fatalf("stat: %v", err)
-	}
-	if info.Mode().Perm() != 0o600 {
-		t.Errorf("perms: want 0600 got %o", info.Mode().Perm())
-	}
-}
-
-func TestWriteAdminBundle_StdoutDash(t *testing.T) {
-	// Redirect os.Stdout temporarily so we can verify the bundle is
-	// written there when the "-" sentinel is supplied.
-	originalStdout := os.Stdout
-	r, w, err := os.Pipe()
-	if err != nil {
-		t.Fatalf("os.Pipe: %v", err)
-	}
-	os.Stdout = w
-	t.Cleanup(func() { os.Stdout = originalStdout })
-
-	result := &initialize.InitResult{
-		SOCertPEM: []byte("CERT"),
-		SOKeyPEM:  []byte("KEY"),
-	}
-	writeErr := writeAdminBundle("-", result)
-	_ = w.Close()
-	os.Stdout = originalStdout
-
-	if writeErr != nil {
-		t.Fatalf("writeAdminBundle: %v", writeErr)
-	}
-	got, err := io.ReadAll(r)
-	if err != nil {
-		t.Fatalf("read pipe: %v", err)
-	}
-	if string(got) != "CERTKEY" {
-		t.Errorf("stdout payload: want CERTKEY got %q", string(got))
-	}
-}
-
-func TestWriteAdminBundle_EmptyPathTreatedAsStdout(t *testing.T) {
-	originalStdout := os.Stdout
-	r, w, err := os.Pipe()
-	if err != nil {
-		t.Fatalf("os.Pipe: %v", err)
-	}
-	os.Stdout = w
-	t.Cleanup(func() { os.Stdout = originalStdout })
-
-	result := &initialize.InitResult{SOCertPEM: []byte("A"), SOKeyPEM: []byte("B")}
-	writeErr := writeAdminBundle("", result)
-	_ = w.Close()
-	os.Stdout = originalStdout
-
-	if writeErr != nil {
-		t.Fatalf("writeAdminBundle: %v", writeErr)
-	}
-	got, err := io.ReadAll(r)
-	if err != nil {
-		t.Fatalf("read pipe: %v", err)
-	}
-	if string(got) != "AB" {
-		t.Errorf("stdout payload: want AB got %q", string(got))
-	}
-}
-
-func TestWriteAdminBundle_BadPath(t *testing.T) {
-	// A directory that does not exist surfaces ErrAdminBundleWriteFailed.
-	result := &initialize.InitResult{SOCertPEM: []byte("c"), SOKeyPEM: []byte("k")}
-	err := writeAdminBundle("/nonexistent/dir/bundle.pem", result)
-	if err == nil {
-		t.Fatal("expected error for bad path")
-	}
-	if !errors.Is(err, ErrAdminBundleWriteFailed) {
-		t.Errorf("expected ErrAdminBundleWriteFailed, got %v", err)
 	}
 }
 
@@ -490,13 +358,11 @@ func TestPrintCeremonyOutcome_SingleAdmin(t *testing.T) {
 	os.Stderr = w
 	t.Cleanup(func() { os.Stderr = originalStderr })
 
-	env := &ceremonyEnv{dataDir: "/var/lib/xkms", adminBundlePath: "/tmp/admin.pem"}
+	env := &ceremonyEnv{dataDir: "/var/lib/xkms"}
 	result := &initialize.InitResult{
 		State:     initialize.StateOperational,
 		SPKIPin:   "deadbeef",
 		CACertPEM: []byte("ca"),
-		SOCertPEM: []byte("so"),
-		SOKeyPEM:  []byte("key"),
 	}
 	printCeremonyOutcome(env, result)
 	_ = w.Close()
@@ -507,7 +373,7 @@ func TestPrintCeremonyOutcome_SingleAdmin(t *testing.T) {
 		t.Fatalf("read pipe: %v", err)
 	}
 	out := string(got)
-	for _, want := range []string{"Ceremony Outcome", "deadbeef", "/var/lib/xkms", "/tmp/admin.pem"} {
+	for _, want := range []string{"Ceremony Outcome", "deadbeef", "/var/lib/xkms"} {
 		if !strings.Contains(out, want) {
 			t.Errorf("expected output to contain %q; got:\n%s", want, out)
 		}
@@ -523,7 +389,7 @@ func TestPrintCeremonyOutcome_MofNMentionsClaim(t *testing.T) {
 	os.Stderr = w
 	t.Cleanup(func() { os.Stderr = originalStderr })
 
-	env := &ceremonyEnv{dataDir: "/data", adminBundlePath: "-"}
+	env := &ceremonyEnv{dataDir: "/data"}
 	result := &initialize.InitResult{
 		State:      initialize.StateEnrolling,
 		SPKIPin:    "ff",

@@ -417,6 +417,25 @@ func (e *UnsupportedProtocolError) Unwrap() error {
 	return ErrUnsupportedProtocol
 }
 
+// IncompleteTLSMaterialError indicates that TLS client-certificate material
+// was configured with only one half of the keypair. The SDK refuses to build
+// a client in that state rather than silently connecting without the client
+// certificate (or, worse, without TLS at all).
+type IncompleteTLSMaterialError struct {
+	// Missing names the configuration field that was left empty.
+	Missing string
+}
+
+// Error returns a human-readable description.
+func (e *IncompleteTLSMaterialError) Error() string {
+	return ErrIncompleteTLSMaterial.Error() + ": " + e.Missing + " is required"
+}
+
+// Unwrap returns ErrIncompleteTLSMaterial so errors.Is matches the sentinel.
+func (e *IncompleteTLSMaterialError) Unwrap() error {
+	return ErrIncompleteTLSMaterial
+}
+
 // InvalidURLError indicates a client URL could not be parsed.
 type InvalidURLError struct {
 	// Err is the underlying parse error.

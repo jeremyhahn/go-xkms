@@ -24,6 +24,8 @@ import (
 
 	"github.com/gorilla/mux"
 	db "github.com/jeremyhahn/go-qrdb/sdk/go/transport"
+
+	"github.com/jeremyhahn/go-xkms/pkg/auth"
 )
 
 // TenantHandlers provides HTTP handlers for tenant management API endpoints
@@ -40,108 +42,110 @@ func NewTenantHandlers(service TenantService, logger *slog.Logger) *TenantHandle
 	}
 }
 
-// RegisterRoutes registers all tenant API routes with the router
-func (h *TenantHandlers) RegisterRoutes(router *mux.Router, authMiddleware AuthHandler) {
+// RegisterRoutes registers all tenant API routes with the router.
+//
+// Every route declares the exact go-qrdb resource:action grant it requires and
+// gate resolves it through the hosted qrdb node's RBAC service. The role and
+// user sub-trees, which previously carried no authorization at all, are gated
+// on qrdb's canonical roles:* and users:* permissions — the same grants the
+// main REST/gRPC/QUIC/MCP transports require for identity administration.
+func (h *TenantHandlers) RegisterRoutes(router *mux.Router, authMiddleware AuthHandler, gate *PermissionGate) {
 	// Apply auth middleware to all routes
 	tenantsRouter := router.PathPrefix("/api/v1/tenants").Subrouter()
 	if authMiddleware != nil {
 		tenantsRouter.Use(authMiddleware.Authenticate)
 	}
 
-	// Tenant list (super-admin only)
-	listRouter := tenantsRouter.NewRoute().Subrouter()
-	listRouter.Use(RequireRole(RoleSuperAdmin))
-	listRouter.HandleFunc("", h.ListTenants).Methods("GET")
+	// Tenant lifecycle.
+	tenantsRouter.Handle("",
+		gate.Wrap(auth.ResourceTenants, auth.ActionList, h.ListTenants)).Methods("GET")
+	tenantsRouter.Handle("",
+		gate.Wrap(auth.ResourceTenants, auth.ActionCreate, h.CreateTenant)).Methods("POST")
+	tenantsRouter.Handle("/{id}",
+		gate.Wrap(auth.ResourceTenants, auth.ActionRead, h.GetTenant)).Methods("GET")
+	tenantsRouter.Handle("/{id}",
+		gate.Wrap(auth.ResourceTenants, auth.ActionUpdate, h.UpdateTenant)).Methods("PUT")
+	tenantsRouter.Handle("/{id}",
+		gate.Wrap(auth.ResourceTenants, auth.ActionDelete, h.DeleteTenant)).Methods("DELETE")
+	tenantsRouter.Handle("/{id}/status",
+		gate.Wrap(auth.ResourceTenants, auth.ActionUpdate, h.UpdateTenantStatus)).Methods("PUT")
 
-	// Tenant creation (super-admin only)
-	createRouter := tenantsRouter.NewRoute().Subrouter()
-	createRouter.Use(RequireRole(RoleSuperAdmin))
-	createRouter.HandleFunc("", h.CreateTenant).Methods("POST")
+	// Tenant CA hierarchy. Creating or retiring a signing CA is strictly more
+	// privileged than issuing a leaf certificate, so it is gated on ca:* rather
+	// than certs:*.
+	tenantsRouter.Handle("/{id}/root-ca",
+		gate.Wrap(auth.ResourceCA, auth.ActionCreate, h.CreateTenantRootCA)).Methods("POST")
+	tenantsRouter.Handle("/{id}/intermediate-cas",
+		gate.Wrap(auth.ResourceCA, auth.ActionList, h.ListTenantIntermediateCAs)).Methods("GET")
+	tenantsRouter.Handle("/{id}/intermediate-cas",
+		gate.Wrap(auth.ResourceCA, auth.ActionCreate, h.CreateTenantIntermediateCA)).Methods("POST")
+	tenantsRouter.Handle("/{id}/intermediate-cas/{caid}",
+		gate.Wrap(auth.ResourceCA, auth.ActionRead, h.GetTenantIntermediateCA)).Methods("GET")
+	tenantsRouter.Handle("/{id}/intermediate-cas/{caid}/status",
+		gate.Wrap(auth.ResourceCA, auth.ActionUpdate, h.UpdateTenantIntermediateCAStatus)).Methods("PUT")
+	tenantsRouter.Handle("/{id}/default-intermediate-ca",
+		gate.Wrap(auth.ResourceCA, auth.ActionUpdate, h.SetTenantDefaultIntermediateCA)).Methods("PUT")
+	tenantsRouter.Handle("/{id}/ca-status",
+		gate.Wrap(auth.ResourceCA, auth.ActionRead, h.GetTenantCAStatus)).Methods("GET")
 
-	// Tenant get/update/delete (admin can view own tenant, super-admin all)
-	// Note: Role checks for tenant access are handled in the handlers
-	tenantsRouter.HandleFunc("/{id}", h.GetTenant).Methods("GET")
+	// External Account Bindings. acme_eab:create is the "endorser" authority
+	// that the deleted local RoleEndorser used to express; a deployment that
+	// needs an endorse-only principal creates a qrdb role holding exactly that
+	// permission.
+	tenantsRouter.Handle("/{id}/eab",
+		gate.Wrap(auth.ResourceACMEEAB, auth.ActionList, h.ListTenantEABs)).Methods("GET")
+	tenantsRouter.Handle("/{id}/eab",
+		gate.Wrap(auth.ResourceACMEEAB, auth.ActionCreate, h.CreateTenantEAB)).Methods("POST")
+	tenantsRouter.Handle("/{id}/eab/{kid}",
+		gate.Wrap(auth.ResourceACMEEAB, auth.ActionRead, h.GetTenantEAB)).Methods("GET")
+	tenantsRouter.Handle("/{id}/eab/{kid}",
+		gate.Wrap(auth.ResourceACMEEAB, auth.ActionDelete, h.DeleteTenantEAB)).Methods("DELETE")
 
-	updateRouter := tenantsRouter.PathPrefix("/{id}").Subrouter()
-	updateRouter.Use(RequireRole(RoleAdmin))
-	updateRouter.HandleFunc("", h.UpdateTenant).Methods("PUT")
+	// Tenant role management.
+	tenantsRouter.Handle("/{id}/roles",
+		gate.Wrap(auth.ResourceRoles, auth.ActionList, h.ListTenantRoles)).Methods("GET")
+	tenantsRouter.Handle("/{id}/roles",
+		gate.Wrap(auth.ResourceRoles, auth.ActionCreate, h.CreateTenantRole)).Methods("POST")
+	tenantsRouter.Handle("/{id}/roles/{roleID}",
+		gate.Wrap(auth.ResourceRoles, auth.ActionRead, h.GetTenantRole)).Methods("GET")
+	tenantsRouter.Handle("/{id}/roles/{roleID}",
+		gate.Wrap(auth.ResourceRoles, auth.ActionUpdate, h.UpdateTenantRole)).Methods("PUT")
+	tenantsRouter.Handle("/{id}/roles/{roleID}",
+		gate.Wrap(auth.ResourceRoles, auth.ActionDelete, h.DeleteTenantRole)).Methods("DELETE")
 
-	// Tenant deletion (super-admin only)
-	deleteRouter := tenantsRouter.PathPrefix("/{id}").Subrouter()
-	deleteRouter.Use(RequireRole(RoleSuperAdmin))
-	deleteRouter.HandleFunc("", h.DeleteTenant).Methods("DELETE")
-
-	// Tenant status update (super-admin only)
-	statusRouter := tenantsRouter.PathPrefix("/{id}/status").Subrouter()
-	statusRouter.Use(RequireRole(RoleSuperAdmin))
-	statusRouter.HandleFunc("", h.UpdateTenantStatus).Methods("PUT")
-
-	// Tenant CA endpoints (admin access required)
-	caRouter := tenantsRouter.PathPrefix("/{id}").Subrouter()
-	caRouter.Use(RequireRole(RoleAdmin))
-	caRouter.HandleFunc("/root-ca", h.CreateTenantRootCA).Methods("POST")
-	caRouter.HandleFunc("/intermediate-cas", h.ListTenantIntermediateCAs).Methods("GET")
-	caRouter.HandleFunc("/intermediate-cas", h.CreateTenantIntermediateCA).Methods("POST")
-	caRouter.HandleFunc("/intermediate-cas/{caid}", h.GetTenantIntermediateCA).Methods("GET")
-	caRouter.HandleFunc("/intermediate-cas/{caid}/status", h.UpdateTenantIntermediateCAStatus).Methods("PUT")
-	caRouter.HandleFunc("/default-intermediate-ca", h.SetTenantDefaultIntermediateCA).Methods("PUT")
-	caRouter.HandleFunc("/ca-status", h.GetTenantCAStatus).Methods("GET")
-
-	// Tenant EAB endpoints (endorser can create, admin can manage)
-	eabRouter := tenantsRouter.PathPrefix("/{id}/eab").Subrouter()
-	eabRouter.Use(RequireRole(RoleEndorser))
-	eabRouter.HandleFunc("", h.ListTenantEABs).Methods("GET")
-	eabRouter.HandleFunc("", h.CreateTenantEAB).Methods("POST")
-	eabRouter.HandleFunc("/{kid}", h.GetTenantEAB).Methods("GET")
-
-	// EAB deletion requires admin role
-	eabDeleteRouter := tenantsRouter.PathPrefix("/{id}/eab/{kid}").Subrouter()
-	eabDeleteRouter.Use(RequireRole(RoleAdmin))
-	eabDeleteRouter.HandleFunc("", h.DeleteTenantEAB).Methods("DELETE")
-
-	// Role management routes
-	roleRouter := tenantsRouter.PathPrefix("/{id}/roles").Subrouter()
-	roleRouter.HandleFunc("", h.ListTenantRoles).Methods("GET")
-	roleRouter.HandleFunc("", h.CreateTenantRole).Methods("POST")
-	roleRouter.HandleFunc("/{roleID}", h.GetTenantRole).Methods("GET")
-	roleRouter.HandleFunc("/{roleID}", h.UpdateTenantRole).Methods("PUT")
-	roleRouter.HandleFunc("/{roleID}", h.DeleteTenantRole).Methods("DELETE")
-
-	// User management routes
-	userRouter := tenantsRouter.PathPrefix("/{id}/users").Subrouter()
-	userRouter.HandleFunc("", h.ListTenantUsers).Methods("GET")
-	userRouter.HandleFunc("", h.CreateTenantUser).Methods("POST")
-	userRouter.HandleFunc("/{userID}", h.GetTenantUser).Methods("GET")
-	userRouter.HandleFunc("/{userID}", h.UpdateTenantUser).Methods("PUT")
-	userRouter.HandleFunc("/{userID}", h.DeleteTenantUser).Methods("DELETE")
+	// Tenant user management.
+	tenantsRouter.Handle("/{id}/users",
+		gate.Wrap(auth.ResourceUsers, auth.ActionList, h.ListTenantUsers)).Methods("GET")
+	tenantsRouter.Handle("/{id}/users",
+		gate.Wrap(auth.ResourceUsers, auth.ActionCreate, h.CreateTenantUser)).Methods("POST")
+	tenantsRouter.Handle("/{id}/users/{userID}",
+		gate.Wrap(auth.ResourceUsers, auth.ActionRead, h.GetTenantUser)).Methods("GET")
+	tenantsRouter.Handle("/{id}/users/{userID}",
+		gate.Wrap(auth.ResourceUsers, auth.ActionUpdate, h.UpdateTenantUser)).Methods("PUT")
+	tenantsRouter.Handle("/{id}/users/{userID}",
+		gate.Wrap(auth.ResourceUsers, auth.ActionDelete, h.DeleteTenantUser)).Methods("DELETE")
 }
 
 // checkTenantAccess verifies that the caller has permission to access the specified tenant.
 // It performs RBAC role checks to determine access.
 //
-// Access rules:
-// - Super-admins can access any tenant
-// - Users can access their own tenant (tenant ID matches)
-// - Cross-tenant access is denied by default
+// Access rules follow go-qrdb's canonical system-tenant rule (RequireTenantScope):
+//   - An identity rooted in the reserved system tenant is platform-scoped and
+//     reaches every tenant.
+//   - Any other identity reaches only its own tenant.
+//   - Cross-tenant access is denied by default.
 //
 // Returns nil if access is allowed, or an error describing the denial reason.
-func (h *TenantHandlers) checkTenantAccess(_ context.Context, _ *http.Request, user *AuthenticatedUser, targetTenantID, _ string) error {
-	// Super-admins have unrestricted access to all tenants
-	if user.Role == RoleSuperAdmin {
-		return nil
+func (h *TenantHandlers) checkTenantAccess(ctx context.Context, _ *http.Request, user *AuthenticatedUser, targetTenantID, _ string) error {
+	if err := RequireTenantScope(ctx, targetTenantID); err != nil {
+		h.logger.Warn("cross-tenant access denied",
+			slog.String("user_id", user.UserID),
+			slog.String("user_tenant", user.TenantID),
+			slog.String("target_tenant", targetTenantID),
+			slog.String("error", err.Error()))
+		return ErrForbidden
 	}
-
-	// Users can access their own tenant
-	if user.TenantID == targetTenantID {
-		return nil
-	}
-
-	// Default deny for cross-tenant access
-	h.logger.Warn("cross-tenant access denied",
-		slog.String("user_id", user.UserID),
-		slog.String("user_tenant", user.TenantID),
-		slog.String("target_tenant", targetTenantID))
-	return ErrForbidden
+	return nil
 }
 
 // CreateTenant handles POST /api/v1/tenants
@@ -192,7 +196,7 @@ func (h *TenantHandlers) GetTenant(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Check if caller has permission to access this tenant
-	if err := h.checkTenantAccess(ctx, r, user, tenantID, ActionRead); err != nil {
+	if err := h.checkTenantAccess(ctx, r, user, tenantID, auth.ActionRead); err != nil {
 		writeProblem(w, http.StatusForbidden, "urn:trusted-ca:error:forbidden", "Access denied to tenant")
 		return
 	}
@@ -224,7 +228,7 @@ func (h *TenantHandlers) UpdateTenant(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if err := h.checkTenantAccess(ctx, r, user, tenantID, ActionUpdate); err != nil {
+	if err := h.checkTenantAccess(ctx, r, user, tenantID, auth.ActionUpdate); err != nil {
 		writeProblem(w, http.StatusForbidden, "urn:trusted-ca:error:forbidden", "Access denied to tenant")
 		return
 	}
@@ -342,7 +346,7 @@ func (h *TenantHandlers) CreateTenantRootCA(w http.ResponseWriter, r *http.Reque
 		return
 	}
 
-	if err := h.checkTenantAccess(ctx, r, user, tenantID, ActionAdmin); err != nil {
+	if err := h.checkTenantAccess(ctx, r, user, tenantID, auth.ActionUpdate); err != nil {
 		writeProblem(w, http.StatusForbidden, "urn:trusted-ca:error:forbidden", "Access denied to tenant")
 		return
 	}
@@ -399,7 +403,7 @@ func (h *TenantHandlers) CreateTenantIntermediateCA(w http.ResponseWriter, r *ht
 		return
 	}
 
-	if err := h.checkTenantAccess(ctx, r, user, tenantID, ActionAdmin); err != nil {
+	if err := h.checkTenantAccess(ctx, r, user, tenantID, auth.ActionUpdate); err != nil {
 		writeProblem(w, http.StatusForbidden, "urn:trusted-ca:error:forbidden", "Access denied to tenant")
 		return
 	}
@@ -462,7 +466,7 @@ func (h *TenantHandlers) GetTenantCAStatus(w http.ResponseWriter, r *http.Reques
 		return
 	}
 
-	if err := h.checkTenantAccess(ctx, r, user, tenantID, ActionRead); err != nil {
+	if err := h.checkTenantAccess(ctx, r, user, tenantID, auth.ActionRead); err != nil {
 		writeProblem(w, http.StatusForbidden, "urn:trusted-ca:error:forbidden", "Access denied to tenant")
 		return
 	}
@@ -494,7 +498,7 @@ func (h *TenantHandlers) ListTenantIntermediateCAs(w http.ResponseWriter, r *htt
 		return
 	}
 
-	if err := h.checkTenantAccess(ctx, r, user, tenantID, ActionRead); err != nil {
+	if err := h.checkTenantAccess(ctx, r, user, tenantID, auth.ActionRead); err != nil {
 		writeProblem(w, http.StatusForbidden, "urn:trusted-ca:error:forbidden", "Access denied to tenant")
 		return
 	}
@@ -530,7 +534,7 @@ func (h *TenantHandlers) GetTenantIntermediateCA(w http.ResponseWriter, r *http.
 		return
 	}
 
-	if err := h.checkTenantAccess(ctx, r, user, tenantID, ActionRead); err != nil {
+	if err := h.checkTenantAccess(ctx, r, user, tenantID, auth.ActionRead); err != nil {
 		writeProblem(w, http.StatusForbidden, "urn:trusted-ca:error:forbidden", "Access denied to tenant")
 		return
 	}
@@ -567,7 +571,7 @@ func (h *TenantHandlers) UpdateTenantIntermediateCAStatus(w http.ResponseWriter,
 		return
 	}
 
-	if err := h.checkTenantAccess(ctx, r, user, tenantID, ActionAdmin); err != nil {
+	if err := h.checkTenantAccess(ctx, r, user, tenantID, auth.ActionUpdate); err != nil {
 		writeProblem(w, http.StatusForbidden, "urn:trusted-ca:error:forbidden", "Access denied to tenant")
 		return
 	}
@@ -620,7 +624,7 @@ func (h *TenantHandlers) SetTenantDefaultIntermediateCA(w http.ResponseWriter, r
 		return
 	}
 
-	if err := h.checkTenantAccess(ctx, r, user, tenantID, ActionAdmin); err != nil {
+	if err := h.checkTenantAccess(ctx, r, user, tenantID, auth.ActionUpdate); err != nil {
 		writeProblem(w, http.StatusForbidden, "urn:trusted-ca:error:forbidden", "Access denied to tenant")
 		return
 	}
@@ -666,7 +670,7 @@ func (h *TenantHandlers) CreateTenantEAB(w http.ResponseWriter, r *http.Request)
 		return
 	}
 
-	if err := h.checkTenantAccess(ctx, r, user, tenantID, ActionCreate); err != nil {
+	if err := h.checkTenantAccess(ctx, r, user, tenantID, auth.ActionCreate); err != nil {
 		writeProblem(w, http.StatusForbidden, "urn:trusted-ca:error:forbidden", "Access denied to tenant")
 		return
 	}
@@ -726,7 +730,7 @@ func (h *TenantHandlers) GetTenantEAB(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if err := h.checkTenantAccess(ctx, r, user, tenantID, ActionRead); err != nil {
+	if err := h.checkTenantAccess(ctx, r, user, tenantID, auth.ActionRead); err != nil {
 		writeProblem(w, http.StatusForbidden, "urn:trusted-ca:error:forbidden", "Access denied to tenant")
 		return
 	}
@@ -763,7 +767,7 @@ func (h *TenantHandlers) DeleteTenantEAB(w http.ResponseWriter, r *http.Request)
 		return
 	}
 
-	if err := h.checkTenantAccess(ctx, r, user, tenantID, ActionDelete); err != nil {
+	if err := h.checkTenantAccess(ctx, r, user, tenantID, auth.ActionDelete); err != nil {
 		writeProblem(w, http.StatusForbidden, "urn:trusted-ca:error:forbidden", "Access denied to tenant")
 		return
 	}
@@ -798,7 +802,7 @@ func (h *TenantHandlers) ListTenantEABs(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 
-	if err := h.checkTenantAccess(ctx, r, user, tenantID, ActionList); err != nil {
+	if err := h.checkTenantAccess(ctx, r, user, tenantID, auth.ActionList); err != nil {
 		writeProblem(w, http.StatusForbidden, "urn:trusted-ca:error:forbidden", "Access denied to tenant")
 		return
 	}

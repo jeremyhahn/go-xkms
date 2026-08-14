@@ -526,8 +526,8 @@ func TestFB_TPM_GetIDevIDInfo_PanicRecover(t *testing.T) {
 func TestFB_TPM_ListKeys_NilAccessor(t *testing.T) {
 	svc := fbTPMSvcNilTPM()
 	keys, err := svc.ListKeys()
-	assert.NoError(t, err)
-	assert.Empty(t, keys)
+	assert.ErrorIs(t, err, ErrTPMNotAvailable)
+	assert.Nil(t, keys)
 }
 
 func TestFB_TPM_Provision_NilAccessor(t *testing.T) {

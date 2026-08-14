@@ -122,6 +122,34 @@ func TestTenantUnaryInterceptor_EmptyTenantID(t *testing.T) {
 	})
 }
 
+// TestTenantUnaryInterceptor_SystemTenantID is the regression test for the
+// reported bug: a WebAuthn-registered identity is minted with
+// TenantID = "system" (pkg/server/server.go's webAuthnSystemTenant), and the
+// gRPC tenant interceptor must recognize that as cross-tenant scoped via
+// auth.IsCrossTenant exactly like the empty-TenantID case. Before this fix
+// the interceptor only special-cased "", so a "system"-tenant identity fell
+// through to the registry lookup and was denied PermissionDenied for a
+// tenant that was never meant to be looked up -- this test fails against the
+// old `identity.TenantID == ""` check.
+func TestTenantUnaryInterceptor_SystemTenantID(t *testing.T) {
+	t.Run("passes through when identity has the reserved system TenantID", func(t *testing.T) {
+		registry := testTenantRegistry(t)
+		old := GetBarrierRegistry()
+		SetBarrierRegistry(registry)
+		defer SetBarrierRegistry(old)
+
+		srv := &Server{logger: discardLogger()}
+		info := &grpc.UnaryServerInfo{FullMethod: "/test/Method"}
+
+		identity := &auth.Identity{Subject: "webauthn-user", TenantID: "system"}
+		ctx := auth.WithIdentity(context.Background(), identity)
+
+		resp, err := srv.tenantUnaryInterceptor(ctx, "req", info, passthroughUnaryHandler)
+		require.NoError(t, err)
+		assert.Equal(t, "ok", resp)
+	})
+}
+
 func TestTenantUnaryInterceptor_SORolePassesThrough(t *testing.T) {
 	t.Run("SO role gets cross-tenant access", func(t *testing.T) {
 		registry := testTenantRegistry(t)

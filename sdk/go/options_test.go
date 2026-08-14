@@ -32,6 +32,10 @@ func (m *mockService) ListBackends(ctx context.Context, opts ...ListOption) ([]B
 	return nil, nil
 }
 
+func (m *mockService) Algorithms(ctx context.Context) (*AlgorithmsResponse, error) {
+	return nil, nil
+}
+
 func (m *mockService) GetBackend(ctx context.Context, backendID string) (*BackendInfo, error) {
 	return nil, nil
 }
@@ -1379,6 +1383,14 @@ func (m *mockService) ListShares(ctx context.Context) (*ListSharesResponse, erro
 	return nil, nil
 }
 
+func (m *mockService) GetShare(ctx context.Context, serverURL, groupID string, shareIndex int) (*ShareInfo, error) {
+	return nil, nil
+}
+
+func (m *mockService) DeleteShare(ctx context.Context, serverURL, groupID string, shareIndex int) error {
+	return nil
+}
+
 func (m *mockService) GetShareCollectionStatus(ctx context.Context, groupID string) (*ShareCollectionStatus, error) {
 	return nil, nil
 }
@@ -1433,7 +1445,11 @@ func (m *mockService) ClaimCertComplete(ctx context.Context, req *ClaimCertCompl
 	return nil, nil
 }
 
-func (m *mockService) ClaimShare(ctx context.Context, req *ClaimShareRequest) (*ClaimShareResponse, error) {
+func (m *mockService) ClaimShareBegin(ctx context.Context, req *ClaimShareBeginRequest) (*ClaimShareBeginResponse, error) {
+	return nil, nil
+}
+
+func (m *mockService) ClaimShareComplete(ctx context.Context, req *ClaimShareCompleteRequest) (*ClaimShareCompleteResponse, error) {
 	return nil, nil
 }
 
@@ -1480,5 +1496,9 @@ func (m *mockService) BindUserCert(ctx context.Context, username, thumbprint str
 }
 
 func (m *mockService) ListUserCredentials(ctx context.Context, username string) (*ListUserCredentialsResponse, error) {
+	return nil, nil
+}
+
+func (m *mockService) QueryAudit(ctx context.Context, filter *AuditFilter) (*AuditPage, error) {
 	return nil, nil
 }

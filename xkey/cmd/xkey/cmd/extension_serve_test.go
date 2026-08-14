@@ -17,6 +17,7 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"io"
 	"log/slog"
 	"os"
 	"path/filepath"
@@ -27,6 +28,7 @@ import (
 	"github.com/spf13/cobra"
 
 	xkms "github.com/jeremyhahn/go-xkms/sdk/go"
+	"github.com/jeremyhahn/go-xkms/xkey/pkg/authenticator"
 	"github.com/jeremyhahn/go-xkms/xkey/pkg/gui/services"
 	"github.com/jeremyhahn/go-xkms/xkey/pkg/ipc"
 	"github.com/jeremyhahn/go-xkms/xkey/pkg/xhome"
@@ -752,29 +754,46 @@ func TestInitHeadlessAuthenticator_Success(t *testing.T) {
 	}
 }
 
-func TestInitHeadlessAuthenticator_InvalidDir(t *testing.T) {
-	// Use a path that cannot be created (nested under a non-existent root
-	// with a file in the way).
-	dataDir := "/nonexistent/path/that/does/not/exist"
-	logger := slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelError}))
-
-	backend, err := xkms.NewFileStorageBackend(dataDir)
-	if err != nil {
-		// Backend creation itself may fail for invalid paths — that's acceptable.
-		// The test intent is to verify initHeadlessAuthenticator handles the failure.
-		t.Skipf("xkms.NewFileStorageBackend failed for invalid path (expected): %v", err)
-	}
+// TestInitHeadlessAuthenticator_StorageError verifies that a storage layer
+// that cannot be constructed is surfaced as ErrServeAuthenticatorInitFailed
+// with the underlying cause preserved. A nil backend is the one input that
+// deterministically fails BackendStorage construction, so the error path is
+// exercised directly instead of relying on the host rejecting a path.
+func TestInitHeadlessAuthenticator_StorageError(t *testing.T) {
+	logger := slog.New(slog.NewTextHandler(io.Discard, &slog.HandlerOptions{Level: slog.LevelError}))
 	pinSvc := services.NewPINService()
 
-	auth, err := initHeadlessAuthenticator(backend, pinSvc, logger)
+	auth, err := initHeadlessAuthenticator(nil, pinSvc, logger)
 	if err == nil {
-		t.Fatal("expected error for invalid directory")
+		t.Fatal("expected error when the storage backend is unusable")
 	}
 	if auth != nil {
 		t.Fatal("expected nil authenticator on error")
 	}
 	if !errors.Is(err, ErrServeAuthenticatorInitFailed) {
 		t.Fatalf("expected ErrServeAuthenticatorInitFailed, got %v", err)
+	}
+	if !errors.Is(err, authenticator.ErrNilStorage) {
+		t.Fatalf("expected the underlying cause to be preserved, got %v", err)
+	}
+}
+
+// TestNewFileStorageBackend_UncreatablePath verifies that the file storage
+// backend refuses a data directory that cannot be created because a regular
+// file occupies a path component. This stays inside t.TempDir so the host
+// filesystem is untouched.
+func TestNewFileStorageBackend_UncreatablePath(t *testing.T) {
+	blocker := filepath.Join(t.TempDir(), "not-a-directory")
+	if err := os.WriteFile(blocker, []byte("x"), 0o600); err != nil {
+		t.Fatalf("failed to create blocking file: %v", err)
+	}
+
+	backend, err := xkms.NewFileStorageBackend(filepath.Join(blocker, "data"))
+	if err == nil {
+		t.Fatal("expected NewFileStorageBackend to reject an uncreatable data dir")
+	}
+	if backend != nil {
+		t.Fatal("expected nil backend when construction fails")
 	}
 }
 

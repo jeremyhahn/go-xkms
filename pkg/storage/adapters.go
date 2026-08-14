@@ -72,6 +72,50 @@ func KeyExists(ctx context.Context, backend Backend, id string) (bool, error) {
 	return backend.Exists(ctx, key)
 }
 
+// SaveKeyMetadata stores a key's metadata record for the given ID using the backend.
+// It automatically constructs the storage path using MetadataPath(id).
+// Metadata is written through the identical backend.Put call as SaveKey, the
+// seam where the system/tenant barrier applies its encryption, so a
+// key's metadata inherits the same protection as the key material it
+// describes -- there is no separate, unsealed metadata channel.
+// Returns ErrInvalidID if the ID is empty.
+// Returns any error from the backend Put operation.
+func SaveKeyMetadata(ctx context.Context, backend Backend, id string, metadata []byte) error {
+	if id == "" {
+		return ErrInvalidID
+	}
+	key := MetadataPath(id)
+	return backend.Put(ctx, key, metadata)
+}
+
+// GetKeyMetadata retrieves a key's metadata record for the given ID using the backend.
+// It automatically constructs the storage path using MetadataPath(id).
+// Returns ErrInvalidID if the ID is empty.
+// Returns ErrNotFound if no metadata record exists for the key. Callers must
+// treat this as "no metadata was ever recorded" rather than a failure --
+// keys created before metadata persistence existed have no record.
+// Returns any error from the backend Get operation.
+func GetKeyMetadata(ctx context.Context, backend Backend, id string) ([]byte, error) {
+	if id == "" {
+		return nil, ErrInvalidID
+	}
+	key := MetadataPath(id)
+	return backend.Get(ctx, key)
+}
+
+// DeleteKeyMetadata removes a key's metadata record for the given ID using the backend.
+// It automatically constructs the storage path using MetadataPath(id).
+// Returns ErrInvalidID if the ID is empty.
+// Returns ErrNotFound if no metadata record exists for the key.
+// Returns any error from the backend Delete operation.
+func DeleteKeyMetadata(ctx context.Context, backend Backend, id string) error {
+	if id == "" {
+		return ErrInvalidID
+	}
+	key := MetadataPath(id)
+	return backend.Delete(ctx, key)
+}
+
 // SaveCert stores certificate data for the given ID using the backend.
 // It automatically constructs the storage path using CertPath(id).
 // Returns ErrInvalidID if the ID is empty.

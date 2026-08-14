@@ -654,7 +654,7 @@ func (b *PhoneKeyBackend) Sign(handle keybackend.KeyHandle, algorithm int, data 
 	// with biometric binding requires biometric auth for every key operation.
 	// Attempting to sign without biometric will result in a crypto error.
 	b.log.Debug("Sign: sending request to phone",
-		"credential_id", credIDHex[:16],
+		"credential_id", shortCredID(credIDHex),
 		"data_hash_len", len(data))
 	req := NewRequest(MethodSign, &SignParams{
 		CredentialID:             phoneHandle.credentialID,
@@ -664,13 +664,13 @@ func (b *PhoneKeyBackend) Sign(handle keybackend.KeyHandle, algorithm int, data 
 
 	resp, err := b.SendRequest(ctx, req)
 	if err != nil {
-		b.log.Error("Sign: request failed", "credential_id", credIDHex[:16], "error", err)
+		b.log.Error("Sign: request failed", "credential_id", shortCredID(credIDHex), "error", err)
 		return nil, err
 	}
 
 	if resp.Error != nil {
 		b.log.Error("Sign: phone returned error",
-			"credential_id", credIDHex[:16],
+			"credential_id", shortCredID(credIDHex),
 			"error_code", resp.Error.Code,
 			"error_message", resp.Error.Message,
 			"error_data", resp.Error.Data)
@@ -685,7 +685,7 @@ func (b *PhoneKeyBackend) Sign(handle keybackend.KeyHandle, algorithm int, data 
 	}
 
 	b.log.Debug("Sign: completed with biometric verification",
-		"credential_id", credIDHex[:16],
+		"credential_id", shortCredID(credIDHex),
 		"signature_len", len(result.Signature))
 	return result.Signature, nil
 }
@@ -708,7 +708,7 @@ func (b *PhoneKeyBackend) LoadKey(credentialID []byte, algorithm int) (keybacken
 		if handle.algorithm != algorithm {
 			return nil, ErrUnsupportedAlgorithm
 		}
-		b.log.Debug("LoadKey: found in local cache", "credential_id", credIDHex[:16])
+		b.log.Debug("LoadKey: found in local cache", "credential_id", shortCredID(credIDHex))
 		return handle, nil
 	}
 	b.mu.RUnlock()
@@ -726,7 +726,7 @@ func (b *PhoneKeyBackend) LoadKey(credentialID []byte, algorithm int) (keybacken
 	}
 
 	// Send load request to verify key exists
-	b.log.Debug("LoadKey: sending request to phone", "credential_id", credIDHex[:16])
+	b.log.Debug("LoadKey: sending request to phone", "credential_id", shortCredID(credIDHex))
 	req := NewRequest(MethodLoadKey, &LoadKeyParams{
 		CredentialID: credentialID,
 		Algorithm:    algorithm,
@@ -734,13 +734,13 @@ func (b *PhoneKeyBackend) LoadKey(credentialID []byte, algorithm int) (keybacken
 
 	resp, err := b.SendRequest(ctx, req)
 	if err != nil {
-		b.log.Error("LoadKey: request failed", "credential_id", credIDHex[:16], "error", err)
+		b.log.Error("LoadKey: request failed", "credential_id", shortCredID(credIDHex), "error", err)
 		return nil, err
 	}
 
 	if resp.Error != nil {
 		b.log.Error("LoadKey: phone returned error",
-			"credential_id", credIDHex[:16],
+			"credential_id", shortCredID(credIDHex),
 			"error_code", resp.Error.Code,
 			"error_message", resp.Error.Message,
 			"error_data", resp.Error.Data)
@@ -755,7 +755,7 @@ func (b *PhoneKeyBackend) LoadKey(credentialID []byte, algorithm int) (keybacken
 	}
 
 	if !result.Exists {
-		b.log.Error("LoadKey: key does not exist on phone", "credential_id", credIDHex[:16])
+		b.log.Error("LoadKey: key does not exist on phone", "credential_id", shortCredID(credIDHex))
 		return nil, ErrKeyNotFound
 	}
 
@@ -769,7 +769,7 @@ func (b *PhoneKeyBackend) LoadKey(credentialID []byte, algorithm int) (keybacken
 	b.handles[credIDHex] = handle
 	b.mu.Unlock()
 
-	b.log.Debug("LoadKey: key verified and cached", "credential_id", credIDHex[:16])
+	b.log.Debug("LoadKey: key verified and cached", "credential_id", shortCredID(credIDHex))
 	return handle, nil
 }
 
@@ -861,6 +861,20 @@ func (b *PhoneKeyBackend) Close() error {
 
 	b.log.Info("phone backend closed")
 	return nil
+}
+
+// credIDLogPrefixLen is the number of hex characters of a credential ID
+// included in log records.
+const credIDLogPrefixLen = 16
+
+// shortCredID returns a log-safe prefix of a hex-encoded credential ID.
+// Credential IDs shorter than credIDLogPrefixLen/2 bytes are returned whole
+// rather than slicing out of range.
+func shortCredID(credIDHex string) string {
+	if len(credIDHex) > credIDLogPrefixLen {
+		return credIDHex[:credIDLogPrefixLen]
+	}
+	return credIDHex
 }
 
 // isAlgorithmSupported checks if the algorithm is supported.

@@ -52,6 +52,30 @@ const (
 	ErrCodeMethodNotFound = -32601
 	ErrCodeInvalidParams  = -32602
 	ErrCodeInternalError  = -32603
+
+	// Authorization codes. JSON-RPC 2.0 reserves -32000..-32099 for
+	// implementation-defined server errors; the standard code set has no
+	// authentication or authorization member. These mirror the HTTP statuses
+	// the REST and QUIC transports return for the same decisions (401 and
+	// 403) and follow the ACME MCP surface's use of the reserved range
+	// (pkg/acme/api/server/server.go).
+
+	// ErrCodeUnauthorized reports a request that carried no authenticated
+	// identity for a method that requires one — the REST/QUIC 401.
+	ErrCodeUnauthorized = -32002
+
+	// ErrCodeForbidden reports an authenticated caller that lacks the qrdb
+	// role grant required by the method — the REST/QUIC 403. It also reports
+	// a tenant-scoped caller whose tenant carries no registered barrier (see
+	// pkg/api/tenantgate.ErrTenantNotFound), mirroring the REST/QUIC/gRPC
+	// 403/PermissionDenied for the same condition.
+	ErrCodeForbidden = -32003
+
+	// ErrCodeServiceUnavailable reports a tenant-scoped caller whose tenant
+	// barrier exists but is currently sealed (see
+	// pkg/api/tenantgate.ErrTenantSealed) — the REST/QUIC 503 and the gRPC
+	// Unavailable status.
+	ErrCodeServiceUnavailable = -32004
 )
 
 // JSONRPCNotification represents a JSON-RPC 2.0 notification (no ID)
@@ -89,6 +113,7 @@ type GenerateKeyParams struct {
 	Curve      string `json:"curve,omitempty"`
 	Algorithm  string `json:"algorithm,omitempty"` // For AES: "aes128-gcm", "aes192-gcm", "aes256-gcm"
 	Exportable bool   `json:"exportable,omitempty"`
+	Sensitive  bool   `json:"sensitive,omitempty"` // CKA_SENSITIVE: plaintext is never released
 }
 
 // GenerateKeyResult represents the result of key generation
@@ -116,26 +141,62 @@ type GetKeyResult struct {
 	Backend      string `json:"backend"`
 }
 
-// SignParams represents parameters for signing
+// SignParams represents parameters for signing.
+//
+// Every field below is forwarded verbatim to transport.SignRequest; see that
+// type for the authoritative semantics. This struct exists only to give the
+// JSON-RPC surface its own parameter shape, not to reinterpret any parameter.
 type SignParams struct {
 	KeyID   string `json:"key_id"`
 	Backend string `json:"backend"`
 	Data    []byte `json:"data"`
 	Hash    string `json:"hash"`
+	// DataIsDigest states that Data is already the digest and must not be
+	// hashed again, while Hash still names which digest produced it.
+	// RSASSA-PSS needs both facts at once, so they are separate fields.
+	DataIsDigest bool `json:"data_is_digest,omitempty"`
+	// Padding selects the RSA signature padding scheme: "" or "pkcs1v15"
+	// (default, PKCS#1 v1.5) or "pss" (RSASSA-PSS).
+	Padding string `json:"padding,omitempty"`
+	// SaltLength is the RSA-PSS salt length in bytes. Zero selects
+	// rsa.PSSSaltLengthAuto. Ignored unless Padding is "pss".
+	SaltLength int `json:"salt_length,omitempty"`
+	// PreHash selects the pre-hashed EdDSA variant (Ed25519ph) per RFC 8032
+	// Table 73. Only meaningful for Ed25519 keys.
+	PreHash bool `json:"pre_hash,omitempty"`
+	// Context is the optional EdDSA context string (Ed25519ctx).
+	Context []byte `json:"context,omitempty"`
 }
 
 // SignResult represents the result of signing
 type SignResult struct {
 	Signature interface{} `json:"signature"`
+	// Algorithm names the key algorithm that produced the signature, as
+	// reported by the service layer.
+	Algorithm string `json:"algorithm,omitempty"`
 }
 
-// VerifyParams represents parameters for verification
+// VerifyParams represents parameters for verification. Its parameters mirror
+// SignParams' and must match those used to produce Signature.
 type VerifyParams struct {
 	KeyID     string      `json:"key_id"`
 	Backend   string      `json:"backend"`
 	Data      []byte      `json:"data"`
 	Signature interface{} `json:"signature"`
 	Hash      string      `json:"hash"`
+	// DataIsDigest states that Data is already the digest. See
+	// SignParams.DataIsDigest.
+	DataIsDigest bool `json:"data_is_digest,omitempty"`
+	// Padding selects the RSA signature padding scheme. See
+	// SignParams.Padding.
+	Padding string `json:"padding,omitempty"`
+	// SaltLength is the RSA-PSS salt length in bytes the signature is
+	// expected to use. Zero selects rsa.PSSSaltLengthAuto (auto-detect).
+	SaltLength int `json:"salt_length,omitempty"`
+	// PreHash selects the pre-hashed EdDSA variant. See SignParams.PreHash.
+	PreHash bool `json:"pre_hash,omitempty"`
+	// Context is the optional EdDSA context string. See SignParams.Context.
+	Context []byte `json:"context,omitempty"`
 }
 
 // VerifyResult represents the result of verification
@@ -175,6 +236,28 @@ type DecryptParams struct {
 	Nonce          []byte `json:"nonce,omitempty"`           // For symmetric decryption
 	Tag            []byte `json:"tag,omitempty"`             // For symmetric decryption
 	AdditionalData []byte `json:"additional_data,omitempty"` // For symmetric decryption with AAD
+	// Mode selects the cipher mode of operation: "" (default AEAD, AES-GCM or
+	// ChaCha20-Poly1305), "cbc" (unpadded AES-CBC), or "cbc-pad" (AES-CBC with
+	// PKCS#7 padding). Must match the Mode used to produce Ciphertext.
+	Mode string `json:"mode,omitempty"`
+	// IV is the AES-CBC initialization vector used at encryption time,
+	// exactly 16 bytes. Required when Mode is "cbc" or "cbc-pad".
+	IV []byte `json:"iv,omitempty"`
+	// TagSize is the AEAD authentication tag length in bytes that Tag
+	// carries; 0 selects the cipher's full-length tag. It must equal the
+	// TagSize used to encrypt.
+	TagSize int `json:"tag_size,omitempty"`
+	// Padding selects the RSA decryption scheme for an asymmetric key:
+	// "" or "pkcs1v15" (default), or "oaep". This handler used to force
+	// OAEP-SHA-256 unconditionally, so a PKCS#1 v1.5 ciphertext could not be
+	// decrypted here at all and an OAEP ciphertext under any other digest
+	// failed with an error that read like corruption.
+	Padding string `json:"padding,omitempty"`
+	// Hash names the OAEP digest (e.g. "SHA-256"). Ignored unless Padding is
+	// "oaep"; empty selects SHA-1, which is OAEP's own default.
+	Hash string `json:"hash,omitempty"`
+	// Label is the optional OAEP label. Ignored unless Padding is "oaep".
+	Label []byte `json:"label,omitempty"`
 }
 
 // DecryptResult represents the result of decryption
@@ -188,6 +271,22 @@ type EncryptParams struct {
 	Backend        string `json:"backend"`
 	Plaintext      []byte `json:"plaintext"`
 	AdditionalData []byte `json:"additional_data,omitempty"` // For AEAD (authenticated encryption with associated data)
+	// Nonce optionally supplies the AEAD nonce to use. If empty, the backend
+	// generates a random one and returns it in EncryptResult.Nonce. Only
+	// meaningful for the default AEAD mode; AES-CBC uses IV instead.
+	Nonce []byte `json:"nonce,omitempty"`
+	// Mode selects the cipher mode of operation: "" (default AEAD, AES-GCM or
+	// ChaCha20-Poly1305), "cbc" (unpadded AES-CBC; Plaintext must already be a
+	// whole number of AES blocks), or "cbc-pad" (AES-CBC with PKCS#7 padding).
+	Mode string `json:"mode,omitempty"`
+	// IV supplies the AES-CBC initialization vector, exactly 16 bytes. Ignored
+	// for the default AEAD mode. If empty with a CBC Mode, a random IV is
+	// generated and returned in EncryptResult.IV.
+	IV []byte `json:"iv,omitempty"`
+	// TagSize is the AEAD authentication tag length in bytes; 0 selects the
+	// cipher's full-length tag. AES-GCM admits 12-16 bytes per NIST
+	// SP 800-38D section 5.2.1.2.
+	TagSize int `json:"tag_size,omitempty"`
 }
 
 // EncryptResult represents the result of encryption
@@ -195,6 +294,9 @@ type EncryptResult struct {
 	Ciphertext []byte `json:"ciphertext"` // base64 encoded in JSON
 	Nonce      []byte `json:"nonce"`      // base64 encoded in JSON
 	Tag        []byte `json:"tag"`        // base64 encoded in JSON
+	// IV is the AES-CBC initialization vector used for encryption. Populated
+	// only when the request's Mode was "cbc" or "cbc-pad".
+	IV []byte `json:"iv,omitempty"`
 }
 
 // SaveCertParams represents parameters for saving a certificate
@@ -367,6 +469,11 @@ type AsymmetricEncryptParams struct {
 	KeyID     string `json:"key_id"`
 	Backend   string `json:"backend"`
 	Plaintext []byte `json:"plaintext"`
+	// Hash names the RSA-OAEP digest (e.g. "SHA-384"). Empty selects
+	// SHA-256. The digest is part of the ciphertext's construction, so a
+	// caller that asks for one hash and gets another produces a blob its
+	// intended recipient cannot open.
+	Hash string `json:"hash,omitempty"`
 }
 
 // AsymmetricEncryptResult represents the result of asymmetric encryption
@@ -379,6 +486,17 @@ type AsymmetricDecryptParams struct {
 	KeyID      string `json:"key_id"`
 	Backend    string `json:"backend"`
 	Ciphertext []byte `json:"ciphertext"`
+	// Padding selects the RSA decryption scheme: "" or "pkcs1v15", or
+	// "oaep". Empty defaults to "oaep" here rather than to PKCS#1 v1.5,
+	// because this method is the counterpart of xkms.asymmetricEncrypt,
+	// which only ever produces OAEP ciphertexts. See DecryptParams.Padding
+	// for the general-purpose decrypt method's default.
+	Padding string `json:"padding,omitempty"`
+	// Hash names the OAEP digest. Empty selects SHA-256, matching
+	// xkms.asymmetricEncrypt's own default.
+	Hash string `json:"hash,omitempty"`
+	// Label is the optional OAEP label.
+	Label []byte `json:"label,omitempty"`
 }
 
 // AsymmetricDecryptResult represents the result of asymmetric decryption

@@ -50,20 +50,10 @@ var (
 	// not match a known, implemented strategy.
 	ErrUnknownKeyStrategy = errors.New("clusterca: unknown cluster CA key strategy")
 
-	// ErrIssuanceNotLocal is returned by a strategy's RuntimeBackend when this
-	// node cannot issue locally and must delegate (reserved for future
-	// leader-only / sub-quorum threshold strategies).
-	ErrIssuanceNotLocal = errors.New("clusterca: cluster CA issuance is not local to this node")
-
 	// ErrStrategyMisconfigured is returned when a strategy's required
 	// dependencies are absent (e.g. hsm without an HSM backend, barrier runtime
 	// without replicated storage).
 	ErrStrategyMisconfigured = errors.New("clusterca: cluster CA key strategy misconfigured")
-
-	// ErrKeyStrategyNotImplemented is returned for a recognized strategy whose
-	// implementation has not yet landed. It fails closed so a deployment never
-	// silently runs a half-built custody model.
-	ErrKeyStrategyNotImplemented = errors.New("clusterca: cluster CA key strategy not yet implemented")
 )
 
 // StrategyDeps carries the composition-root dependencies a strategy needs. The
@@ -141,14 +131,14 @@ type ClusterCAKeyStrategy interface {
 	// RuntimeBackend returns THIS node's durable keystore for the cluster CA
 	// identity once the datastore is available. On the first node it promotes
 	// the bootstrap key into the durable (replicated) store as needed; on other
-	// nodes it resolves the shared key. It returns ErrIssuanceNotLocal when this
-	// node must delegate issuance.
+	// nodes it resolves the shared key. Every implemented strategy issues
+	// locally, so a successful call always yields a signing-capable backend.
 	RuntimeBackend(ctx context.Context, deps *StrategyDeps) (xkms.Backend, error)
 }
 
 // NewKeyStrategy returns the cluster CA key strategy for the given name (empty
-// selects the barrier default). It errors for an unknown or not-yet-implemented
-// strategy so a misconfiguration fails closed rather than silently downgrading.
+// selects the barrier default). It errors for an unknown strategy so a
+// misconfiguration fails closed rather than silently downgrading.
 func NewKeyStrategy(name KeyStrategyName) (ClusterCAKeyStrategy, error) {
 	switch name {
 	case "", KeyStrategyBarrier:

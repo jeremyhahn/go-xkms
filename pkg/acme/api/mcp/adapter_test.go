@@ -16,12 +16,14 @@ package mcp
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"io"
 	"net/http"
 	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -1853,13 +1855,26 @@ func TestAdapterNetworkErrors(t *testing.T) {
 	})
 
 	t.Run("server closed mid-request", func(t *testing.T) {
+		// httptest.NewServer speaks HTTP/1.1, whose ResponseWriter always
+		// implements http.Hijacker, so the connection can be severed
+		// mid-request unconditionally. (Skipping from a server goroutine would
+		// be invalid anyway: only the test goroutine may do that.)
+		var hijackErr atomic.Pointer[error]
 		handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			hj, ok := w.(http.Hijacker)
 			if !ok {
-				t.Skip("ResponseWriter does not support hijacking")
+				err := errors.New("HTTP/1.1 ResponseWriter must implement http.Hijacker")
+				hijackErr.Store(&err)
+				return
 			}
-			conn, _, _ := hj.Hijack()
-			conn.Close()
+			conn, _, err := hj.Hijack()
+			if err != nil {
+				hijackErr.Store(&err)
+				return
+			}
+			if err := conn.Close(); err != nil {
+				hijackErr.Store(&err)
+			}
 		})
 		server := httptest.NewServer(handler)
 		defer server.Close()
@@ -1875,6 +1890,9 @@ func TestAdapterNetworkErrors(t *testing.T) {
 		_, err = adapter.GetStatus(ctx)
 		if err == nil {
 			t.Error("Expected error for closed connection")
+		}
+		if e := hijackErr.Load(); e != nil {
+			t.Errorf("handler failed to sever the connection: %v", *e)
 		}
 	})
 }

@@ -41,7 +41,7 @@ func (s *Suite) testCreateObject(t *testing.T) {
 		m, cleanup := s.createInitializedModule(t)
 		defer cleanup()
 
-		sh := openRWSession(t, m)
+		sh := openAuthenticatedRWSession(t, m)
 
 		template := []module.Attribute{
 			module.NewUint32Attribute(module.CKA_CLASS, uint32(module.CKO_DATA)),
@@ -54,9 +54,6 @@ func (s *Suite) testCreateObject(t *testing.T) {
 		}
 
 		handle, rv := m.CreateObject(sh, template)
-		if s.skipIfUnsupported(t, rv) {
-			return
-		}
 		requireRV(t, module.CKR_OK, rv, "CreateObject data should succeed")
 
 		if handle == 0 {
@@ -68,7 +65,7 @@ func (s *Suite) testCreateObject(t *testing.T) {
 		m, cleanup := s.createInitializedModule(t)
 		defer cleanup()
 
-		sh := openRWSession(t, m)
+		sh := openAuthenticatedRWSession(t, m)
 
 		handle := createSecretKeyObject(t, m, sh)
 		if handle == 0 {
@@ -89,9 +86,6 @@ func (s *Suite) testCreateObject(t *testing.T) {
 		}
 
 		_, rv := m.CreateObject(invalidSession, template)
-		if s.skipIfUnsupported(t, rv) {
-			return
-		}
 		requireRV(t, module.CKR_SESSION_HANDLE_INVALID, rv,
 			"CreateObject with invalid session should return CKR_SESSION_HANDLE_INVALID")
 	})
@@ -104,7 +98,7 @@ func (s *Suite) testCopyObject(t *testing.T) {
 		m, cleanup := s.createInitializedModule(t)
 		defer cleanup()
 
-		sh := openRWSession(t, m)
+		sh := openAuthenticatedRWSession(t, m)
 		srcHandle := createDataObject(t, m, sh, "copy-source")
 
 		copyTemplate := []module.Attribute{
@@ -112,9 +106,6 @@ func (s *Suite) testCopyObject(t *testing.T) {
 		}
 
 		newHandle, rv := m.CopyObject(sh, srcHandle, copyTemplate)
-		if s.skipIfUnsupported(t, rv) {
-			return
-		}
 		requireRV(t, module.CKR_OK, rv, "CopyObject should succeed")
 
 		if newHandle == 0 {
@@ -145,13 +136,10 @@ func (s *Suite) testCopyObject(t *testing.T) {
 		m, cleanup := s.createInitializedModule(t)
 		defer cleanup()
 
-		sh := openRWSession(t, m)
+		sh := openAuthenticatedRWSession(t, m)
 		invalidHandle := module.ObjectHandle(0xBADF00D)
 
 		_, rv := m.CopyObject(sh, invalidHandle, nil)
-		if s.skipIfUnsupported(t, rv) {
-			return
-		}
 		requireRV(t, module.CKR_OBJECT_HANDLE_INVALID, rv,
 			"CopyObject with invalid handle should return CKR_OBJECT_HANDLE_INVALID")
 	})
@@ -165,13 +153,10 @@ func (s *Suite) testDestroyObject(t *testing.T) {
 		m, cleanup := s.createInitializedModule(t)
 		defer cleanup()
 
-		sh := openRWSession(t, m)
+		sh := openAuthenticatedRWSession(t, m)
 		handle := createDataObject(t, m, sh, "destroy-me")
 
 		rv := m.DestroyObject(sh, handle)
-		if s.skipIfUnsupported(t, rv) {
-			return
-		}
 		requireRV(t, module.CKR_OK, rv, "DestroyObject should succeed for valid object")
 	})
 
@@ -179,13 +164,10 @@ func (s *Suite) testDestroyObject(t *testing.T) {
 		m, cleanup := s.createInitializedModule(t)
 		defer cleanup()
 
-		sh := openRWSession(t, m)
+		sh := openAuthenticatedRWSession(t, m)
 		invalidHandle := module.ObjectHandle(0xBADF00D)
 
 		rv := m.DestroyObject(sh, invalidHandle)
-		if s.skipIfUnsupported(t, rv) {
-			return
-		}
 		requireRV(t, module.CKR_OBJECT_HANDLE_INVALID, rv,
 			"DestroyObject with invalid handle should return CKR_OBJECT_HANDLE_INVALID")
 	})
@@ -194,13 +176,10 @@ func (s *Suite) testDestroyObject(t *testing.T) {
 		m, cleanup := s.createInitializedModule(t)
 		defer cleanup()
 
-		sh := openRWSession(t, m)
+		sh := openAuthenticatedRWSession(t, m)
 		handle := createDataObject(t, m, sh, "destroy-twice")
 
 		rv := m.DestroyObject(sh, handle)
-		if s.skipIfUnsupported(t, rv) {
-			return
-		}
 		requireRV(t, module.CKR_OK, rv, "first DestroyObject should succeed")
 
 		rv = m.DestroyObject(sh, handle)
@@ -217,7 +196,7 @@ func (s *Suite) testGetAttributeValue(t *testing.T) {
 		m, cleanup := s.createInitializedModule(t)
 		defer cleanup()
 
-		sh := openRWSession(t, m)
+		sh := openAuthenticatedRWSession(t, m)
 
 		const expectedLabel = "get-attr-test"
 		handle := createDataObject(t, m, sh, expectedLabel)
@@ -227,9 +206,6 @@ func (s *Suite) testGetAttributeValue(t *testing.T) {
 		}
 
 		attrs, rv := m.GetAttributeValue(sh, handle, getTemplate)
-		if s.skipIfUnsupported(t, rv) {
-			return
-		}
 		requireRV(t, module.CKR_OK, rv, "GetAttributeValue should succeed")
 
 		if len(attrs) != 1 {
@@ -245,7 +221,7 @@ func (s *Suite) testGetAttributeValue(t *testing.T) {
 		m, cleanup := s.createInitializedModule(t)
 		defer cleanup()
 
-		sh := openRWSession(t, m)
+		sh := openAuthenticatedRWSession(t, m)
 		invalidHandle := module.ObjectHandle(0xBADF00D)
 
 		getTemplate := []module.Attribute{
@@ -253,9 +229,6 @@ func (s *Suite) testGetAttributeValue(t *testing.T) {
 		}
 
 		_, rv := m.GetAttributeValue(sh, invalidHandle, getTemplate)
-		if s.skipIfUnsupported(t, rv) {
-			return
-		}
 		requireRV(t, module.CKR_OBJECT_HANDLE_INVALID, rv,
 			"GetAttributeValue with invalid handle should return CKR_OBJECT_HANDLE_INVALID")
 	})
@@ -269,7 +242,7 @@ func (s *Suite) testSetAttributeValue(t *testing.T) {
 		m, cleanup := s.createInitializedModule(t)
 		defer cleanup()
 
-		sh := openRWSession(t, m)
+		sh := openAuthenticatedRWSession(t, m)
 		handle := createDataObject(t, m, sh, "original-label")
 
 		const updatedLabel = "updated-label"
@@ -278,9 +251,6 @@ func (s *Suite) testSetAttributeValue(t *testing.T) {
 		}
 
 		rv := m.SetAttributeValue(sh, handle, setTemplate)
-		if s.skipIfUnsupported(t, rv) {
-			return
-		}
 		requireRV(t, module.CKR_OK, rv, "SetAttributeValue should succeed on modifiable object")
 
 		// Verify the label was updated
@@ -303,7 +273,7 @@ func (s *Suite) testSetAttributeValue(t *testing.T) {
 		m, cleanup := s.createInitializedModule(t)
 		defer cleanup()
 
-		sh := openRWSession(t, m)
+		sh := openAuthenticatedRWSession(t, m)
 		invalidHandle := module.ObjectHandle(0xBADF00D)
 
 		setTemplate := []module.Attribute{
@@ -311,9 +281,6 @@ func (s *Suite) testSetAttributeValue(t *testing.T) {
 		}
 
 		rv := m.SetAttributeValue(sh, invalidHandle, setTemplate)
-		if s.skipIfUnsupported(t, rv) {
-			return
-		}
 		requireRV(t, module.CKR_OBJECT_HANDLE_INVALID, rv,
 			"SetAttributeValue with invalid handle should return CKR_OBJECT_HANDLE_INVALID")
 	})
@@ -327,13 +294,10 @@ func (s *Suite) testFindObjects(t *testing.T) {
 		m, cleanup := s.createInitializedModule(t)
 		defer cleanup()
 
-		sh := openRWSession(t, m)
+		sh := openAuthenticatedRWSession(t, m)
 		createDataObject(t, m, sh, "find-cycle-obj")
 
 		rv := m.FindObjectsInit(sh, nil)
-		if s.skipIfUnsupported(t, rv) {
-			return
-		}
 		requireRV(t, module.CKR_OK, rv, "FindObjectsInit should succeed")
 
 		_, rv = m.FindObjects(sh, 10)
@@ -347,7 +311,7 @@ func (s *Suite) testFindObjects(t *testing.T) {
 		m, cleanup := s.createInitializedModule(t)
 		defer cleanup()
 
-		sh := openRWSession(t, m)
+		sh := openAuthenticatedRWSession(t, m)
 
 		const targetLabel = "find-by-label-target"
 		createDataObject(t, m, sh, targetLabel)
@@ -358,9 +322,6 @@ func (s *Suite) testFindObjects(t *testing.T) {
 		}
 
 		rv := m.FindObjectsInit(sh, searchTemplate)
-		if s.skipIfUnsupported(t, rv) {
-			return
-		}
 		requireRV(t, module.CKR_OK, rv, "FindObjectsInit with label filter should succeed")
 
 		handles, rv := m.FindObjects(sh, 10)
@@ -393,7 +354,7 @@ func (s *Suite) testFindObjects(t *testing.T) {
 		m, cleanup := s.createInitializedModule(t)
 		defer cleanup()
 
-		sh := openRWSession(t, m)
+		sh := openAuthenticatedRWSession(t, m)
 
 		createDataObject(t, m, sh, "all-obj-1")
 		createDataObject(t, m, sh, "all-obj-2")
@@ -401,9 +362,6 @@ func (s *Suite) testFindObjects(t *testing.T) {
 
 		// Empty template matches all objects
 		rv := m.FindObjectsInit(sh, []module.Attribute{})
-		if s.skipIfUnsupported(t, rv) {
-			return
-		}
 		requireRV(t, module.CKR_OK, rv, "FindObjectsInit with empty template should succeed")
 
 		handles, rv := m.FindObjects(sh, 100)
@@ -421,12 +379,9 @@ func (s *Suite) testFindObjects(t *testing.T) {
 		m, cleanup := s.createInitializedModule(t)
 		defer cleanup()
 
-		sh := openRWSession(t, m)
+		sh := openAuthenticatedRWSession(t, m)
 
 		_, rv := m.FindObjects(sh, 10)
-		if s.skipIfUnsupported(t, rv) {
-			return
-		}
 		requireRV(t, module.CKR_OPERATION_NOT_INITIALIZED, rv,
 			"FindObjects without FindObjectsInit should return CKR_OPERATION_NOT_INITIALIZED")
 	})
@@ -435,12 +390,9 @@ func (s *Suite) testFindObjects(t *testing.T) {
 		m, cleanup := s.createInitializedModule(t)
 		defer cleanup()
 
-		sh := openRWSession(t, m)
+		sh := openAuthenticatedRWSession(t, m)
 
 		rv := m.FindObjectsInit(sh, nil)
-		if s.skipIfUnsupported(t, rv) {
-			return
-		}
 		requireRV(t, module.CKR_OK, rv, "first FindObjectsInit should succeed")
 
 		rv = m.FindObjectsInit(sh, nil)
@@ -461,13 +413,10 @@ func (s *Suite) testGetObjectSize(t *testing.T) {
 		m, cleanup := s.createInitializedModule(t)
 		defer cleanup()
 
-		sh := openRWSession(t, m)
+		sh := openAuthenticatedRWSession(t, m)
 		handle := createDataObject(t, m, sh, "size-test-obj")
 
 		size, rv := m.GetObjectSize(sh, handle)
-		if s.skipIfUnsupported(t, rv) {
-			return
-		}
 		requireRV(t, module.CKR_OK, rv, "GetObjectSize should succeed for valid object")
 
 		if size == 0 {
@@ -479,13 +428,10 @@ func (s *Suite) testGetObjectSize(t *testing.T) {
 		m, cleanup := s.createInitializedModule(t)
 		defer cleanup()
 
-		sh := openRWSession(t, m)
+		sh := openAuthenticatedRWSession(t, m)
 		invalidHandle := module.ObjectHandle(0xBADF00D)
 
 		_, rv := m.GetObjectSize(sh, invalidHandle)
-		if s.skipIfUnsupported(t, rv) {
-			return
-		}
 		requireRV(t, module.CKR_OBJECT_HANDLE_INVALID, rv,
 			"GetObjectSize with invalid handle should return CKR_OBJECT_HANDLE_INVALID")
 	})

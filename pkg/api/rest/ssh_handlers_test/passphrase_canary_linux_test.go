@@ -100,18 +100,23 @@ func TestCanary_PassphraseNotInHeap(t *testing.T) {
 	runtime.GC()
 	runtime.GC()
 
-	// Best-effort /proc/self/mem scan. On platforms where we can't
-	// read maps, skip — a positive canary requires successful
-	// introspection.
+	// This file is linux-only, so /proc/self/maps is always readable and
+	// populated. Failing to read it means the canary has no subject, which
+	// invalidates the test rather than excusing it.
 	maps, err := os.ReadFile("/proc/self/maps")
-	if err != nil || len(maps) == 0 {
-		t.Skip("cannot introspect /proc/self/maps")
+	if err != nil {
+		t.Fatalf("read /proc/self/maps: %v", err)
+	}
+	if len(maps) == 0 {
+		t.Fatal("/proc/self/maps is empty: the canary cannot introspect this process")
 	}
 	// Also confirm the needle is present in the decoded base64
 	// copy of the request body before the wipe — smoke-control to
 	// confirm the test has a real test subject.
+	// Positive control: if the needle never reached the request body, the scan
+	// proves nothing. That is a broken test, not a reason to pass.
 	if !bytes.Contains([]byte(importBody.PassphraseB64), []byte(base64.StdEncoding.EncodeToString([]byte(needle)))) {
-		t.Skip("needle not present in test body — invalid setup")
+		t.Fatal("needle not present in test body: the canary has no test subject")
 	}
 	// The needle may still appear inside the memguard enclave
 	// pages (which are mlocked / guarded) — those are the intended

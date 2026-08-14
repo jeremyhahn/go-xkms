@@ -28,6 +28,13 @@ type EmbeddedServiceConfig struct {
 	// BackendName registers the embedded software backend under this name and
 	// makes it the default backend. Defaults to "software".
 	BackendName string
+
+	// KeyStorage optionally overrides where the software backend keeps key
+	// material. When nil, a plain file backend under KeyDir is used. A caller
+	// that wants the key material encrypted at rest passes a barrier-backed
+	// storage.Backend here (e.g. from pkg/pkcs11/localseal), so the embedded
+	// service consumes go-qrdb's barrier rather than any bespoke sealer.
+	KeyStorage StorageBackend
 }
 
 // NewEmbeddedService builds and initializes the in-process XKMS service with a
@@ -39,9 +46,13 @@ type EmbeddedServiceConfig struct {
 // constructor; storage comes from the SDK file backend — no pkg/* imports are
 // required of callers.
 func NewEmbeddedService(cfg EmbeddedServiceConfig) (XKMSServicer, error) {
-	keyStorage, err := NewFileStorageBackend(cfg.KeyDir)
-	if err != nil {
-		return nil, err
+	keyStorage := cfg.KeyStorage
+	if keyStorage == nil {
+		var err error
+		keyStorage, err = NewFileStorageBackend(cfg.KeyDir)
+		if err != nil {
+			return nil, err
+		}
 	}
 	certStorage, err := NewFileStorageBackend(cfg.KeyDir + "/certs")
 	if err != nil {

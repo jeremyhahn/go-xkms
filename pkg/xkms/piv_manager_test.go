@@ -1365,6 +1365,41 @@ func TestGeneratePIVKey_OutputFormat_SelfSigned(t *testing.T) {
 	assert.NoError(t, err)
 }
 
+// TestGeneratePIVKey_SelfSigned_KeyUsageMatchesSlotMetadata locks in that
+// pivGenerateSelfSigned (the entry point behind GeneratePIVKey's default and
+// "self-signed" output formats) takes its KeyUsage/ExtKeyUsage from
+// pivcert.DefaultSlotMetadata rather than a hand-rolled copy. It reads the
+// slot metadata live rather than hardcoding the expected flags, so a change
+// to a PIV slot's certificate policy is observable here without editing this
+// test — exactly like TestSelfSignExistingPIVKey_KeyUsageMatchesSlotMetadata
+// observes the same change through the OTHER self-sign entry point. Both
+// entry points share one implementation (buildAndStoreSelfSigned); this pair
+// of tests is what stops them from drifting apart again.
+func TestGeneratePIVKey_SelfSigned_KeyUsageMatchesSlotMetadata(t *testing.T) {
+	setupPIVWithMockResolver(t)
+
+	resp, err := GeneratePIVKey(context.Background(), &transport.GeneratePIVKeyRequest{
+		Backend:   "software",
+		Slot:      "9c",
+		Algorithm: "ecdsap256",
+	})
+	require.NoError(t, err)
+
+	slot, err := pivcert.ParseSlot("9c")
+	require.NoError(t, err)
+	meta, err := pivcert.DefaultSlotMetadata(slot)
+	require.NoError(t, err)
+
+	block, _ := pem.Decode(resp.Certificate)
+	require.NotNil(t, block)
+	cert, err := x509.ParseCertificate(block.Bytes)
+	require.NoError(t, err)
+
+	assert.Equal(t, meta.KeyUsage, cert.KeyUsage)
+	assert.ElementsMatch(t, meta.ExtKeyUsage, cert.ExtKeyUsage)
+	assert.True(t, cert.BasicConstraintsValid)
+}
+
 func TestGeneratePIVKey_OutputFormat_Invalid(t *testing.T) {
 	setupPIVWithMockResolver(t)
 
@@ -1729,6 +1764,35 @@ func TestSelfSignExistingPIVKey_DefaultCommonNameWhenEmpty(t *testing.T) {
 	stored, ok := store.certs[slot]
 	require.True(t, ok)
 	assert.Equal(t, pivcert.SlotName(slot), stored.Subject.CommonName)
+}
+
+// TestSelfSignExistingPIVKey_KeyUsageMatchesSlotMetadata is the counterpart
+// to TestGeneratePIVKey_SelfSigned_KeyUsageMatchesSlotMetadata: it proves the
+// "self-sign an existing key" entry point reads the same live
+// pivcert.DefaultSlotMetadata, not a copy hand-rolled at this call site.
+func TestSelfSignExistingPIVKey_KeyUsageMatchesSlotMetadata(t *testing.T) {
+	store, software := setupPIVAndServiceForSelfSign(t)
+	ctx := context.Background()
+
+	slot, err := pivcert.ParseSlot("9c")
+	require.NoError(t, err)
+	cn := PivSlotCN(slot)
+
+	_, err = software.GenerateECDSA(ctx, &types.KeyAttributes{CN: cn, KeyAlgorithm: x509.ECDSA})
+	require.NoError(t, err)
+
+	_, err = SelfSignExistingPIVKey(ctx, "software", "9c", "", 0)
+	require.NoError(t, err)
+
+	meta, err := pivcert.DefaultSlotMetadata(slot)
+	require.NoError(t, err)
+
+	stored, ok := store.certs[slot]
+	require.True(t, ok, "expected certificate to be stored in the PIV slot")
+
+	assert.Equal(t, meta.KeyUsage, stored.KeyUsage)
+	assert.ElementsMatch(t, meta.ExtKeyUsage, stored.ExtKeyUsage)
+	assert.True(t, stored.BasicConstraintsValid)
 }
 
 func TestSelfSignExistingPIVKey_InvalidSlot(t *testing.T) {

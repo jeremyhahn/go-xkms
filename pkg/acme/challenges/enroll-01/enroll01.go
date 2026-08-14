@@ -89,11 +89,21 @@ type activateCredentialRequest struct {
 	EncryptedSecret string `json:"encryptedSecret"`
 }
 
-// CertificateAuthority defines the CA interface needed for enroll-01 verification
-type CertificateAuthority interface {
+// TCGCSRVerifier verifies a TCG-CSR-IDEVID and produces the
+// TPM2_MakeCredential challenge components used by the enroll-01 challenge.
+type TCGCSRVerifier interface {
 	// VerifyTCG_CSR_IDevIDBytes verifies a TCG-CSR-IDEVID and returns credential components
 	// Returns: credentialBlob, encryptedSecret, plainSecret, error
-	VerifyTCG_CSR_IDevIDBytes(packedCSR []byte, sigAlg interface{}) ([]byte, []byte, []byte, error)
+	//
+	// sigAlg is x509.SignatureAlgorithm, matching pkg/ca.TCGCA exactly. It was
+	// declared interface{} here, and because Go requires an exact method
+	// signature match, *ca.CA -- the only production implementation -- did not
+	// satisfy this interface. The capability assertion in
+	// sdk/go/acme/attestation.go therefore always failed and every enroll-01
+	// challenge returned ErrACMEEnrollCAUnsupported, so TPM IDevID enrollment
+	// could never succeed. The tests passed because the mock was written
+	// against interface{} and matched the declaration the real CA could not.
+	VerifyTCG_CSR_IDevIDBytes(packedCSR []byte, sigAlg x509.SignatureAlgorithm) ([]byte, []byte, []byte, error)
 
 	// DefaultSignatureAlgorithm returns the CA's default signature algorithm
 	DefaultSignatureAlgorithm() x509.SignatureAlgorithm
@@ -129,7 +139,7 @@ type TrustedPlatformModule interface {
 //
 // Parameters:
 //   - resolver: DNS resolver for domain name resolution
-//   - ca: Certificate Authority for CSR verification and credential generation
+//   - ca: TCG-CSR-IDEVID verifier for CSR verification and credential generation
 //   - domain: Domain name to verify
 //   - port: HTTP port for challenge communication
 //   - token: Challenge token
@@ -140,7 +150,7 @@ type TrustedPlatformModule interface {
 //   - error if verification fails at any step
 func Verify(
 	resolver *net.Resolver,
-	ca CertificateAuthority,
+	ca TCGCSRVerifier,
 	domain, port, token, keyAuth string) error {
 
 	// Retrieve the TCG-CSR-IDevID from the challenge endpoint
@@ -241,7 +251,6 @@ func Verify(
 // Parameters:
 //   - port: HTTP port to listen on
 //   - keyAuth: Key authorization (used as qualifying data in CSR)
-//   - ca: Certificate Authority (not used in client setup)
 //   - tpm: Trusted Platform Module for key creation and activation
 //
 // Returns:
@@ -253,7 +262,6 @@ func Verify(
 // - POST /.well-known/acme-activation/{token}: Activates credential and returns secret
 func Setup(
 	port, keyAuth string,
-	ca CertificateAuthority,
 	tpm TrustedPlatformModule) ([]byte, error) {
 
 	ekCert, err := tpm.EKCertificate()

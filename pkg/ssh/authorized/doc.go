@@ -22,8 +22,12 @@
 //
 // The Store sub-surface persists Entries by (scope, owner, name) using
 // the same storage.Backend contract that pkg/ssh/keys and
-// pkg/ssh/known_hosts use. Verify looks up pinned Entries and matches
-// an incoming ssh.PublicKey against them by SHA256 fingerprint.
+// pkg/ssh/known_hosts use. Reads return a Record — the stored (scope,
+// owner, name) coordinates and add timestamp paired with the parsed
+// Entry — so a listed entry can be fed straight back into Get or
+// Remove. Verify looks up pinned Records and matches an incoming
+// ssh.PublicKey against them by SHA256 fingerprint, returning the
+// Record that granted access.
 //
 // # Layering
 //

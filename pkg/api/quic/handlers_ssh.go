@@ -24,6 +24,7 @@ import (
 	gossh "golang.org/x/crypto/ssh"
 
 	"github.com/jeremyhahn/go-xkms/pkg/api/rest/secureio"
+	"github.com/jeremyhahn/go-xkms/pkg/auth"
 	pkgauthorized "github.com/jeremyhahn/go-xkms/pkg/ssh/authorized"
 	pkgkeys "github.com/jeremyhahn/go-xkms/pkg/ssh/keys"
 	pkgknownhosts "github.com/jeremyhahn/go-xkms/pkg/ssh/known_hosts"
@@ -126,7 +127,7 @@ func (s *Server) handleSSHKeyOps(w http.ResponseWriter, r *http.Request) {
 
 // handleSSHGenerate handles POST /xkms/v1/ssh/keys.
 func (s *Server) handleSSHGenerate(w http.ResponseWriter, r *http.Request) {
-	if !s.authorize(w, r, "ssh", "write") {
+	if !s.authorize(w, r, auth.ResourceSSH, auth.ActionWrite) {
 		return
 	}
 	var req sdkssh.GenerateRequest
@@ -146,7 +147,7 @@ func (s *Server) handleSSHGenerate(w http.ResponseWriter, r *http.Request) {
 // (if present) is decoded directly into a memguard-backed *secure.Buffer
 // via secureio.PasswordField — plaintext never occupies a Go string.
 func (s *Server) handleSSHImport(w http.ResponseWriter, r *http.Request) {
-	if !s.authorize(w, r, "ssh", "write") {
+	if !s.authorize(w, r, auth.ResourceSSH, auth.ActionWrite) {
 		return
 	}
 	var dto sshImportDTO
@@ -181,7 +182,7 @@ func (s *Server) handleSSHImport(w http.ResponseWriter, r *http.Request) {
 
 // handleSSHListKeys handles GET /xkms/v1/ssh/keys.
 func (s *Server) handleSSHListKeys(w http.ResponseWriter, r *http.Request) {
-	if !s.authorize(w, r, "ssh", "read") {
+	if !s.authorize(w, r, auth.ResourceSSH, auth.ActionRead) {
 		return
 	}
 	list, err := s.sshClient.Keys().List(r.Context(), sdkssh.ListKeysRequest{
@@ -197,7 +198,7 @@ func (s *Server) handleSSHListKeys(w http.ResponseWriter, r *http.Request) {
 
 // handleSSHGetKey handles GET /xkms/v1/ssh/keys/{scope}/{owner}/{name}.
 func (s *Server) handleSSHGetKey(w http.ResponseWriter, r *http.Request, scope, owner, name string) {
-	if !s.authorize(w, r, "ssh", "read") {
+	if !s.authorize(w, r, auth.ResourceSSH, auth.ActionRead) {
 		return
 	}
 	out, err := s.sshClient.Keys().Get(r.Context(), sdkssh.GetKeyRequest{
@@ -214,7 +215,7 @@ func (s *Server) handleSSHGetKey(w http.ResponseWriter, r *http.Request, scope, 
 
 // handleSSHDeleteKey handles DELETE /xkms/v1/ssh/keys/{scope}/{owner}/{name}.
 func (s *Server) handleSSHDeleteKey(w http.ResponseWriter, r *http.Request, scope, owner, name string) {
-	if !s.authorize(w, r, "ssh", "delete") {
+	if !s.authorize(w, r, auth.ResourceSSH, auth.ActionDelete) {
 		return
 	}
 	if err := s.sshClient.Keys().Delete(r.Context(), sdkssh.DeleteKeyRequest{
@@ -234,7 +235,7 @@ func (s *Server) handleSSHExportPublic(w http.ResponseWriter, r *http.Request, s
 		s.sendError(w, http.StatusMethodNotAllowed, "method not allowed")
 		return
 	}
-	if !s.authorize(w, r, "ssh", "read") {
+	if !s.authorize(w, r, auth.ResourceSSH, auth.ActionRead) {
 		return
 	}
 	out, err := s.sshClient.Keys().ExportPublic(r.Context(), sdkssh.ExportRequest{
@@ -257,7 +258,7 @@ func (s *Server) handleSSHSign(w http.ResponseWriter, r *http.Request, scope, ow
 		s.sendError(w, http.StatusMethodNotAllowed, "method not allowed")
 		return
 	}
-	if !s.authorize(w, r, "ssh", "write") {
+	if !s.authorize(w, r, auth.ResourceSSH, auth.ActionWrite) {
 		return
 	}
 	var req sshSignReq
@@ -345,7 +346,7 @@ func (s *Server) handleSSHKnownHostOps(w http.ResponseWriter, r *http.Request) {
 
 // handleSSHAddKnownHost handles POST /xkms/v1/ssh/known-hosts.
 func (s *Server) handleSSHAddKnownHost(w http.ResponseWriter, r *http.Request) {
-	if !s.authorize(w, r, "ssh", "write") {
+	if !s.authorize(w, r, auth.ResourceSSH, auth.ActionWrite) {
 		return
 	}
 	var req sdkssh.AddKnownHostRequest
@@ -362,7 +363,7 @@ func (s *Server) handleSSHAddKnownHost(w http.ResponseWriter, r *http.Request) {
 
 // handleSSHListKnownHosts handles GET /xkms/v1/ssh/known-hosts.
 func (s *Server) handleSSHListKnownHosts(w http.ResponseWriter, r *http.Request) {
-	if !s.authorize(w, r, "ssh", "read") {
+	if !s.authorize(w, r, auth.ResourceSSH, auth.ActionRead) {
 		return
 	}
 	list, err := s.sshClient.KnownHosts().List(r.Context(), sdkssh.ListKnownHostsRequest{
@@ -378,7 +379,7 @@ func (s *Server) handleSSHListKnownHosts(w http.ResponseWriter, r *http.Request)
 
 // handleSSHRemoveKnownHost handles DELETE /xkms/v1/ssh/known-hosts/{host}.
 func (s *Server) handleSSHRemoveKnownHost(w http.ResponseWriter, r *http.Request, host string) {
-	if !s.authorize(w, r, "ssh", "delete") {
+	if !s.authorize(w, r, auth.ResourceSSH, auth.ActionDelete) {
 		return
 	}
 	err := s.sshClient.KnownHosts().Remove(r.Context(), sdkssh.RemoveKnownHostRequest{
@@ -398,7 +399,7 @@ func (s *Server) handleSSHRemoveKnownHost(w http.ResponseWriter, r *http.Request
 // returning 204 on match and 409 on mismatch — the same semantics as
 // the REST transport.
 func (s *Server) handleSSHVerifyKnownHost(w http.ResponseWriter, r *http.Request, host string) {
-	if !s.authorize(w, r, "ssh", "read") {
+	if !s.authorize(w, r, auth.ResourceSSH, auth.ActionRead) {
 		return
 	}
 	var req sshVerifyReq
@@ -505,7 +506,7 @@ func (s *Server) handleSSHAuthorizedKeyOps(w http.ResponseWriter, r *http.Reques
 
 // handleSSHAddAuthorized handles POST /xkms/v1/ssh/authorized-keys.
 func (s *Server) handleSSHAddAuthorized(w http.ResponseWriter, r *http.Request) {
-	if !s.authorize(w, r, "ssh", "write") {
+	if !s.authorize(w, r, auth.ResourceSSH, auth.ActionWrite) {
 		return
 	}
 	var req sdkssh.AddAuthorizedKeyRequest
@@ -522,7 +523,7 @@ func (s *Server) handleSSHAddAuthorized(w http.ResponseWriter, r *http.Request) 
 
 // handleSSHListAuthorized handles GET /xkms/v1/ssh/authorized-keys.
 func (s *Server) handleSSHListAuthorized(w http.ResponseWriter, r *http.Request) {
-	if !s.authorize(w, r, "ssh", "read") {
+	if !s.authorize(w, r, auth.ResourceSSH, auth.ActionRead) {
 		return
 	}
 	list, err := s.sshClient.AuthorizedKeys().List(r.Context(), sdkssh.ListAuthorizedKeysRequest{
@@ -538,7 +539,7 @@ func (s *Server) handleSSHListAuthorized(w http.ResponseWriter, r *http.Request)
 
 // handleSSHGetAuthorized handles GET /xkms/v1/ssh/authorized-keys/{scope}/{owner}/{name}.
 func (s *Server) handleSSHGetAuthorized(w http.ResponseWriter, r *http.Request, scope, owner, name string) {
-	if !s.authorize(w, r, "ssh", "read") {
+	if !s.authorize(w, r, auth.ResourceSSH, auth.ActionRead) {
 		return
 	}
 	out, err := s.sshClient.AuthorizedKeys().Get(r.Context(), scope, owner, name)
@@ -551,7 +552,7 @@ func (s *Server) handleSSHGetAuthorized(w http.ResponseWriter, r *http.Request, 
 
 // handleSSHRemoveAuthorized handles DELETE /xkms/v1/ssh/authorized-keys/{scope}/{owner}/{name}.
 func (s *Server) handleSSHRemoveAuthorized(w http.ResponseWriter, r *http.Request, scope, owner, name string) {
-	if !s.authorize(w, r, "ssh", "delete") {
+	if !s.authorize(w, r, auth.ResourceSSH, auth.ActionDelete) {
 		return
 	}
 	if err := s.sshClient.AuthorizedKeys().Remove(r.Context(), scope, owner, name); err != nil {
@@ -563,7 +564,7 @@ func (s *Server) handleSSHRemoveAuthorized(w http.ResponseWriter, r *http.Reques
 
 // handleSSHEmit handles POST /xkms/v1/ssh/authorized-keys/emit.
 func (s *Server) handleSSHEmit(w http.ResponseWriter, r *http.Request) {
-	if !s.authorize(w, r, "ssh", "read") {
+	if !s.authorize(w, r, auth.ResourceSSH, auth.ActionRead) {
 		return
 	}
 	var req sdkssh.EmitRequest
@@ -584,7 +585,7 @@ func (s *Server) handleSSHEmit(w http.ResponseWriter, r *http.Request) {
 // public key, and compares the SHA-256 fingerprint against the supplied
 // value — matching the REST handler's fingerprint-comparison semantics.
 func (s *Server) handleSSHVerifyAuthorized(w http.ResponseWriter, r *http.Request) {
-	if !s.authorize(w, r, "ssh", "read") {
+	if !s.authorize(w, r, auth.ResourceSSH, auth.ActionRead) {
 		return
 	}
 	var req sshVerifyReq

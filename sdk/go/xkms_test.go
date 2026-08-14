@@ -782,6 +782,10 @@ func (m *mockXKMSService) ListBackends(ctx context.Context, _ ...transport.ListO
 	return m.backends, nil
 }
 
+func (m *mockXKMSService) Algorithms(ctx context.Context) (*transport.AlgorithmsResponse, error) {
+	return nil, nil
+}
+
 func (m *mockXKMSService) GetBackend(ctx context.Context, backendID string) (*transport.BackendInfo, error) {
 	return m.backend, m.backendErr
 }
@@ -1264,6 +1268,14 @@ func (m *mockXKMSService) ListShares(ctx context.Context) (*transport.ListShares
 	return nil, nil
 }
 
+func (m *mockXKMSService) GetShare(ctx context.Context, serverURL, groupID string, shareIndex int) (*transport.ShareInfo, error) {
+	return nil, nil
+}
+
+func (m *mockXKMSService) DeleteShare(ctx context.Context, serverURL, groupID string, shareIndex int) error {
+	return nil
+}
+
 func (m *mockXKMSService) GetShareCollectionStatus(ctx context.Context, groupID string) (*transport.ShareCollectionStatus, error) {
 	return nil, nil
 }
@@ -1320,7 +1332,11 @@ func (m *mockXKMSService) ClaimCertComplete(ctx context.Context, req *transport.
 	return nil, nil
 }
 
-func (m *mockXKMSService) ClaimShare(ctx context.Context, req *transport.ClaimShareRequest) (*transport.ClaimShareResponse, error) {
+func (m *mockXKMSService) ClaimShareBegin(ctx context.Context, req *transport.ClaimShareBeginRequest) (*transport.ClaimShareBeginResponse, error) {
+	return nil, nil
+}
+
+func (m *mockXKMSService) ClaimShareComplete(ctx context.Context, req *transport.ClaimShareCompleteRequest) (*transport.ClaimShareCompleteResponse, error) {
 	return nil, nil
 }
 
@@ -1367,5 +1383,9 @@ func (m *mockXKMSService) BindUserCert(ctx context.Context, username, thumbprint
 }
 
 func (m *mockXKMSService) ListUserCredentials(ctx context.Context, username string) (*transport.ListUserCredentialsResponse, error) {
+	return nil, nil
+}
+
+func (m *mockXKMSService) QueryAudit(ctx context.Context, filter *transport.AuditFilter) (*transport.AuditPage, error) {
 	return nil, nil
 }

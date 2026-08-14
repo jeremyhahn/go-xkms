@@ -14,6 +14,7 @@
 package grpc
 
 import (
+	"context"
 	"errors"
 	"testing"
 
@@ -27,7 +28,7 @@ import (
 
 func TestNotLeaderStatus_Translation(t *testing.T) {
 	src := &qrdbtransport.NotLeaderError{ShardID: 7, LeaderID: 3, LeaderAddress: "10.0.0.3:63001"}
-	err, ok := notLeaderStatus(&errs.Wrapped{Msg: "write", Err: src})
+	err, ok := notLeaderStatus(context.Background(), nil, &errs.Wrapped{Msg: "write", Err: src})
 	if !ok {
 		t.Fatal("notLeaderStatus(NotLeaderError) ok = false, want true")
 	}
@@ -40,15 +41,7 @@ func TestNotLeaderStatus_Translation(t *testing.T) {
 		t.Fatalf("code = %v, want FailedPrecondition", st.Code())
 	}
 
-	var info *errdetails.ErrorInfo
-	for _, d := range st.Details() {
-		if ei, ok := d.(*errdetails.ErrorInfo); ok {
-			info = ei
-		}
-	}
-	if info == nil {
-		t.Fatal("status missing ErrorInfo detail")
-	}
+	info := notLeaderErrorInfo(t, st)
 	if info.Reason != notLeaderReason {
 		t.Fatalf("ErrorInfo.Reason = %q, want %q", info.Reason, notLeaderReason)
 	}
@@ -56,17 +49,76 @@ func TestNotLeaderStatus_Translation(t *testing.T) {
 		info.Metadata["leader_address"] != "10.0.0.3:63001" {
 		t.Fatalf("ErrorInfo.Metadata = %v", info.Metadata)
 	}
+	if _, present := info.Metadata["leader_api_address"]; present {
+		t.Fatalf("ErrorInfo.Metadata unexpectedly carries leader_api_address: %v", info.Metadata)
+	}
 }
 
 func TestNotLeaderStatus_NoMatch(t *testing.T) {
-	if err, ok := notLeaderStatus(errors.New("boom")); ok || err != nil {
+	if err, ok := notLeaderStatus(context.Background(), nil, errors.New("boom")); ok || err != nil {
 		t.Fatalf("notLeaderStatus(other) = (%v, %v), want (nil, false)", err, ok)
+	}
+}
+
+// TestNotLeaderStatus_ResolvesAPIAddress covers the case the servicer's
+// ClusterLeaderEndpoint successfully resolves the leader's dialable gRPC
+// endpoint: the resolved address must be folded into the leader_api_address
+// metadata key.
+func TestNotLeaderStatus_ResolvesAPIAddress(t *testing.T) {
+	reader := &grpcFakeClusterReader{
+		leaderID:       3,
+		hasLeader:      true,
+		leaderEndpoint: "10.0.0.3:9443",
+	}
+	xkmsSvc := setClusterClientForTest(t, reader, 7, 1)
+
+	src := &qrdbtransport.NotLeaderError{ShardID: 7, LeaderID: 3, LeaderAddress: "10.0.0.3:63001"}
+	err, ok := notLeaderStatus(context.Background(), xkmsSvc, src)
+	if !ok {
+		t.Fatal("notLeaderStatus ok = false, want true")
+	}
+
+	st, _ := status.FromError(err)
+	info := notLeaderErrorInfo(t, st)
+	if info.Metadata["leader_api_address"] != "10.0.0.3:9443" {
+		t.Fatalf("leader_api_address = %q, want %q", info.Metadata["leader_api_address"], "10.0.0.3:9443")
+	}
+}
+
+// TestNotLeaderStatus_ResolutionFailureOmitsAPIAddress covers a
+// ClusterLeaderEndpoint failure: it must not turn the not-leader condition
+// into a harder failure, and leader_api_address must be omitted entirely
+// rather than emitted empty.
+func TestNotLeaderStatus_ResolutionFailureOmitsAPIAddress(t *testing.T) {
+	reader := &grpcFakeClusterReader{
+		leaderID:          3,
+		hasLeader:         true,
+		leaderEndpointErr: errors.New("registry unreachable"),
+	}
+	xkmsSvc := setClusterClientForTest(t, reader, 7, 1)
+
+	src := &qrdbtransport.NotLeaderError{ShardID: 7, LeaderID: 3, LeaderAddress: "10.0.0.3:63001"}
+	err, ok := notLeaderStatus(context.Background(), xkmsSvc, src)
+	if !ok {
+		t.Fatal("notLeaderStatus ok = false, want true")
+	}
+
+	st, _ := status.FromError(err)
+	if st.Code() != codes.FailedPrecondition {
+		t.Fatalf("code = %v, want FailedPrecondition", st.Code())
+	}
+	info := notLeaderErrorInfo(t, st)
+	if _, present := info.Metadata["leader_api_address"]; present {
+		t.Fatalf("ErrorInfo.Metadata unexpectedly carries leader_api_address after resolution failure: %v", info.Metadata)
+	}
+	if info.Metadata["leader_address"] != "10.0.0.3:63001" {
+		t.Fatalf("leader_address = %q, want the Raft coordinates preserved", info.Metadata["leader_address"])
 	}
 }
 
 func TestWrapWriteError_NotLeader(t *testing.T) {
 	src := &qrdbtransport.NotLeaderError{ShardID: 1, LeaderID: 9, LeaderAddress: "n9:63001"}
-	err := wrapWriteError(&errs.Wrapped{Msg: "generate key", Err: src}, codes.Internal, "failed to generate key: %v", src)
+	err := wrapWriteError(context.Background(), nil, &errs.Wrapped{Msg: "generate key", Err: src}, codes.Internal, "failed to generate key: %v", src)
 
 	st, _ := status.FromError(err)
 	if st.Code() != codes.FailedPrecondition {
@@ -75,7 +127,7 @@ func TestWrapWriteError_NotLeader(t *testing.T) {
 }
 
 func TestWrapWriteError_Fallback(t *testing.T) {
-	err := wrapWriteError(errors.New("disk full"), codes.Internal, "failed to generate key: %v", "disk full")
+	err := wrapWriteError(context.Background(), nil, errors.New("disk full"), codes.Internal, "failed to generate key: %v", "disk full")
 
 	st, _ := status.FromError(err)
 	if st.Code() != codes.Internal {
@@ -84,4 +136,17 @@ func TestWrapWriteError_Fallback(t *testing.T) {
 	if st.Message() != "failed to generate key: disk full" {
 		t.Fatalf("message = %q", st.Message())
 	}
+}
+
+// notLeaderErrorInfo extracts the ErrorInfo detail from a gRPC status,
+// failing the test if it is absent.
+func notLeaderErrorInfo(t *testing.T, st *status.Status) *errdetails.ErrorInfo {
+	t.Helper()
+	for _, d := range st.Details() {
+		if ei, ok := d.(*errdetails.ErrorInfo); ok {
+			return ei
+		}
+	}
+	t.Fatal("status missing ErrorInfo detail")
+	return nil
 }

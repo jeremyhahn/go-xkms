@@ -35,15 +35,23 @@ info:
 
     ## Role-Based Access Control
 
-    The Admin API implements hierarchical RBAC with the following roles:
+    Authorization is delegated to the hosted go-qrdb node's RBAC service. The
+    Admin API defines no roles or permissions of its own; the canonical roles
+    are go-qrdb's six system roles.
 
-    | Role | Level | Capabilities |
-    |------|-------|--------------|
-    | super-admin | 100 | Full system access, manage all tenants, root CA, system config |
-    | admin | 80 | Tenant-level full access, manage intermediate CAs |
-    | endorser | 60 | Operator permissions plus endorse-01 EAB operations |
-    | operator | 40 | Read/write access, cannot delete or manage CAs |
-    | viewer | 20 | Read-only access |
+    | Role | Capabilities |
+    |------|--------------|
+    | so | CA hierarchy, ACME accounts/orders/EABs, barrier governance, role management |
+    | admin | Tenant, CA hierarchy, user, certificate, and EAB lifecycle |
+    | operator | Read-only ACME registration data and CA hierarchy |
+    | user | No ACME administration |
+    | auditor | Read-only metadata plus the audit trail |
+    | custodian | barrier:unseal-share only |
+
+    Cross-tenant reach follows qrdb's system-tenant rule: an identity rooted in
+    the reserved system tenant, or one carrying no tenant at all (empty
+    TenantID -- the bootstrap case), is platform-scoped; any other identity is
+    confined to its own tenant.
 
   version: 1.0.0
   contact:
@@ -82,7 +90,7 @@ tags:
   - name: Status
     description: CA status and statistics
   - name: Tenants
-    description: Multi-tenant management (super-admin only for create/delete)
+    description: Multi-tenant management (requires tenants:create / tenants:delete)
   - name: Tenant CAs
     description: Tenant Certificate Authority management
   - name: EAB
@@ -1057,7 +1065,7 @@ paths:
       summary: List tenants
       description: |
         Retrieves a paginated list of all tenants.
-        Requires super-admin role.
+        Requires the corresponding tenants:* permission.
       operationId: listTenants
       security:
         - BearerAuth: []
@@ -1099,7 +1107,7 @@ paths:
       summary: Create tenant
       description: |
         Creates a new tenant with default isolation policies.
-        Requires super-admin role.
+        Requires the corresponding tenants:* permission.
       operationId: createTenant
       security:
         - BearerAuth: []
@@ -1143,7 +1151,7 @@ paths:
       summary: Get tenant
       description: |
         Retrieves tenant information by ID.
-        Admin can view their own tenant, super-admin can view all.
+        Requires tenants:read. A system-tenant identity may view any tenant; a tenant-scoped identity may view only its own.
       operationId: getTenant
       security:
         - BearerAuth: []
@@ -1216,7 +1224,7 @@ paths:
       description: |
         Deletes a tenant and all associated resources including policies,
         CAs, EABs, accounts, and certificates.
-        Requires super-admin role.
+        Requires the corresponding tenants:* permission.
       operationId: deleteTenant
       security:
         - BearerAuth: []
@@ -1254,7 +1262,7 @@ paths:
       summary: Update tenant status
       description: |
         Updates the operational status of a tenant.
-        Requires super-admin role.
+        Requires the corresponding tenants:* permission.
       operationId: updateTenantStatus
       security:
         - BearerAuth: []
@@ -1591,7 +1599,7 @@ paths:
       summary: List tenant EABs
       description: |
         Lists External Account Binding tokens for a tenant.
-        Requires endorser role or higher.
+        Requires the corresponding acme_eab:* permission.
       operationId: listTenantEABs
       security:
         - BearerAuth: []
@@ -1643,7 +1651,7 @@ paths:
       description: |
         Creates an External Account Binding token for a tenant.
         The MAC key is returned only once in the response.
-        Requires endorser role or higher.
+        Requires the corresponding acme_eab:* permission.
       operationId: createTenantEAB
       security:
         - BearerAuth: []

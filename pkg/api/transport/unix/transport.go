@@ -42,6 +42,7 @@ import (
 	"google.golang.org/grpc/credentials"
 	"google.golang.org/grpc/credentials/insecure"
 	"google.golang.org/protobuf/types/known/emptypb"
+	"google.golang.org/protobuf/types/known/timestamppb"
 )
 
 var (
@@ -311,6 +312,7 @@ func (t *Transport) GenerateKey(ctx context.Context, req *transport.GenerateKeyR
 		Hash:       req.Hash,
 		Algorithm:  req.Algorithm,
 		Exportable: req.Exportable,
+		Sensitive:  req.Sensitive,
 	}
 
 	resp, err := t.client.GenerateKey(ctx, pbReq)
@@ -563,6 +565,7 @@ func (t *Transport) WrapKey(ctx context.Context, req *transport.WrapKeyRequest) 
 	}
 
 	pbReq := &pb.WrapKeyRequest{
+		Backend:           req.Backend,
 		KeyMaterial:       req.KeyMaterial,
 		Algorithm:         req.Algorithm,
 		ImportToken:       req.ImportToken,
@@ -587,6 +590,7 @@ func (t *Transport) UnwrapKey(ctx context.Context, req *transport.UnwrapKeyReque
 	}
 
 	pbReq := &pb.UnwrapKeyRequest{
+		Backend:     req.Backend,
 		WrappedKey:  req.WrappedKeyMaterial,
 		Algorithm:   req.Algorithm,
 		ImportToken: req.ImportToken,
@@ -613,7 +617,13 @@ func (t *Transport) WrapKeyByID(ctx context.Context, req *transport.WrapKeyByIDR
 		WrappingKeyBackend: req.WrappingKeyBackend,
 		TargetKeyId:        req.TargetKeyID,
 		TargetKeyBackend:   req.TargetKeyBackend,
+		TargetKeyMaterial:  req.TargetKeyMaterial,
 		Algorithm:          req.Algorithm,
+		Iv:                 req.IV,
+		Aad:                req.AAD,
+		// #nosec G115 - CK_GCM_PARAMS.ulTagBits is one of 96..128.
+		TagBits:   int32(req.TagBits),
+		OaepLabel: req.OAEPLabel,
 	}
 
 	resp, err := t.client.WrapKeyByID(ctx, pbReq)
@@ -638,13 +648,18 @@ func (t *Transport) UnwrapKeyByID(ctx context.Context, req *transport.UnwrapKeyB
 		UnwrappingKeyId:      req.UnwrappingKeyID,
 		UnwrappingKeyBackend: req.UnwrappingKeyBackend,
 		Algorithm:            req.Algorithm,
-		TargetKeyId:          req.TargetKeyID,
-		TargetKeyBackend:     req.TargetKeyBackend,
-		TargetKeyType:        req.TargetKeyType,
-		TargetKeySize:        int32(req.TargetKeySize),
-		TargetCurve:          req.TargetCurve,
-		TargetPartition:      req.TargetPartition,
-		TargetExportable:     req.TargetExportable,
+		Iv:                   req.IV,
+		Aad:                  req.AAD,
+		// #nosec G115 - CK_GCM_PARAMS.ulTagBits is one of 96..128.
+		TagBits:          int32(req.TagBits),
+		OaepLabel:        req.OAEPLabel,
+		TargetKeyId:      req.TargetKeyID,
+		TargetKeyBackend: req.TargetKeyBackend,
+		TargetKeyType:    req.TargetKeyType,
+		TargetKeySize:    int32(req.TargetKeySize),
+		TargetCurve:      req.TargetCurve,
+		TargetPartition:  req.TargetPartition,
+		TargetExportable: req.TargetExportable,
 	}
 
 	resp, err := t.client.UnwrapKeyByID(ctx, pbReq)
@@ -667,10 +682,13 @@ func (t *Transport) Sign(ctx context.Context, req *transport.SignRequest) (*tran
 	}
 
 	pbReq := &pb.SignRequest{
-		KeyId:   req.KeyID,
-		Backend: req.Backend,
-		Data:    req.Data,
-		Hash:    req.Hash,
+		KeyId:        req.KeyID,
+		Backend:      req.Backend,
+		Data:         req.Data,
+		Hash:         req.Hash,
+		Padding:      req.Padding,
+		SaltLength:   int32(req.SaltLength),
+		DataIsDigest: req.DataIsDigest,
 	}
 
 	resp, err := t.client.Sign(ctx, pbReq)
@@ -690,11 +708,14 @@ func (t *Transport) Verify(ctx context.Context, req *transport.VerifyRequest) (*
 	}
 
 	pbReq := &pb.VerifyRequest{
-		KeyId:     req.KeyID,
-		Backend:   req.Backend,
-		Data:      req.Data,
-		Signature: req.Signature,
-		Hash:      req.Hash,
+		KeyId:        req.KeyID,
+		Backend:      req.Backend,
+		Data:         req.Data,
+		Signature:    req.Signature,
+		Hash:         req.Hash,
+		Padding:      req.Padding,
+		SaltLength:   int32(req.SaltLength),
+		DataIsDigest: req.DataIsDigest,
 	}
 
 	resp, err := t.client.Verify(ctx, pbReq)
@@ -719,6 +740,10 @@ func (t *Transport) Encrypt(ctx context.Context, req *transport.EncryptRequest) 
 		Backend:        req.Backend,
 		Plaintext:      req.Plaintext,
 		AdditionalData: req.AdditionalData,
+		Nonce:          req.Nonce,
+		Mode:           req.Mode,
+		Iv:             req.IV,
+		TagSize:        int32(req.TagSize),
 	}
 
 	resp, err := t.client.Encrypt(ctx, pbReq)
@@ -730,6 +755,7 @@ func (t *Transport) Encrypt(ctx context.Context, req *transport.EncryptRequest) 
 		Ciphertext: resp.Ciphertext,
 		Nonce:      resp.Nonce,
 		Tag:        resp.Tag,
+		IV:         resp.Iv,
 	}, nil
 }
 
@@ -746,6 +772,12 @@ func (t *Transport) Decrypt(ctx context.Context, req *transport.DecryptRequest) 
 		Nonce:          req.Nonce,
 		Tag:            req.Tag,
 		AdditionalData: req.AdditionalData,
+		Mode:           req.Mode,
+		Iv:             req.IV,
+		Padding:        req.Padding,
+		Hash:           req.Hash,
+		Label:          req.Label,
+		TagSize:        int32(req.TagSize),
 	}
 
 	resp, err := t.client.Decrypt(ctx, pbReq)
@@ -769,6 +801,7 @@ func (t *Transport) EncryptAsym(ctx context.Context, req *transport.EncryptAsymR
 		Backend:   req.Backend,
 		Plaintext: req.Plaintext,
 		Hash:      req.Hash,
+		Label:     req.Label,
 	})
 	if err != nil {
 		return nil, err
@@ -833,6 +866,7 @@ func (t *Transport) DeriveKeyECDH(ctx context.Context, req *transport.DeriveKeyE
 		KdfHash:       req.KDFHash,
 		KdfSalt:       req.KDFSalt,
 		KdfInfo:       req.KDFInfo,
+		KdfLabel:      req.KDFLabel,
 		KeyLength:     int32(req.KeyLength),
 	}
 
@@ -2474,21 +2508,62 @@ func (t *Transport) ListShares(ctx context.Context) (*transport.ListSharesRespon
 
 	shares := make([]transport.ShareInfo, len(resp.GetShares()))
 	for i, s := range resp.GetShares() {
-		receivedAt, _ := time.Parse(time.RFC3339, s.GetSubmittedAt())
-		shares[i] = transport.ShareInfo{
-			ServerURL:  s.GetServerUrl(),
-			GroupID:    s.GetGroupId(),
-			GroupName:  s.GetGroupName(),
-			ShareIndex: int(s.GetShareIndex()),
-			Purpose:    s.GetPurpose(),
-			ReceivedAt: receivedAt,
-			TenantID:   s.GetTenantId(),
-		}
+		shares[i] = pbShareInfoToTransport(s)
 	}
 
 	return &transport.ListSharesResponse{
 		Shares: shares,
 	}, nil
+}
+
+// GetShare returns a single stored share. Share material is never included
+// in the response — the server returns metadata only.
+func (t *Transport) GetShare(ctx context.Context, serverURL, groupID string, shareIndex int) (*transport.ShareInfo, error) {
+	if t.client == nil {
+		return nil, ErrNotConnected
+	}
+
+	resp, err := t.client.GetShare(ctx, &pb.GetShareRequest{
+		ServerUrl:  serverURL,
+		GroupId:    groupID,
+		ShareIndex: int32(shareIndex), // #nosec G115 - share index fits in int32
+	})
+	if err != nil {
+		return nil, err
+	}
+
+	info := pbShareInfoToTransport(resp)
+	return &info, nil
+}
+
+// DeleteShare removes a single stored share.
+func (t *Transport) DeleteShare(ctx context.Context, serverURL, groupID string, shareIndex int) error {
+	if t.client == nil {
+		return ErrNotConnected
+	}
+
+	_, err := t.client.DeleteShare(ctx, &pb.DeleteShareRequest{
+		ServerUrl:  serverURL,
+		GroupId:    groupID,
+		ShareIndex: int32(shareIndex), // #nosec G115 - share index fits in int32
+	})
+	return err
+}
+
+// pbShareInfoToTransport converts a proto ShareInfo to its transport
+// representation. An unparseable timestamp yields the zero time rather than
+// failing the call — the metadata is still useful without it.
+func pbShareInfoToTransport(s *pb.ShareInfo) transport.ShareInfo {
+	receivedAt, _ := time.Parse(time.RFC3339, s.GetSubmittedAt())
+	return transport.ShareInfo{
+		ServerURL:  s.GetServerUrl(),
+		GroupID:    s.GetGroupId(),
+		GroupName:  s.GetGroupName(),
+		ShareIndex: int(s.GetShareIndex()),
+		Purpose:    s.GetPurpose(),
+		ReceivedAt: receivedAt,
+		TenantID:   s.GetTenantId(),
+	}
 }
 
 // GetShareCollectionStatus returns the collection status for a group.
@@ -2510,6 +2585,78 @@ func (t *Transport) GetShareCollectionStatus(ctx context.Context, groupID string
 		Collected: int(resp.GetCollected()),
 		Ready:     resp.GetComplete(),
 	}, nil
+}
+
+// Audit Operations
+
+// QueryAudit returns one page of audit events from the tamper-evident audit
+// chain owned by the embedded qrdb node.
+func (t *Transport) QueryAudit(ctx context.Context, filter *transport.AuditFilter) (*transport.AuditPage, error) {
+	if filter == nil {
+		return nil, transport.ErrInvalidRequest
+	}
+	if t.client == nil {
+		return nil, ErrNotConnected
+	}
+
+	req := &pb.QueryAuditRequest{
+		Actor:    filter.Actor,
+		Resource: filter.Resource,
+		Action:   filter.Action,
+		Outcome:  filter.Outcome,
+		TenantId: filter.TenantID,
+		Limit:    int32(filter.Limit), // #nosec G115 - page limit fits in int32
+		Cursor:   filter.Cursor,
+	}
+	if !filter.From.IsZero() {
+		req.From = timestamppb.New(filter.From)
+	}
+	if !filter.To.IsZero() {
+		req.To = timestamppb.New(filter.To)
+	}
+
+	resp, err := t.client.QueryAudit(ctx, req)
+	if err != nil {
+		return nil, err
+	}
+
+	events := make([]transport.AuditEvent, len(resp.GetEvents()))
+	for i, e := range resp.GetEvents() {
+		events[i] = pbAuditEventToTransport(e)
+	}
+
+	return &transport.AuditPage{
+		Events: events,
+		Next:   resp.GetNext(),
+		Total:  int(resp.GetTotal()),
+	}, nil
+}
+
+// pbAuditEventToTransport converts a proto AuditEvent to its transport
+// representation. A nil Attributes Struct converts to a nil map rather than
+// panicking.
+func pbAuditEventToTransport(e *pb.AuditEvent) transport.AuditEvent {
+	var attrs map[string]any
+	if a := e.GetAttributes(); a != nil {
+		attrs = a.AsMap()
+	}
+	var ts time.Time
+	if pts := e.GetTimestamp(); pts != nil {
+		ts = pts.AsTime()
+	}
+	return transport.AuditEvent{
+		Timestamp:  ts,
+		Actor:      e.GetActor(),
+		TenantID:   e.GetTenantId(),
+		Role:       e.GetRole(),
+		Resource:   e.GetResource(),
+		Action:     e.GetAction(),
+		Outcome:    e.GetOutcome(),
+		Attributes: attrs,
+		ClientIP:   e.GetClientIp(),
+		RequestID:  e.GetRequestId(),
+		PrevHash:   e.GetPrevHash(),
+	}
 }
 
 // Tenant Operations
@@ -2788,17 +2935,37 @@ func (t *Transport) ClaimCertComplete(ctx context.Context, req *transport.ClaimC
 }
 
 // ClaimShare retrieves the Shamir share for the named officer.
-func (t *Transport) ClaimShare(ctx context.Context, req *transport.ClaimShareRequest) (*transport.ClaimShareResponse, error) {
+func (t *Transport) ClaimShareBegin(ctx context.Context, req *transport.ClaimShareBeginRequest) (*transport.ClaimShareBeginResponse, error) {
 	if !t.connected {
 		return nil, ErrNotConnected
 	}
 
-	data, err := t.doRawRequest(ctx, http.MethodPost, "/api/v1/init/claim-share", req)
+	data, err := t.doRawRequest(ctx, http.MethodPost, "/api/v1/init/claim-share/begin", req)
 	if err != nil {
 		return nil, err
 	}
 
-	var resp transport.ClaimShareResponse
+	var resp transport.ClaimShareBeginResponse
+	if err := json.Unmarshal(data, &resp); err != nil {
+		return nil, &errs.Wrapped{Msg: "failed to parse response", Err: err}
+	}
+
+	return &resp, nil
+}
+
+// ClaimShareComplete completes the Shamir share claim handshake for the named
+// officer.
+func (t *Transport) ClaimShareComplete(ctx context.Context, req *transport.ClaimShareCompleteRequest) (*transport.ClaimShareCompleteResponse, error) {
+	if !t.connected {
+		return nil, ErrNotConnected
+	}
+
+	data, err := t.doRawRequest(ctx, http.MethodPost, "/api/v1/init/claim-share/complete", req)
+	if err != nil {
+		return nil, err
+	}
+
+	var resp transport.ClaimShareCompleteResponse
 	if err := json.Unmarshal(data, &resp); err != nil {
 		return nil, &errs.Wrapped{Msg: "failed to parse response", Err: err}
 	}
@@ -2876,6 +3043,7 @@ func protoToUserInfo(u *pb.UserInfo) transport.UserInfo {
 		return transport.UserInfo{}
 	}
 	return transport.UserInfo{
+		ID:          u.GetId(),
 		Username:    u.GetUsername(),
 		DisplayName: u.GetDisplayName(),
 		Role:        u.GetRole(),
@@ -2997,10 +3165,19 @@ var _ transport.Client = (*Transport)(nil)
 
 // ==================== Cluster Operations ====================
 //
-// The cluster surface is read-only. These methods satisfy the
-// transport.ClusterReader interface the SDK Cluster() accessor type-asserts to,
-// giving the gRPC (and unix, which is gRPC-over-uds) transports parity with the
-// REST transport.
+// These methods satisfy the transport.ClusterClient interface (read surface
+// plus the privileged membership mutations) the SDK Cluster() accessor
+// type-asserts to, giving the unix (gRPC-over-uds) transport parity with the
+// gRPC and REST transports.
+//
+// Unlike the gRPC transport, this transport does NOT follow a NOT_LEADER
+// transparent redirect: a Unix domain socket client has no network
+// credentials to present to a remote leader (the socket's peer-credential
+// trust boundary is meaningless off-host), and the leader is by definition a
+// different process, almost always on a different host, than the one this
+// socket connects to. A caller that reaches a follower over this socket
+// surfaces the typed not-leader error unchanged and must reconnect to the
+// leader's own Unix socket (or another transport) itself.
 
 // ClusterStatus returns the Raft leadership status for the configured shard.
 func (t *Transport) ClusterStatus(ctx context.Context) (*transport.ClusterStatusResponse, error) {
@@ -3038,9 +3215,10 @@ func (t *Transport) ClusterMembers(ctx context.Context) (*transport.ListClusterM
 	members := make([]transport.ClusterMemberInfo, len(resp.GetMembers()))
 	for i, m := range resp.GetMembers() {
 		members[i] = transport.ClusterMemberInfo{
-			NodeID:   m.GetNodeId(),
-			Address:  m.GetAddress(),
-			IsLeader: m.GetIsLeader(),
+			NodeID:       m.GetNodeId(),
+			Address:      m.GetAddress(),
+			IsLeader:     m.GetIsLeader(),
+			APIEndpoints: m.GetApiEndpoints(),
 		}
 	}
 
@@ -3049,9 +3227,58 @@ func (t *Transport) ClusterMembers(ctx context.Context) (*transport.ListClusterM
 	}, nil
 }
 
-// Compile-time assertion that Transport satisfies the read-only cluster surface
+// AddClusterReplica adds a replica to the configured shard's Raft group. The
+// underlying operation is idempotent: adding a replica already present
+// succeeds without changing the configuration.
+//
+// No transparent leader redirect: see the package-level comment on the
+// Cluster Operations section above.
+func (t *Transport) AddClusterReplica(ctx context.Context, replicaID uint64, raftAddr string) (*transport.ClusterReplicaResponse, error) {
+	if t.client == nil {
+		return nil, ErrNotConnected
+	}
+
+	resp, err := t.client.AddClusterReplica(ctx, &pb.AddClusterReplicaRequest{
+		ReplicaId:   replicaID,
+		RaftAddress: raftAddr,
+	})
+	if err != nil {
+		return nil, err
+	}
+
+	return &transport.ClusterReplicaResponse{
+		ShardID:   resp.GetShardId(),
+		ReplicaID: resp.GetReplicaId(),
+	}, nil
+}
+
+// RemoveClusterReplica removes a replica from the configured shard's Raft
+// group. The underlying operation is idempotent: removing a replica that is
+// already absent succeeds.
+//
+// No transparent leader redirect: see the package-level comment on the
+// Cluster Operations section above.
+func (t *Transport) RemoveClusterReplica(ctx context.Context, replicaID uint64) (*transport.ClusterReplicaResponse, error) {
+	if t.client == nil {
+		return nil, ErrNotConnected
+	}
+
+	resp, err := t.client.RemoveClusterReplica(ctx, &pb.RemoveClusterReplicaRequest{
+		ReplicaId: replicaID,
+	})
+	if err != nil {
+		return nil, err
+	}
+
+	return &transport.ClusterReplicaResponse{
+		ShardID:   resp.GetShardId(),
+		ReplicaID: resp.GetReplicaId(),
+	}, nil
+}
+
+// Compile-time assertion that Transport satisfies the full cluster surface
 // the SDK Cluster() accessor type-asserts to.
-var _ transport.ClusterReader = (*Transport)(nil)
+var _ transport.ClusterClient = (*Transport)(nil)
 
 // Helper functions for converting between SDK types and protobuf types
 
@@ -3102,5 +3329,42 @@ func pbTenantInfoToTransport(ti *pb.TenantInfo) transport.TenantInfo {
 	}
 	out.Quotas = pbQuotasToTransport(ti.GetQuotas())
 	out.Entitlements = pbEntitlementsToTransport(ti.GetEntitlements())
+	return out
+}
+
+// Algorithms reports the algorithms the server supports.
+func (t *Transport) Algorithms(ctx context.Context) (*transport.AlgorithmsResponse, error) {
+	if t.client == nil {
+		return nil, ErrNotConnected
+	}
+
+	resp, err := t.client.Algorithms(ctx, &pb.AlgorithmsRequest{})
+	if err != nil {
+		return nil, err
+	}
+
+	return &transport.AlgorithmsResponse{
+		Signing:          pbAlgorithmInfosToTransport(resp.GetSigning()),
+		KeyEncapsulation: pbAlgorithmInfosToTransport(resp.GetKeyEncapsulation()),
+	}, nil
+}
+
+// pbAlgorithmInfosToTransport converts proto algorithm entries to their
+// transport representation.
+func pbAlgorithmInfosToTransport(in []*pb.AlgorithmInfo) []transport.AlgorithmInfo {
+	out := make([]transport.AlgorithmInfo, len(in))
+	for i, a := range in {
+		sizes := make([]int, len(a.GetKeySizes()))
+		for j, s := range a.GetKeySizes() {
+			sizes[j] = int(s)
+		}
+		out[i] = transport.AlgorithmInfo{
+			Algorithm:   a.GetAlgorithm(),
+			Curves:      a.GetCurves(),
+			KeySizes:    sizes,
+			Backends:    a.GetBackends(),
+			PostQuantum: a.GetPostQuantum(),
+		}
+	}
 	return out
 }

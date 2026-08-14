@@ -112,17 +112,6 @@ var (
 	// ErrInvalidKDFParams indicates the KDF parameters are invalid.
 	ErrInvalidKDFParams = errors.New("phone backend: invalid KDF parameters")
 
-	// ErrUnsupportedKDFAlgorithm indicates the requested KDF algorithm is not supported.
-	// Only HKDF (RFC 5869) is currently supported for the phone backend.
-	ErrUnsupportedKDFAlgorithm = errors.New("phone backend: unsupported KDF algorithm")
-
-	// ErrUnsupportedHashAlgorithm indicates the requested hash algorithm is not supported
-	// for the KDF operation.
-	ErrUnsupportedHashAlgorithm = errors.New("phone backend: unsupported hash algorithm")
-
-	// ErrKDFDerivationFailed indicates the KDF key derivation operation failed.
-	ErrKDFDerivationFailed = errors.New("phone backend: KDF derivation failed")
-
 	// ErrSymmetricEncryptFailed indicates the phone failed to perform symmetric encryption.
 	ErrSymmetricEncryptFailed = errors.New("phone backend: symmetric encryption failed")
 

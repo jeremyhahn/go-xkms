@@ -190,8 +190,8 @@ var methodMapping = map[string]string{
 	"/api/v1/keys/copy":          "xkms.copyKey",
 	"/api/v1/keys/wrap":          "xkms.wrapKey",
 	"/api/v1/keys/unwrap":        "xkms.unwrapKey",
-	"/api/v1/keys/wrap-by-id":    "xkms.wrapKey",
-	"/api/v1/keys/unwrap-by-id":  "xkms.unwrapKey",
+	"/api/v1/keys/wrap-by-id":    "xkms.wrapKeyByID",
+	"/api/v1/keys/unwrap-by-id":  "xkms.unwrapKeyByID",
 	"/api/v1/keys/import-params": "xkms.getImportParameters",
 
 	// Certificates
@@ -273,6 +273,9 @@ var methodMapping = map[string]string{
 	// Shares
 	"/api/v1/shares/submit": "xkms.submitShare",
 	"/api/v1/shares":        "xkms.listShares",
+
+	// Audit
+	"/api/v1/audit": "xkms.queryAudit",
 
 	// Tenants
 	"/api/v1/tenants": "xkms.listTenants",
@@ -714,6 +717,15 @@ func (t *Transport) GetBackend(ctx context.Context, backendID string) (*transpor
 	return &result, nil
 }
 
+// Algorithms reports the algorithms the server supports.
+func (t *Transport) Algorithms(ctx context.Context) (*transport.AlgorithmsResponse, error) {
+	var result transport.AlgorithmsResponse
+	if err := t.rpcCall(ctx, "xkms.algorithms", nil, &result); err != nil {
+		return nil, err
+	}
+	return &result, nil
+}
+
 // GenerateKey generates a new key.
 func (t *Transport) GenerateKey(ctx context.Context, req *transport.GenerateKeyRequest) (*transport.GenerateKeyResponse, error) {
 	var result transport.GenerateKeyResponse
@@ -918,7 +930,7 @@ func (t *Transport) UnwrapKey(ctx context.Context, req *transport.UnwrapKeyReque
 // WrapKeyByID wraps a key using another key, both identified by their IDs.
 func (t *Transport) WrapKeyByID(ctx context.Context, req *transport.WrapKeyByIDRequest) (*transport.WrapKeyByIDResponse, error) {
 	var result transport.WrapKeyByIDResponse
-	if err := t.rpcCall(ctx, "xkms.wrapKey", req, &result); err != nil {
+	if err := t.rpcCall(ctx, "xkms.wrapKeyByID", req, &result); err != nil {
 		return nil, err
 	}
 	return &result, nil
@@ -927,7 +939,7 @@ func (t *Transport) WrapKeyByID(ctx context.Context, req *transport.WrapKeyByIDR
 // UnwrapKeyByID unwraps key material and imports it as a new key.
 func (t *Transport) UnwrapKeyByID(ctx context.Context, req *transport.UnwrapKeyByIDRequest) (*transport.UnwrapKeyByIDResponse, error) {
 	var result transport.UnwrapKeyByIDResponse
-	if err := t.rpcCall(ctx, "xkms.unwrapKey", req, &result); err != nil {
+	if err := t.rpcCall(ctx, "xkms.unwrapKeyByID", req, &result); err != nil {
 		return nil, err
 	}
 	return &result, nil
@@ -1701,11 +1713,51 @@ func (t *Transport) ListShares(ctx context.Context) (*transport.ListSharesRespon
 	return &result, nil
 }
 
+// GetShare returns a single stored share. Share material is never included
+// in the response — the server returns metadata only.
+func (t *Transport) GetShare(ctx context.Context, serverURL, groupID string, shareIndex int) (*transport.ShareInfo, error) {
+	var result transport.ShareInfo
+	if err := t.rpcCall(ctx, "xkms.getShare", shareParams(serverURL, groupID, shareIndex), &result); err != nil {
+		return nil, err
+	}
+	return &result, nil
+}
+
+// DeleteShare removes a single stored share.
+func (t *Transport) DeleteShare(ctx context.Context, serverURL, groupID string, shareIndex int) error {
+	var result struct{}
+	return t.rpcCall(ctx, "xkms.deleteShare", shareParams(serverURL, groupID, shareIndex), &result)
+}
+
+// shareParams builds the JSON-RPC parameter object addressing a single share.
+func shareParams(serverURL, groupID string, shareIndex int) map[string]any {
+	return map[string]any{
+		"server_url":  serverURL,
+		"group_id":    groupID,
+		"share_index": shareIndex,
+	}
+}
+
 // GetShareCollectionStatus returns the share collection status for a group.
 func (t *Transport) GetShareCollectionStatus(ctx context.Context, groupID string) (*transport.ShareCollectionStatus, error) {
 	params := map[string]string{"group_id": groupID}
 	var result transport.ShareCollectionStatus
 	if err := t.rpcCall(ctx, "xkms.getShareCollectionStatus", params, &result); err != nil {
+		return nil, err
+	}
+	return &result, nil
+}
+
+// AuditService methods.
+
+// QueryAudit returns one page of audit events from the tamper-evident audit
+// chain owned by the embedded qrdb node.
+func (t *Transport) QueryAudit(ctx context.Context, filter *transport.AuditFilter) (*transport.AuditPage, error) {
+	if filter == nil {
+		return nil, transport.ErrInvalidRequest
+	}
+	var result transport.AuditPage
+	if err := t.rpcCall(ctx, "xkms.queryAudit", filter, &result); err != nil {
 		return nil, err
 	}
 	return &result, nil
@@ -1815,9 +1867,19 @@ func (t *Transport) ClaimCertComplete(ctx context.Context, req *transport.ClaimC
 }
 
 // ClaimShare retrieves the Shamir share for the named officer.
-func (t *Transport) ClaimShare(ctx context.Context, req *transport.ClaimShareRequest) (*transport.ClaimShareResponse, error) {
-	var result transport.ClaimShareResponse
-	if err := t.rpcCall(ctx, "init.claimShare", req, &result); err != nil {
+func (t *Transport) ClaimShareBegin(ctx context.Context, req *transport.ClaimShareBeginRequest) (*transport.ClaimShareBeginResponse, error) {
+	var result transport.ClaimShareBeginResponse
+	if err := t.rpcCall(ctx, "init.claimShareBegin", req, &result); err != nil {
+		return nil, err
+	}
+	return &result, nil
+}
+
+// ClaimShareComplete completes the Shamir share claim handshake for the named
+// officer.
+func (t *Transport) ClaimShareComplete(ctx context.Context, req *transport.ClaimShareCompleteRequest) (*transport.ClaimShareCompleteResponse, error) {
+	var result transport.ClaimShareCompleteResponse
+	if err := t.rpcCall(ctx, "init.claimShareComplete", req, &result); err != nil {
 		return nil, err
 	}
 	return &result, nil

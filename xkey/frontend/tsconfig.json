@@ -13,6 +13,7 @@
     "paths": {
       "$lib/*": ["src/lib/*"],
       "@go-xkms/sdk": ["../../sdk/ts/src/index.ts"],
+      "@go-xkms/sdk/ssh-console": ["../../sdk/ts/src/ssh-console.ts"],
       "@xterm/xterm": ["./node_modules/@xterm/xterm"],
       "@xterm/addon-fit": ["./node_modules/@xterm/addon-fit"]
     }

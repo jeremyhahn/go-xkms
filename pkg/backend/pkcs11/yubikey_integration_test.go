@@ -48,6 +48,7 @@ import (
 	"os/exec"
 	"testing"
 
+	"github.com/jeremyhahn/go-xkms/pkg/storage"
 	"github.com/jeremyhahn/go-xkms/pkg/storage/hardware"
 	p11 "github.com/miekg/pkcs11"
 )
@@ -91,28 +92,37 @@ type ykctx struct {
 func openYubiKey(t *testing.T) *ykctx {
 	t.Helper()
 
+	// The yubikey_hardware build tag is the guard: a binary built with it
+	// declares that a physical YubiKey is attached. A missing library or an
+	// absent token is therefore a hard failure, never a silent skip that would
+	// let a hardware run report success without touching hardware.
 	lib := findLibykcs11()
 	if lib == "" {
-		t.Skipf("libykcs11.so not found in any of: %v -- skipping YubiKey hardware tests", libykcs11Paths)
+		t.Fatalf("libykcs11.so not found in any of: %v -- attach a YubiKey and install yubico-piv-tool", libykcs11Paths)
 	}
 
 	ctx := p11.New(lib)
 	if ctx == nil {
-		t.Skipf("failed to load %s", lib)
+		t.Fatalf("failed to load %s", lib)
 	}
 
 	if err := ctx.Initialize(); err != nil {
 		if !errors.Is(err, p11.Error(p11.CKR_CRYPTOKI_ALREADY_INITIALIZED)) {
 			ctx.Destroy()
-			t.Skipf("libykcs11 Initialize failed (no YubiKey attached?): %v", err)
+			t.Fatalf("libykcs11 Initialize failed (no YubiKey attached?): %v", err)
 		}
 	}
 
 	slots, err := ctx.GetSlotList(true)
-	if err != nil || len(slots) == 0 {
+	if err != nil {
 		ctx.Finalize()
 		ctx.Destroy()
-		t.Skip("no YubiKey slots with a token present -- skipping")
+		t.Fatalf("GetSlotList: %v", err)
+	}
+	if len(slots) == 0 {
+		ctx.Finalize()
+		ctx.Destroy()
+		t.Fatal("no YubiKey slots with a token present -- attach a YubiKey")
 	}
 
 	session, err := ctx.OpenSession(slots[0], p11.CKF_SERIAL_SESSION|p11.CKF_RW_SESSION)
@@ -292,18 +302,13 @@ func TestYubiKeyPIV_DeleteReturnsClearError(t *testing.T) {
 		t.Logf("got expected sentinel: %v", derr)
 		return
 	}
-	// ErrNotFound is fine -- nothing to delete.
-	if derr.Error() == "not found" || errors.Is(derr, errNotFoundSentinel(derr)) {
+	// ErrNotFound is fine -- there was nothing to delete.
+	if errors.Is(derr, storage.ErrNotFound) {
 		t.Log("no cert present in slot 9D; delete verification path untested")
 		return
 	}
 	t.Fatalf("DeleteCert returned unexpected error: %v", derr)
 }
-
-// errNotFoundSentinel is a tiny helper to identify the not-found case
-// without pulling the storage package's ErrNotFound into this file's import
-// graph directly.
-func errNotFoundSentinel(err error) error { return err }
 
 // rawProvider is a hardware.PKCS11SessionProvider + PKCS11SOSessionProvider
 // that reuses a single pre-opened session on the live YubiKey.

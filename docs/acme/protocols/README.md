@@ -1,46 +1,64 @@
 # Multi-Protocol API Support
 
-go-xkms exposes all administrative operations through five protocols, ensuring maximum interoperability across different client types and deployment scenarios.
+go-xkms exposes all administrative operations over six server protocols,
+ensuring maximum interoperability across different client types and deployment
+scenarios.
 
 ## Supported Protocols
 
+Defaults below are the shipped configuration (`pkg/config/config.go`,
+`configs/xkmsd-dev.yaml`).
+
 | Protocol | Transport | Default Address | Use Case |
 |----------|-----------|-----------------|----------|
-| Unix | gRPC over UDS | /run/trusted-ca-grpc.sock | Local IPC, CLI |
+| Unix | gRPC over UDS | xkms-data/xkms.sock | Local IPC, CLI |
 | REST | HTTP/HTTPS | localhost:8443 | Web clients, external systems |
 | gRPC | TCP | localhost:9443 | High-performance service-to-service |
-| QUIC | UDP | localhost:9444 | Low-latency, mobile clients |
-| MCP | stdio/HTTP | localhost:9445 | AI/LLM integration |
+| QUIC | UDP | localhost:8444/udp | Low-latency, mobile clients |
+| MCP | stdio/HTTP | localhost:8445 | AI/LLM integration |
+| Noise | TCP | localhost:8447 | Cluster bootstrap (Noise NK) |
+
+The socket path is relative to the working directory by default; deployment
+configs use an absolute path (`configs/xkmsd-integration.yaml` uses
+`/var/run/xkms/xkms.sock`). Only Unix is enabled in the development config —
+the rest are opt-in under `protocols:`.
 
 ## Architecture
 
-All protocols share a common service layer, ensuring feature parity and consistent behavior regardless of transport. The architecture follows a clean separation:
+All protocols share a common service layer, ensuring feature parity and
+consistent behavior regardless of transport. Each transport is served from the
+same `Servicer` interface (`pkg/api/transport/servicer.go`), which is what keeps
+them in step:
 
 ```
 Client Request --> Protocol Handler --> Service Layer --> Business Logic
                    (REST/gRPC/etc)      (Common API)      (CA Operations)
 ```
 
-## Selecting a Protocol with cactl
+## Selecting a Protocol with xkmsctl
 
-The `cactl` CLI supports protocol selection via the `--transport` flag:
+`xkmsctl` selects its transport with `--transport` (default `unix`) and its
+endpoint with `--server`/`-s`. The endpoint is a URL, not a bare host:port:
 
 ```bash
 # Unix socket (default, fastest for local operations)
-cactl --transport unix cert list
+xkmsctl --transport unix cert list
 
 # REST API
-cactl --transport rest --address localhost:8443 cert list
+xkmsctl --transport rest --server https://localhost:8443 cert list
 
 # gRPC
-cactl --transport grpc --address localhost:9443 cert list
+xkmsctl --transport grpc --server grpc://localhost:9443 cert list
 
 # QUIC
-cactl --transport quic --address localhost:9444 cert list
+xkmsctl --transport quic --server quic://localhost:8444 cert list
 
 # MCP (for AI/LLM tooling)
-cactl --transport mcp --address localhost:9445 cert list
+xkmsctl --transport mcp --server https://localhost:8445 cert list
 ```
+
+`--transport` also accepts `embedded`, which runs the service in-process with no
+server at all. `--protocol`/`-P` is a deprecated alias for `--transport`.
 
 ## Protocol Characteristics
 
@@ -75,28 +93,41 @@ cactl --transport mcp --address localhost:9445 cert list
 - Supports stdio and HTTP transports
 - Enables AI agents to manage certificates
 
+### Noise
+- Noise NK handshake over TCP
+- Carries cluster bootstrap for a joining node
+- Enabled only where nodes join over an untrusted network
+
 ## Configuration
 
-Protocol endpoints are configured in the server configuration:
+Ports live under `server:`, and each protocol is switched on under `protocols:`:
 
 ```yaml
-api:
-  grpc:
-    enabled: true
-    address: :9443
-    unix_path: /run/trusted-ca-grpc.sock
-    unix_mode: 0660
-  rest:
-    enabled: true
-    address: :8443
-    tls: true
-  quic:
-    enabled: true
-    address: :9444
-  mcp:
-    enabled: true
-    address: :9445
+server:
+  host: "127.0.0.1"
+  rest_port: 8443
+  grpc_port: 9443
+  quic_port: 8444
+  mcp_port: 8445
+  noise_port: 8447
+
+protocols:
+  unix: true
+  rest: false
+  grpc: false
+  quic: false
+  mcp: false
+
+unix:
+  enabled: true
+  socket_path: "xkms-data/xkms.sock"
+  socket_mode: "0660"
+  protocol: "grpc"
 ```
+
+Each port also has an environment override — `XKMS_REST_PORT`, `XKMS_GRPC_PORT`,
+`XKMS_QUIC_PORT`, `XKMS_MCP_PORT`, `XKMS_NOISE_PORT` — applied when the value
+parses as a valid port.
 
 ## See Also
 

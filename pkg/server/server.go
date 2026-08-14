@@ -21,6 +21,7 @@ import (
 	"encoding/base64"
 	"errors"
 	"fmt"
+	"io/fs"
 	"log/slog"
 	"net"
 	"net/http"
@@ -50,6 +51,7 @@ import (
 	"github.com/jeremyhahn/go-xkms/pkg/api/unix"
 	"github.com/jeremyhahn/go-xkms/pkg/audit"
 	"github.com/jeremyhahn/go-xkms/pkg/auth"
+	"github.com/jeremyhahn/go-xkms/pkg/auth/token"
 	"github.com/jeremyhahn/go-xkms/pkg/backend/software"
 	"github.com/jeremyhahn/go-xkms/pkg/ca"
 	"github.com/jeremyhahn/go-xkms/pkg/ca/provider"
@@ -59,6 +61,8 @@ import (
 	initialize "github.com/jeremyhahn/go-xkms/pkg/init"
 	"github.com/jeremyhahn/go-xkms/pkg/keyprovider/pkcs8"
 	"github.com/jeremyhahn/go-xkms/pkg/metrics"
+	"github.com/jeremyhahn/go-xkms/pkg/pkcs11state"
+	"github.com/jeremyhahn/go-xkms/pkg/ratelimit"
 	"github.com/jeremyhahn/go-xkms/pkg/seal"
 	"github.com/jeremyhahn/go-xkms/pkg/seal/policy"
 	credentialspkg "github.com/jeremyhahn/go-xkms/pkg/server/credentials"
@@ -90,9 +94,8 @@ type Server struct {
 
 	// sshClient is the shared SSH SDK client wired into every transport. It
 	// is built once, lazily, via ensureSSHClient.
-	sshClient   sdkssh.Client
-	sshHostKeys sdkssh.HostKeyStore
-	sshOnce     sync.Once
+	sshClient sdkssh.Client
+	sshOnce   sync.Once
 
 	// xkmsService is the composed XKMS service injected into every transport
 	// constructor. It is resolved once from the package singleton at the
@@ -116,8 +119,26 @@ type Server struct {
 	metricsServer *http.Server
 
 	// Authentication
-	authenticator  auth.Authenticator
-	webauthnConfig *webauthn.Config
+	authenticator auth.Authenticator
+
+	// liveAuthenticator is what every transport actually receives. It is an
+	// auth.Authenticator that forwards to whichever authenticator is current,
+	// so a listener constructed at startup uses the authenticator installed by
+	// a later Reload instead of the one it captured. s.authenticator remains
+	// the concrete authenticator in force, which is what reload rollback,
+	// logging and the nil check read.
+	liveAuthenticator *auth.LiveAuthenticator
+	webauthnConfig    *webauthn.Config
+
+	// tokenIssuer mints the access/refresh pairs behind the login flows
+	// (WebAuthn passkey login, PIV/mTLS cert login) and the /api/v1/auth
+	// session endpoints. Nil when no backends are available.
+	tokenIssuer *token.Issuer
+
+	// defaultBackendName is the resolved default backend, recorded by
+	// initializeKeyStore so later initialization stages use the same
+	// resolution instead of re-deriving (or consulting the singleton).
+	defaultBackendName string
 
 	// webauthnService is the single WebAuthn relying-party service shared
 	// between the REST browser ceremony and the SDK ceremony (via
@@ -196,6 +217,10 @@ type Server struct {
 	// Password store
 	passwordStore *staticpw.BackendStore
 
+	// PKCS#11 remote-state store — persists a remote-mode PKCS#11 module's token
+	// and object state in the embedded qrdb node. Nil unless enabled.
+	pkcs11StateStore *pkcs11state.Store
+
 	// Platform store
 	platformStore seal.PlatformStore
 
@@ -257,11 +282,48 @@ type Server struct {
 	// during Shutdown. It is nil for non-embedded (remote) qrdb deployments.
 	qrdbAuditSink qrdbsdk.NodeAuditLogger
 
+	// clusterAdvertiser publishes this node's Raft address and client-facing
+	// API endpoints into the cluster registry and keeps the lease alive, so a
+	// peer can turn a leader replica ID into a dialable API address. It is nil
+	// on a standalone node and on a node with no advertisable host.
+	clusterAdvertiser *qrdbsdk.NodeAdvertiser
+
+	// uiAssets is the compiled web UI filesystem (rooted at the vite dist
+	// output) served by the REST transport. It is installed by the
+	// composition root via SetUIAssets before Start; nil (or a config-level
+	// disable) leaves the UI unmounted.
+	uiAssets fs.FS
+
+	// authDecorator optionally wraps the built authenticator before it is
+	// published (desktop loopback-token composite). Set via
+	// WithAuthenticatorDecorator.
+	authDecorator func(auth.Authenticator) auth.Authenticator
+
+	// restListener, when non-nil, is handed to the REST transport so it
+	// serves a pre-bound listener (loopback launcher: 127.0.0.1:0) instead of
+	// binding the configured port. Set via SetRESTListener.
+	restListener net.Listener
+
 	// Lifecycle
 	ctx        context.Context
 	cancel     context.CancelFunc
 	wg         sync.WaitGroup
 	shutdownCh chan struct{}
+}
+
+// SetUIAssets installs the compiled web UI filesystem (rooted at the vite
+// dist output) served by the REST transport. Call before Start; a nil
+// assets value leaves the UI unmounted.
+func (s *Server) SetUIAssets(assets fs.FS) {
+	s.uiAssets = assets
+}
+
+// SetRESTListener hands the REST transport a pre-bound listener to serve
+// instead of binding the configured port. The loopback launcher uses this
+// with a 127.0.0.1:0 listener so the embedded desktop engine is off-box
+// unreachable. Call before Start.
+func (s *Server) SetRESTListener(l net.Listener) {
+	s.restListener = l
 }
 
 // ensureSSHClient lazily builds the shared SSH SDK client used by every
@@ -299,29 +361,77 @@ func (s *Server) ensureSSHClient() sdkssh.Client {
 			return
 		}
 		s.sshClient = client
-		// Host-key pin store over the same SSH storage — used to verify hosts
-		// for the interactive console (SSHConsole stream / WS bridge).
-		if hostKeys, hkerr := sdkssh.NewHostKeyStore(sshStorage); hkerr != nil {
-			s.logger.Error("Failed to build SSH host-key store", slog.Any("error", hkerr))
-		} else {
-			s.sshHostKeys = hostKeys
-		}
 		s.logger.Info("SSH subsystem initialized")
 	})
 	return s.sshClient
 }
 
-// ensureSSHHostKeys returns the host-key pin store (built alongside the SSH
-// client). Used by the SSHConsole stream to verify hosts.
-func (s *Server) ensureSSHHostKeys() sdkssh.HostKeyStore {
-	s.ensureSSHClient()
-	return s.sshHostKeys
+// New creates a new unified server instance
+// Option customizes server construction. Options are additive and applied
+// before subsystem initialization; they can only add capabilities (e.g.
+// compose an extra authenticator), never bypass the fail-closed defaults.
+type Option func(*Server)
+
+// WithAuthenticatorDecorator wraps the configured authenticator once it has
+// been built, before it is published to the transports. The decorator
+// receives the resolved authenticator and returns the one to use — typically
+// a composite that also accepts a loopback per-launch token (desktop
+// standalone). It can only add acceptance paths on top of the configured
+// chain; it cannot disable the underlying authenticator.
+func WithAuthenticatorDecorator(fn func(auth.Authenticator) auth.Authenticator) Option {
+	return func(s *Server) { s.authDecorator = fn }
 }
 
-// New creates a new unified server instance
-func New(cfg *config.Config) (*Server, error) {
+func New(cfg *config.Config, opts ...Option) (*Server, error) {
 	// Setup logging
 	logger := setupLogger(cfg.Logging)
+
+	// Apply the configured weak-hash policy to pkg/types. This is the
+	// composition root: pkg/types refuses the collision-broken digests until
+	// something applies a configuration, so a deployment that needs SHA-1/MD5
+	// for legacy interop or PKCS#11 conformance gets them only by setting
+	// crypto.allow_weak_hashes, and a deployment that says nothing keeps the
+	// secure default. In FIPS mode SetAllowWeakHashes ignores the request: the
+	// approved-algorithm boundary belongs to the validated module, which the Go
+	// toolchain selects (GOFIPS140 at build time, GODEBUG=fips140 at run time),
+	// and no configuration file can widen it.
+	types.SetAllowWeakHashes(cfg.Crypto.AllowWeakHashes)
+
+	// Same shape for the key-wrap constructions that authenticate nothing.
+	// pkg/types refuses RSA_PKCS1_V1_5, AES_CBC_PAD and AES_CBC until this
+	// applies a configuration, because C_UnwrapKey takes a caller-supplied
+	// blob over every transport and each of them turns it into a decryption
+	// oracle. FIPS mode ignores the request on the same terms.
+	types.SetAllowLegacyKeyWrap(cfg.Crypto.AllowLegacyKeyWrap)
+
+	// Log the resulting posture so which algorithms this process will perform is
+	// unambiguous in the operator's logs, and name the digests when the operator
+	// has opted into the forgeable ones.
+	switch {
+	case types.FIPSMode():
+		logger.Info("FIPS 140-3 mode active; non-approved algorithms are refused",
+			slog.Any("refused_hashes", types.WeakHashNames()),
+			slog.Any("refused_key_wrap", types.LegacyKeyWrapNames()))
+	case types.AllowWeakHashes():
+		logger.Warn("crypto.allow_weak_hashes is enabled; collision-broken digests will be used "+
+			"for signing, certificates and attestation. Signatures produced over them are forgeable; "+
+			"enable this only for legacy interop or PKCS#11 conformance",
+			slog.Any("admitted_hashes", types.WeakHashNames()))
+	default:
+		logger.Info("collision-broken digests are refused (crypto.allow_weak_hashes=false)",
+			slog.Any("refused_hashes", types.WeakHashNames()),
+			slog.Bool("legacy_key_wrap_available", types.AllowLegacyKeyWrap()))
+	}
+
+	// The unauthenticated key-wrap constructions get their own warning: an
+	// operator who enabled them has opened a decryption oracle on C_UnwrapKey,
+	// which is a different exposure from a forgeable signature.
+	if !types.FIPSMode() && types.AllowLegacyKeyWrap() {
+		logger.Warn("crypto.allow_legacy_key_wrap is enabled; C_UnwrapKey accepts a caller-supplied "+
+			"blob under these mechanisms, so an unwrap success is not evidence the blob came from "+
+			"this service",
+			slog.Any("admitted_key_wrap", types.LegacyKeyWrapNames()))
+	}
 
 	// Create context with cancellation
 	ctx, cancel := context.WithCancel(context.Background())
@@ -334,6 +444,11 @@ func New(cfg *config.Config) (*Server, error) {
 		ctx:          ctx,
 		cancel:       cancel,
 		shutdownCh:   make(chan struct{}),
+	}
+
+	// Apply construction options before any subsystem initializes.
+	for _, opt := range opts {
+		opt(s)
 	}
 
 	// Decide whether the qrdb node's own barrier encrypts the data plane (the
@@ -368,6 +483,16 @@ func New(cfg *config.Config) (*Server, error) {
 		cancel()
 		s.closeBackends()
 		return nil, &ErrServiceInit{Service: "keystore", Err: err}
+	}
+
+	// Initialize the session-token issuer (JWT signing key in the default
+	// backend + refresh-token store). Must precede authentication so the JWT
+	// authenticator can fall back to the issuer's public key, and precede the
+	// WebAuthn service so ceremony completion mints real tokens.
+	if err := s.initializeTokenIssuer(); err != nil {
+		cancel()
+		s.closeBackends()
+		return nil, &ErrServiceInit{Service: "token issuer", Err: err}
 	}
 
 	// Initialize authentication
@@ -429,6 +554,13 @@ func New(cfg *config.Config) (*Server, error) {
 		return nil, &ErrServiceInit{Service: "password store", Err: err}
 	}
 
+	// Initialize the PKCS#11 remote-state store
+	if err := s.initializePKCS11StateStore(); err != nil {
+		cancel()
+		s.closeBackends()
+		return nil, &ErrServiceInit{Service: "pkcs11 state store", Err: err}
+	}
+
 	// Initialize platform store
 	if err := s.initializePlatformStore(); err != nil {
 		cancel()
@@ -471,6 +603,24 @@ func New(cfg *config.Config) (*Server, error) {
 		return nil, &ErrServiceInit{Service: "factor registry", Err: err}
 	}
 
+	// Run qrdb's canonical first-boot: the system tenant, the built-in roles,
+	// the administrator and the administrator's certificate, exactly as qrdbd
+	// and quicbaasd create them.
+	//
+	// It runs HERE, after initializeCA, because the administrator's certificate
+	// is issued by the CA. Bootstrapping earlier — while the embedded node was
+	// being built — created the administrator before any CA existed, leaving an
+	// identity with no bound certificate that nobody could authenticate as.
+	//
+	// It is idempotent, so every start and every node of a cluster runs it, and
+	// it is fatal: a daemon whose bootstrap did not happen surfaces later as an
+	// unexplained authentication failure rather than as the missing bootstrap.
+	if err := s.runFirstBoot(ctx); err != nil {
+		cancel()
+		s.closeBackends()
+		return nil, &ErrServiceInit{Service: "first-boot", Err: err}
+	}
+
 	// Wire all subsystems into the XKMSService singleton so it implements
 	// the full embedded.XKMSServicer interface for in-process SDK access.
 	// The resolved service is also captured on the server so the transport
@@ -502,6 +652,9 @@ func New(cfg *config.Config) (*Server, error) {
 				}
 			}
 		}
+		if s.pkcs11StateStore != nil {
+			svc.SetPKCS11StateStore(s.pkcs11StateStore)
+		}
 		if s.platformStore != nil {
 			svc.SetPlatformStore(s.platformStore)
 		}
@@ -514,13 +667,29 @@ func New(cfg *config.Config) (*Server, error) {
 		if s.qrdbClient != nil {
 			svc.SetShareClient(s.qrdbClient.Shares())
 		}
+		// UserAuthFactors returns nil when the transport predates the
+		// user-side surface, so the servicer stays unconfigured rather than
+		// holding a typed-nil client that would panic on first call.
+		if s.qrdbClient != nil {
+			if factors := s.qrdbClient.UserAuthFactors(); factors != nil {
+				svc.SetUserAuthFactorClient(factors)
+			}
+		}
+		// The audit client is wired read-only: the servicer exposes QueryAudit
+		// and nothing else, so the viewer can read the chain while emission
+		// stays with pkg/audit's Logger.
+		if s.qrdbClient != nil {
+			if auditClient := s.qrdbClient.Audit(); auditClient != nil {
+				svc.SetAuditClient(auditClient)
+			}
+		}
 		// Wire the read-only cluster surface. Only attach the live qrdb
 		// cluster client when clustering is enabled; a standalone node leaves
 		// the reader nil and the servicer reports single-node status. The
 		// shard and this node's replica id come from operator cluster config.
 		if s.qrdbClient != nil && s.config.Cluster.Enabled {
 			svc.SetClusterClient(
-				&clusterReaderAdapter{cluster: s.qrdbClient.Cluster()},
+				&clusterClientAdapter{cluster: s.qrdbClient.Cluster()},
 				s.config.Cluster.ShardID,
 				s.config.Cluster.NodeID,
 			)
@@ -553,6 +722,20 @@ func New(cfg *config.Config) (*Server, error) {
 			if caProvider, ok := s.ca.(provider.CA); ok {
 				svc.SetCA(caProvider)
 			}
+		}
+		// Wire the hardware-attestation trust anchors. Without them,
+		// attestation-gated CSR signing fails closed, so a broken anchor
+		// configuration is fatal at startup rather than silently permissive.
+		if s.config.Attestation != nil {
+			verifiers, attErr := s.config.Attestation.Verifiers()
+			if attErr != nil {
+				return nil, attErr
+			}
+			if attErr := svc.SetAttestationVerifiers(verifiers); attErr != nil {
+				return nil, attErr
+			}
+			s.logger.Info("Hardware attestation trust anchors wired",
+				"formats", svc.AttestationFormats())
 		}
 	}
 
@@ -749,6 +932,7 @@ func (s *Server) initializeKeyStore() error {
 			break
 		}
 	}
+	s.defaultBackendName = defaultBackend
 
 	// Initialize the global xkms service with the keystores. The resolved
 	// service is captured on the server in New() and injected into every
@@ -772,7 +956,48 @@ func (s *Server) initializeKeyStore() error {
 // It configures adaptive authentication that automatically switches between:
 // - NoOp mode (when no users exist) - allows all requests for bootstrap
 // - Required auth mode (when users exist) - requires JWT or mTLS authentication
+//
+// Authenticator selection is fail-closed. The no-op authenticator is reachable
+// only through an explicit, unambiguous opt-in — auth.enabled=false or
+// auth.type "none"/"noop"/"" — which config.ComplianceGaps() reports, so the
+// daemon refuses to start on it at all and offers no override. Every
+// other outcome that cannot produce a real authenticator (an unrecognized
+// auth.type, a broken JWT key, adaptive mode with nothing to escalate to) is a
+// fatal startup error rather than a silently unauthenticated server.
 func (s *Server) initializeAuthentication() error {
+	if err := s.buildAuthenticator(); err != nil {
+		return err
+	}
+	// Apply an authenticator decorator (e.g. desktop loopback-token composite)
+	// before publishing. Decorators add acceptance paths on top of the
+	// configured authenticator; they never replace it with a weaker one.
+	if s.authDecorator != nil {
+		s.authenticator = s.authDecorator(s.authenticator)
+		s.logger.Info("Authenticator decorated", slog.String("name", s.authenticator.Name()))
+	}
+	// Publish on every success path. buildAuthenticator assigns s.authenticator
+	// from several branches, so publishing here rather than at each assignment
+	// keeps the holder and the concrete authenticator from drifting apart.
+	s.publishAuthenticator()
+	return nil
+}
+
+// publishAuthenticator makes the authenticator now in force the one every
+// transport uses, including listeners that were constructed earlier. The
+// holder is created on first use so it exists before any transport is built,
+// whatever order a caller initializes the server in.
+func (s *Server) publishAuthenticator() {
+	if s.liveAuthenticator == nil {
+		s.liveAuthenticator = auth.NewLiveAuthenticator(s.authenticator)
+		return
+	}
+	s.liveAuthenticator.Store(s.authenticator)
+}
+
+// buildAuthenticator resolves the configured authenticator into
+// s.authenticator. Callers go through initializeAuthentication, which also
+// publishes the result to the running transports.
+func (s *Server) buildAuthenticator() error {
 	s.logger.Info("Initializing authentication...")
 
 	// Build WebAuthn config if enabled (do this first as WebAuthn can work independently
@@ -786,6 +1011,7 @@ func (s *Server) initializeAuthentication() error {
 			AuthenticatorAttachment: s.config.WebAuthn.AuthenticatorAttachment,
 			ResidentKeyRequirement:  s.config.WebAuthn.ResidentKey,
 			UserVerification:        s.config.WebAuthn.UserVerification,
+			AllowPublicRegistration: s.config.WebAuthn.AllowPublicRegistration,
 		}
 
 		// Set defaults for any unset values. The relying-party display name and
@@ -805,16 +1031,28 @@ func (s *Server) initializeAuthentication() error {
 			"rp_display_name", s.config.WebAuthn.RPDisplayName)
 	}
 
-	// If auth is disabled, use NoOp authenticator
+	// If auth is disabled, use NoOp authenticator. This is an explicit opt-in
+	// that config.ComplianceGaps() flags, so cmd/xkmsd refuses to start on it
+	// outright; only embedded and test callers of this package reach here.
 	if !s.config.Auth.Enabled {
 		s.authenticator = auth.NewNoOpAuthenticator()
-		s.logger.Info("Authentication disabled, using NoOp authenticator")
+		s.logger.Warn("Authentication disabled (auth.enabled=false), using NoOp authenticator: all requests are anonymous")
 		return nil
 	}
 
 	// Determine the required authenticator based on config type
 	var requiredAuth auth.Authenticator
-	switch s.config.Auth.Type {
+	switch strings.ToLower(strings.TrimSpace(s.config.Auth.Type)) {
+	case "none", "noop", "":
+		// Explicit, unambiguous opt-in to unauthenticated access. This mirrors
+		// config.AuthConfig.CreateAuthenticator and is reported by
+		// config.ComplianceGaps(), so the daemon refuses to start on it
+		// outright; only embedded and test callers of this package reach here.
+		s.authenticator = auth.NewNoOpAuthenticator()
+		s.logger.Warn("Authentication explicitly set to no-op, all requests are anonymous",
+			"type", s.config.Auth.Type)
+		return nil
+
 	case "jwt":
 		// JWT authenticator requires a public key
 		if s.config.Auth.JWT == nil || s.config.Auth.JWT.PublicKeyFile == "" {
@@ -853,36 +1091,34 @@ func (s *Server) initializeAuthentication() error {
 		s.logger.Info("Adaptive authentication mode enabled")
 
 	default:
-		// Default to NoOp if type is not recognized
-		s.authenticator = auth.NewNoOpAuthenticator()
-		s.logger.Warn("Unknown auth type, using NoOp authenticator", "type", s.config.Auth.Type)
-		return nil
+		// Fail closed: an unrecognized auth.type is almost always a typo, and
+		// admitting every request because of one would be the worst possible
+		// outcome. Unauthenticated access must be requested explicitly.
+		return &ErrUnknownAuthType{Type: s.config.Auth.Type}
 	}
 
 	// If adaptive mode is enabled or explicitly configured, wrap the authenticator
-	if s.config.Auth.Adaptive || s.config.Auth.Type == "adaptive" {
-		// For adaptive mode, we need a required authenticator
-		// If none was configured, default to JWT (for WebAuthn flow)
+	if s.config.Auth.Adaptive || strings.EqualFold(strings.TrimSpace(s.config.Auth.Type), "adaptive") {
+		// Adaptive mode relaxes authentication only while no users exist; once a
+		// user is provisioned every request is delegated to the required
+		// authenticator. A no-op required authenticator would therefore leave
+		// the API anonymous forever, so one must be derivable from the config.
 		if requiredAuth == nil {
-			// Try to create JWT authenticator if WebAuthn is configured
-			if s.config.WebAuthn != nil && s.config.WebAuthn.Enabled {
-				if s.config.Auth.JWT != nil && s.config.Auth.JWT.PublicKeyFile != "" {
-					jwtAuth, err := s.createJWTAuthenticator()
-					if err != nil {
-						s.logger.Warn("Failed to create JWT authenticator for adaptive mode, falling back to NoOp",
-							slog.Any("error", err))
-						requiredAuth = auth.NewNoOpAuthenticator()
-					} else {
-						requiredAuth = jwtAuth
-					}
-				} else {
-					// No JWT config, use NoOp for now
-					s.logger.Warn("Adaptive mode enabled but no JWT config, using NoOp for required auth")
-					requiredAuth = auth.NewNoOpAuthenticator()
-				}
-			} else {
-				requiredAuth = auth.NewNoOpAuthenticator()
+			// The WebAuthn browser/SDK ceremony issues a bearer token that the
+			// JWT authenticator validates, so JWT is the required authenticator
+			// for a WebAuthn deployment. The verification key is either the
+			// operator-supplied public key file or the built-in token issuer's
+			// signing key; without both there is nothing that can validate a
+			// post-login request.
+			hasKeyFile := s.config.Auth.JWT != nil && s.config.Auth.JWT.PublicKeyFile != ""
+			if !hasKeyFile && s.tokenIssuer == nil {
+				return ErrAdaptiveRequiresAuthenticator
 			}
+			jwtAuth, err := s.createJWTAuthenticator()
+			if err != nil {
+				return &ErrServiceInit{Service: "JWT authenticator for adaptive mode", Err: err}
+			}
+			requiredAuth = jwtAuth
 		}
 
 		adaptiveAuth, err := auth.NewAdaptiveAuthenticator(&auth.AdaptiveConfig{
@@ -898,11 +1134,16 @@ func (s *Server) initializeAuthentication() error {
 		s.authenticator = adaptiveAuth
 		s.logger.Info("Adaptive authentication initialized",
 			"required_auth", requiredAuth.Name())
-	} else if requiredAuth != nil {
-		s.authenticator = requiredAuth
-	} else {
-		s.authenticator = auth.NewNoOpAuthenticator()
+		return nil
 	}
+
+	// Every non-adaptive branch above either assigns requiredAuth or returns an
+	// error, so a nil authenticator here would be a programming error rather
+	// than a configuration one. Fail closed instead of admitting all requests.
+	if requiredAuth == nil {
+		return &ErrUnknownAuthType{Type: s.config.Auth.Type}
+	}
+	s.authenticator = requiredAuth
 
 	return nil
 }
@@ -1006,13 +1247,25 @@ func (s *Server) initializeWebAuthnService() error {
 		s.logger.Info("WebAuthn using datastore-backed stores for persistence")
 	}
 
-	svc, err := webauthn.NewService(webauthn.ServiceParams{
+	params := webauthn.ServiceParams{
 		Config:          s.webauthnConfig,
 		UserStore:       userStore,
 		SessionStore:    sessionStore,
 		CredentialStore: credStore,
 		Logger:          s.logger,
-	})
+	}
+
+	// Wire the session-token issuer so ceremony completion mints verifiable
+	// access/refresh JWTs. Without it the library falls back to an unsigned
+	// base64 user ID, which no authenticator accepts — a login flow that
+	// cannot actually log anyone in.
+	if s.tokenIssuer != nil {
+		params.JWTGenerator = &webAuthnTokenAdapter{issuer: s.tokenIssuer}
+	} else {
+		s.logger.Warn("WebAuthn service has no token issuer: ceremony tokens will not authenticate API requests")
+	}
+
+	svc, err := webauthn.NewService(params)
 	if err != nil {
 		return &ErrServiceInit{Service: "webauthn service", Err: err}
 	}
@@ -1023,11 +1276,16 @@ func (s *Server) initializeWebAuthnService() error {
 }
 
 // initializeAuthorization sets up the authorization subsystem. All transports
-// (REST, gRPC, QUIC) authorize through the single qrdb-backed Authorizer — the
-// canonical role/permission engine. When RBAC is disabled, or enabled without a
-// hosted qrdb identity plane (non-qrdb storage backends), the Authorizer is left
-// nil so the gate stays open (allow all) rather than denying every request —
-// mirroring the mTLS identity fallback.
+// (REST, gRPC, QUIC, MCP) authorize through the single qrdb-backed Authorizer —
+// the canonical role/permission engine. When RBAC is disabled the Authorizer is
+// left nil and the gate stays open, which is the configured intent.
+//
+// RBAC enabled without a hosted qrdb identity plane (a non-qrdb storage backend)
+// also leaves the Authorizer nil, which would silently degrade every transport
+// to allow-all. That combination is refused before startup reaches here:
+// Config.ComplianceGaps reports it and cmd/xkmsd aborts, with no override. The
+// warning below therefore only fires for an embedded or test caller that
+// constructs this package directly.
 func (s *Server) initializeAuthorization() error {
 	s.logger.Info("Initializing authorization...")
 
@@ -1351,6 +1609,24 @@ func (s *Server) initializePasswordStore() error {
 	return nil
 }
 
+// initializePKCS11StateStore builds the store that persists a remote-mode
+// PKCS#11 module's token and object state in the embedded qrdb node. It uses the
+// same createStorage seam every other server subsystem does, so the records
+// inherit the node's durability and, per tenant, its barrier encryption.
+func (s *Server) initializePKCS11StateStore() error {
+	backend, err := s.createStorage("pkcs11state")
+	if err != nil {
+		return &ErrStorageCreate{Resource: "pkcs11 state storage", Err: err}
+	}
+	store, err := pkcs11state.NewStore(backend)
+	if err != nil {
+		return &ErrStorageCreate{Resource: "pkcs11 state storage", Err: err}
+	}
+	s.pkcs11StateStore = store
+	s.logger.Info("PKCS#11 remote-state store initialized")
+	return nil
+}
+
 // initializePlatformStore initializes the platform sealed credential store.
 func (s *Server) initializePlatformStore() error {
 	// Platform store requires barrier to be initialized for sealing
@@ -1470,26 +1746,43 @@ func (s *Server) CredentialService() *credentialspkg.Service {
 
 // createJWTAuthenticator creates a JWT authenticator from configuration.
 func (s *Server) createJWTAuthenticator() (*auth.JWTAuthenticator, error) {
-	if s.config.Auth.JWT == nil {
+	// An operator-supplied public key file always wins (external IdP tokens).
+	// Without one, fall back to the built-in token issuer's public key so the
+	// login flows (WebAuthn passkey, PIV/mTLS cert login) verify without any
+	// extra key management.
+	var (
+		pubKey   interface{}
+		issuer   string
+		audience []string
+	)
+
+	switch {
+	case s.config.Auth.JWT != nil && s.config.Auth.JWT.PublicKeyFile != "":
+		pubKeyData, err := os.ReadFile(s.config.Auth.JWT.PublicKeyFile)
+		if err != nil {
+			return nil, &ErrFileRead{Path: "public key file", Err: err}
+		}
+		parsed, err := parsePublicKey(pubKeyData)
+		if err != nil {
+			return nil, &ErrTLSCertOp{Operation: "parse public key", Err: err}
+		}
+		pubKey = parsed
+		issuer = s.config.Auth.JWT.Issuer
+		audience = s.config.Auth.JWT.Audience
+
+	case s.tokenIssuer != nil:
+		pubKey = s.tokenIssuer.PublicKey()
+		issuer = s.tokenIssuer.IssuerName()
+		audience = s.tokenIssuer.Audience()
+
+	default:
 		return nil, ErrJWTConfigRequired
-	}
-
-	// Load public key from file
-	pubKeyData, err := os.ReadFile(s.config.Auth.JWT.PublicKeyFile)
-	if err != nil {
-		return nil, &ErrFileRead{Path: "public key file", Err: err}
-	}
-
-	// Parse the public key (supports PEM-encoded ECDSA or RSA keys)
-	pubKey, err := parsePublicKey(pubKeyData)
-	if err != nil {
-		return nil, &ErrTLSCertOp{Operation: "parse public key", Err: err}
 	}
 
 	return auth.NewJWTAuthenticator(&auth.JWTConfig{
 		PublicKey:  pubKey,
-		Issuer:     s.config.Auth.JWT.Issuer,
-		Audience:   s.config.Auth.JWT.Audience,
+		Issuer:     issuer,
+		Audience:   audience,
 		HeaderName: "Authorization",
 	})
 }
@@ -1789,10 +2082,24 @@ func (s *Server) initializeCA() error {
 	return nil
 }
 
+// tlsBootstrapCA is the subset of ca.TrustedCA the TLS-server-certificate
+// bootstrap path (ensureTLSServerCert / syncExistingTLSCert /
+// storeTLSCertInBackend) depends on: reading/issuing TLS material
+// (ca.CATLSConfig, ca.CAIssuer), the CA's own certificate (ca.CATrustChain),
+// and its certificate store (ca.CAStores). Declaring this instead of the
+// full ca.TrustedCA keeps the bootstrap path's dependency honest — it never
+// touches attestation, cross-signing, revocation, or TCG enrollment.
+type tlsBootstrapCA interface {
+	ca.CATLSConfig
+	ca.CAIssuer
+	ca.CATrustChain
+	ca.CAStores
+}
+
 // ensureTLSServerCert checks if a TLS server certificate exists for the configured
 // server CN and issues one from the CA if it doesn't. This enables CA-backed TLS
 // without requiring pre-generated cert/key files.
-func (s *Server) ensureTLSServerCert(xkmsCA ca.TrustedCA, keystoreType types.StoreType) error {
+func (s *Server) ensureTLSServerCert(xkmsCA tlsBootstrapCA, keystoreType types.StoreType) error {
 	serverCN := s.config.TLS.ServerCN
 
 	// Build key attributes for the TLS server cert using the CA identity's store type
@@ -1858,7 +2165,7 @@ func (s *Server) ensureTLSServerCert(xkmsCA ca.TrustedCA, keystoreType types.Sto
 // certificate (from a previous run) but the backend's certStorage doesn't. This
 // happens when Docker volumes are partially cleaned between runs. The function
 // retrieves the existing cert from the CA's certStore and stores it in the backend.
-func (s *Server) syncExistingTLSCert(xkmsCA ca.TrustedCA, serverCN string, keystoreType types.StoreType) error {
+func (s *Server) syncExistingTLSCert(xkmsCA tlsBootstrapCA, serverCN string, keystoreType types.StoreType) error {
 	s.logger.Info("TLS cert exists in CA but not in backend, syncing", "cn", serverCN)
 
 	cert, err := xkmsCA.CertStore().GetCertificate(serverCN)
@@ -1878,7 +2185,7 @@ func (s *Server) syncExistingTLSCert(xkmsCA ca.TrustedCA, serverCN string, keyst
 // cert storage so that ca.TLSCertificate() → keyStore.GetTLSCertificate() can
 // find it. The CA stores certs in its own certStore, but GetTLSCertificate looks
 // in the compositeBackend's certStorage (separate storage).
-func (s *Server) storeTLSCertInBackend(ctx context.Context, xkmsCA ca.TrustedCA, serverCN string, keystoreType types.StoreType, cert *x509.Certificate) error {
+func (s *Server) storeTLSCertInBackend(ctx context.Context, xkmsCA tlsBootstrapCA, serverCN string, keystoreType types.StoreType, cert *x509.Certificate) error {
 	backend, ok := s.backends[string(keystoreType)]
 	if !ok {
 		return &ErrBackendNotAvailable{Backend: string(keystoreType), Purpose: "TLS cert storage"}
@@ -2011,11 +2318,11 @@ func (s *Server) startUnix() {
 		// Create Unix gRPC server configuration
 		// Note: Logger is nil - the unix package will use its internal noOpLogger
 		grpcConfig := &unix.GRPCConfig{
-			SocketPath:  socketPath,
-			Logger:      nil,
-			XKMSService: s.xkmsService,
-			SSHClient:   s.ensureSSHClient(),
-			SSHHostKeys: s.ensureSSHHostKeys(),
+			SocketPath:      socketPath,
+			Logger:          nil,
+			XKMSService:     s.xkmsService,
+			SSHClient:       s.ensureSSHClient(),
+			BarrierRegistry: s.barrierRegistry,
 		}
 
 		grpcServer, err := unix.NewGRPCServer(grpcConfig)
@@ -2054,7 +2361,7 @@ func (s *Server) startREST() {
 		Port:              s.config.Server.RESTPort,
 		Backends:          s.backends,
 		Version:           getBuildVersion(),
-		Authenticator:     s.authenticator,
+		Authenticator:     s.liveAuthenticator,
 		EnableRBAC:        s.config.Auth.EnableRBAC,
 		RBACAuthorizer:    s.rbacAuthorizer,
 		AuditLogger:       s.auditLogger,
@@ -2070,7 +2377,62 @@ func (s *Server) startREST() {
 		CredentialService: s.credentialService,
 		XKMSService:       s.xkmsService,
 		SSHClient:         s.ensureSSHClient(),
-		SSHHostKeys:       s.ensureSSHHostKeys(),
+	}
+
+	// Loopback launcher: serve a pre-bound listener (127.0.0.1:0) instead of
+	// binding the configured port, so the desktop standalone engine is
+	// off-box unreachable and its ephemeral port is known to the shell.
+	if s.restListener != nil {
+		restConfig.Listener = s.restListener
+	}
+
+	// Embedded web UI: serve the compiled SPA (installed via SetUIAssets)
+	// unless the configuration explicitly disables it. The prefix and root
+	// redirect come from the ui config section; empty prefix selects the
+	// REST transport's default.
+	if s.uiAssets != nil && s.config.UIEnabled() {
+		restConfig.UI = &rest.UIOptions{
+			Enabled:      true,
+			PathPrefix:   s.config.UI.PathPrefix,
+			Assets:       s.uiAssets,
+			RedirectRoot: s.config.UI.RedirectRoot,
+		}
+	}
+
+	// Cross-origin access is opt-in: without an explicit allowlist the REST
+	// router emits no CORS headers and browsers enforce same-origin (the
+	// embedded web UI is served same-origin and needs none).
+	if s.config.CORS.Enabled {
+		restConfig.CORS = &rest.CORSOptions{
+			AllowedOrigins:   s.config.CORS.AllowedOrigins,
+			AllowCredentials: s.config.CORS.AllowCredentials,
+			MaxAgeSeconds:    s.config.CORS.MaxAgeSeconds,
+		}
+	}
+
+	// Session-token plane: the issuer behind the login flows plus a
+	// dedicated, stricter per-client limiter on the login/refresh/ceremony
+	// endpoints (hardware-ceremony endpoints are expensive and the exchange
+	// endpoints are unauthenticated by design).
+	if s.tokenIssuer != nil {
+		restConfig.TokenIssuer = s.tokenIssuer
+		restConfig.AuthUserStore = s.mtlsUserStore()
+
+		loginRate := 10
+		if s.config.Auth.Session != nil && s.config.Auth.Session.LoginRatePerMin > 0 {
+			loginRate = s.config.Auth.Session.LoginRatePerMin
+		}
+		restConfig.AuthRateLimiter = ratelimit.New(&ratelimit.Config{
+			Enabled:           true,
+			RequestsPerMinute: loginRate,
+		})
+
+		if s.config.Auth.PIVLogin != nil {
+			restConfig.PIVLogin = &rest.PIVLoginOptions{
+				Enabled:        s.config.Auth.PIVLogin.Enabled,
+				TrustedIssuers: s.config.Auth.PIVLogin.TrustedIssuers,
+			}
+		}
 	}
 
 	// When xkms hosts/dials the qrdb engine, persist WebAuthn users and
@@ -2187,7 +2549,6 @@ func (s *Server) startGRPC() {
 	// Create and register gRPC service with the injected XKMS service
 	service := grpcinternal.NewService(s.rbacAuthorizer, s.auditLogger, s.xkmsService)
 	service.SetSSHClient(s.ensureSSHClient())
-	service.SetSSHHostKeyStore(s.ensureSSHHostKeys())
 
 	// Wire barrier and PIN manager into gRPC service
 	if s.barrier != nil {
@@ -2314,6 +2675,19 @@ func (s *Server) startMCP() {
 		Logger:      s.logger.With("component", "mcp"),
 		XKMSService: s.xkmsService,
 		SSHClient:   s.ensureSSHClient(),
+		// Thread the resolved authenticator through: mcp.NewServer now
+		// rejects a nil authenticator rather than silently substituting a
+		// no-op one, so omitting it would leave MCP unable to start.
+		Authenticator: s.liveAuthenticator,
+		// Authorization uses the same qrdb-backed authorizer as REST, gRPC,
+		// and QUIC. mcp.NewServer fails closed when RBAC is enabled without a
+		// usable authorizer (RBAC on, no qrdb identity plane), so MCP never
+		// runs believing it enforces RBAC while allowing every method.
+		EnableRBAC: s.config.Auth.EnableRBAC,
+		Authorizer: s.rbacAuthorizer,
+		// BarrierRegistry gates per-request tenant access the same way REST,
+		// gRPC, and QUIC do (see pkg/api/tenantgate).
+		BarrierRegistry: s.barrierRegistry,
 	}
 
 	mcpSrv, err := mcp.NewServer(mcpConfig)
@@ -2600,6 +2974,20 @@ func parseCipherSuites(names []string) []uint16 {
 func (s *Server) startQUIC() {
 	defer s.wg.Done()
 
+	// RBAC enabled without a usable authorizer must not silently degrade QUIC
+	// to allow-all while the operator believes RBAC is enforced. quic.Config
+	// carries no EnableRBAC flag — a nil/disabled Authorizer means "RBAC off"
+	// by contract — so the daemon-level intent is asserted here at the wiring
+	// site, matching the construction asserts in rest.NewServer and
+	// mcp.NewServer. Under cmd/xkmsd this branch is unreachable:
+	// Config.ComplianceGaps refuses auth.enable_rbac=true without the qrdb
+	// storage backend and the daemon has no override, so it can only fire for
+	// an embedded or test caller with a broken RBAC wiring.
+	if s.config.Auth.EnableRBAC && !s.rbacAuthorizer.Enabled() {
+		s.logger.Error("RBAC enabled but no usable authorizer; refusing to start QUIC server")
+		return
+	}
+
 	// Get default keystore for QUIC (use first available if no default specified)
 	var defaultKS xkms.Backend
 	if s.config.Default != "" {
@@ -2631,11 +3019,14 @@ func (s *Server) startQUIC() {
 		Version:       getBuildVersion(),
 		TLSConfig:     tlsConfig,
 		Logger:        s.logger.With("component", "quic"),
-		Authenticator: s.authenticator,
+		Authenticator: s.liveAuthenticator,
 		Authorizer:    s.rbacAuthorizer,
 		AuditLogger:   s.auditLogger,
 		XKMSService:   s.xkmsService,
 		SSHClient:     s.ensureSSHClient(),
+		// BarrierRegistry gates per-request tenant access the same way REST,
+		// gRPC, and MCP do (see pkg/api/tenantgate).
+		BarrierRegistry: s.barrierRegistry,
 	}
 
 	quicSrv, err := quic.NewServer(quicConfig)

@@ -66,35 +66,104 @@ defer xkms.Close()
 
 ```
 Endorsement Key (EK)
-  └─ Storage Root Key (SRK)
-      ├─ Application Key 1 (RSA/ECDSA)
-      ├─ Application Key 2 (RSA/ECDSA)
-      └─ Application Key N (RSA/ECDSA)
+  ├─ Shared SRK (SSRK, 0x81000001, no platform policy)
+  │   ├─ Application Key 1 (RSA/ECDSA)
+  │   ├─ Application Key 2 (RSA/ECDSA)
+  │   └─ Application Key N (RSA/ECDSA)
+  └─ Platform SRK (0x81000002, platform policy + user PIN)
+      └─ Sealed objects (barrier, seal service)
 ```
 
 - **Endorsement Key (EK)**: TPM vendor-provisioned root of trust
-- **Storage Root Key (SRK)**: Application-specific root created during initialization
+- **Shared SRK (SSRK)**: TCG-standard storage parent created during provisioning
+- **Platform SRK**: PIN-verification and sealing parent, created after provisioning
 - **Application Keys**: Child keys for signing, encryption, etc.
+
+### The Shared SRK carries no platform policy
+
+Only the Platform SRK is platform-bound. `SRKConfig` — the `ssrk` configuration
+section — has no `platform-policy` field, and a configuration file that still
+sets one is rejected with `ErrSSRKPlatformPolicy` rather than silently ignored.
+
+The reason is ordering. `Provision` creates the SSRK inside `ProvisionOwner`,
+and only afterwards calls `CreatePlatformPolicy`, which extends the golden
+measurement into the platform PCR. An SSRK given a platform policy would carry
+an `AuthPolicy` computed over a PCR state that no longer exists once
+provisioning returns — stale from birth, so auto-unlock through it never worked.
+
+Reordering provisioning is not the fix: `AuthPolicy` is part of the template,
+and the template is an input to `TPM2_CreatePrimary`'s key derivation (TPM 2.0
+Part 1, §27.2), so changing it derives a different primary key and orphans every
+existing child.
+
+Platform binding therefore lives on `platform-srk.platform-policy`. The Platform
+SRK is created by `PlatformKeyStore.Initialize` after provisioning completes, so
+its policy describes the state the machine is actually running in.
+
+Shared SRKs created by earlier releases still carry the stale policy in their
+public area. They remain fully usable: the SRK templates set `userWithAuth`, so
+the USER role is satisfied by the auth value, and the read path
+(`SSRKAttributes`) never reports a platform policy it would then try to satisfy.
+No key is re-derived and no child is orphaned.
 
 ## Supported Algorithms
 
-### RSA
-- Key sizes: 2048, 3072 bits
-- Signing: PKCS#1 v1.5, RSA-PSS
-- Encryption: OAEP
-- Hash functions: SHA-256, SHA-384, SHA-512
+The algorithm set is read from the device, not from a table in this repository.
+A TPM 2.0 implementation chooses which algorithms and curves it implements, so
+the backend asks it: `TPM2_GetCapability` with `TPM_CAP_ALGS` and
+`TPM_CAP_ECC_CURVES`, plus `TPM2_TestParms` for the RSA modulus sizes, which no
+capability property reports. A request the device cannot serve is refused with a
+typed error naming both what was asked for and what the device offers; it is
+never silently substituted.
 
-**Note**: RSA 4096-bit keys are not supported by TPM 2.0 due to hardware limitations. Use 2048 or 3072-bit keys instead.
+```go
+caps, err := tpm.Capabilities()          // TPM_CAP_ALGS + TPM_CAP_ECC_CURVES
+caps.SupportsAlgorithm(tpm2.TPMAlgSHA512)
+caps.SupportsCurve(tpm2.TPMECCNistP384)
+tpm.SupportedRSAKeyBits()                // learned via TPM2_TestParms
+```
+
+### RSA
+- Key sizes: whichever of 1024, 2048, 3072 and 4096 the device accepts.
+  TPM 2.0 defines all four; a device that declines one is reported through
+  `KeySizeNotSupportedError`, which lists the sizes it does accept.
+- Signing: PKCS#1 v1.5 and RSA-PSS, chosen per operation.
+- Encryption: OAEP.
+- Digests: any the device implements, chosen per operation.
 
 ### ECDSA
-- Curves: P-256, P-384, P-521
-- Signing: ECDSA with SHA-256, SHA-384, SHA-512
+- Curves: P-224, P-256, P-384 and P-521, subject to the device's curve set.
+  A curve the device lacks is reported through `CurveNotSupportedError`.
+- Signing: ECDSA under any digest the device implements.
 
-**Note**: All 10 backends support ECDSA P-256, P-384, and P-521 curves. TPM2 has full integration test coverage (151/151 tests passing).
+### Per-operation algorithm selection
 
-### Not Supported
-- Ed25519 (TPM 2.0 specification limitation)
-- RSA 4096-bit keys (TPM 2.0 hardware limitation)
+Signing keys are created with a `TPM_ALG_NULL` signature scheme, so the digest
+and the padding are chosen per operation rather than fixed at key creation
+(TCG TPM 2.0 Library Part 3, section 12.1). One RSA key can therefore produce
+both PKCS#1 v1.5 and RSA-PSS signatures, which is what TLS 1.3 requires of a
+certificate key, and one EC key signs under SHA-256, SHA-384 and SHA-512.
+
+Keys provisioned by earlier releases carry a fixed scheme in their public area
+and keep working under the digest they were created with. Asking such a key for
+a different digest returns `ErrSignSchemeMismatch`, which names the constraint,
+instead of the bare `TPM_RC_SCHEME` the TPM answers with. No migration is
+required; rotating the key is what grants it agility.
+
+### Not supported
+- Ed25519 (no TPM 2.0 algorithm; the TCG registry has no EdDSA signing scheme
+  that this package can create).
+- Raw PKCS#1 v1.5 signing over a caller-built DigestInfo (`CKM_RSA_PKCS`).
+  `TPM2_Sign` builds the DigestInfo itself and rejects a caller's as the wrong
+  size, and `TPM2_RSA_Decrypt` — the only command that performs the bare
+  private-key operation — is refused on a sign-only key. Making signing keys
+  decrypt-capable to route around it would turn every one of them into a
+  signature-forgery oracle, so it is not done. See `ErrRawRSASignUnsupported`.
+- SM2, ECDAA and EC-Schnorr signing, and the SM2/Barreto-Naehrig/Brainpool
+  curves: a device may implement them, but `KeyAttributes` models a curve as a
+  `crypto/elliptic.Curve` and there is no verifier for those schemes in the Go
+  standard library. Requests are refused by name through
+  `SchemeNotImplementedError` rather than substituted.
 
 ## Configuration
 
@@ -879,7 +948,7 @@ if hwStorage, ok := certStorage.(hardware.HardwareCertStorage); ok {
 - ListCerts cannot reverse hash to original IDs (returns hex indices)
 - Compaction not supported by most TPMs
 
-See [Certificate Management Guide](../certificate-management.md) for detailed information on certificate storage configuration and migration strategies.
+See [Hardware Certificate Storage](../architecture/hardware-certificate-storage.md) for certificate storage configuration and migration strategies, and [Certificate Types](../ca/certificate-types.md) for the certificate profiles the CA issues.
 
 ## References
 

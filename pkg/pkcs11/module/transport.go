@@ -16,7 +16,7 @@
 // This file defines the PKCS11Transport interface — the minimal set of transport
 // methods that the PKCS#11 module actually calls. The module handles sessions,
 // slots, tokens, objects, mechanisms, digesting, multi-part operations, and random
-// generation internally without transport calls. Only 20 methods are needed for
+// generation internally without transport calls. Only 23 methods are needed for
 // backend delegation.
 //
 // All existing transports (gRPC, REST, Unix, embedded) satisfy this interface
@@ -34,7 +34,7 @@ import (
 )
 
 // PKCS11Transport defines the minimal transport interface required by the PKCS#11
-// module. This is a consumer-side interface containing only the 20 methods the
+// module. This is a consumer-side interface containing only the 23 methods the
 // module actually calls, rather than the full 116-method transport.Client.
 //
 // The module handles sessions, slots, tokens, objects, mechanisms, digesting,
@@ -63,6 +63,14 @@ type PKCS11Transport interface {
 	// Encrypt encrypts data with the specified key.
 	Encrypt(ctx context.Context, req *transport.EncryptRequest) (*transport.EncryptResponse, error)
 
+	// EncryptAsym encrypts data with an RSA public key using OAEP padding.
+	// CryptoManager.Encrypt routes CKM_RSA_PKCS_OAEP here instead of through
+	// the generic Encrypt RPC above: transport.EncryptRequest carries no
+	// padding/digest selector, so a caller's CK_RSA_PKCS_OAEP_PARAMS.hashAlg
+	// has no field to travel in on that request, while EncryptAsymRequest
+	// already carries a selectable Hash.
+	EncryptAsym(ctx context.Context, req *transport.EncryptAsymRequest) (*transport.EncryptAsymResponse, error)
+
 	// Decrypt decrypts data with the specified key.
 	Decrypt(ctx context.Context, req *transport.DecryptRequest) (*transport.DecryptResponse, error)
 
@@ -80,6 +88,17 @@ type PKCS11Transport interface {
 
 	// ExportKeyMaterial exports raw symmetric key bytes for extractable keys.
 	ExportKeyMaterial(ctx context.Context, req *transport.ExportKeyMaterialRequest) (*transport.ExportKeyMaterialResponse, error)
+
+	// GetImportParameters obtains the wrapping public key and import token that
+	// ImportKey requires. It is the first half of the key-import ceremony
+	// C_CreateObject performs for a secret key; see
+	// CryptoManager.ImportKeyMaterial for why the module runs the ceremony
+	// rather than sending plaintext.
+	GetImportParameters(ctx context.Context, req *transport.GetImportParametersRequest) (*transport.GetImportParametersResponse, error)
+
+	// ImportKey imports externally generated key material into a backend. The
+	// material must arrive wrapped under the key GetImportParameters returned.
+	ImportKey(ctx context.Context, req *transport.ImportKeyRequest) (*transport.ImportKeyResponse, error)
 
 	// ListPIVSlots returns the status of all PIV slots in the specified backend.
 	ListPIVSlots(ctx context.Context, req *transport.ListPIVSlotsRequest) (*transport.ListPIVSlotsResponse, error)

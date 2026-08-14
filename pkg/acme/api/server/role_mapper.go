@@ -13,36 +13,55 @@
 
 package server
 
-// Role represents an authorization role for gRPC Unix socket authentication.
-type Role string
+import (
+	"fmt"
 
-const (
-	// RoleAdmin has full access to all operations
-	RoleAdmin Role = "admin"
-	// RoleOperator has access to operational tasks but not administrative ones
-	RoleOperator Role = "operator"
-	// RoleViewer has read-only access
-	RoleViewer Role = "viewer"
-	// RoleNone indicates no authenticated role (unauthenticated or unauthorized)
-	RoleNone Role = "none"
+	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
+	"github.com/jeremyhahn/go-xkms/pkg/auth"
 )
 
-// RoleMapping defines how Unix UIDs and GIDs map to authorization roles.
-// This enables fine-grained access control based on the calling process's
-// identity as reported by the kernel via SO_PEERCRED.
+// Canonical go-qrdb role names assignable from Unix peer credentials. They are
+// the same six FIPS 140-3 / PCI-DSS v4 system roles the rest of the stack uses;
+// this package defines no role vocabulary of its own. Any role name qrdb knows
+// may be configured in a RoleMapping — these constants simply name the ones a
+// default deployment assigns.
+const (
+	// RoleAdmin manages key lifecycle and tenant configuration.
+	RoleAdmin = qrdbsdk.RoleNameAdmin
+	// RoleOperator performs routine operational tasks.
+	RoleOperator = qrdbsdk.RoleNameOperator
+	// RoleAuditor has read-only access to system state and the audit trail.
+	RoleAuditor = qrdbsdk.RoleNameAuditor
+)
+
+// RoleMapping defines how Unix UIDs and GIDs map to canonical qrdb role names.
+// SO_PEERCRED gives the kernel-verified identity of the calling process; this
+// mapping turns that identity into the role grants the qrdb RBAC engine then
+// evaluates. It performs no authorization itself.
+//
+// There is deliberately no implicit default role. A peer that matches no entry
+// yields an identity with no roles, and every privileged method is denied. The
+// previous "all other authenticated connections -> viewer" fallback handed the
+// entire read surface of the ACME admin API to any local user who could open
+// the socket.
 type RoleMapping struct {
-	// AdminUIDs are user IDs that receive admin role (e.g., root = 0)
+	// AdminUIDs are user IDs that receive the admin role (e.g. root = 0)
 	AdminUIDs []uint32
-	// AdminGIDs are group IDs that receive admin role
+	// AdminGIDs are group IDs that receive the admin role
 	AdminGIDs []uint32
-	// OperatorUIDs are user IDs that receive operator role
+	// OperatorUIDs are user IDs that receive the operator role
 	OperatorUIDs []uint32
-	// OperatorGIDs are group IDs that receive operator role (e.g., wheel, admin)
+	// OperatorGIDs are group IDs that receive the operator role (e.g. wheel, admin)
 	OperatorGIDs []uint32
-	// ViewerUIDs are user IDs that receive viewer role
-	ViewerUIDs []uint32
-	// ViewerGIDs are group IDs that receive viewer role
-	ViewerGIDs []uint32
+	// AuditorUIDs are user IDs that receive the read-only auditor role
+	AuditorUIDs []uint32
+	// AuditorGIDs are group IDs that receive the read-only auditor role
+	AuditorGIDs []uint32
+
+	// TenantID scopes the identities this mapping produces. An empty value is
+	// normalized by the Authorizer to the reserved system tenant, which is the
+	// correct scope for a local administrative socket.
+	TenantID string
 }
 
 // DefaultRoleMapping returns sensible default role mappings:
@@ -50,7 +69,7 @@ type RoleMapping struct {
 //   - root group (GID 0) -> admin
 //   - wheel group (GID 10 on Linux) -> operator
 //   - admin group (GID 80 on macOS) -> operator
-//   - All other authenticated connections -> viewer
+//   - every other peer -> no roles (denied)
 func DefaultRoleMapping() *RoleMapping {
 	return &RoleMapping{
 		AdminUIDs:    []uint32{0},      // root
@@ -59,75 +78,61 @@ func DefaultRoleMapping() *RoleMapping {
 	}
 }
 
-// GetRole determines the role for the given peer credentials.
-// Roles are checked in order of privilege: admin -> operator -> viewer.
-// Returns RoleViewer for authenticated connections that don't match any specific mapping.
-// Returns RoleNone if credentials are nil.
-func (rm *RoleMapping) GetRole(creds *PeerCredentials) Role {
-	if creds == nil {
-		return RoleNone
+// Roles returns the canonical qrdb role names for the given peer credentials,
+// checked in order of privilege: admin -> operator -> auditor. It returns nil
+// for nil credentials and for a peer that matches no configured entry, so the
+// resulting identity holds no grants and fails closed at the authorizer.
+func (rm *RoleMapping) Roles(creds *PeerCredentials) []string {
+	if rm == nil || creds == nil {
+		return nil
 	}
 
-	// Check admin UIDs first (highest privilege)
-	for _, uid := range rm.AdminUIDs {
-		if creds.UID == uid {
-			return RoleAdmin
+	for _, role := range []struct {
+		name string
+		uids []uint32
+		gids []uint32
+	}{
+		{RoleAdmin, rm.AdminUIDs, rm.AdminGIDs},
+		{RoleOperator, rm.OperatorUIDs, rm.OperatorGIDs},
+		{RoleAuditor, rm.AuditorUIDs, rm.AuditorGIDs},
+	} {
+		for _, uid := range role.uids {
+			if creds.UID == uid {
+				return []string{role.name}
+			}
+		}
+		for _, gid := range role.gids {
+			if creds.GID == gid {
+				return []string{role.name}
+			}
 		}
 	}
 
-	// Check admin GIDs
-	for _, gid := range rm.AdminGIDs {
-		if creds.GID == gid {
-			return RoleAdmin
-		}
-	}
-
-	// Check operator UIDs
-	for _, uid := range rm.OperatorUIDs {
-		if creds.UID == uid {
-			return RoleOperator
-		}
-	}
-
-	// Check operator GIDs
-	for _, gid := range rm.OperatorGIDs {
-		if creds.GID == gid {
-			return RoleOperator
-		}
-	}
-
-	// Check viewer UIDs
-	for _, uid := range rm.ViewerUIDs {
-		if creds.UID == uid {
-			return RoleViewer
-		}
-	}
-
-	// Check viewer GIDs
-	for _, gid := range rm.ViewerGIDs {
-		if creds.GID == gid {
-			return RoleViewer
-		}
-	}
-
-	// Default to viewer for authenticated connections (Unix sockets are inherently local)
-	return RoleViewer
+	return nil
 }
 
-// CanPerform checks if the given role can perform an action requiring the specified role.
-// Roles are hierarchical: admin > operator > viewer.
-func CanPerform(userRole, requiredRole Role) bool {
-	switch requiredRole {
-	case RoleAdmin:
-		return userRole == RoleAdmin
-	case RoleOperator:
-		return userRole == RoleAdmin || userRole == RoleOperator
-	case RoleViewer:
-		return userRole == RoleAdmin || userRole == RoleOperator || userRole == RoleViewer
-	case RoleNone:
-		// RoleNone as required means no authentication needed
-		return true
-	default:
-		return false
+// Identity builds the canonical auth.Identity for the given peer credentials.
+// The subject records the kernel-reported UID/PID so denials are attributable.
+// It returns nil for nil credentials — the caller must then deny.
+func (rm *RoleMapping) Identity(creds *PeerCredentials) *auth.Identity {
+	if creds == nil {
+		return nil
+	}
+
+	tenantID := ""
+	if rm != nil {
+		tenantID = rm.TenantID
+	}
+
+	return &auth.Identity{
+		Subject:  fmt.Sprintf("uid:%d", creds.UID),
+		TenantID: tenantID,
+		Roles:    rm.Roles(creds),
+		Metadata: map[string]string{
+			"auth_method": "so_peercred",
+			"uid":         fmt.Sprintf("%d", creds.UID),
+			"gid":         fmt.Sprintf("%d", creds.GID),
+			"pid":         fmt.Sprintf("%d", creds.PID),
+		},
 	}
 }

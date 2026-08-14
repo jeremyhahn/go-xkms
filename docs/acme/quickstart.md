@@ -204,9 +204,9 @@ The CA uses [go-xkms](https://github.com/jeremyhahn/go-xkms) for all key operati
 
 | Topic | Documentation |
 |-------|---------------|
-| All challenge types | [ACME README](acme/README.md) |
-| DNS-01 providers | [DNS-01 Providers](acme/dns-01-providers.md) |
-| ACME client | [Client Documentation](acme/client.md) |
+| All challenge types | [ACME README](README.md) |
+| DNS-01 providers | [DNS-01 Providers](dns-01-providers.md) |
+| ACME client | [Client Documentation](client.md) |
 | Multi-tenancy | [Multi-tenancy Guide](multi-tenancy.md) |
 | QRDB clustering | [QRDB Architecture](qrdb/architecture.md) |
 | Admin API | [Admin API](admin/README.md) |
@@ -239,7 +239,7 @@ For HTTP-01 challenges, ensure:
 3. No firewall blocking port 80
 
 For DNS-01 challenges:
-1. Configure a DNS provider (see [DNS-01 Providers](acme/dns-01-providers.md))
+1. Configure a DNS provider (see [DNS-01 Providers](dns-01-providers.md))
 2. Set provider credentials via environment variables
 3. Ensure TXT record propagation
 

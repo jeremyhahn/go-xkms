@@ -111,10 +111,10 @@ func TestQuantumMechanismRegistration(t *testing.T) {
 	})
 
 	t.Run("ML-KEM mechanisms are registered in global registry", func(t *testing.T) {
+		// All three FIPS 203 parameter sets are registered; TestMLKEM512IsFullyWired
+		// pins the 512 case, which was unavailable while these paths wrapped only
+		// crypto/mlkem.
 		mechanisms := []MechanismType{
-			CKM_VENDOR_ML_KEM_512_KEY_GEN,
-			CKM_VENDOR_ML_KEM_512_ENCAPSULATE,
-			CKM_VENDOR_ML_KEM_512_DECAPSULATE,
 			CKM_VENDOR_ML_KEM_768_KEY_GEN,
 			CKM_VENDOR_ML_KEM_768_ENCAPSULATE,
 			CKM_VENDOR_ML_KEM_768_DECAPSULATE,
@@ -189,7 +189,14 @@ func TestQuantumMechanismDescriptors(t *testing.T) {
 		require.NotNil(t, desc)
 
 		assert.Equal(t, "CKM_VENDOR_ML_KEM_768_ENCAPSULATE", desc.Name)
-		assert.True(t, desc.Flags&CKF_DERIVE != 0, "should support derivation")
+		// CKF_ENCAPSULATE, not CKF_DERIVE. PKCS#11 v3.2 §5.20 gates
+		// C_EncapsulateKey on the former and C_DeriveKey on the latter, and this
+		// mechanism appears in no C_DeriveKey dispatch -- so CKF_DERIVE made
+		// CanDerive answer true for an operation that always returns
+		// CKR_MECHANISM_INVALID, while the flag that gates the operation it does
+		// perform went unset.
+		assert.True(t, desc.Flags&CKF_ENCAPSULATE != 0, "should support encapsulation")
+		assert.True(t, desc.Flags&CKF_DERIVE == 0, "must not claim derivation")
 		assert.True(t, desc.Flags&CKF_EXTENSION != 0, "should have extension flag")
 		assert.Contains(t, desc.Categories, CategoryEncapsulate)
 	})
@@ -199,7 +206,9 @@ func TestQuantumMechanismDescriptors(t *testing.T) {
 		require.NotNil(t, desc)
 
 		assert.Equal(t, "CKM_VENDOR_ML_KEM_768_DECAPSULATE", desc.Name)
-		assert.True(t, desc.Flags&CKF_DERIVE != 0, "should support derivation")
+		// CKF_DECAPSULATE, not CKF_DERIVE; see the encapsulate case above.
+		assert.True(t, desc.Flags&CKF_DECAPSULATE != 0, "should support decapsulation")
+		assert.True(t, desc.Flags&CKF_DERIVE == 0, "must not claim derivation")
 		assert.True(t, desc.Flags&CKF_EXTENSION != 0, "should have extension flag")
 		assert.Contains(t, desc.Categories, CategoryDecapsulate)
 	})
@@ -214,9 +223,8 @@ func TestIsQuantumMechanism(t *testing.T) {
 			CKM_VENDOR_ML_DSA_65,
 			CKM_VENDOR_ML_DSA_87_KEY_PAIR_GEN,
 			CKM_VENDOR_ML_DSA_87,
-			CKM_VENDOR_ML_KEM_512_KEY_GEN,
-			CKM_VENDOR_ML_KEM_512_ENCAPSULATE,
-			CKM_VENDOR_ML_KEM_512_DECAPSULATE,
+			// ML-KEM-512 is unregistered, so IsQuantumMechanism -- which
+			// resolves through the registry -- correctly answers false for it.
 			CKM_VENDOR_ML_KEM_768_KEY_GEN,
 			CKM_VENDOR_ML_KEM_768_ENCAPSULATE,
 			CKM_VENDOR_ML_KEM_768_DECAPSULATE,
@@ -400,7 +408,10 @@ func TestListQuantumMechanisms(t *testing.T) {
 	mechanisms := ListQuantumMechanisms()
 
 	t.Run("returns all quantum mechanisms", func(t *testing.T) {
-		// Should have 15 mechanisms total (6 ML-DSA + 9 ML-KEM)
+		// 6 ML-DSA + 9 ML-KEM: three parameter sets, each with key generation,
+		// encapsulation and decapsulation. The ML-KEM-512 trio was unregistered
+		// while pkg/quantum wrapped only crypto/mlkem, which implements 768 and
+		// 1024 alone.
 		assert.Len(t, mechanisms, 15)
 	})
 
@@ -421,9 +432,6 @@ func TestListQuantumMechanisms(t *testing.T) {
 
 	t.Run("contains ML-KEM mechanisms", func(t *testing.T) {
 		expected := []MechanismType{
-			CKM_VENDOR_ML_KEM_512_KEY_GEN,
-			CKM_VENDOR_ML_KEM_512_ENCAPSULATE,
-			CKM_VENDOR_ML_KEM_512_DECAPSULATE,
 			CKM_VENDOR_ML_KEM_768_KEY_GEN,
 			CKM_VENDOR_ML_KEM_768_ENCAPSULATE,
 			CKM_VENDOR_ML_KEM_768_DECAPSULATE,
@@ -435,6 +443,62 @@ func TestListQuantumMechanisms(t *testing.T) {
 		for _, mech := range expected {
 			assert.Contains(t, mechanisms, mech)
 		}
+	})
+}
+
+// TestMLKEM512IsFullyWired is the inverse of the test that used to stand here.
+//
+// ML-KEM-512 was unavailable while the module's KEM paths wrapped only
+// crypto/mlkem, which implements the 768 and 1024 parameter sets and no other.
+// The mechanisms were left unregistered on purpose: advertising them would have
+// let C_EncapsulateKey's size query answer CKR_OK for an encapsulation that then
+// refused the mechanism, which is the shape the no-stub policy exists to prevent.
+//
+// pkg/quantum/mlkem512 now supplies the parameter set from CIRCL's FIPS 203
+// implementation, so the requirement inverts: every routing table that was
+// checked for the *absence* of a 512 entry is now checked for its presence. A
+// missing entry in any one of them reproduces the original defect from the other
+// direction -- an advertised mechanism whose dispatch silently falls through to
+// ML-KEM-768, which is exactly what resolveMLKEMLevel's default did before these
+// entries were added.
+func TestMLKEM512IsFullyWired(t *testing.T) {
+	registered := []MechanismType{
+		CKM_VENDOR_ML_KEM_512_KEY_GEN,
+		CKM_VENDOR_ML_KEM_512_ENCAPSULATE,
+		CKM_VENDOR_ML_KEM_512_DECAPSULATE,
+	}
+
+	for _, mech := range registered {
+		t.Run(GetMechanismName(mech), func(t *testing.T) {
+			assert.NotNil(t, GetMechanismDescriptor(mech),
+				"ML-KEM-512 is implemented, so its mechanisms must be resolvable")
+			assert.Contains(t, ListQuantumMechanisms(), mech)
+		})
+	}
+
+	t.Run("every routing table resolves 512", func(t *testing.T) {
+		encapsulate, ok := mlkemEncapsulateVendorMechanism[512]
+		require.True(t, ok, "C_EncapsulateKey cannot dispatch an ML-KEM-512 key without this")
+		assert.Equal(t, CKM_VENDOR_ML_KEM_512_ENCAPSULATE, encapsulate)
+
+		decapsulate, ok := mlkemDecapsulateVendorMechanism[512]
+		require.True(t, ok, "C_DecapsulateKey cannot dispatch an ML-KEM-512 key without this")
+		assert.Equal(t, CKM_VENDOR_ML_KEM_512_DECAPSULATE, decapsulate)
+
+		size, ok := mlkemCiphertextSizeByLevel[512]
+		require.True(t, ok, "the C ABI size probe needs this before it will call through")
+		assert.Equal(t, uint64(MLKEM512CiphertextSize), size)
+	})
+
+	// The level must be resolvable from the key's own parameter set, because a
+	// private key cannot be told apart by length: every ML-KEM level stores the
+	// same 64-byte seed.
+	t.Run("CKA_PARAMETER_SET resolves the level", func(t *testing.T) {
+		key := &Object{Attributes: map[AttributeType][]byte{}}
+		key.SetAttribute(CKA_PARAMETER_SET, NewUint32Attribute(CKA_PARAMETER_SET, uint32(CKP_ML_KEM_512)).Value)
+
+		assert.Equal(t, 512, resolveMLKEMLevel(key, mlkemSeedSize),
+			"a 64-byte seed is ambiguous across levels, so CKA_PARAMETER_SET has to decide")
 	})
 }
 

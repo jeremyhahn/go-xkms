@@ -17,9 +17,8 @@ package pkcs11
 
 import (
 	"context"
-	"crypto/aes"
-	"crypto/cipher"
 	"crypto/rand"
+	"errors"
 	"fmt"
 
 	"github.com/jeremyhahn/go-xkms/pkg/errs"
@@ -33,6 +32,131 @@ import (
 // - GenerateSymmetricKey
 // - GetSymmetricKey
 // - SymmetricEncrypter
+
+// AES-GCM parameters this backend produces and accepts. PKCS#11 v3.2 6.13.7
+// permits any ulIvLen from 1 to 2^32-1 and any ulTagBits from 0 to 128, but a
+// backend that emits 96-bit nonces and 128-bit tags must also refuse to consume
+// anything else: a short tag weakens forgery resistance, and a nonce length
+// this encrypter would never produce can only have come from a confused or
+// hostile caller.
+const (
+	// gcmNonceSize is the 96-bit GCM nonce length, in bytes. It is the length
+	// PKCS#11 v3.2 6.13.7 recommends and the only length crypto/cipher's GCM
+	// accepts by default, which keeps ciphertext produced here decryptable by
+	// every other backend in the stack.
+	gcmNonceSize = 12
+
+	// gcmTagSize is the full 128-bit GCM authentication tag length, in bytes.
+	// It is the default; types.EncryptOptions.TagSize selects a shorter one
+	// from the set SP 800-38D approves. CK_GCM_PARAMS.ulTagBits carries the
+	// chosen length to the token in bits, not bytes.
+	gcmTagSize = 16
+)
+
+var (
+	// ErrInvalidNonceLength is returned when a caller supplies an AEAD nonce
+	// that is not exactly gcmNonceSize bytes.
+	//
+	// This is a denial-of-service guard as much as a correctness one:
+	// crypto/cipher's AEAD.Seal and AEAD.Open panic rather than returning an
+	// error when the nonce length differs from NonceSize(), so a nonce that
+	// reaches them straight from a request kills the process.
+	ErrInvalidNonceLength = errors.New("pkcs11: invalid AEAD nonce length")
+
+	// ErrInvalidTagLength is returned when encrypted data carries an
+	// authentication tag whose length is not the one the request selected.
+	// The length comes from types.DecryptOptions.TagSize, never from the tag
+	// itself: inferring it would let a caller -- or an attacker who can
+	// reshape a ciphertext bundle -- downgrade forgery resistance by handing
+	// over fewer tag bits than the encryptor produced.
+	ErrInvalidTagLength = errors.New("pkcs11: invalid AEAD authentication tag length")
+
+	// ErrInvalidTagSize is returned when a requested tag length is not one
+	// PKCS#11 v3.2 section 6.13.7 and NIST SP 800-38D section 5.2.1.2
+	// approve for AES-GCM: 96, 104, 112, 120 or 128 bits.
+	ErrInvalidTagSize = errors.New("pkcs11: unsupported AEAD authentication tag size")
+
+	// ErrNilEncryptedData is returned when Decrypt is handed a nil
+	// *types.EncryptedData, which would otherwise be a nil-pointer panic.
+	ErrNilEncryptedData = errors.New("pkcs11: encrypted data is nil")
+
+	// ErrUnsupportedCipherMode is returned when a caller requests a
+	// types.CipherMode this encrypter does not implement. Silently encrypting
+	// in a different mode than the caller asked for is worse than failing:
+	// encrypt and decrypt would agree with each other while producing
+	// unauthenticated output the caller believed was authenticated, or the
+	// reverse.
+	ErrUnsupportedCipherMode = errors.New("pkcs11: unsupported cipher mode")
+)
+
+// requireAEADMode rejects any cipher mode other than the key's native AEAD
+// mode. AES-CBC (CKM_AES_CBC / CKM_AES_CBC_PAD) is not implemented by this
+// encrypter, so a request for it must fail rather than silently return
+// AES-GCM output.
+func requireAEADMode(mode types.CipherMode) error {
+	if mode == "" {
+		return nil
+	}
+	return &errs.Detail{Err: ErrUnsupportedCipherMode, Detail: fmt.Sprintf(
+		"%q; the PKCS#11 backend implements only the native AEAD mode", mode)}
+}
+
+// requireGCMNonce validates a caller-supplied AEAD nonce length.
+func requireGCMNonce(nonce []byte) error {
+	if len(nonce) == gcmNonceSize {
+		return nil
+	}
+	return &errs.Detail{Err: ErrInvalidNonceLength, Detail: fmt.Sprintf(
+		"nonce is %d bytes, want %d", len(nonce), gcmNonceSize)}
+}
+
+// requireGCMTag validates the authentication tag length carried by encrypted
+// data against the length the request selected.
+func requireGCMTag(tag []byte, tagSize int) error {
+	if len(tag) == tagSize {
+		return nil
+	}
+	return &errs.Detail{Err: ErrInvalidTagLength, Detail: fmt.Sprintf(
+		"tag is %d bytes, want %d", len(tag), tagSize)}
+}
+
+// gcmTagSizes are the AES-GCM authentication tag lengths in bytes that
+// PKCS#11 v3.2 section 6.13.7 and NIST SP 800-38D section 5.2.1.2 approve:
+// t of 96, 104, 112, 120 and 128 bits.
+var gcmTagSizes = map[int]struct{}{
+	12: {}, 13: {}, 14: {}, 15: {}, 16: {},
+}
+
+// resolveGCMTagSize maps a requested tag length in bytes onto the length this
+// encrypter will ask the token for. Zero selects the full 128-bit tag.
+//
+// CK_GCM_PARAMS.ulTagBits carries the length to the token, which produces the
+// leading ulTagBits bits of the full tag (SP 800-38D section 5.2.1.2), so a
+// truncated tag is a genuine capability here rather than something to be
+// emulated. A length outside the approved set is refused: substituting the
+// nearest permitted one would hand back a tag the caller's peer cannot verify.
+func resolveGCMTagSize(requested int) (int, error) {
+	if requested == 0 {
+		return gcmTagSize, nil
+	}
+	if _, ok := gcmTagSizes[requested]; !ok {
+		return 0, &errs.Detail{Err: ErrInvalidTagSize, Detail: fmt.Sprintf(
+			"%d bytes; AES-GCM permits 12, 13, 14, 15 or 16", requested)}
+	}
+	return requested, nil
+}
+
+// concatCiphertextAndTag returns ciphertext||tag in a freshly allocated slice.
+//
+// The obvious append(ciphertext, tag...) aliases: Encrypt hands back a
+// Ciphertext and a Tag that are two windows onto one array, so appending
+// writes through the caller's own buffer whenever it has spare capacity.
+// Copying keeps Decrypt free of side effects on its argument.
+func concatCiphertextAndTag(ciphertext, tag []byte) []byte {
+	full := make([]byte, 0, len(ciphertext)+len(tag))
+	full = append(full, ciphertext...)
+	return append(full, tag...)
+}
 
 // pkcs11SymmetricKey implements types.SymmetricKey for PKCS#11 AES keys.
 // The actual key material never leaves the HSM hardware.
@@ -74,6 +198,22 @@ func (e *pkcs11SymmetricEncrypter) Encrypt(plaintext []byte, opts *types.Encrypt
 		opts = &types.EncryptOptions{}
 	}
 
+	// STEP 0: Reject a malformed request before it can consume any of the
+	// key's AEAD byte budget or reach the token. A caller-supplied nonce is
+	// untrusted input all the way from the wire.
+	if err := requireAEADMode(opts.Mode); err != nil {
+		return nil, err
+	}
+	if opts.Nonce != nil {
+		if err := requireGCMNonce(opts.Nonce); err != nil {
+			return nil, err
+		}
+	}
+	tagSize, err := resolveGCMTagSize(opts.TagSize)
+	if err != nil {
+		return nil, err
+	}
+
 	// Get key ID for tracking
 	label := createKeyID(e.attrs)
 
@@ -89,18 +229,13 @@ func (e *pkcs11SymmetricEncrypter) Encrypt(plaintext []byte, opts *types.Encrypt
 		return nil, &errs.Message{Msg: "PKCS#11 context not initialized"}
 	}
 
-	// Get token slot
-	slots, err := e.backend.p11ctx.GetSlotList(true)
-	if err != nil {
-		return nil, &errs.Wrapped{Msg: "failed to get slot list", Err: err}
-	}
-	if len(slots) == 0 {
-		return nil, ErrTokenNotFound
-	}
-
-	slot := slots[0]
-	if e.backend.config.Slot != nil {
-		slot = uint(*e.backend.config.Slot)
+	// Resolve the token slot the same way every other operation on this
+	// backend does. Taking the first enumerated slot would ignore the
+	// configured TokenLabel and silently operate on whichever token the module
+	// happens to list first, which on a multi-token host is not the caller's.
+	slot, slotErr := e.backend.resolveSlot()
+	if slotErr != nil {
+		return nil, slotErr
 	}
 
 	// Open session
@@ -119,13 +254,13 @@ func (e *pkcs11SymmetricEncrypter) Encrypt(plaintext []byte, opts *types.Encrypt
 	}
 	// DO NOT LOGOUT - C_Logout affects ALL sessions on this token
 
-	// STEP 2: Generate or use provided nonce
-	nonceSize := 12 // Standard GCM nonce size
+	// STEP 2: Generate or use provided nonce. A caller-supplied nonce has
+	// already been length-checked above.
 	var nonce []byte
 	if opts.Nonce != nil {
 		nonce = opts.Nonce
 	} else {
-		nonce = make([]byte, nonceSize)
+		nonce = make([]byte, gcmNonceSize)
 		if _, err := rand.Read(nonce); err != nil {
 			return nil, &errs.Wrapped{Msg: "failed to generate nonce", Err: err}
 		}
@@ -147,10 +282,14 @@ func (e *pkcs11SymmetricEncrypter) Encrypt(plaintext []byte, opts *types.Encrypt
 	// Since PKCS#11 keys are typically non-extractable, we'll perform
 	// encryption using PKCS#11 C_Encrypt with CKM_AES_GCM mechanism
 
-	// Prepare GCM parameters
-	// PKCS#11 NewGCMParams expects tag size in BITS, not bytes
-	tagBits := 128 // GCM tag size in bits (16 bytes)
-	gcmParams := pkcs11.NewGCMParams(nonce, opts.AdditionalData, tagBits)
+	// Prepare GCM parameters. CK_GCM_PARAMS.ulTagBits is in bits, not bytes.
+	//
+	// NewGCMParams allocates the IV and AAD in C memory that the library
+	// deliberately does not free automatically, so that an HSM which writes
+	// its own IV back can be read after the operation. Every caller therefore
+	// owns the Free(); without it each encryption leaks the nonce and AAD.
+	gcmParams := pkcs11.NewGCMParams(nonce, opts.AdditionalData, tagSize*8)
+	defer gcmParams.Free()
 
 	// Find the key handle in THIS session (handles are session-specific)
 	// We must find the key in the same session where we'll use it
@@ -198,16 +337,17 @@ func (e *pkcs11SymmetricEncrypter) Encrypt(plaintext []byte, opts *types.Encrypt
 		return nil, &errs.Wrapped{Msg: "encryption failed", Err: err}
 	}
 
-	// GCM appends the tag to the ciphertext
-	// Extract tag (last tagBytes bytes)
-	// For GCM, even with empty plaintext, we should get at least the tag (16 bytes)
-	tagBytes := tagBits / 8 // Convert bits to bytes for slicing
-	if len(ciphertext) < tagBytes {
-		return nil, &errs.Message{Msg: fmt.Sprintf("ciphertext too short: got %d bytes, expected at least %d bytes (tag size)", len(ciphertext), tagBytes)}
+	// PKCS#11 v3.2 6.13.2 has C_Encrypt return the ciphertext with the
+	// authentication tag appended, so even an empty plaintext yields at least
+	// gcmTagSize bytes. A token that returns less is malfunctioning, and the
+	// split below would panic on it, so check before slicing.
+	if len(ciphertext) < tagSize {
+		return nil, &errs.Detail{Err: ErrInvalidTagLength, Detail: fmt.Sprintf(
+			"token returned %d bytes of ciphertext, expected at least %d (tag size)", len(ciphertext), tagSize)}
 	}
 
-	tag := ciphertext[len(ciphertext)-tagBytes:]
-	ciphertextOnly := ciphertext[:len(ciphertext)-tagBytes]
+	tag := ciphertext[len(ciphertext)-tagSize:]
+	ciphertextOnly := ciphertext[:len(ciphertext)-tagSize]
 
 	// STEP 5: Record nonce after successful encryption
 	if e.backend.tracker != nil {
@@ -231,23 +371,40 @@ func (e *pkcs11SymmetricEncrypter) Decrypt(data *types.EncryptedData, opts *type
 		opts = &types.DecryptOptions{}
 	}
 
+	// Validate the whole request before touching the token. Every field read
+	// below is attacker-controlled in a daemon that decrypts on request: a nil
+	// struct is a nil-pointer panic, an empty nonce becomes a NULL pIv with
+	// ulIvLen 0 which PKCS#11 v3.2 6.13.7 does not permit (1 to 2^32-1), and a
+	// short tag would silently weaken forgery resistance.
+	if data == nil {
+		return nil, ErrNilEncryptedData
+	}
+	if err := requireAEADMode(opts.Mode); err != nil {
+		return nil, err
+	}
+	if err := requireGCMNonce(data.Nonce); err != nil {
+		return nil, err
+	}
+	tagSize, err := resolveGCMTagSize(opts.TagSize)
+	if err != nil {
+		return nil, err
+	}
+	if err := requireGCMTag(data.Tag, tagSize); err != nil {
+		return nil, err
+	}
+
 	// Initialize PKCS#11 context if needed
 	if e.backend.p11ctx == nil {
 		return nil, &errs.Message{Msg: "PKCS#11 context not initialized"}
 	}
 
-	// Get token slot
-	slots, err := e.backend.p11ctx.GetSlotList(true)
+	// Resolve the token slot the same way every other operation on this
+	// backend does. Taking the first enumerated slot would ignore the
+	// configured TokenLabel and silently operate on whichever token the module
+	// happens to list first, which on a multi-token host is not the caller's.
+	slot, err := e.backend.resolveSlot()
 	if err != nil {
-		return nil, &errs.Wrapped{Msg: "failed to get slot list", Err: err}
-	}
-	if len(slots) == 0 {
-		return nil, ErrTokenNotFound
-	}
-
-	slot := slots[0]
-	if e.backend.config.Slot != nil {
-		slot = uint(*e.backend.config.Slot)
+		return nil, err
 	}
 
 	// Open session
@@ -266,10 +423,11 @@ func (e *pkcs11SymmetricEncrypter) Decrypt(data *types.EncryptedData, opts *type
 	}
 	// DO NOT LOGOUT - C_Logout affects ALL sessions on this token
 
-	// Prepare GCM parameters for decryption
-	// PKCS#11 NewGCMParams expects tag size in BITS, not bytes
-	tagBits := len(data.Tag) * 8 // Convert bytes to bits for PKCS#11
-	gcmParams := pkcs11.NewGCMParams(data.Nonce, opts.AdditionalData, tagBits)
+	// Prepare GCM parameters for decryption. CK_GCM_PARAMS.ulTagBits is in
+	// bits, not bytes, and the C allocations behind it are the caller's to
+	// free (see the matching comment in Encrypt).
+	gcmParams := pkcs11.NewGCMParams(data.Nonce, opts.AdditionalData, tagSize*8)
+	defer gcmParams.Free()
 
 	// Find the key handle in THIS session (handles are session-specific)
 	// We must find the key in the same session where we'll use it
@@ -310,8 +468,9 @@ func (e *pkcs11SymmetricEncrypter) Decrypt(data *types.EncryptedData, opts *type
 		return nil, &errs.Wrapped{Msg: "failed to initialize decryption", Err: err}
 	}
 
-	// Reconstruct full ciphertext with tag appended
-	fullCiphertext := append(data.Ciphertext, data.Tag...)
+	// PKCS#11 v3.2 6.13.2: C_Decrypt takes the ciphertext with the tag
+	// appended.
+	fullCiphertext := concatCiphertextAndTag(data.Ciphertext, data.Tag)
 
 	// Decrypt the data
 	plaintext, err := e.backend.p11ctx.Decrypt(session, fullCiphertext)
@@ -320,6 +479,29 @@ func (e *pkcs11SymmetricEncrypter) Decrypt(data *types.EncryptedData, opts *type
 	}
 
 	return plaintext, nil
+}
+
+// aesGCMAlgorithms are the symmetric algorithms this backend implements.
+//
+// Every operation here runs CKM_AES_KEY_GEN and CKM_AES_GCM, so only AES-GCM
+// belongs in the set. The ChaCha20-Poly1305 algorithms must not be silently
+// accepted: types.SymmetricAlgorithm.KeySize reports 256 bits for them, so
+// without this check a request for XChaCha20-Poly1305 would generate an AES key
+// and encrypt it under AES-GCM with a 12-byte nonce instead of XChaCha20's
+// 24-byte nonce, while reporting the caller's algorithm back to them.
+var aesGCMAlgorithms = map[types.SymmetricAlgorithm]struct{}{
+	types.SymmetricAES128GCM: {},
+	types.SymmetricAES192GCM: {},
+	types.SymmetricAES256GCM: {},
+}
+
+// requireAESGCMAlgorithm rejects any symmetric algorithm other than AES-GCM.
+func requireAESGCMAlgorithm(algorithm types.SymmetricAlgorithm) error {
+	if _, ok := aesGCMAlgorithms[algorithm]; ok {
+		return nil
+	}
+	return &errs.Detail{Err: backend.ErrInvalidAlgorithm, Detail: fmt.Sprintf(
+		"%s; the PKCS#11 backend implements AES-GCM only", algorithm)}
 }
 
 // GenerateSymmetricKey generates a new AES symmetric key on the HSM.
@@ -339,12 +521,15 @@ func (b *Backend) GenerateSymmetricKey(ctx context.Context, attrs *types.KeyAttr
 	if !attrs.IsSymmetric() {
 		return nil, &errs.Detail{Err: backend.ErrInvalidAlgorithm, Detail: fmt.Sprintf("attributes specify asymmetric algorithm %s", attrs.KeyAlgorithm)}
 	}
-
-	// Get key size from attributes
-	keySize := attrs.SymmetricAlgorithm.KeySize()
-	if keySize != 128 && keySize != 192 && keySize != 256 {
-		return nil, &errs.Detail{Err: backend.ErrInvalidAlgorithm, Detail: fmt.Sprintf("AES key size %d bits (only 128, 192, and 256 are supported)", keySize)}
+	if err := requireAESGCMAlgorithm(attrs.SymmetricAlgorithm); err != nil {
+		return nil, err
 	}
+
+	// requireAESGCMAlgorithm above restricts the algorithm to the three AES-GCM
+	// variants, so the key size is one of 128, 192 or 256 by construction.
+	// GenerateSecretKey remains the single authority on which of those the
+	// token key generation path actually accepts.
+	keySize := attrs.SymmetricAlgorithm.KeySize()
 
 	// Generate the secret key on the HSM
 	handle, err := b.GenerateSecretKey(attrs, keySize)
@@ -362,7 +547,7 @@ func (b *Backend) GenerateSymmetricKey(ctx context.Context, attrs *types.KeyAttr
 	}
 
 	return &pkcs11SymmetricKey{
-		algorithm: attrs.KeyAlgorithm.String(),
+		algorithm: string(attrs.SymmetricAlgorithm),
 		keySize:   keySize,
 		handle:    handle,
 		backend:   b,
@@ -385,6 +570,9 @@ func (b *Backend) GetSymmetricKey(ctx context.Context, attrs *types.KeyAttribute
 	if !attrs.IsSymmetric() {
 		return nil, &errs.Detail{Err: backend.ErrInvalidAlgorithm, Detail: fmt.Sprintf("attributes specify asymmetric algorithm %s", attrs.KeyAlgorithm)}
 	}
+	if err := requireAESGCMAlgorithm(attrs.SymmetricAlgorithm); err != nil {
+		return nil, err
+	}
 
 	// Find the secret key on the HSM
 	handle, err := b.FindSecretKey(attrs)
@@ -392,10 +580,9 @@ func (b *Backend) GetSymmetricKey(ctx context.Context, attrs *types.KeyAttribute
 		return nil, &errs.Wrapped{Msg: "failed to find symmetric key", Err: err}
 	}
 
+	// requireAESGCMAlgorithm above has already established that the algorithm
+	// is one of the three AES-GCM variants, so the key size is known.
 	keySize := attrs.SymmetricAlgorithm.KeySize()
-	if keySize == 0 {
-		return nil, &errs.Detail{Err: backend.ErrInvalidAlgorithm, Detail: fmt.Sprintf("cannot determine key size for algorithm %s", attrs.SymmetricAlgorithm)}
-	}
 
 	return &pkcs11SymmetricKey{
 		algorithm: string(attrs.SymmetricAlgorithm),
@@ -425,88 +612,6 @@ func (b *Backend) SymmetricEncrypter(ctx context.Context, attrs *types.KeyAttrib
 		attrs:   attrs,
 		handle:  pkcs11Key.handle,
 	}, nil
-}
-
-// softwareEncrypter is a fallback software-based encrypter when PKCS#11
-// operations are not available or fail. This should only be used for testing.
-type softwareEncrypter struct {
-	key   []byte
-	attrs *types.KeyAttributes
-}
-
-// Encrypt implements software-based AES-GCM encryption.
-func (e *softwareEncrypter) Encrypt(plaintext []byte, opts *types.EncryptOptions) (*types.EncryptedData, error) {
-	if opts == nil {
-		opts = &types.EncryptOptions{}
-	}
-
-	// Create AES cipher
-	block, err := aes.NewCipher(e.key)
-	if err != nil {
-		return nil, &errs.Wrapped{Msg: "failed to create cipher", Err: err}
-	}
-
-	// Create GCM mode
-	gcm, err := cipher.NewGCM(block)
-	if err != nil {
-		return nil, &errs.Wrapped{Msg: "failed to create GCM", Err: err}
-	}
-
-	// Generate or use provided nonce
-	var nonce []byte
-	if opts.Nonce != nil {
-		nonce = opts.Nonce
-	} else {
-		nonce = make([]byte, gcm.NonceSize())
-		if _, err := rand.Read(nonce); err != nil {
-			return nil, &errs.Wrapped{Msg: "failed to generate nonce", Err: err}
-		}
-	}
-
-	// Encrypt with authentication
-	ciphertext := gcm.Seal(nil, nonce, plaintext, opts.AdditionalData)
-
-	// GCM appends the tag to ciphertext, extract it
-	tagSize := gcm.Overhead()
-	tag := ciphertext[len(ciphertext)-tagSize:]
-	ciphertextOnly := ciphertext[:len(ciphertext)-tagSize]
-
-	return &types.EncryptedData{
-		Ciphertext: ciphertextOnly,
-		Nonce:      nonce,
-		Tag:        tag,
-		Algorithm:  string(e.attrs.SymmetricAlgorithm),
-	}, nil
-}
-
-// Decrypt implements software-based AES-GCM decryption.
-func (e *softwareEncrypter) Decrypt(data *types.EncryptedData, opts *types.DecryptOptions) ([]byte, error) {
-	if opts == nil {
-		opts = &types.DecryptOptions{}
-	}
-
-	// Create AES cipher
-	block, err := aes.NewCipher(e.key)
-	if err != nil {
-		return nil, &errs.Wrapped{Msg: "failed to create cipher", Err: err}
-	}
-
-	// Create GCM mode
-	gcm, err := cipher.NewGCM(block)
-	if err != nil {
-		return nil, &errs.Wrapped{Msg: "failed to create GCM", Err: err}
-	}
-
-	// Reconstruct ciphertext with tag (GCM expects tag appended)
-	fullCiphertext := append(data.Ciphertext, data.Tag...)
-
-	// Decrypt and verify
-	plaintext, err := gcm.Open(nil, data.Nonce, fullCiphertext, opts.AdditionalData)
-	if err != nil {
-		return nil, &errs.Wrapped{Msg: "decryption failed (authentication error)", Err: err}
-	}
-
-	return plaintext, nil
 }
 
 // GetTracker returns the AEAD safety tracker for this backend.

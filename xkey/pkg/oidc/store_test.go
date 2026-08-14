@@ -778,3 +778,39 @@ func TestFileTokenStore_DecryptInvalidJSON(t *testing.T) {
 	_, err = store.decryptToken(encToken)
 	assert.ErrorIs(t, err, ErrDecryptionFailed)
 }
+
+// TestFileTokenStore_DecryptToken_WrongNonceLength verifies that
+// decryptToken returns an error instead of panicking when the on-disk
+// token file carries a nonce that is not exactly the GCM nonce size.
+// crypto/cipher.AEAD.Open panics on a mismatched nonce length, so a
+// corrupted or tampered token file must not be able to crash the process.
+func TestFileTokenStore_DecryptToken_WrongNonceLength(t *testing.T) {
+	tmpDir := t.TempDir()
+	path := filepath.Join(tmpDir, "tokens.json")
+	key := []byte("encryption-key-12345")
+
+	store, err := NewFileTokenStore(path, key)
+	require.NoError(t, err)
+	defer store.Close()
+
+	tests := []struct {
+		name      string
+		nonceSize int
+	}{
+		{name: "16-byte AES-CBC-style IV", nonceSize: 16},
+		{name: "single byte nonce", nonceSize: 1},
+		{name: "zero-length nonce", nonceSize: 0},
+		{name: "oversized nonce", nonceSize: 32},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			encToken := &encryptedToken{
+				Ciphertext: []byte("some ciphertext bytes"),
+				Nonce:      make([]byte, tt.nonceSize),
+			}
+			_, err := store.decryptToken(encToken)
+			assert.ErrorIs(t, err, ErrDecryptionFailed)
+		})
+	}
+}

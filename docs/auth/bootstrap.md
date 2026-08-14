@@ -1,319 +1,438 @@
 # Bootstrap Authentication
 
-The IAM half of bootstrap — system tenant creation, admin user creation,
-admin certificate issuance, role/permission seeding — runs inside the
-**embedded qrdb node** that xkms hosts in-process as its single datastore.
-xkms always embeds qrdb (never dials a remote one), so first-boot is a direct
-call into the embedded engine's first-boot path; there is no separate xkms
-`pkg/bootstrap` overlay package (it was removed). xkms contributes only the
-hardware/identity-specific concerns: setup tokens, the FIDO2/WebAuthn
-attestation binding for the first admin, and the M-of-N ceremony for
-multi-admin deployments. The user, role, and certificate records it creates
-live on the embedded qrdb node — the single source of identity that xkms then
-exposes as its **own** users over every transport.
+The IAM half of bootstrap — the trust root, the first operator certificate,
+and every admin account created afterwards — is **cert-based**. There is no
+setup token, no invitation, and no self-service `/init` registration endpoint.
+The first operator identity is a certificate the xkms CA issues during the
+`xkmsd init` ceremony; subsequent admins are enrolled by binding an mTLS
+certificate (or a FIDO2 credential) to a user record that lives on the
+embedded qrdb node.
 
-There is exactly one user/tenant/role creation path in the entire stack
-(qrdb's), and every binary that embeds the stack — xkms, quicbaas,
-trusted-platform — composes it. xkms does not duplicate that work.
+Identity storage is qrdb's. xkms defines no user, role, or tenant type of its
+own; `xkmsctl` creates users and cert bindings through the SDK, which lands on
+qrdb's user client (`XKMSService.BindUserCert` →
+`users.AddCertBinding`, `pkg/xkms/servicer_user.go:162`). The one cert-binding
+identifier in the stack is qrdb's SPKI thumbprint
+(`qrdbsdk.ComputeSPKIThumbprint`), computed by `cmd/xkmsctl/admin.go:193`.
+
+What xkms owns is the hardware and PKI side: the `TrustedCA` that signs the
+certificates, the Shamir/SO-PIN ceremony that protects the barrier root key,
+and the FIDO2/WebAuthn relying party.
 
 ## Layering
 
 ```
                   +-------------------------------------+
-                  | xkms server (init/credential svc)   |
-                  | - setup token issuance + TTL        |
-                  | - FIDO2/WebAuthn attestation binding |
-                  | - M-of-N ceremony                   |
+                  | xkms                                |
+                  | - pkg/ca TrustedCA (signs certs)    |
+                  | - pkg/init CeremonyService          |
+                  |   (+ CAAdapter -> qrdb CeremonyCA)  |
+                  | - pkg/server/credentials Service    |
+                  | - pkg/webauthn RP (FIDO2)           |
                   +------------------+------------------+
                                      |
                                      v
                   +-------------------------------------+
-                  | embedded qrdb node (first-boot)     |
-                  | - system tenant                     |
-                  | - admin user                        |
-                  | - admin certificate                 |
-                  | - role/permission seeding           |
+                  | go-qrdb (via sdk/go only)           |
+                  | - ceremony state machine + Shamir   |
+                  | - users, roles, cert bindings       |
+                  | - barrier / seal                    |
                   +-------------------------------------+
 ```
 
-The xkms server surfaces the FIDO2/WebAuthn attestation hook and the
-invitation flow; tenant/user/role/cert creation is delegated to the embedded
-qrdb node.
+`pkg/init` (Go package `initialize`, directory named `init` to dodge the
+keyword) is a thin adapter over qrdb's ceremony: `initialize.CeremonyService`
+wraps `qrdbsdk.CeremonyService`, and `initialize.CAAdapter`
+(`pkg/init/ca_adapter.go:36`) bridges xkms's `ca.TrustedCA` to qrdb's
+`qrdbsdk.CeremonyCA` seam — a compile-time assertion pins the contract:
+
+```go
+var _ qrdbsdk.CeremonyCA = (*CAAdapter)(nil)
+```
+
+The adapter forwards `SignCSR`, `IssueCertificate`, `CACertificate`, and
+`CABundle` to the xkms CA, and stamps a system-tenant SPIFFE SAN on the SO /
+bootstrap certificate when a trust domain is configured, so the control plane
+has an identity before any tenant barrier unseals.
 
 ## Server Startup Sequence
 
-Bootstrap initializes as part of the server startup in `pkg/server/server.go`. The initialization order ensures all prerequisites are available before bootstrap runs:
+Subsystems come up in this order in `server.New` (`pkg/server/server.go:322`,
+sequence begins at line 352). There is no separate bootstrap step: the
+ceremony service is injected by the composing binary via
+`Server.SetCeremonyService` (`pkg/server/server.go:1496`) and surfaced to the
+transports through `initialize.NewCeremonyAdapter`
+(`pkg/server/server.go:547`).
 
 ```
- 1. Backends         (software, PKCS#11, TPM2, cloud KMS, etc.)
- 2. KeyStore         (per-backend key storage)
- 3. Embedded qrdb    (in-process datastore + identity store; holds admin accounts)
- 4. Authentication   (JWT, mTLS, adaptive auth)
- 5. Authorization    (RBAC)
- 6. AuditLogger      (structured audit trail)
- 7. Barrier          (AES-256-GCM at-rest encryption over the embedded node KV)
- 8. BarrierRegistry  (multi-tenant barrier isolation)
- 9. Bootstrap        <-- HERE
-10. PIN Manager      (SO PIN + User PIN)
-11. PasswordStore    (static password storage)
-12. PlatformStore    (sealed credential store)
-13. PolicyManager    (PCR policy management)
-14. Health           (health checks for all subsystems)
+ 1. QRDB storage      (embedded node: identity plane + KV)
+ 2. Backends          (software, PKCS#11, TPM2, cloud KMS, ...)
+ 3. KeyStore
+ 4. Authentication    (mTLS, JWT, OIDC, adaptive)
+ 5. WebAuthn service  (FIDO2 relying party)
+ 6. Authorization     (auth.Authorizer -> qrdb RBAC)
+ 7. AuditLogger
+ 8. Barrier           (AES-256-GCM at-rest encryption)
+ 9. BarrierRegistry   (per-tenant barrier isolation)
+10. PIN Manager       (SO PIN + User PIN)
+11. PasswordStore
+12. PlatformStore     (sealed credential store)
+13. CredentialService
+14. PolicyManager     (PCR policy management)
+15. Health
+16. CA
+17. FactorRegistry    (PIV / FIDO2 / PKCS#11 factors)
 ```
 
-On startup, the bootstrap check queries the embedded qrdb node for existing
-users. If any exist, the state is set to `complete` immediately -- the system
-has already been initialized.
+## Ceremony State Machine
 
-## State Machine
+The ceremony states are qrdb's, re-exported by `pkg/init/ceremony.go:48`:
 
 ```
-                    GenerateSetupToken()
-  UNINITIALIZED ----------------------> READY
-                                          |
-                          Initialize()    |
-                     +--------------------+
-                     |
-            +--------v---------+
-            |  single-admin?   |
-            +--+----------+----+
-               |          |
-           yes |          | no (threshold mode)
-               v          v
-          COMPLETE    CEREMONY
-                         |
-                         | ConsumeInvitation() x N
-                         v
-                      COMPLETE
+              xkmsd init (single admin)
+ awaiting_init ------------------------------------> operational
+       |
+       | xkmsd init --barrier-strategy shamir
+       |            --shares N --threshold M --so ...
+       v
+   enrolling  --- claim-cert + claim-share x N --->  operational
 ```
 
-| State | Description |
-|-------|-------------|
-| `uninitialized` | No setup token generated |
-| `ready` | Token generated, awaiting first admin |
-| `ceremony` | Threshold mode: waiting for additional admins |
-| `complete` | System fully initialized |
+| Constant | Value | Description |
+|----------|-------|-------------|
+| `initialize.StateAwaitingInit` | `awaiting_init` | Barrier not initialized; no CA, no admin identity |
+| `initialize.StateEnrolling` | `enrolling` | M-of-N: officers still claiming certificates and Shamir shares |
+| `initialize.StateOperational` | `operational` | Ready for service |
 
 ## Fresh Install Flow
 
-### Single-Admin Mode
+### Single Admin
 
-1. **Server starts** -- bootstrap service detects no users exist, enters `uninitialized` state
-2. **Operator generates setup token** -- via CLI or internal API (server logs the token)
-3. **Admin calls `POST /api/v1/init`** -- provides setup token, username, and FIDO2 attestation
-4. **Bootstrap atomically creates admin** -- validates token, creates user with `RoleAdmin`, consumes token
-5. **System enters `complete` state** -- all subsequent requests require authentication
+```bash
+xkmsd init --config /etc/xkms/xkmsd.yaml \
+  --so-pin <PIN> --user-pin <PIN> \
+  --hostname xkms.example.com
+```
 
-### Multi-Admin Threshold Mode
+`runInit` (`cmd/xkmsd/init.go:247`) validates the flags, builds the barrier
+and the credential service, then `executeCeremony`
+(`cmd/xkmsd/init_ceremony.go:112`) constructs a software-backed `TrustedCA`
+and calls `CeremonyService.Initialize(ctx, caInstance)`. On success it writes:
 
-1. **Server starts** with `threshold_mode: true`, `admin_threshold: M`, `admin_total: N`
-2. **Operator generates setup token**
-3. **First admin calls `POST /api/v1/init/threshold`** -- uses setup token, system enters `ceremony` state
-4. **Operator generates N-1 invitations** -- distributes to remaining admins via secure channel
-5. **Each subsequent admin calls `POST /api/v1/init/threshold`** -- uses their invitation token
-6. **When N admins registered**, system auto-transitions to `complete`
+| Artifact | Destination | Notes |
+|----------|-------------|-------|
+| CA bundle | `<data-dir>/ca-bundle.pem` | Public; the trust root clients pin against |
+| SPKI pin | `<data-dir>/spki-pin.txt` | Hex-encoded SHA-256 over the CA SubjectPublicKeyInfo |
 
-## Setup Token
+The SO identity is CSR-based; the server never holds officer private keys,
+so no credential bundle is emitted. State goes straight to `operational`.
 
-- 32 bytes from `crypto/rand`, base64url-encoded (43 characters)
-- One-time use, TTL-limited (default: 1 hour)
-- Validated with `crypto/subtle.ConstantTimeCompare` (timing-attack resistant)
-- Can only be generated when state is `uninitialized`
+### M-of-N (Threshold)
 
-## Atomic Initialization
+Each Security Officer generates a keypair and CSR offline. The operator passes
+one `--so username:/path/to/csr.pem` per officer:
 
-`Initialize` is all-or-nothing and delegates the heavy lifting to the
-embedded qrdb node's first-boot path. xkms only contributes the
-FIDO2/WebAuthn attestation hook and the setup-token bookkeeping:
+```bash
+xkmsd init --config /etc/xkms/xkmsd.yaml \
+  --so-pin <PIN> --user-pin <PIN> \
+  --barrier-strategy shamir --shares 3 --threshold 2 \
+  --so admin1@example.com:/path/to/admin1.csr \
+  --so admin2@example.com:/path/to/admin2.csr \
+  --so admin3@example.com:/path/to/admin3.csr
+```
 
-1. Validate state is `ready`
-2. Validate setup token (fail fast before side effects)
-3. Drive the embedded qrdb node's first-boot with the canonical params
-   (system tenant, admin username, admin role) and the FIDO2/WebAuthn
-   attestation hook
-4. The embedded node creates the admin user and admin certificate
-   atomically; if any step fails the function returns without mutating state
-   and the setup token is NOT consumed (retry safe)
-5. On success: consume token, transition to `complete` (or `ceremony` for
-   threshold)
+`--shares` and `--threshold` are only accepted with
+`--barrier-strategy=shamir`; passing them with any other strategy is rejected
+with `ErrSharesRequiresShamir` (`cmd/xkmsd/init.go:526`).
+
+Init signs each CSR against the new CA, Shamir-splits the barrier root key,
+seals the shares, and leaves the ceremony in `enrolling` — each officer
+claims their own certificate and share over the network.
+
+Claiming is a challenge-response: `BeginClaimCert` returns a random nonce
+(5-minute expiry) that the officer signs with the private key matching the CSR
+they submitted; `CompleteClaimCert` verifies that signature before releasing
+the certificate. `ClaimShare` then hands over the sealed Shamir share and
+deletes it from sealed storage. When every certificate and share has been
+claimed, the ceremony transitions to `operational`.
+
+This M-of-N officer ceremony is the **only** multi-party admin path. There is
+no "threshold registration" flow where extra admins redeem invitations.
+
+## Admin Enrollment After First Boot
+
+Once the server is operational, admins are added with `xkmsctl admin`
+(`cmd/xkmsctl/admin.go`). Enrollment method is selected with `--method`;
+`adminCreateHandlers` dispatches to exactly two handlers, `fido2` (default)
+and `mtls`.
+
+```bash
+# mTLS from a PEM certificate
+xkmsctl admin create alice@example.com \
+  --method mtls --cert-file /path/to/alice.pem
+
+# mTLS from a PKCS#11 token (module/slot/PIN are root persistent flags)
+xkmsctl admin create alice@example.com \
+  --method mtls --pkcs11-module /usr/lib/libxkey11.so
+
+# FIDO2 security key (default method)
+xkmsctl admin create alice@example.com --display-name "Alice"
+```
+
+The mTLS path reads the certificate, computes
+`qrdbsdk.ComputeSPKIThumbprint(cert)`, creates the user with role `admin`
+(`RoleAdmin`, `cmd/xkmsctl/roles.go:26`), and binds the thumbprint via
+`BindUserCert`. Because the identifier is over the SubjectPublicKeyInfo, a
+re-issued certificate for the same key resolves to the same binding.
+
+Certificates for new operators come from the CA itself: `POST
+/api/v1/ca/sign-csr` (CSR-sign) or `POST /api/v1/ca/issue`
+(generate-and-distribute), both authenticated (`pkg/api/rest/server.go:714`).
+During the ceremony the SO-authorized equivalent is `init.signCSR`. Neither
+path issues a bearer token.
+
+Remaining subcommands:
+
+| Command | Purpose |
+|---------|---------|
+| `xkmsctl admin list` | List accounts with role `admin` |
+| `xkmsctl admin get <username>` | Show one account |
+| `xkmsctl admin enable <username>` | Enable an account |
+| `xkmsctl admin disable <username>` | Disable an account |
+| `xkmsctl admin delete <username>` | Delete an account |
+| `xkmsctl admin status` | Report whether any admin accounts exist |
 
 ## FIDO2 Integration
 
-The `InitRequest.FIDO2Attestation` field carries a WebAuthn attestation response as base64 JSON. The flow:
+`--method fido2` drives the server-side WebAuthn ceremony through the SDK
+(`webAuthnRegistration`, `cmd/xkmsctl/user.go:39`):
 
-1. Client performs FIDO2 registration (MakeCredential) locally against a hardware authenticator
-2. Client sends the attestation response in the `POST /api/v1/init` request body
-3. The REST handler passes the attestation to `webauthn.Service` for validation
-4. Bootstrap validates the token and creates the admin user
-5. The FIDO2 credential is associated with the user account
+1. `CreateUser` creates the account on the embedded qrdb node with `RoleAdmin`.
+2. `BeginRegistration` returns the server's
+   `PublicKeyCredentialCreationOptions` as JSON.
+3. `pkg/fido2` performs MakeCredential against the hardware authenticator.
+4. The attestation is returned to `pkg/webauthn`'s relying-party service,
+   which persists the credential on the qrdb node.
 
-This binds the first admin account to a hardware security key, ensuring strong authentication from the very first operation.
-
-Both halves of the WebAuthn ceremony are wired end-to-end over the xkms SDK,
-not just registration: the SDK `XKMSService` drives `pkg/webauthn`'s relying-party
-service, which persists/loads credentials on the embedded qrdb node, while
-`pkg/fido2` emits attestations during enrollment and consumes assertions during
-login. Authentication (the login assertion ceremony) resolves the user from the
-qrdb-backed credential store and is integration-tested against xkey's virtual
-authenticator (`test/integration/fido2/{registration,authentication}_ceremony_test.go`),
+Both halves of the ceremony are wired end-to-end: authentication resolves the
+user from the same qrdb-backed credential store, and is integration-tested
+against xkey's virtual authenticator
+(`test/integration/fido2/{registration,authentication}_ceremony_test.go`),
 with a YubiKey-gated hardware path enabled by `XKMS_FIDO2_HARDWARE=1`.
 
-## REST API
+## Secure-by-Default Gate
 
-### GET /api/v1/bootstrap/status
+`Config.ComplianceGaps()` (`pkg/config/config.go:1214`) reports posture gaps
+that FedRAMP / PCI-DSS v4 / HIPAA do not permit, and `cmd/xkmsd/main.go:134`
+refuses to start when any are present unless the operator passes `--insecure`
+or sets `XKMS_INSECURE=true`. The same gate is re-applied on config reload
+(`main.go:266`), so a hot reload cannot downgrade a running server.
 
-Returns the current bootstrap state. No authentication required during bootstrap.
+Gaps relevant to first boot:
 
-**Response:**
+| Gap | Trigger |
+|-----|---------|
+| No CA configured | `ca` is unset — no trust anchor, so no certificate-based admin enrollment is possible |
+| Encryption-at-rest disabled | `barrier.enabled=false` |
+| Barrier cannot auto-unseal | `barrier.strategy` is passphrase/software/none with no passphrase and no hardware backend — the embedded data plane, including backend key stores, would be plaintext |
+| TLS disabled | `tls.enabled=false` |
+| Authentication disabled or no-op | `auth.enabled=false`, or `auth.type` resolves to `noop`/`none`/`""` |
+| RBAC without an identity plane | `auth.enable_rbac=true` with `storage.backend != "qrdb"` — the authorizer cannot be built and every transport allows everything |
+
+This is why `xkmsd init` is a prerequisite rather than a convenience: a
+compliant configuration needs a CA and an encrypted barrier before the daemon
+will accept its first connection.
+
+## API Surface
+
+The init ceremony endpoints exist to let an officer collect the artifacts
+minted for them during `xkmsd init`. Possession of the CSR private key is the
+credential proven by the challenge-response.
+
+Note that on REST these routes sit inside the `/api/v1` group behind
+`AuthenticationMiddleware` (`pkg/api/rest/middleware.go`), which carves out
+exactly one exemption: the four claim endpoints below are served without an
+identity assertion while the ceremony is still in progress, because an
+officer's first credential is the certificate those routes hand out
+(`pkg/api/rest/middleware_init_public.go`). The exemption fails closed on
+five axes:
+
+1. An init ceremony service must be wired on the server; without one no
+   request is ever treated as public.
+2. The request path must exactly match the four-entry allowlist — prefix
+   matching is deliberately avoided so a path like `/api/v1/initialize` can
+   never be exempted.
+3. A percent-encoded path whose escaped form differs from its decoded form is
+   never treated as public, so the string this check inspects can never
+   diverge from the string chi routes on.
+4. The ceremony state must be on the explicit pre-operational allowlist
+   (`awaiting_init`, `enrolling`). Any other state — operational included,
+   and any state string a future go-qrdb release might add — restores full
+   authentication.
+5. `sign-csr` is not in the allowlist at all: it requires the SO PIN and an
+   already-enrolled operator, so it stays behind authentication (and RBAC,
+   when enabled).
+
+The exemption does not widen the set of parties that can reach the daemon:
+possession of the CSR private key is the credential proven by the claim
+challenge-response, and the transport is additionally SPKI-pinned against the
+pin published by the initialization ceremony. Once the ceremony reaches the
+operational state these paths are ordinary authenticated routes.
+
+REST (`pkg/api/rest/server.go:830`):
+
+| Method | Path |
+|--------|------|
+| GET | `/api/v1/init/status` |
+| POST | `/api/v1/init/claim-cert/begin` |
+| POST | `/api/v1/init/claim-cert/complete` |
+| POST | `/api/v1/init/claim-share` |
+
+QUIC (`pkg/api/quic/server.go:295`) mounts the same four plus
+`/api/v1/init/sign-csr`. MCP exposes them as JSON-RPC methods
+`init.getStatus`, `init.claimCertBegin`, `init.claimCertComplete`,
+`init.claimShare`, `init.signCSR` (`pkg/api/mcp/server.go:509`). gRPC does
+**not** implement the ceremony — its transport returns `ErrNotSupported`
+(`pkg/api/transport/grpc/transport.go:2247`).
+
+Request/response shapes are the canonical types in
+`pkg/api/transport/types_init.go`:
+
 ```json
-{
-  "state": "uninitialized",
-  "message": "System requires initialization. Generate a setup token to begin."
-}
+// POST /api/v1/init/claim-cert/begin
+{"username": "admin2@example.com"}
+// -> {"nonce": "<hex>", "username": "...", "expires_at": "..."}
+
+// POST /api/v1/init/claim-cert/complete
+{"username": "admin2@example.com", "nonce": "<hex>", "signature": "<base64>"}
+// -> {"cert_pem": "...", "ca_cert_pem": "..."}
+
+// POST /api/v1/init/claim-share
+{"username": "admin2@example.com"}
+// -> {"share": { ... }}
 ```
 
-State messages:
+Error mapping (`pkg/api/rest/handlers_init.go:98`):
 
-| State | Message |
-|-------|---------|
-| `uninitialized` | System requires initialization. Generate a setup token to begin. |
-| `ready` | Setup token generated. System is ready for admin initialization. |
-| `ceremony` | Threshold ceremony in progress. Waiting for additional admin registrations. |
-| `complete` | System is initialized and ready. |
+| Error | HTTP Status |
+|-------|-------------|
+| `initialize.ErrNotInEnrollingState` | 409 Conflict |
+| `initialize.ErrAlreadyInitialized` | 409 Conflict |
+| `initialize.ErrCertAlreadyClaimed` | 409 Conflict |
+| `initialize.ErrShareAlreadyClaimed` | 409 Conflict |
+| `initialize.ErrPendingCertNotFound` | 404 Not Found |
+| `initialize.ErrShareNotFound` | 404 Not Found |
+| `initialize.ErrUserNotFound` | 404 Not Found |
+| `initialize.ErrChallengeNotFound` | 404 Not Found |
+| `initialize.ErrChallengeExpired` | 410 Gone |
+| `initialize.ErrChallengeVerificationFailed` | 401 Unauthorized |
+| anything else | 500 Internal Server Error |
 
-### POST /api/v1/init
+Credential submission (used to hand the daemon a User PIN at start-up under
+the `manual` strategy) lives alongside it at `/api/v1/credentials/submit` and
+`/api/v1/credentials/strategy` (`pkg/api/rest/server.go:840`).
 
-Single-admin initialization. No authentication required.
+### Known CLI drift
 
-**Request:**
-```json
-{
-  "setup_token": "base64url-encoded-32-byte-token",
-  "username": "admin",
-  "display_name": "System Administrator",
-  "fido2_attestation": "<base64-encoded WebAuthn attestation response>"
-}
-```
+`xkmsctl init` speaks plain HTTP to the REST endpoint in `--server`, and three
+of its subcommands do not currently match the server contract:
 
-**Response (200 OK):**
-```json
-{
-  "user_id": "base64url-encoded-user-id",
-  "username": "admin",
-  "jwt": "eyJhbGciOiJ...",
-  "server_info": {
-    "spki_pin": "sha256/...",
-    "hostname": "xkms.example.com",
-    "version": "1.0.0"
-  }
-}
-```
+- `claim-share` posts to `/api/v1/init/claim-share/begin` and `/complete`
+  (`cmd/xkmsctl/init.go:429`, `:474`); the server exposes a single
+  `/api/v1/init/claim-share`.
+- `claim-cert` generates a fresh keypair and signs the nonce with it
+  (`cmd/xkmsctl/init.go:343`), but the server verifies the signature against
+  the public key in the officer's CSR, and it reads `cert_pem`, not the
+  `certificate` field the CLI decodes.
+- `sign-csr` posts to `/api/v1/init/sign-csr`, which only QUIC and MCP mount.
 
-### POST /api/v1/init/threshold
-
-Threshold mode admin registration. No authentication required during bootstrap.
-
-**First admin (uses setup token):**
-```json
-{
-  "setup_token": "base64url-encoded-token",
-  "username": "admin1",
-  "display_name": "Admin One",
-  "fido2_attestation": "<attestation>"
-}
-```
-
-**Subsequent admins (use invitation token):**
-```json
-{
-  "invitation": "base64url-encoded-invitation-token",
-  "username": "admin2",
-  "display_name": "Admin Two",
-  "fido2_attestation": "<attestation>"
-}
-```
+Drive the documented endpoints directly until the CLI is reconciled with the
+server contract.
 
 ## Barrier Coordination
 
-The barrier (at-rest encryption) initializes before bootstrap in the server startup sequence. This means:
+The barrier comes up at step 8, before the CA at step 16, which means:
 
-- The barrier root key and encryption subsystem are available before any user data is created
-- The first admin user's credentials are stored through the barrier's encrypted storage
-- If the barrier is sealed on restart, bootstrap still reports `complete` (users exist), but key operations require unsealing
+- The barrier root key exists before any identity or credential is written.
+- Admin records and sealed credentials are stored through barrier-encrypted
+  storage.
+- In M-of-N mode the barrier root key *is* the secret that was Shamir-split:
+  the ceremony seals one share per officer, `ClaimShare` releases and deletes
+  it, and the officers' shares are what later reconstruct the root key at
+  unseal time (`xkmsctl barrier unseal-shares --share <s> ...`).
+- The ceremony and the barrier are separate gates. A server whose ceremony is
+  `operational` still refuses key operations while its barrier is sealed.
 
 ## Configuration
 
-YAML (`xkmsd.yaml`):
+Bootstrap is driven by `xkmsd init` flags, not by a config block. Each flag
+has a Viper-bound `XKMS_*` fallback (`cmd/xkmsd/init.go:464`):
 
-```yaml
-init_bootstrap:
-  enabled: true
-  token_ttl: 1h            # Setup token validity (default: 1 hour)
-  threshold_mode: false     # Enable M-of-N admin ceremony
-  admin_threshold: 0        # M: minimum admins (required if threshold_mode)
-  admin_total: 0            # N: total admins to register (required if threshold_mode)
-```
+| Flag | Env | Default | Purpose |
+|------|-----|---------|---------|
+| `--config` | — | `/etc/xkms/xkmsd.yaml` | Configuration file |
+| `--so-pin` | `XKMS_SO_PIN` | — | Security Officer PIN (required) |
+| `--user-pin` | `XKMS_USER_PIN` | — | User PIN (required) |
+| `--barrier-strategy` | `XKMS_BARRIER_STRATEGY` | `passphrase` | `passphrase`, `shamir`, `pkcs11`, `tpm2`, `awskms`, `gcpkms`, `azurekv`, `vault` |
+| `--shares` | `XKMS_SHARES` | `0` | Total Shamir shares (only with `--barrier-strategy=shamir`) |
+| `--threshold` | `XKMS_THRESHOLD` | `0` | M-of-N threshold |
+| `--so` | — | — | `username:/path/to/csr.pem`, repeatable |
+| `--credential-strategy` | — | `barrier` | Credential seal strategy |
+| `--data-dir` | — | `/var/lib/xkms` | Where public artifacts are written |
+| `--hostname` | `XKMS_HOSTNAME` | `localhost` | CN for the admin/server certificate |
+| `--sans` | `XKMS_SANS` | — | Additional DNS / IP SANs. Parsed and env-resolved, but not yet consumed by the ceremony (`cmd/xkmsd/init.go:445`) |
 
-Go config struct:
+`validateInitFlags` (`cmd/xkmsd/init.go:507`) enforces the combinations:
+`--shares`/`--threshold` are rejected unless the strategy is `shamir`; with
+`shamir`, `--shares >= 2` and `2 <= --threshold <= --shares`; and
+`--threshold` may not exceed the number of `--so` officers.
 
-```go
-type InitBootstrapConfig struct {
-    Enabled        bool          `yaml:"enabled"`
-    TokenTTL       time.Duration `yaml:"token_ttl"`
-    ThresholdMode  bool          `yaml:"threshold_mode"`
-    AdminThreshold int           `yaml:"admin_threshold"`
-    AdminTotal     int           `yaml:"admin_total"`
-}
-```
-
-Validation: if `threshold_mode` is true, then `admin_threshold > 0` and `admin_threshold <= admin_total`.
+The credential seal strategy is validated against `validStrategies`
+(`pkg/server/credentials/service.go:43`): `manual`, `barrier`, `tpm2`,
+`pkcs11`, `awskms`, `gcpkms`, `azurekv`, `vault`, `passphrase`, plus the
+underscored aliases `aws_kms`/`gcp_kms`/`azure_kv` and `software` for
+`passphrase`.
 
 ## Service API
 
+`initialize.CeremonyService` (`pkg/init/ceremony.go:88`):
+
 | Method | Description |
 |--------|-------------|
-| `NewService(config, qrdbClient, logger)` | Creates bootstrap service backed by the embedded qrdb node |
-| `State()` | Returns current state |
-| `IsInitialized()` | Returns true if complete |
-| `GenerateSetupToken()` | Generates one-time token (uninitialized state only) |
-| `ValidateSetupToken(token)` | Checks validity without consuming |
-| `ConsumeSetupToken(token)` | Atomically marks token as used |
-| `Initialize(ctx, req)` | Atomic init: validate token, create admin, transition state |
-| `GenerateInvitations(count)` | Creates invitation tokens (ceremony state only) |
-| `ValidateInvitation(token)` | Checks invitation validity |
-| `ConsumeInvitation(token)` | Consumes invitation, auto-completes ceremony when admin count reached |
+| `NewCeremonyService(config, barrier, credService, logger)` | Validates the config and wraps qrdb's ceremony service |
+| `Initialize(ctx, ca.TrustedCA)` | Runs the ceremony; returns `InitResult` (state, SPKI pin, CA bundle, share count) |
+| `BeginClaimCert(ctx, username)` | Issues a 5-minute challenge nonce |
+| `CompleteClaimCert(ctx, username, nonceHex, signature)` | Verifies possession, returns cert + CA cert |
+| `ClaimShare(ctx, username)` | Returns and destroys the officer's sealed Shamir share |
+| `SignCSRInit(ctx, username, soPin, csrPEM, role)` | SO-authorized CSR signing during init |
+| `State()` | Current ceremony state (concurrency-safe) |
+| `SPKIPin()` | Hex-encoded SPKI pin of the CA |
+| `SetSPIFFETrustDomain(td)` | Enables system-tenant SPIFFE SAN stamping |
+| `ThresholdRegistry()` | Registry for vendor HSM threshold initializers |
+| `Cleanup()` | Destroys remaining shares and clears sensitive state |
 
-## Concurrency
+The running server reaches the ceremony through `XKMSService`, which stores it
+as `any` (`pkg/xkms/service.go:128`) to break the
+`xkms -> init -> ca -> xkms` import cycle; `SetCeremonyService` /
+`CeremonyService()` are the accessors and the transport layer type-asserts to
+`transport.InitCeremonyService`.
 
-- **RWMutex**: write lock during state transitions (`Initialize`, `GenerateSetupToken`, `ConsumeInvitation`), read lock for status queries
-- **Race-safe**: concurrent `Initialize` calls -- only the first succeeds, others get `ErrNotReady` after acquiring the lock
-- **Atomic token consumption**: token marked as used only after successful user creation
+## Removed Design: Setup Tokens
 
-## Error Reference
-
-| Error | HTTP Status | Condition |
-|-------|-------------|-----------|
-| `ErrAlreadyInitialized` | 409 Conflict | System already initialized |
-| `ErrNotReady` | 503 Service Unavailable | State is not `ready` |
-| `ErrInvalidToken` | 401 Unauthorized | Token does not match (constant-time) |
-| `ErrTokenExpired` | 410 Gone | Token TTL elapsed |
-| `ErrTokenUsed` | 409 Conflict | Token already consumed |
-| `ErrNoToken` | 503 Service Unavailable | No token generated yet |
-| `ErrUsernameTaken` | 409 Conflict | Username already exists |
-| `ErrEmptyUsername` | 400 Bad Request | Empty username in request |
-| `ErrEmptyAttestation` | 400 Bad Request | Missing FIDO2 attestation |
-| `ErrThresholdConfig` | -- | Invalid threshold/total values |
-| `ErrCeremonyNotStarted` | 503 Service Unavailable | Threshold ceremony not active |
-| `ErrCeremonyComplete` | 409 Conflict | Ceremony already finished |
-| `ErrInvalidInvitation` | 401 Unauthorized | Invitation token invalid |
-| `ErrInvitationExpired` | 410 Gone | Invitation TTL elapsed |
-| `ErrInvitationUsed` | 409 Conflict | Invitation already consumed |
+An earlier design bootstrapped the first admin with a one-time setup token
+plus `POST /api/v1/init`, and added extra admins with invitation tokens via
+`POST /api/v1/init/threshold`. **That design was removed.** No setup-token,
+invitation, or `/api/v1/init` (bare) route exists in `pkg/`, `cmd/`, or
+`sdk/`, and admin enrollment is now cert-based by architectural rule:
+CSR-sign or generate-and-distribute, never an invite token. Stale references
+in `docs/ROADMAP-bootstrap.md` describe this removed design.
 
 ## Cross-References
 
-- [Initialization Guide](../usage/initialization.md) -- step-by-step CLI initialization
-- [Init System](../init/README.md) -- the KMS+CA half of the bootstrap state machine (this page is the IAM half)
-- [Barrier Architecture](../seal/README.md) -- at-rest encryption design
-- [MFA Policy Engine](mfa-policy.md) -- operation-level MFA requirements
-- [Bootstrap CA Configuration](../configuration/bootstrap.md) -- CA bundle bootstrap (separate from init bootstrap)
-- [Trust Bootstrap Library](../trust/bootstrap.md) -- the client-side library that fetches the CA bundle produced here
+- [Init System](../init/README.md) — the KMS + CA half of `xkmsd init`
+- [Identity / authorization layering](layering.md) — the qrdb boundary and the `auth.Authorizer` seam
+- [RBAC](../architecture/rbac.md) — permission vocabulary and per-transport gates
+- [Barrier Architecture](../seal/README.md) — at-rest encryption design
+- [WebAuthn RP](../webauthn/README.md) — the relying party behind `--method fido2`
+- [Trust Bootstrap Library](../trust/bootstrap.md) — the client-side library that fetches the CA bundle produced here
+- [Bootstrap CA Configuration](../configuration/bootstrap.md) — CA bundle bootstrap (separate from init)

@@ -19,12 +19,16 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"log/slog"
-	"os"
+	"path/filepath"
 	"time"
 
 	"github.com/spf13/cobra"
 	"github.com/spf13/viper"
+
+	"github.com/jeremyhahn/go-xkms/xkey/pkg/phone"
+	xkeysync "github.com/jeremyhahn/go-xkms/xkey/pkg/sync"
 )
 
 // Device sync errors.
@@ -225,50 +229,87 @@ func (s syncScope) scopeLabels() []string {
 	return labels
 }
 
+// syncMode selects which halves of an exchange are applied.
+type syncMode int
+
+const (
+	// syncModeBoth sends local items and applies the phone's reply.
+	syncModeBoth syncMode = iota
+
+	// syncModePush sends local items and discards the phone's reply.
+	syncModePush
+
+	// syncModePull sends nothing and applies the phone's reply.
+	syncModePull
+)
+
+// sends reports whether the mode transmits local items to the phone.
+func (m syncMode) sends() bool { return m != syncModePull }
+
+// applies reports whether the mode writes the phone's items to local stores.
+func (m syncMode) applies() bool { return m != syncModePush }
+
+// verb returns the operator-facing name of the mode.
+func (m syncMode) verb() string {
+	switch m {
+	case syncModePush:
+		return "Pushing"
+	case syncModePull:
+		return "Pulling"
+	default:
+		return "Syncing"
+	}
+}
+
 // runDeviceSync synchronizes data bidirectionally with a paired phone.
 func runDeviceSync(cmd *cobra.Command, args []string) error {
+	return runDeviceSyncMode(cmd, syncModeBoth)
+}
+
+// runDeviceSyncPush pushes local data to a paired phone.
+func runDeviceSyncPush(cmd *cobra.Command, args []string) error {
+	return runDeviceSyncMode(cmd, syncModePush)
+}
+
+// runDeviceSyncPull pulls phone data to this device.
+func runDeviceSyncPull(cmd *cobra.Command, args []string) error {
+	return runDeviceSyncMode(cmd, syncModePull)
+}
+
+// runDeviceSyncMode drives every selected store through one exchange with the
+// phone. All three sync commands funnel through here; the mode decides which
+// half of each exchange is applied.
+func runDeviceSyncMode(cmd *cobra.Command, mode syncMode) error {
 	deviceName, _ := cmd.Flags().GetString("device")
 	timeout, _ := cmd.Flags().GetDuration("timeout")
 	dryRun, _ := cmd.Flags().GetBool("dry-run")
-	logger := slog.Default()
+	out := cmd.OutOrStdout()
 
 	scope, err := resolveSyncScope(cmd)
 	if err != nil {
 		return err
 	}
 
-	// Load phone config
-	cfg, err := loadDevicesConfig()
+	device, err := resolvePairedDevice(deviceName)
 	if err != nil {
-		if errors.Is(err, os.ErrNotExist) {
-			return ErrDeviceNotPaired
-		}
-		return &SentinelCauseError{Sentinel: ErrDeviceConfigLoadFailed, Cause: err}
+		return err
 	}
 
-	if len(cfg.Devices) == 0 {
-		return ErrDeviceNotPaired
+	// Open the local stores before any radio work so an unreachable store
+	// fails here rather than after the phone has already been handed data.
+	svc, sources, err := openSyncService()
+	if err != nil {
+		return err
 	}
-
-	// Select device
-	device := selectDevice(cfg, deviceName)
-	if device == nil {
-		if deviceName != "" {
-			return &DetailError{Err: ErrDeviceNotFound, Detail: fmt.Sprintf(": %s", deviceName)}
-		}
-		return ErrDeviceNotPaired
-	}
+	defer sources.Close()
 
 	if dryRun {
-		fmt.Fprintf(cmd.OutOrStdout(), "[dry-run] Would sync with device \"%s\"\n", device.Name)
-		fmt.Fprintf(cmd.OutOrStdout(), "[dry-run] Stores: %v\n", scope.scopeLabels())
-		return nil
+		return reportSyncDryRun(out, device.Name, mode, scope, svc)
 	}
 
-	fmt.Fprintf(cmd.OutOrStdout(), "Syncing with device \"%s\"...\n\n", device.Name)
+	fmt.Fprintf(out, "%s with device \"%s\"...\n\n", mode.verb(), device.Name)
 
-	// Connect to phone
-	phoneBackend, err := connectToPhone(device, timeout, logger)
+	phoneBackend, err := connectToPhone(device, timeout, slog.Default())
 	if err != nil {
 		return &SentinelCauseError{Sentinel: ErrDeviceSyncFailed, Cause: err}
 	}
@@ -277,38 +318,35 @@ func runDeviceSync(cmd *cobra.Command, args []string) error {
 	ctx, cancel := context.WithTimeout(context.Background(), timeout)
 	defer cancel()
 
-	fmt.Fprintln(cmd.OutOrStdout(), "Connecting to phone...")
+	fmt.Fprintln(out, "Connecting to phone...")
 	if err := phoneBackend.Connect(ctx); err != nil {
 		return &SentinelCauseError{Sentinel: ErrDeviceSyncFailed, Cause: err}
 	}
 
-	// Sync each selected store
-	summary := syncSummary{}
+	var summary syncSummary
+	var failures []error
 
-	if scope.TrustStore {
-		fmt.Fprintln(cmd.OutOrStdout(), "Syncing trust store...")
-		summary.TrustStoreAdded = 0
-		summary.TrustStoreUpdated = 0
-		summary.TrustStoreSkipped = 0
+	for _, store := range selectedSyncStores(scope) {
+		fmt.Fprintf(out, "%s %s...\n", mode.verb(), store.label)
+		result, err := store.exchange(ctx, phoneBackend, svc, mode)
+		if err != nil {
+			fmt.Fprintf(out, "  %s\n", err)
+			failures = append(failures, err)
+			continue
+		}
+		summary.set(store.label, result)
 	}
 
-	if scope.OATH {
-		fmt.Fprintln(cmd.OutOrStdout(), "Syncing OATH credentials...")
-		summary.OATHAdded = 0
-		summary.OATHUpdated = 0
-		summary.OATHSkipped = 0
+	fmt.Fprintln(out)
+	summary.write(out, scope, mode)
+
+	if len(failures) > 0 {
+		return errors.Join(failures...)
 	}
 
-	if scope.Passwords {
-		fmt.Fprintln(cmd.OutOrStdout(), "Syncing passwords...")
-		summary.PasswordsAdded = 0
-		summary.PasswordsUpdated = 0
-		summary.PasswordsSkipped = 0
+	if err := recordSyncState(svc); err != nil {
+		return err
 	}
-
-	// Print summary
-	fmt.Fprintln(cmd.OutOrStdout())
-	printSyncSummary(cmd, scope, summary)
 
 	return nil
 }
@@ -317,101 +355,16 @@ func runDeviceSync(cmd *cobra.Command, args []string) error {
 func runDeviceSyncStatus(cmd *cobra.Command, args []string) error {
 	deviceName, _ := cmd.Flags().GetString("device")
 	timeout, _ := cmd.Flags().GetDuration("timeout")
-	logger := slog.Default()
+	out := cmd.OutOrStdout()
 
-	// Load phone config
-	cfg, err := loadDevicesConfig()
-	if err != nil {
-		if errors.Is(err, os.ErrNotExist) {
-			return ErrDeviceNotPaired
-		}
-		return &SentinelCauseError{Sentinel: ErrDeviceConfigLoadFailed, Cause: err}
-	}
-
-	if len(cfg.Devices) == 0 {
-		return ErrDeviceNotPaired
-	}
-
-	// Select device
-	device := selectDevice(cfg, deviceName)
-	if device == nil {
-		if deviceName != "" {
-			return &DetailError{Err: ErrDeviceNotFound, Detail: fmt.Sprintf(": %s", deviceName)}
-		}
-		return ErrDeviceNotPaired
-	}
-
-	fmt.Fprintf(cmd.OutOrStdout(), "Checking sync status with device \"%s\"...\n\n", device.Name)
-
-	// Connect to phone
-	phoneBackend, err := connectToPhone(device, timeout, logger)
-	if err != nil {
-		return &SentinelCauseError{Sentinel: ErrDeviceSyncFailed, Cause: err}
-	}
-	defer phoneBackend.Close()
-
-	ctx, cancel := context.WithTimeout(context.Background(), timeout)
-	defer cancel()
-
-	fmt.Fprintln(cmd.OutOrStdout(), "Connecting to phone...")
-	if err := phoneBackend.Connect(ctx); err != nil {
-		return &SentinelCauseError{Sentinel: ErrDeviceSyncFailed, Cause: err}
-	}
-
-	// Display sync status
-	fmt.Fprintf(cmd.OutOrStdout(), "Device:    %s\n", device.Name)
-	fmt.Fprintf(cmd.OutOrStdout(), "Address:   %s\n", device.Address)
-	fmt.Fprintf(cmd.OutOrStdout(), "Paired:    %s\n", device.PairedAt.Format(time.RFC3339))
-	fmt.Fprintln(cmd.OutOrStdout())
-	fmt.Fprintln(cmd.OutOrStdout(), "Store checksums will be available after first sync.")
-
-	return nil
-}
-
-// runDeviceSyncPush pushes local data to a paired phone.
-func runDeviceSyncPush(cmd *cobra.Command, args []string) error {
-	deviceName, _ := cmd.Flags().GetString("device")
-	timeout, _ := cmd.Flags().GetDuration("timeout")
-	dryRun, _ := cmd.Flags().GetBool("dry-run")
-	logger := slog.Default()
-
-	scope, err := resolveSyncScope(cmd)
+	device, err := resolvePairedDevice(deviceName)
 	if err != nil {
 		return err
 	}
 
-	// Load phone config
-	cfg, err := loadDevicesConfig()
-	if err != nil {
-		if errors.Is(err, os.ErrNotExist) {
-			return ErrDeviceNotPaired
-		}
-		return &SentinelCauseError{Sentinel: ErrDeviceConfigLoadFailed, Cause: err}
-	}
+	fmt.Fprintf(out, "Checking sync status with device \"%s\"...\n\n", device.Name)
 
-	if len(cfg.Devices) == 0 {
-		return ErrDeviceNotPaired
-	}
-
-	// Select device
-	device := selectDevice(cfg, deviceName)
-	if device == nil {
-		if deviceName != "" {
-			return &DetailError{Err: ErrDeviceNotFound, Detail: fmt.Sprintf(": %s", deviceName)}
-		}
-		return ErrDeviceNotPaired
-	}
-
-	if dryRun {
-		fmt.Fprintf(cmd.OutOrStdout(), "[dry-run] Would push to device \"%s\"\n", device.Name)
-		fmt.Fprintf(cmd.OutOrStdout(), "[dry-run] Stores: %v\n", scope.scopeLabels())
-		return nil
-	}
-
-	fmt.Fprintf(cmd.OutOrStdout(), "Pushing to device \"%s\"...\n\n", device.Name)
-
-	// Connect to phone
-	phoneBackend, err := connectToPhone(device, timeout, logger)
+	phoneBackend, err := connectToPhone(device, timeout, slog.Default())
 	if err != nil {
 		return &SentinelCauseError{Sentinel: ErrDeviceSyncFailed, Cause: err}
 	}
@@ -420,147 +373,534 @@ func runDeviceSyncPush(cmd *cobra.Command, args []string) error {
 	ctx, cancel := context.WithTimeout(context.Background(), timeout)
 	defer cancel()
 
-	fmt.Fprintln(cmd.OutOrStdout(), "Connecting to phone...")
+	fmt.Fprintln(out, "Connecting to phone...")
 	if err := phoneBackend.Connect(ctx); err != nil {
 		return &SentinelCauseError{Sentinel: ErrDeviceSyncFailed, Cause: err}
 	}
 
-	// Push each selected store
-	summary := syncSummary{}
-
-	if scope.TrustStore {
-		fmt.Fprintln(cmd.OutOrStdout(), "Pushing trust store...")
-		summary.TrustStoreAdded = 0
-	}
-
-	if scope.OATH {
-		fmt.Fprintln(cmd.OutOrStdout(), "Pushing OATH credentials...")
-		summary.OATHAdded = 0
-	}
-
-	if scope.Passwords {
-		fmt.Fprintln(cmd.OutOrStdout(), "Pushing passwords...")
-		summary.PasswordsAdded = 0
-	}
-
-	fmt.Fprintln(cmd.OutOrStdout())
-	printSyncSummary(cmd, scope, summary)
-
-	return nil
-}
-
-// runDeviceSyncPull pulls phone data to this device.
-func runDeviceSyncPull(cmd *cobra.Command, args []string) error {
-	deviceName, _ := cmd.Flags().GetString("device")
-	timeout, _ := cmd.Flags().GetDuration("timeout")
-	dryRun, _ := cmd.Flags().GetBool("dry-run")
-	logger := slog.Default()
-
-	scope, err := resolveSyncScope(cmd)
+	status, err := sendSyncRequest[phone.LocalSyncStatusResult](ctx, phoneBackend,
+		phone.MethodLocalSyncStatus, &phone.LocalSyncStatusParams{})
 	if err != nil {
 		return err
 	}
 
-	// Load phone config
-	cfg, err := loadDevicesConfig()
+	fmt.Fprintf(out, "Device:    %s\n", device.Name)
+	fmt.Fprintf(out, "Address:   %s\n", device.Address)
+	fmt.Fprintf(out, "Paired:    %s\n", device.PairedAt.Format(time.RFC3339))
+	fmt.Fprintln(out)
+	fmt.Fprintln(out, "Phone:")
+	fmt.Fprintf(out, "  Device ID:  %s\n", status.DeviceID)
+	fmt.Fprintf(out, "  Last sync:  %s\n", orNever(status.LastSync))
+	if len(status.StoreChecksums) == 0 {
+		fmt.Fprintln(out, "  Checksums:  (none reported)")
+	} else {
+		fmt.Fprintln(out, "  Checksums:")
+		for _, name := range []string{"trust_store", "oath", "passwords"} {
+			if sum, ok := status.StoreChecksums[name]; ok {
+				fmt.Fprintf(out, "    %-12s %s\n", name+":", sum)
+			}
+		}
+	}
+
+	// The local half comes from the sync state file this machine maintains.
+	svc, sources, err := openSyncService()
 	if err != nil {
-		if errors.Is(err, os.ErrNotExist) {
-			return ErrDeviceNotPaired
-		}
-		return &SentinelCauseError{Sentinel: ErrDeviceConfigLoadFailed, Cause: err}
+		return err
 	}
+	defer sources.Close()
 
-	if len(cfg.Devices) == 0 {
-		return ErrDeviceNotPaired
-	}
-
-	// Select device
-	device := selectDevice(cfg, deviceName)
-	if device == nil {
-		if deviceName != "" {
-			return &DetailError{Err: ErrDeviceNotFound, Detail: fmt.Sprintf(": %s", deviceName)}
-		}
-		return ErrDeviceNotPaired
-	}
-
-	if dryRun {
-		fmt.Fprintf(cmd.OutOrStdout(), "[dry-run] Would pull from device \"%s\"\n", device.Name)
-		fmt.Fprintf(cmd.OutOrStdout(), "[dry-run] Stores: %v\n", scope.scopeLabels())
-		return nil
-	}
-
-	fmt.Fprintf(cmd.OutOrStdout(), "Pulling from device \"%s\"...\n\n", device.Name)
-
-	// Connect to phone
-	phoneBackend, err := connectToPhone(device, timeout, logger)
+	state, err := svc.LoadState()
 	if err != nil {
 		return &SentinelCauseError{Sentinel: ErrDeviceSyncFailed, Cause: err}
 	}
-	defer phoneBackend.Close()
 
-	ctx, cancel := context.WithTimeout(context.Background(), timeout)
-	defer cancel()
-
-	fmt.Fprintln(cmd.OutOrStdout(), "Connecting to phone...")
-	if err := phoneBackend.Connect(ctx); err != nil {
-		return &SentinelCauseError{Sentinel: ErrDeviceSyncFailed, Cause: err}
+	fmt.Fprintln(out)
+	fmt.Fprintln(out, "This device:")
+	if state.LastSync.IsZero() {
+		fmt.Fprintln(out, "  Last sync:  never")
+	} else {
+		fmt.Fprintf(out, "  Last sync:  %s\n", state.LastSync.UTC().Format(time.RFC3339))
 	}
-
-	// Pull each selected store
-	summary := syncSummary{}
-
-	if scope.TrustStore {
-		fmt.Fprintln(cmd.OutOrStdout(), "Pulling trust store...")
-		summary.TrustStoreAdded = 0
-	}
-
-	if scope.OATH {
-		fmt.Fprintln(cmd.OutOrStdout(), "Pulling OATH credentials...")
-		summary.OATHAdded = 0
-	}
-
-	if scope.Passwords {
-		fmt.Fprintln(cmd.OutOrStdout(), "Pulling passwords...")
-		summary.PasswordsAdded = 0
-	}
-
-	fmt.Fprintln(cmd.OutOrStdout())
-	printSyncSummary(cmd, scope, summary)
 
 	return nil
 }
 
-// syncSummary holds per-store sync result counts.
+// orNever renders an empty RFC 3339 timestamp as "never".
+func orNever(value string) string {
+	if value == "" {
+		return "never"
+	}
+	return value
+}
+
+// ---------------------------------------------------------------------------
+// Store exchanges
+// ---------------------------------------------------------------------------
+
+// syncCounts holds the outcome of one half of a store exchange.
+type syncCounts struct {
+	Added   int
+	Updated int
+	Skipped int
+}
+
+// syncResult pairs the counts the phone reported for what it received with
+// the counts this device applied from the phone's reply.
+type syncResult struct {
+	Pushed syncCounts
+	Pulled syncCounts
+}
+
+// syncStore binds a store's operator-facing label to its exchange function.
+type syncStore struct {
+	label    string
+	exchange func(ctx context.Context, backend *phone.PhoneKeyBackend, svc *xkeysync.Service, mode syncMode) (syncResult, error)
+}
+
+// selectedSyncStores returns the exchanges for the selected scope, in a
+// stable order.
+func selectedSyncStores(scope syncScope) []syncStore {
+	stores := make([]syncStore, 0, 3)
+	if scope.TrustStore {
+		stores = append(stores, syncStore{label: "trust-store", exchange: exchangeTrustStore})
+	}
+	if scope.OATH {
+		stores = append(stores, syncStore{label: "oath", exchange: exchangeOATH})
+	}
+	if scope.Passwords {
+		stores = append(stores, syncStore{label: "passwords", exchange: exchangePasswords})
+	}
+	return stores
+}
+
+// exchangeTrustStore sends the local trust store to the phone and merges the
+// certificates the phone returns.
+func exchangeTrustStore(ctx context.Context, backend *phone.PhoneKeyBackend, svc *xkeysync.Service, mode syncMode) (syncResult, error) {
+	var result syncResult
+
+	params := &phone.LocalSyncTrustStoreParams{Certificates: []phone.SyncCertificate{}}
+	if mode.sends() {
+		delta, err := svc.ComputeLocalTrustStoreDelta()
+		if err != nil {
+			return result, &SentinelCauseError{Sentinel: ErrDeviceSyncFailed, Cause: err}
+		}
+		params.Certificates = wireCertificates(delta)
+	}
+
+	remote, err := sendSyncRequest[phone.LocalSyncTrustStoreResult](ctx, backend,
+		phone.MethodLocalSyncTrustStore, params)
+	if err != nil {
+		return result, err
+	}
+	result.Pushed = syncCounts{Added: remote.Added, Skipped: remote.Skipped}
+
+	if !mode.applies() {
+		return result, nil
+	}
+
+	applied, err := svc.ApplyTrustStoreDelta(&xkeysync.TrustStoreDelta{
+		Certificates: localCertificates(remote.Remote),
+	})
+	if err != nil {
+		return result, &SentinelCauseError{Sentinel: ErrDeviceSyncFailed, Cause: err}
+	}
+	result.Pulled = itemCounts(applied)
+
+	return result, nil
+}
+
+// exchangeOATH sends the local OATH credentials to the phone and merges the
+// credentials the phone returns.
+func exchangeOATH(ctx context.Context, backend *phone.PhoneKeyBackend, svc *xkeysync.Service, mode syncMode) (syncResult, error) {
+	var result syncResult
+
+	params := &phone.LocalSyncOATHParams{Credentials: []phone.SyncOATHCredential{}}
+	if mode.sends() {
+		delta, err := svc.ComputeLocalOATHDelta()
+		if err != nil {
+			return result, &SentinelCauseError{Sentinel: ErrDeviceSyncFailed, Cause: err}
+		}
+		params.Credentials = wireOATH(delta)
+	}
+
+	remote, err := sendSyncRequest[phone.LocalSyncOATHResult](ctx, backend,
+		phone.MethodLocalSyncOATH, params)
+	if err != nil {
+		return result, err
+	}
+	result.Pushed = syncCounts{Added: remote.Added, Updated: remote.Updated, Skipped: remote.Skipped}
+
+	if !mode.applies() {
+		return result, nil
+	}
+
+	applied, err := svc.ApplyOATHDelta(&xkeysync.OATHDelta{
+		Credentials: localOATH(remote.Remote),
+	})
+	if err != nil {
+		return result, &SentinelCauseError{Sentinel: ErrDeviceSyncFailed, Cause: err}
+	}
+	result.Pulled = itemCounts(applied)
+
+	return result, nil
+}
+
+// exchangePasswords sends the local password entries to the phone and merges
+// the entries the phone returns.
+func exchangePasswords(ctx context.Context, backend *phone.PhoneKeyBackend, svc *xkeysync.Service, mode syncMode) (syncResult, error) {
+	var result syncResult
+
+	params := &phone.LocalSyncPasswordsParams{Passwords: []phone.SyncPassword{}}
+	if mode.sends() {
+		delta, err := svc.ComputeLocalPasswordDelta()
+		if err != nil {
+			return result, &SentinelCauseError{Sentinel: ErrDeviceSyncFailed, Cause: err}
+		}
+		params.Passwords = wirePasswords(delta)
+	}
+
+	remote, err := sendSyncRequest[phone.LocalSyncPasswordsResult](ctx, backend,
+		phone.MethodLocalSyncPasswords, params)
+	if err != nil {
+		return result, err
+	}
+	result.Pushed = syncCounts{Added: remote.Added, Updated: remote.Updated, Skipped: remote.Skipped}
+
+	if !mode.applies() {
+		return result, nil
+	}
+
+	applied, err := svc.ApplyPasswordDelta(&xkeysync.PasswordDelta{
+		Passwords: localPasswords(remote.Remote),
+	})
+	if err != nil {
+		return result, &SentinelCauseError{Sentinel: ErrDeviceSyncFailed, Cause: err}
+	}
+	result.Pulled = itemCounts(applied)
+
+	return result, nil
+}
+
+// sendSyncRequest performs one request/response round trip and decodes the
+// result, mapping both transport and protocol failures onto the sync sentinel.
+func sendSyncRequest[T any](ctx context.Context, backend *phone.PhoneKeyBackend, method string, params interface{}) (*T, error) {
+	resp, err := backend.SendRequest(ctx, phone.NewRequest(method, params))
+	if err != nil {
+		return nil, &SentinelCauseError{Sentinel: ErrDeviceSyncFailed, Cause: err}
+	}
+	if resp.Error != nil {
+		return nil, &DetailError{
+			Err:    ErrDeviceSyncFailed,
+			Detail: fmt.Sprintf(": %s: [%d] %s", method, resp.Error.Code, resp.Error.Message),
+		}
+	}
+	result, err := phone.DecodeResult[T](resp)
+	if err != nil {
+		return nil, &DetailError{
+			Err:    ErrDeviceSyncFailed,
+			Detail: fmt.Sprintf(": %s: failed to decode result: %v", method, err),
+		}
+	}
+	return result, nil
+}
+
+// itemCounts projects a sync service result onto the reporting counts.
+func itemCounts(result *xkeysync.SyncItemResult) syncCounts {
+	if result == nil {
+		return syncCounts{}
+	}
+	return syncCounts{Added: result.Added, Updated: result.Updated, Skipped: result.Skipped}
+}
+
+// ---------------------------------------------------------------------------
+// Wire conversions
+// ---------------------------------------------------------------------------
+
+// wireCertificates converts a local trust store delta to the pairing wire form.
+func wireCertificates(delta *xkeysync.TrustStoreDelta) []phone.SyncCertificate {
+	if delta == nil {
+		return []phone.SyncCertificate{}
+	}
+	out := make([]phone.SyncCertificate, 0, len(delta.Certificates))
+	for _, cert := range delta.Certificates {
+		out = append(out, phone.SyncCertificate{
+			PEM:         cert.PEM,
+			Fingerprint: cert.Fingerprint,
+			Purpose:     cert.Purpose,
+			Source:      cert.Source,
+			Tags:        cert.Tags,
+		})
+	}
+	return out
+}
+
+// localCertificates converts wire certificates to a local trust store delta.
+func localCertificates(certs []phone.SyncCertificate) []xkeysync.TrustStoreCertSync {
+	out := make([]xkeysync.TrustStoreCertSync, 0, len(certs))
+	for _, cert := range certs {
+		out = append(out, xkeysync.TrustStoreCertSync{
+			PEM:         cert.PEM,
+			Fingerprint: cert.Fingerprint,
+			Purpose:     cert.Purpose,
+			Source:      cert.Source,
+			Tags:        cert.Tags,
+		})
+	}
+	return out
+}
+
+// wireOATH converts a local OATH delta to the pairing wire form.
+func wireOATH(delta *xkeysync.OATHDelta) []phone.SyncOATHCredential {
+	if delta == nil {
+		return []phone.SyncOATHCredential{}
+	}
+	out := make([]phone.SyncOATHCredential, 0, len(delta.Credentials))
+	for _, cred := range delta.Credentials {
+		out = append(out, phone.SyncOATHCredential{
+			ID:          cred.ID,
+			Name:        cred.Name,
+			Issuer:      cred.Issuer,
+			AccountName: cred.AccountName,
+			Secret:      cred.Secret,
+			Type:        cred.Type,
+			Algorithm:   cred.Algorithm,
+			Digits:      cred.Digits,
+			Period:      cred.Period,
+			Counter:     cred.Counter,
+			UpdatedAt:   formatSyncTime(cred.UpdatedAt),
+		})
+	}
+	return out
+}
+
+// localOATH converts wire OATH credentials to a local delta.
+func localOATH(creds []phone.SyncOATHCredential) []xkeysync.OATHCredentialSync {
+	out := make([]xkeysync.OATHCredentialSync, 0, len(creds))
+	for _, cred := range creds {
+		out = append(out, xkeysync.OATHCredentialSync{
+			ID:          cred.ID,
+			Name:        cred.Name,
+			Issuer:      cred.Issuer,
+			AccountName: cred.AccountName,
+			Secret:      cred.Secret,
+			Type:        cred.Type,
+			Algorithm:   cred.Algorithm,
+			Digits:      cred.Digits,
+			Period:      cred.Period,
+			Counter:     cred.Counter,
+			UpdatedAt:   parseSyncTime(cred.UpdatedAt),
+		})
+	}
+	return out
+}
+
+// wirePasswords converts a local password delta to the pairing wire form.
+func wirePasswords(delta *xkeysync.PasswordDelta) []phone.SyncPassword {
+	if delta == nil {
+		return []phone.SyncPassword{}
+	}
+	out := make([]phone.SyncPassword, 0, len(delta.Passwords))
+	for _, pw := range delta.Passwords {
+		out = append(out, phone.SyncPassword{
+			ID:         pw.ID,
+			Name:       pw.Name,
+			Title:      pw.Title,
+			Username:   pw.Username,
+			Password:   pw.Password,
+			URL:        pw.URL,
+			Notes:      pw.Notes,
+			FolderPath: pw.FolderPath,
+			UpdatedAt:  formatSyncTime(pw.UpdatedAt),
+		})
+	}
+	return out
+}
+
+// localPasswords converts wire password entries to a local delta.
+func localPasswords(passwords []phone.SyncPassword) []xkeysync.PasswordSync {
+	out := make([]xkeysync.PasswordSync, 0, len(passwords))
+	for _, pw := range passwords {
+		out = append(out, xkeysync.PasswordSync{
+			ID:         pw.ID,
+			Name:       pw.Name,
+			Title:      pw.Title,
+			Username:   pw.Username,
+			Password:   pw.Password,
+			URL:        pw.URL,
+			Notes:      pw.Notes,
+			FolderPath: pw.FolderPath,
+			UpdatedAt:  parseSyncTime(pw.UpdatedAt),
+		})
+	}
+	return out
+}
+
+// formatSyncTime renders a timestamp in the RFC 3339 form the wire uses.
+// The zero time becomes the empty string, which the peer reads as "unknown".
+func formatSyncTime(t time.Time) string {
+	if t.IsZero() {
+		return ""
+	}
+	return t.UTC().Format(time.RFC3339)
+}
+
+// parseSyncTime parses a wire timestamp. An absent or malformed value yields
+// the zero time, which the merge treats as "older than anything local".
+func parseSyncTime(value string) time.Time {
+	if value == "" {
+		return time.Time{}
+	}
+	parsed, err := time.Parse(time.RFC3339, value)
+	if err != nil {
+		return time.Time{}
+	}
+	return parsed
+}
+
+// ---------------------------------------------------------------------------
+// Service wiring and reporting
+// ---------------------------------------------------------------------------
+
+// syncStateFile is the name of the sync state file kept in the data directory.
+const syncStateFile = "sync-state.json"
+
+// openSyncService opens every local store and wires it into a sync service.
+// The caller owns the returned sources and must close them.
+func openSyncService() (*xkeysync.Service, *backupSources, error) {
+	dataDir, err := backupDataDir()
+	if err != nil {
+		return nil, nil, err
+	}
+
+	sources, err := resolveBackupSources(backupStorePaths{})
+	if err != nil {
+		return nil, nil, err
+	}
+
+	svc, err := xkeysync.NewService(&xkeysync.Config{
+		DeviceName:    getHostname(),
+		StateFilePath: filepath.Join(dataDir, syncStateFile),
+	}, sources.syncOptions()...)
+	if err != nil {
+		sources.Close()
+		return nil, nil, &SentinelCauseError{Sentinel: ErrDeviceSyncFailed, Cause: err}
+	}
+
+	return svc, sources, nil
+}
+
+// recordSyncState stamps the successful sync so sync-status can report it.
+func recordSyncState(svc *xkeysync.Service) error {
+	state, err := svc.LoadState()
+	if err != nil {
+		return &SentinelCauseError{Sentinel: ErrDeviceSyncFailed, Cause: err}
+	}
+	state.LastSync = time.Now().UTC()
+	if state.DeviceID == "" {
+		state.DeviceID = getHostname()
+	}
+	if err := svc.SaveState(state); err != nil {
+		return &SentinelCauseError{Sentinel: ErrDeviceSyncFailed, Cause: err}
+	}
+	return nil
+}
+
+// reportSyncDryRun prints what a real run would send without connecting.
+func reportSyncDryRun(out io.Writer, deviceName string, mode syncMode, scope syncScope, svc *xkeysync.Service) error {
+	fmt.Fprintf(out, "[dry-run] Would %s device \"%s\"\n", dryRunPreposition(mode), deviceName)
+	fmt.Fprintf(out, "[dry-run] Stores: %v\n", scope.scopeLabels())
+
+	if !mode.sends() {
+		return nil
+	}
+
+	if scope.TrustStore {
+		delta, err := svc.ComputeLocalTrustStoreDelta()
+		if err != nil {
+			return &SentinelCauseError{Sentinel: ErrDeviceSyncFailed, Cause: err}
+		}
+		fmt.Fprintf(out, "[dry-run] trust-store: %d certificate(s) to send\n", len(wireCertificates(delta)))
+	}
+	if scope.OATH {
+		delta, err := svc.ComputeLocalOATHDelta()
+		if err != nil {
+			return &SentinelCauseError{Sentinel: ErrDeviceSyncFailed, Cause: err}
+		}
+		fmt.Fprintf(out, "[dry-run] oath: %d credential(s) to send\n", len(wireOATH(delta)))
+	}
+	if scope.Passwords {
+		delta, err := svc.ComputeLocalPasswordDelta()
+		if err != nil {
+			return &SentinelCauseError{Sentinel: ErrDeviceSyncFailed, Cause: err}
+		}
+		fmt.Fprintf(out, "[dry-run] passwords: %d entry(s) to send\n", len(wirePasswords(delta)))
+	}
+
+	return nil
+}
+
+// dryRunPreposition renders the mode as it reads in the dry-run banner.
+func dryRunPreposition(mode syncMode) string {
+	switch mode {
+	case syncModePush:
+		return "push to"
+	case syncModePull:
+		return "pull from"
+	default:
+		return "sync with"
+	}
+}
+
+// syncSummary holds the per-store outcome of a sync run.
 type syncSummary struct {
-	TrustStoreAdded   int
-	TrustStoreUpdated int
-	TrustStoreSkipped int
-
-	OATHAdded   int
-	OATHUpdated int
-	OATHSkipped int
-
-	PasswordsAdded   int
-	PasswordsUpdated int
-	PasswordsSkipped int
+	TrustStore syncResult
+	OATH       syncResult
+	Passwords  syncResult
 }
 
-// printSyncSummary prints a per-store sync summary.
-func printSyncSummary(cmd *cobra.Command, scope syncScope, summary syncSummary) {
-	fmt.Fprintln(cmd.OutOrStdout(), "Sync summary:")
+// set records the result for the store identified by its label.
+func (s *syncSummary) set(label string, result syncResult) {
+	switch label {
+	case "trust-store":
+		s.TrustStore = result
+	case "oath":
+		s.OATH = result
+	case "passwords":
+		s.Passwords = result
+	}
+}
 
-	if scope.TrustStore {
-		fmt.Fprintf(cmd.OutOrStdout(), "  trust-store: %d added, %d updated, %d skipped\n",
-			summary.TrustStoreAdded, summary.TrustStoreUpdated, summary.TrustStoreSkipped)
+// write prints a per-store summary covering only the halves the mode ran.
+func (s *syncSummary) write(out io.Writer, scope syncScope, mode syncMode) {
+	fmt.Fprintln(out, "Sync summary:")
+
+	results := map[string]syncResult{
+		"trust-store": s.TrustStore,
+		"oath":        s.OATH,
+		"passwords":   s.Passwords,
 	}
 
-	if scope.OATH {
-		fmt.Fprintf(cmd.OutOrStdout(), "  oath:        %d added, %d updated, %d skipped\n",
-			summary.OATHAdded, summary.OATHUpdated, summary.OATHSkipped)
+	for _, store := range selectedSyncStores(scope) {
+		result := results[store.label]
+		fmt.Fprintf(out, "  %-12s %s\n", store.label+":", formatSyncResult(result, mode))
 	}
+}
 
-	if scope.Passwords {
-		fmt.Fprintf(cmd.OutOrStdout(), "  passwords:   %d added, %d updated, %d skipped\n",
-			summary.PasswordsAdded, summary.PasswordsUpdated, summary.PasswordsSkipped)
+// formatSyncResult renders one store's counts for the halves the mode ran.
+func formatSyncResult(result syncResult, mode syncMode) string {
+	switch mode {
+	case syncModePush:
+		return "phone applied " + formatSyncCounts(result.Pushed)
+	case syncModePull:
+		return "locally applied " + formatSyncCounts(result.Pulled)
+	default:
+		return "phone applied " + formatSyncCounts(result.Pushed) +
+			"; locally applied " + formatSyncCounts(result.Pulled)
 	}
+}
+
+// formatSyncCounts renders one half's counts.
+func formatSyncCounts(counts syncCounts) string {
+	return fmt.Sprintf("%d added, %d updated, %d skipped",
+		counts.Added, counts.Updated, counts.Skipped)
 }

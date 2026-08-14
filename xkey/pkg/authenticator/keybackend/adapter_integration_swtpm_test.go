@@ -46,7 +46,7 @@ import (
 func init() {
 	registerBackend(backendEntry{
 		name:     "tpm2",
-		skip:     skipIfNoSwtpm,
+		skip:     requireSwtpm,
 		adapter:  newSwtpmAdapter,
 		hardware: true,
 	})
@@ -63,11 +63,15 @@ func swtpmDevice() string {
 	return "/tmp/swtpm/swtpm.sock"
 }
 
-// skipIfNoSwtpm skips the tpm2 entry when no swtpm device socket is present.
-func skipIfNoSwtpm(t *testing.T) {
+// requireSwtpm fails the tpm2 entry when no swtpm device socket is present.
+// swtpm is a software TPM started by the integration container entrypoint, so
+// a missing socket is an environment fault that must be reported rather than
+// silently dropping the whole TPM2 matrix.
+func requireSwtpm(t *testing.T) {
 	t.Helper()
 	if _, err := os.Stat(swtpmDevice()); err != nil {
-		t.Skipf("swtpm not available: device %s not present", swtpmDevice())
+		t.Fatalf("swtpm device %s not present: %v; start swtpm or run this suite "+
+			"via the devcontainer (make integration-test)", swtpmDevice(), err)
 	}
 }
 
@@ -176,9 +180,7 @@ func isTransientTPMError(err error) bool {
 // swtpm-backed TPM2 backend.
 func newSwtpmAdapter(t *testing.T) *BackendAdapter {
 	t.Helper()
-	if _, err := os.Stat(swtpmDevice()); err != nil {
-		t.Skipf("swtpm not available: device %s not present", swtpmDevice())
-	}
+	requireSwtpm(t)
 	swtpmOnce.Do(provisionSwtpmOnce)
 	require.NoError(t, swtpmErr, "swtpm provisioning failed")
 	require.NotNil(t, swtpmBackend, "swtpm backend not provisioned")

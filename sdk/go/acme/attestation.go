@@ -23,7 +23,7 @@ import (
 
 // ErrACMEEnrollCAUnsupported is returned by the enroll-01 verifier when the
 // configured CA does not implement the TCG-CSR-IDEVID verification surface
-// (ACMEEnroll01CertificateAuthority) required for TPM attestation.
+// (ACMEEnroll01TCGCSRVerifier) required for TPM attestation.
 var ErrACMEEnrollCAUnsupported = errors.New("acme: configured CA does not support enroll-01 (TCG-CSR-IDEVID) verification")
 
 // ACMEAttestationVerifiers returns the challenge-verifier entries for the TPM
@@ -34,7 +34,7 @@ var ErrACMEEnrollCAUnsupported = errors.New("acme: configured CA does not suppor
 //
 //   - enroll-01 proves possession of a TPM-resident IDevID via TCG-CSR-IDEVID +
 //     TPM2_MakeCredential/ActivateCredential. The verifier asserts the
-//     server-supplied CA to ACMEEnroll01CertificateAuthority (the concrete
+//     server-supplied CA to ACMEEnroll01TCGCSRVerifier (the concrete
 //     server TCGCA satisfies it) and returns ErrACMEEnrollCAUnsupported otherwise.
 //   - endorse-01 issues an EK certificate for TPMs lacking a manufacturer EK
 //     cert; server-side verification is a no-op (the CA is not consulted here),
@@ -46,7 +46,7 @@ func ACMEAttestationVerifiers(enroll, endorse bool) map[string]ACMEChallengeVeri
 			resolver *net.Resolver,
 			ca ACMECertificateAuthority,
 			authzValue, challengePort, challengeToken, expectedKeyAuth string) error {
-			enrollCA, ok := ca.(ACMEEnroll01CertificateAuthority)
+			enrollCA, ok := ca.(ACMEEnroll01TCGCSRVerifier)
 			if !ok {
 				return ErrACMEEnrollCAUnsupported
 			}
@@ -58,7 +58,7 @@ func ACMEAttestationVerifiers(enroll, endorse bool) map[string]ACMEChallengeVeri
 			resolver *net.Resolver,
 			_ ACMECertificateAuthority,
 			authzValue, challengePort, challengeToken, expectedKeyAuth string) error {
-			return endorse01.Verify(resolver, nil, authzValue, challengePort, challengeToken, expectedKeyAuth)
+			return endorse01.Verify(resolver, authzValue, challengePort, challengeToken, expectedKeyAuth)
 		}
 	}
 	return m

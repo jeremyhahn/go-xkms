@@ -16,6 +16,7 @@ package mcp
 import (
 	"context"
 	"encoding/json"
+	"github.com/jeremyhahn/go-xkms/pkg/auth"
 	"log/slog"
 	"sync"
 	"testing"
@@ -117,9 +118,10 @@ func createTestBarrierServer(t *testing.T) (*Server, *testCaptureDistributor, *t
 	barrier, dist, recoveryDist := createTestBarrier(t)
 
 	server, err := NewServer(&Config{
-		Addr:        "localhost:0",
-		Barrier:     barrier,
-		XKMSService: svc,
+		Authenticator: auth.NewNoOpAuthenticator(),
+		Addr:          "localhost:0",
+		Barrier:       barrier,
+		XKMSService:   svc,
 	})
 	require.NoError(t, err)
 
@@ -904,7 +906,7 @@ func TestBarrierSetBarrier(t *testing.T) {
 	svc := setupTestXKMS(t)
 	defer cleanupXKMS()
 
-	server, err := NewServer(&Config{Addr: "localhost:0", XKMSService: svc})
+	server, err := NewServer(&Config{Addr: "localhost:0", XKMSService: svc, Authenticator: auth.NewNoOpAuthenticator()})
 	require.NoError(t, err)
 
 	// Initially no barrier
@@ -931,9 +933,10 @@ func TestBarrierConfigPassthrough(t *testing.T) {
 
 	barrier, _, _ := createTestBarrier(t)
 	server, err := NewServer(&Config{
-		Addr:        "localhost:0",
-		Barrier:     barrier,
-		XKMSService: svc,
+		Authenticator: auth.NewNoOpAuthenticator(),
+		Addr:          "localhost:0",
+		Barrier:       barrier,
+		XKMSService:   svc,
 	})
 	require.NoError(t, err)
 	assert.NotNil(t, server.barrier)

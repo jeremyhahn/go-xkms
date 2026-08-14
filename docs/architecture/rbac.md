@@ -2,391 +2,177 @@
 
 ## Overview
 
-The go-xkms library provides a pluggable RBAC adapter for fine-grained permission management. This allows applications to control access to keys, certificates, and other resources based on user roles and permissions.
+go-xkms carries **no RBAC engine of its own**. Roles, permissions, and role
+bindings live in the **qrdb identity plane** that xkms hosts in-process as its
+datastore. xkms contributes one thing: a single authorization seam that every
+transport calls before it dispatches an operation.
+
+The packages that once held a parallel implementation (`pkg/rbac` /
+`pkg/keyrbac`, `pkg/authz` / `pkg/keyauthz`, `pkg/policy` / `pkg/keypolicy`)
+were deleted in the RBAC unification. Nothing imports them; do not reintroduce
+a local role or permission store.
 
 ## Architecture
 
-The RBAC system consists of three main components:
-
-1. **Permission** - A resource:action pair (e.g., `keys:sign`)
-2. **Role** - A named collection of permissions
-3. **RBACAdapter** - The interface for checking and managing permissions
-
-## Interface
-
-Located in `pkg/keyrbac/rbac.go` (renamed from `pkg/rbac`):
-
-```go
-type RBACAdapter interface {
-    // CheckPermission verifies if a subject has a specific permission
-    CheckPermission(ctx context.Context, subject string, permission Permission) (bool, error)
-
-    // AssignRole assigns a role to a subject
-    AssignRole(ctx context.Context, subject string, roleName string) error
-
-    // RevokeRole removes a role from a subject
-    RevokeRole(ctx context.Context, subject string, roleName string) error
-
-    // GetUserRoles retrieves all roles assigned to a subject
-    GetUserRoles(ctx context.Context, subject string) ([]string, error)
-
-    // CreateRole creates a new role with the specified permissions
-    CreateRole(ctx context.Context, role *Role) error
-
-    // UpdateRole updates an existing role's permissions
-    UpdateRole(ctx context.Context, role *Role) error
-
-    // DeleteRole removes a role from the system
-    DeleteRole(ctx context.Context, roleName string) error
-
-    // GetRole retrieves a role by name
-    GetRole(ctx context.Context, roleName string) (*Role, error)
-
-    // ListRoles retrieves all roles in the system
-    ListRoles(ctx context.Context) ([]*Role, error)
-
-    // ListPermissions retrieves all permissions for a specific subject
-    ListPermissions(ctx context.Context, subject string) ([]Permission, error)
-
-    // GrantPermission grants a specific permission to a role
-    GrantPermission(ctx context.Context, roleName string, permission Permission) error
-
-    // RevokePermission removes a specific permission from a role
-    RevokePermission(ctx context.Context, roleName string, permission Permission) error
-}
+```
+request -> authenticator -> auth.WithIdentity(ctx, id)
+                                  |
+                                  v
+                      transport authorization gate
+                                  |
+                                  v
+                  auth.Authorizer.Authorize(ctx, id, resource, action)
+                                  |
+                                  v
+                     qrdbClient.RBAC().Authorize(...)
 ```
 
-## Permission Model
+| Piece | Location | Responsibility |
+|-------|----------|----------------|
+| `auth.Authorizer` | `pkg/auth/authorize.go` | The only authorization seam. Wraps a qrdb `RBACClient`, normalizes an empty tenant to the system tenant, and forwards the decision. |
+| Resource / action identifiers | `pkg/auth/permissions.go` | The `Resource*` / `Action*` constants the transports pass in. They mirror qrdb's canonical permission vocabulary; xkms registers none of its own. |
+| Wiring | `Server.initializeAuthorization` in `pkg/server/server.go` | Builds `auth.NewAuthorizer(s.qrdbClient.RBAC())` when `auth.enable_rbac` is true and a qrdb client exists. |
 
-### Permission Structure
+`Authorizer.Enabled()` is false for a nil `Authorizer` or one built with a nil
+RBAC client; in that state `Authorize` returns nil for everything. That is how
+"RBAC disabled" is expressed — there is no permissive local fallback engine.
 
-```go
-type Permission struct {
-    Resource string  // Target resource (e.g., "keys", "certificates")
-    Action   string  // Operation (e.g., "read", "sign", "delete")
-}
+## Requires the qrdb storage backend
+
+RBAC is backed **exclusively** by the qrdb identity plane, and that plane only
+exists when qrdb is the storage backend:
+
+```yaml
+storage:
+  backend: "qrdb"
+
+auth:
+  enabled: true
+  type: mtls
+  enable_rbac: true
 ```
 
-### Predefined Resources
+With any other backend (`pebble`, `file`, `memory`) there is no qrdb client, so
+`initializeAuthorization` leaves the authorizer nil and every transport
+authorizes every request — an access control the operator asked for that
+silently does nothing. `Config.ComplianceGaps` (`pkg/config/config.go`) reports
+that combination and the daemon refuses to start unless the operator explicitly
+opts into development mode with `--insecure` / `XKMS_INSECURE=true`.
 
-| Constant | Value | Description |
-|----------|-------|-------------|
-| `ResourceKeys` | `keys` | Cryptographic keys |
-| `ResourceSecrets` | `secrets` | Secret values |
-| `ResourceCertificates` | `certificates` | X.509 certificates |
-| `ResourceBackends` | `backends` | Key storage backends |
-| `ResourceUsers` | `users` | User accounts |
-| `ResourceRoles` | `roles` | RBAC roles |
-| `ResourceAudit` | `audit` | Audit logs |
-| `ResourceSystem` | `system` | System configuration |
+## Permission model
 
-### Predefined Actions
+A permission is a `resource:action` pair, matched by qrdb against the role
+grants held by the identity's roles, scoped to the identity's tenant.
 
-| Constant | Value | Description |
-|----------|-------|-------------|
-| `ActionCreate` | `create` | Create new resources |
-| `ActionRead` | `read` | Read resource details |
-| `ActionUpdate` | `update` | Modify resources |
-| `ActionDelete` | `delete` | Remove resources |
-| `ActionList` | `list` | List resources |
-| `ActionSign` | `sign` | Sign data with keys |
-| `ActionVerify` | `verify` | Verify signatures |
-| `ActionEncrypt` | `encrypt` | Encrypt data |
-| `ActionDecrypt` | `decrypt` | Decrypt data |
-| `ActionImport` | `import` | Import keys/certs |
-| `ActionExport` | `export` | Export keys/certs |
-| `ActionRotate` | `rotate` | Rotate keys |
-| `ActionManage` | `manage` | Full management access |
-| `ActionAll` | `*` | Wildcard (all actions) |
+Constants declared in `pkg/auth/permissions.go`:
 
-### Wildcard Matching
+| Resources | Actions |
+|-----------|---------|
+| `keys`, `certs`, `backends`, `users` | `create`, `get`, `read`, `list`, `update`, `delete`, `sign`, `verify`, `encrypt`, `decrypt`, `rotate`, `import`, `export`, `generate`, `revoke` |
 
-Permissions support wildcards for both resource and action:
+The remaining resources and actions are canonical qrdb permission strings used
+verbatim by the transports; `pkg/api/mcp/authz.go` declares them as constants so
+two gates cannot disagree on spelling:
 
-```go
-// Grant all actions on keys
-Permission{Resource: "keys", Action: "*"}
+| Resource | Actions |
+|----------|---------|
+| `piv` | `read`, `write`, `delete`, `use` |
+| `ssh` | `read`, `write`, `delete` |
+| `seal` | `bootstrap`, `initialize_shamir`, `unseal`, `seal`, `status`, `rekey`, `generate_recovery`, `recover_with_keys`, `rotate_root_key`, `enable_encryption` |
+| `barrier` | `unseal-share` |
+| `ceremony` | `status`, `claim_cert`, `claim_share_complete`, `sign_csr` |
+| `credentials` | `submit`, `strategy` |
+| `passwords` | `read`, `write`, `delete`, `unlock`, `lock`, `generate` |
 
-// Grant read on all resources
-Permission{Resource: "*", Action: "read"}
+Key operations that have no `Action*` constant use `wrap`, `unwrap`, and
+`derive` on the `keys` resource.
 
-// Grant everything (superadmin)
-Permission{Resource: "*", Action: "*"}
-```
+`pkg/api/mcp/authz.go`'s `methodPermissions` table is the most complete written
+record of the vocabulary: it maps every JSON-RPC method to the pair the
+equivalent REST / gRPC / QUIC operation already requires, with per-namespace
+citations of the transport it was taken from.
 
-## Default Roles
+## Transport enforcement
 
-When using `NewMemoryRBACAdapter(true)`, these roles are created:
+Every transport authorizes through the same `auth.Authorizer`, so a role grant
+means the same thing regardless of how the request arrives.
 
-### admin
-Full administrative access to all resources.
-```go
-Permissions: []Permission{
-    {Resource: "*", Action: "*"},
-}
-```
+| Transport | Gate |
+|-----------|------|
+| REST | `RBACMiddleware.RequirePermission(resource, action)` (`pkg/api/rest/rbac_middleware.go`) applied per route |
+| gRPC | `Service.authorize(ctx, resource, action, resourceID)` (`pkg/api/grpc/service.go`) |
+| QUIC | `Server.authorize(w, r, resource, action)` (`pkg/api/quic/server.go`) |
+| MCP | `Server.authorizeMethod(ctx, method)` (`pkg/api/mcp/authz.go`) before any dispatch path |
 
-### operator
-Manage keys, certificates, and cryptographic operations.
-```go
-Permissions: []Permission{
-    {Resource: "keys", Action: "*"},
-    {Resource: "certificates", Action: "*"},
-    {Resource: "secrets", Action: "create"},
-    {Resource: "secrets", Action: "read"},
-    {Resource: "secrets", Action: "update"},
-    {Resource: "secrets", Action: "delete"},
-}
-```
+Denials, status codes, and the fail-closed behaviour of the MCP gate are
+documented in [Authentication configuration](../configuration/auth.md#transport-enforcement).
 
-### auditor
-Read-only access for audit and compliance.
-```go
-Permissions: []Permission{
-    {Resource: "audit", Action: "read"},
-    {Resource: "audit", Action: "list"},
-    {Resource: "keys", Action: "list"},
-    {Resource: "certificates", Action: "list"},
-    {Resource: "users", Action: "list"},
-}
-```
+Authentication is mandatory on every transport whether or not RBAC is enabled.
 
-### user
-Basic user with cryptographic operation permissions.
-```go
-Permissions: []Permission{
-    {Resource: "keys", Action: "sign"},
-    {Resource: "keys", Action: "verify"},
-    {Resource: "keys", Action: "encrypt"},
-    {Resource: "keys", Action: "decrypt"},
-    {Resource: "secrets", Action: "read"},
-}
-```
+## Roles
 
-### readonly
-Read-only access to non-sensitive information.
-```go
-Permissions: []Permission{
-    {Resource: "keys", Action: "list"},
-    {Resource: "certificates", Action: "list"},
-    {Resource: "certificates", Action: "read"},
-}
-```
+Role definitions and memberships are qrdb records, not xkms constants. The
+canonical names — qrdb's FIPS 140-3 six-role model, mirrored by
+`cmd/xkmsctl/roles.go` so the strings the CLI sends match what the server
+understands:
 
-### guest
-Minimal guest access.
-```go
-Permissions: []Permission{
-    {Resource: "keys", Action: "list"},
-}
-```
+| Role | Intent |
+|------|--------|
+| `so` | Security Officer: module initialization and PIN management, separated from key use |
+| `admin` | Full access to manage xkms and its users |
+| `operator` | Manage keys and certificates, not users |
+| `user` | Use keys for cryptographic operations, not manage them |
+| `auditor` | View audit logs and key metadata only |
+| `custodian` | Participate in key ceremonies and manage key shares |
 
-## Usage
+An authenticated identity carries its qrdb roles in `Identity.Roles`; the
+mTLS authenticator populates them from the user record resolved by certificate
+SPKI thumbprint (`pkg/auth/qrdb_userstore.go`).
 
-### Basic Setup
+See [Init system roles](../init/roles.md) for how these map onto the PKCS#11
+SO/User model and the ceremony flow.
 
-```go
-package main
+## Managing roles and permissions
 
-import (
-    "context"
-    rbac "github.com/jeremyhahn/go-xkms/pkg/keyrbac"
-)
-
-func main() {
-    ctx := context.Background()
-
-    // Create adapter with default roles
-    adapter := rbac.NewMemoryRBACAdapter(true)
-
-    // Assign a role to a user
-    err := adapter.AssignRole(ctx, "alice@example.com", rbac.RoleOperator)
-    if err != nil {
-        panic(err)
-    }
-
-    // Check permissions
-    canSign, _ := adapter.CheckPermission(ctx, "alice@example.com", rbac.Permission{
-        Resource: rbac.ResourceKeys,
-        Action:   rbac.ActionSign,
-    })
-    // canSign = true (operator has keys:*)
-}
-```
-
-### Creating Custom Roles
-
-```go
-// Create a custom role for DevOps team
-devOpsRole := &rbac.Role{
-    Name:        "devops",
-    Description: "DevOps team - manage keys and certificates",
-    Permissions: []rbac.Permission{
-        {Resource: rbac.ResourceKeys, Action: rbac.ActionCreate},
-        {Resource: rbac.ResourceKeys, Action: rbac.ActionRotate},
-        {Resource: rbac.ResourceKeys, Action: rbac.ActionList},
-        {Resource: rbac.ResourceKeys, Action: rbac.ActionRead},
-        {Resource: rbac.ResourceCertificates, Action: rbac.ActionAll},
-        {Resource: rbac.ResourceAudit, Action: rbac.ActionRead},
-    },
-    Metadata: map[string]interface{}{
-        "department": "engineering",
-    },
-}
-
-err := adapter.CreateRole(ctx, devOpsRole)
-if err != nil {
-    panic(err)
-}
-
-// Assign to user
-adapter.AssignRole(ctx, "bob@example.com", "devops")
-```
-
-### Multiple Roles
-
-Users can have multiple roles. Permissions are aggregated:
-
-```go
-// Assign multiple roles
-adapter.AssignRole(ctx, "charlie@example.com", rbac.RoleUser)
-adapter.AssignRole(ctx, "charlie@example.com", rbac.RoleAuditor)
-
-// Charlie now has permissions from both roles
-perms, _ := adapter.ListPermissions(ctx, "charlie@example.com")
-// Returns combined permissions from user + auditor roles
-```
-
-### HTTP Middleware Integration
-
-```go
-func RBACMiddleware(rbacAdapter rbac.RBACAdapter) func(http.Handler) http.Handler {
-    return func(next http.Handler) http.Handler {
-        return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-            // Get authenticated user from context
-            identity := auth.GetIdentity(r.Context())
-            if identity == nil {
-                http.Error(w, "Unauthorized", http.StatusUnauthorized)
-                return
-            }
-
-            // Determine required permission from route
-            permission := permissionForRoute(r.Method, r.URL.Path)
-
-            // Check permission
-            allowed, err := rbacAdapter.CheckPermission(r.Context(), identity.Subject, permission)
-            if err != nil || !allowed {
-                http.Error(w, "Forbidden", http.StatusForbidden)
-                return
-            }
-
-            next.ServeHTTP(w, r)
-        })
-    }
-}
-
-func permissionForRoute(method, path string) rbac.Permission {
-    switch {
-    case method == "POST" && strings.HasPrefix(path, "/api/v1/keys"):
-        return rbac.NewPermission(rbac.ResourceKeys, rbac.ActionCreate)
-    case method == "GET" && strings.HasPrefix(path, "/api/v1/keys"):
-        return rbac.NewPermission(rbac.ResourceKeys, rbac.ActionList)
-    case strings.Contains(path, "/sign"):
-        return rbac.NewPermission(rbac.ResourceKeys, rbac.ActionSign)
-    case strings.Contains(path, "/encrypt"):
-        return rbac.NewPermission(rbac.ResourceKeys, rbac.ActionEncrypt)
-    case strings.Contains(path, "/decrypt"):
-        return rbac.NewPermission(rbac.ResourceKeys, rbac.ActionDecrypt)
-    default:
-        return rbac.NewPermission(rbac.ResourceSystem, rbac.ActionRead)
-    }
-}
-```
-
-### Integrating with User Management
-
-There is **no local xkms user store**. The former `pkg/user` package (with its
-`FileStore` and `UserRBACAdapter`) was deleted. Users, roles, and role bindings
-live on the **embedded qrdb node** that xkms always hosts in-process as its
-single datastore. xkms presents these as its own users and exposes the full CRUD
-surface (create / list / get / delete / enable / disable / credentials) over
-every transport (gRPC, unix, REST, QUIC, MCP, embedded); the CLI and web UI
-reach it through the xkms SDK.
-
-Identity-domain authorization (tenant/user CRUD, role membership) is qrdb's RBAC.
-Key-domain authorization (sign, encrypt, issue-cert, ...) is xkms's `pkg/keyrbac`
-(the package described above, renamed from `pkg/rbac`). The two are layered, not
-duplicated — see [../auth/layering.md](../auth/layering.md).
+Roles, permissions, and user records are reached through the xkms SDK, which
+re-exports the qrdb clients so consumers need a single import:
 
 ```go
 import xkms "github.com/jeremyhahn/go-xkms/sdk/go"
 
 ac := xkms.Auth(qrdbClient) // qrdbClient backed by the embedded node
 
-// User lifecycle (delegated to the embedded qrdb node)
-ac.Users().CreateUser(ctx, &xkms.CreateUserRequest{Username: "alice@example.com", Role: "operator"})
-ac.Users().ListUsers(ctx)
-
-// mTLS admin enrollment: create the user, then bind the client cert's SPKI
-// thumbprint so login resolves the user via the cert-thumbprint index.
-ac.Users().BindUserCert(ctx, "alice@example.com", spkiThumbprint, notAfterUnix)
+ac.Roles()       // qrdb RoleClient       — role definitions
+ac.Permissions() // qrdb PermissionClient — permission registry
+ac.RBAC()        // qrdb RBACClient       — Authorize + ListPermissions
+ac.Users()       // qrdb UserClient       — user lifecycle
 ```
 
-After login the identity carries its qrdb roles; key-domain checks then run
-through `keyrbac.CheckPermission(roles, perm)` (e.g. `keys:sign`). No separate
-xkms user record or `RoleToRBAC` mapping exists anymore.
-
-## Implementing Custom Adapters
-
-For production multi-instance deployments, implement a database-backed adapter:
+There is no local xkms user store. Users are created and bound to an mTLS
+client certificate through the same surface:
 
 ```go
-type PostgresRBACAdapter struct {
-    db *sql.DB
-}
-
-func (p *PostgresRBACAdapter) CheckPermission(ctx context.Context, subject string, perm rbac.Permission) (bool, error) {
-    query := `
-        SELECT 1 FROM user_roles ur
-        JOIN role_permissions rp ON ur.role_name = rp.role_name
-        WHERE ur.subject = $1
-        AND (rp.resource = $2 OR rp.resource = '*')
-        AND (rp.action = $3 OR rp.action = '*')
-        LIMIT 1
-    `
-    var exists int
-    err := p.db.QueryRowContext(ctx, query, subject, perm.Resource, perm.Action).Scan(&exists)
-    if err == sql.ErrNoRows {
-        return false, nil
-    }
-    return err == nil, err
-}
-
-func (p *PostgresRBACAdapter) AssignRole(ctx context.Context, subject, roleName string) error {
-    _, err := p.db.ExecContext(ctx, `
-        INSERT INTO user_roles (subject, role_name, created_at)
-        VALUES ($1, $2, NOW())
-        ON CONFLICT (subject, role_name) DO NOTHING
-    `, subject, roleName)
-    return err
-}
-
-// Implement remaining interface methods...
+ac.Users().CreateUser(ctx, ...)
+// then bind the cert's SPKI thumbprint so login resolves the user
+// via the cert-thumbprint index (xkmsctl admin create --method mtls
+// does both in one step).
 ```
 
-## Best Practices
+## Best practices
 
-1. **Principle of Least Privilege** - Assign the minimum permissions needed
-2. **Use Predefined Roles** - Start with built-in roles before creating custom ones
-3. **Audit Role Changes** - Log all role assignments and permission changes
-4. **Avoid Wildcards in Production** - Use specific permissions when possible
-5. **Regular Reviews** - Periodically audit user role assignments
-6. **Separation of Duties** - Don't give single users conflicting permissions
-7. **Test Permissions** - Verify permission checks work as expected
+1. **Principle of least privilege** — grant the minimum permissions needed.
+2. **Use the six canonical roles** before defining custom ones; separation of
+   duties is what makes the SO/operator split meaningful.
+3. **Never run production with `enable_rbac: true` on a non-qrdb backend** —
+   the daemon refuses it, and `--insecure` should not be used to work around it.
+4. **Audit role changes** — role assignment flows through qrdb's HMAC-chained
+   audit subsystem.
+5. **Review memberships periodically**, especially `admin` and `so`.
 
 ## Related Documentation
 
+- [Authentication configuration](../configuration/auth.md) - mTLS, RBAC config, transport enforcement
+- [Identity / authorization layering](../auth/layering.md) - the xkms/qrdb boundary
 - [Authentication Adapters](adapter-framework.md) - HTTP/gRPC authentication
-- [User Management](../usage/user.md) - User accounts and WebAuthn
-- [WebAuthn Authentication](../usage/webauthn.md) - Passwordless authentication
+- [Init system roles](../init/roles.md) - roles in the first-boot ceremony
 - [Server Architecture](server-architecture.md) - API server configuration

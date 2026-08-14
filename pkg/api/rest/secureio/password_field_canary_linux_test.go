@@ -75,17 +75,25 @@ func TestCanary_PasswordFieldNeedleNotInHeap(t *testing.T) {
 	runtime.GC()
 	runtime.GC()
 
+	// This file is linux-only, so /proc/self/maps is always readable and
+	// populated. Failing to read it means the canary has no subject, which
+	// invalidates the test rather than excusing it.
 	maps, err := os.ReadFile("/proc/self/maps")
-	if err != nil || len(maps) == 0 {
-		t.Skip("cannot introspect /proc/self/maps")
+	if err != nil {
+		t.Fatalf("read /proc/self/maps: %v", err)
+	}
+	if len(maps) == 0 {
+		t.Fatal("/proc/self/maps is empty: the canary cannot introspect this process")
 	}
 
 	// Confirm the positive control: the decoded base64 copy lived
 	// in the request body before Destroy. If the test body doesn't
 	// contain it (e.g., unexpected encoding path), the scan is
 	// invalid and we skip.
+	// Positive control: if the needle never reached the request body, the scan
+	// below proves nothing. That is a broken test, not a reason to pass.
 	if !bytes.Contains([]byte(body), []byte(encoded)) {
-		t.Skip("needle not present in test body — invalid setup")
+		t.Fatal("needle not present in test body: the canary has no test subject")
 	}
 
 	// A broader /proc/self/mem scan is the responsibility of the

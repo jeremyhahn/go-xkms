@@ -245,6 +245,40 @@ type LocalStoreEnrollmentCertsResult struct {
 	IDevIDCertFingerprint string `json:"idevidCertFingerprint,omitempty"`
 }
 
+// RemoteStoreEnrollmentCertsParams carries the certificates the phone issued
+// as Certificate Authority back to the desktop for provisioning.
+//
+// Mirrors LocalStoreEnrollmentCertsParams, which carries the same payload in
+// the opposite direction. The JSON tags are identical on purpose: the Android
+// client is a hand-written reimplementation with no shared code, so one wire
+// shape for both directions is one shape to keep in step.
+type RemoteStoreEnrollmentCertsParams struct {
+	// Backend names the enrollee's hardware backend. Defaults to "tpm2".
+	Backend string `json:"backend,omitempty"`
+
+	// IAKCert is the DER-encoded Initial Attestation Key certificate.
+	IAKCert []byte `json:"iakCert"`
+
+	// IDevIDCert is the DER-encoded Initial Device Identity certificate.
+	IDevIDCert []byte `json:"idevidCert"`
+
+	// Chain carries any DER-encoded intermediates. Validated as parseable but
+	// not persisted: the TPM stores only the two leaf certificates.
+	Chain [][]byte `json:"chain,omitempty"`
+}
+
+// RemoteStoreEnrollmentCertsResult reports what was provisioned.
+type RemoteStoreEnrollmentCertsResult struct {
+	// Stored reports whether both certificates reached the TPM.
+	Stored bool `json:"stored"`
+
+	// IAKCertFingerprint is the hex SHA-256 digest of the stored IAK cert.
+	IAKCertFingerprint string `json:"iakCertFingerprint,omitempty"`
+
+	// IDevIDCertFingerprint is the hex SHA-256 digest of the stored IDevID cert.
+	IDevIDCertFingerprint string `json:"idevidCertFingerprint,omitempty"`
+}
+
 // attestationMethodNames contains all valid attestation method names for validation.
 var attestationMethodNames = map[string]bool{
 	MethodLocalGetTCGCSRIDevID:      true,

@@ -78,10 +78,18 @@ func (s *mockKeystoreServer) GetClusterStatus(_ context.Context, _ *emptypb.Empt
 func (s *mockKeystoreServer) ListClusterMembers(_ context.Context, _ *emptypb.Empty) (*pb.ListClusterMembersResponse, error) {
 	return &pb.ListClusterMembersResponse{
 		Members: []*pb.ClusterMember{
-			{NodeId: 1, Address: "10.0.0.1:63001", IsLeader: false},
+			{NodeId: 1, Address: "10.0.0.1:63001", IsLeader: false, ApiEndpoints: map[string]string{"grpc": "10.0.0.1:9090"}},
 			{NodeId: 2, Address: "10.0.0.2:63001", IsLeader: true},
 		},
 	}, nil
+}
+
+func (s *mockKeystoreServer) AddClusterReplica(_ context.Context, req *pb.AddClusterReplicaRequest) (*pb.ClusterReplicaResponse, error) {
+	return &pb.ClusterReplicaResponse{ShardId: 3, ReplicaId: req.GetReplicaId()}, nil
+}
+
+func (s *mockKeystoreServer) RemoveClusterReplica(_ context.Context, req *pb.RemoveClusterReplicaRequest) (*pb.ClusterReplicaResponse, error) {
+	return &pb.ClusterReplicaResponse{ShardId: 3, ReplicaId: req.GetReplicaId()}, nil
 }
 
 func (s *mockKeystoreServer) GenerateKey(_ context.Context, req *pb.GenerateKeyRequest) (*pb.GenerateKeyResponse, error) {
@@ -1612,8 +1620,10 @@ func TestClusterMembers_Connected(t *testing.T) {
 	assert.Equal(t, uint64(1), resp.Members[0].NodeID)
 	assert.Equal(t, "10.0.0.1:63001", resp.Members[0].Address)
 	assert.False(t, resp.Members[0].IsLeader)
+	assert.Equal(t, map[string]string{"grpc": "10.0.0.1:9090"}, resp.Members[0].APIEndpoints)
 	assert.Equal(t, uint64(2), resp.Members[1].NodeID)
 	assert.True(t, resp.Members[1].IsLeader)
+	assert.Empty(t, resp.Members[1].APIEndpoints, "a member advertising nothing carries an empty map")
 }
 
 func TestClusterStatus_NotConnected(t *testing.T) {

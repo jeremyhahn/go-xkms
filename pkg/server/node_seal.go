@@ -41,8 +41,9 @@ func (e *NodeSealError) Error() string {
 //   - the node's own barrier is engaged (nodeSealEnabled): the KV is sealed, so
 //     the DER is encrypted at rest by the storage layer; or
 //   - the operator has explicitly accepted an unencrypted data plane — no
-//     barrier, or seal strategy "none" (a development/insecure deployment, gated
-//     by the --insecure compliance guard).
+//     barrier, or seal strategy "none". config.ComplianceGaps reports that, and
+//     cmd/xkmsd refuses to start on it, so this case is reachable only from an
+//     embedded or test caller of this package.
 //
 // When a barrier is configured but the node seal is NOT engaged (e.g. an
 // interactive-unseal deployment, or a strategy not yet wired to the node

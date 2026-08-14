@@ -17,6 +17,7 @@
 package tpm2
 
 import (
+	"crypto"
 	"crypto/ecdsa"
 	"crypto/elliptic"
 	"crypto/rand"
@@ -34,6 +35,95 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
+
+// newCertStoreTPM returns a simulator-backed TPM provisioned with an IDevID key
+// and wired to a real certificate store.
+//
+// The certificate lifecycle under test needs two things the default createSim
+// configuration does not supply: an IDevID key (createSim configures no IDevID
+// section at all, so IDevIDAttributes reports ErrIDevIDConfigNil) and a
+// certificate store (createSim passes no CertStore, leaving tpm.certStore nil).
+// Tests used to skip when either was missing. Both are provisioned here
+// instead, so the store-backed paths in cert_idevid.go actually execute.
+//
+// CertHandle is left at zero for both identities, selecting the certificate
+// store rather than TPM NV RAM. The store is the production
+// store.MemoryCertStore, not a stand-in, so the CertificateStorer contract is
+// exercised as shipped.
+func newCertStoreTPM(t *testing.T) *TPM2 {
+	t.Helper()
+
+	h := newSimHarness(t, func(c *Config) {
+		c.IDevID = &IDevIDConfig{
+			CertHandle:         0, // store mode
+			CN:                 "idevid-device-001",
+			Hash:               crypto.SHA256.String(),
+			Handle:             0x81020000,
+			KeyAlgorithm:       x509.RSA.String(),
+			Manufacturer:       "ATT",
+			Model:              "xkms-test-device",
+			Pad:                false,
+			RSAConfig:          &store.RSAConfig{KeySize: 2048},
+			Serial:             "SN-0000-0001",
+			SignatureAlgorithm: x509.SHA256WithRSAPSS.String(),
+		}
+		c.IAK.CertHandle = 0 // store mode
+	})
+
+	h.TPM.certStore = store.NewMemoryCertStore(h.Logger)
+
+	// Mint the IDevID key explicitly. Provision() attempts this itself but
+	// treats failure as non-fatal, so relying on it would reintroduce exactly
+	// the "maybe it is there" ambiguity these tests used to skip on.
+	ekPub, err := h.TPM.EKRSA()
+	require.NoError(t, err)
+	ekCert := selfSignedCertForKey(t, ekPub)
+
+	iakAttrs, err := h.TPM.IAKAttributes()
+	require.NoError(t, err)
+
+	_, _, err = h.TPM.CreateIDevID(iakAttrs, ekCert, nil)
+	require.NoError(t, err, "the simulator must be able to create an IDevID key")
+
+	_, err = h.TPM.IDevIDAttributes()
+	require.NoError(t, err, "the IDevID key must be present at the configured handle")
+
+	return h.TPM
+}
+
+// certForTPMKey issues a certificate whose subject public key is the public key
+// of the supplied TPM key, which is what ProvisionIDevIDCert and
+// ProvisionIAKCert require before they will store a certificate.
+//
+// The certificate is signed by a throwaway CA key; only the subject public key
+// matters to validateCertPublicKey.
+func certForTPMKey(t *testing.T, attrs *types.KeyAttributes, cn string) *x509.Certificate {
+	t.Helper()
+
+	require.NotNil(t, attrs.TPMAttributes, "key attributes must carry a TPM public area")
+
+	subjectPub, err := x509.ParsePKIXPublicKey(attrs.TPMAttributes.PublicKeyBytes)
+	require.NoError(t, err, "the TPM public area must parse as a PKIX public key")
+
+	issuerKey, err := rsa.GenerateKey(rand.Reader, 2048)
+	require.NoError(t, err)
+
+	template := &x509.Certificate{
+		SerialNumber:          big.NewInt(2),
+		Subject:               pkix.Name{CommonName: cn},
+		NotBefore:             time.Now().Add(-time.Hour),
+		NotAfter:              time.Now().Add(24 * time.Hour),
+		KeyUsage:              x509.KeyUsageDigitalSignature,
+		BasicConstraintsValid: true,
+	}
+
+	der, err := x509.CreateCertificate(rand.Reader, template, template, subjectPub, issuerKey)
+	require.NoError(t, err)
+
+	cert, err := x509.ParseCertificate(der)
+	require.NoError(t, err)
+	return cert
+}
 
 // TestProvisionIDevIDCert_NotConfigured tests error when IDevID not configured
 func TestProvisionIDevIDCert_NotConfigured(t *testing.T) {
@@ -145,59 +235,59 @@ func TestWriteCertToStore_NotConfigured(t *testing.T) {
 	assert.Error(t, err)
 }
 
-// TestIDevIDCertificate_NotFound tests certificate not found error
+// TestIDevIDCertificate_NotFound tests certificate not found error.
+//
+// The store's generic ErrCertNotFound must be translated into the identity
+// specific ErrIDevIDCertNotFound, which is what callers match on; the previous
+// bare assert.Error would have passed for any failure at all, including a nil
+// store panic.
 func TestIDevIDCertificate_NotFound(t *testing.T) {
-	_, tpm := createSim(false, false)
-	defer func() { _ = tpm.Close() }()
+	tpm := newCertStoreTPM(t)
 
-	tpm2Impl := tpm.(*TPM2)
-	// Skip if certStore is nil - test will panic
-	if tpm2Impl.certStore == nil {
-		t.Skip("certStore is nil - skipping test")
-	}
-
-	if tpm2Impl.config.IDevID != nil {
-		originalCertHandle := tpm2Impl.config.IDevID.CertHandle
-		tpm2Impl.config.IDevID.CertHandle = 0
-		defer func() { tpm2Impl.config.IDevID.CertHandle = originalCertHandle }()
-	}
-
-	// Reading should fail because no cert exists
-	_, err := tpm.IDevIDCertificate()
-	// May return ErrIDevIDCertNotFound or other error depending on state
-	assert.Error(t, err)
+	cert, err := tpm.IDevIDCertificate()
+	assert.Nil(t, cert)
+	assert.ErrorIs(t, err, ErrIDevIDCertNotFound)
 }
 
-// TestIAKCertificate_NotFound tests certificate not found error
+// TestIDevIDCertificate_StoreNotConfigured pins the other store-mode failure:
+// asking for a certificate in store mode without a store must report
+// ErrCertStoreNotConfigured rather than dereferencing the nil store.
+func TestIDevIDCertificate_StoreNotConfigured(t *testing.T) {
+	tpm := newCertStoreTPM(t)
+	tpm.certStore = nil
+
+	cert, err := tpm.IDevIDCertificate()
+	assert.Nil(t, cert)
+	assert.ErrorIs(t, err, ErrCertStoreNotConfigured)
+}
+
+// TestIAKCertificate_NotFound tests certificate not found error.
 func TestIAKCertificate_NotFound(t *testing.T) {
-	_, tpm := createSim(false, false)
-	defer func() { _ = tpm.Close() }()
+	tpm := newCertStoreTPM(t)
 
-	tpm2Impl := tpm.(*TPM2)
-	// Skip if certStore is nil - test will panic
-	if tpm2Impl.certStore == nil {
-		t.Skip("certStore is nil - skipping test")
-	}
-
-	if tpm2Impl.config.IAK != nil {
-		originalCertHandle := tpm2Impl.config.IAK.CertHandle
-		tpm2Impl.config.IAK.CertHandle = 0
-		defer func() { tpm2Impl.config.IAK.CertHandle = originalCertHandle }()
-	}
-
-	_, err := tpm.IAKCertificate()
-	assert.Error(t, err)
+	cert, err := tpm.IAKCertificate()
+	assert.Nil(t, cert)
+	assert.ErrorIs(t, err, ErrIAKCertNotFound)
 }
 
-// TestProvisionIDevIDCert_PublicKeyMismatch tests public key validation
-func TestProvisionIDevIDCert_PublicKeyMismatch(t *testing.T) {
-	_, tpm := createSim(false, false)
-	defer func() { _ = tpm.Close() }()
+// TestIAKCertificate_StoreNotConfigured is the IAK counterpart of
+// TestIDevIDCertificate_StoreNotConfigured.
+func TestIAKCertificate_StoreNotConfigured(t *testing.T) {
+	tpm := newCertStoreTPM(t)
+	tpm.certStore = nil
 
-	tpm2Impl := tpm.(*TPM2)
-	if tpm2Impl.config.IDevID == nil {
-		t.Skip("IDevID not configured - skipping test")
-	}
+	cert, err := tpm.IAKCertificate()
+	assert.Nil(t, cert)
+	assert.ErrorIs(t, err, ErrCertStoreNotConfigured)
+}
+
+// TestProvisionIDevIDCert_PublicKeyMismatch tests public key validation.
+//
+// This used to skip because createSim configures no IDevID section; it now runs
+// against a TPM that really has an IDevID key, which is the only configuration
+// in which the mismatch check is reachable.
+func TestProvisionIDevIDCert_PublicKeyMismatch(t *testing.T) {
+	tpm := newCertStoreTPM(t)
 
 	// Create certificate with a different key than what's in the TPM
 	rsaKey, err := rsa.GenerateKey(rand.Reader, 2048)
@@ -222,8 +312,12 @@ func TestProvisionIDevIDCert_PublicKeyMismatch(t *testing.T) {
 
 	// Should fail because cert's public key doesn't match TPM key
 	err = tpm.ProvisionIDevIDCert(cert)
-	assert.Error(t, err)
 	assert.ErrorIs(t, err, ErrCertPublicKeyMismatch)
+
+	// A rejected certificate must not be stored.
+	stored, getErr := tpm.IDevIDCertificate()
+	assert.Nil(t, stored)
+	assert.ErrorIs(t, getErr, ErrIDevIDCertNotFound)
 }
 
 // TestProvisionIAKCert_PublicKeyMismatch tests public key validation
@@ -256,48 +350,101 @@ func TestProvisionIAKCert_PublicKeyMismatch(t *testing.T) {
 	assert.ErrorIs(t, err, ErrCertPublicKeyMismatch)
 }
 
-// TestDeleteIDevIDCertificate_StoreMode tests delete from cert store
+// TestDeleteIDevIDCertificate_StoreMode exercises the whole store-mode IDevID
+// certificate lifecycle: provision, read back, delete, and confirm the delete.
+//
+// The previous version skipped whenever the store was absent and, when it did
+// run, discarded the result with "_ = err" after asserting nothing, so it could
+// not fail. Provisioning first also means the delete has something to remove,
+// which is the case that actually matters.
 func TestDeleteIDevIDCertificate_StoreMode(t *testing.T) {
-	_, tpm := createSim(false, false)
-	defer func() { _ = tpm.Close() }()
+	tpm := newCertStoreTPM(t)
 
-	tpm2Impl := tpm.(*TPM2)
-	// Skip if certStore is nil - test will panic
-	if tpm2Impl.certStore == nil {
-		t.Skip("certStore is nil - skipping test")
-	}
+	idevidAttrs, err := tpm.IDevIDAttributes()
+	require.NoError(t, err)
+	cert := certForTPMKey(t, idevidAttrs, "idevid-device-001")
 
-	if tpm2Impl.config.IDevID != nil {
-		originalCertHandle := tpm2Impl.config.IDevID.CertHandle
-		tpm2Impl.config.IDevID.CertHandle = 0
-		defer func() { tpm2Impl.config.IDevID.CertHandle = originalCertHandle }()
-	}
+	require.NoError(t, tpm.ProvisionIDevIDCert(cert),
+		"a certificate matching the IDevID key must be accepted")
 
-	// Delete will fail if cert doesn't exist, but it tests the code path
-	err := tpm.DeleteIDevIDCertificate()
-	// May succeed (if no cert) or error (if store error)
-	_ = err
+	stored, err := tpm.IDevIDCertificate()
+	require.NoError(t, err, "the provisioned certificate must be readable")
+	assert.Equal(t, cert.Raw, stored.Raw, "the stored certificate must round trip intact")
+
+	require.NoError(t, tpm.DeleteIDevIDCertificate())
+
+	after, err := tpm.IDevIDCertificate()
+	assert.Nil(t, after)
+	assert.ErrorIs(t, err, ErrIDevIDCertNotFound, "the certificate must be gone after deletion")
 }
 
-// TestDeleteIAKCertificate_StoreMode tests delete from cert store
+// TestDeleteIDevIDCertificate_StoreNotConfigured pins the guard clause: a
+// delete in store mode without a store reports ErrCertStoreNotConfigured.
+func TestDeleteIDevIDCertificate_StoreNotConfigured(t *testing.T) {
+	tpm := newCertStoreTPM(t)
+	tpm.certStore = nil
+
+	assert.ErrorIs(t, tpm.DeleteIDevIDCertificate(), ErrCertStoreNotConfigured)
+}
+
+// TestDeleteIAKCertificate_StoreMode is the IAK counterpart of
+// TestDeleteIDevIDCertificate_StoreMode.
 func TestDeleteIAKCertificate_StoreMode(t *testing.T) {
-	_, tpm := createSim(false, false)
-	defer func() { _ = tpm.Close() }()
+	tpm := newCertStoreTPM(t)
 
-	tpm2Impl := tpm.(*TPM2)
-	// Skip if certStore is nil - test will panic
-	if tpm2Impl.certStore == nil {
-		t.Skip("certStore is nil - skipping test")
-	}
+	iakAttrs, err := tpm.IAKAttributes()
+	require.NoError(t, err)
+	cert := certForTPMKey(t, iakAttrs, "device-id-001")
 
-	if tpm2Impl.config.IAK != nil {
-		originalCertHandle := tpm2Impl.config.IAK.CertHandle
-		tpm2Impl.config.IAK.CertHandle = 0
-		defer func() { tpm2Impl.config.IAK.CertHandle = originalCertHandle }()
-	}
+	require.NoError(t, tpm.ProvisionIAKCert(cert),
+		"a certificate matching the IAK must be accepted")
 
-	err := tpm.DeleteIAKCertificate()
-	_ = err
+	stored, err := tpm.IAKCertificate()
+	require.NoError(t, err)
+	assert.Equal(t, cert.Raw, stored.Raw)
+
+	require.NoError(t, tpm.DeleteIAKCertificate())
+
+	after, err := tpm.IAKCertificate()
+	assert.Nil(t, after)
+	assert.ErrorIs(t, err, ErrIAKCertNotFound)
+}
+
+// TestDeleteIAKCertificate_StoreNotConfigured is the IAK counterpart of
+// TestDeleteIDevIDCertificate_StoreNotConfigured.
+func TestDeleteIAKCertificate_StoreNotConfigured(t *testing.T) {
+	tpm := newCertStoreTPM(t)
+	tpm.certStore = nil
+
+	assert.ErrorIs(t, tpm.DeleteIAKCertificate(), ErrCertStoreNotConfigured)
+}
+
+// TestIDevIDAndIAKCertificatesAreStoredSeparately proves the two identities do
+// not collide in the certificate store: deleting one must leave the other
+// intact. MemoryCertStore keys on the common name, so a configuration that gave
+// both identities the same CN would silently share a single slot.
+func TestIDevIDAndIAKCertificatesAreStoredSeparately(t *testing.T) {
+	tpm := newCertStoreTPM(t)
+
+	idevidAttrs, err := tpm.IDevIDAttributes()
+	require.NoError(t, err)
+	iakAttrs, err := tpm.IAKAttributes()
+	require.NoError(t, err)
+
+	idevidCert := certForTPMKey(t, idevidAttrs, "idevid-device-001")
+	iakCert := certForTPMKey(t, iakAttrs, "device-id-001")
+
+	require.NoError(t, tpm.ProvisionIDevIDCert(idevidCert))
+	require.NoError(t, tpm.ProvisionIAKCert(iakCert))
+
+	require.NoError(t, tpm.DeleteIDevIDCertificate())
+
+	_, err = tpm.IDevIDCertificate()
+	assert.ErrorIs(t, err, ErrIDevIDCertNotFound)
+
+	survivor, err := tpm.IAKCertificate()
+	require.NoError(t, err, "deleting the IDevID certificate must not remove the IAK certificate")
+	assert.Equal(t, iakCert.Raw, survivor.Raw)
 }
 
 // TestValidateCertPublicKey_UnsupportedKeyType tests handling of unsupported key types

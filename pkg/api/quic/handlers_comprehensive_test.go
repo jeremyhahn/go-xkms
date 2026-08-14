@@ -556,9 +556,17 @@ func TestInitCredentialHandlers(t *testing.T) {
 		assert.NotEqual(t, http.StatusMethodNotAllowed, w.Code)
 	})
 
-	t.Run("ClaimShare POST", func(t *testing.T) {
+	t.Run("ClaimShareBegin POST", func(t *testing.T) {
 		body, _ := json.Marshal(map[string]string{"officer_name": "test"})
-		req := httptest.NewRequest(http.MethodPost, "/api/v1/init/claim-share", bytes.NewReader(body))
+		req := httptest.NewRequest(http.MethodPost, "/api/v1/init/claim-share/begin", bytes.NewReader(body))
+		w := httptest.NewRecorder()
+		server.handler.ServeHTTP(w, req)
+		assert.NotEqual(t, http.StatusMethodNotAllowed, w.Code)
+	})
+
+	t.Run("ClaimShareComplete POST", func(t *testing.T) {
+		body, _ := json.Marshal(map[string]string{"officer_name": "test"})
+		req := httptest.NewRequest(http.MethodPost, "/api/v1/init/claim-share/complete", bytes.NewReader(body))
 		w := httptest.NewRecorder()
 		server.handler.ServeHTTP(w, req)
 		assert.NotEqual(t, http.StatusMethodNotAllowed, w.Code)

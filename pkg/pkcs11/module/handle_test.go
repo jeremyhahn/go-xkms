@@ -144,59 +144,6 @@ func TestHandleTable_Lookup_InvalidHandle(t *testing.T) {
 	}
 }
 
-func TestHandleTable_LookupOrError_Success(t *testing.T) {
-	table := NewHandleTable[*testObject]()
-
-	obj := &testObject{ID: 100, Name: "error-lookup-test"}
-	handle, err := table.Allocate(obj)
-	if err != nil {
-		t.Fatalf("Allocate failed: %v", err)
-	}
-
-	found, err := table.LookupOrError(handle)
-	if err != nil {
-		t.Fatalf("LookupOrError failed: %v", err)
-	}
-	if found.ID != 100 {
-		t.Errorf("expected ID 100, got %d", found.ID)
-	}
-}
-
-func TestHandleTable_LookupOrError_NotFound(t *testing.T) {
-	table := NewHandleTable[*testObject]()
-
-	found, err := table.LookupOrError(999)
-	if err == nil {
-		t.Fatal("expected error for non-existent handle")
-	}
-	if found != nil {
-		t.Error("expected nil value for non-existent handle")
-	}
-
-	he, ok := err.(*HandleError)
-	if !ok {
-		t.Fatalf("expected *HandleError, got %T", err)
-	}
-	if he.Op != "lookup" {
-		t.Errorf("expected Op 'lookup', got %s", he.Op)
-	}
-	if he.Handle != 999 {
-		t.Errorf("expected Handle 999, got %d", he.Handle)
-	}
-}
-
-func TestHandleTable_LookupOrError_InvalidHandle(t *testing.T) {
-	table := NewHandleTable[*testObject]()
-
-	found, err := table.LookupOrError(InvalidHandle)
-	if err != ErrHandleInvalid {
-		t.Errorf("expected ErrHandleInvalid, got %v", err)
-	}
-	if found != nil {
-		t.Error("expected nil value for InvalidHandle")
-	}
-}
-
 func TestHandleTable_Release_Success(t *testing.T) {
 	table := NewHandleTable[*testObject]()
 
@@ -243,56 +190,6 @@ func TestHandleTable_Release_InvalidHandle(t *testing.T) {
 	released, ok := table.Release(InvalidHandle)
 	if ok {
 		t.Error("Release returned true for InvalidHandle")
-	}
-	if released != nil {
-		t.Error("expected nil value for InvalidHandle")
-	}
-}
-
-func TestHandleTable_ReleaseOrError_Success(t *testing.T) {
-	table := NewHandleTable[*testObject]()
-
-	obj := &testObject{ID: 75, Name: "release-error-test"}
-	handle, err := table.Allocate(obj)
-	if err != nil {
-		t.Fatalf("Allocate failed: %v", err)
-	}
-
-	released, err := table.ReleaseOrError(handle)
-	if err != nil {
-		t.Fatalf("ReleaseOrError failed: %v", err)
-	}
-	if released.ID != 75 {
-		t.Errorf("expected ID 75, got %d", released.ID)
-	}
-}
-
-func TestHandleTable_ReleaseOrError_NotFound(t *testing.T) {
-	table := NewHandleTable[*testObject]()
-
-	released, err := table.ReleaseOrError(999)
-	if err == nil {
-		t.Fatal("expected error for non-existent handle")
-	}
-	if released != nil {
-		t.Error("expected nil value for non-existent handle")
-	}
-
-	he, ok := err.(*HandleError)
-	if !ok {
-		t.Fatalf("expected *HandleError, got %T", err)
-	}
-	if he.Op != "release" {
-		t.Errorf("expected Op 'release', got %s", he.Op)
-	}
-}
-
-func TestHandleTable_ReleaseOrError_InvalidHandle(t *testing.T) {
-	table := NewHandleTable[*testObject]()
-
-	released, err := table.ReleaseOrError(InvalidHandle)
-	if err != ErrHandleInvalid {
-		t.Errorf("expected ErrHandleInvalid, got %v", err)
 	}
 	if released != nil {
 		t.Error("expected nil value for InvalidHandle")

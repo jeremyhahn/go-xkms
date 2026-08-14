@@ -43,9 +43,6 @@ const (
 	// userDirName is the default directory name under $HOME.
 	userDirName = ".xkey"
 
-	// systemDir is the system-wide fallback directory.
-	systemDir = "/etc/xkey"
-
 	// configFile is the configuration file name.
 	configFile = "config.yaml"
 
@@ -92,6 +89,12 @@ type Home struct {
 //
 // For the user-home strategy (~/.xkey/), the directory is created with
 // 0700 permissions if it does not already exist.
+// systemDir is the system-wide fallback directory. It is a variable rather
+// than a constant so tests can point the last resolution strategy at a path
+// that is known not to exist, instead of depending on whether /etc/xkey
+// happens to be present on the machine running the tests.
+var systemDir = "/etc/xkey"
+
 func Resolve() (*Home, error) {
 	// Check test override first.
 	if ptr := override.Load(); ptr != nil && *ptr != "" {

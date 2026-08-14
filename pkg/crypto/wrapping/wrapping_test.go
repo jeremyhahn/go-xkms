@@ -345,12 +345,12 @@ func TestAESKWP_VariousSizes(t *testing.T) {
 			_, err := rand.Read(plaintext)
 			require.NoError(t, err)
 
-			wrapped, err := wrapKeyWithAESKWP(plaintext, aesKey)
+			wrapped, err := WrapAESKWP(plaintext, aesKey)
 			require.NoError(t, err)
 			assert.NotNil(t, wrapped)
 			assert.NotEqual(t, plaintext, wrapped)
 
-			unwrapped, err := unwrapKeyWithAESKWP(wrapped, aesKey)
+			unwrapped, err := UnwrapAESKWP(wrapped, aesKey)
 			require.NoError(t, err)
 			assert.Equal(t, plaintext, unwrapped)
 		})
@@ -367,7 +367,7 @@ func TestAESKWP_InvalidInputs(t *testing.T) {
 
 	t.Run("InvalidKeySize_15bytes", func(t *testing.T) {
 		invalidKey := make([]byte, 15)
-		_, err := wrapKeyWithAESKWP(validPlaintext, invalidKey)
+		_, err := WrapAESKWP(validPlaintext, invalidKey)
 		assert.Error(t, err)
 		var szErr *InvalidKeySizeError
 		assert.True(t, errors.As(err, &szErr), "expected InvalidKeySizeError, got %v", err)
@@ -375,7 +375,7 @@ func TestAESKWP_InvalidInputs(t *testing.T) {
 
 	t.Run("InvalidKeySize_20bytes", func(t *testing.T) {
 		invalidKey := make([]byte, 20)
-		_, err := wrapKeyWithAESKWP(validPlaintext, invalidKey)
+		_, err := WrapAESKWP(validPlaintext, invalidKey)
 		assert.Error(t, err)
 		var szErr *InvalidKeySizeError
 		assert.True(t, errors.As(err, &szErr), "expected InvalidKeySizeError, got %v", err)
@@ -383,7 +383,7 @@ func TestAESKWP_InvalidInputs(t *testing.T) {
 
 	t.Run("UnwrapInvalidCiphertextLength", func(t *testing.T) {
 		shortCiphertext := make([]byte, 8) // Too short
-		_, err := unwrapKeyWithAESKWP(shortCiphertext, validAESKey)
+		_, err := UnwrapAESKWP(shortCiphertext, validAESKey)
 		assert.Error(t, err)
 		var mErr *MalformedWrappedKeyError
 		assert.True(t, errors.As(err, &mErr), "expected MalformedWrappedKeyError, got %v", err)
@@ -391,34 +391,34 @@ func TestAESKWP_InvalidInputs(t *testing.T) {
 
 	t.Run("UnwrapInvalidCiphertextAlignment", func(t *testing.T) {
 		badCiphertext := make([]byte, 17) // Not a multiple of 8
-		_, err := unwrapKeyWithAESKWP(badCiphertext, validAESKey)
+		_, err := UnwrapAESKWP(badCiphertext, validAESKey)
 		assert.Error(t, err)
 		var mErr *MalformedWrappedKeyError
 		assert.True(t, errors.As(err, &mErr), "expected MalformedWrappedKeyError, got %v", err)
 	})
 
 	t.Run("UnwrapCorruptedAIV", func(t *testing.T) {
-		wrapped, err := wrapKeyWithAESKWP(validPlaintext, validAESKey)
+		wrapped, err := WrapAESKWP(validPlaintext, validAESKey)
 		require.NoError(t, err)
 
 		// Corrupt the AIV
 		wrapped[0] ^= 0xFF
 
-		_, err = unwrapKeyWithAESKWP(wrapped, validAESKey)
+		_, err = UnwrapAESKWP(wrapped, validAESKey)
 		assert.Error(t, err)
 		var mErr *MalformedWrappedKeyError
 		assert.True(t, errors.As(err, &mErr), "expected MalformedWrappedKeyError, got %v", err)
 	})
 
 	t.Run("UnwrapWrongKey", func(t *testing.T) {
-		wrapped, err := wrapKeyWithAESKWP(validPlaintext, validAESKey)
+		wrapped, err := WrapAESKWP(validPlaintext, validAESKey)
 		require.NoError(t, err)
 
 		wrongKey := make([]byte, 32)
 		_, err = rand.Read(wrongKey)
 		require.NoError(t, err)
 
-		_, err = unwrapKeyWithAESKWP(wrapped, wrongKey)
+		_, err = UnwrapAESKWP(wrapped, wrongKey)
 		assert.Error(t, err)
 	})
 }
@@ -739,7 +739,7 @@ func BenchmarkAESKWP(b *testing.B) {
 		b.ReportAllocs()
 		b.ResetTimer()
 		for i := 0; i < b.N; i++ {
-			_, err := wrapKeyWithAESKWP(plaintext, kek)
+			_, err := WrapAESKWP(plaintext, kek)
 			if err != nil {
 				b.Fatal(err)
 			}
@@ -749,14 +749,14 @@ func BenchmarkAESKWP(b *testing.B) {
 	b.Run("Unwrap_32B", func(b *testing.B) {
 		plaintext := make([]byte, 32)
 		_, _ = rand.Read(plaintext)
-		wrapped, err := wrapKeyWithAESKWP(plaintext, kek)
+		wrapped, err := WrapAESKWP(plaintext, kek)
 		if err != nil {
 			b.Fatal(err)
 		}
 		b.ReportAllocs()
 		b.ResetTimer()
 		for i := 0; i < b.N; i++ {
-			_, err := unwrapKeyWithAESKWP(wrapped, kek)
+			_, err := UnwrapAESKWP(wrapped, kek)
 			if err != nil {
 				b.Fatal(err)
 			}
@@ -769,7 +769,7 @@ func BenchmarkAESKWP(b *testing.B) {
 		b.ReportAllocs()
 		b.ResetTimer()
 		for i := 0; i < b.N; i++ {
-			_, err := wrapKeyWithAESKWP(plaintext, kek)
+			_, err := WrapAESKWP(plaintext, kek)
 			if err != nil {
 				b.Fatal(err)
 			}
@@ -779,14 +779,14 @@ func BenchmarkAESKWP(b *testing.B) {
 	b.Run("Unwrap_1KB", func(b *testing.B) {
 		plaintext := make([]byte, 1024)
 		_, _ = rand.Read(plaintext)
-		wrapped, err := wrapKeyWithAESKWP(plaintext, kek)
+		wrapped, err := WrapAESKWP(plaintext, kek)
 		if err != nil {
 			b.Fatal(err)
 		}
 		b.ReportAllocs()
 		b.ResetTimer()
 		for i := 0; i < b.N; i++ {
-			_, err := unwrapKeyWithAESKWP(wrapped, kek)
+			_, err := UnwrapAESKWP(wrapped, kek)
 			if err != nil {
 				b.Fatal(err)
 			}

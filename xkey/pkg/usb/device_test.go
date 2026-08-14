@@ -48,22 +48,19 @@ func TestIsBlockDevice_Directory(t *testing.T) {
 		"directory should not be a block device")
 }
 
-func TestIsBlockDevice_DevNull(t *testing.T) {
-	// /dev/null is a character device, not a block device, but ModeDevice
-	// is set for both character and block devices. Our implementation checks
-	// ModeDevice which includes character devices. This test documents
-	// the behavior.
-	info, err := os.Stat("/dev/null")
-	if err != nil {
-		t.Skip("/dev/null not accessible")
-	}
+func TestIsBlockDevice_DeviceNode(t *testing.T) {
+	// IsBlockDevice checks os.ModeDevice, which is set for both block and
+	// character device nodes. Drive it through the statPath seam so the
+	// assertion is exact and does not depend on any host device existing.
+	restore := saveHooks(t)
+	defer restore()
 
-	result := IsBlockDevice("/dev/null")
-	if info.Mode()&os.ModeDevice != 0 {
-		assert.True(t, result)
-	} else {
-		assert.False(t, result)
-	}
+	mockDeviceNode(testDevicePath)
+
+	assert.True(t, IsBlockDevice(testDevicePath),
+		"a device node must be reported as a block device")
+	assert.False(t, IsBlockDevice("/dev/some-other-node"),
+		"a path that does not stat must not be reported as a block device")
 }
 
 // ---------------------------------------------------------------------------
@@ -89,59 +86,53 @@ func TestValidateBlockDevice_RegularFile(t *testing.T) {
 
 // TestValidateBlockDevice_DevNull_NoSystemMounts verifies that
 // ValidateBlockDevice succeeds when the device has no critical mounts.
-// We use /dev/null as a device node that passes IsBlockDevice.
-func TestValidateBlockDevice_DevNull_NoSystemMounts(t *testing.T) {
-	if _, err := os.Stat("/dev/null"); err != nil {
-		t.Skip("/dev/null not accessible")
-	}
-
+// The device node is synthesized through the statPath seam.
+func TestValidateBlockDevice_Device_NoSystemMounts(t *testing.T) {
 	restore := saveHooks(t)
 	defer restore()
+
+	mockDeviceNode(testDevicePath)
 
 	// Provide mount data that does NOT reference /dev/null on critical paths.
 	readMountsFile = func() ([]byte, error) {
 		return []byte("/dev/sda1 / ext4 rw 0 0\n/dev/sda2 /home ext4 rw 0 0\n"), nil
 	}
 
-	err := ValidateBlockDevice("/dev/null")
+	err := ValidateBlockDevice(testDevicePath)
 	assert.NoError(t, err)
 }
 
 // TestValidateBlockDevice_DevNull_SystemDiskDetected verifies that
 // ValidateBlockDevice detects a device mounted at a critical path.
-func TestValidateBlockDevice_DevNull_SystemDiskDetected(t *testing.T) {
-	if _, err := os.Stat("/dev/null"); err != nil {
-		t.Skip("/dev/null not accessible")
-	}
-
+func TestValidateBlockDevice_Device_SystemDiskDetected(t *testing.T) {
 	restore := saveHooks(t)
 	defer restore()
 
+	mockDeviceNode(testDevicePath)
+
 	// The basename of /dev/null is "null". Mount data shows "null1" on /.
 	readMountsFile = func() ([]byte, error) {
-		return []byte("/dev/null1 / ext4 rw 0 0\n"), nil
+		return []byte(testDevicePath + "1 / ext4 rw 0 0\n"), nil
 	}
 
-	err := ValidateBlockDevice("/dev/null")
+	err := ValidateBlockDevice(testDevicePath)
 	require.Error(t, err)
 	assert.True(t, errors.Is(err, ErrSystemDisk))
 }
 
 // TestValidateBlockDevice_DevNull_MountsReadError verifies that
 // ValidateBlockDevice returns an error when mounts cannot be read.
-func TestValidateBlockDevice_DevNull_MountsReadError(t *testing.T) {
-	if _, err := os.Stat("/dev/null"); err != nil {
-		t.Skip("/dev/null not accessible")
-	}
-
+func TestValidateBlockDevice_Device_MountsReadError(t *testing.T) {
 	restore := saveHooks(t)
 	defer restore()
+
+	mockDeviceNode(testDevicePath)
 
 	readMountsFile = func() ([]byte, error) {
 		return nil, errors.New("permission denied")
 	}
 
-	err := ValidateBlockDevice("/dev/null")
+	err := ValidateBlockDevice(testDevicePath)
 	require.Error(t, err)
 
 	var usbErr *USBError
@@ -151,30 +142,24 @@ func TestValidateBlockDevice_DevNull_MountsReadError(t *testing.T) {
 
 // TestValidateBlockDevice_DevNull_NonCriticalMount verifies that a
 // device partition mounted at a non-critical path passes validation.
-func TestValidateBlockDevice_DevNull_NonCriticalMount(t *testing.T) {
-	if _, err := os.Stat("/dev/null"); err != nil {
-		t.Skip("/dev/null not accessible")
-	}
-
+func TestValidateBlockDevice_Device_NonCriticalMount(t *testing.T) {
 	restore := saveHooks(t)
 	defer restore()
 
+	mockDeviceNode(testDevicePath)
+
 	// "null1" is mounted at /mnt/usb which is NOT a critical mount.
 	readMountsFile = func() ([]byte, error) {
-		return []byte("/dev/null1 /mnt/usb vfat rw 0 0\n"), nil
+		return []byte(testDevicePath + "1 /mnt/usb vfat rw 0 0\n"), nil
 	}
 
-	err := ValidateBlockDevice("/dev/null")
+	err := ValidateBlockDevice(testDevicePath)
 	assert.NoError(t, err)
 }
 
 // TestValidateBlockDevice_DevNull_MultipleCriticalMounts tests all
 // critical mount points for detection.
-func TestValidateBlockDevice_DevNull_MultipleCriticalMounts(t *testing.T) {
-	if _, err := os.Stat("/dev/null"); err != nil {
-		t.Skip("/dev/null not accessible")
-	}
-
+func TestValidateBlockDevice_Device_MultipleCriticalMounts(t *testing.T) {
 	criticalPaths := []string{"/", "/boot", "/boot/efi", "/home", "/var", "/usr", "/tmp"}
 
 	for _, critical := range criticalPaths {
@@ -182,11 +167,13 @@ func TestValidateBlockDevice_DevNull_MultipleCriticalMounts(t *testing.T) {
 			restore := saveHooks(t)
 			defer restore()
 
+			mockDeviceNode(testDevicePath)
+
 			readMountsFile = func() ([]byte, error) {
-				return []byte("/dev/null1 " + critical + " ext4 rw 0 0\n"), nil
+				return []byte(testDevicePath + "1 " + critical + " ext4 rw 0 0\n"), nil
 			}
 
-			err := ValidateBlockDevice("/dev/null")
+			err := ValidateBlockDevice(testDevicePath)
 			require.Error(t, err, "should detect system disk for mount at %s", critical)
 			assert.True(t, errors.Is(err, ErrSystemDisk))
 		})
@@ -195,37 +182,33 @@ func TestValidateBlockDevice_DevNull_MultipleCriticalMounts(t *testing.T) {
 
 // TestValidateBlockDevice_DevNull_EmptyMounts verifies that empty
 // mount data passes validation (no critical mounts found).
-func TestValidateBlockDevice_DevNull_EmptyMounts(t *testing.T) {
-	if _, err := os.Stat("/dev/null"); err != nil {
-		t.Skip("/dev/null not accessible")
-	}
-
+func TestValidateBlockDevice_Device_EmptyMounts(t *testing.T) {
 	restore := saveHooks(t)
 	defer restore()
+
+	mockDeviceNode(testDevicePath)
 
 	readMountsFile = func() ([]byte, error) {
 		return []byte(""), nil
 	}
 
-	err := ValidateBlockDevice("/dev/null")
+	err := ValidateBlockDevice(testDevicePath)
 	assert.NoError(t, err)
 }
 
 // TestValidateBlockDevice_DevNull_ShortLines verifies that lines
 // with fewer than 2 fields are skipped.
-func TestValidateBlockDevice_DevNull_ShortLines(t *testing.T) {
-	if _, err := os.Stat("/dev/null"); err != nil {
-		t.Skip("/dev/null not accessible")
-	}
-
+func TestValidateBlockDevice_Device_ShortLines(t *testing.T) {
 	restore := saveHooks(t)
 	defer restore()
 
+	mockDeviceNode(testDevicePath)
+
 	readMountsFile = func() ([]byte, error) {
-		return []byte("onlyonefield\n\n/dev/null1\n"), nil
+		return []byte("onlyonefield\n\n" + testDevicePath + "1\n"), nil
 	}
 
-	err := ValidateBlockDevice("/dev/null")
+	err := ValidateBlockDevice(testDevicePath)
 	assert.NoError(t, err)
 }
 

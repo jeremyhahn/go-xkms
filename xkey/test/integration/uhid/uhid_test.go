@@ -27,7 +27,7 @@ import (
 )
 
 func TestUHIDOpen(t *testing.T) {
-	skipIfNoUHID(t)
+	requireUHID(t)
 
 	device, err := uhid.Open()
 	require.NoError(t, err, "Failed to open UHID device")
@@ -40,15 +40,8 @@ func TestUHIDOpen(t *testing.T) {
 	assert.Greater(t, device.Fd(), 0, "File descriptor should be positive")
 }
 
-func TestUHIDOpenPermissionDenied(t *testing.T) {
-	// This test verifies error handling when UHID is not accessible.
-	// If /dev/uhid exists but we can open it, skip this test.
-	skipIfNoUHID(t)
-	t.Skip("UHID is accessible - cannot test permission denied scenario")
-}
-
 func TestUHIDCreateDevice(t *testing.T) {
-	skipIfNoUHID(t)
+	requireUHID(t)
 
 	device, err := uhid.Open()
 	require.NoError(t, err)
@@ -68,7 +61,7 @@ func TestUHIDCreateDevice(t *testing.T) {
 }
 
 func TestUHIDCreateDeviceWithNilConfig(t *testing.T) {
-	skipIfNoUHID(t)
+	requireUHID(t)
 
 	device, err := uhid.Open()
 	require.NoError(t, err)
@@ -82,7 +75,7 @@ func TestUHIDCreateDeviceWithNilConfig(t *testing.T) {
 }
 
 func TestUHIDCreateDeviceAlreadyCreated(t *testing.T) {
-	skipIfNoUHID(t)
+	requireUHID(t)
 
 	device, cleanup := createTestDevice(t, "test-already-created")
 	defer cleanup()
@@ -95,7 +88,7 @@ func TestUHIDCreateDeviceAlreadyCreated(t *testing.T) {
 }
 
 func TestUHIDDeviceLifecycle(t *testing.T) {
-	skipIfNoUHID(t)
+	requireUHID(t)
 
 	// Phase 1: Open
 	device, err := uhid.Open()
@@ -137,7 +130,7 @@ func TestUHIDDeviceLifecycle(t *testing.T) {
 }
 
 func TestUHIDWriteInput(t *testing.T) {
-	skipIfNoUHID(t)
+	requireUHID(t)
 
 	device, cleanup := createTestDevice(t, "test-write-input")
 	defer cleanup()
@@ -149,7 +142,7 @@ func TestUHIDWriteInput(t *testing.T) {
 }
 
 func TestUHIDWriteInputEmptyData(t *testing.T) {
-	skipIfNoUHID(t)
+	requireUHID(t)
 
 	device, cleanup := createTestDevice(t, "test-write-empty")
 	defer cleanup()
@@ -160,7 +153,7 @@ func TestUHIDWriteInputEmptyData(t *testing.T) {
 }
 
 func TestUHIDWriteInputMaxSize(t *testing.T) {
-	skipIfNoUHID(t)
+	requireUHID(t)
 
 	device, cleanup := createTestDevice(t, "test-write-max")
 	defer cleanup()
@@ -176,7 +169,7 @@ func TestUHIDWriteInputMaxSize(t *testing.T) {
 }
 
 func TestUHIDWriteInputTooLarge(t *testing.T) {
-	skipIfNoUHID(t)
+	requireUHID(t)
 
 	device, cleanup := createTestDevice(t, "test-write-too-large")
 	defer cleanup()
@@ -190,7 +183,7 @@ func TestUHIDWriteInputTooLarge(t *testing.T) {
 }
 
 func TestUHIDWriteInputOnClosedDevice(t *testing.T) {
-	skipIfNoUHID(t)
+	requireUHID(t)
 
 	device, _ := createTestDevice(t, "test-write-closed")
 	device.Close()
@@ -202,7 +195,7 @@ func TestUHIDWriteInputOnClosedDevice(t *testing.T) {
 }
 
 func TestUHIDConcurrentAccess(t *testing.T) {
-	skipIfNoUHID(t)
+	requireUHID(t)
 
 	device, cleanup := createTestDevice(t, "test-concurrent")
 	defer cleanup()
@@ -243,7 +236,7 @@ func TestUHIDConcurrentAccess(t *testing.T) {
 }
 
 func TestUHIDConcurrentStateAccess(t *testing.T) {
-	skipIfNoUHID(t)
+	requireUHID(t)
 
 	device, cleanup := createTestDevice(t, "test-concurrent-state")
 	defer cleanup()
@@ -272,7 +265,7 @@ func TestUHIDConcurrentStateAccess(t *testing.T) {
 }
 
 func TestUHIDCreateWithFIDO2Descriptor(t *testing.T) {
-	skipIfNoUHID(t)
+	requireUHID(t)
 
 	device, err := uhid.Open()
 	require.NoError(t, err)
@@ -307,7 +300,7 @@ func TestUHIDCreateWithFIDO2Descriptor(t *testing.T) {
 }
 
 func TestUHIDCreateWithCustomDescriptor(t *testing.T) {
-	skipIfNoUHID(t)
+	requireUHID(t)
 
 	device, err := uhid.Open()
 	require.NoError(t, err)
@@ -346,7 +339,7 @@ func TestUHIDCreateWithCustomDescriptor(t *testing.T) {
 }
 
 func TestUHIDDeviceSetReadTimeout(t *testing.T) {
-	skipIfNoUHID(t)
+	requireUHID(t)
 
 	device, cleanup := createTestDevice(t, "test-timeout")
 	defer cleanup()
@@ -366,7 +359,7 @@ func TestUHIDDeviceSetReadTimeout(t *testing.T) {
 }
 
 func TestUHIDDeviceSetNonBlocking(t *testing.T) {
-	skipIfNoUHID(t)
+	requireUHID(t)
 
 	device, cleanup := createTestDevice(t, "test-nonblocking")
 	defer cleanup()
@@ -381,7 +374,7 @@ func TestUHIDDeviceSetNonBlocking(t *testing.T) {
 }
 
 func TestUHIDDeviceSetNonBlockingOnClosedDevice(t *testing.T) {
-	skipIfNoUHID(t)
+	requireUHID(t)
 
 	device, _ := createTestDevice(t, "test-nonblock-closed")
 	device.Close()
@@ -393,7 +386,7 @@ func TestUHIDDeviceSetNonBlockingOnClosedDevice(t *testing.T) {
 }
 
 func TestUHIDCloseIdempotent(t *testing.T) {
-	skipIfNoUHID(t)
+	requireUHID(t)
 
 	device, err := uhid.Open()
 	require.NoError(t, err)
@@ -420,7 +413,7 @@ func TestUHIDCloseIdempotent(t *testing.T) {
 }
 
 func TestUHIDDeviceCleanupOnPanic(t *testing.T) {
-	skipIfNoUHID(t)
+	requireUHID(t)
 
 	// This test verifies that devices can be properly cleaned up
 	// even in error scenarios
@@ -450,7 +443,7 @@ func TestUHIDDeviceCleanupOnPanic(t *testing.T) {
 }
 
 func TestUHIDMultipleDevices(t *testing.T) {
-	skipIfNoUHID(t)
+	requireUHID(t)
 
 	const numDevices = 5
 	devices := make([]*uhid.Device, numDevices)
@@ -488,7 +481,7 @@ func TestUHIDMultipleDevices(t *testing.T) {
 }
 
 func TestUHIDDeviceWithLongName(t *testing.T) {
-	skipIfNoUHID(t)
+	requireUHID(t)
 
 	device, err := uhid.Open()
 	require.NoError(t, err)
@@ -518,7 +511,7 @@ func TestUHIDDeviceWithLongName(t *testing.T) {
 }
 
 func TestUHIDDeviceWithEmptyName(t *testing.T) {
-	skipIfNoUHID(t)
+	requireUHID(t)
 
 	device, err := uhid.Open()
 	require.NoError(t, err)
@@ -544,7 +537,7 @@ func TestUHIDSerializeCreate2RequestIntegration(t *testing.T) {
 	// This test validates that SerializeCreate2Request produces valid data
 	// by actually creating a device with equivalent configuration
 
-	skipIfNoUHID(t)
+	requireUHID(t)
 
 	cfg := &uhid.CreateConfig{
 		Name:             generateUniqueDeviceName("test-serialize"),
@@ -573,7 +566,7 @@ func TestUHIDSerializeCreate2RequestIntegration(t *testing.T) {
 }
 
 func TestUHIDSerializeInput2RequestIntegration(t *testing.T) {
-	skipIfNoUHID(t)
+	requireUHID(t)
 
 	device, cleanup := createTestDevice(t, "test-serialize-input")
 	defer cleanup()
@@ -591,7 +584,7 @@ func TestUHIDSerializeInput2RequestIntegration(t *testing.T) {
 }
 
 func TestUHIDFd(t *testing.T) {
-	skipIfNoUHID(t)
+	requireUHID(t)
 
 	device, err := uhid.Open()
 	require.NoError(t, err)
@@ -619,7 +612,7 @@ func TestUHIDFd(t *testing.T) {
 }
 
 func TestUHIDReadOutputTimeout(t *testing.T) {
-	skipIfNoUHID(t)
+	requireUHID(t)
 
 	device, cleanup := createTestDevice(t, "test-read-timeout")
 	defer cleanup()
@@ -645,7 +638,7 @@ func TestUHIDReadOutputTimeout(t *testing.T) {
 }
 
 func TestUHIDReadOutputOnClosedDevice(t *testing.T) {
-	skipIfNoUHID(t)
+	requireUHID(t)
 
 	device, _ := createTestDevice(t, "test-read-closed")
 	device.Close()

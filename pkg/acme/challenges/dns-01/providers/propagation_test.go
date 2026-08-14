@@ -17,6 +17,7 @@ import (
 	"context"
 	"errors"
 	"net"
+	"reflect"
 	"sync"
 	"testing"
 	"time"
@@ -119,6 +120,57 @@ func (m *testDNSServer) addTXTRecord(fqdn, value string) {
 	m.mu.Lock()
 	m.responses[key] = append(m.responses[key], txt)
 	m.mu.Unlock()
+}
+
+// addSOARecord makes the server authoritative for a zone, which is what
+// FindZoneByFQDN climbs the label tree looking for.
+func (m *testDNSServer) addSOARecord(zone string) {
+	zone = ToFQDN(zone)
+	soa := &dns.SOA{
+		Hdr: dns.RR_Header{
+			Name:   zone,
+			Rrtype: dns.TypeSOA,
+			Class:  dns.ClassINET,
+			Ttl:    300,
+		},
+		Ns:      "ns1." + zone,
+		Mbox:    "hostmaster." + zone,
+		Serial:  1,
+		Refresh: 3600,
+		Retry:   600,
+		Expire:  86400,
+		Minttl:  300,
+	}
+	m.mu.Lock()
+	m.responses[zone+"SOA"] = append(m.responses[zone+"SOA"], soa)
+	m.mu.Unlock()
+}
+
+// addNSRecord publishes an NS record for a zone.
+func (m *testDNSServer) addNSRecord(zone, nameserver string) {
+	zone = ToFQDN(zone)
+	ns := &dns.NS{
+		Hdr: dns.RR_Header{
+			Name:   zone,
+			Rrtype: dns.TypeNS,
+			Class:  dns.ClassINET,
+			Ttl:    300,
+		},
+		Ns: ToFQDN(nameserver),
+	}
+	m.mu.Lock()
+	m.responses[zone+"NS"] = append(m.responses[zone+"NS"], ns)
+	m.mu.Unlock()
+}
+
+// useAsDefaultResolver points DefaultNameservers at this server for the
+// duration of the test, so nothing in the package reaches the public internet.
+func (m *testDNSServer) useAsDefaultResolver(t *testing.T) {
+	t.Helper()
+
+	original := DefaultNameservers
+	DefaultNameservers = []string{m.addr}
+	t.Cleanup(func() { DefaultNameservers = original })
 }
 
 func (m *testDNSServer) close() {
@@ -445,19 +497,27 @@ func TestPropagationGetAuthoritativeNameservers(t *testing.T) {
 		}
 	})
 
-	t.Run("real domain query", func(t *testing.T) {
+	t.Run("authoritative nameservers are returned with a port", func(t *testing.T) {
+		server := newTestDNSServer(t)
+		defer server.close()
+		server.useAsDefaultResolver(t)
+
+		const zone = "ns-lookup.test"
+		server.addSOARecord(zone)
+		server.addNSRecord(zone, "ns1."+zone)
+		server.addNSRecord(zone, "ns2."+zone)
+
 		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 		defer cancel()
 
-		// Query a well-known domain
-		ns, err := GetAuthoritativeNameservers(ctx, "google.com")
+		ns, err := GetAuthoritativeNameservers(ctx, zone)
 		if err != nil {
-			t.Skipf("skipping real DNS test: %v", err)
+			t.Fatalf("GetAuthoritativeNameservers: %v", err)
 		}
-		if len(ns) == 0 {
-			t.Error("expected at least one nameserver")
+		if len(ns) != 2 {
+			t.Fatalf("expected 2 nameservers, got %d: %v", len(ns), ns)
 		}
-		// Verify nameservers have port suffix
+		// Callers feed these straight into DNSQuery, so each must carry a port.
 		for _, n := range ns {
 			if _, _, err := net.SplitHostPort(n); err != nil {
 				t.Errorf("nameserver %s should have port: %v", n, err)
@@ -466,6 +526,10 @@ func TestPropagationGetAuthoritativeNameservers(t *testing.T) {
 	})
 
 	t.Run("invalid domain returns error", func(t *testing.T) {
+		server := newTestDNSServer(t)
+		defer server.close()
+		server.useAsDefaultResolver(t)
+
 		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 		defer cancel()
 
@@ -476,21 +540,31 @@ func TestPropagationGetAuthoritativeNameservers(t *testing.T) {
 	})
 
 	t.Run("fqdn is normalized with trailing dot", func(t *testing.T) {
+		server := newTestDNSServer(t)
+		defer server.close()
+		server.useAsDefaultResolver(t)
+
+		const zone = "normalize.test"
+		server.addSOARecord(zone)
+		server.addNSRecord(zone, "ns1."+zone)
+
 		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 		defer cancel()
 
-		// Both should work the same
-		ns1, err1 := GetAuthoritativeNameservers(ctx, "google.com")
-		ns2, err2 := GetAuthoritativeNameservers(ctx, "google.com.")
-
+		ns1, err1 := GetAuthoritativeNameservers(ctx, zone)
 		if err1 != nil {
-			t.Skipf("skipping real DNS test: %v", err1)
+			t.Fatalf("GetAuthoritativeNameservers(%q): %v", zone, err1)
 		}
+		ns2, err2 := GetAuthoritativeNameservers(ctx, zone+".")
 		if err2 != nil {
-			t.Skipf("skipping real DNS test: %v", err2)
+			t.Fatalf("GetAuthoritativeNameservers(%q.): %v", zone, err2)
 		}
 
-		if len(ns1) == 0 || len(ns2) == 0 {
+		// The trailing dot must not change the result at all.
+		if !reflect.DeepEqual(ns1, ns2) {
+			t.Errorf("trailing dot changed the result: %v vs %v", ns1, ns2)
+		}
+		if len(ns1) == 0 {
 			t.Error("expected nameservers for both queries")
 		}
 	})

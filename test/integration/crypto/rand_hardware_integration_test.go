@@ -455,10 +455,6 @@ func TestRandHardwareComparison(t *testing.T) {
 
 // TestRandHardwarePerformance benchmarks hardware RNG performance
 func TestRandHardwarePerformance(t *testing.T) {
-	if testing.Short() {
-		t.Fatal("Skipping performance test in short mode")
-	}
-
 	sources := []struct {
 		name   string
 		config interface{}
@@ -506,11 +502,6 @@ func TestRandHardwarePerformance(t *testing.T) {
 
 // TestRandHardwareReliability tests reliability under stress
 func TestRandHardwareReliability(t *testing.T) {
-	if testing.Short() {
-		t.Log("Skipping reliability test in short mode")
-		return
-	}
-
 	// Try simulator first, then real device
 	swtpmHost := os.Getenv("SWTPM_HOST")
 	if swtpmHost == "" {

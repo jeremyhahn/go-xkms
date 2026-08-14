@@ -322,6 +322,12 @@ func runFIDO2RegisterWithWriter(cmd *cobra.Command, args []string, writer io.Wri
 	}
 }
 
+// legacyDerivationCLIWarning is printed whenever --legacy-hmac-derivation
+// is used, so the operator cannot miss that the key is not hardware-bound.
+const legacyDerivationCLIWarning = "SECURITY: --legacy-hmac-derivation is in use. " +
+	"The derived key is NOT bound to your security key and can be recomputed from the credential ID and salt alone. " +
+	"Unlock the volume with it once, then re-enroll the volume immediately."
+
 // fido2AuthenticateCmd authenticates using a FIDO2 credential
 var fido2AuthenticateCmd = &cobra.Command{
 	Use:   "authenticate",
@@ -350,6 +356,7 @@ func runFIDO2AuthenticateWithWriter(cmd *cobra.Command, args []string, writer io
 	devicePath, _ := cmd.Flags().GetString("device")
 	requireUV, _ := cmd.Flags().GetBool("user-verification")
 	outputHex, _ := cmd.Flags().GetBool("hex")
+	legacyDerivation, _ := cmd.Flags().GetBool("legacy-hmac-derivation")
 
 	if credIDStr == "" {
 		handleError(ErrCredentialIDRequired)
@@ -391,6 +398,17 @@ func runFIDO2AuthenticateWithWriter(cmd *cobra.Command, args []string, writer io
 	authConfig.RelyingPartyID = rpID
 	authConfig.Timeout = timeout
 	authConfig.RequireUserVerification = requireUV
+
+	// The legacy derivation is reachable only through this flag. It exists
+	// so an operator can unlock a volume enrolled before the hmac-secret
+	// extension was parsed correctly, once, and re-enroll it.
+	if legacyDerivation {
+		authConfig.DerivationMode = fido2.DerivationModeLegacyInsecure
+		if err := printer.PrintWarning(legacyDerivationCLIWarning); err != nil {
+			handleError(err)
+			return
+		}
+	}
 
 	if err := printer.PrintPrompt("Please touch your security key to authenticate..."); err != nil {
 		handleError(err)
@@ -536,6 +554,10 @@ func init() {
 	fido2AuthenticateCmd.Flags().String("device", "", "specific device path to use")
 	fido2AuthenticateCmd.Flags().Bool("user-verification", false, "require user verification (PIN)")
 	fido2AuthenticateCmd.Flags().Bool("hex", false, "output derived key in hex format instead of base64")
+	fido2AuthenticateCmd.Flags().Bool("legacy-hmac-derivation", false,
+		"DEPRECATED, MIGRATION ONLY: derive the key with the pre-fix hmac-secret derivation. "+
+			"The resulting key is NOT bound to the authenticator. Use it once to unlock a volume enrolled "+
+			"before the derivation was fixed, then re-enroll that volume immediately.")
 	_ = fido2AuthenticateCmd.MarkFlagRequired("credential-id")
 	_ = fido2AuthenticateCmd.MarkFlagRequired("salt")
 

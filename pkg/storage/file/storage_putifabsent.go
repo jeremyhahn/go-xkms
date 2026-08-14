@@ -17,7 +17,6 @@ import (
 	"context"
 	"fmt"
 	"os"
-	"path/filepath"
 
 	"github.com/jeremyhahn/go-xkms/pkg/errs"
 )
@@ -44,8 +43,7 @@ func (f *FileStorage) PutIfAbsent(ctx context.Context, key string, value []byte)
 	// caller the store is unchanged when it is not, and a retry would
 	// then see ErrKeyAlreadyExists for a key it "never stored".
 	if perm := filePermissionsForKey(key); perm != defaultPerms {
-		path := filepath.Join(f.rootDir, filepath.FromSlash(key))
-		if err := os.Chmod(path, perm); err != nil {
+		if err := os.Chmod(f.keyPath(key), perm); err != nil {
 			return true, &errs.Wrapped{Msg: fmt.Sprintf("file storage: failed to set permissions for key %q", key), Err: err}
 		}
 	}

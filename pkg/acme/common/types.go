@@ -78,12 +78,17 @@ type Meta struct {
 	ExternalAccountReq bool     `json:"externalAccountRequired,omitempty"` // Whether external account binding is required
 }
 
-// CertificateAuthority defines the minimal interface required by challenge verifiers.
-// This abstraction allows the ACME server to integrate with different CA implementations.
-type CertificateAuthority interface {
-	// Add methods as needed by challenge verifiers
-	// This is a placeholder interface that will be expanded based on actual CA requirements
-}
+// CertificateAuthority is the opaque CA handle threaded through
+// ChallengeVerifierFunc. It is deliberately method-free: the challenge types
+// need mutually disjoint CA capabilities (enroll-01 needs TCG-CSR-IDEVID
+// verification, endorse-01 needs CSR creation, http-01/dns-01 need nothing at
+// all), so a verifier that requires a capability asserts this value to the
+// narrow interface it needs and fails closed when the assertion does not hold.
+// See ACMEAttestationVerifiers in sdk/go/acme for the canonical example.
+//
+// It is NOT a placeholder. Widening it to a concrete method set would force
+// every CA implementation to satisfy the union of all challenge requirements.
+type CertificateAuthority interface{}
 
 // ChallengeVerifierFunc defines the function signature for challenge verification functions.
 // Each challenge type (http-01, dns-01, etc.) implements this interface to verify
@@ -91,7 +96,8 @@ type CertificateAuthority interface {
 //
 // Parameters:
 //   - resolver: DNS resolver to use for lookups
-//   - ca: Certificate Authority instance
+//   - ca: opaque CA handle; verifiers needing CA behavior assert it to a
+//     narrow capability interface (see CertificateAuthority)
 //   - authzValue: The identifier value being authorized (domain name, IP, etc.)
 //   - challengePort: The port to use for verification
 //   - challengeToken: The challenge token provided by the server

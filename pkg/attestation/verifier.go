@@ -122,20 +122,88 @@ func (v *Verifier) Verify(stmt *AttestationStatement, opts *VerifyOptions) error
 	return nil
 }
 
+// TrustAnchorCount returns the number of trust anchors configured on the
+// verifier. A verifier with zero anchors cannot establish hardware provenance
+// and is rejected by VerifyChainAnchored.
+func (v *Verifier) TrustAnchorCount() int {
+	return len(v.trustedRoots)
+}
+
+// anchors returns the effective trust anchor set: the anchors the verifier was
+// constructed with, plus any supplied per-call through the options.
+func (v *Verifier) anchors(opts *VerifyOptions) []*x509.Certificate {
+	if opts == nil || len(opts.TrustedRoots) == 0 {
+		return v.trustedRoots
+	}
+	combined := make([]*x509.Certificate, 0, len(v.trustedRoots)+len(opts.TrustedRoots))
+	combined = append(combined, v.trustedRoots...)
+	combined = append(combined, opts.TrustedRoots...)
+	return combined
+}
+
 // VerifyChain validates the certificate chain in the attestation statement.
+//
+// The chain is ordered leaf-first: index 0 is the attesting certificate and
+// each subsequent entry is its issuer (YubiKey PIV: slot cert, f9 attestation
+// cert, Yubico PIV Root CA; TPM 2.0: AK/IAK cert, EK cert, manufacturer CA).
+//
+// Verification is structural (each certificate is signed by the next, and no
+// certificate in the chain is expired or not yet valid) and, when trust
+// anchors are configured on the verifier or in the options, path validation
+// against those anchors. Configured anchors are always enforced — they are
+// never accepted and then ignored.
+//
+// VerifyChain does not by itself require an anchor: with no anchors configured
+// it performs structural validation only, which proves nothing about hardware
+// provenance because the whole chain is caller-supplied. Callers that gate a
+// security decision on hardware provenance must use VerifyChainAnchored, which
+// fails closed when no anchors are configured.
 func (v *Verifier) VerifyChain(stmt *AttestationStatement, opts *VerifyOptions) error {
+	if stmt == nil {
+		return ErrNilStatement
+	}
 	if len(stmt.CertificateChain) == 0 {
 		return ErrEmptyCertificateChain
 	}
 
-	// Get the attesting certificate (leaf)
-	attestingCert := stmt.CertificateChain[0]
-
-	// Verify the leaf certificate is not expired
 	now := time.Now()
-	if opts.CurrentTime != nil {
+	if opts != nil && opts.CurrentTime != nil {
 		now = time.Unix(*opts.CurrentTime, 0)
 	}
+
+	if err := verifyChainStructure(stmt.CertificateChain, now); err != nil {
+		return err
+	}
+
+	if anchors := v.anchors(opts); len(anchors) > 0 {
+		return verifyChainAnchoring(stmt.CertificateChain, anchors, now)
+	}
+
+	return nil
+}
+
+// VerifyChainAnchored validates the certificate chain and requires that it
+// terminate at a configured trust anchor.
+//
+// It fails closed. When no trust anchors are configured it returns
+// ErrNoTrustAnchors instead of falling back to structural-only validation: a
+// self-consistent chain minted by the caller must never satisfy an
+// attestation gate.
+func (v *Verifier) VerifyChainAnchored(stmt *AttestationStatement, opts *VerifyOptions) error {
+	if stmt == nil {
+		return ErrNilStatement
+	}
+	if len(v.anchors(opts)) == 0 {
+		return ErrNoTrustAnchors
+	}
+	return v.VerifyChain(stmt, opts)
+}
+
+// verifyChainStructure checks that the leaf-first chain is internally
+// consistent: every certificate is temporally valid and signed by its
+// successor. A single-certificate chain must be self-signed.
+func verifyChainStructure(chain []*x509.Certificate, now time.Time) error {
+	attestingCert := chain[0]
 
 	if now.Before(attestingCert.NotBefore) {
 		return &errs.Affix{Err: ErrCertificateNotYetValid, Suffix: fmt.Sprintf(" (valid from %s)", attestingCert.NotBefore)}
@@ -146,7 +214,7 @@ func (v *Verifier) VerifyChain(stmt *AttestationStatement, opts *VerifyOptions) 
 	}
 
 	// If only one cert, check for self-signed
-	if len(stmt.CertificateChain) == 1 {
+	if len(chain) == 1 {
 		cert := attestingCert
 		// Try CheckSignatureFrom first (handles RSA, ECDSA, Ed25519)
 		if err := cert.CheckSignatureFrom(cert); err == nil {
@@ -161,9 +229,9 @@ func (v *Verifier) VerifyChain(stmt *AttestationStatement, opts *VerifyOptions) 
 	}
 
 	// Verify chain of signatures
-	for i := 0; i < len(stmt.CertificateChain)-1; i++ {
-		currentCert := stmt.CertificateChain[i]
-		nextCert := stmt.CertificateChain[i+1]
+	for i := 0; i < len(chain)-1; i++ {
+		currentCert := chain[i]
+		nextCert := chain[i+1]
 
 		// Verify current cert is signed by next cert
 		if err := nextCert.CheckSignature(currentCert.SignatureAlgorithm,
@@ -180,6 +248,39 @@ func (v *Verifier) VerifyChain(stmt *AttestationStatement, opts *VerifyOptions) 
 		if now.After(nextCert.NotAfter) {
 			return &errs.Detail{Err: ErrCertificateExpired, Detail: fmt.Sprintf("intermediate certificate %d", i+1)}
 		}
+	}
+
+	return nil
+}
+
+// verifyChainAnchoring performs X.509 path validation of the leaf-first chain
+// against the supplied trust anchors. Every certificate the caller supplied
+// beyond the leaf is offered as an intermediate only — none of them can act as
+// an anchor, so a chain that terminates in a caller-minted root is rejected
+// with ErrChainNotAnchored.
+//
+// ExtKeyUsageAny is used deliberately: hardware attestation certificates carry
+// vendor extended key usages (for example the TCG tcg-kp-EKCertificate OID
+// 2.23.133.8.1 on TPM EK certificates) rather than the TLS usages Go checks by
+// default.
+func verifyChainAnchoring(chain []*x509.Certificate, anchors []*x509.Certificate, now time.Time) error {
+	roots := x509.NewCertPool()
+	for _, anchor := range anchors {
+		roots.AddCert(anchor)
+	}
+
+	intermediates := x509.NewCertPool()
+	for _, cert := range chain[1:] {
+		intermediates.AddCert(cert)
+	}
+
+	if _, err := chain[0].Verify(x509.VerifyOptions{
+		Roots:         roots,
+		Intermediates: intermediates,
+		CurrentTime:   now,
+		KeyUsages:     []x509.ExtKeyUsage{x509.ExtKeyUsageAny},
+	}); err != nil {
+		return &errs.Detail{Err: ErrChainNotAnchored, Detail: fmt.Sprintf("%v", err)}
 	}
 
 	return nil

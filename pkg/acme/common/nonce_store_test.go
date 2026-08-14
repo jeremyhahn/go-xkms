@@ -48,6 +48,20 @@ func (m *mockNonceDAO) SaveWithCondition(_ context.Context, _ *entities.ACMENonc
 	panic("not implemented")
 }
 
+// SaveIfAbsent stores the nonce only when its ID is unused, reporting whether
+// this call created it. The check and the insert happen under one lock so the
+// mock keeps the atomicity the real DAO delegates to the store — a mock that
+// raced here would let a single-use nonce be created twice.
+func (m *mockNonceDAO) SaveIfAbsent(_ context.Context, nonce *entities.ACMENonce) (bool, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if _, exists := m.nonces[nonce.ID]; exists {
+		return false, nil
+	}
+	m.nonces[nonce.ID] = nonce
+	return true, nil
+}
+
 func (m *mockNonceDAO) Get(_ context.Context, id uint64) (*entities.ACMENonce, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()

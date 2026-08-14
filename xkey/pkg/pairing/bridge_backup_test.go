@@ -46,8 +46,9 @@ func TestBridge_DispatchMap_TotalHandlerCount_WithBackup(t *testing.T) {
 	b, err := NewBridge(client, &BridgeConfig{Logger: testLogger()})
 	require.NoError(t, err)
 
-	// 16 original + 3 sharing + 3 backup + 2 OATH + 3 PIV + 5 sync = 32 total handlers.
-	assert.Len(t, b.handlers, 32)
+	// 16 original + 3 sharing + 3 backup + 2 OATH + 3 PIV + 5 sync
+	// + 1 enrollment-certificate store = 33 total handlers.
+	assert.Len(t, b.handlers, 33)
 }
 
 // --- handleCreateBackup tests ---
@@ -316,7 +317,11 @@ func (m *mockTransportClient) ClaimCertComplete(_ context.Context, _ *transport.
 	return nil, errNotImplemented
 }
 
-func (m *mockTransportClient) ClaimShare(_ context.Context, _ *transport.ClaimShareRequest) (*transport.ClaimShareResponse, error) {
+func (m *mockTransportClient) ClaimShareBegin(_ context.Context, _ *transport.ClaimShareBeginRequest) (*transport.ClaimShareBeginResponse, error) {
+	return nil, errNotImplemented
+}
+
+func (m *mockTransportClient) ClaimShareComplete(_ context.Context, _ *transport.ClaimShareCompleteRequest) (*transport.ClaimShareCompleteResponse, error) {
 	return nil, errNotImplemented
 }
 

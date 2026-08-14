@@ -260,30 +260,50 @@ func TestProvisionedKeyOperations(t *testing.T) {
 	assert.NotEmpty(t, validationSig)
 }
 
-// TestProvisionedAttestationOperations tests attestation with provisioned IAK.
-// This exercises Quote, AKProfile with provisioned keys.
+// TestProvisionedAttestationOperations tests attestation with a provisioned IAK.
+// This exercises AKProfile and Quote against the keys createSim provisioned.
+//
+// AKProfile used to be allowed to skip the test ("not supported in this
+// configuration"). It is supported: createSim provisions both the EK and the
+// IAK, which is exactly what AKProfile reports on, so a failure here is a
+// regression. The skip also hid the ordering defect AKProfile documents, where
+// reading the attribute caches directly made the call depend on which method
+// happened to run first.
 func TestProvisionedAttestationOperations(t *testing.T) {
 	_, tpm := createSim(false, false)
 	defer func() { _ = tpm.Close() }()
 
-	// Test AKProfile
 	profile, err := tpm.AKProfile()
-	if err != nil {
-		t.Logf("AKProfile not available: %v", err)
-		t.Skip("AKProfile not supported in this configuration")
-	}
-	assert.NotNil(t, profile)
+	require.NoError(t, err, "a provisioned TPM must be able to report its AK profile")
 
-	// Test Quote operation
+	// The profile is the enrollment evidence a CA consumes, so every field must
+	// be populated and must match the keys the TPM actually holds.
+	ekAttrs, err := tpm.EKAttributes()
+	require.NoError(t, err)
+	iakAttrs, err := tpm.IAKAttributes()
+	require.NoError(t, err)
+
+	assert.NotEmpty(t, profile.EKPub, "AK profile must carry the EK public area")
+	assert.NotEmpty(t, profile.AKPub, "AK profile must carry the AK public area")
+	assert.NotEmpty(t, profile.AKName.Buffer, "AK profile must carry the AK name")
+	assert.Equal(t, ekAttrs.TPMAttributes.PublicKeyBytes, profile.EKPub)
+	assert.Equal(t, iakAttrs.TPMAttributes.PublicKeyBytes, profile.AKPub)
+	assert.Equal(t, iakAttrs.TPMAttributes.Name, profile.AKName)
+	assert.Equal(t, iakAttrs.SignatureAlgorithm, profile.SignatureAlgorithm)
+	assert.NotEqual(t, profile.EKPub, profile.AKPub,
+		"the EK and the AK must be distinct keys")
+
+	// Quote over the same PCRs must succeed and must be bound to the nonce.
 	nonce := []byte("test-nonce-for-quote-operation-12345")
 	pcrs := []uint{0, 1, 2, 3, 7}
 
 	quote, err := tpm.Quote(pcrs, nonce)
-	if err != nil {
-		t.Logf("Quote failed: %v", err)
-		return
-	}
-	assert.NotNil(t, quote)
+	require.NoError(t, err, "a provisioned TPM must be able to quote")
+	assert.NotEmpty(t, quote.Quoted, "the quote must contain the signed attestation")
+	assert.NotEmpty(t, quote.Signature, "the quote must be signed")
+	assert.Equal(t, nonce, quote.Nonce, "the quote must echo the caller's nonce")
+	assert.Contains(t, string(quote.Quoted), string(nonce),
+		"the nonce must be embedded in the signed attestation structure")
 }
 
 // TestEKOperations tests operations specific to the Endorsement Key.
@@ -391,9 +411,8 @@ func TestClearWithInvalidAuthCoverage(t *testing.T) {
 func TestProvisionEKCertWithCertStoreCoverage(t *testing.T) {
 	logger := slog.Default()
 	sim, err := OpenSimulator()
-	if err != nil {
-		t.Skip("simulator not available")
-	}
+	require.NoError(t, err,
+		"the in-process TPM simulator must open; build with -tags tpm_simulator")
 
 	storageFactory, err := store.NewStorageFactory(logger, "")
 	require.NoError(t, err)
@@ -461,9 +480,8 @@ func TestProvisionEKCertWithCertStoreCoverage(t *testing.T) {
 func TestProvisionEKCertNilCertStoreCoverage(t *testing.T) {
 	logger := slog.Default()
 	sim, err := OpenSimulator()
-	if err != nil {
-		t.Skip("simulator not available")
-	}
+	require.NoError(t, err,
+		"the in-process TPM simulator must open; build with -tags tpm_simulator")
 
 	storageFactory, err := store.NewStorageFactory(logger, "")
 	require.NoError(t, err)
@@ -532,9 +550,8 @@ func TestProvisionEKCertNilCertStoreCoverage(t *testing.T) {
 func TestWriteEKCertCoverage(t *testing.T) {
 	logger := slog.Default()
 	sim, err := OpenSimulator()
-	if err != nil {
-		t.Skip("simulator not available")
-	}
+	require.NoError(t, err,
+		"the in-process TPM simulator must open; build with -tags tpm_simulator")
 
 	storageFactory, err := store.NewStorageFactory(logger, "")
 	require.NoError(t, err)
@@ -673,9 +690,8 @@ func TestCreatePlatformPolicyCoverage(t *testing.T) {
 func TestCreatePlatformPolicyEmptyGoldenPCRsCoverage(t *testing.T) {
 	logger := slog.Default()
 	sim, err := OpenSimulator()
-	if err != nil {
-		t.Skip("simulator not available")
-	}
+	require.NoError(t, err,
+		"the in-process TPM simulator must open; build with -tags tpm_simulator")
 
 	storageFactory, err := store.NewStorageFactory(logger, "")
 	require.NoError(t, err)

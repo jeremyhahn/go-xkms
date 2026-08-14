@@ -32,7 +32,6 @@ func TestCanonicalSurface_InitParsesCanonicalFlags(t *testing.T) {
 		"--threshold", "3",
 		"--hostname", "node.example.com",
 		"--sans", "node.example.com,node.lan",
-		"--admin-bundle", "/tmp/bundle.pem",
 	})
 	if err != nil {
 		t.Fatalf("canonical init flags rejected: %v", err)
@@ -43,8 +42,8 @@ func TestCanonicalSurface_InitParsesCanonicalFlags(t *testing.T) {
 	if flags.barrierStrategy != "shamir" || flags.shares != 5 || flags.threshold != 3 {
 		t.Fatalf("strategy/threshold parsing failed: %+v", flags)
 	}
-	if flags.hostname != "node.example.com" || flags.adminBundle != "/tmp/bundle.pem" {
-		t.Fatalf("hostname/admin-bundle parsing failed: %+v", flags)
+	if flags.hostname != "node.example.com" {
+		t.Fatalf("hostname parsing failed: %+v", flags)
 	}
 }
 
@@ -112,7 +111,6 @@ func TestCanonicalSurface_InitEnvFallback(t *testing.T) {
 	t.Setenv("XKMS_THRESHOLD", "3")
 	t.Setenv("XKMS_HOSTNAME", "env.example.com")
 	t.Setenv("XKMS_SANS", "env.example.com")
-	t.Setenv("XKMS_ADMIN_BUNDLE", "/tmp/env-bundle")
 
 	f, err := parseInitFlags([]string{})
 	if err != nil {
@@ -125,8 +123,8 @@ func TestCanonicalSurface_InitEnvFallback(t *testing.T) {
 	if f.barrierStrategy != "shamir" || f.shares != 5 || f.threshold != 3 {
 		t.Fatalf("env strategy/shares fallback failed: %+v", f)
 	}
-	if f.hostname != "env.example.com" || f.adminBundle != "/tmp/env-bundle" {
-		t.Fatalf("env hostname/admin-bundle fallback failed: %+v", f)
+	if f.hostname != "env.example.com" {
+		t.Fatalf("env hostname fallback failed: %+v", f)
 	}
 }
 
@@ -153,7 +151,7 @@ func TestCanonicalSurface_InitHelpMentionsCanonicalFlags(t *testing.T) {
 
 	for _, flag := range []string{
 		"--so-pin", "--user-pin", "--barrier-strategy", "--shares",
-		"--threshold", "--hostname", "--sans", "--admin-bundle",
+		"--threshold", "--hostname", "--sans",
 	} {
 		// PrintDefaults uses single dash for go flag; we accept either.
 		if !strings.Contains(help, flag) && !strings.Contains(help, strings.TrimPrefix(flag, "-")) {

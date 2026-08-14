@@ -16,24 +16,19 @@
 package pkcs11
 
 import (
+	"bytes"
 	"context"
-	"crypto"
 	"crypto/ecdsa"
 	"crypto/elliptic"
-	"crypto/sha256"
-	"crypto/sha512"
 	"crypto/x509"
 	"encoding/asn1"
 	"fmt"
-	"hash"
-	"io"
 
 	"github.com/jeremyhahn/go-xkms/pkg/errs"
 
 	"github.com/jeremyhahn/go-xkms/pkg/backend"
 	"github.com/jeremyhahn/go-xkms/pkg/types"
 	"github.com/miekg/pkcs11"
-	"golang.org/x/crypto/hkdf"
 )
 
 // PKCS#11 ECDH mechanism constants
@@ -60,17 +55,6 @@ const (
 	// CKD_SHA512_KDF uses SHA-512 based KDF (ANSI X9.63)
 	CKD_SHA512_KDF = 0x00000008
 )
-
-// CK_ECDH1_DERIVE_PARAMS represents the parameters for CKM_ECDH1_DERIVE mechanism
-// Per PKCS#11 v2.40/v3.0 specification, this structure contains:
-//   - kdf: Key derivation function to apply (CKD_NULL, CKD_SHA256_KDF, etc.)
-//   - pSharedData: Optional shared data for the KDF (typically nil)
-//   - pPublicData: The peer's EC public key point (uncompressed format)
-type ecdhDeriveParams struct {
-	kdf        uint
-	sharedData []byte
-	publicData []byte
-}
 
 // SupportedCurves returns the list of elliptic curves supported for ECDH key agreement.
 // This queries the token's mechanism list to determine supported curves.
@@ -206,8 +190,9 @@ func (b *Backend) DeriveKeyECDH(
 		return nil, &errs.Wrapped{Msg: "failed to parse peer public key", Err: err}
 	}
 
-	// Get slot
-	slot, err := b.getSlot()
+	// Resolve the slot through the backend's one label-aware resolver rather
+	// than assuming the token is first in the module's enumeration.
+	slot, err := b.resolveSlot()
 	if err != nil {
 		return nil, err
 	}
@@ -271,23 +256,6 @@ func (b *Backend) ensureP11Context() error {
 	return nil
 }
 
-// getSlot returns the configured slot or the first available slot.
-// Must be called with b.mu held and p11ctx initialized.
-func (b *Backend) getSlot() (uint, error) {
-	slots, err := b.p11ctx.GetSlotList(true)
-	if err != nil {
-		return 0, &errs.Wrapped{Msg: "failed to get slot list", Err: err}
-	}
-	if len(slots) == 0 {
-		return 0, ErrTokenNotFound
-	}
-
-	if b.config.Slot != nil {
-		return uint(*b.config.Slot), nil
-	}
-	return slots[0], nil
-}
-
 // findPrivateKeyHandle finds a private key object by its attributes.
 func (b *Backend) findPrivateKeyHandle(session pkcs11.SessionHandle, attrs *types.KeyAttributes) (pkcs11.ObjectHandle, error) {
 	label := createKeyID(attrs)
@@ -314,6 +282,55 @@ func (b *Backend) findPrivateKeyHandle(session pkcs11.SessionHandle, attrs *type
 	return handles[0], nil
 }
 
+// namedCurveOIDs maps the curves this backend agrees on to their ASN.1 object
+// identifiers. CKA_EC_PARAMS holds the DER encoding of the ECParameters CHOICE,
+// which for these NIST curves is the namedCurve alternative: a bare OID.
+var namedCurveOIDs = map[string]asn1.ObjectIdentifier{
+	elliptic.P256().Params().Name: {1, 2, 840, 10045, 3, 1, 7},
+	elliptic.P384().Params().Name: {1, 3, 132, 0, 34},
+	elliptic.P521().Params().Name: {1, 3, 132, 0, 35},
+}
+
+// requireMatchingCurve fails unless the token's private key sits on the same
+// curve as the peer's public key.
+//
+// ECDH across two different curves is meaningless: the peer point is not even a
+// member of the private key's group, and a token is free to return a value
+// anyway. types.KeyAgreementProvider documents ErrCurveMismatch for this, and
+// the software backend already returns it, so the hardware backend must agree.
+func (b *Backend) requireMatchingCurve(
+	session pkcs11.SessionHandle,
+	privKeyHandle pkcs11.ObjectHandle,
+	peerCurve elliptic.Curve,
+) error {
+	peerOID, ok := namedCurveOIDs[peerCurve.Params().Name]
+	if !ok {
+		return &errs.Detail{Err: ErrECDHNotSupported, Detail: fmt.Sprintf("curve %s", peerCurve.Params().Name)}
+	}
+
+	peerParams, err := asn1.Marshal(peerOID)
+	if err != nil {
+		return &errs.Wrapped{Msg: "failed to encode peer curve OID", Err: err}
+	}
+
+	attrs, err := b.p11ctx.GetAttributeValue(session, privKeyHandle, []*pkcs11.Attribute{
+		pkcs11.NewAttribute(pkcs11.CKA_EC_PARAMS, nil),
+	})
+	if err != nil {
+		return &errs.Wrapped{Msg: "failed to read CKA_EC_PARAMS from the private key", Err: err}
+	}
+	if len(attrs) == 0 || len(attrs[0].Value) == 0 {
+		return &errs.Detail{Err: ErrInvalidKeyAttributes, Detail: "private key exposes no CKA_EC_PARAMS; it is not an EC key"}
+	}
+
+	if !bytes.Equal(attrs[0].Value, peerParams) {
+		return &errs.Detail{Err: ErrCurveMismatch, Detail: fmt.Sprintf(
+			"peer public key uses %s, which does not match the private key's CKA_EC_PARAMS", peerCurve.Params().Name)}
+	}
+
+	return nil
+}
+
 // deriveECDH performs the ECDH key derivation on the HSM.
 func (b *Backend) deriveECDH(
 	session pkcs11.SessionHandle,
@@ -324,17 +341,21 @@ func (b *Backend) deriveECDH(
 	// Determine the expected shared secret size based on the curve
 	secretSize := (curve.Params().BitSize + 7) / 8
 
-	// Build the CK_ECDH1_DERIVE_PARAMS structure
-	// PKCS#11 requires this to be serialized as:
-	// - 4 bytes: kdf (CK_EC_KDF_TYPE)
-	// - 4 bytes: ulSharedDataLen
-	// - pointer to shared data (we'll use 0/nil)
-	// - 4 bytes: ulPublicDataLen
-	// - pointer to public data
+	// Refuse to derive against a peer key on a different curve. PKCS#11 leaves
+	// the outcome of a cross-curve C_DeriveKey to the token, and the
+	// types.KeyAgreementProvider contract requires ErrCurveMismatch here.
+	if err := b.requireMatchingCurve(session, privKeyHandle, curve); err != nil {
+		return nil, err
+	}
+
+	// Build CK_ECDH1_DERIVE_PARAMS.
 	//
-	// However, miekg/pkcs11 expects the parameters differently.
-	// We use the NewMechanism with raw parameter bytes.
-	ecdhParams := buildECDH1DeriveParams(CKD_NULL, nil, peerPoint)
+	// The struct holds two CK_BYTE_PTRs, so it cannot be serialized by hand
+	// from Go: pSharedData and pPublicData are addresses of C memory, not
+	// inline data, and CK_ULONG is 8 bytes on every platform this runs on.
+	// NewECDH1DeriveParams builds the real C structure and keeps the pointed-to
+	// buffers alive for the duration of the call.
+	ecdhParams := pkcs11.NewECDH1DeriveParams(CKD_NULL, nil, peerPoint)
 
 	// Create the mechanism with parameters
 	mechanism := []*pkcs11.Mechanism{
@@ -374,249 +395,94 @@ func (b *Backend) deriveECDH(
 	return secretAttrs[0].Value, nil
 }
 
-// buildECDH1DeriveParams constructs the CK_ECDH1_DERIVE_PARAMS byte slice
-// for the miekg/pkcs11 library.
-//
-// Per PKCS#11 specification, the structure is:
-//
-//	typedef struct CK_ECDH1_DERIVE_PARAMS {
-//	    CK_EC_KDF_TYPE kdf;
-//	    CK_ULONG ulSharedDataLen;
-//	    CK_BYTE_PTR pSharedData;
-//	    CK_ULONG ulPublicDataLen;
-//	    CK_BYTE_PTR pPublicData;
-//	} CK_ECDH1_DERIVE_PARAMS;
-//
-// For miekg/pkcs11, we serialize this according to the library's expectations.
-func buildECDH1DeriveParams(kdf uint, sharedData, publicData []byte) []byte {
-	// miekg/pkcs11 expects the ECDH1 derive params in a specific format
-	// The library handles the parameter structure internally when we pass:
-	// - kdf type as uint32
-	// - shared data length as uint32
-	// - shared data bytes
-	// - public data length as uint32
-	// - public data bytes
-	//
-	// We'll construct this in little-endian format (platform-dependent, but most common)
+// curveForUncompressedPoint returns the curve an uncompressed EC point of the
+// given length belongs to. The length is unambiguous across the supported
+// curves: 1 + 2*coordinate size, so 65, 97 and 133 bytes.
+func curveForUncompressedPoint(length int) (elliptic.Curve, bool) {
+	switch length {
+	case 65:
+		return elliptic.P256(), true
+	case 97:
+		return elliptic.P384(), true
+	case 133:
+		return elliptic.P521(), true
+	}
+	return nil, false
+}
 
-	// For simplicity with miekg/pkcs11, we encode the parameters as the library expects
-	// The library's Mechanism.Parameter expects a byte slice that it will parse
-	//
-	// Format: kdf(4 bytes) + sharedDataLen(4 bytes) + sharedData + pubDataLen(4 bytes) + pubData
-	sharedLen := uint32(len(sharedData))
-	pubLen := uint32(len(publicData))
+// uncompressedPoint validates a bare uncompressed EC point and returns it with
+// its curve.
+func uncompressedPoint(candidate []byte) ([]byte, elliptic.Curve, error) {
+	curve, ok := curveForUncompressedPoint(len(candidate))
+	if !ok {
+		return nil, nil, &errs.Message{Msg: fmt.Sprintf("unsupported EC point size: %d", len(candidate))}
+	}
 
-	// Calculate total size
-	size := 4 + 4 + len(sharedData) + 4 + len(publicData)
-	params := make([]byte, size)
+	// Unmarshal rejects points that are not on the curve, which is what stops
+	// an invalid-curve attack: a peer that submits a point on a weaker curve
+	// can otherwise recover the private key from a sequence of derivations.
+	if x, _ := elliptic.Unmarshal(curve, candidate); x == nil {
+		return nil, nil, &errs.Message{Msg: "invalid EC point: not on curve"}
+	}
 
-	offset := 0
-
-	// KDF type (4 bytes, little-endian)
-	params[offset] = byte(kdf)
-	params[offset+1] = byte(kdf >> 8)
-	params[offset+2] = byte(kdf >> 16)
-	params[offset+3] = byte(kdf >> 24)
-	offset += 4
-
-	// Shared data length (4 bytes, little-endian)
-	params[offset] = byte(sharedLen)
-	params[offset+1] = byte(sharedLen >> 8)
-	params[offset+2] = byte(sharedLen >> 16)
-	params[offset+3] = byte(sharedLen >> 24)
-	offset += 4
-
-	// Shared data
-	copy(params[offset:], sharedData)
-	offset += len(sharedData)
-
-	// Public data length (4 bytes, little-endian)
-	params[offset] = byte(pubLen)
-	params[offset+1] = byte(pubLen >> 8)
-	params[offset+2] = byte(pubLen >> 16)
-	params[offset+3] = byte(pubLen >> 24)
-	offset += 4
-
-	// Public data
-	copy(params[offset:], publicData)
-
-	return params
+	return candidate, curve, nil
 }
 
 // parsePeerPublicKey parses the peer's public key bytes into an EC point.
-// Accepts either:
+// Accepts, in order of preference:
 //   - DER-encoded SubjectPublicKeyInfo (X.509 format)
 //   - Raw uncompressed EC point (0x04 || X || Y)
+//   - An ASN.1 OCTET STRING wrapping an uncompressed point, which is how
+//     PKCS#11 tokens store CKA_EC_POINT and therefore how a peer that copies
+//     that attribute verbatim sends its key
 //
 // Returns the uncompressed point bytes and the curve.
+//
+// The three encodings cannot be told apart by their first byte: 0x04 is both
+// the uncompressed point marker and the ASN.1 OCTET STRING tag. Length is the
+// discriminator, so a leading 0x04 that is not a valid point length falls
+// through to the OCTET STRING attempt rather than being rejected outright.
 func parsePeerPublicKey(pubKeyBytes []byte) ([]byte, elliptic.Curve, error) {
 	if len(pubKeyBytes) == 0 {
-		return nil, nil, &errs.Message{Msg: "empty public key"}
+		return nil, nil, ErrInvalidPeerPublicKey
 	}
 
-	// Try to parse as DER-encoded SubjectPublicKeyInfo
-	pubKey, err := x509.ParsePKIXPublicKey(pubKeyBytes)
-	if err == nil {
+	// SubjectPublicKeyInfo.
+	if pubKey, err := x509.ParsePKIXPublicKey(pubKeyBytes); err == nil {
 		ecdsaPub, ok := pubKey.(*ecdsa.PublicKey)
 		if !ok {
-			return nil, nil, &errs.Message{Msg: "public key is not an ECDSA key"}
+			return nil, nil, &errs.Detail{Err: ErrInvalidPeerPublicKey, Detail: "public key is not an ECDSA key"}
 		}
-		// Marshal to uncompressed point format
-		point := elliptic.Marshal(ecdsaPub.Curve, ecdsaPub.X, ecdsaPub.Y)
-		return point, ecdsaPub.Curve, nil
+		return elliptic.Marshal(ecdsaPub.Curve, ecdsaPub.X, ecdsaPub.Y), ecdsaPub.Curve, nil
 	}
 
-	// Try to parse as raw EC point
-	// Uncompressed format: 0x04 || X || Y
+	// Bare uncompressed point.
 	if pubKeyBytes[0] == 0x04 {
-		// Determine curve from point size
-		pointLen := len(pubKeyBytes)
-		var curve elliptic.Curve
-
-		switch pointLen {
-		case 65: // P-256: 1 + 32 + 32
-			curve = elliptic.P256()
-		case 97: // P-384: 1 + 48 + 48
-			curve = elliptic.P384()
-		case 133: // P-521: 1 + 66 + 66
-			curve = elliptic.P521()
-		default:
-			return nil, nil, &errs.Message{Msg: fmt.Sprintf("unsupported EC point size: %d", pointLen)}
+		if _, ok := curveForUncompressedPoint(len(pubKeyBytes)); ok {
+			return uncompressedPoint(pubKeyBytes)
 		}
-
-		// Validate the point is on the curve
-		x, _ := elliptic.Unmarshal(curve, pubKeyBytes)
-		if x == nil {
-			return nil, nil, &errs.Message{Msg: "invalid EC point: not on curve"}
-		}
-
-		return pubKeyBytes, curve, nil
 	}
 
-	// Try to unwrap ASN.1 OCTET STRING if present
+	// OCTET STRING wrapping an uncompressed point.
 	var octetString []byte
 	if _, err := asn1.Unmarshal(pubKeyBytes, &octetString); err == nil {
 		if len(octetString) > 0 && octetString[0] == 0x04 {
-			return parsePeerPublicKey(octetString)
+			return uncompressedPoint(octetString)
 		}
 	}
 
-	return nil, nil, &errs.Message{Msg: "unrecognized public key format"}
+	return nil, nil, &errs.Detail{Err: ErrInvalidPeerPublicKey, Detail: "unrecognized public key format"}
 }
 
-// applyKDF applies the specified key derivation function to the shared secret.
+// applyKDF derives a key from an ECDH shared secret using the canonical KDF
+// implementation in pkg/crypto/kdf, reached through types.KDFParams.Derive.
+// Every backend derives through that one entry point, so the same parameters
+// yield the same bytes here as on the TPM 2.0, software, and phone backends.
 func applyKDF(sharedSecret []byte, params *types.KDFParams) ([]byte, error) {
-	// Get the hash function
-	hashFunc, err := getHashFunc(params.Hash)
-	if err != nil {
-		return nil, err
+	if params == nil {
+		return nil, ErrInvalidKDFParams
 	}
-
-	switch params.Algorithm {
-	case types.KDFAlgorithmHKDF:
-		return applyHKDF(sharedSecret, params.Salt, params.Info, params.KeyLength, hashFunc)
-
-	case types.KDFAlgorithmX963:
-		// ANSI X9.63 KDF - commonly used with ECDH
-		return applyX963KDF(sharedSecret, params.Info, params.KeyLength, hashFunc)
-
-	case types.KDFAlgorithmSP80056A:
-		// NIST SP 800-56A Concatenation KDF
-		return applySP80056AKDF(sharedSecret, params.Info, params.KeyLength, hashFunc)
-
-	default:
-		return nil, &errs.Message{Msg: fmt.Sprintf("unsupported KDF algorithm for ECDH: %s", params.Algorithm)}
-	}
-}
-
-// getHashFunc returns a hash function constructor for the specified algorithm name.
-func getHashFunc(hashName string) (func() hash.Hash, error) {
-	switch hashName {
-	case "SHA-256":
-		return sha256.New, nil
-	case "SHA-384":
-		return sha512.New384, nil
-	case "SHA-512":
-		return sha512.New, nil
-	default:
-		return nil, &errs.Message{Msg: fmt.Sprintf("unsupported hash algorithm: %s", hashName)}
-	}
-}
-
-// applyHKDF applies HKDF (RFC 5869) to derive a key from the shared secret.
-func applyHKDF(secret, salt, info []byte, keyLen int, hashFunc func() hash.Hash) ([]byte, error) {
-	reader := hkdf.New(hashFunc, secret, salt, info)
-	key := make([]byte, keyLen)
-	if _, err := io.ReadFull(reader, key); err != nil {
-		return nil, &errs.Wrapped{Msg: "HKDF expansion failed", Err: err}
-	}
-	return key, nil
-}
-
-// applyX963KDF applies ANSI X9.63 KDF to derive a key from the shared secret.
-// X9.63 KDF: Key = H(Z || Counter || SharedInfo)
-func applyX963KDF(secret, sharedInfo []byte, keyLen int, hashFunc func() hash.Hash) ([]byte, error) {
-	h := hashFunc()
-	hashLen := h.Size()
-	reps := (keyLen + hashLen - 1) / hashLen
-
-	if reps > 0xFFFFFFFF {
-		return nil, &errs.Message{Msg: "requested key length too large"}
-	}
-
-	var derivedKey []byte
-	counter := make([]byte, 4)
-
-	for i := uint32(1); i <= uint32(reps); i++ {
-		// Counter is big-endian per X9.63
-		counter[0] = byte(i >> 24)
-		counter[1] = byte(i >> 16)
-		counter[2] = byte(i >> 8)
-		counter[3] = byte(i)
-
-		h.Reset()
-		h.Write(secret)
-		h.Write(counter)
-		if len(sharedInfo) > 0 {
-			h.Write(sharedInfo)
-		}
-		derivedKey = append(derivedKey, h.Sum(nil)...)
-	}
-
-	return derivedKey[:keyLen], nil
-}
-
-// applySP80056AKDF applies NIST SP 800-56A Concatenation KDF.
-// Similar to X9.63 but with different structure: Key = H(Counter || Z || OtherInfo)
-func applySP80056AKDF(secret, otherInfo []byte, keyLen int, hashFunc func() hash.Hash) ([]byte, error) {
-	h := hashFunc()
-	hashLen := h.Size()
-	reps := (keyLen + hashLen - 1) / hashLen
-
-	if reps > 0xFFFFFFFF {
-		return nil, &errs.Message{Msg: "requested key length too large"}
-	}
-
-	var derivedKey []byte
-	counter := make([]byte, 4)
-
-	for i := uint32(1); i <= uint32(reps); i++ {
-		// Counter is big-endian per SP 800-56A
-		counter[0] = byte(i >> 24)
-		counter[1] = byte(i >> 16)
-		counter[2] = byte(i >> 8)
-		counter[3] = byte(i)
-
-		h.Reset()
-		h.Write(counter)
-		h.Write(secret)
-		if len(otherInfo) > 0 {
-			h.Write(otherInfo)
-		}
-		derivedKey = append(derivedKey, h.Sum(nil)...)
-	}
-
-	return derivedKey[:keyLen], nil
+	return params.Derive(sharedSecret)
 }
 
 // GetPublicKeyBytes returns the DER-encoded public key for a key pair.
@@ -633,12 +499,3 @@ func (b *Backend) GetPublicKeyBytes(attrs *types.KeyAttributes) ([]byte, error) 
 
 // Ensure Backend implements KeyAgreementBackend at compile time
 var _ types.KeyAgreementProvider = (*Backend)(nil)
-
-// ecdhSigner wraps a crypto.Signer to provide ECDH capability.
-// This is useful when you need to perform ECDH with a key that only exposes
-// the crypto.Signer interface.
-type ecdhSigner struct {
-	backend *Backend
-	attrs   *types.KeyAttributes
-	signer  crypto.Signer
-}

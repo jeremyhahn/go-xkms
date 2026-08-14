@@ -32,6 +32,7 @@ func (s *XKMSService) userToTransport(ctx context.Context, u *qrdbtransport.User
 		}
 	}
 	return transport.UserInfo{
+		ID:       u.ID,
 		Username: u.Username,
 		Role:     role,
 		Enabled:  u.Enabled,

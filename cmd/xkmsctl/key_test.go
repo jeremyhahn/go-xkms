@@ -54,6 +54,7 @@ type mockKeyClient struct {
 	rotateKeyResp       *client.RotateKeyResponse
 	rotateKeyErr        error
 	importKeyResp       *client.ImportKeyResponse
+	importKeyReq        *client.ImportKeyRequest
 	importKeyErr        error
 	exportKeyResp       *client.ExportKeyResponse
 	exportKeyErr        error
@@ -108,6 +109,11 @@ func (m *mockKeyClient) RotateKey(_ context.Context, req *client.RotateKeyReques
 }
 
 func (m *mockKeyClient) ImportKey(_ context.Context, req *client.ImportKeyRequest) (*client.ImportKeyResponse, error) {
+	// Recorded, not discarded: the algorithm, size and curve the caller supplies
+	// are the whole point of the import contract -- wrapped material is opaque
+	// ciphertext and the server cannot infer them -- so a test that cannot see
+	// the outgoing request cannot tell a correct import from one that drops them.
+	m.importKeyReq = req
 	return m.importKeyResp, m.importKeyErr
 }
 
@@ -302,7 +308,7 @@ func TestGenerateKey_Success(t *testing.T) {
 		},
 	}
 
-	generateKey(cfg, printer, "test-key", "tls", "", "rsa", 2048, "", false)
+	generateKey(cfg, printer, "test-key", "tls", "", "rsa", 2048, "", false, false)
 
 	output := buf.String()
 	if !strings.Contains(output, "Successfully generated") {
@@ -328,7 +334,7 @@ func TestGenerateKey_SymmetricKey(t *testing.T) {
 		},
 	}
 
-	generateKey(cfg, printer, "sym-key", "symmetric", "aes-256-gcm", "", 256, "", false)
+	generateKey(cfg, printer, "sym-key", "symmetric", "aes-256-gcm", "", 256, "", false, false)
 
 	output := buf.String()
 	if !strings.Contains(output, "Successfully generated") {
@@ -350,7 +356,7 @@ func TestGenerateKey_ClientCreateError(t *testing.T) {
 		},
 	}
 
-	generateKey(cfg, printer, "test-key", "tls", "", "rsa", 2048, "", false)
+	generateKey(cfg, printer, "test-key", "tls", "", "rsa", 2048, "", false, false)
 }
 
 func TestGenerateKey_ConnectError(t *testing.T) {
@@ -373,7 +379,7 @@ func TestGenerateKey_ConnectError(t *testing.T) {
 		},
 	}
 
-	generateKey(cfg, printer, "test-key", "tls", "", "rsa", 2048, "", false)
+	generateKey(cfg, printer, "test-key", "tls", "", "rsa", 2048, "", false, false)
 }
 
 func TestGenerateKey_GenerateError(t *testing.T) {
@@ -394,7 +400,7 @@ func TestGenerateKey_GenerateError(t *testing.T) {
 		},
 	}
 
-	generateKey(cfg, printer, "test-key", "tls", "", "rsa", 2048, "", false)
+	generateKey(cfg, printer, "test-key", "tls", "", "rsa", 2048, "", false, false)
 }
 
 // Test listKeys function
@@ -1479,7 +1485,7 @@ func TestImportKey_Success(t *testing.T) {
 		Algorithm:  backend.WrappingAlgorithmRSAES_OAEP_SHA_256,
 	}
 
-	importKey(cfg, printer, "test-key", wrapped)
+	importKey(cfg, printer, "test-key", wrapped, importKeySpec{keyType: "rsa", keySize: 2048})
 
 	output := buf.String()
 	if !strings.Contains(output, "Successfully imported") {
@@ -1506,7 +1512,7 @@ func TestImportKey_ClientCreateError(t *testing.T) {
 		Algorithm:  backend.WrappingAlgorithmRSAES_OAEP_SHA_256,
 	}
 
-	importKey(cfg, printer, "test-key", wrapped)
+	importKey(cfg, printer, "test-key", wrapped, importKeySpec{keyType: "rsa", keySize: 2048})
 }
 
 func TestImportKey_ConnectError(t *testing.T) {
@@ -1534,7 +1540,7 @@ func TestImportKey_ConnectError(t *testing.T) {
 		Algorithm:  backend.WrappingAlgorithmRSAES_OAEP_SHA_256,
 	}
 
-	importKey(cfg, printer, "test-key", wrapped)
+	importKey(cfg, printer, "test-key", wrapped, importKeySpec{keyType: "rsa", keySize: 2048})
 }
 
 func TestImportKey_ImportError(t *testing.T) {
@@ -1560,7 +1566,7 @@ func TestImportKey_ImportError(t *testing.T) {
 		Algorithm:  backend.WrappingAlgorithmRSAES_OAEP_SHA_256,
 	}
 
-	importKey(cfg, printer, "test-key", wrapped)
+	importKey(cfg, printer, "test-key", wrapped, importKeySpec{keyType: "rsa", keySize: 2048})
 }
 
 // Test exportKey function
@@ -2870,7 +2876,7 @@ func TestGenerateKey_AllFormats(t *testing.T) {
 				},
 			}
 
-			generateKey(cfg, printer, "test-key", "tls", "", "rsa", 2048, "", false)
+			generateKey(cfg, printer, "test-key", "tls", "", "rsa", 2048, "", false, false)
 
 			if buf.Len() == 0 {
 				t.Errorf("generateKey with %s format should produce output", format)

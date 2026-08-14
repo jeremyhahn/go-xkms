@@ -449,6 +449,47 @@ func TestDecryptBackup_CorruptedCiphertext(t *testing.T) {
 	assert.ErrorIs(t, err, ErrDecryptionFailed)
 }
 
+// TestDecryptBackup_WrongNonceLength verifies that DecryptBackup returns an
+// error instead of panicking when the backup file carries a nonce that is
+// not exactly the XChaCha20-Poly1305 nonce size (24 bytes).
+// chacha20poly1305.AEAD.Open panics on a mismatched nonce length, so a
+// corrupted or maliciously crafted import file must not be able to crash
+// the process.
+func TestDecryptBackup_WrongNonceLength(t *testing.T) {
+	cert := testCert(t)
+	svc, err := NewService(testConfig(),
+		WithTrustStore(&mockTrustStore{
+			certs: []*x509.Certificate{cert},
+		}),
+	)
+	require.NoError(t, err)
+
+	key := testKey()
+	eb, err := svc.CreateBackup(key)
+	require.NoError(t, err)
+
+	tests := []struct {
+		name      string
+		nonceSize int
+	}{
+		{name: "12-byte AES-GCM-style nonce", nonceSize: 12},
+		{name: "empty nonce", nonceSize: 0},
+		{name: "single byte nonce", nonceSize: 1},
+		{name: "oversized nonce", nonceSize: 48},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			tampered := *eb
+			tampered.Nonce = make([]byte, tt.nonceSize)
+
+			archive, err := svc.DecryptBackup(&tampered, key)
+			assert.Nil(t, archive)
+			assert.ErrorIs(t, err, ErrDecryptionFailed)
+		})
+	}
+}
+
 func TestCreateDecryptRoundTrip(t *testing.T) {
 	cert := testCert(t)
 	fp := testCertFingerprint(cert)

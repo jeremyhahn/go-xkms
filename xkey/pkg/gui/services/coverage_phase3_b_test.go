@@ -549,11 +549,9 @@ func TestP3B_StorageService_WipeVolume_InvalidStandard(t *testing.T) {
 // TestP3B_StorageService_WipeVolume_ValidStandards tests that valid
 // standard names pass validation (non-root path).
 func TestP3B_StorageService_WipeVolume_ValidStandards(t *testing.T) {
-	// Not running as root, so this will try elevated path which requires
-	// elevator to be set.
-	if os.Geteuid() == 0 {
-		t.Skip("test must not run as root")
-	}
+	// Force the unprivileged branch, which routes through the elevated
+	// helper and fails with ErrStorageRequiresRoot when no elevator is set.
+	asUnprivileged(t)
 	svc := NewStorageService()
 
 	for _, std := range []string{"nist", "dod3", "dod7"} {

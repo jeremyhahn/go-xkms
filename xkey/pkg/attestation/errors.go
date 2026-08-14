@@ -36,6 +36,16 @@ var (
 
 	// ErrTrustStoreQuery indicates a failure querying the trust store.
 	ErrTrustStoreQuery = errors.New("attestation: trust store query failed")
+
+	// ErrMissingNonce indicates an attestation was submitted without the
+	// challenge it must be bound to. Verifying without a challenge accepts
+	// replayed attestations, so the verifier refuses instead.
+	ErrMissingNonce = errors.New("attestation: challenge nonce is required")
+
+	// ErrChallengeVerification indicates the attestation challenge could not be
+	// bound to the supplied nonce: the key attestation extension was absent,
+	// unparseable, or carried a different challenge.
+	ErrChallengeVerification = errors.New("attestation: challenge verification failed")
 )
 
 // SentinelCauseError attaches an underlying cause to a package sentinel

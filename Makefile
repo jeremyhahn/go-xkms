@@ -196,17 +196,45 @@ PKCS11_SO_PIN ?= 12345678
 # Multi-protocol connection configuration
 # Unix socket (gRPC over UDS)
 XKMS_UNIX_SOCKET ?= /var/run/xkms/xkms.sock
+# Path to this repo inside go-xkms's OWN devcontainer (.devcontainer/, compose
+# project "go-xkms", container go-xkms-devcontainer), which bind-mounts the repo
+# at /workspace. Every in-container path below is derived from this variable, so
+# pointing it elsewhere is all that is needed to drive a container that mounts
+# go-xkms somewhere other than /workspace.
+DEVCONTAINER_REPO ?= /workspace
 # TCP (gRPC over TCP)
 XKMS_GRPC_ADDR ?= localhost:9443
 # Container gRPC address (for tests running inside devcontainer network)
 XKMS_GRPC_ADDR_CONTAINER ?= xkms-server:9443
 # PKCS#11 module path inside container
-PKCS11_MODULE_CONTAINER := /workspace/build/lib/libxkms_pkcs11.so
+PKCS11_MODULE_CONTAINER := $(DEVCONTAINER_REPO)/build/lib/libxkms_pkcs11.so
+# FIPS PKCS#11 module path inside container (the GOFIPS140-compiled artifact,
+# used by FIPS lanes that dlopen the .so so they exercise the real FIPS build
+# rather than a non-FIPS build merely run under the GOFIPS140 environment).
+PKCS11_MODULE_FIPS_CONTAINER := $(DEVCONTAINER_REPO)/build/lib/libxkms_pkcs11_fips.so
 XKMS_GRPC_TLS_ENABLED ?= false
 XKMS_GRPC_TLS_INSECURE ?= true
 
+# FIPS 140-3 build selection for the PKCS#11 module.
+#
+# GOFIPS140 is the Go toolchain variable that compiles in the FIPS 140-3 crypto
+# module. The non-FIPS build defaults it to "off"; the FIPS build defaults it to
+# "latest". Both are user-overridable, so an operator can pin an exact certified
+# module version at build time, e.g.:
+#
+#   make build-pkcs11-module-fips GOFIPS140_FIPS=v1.0.0
+#
+# The FIPS artifact is emitted alongside the non-FIPS one as
+# libxkms_pkcs11_fips.so and self-identifies as FIPS in its CK_INFO /
+# CK_TOKEN_INFO labels (via crypto/fips140.Enabled(), the build-time truth).
+GOFIPS140 ?= off
+GOFIPS140_FIPS ?= latest
+
 # Test timeout
 PKCS11_TEST_TIMEOUT ?= 10m
+# Backends the OpenSSL matrix exercises. Naming a backend asserts it is
+# compiled in; the matrix fails rather than skips if it is not.
+XKMS_PKCS11_BACKENDS ?= software
 
 # Test configuration - include codec build tags for go-codec support
 TEST_FLAGS := -v -race -timeout 30m -tags="codec_cbor codec_json codec_msgpack tpm_simulator"
@@ -334,18 +362,188 @@ build-xkey-local:
 	@echo "$(GREEN)✓ xkey binary built at: $(BIN_DIR)/xkey$(RESET)"
 
 # ==============================================================================
+# Web UI Targets (server console SPA + TypeScript SDK)
+# ==============================================================================
+#
+# The SPA (web/app) consumes two workspace packages through npm `file:` deps:
+#   @go-xkms/sdk         → sdk/ts        (built: needs dist/)
+#   @go-xkms/svelte-auth → sdk/ts/svelte-auth (source-only)
+# The built dist/ is copied to two embed roots: web/dist (daemon `ui` build
+# tag) and web/desktop/frontend/dist (the future Wails shell). npm targets
+# no-op with a warning when npm is unavailable so a Go-only checkout still
+# builds.
+
+WEB_APP_DIR := web/app
+SDK_TS_DIR := sdk/ts
+SVELTE_AUTH_DIR := sdk/ts/svelte-auth
+NPM := $(shell command -v npm 2>/dev/null)
+
+.PHONY: build-sdk-ts
+## build-sdk-ts: Build and test the @go-xkms/sdk TypeScript client
+build-sdk-ts:
+ifeq ($(NPM),)
+	@echo "$(YELLOW)⚠ npm not found; skipping build-sdk-ts$(RESET)"
+else
+	@echo "$(CYAN)$(BOLD)→ Building @go-xkms/sdk...$(RESET)"
+	@cd $(SDK_TS_DIR) && npm install --silent && npm run build && npm test
+	@echo "$(GREEN)✓ @go-xkms/sdk built$(RESET)"
+endif
+
+.PHONY: build-web
+## build-web: Build the server console SPA and stage it for embedding
+build-web: build-sdk-ts
+ifeq ($(NPM),)
+	@echo "$(YELLOW)⚠ npm not found; skipping build-web$(RESET)"
+else
+	@echo "$(CYAN)$(BOLD)→ Installing web/app dependencies...$(RESET)"
+	@cd $(WEB_APP_DIR) && npm install --silent
+	@# npm rewrites file: deps to relative symlinks; force absolute symlinks so
+	@# resolution survives regardless of the working directory, then assert the
+	@# entrypoints resolve before building.
+	@mkdir -p $(WEB_APP_DIR)/node_modules/@go-xkms
+	@rm -rf $(WEB_APP_DIR)/node_modules/@go-xkms/sdk $(WEB_APP_DIR)/node_modules/@go-xkms/svelte-auth
+	@ln -sfn $(CURDIR)/$(SDK_TS_DIR) $(WEB_APP_DIR)/node_modules/@go-xkms/sdk
+	@ln -sfn $(CURDIR)/$(SVELTE_AUTH_DIR) $(WEB_APP_DIR)/node_modules/@go-xkms/svelte-auth
+	@test -f $(CURDIR)/$(SDK_TS_DIR)/dist/index.js || { echo "$(RED)✗ @go-xkms/sdk dist missing; run build-sdk-ts$(RESET)"; exit 1; }
+	@test -f $(CURDIR)/$(SVELTE_AUTH_DIR)/src/index.ts || { echo "$(RED)✗ @go-xkms/svelte-auth src missing$(RESET)"; exit 1; }
+	@echo "$(CYAN)$(BOLD)→ Building web/app SPA...$(RESET)"
+	@cd $(WEB_APP_DIR) && npm run build
+	@test -f $(WEB_APP_DIR)/dist/index.html || { echo "$(RED)✗ web/app build produced no dist/index.html$(RESET)"; exit 1; }
+	@echo "$(CYAN)$(BOLD)→ Staging dist for daemon and desktop embeds...$(RESET)"
+	@rm -rf web/dist && mkdir -p web/dist && cp -r $(WEB_APP_DIR)/dist/. web/dist/
+	@mkdir -p web/desktop/frontend/dist && rm -rf web/desktop/frontend/dist && mkdir -p web/desktop/frontend/dist && cp -r $(WEB_APP_DIR)/dist/. web/desktop/frontend/dist/
+	@echo "$(GREEN)✓ web UI built and staged (web/dist, web/desktop/frontend/dist)$(RESET)"
+endif
+
+.PHONY: build-ui
+## build-ui: Build xkmsd with the embedded web UI (requires build-web first)
+build-ui: build-web
+	@echo "$(CYAN)$(BOLD)→ Building xkmsd with embedded web UI...$(RESET)"
+	@mkdir -p $(BIN_DIR)
+	@$(GO) build -tags "ui $(SERVER_BUILD_TAGS)" -o $(BIN_DIR)/xkmsd ./cmd/xkmsd
+	@echo "$(GREEN)✓ xkmsd (with web UI) built: $(BIN_DIR)/xkmsd$(RESET)"
+
+.PHONY: dev-web
+## dev-web: Run the SPA dev server (proxies to XKMS_DEV_API, default :8443)
+dev-web:
+ifeq ($(NPM),)
+	@echo "$(YELLOW)⚠ npm not found; cannot run dev-web$(RESET)"
+else
+	@cd $(WEB_APP_DIR) && XKMS_DEV_API=$${XKMS_DEV_API:-https://localhost:8443} npm run dev
+endif
+
+.PHONY: build-desktop
+## build-desktop: Build the Wails desktop console (embeds the SPA)
+## The GUI needs cgo + WebKit; build under the "desktop" tag. Depends on
+## build-web to stage the SPA into web/desktop/frontend/dist first.
+build-desktop: build-web
+	@echo "$(CYAN)$(BOLD)→ Building xKMS desktop console...$(RESET)"
+	@mkdir -p $(BIN_DIR)
+	@cd web/desktop && CGO_ENABLED=1 $(GO) build -tags "desktop production webkit2_41" \
+		-o $(CURDIR)/$(BIN_DIR)/xkms-console . && \
+		echo "$(GREEN)✓ xKMS desktop console built: $(BIN_DIR)/xkms-console$(RESET)"
+
+.PHONY: test-web
+## test-web: Type-check and unit-test the SDK, svelte-auth, and SPA
+## Runs under coverage so the 90% thresholds in each vitest config gate the
+## build — a plain `vitest run` reports no coverage and enforces nothing.
+test-web:
+ifeq ($(NPM),)
+	@echo "$(YELLOW)⚠ npm not found; skipping test-web$(RESET)"
+else
+	@echo "$(CYAN)$(BOLD)→ Testing @go-xkms/sdk...$(RESET)"
+	@cd $(SDK_TS_DIR) && npm install --silent && npm run test:coverage
+	@echo "$(CYAN)$(BOLD)→ Testing @go-xkms/svelte-auth...$(RESET)"
+	@cd $(SVELTE_AUTH_DIR) && npm install --silent && npm run test:coverage
+	@echo "$(CYAN)$(BOLD)→ Type-checking and testing web/app...$(RESET)"
+	@cd $(WEB_APP_DIR) && npm install --silent && npm run check && npm run test:coverage
+	@echo "$(GREEN)✓ web UI tests passed$(RESET)"
+endif
+
+.PHONY: test-web-e2e
+## test-web-e2e: Playwright mock-API tier (hermetic; no server required)
+## Drives the real SPA against page.route() interception, so it needs only a
+## browser — the live-server tier is integration-test-web.
+test-web-e2e:
+ifeq ($(NPM),)
+	@echo "$(YELLOW)⚠ npm not found; skipping test-web-e2e$(RESET)"
+else
+	@echo "$(CYAN)$(BOLD)→ Running web console e2e (mock API tier)...$(RESET)"
+	@cd $(WEB_APP_DIR) && npm install --silent && npx playwright install --with-deps chromium && npm run e2e
+	@echo "$(GREEN)✓ web e2e (mock tier) passed$(RESET)"
+endif
+
+.PHONY: integration-test-web
+## integration-test-web: Playwright live-server tier against a real xkmsd
+## Boots a real daemon (run-server.sh) and drives passkey login through
+## Chrome's CDP virtual WebAuthn authenticator.
+integration-test-web:
+ifeq ($(NPM),)
+	@echo "$(YELLOW)⚠ npm not found; skipping integration-test-web$(RESET)"
+else
+	@echo "$(CYAN)$(BOLD)→ Running web console e2e (live server tier)...$(RESET)"
+	@cd test/integration/web && npm install --silent && npx playwright install --with-deps chromium && npx playwright test
+	@echo "$(GREEN)✓ web e2e (live tier) passed$(RESET)"
+endif
+
+.PHONY: coverage-sdk-ts
+## coverage-sdk-ts: Coverage report for @go-xkms/sdk (sdk/ts/coverage/)
+coverage-sdk-ts:
+ifeq ($(NPM),)
+	@echo "$(YELLOW)⚠ npm not found; skipping coverage-sdk-ts$(RESET)"
+else
+	@echo "$(CYAN)$(BOLD)→ Coverage: @go-xkms/sdk...$(RESET)"
+	@cd $(SDK_TS_DIR) && npm install --silent && npm run test:coverage
+endif
+
+.PHONY: coverage-svelte-auth
+## coverage-svelte-auth: Coverage report for @go-xkms/svelte-auth
+coverage-svelte-auth:
+ifeq ($(NPM),)
+	@echo "$(YELLOW)⚠ npm not found; skipping coverage-svelte-auth$(RESET)"
+else
+	@echo "$(CYAN)$(BOLD)→ Coverage: @go-xkms/svelte-auth...$(RESET)"
+	@cd $(SVELTE_AUTH_DIR) && npm install --silent && npm run test:coverage
+endif
+
+.PHONY: coverage-web-app
+## coverage-web-app: Coverage report for the web/app SPA
+coverage-web-app:
+ifeq ($(NPM),)
+	@echo "$(YELLOW)⚠ npm not found; skipping coverage-web-app$(RESET)"
+else
+	@echo "$(CYAN)$(BOLD)→ Coverage: web/app SPA...$(RESET)"
+	@cd $(WEB_APP_DIR) && npm install --silent && npm run test:coverage
+endif
+
+.PHONY: coverage-web
+## coverage-web: Coverage for all three web packages (SDK, svelte-auth, SPA)
+coverage-web: coverage-sdk-ts coverage-svelte-auth coverage-web-app
+	@echo "$(GREEN)✓ web coverage reports written (lcov + text per package)$(RESET)"
+
+# ==============================================================================
 # PKCS#11 Module Targets
 # ==============================================================================
 
 .PHONY: build-pkcs11-module
-## build-pkcs11-module: Build the PKCS#11 shared library (libxkms_pkcs11.so)
+## build-pkcs11-module: Build the PKCS#11 shared library (libxkms_pkcs11.so). GOFIPS140 defaults to off.
 build-pkcs11-module:
-	@echo "$(CYAN)$(BOLD)→ Building PKCS#11 shared library...$(RESET)"
+	@echo "$(CYAN)$(BOLD)→ Building PKCS#11 shared library (GOFIPS140=$(GOFIPS140))...$(RESET)"
 	@mkdir -p $(LIB_DIR)
-	@CGO_ENABLED=1 $(GO) build -buildmode=c-shared \
+	@GOFIPS140=$(GOFIPS140) CGO_ENABLED=1 $(GO) build -buildmode=c-shared \
 		-o $(LIB_DIR)/libxkms_pkcs11.so \
 		./cmd/pkcs11-module
 	@echo "$(GREEN)✓ PKCS#11 module built: $(LIB_DIR)/libxkms_pkcs11.so$(RESET)"
+
+.PHONY: build-pkcs11-module-fips
+## build-pkcs11-module-fips: Build the FIPS 140-3 PKCS#11 shared library (libxkms_pkcs11_fips.so). GOFIPS140_FIPS defaults to latest; pin with GOFIPS140_FIPS=v1.0.0.
+build-pkcs11-module-fips:
+	@echo "$(CYAN)$(BOLD)→ Building FIPS 140-3 PKCS#11 shared library (GOFIPS140=$(GOFIPS140_FIPS))...$(RESET)"
+	@mkdir -p $(LIB_DIR)
+	@GOFIPS140=$(GOFIPS140_FIPS) CGO_ENABLED=1 $(GO) build -buildmode=c-shared \
+		-o $(LIB_DIR)/libxkms_pkcs11_fips.so \
+		./cmd/pkcs11-module
+	@echo "$(GREEN)✓ FIPS PKCS#11 module built: $(LIB_DIR)/libxkms_pkcs11_fips.so$(RESET)"
 
 .PHONY: test-pkcs11-module
 ## test-pkcs11-module: Run PKCS#11 module unit tests
@@ -559,8 +757,18 @@ lib: builder-image
 	@echo "$(GREEN)✓ Symlink created: $(SHARED_LIB_LINK) -> libxkms-$(VERSION).so$(RESET)"
 
 .PHONY: test
-## test: Run unit tests with coverage (fast, in-memory, no system modifications)
-test: check-insecure-tls
+## test: Run unit tests with coverage (Go + web UI; fast, in-memory)
+## Sub-makes rather than prerequisites so the Go suites always report before
+## the web suites even under `make -j`; make aborts on the first failure, so a
+## red web suite still fails the target.
+test:
+	@$(MAKE) --no-print-directory test-go
+	@$(MAKE) --no-print-directory test-web
+	@echo "$(GREEN)$(BOLD)✓ All unit tests passed (Go + web)!$(RESET)"
+
+.PHONY: test-go
+## test-go: Run the Go unit tests with coverage
+test-go: check-insecure-tls
 	@echo "$(CYAN)$(BOLD)→ Running unit tests...$(RESET)"
 	@mkdir -p $(COVERAGE_DIR)
 	@bash -c 'set -o pipefail; \
@@ -1081,7 +1289,13 @@ coverage-xkmsctl:
 .PHONY: integration-test
 ## integration-test: Run all integration tests (all backends + all API protocols)
 
-integration-test: clean-test-containers integration-test-software integration-test-pkcs8 integration-test-pkcs11 integration-test-tpm2 integration-test-awskms integration-test-gcpkms integration-test-azurekv integration-test-vault integration-test-storage integration-test-utils integration-test-quantum integration-test-frost integration-test-webauthn integration-test-fido2 integration-test-cli integration-test-api-all integration-test-sdk-go integration-test-bootstrap
+# integration-test-pkcs11 is the BACKEND lane (xkms as a client of SoftHSM);
+# integration-test-pkcs11-module-all is the MODULE lane (the .so xkms ships to
+# other applications), and the two prove nothing about each other. The module
+# lane used to be represented here by integration-test-pkcs11-conformance alone,
+# which left the C ABI and the whole OpenSSL/OpenSSH interop surface out of every
+# default run -- the exact surface real callers reach the module through.
+integration-test: clean-test-containers integration-test-software integration-test-pkcs8 integration-test-pkcs11 integration-test-pkcs11-module-all integration-test-tpm2 integration-test-awskms integration-test-gcpkms integration-test-azurekv integration-test-vault integration-test-storage integration-test-utils integration-test-quantum integration-test-frost integration-test-webauthn integration-test-fido2 integration-test-cli integration-test-api-all integration-test-sdk-go integration-test-bootstrap
 	@echo "$(GREEN)$(BOLD)✓ All integration tests complete!$(RESET)"
 
 .PHONY: clean-test-containers
@@ -1280,9 +1494,15 @@ integration-test-pkcs8:
 	@cd test/integration/pkcs8 && (docker compose run --build --rm test; EXIT_CODE=$$?; docker compose down -v; exit $$EXIT_CODE)
 	@echo "$(GREEN)✓ PKCS8 integration tests complete$(RESET)"
 
-.PHONY: integration-test-pkcs11
-## integration-test-pkcs11: Run PKCS11/SoftHSM integration tests
-integration-test-pkcs11:
+.PHONY: integration-test-pkcs11-backend integration-test-pkcs11
+## integration-test-pkcs11-backend: Run the PKCS#11 BACKEND (core library) tests against SoftHSM
+## integration-test-pkcs11: Alias of integration-test-pkcs11-backend
+# This exercises pkg/backend/pkcs11 -- xkms acting as a PKCS#11 CLIENT of an HSM.
+# It is a different layer from integration-test-pkcs11-module-all, which tests
+# the PKCS#11 module xkms PROVIDES to other applications. Keeping the two apart
+# matters: a green run of one says nothing about the other.
+integration-test-pkcs11: integration-test-pkcs11-backend
+integration-test-pkcs11-backend:
 	@echo "$(CYAN)$(BOLD)→ Running PKCS11/SoftHSM integration tests...$(RESET)"
 	@cd test/integration/pkcs11 && docker compose down -v >/dev/null 2>&1 || true
 	@cd test/integration/pkcs11 && (docker compose run --build --rm test; EXIT_CODE=$$?; docker compose down -v; exit $$EXIT_CODE)
@@ -1293,15 +1513,54 @@ integration-test-pkcs11:
 integration-test-pkcs11-module:
 	$(call run_with_server,PKCS11_MODULE=$(PKCS11_MODULE_CONTAINER) PKCS11_TOKEN_LABEL=$(PKCS11_TOKEN_LABEL) PKCS11_PIN=$(PKCS11_PIN) PKCS11_SO_PIN=$(PKCS11_SO_PIN) XKMS_PKCS11_AUTO_INIT_TOKEN=true XKMS_PKCS11_SO_PIN=$(PKCS11_SO_PIN) XKMS_PKCS11_USER_PIN=$(PKCS11_PIN) XKMS_PKCS11_TOKEN_LABEL=$(PKCS11_TOKEN_LABEL) XKMS_PKCS11_STORAGE_TYPE=file XKMS_PKCS11_STORAGE_PATH=/tmp/pkcs11-storage XKMS_UNIX_SOCKET=$(XKMS_UNIX_SOCKET) XKMS_GRPC_ADDR=$(XKMS_GRPC_ADDR_CONTAINER) $(GO) test -v -tags='integration' ./test/integration/pkcs11/module/... -timeout $(PKCS11_TEST_TIMEOUT),integration-test-pkcs11-module)
 
+.PHONY: integration-test-pkcs11-conformance
+## integration-test-pkcs11-conformance: Run the OASIS PKCS#11 v3.0 conformance suite (runs in devcontainer with xkms-server)
+# The suite lives in test/integration/pkcs11/module/conformance and is guarded
+# by `//go:build integration && conformance`, so it only compiles when BOTH
+# tags are passed. Without this target nothing ever passed `conformance` and
+# the whole OASIS suite was dead code.
+# XKMS_PKCS11_ALLOW_WEAK_HASH_SIGNING=true lets the module advertise and perform
+# SHA-1 signature generation so the conformance suite can exercise every
+# advertised mechanism, matching the daemon's crypto.allow_weak_hashes:true from
+# start-test-xkmsd.sh. Production defaults to off (secure); the FIPS conformance
+# lane deliberately omits it, and FIPS withholds SHA-1 signing regardless.
+integration-test-pkcs11-conformance:
+	$(call run_with_server,PKCS11_MODULE=$(PKCS11_MODULE_CONTAINER) PKCS11_TOKEN_LABEL=$(PKCS11_TOKEN_LABEL) PKCS11_PIN=$(PKCS11_PIN) PKCS11_SO_PIN=$(PKCS11_SO_PIN) XKMS_PKCS11_AUTO_INIT_TOKEN=true XKMS_PKCS11_SO_PIN=$(PKCS11_SO_PIN) XKMS_PKCS11_USER_PIN=$(PKCS11_PIN) XKMS_PKCS11_TOKEN_LABEL=$(PKCS11_TOKEN_LABEL) XKMS_PKCS11_STORAGE_TYPE=file XKMS_PKCS11_STORAGE_PATH=/tmp/pkcs11-storage XKMS_PKCS11_ALLOW_WEAK_HASH_SIGNING=true XKMS_UNIX_SOCKET=$(XKMS_UNIX_SOCKET) XKMS_GRPC_ADDR=$(XKMS_GRPC_ADDR_CONTAINER) $(GO) test -v -tags='integration$(comma)conformance' ./test/integration/pkcs11/module/conformance/... -timeout $(PKCS11_TEST_TIMEOUT),integration-test-pkcs11-conformance)
+
+.PHONY: integration-test-pkcs11-cabi
+## integration-test-pkcs11-cabi: Drive the built .so through its C ABI, proving mechanism parameters survive the cgo boundary (runs in devcontainer with xkms-server)
+# Every other PKCS#11 suite calls pkg/pkcs11/module directly from Go, which
+# skips cmd/pkcs11-module/exports.go entirely. This one dlopen()s the shared
+# object and dispatches through the CK_FUNCTION_LIST_3_2 that C_GetInterface
+# returns, exactly as a C application does, so a parameter that is accepted at
+# the boundary and then dropped is visible.
+#
+# REFERENCE_PKCS11_MODULE points at SoftHSM2, which the suite drives through the
+# same harness to establish what conforming behaviour looks like before calling
+# any disagreement a defect. Its token is initialized here because SoftHSM
+# refuses to open a slot that was never initialized.
+integration-test-pkcs11-cabi: SOFTHSM_CABI_DIR := /tmp/softhsm-cabi
+integration-test-pkcs11-cabi:
+	$(call run_with_server,mkdir -p $(SOFTHSM_CABI_DIR)/tokens \
+		&& printf 'directories.tokendir = %s/tokens\nobjectstore.backend = file\nlog.level = ERROR\n' $(SOFTHSM_CABI_DIR) > $(SOFTHSM_CABI_DIR)/softhsm2.conf \
+		&& SOFTHSM2_CONF=$(SOFTHSM_CABI_DIR)/softhsm2.conf softhsm2-util --show-slots 2>/dev/null | grep -q 'Label:.*cabi-ref' \
+		|| SOFTHSM2_CONF=$(SOFTHSM_CABI_DIR)/softhsm2.conf softhsm2-util --init-token --slot 0 --label cabi-ref --so-pin $(PKCS11_SO_PIN) --pin $(PKCS11_PIN) >/dev/null; \
+		PKCS11_MODULE=$(PKCS11_MODULE_CONTAINER) PKCS11_TOKEN_LABEL=$(PKCS11_TOKEN_LABEL) PKCS11_PIN=$(PKCS11_PIN) PKCS11_SO_PIN=$(PKCS11_SO_PIN) XKMS_PKCS11_AUTO_INIT_TOKEN=true XKMS_PKCS11_SO_PIN=$(PKCS11_SO_PIN) XKMS_PKCS11_USER_PIN=$(PKCS11_PIN) XKMS_PKCS11_TOKEN_LABEL=$(PKCS11_TOKEN_LABEL) XKMS_PKCS11_STORAGE_TYPE=file XKMS_PKCS11_STORAGE_PATH=/tmp/pkcs11-storage XKMS_UNIX_SOCKET=$(XKMS_UNIX_SOCKET) XKMS_GRPC_ADDR=$(XKMS_GRPC_ADDR_CONTAINER) SOFTHSM2_CONF=$(SOFTHSM_CABI_DIR)/softhsm2.conf REFERENCE_PKCS11_MODULE=/usr/lib/softhsm/libsofthsm2.so REFERENCE_PKCS11_PIN=$(PKCS11_PIN) CGO_ENABLED=1 $(GO) test -v -count=1 -tags='integration$(comma)pkcs11_cabi' ./test/integration/pkcs11/module/cabi/... -timeout $(PKCS11_TEST_TIMEOUT),integration-test-pkcs11-cabi)
+
+.PHONY: integration-test-pkcs11-module-external
+## integration-test-pkcs11-module-external: Run the external-view PKCS#11 module checks (shared-library shape, ldd deps, server reachability) via the pkcs11_external tag
+integration-test-pkcs11-module-external:
+	$(call run_with_server,PKCS11_MODULE=$(PKCS11_MODULE_CONTAINER) PKCS11_TOKEN_LABEL=$(PKCS11_TOKEN_LABEL) PKCS11_PIN=$(PKCS11_PIN) PKCS11_SO_PIN=$(PKCS11_SO_PIN) XKMS_UNIX_SOCKET=$(XKMS_UNIX_SOCKET) XKMS_GRPC_ADDR=$(XKMS_GRPC_ADDR_CONTAINER) $(GO) test -v -tags='integration$(comma)pkcs11$(comma)pkcs11_external' ./test/integration/pkcs11/module/... -timeout $(PKCS11_TEST_TIMEOUT),integration-test-pkcs11-module-external)
+
 .PHONY: integration-test-pkcs11-module-unix
 ## integration-test-pkcs11-module-unix: Run PKCS#11 multi-protocol tests with Unix socket target (runs in devcontainer with xkms-server)
 integration-test-pkcs11-module-unix:
-	$(call run_with_server,PKCS11_MODULE=$(PKCS11_MODULE_CONTAINER) PKCS11_TOKEN_LABEL=$(PKCS11_TOKEN_LABEL) PKCS11_PIN=$(PKCS11_PIN) PKCS11_SO_PIN=$(PKCS11_SO_PIN) XKMS_PKCS11_AUTO_INIT_TOKEN=true XKMS_PKCS11_SO_PIN=$(PKCS11_SO_PIN) XKMS_PKCS11_USER_PIN=$(PKCS11_PIN) XKMS_PKCS11_TOKEN_LABEL=$(PKCS11_TOKEN_LABEL) XKMS_PKCS11_STORAGE_TYPE=file XKMS_PKCS11_STORAGE_PATH=/tmp/pkcs11-storage XKMS_UNIX_SOCKET=$(XKMS_UNIX_SOCKET) XKMS_PKCS11_TARGET=unix://$(XKMS_UNIX_SOCKET) $(GO) test -v -tags='integration' ./test/integration/pkcs11/module/... -timeout $(PKCS11_TEST_TIMEOUT) -run 'TestMultiProtocol',integration-test-pkcs11-module-unix)
+	$(call run_with_server,PKCS11_MODULE=$(PKCS11_MODULE_CONTAINER) PKCS11_TOKEN_LABEL=$(PKCS11_TOKEN_LABEL) PKCS11_PIN=$(PKCS11_PIN) PKCS11_SO_PIN=$(PKCS11_SO_PIN) XKMS_PKCS11_AUTO_INIT_TOKEN=true XKMS_PKCS11_SO_PIN=$(PKCS11_SO_PIN) XKMS_PKCS11_USER_PIN=$(PKCS11_PIN) XKMS_PKCS11_TOKEN_LABEL=$(PKCS11_TOKEN_LABEL) XKMS_PKCS11_STORAGE_TYPE=file XKMS_PKCS11_STORAGE_PATH=/tmp/pkcs11-storage XKMS_UNIX_SOCKET=$(XKMS_UNIX_SOCKET) XKMS_GRPC_ADDR=$(XKMS_GRPC_ADDR_CONTAINER) XKMS_PKCS11_TARGET=unix://$(XKMS_UNIX_SOCKET) $(GO) test -v -tags='integration' ./test/integration/pkcs11/module/... -timeout $(PKCS11_TEST_TIMEOUT) -run 'TestMultiProtocol',integration-test-pkcs11-module-unix)
 
 .PHONY: integration-test-pkcs11-module-grpc
 ## integration-test-pkcs11-module-grpc: Run PKCS#11 multi-protocol tests with gRPC target (runs in devcontainer with xkms-server)
 integration-test-pkcs11-module-grpc:
-	$(call run_with_server,PKCS11_MODULE=$(PKCS11_MODULE_CONTAINER) PKCS11_TOKEN_LABEL=$(PKCS11_TOKEN_LABEL) PKCS11_PIN=$(PKCS11_PIN) PKCS11_SO_PIN=$(PKCS11_SO_PIN) XKMS_PKCS11_AUTO_INIT_TOKEN=true XKMS_PKCS11_SO_PIN=$(PKCS11_SO_PIN) XKMS_PKCS11_USER_PIN=$(PKCS11_PIN) XKMS_PKCS11_TOKEN_LABEL=$(PKCS11_TOKEN_LABEL) XKMS_PKCS11_STORAGE_TYPE=file XKMS_PKCS11_STORAGE_PATH=/tmp/pkcs11-storage XKMS_GRPC_ADDR=$(XKMS_GRPC_ADDR_CONTAINER) XKMS_PKCS11_TARGET=$(XKMS_GRPC_ADDR_CONTAINER) $(GO) test -v -tags='integration' ./test/integration/pkcs11/module/... -timeout $(PKCS11_TEST_TIMEOUT) -run 'TestMultiProtocol',integration-test-pkcs11-module-grpc)
+	$(call run_with_server,PKCS11_MODULE=$(PKCS11_MODULE_CONTAINER) PKCS11_TOKEN_LABEL=$(PKCS11_TOKEN_LABEL) PKCS11_PIN=$(PKCS11_PIN) PKCS11_SO_PIN=$(PKCS11_SO_PIN) XKMS_PKCS11_AUTO_INIT_TOKEN=true XKMS_PKCS11_SO_PIN=$(PKCS11_SO_PIN) XKMS_PKCS11_USER_PIN=$(PKCS11_PIN) XKMS_PKCS11_TOKEN_LABEL=$(PKCS11_TOKEN_LABEL) XKMS_PKCS11_STORAGE_TYPE=file XKMS_PKCS11_STORAGE_PATH=/tmp/pkcs11-storage XKMS_UNIX_SOCKET=$(XKMS_UNIX_SOCKET) XKMS_GRPC_ADDR=$(XKMS_GRPC_ADDR_CONTAINER) XKMS_PKCS11_TARGET=$(XKMS_GRPC_ADDR_CONTAINER) $(GO) test -v -tags='integration' ./test/integration/pkcs11/module/... -timeout $(PKCS11_TEST_TIMEOUT) -run 'TestMultiProtocol',integration-test-pkcs11-module-grpc)
 
 .PHONY: integration-test-pkcs11-module-compat
 ## integration-test-pkcs11-module-compat: Run PKCS#11 module compatibility tests with pkcs11-tool (runs in devcontainer with xkms-server)
@@ -1312,6 +1571,102 @@ integration-test-pkcs11-module-compat:
 ## integration-test-pkcs11-tool: Run comprehensive pkcs11-tool integration tests (runs in devcontainer with xkms-server)
 integration-test-pkcs11-tool:
 	$(call run_with_server,PKCS11_MODULE=$(PKCS11_MODULE_CONTAINER) PKCS11_TOKEN_LABEL=$(PKCS11_TOKEN_LABEL) PKCS11_PIN=$(PKCS11_PIN) PKCS11_SO_PIN=$(PKCS11_SO_PIN) XKMS_PKCS11_AUTO_INIT_TOKEN=true XKMS_PKCS11_SO_PIN=$(PKCS11_SO_PIN) XKMS_PKCS11_USER_PIN=$(PKCS11_PIN) XKMS_PKCS11_TOKEN_LABEL=$(PKCS11_TOKEN_LABEL) XKMS_PKCS11_STORAGE_TYPE=file XKMS_PKCS11_STORAGE_PATH=/tmp/pkcs11-storage XKMS_UNIX_SOCKET=$(XKMS_UNIX_SOCKET) XKMS_GRPC_ADDR=$(XKMS_GRPC_ADDR_CONTAINER) $(GO) test -v -tags='integration$(comma)pkcs11$(comma)pkcs11_tool' ./test/integration/pkcs11/module/... -timeout $(PKCS11_TEST_TIMEOUT) -run 'TestPKCS11Tool',integration-test-pkcs11-tool)
+
+.PHONY: integration-test-pkcs11-openssl-provider
+## integration-test-pkcs11-openssl-provider: Drive the module through OpenSSL 3's pkcs11-provider (runs in devcontainer with xkms-server)
+# OpenSSL 3 replaced ENGINEs with providers, so this covers the interface a
+# modern caller actually uses. It issues a different C_* sequence than libp11.
+integration-test-pkcs11-openssl-provider:
+	$(call run_with_server,PKCS11_MODULE=$(PKCS11_MODULE_CONTAINER) PKCS11_TOKEN_LABEL=$(PKCS11_TOKEN_LABEL) PKCS11_PIN=$(PKCS11_PIN) PKCS11_SO_PIN=$(PKCS11_SO_PIN) XKMS_PKCS11_AUTO_INIT_TOKEN=true XKMS_PKCS11_SO_PIN=$(PKCS11_SO_PIN) XKMS_PKCS11_USER_PIN=$(PKCS11_PIN) XKMS_PKCS11_TOKEN_LABEL=$(PKCS11_TOKEN_LABEL) XKMS_PKCS11_STORAGE_TYPE=file XKMS_PKCS11_STORAGE_PATH=/tmp/pkcs11-storage XKMS_UNIX_SOCKET=$(XKMS_UNIX_SOCKET) XKMS_GRPC_ADDR=$(XKMS_GRPC_ADDR_CONTAINER) $(GO) test -v -tags='integration$(comma)pkcs11$(comma)pkcs11_tool' ./test/integration/pkcs11/module/... -timeout $(PKCS11_TEST_TIMEOUT) -run 'TestOpenSSLProvider',integration-test-pkcs11-openssl-provider)
+
+.PHONY: integration-test-pkcs11-openssl-schemes
+## integration-test-pkcs11-openssl-schemes: Test RSA-PSS, OAEP and TLS handshake through OpenSSL (runs in devcontainer with xkms-server)
+# Covers the padding modes and the end-to-end TLS handshake that the engine
+# suite does not: a PSS request silently answered with PKCS#1 v1.5 is a defect
+# no signature-shape assertion would catch.
+integration-test-pkcs11-openssl-schemes:
+	$(call run_with_server,PKCS11_MODULE=$(PKCS11_MODULE_CONTAINER) PKCS11_TOKEN_LABEL=$(PKCS11_TOKEN_LABEL) PKCS11_PIN=$(PKCS11_PIN) PKCS11_SO_PIN=$(PKCS11_SO_PIN) XKMS_PKCS11_AUTO_INIT_TOKEN=true XKMS_PKCS11_SO_PIN=$(PKCS11_SO_PIN) XKMS_PKCS11_USER_PIN=$(PKCS11_PIN) XKMS_PKCS11_TOKEN_LABEL=$(PKCS11_TOKEN_LABEL) XKMS_PKCS11_STORAGE_TYPE=file XKMS_PKCS11_STORAGE_PATH=/tmp/pkcs11-storage XKMS_UNIX_SOCKET=$(XKMS_UNIX_SOCKET) XKMS_GRPC_ADDR=$(XKMS_GRPC_ADDR_CONTAINER) $(GO) test -v -tags='integration$(comma)pkcs11$(comma)pkcs11_tool' ./test/integration/pkcs11/module/... -timeout $(PKCS11_TEST_TIMEOUT) -run 'TestOpenSSL.*RSAPSS|TestOpenSSL.*RSAOAEP|TestOpenSSL_TLSHandshake',integration-test-pkcs11-openssl-schemes)
+
+.PHONY: integration-test-pkcs11-openssl-backends
+## integration-test-pkcs11-openssl-backends: Run the OpenSSL operations against every backend in XKMS_PKCS11_BACKENDS (runs in devcontainer with xkms-server)
+# Set XKMS_PKCS11_BACKENDS to a comma-separated list (default: software).
+# Verification runs outside the module, so a backend returning the wrong
+# signature encoding fails here rather than passing silently.
+#
+# The default is software because that is the only backend the daemon serving
+# this socket can satisfy for every operation. Naming another one costs nothing
+# beyond the daemon having it enabled -- the module reads
+# XKMS_PKCS11_DEFAULT_BACKEND at C_Initialize, which this target sets per case:
+#
+#   make integration-test-pkcs11-openssl-backends XKMS_PKCS11_BACKENDS=software,pkcs11
+#
+# That run used to be RED on RSA: the pkcs11 backend could not perform a bare
+# CKM_RSA_PKCS signature over a caller-supplied DigestInfo, which is exactly
+# what the libp11 ENGINE and TLS 1.3 send. signPKCS1v15 prepended a DigestInfo
+# prefix chosen from opts.HashFunc() with no case for the NONE hash the module
+# asks for. It is FIXED: pkg/backend/pkcs11/signer_rsa.go signs the digest
+# verbatim when the requested hash is crypto.Hash(0), matching what
+# rsa.SignPKCS1v15 does for the software backend and what
+# pkg/xkms/servicer_helpers.go ResolveHash means by "NONE".
+#
+# Do not reinstate an expected-red note here without re-verifying it. A build
+# comment that says a lane is meant to fail is how a genuine failure gets waved
+# past, and this one outlived its defect.
+#
+# tpm2 needs one thing more: configs/xkmsd-integration.yaml enables only
+# software and pkcs11, so the daemon must also be given
+#   tpm2: {enabled: true, device_path: "tcp://swtpm:2321", use_simulator: true}
+# to match the swtpm service the compose stack already runs and the
+# TPM_DEVICE_PATH the server container already has.
+integration-test-pkcs11-openssl-backends:
+	$(call run_with_server,PKCS11_MODULE=$(PKCS11_MODULE_CONTAINER) PKCS11_TOKEN_LABEL=$(PKCS11_TOKEN_LABEL) PKCS11_PIN=$(PKCS11_PIN) PKCS11_SO_PIN=$(PKCS11_SO_PIN) XKMS_PKCS11_AUTO_INIT_TOKEN=true XKMS_PKCS11_SO_PIN=$(PKCS11_SO_PIN) XKMS_PKCS11_USER_PIN=$(PKCS11_PIN) XKMS_PKCS11_TOKEN_LABEL=$(PKCS11_TOKEN_LABEL) XKMS_PKCS11_STORAGE_TYPE=file XKMS_PKCS11_STORAGE_PATH=/tmp/pkcs11-storage XKMS_UNIX_SOCKET=$(XKMS_UNIX_SOCKET) XKMS_GRPC_ADDR=$(XKMS_GRPC_ADDR_CONTAINER) XKMS_PKCS11_BACKENDS=$(XKMS_PKCS11_BACKENDS) $(GO) test -v -tags='integration$(comma)pkcs11$(comma)pkcs11_tool' ./test/integration/pkcs11/module/... -timeout $(PKCS11_TEST_TIMEOUT) -run 'TestOpenSSLBackendMatrix',integration-test-pkcs11-openssl-backends)
+
+.PHONY: integration-test-pkcs11-openssl-x509
+## integration-test-pkcs11-openssl-x509: Issue certificates with a module-resident key -- CSR, self-signed, and signing somebody else's CSR as a CA
+# The rest of the X.509 coverage is self-signed only, where the signing key and
+# the certified key are the same object: a module signing over the wrong
+# TBSCertificate bytes still produces a certificate that verifies against
+# itself. These issue to a separately generated subject key and build the chain
+# outside the module, so that coincidence cannot pass.
+integration-test-pkcs11-openssl-x509:
+	$(call run_with_server,PKCS11_MODULE=$(PKCS11_MODULE_CONTAINER) PKCS11_TOKEN_LABEL=$(PKCS11_TOKEN_LABEL) PKCS11_PIN=$(PKCS11_PIN) PKCS11_SO_PIN=$(PKCS11_SO_PIN) XKMS_PKCS11_AUTO_INIT_TOKEN=true XKMS_PKCS11_SO_PIN=$(PKCS11_SO_PIN) XKMS_PKCS11_USER_PIN=$(PKCS11_PIN) XKMS_PKCS11_TOKEN_LABEL=$(PKCS11_TOKEN_LABEL) XKMS_PKCS11_STORAGE_TYPE=file XKMS_PKCS11_STORAGE_PATH=/tmp/pkcs11-storage XKMS_UNIX_SOCKET=$(XKMS_UNIX_SOCKET) XKMS_GRPC_ADDR=$(XKMS_GRPC_ADDR_CONTAINER) $(GO) test -v -tags='integration$(comma)pkcs11$(comma)pkcs11_tool' ./test/integration/pkcs11/module/... -timeout $(PKCS11_TEST_TIMEOUT) -run 'TestOpenSSLProvider_SignsCertificateAsCA|TestOpenSSL_EngineCSR|TestOpenSSL_EngineSelfSignedCertificateVerifies',integration-test-pkcs11-openssl-x509)
+
+.PHONY: integration-test-pkcs11-openssl-engine
+## integration-test-pkcs11-openssl-engine: Run the OpenSSL 3 ENGINE lane operations the SSH suite leaves out (PSS, CSR, OAEP, TLS) plus libp11's pinned limitations
+# OpenSSL 4.0 removed ENGINE support, so this lane runs against the image's
+# OpenSSL 3 build; opensslEngineBinary() selects it and OPENSSL_BIN overrides it.
+integration-test-pkcs11-openssl-engine:
+	$(call run_with_server,PKCS11_MODULE=$(PKCS11_MODULE_CONTAINER) PKCS11_TOKEN_LABEL=$(PKCS11_TOKEN_LABEL) PKCS11_PIN=$(PKCS11_PIN) PKCS11_SO_PIN=$(PKCS11_SO_PIN) XKMS_PKCS11_AUTO_INIT_TOKEN=true XKMS_PKCS11_SO_PIN=$(PKCS11_SO_PIN) XKMS_PKCS11_USER_PIN=$(PKCS11_PIN) XKMS_PKCS11_TOKEN_LABEL=$(PKCS11_TOKEN_LABEL) XKMS_PKCS11_STORAGE_TYPE=file XKMS_PKCS11_STORAGE_PATH=/tmp/pkcs11-storage XKMS_UNIX_SOCKET=$(XKMS_UNIX_SOCKET) XKMS_GRPC_ADDR=$(XKMS_GRPC_ADDR_CONTAINER) $(GO) test -v -tags='integration$(comma)pkcs11$(comma)pkcs11_tool' ./test/integration/pkcs11/module/... -timeout $(PKCS11_TEST_TIMEOUT) -run 'TestOpenSSL_Engine',integration-test-pkcs11-openssl-engine)
+
+.PHONY: integration-test-pkcs11-provider-keygen
+## integration-test-pkcs11-provider-keygen: Generate a key IN the token through `openssl genpkey`, read the public half back and sign with it
+# Every other key in the suite is created by pkcs11-tool, which supplies
+# CKA_CLASS and CKA_KEY_TYPE in its own template. The provider does not, so the
+# module has to derive them itself -- the path where it once emitted them 4
+# bytes wide, where CK_ULONG is 8, and pkcs11-provider read a garbage object
+# class back and abandoned the new key.
+#
+# That defect is FIXED and this target is green (4/4). It keeps its own target
+# because it is the only lane that exercises provider-driven keygen, which is a
+# distinct path from pkcs11-tool's, not because it is expected to be red.
+integration-test-pkcs11-provider-keygen:
+	$(call run_with_server,PKCS11_MODULE=$(PKCS11_MODULE_CONTAINER) PKCS11_TOKEN_LABEL=$(PKCS11_TOKEN_LABEL) PKCS11_PIN=$(PKCS11_PIN) PKCS11_SO_PIN=$(PKCS11_SO_PIN) XKMS_PKCS11_AUTO_INIT_TOKEN=true XKMS_PKCS11_SO_PIN=$(PKCS11_SO_PIN) XKMS_PKCS11_USER_PIN=$(PKCS11_PIN) XKMS_PKCS11_TOKEN_LABEL=$(PKCS11_TOKEN_LABEL) XKMS_PKCS11_STORAGE_TYPE=file XKMS_PKCS11_STORAGE_PATH=/tmp/pkcs11-storage XKMS_UNIX_SOCKET=$(XKMS_UNIX_SOCKET) XKMS_GRPC_ADDR=$(XKMS_GRPC_ADDR_CONTAINER) $(GO) test -v -tags='integration$(comma)pkcs11$(comma)pkcs11_tool' ./test/integration/pkcs11/module/... -timeout $(PKCS11_TEST_TIMEOUT) -run 'TestPKCS11ProviderKeygen',integration-test-pkcs11-provider-keygen)
+
+.PHONY: integration-test-pkcs11-ssh-login
+## integration-test-pkcs11-ssh-login: Authenticate to a real sshd with token-resident RSA, ECDSA and Ed25519 keys, every signature algorithm
+# Listing a key with `ssh-keygen -D` exercises C_GetAttributeValue and nothing
+# else. These complete real logins: rsa-sha2-512/rsa-sha2-256/ssh-rsa, all three
+# ECDSA curves, Ed25519, and one login with no agent at all (`ssh -I`).
+# authorized_keys holds exactly the key under test and both ends are pinned to
+# one algorithm, so a successful login is attributable to that key and that
+# mechanism.
+integration-test-pkcs11-ssh-login:
+	$(call run_with_server,PKCS11_MODULE=$(PKCS11_MODULE_CONTAINER) PKCS11_TOKEN_LABEL=$(PKCS11_TOKEN_LABEL) PKCS11_PIN=$(PKCS11_PIN) PKCS11_SO_PIN=$(PKCS11_SO_PIN) XKMS_PKCS11_AUTO_INIT_TOKEN=true XKMS_PKCS11_SO_PIN=$(PKCS11_SO_PIN) XKMS_PKCS11_USER_PIN=$(PKCS11_PIN) XKMS_PKCS11_TOKEN_LABEL=$(PKCS11_TOKEN_LABEL) XKMS_PKCS11_STORAGE_TYPE=file XKMS_PKCS11_STORAGE_PATH=/tmp/pkcs11-storage XKMS_UNIX_SOCKET=$(XKMS_UNIX_SOCKET) XKMS_GRPC_ADDR=$(XKMS_GRPC_ADDR_CONTAINER) $(GO) test -v -tags='integration$(comma)pkcs11$(comma)pkcs11_tool' ./test/integration/pkcs11/module/... -timeout $(PKCS11_TEST_TIMEOUT) -run 'TestSSH_AuthenticatesWith|TestSSH_Ed25519Key',integration-test-pkcs11-ssh-login)
+
+
+.PHONY: integration-test-pkcs11-openssl-all
+## integration-test-pkcs11-openssl-all: Run every OpenSSL-driven PKCS#11 test (engine, provider, schemes, backend matrix)
+integration-test-pkcs11-openssl-all: integration-test-pkcs11-openssl integration-test-pkcs11-openssl-provider integration-test-pkcs11-openssl-schemes integration-test-pkcs11-openssl-backends integration-test-pkcs11-openssl-engine integration-test-pkcs11-openssl-x509 integration-test-pkcs11-openssl3-provider
 
 .PHONY: integration-test-pkcs11-openssl
 ## integration-test-pkcs11-openssl: Run PKCS#11 module OpenSSL integration tests (runs in devcontainer with xkms-server)
@@ -1325,8 +1680,85 @@ integration-test-pkcs11-ssh:
 
 .PHONY: integration-test-pkcs11-compat-all
 ## integration-test-pkcs11-compat-all: Run ALL PKCS#11 compatibility tests (pkcs11-tool, OpenSSL, SSH)
-integration-test-pkcs11-compat-all: integration-test-pkcs11-tool integration-test-pkcs11-openssl integration-test-pkcs11-ssh
+integration-test-pkcs11-compat-all: integration-test-pkcs11-tool integration-test-pkcs11-openssl integration-test-pkcs11-ssh integration-test-pkcs11-ssh-login
 	@echo "$(GREEN)$(BOLD)✓ All PKCS#11 compatibility tests complete!$(RESET)"
+
+.PHONY: integration-test-pkcs11-module-all
+## integration-test-pkcs11-module-all: Run EVERY PKCS#11 module test (module, external, conformance, C ABI, tool, OpenSSL, SSH)
+# The single entry point for "is the PKCS#11 module we ship correct".
+#
+# integration-test-pkcs11-module alone is NOT that: it builds with -tags=integration,
+# which excludes every file gated on pkcs11_tool or conformance -- so the external
+# tool, OpenSSL and SSH compatibility suites and the whole OASIS conformance suite
+# are silently skipped by it. A target that appears to cover the module while
+# omitting most of its coverage is worse than no target, because a green run reads
+# as proof.
+#
+# The list is expressed in terms of the -compat-all and -openssl-all roll-ups so
+# that a lane added to either is picked up here without a second edit. Make runs
+# each prerequisite at most once per invocation, so the overlap between them
+# (integration-test-pkcs11-openssl is in both) costs nothing.
+#
+# Deliberately NOT included, because each needs something the default devcontainer
+# lane does not provide and a missing dependency would read as a module defect:
+#   -openssl4          needs the /usr/local/openssl-4.0.1 build (version matrix)
+#   -fips              needs GOFIPS140 and re-runs conformance under it (compliance lane)
+#   -module-unix/-grpc needs nothing extra but only re-runs TestMultiProtocol against
+#                      another target; -module already covers those tests
+#   -module-compat     a strict subset of -tool
+integration-test-pkcs11-module-all: integration-test-pkcs11-module integration-test-pkcs11-module-external integration-test-pkcs11-conformance integration-test-pkcs11-cabi integration-test-pkcs11-compat-all integration-test-pkcs11-openssl-all integration-test-pkcs11-provider-keygen
+	@echo "$(GREEN)$(BOLD)✓ Full PKCS#11 module suite complete!$(RESET)"
+
+.PHONY: integration-test-pkcs11-openssl4
+## integration-test-pkcs11-openssl4: Run the OpenSSL provider tests against OpenSSL 4.0.1
+# OpenSSL 4.0 removed ENGINE support outright, so the provider interface is the only
+# way an OpenSSL 4 application can reach a PKCS#11 module at all. The suite resolves
+# the provider from the running openssl's own MODULESDIR, so pointing OPENSSL_BIN at
+# the 4.0.1 build is all that is needed to re-run the same tests against it.
+integration-test-pkcs11-openssl4:
+	$(call run_with_server,OPENSSL_BIN=/usr/local/openssl-4.0.1/bin/openssl PKCS11_MODULE=$(PKCS11_MODULE_CONTAINER) PKCS11_TOKEN_LABEL=$(PKCS11_TOKEN_LABEL) PKCS11_PIN=$(PKCS11_PIN) PKCS11_SO_PIN=$(PKCS11_SO_PIN) XKMS_PKCS11_AUTO_INIT_TOKEN=true XKMS_PKCS11_SO_PIN=$(PKCS11_SO_PIN) XKMS_PKCS11_USER_PIN=$(PKCS11_PIN) XKMS_PKCS11_TOKEN_LABEL=$(PKCS11_TOKEN_LABEL) XKMS_PKCS11_STORAGE_TYPE=file XKMS_PKCS11_STORAGE_PATH=/tmp/pkcs11-storage XKMS_UNIX_SOCKET=$(XKMS_UNIX_SOCKET) XKMS_GRPC_ADDR=$(XKMS_GRPC_ADDR_CONTAINER) $(GO) test -v -tags='integration$(comma)pkcs11$(comma)pkcs11_tool' ./test/integration/pkcs11/module/... -timeout $(PKCS11_TEST_TIMEOUT) -run 'TestOpenSSLProvider',integration-test-pkcs11-openssl4)
+
+.PHONY: integration-test-pkcs11-openssl3-provider
+## integration-test-pkcs11-openssl3-provider: Run the provider tests against OpenSSL 3.0.20 (the 4.0.1 build is the default lane)
+# The image carries two OpenSSLs and each has its OWN pkcs11-provider build; the
+# suite resolves the provider from the running openssl's MODULESDIR, so
+# OPENSSL_BIN is all that has to change. The two builds are not interchangeable
+# and they do NOT behave identically -- the 4.0.1 provider re-encodes EC public
+# keys with explicit curve parameters while the 3.0.20 one emits a namedCurve,
+# which decides whether an EC token key can act as a CA
+# (TestOpenSSLProvider_ECPublicKeyExport asserts the link). Testing only one
+# build would have missed that entirely.
+integration-test-pkcs11-openssl3-provider:
+	$(call run_with_server,OPENSSL_BIN=openssl-3 PKCS11_MODULE=$(PKCS11_MODULE_CONTAINER) PKCS11_TOKEN_LABEL=$(PKCS11_TOKEN_LABEL) PKCS11_PIN=$(PKCS11_PIN) PKCS11_SO_PIN=$(PKCS11_SO_PIN) XKMS_PKCS11_AUTO_INIT_TOKEN=true XKMS_PKCS11_SO_PIN=$(PKCS11_SO_PIN) XKMS_PKCS11_USER_PIN=$(PKCS11_PIN) XKMS_PKCS11_TOKEN_LABEL=$(PKCS11_TOKEN_LABEL) XKMS_PKCS11_STORAGE_TYPE=file XKMS_PKCS11_STORAGE_PATH=/tmp/pkcs11-storage XKMS_UNIX_SOCKET=$(XKMS_UNIX_SOCKET) XKMS_GRPC_ADDR=$(XKMS_GRPC_ADDR_CONTAINER) $(GO) test -v -tags='integration$(comma)pkcs11$(comma)pkcs11_tool' ./test/integration/pkcs11/module/... -timeout $(PKCS11_TEST_TIMEOUT) -run 'TestOpenSSLProvider|TestOpenSSL_TLSHandshake',integration-test-pkcs11-openssl3-provider)
+
+.PHONY: integration-test-pkcs11-fips
+## integration-test-pkcs11-fips: Run the PKCS#11 module suite in FIPS mode (approved algorithms only)
+# FIPS mode changes which mechanisms the module advertises AND accepts, so it needs its
+# own run: a suite that only ever exercises the default build cannot show that the
+# restriction holds, nor that everything approved still works under it.
+integration-test-pkcs11-fips:
+	$(call run_with_server,GOFIPS140=latest PKCS11_MODULE=$(PKCS11_MODULE_CONTAINER) PKCS11_TOKEN_LABEL=$(PKCS11_TOKEN_LABEL) PKCS11_PIN=$(PKCS11_PIN) PKCS11_SO_PIN=$(PKCS11_SO_PIN) XKMS_PKCS11_AUTO_INIT_TOKEN=true XKMS_PKCS11_SO_PIN=$(PKCS11_SO_PIN) XKMS_PKCS11_USER_PIN=$(PKCS11_PIN) XKMS_PKCS11_TOKEN_LABEL=$(PKCS11_TOKEN_LABEL) XKMS_PKCS11_STORAGE_TYPE=file XKMS_PKCS11_STORAGE_PATH=/tmp/pkcs11-storage XKMS_UNIX_SOCKET=$(XKMS_UNIX_SOCKET) XKMS_GRPC_ADDR=$(XKMS_GRPC_ADDR_CONTAINER) $(GO) test -v -tags='integration$(comma)conformance' ./test/integration/pkcs11/module/conformance/... -timeout $(PKCS11_TEST_TIMEOUT),integration-test-pkcs11-fips)
+
+.PHONY: integration-test-pkcs11-fips-enforcement
+# The .so this lane dlopens is compiled FIPS (target-specific GOFIPS140), so it
+# exercises the real FIPS build — labels and compiled crypto — not merely a
+# non-FIPS build run under the GOFIPS140 environment. The harness still re-execs
+# with the env; a FIPS-compiled .so agrees with it.
+integration-test-pkcs11-fips-enforcement: GOFIPS140 := $(GOFIPS140_FIPS)
+## integration-test-pkcs11-fips-enforcement: Run the FIPS enforcement suite (test/integration/pkcs11/module/fips)
+# This package is gated `//go:build integration && fips` and NO target passed the
+# fips tag, so its fifteen test functions had never been compiled into a binary,
+# let alone run. They are the only tests that assert the FIPS filter end to end:
+# that every mechanism C_GetMechanismList still offers under FIPS actually works,
+# that the withheld ones are refused, and that CK_MECHANISM_INFO agrees with both.
+# integration-test-pkcs11-fips is a different thing -- it re-runs the ordinary
+# conformance suite under GOFIPS140 and never touches this package.
+#
+# GOFIPS140 is not set here on purpose: the harness re-executes itself with it
+# (see TestMain in fips/harness_test.go), because a suite that asserted FIPS
+# behaviour of a non-FIPS process would pass for the wrong reason.
+integration-test-pkcs11-fips-enforcement:
+	$(call run_with_server,PKCS11_MODULE=$(PKCS11_MODULE_CONTAINER) PKCS11_TOKEN_LABEL=$(PKCS11_TOKEN_LABEL) PKCS11_PIN=$(PKCS11_PIN) PKCS11_SO_PIN=$(PKCS11_SO_PIN) XKMS_PKCS11_AUTO_INIT_TOKEN=true XKMS_PKCS11_SO_PIN=$(PKCS11_SO_PIN) XKMS_PKCS11_USER_PIN=$(PKCS11_PIN) XKMS_PKCS11_TOKEN_LABEL=$(PKCS11_TOKEN_LABEL) XKMS_PKCS11_STORAGE_TYPE=file XKMS_PKCS11_STORAGE_PATH=/tmp/pkcs11-storage XKMS_UNIX_SOCKET=$(XKMS_UNIX_SOCKET) XKMS_GRPC_ADDR=$(XKMS_GRPC_ADDR_CONTAINER) CGO_ENABLED=1 $(GO) test -v -tags='integration$(comma)fips' ./test/integration/pkcs11/module/fips/... -timeout $(PKCS11_TEST_TIMEOUT),integration-test-pkcs11-fips-enforcement)
 
 .PHONY: integration-test-tpm2
 ## integration-test-tpm2: Run TPM2 simulator integration tests
@@ -1437,9 +1869,17 @@ else
 endif
 
 .PHONY: integration-test-webauthn
-## integration-test-webauthn: Run WebAuthn integration tests with virtual authenticator (runs in devcontainer)
-integration-test-webauthn:
-	$(call run_in_devcontainer,$(GO) test -v -tags=integration ./pkg/webauthn/... -timeout 5m,integration-test-webauthn)
+## integration-test-webauthn: Run the WebAuthn RP ceremony suite (alias of integration-test-webauthn-browser)
+# There is one WebAuthn E2E suite: the Playwright suite under
+# test/integration/webauthn-browser, which drives Chrome's CDP virtual
+# authenticator against a real xkmsd Relying Party.
+#
+# The Go/chromedp suite this target used to run (test/integration/webauthn)
+# was deleted: its virtual-authenticator tests exercised Chrome's own CDP
+# domain and asserted nothing about our RP, and its E2E tests navigated to
+# /webauthn/test -- a path the server does not serve -- while logging every
+# failure instead of failing, so they passed whether or not the RP worked.
+integration-test-webauthn: integration-test-webauthn-browser
 
 .PHONY: integration-test-webauthn-browser
 ## integration-test-webauthn-browser: Drive Chrome's CDP virtual authenticator against the REAL xkmsd WebAuthn RP (host: needs Node + Chromium)
@@ -1455,62 +1895,174 @@ integration-test-webauthn-browser:
 # Comma for use in function calls (Make escapes commas in function args)
 comma := ,
 
-# Docker compose command for devcontainer
-DOCKER_COMPOSE := docker compose -f .devcontainer/docker-compose.yml
+# Docker compose command for devcontainer.
+#
+# The compose file pins `name: go-xkms`; without it compose derives the project
+# name from the file's directory (".devcontainer" -> "devcontainer"), which is
+# the same name go-trusted-platform's stack uses. Sharing that namespace made
+# `exec devcontainer` attach to the OTHER project's container and made
+# `up -d xkms-server` match nothing at all. Pass the project name explicitly
+# here too so the intent survives even if the file is invoked another way.
+COMPOSE_PROJECT := go-xkms
+DOCKER_COMPOSE := docker compose -p $(COMPOSE_PROJECT) -f .devcontainer/docker-compose.yml
 
 # Helper to run command in devcontainer (auto-starts if needed)
 define run_in_devcontainer
 	@if [ -f "/.dockerenv" ] || [ -n "$$DEVCONTAINER" ]; then \
-		/workspace/.devcontainer/scripts/ensure-gowork.sh && $(1); \
+		$(DEVCONTAINER_REPO)/.devcontainer/scripts/ensure-gowork.sh && $(1); \
 	else \
 		echo "$(CYAN)$(BOLD)→ Starting devcontainer...$(RESET)"; \
 		$(DOCKER_COMPOSE) up -d devcontainer --wait 2>/dev/null || $(DOCKER_COMPOSE) up -d devcontainer; \
-		$(DOCKER_COMPOSE) exec -T devcontainer bash -c "/workspace/.devcontainer/scripts/ensure-gowork.sh"; \
+		$(DOCKER_COMPOSE) exec -T devcontainer bash -c "cd $(DEVCONTAINER_REPO) && bash .devcontainer/scripts/ensure-gowork.sh"; \
 		echo "$(CYAN)$(BOLD)→ Running in devcontainer: $(2)$(RESET)"; \
-		$(DOCKER_COMPOSE) exec -T devcontainer bash -c "cd /workspace && $(1)"; \
+		$(DOCKER_COMPOSE) exec -T devcontainer bash -c "cd $(DEVCONTAINER_REPO) && $(1)"; \
 	fi
+endef
+
+# Bring up the compose `xkms-server` service, which serves the Unix socket the
+# PKCS#11 suites dial (shared with the devcontainer through the
+# go-xkms_xkms-socket volume). Building that image compiles the whole tree, so
+# `auto` -- the default -- only starts the service when the image already exists,
+# and otherwise leaves the in-devcontainer fallback (scripts/start-test-xkmsd.sh)
+# to serve the socket.
+#   XKMS_COMPOSE_SERVER=1   always start it, building the image if necessary
+#   XKMS_COMPOSE_SERVER=0   never start it; always use the fallback
+XKMS_COMPOSE_SERVER ?= auto
+
+define compose_up_xkms_server
+	@case "$(XKMS_COMPOSE_SERVER)" in \
+		0|no|off) \
+			echo "$(YELLOW)xkms-server disabled (XKMS_COMPOSE_SERVER=0); the devcontainer serves the socket.$(RESET)" ;; \
+		1|yes|on) \
+			echo "$(CYAN)$(BOLD)→ Starting xkms-server (compose)...$(RESET)"; \
+			$(DOCKER_COMPOSE) up -d --build xkms-server || true; \
+			$(MAKE) --no-print-directory devcontainer-server-wait || true ;; \
+		*) \
+			if docker image inspect go-xkms-server:dev >/dev/null 2>&1; then \
+				echo "$(CYAN)$(BOLD)→ Starting xkms-server (compose)...$(RESET)"; \
+				$(DOCKER_COMPOSE) up -d --build xkms-server || true; \
+				$(MAKE) --no-print-directory devcontainer-server-wait || \
+					$(DOCKER_COMPOSE) stop xkms-server >/dev/null 2>&1 || true; \
+			else \
+				echo "$(YELLOW)go-xkms-server:dev not built; the devcontainer serves the socket itself.$(RESET)"; \
+				echo "$(YELLOW)Build it once with: make devcontainer-server-build$(RESET)"; \
+			fi ;; \
+	esac
 endef
 
 # Helper to run command in devcontainer with xkms-server running
 # Usage: $(call run_with_server,command,description)
+#
+# The socket is served either by the compose `xkms-server` service or, when that
+# service is unavailable, by scripts/start-test-xkmsd.sh inside the devcontainer.
+# That script probes for a live listener before doing anything, so when the
+# compose service IS up it no-ops and leaves it alone.
 define run_with_server
+	@if [ ! -f "/.dockerenv" ] && [ -z "$$DEVCONTAINER" ]; then \
+		echo "$(CYAN)$(BOLD)→ Starting devcontainer...$(RESET)"; \
+		{ $(DOCKER_COMPOSE) up -d devcontainer --wait 2>/dev/null || $(DOCKER_COMPOSE) up -d devcontainer; } && \
+		$(DOCKER_COMPOSE) exec -T devcontainer bash -c "cd $(DEVCONTAINER_REPO) && bash .devcontainer/scripts/ensure-gowork.sh" && \
+		echo "$(CYAN)$(BOLD)→ Building PKCS#11 shared library in devcontainer...$(RESET)" && \
+		$(DOCKER_COMPOSE) exec -T devcontainer bash -c "cd $(DEVCONTAINER_REPO) && mkdir -p build/lib && GOWORK=/tmp/go.work GOFIPS140=$(GOFIPS140) CGO_ENABLED=1 go build -buildvcs=false -buildmode=c-shared -o build/lib/libxkms_pkcs11.so ./cmd/pkcs11-module" && \
+		echo "$(GREEN)✓ PKCS#11 module built in devcontainer$(RESET)" || \
+		{ echo "$(RED)✗ Could not build the PKCS#11 module; the suite would run against a stale .so$(RESET)"; exit 1; }; \
+	fi
+	$(call compose_up_xkms_server)
 	@if [ -f "/.dockerenv" ] || [ -n "$$DEVCONTAINER" ]; then \
-		/workspace/.devcontainer/scripts/ensure-gowork.sh; \
+		$(DEVCONTAINER_REPO)/.devcontainer/scripts/ensure-gowork.sh; \
 		echo "$(CYAN)$(BOLD)→ Building PKCS#11 shared library...$(RESET)"; \
-		mkdir -p build/lib && CGO_ENABLED=1 go build -buildmode=c-shared -o build/lib/libxkms_pkcs11.so ./cmd/pkcs11-module; \
+		mkdir -p build/lib && GOFIPS140=$(GOFIPS140) CGO_ENABLED=1 go build -buildmode=c-shared -o build/lib/libxkms_pkcs11.so ./cmd/pkcs11-module || \
+			{ echo "$(RED)✗ Could not build the PKCS#11 module; the suite would run against a stale .so$(RESET)"; exit 1; }; \
 		echo "$(GREEN)✓ PKCS#11 module built: build/lib/libxkms_pkcs11.so$(RESET)"; \
-		echo "$(CYAN)$(BOLD)→ Starting xkms-server...$(RESET)"; \
-		$(DOCKER_COMPOSE) up -d xkms-server 2>/dev/null || true; \
-		echo "$(CYAN)$(BOLD)→ Waiting for xkms-server to be ready...$(RESET)"; \
-		for i in 1 2 3 4 5 6 7 8 9 10; do \
-			if [ -S /var/run/xkms/xkms.sock ]; then \
-				echo "$(GREEN)✓ Unix socket ready$(RESET)"; \
-				break; \
-			fi; \
-			echo "  Waiting for socket... ($$i/10)"; \
-			sleep 2; \
-		done; \
+		echo "$(CYAN)$(BOLD)→ Ensuring an xkms server is listening...$(RESET)"; \
+		bash scripts/start-test-xkmsd.sh $(XKMS_UNIX_SOCKET); \
+		bash .devcontainer/scripts/ensure-server-ca.sh || true; \
 		$(1); \
 	else \
-		echo "$(CYAN)$(BOLD)→ Starting devcontainer...$(RESET)"; \
-		$(DOCKER_COMPOSE) up -d devcontainer 2>/dev/null || true; \
-		$(DOCKER_COMPOSE) exec -T devcontainer bash -c "/workspace/.devcontainer/scripts/ensure-gowork.sh"; \
-		echo "$(CYAN)$(BOLD)→ Building PKCS#11 shared library in devcontainer...$(RESET)"; \
-		$(DOCKER_COMPOSE) exec -T devcontainer bash -c "cd /workspace && mkdir -p build/lib && CGO_ENABLED=1 go build -buildmode=c-shared -o build/lib/libxkms_pkcs11.so ./cmd/pkcs11-module"; \
-		echo "$(GREEN)✓ PKCS#11 module built in devcontainer$(RESET)"; \
-		echo "$(CYAN)$(BOLD)→ Starting xkms-server...$(RESET)"; \
-		$(DOCKER_COMPOSE) up -d xkms-server 2>/dev/null || true; \
-		echo "$(CYAN)$(BOLD)→ Waiting for xkms-server...$(RESET)"; \
-		sleep 5; \
 		echo "$(CYAN)$(BOLD)→ Running in devcontainer: $(2)$(RESET)"; \
-		$(DOCKER_COMPOSE) exec -T devcontainer bash -c "cd /workspace && \
-			echo 'Waiting for Unix socket...'; \
-			for i in 1 2 3 4 5 6 7 8 9 10; do [ -S /var/run/xkms/xkms.sock ] && break; sleep 2; done; \
-			echo 'Waiting for gRPC port...'; \
-			for i in 1 2 3 4 5 6 7 8 9 10; do nc -z xkms-server 9443 2>/dev/null && break; sleep 2; done; \
+		$(DOCKER_COMPOSE) exec -T devcontainer bash -c "cd $(DEVCONTAINER_REPO) && \
+			bash scripts/start-test-xkmsd.sh $(XKMS_UNIX_SOCKET); \
+			bash .devcontainer/scripts/ensure-server-ca.sh || true; \
 			$(1)"; \
 	fi
 endef
+
+.PHONY: devcontainer-up
+## devcontainer-up: Build and start go-xkms's own devcontainer stack (devcontainer + swtpm + softhsm)
+devcontainer-up:
+	@echo "$(CYAN)$(BOLD)→ Bringing up the go-xkms devcontainer stack...$(RESET)"
+	$(DOCKER_COMPOSE) up -d --build devcontainer
+	$(DOCKER_COMPOSE) exec -T devcontainer bash -c "cd $(DEVCONTAINER_REPO) && bash .devcontainer/scripts/ensure-gowork.sh"
+	@echo "$(GREEN)✓ go-xkms-devcontainer is up (compose project $(COMPOSE_PROJECT))$(RESET)"
+
+.PHONY: devcontainer-down
+## devcontainer-down: Stop go-xkms's devcontainer stack (leaves volumes intact)
+devcontainer-down:
+	$(DOCKER_COMPOSE) down
+
+.PHONY: devcontainer-shell
+## devcontainer-shell: Open an interactive shell in go-xkms's devcontainer
+devcontainer-shell:
+	@$(DOCKER_COMPOSE) up -d devcontainer >/dev/null 2>&1 || true
+	@$(DOCKER_COMPOSE) exec devcontainer bash
+
+.PHONY: devcontainer-verify
+## devcontainer-verify: Print the toolchain versions the integration suites depend on
+devcontainer-verify:
+	@$(DOCKER_COMPOSE) up -d devcontainer --wait >/dev/null 2>&1 || $(DOCKER_COMPOSE) up -d devcontainer
+	@$(DOCKER_COMPOSE) exec -T devcontainer bash -c '\
+		set -e; \
+		echo "repo:        $$(ls -d $(DEVCONTAINER_REPO)/go.mod)"; \
+		echo "ssh:         $$(ssh -V 2>&1)"; \
+		echo "openssl:     $$(openssl version)"; \
+		echo "openssl-3:   $$(openssl-3 version)"; \
+		echo "go:          $$(go version)"; \
+		echo "softhsm2:    $$(softhsm2-util --version)"; \
+		echo "swtpm:       $$(swtpm --version | head -1)"; \
+		echo "opensc:      $$(dpkg -s opensc | sed -n s/^Version:.//p)"; \
+		echo "pkcs11-tool: OK ($$(pkcs11-tool --module $$PKCS11_LIBRARY -I | grep Cryptoki))"; \
+		echo "providers:"; \
+		PKCS11_MODULE_PATH=$$PKCS11_LIBRARY OPENSSL_CONF=/usr/local/openssl-4.0.1/ssl/openssl-pkcs11.cnf openssl list -providers'
+
+.PHONY: devcontainer-server-build
+## devcontainer-server-build: Build the compose xkms-server image (go-xkms-server:dev)
+devcontainer-server-build:
+	$(DOCKER_COMPOSE) build xkms-server
+
+.PHONY: devcontainer-server-up
+## devcontainer-server-up: Start the compose xkms-server service and wait for its Unix socket
+# Deliberately does NOT pass --build. The image's build context is the whole
+# repo, so any source edit invalidates the COPY layer and forces a full rebuild
+# of the tree - tens of GB of layers and build cache. Rebuild explicitly with
+# `make devcontainer-server-build` when the server binary needs to be refreshed.
+devcontainer-server-up:
+	$(DOCKER_COMPOSE) up -d xkms-server
+	@$(MAKE) --no-print-directory devcontainer-server-wait
+
+.PHONY: devcontainer-server-wait
+## devcontainer-server-wait: Wait until the compose xkms-server serves the shared Unix socket
+# Fails (non-zero) if it does not, so callers can fall back to
+# scripts/start-test-xkmsd.sh rather than letting the suite die at C_Initialize
+# with an opaque CKR_DEVICE_ERROR.
+#
+# Both conditions are checked: the xkms-server container must still be running
+# AND the socket must accept a connection. Testing only for the socket FILE is
+# not enough - the shared volume keeps the inode after a previous fallback
+# xkmsd exits, so `test -S` reports success against a dead socket.
+devcontainer-server-wait:
+	@echo "$(CYAN)$(BOLD)→ Waiting for xkms-server on $(XKMS_UNIX_SOCKET)...$(RESET)"
+	@for i in $$(seq 1 15); do \
+		if [ "$$(docker inspect -f '{{.State.Running}}' xkms-dev-server 2>/dev/null)" != "true" ]; then \
+			break; \
+		fi; \
+		if $(DOCKER_COMPOSE) exec -T devcontainer nc -U -z $(XKMS_UNIX_SOCKET) 2>/dev/null; then \
+			echo "$(GREEN)✓ xkms-server is serving $(XKMS_UNIX_SOCKET)$(RESET)"; exit 0; \
+		fi; \
+		sleep 2; \
+	done; \
+	echo "$(YELLOW)xkms-server is not serving $(XKMS_UNIX_SOCKET); last log lines:$(RESET)"; \
+	$(DOCKER_COMPOSE) logs --tail 15 xkms-server 2>&1 | sed 's/^/    /'; \
+	exit 1
 
 .PHONY: integration-test-fido2
 ## integration-test-fido2: Run all FIDO2 integration tests (runs in devcontainer)
@@ -1521,6 +2073,13 @@ integration-test-fido2:
 ## integration-test-fido2-cli: Run FIDO2 CLI command tests (runs in devcontainer)
 integration-test-fido2-cli:
 	$(call run_in_devcontainer,mkdir -p build/bin && CGO_ENABLED=0 $(GO) build -buildvcs=false -o build/bin/xkmsctl ./cmd/xkmsctl && $(GO) test -v -tags='integration$(comma)fido2' ./test/integration/fido2/... -run 'CLI' -timeout 10m,integration-test-fido2-cli)
+
+.PHONY: integration-test-fido2-hardware
+## integration-test-fido2-hardware: Run FIDO2 ceremonies against a REAL attached authenticator (requires a physical YubiKey/CTAP2 key and a human to touch it)
+integration-test-fido2-hardware:
+	@echo "$(YELLOW)This lane needs a physical CTAP2 authenticator attached; touch it when prompted.$(RESET)"
+	CGO_ENABLED=1 $(GO) test -v -count=1 -tags='integration fido2 yubikey_hardware' \
+		./test/integration/fido2/... -run 'HardwareYubiKey' -timeout 10m
 
 .PHONY: integration-test-fido2-webauthn
 ## integration-test-fido2-webauthn: Run FIDO2 WebAuthn server integration tests (runs in devcontainer)
@@ -1623,7 +2182,7 @@ integration-test-xkey-ssh:
 		echo "$(CYAN)$(BOLD)→ Waiting for xkms-server...$(RESET)"; \
 		sleep 5; \
 		echo "$(CYAN)$(BOLD)→ Running in devcontainer: integration-test-xkey-ssh$(RESET)"; \
-		$(DOCKER_COMPOSE) exec -T devcontainer bash -c "cd /workspace && for i in 1 2 3 4 5 6 7 8 9 10; do [ -S /var/run/xkms/xkms.sock ] && break; echo 'Waiting for socket... ('$$i'/10)'; sleep 2; done && cd xkey && $(GO) test -v -tags='integration' ./test/integration/ssh/... -timeout 5m"; \
+		$(DOCKER_COMPOSE) exec -T devcontainer bash -c "cd $(DEVCONTAINER_REPO) && for i in 1 2 3 4 5 6 7 8 9 10; do [ -S $(XKMS_UNIX_SOCKET) ] && break; echo 'Waiting for socket... ('$$i'/10)'; sleep 2; done && cd xkey && $(GO) test -v -tags='integration' ./test/integration/ssh/... -timeout 5m"; \
 	fi
 
 .PHONY: integration-test-xkey-ctap
@@ -3335,8 +3894,12 @@ integration-test-fido2-adapter:
 integration-test-piv-pkcs11:
 	@$(MAKE) -C xkey integration-test-piv-pkcs11
 
-.PHONY: integration-test-pkcs11
-integration-test-pkcs11:
+.PHONY: integration-test-xkey-pkcs11
+## integration-test-xkey-pkcs11: Run xkey's PKCS#11 consumer tests (FIDO2 adapter + PIV)
+# Renamed from integration-test-pkcs11, which collided with the core-library
+# target above: make takes the LAST definition, so this recipe silently replaced
+# it and the SoftHSM backend suite never ran under that name.
+integration-test-xkey-pkcs11:
 	@$(MAKE) -C xkey integration-test-pkcs11
 
 .PHONY: playwright-test

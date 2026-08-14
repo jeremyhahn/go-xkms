@@ -223,9 +223,30 @@ func TestCreateKeyWithPolicy(t *testing.T) {
 				tpm.Flush(keyAttrs.TPMAttributes.Handle)
 			}
 
-			// Extend the PCR and read again - policy check should fail
+			// Extend the PCR and read again - the PCR branch must stop
+			// authorizing.
+			//
+			// This probes the PCR branch specifically, by presenting no
+			// password on either the key or its parent. The password branch
+			// deliberately survives a PCR change now: the SRK and the key each
+			// record the platform policy pin they were created with, so a
+			// caller holding the PINs can still authorize them. That is the
+			// recovery path, and it is covered in
+			// seal_pcr_policy_simulator_test.go.
+			//
+			// Probing the password branch here would not report a policy
+			// failure in any case: once authorization succeeds, TPM2_Unseal of
+			// an RSA key answers TPM_RC_TYPE, because an asymmetric key is not
+			// a sealed data object.
 			extendRandomBytes(tpm.Transport())
-			secret2, err := tpm.UnsealKey(keyAttrs, nil)
+
+			pcrBranchParent := *keyAttrs.Parent
+			pcrBranchParent.Password = nil
+			pcrBranchAttrs := *keyAttrs
+			pcrBranchAttrs.Parent = &pcrBranchParent
+			pcrBranchAttrs.Password = nil
+
+			secret2, err := tpm.UnsealKey(&pcrBranchAttrs, nil)
 			assert.NotNil(t, err)
 			assert.Nil(t, secret2)
 			assert.Equal(t, ErrPolicyCheckFailed, err)

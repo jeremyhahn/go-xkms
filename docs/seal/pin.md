@@ -325,6 +325,6 @@ if status := svc.GetLockoutStatus(); status != nil && status.IsLocked {
 ## See Also
 
 - [Barrier Encryption Architecture](README.md)
-- [CLI PIN Commands](../usage/cli/pin.md)
+- [CLI PIN Commands](../../xkey/docs/usage/cli/pin.md)
 - [Configuration Reference](../configuration/README.md)
 - [Setup and Unlock Flow](../../xkey/docs/architecture/setup-and-unlock-flow.md)

@@ -112,6 +112,11 @@ type TCPPairingServer struct {
 	wg       sync.WaitGroup
 	connSem  chan struct{}
 
+	// connMu guards conns, the set of accepted connections that have not
+	// finished. Stop closes them so blocked reads unblock immediately.
+	connMu sync.Mutex
+	conns  map[net.Conn]struct{}
+
 	localStaticKey *noise.DHKey
 }
 
@@ -158,6 +163,7 @@ func NewTCPPairingServer(cfg *TCPPairingConfig) (*TCPPairingServer, error) {
 		log:            cfg.Logger.With("component", "tcp_pairing_server"),
 		localStaticKey: localKey,
 		connSem:        make(chan struct{}, cfg.MaxConnections),
+		conns:          make(map[net.Conn]struct{}),
 	}, nil
 }
 
@@ -199,6 +205,10 @@ func (s *TCPPairingServer) Stop() error {
 	if s.listener != nil {
 		_ = s.listener.Close()
 	}
+
+	// Close active connections so handler goroutines blocked on a read
+	// return immediately instead of waiting out the idle timeout.
+	s.closeAllConns()
 
 	s.wg.Wait()
 	s.log.Info("TCP pairing server stopped")
@@ -254,8 +264,41 @@ func (s *TCPPairingServer) acceptLoop() {
 
 		s.log.Debug("accepted connection", "remote", remoteAddr)
 
+		s.trackConn(conn)
+
 		s.wg.Add(1)
 		go s.handleConnection(conn)
+	}
+}
+
+// trackConn registers an accepted connection so Stop can close it.
+func (s *TCPPairingServer) trackConn(conn net.Conn) {
+	s.connMu.Lock()
+	defer s.connMu.Unlock()
+	if s.conns == nil {
+		s.conns = make(map[net.Conn]struct{})
+	}
+	s.conns[conn] = struct{}{}
+}
+
+// untrackConn removes a connection that has finished.
+func (s *TCPPairingServer) untrackConn(conn net.Conn) {
+	s.connMu.Lock()
+	defer s.connMu.Unlock()
+	delete(s.conns, conn)
+}
+
+// closeAllConns closes every tracked connection.
+func (s *TCPPairingServer) closeAllConns() {
+	s.connMu.Lock()
+	conns := make([]net.Conn, 0, len(s.conns))
+	for conn := range s.conns {
+		conns = append(conns, conn)
+	}
+	s.connMu.Unlock()
+
+	for _, conn := range conns {
+		_ = conn.Close()
 	}
 }
 
@@ -263,7 +306,10 @@ func (s *TCPPairingServer) acceptLoop() {
 // Noise XX handshake followed by encrypted JSON-RPC request/response processing.
 func (s *TCPPairingServer) handleConnection(conn net.Conn) {
 	defer s.wg.Done()
-	defer func() { _ = conn.Close() }()
+	defer func() {
+		s.untrackConn(conn)
+		_ = conn.Close()
+	}()
 	defer func() { <-s.connSem }()
 
 	remoteAddr := conn.RemoteAddr().String()

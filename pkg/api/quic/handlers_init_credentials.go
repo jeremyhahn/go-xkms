@@ -19,6 +19,7 @@ import (
 	"net/http"
 
 	"github.com/jeremyhahn/go-xkms/pkg/api/transport"
+	"github.com/jeremyhahn/go-xkms/pkg/auth"
 	initialize "github.com/jeremyhahn/go-xkms/pkg/init"
 	"github.com/jeremyhahn/go-xkms/pkg/server/credentials"
 	"github.com/jeremyhahn/go-xkms/pkg/xkms"
@@ -29,6 +30,11 @@ var (
 	// ErrXKMSServiceUnavailable is returned when the xkms service singleton
 	// cannot be retrieved.
 	ErrXKMSServiceUnavailable = errors.New("xkms service unavailable")
+
+	// ErrClientCertRequired is returned when a share-claim request arrives
+	// without a verified mTLS peer certificate. The officer's certificate
+	// thumbprint is the authentication for these routes.
+	ErrClientCertRequired = errors.New("client certificate required")
 )
 
 // initErrorStatusMap maps ceremony errors to HTTP status codes for O(1) lookup.
@@ -39,6 +45,9 @@ var initErrorStatusMap = map[error]int{
 	initialize.ErrShareNotFound:               http.StatusNotFound,
 	initialize.ErrShareAlreadyClaimed:         http.StatusConflict,
 	initialize.ErrChallengeVerificationFailed: http.StatusUnauthorized,
+	initialize.ErrCertThumbprintMismatch:      http.StatusUnauthorized,
+	initialize.ErrOfficerNotFound:             http.StatusNotFound,
+	initialize.ErrNoPendingShare:              http.StatusNotFound,
 	initialize.ErrAlreadyInitialized:          http.StatusConflict,
 	xkms.ErrNotConfigured:                     http.StatusServiceUnavailable,
 	xkms.ErrNilRequest:                        http.StatusBadRequest,
@@ -64,7 +73,7 @@ func (s *Server) handleGetInitStatus(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if !s.authorize(w, r, "ceremony", "status") {
+	if !s.authorizeCeremony(w, r, auth.ActionStatus) {
 		return
 	}
 
@@ -92,7 +101,7 @@ func (s *Server) handleClaimCertBegin(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if !s.authorize(w, r, "ceremony", "claim_cert") {
+	if !s.authorizeCeremony(w, r, auth.ActionClaimCert) {
 		return
 	}
 
@@ -127,7 +136,7 @@ func (s *Server) handleClaimCertComplete(w http.ResponseWriter, r *http.Request)
 		return
 	}
 
-	if !s.authorize(w, r, "ceremony", "claim_cert") {
+	if !s.authorizeCeremony(w, r, auth.ActionClaimCert) {
 		return
 	}
 
@@ -153,23 +162,47 @@ func (s *Server) handleClaimCertComplete(w http.ResponseWriter, r *http.Request)
 	s.sendJSON(w, http.StatusOK, resp)
 }
 
-// handleClaimShare retrieves the Shamir share for the named officer.
-// POST /api/v1/init/claim-share
-func (s *Server) handleClaimShare(w http.ResponseWriter, r *http.Request) {
+// callerCertThumbprint derives the caller's certificate thumbprint from the
+// verified mTLS peer certificate on the HTTP/3 request. It fails closed with
+// ErrClientCertRequired when the request carries none, so the share-claim
+// routes never fall back to trusting a username.
+//
+// The value is computed with initialize.CertThumbprint, the single canonical
+// binding identifier the ceremony records for each officer at enrollment.
+func callerCertThumbprint(r *http.Request) (string, error) {
+	if r.TLS == nil || len(r.TLS.PeerCertificates) == 0 {
+		return "", ErrClientCertRequired
+	}
+	return initialize.CertThumbprint(r.TLS.PeerCertificates[0].Raw), nil
+}
+
+// handleClaimShareBegin starts the Shamir share claim handshake for the named
+// officer. The officer has no account yet; the certificate claim-cert issued
+// them is their credential, and its thumbprint is the authentication here.
+// POST /api/v1/init/claim-share/begin
+func (s *Server) handleClaimShareBegin(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
 		s.sendError(w, http.StatusMethodNotAllowed, "method not allowed")
 		return
 	}
 
-	if !s.authorize(w, r, "ceremony", "claim_share_complete") {
+	if !s.authorizeCeremony(w, r, auth.ActionClaimShareBegin) {
 		return
 	}
 
-	var req transport.ClaimShareRequest
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+	thumbprint, err := callerCertThumbprint(r)
+	if err != nil {
+		s.sendError(w, http.StatusUnauthorized, err.Error())
+		return
+	}
+
+	var req transport.ClaimShareBeginRequest
+	if decErr := json.NewDecoder(r.Body).Decode(&req); decErr != nil {
 		s.sendError(w, http.StatusBadRequest, "invalid request body")
 		return
 	}
+	// Never from the wire: overwrite whatever decoding produced.
+	req.CallerCertThumbprint = thumbprint
 
 	svc := s.xkmsService
 	if svc == nil {
@@ -177,7 +210,50 @@ func (s *Server) handleClaimShare(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	resp, err := svc.ClaimShare(r.Context(), &req)
+	resp, err := svc.ClaimShareBegin(r.Context(), &req)
+	if err != nil {
+		statusCode := mapInitErrorToStatus(err)
+		s.sendError(w, statusCode, err.Error())
+		return
+	}
+
+	s.sendJSON(w, http.StatusOK, resp)
+}
+
+// handleClaimShareComplete completes the Shamir share claim handshake,
+// releasing the share exactly once after both the nonce signature and the
+// caller certificate thumbprint verify.
+// POST /api/v1/init/claim-share/complete
+func (s *Server) handleClaimShareComplete(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		s.sendError(w, http.StatusMethodNotAllowed, "method not allowed")
+		return
+	}
+
+	if !s.authorizeCeremony(w, r, auth.ActionClaimShareComplete) {
+		return
+	}
+
+	thumbprint, err := callerCertThumbprint(r)
+	if err != nil {
+		s.sendError(w, http.StatusUnauthorized, err.Error())
+		return
+	}
+
+	var req transport.ClaimShareCompleteRequest
+	if decErr := json.NewDecoder(r.Body).Decode(&req); decErr != nil {
+		s.sendError(w, http.StatusBadRequest, "invalid request body")
+		return
+	}
+	req.CallerCertThumbprint = thumbprint
+
+	svc := s.xkmsService
+	if svc == nil {
+		s.sendError(w, http.StatusServiceUnavailable, ErrXKMSServiceUnavailable.Error())
+		return
+	}
+
+	resp, err := svc.ClaimShareComplete(r.Context(), &req)
 	if err != nil {
 		statusCode := mapInitErrorToStatus(err)
 		s.sendError(w, statusCode, err.Error())
@@ -195,7 +271,7 @@ func (s *Server) handleSignCSRInit(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if !s.authorize(w, r, "ceremony", "sign_csr") {
+	if !s.authorize(w, r, auth.ResourceCeremony, auth.ActionSignCSR) {
 		return
 	}
 
@@ -229,7 +305,7 @@ func (s *Server) handleCredentialSubmit(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 
-	if !s.authorize(w, r, "credentials", "submit") {
+	if !s.authorize(w, r, auth.ResourceCredentials, auth.ActionSubmit) {
 		return
 	}
 
@@ -263,7 +339,7 @@ func (s *Server) handleCredentialStrategy(w http.ResponseWriter, r *http.Request
 		return
 	}
 
-	if !s.authorize(w, r, "credentials", "strategy") {
+	if !s.authorize(w, r, auth.ResourceCredentials, auth.ActionStrategy) {
 		return
 	}
 

@@ -600,7 +600,7 @@ if err != nil {
 - [Integration Guide](./bootstrap-integration.md) -- Project-specific usage for go-xkms, xkey, and go-trusted-platform
 - [DANE/TLSA Documentation](./dane.md) -- RFC 6698 details, DNSSEC trust chain, and record format
 - [CA Package Documentation](../ca/) -- Certificate Authority overview
-- [Bootstrap CLI Commands](../usage/cli/bootstrap.md) -- CLI reference for DANE, Noise, and SPKI commands
-- [Noise CLI Commands](../usage/cli/noise.md) -- Key generation and SPKI pin tools (legacy path)
+- [Bootstrap CLI Commands](../../xkey/docs/usage/cli/bootstrap.md) -- CLI reference for DANE, Noise, and SPKI commands
+- [Noise CLI Commands](../../xkey/docs/usage/cli/noise.md) -- Key generation and SPKI pin tools (legacy path)
 - [Bootstrap Configuration](../configuration/bootstrap.md) -- YAML configuration reference
 - [Backends](../backends/) -- Key storage backend selection

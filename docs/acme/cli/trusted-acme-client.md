@@ -373,6 +373,6 @@ trusted-acme-client cert request public-web
 ## See Also
 
 - [Example multi-account config](../examples/multi-account.yaml)
-- [ACME Documentation](../acme/README.md)
+- [ACME Documentation](../README.md)
 - [trusted-acme-server](trusted-acme-server.md)
 - [cactl](cactl.md)

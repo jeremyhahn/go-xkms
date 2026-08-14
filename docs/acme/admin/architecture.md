@@ -354,13 +354,13 @@ Admin UI              Admin API              CA Service              Storage
 ### Tenant Creation Flow
 
 ```
-Super-Admin           Admin API              TenantService          QRDB
+Platform Admin        Admin API              TenantService          QRDB
    |                      |                      |                      |
    | 1. POST /tenants     |                      |                      |
    |--------------------->|                      |                      |
    |                      |                      |                      |
    |                      | 2. Authenticate      |                      |
-   |                      | 3. Require super-admin                      |
+   |                      | 3. Authorize tenants:create (qrdb RBAC)     |
    |                      |                      |                      |
    |                      | 4. CreateTenant      |                      |
    |                      |--------------------->|                      |

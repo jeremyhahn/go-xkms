@@ -112,5 +112,5 @@ type Config struct {
 
 ## Cross-References
 
-- [WebAuthn Server Documentation](../usage/webauthn.md) -- server-side WebAuthn setup
+- [WebAuthn Server Documentation](../../xkey/docs/usage/webauthn.md) -- server-side WebAuthn setup
 - [FIDO2 Documentation](../fido2/README.md) -- FIDO2/CTAP2 protocol details

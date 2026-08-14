@@ -298,19 +298,45 @@ func TestResolve_NoValidPath(t *testing.T) {
 	// Override HOME to a non-existent directory so strategy 3 fails.
 	t.Setenv("HOME", "/nonexistent-xhome-test-dir")
 
-	// Strategy 4 (/etc/xkey) may or may not exist on the test host.
-	// If it does exist, this test will pass via strategy 4, which is
-	// fine — we're testing that at least one path works or the error
-	// is returned.
-	h, err := Resolve()
-	if err == nil && h.Root == systemDir {
-		t.Skip("/etc/xkey exists on this host, cannot test no-path scenario")
-	}
+	// Strategy 4 (/etc/xkey) is redirected to a path that does not exist so
+	// the no-path scenario is reachable regardless of whether the host has
+	// /etc/xkey installed.
+	origSystemDir := systemDir
+	systemDir = filepath.Join(t.TempDir(), "no-such-system-dir")
+	t.Cleanup(func() { systemDir = origSystemDir })
+
+	_, err := Resolve()
 	if err == nil {
 		t.Fatal("expected error when no valid path exists")
 	}
 	if err != ErrHomeNotResolved {
 		t.Errorf("error = %v, want ErrHomeNotResolved", err)
+	}
+}
+
+// TestResolve_SystemDirFallback verifies that Resolve falls back to the
+// system-wide directory when no override, env var, marker file or home
+// directory candidate applies.
+func TestResolve_SystemDirFallback(t *testing.T) {
+	ResetRoot()
+	t.Setenv(EnvHome, "")
+	t.Setenv("HOME", "/nonexistent-xhome-test-dir")
+
+	sysDir := filepath.Join(t.TempDir(), "etc-xkey")
+	if err := os.MkdirAll(sysDir, 0700); err != nil {
+		t.Fatalf("failed to create system dir: %v", err)
+	}
+
+	origSystemDir := systemDir
+	systemDir = sysDir
+	t.Cleanup(func() { systemDir = origSystemDir })
+
+	h, err := Resolve()
+	if err != nil {
+		t.Fatalf("Resolve() error = %v, want the system dir fallback", err)
+	}
+	if h.Root != sysDir {
+		t.Errorf("Resolve() root = %q, want %q", h.Root, sysDir)
 	}
 }
 

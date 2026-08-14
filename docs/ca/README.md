@@ -121,7 +121,7 @@ The CA supports multi-tenant deployments where each tenant has isolated data, de
 Each tenant can have their own intermediate CA(s) under a global or tenant-specific root:
 
 ```
-Global Root CA (managed by super-admin)
+Global Root CA (managed by a system-tenant `so` / `admin`)
 +-- Tenant A Intermediate CA
 |   +-- General Purpose (default)
 |   +-- TPM Endorsement
@@ -197,7 +197,7 @@ tenants/{tenant_id}/ca/crl/{crl_number}
 tenants/{tenant_id}/ca/ocsp/{serial}
 ```
 
-See [Multi-Tenancy Documentation](../multi-tenancy.md) for complete details.
+See [Multi-Tenancy Documentation](../acme/multi-tenancy.md) for complete details.
 
 ## Quick Start
 
@@ -422,8 +422,8 @@ The CA follows a layered architecture with clear separation of concerns:
 ## Related Documentation
 
 - [ACME Server Documentation](../acme/README.md)
-- [QRDB Documentation](../qrdb/README.md)
-- [Multi-Tenancy](../multi-tenancy.md)
+- [QRDB Documentation](../acme/qrdb/README.md)
+- [Multi-Tenancy](../acme/multi-tenancy.md)
 - [go-xkms Documentation](https://github.com/jeremyhahn/go-xkms)
 - [go-objstore Documentation](https://github.com/jeremyhahn/go-objstore)
 - [go-trusted-platform TPM Documentation](https://github.com/jeremyhahn/go-trusted-platform/tree/main/docs)

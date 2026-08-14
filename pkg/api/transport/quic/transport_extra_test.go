@@ -686,12 +686,12 @@ func TestClaimCertComplete_Connected(t *testing.T) {
 	assert.NotNil(t, resp)
 }
 
-func TestClaimShare_Connected(t *testing.T) {
+func TestClaimShareBegin_Connected(t *testing.T) {
 	tr, cleanup := newFullMockTransport(t)
 	defer cleanup()
-	resp, err := tr.ClaimShare(context.Background(), &transport.ClaimShareRequest{})
+	resp, err := tr.ClaimShareBegin(context.Background(), &transport.ClaimShareBeginRequest{})
 	require.NoError(t, err)
-	assert.NotNil(t, resp.Share)
+	assert.NotNil(t, resp)
 }
 
 func TestSignCSRInit_Connected(t *testing.T) {

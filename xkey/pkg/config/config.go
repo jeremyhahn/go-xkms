@@ -80,6 +80,13 @@ type PhoneConfig struct {
 	ServerTLSEnabled  bool   `yaml:"server_tls_enabled" json:"server_tls_enabled" mapstructure:"server_tls_enabled"`
 	DeviceFilter      string `yaml:"device_filter" json:"device_filter" mapstructure:"device_filter"`
 	AttestationPolicy string `yaml:"attestation_policy" json:"attestation_policy" mapstructure:"attestation_policy"`
+
+	// TPMEnrollment offers TCG-CSR-IDEVID device enrollment from this host's
+	// TPM over the phone bridge, so a paired phone acting as a Certificate
+	// Authority can enroll this machine's device identity. Off by default:
+	// enrollment exposes the EK certificate and runs TPM2_ActivateCredential
+	// on the phone's behalf. The TPM is opened from tpm.device.
+	TPMEnrollment bool `yaml:"tpm_enrollment" json:"tpm_enrollment" mapstructure:"tpm_enrollment"`
 }
 
 // XKMSDConfig holds connection settings for the xkmsd server.

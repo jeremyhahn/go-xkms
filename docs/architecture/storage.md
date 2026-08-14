@@ -513,5 +513,5 @@ Implement a caching layer for frequently accessed data to reduce latency.
 ## See Also
 
 - [Storage Interface Compatibility](./objstore-integration.md)
-- [Getting Started Guide](../usage/getting-started.md)
+- [Getting Started Guide](../../xkey/docs/usage/getting-started.md)
 - [Architecture Overview](./overview.md)

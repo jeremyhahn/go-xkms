@@ -27,8 +27,6 @@ import (
 
 // Mock implementations for testing
 
-type mockCA struct{}
-
 type mockDNSService struct {
 	zones     map[string]*mockZone
 	saveError error
@@ -153,9 +151,7 @@ func TestVerify_Success(t *testing.T) {
 		},
 	}
 
-	ca := &mockCA{}
-
-	err := Verify(resolver, ca, "example.com", "", "", keyAuth)
+	err := Verify(resolver, "example.com", "", "", keyAuth)
 	if err != nil {
 		t.Errorf("Verify() failed: %v", err)
 	}
@@ -181,9 +177,7 @@ func TestVerify_ChallengeFailed(t *testing.T) {
 		},
 	}
 
-	ca := &mockCA{}
-
-	err := Verify(resolver, ca, "example.com", "", "", keyAuth)
+	err := Verify(resolver, "example.com", "", "", keyAuth)
 	if err != ErrChallengeFailed {
 		t.Errorf("Verify() should return ErrChallengeFailed, got: %v", err)
 	}
@@ -194,9 +188,8 @@ func TestVerify_DNSServiceNotInitialized(t *testing.T) {
 	SetDNSService(nil)
 
 	resolver := net.DefaultResolver
-	ca := &mockCA{}
 
-	err := Verify(resolver, ca, "example.com", "", "", "keyauth")
+	err := Verify(resolver, "example.com", "", "", "keyauth")
 	if err != ErrDNSServiceNotInitialized {
 		t.Errorf("Verify() should return ErrDNSServiceNotInitialized, got: %v", err)
 	}
@@ -213,9 +206,7 @@ func TestVerify_DNSLookupError(t *testing.T) {
 		lookupErr: errors.New("DNS lookup failed"),
 	}
 
-	ca := &mockCA{}
-
-	err := Verify(resolver, ca, "example.com", "", "", "keyauth")
+	err := Verify(resolver, "example.com", "", "", "keyauth")
 	if err == nil {
 		t.Error("Verify() should fail when DNS lookup fails")
 	}
@@ -241,9 +232,7 @@ func TestVerify_ZoneRetrievalError(t *testing.T) {
 		},
 	}
 
-	ca := &mockCA{}
-
-	err := Verify(resolver, ca, "example.com", "", "", keyAuth)
+	err := Verify(resolver, "example.com", "", "", keyAuth)
 	if err == nil {
 		t.Error("Verify() should fail when zone retrieval fails")
 	}
@@ -266,9 +255,7 @@ func TestVerify_ZoneSaveError(t *testing.T) {
 		},
 	}
 
-	ca := &mockCA{}
-
-	err := Verify(resolver, ca, "example.com", "", "", keyAuth)
+	err := Verify(resolver, "example.com", "", "", keyAuth)
 	if err == nil {
 		t.Error("Verify() should fail when zone save fails")
 	}
@@ -500,8 +487,7 @@ func TestVerify_Integration(t *testing.T) {
 	}
 
 	// Verify the challenge
-	ca := &mockCA{}
-	err = Verify(resolver, ca, "test.example.com", "", "", keyAuth)
+	err = Verify(resolver, "test.example.com", "", "", keyAuth)
 	if err != nil {
 		t.Errorf("Verify() failed: %v", err)
 	}
@@ -799,9 +785,7 @@ func TestVerify_EmptyTXTRecords(t *testing.T) {
 		},
 	}
 
-	ca := &mockCA{}
-
-	err := Verify(resolver, ca, "example.com", "", "", "keyauth")
+	err := Verify(resolver, "example.com", "", "", "keyauth")
 	if err != ErrChallengeFailed {
 		t.Errorf("Verify() should return ErrChallengeFailed for empty TXT records, got: %v", err)
 	}
@@ -830,9 +814,7 @@ func TestVerify_MultipleTXTRecords(t *testing.T) {
 		},
 	}
 
-	ca := &mockCA{}
-
-	err := Verify(resolver, ca, "example.com", "", "", keyAuth)
+	err := Verify(resolver, "example.com", "", "", keyAuth)
 	if err != nil {
 		t.Errorf("Verify() should succeed when correct value is among multiple TXT records: %v", err)
 	}
@@ -854,8 +836,6 @@ func BenchmarkVerify(b *testing.B) {
 		},
 	}
 
-	ca := &mockCA{}
-
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
 		// Re-add the record for each iteration
@@ -870,7 +850,7 @@ func BenchmarkVerify(b *testing.B) {
 		}
 		dnsService.zones["example.com"] = zone
 
-		_ = Verify(resolver, ca, "example.com", "", "", keyAuth)
+		_ = Verify(resolver, "example.com", "", "", keyAuth)
 	}
 }
 

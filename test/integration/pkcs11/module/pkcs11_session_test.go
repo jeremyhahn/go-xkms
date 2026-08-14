@@ -344,9 +344,15 @@ func TestLoginLogout(t *testing.T) {
 		// Open RO session
 		session := env.MustOpenROSession(t)
 
-		// SO login should fail on RO session
+		// SO login must fail, and with CKR_SESSION_READ_ONLY_EXISTS.
+		//
+		// This asserted CKR_SESSION_READ_ONLY until the login path was
+		// corrected. That code is absent from C_Login's return table in v3.2
+		// §5.6.8, and SoftHSM answers CKR_SESSION_READ_ONLY_EXISTS here, so the
+		// old assertion was pinning a non-conformant code that applications
+		// branching on the return value would have had to special-case.
 		rv := env.LoginSO(t, session, TestPINs.SO)
-		RequireReturnValue(t, rv, module.CKR_SESSION_READ_ONLY, "SO login on RO session")
+		RequireReturnValue(t, rv, module.CKR_SESSION_READ_ONLY_EXISTS, "SO login on RO session")
 	})
 
 	t.Run("SOLoginBlockedByROSessions", func(t *testing.T) {
@@ -581,15 +587,39 @@ func TestPINOperations(t *testing.T) {
 		RequireReturnValue(t, rv, module.CKR_PIN_INCORRECT, "SetPIN with wrong old PIN")
 	})
 
-	t.Run("SetPINWithoutLogin", func(t *testing.T) {
-		env := SetupTestEnvironment(t, nil)
-		env.MustInitializeModule(t)
-		env.MustInitializeToken(t, TestPINs.SO, TestLabels.Token)
+	t.Run("SetPINInPublicSessionChangesTheUserPIN", func(t *testing.T) {
+		// PKCS#11 v3.2 §5.5.9 is explicit that a login is NOT required:
+		// "C_SetPIN modifies the PIN of the user that is currently logged in,
+		// or the CKU_USER PIN if the session is not logged in", and it "can
+		// only be called in the R/W Public Session state, R/W SO Functions
+		// state, or R/W User Functions state" -- R/W Public is listed first.
+		// Requiring a login here would refuse the very case the spec names,
+		// leaving a user who has forgotten nothing unable to change their PIN.
+		env, session := SetupInitializedModule(t)
 
-		session := env.MustOpenRWSession(t)
+		newPIN := []byte("87651234")
 
-		rv := env.Module.SetPIN(session, TestPINs.User, []byte("newpin"))
-		RequireReturnValue(t, rv, module.CKR_USER_NOT_LOGGED_IN, "SetPIN without login")
+		// The old PIN must still be checked: this is a PIN change, not a reset.
+		rv := env.Module.SetPIN(session, []byte("definitely-wrong"), newPIN)
+		RequireReturnValue(t, rv, module.CKR_PIN_INCORRECT,
+			"SetPIN with a wrong old PIN from a public session")
+
+		// With the correct old PIN it succeeds without any login.
+		rv = env.Module.SetPIN(session, TestPINs.User, newPIN)
+		RequireReturnValue(t, rv, module.CKR_OK,
+			"SetPIN from an R/W Public Session must be permitted")
+
+		// The change is real: the new PIN authenticates and the old one does not.
+		RequireReturnValue(t, env.Module.Login(session, module.CKU_USER, newPIN),
+			module.CKR_OK, "the new PIN must authenticate")
+		RequireOK(t, env.Module.Logout(session), "Logout")
+
+		// Put the PIN back. These tests share one token, and leaving it changed
+		// makes every later test -- including the ones that drive pkcs11-tool in
+		// a separate process -- fail to log in for reasons unrelated to what
+		// they are testing.
+		RequireReturnValue(t, env.Module.SetPIN(session, newPIN, TestPINs.User),
+			module.CKR_OK, "restoring the original PIN")
 	})
 }
 

@@ -22,6 +22,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"sync/atomic"
@@ -930,23 +931,79 @@ func TestFC3_ConnectionService_ConnectHealthCheckError(t *testing.T) {
 // TestFC3_SudoElevator_Run_WithSudoAvailable exercises L79-82 and
 // L135-140. When sudo is available but the command fails with a non-exit
 // error.
+// TestFC3_SudoElevator_Run_WithSudoAvailable exercises the sudo result
+// handling for every outcome. The sudo invocation is routed through the
+// sudoCommand seam so no real PAM authentication attempt is made against the
+// host, which also makes each mapping exact instead of best-effort.
 func TestFC3_SudoElevator_Run_WithSudoAvailable(t *testing.T) {
-	e := NewSudoElevator("badpassword")
+	origLook, origCmd := sudoLookPath, sudoCommand
+	t.Cleanup(func() { sudoLookPath, sudoCommand = origLook, origCmd })
 
-	if !e.IsAvailable() {
-		t.Skip("sudo not available on this system")
-	}
+	sudoLookPath = func(string) (string, error) { return "/usr/bin/sudo", nil }
 
-	// This will attempt to run sudo with a bad password. Sudo will fail
-	// with an exit error (exit code 1 = wrong password).
+	t.Run("wrong password is denied", func(t *testing.T) {
+		// sudo exits 1 when the password is incorrect.
+		sudoCommand = func(_ string, _ ...string) *exec.Cmd {
+			return exec.Command("sh", "-c", "exit 1")
+		}
+
+		e := NewSudoElevator("badpassword")
+		require.True(t, e.IsAvailable())
+
+		out, err := e.Run([]string{"trust", "install", "abc"}, nil)
+		assert.Nil(t, out)
+		assert.ErrorIs(t, err, ErrElevationDenied)
+	})
+
+	t.Run("other exit code is a failure", func(t *testing.T) {
+		sudoCommand = func(_ string, _ ...string) *exec.Cmd {
+			return exec.Command("sh", "-c", "echo boom >&2; exit 3")
+		}
+
+		e := NewSudoElevator("password")
+		out, err := e.Run([]string{"trust", "install", "abc"}, nil)
+		assert.Nil(t, out)
+		assert.ErrorIs(t, err, ErrElevationFailed)
+		assert.Contains(t, err.Error(), "exit code 3")
+		assert.Contains(t, err.Error(), "boom")
+	})
+
+	t.Run("non exit error is a failure", func(t *testing.T) {
+		sudoCommand = func(_ string, _ ...string) *exec.Cmd {
+			return exec.Command("/nonexistent/xkey-test-binary")
+		}
+
+		e := NewSudoElevator("password")
+		out, err := e.Run([]string{"trust", "install", "abc"}, nil)
+		assert.Nil(t, out)
+		assert.ErrorIs(t, err, ErrElevationFailed)
+	})
+
+	t.Run("success returns stdout", func(t *testing.T) {
+		sudoCommand = func(_ string, _ ...string) *exec.Cmd {
+			return exec.Command("sh", "-c", "printf elevated-output")
+		}
+
+		e := NewSudoElevator("password")
+		out, err := e.Run([]string{"trust", "install", "abc"}, nil)
+		require.NoError(t, err)
+		assert.Equal(t, "elevated-output", string(out))
+	})
+}
+
+// TestFC3_SudoElevator_IsAvailable_NoSudo verifies IsAvailable reports false
+// when sudo cannot be resolved, and that Run refuses to proceed.
+func TestFC3_SudoElevator_IsAvailable_NoSudo(t *testing.T) {
+	origLook := sudoLookPath
+	t.Cleanup(func() { sudoLookPath = origLook })
+	sudoLookPath = func(string) (string, error) { return "", exec.ErrNotFound }
+
+	e := NewSudoElevator("password")
+	assert.False(t, e.IsAvailable())
+
 	out, err := e.Run([]string{"trust", "install", "abc"}, nil)
 	assert.Nil(t, out)
-	assert.Error(t, err)
-	// On most systems with sudo, wrong password yields ErrElevationDenied
-	// or ErrElevationFailed.
-	assert.True(t,
-		errors.Is(err, ErrElevationDenied) || errors.Is(err, ErrElevationFailed),
-		"expected ErrElevationDenied or ErrElevationFailed, got: %v", err)
+	assert.ErrorIs(t, err, ErrSudoUnavailable)
 }
 
 // TestFC3_SudoElevator_Run_PasswordZeroed exercises L143-147 where sudo

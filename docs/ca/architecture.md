@@ -148,6 +148,132 @@ This separation ensures:
 - **Audit Trail**: Clear separation of CA operations
 - **Backup/Recovery**: Independent backup strategies per CA
 
+## Canonical Certificate Issuance
+
+`pkg/ca` is the single implementer of CA-issued certificate creation. Every
+certificate this project signs — root, intermediate, end entity, TCG
+endorsement / attestation / device identity, ACME subscriber and per-tenant CA
+— is built and signed by `ca.Issuer`.
+
+```
+       caller                      pkg/ca                        crypto/x509
+         |                            |                               |
+         |  CertificateSpec           |                               |
+         |  (subject, validity, SANs, |                               |
+         |   profile, extensions)     |                               |
+         |--------------------------->|                               |
+         |                            |                               |
+         |                     Issuer.Template                        |
+         |                       1. subject / validity / names        |
+         |                       2. issuer name + authority key id    |
+         |                       3. Profile.Apply                     |
+         |                          (key usage, EKU, basic            |
+         |                           constraints, policies)           |
+         |                       4. Identity endpoints                |
+         |                          (CRL / OCSP / AIA)                |
+         |                       5. caller extensions                 |
+         |                            |                               |
+         |                     Issuer.Sign  ---- CreateCertificate --->|
+         |                            |                               |
+         |  *x509.Certificate         |                               |
+         |<---------------------------|                               |
+```
+
+### The two halves of the seam
+
+A caller states **what** it wants; `pkg/ca` decides **how** that becomes an
+X.509 certificate.
+
+| Owned by the caller (`CertificateSpec`) | Owned by `pkg/ca` |
+| --- | --- |
+| Serial, subject, validity window | Key usage, extended key usage |
+| Subject alternative names | Basic constraints and path length |
+| Public key, signature algorithm | Certificate policies |
+| Path-specific extra extensions | CRL / OCSP / AIA endpoints |
+| Which **profile** classifies the certificate | Issuer name, authority key identifier |
+
+`CertificateSpec` deliberately has no key-usage, extended-key-usage or
+basic-constraints field. Those are policy, and policy belongs to the profile.
+`Issuer.Issue` requires a profile: that requirement is what guarantees no
+issuance path can bypass `Profile.Apply`.
+
+### The issuer is explicit
+
+`ca.Issuer` carries the signing key, the issuing certificate and the issuing
+identity as values rather than resolving them from a process-wide CA:
+
+```go
+type Issuer struct {
+    Signer      crypto.Signer      // signs the certificate
+    Certificate *x509.Certificate  // nil => self-signed (root creation)
+    Identity    *Identity          // supplies CRL / OCSP / AIA endpoints
+}
+```
+
+This is what makes multi-tenant issuance possible. The ACME admin service
+creates a per-tenant root by passing an `Issuer` with a nil `Certificate` and
+the tenant's own key; it creates a tenant intermediate by passing the tenant
+root, or the platform CA, as the parent. The cluster provisioner does the same
+through `SignOptions.Signer` / `SignOptions.IssuerCert`.
+
+### Profiles
+
+Profiles are the policy vocabulary. A change to a profile reaches every path
+that issues with it — that is the point of routing everything through one
+issuer.
+
+| Profile | Used by | Key usage | Basic constraints |
+| --- | --- | --- | --- |
+| `ca` | root, intermediate, tenant root, tenant intermediate | certSign, cRLSign, digitalSignature | CA, path length from request |
+| `server`, `client`, `code-signing`, `email`, `ocsp-responder`, `timestamping` | `SignCSR` with a named profile | per purpose | end entity |
+| `acme-leaf` | ACME issuance pipeline | digitalSignature, keyEncipherment | omitted |
+| `tcg-ek` | `IssueEKCertificate` | keyEncipherment | omitted |
+| `tcg-ak`, `tcg-iak` | `IssueAKCertificate`, `SignTCGCSRIDevID` | digitalSignature | omitted |
+| `tcg-idevid` | `SignTCGCSRIDevID` | digitalSignature, keyEncipherment | omitted |
+
+A CSR-signing caller that names no profile is issued with an anonymous TLS leaf
+profile carrying whatever key usage and extended key usage its `SignOptions`
+asked for, so even that case goes through `Profile.Apply`.
+
+Registering a profile against a CA replaces it everywhere:
+
+```go
+stricter := ca.NewProfileBuilder(ca.ProfileNameCA).
+    WithKeyUsage(x509.KeyUsageCertSign | x509.KeyUsageCRLSign).
+    AsCA().
+    Build()
+myCA.Profiles().Register(ca.ProfileNameCA, stricter)
+```
+
+After that, the platform root, every intermediate and every per-tenant CA the
+deployment creates carry the stricter key usage.
+
+### Signing the same template twice
+
+Two callers must sign one template more than once and therefore use
+`Issuer.Sign` directly rather than `Issuer.Issue`:
+
+- the **Certificate Transparency pipeline** (`pkg/acme/issuance`), which signs
+  a precertificate carrying a poison extension and then a final certificate
+  carrying the SCT list;
+- the **hybrid ML-DSA signer** (`pkg/ca/hybrid.go`), which signs once to obtain
+  a TBS to countersign with the quantum key, and again to embed the
+  countersignature.
+
+Both build their template through `Issuer.Template`, so they inherit the same
+profile and endpoint policy as everything else. `Issuer.Sign` is the only place
+`x509.CreateCertificate` is called for a CA-issued certificate.
+
+### Regression coverage
+
+`testutil.PolicyFingerprint` reduces a certificate to its policy surface —
+extensions with their raw values, key usage, extended key usage, basic
+constraints, path length, endpoints and validity duration — excluding the
+serial, the absolute timestamps and everything derived from key material. The
+`TestCertificatePolicy_*` suites pin that fingerprint for every former call
+site, and assert that adding an OCSP responder to the issuing identity is
+observable from all of them.
+
 ## Certificate Lifecycle
 
 ```

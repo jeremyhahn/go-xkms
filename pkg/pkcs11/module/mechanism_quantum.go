@@ -196,135 +196,177 @@ var quantumKeyTypeNames = map[KeyType]string{
 // quantumMechanismRegistry contains descriptors for quantum-safe mechanisms.
 var quantumMechanismRegistry = map[MechanismType]*MechanismDescriptor{
 	// ML-DSA-44 (Dilithium2 equivalent)
+	// Per PKCS#11 v3.2 sections 6.67.4/6.67.5, ulMinKeySize/ulMaxKeySize for
+	// ML-DSA mechanisms specify the ML-DSA *public* key size *in bytes*. Each
+	// vendor mechanism below is scoped to a single security level, so
+	// MinKeySize == MaxKeySize == that level's public key size.
 	CKM_VENDOR_ML_DSA_44_KEY_PAIR_GEN: {
-		Type:       CKM_VENDOR_ML_DSA_44_KEY_PAIR_GEN,
-		Name:       "CKM_VENDOR_ML_DSA_44_KEY_PAIR_GEN",
-		Categories: []MechanismCategory{CategoryKeyPairGen},
-		MinKeySize: MLDSA44PublicKeySize * 8, // in bits
-		MaxKeySize: MLDSA44SecretKeySize * 8,
-		Flags:      CKF_GENERATE_KEY_PAIR | CKF_EXTENSION,
+		Type:         CKM_VENDOR_ML_DSA_44_KEY_PAIR_GEN,
+		Name:         "CKM_VENDOR_ML_DSA_44_KEY_PAIR_GEN",
+		Categories:   []MechanismCategory{CategoryKeyPairGen},
+		MinKeySize:   MLDSA44PublicKeySize,
+		MaxKeySize:   MLDSA44PublicKeySize,
+		Flags:        CKF_GENERATE_KEY_PAIR | CKF_EXTENSION,
+		FIPSApproved: true,
 	},
 	CKM_VENDOR_ML_DSA_44: {
-		Type:       CKM_VENDOR_ML_DSA_44,
-		Name:       "CKM_VENDOR_ML_DSA_44",
-		Categories: []MechanismCategory{CategorySign, CategoryVerify},
-		MinKeySize: MLDSA44PublicKeySize * 8,
-		MaxKeySize: MLDSA44SecretKeySize * 8,
-		Flags:      CKF_SIGN | CKF_VERIFY | CKF_EXTENSION,
+		Type:         CKM_VENDOR_ML_DSA_44,
+		Name:         "CKM_VENDOR_ML_DSA_44",
+		Categories:   []MechanismCategory{CategorySign, CategoryVerify},
+		MinKeySize:   MLDSA44PublicKeySize,
+		MaxKeySize:   MLDSA44PublicKeySize,
+		Flags:        CKF_SIGN | CKF_VERIFY | CKF_EXTENSION,
+		FIPSApproved: true,
 	},
 
 	// ML-DSA-65 (Dilithium3 equivalent)
 	CKM_VENDOR_ML_DSA_65_KEY_PAIR_GEN: {
-		Type:       CKM_VENDOR_ML_DSA_65_KEY_PAIR_GEN,
-		Name:       "CKM_VENDOR_ML_DSA_65_KEY_PAIR_GEN",
-		Categories: []MechanismCategory{CategoryKeyPairGen},
-		MinKeySize: MLDSA65PublicKeySize * 8,
-		MaxKeySize: MLDSA65SecretKeySize * 8,
-		Flags:      CKF_GENERATE_KEY_PAIR | CKF_EXTENSION,
+		Type:         CKM_VENDOR_ML_DSA_65_KEY_PAIR_GEN,
+		Name:         "CKM_VENDOR_ML_DSA_65_KEY_PAIR_GEN",
+		Categories:   []MechanismCategory{CategoryKeyPairGen},
+		MinKeySize:   MLDSA65PublicKeySize,
+		MaxKeySize:   MLDSA65PublicKeySize,
+		Flags:        CKF_GENERATE_KEY_PAIR | CKF_EXTENSION,
+		FIPSApproved: true,
 	},
 	CKM_VENDOR_ML_DSA_65: {
-		Type:       CKM_VENDOR_ML_DSA_65,
-		Name:       "CKM_VENDOR_ML_DSA_65",
-		Categories: []MechanismCategory{CategorySign, CategoryVerify},
-		MinKeySize: MLDSA65PublicKeySize * 8,
-		MaxKeySize: MLDSA65SecretKeySize * 8,
-		Flags:      CKF_SIGN | CKF_VERIFY | CKF_EXTENSION,
+		Type:         CKM_VENDOR_ML_DSA_65,
+		Name:         "CKM_VENDOR_ML_DSA_65",
+		Categories:   []MechanismCategory{CategorySign, CategoryVerify},
+		MinKeySize:   MLDSA65PublicKeySize,
+		MaxKeySize:   MLDSA65PublicKeySize,
+		Flags:        CKF_SIGN | CKF_VERIFY | CKF_EXTENSION,
+		FIPSApproved: true,
 	},
 
 	// ML-DSA-87 (Dilithium5 equivalent)
 	CKM_VENDOR_ML_DSA_87_KEY_PAIR_GEN: {
-		Type:       CKM_VENDOR_ML_DSA_87_KEY_PAIR_GEN,
-		Name:       "CKM_VENDOR_ML_DSA_87_KEY_PAIR_GEN",
-		Categories: []MechanismCategory{CategoryKeyPairGen},
-		MinKeySize: MLDSA87PublicKeySize * 8,
-		MaxKeySize: MLDSA87SecretKeySize * 8,
-		Flags:      CKF_GENERATE_KEY_PAIR | CKF_EXTENSION,
+		Type:         CKM_VENDOR_ML_DSA_87_KEY_PAIR_GEN,
+		Name:         "CKM_VENDOR_ML_DSA_87_KEY_PAIR_GEN",
+		Categories:   []MechanismCategory{CategoryKeyPairGen},
+		MinKeySize:   MLDSA87PublicKeySize,
+		MaxKeySize:   MLDSA87PublicKeySize,
+		Flags:        CKF_GENERATE_KEY_PAIR | CKF_EXTENSION,
+		FIPSApproved: true,
 	},
 	CKM_VENDOR_ML_DSA_87: {
-		Type:       CKM_VENDOR_ML_DSA_87,
-		Name:       "CKM_VENDOR_ML_DSA_87",
-		Categories: []MechanismCategory{CategorySign, CategoryVerify},
-		MinKeySize: MLDSA87PublicKeySize * 8,
-		MaxKeySize: MLDSA87SecretKeySize * 8,
-		Flags:      CKF_SIGN | CKF_VERIFY | CKF_EXTENSION,
+		Type:         CKM_VENDOR_ML_DSA_87,
+		Name:         "CKM_VENDOR_ML_DSA_87",
+		Categories:   []MechanismCategory{CategorySign, CategoryVerify},
+		MinKeySize:   MLDSA87PublicKeySize,
+		MaxKeySize:   MLDSA87PublicKeySize,
+		Flags:        CKF_SIGN | CKF_VERIFY | CKF_EXTENSION,
+		FIPSApproved: true,
 	},
 
-	// ML-KEM-512 (Kyber512 equivalent)
+	// Per PKCS#11 v3.2 sections 6.68.4/6.68.5, ulMinKeySize/ulMaxKeySize for
+	// ML-KEM mechanisms specify the ML-KEM *public* key size *in bytes*, for
+	// both the key generation and the (en|de)capsulation direction -- never
+	// the private key/seed size. Each vendor mechanism below is scoped to a
+	// single security level, so MinKeySize == MaxKeySize == that level's
+	// public key size.
+
+	// The (en|de)capsulation mechanisms carry CKF_ENCAPSULATE / CKF_DECAPSULATE
+	// rather than CKF_DERIVE. PKCS#11 v3.2 §5.20 gates C_EncapsulateKey and
+	// C_DecapsulateKey on those flags and gates C_DeriveKey on CKF_DERIVE; none
+	// of these mechanisms appears in C_DeriveKey's dispatch, so CKF_DERIVE told
+	// CanDerive to answer true for an operation that always returns
+	// CKR_MECHANISM_INVALID, while the flag that should have gated the
+	// operation they DO perform went unset.
+
+	// ML-KEM-512
+	//
+	// These descriptors were absent for a period, because crypto/mlkem -- which
+	// the 768 and 1024 paths wrap -- implements only those two parameter sets,
+	// and registering mechanisms the crypto layer could not perform advertised
+	// three operations that failed after C_EncapsulateKey's size query had
+	// already answered CKR_OK. pkg/quantum/mlkem512 now supplies the parameter
+	// set from CIRCL's FIPS 203 implementation, so the operations are real and
+	// the descriptors describe something the token does.
 	CKM_VENDOR_ML_KEM_512_KEY_GEN: {
-		Type:       CKM_VENDOR_ML_KEM_512_KEY_GEN,
-		Name:       "CKM_VENDOR_ML_KEM_512_KEY_GEN",
-		Categories: []MechanismCategory{CategoryKeyPairGen},
-		MinKeySize: MLKEM512PublicKeySize * 8,
-		MaxKeySize: MLKEM512SecretKeySize * 8,
-		Flags:      CKF_GENERATE_KEY_PAIR | CKF_EXTENSION,
+		Type:         CKM_VENDOR_ML_KEM_512_KEY_GEN,
+		Name:         "CKM_VENDOR_ML_KEM_512_KEY_GEN",
+		Categories:   []MechanismCategory{CategoryKeyPairGen},
+		MinKeySize:   MLKEM512PublicKeySize,
+		MaxKeySize:   MLKEM512PublicKeySize,
+		Flags:        CKF_GENERATE_KEY_PAIR | CKF_EXTENSION,
+		FIPSApproved: true,
 	},
 	CKM_VENDOR_ML_KEM_512_ENCAPSULATE: {
-		Type:       CKM_VENDOR_ML_KEM_512_ENCAPSULATE,
-		Name:       "CKM_VENDOR_ML_KEM_512_ENCAPSULATE",
-		Categories: []MechanismCategory{CategoryEncapsulate},
-		MinKeySize: MLKEM512PublicKeySize * 8,
-		MaxKeySize: MLKEM512PublicKeySize * 8,
-		Flags:      CKF_DERIVE | CKF_EXTENSION,
+		Type:         CKM_VENDOR_ML_KEM_512_ENCAPSULATE,
+		Name:         "CKM_VENDOR_ML_KEM_512_ENCAPSULATE",
+		Categories:   []MechanismCategory{CategoryEncapsulate},
+		MinKeySize:   MLKEM512PublicKeySize,
+		MaxKeySize:   MLKEM512PublicKeySize,
+		Flags:        CKF_ENCAPSULATE | CKF_EXTENSION,
+		FIPSApproved: true,
 	},
 	CKM_VENDOR_ML_KEM_512_DECAPSULATE: {
-		Type:       CKM_VENDOR_ML_KEM_512_DECAPSULATE,
-		Name:       "CKM_VENDOR_ML_KEM_512_DECAPSULATE",
-		Categories: []MechanismCategory{CategoryDecapsulate},
-		MinKeySize: MLKEM512SecretKeySize * 8,
-		MaxKeySize: MLKEM512SecretKeySize * 8,
-		Flags:      CKF_DERIVE | CKF_EXTENSION,
+		Type:         CKM_VENDOR_ML_KEM_512_DECAPSULATE,
+		Name:         "CKM_VENDOR_ML_KEM_512_DECAPSULATE",
+		Categories:   []MechanismCategory{CategoryDecapsulate},
+		MinKeySize:   MLKEM512PublicKeySize,
+		MaxKeySize:   MLKEM512PublicKeySize,
+		Flags:        CKF_DECAPSULATE | CKF_EXTENSION,
+		FIPSApproved: true,
 	},
 
 	// ML-KEM-768 (Kyber768 equivalent)
 	CKM_VENDOR_ML_KEM_768_KEY_GEN: {
-		Type:       CKM_VENDOR_ML_KEM_768_KEY_GEN,
-		Name:       "CKM_VENDOR_ML_KEM_768_KEY_GEN",
-		Categories: []MechanismCategory{CategoryKeyPairGen},
-		MinKeySize: MLKEM768PublicKeySize * 8,
-		MaxKeySize: MLKEM768SecretKeySize * 8,
-		Flags:      CKF_GENERATE_KEY_PAIR | CKF_EXTENSION,
+		Type:         CKM_VENDOR_ML_KEM_768_KEY_GEN,
+		Name:         "CKM_VENDOR_ML_KEM_768_KEY_GEN",
+		Categories:   []MechanismCategory{CategoryKeyPairGen},
+		MinKeySize:   MLKEM768PublicKeySize,
+		MaxKeySize:   MLKEM768PublicKeySize,
+		Flags:        CKF_GENERATE_KEY_PAIR | CKF_EXTENSION,
+		FIPSApproved: true,
 	},
 	CKM_VENDOR_ML_KEM_768_ENCAPSULATE: {
-		Type:       CKM_VENDOR_ML_KEM_768_ENCAPSULATE,
-		Name:       "CKM_VENDOR_ML_KEM_768_ENCAPSULATE",
-		Categories: []MechanismCategory{CategoryEncapsulate},
-		MinKeySize: MLKEM768PublicKeySize * 8,
-		MaxKeySize: MLKEM768PublicKeySize * 8,
-		Flags:      CKF_DERIVE | CKF_EXTENSION,
+		Type:         CKM_VENDOR_ML_KEM_768_ENCAPSULATE,
+		Name:         "CKM_VENDOR_ML_KEM_768_ENCAPSULATE",
+		Categories:   []MechanismCategory{CategoryEncapsulate},
+		MinKeySize:   MLKEM768PublicKeySize,
+		MaxKeySize:   MLKEM768PublicKeySize,
+		Flags:        CKF_ENCAPSULATE | CKF_EXTENSION,
+		FIPSApproved: true,
 	},
 	CKM_VENDOR_ML_KEM_768_DECAPSULATE: {
-		Type:       CKM_VENDOR_ML_KEM_768_DECAPSULATE,
-		Name:       "CKM_VENDOR_ML_KEM_768_DECAPSULATE",
-		Categories: []MechanismCategory{CategoryDecapsulate},
-		MinKeySize: MLKEM768SecretKeySize * 8,
-		MaxKeySize: MLKEM768SecretKeySize * 8,
-		Flags:      CKF_DERIVE | CKF_EXTENSION,
+		Type:         CKM_VENDOR_ML_KEM_768_DECAPSULATE,
+		Name:         "CKM_VENDOR_ML_KEM_768_DECAPSULATE",
+		Categories:   []MechanismCategory{CategoryDecapsulate},
+		MinKeySize:   MLKEM768PublicKeySize,
+		MaxKeySize:   MLKEM768PublicKeySize,
+		Flags:        CKF_DECAPSULATE | CKF_EXTENSION,
+		FIPSApproved: true,
 	},
 
 	// ML-KEM-1024 (Kyber1024 equivalent)
 	CKM_VENDOR_ML_KEM_1024_KEY_GEN: {
-		Type:       CKM_VENDOR_ML_KEM_1024_KEY_GEN,
-		Name:       "CKM_VENDOR_ML_KEM_1024_KEY_GEN",
-		Categories: []MechanismCategory{CategoryKeyPairGen},
-		MinKeySize: MLKEM1024PublicKeySize * 8,
-		MaxKeySize: MLKEM1024SecretKeySize * 8,
-		Flags:      CKF_GENERATE_KEY_PAIR | CKF_EXTENSION,
+		Type:         CKM_VENDOR_ML_KEM_1024_KEY_GEN,
+		Name:         "CKM_VENDOR_ML_KEM_1024_KEY_GEN",
+		Categories:   []MechanismCategory{CategoryKeyPairGen},
+		MinKeySize:   MLKEM1024PublicKeySize,
+		MaxKeySize:   MLKEM1024PublicKeySize,
+		Flags:        CKF_GENERATE_KEY_PAIR | CKF_EXTENSION,
+		FIPSApproved: true,
 	},
 	CKM_VENDOR_ML_KEM_1024_ENCAPSULATE: {
-		Type:       CKM_VENDOR_ML_KEM_1024_ENCAPSULATE,
-		Name:       "CKM_VENDOR_ML_KEM_1024_ENCAPSULATE",
-		Categories: []MechanismCategory{CategoryEncapsulate},
-		MinKeySize: MLKEM1024PublicKeySize * 8,
-		MaxKeySize: MLKEM1024PublicKeySize * 8,
-		Flags:      CKF_DERIVE | CKF_EXTENSION,
+		Type:         CKM_VENDOR_ML_KEM_1024_ENCAPSULATE,
+		Name:         "CKM_VENDOR_ML_KEM_1024_ENCAPSULATE",
+		Categories:   []MechanismCategory{CategoryEncapsulate},
+		MinKeySize:   MLKEM1024PublicKeySize,
+		MaxKeySize:   MLKEM1024PublicKeySize,
+		Flags:        CKF_ENCAPSULATE | CKF_EXTENSION,
+		FIPSApproved: true,
 	},
 	CKM_VENDOR_ML_KEM_1024_DECAPSULATE: {
-		Type:       CKM_VENDOR_ML_KEM_1024_DECAPSULATE,
-		Name:       "CKM_VENDOR_ML_KEM_1024_DECAPSULATE",
-		Categories: []MechanismCategory{CategoryDecapsulate},
-		MinKeySize: MLKEM1024SecretKeySize * 8,
-		MaxKeySize: MLKEM1024SecretKeySize * 8,
-		Flags:      CKF_DERIVE | CKF_EXTENSION,
+		Type:         CKM_VENDOR_ML_KEM_1024_DECAPSULATE,
+		Name:         "CKM_VENDOR_ML_KEM_1024_DECAPSULATE",
+		Categories:   []MechanismCategory{CategoryDecapsulate},
+		MinKeySize:   MLKEM1024PublicKeySize,
+		MaxKeySize:   MLKEM1024PublicKeySize,
+		Flags:        CKF_DECAPSULATE | CKF_EXTENSION,
+		FIPSApproved: true,
 	},
 }
 
@@ -348,8 +390,30 @@ func init() {
 
 // GetQuantumMechanismDescriptor returns the descriptor for a quantum mechanism.
 // Returns nil if the mechanism is not a quantum-safe mechanism.
+//
+// PKCS#11 v3.2 standardized CKM_ML_DSA and CKM_ML_KEM as the non-vendor
+// replacements for the legacy per-level vendor mechanisms; their descriptors
+// live in the global registry (populated by mechanism_v32.go's init), not in
+// quantumMechanismRegistry. Fall back to the global registry for exactly
+// those two mechanism types so dispatch code that gates on this function
+// accepts the standard mechanisms as well as the vendor-defined ones.
 func GetQuantumMechanismDescriptor(mechType MechanismType) *MechanismDescriptor {
-	return quantumMechanismRegistry[mechType]
+	if desc, ok := quantumMechanismRegistry[mechType]; ok {
+		// Apply the same FIPS choke point the classical GetMechanismDescriptor
+		// applies, so this registry cannot become a second policy that diverges
+		// from the first. Every mechanism here is a genuine FIPS 203/204
+		// algorithm and is marked FIPSApproved, so this hides nothing today; it
+		// is the guard that keeps a future non-approved PQC mechanism added to
+		// quantumMechanismRegistry from being reachable under FIPS mode.
+		if !desc.FIPSApproved && fipsModeEnabled() {
+			return nil
+		}
+		return desc
+	}
+	if mechType == CKM_ML_DSA || mechType == CKM_ML_KEM {
+		return GetMechanismDescriptor(mechType)
+	}
+	return nil
 }
 
 // IsQuantumMechanism returns true if the mechanism type is a quantum-safe mechanism.
@@ -358,14 +422,24 @@ func IsQuantumMechanism(mechType MechanismType) bool {
 	return ok
 }
 
-// IsMLDSAMechanism returns true if the mechanism is an ML-DSA mechanism.
+// IsMLDSAMechanism returns true if the mechanism is an ML-DSA mechanism,
+// including both the legacy per-level vendor mechanisms and the PKCS#11 v3.2
+// standard CKM_ML_DSA mechanism.
 func IsMLDSAMechanism(mechType MechanismType) bool {
+	if mechType == CKM_ML_DSA {
+		return true
+	}
 	return mechType >= CKM_VENDOR_ML_DSA_44_KEY_PAIR_GEN &&
 		mechType <= CKM_VENDOR_ML_DSA_87
 }
 
-// IsMLKEMMechanism returns true if the mechanism is an ML-KEM mechanism.
+// IsMLKEMMechanism returns true if the mechanism is an ML-KEM mechanism,
+// including both the legacy per-level vendor mechanisms and the PKCS#11 v3.2
+// standard CKM_ML_KEM mechanism.
 func IsMLKEMMechanism(mechType MechanismType) bool {
+	if mechType == CKM_ML_KEM {
+		return true
+	}
 	return mechType >= CKM_VENDOR_ML_KEM_512_KEY_GEN &&
 		mechType <= CKM_VENDOR_ML_KEM_1024_DECAPSULATE
 }
@@ -411,6 +485,67 @@ func GetMLKEMSecurityLevel(mechType MechanismType) int {
 	case CKM_VENDOR_ML_KEM_1024_KEY_GEN,
 		CKM_VENDOR_ML_KEM_1024_ENCAPSULATE,
 		CKM_VENDOR_ML_KEM_1024_DECAPSULATE:
+		return 1024
+	default:
+		return 0
+	}
+}
+
+// ResolveMLDSASecurityLevel returns the ML-DSA security level (44, 65, or 87)
+// for a mechanism, falling back to inferring the level from the length of
+// the associated key material when the mechanism is the PKCS#11 v3.2
+// standard CKM_ML_DSA mechanism. Per spec section 6.67.4/6.67.5, CKM_ML_DSA
+// carries no mechanism parameter -- the parameter set is selected by the
+// key object's CKA_PARAMETER_SET attribute -- so callers that only have raw
+// key bytes (not the key Object) can still resolve the level unambiguously
+// when keyMaterialLen is an ML-DSA public key size, since the three ML-DSA
+// public key sizes never collide (1312/1952/2592 bytes per FIPS 204).
+// Returns 0 if the security level cannot be determined, which is expected
+// when keyMaterialLen is a private-key seed rather than a public key, since
+// this module stores all ML-DSA private keys as a fixed-size 32-byte seed
+// regardless of security level; resolving that case requires the key
+// object's CKA_PARAMETER_SET attribute, which callers with Object access
+// should consult directly rather than relying on this fallback.
+func ResolveMLDSASecurityLevel(mechType MechanismType, keyMaterialLen int) int {
+	if level := GetMLDSASecurityLevel(mechType); level != 0 {
+		return level
+	}
+	if mechType != CKM_ML_DSA {
+		return 0
+	}
+	switch keyMaterialLen {
+	case MLDSA44PublicKeySize:
+		return 44
+	case MLDSA65PublicKeySize:
+		return 65
+	case MLDSA87PublicKeySize:
+		return 87
+	default:
+		return 0
+	}
+}
+
+// ResolveMLKEMSecurityLevel is the ML-KEM analog of ResolveMLDSASecurityLevel,
+// returning 512, 768, or 1024. It falls back to inferring the level from
+// keyMaterialLen (an ML-KEM public key size: 800/1184/1568 bytes per FIPS
+// 203) when the mechanism is the PKCS#11 v3.2 standard CKM_ML_KEM mechanism.
+// Returns 0 if the security level cannot be determined, which is expected
+// when keyMaterialLen is a private-key seed (this module stores all ML-KEM
+// private keys as a fixed-size 64-byte seed regardless of security level);
+// resolving that case requires the key object's CKA_PARAMETER_SET attribute.
+func ResolveMLKEMSecurityLevel(mechType MechanismType, keyMaterialLen int) int {
+	if level := GetMLKEMSecurityLevel(mechType); level != 0 {
+		return level
+	}
+	if mechType != CKM_ML_KEM {
+		return 0
+	}
+	switch keyMaterialLen {
+	case MLKEM512PublicKeySize:
+		return 512
+	case MLKEM768PublicKeySize:
+		return 768
+	case MLKEM1024PublicKeySize:
 		return 1024
 	default:
 		return 0

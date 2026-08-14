@@ -138,7 +138,29 @@ pkcs11-tool --module $P11_MODULE \
 
 ## OpenSSL Integration
 
-### Using libp11 Engine
+OpenSSL 3 replaced ENGINEs with providers and OpenSSL 4.0 removed ENGINEs
+outright, so **pkcs11-provider is the supported path**; the libp11 ENGINE recipes
+below are for existing integrations only. The ENGINE cannot generate keys on the
+token and cannot carry an Ed25519 key — see
+[consumers.md](consumers.md#openssl-the-legacy-libp11-engine) for the setup each
+needs and the full list of what works.
+
+### Using pkcs11-provider (OpenSSL 3+)
+
+```bash
+# openssl.cnf must load the provider; see consumers.md for the file
+export OPENSSL_CONF=/etc/xkms/openssl-pkcs11.cnf
+export PKCS11_PIN=123456
+
+# Sign
+openssl pkeyutl -sign -inkey "pkcs11:object=my-rsa-key;type=private" \
+  -rawin -in message.txt -out signature.bin
+
+# Export a public key (works for P-384, unlike pkcs11-tool)
+openssl pkey -in "pkcs11:object=my-rsa-key;type=public" -pubout
+```
+
+### Using libp11 Engine (deprecated)
 
 ```bash
 # Install libp11
@@ -201,6 +223,10 @@ openssl s_client -engine pkcs11 -keyform engine \
 ```
 
 ## SSH Integration
+
+RSA, ECDSA P-256/P-384/P-521 and Ed25519 token keys all list, sign and log in.
+Ed25519 on a PKCS#11 token requires **OpenSSH 10.1 or later**; see
+[consumers.md](consumers.md#openssh).
 
 ### SSH Agent
 
@@ -394,5 +420,16 @@ export XKMS_LOG_FILE=/tmp/pkcs11.log
 | CKR_TOKEN_NOT_PRESENT | xKMS daemon not running | Start daemon |
 | CKR_DEVICE_ERROR | Connection failed | Check target config |
 | CKR_PIN_INCORRECT | Wrong PIN | Verify PIN |
+| CKR_PIN_LOCKED | 3 consecutive failed PIN attempts | Reset the PIN via an authorized SO/user action |
 | CKR_SESSION_HANDLE_INVALID | Stale session | Reopen session |
-| CKR_KEY_HANDLE_INVALID | Key not found | Check key label |
+| CKR_KEY_HANDLE_INVALID | Key not found, or key is a private object and the session is not logged in | Check key label, or log in |
+| CKR_KEY_FUNCTION_NOT_PERMITTED | Key's usage attribute (`CKA_SIGN`, `CKA_ENCRYPT`, etc.) is not `CK_TRUE` for the requested operation | Generate/import the key with the needed usage attribute set |
+
+### Buffer-Query Behavior
+
+Tools that call a terminal operation (`--sign`, `--decrypt`, etc.) twice -- once with a `NULL` output buffer to
+size their allocation, then again to fetch the data -- get the exact same bytes back on the second call without
+the operation re-running against the backend. The module caches the result after the first successful attempt and
+only discards it once the caller has actually copied the output out (PKCS#11 v3.2 §5.2 two-call convention). If a
+tool appears to hang or repeat, check that it is completing the second call rather than abandoning the operation
+after the size query.

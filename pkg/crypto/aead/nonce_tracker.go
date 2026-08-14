@@ -51,7 +51,13 @@ import (
 type NonceTracker struct {
 	enabled bool
 	nonces  map[string]struct{} // Set of used nonces (hex encoded)
-	mu      sync.RWMutex
+
+	// limit bounds the set. Zero means unbounded. A bounded tracker refuses
+	// new nonces once it is full rather than evicting an entry; see
+	// ErrNonceTrackerFull for why forgetting is not an option.
+	limit int
+
+	mu sync.RWMutex
 }
 
 // NewNonceTracker creates a new nonce tracker.
@@ -70,9 +76,30 @@ type NonceTracker struct {
 //	// Disable nonce tracking (only for testing or specific use cases)
 //	tracker := aead.NewNonceTracker(false)
 func NewNonceTracker(enabled bool) *NonceTracker {
+	return NewNonceTrackerWithLimit(enabled, 0)
+}
+
+// NewNonceTrackerWithLimit creates a nonce tracker that holds at most limit
+// nonces.
+//
+// A long-lived process whose nonces come from a caller must bound this set, or
+// the caller decides how much memory the process spends. Once the limit is
+// reached CheckAndRecordNonce returns ErrNonceTrackerFull and records nothing
+// further, so the tracker fails closed: it never silently forgets a nonce it
+// has already seen, because forgetting one would turn a detected reuse into an
+// undetected one.
+//
+// Parameters:
+//   - enabled: If true, nonce tracking is active. If false, all operations are no-ops.
+//   - limit: The maximum number of nonces to hold. Zero means unbounded.
+//
+// Returns:
+//   - A new NonceTracker instance
+func NewNonceTrackerWithLimit(enabled bool, limit int) *NonceTracker {
 	return &NonceTracker{
 		enabled: enabled,
 		nonces:  make(map[string]struct{}),
+		limit:   limit,
 	}
 }
 
@@ -91,7 +118,8 @@ func NewNonceTracker(enabled bool) *NonceTracker {
 //
 // Returns:
 //   - nil if the nonce is unique and has been recorded
-//   - error if the nonce was previously used (nonce reuse detected)
+//   - ErrNonceReuse if the nonce was previously used (nonce reuse detected)
+//   - ErrNonceTrackerFull if the tracker is bounded and already full
 //
 // Example:
 //
@@ -114,6 +142,13 @@ func (nt *NonceTracker) CheckAndRecordNonce(nonce []byte) error {
 
 	if _, exists := nt.nonces[nonceHex]; exists {
 		return ErrNonceReuse
+	}
+
+	// The limit is checked after the reuse check so that a full tracker still
+	// reports a repeat as a repeat: the entry is already there to be found, and
+	// answering "full" for it would hide the more serious of the two answers.
+	if nt.limit > 0 && len(nt.nonces) >= nt.limit {
+		return ErrNonceTrackerFull
 	}
 
 	nt.nonces[nonceHex] = struct{}{}

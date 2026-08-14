@@ -19,6 +19,7 @@ package module
 import (
 	"bufio"
 	"fmt"
+	"net"
 	"os"
 	"strconv"
 	"strings"
@@ -58,12 +59,19 @@ const (
 	EnvStorageType    = "XKMS_PKCS11_STORAGE_TYPE"
 	EnvStoragePath    = "XKMS_PKCS11_STORAGE_PATH"
 	EnvPIVBackends    = "XKMS_PKCS11_PIV_BACKENDS"
+
+	// EnvAllowInsecureTransport is the environment variable name for the
+	// AllowInsecureTransport opt-out. See the field doc comment for details.
+	EnvAllowInsecureTransport = "XKMS_PKCS11_ALLOW_INSECURE_TRANSPORT"
 )
 
 // Storage type constants
 const (
 	StorageTypeMemory = "memory"
 	StorageTypeFile   = "file"
+	// StorageTypeRemote persists token and object state in xkmsd over the active
+	// transport (gRPC/REST/QUIC/Unix). The module keeps no local on-disk state.
+	StorageTypeRemote = "remote"
 )
 
 // TLSConfig contains TLS/mTLS configuration for secure gRPC connections.
@@ -97,6 +105,18 @@ type Config struct {
 	// TLS contains TLS configuration for secure connections.
 	TLS TLSConfig `yaml:"tls" json:"tls" mapstructure:"tls"`
 
+	// AllowInsecureTransport explicitly opts out of the mandatory-TLS guard
+	// enforced by Validate for non-local (non unix://) targets. It is false
+	// by default: the gRPC transport falls back to plaintext credentials
+	// when TLS is disabled, and PKCS#11 traffic can include raw exported key
+	// material, so a remote target without TLS is refused unless this field
+	// is deliberately set. This exists only for test/dev use against a
+	// loopback or containerized xkms server -- it must never be set in a
+	// production configuration. Settable via the allow_insecure_transport
+	// config key or the XKMS_PKCS11_ALLOW_INSECURE_TRANSPORT environment
+	// variable.
+	AllowInsecureTransport bool `yaml:"allow_insecure_transport" json:"allow_insecure_transport" mapstructure:"allow_insecure_transport"`
+
 	// Timeout is the timeout for gRPC operations.
 	Timeout time.Duration `yaml:"timeout" json:"timeout" mapstructure:"timeout"`
 
@@ -125,12 +145,17 @@ type Config struct {
 	// Storage configuration for persistent state
 
 	// StorageType specifies the storage backend type.
-	// Supported values: "memory" (default), "file"
+	// Supported values: "memory" (default), "file", "remote"
 	StorageType string `yaml:"storage_type" json:"storage_type" mapstructure:"storage_type"`
 
 	// StoragePath is the path for file-based storage.
 	// Required when StorageType is "file".
 	StoragePath string `yaml:"storage_path" json:"storage_path" mapstructure:"storage_path"`
+
+	// TenantID scopes remote storage records to a tenant. Empty is the system
+	// scope. Only used when StorageType is "remote"; the server may further
+	// scope by the module's authenticated identity.
+	TenantID string `yaml:"tenant_id" json:"tenant_id" mapstructure:"tenant_id"`
 
 	// PIV configuration
 
@@ -142,20 +167,22 @@ type Config struct {
 }
 
 // DefaultConfig returns a Config with sensible default values.
+// It shares its default Target, Timeout, DefaultBackend, and StorageType
+// values with SetDefaults, which is the single source of truth for them.
 func DefaultConfig() *Config {
-	return &Config{
-		Target:         DefaultTarget,
-		Timeout:        DefaultTimeout,
-		DefaultBackend: DefaultBackend,
-		StorageType:    StorageTypeMemory,
-		TLS: TLSConfig{
-			Enabled: false,
-		},
-	}
+	cfg := &Config{}
+	cfg.SetDefaults()
+	return cfg
 }
 
-// SetDefaults sets default values for any zero-valued fields.
-// This allows partial configuration while ensuring all fields have valid values.
+// SetDefaults sets default values for any zero-valued fields: Target,
+// Timeout, DefaultBackend, and StorageType. This allows partial
+// configuration -- for example &Config{Target: "..."} constructed directly
+// by a caller -- while ensuring every field SetDefaults governs ends up
+// with a valid, non-zero value. TLS and AllowInsecureTransport are left
+// untouched: their zero values (disabled/false) are already the secure
+// default, and setting them here would defeat the mandatory-TLS guard in
+// Validate.
 func (c *Config) SetDefaults() {
 	if c.Target == "" {
 		c.Target = DefaultTarget
@@ -192,6 +219,13 @@ func (c *Config) Validate() error {
 		if err := c.validateTLS(); err != nil {
 			return err
 		}
+	} else if !isLocalTarget(c.Target) && !c.AllowInsecureTransport {
+		// A non-local target with TLS disabled sends every PKCS#11 operation,
+		// including raw exported key material, over a plaintext channel (the
+		// gRPC transport falls back to insecure.NewCredentials()). Refuse it
+		// unless the operator has deliberately opted out via
+		// AllowInsecureTransport.
+		return &errs.Detail{Err: ErrInsecureRemoteTarget, Detail: c.Target}
 	}
 
 	// Validate timeout
@@ -204,7 +238,74 @@ func (c *Config) Validate() error {
 		return err
 	}
 
+	// Validate the shape of the configured backend names.
+	if err := c.validateBackends(); err != nil {
+		return err
+	}
+
 	return nil
+}
+
+// isLocalTarget reports whether target addresses a local Unix domain socket
+// (unix:///path/to/socket). A unix:// target never leaves the host, so the
+// mandatory-TLS guard in Validate does not apply to it.
+func isLocalTarget(target string) bool {
+	return strings.HasPrefix(target, "unix://")
+}
+
+// validateBackends checks that DefaultBackend and every entry of PIVBackends
+// names something. It deliberately does not decide whether the named backend
+// exists.
+//
+// It used to. It checked each name against the registry this binary's build
+// tags populate (backend.go), which knows software, tpm2, pkcs11, quantum,
+// awskms, gcpkms and azurekv — and, because the shared library is built with no
+// build tags at all, in practice knows only software. The xkms daemon on the
+// other end additionally serves pkcs8, vault, symmetric, frost and phone, and
+// registers backends from its own runtime configuration rather than from this
+// binary's tags. So XKMS_PKCS11_DEFAULT_BACKEND=vault failed C_Initialize with
+// CKR_GENERAL_ERROR against a daemon with vault working perfectly, and so did
+// tpm2, and the operator was told the backend "was not compiled in" by a
+// process that does not host backends at all.
+//
+// The module is a client. Which backends are serviceable is a property of the
+// service, discoverable only after connecting — and Validate runs before
+// Connect, by design, so that a misconfigured endpoint is refused before any
+// dialling happens. A client that adjudicates its server's capabilities from
+// its own link-time contents will be wrong in both directions: it rejects
+// backends the service has, and it accepts backends the service lacks (a
+// tpm2-tagged build with no TPM configured on the daemon). The authoritative
+// refusal is the daemon's, arrives naming the backend, and reaches the
+// application through FromError's status translation.
+//
+// The in-process case (the xkey shared library, which injects an embedded
+// transport instead of dialling) is not an exception: there the backends come
+// from the xkms service singleton's registry, populated from the user's
+// configuration at runtime, which this package's build tags likewise do not
+// describe.
+//
+// What remains is the one thing a configuration can be wrong about locally: a
+// name that is blank. An empty backend name identifies nothing, and every
+// request built from it would ask the service to resolve "".
+func (c *Config) validateBackends() error {
+	if err := validateBackendName("default_backend", c.DefaultBackend); err != nil {
+		return err
+	}
+	for i, name := range c.PIVBackends {
+		if err := validateBackendName(fmt.Sprintf("piv_backends[%d]", i), name); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// validateBackendName rejects a blank backend name, reporting the
+// configuration field it came from so the operator can find it.
+func validateBackendName(field, name string) error {
+	if strings.TrimSpace(name) != "" {
+		return nil
+	}
+	return &errs.Detail{Err: ErrEmptyBackendName, Detail: field}
 }
 
 // validateStorage validates the storage configuration.
@@ -216,6 +317,13 @@ func (c *Config) validateStorage() error {
 	case StorageTypeFile:
 		if c.StoragePath == "" {
 			return ErrStoragePathRequired
+		}
+		return nil
+	case StorageTypeRemote:
+		// Remote storage needs no local path; it needs a token label to
+		// namespace records and a transport (validated by validateTarget).
+		if c.TokenLabel == "" {
+			return ErrRemoteTokenRequired
 		}
 		return nil
 	case "":
@@ -279,16 +387,36 @@ func validateTarget(target string) error {
 		return nil
 	}
 
-	// Direct host:port format
+	// REST / QUIC formats: rest://host:port, quic://host:port. Both dial a
+	// host:port after the scheme, so the address is validated the same way.
+	for _, scheme := range []string{"rest://", "quic://"} {
+		if strings.HasPrefix(target, scheme) {
+			addr := strings.TrimPrefix(target, scheme)
+			if _, _, err := net.SplitHostPort(addr); err != nil {
+				return &errs.Detail{Err: ErrInvalidTarget, Detail: "invalid host:port after " + scheme}
+			}
+			return nil
+		}
+	}
+
+	// MCP is an AI/LLM-oriented transport, not a cryptographic data plane, so a
+	// target that names it is refused rather than dialed.
+	if strings.HasPrefix(target, "mcp://") {
+		return &errs.Detail{Err: ErrMCPTargetNotSupported, Detail: target}
+	}
+
+	// Direct host:port format, including bracketed IPv6 literals such as
+	// [::1]:8443. net.SplitHostPort understands the bracket syntax and
+	// rejects an unbracketed address with more than one colon as ambiguous.
 	if strings.Contains(target, ":") {
-		parts := strings.Split(target, ":")
-		if len(parts) != 2 {
+		host, portStr, err := net.SplitHostPort(target)
+		if err != nil {
 			return &errs.Detail{Err: ErrInvalidTarget, Detail: "invalid host:port format"}
 		}
-		if parts[0] == "" {
+		if host == "" {
 			return &errs.Detail{Err: ErrInvalidTarget, Detail: "empty host"}
 		}
-		port, err := strconv.Atoi(parts[1])
+		port, err := strconv.Atoi(portStr)
 		if err != nil || port < 1 || port > 65535 {
 			return &errs.Detail{Err: ErrInvalidTarget, Detail: "invalid port number"}
 		}
@@ -321,6 +449,10 @@ func LoadFromEnv() *Config {
 
 	if tlsCA := os.Getenv(EnvTLSCA); tlsCA != "" {
 		cfg.TLS.CAFile = tlsCA
+	}
+
+	if allowInsecure := os.Getenv(EnvAllowInsecureTransport); allowInsecure != "" {
+		cfg.AllowInsecureTransport = parseBool(allowInsecure)
 	}
 
 	if timeout := os.Getenv(EnvTimeout); timeout != "" {
@@ -367,6 +499,25 @@ func LoadFromEnv() *Config {
 	return cfg
 }
 
+// checkConfigFilePermissions refuses to load a configuration file that is
+// readable by users other than its owner. LoadFromFile's INI format accepts
+// so_pin and user_pin in cleartext (see setField), so a group- or
+// world-readable config file leaks a credential to every other account on
+// the host.
+func checkConfigFilePermissions(path string) error {
+	info, err := os.Stat(path)
+	if err != nil {
+		return &errs.Detail{Err: ErrConfigFileOpen, Detail: fmt.Sprintf("%v", err)}
+	}
+	if perm := info.Mode().Perm(); perm&0077 != 0 {
+		return &errs.Detail{
+			Err:    ErrConfigFilePermissions,
+			Detail: fmt.Sprintf("%s has mode %04o, must not be group- or world-readable", path, perm),
+		}
+	}
+	return nil
+}
+
 // LoadFromFile loads configuration from an INI-format file.
 // File format:
 //
@@ -379,6 +530,10 @@ func LoadFromEnv() *Config {
 //	default_backend = software
 //	piv_backends = tpm2,pkcs11
 func LoadFromFile(path string) (*Config, error) {
+	if err := checkConfigFilePermissions(path); err != nil {
+		return nil, err
+	}
+
 	// #nosec G304 - Config file path is provided by admin/user
 	file, err := os.Open(path)
 	if err != nil {
@@ -436,6 +591,8 @@ func (c *Config) setField(key, value string) error {
 		c.TLS.KeyFile = value
 	case "tls_ca":
 		c.TLS.CAFile = value
+	case "allow_insecure_transport":
+		c.AllowInsecureTransport = parseBool(value)
 	case "timeout":
 		d, err := time.ParseDuration(value)
 		if err != nil {
@@ -521,6 +678,10 @@ func applyEnvOverrides(cfg *Config) {
 
 	if tlsCA := os.Getenv(EnvTLSCA); tlsCA != "" {
 		cfg.TLS.CAFile = tlsCA
+	}
+
+	if allowInsecure := os.Getenv(EnvAllowInsecureTransport); allowInsecure != "" {
+		cfg.AllowInsecureTransport = parseBool(allowInsecure)
 	}
 
 	if timeout := os.Getenv(EnvTimeout); timeout != "" {

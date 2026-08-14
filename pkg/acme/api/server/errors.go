@@ -41,18 +41,23 @@ func (e ErrPeerCredentialsFailed) Error() string {
 	return fmt.Sprintf("failed to get peer credentials: %s", e.Reason)
 }
 
-// ErrPermissionDenied is returned when authorization check fails.
+// ErrPermissionDenied is returned when an authorization check fails. It names
+// the canonical go-qrdb resource:action grant the caller lacked, not a local
+// role tier, so the message matches what an operator must grant to fix it.
 type ErrPermissionDenied struct {
-	UID      uint32
-	GID      uint32
-	Role     Role
-	Method   string
-	Required Role
+	// Subject is the denied identity (a certificate CN, or "uid:N" for a
+	// Unix-socket peer).
+	Subject string
+	// Method is the gRPC method or MCP method that was refused.
+	Method string
+	// Resource and Action are the qrdb grant the method requires.
+	Resource string
+	Action   string
 }
 
 func (e ErrPermissionDenied) Error() string {
-	return fmt.Sprintf("permission denied for uid=%d gid=%d role=%s: method %s requires role %s",
-		e.UID, e.GID, e.Role, e.Method, e.Required)
+	return fmt.Sprintf("permission denied for %s: method %s requires %s:%s",
+		e.Subject, e.Method, e.Resource, e.Action)
 }
 
 // ErrInvalidUserID is returned when a wire-format user id (a decimal

@@ -25,6 +25,27 @@ type (
 	ClusterStatusResponse = pkgtransport.ClusterStatusResponse
 	// ListClusterMembersResponse wraps the cluster membership response.
 	ListClusterMembersResponse = pkgtransport.ListClusterMembersResponse
+	// AddClusterReplicaRequest asks the server to add a replica to the shard.
+	AddClusterReplicaRequest = pkgtransport.AddClusterReplicaRequest
+	// ClusterReplicaResponse acknowledges a membership mutation.
+	ClusterReplicaResponse = pkgtransport.ClusterReplicaResponse
 	// ClusterReader is the read-only cluster surface.
 	ClusterReader = pkgtransport.ClusterReader
+	// ClusterMutator is the privileged membership-mutation surface.
+	ClusterMutator = pkgtransport.ClusterMutator
+	// ClusterClient is the full cluster surface a transport may expose.
+	ClusterClient = pkgtransport.ClusterClient
+)
+
+// API protocol names used to look up a replica's advertised endpoint,
+// re-exported from the canonical transport package.
+var (
+	// APIProtocolREST names the HTTP/REST API.
+	APIProtocolREST = pkgtransport.APIProtocolREST
+	// APIProtocolGRPC names the gRPC API.
+	APIProtocolGRPC = pkgtransport.APIProtocolGRPC
+	// APIProtocolQUIC names the native QUIC API.
+	APIProtocolQUIC = pkgtransport.APIProtocolQUIC
+	// APIProtocolMCP names the Model Context Protocol API.
+	APIProtocolMCP = pkgtransport.APIProtocolMCP
 )

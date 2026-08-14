@@ -19,6 +19,7 @@ import (
 	"crypto/elliptic"
 	"crypto/rand"
 	"crypto/x509"
+	"errors"
 	"testing"
 
 	"github.com/jeremyhahn/go-xkms/pkg/types"
@@ -327,15 +328,18 @@ func TestBackend_DeriveKeyECDH_UnsupportedKDFAlgorithm(t *testing.T) {
 	peerKey := generatePeerPublicKeyDER(t)
 	attrs := ecdsaP256Attrs("my-key")
 
+	// SP 800-108 is a supported algorithm now that every backend derives
+	// through the canonical KDF, so an unknown label is needed to reach the
+	// rejection path. KDFParams.Validate screens it before the KDF runs.
 	kdfParams := &types.KDFParams{
-		Algorithm: types.KDFAlgorithm("SP800-108-COUNTER"),
+		Algorithm: types.KDFAlgorithm("PBKDF2"),
 		Hash:      "SHA-256",
 		KeyLength: 32,
 	}
 
 	_, err := b.DeriveKeyECDH(context.Background(), attrs, peerKey, kdfParams)
-	if err != ErrUnsupportedKDFAlgorithm {
-		t.Errorf("expected ErrUnsupportedKDFAlgorithm, got %v", err)
+	if !errors.Is(err, ErrInvalidKDFParams) {
+		t.Errorf("expected ErrInvalidKDFParams, got %v", err)
 	}
 }
 
@@ -413,28 +417,41 @@ func TestApplyKDF_HKDF_SHA256(t *testing.T) {
 }
 
 func TestApplyKDF_UnsupportedAlgorithm(t *testing.T) {
-	params := &types.KDFParams{
-		Algorithm: types.KDFAlgorithm("PBKDF2"),
-		Hash:      "SHA-256",
-		KeyLength: 32,
-	}
+	for _, algorithm := range []types.KDFAlgorithm{"PBKDF2", "Argon2id", ""} {
+		params := &types.KDFParams{
+			Algorithm: algorithm,
+			Hash:      "SHA-256",
+			KeyLength: 32,
+		}
 
-	_, err := applyKDF([]byte("secret"), params)
-	if err != ErrUnsupportedKDFAlgorithm {
-		t.Errorf("expected ErrUnsupportedKDFAlgorithm, got %v", err)
+		_, err := applyKDF([]byte("secret"), params)
+		if !errors.Is(err, types.ErrUnsupportedKDFAlgorithm) {
+			t.Errorf("algorithm %q: expected ErrUnsupportedKDFAlgorithm, got %v", algorithm, err)
+		}
+	}
+}
+
+func TestApplyKDF_NilParams(t *testing.T) {
+	_, err := applyKDF([]byte("secret"), nil)
+	if !errors.Is(err, ErrInvalidKDFParams) {
+		t.Errorf("expected ErrInvalidKDFParams, got %v", err)
 	}
 }
 
 func TestApplyKDF_UnsupportedHash(t *testing.T) {
-	params := &types.KDFParams{
-		Algorithm: types.KDFAlgorithmHKDF,
-		Hash:      "MD5",
-		KeyLength: 32,
-	}
+	// MD5 and SHA-1 name real hashes but are not approved KDF pseudorandom
+	// functions.
+	for _, hash := range []string{"MD5", "SHA-1", "MD4", "SHA-224", "", "sha256"} {
+		params := &types.KDFParams{
+			Algorithm: types.KDFAlgorithmHKDF,
+			Hash:      hash,
+			KeyLength: 32,
+		}
 
-	_, err := applyKDF([]byte("secret"), params)
-	if err != ErrUnsupportedHashAlgorithm {
-		t.Errorf("expected ErrUnsupportedHashAlgorithm, got %v", err)
+		_, err := applyKDF([]byte("secret"), params)
+		if !errors.Is(err, types.ErrUnsupportedKDFHash) {
+			t.Errorf("hash %q: expected ErrUnsupportedKDFHash, got %v", hash, err)
+		}
 	}
 }
 
@@ -456,26 +473,6 @@ func TestApplyKDF_AllSupportedHashes(t *testing.T) {
 			}
 			if len(result) != 32 {
 				t.Errorf("expected 32 bytes for hash %s, got %d", hash, len(result))
-			}
-		})
-	}
-}
-
-// --- hashFuncMapping ---
-
-func TestHashFuncMapping_AllEntries(t *testing.T) {
-	expectedHashes := []string{"SHA-256", "SHA-384", "SHA-512", "SHA3-256", "SHA3-384", "SHA3-512"}
-
-	for _, name := range expectedHashes {
-		t.Run(name, func(t *testing.T) {
-			fn, ok := hashFuncMapping[name]
-			if !ok {
-				t.Errorf("hash %s not in hashFuncMapping", name)
-				return
-			}
-			h := fn()
-			if h == nil {
-				t.Errorf("hash function for %s returned nil", name)
 			}
 		})
 	}

@@ -13,16 +13,15 @@ readiness.
 | State Machine | Question Answered | Owner | Where It Runs |
 |---------------|-------------------|-------|---------------|
 | **KMS + CA bootstrap** | Does this server have a TPM/HSM/CA/TLS identity? | `cmd/xkmsd init` (xkms) | This document and `ceremony.md` |
-| **IAM first-boot bootstrap** | Does this server have a system tenant, an admin user, and an admin certificate? | embedded qrdb node (in-process) | Documented in `auth/bootstrap.md` |
+| **IAM admin enrollment** | Does this server have an admin user with a certificate bound to it? | embedded qrdb node (in-process) | Documented in `auth/bootstrap.md` |
 
-After Phase 5 the IAM half is delegated wholesale to qrdb. xkms no longer
-owns user/tenant/role/admin-cert creation — it always embeds qrdb in-process
-as its single datastore and drives the embedded node's first-boot path, so a
-single canonical implementation runs in every binary that embeds the stack
-(xkms, quicbaas, trusted-platform). xkms contributes the FIDO2/WebAuthn
-attestation hook and the invitation flow on top of the embedded node's
-first-boot output; the rest of `auth/bootstrap.md` covers the integration in
-detail.
+The IAM half is delegated wholesale to qrdb. xkms owns no user/tenant/role
+type — it always embeds qrdb in-process as its single datastore, so a single
+canonical identity implementation runs in every binary that embeds the stack
+(xkms, quicbaas, trusted-platform). xkms contributes the CA that signs
+operator certificates and the FIDO2/WebAuthn relying party. Admin enrollment
+is cert-based (CSR-sign or generate-and-distribute); there are no setup tokens
+or invitations. See `auth/bootstrap.md` for the full flow.
 
 ## Problem (KMS + CA half)
 
@@ -47,7 +46,7 @@ all before the first network listener starts.
 6. Runs `CeremonyService.Initialize(ctx, caInstance)` end-to-end (`cmd/xkmsd/init_ceremony.go:122`) — this is the call site Phase 9 wired up; there is no longer a `TODO` here
 7. Persists the CA bundle to `<dataDir>/ca-bundle.pem` and the SPKI pin to `<dataDir>/spki-pin.txt`
 8. Computes and prints the SPKI pin for trust-on-first-use
-9. **Single admin**: writes the SO admin client bundle (cert + key, PEM-concatenated) to `--admin-bundle` (`-` = stdout)
+9. **Single admin**: transitions straight to `operational`; the SO identity is CSR-based and the server never holds officer private keys, so no credential bundle is emitted
 10. **M-of-N**: Shamir-splits the barrier root key, seals shares, signs SO CSRs, starts a temporary TLS listener for certificate and share claims
 
 After `xkmsd init` completes, the server is ready for `xkmsd start`.
@@ -116,10 +115,11 @@ xkmsd init --config /etc/xkms/xkmsd.yaml --so-pin <PIN> --user-pin <PIN> \
 xkmsctl init claim-cert --server https://xkmsd:8443 --spki-pin <PIN> \
   --username admin2@example.com --key /path/to/csr-private-key.pem
 
-# SO claims Shamir share (mTLS with newly claimed cert)
-xkmsctl init claim-share --server https://xkmsd:8443 \
-  --tls-cert so.pem --tls-key so-key.pem --tls-ca ca.pem \
-  --username admin2@example.com
+# SO claims Shamir share (two round-trip challenge-response over mTLS with the
+# newly claimed cert; the server binds the claim to the certificate thumbprint)
+xkmsctl init claim-share --server https://xkmsd:8443 --spki-pin <PIN> \
+  --cert so.pem --key so-key.pem \
+  --username admin2@example.com --output so-share.json
 
 # Submit a credential (e.g., User PIN for auto-start)
 xkmsctl credential submit --server https://xkmsd:8443 \
@@ -137,7 +137,7 @@ xkmsctl barrier unseal-share --share "$(xkey share get barrier)"
 | [threshold.md](threshold.md) | M-of-N architecture, application-layer Shamir, HSM-layer threshold |
 | [credentials.md](credentials.md) | Credential seal strategies, CredentialService architecture, configuration |
 | [roles.md](roles.md) | FIPS 140-2/3 role model, operation matrix, separation of duties |
-| [../auth/bootstrap.md](../auth/bootstrap.md) | The IAM half: how xkms drives the embedded qrdb node's first-boot |
+| [../auth/bootstrap.md](../auth/bootstrap.md) | The IAM half: cert-based admin enrollment against the embedded qrdb node |
 | [../trust/bootstrap.md](../trust/bootstrap.md) | Trust-bootstrap library used by clients to fetch the CA bundle produced here |
 
 ## Related Documentation
@@ -145,6 +145,6 @@ xkmsctl barrier unseal-share --share "$(xkey share get barrier)"
 - [Architecture Overview](../architecture/overview.md)
 - [RBAC](../architecture/rbac.md)
 - [Configuration](../configuration/README.md)
-- [Getting Started](../usage/getting-started.md)
+- [Getting Started](../../xkey/docs/usage/getting-started.md)
 - [PKCS#11 Backend](../backends/pkcs11.md)
 - [TPM2 Backend](../backends/tpm2.md)

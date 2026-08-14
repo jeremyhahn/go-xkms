@@ -33,6 +33,10 @@ import (
 // required by go-qrdb's DAO layer. This allows any go-xkms storage backend
 // (memory, file, QRDB, LUKS, sealed) to be used with the DAO for typed
 // entity persistence.
+//
+// Key-value operations are fully supported. Secondary indexing is not: every
+// index method reports ErrIndexingNotSupported so an index query can never be
+// mistaken for an empty match. See indexes.go for the rationale.
 type KVStoreAdapter struct {
 	backend storage.Backend
 }
@@ -133,34 +137,4 @@ func (a *KVStoreAdapter) Exists(ctx context.Context, key string) (bool, error) {
 		return false, &ExistsError{Key: key, Err: err}
 	}
 	return exists, nil
-}
-
-// RegisterEntityIndexes registers index definitions for an entity type.
-// The KVStoreAdapter does not support indexing; this is a no-op.
-func (a *KVStoreAdapter) RegisterEntityIndexes(_ string, _ []qrdbsdk.EntityIndex) error {
-	return nil
-}
-
-// QueryIndex performs an exact-match query on the named index.
-// The KVStoreAdapter does not support indexing; returns nil.
-func (a *KVStoreAdapter) QueryIndex(_ context.Context, _ string, _ []byte) ([][]byte, error) {
-	return nil, nil
-}
-
-// ScanIndex performs a range scan on the named index.
-// The KVStoreAdapter does not support indexing; returns nil.
-func (a *KVStoreAdapter) ScanIndex(_ context.Context, _ string, _, _ []byte) (map[string][][]byte, error) {
-	return nil, nil
-}
-
-// QueryCompoundIndex performs an exact-match query on a compound index.
-// The KVStoreAdapter does not support indexing; returns nil.
-func (a *KVStoreAdapter) QueryCompoundIndex(_ context.Context, _ string, _ [][]byte) ([][]byte, error) {
-	return nil, nil
-}
-
-// ScanCompoundIndex performs a prefix and range scan on a compound index.
-// The KVStoreAdapter does not support indexing; returns nil.
-func (a *KVStoreAdapter) ScanCompoundIndex(_ context.Context, _ string, _ [][]byte, _, _ []byte) (map[string][][]byte, error) {
-	return nil, nil
 }

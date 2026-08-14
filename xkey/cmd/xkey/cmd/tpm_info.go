@@ -16,7 +16,7 @@ package cmd
 import (
 	"encoding/json"
 	"fmt"
-	"os"
+	"io"
 	"strings"
 
 	"github.com/spf13/cobra"
@@ -83,6 +83,7 @@ Examples:
 }
 
 func runTPMInfo(cmd *cobra.Command, args []string) error {
+	out := cmd.OutOrStdout()
 	// Try to open TPM - don't require it to be initialized
 	tpm, err := openTPMForProvisioning()
 	if err != nil {
@@ -101,9 +102,9 @@ func runTPMInfo(cmd *cobra.Command, args []string) error {
 	// Output based on format
 	switch tpmCfg.outputFormat {
 	case "json":
-		return outputJSON(info)
+		return outputJSON(out, info)
 	default:
-		return outputText(info)
+		return outputText(out, info)
 	}
 }
 
@@ -170,50 +171,50 @@ func (info *TPMInfo) checkProvisioningState(tpm xkms.TrustedPlatformModule) {
 	info.Provisioned = info.EKPresent && info.SRKPresent
 }
 
-func outputJSON(info *TPMInfo) error {
-	encoder := json.NewEncoder(os.Stdout)
+func outputJSON(out io.Writer, info *TPMInfo) error {
+	encoder := json.NewEncoder(out)
 	encoder.SetIndent("", "  ")
 	return encoder.Encode(info)
 }
 
-func outputText(info *TPMInfo) error {
-	fmt.Println("TPM Information")
-	fmt.Println("===============")
-	fmt.Println()
+func outputText(out io.Writer, info *TPMInfo) error {
+	fmt.Fprintln(out, "TPM Information")
+	fmt.Fprintln(out, "===============")
+	fmt.Fprintln(out)
 
-	fmt.Println("Device Information:")
-	fmt.Printf("  Manufacturer:     %s\n", info.Manufacturer)
-	fmt.Printf("  Vendor ID:        %s\n", info.VendorID)
-	fmt.Printf("  Family:           %s\n", info.Family)
-	fmt.Printf("  Revision:         %s\n", info.Revision)
-	fmt.Printf("  Firmware:         %d.%d\n", info.FirmwareMajor, info.FirmwareMinor)
-	fmt.Printf("  Model:            %s\n", info.Model)
-	fmt.Printf("  Type:             %s\n", info.Type)
-	fmt.Printf("  Device Path:      %s\n", info.Device)
-	fmt.Printf("  FIPS 140-2:       %t\n", info.FIPS1402)
-	fmt.Println()
+	fmt.Fprintln(out, "Device Information:")
+	fmt.Fprintf(out, "  Manufacturer:     %s\n", info.Manufacturer)
+	fmt.Fprintf(out, "  Vendor ID:        %s\n", info.VendorID)
+	fmt.Fprintf(out, "  Family:           %s\n", info.Family)
+	fmt.Fprintf(out, "  Revision:         %s\n", info.Revision)
+	fmt.Fprintf(out, "  Firmware:         %d.%d\n", info.FirmwareMajor, info.FirmwareMinor)
+	fmt.Fprintf(out, "  Model:            %s\n", info.Model)
+	fmt.Fprintf(out, "  Type:             %s\n", info.Type)
+	fmt.Fprintf(out, "  Device Path:      %s\n", info.Device)
+	fmt.Fprintf(out, "  FIPS 140-2:       %t\n", info.FIPS1402)
+	fmt.Fprintln(out)
 
-	fmt.Println("Provisioning State:")
-	fmt.Printf("  Provisioned:      %t\n", info.Provisioned)
-	fmt.Printf("  EK Present:       %t\n", info.EKPresent)
-	fmt.Printf("  SRK Present:      %t\n", info.SRKPresent)
-	fmt.Printf("  IAK Present:      %t\n", info.IAKPresent)
-	fmt.Printf("  IDevID Present:   %t\n", info.IDevIDPresent)
-	fmt.Println()
+	fmt.Fprintln(out, "Provisioning State:")
+	fmt.Fprintf(out, "  Provisioned:      %t\n", info.Provisioned)
+	fmt.Fprintf(out, "  EK Present:       %t\n", info.EKPresent)
+	fmt.Fprintf(out, "  SRK Present:      %t\n", info.SRKPresent)
+	fmt.Fprintf(out, "  IAK Present:      %t\n", info.IAKPresent)
+	fmt.Fprintf(out, "  IDevID Present:   %t\n", info.IDevIDPresent)
+	fmt.Fprintln(out)
 
-	fmt.Println("Capabilities:")
-	fmt.Printf("  Max Auth Failures:     %d\n", info.MaxAuthFail)
-	fmt.Printf("  Lockout Counter:       %d\n", info.LockoutCounter)
-	fmt.Printf("  Lockout Interval:      %d\n", info.LockoutInterval)
-	fmt.Printf("  Lockout Recovery:      %d\n", info.LockoutRecovery)
-	fmt.Printf("  NV Buffer Max:         %d\n", info.NVBufferMax)
-	fmt.Printf("  NV Indexes Defined:    %d\n", info.NVIndexesDefined)
-	fmt.Printf("  NV Indexes Max:        %d\n", info.NVIndexesMax)
-	fmt.Printf("  Persistent Loaded:     %d\n", info.PersistentLoaded)
-	fmt.Printf("  Persistent Available:  %d\n", info.PersistentAvail)
-	fmt.Printf("  Transient Min:         %d\n", info.TransientMin)
-	fmt.Printf("  Transient Available:   %d\n", info.TransientAvail)
-	fmt.Printf("  Active Sessions Max:   %d\n", info.ActiveSessionsMax)
+	fmt.Fprintln(out, "Capabilities:")
+	fmt.Fprintf(out, "  Max Auth Failures:     %d\n", info.MaxAuthFail)
+	fmt.Fprintf(out, "  Lockout Counter:       %d\n", info.LockoutCounter)
+	fmt.Fprintf(out, "  Lockout Interval:      %d\n", info.LockoutInterval)
+	fmt.Fprintf(out, "  Lockout Recovery:      %d\n", info.LockoutRecovery)
+	fmt.Fprintf(out, "  NV Buffer Max:         %d\n", info.NVBufferMax)
+	fmt.Fprintf(out, "  NV Indexes Defined:    %d\n", info.NVIndexesDefined)
+	fmt.Fprintf(out, "  NV Indexes Max:        %d\n", info.NVIndexesMax)
+	fmt.Fprintf(out, "  Persistent Loaded:     %d\n", info.PersistentLoaded)
+	fmt.Fprintf(out, "  Persistent Available:  %d\n", info.PersistentAvail)
+	fmt.Fprintf(out, "  Transient Min:         %d\n", info.TransientMin)
+	fmt.Fprintf(out, "  Transient Available:   %d\n", info.TransientAvail)
+	fmt.Fprintf(out, "  Active Sessions Max:   %d\n", info.ActiveSessionsMax)
 
 	return nil
 }

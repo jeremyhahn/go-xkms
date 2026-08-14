@@ -1116,9 +1116,10 @@ func TestNewServerWithTLSConfig(t *testing.T) {
 	}
 
 	cfg := &ServerConfig{
-		Port:      0,
-		TLSConfig: tlsConfig,
-		Logger:    slog.New(slog.NewTextHandler(io.Discard, nil)),
+		Authenticator: auth.NewNoOpAuthenticator(),
+		Port:          0,
+		TLSConfig:     tlsConfig,
+		Logger:        slog.New(slog.NewTextHandler(io.Discard, nil)),
 	}
 
 	server, err := NewServer(cfg)
@@ -1148,9 +1149,10 @@ func TestNewServerWithRateLimiter(t *testing.T) {
 	})
 
 	cfg := &ServerConfig{
-		Port:        0,
-		RateLimiter: limiter,
-		Logger:      slog.New(slog.NewTextHandler(io.Discard, nil)),
+		Authenticator: auth.NewNoOpAuthenticator(),
+		Port:          0,
+		RateLimiter:   limiter,
+		Logger:        slog.New(slog.NewTextHandler(io.Discard, nil)),
 	}
 
 	server, err := NewServer(cfg)
@@ -2010,7 +2012,10 @@ func TestVerifyWithDefaultHash(t *testing.T) {
 	}
 }
 
-// TestSignWithInvalidHash tests Sign with invalid hash algorithm
+// TestSignWithInvalidHash asserts that Sign refuses an invalid hash algorithm
+// instead of substituting SHA-256 for it. This is the assertion that would have
+// caught the silent-downgrade defect: the caller must get a typed error and no
+// signature, not a signature over a digest it did not name.
 func TestSignWithInvalidHash(t *testing.T) {
 	service := setupFinalGapsTest(t)
 	defer xkms.Reset()
@@ -2026,19 +2031,24 @@ func TestSignWithInvalidHash(t *testing.T) {
 		t.Fatalf("GenerateKey failed: %v", err)
 	}
 
-	// Sign with invalid hash (should default to SHA256)
-	resp, err := service.Sign(context.Background(), &pb.SignRequest{
-		KeyId:   "sign-invalid-hash-test",
-		Backend: "software",
-		Data:    []byte("test data"),
-		Hash:    "INVALID_HASH",
-	})
-	if err != nil {
-		t.Fatalf("Sign failed: %v", err)
-	}
-
-	if len(resp.Signature) == 0 {
-		t.Error("Expected non-empty signature")
+	for _, hash := range []string{"INVALID_HASH", "MD5", "SHA-1", "RIPEMD-160"} {
+		t.Run(hash, func(t *testing.T) {
+			resp, err := service.Sign(context.Background(), &pb.SignRequest{
+				KeyId:   "sign-invalid-hash-test",
+				Backend: "software",
+				Data:    []byte("test data"),
+				Hash:    hash,
+			})
+			if err == nil {
+				t.Fatalf("Sign with %q must return an error", hash)
+			}
+			if status.Code(err) != codes.InvalidArgument {
+				t.Errorf("Expected InvalidArgument, got %v", status.Code(err))
+			}
+			if resp != nil {
+				t.Errorf("Expected no signature when %q is refused, got %v", hash, resp)
+			}
+		})
 	}
 }
 

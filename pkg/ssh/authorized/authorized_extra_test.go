@@ -694,18 +694,23 @@ func TestStore_List_CorruptEnvelope(t *testing.T) {
 // Verify: list returns entries with nil Key (nil-key guard path in Verify)
 // ---------------------------------------------------------------------------
 
-// nilKeyStore is a Store that returns one Entry with nil Key.
+// nilKeyStore is a Store whose reads yield degenerate Records: an Entry
+// with a nil Key, a Record with a nil Entry, and a nil Record.
 type nilKeyStore struct{}
 
 func (nilKeyStore) Add(_ context.Context, _ scope.Scope, _, _ string, _ *authorized.Entry) error {
 	return nil
 }
-func (nilKeyStore) Get(_ context.Context, _ scope.Scope, _, _ string) (*authorized.Entry, error) {
-	return &authorized.Entry{Key: nil}, nil
+func (nilKeyStore) Get(_ context.Context, _ scope.Scope, _, _ string) (*authorized.Record, error) {
+	return &authorized.Record{Name: "nilkey", Entry: &authorized.Entry{Key: nil}}, nil
 }
-func (nilKeyStore) List(_ context.Context, _ scope.Scope, _ string) ([]*authorized.Entry, error) {
-	// Return one entry with nil Key and one nil entry to exercise both guard branches.
-	return []*authorized.Entry{{Key: nil}, nil}, nil
+func (nilKeyStore) List(_ context.Context, _ scope.Scope, _ string) ([]*authorized.Record, error) {
+	// Exercise all three guard branches in Verify.
+	return []*authorized.Record{
+		{Name: "nilkey", Entry: &authorized.Entry{Key: nil}},
+		{Name: "nilentry"},
+		nil,
+	}, nil
 }
 func (nilKeyStore) Remove(_ context.Context, _ scope.Scope, _, _ string) error { return nil }
 

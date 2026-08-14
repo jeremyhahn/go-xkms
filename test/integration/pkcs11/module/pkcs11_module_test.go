@@ -150,9 +150,12 @@ func TestModuleGetInfo(t *testing.T) {
 			t.Fatal("GetInfo returned nil info")
 		}
 
-		// Verify Cryptoki version is 3.0
-		if info.CryptokiVersion.Major != 3 || info.CryptokiVersion.Minor != 0 {
-			t.Errorf("expected Cryptoki version 3.0, got %d.%d",
+		// The module implements PKCS#11 v3.2, which is the specification this
+		// suite is written against, so that is what C_GetInfo must report. A
+		// module claiming an older version than it implements misleads a caller
+		// into avoiding functions it could have used.
+		if info.CryptokiVersion.Major != 3 || info.CryptokiVersion.Minor != 2 {
+			t.Errorf("expected Cryptoki version 3.2, got %d.%d",
 				info.CryptokiVersion.Major, info.CryptokiVersion.Minor)
 		}
 

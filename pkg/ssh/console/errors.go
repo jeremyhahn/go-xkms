@@ -32,3 +32,9 @@ func (e *SessionError) Unwrap() error { return e.Err }
 type ClosedError struct{}
 
 func (e *ClosedError) Error() string { return "ssh/console: console is closed" }
+
+// WriteClosedError indicates a Write after CloseWrite: the console's write
+// half has been shut and the remote has already seen EOF on its stdin.
+type WriteClosedError struct{}
+
+func (e *WriteClosedError) Error() string { return "ssh/console: write half is closed" }

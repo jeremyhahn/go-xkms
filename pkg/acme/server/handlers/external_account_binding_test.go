@@ -47,6 +47,10 @@ func (m *mockEABDAO) SaveWithCondition(_ context.Context, _ *entities.ExternalAc
 	panic("not implemented")
 }
 
+func (m *mockEABDAO) SaveIfAbsent(_ context.Context, _ *entities.ExternalAccountBinding) (bool, error) {
+	panic("not implemented")
+}
+
 func (m *mockEABDAO) Get(_ context.Context, id uint64) (*entities.ExternalAccountBinding, error) {
 	if m.err != nil {
 		return nil, m.err

@@ -40,7 +40,7 @@ func NewFileStore(dir string, logger *slog.Logger) (*FileStore, error) {
 		return nil, ErrNilLogger
 	}
 	if err := os.MkdirAll(dir, 0700); err != nil {
-		return nil, &AgentError{Operation: "new_file_store", Err: ErrStoreDir}
+		return nil, &AgentError{Operation: "new_file_store", Err: ErrStoreDir, Cause: err}
 	}
 	return &FileStore{
 		dir:    dir,
@@ -57,7 +57,7 @@ func (s *FileStore) SaveAgent(agent *AgentInfo) error {
 
 	data, err := json.MarshalIndent(agent, "", "  ")
 	if err != nil {
-		return &AgentError{Operation: "save_agent", Err: ErrStoreMarshal}
+		return &AgentError{Operation: "save_agent", Err: ErrStoreMarshal, Cause: err}
 	}
 
 	s.mu.Lock()
@@ -65,7 +65,7 @@ func (s *FileStore) SaveAgent(agent *AgentInfo) error {
 
 	path := s.agentPath(agent.ID)
 	if err := os.WriteFile(path, data, 0600); err != nil {
-		return &AgentError{Operation: "save_agent", Err: ErrStoreWrite}
+		return &AgentError{Operation: "save_agent", Err: ErrStoreWrite, Cause: err}
 	}
 
 	s.logger.Debug("saved agent", "id", agent.ID, "path", path)
@@ -107,7 +107,7 @@ func (s *FileStore) ListAgents() ([]*AgentInfo, error) {
 
 	entries, err := os.ReadDir(s.dir)
 	if err != nil {
-		return nil, &AgentError{Operation: "list_agents", Err: ErrStoreRead}
+		return nil, &AgentError{Operation: "list_agents", Err: ErrStoreRead, Cause: err}
 	}
 
 	agents := make([]*AgentInfo, 0, len(entries))

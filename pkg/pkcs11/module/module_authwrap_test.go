@@ -70,8 +70,9 @@ func createAuthWrapTestObjects(t *testing.T) (*Module, SessionHandle, ObjectHand
 	t.Helper()
 	m := initializeTestModule(t)
 
-	sessionHandle, rv := m.OpenSession(0, CKF_SERIAL_SESSION|CKF_RW_SESSION)
-	require.Equal(t, CKR_OK, rv)
+	// CKF_LOGIN_REQUIRED gates key-bearing operations, so the fixture
+	// authenticates before exercising them.
+	sessionHandle := loginAsNormalUser(t, m)
 
 	wrappingKeyValue := createAESKey(t)
 	targetKeyValue := createAESKey(t)
@@ -141,8 +142,9 @@ func TestWrapKeyAuthenticated(t *testing.T) {
 		m := initializeTestModule(t)
 		defer m.Finalize()
 
-		sessionHandle, rv := m.OpenSession(0, CKF_SERIAL_SESSION|CKF_RW_SESSION)
-		require.Equal(t, CKR_OK, rv)
+		// CKF_LOGIN_REQUIRED gates key-bearing operations, so the fixture
+		// authenticates before exercising them.
+		sessionHandle := loginAsNormalUser(t, m)
 
 		aesKey := createAESKey(t)
 		originalKeyValue := createAESKey(t)
@@ -186,7 +188,7 @@ func TestWrapKeyAuthenticated(t *testing.T) {
 		assert.NotEqual(t, ObjectHandle(InvalidHandle), newHandle)
 
 		// Verify the unwrapped key material matches the original
-		unwrappedObj, err := m.objectManager.GetObject(newHandle)
+		unwrappedObj, err := m.objectManager.getObjectUnchecked(newHandle)
 		require.NoError(t, err)
 		unwrappedValue := unwrappedObj.GetAttribute(CKA_VALUE)
 		assert.True(t, bytes.Equal(originalKeyValue, unwrappedValue),
@@ -261,12 +263,13 @@ func TestWrapKeyAuthenticated(t *testing.T) {
 		assert.Nil(t, wrappedKey)
 	})
 
-	t.Run("returns CKR_KEY_FUNCTION_NOT_PERMITTED when CKA_WRAP is false", func(t *testing.T) {
+	t.Run("returns CKR_WRAPPING_KEY_TYPE_INCONSISTENT when CKA_WRAP is false", func(t *testing.T) {
 		m := initializeTestModule(t)
 		defer m.Finalize()
 
-		sessionHandle, rv := m.OpenSession(0, CKF_SERIAL_SESSION|CKF_RW_SESSION)
-		require.Equal(t, CKR_OK, rv)
+		// CKF_LOGIN_REQUIRED gates key-bearing operations, so the fixture
+		// authenticates before exercising them.
+		sessionHandle := loginAsNormalUser(t, m)
 
 		// Key without CKA_WRAP
 		noWrapTemplate := []Attribute{
@@ -281,6 +284,7 @@ func TestWrapKeyAuthenticated(t *testing.T) {
 		// Target key
 		targetTemplate := []Attribute{
 			NewUint32Attribute(CKA_CLASS, uint32(CKO_SECRET_KEY)),
+			NewUint32Attribute(CKA_KEY_TYPE, uint32(CKK_AES)),
 			NewBoolAttribute(CKA_EXTRACTABLE, true),
 			NewAttribute(CKA_VALUE, createAESKey(t)),
 		}
@@ -292,20 +296,27 @@ func TestWrapKeyAuthenticated(t *testing.T) {
 		require.Error(t, err)
 		var pkcsErr *PKCS11Error
 		require.ErrorAs(t, err, &pkcsErr)
-		assert.Equal(t, CKR_KEY_FUNCTION_NOT_PERMITTED, pkcsErr.Code)
+		assert.Equal(t, CKR_WRAPPING_KEY_TYPE_INCONSISTENT, pkcsErr.Code)
 		assert.Nil(t, wrappedKey)
 	})
 
-	t.Run("returns CKR_KEY_NOT_WRAPPABLE when target is not extractable", func(t *testing.T) {
+	// CKR_KEY_UNEXTRACTABLE, not CKR_KEY_NOT_WRAPPABLE: PKCS#11 v3.2 §5.1
+	// defines the former as the key's CKA_EXTRACTABLE being CK_FALSE and the
+	// latter as the token being unable to wrap a key that IS extractable, and
+	// C_WrapKey answers the former for this condition. The two wrap verbs must
+	// not report different causes for one condition.
+	t.Run("returns CKR_KEY_UNEXTRACTABLE when target is not extractable", func(t *testing.T) {
 		m := initializeTestModule(t)
 		defer m.Finalize()
 
-		sessionHandle, rv := m.OpenSession(0, CKF_SERIAL_SESSION|CKF_RW_SESSION)
-		require.Equal(t, CKR_OK, rv)
+		// CKF_LOGIN_REQUIRED gates key-bearing operations, so the fixture
+		// authenticates before exercising them.
+		sessionHandle := loginAsNormalUser(t, m)
 
 		// Wrapping key
 		wkTemplate := []Attribute{
 			NewUint32Attribute(CKA_CLASS, uint32(CKO_SECRET_KEY)),
+			NewUint32Attribute(CKA_KEY_TYPE, uint32(CKK_AES)),
 			NewBoolAttribute(CKA_WRAP, true),
 			NewAttribute(CKA_VALUE, createAESKey(t)),
 		}
@@ -315,6 +326,7 @@ func TestWrapKeyAuthenticated(t *testing.T) {
 		// Non-extractable target key
 		targetTemplate := []Attribute{
 			NewUint32Attribute(CKA_CLASS, uint32(CKO_SECRET_KEY)),
+			NewUint32Attribute(CKA_KEY_TYPE, uint32(CKK_AES)),
 			NewBoolAttribute(CKA_EXTRACTABLE, false),
 			NewAttribute(CKA_VALUE, createAESKey(t)),
 		}
@@ -326,7 +338,7 @@ func TestWrapKeyAuthenticated(t *testing.T) {
 		require.Error(t, err)
 		var pkcsErr *PKCS11Error
 		require.ErrorAs(t, err, &pkcsErr)
-		assert.Equal(t, CKR_KEY_NOT_WRAPPABLE, pkcsErr.Code)
+		assert.Equal(t, CKR_KEY_UNEXTRACTABLE, pkcsErr.Code)
 		assert.Nil(t, wrappedKey)
 	})
 
@@ -334,13 +346,15 @@ func TestWrapKeyAuthenticated(t *testing.T) {
 		m := initializeTestModule(t)
 		defer m.Finalize()
 
-		sessionHandle, rv := m.OpenSession(0, CKF_SERIAL_SESSION|CKF_RW_SESSION)
-		require.Equal(t, CKR_OK, rv)
+		// CKF_LOGIN_REQUIRED gates key-bearing operations, so the fixture
+		// authenticates before exercising them.
+		sessionHandle := loginAsNormalUser(t, m)
 
 		// Wrapping key with invalid size (17 bytes)
 		badKeyValue := make([]byte, 17)
 		wkTemplate := []Attribute{
 			NewUint32Attribute(CKA_CLASS, uint32(CKO_SECRET_KEY)),
+			NewUint32Attribute(CKA_KEY_TYPE, uint32(CKK_AES)),
 			NewBoolAttribute(CKA_WRAP, true),
 			NewAttribute(CKA_VALUE, badKeyValue),
 		}
@@ -350,6 +364,7 @@ func TestWrapKeyAuthenticated(t *testing.T) {
 		// Target key
 		targetTemplate := []Attribute{
 			NewUint32Attribute(CKA_CLASS, uint32(CKO_SECRET_KEY)),
+			NewUint32Attribute(CKA_KEY_TYPE, uint32(CKK_AES)),
 			NewBoolAttribute(CKA_EXTRACTABLE, true),
 			NewAttribute(CKA_VALUE, createAESKey(t)),
 		}
@@ -369,18 +384,20 @@ func TestWrapKeyAuthenticated(t *testing.T) {
 		m := initializeTestModule(t)
 		defer m.Finalize()
 
-		// Open read-only session
+		// Provision and authenticate first: C_InitToken refuses to run while
+		// any session is open.
+		rwSession := loginAsNormalUser(t, m)
+
 		roSession, rv := m.OpenSession(0, CKF_SERIAL_SESSION)
 		require.Equal(t, CKR_OK, rv)
 
 		mechanism := NewMechanism(CKM_AES_GCM)
 
 		// We need valid key handles, so create them via a R/W session first
-		rwSession, rv := m.OpenSession(0, CKF_SERIAL_SESSION|CKF_RW_SESSION)
-		require.Equal(t, CKR_OK, rv)
 
 		wkTemplate := []Attribute{
 			NewUint32Attribute(CKA_CLASS, uint32(CKO_SECRET_KEY)),
+			NewUint32Attribute(CKA_KEY_TYPE, uint32(CKK_AES)),
 			NewBoolAttribute(CKA_WRAP, true),
 			NewAttribute(CKA_VALUE, createAESKey(t)),
 		}
@@ -389,6 +406,7 @@ func TestWrapKeyAuthenticated(t *testing.T) {
 
 		targetTemplate := []Attribute{
 			NewUint32Attribute(CKA_CLASS, uint32(CKO_SECRET_KEY)),
+			NewUint32Attribute(CKA_KEY_TYPE, uint32(CKK_AES)),
 			NewBoolAttribute(CKA_EXTRACTABLE, true),
 			NewAttribute(CKA_VALUE, createAESKey(t)),
 		}
@@ -475,6 +493,7 @@ func TestUnwrapKeyAuthenticated(t *testing.T) {
 
 		unwrapTemplate := []Attribute{
 			NewUint32Attribute(CKA_CLASS, uint32(CKO_SECRET_KEY)),
+			NewUint32Attribute(CKA_KEY_TYPE, uint32(CKK_AES)),
 		}
 		handle, err := m.UnwrapKeyAuthenticated(sessionHandle, mechanism, wrappingKeyHandle, wrappedKey, unwrapTemplate, nil)
 		require.NoError(t, err)
@@ -494,6 +513,7 @@ func TestUnwrapKeyAuthenticated(t *testing.T) {
 		// Unwrap with wrong AAD
 		unwrapTemplate := []Attribute{
 			NewUint32Attribute(CKA_CLASS, uint32(CKO_SECRET_KEY)),
+			NewUint32Attribute(CKA_KEY_TYPE, uint32(CKK_AES)),
 		}
 		handle, err := m.UnwrapKeyAuthenticated(sessionHandle, mechanism, wrappingKeyHandle, wrappedKey, unwrapTemplate, []byte("wrong-aad"))
 		require.Error(t, err)
@@ -519,6 +539,7 @@ func TestUnwrapKeyAuthenticated(t *testing.T) {
 
 		unwrapTemplate := []Attribute{
 			NewUint32Attribute(CKA_CLASS, uint32(CKO_SECRET_KEY)),
+			NewUint32Attribute(CKA_KEY_TYPE, uint32(CKK_AES)),
 		}
 		handle, err := m.UnwrapKeyAuthenticated(sessionHandle, mechanism, wrappingKeyHandle, tampered, unwrapTemplate, nil)
 		require.Error(t, err)
@@ -532,8 +553,9 @@ func TestUnwrapKeyAuthenticated(t *testing.T) {
 		m := initializeTestModule(t)
 		defer m.Finalize()
 
-		sessionHandle, rv := m.OpenSession(0, CKF_SERIAL_SESSION|CKF_RW_SESSION)
-		require.Equal(t, CKR_OK, rv)
+		// CKF_LOGIN_REQUIRED gates key-bearing operations, so the fixture
+		// authenticates before exercising them.
+		sessionHandle := loginAsNormalUser(t, m)
 
 		correctKey := createAESKey(t)
 		wrongKey := createAESKey(t)
@@ -541,6 +563,7 @@ func TestUnwrapKeyAuthenticated(t *testing.T) {
 		// Wrapping key
 		wkTemplate := []Attribute{
 			NewUint32Attribute(CKA_CLASS, uint32(CKO_SECRET_KEY)),
+			NewUint32Attribute(CKA_KEY_TYPE, uint32(CKK_AES)),
 			NewBoolAttribute(CKA_WRAP, true),
 			NewBoolAttribute(CKA_UNWRAP, true),
 			NewAttribute(CKA_VALUE, correctKey),
@@ -551,6 +574,7 @@ func TestUnwrapKeyAuthenticated(t *testing.T) {
 		// Wrong key
 		wrongKeyTemplate := []Attribute{
 			NewUint32Attribute(CKA_CLASS, uint32(CKO_SECRET_KEY)),
+			NewUint32Attribute(CKA_KEY_TYPE, uint32(CKK_AES)),
 			NewBoolAttribute(CKA_UNWRAP, true),
 			NewAttribute(CKA_VALUE, wrongKey),
 		}
@@ -560,6 +584,7 @@ func TestUnwrapKeyAuthenticated(t *testing.T) {
 		// Target
 		targetTemplate := []Attribute{
 			NewUint32Attribute(CKA_CLASS, uint32(CKO_SECRET_KEY)),
+			NewUint32Attribute(CKA_KEY_TYPE, uint32(CKK_AES)),
 			NewBoolAttribute(CKA_EXTRACTABLE, true),
 			NewAttribute(CKA_VALUE, createAESKey(t)),
 		}
@@ -575,6 +600,7 @@ func TestUnwrapKeyAuthenticated(t *testing.T) {
 		// Unwrap with wrong key
 		unwrapTemplate := []Attribute{
 			NewUint32Attribute(CKA_CLASS, uint32(CKO_SECRET_KEY)),
+			NewUint32Attribute(CKA_KEY_TYPE, uint32(CKK_AES)),
 		}
 		handle, err := m.UnwrapKeyAuthenticated(sessionHandle, mechanism, wrongKeyHandle, wrappedKey, unwrapTemplate, nil)
 		require.Error(t, err)
@@ -613,8 +639,9 @@ func TestUnwrapKeyAuthenticated(t *testing.T) {
 		m := initializeTestModule(t)
 		defer m.Finalize()
 
-		sessionHandle, rv := m.OpenSession(0, CKF_SERIAL_SESSION|CKF_RW_SESSION)
-		require.Equal(t, CKR_OK, rv)
+		// CKF_LOGIN_REQUIRED gates key-bearing operations, so the fixture
+		// authenticates before exercising them.
+		sessionHandle := loginAsNormalUser(t, m)
 
 		mechanism := NewMechanism(CKM_AES_GCM)
 		handle, err := m.UnwrapKeyAuthenticated(sessionHandle, mechanism, ObjectHandle(99999), []byte("wrapped"), nil, nil)
@@ -653,16 +680,18 @@ func TestUnwrapKeyAuthenticated(t *testing.T) {
 		assert.Equal(t, ObjectHandle(InvalidHandle), handle)
 	})
 
-	t.Run("returns CKR_KEY_FUNCTION_NOT_PERMITTED when CKA_UNWRAP is false", func(t *testing.T) {
+	t.Run("returns CKR_UNWRAPPING_KEY_TYPE_INCONSISTENT when CKA_UNWRAP is false", func(t *testing.T) {
 		m := initializeTestModule(t)
 		defer m.Finalize()
 
-		sessionHandle, rv := m.OpenSession(0, CKF_SERIAL_SESSION|CKF_RW_SESSION)
-		require.Equal(t, CKR_OK, rv)
+		// CKF_LOGIN_REQUIRED gates key-bearing operations, so the fixture
+		// authenticates before exercising them.
+		sessionHandle := loginAsNormalUser(t, m)
 
 		// Key without CKA_UNWRAP
 		noUnwrapTemplate := []Attribute{
 			NewUint32Attribute(CKA_CLASS, uint32(CKO_SECRET_KEY)),
+			NewUint32Attribute(CKA_KEY_TYPE, uint32(CKK_AES)),
 			NewBoolAttribute(CKA_UNWRAP, false),
 			NewAttribute(CKA_VALUE, createAESKey(t)),
 		}
@@ -676,7 +705,7 @@ func TestUnwrapKeyAuthenticated(t *testing.T) {
 		require.Error(t, err)
 		var pkcsErr *PKCS11Error
 		require.ErrorAs(t, err, &pkcsErr)
-		assert.Equal(t, CKR_KEY_FUNCTION_NOT_PERMITTED, pkcsErr.Code)
+		assert.Equal(t, CKR_UNWRAPPING_KEY_TYPE_INCONSISTENT, pkcsErr.Code)
 		assert.Equal(t, ObjectHandle(InvalidHandle), handle)
 	})
 
@@ -684,16 +713,22 @@ func TestUnwrapKeyAuthenticated(t *testing.T) {
 		m := initializeTestModule(t)
 		defer m.Finalize()
 
-		// Open read-only session
+		// Provision and authenticate first: C_InitToken refuses to run while
+		// any session is open.
+		rwSession := loginAsNormalUser(t, m)
+
 		roSession, rv := m.OpenSession(0, CKF_SERIAL_SESSION)
 		require.Equal(t, CKR_OK, rv)
 
-		// We need a valid key handle via a R/W session
-		rwSession, rv := m.OpenSession(0, CKF_SERIAL_SESSION|CKF_RW_SESSION)
-		require.Equal(t, CKR_OK, rv)
-
+		// We need a valid key handle via a R/W session. It must be a TOKEN
+		// object: a session object belongs to the session that created it and
+		// is invisible to roSession (v3.0 §4.4), which would make this subtest
+		// fail on CKR_UNWRAPPING_KEY_HANDLE_INVALID before ever reaching the
+		// read-only-session rule it exists to check.
 		keyTemplate := []Attribute{
 			NewUint32Attribute(CKA_CLASS, uint32(CKO_SECRET_KEY)),
+			NewUint32Attribute(CKA_KEY_TYPE, uint32(CKK_AES)),
+			NewBoolAttribute(CKA_TOKEN, true),
 			NewBoolAttribute(CKA_UNWRAP, true),
 			NewAttribute(CKA_VALUE, createAESKey(t)),
 		}
@@ -714,12 +749,14 @@ func TestUnwrapKeyAuthenticated(t *testing.T) {
 		m := initializeTestModule(t)
 		defer m.Finalize()
 
-		sessionHandle, rv := m.OpenSession(0, CKF_SERIAL_SESSION|CKF_RW_SESSION)
-		require.Equal(t, CKR_OK, rv)
+		// CKF_LOGIN_REQUIRED gates key-bearing operations, so the fixture
+		// authenticates before exercising them.
+		sessionHandle := loginAsNormalUser(t, m)
 
 		// Bad key size (17 bytes)
 		badKeyTemplate := []Attribute{
 			NewUint32Attribute(CKA_CLASS, uint32(CKO_SECRET_KEY)),
+			NewUint32Attribute(CKA_KEY_TYPE, uint32(CKK_AES)),
 			NewBoolAttribute(CKA_UNWRAP, true),
 			NewAttribute(CKA_VALUE, make([]byte, 17)),
 		}
@@ -800,8 +837,9 @@ func TestAuthWrapAESKeySizes(t *testing.T) {
 			m := initializeTestModule(t)
 			defer m.Finalize()
 
-			sessionHandle, rv := m.OpenSession(0, CKF_SERIAL_SESSION|CKF_RW_SESSION)
-			require.Equal(t, CKR_OK, rv)
+			// CKF_LOGIN_REQUIRED gates key-bearing operations, so the fixture
+			// authenticates before exercising them.
+			sessionHandle := loginAsNormalUser(t, m)
 
 			keyValue := make([]byte, size)
 			_, err := rand.Read(keyValue)
@@ -809,6 +847,7 @@ func TestAuthWrapAESKeySizes(t *testing.T) {
 
 			wkTemplate := []Attribute{
 				NewUint32Attribute(CKA_CLASS, uint32(CKO_SECRET_KEY)),
+				NewUint32Attribute(CKA_KEY_TYPE, uint32(CKK_AES)),
 				NewBoolAttribute(CKA_WRAP, true),
 				NewBoolAttribute(CKA_UNWRAP, true),
 				NewAttribute(CKA_VALUE, keyValue),
@@ -816,9 +855,20 @@ func TestAuthWrapAESKeySizes(t *testing.T) {
 			wkHandle, rv := m.CreateObject(sessionHandle, wkTemplate)
 			require.Equal(t, CKR_OK, rv)
 
-			targetValue := createAESKey(t)
+			// The target matches the wrapping key's length. This test is about
+			// the wrapping key's size being accepted, and a fixed 32-byte target
+			// would instead have every case below AES-256 refused for a
+			// different reason: a key may not be protected by a key of lesser
+			// strength (NIST SP 800-57 Part 1 §5.6.2), which
+			// requireWrappingKeyStrength enforces and
+			// TestAuthWrapRefusesWeakerWrappingKey covers.
+			targetValue := make([]byte, size)
+			_, err = rand.Read(targetValue)
+			require.NoError(t, err)
+
 			targetTemplate := []Attribute{
 				NewUint32Attribute(CKA_CLASS, uint32(CKO_SECRET_KEY)),
+				NewUint32Attribute(CKA_KEY_TYPE, uint32(CKK_AES)),
 				NewBoolAttribute(CKA_EXTRACTABLE, true),
 				NewAttribute(CKA_VALUE, targetValue),
 			}
@@ -836,13 +886,14 @@ func TestAuthWrapAESKeySizes(t *testing.T) {
 			// Unwrap
 			unwrapTemplate := []Attribute{
 				NewUint32Attribute(CKA_CLASS, uint32(CKO_SECRET_KEY)),
+				NewUint32Attribute(CKA_KEY_TYPE, uint32(CKK_AES)),
 				NewBoolAttribute(CKA_EXTRACTABLE, true),
 			}
 			newHandle, err := m.UnwrapKeyAuthenticated(sessionHandle, mechanism, wkHandle, wrappedKey, unwrapTemplate, aad)
 			require.NoError(t, err)
 
 			// Verify round-trip
-			newObj, err := m.objectManager.GetObject(newHandle)
+			newObj, err := m.objectManager.getObjectUnchecked(newHandle)
 			require.NoError(t, err)
 			assert.True(t, bytes.Equal(targetValue, newObj.GetAttribute(CKA_VALUE)),
 				"unwrapped key should match original for AES key size %d", size)
@@ -938,16 +989,20 @@ func TestWrapKeyAuthenticatedSize(t *testing.T) {
 		assert.Equal(t, CKR_KEY_HANDLE_INVALID, pkcsErr.Code)
 	})
 
-	t.Run("returns CKR_KEY_NOT_WRAPPABLE for non-extractable target", func(t *testing.T) {
+	// The size query answers with the code the wrap itself would, so it moved
+	// to CKR_KEY_UNEXTRACTABLE with WrapKeyAuthenticated.
+	t.Run("returns CKR_KEY_UNEXTRACTABLE for non-extractable target", func(t *testing.T) {
 		m := initializeTestModule(t)
 		defer m.Finalize()
 
-		sessionHandle, rv := m.OpenSession(0, CKF_SERIAL_SESSION|CKF_RW_SESSION)
-		require.Equal(t, CKR_OK, rv)
+		// CKF_LOGIN_REQUIRED gates key-bearing operations, so the fixture
+		// authenticates before exercising them.
+		sessionHandle := loginAsNormalUser(t, m)
 
 		// Create wrapping key
 		wkTemplate := []Attribute{
 			NewUint32Attribute(CKA_CLASS, uint32(CKO_SECRET_KEY)),
+			NewUint32Attribute(CKA_KEY_TYPE, uint32(CKK_AES)),
 			NewBoolAttribute(CKA_WRAP, true),
 			NewAttribute(CKA_VALUE, createAESKey(t)),
 		}
@@ -957,6 +1012,7 @@ func TestWrapKeyAuthenticatedSize(t *testing.T) {
 		// Create non-extractable target key
 		targetTemplate := []Attribute{
 			NewUint32Attribute(CKA_CLASS, uint32(CKO_SECRET_KEY)),
+			NewUint32Attribute(CKA_KEY_TYPE, uint32(CKK_AES)),
 			NewBoolAttribute(CKA_EXTRACTABLE, false),
 			NewAttribute(CKA_VALUE, createAESKey(t)),
 		}
@@ -967,19 +1023,21 @@ func TestWrapKeyAuthenticatedSize(t *testing.T) {
 		require.Error(t, err)
 		var pkcsErr *PKCS11Error
 		require.ErrorAs(t, err, &pkcsErr)
-		assert.Equal(t, CKR_KEY_NOT_WRAPPABLE, pkcsErr.Code)
+		assert.Equal(t, CKR_KEY_UNEXTRACTABLE, pkcsErr.Code)
 	})
 
-	t.Run("returns CKR_KEY_FUNCTION_NOT_PERMITTED without CKA_WRAP", func(t *testing.T) {
+	t.Run("returns CKR_WRAPPING_KEY_TYPE_INCONSISTENT without CKA_WRAP", func(t *testing.T) {
 		m := initializeTestModule(t)
 		defer m.Finalize()
 
-		sessionHandle, rv := m.OpenSession(0, CKF_SERIAL_SESSION|CKF_RW_SESSION)
-		require.Equal(t, CKR_OK, rv)
+		// CKF_LOGIN_REQUIRED gates key-bearing operations, so the fixture
+		// authenticates before exercising them.
+		sessionHandle := loginAsNormalUser(t, m)
 
 		// Wrapping key without CKA_WRAP
 		wkTemplate := []Attribute{
 			NewUint32Attribute(CKA_CLASS, uint32(CKO_SECRET_KEY)),
+			NewUint32Attribute(CKA_KEY_TYPE, uint32(CKK_AES)),
 			NewAttribute(CKA_VALUE, createAESKey(t)),
 		}
 		wkHandle, rv := m.CreateObject(sessionHandle, wkTemplate)
@@ -991,19 +1049,21 @@ func TestWrapKeyAuthenticatedSize(t *testing.T) {
 		require.Error(t, err)
 		var pkcsErr *PKCS11Error
 		require.ErrorAs(t, err, &pkcsErr)
-		assert.Equal(t, CKR_KEY_FUNCTION_NOT_PERMITTED, pkcsErr.Code)
+		assert.Equal(t, CKR_WRAPPING_KEY_TYPE_INCONSISTENT, pkcsErr.Code)
 	})
 
 	t.Run("returns CKR_WRAPPING_KEY_SIZE_RANGE for invalid key size", func(t *testing.T) {
 		m := initializeTestModule(t)
 		defer m.Finalize()
 
-		sessionHandle, rv := m.OpenSession(0, CKF_SERIAL_SESSION|CKF_RW_SESSION)
-		require.Equal(t, CKR_OK, rv)
+		// CKF_LOGIN_REQUIRED gates key-bearing operations, so the fixture
+		// authenticates before exercising them.
+		sessionHandle := loginAsNormalUser(t, m)
 
 		// Wrapping key with invalid 15-byte AES key
 		wkTemplate := []Attribute{
 			NewUint32Attribute(CKA_CLASS, uint32(CKO_SECRET_KEY)),
+			NewUint32Attribute(CKA_KEY_TYPE, uint32(CKK_AES)),
 			NewBoolAttribute(CKA_WRAP, true),
 			NewAttribute(CKA_VALUE, make([]byte, 15)),
 		}
@@ -1023,16 +1083,15 @@ func TestWrapKeyAuthenticatedSize(t *testing.T) {
 		m := initializeTestModule(t)
 		defer m.Finalize()
 
-		sessionHandle, rv := m.OpenSession(0, CKF_SERIAL_SESSION|CKF_RW_SESSION)
-		require.Equal(t, CKR_OK, rv)
+		// CKF_LOGIN_REQUIRED gates key-bearing operations, so the fixture
+		// authenticates before exercising them.
+		sessionHandle := loginAsNormalUser(t, m)
 
-		// Wrapping key with CKA_WRAP but no CKA_VALUE
-		wkTemplate := []Attribute{
-			NewUint32Attribute(CKA_CLASS, uint32(CKO_SECRET_KEY)),
-			NewBoolAttribute(CKA_WRAP, true),
-		}
-		wkHandle, rv := m.CreateObject(sessionHandle, wkTemplate)
-		require.Equal(t, CKR_OK, rv)
+		// Wrapping key with CKA_WRAP but no CKA_VALUE. C_CreateObject cannot
+		// produce this state any more, but restore-from-storage and C_UnwrapKey
+		// can, which is what this gate defends.
+		wkHandle := createSecretKeyWithoutValue(t, m, sessionHandle,
+			NewBoolAttribute(CKA_WRAP, true))
 
 		targetHandle := createExtractableSecretKey(t, m, sessionHandle)
 
@@ -1047,18 +1106,15 @@ func TestWrapKeyAuthenticatedSize(t *testing.T) {
 		m := initializeTestModule(t)
 		defer m.Finalize()
 
-		sessionHandle, rv := m.OpenSession(0, CKF_SERIAL_SESSION|CKF_RW_SESSION)
-		require.Equal(t, CKR_OK, rv)
+		// CKF_LOGIN_REQUIRED gates key-bearing operations, so the fixture
+		// authenticates before exercising them.
+		sessionHandle := loginAsNormalUser(t, m)
 
 		wkHandle := createWrappingKey(t, m, sessionHandle)
 
-		// Target key with CKA_EXTRACTABLE but no CKA_VALUE
-		targetTemplate := []Attribute{
-			NewUint32Attribute(CKA_CLASS, uint32(CKO_SECRET_KEY)),
-			NewBoolAttribute(CKA_EXTRACTABLE, true),
-		}
-		targetHandle, rv := m.CreateObject(sessionHandle, targetTemplate)
-		require.Equal(t, CKR_OK, rv)
+		// Target key with CKA_EXTRACTABLE but no CKA_VALUE; see above.
+		targetHandle := createSecretKeyWithoutValue(t, m, sessionHandle,
+			NewBoolAttribute(CKA_EXTRACTABLE, true))
 
 		_, err := m.WrapKeyAuthenticatedSize(sessionHandle, NewMechanism(CKM_AES_GCM), wkHandle, targetHandle)
 		require.Error(t, err)
@@ -1075,16 +1131,15 @@ func TestWrapKeyAuthenticatedNoValue(t *testing.T) {
 		m := initializeTestModule(t)
 		defer m.Finalize()
 
-		sessionHandle, rv := m.OpenSession(0, CKF_SERIAL_SESSION|CKF_RW_SESSION)
-		require.Equal(t, CKR_OK, rv)
+		// CKF_LOGIN_REQUIRED gates key-bearing operations, so the fixture
+		// authenticates before exercising them.
+		sessionHandle := loginAsNormalUser(t, m)
 
-		// Wrapping key with CKA_WRAP but no CKA_VALUE
-		wkTemplate := []Attribute{
-			NewUint32Attribute(CKA_CLASS, uint32(CKO_SECRET_KEY)),
-			NewBoolAttribute(CKA_WRAP, true),
-		}
-		wkHandle, rv := m.CreateObject(sessionHandle, wkTemplate)
-		require.Equal(t, CKR_OK, rv)
+		// Wrapping key with CKA_WRAP but no CKA_VALUE. C_CreateObject cannot
+		// produce this state any more, but restore-from-storage and C_UnwrapKey
+		// can, which is what this gate defends.
+		wkHandle := createSecretKeyWithoutValue(t, m, sessionHandle,
+			NewBoolAttribute(CKA_WRAP, true))
 
 		targetHandle := createExtractableSecretKey(t, m, sessionHandle)
 
@@ -1099,18 +1154,15 @@ func TestWrapKeyAuthenticatedNoValue(t *testing.T) {
 		m := initializeTestModule(t)
 		defer m.Finalize()
 
-		sessionHandle, rv := m.OpenSession(0, CKF_SERIAL_SESSION|CKF_RW_SESSION)
-		require.Equal(t, CKR_OK, rv)
+		// CKF_LOGIN_REQUIRED gates key-bearing operations, so the fixture
+		// authenticates before exercising them.
+		sessionHandle := loginAsNormalUser(t, m)
 
 		wkHandle := createWrappingKey(t, m, sessionHandle)
 
-		// Target key with CKA_EXTRACTABLE but no CKA_VALUE
-		targetTemplate := []Attribute{
-			NewUint32Attribute(CKA_CLASS, uint32(CKO_SECRET_KEY)),
-			NewBoolAttribute(CKA_EXTRACTABLE, true),
-		}
-		targetHandle, rv := m.CreateObject(sessionHandle, targetTemplate)
-		require.Equal(t, CKR_OK, rv)
+		// Target key with CKA_EXTRACTABLE but no CKA_VALUE; see above.
+		targetHandle := createSecretKeyWithoutValue(t, m, sessionHandle,
+			NewBoolAttribute(CKA_EXTRACTABLE, true))
 
 		_, err := m.WrapKeyAuthenticated(sessionHandle, NewMechanism(CKM_AES_GCM), wkHandle, targetHandle, nil)
 		require.Error(t, err)
@@ -1127,19 +1179,17 @@ func TestUnwrapKeyAuthenticatedNoValue(t *testing.T) {
 		m := initializeTestModule(t)
 		defer m.Finalize()
 
-		sessionHandle, rv := m.OpenSession(0, CKF_SERIAL_SESSION|CKF_RW_SESSION)
-		require.Equal(t, CKR_OK, rv)
+		// CKF_LOGIN_REQUIRED gates key-bearing operations, so the fixture
+		// authenticates before exercising them.
+		sessionHandle := loginAsNormalUser(t, m)
 
-		// Unwrapping key with CKA_UNWRAP but no CKA_VALUE
-		ukTemplate := []Attribute{
-			NewUint32Attribute(CKA_CLASS, uint32(CKO_SECRET_KEY)),
-			NewBoolAttribute(CKA_UNWRAP, true),
-		}
-		ukHandle, rv := m.CreateObject(sessionHandle, ukTemplate)
-		require.Equal(t, CKR_OK, rv)
+		// Unwrapping key with CKA_UNWRAP but no CKA_VALUE; see the wrap side.
+		ukHandle := createSecretKeyWithoutValue(t, m, sessionHandle,
+			NewBoolAttribute(CKA_UNWRAP, true))
 
 		template := []Attribute{
 			NewUint32Attribute(CKA_CLASS, uint32(CKO_SECRET_KEY)),
+			NewUint32Attribute(CKA_KEY_TYPE, uint32(CKK_AES)),
 		}
 		// wrappedKey must be at least GCMMinCiphertextSize+1 = 29 bytes
 		wrappedKey := make([]byte, 30)
@@ -1196,8 +1246,9 @@ func TestAuthWrapWithGCMParams(t *testing.T) {
 		m := initializeTestModule(t)
 		defer m.Finalize()
 
-		sessionHandle, rv := m.OpenSession(0, CKF_SERIAL_SESSION|CKF_RW_SESSION)
-		require.Equal(t, CKR_OK, rv)
+		// CKF_LOGIN_REQUIRED gates key-bearing operations, so the fixture
+		// authenticates before exercising them.
+		sessionHandle := loginAsNormalUser(t, m)
 
 		aesKey := createAESKey(t)
 		originalKeyValue := createAESKey(t)
@@ -1250,7 +1301,7 @@ func TestAuthWrapWithGCMParams(t *testing.T) {
 		assert.NotEqual(t, ObjectHandle(InvalidHandle), newHandle)
 
 		// Verify the unwrapped key material matches the original
-		unwrappedObj, err := m.objectManager.GetObject(newHandle)
+		unwrappedObj, err := m.objectManager.getObjectUnchecked(newHandle)
 		require.NoError(t, err)
 		unwrappedValue := unwrappedObj.GetAttribute(CKA_VALUE)
 		assert.True(t, bytes.Equal(originalKeyValue, unwrappedValue),
@@ -1279,6 +1330,7 @@ func TestAuthWrapWithGCMParams(t *testing.T) {
 		unwrapMech := NewMechanismWithTypedParams(CKM_AES_GCM, unwrapParams)
 		unwrapTemplate := []Attribute{
 			NewUint32Attribute(CKA_CLASS, uint32(CKO_SECRET_KEY)),
+			NewUint32Attribute(CKA_KEY_TYPE, uint32(CKK_AES)),
 		}
 
 		handle, err := m.UnwrapKeyAuthenticated(sessionHandle, unwrapMech, wrappingKeyHandle, wrappedKey, unwrapTemplate, []byte("also-ignored"))
@@ -1316,6 +1368,7 @@ func TestAuthWrapWithGCMParams(t *testing.T) {
 		fakeWrapped := make([]byte, GCMTagSize+10)
 		unwrapTemplate := []Attribute{
 			NewUint32Attribute(CKA_CLASS, uint32(CKO_SECRET_KEY)),
+			NewUint32Attribute(CKA_KEY_TYPE, uint32(CKK_AES)),
 		}
 
 		handle, err := m.UnwrapKeyAuthenticated(sessionHandle, mechanism, wrappingKeyHandle, fakeWrapped, unwrapTemplate, nil)
@@ -1350,6 +1403,7 @@ func TestAuthWrapWithGCMParams(t *testing.T) {
 		unwrapMech := NewMechanismWithTypedParams(CKM_AES_GCM, unwrapParams)
 		unwrapTemplate := []Attribute{
 			NewUint32Attribute(CKA_CLASS, uint32(CKO_SECRET_KEY)),
+			NewUint32Attribute(CKA_KEY_TYPE, uint32(CKK_AES)),
 		}
 
 		handle, err := m.UnwrapKeyAuthenticated(sessionHandle, unwrapMech, wrappingKeyHandle, wrappedKey, unwrapTemplate, nil)
@@ -1373,6 +1427,7 @@ func TestAuthWrapWithGCMParams(t *testing.T) {
 		tooShort := make([]byte, GCMTagSize)
 		unwrapTemplate := []Attribute{
 			NewUint32Attribute(CKA_CLASS, uint32(CKO_SECRET_KEY)),
+			NewUint32Attribute(CKA_KEY_TYPE, uint32(CKK_AES)),
 		}
 
 		handle, err := m.UnwrapKeyAuthenticated(sessionHandle, mechanism, wrappingKeyHandle, tooShort, unwrapTemplate, nil)
@@ -1461,7 +1516,7 @@ func TestUnwrapKeyAuthenticatedAttributes(t *testing.T) {
 		newHandle, err := m.UnwrapKeyAuthenticated(sessionHandle, mechanism, wrappingKeyHandle, wrappedKey, unwrapTemplate, nil)
 		require.NoError(t, err)
 
-		obj, err := m.objectManager.GetObject(newHandle)
+		obj, err := m.objectManager.getObjectUnchecked(newHandle)
 		require.NoError(t, err)
 
 		localAttr := obj.GetAttribute(CKA_LOCAL)
@@ -1484,7 +1539,7 @@ func TestUnwrapKeyAuthenticatedAttributes(t *testing.T) {
 		newHandle, err := m.UnwrapKeyAuthenticated(sessionHandle, mechanism, wrappingKeyHandle, wrappedKey, unwrapTemplate, nil)
 		require.NoError(t, err)
 
-		obj, err := m.objectManager.GetObject(newHandle)
+		obj, err := m.objectManager.getObjectUnchecked(newHandle)
 		require.NoError(t, err)
 
 		alwaysSensitive := obj.GetAttribute(CKA_ALWAYS_SENSITIVE)
@@ -1508,7 +1563,7 @@ func TestUnwrapKeyAuthenticatedAttributes(t *testing.T) {
 		newHandle, err := m.UnwrapKeyAuthenticated(sessionHandle, mechanism, wrappingKeyHandle, wrappedKey, unwrapTemplate, nil)
 		require.NoError(t, err)
 
-		obj, err := m.objectManager.GetObject(newHandle)
+		obj, err := m.objectManager.getObjectUnchecked(newHandle)
 		require.NoError(t, err)
 
 		neverExtractable := obj.GetAttribute(CKA_NEVER_EXTRACTABLE)
@@ -1521,8 +1576,9 @@ func TestUnwrapKeyAuthenticatedAttributes(t *testing.T) {
 		m := initializeTestModule(t)
 		defer m.Finalize()
 
-		sessionHandle, rv := m.OpenSession(0, CKF_SERIAL_SESSION|CKF_RW_SESSION)
-		require.Equal(t, CKR_OK, rv)
+		// CKF_LOGIN_REQUIRED gates key-bearing operations, so the fixture
+		// authenticates before exercising them.
+		sessionHandle := loginAsNormalUser(t, m)
 
 		aesKey := createAESKey(t)
 		originalKeyValue := createAESKey(t)
@@ -1558,7 +1614,7 @@ func TestUnwrapKeyAuthenticatedAttributes(t *testing.T) {
 		newHandle, err := m.UnwrapKeyAuthenticated(sessionHandle, mechanism, wkHandle, wrappedKey, unwrapTemplate, nil)
 		require.NoError(t, err)
 
-		obj, err := m.objectManager.GetObject(newHandle)
+		obj, err := m.objectManager.getObjectUnchecked(newHandle)
 		require.NoError(t, err)
 
 		// Verify all three PKCS#11 unwrap attributes
@@ -1616,4 +1672,478 @@ func TestGetAESGCMParams(t *testing.T) {
 		assert.False(t, ok)
 		assert.Nil(t, params)
 	})
+}
+
+// TestWrapKeyAuthenticatedSizeReadOnlySession asserts the size query rejects a
+// read-only session with the same code the wrap itself does.
+//
+// C_WrapKeyAuthenticated is a two-call function: an application asks for the
+// output length with a NULL pWrappedKey, allocates that many bytes, and calls
+// again. A size query that succeeds where the wrap can only return
+// CKR_SESSION_READ_ONLY tells the application to allocate for a call that
+// cannot run, which PKCS#11 v3.2 section 5.2 does not permit.
+func TestWrapKeyAuthenticatedSizeReadOnlySession(t *testing.T) {
+	t.Run("returns CKR_SESSION_READ_ONLY on a read-only session", func(t *testing.T) {
+		m := initializeTestModule(t)
+		defer m.Finalize()
+
+		rwSession := loginAsNormalUser(t, m)
+
+		roSession, rv := m.OpenSession(0, CKF_SERIAL_SESSION)
+		require.Equal(t, CKR_OK, rv)
+
+		wkTemplate := []Attribute{
+			NewUint32Attribute(CKA_CLASS, uint32(CKO_SECRET_KEY)),
+			NewUint32Attribute(CKA_KEY_TYPE, uint32(CKK_AES)),
+			NewBoolAttribute(CKA_WRAP, true),
+			NewAttribute(CKA_VALUE, createAESKey(t)),
+		}
+		wkHandle, rv := m.CreateObject(rwSession, wkTemplate)
+		require.Equal(t, CKR_OK, rv)
+
+		targetTemplate := []Attribute{
+			NewUint32Attribute(CKA_CLASS, uint32(CKO_SECRET_KEY)),
+			NewUint32Attribute(CKA_KEY_TYPE, uint32(CKK_AES)),
+			NewBoolAttribute(CKA_EXTRACTABLE, true),
+			NewAttribute(CKA_VALUE, createAESKey(t)),
+		}
+		targetHandle, rv := m.CreateObject(rwSession, targetTemplate)
+		require.Equal(t, CKR_OK, rv)
+
+		mechanism := NewMechanism(CKM_AES_GCM)
+
+		size, sizeErr := m.WrapKeyAuthenticatedSize(roSession, mechanism, wkHandle, targetHandle)
+		require.Error(t, sizeErr, "the size query must not succeed where the wrap cannot run")
+		var sizePkcsErr *PKCS11Error
+		require.ErrorAs(t, sizeErr, &sizePkcsErr)
+		assert.Equal(t, CKR_SESSION_READ_ONLY, sizePkcsErr.Code)
+		assert.Zero(t, size)
+
+		// The wrap the application would have made next returns the same code,
+		// which is what makes the size query's answer the useful one.
+		_, wrapErr := m.WrapKeyAuthenticated(roSession, mechanism, wkHandle, targetHandle, nil)
+		require.Error(t, wrapErr)
+		var wrapPkcsErr *PKCS11Error
+		require.ErrorAs(t, wrapErr, &wrapPkcsErr)
+		assert.Equal(t, CKR_SESSION_READ_ONLY, wrapPkcsErr.Code)
+	})
+
+	t.Run("returns the wrap output length on a read-write session", func(t *testing.T) {
+		m, sessionHandle, wkHandle, targetHandle := createAuthWrapTestObjects(t)
+		defer m.Finalize()
+
+		mechanism := NewMechanism(CKM_AES_GCM)
+
+		size, err := m.WrapKeyAuthenticatedSize(sessionHandle, mechanism, wkHandle, targetHandle)
+		require.NoError(t, err, "the read-write check must not reject the session the wrap accepts")
+
+		wrappedKey, err := m.WrapKeyAuthenticated(sessionHandle, mechanism, wkHandle, targetHandle, nil)
+		require.NoError(t, err)
+		assert.Equal(t, size, uint64(len(wrappedKey)))
+	})
+}
+
+// authWrapPublicKeyPair creates a wrapping key and a target key that
+// C_WrapKeyAuthenticated accepts, both CKA_PRIVATE=CK_FALSE and both carrying
+// whatever extra attributes the caller names on top.
+//
+// The objects are deliberately public. A test that logs out to exercise the
+// login gate needs objects that survive C_Logout (v3.2 §5.6.10 destroys private
+// session objects) and that remain resolvable to a logged-out session, so that
+// removing the gate makes the wrap SUCCEED rather than fail on a handle it can
+// no longer see. A gate proved with private objects would pass just as well if
+// it were deleted.
+func authWrapPublicKeyPair(t *testing.T, m *Module, session SessionHandle, wrapExtra, targetExtra []Attribute) (ObjectHandle, ObjectHandle) {
+	t.Helper()
+
+	wrapTemplate := append([]Attribute{
+		NewUint32Attribute(CKA_CLASS, uint32(CKO_SECRET_KEY)),
+		NewUint32Attribute(CKA_KEY_TYPE, uint32(CKK_AES)),
+		NewBoolAttribute(CKA_PRIVATE, false),
+		NewBoolAttribute(CKA_WRAP, true),
+		NewBoolAttribute(CKA_UNWRAP, true),
+		NewAttribute(CKA_VALUE, createAESKey(t)),
+	}, wrapExtra...)
+	wrappingKey, rv := m.CreateObject(session, wrapTemplate)
+	require.Equal(t, CKR_OK, rv)
+
+	targetTemplate := append([]Attribute{
+		NewUint32Attribute(CKA_CLASS, uint32(CKO_SECRET_KEY)),
+		NewUint32Attribute(CKA_KEY_TYPE, uint32(CKK_AES)),
+		NewBoolAttribute(CKA_PRIVATE, false),
+		NewBoolAttribute(CKA_EXTRACTABLE, true),
+		NewAttribute(CKA_VALUE, createAESKey(t)),
+	}, targetExtra...)
+	targetKey, rv := m.CreateObject(session, targetTemplate)
+	require.Equal(t, CKR_OK, rv)
+
+	return wrappingKey, targetKey
+}
+
+// soCreateTrustedWrappingKey provisions the token, creates a CKA_TRUSTED
+// wrapping key as the Security Officer, and leaves the token ready for
+// loginAsNormalUser to open a user session on.
+//
+// The SO detour is not incidental to the test, it is the subject: PKCS#11 v3.2
+// Table 13 footnote 10 says CKA_TRUSTED "can only be set to CK_TRUE by the SO
+// user", so a trusted wrapping key cannot come into being any other way. A
+// fixture that minted one from a user session would be asserting the wrap gate
+// against a key the token should never have issued.
+//
+// The key is public (CKA_PRIVATE=CK_FALSE) so that it survives the SO's
+// C_Logout and stays resolvable to the user session that follows. That is also
+// this token's default for a trusted object, for the reason applyTrustedPrivacyDefault
+// records; it is stated explicitly here so the fixture does not depend on it.
+func soCreateTrustedWrappingKey(t *testing.T, m *Module) ObjectHandle {
+	t.Helper()
+
+	require.Equal(t, CKR_OK, m.InitToken(0, []byte("so-pin-1234"), "Test Token"))
+
+	soSession, rv := m.OpenSession(0, CKF_SERIAL_SESSION|CKF_RW_SESSION)
+	require.Equal(t, CKR_OK, rv)
+
+	require.Equal(t, CKR_OK, m.Login(soSession, CKU_SO, []byte("so-pin-1234")))
+	require.Equal(t, CKR_OK, m.InitPIN(soSession, []byte("user-pin-1234")))
+
+	wrappingKey, rv := m.CreateObject(soSession, []Attribute{
+		NewUint32Attribute(CKA_CLASS, uint32(CKO_SECRET_KEY)),
+		NewUint32Attribute(CKA_KEY_TYPE, uint32(CKK_AES)),
+		// A token object, not a session object: the SO's session ends here, and
+		// v3.2 §4.1.3 destroys a session's objects with it. A trust anchor that
+		// vanished when its provisioning session closed would be of no use to
+		// the application anyway.
+		NewBoolAttribute(CKA_TOKEN, true),
+		NewBoolAttribute(CKA_PRIVATE, false),
+		NewBoolAttribute(CKA_WRAP, true),
+		NewBoolAttribute(CKA_UNWRAP, true),
+		NewBoolAttribute(CKA_TRUSTED, true),
+		NewAttribute(CKA_VALUE, createAESKey(t)),
+	})
+	require.Equal(t, CKR_OK, rv, "the SO must be able to create the trusted wrapping key")
+
+	require.Equal(t, CKR_OK, m.Logout(soSession))
+	require.Equal(t, CKR_OK, m.CloseSession(soSession))
+
+	return wrappingKey
+}
+
+// authWrapPublicTargetKey creates the wrappable target half of the pair that
+// authWrapPublicKeyPair would otherwise supply, for tests whose wrapping key
+// had to be created separately by the SO.
+func authWrapPublicTargetKey(t *testing.T, m *Module, session SessionHandle, targetExtra []Attribute) ObjectHandle {
+	t.Helper()
+
+	targetKey, rv := m.CreateObject(session, append([]Attribute{
+		NewUint32Attribute(CKA_CLASS, uint32(CKO_SECRET_KEY)),
+		NewUint32Attribute(CKA_KEY_TYPE, uint32(CKK_AES)),
+		NewBoolAttribute(CKA_PRIVATE, false),
+		NewBoolAttribute(CKA_EXTRACTABLE, true),
+		NewAttribute(CKA_VALUE, createAESKey(t)),
+	}, targetExtra...))
+	require.Equal(t, CKR_OK, rv)
+
+	return targetKey
+}
+
+// TestAuthenticatedWrapRequiresLogin proves the token's CKF_LOGIN_REQUIRED
+// policy reaches C_WrapKeyAuthenticated, its size query and
+// C_UnwrapKeyAuthenticated.
+//
+// The authenticated forms are an export path for key material exactly as
+// C_WrapKey is, so the policy cannot depend on which verb the application
+// names: a session that C_WrapKey refuses with CKR_USER_NOT_LOGGED_IN must not
+// reach the same bytes through C_WrapKeyAuthenticated. Each subtest runs the
+// call once while logged in, so a gate that refused unconditionally would fail
+// here rather than pass.
+func TestAuthenticatedWrapRequiresLogin(t *testing.T) {
+	mechanism := NewMechanism(CKM_AES_GCM)
+
+	t.Run("WrapKeyAuthenticated refuses a logged-out session", func(t *testing.T) {
+		m := initializeTestModule(t)
+		defer m.Finalize()
+
+		session := loginAsNormalUser(t, m)
+		wrappingKey, targetKey := authWrapPublicKeyPair(t, m, session, nil, nil)
+
+		wrapped, err := m.WrapKeyAuthenticated(session, mechanism, wrappingKey, targetKey, nil)
+		require.NoError(t, err, "the wrap must succeed while the session is authenticated")
+		require.NotEmpty(t, wrapped)
+
+		require.Equal(t, CKR_OK, m.Logout(session))
+
+		wrapped, err = m.WrapKeyAuthenticated(session, mechanism, wrappingKey, targetKey, nil)
+		require.Error(t, err, "a logged-out session must not receive wrapped key material")
+		var pkcsErr *PKCS11Error
+		require.ErrorAs(t, err, &pkcsErr)
+		assert.Equal(t, CKR_USER_NOT_LOGGED_IN, pkcsErr.Code)
+		assert.Nil(t, wrapped)
+
+		// The unauthenticated form answers the same code for the same objects,
+		// which is the property the gate exists to preserve.
+		_, rv := m.WrapKey(session, mechanism, wrappingKey, targetKey)
+		assert.Equal(t, CKR_USER_NOT_LOGGED_IN, rv,
+			"C_WrapKey and C_WrapKeyAuthenticated must answer alike for one session state")
+	})
+
+	t.Run("WrapKeyAuthenticatedSize refuses a logged-out session", func(t *testing.T) {
+		m := initializeTestModule(t)
+		defer m.Finalize()
+
+		session := loginAsNormalUser(t, m)
+		wrappingKey, targetKey := authWrapPublicKeyPair(t, m, session, nil, nil)
+
+		size, err := m.WrapKeyAuthenticatedSize(session, mechanism, wrappingKey, targetKey)
+		require.NoError(t, err, "the size query must answer while the session is authenticated")
+		require.NotZero(t, size)
+
+		require.Equal(t, CKR_OK, m.Logout(session))
+
+		size, err = m.WrapKeyAuthenticatedSize(session, mechanism, wrappingKey, targetKey)
+		require.Error(t, err, "the size query is a wrap the module declines to perform, so it carries the same policy")
+		var pkcsErr *PKCS11Error
+		require.ErrorAs(t, err, &pkcsErr)
+		assert.Equal(t, CKR_USER_NOT_LOGGED_IN, pkcsErr.Code)
+		assert.Zero(t, size)
+	})
+
+	t.Run("UnwrapKeyAuthenticated refuses a logged-out session", func(t *testing.T) {
+		m := initializeTestModule(t)
+		defer m.Finalize()
+
+		session := loginAsNormalUser(t, m)
+		wrappingKey, targetKey := authWrapPublicKeyPair(t, m, session, nil, nil)
+
+		wrapped, err := m.WrapKeyAuthenticated(session, mechanism, wrappingKey, targetKey, nil)
+		require.NoError(t, err)
+
+		unwrapTemplate := []Attribute{
+			NewUint32Attribute(CKA_CLASS, uint32(CKO_SECRET_KEY)),
+			NewUint32Attribute(CKA_KEY_TYPE, uint32(CKK_AES)),
+			NewBoolAttribute(CKA_PRIVATE, false),
+			NewBoolAttribute(CKA_EXTRACTABLE, true),
+		}
+		handle, err := m.UnwrapKeyAuthenticated(session, mechanism, wrappingKey, wrapped, unwrapTemplate, nil)
+		require.NoError(t, err, "the unwrap must succeed while the session is authenticated")
+		require.NotEqual(t, ObjectHandle(InvalidHandle), handle)
+
+		require.Equal(t, CKR_OK, m.Logout(session))
+
+		handle, err = m.UnwrapKeyAuthenticated(session, mechanism, wrappingKey, wrapped, unwrapTemplate, nil)
+		require.Error(t, err, "a logged-out session must not import key material it supplied")
+		var pkcsErr *PKCS11Error
+		require.ErrorAs(t, err, &pkcsErr)
+		assert.Equal(t, CKR_USER_NOT_LOGGED_IN, pkcsErr.Code)
+		assert.Equal(t, ObjectHandle(InvalidHandle), handle)
+
+		_, rv := m.UnwrapKey(session, mechanism, wrappingKey, wrapped, unwrapTemplate)
+		assert.Equal(t, CKR_USER_NOT_LOGGED_IN, rv,
+			"C_UnwrapKey and C_UnwrapKeyAuthenticated must answer alike for one session state")
+	})
+}
+
+// TestAuthenticatedWrapHonoursWrapWithTrusted proves CKA_WRAP_WITH_TRUSTED
+// reaches the authenticated wrap.
+//
+// PKCS#11 v3.2 §4.9 makes the attribute the only way to name the small set of
+// wrapping keys a sensitive key may be exported under: a key carrying it may be
+// wrapped solely by a key the token marked CKA_TRUSTED. A wrap verb that skips
+// the check accepts every key on the token that carries CKA_WRAP, which is the
+// whole population the attribute was written to exclude.
+func TestAuthenticatedWrapHonoursWrapWithTrusted(t *testing.T) {
+	mechanism := NewMechanism(CKM_AES_GCM)
+	wrapWithTrusted := []Attribute{NewBoolAttribute(CKA_WRAP_WITH_TRUSTED, true)}
+
+	t.Run("refuses an untrusted wrapping key", func(t *testing.T) {
+		m := initializeTestModule(t)
+		defer m.Finalize()
+
+		session := loginAsNormalUser(t, m)
+		wrappingKey, targetKey := authWrapPublicKeyPair(t, m, session, nil, wrapWithTrusted)
+
+		wrapped, err := m.WrapKeyAuthenticated(session, mechanism, wrappingKey, targetKey, nil)
+		require.Error(t, err, "a CKA_WRAP_WITH_TRUSTED key must not leave under a wrapping key the token never trusted")
+		var pkcsErr *PKCS11Error
+		require.ErrorAs(t, err, &pkcsErr)
+		assert.Equal(t, CKR_KEY_NOT_WRAPPABLE, pkcsErr.Code)
+		assert.Nil(t, wrapped)
+
+		size, err := m.WrapKeyAuthenticatedSize(session, mechanism, wrappingKey, targetKey)
+		require.Error(t, err, "the size query must not size a buffer for a wrap that cannot run")
+		require.ErrorAs(t, err, &pkcsErr)
+		assert.Equal(t, CKR_KEY_NOT_WRAPPABLE, pkcsErr.Code)
+		assert.Zero(t, size)
+
+		_, rv := m.WrapKey(session, mechanism, wrappingKey, targetKey)
+		assert.Equal(t, CKR_KEY_NOT_WRAPPABLE, rv,
+			"C_WrapKey and C_WrapKeyAuthenticated must answer alike for one pair of keys")
+	})
+
+	t.Run("accepts a CKA_TRUSTED wrapping key", func(t *testing.T) {
+		m := initializeTestModule(t)
+		defer m.Finalize()
+
+		// The trusted wrapping key is created by the SO, the only role that may
+		// set CKA_TRUSTED (v3.2 Table 13 footnote 10); the target key and the
+		// wrap itself then run from an ordinary user session.
+		wrappingKey := soCreateTrustedWrappingKey(t, m)
+
+		session := loginAsNormalUser(t, m)
+		targetKey := authWrapPublicTargetKey(t, m, session, wrapWithTrusted)
+
+		size, err := m.WrapKeyAuthenticatedSize(session, mechanism, wrappingKey, targetKey)
+		require.NoError(t, err, "the gate must admit the wrapping key the token trusts")
+
+		wrapped, err := m.WrapKeyAuthenticated(session, mechanism, wrappingKey, targetKey, nil)
+		require.NoError(t, err, "the gate must admit the wrapping key the token trusts")
+		assert.Equal(t, size, uint64(len(wrapped)))
+	})
+}
+
+// TestUnwrapKeyAuthenticatedAgreesWithUnwrapKeyOnAlwaysAuthenticate pins what
+// CKA_ALWAYS_AUTHENTICATE means for the two unwrap verbs, and that they mean the
+// same thing by it.
+//
+// It does not gate them. PKCS#11 v3.2 §4.10 defines the attribute's "use" as "a
+// cryptographic operation such as sign or decrypt", and gives re-authentication
+// exactly one form: "calling C_Login with userType set to CKU_CONTEXT_SPECIFIC
+// immediately after a cryptographic operation using the key has been initiated
+// (e.g. after C_SignInit)", after which "the active key" is authenticated.
+// C_UnwrapKey and C_UnwrapKeyAuthenticated have no Init phase, so there is no
+// call an application could place between naming the key and using it.
+//
+// An operation of the same category CAN nevertheless be active on the key, if
+// the application initiated one with another verb, and that is precisely why
+// neither unwrap consults the attribute at all any more: the only grant either
+// could ever have found belonged to that other operation. See
+// TestKeyManagementVerbsDoNotConsumeADecryptContextAuthentication.
+//
+// This test used to assert the opposite, and passed only through the defect that
+// made the grant key-blind: it initiated a decryption on a throwaway key that
+// required no re-authentication purely so C_Login had "a category to grant for",
+// and that grant then satisfied the unwrapping key's requirement. Once the grant
+// is bound to the key of the operation it follows, that route is gone, and what
+// is left for an unwrap is a gate no conforming application can pass — one a key
+// marked CKA_UNWRAP without CKA_DECRYPT could never pass even in principle.
+//
+// The two verbs answering alike is the part that still matters: the authenticated
+// form must not be the weaker or the stronger of the two.
+func TestUnwrapKeyAuthenticatedAgreesWithUnwrapKeyOnAlwaysAuthenticate(t *testing.T) {
+	mechanism := NewMechanism(CKM_AES_GCM)
+
+	newFixture := func(t *testing.T) (*Module, SessionHandle, ObjectHandle, []byte, []Attribute) {
+		t.Helper()
+
+		m := initializeTestModule(t)
+		session := loginAsNormalUser(t, m)
+
+		// The wrapping key is created without CKA_ALWAYS_AUTHENTICATE so the
+		// wrap that produces the blob is unencumbered, and the attribute is set
+		// afterwards so it governs only the unwrap under test.
+		wrappingKey, targetKey := authWrapPublicKeyPair(t, m, session, nil, nil)
+		wrapped, err := m.WrapKeyAuthenticated(session, mechanism, wrappingKey, targetKey, nil)
+		require.NoError(t, err)
+
+		require.Equal(t, CKR_OK, m.SetAttributeValue(session, wrappingKey,
+			[]Attribute{NewBoolAttribute(CKA_ALWAYS_AUTHENTICATE, true)}))
+
+		template := []Attribute{
+			NewUint32Attribute(CKA_CLASS, uint32(CKO_SECRET_KEY)),
+			NewUint32Attribute(CKA_KEY_TYPE, uint32(CKK_AES)),
+			NewBoolAttribute(CKA_PRIVATE, false),
+			NewBoolAttribute(CKA_EXTRACTABLE, true),
+		}
+		return m, session, wrappingKey, wrapped, template
+	}
+
+	t.Run("both verbs unwrap with the session login alone", func(t *testing.T) {
+		m, session, wrappingKey, wrapped, template := newFixture(t)
+		defer m.Finalize()
+
+		handle, err := m.UnwrapKeyAuthenticated(session, mechanism, wrappingKey, wrapped, template, nil)
+		require.NoError(t, err,
+			"an unwrap has no Init phase, so §4.10's re-authentication cannot be placed before it; "+
+				"refusing it would deny a legal use of the key outright")
+		assert.NotEqual(t, ObjectHandle(InvalidHandle), handle)
+
+		// C_UnwrapKey unwraps inside the backend, and this fixture's unwrapping
+		// key was imported with C_CreateObject. That used to leave the key
+		// naming no backend key, so the call could not reach one and the
+		// assertion here could only say which refusal it was NOT. Since
+		// C_CreateObject imports a secret key's material, the key names a real
+		// backend key and the unwrap simply succeeds -- see
+		// TestImportedKEKIsUsableForWrapAndUnwrap.
+		//
+		// CKR_OK is the stronger form of what this test has always measured:
+		// the attribute must not turn a legal unwrap into
+		// CKR_USER_NOT_LOGGED_IN. The weaker assertion is kept alongside it
+		// because it names the specific regression, and it would still fail if
+		// the gate came back while some unrelated refusal masked the success.
+		_, rv := m.UnwrapKey(session, mechanism, wrappingKey, wrapped, template)
+		assert.NotEqual(t, CKR_USER_NOT_LOGGED_IN, rv,
+			"C_UnwrapKey and C_UnwrapKeyAuthenticated must answer alike about CKA_ALWAYS_AUTHENTICATE")
+		assert.Equal(t, CKR_OK, rv,
+			"an imported unwrapping key names a backend key, so nothing remains to refuse")
+	})
+
+	t.Run("a context-specific login cannot be obtained for the unwrapping key", func(t *testing.T) {
+		m, session, wrappingKey, _, _ := newFixture(t)
+		defer m.Finalize()
+
+		// This is the other half of the reason the gate is gone: there is no
+		// state in which an application could re-authenticate for an unwrap.
+		// The wrapping key carries CKA_ALWAYS_AUTHENTICATE and no operation can
+		// be initiated with it, so C_Login has no active key to authenticate.
+		assert.Equal(t, CKR_OPERATION_NOT_INITIALIZED,
+			m.Login(session, CKU_CONTEXT_SPECIFIC, []byte("user-pin-1234")))
+		assert.Equal(t, CKR_OPERATION_NOT_INITIALIZED,
+			m.LoginUser(session, CKU_CONTEXT_SPECIFIC, []byte("user-pin-1234"), "context"))
+
+		// The attribute really is set on the key under test; without this the
+		// subtest above would pass on a key that never required anything.
+		attrs, rv := m.GetAttributeValue(session, wrappingKey, []Attribute{{Type: CKA_ALWAYS_AUTHENTICATE}})
+		require.Equal(t, CKR_OK, rv)
+		require.Len(t, attrs, 1)
+		assert.Equal(t, byte(1), attrs[0].Value[0])
+	})
+}
+
+// TestUnwrapKeyAuthenticatedDefaultsToExtractable proves the unwrap default
+// PKCS#11 v3.2 §5.18.4 fixes for C_UnwrapKey -- "the CKA_EXTRACTABLE attribute
+// is by default set to CK_TRUE" -- also holds for the authenticated form.
+//
+// C_UnwrapKey states the default explicitly in module.go; C_UnwrapKeyAuthenticated
+// reaches it through the class defaults the object manager applies underneath
+// CreateDerivedObject. The two arrive by different routes, so this asserts on
+// the outcome: a key unwrapped without CKA_EXTRACTABLE in its template must be
+// extractable, or its value can never be read back and it can never be
+// re-wrapped.
+func TestUnwrapKeyAuthenticatedDefaultsToExtractable(t *testing.T) {
+	m := initializeTestModule(t)
+	defer m.Finalize()
+
+	session := loginAsNormalUser(t, m)
+	mechanism := NewMechanism(CKM_AES_GCM)
+	wrappingKey, targetKey := authWrapPublicKeyPair(t, m, session, nil, nil)
+
+	wrapped, err := m.WrapKeyAuthenticated(session, mechanism, wrappingKey, targetKey, nil)
+	require.NoError(t, err)
+
+	// The template names no CKA_EXTRACTABLE, which is the whole point.
+	handle, err := m.UnwrapKeyAuthenticated(session, mechanism, wrappingKey, wrapped, []Attribute{
+		NewUint32Attribute(CKA_CLASS, uint32(CKO_SECRET_KEY)),
+		NewUint32Attribute(CKA_KEY_TYPE, uint32(CKK_AES)),
+		NewBoolAttribute(CKA_PRIVATE, false),
+	}, nil)
+	require.NoError(t, err)
+
+	unwrapped, err := m.objectManager.getObjectUnchecked(handle)
+	require.NoError(t, err)
+	assert.True(t, boolAttributeIsTrue(unwrapped.GetAttribute(CKA_EXTRACTABLE)),
+		"an unwrapped key with no CKA_EXTRACTABLE in its template must default to CK_TRUE (v3.2 §5.18.4)")
+
+	// A key that says it is extractable must actually be re-wrappable, which is
+	// the bad-input half: an attribute that reads CK_TRUE while the wrap path
+	// refuses it would be a default in name only.
+	_, err = m.WrapKeyAuthenticated(session, mechanism, wrappingKey, handle, nil)
+	require.NoError(t, err, "the unwrapped key reports CKA_EXTRACTABLE=CK_TRUE but cannot be wrapped")
 }

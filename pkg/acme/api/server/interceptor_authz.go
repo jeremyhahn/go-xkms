@@ -15,76 +15,90 @@ package server
 
 import (
 	"context"
+	"errors"
+	"log/slog"
 
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
+
+	"github.com/jeremyhahn/go-xkms/pkg/acme/admin"
+	"github.com/jeremyhahn/go-xkms/pkg/auth"
 )
 
-// MethodRoles maps gRPC method full names to their required roles.
-// Methods not in this map default to requiring viewer role for Unix socket
-// connections and are allowed for TLS-authenticated TCP connections.
-var MethodRoles = map[string]Role{
-	// Tenant management - admin only
-	"/admin.v1.AdminService/CreateTenant": RoleAdmin,
-	"/admin.v1.AdminService/UpdateTenant": RoleAdmin,
-	"/admin.v1.AdminService/DeleteTenant": RoleAdmin,
+// Permission is the canonical go-qrdb resource:action pair a gRPC method
+// requires. The pairs below are identical to the ones the ACME admin REST
+// routes and the MCP methods request, so the same grant means the same thing on
+// every transport.
+type Permission struct {
+	Resource string
+	Action   string
+}
 
-	// Tenant viewing - operator and above
-	"/admin.v1.AdminService/GetTenant":   RoleOperator,
-	"/admin.v1.AdminService/ListTenants": RoleOperator,
+// MethodPermissions maps every gRPC AdminService method to the qrdb grant its
+// caller must hold. A dispatchable method missing from this table is denied,
+// not admitted — see UnaryAuthorizationInterceptor.
+var MethodPermissions = map[string]Permission{
+	// Tenant lifecycle.
+	"/admin.v1.AdminService/CreateTenant": {auth.ResourceTenants, auth.ActionCreate},
+	"/admin.v1.AdminService/UpdateTenant": {auth.ResourceTenants, auth.ActionUpdate},
+	"/admin.v1.AdminService/DeleteTenant": {auth.ResourceTenants, auth.ActionDelete},
+	"/admin.v1.AdminService/GetTenant":    {auth.ResourceTenants, auth.ActionRead},
+	"/admin.v1.AdminService/ListTenants":  {auth.ResourceTenants, auth.ActionList},
 
-	// EAB management - admin only
-	"/admin.v1.AdminService/CreateEAB": RoleAdmin,
-	"/admin.v1.AdminService/DeleteEAB": RoleAdmin,
+	// External Account Bindings.
+	"/admin.v1.AdminService/CreateEAB": {auth.ResourceACMEEAB, auth.ActionCreate},
+	"/admin.v1.AdminService/DeleteEAB": {auth.ResourceACMEEAB, auth.ActionDelete},
+	"/admin.v1.AdminService/GetEAB":    {auth.ResourceACMEEAB, auth.ActionRead},
+	"/admin.v1.AdminService/ListEABs":  {auth.ResourceACMEEAB, auth.ActionList},
 
-	// EAB viewing - operator and above
-	"/admin.v1.AdminService/GetEAB":   RoleOperator,
-	"/admin.v1.AdminService/ListEABs": RoleOperator,
+	// Role management.
+	"/admin.v1.AdminService/CreateTenantRole": {auth.ResourceRoles, auth.ActionCreate},
+	"/admin.v1.AdminService/UpdateTenantRole": {auth.ResourceRoles, auth.ActionUpdate},
+	"/admin.v1.AdminService/DeleteTenantRole": {auth.ResourceRoles, auth.ActionDelete},
+	"/admin.v1.AdminService/GetTenantRole":    {auth.ResourceRoles, auth.ActionRead},
+	"/admin.v1.AdminService/ListTenantRoles":  {auth.ResourceRoles, auth.ActionList},
 
-	// Role management (RBAC) - admin only
-	"/admin.v1.AdminService/CreateTenantRole": RoleAdmin,
-	"/admin.v1.AdminService/UpdateTenantRole": RoleAdmin,
-	"/admin.v1.AdminService/DeleteTenantRole": RoleAdmin,
+	// User management.
+	"/admin.v1.AdminService/CreateTenantUser": {auth.ResourceUsers, auth.ActionCreate},
+	"/admin.v1.AdminService/UpdateTenantUser": {auth.ResourceUsers, auth.ActionUpdate},
+	"/admin.v1.AdminService/DeleteTenantUser": {auth.ResourceUsers, auth.ActionDelete},
+	"/admin.v1.AdminService/GetTenantUser":    {auth.ResourceUsers, auth.ActionRead},
+	"/admin.v1.AdminService/ListTenantUsers":  {auth.ResourceUsers, auth.ActionList},
 
-	// Role viewing - operator and above
-	"/admin.v1.AdminService/GetTenantRole":   RoleOperator,
-	"/admin.v1.AdminService/ListTenantRoles": RoleOperator,
+	// Certificates.
+	"/admin.v1.AdminService/RevokeCertificate": {auth.ResourceCerts, auth.ActionRevoke},
+	"/admin.v1.AdminService/GetCertificate":    {auth.ResourceCerts, auth.ActionRead},
+	"/admin.v1.AdminService/ListCertificates":  {auth.ResourceCerts, auth.ActionList},
 
-	// User management (RBAC) - admin only
-	"/admin.v1.AdminService/CreateTenantUser": RoleAdmin,
-	"/admin.v1.AdminService/UpdateTenantUser": RoleAdmin,
-	"/admin.v1.AdminService/DeleteTenantUser": RoleAdmin,
-
-	// User viewing - operator and above
-	"/admin.v1.AdminService/GetTenantUser":   RoleOperator,
-	"/admin.v1.AdminService/ListTenantUsers": RoleOperator,
-
-	// Certificate management - admin for revocation
-	"/admin.v1.AdminService/RevokeCertificate": RoleAdmin,
-
-	// Certificate viewing - viewer and above
-	"/admin.v1.AdminService/GetCertificate":   RoleViewer,
-	"/admin.v1.AdminService/ListCertificates": RoleViewer,
-
-	// Status operations - viewer and above
-	"/admin.v1.AdminService/GetStatus": RoleViewer,
-	"/admin.v1.AdminService/GetStats":  RoleViewer,
+	// Server status.
+	"/admin.v1.AdminService/GetStatus": {auth.ResourceAdmin, auth.ActionStatus},
+	"/admin.v1.AdminService/GetStats":  {auth.ResourceAdmin, auth.ActionStatus},
 }
 
 // UnaryAuthorizationInterceptor returns a gRPC unary server interceptor that
-// enforces role-based access control for Unix socket connections.
+// authorizes every AdminService call through the qrdb-backed PermissionGate —
+// the same seam the ACME admin REST routes and the MCP surface use.
 //
-// For Unix socket connections (identified by peer credentials in context),
-// this interceptor checks if the caller's role meets the required role for
-// the requested method.
+// The identity is resolved in this order:
 //
-// For TCP connections (no peer credentials), this interceptor passes through,
-// assuming that TLS client certificate authentication or other mechanisms
-// handle authorization at a different layer.
-func UnaryAuthorizationInterceptor(roleMapping *RoleMapping) grpc.UnaryServerInterceptor {
+//  1. An identity already on the context, published by an upstream
+//     authenticating interceptor (UnaryMTLSIdentityInterceptor for TLS/TCP).
+//  2. Unix peer credentials (SO_PEERCRED), mapped to canonical qrdb role names
+//     by roleMapping. The kernel supplies these and the peer cannot forge them.
+//
+// A call with neither is Unauthenticated. This replaces the previous behavior
+// where a connection without peer credentials — every TCP connection — was
+// passed straight through to the handler on the assumption that "TLS client
+// certificate authentication handles authorization at a different layer". No
+// such layer existed, so the entire ACME admin gRPC TCP surface was
+// unauthenticated and unauthorized.
+func UnaryAuthorizationInterceptor(roleMapping *RoleMapping, gate *admin.PermissionGate, logger *slog.Logger) grpc.UnaryServerInterceptor {
 	if roleMapping == nil {
 		roleMapping = DefaultRoleMapping()
+	}
+	if logger == nil {
+		logger = slog.Default()
 	}
 
 	return func(
@@ -93,53 +107,39 @@ func UnaryAuthorizationInterceptor(roleMapping *RoleMapping) grpc.UnaryServerInt
 		info *grpc.UnaryServerInfo,
 		handler grpc.UnaryHandler,
 	) (interface{}, error) {
-		// Get peer credentials from context (set by PeerCredentialsInterceptor)
-		creds := GetPeerCredentials(ctx)
-
-		// If no credentials, this is likely a TCP connection
-		// Allow it through - TCP uses TLS client certs for auth
-		if creds == nil {
-			return handler(ctx, req)
+		perm, mapped := MethodPermissions[info.FullMethod]
+		if !mapped {
+			logger.ErrorContext(ctx, "ACME admin gRPC method has no permission mapping; denying",
+				slog.String("method", info.FullMethod))
+			return nil, status.Error(codes.PermissionDenied, admin.ErrOperationUnmapped.Error())
 		}
 
-		// Determine the user's role based on credentials
-		userRole := roleMapping.GetRole(creds)
+		ctx = withResolvedIdentity(ctx, roleMapping)
 
-		// Look up the required role for this method
-		requiredRole, exists := MethodRoles[info.FullMethod]
-		if !exists {
-			// Default to viewer for unlisted methods
-			requiredRole = RoleViewer
-		}
-
-		// Check authorization
-		if !CanPerform(userRole, requiredRole) {
+		if err := gate.Authorize(ctx, perm.Resource, perm.Action); err != nil {
+			if errors.Is(err, auth.ErrUnauthenticated) {
+				return nil, status.Errorf(codes.Unauthenticated,
+					"authentication required for %s", info.FullMethod)
+			}
 			return nil, status.Errorf(codes.PermissionDenied,
-				"permission denied: role %q cannot perform %s (requires %q)",
-				userRole, info.FullMethod, requiredRole)
+				"permission denied: %s requires %s:%s", info.FullMethod, perm.Resource, perm.Action)
 		}
 
 		return handler(ctx, req)
 	}
 }
 
-// authorizationContextKey is the context key for storing authorization info.
-type authorizationContextKey struct{}
-
-// AuthorizationInfo contains authorization details for the current request.
-type AuthorizationInfo struct {
-	// Role is the determined role of the caller
-	Role Role
-	// Method is the gRPC method being called
-	Method string
-	// RequiredRole is the role required for the method
-	RequiredRole Role
-}
-
-// GetAuthorizationInfo retrieves authorization info from the context.
-func GetAuthorizationInfo(ctx context.Context) *AuthorizationInfo {
-	if info, ok := ctx.Value(authorizationContextKey{}).(*AuthorizationInfo); ok {
-		return info
+// withResolvedIdentity returns a context carrying the caller's canonical
+// identity. An identity published upstream (mTLS) wins; otherwise Unix peer
+// credentials are mapped to qrdb role names. When neither is available the
+// context is returned unchanged and the gate denies for want of an identity.
+func withResolvedIdentity(ctx context.Context, roleMapping *RoleMapping) context.Context {
+	if auth.GetIdentity(ctx) != nil {
+		return ctx
 	}
-	return nil
+	creds := GetPeerCredentials(ctx)
+	if creds == nil {
+		return ctx
+	}
+	return auth.WithIdentity(ctx, roleMapping.Identity(creds))
 }

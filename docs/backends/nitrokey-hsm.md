@@ -493,4 +493,4 @@ If migrating from YubiKey PIV to Nitrokey HSM:
 
 - [PKCS#11 Backend](pkcs11.md) - Generic HSM support (including YubiKey via libykcs11)
 - [TPM2 Backend](tpm2.md) - Trusted Platform Module support
-- [Getting Started](../usage/getting-started.md) - General usage guide
+- [Getting Started](../../xkey/docs/usage/getting-started.md) - General usage guide

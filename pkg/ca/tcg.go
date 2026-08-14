@@ -30,6 +30,7 @@ import (
 
 	"github.com/jeremyhahn/go-xkms/pkg/errs"
 
+	"github.com/jeremyhahn/go-xkms/pkg/attestation"
 	"github.com/jeremyhahn/go-xkms/pkg/tpm2"
 	"github.com/jeremyhahn/go-xkms/pkg/types"
 )
@@ -65,13 +66,9 @@ func (ca *CA) IssueEKCertificate(ctx context.Context, request *CertificateReques
 		return nil, ErrTCGInvalidPublicKey
 	}
 
-	// Determine key algorithm from public key
-	var keyAlgorithm x509.PublicKeyAlgorithm
+	// The TCG EK Credential Profile admits RSA and ECC endorsement keys only.
 	switch ekPubKey.(type) {
-	case *rsa.PublicKey:
-		keyAlgorithm = x509.RSA
-	case *ecdsa.PublicKey:
-		keyAlgorithm = x509.ECDSA
+	case *rsa.PublicKey, *ecdsa.PublicKey:
 	default:
 		return nil, ErrTCGInvalidPublicKey
 	}
@@ -138,40 +135,32 @@ func (ca *CA) IssueEKCertificate(ctx context.Context, request *CertificateReques
 		}
 	}
 
-	// Create EK certificate template per TCG EK Credential Profile.
-	// NotBefore is backdated by 1 minute to handle clock skew between server and client.
-	template := &x509.Certificate{
-		Version:            3,
-		SerialNumber:       serial,
+	// Issue the EK certificate per the TCG EK Credential Profile. The profile
+	// owns the key usage (KeyEncipherment: an endorsement key is an encryption
+	// key) and the extended key usage; the TCG device attributes assembled
+	// above ride along as caller extensions.
+	//
+	// NotBefore is backdated by 1 minute to handle clock skew between server
+	// and client.
+	profile, err := ca.Profiles().Get(ProfileNameTCGEndorsementKey)
+	if err != nil {
+		return nil, err
+	}
+
+	cert, err := ca.issueTCGCertificate(signer, signingCert, &CertificateSpec{
+		Serial:             serial,
 		Subject:            request.Subject.ToPkixName(),
 		NotBefore:          time.Now().Add(-1 * time.Minute),
 		NotAfter:           tcgNotAfter,
-		SignatureAlgorithm: sigAlg,
-		PublicKeyAlgorithm: keyAlgorithm,
 		PublicKey:          ekPubKey,
-		Issuer:             signingCert.Subject,
-		AuthorityKeyId:     signingCert.SubjectKeyId,
-		// Per TCG EK Credential Profile: KeyUsage is KeyEncipherment for encryption EKs
-		KeyUsage:        x509.KeyUsageKeyEncipherment,
-		ExtKeyUsage:     []x509.ExtKeyUsage{x509.ExtKeyUsageClientAuth, x509.ExtKeyUsageServerAuth},
-		ExtraExtensions: extraExtensions,
-		IsCA:            false,
-	}
-
-	// Add SANs if provided
-	if request.SANS != nil {
-		addSANsToTemplate(template, request.SANS)
-	}
-
-	// Sign the certificate
-	certDER, err := x509.CreateCertificate(rand.Reader, template, signingCert, ekPubKey, signer)
+		SignatureAlgorithm: sigAlg,
+		Profile:            profile,
+		Request:            request,
+		SANS:               request.SANS,
+		ExtraExtensions:    extraExtensions,
+	})
 	if err != nil {
-		return nil, &errs.Detail{Err: ErrTCGCertIssuanceFailed, Detail: fmt.Sprintf("%v", err)}
-	}
-
-	cert, err := x509.ParseCertificate(certDER)
-	if err != nil {
-		return nil, &errs.Detail{Err: ErrTCGCertIssuanceFailed, Detail: fmt.Sprintf("%v", err)}
+		return nil, err
 	}
 
 	// Store the certificate
@@ -196,15 +185,9 @@ func (ca *CA) IssueAKCertificate(ctx context.Context, request *CertificateReques
 		return nil, ErrTCGInvalidPublicKey
 	}
 
-	// Determine key algorithm from public key
-	var keyAlgorithm x509.PublicKeyAlgorithm
+	// An attestation key may be RSA, ECC or Ed25519.
 	switch pubKey.(type) {
-	case *rsa.PublicKey:
-		keyAlgorithm = x509.RSA
-	case *ecdsa.PublicKey:
-		keyAlgorithm = x509.ECDSA
-	case ed25519.PublicKey:
-		keyAlgorithm = x509.Ed25519
+	case *rsa.PublicKey, *ecdsa.PublicKey, ed25519.PublicKey:
 	default:
 		return nil, ErrTCGInvalidPublicKey
 	}
@@ -233,46 +216,30 @@ func (ca *CA) IssueAKCertificate(ctx context.Context, request *CertificateReques
 		},
 	}
 
-	// Create AK certificate template per TCG specifications.
+	// Issue the AK certificate per TCG specifications. The profile owns the
+	// digital-signature key usage an attestation key needs for quotes, and the
+	// TCG policy OIDs asserting TPM residency and fixed attributes.
+	//
 	// NotBefore is backdated by 1 minute to handle clock skew.
-	template := &x509.Certificate{
-		Version:            3,
-		SerialNumber:       serial,
+	profile, err := ca.Profiles().Get(ProfileNameTCGAttestationKey)
+	if err != nil {
+		return nil, err
+	}
+
+	cert, err := ca.issueTCGCertificate(signer, signingCert, &CertificateSpec{
+		Serial:             serial,
 		Subject:            request.Subject.ToPkixName(),
 		NotBefore:          time.Now().Add(-1 * time.Minute),
 		NotAfter:           tcgNotAfter,
-		SignatureAlgorithm: sigAlg,
-		PublicKeyAlgorithm: keyAlgorithm,
 		PublicKey:          pubKey,
-		Issuer:             signingCert.Subject,
-		AuthorityKeyId:     signingCert.SubjectKeyId,
-		// Per TCG: AK is used for digital signatures (attestation, quotes)
-		KeyUsage:    x509.KeyUsageDigitalSignature,
-		ExtKeyUsage: []x509.ExtKeyUsage{x509.ExtKeyUsageClientAuth, x509.ExtKeyUsageServerAuth},
-		// TCG policy OIDs indicating TPM residency and fixed attributes
-		// Using Policies field for Go 1.24+ compatibility
-		Policies: []x509.OID{
-			TCGVerifiedTPMResidencyPolicy,
-			TCGVerifiedTPMFixedPolicy,
-		},
-		ExtraExtensions: extraExtensions,
-		IsCA:            false,
-	}
-
-	// Add SANs if provided
-	if request.SANS != nil {
-		addSANsToTemplate(template, request.SANS)
-	}
-
-	// Sign the certificate
-	certDER, err := x509.CreateCertificate(rand.Reader, template, signingCert, pubKey, signer)
+		SignatureAlgorithm: sigAlg,
+		Profile:            profile,
+		Request:            request,
+		SANS:               request.SANS,
+		ExtraExtensions:    extraExtensions,
+	})
 	if err != nil {
-		return nil, &errs.Detail{Err: ErrTCGCertIssuanceFailed, Detail: fmt.Sprintf("%v", err)}
-	}
-
-	cert, err := x509.ParseCertificate(certDER)
-	if err != nil {
-		return nil, &errs.Detail{Err: ErrTCGCertIssuanceFailed, Detail: fmt.Sprintf("%v", err)}
+		return nil, err
 	}
 
 	// Store the certificate
@@ -321,6 +288,31 @@ func (ca *CA) SignTCGCSRIDevID(
 		return nil, nil, &errs.Detail{Err: ErrTCGCSRVerificationFailed, Detail: fmt.Sprintf("%v", err)}
 	}
 
+	// The same gate the generic CSR carrier answers to.
+	//
+	// Two carriers exist because the evidence formats are externally defined
+	// standards -- TCG-CSR-IDEVID here, PKCS#10 plus format-tagged evidence
+	// there -- but only one place decides whether evidence is good enough to
+	// sign. Before this, each route reached its own conclusion by its own
+	// route, and they had already drifted apart.
+	//
+	// No expected challenge: this certification is produced when the IDevID is
+	// created, long before a CA picks one. Freshness in this ceremony comes
+	// from credential activation and the quote, both bound to values chosen
+	// in-session.
+	if err := attestation.VerifyInvariants(&attestation.Evidence{
+		Format:             attestation.FormatTPM2,
+		AttesterPublicArea: unpacked.CsrContents.AttestPub,
+		SubjectPublicArea:  unpacked.CsrContents.SigningPub,
+		CertifyInfo:        unpacked.CsrContents.SgnCertifyInfo,
+		CertifySignature:   unpacked.CsrContents.SgnCertifyInfoSig,
+	}); err != nil {
+		return nil, nil, &errs.Detail{
+			Err:    ErrTCGCSRVerificationFailed,
+			Detail: fmt.Sprintf("%v", err),
+		}
+	}
+
 	// Extract IAK public key from TPM public area
 	iakPubKey, err := tpm2.ExtractPublicKeyFromTPMPublic(unpacked.CsrContents.AttestPub)
 	if err != nil {
@@ -344,26 +336,24 @@ func (ca *CA) SignTCGCSRIDevID(
 		return nil, nil, &errs.Detail{Err: ErrSerialGenerationFailed, Detail: fmt.Sprintf("%v", err)}
 	}
 
-	// Create IAK certificate template
-	iakTemplate := &x509.Certificate{
-		SerialNumber:       iakSerial,
+	// Issue the IAK certificate. The IAK profile owns its digital-signature key
+	// usage and the TCG residency and fixed-attribute policies.
+	iakProfile, err := ca.Profiles().Get(ProfileNameTCGInitialAK)
+	if err != nil {
+		return nil, nil, err
+	}
+
+	iakCert, err := ca.issueTCGCertificate(signer, signingCert, &CertificateSpec{
+		Serial:             iakSerial,
 		Subject:            request.Subject.ToPkixName(),
 		NotBefore:          time.Now().Add(-1 * time.Minute),
 		NotAfter:           tcgNotAfter,
+		PublicKey:          iakPubKey,
 		SignatureAlgorithm: sigAlg,
-		KeyUsage:           x509.KeyUsageDigitalSignature,
-		ExtKeyUsage:        []x509.ExtKeyUsage{x509.ExtKeyUsageClientAuth, x509.ExtKeyUsageServerAuth},
-		Policies: []x509.OID{
-			TCGVerifiedTPMResidencyPolicy,
-			TCGVerifiedTPMFixedPolicy,
-		},
-		ExtraExtensions: iakExtensions,
-		IsCA:            false,
-		Issuer:          signingCert.Subject,
-		AuthorityKeyId:  signingCert.SubjectKeyId,
-	}
-
-	iakCertDER, err := x509.CreateCertificate(rand.Reader, iakTemplate, signingCert, iakPubKey, signer)
+		Profile:            iakProfile,
+		Request:            request,
+		ExtraExtensions:    iakExtensions,
+	})
 	if err != nil {
 		return nil, nil, &errs.Detail{Err: ErrTCGCertIssuanceFailed, Detail: fmt.Sprintf("iak: %v", err)}
 	}
@@ -381,31 +371,26 @@ func (ca *CA) SignTCGCSRIDevID(
 		return nil, nil, &errs.Detail{Err: ErrSerialGenerationFailed, Detail: fmt.Sprintf("%v", err)}
 	}
 
-	// Create IDevID certificate template
-	idevidTemplate := &x509.Certificate{
-		SerialNumber:       idevidSerial,
+	// Issue the IDevID certificate. Its profile adds key encipherment to the
+	// IAK's digital-signature key usage because a device identity both
+	// authenticates the device and establishes keys with it.
+	idevidProfile, err := ca.Profiles().Get(ProfileNameTCGDeviceIdentity)
+	if err != nil {
+		return nil, nil, err
+	}
+
+	idevidCert, err := ca.issueTCGCertificate(signer, signingCert, &CertificateSpec{
+		Serial:             idevidSerial,
 		Subject:            request.Subject.ToPkixName(),
 		NotBefore:          time.Now().Add(-1 * time.Minute),
 		NotAfter:           tcgNotAfter,
+		PublicKey:          pubKey,
 		SignatureAlgorithm: sigAlg,
-		KeyUsage:           x509.KeyUsageDigitalSignature | x509.KeyUsageKeyEncipherment,
-		ExtKeyUsage:        []x509.ExtKeyUsage{x509.ExtKeyUsageClientAuth, x509.ExtKeyUsageServerAuth},
-		Policies: []x509.OID{
-			TCGVerifiedTPMResidencyPolicy,
-			TCGVerifiedTPMFixedPolicy,
-		},
-		ExtraExtensions: idevidExtensions,
-		IsCA:            false,
-		Issuer:          signingCert.Subject,
-		AuthorityKeyId:  signingCert.SubjectKeyId,
-	}
-
-	// Add SANs to IDevID certificate if provided
-	if request.SANS != nil {
-		addSANsToTemplate(idevidTemplate, request.SANS)
-	}
-
-	idevidCertDER, err := x509.CreateCertificate(rand.Reader, idevidTemplate, signingCert, pubKey, signer)
+		Profile:            idevidProfile,
+		Request:            request,
+		SANS:               request.SANS,
+		ExtraExtensions:    idevidExtensions,
+	})
 	if err != nil {
 		return nil, nil, &errs.Detail{Err: ErrTCGCertIssuanceFailed, Detail: fmt.Sprintf("idevid: %v", err)}
 	}
@@ -418,23 +403,15 @@ func (ca *CA) SignTCGCSRIDevID(
 	// certs the CA can never revoke, list, or audit. Matches SignCSR's
 	// post-signing storage call (ca.go:1349).
 	if ca.certStore != nil {
-		iakCert, parseErr := x509.ParseCertificate(iakCertDER)
-		if parseErr != nil {
-			return nil, nil, &errs.Detail{Err: ErrTCGCertIssuanceFailed, Detail: fmt.Sprintf("parse iak for store: %v", parseErr)}
-		}
 		if storeErr := ca.certStore.StoreCertificate(iakCert); storeErr != nil {
 			return nil, nil, &errs.Detail{Err: ErrTCGCertIssuanceFailed, Detail: fmt.Sprintf("store iak: %v", storeErr)}
-		}
-		idevidCert, parseErr := x509.ParseCertificate(idevidCertDER)
-		if parseErr != nil {
-			return nil, nil, &errs.Detail{Err: ErrTCGCertIssuanceFailed, Detail: fmt.Sprintf("parse idevid for store: %v", parseErr)}
 		}
 		if storeErr := ca.certStore.StoreCertificate(idevidCert); storeErr != nil {
 			return nil, nil, &errs.Detail{Err: ErrTCGCertIssuanceFailed, Detail: fmt.Sprintf("store idevid: %v", storeErr)}
 		}
 	}
 
-	return iakCertDER, idevidCertDER, nil
+	return iakCert.Raw, idevidCert.Raw, nil
 }
 
 // resolveTCGSigner determines the signer, signing certificate, and issuer keystore
@@ -472,16 +449,30 @@ func (ca *CA) resolveTCGSigner(ctx context.Context, request *CertificateRequest)
 	return signer, signingCert, issuerKeyStoreType, nil
 }
 
-// addSANsToTemplate adds Subject Alternative Names from a SubjectAlternativeNames
-// to a certificate template.
-func addSANsToTemplate(template *x509.Certificate, sans *SubjectAlternativeNames) {
-	if sans == nil {
-		return
+// issueTCGCertificate issues one TCG credential through the CA's canonical
+// issuance path.
+//
+// The CA's issuing identity supplies the revocation and Authority Information
+// Access endpoints, exactly as it does for the root, intermediate and
+// end-entity paths — a TPM credential is a certificate this CA is responsible
+// for revoking like any other. A credential signed with a caller-supplied
+// Signer belongs to a different issuer whose CRL and OCSP services this CA
+// cannot speak for, so that path carries no identity; this is the same rule
+// SignCSR applies.
+func (ca *CA) issueTCGCertificate(
+	signer crypto.Signer,
+	signingCert *x509.Certificate,
+	spec *CertificateSpec,
+) (*x509.Certificate, error) {
+	issuer := &Issuer{Signer: signer, Certificate: signingCert}
+	if spec.Request == nil || spec.Request.Signer == nil {
+		issuer.Identity = ca.config.IssuingIdentity()
 	}
-	template.DNSNames = append(template.DNSNames, sans.DNS...)
-	template.EmailAddresses = append(template.EmailAddresses, sans.Email...)
-	template.IPAddresses = append(template.IPAddresses, sans.ParseIPs()...)
-	template.URIs = append(template.URIs, sans.ParseURIs()...)
+	cert, err := issuer.Issue(rand.Reader, spec)
+	if err != nil {
+		return nil, &errs.Detail{Err: ErrTCGCertIssuanceFailed, Detail: fmt.Sprintf("%v", err)}
+	}
+	return cert, nil
 }
 
 // buildIAKExtensions builds the TCG extensions for an IAK certificate.

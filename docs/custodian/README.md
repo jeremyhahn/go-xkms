@@ -1,6 +1,15 @@
 # Custodian Groups
 
-The `pkg/custodian` package provides M-of-N custodian group management for key ceremony participation and share distribution. Custodian groups track which users hold Shamir shares, when shares were assigned, and whether they have been received. This supports FIPS 140-2/3 and PCI DSS separation of duties requirements.
+A custodian group records *who* holds the Shamir shares of a barrier: an M-of-N
+roster naming each share index, the user assigned to it, when the share was
+assigned and whether it has been picked up. This is what FIPS 140-2/3 and PCI
+DSS separation-of-duties reviews ask for — a named, auditable roster rather than
+an anonymous quorum.
+
+Custodian state is owned by the embedded go-qrdb node. `XKMSService`
+(`pkg/xkms/servicer_custodian.go`) is a passthrough to the node's custodian
+client — xkms performs no local persistence of its own. There is no custodian
+storage package in this repository.
 
 ## Architecture
 
@@ -16,19 +25,25 @@ The `pkg/custodian` package provides M-of-N custodian group management for key c
 
 ## Types
 
-### CustodianGroup
+The transport types are aliases of the go-qrdb SDK types
+(`pkg/api/transport/types_custodian.go`), so a value crossing the xkms API is
+the same value the node stores.
+
+### CustodianGroupInfo
 
 | Field | Type | Description |
 |-------|------|-------------|
 | `ID` | `string` | Unique group identifier |
-| `TenantID` | `string` | Tenant scope (empty = system-level) |
+| `TenantID` | `string` | Tenant scope (empty, or the reserved `system` tenant, = system-level; see auth.IsCrossTenant) |
 | `Name` | `string` | Human-readable group name |
-| `Purpose` | `string` | `"barrier"`, `"signing-key"`, or `"backup"` |
+| `Purpose` | `string` | What the group's shares protect |
 | `Threshold` | `int` | M (minimum shares to reconstruct) |
 | `Total` | `int` | N (total shares) |
-| `Members` | `[]CustodianMember` | Group members |
+| `Members` | `[]CustodianMemberInfo` | Group members |
+| `CreatedAt` | `time.Time` | Group creation time |
+| `UpdatedAt` | `time.Time` | Last modification time |
 
-### CustodianMember
+### CustodianMemberInfo
 
 | Field | Type | Description |
 |-------|------|-------------|
@@ -37,66 +52,86 @@ The `pkg/custodian` package provides M-of-N custodian group management for key c
 | `Username` | `string` | Display name |
 | `AssignedAt` | `time.Time` | When share was assigned |
 | `ReceivedAt` | `*time.Time` | When share was picked up (nil = pending) |
-| `Method` | `string` | Delivery method: `"fido2"`, `"pkcs11"`, `"manual"` |
+| `Method` | `string` | Delivery method |
 
 ## Service API
 
-| Method | Description |
-|--------|-------------|
-| `NewService(store)` | Creates service backed by a `CustodianGroupStore` |
-| `CreateGroup(ctx, id, tenantID, name, purpose, threshold, total)` | Creates and validates a new group |
-| `GetGroup(ctx, id)` | Retrieves a group by ID |
-| `DeleteGroup(ctx, id)` | Deletes a group |
-| `AddMember(ctx, groupID, userID, username, method)` | Adds a member to a group |
-| `RemoveMember(ctx, groupID, userID)` | Removes a member |
-| `MarkShareReceived(ctx, groupID, userID)` | Marks a member's share as received |
-| `ListGroups(ctx)` | Returns all groups |
-| `ListGroupsByTenant(ctx, tenantID)` | Returns groups for a tenant |
-
-## CustodianGroupStore Interface
+`CustodianGroupServicer` (`pkg/xkms/servicer_custodian.go`) is the interface
+every transport is served from:
 
 | Method | Description |
 |--------|-------------|
-| `Create(ctx, group)` | Persists a new group |
-| `Get(ctx, id)` | Retrieves group by ID |
-| `Update(ctx, group)` | Updates an existing group |
-| `Delete(ctx, id)` | Removes a group |
-| `List(ctx)` | Returns all groups |
-| `ListByTenant(ctx, tenantID)` | Groups by tenant |
-| `ListByPurpose(ctx, purpose)` | Groups by purpose |
+| `CreateCustodianGroup(ctx, req)` | Creates a group with threshold parameters |
+| `GetCustodianGroup(ctx, groupID)` | Retrieves a group by ID |
+| `ListCustodianGroups(ctx)` | Returns all registered groups |
+| `DeleteCustodianGroup(ctx, groupID)` | Deletes a group by ID |
+| `AddCustodianMember(ctx, req)` | Adds a member to a group |
+| `RemoveCustodianMember(ctx, req)` | Removes a member from a group |
+| `DistributeShares(ctx, req)` | Distributes Shamir shares to group members |
 
-A `MemoryStore` implementation is provided for testing.
+Every method fails with `ErrNotConfigured` (`pkg/xkms/errors.go`) when the
+custodian client is absent, and the request-taking methods fail with
+`ErrNilRequest` on a nil request. Domain errors — unknown group, duplicate
+member, bad threshold — come back from the node.
 
-## Usage
+## REST
 
-```go
-store := custodian.NewMemoryStore()
-svc, _ := custodian.NewService(store)
+The routes are registered inside the versioned `/api/v1` router
+(`pkg/api/rest/server.go:629`), under `/custodian/groups`, and only when the
+custodian handlers were built, which the `Config.CustodianEnabled` flag gates
+(`pkg/api/rest/server.go:212` and `:475-476`; route table at `:971-982`).
+`CustodianEnabled` is to be set only when the embedded qrdb node is available.
+The full paths are therefore:
 
-group, _ := svc.CreateGroup(ctx, "grp-1", "", "Barrier Custodians",
-    custodian.PurposeBarrier, 3, 5)
+| Method | Path |
+|--------|------|
+| `POST` | `/api/v1/custodian/groups` |
+| `GET` | `/api/v1/custodian/groups` |
+| `GET` | `/api/v1/custodian/groups/{id}` |
+| `DELETE` | `/api/v1/custodian/groups/{id}` |
+| `POST` | `/api/v1/custodian/groups/{id}/members` |
+| `DELETE` | `/api/v1/custodian/groups/{id}/members/{userID}` |
+| `POST` | `/api/v1/custodian/groups/{id}/distribute` |
 
-member, _ := svc.AddMember(ctx, "grp-1", "user-42", "alice", custodian.MethodFIDO2)
-// member.ShareIndex == 1, member.ReceivedAt == nil
+## CLI
 
-svc.MarkShareReceived(ctx, "grp-1", "user-42")
-// member.ReceivedAt is now set
+`xkmsctl custodian` (`cmd/xkmsctl/custodian.go`). Every subcommand takes its
+arguments as flags -- there are no positional arguments:
+
+```bash
+xkmsctl custodian create --name "Ops Team" --purpose "production barrier" --threshold 3 --total 5
+xkmsctl custodian create --name "DR Group" --threshold 2 --total 3 --tenant-id acme --id dr-group
+xkmsctl custodian list
+xkmsctl custodian show --id <group-id>
+xkmsctl custodian delete --id <group-id>
+xkmsctl custodian add-member --group-id <group-id> --user-id <user-id> [--username alice] [--method encrypted]
+xkmsctl custodian remove-member --group-id <group-id> --user-id <user-id>
+xkmsctl custodian distribute --group-id <group-id>
 ```
 
-## Error Reference
+| Subcommand | Flags | Required |
+|------------|-------|----------|
+| `create` | `--name`, `--purpose`, `--threshold`, `--total`, `--tenant-id`, `--id` | `--name`, `--threshold`, `--total` |
+| `list` | `--tenant-id` | none |
+| `show` | `--id` | `--id` |
+| `delete` | `--id` | `--id` |
+| `add-member` | `--group-id`, `--user-id`, `--username`, `--method` | `--group-id`, `--user-id` |
+| `remove-member` | `--group-id`, `--user-id` | `--group-id`, `--user-id` |
+| `distribute` | `--group-id` | `--group-id` |
 
-| Error | Condition |
-|-------|-----------|
-| `ErrGroupNotFound` | Group ID not found |
-| `ErrGroupAlreadyExists` | Duplicate group ID |
-| `ErrGroupFull` | Group at maximum capacity |
-| `ErrMemberNotFound` | User not in group |
-| `ErrMemberAlreadyExists` | User already in group |
-| `ErrInvalidThreshold` | Threshold < 2 or > total |
-| `ErrShareAlreadyReceived` | Share already marked received |
-| `ErrNilStore` | Nil store passed to `NewService` |
+`--method` defaults to `encrypted` (the other accepted value is `manual`);
+`--id` on `create` is optional and the group ID is generated when it is
+omitted. `create` rejects a threshold that is zero, negative, or greater than
+`--total` before any request leaves the client.
+
+`list --tenant-id` is registered as a flag but is not yet wired: the run
+function calls `custodianList(cfg, printer)` without it
+(`cmd/xkmsctl/custodian.go:94-99`), and `ListCustodianGroups` takes no filter
+argument (`pkg/xkms/servicer_custodian.go:58`). `list` therefore always
+returns every group the caller is authorized to see.
 
 ## Cross-References
 
+- [Share Collection Plane](shares.md) -- submitting, inspecting, and removing returned shares
 - [Barrier Encryption Architecture](../seal/README.md) -- Shamir secret sharing for barrier root keys
 - [Key Share Persistence](../sharestore/README.md) -- storing received shares on client side

@@ -65,6 +65,14 @@ xkey ssh keys export --server unix:///run/xkms/xkms.sock --name k
 # xkmsctl mirrors the surface for multi-protocol parity testing
 xkmsctl --server mcp://host:8445 ssh keys list
 
+# xkmsctl also covers key import and the pin / authorized-key stores
+xkmsctl ssh keys import --file ~/.ssh/id_ed25519 --name laptop
+xkmsctl ssh known-hosts add --host git.example.com --fingerprint SHA256:...
+xkmsctl ssh known-hosts verify --host git.example.com --file host.pub
+xkmsctl ssh authorized-keys add --name ci-runner --line "ssh-ed25519 AAAA..."
+xkmsctl ssh authorized-keys emit --line "ssh-ed25519 AAAA..." --option no-pty
+xkmsctl ssh authorized-keys verify --key "ssh-ed25519 AAAA..."
+
 # Local system SSH integration (read-only, xkey only — see below)
 xkey ssh local hosts                                    # ssh_config(5) Host aliases
 xkey ssh local keys                                     # agent + ~/.ssh identities
@@ -72,6 +80,13 @@ xkey ssh connect --local --ssh-config-alias prod-bastion # plain passthrough `ss
 ```
 
 `xkmsctl ssh` honors the global `--protocol` / `--server` / `--tls-ca` flags.
+Every subcommand except `authorized-keys emit` (a pure formatting helper) is
+addressed by `--scope` / `--owner`. `keys import` reads an encrypted PEM's
+passphrase without echo from the terminal, or from stdin when the CLI is not
+attached to one; the plaintext is read straight into an enclaved buffer.
+`known-hosts verify` and `authorized-keys verify` take the public key as an
+`authorized_keys`-format line via `--key`, or read it from a file via
+`--file`.
 
 ## GUI
 
@@ -101,8 +116,8 @@ parallel store or generator. Backend selection uses the `signing` capability.
 
 - Unit: `make test-ssh` (`pkg/ssh`), `go test -tags codec_json ./xkey/pkg/gui/services/ -run SSH`,
   SDK + gRPC service SSH tests. The embedded console is covered end-to-end by
-  `pkg/ssh/console` (in-process echo-PTY server), the gRPC `SSHConsole` stream
-  (`pkg/api/grpc`, bufconn), and the WebSocket bridge (`NewWSHandler`).
+  `pkg/ssh/console` (in-process echo-PTY server) and the WebSocket bridge
+  (`NewWSHandler`), both exercised on the client side.
 - Integration (devcontainer):
   - `make integration-test-api-ssh` — drives the **xkey** CLI against a
     dockerized xkmsd over embedded/REST/gRPC/QUIC/MCP/unix, running the common
@@ -240,35 +255,67 @@ one click away; nothing ever auto-dials SSH at startup. Closing a persisted
 tab (or the whole panel) deletes its record. CLI parity:
 `xkey ssh sessions list|rm`.
 
-### Embedded console — a reusable xkms capability
+### Embedded console — a client-side capability
 
-The embedded console is a first-class xkms capability (`pkg/ssh/console`),
-exposed through the SDK and supported over **every streaming transport**, so any
-app (xkey, a future xkms web UI, go-trusted-platform) opens a console the same
-way:
+The embedded console is an xkms library capability (`pkg/ssh/console`) that runs
+**in the client's own process**. The SSH session is established by whoever holds
+the terminal — xkey's CLI and desktop app — never by xkmsd.
 
 | Transport | Mechanism |
 |-----------|-----------|
 | embedded | in-process PTY (`OpenConsole` / `Client.Console`) |
-| gRPC, unix | `SSHConsole` bidirectional streaming RPC |
-| REST, QUIC | the WebSocket bridge handler (`NewConsoleWSHandler`), mounted at `/xkms/v1/ssh/console` |
-| MCP | unsupported (`ConsoleUnsupportedError` — JSON-RPC can't stream) |
+| gRPC, unix, REST, QUIC, MCP | unsupported (`ConsoleUnsupportedError`) |
+
+xkmsd serves **no** console endpoint. It is a key vault, a CA, and a network
+appliance for storing and serving keys; terminating SSH there would let any
+authenticated caller make the appliance dial an arbitrary host and proxy an
+interactive shell through it — server-side request forgery, a network pivot,
+and remote code execution against the target, from the one host that must offer
+none of them. A remotely stored key still drives a local session: the client
+resolves a `Signer` through `Keys().Signer`, which sends each authentication
+challenge to the server to be signed, so the private key never leaves the
+vault. Add xkms as an xkey backend and `xkey ssh console` works against it.
 
 The console reuses the same key signer (software **or** hardware-backed) and
 host-key verification — for hardware keys the private key never leaves the
 device. `pkg/ssh/console.Open` requests a PTY, wires stdin/stdout pipes, and
 exposes `Resize(rows, cols)`; `Console.Read`/`Write` are the terminal stream.
 
+#### Shutdown: `CloseWrite` (half) vs `Close` (full)
+
+`Console` separates the two shutdowns the way `net.TCPConn` does, and every
+transport's `ConsoleSession` implements both:
+
+| Call | Effect |
+|------|--------|
+| `CloseWrite()` | **Half close.** Sends an SSH channel EOF so the remote command's stdin reports EOF (what `xkey ssh console host < script` needs); the session stays readable so trailing output still arrives. Idempotent; later `Write`s return `*WriteClosedError`. |
+| `Close()` | **Full teardown.** Closes the session (and, for a `Dial`ed console, the connection), releasing any `Read`/`Write` in flight. Idempotent; every later operation returns `*ClosedError`. |
+
+`Close` never sends the EOF and never blocks on a write: closing the stdin pipe
+reaches `ssh.(*channel).CloseWrite()`, which mutates the channel's EOF flag
+without synchronizing against an in-flight `WriteExtended` — a GUI "disconnect"
+racing the keystroke pump was a real data race, and serializing `Write` behind
+the same lock as `Close` would have turned it into a hang whenever the remote
+stopped reading.
+
+`Read`, `Write`, `Resize` and `Close` are safe to call concurrently.
+`CloseWrite` must be sequenced after the caller's final `Write` — it is the
+"no more input" signal, so by definition no write is outstanding.
+
+Transport specifics: over the WebSocket bridge, the end of the client's input
+stream triggers `CloseWrite` before the deferred `Close`.
+
 **Wire protocol** (WebSocket): binary frames carry terminal bytes (stdin one
 way, stdout the other); text frames are JSON control —
 `{"type":"resize","rows":R,"cols":C}` (client→server) and
 `{"type":"error"|"exit",...}` (server→client).
 
-**Frontend client**: the framework-agnostic `SSHConsoleClient` in **`sdk/ts`**
-(`@go-xkms/sdk`) wraps xterm.js + this protocol; xkey (Svelte) and other web UIs
-(React, etc.) wrap it in their own component. The xkey desktop app serves the
-bridge on a token-gated loopback WebSocket; the xkms REST/QUIC server serves it
-behind JWT auth at `/xkms/v1/ssh/console`.
+**Frontend client**: the framework-agnostic `SSHConsoleClient` on the
+**`@go-xkms/sdk/ssh-console`** subpath wraps xterm.js + this protocol; xkey
+(Svelte) and other web UIs wrap it in their own component. It lives on a subpath
+rather than the package root so consumers that only talk to the REST API do not
+pull xterm into their bundle. The bridge it connects to is the xkey desktop
+app's token-gated loopback WebSocket — the only place this protocol is served.
 
 ```bash
 # CLI: interactive console in the current terminal (in-process, SDK Console)

@@ -26,6 +26,7 @@ import (
 	"github.com/jeremyhahn/go-xkms/pkg/errs"
 
 	"github.com/jeremyhahn/go-xkms/pkg/api/transport"
+	"github.com/jeremyhahn/go-xkms/pkg/attestation"
 	"github.com/jeremyhahn/go-xkms/pkg/auth"
 	"github.com/jeremyhahn/go-xkms/pkg/ca/provider"
 )
@@ -43,6 +44,22 @@ var (
 	// ErrCSRSigningDenied is returned when the caller does not have permission
 	// to sign CSRs.
 	ErrCSRSigningDenied = errors.New("ca: CSR signing denied (insufficient permissions)")
+
+	// ErrAttestationNotConfigured is returned when a CSR carries an attestation
+	// but the server has no attestation trust anchors wired at all. The request
+	// is refused rather than admitted: without an anchor the caller-supplied
+	// chain proves nothing, so accepting it would silently downgrade the
+	// hardware-attestation gate to a no-op.
+	ErrAttestationNotConfigured = errors.New("ca: attestation trust anchors not configured")
+
+	// ErrAttestationFormatNotConfigured is returned when a CSR requests an
+	// attestation format for which no trust anchors are configured. It prevents
+	// a caller from selecting an unanchored format to bypass the gate.
+	ErrAttestationFormatNotConfigured = errors.New("ca: no attestation trust anchors configured for format")
+
+	// ErrAttestationVerifierInvalid is returned when a verifier offered to
+	// SetAttestationVerifiers cannot enforce anchoring.
+	ErrAttestationVerifierInvalid = errors.New("ca: invalid attestation verifier")
 )
 
 // getCA returns the typed CA provider. Returns ErrNotConfigured if no CA is wired.
@@ -177,14 +194,107 @@ func (s *XKMSService) SignCSR(ctx context.Context, req *transport.SignCSRRequest
 	}, nil
 }
 
+// SetAttestationVerifiers wires the per-format hardware-attestation verifiers
+// used to verify attestation chains presented with a CSR. Keys are attestation
+// format identifiers as they appear on the wire ("tpm2", "yubikey-piv"); they
+// are normalized to lower case.
+//
+// Each verifier must carry at least one trust anchor. A verifier with no
+// anchors cannot establish hardware provenance, so it is rejected here rather
+// than stored — a misconfiguration must never downgrade the attestation gate to
+// accepting a caller-minted chain. Formats with no configured verifier are
+// refused at the gate; passing a nil or empty map leaves attestation-gated CSR
+// signing failing closed.
+func (s *XKMSService) SetAttestationVerifiers(verifiers map[string]*attestation.Verifier) error {
+	normalized := make(map[string]*attestation.Verifier, len(verifiers))
+	for format, verifier := range verifiers {
+		key := normalizeAttestationFormat(format)
+		if key == "" {
+			return &errs.Detail{Err: ErrAttestationVerifierInvalid, Detail: "empty attestation format"}
+		}
+		if verifier == nil {
+			return &errs.Detail{Err: ErrAttestationVerifierInvalid, Detail: "nil verifier for format " + key}
+		}
+		if verifier.TrustAnchorCount() == 0 {
+			return &errs.Detail{Err: ErrAttestationVerifierInvalid, Detail: "no trust anchors for format " + key}
+		}
+		normalized[key] = verifier
+	}
+
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.attestationVerifiers = normalized
+	return nil
+}
+
+// AttestationFormats returns the attestation formats that have trust anchors
+// configured, in no particular order.
+func (s *XKMSService) AttestationFormats() []string {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	formats := make([]string, 0, len(s.attestationVerifiers))
+	for format := range s.attestationVerifiers {
+		formats = append(formats, format)
+	}
+	return formats
+}
+
+// attestationVerifierFor resolves the verifier registered for an attestation
+// format. The boolean result is false when no verifier is configured for the
+// format, in which case the caller must fail closed.
+func (s *XKMSService) attestationVerifierFor(format string) (*attestation.Verifier, bool) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	verifier, ok := s.attestationVerifiers[normalizeAttestationFormat(format)]
+	return verifier, ok
+}
+
+// normalizeAttestationFormat canonicalizes a wire-supplied attestation format
+// identifier so lookups are case- and whitespace-insensitive.
+func normalizeAttestationFormat(format string) string {
+	return strings.ToLower(strings.TrimSpace(format))
+}
+
 // verifyCSRAttestation verifies the attestation proof included in a CSR
 // signing request. This proves the CSR's private key is stored in hardware.
+//
+// The attestation chain is caller-supplied and is therefore trusted only to the
+// extent that it terminates at a trust anchor the operator configured for the
+// requested format. The chain is ordered leaf-first and its shape is
+// format-specific:
+//
+//	YubiKey PIV ("yubikey-piv"):
+//	  certs[0] = slot attestation cert (signed by the f9 attestation cert)
+//	  certs[1] = f9 attestation cert (signed by the Yubico PIV Root CA)
+//	  anchor   = Yubico PIV Root CA
+//
+//	TPM 2.0 ("tpm2"):
+//	  certs[0] = AK/IAK cert
+//	  certs[1] = EK cert (signed by the TPM manufacturer CA)
+//	  anchor   = TPM manufacturer root
+//
+// Anchors are registered per format, so a Yubico anchor can never validate a
+// TPM chain and vice versa. Verification fails closed: a request whose format
+// has no configured anchors is refused, never admitted.
 func (s *XKMSService) verifyCSRAttestation(req *transport.SignCSRRequest) error {
+	verifier, ok := s.attestationVerifierFor(req.AttestationFormat)
+	if !ok {
+		format := normalizeAttestationFormat(req.AttestationFormat)
+		if len(s.AttestationFormats()) == 0 {
+			slog.Warn("CSR attestation refused: no attestation trust anchors configured",
+				"format", format)
+			return &errs.Detail{Err: ErrAttestationNotConfigured, Detail: "format " + format}
+		}
+		slog.Warn("CSR attestation refused: unconfigured attestation format",
+			"format", format)
+		return &errs.Detail{Err: ErrAttestationFormatNotConfigured, Detail: format}
+	}
+
 	if len(req.AttestationChain) == 0 {
 		return &errs.Detail{Err: ErrAttestationVerificationFailed, Detail: "empty attestation chain"}
 	}
 
-	// Parse the attestation certificate chain.
+	// Parse the caller-supplied attestation certificate chain.
 	certs := make([]*x509.Certificate, 0, len(req.AttestationChain))
 	for i, der := range req.AttestationChain {
 		cert, err := x509.ParseCertificate(der)
@@ -194,34 +304,43 @@ func (s *XKMSService) verifyCSRAttestation(req *transport.SignCSRRequest) error 
 		certs = append(certs, cert)
 	}
 
-	// Verify the attestation chain. The first certificate should be the
-	// attestation cert for the generated key, signed by the device's
-	// attestation CA (e.g., YubiKey PIV f9 cert, which chains to Yubico Root CA).
-	//
-	// For YubiKey PIV attestation format:
-	//   certs[0] = slot attestation cert (signed by f9)
-	//   certs[1] = f9 attestation cert (signed by Yubico PIV Root CA)
-	//
-	// For TPM2 attestation format:
-	//   certs[0] = IAK cert
-	//   certs[1] = EK cert (signed by TPM manufacturer CA)
-	//
-	// Full chain verification against trusted roots is deferred to the
-	// attestation verifier when it is wired. For now, we verify the chain
-	// is internally consistent (each cert signed by the next).
-	for i := 0; i < len(certs)-1; i++ {
-		if err := certs[i].CheckSignatureFrom(certs[i+1]); err != nil {
-			slog.Warn("attestation chain verification failed",
-				"index", i,
-				"subject", certs[i].Subject,
-				"issuer", certs[i].Issuer,
-				"error", err)
-			return &errs.Detail{Err: ErrAttestationVerificationFailed, Detail: fmt.Sprintf("chain link %d → %d: %v", i, i+1, err)}
+	stmt := &attestation.AttestationStatement{
+		Format:           normalizeAttestationFormat(req.AttestationFormat),
+		CertificateChain: certs,
+	}
+
+	// VerifyChainAnchored performs structural validation (each certificate
+	// signed by the next, none expired) and X.509 path validation terminating
+	// at a configured anchor. It returns ErrNoTrustAnchors rather than passing
+	// when the verifier holds no anchors.
+	if err := verifier.VerifyChainAnchored(stmt, &attestation.VerifyOptions{}); err != nil {
+		slog.Warn("attestation chain verification failed",
+			"format", stmt.Format,
+			"chain_length", len(certs),
+			"leaf_subject", certs[0].Subject,
+			"error", err)
+		return &errs.Detail{Err: ErrAttestationVerificationFailed, Detail: fmt.Sprintf("%v", err)}
+	}
+
+	// Chain anchoring establishes provenance and nothing more: that some
+	// hardware exists somewhere, not that it holds the key being certified,
+	// nor that the evidence was produced for this request. Those are the
+	// invariants, applied through each format's own mechanism.
+	if err := s.enforceAttestationInvariants(stmt.Format, req, certs[0]); err != nil {
+		return err
+	}
+
+	// Deployment policy on top of the invariants. Android evidence carries
+	// claims no other format expresses -- verified boot state, bootloader
+	// lock, the calling application -- so it has its own gate.
+	if stmt.Format == AttestationFormatAndroidKey {
+		if err := s.verifyAndroidCSRAttestation(req); err != nil {
+			return err
 		}
 	}
 
 	slog.Info("attestation verified",
-		"format", req.AttestationFormat,
+		"format", stmt.Format,
 		"chain_length", len(certs),
 		"leaf_subject", certs[0].Subject)
 

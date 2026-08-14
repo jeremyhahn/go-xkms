@@ -1149,23 +1149,44 @@ func TestDefaultPasswordClientFactory_MissingURL(t *testing.T) {
 	}
 }
 
+// TestDefaultPasswordClientFactory_WithURL previously asserted the STUB
+// behavior — the factory always failed with "transport client creation
+// requires a running xkmsd server". The factory now builds a real (not yet
+// connected) transport client via the shared xkmsd endpoint helper, so a
+// well-formed URL must yield a client; connection failures surface later,
+// when a command actually dials.
 func TestDefaultPasswordClientFactory_WithURL(t *testing.T) {
-	// Save and set the xkmsdURL.
 	original := xkmsdURL
 	xkmsdURL = "http://localhost:8080"
 	defer func() { xkmsdURL = original }()
 
-	_, err := defaultPasswordClientFactory()
-	if err == nil {
-		t.Fatal("defaultPasswordClientFactory should fail (no real server)")
+	client, err := defaultPasswordClientFactory()
+	if err != nil {
+		t.Fatalf("defaultPasswordClientFactory with a valid URL: %v", err)
 	}
+	if client == nil {
+		t.Fatal("defaultPasswordClientFactory returned a nil client without an error")
+	}
+	_ = client.Close()
+}
 
-	var storeErr *PasswordStoreError
-	if !errors.As(err, &storeErr) {
-		t.Fatalf("error should be *PasswordStoreError, got %T", err)
-	}
-	if storeErr.Operation != "connect" {
-		t.Errorf("error operation = %q, want %q", storeErr.Operation, "connect")
+// TestDefaultPasswordClientFactory_UnsupportedScheme verifies a bad scheme is
+// rejected as a typed PasswordStoreError rather than yielding a dead client.
+func TestDefaultPasswordClientFactory_UnsupportedScheme(t *testing.T) {
+	original := xkmsdURL
+	xkmsdURL = "ftp://localhost:8080"
+	defer func() { xkmsdURL = original }()
+
+	if _, err := defaultPasswordClientFactory(); err == nil {
+		t.Fatal("expected an error for an unsupported scheme")
+	} else {
+		var storeErr *PasswordStoreError
+		if !errors.As(err, &storeErr) {
+			t.Fatalf("error should be *PasswordStoreError, got %T", err)
+		}
+		if storeErr.Operation != "connect" {
+			t.Errorf("error operation = %q, want %q", storeErr.Operation, "connect")
+		}
 	}
 }
 

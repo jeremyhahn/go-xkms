@@ -22,6 +22,7 @@ import (
 	"crypto/x509"
 	"crypto/x509/pkix"
 	"errors"
+	"io"
 	"math/big"
 	"testing"
 	"time"
@@ -39,7 +40,7 @@ func TestIssuer_SerialCleanupOnFailure(t *testing.T) {
 		// Signer that fails on the second Signer() call (during signCertificate for precert)
 		// Call sequence: 1=createLintDER.Certificate, 2=createLintDER.Signer, 3=signCertificate.Certificate, 4=signCertificate.Signer(FAIL)
 		failingSigner := &countingFailSigner{
-			failSignerOnCall: 2, // Fail on second Signer() call
+			failSignOnCall: 2, // Fail signing the precertificate
 		}
 		failingSigner.init()
 
@@ -79,7 +80,7 @@ func TestIssuer_SerialCleanupOnFailure(t *testing.T) {
 		// 5=createLintDER.Certificate(final), 6=createLintDER.Signer(final),
 		// 7=signCertificate.Certificate(final), 8=signCertificate.Signer(final - FAIL)
 		failingSigner := &countingFailSigner{
-			failSignerOnCall: 4, // Fail on 4th Signer() call (during final cert signing)
+			failSignOnCall: 4, // Fail signing the final certificate
 		}
 		failingSigner.init()
 
@@ -119,7 +120,7 @@ func TestIssuer_SerialCleanupOnFailure(t *testing.T) {
 		// Signer that succeeds for precert but fails during final lint DER creation
 		// Fail on 3rd Certificate() call (during createLintDER for final)
 		failingSigner := &countingFailSigner{
-			failCertOnCall: 3, // Fail on 3rd Certificate() call
+			failSignOnCall: 3, // Fail signing the final lint certificate
 		}
 		failingSigner.init()
 
@@ -158,7 +159,7 @@ func TestIssuer_SerialCleanupOnFailure(t *testing.T) {
 	t.Run("no cleanup when no serial storage configured", func(t *testing.T) {
 		// Signer that fails on precert signing
 		failingSigner := &countingFailSigner{
-			failSignerOnCall: 2, // Fail during precert signing
+			failSignOnCall: 2, // Fail signing the precertificate
 		}
 		failingSigner.init()
 
@@ -193,7 +194,7 @@ func TestIssuer_SignCertificateErrorPaths(t *testing.T) {
 	t.Run("certificate error during precert signing", func(t *testing.T) {
 		// Signer that fails Certificate() on the second call (during signCertificate for precert)
 		failingSigner := &countingFailSigner{
-			failCertOnCall: 2, // First call is for createLintDER, second is for signCertificate (precert)
+			failSignOnCall: 2, // Fail signing the precertificate
 		}
 		failingSigner.init()
 
@@ -223,7 +224,7 @@ func TestIssuer_SignCertificateErrorPaths(t *testing.T) {
 	t.Run("signer error during precert signing", func(t *testing.T) {
 		// Signer that fails Signer() on the second call (during signCertificate for precert)
 		failingSigner := &countingFailSigner{
-			failSignerOnCall: 2, // Second Signer() call is for precert signing
+			failSignOnCall: 2, // Fail signing the precertificate
 		}
 		failingSigner.init()
 
@@ -253,7 +254,7 @@ func TestIssuer_SignCertificateErrorPaths(t *testing.T) {
 	t.Run("certificate error during final cert signing", func(t *testing.T) {
 		// Signer that fails Certificate() later (during final cert signing)
 		failingSigner := &countingFailSigner{
-			failCertOnCall: 4, // Fail on 4th Certificate() call (for final cert signing)
+			failSignOnCall: 4, // Fail signing the final certificate
 		}
 		failingSigner.init()
 
@@ -288,7 +289,7 @@ func TestIssuer_SignCertificateErrorPaths(t *testing.T) {
 	t.Run("signer error during final cert signing", func(t *testing.T) {
 		// Signer that fails Signer() later (during final cert signing)
 		failingSigner := &countingFailSigner{
-			failSignerOnCall: 4, // Fail on 4th Signer() call (for final cert signing)
+			failSignOnCall: 4, // Fail signing the final certificate
 		}
 		failingSigner.init()
 
@@ -327,7 +328,7 @@ func TestIssuer_CreateLintDERErrorPaths(t *testing.T) {
 	t.Run("certificate error during lint DER creation", func(t *testing.T) {
 		// Signer that fails on first Certificate() call (during createLintDER)
 		failingSigner := &countingFailSigner{
-			failCertOnCall: 1,
+			failSignOnCall: 1, // Fail signing the lint precertificate
 		}
 		failingSigner.init()
 
@@ -357,7 +358,7 @@ func TestIssuer_CreateLintDERErrorPaths(t *testing.T) {
 	t.Run("signer error during lint DER creation", func(t *testing.T) {
 		// Signer that fails on first Signer() call (during createLintDER)
 		failingSigner := &countingFailSigner{
-			failSignerOnCall: 1,
+			failSignOnCall: 1, // Fail signing the lint precertificate
 		}
 		failingSigner.init()
 
@@ -386,7 +387,7 @@ func TestIssuer_CreateLintDERErrorPaths(t *testing.T) {
 	t.Run("certificate error during final lint DER creation", func(t *testing.T) {
 		// Signer that fails on 3rd Certificate() call (during final lint DER creation)
 		failingSigner := &countingFailSigner{
-			failCertOnCall: 3, // Third call is for final lint DER
+			failSignOnCall: 3, // Fail signing the final lint certificate
 		}
 		failingSigner.init()
 
@@ -421,7 +422,7 @@ func TestIssuer_CreateLintDERErrorPaths(t *testing.T) {
 	t.Run("signer error during final lint DER creation", func(t *testing.T) {
 		// Signer that fails on 3rd Signer() call (during final lint DER creation)
 		failingSigner := &countingFailSigner{
-			failSignerOnCall: 3, // Third call is for final lint DER
+			failSignOnCall: 3, // Fail signing the final lint certificate
 		}
 		failingSigner.init()
 
@@ -465,7 +466,7 @@ func TestIssuer_GetIssuerChainError(t *testing.T) {
 	t.Run("chain error when getting issuer certificate", func(t *testing.T) {
 		// Create signer that fails Certificate() on the 3rd call (when getting issuer chain for CT)
 		failingSigner := &countingFailSigner{
-			failCertOnCall: 3, // Fail on 3rd Certificate() call (getIssuerChain)
+			failCertOnCall: 2, // Fail on the getIssuerChain Certificate() call
 		}
 		failingSigner.init()
 
@@ -580,6 +581,29 @@ type countingFailSigner struct {
 	signerCallCount  int
 	failCertOnCall   int // 0 means never fail
 	failSignerOnCall int // 0 means never fail
+
+	// failSignOnCall injects a failure into the nth signature rather than into
+	// the nth accessor call. The issuer resolves its signing identity once and
+	// then signs four times — the lint precertificate, the precertificate, the
+	// final lint certificate and the final certificate, in that order — so the
+	// signature count is what selects a stage of the pipeline.
+	failSignOnCall int
+	signStage      *stageFailingSigner
+}
+
+// stageFailingSigner wraps a crypto.Signer and fails on the nth Sign call.
+type stageFailingSigner struct {
+	crypto.Signer
+	failOnCall int
+	calls      int
+}
+
+func (s *stageFailingSigner) Sign(randReader io.Reader, digest []byte, opts crypto.SignerOpts) ([]byte, error) {
+	s.calls++
+	if s.failOnCall > 0 && s.calls >= s.failOnCall {
+		return nil, errors.New("sign error on call " + big.NewInt(int64(s.calls)).String())
+	}
+	return s.Signer.Sign(randReader, digest, opts)
 }
 
 func (s *countingFailSigner) init() {
@@ -615,6 +639,12 @@ func (s *countingFailSigner) Signer() (crypto.Signer, error) {
 	s.signerCallCount++
 	if s.failSignerOnCall > 0 && s.signerCallCount >= s.failSignerOnCall {
 		return nil, errors.New("signer error on call " + big.NewInt(int64(s.signerCallCount)).String())
+	}
+	if s.failSignOnCall > 0 {
+		if s.signStage == nil {
+			s.signStage = &stageFailingSigner{Signer: s.key, failOnCall: s.failSignOnCall}
+		}
+		return s.signStage, nil
 	}
 	return s.key, nil
 }

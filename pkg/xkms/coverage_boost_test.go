@@ -7,6 +7,7 @@ import (
 	"crypto/elliptic"
 	"crypto/rand"
 	"crypto/rsa"
+	"crypto/sha256"
 	"crypto/x509"
 	"errors"
 	"testing"
@@ -115,9 +116,18 @@ func (m *boostIEKeyProvider) WrapKey(_ context.Context, keyMaterial []byte, para
 	if m.wrapErr != nil {
 		return nil, m.wrapErr
 	}
+	// Real RSA-OAEP under this provider's own wrapping key rather than a canned
+	// value. A mock that ignores its input cannot tell a caller that wrapped
+	// the right material from one that wrapped nothing, so a test built on it
+	// would pass either way.
+	wrapped, err := rsa.EncryptOAEP(sha256.New(), rand.Reader, &m.wrappingKey.PublicKey, keyMaterial, nil)
+	if err != nil {
+		return nil, err
+	}
 	return &backend.WrappedKeyMaterial{
-		WrappedKey: []byte("wrapped-material"),
-		Algorithm:  params.Algorithm,
+		WrappedKey:  wrapped,
+		Algorithm:   params.Algorithm,
+		ImportToken: params.ImportToken,
 	}, nil
 }
 
@@ -361,6 +371,7 @@ func TestBoostImportKey_IEBackend_Success(t *testing.T) {
 	resp, err := svc.ImportKey(context.Background(), &transport.ImportKeyRequest{
 		KeyID:              "imported-key",
 		Backend:            "ie-backend",
+		KeyType:            "ecdsa",
 		WrappedKeyMaterial: []byte("wrapped-data"),
 		Algorithm:          "RSAES_OAEP_SHA_256",
 	})
@@ -379,6 +390,7 @@ func TestBoostImportKey_IEBackend_ImportError(t *testing.T) {
 	_, err = svc.ImportKey(context.Background(), &transport.ImportKeyRequest{
 		KeyID:              "fail-import",
 		Backend:            "ie-backend",
+		KeyType:            "ecdsa",
 		WrappedKeyMaterial: []byte("data"),
 	})
 	require.Error(t, err)
@@ -1328,19 +1340,44 @@ func TestBoostBuildKeyAttributes_SecretAlias(t *testing.T) {
 	assert.NotEmpty(t, attrs.SymmetricAlgorithm)
 }
 
+// TestBoostBuildImportKeyAttributes_WithKeyType covers the algorithm names an
+// ImportKeyRequest's KeyType may take. The field names the ALGORITHM, and the
+// purpose follows from it.
 func TestBoostBuildImportKeyAttributes_WithKeyType(t *testing.T) {
-	attrs := buildImportKeyAttributes(&transport.ImportKeyRequest{
+	attrs, err := buildImportKeyAttributes(&transport.ImportKeyRequest{
+		KeyID:   "key",
+		KeyType: "rsa",
+	}, "software")
+	require.NoError(t, err)
+	assert.Equal(t, types.KeyTypeSigning, attrs.KeyType)
+	assert.Equal(t, x509.RSA, attrs.KeyAlgorithm)
+}
+
+// TestBoostBuildImportKeyAttributes_PurposeNameRejected pins that a purpose
+// name is not an algorithm.
+//
+// "signing" used to be accepted and produce attributes with KeyTypeSigning and
+// no algorithm at all, so types.KeyAttributes.ID() ended in "unknown" and the
+// key was stored where nothing else looks for it.
+func TestBoostBuildImportKeyAttributes_PurposeNameRejected(t *testing.T) {
+	_, err := buildImportKeyAttributes(&transport.ImportKeyRequest{
 		KeyID:   "key",
 		KeyType: "signing",
 	}, "software")
-	assert.Equal(t, types.KeyTypeSigning, attrs.KeyType)
+	require.Error(t, err)
+	assert.ErrorIs(t, err, ErrInvalidKeyType)
 }
 
-func TestBoostBuildImportKeyAttributes_DefaultKeyType(t *testing.T) {
-	attrs := buildImportKeyAttributes(&transport.ImportKeyRequest{
+// TestBoostBuildImportKeyAttributes_KeyTypeRequired pins that there is no
+// default algorithm for an import. The algorithm cannot be recovered from the
+// wrapped material at this layer, so a request that omits it is refused rather
+// than answered with a key stored under an identifier that misdescribes it.
+func TestBoostBuildImportKeyAttributes_KeyTypeRequired(t *testing.T) {
+	_, err := buildImportKeyAttributes(&transport.ImportKeyRequest{
 		KeyID: "key",
 	}, "software")
-	assert.Equal(t, types.KeyTypeSigning, attrs.KeyType)
+	require.Error(t, err)
+	assert.ErrorIs(t, err, ErrMissingRequiredField)
 }
 
 func TestBoostParseCurveString_AllCurves(t *testing.T) {
@@ -1378,7 +1415,7 @@ func TestBoostParseSymmetricAlgorithm_Variants(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.input, func(t *testing.T) {
-			result := parseSymmetricAlgorithm(tt.input)
+			result := ParseSymmetricAlgorithm(tt.input)
 			if tt.wantNone {
 				assert.Empty(t, result)
 			} else {
@@ -1389,23 +1426,32 @@ func TestBoostParseSymmetricAlgorithm_Variants(t *testing.T) {
 }
 
 // ===========================================================================
-// servicer_helpers.go: parseHash
+// servicer_helpers.go: resolveHash
 // ===========================================================================
 
-func TestBoostParseHash_Values(t *testing.T) {
+func TestBoostResolveHash_Values(t *testing.T) {
 	tests := []struct {
-		input string
-		want  crypto.Hash
+		input   string
+		want    crypto.Hash
+		wantErr bool
 	}{
-		{"", crypto.SHA256},
-		{"sha256", crypto.SHA256},
-		{"sha384", crypto.SHA384},
-		{"sha512", crypto.SHA512},
-		{"unknown-hash", crypto.SHA256},
+		{"", crypto.SHA256, false},
+		{"sha256", crypto.SHA256, false},
+		{"sha384", crypto.SHA384, false},
+		{"sha512", crypto.SHA512, false},
+		{"sha3-256", crypto.SHA3_256, false},
+		{"unknown-hash", 0, true},
+		{"md5", 0, true},
 	}
 	for _, tt := range tests {
 		t.Run(tt.input, func(t *testing.T) {
-			got := parseHash(tt.input)
+			got, err := ResolveHash(tt.input)
+			if tt.wantErr {
+				require.Error(t, err)
+				assert.ErrorIs(t, err, ErrInvalidHashFunction)
+			} else {
+				require.NoError(t, err)
+			}
 			assert.Equal(t, tt.want, got)
 		})
 	}

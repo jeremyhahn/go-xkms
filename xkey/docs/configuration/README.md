@@ -19,7 +19,7 @@ The `--storage` flag selects the credential storage backend.
 
 **Memory Storage** (Default):
 ```bash
-sudo xkey --storage memory
+sudo xkey fido2 --storage memory
 ```
 
 Best for:
@@ -29,7 +29,7 @@ Best for:
 
 **File Storage**:
 ```bash
-sudo xkey --storage file --storage-path /var/lib/xkey
+sudo xkey fido2 --storage file --storage-path /var/lib/xkey
 ```
 
 Best for:
@@ -42,7 +42,7 @@ Best for:
 When using file storage, `--storage-path` specifies the directory for credential data.
 
 ```bash
-sudo xkey --storage file --storage-path /var/lib/xkey
+sudo xkey fido2 --storage file --storage-path /var/lib/xkey
 ```
 
 The directory is created if it does not exist. Ensure the xkey process has write permissions.
@@ -327,7 +327,7 @@ sudo systemctl start xkey
 xkey luks2 seal --size 64M
 
 # Start xkey with file storage
-sudo xkey --storage file --storage-path ~/.xkey
+sudo xkey fido2 --storage file --storage-path ~/.xkey
 ```
 
 ### Security Considerations
@@ -365,7 +365,7 @@ echo "$PASSPHRASE" | xkey luks2 unseal
 The `--name` flag sets the device name reported to the operating system.
 
 ```bash
-sudo xkey --name "My Test Xkey"
+sudo xkey fido2 --name "My Test Xkey"
 ```
 
 Default: `Xkey Virtual Device (go-xkms)`
@@ -380,7 +380,7 @@ This name appears in:
 The `--serial` flag sets the device serial number.
 
 ```bash
-sudo xkey --serial "XKMSFIDO2-12345678"
+sudo xkey fido2 --serial "XKMSFIDO2-12345678"
 ```
 
 Default: Auto-generated 16-character hexadecimal string.
@@ -394,7 +394,7 @@ Serial numbers should be unique per device instance to avoid conflicts when runn
 The `--pin` flag enables PIN-based user verification.
 
 ```bash
-sudo xkey --pin
+sudo xkey fido2 --pin
 ```
 
 When enabled:
@@ -407,7 +407,7 @@ When enabled:
 The `--set-pin` flag sets the initial PIN during startup. Requires `--pin`.
 
 ```bash
-sudo xkey --pin --set-pin 123456
+sudo xkey fido2 --pin --set-pin 123456
 ```
 
 PIN requirements:
@@ -420,51 +420,50 @@ PIN requirements:
 
 The SO PIN provides administrative access for protected operations that should not be available to regular users.
 
-### Enabling SO PIN
+### Setting the SO PIN
 
-The `--so-pin` flag enables Security Officer PIN support.
-
-```bash
-sudo xkey --so-pin
-```
-
-When enabled:
-- Protected operations require SO PIN authentication
-- SO PIN must be set before use (via `--set-so-pin` or CTAP2.1 vendorSetSOPIN)
-- SO PIN has configurable retry attempts before permanent lockout
-
-### Setting Initial SO PIN
-
-The `--set-so-pin` flag sets the initial SO PIN during startup. Requires `--so-pin`.
+The SO PIN is **not** a startup flag. It is managed by the `xkey pin` command
+group, which prompts for the PIN rather than taking it on the command line, so
+it never lands in shell history or the process list:
 
 ```bash
-sudo xkey --so-pin --set-so-pin "SecureAdmin123!"
+xkey pin set-so           # set the SO PIN for the first time
+xkey pin change-so        # change an existing SO PIN
+xkey pin status           # whether each PIN is set, and retry counts
+xkey pin reset-lockout    # clear a lockout
 ```
 
-SO PIN requirements:
-- Minimum 8 characters (recommended: 12+)
-- Should differ from user PIN
+`xkey pin set-so` accepts `--data-dir` to target a specific store. If the SO
+PIN is already set, it prompts for the current one first.
+
+The SO PIN must be set before user PINs can be configured:
+
+```bash
+xkey pin set-so
+xkey pin set-user
+```
+
+SO PIN requirements (`pkg/authenticator/so_pin.go`):
+- Minimum 6 characters, maximum 63 (UTF-8 bytes); 12+ recommended
+- Should differ from the user PIN
 - Supports alphanumeric and special characters
 
 ### SO PIN Retry Limit
 
-The `--so-pin-retries` flag configures maximum SO PIN attempts.
+The retry limit is a fixed authenticator constant, `DefaultSOPINMaxRetries`,
+which is **8**. There is no flag to configure it.
 
-```bash
-sudo xkey --so-pin --so-pin-retries 5
-```
+**Warning**: When the SO PIN is locked, administrative operations are
+permanently disabled. There is no recovery mechanism.
 
-Default: `8` attempts
+### Over CTAP2
 
-**Warning**: When SO PIN is locked, administrative operations are permanently disabled. There is no recovery mechanism.
-
-### SO PIN Configuration Table
-
-| Flag | Default | Description |
-|------|---------|-------------|
-| `--so-pin` | `false` | Enable SO PIN support |
-| `--set-so-pin` | (none) | Set initial SO PIN (requires `--so-pin`) |
-| `--so-pin-retries` | `8` | Maximum retry attempts before lockout |
+The same operations are reachable over CTAP2.1 `authenticatorConfig`. Vendor
+operations are nested: the subcommand is `AuthConfigCmdVendorPrototype` (0x80),
+and the operation is selected by a vendor command ID inside it —
+`VendorCmdSetSOPIN` (0x01), `VendorCmdChangeSOPIN` (0x02),
+`VendorCmdUnlockWithSOPIN` (0x03), `VendorCmdResetUserPIN` (0x04),
+`VendorCmdReplaceAttestKey` (0x05), `VendorCmdGetSOPINRetries` (0x06).
 
 ### Protected Operations
 
@@ -503,47 +502,53 @@ User PIN --> Argon2id --> UMK ----------------+ (also unwraps CMK)
 
 ### SO PIN Examples
 
+The SO PIN is set once, before the daemon runs, and is not part of the daemon's
+command line in any of these.
+
 **Development with SO PIN:**
 
 ```bash
-sudo xkey \
+xkey pin set-so                 # prompts for the SO PIN
+sudo xkey fido2 \
   --pin --set-pin 123456 \
-  --so-pin --set-so-pin "DevAdmin123" \
   --log-level debug
 ```
 
 **Production with hardware-backed SO:**
 
 ```bash
-sudo xkey \
+xkey pin set-so
+sudo xkey fido2 \
   --backend tpm2 \
   --tpm-device /dev/tpmrm0 \
   --storage file \
   --storage-path /var/lib/xkey \
   --pin \
-  --so-pin --so-pin-retries 5 \
   --attestation tpm
 ```
 
 **High-security deployment:**
 
 ```bash
-sudo xkey \
+xkey pin set-so
+sudo xkey fido2 \
   --backend tpm2 \
   --storage file \
   --storage-path /var/lib/xkey \
   --pin \
-  --so-pin --set-so-pin "$(cat /run/secrets/so-pin)" \
-  --so-pin-retries 3 \
   --log-file /var/log/xkey.log
 ```
+
+Because `xkey pin set-so` prompts, a secret file is read by the operator at the
+prompt rather than interpolated into a command line where it would reach the
+process list and the shell history.
 
 ### Security Recommendations
 
 1. **Strong SO PIN**: Use at least 12 characters with mixed case, numbers, and symbols
 2. **Different from User PIN**: Never use the same PIN for SO and user
 3. **Secure Storage**: Store SO PIN in a secure location (HSM, vault, air-gapped system)
-4. **Limited Retries**: Consider reducing `--so-pin-retries` for high-security deployments
+4. **Limited Retries**: The retry limit is fixed at 8 (`DefaultSOPINMaxRetries`) and is not configurable; plan recovery around that
 5. **Audit Logging**: Enable logging to track SO PIN operations
 6. **Physical Security**: Restrict physical access to systems with SO PIN configured
 
@@ -554,7 +559,7 @@ sudo xkey \
 The `--interactive` flag enables terminal-based user presence prompts.
 
 ```bash
-sudo xkey --interactive
+sudo xkey fido2 --interactive
 ```
 
 In interactive mode:
@@ -570,7 +575,7 @@ In interactive mode:
 The `--timeout` flag sets the timeout for user presence requests.
 
 ```bash
-sudo xkey --interactive --timeout 60s
+sudo xkey fido2 --interactive --timeout 60s
 ```
 
 Default: `30s`
@@ -592,7 +597,7 @@ The `--backend` flag selects the cryptographic key backend.
 
 **Software Backend** (Default):
 ```bash
-sudo xkey --backend software
+sudo xkey fido2 --backend software
 ```
 
 Features:
@@ -602,7 +607,7 @@ Features:
 
 **TPM2 Backend**:
 ```bash
-sudo xkey --backend tpm2 --tpm-device /dev/tpmrm0
+sudo xkey fido2 --backend tpm2 --tpm-device /dev/tpmrm0
 ```
 
 Features:
@@ -616,7 +621,7 @@ Features:
 The `--tpm-device` flag specifies the TPM device when using the tpm2 backend.
 
 ```bash
-sudo xkey --backend tpm2 --tpm-device /dev/tpmrm0
+sudo xkey fido2 --backend tpm2 --tpm-device /dev/tpmrm0
 ```
 
 Default: `/dev/tpmrm0`
@@ -639,21 +644,21 @@ The `--attestation` flag selects the attestation statement format.
 
 **None** (Default):
 ```bash
-sudo xkey --attestation none
+sudo xkey fido2 --attestation none
 ```
 
 Provides maximum privacy. Relying parties cannot verify authenticator identity.
 
 **Packed**:
 ```bash
-sudo xkey --attestation packed
+sudo xkey fido2 --attestation packed
 ```
 
 Self-signed attestation with x5c certificate chain. Suitable for testing attestation verification flows.
 
 **TPM**:
 ```bash
-sudo xkey --backend tpm2 --attestation tpm
+sudo xkey fido2 --backend tpm2 --attestation tpm
 ```
 
 Hardware attestation with TPM-generated signature. Provides cryptographic proof of hardware protection.
@@ -719,7 +724,7 @@ sudo xkey
 ### Development with Debug Logging
 
 ```bash
-sudo xkey \
+sudo xkey fido2 \
   --log-level debug \
   --name "Xkey Dev"
 ```
@@ -727,7 +732,7 @@ sudo xkey \
 ### CI/CD Integration
 
 ```bash
-sudo xkey \
+sudo xkey fido2 \
   --storage memory \
   --pin --set-pin testpin \
   --log-level error
@@ -736,7 +741,7 @@ sudo xkey \
 ### Production Service
 
 ```bash
-sudo xkey \
+sudo xkey fido2 \
   --storage file \
   --storage-path /var/lib/xkey \
   --log-file /var/log/xkey.log \
@@ -747,7 +752,7 @@ sudo xkey \
 ### Hardware-Backed Security
 
 ```bash
-sudo xkey \
+sudo xkey fido2 \
   --backend tpm2 \
   --tpm-device /dev/tpmrm0 \
   --attestation tpm \
@@ -759,7 +764,7 @@ sudo xkey \
 ### Interactive Manual Testing
 
 ```bash
-sudo xkey \
+sudo xkey fido2 \
   --interactive \
   --timeout 60s \
   --log-level info \

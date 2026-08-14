@@ -56,7 +56,7 @@ func (e *SudoElevator) IsAvailable() bool {
 		e.log.Debug("IsAvailable: executable path not found")
 		return false
 	}
-	_, err := exec.LookPath("sudo")
+	_, err := sudoLookPath("sudo")
 	available := err == nil
 
 	e.log.Debug("IsAvailable check",
@@ -97,7 +97,7 @@ func (e *SudoElevator) Run(args []string, stdinData []byte) ([]byte, error) {
 	cmdArgs = append(cmdArgs, "-S", e.execPath, "--no-gui")
 	cmdArgs = append(cmdArgs, args...)
 
-	cmd := exec.Command("sudo", cmdArgs...) // #nosec G204 -- re-invoking self
+	cmd := sudoCommand("sudo", cmdArgs...) // #nosec G204 -- re-invoking self
 	cmd.Stdin = &stdinBuf
 
 	var stdout bytes.Buffer

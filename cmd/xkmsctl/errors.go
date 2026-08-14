@@ -61,6 +61,13 @@ var (
 	// BarrierSealConfirmationError. Sentinel-style flag-validation errors
 	// for barrier verbs have been retired in favour of those typed forms.
 
+	// ErrImportKeyTypeRequired is returned when `key import` is invoked without
+	// --key-type. The server cannot infer the algorithm from wrapped material —
+	// it is opaque ciphertext — so an import that omits it previously stored a
+	// key with no algorithm that no later operation could resolve. Requiring it
+	// here turns that silent corruption into an error before anything is sent.
+	ErrImportKeyTypeRequired = errors.New("--key-type is required (rsa, ecdsa, ed25519, or aes)")
+
 	// Custodian group errors
 
 	// ErrCustodianNameRequired is returned when --name is not provided for custodian create.
@@ -115,6 +122,12 @@ var (
 
 	// ErrUsernameRequired is returned when --username is not specified.
 	ErrUsernameRequired = errors.New("--username is required")
+
+	// ErrExternalOfficerMaterial reports that external-officer enrolment was
+	// given both or neither of --cert / --pubkey. Exactly one is required:
+	// they are different trust sources (external CA chain vs admin-asserted),
+	// so accepting both would leave the trust decision ambiguous.
+	ErrExternalOfficerMaterial = errors.New("exactly one of --cert or --pubkey is required")
 
 	// ErrKeyFileRequired is returned when --key is not specified for claim-cert.
 	ErrKeyFileRequired = errors.New("--key is required for claim-cert (CSR private key)")
@@ -175,14 +188,54 @@ var (
 	// ErrShareFileWrite is returned when a share file cannot be written.
 	ErrShareFileWrite = errors.New("failed to write share file")
 
+	// ErrShareMissingInResponse is returned when the server answers a share
+	// claim with a body that carries no share document.
+	ErrShareMissingInResponse = errors.New("server response contained no share")
+
+	// ErrShareGroupIDRequired is returned when a share command needs --group-id.
+	ErrShareGroupIDRequired = errors.New("--group-id is required")
+
+	// ErrShareDataRequired is returned when share submission has no share data.
+	ErrShareDataRequired = errors.New("share data is required (use --data or --file)")
+
+	// ErrShareDataSourceConflict is returned when both --data and --file are set.
+	ErrShareDataSourceConflict = errors.New("only one of --data or --file may be provided")
+
+	// ErrSubmitShareFailed wraps a share submission failure.
+	ErrSubmitShareFailed = errors.New("failed to submit share")
+
+	// ErrListSharesFailed wraps a share listing failure.
+	ErrListSharesFailed = errors.New("failed to list shares")
+
+	// ErrShareCollectionStatusFailed wraps a collection-status failure.
+	ErrShareCollectionStatusFailed = errors.New("failed to get share collection status")
+
+	// ErrReadShareFileFailed wraps a share file read failure.
+	ErrReadShareFileFailed = errors.New("failed to read share file")
+
+	// ErrShareServerURLRequired is returned when a per-share command needs
+	// --server-url to address the share.
+	ErrShareServerURLRequired = errors.New("--server-url is required")
+
+	// ErrListAlgorithmsFailed wraps an algorithm-discovery failure.
+	ErrListAlgorithmsFailed = errors.New("failed to list algorithms")
+
+	// ErrGetShareFailed wraps a single-share retrieval failure.
+	ErrGetShareFailed = errors.New("failed to get share")
+
+	// ErrDeleteShareFailed wraps a single-share deletion failure.
+	ErrDeleteShareFailed = errors.New("failed to delete share")
+
 	// ErrKeyGenFailed is returned when key generation fails.
 	ErrKeyGenFailed = errors.New("failed to generate key pair")
 
-	// ErrPubKeyMarshalFailed is returned when public key marshalling fails.
-	ErrPubKeyMarshalFailed = errors.New("failed to marshal public key")
-
 	// ErrInvalidCA is returned when the CA certificate is invalid.
 	ErrInvalidCA = errors.New("invalid CA certificate")
+
+	// ErrUnsupportedPrivateKeyType is returned when a generated or loaded
+	// private key does not implement crypto.Signer, so it cannot be used to
+	// issue a certificate.
+	ErrUnsupportedPrivateKeyType = errors.New("unsupported private key type")
 
 	// FIDO2 virtual device errors
 
@@ -207,6 +260,14 @@ var (
 
 	// ErrAuthenticationFailed is the sentinel error "authentication failed".
 	ErrAuthenticationFailed = errors.New("authentication failed")
+
+	// ErrAuditFromInvalid is returned when "audit query" is invoked with a
+	// --from value that does not parse as RFC3339.
+	ErrAuditFromInvalid = errors.New("--from is not a valid RFC3339 timestamp")
+
+	// ErrAuditToInvalid is returned when "audit query" is invoked with a
+	// --to value that does not parse as RFC3339.
+	ErrAuditToInvalid = errors.New("--to is not a valid RFC3339 timestamp")
 
 	// ErrBeginAuthenticationFailed is the sentinel error "failed to begin authentication".
 	ErrBeginAuthenticationFailed = errors.New("failed to begin authentication")
@@ -526,6 +587,16 @@ var (
 	// ErrGetClusterStatusFailed is the sentinel error "failed to get cluster status".
 	ErrGetClusterStatusFailed = errors.New("failed to get cluster status")
 
+	// ErrAddClusterReplicaFailed is the sentinel error "failed to add cluster replica".
+	ErrAddClusterReplicaFailed = errors.New("failed to add cluster replica")
+
+	// ErrRemoveClusterReplicaFailed is the sentinel error "failed to remove cluster replica".
+	ErrRemoveClusterReplicaFailed = errors.New("failed to remove cluster replica")
+
+	// ErrInvalidReplicaID is the sentinel error for a replica identifier that is
+	// not a positive integer. Zero is reserved by Raft to mean "no replica".
+	ErrInvalidReplicaID = errors.New("invalid replica id: must be a positive integer")
+
 	// ErrGetCustodianGroupFailed is the sentinel error "failed to get custodian group".
 	ErrGetCustodianGroupFailed = errors.New("failed to get custodian group")
 
@@ -751,6 +822,9 @@ var (
 	// ErrParseRegistrationOptionsFailed is the sentinel error "failed to parse registration options".
 	ErrParseRegistrationOptionsFailed = errors.New("failed to parse registration options")
 
+	// ErrQueryAuditFailed is the sentinel error "failed to query audit log".
+	ErrQueryAuditFailed = errors.New("failed to query audit log")
+
 	// ErrRSAKeySizeTooSmall is the sentinel error "RSA key size must be at least 2048 bits".
 	ErrRSAKeySizeTooSmall = errors.New("RSA key size must be at least 2048 bits")
 
@@ -810,6 +884,12 @@ var (
 
 	// ErrRecoverBarrierFailed is the sentinel error "failed to recover barrier".
 	ErrRecoverBarrierFailed = errors.New("failed to recover barrier")
+
+	// ErrDeleteRecoveryKeysFailed wraps a recovery-key deletion failure.
+	ErrDeleteRecoveryKeysFailed = errors.New("failed to delete recovery keys")
+
+	// ErrGenerateRootTokenFailed wraps a root-token generation failure.
+	ErrGenerateRootTokenFailed = errors.New("failed to generate root token")
 
 	// ErrRegisterCredentialFailed is the sentinel error "failed to register credential".
 	ErrRegisterCredentialFailed = errors.New("failed to register credential")
@@ -987,6 +1067,216 @@ var (
 
 	// ErrWriteWrappedKeyFileFailed is the sentinel error "failed to write wrapped key file".
 	ErrWriteWrappedKeyFileFailed = errors.New("failed to write wrapped key file")
+)
+
+// Sentinel errors for the password / platform / policy / pin / status
+// command groups and the key attestation, ECDH derivation, by-ID wrap,
+// and key-material export verbs.
+var (
+	// ErrReadSecretFailed is returned when a secret cannot be read from a
+	// flag, stdin, or an interactive prompt.
+	ErrReadSecretFailed = errors.New("failed to read secret")
+
+	// Password store errors
+
+	// ErrPasswordNameRequired is returned when a password entry name is missing.
+	ErrPasswordNameRequired = errors.New("password name is required")
+
+	// ErrPasswordIDRequired is returned when a password entry ID is missing.
+	ErrPasswordIDRequired = errors.New("password id is required")
+
+	// ErrPasswordSecretRequired is returned when no password value could be
+	// resolved from the flag, stdin, or the interactive prompt.
+	ErrPasswordSecretRequired = errors.New("password value is required")
+
+	// ErrPasswordUpdateNoFields is returned when a password update names no
+	// fields to change.
+	ErrPasswordUpdateNoFields = errors.New("password update requires at least one field flag")
+
+	// ErrAccessModeRequired is returned when the password store access mode
+	// argument is missing.
+	ErrAccessModeRequired = errors.New("access mode is required (pin_per_operation | session_based)")
+
+	// ErrInvalidAccessMode is returned when the password store access mode
+	// is not one of the staticpw access modes.
+	ErrInvalidAccessMode = errors.New("invalid access mode (valid: pin_per_operation, session_based)")
+
+	// ErrAddPasswordFailed is the sentinel error "failed to add password".
+	ErrAddPasswordFailed = errors.New("failed to add password")
+
+	// ErrGetPasswordFailed is the sentinel error "failed to get password".
+	ErrGetPasswordFailed = errors.New("failed to get password")
+
+	// ErrListPasswordsFailed is the sentinel error "failed to list passwords".
+	ErrListPasswordsFailed = errors.New("failed to list passwords")
+
+	// ErrUpdatePasswordFailed is the sentinel error "failed to update password".
+	ErrUpdatePasswordFailed = errors.New("failed to update password")
+
+	// ErrDeletePasswordFailed is the sentinel error "failed to delete password".
+	ErrDeletePasswordFailed = errors.New("failed to delete password")
+
+	// ErrUnlockPasswordStoreFailed is the sentinel error "failed to unlock password store".
+	ErrUnlockPasswordStoreFailed = errors.New("failed to unlock password store")
+
+	// ErrLockPasswordStoreFailed is the sentinel error "failed to lock password store".
+	ErrLockPasswordStoreFailed = errors.New("failed to lock password store")
+
+	// ErrPasswordStoreStatusFailed is the sentinel error "failed to get password store status".
+	ErrPasswordStoreStatusFailed = errors.New("failed to get password store status")
+
+	// ErrSetPasswordAccessModeFailed is the sentinel error "failed to set password store access mode".
+	ErrSetPasswordAccessModeFailed = errors.New("failed to set password store access mode")
+
+	// ErrGeneratePasswordFailed is the sentinel error "failed to generate password".
+	ErrGeneratePasswordFailed = errors.New("failed to generate password")
+
+	// Platform store errors
+
+	// ErrPlatformSecretNameRequired is returned when a platform secret name is missing.
+	ErrPlatformSecretNameRequired = errors.New("platform secret name is required")
+
+	// ErrPlatformSecretRequired is returned when no secret bytes could be
+	// resolved from --value, --file, stdin, or the interactive prompt.
+	ErrPlatformSecretRequired = errors.New("platform secret value is required")
+
+	// ErrPlatformSecretSourceConflict is returned when both --value and
+	// --file are supplied for a platform secret.
+	ErrPlatformSecretSourceConflict = errors.New("--value and --file are mutually exclusive")
+
+	// ErrReadSecretFileFailed is the sentinel error "failed to read secret file".
+	ErrReadSecretFileFailed = errors.New("failed to read secret file")
+
+	// ErrWriteSecretFileFailed is the sentinel error "failed to write secret file".
+	ErrWriteSecretFileFailed = errors.New("failed to write secret file")
+
+	// ErrPutPlatformSecretFailed is the sentinel error "failed to store platform secret".
+	ErrPutPlatformSecretFailed = errors.New("failed to store platform secret")
+
+	// ErrGetPlatformSecretFailed is the sentinel error "failed to get platform secret".
+	ErrGetPlatformSecretFailed = errors.New("failed to get platform secret")
+
+	// ErrDeletePlatformSecretFailed is the sentinel error "failed to delete platform secret".
+	ErrDeletePlatformSecretFailed = errors.New("failed to delete platform secret")
+
+	// ErrListPlatformSecretsFailed is the sentinel error "failed to list platform secrets".
+	ErrListPlatformSecretsFailed = errors.New("failed to list platform secrets")
+
+	// ErrResealPlatformSecretFailed is the sentinel error "failed to reseal platform secret".
+	ErrResealPlatformSecretFailed = errors.New("failed to reseal platform secret")
+
+	// ErrPlatformStoreStatusFailed is the sentinel error "failed to get platform store status".
+	ErrPlatformStoreStatusFailed = errors.New("failed to get platform store status")
+
+	// PCR policy errors
+
+	// ErrPolicyNameRequired is returned when a policy name is missing.
+	ErrPolicyNameRequired = errors.New("policy name is required")
+
+	// ErrPolicyPCRsRequired is returned when --pcrs is missing for policy create.
+	ErrPolicyPCRsRequired = errors.New("--pcrs is required (comma-separated PCR indexes)")
+
+	// ErrCreatePolicyFailed is the sentinel error "failed to create policy".
+	ErrCreatePolicyFailed = errors.New("failed to create policy")
+
+	// ErrGetPolicyFailed is the sentinel error "failed to get policy".
+	ErrGetPolicyFailed = errors.New("failed to get policy")
+
+	// ErrListPoliciesFailed is the sentinel error "failed to list policies".
+	ErrListPoliciesFailed = errors.New("failed to list policies")
+
+	// ErrDeletePolicyFailed is the sentinel error "failed to delete policy".
+	ErrDeletePolicyFailed = errors.New("failed to delete policy")
+
+	// ErrRefreshPolicyFailed is the sentinel error "failed to refresh policy".
+	ErrRefreshPolicyFailed = errors.New("failed to refresh policy")
+
+	// ErrVerifyPolicyFailed is the sentinel error "failed to verify policy".
+	ErrVerifyPolicyFailed = errors.New("failed to verify policy")
+
+	// ErrPolicyVerifyMismatch is returned when a policy does not match the
+	// current PCR values.
+	ErrPolicyVerifyMismatch = errors.New("policy does not match current PCR values")
+
+	// ErrExportPolicyFailed is the sentinel error "failed to export policy".
+	ErrExportPolicyFailed = errors.New("failed to export policy")
+
+	// ErrWritePolicyFileFailed is the sentinel error "failed to write policy file".
+	ErrWritePolicyFileFailed = errors.New("failed to write policy file")
+
+	// PIN errors
+
+	// ErrPINEmpty is returned when an interactive or piped PIN resolves to
+	// an empty string.
+	ErrPINEmpty = errors.New("PIN must not be empty")
+
+	// ErrChangeSOPINFailed is the sentinel error "failed to change SO PIN".
+	ErrChangeSOPINFailed = errors.New("failed to change SO PIN")
+
+	// ErrChangeUserPINFailed is the sentinel error "failed to change user PIN".
+	ErrChangeUserPINFailed = errors.New("failed to change user PIN")
+
+	// ErrVerifyUserPINFailed is the sentinel error "failed to verify user PIN".
+	ErrVerifyUserPINFailed = errors.New("failed to verify user PIN")
+
+	// ErrGetLockoutStatusFailed is the sentinel error "failed to get lockout status".
+	ErrGetLockoutStatusFailed = errors.New("failed to get lockout status")
+
+	// ErrResetLockoutFailed is the sentinel error "failed to reset lockout".
+	ErrResetLockoutFailed = errors.New("failed to reset lockout")
+
+	// Server status errors
+
+	// ErrHealthCheckFailed is the sentinel error "health check failed".
+	ErrHealthCheckFailed = errors.New("health check failed")
+
+	// Key operation errors
+
+	// ErrAttestKeyFailed is the sentinel error "failed to attest key".
+	ErrAttestKeyFailed = errors.New("failed to attest key")
+
+	// ErrGenerateNonceFailed is the sentinel error "failed to generate nonce".
+	ErrGenerateNonceFailed = errors.New("failed to generate nonce")
+
+	// ErrWriteAttestationFileFailed is the sentinel error "failed to write attestation file".
+	ErrWriteAttestationFileFailed = errors.New("failed to write attestation file")
+
+	// ErrDeriveKeyECDHFailed is the sentinel error "failed to derive key via ECDH".
+	ErrDeriveKeyECDHFailed = errors.New("failed to derive key via ECDH")
+
+	// ErrPeerPublicKeyRequired is returned when --peer-key is missing for derive-ecdh.
+	ErrPeerPublicKeyRequired = errors.New("--peer-key is required (peer public key file)")
+
+	// ErrWriteDerivedKeyFileFailed is the sentinel error "failed to write derived key file".
+	ErrWriteDerivedKeyFileFailed = errors.New("failed to write derived key file")
+
+	// ErrWrapKeyByIDFailed is the sentinel error "failed to wrap key by ID".
+	ErrWrapKeyByIDFailed = errors.New("failed to wrap key by ID")
+
+	// ErrUnwrapKeyByIDFailed is the sentinel error "failed to unwrap key by ID".
+	ErrUnwrapKeyByIDFailed = errors.New("failed to unwrap key by ID")
+
+	// ErrWrappingKeyIDRequired is returned when --wrapping-key is missing for wrap-by-id.
+	ErrWrappingKeyIDRequired = errors.New("--wrapping-key is required")
+
+	// ErrUnwrappingKeyIDRequired is returned when --unwrapping-key is missing for unwrap-by-id.
+	ErrUnwrappingKeyIDRequired = errors.New("--unwrapping-key is required")
+
+	// ErrWrappedKeyFileRequired is returned when --wrapped-file is missing for unwrap-by-id.
+	ErrWrappedKeyFileRequired = errors.New("--wrapped-file is required")
+
+	// ErrExportKeyMaterialFailed is the sentinel error "failed to export key material".
+	ErrExportKeyMaterialFailed = errors.New("failed to export key material")
+
+	// User management errors
+
+	// ErrUserUpdateEnableFlagRequired is returned when "user update" is
+	// invoked without exactly one of --enable / --disable.
+	ErrUserUpdateEnableFlagRequired = errors.New("exactly one of --enable or --disable is required")
+
+	// ErrUserCertSourceRequired is returned when "user bind-cert" is invoked
+	// without exactly one of --thumbprint / --cert-file.
+	ErrUserCertSourceRequired = errors.New("exactly one of --thumbprint or --cert-file is required")
 )
 
 // WrappedError pairs a sentinel error with an underlying cause, rendering

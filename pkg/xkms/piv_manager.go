@@ -690,6 +690,11 @@ func buildAndStoreSelfSigned(backend string, slot pivcert.PIVSlot, signer crypto
 	return string(pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: certDER})), nil
 }
 
+// pivGenerateSelfSigned creates a self-signed certificate for a freshly
+// generated PIV key and stores it. The template + CreateCertificate + store
+// logic lives in buildAndStoreSelfSigned, which this shares with
+// SelfSignExistingPIVKey so the two entry points can never drift onto
+// different certificate shapes for the same slot.
 func pivGenerateSelfSigned(
 	req *transport.GeneratePIVKeyRequest,
 	slot pivcert.PIVSlot,
@@ -698,54 +703,14 @@ func pivGenerateSelfSigned(
 	subject pkix.Name,
 ) (*transport.GeneratePIVKeyResponse, error) {
 
-	store, err := pivStore(req.Backend)
+	certPEM, err := buildAndStoreSelfSigned(req.Backend, slot, signer, subject, req.ValidityDays)
 	if err != nil {
 		return nil, err
 	}
 
-	serialNumber, err := rand.Int(rand.Reader, new(big.Int).Lsh(big.NewInt(1), 128))
-	if err != nil {
-		return nil, err
-	}
-
-	meta, err := pivcert.DefaultSlotMetadata(slot)
-	if err != nil {
-		return nil, err
-	}
-
-	validity := 10 * 365 * 24 * time.Hour // 10 years default
-	if req.ValidityDays > 0 {
-		validity = time.Duration(req.ValidityDays) * 24 * time.Hour
-	}
-
-	template := &x509.Certificate{
-		SerialNumber:          serialNumber,
-		Subject:               subject,
-		NotBefore:             time.Now(),
-		NotAfter:              time.Now().Add(validity),
-		KeyUsage:              meta.KeyUsage,
-		ExtKeyUsage:           meta.ExtKeyUsage,
-		BasicConstraintsValid: true,
-	}
-
-	certDER, err := x509.CreateCertificate(rand.Reader, template, template, signer.Public(), signer)
-	if err != nil {
-		return nil, err
-	}
-
-	cert, err := x509.ParseCertificate(certDER)
-	if err != nil {
-		return nil, err
-	}
-
-	if err := store.Store(slot, cert); err != nil {
-		return nil, err
-	}
-
-	certPEM := pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: certDER})
 	return &transport.GeneratePIVKeyResponse{
 		Slot:        req.Slot,
-		Certificate: certPEM,
+		Certificate: []byte(certPEM),
 		PublicKey:   pubKeyPEM,
 	}, nil
 }

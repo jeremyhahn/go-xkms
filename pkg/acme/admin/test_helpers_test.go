@@ -24,6 +24,7 @@ import (
 	"testing"
 
 	"github.com/jeremyhahn/go-objstore/pkg/local"
+	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
 	xkmssdk "github.com/jeremyhahn/go-xkms/sdk/go"
 	"github.com/stretchr/testify/require"
 
@@ -37,36 +38,38 @@ import (
 	"github.com/jeremyhahn/go-xkms/pkg/types"
 )
 
-// createAdminUser creates an AuthenticatedUser with admin role for testing
+// createAdminUser creates a tenant-scoped AuthenticatedUser holding qrdb's
+// canonical admin role.
 func createAdminUser(tenantID string) *AuthenticatedUser {
 	return &AuthenticatedUser{
 		UserID:   "admin-user-1",
 		Username: "admin",
 		Email:    "admin@example.com",
-		Role:     RoleAdmin,
 		TenantID: tenantID,
-		Roles:    []string{string(RoleAdmin)},
+		Roles:    []string{qrdbsdk.RoleNameAdmin},
 		Groups:   []string{"admins"},
 	}
 }
 
-// createSuperAdminUser creates an AuthenticatedUser with super-admin role for testing
-func createSuperAdminUser() *AuthenticatedUser {
+// createPlatformAdminUser creates an AuthenticatedUser rooted in the reserved
+// system tenant. Under qrdb's system-tenant rule this is the platform-scoped
+// principal that reaches every tenant — the authority the deleted local
+// "super-admin" role used to express.
+func createPlatformAdminUser() *AuthenticatedUser {
 	return &AuthenticatedUser{
-		UserID:   "super-admin-user-1",
+		UserID:   "platform-admin-1",
 		Username: "platformadmin",
 		Email:    "platformadmin@example.com",
-		Role:     RoleSuperAdmin,
-		TenantID: "", // Super-admins have no tenant restriction
-		Roles:    []string{string(RoleSuperAdmin)},
-		Groups:   []string{"super-admins"},
+		TenantID: "", // normalized to the system tenant by the Authorizer
+		Roles:    []string{qrdbsdk.RoleNameAdmin},
+		Groups:   []string{"platform-admins"},
 	}
 }
 
-// addUserToRequest adds an authenticated user to the request context
+// addUserToRequest publishes the authenticated user and its canonical
+// auth.Identity on the request context, exactly as the auth middleware does.
 func addUserToRequest(r *http.Request, user *AuthenticatedUser) *http.Request {
-	ctx := context.WithValue(r.Context(), ContextKeyUser, user)
-	return r.WithContext(ctx)
+	return r.WithContext(withUser(r.Context(), user))
 }
 
 // extractTenantIDFromResource extracts the tenant ID from a resource path.
@@ -83,20 +86,23 @@ func extractTenantIDFromResource(resource string) string {
 }
 
 // newTestAuthMiddleware creates an AuthMiddleware for testing with a user of the given role
-func newTestAuthMiddleware(role Role) *AuthMiddleware {
+func newTestAuthMiddleware(role string) *AuthMiddleware {
 	client := auth.NewMemoryClient()
 	claims := &auth.TokenClaims{
 		Valid:    true,
 		UserID:   "test-user",
 		Username: "testuser",
 		TenantID: "test-tenant",
-		Roles:    []string{string(role)},
+		Roles:    []string{role},
 	}
-	// Register both generic "test-key" and role-specific token keys for compatibility
+	// Register the generic "test-key", the role-specific key, and the legacy
+	// role-named keys the handler tests use. The legacy names ("viewer",
+	// "super-admin", "endorser") no longer name roles — they are token labels
+	// only — so they are registered alongside the canonical ones.
 	client.AddToken("test-key", claims)
-	// Create token key based on role: test-viewer-key, test-admin-key, test-super-admin-key
-	tokenKey := "test-" + strings.ToLower(strings.ReplaceAll(string(role), "_", "-")) + "-key"
-	client.AddToken(tokenKey, claims)
+	for _, label := range []string{role, "viewer", "super-admin", "endorser", "admin", "operator", "auditor", "so"} {
+		client.AddToken("test-"+strings.ToLower(strings.ReplaceAll(label, "_", "-"))+"-key", claims)
+	}
 	return NewAuthMiddleware(client)
 }
 

@@ -83,8 +83,8 @@ func (e *WrappedDetailError) Unwrap() []error {
 }
 
 // InsecureReloadError is returned when a configuration reload is refused
-// because the new configuration has compliance gaps and the daemon was not
-// started in insecure (development) mode.
+// because the new configuration has compliance gaps. The refusal is
+// unconditional: there is no development override.
 type InsecureReloadError struct {
 	// Gaps lists the compliance gaps detected in the new configuration.
 	Gaps []string
@@ -94,5 +94,5 @@ type InsecureReloadError struct {
 func (e *InsecureReloadError) Error() string {
 	return fmt.Sprintf("refusing to reload an insecure configuration "+
 		"(FedRAMP/PCI-DSS/HIPAA require encryption-at-rest, TLS, authentication, and a CA; "+
-		"pass --insecure / XKMS_INSECURE=true for development): %v", e.Gaps)
+		"enable the reported settings or run `xkmsd init`): %v", e.Gaps)
 }

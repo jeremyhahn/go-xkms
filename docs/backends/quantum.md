@@ -529,5 +529,5 @@ backend.RotateKey(attrs)
 
 - [Post-Quantum Cryptography Architecture](../architecture/post-quantum-cryptography.md)
 - [AEAD Bytes Tracking](../configuration/aead-bytes-tracking.md)
-- [Backend Registry](../architecture/backend-registry.md)
+- Backend Registry - no standalone document yet; see `pkg/xkms/registry.go` and `pkg/xkms/register_quantum.go`
 - [Integration Tests](../testing/integration-tests.md)

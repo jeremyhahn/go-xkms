@@ -124,12 +124,12 @@ func runOIDCAWS(cmd *cobra.Command, args []string) error {
 	background, _ := cmd.Flags().GetBool("background")
 	logFile, _ := cmd.Flags().GetString("log-file")
 
-	return runAWSLogin(region, profile, crossDevice, noBrowser, output, credentialsFile, execCmd, autoRefresh, sessionStore, background, logFile, "")
+	return runAWSLogin(cmd.OutOrStdout(), region, profile, crossDevice, noBrowser, output, credentialsFile, execCmd, autoRefresh, sessionStore, background, logFile, "")
 }
 
 // runAWSLogin is the core AWS login implementation that can be called from both
 // the aws subcommand and from provider-based login.
-func runAWSLogin(region, profile string, crossDevice, noBrowser bool, output, credentialsFile, execCmd string, autoRefresh int, sessionStore string, background bool, logFile, providerName string) error {
+func runAWSLogin(out io.Writer, region, profile string, crossDevice, noBrowser bool, output, credentialsFile, execCmd string, autoRefresh int, sessionStore string, background bool, logFile, providerName string) error {
 	if region == "" {
 		return ErrAWSMissingRegion
 	}
@@ -220,23 +220,23 @@ func runAWSLogin(region, profile string, crossDevice, noBrowser bool, output, cr
 
 	// Open browser or print URL
 	if noBrowser || crossDevice {
-		fmt.Println("Open the following URL in your browser:")
-		fmt.Println()
-		fmt.Println(authURL)
-		fmt.Println()
+		fmt.Fprintln(out, "Open the following URL in your browser:")
+		fmt.Fprintln(out)
+		fmt.Fprintln(out, authURL)
+		fmt.Fprintln(out)
 		if crossDevice {
-			fmt.Println("(Cross-device mode: you can open this on a different device)")
+			fmt.Fprintln(out, "(Cross-device mode: you can open this on a different device)")
 		}
-		fmt.Println("Waiting for authorization...")
+		fmt.Fprintln(out, "Waiting for authorization...")
 	} else {
-		fmt.Println("Opening browser for AWS authentication...")
+		fmt.Fprintln(out, "Opening browser for AWS authentication...")
 		if err := browser.OpenURL(authURL); err != nil {
-			fmt.Printf("Failed to open browser: %v\n", err)
-			fmt.Println("Please open the following URL manually:")
-			fmt.Println()
-			fmt.Println(authURL)
+			fmt.Fprintf(out, "Failed to open browser: %v\n", err)
+			fmt.Fprintln(out, "Please open the following URL manually:")
+			fmt.Fprintln(out)
+			fmt.Fprintln(out, authURL)
 		}
-		fmt.Println("Waiting for authorization...")
+		fmt.Fprintln(out, "Waiting for authorization...")
 	}
 
 	// Wait for callback
@@ -284,14 +284,14 @@ func runAWSLogin(region, profile string, crossDevice, noBrowser bool, output, cr
 	creds := tokenResp.GetCredentials()
 	expiration, _ := tokenResp.GetExpirationTime()
 
-	fmt.Println()
-	fmt.Println("AWS login successful!")
-	fmt.Println()
-	fmt.Printf("  Region:         %s\n", region)
-	fmt.Printf("  Profile:        %s\n", profile)
-	fmt.Printf("  Access Key ID:  %s\n", creds.AccessKeyID)
-	fmt.Printf("  Expires:        %s\n", expiration.Format(time.RFC3339))
-	fmt.Printf("  Time remaining: %s\n", formatDuration(time.Until(expiration)))
+	fmt.Fprintln(out)
+	fmt.Fprintln(out, "AWS login successful!")
+	fmt.Fprintln(out)
+	fmt.Fprintf(out, "  Region:         %s\n", region)
+	fmt.Fprintf(out, "  Profile:        %s\n", profile)
+	fmt.Fprintf(out, "  Access Key ID:  %s\n", creds.AccessKeyID)
+	fmt.Fprintf(out, "  Expires:        %s\n", expiration.Format(time.RFC3339))
+	fmt.Fprintf(out, "  Time remaining: %s\n", formatDuration(time.Until(expiration)))
 
 	// Store session for refresh (if refresh token available)
 	if tokenResp.RefreshToken != "" && sessionStore != "" {
@@ -312,7 +312,7 @@ func runAWSLogin(region, profile string, crossDevice, noBrowser bool, output, cr
 	// Auto-refresh loop
 	if autoRefresh > 0 {
 		if tokenResp.RefreshToken == "" {
-			fmt.Println("\nWarning: No refresh token received. Auto-refresh will not work.")
+			fmt.Fprintln(out, "\nWarning: No refresh token received. Auto-refresh will not work.")
 			return nil
 		}
 
@@ -325,12 +325,12 @@ func runAWSLogin(region, profile string, crossDevice, noBrowser bool, output, cr
 
 		if background {
 			// Start background process
-			return startAWSBackgroundRefresh(region, profile, credentialsFile, output, execCmd, sessionStore, logFile, autoRefresh, providerName)
+			return startAWSBackgroundRefresh(out, region, profile, credentialsFile, output, execCmd, sessionStore, logFile, autoRefresh, providerName)
 		}
 
-		fmt.Printf("\nAuto-refresh enabled: refreshing every %d seconds\n", autoRefresh)
-		fmt.Println("Press Ctrl+C to stop...")
-		fmt.Println()
+		fmt.Fprintf(out, "\nAuto-refresh enabled: refreshing every %d seconds\n", autoRefresh)
+		fmt.Fprintln(out, "Press Ctrl+C to stop...")
+		fmt.Fprintln(out)
 
 		return runAWSAutoRefresh(client, tokenResp.RefreshToken, region, profile, credentialsFile, output, execCmd, sessionStore, providerName, time.Duration(autoRefresh)*time.Second)
 	}
@@ -394,84 +394,8 @@ func handleAWSOutput(outputMode string, data *handlers.TokenData, profile, crede
 
 // runAWSAutoRefresh runs the auto-refresh loop for AWS credentials.
 func runAWSAutoRefresh(client *aws.Client, refreshToken, region, profile, credentialsFile, output, execCmd, sessionStore, providerName string, interval time.Duration) error {
-	// Set up signal handling
-	sigChan := make(chan os.Signal, 1)
-	signal.Notify(sigChan, os.Interrupt, syscall.SIGTERM)
-
-	ticker := time.NewTicker(interval)
-	defer ticker.Stop()
-
-	refreshCount := 0
-	intervalSecs := int(interval.Seconds())
-
-	// Helper to save status
-	updateStatus := func(lastStatus, lastError string) {
-		status := &OIDCRefreshStatus{
-			LastRefresh:  time.Now(),
-			NextRefresh:  time.Now().Add(interval),
-			RefreshCount: refreshCount,
-			LastStatus:   lastStatus,
-			LastError:    lastError,
-			IntervalSecs: intervalSecs,
-		}
-		// Use session store directory for status file
-		statusName := providerName
-		if statusName == "" {
-			statusName = fmt.Sprintf("aws-%s", region)
-		}
-		if err := saveRefreshStatus(sessionStore, statusName, status); err != nil {
-			fmt.Printf("  Warning: failed to save status: %v\n", err)
-		}
-	}
-
-	for {
-		select {
-		case <-sigChan:
-			fmt.Printf("\n[%s] Auto-refresh stopped.\n", time.Now().Format("2006-01-02 15:04:05"))
-			return nil
-
-		case <-ticker.C:
-			refreshCount++
-			fmt.Printf("[%s] Refreshing AWS credentials (#%d)...\n", time.Now().Format("2006-01-02 15:04:05"), refreshCount)
-
-			// Refresh tokens
-			tokenResp, err := client.Refresh(context.Background(), refreshToken)
-			if err != nil {
-				fmt.Printf("  Error refreshing: %v\n", err)
-				updateStatus("error", fmt.Sprintf("refresh failed: %v", err))
-				continue
-			}
-
-			// Update refresh token if new one provided
-			if tokenResp.RefreshToken != "" {
-				refreshToken = tokenResp.RefreshToken
-			}
-
-			if !tokenResp.HasCredentials() {
-				fmt.Printf("  Error: No credentials in refresh response\n")
-				updateStatus("error", "no credentials in response")
-				continue
-			}
-
-			// Convert and output
-			tokenData, err := tokenResp.ToTokenData(region)
-			if err != nil {
-				fmt.Printf("  Error converting: %v\n", err)
-				updateStatus("error", fmt.Sprintf("conversion failed: %v", err))
-				continue
-			}
-
-			if err := handleAWSOutput(output, tokenData, profile, credentialsFile, execCmd); err != nil {
-				fmt.Printf("  Error outputting: %v\n", err)
-				updateStatus("error", fmt.Sprintf("output failed: %v", err))
-				continue
-			}
-
-			expiration, _ := tokenResp.GetExpirationTime()
-			fmt.Printf("  Credentials refreshed. Expires: %s\n", expiration.Format(time.RFC3339))
-			updateStatus("success", "")
-		}
-	}
+	return runAWSAutoRefreshWithWriter(client, refreshToken, region, profile,
+		credentialsFile, output, execCmd, sessionStore, providerName, interval, os.Stdout)
 }
 
 // runAWSAutoRefreshWithWriter runs the auto-refresh loop for AWS credentials with a custom writer.
@@ -615,7 +539,7 @@ func getAWSPIDFile(sessionStore, region, providerName string) string {
 }
 
 // startAWSBackgroundRefresh starts a background refresh process for AWS.
-func startAWSBackgroundRefresh(region, profile, credentialsFile, output, execCmd, sessionStore, logFile string, autoRefresh int, providerName string) error {
+func startAWSBackgroundRefresh(out io.Writer, region, profile, credentialsFile, output, execCmd, sessionStore, logFile string, autoRefresh int, providerName string) error {
 	// Ensure log directory exists
 	logDir := filepath.Dir(logFile)
 	if err := os.MkdirAll(logDir, 0700); err != nil {
@@ -708,14 +632,14 @@ func startAWSBackgroundRefresh(region, profile, credentialsFile, output, execCmd
 	stopName := providerName
 	if stopName == "" {
 		stopName = fmt.Sprintf("aws-%s", region)
-		fmt.Printf("Background refresh started for AWS region '%s'\n", region)
+		fmt.Fprintf(out, "Background refresh started for AWS region '%s'\n", region)
 	} else {
-		fmt.Printf("Background refresh started for '%s'\n", providerName)
+		fmt.Fprintf(out, "Background refresh started for '%s'\n", providerName)
 	}
-	fmt.Printf("  PID:      %d\n", cmd.Process.Pid)
-	fmt.Printf("  Log file: %s\n", logFile)
-	fmt.Printf("\nUse 'xkey oidc status' to see running refreshes\n")
-	fmt.Printf("Use 'xkey oidc stop %s' to stop\n", stopName)
+	fmt.Fprintf(out, "  PID:      %d\n", cmd.Process.Pid)
+	fmt.Fprintf(out, "  Log file: %s\n", logFile)
+	fmt.Fprintf(out, "\nUse 'xkey oidc status' to see running refreshes\n")
+	fmt.Fprintf(out, "Use 'xkey oidc stop %s' to stop\n", stopName)
 
 	return nil
 }

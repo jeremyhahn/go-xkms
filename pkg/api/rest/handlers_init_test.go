@@ -394,6 +394,143 @@ func initTestMofNService(t *testing.T, threshold, numOfficers int) (*InitHandler
 	return handlers, keys, mockCA
 }
 
+// initTestClaimCertThumbprint runs the certificate claim handshake for
+// username against handlers and returns the thumbprint of the issued
+// certificate — the value the officer's mTLS peer certificate hashes to.
+func initTestClaimCertThumbprint(t *testing.T, handlers *InitHandlers, username string, key *ecdsa.PrivateKey) string {
+	t.Helper()
+
+	beginBody, err := json.Marshal(ClaimCertBeginRequest{Username: username})
+	require.NoError(t, err)
+	beginReq := httptest.NewRequest(http.MethodPost, "/api/v1/init/claim-cert/begin", bytes.NewReader(beginBody))
+	beginRec := httptest.NewRecorder()
+	handlers.HandleClaimCertBegin(beginRec, beginReq)
+	require.Equal(t, http.StatusOK, beginRec.Code, beginRec.Body.String())
+
+	var begun ClaimCertBeginResponse
+	require.NoError(t, json.Unmarshal(beginRec.Body.Bytes(), &begun))
+
+	nonce, err := hex.DecodeString(begun.Nonce)
+	require.NoError(t, err)
+	hash := sha256.Sum256(nonce)
+	sig, err := ecdsa.SignASN1(rand.Reader, key, hash[:])
+	require.NoError(t, err)
+
+	completeBody, err := json.Marshal(ClaimCertCompleteRequest{
+		Username:  username,
+		Nonce:     begun.Nonce,
+		Signature: base64.StdEncoding.EncodeToString(sig),
+	})
+	require.NoError(t, err)
+	completeReq := httptest.NewRequest(http.MethodPost, "/api/v1/init/claim-cert/complete", bytes.NewReader(completeBody))
+	completeRec := httptest.NewRecorder()
+	handlers.HandleClaimCertComplete(completeRec, completeReq)
+	require.Equal(t, http.StatusOK, completeRec.Code, completeRec.Body.String())
+
+	var claimed ClaimCertCompleteResponse
+	require.NoError(t, json.Unmarshal(completeRec.Body.Bytes(), &claimed))
+
+	block, _ := pem.Decode([]byte(claimed.CertPEM))
+	require.NotNil(t, block)
+	cert, err := x509.ParseCertificate(block.Bytes)
+	require.NoError(t, err)
+
+	return initialize.CertThumbprint(cert.Raw)
+}
+
+// initTestWithPeerCert attaches a peer certificate to the request whose
+// thumbprint is `thumbprint`. Since the handler only hashes the leaf DER, a
+// synthetic leaf carrying the same DER as the officer's certificate is what a
+// real mTLS handshake would present. thumbprintCert must be the DER of the
+// certificate whose thumbprint the caller wants to assert.
+func initTestWithPeerCert(r *http.Request, leafDER []byte) *http.Request {
+	cert, err := x509.ParseCertificate(leafDER)
+	if err != nil {
+		panic("initTestWithPeerCert: parse leaf: " + err.Error())
+	}
+	r.TLS = &tls.ConnectionState{PeerCertificates: []*x509.Certificate{cert}}
+	return r
+}
+
+// initTestOfficerCertDER runs the certificate claim handshake and returns the
+// DER of the certificate issued to username, ready to be presented as an mTLS
+// leaf by initTestWithPeerCert.
+func initTestOfficerCertDER(t *testing.T, handlers *InitHandlers, username string, key *ecdsa.PrivateKey) []byte {
+	t.Helper()
+
+	beginBody, err := json.Marshal(ClaimCertBeginRequest{Username: username})
+	require.NoError(t, err)
+	beginReq := httptest.NewRequest(http.MethodPost, "/api/v1/init/claim-cert/begin", bytes.NewReader(beginBody))
+	beginRec := httptest.NewRecorder()
+	handlers.HandleClaimCertBegin(beginRec, beginReq)
+	require.Equal(t, http.StatusOK, beginRec.Code, beginRec.Body.String())
+
+	var begun ClaimCertBeginResponse
+	require.NoError(t, json.Unmarshal(beginRec.Body.Bytes(), &begun))
+
+	nonce, err := hex.DecodeString(begun.Nonce)
+	require.NoError(t, err)
+	hash := sha256.Sum256(nonce)
+	sig, err := ecdsa.SignASN1(rand.Reader, key, hash[:])
+	require.NoError(t, err)
+
+	completeBody, err := json.Marshal(ClaimCertCompleteRequest{
+		Username:  username,
+		Nonce:     begun.Nonce,
+		Signature: base64.StdEncoding.EncodeToString(sig),
+	})
+	require.NoError(t, err)
+	completeReq := httptest.NewRequest(http.MethodPost, "/api/v1/init/claim-cert/complete", bytes.NewReader(completeBody))
+	completeRec := httptest.NewRecorder()
+	handlers.HandleClaimCertComplete(completeRec, completeReq)
+	require.Equal(t, http.StatusOK, completeRec.Code, completeRec.Body.String())
+
+	var claimed ClaimCertCompleteResponse
+	require.NoError(t, json.Unmarshal(completeRec.Body.Bytes(), &claimed))
+
+	block, _ := pem.Decode([]byte(claimed.CertPEM))
+	require.NotNil(t, block)
+	return block.Bytes
+}
+
+// initTestClaimShare drives the two-round-trip share claim over the handlers,
+// presenting leafDER as the mTLS peer certificate and signing the nonce with
+// key. It returns the final recorder so callers can assert on status and body.
+func initTestClaimShare(t *testing.T, handlers *InitHandlers, username string, key *ecdsa.PrivateKey, leafDER []byte) *httptest.ResponseRecorder {
+	t.Helper()
+
+	beginBody, err := json.Marshal(ClaimShareBeginRequest{Username: username})
+	require.NoError(t, err)
+	beginReq := initTestWithPeerCert(
+		httptest.NewRequest(http.MethodPost, "/api/v1/init/claim-share/begin", bytes.NewReader(beginBody)), leafDER)
+	beginRec := httptest.NewRecorder()
+	handlers.HandleClaimShareBegin(beginRec, beginReq)
+	if beginRec.Code != http.StatusOK {
+		return beginRec
+	}
+
+	var begun ClaimShareBeginResponse
+	require.NoError(t, json.Unmarshal(beginRec.Body.Bytes(), &begun))
+
+	nonce, err := hex.DecodeString(begun.Nonce)
+	require.NoError(t, err)
+	hash := sha256.Sum256(nonce)
+	sig, err := ecdsa.SignASN1(rand.Reader, key, hash[:])
+	require.NoError(t, err)
+
+	completeBody, err := json.Marshal(ClaimShareCompleteRequest{
+		Username:  username,
+		Nonce:     begun.Nonce,
+		Signature: base64.StdEncoding.EncodeToString(sig),
+	})
+	require.NoError(t, err)
+	completeReq := initTestWithPeerCert(
+		httptest.NewRequest(http.MethodPost, "/api/v1/init/claim-share/complete", bytes.NewReader(completeBody)), leafDER)
+	completeRec := httptest.NewRecorder()
+	handlers.HandleClaimShareComplete(completeRec, completeReq)
+	return completeRec
+}
+
 // initTestSingleAdminService creates an initialized single-admin ceremony service.
 func initTestSingleAdminService(t *testing.T) *InitHandlers {
 	t.Helper()
@@ -790,116 +927,231 @@ func TestInitHandleClaimCertComplete_NotEnrolling(t *testing.T) {
 }
 
 // ---------------------------------------------------------------------------
-// HandleClaimShare tests
+// HandleClaimShareBegin / HandleClaimShareComplete tests
 // ---------------------------------------------------------------------------
 
-// TestInitHandleClaimShare_Success verifies successful share claim.
+// TestInitHandleClaimShare_Success verifies the full two-round-trip share
+// claim by the rightful officer.
 func TestInitHandleClaimShare_Success(t *testing.T) {
-	handlers, _, _ := initTestMofNService(t, 2, 3)
+	handlers, keys, _ := initTestMofNService(t, 2, 3)
 
-	body, err := json.Marshal(ClaimShareRequest{Username: "officer-A"})
-	require.NoError(t, err)
+	leaf := initTestOfficerCertDER(t, handlers, "officer-A", keys[0])
+	rec := initTestClaimShare(t, handlers, "officer-A", keys[0], leaf)
+	require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
 
-	req := httptest.NewRequest(http.MethodPost, "/api/v1/init/claim-share", bytes.NewReader(body))
-	req.Header.Set("Content-Type", "application/json")
-	rec := httptest.NewRecorder()
-
-	handlers.HandleClaimShare(rec, req)
-
-	assert.Equal(t, http.StatusOK, rec.Code)
-
-	var resp ClaimShareResponse
-	err = json.NewDecoder(rec.Body).Decode(&resp)
-	require.NoError(t, err)
+	var resp ClaimShareCompleteResponse
+	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &resp))
 	assert.NotEmpty(t, resp.Share)
+	assert.Equal(t, 1, resp.ShareIndex)
+}
+
+// TestInitHandleClaimShare_NoClientCertRefused is the security regression test
+// for the username-only share release over REST. An enrolled officer who
+// presents no client certificate is refused with 401, and the response body
+// must carry no share material.
+func TestInitHandleClaimShare_NoClientCertRefused(t *testing.T) {
+	handlers, keys, _ := initTestMofNService(t, 2, 3)
+	initTestClaimCertThumbprint(t, handlers, "officer-A", keys[0])
+
+	beginBody, err := json.Marshal(ClaimShareBeginRequest{Username: "officer-A"})
+	require.NoError(t, err)
+	beginReq := httptest.NewRequest(http.MethodPost, "/api/v1/init/claim-share/begin", bytes.NewReader(beginBody))
+	beginRec := httptest.NewRecorder()
+	handlers.HandleClaimShareBegin(beginRec, beginReq)
+	assert.Equal(t, http.StatusUnauthorized, beginRec.Code)
+
+	completeBody, err := json.Marshal(ClaimShareCompleteRequest{
+		Username:  "officer-A",
+		Nonce:     hex.EncodeToString(make([]byte, 32)),
+		Signature: base64.StdEncoding.EncodeToString([]byte("sig")),
+	})
+	require.NoError(t, err)
+	completeReq := httptest.NewRequest(http.MethodPost, "/api/v1/init/claim-share/complete", bytes.NewReader(completeBody))
+	completeRec := httptest.NewRecorder()
+	handlers.HandleClaimShareComplete(completeRec, completeReq)
+	assert.Equal(t, http.StatusUnauthorized, completeRec.Code)
+	assertNoShareInBody(t, completeRec)
+}
+
+// TestInitHandleClaimShare_WrongOfficerCertRefused proves officer-B cannot
+// take officer-A's share by naming officer-A while presenting its own
+// certificate. Nothing resembling share material may appear in the response.
+func TestInitHandleClaimShare_WrongOfficerCertRefused(t *testing.T) {
+	handlers, keys, _ := initTestMofNService(t, 2, 3)
+
+	victimLeaf := initTestOfficerCertDER(t, handlers, "officer-A", keys[0])
+	attackerLeaf := initTestOfficerCertDER(t, handlers, "officer-B", keys[1])
+	require.NotEqual(t, victimLeaf, attackerLeaf)
+
+	beginBody, err := json.Marshal(ClaimShareBeginRequest{Username: "officer-A"})
+	require.NoError(t, err)
+	beginReq := initTestWithPeerCert(
+		httptest.NewRequest(http.MethodPost, "/api/v1/init/claim-share/begin", bytes.NewReader(beginBody)), attackerLeaf)
+	beginRec := httptest.NewRecorder()
+	handlers.HandleClaimShareBegin(beginRec, beginReq)
+	assert.Equal(t, http.StatusUnauthorized, beginRec.Code)
+	assertNoShareInBody(t, beginRec)
+
+	completeBody, err := json.Marshal(ClaimShareCompleteRequest{
+		Username:  "officer-A",
+		Nonce:     hex.EncodeToString(make([]byte, 32)),
+		Signature: base64.StdEncoding.EncodeToString([]byte("sig")),
+	})
+	require.NoError(t, err)
+	completeReq := initTestWithPeerCert(
+		httptest.NewRequest(http.MethodPost, "/api/v1/init/claim-share/complete", bytes.NewReader(completeBody)), attackerLeaf)
+	completeRec := httptest.NewRecorder()
+	handlers.HandleClaimShareComplete(completeRec, completeReq)
+	assert.NotEqual(t, http.StatusOK, completeRec.Code)
+	assertNoShareInBody(t, completeRec)
+
+	// The victim's share is untouched.
+	rec := initTestClaimShare(t, handlers, "officer-A", keys[0], victimLeaf)
+	require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
+}
+
+// TestInitHandleClaimShare_NonceReplayRejected proves a nonce is single-use.
+func TestInitHandleClaimShare_NonceReplayRejected(t *testing.T) {
+	handlers, keys, _ := initTestMofNService(t, 2, 3)
+	leaf := initTestOfficerCertDER(t, handlers, "officer-A", keys[0])
+
+	beginBody, err := json.Marshal(ClaimShareBeginRequest{Username: "officer-A"})
+	require.NoError(t, err)
+	beginReq := initTestWithPeerCert(
+		httptest.NewRequest(http.MethodPost, "/api/v1/init/claim-share/begin", bytes.NewReader(beginBody)), leaf)
+	beginRec := httptest.NewRecorder()
+	handlers.HandleClaimShareBegin(beginRec, beginReq)
+	require.Equal(t, http.StatusOK, beginRec.Code, beginRec.Body.String())
+
+	var begun ClaimShareBeginResponse
+	require.NoError(t, json.Unmarshal(beginRec.Body.Bytes(), &begun))
+	nonce, err := hex.DecodeString(begun.Nonce)
+	require.NoError(t, err)
+	hash := sha256.Sum256(nonce)
+	sig, err := ecdsa.SignASN1(rand.Reader, keys[0], hash[:])
+	require.NoError(t, err)
+
+	completeBody, err := json.Marshal(ClaimShareCompleteRequest{
+		Username:  "officer-A",
+		Nonce:     begun.Nonce,
+		Signature: base64.StdEncoding.EncodeToString(sig),
+	})
+	require.NoError(t, err)
+
+	first := httptest.NewRecorder()
+	handlers.HandleClaimShareComplete(first,
+		initTestWithPeerCert(httptest.NewRequest(http.MethodPost, "/api/v1/init/claim-share/complete", bytes.NewReader(completeBody)), leaf))
+	require.Equal(t, http.StatusOK, first.Code, first.Body.String())
+
+	replay := httptest.NewRecorder()
+	handlers.HandleClaimShareComplete(replay,
+		initTestWithPeerCert(httptest.NewRequest(http.MethodPost, "/api/v1/init/claim-share/complete", bytes.NewReader(completeBody)), leaf))
+	assert.NotEqual(t, http.StatusOK, replay.Code)
+	assertNoShareInBody(t, replay)
 }
 
 // TestInitHandleClaimShare_InvalidJSON verifies 400 for malformed JSON.
 func TestInitHandleClaimShare_InvalidJSON(t *testing.T) {
-	handlers, _, _ := initTestMofNService(t, 2, 3)
+	handlers, keys, _ := initTestMofNService(t, 2, 3)
+	leaf := initTestOfficerCertDER(t, handlers, "officer-A", keys[0])
 
-	req := httptest.NewRequest(http.MethodPost, "/api/v1/init/claim-share", bytes.NewReader([]byte("{bad")))
-	req.Header.Set("Content-Type", "application/json")
+	req := initTestWithPeerCert(
+		httptest.NewRequest(http.MethodPost, "/api/v1/init/claim-share/begin", bytes.NewReader([]byte("{bad"))), leaf)
 	rec := httptest.NewRecorder()
-
-	handlers.HandleClaimShare(rec, req)
-
+	handlers.HandleClaimShareBegin(rec, req)
 	assert.Equal(t, http.StatusBadRequest, rec.Code)
 }
 
 // TestInitHandleClaimShare_MissingUsername verifies 400 for empty username.
 func TestInitHandleClaimShare_MissingUsername(t *testing.T) {
-	handlers, _, _ := initTestMofNService(t, 2, 3)
+	handlers, keys, _ := initTestMofNService(t, 2, 3)
+	leaf := initTestOfficerCertDER(t, handlers, "officer-A", keys[0])
 
-	body, err := json.Marshal(ClaimShareRequest{Username: ""})
+	body, err := json.Marshal(ClaimShareBeginRequest{Username: ""})
 	require.NoError(t, err)
-
-	req := httptest.NewRequest(http.MethodPost, "/api/v1/init/claim-share", bytes.NewReader(body))
-	req.Header.Set("Content-Type", "application/json")
+	req := initTestWithPeerCert(
+		httptest.NewRequest(http.MethodPost, "/api/v1/init/claim-share/begin", bytes.NewReader(body)), leaf)
 	rec := httptest.NewRecorder()
-
-	handlers.HandleClaimShare(rec, req)
-
+	handlers.HandleClaimShareBegin(rec, req)
 	assert.Equal(t, http.StatusBadRequest, rec.Code)
 }
 
 // TestInitHandleClaimShare_UnknownOfficer verifies 404 for a nonexistent username.
 func TestInitHandleClaimShare_UnknownOfficer(t *testing.T) {
-	handlers, _, _ := initTestMofNService(t, 2, 3)
+	handlers, keys, _ := initTestMofNService(t, 2, 3)
+	leaf := initTestOfficerCertDER(t, handlers, "officer-A", keys[0])
 
-	body, err := json.Marshal(ClaimShareRequest{Username: "nonexistent"})
+	body, err := json.Marshal(ClaimShareBeginRequest{Username: "nonexistent"})
 	require.NoError(t, err)
-
-	req := httptest.NewRequest(http.MethodPost, "/api/v1/init/claim-share", bytes.NewReader(body))
-	req.Header.Set("Content-Type", "application/json")
+	req := initTestWithPeerCert(
+		httptest.NewRequest(http.MethodPost, "/api/v1/init/claim-share/begin", bytes.NewReader(body)), leaf)
 	rec := httptest.NewRecorder()
-
-	handlers.HandleClaimShare(rec, req)
-
+	handlers.HandleClaimShareBegin(rec, req)
 	assert.Equal(t, http.StatusNotFound, rec.Code)
 }
 
-// TestInitHandleClaimShare_AlreadyClaimed verifies 409 when a share has
-// already been claimed.
+// TestInitHandleClaimShare_AlreadyClaimed verifies 404 (no pending share) once
+// the share has been released.
 func TestInitHandleClaimShare_AlreadyClaimed(t *testing.T) {
-	handlers, _, _ := initTestMofNService(t, 2, 3)
+	handlers, keys, _ := initTestMofNService(t, 2, 3)
+	leaf := initTestOfficerCertDER(t, handlers, "officer-A", keys[0])
 
-	body, err := json.Marshal(ClaimShareRequest{Username: "officer-A"})
+	rec := initTestClaimShare(t, handlers, "officer-A", keys[0], leaf)
+	require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
+
+	body, err := json.Marshal(ClaimShareBeginRequest{Username: "officer-A"})
 	require.NoError(t, err)
-
-	// First claim succeeds.
-	req := httptest.NewRequest(http.MethodPost, "/api/v1/init/claim-share", bytes.NewReader(body))
-	req.Header.Set("Content-Type", "application/json")
-	rec := httptest.NewRecorder()
-	handlers.HandleClaimShare(rec, req)
-	assert.Equal(t, http.StatusOK, rec.Code)
-
-	// Second claim fails.
-	body, err = json.Marshal(ClaimShareRequest{Username: "officer-A"})
-	require.NoError(t, err)
-	req = httptest.NewRequest(http.MethodPost, "/api/v1/init/claim-share", bytes.NewReader(body))
-	req.Header.Set("Content-Type", "application/json")
-	rec = httptest.NewRecorder()
-	handlers.HandleClaimShare(rec, req)
-
-	assert.Equal(t, http.StatusConflict, rec.Code)
+	again := httptest.NewRecorder()
+	handlers.HandleClaimShareBegin(again,
+		initTestWithPeerCert(httptest.NewRequest(http.MethodPost, "/api/v1/init/claim-share/begin", bytes.NewReader(body)), leaf))
+	assert.Equal(t, http.StatusNotFound, again.Code)
+	assertNoShareInBody(t, again)
 }
 
-// TestInitHandleClaimShare_NotEnrolling verifies 409 when ceremony is not
-// in the enrolling state.
+// TestInitHandleClaimShare_NotEnrolling verifies the claim is refused when the
+// ceremony never enrolled any officers.
 func TestInitHandleClaimShare_NotEnrolling(t *testing.T) {
 	handlers := initTestAwaitingService(t)
 
-	body, err := json.Marshal(ClaimShareRequest{Username: "officer-A"})
+	body, err := json.Marshal(ClaimShareBeginRequest{Username: "officer-A"})
 	require.NoError(t, err)
 
-	req := httptest.NewRequest(http.MethodPost, "/api/v1/init/claim-share", bytes.NewReader(body))
-	req.Header.Set("Content-Type", "application/json")
+	req := initTestWithPeerCert(
+		httptest.NewRequest(http.MethodPost, "/api/v1/init/claim-share/begin", bytes.NewReader(body)),
+		initTestSelfSignedDER(t))
 	rec := httptest.NewRecorder()
+	handlers.HandleClaimShareBegin(rec, req)
 
-	handlers.HandleClaimShare(rec, req)
+	assert.Equal(t, http.StatusNotFound, rec.Code)
+	assertNoShareInBody(t, rec)
+}
 
-	assert.Equal(t, http.StatusConflict, rec.Code)
+// initTestSelfSignedDER returns the DER of a throwaway self-signed leaf, used
+// where a request must carry *some* peer certificate that is not any enrolled
+// officer's.
+func initTestSelfSignedDER(t *testing.T) []byte {
+	t.Helper()
+	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	require.NoError(t, err)
+	tmpl := &x509.Certificate{
+		SerialNumber: big.NewInt(1),
+		Subject:      pkix.Name{CommonName: "not-an-officer"},
+		NotBefore:    time.Now().Add(-time.Minute),
+		NotAfter:     time.Now().Add(time.Hour),
+	}
+	der, err := x509.CreateCertificate(rand.Reader, tmpl, tmpl, &key.PublicKey, key)
+	require.NoError(t, err)
+	return der
+}
+
+// assertNoShareInBody fails the test when a response body carries anything
+// that looks like released share material. Asserting only "an error came back"
+// would not catch a handler that errored *after* writing the share.
+func assertNoShareInBody(t *testing.T, rec *httptest.ResponseRecorder) {
+	t.Helper()
+	body := rec.Body.String()
+	assert.NotContains(t, body, `"share"`, "share material leaked on a refusal: %s", body)
+	assert.NotContains(t, body, `"share_index"`, "share metadata leaked on a refusal: %s", body)
 }
 
 // ---------------------------------------------------------------------------

@@ -18,6 +18,8 @@ import (
 	"errors"
 	"testing"
 
+	"github.com/spf13/cobra"
+
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -250,12 +252,27 @@ func TestUSBSentinelErrors_AreDistinct(t *testing.T) {
 
 // --- LUKS exempt tests ---
 
+// TestUSBCommandsAreLUKSExempt asserts on the real command objects rather
+// than bare leaf names — "create"/"update" are generic and were exempting
+// unrelated commands that happen to share those names.
 func TestUSBCommandsAreLUKSExempt(t *testing.T) {
-	exemptNames := []string{"usb", "create", "update"}
-	for _, name := range exemptNames {
-		t.Run(name, func(t *testing.T) {
-			assert.True(t, luksExemptCommands[name],
-				"%q should be in luksExemptCommands", name)
+	for _, cmd := range []*cobra.Command{usbCmd, usbCreateCmd, usbUpdateCmd} {
+		t.Run(cmd.Name(), func(t *testing.T) {
+			assert.True(t, isLUKSExempt(cmd),
+				"%q must be LUKS-exempt", cmd.CommandPath())
+		})
+	}
+}
+
+// TestNonLUKSCommandsAreNotExempt is the regression guard for the leaf-name
+// matching bug: these commands share a leaf name with a genuinely exempt
+// command ("status", "init", "lock", "unseal", "verify") but manage no
+// LUKS/barrier/PIN state, so they must still be gated on an unlocked home.
+func TestNonLUKSCommandsAreNotExempt(t *testing.T) {
+	for _, cmd := range []*cobra.Command{PIVCmd, PasswordCmd, shareCmd, configCmd, PolicyCmd, deviceCmd, authCmd} {
+		t.Run(cmd.Name(), func(t *testing.T) {
+			assert.False(t, isLUKSExempt(cmd),
+				"%q must NOT be LUKS-exempt", cmd.CommandPath())
 		})
 	}
 }

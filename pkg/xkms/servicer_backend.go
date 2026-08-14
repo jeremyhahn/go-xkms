@@ -88,3 +88,11 @@ func capabilitiesToTransport(caps types.Capabilities) transport.BackendCapabilit
 		KeyEncapsulation:    caps.KeyEncapsulation,
 	}
 }
+
+// Algorithms reports the cryptographic algorithms this build supports and
+// which backends provide each one. The inventory is derived from the
+// compiled-in backend registry, so it needs no service state and is safe to
+// serve before a caller has authenticated.
+func (s *XKMSService) Algorithms(_ context.Context) (*transport.AlgorithmsResponse, error) {
+	return DiscoverAlgorithms(), nil
+}

@@ -459,7 +459,11 @@ func (m *mockClient) ClaimCertBegin(context.Context, *transport.ClaimCertBeginRe
 func (m *mockClient) ClaimCertComplete(context.Context, *transport.ClaimCertCompleteRequest) (*transport.ClaimCertCompleteResponse, error) {
 	return nil, nil
 }
-func (m *mockClient) ClaimShare(context.Context, *transport.ClaimShareRequest) (*transport.ClaimShareResponse, error) {
+func (m *mockClient) ClaimShareBegin(context.Context, *transport.ClaimShareBeginRequest) (*transport.ClaimShareBeginResponse, error) {
+	return nil, nil
+}
+
+func (m *mockClient) ClaimShareComplete(context.Context, *transport.ClaimShareCompleteRequest) (*transport.ClaimShareCompleteResponse, error) {
 	return nil, nil
 }
 func (m *mockClient) SignCSRInit(context.Context, *transport.SignCSRInitRequest) (*transport.SignCSRInitResponse, error) {

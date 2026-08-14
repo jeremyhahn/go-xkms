@@ -21,6 +21,7 @@ import (
 	"encoding/base64"
 	"encoding/binary"
 	"encoding/json"
+	"errors"
 	"testing"
 
 	"github.com/fxamacker/cbor/v2"
@@ -289,4 +290,110 @@ func TestEncodeAttestationObjectRoundTrip(t *testing.T) {
 	if !bytes.Equal(decoded.AuthData, resp.AuthData) {
 		t.Errorf("authData round-trip mismatch")
 	}
+}
+
+// newPINRegistrationHandler builds a handler over a single mock authenticator
+// whose simulator enforces pin, mirroring a security key with a PIN set.
+func newPINRegistrationHandler(t *testing.T, pin string) *FIDO2Handler {
+	t.Helper()
+
+	mockDev := NewMockHIDDevice("/dev/hidraw0")
+	mockDev.sim.pin = pin
+
+	enum := NewMockHIDDeviceEnumerator()
+	enum.AddDevice(mockDev)
+
+	config := DefaultConfig
+	handler, err := NewHandler(&config, enum)
+	if err != nil {
+		t.Fatalf("NewHandler: %v", err)
+	}
+	return handler
+}
+
+// pinRegistrationOptions is a minimal registration ceremony for a
+// PIN-protected authenticator.
+func pinRegistrationOptions(pin string) WebAuthnRegistrationOptions {
+	return WebAuthnRegistrationOptions{
+		Challenge:       []byte("registration-challenge"),
+		Origin:          "https://xkms.example.com",
+		RPID:            "xkms.example.com",
+		RPName:          "xkms",
+		UserID:          []byte("user-handle"),
+		UserName:        "administrator",
+		UserDisplayName: "administrator",
+		// A PIN-protected key has no built-in user verification method, so
+		// this must NOT reach the wire as the "uv" option once a PIN is
+		// supplied — the simulator rejects that combination outright.
+		RequireUserVerification: true,
+		PIN:                     pin,
+	}
+}
+
+func TestRegisterWebAuthnWithPIN(t *testing.T) {
+	handler := newPINRegistrationHandler(t, "123456")
+
+	attestation, err := handler.RegisterWebAuthn(pinRegistrationOptions("123456"))
+	if err != nil {
+		t.Fatalf("RegisterWebAuthn with PIN: %v", err)
+	}
+	if len(attestation.CredentialID) == 0 {
+		t.Fatal("attestation carries no credential id")
+	}
+
+	// The credential must survive the same parser the browser path uses.
+	if _, err := protocol.ParseCredentialCreationResponseBody(
+		bytes.NewReader(attestation.PublicKeyCredentialJSON),
+	); err != nil {
+		t.Fatalf("server-side parse of the enrolled credential: %v", err)
+	}
+}
+
+func TestRegisterWebAuthnPINErrors(t *testing.T) {
+	t.Run("PIN-protected key refuses an unauthorized request", func(t *testing.T) {
+		handler := newPINRegistrationHandler(t, "123456")
+
+		// No PIN supplied: this is the failure the init ceremony hit before the
+		// PIN was threaded through, and it must stay legible. The "uv" option
+		// is off here so the refusal is unambiguously about the missing
+		// pinUvAuthParam rather than about asking a PIN-only key for built-in
+		// user verification.
+		opts := pinRegistrationOptions("")
+		opts.RequireUserVerification = false
+
+		attestation, err := handler.RegisterWebAuthn(opts)
+		if attestation != nil {
+			t.Fatal("an unauthorized request must not yield a credential")
+		}
+		if !errors.Is(err, ErrPINRequired) {
+			t.Fatalf("want ErrPINRequired, got %v", err)
+		}
+	})
+
+	t.Run("wrong PIN is not reported as a refusal", func(t *testing.T) {
+		handler := newPINRegistrationHandler(t, "123456")
+
+		attestation, err := handler.RegisterWebAuthn(pinRegistrationOptions("999999"))
+		if attestation != nil {
+			t.Fatal("a wrong PIN must not yield a credential")
+		}
+		if !errors.Is(err, ErrInvalidPIN) {
+			t.Fatalf("want ErrInvalidPIN, got %v", err)
+		}
+	})
+
+	t.Run("a key with no PIN ignores a supplied one", func(t *testing.T) {
+		handler := newPINRegistrationHandler(t, "")
+
+		// GetPINToken against a key with no PIN set is an error rather than a
+		// silent success, so the operator learns the PIN was pointless instead
+		// of enrolling a credential that verification will not match.
+		attestation, err := handler.RegisterWebAuthn(pinRegistrationOptions("123456"))
+		if attestation != nil {
+			t.Fatal("expected no credential")
+		}
+		if !errors.Is(err, ErrPINNotSet) {
+			t.Fatalf("want ErrPINNotSet, got %v", err)
+		}
+	})
 }

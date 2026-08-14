@@ -21,6 +21,7 @@ import (
 	"strings"
 
 	"github.com/jeremyhahn/go-xkms/pkg/api/transport"
+	"github.com/jeremyhahn/go-xkms/pkg/auth"
 	"github.com/jeremyhahn/go-xkms/pkg/xkms"
 )
 
@@ -40,7 +41,7 @@ func (s *Server) handleGetCABundle(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if !s.authorize(w, r, "certs", "read") {
+	if !s.authorize(w, r, auth.ResourceCerts, auth.ActionRead) {
 		return
 	}
 
@@ -73,7 +74,7 @@ func (s *Server) handleGetCACertificate(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 
-	if !s.authorize(w, r, "certs", "read") {
+	if !s.authorize(w, r, auth.ResourceCerts, auth.ActionRead) {
 		return
 	}
 
@@ -105,7 +106,7 @@ func (s *Server) handleSignCSR(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if !s.authorize(w, r, "certs", "generate") {
+	if !s.authorize(w, r, auth.ResourceCerts, auth.ActionGenerate) {
 		return
 	}
 
@@ -139,7 +140,7 @@ func (s *Server) handleIssueCertificate(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 
-	if !s.authorize(w, r, "certs", "generate") {
+	if !s.authorize(w, r, auth.ResourceCerts, auth.ActionGenerate) {
 		return
 	}
 
@@ -173,7 +174,7 @@ func (s *Server) handleRevokeCertificate(w http.ResponseWriter, r *http.Request)
 		return
 	}
 
-	if !s.authorize(w, r, "certs", "revoke") {
+	if !s.authorize(w, r, auth.ResourceCerts, auth.ActionRevoke) {
 		return
 	}
 
@@ -207,7 +208,7 @@ func (s *Server) handleGenerateCRL(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if !s.authorize(w, r, "certs", "read") {
+	if !s.authorize(w, r, auth.ResourceCerts, auth.ActionRead) {
 		return
 	}
 
@@ -241,7 +242,7 @@ func (s *Server) handleIsRevoked(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if !s.authorize(w, r, "certs", "read") {
+	if !s.authorize(w, r, auth.ResourceCerts, auth.ActionRead) {
 		return
 	}
 

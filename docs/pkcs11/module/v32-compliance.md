@@ -4,21 +4,21 @@ This document details the go-xkms PKCS#11 module's compliance with the OASIS PKC
 
 ## v3.2 Function Support Matrix
 
-The module implements all 17 v3.2 function signatures (12 core + 5 message-based VerifySignature) with full input validation, session state management, and proper PKCS#11 size query semantics. Functions that depend on async backend infrastructure return `CKR_FUNCTION_NOT_SUPPORTED` until the corresponding backends are integrated.
+The module implements 12 v3.2 function signatures with full input validation, session state management, and proper PKCS#11 size query semantics. The message-based signature-first verification functions (`C_MessageVerifySignatureInit` and its four siblings) are specified by v3.2 but have no `*Module` method or CGO export in this codebase yet -- they are not partially stubbed, they simply do not exist. Functions that depend on async backend infrastructure return `CKR_FUNCTION_NOT_SUPPORTED` until the corresponding backends are integrated.
 
 | Function | Status | Notes |
 |----------|--------|-------|
-| `C_EncapsulateKey` | Supported | ML-KEM-768 via crypto/mlkem |
-| `C_DecapsulateKey` | Supported | ML-KEM-768 via crypto/mlkem |
-| `C_VerifySignatureInit` | Supported | ML-DSA-44 via circl |
+| `C_EncapsulateKey` | Supported | ML-KEM-768/1024 via crypto/mlkem; parameter set resolved from `CKA_PARAMETER_SET` |
+| `C_DecapsulateKey` | Supported | ML-KEM-768/1024 via crypto/mlkem |
+| `C_VerifySignatureInit` | Supported | ML-DSA via circl |
 | `C_VerifySignature` | Supported | Single-part verification |
 | `C_VerifySignatureUpdate` | Supported | Multi-part streaming |
 | `C_VerifySignatureFinal` | Supported | Multi-part finalization |
-| `C_MessageVerifySignatureInit` | Supported | Message-based session init |
-| `C_VerifyMessageSignature` | Supported | Complete message verification |
-| `C_VerifyMessageSignatureBegin` | Supported | Streaming message init |
-| `C_VerifyMessageSignatureNext` | Supported | Streaming message data |
-| `C_MessageVerifySignatureFinal` | Supported | Streaming session cleanup |
+| `C_MessageVerifySignatureInit` | Not implemented | No `*Module` method or CGO export exists |
+| `C_VerifyMessageSignature` | Not implemented | No `*Module` method or CGO export exists |
+| `C_VerifyMessageSignatureBegin` | Not implemented | No `*Module` method or CGO export exists |
+| `C_VerifyMessageSignatureNext` | Not implemented | No `*Module` method or CGO export exists |
+| `C_MessageVerifySignatureFinal` | Not implemented | No `*Module` method or CGO export exists |
 | `C_WrapKeyAuthenticated` | Supported | AES-GCM AEAD wrapping with size query support |
 | `C_UnwrapKeyAuthenticated` | Supported | AES-GCM AEAD unwrapping with R/W session enforcement |
 | `C_GetSessionValidationFlags` | Supported | Returns 0 (non-FIPS module) |
@@ -26,7 +26,11 @@ The module implements all 17 v3.2 function signatures (12 core + 5 message-based
 | `C_AsyncGetID` | Not Supported | Returns `CKR_FUNCTION_NOT_SUPPORTED` |
 | `C_AsyncJoin` | Not Supported | Returns `CKR_FUNCTION_NOT_SUPPORTED` |
 
-All functions perform input validation (session existence, mechanism presence, key handle validity) before returning results. KEM and AuthWrap functions enforce read-write session requirements for object-creating operations. Size queries (NULL output buffer) return the required buffer length without performing crypto or creating objects.
+All implemented functions perform input validation (session existence, mechanism presence, key handle validity) before returning results. KEM and AuthWrap functions enforce read-write session requirements for object-creating operations. Size queries (NULL output buffer) return the required buffer length without performing crypto or creating objects.
+
+`C_WrapKeyAuthenticated` additionally refuses a wrapping key shorter than the key it would carry, with `CKR_WRAPPING_KEY_SIZE_RANGE` (NIST SP 800-57 Part 1 §5.6.2). The check is not applied to `C_UnwrapKeyAuthenticated`.
+
+**These functions live only in `CK_FUNCTION_LIST_3_2`.** They are absent from `CK_FUNCTION_LIST_3_0` and from the v2.40 list that `C_GetFunctionList` returns, so an application must reach them through `C_GetInterface` asking for version 3.2 -- or for no version at all, which yields the latest. `C_GetInterface` accepts only the interface name `"PKCS 11"` and refuses any non-zero `flags`, `CKF_INTERFACE_FORK_SAFE` included, with `CKR_ARGUMENTS_BAD`: neither the Go runtime nor the daemon connection survives `fork(2)`.
 
 ### CGO Bridge
 
@@ -48,7 +52,7 @@ All v3.2 functions are fully wired through the CGO export layer (`exports_v32.go
 | `CKR_SESSION_ASYNC_NOT_SUPPORTED` | `0x00000205` | Session does not support async |
 | `CKR_SEED_RANDOM_REQUIRED` | `0x00000206` | Token requires seed random data |
 | `CKR_OPERATION_NOT_VALIDATED` | `0x00000207` | Operation not validated |
-| `CKR_OPERATION_INCOMPATIBLE` | `0x00000208` | Operation incompatible with session/token state |
+| `CKR_TOKEN_NOT_INITIALIZED` | `0x00000208` | Token is in factory state; `C_InitToken` must be called first (v3.2 section 5.1.3) |
 | `CKR_PARAMETER_SET_NOT_SUPPORTED` | `0x00000209` | Parameter set not supported by this token |
 
 ## Parameter Set Support (CKP_*)
@@ -125,13 +129,15 @@ Keys are stored as compact seeds per NIST specifications (FIPS 204 Section 6.1 `
 
 | Algorithm | Standard | Status |
 |-----------|----------|--------|
-| ML-KEM-512 | FIPS 203 | Not supported (not in Go stdlib `crypto/mlkem`) |
-| SLH-DSA | FIPS 205 | Mechanism constants defined, no backend |
-| HSS/LMS | RFC 8554 | Mechanism constants defined, no backend |
-| XMSS | RFC 8391 | Mechanism constants defined, no backend |
-| XMSS^MT | RFC 8391 | Mechanism constants defined, no backend |
+| ML-KEM-512 | FIPS 203 | Supported via `pkg/quantum/mlkem512` (CIRCL FIPS 203), since Go's `crypto/mlkem` omits this parameter set |
+| SLH-DSA | FIPS 205 | Mechanism constants and descriptors defined, no backend; registered but not advertised |
+| HSS/LMS | RFC 8554 | Mechanism constants and descriptors defined, no backend; registered but not advertised |
+| XMSS | RFC 8391 | Mechanism constants and descriptors defined, no backend; registered but not advertised |
+| XMSS^MT | RFC 8391 | Mechanism constants and descriptors defined, no backend; registered but not advertised |
 
-PQC operations are always available -- no special build tags are required.
+PQC operations are always available -- no special build tags are required. Only `CKM_ML_KEM`,
+`CKM_ML_KEM_KEY_PAIR_GEN`, `CKM_ML_DSA` and `CKM_ML_DSA_KEY_PAIR_GEN` appear in `C_GetMechanismList`; see the
+[support matrix](support-matrix.md#post-quantum).
 
 ## v3.2 Mechanism Types
 
@@ -144,12 +150,24 @@ The module defines 39 standard v3.2 mechanism constants from the OASIS pkcs11t.h
 | `CKM_ML_KEM_KEY_PAIR_GEN` | `0x0000000F` | `CKF_GENERATE_KEY_PAIR` |
 | `CKM_ML_KEM` | `0x00000017` | `CKF_ENCAPSULATE`, `CKF_DECAPSULATE` |
 
+Per §6.68.4/§6.68.5, `MinKeySize`/`MaxKeySize` for both mechanisms are the ML-KEM *public key* size range in
+bytes (800 through 1568), not a bit count. Standard `CKM_ML_KEM` dispatches to a
+concrete security level by resolving the key object's `CKA_PARAMETER_SET` attribute, falling back to the public
+key material's length when the attribute is absent -- the ML-KEM public key sizes never collide, so the
+length alone is unambiguous.
+
+The advertised minimum of 800 bytes is the ML-KEM-512 public key size, and all three FIPS 203 parameter sets
+are supported. See [Mechanism Conformance](mechanisms.md#ml-kem-fips-203-and-ml-dsa-fips-204-standard-dispatch).
+
 ### ML-DSA (FIPS 204)
 
 | Constant | Value | Capabilities |
 |----------|-------|-------------|
 | `CKM_ML_DSA_KEY_PAIR_GEN` | `0x0000001C` | `CKF_GENERATE_KEY_PAIR` |
 | `CKM_ML_DSA` | `0x0000001D` | `CKF_SIGN`, `CKF_VERIFY` |
+
+As with ML-KEM, `MinKeySize`/`MaxKeySize` (§6.67.4/§6.67.5) are the ML-DSA public key size range in bytes (1312
+through 2592), and standard `CKM_ML_DSA` resolves its security level from `CKA_PARAMETER_SET` on the key object.
 
 ### HashML-DSA (Pre-hashed ML-DSA Variants)
 
@@ -192,12 +210,22 @@ The module defines 39 standard v3.2 mechanism constants from the OASIS pkcs11t.h
 | `CKM_HASH_SLH_DSA_SHAKE128` | `0x0000003E` | `CKF_SIGN`, `CKF_VERIFY` |
 | `CKM_HASH_SLH_DSA_SHAKE256` | `0x0000003F` | `CKF_SIGN`, `CKF_VERIFY` |
 
-### TLS 1.2 Extended Master Key
+### Constants without a mechanism descriptor
 
-| Constant | Value | Capabilities |
-|----------|-------|-------------|
-| `CKM_TLS12_EXTENDED_MASTER_KEY_DERIVE` | `0x00000056` | `CKF_DERIVE` |
-| `CKM_TLS12_EXTENDED_MASTER_KEY_DERIVE_DH` | `0x00000057` | `CKF_DERIVE` |
+These five keep their constants and their `mechanismNames` entries -- a name is a
+diagnostic, so an operator sees `CKM_ECDH_X_AES_KEY_WRAP: CKR_MECHANISM_INVALID`
+rather than `CKM_UNKNOWN(0x00004038)` -- but they have **no registry entry**, so
+`C_*Init` refuses them immediately with `CKR_MECHANISM_INVALID`.
+
+| Constant | Value | Why there is no descriptor |
+|----------|-------|----------------------------|
+| `CKM_TLS12_EXTENDED_MASTER_KEY_DERIVE` | `0x00000056` | Not among the mechanisms `C_DeriveKey` dispatches on |
+| `CKM_TLS12_EXTENDED_MASTER_KEY_DERIVE_DH` | `0x00000057` | same |
+| `CKM_ECDH_X_AES_KEY_WRAP` | `0x00004038` | Nothing routes it to a wrapping algorithm |
+| `CKM_ECDH_COF_AES_KEY_WRAP` | `0x00004039` | same |
+| `CKM_PUB_KEY_FROM_PRIV_KEY` | `0x0000403A` | Not among the mechanisms `C_DeriveKey` dispatches on |
+
+Each becomes a candidate to restore the moment its operation works end to end.
 
 ### HSS/LMS (RFC 8554)
 
@@ -214,14 +242,6 @@ The module defines 39 standard v3.2 mechanism constants from the OASIS pkcs11t.h
 | `CKM_XMSSMT_KEY_PAIR_GEN` | `0x00004035` | `CKF_GENERATE_KEY_PAIR` |
 | `CKM_XMSS` | `0x00004036` | `CKF_SIGN`, `CKF_VERIFY` |
 | `CKM_XMSSMT` | `0x00004037` | `CKF_SIGN`, `CKF_VERIFY` |
-
-### ECDH Key Wrap and Utility
-
-| Constant | Value | Capabilities |
-|----------|-------|-------------|
-| `CKM_ECDH_X_AES_KEY_WRAP` | `0x00004038` | `CKF_WRAP`, `CKF_UNWRAP` |
-| `CKM_ECDH_COF_AES_KEY_WRAP` | `0x00004039` | `CKF_WRAP`, `CKF_UNWRAP` |
-| `CKM_PUB_KEY_FROM_PRIV_KEY` | `0x0000403A` | `CKF_DERIVE` |
 
 ## Async Operations
 

@@ -3,6 +3,8 @@ package xkms
 import (
 	"context"
 	"crypto/elliptic"
+	"crypto/rand"
+	"crypto/rsa"
 	"crypto/x509"
 	"errors"
 	"testing"
@@ -280,32 +282,72 @@ func TestRotateKey_EmptyKeyID(t *testing.T) {
 	assert.True(t, errors.Is(err, ErrInvalidKeyID))
 }
 
-func TestExportKeyMaterial_NotSupported(t *testing.T) {
+func TestExportKeyMaterial_BackendWithoutImportExport(t *testing.T) {
 	setupService(t)
 	svc, err := Get()
 	require.NoError(t, err)
 
-	_, err = svc.ExportKeyMaterial(context.Background(), &transport.ExportKeyMaterialRequest{})
+	_, err = svc.ExportKeyMaterial(context.Background(), &transport.ExportKeyMaterialRequest{
+		KeyID:   "some-key",
+		Backend: "software",
+	})
 	require.Error(t, err)
 	assert.True(t, errors.Is(err, ErrOperationNotSupported))
 }
 
-func TestWrapKeyByID_NotSupported(t *testing.T) {
+func TestWrapKeyByID_BackendWithoutImportExport(t *testing.T) {
 	setupService(t)
 	svc, err := Get()
 	require.NoError(t, err)
 
-	_, err = svc.WrapKeyByID(context.Background(), &transport.WrapKeyByIDRequest{})
+	// The target-backend capability check runs before the wrapping key is
+	// even resolved, so this fails immediately regardless of Algorithm.
+	_, err = svc.WrapKeyByID(context.Background(), &transport.WrapKeyByIDRequest{
+		WrappingKeyID:      "kek",
+		WrappingKeyBackend: "software",
+		TargetKeyID:        "target",
+		TargetKeyBackend:   "software",
+		Algorithm:          string(types.WrapAESKW),
+	})
 	require.Error(t, err)
 	assert.True(t, errors.Is(err, ErrOperationNotSupported))
 }
 
-func TestUnwrapKeyByID_NotSupported(t *testing.T) {
-	setupService(t)
+// TestUnwrapKeyByID_BackendWithoutImportExport proves the target backend's
+// ImportExportBackend requirement (needed for ImportKey) still holds even
+// though the unwrapping key itself no longer needs that capability -- it is
+// used directly via crypto.Decrypter (see servicer_wrapkey.go), so the
+// request must genuinely unwrap before the target-capability check is ever
+// reached. The wrapped blob is a real RSA-PKCS1v15 ciphertext under a real
+// key so the flow gets past unwrapKeyMaterial and into the target-backend
+// check this test is actually about.
+func TestUnwrapKeyByID_BackendWithoutImportExport(t *testing.T) {
+	software, _ := setupService(t)
 	svc, err := Get()
 	require.NoError(t, err)
 
-	_, err = svc.UnwrapKeyByID(context.Background(), &transport.UnwrapKeyByIDRequest{})
+	privKey, err := software.GenerateRSA(context.Background(), &types.KeyAttributes{
+		CN:            "kek",
+		KeyAlgorithm:  x509.RSA,
+		RSAAttributes: &types.RSAAttributes{KeySize: 2048},
+	})
+	require.NoError(t, err)
+	rsaKey, ok := privKey.(*rsa.PrivateKey)
+	require.True(t, ok)
+
+	wrapped, err := rsa.EncryptPKCS1v15(rand.Reader, &rsaKey.PublicKey, []byte("target-key-material-bytes"))
+	require.NoError(t, err)
+
+	_, err = svc.UnwrapKeyByID(context.Background(), &transport.UnwrapKeyByIDRequest{
+		WrappedKey:           wrapped,
+		UnwrappingKeyID:      "kek",
+		UnwrappingKeyBackend: "software",
+		Algorithm:            string(types.WrapRSAPKCS1v15),
+		TargetKeyID:          "imported",
+		TargetKeyBackend:     "software",
+		TargetKeyType:        "symmetric",
+		TargetKeySize:        256,
+	})
 	require.Error(t, err)
 	assert.True(t, errors.Is(err, ErrOperationNotSupported))
 }

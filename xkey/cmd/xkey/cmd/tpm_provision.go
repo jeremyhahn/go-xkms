@@ -17,6 +17,7 @@ import (
 	"bufio"
 	"encoding/json"
 	"fmt"
+	"io"
 	"os"
 	"strconv"
 	"strings"
@@ -195,6 +196,7 @@ func validatePCRBank(bank string) error {
 }
 
 func runTPMInstall(cmd *cobra.Command, args []string) error {
+	out := cmd.OutOrStdout()
 	// Validate PCR flags if provided
 	if err := validatePCRBank(installPCRBank); err != nil {
 		return err
@@ -243,10 +245,10 @@ func runTPMInstall(cmd *cobra.Command, args []string) error {
 		result.SRKCreated = true
 		result.IAKCreated = true
 		result.IDevIDCreated = true
-		return outputProvisionResult(result)
+		return outputProvisionResult(out, result)
 	}
 
-	fmt.Println("Installing xKey TPM keys (safe mode - preserves manufacturer keys)...")
+	fmt.Fprintln(out, "Installing xKey TPM keys (safe mode - preserves manufacturer keys)...")
 
 	// Determine the authorization password
 	var soPIN xkms.Password
@@ -269,25 +271,26 @@ func runTPMInstall(cmd *cobra.Command, args []string) error {
 	result.IAKCreated = true
 	result.IDevIDCreated = true
 
-	return outputProvisionResult(result)
+	return outputProvisionResult(out, result)
 }
 
 func runTPMProvision(cmd *cobra.Command, args []string) error {
+	out := cmd.OutOrStdout()
 	// Require explicit confirmation
 	if !provisionConfirm {
-		fmt.Println()
-		fmt.Println("+------------------------------------------------------------------------------+")
-		fmt.Println("|  WARNING: This operation will PERMANENTLY DESTROY manufacturer TPM keys!    |")
-		fmt.Println("|                                                                              |")
-		fmt.Println("|  The manufacturer EK certificate CANNOT be recovered after deletion.         |")
-		fmt.Println("|  Some enterprise attestation scenarios require manufacturer certificates.    |")
-		fmt.Println("|                                                                              |")
-		fmt.Println("|  Consider using 'xkey tpm install' instead (preserves manufacturer keys).    |")
-		fmt.Println("+------------------------------------------------------------------------------+")
-		fmt.Println()
-		fmt.Println("To proceed, run with --confirm flag:")
-		fmt.Println("  xkey tpm provision --confirm")
-		fmt.Println()
+		fmt.Fprintln(out)
+		fmt.Fprintln(out, "+------------------------------------------------------------------------------+")
+		fmt.Fprintln(out, "|  WARNING: This operation will PERMANENTLY DESTROY manufacturer TPM keys!    |")
+		fmt.Fprintln(out, "|                                                                              |")
+		fmt.Fprintln(out, "|  The manufacturer EK certificate CANNOT be recovered after deletion.         |")
+		fmt.Fprintln(out, "|  Some enterprise attestation scenarios require manufacturer certificates.    |")
+		fmt.Fprintln(out, "|                                                                              |")
+		fmt.Fprintln(out, "|  Consider using 'xkey tpm install' instead (preserves manufacturer keys).    |")
+		fmt.Fprintln(out, "+------------------------------------------------------------------------------+")
+		fmt.Fprintln(out)
+		fmt.Fprintln(out, "To proceed, run with --confirm flag:")
+		fmt.Fprintln(out, "  xkey tpm provision --confirm")
+		fmt.Fprintln(out)
 		return nil
 	}
 
@@ -303,9 +306,9 @@ func runTPMProvision(cmd *cobra.Command, args []string) error {
 
 	// Double-check with interactive prompt if running in a terminal
 	if isTerminal() {
-		fmt.Println()
-		fmt.Println("FINAL WARNING: This will permanently destroy manufacturer TPM keys!")
-		fmt.Print("Type 'DESTROY' to continue: ")
+		fmt.Fprintln(out)
+		fmt.Fprintln(out, "FINAL WARNING: This will permanently destroy manufacturer TPM keys!")
+		fmt.Fprint(out, "Type 'DESTROY' to continue: ")
 
 		reader := bufio.NewReader(os.Stdin)
 		input, err := reader.ReadString('\n')
@@ -315,7 +318,7 @@ func runTPMProvision(cmd *cobra.Command, args []string) error {
 
 		input = strings.TrimSpace(input)
 		if input != "DESTROY" {
-			fmt.Println("Operation cancelled.")
+			fmt.Fprintln(out, "Operation cancelled.")
 			return nil
 		}
 	}
@@ -327,8 +330,8 @@ func runTPMProvision(cmd *cobra.Command, args []string) error {
 	}
 	defer func() { _ = tpm.Close() }()
 
-	fmt.Println()
-	fmt.Println("Performing FULL TPM provisioning (destructive)...")
+	fmt.Fprintln(out)
+	fmt.Fprintln(out, "Performing FULL TPM provisioning (destructive)...")
 
 	// Determine the authorization password
 	var soPIN xkms.Password
@@ -352,29 +355,29 @@ func runTPMProvision(cmd *cobra.Command, args []string) error {
 		IDevIDCreated: true,
 	}
 
-	return outputProvisionResult(result)
+	return outputProvisionResult(out, result)
 }
 
-func outputProvisionResult(result *ProvisionResult) error {
+func outputProvisionResult(out io.Writer, result *ProvisionResult) error {
 	switch tpmCfg.outputFormat {
 	case "json":
-		encoder := json.NewEncoder(os.Stdout)
+		encoder := json.NewEncoder(out)
 		encoder.SetIndent("", "  ")
 		return encoder.Encode(result)
 	default:
-		fmt.Println()
-		fmt.Println("Provisioning Result")
-		fmt.Println("===================")
-		fmt.Printf("Success:        %t\n", result.Success)
-		fmt.Printf("Message:        %s\n", result.Message)
+		fmt.Fprintln(out)
+		fmt.Fprintln(out, "Provisioning Result")
+		fmt.Fprintln(out, "===================")
+		fmt.Fprintf(out, "Success:        %t\n", result.Success)
+		fmt.Fprintf(out, "Message:        %s\n", result.Message)
 		if result.EKPreserved {
-			fmt.Printf("EK:             preserved (manufacturer)\n")
+			fmt.Fprintf(out, "EK:             preserved (manufacturer)\n")
 		} else {
-			fmt.Printf("EK Created:     %t\n", result.EKCreated)
+			fmt.Fprintf(out, "EK Created:     %t\n", result.EKCreated)
 		}
-		fmt.Printf("SRK Created:    %t\n", result.SRKCreated)
-		fmt.Printf("IAK Created:    %t\n", result.IAKCreated)
-		fmt.Printf("IDevID Created: %t\n", result.IDevIDCreated)
+		fmt.Fprintf(out, "SRK Created:    %t\n", result.SRKCreated)
+		fmt.Fprintf(out, "IAK Created:    %t\n", result.IAKCreated)
+		fmt.Fprintf(out, "IDevID Created: %t\n", result.IDevIDCreated)
 		return nil
 	}
 }

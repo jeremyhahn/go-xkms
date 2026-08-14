@@ -1,7 +1,10 @@
 import { defineConfig } from 'tsup';
 
 export default defineConfig({
-  entry: ['src/index.ts'],
+  // Two entries: the main client, and the xterm-backed console on its own
+  // subpath so a web app can code-split the terminal (and its xterm
+  // dependency) out of the initial bundle.
+  entry: ['src/index.ts', 'src/ssh-console.ts'],
   format: ['esm', 'cjs'],
   dts: true,
   sourcemap: true,

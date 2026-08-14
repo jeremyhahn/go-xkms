@@ -17,13 +17,18 @@ package pkcs11
 
 import (
 	"context"
+	"crypto/x509"
+	"encoding/json"
 	"errors"
 	"os"
 	"path/filepath"
 	"testing"
 
+	"github.com/jeremyhahn/go-xkms/pkg/backend"
+	"github.com/jeremyhahn/go-xkms/pkg/errs"
 	"github.com/jeremyhahn/go-xkms/pkg/storage"
 	"github.com/jeremyhahn/go-xkms/pkg/types"
+	"github.com/stretchr/testify/require"
 )
 
 // TestCanSeal_NotInitialized tests CanSeal returns false when not initialized
@@ -397,4 +402,254 @@ func TestMarshalUnmarshalSealedData(t *testing.T) {
 	if restored.KeyID != original.KeyID {
 		t.Errorf("KeyID mismatch: got %s, want %s", restored.KeyID, original.KeyID)
 	}
+}
+
+// newSealingBackend returns a provisioned backend together with the attributes
+// of an AES-256-GCM key that exists on its token, which is the precondition for
+// every Seal/Unseal operation.
+func newSealingBackend(t *testing.T, label, cn string) (*Backend, *types.KeyAttributes) {
+	t.Helper()
+
+	b := newProvisionedBackend(t, label)
+
+	attrs := &types.KeyAttributes{
+		CN:                 cn,
+		KeyType:            backend.KEY_TYPE_SECRET,
+		StoreType:          backend.STORE_PKCS11,
+		SymmetricAlgorithm: types.SymmetricAES256GCM,
+	}
+	require.NoError(t, attrs.Validate())
+
+	_, err := b.GenerateSymmetricKey(context.Background(), attrs)
+	require.NoError(t, err, "the sealing key must exist on the token")
+
+	return b, attrs
+}
+
+// TestCanSeal_Initialized verifies CanSeal reports true only once both the
+// session pool and the PKCS#11 context exist, which is what the sealing path
+// dereferences.
+func TestCanSeal_Initialized(t *testing.T) {
+	b := newProvisionedBackend(t, "seal-cansealed")
+	require.True(t, b.CanSeal())
+
+	require.NoError(t, b.Close())
+	require.False(t, b.CanSeal(), "a closed backend must not claim it can seal")
+}
+
+// TestSeal_Unseal_RoundTrip verifies the full hardware sealing path: the
+// plaintext must be recoverable, and the sealed envelope must actually be an
+// envelope — ciphertext distinct from plaintext, a nonce present, and the key
+// identity recorded so a later unseal can be matched to the right key.
+func TestSeal_Unseal_RoundTrip(t *testing.T) {
+	b, attrs := newSealingBackend(t, "seal-roundtrip", "seal-roundtrip-key")
+	ctx := context.Background()
+
+	plaintext := []byte("hardware sealed payload")
+
+	sealed, err := b.Seal(ctx, plaintext, &types.SealOptions{KeyAttributes: attrs})
+	require.NoError(t, err)
+	require.NotNil(t, sealed)
+
+	require.Equal(t, types.BackendTypePKCS11, sealed.Backend)
+	require.NotEmpty(t, sealed.Ciphertext)
+	require.NotEqual(t, plaintext, sealed.Ciphertext, "the payload must not be stored in the clear")
+	require.NotEmpty(t, sealed.Nonce, "AES-GCM requires a nonce for every seal")
+	require.Equal(t, attrs.ID(), sealed.KeyID)
+	require.Equal(t, string(types.SymmetricAES256GCM), string(sealed.Metadata["pkcs11:algorithm"]))
+	require.NotContains(t, sealed.Metadata, "pkcs11:has_aad", "no AAD was supplied")
+
+	unsealed, err := b.Unseal(ctx, sealed, &types.UnsealOptions{KeyAttributes: attrs})
+	require.NoError(t, err)
+	require.Equal(t, plaintext, unsealed)
+}
+
+// TestSeal_Unseal_NonceIsUnique verifies that two seals of the same plaintext
+// under the same key produce different envelopes. A repeated GCM nonce under
+// one key destroys confidentiality, so this is a security invariant rather than
+// a cosmetic one.
+func TestSeal_Unseal_NonceIsUnique(t *testing.T) {
+	b, attrs := newSealingBackend(t, "seal-nonce-unique", "seal-nonce-key")
+	ctx := context.Background()
+
+	plaintext := []byte("repeated payload")
+
+	first, err := b.Seal(ctx, plaintext, &types.SealOptions{KeyAttributes: attrs})
+	require.NoError(t, err)
+	second, err := b.Seal(ctx, plaintext, &types.SealOptions{KeyAttributes: attrs})
+	require.NoError(t, err)
+
+	require.NotEqual(t, first.Nonce, second.Nonce, "each seal must use a fresh GCM nonce")
+	require.NotEqual(t, first.Ciphertext, second.Ciphertext)
+
+	for _, sealed := range []*types.SealedData{first, second} {
+		got, err := b.Unseal(ctx, sealed, &types.UnsealOptions{KeyAttributes: attrs})
+		require.NoError(t, err)
+		require.Equal(t, plaintext, got)
+	}
+}
+
+// TestSeal_Unseal_AAD verifies that additional authenticated data is bound to
+// the envelope: unsealing succeeds only with the identical AAD, and the
+// metadata records that AAD was used.
+//
+// The negative halves matter more than the positive one. If the AAD were
+// dropped on the way to the token, every one of these mismatched unseals would
+// succeed and the caller's context binding would be silently worthless.
+func TestSeal_Unseal_AAD(t *testing.T) {
+	b, attrs := newSealingBackend(t, "seal-aad", "seal-aad-key")
+	ctx := context.Background()
+
+	plaintext := []byte("aad bound payload")
+	aad := []byte("tenant=acme,purpose=barrier")
+
+	sealed, err := b.Seal(ctx, plaintext, &types.SealOptions{KeyAttributes: attrs, AAD: aad})
+	require.NoError(t, err)
+	require.Equal(t, []byte("true"), sealed.Metadata["pkcs11:has_aad"])
+
+	got, err := b.Unseal(ctx, sealed, &types.UnsealOptions{KeyAttributes: attrs, AAD: aad})
+	require.NoError(t, err)
+	require.Equal(t, plaintext, got)
+
+	_, err = b.Unseal(ctx, sealed, &types.UnsealOptions{KeyAttributes: attrs, AAD: []byte("tenant=evil")})
+	require.Error(t, err, "a different AAD must not authenticate")
+	var wrongAAD *errs.Wrapped
+	require.True(t, errors.As(err, &wrongAAD))
+	require.Equal(t, "failed to decrypt data (check key and AAD)", wrongAAD.Msg)
+
+	_, err = b.Unseal(ctx, sealed, &types.UnsealOptions{KeyAttributes: attrs})
+	require.Error(t, err, "omitting the AAD must not authenticate")
+}
+
+// TestSeal_Unseal_TamperedCiphertext verifies the AEAD integrity guarantee: a
+// single flipped bit in the sealed payload must be detected rather than
+// returning corrupted plaintext.
+func TestSeal_Unseal_TamperedCiphertext(t *testing.T) {
+	b, attrs := newSealingBackend(t, "seal-tamper", "seal-tamper-key")
+	ctx := context.Background()
+
+	sealed, err := b.Seal(ctx, []byte("tamper target payload"), &types.SealOptions{KeyAttributes: attrs})
+	require.NoError(t, err)
+	require.NotEmpty(t, sealed.Ciphertext)
+
+	sealed.Ciphertext[0] ^= 0x01
+
+	_, err = b.Unseal(ctx, sealed, &types.UnsealOptions{KeyAttributes: attrs})
+	require.Error(t, err, "a modified envelope must not unseal")
+
+	var wrapped *errs.Wrapped
+	require.True(t, errors.As(err, &wrapped))
+	require.Equal(t, "failed to decrypt data (check key and AAD)", wrapped.Msg)
+}
+
+// TestSeal_Unseal_WrongKey verifies that an envelope sealed with one key cannot
+// be opened with another. The key-ID guard in Unseal is expected to catch this
+// before any token call.
+func TestSeal_Unseal_WrongKey(t *testing.T) {
+	b, attrs := newSealingBackend(t, "seal-wrongkey", "seal-key-a")
+	ctx := context.Background()
+
+	other := &types.KeyAttributes{
+		CN:                 "seal-key-b",
+		KeyType:            backend.KEY_TYPE_SECRET,
+		StoreType:          backend.STORE_PKCS11,
+		SymmetricAlgorithm: types.SymmetricAES256GCM,
+	}
+	require.NoError(t, other.Validate())
+	_, err := b.GenerateSymmetricKey(ctx, other)
+	require.NoError(t, err)
+
+	sealed, err := b.Seal(ctx, []byte("wrong key payload"), &types.SealOptions{KeyAttributes: attrs})
+	require.NoError(t, err)
+
+	_, err = b.Unseal(ctx, sealed, &types.UnsealOptions{KeyAttributes: other})
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "key ID mismatch")
+}
+
+// TestSeal_AsymmetricKeyRejected verifies that an asymmetric key is refused for
+// sealing, since the PKCS#11 sealing path is AES-GCM on an HSM-resident secret
+// key.
+func TestSeal_AsymmetricKeyRejected(t *testing.T) {
+	b := newProvisionedBackend(t, "seal-asymmetric")
+	ctx := context.Background()
+
+	attrs := &types.KeyAttributes{
+		CN:           "seal-asymmetric-key",
+		KeyType:      backend.KEY_TYPE_TLS,
+		StoreType:    backend.STORE_PKCS11,
+		KeyAlgorithm: x509.RSA,
+	}
+
+	_, err := b.Seal(ctx, []byte("payload"), &types.SealOptions{KeyAttributes: attrs})
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "PKCS#11 sealing requires a symmetric key")
+
+	sealed := &types.SealedData{
+		Backend:    types.BackendTypePKCS11,
+		Ciphertext: []byte("ciphertext"),
+	}
+	_, err = b.Unseal(ctx, sealed, &types.UnsealOptions{KeyAttributes: attrs})
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "PKCS#11 unsealing requires a symmetric key")
+}
+
+// TestSeal_MissingKey verifies that sealing with a symmetric key that was never
+// generated fails with the encrypter-lookup context rather than silently
+// creating a key.
+func TestSeal_MissingKey(t *testing.T) {
+	b := newProvisionedBackend(t, "seal-missing-key")
+	ctx := context.Background()
+
+	attrs := &types.KeyAttributes{
+		CN:                 "seal-never-generated",
+		KeyType:            backend.KEY_TYPE_SECRET,
+		StoreType:          backend.STORE_PKCS11,
+		SymmetricAlgorithm: types.SymmetricAES256GCM,
+	}
+	require.NoError(t, attrs.Validate())
+
+	_, err := b.Seal(ctx, []byte("payload"), &types.SealOptions{KeyAttributes: attrs})
+	require.Error(t, err)
+
+	var wrapped *errs.Wrapped
+	require.True(t, errors.As(err, &wrapped))
+	require.Equal(t, "failed to get symmetric encrypter", wrapped.Msg)
+}
+
+// TestSealedData_SurvivesJSONRoundTrip verifies that a sealed envelope can be
+// persisted and restored through MarshalSealedData/UnmarshalSealedData and
+// still unseal. The binary fields are the risk here: a serialization that
+// mangled the nonce or tag would only show up at unseal time.
+func TestSealedData_SurvivesJSONRoundTrip(t *testing.T) {
+	b, attrs := newSealingBackend(t, "seal-json", "seal-json-key")
+	ctx := context.Background()
+
+	plaintext := []byte("persisted payload")
+	aad := []byte("persisted-aad")
+
+	sealed, err := b.Seal(ctx, plaintext, &types.SealOptions{KeyAttributes: attrs, AAD: aad})
+	require.NoError(t, err)
+
+	encoded, err := MarshalSealedData(sealed)
+	require.NoError(t, err)
+
+	restored, err := UnmarshalSealedData(encoded)
+	require.NoError(t, err)
+
+	got, err := b.Unseal(ctx, restored, &types.UnsealOptions{KeyAttributes: attrs, AAD: aad})
+	require.NoError(t, err)
+	require.Equal(t, plaintext, got)
+}
+
+// TestUnmarshalSealedData_InvalidJSON verifies the decode failure path returns
+// the JSON error instead of a zero-valued envelope that would later be
+// misinterpreted as an empty seal.
+func TestUnmarshalSealedData_InvalidJSON(t *testing.T) {
+	restored, err := UnmarshalSealedData([]byte("{not json"))
+	require.Nil(t, restored)
+	require.Error(t, err)
+
+	var syntaxErr *json.SyntaxError
+	require.True(t, errors.As(err, &syntaxErr), "the JSON decoding error must reach the caller")
 }

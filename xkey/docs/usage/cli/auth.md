@@ -22,6 +22,10 @@ Register with a new xkms server. Establishes a connection, verifies the server i
 xkey auth register --server <url> [--spki-pin <pin>] [--setup-token <token>]
 ```
 
+The registration ceremony runs against a local CTAP2 authenticator -- a real
+security key, or `xkey fido2` running. It fails if no authenticator can be
+opened; no credential is ever fabricated locally.
+
 **Flags:**
 
 | Flag | Type | Description |
@@ -29,6 +33,8 @@ xkey auth register --server <url> [--spki-pin <pin>] [--setup-token <token>]
 | `--server` | string | Server URL (required) |
 | `--spki-pin` | string | SPKI SHA-256 pin for certificate pinning |
 | `--setup-token` | string | Pre-authorized enrollment token from server first boot |
+| `--username` | string | Account name to enroll (default: current OS user) |
+| `--display-name` | string | Human-readable account name (default: the username) |
 
 **Examples:**
 
@@ -47,7 +53,7 @@ Authenticate to a registered server using WebAuthn. On success, the resulting JW
 **Usage:**
 
 ```bash
-xkey auth login --server <url>
+xkey auth login --server <url> [--username <name>]
 ```
 
 **Flags:**
@@ -55,11 +61,13 @@ xkey auth login --server <url>
 | Flag | Type | Description |
 |------|------|-------------|
 | `--server` | string | Server URL (required) |
+| `--username` | string | Account name to authenticate (default: current OS user) |
 
 **Example:**
 
 ```bash
 xkey auth login --server https://kms.example.com:8443
+xkey auth login --server https://kms.example.com:8443 --username alice
 ```
 
 ## auth status

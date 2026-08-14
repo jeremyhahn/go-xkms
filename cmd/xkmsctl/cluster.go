@@ -17,30 +17,104 @@ import (
 	"context"
 	"fmt"
 	"os"
+	"sort"
+	"strconv"
 	"strings"
 
 	client "github.com/jeremyhahn/go-xkms/sdk/go"
 	"github.com/spf13/cobra"
 )
 
-// clusterCmd is the top-level command for read-only Raft cluster inspection.
-//
-// Membership mutation (add/remove replica) is intentionally absent.
-//
-// TODO(cluster): add/remove require a Raft replica-mutation API (qrdb
-// AddReplica/RemoveReplica) not yet exposed via the xkms SDK.
+// clusterCmd is the top-level command for Raft cluster inspection and
+// membership management.
 var clusterCmd = &cobra.Command{
 	Use:   "cluster",
-	Short: "Inspect the Raft cluster",
-	Long: `Inspect the Raft cluster the xkms server participates in.
+	Short: "Inspect and manage the Raft cluster",
+	Long: `Inspect and manage the Raft cluster the xkms server participates in.
 
-The cluster surface is read-only. A standalone (non-clustered) server reports a
-single-node, non-clustered status so the commands work uniformly whether or not
-clustering is enabled.
+A standalone (non-clustered) server reports a single-node, non-clustered status
+so the inspection commands work uniformly whether or not clustering is enabled.
+
+Membership mutation is privileged: the server authorizes it against the
+canonical cluster-membership permissions (admin:add_member, admin:remove_member)
+before reconfiguring the Raft group, and refuses it outright on a standalone
+node.
 
 Subcommands:
   status   Show the Raft leadership status for the configured shard
-  members  List the Raft replicas for the configured shard`,
+  members  List the Raft replicas for the configured shard
+  add      Add a replica to the shard
+  remove   Remove a replica from the shard`,
+}
+
+// clusterAddCmd adds a replica to the shard's Raft group.
+var clusterAddCmd = &cobra.Command{
+	Use:   "add <replica-id> <raft-address>",
+	Short: "Add a replica to the Raft cluster",
+	Long: `Add a replica to the shard's Raft group.
+
+The replica ID must be non-zero and unique within the shard. The Raft address is
+the new replica's peer address in host:port form; it is the address the other
+replicas will use to reach it on the consensus plane, not an API address.
+
+Adding a replica that is already a member succeeds without changing the
+configuration, so the command is safe to retry.
+
+Examples:
+  xkmsctl cluster add 2 10.0.0.2:63001
+  xkmsctl cluster add 3 node3.internal:63001 --output json`,
+	Args: cobra.ExactArgs(2),
+	Run: func(cmd *cobra.Command, args []string) {
+		cfg := getConfig()
+		printer := NewPrinter(cfg.OutputFormat, os.Stdout)
+
+		replicaID, err := parseReplicaID(args[0])
+		if err != nil {
+			handleError(err)
+			return
+		}
+		clusterAdd(cfg, printer, replicaID, args[1])
+	},
+}
+
+// clusterRemoveCmd removes a replica from the shard's Raft group.
+var clusterRemoveCmd = &cobra.Command{
+	Use:   "remove <replica-id>",
+	Short: "Remove a replica from the Raft cluster",
+	Long: `Remove a replica from the shard's Raft group.
+
+Removing a replica that is already absent succeeds, so the command is safe to
+retry. Removing a replica does not stop the process running it; shut that node
+down separately.
+
+Examples:
+  xkmsctl cluster remove 2
+  xkmsctl cluster remove 3 --output json`,
+	Args: cobra.ExactArgs(1),
+	Run: func(cmd *cobra.Command, args []string) {
+		cfg := getConfig()
+		printer := NewPrinter(cfg.OutputFormat, os.Stdout)
+
+		replicaID, err := parseReplicaID(args[0])
+		if err != nil {
+			handleError(err)
+			return
+		}
+		clusterRemove(cfg, printer, replicaID)
+	},
+}
+
+// parseReplicaID converts a positional replica identifier argument, rejecting
+// the reserved zero value that Raft uses to mean "no replica".
+func parseReplicaID(arg string) (uint64, error) {
+	replicaID, err := strconv.ParseUint(arg, 10, 64)
+	if err != nil {
+		return 0, &WrappedError{Sentinel: ErrInvalidReplicaID, Err: err}
+	}
+	if replicaID == 0 {
+		return 0, ErrInvalidReplicaID
+	}
+	return replicaID, nil
 }
 
 // clusterStatusCmd shows the Raft leadership status.
@@ -140,6 +214,65 @@ func clusterMembers(cfg *Config, printer *Printer) {
 	printClusterMembers(printer, resp.Members)
 }
 
+// clusterAdd adds a replica to the shard's Raft group and prints the result.
+func clusterAdd(cfg *Config, printer *Printer, replicaID uint64, raftAddr string) {
+	cluster, cleanup, err := createClusterClient(cfg)
+	if err != nil {
+		handleError(err)
+		return
+	}
+	defer cleanup()
+
+	printVerbose(fmt.Sprintf("Adding replica %d at %s to the cluster", replicaID, raftAddr))
+
+	resp, err := cluster.AddReplica(context.Background(), replicaID, raftAddr)
+	if err != nil {
+		handleError(&WrappedError{Sentinel: ErrAddClusterReplicaFailed, Err: err})
+		return
+	}
+
+	printClusterReplica(printer, "added", resp)
+}
+
+// clusterRemove removes a replica from the shard's Raft group and prints the
+// result.
+func clusterRemove(cfg *Config, printer *Printer, replicaID uint64) {
+	cluster, cleanup, err := createClusterClient(cfg)
+	if err != nil {
+		handleError(err)
+		return
+	}
+	defer cleanup()
+
+	printVerbose(fmt.Sprintf("Removing replica %d from the cluster", replicaID))
+
+	resp, err := cluster.RemoveReplica(context.Background(), replicaID)
+	if err != nil {
+		handleError(&WrappedError{Sentinel: ErrRemoveClusterReplicaFailed, Err: err})
+		return
+	}
+
+	printClusterReplica(printer, "removed", resp)
+}
+
+// printClusterReplica reports the outcome of a membership mutation.
+func printClusterReplica(printer *Printer, action string, resp *client.ClusterReplicaResponse) {
+	switch printer.format {
+	case OutputFormatJSON:
+		result := map[string]interface{}{
+			"action":     action,
+			"shard_id":   resp.ShardID,
+			"replica_id": resp.ReplicaID,
+		}
+		if err := printer.PrintJSON(result); err != nil {
+			handleError(err)
+		}
+	case OutputFormatTable, OutputFormatText:
+		_, _ = fmt.Fprintf(printer.writer, "Replica %d %s (shard %d)\n",
+			resp.ReplicaID, action, resp.ShardID)
+	}
+}
+
 // printClusterStatus prints the Raft leadership status.
 func printClusterStatus(printer *Printer, status *client.ClusterStatusInfo) {
 	switch printer.format {
@@ -189,8 +322,31 @@ func printClusterMembers(printer *Printer, members []client.ClusterMemberInfo) {
 		for _, m := range members {
 			_, _ = fmt.Fprintf(printer.writer, "  - node %d at %s%s\n",
 				m.NodeID, m.Address, leaderSuffix(m.IsLeader))
+			for _, line := range formatAPIEndpoints(m.APIEndpoints) {
+				_, _ = fmt.Fprintf(printer.writer, "      api: %s\n", line)
+			}
 		}
 	}
+}
+
+// formatAPIEndpoints renders a replica's advertised API endpoints in a stable
+// order. A replica that advertises nothing yields no lines, so the output is
+// identical to what it was before endpoints existed.
+func formatAPIEndpoints(endpoints map[string]string) []string {
+	if len(endpoints) == 0 {
+		return nil
+	}
+	protocols := make([]string, 0, len(endpoints))
+	for proto := range endpoints {
+		protocols = append(protocols, proto)
+	}
+	sort.Strings(protocols)
+
+	lines := make([]string, 0, len(protocols))
+	for _, proto := range protocols {
+		lines = append(lines, fmt.Sprintf("%s=%s", proto, endpoints[proto]))
+	}
+	return lines
 }
 
 // leaderMarker returns a table cell marking the shard leader.
@@ -219,6 +375,8 @@ func init() {
 	// Build subcommand tree.
 	clusterCmd.AddCommand(clusterStatusCmd)
 	clusterCmd.AddCommand(clusterMembersCmd)
+	clusterCmd.AddCommand(clusterAddCmd)
+	clusterCmd.AddCommand(clusterRemoveCmd)
 
 	// Register with root.
 	rootCmd.AddCommand(clusterCmd)

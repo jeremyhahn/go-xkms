@@ -18,6 +18,8 @@ import (
 	"errors"
 	"testing"
 
+	"github.com/spf13/cobra"
+
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -162,14 +164,26 @@ func TestUSBDeviceSentinelErrors_Distinct(t *testing.T) {
 
 // --- LUKS exempt tests ---
 
+// TestUSBDeviceCommandsAreLUKSExempt verifies `usb device ...` bypasses the
+// LUKS unlock gate. It asserts on the real command objects rather than on
+// bare leaf names: the previous version asserted `luksExemptCommands["device"]`,
+// which is precisely the bug that exempted the unrelated top-level `device`
+// group (device pair/enroll/attest/...).
 func TestUSBDeviceCommandsAreLUKSExempt(t *testing.T) {
-	exemptNames := []string{"device", "start", "stop"}
-	for _, name := range exemptNames {
-		t.Run(name, func(t *testing.T) {
-			assert.True(t, luksExemptCommands[name],
-				"%q should be in luksExemptCommands", name)
+	for _, cmd := range []*cobra.Command{usbDeviceCmd, usbDeviceStartCmd, usbDeviceStopCmd} {
+		t.Run(cmd.Name(), func(t *testing.T) {
+			assert.True(t, isLUKSExempt(cmd),
+				"%q must be LUKS-exempt", cmd.CommandPath())
 		})
 	}
+}
+
+// TestTopLevelDeviceGroupIsNotLUKSExempt is the regression guard: the
+// top-level `device` group manages phone pairing/enrollment and must NOT
+// bypass the unlock gate just because `usb device` shares its leaf name.
+func TestTopLevelDeviceGroupIsNotLUKSExempt(t *testing.T) {
+	assert.False(t, isLUKSExempt(deviceCmd),
+		"top-level %q must not be LUKS-exempt", deviceCmd.CommandPath())
 }
 
 // --- Helper function tests ---

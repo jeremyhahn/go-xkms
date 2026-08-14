@@ -311,8 +311,8 @@ trusted-acme-server
 
 ## See Also
 
-- [ACME Documentation](../acme/README.md)
+- [ACME Documentation](../README.md)
 - [Admin API Reference](../admin/api-reference.md)
 - [cactl CLI](cactl.md)
 - [Protocol Documentation](../protocols/README.md)
-- [Configuration Reference](../acme/configuration.md)
+- [Configuration Reference](../configuration.md)

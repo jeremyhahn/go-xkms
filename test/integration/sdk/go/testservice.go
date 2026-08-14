@@ -1283,8 +1283,13 @@ func (s *TestXKMSService) ClaimCertComplete(ctx context.Context, req *xkms.Claim
 	return nil, ErrNotImplemented
 }
 
-// ClaimShare retrieves the Shamir share for the named officer.
-func (s *TestXKMSService) ClaimShare(ctx context.Context, req *xkms.ClaimShareRequest) (*xkms.ClaimShareResponse, error) {
+// ClaimShareBegin starts the Shamir share claim handshake for the named officer.
+func (s *TestXKMSService) ClaimShareBegin(ctx context.Context, req *xkms.ClaimShareBeginRequest) (*xkms.ClaimShareBeginResponse, error) {
+	return nil, ErrNotImplemented
+}
+
+// ClaimShareComplete completes the Shamir share claim handshake.
+func (s *TestXKMSService) ClaimShareComplete(ctx context.Context, req *xkms.ClaimShareCompleteRequest) (*xkms.ClaimShareCompleteResponse, error) {
 	return nil, ErrNotImplemented
 }
 

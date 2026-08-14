@@ -31,9 +31,21 @@ tls:
   enabled: true
   server_cn: "localhost"
 
+# Adaptive authentication: anonymous while zero users exist (so a fresh local
+# instance is reachable for bootstrap), then every request is required to
+# authenticate as soon as the first user is provisioned. Bearer tokens are
+# verified against the daemon's own signing key, so no key file is needed.
 auth:
-  enabled: false
-  type: "noop"
+  enabled: true
+  type: "adaptive"
+
+# Encryption-at-rest. The passphrase is a development convenience so the
+# barrier auto-unseals at boot; a real deployment provisions this through
+# `xkmsctl init` (Shamir quorum or a hardware seal strategy) instead.
+barrier:
+  enabled: true
+  strategy: "passphrase"
+  passphrase: "dev-only-passphrase"
 
 ratelimit:
   enabled: false
@@ -72,11 +84,12 @@ ca:
       valid: 10
       keys:
         - algorithm: "ECDSA"
-          ecc_curve: "P-256"
+          ecc:
+            curve: "P-256"
           hash: "SHA-256"
           signature-algorithm: "ECDSAWithSHA256"
           store: "software"
-          key_type: "CA"
+          key-type: "CA"
       keystore-type: "software"
       is-root: true
       max-path-length: 1

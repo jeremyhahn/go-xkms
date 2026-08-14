@@ -33,6 +33,22 @@ type sealOutput struct {
 	Tag        string `json:"tag"`
 }
 
+// requireSealed asserts that the preceding seal subtest actually produced an
+// AEAD result before an unseal subtest tries to consume it.
+//
+// A t.Fatal in a sibling subtest aborts only that subtest, so without this the
+// unseal steps would run against a zero-valued sealOutput. They used to skip in
+// that case, which reported the unseal path as covered when in reality the seal
+// had failed. An empty ciphertext here means the seal step failed, and that is a
+// failure of this test, not a reason to opt out of it.
+func requireSealed(t *testing.T, sealed sealOutput) {
+	t.Helper()
+	if sealed.Ciphertext == "" {
+		t.Fatal("seal step produced no ciphertext; the unseal path cannot be exercised " +
+			"(check the failure reported by the preceding seal subtest)")
+	}
+}
+
 // TestProtocolParity_CanSeal tests that can-seal returns true for software backend across all protocols
 func TestProtocolParity_CanSeal(t *testing.T) {
 	runner := commands.NewTestRunner()
@@ -176,10 +192,7 @@ func TestProtocolParity_SealUnsealLifecycle(t *testing.T) {
 
 			// Step 4: Unseal the data and verify it matches the original
 			t.Run("unseal", func(t *testing.T) {
-				// Skip if seal failed (sealedData would be empty)
-				if sealedData.Ciphertext == "" {
-					t.Skip("Skipping unseal - seal operation did not produce output")
-				}
+				requireSealed(t, sealedData)
 
 				args := []string{
 					"unseal",
@@ -309,9 +322,7 @@ func TestProtocolParity_SealWithAAD(t *testing.T) {
 
 			// Step 3: Unseal with matching AAD
 			t.Run("unseal-with-aad", func(t *testing.T) {
-				if sealedData.Ciphertext == "" {
-					t.Skip("Skipping unseal - seal operation did not produce output")
-				}
+				requireSealed(t, sealedData)
 
 				args := []string{
 					"unseal",
@@ -351,9 +362,7 @@ func TestProtocolParity_SealWithAAD(t *testing.T) {
 
 			// Step 4: Verify unseal fails with wrong AAD
 			t.Run("unseal-wrong-aad-fails", func(t *testing.T) {
-				if sealedData.Ciphertext == "" {
-					t.Skip("Skipping unseal - seal operation did not produce output")
-				}
+				requireSealed(t, sealedData)
 
 				args := []string{
 					"unseal",
@@ -455,7 +464,7 @@ func TestProtocolParity_SealInvalidInput(t *testing.T) {
 				if err != nil {
 					t.Logf("stdout: %s", stdout)
 					t.Logf("stderr: %s", stderr)
-					t.Skip("Skipping - could not seal test data")
+					t.Fatalf("seal of the fixture data failed: %v", err)
 				}
 
 				var sealedData sealOutput
@@ -465,9 +474,10 @@ func TestProtocolParity_SealInvalidInput(t *testing.T) {
 				if jsonStart >= 0 && jsonEnd > jsonStart {
 					jsonStr := combinedOutput[jsonStart : jsonEnd+1]
 					if err := json.Unmarshal([]byte(jsonStr), &sealedData); err != nil {
-						t.Skip("Skipping - could not parse seal output")
+						t.Fatalf("seal output is not valid JSON: %v\nOutput: %s", err, combinedOutput)
 					}
 				}
+				requireSealed(t, sealedData)
 
 				// Try to unseal with a tampered tag
 				args := []string{

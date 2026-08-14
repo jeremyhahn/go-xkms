@@ -97,6 +97,7 @@ func init() {
 
 // runPivCSR executes the piv csr command.
 func runPivCSR(cmd *cobra.Command, args []string) error {
+	out := cmd.OutOrStdout()
 	logger := slog.Default()
 
 	// Validate slot argument
@@ -149,7 +150,7 @@ func runPivCSR(cmd *cobra.Command, args []string) error {
 			return errors.Join(ErrPIVCSROutputFailed, err)
 		}
 		slotName := xkms.PIVSlotName(slot)
-		fmt.Printf("CSR generated for slot %s (%s) and written to %s\n", slot, slotName, outputPath)
+		fmt.Fprintf(out, "CSR generated for slot %s (%s) and written to %s\n", slot, slotName, outputPath)
 	} else {
 		// Write to stdout
 		if _, err := os.Stdout.Write(resp.CSR); err != nil {

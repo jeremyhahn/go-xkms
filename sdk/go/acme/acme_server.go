@@ -314,5 +314,6 @@ var ACMEVerifyEnroll01 = enroll01.Verify
 // ACMEVerifyEndorse01 verifies an endorse-01 ACME challenge.
 var ACMEVerifyEndorse01 = endorse01.Verify
 
-// ACMEEnroll01CertificateAuthority is the CA interface required by enroll-01 challenges.
-type ACMEEnroll01CertificateAuthority = enroll01.CertificateAuthority
+// ACMEEnroll01TCGCSRVerifier is the TCG-CSR-IDEVID verification interface
+// required by enroll-01 challenges.
+type ACMEEnroll01TCGCSRVerifier = enroll01.TCGCSRVerifier

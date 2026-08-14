@@ -19,6 +19,7 @@ import (
 	"crypto/tls"
 	"crypto/x509"
 	"fmt"
+	"strings"
 
 	"github.com/jeremyhahn/go-xkms/pkg/certstore"
 	"github.com/jeremyhahn/go-xkms/pkg/types"
@@ -89,7 +90,22 @@ func (t *TenantScopedBackend) DeleteKey(ctx context.Context, attrs *types.KeyAtt
 // Filtering by tenant is left to the underlying key provider via TenantID on KeyAttributes;
 // here we return the full list as the provider itself handles namespace isolation.
 func (t *TenantScopedBackend) ListKeys(ctx context.Context) ([]*types.KeyAttributes, error) {
-	return t.base.ListKeys(ctx)
+	all, err := t.base.ListKeys(ctx)
+	if err != nil {
+		return nil, err
+	}
+
+	// A tenant-scoped view must only ever show that tenant's keys. Returning
+	// the unfiltered set would let a lookup by common name — which is how
+	// findKeyAttrs resolves a key ID — match another tenant's key, since a CN
+	// is only unique within a tenant.
+	scoped := make([]*types.KeyAttributes, 0, len(all))
+	for _, attr := range all {
+		if attr != nil && attr.TenantID == t.tenantID {
+			scoped = append(scoped, attr)
+		}
+	}
+	return scoped, nil
 }
 
 // RotateKey replaces an existing key scoped to this tenant.
@@ -142,7 +158,22 @@ func (t *TenantScopedBackend) GetCertChain(ctx context.Context, keyID string) ([
 
 // ListCerts returns all certificate IDs from the underlying backend.
 func (t *TenantScopedBackend) ListCerts(ctx context.Context) ([]string, error) {
-	return t.base.ListCerts(ctx)
+	all, err := t.base.ListCerts(ctx)
+	if err != nil {
+		return nil, err
+	}
+
+	// Every other certificate method addresses storage through scopeCertKeyID,
+	// so the listing must apply the same namespace and hand back the
+	// tenant-relative key IDs the caller uses everywhere else.
+	prefix := t.tenantID + "/"
+	scoped := make([]string, 0, len(all))
+	for _, keyID := range all {
+		if strings.HasPrefix(keyID, prefix) {
+			scoped = append(scoped, strings.TrimPrefix(keyID, prefix))
+		}
+	}
+	return scoped, nil
 }
 
 // CertExists checks if a certificate exists under the tenant-scoped key ID.

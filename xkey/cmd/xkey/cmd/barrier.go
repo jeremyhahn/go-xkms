@@ -21,6 +21,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 
 	"github.com/spf13/cobra"
 	"github.com/spf13/viper"
@@ -281,9 +282,74 @@ func createBarrier(dataDir string) (*xkms.Barrier, io.Closer, error) {
 	return barrier, closer, nil
 }
 
+// barrierStdinMu guards barrierStdin and barrierStdinReader.
+var barrierStdinMu sync.Mutex
+
+// barrierStdin is the source of piped barrier password input. It is a
+// variable so tests can substitute a deterministic reader; production
+// always reads os.Stdin.
+var barrierStdin io.Reader = os.Stdin
+
+// barrierStdinReader is a shared buffered reader over barrierStdin. A
+// single reader is used for the whole process because bufio reads ahead:
+// constructing a fresh reader per prompt would discard input the previous
+// reader had already buffered, silently losing the confirmation line.
+var barrierStdinReader *bufio.Reader
+
+// barrierInputIsTerminal reports whether the barrier password can be
+// prompted for interactively. It is a variable so tests can exercise both
+// the terminal and the piped-stdin branches.
+var barrierInputIsTerminal = func() bool {
+	return term.IsTerminal(int(os.Stdin.Fd()))
+}
+
+// getBarrierStdinReader returns the shared buffered reader for piped stdin.
+func getBarrierStdinReader() *bufio.Reader {
+	barrierStdinMu.Lock()
+	defer barrierStdinMu.Unlock()
+	if barrierStdinReader == nil {
+		barrierStdinReader = bufio.NewReader(barrierStdin)
+	}
+	return barrierStdinReader
+}
+
+// setBarrierStdin points piped barrier input at r, discarding any data
+// buffered from the previous source, and returns a function that restores
+// the previous source. Only tests call it.
+func setBarrierStdin(r io.Reader) func() {
+	barrierStdinMu.Lock()
+	previous := barrierStdin
+	barrierStdin = r
+	barrierStdinReader = nil
+	barrierStdinMu.Unlock()
+
+	return func() {
+		barrierStdinMu.Lock()
+		barrierStdin = previous
+		barrierStdinReader = nil
+		barrierStdinMu.Unlock()
+	}
+}
+
+// readBarrierLineFromPipedStdin reads a single line from the shared piped
+// stdin reader.
+//
+// Both \n and a preceding \r are trimmed: CRLF input (a Windows console, or
+// a CRLF file/here-doc piped in) would otherwise seal the barrier with a
+// password carrying a trailing carriage return that can never be re-entered
+// from a terminal, permanently locking the barrier.
+func readBarrierLineFromPipedStdin() (string, error) {
+	reader := getBarrierStdinReader()
+	line, err := reader.ReadString('\n')
+	if err != nil && err != io.EOF {
+		return "", &BarrierError{Operation: "read_password", Err: err}
+	}
+	return strings.TrimRight(line, "\r\n"), nil
+}
+
 // readBarrierPassword reads a password from terminal or piped stdin.
 func readBarrierPassword(out io.Writer, prompt string) (string, error) {
-	if term.IsTerminal(int(os.Stdin.Fd())) {
+	if barrierInputIsTerminal() {
 		_, _ = fmt.Fprint(out, prompt)
 		password, err := term.ReadPassword(int(os.Stdin.Fd()))
 		_, _ = fmt.Fprintln(out)
@@ -297,12 +363,10 @@ func readBarrierPassword(out io.Writer, prompt string) (string, error) {
 	}
 
 	// Read from piped stdin for automation.
-	reader := bufio.NewReader(os.Stdin)
-	password, err := reader.ReadString('\n')
-	if err != nil && err != io.EOF {
-		return "", &BarrierError{Operation: "read_password", Err: err}
+	password, err := readBarrierLineFromPipedStdin()
+	if err != nil {
+		return "", err
 	}
-	password = strings.TrimSuffix(password, "\n")
 	if password == "" {
 		return "", ErrBarrierPasswordEmpty
 	}
@@ -311,7 +375,7 @@ func readBarrierPassword(out io.Writer, prompt string) (string, error) {
 
 // readAndConfirmBarrierPassword reads and confirms a password.
 func readAndConfirmBarrierPassword(out io.Writer) (string, error) {
-	if term.IsTerminal(int(os.Stdin.Fd())) {
+	if barrierInputIsTerminal() {
 		return readBarrierPasswordFromTerminal(out)
 	}
 	return readBarrierPasswordFromStdin(out)
@@ -346,20 +410,16 @@ func readBarrierPasswordFromTerminal(out io.Writer) (string, error) {
 }
 
 // readBarrierPasswordFromStdin reads password from piped stdin for automation.
-func readBarrierPasswordFromStdin(out io.Writer) (string, error) {
-	reader := bufio.NewReader(os.Stdin)
-
-	password1, err := reader.ReadString('\n')
-	if err != nil && err != io.EOF {
-		return "", &BarrierError{Operation: "read_password", Err: err}
+func readBarrierPasswordFromStdin(_ io.Writer) (string, error) {
+	password1, err := readBarrierLineFromPipedStdin()
+	if err != nil {
+		return "", err
 	}
-	password1 = strings.TrimSuffix(password1, "\n")
 
-	password2, err := reader.ReadString('\n')
-	if err != nil && err != io.EOF {
-		return "", &BarrierError{Operation: "read_password", Err: err}
+	password2, err := readBarrierLineFromPipedStdin()
+	if err != nil {
+		return "", err
 	}
-	password2 = strings.TrimSuffix(password2, "\n")
 
 	if password1 != password2 {
 		return "", ErrBarrierPasswordConfirm

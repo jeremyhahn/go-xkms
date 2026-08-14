@@ -22,12 +22,14 @@ import (
 	"net"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
 	grpcinternal "github.com/jeremyhahn/go-xkms/pkg/api/grpc"
 	"github.com/jeremyhahn/go-xkms/pkg/audit"
 	"github.com/jeremyhahn/go-xkms/pkg/backend"
@@ -591,9 +593,14 @@ func TestServer_UserChecker_NilClient(t *testing.T) {
 // Tests — initializeAuthentication adaptive with WebAuthn + empty JWT file
 // ============================================================================
 
-// TestInitializeAuthentication_AdaptiveWebAuthnNoJWT exercises the branch:
-// adaptive mode + WebAuthn enabled + JWT config has empty PublicKeyFile.
-// (Tests that the warning path doesn't error.)
+// TestInitializeAuthentication_AdaptiveWebAuthnNoJWT_NoFile exercises the
+// branch: adaptive mode + WebAuthn enabled + JWT config has an empty
+// PublicKeyFile. The built-in token issuer provisions its own signing key in
+// the default backend, so the WebAuthn ceremony's bearer tokens are
+// verifiable without any operator-supplied key file — startup succeeds and
+// the required authenticator is the JWT authenticator over the issuer's key.
+// (The fail-closed branch — no key file AND no issuer — is covered by
+// TestServer_CreateJWTAuthenticator_NilConfig.)
 func TestInitializeAuthentication_AdaptiveWebAuthnNoJWT_NoFile(t *testing.T) {
 	xkms.Reset()
 	defer xkms.Reset()
@@ -612,8 +619,11 @@ func TestInitializeAuthentication_AdaptiveWebAuthnNoJWT_NoFile(t *testing.T) {
 
 	server, err := New(cfg)
 	require.NoError(t, err)
+	require.NotNil(t, server)
 	defer func() { _ = server.Shutdown() }()
-	assert.NotNil(t, server.authenticator)
+
+	require.NotNil(t, server.tokenIssuer, "built-in token issuer must back the adaptive JWT authenticator")
+	assert.Equal(t, "adaptive:jwt", server.authenticator.Name())
 }
 
 // ============================================================================
@@ -765,19 +775,30 @@ func TestInitializePasswordStore_MemoryBackend(t *testing.T) {
 }
 
 // ============================================================================
-// Tests — clusterReaderAdapter (unit tests on the adapter struct itself)
+// Tests — clusterClientAdapter (unit tests on the adapter struct itself)
 // ============================================================================
 
-// TestClusterReaderAdapter_FieldMapping verifies that the adapter is
-// constructible with the expected struct fields (compile-time check).
-func TestClusterReaderAdapter_FieldMapping(t *testing.T) {
-	// We cannot easily call Members/Leader without a live qrdb cluster, but we
-	// can verify the type is compilable and the interface is satisfied.
-	//
-	// xkms.ClusterReader is the interface clusterReaderAdapter implements; the
-	// compile-time check var _ xkms.ClusterReader = (*clusterReaderAdapter)(nil)
-	// lives in cluster_adapter.go itself (no separate check needed here).
-	t.Log("clusterReaderAdapter compile-time interface check lives in cluster_adapter.go")
+// TestAPIEndpointsToStrings_Advertised verifies that a replica's advertised
+// protocol-keyed endpoints survive translation into the wire map.
+func TestAPIEndpointsToStrings_Advertised(t *testing.T) {
+	out := apiEndpointsToStrings(map[qrdbsdk.APIProtocol]string{
+		qrdbsdk.APIProtocolREST: "10.0.0.2:8443",
+		qrdbsdk.APIProtocolGRPC: "10.0.0.2:9443",
+	})
+
+	assert.Equal(t, map[string]string{
+		"rest": "10.0.0.2:8443",
+		"grpc": "10.0.0.2:9443",
+	}, out)
+}
+
+// TestAPIEndpointsToStrings_NotAdvertised verifies the backward-compatible
+// degrade path: a replica that advertises nothing must translate to a nil map,
+// which consumers read as "unknown", not to an empty map, which would read as
+// "serves no protocols".
+func TestAPIEndpointsToStrings_NotAdvertised(t *testing.T) {
+	assert.Nil(t, apiEndpointsToStrings(nil))
+	assert.Nil(t, apiEndpointsToStrings(map[qrdbsdk.APIProtocol]string{}))
 }
 
 // ============================================================================
@@ -1533,7 +1554,8 @@ func TestInitializeAuthentication_JWTMissingKeyFile(t *testing.T) {
 }
 
 // TestInitializeAuthentication_DefaultUnknownType verifies that an unknown
-// auth type falls through to NoOp.
+// auth type is a fatal configuration error. A typo in auth.type must never
+// silently open the API by falling back to the no-op authenticator.
 func TestInitializeAuthentication_DefaultUnknownType(t *testing.T) {
 	s := newMinimalServer(t, &config.Config{
 		Auth: config.AuthConfig{
@@ -1542,7 +1564,78 @@ func TestInitializeAuthentication_DefaultUnknownType(t *testing.T) {
 		},
 	})
 	err := s.initializeAuthentication()
+	require.Error(t, err)
+
+	var unknown *ErrUnknownAuthType
+	require.ErrorAs(t, err, &unknown)
+	assert.Equal(t, "totally-unknown", unknown.Type)
+	assert.Nil(t, s.authenticator, "no authenticator may be installed for an unknown auth.type")
+}
+
+// TestErrUnknownAuthType_Error verifies the fatal error names the offending
+// value and lists the valid types, so an operator can fix the typo without
+// reading the source.
+func TestErrUnknownAuthType_Error(t *testing.T) {
+	msg := (&ErrUnknownAuthType{Type: "jwtt"}).Error()
+
+	assert.Contains(t, msg, `"jwtt"`)
+	for _, valid := range []string{"jwt", "mtls", "composite", "adaptive", "none", "noop"} {
+		assert.Contains(t, msg, valid)
+	}
+}
+
+// TestInitializeAuthentication_ExplicitNoneOptIn verifies the explicit opt-in
+// values documented by config.AuthConfig.CreateAuthenticator still select the
+// no-op authenticator. config.ComplianceGaps() reports these, so xkmsd still
+// refuses to start without --insecure / XKMS_INSECURE=true.
+func TestInitializeAuthentication_ExplicitNoneOptIn(t *testing.T) {
+	for _, authType := range []string{"none", "noop", "", "NONE", " none "} {
+		t.Run("type="+authType, func(t *testing.T) {
+			s := newMinimalServer(t, &config.Config{
+				Auth: config.AuthConfig{
+					Enabled: true,
+					Type:    authType,
+				},
+			})
+			err := s.initializeAuthentication()
+			require.NoError(t, err)
+			require.NotNil(t, s.authenticator)
+			assert.Equal(t, "noop", s.authenticator.Name())
+		})
+	}
+}
+
+// TestInitializeAuthentication_ExplicitNoneIsAComplianceGap pins the escape
+// hatch to the existing --insecure / XKMS_INSECURE mechanism: an explicit
+// no-op opt-in must remain a reported compliance gap so the daemon refuses to
+// start with it unless development mode was requested.
+func TestInitializeAuthentication_ExplicitNoneIsAComplianceGap(t *testing.T) {
+	for _, authType := range []string{"none", "noop", ""} {
+		cfg := &config.Config{Auth: config.AuthConfig{Enabled: true, Type: authType}}
+
+		var found bool
+		gaps := cfg.ComplianceGaps()
+		for _, gap := range gaps {
+			if strings.Contains(gap, "authentication is no-op") {
+				found = true
+				break
+			}
+		}
+		assert.True(t, found, "auth.type=%q must be reported as a compliance gap, got %v", authType, gaps)
+	}
+}
+
+// TestInitializeAuthentication_DisabledIsExplicitOptIn verifies auth.enabled=false
+// remains the other explicit unauthenticated opt-in (used by the cluster
+// docker-compose, which pairs it with XKMS_INSECURE=true). It short-circuits
+// before auth.type is consulted at all.
+func TestInitializeAuthentication_DisabledIsExplicitOptIn(t *testing.T) {
+	s := newMinimalServer(t, &config.Config{
+		Auth: config.AuthConfig{Enabled: false, Type: "totally-unknown"},
+	})
+	err := s.initializeAuthentication()
 	require.NoError(t, err)
+	require.NotNil(t, s.authenticator)
 	assert.Equal(t, "noop", s.authenticator.Name())
 }
 
@@ -5204,4 +5297,108 @@ func TestServer_StartREST_TLSBuildError_FreePort(t *testing.T) {
 	case <-time.After(2 * time.Second):
 		t.Fatal("startREST did not return on TLS build error")
 	}
+}
+
+// ============================================================================
+// Tests — startMCP authorization wiring
+// ============================================================================
+
+// TestStartMCP_RBACEnabledWithoutAuthorizer_FailsClosed proves the composition
+// root cannot start an MCP server that believes it enforces RBAC while no
+// authorizer exists. initializeAuthorization leaves rbacAuthorizer nil when
+// RBAC is enabled without a hosted qrdb identity plane; mcp.NewServer then
+// refuses, and startMCP returns without registering a server.
+func TestStartMCP_RBACEnabledWithoutAuthorizer_FailsClosed(t *testing.T) {
+	xkms.Reset()
+	defer xkms.Reset()
+
+	cfg := createMinimalConfig(t)
+	cfg.Protocols.MCP = false // call startMCP manually
+	cfg.Protocols.Unix = false
+	cfg.Protocols.REST = false
+	cfg.Protocols.GRPC = false
+	cfg.Protocols.QUIC = false
+	cfg.Metrics.Enabled = false
+	cfg.Auth.EnableRBAC = true
+
+	server, err := New(cfg)
+	require.NoError(t, err)
+	defer func() { _ = server.Shutdown() }()
+
+	// No qrdb identity plane: initializeAuthorization leaves this nil.
+	server.rbacAuthorizer = nil
+
+	server.wg.Add(1)
+	done := make(chan struct{})
+	go func() {
+		server.startMCP()
+		close(done)
+	}()
+
+	select {
+	case <-done:
+	case <-time.After(2 * time.Second):
+		t.Fatal("startMCP did not return when RBAC is enabled without an authorizer")
+	}
+
+	server.mu.Lock()
+	mcpSrv := server.mcpServer
+	server.mu.Unlock()
+	assert.Nil(t, mcpSrv, "no MCP server may be started when authorization cannot be enforced")
+}
+
+// ============================================================================
+// Tests — startQUIC authorization wiring
+// ============================================================================
+
+// TestStartQUIC_RBACEnabledWithoutAuthorizer_FailsClosed proves the composition
+// root cannot start a QUIC server that would silently run allow-all while the
+// operator's config claims RBAC. quic.Config carries no EnableRBAC flag (a
+// nil/disabled Authorizer means RBAC off by contract), so startQUIC asserts
+// the daemon-level intent before wiring the transport. TLS is configured with
+// valid material so the refusal observed here can only come from the RBAC
+// assert, not from the TLS early-return.
+func TestStartQUIC_RBACEnabledWithoutAuthorizer_FailsClosed(t *testing.T) {
+	xkms.Reset()
+	defer xkms.Reset()
+
+	certFile, keyFile, _ := createTestTLSFiles(t)
+
+	cfg := createMinimalConfig(t)
+	cfg.Protocols.MCP = false
+	cfg.Protocols.Unix = false
+	cfg.Protocols.REST = false
+	cfg.Protocols.GRPC = false
+	cfg.Protocols.QUIC = false // call startQUIC manually
+	cfg.Metrics.Enabled = false
+	cfg.TLS.Enabled = true
+	cfg.TLS.CertFile = certFile
+	cfg.TLS.KeyFile = keyFile
+	cfg.Server.QUICPort = 14343
+	cfg.Auth.EnableRBAC = true
+
+	server, err := New(cfg)
+	require.NoError(t, err)
+	defer func() { _ = server.Shutdown() }()
+
+	// No qrdb identity plane: initializeAuthorization leaves this nil.
+	server.rbacAuthorizer = nil
+
+	server.wg.Add(1)
+	done := make(chan struct{})
+	go func() {
+		server.startQUIC()
+		close(done)
+	}()
+
+	select {
+	case <-done:
+	case <-time.After(2 * time.Second):
+		t.Fatal("startQUIC did not return when RBAC is enabled without an authorizer")
+	}
+
+	server.mu.Lock()
+	quicSrv := server.quicServer
+	server.mu.Unlock()
+	assert.Nil(t, quicSrv, "no QUIC server may be started when authorization cannot be enforced")
 }

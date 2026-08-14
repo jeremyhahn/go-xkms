@@ -33,6 +33,8 @@ export function SetBackendKeyLister(arg1:services.BackendKeyLister):Promise<void
 
 export function SetBackendRegistry(arg1:backendregistry.Registry):Promise<void>;
 
+export function SetCloudTester(arg1:services.CloudConnectionTester):Promise<void>;
+
 export function SetConfigUpdateFunc(arg1:any):Promise<void>;
 
 export function SetConnectionInfoFunc(arg1:any):Promise<void>;

@@ -19,11 +19,13 @@ import (
 	"time"
 
 	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
-	pb "github.com/jeremyhahn/go-xkms/pkg/api/grpc/proto/xkmsv1"
-	"github.com/jeremyhahn/go-xkms/pkg/seal"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 	"google.golang.org/protobuf/types/known/emptypb"
+
+	pb "github.com/jeremyhahn/go-xkms/pkg/api/grpc/proto/xkmsv1"
+	"github.com/jeremyhahn/go-xkms/pkg/auth"
+	"github.com/jeremyhahn/go-xkms/pkg/seal"
 )
 
 // Typed errors for barrier and PIN gRPC operations.
@@ -149,7 +151,7 @@ func (s *Service) BarrierInitialize(ctx context.Context, req *pb.BarrierInitiali
 		return nil, status.Error(codes.FailedPrecondition, ErrBarrierNotConfigured.Error())
 	}
 
-	if err := s.authorize(ctx, "seal", "bootstrap", "initialize"); err != nil {
+	if err := s.authorize(ctx, auth.ResourceSeal, auth.ActionBootstrap, "initialize"); err != nil {
 		return nil, err
 	}
 
@@ -168,7 +170,7 @@ func (s *Service) BarrierUnseal(ctx context.Context, req *pb.BarrierUnsealReques
 		return nil, status.Error(codes.FailedPrecondition, ErrBarrierNotConfigured.Error())
 	}
 
-	if err := s.authorize(ctx, "seal", "unseal", "unseal"); err != nil {
+	if err := s.authorize(ctx, auth.ResourceSeal, auth.ActionUnseal, "unseal"); err != nil {
 		return nil, err
 	}
 
@@ -186,7 +188,7 @@ func (s *Service) BarrierSeal(ctx context.Context, _ *emptypb.Empty) (*emptypb.E
 		return nil, status.Error(codes.FailedPrecondition, ErrBarrierNotConfigured.Error())
 	}
 
-	if err := s.authorize(ctx, "seal", "seal", "seal"); err != nil {
+	if err := s.authorize(ctx, auth.ResourceSeal, auth.ActionSeal, "seal"); err != nil {
 		return nil, err
 	}
 
@@ -204,7 +206,7 @@ func (s *Service) BarrierStatus(ctx context.Context, _ *emptypb.Empty) (*pb.Barr
 		return nil, status.Error(codes.FailedPrecondition, ErrBarrierNotConfigured.Error())
 	}
 
-	if err := s.authorize(ctx, "seal", "status", "status"); err != nil {
+	if err := s.authorize(ctx, auth.ResourceSeal, auth.ActionStatus, "status"); err != nil {
 		return nil, err
 	}
 
@@ -231,7 +233,7 @@ func (s *Service) SetSOPIN(ctx context.Context, req *pb.SetSOPINRequest) (*empty
 		return nil, status.Error(codes.FailedPrecondition, ErrPINManagerNotConfigured.Error())
 	}
 
-	if err := s.authorize(ctx, "pin", "write", "so-pin"); err != nil {
+	if err := s.authorize(ctx, auth.ResourcePIN, auth.ActionWrite, "so-pin"); err != nil {
 		return nil, err
 	}
 
@@ -248,7 +250,7 @@ func (s *Service) SetUserPIN(ctx context.Context, req *pb.SetUserPINRequest) (*e
 		return nil, status.Error(codes.FailedPrecondition, ErrPINManagerNotConfigured.Error())
 	}
 
-	if err := s.authorize(ctx, "pin", "write", "user-pin"); err != nil {
+	if err := s.authorize(ctx, auth.ResourcePIN, auth.ActionWrite, "user-pin"); err != nil {
 		return nil, err
 	}
 
@@ -265,7 +267,7 @@ func (s *Service) ChangeSOPIN(ctx context.Context, req *pb.ChangeSOPINRequest) (
 		return nil, status.Error(codes.FailedPrecondition, ErrPINManagerNotConfigured.Error())
 	}
 
-	if err := s.authorize(ctx, "pin", "write", "so-pin"); err != nil {
+	if err := s.authorize(ctx, auth.ResourcePIN, auth.ActionWrite, "so-pin"); err != nil {
 		return nil, err
 	}
 
@@ -282,7 +284,7 @@ func (s *Service) ChangeUserPIN(ctx context.Context, req *pb.ChangeUserPINReques
 		return nil, status.Error(codes.FailedPrecondition, ErrPINManagerNotConfigured.Error())
 	}
 
-	if err := s.authorize(ctx, "pin", "write", "user-pin"); err != nil {
+	if err := s.authorize(ctx, auth.ResourcePIN, auth.ActionWrite, "user-pin"); err != nil {
 		return nil, err
 	}
 
@@ -299,7 +301,7 @@ func (s *Service) VerifySOPIN(ctx context.Context, req *pb.VerifySOPINRequest) (
 		return nil, status.Error(codes.FailedPrecondition, ErrPINManagerNotConfigured.Error())
 	}
 
-	if err := s.authorize(ctx, "pin", "read", "so-pin"); err != nil {
+	if err := s.authorize(ctx, auth.ResourcePIN, auth.ActionRead, "so-pin"); err != nil {
 		return nil, err
 	}
 
@@ -316,7 +318,7 @@ func (s *Service) VerifyUserPIN(ctx context.Context, req *pb.VerifyUserPINReques
 		return nil, status.Error(codes.FailedPrecondition, ErrPINManagerNotConfigured.Error())
 	}
 
-	if err := s.authorize(ctx, "pin", "read", "user-pin"); err != nil {
+	if err := s.authorize(ctx, auth.ResourcePIN, auth.ActionRead, "user-pin"); err != nil {
 		return nil, err
 	}
 
@@ -335,7 +337,7 @@ func (s *Service) GetLockoutStatus(ctx context.Context, _ *emptypb.Empty) (*pb.L
 		return nil, status.Error(codes.FailedPrecondition, ErrPINManagerNotConfigured.Error())
 	}
 
-	if err := s.authorize(ctx, "pin", "read", "lockout-status"); err != nil {
+	if err := s.authorize(ctx, auth.ResourcePIN, auth.ActionRead, "lockout-status"); err != nil {
 		return nil, err
 	}
 
@@ -366,7 +368,7 @@ func (s *Service) ResetLockout(ctx context.Context, req *pb.ResetLockoutRequest)
 		return nil, status.Error(codes.FailedPrecondition, ErrPINManagerNotConfigured.Error())
 	}
 
-	if err := s.authorize(ctx, "pin", "write", "lockout-reset"); err != nil {
+	if err := s.authorize(ctx, auth.ResourcePIN, auth.ActionWrite, "lockout-reset"); err != nil {
 		return nil, err
 	}
 

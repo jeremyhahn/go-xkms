@@ -67,6 +67,16 @@ var (
 
 	// ErrKeyAlreadyExists is returned when attempting to restore a key that already exists
 	ErrKeyAlreadyExists = errors.New("key already exists")
+
+	// ErrNoRestoreTarget is returned when a restore is requested on an adapter
+	// that has no KeyRestorer configured. The archive can be read and verified
+	// without one, but the keys have nowhere to go, so the restore is refused
+	// instead of reporting a count for work that was not performed.
+	ErrNoRestoreTarget = errors.New("no restore target configured")
+
+	// ErrMissingKeyIdentifier is returned when a backed-up key carries no
+	// identifier, which makes conflict detection impossible.
+	ErrMissingKeyIdentifier = errors.New("backup key is missing an identifier")
 )
 
 // FileBackupAdapter implements BackupAdapter using the local filesystem
@@ -79,10 +89,25 @@ type FileBackupAdapter struct {
 
 	// index maintains a cache of backup metadata for fast lookups
 	index map[string]*BackupMetadata
+
+	// restorer is the destination RestoreBackup writes keys to.
+	// A nil restorer makes RestoreBackup fail closed with ErrNoRestoreTarget.
+	restorer KeyRestorer
 }
 
-// NewFileBackupAdapter creates a new file-based backup adapter
-func NewFileBackupAdapter(basePath string) (*FileBackupAdapter, error) {
+// FileOption configures a FileBackupAdapter.
+type FileOption func(*FileBackupAdapter)
+
+// WithKeyRestorer sets the destination that RestoreBackup writes recovered
+// keys to. Without it the adapter can create, verify, export, and dry-run
+// backups, but a real restore is refused.
+func WithKeyRestorer(restorer KeyRestorer) FileOption {
+	return func(f *FileBackupAdapter) { f.restorer = restorer }
+}
+
+// NewFileBackupAdapter creates a new file-based backup adapter.
+// Pass WithKeyRestorer to give the adapter a destination for restores.
+func NewFileBackupAdapter(basePath string, opts ...FileOption) (*FileBackupAdapter, error) {
 	// Ensure the backup directory exists
 	if err := os.MkdirAll(basePath, 0700); err != nil {
 		return nil, &errs.Wrapped{Msg: "failed to create backup directory", Err: err}
@@ -91,6 +116,10 @@ func NewFileBackupAdapter(basePath string) (*FileBackupAdapter, error) {
 	adapter := &FileBackupAdapter{
 		basePath: basePath,
 		index:    make(map[string]*BackupMetadata),
+	}
+
+	for _, opt := range opts {
+		opt(adapter)
 	}
 
 	// Load existing backups into the index
@@ -339,11 +368,48 @@ func (f *FileBackupAdapter) RestoreBackup(ctx context.Context, backupID string, 
 		return len(keysToRestore), nil
 	}
 
-	// In a real implementation, this would actually restore keys to a backend
-	// For now, we just return the count
-	restoredCount := len(keysToRestore)
+	return f.restoreKeys(ctx, keysToRestore, opts)
+}
 
-	return restoredCount, nil
+// restoreKeys writes the selected keys to the configured restore target.
+// Every conflict is resolved before the first write, so a refused restore
+// leaves the destination exactly as it was.
+//
+// Returns ErrNoRestoreTarget when no KeyRestorer is configured: an adapter
+// with nowhere to write keys has restored nothing, and reporting a count for
+// that would turn a no-op into an apparent recovery.
+func (f *FileBackupAdapter) restoreKeys(ctx context.Context, keys []*BackupKey, opts *RestoreOptions) (int, error) {
+	if f.restorer == nil {
+		return 0, ErrNoRestoreTarget
+	}
+
+	for _, key := range keys {
+		if key == nil || key.ID == "" {
+			return 0, ErrMissingKeyIdentifier
+		}
+	}
+
+	if !opts.Overwrite {
+		for _, key := range keys {
+			exists, err := f.restorer.HasKey(ctx, key)
+			if err != nil {
+				return 0, &errs.Wrapped{Msg: fmt.Sprintf("failed to check for existing key %s", key.ID), Err: err}
+			}
+			if exists {
+				return 0, &errs.Detail{Err: ErrKeyAlreadyExists, Detail: key.ID}
+			}
+		}
+	}
+
+	restored := 0
+	for _, key := range keys {
+		if err := f.restorer.RestoreKey(ctx, key); err != nil {
+			return restored, &errs.Wrapped{Msg: fmt.Sprintf("failed to restore key %s", key.ID), Err: err}
+		}
+		restored++
+	}
+
+	return restored, nil
 }
 
 // ListBackups lists available backups with optional filtering

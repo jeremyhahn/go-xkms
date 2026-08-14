@@ -1,5 +1,11 @@
 # CLI Reference: PIN Commands
 
+> **Scope:** this page documents the go-xkms **server** CLI `xkmsctl pin`
+> (source: `cmd/xkmsctl/`), **not** the `xkey` desktop CLI. It lives under
+> `xkey/docs/` for historical reasons.
+> `xkey` has its own `xkey pin` command group with a different surface —
+> see [the xkey CLI reference](README.md).
+
 PIN commands manage the dual-PIN authentication system used to control access to the barrier and key operations. The model follows the PKCS#11 standard with a Security Officer (SO) PIN for administration and a User PIN for daily operations.
 
 ## Commands

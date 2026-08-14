@@ -23,7 +23,11 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
+	"testing/iotest"
+
+	"github.com/jeremyhahn/go-xkms/pkg/config"
 )
 
 // generateTestCSR creates a PEM-encoded ECDSA P-256 CSR for testing.
@@ -543,4 +547,115 @@ func TestValidateInitFlags_ThresholdZeroIsValid(t *testing.T) {
 	if err := validateInitFlags(flags); err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
+}
+
+func TestResolvePasskeyPIN(t *testing.T) {
+	t.Run("stdin is the preferred source", func(t *testing.T) {
+		t.Setenv("XKMS_PASSKEY_PIN", "from-env")
+
+		flags := &initFlags{passkeyPINStdin: true}
+		pin, err := resolvePasskeyPIN(flags, strings.NewReader("123456\n"))
+		if err != nil {
+			t.Fatalf("resolvePasskeyPIN: %v", err)
+		}
+		// The trailing newline a shell adds is not part of the PIN, and an
+		// authenticator that receives it reports a wrong PIN — burning a
+		// retry against a counter that blocks the key after three.
+		if pin != "123456" {
+			t.Errorf("pin = %q, want 123456 with the line ending stripped", pin)
+		}
+	})
+
+	t.Run("environment is the fallback", func(t *testing.T) {
+		t.Setenv("XKMS_PASSKEY_PIN", "654321")
+
+		pin, err := resolvePasskeyPIN(&initFlags{}, strings.NewReader("ignored"))
+		if err != nil {
+			t.Fatalf("resolvePasskeyPIN: %v", err)
+		}
+		if pin != "654321" {
+			t.Errorf("pin = %q, want the environment value", pin)
+		}
+	})
+
+	t.Run("no source is not an error", func(t *testing.T) {
+		t.Setenv("XKMS_PASSKEY_PIN", "")
+
+		// A key with no PIN configured enrolls without one; refusing here
+		// would block a working ceremony.
+		pin, err := resolvePasskeyPIN(&initFlags{}, strings.NewReader(""))
+		if err != nil {
+			t.Fatalf("resolvePasskeyPIN: %v", err)
+		}
+		if pin != "" {
+			t.Errorf("pin = %q, want empty", pin)
+		}
+	})
+
+	t.Run("unreadable stdin is reported, not silently empty", func(t *testing.T) {
+		flags := &initFlags{passkeyPINStdin: true}
+
+		_, err := resolvePasskeyPIN(flags, iotest.ErrReader(errors.New("closed")))
+		if !errors.Is(err, ErrPasskeyPINReadFailed) {
+			t.Fatalf("err = %v, want ErrPasskeyPINReadFailed", err)
+		}
+	})
+}
+
+func TestParseInitFlags_PasskeyPINHasNoFlagForm(t *testing.T) {
+	// A PIN in argv is readable from /proc by every process on the host for
+	// the life of the command, so --passkey-pin must not exist.
+	if _, err := parseInitFlags([]string{
+		"--so-pin", "pin",
+		"--user-pin", "pin",
+		"--passkey-pin", "123456",
+	}); err == nil {
+		t.Fatal("--passkey-pin was accepted; a PIN must never be passed in argv")
+	}
+
+	flags, err := parseInitFlags([]string{
+		"--so-pin", "pin",
+		"--user-pin", "pin",
+		"--passkey-pin-stdin",
+	})
+	if err != nil {
+		t.Fatalf("parseInitFlags: %v", err)
+	}
+	if !flags.passkeyPINStdin {
+		t.Error("--passkey-pin-stdin did not set the flag")
+	}
+}
+
+func TestResolveRelyingParty(t *testing.T) {
+	t.Run("configured relying party wins", func(t *testing.T) {
+		cfg := &config.Config{WebAuthn: &config.WebAuthnConfig{
+			RPID:          "xkms.example.com",
+			RPDisplayName: "xkms console",
+		}}
+
+		id, name := resolveRelyingParty(cfg, "host.local")
+		if id != "xkms.example.com" || name != "xkms console" {
+			t.Fatalf("resolveRelyingParty = (%q, %q), want the configured values", id, name)
+		}
+	})
+
+	t.Run("display name falls back to the RP ID", func(t *testing.T) {
+		cfg := &config.Config{WebAuthn: &config.WebAuthnConfig{RPID: "xkms.example.com"}}
+
+		if _, name := resolveRelyingParty(cfg, "host.local"); name != "xkms.example.com" {
+			t.Fatalf("name = %q, want the RP ID", name)
+		}
+	})
+
+	t.Run("absent webauthn section falls back to the hostname", func(t *testing.T) {
+		// webauthn is an optional config section: every config without one
+		// reaches here with a nil pointer, which used to crash `xkmsd init`
+		// before a single ceremony step ran.
+		for _, cfg := range []*config.Config{nil, {}, {WebAuthn: &config.WebAuthnConfig{}}} {
+			id, name := resolveRelyingParty(cfg, "host.local")
+			if id != "host.local" || name != "host.local" {
+				t.Fatalf("resolveRelyingParty(%+v) = (%q, %q), want the hostname", cfg, id, name)
+			}
+		}
+	})
 }

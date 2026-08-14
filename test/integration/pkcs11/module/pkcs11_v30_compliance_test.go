@@ -43,8 +43,10 @@ package module
 import (
 	"bytes"
 	"crypto/rand"
+	"crypto/sha1" //nolint:gosec // needed to assert CKM_SHA_1 conformance
 	"crypto/sha256"
 	"crypto/sha512"
+	"encoding/asn1"
 	"encoding/binary"
 	"testing"
 
@@ -1065,8 +1067,13 @@ func TestV30_Encrypt(t *testing.T) {
 		rand.Read(iv)
 		aad := []byte("additional data")
 		encMech := &module.Mechanism{
-			Type:      module.CKM_AES_GCM,
-			Parameter: encodeAESGCMParams(iv, aad, 128),
+			// Typed parameters, not the ad-hoc byte layout encodeAESGCMParams
+			// invents. That layout is not a PKCS#11 wire format -- at the C ABI
+			// pParameter is a CK_GCM_PARAMS struct that convertCMechanismToGo
+			// turns into these typed params -- so a module that parsed it would
+			// be parsing a format nothing else produces.
+			Type:           module.CKM_AES_GCM,
+			TypedParameter: module.NewAESGCMParamsWithAAD(iv, aad, 128),
 		}
 
 		// Encrypt
@@ -1146,8 +1153,13 @@ func TestV30_Decrypt(t *testing.T) {
 		rand.Read(iv)
 		aad := []byte("aad")
 		gcmMech := &module.Mechanism{
-			Type:      module.CKM_AES_GCM,
-			Parameter: encodeAESGCMParams(iv, aad, 128),
+			// Typed parameters, not the ad-hoc byte layout encodeAESGCMParams
+			// invents. That layout is not a PKCS#11 wire format -- at the C ABI
+			// pParameter is a CK_GCM_PARAMS struct that convertCMechanismToGo
+			// turns into these typed params -- so a module that parsed it would
+			// be parsing a format nothing else produces.
+			Type:           module.CKM_AES_GCM,
+			TypedParameter: module.NewAESGCMParamsWithAAD(iv, aad, 128),
 		}
 
 		// Encrypt
@@ -1177,23 +1189,33 @@ func TestV30_Decrypt(t *testing.T) {
 
 // TestV30_Digest tests C_DigestInit/Digest/DigestUpdate/DigestFinal per PKCS#11 v3.0 Section 5.10
 func TestV30_Digest(t *testing.T) {
+	// Every mechanism here is advertised by C_GetMechanismList with CKF_DIGEST,
+	// so each must produce the digest that mechanism is defined to produce.
+	// CKM_SHA_1 is included deliberately: the module offers it for interop, and
+	// a test that tolerated "some other length" let it quietly return SHA-256
+	// bytes under a SHA-1 label.
 	testCases := []struct {
-		name       string
-		mech       module.MechanismType
-		expected   int  // expected digest length
-		deprecated bool // SHA-1 is deprecated and may not be supported
-		verify     func([]byte, []byte) bool
+		name     string
+		mech     module.MechanismType
+		expected int // digest length required by the mechanism
+		verify   func([]byte, []byte) bool
 	}{
-		{"SHA256", module.CKM_SHA256, 32, false, func(data, digest []byte) bool {
+		{"SHA256", module.CKM_SHA256, 32, func(data, digest []byte) bool {
 			h := sha256.Sum256(data)
 			return bytes.Equal(h[:], digest)
 		}},
-		{"SHA384", module.CKM_SHA384, 48, false, nil},
-		{"SHA512", module.CKM_SHA512, 64, false, func(data, digest []byte) bool {
+		{"SHA384", module.CKM_SHA384, 48, func(data, digest []byte) bool {
+			h := sha512.Sum384(data)
+			return bytes.Equal(h[:], digest)
+		}},
+		{"SHA512", module.CKM_SHA512, 64, func(data, digest []byte) bool {
 			h := sha512.Sum512(data)
 			return bytes.Equal(h[:], digest)
 		}},
-		{"SHA_1", module.CKM_SHA_1, 20, true, nil}, // SHA-1 is cryptographically weak
+		{"SHA_1", module.CKM_SHA_1, 20, func(data, digest []byte) bool {
+			h := sha1.Sum(data) //nolint:gosec // asserting the module honors CKM_SHA_1
+			return bytes.Equal(h[:], digest)
+		}},
 	}
 
 	for _, tc := range testCases {
@@ -1209,17 +1231,13 @@ func TestV30_Digest(t *testing.T) {
 			RequireOK(t, rv, "C_Digest")
 
 			if len(digest) != tc.expected {
-				if tc.deprecated {
-					t.Logf("Note: %s returned %d bytes instead of expected %d (may be disabled for security)",
-						tc.name, len(digest), tc.expected)
-					t.Skip(tc.name + " appears to be disabled or remapped")
-				} else {
-					t.Errorf("expected %d byte digest, got %d", tc.expected, len(digest))
-				}
+				t.Fatalf("%s: expected %d byte digest, got %d; the module advertises this "+
+					"mechanism, so it must not substitute another algorithm",
+					tc.name, tc.expected, len(digest))
 			}
 
-			if tc.verify != nil && !tc.verify(data, digest) {
-				t.Error("digest verification failed")
+			if !tc.verify(data, digest) {
+				t.Errorf("%s: digest does not match the reference implementation", tc.name)
 			}
 		})
 
@@ -1245,13 +1263,19 @@ func TestV30_Digest(t *testing.T) {
 			RequireOK(t, rv, "C_DigestFinal")
 
 			if len(digest) != tc.expected {
-				if tc.deprecated {
-					t.Logf("Note: %s returned %d bytes instead of expected %d (may be disabled for security)",
-						tc.name, len(digest), tc.expected)
-					t.Skip(tc.name + " appears to be disabled or remapped")
-				} else {
-					t.Errorf("expected %d byte digest, got %d", tc.expected, len(digest))
-				}
+				t.Fatalf("%s: expected %d byte digest, got %d; the module advertises this "+
+					"mechanism, so it must not substitute another algorithm",
+					tc.name, tc.expected, len(digest))
+			}
+
+			// The multi-part result must equal the reference digest of the
+			// concatenated parts, which also proves C_DigestUpdate accumulates.
+			var joined []byte
+			for _, part := range parts {
+				joined = append(joined, part...)
+			}
+			if !tc.verify(joined, digest) {
+				t.Errorf("%s: multi-part digest does not match the reference implementation", tc.name)
 			}
 		})
 	}
@@ -1619,14 +1643,22 @@ func TestV30_WrapKey(t *testing.T) {
 		// Wrap
 		keyWrapMech := &module.Mechanism{Type: module.CKM_AES_KEY_WRAP}
 		wrappedKey, rv := env.Module.WrapKey(session, keyWrapMech, wrapKeyHandle, targetKeyHandle)
-		if rv != module.CKR_OK {
-			// WrapKey may not be fully implemented yet
-			t.Logf("C_WrapKey: %s (may not be fully implemented)", rv.String())
-			t.Skip("WrapKey not fully implemented")
-		}
+		RequireOK(t, rv, "C_WrapKey")
 
 		if len(wrappedKey) == 0 {
-			t.Error("expected non-empty wrapped key")
+			t.Fatal("C_WrapKey returned CKR_OK with an empty wrapped key")
+		}
+
+		// The wrapped blob must not be the plaintext key material.
+		plainAttrs, rv := env.Module.GetAttributeValue(session, targetKeyHandle, []module.Attribute{
+			{Type: module.CKA_VALUE},
+		})
+		RequireOK(t, rv, "C_GetAttributeValue CKA_VALUE of the target key")
+		if len(plainAttrs) == 0 || len(plainAttrs[0].Value) == 0 {
+			t.Fatal("target key is CKA_EXTRACTABLE and not CKA_SENSITIVE, so CKA_VALUE must be readable")
+		}
+		if bytes.Equal(wrappedKey, plainAttrs[0].Value) {
+			t.Error("C_WrapKey returned the plaintext key material; the key was not wrapped")
 		}
 
 		t.Logf("Wrapped key length: %d bytes", len(wrappedKey))
@@ -1671,12 +1703,26 @@ func TestV30_UnwrapKey(t *testing.T) {
 		// Wrap
 		keyWrapMech := &module.Mechanism{Type: module.CKM_AES_KEY_WRAP}
 		wrappedKey, rv := env.Module.WrapKey(session, keyWrapMech, wrapKeyHandle, targetKeyHandle)
-		if rv != module.CKR_OK {
-			t.Logf("WrapKey: %s (may not be fully implemented)", rv.String())
-			t.Skip("WrapKey not fully implemented")
+		RequireOK(t, rv, "C_WrapKey")
+
+		// Capture the original key material so the roundtrip can be proved.
+		originalAttrs, rv := env.Module.GetAttributeValue(session, targetKeyHandle, []module.Attribute{
+			{Type: module.CKA_VALUE},
+		})
+		RequireOK(t, rv, "C_GetAttributeValue CKA_VALUE of the original key")
+		if len(originalAttrs) == 0 || len(originalAttrs[0].Value) == 0 {
+			t.Fatal("original key is CKA_EXTRACTABLE and not CKA_SENSITIVE, so CKA_VALUE must be readable")
 		}
 
-		// Unwrap
+		// Unwrap. PKCS#11 v3.2 5.18.4 (C_UnwrapKey) states this unconditionally,
+		// not as a token-specific default: "The new key will have the
+		// CKA_ALWAYS_SENSITIVE attribute set to CK_FALSE, and the
+		// CKA_NEVER_EXTRACTABLE attribute set to CK_FALSE. The CKA_EXTRACTABLE
+		// attribute is by default set to CK_TRUE." CKA_SENSITIVE is left
+		// unspecified here (so the token's own default applies) but
+		// CKA_EXTRACTABLE is requested explicitly to exercise the roundtrip
+		// read below -- an unwrap that came back CK_FALSE would silently
+		// contradict the spec's mandated default.
 		unwrapTemplate := []module.Attribute{
 			module.NewUint32Attribute(module.CKA_CLASS, uint32(module.CKO_SECRET_KEY)),
 			module.NewUint32Attribute(module.CKA_KEY_TYPE, uint32(module.CKK_AES)),
@@ -1684,15 +1730,30 @@ func TestV30_UnwrapKey(t *testing.T) {
 			module.NewBoolAttribute(module.CKA_TOKEN, false),
 			module.NewBoolAttribute(module.CKA_ENCRYPT, true),
 			module.NewBoolAttribute(module.CKA_DECRYPT, true),
+			module.NewBoolAttribute(module.CKA_SENSITIVE, false),
+			module.NewBoolAttribute(module.CKA_EXTRACTABLE, true),
 		}
 		unwrappedHandle, rv := env.Module.UnwrapKey(session, keyWrapMech, wrapKeyHandle, wrappedKey, unwrapTemplate)
-		if rv != module.CKR_OK {
-			t.Logf("C_UnwrapKey: %s (may not be fully implemented)", rv.String())
-			t.Skip("UnwrapKey not fully implemented")
-		}
+		RequireOK(t, rv, "C_UnwrapKey")
 
 		if unwrappedHandle == 0 {
-			t.Error("expected non-zero unwrapped key handle")
+			t.Fatal("C_UnwrapKey returned CKR_OK with an invalid object handle")
+		}
+
+		// The whole point of the roundtrip: the unwrapped key must carry exactly
+		// the original key material. Asserting only that a handle came back
+		// would pass even if C_UnwrapKey produced unrelated bytes.
+		unwrappedAttrs, rv := env.Module.GetAttributeValue(session, unwrappedHandle, []module.Attribute{
+			{Type: module.CKA_VALUE},
+		})
+		RequireOK(t, rv, "C_GetAttributeValue CKA_VALUE of the unwrapped key")
+		if len(unwrappedAttrs) == 0 {
+			t.Fatal("C_GetAttributeValue returned no attributes for the unwrapped key")
+		}
+		if !bytes.Equal(originalAttrs[0].Value, unwrappedAttrs[0].Value) {
+			t.Errorf("wrap/unwrap roundtrip did not preserve the key material: "+
+				"original %d bytes, unwrapped %d bytes",
+				len(originalAttrs[0].Value), len(unwrappedAttrs[0].Value))
 		}
 	})
 }
@@ -1703,9 +1764,15 @@ func TestV30_DeriveKey(t *testing.T) {
 		env, session := SetupAuthenticatedModule(t)
 
 		// Generate two EC key pairs for key agreement
+		// BuildECPrivateKeyTemplate already sets CKA_DERIVE=true; appending it
+		// again here duplicated the attribute in the template, which
+		// validateCreateTemplate rejects with CKR_TEMPLATE_INCONSISTENT
+		// (PKCS#11 v3.2 5.7: a template must never carry the same attribute
+		// twice). That was the real cause of GenerateKeyPair's failure below,
+		// not anything in the EC template's curve OID or GenerateKeyPair
+		// itself.
 		pubTemplate1 := BuildECPublicKeyTemplateByName("ecdh-pub-1", "P-256")
 		privTemplate1 := BuildECPrivateKeyTemplate("ecdh-priv-1")
-		privTemplate1 = append(privTemplate1, module.NewBoolAttribute(module.CKA_DERIVE, true))
 		mechanism := &module.Mechanism{Type: module.CKM_EC_KEY_PAIR_GEN}
 
 		pubHandle1, privHandle1, rv := env.Module.GenerateKeyPair(session, mechanism, pubTemplate1, privTemplate1)
@@ -1713,7 +1780,6 @@ func TestV30_DeriveKey(t *testing.T) {
 
 		pubTemplate2 := BuildECPublicKeyTemplateByName("ecdh-pub-2", "P-256")
 		privTemplate2 := BuildECPrivateKeyTemplate("ecdh-priv-2")
-		privTemplate2 = append(privTemplate2, module.NewBoolAttribute(module.CKA_DERIVE, true))
 
 		pubHandle2, _, rv := env.Module.GenerateKeyPair(session, mechanism, pubTemplate2, privTemplate2)
 		RequireOK(t, rv, "GenerateKeyPair 2")
@@ -1722,22 +1788,56 @@ func TestV30_DeriveKey(t *testing.T) {
 		attrs, rv := env.Module.GetAttributeValue(session, pubHandle2, []module.Attribute{
 			{Type: module.CKA_EC_POINT},
 		})
-		if rv != module.CKR_OK {
-			t.Logf("GetAttributeValue EC_POINT: %s (CKA_EC_POINT attribute not supported)", rv.String())
-			t.Skip("CKA_EC_POINT attribute retrieval not implemented")
-		}
+		RequireOK(t, rv, "C_GetAttributeValue CKA_EC_POINT")
 
 		if len(attrs) == 0 || len(attrs[0].Value) == 0 {
-			t.Skip("EC point value not returned")
+			t.Fatal("C_GenerateKeyPair populates CKA_EC_POINT on the public key, so it must be readable")
 		}
-		publicData := attrs[0].Value
 
-		// Setup ECDH derivation
+		// CKA_EC_POINT is the DER-encoding of the ANSI X9.62 ECPoint (PKCS#11
+		// v3.2 6.3.3 Table 64): an ASN.1 OCTET STRING wrapping the raw
+		// uncompressed point 0x04||X||Y. CK_ECDH1_DERIVE_PARAMS.pPublicData is
+		// a different encoding, though: v3.2 6.3.17 says a token MUST accept
+		// the *raw* X9.62 octet string (0x04||X||Y with no ASN.1 wrapper) and
+		// only MAY additionally accept the CKA_EC_POINT/DER form. This
+		// module's ECDH derivation (pkg/backend/software's parseNISTPublicKey)
+		// only implements the mandatory raw form, so the DER wrapper must be
+		// stripped before use here.
+		var publicData []byte
+		if _, err := asn1.Unmarshal(attrs[0].Value, &publicData); err != nil {
+			t.Fatalf("failed to unwrap CKA_EC_POINT's DER OCTET STRING: %v", err)
+		}
+
+		// Setup ECDH derivation.
+		//
+		// At this (Go) layer the mechanism parameters are carried in
+		// TypedParameter; Module.deriveKeyECDH deliberately rejects raw
+		// CK_ECDH1_DERIVE_PARAMS bytes because unpacking the C struct is the
+		// CGO layer's job. Passing encoded bytes here produced
+		// CKR_MECHANISM_PARAM_INVALID, which the old skip swallowed.
+		//
+		// CKD_NULL is deliberately unsupported by this module (see the
+		// ecdhKDFs table doc comment in mechanism.go): honoring it would mean
+		// returning the raw ECDH shared secret, and the transport this module
+		// derives keys through has no "no KDF" representation, so CKD_NULL
+		// always fails with CKR_MECHANISM_PARAM_INVALID by design. CKD_SHA256_KDF
+		// (the ANSI X9.63 concatenation KDF) is one of the KDFs actually
+		// advertised and implemented.
 		deriveMech := &module.Mechanism{
-			Type:      module.CKM_ECDH1_DERIVE,
-			Parameter: encodeECDHParams(module.CKD_NULL, nil, publicData),
+			Type: module.CKM_ECDH1_DERIVE,
+			TypedParameter: &module.ECDHParams{
+				KDF:        module.CKD_SHA256_KDF,
+				PublicData: publicData,
+			},
 		}
 
+		// CKA_SENSITIVE/CKA_EXTRACTABLE must be requested explicitly: PKCS#11
+		// v3.2 6.42's C_DeriveKey mechanism rules leave the default
+		// token-specific when a template omits them, and this token's default
+		// (module.go's derivedKeyAttributes) chooses the protective one --
+		// sensitive and non-extractable -- exactly as it does for
+		// C_GenerateKey. Without these two the CKA_VALUE read below would
+		// correctly fail CKR_ATTRIBUTE_SENSITIVE.
 		deriveTemplate := []module.Attribute{
 			module.NewUint32Attribute(module.CKA_CLASS, uint32(module.CKO_SECRET_KEY)),
 			module.NewUint32Attribute(module.CKA_KEY_TYPE, uint32(module.CKK_AES)),
@@ -1745,17 +1845,29 @@ func TestV30_DeriveKey(t *testing.T) {
 			module.NewBoolAttribute(module.CKA_TOKEN, false),
 			module.NewBoolAttribute(module.CKA_ENCRYPT, true),
 			module.NewBoolAttribute(module.CKA_DECRYPT, true),
+			module.NewBoolAttribute(module.CKA_SENSITIVE, false),
+			module.NewBoolAttribute(module.CKA_EXTRACTABLE, true),
 			module.NewUint32Attribute(module.CKA_VALUE_LEN, 32),
 		}
 
 		derivedHandle, rv := env.Module.DeriveKey(session, deriveMech, privHandle1, deriveTemplate)
-		if rv != module.CKR_OK {
-			t.Logf("DeriveKey ECDH: %s (may not be supported)", rv.String())
-			t.Skip("ECDH key derivation not implemented")
-		}
+		RequireOK(t, rv, "C_DeriveKey CKM_ECDH1_DERIVE")
 
 		if derivedHandle == 0 {
-			t.Error("expected non-zero derived key handle")
+			t.Fatal("C_DeriveKey returned CKR_OK with an invalid object handle")
+		}
+
+		// The derived secret must be the requested length and must not be empty.
+		derivedAttrs, rv := env.Module.GetAttributeValue(session, derivedHandle, []module.Attribute{
+			{Type: module.CKA_VALUE},
+		})
+		RequireOK(t, rv, "C_GetAttributeValue CKA_VALUE of the ECDH-derived key")
+		if len(derivedAttrs) == 0 || len(derivedAttrs[0].Value) != 32 {
+			got := 0
+			if len(derivedAttrs) > 0 {
+				got = len(derivedAttrs[0].Value)
+			}
+			t.Errorf("ECDH derived key: want 32 bytes (CKA_VALUE_LEN), got %d", got)
 		}
 
 		_ = pubHandle1
@@ -1780,10 +1892,22 @@ func TestV30_DeriveKey(t *testing.T) {
 		baseKeyHandle, rv := env.Module.GenerateKey(session, mechanism, keyTemplate)
 		RequireOK(t, rv, "GenerateKey for HKDF base")
 
-		// Derive a new key using HKDF
+		// Derive a new key using HKDF.
+		//
+		// At this (Go) layer mechanism parameters are carried in
+		// TypedParameter (see the CKM_ECDH1_DERIVE case above);
+		// parseHKDFParams deliberately requires a *module.HKDFParams and
+		// refuses to fabricate defaults for a bare/empty Parameter, so this
+		// mechanism must supply one explicitly. NewHKDFParams performs the
+		// full RFC 5869 extract-then-expand construction (the only mode this
+		// module's KDF backend implements), with SHA-256 as the PRF hash.
 		deriveMech := &module.Mechanism{
-			Type:      module.CKM_HKDF_DERIVE,
-			Parameter: []byte{}, // Use defaults
+			Type: module.CKM_HKDF_DERIVE,
+			TypedParameter: module.NewHKDFParams(
+				module.CKM_SHA256,
+				nil, // salt: falls back to RFC 5869's zero-salt default
+				[]byte("xkms-hkdf-test-info"),
+			),
 		}
 
 		deriveTemplate := []module.Attribute{
@@ -1796,13 +1920,10 @@ func TestV30_DeriveKey(t *testing.T) {
 		}
 
 		derivedHandle, rv := env.Module.DeriveKey(session, deriveMech, baseKeyHandle, deriveTemplate)
-		if rv != module.CKR_OK {
-			t.Logf("DeriveKey HKDF: %s (may not be fully supported)", rv.String())
-			t.Skip("HKDF key derivation not fully implemented")
-		}
+		RequireOK(t, rv, "C_DeriveKey CKM_HKDF_DERIVE")
 
 		if derivedHandle == 0 {
-			t.Error("expected non-zero derived key handle")
+			t.Fatal("C_DeriveKey returned CKR_OK with an invalid object handle")
 		}
 
 		// Verify derived key has correct attributes
@@ -1838,10 +1959,21 @@ func TestV30_DeriveKey(t *testing.T) {
 		baseKeyHandle, rv := env.Module.GenerateKey(session, mechanism, keyTemplate)
 		RequireOK(t, rv, "GenerateKey for SP800-108 base")
 
-		// Derive a new key using SP800-108 Counter Mode
+		// Derive a new key using SP800-108 Counter Mode.
+		//
+		// Same shape as the HKDF case above: parseSP800108Params requires a
+		// *module.SP800108KDFParams in TypedParameter and refuses to derive
+		// under fabricated defaults for a bare/empty Parameter. A single
+		// CK_SP800_108_BYTE_ARRAY segment supplies the Label (v3.2 section
+		// 6.42's canonical usage example); CKM_SHA256_HMAC is the PRF.
 		deriveMech := &module.Mechanism{
-			Type:      module.CKM_SP800_108_COUNTER_KDF,
-			Parameter: []byte{}, // Use defaults
+			Type: module.CKM_SP800_108_COUNTER_KDF,
+			TypedParameter: &module.SP800108KDFParams{
+				PRF: module.CKM_SHA256_HMAC,
+				DataParams: []module.SP800108DataParam{
+					{Type: module.SP800108ByteArray, Value: []byte("xkms-sp800-108-label")},
+				},
+			},
 		}
 
 		deriveTemplate := []module.Attribute{
@@ -1854,10 +1986,7 @@ func TestV30_DeriveKey(t *testing.T) {
 		}
 
 		derivedHandle, rv := env.Module.DeriveKey(session, deriveMech, baseKeyHandle, deriveTemplate)
-		if rv != module.CKR_OK {
-			t.Logf("DeriveKey SP800-108 Counter: %s (may not be fully supported)", rv.String())
-			t.Skip("SP800-108 Counter key derivation not fully implemented")
-		}
+		RequireOK(t, rv, "C_DeriveKey CKM_SP800_108_COUNTER_KDF")
 
 		if derivedHandle == 0 {
 			t.Error("expected non-zero derived key handle")
@@ -1986,10 +2115,7 @@ func TestV30_LoginUser(t *testing.T) {
 	}
 	defer m.Finalize()
 
-	slots, rv := m.GetSlotList(true)
-	if rv != module.CKR_OK || len(slots) == 0 {
-		t.Skip("No slots with tokens available")
-	}
+	slots := mustSlotsWithTokens(t, m)
 
 	// Initialize token for LoginUser test - must close all sessions first
 	soPIN := []byte("12345678")
@@ -2025,10 +2151,7 @@ func TestV30_SessionCancel(t *testing.T) {
 	}
 	defer m.Finalize()
 
-	slots, rv := m.GetSlotList(true)
-	if rv != module.CKR_OK || len(slots) == 0 {
-		t.Skip("No slots with tokens available")
-	}
+	slots := mustSlotsWithTokens(t, m)
 
 	session, rv := m.OpenSession(slots[0], module.CKF_SERIAL_SESSION|module.CKF_RW_SESSION)
 	if rv != module.CKR_OK {
@@ -2036,10 +2159,21 @@ func TestV30_SessionCancel(t *testing.T) {
 	}
 	defer func() { m.CloseSession(session) }()
 
-	// SessionCancel without active operation should fail
+	// Per PKCS#11 v3.2 Section 5.16.1 (C_SessionCancel): "If no flags are set,
+	// the session state will not be modified and CKR_OK will be returned."
+	// flags=0 selects no operation category, so it is a no-op that succeeds,
+	// not an error -- there is nothing to reject.
 	rv = m.SessionCancel(session, 0)
-	if rv == module.CKR_OK {
-		t.Error("Expected error when canceling with no active operation")
+	if rv != module.CKR_OK {
+		t.Errorf("SessionCancel with flags=0 should be a no-op returning CKR_OK, got: %v", rv)
+	}
+
+	// Naming a category with no active operation of that type is also not an
+	// error: "the operation flag will be ignored and C_SessionCancel will
+	// behave as if the operation flag was not set."
+	rv = m.SessionCancel(session, uint64(module.CKF_DIGEST))
+	if rv != module.CKR_OK {
+		t.Errorf("SessionCancel naming an inactive operation should return CKR_OK, got: %v", rv)
 	}
 
 	// Start a digest operation to test cancellation
@@ -2048,8 +2182,8 @@ func TestV30_SessionCancel(t *testing.T) {
 		t.Fatalf("DigestInit failed: %v", rv)
 	}
 
-	// Now cancel should succeed
-	rv = m.SessionCancel(session, 0)
+	// Cancel by naming the digest category should succeed
+	rv = m.SessionCancel(session, uint64(module.CKF_DIGEST))
 	if rv != module.CKR_OK {
 		t.Errorf("SessionCancel failed: %v", rv)
 	}
@@ -2073,10 +2207,7 @@ func TestV30_MessageEncrypt(t *testing.T) {
 	}
 	defer m.Finalize()
 
-	slots, rv := m.GetSlotList(true)
-	if rv != module.CKR_OK || len(slots) == 0 {
-		t.Skip("No slots with tokens available")
-	}
+	slots := mustSlotsWithTokens(t, m)
 
 	session, rv := m.OpenSession(slots[0], module.CKF_SERIAL_SESSION|module.CKF_RW_SESSION)
 	if rv != module.CKR_OK {
@@ -2109,7 +2240,7 @@ func TestV30_MessageEncrypt(t *testing.T) {
 	// Test EncryptMessage
 	plaintext := []byte("Hello, Message-based PKCS#11!")
 	padded := pkcs7Pad(plaintext, 16) // PKCS#7 padding for CBC
-	ciphertext, rv := m.EncryptMessage(session, nil, padded)
+	ciphertext, rv := m.EncryptMessage(session, nil, nil, padded)
 	if rv != module.CKR_OK {
 		t.Fatalf("EncryptMessage failed: %v", rv)
 	}
@@ -2137,10 +2268,7 @@ func TestV30_MessageDecrypt(t *testing.T) {
 	}
 	defer m.Finalize()
 
-	slots, rv := m.GetSlotList(true)
-	if rv != module.CKR_OK || len(slots) == 0 {
-		t.Skip("No slots with tokens available")
-	}
+	slots := mustSlotsWithTokens(t, m)
 
 	session, rv := m.OpenSession(slots[0], module.CKF_SERIAL_SESSION|module.CKF_RW_SESSION)
 	if rv != module.CKR_OK {
@@ -2158,29 +2286,49 @@ func TestV30_MessageDecrypt(t *testing.T) {
 	}
 	defer m.DestroyObject(session, keyHandle)
 
-	// First encrypt some data
-	iv := make([]byte, 16)
-	rand.Read(iv)
+	// Message-based encrypt/decrypt is defined around CK_GCM_MESSAGE_PARAMS
+	// (PKCS#11 v3.2 Section 6.13.5): C_MessageEncryptInit/C_MessageDecryptInit
+	// bind only the mechanism and key, and the per-message IV/tag ride on each
+	// C_EncryptMessage/C_DecryptMessage call. CKM_AES_CBC has no such
+	// parameter block -- its IV belongs on Init -- so CKM_AES_GCM is the
+	// mechanism these functions are built for.
 	plaintext := []byte("Message-based decryption test")
-	padded := pkcs7Pad(plaintext, 16)
+	aad := []byte("associated data")
 
-	rv = m.EncryptInit(session, &module.Mechanism{Type: module.CKM_AES_CBC, Parameter: iv}, keyHandle)
+	rv = m.MessageEncryptInit(session, &module.Mechanism{Type: module.CKM_AES_GCM}, keyHandle)
 	if rv != module.CKR_OK {
-		t.Fatalf("EncryptInit failed: %v", rv)
+		t.Fatalf("MessageEncryptInit failed: %v", rv)
 	}
-	ciphertext, rv := m.Encrypt(session, padded)
+	encParams := &module.AESGCMMessageParams{IVGenerator: module.CKG_GENERATE, TagBits: 128}
+	ciphertext, rv := m.EncryptMessage(session, encParams, aad, plaintext)
 	if rv != module.CKR_OK {
-		t.Fatalf("Encrypt failed: %v", rv)
+		t.Fatalf("EncryptMessage failed: %v", rv)
+	}
+	if rv = m.MessageEncryptFinal(session); rv != module.CKR_OK {
+		t.Fatalf("MessageEncryptFinal failed: %v", rv)
+	}
+	if len(encParams.IV) == 0 {
+		t.Fatal("EncryptMessage did not return the token-generated IV")
+	}
+	if len(encParams.Tag) != 16 {
+		t.Fatalf("EncryptMessage returned a %d-byte tag, want 16", len(encParams.Tag))
 	}
 
 	// Test MessageDecryptInit
-	rv = m.MessageDecryptInit(session, &module.Mechanism{Type: module.CKM_AES_CBC, Parameter: iv}, keyHandle)
+	rv = m.MessageDecryptInit(session, &module.Mechanism{Type: module.CKM_AES_GCM}, keyHandle)
 	if rv != module.CKR_OK {
 		t.Fatalf("MessageDecryptInit failed: %v", rv)
 	}
 
-	// Test DecryptMessage
-	decrypted, rv := m.DecryptMessage(session, nil, ciphertext)
+	// Test DecryptMessage, feeding back the IV and tag the token produced when
+	// it encrypted -- without them the ciphertext can never be recovered.
+	decParams := &module.AESGCMMessageParams{
+		IV:          encParams.IV,
+		IVGenerator: module.CKG_NO_GENERATE,
+		Tag:         encParams.Tag,
+		TagBits:     128,
+	}
+	decrypted, rv := m.DecryptMessage(session, decParams, aad, ciphertext)
 	if rv != module.CKR_OK {
 		t.Fatalf("DecryptMessage failed: %v", rv)
 	}
@@ -2191,11 +2339,8 @@ func TestV30_MessageDecrypt(t *testing.T) {
 		t.Fatalf("MessageDecryptFinal failed: %v", rv)
 	}
 
-	if len(decrypted) > 0 {
-		unpadded := pkcs7Unpad(decrypted)
-		if !bytes.Equal(unpadded, plaintext) {
-			t.Errorf("Decrypted data mismatch")
-		}
+	if !bytes.Equal(decrypted, plaintext) {
+		t.Errorf("Decrypted data mismatch: got %q, want %q", decrypted, plaintext)
 	}
 }
 
@@ -2211,10 +2356,7 @@ func TestV30_MessageSign(t *testing.T) {
 	}
 	defer m.Finalize()
 
-	slots, rv := m.GetSlotList(true)
-	if rv != module.CKR_OK || len(slots) == 0 {
-		t.Skip("No slots with tokens available")
-	}
+	slots := mustSlotsWithTokens(t, m)
 
 	session, rv := m.OpenSession(slots[0], module.CKF_SERIAL_SESSION|module.CKF_RW_SESSION)
 	if rv != module.CKR_OK {
@@ -2274,10 +2416,7 @@ func TestV30_MessageVerify(t *testing.T) {
 	}
 	defer m.Finalize()
 
-	slots, rv := m.GetSlotList(true)
-	if rv != module.CKR_OK || len(slots) == 0 {
-		t.Skip("No slots with tokens available")
-	}
+	slots := mustSlotsWithTokens(t, m)
 
 	session, rv := m.OpenSession(slots[0], module.CKF_SERIAL_SESSION|module.CKF_RW_SESSION)
 	if rv != module.CKR_OK {
@@ -2343,10 +2482,7 @@ func TestV30_SignRecover(t *testing.T) {
 	}
 	defer m.Finalize()
 
-	slots, rv := m.GetSlotList(true)
-	if rv != module.CKR_OK || len(slots) == 0 {
-		t.Skip("No slots with tokens available")
-	}
+	slots := mustSlotsWithTokens(t, m)
 
 	session, rv := m.OpenSession(slots[0], module.CKF_SERIAL_SESSION|module.CKF_RW_SESSION)
 	if rv != module.CKR_OK {
@@ -2356,9 +2492,13 @@ func TestV30_SignRecover(t *testing.T) {
 
 	session = loginAndInitToken(t, m, session, slots[0])
 
-	// Generate RSA key pair (required for sign-recover)
+	// Generate RSA key pair (required for sign-recover). CKA_SIGN_RECOVER is
+	// the gating capability for C_SignRecoverInit (PKCS#11 v3.2 Section
+	// 5.11.3), and per Section 4.9 an absent boolean capability attribute
+	// defaults to false, not permission -- it must be requested explicitly.
 	rsaPubTemplate := BuildRSAPublicKeyTemplate("sign-recover-pub", 2048)
 	rsaPrivTemplate := BuildRSAPrivateKeyTemplate("sign-recover-priv")
+	rsaPrivTemplate = append(rsaPrivTemplate, module.NewBoolAttribute(module.CKA_SIGN_RECOVER, true))
 	pubKey, privKey, rv := m.GenerateKeyPair(session,
 		&module.Mechanism{Type: module.CKM_RSA_PKCS_KEY_PAIR_GEN},
 		rsaPubTemplate, rsaPrivTemplate)
@@ -2398,10 +2538,7 @@ func TestV30_VerifyRecover(t *testing.T) {
 	}
 	defer m.Finalize()
 
-	slots, rv := m.GetSlotList(true)
-	if rv != module.CKR_OK || len(slots) == 0 {
-		t.Skip("No slots with tokens available")
-	}
+	slots := mustSlotsWithTokens(t, m)
 
 	session, rv := m.OpenSession(slots[0], module.CKF_SERIAL_SESSION|module.CKF_RW_SESSION)
 	if rv != module.CKR_OK {
@@ -2465,10 +2602,7 @@ func TestV30_DigestKey(t *testing.T) {
 	}
 	defer m.Finalize()
 
-	slots, rv := m.GetSlotList(true)
-	if rv != module.CKR_OK || len(slots) == 0 {
-		t.Skip("No slots with tokens available")
-	}
+	slots := mustSlotsWithTokens(t, m)
 
 	session, rv := m.OpenSession(slots[0], module.CKF_SERIAL_SESSION|module.CKF_RW_SESSION)
 	if rv != module.CKR_OK {
@@ -2478,10 +2612,26 @@ func TestV30_DigestKey(t *testing.T) {
 
 	session = loginAndInitToken(t, m, session, slots[0])
 
-	// Generate AES key (secret key for DigestKey)
-	keyTemplate := BuildAESKeyTemplate("digest-key-test", 32)
-	// Make it extractable so we can digest it
-	keyTemplate = append(keyTemplate, module.NewBoolAttribute(module.CKA_EXTRACTABLE, true))
+	// Generate AES key (secret key for DigestKey). C_DigestKey needs to read
+	// CKA_VALUE, which Object.protectsSensitiveAttributes withholds whenever
+	// CKA_SENSITIVE is true or CKA_EXTRACTABLE is false -- so both attributes
+	// must be overridden, not just CKA_EXTRACTABLE. BuildAESKeyTemplate
+	// already sets CKA_EXTRACTABLE, so appending another CKA_EXTRACTABLE
+	// attribute instead of overriding it produced a duplicate attribute in
+	// the template, which object.go's validateCreateTemplate correctly
+	// rejects with CKR_TEMPLATE_INCONSISTENT (PKCS#11 v3.2 Section 5.5.3).
+	keyTemplate := []module.Attribute{
+		module.NewUint32Attribute(module.CKA_CLASS, uint32(module.CKO_SECRET_KEY)),
+		module.NewUint32Attribute(module.CKA_KEY_TYPE, uint32(module.CKK_AES)),
+		module.NewStringAttribute(module.CKA_LABEL, "digest-key-test"),
+		module.NewUint32Attribute(module.CKA_VALUE_LEN, 32),
+		module.NewBoolAttribute(module.CKA_TOKEN, true),
+		module.NewBoolAttribute(module.CKA_PRIVATE, true),
+		module.NewBoolAttribute(module.CKA_SENSITIVE, false),
+		module.NewBoolAttribute(module.CKA_ENCRYPT, true),
+		module.NewBoolAttribute(module.CKA_DECRYPT, true),
+		module.NewBoolAttribute(module.CKA_EXTRACTABLE, true),
+	}
 	keyHandle, rv := m.GenerateKey(session, &module.Mechanism{Type: module.CKM_AES_KEY_GEN}, keyTemplate)
 	if rv != module.CKR_OK {
 		t.Fatalf("GenerateKey failed: %v", rv)
@@ -2497,9 +2647,7 @@ func TestV30_DigestKey(t *testing.T) {
 	// Test DigestKey
 	rv = m.DigestKey(session, keyHandle)
 	if rv != module.CKR_OK {
-		// DigestKey may fail if key is not extractable or sensitive
-		t.Logf("DigestKey returned: %v (may require extractable key)", rv)
-		return
+		t.Fatalf("DigestKey failed: %v", rv)
 	}
 
 	// Finalize the digest
@@ -2514,6 +2662,20 @@ func TestV30_DigestKey(t *testing.T) {
 	}
 }
 
+// cancelAllOperations cancels every operation category active in a session.
+//
+// C_SessionCancel selects what to cancel through its flags, and PKCS#11 v3.2 is
+// explicit that "if no flags are set, the session state will not be modified" —
+// so flags=0 cancels nothing at all. Cleanup that passed 0 therefore left its
+// operations active, and the next subtest sharing the session failed with
+// CKR_OPERATION_ACTIVE for reasons that had nothing to do with what it was
+// testing. Naming a category with nothing active is harmless: the spec says
+// such a flag "will be ignored".
+func cancelAllOperations(m *module.Module, session module.SessionHandle) {
+	m.SessionCancel(session, uint64(module.CKF_ENCRYPT|module.CKF_DECRYPT|
+		module.CKF_DIGEST|module.CKF_SIGN|module.CKF_VERIFY))
+}
+
 // TestV30_DualPurposeFunctions tests dual-purpose crypto functions (PKCS#11 v3.0 Section 5.13)
 // STATUS: IMPLEMENTED
 func TestV30_DualPurposeFunctions(t *testing.T) {
@@ -2526,10 +2688,7 @@ func TestV30_DualPurposeFunctions(t *testing.T) {
 	}
 	defer m.Finalize()
 
-	slots, rv := m.GetSlotList(true)
-	if rv != module.CKR_OK || len(slots) == 0 {
-		t.Skip("No slots with tokens available")
-	}
+	slots := mustSlotsWithTokens(t, m)
 
 	session, rv := m.OpenSession(slots[0], module.CKF_SERIAL_SESSION|module.CKF_RW_SESSION)
 	if rv != module.CKR_OK {
@@ -2560,9 +2719,10 @@ func TestV30_DualPurposeFunctions(t *testing.T) {
 		rand.Read(iv)
 		rv = m.EncryptInit(session, &module.Mechanism{Type: module.CKM_AES_CBC, Parameter: iv}, keyHandle)
 		if rv == module.CKR_OPERATION_ACTIVE {
-			// Module doesn't support dual active operations - cancel and skip
-			m.SessionCancel(session, 0)
-			t.Skip("Dual active operations not supported")
+			cancelAllOperations(m, session)
+			t.Fatal("C_EncryptInit returned CKR_OPERATION_ACTIVE while a digest was active; " +
+				"C_DigestEncryptUpdate requires both operations to coexist and " +
+				"SessionManager.InitializeOperation only rejects a repeat of the same type")
 		}
 		if rv != module.CKR_OK {
 			t.Fatalf("EncryptInit failed: %v", rv)
@@ -2578,7 +2738,7 @@ func TestV30_DualPurposeFunctions(t *testing.T) {
 		t.Logf("DigestEncryptUpdate returned %d bytes (buffered mode)", len(ciphertext))
 
 		// Clean up operations
-		m.SessionCancel(session, 0)
+		cancelAllOperations(m, session)
 	})
 
 	// Test DecryptDigestUpdate: decrypts ciphertext while digesting plaintext
@@ -2588,7 +2748,7 @@ func TestV30_DualPurposeFunctions(t *testing.T) {
 		rand.Read(iv)
 		rv = m.EncryptInit(session, &module.Mechanism{Type: module.CKM_AES_CBC, Parameter: iv}, keyHandle)
 		if rv == module.CKR_OPERATION_ACTIVE {
-			m.SessionCancel(session, 0)
+			cancelAllOperations(m, session)
 			rv = m.EncryptInit(session, &module.Mechanism{Type: module.CKM_AES_CBC, Parameter: iv}, keyHandle)
 		}
 		if rv != module.CKR_OK {
@@ -2609,9 +2769,9 @@ func TestV30_DualPurposeFunctions(t *testing.T) {
 		// Initialize digest
 		rv = m.DigestInit(session, &module.Mechanism{Type: module.CKM_SHA256})
 		if rv == module.CKR_OPERATION_ACTIVE {
-			// Module doesn't support dual active operations - cancel and skip
-			m.SessionCancel(session, 0)
-			t.Skip("Dual active operations not supported")
+			cancelAllOperations(m, session)
+			t.Fatal("C_DigestInit returned CKR_OPERATION_ACTIVE while a decrypt was active; " +
+				"C_DecryptDigestUpdate requires both operations to coexist")
 		}
 		if rv != module.CKR_OK {
 			t.Fatalf("DigestInit failed: %v", rv)
@@ -2626,7 +2786,7 @@ func TestV30_DualPurposeFunctions(t *testing.T) {
 		t.Logf("DecryptDigestUpdate returned %d bytes", len(decrypted))
 
 		// Clean up
-		m.SessionCancel(session, 0)
+		cancelAllOperations(m, session)
 	})
 }
 
@@ -2642,10 +2802,7 @@ func TestV30_LegacyParallelFunctions(t *testing.T) {
 	}
 	defer m.Finalize()
 
-	slots, rv := m.GetSlotList(true)
-	if rv != module.CKR_OK || len(slots) == 0 {
-		t.Skip("No slots with tokens available")
-	}
+	slots := mustSlotsWithTokens(t, m)
 
 	session, rv := m.OpenSession(slots[0], module.CKF_SERIAL_SESSION|module.CKF_RW_SESSION)
 	if rv != module.CKR_OK {
@@ -2682,10 +2839,7 @@ func TestV30_OperationState(t *testing.T) {
 	}
 	defer m.Finalize()
 
-	slots, rv := m.GetSlotList(true)
-	if rv != module.CKR_OK || len(slots) == 0 {
-		t.Skip("No slots with tokens available")
-	}
+	slots := mustSlotsWithTokens(t, m)
 
 	session, rv := m.OpenSession(slots[0], module.CKF_SERIAL_SESSION|module.CKF_RW_SESSION)
 	if rv != module.CKR_OK {
@@ -2707,7 +2861,7 @@ func TestV30_OperationState(t *testing.T) {
 		if rv != module.CKR_OK {
 			t.Fatalf("DigestInit failed: %v", rv)
 		}
-		defer m.SessionCancel(session, 0)
+		defer cancelAllOperations(m, session)
 
 		// Try to get operation state - may return CKR_STATE_UNSAVEABLE for complex ops
 		_, rv = m.GetOperationState(session)
@@ -2729,10 +2883,7 @@ func TestV30_EncryptMessageBeginNext(t *testing.T) {
 	}
 	defer m.Finalize()
 
-	slots, rv := m.GetSlotList(true)
-	if rv != module.CKR_OK || len(slots) == 0 {
-		t.Skip("No slots with tokens available")
-	}
+	slots := mustSlotsWithTokens(t, m)
 
 	session, rv := m.OpenSession(slots[0], module.CKF_SERIAL_SESSION|module.CKF_RW_SESSION)
 	if rv != module.CKR_OK {
@@ -2750,34 +2901,70 @@ func TestV30_EncryptMessageBeginNext(t *testing.T) {
 	}
 	defer m.DestroyObject(session, keyHandle)
 
-	// Initialize message encryption
-	iv := make([]byte, 16)
-	rand.Read(iv)
-	rv = m.MessageEncryptInit(session, &module.Mechanism{Type: module.CKM_AES_CBC, Parameter: iv}, keyHandle)
+	// C_EncryptMessageBegin/C_EncryptMessageNext carry their per-message
+	// parameters in CK_GCM_MESSAGE_PARAMS (PKCS#11 v3.2 Section 6.13.5), so
+	// CKM_AES_GCM -- not CKM_AES_CBC, whose IV belongs on Init -- is the
+	// mechanism this pair is built for.
+	aad := []byte("associated data")
+	rv = m.MessageEncryptInit(session, &module.Mechanism{Type: module.CKM_AES_GCM}, keyHandle)
 	if rv != module.CKR_OK {
 		t.Fatalf("MessageEncryptInit failed: %v", rv)
 	}
 
 	// Begin message encryption with AAD
-	rv = m.EncryptMessageBegin(session, []byte("associated data"))
+	rv = m.EncryptMessageBegin(session, nil, aad)
 	if rv != module.CKR_OK {
 		t.Fatalf("EncryptMessageBegin failed: %v", rv)
 	}
 
-	// Encrypt parts
-	part1 := pkcs7Pad([]byte("First part of message"), 16)
-	_, rv = m.EncryptMessageNext(session, part1, false)
+	// Encrypt parts. The IV is settled once for the whole message, so only the
+	// final call carries CK_GCM_MESSAGE_PARAMS -- that is where the
+	// token-generated IV and authentication tag come back (v3.2 Section
+	// 6.13.5).
+	part1 := []byte("First part of message")
+	_, rv = m.EncryptMessageNext(session, nil, part1, false)
 	if rv != module.CKR_OK {
 		t.Fatalf("EncryptMessageNext (part 1) failed: %v", rv)
 	}
 
-	part2 := pkcs7Pad([]byte("Second part of message"), 16)
-	ciphertext, rv := m.EncryptMessageNext(session, part2, true)
+	part2 := []byte("Second part of message")
+	encParams := &module.AESGCMMessageParams{IVGenerator: module.CKG_GENERATE, TagBits: 128}
+	ciphertext, rv := m.EncryptMessageNext(session, encParams, part2, true)
 	if rv != module.CKR_OK {
 		t.Fatalf("EncryptMessageNext (final) failed: %v", rv)
 	}
+	if len(encParams.IV) == 0 {
+		t.Fatal("EncryptMessageNext did not return the token-generated IV")
+	}
+	if len(encParams.Tag) != 16 {
+		t.Fatalf("EncryptMessageNext returned a %d-byte tag, want 16", len(encParams.Tag))
+	}
 
-	t.Logf("EncryptMessageNext returned %d bytes", len(ciphertext))
+	// A round trip that only checks the return code proves nothing: recover
+	// the plaintext through C_MessageDecryptInit/C_DecryptMessage and confirm
+	// it matches what was buffered across the two EncryptMessageNext calls.
+	rv = m.MessageDecryptInit(session, &module.Mechanism{Type: module.CKM_AES_GCM}, keyHandle)
+	if rv != module.CKR_OK {
+		t.Fatalf("MessageDecryptInit failed: %v", rv)
+	}
+	decParams := &module.AESGCMMessageParams{
+		IV:          encParams.IV,
+		IVGenerator: module.CKG_NO_GENERATE,
+		Tag:         encParams.Tag,
+		TagBits:     128,
+	}
+	decrypted, rv := m.DecryptMessage(session, decParams, aad, ciphertext)
+	if rv != module.CKR_OK {
+		t.Fatalf("DecryptMessage failed: %v", rv)
+	}
+	if rv = m.MessageDecryptFinal(session); rv != module.CKR_OK {
+		t.Fatalf("MessageDecryptFinal failed: %v", rv)
+	}
+
+	want := append(append([]byte{}, part1...), part2...)
+	if !bytes.Equal(decrypted, want) {
+		t.Errorf("Decrypted data mismatch: got %q, want %q", decrypted, want)
+	}
 }
 
 // TestV30_DecryptMessageBeginNext tests C_DecryptMessageBegin and C_DecryptMessageNext
@@ -2792,10 +2979,7 @@ func TestV30_DecryptMessageBeginNext(t *testing.T) {
 	}
 	defer m.Finalize()
 
-	slots, rv := m.GetSlotList(true)
-	if rv != module.CKR_OK || len(slots) == 0 {
-		t.Skip("No slots with tokens available")
-	}
+	slots := mustSlotsWithTokens(t, m)
 
 	session, rv := m.OpenSession(slots[0], module.CKF_SERIAL_SESSION|module.CKF_RW_SESSION)
 	if rv != module.CKR_OK {
@@ -2813,41 +2997,54 @@ func TestV30_DecryptMessageBeginNext(t *testing.T) {
 	}
 	defer m.DestroyObject(session, keyHandle)
 
-	// First, encrypt some data
-	iv := make([]byte, 16)
-	rand.Read(iv)
-	plaintext := pkcs7Pad([]byte("Test message for decryption"), 16)
+	// C_DecryptMessageBegin/C_DecryptMessageNext carry their per-message IV
+	// and tag in CK_GCM_MESSAGE_PARAMS (PKCS#11 v3.2 Section 6.13.5), so
+	// CKM_AES_GCM -- not CKM_AES_CBC, whose IV belongs on Init -- is the
+	// mechanism this pair is built for.
+	plaintext := []byte("Test message for decryption")
+	aad := []byte("associated data")
 
-	rv = m.EncryptInit(session, &module.Mechanism{Type: module.CKM_AES_CBC, Parameter: iv}, keyHandle)
+	rv = m.MessageEncryptInit(session, &module.Mechanism{Type: module.CKM_AES_GCM}, keyHandle)
 	if rv != module.CKR_OK {
-		t.Fatalf("EncryptInit failed: %v", rv)
+		t.Fatalf("MessageEncryptInit failed: %v", rv)
 	}
-	ciphertext, rv := m.Encrypt(session, plaintext)
+	encParams := &module.AESGCMMessageParams{IVGenerator: module.CKG_GENERATE, TagBits: 128}
+	ciphertext, rv := m.EncryptMessage(session, encParams, aad, plaintext)
 	if rv != module.CKR_OK {
-		t.Fatalf("Encrypt failed: %v", rv)
+		t.Fatalf("EncryptMessage failed: %v", rv)
+	}
+	if rv = m.MessageEncryptFinal(session); rv != module.CKR_OK {
+		t.Fatalf("MessageEncryptFinal failed: %v", rv)
 	}
 
 	// Now test message-based decryption
-	rv = m.MessageDecryptInit(session, &module.Mechanism{Type: module.CKM_AES_CBC, Parameter: iv}, keyHandle)
+	rv = m.MessageDecryptInit(session, &module.Mechanism{Type: module.CKM_AES_GCM}, keyHandle)
 	if rv != module.CKR_OK {
 		t.Fatalf("MessageDecryptInit failed: %v", rv)
 	}
 
 	// Begin message decryption with AAD
-	rv = m.DecryptMessageBegin(session, []byte("associated data"))
+	rv = m.DecryptMessageBegin(session, nil, aad)
 	if rv != module.CKR_OK {
 		t.Fatalf("DecryptMessageBegin failed: %v", rv)
 	}
 
-	// Decrypt in one final part
-	decrypted, rv := m.DecryptMessageNext(session, ciphertext, true)
+	// Decrypt in one final part, feeding back the IV and tag the token
+	// produced when it encrypted -- without them the ciphertext can never be
+	// recovered.
+	decParams := &module.AESGCMMessageParams{
+		IV:          encParams.IV,
+		IVGenerator: module.CKG_NO_GENERATE,
+		Tag:         encParams.Tag,
+		TagBits:     128,
+	}
+	decrypted, rv := m.DecryptMessageNext(session, decParams, ciphertext, true)
 	if rv != module.CKR_OK {
 		t.Fatalf("DecryptMessageNext (final) failed: %v", rv)
 	}
 
-	if len(decrypted) > 0 {
-		unpadded := pkcs7Unpad(decrypted)
-		t.Logf("Decrypted: %s", string(unpadded))
+	if !bytes.Equal(decrypted, plaintext) {
+		t.Errorf("Decrypted data mismatch: got %q, want %q", decrypted, plaintext)
 	}
 }
 
@@ -2863,10 +3060,7 @@ func TestV30_CopyObject(t *testing.T) {
 	}
 	defer m.Finalize()
 
-	slots, rv := m.GetSlotList(true)
-	if rv != module.CKR_OK || len(slots) == 0 {
-		t.Skip("No slots with tokens available")
-	}
+	slots := mustSlotsWithTokens(t, m)
 
 	session, rv := m.OpenSession(slots[0], module.CKF_SERIAL_SESSION|module.CKF_RW_SESSION)
 	if rv != module.CKR_OK {
@@ -2934,10 +3128,7 @@ func TestV30_SetAttributeValue(t *testing.T) {
 	}
 	defer m.Finalize()
 
-	slots, rv := m.GetSlotList(true)
-	if rv != module.CKR_OK || len(slots) == 0 {
-		t.Skip("No slots with tokens available")
-	}
+	slots := mustSlotsWithTokens(t, m)
 
 	session, rv := m.OpenSession(slots[0], module.CKF_SERIAL_SESSION|module.CKF_RW_SESSION)
 	if rv != module.CKR_OK {
@@ -3011,10 +3202,7 @@ func TestV30_SeedRandom(t *testing.T) {
 	}
 	defer m.Finalize()
 
-	slots, rv := m.GetSlotList(true)
-	if rv != module.CKR_OK || len(slots) == 0 {
-		t.Skip("No slots with tokens available")
-	}
+	slots := mustSlotsWithTokens(t, m)
 
 	session, rv := m.OpenSession(slots[0], module.CKF_SERIAL_SESSION|module.CKF_RW_SESSION)
 	if rv != module.CKR_OK {
@@ -3064,10 +3252,7 @@ func TestV30_GetObjectSize(t *testing.T) {
 	}
 	defer m.Finalize()
 
-	slots, rv := m.GetSlotList(true)
-	if rv != module.CKR_OK || len(slots) == 0 {
-		t.Skip("No slots with tokens available")
-	}
+	slots := mustSlotsWithTokens(t, m)
 
 	session, rv := m.OpenSession(slots[0], module.CKF_SERIAL_SESSION|module.CKF_RW_SESSION)
 	if rv != module.CKR_OK {
@@ -3119,10 +3304,7 @@ func TestV30_SignMessageBeginNext(t *testing.T) {
 	}
 	defer m.Finalize()
 
-	slots, rv := m.GetSlotList(true)
-	if rv != module.CKR_OK || len(slots) == 0 {
-		t.Skip("No slots with tokens available")
-	}
+	slots := mustSlotsWithTokens(t, m)
 
 	session, rv := m.OpenSession(slots[0], module.CKF_SERIAL_SESSION|module.CKF_RW_SESSION)
 	if rv != module.CKR_OK {
@@ -3193,10 +3375,7 @@ func TestV30_VerifyMessageBeginNext(t *testing.T) {
 	}
 	defer m.Finalize()
 
-	slots, rv := m.GetSlotList(true)
-	if rv != module.CKR_OK || len(slots) == 0 {
-		t.Skip("No slots with tokens available")
-	}
+	slots := mustSlotsWithTokens(t, m)
 
 	session, rv := m.OpenSession(slots[0], module.CKF_SERIAL_SESSION|module.CKF_RW_SESSION)
 	if rv != module.CKR_OK {
@@ -3242,7 +3421,7 @@ func TestV30_VerifyMessageBeginNext(t *testing.T) {
 	}
 
 	// Verify with data and signature
-	rv = m.VerifyMessageNext(session, data[:], signature)
+	rv = m.VerifyMessageNext(session, data[:], signature, true)
 	if rv != module.CKR_OK {
 		t.Fatalf("VerifyMessageNext failed: %v", rv)
 	}
@@ -3263,10 +3442,7 @@ func TestV30_SignEncryptUpdate(t *testing.T) {
 	}
 	defer m.Finalize()
 
-	slots, rv := m.GetSlotList(true)
-	if rv != module.CKR_OK || len(slots) == 0 {
-		t.Skip("No slots with tokens available")
-	}
+	slots := mustSlotsWithTokens(t, m)
 
 	session, rv := m.OpenSession(slots[0], module.CKF_SERIAL_SESSION|module.CKF_RW_SESSION)
 	if rv != module.CKR_OK {
@@ -3306,9 +3482,9 @@ func TestV30_SignEncryptUpdate(t *testing.T) {
 	rand.Read(iv)
 	rv = m.EncryptInit(session, &module.Mechanism{Type: module.CKM_AES_CBC, Parameter: iv}, aesHandle)
 	if rv == module.CKR_OPERATION_ACTIVE {
-		// Module doesn't support dual active operations - cancel and skip
-		m.SessionCancel(session, 0)
-		t.Skip("Dual active operations not supported")
+		cancelAllOperations(m, session)
+		t.Fatal("C_EncryptInit returned CKR_OPERATION_ACTIVE while a sign was active; " +
+			"C_SignEncryptUpdate requires both operations to coexist")
 	}
 	if rv != module.CKR_OK {
 		t.Fatalf("EncryptInit failed: %v", rv)
@@ -3324,7 +3500,7 @@ func TestV30_SignEncryptUpdate(t *testing.T) {
 	t.Logf("SignEncryptUpdate returned %d bytes", len(ciphertext))
 
 	// Clean up operations
-	m.SessionCancel(session, 0)
+	cancelAllOperations(m, session)
 }
 
 // TestV30_DecryptVerifyUpdate tests C_DecryptVerifyUpdate per PKCS#11 v3.0 Section 5.13.4
@@ -3339,10 +3515,7 @@ func TestV30_DecryptVerifyUpdate(t *testing.T) {
 	}
 	defer m.Finalize()
 
-	slots, rv := m.GetSlotList(true)
-	if rv != module.CKR_OK || len(slots) == 0 {
-		t.Skip("No slots with tokens available")
-	}
+	slots := mustSlotsWithTokens(t, m)
 
 	session, rv := m.OpenSession(slots[0], module.CKF_SERIAL_SESSION|module.CKF_RW_SESSION)
 	if rv != module.CKR_OK {
@@ -3394,9 +3567,9 @@ func TestV30_DecryptVerifyUpdate(t *testing.T) {
 	// Initialize verification
 	rv = m.VerifyInit(session, &module.Mechanism{Type: module.CKM_SHA256_RSA_PKCS}, rsaPubHandle)
 	if rv == module.CKR_OPERATION_ACTIVE {
-		// Module doesn't support dual active operations - cancel and skip
-		m.SessionCancel(session, 0)
-		t.Skip("Dual active operations not supported")
+		cancelAllOperations(m, session)
+		t.Fatal("C_VerifyInit returned CKR_OPERATION_ACTIVE while a decrypt was active; " +
+			"C_DecryptVerifyUpdate requires both operations to coexist")
 	}
 	if rv != module.CKR_OK {
 		t.Fatalf("VerifyInit failed: %v", rv)
@@ -3411,7 +3584,7 @@ func TestV30_DecryptVerifyUpdate(t *testing.T) {
 	t.Logf("DecryptVerifyUpdate returned %d bytes", len(decrypted))
 
 	// Clean up operations
-	m.SessionCancel(session, 0)
+	cancelAllOperations(m, session)
 }
 
 // =============================================================================
@@ -3436,28 +3609,6 @@ func encodeAESGCMParams(iv, aad []byte, tagBits uint32) []byte {
 	tagBitsBytes := make([]byte, 4)
 	binary.LittleEndian.PutUint32(tagBitsBytes, tagBits)
 	buf = append(buf, tagBitsBytes...)
-
-	return buf
-}
-
-// encodeECDHParams encodes ECDH derivation parameters
-func encodeECDHParams(kdf module.KDFType, sharedData, publicData []byte) []byte {
-	// Simple encoding: KDF type (4 bytes) + SharedData len (4 bytes) + SharedData + PublicData len (4 bytes) + PublicData
-	buf := make([]byte, 0, 4+4+len(sharedData)+4+len(publicData))
-
-	kdfBytes := make([]byte, 4)
-	binary.LittleEndian.PutUint32(kdfBytes, uint32(kdf))
-	buf = append(buf, kdfBytes...)
-
-	sdLen := make([]byte, 4)
-	binary.LittleEndian.PutUint32(sdLen, uint32(len(sharedData)))
-	buf = append(buf, sdLen...)
-	buf = append(buf, sharedData...)
-
-	pdLen := make([]byte, 4)
-	binary.LittleEndian.PutUint32(pdLen, uint32(len(publicData)))
-	buf = append(buf, pdLen...)
-	buf = append(buf, publicData...)
 
 	return buf
 }

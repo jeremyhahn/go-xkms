@@ -97,6 +97,17 @@ var (
 
 	// ErrCAParseFailed indicates the CA certificate could not be parsed.
 	ErrCAParseFailed = errors.New("server: failed to parse CA certificate PEM")
+
+	// ErrAdaptiveRequiresAuthenticator indicates adaptive authentication was
+	// selected without a required authenticator to escalate to. Adaptive mode
+	// only relaxes authentication while no users exist; once a user is
+	// provisioned it delegates to the required authenticator, so an unset one
+	// would leave the API permanently anonymous. Configure auth.type (or
+	// auth.jwt) with a real method, or opt out explicitly with
+	// auth.enabled=false / auth.type="none".
+	ErrAdaptiveRequiresAuthenticator = errors.New(
+		"server: adaptive authentication requires a required authenticator: set auth.type to jwt, mtls or composite " +
+			"(or provide auth.jwt.public_key_file), or disable authentication explicitly with auth.enabled=false or auth.type=\"none\"")
 )
 
 // ErrBackendInit represents a failure to initialize a specific backend.
@@ -419,4 +430,24 @@ type ErrUnsupportedStorageBackend struct {
 // Error returns the error message.
 func (e *ErrUnsupportedStorageBackend) Error() string {
 	return fmt.Sprintf("unsupported storage backend: %s", e.Backend)
+}
+
+// ErrUnknownAuthType indicates the configured auth.type is not a recognized
+// authentication method. It is fatal: falling back to an unauthenticated server
+// would turn a configuration typo into a silently wide-open API. The only ways
+// to run without authentication are the explicit opt-ins auth.enabled=false or
+// auth.type="none"/"noop", both of which are reported by
+// config.ComplianceGaps() and therefore cannot start cmd/xkmsd at all: the
+// daemon refuses a configuration with any gap and offers no override. This
+// package stays permissive so embedded and test callers can still construct an
+// unauthenticated server deliberately.
+type ErrUnknownAuthType struct {
+	Type string
+}
+
+// Error returns the error message.
+func (e *ErrUnknownAuthType) Error() string {
+	return fmt.Sprintf(
+		"server: unknown auth.type %q: valid types are \"jwt\", \"mtls\", \"composite\", \"adaptive\", "+
+			"or \"none\"/\"noop\" to disable authentication explicitly", e.Type)
 }

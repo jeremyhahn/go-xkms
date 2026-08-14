@@ -50,15 +50,18 @@ type PlatformKeyStorer interface {
 	// Backend returns the key backend used by this store.
 	Backend() store.KeyBackend
 
-	// Initialize sets up the platform key store with SO and user PINs,
-	// then creates the Storage Root Key (SRK).
+	// Initialize sets up the platform key store with the owner hierarchy
+	// auth and the user PIN, then creates the Storage Root Key (SRK).
 	Initialize(soPIN, userPIN string) error
 
 	// EnrollPlatformSRK performs a one-shot first-boot enrollment of the
 	// Platform SRK, binding the operator-supplied userPIN as its auth value.
+	// soPIN is the TPM owner hierarchy authorization value, required whenever
+	// the hierarchy carries one, because the Platform SRK is a persistent
+	// object in that hierarchy; pass an empty string when it has none.
 	// It is idempotent: ErrPlatformSRKAlreadyEnrolled is returned when the
 	// SRK auth is already in a known-good state.
-	EnrollPlatformSRK(userPIN string) error
+	EnrollPlatformSRK(soPIN, userPIN string) error
 
 	// InitializeWithDefaults creates the Platform SRK using empty (default)
 	// TPM hierarchy auth, skipping PINManager setup entirely.

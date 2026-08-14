@@ -51,7 +51,6 @@ func newSimulatorTPMProvider(t *testing.T) types.KeyProvider {
 	tpmConfig.UseSimulator = true
 	tpmConfig.EK.PlatformPolicy = false
 	tpmConfig.EK.HierarchyAuth = ""
-	tpmConfig.SSRK.PlatformPolicy = false
 	tpmConfig.SSRK.HierarchyAuth = ""
 	tpmConfig.IDevID = nil
 	tpmConfig.IAK = nil
@@ -76,7 +75,7 @@ func newSimulatorTPMProvider(t *testing.T) types.KeyProvider {
 			tpm.Close()
 			t.Fatalf("CreateEK: %v", cerr)
 		}
-		srkAttrs, srkErr := xkms.SRKAttributesFromConfig(*tpmConfig.SSRK, nil)
+		srkAttrs, srkErr := xkms.SRKAttributesFromConfig(*tpmConfig.SSRK)
 		if srkErr != nil {
 			tpm.Close()
 			t.Fatalf("SRK attributes: %v", srkErr)

@@ -84,9 +84,7 @@ func buildRSAPSSCert(t *testing.T) *x509.Certificate {
 		KeyUsage:           x509.KeyUsageDigitalSignature,
 	}
 	certDER, err := x509.CreateCertificate(rand.Reader, template, template, &key.PublicKey, key)
-	if err != nil {
-		t.Skipf("PSS self-signed cert not supported on this platform: %v", err)
-	}
+	require.NoError(t, err, "crypto/x509 must be able to self-sign with SHA256WithRSAPSS")
 	cert, err := x509.ParseCertificate(certDER)
 	require.NoError(t, err)
 	return cert
@@ -789,32 +787,6 @@ func TestCASigner_UnknownAlgo_Matches(t *testing.T) {
 // ca_extensions.go — Issued nil stores path (77%)
 // =============================================================================
 
-func TestIssued_NilCN(t *testing.T) {
-	ca := setupTestCA(t)
-	_, err := ca.Issued(context.Background(), "")
-	assert.ErrorIs(t, err, ErrInvalidCertificate)
-}
-
-func TestIssued_ExistingCert(t *testing.T) {
-	ca := setupTestCA(t)
-	issued, err := ca.IssueCertificate(context.Background(), &CertificateRequest{
-		Subject: Subject{CommonName: "issued-check.example.com"},
-		Valid:   365,
-	})
-	require.NoError(t, err)
-
-	found, err := ca.Issued(context.Background(), issued.Certificate.Subject.CommonName)
-	require.NoError(t, err)
-	assert.True(t, found)
-}
-
-func TestIssued_NotFound(t *testing.T) {
-	ca := setupTestCA(t)
-	found, err := ca.Issued(context.Background(), "nonexistent.example.com")
-	require.NoError(t, err)
-	assert.False(t, found)
-}
-
 // =============================================================================
 // ca_extensions.go — Exists (72%)
 // =============================================================================
@@ -941,19 +913,6 @@ func TestBlob_NoObjectStore(t *testing.T) {
 // =============================================================================
 // ca_extensions.go — CAConfig nil (partial)
 // =============================================================================
-
-func TestCAConfig_NilCAConfig(t *testing.T) {
-	ca := &CA{}
-	cfg := ca.CAConfig()
-	assert.Equal(t, CAConfig{}, cfg)
-}
-
-func TestCAConfig_WithCAConfig(t *testing.T) {
-	ca := setupTestCA(t)
-	cfg := ca.CAConfig()
-	// caConfig is set from the flat Params.Config during New().
-	_ = cfg // value exists, no assertion on specific fields needed
-}
 
 // =============================================================================
 // ca_extensions.go — IsAutoImportingIssuerCAs (66%)

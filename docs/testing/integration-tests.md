@@ -144,6 +144,46 @@ docker-compose run --rm test
 docker-compose down -v
 ```
 
+
+## OASIS PKCS#11 v3.0 Conformance Suite
+
+`test/integration/pkcs11/module/conformance` validates the module against the
+OASIS PKCS#11 Base Specification v3.0 (return codes for all C_* functions,
+session/object/mechanism semantics, v3.0 message-based crypto, profiles). It is
+guarded by `//go:build integration && conformance`, so it only compiles when
+BOTH tags are passed.
+
+```bash
+make integration-test-pkcs11-conformance
+```
+
+The target runs in the devcontainer against a live `xkms-server` (same
+transport env as `integration-test-pkcs11-module`) and is part of the aggregate
+`make integration-test`.
+
+
+## WebAuthn Integration Tests
+
+There is one WebAuthn E2E suite: the Playwright suite in
+`test/integration/webauthn-browser`. It boots a real `xkmsd` and drives
+Chrome's CDP virtual authenticator against the live Relying Party
+(`/api/v1/webauthn/*`), covering registration, authentication,
+forged-signature rejection (401), `excludeCredentials` re-registration
+refusal, discoverable resident-key login, unknown-session rejection (400),
+unregistered-user login (404) and the cross-origin CORS path.
+
+```bash
+make integration-test-webauthn           # alias of the target below
+make integration-test-webauthn-browser   # needs Node + Chromium
+```
+
+A second Go/chromedp suite used to live in `test/integration/webauthn`. It was
+deleted: its `TestVirtualAuthenticator_*` tests exercised Chrome's own CDP
+virtual authenticator and asserted nothing about our Relying Party, and its
+`TestE2E_*` tests navigated to `/webauthn/test` -- a path the server does not
+serve -- while logging every failure instead of failing, so they passed whether
+or not the RP worked.
+
 ### SoftHSM Configuration
 - Token Label: test-token
 - Slot: 0

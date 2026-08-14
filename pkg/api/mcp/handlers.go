@@ -15,13 +15,11 @@ package mcp
 
 import (
 	"context"
-	"crypto"
-	"crypto/rand"
-	"crypto/rsa"
 	"crypto/x509"
 	"encoding/base64"
 	"encoding/json"
 	"encoding/pem"
+	"errors"
 	"fmt"
 	"net"
 	"strings"
@@ -72,6 +70,27 @@ func (s *Server) findKeyInBackend(ctx context.Context, keyID string, backendName
 	return nil, &errs.Message{Msg: fmt.Sprintf("key not found: %s", keyID)}
 }
 
+// requireKey confirms keyID names a key that exists, in the named backend when
+// one is given and in the default backend otherwise.
+//
+// The crypto handlers resolve the key again inside the service layer, which is
+// where the operation itself belongs. This lookup exists solely so a missing
+// key is reported with this transport's own wording -- the same phrase every
+// other method here uses -- rather than the service's. It interprets no crypto
+// parameter.
+func (s *Server) requireKey(ctx context.Context, keyID, backendName string) error {
+	var err error
+	if backendName != "" {
+		_, err = s.findKeyInBackend(ctx, keyID, backendName)
+	} else {
+		_, err = s.findKeyByCN(ctx, keyID)
+	}
+	if err != nil {
+		return &errs.Wrapped{Msg: "failed to find key", Err: err}
+	}
+	return nil
+}
+
 // handleHealth handles the health check method
 func (s *Server) handleHealth(ctx context.Context, req *JSONRPCRequest) (interface{}, error) {
 	return HealthResult{Status: "healthy"}, nil
@@ -112,7 +131,37 @@ func (s *Server) handleListBackends(ctx context.Context, req *JSONRPCRequest) (i
 	}, nil
 }
 
-// handleGenerateKey handles the generateKey method
+// symmetricBackendName is the backend this transport has always fallen back to
+// for a symmetric key generated without an explicit backend.
+const symmetricBackendName = "symmetric"
+
+// generateBackendName resolves the backend a generate request is served by.
+//
+// An explicit backend always wins. A symmetric request that names none keeps
+// this transport's historical fallback to the "symmetric" backend; everything
+// else defers to the service layer's own default. Choosing a name is request
+// normalisation, not key work: nothing here interprets a crypto parameter.
+func generateBackendName(params *GenerateKeyParams) string {
+	if params.Backend != "" {
+		return params.Backend
+	}
+	if types.AlgorithmSymmetric.Equals(params.KeyType) || types.AlgorithmSymmetric.Equals(params.Algorithm) {
+		return symmetricBackendName
+	}
+	return ""
+}
+
+// handleGenerateKey handles the generateKey method.
+//
+// Generation belongs to the service layer, which owns backend resolution, the
+// algorithm and key-purpose vocabularies, the symmetric/asymmetric split and
+// the exportability contract. This handler used to resolve params.Backend only
+// far enough to stamp KeyAttributes.StoreType and then generate with
+// s.keystore, the process default backend: a key the caller asked a named
+// backend to create was written to the default one carrying attributes that
+// named a different store. Both halves were invisible from the response, which
+// reported success and a public key either way, and the key was unusable
+// afterwards -- sign, which does resolve the named backend, could not find it.
 func (s *Server) handleGenerateKey(ctx context.Context, req *JSONRPCRequest) (interface{}, error) {
 	var params GenerateKeyParams
 	if err := json.Unmarshal(req.Params, &params); err != nil {
@@ -123,157 +172,57 @@ func (s *Server) handleGenerateKey(ctx context.Context, req *JSONRPCRequest) (in
 		return nil, &errs.Message{Msg: "key_id is required"}
 	}
 
-	// Create key attributes based on backend type
-	attrs := &types.KeyAttributes{
-		CN:         params.KeyID,
+	// A named curve is validated here rather than left to the service, which
+	// silently substitutes P-256 for anything it cannot parse
+	// (pkg/xkms/servicer_key.go, buildKeyAttributes). A caller that asks for a
+	// curve by name and receives a key on a different one has had a parameter
+	// dropped, not defaulted, so the name is rejected at the boundary. This
+	// interprets no crypto: the attributes are still built by the service.
+	if params.Curve != "" {
+		if _, curveErr := types.ParseCurve(params.Curve); curveErr != nil {
+			return nil, &errs.Message{Msg: fmt.Sprintf("invalid curve: %s", params.Curve)}
+		}
+	}
+
+	resp, err := s.xkmsService.GenerateKey(ctx, &transport.GenerateKeyRequest{
+		KeyID:      params.KeyID,
+		Backend:    generateBackendName(&params),
+		KeyType:    params.KeyType,
+		KeySize:    params.KeySize,
+		Curve:      params.Curve,
+		Algorithm:  params.Algorithm,
 		Exportable: params.Exportable,
-	}
-
-	// Parse backend type
-	if params.Backend != "" {
-		storeType := types.ParseStoreType(params.Backend)
-		if storeType == types.StoreUnknown {
-			return nil, &errs.Message{Msg: fmt.Sprintf("invalid backend: %s", params.Backend)}
-		}
-		attrs.StoreType = storeType
-	} else {
-		attrs.StoreType = types.StoreSoftware // Default to software
-	}
-
-	// Generate key based on type
-	var privKey interface{}
-	var err error
-
-	// Parse key purpose type from params.KeyType (e.g., "tls", "signing", "encryption")
-	// If params.KeyType is actually an algorithm name (e.g., "rsa", "ecdsa"), this will return 0
-	keyPurposeType := types.ParseKeyType(params.KeyType)
-	// Default to KeyTypeSigning if no valid key purpose type was parsed
-	if keyPurposeType == 0 {
-		keyPurposeType = types.KeyTypeSigning
-	}
-
-	// Determine the algorithm discriminator:
-	// - First, check if params.KeyType is an algorithm name (backward compatibility)
-	// - If not, use params.Algorithm
-	// This allows both "KeyType: symmetric, Algorithm: aes256-gcm" (backward compat)
-	// and "KeyType: tls, Algorithm: rsa" (new format)
-	algorithmDiscriminator := strings.ToLower(params.KeyType)
-	algorithm := strings.ToLower(params.Algorithm)
-
-	switch {
-	case types.AlgorithmRSA.Equals(algorithmDiscriminator) || types.AlgorithmRSA.Equals(algorithm):
-		attrs.KeyType = keyPurposeType
-		attrs.RSAAttributes = &types.RSAAttributes{
-			KeySize: params.KeySize,
-		}
-		if attrs.RSAAttributes.KeySize == 0 {
-			attrs.RSAAttributes.KeySize = types.RSAKeySize2048 // Default
-		}
-		privKey, err = s.keystore.GenerateRSA(ctx, attrs)
-
-	case types.AlgorithmECDSA.Equals(algorithmDiscriminator) || types.AlgorithmECDSA.Equals(algorithm):
-		attrs.KeyType = keyPurposeType
-		attrs.ECCAttributes = &types.ECCAttributes{}
-		if params.Curve != "" {
-			curve, curveErr := types.ParseCurve(params.Curve)
-			if curveErr != nil {
-				return nil, &errs.Message{Msg: fmt.Sprintf("invalid curve: %s", params.Curve)}
-			}
-			attrs.ECCAttributes.Curve = curve
-		} else {
-			attrs.ECCAttributes.Curve, _ = types.ParseCurve(string(types.CurveP256))
-		}
-		privKey, err = s.keystore.GenerateECDSA(ctx, attrs)
-
-	case types.AlgorithmEd25519.Equals(algorithmDiscriminator) || types.AlgorithmEd25519.Equals(algorithm):
-		attrs.KeyType = keyPurposeType
-		privKey, err = s.keystore.GenerateEd25519(ctx, attrs)
-
-	case types.AlgorithmSymmetric.Equals(algorithmDiscriminator) || types.AlgorithmSymmetric.Equals(algorithm):
-		// Get the correct backend for symmetric operations
-		backendName := params.Backend
-		if backendName == "" {
-			backendName = "symmetric" // Default to symmetric backend
-		}
-		ks, ksErr := s.xkmsService.LookupBackend(backendName)
-		if ksErr != nil {
-			return nil, &errs.Wrapped{Msg: fmt.Sprintf("failed to get backend %s", backendName), Err: ksErr}
-		}
-		symBackend, ok := ks.KeyProvider().(types.SymmetricKeyProvider)
-		if !ok {
-			return nil, &errs.Message{Msg: fmt.Sprintf("backend %s does not support symmetric operations", backendName)}
-		}
-
-		// Use algorithm field or default to AES256-GCM
-		symAlgorithm := algorithm
-		if symAlgorithm == "" || symAlgorithm == "symmetric" {
-			symAlgorithm = "aes256-gcm" // Default
-		}
-
-		// Set symmetric algorithm directly (not using ParseKeyAlgorithm which is for asymmetric)
-		attrs.SymmetricAlgorithm = types.SymmetricAlgorithm(symAlgorithm)
-		attrs.KeyType = types.KeyTypeSecret // Symmetric keys use KeyTypeSecret
-
-		// Generate symmetric key
-		_, err = symBackend.GenerateSymmetricKey(ctx, attrs)
-		if err != nil {
-			return nil, &errs.Wrapped{Msg: "failed to generate symmetric key", Err: err}
-		}
-
-		// Notify subscribers
-		go s.NotifyEvent("key.created", params.KeyID, map[string]interface{}{
-			"key_id":    params.KeyID,
-			"backend":   params.Backend,
-			"key_type":  params.KeyType,
-			"algorithm": symAlgorithm,
-		})
-
-		// For symmetric keys, no public key to return
-		return GenerateKeyResult{
-			KeyID: params.KeyID,
-		}, nil
-
-	default:
-		// Report the most informative error message
-		if algorithm != "" {
-			return nil, &errs.Message{Msg: fmt.Sprintf("unsupported algorithm: %s", algorithm)}
-		}
-		return nil, &errs.Message{Msg: fmt.Sprintf("unsupported key type: %s", algorithmDiscriminator)}
-	}
-
+		Sensitive:  params.Sensitive,
+		TenantID:   callerTenantID(ctx),
+	})
 	if err != nil {
-		return nil, &errs.Wrapped{Msg: "failed to generate key", Err: err}
-	}
-
-	// Extract public key PEM
-	var pubKeyPEM string
-	if privKey != nil {
-		pubKey, err := extractPublicKey(privKey)
-		if err == nil {
-			pubKeyBytes, err := x509.MarshalPKIXPublicKey(pubKey)
-			if err == nil {
-				pemBlock := &pem.Block{
-					Type:  "PUBLIC KEY",
-					Bytes: pubKeyBytes,
-				}
-				pubKeyPEM = string(pem.EncodeToMemory(pemBlock))
-			}
-		}
+		return nil, mapKeyOpError(err)
 	}
 
 	// Notify subscribers
 	go s.NotifyEvent("key.created", params.KeyID, map[string]interface{}{
-		"key_id":  params.KeyID,
-		"backend": params.Backend,
+		"key_id":    params.KeyID,
+		"backend":   params.Backend,
+		"key_type":  params.KeyType,
+		"algorithm": params.Algorithm,
 	})
 
 	return GenerateKeyResult{
-		KeyID:        params.KeyID,
-		PublicKeyPEM: pubKeyPEM,
+		KeyID:        resp.KeyID,
+		PublicKeyPEM: resp.PublicKeyPEM,
 	}, nil
 }
 
-// handleGetKey handles the getKey method
+// handleGetKey handles the getKey method.
+//
+// The lookup belongs to the service layer, which resolves the request's
+// backend and searches only that one. This handler used to find the key with
+// findKeyByCN -- which scans the default keystore and ignores params.Backend
+// entirely -- and then read the material out of s.keystore, the default
+// backend, while echoing the requested backend name back in the response. A
+// caller naming a second backend was answered with the default backend's key
+// under the second backend's label whenever both held the same key ID, and a
+// key resident only in the named backend was reported missing.
 func (s *Server) handleGetKey(ctx context.Context, req *JSONRPCRequest) (interface{}, error) {
 	var params GetKeyParams
 	if err := json.Unmarshal(req.Params, &params); err != nil {
@@ -284,35 +233,17 @@ func (s *Server) handleGetKey(ctx context.Context, req *JSONRPCRequest) (interfa
 		return nil, &errs.Message{Msg: "key_id is required"}
 	}
 
-	// Look up the key to get full attributes
-	attrs, err := s.findKeyByCN(ctx, params.KeyID)
+	resp, err := s.xkmsService.GetKey(ctx, params.Backend, params.KeyID)
 	if err != nil {
 		return nil, &errs.Wrapped{Msg: "failed to find key", Err: err}
 	}
 
-	privKey, err := s.keystore.GetKey(ctx, attrs)
-	if err != nil {
-		return nil, &errs.Wrapped{Msg: "failed to get key", Err: err}
-	}
-
-	// Extract public key PEM
-	var pubKeyPEM string
-	pubKey, err := extractPublicKey(privKey)
-	if err == nil {
-		pubKeyBytes, err := x509.MarshalPKIXPublicKey(pubKey)
-		if err == nil {
-			pemBlock := &pem.Block{
-				Type:  "PUBLIC KEY",
-				Bytes: pubKeyBytes,
-			}
-			pubKeyPEM = string(pem.EncodeToMemory(pemBlock))
-		}
-	}
-
+	// The backend is reported as the service resolved it, not as the request
+	// spelled it, so an empty request field names the backend actually read.
 	return GetKeyResult{
-		KeyID:        params.KeyID,
-		PublicKeyPEM: pubKeyPEM,
-		Backend:      params.Backend,
+		KeyID:        resp.KeyID,
+		PublicKeyPEM: resp.PublicKeyPEM,
+		Backend:      resp.Backend,
 	}, nil
 }
 
@@ -475,52 +406,43 @@ func (s *Server) handleSign(ctx context.Context, req *JSONRPCRequest) (interface
 		return nil, &errs.Message{Msg: "key_id is required"}
 	}
 
-	// Look up the key to get full attributes
-	var attrs *types.KeyAttributes
-	var err error
-	if params.Backend != "" {
-		attrs, err = s.findKeyInBackend(ctx, params.KeyID, params.Backend)
-	} else {
-		attrs, err = s.findKeyByCN(ctx, params.KeyID)
-	}
-	if err != nil {
-		return nil, &errs.Wrapped{Msg: "failed to find key", Err: err}
-	}
-
-	signer, err := s.keystore.Signer(ctx, attrs)
-	if err != nil {
-		return nil, &errs.Wrapped{Msg: "failed to get signer", Err: err}
-	}
-
-	// Ed25519 uses pure signing (no prehashing) - pass raw message with Hash(0)
-	if attrs.KeyAlgorithm == x509.Ed25519 {
-		signature, err := signer.Sign(nil, params.Data, crypto.Hash(0))
-		if err != nil {
-			return nil, &errs.Wrapped{Msg: "failed to sign", Err: err}
-		}
-		return SignResult{
-			Signature: signature,
-		}, nil
-	}
-
-	// Hash the data for other algorithms
-	hash, err := parseHashAlgorithm(params.Hash)
-	if err != nil {
+	// The key is resolved here so a missing key keeps this transport's
+	// "failed to find key" wording, which is its uniform vocabulary for the
+	// condition across every method. This decides error reporting only; the
+	// signing below still resolves the key through the service.
+	if err := s.requireKey(ctx, params.KeyID, params.Backend); err != nil {
 		return nil, err
 	}
 
-	hasher := hash.New()
-	hasher.Write(params.Data)
-	digest := hasher.Sum(nil)
-
-	// Sign the digest
-	signature, err := signer.Sign(nil, digest, hash)
+	// The signing itself belongs to the service layer, which owns padding
+	// selection (PKCS#1 v1.5 vs PSS), the salt length, the "already a digest"
+	// contract, and the per-algorithm rules for Ed25519 and ECDSA. This
+	// handler used to call signer.Sign directly with the bare crypto.Hash as
+	// opts, which is PKCS#1 v1.5 for an RSA key: a caller asking for PSS got
+	// a valid signature under the scheme it did not ask for, and no error.
+	//
+	// It also resolved the key in params.Backend but then signed with
+	// s.keystore, the default backend -- so a request naming a second backend
+	// was answered by the wrong key whenever both held the same key ID.
+	resp, err := s.xkmsService.Sign(ctx, &transport.SignRequest{
+		Backend:      params.Backend,
+		KeyID:        params.KeyID,
+		Data:         params.Data,
+		Hash:         params.Hash,
+		DataIsDigest: params.DataIsDigest,
+		Padding:      params.Padding,
+		SaltLength:   params.SaltLength,
+		PreHash:      params.PreHash,
+		Context:      params.Context,
+		TenantID:     callerTenantID(ctx),
+	})
 	if err != nil {
-		return nil, &errs.Wrapped{Msg: "failed to sign", Err: err}
+		return nil, mapKeyOpError(err)
 	}
 
 	return SignResult{
-		Signature: signature,
+		Signature: resp.Signature,
+		Algorithm: resp.Algorithm,
 	}, nil
 }
 
@@ -535,84 +457,37 @@ func (s *Server) handleVerify(ctx context.Context, req *JSONRPCRequest) (interfa
 		return nil, &errs.Message{Msg: "key_id is required"}
 	}
 
-	// Look up the key to get full attributes
-	var attrs *types.KeyAttributes
-	var err error
-	if params.Backend != "" {
-		attrs, err = s.findKeyInBackend(ctx, params.KeyID, params.Backend)
-	} else {
-		attrs, err = s.findKeyByCN(ctx, params.KeyID)
-	}
-	if err != nil {
-		return nil, &errs.Wrapped{Msg: "failed to find key", Err: err}
+	if err := s.requireKey(ctx, params.KeyID, params.Backend); err != nil {
+		return nil, err
 	}
 
-	// Get the key
-	privKey, err := s.keystore.GetKey(ctx, attrs)
-	if err != nil {
-		return nil, &errs.Wrapped{Msg: "failed to get key", Err: err}
-	}
-
-	pubKey, err := extractPublicKey(privKey)
-	if err != nil {
-		return nil, &errs.Wrapped{Msg: "failed to extract public key", Err: err}
-	}
-
-	// Convert signature to bytes
-	var sigBytes []byte
-	switch sig := params.Signature.(type) {
-	case []byte:
-		sigBytes = sig
-	case string:
-		// JSON encodes []byte as base64 string, so decode it
-		decoded, err := base64.StdEncoding.DecodeString(sig)
-		if err != nil {
-			// Not base64, treat as raw bytes
-			sigBytes = []byte(sig)
-		} else {
-			sigBytes = decoded
-		}
-	case []interface{}:
-		// JSON array of numbers (e.g., [0, 255, 128, ...])
-		sigBytes = make([]byte, len(sig))
-		for i, v := range sig {
-			if b, ok := v.(float64); ok {
-				sigBytes[i] = byte(b)
-			}
-		}
-	default:
-		// Try to marshal and unmarshal
-		sigJSON, _ := json.Marshal(params.Signature)
-		_ = json.Unmarshal(sigJSON, &sigBytes) // Best-effort unmarshal
-	}
-
-	// Ed25519 uses pure verification (no prehashing) - verify against raw data
-	if attrs.KeyAlgorithm == x509.Ed25519 {
-		valid, err := verifySignature(pubKey, params.Data, sigBytes, crypto.Hash(0))
-		if err != nil {
-			return nil, &errs.Wrapped{Msg: "failed to verify", Err: err}
-		}
-		return VerifyResult{Valid: valid}, nil
-	}
-
-	// Hash the data for other algorithms
-	hash, err := parseHashAlgorithm(params.Hash)
+	sigBytes, err := decodeSignature(params.Signature)
 	if err != nil {
 		return nil, err
 	}
 
-	hasher := hash.New()
-	hasher.Write(params.Data)
-	digest := hasher.Sum(nil)
-
-	// Verify signature
-	valid, err := verifySignature(pubKey, digest, sigBytes, hash)
+	// Verification mirrors Sign: the service layer owns padding, salt length
+	// and the per-algorithm rules, so a PSS signature is verified as PSS
+	// rather than being rejected by a hard-wired PKCS#1 v1.5 check.
+	resp, err := s.xkmsService.Verify(ctx, &transport.VerifyRequest{
+		Backend:      params.Backend,
+		KeyID:        params.KeyID,
+		Data:         params.Data,
+		Signature:    sigBytes,
+		Hash:         params.Hash,
+		DataIsDigest: params.DataIsDigest,
+		Padding:      params.Padding,
+		SaltLength:   params.SaltLength,
+		PreHash:      params.PreHash,
+		Context:      params.Context,
+		TenantID:     callerTenantID(ctx),
+	})
 	if err != nil {
-		return nil, &errs.Wrapped{Msg: "failed to verify", Err: err}
+		return nil, mapKeyOpError(err)
 	}
 
 	return VerifyResult{
-		Valid: valid,
+		Valid: resp.Valid,
 	}, nil
 }
 
@@ -649,7 +524,15 @@ func (s *Server) handleSubscribe(ctx context.Context, req *JSONRPCRequest, conn 
 	}, nil
 }
 
-// handleRotateKey handles the rotateKey method
+// handleRotateKey handles the rotateKey method.
+//
+// Rotation belongs to the service layer, which resolves the request's backend
+// and rotates the key it holds. This handler used to read the key's attributes
+// out of the default keystore with findKeyByCN, overwrite their StoreType from
+// params.Backend, and then rotate with s.keystore -- the default backend -- so
+// a request naming a second backend rotated the default backend's key, or
+// failed outright looking for an identifier the default store cannot contain
+// because KeyAttributes.ID() encodes the store type it had just been given.
 func (s *Server) handleRotateKey(ctx context.Context, req *JSONRPCRequest) (interface{}, error) {
 	var params RotateKeyParams
 	if err := json.Unmarshal(req.Params, &params); err != nil {
@@ -660,40 +543,13 @@ func (s *Server) handleRotateKey(ctx context.Context, req *JSONRPCRequest) (inte
 		return nil, &errs.Message{Msg: "key_id is required"}
 	}
 
-	// Look up the key to get full attributes
-	attrs, err := s.findKeyByCN(ctx, params.KeyID)
+	resp, err := s.xkmsService.RotateKey(ctx, &transport.RotateKeyRequest{
+		KeyID:    params.KeyID,
+		Backend:  params.Backend,
+		TenantID: callerTenantID(ctx),
+	})
 	if err != nil {
-		return nil, &errs.Wrapped{Msg: "failed to find key", Err: err}
-	}
-
-	if params.Backend != "" {
-		storeType := types.ParseStoreType(params.Backend)
-		if storeType == types.StoreUnknown {
-			return nil, &errs.Message{Msg: fmt.Sprintf("invalid backend: %s", params.Backend)}
-		}
-		attrs.StoreType = storeType
-	}
-
-	// Rotate the key
-	privKey, err := s.keystore.RotateKey(ctx, attrs)
-	if err != nil {
-		return nil, &errs.Wrapped{Msg: "failed to rotate key", Err: err}
-	}
-
-	// Extract public key PEM
-	var pubKeyPEM string
-	if privKey != nil {
-		pubKey, err := extractPublicKey(privKey)
-		if err == nil {
-			pubKeyBytes, err := x509.MarshalPKIXPublicKey(pubKey)
-			if err == nil {
-				pemBlock := &pem.Block{
-					Type:  "PUBLIC KEY",
-					Bytes: pubKeyBytes,
-				}
-				pubKeyPEM = string(pem.EncodeToMemory(pemBlock))
-			}
-		}
+		return nil, mapKeyOpError(err)
 	}
 
 	// Notify subscribers
@@ -703,8 +559,8 @@ func (s *Server) handleRotateKey(ctx context.Context, req *JSONRPCRequest) (inte
 	})
 
 	return RotateKeyResult{
-		KeyID:        params.KeyID,
-		PublicKeyPEM: pubKeyPEM,
+		KeyID:        resp.KeyID,
+		PublicKeyPEM: resp.PublicKeyPEM,
 	}, nil
 }
 
@@ -749,57 +605,43 @@ func (s *Server) handleDecrypt(ctx context.Context, req *JSONRPCRequest) (interf
 		return nil, &errs.Wrapped{Msg: fmt.Sprintf("failed to get backend %s", backendName), Err: ksErr}
 	}
 
-	storeType := types.ParseStoreType(backendName)
-	if storeType != types.StoreUnknown {
-		attrs.StoreType = storeType
-	}
-
-	// Check if this is a symmetric key based on key attributes
+	// A symmetric key in a backend with no symmetric support is a caller-facing
+	// configuration error on this transport. The service falls back to
+	// asymmetric decryption instead and reports the eventual failure as an
+	// internal fault, so the check stays local to preserve the message.
 	if attrs.IsSymmetric() {
-		// Symmetric decryption
-		symBackend, ok := ks.KeyProvider().(types.SymmetricKeyProvider)
-		if !ok {
+		if _, ok := ks.KeyProvider().(types.SymmetricKeyProvider); !ok {
 			return nil, &errs.Message{Msg: fmt.Sprintf("backend %s does not support symmetric operations", backendName)}
 		}
-
-		encrypter, err := symBackend.SymmetricEncrypter(ctx, attrs)
-		if err != nil {
-			return nil, &errs.Wrapped{Msg: "failed to get symmetric encrypter", Err: err}
-		}
-
-		encryptedData := &types.EncryptedData{
-			Ciphertext: params.Ciphertext,
-			Nonce:      params.Nonce,
-			Tag:        params.Tag,
-		}
-
-		decryptOpts := &types.DecryptOptions{
-			AdditionalData: params.AdditionalData,
-		}
-
-		plaintext, err := encrypter.Decrypt(encryptedData, decryptOpts)
-		if err != nil {
-			return nil, &errs.Wrapped{Msg: "failed to decrypt", Err: err}
-		}
-
-		return DecryptResult{
-			Plaintext: plaintext,
-		}, nil
 	}
 
-	// Asymmetric decryption
-	decrypter, err := ks.Decrypter(ctx, attrs)
+	// Decryption belongs to the service layer, which owns the symmetric /
+	// asymmetric split and the RSA padding selection. This handler used to
+	// hard-wire rsa.OAEPOptions{Hash: crypto.SHA256} for every asymmetric key,
+	// so a PKCS#1 v1.5 ciphertext could not be decrypted here at all, and an
+	// OAEP ciphertext built under any other digest -- or with a label --
+	// failed with an error that read like corruption.
+	resp, err := s.xkmsService.Decrypt(ctx, &transport.DecryptRequest{
+		Backend:        backendName,
+		KeyID:          params.KeyID,
+		Ciphertext:     params.Ciphertext,
+		Nonce:          params.Nonce,
+		Tag:            params.Tag,
+		AdditionalData: params.AdditionalData,
+		Mode:           params.Mode,
+		IV:             params.IV,
+		TagSize:        params.TagSize,
+		Padding:        params.Padding,
+		Hash:           params.Hash,
+		Label:          params.Label,
+		TenantID:       callerTenantID(ctx),
+	})
 	if err != nil {
-		return nil, &errs.Wrapped{Msg: "failed to get decrypter", Err: err}
-	}
-
-	plaintext, err := decrypter.Decrypt(nil, params.Ciphertext, &rsa.OAEPOptions{Hash: crypto.SHA256})
-	if err != nil {
-		return nil, &errs.Wrapped{Msg: "failed to decrypt", Err: err}
+		return nil, mapKeyOpError(err)
 	}
 
 	return DecryptResult{
-		Plaintext: plaintext,
+		Plaintext: resp.Plaintext,
 	}, nil
 }
 
@@ -824,9 +666,12 @@ func (s *Server) handleEncrypt(ctx context.Context, req *JSONRPCRequest) (interf
 		backendName = "symmetric" // Default to symmetric backend
 	}
 
-	// Look up the key in the symmetric backend to get full attributes
-	attrs, err := s.findKeyInBackend(ctx, params.KeyID, backendName)
-	if err != nil {
+	// Two preconditions are checked here rather than left to the service
+	// because this transport reports them with its own messages: a missing key
+	// and a backend with no symmetric support. The service answers the latter
+	// by falling back to asymmetric encryption, so the check stays local. They
+	// decide error reporting only -- no crypto parameter is interpreted here.
+	if _, err := s.findKeyInBackend(ctx, params.KeyID, backendName); err != nil {
 		return nil, &errs.Wrapped{Msg: "failed to find key", Err: err}
 	}
 
@@ -835,38 +680,30 @@ func (s *Server) handleEncrypt(ctx context.Context, req *JSONRPCRequest) (interf
 		return nil, &errs.Wrapped{Msg: fmt.Sprintf("failed to get backend %s", backendName), Err: ksErr}
 	}
 
-	storeType := types.ParseStoreType(backendName)
-	if storeType != types.StoreUnknown {
-		attrs.StoreType = storeType
-	}
-
-	// Get symmetric backend
-	symBackend, ok := ks.KeyProvider().(types.SymmetricKeyProvider)
-	if !ok {
+	if _, ok := ks.KeyProvider().(types.SymmetricKeyProvider); !ok {
 		return nil, &errs.Message{Msg: fmt.Sprintf("backend %s does not support symmetric operations", backendName)}
 	}
 
-	// Get encrypter
-	encrypter, err := symBackend.SymmetricEncrypter(ctx, attrs)
-	if err != nil {
-		return nil, &errs.Wrapped{Msg: "failed to get symmetric encrypter", Err: err}
-	}
-
-	// Prepare encryption options
-	encryptOpts := &types.EncryptOptions{
+	resp, err := s.xkmsService.Encrypt(ctx, &transport.EncryptRequest{
+		Backend:        backendName,
+		KeyID:          params.KeyID,
+		Plaintext:      params.Plaintext,
 		AdditionalData: params.AdditionalData,
-	}
-
-	// Encrypt
-	encryptedData, err := encrypter.Encrypt(params.Plaintext, encryptOpts)
+		Nonce:          params.Nonce,
+		Mode:           params.Mode,
+		IV:             params.IV,
+		TagSize:        params.TagSize,
+		TenantID:       callerTenantID(ctx),
+	})
 	if err != nil {
-		return nil, &errs.Wrapped{Msg: "failed to encrypt", Err: err}
+		return nil, mapKeyOpError(err)
 	}
 
 	return EncryptResult{
-		Ciphertext: encryptedData.Ciphertext,
-		Nonce:      encryptedData.Nonce,
-		Tag:        encryptedData.Tag,
+		Ciphertext: resp.Ciphertext,
+		Nonce:      resp.Nonce,
+		Tag:        resp.Tag,
+		IV:         resp.IV,
 	}, nil
 }
 
@@ -1375,8 +1212,8 @@ func (s *Server) handleImportKeyMaterial(ctx context.Context, req *JSONRPCReques
 	}, nil
 }
 
-// handleExportKeyMaterial handles exporting a key in wrapped form
-func (s *Server) handleExportKeyMaterial(ctx context.Context, req *JSONRPCRequest) (interface{}, error) {
+// handleExportKey handles exporting a key in wrapped form
+func (s *Server) handleExportKey(ctx context.Context, req *JSONRPCRequest) (interface{}, error) {
 	var params ExportKeyParams
 	if err := json.Unmarshal(req.Params, &params); err != nil {
 		return nil, &errs.Wrapped{Msg: "invalid params", Err: err}
@@ -1438,6 +1275,157 @@ func (s *Server) handleExportKeyMaterial(ctx context.Context, req *JSONRPCReques
 	}, nil
 }
 
+// ErrTenantIDNotAccepted is returned when request params carry a tenant_id.
+//
+// The tenant an operation runs under is the authenticated caller's own, never
+// a value the caller names: a key ID is only unique within a tenant, so a
+// caller-supplied tenant would let any caller address another tenant's keys.
+// The field is refused rather than ignored, because a caller that believes it
+// is acting on one tenant and is quietly served another has no way to tell.
+var ErrTenantIDNotAccepted = errors.New("tenant_id is not accepted in the request params; the tenant is taken from the authenticated identity")
+
+// tenantForRequest returns the tenant the operation must run under, which is
+// the one carried by the authenticated identity. It refuses a request that
+// supplied a tenant of its own.
+//
+// This mirrors the gRPC transport, where the tenant has only ever come from
+// callerTenantID and the wire format has no field for the caller to set.
+func tenantForRequest(ctx context.Context, supplied string) (string, error) {
+	if supplied != "" {
+		return "", ErrTenantIDNotAccepted
+	}
+	return callerTenantID(ctx), nil
+}
+
+// handleAttestKey handles requesting a hardware attestation statement proving a
+// key was generated in, and never left, a hardware security boundary (TPM 2.0,
+// PKCS#11 HSM). The transport decodes the wire params directly into
+// transport.AttestKeyRequest and returns transport.AttestKeyResponse unchanged,
+// so the JSON field names are defined exactly once, in pkg/api/transport.
+// All business logic — backend resolution, capability assertion, key lookup —
+// is delegated to the xkms service layer; this handler performs no key
+// operations of its own.
+func (s *Server) handleAttestKey(ctx context.Context, req *JSONRPCRequest) (interface{}, error) {
+	var params transport.AttestKeyRequest
+	if err := json.Unmarshal(req.Params, &params); err != nil {
+		return nil, &errs.Wrapped{Msg: "invalid params", Err: err}
+	}
+
+	tenantID, err := tenantForRequest(ctx, params.TenantID)
+	if err != nil {
+		return nil, err
+	}
+	params.TenantID = tenantID
+
+	resp, err := s.xkmsService.AttestKey(ctx, &params)
+	if err != nil {
+		return nil, mapKeyOpError(err)
+	}
+
+	return resp, nil
+}
+
+// handleDeriveKeyECDH handles ECDH key agreement against a peer public key,
+// combined with a KDF to produce a derived symmetric key. Delegates entirely to
+// the xkms service layer, which resolves the backend, asserts it implements
+// types.KeyAgreementProvider, and performs the derivation.
+func (s *Server) handleDeriveKeyECDH(ctx context.Context, req *JSONRPCRequest) (interface{}, error) {
+	var params transport.DeriveKeyECDHRequest
+	if err := json.Unmarshal(req.Params, &params); err != nil {
+		return nil, &errs.Wrapped{Msg: "invalid params", Err: err}
+	}
+
+	tenantID, err := tenantForRequest(ctx, params.TenantID)
+	if err != nil {
+		return nil, err
+	}
+	params.TenantID = tenantID
+
+	resp, err := s.xkmsService.DeriveKeyECDH(ctx, &params)
+	if err != nil {
+		return nil, mapKeyOpError(err)
+	}
+
+	return resp, nil
+}
+
+// handleExportKeyMaterial handles exporting raw symmetric key bytes for
+// extractable keys.
+//
+// SECURITY WARNING: This method returns plaintext key material without any
+// cryptographic protection. It only succeeds for symmetric keys created with
+// exportable=true on a backend implementing backend.ImportExportBackend; use
+// xkms.exportKey (handleExportKey) for secure key transport between backends.
+func (s *Server) handleExportKeyMaterial(ctx context.Context, req *JSONRPCRequest) (interface{}, error) {
+	var params transport.ExportKeyMaterialRequest
+	if err := json.Unmarshal(req.Params, &params); err != nil {
+		return nil, &errs.Wrapped{Msg: "invalid params", Err: err}
+	}
+
+	tenantID, err := tenantForRequest(ctx, params.TenantID)
+	if err != nil {
+		return nil, err
+	}
+	params.TenantID = tenantID
+
+	resp, err := s.xkmsService.ExportKeyMaterial(ctx, &params)
+	if err != nil {
+		return nil, mapKeyOpError(err)
+	}
+
+	return resp, nil
+}
+
+// handleWrapKeyByID handles wrapping a server-side target key with a
+// server-side wrapping key, both identified by key ID and backend. This is the
+// JSON-RPC surface for PKCS#11 C_WrapKey semantics. Distinct from xkms.wrapKey
+// (handleWrapKey), which wraps caller-supplied key material against a
+// caller-supplied PEM public key.
+func (s *Server) handleWrapKeyByID(ctx context.Context, req *JSONRPCRequest) (interface{}, error) {
+	var params transport.WrapKeyByIDRequest
+	if err := json.Unmarshal(req.Params, &params); err != nil {
+		return nil, &errs.Wrapped{Msg: "invalid params", Err: err}
+	}
+
+	tenantID, err := tenantForRequest(ctx, params.TenantID)
+	if err != nil {
+		return nil, err
+	}
+	params.TenantID = tenantID
+
+	resp, err := s.xkmsService.WrapKeyByID(ctx, &params)
+	if err != nil {
+		return nil, mapKeyOpError(err)
+	}
+
+	return resp, nil
+}
+
+// handleUnwrapKeyByID handles unwrapping key material with a server-side
+// unwrapping key and importing the result as a new key, identified by key ID
+// and backend. This is the JSON-RPC surface for PKCS#11 C_UnwrapKey semantics.
+// Distinct from xkms.unwrapKey (handleUnwrapKey), which unwraps caller-supplied
+// wrapped material against a caller-supplied PEM public key.
+func (s *Server) handleUnwrapKeyByID(ctx context.Context, req *JSONRPCRequest) (interface{}, error) {
+	var params transport.UnwrapKeyByIDRequest
+	if err := json.Unmarshal(req.Params, &params); err != nil {
+		return nil, &errs.Wrapped{Msg: "invalid params", Err: err}
+	}
+
+	tenantID, err := tenantForRequest(ctx, params.TenantID)
+	if err != nil {
+		return nil, err
+	}
+	params.TenantID = tenantID
+
+	resp, err := s.xkmsService.UnwrapKeyByID(ctx, &params)
+	if err != nil {
+		return nil, mapKeyOpError(err)
+	}
+
+	return resp, nil
+}
+
 // handleAsymmetricEncrypt handles asymmetric (RSA) encryption
 func (s *Server) handleAsymmetricEncrypt(ctx context.Context, req *JSONRPCRequest) (interface{}, error) {
 	var params AsymmetricEncryptParams
@@ -1449,46 +1437,35 @@ func (s *Server) handleAsymmetricEncrypt(ctx context.Context, req *JSONRPCReques
 		return nil, &errs.Message{Msg: "key_id is required"}
 	}
 
-	// Look up the key to get full attributes
-	attrs, err := s.findKeyByCN(ctx, params.KeyID)
-	if err != nil {
+	// The key is resolved here so a missing key keeps this transport's
+	// "failed to find key" report rather than the service's own wording.
+	if _, err := s.findKeyByCN(ctx, params.KeyID); err != nil {
 		return nil, &errs.Wrapped{Msg: "failed to find key", Err: err}
 	}
 
 	if params.Backend != "" {
-		storeType := types.ParseStoreType(params.Backend)
-		if storeType == types.StoreUnknown {
+		if storeType := types.ParseStoreType(params.Backend); storeType == types.StoreUnknown {
 			return nil, &errs.Message{Msg: fmt.Sprintf("invalid backend: %s", params.Backend)}
 		}
-		attrs.StoreType = storeType
 	}
 
-	// Get the key
-	privKey, err := s.keystore.GetKey(ctx, attrs)
+	// The OAEP construction belongs to the service layer, which owns the
+	// digest selection, its weak-hash refusal and the RSA key-type check. The
+	// digest used to be a constant here and the request's hash was not carried
+	// at all, so a caller could not choose one.
+	resp, err := s.xkmsService.EncryptAsym(ctx, &transport.EncryptAsymRequest{
+		Backend:   params.Backend,
+		KeyID:     params.KeyID,
+		Plaintext: params.Plaintext,
+		Hash:      params.Hash,
+		TenantID:  callerTenantID(ctx),
+	})
 	if err != nil {
-		return nil, &errs.Wrapped{Msg: "failed to get key", Err: err}
-	}
-
-	// Extract public key for encryption
-	pubKey, err := extractPublicKey(privKey)
-	if err != nil {
-		return nil, &errs.Wrapped{Msg: "failed to extract public key", Err: err}
-	}
-
-	// Encrypt with RSA-OAEP
-	rsaPubKey, ok := pubKey.(*rsa.PublicKey)
-	if !ok {
-		return nil, &errs.Message{Msg: "key is not an RSA key"}
-	}
-
-	hash := crypto.SHA256
-	ciphertext, err := rsa.EncryptOAEP(hash.New(), rand.Reader, rsaPubKey, params.Plaintext, nil)
-	if err != nil {
-		return nil, &errs.Wrapped{Msg: "failed to encrypt", Err: err}
+		return nil, mapKeyOpError(err)
 	}
 
 	return AsymmetricEncryptResult{
-		Ciphertext: ciphertext,
+		Ciphertext: resp.Ciphertext,
 	}, nil
 }
 
@@ -1503,34 +1480,44 @@ func (s *Server) handleAsymmetricDecrypt(ctx context.Context, req *JSONRPCReques
 		return nil, &errs.Message{Msg: "key_id is required"}
 	}
 
-	// Look up the key to get full attributes
-	attrs, err := s.findKeyByCN(ctx, params.KeyID)
-	if err != nil {
+	if _, err := s.findKeyByCN(ctx, params.KeyID); err != nil {
 		return nil, &errs.Wrapped{Msg: "failed to find key", Err: err}
 	}
 
 	if params.Backend != "" {
-		storeType := types.ParseStoreType(params.Backend)
-		if storeType == types.StoreUnknown {
+		if storeType := types.ParseStoreType(params.Backend); storeType == types.StoreUnknown {
 			return nil, &errs.Message{Msg: fmt.Sprintf("invalid backend: %s", params.Backend)}
 		}
-		attrs.StoreType = storeType
 	}
 
-	// Get decrypter
-	decrypter, err := s.keystore.Decrypter(ctx, attrs)
-	if err != nil {
-		return nil, &errs.Wrapped{Msg: "failed to get decrypter", Err: err}
+	// The padding scheme and its digest used to be constants here. They are
+	// now the caller's to choose, defaulting to the OAEP-SHA-256 this method's
+	// counterpart (xkms.asymmetricEncrypt) produces, so the previous
+	// behaviour is what an unchanged caller still gets.
+	padding := params.Padding
+	if padding == "" {
+		padding = "oaep"
+	}
+	hash := params.Hash
+	if hash == "" && strings.EqualFold(padding, "oaep") {
+		hash = "SHA-256"
 	}
 
-	// Decrypt the ciphertext
-	plaintext, err := decrypter.Decrypt(nil, params.Ciphertext, &rsa.OAEPOptions{Hash: crypto.SHA256})
+	resp, err := s.xkmsService.Decrypt(ctx, &transport.DecryptRequest{
+		Backend:    params.Backend,
+		KeyID:      params.KeyID,
+		Ciphertext: params.Ciphertext,
+		Padding:    padding,
+		Hash:       hash,
+		Label:      params.Label,
+		TenantID:   callerTenantID(ctx),
+	})
 	if err != nil {
-		return nil, &errs.Wrapped{Msg: "failed to decrypt", Err: err}
+		return nil, mapKeyOpError(err)
 	}
 
 	return AsymmetricDecryptResult{
-		Plaintext: plaintext,
+		Plaintext: resp.Plaintext,
 	}, nil
 }
 

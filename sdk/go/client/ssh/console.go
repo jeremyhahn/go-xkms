@@ -71,8 +71,9 @@ type ConsoleTarget struct {
 }
 
 // ConsoleResolver authenticates/authorizes a console request and maps it to a
-// ConsoleTarget. Implemented by the host app (xkey loopback, xkms REST,
-// go-trusted-platform).
+// ConsoleTarget. Implemented by the client-side host app that owns the SSH
+// session — xkey's loopback server backing the in-app terminal. The xkms
+// server deliberately implements none of this: see Client.Console.
 type ConsoleResolver interface {
 	ResolveConsoleTarget(r *http.Request) (*ConsoleTarget, error)
 }
@@ -95,10 +96,15 @@ var WithConsoleDialTimeout = pkgconsole.WithDialTimeout
 // client's hostkey-response when HostKeyPolicy is "ask". Default 60s.
 var WithConsoleHostKeyConfirmTimeout = pkgconsole.WithHostKeyConfirmTimeout
 
-// NewConsoleWSHandler returns the reusable WebSocket↔SSH-console bridge handler.
-// Mount it on any HTTP server (xkey's loopback server, the xkms REST router, a
-// consuming web app). The resolver supplies host/port/user + a signer + the
+// NewConsoleWSHandler returns the reusable WebSocket↔SSH-console bridge handler
+// for a client-side host that renders a terminal in a web view — xkey's
+// loopback server. The resolver supplies host/port/user + a signer + the
 // host-key store from the authenticated request, using string scopes.
+//
+// Do not mount this on the xkms server. The process serving the handler is the
+// one that dials the target host, so mounting it on the vault would let an
+// authenticated caller proxy an interactive shell to any reachable host
+// through the appliance.
 func NewConsoleWSHandler(resolver ConsoleResolver, opts ...pkgconsole.HandlerOption) http.Handler {
 	return pkgconsole.NewWSHandler(pkgconsole.ResolverFunc(func(r *http.Request) (*pkgconsole.Target, error) {
 		t, err := resolver.ResolveConsoleTarget(r)

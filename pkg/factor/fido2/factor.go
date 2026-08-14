@@ -68,6 +68,11 @@ type Config struct {
 // Factor implements qrdbsdk.AuthFactorPlugin for FIDO2 / WebAuthn authenticators.
 type Factor struct {
 	cfg Config
+
+	// local drives an attached authenticator for browser-free enrollment at
+	// init. Nil for the ordinary server-side factor, where a browser has
+	// already run the ceremony and Enroll only stores the result.
+	local *LocalCeremony
 }
 
 // New constructs a FIDO2 Factor, applying canonical defaults.
@@ -79,6 +84,31 @@ func New(cfg Config) *Factor {
 		cfg.ChallengeTTLSeconds = defaultChallengeTTLSeconds
 	}
 	return &Factor{cfg: cfg}
+}
+
+// NewWithLocalCeremony constructs a FIDO2 Factor that can also drive an
+// attached authenticator over CTAP2.
+//
+// This is the init-time variant: it answers the ceremony's availability probe
+// from real hardware, so a planned passkey factor with no key attached fails
+// the preflight instead of partway through enrollment.
+func NewWithLocalCeremony(cfg Config, local *LocalCeremony) *Factor {
+	f := New(cfg)
+	f.local = local
+	return f
+}
+
+// Available reports whether a passkey can be enrolled right now, satisfying
+// the ceremony's optional availability probe.
+//
+// A factor with no local ceremony reports available: the browser path needs no
+// hardware attached to THIS host, and reporting otherwise would block every
+// ordinary server deployment from listing fido2 as a usable factor.
+func (f *Factor) Available(ctx context.Context) (bool, string) {
+	if f == nil || f.local == nil {
+		return true, ""
+	}
+	return f.local.Available(ctx)
 }
 
 // Name returns the canonical FIDO2 factor identifier "fido2".

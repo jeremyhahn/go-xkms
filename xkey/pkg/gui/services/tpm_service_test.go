@@ -111,6 +111,10 @@ type mockTPM struct {
 	platformKeyStore xkms.PlatformKeyStorer
 	handleKeyAttrs   map[tpm2.TPMHandle]*xkms.KeyAttributes
 
+	// Public areas returned by ReadHandle, keyed by handle. Populated by
+	// tests that exercise code reading an object's public area (ListKeys).
+	handlePublics map[tpm2.TPMHandle]tpm2.TPMTPublic
+
 	// Phase 4: configurable returns for operations that previously panicked.
 	factoryResetErr     error
 	createIAKResult     *xkms.KeyAttributes
@@ -384,7 +388,13 @@ func (m *mockTPM) RandomSource() io.Reader { panic("mockTPM: RandomSource not ex
 func (m *mockTPM) Read(_ []byte) (int, error) {
 	panic("mockTPM: Read not expected")
 }
-func (m *mockTPM) ReadHandle(_ tpm2.TPMHandle) (tpm2.TPM2BName, tpm2.TPMTPublic, error) {
+func (m *mockTPM) ReadHandle(handle tpm2.TPMHandle) (tpm2.TPM2BName, tpm2.TPMTPublic, error) {
+	if m.readHandleErr != nil {
+		return tpm2.TPM2BName{}, tpm2.TPMTPublic{}, m.readHandleErr
+	}
+	if pub, ok := m.handlePublics[handle]; ok {
+		return tpm2.TPM2BName{}, pub, nil
+	}
 	return tpm2.TPM2BName{}, tpm2.TPMTPublic{}, m.readHandleErr
 }
 func (m *mockTPM) RSADecrypt(_ tpm2.TPMHandle, _ tpm2.TPM2BName, _ []byte) ([]byte, error) {
@@ -520,15 +530,15 @@ type mockPlatformKeyStorer struct {
 	srkAttrs      *xkms.KeyAttributes
 }
 
-func (m *mockPlatformKeyStorer) SRKAttributes() *xkms.KeyAttributes { return m.srkAttrs }
-func (m *mockPlatformKeyStorer) Backend() xkms.TPMKeyBackend        { return nil }
-func (m *mockPlatformKeyStorer) Initialize(_, _ string) error       { return nil }
-func (m *mockPlatformKeyStorer) EnrollPlatformSRK(_ string) error   { return nil }
-func (m *mockPlatformKeyStorer) InitializeWithDefaults() error      { return nil }
-func (m *mockPlatformKeyStorer) IsInitialized() bool                { return m.initialized }
-func (m *mockPlatformKeyStorer) PlatformPolicyEnabled() bool        { return m.policyEnabled }
-func (m *mockPlatformKeyStorer) VerifyAuth(_ string) error          { return nil }
-func (m *mockPlatformKeyStorer) ChangeAuth(_, _ string) error       { return nil }
+func (m *mockPlatformKeyStorer) SRKAttributes() *xkms.KeyAttributes  { return m.srkAttrs }
+func (m *mockPlatformKeyStorer) Backend() xkms.TPMKeyBackend         { return nil }
+func (m *mockPlatformKeyStorer) Initialize(_, _ string) error        { return nil }
+func (m *mockPlatformKeyStorer) EnrollPlatformSRK(_, _ string) error { return nil }
+func (m *mockPlatformKeyStorer) InitializeWithDefaults() error       { return nil }
+func (m *mockPlatformKeyStorer) IsInitialized() bool                 { return m.initialized }
+func (m *mockPlatformKeyStorer) PlatformPolicyEnabled() bool         { return m.policyEnabled }
+func (m *mockPlatformKeyStorer) VerifyAuth(_ string) error           { return nil }
+func (m *mockPlatformKeyStorer) ChangeAuth(_, _ string) error        { return nil }
 func (m *mockPlatformKeyStorer) GetLockoutInfo() (int, int, int, int, error) {
 	return 0, 10, 0, 300, nil
 }
@@ -544,9 +554,8 @@ func defaultMockTPM() *mockTPM {
 		config: &xkms.TPMConfig{
 			Hash: "SHA-256",
 			SSRK: &xkms.SRKConfig{
-				Handle:         0x81000001,
-				PlatformPolicy: false,
-				KeyAlgorithm:   "RSA",
+				Handle:       0x81000001,
+				KeyAlgorithm: "RSA",
 			},
 		},
 		fixedProps: &xkms.PropertiesFixed{
@@ -1454,11 +1463,13 @@ func TestDetectPCRBanks_Error(t *testing.T) {
 // ListKeys
 // ---------------------------------------------------------------------------
 
+// TestTPMService_ListKeys: with no TPM the caller is told so. An empty list
+// would read as "provisioned but holding nothing", which is a different fact.
 func TestTPMService_ListKeys(t *testing.T) {
 	svc := NewTPMService()
 	keys, err := svc.ListKeys()
-	require.NoError(t, err)
-	assert.Empty(t, keys)
+	assert.ErrorIs(t, err, ErrTPMNotAvailable)
+	assert.Nil(t, keys)
 }
 
 // ---------------------------------------------------------------------------

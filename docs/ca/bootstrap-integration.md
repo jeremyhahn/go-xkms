@@ -440,5 +440,5 @@ bootstrap:
 
 - [Bootstrap Protocol Reference](./bootstrap.md) -- Protocol details, security properties, and SDK API
 - [DANE/TLSA Documentation](./dane.md) -- RFC 6698 details and DNSSEC trust chain
-- [Bootstrap CLI Commands](../usage/cli/bootstrap.md) -- CLI reference
+- [Bootstrap CLI Commands](../../xkey/docs/usage/cli/bootstrap.md) -- CLI reference
 - [Bootstrap Configuration](../configuration/bootstrap.md) -- YAML configuration reference

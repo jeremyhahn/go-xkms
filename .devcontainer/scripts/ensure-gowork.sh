@@ -54,12 +54,32 @@ if [ -f "$GOWORK_FILE" ] && ! grep -qxF "go ${GOWORK_GO_VERSION}" "$GOWORK_FILE"
 	rm -f "$GOWORK_FILE" "$GOWORK_FILE.sum"
 fi
 
+# Locate the sibling checkouts. The compose stacks bind-mount them at the
+# filesystem root (/go-codec, …); a devcontainer that checks them out next to
+# go-xkms instead has them at the repo's parent. Probing both means one script
+# serves every context rather than each growing its own copy.
+detect_sibling_root() {
+	if [ -n "${GOWORK_SIBLING_ROOT:-}" ]; then
+		echo "${GOWORK_SIBLING_ROOT%/}"; return
+	fi
+	if [ -d /go-codec ]; then echo ""; return; fi
+	local parent
+	parent="$(dirname "${REPO}")"
+	if [ -d "${parent}/go-codec" ]; then echo "${parent}"; return; fi
+	echo ""
+}
+
+SIBLING_ROOT="$(detect_sibling_root)"
+
 if [ ! -f "$GOWORK_FILE" ]; then
-	for dir in /go-codec /go-frost /go-objstore /go-qrdb /go-qrdb/sdk/go \
-		/go-quicraft /go-truststrap "${REPO}/sdk/go" "${REPO}/xkey"; do
+	for dir in "${SIBLING_ROOT}/go-codec" "${SIBLING_ROOT}/go-frost" \
+		"${SIBLING_ROOT}/go-objstore" "${SIBLING_ROOT}/go-qrdb" \
+		"${SIBLING_ROOT}/go-qrdb/sdk/go" "${SIBLING_ROOT}/go-quicraft" \
+		"${SIBLING_ROOT}/go-truststrap" "${REPO}/sdk/go" "${REPO}/xkey"; do
 		if [ ! -d "$dir" ]; then
 			echo "ensure-gowork: required module directory not mounted: $dir" >&2
-			echo "ensure-gowork: add the matching sibling bind mount to the compose stack" >&2
+			echo "ensure-gowork: add the matching sibling bind mount to the compose stack," >&2
+			echo "ensure-gowork: or set GOWORK_SIBLING_ROOT to where the siblings live" >&2
 			exit 1
 		fi
 	done
@@ -69,7 +89,7 @@ if [ ! -f "$GOWORK_FILE" ]; then
 	# version-specific replace directives live in exactly one place (see
 	# scripts/gen-gowork.sh). Never inline a go.work heredoc here again — that is
 	# how the per-context copies drifted to stale/incomplete replaces.
-	bash "${REPO}/scripts/gen-gowork.sh" "${REPO}" "${GOWORK_FILE}" "${GOWORK_GO_VERSION}"
+	bash "${REPO}/scripts/gen-gowork.sh" "${REPO}" "${GOWORK_FILE}" "${GOWORK_GO_VERSION}" "${SIBLING_ROOT}"
 
 	# Populate /tmp/go.work.sum for the workspace build list. Because every
 	# in-house module is a local workspace member, this only fetches public

@@ -542,9 +542,13 @@ func TestCoreFunctions_SlotAndToken(t *testing.T) {
 	// Test C_GetSlotInfo
 	// Reference: OASIS PKCS#11 v3.0, Section 5.5.2
 	t.Run("C_GetSlotInfo", func(t *testing.T) {
-		slots, _ := env.Module.GetSlotList(false)
+		slots, rv := env.Module.GetSlotList(false)
+		if rv != module.CKR_OK {
+			t.Fatalf("C_GetSlotList: expected CKR_OK, got %s", rv.String())
+		}
 		if len(slots) == 0 {
-			t.Skip("no slots available")
+			t.Fatal("C_GetSlotList reported no slots; the xkms module always presents its " +
+				"virtual slot once initialized")
 		}
 
 		info, rv := env.Module.GetSlotInfo(slots[0])
@@ -616,9 +620,13 @@ func TestCoreFunctions_SlotAndToken(t *testing.T) {
 	// Test C_GetMechanismInfo
 	// Reference: OASIS PKCS#11 v3.0, Section 5.5.5
 	t.Run("C_GetMechanismInfo", func(t *testing.T) {
-		mechs, _ := env.Module.GetMechanismList(0)
+		mechs, rv := env.Module.GetMechanismList(0)
+		if rv != module.CKR_OK {
+			t.Fatalf("C_GetMechanismList: expected CKR_OK, got %s", rv.String())
+		}
 		if len(mechs) == 0 {
-			t.Skip("no mechanisms available")
+			t.Fatal("C_GetMechanismList reported no mechanisms; the token always advertises " +
+				"its RSA, EC, AES and digest mechanism set")
 		}
 
 		info, rv := env.Module.GetMechanismInfo(0, mechs[0])

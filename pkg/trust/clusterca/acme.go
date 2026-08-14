@@ -289,7 +289,7 @@ func (p *Provisioner) issueNodeLeaf(ctx context.Context, issuer CAIssuer, signer
 // growth guard below fails closed if a first-boot pre-stage is attempted when
 // identity keys already exist — so the persistent state that matters survives
 // a restart while the transient bootstrap CA instance does not.
-func (p *Provisioner) stageBootstrapCA(ctx context.Context) (ca.TrustedCA, error) {
+func (p *Provisioner) stageBootstrapCA(ctx context.Context) (CAIssuer, error) {
 	if p.opts.CAConfig == nil {
 		return nil, &ErrMissingOption{Field: "CAConfig", Mode: "acme first-node"}
 	}

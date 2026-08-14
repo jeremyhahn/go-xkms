@@ -204,30 +204,57 @@ Follow the prompts to touch your security key or approve in the xkey terminal.
 xkmsctl --auth fido2 admin status
 ```
 
-> **Deep dive**: [WebAuthn Documentation](webauthn.md) | [FIDO2 CLI Reference](cli/fido2.md) | [xKey FIDO2](../xkey/fido2.md)
+> **Deep dive**: [WebAuthn Documentation](webauthn.md) | [FIDO2 CLI Reference](cli/fido2.md) | [xKey FIDO2](../fido2/README.md)
 
 ---
 
-### Option D: xkey with xkmsd Backend
+### Option D: xkey in Server Mode against xkmsd
 
-xkey can connect directly to xkmsd and use the server's backends for all cryptographic operations. This enables centralized key management with xkey acting as the client interface.
+xkey can reach an xkmsd server so that certificate and secret operations run
+against the server's backends instead of locally. This is enabled by the global
+`--xkmsd-url` flag — there is no `xkmsd` *backend* value.
 
-**1. Configure xkey to use xkmsd:**
+**1. Point xkey at the server:**
 
 ```bash
-# Connect to xkmsd via REST
-xkey fido2 --backend xkmsd --xkmsd-url https://localhost:8443
+# Unix socket
+xkey ca info --xkmsd-url unix:///var/run/xkms/xkms.sock
 
-# Or via gRPC
-xkey fido2 --backend xkmsd --xkmsd-url grpc://localhost:9090
+# gRPC
+xkey ca info --xkmsd-url grpc://localhost:9443
 
-# Or via Unix socket
-xkey fido2 --backend xkmsd --xkmsd-url unix:///var/run/xkms/xkms.sock
+# gRPC over TLS
+xkey ca info --xkmsd-url grpcs://xkms.example.com:8443
 ```
 
-**2. Use xkey for ongoing admin operations** with any supported transport (REST, gRPC, QUIC, Unix socket, MCP).
+`--xkmsd-url` is a persistent root flag, so it applies to any subcommand. It
+resolves in this order (`resolveXKMSdEndpoint`):
 
-> **Deep dive**: [xKey Overview](../xkey/README.md) | [xKey Phone Backend](../xkey/phone-backend.md)
+1. the explicit `--xkmsd-url` flag
+2. `XKMSD_URL` / `XKEY_XKMSD_URL`
+3. the `xkmsd_url` config key
+4. the `xkmsd.address` key of the unified xkey config
+
+The auth token comes from `XKMSD_TOKEN`; the CA bundle from `--tls-ca`, then
+`XKMSD_TLS_CA`, then `xkmsd.tls_ca_file`.
+
+**2. The commands that use server mode** are `xkey ca`, `xkey password`,
+`xkey platform-store` and `xkey agent`. `xkey agent start` *requires* it —
+xkey never signs certificates locally:
+
+```bash
+xkey agent start --xkmsd-url unix:///var/run/xkmsd.sock
+```
+
+The global `--backend` flag selects which backend the *server* should use
+(`software`, `tpm2`, `pkcs11`).
+
+> **Note**: this is separate from the FIDO2 daemon's key backend.
+> `xkey fido2 --backend` is a local flag that shadows the global one and accepts
+> only `software`, `tpm2` or `phone`. The FIDO2 authenticator has no
+> xkmsd-backed key mode — see [FIDO2 Daemon Configuration](../fido2/daemon-configuration.md).
+
+> **Deep dive**: [xKey Overview](../README.md) | [xKey Phone Backend](../phone/README.md)
 
 ## Step 6: Daily Operations
 
@@ -260,5 +287,5 @@ xkmsctl barrier seal
 | Bootstrap for new nodes | [Bootstrap Configuration](../configuration/bootstrap.md) |
 | CLI command reference | [CLI Overview](cli/README.md) |
 | PIV slot management | [PIV Documentation](../piv/README.md) |
-| xKey security key interface | [xKey Overview](../xkey/README.md) |
+| xKey security key interface | [xKey Overview](../README.md) |
 | Docker deployment | [Docker Quick Start](../deployment/docker-quickstart.md) |

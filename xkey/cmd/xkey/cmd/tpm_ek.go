@@ -21,6 +21,7 @@ import (
 	"encoding/json"
 	"encoding/pem"
 	"fmt"
+	"io"
 	"os"
 
 	xkms "github.com/jeremyhahn/go-xkms/sdk/go"
@@ -178,6 +179,7 @@ func init() {
 }
 
 func runEKShow(cmd *cobra.Command, args []string) error {
+	out := cmd.OutOrStdout()
 	tpm, err := openTPM()
 	if err != nil {
 		return err
@@ -210,52 +212,52 @@ func runEKShow(cmd *cobra.Command, args []string) error {
 	// Output based on format
 	switch tpmCfg.outputFormat {
 	case "json":
-		return outputEKJSON(ekAttrs, ekCert)
+		return outputEKJSON(out, ekAttrs, ekCert)
 	default:
-		return outputEKText(ekAttrs, ekCert)
+		return outputEKText(out, ekAttrs, ekCert)
 	}
 }
 
-func outputEKText(ekAttrs *xkms.KeyAttributes, cert *x509.Certificate) error {
+func outputEKText(out io.Writer, ekAttrs *xkms.KeyAttributes, cert *x509.Certificate) error {
 	// Use standard KeyAttributes formatting (matches xkmsctl output.go PrintKeyInfo)
-	fmt.Println("Key Information:")
-	fmt.Printf("  CN:        %s\n", ekAttrs.CN)
-	fmt.Printf("  Type:      %s\n", ekAttrs.KeyType)
-	fmt.Printf("  Algorithm: %s\n", ekAttrs.KeyAlgorithm)
-	fmt.Printf("  Store:     %s\n", ekAttrs.StoreType)
-	fmt.Printf("  Hash:      %s\n", ekAttrs.Hash)
+	fmt.Fprintln(out, "Key Information:")
+	fmt.Fprintf(out, "  CN:        %s\n", ekAttrs.CN)
+	fmt.Fprintf(out, "  Type:      %s\n", ekAttrs.KeyType)
+	fmt.Fprintf(out, "  Algorithm: %s\n", ekAttrs.KeyAlgorithm)
+	fmt.Fprintf(out, "  Store:     %s\n", ekAttrs.StoreType)
+	fmt.Fprintf(out, "  Hash:      %s\n", ekAttrs.Hash)
 
 	if ekAttrs.TPMAttributes != nil {
-		fmt.Printf("  Handle:    0x%08X\n", ekAttrs.TPMAttributes.Handle)
+		fmt.Fprintf(out, "  Handle:    0x%08X\n", ekAttrs.TPMAttributes.Handle)
 		if ekAttrs.TPMAttributes.CertHandle != 0 {
-			fmt.Printf("  Cert NV:   0x%08X\n", ekAttrs.TPMAttributes.CertHandle)
+			fmt.Fprintf(out, "  Cert NV:   0x%08X\n", ekAttrs.TPMAttributes.CertHandle)
 		}
 	}
 
 	if ekAttrs.RSAAttributes != nil {
-		fmt.Printf("  RSA Size:  %d bits\n", ekAttrs.RSAAttributes.KeySize)
+		fmt.Fprintf(out, "  RSA Size:  %d bits\n", ekAttrs.RSAAttributes.KeySize)
 	}
 	if ekAttrs.ECCAttributes != nil {
-		fmt.Printf("  ECC Curve: %s\n", ekAttrs.ECCAttributes.Curve.Params().Name)
+		fmt.Fprintf(out, "  ECC Curve: %s\n", ekAttrs.ECCAttributes.Curve.Params().Name)
 	}
 
-	fmt.Println()
+	fmt.Fprintln(out)
 
 	if cert != nil {
 		// Use xkms.CertToString for detailed certificate output
-		fmt.Print(xkms.CertToString(cert))
+		fmt.Fprint(out, xkms.CertToString(cert))
 
 		// Attempt EK certificate verification against TPM manufacturer roots
-		fmt.Println()
-		verifyEKCertificate(cert)
+		fmt.Fprintln(out)
+		verifyEKCertificate(out, cert)
 	} else {
-		fmt.Println("Certificate: Not available")
+		fmt.Fprintln(out, "Certificate: Not available")
 	}
 
 	return nil
 }
 
-func outputEKJSON(ekAttrs *xkms.KeyAttributes, cert *x509.Certificate) error {
+func outputEKJSON(out io.Writer, ekAttrs *xkms.KeyAttributes, cert *x509.Certificate) error {
 	info := map[string]interface{}{
 		"cn":        ekAttrs.CN,
 		"type":      ekAttrs.KeyType.String(),
@@ -302,7 +304,7 @@ func outputEKJSON(ekAttrs *xkms.KeyAttributes, cert *x509.Certificate) error {
 		info["certificate"] = certInfo
 	}
 
-	encoder := json.NewEncoder(os.Stdout)
+	encoder := json.NewEncoder(out)
 	encoder.SetIndent("", "  ")
 	return encoder.Encode(info)
 }
@@ -311,25 +313,25 @@ func outputEKJSON(ekAttrs *xkms.KeyAttributes, cert *x509.Certificate) error {
 // manufacturer roots in the trust store. It prints the verification result
 // to stdout. If the trust store is unavailable or verification fails, it
 // prints a warning rather than returning an error.
-func verifyEKCertificate(cert *x509.Certificate) {
+func verifyEKCertificate(out io.Writer, cert *x509.Certificate) {
 	result := verifyEKCertificateResult(cert)
 	if result == nil {
-		fmt.Println("EK Certificate Verification:")
-		fmt.Println("  Status: Skipped (trust store not available)")
+		fmt.Fprintln(out, "EK Certificate Verification:")
+		fmt.Fprintln(out, "  Status: Skipped (trust store not available)")
 		return
 	}
 
-	fmt.Println("EK Certificate Verification:")
+	fmt.Fprintln(out, "EK Certificate Verification:")
 	if result.Verified {
-		fmt.Println("  Status:      VERIFIED")
+		fmt.Fprintln(out, "  Status:      VERIFIED")
 	} else {
-		fmt.Println("  Status:      NOT VERIFIED")
+		fmt.Fprintln(out, "  Status:      NOT VERIFIED")
 	}
-	fmt.Printf("  Trust Level: %s\n", result.TrustLevel)
-	fmt.Printf("  Issuer:      %s\n", result.Issuer)
-	fmt.Printf("  Chain:       %d certificate(s)\n", result.ChainLength)
+	fmt.Fprintf(out, "  Trust Level: %s\n", result.TrustLevel)
+	fmt.Fprintf(out, "  Issuer:      %s\n", result.Issuer)
+	fmt.Fprintf(out, "  Chain:       %d certificate(s)\n", result.ChainLength)
 	if result.Message != "" {
-		fmt.Printf("  Message:     %s\n", result.Message)
+		fmt.Fprintf(out, "  Message:     %s\n", result.Message)
 	}
 }
 
@@ -370,6 +372,7 @@ func verifyEKCertificateResult(cert *x509.Certificate) *xkeyAttestation.Verifica
 }
 
 func runEKExport(cmd *cobra.Command, args []string) error {
+	out := cmd.OutOrStdout()
 	tpm, err := openTPM()
 	if err != nil {
 		return err
@@ -396,7 +399,7 @@ func runEKExport(cmd *cobra.Command, args []string) error {
 
 	// Output to file or stdout
 	if ekExportOutput == "-" {
-		fmt.Print(string(pemData))
+		fmt.Fprint(out, string(pemData))
 		return nil
 	}
 
@@ -404,11 +407,12 @@ func runEKExport(cmd *cobra.Command, args []string) error {
 		return &SentinelCauseError{Sentinel: ErrExportFailed, Cause: err}
 	}
 
-	fmt.Printf("EK certificate exported to: %s\n", ekExportOutput)
+	fmt.Fprintf(out, "EK certificate exported to: %s\n", ekExportOutput)
 	return nil
 }
 
 func runEKBackup(cmd *cobra.Command, args []string) error {
+	out := cmd.OutOrStdout()
 
 	tpm, err := openTPM()
 	if err != nil {
@@ -434,12 +438,12 @@ func runEKBackup(cmd *cobra.Command, args []string) error {
 		if err := os.WriteFile(rsaPath, pem.EncodeToMemory(pemBlock), 0600); err != nil {
 			return &WrappedError{Msg: "failed to write RSA EK certificate", Err: err}
 		}
-		fmt.Printf("RSA EK certificate backed up to: %s\n", rsaPath)
-		fmt.Printf("  Issuer: %s\n", rsaCert.Issuer.CommonName)
-		fmt.Printf("  Serial: %s\n", rsaCert.SerialNumber.String())
+		fmt.Fprintf(out, "RSA EK certificate backed up to: %s\n", rsaPath)
+		fmt.Fprintf(out, "  Issuer: %s\n", rsaCert.Issuer.CommonName)
+		fmt.Fprintf(out, "  Serial: %s\n", rsaCert.SerialNumber.String())
 		backupCount++
 	} else {
-		fmt.Println("RSA EK certificate not available")
+		fmt.Fprintln(out, "RSA EK certificate not available")
 	}
 
 	// Backup EC EK certificate
@@ -453,23 +457,24 @@ func runEKBackup(cmd *cobra.Command, args []string) error {
 		if err := os.WriteFile(ecPath, pem.EncodeToMemory(pemBlock), 0600); err != nil {
 			return &WrappedError{Msg: "failed to write EC EK certificate", Err: err}
 		}
-		fmt.Printf("EC EK certificate backed up to: %s\n", ecPath)
-		fmt.Printf("  Issuer: %s\n", ecCert.Issuer.CommonName)
-		fmt.Printf("  Serial: %s\n", ecCert.SerialNumber.String())
+		fmt.Fprintf(out, "EC EK certificate backed up to: %s\n", ecPath)
+		fmt.Fprintf(out, "  Issuer: %s\n", ecCert.Issuer.CommonName)
+		fmt.Fprintf(out, "  Serial: %s\n", ecCert.SerialNumber.String())
 		backupCount++
 	} else {
-		fmt.Println("EC EK certificate not available")
+		fmt.Fprintln(out, "EC EK certificate not available")
 	}
 
 	if backupCount == 0 {
 		return &MessageError{Msg: "no EK certificates available to backup"}
 	}
 
-	fmt.Printf("\nBacked up %d EK certificate(s) to: %s\n", backupCount, ekBackupOutput)
+	fmt.Fprintf(out, "\nBacked up %d EK certificate(s) to: %s\n", backupCount, ekBackupOutput)
 	return nil
 }
 
 func runEKRestore(cmd *cobra.Command, args []string) error {
+	out := cmd.OutOrStdout()
 	// Read the certificate from file
 	pemData, err := os.ReadFile(ekRestoreInput)
 	if err != nil {
@@ -488,11 +493,11 @@ func runEKRestore(cmd *cobra.Command, args []string) error {
 		return &WrappedError{Msg: "failed to parse certificate", Err: err}
 	}
 
-	fmt.Println("Certificate to restore:")
-	fmt.Printf("  Subject: %s\n", cert.Subject.String())
-	fmt.Printf("  Issuer:  %s\n", cert.Issuer.CommonName)
-	fmt.Printf("  Serial:  %s\n", cert.SerialNumber.String())
-	fmt.Println()
+	fmt.Fprintln(out, "Certificate to restore:")
+	fmt.Fprintf(out, "  Subject: %s\n", cert.Subject.String())
+	fmt.Fprintf(out, "  Issuer:  %s\n", cert.Issuer.CommonName)
+	fmt.Fprintf(out, "  Serial:  %s\n", cert.SerialNumber.String())
+	fmt.Fprintln(out)
 
 	// Open TPM
 	tpm, err := openTPM()
@@ -527,14 +532,14 @@ func runEKRestore(cmd *cobra.Command, args []string) error {
 				}
 
 			}
-			fmt.Println("Certificate public key matches TPM EK")
+			fmt.Fprintln(out, "Certificate public key matches TPM EK")
 		}
 	}
 
-	fmt.Println()
-	fmt.Println("WARNING: This will overwrite the current EK certificate in TPM NV RAM!")
-	fmt.Println("         Make sure this is a valid manufacturer certificate.")
-	fmt.Println()
+	fmt.Fprintln(out)
+	fmt.Fprintln(out, "WARNING: This will overwrite the current EK certificate in TPM NV RAM!")
+	fmt.Fprintln(out, "         Make sure this is a valid manufacturer certificate.")
+	fmt.Fprintln(out)
 
 	// Write certificate to NV RAM
 	// Note: This requires hierarchy authorization
@@ -549,6 +554,6 @@ func runEKRestore(cmd *cobra.Command, args []string) error {
 	if ekUseEC {
 		certType = "EC"
 	}
-	fmt.Printf("%s EK certificate restored successfully\n", certType)
+	fmt.Fprintf(out, "%s EK certificate restored successfully\n", certType)
 	return nil
 }

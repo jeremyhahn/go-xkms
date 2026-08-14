@@ -731,13 +731,13 @@ func TestLookupGIDForUID(t *testing.T) {
 // no-op when the process is not running as root (euid != 0). This is
 // the common case during normal test execution.
 func TestChownToCallingUser_NonRoot(t *testing.T) {
-	if os.Geteuid() == 0 {
-		t.Skip("test requires non-root execution")
-	}
+	// Force the unprivileged branch so the early return is exercised no
+	// matter which uid the test binary runs under.
+	origGeteuid := geteuid
+	geteuid = func() int { return 1000 }
+	t.Cleanup(func() { geteuid = origGeteuid })
 
-	tmpDir, err := os.MkdirTemp("", "chown_nonroot")
-	require.NoError(t, err)
-	defer os.RemoveAll(tmpDir)
+	tmpDir := t.TempDir()
 
 	// Set env vars that would normally trigger chown.
 	t.Setenv("SUDO_UID", "1000")
@@ -807,4 +807,29 @@ func TestChownToCallingUser_InvalidPath(t *testing.T) {
 	// ChownToCallingUser on a bad path should not panic.
 	// If not root, it returns early; if root, it logs a warning.
 	ChownToCallingUser(fmt.Sprintf("/nonexistent/path/%d", os.Getpid()))
+}
+
+// TestChownToCallingUser_RootWithoutSudoEnv verifies that the privileged
+// branch returns without attempting a chown when the original calling user
+// cannot be resolved from the environment. Only the privilege decision is
+// faked; no ownership change is attempted against the host.
+func TestChownToCallingUser_RootWithoutSudoEnv(t *testing.T) {
+	origGeteuid := geteuid
+	geteuid = func() int { return 0 }
+	t.Cleanup(func() { geteuid = origGeteuid })
+
+	t.Setenv("SUDO_UID", "")
+	t.Setenv("SUDO_GID", "")
+	t.Setenv("PKEXEC_UID", "")
+
+	tmpDir := t.TempDir()
+	before, err := os.Stat(tmpDir)
+	require.NoError(t, err)
+
+	ChownToCallingUser(tmpDir)
+
+	after, err := os.Stat(tmpDir)
+	require.NoError(t, err)
+	assert.Equal(t, before.Mode(), after.Mode(),
+		"directory must be left untouched when the calling user is unresolvable")
 }

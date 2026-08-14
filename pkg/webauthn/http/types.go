@@ -58,6 +58,11 @@ type AuthResponse struct {
 	// Token is the authentication token (JWT or base64 user ID).
 	Token string `json:"token"`
 
+	// RefreshToken is the rotating refresh token, present when the relying
+	// party's token generator mints access/refresh pairs. Renew via
+	// POST /api/v1/auth/refresh.
+	RefreshToken string `json:"refresh_token,omitempty"`
+
 	// UserID is the base64-encoded user ID.
 	UserID string `json:"user_id"`
 }

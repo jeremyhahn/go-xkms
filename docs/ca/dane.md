@@ -256,4 +256,4 @@ if errors.Is(err, dane.ErrDNSLookupFailed) {
 - [CA Bundle Bootstrap](./bootstrap.md) -- Bootstrap protocol overview and all methods
 - [Integration Guide](./bootstrap-integration.md) -- Project-specific usage for go-xkms, xkey, and go-trusted-platform
 - [Bootstrap Configuration](../configuration/bootstrap.md) -- YAML configuration reference
-- [Bootstrap CLI Commands](../usage/cli/bootstrap.md) -- CLI reference for DANE and other bootstrap commands
+- [Bootstrap CLI Commands](../../xkey/docs/usage/cli/bootstrap.md) -- CLI reference for DANE and other bootstrap commands

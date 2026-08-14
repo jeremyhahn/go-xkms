@@ -1,0 +1,1 @@
+{"transports":["usb","nfc","ble","internal","hybrid"],"enterprise_attestation":true}

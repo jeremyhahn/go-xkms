@@ -1513,8 +1513,8 @@ func TestErrNotSupported_Methods(t *testing.T) {
 			_, err := tr.ClaimCertComplete(context.Background(), &transport.ClaimCertCompleteRequest{})
 			return err
 		}},
-		{"ClaimShare", func() error {
-			_, err := tr.ClaimShare(context.Background(), &transport.ClaimShareRequest{})
+		{"ClaimShareBegin", func() error {
+			_, err := tr.ClaimShareBegin(context.Background(), &transport.ClaimShareBeginRequest{})
 			return err
 		}},
 		{"SubmitCredential", func() error {

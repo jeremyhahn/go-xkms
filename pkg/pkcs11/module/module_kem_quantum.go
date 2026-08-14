@@ -86,16 +86,28 @@ func kemDecapsulate(quantumCrypto any, mechanism *Mechanism, privateKeyHandle Ob
 
 // kemCiphertextSize returns the known ciphertext size for a KEM mechanism.
 // This enables size queries without performing the actual encapsulation.
+//
+// The per-level vendor mechanisms resolve through the same table the dispatch
+// path uses, rather than through a switch of their own. Listing only ML-KEM-768
+// here made ML-KEM-1024 unreachable through the C ABI entirely: exports_v32.go
+// calls KEMCiphertextSize before EncapsulateKey on both the NULL-buffer probe
+// and the real call, so C_EncapsulateKey answered CKR_MECHANISM_INVALID for a
+// mechanism the registry advertises and the crypto layer implements.
 func kemCiphertextSize(mechanism *Mechanism) (uint64, error) {
-	switch mechanism.Type {
-	case CKM_VENDOR_ML_KEM_768_ENCAPSULATE:
-		return MLKEM768CiphertextSize, nil
-	case CKM_ML_KEM:
-		// Standard v3.2 mechanism; size depends on parameter set.
-		// Default to ML-KEM-768 when no parameter set is specified.
-		return MLKEM768CiphertextSize, nil
-	default:
-		return 0, NewPKCS11ErrorWithMessage(CKR_MECHANISM_INVALID,
-			"unknown KEM mechanism for ciphertext size query")
+	if level := GetMLKEMSecurityLevel(mechanism.Type); level != 0 {
+		if size, ok := mlkemCiphertextSizeByLevel[level]; ok {
+			return size, nil
+		}
 	}
+
+	if mechanism.Type == CKM_ML_KEM {
+		// The standard v3.2 mechanism carries no parameter set of its own; the
+		// key object's CKA_PARAMETER_SET decides, and this function has no key.
+		// ML-KEM-768 is FIPS 203's mandatory baseline and the level
+		// resolveMLKEMLevel falls back to, so the two agree.
+		return MLKEM768CiphertextSize, nil
+	}
+
+	return 0, NewPKCS11ErrorWithMessage(CKR_MECHANISM_INVALID,
+		"unknown KEM mechanism for ciphertext size query")
 }

@@ -90,6 +90,12 @@ type ArgDefinition struct {
 
 	// IsPositional indicates if this is a positional argument
 	IsPositional bool
+
+	// IsBoolean marks a flag that takes no value, so the runner emits "--flag"
+	// rather than "--flag <value>". Without it a boolean argument has to carry a
+	// non-empty Value to be emitted at all, and that Value is then passed to a
+	// flag that accepts none.
+	IsBoolean bool
 }
 
 // AllCommands returns all CLI commands for testing
@@ -185,6 +191,48 @@ func KeyCommands() []CommandDefinition {
 			OptionalArgs: []ArgDefinition{
 				{Flag: "key-type", Value: "ed25519", Description: "Key type"},
 				{Flag: "key-algorithm", Value: "ed25519", Description: "Algorithm"},
+			},
+		},
+		// The protection flags are exercised here because they are the only key
+		// attributes the CLI can set that change what the daemon will later
+		// release. --exportable and --sensitive are independent: a sensitive key
+		// may still be wrapped out under another key, but its plaintext is never
+		// returned. Generating with both set proves the pair survives every
+		// transport, which is where a field added to the request struct but not
+		// mapped in one transport's handler would show up.
+		{
+			Name:            "key-generate-symmetric-exportable",
+			Category:        CategoryKey,
+			Command:         []string{"key", "generate"},
+			Description:     "Generate an exportable symmetric key",
+			RequiresBackend: true,
+			RequiresKeyDir:  true,
+			RequiresServer:  true,
+			RequiredArgs: []ArgDefinition{
+				{Flag: "", Value: "test-symmetric-exportable", Description: "Key ID", IsPositional: true},
+			},
+			OptionalArgs: []ArgDefinition{
+				{Flag: "key-type", Value: "symmetric", Description: "Key type"},
+				{Flag: "key-size", Value: "256", Description: "Key size"},
+				{Flag: "exportable", Value: "", Description: "Allow export", IsBoolean: true},
+			},
+		},
+		{
+			Name:            "key-generate-symmetric-sensitive",
+			Category:        CategoryKey,
+			Command:         []string{"key", "generate"},
+			Description:     "Generate a sensitive symmetric key whose plaintext is never released",
+			RequiresBackend: true,
+			RequiresKeyDir:  true,
+			RequiresServer:  true,
+			RequiredArgs: []ArgDefinition{
+				{Flag: "", Value: "test-symmetric-sensitive", Description: "Key ID", IsPositional: true},
+			},
+			OptionalArgs: []ArgDefinition{
+				{Flag: "key-type", Value: "symmetric", Description: "Key type"},
+				{Flag: "key-size", Value: "256", Description: "Key size"},
+				{Flag: "exportable", Value: "", Description: "Allow wrapping", IsBoolean: true},
+				{Flag: "sensitive", Value: "", Description: "Never release plaintext", IsBoolean: true},
 			},
 		},
 		{

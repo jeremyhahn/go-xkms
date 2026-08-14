@@ -343,7 +343,7 @@ func TestNativeVirtualDevice_GetAssertion(t *testing.T) {
 	// Read MakeCredential response to get credential ID
 	mcResponse := readFullResponse(t, device, cid)
 	if mcResponse[0] != 0x00 {
-		t.Skipf("MakeCredential failed with status 0x%02X, skipping GetAssertion test", mcResponse[0])
+		t.Fatalf("MakeCredential returned CTAP status 0x%02X, want 0x00; GetAssertion cannot be exercised without a credential", mcResponse[0])
 	}
 
 	// Now try GetAssertion

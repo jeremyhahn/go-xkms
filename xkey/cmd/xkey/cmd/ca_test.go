@@ -17,7 +17,6 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
-	"strings"
 	"testing"
 
 	"github.com/spf13/cobra"
@@ -393,7 +392,6 @@ func TestCABundleCmd_OutputFlag(t *testing.T) {
 
 func TestCAErrorSentinels(t *testing.T) {
 	sentinels := []error{
-		ErrCANotInitialized,
 		ErrCAInfoFailed,
 		ErrCAIssueFailed,
 		ErrCASignCSRFailed,
@@ -422,21 +420,42 @@ func TestCAErrorSentinels(t *testing.T) {
 
 // --- getSDKClient tests ---
 
-func TestGetSDKClient_ReturnsNotInitialized(t *testing.T) {
-	client, err := getSDKClient()
+// TestGetSDKClient_NoServerConfigured verifies the CA client construction
+// reports the missing-endpoint error when no xkmsd URL is configured by any
+// source, rather than a generic "not initialized" placeholder.
+func TestGetSDKClient_NoServerConfigured(t *testing.T) {
+	isolateXKMSdEndpoint(t)
+
+	client, err := getSDKClient(nil)
 	assert.Nil(t, client)
-	assert.Error(t, err)
-	assert.True(t, errors.Is(err, ErrCANotInitialized))
+	require.Error(t, err)
+	assert.True(t, errors.Is(err, ErrXKMSdURLRequired), "want ErrXKMSdURLRequired, got %v", err)
+}
+
+// TestGetSDKClient_UnreachableServer verifies that a configured but
+// unreachable endpoint surfaces a connection failure from the transport,
+// proving the client is really constructed and dialed.
+func TestGetSDKClient_UnreachableServer(t *testing.T) {
+	isolateXKMSdEndpoint(t)
+
+	xkmsdURL = "unix://" + filepath.Join(t.TempDir(), "absent.sock")
+
+	client, err := getSDKClient(nil)
+	assert.Nil(t, client)
+	require.Error(t, err)
+	assert.True(t, errors.Is(err, ErrXKMSdConnectFailed), "want ErrXKMSdConnectFailed, got %v", err)
 }
 
 // --- RunE error propagation tests ---
 
-func TestRunCAInfo_ClientNotInitialized(t *testing.T) {
+func TestRunCAInfo_NoServerConfigured(t *testing.T) {
+	isolateXKMSdEndpoint(t)
+
 	cmd := &cobra.Command{}
 	err := runCAInfo(cmd, nil)
 	assert.Error(t, err)
 	assert.True(t, errors.Is(err, ErrCAInfoFailed))
-	assert.True(t, strings.Contains(err.Error(), ErrCANotInitialized.Error()))
+	assert.True(t, errors.Is(err, ErrXKMSdURLRequired), "want ErrXKMSdURLRequired, got %v", err)
 }
 
 func TestRunCAIssue_MissingProfile(t *testing.T) {
@@ -467,7 +486,9 @@ func TestRunCAIssue_InvalidSAN(t *testing.T) {
 	assert.True(t, errors.Is(err, ErrCAIssueFailed))
 }
 
-func TestRunCAIssue_ClientNotInitialized(t *testing.T) {
+func TestRunCAIssue_NoServerConfigured(t *testing.T) {
+	isolateXKMSdEndpoint(t)
+
 	cmd := newCAIssueCmd(t)
 	require.NoError(t, cmd.Flags().Set("profile", "server"))
 	require.NoError(t, cmd.Flags().Set("cn", "example.com"))
@@ -475,7 +496,7 @@ func TestRunCAIssue_ClientNotInitialized(t *testing.T) {
 	err := runCAIssue(cmd, nil)
 	assert.Error(t, err)
 	assert.True(t, errors.Is(err, ErrCAIssueFailed))
-	assert.True(t, strings.Contains(err.Error(), ErrCANotInitialized.Error()))
+	assert.True(t, errors.Is(err, ErrXKMSdURLRequired), "want ErrXKMSdURLRequired, got %v", err)
 }
 
 func TestRunCASignCSR_MissingCSRPath(t *testing.T) {
@@ -495,7 +516,9 @@ func TestRunCASignCSR_NonexistentCSRFile(t *testing.T) {
 	assert.True(t, errors.Is(err, ErrCACSRReadFailed))
 }
 
-func TestRunCASignCSR_ClientNotInitialized(t *testing.T) {
+func TestRunCASignCSR_NoServerConfigured(t *testing.T) {
+	isolateXKMSdEndpoint(t)
+
 	dir := t.TempDir()
 	csrFile := filepath.Join(dir, "test.csr")
 	require.NoError(t, os.WriteFile(csrFile, []byte("-----BEGIN CERTIFICATE REQUEST-----\ntest\n-----END CERTIFICATE REQUEST-----\n"), 0600))
@@ -506,16 +529,18 @@ func TestRunCASignCSR_ClientNotInitialized(t *testing.T) {
 	err := runCASignCSR(cmd, nil)
 	assert.Error(t, err)
 	assert.True(t, errors.Is(err, ErrCASignCSRFailed))
-	assert.True(t, strings.Contains(err.Error(), ErrCANotInitialized.Error()))
+	assert.True(t, errors.Is(err, ErrXKMSdURLRequired), "want ErrXKMSdURLRequired, got %v", err)
 }
 
-func TestRunCARevoke_ClientNotInitialized(t *testing.T) {
+func TestRunCARevoke_NoServerConfigured(t *testing.T) {
+	isolateXKMSdEndpoint(t)
+
 	cmd := newCARevokeCmd(t)
 
 	err := runCARevoke(cmd, []string{"ABC123"})
 	assert.Error(t, err)
 	assert.True(t, errors.Is(err, ErrCARevokeFailed))
-	assert.True(t, strings.Contains(err.Error(), ErrCANotInitialized.Error()))
+	assert.True(t, errors.Is(err, ErrXKMSdURLRequired), "want ErrXKMSdURLRequired, got %v", err)
 }
 
 func TestRunCARevoke_InvalidReason(t *testing.T) {
@@ -527,28 +552,34 @@ func TestRunCARevoke_InvalidReason(t *testing.T) {
 	assert.True(t, errors.Is(err, ErrCARevokeFailed))
 }
 
-func TestRunCACRL_ClientNotInitialized(t *testing.T) {
+func TestRunCACRL_NoServerConfigured(t *testing.T) {
+	isolateXKMSdEndpoint(t)
+
 	cmd := newCAOutputCmd(t)
 
 	err := runCACRL(cmd, nil)
 	assert.Error(t, err)
 	assert.True(t, errors.Is(err, ErrCACRLFailed))
-	assert.True(t, strings.Contains(err.Error(), ErrCANotInitialized.Error()))
+	assert.True(t, errors.Is(err, ErrXKMSdURLRequired), "want ErrXKMSdURLRequired, got %v", err)
 }
 
-func TestRunCACheckRevocation_ClientNotInitialized(t *testing.T) {
+func TestRunCACheckRevocation_NoServerConfigured(t *testing.T) {
+	isolateXKMSdEndpoint(t)
+
 	cmd := &cobra.Command{}
 	err := runCACheckRevocation(cmd, []string{"ABC123"})
 	assert.Error(t, err)
 	assert.True(t, errors.Is(err, ErrCACheckRevocationFailed))
-	assert.True(t, strings.Contains(err.Error(), ErrCANotInitialized.Error()))
+	assert.True(t, errors.Is(err, ErrXKMSdURLRequired), "want ErrXKMSdURLRequired, got %v", err)
 }
 
-func TestRunCABundle_ClientNotInitialized(t *testing.T) {
+func TestRunCABundle_NoServerConfigured(t *testing.T) {
+	isolateXKMSdEndpoint(t)
+
 	cmd := newCAOutputCmd(t)
 
 	err := runCABundle(cmd, nil)
 	assert.Error(t, err)
 	assert.True(t, errors.Is(err, ErrCABundleFailed))
-	assert.True(t, strings.Contains(err.Error(), ErrCANotInitialized.Error()))
+	assert.True(t, errors.Is(err, ErrXKMSdURLRequired), "want ErrXKMSdURLRequired, got %v", err)
 }

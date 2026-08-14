@@ -382,9 +382,10 @@ func TestAuthzNewServer_DefaultAuthorizerAndAuditLogger(t *testing.T) {
 	svc, _ := xkms.Get()
 
 	cfg := &Config{
-		Addr:        "localhost:8444",
-		Logger:      testLogger(),
-		XKMSService: svc,
+		Authenticator: auth.NewNoOpAuthenticator(),
+		Addr:          "localhost:8444",
+		Logger:        testLogger(),
+		XKMSService:   svc,
 		// No Authorizer or AuditLogger provided
 	}
 
@@ -409,11 +410,12 @@ func TestAuthzNewServer_WithCustomAuthorizerAndAuditLogger(t *testing.T) {
 	svc, _ := xkms.Get()
 
 	cfg := &Config{
-		Addr:        "localhost:8444",
-		Logger:      testLogger(),
-		Authorizer:  authorizer,
-		AuditLogger: logger,
-		XKMSService: svc,
+		Authenticator: auth.NewNoOpAuthenticator(),
+		Addr:          "localhost:8444",
+		Logger:        testLogger(),
+		Authorizer:    authorizer,
+		AuditLogger:   logger,
+		XKMSService:   svc,
 	}
 
 	server, err := NewServer(cfg)

@@ -39,6 +39,7 @@ import (
 	"crypto/rsa"
 	"crypto/sha1"
 	"crypto/sha256"
+	"crypto/subtle"
 	"encoding/binary"
 	"hash"
 
@@ -156,10 +157,10 @@ func WrapRSAAES(keyMaterial []byte, publicKey *rsa.PublicKey, algorithm backend.
 		return nil, &CryptoError{Op: "rsa.EncryptOAEP (aes key)", Err: encErr}
 	}
 
-	// Step 3: Wrap keyMaterial with AES-KWP. wrapKeyWithAESKWP reads
+	// Step 3: Wrap keyMaterial with AES-KWP. WrapAESKWP reads
 	// the AES key and plaintext; its own internal intermediates use
 	// secure.Buffer.
-	wrappedMaterial, kwpErr := wrapKeyWithAESKWP(keyMaterial, aesKeyBuf.Bytes())
+	wrappedMaterial, kwpErr := WrapAESKWP(keyMaterial, aesKeyBuf.Bytes())
 	if kwpErr != nil {
 		return nil, kwpErr
 	}
@@ -217,18 +218,35 @@ func UnwrapRSAAES(wrappedKey []byte, privateKey *rsa.PrivateKey, algorithm backe
 
 	// Unwrap the material using the AES key inside the Buffer. The
 	// returned plaintext is sensitive — hand it off to the caller.
-	plaintext, kwpErr := unwrapKeyWithAESKWP(wrappedMaterial, aesBuf.Bytes())
+	plaintext, kwpErr := UnwrapAESKWP(wrappedMaterial, aesBuf.Bytes())
 	if kwpErr != nil {
 		return nil, kwpErr
 	}
 	return plaintext, nil
 }
 
-// wrapKeyWithAESKWP implements AES-KWP (RFC 5649). Intermediate state
-// (padded plaintext, register buffer) lives in *secure.Buffer.
-func wrapKeyWithAESKWP(plaintext, key []byte) ([]byte, error) {
+// WrapAESKWP wraps plaintext under an AES key-encryption key using RFC 5649
+// AES Key Wrap with Padding -- PKCS#11 v3.2 §6.10.5's CKM_AES_KEY_WRAP_PAD.
+// Intermediate state (padded plaintext, register buffer) lives in a
+// *secure.Buffer.
+//
+// Unlike WrapAESKW (RFC 3394), the plaintext length is arbitrary: RFC 5649
+// records it in the Alternative Initial Value and pads the input up to an
+// 8-byte boundary, which is what lets a 20-byte or 7-byte key be wrapped at
+// all. Callers that already hold block-aligned material of at least 16 bytes
+// may use either; only the padded form accepts everything else.
+func WrapAESKWP(plaintext, key []byte) ([]byte, error) {
 	if len(key) != 16 && len(key) != 24 && len(key) != 32 {
 		return nil, &InvalidKeySizeError{Algorithm: "aes-kwp", Size: len(key)}
+	}
+	// RFC 5649 section 4.1 takes "a key, K (the KEK) and a plaintext, Q, of m
+	// octets", with m at least 1: the message length indicator in the AIV
+	// records m, and there is no m=0 encoding. Without this the padded length
+	// is zero, the wrapping rounds never run, and the return value is the
+	// bare 8-octet AIV -- a blob carrying no ciphertext at all, handed back
+	// under a nil error as though a key had been wrapped.
+	if len(plaintext) == 0 {
+		return nil, &EmptyInputError{Field: "plaintext"}
 	}
 	block, err := aes.NewCipher(key)
 	if err != nil {
@@ -303,10 +321,78 @@ func wrapKeyWithAESKWP(plaintext, key []byte) ([]byte, error) {
 	return out, nil
 }
 
-// unwrapKeyWithAESKWP inverts wrapKeyWithAESKWP. The unwrapped output
-// IS sensitive and is returned as a plain []byte — the caller is
+// kwpAIVHeader is the constant half of the RFC 5649 section 3 Alternative
+// Initial Value, A65959A6. The four octets that follow it in the AIV carry the
+// message length indicator (MLI), the unpadded length of the wrapped key.
+var kwpAIVHeader = [4]byte{0xA6, 0x59, 0x59, 0xA6}
+
+// kwpIntegrityFailure is the single reason reported for every RFC 5649 section
+// 4.2 verification failure. It is deliberately one string: an unwrap is
+// reachable over the wire with attacker-chosen ciphertext, and an error that
+// said whether the header, the length indicator or the padding was wrong would
+// hand the caller a distinguisher on the decrypted-but-unauthenticated block.
+const kwpIntegrityFailure = "RFC 5649 section 4.2 integrity check failed"
+
+// ctGreaterU64 reports whether x is greater than y, as 1 or 0, without
+// branching on either value. Both arguments must be below 2^63 so that the
+// high bit of the wrapping subtraction is a faithful borrow indicator; every
+// value passed here is either a 32-bit header field or a slice index, so that
+// bound holds by construction.
+func ctGreaterU64(x, y uint64) int {
+	return int((y - x) >> 63)
+}
+
+// verifyKWPIntegrity applies all three checks RFC 5649 section 4.2 requires of
+// the register block recovered by an AES-KWP unwrap, and returns the validated
+// message length indicator:
+//
+//  1. the first four octets of the AIV equal A65959A6;
+//  2. the MLI satisfies 8*(n-1) < MLI <= 8*n;
+//  3. the 8*n - MLI trailing padding octets are all zero.
+//
+// Only the first check used to be applied here, which left the effective
+// forgery test at the 32 bits of the header instead of the header plus up to
+// 56 bits of padding plus the length bound.
+//
+// The checks are evaluated unconditionally and folded into one accumulator so
+// that no branch, and no error value, depends on which of them failed; the
+// padding comparison walks the whole padded region rather than only the
+// trailing 8*n - MLI octets, so its cost depends on the public ciphertext
+// length and not on the recovered MLI.
+//
+// rb is the 8-octet AIV followed by the n padded plaintext blocks.
+func verifyKWPIntegrity(rb []byte, n int) (int, error) {
+	aivOK := subtle.ConstantTimeCompare(rb[0:4], kwpAIVHeader[:])
+
+	mli := uint64(binary.BigEndian.Uint32(rb[4:8]))
+	lower := uint64(8 * (n - 1))
+	upper := uint64(8 * n)
+	rangeOK := ctGreaterU64(mli, lower) & (1 ^ ctGreaterU64(mli, upper))
+
+	padded := rb[8:]
+	var padAcc byte
+	for i := range padded {
+		// Index i holds padding, rather than key material, exactly when
+		// i >= MLI. The mask is 0xFF for a padding octet and 0x00 otherwise,
+		// so padAcc ends up as the OR of every padding octet.
+		isPad := byte(1 ^ ctGreaterU64(mli, uint64(i)))
+		padAcc |= padded[i] & -isPad
+	}
+	padOK := subtle.ConstantTimeByteEq(padAcc, 0)
+
+	if aivOK&rangeOK&padOK != 1 {
+		return 0, &MalformedWrappedKeyError{Reason: kwpIntegrityFailure}
+	}
+	return int(mli), nil
+}
+
+// UnwrapAESKWP inverts WrapAESKWP: it unwraps an RFC 5649 blob under an AES
+// key-encryption key, applies the full section 4.2 verification (AIV header,
+// message length indicator bounds and zero padding, all via
+// verifyKWPIntegrity) and recovers the original unpadded length. The unwrapped
+// output IS sensitive and is returned as a plain []byte — the caller is
 // expected to immediately move it into a secure.Buffer.
-func unwrapKeyWithAESKWP(ciphertext, key []byte) ([]byte, error) {
+func UnwrapAESKWP(ciphertext, key []byte) ([]byte, error) {
 	if len(key) != 16 && len(key) != 24 && len(key) != 32 {
 		return nil, &InvalidKeySizeError{Algorithm: "aes-kwp", Size: len(key)}
 	}
@@ -320,16 +406,21 @@ func unwrapKeyWithAESKWP(ciphertext, key []byte) ([]byte, error) {
 
 	n := (len(ciphertext) / 8) - 1
 
-	// Special case: n == 1.
+	// Special case: n == 1. RFC 5649 section 4.2 decrypts the lone pair of
+	// blocks with a single AES-ECB operation; the verification that follows is
+	// the same one the general case runs, so it goes through the same helper.
 	if n == 1 {
-		out := make([]byte, 16)
-		block.Decrypt(out, ciphertext)
-		if binary.BigEndian.Uint32(out[0:4]) != 0xA65959A6 {
-			return nil, &MalformedWrappedKeyError{Reason: "invalid AIV"}
+		single, serr := secure.NewBuffer(16)
+		if serr != nil {
+			return nil, &CryptoError{Op: "alloc register buffer (unwrap single block)", Err: serr}
 		}
-		mli := binary.BigEndian.Uint32(out[4:8])
-		if mli > 8 {
-			return nil, &MalformedWrappedKeyError{Reason: "invalid MLI"}
+		defer single.Destroy()
+		out := single.Bytes()
+		block.Decrypt(out, ciphertext)
+
+		mli, verr := verifyKWPIntegrity(out, 1)
+		if verr != nil {
+			return nil, verr
 		}
 		// The plaintext portion (out[8:8+mli]) is sensitive — move it
 		// into a Buffer briefly, then return a caller-owned slice.
@@ -361,12 +452,9 @@ func unwrapKeyWithAESKWP(ciphertext, key []byte) ([]byte, error) {
 		}
 	}
 
-	if binary.BigEndian.Uint32(rb[0:4]) != 0xA65959A6 {
-		return nil, &MalformedWrappedKeyError{Reason: "invalid AIV"}
-	}
-	mli := binary.BigEndian.Uint32(rb[4:8])
-	if mli > uint32(n*8) {
-		return nil, &MalformedWrappedKeyError{Reason: "invalid MLI"}
+	mli, verr := verifyKWPIntegrity(rb, n)
+	if verr != nil {
+		return nil, verr
 	}
 
 	// The unwrapped plaintext sits in rb[8 : 8+mli]. Copy it out; the
@@ -415,4 +503,125 @@ func GetHashForAlgorithm(algorithm backend.WrappingAlgorithm) (crypto.Hash, erro
 	default:
 		return 0, &UnsupportedAlgorithmError{Algorithm: string(algorithm)}
 	}
+}
+
+// aesKWDefaultIV is the RFC 3394 section 2.2.3.1 default initial value,
+// A0. PKCS#11's CKM_AES_KEY_WRAP has no per-call IV parameter, so every
+// wrap under this function uses the standard default rather than a
+// caller-supplied alternative (RFC 3394 section 2.2.3.2).
+var aesKWDefaultIV = [8]byte{0xA6, 0xA6, 0xA6, 0xA6, 0xA6, 0xA6, 0xA6, 0xA6}
+
+// WrapAESKW wraps plaintext under kek using RFC 3394 AES Key Wrap (no
+// padding) -- PKCS#11's CKM_AES_KEY_WRAP. Unlike WrapAESKWP (RFC
+// 5649) above, plain AES-KW has no length-padding step: plaintext must
+// already be a whole number of 8-byte blocks, and at least two blocks (16
+// bytes) per RFC 3394 section 2. Callers with unaligned or shorter material
+// need CKM_AES_KEY_WRAP_PAD instead, which this package does not implement.
+//
+// Verified against the RFC 3394 section 4 known-answer vectors (128/192/256
+// -bit KEKs over 128/192/256-bit key data); see wrapping_aeskw_test.go.
+func WrapAESKW(plaintext, kek []byte) ([]byte, error) {
+	if len(kek) != 16 && len(kek) != 24 && len(kek) != 32 {
+		return nil, &InvalidKeySizeError{Algorithm: "aes-kw", Size: len(kek)}
+	}
+	if len(plaintext) == 0 {
+		return nil, &EmptyInputError{Field: "plaintext"}
+	}
+	if len(plaintext) < 16 || len(plaintext)%8 != 0 {
+		return nil, &MalformedWrappedKeyError{Reason: "aes-kw plaintext must be at least 16 bytes and a multiple of 8"}
+	}
+
+	block, err := aes.NewCipher(kek)
+	if err != nil {
+		return nil, &CryptoError{Op: "aes.NewCipher (aes-kw wrap)", Err: err}
+	}
+
+	n := len(plaintext) / 8
+	regLen := (n + 1) * 8
+	registers, rerr := secure.NewBuffer(regLen)
+	if rerr != nil {
+		return nil, &CryptoError{Op: "alloc register buffer (aes-kw wrap)", Err: rerr}
+	}
+	defer registers.Destroy()
+	rb := registers.Bytes()
+	copy(rb[0:8], aesKWDefaultIV[:])
+	copy(rb[8:], plaintext)
+
+	// RFC 3394 section 2.2.1, the wrapping algorithm: 6*n rounds of
+	// B = AES(K, A | R[i]), A = MSB(64,B) XOR t, R[i] = LSB(64,B).
+	var b [16]byte
+	for j := 0; j <= 5; j++ {
+		for i := 1; i <= n; i++ {
+			copy(b[0:8], rb[0:8])
+			copy(b[8:16], rb[i*8:(i+1)*8])
+			block.Encrypt(b[:], b[:])
+
+			t := uint64(n*j + i)
+			copy(rb[0:8], b[0:8])
+			for k := 7; k >= 0; k-- {
+				rb[7-k] ^= byte(t >> (uint(k) * 8))
+			}
+			copy(rb[i*8:(i+1)*8], b[8:16])
+		}
+	}
+
+	out := make([]byte, regLen)
+	copy(out, rb)
+	return out, nil
+}
+
+// UnwrapAESKW inverts WrapAESKW. The unwrapped output IS sensitive and is
+// returned as a plain []byte via encloseAndCopy -- the caller is expected to
+// immediately move it into a secure.Buffer, the same contract
+// UnwrapAESKWP documents above.
+func UnwrapAESKW(wrapped, kek []byte) ([]byte, error) {
+	if len(kek) != 16 && len(kek) != 24 && len(kek) != 32 {
+		return nil, &InvalidKeySizeError{Algorithm: "aes-kw", Size: len(kek)}
+	}
+	if len(wrapped) < 24 || len(wrapped)%8 != 0 {
+		return nil, &MalformedWrappedKeyError{Reason: "aes-kw wrapped key must be at least 24 bytes and a multiple of 8"}
+	}
+
+	block, err := aes.NewCipher(kek)
+	if err != nil {
+		return nil, &CryptoError{Op: "aes.NewCipher (aes-kw unwrap)", Err: err}
+	}
+
+	n := (len(wrapped) / 8) - 1
+	regLen := (n + 1) * 8
+	registers, rerr := secure.NewBuffer(regLen)
+	if rerr != nil {
+		return nil, &CryptoError{Op: "alloc register buffer (aes-kw unwrap)", Err: rerr}
+	}
+	defer registers.Destroy()
+	rb := registers.Bytes()
+	copy(rb, wrapped)
+
+	// RFC 3394 section 2.2.2, the unwrapping algorithm: the inverse 6*n
+	// rounds, run with i and j in reverse order.
+	var b [16]byte
+	for j := 5; j >= 0; j-- {
+		for i := n; i >= 1; i-- {
+			copy(b[0:8], rb[0:8])
+			t := uint64(n*j + i)
+			for k := 7; k >= 0; k-- {
+				b[7-k] ^= byte(t >> (uint(k) * 8))
+			}
+			copy(b[8:16], rb[i*8:(i+1)*8])
+			block.Decrypt(b[:], b[:])
+			copy(rb[0:8], b[0:8])
+			copy(rb[i*8:(i+1)*8], b[8:16])
+		}
+	}
+
+	// RFC 3394 section 2.2.2 step 3: the recovered A must equal the initial
+	// value. subtle.ConstantTimeCompare rather than a byte loop with an early
+	// return, which would leak through timing how many leading octets of a
+	// forged blob matched -- the loop is the whole authenticity check for
+	// CKM_AES_KEY_WRAP, and unwrap is reachable with attacker-chosen input.
+	if subtle.ConstantTimeCompare(rb[0:8], aesKWDefaultIV[:]) != 1 {
+		return nil, &MalformedWrappedKeyError{Reason: "invalid AES-KW integrity check value"}
+	}
+
+	return encloseAndCopy(rb[8:])
 }

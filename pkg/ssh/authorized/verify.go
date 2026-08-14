@@ -22,31 +22,32 @@ import (
 	"github.com/jeremyhahn/go-xkms/pkg/ssh/scope"
 )
 
-// Verify scans every Entry under (scope, owner) in store and returns
+// Verify scans every Record under (scope, owner) in store and returns
 // the first one whose key fingerprint matches received. Returns
-// *NotFoundError if no Entry matches — the caller treats that as
+// *NotFoundError if nothing matches — the caller treats that as
 // authorization denied.
 //
-// Matching is by SHA256 fingerprint; a caller that passes a received
-// key differing only in options/comment will still match.
-func Verify(ctx context.Context, store Store, sc scope.Scope, owner string, received ssh.PublicKey) (*Entry, error) {
+// The returned Record names the entry that granted access, so the
+// caller can log or revoke it; matching is by SHA256 fingerprint, so a
+// received key differing only in options/comment still matches.
+func Verify(ctx context.Context, store Store, sc scope.Scope, owner string, received ssh.PublicKey) (*Record, error) {
 	if store == nil {
 		return nil, &NilInputError{Field: "store"}
 	}
 	if received == nil {
 		return nil, &NilInputError{Field: "received"}
 	}
-	entries, err := store.List(ctx, sc, owner)
+	records, err := store.List(ctx, sc, owner)
 	if err != nil {
 		return nil, err
 	}
 	want := keys.Fingerprint(received)
-	for _, entry := range entries {
-		if entry == nil || entry.Key == nil {
+	for _, rec := range records {
+		if rec == nil || rec.Entry == nil || rec.Entry.Key == nil {
 			continue
 		}
-		if entry.Key.Fingerprint == want {
-			return entry, nil
+		if rec.Entry.Key.Fingerprint == want {
+			return rec, nil
 		}
 	}
 	return nil, &NotFoundError{Scope: string(sc), Owner: owner, Name: ""}

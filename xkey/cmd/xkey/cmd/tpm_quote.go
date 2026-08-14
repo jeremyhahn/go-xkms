@@ -18,6 +18,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"io"
 	"os"
 	"strconv"
 	"strings"
@@ -87,6 +88,7 @@ func init() {
 }
 
 func runTPMQuote(cmd *cobra.Command, args []string) error {
+	out := cmd.OutOrStdout()
 	// Parse PCR indices
 	pcrs, err := parsePCRIndices(quotePCRs)
 	if err != nil {
@@ -115,7 +117,7 @@ func runTPMQuote(cmd *cobra.Command, args []string) error {
 	}
 
 	// Generate quote
-	fmt.Printf("Generating quote for PCRs: %v\n", pcrs)
+	fmt.Fprintf(out, "Generating quote for PCRs: %v\n", pcrs)
 	quote, err := tpm.Quote(pcrs, nonce)
 	if err != nil {
 		return &DetailError{Err: ErrTPMOperationFailed, Detail: fmt.Sprintf(": failed to generate quote: %v", err)}
@@ -140,17 +142,17 @@ func runTPMQuote(cmd *cobra.Command, args []string) error {
 
 	// Output to file if specified
 	if quoteOutputFile != "" {
-		return writeQuoteToFile(result, quote.EventLog)
+		return writeQuoteToFile(out, result, quote.EventLog)
 	}
 
 	// Output based on format
 	switch tpmCfg.outputFormat {
 	case "json":
-		encoder := json.NewEncoder(os.Stdout)
+		encoder := json.NewEncoder(out)
 		encoder.SetIndent("", "  ")
 		return encoder.Encode(result)
 	default:
-		return outputQuoteText(result, pcrs)
+		return outputQuoteText(out, result, pcrs)
 	}
 }
 
@@ -183,41 +185,41 @@ func parsePCRIndices(pcrString string) ([]uint, error) {
 	return pcrs, nil
 }
 
-func outputQuoteText(result *QuoteResult, pcrs []uint) error {
-	fmt.Println()
-	fmt.Println("TPM Quote")
-	fmt.Println("=========")
-	fmt.Println()
+func outputQuoteText(out io.Writer, result *QuoteResult, pcrs []uint) error {
+	fmt.Fprintln(out)
+	fmt.Fprintln(out, "TPM Quote")
+	fmt.Fprintln(out, "=========")
+	fmt.Fprintln(out)
 
-	fmt.Printf("PCRs:       %v\n", pcrs)
-	fmt.Printf("Nonce:      %s\n", result.NonceHex)
-	fmt.Println()
+	fmt.Fprintf(out, "PCRs:       %v\n", pcrs)
+	fmt.Fprintf(out, "Nonce:      %s\n", result.NonceHex)
+	fmt.Fprintln(out)
 
-	fmt.Println("Quoted (TPMS_ATTEST):")
-	fmt.Printf("  Hex:    %s\n", result.QuotedHex)
-	fmt.Printf("  Base64: %s\n", result.Quoted)
-	fmt.Println()
+	fmt.Fprintln(out, "Quoted (TPMS_ATTEST):")
+	fmt.Fprintf(out, "  Hex:    %s\n", result.QuotedHex)
+	fmt.Fprintf(out, "  Base64: %s\n", result.Quoted)
+	fmt.Fprintln(out)
 
-	fmt.Println("Signature:")
-	fmt.Printf("  Hex:    %s\n", result.SignatureHex)
-	fmt.Printf("  Base64: %s\n", result.Signature)
-	fmt.Println()
+	fmt.Fprintln(out, "Signature:")
+	fmt.Fprintf(out, "  Hex:    %s\n", result.SignatureHex)
+	fmt.Fprintf(out, "  Base64: %s\n", result.Signature)
+	fmt.Fprintln(out)
 
-	fmt.Println("PCR Values:")
-	fmt.Printf("  Hex:    %s\n", result.PCRsHex)
-	fmt.Printf("  Base64: %s\n", result.PCRs)
-	fmt.Println()
+	fmt.Fprintln(out, "PCR Values:")
+	fmt.Fprintf(out, "  Hex:    %s\n", result.PCRsHex)
+	fmt.Fprintf(out, "  Base64: %s\n", result.PCRs)
+	fmt.Fprintln(out)
 
 	if result.HasEventLog {
-		fmt.Printf("Event Log: Available (%d bytes)\n", result.EventLogSize)
+		fmt.Fprintf(out, "Event Log: Available (%d bytes)\n", result.EventLogSize)
 	} else {
-		fmt.Println("Event Log: Not available")
+		fmt.Fprintln(out, "Event Log: Not available")
 	}
 
 	return nil
 }
 
-func writeQuoteToFile(result *QuoteResult, eventLog []byte) error {
+func writeQuoteToFile(out io.Writer, result *QuoteResult, eventLog []byte) error {
 	// Create output structure including event log if requested
 	type QuoteOutput struct {
 		QuoteResult
@@ -243,6 +245,6 @@ func writeQuoteToFile(result *QuoteResult, eventLog []byte) error {
 		return &SentinelCauseError{Sentinel: ErrExportFailed, Cause: err}
 	}
 
-	fmt.Printf("Quote written to: %s\n", quoteOutputFile)
+	fmt.Fprintf(out, "Quote written to: %s\n", quoteOutputFile)
 	return nil
 }

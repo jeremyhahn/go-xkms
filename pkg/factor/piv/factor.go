@@ -43,6 +43,7 @@ import (
 	"time"
 
 	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
+	"github.com/jeremyhahn/go-xkms/pkg/ca"
 	"github.com/jeremyhahn/go-xkms/pkg/pivcert"
 	xkms "github.com/jeremyhahn/go-xkms/pkg/xkms"
 )
@@ -232,26 +233,40 @@ func (f *Factor) SignNonce(_ context.Context, slot pivcert.PIVSlot, nonce []byte
 	return signer.Sign(rand.Reader, digest[:], crypto.SHA256)
 }
 
-// buildSelfSignedCert produces a PEM-encoded self-signed certificate for
-// the supplied signer.
+// selfSignedProfile is the certificate profile for a PIV factor's enrollment
+// certificate: a digital-signature-only end-entity certificate proving
+// possession of the enrolled slot's key. It carries no extended key usage —
+// this certificate exists to be re-presented as a challenge-response public
+// key during Verify, not to authenticate a TLS session.
+func selfSignedProfile() ca.ProfileProvider {
+	return ca.NewProfileBuilder("piv-factor-self-signed").
+		WithKeyUsage(x509.KeyUsageDigitalSignature).
+		Build()
+}
+
+// buildSelfSignedCert produces a PEM-encoded self-signed certificate for the
+// supplied signer.
+//
+// Issuance is delegated to ca.Issuer (pkg/ca), the single implementer of
+// certificate template construction and x509.CreateCertificate calls in
+// go-xkms, rather than building the template and calling
+// x509.CreateCertificate directly.
 func buildSelfSignedCert(signer crypto.Signer, subject pkix.Name, validityDays int) ([]byte, error) {
 	serial, err := rand.Int(rand.Reader, new(big.Int).Lsh(big.NewInt(1), 128))
 	if err != nil {
 		return nil, err
 	}
-	tmpl := &x509.Certificate{
-		SerialNumber:          serial,
-		Subject:               subject,
-		NotBefore:             time.Now().UTC(),
-		NotAfter:              time.Now().UTC().AddDate(0, 0, validityDays),
-		KeyUsage:              x509.KeyUsageDigitalSignature,
-		BasicConstraintsValid: true,
-	}
-	der, err := x509.CreateCertificate(rand.Reader, tmpl, tmpl, signer.Public(), signer)
+	cert, err := (&ca.Issuer{Signer: signer}).Issue(rand.Reader, &ca.CertificateSpec{
+		Serial:    serial,
+		Subject:   subject,
+		NotBefore: time.Now().UTC(),
+		NotAfter:  time.Now().UTC().AddDate(0, 0, validityDays),
+		Profile:   selfSignedProfile(),
+	})
 	if err != nil {
 		return nil, err
 	}
-	return pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: der}), nil
+	return pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: cert.Raw}), nil
 }
 
 // parsePublicKeyFromPEM accepts either a CERTIFICATE PEM block (extracts

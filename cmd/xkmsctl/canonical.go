@@ -52,7 +52,6 @@ type canonicalInitFlags struct {
 	threshold       int
 	hostname        string
 	sans            string
-	adminBundle     string
 }
 
 // CanonicalRedirectError is emitted when an operator runs a legacy
@@ -120,8 +119,6 @@ func wireCanonicalInitFlags(cmd *cobra.Command) {
 		"FQDN written into the admin/server certificate CN")
 	cmd.Flags().StringVar(&canonicalSurfaceFlags.sans, "sans", "",
 		"Comma-separated additional DNS / IP SANs")
-	cmd.Flags().StringVar(&canonicalSurfaceFlags.adminBundle, "admin-bundle", "-",
-		"Path for the admin client cert+key bundle (default: stdout, one-shot)")
 
 	cmd.Long = `Bootstrap the xkms server in one call.
 
@@ -134,8 +131,7 @@ Canonical environment variables (Viper-bound):
   XKMS_SHARES              equivalent to --shares
   XKMS_THRESHOLD           equivalent to --threshold
   XKMS_HOSTNAME            equivalent to --hostname
-  XKMS_SANS                equivalent to --sans
-  XKMS_ADMIN_BUNDLE        equivalent to --admin-bundle`
+  XKMS_SANS                equivalent to --sans`
 }
 
 // resolveCanonicalInitEnvFallbacks resolves XKMS_* env-var fallbacks
@@ -153,7 +149,6 @@ func resolveCanonicalInitEnvFallbacks(cmd *cobra.Command, f *canonicalInitFlags)
 		"threshold":        "THRESHOLD",
 		"hostname":         "HOSTNAME",
 		"sans":             "SANS",
-		"admin-bundle":     "ADMIN_BUNDLE",
 	}
 	for flagName, envKey := range bindings {
 		_ = v.BindEnv(flagName, "XKMS_"+envKey)
@@ -215,11 +210,6 @@ func runCanonicalInit(cmd *cobra.Command, _ []string) error {
 	if f.sans != "" {
 		_, _ = fmt.Fprintf(out, "  SANs:            %s\n", f.sans)
 	}
-	bundlePath := f.adminBundle
-	if bundlePath == "" {
-		bundlePath = "-"
-	}
-	_, _ = fmt.Fprintf(out, "  AdminBundle:     %s\n", bundlePath)
 	_, _ = fmt.Fprintln(out)
 	_, _ = fmt.Fprintln(out, "Note: SDK ceremony delegation pending; xkmsctl init wires the canonical")
 	_, _ = fmt.Fprintln(out, "shape that calls quicbaas SDK Ceremony().Initialize() once available.")

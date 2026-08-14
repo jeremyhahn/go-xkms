@@ -19,6 +19,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"encoding/pem"
+	"errors"
 	"log/slog"
 	"time"
 
@@ -55,6 +56,16 @@ type BridgeConfig struct {
 
 	// DeviceName is the human-readable name of the connected phone (for audit logging).
 	DeviceName string
+
+	// TPMOpenErr, when set, records why an apparently-present TPM could not be
+	// opened. Leave nil on a host that genuinely has no TPM: the two are
+	// reported to the phone as different conditions.
+	TPMOpenErr error
+
+	// TPM answers the TCG/IDevID enrollment methods when this host has one.
+	// Optional: leave nil on a host with no TPM, and those handlers report the
+	// feature as unconfigured rather than failing.
+	TPM TPMEnroller
 }
 
 // DefaultBridgeConfig returns a BridgeConfig with sensible defaults.
@@ -78,6 +89,15 @@ type Bridge struct {
 	logger      *slog.Logger
 	auditLogger audit.Logger
 	handlers    map[string]bridgeHandler
+
+	// tpmOpenErr records why a TPM that appears to exist could not be opened,
+	// so the phone can be told "unreachable" rather than "absent".
+	tpmOpenErr error
+
+	// tpm answers the TCG/IDevID enrollment methods when this host has a TPM.
+	// Optional: without it those handlers return ErrTPMNotConfigured, which
+	// tells the phone the feature is unavailable rather than that we failed.
+	tpm TPMEnroller
 
 	// Pre-computed lookup sets for O(1) access control checks.
 	allowedSet map[string]struct{}
@@ -106,6 +126,8 @@ func NewBridge(client transport.Client, config *BridgeConfig) (*Bridge, error) {
 		config:      config,
 		logger:      config.Logger.With("component", "bridge"),
 		auditLogger: config.AuditLogger,
+		tpm:         config.TPM,
+		tpmOpenErr:  config.TPMOpenErr,
 	}
 
 	// Build O(1) access control lookup sets.
@@ -120,22 +142,23 @@ func NewBridge(client transport.Client, config *BridgeConfig) (*Bridge, error) {
 
 	// Initialize map-based dispatch for O(1) routing.
 	b.handlers = map[string]bridgeHandler{
-		MethodRemoteListBackends:        b.handleListBackends,
-		MethodRemoteListKeys:            b.handleListKeys,
-		MethodRemoteGetPublicKey:        b.handleGetPublicKey,
-		MethodRemoteSign:                b.handleSign,
-		MethodRemoteVerify:              b.handleVerify,
-		MethodRemoteEncrypt:             b.handleEncrypt,
-		MethodRemoteDecrypt:             b.handleDecrypt,
-		MethodRemoteDeriveKey:           b.handleDeriveKey,
-		MethodRemoteGenerateKey:         b.handleGenerateKey,
-		MethodRemoteGetKeyInfo:          b.handleGetKeyInfo,
-		MethodRemoteDeleteKey:           b.handleDeleteKey,
-		MethodRemoteAttestKey:           b.handleAttestKey,
-		MethodRemoteAttestDevice:        b.handleAttestDevice,
-		MethodRemoteGetTCGCSRIDevID:     b.handleGetTCGCSRIDevID,
-		MethodRemoteActivateCredential:  b.handleActivateCredential,
-		MethodRemoteGetAttestationQuote: b.handleGetAttestationQuote,
+		MethodRemoteListBackends:         b.handleListBackends,
+		MethodRemoteListKeys:             b.handleListKeys,
+		MethodRemoteGetPublicKey:         b.handleGetPublicKey,
+		MethodRemoteSign:                 b.handleSign,
+		MethodRemoteVerify:               b.handleVerify,
+		MethodRemoteEncrypt:              b.handleEncrypt,
+		MethodRemoteDecrypt:              b.handleDecrypt,
+		MethodRemoteDeriveKey:            b.handleDeriveKey,
+		MethodRemoteGenerateKey:          b.handleGenerateKey,
+		MethodRemoteGetKeyInfo:           b.handleGetKeyInfo,
+		MethodRemoteDeleteKey:            b.handleDeleteKey,
+		MethodRemoteAttestKey:            b.handleAttestKey,
+		MethodRemoteAttestDevice:         b.handleAttestDevice,
+		MethodRemoteGetTCGCSRIDevID:      b.handleGetTCGCSRIDevID,
+		MethodRemoteActivateCredential:   b.handleActivateCredential,
+		MethodRemoteGetAttestationQuote:  b.handleGetAttestationQuote,
+		MethodRemoteStoreEnrollmentCerts: b.handleStoreEnrollmentCerts,
 		// Key sharing handlers.
 		MethodRemoteSharePublicKey:  b.handleSharePublicKey,
 		MethodRemoteShareSymmetric:  b.handleShareSymmetric,
@@ -804,33 +827,6 @@ func (b *Bridge) handleAttestDevice(ctx context.Context, params json.RawMessage)
 // The TCG-CSR-IDEVID structure contains the IDevID public key, IAK public key,
 // EK certificate, and platform identification information needed for CA enrollment.
 //
-// To perform IDevID enrollment, clients should use the xkmsd TPM2 backend directly.
-func (b *Bridge) handleGetTCGCSRIDevID(_ context.Context, params json.RawMessage) (interface{}, error) {
-	var p RemoteGetTCGCSRIDevIDParams
-	if err := unmarshalParams(params, &p); err != nil {
-		return nil, ErrBridgeInvalidParams
-	}
-
-	// Check backend access if specified
-	backend := p.Backend
-	if backend == "" {
-		backend = "tpm2"
-	}
-	if err := b.checkBackendAccess(backend); err != nil {
-		return nil, err
-	}
-
-	b.logger.Warn("TCG-CSR-IDEVID generation requested via bridge",
-		"backend", backend,
-		"note", "operation requires direct TPM2 access")
-
-	// TCG-CSR-IDEVID generation requires direct TPM2 access for:
-	// 1. Reading the EK certificate from TPM NVRAM
-	// 2. Generating/reading IDevID and IAK keys
-	// 3. Creating the TCG-CSR-IDEVID packed structure
-	// The SDK transport.Client does not currently expose these TPM2-specific operations.
-	return nil, ErrTPM2DirectAccessRequired
-}
 
 // handleActivateCredential handles TPM2 credential activation challenges from a CA.
 // This operation requires direct TPM2 access and is not currently supported via the bridge.
@@ -839,35 +835,6 @@ func (b *Bridge) handleGetTCGCSRIDevID(_ context.Context, params json.RawMessage
 // created with TPM2_MakeCredential. The decryption uses the EK private key which
 // never leaves the TPM.
 //
-// To perform credential activation, clients should use the xkmsd TPM2 backend directly.
-func (b *Bridge) handleActivateCredential(_ context.Context, params json.RawMessage) (interface{}, error) {
-	var p RemoteActivateCredentialParams
-	if err := unmarshalParams(params, &p); err != nil {
-		return nil, ErrBridgeInvalidParams
-	}
-
-	// Check backend access if specified
-	backend := p.Backend
-	if backend == "" {
-		backend = "tpm2"
-	}
-	if err := b.checkBackendAccess(backend); err != nil {
-		return nil, err
-	}
-
-	b.logger.Warn("credential activation requested via bridge",
-		"backend", backend,
-		"credentialBlobLen", len(p.CredentialBlob),
-		"encryptedSecretLen", len(p.EncryptedSecret),
-		"note", "operation requires direct TPM2 access")
-
-	// Credential activation requires direct TPM2 access for:
-	// 1. Loading the EK into a TPM session
-	// 2. Loading the IAK into the same session
-	// 3. Executing TPM2_ActivateCredential command
-	// The SDK transport.Client does not currently expose these TPM2-specific operations.
-	return nil, ErrTPM2DirectAccessRequired
-}
 
 // handleGetAttestationQuote handles requests for TPM2 attestation quotes.
 // This operation requires direct TPM2 access and is not currently supported via the bridge.
@@ -876,36 +843,6 @@ func (b *Bridge) handleActivateCredential(_ context.Context, params json.RawMess
 // PCR values with the IAK. The CA uses this to verify platform integrity and
 // binding between the IAK and EK.
 //
-// To obtain attestation quotes, clients should use the xkmsd TPM2 backend directly.
-func (b *Bridge) handleGetAttestationQuote(_ context.Context, params json.RawMessage) (interface{}, error) {
-	var p RemoteGetAttestationQuoteParams
-	if err := unmarshalParams(params, &p); err != nil {
-		return nil, ErrBridgeInvalidParams
-	}
-
-	// Check backend access if specified
-	backend := p.Backend
-	if backend == "" {
-		backend = "tpm2"
-	}
-	if err := b.checkBackendAccess(backend); err != nil {
-		return nil, err
-	}
-
-	b.logger.Warn("attestation quote requested via bridge",
-		"backend", backend,
-		"nonceLen", len(p.Nonce),
-		"pcrIndices", p.PCRIndices,
-		"pcrBank", p.PCRBank,
-		"note", "operation requires direct TPM2 access")
-
-	// Attestation quote generation requires direct TPM2 access for:
-	// 1. Reading PCR values from the TPM
-	// 2. Loading the IAK for signing
-	// 3. Executing TPM2_Quote command
-	// The SDK transport.Client does not currently expose these TPM2-specific operations.
-	return nil, ErrTPM2DirectAccessRequired
-}
 
 // computeDeviceFingerprint generates a stable device identifier based on
 // available backends. For TPM2 systems, this could be enhanced to include
@@ -955,57 +892,73 @@ func (b *Bridge) errorResponse(id uint64, code int, message string) *Response {
 // mapErrorToRPC translates a Go error into an appropriate JSON-RPC error
 // code and message.
 func mapErrorToRPC(err error) (int, string) {
-	// Bridge-specific errors.
-	switch err {
-	case ErrBridgeNotConnected:
+	// errors.Is, not `switch err`: the handlers wrap their causes (tpmError
+	// returns a *SentinelCauseError), and identity comparison silently drops
+	// every wrapped error through to ErrorCodeInternalError. That was observed
+	// on real hardware — an unprovisioned IAK reported -32603 instead of an
+	// attestation code, with only the cause text to go on.
+	switch {
+	case errors.Is(err, ErrBridgeNotConnected):
 		return ErrorCodeInternalError, "xkmsd client not connected"
-	case ErrBridgeBackendDenied:
+	case errors.Is(err, ErrBridgeBackendDenied):
 		return ErrorCodeBackendDenied, "backend access denied"
-	case ErrBridgeInvalidParams:
+	case errors.Is(err, ErrBridgeInvalidParams):
 		return ErrorCodeInvalidParams, "invalid request parameters"
-	case ErrAttestationNotSupported:
+	case errors.Is(err, ErrAttestationNotSupported):
 		return ErrorCodeAttestUnsupported, "attestation not supported via bridge"
-	case ErrTPM2DirectAccessRequired:
+	case errors.Is(err, ErrTPM2DirectAccessRequired):
 		return ErrorCodeAttestUnsupported, "operation requires direct TPM2 access; use xkmsd TPM2 backend"
-	case ErrShareDenied:
+	case errors.Is(err, ErrTPMNotConfigured):
+		return ErrorCodeAttestUnsupported, "no TPM is configured on this host"
+	case errors.Is(err, ErrTPMUnavailable):
+		return ErrorCodeAttestFailed, "this host has a TPM but xkey cannot reach it; check permissions on the TPM device"
+	case errors.Is(err, ErrEKCertificateMissing):
+		return ErrorCodeAttestUnsupported, "the TPM has no endorsement key certificate"
+	case errors.Is(err, ErrTPMKeyNotProvisioned):
+		return ErrorCodeAttestFailed, "TPM key is not provisioned; provision before enrolling"
+	case errors.Is(err, ErrTPMOperationFailed):
+		return ErrorCodeAttestFailed, "TPM operation failed"
+	case errors.Is(err, ErrInvalidCertificate):
+		return ErrorCodeInvalidParams, "certificate is not valid X.509"
+	case errors.Is(err, ErrShareDenied):
 		return ErrorCodeShareDenied, "key sharing denied by policy"
-	case ErrShareNotExportable:
+	case errors.Is(err, ErrShareNotExportable):
 		return ErrorCodeShareNotExportable, "key not exportable for sharing"
-	case ErrInvalidPublicKey:
+	case errors.Is(err, ErrInvalidPublicKey):
 		return ErrorCodeInvalidPublicKey, "invalid public key data"
-	case ErrKeyNotFound:
+	case errors.Is(err, ErrKeyNotFound):
 		return ErrorCodeKeyNotFound, "key not found"
-	case ErrInvalidFormat:
+	case errors.Is(err, ErrInvalidFormat):
 		return ErrorCodeInvalidFormat, "invalid format requested"
-	case ErrBackupFailed:
+	case errors.Is(err, ErrBackupFailed):
 		return ErrorCodeBackupFailed, "phone: backup creation failed"
-	case ErrBackupRestoreFailed:
+	case errors.Is(err, ErrBackupRestoreFailed):
 		return ErrorCodeBackupRestore, "phone: backup restore failed"
-	case ErrBackupNotFound:
+	case errors.Is(err, ErrBackupNotFound):
 		return ErrorCodeBackupNotFound, "phone: backup not found"
-	case ErrOATHCredentialNotFound:
+	case errors.Is(err, ErrOATHCredentialNotFound):
 		return ErrorCodeOATHNotFound, "phone: OATH credential not found"
-	case ErrOATHGenerateFailed:
+	case errors.Is(err, ErrOATHGenerateFailed):
 		return ErrorCodeOATHGenerate, "phone: OATH code generation failed"
-	case ErrOATHStoreFailed:
+	case errors.Is(err, ErrOATHStoreFailed):
 		return ErrorCodeOATHStore, "phone: OATH store operation failed"
-	case ErrPIVSlotNotFound:
+	case errors.Is(err, ErrPIVSlotNotFound):
 		return ErrorCodePIVSlotNotFound, "phone: PIV slot not found"
-	case ErrPIVSlotOccupied:
+	case errors.Is(err, ErrPIVSlotOccupied):
 		return ErrorCodePIVSlotOccupied, "phone: PIV slot already occupied"
-	case ErrPIVSignFailed:
+	case errors.Is(err, ErrPIVSignFailed):
 		return ErrorCodePIVSignFailed, "phone: PIV signing failed"
-	case ErrPIVInvalidSlot:
+	case errors.Is(err, ErrPIVInvalidSlot):
 		return ErrorCodePIVInvalidSlot, "phone: invalid PIV slot identifier"
-	case ErrSyncFailed:
+	case errors.Is(err, ErrSyncFailed):
 		return ErrorCodeSyncFailed, "phone: sync failed"
-	case ErrSyncConflict:
+	case errors.Is(err, ErrSyncConflict):
 		return ErrorCodeSyncConflict, "phone: sync conflict detected"
-	case ErrSyncRemoteUnavailable:
+	case errors.Is(err, ErrSyncRemoteUnavailable):
 		return ErrorCodeSyncRemoteUnavail, "phone: sync remote device unavailable"
-	case ErrSyncNoData:
+	case errors.Is(err, ErrSyncNoData):
 		return ErrorCodeSyncNoData, "phone: no data available for sync"
-	case ErrSyncVersionMismatch:
+	case errors.Is(err, ErrSyncVersionMismatch):
 		return ErrorCodeSyncVersionMismatch, "phone: sync version mismatch"
 	}
 

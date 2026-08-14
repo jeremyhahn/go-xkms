@@ -117,7 +117,7 @@ func TestPromoteKeyStorage(t *testing.T) {
 func TestBarrierStrategy_BootstrapThenPromote(t *testing.T) {
 	ctx := context.Background()
 	deps := &StrategyDeps{
-		NodeLocalDataDir:      t.TempDir(),
+		NodeLocalDataDir:      nodeLocalDataDir(t),
 		CAConfig:              ca.DefaultMultiIdentityCAConfigWithIntermediate(),
 		Protection:            KeyProtection{Mode: KeyProtectPassphrase, Passphrase: "cluster-ca-secret"},
 		ReplicatedKeyStorage:  storage.NewMemory(),
@@ -132,6 +132,11 @@ func TestBarrierStrategy_BootstrapThenPromote(t *testing.T) {
 	require.NoError(t, err)
 	require.NotNil(t, caBackend)
 	require.NotNil(t, s.bootstrapKeyStorage, "bootstrap key storage must be retained for promotion")
+
+	// Release the node-local store handles. Closing them does NOT drain the
+	// asynchronous writes they issued (see nodeLocalDataDir); the data dir
+	// helper absorbs the stragglers during cleanup.
+	t.Cleanup(func() { _ = s.closeBootstrapStorage() })
 
 	// Simulate the CA having created a signing-key blob in the node-local store.
 	require.NoError(t, s.bootstrapKeyStorage.Put(ctx, "ca/cluster-intermediate", []byte("wrapped-key")))
@@ -152,7 +157,7 @@ func TestBarrierStrategy_BootstrapThenPromote(t *testing.T) {
 func TestBarrierStrategy_JoinerNoPromotion(t *testing.T) {
 	ctx := context.Background()
 	deps := &StrategyDeps{
-		NodeLocalDataDir:      t.TempDir(),
+		NodeLocalDataDir:      nodeLocalDataDir(t),
 		CAConfig:              ca.DefaultMultiIdentityCAConfigWithIntermediate(),
 		Protection:            KeyProtection{Mode: KeyProtectPassphrase, Passphrase: "cluster-ca-secret"},
 		ReplicatedKeyStorage:  storage.NewMemory(),

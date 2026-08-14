@@ -83,15 +83,47 @@ func TestResponseWriter(t *testing.T) {
 	})
 }
 
-func TestCORSMiddleware(t *testing.T) {
+func TestNewCORSMiddleware(t *testing.T) {
 	handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusOK)
 	})
 
-	middleware := CORSMiddleware(handler)
+	t.Run("Nil options emit no CORS headers", func(t *testing.T) {
+		middleware := NewCORSMiddleware(nil)(handler)
 
-	t.Run("Sets CORS headers", func(t *testing.T) {
 		req := httptest.NewRequest(http.MethodGet, "/test", nil)
+		req.Header.Set("Origin", "https://evil.example")
+		w := httptest.NewRecorder()
+
+		middleware.ServeHTTP(w, req)
+
+		if got := w.Header().Get("Access-Control-Allow-Origin"); got != "" {
+			t.Errorf("expected no Access-Control-Allow-Origin, got %q", got)
+		}
+		if w.Code != http.StatusOK {
+			t.Errorf("expected pass-through status %d, got %d", http.StatusOK, w.Code)
+		}
+	})
+
+	t.Run("Empty allowlist emits no CORS headers", func(t *testing.T) {
+		middleware := NewCORSMiddleware(&CORSOptions{})(handler)
+
+		req := httptest.NewRequest(http.MethodGet, "/test", nil)
+		req.Header.Set("Origin", "https://app.example")
+		w := httptest.NewRecorder()
+
+		middleware.ServeHTTP(w, req)
+
+		if got := w.Header().Get("Access-Control-Allow-Origin"); got != "" {
+			t.Errorf("expected no Access-Control-Allow-Origin, got %q", got)
+		}
+	})
+
+	t.Run("Wildcard sets CORS headers for cross-origin requests", func(t *testing.T) {
+		middleware := NewCORSMiddleware(&CORSOptions{AllowedOrigins: []string{"*"}})(handler)
+
+		req := httptest.NewRequest(http.MethodGet, "/test", nil)
+		req.Header.Set("Origin", "https://app.example")
 		w := httptest.NewRecorder()
 
 		middleware.ServeHTTP(w, req)
@@ -99,39 +131,119 @@ func TestCORSMiddleware(t *testing.T) {
 		if w.Header().Get("Access-Control-Allow-Origin") != "*" {
 			t.Error("Access-Control-Allow-Origin header not set correctly")
 		}
-
 		if w.Header().Get("Access-Control-Allow-Methods") == "" {
 			t.Error("Access-Control-Allow-Methods header not set")
 		}
-
 		if w.Header().Get("Access-Control-Allow-Headers") == "" {
 			t.Error("Access-Control-Allow-Headers header not set")
 		}
-
 		if w.Header().Get("Access-Control-Max-Age") != "3600" {
 			t.Error("Access-Control-Max-Age header not set correctly")
 		}
 	})
 
-	t.Run("Handles OPTIONS preflight", func(t *testing.T) {
-		req := httptest.NewRequest(http.MethodOptions, "/test", nil)
-		w := httptest.NewRecorder()
+	t.Run("Requests without Origin get no CORS headers", func(t *testing.T) {
+		middleware := NewCORSMiddleware(&CORSOptions{AllowedOrigins: []string{"*"}})(handler)
 
-		middleware.ServeHTTP(w, req)
-
-		if w.Code != http.StatusOK {
-			t.Errorf("Expected status %d, got %d", http.StatusOK, w.Code)
-		}
-	})
-
-	t.Run("Calls next handler for non-OPTIONS", func(t *testing.T) {
 		req := httptest.NewRequest(http.MethodGet, "/test", nil)
 		w := httptest.NewRecorder()
 
 		middleware.ServeHTTP(w, req)
 
+		if got := w.Header().Get("Access-Control-Allow-Origin"); got != "" {
+			t.Errorf("expected no Access-Control-Allow-Origin, got %q", got)
+		}
 		if w.Code != http.StatusOK {
-			t.Errorf("Expected status %d, got %d", http.StatusOK, w.Code)
+			t.Errorf("expected status %d, got %d", http.StatusOK, w.Code)
+		}
+	})
+
+	t.Run("Allow-listed origin is echoed with Vary", func(t *testing.T) {
+		middleware := NewCORSMiddleware(&CORSOptions{
+			AllowedOrigins: []string{"https://app.example"},
+		})(handler)
+
+		req := httptest.NewRequest(http.MethodGet, "/test", nil)
+		req.Header.Set("Origin", "https://app.example")
+		w := httptest.NewRecorder()
+
+		middleware.ServeHTTP(w, req)
+
+		if got := w.Header().Get("Access-Control-Allow-Origin"); got != "https://app.example" {
+			t.Errorf("expected origin echo, got %q", got)
+		}
+		if got := w.Header().Get("Vary"); !strings.Contains(got, "Origin") {
+			t.Errorf("expected Vary: Origin, got %q", got)
+		}
+	})
+
+	t.Run("Unlisted origin gets no CORS headers", func(t *testing.T) {
+		middleware := NewCORSMiddleware(&CORSOptions{
+			AllowedOrigins: []string{"https://app.example"},
+		})(handler)
+
+		req := httptest.NewRequest(http.MethodGet, "/test", nil)
+		req.Header.Set("Origin", "https://evil.example")
+		w := httptest.NewRecorder()
+
+		middleware.ServeHTTP(w, req)
+
+		if got := w.Header().Get("Access-Control-Allow-Origin"); got != "" {
+			t.Errorf("expected no Access-Control-Allow-Origin, got %q", got)
+		}
+	})
+
+	t.Run("Handles OPTIONS preflight for allowed origin", func(t *testing.T) {
+		middleware := NewCORSMiddleware(&CORSOptions{AllowedOrigins: []string{"*"}})(handler)
+
+		req := httptest.NewRequest(http.MethodOptions, "/test", nil)
+		req.Header.Set("Origin", "https://app.example")
+		w := httptest.NewRecorder()
+
+		middleware.ServeHTTP(w, req)
+
+		if w.Code != http.StatusNoContent {
+			t.Errorf("Expected status %d, got %d", http.StatusNoContent, w.Code)
+		}
+	})
+
+	t.Run("Credentials header set for explicit origin only", func(t *testing.T) {
+		middleware := NewCORSMiddleware(&CORSOptions{
+			AllowedOrigins:   []string{"https://app.example"},
+			AllowCredentials: true,
+		})(handler)
+
+		req := httptest.NewRequest(http.MethodGet, "/test", nil)
+		req.Header.Set("Origin", "https://app.example")
+		w := httptest.NewRecorder()
+
+		middleware.ServeHTTP(w, req)
+
+		if w.Header().Get("Access-Control-Allow-Credentials") != "true" {
+			t.Error("expected Access-Control-Allow-Credentials: true")
+		}
+	})
+
+	t.Run("Credentials suppressed for wildcard origin", func(t *testing.T) {
+		middleware := NewCORSMiddleware(&CORSOptions{
+			AllowedOrigins:   []string{"*"},
+			AllowCredentials: true,
+		})(handler)
+
+		req := httptest.NewRequest(http.MethodGet, "/test", nil)
+		req.Header.Set("Origin", "https://app.example")
+		w := httptest.NewRecorder()
+
+		middleware.ServeHTTP(w, req)
+
+		// The Fetch standard forbids credentials with a wildcard origin, so
+		// the middleware sends "*" without the credentials header:
+		// credentialed access requires listing the origin explicitly.
+		if got := w.Header().Get("Access-Control-Allow-Origin"); got != "*" {
+			t.Errorf("expected wildcard origin, got %q", got)
+		}
+		if got := w.Header().Get("Access-Control-Allow-Credentials"); got != "" {
+			t.Errorf("expected no credentials header with wildcard, got %q", got)
 		}
 	})
 
@@ -139,7 +251,10 @@ func TestCORSMiddleware(t *testing.T) {
 	// sending X-Session-Id / X-User-Id on /finish and reading them from
 	// /begin responses. Those headers must be both allowed and exposed.
 	t.Run("Permits and exposes WebAuthn session headers", func(t *testing.T) {
+		middleware := NewCORSMiddleware(&CORSOptions{AllowedOrigins: []string{"*"}})(handler)
+
 		req := httptest.NewRequest(http.MethodOptions, "/api/v1/webauthn/login/finish", nil)
+		req.Header.Set("Origin", "https://app.example")
 		w := httptest.NewRecorder()
 
 		middleware.ServeHTTP(w, req)

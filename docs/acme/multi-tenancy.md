@@ -45,7 +45,7 @@ Tenants can operate with two CA hierarchy models:
 ### Model 1: Global Root CA (Default)
 
 ```
-Global Root CA (managed by super-admin)
+Global Root CA (managed by a system-tenant `so` / `admin`)
 +-- Tenant A Intermediate CA
 +-- Tenant B Intermediate CA
 +-- Tenant C Intermediate CA
@@ -92,35 +92,35 @@ When issuing certificates, the CA is selected:
 
 ### Tenant Management
 
-| Endpoint | Method | Role | Description |
-|----------|--------|------|-------------|
-| `/api/v1/tenants` | POST | super-admin | Create tenant |
-| `/api/v1/tenants` | GET | super-admin | List tenants |
-| `/api/v1/tenants/{id}` | GET | admin | Get tenant |
-| `/api/v1/tenants/{id}` | PUT | admin | Update tenant |
-| `/api/v1/tenants/{id}` | DELETE | super-admin | Delete tenant |
-| `/api/v1/tenants/{id}/status` | PUT | super-admin | Update status |
+| Endpoint | Method | Permission | Description |
+|----------|--------|------------|-------------|
+| `/api/v1/tenants` | POST | `tenants:create` | Create tenant |
+| `/api/v1/tenants` | GET | `tenants:list` | List tenants |
+| `/api/v1/tenants/{id}` | GET | `tenants:read` | Get tenant |
+| `/api/v1/tenants/{id}` | PUT | `tenants:update` | Update tenant |
+| `/api/v1/tenants/{id}` | DELETE | `tenants:delete` | Delete tenant |
+| `/api/v1/tenants/{id}/status` | PUT | `tenants:update` | Update status |
 
 ### Tenant CA Management
 
-| Endpoint | Method | Role | Description |
-|----------|--------|------|-------------|
-| `/api/v1/tenants/{id}/root-ca` | POST | admin | Create tenant root CA |
-| `/api/v1/tenants/{id}/intermediate-cas` | GET | admin | List intermediate CAs |
-| `/api/v1/tenants/{id}/intermediate-cas` | POST | admin | Create intermediate CA |
-| `/api/v1/tenants/{id}/intermediate-cas/{caid}` | GET | admin | Get CA details |
-| `/api/v1/tenants/{id}/intermediate-cas/{caid}/status` | PUT | admin | Update CA status |
-| `/api/v1/tenants/{id}/default-intermediate-ca` | PUT | admin | Set default CA |
-| `/api/v1/tenants/{id}/ca-status` | GET | admin | Get CA status |
+| Endpoint | Method | Permission | Description |
+|----------|--------|------------|-------------|
+| `/api/v1/tenants/{id}/root-ca` | POST | `ca:create` | Create tenant root CA |
+| `/api/v1/tenants/{id}/intermediate-cas` | GET | `ca:list` | List intermediate CAs |
+| `/api/v1/tenants/{id}/intermediate-cas` | POST | `ca:create` | Create intermediate CA |
+| `/api/v1/tenants/{id}/intermediate-cas/{caid}` | GET | `ca:read` | Get CA details |
+| `/api/v1/tenants/{id}/intermediate-cas/{caid}/status` | PUT | `ca:update` | Update CA status |
+| `/api/v1/tenants/{id}/default-intermediate-ca` | PUT | `ca:update` | Set default CA |
+| `/api/v1/tenants/{id}/ca-status` | GET | `ca:read` | Get CA status |
 
 ### Tenant EAB Management
 
-| Endpoint | Method | Role | Description |
-|----------|--------|------|-------------|
-| `/api/v1/tenants/{id}/eab` | GET | endorser | List EABs |
-| `/api/v1/tenants/{id}/eab` | POST | endorser | Create EAB |
-| `/api/v1/tenants/{id}/eab/{kid}` | GET | endorser | Get EAB |
-| `/api/v1/tenants/{id}/eab/{kid}` | DELETE | admin | Delete EAB |
+| Endpoint | Method | Permission | Description |
+|----------|--------|------------|-------------|
+| `/api/v1/tenants/{id}/eab` | GET | `acme_eab:list` | List EABs |
+| `/api/v1/tenants/{id}/eab` | POST | `acme_eab:create` | Create EAB |
+| `/api/v1/tenants/{id}/eab/{kid}` | GET | `acme_eab:read` | Get EAB |
+| `/api/v1/tenants/{id}/eab/{kid}` | DELETE | `acme_eab:delete` | Delete EAB |
 
 ## Tenant Settings
 
@@ -242,26 +242,37 @@ tenants/{tenant_id}/ca/intermediate/{ca_id}
 
 ## RBAC
 
-### Role Hierarchy
+Authorization is delegated to the hosted go-qrdb node's RBAC service; the ACME
+Admin API defines no roles or permissions of its own. The canonical roles are
+go-qrdb's six system roles.
 
-| Role | Level | Tenant Scope |
-|------|-------|--------------|
-| super-admin | 100 | All tenants |
-| admin | 80 | Assigned tenant |
-| endorser | 60 | Assigned tenant |
-| operator | 40 | Assigned tenant |
-| viewer | 20 | Assigned tenant |
+| Role | Tenant scope | ACME admin reach |
+|------|--------------|------------------|
+| `so` | Own tenant (all tenants from the system tenant) | CA hierarchy, ACME accounts / orders / EABs, barrier governance, role management |
+| `admin` | Own tenant (all tenants from the system tenant) | Tenant, CA hierarchy, user, certificate, and EAB lifecycle |
+| `operator` | Own tenant | Read-only registration data and CA hierarchy |
+| `user` | Own tenant | None |
+| `auditor` | Own tenant | Read-only metadata plus the audit trail |
+| `custodian` | Own tenant | `barrier:unseal-share` only |
 
-### Role Capabilities
+Cross-tenant reach is not a role: it follows qrdb's system-tenant rule. An
+identity rooted in the reserved system tenant, or one carrying no tenant at
+all (empty `TenantID` -- the bootstrap case), is platform-scoped and reaches
+every tenant; any other identity is confined to its own (`auth.IsCrossTenant`).
+That is the authority the deleted `super-admin` role used to carry.
 
-| Capability | super-admin | admin | endorser | operator | viewer |
-|------------|:-----------:|:-----:|:-----------------:|:--------:|:------:|
-| Create tenant | X | - | - | - | - |
-| Delete tenant | X | - | - | - | - |
-| Manage tenant CA | X | X | - | - | - |
-| Create EAB (endorse-01) | X | X | X | - | - |
-| Revoke certificates | X | X | - | - | - |
-| View resources | X | X | X | X | X |
+### Capabilities by permission
+
+| Capability | Permission | Held by |
+|------------|------------|---------|
+| Create / delete tenant | `tenants:create`, `tenants:delete` | `so`, `admin` |
+| Manage tenant CA | `ca:create`, `ca:update` | `so`, `admin` |
+| Create EAB (incl. endorse-01) | `acme_eab:create` | `so`, `admin`, or a custom endorse-only role |
+| Revoke certificates | `certs:revoke` | `so`, `admin` |
+| View resources | `*:read`, `*:list` | `so`, `admin`, `operator`, `auditor` |
+
+See [admin/authorization.md](admin/authorization.md) for the complete
+operation-to-permission mapping.
 
 ## Best Practices
 

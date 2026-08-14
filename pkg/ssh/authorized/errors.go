@@ -13,6 +13,8 @@
 
 package authorized
 
+import "strconv"
+
 // NilInputError is returned when a required argument is nil or zero.
 // Field names the offending argument.
 type NilInputError struct {
@@ -108,3 +110,18 @@ func (e *SerializationError) Error() string {
 
 // Unwrap returns the underlying error.
 func (e *SerializationError) Unwrap() error { return e.Err }
+
+// UnsupportedVersionError is returned when a stored envelope declares a
+// format version this binary does not know how to read. Decoding it as the
+// current format could silently misinterpret fields, so reading fails
+// instead.
+type UnsupportedVersionError struct {
+	Found     int
+	Supported int
+}
+
+// Error implements the error interface.
+func (e *UnsupportedVersionError) Error() string {
+	return "ssh/authorized: unsupported envelope version " + strconv.Itoa(e.Found) +
+		" (this build reads up to " + strconv.Itoa(e.Supported) + ")"
+}

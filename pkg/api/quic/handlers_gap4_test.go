@@ -199,7 +199,10 @@ func TestHandleVerify_NullSignature(t *testing.T) {
 	}
 	mockKS.SetKey("null-sig-key", privKey)
 
-	// null signature → json null → default case in the Signature type switch
+	// A null signature is a malformed request, not a signature that happens to
+	// be invalid. It used to fall through the best-effort type switch to an
+	// empty byte slice and be reported as "signature invalid", which tells the
+	// caller its key rejected the signature rather than that it sent none.
 	reqBody := map[string]interface{}{
 		"data":      []byte("testdata"),
 		"signature": nil,
@@ -208,7 +211,7 @@ func TestHandleVerify_NullSignature(t *testing.T) {
 	req := httptest.NewRequest(http.MethodPost, "/test", bytes.NewReader(body))
 	rec := httptest.NewRecorder()
 	server.handleVerify(rec, req, "null-sig-key", "software")
-	assert.Contains(t, []int{http.StatusOK, http.StatusInternalServerError}, rec.Code)
+	assert.Equal(t, http.StatusBadRequest, rec.Code)
 }
 
 // ============================================================================

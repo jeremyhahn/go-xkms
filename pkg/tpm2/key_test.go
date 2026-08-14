@@ -1294,9 +1294,9 @@ func TestParseIdentityProvisioningStrategyUnit(t *testing.T) {
 			want:     EnrollmentStrategyIAK_IDEVID_SINGLE_PASS,
 		},
 		{
-			name:     "invalid strategy defaults to single pass",
+			name:     "invalid strategy fails closed",
 			strategy: "INVALID",
-			want:     EnrollmentStrategyIAK_IDEVID_SINGLE_PASS,
+			want:     EnrollmentStrategyUnknown,
 		},
 		{
 			name:     "empty string defaults to single pass",
@@ -1306,7 +1306,7 @@ func TestParseIdentityProvisioningStrategyUnit(t *testing.T) {
 		{
 			name:     "lowercase iak",
 			strategy: "iak",
-			want:     EnrollmentStrategyIAK_IDEVID_SINGLE_PASS,
+			want:     EnrollmentStrategyUnknown,
 		},
 	}
 

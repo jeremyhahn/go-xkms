@@ -27,7 +27,24 @@ import (
 	"github.com/jeremyhahn/go-xkms/xkey/pkg/gui"
 )
 
+// guiRun starts the Wails GUI. It is a variable so tests can exercise the
+// GUI dispatch branch of run() without opening a window.
+var guiRun = gui.Run
+
+// cliExecute runs the cobra command tree. It is a variable for the same
+// reason as guiRun.
+var cliExecute = cmd.Execute
+
 func main() {
+	os.Exit(run(os.Args, os.Stderr))
+}
+
+// run is the testable body of main. It returns the process exit code
+// instead of calling os.Exit so the dispatch logic (GUI vs CLI, native
+// messaging rewrite, error reporting) can be exercised directly.
+func run(argv []string, stderr io.Writer) int {
+	os.Args = argv
+
 	// Chrome launches native messaging hosts as:
 	//   /path/to/xkey chrome-extension://EXTENSION_ID/
 	// Detect this and rewrite args so cobra routes to "extension host".
@@ -47,47 +64,57 @@ func main() {
 
 	if !forceCLI && (forceGUI || hasGUIEnvironment()) {
 		if !guiBuildTagPresent {
-			fmt.Fprintln(os.Stderr, "xkey: this binary was built without GUI support.")
-			fmt.Fprintln(os.Stderr, "")
-			fmt.Fprintln(os.Stderr, "The Wails GUI requires one of the build tags 'production', 'dev', or 'bindings'.")
-			fmt.Fprintln(os.Stderr, "")
-			fmt.Fprintln(os.Stderr, "Rebuild with:")
-			fmt.Fprintln(os.Stderr, "  make -C xkey build-local           # recommended; installs frontend + GUI")
-			fmt.Fprintln(os.Stderr, "  make -C xkey build                 # builds inside the Docker builder image")
-			fmt.Fprintln(os.Stderr, "")
-			fmt.Fprintln(os.Stderr, "Or pass tags directly:")
-			fmt.Fprintln(os.Stderr, "  cd xkey && go build -tags 'ble production codec_json' -o xkey ./cmd/xkey")
-			fmt.Fprintln(os.Stderr, "")
-			fmt.Fprintln(os.Stderr, "Or run the CLI explicitly with --no-gui.")
-			os.Exit(2)
+			printGUIBuildHelp(stderr)
+			return 2
 		}
 		// Initialize logging from CLI flags before starting the GUI so
 		// that --log-level and --log-file take effect for all slog output.
 		if err := initGUILogging(args); err != nil {
-			fmt.Fprintf(os.Stderr, "logging setup error: %v\n", err)
-			os.Exit(1)
+			fmt.Fprintf(stderr, "logging setup error: %v\n", err)
+			return 1
 		}
 
 		subFS, err := fs.Sub(frontend.Assets, "dist")
 		if err != nil {
-			fmt.Fprintf(os.Stderr, "failed to load frontend assets: %v\n", err)
-			os.Exit(1)
+			fmt.Fprintf(stderr, "failed to load frontend assets: %v\n", err)
+			return 1
 		}
 		gui.Assets = subFS
 		gui.FirmwareVersion = gui.ParseFirmwareVersion(cmd.Version)
 
-		if err := gui.Run(); err != nil {
-			fmt.Fprintf(os.Stderr, "GUI error: %v\n", err)
-			os.Exit(1)
+		if err := guiRun(); err != nil {
+			fmt.Fprintf(stderr, "GUI error: %v\n", err)
+			return 1
 		}
-	} else {
-		// Strip --no-gui and --gui flags before cobra processes args.
-		os.Args = stripFlags(os.Args, "--no-gui", "--gui")
-		if err := cmd.Execute(); err != nil {
-			fmt.Fprintf(os.Stderr, "Error: %v\n", err)
-			os.Exit(1)
-		}
+		return 0
 	}
+
+	// Strip --no-gui and --gui flags before cobra processes args.
+	os.Args = stripFlags(os.Args, "--no-gui", "--gui")
+	if err := cliExecute(); err != nil {
+		fmt.Fprintf(stderr, "Error: %v\n", err)
+		return 1
+	}
+	return 0
+}
+
+// printGUIBuildHelp explains that the binary lacks Wails GUI support and how
+// to rebuild it. Wails' own stub error ("Wails applications will not build
+// without the correct build tags.") is opaque, so this replaces it with
+// actionable guidance.
+func printGUIBuildHelp(w io.Writer) {
+	fmt.Fprintln(w, "xkey: this binary was built without GUI support.")
+	fmt.Fprintln(w, "")
+	fmt.Fprintln(w, "The Wails GUI requires one of the build tags 'production', 'dev', or 'bindings'.")
+	fmt.Fprintln(w, "")
+	fmt.Fprintln(w, "Rebuild with:")
+	fmt.Fprintln(w, "  make -C xkey build-local           # recommended; installs frontend + GUI")
+	fmt.Fprintln(w, "  make -C xkey build                 # builds inside the Docker builder image")
+	fmt.Fprintln(w, "")
+	fmt.Fprintln(w, "Or pass tags directly:")
+	fmt.Fprintln(w, "  cd xkey && go build -tags 'ble production codec_json' -o xkey ./cmd/xkey")
+	fmt.Fprintln(w, "")
+	fmt.Fprintln(w, "Or run the CLI explicitly with --no-gui.")
 }
 
 // initGUILogging configures the global slog logger for GUI mode by parsing

@@ -16,8 +16,10 @@ package module
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"strconv"
 	"sync"
+	"time"
 
 	"github.com/jeremyhahn/go-xkms/pkg/errs"
 
@@ -34,15 +36,23 @@ const (
 
 // PersistentTokenState represents the serializable state of a token.
 type PersistentTokenState struct {
-	SlotID          uint64    `json:"slot_id"`
-	Label           string    `json:"label"`
-	SOPinHash       []byte    `json:"so_pin_hash"`
-	UserPinHash     []byte    `json:"user_pin_hash"`
-	Initialized     bool      `json:"initialized"`
-	Flags           TokenFlag `json:"flags"`
-	ManufacturerID  string    `json:"manufacturer_id"`
-	Model           string    `json:"model"`
-	SerialNumber    string    `json:"serial_number"`
+	SlotID      uint64    `json:"slot_id"`
+	Label       string    `json:"label"`
+	SOPinHash   []byte    `json:"so_pin_hash"`
+	UserPinHash []byte    `json:"user_pin_hash"`
+	Initialized bool      `json:"initialized"`
+	Flags       TokenFlag `json:"flags"`
+	// FailedUserPIN and FailedSOPIN carry the consecutive-failure counters that
+	// drive CKR_PIN_LOCKED. They are persisted because the lockout is a property
+	// of the token, not of the library instance (v3.2 §3.2 describes
+	// CKF_USER_PIN_LOCKED as token state): held only in memory, the whole budget
+	// resets on C_Finalize, and an attacker recovers a four-digit PIN by
+	// re-initializing the library every three guesses.
+	FailedUserPIN   uint32 `json:"failed_user_pin"`
+	FailedSOPIN     uint32 `json:"failed_so_pin"`
+	ManufacturerID  string `json:"manufacturer_id"`
+	Model           string `json:"model"`
+	SerialNumber    string `json:"serial_number"`
 	HardwareVersion struct {
 		Major uint8 `json:"major"`
 		Minor uint8 `json:"minor"`
@@ -84,17 +94,47 @@ type PersistentObject struct {
 type ModuleStorage struct {
 	backend storage.Backend
 	mu      sync.RWMutex
+
+	// timeout bounds every backend round-trip. A store that stops responding
+	// must surface as an error rather than block a Cryptoki call — and through
+	// it the host application — indefinitely.
+	timeout time.Duration
 }
+
+// DefaultStorageTimeout bounds a single persistence operation.
+const DefaultStorageTimeout = 10 * time.Second
 
 // NewModuleStorage creates a new storage instance with the given backend.
 func NewModuleStorage(backend storage.Backend) *ModuleStorage {
 	return &ModuleStorage{
 		backend: backend,
+		timeout: DefaultStorageTimeout,
 	}
 }
 
+// SetTimeout overrides the per-operation storage timeout.
+func (s *ModuleStorage) SetTimeout(timeout time.Duration) {
+	if timeout > 0 {
+		s.timeout = timeout
+	}
+}
+
+// opContext returns a context bounded by the configured storage timeout, along
+// with its cancel function.
+func (s *ModuleStorage) opContext() (context.Context, context.CancelFunc) {
+	timeout := s.timeout
+	if timeout <= 0 {
+		timeout = DefaultStorageTimeout
+	}
+	return context.WithTimeout(context.Background(), timeout)
+}
+
 // SaveTokenState persists the token state for a slot.
-func (s *ModuleStorage) SaveTokenState(slotID SlotID, token *Token) error {
+// failedUserPIN and failedSOPIN are the consecutive-failure counters that drive
+// CKR_PIN_LOCKED. They are passed in rather than read off the Token because the
+// authoritative copy lives on the slot's SessionManager, but the state they
+// describe belongs to the token and so has to be written down with it.
+func (s *ModuleStorage) SaveTokenState(slotID SlotID, token *Token, failedUserPIN, failedSOPIN uint32) error {
 	if s.backend == nil {
 		return nil // No persistence configured
 	}
@@ -103,13 +143,15 @@ func (s *ModuleStorage) SaveTokenState(slotID SlotID, token *Token) error {
 	defer s.mu.Unlock()
 
 	state := &PersistentTokenState{
-		SlotID:      uint64(slotID),
-		SOPinHash:   token.SOPinHash,
-		UserPinHash: token.UserPinHash,
-		Initialized: token.Initialized,
-		Flags:       token.Info.Flags,
-		MaxPinLen:   token.Info.MaxPinLen,
-		MinPinLen:   token.Info.MinPinLen,
+		SlotID:        uint64(slotID),
+		SOPinHash:     token.SOPinHash,
+		UserPinHash:   token.UserPinHash,
+		Initialized:   token.Initialized,
+		Flags:         token.Info.Flags,
+		MaxPinLen:     token.Info.MaxPinLen,
+		MinPinLen:     token.Info.MinPinLen,
+		FailedUserPIN: failedUserPIN,
+		FailedSOPIN:   failedSOPIN,
 	}
 
 	// Copy fixed-size arrays to strings
@@ -128,11 +170,227 @@ func (s *ModuleStorage) SaveTokenState(slotID SlotID, token *Token) error {
 	}
 
 	key := prefixToken + strconv.FormatUint(uint64(slotID), 10)
-	if err := s.backend.Put(context.Background(), key, data); err != nil {
+	ctx, cancel := s.opContext()
+	defer cancel()
+	if err := s.backend.Put(ctx, key, data); err != nil {
 		return &errs.Wrapped{Msg: "failed to save token state", Err: err}
 	}
 
 	return nil
+}
+
+// maxAttemptCASRetries bounds the compare-and-swap retry loop for a failed-
+// attempt counter. It is far above any realistic number of clients contending on
+// one token's counter, so it only backstops a pathological live-lock rather than
+// capping normal concurrency.
+const maxAttemptCASRetries = 16
+
+// ErrCorruptAttemptCounter is returned when a persisted failed-attempt counter
+// does not parse as a uint32. Like the object-handle counter, a counter that
+// cannot be read is not one that may be guessed: a lockout that silently resets
+// to zero is a security fault, so the read fails loudly instead.
+var ErrCorruptAttemptCounter = errors.New("pkcs11: corrupt failed-attempt counter")
+
+// failedAttemptKey builds the dedicated storage key for a token's failed-attempt
+// counter. The counters live under their own keys, apart from the token record,
+// so a single failed attempt is an atomic increment of a small value rather than
+// a read-modify-write of the whole token — which is what lets several remote-mode
+// clients sharing one token accumulate failures without losing updates. It
+// reports false for a user type that has no lockout counter.
+func failedAttemptKey(slotID SlotID, userType UserType) (string, bool) {
+	base := prefixCounter + "token/" + strconv.FormatUint(uint64(slotID), 10) + "/failed_"
+	switch userType {
+	case CKU_USER:
+		return base + "user", true
+	case CKU_SO:
+		return base + "so", true
+	default:
+		return "", false
+	}
+}
+
+// parseAttemptCounter decodes a stored counter value. An absent counter (nil) is
+// zero; a malformed one is ErrCorruptAttemptCounter rather than a silent reset.
+func parseAttemptCounter(data []byte) (uint32, error) {
+	if len(data) == 0 {
+		return 0, nil
+	}
+	v, err := strconv.ParseUint(string(data), 10, 32)
+	if err != nil {
+		return 0, &errs.Wrapped{Msg: "failed-attempt counter", Err: ErrCorruptAttemptCounter}
+	}
+	return uint32(v), nil
+}
+
+// IncrementFailedAttempt atomically adds one to the durable failed-attempt
+// counter for (slotID, userType) and returns the new stored value.
+//
+// On a compare-and-swap-capable backend (the remote/clustered case) it uses a
+// CAS retry loop so concurrent increments from several clients sharing one token
+// accumulate rather than clobber each other; on a single-writer local backend it
+// is a mutex-guarded read-modify-write. The returned value is authoritative — the
+// caller writes it back into its optimistic in-memory counter. persisted is false
+// when no durable backend is configured, telling the caller to advance its own
+// in-memory counter instead.
+func (s *ModuleStorage) IncrementFailedAttempt(slotID SlotID, userType UserType) (value uint32, persisted bool, err error) {
+	if s.backend == nil {
+		return 0, false, nil
+	}
+	key, ok := failedAttemptKey(slotID, userType)
+	if !ok {
+		return 0, false, nil
+	}
+
+	if cas, ok := s.backend.(storage.CompareAndSwapper); ok {
+		v, err := s.incrementViaCAS(cas, key)
+		return v, err == nil, err
+	}
+
+	// Single-writer local backend: the storage mutex makes read-modify-write
+	// linearizable for this process, exactly as it does for PutIfAbsent.
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	v, err := s.incrementLocked(key)
+	return v, err == nil, err
+}
+
+// incrementViaCAS performs the compare-and-swap retry loop for a counter key.
+func (s *ModuleStorage) incrementViaCAS(cas storage.CompareAndSwapper, key string) (uint32, error) {
+	for attempt := 0; attempt < maxAttemptCASRetries; attempt++ {
+		ctx, cancel := s.opContext()
+		current, getErr := s.backend.Get(ctx, key)
+		var expected []byte
+		switch {
+		case getErr == nil:
+			expected = current
+		case errors.Is(getErr, storage.ErrNotFound):
+			expected = nil // require-absent
+		default:
+			cancel()
+			return 0, &errs.Wrapped{Msg: "failed to read lockout counter", Err: getErr}
+		}
+
+		curVal, parseErr := parseAttemptCounter(expected)
+		if parseErr != nil {
+			cancel()
+			return 0, parseErr
+		}
+		next := curVal + 1
+		nextBytes := []byte(strconv.FormatUint(uint64(next), 10))
+
+		swapped, _, casErr := cas.CompareAndSwap(ctx, key, expected, nextBytes)
+		cancel()
+		if casErr != nil {
+			return 0, &errs.Wrapped{Msg: "failed to update lockout counter", Err: casErr}
+		}
+		if swapped {
+			return next, nil
+		}
+		// A concurrent writer moved the counter; re-read and retry.
+	}
+	return 0, &errs.Wrapped{Msg: "lockout counter contention", Err: ErrCorruptAttemptCounter}
+}
+
+// incrementLocked performs read-modify-write for a counter key under s.mu.
+func (s *ModuleStorage) incrementLocked(key string) (uint32, error) {
+	ctx, cancel := s.opContext()
+	defer cancel()
+
+	data, err := s.backend.Get(ctx, key)
+	if err != nil && !errors.Is(err, storage.ErrNotFound) {
+		return 0, &errs.Wrapped{Msg: "failed to read lockout counter", Err: err}
+	}
+	curVal, parseErr := parseAttemptCounter(data)
+	if parseErr != nil {
+		return 0, parseErr
+	}
+	next := curVal + 1
+	if err := s.backend.Put(ctx, key, []byte(strconv.FormatUint(uint64(next), 10))); err != nil {
+		return 0, &errs.Wrapped{Msg: "failed to update lockout counter", Err: err}
+	}
+	return next, nil
+}
+
+// ResetFailedAttempt clears the durable failed-attempt counter for
+// (slotID, userType). A reset follows a successful authentication or an
+// authorized PIN change, which invalidates every prior failure, so it is not
+// accumulation-sensitive and is written as a plain set to zero.
+func (s *ModuleStorage) ResetFailedAttempt(slotID SlotID, userType UserType) error {
+	if s.backend == nil {
+		return nil
+	}
+	key, ok := failedAttemptKey(slotID, userType)
+	if !ok {
+		return nil
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	ctx, cancel := s.opContext()
+	defer cancel()
+	if err := s.backend.Put(ctx, key, []byte("0")); err != nil {
+		return &errs.Wrapped{Msg: "failed to reset lockout counter", Err: err}
+	}
+	return nil
+}
+
+// LoadFailedAttempts returns the durable failed-attempt counters for a token,
+// preferring the dedicated counter keys and falling back to the token record's
+// embedded snapshot for tokens persisted before the counters were split out.
+// When it falls back, it seeds the dedicated key (write-if-absent) so subsequent
+// atomic increments build on the migrated value rather than restarting from zero.
+func (s *ModuleStorage) LoadFailedAttempts(slotID SlotID, recordUser, recordSO uint32) (user, so uint32, err error) {
+	if s.backend == nil {
+		return recordUser, recordSO, nil
+	}
+	user, err = s.loadOrSeedAttempt(slotID, CKU_USER, recordUser)
+	if err != nil {
+		return 0, 0, err
+	}
+	so, err = s.loadOrSeedAttempt(slotID, CKU_SO, recordSO)
+	if err != nil {
+		return 0, 0, err
+	}
+	return user, so, nil
+}
+
+// loadOrSeedAttempt reads one dedicated counter, seeding it from the record
+// snapshot when absent so a pre-split token keeps the budget it had already spent.
+func (s *ModuleStorage) loadOrSeedAttempt(slotID SlotID, userType UserType, recordValue uint32) (uint32, error) {
+	key, ok := failedAttemptKey(slotID, userType)
+	if !ok {
+		return recordValue, nil
+	}
+
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	ctx, cancel := s.opContext()
+	defer cancel()
+
+	data, err := s.backend.Get(ctx, key)
+	if err == nil {
+		return parseAttemptCounter(data)
+	}
+	if !errors.Is(err, storage.ErrNotFound) {
+		return 0, &errs.Wrapped{Msg: "failed to read lockout counter", Err: err}
+	}
+
+	// Absent: migrate from the record snapshot. PutIfAbsent makes the seed
+	// idempotent if two clients start together; the loser re-reads the winner's
+	// value below.
+	seed := []byte(strconv.FormatUint(uint64(recordValue), 10))
+	stored, err := s.backend.PutIfAbsent(ctx, key, seed)
+	if err != nil {
+		return 0, &errs.Wrapped{Msg: "failed to seed lockout counter", Err: err}
+	}
+	if stored {
+		return recordValue, nil
+	}
+	existing, err := s.backend.Get(ctx, key)
+	if err != nil {
+		return 0, &errs.Wrapped{Msg: "failed to read seeded lockout counter", Err: err}
+	}
+	return parseAttemptCounter(existing)
 }
 
 // LoadTokenState loads the token state for a slot.
@@ -145,7 +403,9 @@ func (s *ModuleStorage) LoadTokenState(slotID SlotID) (*PersistentTokenState, er
 	defer s.mu.RUnlock()
 
 	key := prefixToken + strconv.FormatUint(uint64(slotID), 10)
-	data, err := s.backend.Get(context.Background(), key)
+	ctx, cancel := s.opContext()
+	defer cancel()
+	data, err := s.backend.Get(ctx, key)
 	if err != nil {
 		if err == storage.ErrNotFound {
 			return nil, nil // Token not initialized yet
@@ -159,6 +419,21 @@ func (s *ModuleStorage) LoadTokenState(slotID SlotID) (*PersistentTokenState, er
 	}
 
 	return &state, nil
+}
+
+// getWithTimeout performs one bounded backend read, releasing its context
+// before returning.
+//
+// It exists because defer is function-scoped: reading N objects in a loop with a
+// deferred cancel each pushed N live timers and N defer records that ran only
+// when LoadObjects returned, all while the storage read lock was held. A token
+// with fifty thousand persisted objects held fifty thousand armed timers for the
+// whole of C_Initialize, and the per-operation timeout the surrounding code took
+// care to add was silently defeated.
+func (s *ModuleStorage) getWithTimeout(key string) ([]byte, error) {
+	ctx, cancel := s.opContext()
+	defer cancel()
+	return s.backend.Get(ctx, key)
 }
 
 // SaveObject persists a PKCS#11 object.
@@ -191,9 +466,33 @@ func (s *ModuleStorage) SaveObject(slotID SlotID, obj *Object) error {
 		IsDestroyable: obj.IsDestroyable,
 	}
 
-	// Convert attributes map to slice
+	// Convert attributes map to slice.
+	//
+	// A protected key's secret attributes are never written out. This store
+	// holds object metadata, not key material: the material itself lives in the
+	// backend, addressed by KeyID. Serializing CKA_VALUE or an RSA private
+	// component here would place in the clear exactly the bytes that
+	// CKA_SENSITIVE and CKA_EXTRACTABLE=CK_FALSE promise never leave the token.
+	// Non-key classes (certificates, data objects) have no extractability
+	// semantics: their CKA_VALUE is public object content and must persist.
+	//
+	// One key class has no backend copy to fall back on: a post-quantum private
+	// key is generated in process and its seed exists only as CKA_VALUE (see
+	// module_keygen_quantum.go). Withholding that leaves an object no operation
+	// can use. The store is not the place to resolve that — writing the seed
+	// out would break the promise above for the one class least able to afford
+	// it — so quantumPrivateKeyPersistenceError refuses at generation time to
+	// create a CKA_TOKEN post-quantum private key whose material this loop
+	// would drop. A post-quantum private key that reaches here is one the
+	// application declared CKA_SENSITIVE=CK_FALSE and CKA_EXTRACTABLE=CK_TRUE,
+	// for which protected is false and CKA_VALUE persists like any other
+	// attribute.
+	protected := obj.protectsSensitiveAttributes()
 	po.Attributes = make([]PersistentAttribute, 0, len(obj.Attributes))
 	for attrType, value := range obj.Attributes {
+		if protected && IsSensitiveAttribute(attrType) {
+			continue
+		}
 		po.Attributes = append(po.Attributes, PersistentAttribute{
 			Type:  uint32(attrType),
 			Value: value,
@@ -206,7 +505,9 @@ func (s *ModuleStorage) SaveObject(slotID SlotID, obj *Object) error {
 	}
 
 	key := prefixObject + strconv.FormatUint(uint64(obj.Handle), 10)
-	if err := s.backend.Put(context.Background(), key, data); err != nil {
+	ctx, cancel := s.opContext()
+	defer cancel()
+	if err := s.backend.Put(ctx, key, data); err != nil {
 		return &errs.Wrapped{Msg: "failed to save object", Err: err}
 	}
 
@@ -222,21 +523,29 @@ func (s *ModuleStorage) LoadObjects(slotID SlotID) ([]*PersistentObject, error) 
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 
-	keys, err := s.backend.List(context.Background(), prefixObject)
+	ctx, cancel := s.opContext()
+	defer cancel()
+	keys, err := s.backend.List(ctx, prefixObject)
 	if err != nil {
 		return nil, &errs.Wrapped{Msg: "failed to list objects", Err: err}
 	}
 
 	var objects []*PersistentObject
 	for _, key := range keys {
-		data, err := s.backend.Get(context.Background(), key)
+		data, err := s.getWithTimeout(key)
 		if err != nil {
-			continue // Skip objects that fail to load
+			// List reported this key exists, so a Get that now fails is an IO or
+			// consistency fault, not an absence. Surfacing it lets C_Initialize
+			// refuse rather than silently present a token missing one of its
+			// objects.
+			return nil, &errs.Wrapped{Msg: "failed to read persisted object " + key, Err: err}
 		}
 
 		var po PersistentObject
 		if err := json.Unmarshal(data, &po); err != nil {
-			continue // Skip objects that fail to unmarshal
+			// A record that will not unmarshal is corrupt. Dropping it silently
+			// is the same data-loss-under-CKR_OK the caller must not do.
+			return nil, &errs.Wrapped{Msg: "failed to unmarshal persisted object " + key, Err: err}
 		}
 
 		// Only return objects for the requested slot
@@ -258,7 +567,9 @@ func (s *ModuleStorage) DeleteObject(handle ObjectHandle) error {
 	defer s.mu.Unlock()
 
 	key := prefixObject + strconv.FormatUint(uint64(handle), 10)
-	if err := s.backend.Delete(context.Background(), key); err != nil && err != storage.ErrNotFound {
+	ctx, cancel := s.opContext()
+	defer cancel()
+	if err := s.backend.Delete(ctx, key); err != nil && err != storage.ErrNotFound {
 		return &errs.Wrapped{Msg: "failed to delete object", Err: err}
 	}
 
@@ -275,18 +586,34 @@ func (s *ModuleStorage) GetNextHandle() (ObjectHandle, error) {
 	defer s.mu.Unlock()
 
 	key := prefixCounter + "object_handle"
-	data, err := s.backend.Get(context.Background(), key)
+	ctx, cancel := s.opContext()
+	defer cancel()
+	data, err := s.backend.Get(ctx, key)
 	if err != nil && err != storage.ErrNotFound {
 		return 0, &errs.Wrapped{Msg: "failed to get handle counter", Err: err}
 	}
 
 	var counter uint64 = 1
 	if len(data) > 0 {
-		counter, _ = strconv.ParseUint(string(data), 10, 64)
+		// A counter that cannot be read is not a counter that may be guessed.
+		// ParseUint returns 0 on a malformed value, and continuing from 1 would
+		// reissue handles that already name live objects -- and because
+		// ObjectManager.AddObject tries Update before Insert, the reissued
+		// handle would silently REPLACE the object at that handle. An
+		// application holding a handle to its RSA private key would find
+		// different key material under it, and C_Sign would sign with the wrong
+		// key. Failing the call is the only safe answer.
+		stored, parseErr := strconv.ParseUint(string(data), 10, 64)
+		if parseErr != nil {
+			return 0, &errs.Wrapped{Msg: "corrupt object handle counter", Err: parseErr}
+		}
+		counter = stored
 		counter++
 	}
 
-	if err := s.backend.Put(context.Background(), key, []byte(strconv.FormatUint(counter, 10))); err != nil {
+	putCtx, putCancel := s.opContext()
+	defer putCancel()
+	if err := s.backend.Put(putCtx, key, []byte(strconv.FormatUint(counter, 10))); err != nil {
 		return 0, &errs.Wrapped{Msg: "failed to save handle counter", Err: err}
 	}
 
@@ -303,7 +630,9 @@ func (s *ModuleStorage) SetNextHandle(handle ObjectHandle) error {
 	defer s.mu.Unlock()
 
 	key := prefixCounter + "object_handle"
-	if err := s.backend.Put(context.Background(), key, []byte(strconv.FormatUint(uint64(handle), 10))); err != nil {
+	ctx, cancel := s.opContext()
+	defer cancel()
+	if err := s.backend.Put(ctx, key, []byte(strconv.FormatUint(uint64(handle), 10))); err != nil {
 		return &errs.Wrapped{Msg: "failed to save handle counter", Err: err}
 	}
 
@@ -319,27 +648,46 @@ func (s *ModuleStorage) Close() error {
 }
 
 // RestoreObject converts a PersistentObject back to a module Object.
+//
+// Every persisted attribute is re-applied through Object.SetAttribute rather
+// than written into the attribute map directly, so that a value read out of a
+// token file passes through exactly the CK_ULONG width normalization a value
+// supplied in a C_CreateObject template does. A token file written before that
+// normalization existed holds four-byte CKA_CLASS and CKA_KEY_TYPE values;
+// handing those back verbatim gives an application that allocated
+// sizeof(CK_ULONG) four bytes of value and four bytes of its own uninitialized
+// buffer, which is how pkcs11-provider came to decode a class as
+// 0xFFFFFFFF00000002 and abandon the object. Restoring through the same single
+// point means an upgraded deployment's existing keys are usable, not only the
+// keys created after the upgrade.
 func RestoreObject(po *PersistentObject) *Object {
 	obj := &Object{
-		Handle:        ObjectHandle(po.Handle),
-		Class:         ObjectClass(po.Class),
-		KeyType:       KeyType(po.KeyType),
-		Attributes:    make(map[AttributeType][]byte),
-		KeyID:         po.KeyID,
-		BackendName:   po.BackendName,
-		IsToken:       po.IsToken,
-		IsPrivate:     po.IsPrivate,
-		IsSensitive:   po.IsSensitive,
-		IsExtractable: po.IsExtractable,
-		IsModifiable:  po.IsModifiable,
-		IsCopyable:    po.IsCopyable,
-		IsDestroyable: po.IsDestroyable,
+		Attributes: make(map[AttributeType][]byte, len(po.Attributes)),
 	}
 
-	// Restore attributes
 	for _, attr := range po.Attributes {
-		obj.Attributes[AttributeType(attr.Type)] = attr.Value
+		obj.SetAttribute(AttributeType(attr.Type), attr.Value)
 	}
+
+	// The persisted scalars are applied after the attribute loop because they
+	// are the record of what the object was, whereas SetAttribute derives the
+	// same fields from whichever attributes happen to have been persisted. The
+	// two agree for anything this module wrote — SaveObject copies them off one
+	// object — and where an attribute was withheld from the file, as a
+	// protected key's are, only the scalar carries the value at all.
+	obj.Handle = ObjectHandle(po.Handle)
+	obj.SlotID = SlotID(po.SlotID)
+	obj.Class = ObjectClass(po.Class)
+	obj.KeyType = KeyType(po.KeyType)
+	obj.KeyID = po.KeyID
+	obj.BackendName = po.BackendName
+	obj.IsToken = po.IsToken
+	obj.IsPrivate = po.IsPrivate
+	obj.IsSensitive = po.IsSensitive
+	obj.IsExtractable = po.IsExtractable
+	obj.IsModifiable = po.IsModifiable
+	obj.IsCopyable = po.IsCopyable
+	obj.IsDestroyable = po.IsDestroyable
 
 	return obj
 }
@@ -357,9 +705,13 @@ func RestoreTokenState(token *Token, state *PersistentTokenState) {
 	token.Info.FirmwareVersion.Major = state.FirmwareVersion.Major
 	token.Info.FirmwareVersion.Minor = state.FirmwareVersion.Minor
 
-	// Copy strings to fixed-size arrays
-	copy(token.Info.Label[:], state.Label)
-	copy(token.Info.ManufacturerID[:], state.ManufacturerID)
-	copy(token.Info.Model[:], state.Model)
-	copy(token.Info.SerialNumber[:], state.SerialNumber)
+	// The setters blank-pad rather than copy, because CK_TOKEN_INFO's character
+	// fields are space-filled and not NUL-terminated (v3.2 §3.2). A bare copy
+	// left whatever the array already held beyond the restored string, and left
+	// a shorter restored value trailed by NULs where an application expects
+	// spaces.
+	token.Info.SetLabel(trimPaddedString([]byte(state.Label)))
+	token.Info.SetManufacturerID(trimPaddedString([]byte(state.ManufacturerID)))
+	token.Info.SetModel(trimPaddedString([]byte(state.Model)))
+	token.Info.SetSerialNumber(trimPaddedString([]byte(state.SerialNumber)))
 }

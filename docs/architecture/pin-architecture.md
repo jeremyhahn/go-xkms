@@ -288,7 +288,7 @@ The FIDO2 daemon command wires the coordinator at device startup:
 ## See Also
 
 - [PIN Management (PINManager Interface and Strategies)](../seal/pin.md)
-- [CLI PIN Commands](../usage/cli/pin.md)
+- [CLI PIN Commands](../../xkey/docs/usage/cli/pin.md)
 - [FIDO2 Authenticator Architecture](../fido2/authenticator/architecture.md)
 - [PKCS#11 Module Security](../pkcs11/module/security.md)
 - [Setup and Unlock Flow](../../xkey/docs/architecture/setup-and-unlock-flow.md)

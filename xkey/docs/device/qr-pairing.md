@@ -38,18 +38,42 @@ The URI can be copied and pasted directly when camera scanning is not available.
 
 ## CLI Usage
 
+The QR code is **generated** by the workstation and **scanned by the phone**.
+The desktop CLI has no scan-a-pairing-QR command; `xkey device pair` is the
+BLE pairing path, not the QR path.
+
 ```bash
-# Show QR code for pairing (starts TCP relay on default port):
+# Show QR code for pairing (starts the TCP relay; --listen defaults to :8444):
+xkey device relay --qr
 xkey device relay --qr --listen :8444
-
-# Scan QR from screen capture:
-xkey device pair --scan
-
-# Paste URI directly:
-xkey device pair --uri "xkey-pair://..."
 ```
+
+`xkey device relay` takes only `--listen` and `--qr`.
+
+### Pairing over BLE instead
+
+`xkey device pair` scans over Bluetooth, performs the Noise XX handshake and
+verifies the phone through hardware attestation. Its flags are `--device`,
+`--timeout` and `--force` — there is no `--scan` or `--uri`:
+
+```bash
+# Scan and interactively select a device to pair
+xkey device pair
+
+# Pair with a specific device by name
+xkey device pair --device "John's Pixel"
+
+# Extend the scan window
+xkey device pair --timeout 60s
+
+# Force re-pairing if already paired
+xkey device pair --device "John's Pixel" --force
+```
+
+This command is behind the `ble` build tag; a binary built without it carries a
+stub that reports BLE support is unavailable.
 
 ## Packages
 
-- **`xkey/pkg/qrgen/`** -- QR code generation using gozxing (image output) and qrterminal (ASCII terminal output).
-- **`xkey/pkg/qrscan/`** -- Screen scanning with configurable `ScanMode`: `OTP`, `Pairing`, or `Any`.
+- **`xkey/pkg/qrgen/`** -- QR code generation using gozxing (image output) and qrterminal (ASCII terminal output). `PairingPayload` is the struct behind the JSON above; `ToURI`/`FromURI` convert to and from the `xkey-pair://` scheme.
+- **`xkey/pkg/qrscan/`** -- Screen scanning with configurable `Mode`: `ScanModeOTP` (the default), `ScanModePairing`, or `ScanModeAny`. Only the OTP mode currently has a CLI entry point, `xkey oath scan`; `ScanModePairing` is available to callers of the library but no command uses it yet.

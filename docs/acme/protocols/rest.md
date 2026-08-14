@@ -32,9 +32,11 @@ cactl --transport rest --address https://localhost:8443 status
 
 ## Authentication
 
-### Development Mode
+### Authorization
 
-Without TLS, all requests are granted super-admin access.
+Every request is authenticated (JWT or mTLS client certificate) and then
+authorized against the hosted go-qrdb node's RBAC service. There is no
+development bypass: a request with no identity is refused with 401.
 
 ### mTLS (Production)
 

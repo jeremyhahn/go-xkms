@@ -73,8 +73,6 @@ type CeremonyInitializeResponse struct {
 	SPKIPin    string `json:"spki_pin"`
 	CACertPEM  string `json:"ca_cert_pem"`
 	TLSCertPEM string `json:"tls_cert_pem"`
-	SOCertPEM  string `json:"so_cert_pem,omitempty"`
-	SOKeyPEM   string `json:"so_key_pem,omitempty"`
 	State      string `json:"state"`
 	ShareCount int    `json:"share_count"`
 }
@@ -109,14 +107,34 @@ type ClaimCertCompleteResponse struct {
 	CACertPEM string `json:"ca_cert_pem"`
 }
 
-// ClaimShareRequest requests the Shamir share for an officer who has claimed their certificate.
-type ClaimShareRequest struct {
+// BeginClaimShareRequest starts the Shamir share claim handshake for an
+// officer who has claimed their certificate. No thumbprint travels on the
+// wire: the ceremony derives it from the caller's mTLS peer certificate.
+type BeginClaimShareRequest struct {
 	Username string `json:"username"`
 }
 
-// ClaimShareResponse returns the officer's Shamir share.
-type ClaimShareResponse struct {
-	ShareJSON string `json:"share_json"`
+// BeginClaimShareResponse carries the challenge nonce the officer must sign
+// with the private key matching their enrolled certificate.
+type BeginClaimShareResponse struct {
+	NonceHex  string `json:"nonce_hex"`
+	ExpiresAt string `json:"expires_at"`
+}
+
+// CompleteClaimShareRequest carries the signed nonce completing the Shamir
+// share claim handshake.
+type CompleteClaimShareRequest struct {
+	Username  string `json:"username"`
+	NonceHex  string `json:"nonce_hex"`
+	Signature []byte `json:"signature"`
+}
+
+// CompleteClaimShareResponse returns the officer's Shamir share, released
+// exactly once to the officer whose certificate thumbprint matches the
+// enrolment record.
+type CompleteClaimShareResponse struct {
+	ShareIndex int    `json:"share_index"`
+	ShareJSON  string `json:"share_json"`
 }
 
 // SignCSRRequest submits a CSR for signing during or after the ceremony.
@@ -144,8 +162,12 @@ type CeremonyService interface {
 	BeginClaimCert(ctx context.Context, req *ClaimCertBeginRequest) (*ClaimCertBeginResponse, error)
 	// CompleteClaimCert completes a certificate claim by submitting the signed nonce.
 	CompleteClaimCert(ctx context.Context, req *ClaimCertCompleteRequest) (*ClaimCertCompleteResponse, error)
-	// ClaimShare retrieves the Shamir share for an officer who has claimed their certificate.
-	ClaimShare(ctx context.Context, req *ClaimShareRequest) (*ClaimShareResponse, error)
+	// BeginClaimShare starts the Shamir share claim handshake for an officer
+	// who has claimed their certificate.
+	BeginClaimShare(ctx context.Context, req *BeginClaimShareRequest) (*BeginClaimShareResponse, error)
+	// CompleteClaimShare completes the Shamir share claim handshake, releasing
+	// the share exactly once.
+	CompleteClaimShare(ctx context.Context, req *CompleteClaimShareRequest) (*CompleteClaimShareResponse, error)
 	// SignCSR submits a CSR for signing during or after the ceremony.
 	SignCSR(ctx context.Context, req *SignCSRRequest) (*SignCSRResponse, error)
 	// CAAdapter returns the CeremonyCA adapter that bridges go-xkms's CA to
@@ -247,8 +269,6 @@ func (s *ceremonyService) InitializeCeremony(ctx context.Context, req *CeremonyI
 		SPKIPin:    resp.SPKIPin,
 		CACertPEM:  resp.CACertPEM,
 		TLSCertPEM: resp.TLSCertPEM,
-		SOCertPEM:  resp.SOCertPEM,
-		SOKeyPEM:   resp.SOKeyPEM,
 		State:      resp.State,
 		ShareCount: resp.ShareCount,
 	}, nil
@@ -318,24 +338,51 @@ func (s *ceremonyService) CompleteClaimCert(ctx context.Context, req *ClaimCertC
 	}, nil
 }
 
-// ClaimShare retrieves the Shamir share for an officer who has claimed their certificate.
-func (s *ceremonyService) ClaimShare(ctx context.Context, req *ClaimShareRequest) (*ClaimShareResponse, error) {
-	if err := s.requireCeremony("claim-share"); err != nil {
+// BeginClaimShare starts the Shamir share claim handshake for an officer who
+// has claimed their certificate.
+func (s *ceremonyService) BeginClaimShare(ctx context.Context, req *BeginClaimShareRequest) (*BeginClaimShareResponse, error) {
+	if err := s.requireCeremony("begin-claim-share"); err != nil {
 		return nil, err
 	}
 
-	resp, err := s.ceremony.CeremonyClaimShare(ctx, &db.ClaimShareRequest{
+	resp, err := s.ceremony.CeremonyBeginClaimShare(ctx, &db.BeginClaimShareRequest{
 		Username: req.Username,
 	})
 	if err != nil {
-		return nil, &CeremonyError{Operation: "claim-share", Err: err}
+		return nil, &CeremonyError{Operation: "begin-claim-share", Err: err}
+	}
+
+	s.logger.Info("ceremony share claim challenge issued",
+		slog.String("username", req.Username))
+
+	return &BeginClaimShareResponse{
+		NonceHex:  resp.NonceHex,
+		ExpiresAt: resp.ExpiresAt,
+	}, nil
+}
+
+// CompleteClaimShare completes the Shamir share claim handshake, releasing the
+// share exactly once.
+func (s *ceremonyService) CompleteClaimShare(ctx context.Context, req *CompleteClaimShareRequest) (*CompleteClaimShareResponse, error) {
+	if err := s.requireCeremony("complete-claim-share"); err != nil {
+		return nil, err
+	}
+
+	resp, err := s.ceremony.CeremonyCompleteClaimShare(ctx, &db.CompleteClaimShareRequest{
+		Username:  req.Username,
+		NonceHex:  req.NonceHex,
+		Signature: req.Signature,
+	})
+	if err != nil {
+		return nil, &CeremonyError{Operation: "complete-claim-share", Err: err}
 	}
 
 	s.logger.Info("ceremony share claimed",
 		slog.String("username", req.Username))
 
-	return &ClaimShareResponse{
-		ShareJSON: resp.ShareJSON,
+	return &CompleteClaimShareResponse{
+		ShareIndex: resp.ShareIndex,
+		ShareJSON:  resp.ShareJSON,
 	}, nil
 }
 

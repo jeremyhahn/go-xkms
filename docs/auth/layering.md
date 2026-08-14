@@ -6,10 +6,10 @@ on the right side of it.
 
 ## The two layers
 
-| Layer    | Owner   | Responsibilities                                                                                                                                                |
-|----------|---------|-----------------------------------------------------------------------------------------------------------------------------------------------------------------|
-| Identity | qrdb    | Tenants, users, role definitions, role memberships, identity-domain permissions (tenant CRUD, user CRUD, KV/MVCC, audit). System-tenant rule for cross-tenancy. |
-| Key      | xkms    | Authorization for cryptographic / KMS operations: keys, certificates, secrets, barriers, audit-of-key-ops, backend management.                                  |
+| Layer    | Owner   | Responsibilities                                                                                                                                                                          |
+|----------|---------|-------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
+| Identity | qrdb    | Tenants, users, role definitions, role memberships, and the whole permission registry — identity-domain (tenant/user CRUD, KV/MVCC, audit) *and* key-domain (keys, certs, seal, piv, ssh, ...). System-tenant rule for cross-tenancy. |
+| Hardware | xkms    | Authentication adapters, hardware factors and seal strategies, the CA, and the single `auth.Authorizer` seam that asks qrdb for every authorization decision.                              |
 
 xkms does not re-model identity. The `auth.Identity` type in `pkg/auth` is a
 type alias for `qrdbauth.Identity` (`Subject`, `TenantID`, `Roles`, `Metadata`).
@@ -25,7 +25,7 @@ carries **no local user model, cert-binding scheme, or barrier**:
 |------------|-----------|---------------|
 | User/identity model (`User`, RoleBindings, ABAC, factors) | `pkg/user` | `sdk/go/types_user.go` |
 | mTLS cert-binding identifier | `ComputeSPKIThumbprint` (SHA-256 over SubjectPublicKeyInfo, base64url) | `sdk.ComputeSPKIThumbprint` |
-| First-boot + admin-mTLS enrollment | `pkg/firstboot` | `sdk/go/types_firstboot.go` |
+| First-boot + admin-mTLS enrollment | `pkg/firstboot` | `sdk/go/types_firstboot.go` -- available, **not currently wired** (see below) |
 | Barrier (none/passphrase/shamir; system + per-tenant) | `pkg/seal` | `sdk/go/types_seal*.go` |
 | Ceremony (Shamir M-of-N, CSR claim) | `pkg/ceremony` | qrdb SDK |
 
@@ -36,10 +36,20 @@ one cert-binding algorithm in the stack and it lives in qrdb.
 
 ## What xkms still OWNS
 
-- **TrustedCA** (`pkg/ca`) — implements qrdb's `CertProvider` / `CertSigner`
-  (admin-mTLS Path A and Path B) and `CeremonyCA` seams. Admin enrollment is
-  cert-based: CSR-sign (the CA signs an admin CSR) or generate-and-distribute
-  (the CA emits a bundle). No invite tokens.
+- **TrustedCA** (`pkg/ca`) — reaches qrdb through the `CeremonyCA` seam, which
+  `initialize.CAAdapter` implements over `ca.TrustedCA`; the compile-time
+  assertion is `var _ qrdbsdk.CeremonyCA = (*CAAdapter)(nil)`
+  (`pkg/init/ca_adapter.go`). Admin enrollment is cert-based: CSR-sign (the CA
+  signs an admin CSR) or generate-and-distribute (the CA emits a bundle). No
+  invite tokens.
+
+  qrdb also exposes `CertProvider` / `CertSigner` first-boot seams, and this
+  page previously described `TrustedCA` as implementing them. It does not:
+  `CertProvider`, `CertSigner`, `FirstBootInitialize` and `firstboot` appear
+  nowhere in xkms production code. Enrollment runs through `CeremonyCA` and
+  `pkg/init`'s `CeremonyService` instead. The unused seams are a genuine
+  divergence between the stated layering and the wiring, not a naming variant —
+  worth an explicit decision about which one xkms should stand behind.
 - **Hardware factors** — PIV / FIDO2 / WebAuthn implementations registered into
   qrdb's `FactorRegistry` (see [Factor adapters](#factor-adapters-phase-1) below).
 - **Hardware seal strategies** — TPM2 / PKCS#11 / cloud-KMS / Vault, registered
@@ -60,35 +70,34 @@ ac.Permissions() // qrdb PermissionClient
 ac.Factors()     // qrdb FactorClient (with xkms WebAuthn / PIV verifiers)
 ac.Login()       // qrdb LoginClient
 ac.Sessions()    // qrdb SessionClient
-ac.RBAC()        // qrdb RBACClient (identity-domain authorization)
+ac.RBAC()        // qrdb RBACClient (every authorization decision)
 ac.VolumePools() // qrdb VolumePoolClient
 ```
 
 The wrapper does not own state: the underlying qrdb client controls
 connection lifecycle.
 
-## xkms's three key-domain packages
+## Authorization is qrdb's, all of it
 
-Authorization for key-domain resources lives in xkms because the permission
-vocabulary (sign, encrypt, issue-cert, ...) is xkms-specific and would
-contaminate qrdb's identity registry if pushed upstream.
+xkms once carried three key-domain packages — `pkg/keyrbac` (role → permission
+registry), `pkg/keyauthz` (the middleware Authorizer), and `pkg/keypolicy`
+(per-key Allow/Deny rules), renamed from `pkg/rbac`, `pkg/authz`, and
+`pkg/policy`. **All three were deleted.** The key-domain vocabulary (`keys:sign`,
+`certs:generate`, `seal:unseal`, ...) is part of qrdb's canonical permission
+registry, so a second registry in xkms was duplication, not layering.
 
-- **`pkg/keypolicy`** — Allow/Deny rules for individual key operations
-  (Sign, Encrypt) with wildcard resource matching. Used by per-key policies
-  attached to specific `KeyAttributes`.
+What remains in xkms is one seam, `auth.Authorizer` (`pkg/auth/authorize.go`):
+it wraps a qrdb `RBACClient`, binds the identity's tenant as the request's
+target tenant, and forwards `resource, action` to qrdb. The resource and action
+identifiers the transports pass in are constants in `pkg/auth/permissions.go`
+(plus the qrdb strings declared in `pkg/api/mcp/authz.go` for resources with no
+constant). See [RBAC](../architecture/rbac.md) for the full vocabulary and the
+per-transport gates.
 
-- **`pkg/keyrbac`** — The role → key-permission registry. The `Admin` role
-  grants `{keys:*, certificates:*, secrets:*, barrier:*, audit:*, backends:*,
-  pin:*, credentials:*, passwords:*}`; `Operator` grants a narrower set;
-  `Auditor` grants `{audit:read}`; etc. These permissions are xkms-domain;
-  qrdb does not know about them.
-
-- **`pkg/keyauthz`** — The Authorizer interface used by middleware. Adapts
-  `keyrbac` into the request-shaped `AuthorizationRequest` /
-  `AuthorizationDecision` model.
-
-These packages were renamed from `pkg/policy`, `pkg/rbac`, and `pkg/authz` to
-make their key-domain scope unambiguous in the source tree.
+Because the engine is qrdb's, RBAC requires `storage.backend: "qrdb"`. With any
+other backend there is no identity plane, the authorizer is nil, and every
+transport allows every request — `Config.ComplianceGaps` refuses that
+combination at startup unless `--insecure` / `XKMS_INSECURE` is set.
 
 ## Identity flow on a request
 
@@ -102,11 +111,15 @@ authenticator (mTLS/JWT/OIDC/...)  -> *qrdbauth.Identity (via type alias)
 auth.WithIdentity(ctx, id)
       |
       v
-middleware:
-  - identity-domain op (e.g. tenant:list:cross)
-        -> qrdb.RBAC().Authorize(id, resource, action)
-  - key-domain op (e.g. keys:read, secrets:create)
-        -> identity.Roles -> keyrbac.CheckPermission(roles, perm)
+transport gate (REST middleware / gRPC / QUIC / MCP)
+      |
+      v
+auth.Authorizer.Authorize(ctx, id, resource, action)
+      |
+      v
+qrdbClient.RBAC().Authorize(ctx, id, resource, action)   -- one engine,
+                                                            identity- and
+                                                            key-domain alike
 ```
 
 ## System-tenant rule (Phase 0)
@@ -125,13 +138,15 @@ Identity struct before this refactor.
 
 ## What this layering is NOT
 
-- It is **not** two parallel role systems. xkms does not define its own
-  user records, role memberships, or tenant model.
-- It is **not** an opportunity to push key-domain permissions back into
-  qrdb's permission registry. Doing so would couple qrdb's release cadence
-  to xkms's permission vocabulary.
+- It is **not** two parallel role systems. xkms defines no user records, role
+  memberships, tenant model, or permission registry of its own.
+- It is **not** an invitation to reintroduce a local authorization engine when
+  a new resource needs a permission. Add the `resource:action` pair to qrdb's
+  registry and reference it from the transport gate.
 - It is **not** dependent on qrdb being remote. The same shape works when
-  qrdb is embedded in-process via the embedded transport.
+  qrdb is embedded in-process via the embedded transport — which is the only
+  supported RBAC deployment, since the identity plane exists only under
+  `storage.backend: "qrdb"`.
 
 ## Factor adapters (Phase 1)
 
@@ -206,23 +221,26 @@ After the refactor, `pkg/auth` owns:
 
 - The `Authenticator` interface (transport-aware: HTTP and gRPC).
 - The mTLS, JWT, OIDC, NoOp, Composite, and Adaptive authenticator
-  implementations.
-- The MFA policy gating in `pkg/auth/policy` (distinct from `pkg/keypolicy`).
+  implementations (`mtls.go`, `jwt.go`, `oidc.go`, `noop.go`, `composite.go`,
+  `adaptive.go`), plus the PKCS#11 client TLS helper (`pkcs11_tls.go`).
+- `QRDBUserStore` (`qrdb_userstore.go`), which resolves users from the qrdb
+  identity plane by certificate SPKI thumbprint for the mTLS authenticator.
+- The `Authorizer` seam (`authorize.go`) and the resource / action identifiers
+  (`permissions.go`).
 - The `Identity` type alias and the `WithIdentity` / `GetIdentity` /
   `WithTenantBarrier` / `GetTenantBarrier` context helpers.
 - The `IsCrossTenant` and `FirstRole` helpers.
 
 The deleted pieces — the standalone `Identity` struct, `HasPermission`,
 `IsCrossTenant` / `HasRole` methods (replaced by qrdb's equivalents and the
-package-level helpers), and `pkg/user/UserRBACAdapter` — were domain-IAM
-duplication and have moved to qrdb (membership) or `pkg/keyrbac` (permission
-decisions).
+package-level helpers), `pkg/user/UserRBACAdapter`, and the `pkg/auth/policy`
+MFA step-up engine — were domain-IAM duplication and now live in qrdb.
 
 ## See also
 
 - `docs/auth/bootstrap.md` — bootstrap-time auth flow.
-- `docs/auth/mfa-policy.md` — MFA gating policy.
-- `pkg/keyrbac/rbac.go` — the role -> permission registry source of truth.
+- `docs/architecture/rbac.md` — permission vocabulary and transport gates.
+- `pkg/auth/authorize.go` — the Authorizer that delegates to qrdb.
 - `pkg/auth/auth.go` — Identity alias and helpers.
 - qrdb's `docs/auth/layering.md` — the same boundary documented from
   qrdb's side.

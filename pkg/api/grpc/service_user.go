@@ -16,15 +16,18 @@ package grpc
 import (
 	"context"
 
-	pb "github.com/jeremyhahn/go-xkms/pkg/api/grpc/proto/xkmsv1"
-	"github.com/jeremyhahn/go-xkms/pkg/api/transport"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
+
+	pb "github.com/jeremyhahn/go-xkms/pkg/api/grpc/proto/xkmsv1"
+	"github.com/jeremyhahn/go-xkms/pkg/api/transport"
+	"github.com/jeremyhahn/go-xkms/pkg/auth"
 )
 
 // userInfoToProto projects a transport.UserInfo onto its protobuf form.
 func userInfoToProto(u transport.UserInfo) *pb.UserInfo {
 	return &pb.UserInfo{
+		Id:          u.ID,
 		Username:    u.Username,
 		DisplayName: u.DisplayName,
 		Role:        u.Role,
@@ -37,7 +40,7 @@ func (s *Service) CreateUser(ctx context.Context, req *pb.CreateUserRequest) (*p
 	if req == nil || req.Username == "" {
 		return nil, status.Error(codes.InvalidArgument, "username is required")
 	}
-	if err := s.authorize(ctx, "users", "create", req.Username); err != nil {
+	if err := s.authorize(ctx, auth.ResourceUsers, auth.ActionCreate, req.Username); err != nil {
 		return nil, err
 	}
 	svc := s.xkmsService
@@ -58,7 +61,7 @@ func (s *Service) CreateUser(ctx context.Context, req *pb.CreateUserRequest) (*p
 
 // ListUsers lists xkms users.
 func (s *Service) ListUsers(ctx context.Context, _ *pb.ListUsersRequest) (*pb.ListUsersResponse, error) {
-	if err := s.authorize(ctx, "users", "list", ""); err != nil {
+	if err := s.authorize(ctx, auth.ResourceUsers, auth.ActionList, ""); err != nil {
 		return nil, err
 	}
 	svc := s.xkmsService
@@ -81,7 +84,7 @@ func (s *Service) GetUser(ctx context.Context, req *pb.GetUserRequest) (*pb.User
 	if req == nil || req.Username == "" {
 		return nil, status.Error(codes.InvalidArgument, "username is required")
 	}
-	if err := s.authorize(ctx, "users", "read", req.Username); err != nil {
+	if err := s.authorize(ctx, auth.ResourceUsers, auth.ActionRead, req.Username); err != nil {
 		return nil, err
 	}
 	svc := s.xkmsService
@@ -100,7 +103,7 @@ func (s *Service) DeleteUser(ctx context.Context, req *pb.DeleteUserRequest) (*p
 	if req == nil || req.Username == "" {
 		return nil, status.Error(codes.InvalidArgument, "username is required")
 	}
-	if err := s.authorize(ctx, "users", "delete", req.Username); err != nil {
+	if err := s.authorize(ctx, auth.ResourceUsers, auth.ActionDelete, req.Username); err != nil {
 		return nil, err
 	}
 	svc := s.xkmsService
@@ -128,7 +131,7 @@ func (s *Service) setUserEnabled(ctx context.Context, username string, enabled b
 	if username == "" {
 		return nil, status.Error(codes.InvalidArgument, "username is required")
 	}
-	if err := s.authorize(ctx, "users", "update", username); err != nil {
+	if err := s.authorize(ctx, auth.ResourceUsers, auth.ActionUpdate, username); err != nil {
 		return nil, err
 	}
 	svc := s.xkmsService
@@ -159,7 +162,7 @@ func (s *Service) BindUserCert(ctx context.Context, req *pb.BindUserCertRequest)
 	if req.GetThumbprint() == "" {
 		return nil, status.Error(codes.InvalidArgument, "thumbprint is required")
 	}
-	if err := s.authorize(ctx, "users", "update", req.GetUsername()); err != nil {
+	if err := s.authorize(ctx, auth.ResourceUsers, auth.ActionUpdate, req.GetUsername()); err != nil {
 		return nil, err
 	}
 	svc := s.xkmsService
@@ -181,7 +184,7 @@ func (s *Service) ListUserCredentials(ctx context.Context, req *pb.ListUserCrede
 	if req == nil || req.Username == "" {
 		return nil, status.Error(codes.InvalidArgument, "username is required")
 	}
-	if err := s.authorize(ctx, "users", "read", req.Username); err != nil {
+	if err := s.authorize(ctx, auth.ResourceUsers, auth.ActionRead, req.Username); err != nil {
 		return nil, err
 	}
 	svc := s.xkmsService

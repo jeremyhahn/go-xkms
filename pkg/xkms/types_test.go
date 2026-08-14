@@ -256,48 +256,48 @@ func TestKeyAttributes_String(t *testing.T) {
 	}
 }
 
+// TestAvailableHashes verifies the SDK re-export returns only hash functions
+// this binary can actually compute.
+//
+// This previously asserted that every known name was present, including MD4,
+// MD5+SHA1, RIPEMD-160 and the BLAKE2 family. Those implementations are only
+// linked when something imports their package, and crypto.Hash.New panics
+// rather than erroring for an unlinked hash — so returning them turned a
+// caller-supplied algorithm name (KDFParams.Hash arrives from API request
+// bodies) into a process-killing panic. AvailableHashes now filters by
+// Available(), and the old expectation encoded the unsafe contract.
 func TestAvailableHashes(t *testing.T) {
 	hashes := AvailableHashes()
 
-	// Verify all expected hashes are present
-	expected := []crypto.Hash{
-		crypto.MD4,
-		crypto.MD5,
-		crypto.SHA1,
-		crypto.SHA224,
-		crypto.SHA256,
-		crypto.SHA384,
-		crypto.SHA512,
-		crypto.MD5SHA1,
-		crypto.RIPEMD160,
-		crypto.SHA3_224,
-		crypto.SHA3_256,
-		crypto.SHA3_384,
-		crypto.SHA3_512,
-		crypto.SHA512_224,
-		crypto.SHA512_256,
-		crypto.BLAKE2s_256,
-		crypto.BLAKE2b_256,
-		crypto.BLAKE2b_384,
-		crypto.BLAKE2b_512,
+	if len(hashes) == 0 {
+		t.Fatal("AvailableHashes() returned nothing")
 	}
 
-	for _, hash := range expected {
-		name := hash.String()
-		got, ok := hashes[name]
-		if !ok {
-			t.Errorf("AvailableHashes() missing hash %s", name)
+	// Every returned hash must be constructible. New panics for an unlinked
+	// hash, so a passing call is the assertion.
+	for name, h := range hashes {
+		if !h.Available() {
+			t.Errorf("AvailableHashes()[%s] reports Available() == false", name)
 			continue
 		}
-		if got != hash {
-			t.Errorf("AvailableHashes()[%s] = %v, want %v", name, got, hash)
+		if h.New() == nil {
+			t.Errorf("AvailableHashes()[%s] constructed a nil hash", name)
 		}
 	}
 
-	// The function now includes aliases (lowercase, uppercase) for flexibility
-	// So the count will be greater than the number of unique hash types
-	if len(hashes) < len(expected) {
-		t.Errorf("AvailableHashes() returned %d hashes, expected at least %d", len(hashes), len(expected))
+	// The SHA-2 family underpins every signing and KDF path and must always
+	// survive the filter, under the canonical name and both alias spellings.
+	for _, name := range []string{"SHA-256", "SHA-384", "SHA-512", "sha256", "SHA256"} {
+		if _, ok := hashes[name]; !ok {
+			t.Errorf("AvailableHashes() missing core hash %s", name)
+		}
+	}
+
+	// Values must round-trip to the crypto.Hash they name.
+	for _, h := range []crypto.Hash{crypto.SHA256, crypto.SHA384, crypto.SHA512} {
+		if got := hashes[h.String()]; got != h {
+			t.Errorf("AvailableHashes()[%s] = %v, want %v", h.String(), got, h)
+		}
 	}
 }
 

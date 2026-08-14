@@ -471,7 +471,9 @@ func TestTF_ListPolicies_Empty(t *testing.T) {
 	assert.Empty(t, policies)
 }
 
-func TestTF_ListKeys_Empty(t *testing.T) {
+// TestTF_ListKeys_NoPersistentObjects: the mock reports no persistent
+// handles, so the TPM holds no keys to list.
+func TestTF_ListKeys_NoPersistentObjects(t *testing.T) {
 	svc := newServiceWithMock(defaultMockTPM())
 	keys, err := svc.ListKeys()
 	require.NoError(t, err)

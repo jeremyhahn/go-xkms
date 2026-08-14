@@ -18,6 +18,7 @@ import (
 	"net/http"
 
 	"github.com/jeremyhahn/go-xkms/pkg/api/transport"
+	"github.com/jeremyhahn/go-xkms/pkg/auth"
 	"github.com/jeremyhahn/go-xkms/pkg/seal"
 )
 
@@ -82,7 +83,7 @@ func (s *Server) handleBarrierInitializeShamir(w http.ResponseWriter, r *http.Re
 		return
 	}
 
-	if !s.authorize(w, r, "seal", "initialize_shamir") {
+	if !s.authorize(w, r, auth.ResourceSeal, auth.ActionInitializeShamir) {
 		return
 	}
 
@@ -123,7 +124,7 @@ func (s *Server) handleBarrierUnsealShare(w http.ResponseWriter, r *http.Request
 		return
 	}
 
-	if !s.authorize(w, r, "barrier", "unseal-share") {
+	if !s.authorize(w, r, auth.ResourceBarrier, auth.ActionUnsealShare) {
 		return
 	}
 
@@ -165,7 +166,7 @@ func (s *Server) handleBarrierUnsealShares(w http.ResponseWriter, r *http.Reques
 		return
 	}
 
-	if !s.authorize(w, r, "seal", "unseal") {
+	if !s.authorize(w, r, auth.ResourceSeal, auth.ActionUnseal) {
 		return
 	}
 
@@ -204,7 +205,7 @@ func (s *Server) handleBarrierRekey(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if !s.authorize(w, r, "seal", "rekey") {
+	if !s.authorize(w, r, auth.ResourceSeal, auth.ActionRekey) {
 		return
 	}
 
@@ -253,7 +254,7 @@ func (s *Server) handleBarrierGenerateRootToken(w http.ResponseWriter, r *http.R
 		return
 	}
 
-	if !s.authorize(w, r, "seal", "rotate_root_key") {
+	if !s.authorize(w, r, auth.ResourceSeal, auth.ActionRotateRootKey) {
 		return
 	}
 
@@ -294,7 +295,7 @@ func (s *Server) handleBarrierGenerateRecoveryKeys(w http.ResponseWriter, r *htt
 		return
 	}
 
-	if !s.authorize(w, r, "seal", "generate_recovery") {
+	if !s.authorize(w, r, auth.ResourceSeal, auth.ActionGenerateRecovery) {
 		return
 	}
 
@@ -345,7 +346,7 @@ func (s *Server) handleBarrierEnableEncryption(w http.ResponseWriter, r *http.Re
 		return
 	}
 
-	if !s.authorize(w, r, "seal", "enable_encryption") {
+	if !s.authorize(w, r, auth.ResourceSeal, auth.ActionEnableEncryption) {
 		return
 	}
 
@@ -377,7 +378,7 @@ func (s *Server) handleBarrierRecoverWithKeys(w http.ResponseWriter, r *http.Req
 		return
 	}
 
-	if !s.authorize(w, r, "seal", "recover_with_keys") {
+	if !s.authorize(w, r, auth.ResourceSeal, auth.ActionRecoverWithKeys) {
 		return
 	}
 
@@ -416,7 +417,7 @@ func (s *Server) handleBarrierDeleteRecoveryKeys(w http.ResponseWriter, r *http.
 		return
 	}
 
-	if !s.authorize(w, r, "seal", "generate_recovery") {
+	if !s.authorize(w, r, auth.ResourceSeal, auth.ActionGenerateRecovery) {
 		return
 	}
 
@@ -444,7 +445,7 @@ func (s *Server) handleBarrierHasRecoveryKeys(w http.ResponseWriter, r *http.Req
 		return
 	}
 
-	if !s.authorize(w, r, "seal", "status") {
+	if !s.authorize(w, r, auth.ResourceSeal, auth.ActionStatus) {
 		return
 	}
 

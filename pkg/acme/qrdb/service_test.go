@@ -402,7 +402,10 @@ func (m *mockTransport) CeremonyClaimCertBegin(ctx context.Context, req *db.Clai
 func (m *mockTransport) CeremonyClaimCertComplete(ctx context.Context, req *db.ClaimCertCompleteRequest) (*db.ClaimCertCompleteResponse, error) {
 	return nil, nil
 }
-func (m *mockTransport) CeremonyClaimShare(ctx context.Context, req *db.ClaimShareRequest) (*db.ClaimShareResponse, error) {
+func (m *mockTransport) CeremonyBeginClaimShare(ctx context.Context, req *db.BeginClaimShareRequest) (*db.BeginClaimShareResponse, error) {
+	return nil, nil
+}
+func (m *mockTransport) CeremonyCompleteClaimShare(ctx context.Context, req *db.CompleteClaimShareRequest) (*db.CompleteClaimShareResponse, error) {
 	return nil, nil
 }
 func (m *mockTransport) CeremonySignCSR(ctx context.Context, req *db.SignCSRInitRequest) (*db.SignCSRInitResponse, error) {

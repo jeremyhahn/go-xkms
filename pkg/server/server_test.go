@@ -779,13 +779,15 @@ func TestServer_InitializeAuthentication_Unknown(t *testing.T) {
 	cfg.Auth.Enabled = true
 	cfg.Auth.Type = "unknown_type"
 
+	// An unrecognized auth.type is fatal: a typo must not start a server with
+	// authentication silently disabled.
 	server, err := New(cfg)
-	require.NoError(t, err)
-	require.NotNil(t, server)
-	defer func() { _ = server.Shutdown() }()
+	require.Error(t, err)
+	assert.Nil(t, server)
 
-	// Unknown type falls back to NoOp
-	assert.NotNil(t, server.authenticator)
+	var unknown *ErrUnknownAuthType
+	require.ErrorAs(t, err, &unknown)
+	assert.Equal(t, "unknown_type", unknown.Type)
 }
 
 func TestServer_InitializeAuthentication_MTLS_NoTLS(t *testing.T) {
@@ -861,6 +863,10 @@ func TestServer_InitializeAuthentication_Adaptive(t *testing.T) {
 	cfg.Auth.Enabled = true
 	cfg.Auth.Type = "adaptive"
 	cfg.Auth.Adaptive = true
+	cfg.Auth.JWT = &config.JWTConfig{
+		PublicKeyFile: writeTestJWTPublicKey(t),
+		Issuer:        "test-issuer",
+	}
 
 	server, err := New(cfg)
 	require.NoError(t, err)
@@ -871,6 +877,27 @@ func TestServer_InitializeAuthentication_Adaptive(t *testing.T) {
 	// Adaptive authenticator name includes the required auth type suffix
 	assert.True(t, strings.HasPrefix(server.authenticator.Name(), "adaptive"),
 		"Expected authenticator name to start with 'adaptive', got: %s", server.authenticator.Name())
+	// The required authenticator adaptive escalates to must be the real JWT
+	// authenticator, never a no-op that would keep the API anonymous.
+	assert.NotContains(t, server.authenticator.Name(), "noop")
+}
+
+// writeTestJWTPublicKey writes a valid RSA public key in PEM form to a temp
+// file and returns its path, for tests that need a working JWT authenticator.
+func writeTestJWTPublicKey(t *testing.T) string {
+	t.Helper()
+
+	key, err := rsa.GenerateKey(rand.Reader, 2048)
+	require.NoError(t, err)
+
+	pubKeyDER, err := x509.MarshalPKIXPublicKey(&key.PublicKey)
+	require.NoError(t, err)
+
+	path := filepath.Join(t.TempDir(), "jwt-public.pem")
+	pubKeyPEM := pem.EncodeToMemory(&pem.Block{Type: "PUBLIC KEY", Bytes: pubKeyDER})
+	require.NoError(t, os.WriteFile(path, pubKeyPEM, 0600))
+
+	return path
 }
 
 // Test WebAuthn configuration
@@ -1140,9 +1167,17 @@ func TestServer_CreateJWTAuthenticator_NilConfig(t *testing.T) {
 	require.NotNil(t, server)
 	defer func() { _ = server.Shutdown() }()
 
-	// Set JWT config to nil
+	// With a nil JWT config the authenticator falls back to the built-in
+	// token issuer's public key (the login flows sign with it).
 	server.config.Auth.JWT = nil
 
+	jwtAuth, err := server.createJWTAuthenticator()
+	require.NoError(t, err)
+	require.NotNil(t, jwtAuth)
+
+	// Without either an operator key file or the built-in issuer there is
+	// nothing to verify tokens against: fail closed.
+	server.tokenIssuer = nil
 	_, err = server.createJWTAuthenticator()
 	assert.Error(t, err)
 	assert.Contains(t, err.Error(), "JWT configuration is required")
@@ -1312,7 +1347,7 @@ func TestServer_InitializeAuthentication_AdaptiveWithJWT(t *testing.T) {
 		"Expected authenticator name to start with 'adaptive', got: %s", server.authenticator.Name())
 }
 
-// Test adaptive auth without JWT config falls back correctly
+// Test adaptive auth without a JWT key file succeeds via the built-in issuer
 
 func TestServer_InitializeAuthentication_AdaptiveWithoutJWT(t *testing.T) {
 	xkms.Reset()
@@ -1322,20 +1357,48 @@ func TestServer_InitializeAuthentication_AdaptiveWithoutJWT(t *testing.T) {
 	cfg.Auth.Enabled = true
 	cfg.Auth.Type = "adaptive"
 	cfg.Auth.Adaptive = true
-	// No JWT config - should fall back to NoOp for required auth
+	// No JWT config: the built-in token issuer provisions its own signing
+	// key, so adaptive mode escalates to a JWT authenticator over that key
+	// once a user exists. Startup succeeds without any operator key file.
 
 	server, err := New(cfg)
 	require.NoError(t, err)
 	require.NotNil(t, server)
 	defer func() { _ = server.Shutdown() }()
 
-	assert.NotNil(t, server.authenticator)
-	// Adaptive authenticator name includes the required auth type suffix
+	require.NotNil(t, server.tokenIssuer)
 	assert.True(t, strings.HasPrefix(server.authenticator.Name(), "adaptive"),
 		"Expected authenticator name to start with 'adaptive', got: %s", server.authenticator.Name())
 }
 
-// Test adaptive auth with WebAuthn but no JWT file
+// Test adaptive auth layered on a real authenticator (auth.adaptive with a
+// non-adaptive auth.type) still resolves to that authenticator.
+func TestServer_InitializeAuthentication_AdaptiveOverMTLS(t *testing.T) {
+	xkms.Reset()
+	defer xkms.Reset()
+
+	certFile, keyFile, _ := createTestTLSFiles(t)
+
+	cfg := createMinimalConfig(t)
+	cfg.Auth.Enabled = true
+	cfg.Auth.Type = "mtls"
+	cfg.Auth.Adaptive = true
+	cfg.TLS.Enabled = true
+	cfg.TLS.CertFile = certFile
+	cfg.TLS.KeyFile = keyFile
+
+	server, err := New(cfg)
+	require.NoError(t, err)
+	require.NotNil(t, server)
+	defer func() { _ = server.Shutdown() }()
+
+	require.NotNil(t, server.authenticator)
+	assert.True(t, strings.HasPrefix(server.authenticator.Name(), "adaptive"),
+		"Expected authenticator name to start with 'adaptive', got: %s", server.authenticator.Name())
+	assert.NotContains(t, server.authenticator.Name(), "noop")
+}
+
+// Test adaptive auth with WebAuthn and no JWT file succeeds via the built-in issuer
 
 func TestServer_InitializeAuthentication_AdaptiveWebAuthnNoJWTFile(t *testing.T) {
 	xkms.Reset()
@@ -1349,7 +1412,9 @@ func TestServer_InitializeAuthentication_AdaptiveWebAuthnNoJWTFile(t *testing.T)
 		Enabled: true,
 		RPID:    "localhost",
 	}
-	// JWT config exists but no public key file
+	// JWT config exists but no public key file: the built-in token issuer
+	// supplies the verification key for the bearer tokens the WebAuthn
+	// ceremony issues, so startup succeeds.
 	cfg.Auth.JWT = &config.JWTConfig{
 		Issuer: "test-issuer",
 		// PublicKeyFile is empty
@@ -1360,13 +1425,12 @@ func TestServer_InitializeAuthentication_AdaptiveWebAuthnNoJWTFile(t *testing.T)
 	require.NotNil(t, server)
 	defer func() { _ = server.Shutdown() }()
 
-	assert.NotNil(t, server.authenticator)
-	// Adaptive authenticator name includes the required auth type suffix
+	require.NotNil(t, server.tokenIssuer)
 	assert.True(t, strings.HasPrefix(server.authenticator.Name(), "adaptive"),
 		"Expected authenticator name to start with 'adaptive', got: %s", server.authenticator.Name())
 }
 
-// Test adaptive auth with invalid JWT public key (falls back to NoOp)
+// Test adaptive auth with an unparsable JWT public key fails closed
 
 func TestServer_InitializeAuthentication_AdaptiveInvalidJWTKey(t *testing.T) {
 	xkms.Reset()
@@ -1390,16 +1454,17 @@ func TestServer_InitializeAuthentication_AdaptiveInvalidJWTKey(t *testing.T) {
 		Issuer:        "test-issuer",
 	}
 
+	// A broken JWT verification key must abort startup: silently degrading to
+	// the no-op authenticator would disable authentication entirely.
 	server, err := New(cfg)
-	require.NoError(t, err)
-	require.NotNil(t, server)
-	defer func() { _ = server.Shutdown() }()
+	require.Error(t, err)
+	assert.Nil(t, server)
 
-	// Should succeed with adaptive auth (falls back to NoOp for required auth)
-	assert.NotNil(t, server.authenticator)
-	// Adaptive authenticator name includes the required auth type suffix
-	assert.True(t, strings.HasPrefix(server.authenticator.Name(), "adaptive"),
-		"Expected authenticator name to start with 'adaptive', got: %s", server.authenticator.Name())
+	// New wraps initializeAuthentication's error, so assert on the typed error
+	// chain plus the message that names the failing component.
+	var initErr *ErrServiceInit
+	require.ErrorAs(t, err, &initErr)
+	assert.Contains(t, err.Error(), "JWT authenticator for adaptive mode")
 }
 
 // Test JWT auth that uses required auth directly (not adaptive mode)
@@ -1666,14 +1731,23 @@ func TestServer_Reload_AuthChange(t *testing.T) {
 	require.NotNil(t, server)
 	defer func() { _ = server.Shutdown() }()
 
-	// Create new config with auth enabled
+	// Create new config with auth enabled. Adaptive mode escalates to the
+	// required authenticator once a user exists, so it needs a JWT
+	// verification key exactly as it does at startup.
 	newCfg := createMinimalConfig(t)
 	newCfg.Auth.Enabled = true
 	newCfg.Auth.Type = "adaptive"
+	newCfg.Auth.JWT = &config.JWTConfig{
+		PublicKeyFile: writeTestJWTPublicKey(t),
+		Issuer:        "test-issuer",
+	}
 
-	// Reload should update auth configuration
+	// Reload must apply the auth configuration, not just store it.
 	err = server.Reload(newCfg)
-	assert.NoError(t, err)
+	require.NoError(t, err)
+	require.NotNil(t, server.authenticator)
+	assert.True(t, strings.HasPrefix(server.authenticator.Name(), "adaptive"),
+		"expected the rebuilt authenticator to be adaptive, got: %s", server.authenticator.Name())
 }
 
 // Test BuildTLSConfig with TLS 1.3 only
@@ -3148,6 +3222,20 @@ func TestServer_StartREST_NilHealthChecker(t *testing.T) {
 	assert.NoError(t, err)
 }
 
+// requireMCPStarted blocks until Start has published the MCP server.
+//
+// Start launches MCP on its own goroutine, so asserting after a fixed sleep
+// only tests whether that goroutine won a scheduling race — one it loses often
+// enough under -race to fail the suite. Polling the accessor the assertion
+// already reads keeps the check deterministic and still returns immediately in
+// the common case.
+func requireMCPStarted(t *testing.T, server *Server) {
+	t.Helper()
+	assert.Eventually(t, func() bool {
+		return server.MCPServer() != nil
+	}, 10*time.Second, 10*time.Millisecond, "MCP server was never started")
+}
+
 // Test MCP server startup
 func TestServer_StartMCP(t *testing.T) {
 	xkms.Reset()
@@ -3174,7 +3262,7 @@ func TestServer_StartMCP(t *testing.T) {
 	time.Sleep(100 * time.Millisecond)
 
 	// MCP server should be set
-	assert.NotNil(t, server.MCPServer())
+	requireMCPStarted(t, server)
 
 	// Shutdown
 	err = server.Shutdown()
@@ -3208,7 +3296,7 @@ func TestServer_StartMCP_WithDefaultBackend(t *testing.T) {
 	time.Sleep(100 * time.Millisecond)
 
 	// MCP server should be set
-	assert.NotNil(t, server.MCPServer())
+	requireMCPStarted(t, server)
 
 	// Shutdown
 	err = server.Shutdown()
@@ -3242,7 +3330,7 @@ func TestServer_StartMCP_NonexistentDefault(t *testing.T) {
 	time.Sleep(100 * time.Millisecond)
 
 	// MCP server should be set (using fallback)
-	assert.NotNil(t, server.MCPServer())
+	requireMCPStarted(t, server)
 
 	// Shutdown
 	err = server.Shutdown()
@@ -3571,7 +3659,7 @@ func TestServer_Start_AllProtocolsComprehensive(t *testing.T) {
 	assert.NotNil(t, server.RESTServer())
 	assert.NotNil(t, server.GRPCServer())
 	assert.NotNil(t, server.QUICServer())
-	assert.NotNil(t, server.MCPServer())
+	requireMCPStarted(t, server)
 
 	// Shutdown
 	err = server.Shutdown()
@@ -3623,6 +3711,12 @@ func TestServer_StartGRPC_ListenFailure(t *testing.T) {
 }
 
 // Test REST server with RBAC enabled
+// TestServer_StartREST_WithRBAC proves the composition root cannot start a
+// REST server that believes it enforces RBAC while no authorizer exists.
+// initializeAuthorization leaves rbacAuthorizer nil when RBAC is enabled
+// without a hosted qrdb identity plane; rest.NewServer then refuses
+// (ErrAuthorizerRequired) and startREST returns without registering a server,
+// matching the MCP transport's construction assert.
 func TestServer_StartREST_WithRBAC(t *testing.T) {
 	xkms.Reset()
 	defer xkms.Reset()
@@ -3645,11 +3739,13 @@ func TestServer_StartREST_WithRBAC(t *testing.T) {
 	err = server.Start()
 	assert.NoError(t, err)
 
-	// Give the server time to start
+	// Give the server time to attempt start
 	time.Sleep(100 * time.Millisecond)
 
-	// REST server should be set
-	assert.NotNil(t, server.RESTServer())
+	// No qrdb identity plane backs this config, so RBAC cannot be enforced:
+	// the REST transport must refuse to come up rather than allow all.
+	assert.Nil(t, server.RESTServer(),
+		"no REST server may be started when authorization cannot be enforced")
 
 	// Shutdown
 	err = server.Shutdown()
@@ -4287,7 +4383,7 @@ func TestServer_Shutdown_AllServersRunning(t *testing.T) {
 	assert.NotNil(t, server.UnixGRPCServer())
 	assert.NotNil(t, server.RESTServer())
 	assert.NotNil(t, server.GRPCServer())
-	assert.NotNil(t, server.MCPServer())
+	requireMCPStarted(t, server)
 
 	// Shutdown all
 	err = server.Shutdown()

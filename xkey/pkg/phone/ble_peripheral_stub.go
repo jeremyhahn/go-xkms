@@ -44,6 +44,14 @@ type BLEPeripheralConfig struct {
 	// DeviceName is the advertised device name.
 	DeviceName string
 
+	// MTU is the preferred Maximum Transmission Unit. Values below MinMTU
+	// fall back to DefaultMTU.
+	MTU int
+
+	// AdapterID selects the local Bluetooth adapter (for example "hci1").
+	// Empty uses the system default adapter.
+	AdapterID string
+
 	// Logger is the structured logger.
 	Logger *slog.Logger
 

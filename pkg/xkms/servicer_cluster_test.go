@@ -30,8 +30,16 @@ type fakeClusterReader struct {
 	membersErr error
 	leaderErr  error
 
+	leaderEndpoint    string
+	leaderEndpointErr error
+	addErr            error
+	removeErr         error
+
 	gotShardID uint64
 }
+
+// fakeClusterReader must satisfy the full servicer cluster contract.
+var _ ClusterClient = (*fakeClusterReader)(nil)
 
 func (f *fakeClusterReader) Members(_ context.Context, shardID uint64) ([]ClusterMember, error) {
 	f.gotShardID = shardID
@@ -47,6 +55,25 @@ func (f *fakeClusterReader) Leader(_ context.Context, shardID uint64) (uint64, b
 		return 0, false, f.leaderErr
 	}
 	return f.leaderID, f.hasLeader, nil
+}
+
+// The remaining ClusterClient methods let this read-focused double satisfy the
+// full servicer contract. The mutation and endpoint-resolution behaviour is
+// exercised in servicer_cluster_mutation_test.go against a dedicated double.
+
+func (f *fakeClusterReader) LeaderEndpoint(_ context.Context, shardID uint64, _ string) (string, error) {
+	f.gotShardID = shardID
+	return f.leaderEndpoint, f.leaderEndpointErr
+}
+
+func (f *fakeClusterReader) AddReplica(_ context.Context, shardID, _ uint64, _ string) error {
+	f.gotShardID = shardID
+	return f.addErr
+}
+
+func (f *fakeClusterReader) RemoveReplica(_ context.Context, shardID, _ uint64) error {
+	f.gotShardID = shardID
+	return f.removeErr
 }
 
 func TestClusterStatus_Standalone(t *testing.T) {

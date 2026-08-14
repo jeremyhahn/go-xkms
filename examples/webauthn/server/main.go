@@ -37,6 +37,7 @@ import (
 	"fmt"
 	"io/fs"
 	"log"
+	"log/slog"
 	"math/big"
 	"net/http"
 	"os"
@@ -62,9 +63,19 @@ func main() {
 	// Get configuration from environment
 	rpID := getEnv("WEBAUTHN_RP_ID", "localhost")
 	rpName := getEnv("WEBAUTHN_RP_NAME", "go-xkms Example")
-	rpOriginsStr := getEnv("WEBAUTHN_RP_ORIGINS", "https://localhost:8443")
 	port := getEnv("PORT", "8443")
 
+	// TLS is on by default. Set TLS_ENABLED=false to serve plain HTTP, which
+	// is what mobile testing over `adb reverse` needs: http://localhost is a
+	// WebAuthn secure context, so no certificate has to be trusted on the
+	// device.
+	tlsEnabled := getEnv("TLS_ENABLED", "true") != "false"
+	scheme := "https"
+	if !tlsEnabled {
+		scheme = "http"
+	}
+
+	rpOriginsStr := getEnv("WEBAUTHN_RP_ORIGINS", fmt.Sprintf("%s://localhost:%s", scheme, port))
 	rpOrigins := strings.Split(rpOriginsStr, ",")
 
 	fmt.Printf("Configuration:\n")
@@ -72,6 +83,7 @@ func main() {
 	fmt.Printf("  RP Name:    %s\n", rpName)
 	fmt.Printf("  RP Origins: %v\n", rpOrigins)
 	fmt.Printf("  Port:       %s\n", port)
+	fmt.Printf("  TLS:        %t\n", tlsEnabled)
 	fmt.Println()
 
 	// Create WebAuthn stores (use database stores for production)
@@ -110,10 +122,14 @@ func main() {
 	}
 	fmt.Println("   ✓ WebAuthn service created")
 
-	// Create HTTP handlers
+	// Create HTTP handlers. The handler logs the underlying cause of a
+	// verification failure at debug level, which is the only way to tell an
+	// authenticator interop bug from a genuinely forged credential, so the
+	// example runs its logger at debug level to match cfg.Debug.
 	fmt.Println()
 	fmt.Println("3. Setting up HTTP handlers...")
-	handlers := webauthnhttp.NewHandler(svc)
+	logger := slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelDebug}))
+	handlers := webauthnhttp.NewHandler(svc).WithLogger(logger)
 
 	// Create router
 	mux := http.NewServeMux()
@@ -182,20 +198,23 @@ func main() {
 	})
 	fmt.Println("   ✓ Debug endpoint at /api/v1/webauthn/debug")
 
-	// Generate self-signed certificate for HTTPS
-	fmt.Println()
-	fmt.Println("4. Generating TLS certificate...")
-	tlsConfig, err := generateTLSConfig()
-	if err != nil {
-		log.Fatalf("Failed to generate TLS config: %v", err)
-	}
-	fmt.Println("   ✓ Self-signed certificate generated")
-
-	// Create HTTPS server
 	server := &http.Server{
-		Addr:      ":" + port,
-		Handler:   mux,
-		TLSConfig: tlsConfig,
+		Addr:    ":" + port,
+		Handler: mux,
+	}
+
+	if tlsEnabled {
+		fmt.Println()
+		fmt.Println("4. Generating TLS certificate...")
+		tlsConfig, err := generateTLSConfig()
+		if err != nil {
+			log.Fatalf("Failed to generate TLS config: %v", err)
+		}
+		server.TLSConfig = tlsConfig
+		fmt.Println("   ✓ Self-signed certificate generated")
+	} else {
+		fmt.Println()
+		fmt.Println("4. TLS disabled (TLS_ENABLED=false); serving plain HTTP")
 	}
 
 	// Handle graceful shutdown
@@ -217,12 +236,12 @@ func main() {
 	// Start server
 	fmt.Println()
 	fmt.Println("=== Server Ready ===")
-	fmt.Printf("Server listening on: https://localhost:%s\n", port)
+	fmt.Printf("Server listening on: %s://localhost:%s\n", scheme, port)
 	fmt.Println()
 	fmt.Println("Available endpoints:")
-	fmt.Printf("  - https://localhost:%s/              (Web UI)\n", port)
-	fmt.Printf("  - https://localhost:%s/health        (Health check)\n", port)
-	fmt.Printf("  - https://localhost:%s/api/v1/webauthn/*\n", port)
+	fmt.Printf("  - %s://localhost:%s/              (Web UI)\n", scheme, port)
+	fmt.Printf("  - %s://localhost:%s/health        (Health check)\n", scheme, port)
+	fmt.Printf("  - %s://localhost:%s/api/v1/webauthn/*\n", scheme, port)
 	fmt.Println()
 	fmt.Println("WebAuthn API:")
 	fmt.Println("  POST /api/v1/webauthn/registration/begin   - Start registration")
@@ -235,10 +254,16 @@ func main() {
 	fmt.Println("Press Ctrl+C to stop the server")
 	fmt.Println()
 
-	// The server uses ListenAndServeTLS with empty cert/key paths
-	// because we've already configured the TLS certificates in tlsConfig
-	if err := server.ListenAndServeTLS("", ""); err != http.ErrServerClosed {
-		log.Fatalf("Server error: %v", err)
+	// With TLS enabled the certificates already live in server.TLSConfig, so
+	// ListenAndServeTLS is called with empty cert/key paths.
+	var serveErr error
+	if tlsEnabled {
+		serveErr = server.ListenAndServeTLS("", "")
+	} else {
+		serveErr = server.ListenAndServe()
+	}
+	if serveErr != http.ErrServerClosed {
+		log.Fatalf("Server error: %v", serveErr)
 	}
 
 	fmt.Println("Server stopped")

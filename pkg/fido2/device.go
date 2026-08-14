@@ -379,6 +379,12 @@ func (d *CTAPHIDDevice) handleCTAPError(status byte) error {
 		return ErrInvalidPIN
 	case StatusPINBlocked:
 		return ErrPINBlocked
+	case StatusPINAuthInvalid:
+		return ErrPINAuthInvalid
+	case StatusPINAuthBlocked:
+		return ErrPINAuthBlocked
+	case StatusPINNotSet:
+		return ErrPINNotSet
 	case StatusPINRequired:
 		return ErrPINRequired
 	case StatusUPRequired:

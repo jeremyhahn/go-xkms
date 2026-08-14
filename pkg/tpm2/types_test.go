@@ -1187,7 +1187,11 @@ func TestRSASSATemplateExtended(t *testing.T) {
 		assert.NoError(t, err)
 		assert.NotNil(t, rsaDetail)
 		assert.Equal(t, tpm2.TPMKeyBits(2048), rsaDetail.KeyBits)
-		assert.Equal(t, tpm2.TPMAlgRSASSA, rsaDetail.Scheme.Scheme)
+
+		// The general-purpose RSA signing template fixes no scheme, so the
+		// padding and the digest are both chosen per operation. Naming
+		// RSASSA/SHA-256 here limited every key created from it to one digest.
+		assert.Equal(t, tpm2.TPMAlgNull, rsaDetail.Scheme.Scheme)
 	})
 
 	t.Run("has empty auth policy by default", func(t *testing.T) {
@@ -1228,10 +1232,14 @@ func TestECCP256TemplateExtended(t *testing.T) {
 		assert.Equal(t, tpm2.TPMECCNistP256, eccDetail.CurveID)
 	})
 
-	t.Run("has ECDSA scheme", func(t *testing.T) {
+	t.Run("fixes no signature scheme", func(t *testing.T) {
 		eccDetail, err := ECCP256Template.Parameters.ECCDetail()
 		assert.NoError(t, err)
-		assert.Equal(t, tpm2.TPMAlgECDSA, eccDetail.Scheme.Scheme)
+
+		// A scheme of TPM_ALG_NULL is what lets one key sign under SHA-256,
+		// SHA-384 and SHA-512; naming ECDSA/SHA-256 made the other two
+		// TPM_RC_SCHEME.
+		assert.Equal(t, tpm2.TPMAlgNull, eccDetail.Scheme.Scheme)
 	})
 
 	t.Run("has empty auth policy by default", func(t *testing.T) {
@@ -1246,19 +1254,21 @@ func TestECCP384TemplateExtended(t *testing.T) {
 		assert.Equal(t, tpm2.TPMECCNistP384, eccDetail.CurveID)
 	})
 
-	t.Run("has ECDSA scheme", func(t *testing.T) {
+	t.Run("fixes no signature scheme", func(t *testing.T) {
 		eccDetail, err := ECCP384Template.Parameters.ECCDetail()
 		assert.NoError(t, err)
-		assert.Equal(t, tpm2.TPMAlgECDSA, eccDetail.Scheme.Scheme)
+		assert.Equal(t, tpm2.TPMAlgNull, eccDetail.Scheme.Scheme)
 	})
 
-	t.Run("has SHA384 hash algorithm in scheme", func(t *testing.T) {
+	t.Run("names no scheme hash", func(t *testing.T) {
 		eccDetail, err := ECCP384Template.Parameters.ECCDetail()
 		assert.NoError(t, err)
-		schemeDetails := eccDetail.Scheme.Details
-		ecdsaScheme, err := schemeDetails.ECDSA()
-		assert.NoError(t, err)
-		assert.Equal(t, tpm2.TPMAlgSHA384, ecdsaScheme.HashAlg)
+
+		// A scheme-less key carries no hash to read back. This used to name
+		// SHA-384, which is exactly why a P-384 key could not sign a SHA-256
+		// or SHA-512 digest.
+		_, err = eccDetail.Scheme.Details.ECDSA()
+		assert.Error(t, err)
 	})
 }
 
@@ -1269,19 +1279,20 @@ func TestECCP521TemplateExtended(t *testing.T) {
 		assert.Equal(t, tpm2.TPMECCNistP521, eccDetail.CurveID)
 	})
 
-	t.Run("has ECDSA scheme", func(t *testing.T) {
+	t.Run("fixes no signature scheme", func(t *testing.T) {
 		eccDetail, err := ECCP521Template.Parameters.ECCDetail()
 		assert.NoError(t, err)
-		assert.Equal(t, tpm2.TPMAlgECDSA, eccDetail.Scheme.Scheme)
+		assert.Equal(t, tpm2.TPMAlgNull, eccDetail.Scheme.Scheme)
 	})
 
-	t.Run("has SHA512 hash algorithm in scheme", func(t *testing.T) {
+	t.Run("names no scheme hash", func(t *testing.T) {
 		eccDetail, err := ECCP521Template.Parameters.ECCDetail()
 		assert.NoError(t, err)
-		schemeDetails := eccDetail.Scheme.Details
-		ecdsaScheme, err := schemeDetails.ECDSA()
-		assert.NoError(t, err)
-		assert.Equal(t, tpm2.TPMAlgSHA512, ecdsaScheme.HashAlg)
+
+		// A scheme-less key carries no hash to read back. This used to name
+		// SHA-512, which is why a P-521 key could sign nothing else.
+		_, err = eccDetail.Scheme.Details.ECDSA()
+		assert.Error(t, err)
 	})
 }
 
@@ -1987,17 +1998,17 @@ func TestParseIdentityProvisioningStrategy_EdgeCases(t *testing.T) {
 		{
 			name:     "Lowercase IAK",
 			input:    "iak",
-			expected: EnrollmentStrategyIAK_IDEVID_SINGLE_PASS, // Falls through to default
+			expected: EnrollmentStrategyUnknown, // Falls through to default
 		},
 		{
 			name:     "Mixed case",
 			input:    "Iak",
-			expected: EnrollmentStrategyIAK_IDEVID_SINGLE_PASS,
+			expected: EnrollmentStrategyUnknown,
 		},
 		{
 			name:     "Whitespace padded",
 			input:    " IAK ",
-			expected: EnrollmentStrategyIAK_IDEVID_SINGLE_PASS,
+			expected: EnrollmentStrategyUnknown,
 		},
 		{
 			name:     "Exact IAK match",

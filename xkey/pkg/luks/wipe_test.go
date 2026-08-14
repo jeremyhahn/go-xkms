@@ -14,6 +14,7 @@
 package luks
 
 import (
+	"bytes"
 	"os"
 	"path/filepath"
 	"testing"
@@ -303,4 +304,87 @@ func TestWipeConstants(t *testing.T) {
 	assert.Equal(t, WipePattern(0), PatternZeros)
 	assert.Equal(t, WipePattern(1), PatternOnes)
 	assert.Equal(t, WipePattern(2), PatternRandom)
+}
+
+// TestWipe_OpenFailure covers the open-for-write failure branch using a
+// directory, which cannot be opened O_WRONLY at any privilege level.
+func TestWipe_OpenFailure(t *testing.T) {
+	t.Parallel()
+
+	dir := t.TempDir()
+
+	err := Wipe(WipeOptions{Path: dir, Standard: StandardNIST})
+	require.Error(t, err)
+
+	var wrapped *WrappedError
+	require.ErrorAs(t, err, &wrapped)
+	assert.Equal(t, "failed to open file", wrapped.Msg)
+}
+
+// TestWipePass_WriteFailure verifies a failing write aborts the pass with a
+// wrapped error instead of silently reporting a successful wipe.
+func TestWipePass_WriteFailure(t *testing.T) {
+	t.Parallel()
+
+	path := filepath.Join(t.TempDir(), "data.bin")
+	require.NoError(t, os.WriteFile(path, []byte("sensitive data"), 0600))
+
+	// Opened read-only: every write must fail.
+	f, err := os.Open(path)
+	require.NoError(t, err)
+	defer func() { _ = f.Close() }()
+
+	err = wipePass(f, 14, PatternZeros)
+	require.Error(t, err)
+
+	var wrapped *WrappedError
+	require.ErrorAs(t, err, &wrapped)
+	assert.Equal(t, "write error", wrapped.Msg)
+
+	// The file content must be untouched by the failed pass.
+	data, readErr := os.ReadFile(path)
+	require.NoError(t, readErr)
+	assert.Equal(t, "sensitive data", string(data))
+}
+
+// TestWipePass_UnknownPattern verifies an unsupported pattern aborts the pass
+// rather than writing whatever happens to be in the buffer.
+func TestWipePass_UnknownPattern(t *testing.T) {
+	t.Parallel()
+
+	path := filepath.Join(t.TempDir(), "data.bin")
+	require.NoError(t, os.WriteFile(path, []byte("sensitive data"), 0600))
+
+	f, err := os.OpenFile(path, os.O_WRONLY, 0600)
+	require.NoError(t, err)
+	defer func() { _ = f.Close() }()
+
+	err = wipePass(f, 14, WipePattern(200))
+	require.Error(t, err)
+
+	var msgErr *MessageError
+	require.ErrorAs(t, err, &msgErr)
+	assert.Contains(t, msgErr.Msg, "unknown pattern")
+
+	data, readErr := os.ReadFile(path)
+	require.NoError(t, readErr)
+	assert.Equal(t, "sensitive data", string(data), "an unsupported pattern must not modify the file")
+}
+
+// TestWipe_LargerThanBuffer exercises the multi-iteration write loop with a
+// file larger than the 1 MiB wipe buffer.
+func TestWipe_LargerThanBuffer(t *testing.T) {
+	t.Parallel()
+
+	path := filepath.Join(t.TempDir(), "big.bin")
+	original := bytes.Repeat([]byte{0xAA}, (1024*1024)+4096)
+	require.NoError(t, os.WriteFile(path, original, 0600))
+
+	require.NoError(t, Wipe(WipeOptions{Path: path, Standard: StandardCustom}))
+
+	data, err := os.ReadFile(path)
+	require.NoError(t, err)
+	require.Len(t, data, len(original), "wiping must not change the file size")
+	assert.Equal(t, bytes.Repeat([]byte{0x00}, len(original)), data,
+		"every byte past the buffer boundary must be overwritten")
 }

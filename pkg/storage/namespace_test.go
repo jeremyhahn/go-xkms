@@ -131,6 +131,43 @@ func TestCertChainPath(t *testing.T) {
 	}
 }
 
+// TestMetadataPath tests the MetadataPath function.
+func TestMetadataPath(t *testing.T) {
+	tests := []struct {
+		name   string
+		id     string
+		expect string
+	}{
+		{
+			name:   "simple ID",
+			id:     "key1",
+			expect: "meta/key1.json",
+		},
+		{
+			name:   "UUID-style ID",
+			id:     "550e8400-e29b-41d4-a716-446655440000",
+			expect: "meta/550e8400-e29b-41d4-a716-446655440000.json",
+		},
+		{
+			name:   "symmetric key ID format",
+			id:     "sw:secret:my-key:aes256-gcm",
+			expect: "meta/sw:secret:my-key:aes256-gcm.json",
+		},
+		{
+			name:   "empty ID",
+			id:     "",
+			expect: "meta/.json",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result := MetadataPath(tt.id)
+			assert.Equal(t, tt.expect, result)
+		})
+	}
+}
+
 // mockBackend provides a simple in-memory implementation for testing.
 type mockBackend struct {
 	data map[string][]byte

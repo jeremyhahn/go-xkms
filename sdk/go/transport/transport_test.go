@@ -285,6 +285,52 @@ func TestWithAddress(t *testing.T) {
 	})
 }
 
+func TestWithTLSEnabled(t *testing.T) {
+	t.Run("enables TLS with no trust material", func(t *testing.T) {
+		cfg := &Config{}
+		if err := WithTLSEnabled(true)(cfg); err != nil {
+			t.Errorf("unexpected error: %v", err)
+		}
+		if !cfg.TLSEnabled {
+			t.Error("expected TLSEnabled to be true")
+		}
+		// No CA bundle, keypair, or pre-built config: the transport must fall
+		// through to the system root pool rather than to plaintext.
+		if cfg.TLSCAFile != "" || cfg.TLSCertFile != "" || cfg.TLSKeyFile != "" || cfg.TLSConfig != nil {
+			t.Errorf("expected no trust material, got %+v", cfg)
+		}
+	})
+
+	t.Run("disable does not discard configured material", func(t *testing.T) {
+		cfg := &Config{}
+		if err := WithTLS("/path/to/ca.crt")(cfg); err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if err := WithTLSEnabled(false)(cfg); err != nil {
+			t.Errorf("unexpected error: %v", err)
+		}
+		if cfg.TLSEnabled {
+			t.Error("expected TLSEnabled to be false")
+		}
+		if cfg.TLSCAFile != "/path/to/ca.crt" {
+			t.Errorf("expected TLSCAFile to be preserved, got %s", cfg.TLSCAFile)
+		}
+	})
+
+	t.Run("more specific options win when applied after", func(t *testing.T) {
+		cfg := &Config{}
+		if err := ApplyOptions(cfg, WithTLSEnabled(true), WithMTLS("/c.crt", "/k.key", "/ca.crt")); err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if !cfg.TLSEnabled {
+			t.Error("expected TLSEnabled to be true")
+		}
+		if cfg.TLSCertFile != "/c.crt" || cfg.TLSKeyFile != "/k.key" || cfg.TLSCAFile != "/ca.crt" {
+			t.Errorf("expected mTLS material to survive, got %+v", cfg)
+		}
+	})
+}
+
 func TestWithTLS(t *testing.T) {
 	cfg := &Config{}
 	opt := WithTLS("/path/to/ca.crt")

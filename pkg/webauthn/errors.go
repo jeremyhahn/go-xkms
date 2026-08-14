@@ -61,6 +61,14 @@ var (
 
 	// ErrNotConfigured is returned when the service is not properly configured.
 	ErrNotConfigured = errors.New("webauthn service not configured")
+
+	// ErrPublicRegistrationDisabled is returned by BeginRegistration when the
+	// relying party has open sign-up turned off
+	// (webauthn.allow_public_registration = false) and the email does not
+	// belong to an existing account. An account must first be provisioned
+	// through the authorized user-creation path; enrollment for accounts that
+	// already exist is unaffected.
+	ErrPublicRegistrationDisabled = errors.New("webauthn: public registration is disabled; the account must be provisioned by an administrator first")
 )
 
 // WebAuthnError wraps an error with additional context.

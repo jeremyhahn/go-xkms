@@ -151,11 +151,8 @@ func init() {
 	usbUpdateCmd.Flags().StringArrayVar(&usbBinaries, "binary", nil,
 		"Path to xKey binary to include (repeatable). Defaults to current binary.")
 
-	// Add usb to the LUKS exempt list so it runs without requiring
-	// an unlocked LUKS volume.
-	luksExemptCommands["usb"] = true
-	luksExemptCommands["create"] = true
-	luksExemptCommands["update"] = true
+	// The `usb` group is LUKS-exempt (see luksExemptGroups in root.go); the
+	// whole subtree is covered by group, so nothing is registered here.
 }
 
 func runUSBCreate(cmd *cobra.Command, args []string) error {

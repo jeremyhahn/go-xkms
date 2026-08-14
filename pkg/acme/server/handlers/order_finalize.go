@@ -30,6 +30,7 @@ import (
 
 	"github.com/gorilla/mux"
 	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
+	"github.com/jeremyhahn/go-xkms/pkg/acme/audit"
 	"github.com/jeremyhahn/go-xkms/pkg/acme/common"
 	"github.com/jeremyhahn/go-xkms/pkg/acme/entities"
 	caerrors "github.com/jeremyhahn/go-xkms/pkg/acme/errors"
@@ -633,6 +634,17 @@ func (s *RestService) OrderFinalizeHandler(w http.ResponseWriter, r *http.Reques
 	// Encode the certificate to PEM
 	pem = encodeCertificatePEM(cert.Raw)
 
+	// The CA has signed: the certificate exists in the world from here on, so
+	// it is audited now rather than after delivery. A finalization hook or a
+	// storage failure below may still abort the response, but it cannot unsign
+	// the certificate, and an audit trail that omitted it would be wrong.
+	s.recordAudit(audit.LogCertificateIssued(auditContext(r), s.auditLog,
+		auditAccountID(account.ID),
+		strconv.FormatUint(order.ID, 10),
+		cert.Subject.CommonName,
+		auditValidityDays(cert),
+		cert.SerialNumber.String()))
+
 	// Execute order finalization hooks if registered
 	if s.params != nil && s.params.OrderFinalizeHooks != nil {
 		hookCtx := &OrderFinalizeHookContext{
@@ -937,6 +949,19 @@ func (s *RestService) finalizeTCGCSR(
 	if err != nil {
 		return 0, nil, common.ServerInternal("Failed to parse EK certificate")
 	}
+
+	// enroll-01 binds a device identity to a TPM, so the trail records both the
+	// enrollment decision and the IDevID certificate it produced.
+	auditCtx := auditContext(r)
+	s.recordAudit(audit.LogTPMEnrollment(auditCtx, s.auditLog,
+		auditAccountID(account.ID), idevidCN,
+		ekcert.Subject.CommonName, idevidCert.Subject.CommonName))
+	s.recordAudit(audit.LogCertificateIssued(auditCtx, s.auditLog,
+		auditAccountID(account.ID),
+		strconv.FormatUint(order.ID, 10),
+		idevidCert.Subject.CommonName,
+		auditValidityDays(idevidCert),
+		idevidCert.SerialNumber.String()))
 
 	// Execute order finalization hooks if registered
 	if s.params != nil && s.params.OrderFinalizeHooks != nil {

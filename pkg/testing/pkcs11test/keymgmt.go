@@ -14,10 +14,38 @@
 package pkcs11test
 
 import (
+	"bytes"
+	"crypto/sha256"
+	"io"
 	"testing"
+
+	"golang.org/x/crypto/hkdf"
 
 	"github.com/jeremyhahn/go-xkms/pkg/pkcs11/module"
 )
+
+// encryptUnderKey runs a single-part CKM_AES_GCM encryption of plaintext under
+// key with the suite's fixed IV and returns the ciphertext.
+//
+// Two keys hold the same material if and only if they turn the same plaintext
+// into the same ciphertext under the same IV. That equivalence is what proves a
+// C_UnwrapKey actually reconstructed the wrapped key rather than inventing a
+// fresh one, and it works even when neither key's value may be read back.
+func encryptUnderKey(t *testing.T, m *module.Module, sh module.SessionHandle,
+	key module.ObjectHandle, plaintext []byte) []byte {
+	t.Helper()
+
+	mech := module.NewMechanismWithTypedParams(module.CKM_AES_GCM, module.NewAESGCMParams(suiteGCMIV(), 128))
+	requireRV(t, module.CKR_OK, m.EncryptInit(sh, mech, key), "EncryptInit failed")
+
+	ciphertext, rv := m.Encrypt(sh, plaintext)
+	requireRV(t, module.CKR_OK, rv, "Encrypt failed")
+
+	requireRV(t, module.CKR_OK, m.FinishOperation(sh, module.OperationEncrypt),
+		"FinishOperation should terminate the encryption operation")
+
+	return ciphertext
+}
 
 // RunKeyManagementTests verifies Section 5.14 Key Management Functions of the
 // PKCS#11 v3.0 spec. It exercises C_GenerateKey, C_GenerateKeyPair, C_WrapKey,
@@ -40,7 +68,7 @@ func (s *Suite) testGenerateKey(t *testing.T) {
 		m, cleanup := s.createInitializedModule(t)
 		defer cleanup()
 
-		sh := openRWSession(t, m)
+		sh := openAuthenticatedRWSession(t, m)
 
 		mechanism := &module.Mechanism{Type: module.CKM_AES_KEY_GEN}
 		template := []module.Attribute{
@@ -54,9 +82,6 @@ func (s *Suite) testGenerateKey(t *testing.T) {
 		}
 
 		keyHandle, rv := m.GenerateKey(sh, mechanism, template)
-		if s.skipIfUnsupported(t, rv) {
-			return
-		}
 		requireRV(t, module.CKR_OK, rv, "GenerateKey with valid AES template should return CKR_OK")
 
 		if keyHandle == 0 {
@@ -81,9 +106,6 @@ func (s *Suite) testGenerateKey(t *testing.T) {
 		}
 
 		_, rv := m.GenerateKey(invalidSession, mechanism, template)
-		if s.skipIfUnsupported(t, rv) {
-			return
-		}
 		requireRV(t, module.CKR_SESSION_HANDLE_INVALID, rv,
 			"GenerateKey with invalid session should return CKR_SESSION_HANDLE_INVALID")
 	})
@@ -92,7 +114,7 @@ func (s *Suite) testGenerateKey(t *testing.T) {
 		m, cleanup := s.createInitializedModule(t)
 		defer cleanup()
 
-		sh := openRWSession(t, m)
+		sh := openAuthenticatedRWSession(t, m)
 
 		template := []module.Attribute{
 			module.NewUint32Attribute(module.CKA_CLASS, uint32(module.CKO_SECRET_KEY)),
@@ -105,9 +127,6 @@ func (s *Suite) testGenerateKey(t *testing.T) {
 		}
 
 		_, rv := m.GenerateKey(sh, nil, template)
-		if s.skipIfUnsupported(t, rv) {
-			return
-		}
 		requireRV(t, module.CKR_ARGUMENTS_BAD, rv,
 			"GenerateKey with nil mechanism should return CKR_ARGUMENTS_BAD")
 	})
@@ -120,7 +139,7 @@ func (s *Suite) testGenerateKeyPair(t *testing.T) {
 		m, cleanup := s.createInitializedModule(t)
 		defer cleanup()
 
-		sh := openRWSession(t, m)
+		sh := openAuthenticatedRWSession(t, m)
 
 		mechanism := &module.Mechanism{Type: module.CKM_RSA_PKCS_KEY_PAIR_GEN}
 		publicTemplate := []module.Attribute{
@@ -143,9 +162,6 @@ func (s *Suite) testGenerateKeyPair(t *testing.T) {
 		}
 
 		pubHandle, privHandle, rv := m.GenerateKeyPair(sh, mechanism, publicTemplate, privateTemplate)
-		if s.skipIfUnsupported(t, rv) {
-			return
-		}
 		requireRV(t, module.CKR_OK, rv, "GenerateKeyPair with valid RSA templates should return CKR_OK")
 
 		if pubHandle == 0 {
@@ -178,9 +194,6 @@ func (s *Suite) testGenerateKeyPair(t *testing.T) {
 		}
 
 		_, _, rv := m.GenerateKeyPair(invalidSession, mechanism, publicTemplate, privateTemplate)
-		if s.skipIfUnsupported(t, rv) {
-			return
-		}
 		requireRV(t, module.CKR_SESSION_HANDLE_INVALID, rv,
 			"GenerateKeyPair with invalid session should return CKR_SESSION_HANDLE_INVALID")
 	})
@@ -193,22 +206,38 @@ func (s *Suite) testWrapKey(t *testing.T) {
 		m, cleanup := s.createInitializedModule(t)
 		defer cleanup()
 
-		sh := openRWSession(t, m)
+		sh := openAuthenticatedRWSession(t, m)
 
-		// Create wrapping key (real backend key for encryption) and target
-		// key to wrap (needs CKA_VALUE for WrapKey to read key material).
+		// Both keys are real backend keys so the wrap and unwrap both run
+		// inside the backend and round-trip. Wrapping a purely local object
+		// (one with CKA_VALUE but no backend key) produces the mechanism's
+		// own ciphertext format, which the backend unwrap path does not read.
 		wrappingKey := generateSecretKey(t, m, sh)
-		targetKey := createSecretKeyObject(t, m, sh)
+		targetKey := generateSecretKey(t, m, sh)
 
-		mechanism := &module.Mechanism{Type: module.CKM_AES_GCM}
+		// The target's own material, read while the object still permits it,
+		// is the reference the wrapped blob is checked against.
+		targetKeyValue := attributeValue(t, m, sh, targetKey, module.CKA_VALUE)
+
+		mechanism := module.NewMechanismWithTypedParams(module.CKM_AES_GCM, module.NewAESGCMParams(suiteGCMIV(), 128))
 		wrappedKey, rv := m.WrapKey(sh, mechanism, wrappingKey, targetKey)
-		if s.skipIfUnsupported(t, rv) {
-			return
-		}
 		requireRV(t, module.CKR_OK, rv, "WrapKey with valid parameters should return CKR_OK")
 
-		if len(wrappedKey) == 0 {
-			t.Fatal("WrapKey should return non-empty wrapped key bytes")
+		// C_WrapKey encrypts the key (v3.2 §5.18.3). A len != 0 check reports
+		// green for an implementation that hands back the target's plaintext
+		// CKA_VALUE -- key exfiltration through the wrapping API. The wrapped
+		// blob must not contain the key material anywhere, and under an AEAD
+		// wrapping mechanism it must be at least the key plus a 128-bit
+		// authentication tag.
+		if bytes.Contains(wrappedKey, targetKeyValue) {
+			t.Fatalf("the wrapped key contains the target key's plaintext CKA_VALUE; "+
+				"C_WrapKey exported %d bytes of key material in the clear",
+				len(targetKeyValue))
+		}
+		if len(wrappedKey) < len(targetKeyValue)+gcmTagLen {
+			t.Fatalf("the wrapped key is %d bytes, too short to be %d bytes of key "+
+				"material plus a %d-byte AES-GCM tag",
+				len(wrappedKey), len(targetKeyValue), gcmTagLen)
 		}
 	})
 
@@ -217,12 +246,9 @@ func (s *Suite) testWrapKey(t *testing.T) {
 		defer cleanup()
 
 		invalidSession := module.SessionHandle(0xDEADBEEF)
-		mechanism := &module.Mechanism{Type: module.CKM_AES_GCM}
+		mechanism := module.NewMechanismWithTypedParams(module.CKM_AES_GCM, module.NewAESGCMParams(suiteGCMIV(), 128))
 
 		_, rv := m.WrapKey(invalidSession, mechanism, module.ObjectHandle(1), module.ObjectHandle(2))
-		if s.skipIfUnsupported(t, rv) {
-			return
-		}
 		requireRV(t, module.CKR_SESSION_HANDLE_INVALID, rv,
 			"WrapKey with invalid session should return CKR_SESSION_HANDLE_INVALID")
 	})
@@ -231,16 +257,13 @@ func (s *Suite) testWrapKey(t *testing.T) {
 		m, cleanup := s.createInitializedModule(t)
 		defer cleanup()
 
-		sh := openRWSession(t, m)
+		sh := openAuthenticatedRWSession(t, m)
 		targetKey := generateSecretKey(t, m, sh)
 
 		invalidWrappingKey := module.ObjectHandle(0xBADF00D)
-		mechanism := &module.Mechanism{Type: module.CKM_AES_GCM}
+		mechanism := module.NewMechanismWithTypedParams(module.CKM_AES_GCM, module.NewAESGCMParams(suiteGCMIV(), 128))
 
 		_, rv := m.WrapKey(sh, mechanism, invalidWrappingKey, targetKey)
-		if s.skipIfUnsupported(t, rv) {
-			return
-		}
 		requireRV(t, module.CKR_WRAPPING_KEY_HANDLE_INVALID, rv,
 			"WrapKey with invalid wrapping key handle should return CKR_WRAPPING_KEY_HANDLE_INVALID")
 	})
@@ -253,18 +276,17 @@ func (s *Suite) testUnwrapKey(t *testing.T) {
 		m, cleanup := s.createInitializedModule(t)
 		defer cleanup()
 
-		sh := openRWSession(t, m)
+		sh := openAuthenticatedRWSession(t, m)
 
-		// Create wrapping key (real backend key for encryption) and target
-		// key to wrap (needs CKA_VALUE for WrapKey to read key material).
+		// Both keys are real backend keys so the wrap and unwrap both run
+		// inside the backend and round-trip. Wrapping a purely local object
+		// (one with CKA_VALUE but no backend key) produces the mechanism's
+		// own ciphertext format, which the backend unwrap path does not read.
 		wrappingKey := generateSecretKey(t, m, sh)
-		targetKey := createSecretKeyObject(t, m, sh)
+		targetKey := generateSecretKey(t, m, sh)
 
-		wrapMech := &module.Mechanism{Type: module.CKM_AES_GCM}
+		wrapMech := module.NewMechanismWithTypedParams(module.CKM_AES_GCM, module.NewAESGCMParams(suiteGCMIV(), 128))
 		wrappedKeyBytes, rv := m.WrapKey(sh, wrapMech, wrappingKey, targetKey)
-		if s.skipIfUnsupported(t, rv) {
-			return
-		}
 		requireRV(t, module.CKR_OK, rv, "WrapKey should succeed before UnwrapKey test")
 
 		// Unwrap using the same wrapping key.
@@ -277,15 +299,31 @@ func (s *Suite) testUnwrapKey(t *testing.T) {
 			module.NewBoolAttribute(module.CKA_TOKEN, false),
 		}
 
-		unwrapMech := &module.Mechanism{Type: module.CKM_AES_GCM}
+		unwrapMech := module.NewMechanismWithTypedParams(module.CKM_AES_GCM, module.NewAESGCMParams(suiteGCMIV(), 128))
 		unwrappedHandle, rv := m.UnwrapKey(sh, unwrapMech, wrappingKey, wrappedKeyBytes, unwrapTemplate)
-		if s.skipIfUnsupported(t, rv) {
-			return
-		}
 		requireRV(t, module.CKR_OK, rv, "UnwrapKey with valid wrapped bytes should return CKR_OK")
 
 		if unwrappedHandle == 0 {
 			t.Fatal("UnwrapKey should return a non-zero object handle")
+		}
+
+		// A non-zero handle proves nothing about what is behind it: an
+		// implementation that ignored wrappedKeyBytes and generated a fresh
+		// random key would return one too, and the caller would silently be
+		// using a different key than the one it unwrapped.
+		//
+		// Encrypting the same plaintext under the target and under the
+		// unwrapped key with the same IV settles it. AES-GCM is deterministic
+		// given (key, IV, plaintext), so identical ciphertext means identical
+		// key material and nothing else.
+		probe := []byte("unwrap-identity-probe-plaintext!")
+		fromTarget := encryptUnderKey(t, m, sh, targetKey, probe)
+		fromUnwrapped := encryptUnderKey(t, m, sh, unwrappedHandle, probe)
+
+		if !bytes.Equal(fromTarget, fromUnwrapped) {
+			t.Fatalf("the unwrapped key is not the key that was wrapped: the same plaintext "+
+				"encrypts to\n %x under the target key and\n %x under the unwrapped key",
+				fromTarget, fromUnwrapped)
 		}
 	})
 
@@ -294,7 +332,7 @@ func (s *Suite) testUnwrapKey(t *testing.T) {
 		defer cleanup()
 
 		invalidSession := module.SessionHandle(0xDEADBEEF)
-		mechanism := &module.Mechanism{Type: module.CKM_AES_GCM}
+		mechanism := module.NewMechanismWithTypedParams(module.CKM_AES_GCM, module.NewAESGCMParams(suiteGCMIV(), 128))
 		unwrapTemplate := []module.Attribute{
 			module.NewUint32Attribute(module.CKA_CLASS, uint32(module.CKO_SECRET_KEY)),
 			module.NewUint32Attribute(module.CKA_KEY_TYPE, uint32(module.CKK_AES)),
@@ -302,9 +340,6 @@ func (s *Suite) testUnwrapKey(t *testing.T) {
 		}
 
 		_, rv := m.UnwrapKey(invalidSession, mechanism, module.ObjectHandle(1), []byte("fake-wrapped-data"), unwrapTemplate)
-		if s.skipIfUnsupported(t, rv) {
-			return
-		}
 		requireRV(t, module.CKR_SESSION_HANDLE_INVALID, rv,
 			"UnwrapKey with invalid session should return CKR_SESSION_HANDLE_INVALID")
 	})
@@ -313,35 +348,108 @@ func (s *Suite) testUnwrapKey(t *testing.T) {
 // testDeriveKey verifies C_DeriveKey behavior per PKCS#11 v3.0 Section 5.14.5.
 func (s *Suite) testDeriveKey(t *testing.T) {
 
-	t.Run("Happy_DeriveKeyWithValidParamsReturnsOK", func(t *testing.T) {
+	// suiteHKDFSalt and suiteHKDFInfo are the fixed CK_HKDF_PARAMS inputs the
+	// derivation tests use. With a fixed base key they make CKM_HKDF_DERIVE
+	// fully deterministic, which is what allows the derived material to be
+	// compared against RFC 5869 rather than merely inspected for a handle.
+	suiteHKDFSalt := []byte("conformance-suite-salt")
+	suiteHKDFInfo := []byte("conformance-suite-info")
+
+	// hkdfMechanism builds CKM_HKDF_DERIVE with the suite's fixed parameters
+	// and the given info. CK_HKDF_PARAMS is required for this mechanism
+	// (v3.2 §6.62.2), so the mechanism always carries a real one.
+	hkdfMechanism := func(info []byte) *module.Mechanism {
+		return &module.Mechanism{
+			Type: module.CKM_HKDF_DERIVE,
+			TypedParameter: &module.HKDFParams{
+				Extract:     true,
+				Expand:      true,
+				PRFHashMech: module.CKM_SHA256,
+				SaltType:    module.CKF_HKDF_SALT_DATA,
+				Salt:        suiteHKDFSalt,
+				Info:        info,
+			},
+		}
+	}
+
+	// derivedKeyTemplate asks for a 16-byte AES key whose value may be read
+	// back. C_DeriveKey defaults a derived key to sensitive and
+	// non-extractable, and a key whose material can never be seen cannot be
+	// checked against a KDF.
+	derivedKeyTemplate := []module.Attribute{
+		module.NewUint32Attribute(module.CKA_CLASS, uint32(module.CKO_SECRET_KEY)),
+		module.NewUint32Attribute(module.CKA_KEY_TYPE, uint32(module.CKK_AES)),
+		module.NewStringAttribute(module.CKA_LABEL, "derived-aes-key"),
+		module.NewUint32Attribute(module.CKA_VALUE_LEN, 16),
+		module.NewBoolAttribute(module.CKA_ENCRYPT, true),
+		module.NewBoolAttribute(module.CKA_DECRYPT, true),
+		module.NewBoolAttribute(module.CKA_DERIVE, true),
+		module.NewBoolAttribute(module.CKA_SENSITIVE, false),
+		module.NewBoolAttribute(module.CKA_EXTRACTABLE, true),
+		module.NewBoolAttribute(module.CKA_TOKEN, false),
+	}
+
+	t.Run("Happy_DeriveKeyMatchesRFC5869", func(t *testing.T) {
 		m, cleanup := s.createInitializedModule(t)
 		defer cleanup()
 
-		sh := openRWSession(t, m)
+		sh := openAuthenticatedRWSession(t, m)
 
-		// Use an existing secret key as the base key for derivation.
-		baseKey := generateSecretKey(t, m, sh)
+		// The base key is a local object whose CKA_VALUE the suite planted, so
+		// the input keying material the token derives from is known exactly.
+		baseKey := createSecretKeyObject(t, m, sh)
 
-		mechanism := &module.Mechanism{Type: module.CKM_HKDF_DERIVE}
-		template := []module.Attribute{
-			module.NewUint32Attribute(module.CKA_CLASS, uint32(module.CKO_SECRET_KEY)),
-			module.NewUint32Attribute(module.CKA_KEY_TYPE, uint32(module.CKK_AES)),
-			module.NewStringAttribute(module.CKA_LABEL, "derived-aes-key"),
-			module.NewUint32Attribute(module.CKA_VALUE_LEN, 16),
-			module.NewBoolAttribute(module.CKA_ENCRYPT, true),
-			module.NewBoolAttribute(module.CKA_DECRYPT, true),
-			module.NewBoolAttribute(module.CKA_DERIVE, true),
-			module.NewBoolAttribute(module.CKA_TOKEN, false),
-		}
-
-		derivedHandle, rv := m.DeriveKey(sh, mechanism, baseKey, template)
-		if s.skipIfUnsupported(t, rv) {
-			return
-		}
+		derivedHandle, rv := m.DeriveKey(sh, hkdfMechanism(suiteHKDFInfo), baseKey, derivedKeyTemplate)
 		requireRV(t, module.CKR_OK, rv, "DeriveKey with valid parameters should return CKR_OK")
 
 		if derivedHandle == 0 {
 			t.Fatal("DeriveKey should return a non-zero object handle")
+		}
+
+		// CKM_HKDF_DERIVE with bExtract and bExpand set is RFC 5869
+		// extract-then-expand (v3.2 §6.62.2), which is deterministic in
+		// (IKM, salt, info, L). Comparing against golang.org/x/crypto/hkdf
+		// catches a derivation that returns random bytes, one that ignores the
+		// salt or info, and one that quietly uses a different PRF -- none of
+		// which a non-zero handle check can see.
+		derived := attributeValue(t, m, sh, derivedHandle, module.CKA_VALUE)
+
+		expected := make([]byte, len(derived))
+		reader := hkdf.New(sha256.New, suiteSecretKeyValue, suiteHKDFSalt, suiteHKDFInfo)
+		if _, err := io.ReadFull(reader, expected); err != nil {
+			t.Fatalf("building the HKDF oracle failed: %v", err)
+		}
+
+		if !bytes.Equal(derived, expected) {
+			t.Fatalf("the derived key disagrees with RFC 5869 HKDF-SHA256\n got %x\nwant %x",
+				derived, expected)
+		}
+	})
+
+	t.Run("Happy_DeriveKeyWithDifferentInfoProducesDifferentMaterial", func(t *testing.T) {
+		m, cleanup := s.createInitializedModule(t)
+		defer cleanup()
+
+		sh := openAuthenticatedRWSession(t, m)
+		baseKey := createSecretKeyObject(t, m, sh)
+
+		firstHandle, rv := m.DeriveKey(sh, hkdfMechanism(suiteHKDFInfo), baseKey, derivedKeyTemplate)
+		requireRV(t, module.CKR_OK, rv, "first DeriveKey should succeed")
+
+		secondHandle, rv := m.DeriveKey(sh, hkdfMechanism([]byte("a-different-info-string")),
+			baseKey, derivedKeyTemplate)
+		requireRV(t, module.CKR_OK, rv, "second DeriveKey should succeed")
+
+		// CK_HKDF_PARAMS.pInfo is domain separation: two derivations from one
+		// base key that differ only in info MUST NOT yield the same key. A
+		// token that dropped pInfo on the floor produces identical material
+		// here while both derivations still look successful.
+		first := attributeValue(t, m, sh, firstHandle, module.CKA_VALUE)
+		second := attributeValue(t, m, sh, secondHandle, module.CKA_VALUE)
+
+		if bytes.Equal(first, second) {
+			t.Fatalf("changing CK_HKDF_PARAMS.pInfo did not change the derived key; "+
+				"both derivations produced %x", first)
 		}
 	})
 
@@ -359,9 +467,6 @@ func (s *Suite) testDeriveKey(t *testing.T) {
 		}
 
 		_, rv := m.DeriveKey(invalidSession, mechanism, module.ObjectHandle(1), template)
-		if s.skipIfUnsupported(t, rv) {
-			return
-		}
 		requireRV(t, module.CKR_SESSION_HANDLE_INVALID, rv,
 			"DeriveKey with invalid session should return CKR_SESSION_HANDLE_INVALID")
 	})

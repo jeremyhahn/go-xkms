@@ -460,8 +460,8 @@ func (fb *FileBackend) updateMetadata(slot pivcert.PIVSlot, cert *x509.Certifica
 		SerialNumber: cert.SerialNumber.Text(16),
 		NotBefore:    cert.NotBefore.Format(time.RFC3339),
 		NotAfter:     cert.NotAfter.Format(time.RFC3339),
-		Algorithm:    keyAlgorithmName(cert),
-		KeySize:      keySize(cert),
+		Algorithm:    pivcert.KeyAlgorithmName(cert),
+		KeySize:      pivcert.KeySize(cert),
 		Fingerprint:  hex.EncodeToString(fingerprint[:]),
 		StoredAt:     time.Now().UTC().Format(time.RFC3339),
 	}
@@ -483,43 +483,4 @@ func (fb *FileBackend) removeMetadata(slot pivcert.PIVSlot) error {
 // certKey returns the storage key for a certificate slot.
 func certKey(slot pivcert.PIVSlot, ext string) string {
 	return keyPrefixCertificates + string(slot) + ext
-}
-
-// keyAlgorithmName returns a human-readable name for the certificate's public key algorithm.
-func keyAlgorithmName(cert *x509.Certificate) string {
-	switch cert.PublicKeyAlgorithm {
-	case x509.RSA:
-		return "RSA"
-	case x509.ECDSA:
-		return "ECDSA"
-	case x509.Ed25519:
-		return "Ed25519"
-	case x509.DSA:
-		return "DSA"
-	default:
-		return "Unknown"
-	}
-}
-
-// keySize returns the key size in bits for the certificate's public key.
-func keySize(cert *x509.Certificate) int {
-	switch pub := cert.PublicKey.(type) {
-	case interface{ Size() int }:
-		// RSA keys have a Size() method that returns bytes
-		return pub.Size() * 8
-	case interface {
-		Params() interface{ BitSize() int }
-	}:
-		// ECDSA keys have Params().BitSize()
-		if params := pub.Params(); params != nil {
-			return params.BitSize()
-		}
-		return 0
-	default:
-		// Ed25519 is always 256 bits
-		if cert.PublicKeyAlgorithm == x509.Ed25519 {
-			return 256
-		}
-		return 0
-	}
 }

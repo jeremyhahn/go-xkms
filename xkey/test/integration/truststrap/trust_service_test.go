@@ -58,14 +58,16 @@ const (
 	envSPKIPin   = "BOOTSTRAP_SPKI_PIN"
 )
 
-// requiredEnv returns the value of the named environment variable or
-// skips the test if it is unset, so the file can be compiled and
-// selectively run outside the bootstrap stack.
+// requiredEnv returns the value of the named environment variable, failing the
+// test if it is unset. These variables are exported by the bootstrap
+// docker-compose stack the suite is required to run under, so a missing value
+// is an environment fault rather than a reason to drop the coverage.
 func requiredEnv(t *testing.T, key string) string {
 	t.Helper()
 	val := os.Getenv(key)
 	if val == "" {
-		t.Skipf("integration: %s not set (run via bootstrap docker-compose stack)", key)
+		t.Fatalf("integration: %s not set; run this suite via the bootstrap "+
+			"docker-compose stack", key)
 	}
 	return val
 }

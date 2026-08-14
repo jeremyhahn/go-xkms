@@ -18,60 +18,9 @@ import (
 	"time"
 
 	"github.com/jeremyhahn/go-xkms/pkg/api/transport"
-	"github.com/jeremyhahn/go-xkms/pkg/types"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
-
-func TestParseKDFAlgorithm(t *testing.T) {
-	tests := []struct {
-		name     string
-		input    string
-		expected types.KDFAlgorithm
-	}{
-		{"empty defaults to HKDF", "", types.KDFAlgorithmHKDF},
-		{"HKDF", "HKDF", types.KDFAlgorithmHKDF},
-		{"hkdf lowercase", "hkdf", types.KDFAlgorithmHKDF},
-		{"SP800-108-COUNTER", "SP800-108-COUNTER", types.KDFAlgorithmSP800108Counter},
-		{"SP800-108-FEEDBACK", "SP800-108-FEEDBACK", types.KDFAlgorithmSP800108Feedback},
-		{"SP800-56A", "SP800-56A", types.KDFAlgorithmSP80056A},
-		{"X963", "X963", types.KDFAlgorithmX963},
-		{"unknown defaults to HKDF", "unknown-algo", types.KDFAlgorithmHKDF},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			result := parseKDFAlgorithm(tt.input)
-			assert.Equal(t, tt.expected, result)
-		})
-	}
-}
-
-func TestParseKDFHash(t *testing.T) {
-	tests := []struct {
-		name     string
-		input    string
-		expected string
-	}{
-		{"empty defaults to SHA-256", "", "SHA-256"},
-		{"SHA256", "SHA256", "SHA-256"},
-		{"SHA-256 with dash", "SHA-256", "SHA-256"},
-		{"SHA384", "SHA384", "SHA-384"},
-		{"SHA512", "SHA512", "SHA-512"},
-		{"SHA3256", "SHA3-256", "SHA3-256"},
-		{"SHA3384", "SHA3-384", "SHA3-384"},
-		{"SHA3512", "SHA3-512", "SHA3-512"},
-		{"unknown returned as-is", "BLAKE2b", "BLAKE2b"},
-		{"lowercase sha256", "sha256", "SHA-256"},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			result := parseKDFHash(tt.input)
-			assert.Equal(t, tt.expected, result)
-		})
-	}
-}
 
 func TestParseTimestampHelper(t *testing.T) {
 	t.Run("returns nil for empty string", func(t *testing.T) {

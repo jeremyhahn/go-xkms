@@ -17,7 +17,8 @@ type mockCeremonyService struct {
 	getInitStatusResp       *transport.InitStatusResponse
 	claimCertBeginResp      *transport.ClaimCertBeginResponse
 	claimCertCompleteResp   *transport.ClaimCertCompleteResponse
-	claimShareResp          *transport.ClaimShareResponse
+	claimShareBeginResp     *transport.ClaimShareBeginResponse
+	claimShareResp          *transport.ClaimShareCompleteResponse
 	signCSRInitResp         *transport.SignCSRInitResponse
 	getInitStatusErr        error
 	claimCertBeginErr       error
@@ -44,7 +45,12 @@ func (m *mockCeremonyService) ClaimCertComplete(ctx context.Context, req *transp
 	return m.claimCertCompleteResp, m.claimCertCompleteErr
 }
 
-func (m *mockCeremonyService) ClaimShare(ctx context.Context, req *transport.ClaimShareRequest) (*transport.ClaimShareResponse, error) {
+func (m *mockCeremonyService) ClaimShareBegin(ctx context.Context, req *transport.ClaimShareBeginRequest) (*transport.ClaimShareBeginResponse, error) {
+	m.claimShareCalled = true
+	return m.claimShareBeginResp, m.claimShareErr
+}
+
+func (m *mockCeremonyService) ClaimShareComplete(ctx context.Context, req *transport.ClaimShareCompleteRequest) (*transport.ClaimShareCompleteResponse, error) {
 	m.claimShareCalled = true
 	return m.claimShareResp, m.claimShareErr
 }
@@ -68,8 +74,14 @@ func setupServiceWithMockCeremony(t *testing.T) (*XKMSService, *mockCeremonyServ
 			CertPEM:   "-----BEGIN CERTIFICATE-----\ntest\n-----END CERTIFICATE-----",
 			CACertPEM: "-----BEGIN CERTIFICATE-----\nca\n-----END CERTIFICATE-----",
 		},
-		claimShareResp: &transport.ClaimShareResponse{
-			Share: json.RawMessage(`{"index":1,"value":"deadbeef"}`),
+		claimShareBeginResp: &transport.ClaimShareBeginResponse{
+			Nonce:     "aabbccdd",
+			Username:  "alice",
+			ExpiresAt: time.Now().Add(5 * time.Minute),
+		},
+		claimShareResp: &transport.ClaimShareCompleteResponse{
+			ShareIndex: 1,
+			Share:      json.RawMessage(`{"index":1,"value":"deadbeef"}`),
 		},
 		signCSRInitErr: errors.New("initialize: operation not implemented"),
 	}
@@ -120,7 +132,13 @@ func TestClaimShare_NotConfigured(t *testing.T) {
 	svc, err := Get()
 	require.NoError(t, err)
 
-	_, err = svc.ClaimShare(context.Background(), &transport.ClaimShareRequest{
+	_, err = svc.ClaimShareBegin(context.Background(), &transport.ClaimShareBeginRequest{
+		Username: "alice",
+	})
+	require.Error(t, err)
+	assert.True(t, errors.Is(err, ErrNotConfigured))
+
+	_, err = svc.ClaimShareComplete(context.Background(), &transport.ClaimShareCompleteRequest{
 		Username: "alice",
 	})
 	require.Error(t, err)
@@ -176,7 +194,11 @@ func TestClaimCertComplete_NilRequest(t *testing.T) {
 func TestClaimShare_NilRequest(t *testing.T) {
 	svc, _ := setupServiceWithMockCeremony(t)
 
-	_, err := svc.ClaimShare(context.Background(), nil)
+	_, err := svc.ClaimShareBegin(context.Background(), nil)
+	require.Error(t, err)
+	assert.True(t, errors.Is(err, ErrNilRequest))
+
+	_, err = svc.ClaimShareComplete(context.Background(), nil)
 	require.Error(t, err)
 	assert.True(t, errors.Is(err, ErrNilRequest))
 }
@@ -228,12 +250,40 @@ func TestClaimCertComplete_Success(t *testing.T) {
 func TestClaimShare_Success(t *testing.T) {
 	svc, mock := setupServiceWithMockCeremony(t)
 
-	resp, err := svc.ClaimShare(context.Background(), &transport.ClaimShareRequest{
-		Username: "alice",
+	begun, err := svc.ClaimShareBegin(context.Background(), &transport.ClaimShareBeginRequest{
+		Username:             "alice",
+		CallerCertThumbprint: "deadbeefthumb",
 	})
 	require.NoError(t, err)
 	assert.True(t, mock.claimShareCalled)
+	assert.Equal(t, "aabbccdd", begun.Nonce)
+
+	resp, err := svc.ClaimShareComplete(context.Background(), &transport.ClaimShareCompleteRequest{
+		Username:             "alice",
+		Nonce:                begun.Nonce,
+		Signature:            "c2ln",
+		CallerCertThumbprint: "deadbeefthumb",
+	})
+	require.NoError(t, err)
 	assert.Contains(t, string(resp.Share), "deadbeef")
+}
+
+// TestClaimShareRequests_ThumbprintNeverFromWire proves the caller certificate
+// thumbprint cannot be asserted by a client: it carries a `json:"-"` tag, so a
+// request body naming another officer's thumbprint decodes to the empty
+// string and the transport's own value is what reaches the service.
+func TestClaimShareRequests_ThumbprintNeverFromWire(t *testing.T) {
+	var begin transport.ClaimShareBeginRequest
+	require.NoError(t, json.Unmarshal(
+		[]byte(`{"username":"alice","CallerCertThumbprint":"attacker","caller_cert_thumbprint":"attacker"}`), &begin))
+	assert.Equal(t, "alice", begin.Username)
+	assert.Empty(t, begin.CallerCertThumbprint, "thumbprint must never be decodable from the request body")
+
+	var complete transport.ClaimShareCompleteRequest
+	require.NoError(t, json.Unmarshal(
+		[]byte(`{"username":"alice","CallerCertThumbprint":"attacker","caller_cert_thumbprint":"attacker"}`), &complete))
+	assert.Equal(t, "alice", complete.Username)
+	assert.Empty(t, complete.CallerCertThumbprint, "thumbprint must never be decodable from the request body")
 }
 
 func TestSignCSRInit_DelegatesToAdapter(t *testing.T) {

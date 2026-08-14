@@ -17,7 +17,6 @@ import (
 	"context"
 	"io"
 	"net"
-	"sync"
 
 	gossh "golang.org/x/crypto/ssh"
 	"google.golang.org/grpc"
@@ -102,74 +101,15 @@ func (c *grpcClient) AuthorizedKeys() AuthorizedKeysClient {
 
 func (c *grpcClient) Session() SessionClient { return &grpcSessionClient{} }
 
-// Console implements Client.Console over the SSHConsole bidi stream.
-func (c *grpcClient) Console(ctx context.Context, req ConsoleConnectRequest, cfg ConsoleConfig) (ConsoleSession, error) {
-	stream, err := c.svc.SSHConsole(ctx)
-	if err != nil {
-		return nil, mapGRPCError(err)
-	}
-	if serr := stream.Send(&pb.SSHConsoleClientMsg{Msg: &pb.SSHConsoleClientMsg_Open{Open: &pb.SSHConsoleOpen{
-		Scope:   req.KeyScope,
-		Owner:   req.KeyOwner,
-		KeyName: req.KeyName,
-		Host:    req.Host,
-		Port:    int32(req.Port),
-		User:    req.User,
-		Term:    cfg.Term,
-		Rows:    int32(cfg.Rows),
-		Cols:    int32(cfg.Cols),
-	}}}); serr != nil {
-		return nil, mapGRPCError(serr)
-	}
-	return &grpcConsole{stream: stream}, nil
-}
-
-// grpcConsole adapts the SSHConsole bidi stream to a ConsoleSession.
-type grpcConsole struct {
-	stream grpc.BidiStreamingClient[pb.SSHConsoleClientMsg, pb.SSHConsoleServerMsg]
-	buf    []byte
-	sendMu sync.Mutex
-}
-
-func (g *grpcConsole) Read(p []byte) (int, error) {
-	for len(g.buf) == 0 {
-		msg, err := g.stream.Recv()
-		if err != nil {
-			return 0, err
-		}
-		switch m := msg.GetMsg().(type) {
-		case *pb.SSHConsoleServerMsg_Stdout:
-			g.buf = m.Stdout
-		case *pb.SSHConsoleServerMsg_Exit:
-			return 0, io.EOF
-		}
-	}
-	n := copy(p, g.buf)
-	g.buf = g.buf[n:]
-	return n, nil
-}
-
-func (g *grpcConsole) Write(p []byte) (int, error) {
-	g.sendMu.Lock()
-	defer g.sendMu.Unlock()
-	if err := g.stream.Send(&pb.SSHConsoleClientMsg{Msg: &pb.SSHConsoleClientMsg_Stdin{Stdin: p}}); err != nil {
-		return 0, err
-	}
-	return len(p), nil
-}
-
-func (g *grpcConsole) Resize(rows, cols int) error {
-	g.sendMu.Lock()
-	defer g.sendMu.Unlock()
-	return g.stream.Send(&pb.SSHConsoleClientMsg{Msg: &pb.SSHConsoleClientMsg_Resize{Resize: &pb.SSHConsoleResize{
-		Rows: int32(rows), Cols: int32(cols),
-	}}})
-}
-
-func (g *grpcConsole) Close() error {
-	g.sendMu.Lock()
-	defer g.sendMu.Unlock()
-	return g.stream.CloseSend()
+// Console is not supported over gRPC (or the Unix socket, which serves the
+// same service): the xkms server is a key vault and CA and never terminates an
+// SSH session. Terminating SSH there would let an authenticated caller make
+// the appliance open outbound connections to arbitrary hosts and proxy an
+// interactive shell through them. The client (xkey) runs the SSH protocol
+// itself and asks the server only to sign the authentication challenge with
+// the stored key, which never leaves the vault.
+func (c *grpcClient) Console(_ context.Context, _ ConsoleConnectRequest, _ ConsoleConfig) (ConsoleSession, error) {
+	return nil, &ConsoleUnsupportedError{Transport: "grpc"}
 }
 
 // Close closes the gRPC connection.

@@ -28,6 +28,7 @@ import (
 	"github.com/jeremyhahn/go-xkms/pkg/config"
 	"github.com/jeremyhahn/go-xkms/pkg/server"
 	secure "github.com/jeremyhahn/go-xkms/sdk/go/secure"
+	"github.com/jeremyhahn/go-xkms/web"
 )
 
 var (
@@ -69,7 +70,6 @@ func main() {
 	daemonShort := flag.Bool("d", false, "Run as daemon (short)")
 	pidFile := flag.String("pid-file", "", "Path to PID file")
 	showVersion := flag.Bool("version", false, "Show version information")
-	insecure := flag.Bool("insecure", false, "Allow starting with an insecure, non-compliant configuration (DEVELOPMENT ONLY)")
 	sealPassphrase := flag.String("seal-passphrase", "", "Barrier auto-unseal passphrase (prefer XKMS_SEAL_PASSPHRASE env or a credential:// reference; passing a secret on the command line is discouraged)")
 	flag.Parse()
 
@@ -124,23 +124,18 @@ func main() {
 	}
 
 	// Secure-by-default gate: refuse to serve a non-compliant configuration
-	// (no encryption-at-rest / TLS / authentication / CA) unless the operator
-	// explicitly opts into development mode. This is the deployment-unit
-	// enforcement point — the library stays permissive for embedded/test use.
-	// XKMS_INSECURE=true is honored as an env equivalent of --insecure.
-	if os.Getenv("XKMS_INSECURE") == "true" {
-		*insecure = true
-	}
+	// (no encryption-at-rest / TLS / authentication / CA). There is no
+	// override — the daemon has an embedded CA and mints its own TLS
+	// certificate, so a secure deployment needs no manual provisioning and an
+	// insecure one has no legitimate reason to exist. Every gap names the
+	// exact configuration key to turn on; `xkmsd init` provisions them all.
+	// The library stays permissive for embedded/test use.
 	if gaps := cfg.ComplianceGaps(); len(gaps) > 0 {
-		if !*insecure {
-			logger.Error("xkmsd refuses to start with an insecure configuration; "+
-				"FedRAMP/PCI-DSS/HIPAA require encryption-at-rest, TLS, authentication, and a CA. "+
-				"Run `xkmsd init` to provision a secure deployment, or pass --insecure (XKMS_INSECURE=true) for development.",
-				slog.Any("gaps", gaps))
-			os.Exit(1)
-		}
-		logger.Warn("starting with an INSECURE configuration (--insecure); NOT suitable for production",
+		logger.Error("xkmsd refuses to start with an insecure configuration; "+
+			"FedRAMP/PCI-DSS/HIPAA require encryption-at-rest, TLS, authentication, and a CA. "+
+			"Run `xkmsd init` to provision a secure deployment, or enable the reported settings.",
 			slog.Any("gaps", gaps))
+		os.Exit(1)
 	}
 
 	// Write PID file if specified
@@ -157,6 +152,14 @@ func main() {
 	if err != nil {
 		logger.Error("Failed to create server", slog.Any("error", err))
 		os.Exit(1)
+	}
+
+	// Serve the embedded web UI when this binary was built with the "ui"
+	// tag (the stub Assets returns ok=false otherwise). The config-level
+	// ui.enabled switch is enforced inside the server.
+	if assets, ok := web.Assets(); ok {
+		srv.SetUIAssets(assets)
+		logger.Info("Embedded web UI assets loaded")
 	}
 
 	// Setup signal handler for graceful shutdown and config reload
@@ -176,7 +179,7 @@ func main() {
 	// Handle config reload
 	go func() {
 		for range configReloadCh {
-			if err := reloadConfiguration(srv, *configPath, *insecure, logger); err != nil {
+			if err := reloadConfiguration(srv, *configPath, logger); err != nil {
 				logger.Error("Failed to reload configuration", slog.Any("error", err))
 			} else {
 				logger.Info("Configuration reloaded successfully")
@@ -251,24 +254,19 @@ func setupSignalHandler(logger *slog.Logger) (context.Context, chan os.Signal) {
 
 // reloadConfiguration attempts to reload the server configuration. It re-applies
 // the secure-by-default gate so a SIGHUP cannot quietly drop the daemon to a
-// non-compliant posture (no encryption-at-rest / TLS / authentication / CA); an
-// insecure reload is refused unless the daemon was started in insecure
-// (development) mode.
-func reloadConfiguration(srv *server.Server, configPath string, insecure bool, logger *slog.Logger) error {
+// non-compliant posture (no encryption-at-rest / TLS / authentication / CA).
+// The refusal is unconditional, mirroring startup.
+func reloadConfiguration(srv *server.Server, configPath string, logger *slog.Logger) error {
 	// Load new configuration (config.Load validates before returning).
 	newCfg, err := config.Load(configPath)
 	if err != nil {
 		return &WrappedError{Sentinel: ErrConfigLoad, Err: err}
 	}
 
-	// Secure-by-default gate, mirrored from startup: refuse to swap in a
-	// non-compliant configuration unless the operator opted into insecure mode.
+	// Secure-by-default gate, mirrored from startup: never swap in a
+	// non-compliant configuration.
 	if gaps := newCfg.ComplianceGaps(); len(gaps) > 0 {
-		if !insecure {
-			return &InsecureReloadError{Gaps: gaps}
-		}
-		logger.Warn("reloading an INSECURE configuration (--insecure); NOT suitable for production",
-			slog.Any("gaps", gaps))
+		return &InsecureReloadError{Gaps: gaps}
 	}
 
 	// Attempt to reload the server with new configuration

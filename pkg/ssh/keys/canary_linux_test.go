@@ -53,8 +53,11 @@ func TestCanary_PEMNotOnHeap(t *testing.T) {
 	if err != nil {
 		t.Fatalf("read maps: %v", err)
 	}
+	// This file is linux-only, and /proc/self/maps is always populated for a
+	// running process. An empty read means the scan has no subject, which
+	// invalidates the canary rather than excusing it.
 	if len(data) == 0 {
-		t.Skip("cannot introspect /proc/self/maps on this host")
+		t.Fatal("/proc/self/maps is empty: the canary cannot introspect this process")
 	}
 
 	mem, err := os.Open("/proc/self/mem")

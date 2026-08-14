@@ -26,6 +26,8 @@ pkg/fido2/
     device.go         # HID device interface and USB HID communication
     ctap2.go          # CTAP2 message encoding/decoding
     hmac_secret.go    # hmac-secret extension support
+    authdata.go       # Authenticator data / extension map parsing
+    pinuvauth.go      # PIN/UV auth protocols one and two (ECDH shared secret)
     hid_linux.go      # Linux USB HID device enumeration
     hid_stub.go       # Stub for non-Linux platforms
 ```
@@ -74,15 +76,77 @@ func main() {
 }
 ```
 
+## hmac-secret Key Derivation
+
+The hmac-secret extension is how a FIDO2 credential produces a symmetric key
+(for example a LUKS volume key). The derivation is a CTAP 2.1 12.5 exchange,
+and every step matters:
+
+1. The platform fetches the authenticator's key agreement key with
+   `authenticatorClientPIN` / `getKeyAgreement`, generates an ephemeral P-256
+   key pair, and derives a **PIN/UV auth shared secret** by ECDH.
+   Protocol two is used when the authenticator advertises it, protocol one
+   otherwise.
+2. The 32-byte salt is encrypted under that shared secret (`saltEnc`) and
+   authenticated (`saltAuth`), then sent as the hmac-secret extension input
+   of `authenticatorGetAssertion`.
+3. The authenticator answers with `HMAC-SHA-256(CredRandom, salt)`, encrypted
+   under the same shared secret, inside the **CBOR extension map that
+   terminates the authenticator data**.
+4. The platform locates that map with `ParseAuthDataExtensions` (which honors
+   the AT and ED flags and measures the COSE public key rather than assuming
+   a fixed offset) and decrypts the output.
+
+`CredRandom` never leaves the authenticator, so the derived key exists only
+in the physical token's presence.
+
+```go
+config := fido2.DefaultAuthenticationConfig(credentialID, salt)
+config.RelyingPartyID = "go-xkms"
+
+// Optional: a second 32-byte salt yields a second 32-byte output.
+config.Salt2 = otherSalt
+
+key, err := handler.UnlockWithKey(config) // 64-byte derived key
+```
+
+Any failure to obtain the genuine output — no extension map, no hmac-secret
+entry, a malformed entry, or an output of the wrong length — is a typed
+error (`ErrHMACSecretMissing`, `ErrHMACSecretOutputInvalid`,
+`ErrInvalidExtensions`, ...). No key is returned. A value that is not the
+authenticator's secret is not a key.
+
+### Legacy derivation (deprecated, migration only)
+
+Releases before this derivation was corrected read 32 raw bytes from a fixed
+offset in the authenticator data and, failing that, used
+`SHA-256(credentialID || salt)`. Both credential ID and salt are public and
+are normally stored beside the encrypted volume, so a key derived that way is
+**not hardware-bound** and can be recomputed without the token.
+
+`DerivationModeLegacyInsecure` reproduces that behavior byte for byte so an
+affected volume can be unlocked once and re-enrolled. It is never selected by
+default and cannot be enabled from a configuration file — the
+`AuthenticationConfig.DerivationMode` field is excluded from every
+serialization format. Selecting it logs a prominent warning.
+
+```
+xkmsctl fido2 authenticate \
+  --credential-id <id> --salt <salt> --legacy-hmac-derivation
+```
+
+Volumes unlocked this way must be re-enrolled immediately. The mode is
+deprecated and will be removed.
+
 ## Virtual Authenticator
 
-For development and testing, the xkey virtual authenticator (`xkey/cmd/xkey/`) can expose a software-based FIDO2 authenticator as a USB HID device via Linux UHID. See the [xkey FIDO2 documentation](../xkey/fido2.md) for details.
+For development and testing, the xkey virtual authenticator (`xkey/cmd/xkey/`) can expose a software-based FIDO2 authenticator as a USB HID device via Linux UHID. See the [xkey FIDO2 documentation](../../xkey/docs/fido2/overview.md) for details.
 
 ## Documentation
 
-- [xkey FIDO2 Virtual Authenticator](../xkey/fido2.md) - Virtual FIDO2 device for development
-- [xkey Architecture](../xkey/fido2-architecture.md) - xkey FIDO2 component design
-- [WebAuthn Usage](../usage/webauthn.md) - Server-side WebAuthn integration
+- [xkey FIDO2 Virtual Authenticator](../../xkey/docs/fido2/overview.md) - Virtual FIDO2 device for development
+- [xkey Architecture](../../xkey/docs/fido2/authenticator-architecture.md) - xkey FIDO2 component design
+- [WebAuthn Usage](../../xkey/docs/usage/webauthn.md) - Server-side WebAuthn integration
 
 ## Requirements
 

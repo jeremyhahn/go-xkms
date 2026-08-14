@@ -15,10 +15,10 @@ package main
 
 import (
 	"bytes"
+	"context"
 	"crypto"
 	"crypto/ecdsa"
 	"crypto/ed25519"
-	"crypto/elliptic"
 	"crypto/rand"
 	"crypto/rsa"
 	"crypto/sha256"
@@ -27,6 +27,7 @@ import (
 	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
+	"encoding/pem"
 	"fmt"
 	"io"
 	"net/http"
@@ -56,42 +57,52 @@ type claimCertBeginResponse struct {
 	Nonce string `json:"nonce"`
 }
 
-// claimCertCompleteRequest is the JSON request body for completing a certificate claim.
+// claimCertCompleteRequest is the JSON request body for completing a certificate
+// claim. The server verifies Signature against the public key in the officer's
+// pre-submitted CSR, so no public key travels on the wire.
 type claimCertCompleteRequest struct {
 	Username  string `json:"username"`
 	Nonce     string `json:"nonce"`
-	PublicKey string `json:"public_key"`
 	Signature string `json:"signature"`
 }
 
-// claimCertCompleteResponse is the JSON response for a successful claim-cert complete.
+// claimCertCompleteResponse is the JSON response for a successful claim-cert
+// complete. Both fields carry PEM text, matching the server's
+// ClaimCertCompleteResponse.
 type claimCertCompleteResponse struct {
-	Certificate string `json:"certificate"`
+	CertPEM   string `json:"cert_pem"`
+	CACertPEM string `json:"ca_cert_pem"`
 }
 
-// claimShareBeginRequest is the JSON request body for beginning a share claim.
+// claimShareBeginRequest is the JSON request body for beginning a Shamir share
+// claim. Share claim is a two round-trip challenge-response, mirroring
+// claim-cert: the server binds the challenge to the caller's mTLS certificate
+// thumbprint, which it derives from the TLS handshake -- no thumbprint is ever
+// sent on the wire.
 type claimShareBeginRequest struct {
 	Username string `json:"username"`
 }
 
-// claimShareBeginResponse is the JSON response for a successful claim-share begin.
+// claimShareBeginResponse is the JSON response for a successful claim-share
+// begin. Nonce is the hex-encoded challenge the officer must sign.
 type claimShareBeginResponse struct {
 	Nonce string `json:"nonce"`
 }
 
-// claimShareCompleteRequest is the JSON request body for completing a share claim.
+// claimShareCompleteRequest is the JSON request body for completing a Shamir
+// share claim. The server verifies Signature against the public key recorded
+// for the officer at enrollment, so no public key travels on the wire.
 type claimShareCompleteRequest struct {
 	Username  string `json:"username"`
 	Nonce     string `json:"nonce"`
-	PublicKey string `json:"public_key"`
 	Signature string `json:"signature"`
 }
 
-// claimShareCompleteResponse is the JSON response for a successful claim-share complete.
+// claimShareCompleteResponse is the JSON response for a successful share
+// claim. Share is the raw JSON share document produced by the ceremony service.
 type claimShareCompleteResponse struct {
-	Share      string `json:"share"`
-	ShareIndex int    `json:"share_index"`
-	Threshold  int    `json:"threshold"`
+	ShareIndex int             `json:"share_index"`
+	Share      json.RawMessage `json:"share"`
 }
 
 // signCSRInitRequest is the JSON request body for signing a CSR during init.
@@ -137,7 +148,14 @@ var (
 	claimShareCmd = &cobra.Command{
 		Use:   "claim-share",
 		Short: "Claim a threshold share",
-		RunE:  runClaimShare,
+		Long: `Claim the Shamir share assigned to an officer.
+
+Share claim is a two round-trip challenge-response, exactly like claim-cert.
+The officer presents the certificate claim-cert issued them as an mTLS client
+certificate; the server matches its thumbprint against the officer's enrolment
+record, issues a single-use nonce, and releases the share only after verifying
+a signature over that nonce. Knowing an officer's username is not enough.`,
+		RunE: runClaimShare,
 	}
 
 	// initSignCSRCmd signs a CSR during initialization with SO authorization.
@@ -160,10 +178,15 @@ func init() {
 	initCmd.AddCommand(initStatusCmd, claimCertCmd, claimShareCmd, initSignCSRCmd)
 
 	claimCertCmd.Flags().StringVar(&claimCertUsername, "username", "", "Username (required)")
+	claimCertCmd.Flags().StringVar(&claimCertKeyFile, "key", "", "PEM-encoded private key matching the submitted CSR (required)")
 	claimCertCmd.Flags().StringVar(&claimCertSpkiPin, "spki-pin", "", "SPKI SHA-256 pin for server (required)")
-	claimCertCmd.Flags().StringVar(&claimCertOutput, "output", "", "Output file for certificate")
+	claimCertCmd.Flags().StringVar(&claimCertOutput, "output", "", "Output file for the issued certificate (default: stdout)")
+	claimCertCmd.Flags().StringVar(&claimCertCAOutput, "ca-output", "", "Output file for the CA bundle returned with the certificate")
 
 	claimShareCmd.Flags().StringVar(&claimShareUsername, "username", "", "Username (required)")
+	claimShareCmd.Flags().StringVar(&claimShareCertFile, "cert", "", "PEM-encoded officer certificate issued by claim-cert (required)")
+	claimShareCmd.Flags().StringVar(&claimShareKeyFile, "key", "", "PEM-encoded private key matching the officer certificate (required)")
+	claimShareCmd.Flags().StringVar(&claimShareCAFile, "ca-cert", "", "PEM-encoded CA bundle used to verify the server (defaults to the SPKI pin)")
 	claimShareCmd.Flags().StringVar(&claimShareSpkiPin, "spki-pin", "", "SPKI SHA-256 pin for server (required)")
 	claimShareCmd.Flags().StringVar(&claimShareOutput, "output", "", "Output file for share")
 
@@ -175,9 +198,14 @@ func init() {
 
 var (
 	claimCertUsername  string
+	claimCertKeyFile   string
 	claimCertSpkiPin   string
 	claimCertOutput    string
+	claimCertCAOutput  string
 	claimShareUsername string
+	claimShareCertFile string
+	claimShareKeyFile  string
+	claimShareCAFile   string
 	claimShareSpkiPin  string
 	claimShareOutput   string
 	signCSRUsername    string
@@ -289,14 +317,71 @@ func runInitStatus(cmd *cobra.Command, args []string) error {
 	return nil
 }
 
-// runClaimCert handles certificate claims with full challenge-response protocol.
+// loadCSRPrivateKey reads a PEM-encoded private key from path. The key must be
+// the one whose public half was submitted in the officer's CSR: the server
+// verifies the challenge signature against the CSR public key, so any other key
+// fails verification. PKCS#8, SEC 1 ("EC PRIVATE KEY") and PKCS#1
+// ("RSA PRIVATE KEY") encodings are accepted.
+func loadCSRPrivateKey(path string) (crypto.PrivateKey, error) {
+	keyPEM, err := os.ReadFile(path)
+	if err != nil {
+		return nil, &WrappedError{Sentinel: ErrPrivateKeyRead, Err: err}
+	}
+
+	block, _ := pem.Decode(keyPEM)
+	if block == nil {
+		return nil, &WrappedDetailError{Sentinel: ErrPrivateKeyParse, Detail: "no PEM block found in " + path}
+	}
+
+	if key, err := x509.ParsePKCS8PrivateKey(block.Bytes); err == nil {
+		return key, nil
+	}
+	if key, err := x509.ParseECPrivateKey(block.Bytes); err == nil {
+		return key, nil
+	}
+	key, err := x509.ParsePKCS1PrivateKey(block.Bytes)
+	if err != nil {
+		return nil, &WrappedDetailError{Sentinel: ErrPrivateKeyParse, Detail: path, Err: err}
+	}
+	return key, nil
+}
+
+// writePEMOutput writes PEM text to path when path is non-empty and reports
+// the destination, otherwise prints the text to stdout.
+func writePEMOutput(path, label, pemText string, sentinel error) error {
+	if path == "" {
+		fmt.Print(pemText)
+		return nil
+	}
+	if err := os.WriteFile(path, []byte(pemText), 0600); err != nil {
+		return &WrappedError{Sentinel: sentinel, Err: err}
+	}
+	fmt.Printf("%s written to %s\n", label, path)
+	return nil
+}
+
+// runClaimCert claims an officer's enrollment certificate using the ceremony's
+// two-step challenge-response protocol. The nonce returned by
+// /api/v1/init/claim-cert/begin is signed with the private key matching the
+// officer's pre-submitted CSR; the server verifies that signature against the
+// CSR public key before releasing the certificate.
 func runClaimCert(cmd *cobra.Command, args []string) error {
 	// Validate required arguments
 	if claimCertUsername == "" {
 		return ErrUsernameRequired
 	}
+	if claimCertKeyFile == "" {
+		return ErrKeyFileRequired
+	}
 	if claimCertSpkiPin == "" {
 		return ErrSPKIPinRequired
+	}
+
+	// The challenge must be signed with the CSR key, so load it before any
+	// network round trip: a bad key path should not consume a server nonce.
+	privKey, err := loadCSRPrivateKey(claimCertKeyFile)
+	if err != nil {
+		return err
 	}
 
 	// Create a temporary config with SPKI pin for claim-cert
@@ -334,15 +419,10 @@ func runClaimCert(cmd *cobra.Command, args []string) error {
 		return &WrappedError{Sentinel: ErrJSONParseFailed, Err: err}
 	}
 
-	// Step 2: Generate keypair and sign nonce
+	// Step 2: Sign the nonce with the CSR private key.
 	nonce, err := hex.DecodeString(beginResp.Nonce)
 	if err != nil {
 		return &WrappedError{Sentinel: ErrNonceDecode, Err: err}
-	}
-
-	pubKey, privKey, err := generateNoiseKeyPair()
-	if err != nil {
-		return err
 	}
 
 	sig, err := signNonce(nonce, privKey)
@@ -354,7 +434,6 @@ func runClaimCert(cmd *cobra.Command, args []string) error {
 	completeReq := claimCertCompleteRequest{
 		Username:  claimCertUsername,
 		Nonce:     beginResp.Nonce,
-		PublicKey: base64.StdEncoding.EncodeToString(pubKey),
 		Signature: base64.StdEncoding.EncodeToString(sig),
 	}
 
@@ -374,54 +453,77 @@ func runClaimCert(cmd *cobra.Command, args []string) error {
 		return err
 	}
 
-	var completeResp2 claimCertCompleteResponse
-	if err := json.Unmarshal(completeRespBody, &completeResp2); err != nil {
+	var claimed claimCertCompleteResponse
+	if err := json.Unmarshal(completeRespBody, &claimed); err != nil {
 		return &WrappedError{Sentinel: ErrJSONParseFailed, Err: err}
 	}
 
-	// Write certificate to output file if specified, otherwise print to stdout
-	certPEM, err := base64.StdEncoding.DecodeString(completeResp2.Certificate)
-	if err != nil {
-		return &WrappedError{Sentinel: ErrBase64Decode, Err: err}
+	if err := writePEMOutput(claimCertOutput, "Certificate", claimed.CertPEM, ErrCertFileWrite); err != nil {
+		return err
 	}
 
-	if claimCertOutput != "" {
-		if err := os.WriteFile(claimCertOutput, certPEM, 0600); err != nil {
-			return &WrappedError{Sentinel: ErrCertFileWrite, Err: err}
+	// The CA bundle is only persisted when the operator asks for it; printing
+	// it alongside the certificate would corrupt a redirected certificate file.
+	if claimCertCAOutput != "" {
+		if err := writePEMOutput(claimCertCAOutput, "CA bundle", claimed.CACertPEM, ErrCertFileWrite); err != nil {
+			return err
 		}
-		fmt.Printf("Certificate written to %s\n", claimCertOutput)
-	} else {
-		fmt.Print(string(certPEM))
 	}
 
 	return nil
 }
 
-// runClaimShare handles share claims with full challenge-response protocol.
+// runClaimShare claims an officer's Shamir share over the ceremony's two-step
+// challenge-response protocol, mirroring runClaimCert. The officer's
+// certificate is presented as an mTLS client certificate: the server derives
+// its thumbprint from the TLS handshake and matches it against the officer's
+// enrolment record before issuing the nonce at
+// /api/v1/init/claim-share/begin and again before releasing the share at
+// /api/v1/init/claim-share/complete. The nonce is signed with the private key
+// matching that certificate. The share is released exactly once per officer.
 func runClaimShare(cmd *cobra.Command, args []string) error {
-	// Validate required arguments
+	// Validate required arguments.
 	if claimShareUsername == "" {
 		return ErrUsernameRequired
+	}
+	if claimShareCertFile == "" {
+		return ErrCertFileRequired
+	}
+	if claimShareKeyFile == "" {
+		return ErrKeyFileRequired
 	}
 	if claimShareSpkiPin == "" {
 		return ErrSPKIPinRequired
 	}
 
-	// Create a temporary config with SPKI pin for claim-share
-	shareConfig := &Config{
-		Server:       globalConfig.Server,
-		OutputFormat: globalConfig.OutputFormat,
-		SPKIPin:      claimShareSpkiPin,
-	}
-
-	client, err := createInitHTTPClient(shareConfig, true)
+	// The challenge must be signed with the key matching the officer
+	// certificate, so load it before any network round trip: a bad key path
+	// should not consume a server nonce.
+	privKey, err := loadCSRPrivateKey(claimShareKeyFile)
 	if err != nil {
 		return err
 	}
 
-	// Step 1: Begin the challenge
-	beginReq := claimShareBeginRequest{Username: claimShareUsername}
-	beginBody, err := json.Marshal(beginReq)
+	// The share endpoints require a client certificate, so the transport is
+	// mTLS with the server still pinned by SPKI: the officer has the CA
+	// bundle only after claim-cert, and pinning is what the ceremony
+	// published.
+	shareConfig := &Config{
+		Server:       globalConfig.Server,
+		OutputFormat: globalConfig.OutputFormat,
+		SPKIPin:      claimShareSpkiPin,
+		TLSCert:      claimShareCertFile,
+		TLSKey:       claimShareKeyFile,
+		TLSCACert:    claimShareCAFile,
+	}
+
+	client, err := createClaimShareHTTPClient(shareConfig)
+	if err != nil {
+		return err
+	}
+
+	// Step 1: Begin the challenge.
+	beginBody, err := json.Marshal(claimShareBeginRequest{Username: claimShareUsername})
 	if err != nil {
 		return &WrappedError{Sentinel: ErrJSONMarshalFailed, Err: err}
 	}
@@ -442,15 +544,10 @@ func runClaimShare(cmd *cobra.Command, args []string) error {
 		return &WrappedError{Sentinel: ErrJSONParseFailed, Err: err}
 	}
 
-	// Step 2: Generate keypair and sign nonce
+	// Step 2: Sign the nonce with the officer's private key.
 	nonce, err := hex.DecodeString(beginResp.Nonce)
 	if err != nil {
 		return &WrappedError{Sentinel: ErrNonceDecode, Err: err}
-	}
-
-	pubKey, privKey, err := generateNoiseKeyPair()
-	if err != nil {
-		return err
 	}
 
 	sig, err := signNonce(nonce, privKey)
@@ -458,15 +555,12 @@ func runClaimShare(cmd *cobra.Command, args []string) error {
 		return err
 	}
 
-	// Step 3: Complete the challenge
-	completeReq := claimShareCompleteRequest{
+	// Step 3: Complete the challenge and receive the share.
+	completeBody, err := json.Marshal(claimShareCompleteRequest{
 		Username:  claimShareUsername,
 		Nonce:     beginResp.Nonce,
-		PublicKey: base64.StdEncoding.EncodeToString(pubKey),
 		Signature: base64.StdEncoding.EncodeToString(sig),
-	}
-
-	completeBody, err := json.Marshal(completeReq)
+	})
 	if err != nil {
 		return &WrappedError{Sentinel: ErrJSONMarshalFailed, Err: err}
 	}
@@ -482,28 +576,57 @@ func runClaimShare(cmd *cobra.Command, args []string) error {
 		return err
 	}
 
-	var completeResp2 claimShareCompleteResponse
-	if err := json.Unmarshal(completeRespBody, &completeResp2); err != nil {
+	var claimed claimShareCompleteResponse
+	if err := json.Unmarshal(completeRespBody, &claimed); err != nil {
 		return &WrappedError{Sentinel: ErrJSONParseFailed, Err: err}
 	}
-
-	// Write share to output file if specified, otherwise print to stdout
-	sharePEM, err := base64.StdEncoding.DecodeString(completeResp2.Share)
-	if err != nil {
-		return &WrappedError{Sentinel: ErrBase64Decode, Err: err}
+	if len(claimed.Share) == 0 {
+		return ErrShareMissingInResponse
 	}
 
 	if claimShareOutput != "" {
-		if err := os.WriteFile(claimShareOutput, sharePEM, 0600); err != nil {
+		if err := os.WriteFile(claimShareOutput, claimed.Share, 0600); err != nil {
 			return &WrappedError{Sentinel: ErrShareFileWrite, Err: err}
 		}
-		fmt.Printf("Share %d/%d written to %s\n", completeResp2.ShareIndex, completeResp2.Threshold, claimShareOutput)
-	} else {
-		fmt.Printf("Share %d/%d:\n", completeResp2.ShareIndex, completeResp2.Threshold)
-		fmt.Print(string(sharePEM))
+		fmt.Printf("Share written to %s\n", claimShareOutput)
+		return nil
 	}
 
+	fmt.Println(string(claimed.Share))
 	return nil
+}
+
+// createClaimShareHTTPClient builds the client the share-claim handshake
+// needs: the officer certificate is presented for mTLS while the server is
+// still verified by SPKI pin (or by an explicit CA bundle when the officer
+// saved one from claim-cert). Test injection goes through the same factory
+// hook every other init command uses.
+func createClaimShareHTTPClient(cfg *Config) (*http.Client, error) {
+	if initHTTPClientFactory != nil {
+		return initHTTPClientFactory(cfg)
+	}
+
+	cert, err := tls.LoadX509KeyPair(cfg.TLSCert, cfg.TLSKey)
+	if err != nil {
+		return nil, &WrappedError{Sentinel: ErrCertFileRead, Err: err}
+	}
+
+	tlsConfig := xkmssdk.NewSPKIPinnedTLSConfig(cfg.SPKIPin)
+	tlsConfig.Certificates = []tls.Certificate{cert}
+
+	if cfg.TLSCACert != "" {
+		caPEM, readErr := os.ReadFile(cfg.TLSCACert)
+		if readErr != nil {
+			return nil, &WrappedError{Sentinel: ErrCertFileRead, Err: readErr}
+		}
+		caPool := x509.NewCertPool()
+		if !caPool.AppendCertsFromPEM(caPEM) {
+			return nil, ErrInvalidCA
+		}
+		tlsConfig.RootCAs = caPool
+	}
+
+	return &http.Client{Transport: &http.Transport{TLSClientConfig: tlsConfig}}, nil
 }
 
 // runInitSignCSR handles CSR signing during initialization with SO authorization.
@@ -581,21 +704,6 @@ func runInitSignCSR(cmd *cobra.Command, args []string) error {
 	return nil
 }
 
-// generateKeyPair generates an ECDSA P-256 keypair and returns the public key bytes and private key.
-func generateNoiseKeyPair() ([]byte, crypto.PrivateKey, error) {
-	privKey, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
-	if err != nil {
-		return nil, nil, &WrappedError{Sentinel: ErrKeyGenFailed, Err: err}
-	}
-
-	pubKey, err := x509.MarshalPKIXPublicKey(&privKey.PublicKey)
-	if err != nil {
-		return nil, nil, &WrappedError{Sentinel: ErrPubKeyMarshalFailed, Err: err}
-	}
-
-	return pubKey, privKey, nil
-}
-
 // newSPKIHTTPClient creates an HTTP client that pins the server's SPKI.
 func newSPKIHTTPClient(pin string) *http.Client {
 	return &http.Client{
@@ -641,6 +749,13 @@ func newMTLSHTTPClient(certFile, keyFile, caFile string) (*http.Client, error) {
 
 // doInitRequest is a helper for making init ceremony requests.
 func doInitRequest(client *http.Client, method, url string, body interface{}) (*http.Response, error) {
+	return doInitRequestContext(context.Background(), client, method, url, body)
+}
+
+// doInitRequestContext is doInitRequest with a caller-supplied context, so a
+// cancelled command stops its in-flight request instead of waiting out the
+// transport timeout.
+func doInitRequestContext(ctx context.Context, client *http.Client, method, url string, body interface{}) (*http.Response, error) {
 	var bodyReader io.Reader
 	if body != nil {
 		bodyBytes, err := json.Marshal(body)
@@ -650,7 +765,7 @@ func doInitRequest(client *http.Client, method, url string, body interface{}) (*
 		bodyReader = bytes.NewReader(bodyBytes)
 	}
 
-	req, err := http.NewRequest(method, url, bodyReader)
+	req, err := http.NewRequestWithContext(ctx, method, url, bodyReader)
 	if err != nil {
 		return nil, &WrappedError{Sentinel: ErrHTTPRequestFailed, Err: err}
 	}

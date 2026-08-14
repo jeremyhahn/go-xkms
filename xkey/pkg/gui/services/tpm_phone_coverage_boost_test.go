@@ -320,10 +320,10 @@ func TestTPMPhoneCoverageBoost_ListCompositePolicies_WithSavedData(t *testing.T)
 }
 
 // ---------------------------------------------------------------------------
-// TPM: ListKeys always returns empty (current implementation)
+// TPM: ListKeys reports nothing when the TPM holds no persistent objects
 // ---------------------------------------------------------------------------
 
-func TestTPMPhoneCoverageBoost_ListKeys_AlwaysEmpty(t *testing.T) {
+func TestTPMPhoneCoverageBoost_ListKeys_NoPersistentObjects(t *testing.T) {
 	mock := defaultMockTPM()
 	svc := newTPCBTPMService(mock)
 	svc.SetDataDir(t.TempDir())

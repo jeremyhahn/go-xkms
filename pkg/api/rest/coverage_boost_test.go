@@ -143,20 +143,36 @@ func TestSignHandler_CustomHashAlgorithm(t *testing.T) {
 	assert.Contains(t, []int{http.StatusOK, http.StatusInternalServerError}, w.Code)
 }
 
+// TestSignHandler_UnknownHash is the assertion that would have caught the
+// silent hash downgrade on the REST signing path. A hash name the caller did
+// supply that does not resolve — misspelled, or one of the collision-broken
+// digests the weak-hash policy refuses — must be a client error carrying no
+// signature at all. Answering it with a SHA-256 signature and HTTP 200 is
+// indistinguishable, to the caller, from having signed with what it asked for.
 func TestSignHandler_UnknownHash(t *testing.T) {
 	ks := setupTestService(t, "test-backend")
 	ecKey, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
 	require.NoError(t, err)
 	ks.SetKey("hash-key2", ecKey)
 
-	ctx := newTestHandlerContext()
-	router := createRouterWithHandler(http.MethodPost, "/api/v1/keys/{id}/sign", ctx.SignHandler)
-	body, _ := json.Marshal(SignRequest{Data: []byte("data"), Hash: "UNKNOWN-HASH"})
-	req := httptest.NewRequest(http.MethodPost, "/api/v1/keys/hash-key2/sign?backend=test-backend", strings.NewReader(string(body)))
-	w := httptest.NewRecorder()
-	router.ServeHTTP(w, req)
-	// Falls back to SHA256.
-	assert.Equal(t, http.StatusOK, w.Code)
+	for _, hash := range []string{"UNKNOWN-HASH", "MD5", "SHA-1", "RIPEMD-160"} {
+		t.Run(hash, func(t *testing.T) {
+			ctx := newTestHandlerContext()
+			router := createRouterWithHandler(http.MethodPost, "/api/v1/keys/{id}/sign", ctx.SignHandler)
+			body, _ := json.Marshal(SignRequest{Data: []byte("data"), Hash: hash})
+			req := httptest.NewRequest(http.MethodPost, "/api/v1/keys/hash-key2/sign?backend=test-backend", strings.NewReader(string(body)))
+			w := httptest.NewRecorder()
+			router.ServeHTTP(w, req)
+
+			require.Equal(t, http.StatusBadRequest, w.Code)
+
+			// No signature may appear in the body, not even an empty field
+			// that a client could mistake for a result.
+			var resp SignResponse
+			require.NoError(t, json.Unmarshal(w.Body.Bytes(), &resp))
+			assert.Nil(t, resp.Signature, "a refused hash must not produce a signature")
+		})
+	}
 }
 
 func TestSignHandler_ListKeysError(t *testing.T) {
@@ -850,7 +866,17 @@ func TestEncryptAsymHandler_SHA512(t *testing.T) {
 	assert.Equal(t, http.StatusOK, w.Code)
 }
 
-func TestEncryptAsymHandler_SHA1(t *testing.T) {
+// TestEncryptAsymHandler_SHA1Rejected asserts this transport refuses a
+// collision-broken OAEP digest.
+//
+// It previously asserted HTTP 200: the handler carried its own hash switch that
+// accepted SHA-1 and encrypted with it, while gRPC and the service layer
+// refused the identical request. The digest a caller actually got depended on
+// which port the request arrived on. Both now resolve through
+// xkms.ResolveOAEPHash, which refuses SHA-1 unconditionally -- OAEP has no
+// legacy ciphertexts here, so the weak-hash escape hatch that exists for
+// signing deliberately does not reach it.
+func TestEncryptAsymHandler_SHA1Rejected(t *testing.T) {
 	ks := setupTestService(t, "test-backend")
 	rsaKey, err := rsa.GenerateKey(rand.Reader, 2048)
 	require.NoError(t, err)
@@ -858,11 +884,39 @@ func TestEncryptAsymHandler_SHA1(t *testing.T) {
 
 	ctx := newTestHandlerContext()
 	router := createRouterWithHandler(http.MethodPost, "/api/v1/keys/{id}/encrypt-asym", ctx.EncryptAsymHandler)
-	body, _ := json.Marshal(EncryptAsymRequest{Plaintext: []byte("data"), Hash: "sha1"})
-	req := httptest.NewRequest(http.MethodPost, "/api/v1/keys/rsa-sha1/encrypt-asym?backend=test-backend", strings.NewReader(string(body)))
-	w := httptest.NewRecorder()
-	router.ServeHTTP(w, req)
-	assert.Equal(t, http.StatusOK, w.Code)
+
+	for _, spelling := range []string{"sha1", "SHA-1", "1"} {
+		body, _ := json.Marshal(EncryptAsymRequest{Plaintext: []byte("data"), Hash: spelling})
+		req := httptest.NewRequest(http.MethodPost, "/api/v1/keys/rsa-sha1/encrypt-asym?backend=test-backend", strings.NewReader(string(body)))
+		w := httptest.NewRecorder()
+		router.ServeHTTP(w, req)
+
+		assert.Equal(t, http.StatusBadRequest, w.Code,
+			"hash %q must be refused, not encrypted with", spelling)
+		assert.NotContains(t, w.Body.String(), "ciphertext",
+			"a refused request must return no ciphertext")
+	}
+}
+
+// TestEncryptAsymHandler_StrongHashAccepted is the companion proving the
+// refusal is not over-broad: SHA-256 and friends still encrypt.
+func TestEncryptAsymHandler_StrongHashAccepted(t *testing.T) {
+	ks := setupTestService(t, "test-backend")
+	rsaKey, err := rsa.GenerateKey(rand.Reader, 2048)
+	require.NoError(t, err)
+	ks.SetKey("rsa-strong", rsaKey)
+
+	ctx := newTestHandlerContext()
+	router := createRouterWithHandler(http.MethodPost, "/api/v1/keys/{id}/encrypt-asym", ctx.EncryptAsymHandler)
+
+	for _, spelling := range []string{"", "sha256", "SHA-256", "384", "SHA-512"} {
+		body, _ := json.Marshal(EncryptAsymRequest{Plaintext: []byte("data"), Hash: spelling})
+		req := httptest.NewRequest(http.MethodPost, "/api/v1/keys/rsa-strong/encrypt-asym?backend=test-backend", strings.NewReader(string(body)))
+		w := httptest.NewRecorder()
+		router.ServeHTTP(w, req)
+
+		assert.Equal(t, http.StatusOK, w.Code, "hash %q must be accepted", spelling)
+	}
 }
 
 func TestEncryptAsymHandler_ListKeysError(t *testing.T) {
@@ -896,7 +950,10 @@ func TestDecryptHandler_AsymmetricRoundTrip(t *testing.T) {
 
 	ctx := newTestHandlerContext()
 	router := createRouterWithHandler(http.MethodPost, "/api/v1/keys/{id}/decrypt", ctx.DecryptHandler)
-	body, _ := json.Marshal(DecryptRequest{Ciphertext: ciphertext})
+	// The padding has to be stated. An unnamed padding means PKCS#1 v1.5 --
+	// which is what this API's own asymmetric Encrypt produces -- so an OAEP
+	// ciphertext must say so, exactly as it must on QUIC and gRPC.
+	body, _ := json.Marshal(DecryptRequest{Ciphertext: ciphertext, Padding: "oaep", Hash: "SHA-256"})
 	req := httptest.NewRequest(http.MethodPost, "/api/v1/keys/rsa-roundtrip/decrypt?backend=test-backend", strings.NewReader(string(body)))
 	w := httptest.NewRecorder()
 	router.ServeHTTP(w, req)

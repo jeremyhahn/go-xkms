@@ -163,16 +163,37 @@ type AgentError struct {
 	// Operation describes the operation that failed (e.g., "enroll", "connect").
 	Operation string
 
-	// Err is the underlying error.
+	// Err is the sentinel classifying the failure (ErrStoreWrite,
+	// ErrDAOCreation, ...). It is what callers match with errors.Is.
 	Err error
+
+	// Cause is the error that actually produced the failure, when there was
+	// one. It is reported alongside Err rather than replacing it: the sentinel
+	// says what kind of failure this is, the cause says why it happened.
+	//
+	// Without this, a wrapper built from a sentinel alone discards the only
+	// information that explains the failure -- a "failed to create DAO" that
+	// names neither the field nor the reason forces the reader into the
+	// dependency's source to learn what went wrong.
+	Cause error
 }
 
-// Error returns a formatted error string including the operation context.
+// Error returns a formatted error string including the operation context and,
+// when one is known, the underlying cause.
 func (e *AgentError) Error() string {
-	return "agent: " + e.Operation + ": " + e.Err.Error()
+	msg := "agent: " + e.Operation + ": " + e.Err.Error()
+	if e.Cause != nil {
+		msg += ": " + e.Cause.Error()
+	}
+	return msg
 }
 
-// Unwrap returns the underlying error for use with errors.Is and errors.As.
-func (e *AgentError) Unwrap() error {
-	return e.Err
+// Unwrap returns both the sentinel and the cause so errors.Is and errors.As
+// match either. Returning a slice (Go 1.20+ multi-error unwrapping) is what
+// lets a caller keep matching the sentinel while the cause stays reachable.
+func (e *AgentError) Unwrap() []error {
+	if e.Cause == nil {
+		return []error{e.Err}
+	}
+	return []error{e.Err, e.Cause}
 }

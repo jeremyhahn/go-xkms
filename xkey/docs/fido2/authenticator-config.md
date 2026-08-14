@@ -538,13 +538,23 @@ config := &authenticator.Config{
 
 ### With Software Key Backend
 
+There is no per-backend package. One adapter wraps any go-xkms `KeyProvider`, and
+the backend is chosen by `BackendType`:
+
 ```go
-import "github.com/jeremyhahn/go-xkms/xkey/pkg/fido2/authenticator/keybackend/software"
+import (
+    xkms "github.com/jeremyhahn/go-xkms/sdk/go"
+    "github.com/jeremyhahn/go-xkms/xkey/pkg/authenticator"
+    "github.com/jeremyhahn/go-xkms/xkey/pkg/authenticator/keybackend"
+)
 
 config := authenticator.DefaultConfig()
 config.Storage = authenticator.NewMemoryStorage()
-config.KeyBackend = software.NewSoftwareKeyBackend()
+config.KeyBackend = keybackend.NewBackendAdapter(provider, xkms.BackendTypeSoftware)
 ```
+
+Swap `xkms.BackendTypeSoftware` for `xkms.BackendTypeTPM2`, `xkms.BackendTypePKCS11`
+or any other supported backend type; the rest of the wiring is identical.
 
 ### With Interactive User Presence
 

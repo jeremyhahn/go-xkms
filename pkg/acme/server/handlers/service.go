@@ -38,6 +38,7 @@ import (
 
 	"github.com/go-jose/go-jose/v4"
 	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
+	"github.com/jeremyhahn/go-xkms/pkg/acme/audit"
 	"github.com/jeremyhahn/go-xkms/pkg/acme/common"
 	"github.com/jeremyhahn/go-xkms/pkg/acme/entities"
 	caerrors "github.com/jeremyhahn/go-xkms/pkg/acme/errors"
@@ -211,6 +212,13 @@ type Params struct {
 	// registration order. A hook error aborts finalization fail-closed.
 	OrderPreSignHooks *OrderPreSignHookRegistry
 
+	// AuditLogger records the security-relevant decisions this service makes:
+	// account creation, order creation, certificate issuance and revocation,
+	// account key rollover, TPM enrollment, and rejected authentication. When
+	// nil the service records to a no-op logger and keeps no audit trail, which
+	// is only appropriate outside a compliance-controlled deployment.
+	AuditLogger audit.AuditLogger
+
 	// ClusterCACN, when set, routes TCG-CSR-IDEVID (enroll-01) issuance through
 	// the named CA identity — a dedicated cluster intermediate — instead of the
 	// CA's default issuing identity. This keeps Raft node transport certificates
@@ -228,6 +236,7 @@ type CAAValidatorInterface interface {
 
 // RestService implements the ACME REST service handlers.
 type RestService struct {
+	auditLog                audit.AuditLogger
 	baseRESTURI             string
 	ca                      ca.TCGCA
 	caaIdentities           []string
@@ -284,7 +293,15 @@ func NewRestService(params *Params) (RestServicer, error) {
 		nonceGen = common.GenerateNonce
 	}
 
+	// The audit trail is always present so call sites never branch on nil; a
+	// service configured without a logger records to the no-op logger.
+	auditLog := params.AuditLogger
+	if auditLog == nil {
+		auditLog = audit.NewNoOpLogger()
+	}
+
 	return &RestService{
+		auditLog:                auditLog,
 		baseRESTURI:             params.BaseRESTURI,
 		ca:                      params.CA,
 		caaIdentities:           params.CAAIdentities,

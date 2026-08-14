@@ -513,17 +513,6 @@ func TestPutRevocationBlob_RevocationStorePath_B8(t *testing.T) {
 // ca_extensions.go — Issued: both certStore and keyStore paths
 // =============================================================================
 
-func TestIssued_NoCertStoreNorKeyStore_B8(t *testing.T) {
-	t.Parallel()
-	ca := setupTestCA(t)
-	// Clamp both stores to nil so neither can match.
-	ca.certStore = nil
-	ca.keyStore = nil
-	found, err := ca.Issued(context.Background(), "ghost-b8")
-	require.NoError(t, err)
-	assert.False(t, found)
-}
-
 // =============================================================================
 // trust_chain_extensions.go — ImportIssuingCAs: bad-request path (malformed URL)
 // =============================================================================
@@ -794,9 +783,7 @@ func TestDefaultSignatureAlgorithm_GetSigAlgoError_B8(t *testing.T) {
 // the 10-hop maximum by populating the certStore with 11 certs A→B→C→…→K.
 func TestRootCertificate_ChainTooLong_B8(t *testing.T) {
 	ca := setupTestCA(t)
-	if ca.certStore == nil {
-		t.Skip("certStore required for this test")
-	}
+	require.NotNil(t, ca.certStore, "setupTestCA must provide a certStore")
 
 	// Build 11 certificates A(Issuer=B) → B(Issuer=C) → … → K (self-signed-ish).
 	// Each certN is signed by the previous key so Issuer reflects the parent CN.

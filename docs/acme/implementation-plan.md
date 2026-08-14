@@ -82,7 +82,7 @@ cactl
 |   +-- get            # Get account by ID
 |   +-- disable        # Disable account
 |
-+-- tenant              # Tenant operations (super-admin)
++-- tenant              # Tenant operations (requires tenants:*)
 |   +-- create         # Create tenant
 |   +-- get            # Get tenant
 |   +-- update         # Update tenant

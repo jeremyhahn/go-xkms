@@ -16,7 +16,9 @@ package fido2
 import (
 	"crypto/rand"
 	"crypto/sha256"
+	"encoding/binary"
 	"fmt"
+	"log/slog"
 
 	"github.com/jeremyhahn/go-xkms/pkg/errs"
 )
@@ -91,8 +93,8 @@ func (h *HMACSecretExtension) EnrollCredential(config *EnrollmentConfig) (*Enrol
 	//   - credentialId: credentialIdLength bytes
 	//   - credentialPublicKey: CBOR encoded
 
-	flags := authData[32]
-	attestedCredentialDataIncluded := (flags & 0x40) != 0
+	flags := authData[authDataRPIDHashLen]
+	attestedCredentialDataIncluded := flags&FlagAttestedCredentialData != 0
 
 	if !attestedCredentialDataIncluded {
 		return nil, &errs.Message{Msg: "attested credential data not included"}
@@ -144,9 +146,179 @@ func (h *HMACSecretExtension) EnrollCredential(config *EnrollmentConfig) (*Enrol
 	return result, nil
 }
 
-// DeriveSecret derives an HMAC secret from the credential
+// hmac-secret extension parameters, as defined by CTAP 2.1 12.5.
+const (
+	// hmacSecretSaltLen is the size of a single hmac-secret salt, and
+	// therefore of a single hmac-secret output.
+	hmacSecretSaltLen = 32
+
+	// hmacSecretInputKeyAgreement carries the platform's ephemeral public
+	// key in the extension input.
+	hmacSecretInputKeyAgreement = 0x01
+
+	// hmacSecretInputSaltEnc carries the encrypted salt(s).
+	hmacSecretInputSaltEnc = 0x02
+
+	// hmacSecretInputSaltAuth carries the authentication tag over saltEnc.
+	hmacSecretInputSaltAuth = 0x03
+
+	// hmacSecretInputPinUVAuthProtocol names the protocol used to encrypt
+	// and authenticate the salts.
+	hmacSecretInputPinUVAuthProtocol = 0x04
+)
+
+// legacyDerivationWarning is emitted whenever the deprecated derivation is
+// used. It is deliberately blunt: an operator who sees it is holding a key
+// that any holder of the credential ID and salt can recompute.
+const legacyDerivationWarning = "SECURITY: FIDO2 legacy hmac-secret derivation is in use. " +
+	"The resulting key is NOT bound to the authenticator and can be recomputed from the credential ID and salt alone, " +
+	"both of which are normally stored beside the encrypted volume. " +
+	"Use this mode only to unlock a volume enrolled before the derivation was fixed, and re-enroll that volume immediately."
+
+// DeriveSecret derives an HMAC secret from the credential.
+//
+// The secret is the authenticator's hmac-secret extension output: the
+// platform encrypts the salt under a PIN/UV auth shared secret established
+// by ECDH with the authenticator, the authenticator returns
+// HMAC-SHA-256(CredRandom, salt) encrypted under the same secret, and the
+// platform decrypts it. CredRandom never leaves the authenticator, so the
+// result is reproducible only in its presence.
+//
+// When config.DerivationMode is DerivationModeLegacyInsecure the deprecated
+// pre-fix derivation runs instead. See DerivationModeLegacyInsecure.
 func (h *HMACSecretExtension) DeriveSecret(config *AuthenticationConfig) (*AuthenticationResult, error) {
-	// Generate client data hash
+	if config == nil {
+		return nil, ErrAuthenticationConfigNil
+	}
+
+	if config.DerivationMode == DerivationModeLegacyInsecure {
+		return h.deriveSecretLegacy(config)
+	}
+	return h.deriveSecretCTAP2(config)
+}
+
+// deriveSecretCTAP2 performs the hmac-secret derivation defined by
+// CTAP 2.1 12.5.
+func (h *HMACSecretExtension) deriveSecretCTAP2(config *AuthenticationConfig) (*AuthenticationResult, error) {
+	if len(config.CredentialID) == 0 {
+		return nil, ErrInvalidCredentialID
+	}
+
+	salts, err := hmacSecretSalts(config)
+	if err != nil {
+		return nil, err
+	}
+
+	session, err := h.auth.EstablishPINUVAuthSession()
+	if err != nil {
+		return nil, err
+	}
+
+	saltEnc, err := session.Encrypt(salts)
+	if err != nil {
+		return nil, err
+	}
+
+	extensions := map[string]interface{}{
+		ExtensionHMACSecret: map[int]interface{}{
+			hmacSecretInputKeyAgreement:      session.PlatformKeyAgreement().Map(),
+			hmacSecretInputSaltEnc:           saltEnc,
+			hmacSecretInputSaltAuth:          session.Authenticate(saltEnc),
+			hmacSecretInputPinUVAuthProtocol: session.Version(),
+		},
+	}
+
+	resp, err := h.getAssertion(config, extensions)
+	if err != nil {
+		return nil, err
+	}
+
+	result, err := newAuthenticationResult(resp)
+	if err != nil {
+		return nil, err
+	}
+
+	output, err := hmacSecretOutput(resp.AuthData, session, len(salts))
+	if err != nil {
+		return nil, err
+	}
+
+	result.HMACSecret = output[:hmacSecretSaltLen]
+	if len(output) > hmacSecretSaltLen {
+		result.HMACSecret2 = output[hmacSecretSaltLen:]
+	}
+
+	return result, nil
+}
+
+// hmacSecretSalts concatenates the configured salts into the plaintext the
+// extension input carries. CTAP 2.1 12.5 admits one or two salts, each
+// exactly 32 bytes.
+func hmacSecretSalts(config *AuthenticationConfig) ([]byte, error) {
+	if len(config.Salt) != hmacSecretSaltLen {
+		return nil, &errs.Detail{
+			Err:    ErrInvalidSalt,
+			Detail: fmt.Sprintf("expected a %d-byte salt, got %d", hmacSecretSaltLen, len(config.Salt)),
+		}
+	}
+
+	if len(config.Salt2) == 0 {
+		return append([]byte(nil), config.Salt...), nil
+	}
+
+	if len(config.Salt2) != hmacSecretSaltLen {
+		return nil, &errs.Detail{
+			Err:    ErrInvalidSalt,
+			Detail: fmt.Sprintf("expected a %d-byte second salt, got %d", hmacSecretSaltLen, len(config.Salt2)),
+		}
+	}
+
+	salts := make([]byte, 0, 2*hmacSecretSaltLen)
+	salts = append(salts, config.Salt...)
+	salts = append(salts, config.Salt2...)
+	return salts, nil
+}
+
+// hmacSecretOutput extracts and decrypts the hmac-secret extension output.
+// Every failure is terminal: a value that is not the authenticator's
+// secret is not a key, so none is returned.
+func hmacSecretOutput(authData []byte, session *PINUVAuthSession, saltsLen int) ([]byte, error) {
+	extensions, err := ParseAuthDataExtensions(authData)
+	if err != nil {
+		return nil, err
+	}
+
+	value, ok := extensions[ExtensionHMACSecret]
+	if !ok {
+		return nil, ErrHMACSecretMissing
+	}
+
+	encrypted, ok := value.([]byte)
+	if !ok {
+		return nil, &errs.Detail{
+			Err:    ErrHMACSecretOutputInvalid,
+			Detail: fmt.Sprintf("expected a byte string, got %T", value),
+		}
+	}
+
+	output, err := session.Decrypt(encrypted)
+	if err != nil {
+		return nil, &errs.Joined{Lead: ErrHMACSecretOutputInvalid, Cause: err}
+	}
+
+	if len(output) != saltsLen {
+		return nil, &errs.Detail{
+			Err:    ErrHMACSecretOutputInvalid,
+			Detail: fmt.Sprintf("expected %d bytes for %d salt(s), got %d", saltsLen, saltsLen/hmacSecretSaltLen, len(output)),
+		}
+	}
+
+	return output, nil
+}
+
+// getAssertion issues the GetAssertion request that carries an hmac-secret
+// extension input.
+func (h *HMACSecretExtension) getAssertion(config *AuthenticationConfig, extensions map[string]interface{}) (*GetAssertionResponse, error) {
 	challenge := config.Challenge
 	if len(challenge) == 0 {
 		challenge = make([]byte, 32)
@@ -154,19 +326,10 @@ func (h *HMACSecretExtension) DeriveSecret(config *AuthenticationConfig) (*Authe
 			return nil, &errs.Wrapped{Msg: "failed to generate challenge", Err: err}
 		}
 	}
-	clientDataHash := CreateClientDataHash(challenge)
-
-	// Build GetAssertion request with hmac-secret extension
-	// For CTAP2.0, we use simple salt (no encryption)
-	extensions := map[string]interface{}{
-		ExtensionHMACSecret: map[string]interface{}{
-			"salt1": config.Salt, // 32-byte salt
-		},
-	}
 
 	req := &GetAssertionRequest{
 		RPID:           config.RelyingPartyID,
-		ClientDataHash: clientDataHash,
+		ClientDataHash: CreateClientDataHash(challenge),
 		AllowList: []PublicKeyCredentialDescriptor{
 			{
 				Type: "public-key",
@@ -180,72 +343,94 @@ func (h *HMACSecretExtension) DeriveSecret(config *AuthenticationConfig) (*Authe
 		},
 	}
 
-	// Get assertion
 	resp, err := h.auth.GetAssertion(req)
 	if err != nil {
 		return nil, &errs.Wrapped{Msg: "failed to get assertion", Err: err}
 	}
+	return resp, nil
+}
 
-	// Parse authenticator data
+// newAuthenticationResult populates the assertion metadata shared by every
+// derivation mode. The HMAC secret is filled in by the caller.
+func newAuthenticationResult(resp *GetAssertionResponse) (*AuthenticationResult, error) {
 	authData := resp.AuthData
-	if len(authData) < 37 {
-		return nil, &errs.Message{Msg: fmt.Sprintf("invalid authenticator data length: %d", len(authData))}
-	}
-
-	// Extract flags and sign count
-	flags := authData[32]
-	userPresent := (flags & 0x01) != 0
-	userVerified := (flags & 0x04) != 0
-	backupEligible := (flags & 0x08) != 0
-	backupState := (flags & 0x10) != 0
-
-	signCount := uint32(authData[33])<<24 | uint32(authData[34])<<16 |
-		uint32(authData[35])<<8 | uint32(authData[36])
-
-	// Extract HMAC secret from extension output
-	// The hmac-secret output is in the authenticator data extensions
-	extensionsIncluded := (flags & 0x80) != 0
-
-	var hmacSecret []byte
-	if extensionsIncluded {
-		// Extensions are CBOR encoded after the base authData
-		if len(authData) > 37 {
-			// Look for hmac-secret output (32 or 64 bytes)
-			extensionData := authData[37:]
-			if len(extensionData) >= 32 {
-				// Extract the HMAC output
-				hmacSecret = extensionData[:32]
-			}
+	if len(authData) < authDataHeaderLen {
+		return nil, &errs.Detail{
+			Err:    ErrAuthDataTooShort,
+			Detail: fmt.Sprintf("got %d bytes", len(authData)),
 		}
 	}
 
-	// If we couldn't extract from extensions, derive from signature
-	// This is a fallback that works for some devices
-	if len(hmacSecret) == 0 {
-		// Some devices return the HMAC in a different format
-		// Use the credential ID + salt as fallback
+	flags := authData[authDataRPIDHashLen]
+
+	return &AuthenticationResult{
+		SignCount:      binary.BigEndian.Uint32(authData[authDataRPIDHashLen+1 : authDataHeaderLen]),
+		UserPresent:    flags&FlagUserPresent != 0,
+		UserVerified:   flags&FlagUserVerified != 0,
+		BackupEligible: flags&FlagBackupEligible != 0,
+		BackupState:    flags&FlagBackupState != 0,
+		Signature:      resp.Signature,
+		AuthData:       authData,
+	}, nil
+}
+
+// deriveSecretLegacy reproduces the derivation go-xkms performed before the
+// hmac-secret extension output was parsed correctly, so that a volume
+// enrolled against it can be unlocked once and re-enrolled.
+//
+// Deprecated: migration only. The value it returns is not hardware-bound.
+func (h *HMACSecretExtension) deriveSecretLegacy(config *AuthenticationConfig) (*AuthenticationResult, error) {
+	slog.Warn(legacyDerivationWarning,
+		"relying_party_id", config.RelyingPartyID,
+		"derivation_mode", "legacy-insecure",
+	)
+
+	// The legacy request sent the raw salt under a "salt1" key, which no
+	// conforming authenticator interprets as an hmac-secret input. It is
+	// reproduced verbatim so the legacy result is reproduced verbatim.
+	extensions := map[string]interface{}{
+		ExtensionHMACSecret: map[string]interface{}{
+			"salt1": config.Salt,
+		},
+	}
+
+	resp, err := h.getAssertion(config, extensions)
+	if err != nil {
+		return nil, err
+	}
+
+	result, err := newAuthenticationResult(resp)
+	if err != nil {
+		return nil, err
+	}
+
+	result.HMACSecret = legacyHMACSecret(resp.AuthData, config)
+	return result, nil
+}
+
+// legacyHMACSecret reproduces the pre-fix extraction byte for byte: raw
+// bytes from a fixed offset that ignores the AT flag and is never
+// CBOR-decoded, falling back to SHA-256(credentialID || salt), which is
+// computable from public data alone.
+//
+// Deprecated: migration only.
+func legacyHMACSecret(authData []byte, config *AuthenticationConfig) []byte {
+	var secret []byte
+
+	if authData[authDataRPIDHashLen]&FlagExtensionData != 0 && len(authData) > authDataHeaderLen {
+		if extensionData := authData[authDataHeaderLen:]; len(extensionData) >= hmacSecretSaltLen {
+			secret = extensionData[:hmacSecretSaltLen]
+		}
+	}
+
+	if len(secret) == 0 {
 		hash := sha256.New()
 		hash.Write(config.CredentialID)
 		hash.Write(config.Salt)
-		hmacSecret = hash.Sum(nil)
+		secret = hash.Sum(nil)
 	}
 
-	if len(hmacSecret) == 0 {
-		return nil, ErrInvalidHMACSecret
-	}
-
-	result := &AuthenticationResult{
-		HMACSecret:     hmacSecret,
-		SignCount:      signCount,
-		UserPresent:    userPresent,
-		UserVerified:   userVerified,
-		BackupEligible: backupEligible,
-		BackupState:    backupState,
-		Signature:      resp.Signature,
-		AuthData:       authData,
-	}
-
-	return result, nil
+	return secret
 }
 
 // GenerateDerivedKey generates a derived key from FIDO2 HMAC-secret
@@ -288,60 +473,4 @@ func VerifyHMACSecret(secret []byte) error {
 		return &errs.Message{Msg: fmt.Sprintf("invalid HMAC secret length: expected 32 or 64, got %d", len(secret))}
 	}
 	return nil
-}
-
-// ParseAuthDataExtensions parses CBOR encoded extension output from authenticator data
-// This is a helper for extracting hmac-secret output
-func ParseAuthDataExtensions(authData []byte) (map[string]interface{}, error) {
-	if len(authData) < 37 {
-		return nil, &errs.Message{Msg: "invalid authenticator data length"}
-	}
-
-	flags := authData[32]
-	extensionsIncluded := (flags & 0x80) != 0
-
-	if !extensionsIncluded {
-		return nil, nil
-	}
-
-	// Extensions start after the base auth data (37 bytes)
-	// If attested credential data is present, skip it
-	attestedCredentialDataIncluded := (flags & 0x40) != 0
-
-	offset := 37
-	if attestedCredentialDataIncluded {
-		// Skip AAGUID (16 bytes)
-		offset += 16
-
-		if len(authData) < offset+2 {
-			return nil, &errs.Message{Msg: "invalid attested credential data"}
-		}
-
-		// Get credential ID length
-		credIDLen := int(authData[offset])<<8 | int(authData[offset+1])
-		offset += 2
-
-		if len(authData) < offset+credIDLen {
-			return nil, &errs.Message{Msg: "invalid credential ID length"}
-		}
-
-		// Skip credential ID
-		offset += credIDLen
-
-		// Skip credential public key (CBOR encoded)
-		// This requires proper CBOR length detection
-		// For now, we'll use a simplified approach
-	}
-
-	// Parse extensions CBOR
-	if len(authData) <= offset {
-		return nil, nil
-	}
-
-	extensionData := authData[offset:]
-	var extensions map[string]interface{}
-	// Note: This may fail if we haven't properly skipped the public key
-	_ = extensionData // Placeholder for actual CBOR parsing
-
-	return extensions, nil
 }

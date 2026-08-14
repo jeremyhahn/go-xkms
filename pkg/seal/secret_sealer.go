@@ -20,10 +20,12 @@ import (
 	"crypto/rand"
 	"crypto/sha256"
 	"errors"
+	"fmt"
 	"io"
 
 	"golang.org/x/crypto/hkdf"
 
+	"github.com/jeremyhahn/go-xkms/pkg/errs"
 	"github.com/jeremyhahn/go-xkms/pkg/types"
 )
 
@@ -103,6 +105,14 @@ func (s *SecretSealer) Unseal(_ context.Context, sealed *types.SealedData, _ *ty
 	gcm, err := s.gcm()
 	if err != nil {
 		return nil, err
+	}
+	// crypto/cipher panics rather than returning an error when the nonce is
+	// not exactly NonceSize bytes. The nonce arrives from stored/caller data,
+	// so without this check a corrupted or malicious sealed blob takes the
+	// whole process down.
+	if len(sealed.Nonce) != gcm.NonceSize() {
+		return nil, &errs.Message{Msg: fmt.Sprintf(
+			"seal: nonce is %d bytes, want %d", len(sealed.Nonce), gcm.NonceSize())}
 	}
 	return gcm.Open(nil, sealed.Nonce, sealed.Ciphertext, nil)
 }

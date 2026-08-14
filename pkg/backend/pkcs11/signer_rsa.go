@@ -80,6 +80,8 @@ func (s *pkcs11RSASigner) Public() crypto.PublicKey {
 // Supported opts:
 //   - *rsa.PSSOptions: uses CKM_RSA_PKCS_PSS with the specified hash and salt length.
 //     PSSSaltLengthAuto is not supported (returns error).
+//   - crypto.Hash(0): uses CKM_RSA_PKCS (PKCS#1 v1.5) over digest verbatim.
+//     See signPKCS1v15.
 //   - nil or other: uses CKM_RSA_PKCS (PKCS#1 v1.5) with DigestInfo DER prefix.
 func (s *pkcs11RSASigner) Sign(_ io.Reader, digest []byte, opts crypto.SignerOpts) ([]byte, error) {
 	if pssOpts, ok := opts.(*rsa.PSSOptions); ok {
@@ -88,23 +90,42 @@ func (s *pkcs11RSASigner) Sign(_ io.Reader, digest []byte, opts crypto.SignerOpt
 	return s.signPKCS1v15(digest, opts)
 }
 
-// signPKCS1v15 performs PKCS#1 v1.5 signing by prepending the DigestInfo DER prefix
-// and calling CKM_RSA_PKCS on the HSM.
+// signPKCS1v15 performs PKCS#1 v1.5 signing with CKM_RSA_PKCS on the HSM.
+//
+// A nil opts means the caller expressed no preference and selects the SHA-256
+// default, matching xkms.ResolveHash's treatment of an unspecified hash name.
+//
+// A zero opts.HashFunc() — crypto.Hash(0), the value xkms.ResolveHash returns
+// for the wire sentinel "NONE" — means the caller has already built the exact
+// bytes to pad and sign, so digest is signed verbatim with no DigestInfo
+// prepended. This is the case PKCS#11's raw CKM_RSA_PKCS mechanism produces:
+// libp11 and a TLS 1.3 CertificateVerify both hand the token a complete
+// DigestInfo. Prepending a second one signs bytes nobody chose, and the
+// resulting signature verifies against nothing. crypto/rsa gives crypto.Hash(0)
+// exactly this meaning in SignPKCS1v15, so the software and PKCS#11 backends
+// answer the same request the same way.
+//
+// Any other hash names the DigestInfo to build. A hash with no prefix in
+// RFC 8017 §9.2 is refused rather than defaulted, because substituting a digest
+// the caller did not ask for reports success for a signature it cannot use.
 func (s *pkcs11RSASigner) signPKCS1v15(digest []byte, opts crypto.SignerOpts) ([]byte, error) {
 	hashFunc := crypto.SHA256
 	if opts != nil {
 		hashFunc = opts.HashFunc()
 	}
 
-	prefix, ok := digestInfoPrefix[hashFunc]
-	if !ok {
-		return nil, &errs.Detail{Err: ErrUnsupportedOperation, Detail: fmt.Sprintf("unsupported hash for PKCS1v15: %v", hashFunc)}
-	}
+	signed := digest
+	if hashFunc != 0 {
+		prefix, ok := digestInfoPrefix[hashFunc]
+		if !ok {
+			return nil, &errs.Detail{Err: ErrUnsupportedOperation, Detail: fmt.Sprintf("unsupported hash for PKCS1v15: %v", hashFunc)}
+		}
 
-	// DigestInfo = prefix || digest
-	signed := make([]byte, len(prefix)+len(digest))
-	copy(signed, prefix)
-	copy(signed[len(prefix):], digest)
+		// DigestInfo = prefix || digest
+		signed = make([]byte, len(prefix)+len(digest))
+		copy(signed, prefix)
+		copy(signed[len(prefix):], digest)
+	}
 
 	var signature []byte
 	err := s.pool.WithSession(func(session pkcs11.SessionHandle) error {
@@ -220,7 +241,22 @@ func (s *pkcs11RSASigner) decryptOAEP(ciphertext []byte, opts *rsa.OAEPOptions) 
 		return nil, &errs.Detail{Err: ErrUnsupportedOperation, Detail: fmt.Sprintf("unsupported hash for OAEP: %v", hashFunc)}
 	}
 
-	oaepParams := pkcs11.NewOAEPParams(info.hashAlg, info.mgfAlg, pkcs11.CKZ_DATA_SPECIFIED, opts.Label)
+	// The MGF1 hash is a separate choice from the label hash. crypto.Decrypter
+	// defines OAEPOptions.MGFHash as exactly that, defaulting to Hash when it is
+	// zero, and CK_RSA_PKCS_OAEP_PARAMS likewise carries hashAlg and mgf as
+	// independent fields. Deriving the MGF from Hash unconditionally meant a
+	// caller asking for OAEP(SHA-256, MGF1-SHA-1) silently got MGF1-SHA-256 --
+	// a different scheme from the one requested, whose ciphertext a conformant
+	// peer cannot decrypt.
+	mgfInfo := info
+	if opts.MGFHash != 0 && opts.MGFHash != hashFunc {
+		mgfInfo, ok = hashMap[opts.MGFHash]
+		if !ok {
+			return nil, &errs.Detail{Err: ErrUnsupportedOperation, Detail: fmt.Sprintf("unsupported MGF1 hash for OAEP: %v", opts.MGFHash)}
+		}
+	}
+
+	oaepParams := pkcs11.NewOAEPParams(info.hashAlg, mgfInfo.mgfAlg, pkcs11.CKZ_DATA_SPECIFIED, opts.Label)
 
 	var plaintext []byte
 	err := s.pool.WithSession(func(session pkcs11.SessionHandle) error {
@@ -278,6 +314,53 @@ func exportRSAPublicKey(pool *SessionPool, pubHandle pkcs11.ObjectHandle) (*rsa.
 // rsaPublicExponent65537 is the standard RSA public exponent (0x10001).
 var rsaPublicExponent65537 = []byte{0x01, 0x00, 0x01}
 
+// generatedKeySensitive and generatedKeyExtractable are the protection
+// attributes written into the private key template of every key pair this
+// backend generates on a token, for both RSA and EC.
+//
+// Both are written explicitly rather than left to the token. PKCS#11 3.2 §4.9
+// gives CKA_SENSITIVE and CKA_EXTRACTABLE on a generated private key a default
+// that is "token-specific, and may depend on the values of other attributes",
+// so a template that omits them produces a differently protected key on every
+// module. SoftHSM2 happens to generate CKA_SENSITIVE=CK_TRUE,
+// CKA_EXTRACTABLE=CK_FALSE, which is stricter than the specification requires —
+// exactly the situation buildImportKeyTemplate warns about, where the tests
+// pass and a conforming HSM still hands out a weaker key.
+//
+// The two attributes answer different questions and are chosen separately:
+//
+//   - CKA_SENSITIVE=CK_TRUE is what keeps the private key secret. Per the
+//     footnotes to the §4.9 attribute tables, the value of a key whose
+//     CKA_SENSITIVE is CK_TRUE is never revealed in plaintext, so
+//     C_GetAttributeValue cannot read it out.
+//
+//   - CKA_EXTRACTABLE=CK_FALSE says the key may not be wrapped (§4.9 Table 30).
+//     It is not a plaintext-disclosure control — CKA_SENSITIVE already is — and
+//     it is one-way: §4.9 permits CK_TRUE to CK_FALSE and never the reverse, so
+//     a key generated this way can never be backed up or escrowed, in any form,
+//     for its whole lifetime.
+//
+// CK_FALSE is nevertheless the right value here, and this is a deliberate
+// difference from buildImportKeyTemplate, which writes the caller's
+// attrs.Exportable policy instead:
+//
+//   - A key that was generated on the token has never existed anywhere else.
+//     Sealing it in is the property the caller asked for by generating in
+//     hardware rather than importing, and ExportKey already refuses these keys
+//     today — the token answers C_WrapKey with CKR_KEY_UNEXTRACTABLE. Writing
+//     CK_FALSE pins that behaviour on every module instead of inheriting it
+//     from SoftHSM2 by luck.
+//
+//   - The generate entry points take no exportability policy from the caller,
+//     so there is nothing to honour here the way the import path honours
+//     attrs.Exportable. A caller that needs an escrow-capable key generates the
+//     material itself and calls ImportKey with Exportable set, which is the
+//     path that carries a copy of the key outside the token anyway.
+const (
+	generatedKeySensitive   = true
+	generatedKeyExtractable = false
+)
+
 // buildYubiKeyRSATemplates returns the minimal RSA key pair templates required by
 // YubiKey's libykcs11. YubiKey PIV slots set CKA_TOKEN, CKA_SIGN, CKA_VERIFY,
 // CKA_PRIVATE, and CKA_SENSITIVE automatically based on the slot; supplying them
@@ -303,6 +386,19 @@ func buildYubiKeyRSATemplates(id []byte, keySize int) (pub, priv []*pkcs11.Attri
 // When isYubiKeyPIV is true, a minimal attribute template is used as required by
 // YubiKey's libykcs11. Otherwise, the full template suitable for SoftHSM and
 // generic PKCS#11 modules is used.
+//
+// The generic private key template names every operation the key is allowed to
+// perform, because PKCS#11 3.2 §4.9 defaults the usage flags it omits to
+// CK_FALSE: CKA_SIGN and CKA_DECRYPT for the signer and decrypter this returns,
+// and CKA_UNWRAP so an imported key can be delivered under this one.
+// CKA_DERIVE is deliberately absent — it is the flag C_DeriveKey checks on its
+// base key, and no derive mechanism in this backend takes an RSA base key, so
+// the §4.9 default of CK_FALSE is the correct value and granting it would widen
+// the key's permissions for no operation it can actually perform. That is the
+// opposite of generateECDSAKeyPair, whose keys are the base keys of
+// CKM_ECDH1_DERIVE.
+//
+// For CKA_SENSITIVE and CKA_EXTRACTABLE see generatedKeySensitive.
 func generateRSAKeyPair(pool *SessionPool, id, label []byte, keySize int, isYubiKeyPIV bool, soPIN, userPIN string) (*pkcs11RSASigner, error) {
 	var pubTemplate, privTemplate []*pkcs11.Attribute
 	if isYubiKeyPIV {
@@ -325,7 +421,8 @@ func generateRSAKeyPair(pool *SessionPool, id, label []byte, keySize int, isYubi
 			pkcs11.NewAttribute(pkcs11.CKA_KEY_TYPE, pkcs11.CKK_RSA),
 			pkcs11.NewAttribute(pkcs11.CKA_TOKEN, true),
 			pkcs11.NewAttribute(pkcs11.CKA_PRIVATE, true),
-			pkcs11.NewAttribute(pkcs11.CKA_SENSITIVE, true),
+			pkcs11.NewAttribute(pkcs11.CKA_SENSITIVE, generatedKeySensitive),
+			pkcs11.NewAttribute(pkcs11.CKA_EXTRACTABLE, generatedKeyExtractable),
 			pkcs11.NewAttribute(pkcs11.CKA_SIGN, true),
 			pkcs11.NewAttribute(pkcs11.CKA_DECRYPT, true),
 			pkcs11.NewAttribute(pkcs11.CKA_UNWRAP, true),

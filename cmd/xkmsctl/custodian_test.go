@@ -99,6 +99,18 @@ func (m *mockCustodianClient) ListShares(ctx context.Context) (*transport.ListSh
 	return nil, nil
 }
 
+func (m *mockCustodianClient) Algorithms(ctx context.Context) (*transport.AlgorithmsResponse, error) {
+	return nil, nil
+}
+
+func (m *mockCustodianClient) GetShare(ctx context.Context, serverURL, groupID string, shareIndex int) (*transport.ShareInfo, error) {
+	return nil, nil
+}
+
+func (m *mockCustodianClient) DeleteShare(ctx context.Context, serverURL, groupID string, shareIndex int) error {
+	return nil
+}
+
 func (m *mockCustodianClient) GetShareCollectionStatus(ctx context.Context, groupID string) (*transport.ShareCollectionStatus, error) {
 	return nil, nil
 }

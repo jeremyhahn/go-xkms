@@ -25,12 +25,25 @@ logging:
   level: "info"
   format: "json"
 
+# xkmsd refuses to start unless encryption-at-rest, TLS, authentication and a CA
+# are all configured (cmd/xkmsd checks config.ComplianceGaps; there is no
+# override). The defaults below are the compliant baseline, and they need no
+# manual provisioning: the embedded CA below mints the TLS server certificate on
+# first start.
 tls:
-  enabled: false
+  enabled: true
 
 auth:
-  enabled: false
-  type: "noop"
+  enabled: true
+  type: "adaptive"
+
+# Encryption at rest. The passphrase is deliberately absent from this file --
+# supply it out of band via XKMS_SEAL_PASSPHRASE, a credential:// reference, or
+# --seal-passphrase (in that order of preference; a secret on the command line
+# is visible in the process list). `xkmsd init` provisions one for you.
+barrier:
+  enabled: true
+  strategy: "passphrase"
 
 ratelimit:
   enabled: false
@@ -57,49 +70,68 @@ rng:
 default_backend: "software"
 
 backends:
-  # Software backends (always available)
+  # Software backends (always available, no privileges required)
   software:
     enabled: true
-    key_dir: "xkms-data/keys/software"
+    path: "xkms-data/keys/software"
 
   pkcs8:
     enabled: true
-    key_dir: "xkms-data/keys/pkcs8"
+    path: "xkms-data/keys/pkcs8"
 
-  aes:
-    enabled: true
-    key_dir: "xkms-data/keys/aes"
+  # Hardware and cloud backends are commented out: this preset is the
+  # zero-privilege default, and a backend enabled here that cannot reach its
+  # device or credentials aborts daemon startup. Uncomment the one you have.
 
-  # Hardware backends (may not be available in all environments)
-  tpm2:
-    enabled: true
-    device: "/dev/tpmrm0"
-    key_dir: "xkms-data/keys/tpm2"
-    use_simulator: false
-    encrypt_session: false
+  # tpm2:
+  #   enabled: true
+  #   device_path: "/dev/tpmrm0"
+  #   # Development without a TPM: use the in-process simulator instead.
+  #   use_simulator: false
 
-  pkcs11:
-    enabled: true
-    library_path: "/usr/lib/softhsm/libsofthsm2.so"
-    token_label: "xkms"
-    pin: "1234"
+  # pkcs11:
+  #   enabled: true
+  #   library: "/usr/lib/softhsm/libsofthsm2.so"
+  #   token: "xkms"
+  #   pin: ""
 
-  # Cloud backends (will fail if credentials not available)
-  awskms:
-    enabled: true
-    region: "us-east-1"
+  # awskms:
+  #   enabled: true
+  #   region: "us-east-1"
 
-  gcpkms:
-    enabled: true
-    project_id: ""
-    location_id: "us-east1"
-    key_ring_id: "xkms"
+  # gcpkms:
+  #   enabled: true
+  #   project_id: ""
+  #   location: "us-east1"
+  #   key_ring: "xkms"
 
-  azurekv:
-    enabled: true
-    # Will use environment variables for Azure authentication
+  # azurekv:
+  #   enabled: true
+  #   vault_url: ""
+  #   # Remaining credentials come from the standard Azure environment variables.
 
-  vault:
-    enabled: true
-    address: "http://localhost:8200"
-    # Will use VAULT_TOKEN env var
+  # vault:
+  #   enabled: true
+  #   address: "http://localhost:8200"
+  #   # Token comes from the VAULT_TOKEN environment variable.
+
+# Embedded certificate authority. This is what makes the secure defaults above
+# self-provisioning: on first start xkmsd creates the root below, issues its own
+# TLS server certificate from it, and persists both. Subsequent starts load
+# them. Point `selected-ca` at a different identity to issue from another root.
+ca:
+  identity:
+    - subject:
+        cn: "xkms Root CA"
+        organization: "go-xkms"
+      valid: 10
+      keys:
+        - algorithm: "ECDSA"
+          ecc:
+            curve: "P-256"
+          hash: "SHA-256"
+          key_type: "CA"
+      keystore-type: "software"
+      is-root: true
+  selected-ca: 0
+  default-validity-days: 365

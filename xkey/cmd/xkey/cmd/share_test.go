@@ -317,13 +317,73 @@ func TestDefaultShareClientFactory_EmptyServer(t *testing.T) {
 	assert.ErrorIs(t, err, ErrShareMissingServer)
 }
 
-func TestDefaultShareClientFactory_WithServer(t *testing.T) {
-	client, err := defaultShareClientFactory("grpc://localhost:9090")
+func TestDefaultShareClientFactory_WhitespaceServer(t *testing.T) {
+	client, err := defaultShareClientFactory("   ")
 	assert.Nil(t, client)
-	assert.Error(t, err)
-	var shareErr *ShareError
-	assert.True(t, errors.As(err, &shareErr))
-	assert.Equal(t, "connect", shareErr.Operation)
+	assert.ErrorIs(t, err, ErrShareMissingServer)
+}
+
+// TestDefaultShareClientFactory_BuildsTransportPerScheme verifies the factory
+// really constructs an SDK transport client for every scheme the shared
+// resolver dispatches on, rather than the pre-implementation stub that always
+// refused with "requires a running xkmsd server". The client is returned
+// unconnected, so no server is contacted here.
+func TestDefaultShareClientFactory_BuildsTransportPerScheme(t *testing.T) {
+	t.Setenv("XKMSD_TOKEN", "")
+	t.Setenv("XKMSD_TLS_CA", "")
+
+	for _, serverURL := range []string{
+		"grpc://localhost:9090",
+		"grpcs://localhost:9090",
+		"unix:///tmp/xkmsd.sock",
+		"http://localhost:8080",
+		"https://localhost:8443",
+		"quic://localhost:8443",
+		"mcp://localhost:9100",
+	} {
+		t.Run(serverURL, func(t *testing.T) {
+			client, err := defaultShareClientFactory(serverURL)
+			require.NoError(t, err)
+			require.NotNil(t, client)
+			require.NoError(t, client.Close())
+		})
+	}
+}
+
+// TestDefaultShareClientFactory_UnsupportedScheme verifies an unknown scheme
+// is rejected with the supported-scheme list before anything is dialed.
+func TestDefaultShareClientFactory_UnsupportedScheme(t *testing.T) {
+	client, err := defaultShareClientFactory("ftp://xkmsd.example.invalid:21")
+	assert.Nil(t, client)
+	require.ErrorIs(t, err, ErrXKMSdUnsupportedScheme)
+	assert.Contains(t, err.Error(), "grpcs://")
+}
+
+// TestDefaultShareClientFactory_InvalidURL verifies an unparsable server URL
+// is reported as such.
+func TestDefaultShareClientFactory_InvalidURL(t *testing.T) {
+	client, err := defaultShareClientFactory("://no-scheme")
+	assert.Nil(t, client)
+	assert.ErrorIs(t, err, ErrXKMSdURLInvalid)
+}
+
+// TestDefaultShareClientFactory_TLSCAFromEnvironment verifies the TLS-bearing
+// transports consult the shared CA-bundle resolution chain, failing closed on
+// an unreadable bundle.
+func TestDefaultShareClientFactory_TLSCAFromEnvironment(t *testing.T) {
+	t.Setenv("XKMSD_TLS_CA", filepath.Join(t.TempDir(), "missing-ca.pem"))
+
+	client, err := defaultShareClientFactory("grpcs://localhost:9090")
+	assert.Nil(t, client)
+	assert.ErrorIs(t, err, ErrXKMSdTLSConfigFailed)
+}
+
+// TestShareCmd_TLSCAFlag verifies the share command group declares the
+// CA-bundle override the server-facing subcommands honor.
+func TestShareCmd_TLSCAFlag(t *testing.T) {
+	flag := shareCmd.PersistentFlags().Lookup(tlsCAFlagName)
+	require.NotNil(t, flag)
+	assert.Equal(t, "", flag.DefValue)
 }
 
 // --- runShareList tests ---

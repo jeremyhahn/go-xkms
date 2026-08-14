@@ -22,6 +22,7 @@ import (
 	"encoding/pem"
 	"errors"
 	"fmt"
+	"io"
 	"log/slog"
 	"os"
 	"strings"
@@ -241,6 +242,7 @@ func init() {
 
 // runPivGenerate executes the piv generate command.
 func runPivGenerate(cmd *cobra.Command, args []string) error {
+	out := cmd.OutOrStdout()
 	logger := slog.Default()
 	pivCfg := buildPIVConfig()
 
@@ -341,45 +343,45 @@ func runPivGenerate(cmd *cobra.Command, args []string) error {
 
 	switch outputFormat {
 	case "public-key":
-		return writePIVOutput(outputFile, resp.PublicKey, "Public key",
+		return writePIVOutput(out, outputFile, resp.PublicKey, "Public key",
 			fmt.Sprintf("Public key generated for slot %s (%s)", slot, slotName))
 
 	case "csr":
-		return writePIVOutput(outputFile, resp.CSR, "CSR",
+		return writePIVOutput(out, outputFile, resp.CSR, "CSR",
 			fmt.Sprintf("CSR generated for slot %s (%s)", slot, slotName))
 
 	case "ca-signed":
-		fmt.Printf("CA-signed certificate generated in slot %s (%s)\n", slot, slotName)
-		fmt.Printf("Algorithm: %s\n", algorithm)
-		fmt.Printf("Subject: %s\n", subjectCN)
+		fmt.Fprintf(out, "CA-signed certificate generated in slot %s (%s)\n", slot, slotName)
+		fmt.Fprintf(out, "Algorithm: %s\n", algorithm)
+		fmt.Fprintf(out, "Subject: %s\n", subjectCN)
 		if len(resp.Certificate) > 0 {
-			fmt.Printf("Certificate:\n%s", string(resp.Certificate))
+			fmt.Fprintf(out, "Certificate:\n%s", string(resp.Certificate))
 		}
 		if len(resp.ChainPEM) > 0 {
-			fmt.Printf("CA Chain:\n%s", string(resp.ChainPEM))
+			fmt.Fprintf(out, "CA Chain:\n%s", string(resp.ChainPEM))
 		}
 
 	default: // self-signed
-		fmt.Printf("Key generated in slot %s (%s)\n", slot, slotName)
-		fmt.Printf("Algorithm: %s\n", algorithm)
-		fmt.Printf("PIN Policy: %s\n", pinPolicy)
-		fmt.Printf("Touch Policy: %s\n", touchPolicy)
-		fmt.Printf("Public Key:\n%s", string(resp.PublicKey))
+		fmt.Fprintf(out, "Key generated in slot %s (%s)\n", slot, slotName)
+		fmt.Fprintf(out, "Algorithm: %s\n", algorithm)
+		fmt.Fprintf(out, "PIN Policy: %s\n", pinPolicy)
+		fmt.Fprintf(out, "Touch Policy: %s\n", touchPolicy)
+		fmt.Fprintf(out, "Public Key:\n%s", string(resp.PublicKey))
 	}
 
 	return nil
 }
 
 // writePIVOutput writes PEM data to a file or stdout.
-func writePIVOutput(outputFile string, data []byte, label, successMsg string) error {
+func writePIVOutput(out io.Writer, outputFile string, data []byte, label, successMsg string) error {
 	if outputFile != "" {
 		if err := os.WriteFile(outputFile, data, 0600); err != nil {
 			return &WrappedError{Msg: fmt.Sprintf("piv: failed to write %s to %s", label, outputFile), Err: err}
 		}
-		fmt.Printf("%s written to %s\n", successMsg, outputFile)
+		fmt.Fprintf(out, "%s written to %s\n", successMsg, outputFile)
 		return nil
 	}
-	_, err := os.Stdout.Write(data)
+	_, err := out.Write(data)
 	return err
 }
 

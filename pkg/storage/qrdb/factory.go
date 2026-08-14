@@ -15,6 +15,8 @@ package qrdb
 
 import (
 	"context"
+	"io"
+	"sync/atomic"
 
 	"github.com/jeremyhahn/go-qrdb/sdk/go/transport/embedded"
 
@@ -62,8 +64,17 @@ func NewPebble(path string) (*Backend, error) {
 // FastStateMachine is used instead of SimpleStateMachine because it
 // supports PrefixQuery lookups required by the Scan operation.
 //
-// The returned Backend owns the SDK client lifecycle; Close() tears down
-// the client, which in turn closes the transport.
+// The returned Backend owns the SDK client lifecycle; Close() tears down the
+// client and then drains the state machine.
+//
+// Draining is not optional and cannot be delegated to the client: FastBackend
+// applies each Put on a detached goroutine, and the only join point is
+// FastStateMachine.Close (wg.Wait). The SDK client's Close reaches the embedded
+// transport, whose Close just flips a closed flag — it never reaches the state
+// machine. Without the explicit drain below, a write issued shortly before
+// shutdown lands after Close returns, or not at all, and the only trace is an
+// error logged from a goroutine nobody is waiting on. For a key store that is
+// silent data loss.
 func newEmbedded(store qrdbsdk.Storage, engine string) (*Backend, error) {
 	fsm := qrdbsdk.NewFastStateMachine(1, 1, store)
 	host := qrdbsdk.NewLocalBackend(fsm)
@@ -84,5 +95,53 @@ func newEmbedded(store qrdbsdk.Storage, engine string) (*Backend, error) {
 		return nil, &FactoryError{Engine: engine, Err: err}
 	}
 
-	return newOwnedBackend(client.KV(), client), nil
+	return newOwnedBackend(client.KV(), &embeddedCloser{client: client, fsm: fsm, store: store}), nil
+}
+
+// embeddedCloser tears down the embedded stack in dependency order: the client
+// first, so no further writes are accepted; then the state machine, which waits
+// for every in-flight apply to reach the storage engine; then the engine, which
+// releases its files and locks.
+//
+// Nothing below the client was being closed at all. FastStateMachine.Close is
+// only a wg.Wait, and no layer forwarded a close to the engine, so a PebbleDB
+// instance kept its handle and directory lock for the life of the process --
+// reopening the same path failed with "lock held by current process".
+type embeddedCloser struct {
+	client io.Closer
+	fsm    interface {
+		Close(context.Context) error
+	}
+	store  io.Closer
+	closed atomic.Bool
+}
+
+// Close tears the stack down and returns the first error encountered.
+//
+// Every stage runs even if an earlier one fails: writes already accepted must
+// still reach disk, and the engine must release its lock regardless of how the
+// layers above it fared. Close is idempotent — callers commonly close from a
+// defer as well as an explicit shutdown path.
+func (c *embeddedCloser) Close() error {
+	if c.closed.Swap(true) {
+		return nil
+	}
+
+	var firstErr error
+	record := func(err error) {
+		if err != nil && firstErr == nil {
+			firstErr = err
+		}
+	}
+
+	if c.client != nil {
+		record(c.client.Close())
+	}
+	if c.fsm != nil {
+		record(c.fsm.Close(context.Background()))
+	}
+	if c.store != nil {
+		record(c.store.Close())
+	}
+	return firstErr
 }

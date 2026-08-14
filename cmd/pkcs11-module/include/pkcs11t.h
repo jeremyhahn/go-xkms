@@ -217,6 +217,11 @@ typedef CK_SLOT_INFO *CK_SLOT_INFO_PTR;
 #define CKF_REMOVABLE_DEVICE  0x00000002UL
 #define CKF_HW_SLOT           0x00000004UL
 
+/* C_WaitForSlotEvent flags (PKCS#11 v3.2 section 5.5.9). CKF_DONT_BLOCK asks
+ * for a poll rather than a wait: without it C_WaitForSlotEvent blocks until a
+ * slot event occurs, and CKR_NO_EVENT is a legal answer only when it is set. */
+#define CKF_DONT_BLOCK        1UL
+
 /* Token information */
 typedef struct CK_TOKEN_INFO {
     CK_UTF8CHAR   label[32];
@@ -334,6 +339,10 @@ typedef CK_ULONG          CK_KEY_TYPE;
 #define CKK_SHA512_HMAC       0x0000002DUL
 #define CKK_EC_EDWARDS        0x00000040UL
 #define CKK_EC_MONTGOMERY     0x00000041UL
+/* Key type of an HKDF input keying material object
+ * (v3.2 section 6.62.1). CK_HKDF_PARAMS-driven derivation accepts a base key
+ * of CKK_HKDF or CKK_GENERIC_SECRET. */
+#define CKK_HKDF              0x00000042UL
 #define CKK_VENDOR_DEFINED    0x80000000UL
 
 /* Attribute type */
@@ -583,22 +592,26 @@ typedef CK_MECHANISM_TYPE *CK_MECHANISM_TYPE_PTR;
 #define CKM_SHA512                     0x00000270UL
 #define CKM_SHA512_HMAC                0x00000271UL
 #define CKM_SHA512_HMAC_GENERAL        0x00000272UL
+/* SHA-3 digest mechanisms. OASIS does not assign these in ascending
+ * digest-size order: SHA3-256 takes the lowest block at 0x2B0 and SHA3-224
+ * follows it at 0x2B5. CKM_SHA3_256 is 0x2B0 and NOT 0x2C0 (0x2C0 is
+ * CKM_SHA3_384); CKM_SHA3_512 is 0x2D0 and NOT 0x2E0 (0x2E0 is unassigned). */
+#define CKM_SHA3_256                   0x000002B0UL
+#define CKM_SHA3_256_HMAC              0x000002B1UL
+#define CKM_SHA3_256_HMAC_GENERAL      0x000002B2UL
+#define CKM_SHA3_256_KEY_GEN           0x000002B3UL
 #define CKM_SHA3_224                   0x000002B5UL
 #define CKM_SHA3_224_HMAC              0x000002B6UL
 #define CKM_SHA3_224_HMAC_GENERAL      0x000002B7UL
 #define CKM_SHA3_224_KEY_GEN           0x000002B8UL
-#define CKM_SHA3_256                   0x000002C0UL
-#define CKM_SHA3_256_HMAC              0x000002C1UL
-#define CKM_SHA3_256_HMAC_GENERAL      0x000002C2UL
-#define CKM_SHA3_256_KEY_GEN           0x000002C3UL
-#define CKM_SHA3_384                   0x000002D0UL
-#define CKM_SHA3_384_HMAC              0x000002D1UL
-#define CKM_SHA3_384_HMAC_GENERAL      0x000002D2UL
-#define CKM_SHA3_384_KEY_GEN           0x000002D3UL
-#define CKM_SHA3_512                   0x000002E0UL
-#define CKM_SHA3_512_HMAC              0x000002E1UL
-#define CKM_SHA3_512_HMAC_GENERAL      0x000002E2UL
-#define CKM_SHA3_512_KEY_GEN           0x000002E3UL
+#define CKM_SHA3_384                   0x000002C0UL
+#define CKM_SHA3_384_HMAC              0x000002C1UL
+#define CKM_SHA3_384_HMAC_GENERAL      0x000002C2UL
+#define CKM_SHA3_384_KEY_GEN           0x000002C3UL
+#define CKM_SHA3_512                   0x000002D0UL
+#define CKM_SHA3_512_HMAC              0x000002D1UL
+#define CKM_SHA3_512_HMAC_GENERAL      0x000002D2UL
+#define CKM_SHA3_512_KEY_GEN           0x000002D3UL
 #define CKM_GENERIC_SECRET_KEY_GEN     0x00000350UL
 #define CKM_CONCATENATE_BASE_AND_KEY   0x00000360UL
 #define CKM_CONCATENATE_BASE_AND_DATA  0x00000362UL
@@ -623,8 +636,10 @@ typedef CK_MECHANISM_TYPE *CK_MECHANISM_TYPE_PTR;
 #define CKM_SHA384_KEY_DERIVATION      0x00000394UL
 #define CKM_SHA512_KEY_DERIVATION      0x00000395UL
 #define CKM_SHA224_KEY_DERIVATION      0x00000396UL
-#define CKM_SHA3_224_KEY_DERIVATION    0x00000397UL
-#define CKM_SHA3_256_KEY_DERIVATION    0x00000398UL
+/* SHA-3 key derivation. As with the digest mechanisms above, SHA3-256 comes
+ * before SHA3-224: CKM_SHA3_256_KEY_DERIVATION is 0x397 and NOT 0x398. */
+#define CKM_SHA3_256_KEY_DERIVATION    0x00000397UL
+#define CKM_SHA3_224_KEY_DERIVATION    0x00000398UL
 #define CKM_SHA3_384_KEY_DERIVATION    0x00000399UL
 #define CKM_SHA3_512_KEY_DERIVATION    0x0000039AUL
 #define CKM_PBE_MD2_DES_CBC            0x000003A0UL
@@ -699,9 +714,20 @@ typedef CK_MECHANISM_TYPE *CK_MECHANISM_TYPE_PTR;
 #define CKM_RSA_AES_KEY_WRAP           0x00001054UL
 #define CKM_EC_EDWARDS_KEY_PAIR_GEN    0x00001055UL
 #define CKM_EDDSA                      0x00001057UL
-#define CKM_HKDF_DERIVE                0x0000402CUL
-#define CKM_HKDF_DATA                  0x0000402DUL
-#define CKM_HKDF_KEY_GEN               0x0000402EUL
+/* HKDF mechanisms. These follow CKM_XEDDSA (0x4029) and precede
+ * CKM_SALSA20_KEY_GEN (0x402D). CKM_HKDF_DERIVE is 0x402A and NOT 0x402C:
+ * 0x402C is CKM_HKDF_KEY_GEN, so shifting the block up by two aliases derive
+ * onto key generation, data derive onto CKM_SALSA20_KEY_GEN, and key
+ * generation onto CKM_IKE2_PRF_PLUS_DERIVE (0x402E). */
+#define CKM_HKDF_DERIVE                0x0000402AUL
+#define CKM_HKDF_DATA                  0x0000402BUL
+#define CKM_HKDF_KEY_GEN               0x0000402CUL
+/* SP800-108 key derivation mechanisms (v3.2 section 6.42.1). Each takes a
+ * CK_SP800_108_KDF_PARAMS, except CKM_SP800_108_FEEDBACK_KDF which takes a
+ * CK_SP800_108_FEEDBACK_KDF_PARAMS; both structures are declared below. */
+#define CKM_SP800_108_COUNTER_KDF         0x000003ACUL
+#define CKM_SP800_108_FEEDBACK_KDF        0x000003ADUL
+#define CKM_SP800_108_DOUBLE_PIPELINE_KDF 0x000003AEUL
 #define CKM_VENDOR_DEFINED             0x80000000UL
 
 /* Mechanism info structure */
@@ -870,6 +896,132 @@ typedef struct CK_ECDH1_DERIVE_PARAMS {
 
 typedef CK_ECDH1_DERIVE_PARAMS *CK_ECDH1_DERIVE_PARAMS_PTR;
 
+/* HKDF salt type (v3.2 section 6.62.2) */
+typedef CK_ULONG CK_HKDF_SALT_TYPE;
+
+/* These are single-bit flag values, not a dense enumeration:
+ * CKF_HKDF_SALT_KEY is 0x4 and NOT 0x3, which is merely the bitwise union of
+ * the two values above and names no salt type of its own. */
+#define CKF_HKDF_SALT_NULL     0x00000001UL
+#define CKF_HKDF_SALT_DATA     0x00000002UL
+#define CKF_HKDF_SALT_KEY      0x00000004UL
+
+/* HKDF derive parameters (v3.2 section 6.62.2, CK_HKDF_PARAMS).
+ * Field order and types must match the spec exactly: a reordering here
+ * silently misparses every field after the first mismatch. */
+typedef struct CK_HKDF_PARAMS {
+    CK_BBOOL bExtract;
+    CK_BBOOL bExpand;
+    CK_MECHANISM_TYPE prfHashMechanism;
+    CK_ULONG ulSaltType;
+    CK_BYTE_PTR pSalt;
+    CK_ULONG ulSaltLen;
+    CK_OBJECT_HANDLE hSaltKey;
+    CK_BYTE_PTR pInfo;
+    CK_ULONG ulInfoLen;
+} CK_HKDF_PARAMS;
+
+typedef CK_HKDF_PARAMS *CK_HKDF_PARAMS_PTR;
+
+/* SP800-108 KDF pseudo-random function data field types
+ * (v3.2 section 6.42, Table 197, CK_PRF_DATA_TYPE). */
+typedef CK_ULONG CK_PRF_DATA_TYPE;
+
+#define CK_SP800_108_ITERATION_VARIABLE   0x00000001UL
+#define CK_SP800_108_OPTIONAL_COUNTER     0x00000002UL
+#define CK_SP800_108_DKM_LENGTH           0x00000003UL
+#define CK_SP800_108_BYTE_ARRAY           0x00000004UL
+/* CK_SP800_108_COUNTER is the historical spelling OASIS keeps as an alias of
+ * CK_SP800_108_OPTIONAL_COUNTER. Both names must be defined: an application
+ * written against the OASIS header may use either. */
+#define CK_SP800_108_COUNTER              CK_SP800_108_OPTIONAL_COUNTER
+#define CK_SP800_108_KEY_HANDLE           0x00000005UL
+
+/* SP800-108 KDF PRF input segment (v3.2 section 6.42, CK_PRF_DATA_PARAM). */
+typedef struct CK_PRF_DATA_PARAM {
+    CK_PRF_DATA_TYPE type;
+    CK_VOID_PTR pValue;
+    CK_ULONG ulValueLen;
+} CK_PRF_DATA_PARAM;
+
+typedef CK_PRF_DATA_PARAM *CK_PRF_DATA_PARAM_PTR;
+
+/* SP800-108 counter encoding (v3.2 section 6.42, CK_SP800_108_COUNTER_FORMAT). */
+typedef struct CK_SP800_108_COUNTER_FORMAT {
+    CK_BBOOL bLittleEndian;
+    CK_ULONG ulWidthInBits;
+} CK_SP800_108_COUNTER_FORMAT;
+
+typedef CK_SP800_108_COUNTER_FORMAT *CK_SP800_108_COUNTER_FORMAT_PTR;
+
+/* SP800-108 derived-keying-material length method
+ * (v3.2 section 6.42, Table 198, CK_SP800_108_DKM_LENGTH_METHOD). */
+typedef CK_ULONG CK_SP800_108_DKM_LENGTH_METHOD;
+
+#define CK_SP800_108_DKM_LENGTH_SUM_OF_KEYS     0x00000001UL
+#define CK_SP800_108_DKM_LENGTH_SUM_OF_SEGMENTS 0x00000002UL
+
+/* SP800-108 DKM length encoding (v3.2 section 6.42, CK_SP800_108_DKM_LENGTH_FORMAT). */
+typedef struct CK_SP800_108_DKM_LENGTH_FORMAT {
+    CK_SP800_108_DKM_LENGTH_METHOD dkmLengthMethod;
+    CK_BBOOL bLittleEndian;
+    CK_ULONG ulWidthInBits;
+} CK_SP800_108_DKM_LENGTH_FORMAT;
+
+typedef CK_SP800_108_DKM_LENGTH_FORMAT *CK_SP800_108_DKM_LENGTH_FORMAT_PTR;
+
+/* Additional key to derive alongside the primary result
+ * (v3.2 section 6.42, CK_DERIVED_KEY). */
+typedef struct CK_DERIVED_KEY {
+    CK_ATTRIBUTE_PTR pTemplate;
+    CK_ULONG ulAttributeCount;
+    CK_OBJECT_HANDLE_PTR phKey;
+} CK_DERIVED_KEY;
+
+typedef CK_DERIVED_KEY *CK_DERIVED_KEY_PTR;
+
+/* SP800-108 PRF type: one of the CKM_*_HMAC or CKM_*_CMAC mechanisms
+ * (v3.2 section 6.42, Table 196). */
+typedef CK_MECHANISM_TYPE CK_SP800_108_PRF_TYPE;
+
+/* SP800-108 counter-mode and double-pipeline-mode KDF parameters
+ * (v3.2 section 6.42, CK_SP800_108_KDF_PARAMS). Used by
+ * CKM_SP800_108_COUNTER_KDF and CKM_SP800_108_DOUBLE_PIPELINE_KDF. */
+typedef struct CK_SP800_108_KDF_PARAMS {
+    CK_SP800_108_PRF_TYPE prfType;
+    CK_ULONG ulNumberOfDataParams;
+    CK_PRF_DATA_PARAM_PTR pDataParams;
+    CK_ULONG ulAdditionalDerivedKeys;
+    CK_DERIVED_KEY_PTR pAdditionalDerivedKeys;
+} CK_SP800_108_KDF_PARAMS;
+
+typedef CK_SP800_108_KDF_PARAMS *CK_SP800_108_KDF_PARAMS_PTR;
+
+/* SP800-108 feedback-mode KDF parameters (v3.2 section 6.42,
+ * CK_SP800_108_FEEDBACK_KDF_PARAMS). Used by CKM_SP800_108_FEEDBACK_KDF. */
+typedef struct CK_SP800_108_FEEDBACK_KDF_PARAMS {
+    CK_SP800_108_PRF_TYPE prfType;
+    CK_ULONG ulNumberOfDataParams;
+    CK_PRF_DATA_PARAM_PTR pDataParams;
+    CK_ULONG ulIVLen;
+    CK_BYTE_PTR pIV;
+    CK_ULONG ulAdditionalDerivedKeys;
+    CK_DERIVED_KEY_PTR pAdditionalDerivedKeys;
+} CK_SP800_108_FEEDBACK_KDF_PARAMS;
+
+typedef CK_SP800_108_FEEDBACK_KDF_PARAMS *CK_SP800_108_FEEDBACK_KDF_PARAMS_PTR;
+
+/* EdDSA signature parameters (v3.2 section 6.24, CK_EDDSA_PARAMS). Absence
+ * of this parameter (NULL pParameter) selects pure Ed25519/Ed448; presence
+ * selects among Ed25519ctx, Ed25519ph, Ed448 and Ed448ph per Table 73. */
+typedef struct CK_EDDSA_PARAMS {
+    CK_BBOOL phFlag;
+    CK_ULONG ulContextDataLen;
+    CK_BYTE_PTR pContextData;
+} CK_EDDSA_PARAMS;
+
+typedef CK_EDDSA_PARAMS *CK_EDDSA_PARAMS_PTR;
+
 /* PKCS#11 v3.0 interface functions */
 
 typedef struct CK_INTERFACE {
@@ -966,8 +1118,11 @@ typedef CK_FLAGS *CK_FLAGS_PTR;
 #define CKA_VALIDATION_CERTIFICATE_URI        0x00000627UL
 #define CKA_VALIDATION_VENDOR_URI             0x00000628UL
 #define CKA_VALIDATION_PROFILE                0x00000629UL
-#define CKA_ENCAPSULATE_TEMPLATE              (CKF_ARRAY_ATTRIBUTE|0x0000062aUL)
-#define CKA_DECAPSULATE_TEMPLATE              (CKF_ARRAY_ATTRIBUTE|0x0000062bUL)
+/* OASIS defines the two KEM template attributes without the
+ * CKF_ARRAY_ATTRIBUTE bit that the other *_TEMPLATE attributes carry. The
+ * plain values below match the normative v3.2 header. */
+#define CKA_ENCAPSULATE_TEMPLATE              0x0000062aUL
+#define CKA_DECAPSULATE_TEMPLATE              0x0000062bUL
 #define CKA_TRUST_SERVER_AUTH                 0x0000062cUL
 #define CKA_TRUST_CLIENT_AUTH                 0x0000062dUL
 #define CKA_TRUST_CODE_SIGNING                0x0000062eUL
@@ -1033,18 +1188,22 @@ typedef CK_FLAGS *CK_FLAGS_PTR;
 #define CKP_ML_KEM_768                        0x00000002UL
 #define CKP_ML_KEM_1024                       0x00000003UL
 
-/* SLH-DSA parameter sets (scoped per key type) */
+/* SLH-DSA parameter sets (scoped per key type). OASIS interleaves the hash
+ * families instead of listing all six SHA2 sets before all six SHAKE sets:
+ * each security level contributes SHA2 then SHAKE, "S" before "F". Only the
+ * first and last entries are unchanged by that layout, so
+ * CKP_SLH_DSA_SHAKE_128S is 0x02 and NOT 0x07. */
 #define CKP_SLH_DSA_SHA2_128S                 0x00000001UL
-#define CKP_SLH_DSA_SHA2_128F                 0x00000002UL
-#define CKP_SLH_DSA_SHA2_192S                 0x00000003UL
-#define CKP_SLH_DSA_SHA2_192F                 0x00000004UL
-#define CKP_SLH_DSA_SHA2_256S                 0x00000005UL
-#define CKP_SLH_DSA_SHA2_256F                 0x00000006UL
-#define CKP_SLH_DSA_SHAKE_128S                0x00000007UL
-#define CKP_SLH_DSA_SHAKE_128F                0x00000008UL
-#define CKP_SLH_DSA_SHAKE_192S                0x00000009UL
-#define CKP_SLH_DSA_SHAKE_192F                0x0000000AUL
-#define CKP_SLH_DSA_SHAKE_256S                0x0000000BUL
+#define CKP_SLH_DSA_SHAKE_128S                0x00000002UL
+#define CKP_SLH_DSA_SHA2_128F                 0x00000003UL
+#define CKP_SLH_DSA_SHAKE_128F                0x00000004UL
+#define CKP_SLH_DSA_SHA2_192S                 0x00000005UL
+#define CKP_SLH_DSA_SHAKE_192S                0x00000006UL
+#define CKP_SLH_DSA_SHA2_192F                 0x00000007UL
+#define CKP_SLH_DSA_SHAKE_192F                0x00000008UL
+#define CKP_SLH_DSA_SHA2_256S                 0x00000009UL
+#define CKP_SLH_DSA_SHAKE_256S                0x0000000AUL
+#define CKP_SLH_DSA_SHA2_256F                 0x0000000BUL
 #define CKP_SLH_DSA_SHAKE_256F                0x0000000CUL
 
 /* v3.2 Mechanism Flags */
@@ -1070,7 +1229,7 @@ typedef CK_ASYNC_DATA *CK_ASYNC_DATA_PTR;
 #define CKR_SESSION_ASYNC_NOT_SUPPORTED       0x00000205UL
 #define CKR_SEED_RANDOM_REQUIRED              0x00000206UL
 #define CKR_OPERATION_NOT_VALIDATED            0x00000207UL
-#define CKR_OPERATION_INCOMPATIBLE            0x00000208UL
+#define CKR_TOKEN_NOT_INITIALIZED             0x00000208UL
 #define CKR_PARAMETER_SET_NOT_SUPPORTED       0x00000209UL
 
 #ifdef __cplusplus

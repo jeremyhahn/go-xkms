@@ -786,7 +786,7 @@ func TestWrapKeyHandler_ImportExportSuccessPath(t *testing.T) {
 		wrappingKeyPEM := getWrappingPublicKeyPEM(t, ks.backend.wrappingKey)
 
 		keyMaterial := "dGVzdCBrZXkgbWF0ZXJpYWw=" // base64 encoded
-		body := fmt.Sprintf(`{"key_material": "%s", "wrapping_public_key_pem": %q, "algorithm": "RSAES_OAEP_SHA_256"}`, keyMaterial, wrappingKeyPEM)
+		body := fmt.Sprintf(`{"backend": "test-backend", "key_material": "%s", "wrapping_public_key_pem": %q, "algorithm": "RSAES_OAEP_SHA_256"}`, keyMaterial, wrappingKeyPEM)
 		req := httptest.NewRequest(http.MethodPost, "/api/v1/keys/wrap", strings.NewReader(body))
 		w := httptest.NewRecorder()
 
@@ -813,7 +813,7 @@ func TestWrapKeyHandler_ImportExportError(t *testing.T) {
 
 		wrappingKeyPEM := getWrappingPublicKeyPEM(t, ks.backend.wrappingKey)
 
-		body := fmt.Sprintf(`{"key_material": "dGVzdA==", "wrapping_public_key_pem": %q, "algorithm": "RSAES_OAEP_SHA_256"}`, wrappingKeyPEM)
+		body := fmt.Sprintf(`{"backend": "test-backend", "key_material": "dGVzdA==", "wrapping_public_key_pem": %q, "algorithm": "RSAES_OAEP_SHA_256"}`, wrappingKeyPEM)
 		req := httptest.NewRequest(http.MethodPost, "/api/v1/keys/wrap", strings.NewReader(body))
 		w := httptest.NewRecorder()
 
@@ -839,7 +839,7 @@ func TestUnwrapKeyHandler_ImportExportSuccessPath(t *testing.T) {
 
 		wrappingKeyPEM := getWrappingPublicKeyPEM(t, ks.backend.wrappingKey)
 
-		body := fmt.Sprintf(`{"wrapped_key": "%s", "wrapping_public_key_pem": %q, "algorithm": "RSAES_OAEP_SHA_256"}`,
+		body := fmt.Sprintf(`{"backend": "test-backend", "wrapped_key": "%s", "wrapping_public_key_pem": %q, "algorithm": "RSAES_OAEP_SHA_256"}`,
 			base64.StdEncoding.EncodeToString(wrapped), wrappingKeyPEM)
 		req := httptest.NewRequest(http.MethodPost, "/api/v1/keys/unwrap", strings.NewReader(body))
 		w := httptest.NewRecorder()
@@ -866,7 +866,7 @@ func TestUnwrapKeyHandler_ImportExportError(t *testing.T) {
 
 		wrappingKeyPEM := getWrappingPublicKeyPEM(t, ks.backend.wrappingKey)
 
-		body := fmt.Sprintf(`{"wrapped_key": "dGVzdA==", "wrapping_public_key_pem": %q, "algorithm": "RSAES_OAEP_SHA_256"}`, wrappingKeyPEM)
+		body := fmt.Sprintf(`{"backend": "test-backend", "wrapped_key": "dGVzdA==", "wrapping_public_key_pem": %q, "algorithm": "RSAES_OAEP_SHA_256"}`, wrappingKeyPEM)
 		req := httptest.NewRequest(http.MethodPost, "/api/v1/keys/unwrap", strings.NewReader(body))
 		w := httptest.NewRecorder()
 

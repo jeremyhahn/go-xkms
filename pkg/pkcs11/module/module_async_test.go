@@ -30,8 +30,9 @@ func TestAsyncComplete(t *testing.T) {
 		m := initializeTestModule(t)
 		defer m.Finalize()
 
-		sessionHandle, rv := m.OpenSession(0, CKF_SERIAL_SESSION|CKF_RW_SESSION)
-		require.Equal(t, CKR_OK, rv)
+		// CKF_LOGIN_REQUIRED gates key-bearing operations, so the fixture
+		// authenticates before exercising them.
+		sessionHandle := loginAsNormalUser(t, m)
 
 		result, err := m.AsyncComplete(sessionHandle, "C_Sign")
 		require.Error(t, err)
@@ -45,8 +46,9 @@ func TestAsyncComplete(t *testing.T) {
 		m := initializeTestModule(t)
 		defer m.Finalize()
 
-		sessionHandle, rv := m.OpenSession(0, CKF_SERIAL_SESSION|CKF_RW_SESSION)
-		require.Equal(t, CKR_OK, rv)
+		// CKF_LOGIN_REQUIRED gates key-bearing operations, so the fixture
+		// authenticates before exercising them.
+		sessionHandle := loginAsNormalUser(t, m)
 
 		result, err := m.AsyncComplete(sessionHandle, "")
 		require.Error(t, err)
@@ -96,8 +98,9 @@ func TestAsyncGetID(t *testing.T) {
 		m := initializeTestModule(t)
 		defer m.Finalize()
 
-		sessionHandle, rv := m.OpenSession(0, CKF_SERIAL_SESSION|CKF_RW_SESSION)
-		require.Equal(t, CKR_OK, rv)
+		// CKF_LOGIN_REQUIRED gates key-bearing operations, so the fixture
+		// authenticates before exercising them.
+		sessionHandle := loginAsNormalUser(t, m)
 
 		operationID, err := m.AsyncGetID(sessionHandle, "C_Sign")
 		require.Error(t, err)
@@ -111,8 +114,9 @@ func TestAsyncGetID(t *testing.T) {
 		m := initializeTestModule(t)
 		defer m.Finalize()
 
-		sessionHandle, rv := m.OpenSession(0, CKF_SERIAL_SESSION|CKF_RW_SESSION)
-		require.Equal(t, CKR_OK, rv)
+		// CKF_LOGIN_REQUIRED gates key-bearing operations, so the fixture
+		// authenticates before exercising them.
+		sessionHandle := loginAsNormalUser(t, m)
 
 		operationID, err := m.AsyncGetID(sessionHandle, "")
 		require.Error(t, err)
@@ -162,8 +166,9 @@ func TestAsyncJoin(t *testing.T) {
 		m := initializeTestModule(t)
 		defer m.Finalize()
 
-		sessionHandle, rv := m.OpenSession(0, CKF_SERIAL_SESSION|CKF_RW_SESSION)
-		require.Equal(t, CKR_OK, rv)
+		// CKF_LOGIN_REQUIRED gates key-bearing operations, so the fixture
+		// authenticates before exercising them.
+		sessionHandle := loginAsNormalUser(t, m)
 
 		err := m.AsyncJoin(sessionHandle, "C_Sign", 42, nil)
 		require.Error(t, err)
@@ -176,8 +181,9 @@ func TestAsyncJoin(t *testing.T) {
 		m := initializeTestModule(t)
 		defer m.Finalize()
 
-		sessionHandle, rv := m.OpenSession(0, CKF_SERIAL_SESSION|CKF_RW_SESSION)
-		require.Equal(t, CKR_OK, rv)
+		// CKF_LOGIN_REQUIRED gates key-bearing operations, so the fixture
+		// authenticates before exercising them.
+		sessionHandle := loginAsNormalUser(t, m)
 
 		err := m.AsyncJoin(sessionHandle, "C_Sign", 42, []byte("join-data"))
 		require.Error(t, err)
@@ -190,8 +196,9 @@ func TestAsyncJoin(t *testing.T) {
 		m := initializeTestModule(t)
 		defer m.Finalize()
 
-		sessionHandle, rv := m.OpenSession(0, CKF_SERIAL_SESSION|CKF_RW_SESSION)
-		require.Equal(t, CKR_OK, rv)
+		// CKF_LOGIN_REQUIRED gates key-bearing operations, so the fixture
+		// authenticates before exercising them.
+		sessionHandle := loginAsNormalUser(t, m)
 
 		err := m.AsyncJoin(sessionHandle, "", 42, nil)
 		require.Error(t, err)

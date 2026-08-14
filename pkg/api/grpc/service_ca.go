@@ -21,12 +21,14 @@ import (
 	"strings"
 	"sync"
 
+	"github.com/jeremyhahn/go-xkms/pkg/auth"
 	"github.com/jeremyhahn/go-xkms/pkg/errs"
+
+	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/status"
 
 	pb "github.com/jeremyhahn/go-xkms/pkg/api/grpc/proto/xkmsv1"
 	"github.com/jeremyhahn/go-xkms/pkg/api/transport"
-	"google.golang.org/grpc/codes"
-	"google.golang.org/grpc/status"
 )
 
 // Typed errors for CA gRPC operations.
@@ -116,7 +118,7 @@ func (s *Service) GetCACertificate(ctx context.Context, req *pb.GetCACertificate
 		return nil, status.Error(codes.Unavailable, ErrCANotConfigured.Error())
 	}
 
-	if err := s.authorize(ctx, "certs", "read", ""); err != nil {
+	if err := s.authorize(ctx, auth.ResourceCerts, auth.ActionRead, ""); err != nil {
 		return nil, err
 	}
 
@@ -148,7 +150,7 @@ func (s *Service) SignCSR(ctx context.Context, req *pb.SignCSRRequest) (*pb.Sign
 		return nil, status.Error(codes.Unavailable, ErrCANotConfigured.Error())
 	}
 
-	if err := s.authorize(ctx, "certs", "generate", ""); err != nil {
+	if err := s.authorize(ctx, auth.ResourceCerts, auth.ActionGenerate, ""); err != nil {
 		return nil, err
 	}
 
@@ -167,7 +169,7 @@ func (s *Service) SignCSR(ctx context.Context, req *pb.SignCSRRequest) (*pb.Sign
 		ValidityDays: int(req.GetValidityDays()),
 	})
 	if err != nil {
-		return nil, wrapWriteError(err, codes.Internal, "failed to sign CSR: %v", err)
+		return nil, wrapWriteError(ctx, s.xkmsService, err, codes.Internal, "failed to sign CSR: %v", err)
 	}
 
 	return &pb.SignCSRResponse{
@@ -184,7 +186,7 @@ func (s *Service) IssueCertificate(ctx context.Context, req *pb.IssueCertificate
 		return nil, status.Error(codes.Unavailable, ErrCANotConfigured.Error())
 	}
 
-	if err := s.authorize(ctx, "certs", "generate", ""); err != nil {
+	if err := s.authorize(ctx, auth.ResourceCerts, auth.ActionGenerate, ""); err != nil {
 		return nil, err
 	}
 
@@ -224,7 +226,7 @@ func (s *Service) RevokeCertificate(ctx context.Context, req *pb.RevokeCertifica
 		return nil, status.Error(codes.Unavailable, ErrCANotConfigured.Error())
 	}
 
-	if err := s.authorize(ctx, "certs", "revoke", ""); err != nil {
+	if err := s.authorize(ctx, auth.ResourceCerts, auth.ActionRevoke, ""); err != nil {
 		return nil, err
 	}
 
@@ -262,7 +264,7 @@ func (s *Service) GenerateCRL(ctx context.Context, req *pb.GenerateCRLRequest) (
 		return nil, status.Error(codes.Unavailable, ErrCANotConfigured.Error())
 	}
 
-	if err := s.authorize(ctx, "certs", "read", ""); err != nil {
+	if err := s.authorize(ctx, auth.ResourceCerts, auth.ActionRead, ""); err != nil {
 		return nil, err
 	}
 
@@ -288,7 +290,7 @@ func (s *Service) IsRevoked(ctx context.Context, req *pb.IsRevokedRequest) (*pb.
 		return nil, status.Error(codes.Unavailable, ErrCANotConfigured.Error())
 	}
 
-	if err := s.authorize(ctx, "certs", "read", ""); err != nil {
+	if err := s.authorize(ctx, auth.ResourceCerts, auth.ActionRead, ""); err != nil {
 		return nil, err
 	}
 

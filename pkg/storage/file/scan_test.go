@@ -15,8 +15,6 @@ package file
 
 import (
 	"context"
-	"os"
-	"path/filepath"
 	"testing"
 )
 
@@ -205,68 +203,6 @@ func TestScan_ValuesAreCorrect(t *testing.T) {
 		if got[i] != b {
 			t.Errorf("Scan() value[%d] = %x, want %x", i, got[i], b)
 		}
-	}
-}
-
-// TestScan_WalkError verifies Scan returns an error when the directory is inaccessible.
-func TestScan_WalkError(t *testing.T) {
-	skipIfRoot(t)
-
-	ctx := context.Background()
-	dir := setupTestDir(t)
-	store, err := New(dir)
-	if err != nil {
-		t.Fatalf("New() error = %v", err)
-	}
-	defer func() { _ = store.Close() }()
-
-	if err := store.Put(ctx, "keys/secret", []byte("data")); err != nil {
-		t.Fatalf("Put() error = %v", err)
-	}
-
-	// Create a subdirectory and make it inaccessible so WalkDir returns an error.
-	badDir := filepath.Join(dir, "locked")
-	if err := os.MkdirAll(badDir, 0700); err != nil {
-		t.Fatalf("MkdirAll() error = %v", err)
-	}
-	if err := os.Chmod(badDir, 0000); err != nil {
-		t.Fatalf("Chmod() error = %v", err)
-	}
-	defer func() { _ = os.Chmod(badDir, 0700) }()
-
-	err = store.Scan(ctx, "", func(_ string, _ []byte) error { return nil })
-	if err == nil {
-		t.Error("Scan() with inaccessible directory should return error")
-	}
-}
-
-// TestScan_ReadFileError verifies Scan returns an error when a file cannot be read.
-func TestScan_ReadFileError(t *testing.T) {
-	skipIfRoot(t)
-
-	ctx := context.Background()
-	dir := setupTestDir(t)
-	store, err := New(dir)
-	if err != nil {
-		t.Fatalf("New() error = %v", err)
-	}
-	defer func() { _ = store.Close() }()
-
-	key := "keys/unreadable"
-	if err := store.Put(ctx, key, []byte("secret")); err != nil {
-		t.Fatalf("Put() error = %v", err)
-	}
-
-	// Remove read permission on the file itself.
-	filePath := filepath.Join(dir, key)
-	if err := os.Chmod(filePath, 0000); err != nil {
-		t.Fatalf("Chmod() error = %v", err)
-	}
-	defer func() { _ = os.Chmod(filePath, 0600) }()
-
-	err = store.Scan(ctx, "", func(_ string, _ []byte) error { return nil })
-	if err == nil {
-		t.Error("Scan() with unreadable file should return error")
 	}
 }
 

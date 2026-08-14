@@ -24,12 +24,15 @@ import (
 	"crypto/tls"
 	"crypto/x509"
 	"crypto/x509/pkix"
+	"errors"
 	"math/big"
 	"sync"
 	"testing"
 	"time"
 
+	"github.com/jeremyhahn/go-xkms/pkg/backend/software"
 	"github.com/jeremyhahn/go-xkms/pkg/certstore"
+	"github.com/jeremyhahn/go-xkms/pkg/storage"
 	"github.com/jeremyhahn/go-xkms/pkg/types"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -43,6 +46,12 @@ import (
 // ============================================================
 
 type recordingBackend struct {
+	// listKeys and listCerts drive the tenant-filtering tests.
+	listKeys     []*types.KeyAttributes
+	listKeysErr  error
+	listCerts    []string
+	listCertsErr error
+
 	mu sync.Mutex
 
 	lastAttrs *types.KeyAttributes
@@ -119,7 +128,7 @@ func (r *recordingBackend) DeleteKey(_ context.Context, attrs *types.KeyAttribut
 }
 
 func (r *recordingBackend) ListKeys(_ context.Context) ([]*types.KeyAttributes, error) {
-	return nil, nil
+	return r.listKeys, r.listKeysErr
 }
 
 func (r *recordingBackend) RotateKey(_ context.Context, attrs *types.KeyAttributes) (crypto.PrivateKey, error) {
@@ -163,7 +172,7 @@ func (r *recordingBackend) GetCertChain(_ context.Context, keyID string) ([]*x50
 }
 
 func (r *recordingBackend) ListCerts(_ context.Context) ([]string, error) {
-	return nil, nil
+	return r.listCerts, r.listCertsErr
 }
 
 func (r *recordingBackend) CertExists(_ context.Context, keyID string) (bool, error) {
@@ -428,22 +437,67 @@ func TestTenantScopedBackend_GetTLSCertificate_PrefixesKeyIDAndSetsAttrs(t *test
 // Passthrough operations – no tenant scoping
 // ============================================================
 
-func TestTenantScopedBackend_ListKeys_Passthrough(t *testing.T) {
-	base := &recordingBackend{}
+func TestTenantScopedBackend_ListKeys_HidesOtherTenants(t *testing.T) {
+	// A key ID is only unique within a tenant, and findKeyAttrs resolves a key
+	// by matching the common name against ListKeys. An unfiltered listing would
+	// therefore let one tenant reach another tenant's key by naming it.
+	base := &recordingBackend{listKeys: []*types.KeyAttributes{
+		{CN: "shared-name", TenantID: "acme"},
+		{CN: "shared-name", TenantID: "other"},
+		{CN: "other-only", TenantID: "other"},
+		{CN: "unscoped"},
+	}}
 	tsb := NewTenantScopedBackend(base, "acme")
 
 	keys, err := tsb.ListKeys(context.Background())
 	require.NoError(t, err)
-	assert.Nil(t, keys)
+
+	require.Len(t, keys, 1, "only the tenant's own keys may be visible")
+	assert.Equal(t, "shared-name", keys[0].CN)
+	assert.Equal(t, "acme", keys[0].TenantID)
 }
 
-func TestTenantScopedBackend_ListCerts_Passthrough(t *testing.T) {
-	base := &recordingBackend{}
+func TestTenantScopedBackend_ListKeys_EmptyWhenTenantOwnsNothing(t *testing.T) {
+	base := &recordingBackend{listKeys: []*types.KeyAttributes{
+		{CN: "a", TenantID: "other"},
+		{CN: "b"},
+	}}
+	tsb := NewTenantScopedBackend(base, "acme")
+
+	keys, err := tsb.ListKeys(context.Background())
+	require.NoError(t, err)
+	assert.Empty(t, keys)
+}
+
+func TestTenantScopedBackend_ListKeys_PropagatesError(t *testing.T) {
+	base := &recordingBackend{listKeysErr: errors.New("backend down")}
+	tsb := NewTenantScopedBackend(base, "acme")
+
+	_, err := tsb.ListKeys(context.Background())
+	require.Error(t, err)
+}
+
+func TestTenantScopedBackend_ListCerts_ScopesToTenantNamespace(t *testing.T) {
+	// Every other certificate method addresses storage through scopeCertKeyID,
+	// so the listing must apply the same namespace and return tenant-relative
+	// key IDs rather than another tenant's entries.
+	base := &recordingBackend{listCerts: []string{
+		"acme/server", "acme/client", "other/server", "unscoped",
+	}}
 	tsb := NewTenantScopedBackend(base, "acme")
 
 	certs, err := tsb.ListCerts(context.Background())
 	require.NoError(t, err)
-	assert.Nil(t, certs)
+
+	assert.ElementsMatch(t, []string{"server", "client"}, certs)
+}
+
+func TestTenantScopedBackend_ListCerts_PropagatesError(t *testing.T) {
+	base := &recordingBackend{listCertsErr: errors.New("backend down")}
+	tsb := NewTenantScopedBackend(base, "acme")
+
+	_, err := tsb.ListCerts(context.Background())
+	require.Error(t, err)
 }
 
 func TestTenantScopedBackend_Close_Passthrough(t *testing.T) {
@@ -801,4 +855,165 @@ func TestTenantScopedBackend_GetDecrypterByID_RealBackend_UnsupportedKey(t *test
 
 	_, err = tsb.GetDecrypterByID(ctx, "ec-decrypt-key")
 	require.Error(t, err)
+}
+
+// ============================================================
+// Cross-tenant key identity over a real backend.
+//
+// The mock above answers ListKeys from a canned slice whose TenantID the test
+// sets itself, so it can only prove the filter reads a field. These tests wire
+// a real software backend -- the same pkg/keyprovider/pkcs8 provider the
+// service uses -- so the oracle is the stored key itself: the same common name
+// under two tenants must be two keys, and each tenant must resolve its own.
+// ============================================================
+
+// realTenantBackends returns a Backend backed by a real in-memory software
+// key provider, together with tenant-scoped views for tenantA and tenantB.
+func realTenantBackends(t *testing.T, tenantA, tenantB string) (Backend, *TenantScopedBackend, *TenantScopedBackend) {
+	t.Helper()
+
+	provider, err := software.NewBackend(&software.Config{KeyStorage: storage.New()})
+	require.NoError(t, err)
+
+	base, err := New(&BackendConfig{Backend: provider, CertStorage: storage.New()})
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = base.Close() })
+
+	return base, NewTenantScopedBackend(base, tenantA), NewTenantScopedBackend(base, tenantB)
+}
+
+// tenantTestAttrs builds RSA attributes for cn with no tenant set; the scoped
+// backend is what must apply the tenant.
+func tenantTestAttrs(cn string) *types.KeyAttributes {
+	return &types.KeyAttributes{
+		CN:            cn,
+		KeyType:       types.KeyTypeSigning,
+		StoreType:     types.StoreSoftware,
+		KeyAlgorithm:  x509.RSA,
+		RSAAttributes: &types.RSAAttributes{KeySize: 2048},
+	}
+}
+
+// rsaPublicOf returns the public half of a generated key. The software
+// backend hands back an opaque handle rather than the private key itself, so
+// the public half is read through crypto.Signer.
+func rsaPublicOf(t *testing.T, key crypto.PrivateKey) *rsa.PublicKey {
+	t.Helper()
+	switch k := key.(type) {
+	case *rsa.PrivateKey:
+		return &k.PublicKey
+	case crypto.Signer:
+		pub, ok := k.Public().(*rsa.PublicKey)
+		require.True(t, ok, "expected an RSA public key, got %T", k.Public())
+		return pub
+	default:
+		t.Fatalf("generated key exposes no public half: %T", key)
+		return nil
+	}
+}
+
+// TestTenantScopedBackend_RealBackend_CrossTenantKeyIdentity proves a
+// tenant-scoped view resolves the tenant's own key and not another tenant's
+// key of the same name.
+//
+// This is the end-to-end shape the service layer uses: findKeyAttrs matches a
+// caller-supplied key ID against the scoped listing, and the resulting
+// attributes are handed straight to Signer. While the provider dropped the
+// tenant when it reconstructed those attributes, the scoped listing was empty
+// and every tenant-scoped operation failed on the tenant's own key.
+func TestTenantScopedBackend_RealBackend_CrossTenantKeyIdentity(t *testing.T) {
+	ctx := context.Background()
+	_, tenantA, tenantB := realTenantBackends(t, "tenant-a", "tenant-b")
+
+	const sharedCN = "shared-name"
+	keyA, err := tenantA.GenerateRSA(ctx, tenantTestAttrs(sharedCN))
+	require.NoError(t, err)
+	keyB, err := tenantB.GenerateRSA(ctx, tenantTestAttrs(sharedCN))
+	require.NoError(t, err)
+
+	pubA, pubB := rsaPublicOf(t, keyA), rsaPublicOf(t, keyB)
+	require.False(t, pubA.Equal(pubB),
+		"the same name under two tenants must be two distinct keys")
+
+	// Each tenant sees exactly its own key, reported as its own.
+	listedA, err := tenantA.ListKeys(ctx)
+	require.NoError(t, err)
+	require.Len(t, listedA, 1, "tenant-a must see exactly its own key")
+	assert.Equal(t, "tenant-a", listedA[0].TenantID)
+	assert.Equal(t, sharedCN, listedA[0].CN)
+
+	listedB, err := tenantB.ListKeys(ctx)
+	require.NoError(t, err)
+	require.Len(t, listedB, 1, "tenant-b must see exactly its own key")
+	assert.Equal(t, "tenant-b", listedB[0].TenantID)
+
+	// The service layer's own resolution path: find by common name, then sign.
+	attrsA, err := findKeyAttrs(ctx, tenantA, sharedCN)
+	require.NoError(t, err, "a tenant must be able to resolve its own key by name")
+	signerA, err := tenantA.Signer(ctx, attrsA)
+	require.NoError(t, err)
+	assert.True(t, signerA.Public().(*rsa.PublicKey).Equal(pubA),
+		"tenant-a resolved a key that is not its own")
+
+	attrsB, err := findKeyAttrs(ctx, tenantB, sharedCN)
+	require.NoError(t, err)
+	signerB, err := tenantB.Signer(ctx, attrsB)
+	require.NoError(t, err)
+	assert.True(t, signerB.Public().(*rsa.PublicKey).Equal(pubB),
+		"tenant-b resolved a key that is not its own")
+}
+
+// TestTenantScopedBackend_RealBackend_ForeignTenantKeyIsUnreachable is the
+// negative control: a tenant that owns nothing must not reach another tenant's
+// key by naming it, and must not be handed the untenanted key of that name
+// either.
+func TestTenantScopedBackend_RealBackend_ForeignTenantKeyIsUnreachable(t *testing.T) {
+	ctx := context.Background()
+	base, tenantA, tenantB := realTenantBackends(t, "tenant-a", "tenant-b")
+
+	const cn = "only-tenant-a-has-this"
+	_, err := tenantA.GenerateRSA(ctx, tenantTestAttrs(cn))
+	require.NoError(t, err)
+	_, err = base.GenerateRSA(ctx, tenantTestAttrs(cn))
+	require.NoError(t, err, "an untenanted key of the same name must be storable alongside it")
+
+	listedB, err := tenantB.ListKeys(ctx)
+	require.NoError(t, err)
+	assert.Empty(t, listedB, "a tenant that owns no key must see none")
+
+	_, err = findKeyAttrs(ctx, tenantB, cn)
+	require.Error(t, err, "naming another tenant's key must not resolve it")
+	assert.ErrorIs(t, err, ErrKeyNotFound)
+
+	_, err = tenantB.GetKey(ctx, tenantTestAttrs(cn))
+	require.Error(t, err, "a tenant must not read another tenant's key material")
+}
+
+// TestTenantScopedBackend_RealBackend_UntenantedViewSeesOnlyUntenantedKeys
+// covers the single-tenant deployment: an unscoped caller must keep seeing the
+// keys it always saw, and must not inherit any tenant's keys.
+func TestTenantScopedBackend_RealBackend_UntenantedViewSeesOnlyUntenantedKeys(t *testing.T) {
+	ctx := context.Background()
+	base, tenantA, _ := realTenantBackends(t, "tenant-a", "tenant-b")
+
+	_, err := base.GenerateRSA(ctx, tenantTestAttrs("plain-key"))
+	require.NoError(t, err)
+	_, err = tenantA.GenerateRSA(ctx, tenantTestAttrs("tenant-key"))
+	require.NoError(t, err)
+
+	// The unscoped backend is the whole store; it is the tenant-scoped view
+	// that narrows it.
+	all, err := base.ListKeys(ctx)
+	require.NoError(t, err)
+	require.Len(t, all, 2)
+
+	attrs, err := findKeyAttrs(ctx, base, "plain-key")
+	require.NoError(t, err)
+	assert.Empty(t, attrs.TenantID, "an untenanted key must not acquire an owner")
+
+	listedA, err := tenantA.ListKeys(ctx)
+	require.NoError(t, err)
+	require.Len(t, listedA, 1)
+	assert.Equal(t, "tenant-key", listedA[0].CN,
+		"a tenant must not be shown the untenanted key")
 }

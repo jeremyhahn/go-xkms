@@ -28,25 +28,42 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// TestFileBackupAdapter_NewFileBackupAdapter_LoadIndexPermissionError exercises
-// the loadIndex error-propagation path in NewFileBackupAdapter. Unlike a
-// missing directory (which loadIndex tolerates), a directory that exists but
-// cannot be read must surface as a wrapped error from NewFileBackupAdapter.
-func TestFileBackupAdapter_NewFileBackupAdapter_LoadIndexPermissionError(t *testing.T) {
-	skipIfRoot(t)
-
+// TestFileBackupAdapter_NewFileBackupAdapter_RejectsUnusableBasePath verifies
+// the constructor refuses a base path that cannot be a directory rather than
+// returning a half-built adapter.
+func TestFileBackupAdapter_NewFileBackupAdapter_RejectsUnusableBasePath(t *testing.T) {
 	tempDir := t.TempDir()
-	restrictedDir := filepath.Join(tempDir, "restricted")
-	require.NoError(t, os.Mkdir(restrictedDir, 0755))
+	notADir := filepath.Join(tempDir, "not-a-directory")
+	require.NoError(t, os.WriteFile(notADir, []byte("blocker"), 0600))
 
-	// Remove read+execute permission so os.ReadDir fails with a permission
-	// error (not os.IsNotExist) inside loadIndex.
-	require.NoError(t, os.Chmod(restrictedDir, 0300))
-	defer func() { _ = os.Chmod(restrictedDir, 0755) }()
-
-	_, err := NewFileBackupAdapter(restrictedDir)
+	adapter, err := NewFileBackupAdapter(notADir)
 	require.Error(t, err)
-	assert.Contains(t, err.Error(), "failed to load backup index")
+	assert.Nil(t, adapter)
+	assert.Contains(t, err.Error(), "failed to create backup directory")
+}
+
+// TestFileBackupAdapter_LoadIndex_ReadDirError exercises loadIndex's
+// error-propagation path. Unlike a missing directory (which loadIndex
+// tolerates), a base path that exists but cannot be listed must surface as an
+// error rather than an empty index.
+//
+// The failure is induced with a regular file where a directory is expected, so
+// os.ReadDir fails with ENOTDIR — enforced for every user. An unreadable
+// directory would not fail for root, which is how CI runs.
+func TestFileBackupAdapter_LoadIndex_ReadDirError(t *testing.T) {
+	tempDir := t.TempDir()
+	notADir := filepath.Join(tempDir, "not-a-directory")
+	require.NoError(t, os.WriteFile(notADir, []byte("blocker"), 0600))
+
+	adapter := &FileBackupAdapter{
+		basePath: notADir,
+		index:    make(map[string]*BackupMetadata),
+	}
+
+	err := adapter.loadIndex()
+	require.Error(t, err)
+	assert.False(t, os.IsNotExist(err), "ENOTDIR must not be mistaken for a missing directory")
+	assert.Empty(t, adapter.index, "a failed listing must not leave a partially populated index")
 }
 
 // TestFileBackupAdapter_CreateBackup_VersionDefaultWithExistingMetadata verifies
@@ -230,22 +247,18 @@ func TestFileBackupAdapter_ImportBackup_MetadataFileWriteError(t *testing.T) {
 	assert.NoFileExists(t, adapter.getBackupPath(backupID))
 }
 
-// TestFileBackupAdapter_GetBackupMetadata_ReadPermissionDenied writes a
-// metadata file directly to disk (bypassing the in-memory index) and
-// removes all permissions from it, forcing os.ReadFile to fail with a
-// permission error distinct from the "does not exist" case.
-func TestFileBackupAdapter_GetBackupMetadata_ReadPermissionDenied(t *testing.T) {
-	skipIfRoot(t)
-
+// TestFileBackupAdapter_GetBackupMetadata_ReadError puts a directory where the
+// metadata file belongs (bypassing the in-memory index), forcing os.ReadFile to
+// fail with EISDIR — an error distinct from the "does not exist" case, and one
+// the kernel reports to every user including root.
+func TestFileBackupAdapter_GetBackupMetadata_ReadError(t *testing.T) {
 	tempDir := t.TempDir()
 	adapter, err := NewFileBackupAdapter(tempDir)
 	require.NoError(t, err)
 
-	const backupID = "perm-denied-id"
+	const backupID = "unreadable-id"
 	metadataPath := adapter.getMetadataPath(backupID)
-	require.NoError(t, os.WriteFile(metadataPath, []byte("{}"), 0600))
-	require.NoError(t, os.Chmod(metadataPath, 0000))
-	defer func() { _ = os.Chmod(metadataPath, 0600) }()
+	require.NoError(t, os.MkdirAll(metadataPath, 0700))
 
 	_, err = adapter.getBackupMetadata(backupID)
 	require.Error(t, err)

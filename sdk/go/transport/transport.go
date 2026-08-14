@@ -45,6 +45,21 @@ func WithAddress(addr string) Option {
 	return pkgtransport.WithAddress(addr)
 }
 
+// WithTLSEnabled enables or disables TLS without supplying custom trust
+// material. When TLS is enabled this way — no CA bundle, no client keypair,
+// no pre-built *tls.Config — every transport verifies the server against the
+// host system root pool using the shared client policy (TLS 1.3 minimum).
+//
+// It is the lowest-precedence TLS option: WithTLSConfig, WithMTLS, and
+// WithTLS all enable TLS as well and additionally install trust material,
+// so applying this option alongside them never downgrades them.
+func WithTLSEnabled(enabled bool) Option {
+	return func(c *Config) error {
+		c.TLSEnabled = enabled
+		return nil
+	}
+}
+
 // WithTLS enables TLS with the specified CA certificate file.
 func WithTLS(caFile string) Option {
 	return pkgtransport.WithTLS(caFile)

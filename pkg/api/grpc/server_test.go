@@ -88,8 +88,9 @@ func TestNewServer(t *testing.T) {
 		defer xkms.Reset()
 
 		cfg := &ServerConfig{
-			Port:   0,
-			Logger: discardLogger(),
+			Authenticator: auth.NewNoOpAuthenticator(),
+			Port:          0,
+			Logger:        discardLogger(),
 		}
 
 		server, err := NewServer(cfg)
@@ -141,6 +142,7 @@ func TestNewServer(t *testing.T) {
 		defer xkms.Reset()
 
 		cfg := &ServerConfig{
+			Authenticator: auth.NewNoOpAuthenticator(),
 			Port:          0,
 			EnableLogging: true,
 			Logger:        discardLogger(),
@@ -161,6 +163,7 @@ func TestNewServer(t *testing.T) {
 		defer xkms.Reset()
 
 		cfg := &ServerConfig{
+			Authenticator:  auth.NewNoOpAuthenticator(),
 			Port:           0,
 			EnableRecovery: true,
 			Logger:         discardLogger(),
@@ -182,8 +185,9 @@ func TestServerPort(t *testing.T) {
 	defer xkms.Reset()
 
 	cfg := &ServerConfig{
-		Port:   9876,
-		Logger: discardLogger(),
+		Authenticator: auth.NewNoOpAuthenticator(),
+		Port:          9876,
+		Logger:        discardLogger(),
 	}
 
 	server, err := NewServer(cfg)
@@ -975,6 +979,15 @@ func TestCorrelationStreamInterceptor(t *testing.T) {
 	})
 }
 
+// newErrorHandlingTestServer returns a *Server with just enough wiring
+// (a non-nil *Service, xkmsService left nil) for errorHandlingUnaryInterceptor
+// / errorHandlingStreamInterceptor to run: they read s.service.xkmsService to
+// pass through to notLeaderStatus, and a nil *Service would panic on that
+// field access.
+func newErrorHandlingTestServer() *Server {
+	return &Server{service: &Service{}}
+}
+
 func TestErrorHandlingUnaryInterceptor(t *testing.T) {
 	t.Run("passes through gRPC errors", func(t *testing.T) {
 		ctx := context.Background()
@@ -987,7 +1000,8 @@ func TestErrorHandlingUnaryInterceptor(t *testing.T) {
 			return nil, expectedErr
 		}
 
-		_, err := errorHandlingUnaryInterceptor(ctx, nil, info, handler)
+		server := newErrorHandlingTestServer()
+		_, err := server.errorHandlingUnaryInterceptor(ctx, nil, info, handler)
 		if err != expectedErr {
 			t.Errorf("Expected error %v, got %v", expectedErr, err)
 		}
@@ -1003,7 +1017,8 @@ func TestErrorHandlingUnaryInterceptor(t *testing.T) {
 			return nil, &errs.Message{Msg: "plain error"}
 		}
 
-		_, err := errorHandlingUnaryInterceptor(ctx, nil, info, handler)
+		server := newErrorHandlingTestServer()
+		_, err := server.errorHandlingUnaryInterceptor(ctx, nil, info, handler)
 		if err == nil {
 			t.Fatal("Expected error")
 		}
@@ -1027,7 +1042,8 @@ func TestErrorHandlingUnaryInterceptor(t *testing.T) {
 			return "response", nil
 		}
 
-		resp, err := errorHandlingUnaryInterceptor(ctx, nil, info, handler)
+		server := newErrorHandlingTestServer()
+		resp, err := server.errorHandlingUnaryInterceptor(ctx, nil, info, handler)
 		if err != nil {
 			t.Errorf("Expected no error, got: %v", err)
 		}
@@ -1050,7 +1066,8 @@ func TestErrorHandlingStreamInterceptor(t *testing.T) {
 			return expectedErr
 		}
 
-		err := errorHandlingStreamInterceptor(nil, stream, info, handler)
+		server := newErrorHandlingTestServer()
+		err := server.errorHandlingStreamInterceptor(nil, stream, info, handler)
 		if err != expectedErr {
 			t.Errorf("Expected error %v, got %v", expectedErr, err)
 		}
@@ -1067,7 +1084,8 @@ func TestErrorHandlingStreamInterceptor(t *testing.T) {
 			return &errs.Message{Msg: "plain error"}
 		}
 
-		err := errorHandlingStreamInterceptor(nil, stream, info, handler)
+		server := newErrorHandlingTestServer()
+		err := server.errorHandlingStreamInterceptor(nil, stream, info, handler)
 		if err == nil {
 			t.Fatal("Expected error")
 		}
@@ -1092,7 +1110,8 @@ func TestErrorHandlingStreamInterceptor(t *testing.T) {
 			return nil
 		}
 
-		err := errorHandlingStreamInterceptor(nil, stream, info, handler)
+		server := newErrorHandlingTestServer()
+		err := server.errorHandlingStreamInterceptor(nil, stream, info, handler)
 		if err != nil {
 			t.Errorf("Expected no error, got: %v", err)
 		}

@@ -19,7 +19,6 @@ import (
 	"context"
 	"crypto/x509"
 	"errors"
-	"os"
 	"testing"
 
 	"github.com/jeremyhahn/go-xkms/pkg/backend"
@@ -29,26 +28,24 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// getTestVaultConfig returns a test configuration for Vault.
-// Requires VAULT_ADDR and VAULT_TOKEN environment variables.
+// getTestVaultConfig returns a configuration pointed at an in-process Vault
+// Transit double.
+//
+// The double performs real AES-256-GCM and speaks Vault's wire format (see
+// transit_double_vault_test.go), so these tests exercise the backend's request
+// encoding and response parsing without a Vault server, a token, or a network.
+// The full stack against a real Vault is covered by test/integration/vault.
 func getTestVaultConfig(t *testing.T) *Config {
-	addr := os.Getenv("VAULT_ADDR")
-	token := os.Getenv("VAULT_TOKEN")
+	t.Helper()
 
-	if addr == "" {
-		addr = "http://127.0.0.1:8200"
-	}
-	if token == "" {
-		t.Skip("VAULT_TOKEN not set, skipping Vault integration test")
-	}
+	_, addr := newTransitDouble(t)
 
 	return &Config{
-		Address:       addr,
-		Token:         token,
-		TransitPath:   "transit",
-		KeyStorage:    storage.New(),
-		CertStorage:   storage.New(),
-		TLSSkipVerify: true,
+		Address:     addr,
+		Token:       "test-token",
+		TransitPath: "transit",
+		KeyStorage:  storage.New(),
+		CertStorage: storage.New(),
 	}
 }
 
@@ -86,8 +83,9 @@ func TestVaultBackend_GenerateSymmetricKey(t *testing.T) {
 	assert.Equal(t, string(types.SymmetricAES256GCM), symmetricKey.Algorithm())
 	assert.Equal(t, 256, symmetricKey.KeySize())
 
-	// Verify metadata was stored
-	exists, err := config.KeyStorage.Exists(context.Background(), attrs.CN)
+	// Verify metadata was stored under the namespaced key path the backend
+	// writes through storage.SaveKey.
+	exists, err := config.KeyStorage.Exists(context.Background(), storage.KeyPath(attrs.CN))
 	require.NoError(t, err)
 	assert.True(t, exists)
 
@@ -184,7 +182,7 @@ func TestVaultBackend_GetSymmetricKey_NotFound(t *testing.T) {
 
 	_, err = b.GetSymmetricKey(context.Background(), attrs)
 	assert.Error(t, err)
-	assert.ErrorIs(t, err, ErrKeyNotFound)
+	assert.ErrorIs(t, err, backend.ErrKeyNotFound)
 }
 
 func TestVaultBackend_SymmetricEncrypter_EncryptDecrypt(t *testing.T) {
@@ -441,7 +439,7 @@ func TestVaultBackend_SymmetricEncrypter_NotFound(t *testing.T) {
 
 	_, err = b.SymmetricEncrypter(context.Background(), attrs)
 	assert.Error(t, err)
-	assert.ErrorIs(t, err, ErrKeyNotFound)
+	assert.ErrorIs(t, err, backend.ErrKeyNotFound)
 }
 
 func TestVaultBackend_SymmetricKey_DuplicateGeneration(t *testing.T) {

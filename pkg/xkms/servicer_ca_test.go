@@ -27,6 +27,7 @@ import (
 	"time"
 
 	"github.com/jeremyhahn/go-xkms/pkg/api/transport"
+	"github.com/jeremyhahn/go-xkms/pkg/attestation"
 	"github.com/jeremyhahn/go-xkms/pkg/auth"
 	"github.com/jeremyhahn/go-xkms/pkg/ca/provider"
 	"github.com/stretchr/testify/assert"
@@ -869,7 +870,157 @@ func TestSignCSR_RBAC_LocalCallAllowed(t *testing.T) {
 
 // ========================================================================
 // SignCSR Attestation Tests
+//
+// The attestation chain is entirely caller-supplied, so these tests assert the
+// gate's only real security property: the chain must terminate at a trust
+// anchor the operator configured for the requested format. A chain that is
+// merely internally consistent — the classic forged-attestation attack, where
+// the attacker mints their own root, intermediate and leaf — must be rejected.
 // ========================================================================
+
+// attestationChain is a generated hardware-attestation certificate chain
+// shaped like the real ones: a vendor root (the trust anchor), a device
+// attestation CA (the YubiKey f9 certificate / TPM manufacturer intermediate),
+// and the leaf attestation certificate for the attested key.
+type attestationChain struct {
+	root     *x509.Certificate
+	rootDER  []byte
+	interDER []byte
+	leafDER  []byte
+	// leafKey is the key the leaf certifies, so a test can build a CSR that
+	// the key-binding invariant accepts.
+	leafKey *ecdsa.PrivateKey
+}
+
+// wire returns the chain as it travels on the wire: leaf first, then the
+// intermediate. The root is the anchor and is never trusted from the wire.
+func (c *attestationChain) wire() [][]byte {
+	return [][]byte{c.leafDER, c.interDER}
+}
+
+// wireWithRoot returns the chain including the caller-supplied root. A caller
+// that ships its own root must not thereby become trusted.
+func (c *attestationChain) wireWithRoot() [][]byte {
+	return [][]byte{c.leafDER, c.interDER, c.rootDER}
+}
+
+// newAttestationChain builds a three-level attestation chain. leafNotBefore and
+// leafNotAfter control the validity window of the leaf so expiry can be tested.
+func newAttestationChain(t *testing.T, name string, leafNotBefore, leafNotAfter time.Time) *attestationChain {
+	t.Helper()
+
+	rootKey, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	require.NoError(t, err)
+	rootTemplate := &x509.Certificate{
+		SerialNumber:          big.NewInt(1),
+		Subject:               pkix.Name{CommonName: name + " Attestation Root CA"},
+		IsCA:                  true,
+		NotBefore:             time.Now().Add(-time.Hour),
+		NotAfter:              time.Now().Add(10 * 365 * 24 * time.Hour),
+		BasicConstraintsValid: true,
+		KeyUsage:              x509.KeyUsageCertSign,
+	}
+	rootDER, err := x509.CreateCertificate(rand.Reader, rootTemplate, rootTemplate, &rootKey.PublicKey, rootKey)
+	require.NoError(t, err)
+	rootCert, err := x509.ParseCertificate(rootDER)
+	require.NoError(t, err)
+
+	interKey, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	require.NoError(t, err)
+	interTemplate := &x509.Certificate{
+		SerialNumber:          big.NewInt(2),
+		Subject:               pkix.Name{CommonName: name + " Device Attestation CA"},
+		IsCA:                  true,
+		NotBefore:             time.Now().Add(-time.Hour),
+		NotAfter:              time.Now().Add(5 * 365 * 24 * time.Hour),
+		BasicConstraintsValid: true,
+		KeyUsage:              x509.KeyUsageCertSign,
+	}
+	interDER, err := x509.CreateCertificate(rand.Reader, interTemplate, rootCert, &interKey.PublicKey, rootKey)
+	require.NoError(t, err)
+	interCert, err := x509.ParseCertificate(interDER)
+	require.NoError(t, err)
+
+	leafKey, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	require.NoError(t, err)
+	leafTemplate := &x509.Certificate{
+		SerialNumber: big.NewInt(3),
+		Subject:      pkix.Name{CommonName: name + " Slot Attestation"},
+		NotBefore:    leafNotBefore,
+		NotAfter:     leafNotAfter,
+		KeyUsage:     x509.KeyUsageDigitalSignature,
+	}
+	leafDER, err := x509.CreateCertificate(rand.Reader, leafTemplate, interCert, &leafKey.PublicKey, interKey)
+	require.NoError(t, err)
+
+	return &attestationChain{
+		root: rootCert, rootDER: rootDER, interDER: interDER,
+		leafDER: leafDER, leafKey: leafKey,
+	}
+}
+
+// newValidAttestationChain builds a chain whose leaf is currently valid.
+func newValidAttestationChain(t *testing.T, name string) *attestationChain {
+	t.Helper()
+	return newAttestationChain(t, name, time.Now().Add(-time.Hour), time.Now().Add(24*time.Hour))
+}
+
+// anchorFormats configures the service with the given per-format trust anchors.
+func anchorFormats(t *testing.T, svc *XKMSService, anchors map[string][]*x509.Certificate) {
+	t.Helper()
+	verifiers := make(map[string]*attestation.Verifier, len(anchors))
+	for format, roots := range anchors {
+		verifiers[format] = attestation.NewVerifier(roots)
+	}
+	require.NoError(t, svc.SetAttestationVerifiers(verifiers))
+}
+
+// signCSRWithAttestation issues an attestation-gated SignCSR call.
+//
+// The CSR is built for key, which must be the key the leaf of chain certifies.
+// It used to be a placeholder that did not parse, which meant these tests
+// exercised chain anchoring and nothing else -- and a CA that only anchors the
+// chain will certify a software key presented beside somebody else's genuine
+// attestation. Passing a real, matching CSR is what makes them cover the path
+// a caller actually takes.
+func signCSRWithAttestation(
+	t *testing.T,
+	svc *XKMSService,
+	format string,
+	chain [][]byte,
+	key *ecdsa.PrivateKey,
+) (*transport.SignCSRResponse, error) {
+	t.Helper()
+	return svc.SignCSR(context.Background(), &transport.SignCSRRequest{
+		CSRPEM:            csrPEMFor(t, key),
+		AttestationFormat: format,
+		AttestationChain:  chain,
+	})
+}
+
+// csrPEMFor builds a PEM CSR signed by key.
+func csrPEMFor(t *testing.T, key *ecdsa.PrivateKey) []byte {
+	t.Helper()
+	der, err := x509.CreateCertificateRequest(rand.Reader, &x509.CertificateRequest{
+		Subject:            pkix.Name{CommonName: "attested device"},
+		SignatureAlgorithm: x509.ECDSAWithSHA256,
+	}, key)
+	require.NoError(t, err)
+	return pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE REQUEST", Bytes: der})
+}
+
+// signingServiceWithAnchor returns a service backed by a working mock CA whose
+// only configured attestation anchor is the root of the returned chain.
+func signingServiceWithAnchor(t *testing.T, format string) (*XKMSService, *attestationChain) {
+	t.Helper()
+	svc := setupServiceWithCA(t, &mockCA{
+		signCSRCert: createSelfSignedCert(t),
+		cert:        createSelfSignedCert(t),
+	})
+	genuine := newValidAttestationChain(t, "Vendor")
+	anchorFormats(t, svc, map[string][]*x509.Certificate{format: {genuine.root}})
+	return svc, genuine
+}
 
 func TestSignCSR_Attestation_Skipped(t *testing.T) {
 	signedCert := createSelfSignedCert(t)
@@ -892,32 +1043,177 @@ func TestSignCSR_Attestation_Skipped(t *testing.T) {
 	assert.NotEmpty(t, resp.CertificatePEM)
 }
 
-func TestSignCSR_Attestation_EmptyChain(t *testing.T) {
-	ca := &mockCA{}
-	svc := setupServiceWithCA(t, ca)
-	ctx := context.Background()
-
-	// Set AttestationFormat but leave chain empty.
-	resp, err := svc.SignCSR(ctx, &transport.SignCSRRequest{
-		CSRPEM:            []byte("-----BEGIN CERTIFICATE REQUEST-----\ntest\n-----END CERTIFICATE REQUEST-----"),
-		AttestationFormat: "yubikey-piv",
-		AttestationChain:  [][]byte{},
+// TestSignCSR_Attestation_NoTrustAnchors_FailsClosed asserts the gate fails
+// closed. With no anchors configured, even a perfectly formed chain is refused:
+// a misconfigured server must never silently accept unverifiable attestations.
+func TestSignCSR_Attestation_NoTrustAnchors_FailsClosed(t *testing.T) {
+	svc := setupServiceWithCA(t, &mockCA{
+		signCSRCert: createSelfSignedCert(t),
+		cert:        createSelfSignedCert(t),
 	})
+	chain := newValidAttestationChain(t, "Vendor")
+
+	resp, err := signCSRWithAttestation(t, svc, "yubikey-piv", chain.wire(), chain.leafKey)
+	assert.Nil(t, resp)
+	require.Error(t, err)
+	assert.ErrorIs(t, err, ErrAttestationNotConfigured)
+}
+
+// TestSignCSR_Attestation_UnconfiguredFormat_FailsClosed asserts a caller
+// cannot pick an attestation format that has no anchors in order to slip past
+// the gate.
+func TestSignCSR_Attestation_UnconfiguredFormat_FailsClosed(t *testing.T) {
+	svc, genuine := signingServiceWithAnchor(t, "tpm2")
+
+	resp, err := signCSRWithAttestation(t, svc, "yubikey-piv", genuine.wire(), genuine.leafKey)
+	assert.Nil(t, resp)
+	require.Error(t, err)
+	assert.ErrorIs(t, err, ErrAttestationFormatNotConfigured)
+}
+
+// TestSignCSR_Attestation_AttackerMintedChain_Rejected is the regression test
+// for the authentication bypass this gate previously allowed.
+//
+// The attack: an attacker with no hardware at all generates their own root CA,
+// their own device-attestation intermediate, and their own leaf, signing each
+// with the next so the chain is fully self-consistent, then submits it as the
+// attestation for a software key. The old implementation only checked that
+// certs[i] was signed by certs[i+1], which this chain satisfies by
+// construction, so the forged attestation passed and the CSR was signed as if
+// the key lived in genuine hardware.
+//
+// The chain must now be rejected because it terminates at the attacker's root
+// rather than the configured vendor anchor. Both the leaf-plus-intermediate
+// form and the form where the attacker also ships their own root are refused.
+func TestSignCSR_Attestation_AttackerMintedChain_Rejected(t *testing.T) {
+	svc, _ := signingServiceWithAnchor(t, "yubikey-piv")
+	attacker := newValidAttestationChain(t, "Attacker")
+
+	// Sanity check: the forged chain really is internally consistent, so the
+	// old "each cert signed by the next" check would have accepted it.
+	leaf, err := x509.ParseCertificate(attacker.leafDER)
+	require.NoError(t, err)
+	intermediate, err := x509.ParseCertificate(attacker.interDER)
+	require.NoError(t, err)
+	require.NoError(t, leaf.CheckSignatureFrom(intermediate))
+	require.NoError(t, intermediate.CheckSignatureFrom(attacker.root))
+
+	t.Run("without attacker root", func(t *testing.T) {
+		resp, err := signCSRWithAttestation(t, svc, "yubikey-piv", attacker.wire(), attacker.leafKey)
+		assert.Nil(t, resp)
+		require.Error(t, err)
+		assert.ErrorIs(t, err, ErrAttestationVerificationFailed)
+	})
+
+	t.Run("with attacker root appended", func(t *testing.T) {
+		resp, err := signCSRWithAttestation(t, svc, "yubikey-piv", attacker.wireWithRoot(), attacker.leafKey)
+		assert.Nil(t, resp)
+		require.Error(t, err)
+		assert.ErrorIs(t, err, ErrAttestationVerificationFailed)
+	})
+}
+
+// TestSignCSR_Attestation_TrustedChain_Accepted asserts genuine hardware still
+// works: a chain terminating at the configured anchor is accepted.
+func TestSignCSR_Attestation_TrustedChain_Accepted(t *testing.T) {
+	svc, genuine := signingServiceWithAnchor(t, "yubikey-piv")
+
+	resp, err := signCSRWithAttestation(t, svc, "yubikey-piv", genuine.wire(), genuine.leafKey)
+	require.NoError(t, err)
+	require.NotNil(t, resp)
+	assert.NotEmpty(t, resp.CertificatePEM)
+}
+
+// TestSignCSR_Attestation_TrustedChain_WithRootAccepted asserts a client that
+// also ships the anchor certificate is accepted, since the anchor is matched
+// from the configured trust store rather than from the wire.
+func TestSignCSR_Attestation_TrustedChain_WithRootAccepted(t *testing.T) {
+	svc, genuine := signingServiceWithAnchor(t, "yubikey-piv")
+
+	resp, err := signCSRWithAttestation(t, svc, "yubikey-piv", genuine.wireWithRoot(), genuine.leafKey)
+	require.NoError(t, err)
+	require.NotNil(t, resp)
+	assert.NotEmpty(t, resp.CertificatePEM)
+}
+
+// TestSignCSR_Attestation_UntrustedRoot_Rejected asserts a well-formed chain
+// anchored in a different, untrusted vendor root is rejected.
+func TestSignCSR_Attestation_UntrustedRoot_Rejected(t *testing.T) {
+	svc, _ := signingServiceWithAnchor(t, "yubikey-piv")
+	other := newValidAttestationChain(t, "Other Vendor")
+
+	resp, err := signCSRWithAttestation(t, svc, "yubikey-piv", other.wire(), other.leafKey)
+	assert.Nil(t, resp)
+	require.Error(t, err)
+	assert.ErrorIs(t, err, ErrAttestationVerificationFailed)
+}
+
+// TestSignCSR_Attestation_CrossFormatAnchorRejected asserts anchors do not leak
+// across attestation formats: a TPM manufacturer root cannot validate a chain
+// presented as YubiKey PIV attestation.
+func TestSignCSR_Attestation_CrossFormatAnchorRejected(t *testing.T) {
+	svc := setupServiceWithCA(t, &mockCA{
+		signCSRCert: createSelfSignedCert(t),
+		cert:        createSelfSignedCert(t),
+	})
+	tpmChain := newValidAttestationChain(t, "TPM Manufacturer")
+	yubiChain := newValidAttestationChain(t, "Yubico")
+	anchorFormats(t, svc, map[string][]*x509.Certificate{
+		"tpm2":        {tpmChain.root},
+		"yubikey-piv": {yubiChain.root},
+	})
+
+	// The TPM chain is genuine, but presented under the YubiKey format.
+	resp, err := signCSRWithAttestation(t, svc, "yubikey-piv", tpmChain.wire(), tpmChain.leafKey)
+	assert.Nil(t, resp)
+	require.Error(t, err)
+	assert.ErrorIs(t, err, ErrAttestationVerificationFailed)
+
+	// Presented under its own format it is accepted.
+	svc.AllowUnboundAttestationFormats(true) // anchoring test; TPM2 binding is
+	// unimplemented and refused by default.
+	resp, err = signCSRWithAttestation(t, svc, "tpm2", tpmChain.wire(), tpmChain.leafKey)
+	require.NoError(t, err)
+	require.NotNil(t, resp)
+}
+
+// TestSignCSR_Attestation_FormatNormalized asserts format lookup is
+// case- and whitespace-insensitive so a client cannot dodge the anchor set
+// with a differently cased format string.
+func TestSignCSR_Attestation_FormatNormalized(t *testing.T) {
+	svc, genuine := signingServiceWithAnchor(t, "yubikey-piv")
+
+	resp, err := signCSRWithAttestation(t, svc, "  YubiKey-PIV ", genuine.wire(), genuine.leafKey)
+	require.NoError(t, err)
+	require.NotNil(t, resp)
+}
+
+func TestSignCSR_Attestation_EmptyChain(t *testing.T) {
+	svc, genuine := signingServiceWithAnchor(t, "yubikey-piv")
+
+	resp, err := signCSRWithAttestation(t, svc, "yubikey-piv", [][]byte{}, genuine.leafKey)
 	assert.Nil(t, resp)
 	require.Error(t, err)
 	assert.ErrorIs(t, err, ErrAttestationVerificationFailed)
 }
 
 func TestSignCSR_Attestation_InvalidCert(t *testing.T) {
-	ca := &mockCA{}
-	svc := setupServiceWithCA(t, ca)
-	ctx := context.Background()
+	svc, genuine := signingServiceWithAnchor(t, "yubikey-piv")
 
-	resp, err := svc.SignCSR(ctx, &transport.SignCSRRequest{
-		CSRPEM:            []byte("-----BEGIN CERTIFICATE REQUEST-----\ntest\n-----END CERTIFICATE REQUEST-----"),
-		AttestationFormat: "yubikey-piv",
-		AttestationChain:  [][]byte{[]byte("not-valid-der")},
-	})
+	resp, err := signCSRWithAttestation(t, svc, "yubikey-piv",
+		[][]byte{[]byte("not-valid-der")}, genuine.leafKey)
+	assert.Nil(t, resp)
+	require.Error(t, err)
+	assert.ErrorIs(t, err, ErrAttestationVerificationFailed)
+}
+
+// TestSignCSR_Attestation_MalformedTrailingCert asserts a malformed
+// certificate anywhere in the chain is reported, not just at index 0.
+func TestSignCSR_Attestation_MalformedTrailingCert(t *testing.T) {
+	svc, genuine := signingServiceWithAnchor(t, "yubikey-piv")
+
+	resp, err := signCSRWithAttestation(t, svc, "yubikey-piv",
+		[][]byte{genuine.leafDER, []byte{0x30, 0x82, 0xff, 0xff}}, genuine.leafKey)
 	assert.Nil(t, resp)
 	require.Error(t, err)
 	assert.ErrorIs(t, err, ErrAttestationVerificationFailed)
@@ -925,7 +1221,7 @@ func TestSignCSR_Attestation_InvalidCert(t *testing.T) {
 
 // createAttestationChain generates a 2-cert chain: leaf signed by root.
 // Returns (leafDER, rootDER) suitable for AttestationChain.
-func createAttestationChain(t *testing.T) ([]byte, []byte) {
+func createAttestationChain(t *testing.T) ([]byte, []byte, *ecdsa.PrivateKey) {
 	t.Helper()
 
 	// Generate root CA key and self-signed cert.
@@ -960,36 +1256,71 @@ func createAttestationChain(t *testing.T) ([]byte, []byte) {
 	leafDER, err := x509.CreateCertificate(rand.Reader, leafTemplate, rootCert, &leafKey.PublicKey, rootKey)
 	require.NoError(t, err)
 
-	return leafDER, rootDER
+	return leafDER, rootDER, leafKey
 }
 
-func TestSignCSR_Attestation_ValidChain(t *testing.T) {
-	signedCert := createSelfSignedCert(t)
-	caCert := createSelfSignedCert(t)
+// TestSignCSR_Attestation_TwoLevelChain covers the minimal leaf-plus-root
+// shape: accepted when the root is the configured anchor, rejected when it is
+// merely shipped by the caller.
+func TestSignCSR_Attestation_TwoLevelChain(t *testing.T) {
+	leafDER, rootDER, leafKey := createAttestationChain(t)
+	root, err := x509.ParseCertificate(rootDER)
+	require.NoError(t, err)
 
-	ca := &mockCA{
-		signCSRCert: signedCert,
-		cert:        caCert,
-	}
-	svc := setupServiceWithCA(t, ca)
-	ctx := context.Background()
+	t.Run("anchored", func(t *testing.T) {
+		svc := setupServiceWithCA(t, &mockCA{
+			signCSRCert: createSelfSignedCert(t),
+			cert:        createSelfSignedCert(t),
+		})
+		anchorFormats(t, svc, map[string][]*x509.Certificate{"yubikey-piv": {root}})
 
-	leafDER, rootDER := createAttestationChain(t)
-
-	resp, err := svc.SignCSR(ctx, &transport.SignCSRRequest{
-		CSRPEM:            []byte("-----BEGIN CERTIFICATE REQUEST-----\ntest\n-----END CERTIFICATE REQUEST-----"),
-		AttestationFormat: "yubikey-piv",
-		AttestationChain:  [][]byte{leafDER, rootDER},
+		resp, err := signCSRWithAttestation(t, svc, "yubikey-piv", [][]byte{leafDER, rootDER}, leafKey)
+		require.NoError(t, err)
+		require.NotNil(t, resp)
 	})
+
+	t.Run("caller supplied root only", func(t *testing.T) {
+		svc, _ := signingServiceWithAnchor(t, "yubikey-piv")
+
+		resp, err := signCSRWithAttestation(t, svc, "yubikey-piv", [][]byte{leafDER, rootDER}, leafKey)
+		assert.Nil(t, resp)
+		require.Error(t, err)
+		assert.ErrorIs(t, err, ErrAttestationVerificationFailed)
+	})
+}
+
+// TestSignCSR_Attestation_SingleSelfSignedCert_Rejected asserts a lone
+// self-signed certificate is not an attestation. It is internally consistent by
+// definition, so only the anchor check can reject it.
+func TestSignCSR_Attestation_SingleSelfSignedCert_Rejected(t *testing.T) {
+	svc, genuine := signingServiceWithAnchor(t, "yubikey-piv")
+	selfSigned := createSelfSignedCert(t)
+
+	resp, err := signCSRWithAttestation(t, svc, "yubikey-piv", [][]byte{selfSigned.Raw}, genuine.leafKey)
+	assert.Nil(t, resp)
+	require.Error(t, err)
+	assert.ErrorIs(t, err, ErrAttestationVerificationFailed)
+}
+
+// TestSignCSR_Attestation_SingleAnchorCert_Accepted asserts the degenerate but
+// legitimate case where the presented certificate is itself the anchor.
+func TestSignCSR_Attestation_SingleAnchorCert_Accepted(t *testing.T) {
+	svc := setupServiceWithCA(t, &mockCA{
+		signCSRCert: createSelfSignedCert(t),
+		cert:        createSelfSignedCert(t),
+	})
+	genuine := newValidAttestationChain(t, "Vendor")
+	anchorFormats(t, svc, map[string][]*x509.Certificate{"tpm2": {genuine.root}})
+
+	svc.AllowUnboundAttestationFormats(true) // anchoring test; TPM2 binding is
+	// unimplemented and refused by default.
+	resp, err := signCSRWithAttestation(t, svc, "tpm2", [][]byte{genuine.rootDER}, genuine.leafKey)
 	require.NoError(t, err)
 	require.NotNil(t, resp)
-	assert.NotEmpty(t, resp.CertificatePEM)
 }
 
 func TestSignCSR_Attestation_BrokenChain(t *testing.T) {
-	ca := &mockCA{}
-	svc := setupServiceWithCA(t, ca)
-	ctx := context.Background()
+	svc, _ := signingServiceWithAnchor(t, "yubikey-piv")
 
 	// Create two independent self-signed certs (leaf is NOT signed by root).
 	key1, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
@@ -1018,12 +1349,84 @@ func TestSignCSR_Attestation_BrokenChain(t *testing.T) {
 	root2DER, err := x509.CreateCertificate(rand.Reader, root2Template, root2Template, &key2.PublicKey, key2)
 	require.NoError(t, err)
 
-	resp, err := svc.SignCSR(ctx, &transport.SignCSRRequest{
-		CSRPEM:            []byte("-----BEGIN CERTIFICATE REQUEST-----\ntest\n-----END CERTIFICATE REQUEST-----"),
-		AttestationFormat: "yubikey-piv",
-		AttestationChain:  [][]byte{leaf1DER, root2DER},
-	})
+	resp, err := signCSRWithAttestation(t, svc, "yubikey-piv", [][]byte{leaf1DER, root2DER}, key1)
 	assert.Nil(t, resp)
 	require.Error(t, err)
 	assert.ErrorIs(t, err, ErrAttestationVerificationFailed)
+}
+
+// TestSignCSR_Attestation_ExpiredLeaf_Rejected asserts an expired attestation
+// leaf is rejected even though it chains to the configured anchor.
+func TestSignCSR_Attestation_ExpiredLeaf_Rejected(t *testing.T) {
+	svc := setupServiceWithCA(t, &mockCA{
+		signCSRCert: createSelfSignedCert(t),
+		cert:        createSelfSignedCert(t),
+	})
+	expired := newAttestationChain(t, "Vendor",
+		time.Now().Add(-48*time.Hour), time.Now().Add(-24*time.Hour))
+	anchorFormats(t, svc, map[string][]*x509.Certificate{"yubikey-piv": {expired.root}})
+
+	resp, err := signCSRWithAttestation(t, svc, "yubikey-piv", expired.wire(), expired.leafKey)
+	assert.Nil(t, resp)
+	require.Error(t, err)
+	assert.ErrorIs(t, err, ErrAttestationVerificationFailed)
+}
+
+// ========================================================================
+// SetAttestationVerifiers
+// ========================================================================
+
+// TestSetAttestationVerifiers_RejectsUnusableVerifiers asserts a verifier that
+// cannot enforce anchoring is refused at wiring time rather than accepted and
+// then silently permitting everything.
+func TestSetAttestationVerifiers_RejectsUnusableVerifiers(t *testing.T) {
+	svc := setupServiceWithCA(t, &mockCA{})
+	genuine := newValidAttestationChain(t, "Vendor")
+
+	tests := []struct {
+		name      string
+		verifiers map[string]*attestation.Verifier
+	}{
+		{
+			name:      "nil verifier",
+			verifiers: map[string]*attestation.Verifier{"tpm2": nil},
+		},
+		{
+			name:      "verifier without trust anchors",
+			verifiers: map[string]*attestation.Verifier{"tpm2": attestation.NewVerifier(nil)},
+		},
+		{
+			name:      "empty format",
+			verifiers: map[string]*attestation.Verifier{"   ": attestation.NewVerifier([]*x509.Certificate{genuine.root})},
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			err := svc.SetAttestationVerifiers(tc.verifiers)
+			require.Error(t, err)
+			assert.ErrorIs(t, err, ErrAttestationVerifierInvalid)
+			assert.Empty(t, svc.AttestationFormats())
+		})
+	}
+}
+
+// TestSetAttestationVerifiers_NormalizesAndReplaces asserts formats are stored
+// normalized and that a later call replaces the previous anchor set.
+func TestSetAttestationVerifiers_NormalizesAndReplaces(t *testing.T) {
+	svc := setupServiceWithCA(t, &mockCA{})
+	genuine := newValidAttestationChain(t, "Vendor")
+
+	require.NoError(t, svc.SetAttestationVerifiers(map[string]*attestation.Verifier{
+		" TPM2 ": attestation.NewVerifier([]*x509.Certificate{genuine.root}),
+	}))
+	assert.Equal(t, []string{"tpm2"}, svc.AttestationFormats())
+
+	_, ok := svc.attestationVerifierFor("tpm2")
+	assert.True(t, ok)
+
+	require.NoError(t, svc.SetAttestationVerifiers(nil))
+	assert.Empty(t, svc.AttestationFormats())
+	_, ok = svc.attestationVerifierFor("tpm2")
+	assert.False(t, ok)
 }

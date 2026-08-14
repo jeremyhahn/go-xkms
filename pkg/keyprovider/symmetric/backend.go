@@ -20,7 +20,8 @@ import (
 	"crypto/cipher"
 	"crypto/rand"
 	"crypto/rsa"
-	"encoding/json"
+	"crypto/subtle"
+	"errors"
 	"fmt"
 	"strings"
 	"sync"
@@ -30,6 +31,7 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/jeremyhahn/go-xkms/pkg/backend"
+	"github.com/jeremyhahn/go-xkms/pkg/crypto/aead"
 	chacha20poly1305pkg "github.com/jeremyhahn/go-xkms/pkg/crypto/chacha20poly1305"
 	cryptorand "github.com/jeremyhahn/go-xkms/pkg/crypto/rand"
 	"github.com/jeremyhahn/go-xkms/pkg/crypto/wrapping"
@@ -204,6 +206,12 @@ func (b *Backend) DeleteKey(ctx context.Context, attrs *types.KeyAttributes) err
 		return &errs.Wrapped{Msg: "failed to delete key", Err: err}
 	}
 
+	// Remove the metadata record so a deleted key leaves no orphaned
+	// Exportable flag behind for a future key ID collision to inherit.
+	if err := b.deleteKeyMetadata(ctx, keyID); err != nil {
+		return err
+	}
+
 	return nil
 }
 
@@ -275,16 +283,13 @@ func (b *Backend) ListKeys(ctx context.Context) ([]*types.KeyAttributes, error) 
 			attr.KeyType = types.KeyTypeSecret // Default to Secret if parsing fails
 		}
 
-		// Load metadata to get exportable flag
-		metaKey := "meta/" + id
-		if metaData, err := b.storage.Get(ctx, metaKey); err == nil {
-			var metadata map[string]interface{}
-			if json.Unmarshal(metaData, &metadata) == nil {
-				if exportable, ok := metadata["exportable"].(bool); ok {
-					attr.Exportable = exportable
-				}
-			}
-		}
+		// Reload the metadata record to recover attributes the key ID string
+		// has no room to encode. A missing/corrupt record (a key that
+		// predates metadata persistence) is not an error: loadKeyMetadata
+		// returns the safe Exportable=false default and ListKeys carries on.
+		metadata := b.loadKeyMetadata(ctx, id)
+		attr.Exportable = metadata.Exportable
+		attr.Sensitive = metadata.Sensitive
 
 		attrs = append(attrs, attr)
 	}
@@ -442,21 +447,13 @@ func (b *Backend) GenerateSymmetricKey(ctx context.Context, attrs *types.KeyAttr
 		return nil, err
 	}
 
-	// Store metadata (including exportable flag)
-	metadata := map[string]interface{}{
-		"cn":         attrs.CN,
-		"key_type":   attrs.KeyType.String(),
-		"store_type": string(attrs.StoreType),
-		"algorithm":  string(attrs.SymmetricAlgorithm),
-		"exportable": attrs.Exportable,
-	}
-	metadataBytes, err := json.Marshal(metadata)
-	if err != nil {
-		return nil, &errs.Wrapped{Msg: "failed to marshal metadata", Err: err}
-	}
-	metaKey := "meta/" + keyID
-	if err := b.storage.Put(ctx, metaKey, metadataBytes); err != nil {
-		return nil, &errs.Wrapped{Msg: "failed to store metadata", Err: err}
+	// Persist the metadata record (currently just Exportable) that the key
+	// ID string has no room to encode. This is the fix for the defect where
+	// Exportable was honoured at creation but never survived a reload: it
+	// must be saved before returning so a caller that immediately lists or
+	// exports the key sees the same value it just requested.
+	if err := b.saveKeyMetadata(ctx, keyID, attrs); err != nil {
+		return nil, err
 	}
 
 	return symmetricKey, nil
@@ -544,6 +541,21 @@ func (e *softwareSymmetricEncrypter) Encrypt(plaintext []byte, opts *types.Encry
 		opts = &types.EncryptOptions{}
 	}
 
+	// AES-CBC and AES-CBC-PAD are non-AEAD: they take a different code path
+	// entirely (no tag, no AEAD nonce/AAD, no AEAD safety tracking -- the
+	// NIST SP 800-38D nonce-reuse and byte-limit rules below are specific to
+	// GCM/ChaCha20-Poly1305 and do not apply to CBC).
+	switch opts.Mode {
+	case "":
+		// Fall through to the AEAD path below (existing default behavior).
+	case types.CipherModeCBC, types.CipherModeCBCPad:
+		return e.encryptCBC(plaintext, opts)
+	case types.CipherModeECB:
+		return e.encryptECB(plaintext, opts)
+	default:
+		return nil, ErrUnsupportedCipherMode
+	}
+
 	// Get key ID for tracking
 	keyID := e.attrs.ID()
 
@@ -574,6 +586,11 @@ func (e *softwareSymmetricEncrypter) Encrypt(plaintext []byte, opts *types.Encry
 		}
 		if err != nil {
 			return nil, &errs.Wrapped{Msg: "failed to create ChaCha20 cipher", Err: err}
+		}
+
+		// Poly1305 has no truncated form; see ErrTagSizeNotSupported.
+		if opts.TagSize != 0 && opts.TagSize != chacha20Cipher.Overhead() {
+			return nil, ErrTagSizeNotSupported
 		}
 
 		// STEP 2: Generate or use provided nonce
@@ -616,9 +633,9 @@ func (e *softwareSymmetricEncrypter) Encrypt(plaintext []byte, opts *types.Encry
 			return nil, &errs.Wrapped{Msg: "failed to create cipher", Err: err}
 		}
 
-		gcm, err := cipher.NewGCM(block)
+		gcm, err := newGCMWithTagSize(block, opts.TagSize)
 		if err != nil {
-			return nil, &errs.Wrapped{Msg: "failed to create GCM", Err: err}
+			return nil, err
 		}
 
 		nonceSize := gcm.NonceSize()
@@ -688,6 +705,17 @@ func (e *softwareSymmetricEncrypter) Decrypt(data *types.EncryptedData, opts *ty
 		return nil, &errs.Message{Msg: "encrypted data is nil"}
 	}
 
+	switch opts.Mode {
+	case "":
+		// Fall through to the AEAD path below (existing default behavior).
+	case types.CipherModeCBC, types.CipherModeCBCPad:
+		return e.decryptCBC(data, opts)
+	case types.CipherModeECB:
+		return e.decryptECB(data, opts)
+	default:
+		return nil, ErrUnsupportedCipherMode
+	}
+
 	// Get raw key bytes
 	keyBytes, err := e.key.Raw()
 	if err != nil {
@@ -712,6 +740,11 @@ func (e *softwareSymmetricEncrypter) Decrypt(data *types.EncryptedData, opts *ty
 			return nil, &errs.Wrapped{Msg: "failed to create ChaCha20 cipher", Err: err}
 		}
 
+		// Poly1305 has no truncated form; see ErrTagSizeNotSupported.
+		if opts.TagSize != 0 && opts.TagSize != chacha20Cipher.Overhead() {
+			return nil, ErrTagSizeNotSupported
+		}
+
 		// Decrypt and verify - use the ChaCha20 AEAD interface's Decrypt method
 		plaintext, err = chacha20Cipher.Decrypt(data, &types.DecryptOptions{
 			AdditionalData: opts.AdditionalData,
@@ -727,9 +760,30 @@ func (e *softwareSymmetricEncrypter) Decrypt(data *types.EncryptedData, opts *ty
 			return nil, &errs.Wrapped{Msg: "failed to create cipher", Err: err}
 		}
 
-		gcm, err := cipher.NewGCM(block)
+		// The tag length has to be reconstructed here, not inferred from the
+		// tag that arrived: SP 800-38D section 5.2.2 verifies a t-bit tag by
+		// recomputing the tag at t bits and comparing, so decrypting a
+		// truncated tag under a full-length GCM rejects it as a forgery.
+		// Taking the length from data.Tag instead of from opts would let an
+		// attacker choose it, which is what SP 800-38D appendix C warns
+		// against.
+		gcm, err := newGCMWithTagSize(block, opts.TagSize)
 		if err != nil {
-			return nil, &errs.Wrapped{Msg: "failed to create GCM", Err: err}
+			return nil, err
+		}
+
+		if len(data.Tag) != gcm.Overhead() {
+			return nil, &errs.Message{Msg: fmt.Sprintf(
+				"symmetric: authentication tag is %d bytes, want %d", len(data.Tag), gcm.Overhead())}
+		}
+
+		// crypto/cipher panics rather than returning an error when the nonce is
+		// not exactly NonceSize bytes. The nonce arrives from the caller, so
+		// without this check any request carrying a short nonce takes the whole
+		// daemon down.
+		if len(data.Nonce) != gcm.NonceSize() {
+			return nil, &errs.Message{Msg: fmt.Sprintf(
+				"symmetric: nonce is %d bytes, want %d", len(data.Nonce), gcm.NonceSize())}
 		}
 
 		// Decrypt and verify
@@ -740,6 +794,318 @@ func (e *softwareSymmetricEncrypter) Decrypt(data *types.EncryptedData, opts *ty
 	}
 
 	return plaintext, nil
+}
+
+// newGCMWithTagSize builds an AES-GCM AEAD producing a tagSize-byte
+// authentication tag, with zero selecting the full 16-byte tag. The tag-length
+// rules live in pkg/crypto/aead so that every AES-GCM implementation in the
+// stack answers the same way; this wrapper only maps the failure onto this
+// package's sentinel so callers can match on ErrInvalidTagSize.
+func newGCMWithTagSize(block cipher.Block, tagSize int) (cipher.AEAD, error) {
+	gcm, err := aead.NewGCM(block, tagSize)
+	if err != nil {
+		if errors.Is(err, aead.ErrInvalidGCMTagSize) {
+			return nil, &errs.Detail{Err: ErrInvalidTagSize, Detail: err.Error()}
+		}
+		return nil, &errs.Wrapped{Msg: "failed to create GCM", Err: err}
+	}
+	return gcm, nil
+}
+
+// isAESCipherAlgorithm reports whether alg is one of the AES-family
+// SymmetricAlgorithm values. AES-CBC and AES-CBC-PAD are only defined for
+// AES keys; ChaCha20-Poly1305/XChaCha20-Poly1305 have no CBC mode.
+func isAESCipherAlgorithm(alg types.SymmetricAlgorithm) bool {
+	switch alg {
+	case types.SymmetricAES128GCM, types.SymmetricAES192GCM, types.SymmetricAES256GCM:
+		return true
+	default:
+		return false
+	}
+}
+
+// encryptCBC implements types.CipherModeCBC (unpadded, PKCS#11's
+// CKM_AES_CBC) and types.CipherModeCBCPad (PKCS#7-padded, PKCS#11's
+// CKM_AES_CBC_PAD). AES-CBC is not an AEAD mode: it produces no
+// authentication tag and accepts no additional authenticated data.
+func (e *softwareSymmetricEncrypter) encryptCBC(plaintext []byte, opts *types.EncryptOptions) (*types.EncryptedData, error) {
+	if !isAESCipherAlgorithm(e.attrs.SymmetricAlgorithm) {
+		return nil, ErrCBCRequiresAES
+	}
+	if len(opts.AdditionalData) > 0 {
+		return nil, ErrAdditionalDataNotSupported
+	}
+	// AES-CBC produces no authentication tag at all, so a tag length is not
+	// something this mode can honour. Accepting and ignoring it would report
+	// success for an operation the caller did not get.
+	if opts.TagSize != 0 {
+		return nil, ErrTagSizeNotSupported
+	}
+
+	keyBytes, err := e.key.Raw()
+	if err != nil {
+		return nil, &errs.Wrapped{Msg: "failed to get raw key", Err: err}
+	}
+
+	block, err := aes.NewCipher(keyBytes)
+	if err != nil {
+		return nil, &errs.Wrapped{Msg: "failed to create cipher", Err: err}
+	}
+
+	// crypto/cipher's NewCBCEncrypter panics if the IV is not exactly
+	// block.BlockSize() bytes, so validate before calling it: a caller
+	// -supplied IV of the wrong length must become a typed error, not a
+	// daemon crash.
+	iv := opts.IV
+	if len(iv) == 0 {
+		iv, err = e.rng.Rand(aes.BlockSize)
+		if err != nil {
+			return nil, &errs.Wrapped{Msg: "failed to generate IV", Err: err}
+		}
+	} else if len(iv) != aes.BlockSize {
+		return nil, &errs.Detail{Err: ErrInvalidIVSize, Detail: fmt.Sprintf("got %d bytes, want %d", len(iv), aes.BlockSize)}
+	}
+
+	var toEncrypt []byte
+	if opts.Mode == types.CipherModeCBCPad {
+		toEncrypt = padPKCS7(plaintext, aes.BlockSize)
+	} else {
+		// Unpadded CBC: crypto/cipher's BlockMode.CryptBlocks panics on a
+		// non-block-aligned input, so this must be checked before calling
+		// it rather than left to panic on caller-supplied plaintext.
+		if len(plaintext) == 0 || len(plaintext)%aes.BlockSize != 0 {
+			return nil, ErrPlaintextNotBlockAligned
+		}
+		toEncrypt = plaintext
+	}
+
+	ciphertext := make([]byte, len(toEncrypt))
+	cipher.NewCBCEncrypter(block, iv).CryptBlocks(ciphertext, toEncrypt)
+
+	return &types.EncryptedData{
+		Ciphertext: ciphertext,
+		IV:         iv,
+		Algorithm:  e.key.Algorithm(),
+	}, nil
+}
+
+// encryptECB implements types.CipherModeECB (PKCS#11's CKM_AES_ECB). Each
+// 16-byte block is enciphered independently under the raw block cipher: there
+// is no IV, no chaining and no authentication tag.
+//
+// SECURITY: ECB is deterministic. Two identical plaintext blocks produce two
+// identical ciphertext blocks under the same key, which is exactly the
+// structure leak the mode is known for. It is implemented because PKCS#11
+// v3.2 §6.10.4 defines the mechanism and this module advertises it; a
+// mechanism that is advertised and then quietly served by some other mode is
+// worse than either offering it or refusing it, because the ciphertext no
+// peer can reproduce still looks like success.
+func (e *softwareSymmetricEncrypter) encryptECB(plaintext []byte, opts *types.EncryptOptions) (*types.EncryptedData, error) {
+	if !isAESCipherAlgorithm(e.attrs.SymmetricAlgorithm) {
+		return nil, ErrECBRequiresAES
+	}
+	// ECB authenticates nothing and takes no IV, so associated data, a tag
+	// length and an IV are all things this mode cannot honour. Accepting and
+	// ignoring any of them would report success for an operation the caller
+	// did not get -- the same reasoning as the matching checks in encryptCBC.
+	if len(opts.AdditionalData) > 0 {
+		return nil, ErrAdditionalDataNotSupported
+	}
+	if opts.TagSize != 0 {
+		return nil, ErrTagSizeNotSupported
+	}
+	if len(opts.IV) > 0 {
+		return nil, ErrIVNotSupported
+	}
+
+	// crypto/cipher has no ECB BlockMode -- deliberately, because the mode is
+	// unsafe as a general construction -- so the blocks are driven through
+	// cipher.Block directly. That is the same primitive NewCBCEncrypter would
+	// use, with no chaining applied.
+	if len(plaintext) == 0 || len(plaintext)%aes.BlockSize != 0 {
+		return nil, ErrPlaintextNotBlockAligned
+	}
+
+	keyBytes, err := e.key.Raw()
+	if err != nil {
+		return nil, &errs.Wrapped{Msg: "failed to get raw key", Err: err}
+	}
+
+	block, err := aes.NewCipher(keyBytes)
+	if err != nil {
+		return nil, &errs.Wrapped{Msg: "failed to create cipher", Err: err}
+	}
+
+	ciphertext := make([]byte, len(plaintext))
+	for offset := 0; offset < len(plaintext); offset += aes.BlockSize {
+		block.Encrypt(ciphertext[offset:offset+aes.BlockSize], plaintext[offset:offset+aes.BlockSize])
+	}
+
+	return &types.EncryptedData{
+		Ciphertext: ciphertext,
+		Algorithm:  e.key.Algorithm(),
+	}, nil
+}
+
+// decryptECB implements types.CipherModeECB decryption, the inverse of
+// encryptECB.
+func (e *softwareSymmetricEncrypter) decryptECB(data *types.EncryptedData, opts *types.DecryptOptions) ([]byte, error) {
+	if !isAESCipherAlgorithm(e.attrs.SymmetricAlgorithm) {
+		return nil, ErrECBRequiresAES
+	}
+	if len(opts.AdditionalData) > 0 {
+		return nil, ErrAdditionalDataNotSupported
+	}
+	if len(data.Tag) > 0 {
+		return nil, &errs.Message{Msg: "symmetric: tag is not supported for AES-ECB"}
+	}
+	if opts.TagSize != 0 {
+		return nil, ErrTagSizeNotSupported
+	}
+	// An IV on the wire means the ciphertext was produced by some other mode,
+	// or the caller believes ECB uses one. Either way, decrypting it as ECB
+	// would return plausible-looking garbage rather than an error.
+	if len(data.IV) > 0 {
+		return nil, ErrIVNotSupported
+	}
+
+	if len(data.Ciphertext) == 0 || len(data.Ciphertext)%aes.BlockSize != 0 {
+		return nil, ErrCiphertextNotBlockAligned
+	}
+
+	keyBytes, err := e.key.Raw()
+	if err != nil {
+		return nil, &errs.Wrapped{Msg: "failed to get raw key", Err: err}
+	}
+
+	block, err := aes.NewCipher(keyBytes)
+	if err != nil {
+		return nil, &errs.Wrapped{Msg: "failed to create cipher", Err: err}
+	}
+
+	plaintext := make([]byte, len(data.Ciphertext))
+	for offset := 0; offset < len(data.Ciphertext); offset += aes.BlockSize {
+		block.Decrypt(plaintext[offset:offset+aes.BlockSize], data.Ciphertext[offset:offset+aes.BlockSize])
+	}
+	return plaintext, nil
+}
+
+// decryptCBC implements types.CipherModeCBC and types.CipherModeCBCPad
+// decryption, the inverse of encryptCBC.
+//
+// SECURITY: padding removal for CipherModeCBCPad is delegated to
+// unpadPKCS7, which validates padding length and content in constant time
+// and returns a single ErrInvalidPadding for every failure mode. Do not add
+// any branch here (or in unpadPKCS7) whose timing or error value depends on
+// *how* the padding was invalid -- that is exactly the CBC padding-oracle
+// primitive (Vaudenay, 2002) this function exists to close off.
+func (e *softwareSymmetricEncrypter) decryptCBC(data *types.EncryptedData, opts *types.DecryptOptions) ([]byte, error) {
+	if !isAESCipherAlgorithm(e.attrs.SymmetricAlgorithm) {
+		return nil, ErrCBCRequiresAES
+	}
+	if len(opts.AdditionalData) > 0 {
+		return nil, ErrAdditionalDataNotSupported
+	}
+	if len(data.Tag) > 0 {
+		return nil, &errs.Message{Msg: "symmetric: tag is not supported for AES-CBC modes"}
+	}
+	// AES-CBC authenticates nothing, so there is no tag length to honour.
+	// See the matching check in encryptCBC.
+	if opts.TagSize != 0 {
+		return nil, ErrTagSizeNotSupported
+	}
+
+	// crypto/cipher's NewCBCDecrypter panics if the IV is not exactly
+	// block.BlockSize() bytes; validate before calling it.
+	if len(data.IV) != aes.BlockSize {
+		return nil, &errs.Detail{Err: ErrInvalidIVSize, Detail: fmt.Sprintf("got %d bytes, want %d", len(data.IV), aes.BlockSize)}
+	}
+
+	// crypto/cipher's BlockMode.CryptBlocks panics if its input is not a
+	// whole number of blocks; validate before calling it. This depends only
+	// on the caller-supplied ciphertext length, which is public information
+	// independent of the key or plaintext, so it is not part of the padding
+	// oracle that ErrInvalidPadding guards against below.
+	if len(data.Ciphertext) == 0 || len(data.Ciphertext)%aes.BlockSize != 0 {
+		return nil, ErrCiphertextNotBlockAligned
+	}
+
+	keyBytes, err := e.key.Raw()
+	if err != nil {
+		return nil, &errs.Wrapped{Msg: "failed to get raw key", Err: err}
+	}
+
+	block, err := aes.NewCipher(keyBytes)
+	if err != nil {
+		return nil, &errs.Wrapped{Msg: "failed to create cipher", Err: err}
+	}
+
+	decrypted := make([]byte, len(data.Ciphertext))
+	cipher.NewCBCDecrypter(block, data.IV).CryptBlocks(decrypted, data.Ciphertext)
+
+	if opts.Mode == types.CipherModeCBCPad {
+		return unpadPKCS7(decrypted, aes.BlockSize)
+	}
+	return decrypted, nil
+}
+
+// padPKCS7 appends PKCS#7 padding (RFC 5652 section 6.3) so data becomes a
+// whole number of blockSize-byte blocks. When len(data) is already
+// block-aligned, a full extra block of padding is appended -- this is
+// required for unambiguous unpadding, since otherwise a legitimately
+// block-aligned plaintext would be indistinguishable from one with its
+// trailing padding already stripped.
+func padPKCS7(data []byte, blockSize int) []byte {
+	padLen := blockSize - (len(data) % blockSize)
+	padded := make([]byte, len(data)+padLen)
+	copy(padded, data)
+	for i := len(data); i < len(padded); i++ {
+		padded[i] = byte(padLen)
+	}
+	return padded
+}
+
+// unpadPKCS7 removes PKCS#7 padding from a decrypted AES-CBC plaintext.
+// data's length must already be verified as a positive multiple of
+// blockSize by the caller (decryptCBC checks the ciphertext length before
+// decrypting, and CBC preserves length).
+//
+// Both ways unpadding can fail -- a padding-length byte outside [1,
+// blockSize], or padding bytes that don't match that length -- return the
+// identical ErrInvalidPadding, and the check runs in constant time relative
+// to the padding length: the loop always scans the full last block and
+// never branches on the untrusted length byte. This is the standard
+// defense against a CBC padding oracle (Vaudenay, 2002): a decryption
+// service that reveals *why* (or measurably how fast) unpadding failed lets
+// an attacker recover plaintext one byte at a time without the key.
+func unpadPKCS7(data []byte, blockSize int) ([]byte, error) {
+	if len(data) == 0 || len(data)%blockSize != 0 {
+		return nil, ErrInvalidPadding
+	}
+
+	padLen := int(data[len(data)-1])
+
+	// good is 1 only if padLen is a plausible PKCS#7 length, i.e. in
+	// [1, blockSize]. Computed without branching on padLen.
+	good := subtle.ConstantTimeLessOrEq(1, padLen) & subtle.ConstantTimeLessOrEq(padLen, blockSize)
+
+	lastBlock := data[len(data)-blockSize:]
+	for i := 0; i < blockSize; i++ {
+		// pos is the 1-based distance of byte i from the end of the block.
+		pos := blockSize - i
+		// isPadByte is 1 iff position pos falls within the claimed padding.
+		isPadByte := subtle.ConstantTimeLessOrEq(pos, padLen)
+		eq := subtle.ConstantTimeByteEq(lastBlock[i], byte(padLen))
+		// A claimed padding byte that doesn't equal padLen invalidates the
+		// result, but every iteration always runs regardless of padLen.
+		mismatch := isPadByte & (1 - eq)
+		good &= 1 - mismatch
+	}
+
+	if good != 1 {
+		return nil, ErrInvalidPadding
+	}
+	return data[:len(data)-padLen], nil
 }
 
 // storeSymmetricKey stores a symmetric key, optionally encrypted with a password.
@@ -1105,6 +1471,13 @@ func (b *Backend) ImportKey(ctx context.Context, attrs *types.KeyAttributes, wra
 	// Store the key using the existing storage mechanism
 	if err := b.storeSymmetricKey(ctx, keyID, keyData, attrs.Password); err != nil {
 		return &errs.Wrapped{Msg: "failed to store imported key", Err: err}
+	}
+
+	// Imported keys go through the same defect as generated ones: the
+	// caller's Exportable attribute has nowhere to live besides this
+	// metadata record, so it must be persisted here too.
+	if err := b.saveKeyMetadata(ctx, keyID, attrs); err != nil {
+		return err
 	}
 
 	// Clean up the wrapping key after successful import

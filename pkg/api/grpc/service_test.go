@@ -22,11 +22,13 @@ import (
 	"crypto/rsa"
 	"crypto/x509"
 	"crypto/x509/pkix"
+	"errors"
 	"math/big"
 	"strings"
 	"testing"
 
 	"github.com/jeremyhahn/go-xkms/pkg/types"
+	"github.com/jeremyhahn/go-xkms/pkg/xkms"
 )
 
 func TestParseHashAlgorithm(t *testing.T) {
@@ -34,6 +36,7 @@ func TestParseHashAlgorithm(t *testing.T) {
 		name     string
 		hashStr  string
 		expected crypto.Hash
+		wantErr  bool
 	}{
 		{
 			name:     "Empty string defaults to SHA256",
@@ -56,15 +59,48 @@ func TestParseHashAlgorithm(t *testing.T) {
 			expected: crypto.SHA512,
 		},
 		{
-			name:     "Unknown defaults to SHA256",
-			hashStr:  "unknown",
-			expected: crypto.SHA256,
+			name:     "SHA3-256",
+			hashStr:  "SHA3-256",
+			expected: crypto.SHA3_256,
+		},
+		// A name the caller did supply that does not resolve is an error, not
+		// a SHA-256 substitution: the caller cannot tell a downgrade from
+		// having got what it asked for.
+		{
+			name:    "Unknown is an error",
+			hashStr: "unknown",
+			wantErr: true,
+		},
+		{
+			name:    "Weak hash is refused",
+			hashStr: "MD5",
+			wantErr: true,
+		},
+		{
+			name:    "SHA-1 is refused",
+			hashStr: "SHA-1",
+			wantErr: true,
 		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			result := parseHashAlgorithm(tt.hashStr)
+			result, err := parseHashAlgorithm(tt.hashStr)
+			if tt.wantErr {
+				if err == nil {
+					t.Fatalf("Expected an error for %q, got hash %v", tt.hashStr, result)
+				}
+				if !errors.Is(err, xkms.ErrInvalidHashFunction) {
+					t.Errorf("Expected ErrInvalidHashFunction, got %v", err)
+				}
+				if result != 0 {
+					t.Errorf("Expected the zero hash on refusal, got %v", result)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("Unexpected error: %v", err)
+			}
 			if result != tt.expected {
 				t.Errorf("Expected %v, got %v", tt.expected, result)
 			}

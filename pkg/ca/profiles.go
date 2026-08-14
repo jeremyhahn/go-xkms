@@ -68,6 +68,11 @@ func (r *defaultProfileRegistry) registerBuiltinProfiles() {
 		NewOCSPResponderProfile(),
 		NewTimestampingProfile(),
 		NewCAProfile(),
+		NewACMELeafProfile(),
+		NewTCGEndorsementKeyProfile(),
+		NewTCGAttestationKeyProfile(),
+		NewTCGInitialAttestationKeyProfile(),
+		NewTCGDeviceIdentityProfile(),
 	}
 
 	for _, profile := range profiles {
@@ -150,6 +155,18 @@ type baseProfile struct {
 	keyUsage        x509.KeyUsage
 	extKeyUsage     []x509.ExtKeyUsage
 	defaultValidity int
+
+	// basicConstraintsValid controls whether the issued certificate carries a
+	// Basic Constraints extension at all. End-entity profiles for TLS assert
+	// an explicit non-CA constraint; the TCG credential profiles and the ACME
+	// leaf profile deliberately omit the extension, which is a policy decision
+	// and therefore lives on the profile rather than at a call site.
+	basicConstraintsValid bool
+
+	// policies are the certificate policy OIDs the profile stamps onto every
+	// certificate it issues, such as the TCG verified-TPM-residency and
+	// verified-TPM-fixed policies.
+	policies []x509.OID
 }
 
 // Name returns the profile name.
@@ -176,6 +193,11 @@ func (p *baseProfile) DefaultValidity() int {
 //
 // This method modifies the certificate template in place, setting
 // key usage, extended key usage, and other profile-specific attributes.
+//
+// The profile is the last word on the fields it owns: key usage, extended key
+// usage, basic constraints and certificate policies are overwritten rather
+// than merged, so that every issuance path funnelling through Issuer.Issue
+// produces the same policy for the same profile.
 func (p *baseProfile) Apply(template *x509.Certificate, request *CertificateRequest) error {
 	if template == nil {
 		return ErrInvalidProfile
@@ -183,6 +205,8 @@ func (p *baseProfile) Apply(template *x509.Certificate, request *CertificateRequ
 
 	template.KeyUsage = p.keyUsage
 	template.ExtKeyUsage = p.extKeyUsage
+	template.BasicConstraintsValid = p.basicConstraintsValid
+	template.Policies = p.policies
 
 	return nil
 }
@@ -209,10 +233,11 @@ type serverProfile struct {
 func NewServerProfile() ProfileProvider {
 	return &serverProfile{
 		baseProfile: baseProfile{
-			name:            "server",
-			keyUsage:        x509.KeyUsageDigitalSignature | x509.KeyUsageKeyEncipherment,
-			extKeyUsage:     []x509.ExtKeyUsage{x509.ExtKeyUsageServerAuth},
-			defaultValidity: 365,
+			name:                  "server",
+			keyUsage:              x509.KeyUsageDigitalSignature | x509.KeyUsageKeyEncipherment,
+			extKeyUsage:           []x509.ExtKeyUsage{x509.ExtKeyUsageServerAuth},
+			defaultValidity:       365,
+			basicConstraintsValid: true,
 		},
 	}
 }
@@ -235,10 +260,11 @@ type clientProfile struct {
 func NewClientProfile() ProfileProvider {
 	return &clientProfile{
 		baseProfile: baseProfile{
-			name:            "client",
-			keyUsage:        x509.KeyUsageDigitalSignature | x509.KeyUsageKeyEncipherment,
-			extKeyUsage:     []x509.ExtKeyUsage{x509.ExtKeyUsageClientAuth},
-			defaultValidity: 365,
+			name:                  "client",
+			keyUsage:              x509.KeyUsageDigitalSignature | x509.KeyUsageKeyEncipherment,
+			extKeyUsage:           []x509.ExtKeyUsage{x509.ExtKeyUsageClientAuth},
+			defaultValidity:       365,
+			basicConstraintsValid: true,
 		},
 	}
 }
@@ -260,10 +286,11 @@ type codeSigningProfile struct {
 func NewCodeSigningProfile() ProfileProvider {
 	return &codeSigningProfile{
 		baseProfile: baseProfile{
-			name:            "code-signing",
-			keyUsage:        x509.KeyUsageDigitalSignature,
-			extKeyUsage:     []x509.ExtKeyUsage{x509.ExtKeyUsageCodeSigning},
-			defaultValidity: 365,
+			name:                  "code-signing",
+			keyUsage:              x509.KeyUsageDigitalSignature,
+			extKeyUsage:           []x509.ExtKeyUsage{x509.ExtKeyUsageCodeSigning},
+			defaultValidity:       365,
+			basicConstraintsValid: true,
 		},
 	}
 }
@@ -287,10 +314,11 @@ type emailProfile struct {
 func NewEmailProfile() ProfileProvider {
 	return &emailProfile{
 		baseProfile: baseProfile{
-			name:            "email",
-			keyUsage:        x509.KeyUsageDigitalSignature | x509.KeyUsageContentCommitment | x509.KeyUsageKeyEncipherment,
-			extKeyUsage:     []x509.ExtKeyUsage{x509.ExtKeyUsageEmailProtection},
-			defaultValidity: 365,
+			name:                  "email",
+			keyUsage:              x509.KeyUsageDigitalSignature | x509.KeyUsageContentCommitment | x509.KeyUsageKeyEncipherment,
+			extKeyUsage:           []x509.ExtKeyUsage{x509.ExtKeyUsageEmailProtection},
+			defaultValidity:       365,
+			basicConstraintsValid: true,
 		},
 	}
 }
@@ -312,10 +340,11 @@ type ocspResponderProfile struct {
 func NewOCSPResponderProfile() ProfileProvider {
 	return &ocspResponderProfile{
 		baseProfile: baseProfile{
-			name:            "ocsp-responder",
-			keyUsage:        x509.KeyUsageDigitalSignature,
-			extKeyUsage:     []x509.ExtKeyUsage{x509.ExtKeyUsageOCSPSigning},
-			defaultValidity: 90,
+			name:                  "ocsp-responder",
+			keyUsage:              x509.KeyUsageDigitalSignature,
+			extKeyUsage:           []x509.ExtKeyUsage{x509.ExtKeyUsageOCSPSigning},
+			defaultValidity:       90,
+			basicConstraintsValid: true,
 		},
 	}
 }
@@ -338,13 +367,19 @@ type timestampingProfile struct {
 func NewTimestampingProfile() ProfileProvider {
 	return &timestampingProfile{
 		baseProfile: baseProfile{
-			name:            "timestamping",
-			keyUsage:        x509.KeyUsageDigitalSignature | x509.KeyUsageContentCommitment,
-			extKeyUsage:     []x509.ExtKeyUsage{x509.ExtKeyUsageTimeStamping},
-			defaultValidity: 365,
+			name:                  "timestamping",
+			keyUsage:              x509.KeyUsageDigitalSignature | x509.KeyUsageContentCommitment,
+			extKeyUsage:           []x509.ExtKeyUsage{x509.ExtKeyUsageTimeStamping},
+			defaultValidity:       365,
+			basicConstraintsValid: true,
 		},
 	}
 }
+
+// ProfileNameCA is the registry name of the CA profile. Root, intermediate and
+// per-tenant CA certificates are all issued with it, so a change to the CA
+// profile reaches every CA certificate this project creates.
+const ProfileNameCA = "ca"
 
 // caProfile provides configuration for subordinate CA certificates.
 type caProfile struct {
@@ -364,7 +399,7 @@ type caProfile struct {
 func NewCAProfile() ProfileProvider {
 	return &caProfile{
 		baseProfile: baseProfile{
-			name:            "ca",
+			name:            ProfileNameCA,
 			keyUsage:        x509.KeyUsageCertSign | x509.KeyUsageCRLSign | x509.KeyUsageDigitalSignature,
 			extKeyUsage:     nil,
 			defaultValidity: 1825, // 5 years
@@ -381,6 +416,7 @@ func (p *caProfile) Apply(template *x509.Certificate, request *CertificateReques
 
 	template.KeyUsage = p.keyUsage
 	template.ExtKeyUsage = p.extKeyUsage
+	template.Policies = p.policies
 	template.IsCA = true
 	template.BasicConstraintsValid = true
 
@@ -394,24 +430,186 @@ func (p *caProfile) Apply(template *x509.Certificate, request *CertificateReques
 }
 
 // =============================================================================
+// End-Entity Profiles
+// =============================================================================
+
+// ProfileNameACMELeaf is the registry name of the ACME end-entity profile.
+const ProfileNameACMELeaf = "acme-leaf"
+
+// NewACMELeafProfile creates the profile for end-entity certificates issued by
+// the ACME issuance pipeline.
+//
+// Key usage:
+//   - DigitalSignature
+//   - KeyEncipherment
+//
+// Extended key usage:
+//   - ServerAuth
+//   - ClientAuth
+//
+// Basic constraints are deliberately omitted: an ACME subscriber certificate
+// derives its non-CA status from the issuing CA's path length constraint, and
+// the CA/Browser Forum baseline requirements do not require the extension on
+// subscriber certificates.
+//
+// Default validity: 90 days, the ACME convention.
+func NewACMELeafProfile() ProfileProvider {
+	return &baseProfile{
+		name:            ProfileNameACMELeaf,
+		keyUsage:        x509.KeyUsageDigitalSignature | x509.KeyUsageKeyEncipherment,
+		extKeyUsage:     []x509.ExtKeyUsage{x509.ExtKeyUsageServerAuth, x509.ExtKeyUsageClientAuth},
+		defaultValidity: 90,
+	}
+}
+
+// newTLSLeafProfile creates the profile applied to a CSR-signing operation
+// whose caller did not name one.
+//
+// keyUsage and extKeyUsage carry the caller's SignOptions overrides, or the
+// CA's TLS defaults when the caller supplied none. Expressing even the
+// "no profile requested" case as a profile is what lets Issuer.Issue require a
+// profile unconditionally, so no issuance path can bypass Profile.Apply.
+func newTLSLeafProfile(keyUsage x509.KeyUsage, extKeyUsage []x509.ExtKeyUsage, defaultValidity int) ProfileProvider {
+	return &baseProfile{
+		name:                  "tls-leaf",
+		keyUsage:              keyUsage,
+		extKeyUsage:           extKeyUsage,
+		defaultValidity:       defaultValidity,
+		basicConstraintsValid: true,
+	}
+}
+
+// =============================================================================
+// TCG Credential Profiles
+// =============================================================================
+
+// Registry names of the TCG credential profiles. Each corresponds to one
+// certificate type in the TCG EK Credential Profile and TCG TPM 2.0 Keys for
+// Device Identity and Attestation specifications.
+const (
+	ProfileNameTCGEndorsementKey = "tcg-ek"
+	ProfileNameTCGAttestationKey = "tcg-ak"
+	ProfileNameTCGInitialAK      = "tcg-iak"
+	ProfileNameTCGDeviceIdentity = "tcg-idevid"
+)
+
+// tcgExtKeyUsage is the extended key usage shared by every TCG credential this
+// CA issues. The order is significant: it is encoded into the certificate and
+// changing it changes the certificate.
+func tcgExtKeyUsage() []x509.ExtKeyUsage {
+	return []x509.ExtKeyUsage{x509.ExtKeyUsageClientAuth, x509.ExtKeyUsageServerAuth}
+}
+
+// tcgAttestationPolicies are the TCG policy OIDs asserting that the certified
+// key was proven to reside in a TPM and to carry fixed (non-migratable)
+// attributes.
+func tcgAttestationPolicies() []x509.OID {
+	return []x509.OID{TCGVerifiedTPMResidencyPolicy, TCGVerifiedTPMFixedPolicy}
+}
+
+// tcgValidityDays is the validity a TCG credential is issued for. TCG device
+// credentials do not expire in the ordinary sense; the issuance paths encode
+// the "no well-defined expiration" date from RFC 5280 section 4.1.2.5 instead
+// of computing NotAfter from this value, which exists so the profile satisfies
+// ProfileProvider.
+const tcgValidityDays = 0
+
+// NewTCGEndorsementKeyProfile creates the profile for TPM endorsement key
+// certificates per the TCG EK Credential Profile.
+//
+// Key usage is KeyEncipherment: an endorsement key is an encryption key, not a
+// signing key.
+func NewTCGEndorsementKeyProfile() ProfileProvider {
+	return &baseProfile{
+		name:            ProfileNameTCGEndorsementKey,
+		keyUsage:        x509.KeyUsageKeyEncipherment,
+		extKeyUsage:     tcgExtKeyUsage(),
+		defaultValidity: tcgValidityDays,
+	}
+}
+
+// NewTCGAttestationKeyProfile creates the profile for TPM attestation key
+// certificates.
+//
+// Key usage is DigitalSignature: an attestation key signs quotes and
+// certification structures.
+func NewTCGAttestationKeyProfile() ProfileProvider {
+	return &baseProfile{
+		name:            ProfileNameTCGAttestationKey,
+		keyUsage:        x509.KeyUsageDigitalSignature,
+		extKeyUsage:     tcgExtKeyUsage(),
+		defaultValidity: tcgValidityDays,
+		policies:        tcgAttestationPolicies(),
+	}
+}
+
+// NewTCGInitialAttestationKeyProfile creates the profile for the initial
+// attestation key (IAK) certificate issued from a TCG-CSR-IDEVID.
+func NewTCGInitialAttestationKeyProfile() ProfileProvider {
+	return &baseProfile{
+		name:            ProfileNameTCGInitialAK,
+		keyUsage:        x509.KeyUsageDigitalSignature,
+		extKeyUsage:     tcgExtKeyUsage(),
+		defaultValidity: tcgValidityDays,
+		policies:        tcgAttestationPolicies(),
+	}
+}
+
+// NewTCGDeviceIdentityProfile creates the profile for the initial device
+// identity (IDevID) certificate issued from a TCG-CSR-IDEVID.
+//
+// Key usage adds KeyEncipherment to DigitalSignature because an IDevID is used
+// both to authenticate the device and to establish keys with it.
+func NewTCGDeviceIdentityProfile() ProfileProvider {
+	return &baseProfile{
+		name:            ProfileNameTCGDeviceIdentity,
+		keyUsage:        x509.KeyUsageDigitalSignature | x509.KeyUsageKeyEncipherment,
+		extKeyUsage:     tcgExtKeyUsage(),
+		defaultValidity: tcgValidityDays,
+		policies:        tcgAttestationPolicies(),
+	}
+}
+
+// =============================================================================
 // Custom Profile Builder
 // =============================================================================
 
 // ProfileBuilder provides a fluent interface for creating custom profiles.
 type ProfileBuilder struct {
-	name            string
-	keyUsage        x509.KeyUsage
-	extKeyUsage     []x509.ExtKeyUsage
-	defaultValidity int
-	isCA            bool
+	name                  string
+	keyUsage              x509.KeyUsage
+	extKeyUsage           []x509.ExtKeyUsage
+	defaultValidity       int
+	isCA                  bool
+	basicConstraintsValid bool
+	policies              []x509.OID
 }
 
 // NewProfileBuilder creates a new ProfileBuilder for creating custom profiles.
+//
+// Custom profiles assert basic constraints by default; call
+// WithBasicConstraints(false) for a profile whose certificates must omit the
+// extension entirely.
 func NewProfileBuilder(name string) *ProfileBuilder {
 	return &ProfileBuilder{
-		name:            name,
-		defaultValidity: 365, // Default to 1 year
+		name:                  name,
+		defaultValidity:       365, // Default to 1 year
+		basicConstraintsValid: true,
 	}
+}
+
+// WithBasicConstraints controls whether certificates issued with this profile
+// carry a Basic Constraints extension.
+func (b *ProfileBuilder) WithBasicConstraints(valid bool) *ProfileBuilder {
+	b.basicConstraintsValid = valid
+	return b
+}
+
+// WithPolicies sets the certificate policy OIDs stamped onto certificates
+// issued with this profile.
+func (b *ProfileBuilder) WithPolicies(policies ...x509.OID) *ProfileBuilder {
+	b.policies = policies
+	return b
 }
 
 // WithKeyUsage sets the key usage flags.
@@ -444,19 +642,23 @@ func (b *ProfileBuilder) Build() ProfileProvider {
 	if b.isCA {
 		return &customCAProfile{
 			baseProfile: baseProfile{
-				name:            b.name,
-				keyUsage:        b.keyUsage,
-				extKeyUsage:     b.extKeyUsage,
-				defaultValidity: b.defaultValidity,
+				name:                  b.name,
+				keyUsage:              b.keyUsage,
+				extKeyUsage:           b.extKeyUsage,
+				defaultValidity:       b.defaultValidity,
+				basicConstraintsValid: true,
+				policies:              b.policies,
 			},
 		}
 	}
 
 	return &baseProfile{
-		name:            b.name,
-		keyUsage:        b.keyUsage,
-		extKeyUsage:     b.extKeyUsage,
-		defaultValidity: b.defaultValidity,
+		name:                  b.name,
+		keyUsage:              b.keyUsage,
+		extKeyUsage:           b.extKeyUsage,
+		defaultValidity:       b.defaultValidity,
+		basicConstraintsValid: b.basicConstraintsValid,
+		policies:              b.policies,
 	}
 }
 
@@ -473,6 +675,7 @@ func (p *customCAProfile) Apply(template *x509.Certificate, request *Certificate
 
 	template.KeyUsage = p.keyUsage
 	template.ExtKeyUsage = p.extKeyUsage
+	template.Policies = p.policies
 	template.IsCA = true
 	template.BasicConstraintsValid = true
 

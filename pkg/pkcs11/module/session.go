@@ -31,6 +31,7 @@
 package module
 
 import (
+	"errors"
 	"sync"
 	"sync/atomic"
 )
@@ -200,6 +201,47 @@ type OperationState struct {
 	// CryptoOp stores the cryptographic operation object.
 	// This is an interface{} to avoid circular dependencies with crypto.go.
 	CryptoOp interface{}
+
+	// Result caches the output of a terminal operation such as C_Sign or
+	// C_Encrypt. PKCS#11 v3.2 §5.2 lets an application call these functions
+	// twice — once with a NULL buffer to learn the required length, then again
+	// to collect the bytes — and neither the length query nor a
+	// CKR_BUFFER_TOO_SMALL result may terminate the operation. Caching the
+	// output makes the second call return the same bytes without running the
+	// backend operation again, which matters for mechanisms whose every
+	// invocation consumes a nonce or a counter.
+	Result []byte
+
+	// ResultReady reports whether Result holds the output of a completed
+	// terminal operation, distinguishing a cached empty result from no result.
+	ResultReady bool
+
+	// MultiPart reports whether the operation has consumed at least one part
+	// through its *Update function. PKCS#11 v3.2 requires that the single-part
+	// function (C_Sign, C_Verify, C_Encrypt, C_Decrypt, C_Digest,
+	// C_VerifySignature) follow its *Init with no intervening *Update, because
+	// it cannot be used to terminate a multiple-part operation. Without this
+	// flag the single-part call would silently discard everything buffered so
+	// far and operate on its own argument alone, returning a well-formed but
+	// wrong result.
+	//
+	// Data cannot serve this purpose: it holds AEAD associated data, which the
+	// message-based functions set without starting a multiple-part operation.
+	MultiPart bool
+
+	// AuthRevoked reports that C_Logout has revoked the authentication this
+	// operation was initialized under. PKCS#11 v3.2 §5.6.10 says logging out
+	// destroys the application's private session objects and invalidates its
+	// handles to private objects, so an operation bound to a private key
+	// cannot be completed afterwards.
+	//
+	// The reason has to be recorded at the moment of the logout, because that
+	// is the only moment it is knowable: by the time the next C_Sign or
+	// C_Decrypt looks the key up, an unresolvable handle is indistinguishable
+	// from one the application destroyed itself, and the two call for
+	// different answers -- CKR_USER_NOT_LOGGED_IN for this one, the
+	// undiagnosable CKR_FUNCTION_FAILED for the other.
+	AuthRevoked bool
 }
 
 // Session represents a PKCS#11 session.
@@ -228,15 +270,28 @@ type Session struct {
 	// This allows multiple concurrent operations (e.g., digest + encrypt for
 	// dual-operation functions like DigestEncryptUpdate).
 	operations map[OperationType]*OperationState
+
+	// contextAuth records, per operation category, the key for which the
+	// application has re-authenticated with C_Login(CKU_CONTEXT_SPECIFIC). An
+	// entry authorizes exactly one use of that key and is consumed when the use
+	// occurs.
+	//
+	// The key is half of the entry because PKCS#11 v3.2 §4.10 authenticates
+	// "the active key": re-authentication follows an operation that was
+	// initiated with a particular key, and it is that key it puts "in an
+	// authenticated state". Recording only the category let a grant obtained
+	// while one key's operation was active be spent on a different key.
+	contextAuth map[OperationType]ObjectHandle
 }
 
 // NewSession creates a new session with the given parameters.
 func NewSession(handle SessionHandle, slotID uint64, flags SessionFlag) *Session {
 	s := &Session{
-		Handle:     handle,
-		SlotID:     slotID,
-		flags:      flags,
-		operations: make(map[OperationType]*OperationState),
+		Handle:      handle,
+		SlotID:      slotID,
+		flags:       flags,
+		operations:  make(map[OperationType]*OperationState),
+		contextAuth: make(map[OperationType]ObjectHandle),
 	}
 
 	// Initialize to appropriate public session state based on flags
@@ -344,6 +399,10 @@ func (s *Session) copyOperationState(op *OperationState) OperationState {
 		state.FindResults = make([]ObjectHandle, len(op.FindResults))
 		copy(state.FindResults, op.FindResults)
 	}
+	if op.Result != nil {
+		state.Result = make([]byte, len(op.Result))
+		copy(state.Result, op.Result)
+	}
 	return state
 }
 
@@ -437,18 +496,115 @@ func (s *Session) GetActiveOperationType() OperationType {
 	return OperationNone
 }
 
-// ClearOperation resets all operation states.
+// ClearOperation resets all operation states. It is only correct where every
+// operation on the session must end at once, such as C_CloseSession or
+// C_SessionCancel with all categories selected. Terminating a single operation
+// must use ClearOperationType, otherwise a concurrently active operation of a
+// different category — the other half of a dual-function flow — is destroyed
+// along with it.
 func (s *Session) ClearOperation() {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	for _, op := range s.operations {
+		zeroizeOperation(op)
+	}
 	s.operations = make(map[OperationType]*OperationState)
+	s.contextAuth = make(map[OperationType]ObjectHandle)
 }
 
-// ClearOperationType clears a specific operation type from the session.
+// GrantContextAuthentication records that the application re-authenticated with
+// C_Login(CKU_CONTEXT_SPECIFIC) for one use of keyHandle in the given operation
+// category.
+func (s *Session) GrantContextAuthentication(opType OperationType, keyHandle ObjectHandle) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.contextAuth[opType] = keyHandle
+}
+
+// ConsumeContextAuthentication reports whether the application re-authenticated
+// for a use of keyHandle in the given operation category, consuming the
+// authorization so it covers a single use.
+//
+// A grant made for one key does not answer for another. PKCS#11 v3.2 §4.10 puts
+// "the active key" into an authenticated state, so an authorization the
+// application obtained while an operation on some other key was active is not
+// the authorization this key's CKA_ALWAYS_AUTHENTICATE asks for.
+func (s *Session) ConsumeContextAuthentication(opType OperationType, keyHandle ObjectHandle) bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	granted, ok := s.contextAuth[opType]
+	if !ok || granted != keyHandle {
+		return false
+	}
+	delete(s.contextAuth, opType)
+	return true
+}
+
+// ActiveOperationKey returns the key handle of the active operation of the given
+// type, reporting false when no operation of that type is active.
+func (s *Session) ActiveOperationKey(opType OperationType) (ObjectHandle, bool) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+
+	op, exists := s.operations[opType]
+	if !exists || op == nil {
+		return ObjectHandle(InvalidHandle), false
+	}
+	return op.KeyHandle, true
+}
+
+// ClearOperationType clears a specific operation type from the session, leaving
+// any concurrently active operation of another category untouched.
 func (s *Session) ClearOperationType(opType OperationType) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+
+	zeroizeOperation(s.operations[opType])
 	delete(s.operations, opType)
+
+	// A context-specific authorization is scoped to the operation that was
+	// active when it was granted, so it must not outlive that operation.
+	delete(s.contextAuth, opType)
+}
+
+// RevokeOperationAuthorization marks every active operation for which revoked
+// reports true as no longer authorized, so the next call that would continue it
+// refuses instead. C_Logout is the only caller: it has just withdrawn the
+// authentication the session held, and PKCS#11 v3.2 §5.6.10 forbids the
+// operations that depended on it from completing.
+//
+// The predicate is evaluated under the session lock against the live operation
+// state, so an operation cannot be started, finished or re-bound midway through
+// the decision. It must not call back into this session.
+func (s *Session) RevokeOperationAuthorization(revoked func(op *OperationState) bool) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	for _, op := range s.operations {
+		if op == nil || op.AuthRevoked {
+			continue
+		}
+		if revoked(op) {
+			op.AuthRevoked = true
+		}
+	}
+}
+
+// zeroizeOperation overwrites the cached output an operation holds before it is
+// discarded. Result caches the output of a terminal call — for a decryption
+// that is recovered plaintext — so it must not be left for the garbage
+// collector to release at some arbitrary later point. Only Result is wiped:
+// cacheResult stores a private copy, whereas Data may alias buffers the caller
+// still owns.
+func zeroizeOperation(op *OperationState) {
+	if op == nil {
+		return
+	}
+	for i := range op.Result {
+		op.Result[i] = 0
+	}
+	op.Result = nil
+	op.ResultReady = false
 }
 
 // WithOperation provides thread-safe in-place mutation of a live operation.
@@ -544,8 +700,33 @@ type SessionManager struct {
 	// soPIN is the hashed SO PIN (for validation).
 	soPIN []byte
 
-	// pinValidator is an optional function to validate PINs.
-	pinValidator func(userType UserType, pin []byte) bool
+	// failedUserPIN and failedSOPIN count consecutive failed authentication
+	// attempts. Without a lockout an attacker with session access can brute
+	// force a short PIN online at full speed. Counters are atomic so a failed
+	// attempt can be recorded from a read-locked validation path.
+	failedUserPIN atomic.Uint32
+	failedSOPIN   atomic.Uint32
+
+	// incrementAttempt and resetAttempt, when set, reconcile a failed-attempt
+	// counter with durable storage so the lockout reaches the token before the
+	// next call can be made. A lockout a restart clears is not a lockout: the
+	// atomics above are an optimistic in-memory cache, but the authoritative
+	// counter lives in the store.
+	//
+	// incrementAttempt atomically bumps the durable counter and returns
+	// (authoritative value, persisted). persisted is false when no durable
+	// backend is configured, so the caller advances its own atomic instead — and
+	// so that several remote-mode clients sharing one token accumulate failures
+	// against one true counter rather than each losing the others' increments.
+	// resetAttempt clears the durable counter after a success or PIN change.
+	//
+	// A shared token's local atomic can trail the durable counter between a
+	// concurrent client's increment and this client's next reconcile, so the
+	// cheap pre-check in preparePINVerificationLocked may admit one extra
+	// derivation per lagging client; the increment on that attempt still reads
+	// the durable value and locks, so the budget is never actually exceeded.
+	incrementAttempt func(userType UserType) (uint32, bool)
+	resetAttempt     func(userType UserType)
 }
 
 // Login state constants for the session manager.
@@ -557,32 +738,65 @@ const (
 
 // NewSessionManager creates a new session manager for a slot.
 func NewSessionManager(slotID uint64, maxSessions uint32) *SessionManager {
+	return NewSessionManagerWithTable(slotID, maxSessions, NewHandleTable[*Session]())
+}
+
+// NewSessionManagerWithTable creates a session manager for a slot that draws its
+// handles from a table shared with every other slot of the same module.
+//
+// CK_SESSION_HANDLE is ONE flat namespace across the library (v3.2 §3.3), so a
+// manager with a private counter hands out handle 1 for its slot while another
+// manager hands out handle 1 for its own. Module.findSession and
+// Module.CloseSession both resolve a handle by ranging over the managers and
+// taking the first hit, and Go randomizes map iteration -- so with two slots,
+// C_CloseSession(1) would close whichever the range reached first, and
+// C_Login(1) would authenticate against an arbitrary token.
+//
+// SlotManager provisions only slot 0 today, which is the sole reason this has
+// never been observable. Sharing the table removes the ambiguity structurally
+// rather than relying on that staying true.
+func NewSessionManagerWithTable(slotID uint64, maxSessions uint32, sessions *HandleTable[*Session]) *SessionManager {
 	return &SessionManager{
-		sessions:    NewHandleTable[*Session](),
+		sessions:    sessions,
 		slotID:      slotID,
 		maxSessions: maxSessions,
 	}
 }
 
-// SetPINValidator sets the PIN validation function.
-func (m *SessionManager) SetPINValidator(validator func(userType UserType, pin []byte) bool) {
-	m.mu.Lock()
-	defer m.mu.Unlock()
-	m.pinValidator = validator
+// ownsSession reports whether a session in the shared table belongs to this
+// manager's slot. Every walker filters on it: the table now holds every slot's
+// sessions, so an unfiltered range would reach another token's.
+func (m *SessionManager) ownsSession(s *Session) bool {
+	return s != nil && s.SlotID == m.slotID
 }
 
-// SetUserPIN sets the user PIN (should be hashed).
+// SetUserPIN sets the user PIN verifier (already hashed).
+//
+// An empty verifier is stored as nil so that "no PIN has been established"
+// stays distinguishable from "a PIN that nothing matches". make([]byte, 0) is
+// non-nil, and storing that made C_InitToken's reset of the user PIN look like
+// a provisioned token whose every login failed: three attempts then locked it,
+// where the answer should have been CKR_USER_PIN_NOT_INITIALIZED.
 func (m *SessionManager) SetUserPIN(pin []byte) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	if len(pin) == 0 {
+		m.userPIN = nil
+		return
+	}
 	m.userPIN = make([]byte, len(pin))
 	copy(m.userPIN, pin)
 }
 
-// SetSOPIN sets the SO PIN (should be hashed).
+// SetSOPIN sets the SO PIN verifier (already hashed). An empty verifier is
+// stored as nil, for the reason SetUserPIN gives.
 func (m *SessionManager) SetSOPIN(pin []byte) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	if len(pin) == 0 {
+		m.soPIN = nil
+		return
+	}
 	m.soPIN = make([]byte, len(pin))
 	copy(m.soPIN, pin)
 }
@@ -593,6 +807,16 @@ func (m *SessionManager) OpenSession(flags SessionFlag) (SessionHandle, error) {
 	// CKF_SERIAL_SESSION must always be set
 	if flags&CKF_SERIAL_SESSION == 0 {
 		return SessionHandle(InvalidHandle), NewPKCS11Error(CKR_SESSION_PARALLEL_NOT_SUPPORTED)
+	}
+
+	// An asynchronous session must be refused rather than downgraded. PKCS#11
+	// v3.2 §5.6.1 says a token that does not support asynchronous operations
+	// should return CKR_SESSION_ASYNC_NOT_SUPPORTED, and this token does not
+	// advertise CKF_ASYNC_SESSION_SUPPORTED. Handing back a synchronous session
+	// under CKR_OK would leave the application believing it may collect results
+	// with C_AsyncGetID, so the mismatch would surface far from its cause.
+	if flags&SessionFlag(CKF_ASYNC_SESSION) != 0 {
+		return SessionHandle(InvalidHandle), NewPKCS11Error(CKR_SESSION_ASYNC_NOT_SUPPORTED)
 	}
 
 	// Check if SO is logged in and this is a RO session request
@@ -664,10 +888,25 @@ func (m *SessionManager) updateSessionLoginState(session *Session) {
 // CloseSession closes a session.
 // Implements C_CloseSession behavior per PKCS#11 specification.
 func (m *SessionManager) CloseSession(handle SessionHandle) error {
+	// Ownership is checked BEFORE the release, or this manager would close a
+	// session belonging to another slot and then report it could not find it.
+	if existing, ok := m.sessions.Lookup(uint64(handle)); !ok || !m.ownsSession(existing) {
+		return NewPKCS11Error(CKR_SESSION_HANDLE_INVALID)
+	}
+
 	session, ok := m.sessions.Release(uint64(handle))
 	if !ok {
 		return NewPKCS11Error(CKR_SESSION_HANDLE_INVALID)
 	}
+
+	// Closing a session ends every operation on it, so the outputs those
+	// operations cached are wiped here rather than left for the collector.
+	// OperationState.Result holds the result of a terminal call -- for
+	// C_Decrypt, recovered plaintext -- which the two-call convention requires
+	// the module to keep between the length query and the copying call. Every
+	// other termination path zeroizes it; this one must too, or a short-lived
+	// process leaves it readable in a core dump.
+	session.ClearOperation()
 
 	// Update session counts
 	if session.IsReadWrite() {
@@ -689,7 +928,25 @@ func (m *SessionManager) CloseAllSessions() {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
-	m.sessions.Clear()
+	// Only this slot's sessions. The table is shared across every slot of the
+	// module, so Clear() would close another token's sessions as a side effect
+	// of closing this one's.
+	//
+	// Handles are collected under the table's read lock and released afterwards,
+	// because Release takes the write lock and ForEach holds the read lock for
+	// the whole walk. Each session's cached operation output is wiped first, for
+	// the reason CloseSession gives.
+	var owned []uint64
+	m.sessions.ForEach(func(handle uint64, session *Session) bool {
+		if m.ownsSession(session) {
+			session.ClearOperation()
+			owned = append(owned, handle)
+		}
+		return true
+	})
+	for _, handle := range owned {
+		m.sessions.Release(handle)
+	}
 	m.roSessionCount.Store(0)
 	m.rwSessionCount.Store(0)
 
@@ -698,9 +955,36 @@ func (m *SessionManager) CloseAllSessions() {
 	m.loggedInUser.Store(0)
 }
 
+// SessionHandles returns the handles of every session currently open on this
+// slot.
+//
+// It exists so the module can destroy each session's objects before the manager
+// forgets the sessions that owned them: a session object lives no longer than
+// its session (v3.2 §4.1.3), and after CloseAllSessions nothing can name those
+// sessions to clean up after them.
+func (m *SessionManager) SessionHandles() []SessionHandle {
+	var handles []SessionHandle
+	m.sessions.ForEach(func(handle uint64, session *Session) bool {
+		if m.ownsSession(session) {
+			handles = append(handles, SessionHandle(handle))
+		}
+		return true
+	})
+	return handles
+}
+
 // checkAndClearLoginState clears login state if no sessions remain.
 func (m *SessionManager) checkAndClearLoginState() {
-	if m.sessions.Size() == 0 {
+	// Only this slot's sessions decide this slot's login state; the table also
+	// holds other slots'.
+	remaining := 0
+	m.sessions.ForEach(func(_ uint64, session *Session) bool {
+		if m.ownsSession(session) {
+			remaining++
+		}
+		return true
+	})
+	if remaining == 0 {
 		m.loginState.Store(loginStateNone)
 		m.loggedInUser.Store(0)
 	}
@@ -709,7 +993,12 @@ func (m *SessionManager) checkAndClearLoginState() {
 // GetSession retrieves a session by handle.
 func (m *SessionManager) GetSession(handle SessionHandle) (*Session, error) {
 	session, ok := m.sessions.Lookup(uint64(handle))
-	if !ok {
+	// A handle naming another slot's session is not this manager's to return.
+	// The table is shared across the module, so the lookup alone no longer
+	// establishes ownership -- and Module.findSession resolves a handle by
+	// asking each manager in turn, so a manager that answered for a foreign
+	// session would make the search order decide which token replied.
+	if !ok || !m.ownsSession(session) {
 		return nil, NewPKCS11Error(CKR_SESSION_HANDLE_INVALID)
 	}
 	return session, nil
@@ -727,14 +1016,51 @@ func (m *SessionManager) GetSessionInfo(handle SessionHandle) (SessionInfo, erro
 // Login logs a user into the token.
 // Implements C_Login behavior per PKCS#11 specification.
 func (m *SessionManager) Login(handle SessionHandle, userType UserType, pin []byte) error {
-	session, err := m.GetSession(handle)
-	if err != nil {
+	// The handle has to name a session even though nothing below reads the
+	// session itself; C_Login answers CKR_SESSION_HANDLE_INVALID for a handle
+	// that names none (v3.2 §5.6.8).
+	if _, err := m.GetSession(handle); err != nil {
 		return err
 	}
 
 	// Validate user type
 	if userType != CKU_SO && userType != CKU_USER && userType != CKU_CONTEXT_SPECIFIC {
 		return NewPKCS11Error(CKR_USER_TYPE_INVALID)
+	}
+
+	// The invariant checks below and the state they commit must be evaluated
+	// atomically. Reading the login and session counters before taking the lock
+	// would let a concurrent OpenSession and Login both pass their checks and
+	// produce an SO login coexisting with an open read-only session — exactly
+	// what CKR_SESSION_READ_ONLY_EXISTS forbids.
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	// Re-authentication for CKA_ALWAYS_AUTHENTICATE keys is expressly allowed
+	// while the normal user is already logged in (v3.2 §5.6.8); it validates the
+	// user PIN without altering the token's login state.
+	//
+	// Validating the PIN is all this layer does. The authorization a successful
+	// re-authentication produces is bound to the key of the operation it
+	// follows (v3.2 §4.10), and a session manager holds sessions, not objects:
+	// it cannot resolve an operation's key handle to the object whose
+	// CKA_ALWAYS_AUTHENTICATE the grant answers. Module.loginContextSpecific
+	// owns that decision and makes the grant, which is also what keeps C_Login
+	// and C_LoginUser answering alike.
+	if userType == CKU_CONTEXT_SPECIFIC {
+		if m.loginState.Load() != loginStateUser {
+			return NewPKCS11Error(CKR_USER_NOT_LOGGED_IN)
+		}
+		plan, decided := m.preparePINVerificationLocked(CKU_USER, pin)
+		if decided != nil {
+			return decided
+		}
+		// The lock is released only for the derivation and re-taken before
+		// returning, so the deferred Unlock above stays balanced on every path.
+		m.mu.Unlock()
+		err := m.finishPINVerification(plan, pin)
+		m.mu.Lock()
+		return err
 	}
 
 	// Check if already logged in
@@ -749,24 +1075,50 @@ func (m *SessionManager) Login(handle SessionHandle, userType UserType, pin []by
 		return NewPKCS11Error(CKR_USER_ANOTHER_ALREADY_LOGGED_IN)
 	}
 
-	// SO login requires RW session
-	if userType == CKU_SO && !session.IsReadWrite() {
-		return NewPKCS11Error(CKR_SESSION_READ_ONLY)
-	}
-
-	// SO login cannot proceed if RO sessions exist
+	// The Security Officer may not log in while any read-only session is open on
+	// the token. C_Login's return table (v3.2 §5.6.8) expresses this with
+	// CKR_SESSION_READ_ONLY_EXISTS and does not list CKR_SESSION_READ_ONLY at
+	// all, so that is the only code this refusal may carry.
+	//
+	// One check covers both shapes of the refusal. A read-only session used to
+	// be rejected separately for not being read-write, but a session cannot be
+	// read-only without having incremented roSessionCount, so this test already
+	// catches it — and the separate test answered a code outside the function's
+	// contract. SoftHSM 2.6 agrees: C_Login(CKU_SO) on a read-only session
+	// returns CKR_SESSION_READ_ONLY_EXISTS (0x000000B7).
 	if userType == CKU_SO && m.roSessionCount.Load() > 0 {
 		return NewPKCS11Error(CKR_SESSION_READ_ONLY_EXISTS)
 	}
 
-	// Validate PIN
-	if err := m.validatePIN(userType, pin); err != nil {
-		return err
+	// The verifier is snapshotted here and the derivation runs with the lock
+	// RELEASED; see preparePINVerificationLocked for why. The invariants checked
+	// above are re-checked after re-acquiring, because a concurrent Login or
+	// OpenSession can commit in the window.
+	plan, decided := m.preparePINVerificationLocked(userType, pin)
+	if decided != nil {
+		return decided
 	}
 
-	// Update login state
+	// Released only for the derivation, and re-taken before anything else is
+	// read or written, so the deferred Unlock stays balanced.
+	m.mu.Unlock()
+	verifyErr := m.finishPINVerification(plan, pin)
 	m.mu.Lock()
-	defer m.mu.Unlock()
+
+	if verifyErr != nil {
+		return verifyErr
+	}
+
+	// Re-check what the released lock allowed to change. Without this, two
+	// concurrent Logins could both pass their checks and both commit, and an
+	// OpenSession could open a read-only session while an SO login was mid-flight
+	// -- the exact state CKR_SESSION_READ_ONLY_EXISTS exists to prevent.
+	if m.loginState.Load() != loginStateNone {
+		return NewPKCS11Error(CKR_USER_ANOTHER_ALREADY_LOGGED_IN)
+	}
+	if userType == CKU_SO && m.roSessionCount.Load() > 0 {
+		return NewPKCS11Error(CKR_SESSION_READ_ONLY_EXISTS)
+	}
 
 	if userType == CKU_SO {
 		m.loginState.Store(loginStateSO)
@@ -784,25 +1136,68 @@ func (m *SessionManager) Login(handle SessionHandle, userType UserType, pin []by
 	return nil
 }
 
-// validatePIN validates a PIN for the given user type.
-// The stored PIN is expected to be a SHA-256 hash.
-func (m *SessionManager) validatePIN(userType UserType, pin []byte) error {
-	// Check PIN length
-	if len(pin) == 0 {
-		return NewPKCS11Error(CKR_PIN_LEN_RANGE)
+// finishPINVerification runs the Argon2id derivation and records the outcome.
+// It must be called WITHOUT m.mu held: that is the entire point of the split.
+//
+// The attempt counters are atomics and saveAttempts writes through the storage
+// callback, neither of which needs the session lock.
+func (m *SessionManager) finishPINVerification(plan *pinVerificationPlan, pin []byte) error {
+	if !verifyPin(plan.verifier, string(pin)) {
+		return m.recordFailedAttempt(plan.userType, plan.attempts)
 	}
-
-	// Use custom validator if provided
-	if m.pinValidator != nil {
-		if !m.pinValidator(userType, pin) {
-			return NewPKCS11Error(CKR_PIN_INCORRECT)
-		}
-		return nil
+	if plan.attempts != nil {
+		plan.attempts.Store(0)
+		m.reconcileReset(plan.userType)
 	}
+	return nil
+}
 
-	// Default PIN validation using stored PINs
-	m.mu.RLock()
-	defer m.mu.RUnlock()
+// MaxPINAttempts is the number of consecutive failed authentication attempts
+// after which a PIN locks. PKCS#11 PINs are short, so an online guessing attack
+// must be bounded rather than merely slowed.
+const MaxPINAttempts = 3
+
+// contextAuthOperations lists the operation categories that can require
+// re-authentication for a key carrying CKA_ALWAYS_AUTHENTICATE.
+var contextAuthOperations = map[OperationType]bool{
+	OperationSign:    true,
+	OperationDecrypt: true,
+}
+
+// pinVerificationPlan carries what the expensive half of PIN validation needs,
+// snapshotted while the lock is held.
+type pinVerificationPlan struct {
+	// verifier is a COPY of the stored Argon2id verifier, so the derivation can
+	// run after the lock is released without racing a concurrent C_SetPIN.
+	verifier []byte
+
+	// attempts is the failed-attempt counter for this user type. It is an
+	// atomic, so it is safe to touch from either side of the lock.
+	attempts *atomic.Uint32
+
+	// userType names the counter attempts refers to, so the durable-storage
+	// reconcile (increment on failure, reset on success) can address the right
+	// per-token counter key.
+	userType UserType
+}
+
+// preparePINVerificationLocked does the cheap part of PIN validation and returns
+// what the expensive part needs. The caller must hold m.mu.
+//
+// A non-nil second return means the answer is already settled and no derivation
+// should run.
+//
+// The split exists because verifyPin is deliberately expensive: it queues on a
+// bounded admission gate and then runs a 64 MiB Argon2id derivation. Doing that
+// under the session write lock meant one caller's WRONG PIN stalled every
+// C_OpenSession, C_CloseSession and C_Login on the token for the duration --
+// and an attacker needs no valid PIN to trigger it, since a wrong guess costs
+// exactly the same derivation.
+func (m *SessionManager) preparePINVerificationLocked(userType UserType, pin []byte) (*pinVerificationPlan, error) {
+	attempts := m.attemptCounter(userType)
+	if attempts != nil && attempts.Load() >= MaxPINAttempts {
+		return nil, NewPKCS11Error(CKR_PIN_LOCKED)
+	}
 
 	var storedPINHash []byte
 	switch userType {
@@ -811,34 +1206,182 @@ func (m *SessionManager) validatePIN(userType UserType, pin []byte) error {
 	case CKU_USER:
 		storedPINHash = m.userPIN
 	default:
-		return NewPKCS11Error(CKR_USER_TYPE_INVALID)
+		return nil, NewPKCS11Error(CKR_USER_TYPE_INVALID)
 	}
 
-	// Check if PIN is initialized
-	if storedPINHash == nil {
-		return NewPKCS11Error(CKR_USER_PIN_NOT_INITIALIZED)
+	// Whether a PIN exists at all is decided before any attempt is counted. A
+	// token with no verifier cannot be authenticated to by any PIN, so charging
+	// the attempt would let three logins lock a PIN that was never established
+	// -- and C_InitPIN, the call meant to establish it, does not clear the
+	// counter. The answer is the one v3.2 §5.6.8 names for this state, which
+	// OpenSC branches on to prompt the SO.
+	//
+	// The test is on length rather than on nil so that a zero-length verifier
+	// reaching this point from any source is treated the same way.
+	if len(storedPINHash) == 0 {
+		return nil, NewPKCS11Error(CKR_USER_PIN_NOT_INITIALIZED)
 	}
 
-	// Hash the provided PIN and compare with stored hash
-	// Uses hashPin from token.go (same package)
-	pinHash := hashPin(string(pin))
-	if !comparePINs(pinHash, storedPINHash) {
+	// An empty PIN supplied against a token that does have a verifier is a
+	// genuine wrong guess, so it is counted as one. This is not the NULL pPin
+	// case: C_Login rejects that at the ABI boundary with CKR_ARGUMENTS_BAD,
+	// because v3.2 §5.6.8 gives NULL a meaning only for a token with a protected
+	// authentication path, which this token does not advertise.
+	if len(pin) == 0 {
+		return nil, m.recordFailedAttempt(userType, attempts)
+	}
+
+	// The verifier is copied out. It carries its own salt, so it cannot be
+	// checked by re-hashing and comparing bytes -- the derivation has to run,
+	// and it runs against this copy after the lock is released.
+	verifier := make([]byte, len(storedPINHash))
+	copy(verifier, storedPINHash)
+
+	return &pinVerificationPlan{verifier: verifier, attempts: attempts, userType: userType}, nil
+}
+
+// attemptCounter returns the failed-attempt counter for a user type, or nil for
+// a user type that has none.
+func (m *SessionManager) attemptCounter(userType UserType) *atomic.Uint32 {
+	switch userType {
+	case CKU_SO:
+		return &m.failedSOPIN
+	case CKU_USER:
+		return &m.failedUserPIN
+	default:
+		return nil
+	}
+}
+
+// recordFailedAttempt increments the failure counter and reports whether the
+// PIN has now locked. The increment is reconciled with durable storage before
+// returning, so the attempt is spent even if the process does not survive to
+// answer — and, for a shared remote token, so a concurrent client's failures are
+// counted against the same budget rather than lost.
+func (m *SessionManager) recordFailedAttempt(userType UserType, attempts *atomic.Uint32) error {
+	if attempts == nil {
 		return NewPKCS11Error(CKR_PIN_INCORRECT)
 	}
 
-	return nil
+	// The durable counter is authoritative: its post-increment value, not the
+	// local guess, decides the lockout. When there is no durable backend (or the
+	// reconcile fails) the local atomic is advanced instead, preserving the
+	// in-memory-only behavior a store-less module has always had.
+	var count uint32
+	if m.incrementAttempt != nil {
+		if authoritative, persisted := m.incrementAttempt(userType); persisted {
+			attempts.Store(authoritative)
+			count = authoritative
+		} else {
+			count = attempts.Add(1)
+		}
+	} else {
+		count = attempts.Add(1)
+	}
+
+	if count >= MaxPINAttempts {
+		return NewPKCS11Error(CKR_PIN_LOCKED)
+	}
+	return NewPKCS11Error(CKR_PIN_INCORRECT)
 }
 
-// comparePINs compares two PINs in constant time.
-func comparePINs(a, b []byte) bool {
-	if len(a) != len(b) {
-		return false
+// ResetPINAttempts clears the failed-attempt counter for a user type. It is
+// called when a PIN is set or reset by an authorized party.
+func (m *SessionManager) ResetPINAttempts(userType UserType) {
+	if attempts := m.attemptCounter(userType); attempts != nil {
+		attempts.Store(0)
+		m.reconcileReset(userType)
 	}
-	var result byte
-	for i := range a {
-		result |= a[i] ^ b[i]
+}
+
+// VerifyPINForChange checks an old PIN offered to C_SetPIN against the same
+// lockout accounting C_Login uses, and reports the CK_RV to return.
+//
+// It exists because proving the old PIN is an authentication, whatever function
+// it happens under. C_SetPIN verified it directly against the token, outside the
+// counter, which left an unbounded oracle: an attacker repeats
+// C_SetPIN(wrongOld, anything) forever and gets CKR_PIN_INCORRECT each time,
+// while three C_Login attempts would have locked the token. v3.2 §5.5.9 lists
+// CKR_PIN_LOCKED among C_SetPIN's own return values, so the spec expects this
+// path to be able to lock.
+//
+// A successful check clears the counter, exactly as a successful login does.
+//
+// The result is translated into C_SetPIN's own vocabulary. validatePINLocked
+// answers in C_Login's, and the two return tables differ:
+// CKR_USER_PIN_NOT_INITIALIZED is listed for C_Login (§5.6.8) and not for
+// C_SetPIN (§5.5.9), where an old PIN that matches a verifier which does not
+// exist is simply incorrect. That case is also not charged to the lockout --
+// there is nothing to guess, so an attempt reveals nothing and must not be able
+// to lock a token before its PIN has been provisioned.
+func (m *SessionManager) VerifyPINForChange(userType UserType, oldPin []byte) error {
+	// Snapshot the verifier under the lock, then run the Argon2id derivation
+	// with it released — the same split the login path uses. C_SetPIN is
+	// authenticated and infrequent, so this is not the DoS the login fix
+	// addressed, but there is no reason to hold the read lock across a
+	// deliberately slow KDF and stall every other reader of this token.
+	m.mu.RLock()
+	plan, decided := m.preparePINVerificationLocked(userType, oldPin)
+	m.mu.RUnlock()
+
+	err := decided
+	if err == nil {
+		err = m.finishPINVerification(plan, oldPin)
 	}
-	return result == 0
+
+	var pkcsErr *PKCS11Error
+	if errors.As(err, &pkcsErr) && pkcsErr.Code == CKR_USER_PIN_NOT_INITIALIZED {
+		return NewPKCS11Error(CKR_PIN_INCORRECT)
+	}
+	return err
+}
+
+// SetAttemptPersistence installs the callbacks that reconcile the failed-attempt
+// counters with durable storage: increment on a failure, reset on a success or
+// PIN change. increment returns the authoritative post-increment value and
+// whether it was persisted; reset best-effort clears the durable counter. Both
+// are addressed by user type so they reach the right per-token counter key.
+func (m *SessionManager) SetAttemptPersistence(increment func(userType UserType) (uint32, bool), reset func(userType UserType)) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.incrementAttempt = increment
+	m.resetAttempt = reset
+}
+
+// PINAttempts returns the current failed-attempt counters, for persistence.
+func (m *SessionManager) PINAttempts() (user, so uint32) {
+	return m.failedUserPIN.Load(), m.failedSOPIN.Load()
+}
+
+// RestorePINAttempts reinstates counters loaded from durable storage, so a
+// token that was locked before a restart is still locked after it.
+func (m *SessionManager) RestorePINAttempts(user, so uint32) {
+	m.failedUserPIN.Store(user)
+	m.failedSOPIN.Store(so)
+}
+
+// reconcileReset invokes the reset callback, if one is installed.
+//
+// The callback is read without taking m.mu: recordFailedAttempt and the success
+// path run on the authentication path, which already holds the lock for reading,
+// and taking it again here would deadlock. Installation happens once during
+// Initialize, before any session exists to authenticate.
+func (m *SessionManager) reconcileReset(userType UserType) {
+	if m.resetAttempt != nil {
+		m.resetAttempt(userType)
+	}
+}
+
+// PINAttemptStatus reports the failed-attempt count and lock state for a user
+// type, so the token can publish the CKF_*_PIN_COUNT_LOW, CKF_*_PIN_FINAL_TRY
+// and CKF_*_PIN_LOCKED flags in CK_TOKEN_INFO.
+func (m *SessionManager) PINAttemptStatus(userType UserType) (failed uint32, locked bool) {
+	attempts := m.attemptCounter(userType)
+	if attempts == nil {
+		return 0, false
+	}
+	failed = attempts.Load()
+	return failed, failed >= MaxPINAttempts
 }
 
 // Logout logs out the current user.
@@ -885,6 +1428,17 @@ func (m *SessionManager) GetLoggedInUserType() (UserType, bool) {
 }
 
 // SessionCount returns the total number of open sessions.
+// ForEachSession invokes fn for the handle of every open session managed by
+// this slot.
+func (m *SessionManager) ForEachSession(fn func(handle SessionHandle)) {
+	m.sessions.ForEach(func(handle uint64, session *Session) bool {
+		if m.ownsSession(session) {
+			fn(SessionHandle(handle))
+		}
+		return true
+	})
+}
+
 func (m *SessionManager) SessionCount() uint32 {
 	return m.roSessionCount.Load() + m.rwSessionCount.Load()
 }

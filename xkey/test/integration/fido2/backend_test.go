@@ -255,7 +255,6 @@ func initTPM2BackendAdapter() (keybackend.FIDO2KeyBackend, error) {
 	tpmConfig.UseSimulator = true
 	tpmConfig.EK.PlatformPolicy = false
 	tpmConfig.EK.HierarchyAuth = ""
-	tpmConfig.SSRK.PlatformPolicy = false
 	tpmConfig.SSRK.HierarchyAuth = ""
 	tpmConfig.IDevID = nil
 	tpmConfig.IAK = nil
@@ -278,7 +277,7 @@ func initTPM2BackendAdapter() (keybackend.FIDO2KeyBackend, error) {
 			tpm.Close()
 			return nil, &WrappedError{Msg: "failed to create EK", Err: ekCreateErr}
 		}
-		srkAttrs, srkErr := xkms.SRKAttributesFromConfig(*tpmConfig.SSRK, nil)
+		srkAttrs, srkErr := xkms.SRKAttributesFromConfig(*tpmConfig.SSRK)
 		if srkErr != nil {
 			tpm.Close()
 			return nil, &WrappedError{Msg: "failed to build SRK attributes", Err: srkErr}

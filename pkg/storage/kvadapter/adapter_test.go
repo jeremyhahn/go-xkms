@@ -402,10 +402,14 @@ func TestExists_BackendError(t *testing.T) {
 }
 
 // =============================================================================
-// Index No-Op Tests
+// Indexing-Not-Supported Tests
+//
+// The adapter must fail loudly on every index operation. A nil result with a
+// nil error would be indistinguishable from a genuine empty match, which is
+// the exact defect these tests pin shut.
 // =============================================================================
 
-func TestRegisterEntityIndexes_NoOp(t *testing.T) {
+func TestRegisterEntityIndexes_ReturnsIndexingNotSupported(t *testing.T) {
 	backend := storage.NewMemory()
 	adapter, err := New(backend)
 	require.NoError(t, err)
@@ -414,67 +418,84 @@ func TestRegisterEntityIndexes_NoOp(t *testing.T) {
 		{FieldName: "name", JSONFieldName: "name"},
 	}
 	err = adapter.RegisterEntityIndexes("users", indexes)
-	assert.NoError(t, err)
+	require.Error(t, err)
+	assert.ErrorIs(t, err, ErrIndexingNotSupported)
+
+	var typed *IndexingNotSupportedError
+	require.True(t, errors.As(err, &typed))
+	assert.Equal(t, "RegisterEntityIndexes", typed.Op)
+	assert.Equal(t, "users", typed.Name)
 }
 
-func TestRegisterEntityIndexes_EmptyIndexes(t *testing.T) {
+func TestRegisterEntityIndexes_EmptyIndexesStillReportsUnsupported(t *testing.T) {
 	backend := storage.NewMemory()
 	adapter, err := New(backend)
 	require.NoError(t, err)
 
 	err = adapter.RegisterEntityIndexes("users", nil)
-	assert.NoError(t, err)
+	assert.ErrorIs(t, err, ErrIndexingNotSupported)
 }
 
-func TestQueryIndex_ReturnsNil(t *testing.T) {
+func TestQueryIndex_ReturnsIndexingNotSupported(t *testing.T) {
 	backend := storage.NewMemory()
 	adapter, err := New(backend)
 	require.NoError(t, err)
 	ctx := context.Background()
 
 	results, queryErr := adapter.QueryIndex(ctx, "idx_name", []byte("alice"))
-	assert.NoError(t, queryErr)
 	assert.Nil(t, results)
+	require.Error(t, queryErr)
+	assert.ErrorIs(t, queryErr, ErrIndexingNotSupported)
+
+	var typed *IndexingNotSupportedError
+	require.True(t, errors.As(queryErr, &typed))
+	assert.Equal(t, "QueryIndex", typed.Op)
+	assert.Equal(t, "idx_name", typed.Name)
 }
 
-func TestQueryIndex_EmptyValue(t *testing.T) {
+func TestQueryIndex_EmptyValueStillReportsUnsupported(t *testing.T) {
 	backend := storage.NewMemory()
 	adapter, err := New(backend)
 	require.NoError(t, err)
 	ctx := context.Background()
 
 	results, queryErr := adapter.QueryIndex(ctx, "idx_name", nil)
-	assert.NoError(t, queryErr)
 	assert.Nil(t, results)
+	assert.ErrorIs(t, queryErr, ErrIndexingNotSupported)
 }
 
-func TestScanIndex_ReturnsNil(t *testing.T) {
+func TestScanIndex_ReturnsIndexingNotSupported(t *testing.T) {
 	backend := storage.NewMemory()
 	adapter, err := New(backend)
 	require.NoError(t, err)
 	ctx := context.Background()
 
 	results, scanErr := adapter.ScanIndex(ctx, "idx_name", []byte("a"), []byte("z"))
-	assert.NoError(t, scanErr)
 	assert.Nil(t, results)
+	require.Error(t, scanErr)
+	assert.ErrorIs(t, scanErr, ErrIndexingNotSupported)
+
+	var typed *IndexingNotSupportedError
+	require.True(t, errors.As(scanErr, &typed))
+	assert.Equal(t, "ScanIndex", typed.Op)
 }
 
-func TestScanIndex_NilBounds(t *testing.T) {
+func TestScanIndex_NilBoundsStillReportsUnsupported(t *testing.T) {
 	backend := storage.NewMemory()
 	adapter, err := New(backend)
 	require.NoError(t, err)
 	ctx := context.Background()
 
 	results, scanErr := adapter.ScanIndex(ctx, "idx_name", nil, nil)
-	assert.NoError(t, scanErr)
 	assert.Nil(t, results)
+	assert.ErrorIs(t, scanErr, ErrIndexingNotSupported)
 }
 
 // =============================================================================
-// Compound Index No-Op Tests
+// Compound Index Tests
 // =============================================================================
 
-func TestQueryCompoundIndex_ReturnsNil(t *testing.T) {
+func TestQueryCompoundIndex_ReturnsIndexingNotSupported(t *testing.T) {
 	backend := storage.NewMemory()
 	adapter, err := New(backend)
 	require.NoError(t, err)
@@ -482,22 +503,28 @@ func TestQueryCompoundIndex_ReturnsNil(t *testing.T) {
 
 	values := [][]byte{[]byte("tenant-1"), []byte("alice")}
 	results, queryErr := adapter.QueryCompoundIndex(ctx, "idx_tenant_name", values)
-	assert.NoError(t, queryErr)
 	assert.Nil(t, results)
+	require.Error(t, queryErr)
+	assert.ErrorIs(t, queryErr, ErrIndexingNotSupported)
+
+	var typed *IndexingNotSupportedError
+	require.True(t, errors.As(queryErr, &typed))
+	assert.Equal(t, "QueryCompoundIndex", typed.Op)
+	assert.Equal(t, "idx_tenant_name", typed.Name)
 }
 
-func TestQueryCompoundIndex_NilValues(t *testing.T) {
+func TestQueryCompoundIndex_NilValuesStillReportsUnsupported(t *testing.T) {
 	backend := storage.NewMemory()
 	adapter, err := New(backend)
 	require.NoError(t, err)
 	ctx := context.Background()
 
 	results, queryErr := adapter.QueryCompoundIndex(ctx, "idx_tenant_name", nil)
-	assert.NoError(t, queryErr)
 	assert.Nil(t, results)
+	assert.ErrorIs(t, queryErr, ErrIndexingNotSupported)
 }
 
-func TestScanCompoundIndex_ReturnsNil(t *testing.T) {
+func TestScanCompoundIndex_ReturnsIndexingNotSupported(t *testing.T) {
 	backend := storage.NewMemory()
 	adapter, err := New(backend)
 	require.NoError(t, err)
@@ -505,19 +532,72 @@ func TestScanCompoundIndex_ReturnsNil(t *testing.T) {
 
 	prefixValues := [][]byte{[]byte("tenant-1")}
 	results, scanErr := adapter.ScanCompoundIndex(ctx, "idx_compound", prefixValues, []byte("a"), []byte("z"))
-	assert.NoError(t, scanErr)
 	assert.Nil(t, results)
+	require.Error(t, scanErr)
+	assert.ErrorIs(t, scanErr, ErrIndexingNotSupported)
+
+	var typed *IndexingNotSupportedError
+	require.True(t, errors.As(scanErr, &typed))
+	assert.Equal(t, "ScanCompoundIndex", typed.Op)
 }
 
-func TestScanCompoundIndex_NilArgs(t *testing.T) {
+func TestScanCompoundIndex_NilArgsStillReportsUnsupported(t *testing.T) {
 	backend := storage.NewMemory()
 	adapter, err := New(backend)
 	require.NoError(t, err)
 	ctx := context.Background()
 
 	results, scanErr := adapter.ScanCompoundIndex(ctx, "idx_compound", nil, nil, nil)
-	assert.NoError(t, scanErr)
 	assert.Nil(t, results)
+	assert.ErrorIs(t, scanErr, ErrIndexingNotSupported)
+}
+
+// TestIndexOperations_DistinguishableFromEmptyMatch pins the contract that
+// motivated the typed error: a populated store returns real data for the
+// key-value operations, while every index operation reports the unsupported
+// sentinel instead of an empty result set.
+func TestIndexOperations_DistinguishableFromEmptyMatch(t *testing.T) {
+	backend := storage.NewMemory()
+	adapter, err := New(backend)
+	require.NoError(t, err)
+	ctx := context.Background()
+
+	require.NoError(t, adapter.Put(ctx, "users/1", []byte(`{"name":"alice"}`)))
+
+	// The unindexed path works and reports real contents.
+	keys, err := adapter.List(ctx, "users/")
+	require.NoError(t, err)
+	assert.Equal(t, []string{"users/1"}, keys)
+
+	// The index path never masquerades as an empty match.
+	for _, tc := range []struct {
+		name string
+		call func() error
+	}{
+		{"QueryIndex", func() error {
+			_, callErr := adapter.QueryIndex(ctx, "users.name", []byte("alice"))
+			return callErr
+		}},
+		{"ScanIndex", func() error {
+			_, callErr := adapter.ScanIndex(ctx, "users.name", []byte("a"), []byte("z"))
+			return callErr
+		}},
+		{"QueryCompoundIndex", func() error {
+			_, callErr := adapter.QueryCompoundIndex(ctx, "users.tenant_name", [][]byte{[]byte("t1")})
+			return callErr
+		}},
+		{"ScanCompoundIndex", func() error {
+			_, callErr := adapter.ScanCompoundIndex(ctx, "users.tenant_name", [][]byte{[]byte("t1")}, nil, nil)
+			return callErr
+		}},
+		{"RegisterEntityIndexes", func() error {
+			return adapter.RegisterEntityIndexes("users", []qrdbsdk.EntityIndex{{FieldName: "name"}})
+		}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			assert.ErrorIs(t, tc.call(), ErrIndexingNotSupported)
+		})
+	}
 }
 
 // =============================================================================
@@ -649,4 +729,12 @@ func TestKVStoreAdapter_ClosedBackend(t *testing.T) {
 
 	deleteErr := adapter.Delete(ctx, "key1")
 	assert.Error(t, deleteErr)
+}
+
+func TestIndexingNotSupportedError_Message(t *testing.T) {
+	err := &IndexingNotSupportedError{Op: "QueryIndex", Name: "users.name"}
+	assert.Equal(t,
+		"kvadapter: QueryIndex users.name: secondary indexing is not supported",
+		err.Error())
+	assert.Equal(t, ErrIndexingNotSupported, err.Unwrap())
 }

@@ -244,13 +244,15 @@ admin:
   enabled: true
   addr: ":9090"
   # API keys (use environment variables in production)
+  # Roles are go-qrdb's canonical system roles: so, admin, operator, user,
+  # auditor, custodian. There is no ACME-specific role vocabulary.
   api_keys:
-    - key: "${ADMIN_SUPER_ADMIN_KEY}"
-      role: super-admin
+    - key: "${ADMIN_SO_KEY}"
+      role: so
     - key: "${ADMIN_OPERATOR_KEY}"
       role: operator
-    - key: "${ADMIN_VIEWER_KEY}"
-      role: viewer
+    - key: "${ADMIN_AUDITOR_KEY}"
+      role: auditor
 
 # Logging
 logging:
@@ -283,9 +285,9 @@ Create `/etc/trusted-acme/env`:
 
 ```bash
 # Admin API keys (generate with: openssl rand -base64 32)
-ADMIN_SUPER_ADMIN_KEY="your-super-admin-key-here"
+ADMIN_SO_KEY="your-security-officer-key-here"
 ADMIN_OPERATOR_KEY="your-operator-key-here"
-ADMIN_VIEWER_KEY="your-viewer-key-here"
+ADMIN_AUDITOR_KEY="your-auditor-key-here"
 
 # Optional: TPM configuration
 TPM_DEVICE="/dev/tpmrm0"

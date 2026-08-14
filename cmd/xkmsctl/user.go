@@ -15,13 +15,17 @@ package main
 
 import (
 	"context"
+	"crypto/x509"
 	"encoding/base64"
 	"encoding/json"
+	"encoding/pem"
 	"fmt"
 	"os"
+	"path/filepath"
 	"time"
 
 	"github.com/go-webauthn/webauthn/protocol"
+	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
 	client "github.com/jeremyhahn/go-xkms/sdk/go"
 	"github.com/jeremyhahn/go-xkms/sdk/go/fido2"
 	"github.com/spf13/cobra"
@@ -855,6 +859,186 @@ Example:
 	},
 }
 
+// userUpdateCmd updates a user account (enable/disable state).
+var userUpdateCmd = &cobra.Command{
+	Use:   "update <username>",
+	Short: "Update a user account",
+	Long: `Update a user account's enabled state. Exactly one of --enable or
+--disable must be provided; this maps onto the server's user update
+endpoint (PUT /api/v1/users/{username}).
+
+Examples:
+  xkmsctl user update alice --enable
+  xkmsctl user update alice --disable`,
+	Args: cobra.ExactArgs(1),
+	Run: func(cmd *cobra.Command, args []string) {
+		username := args[0]
+		cfg := getConfig()
+		printer := NewPrinter(cfg.OutputFormat, os.Stdout)
+
+		enable, _ := cmd.Flags().GetBool("enable")
+		disable, _ := cmd.Flags().GetBool("disable")
+
+		if enable == disable {
+			handleError(ErrUserUpdateEnableFlagRequired)
+			return
+		}
+
+		userUpdate(cfg, printer, username, enable)
+	},
+}
+
+// userUpdate updates a user's enabled state via the SDK client.
+func userUpdate(cfg *Config, printer *Printer, username string, enable bool) {
+	cl, err := cfg.CreateClient()
+	if err != nil {
+		handleError(&WrappedError{Sentinel: ErrCreateClientFailed, Err: err})
+		return
+	}
+	defer func() { _ = cl.Close() }()
+
+	ctx := context.Background()
+	if err := cl.Connect(ctx); err != nil {
+		handleError(&WrappedError{Sentinel: ErrConnectFailed, Err: err})
+		return
+	}
+	printVerbose("Connected to xkms service")
+
+	if enable {
+		if err := cl.EnableUser(ctx, username); err != nil {
+			handleError(&WrappedError{Sentinel: ErrEnableUserFailed, Err: err})
+			return
+		}
+	} else {
+		if err := cl.DisableUser(ctx, username); err != nil {
+			handleError(&WrappedError{Sentinel: ErrDisableUserFailed, Err: err})
+			return
+		}
+	}
+
+	// Read back the user so the output reflects the server's state.
+	resp, err := cl.GetUser(ctx, username)
+	if err != nil {
+		handleError(&WrappedError{Sentinel: ErrGetUserFailed, Err: err})
+		return
+	}
+	u := resp.User
+
+	if cfg.OutputFormat == "json" {
+		if err := printer.PrintJSON(map[string]interface{}{
+			"success":  true,
+			"username": u.Username,
+			"enabled":  u.Enabled,
+			"role":     u.Role,
+		}); err != nil {
+			handleError(err)
+		}
+	} else {
+		fmt.Printf("User '%s' updated (enabled: %t).\n", u.Username, u.Enabled)
+	}
+}
+
+// userBindCertCmd binds an mTLS certificate to a user.
+var userBindCertCmd = &cobra.Command{
+	Use:   "bind-cert <username>",
+	Short: "Bind an mTLS certificate to a user",
+	Long: `Bind an mTLS client certificate to a user account so the user can
+authenticate with that certificate.
+
+The binding identifier is the canonical qrdb SPKI SHA-256 thumbprint.
+Provide either the certificate PEM file (--cert-file, from which the
+thumbprint and expiry are computed) or a precomputed thumbprint
+(--thumbprint, optionally with --not-after).
+
+Examples:
+  xkmsctl user bind-cert alice --cert-file alice.pem
+  xkmsctl user bind-cert alice --thumbprint 9f3a... --not-after 1767225600`,
+	Args: cobra.ExactArgs(1),
+	Run: func(cmd *cobra.Command, args []string) {
+		username := args[0]
+		cfg := getConfig()
+		printer := NewPrinter(cfg.OutputFormat, os.Stdout)
+
+		thumbprint, _ := cmd.Flags().GetString("thumbprint")
+		certFile, _ := cmd.Flags().GetString("cert-file")
+		notAfter, _ := cmd.Flags().GetInt64("not-after")
+
+		if (thumbprint == "") == (certFile == "") {
+			handleError(ErrUserCertSourceRequired)
+			return
+		}
+
+		if certFile != "" {
+			cert, err := loadPEMCertificate(certFile)
+			if err != nil {
+				handleError(err)
+				return
+			}
+			thumbprint = qrdbsdk.ComputeSPKIThumbprint(cert)
+			notAfter = cert.NotAfter.Unix()
+		}
+
+		userBindCert(cfg, printer, username, thumbprint, notAfter)
+	},
+}
+
+// loadPEMCertificate reads and parses the first certificate PEM block in
+// the given file.
+func loadPEMCertificate(path string) (*x509.Certificate, error) {
+	data, err := os.ReadFile(filepath.Clean(path))
+	if err != nil {
+		return nil, &CertFileReadError{Path: path, Err: err}
+	}
+	block, _ := pem.Decode(data)
+	if block == nil {
+		return nil, &PEMBlockDecodeError{Path: path}
+	}
+	cert, err := x509.ParseCertificate(block.Bytes)
+	if err != nil {
+		return nil, &CertFileParseError{Path: path, Err: err}
+	}
+	return cert, nil
+}
+
+// userBindCert binds a certificate thumbprint to a user via the SDK client.
+func userBindCert(cfg *Config, printer *Printer, username, thumbprint string, notAfterUnix int64) {
+	cl, err := cfg.CreateClient()
+	if err != nil {
+		handleError(&WrappedError{Sentinel: ErrCreateClientFailed, Err: err})
+		return
+	}
+	defer func() { _ = cl.Close() }()
+
+	ctx := context.Background()
+	if err := cl.Connect(ctx); err != nil {
+		handleError(&WrappedError{Sentinel: ErrConnectFailed, Err: err})
+		return
+	}
+	printVerbose("Connected to xkms service")
+
+	if err := cl.BindUserCert(ctx, username, thumbprint, notAfterUnix); err != nil {
+		handleError(&WrappedError{Sentinel: ErrBindCertFailed, Err: err})
+		return
+	}
+
+	if cfg.OutputFormat == "json" {
+		if err := printer.PrintJSON(map[string]interface{}{
+			"success":    true,
+			"username":   username,
+			"thumbprint": thumbprint,
+			"not_after":  notAfterUnix,
+		}); err != nil {
+			handleError(err)
+		}
+	} else {
+		fmt.Printf("Certificate bound to user '%s'.\n", username)
+		fmt.Printf("  Thumbprint: %s\n", thumbprint)
+		if notAfterUnix > 0 {
+			fmt.Printf("  Not After:  %s\n", time.Unix(notAfterUnix, 0).UTC().Format(time.RFC3339))
+		}
+	}
+}
+
 func init() {
 	// Add subcommands
 	userCmd.AddCommand(userRegisterCmd)
@@ -866,6 +1050,8 @@ func init() {
 	userCmd.AddCommand(userEnableCmd)
 	userCmd.AddCommand(userStatusCmd)
 	userCmd.AddCommand(userCredentialConfigCmd)
+	userCmd.AddCommand(userUpdateCmd)
+	userCmd.AddCommand(userBindCertCmd)
 
 	// Common flags
 	userCmd.PersistentFlags().String("storage-path", "", "path to xkms storage (default: $XKMS_STORAGE_PATH or /var/lib/xkms)")
@@ -884,4 +1070,13 @@ func init() {
 	userLoginCmd.Flags().Duration("timeout", 30*time.Second, "timeout for user presence")
 	userLoginCmd.Flags().String("device", "", "specific FIDO2 device path to use")
 	userLoginCmd.Flags().Bool("user-verification", false, "require user verification (PIN)")
+
+	// update flags
+	userUpdateCmd.Flags().Bool("enable", false, "enable the user account")
+	userUpdateCmd.Flags().Bool("disable", false, "disable the user account")
+
+	// bind-cert flags
+	userBindCertCmd.Flags().String("cert-file", "", "client certificate PEM file (thumbprint and expiry are computed)")
+	userBindCertCmd.Flags().String("thumbprint", "", "precomputed SPKI SHA-256 thumbprint (hex)")
+	userBindCertCmd.Flags().Int64("not-after", 0, "binding expiry as Unix seconds (with --thumbprint)")
 }

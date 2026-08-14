@@ -161,6 +161,40 @@ var (
 	// and cannot be performed via the bridge.
 	ErrTPM2DirectAccessRequired = errors.New("pairing: operation requires direct TPM2 access")
 
+	// ErrTPMNotConfigured is returned when a TCG/IDevID enrollment method is
+	// invoked on a host with no TPM wired into the bridge. It means the feature
+	// is unavailable here, which is distinct from the operation having failed.
+	ErrTPMNotConfigured = errors.New("pairing: no TPM is configured on this host")
+
+	// ErrTPMUnavailable is returned when this host appears to have a TPM but
+	// xkey cannot reach it. On Linux this is almost always a permissions
+	// problem on the device node. It is deliberately distinct from
+	// ErrTPMNotConfigured: the feature is supposed to work here and does not,
+	// which is something an operator can fix.
+	ErrTPMUnavailable = errors.New("pairing: this host has a TPM but xkey cannot reach it")
+
+	// ErrTPMOperationFailed wraps a failure reported by the TPM itself. The
+	// cause travels with it so the phone learns what actually went wrong.
+	ErrTPMOperationFailed = errors.New("pairing: TPM operation failed")
+
+	// ErrEKCertificateMissing is returned when the TPM has no manufacturer
+	// Endorsement Key certificate. Without it a CA cannot establish that the
+	// TPM is genuine, so enrollment cannot proceed.
+	ErrEKCertificateMissing = errors.New("pairing: the TPM has no endorsement key certificate")
+
+	// ErrTPMKeyNotProvisioned is returned when the IAK or IDevID key has not
+	// been created yet. Provision the TPM before enrolling.
+	ErrTPMKeyNotProvisioned = errors.New("pairing: TPM key is not provisioned")
+
+	// ErrInvalidCertificate is returned when a certificate supplied by the peer
+	// is not parseable X.509. A CA-issued certificate that will not parse must
+	// never reach the TPM.
+	ErrInvalidCertificate = errors.New("pairing: certificate is not valid X.509")
+
+	// ErrPCRBankUnavailable is returned when the requested PCR bank is not
+	// available on this TPM, so a quote over those registers cannot be produced.
+	ErrPCRBankUnavailable = errors.New("pairing: requested PCR bank is unavailable")
+
 	// ErrShareDenied indicates key sharing is denied by policy.
 	ErrShareDenied = errors.New("pairing: key sharing denied by policy")
 

@@ -79,6 +79,121 @@ func (b *PKCS8Backend) Capabilities() types.Capabilities {
 	}
 }
 
+// keyMetadataSchemaVersion1 is the first schema version of keyMetadata that
+// records the tenant and the partition.
+//
+// The version is what lets loadKeyMetadata tell a record written before this
+// package persisted a tenant from one that deliberately records an empty
+// tenant. Records that predate it decode with SchemaVersion 0, and ListKeys
+// falls back to reading the identifier positionally for those, which is
+// exactly how they were read before this field existed.
+const keyMetadataSchemaVersion1 = 1
+
+// keyMetadata is the record persisted alongside a key's PKCS#8 bytes to carry
+// the attributes the key identifier cannot express.
+//
+// The identifier produced by types.KeyAttributes.ID() is
+// [tenant:][partition:]storetype:keytype:cn:algorithm. A tenant-scoped key
+// with no partition and an untenanted key with a partition therefore produce
+// identifiers of the same shape, and nothing in the string says which of the
+// two the leading segment is. The tenant has to be recoverable -- a
+// tenant-scoped view of a backend filters ListKeys on
+// types.KeyAttributes.TenantID, and a key that reports no tenant is invisible
+// to the tenant that owns it -- so it is recorded here rather than inferred.
+//
+// The record is written through the backend's own storage.Backend, the same
+// seam the key material goes through, so it inherits whatever barrier
+// encryption protects the key it describes.
+type keyMetadata struct {
+	// SchemaVersion identifies the shape of this record.
+	SchemaVersion int `json:"schema_version,omitempty"`
+
+	// CN, KeyType, StoreType and KeyAlgorithm mirror the identifier's own
+	// segments. They were present before the schema was versioned and are
+	// kept so an operator reading a record out of storage can identify the
+	// key it belongs to without parsing the path.
+	CN           string `json:"cn"`
+	KeyType      string `json:"key_type"`
+	StoreType    string `json:"store_type"`
+	KeyAlgorithm string `json:"key_algorithm"`
+
+	// TenantID is the tenant that owns the key, empty for an untenanted key.
+	TenantID string `json:"tenant_id,omitempty"`
+
+	// Partition is the key's partition, empty when unpartitioned.
+	Partition string `json:"partition,omitempty"`
+
+	// Exportable mirrors types.KeyAttributes.Exportable as supplied by the
+	// caller at key creation time.
+	Exportable bool `json:"exportable"`
+}
+
+// newKeyMetadata builds the current-schema record for attrs.
+func newKeyMetadata(attrs *types.KeyAttributes) *keyMetadata {
+	return &keyMetadata{
+		SchemaVersion: keyMetadataSchemaVersion1,
+		CN:            attrs.CN,
+		KeyType:       attrs.KeyType.String(),
+		StoreType:     string(attrs.StoreType),
+		KeyAlgorithm:  attrs.KeyAlgorithm.String(),
+		TenantID:      attrs.TenantID,
+		Partition:     string(attrs.Partition),
+		Exportable:    attrs.Exportable,
+	}
+}
+
+// metadataPath returns the storage path of keyID's metadata record.
+//
+// This package has always written the record to "meta/{id}", where
+// pkg/storage's shared storage.MetadataPath helper uses "meta/{id}.json".
+// Moving to the shared helper would leave every record written before that
+// move unreadable, which would silently downgrade every existing exportable
+// key to non-exportable, so the path this package already wrote is the path
+// it keeps. Unifying the two requires a migration that reads both.
+func metadataPath(keyID string) string {
+	return "meta/" + keyID
+}
+
+// loadKeyMetadata returns the metadata record for keyID, or nil when no
+// readable record exists.
+//
+// A missing or corrupt record is not an error: keys written before this
+// package persisted metadata have none at all, and failing ListKeys for that
+// reason would hide every one of them. Callers fall back to reading the
+// identifier itself, which is how those keys were always read.
+func (b *PKCS8Backend) loadKeyMetadata(ctx context.Context, keyID string) *keyMetadata {
+	data, err := b.storage.Get(ctx, metadataPath(keyID))
+	if err != nil {
+		// Metadata is recoverable; a missing record only costs the attributes
+		// the identifier cannot carry, so log at debug and keep listing.
+		slog.Debug("pkcs8: failed to load key metadata",
+			"keyID", keyID, "metaKey", metadataPath(keyID), "error", err)
+		return nil
+	}
+	var metadata keyMetadata
+	if err := json.Unmarshal(data, &metadata); err != nil {
+		slog.Debug("pkcs8: failed to parse key metadata",
+			"keyID", keyID, "metaKey", metadataPath(keyID), "error", err)
+		return nil
+	}
+	return &metadata
+}
+
+// deleteKeyMetadata removes keyID's metadata record.
+//
+// storage.ErrNotFound is swallowed rather than propagated: a key written
+// before this package persisted metadata never had a record, and deleting it
+// must still succeed.
+func (b *PKCS8Backend) deleteKeyMetadata(ctx context.Context, keyID string) error {
+	if err := b.storage.Delete(ctx, metadataPath(keyID)); err != nil {
+		if errors.Is(err, storage.ErrNotFound) {
+			return nil
+		}
+		return &errs.Wrapped{Msg: "failed to delete key metadata", Err: err}
+	}
+	return nil
+}
+
 // GenerateKey generates a new private key with the given attributes.
 // The key is encoded in PKCS#8 format and stored using the KeyStorage.
 //
@@ -147,19 +262,14 @@ func (b *PKCS8Backend) GenerateKey(ctx context.Context, attrs *types.KeyAttribut
 		return nil, &errs.Detail{Err: backend.ErrKeyAlreadyExists, Detail: fmt.Sprintf("%s", keyID)}
 	}
 
-	// Store metadata (including exportable flag). Metadata is non-authoritative.
-	metadata := map[string]interface{}{
-		"cn":            attrs.CN,
-		"key_type":      attrs.KeyType.String(),
-		"store_type":    string(attrs.StoreType),
-		"key_algorithm": attrs.KeyAlgorithm.String(),
-		"exportable":    attrs.Exportable,
-	}
-	metadataBytes, err := json.Marshal(metadata)
+	// Store the metadata record. It carries the attributes the key identifier
+	// cannot unambiguously encode -- the tenant above all -- so it is written
+	// in the same operation as the key material and rolled back with it.
+	metadataBytes, err := json.Marshal(newKeyMetadata(attrs))
 	if err != nil {
 		return nil, &errs.Wrapped{Msg: "failed to marshal metadata", Err: err}
 	}
-	metaKey := "meta/" + keyID
+	metaKey := metadataPath(keyID)
 	if err := b.storage.Put(ctx, metaKey, metadataBytes); err != nil {
 		// Roll back the key blob so a failed generation does not leave an
 		// orphaned key that blocks regenerating under the same ID.
@@ -226,14 +336,100 @@ func (b *PKCS8Backend) DeleteKey(ctx context.Context, attrs *types.KeyAttributes
 		return &errs.Wrapped{Msg: "failed to delete key", Err: err}
 	}
 
+	// Remove the metadata record so a deleted key leaves no orphaned tenant or
+	// Exportable flag behind for a future key of the same identifier to
+	// inherit.
+	if err := b.deleteKeyMetadata(ctx, keyID); err != nil {
+		return err
+	}
+
 	return nil
+}
+
+// storageKeyID holds the attribute segments recovered from a stored key
+// identifier.
+type storageKeyID struct {
+	TenantID  string
+	Partition string
+	StoreType string
+	KeyType   string
+	CN        string
+	Algorithm string
+}
+
+// parseStorageKeyID splits a stored key identifier into the attributes
+// types.KeyAttributes.ID() encoded into it.
+//
+// The identifier is [tenant:][partition:]storetype:keytype:cn:algorithm, so
+// the segment count tells all but one thing:
+//
+//	4 segments: neither tenant nor partition.
+//	5 segments: one of the two is present, and the string does not say which.
+//	6 segments: both, in that order.
+//
+// The five-segment case is read as a partition, which is how it was read
+// before tenants existed and therefore what every key written back then
+// means. That is the only case a caller must not rely on: ListKeys overlays
+// the persisted metadata record, which states the tenant outright, and only
+// falls back to this reading for keys that have no record.
+//
+// Note that the ambiguity is confined to the leading segment. Store type, key
+// type, common name and algorithm sit at the same offsets from the end under
+// either reading, so those four are recovered correctly regardless.
+func parseStorageKeyID(id string) storageKeyID {
+	parts := strings.Split(id, ":")
+
+	switch {
+	case len(parts) == 4:
+		return storageKeyID{
+			StoreType: parts[0],
+			KeyType:   parts[1],
+			CN:        parts[2],
+			Algorithm: parts[3],
+		}
+	case len(parts) == 5:
+		return storageKeyID{
+			Partition: parts[0],
+			StoreType: parts[1],
+			KeyType:   parts[2],
+			CN:        parts[3],
+			Algorithm: parts[4],
+		}
+	case len(parts) >= 6:
+		return storageKeyID{
+			TenantID:  parts[0],
+			Partition: parts[1],
+			StoreType: parts[2],
+			KeyType:   parts[3],
+			CN:        strings.Join(parts[4:len(parts)-1], ":"),
+			Algorithm: parts[len(parts)-1],
+		}
+	default:
+		// Not an identifier this package produced. Treat the whole string as
+		// a common name and apply the same defaults as before.
+		return storageKeyID{
+			StoreType: "pkcs8",
+			KeyType:   "tls",
+			CN:        id,
+			Algorithm: "rsa",
+		}
+	}
 }
 
 // ListKeys returns attributes for all keys managed by this backend.
 // Returns an empty slice if no keys exist.
 //
-// Note: This implementation returns key IDs as CommonNames.
-// Full attribute reconstruction may require additional metadata storage.
+// Attributes are recovered from the stored key identifier and from the
+// metadata record persisted next to the key material. The record is
+// authoritative for the tenant and the partition, which the identifier cannot
+// distinguish from one another; see keyMetadata and parseStorageKeyID.
+//
+// Recovering the tenant is what makes a tenant-scoped view of this backend
+// work at all: that view filters this listing on
+// types.KeyAttributes.TenantID, and callers resolve a key by matching a common
+// name against the result. While the tenant was dropped here, every key
+// reported no owner, so a tenant saw an empty listing and could not resolve
+// even its own keys.
 func (b *PKCS8Backend) ListKeys(ctx context.Context) ([]*types.KeyAttributes, error) {
 	b.mu.RLock()
 	defer b.mu.RUnlock()
@@ -247,68 +443,40 @@ func (b *PKCS8Backend) ListKeys(ctx context.Context) ([]*types.KeyAttributes, er
 		return nil, &errs.Wrapped{Msg: "failed to list keys", Err: err}
 	}
 
-	// Parse key ID to extract attributes
-	// Format: [partition:]storetype:keytype:cn:algorithm
-	// Example: sw:tls:my-key:rsa or partition:sw:signing:my-key:ecdsa
-	// Also supports format like: pkcs8:tls:my-key:rsa
 	attrs := make([]*types.KeyAttributes, 0, len(keyIDs))
 	for _, id := range keyIDs {
-		parts := strings.Split(id, ":")
-		var cn string
-		var keyTypeStr string
-		var storeTypeStr string
-		var algorithmStr string
-
-		if len(parts) >= 4 {
-			// Has all required parts
-			// For format without partition: storetype:keytype:cn:algorithm (4 parts)
-			// For format with partition: partition:storetype:keytype:cn:algorithm (5 parts)
-			if len(parts) == 4 {
-				// storetype:keytype:cn:algorithm
-				storeTypeStr = parts[0]
-				keyTypeStr = parts[1]
-				cn = parts[2]
-				algorithmStr = parts[3]
-			} else {
-				// partition:storetype:keytype:cn:algorithm
-				storeTypeStr = parts[1]
-				keyTypeStr = parts[2]
-				cn = parts[3]
-				algorithmStr = parts[4]
-			}
-		} else {
-			// Fallback to using the whole ID as CN
-			cn = id
-			keyTypeStr = "tls"     // Default to TLS
-			storeTypeStr = "pkcs8" // Default to pkcs8
-			algorithmStr = "rsa"   // Default to RSA
-		}
+		parsed := parseStorageKeyID(id)
 
 		// Skip symmetric keys - they are handled by the symmetric backend
-		if strings.ToLower(keyTypeStr) == "secret" {
+		if strings.EqualFold(parsed.KeyType, "secret") {
 			continue
 		}
 
 		// Skip quantum keys - they are handled by the quantum backend
-		algoLower := strings.ToLower(algorithmStr)
+		algoLower := strings.ToLower(parsed.Algorithm)
 		if strings.HasPrefix(algoLower, "ml-dsa") || strings.HasPrefix(algoLower, "ml-kem") {
 			continue
 		}
 
 		attr := &types.KeyAttributes{
-			CN:        cn,
-			KeyType:   types.ParseKeyType(keyTypeStr),
-			StoreType: types.ParseStoreType(storeTypeStr),
+			CN:        parsed.CN,
+			KeyType:   types.ParseKeyType(parsed.KeyType),
+			StoreType: types.ParseStoreType(parsed.StoreType),
+			TenantID:  parsed.TenantID,
+			Partition: types.Partition(parsed.Partition),
 		}
 
 		// Parse key algorithm
-		switch strings.ToLower(algorithmStr) {
+		switch algoLower {
 		case "rsa":
 			attr.KeyAlgorithm = x509.RSA
 			attr.RSAAttributes = &types.RSAAttributes{KeySize: 2048} // Default
 		case "ecdsa":
 			attr.KeyAlgorithm = x509.ECDSA
-			curve, _ := types.ParseCurve("P-256") // Default curve
+			curve, err := types.ParseCurve("P-256") // Default curve
+			if err != nil {
+				return nil, &errs.Wrapped{Msg: "failed to resolve default curve", Err: err}
+			}
 			attr.ECCAttributes = &types.ECCAttributes{Curve: curve}
 		case "ed25519":
 			attr.KeyAlgorithm = x509.Ed25519
@@ -326,20 +494,16 @@ func (b *PKCS8Backend) ListKeys(ctx context.Context) ([]*types.KeyAttributes, er
 			attr.RSAAttributes = &types.RSAAttributes{KeySize: 2048}
 		}
 
-		// Load metadata to get exportable flag
-		metaKey := "meta/" + id
-		if metaData, err := b.storage.Get(ctx, metaKey); err == nil {
-			var metadata map[string]interface{}
-			if json.Unmarshal(metaData, &metadata) == nil {
-				if exportable, ok := metadata["exportable"].(bool); ok {
-					attr.Exportable = exportable
-				}
+		// Overlay the persisted record. It is authoritative for the tenant and
+		// the partition from the schema version that records them onwards; an
+		// older record says nothing about either, so the identifier's own
+		// reading stands for those keys.
+		if metadata := b.loadKeyMetadata(ctx, id); metadata != nil {
+			attr.Exportable = metadata.Exportable
+			if metadata.SchemaVersion >= keyMetadataSchemaVersion1 {
+				attr.TenantID = metadata.TenantID
+				attr.Partition = types.Partition(metadata.Partition)
 			}
-		} else {
-			// Metadata is non-authoritative; a missing record only loses the
-			// exportable flag, so log at debug and keep listing.
-			slog.Debug("pkcs8: failed to load key metadata",
-				"keyID", id, "metaKey", metaKey, "error", err)
 		}
 
 		attrs = append(attrs, attr)

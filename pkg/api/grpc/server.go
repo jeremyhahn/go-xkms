@@ -69,10 +69,13 @@ func NewServer(cfg *ServerConfig) (*Server, error) {
 	// Don't set a default port here - let Port 0 remain 0 for ephemeral ports
 	// The port will be set in Start() after the listener is created
 
-	// Set up authenticator (default to NoOp if not provided)
+	// The authenticator is mandatory. Substituting a NoOp authenticator for a
+	// missing one would silently disable authentication for every RPC, so an
+	// omitted authenticator is an error: selecting auth.NewNoOpAuthenticator()
+	// must always be an explicit caller decision.
 	authenticator := cfg.Authenticator
 	if authenticator == nil {
-		authenticator = auth.NewNoOpAuthenticator()
+		return nil, ErrAuthenticatorRequired
 	}
 
 	// Set up logger (default to stdlib if not provided)
@@ -134,8 +137,8 @@ func NewServer(cfg *ServerConfig) (*Server, error) {
 	}
 
 	// Error handling interceptor
-	unaryInterceptors = append(unaryInterceptors, errorHandlingUnaryInterceptor)
-	streamInterceptors = append(streamInterceptors, errorHandlingStreamInterceptor)
+	unaryInterceptors = append(unaryInterceptors, server.errorHandlingUnaryInterceptor)
+	streamInterceptors = append(streamInterceptors, server.errorHandlingStreamInterceptor)
 
 	// Create gRPC server options
 	opts := []grpc.ServerOption{
@@ -428,8 +431,11 @@ func (s *Server) recoveryStreamInterceptor(
 	return handler(srv, ss)
 }
 
-// errorHandlingUnaryInterceptor normalizes error responses
-func errorHandlingUnaryInterceptor(
+// errorHandlingUnaryInterceptor normalizes error responses. It is a Server
+// method (rather than a free function) so it can pass s.service.xkmsService
+// through to notLeaderStatus, which needs it to resolve the leader's dialable
+// gRPC endpoint for a not-leader redirect.
+func (s *Server) errorHandlingUnaryInterceptor(
 	ctx context.Context,
 	req interface{},
 	info *grpc.UnaryServerInfo,
@@ -440,7 +446,7 @@ func errorHandlingUnaryInterceptor(
 	if err != nil {
 		// Clustered not-leader writes get a dedicated FailedPrecondition status
 		// carrying the leader coordinates so the client can retry on the leader.
-		if translated, ok := notLeaderStatus(err); ok {
+		if translated, ok := notLeaderStatus(ctx, s.service.xkmsService, err); ok {
 			return resp, translated
 		}
 		// Ensure error is a proper gRPC status error
@@ -453,8 +459,9 @@ func errorHandlingUnaryInterceptor(
 	return resp, err
 }
 
-// errorHandlingStreamInterceptor normalizes error responses for streams
-func errorHandlingStreamInterceptor(
+// errorHandlingStreamInterceptor normalizes error responses for streams. See
+// errorHandlingUnaryInterceptor for why this is a Server method.
+func (s *Server) errorHandlingStreamInterceptor(
 	srv interface{},
 	ss grpc.ServerStream,
 	info *grpc.StreamServerInfo,
@@ -465,7 +472,7 @@ func errorHandlingStreamInterceptor(
 	if err != nil {
 		// Clustered not-leader writes get a dedicated FailedPrecondition status
 		// carrying the leader coordinates so the client can retry on the leader.
-		if translated, ok := notLeaderStatus(err); ok {
+		if translated, ok := notLeaderStatus(ss.Context(), s.service.xkmsService, err); ok {
 			return translated
 		}
 		// Ensure error is a proper gRPC status error

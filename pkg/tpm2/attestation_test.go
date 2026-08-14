@@ -38,18 +38,33 @@ func TestReadPCRs_TPM(t *testing.T) {
 	}
 
 	assert.True(t, len(banks) >= 2)
-	assert.Equal(t, 23, len(banks[0].PCRs)) // SHA1
-	assert.Equal(t, 23, len(banks[1].PCRs)) // SHA256
+
+	// ReadPCRs ranges over a map to build its result, so bank order is
+	// randomised per run and banks must be matched by Algorithm, never by
+	// index. Every bank the TPM reports must carry every requested PCR.
+	seen := make(map[string]int, len(banks))
+	for _, bank := range banks {
+		assert.Equal(t, len(pcrs), len(bank.PCRs),
+			"bank %s must report every requested PCR", bank.Algorithm)
+		seen[bank.Algorithm] = len(bank.PCRs)
+	}
+	assert.Contains(t, seen, "SHA1")
+	assert.Contains(t, seen, "SHA256")
 }
 
-// NOTE: The user account running the test requires read permissions
-// to binary_bios_measurements:
-// sudo chown root.myuser /sys/kernel/security/tpm0/binary_bios_measurements
-func TestParseEventLog(t *testing.T) {
-	// Skip this test when running against simulator - no event log file available
-	// This test requires real TPM hardware or special filesystem setup
-	t.Skip("Skipping EventLog test - requires real TPM event log file access")
-}
+// TestParseEventLog was deleted rather than un-skipped. Its body was nothing
+// but a skip call: it asserted nothing and could never fail, and reviving it
+// would have meant reading the host's
+// /sys/kernel/security/tpm*/binary_bios_measurements, which no unit test may
+// depend on.
+//
+// Event log parsing is covered exhaustively and host-independently in
+// eventlog_test.go, which parses synthetic TCG logs from t.TempDir():
+// TestParseEventLog_BootSequence (a multi-event, multi-bank boot sequence
+// asserted field by field), TestParseEventLog_TruncatedData and
+// TestParseEventLog_TruncatedUnknownAlgorithmDigest (malformed input),
+// TestParseEventLog_Success, TestParseEventLog_EmptyFile and
+// TestParseEventLog_FileNotFound.
 
 // TestParseEventLogSimulator tests event log parsing with mock data
 func TestParseEventLogSimulator(t *testing.T) {

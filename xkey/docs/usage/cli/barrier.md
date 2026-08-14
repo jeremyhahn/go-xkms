@@ -1,5 +1,11 @@
 # CLI Reference: Barrier Commands
 
+> **Scope:** this page documents the go-xkms **server** CLI `xkmsctl barrier`
+> (source: `cmd/xkmsctl/`), **not** the `xkey` desktop CLI. It lives under
+> `xkey/docs/` for historical reasons.
+> `xkey` has its own `xkey barrier` command group with a different surface —
+> see [the xkey CLI reference](README.md).
+
 Barrier commands manage the encrypted storage layer that protects all key material at rest. The barrier must be initialized once and unsealed on each application start before key operations can proceed.
 
 Two sealing strategies are available:

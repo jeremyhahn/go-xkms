@@ -29,159 +29,159 @@
 package module
 
 import (
+	"debug/elf"
 	"os"
 	"os/exec"
 	"strings"
 	"testing"
 )
 
-// getEnvOrDefault returns the environment variable value or the default if not set.
-func getEnvOrDefault(key, defaultValue string) string {
-	if value := os.Getenv(key); value != "" {
-		return value
+// requireModulePath returns the path of the built PKCS#11 shared library.
+//
+// run_with_server compiles build/lib/libxkms_pkcs11.so before every PKCS#11
+// Makefile target and exports PKCS11_MODULE, so a missing library means the
+// build step failed. Skipping on it reported the module as verified when it had
+// never even been produced.
+func requireModulePath(t *testing.T) string {
+	t.Helper()
+
+	modulePath := getEnvOrDefault("PKCS11_MODULE", "/usr/local/lib/libxkms_pkcs11.so")
+	info, err := os.Stat(modulePath)
+	if err != nil {
+		t.Fatalf("PKCS#11 module not readable at %s: %v; the harness builds it with "+
+			"`go build -buildmode=c-shared ./cmd/pkcs11-module` and exports PKCS11_MODULE",
+			modulePath, err)
 	}
-	return defaultValue
+	if info.IsDir() {
+		t.Fatalf("PKCS#11 module path is a directory, expected a file: %s", modulePath)
+	}
+	return modulePath
+}
+
+// requireBinary asserts an external tool the harness depends on is on PATH.
+func requireBinary(t *testing.T, name, provider string) {
+	t.Helper()
+	if _, err := exec.LookPath(name); err != nil {
+		t.Fatalf("%s is not on PATH: %v; the devcontainer image provides it via %s",
+			name, err, provider)
+	}
 }
 
 // TestPKCS11ModuleExists verifies that the PKCS#11 module shared library exists.
 func TestPKCS11ModuleExists(t *testing.T) {
-	modulePath := getEnvOrDefault("PKCS11_MODULE", "/usr/local/lib/libxkms_pkcs11.so")
+	modulePath := requireModulePath(t)
 
 	info, err := os.Stat(modulePath)
 	if err != nil {
-		if os.IsNotExist(err) {
-			t.Skipf("PKCS#11 module not found at %s - skipping test", modulePath)
-		}
 		t.Fatalf("Failed to stat PKCS#11 module: %v", err)
 	}
-
-	if info.IsDir() {
-		t.Fatalf("PKCS#11 module path is a directory, expected a file: %s", modulePath)
+	if info.Size() == 0 {
+		t.Fatalf("PKCS#11 module at %s is empty", modulePath)
 	}
 
 	t.Logf("PKCS#11 module found: %s (size: %d bytes)", modulePath, info.Size())
 }
 
-// TestPKCS11ModuleIsSharedLibrary verifies the module is a valid shared library.
+// TestPKCS11ModuleIsSharedLibrary verifies the module really is a dynamically
+// loadable shared object.
+//
+// The ELF header is parsed directly instead of shelling out to file(1): the
+// previous version returned early with a warning when the tool was missing, so
+// on a host without file(1) it asserted nothing at all while still reporting
+// PASS. debug/elf also checks more than a substring match — the object must be
+// ET_DYN (what dlopen needs) and expose the Cryptoki entry point.
 func TestPKCS11ModuleIsSharedLibrary(t *testing.T) {
-	modulePath := getEnvOrDefault("PKCS11_MODULE", "/usr/local/lib/libxkms_pkcs11.so")
+	modulePath := requireModulePath(t)
 
-	if _, err := os.Stat(modulePath); os.IsNotExist(err) {
-		t.Skipf("PKCS#11 module not found at %s - skipping test", modulePath)
-	}
-
-	// Use file command to verify it's a shared library
-	cmd := exec.Command("file", modulePath)
-	output, err := cmd.Output()
+	f, err := elf.Open(modulePath)
 	if err != nil {
-		t.Logf("Warning: could not run 'file' command: %v", err)
-		return
+		t.Fatalf("PKCS#11 module at %s is not a valid ELF object: %v", modulePath, err)
+	}
+	defer func() {
+		if cerr := f.Close(); cerr != nil {
+			t.Errorf("closing ELF module: %v", cerr)
+		}
+	}()
+
+	if f.Type != elf.ET_DYN {
+		t.Fatalf("PKCS#11 module ELF type = %v, want %v (it must be dlopen-able)", f.Type, elf.ET_DYN)
 	}
 
-	outputStr := string(output)
-	if !strings.Contains(outputStr, "shared object") && !strings.Contains(outputStr, "ELF") {
-		t.Errorf("PKCS#11 module does not appear to be a valid shared library: %s", outputStr)
+	syms, err := f.DynamicSymbols()
+	if err != nil {
+		t.Fatalf("reading dynamic symbols from %s: %v", modulePath, err)
 	}
-
-	t.Logf("Module type: %s", strings.TrimSpace(outputStr))
+	const entryPoint = "C_GetFunctionList"
+	for _, sym := range syms {
+		if sym.Name == entryPoint {
+			t.Logf("module %s: %v, exports %s", modulePath, f.Type, entryPoint)
+			return
+		}
+	}
+	t.Fatalf("PKCS#11 module does not export %s; a Cryptoki library is unusable without it", entryPoint)
 }
 
 // TestPKCS11ToolListSlots tests the module with pkcs11-tool --list-slots.
 func TestPKCS11ToolListSlots(t *testing.T) {
-	modulePath := getEnvOrDefault("PKCS11_MODULE", "/usr/local/lib/libxkms_pkcs11.so")
-
-	if _, err := os.Stat(modulePath); os.IsNotExist(err) {
-		t.Skipf("PKCS#11 module not found at %s - skipping test", modulePath)
-	}
-
-	// Check if pkcs11-tool is available
-	if _, err := exec.LookPath("pkcs11-tool"); err != nil {
-		t.Skip("pkcs11-tool not found in PATH - skipping test")
-	}
+	modulePath := requireModulePath(t)
+	requireBinary(t, "pkcs11-tool", "the opensc package")
 
 	cmd := exec.Command("pkcs11-tool", "--module", modulePath, "--list-slots")
 	output, err := cmd.CombinedOutput()
-
-	// Log output regardless of error (some errors are expected if module not initialized)
 	t.Logf("pkcs11-tool --list-slots output:\n%s", string(output))
-
 	if err != nil {
-		// Check if it's an expected error (e.g., no slots initialized)
-		outputStr := string(output)
-		if strings.Contains(outputStr, "No slots") ||
-			strings.Contains(outputStr, "not initialized") ||
-			strings.Contains(outputStr, "CKR_TOKEN_NOT_PRESENT") {
-			t.Logf("Expected condition: module loaded but no slots/tokens initialized")
-			return
-		}
+		t.Fatalf("pkcs11-tool --list-slots failed: %v", err)
+	}
 
-		// Unexpected error
-		t.Logf("Warning: pkcs11-tool returned error (may be expected): %v", err)
+	// The "no slots / token not present" branch this test used to tolerate
+	// cannot happen: SlotManager always publishes slot 0 with a token
+	// (pkg/pkcs11/module/token.go NewSlotManager), so an empty slot list is a
+	// module defect, not an environment condition.
+	if !strings.Contains(string(output), "Slot 0") {
+		t.Fatalf("pkcs11-tool --list-slots did not report slot 0; the module always publishes it:\n%s", string(output))
 	}
 }
 
 // TestPKCS11ToolListMechanisms tests the module with pkcs11-tool --list-mechanisms.
 func TestPKCS11ToolListMechanisms(t *testing.T) {
-	modulePath := getEnvOrDefault("PKCS11_MODULE", "/usr/local/lib/libxkms_pkcs11.so")
-
-	if _, err := os.Stat(modulePath); os.IsNotExist(err) {
-		t.Skipf("PKCS#11 module not found at %s - skipping test", modulePath)
-	}
-
-	// Check if pkcs11-tool is available
-	if _, err := exec.LookPath("pkcs11-tool"); err != nil {
-		t.Skip("pkcs11-tool not found in PATH - skipping test")
-	}
+	modulePath := requireModulePath(t)
+	requireBinary(t, "pkcs11-tool", "the opensc package")
 
 	cmd := exec.Command("pkcs11-tool", "--module", modulePath, "--list-mechanisms")
 	output, err := cmd.CombinedOutput()
-
-	// Log output regardless of error
 	t.Logf("pkcs11-tool --list-mechanisms output:\n%s", string(output))
-
 	if err != nil {
-		outputStr := string(output)
-		// Check if it's an expected error
-		if strings.Contains(outputStr, "No slots") ||
-			strings.Contains(outputStr, "not initialized") ||
-			strings.Contains(outputStr, "CKR_TOKEN_NOT_PRESENT") {
-			t.Logf("Expected condition: module loaded but no slots/tokens initialized")
-			return
-		}
+		t.Fatalf("pkcs11-tool --list-mechanisms failed: %v", err)
+	}
 
-		t.Logf("Warning: pkcs11-tool returned error (may be expected): %v", err)
+	// Same reasoning as --list-slots: slot 0 always carries a token, and the
+	// module's mechanism table (defaultMechanismInfo) always advertises the
+	// RSA PKCS#1 family, so an empty or failing listing is a real regression.
+	if !strings.Contains(string(output), "RSA-PKCS") {
+		t.Fatalf("mechanism list does not advertise RSA-PKCS; the module always publishes it:\n%s", string(output))
 	}
 }
 
 // TestPKCS11ToolShowInfo tests the module with pkcs11-tool --show-info.
 func TestPKCS11ToolShowInfo(t *testing.T) {
-	modulePath := getEnvOrDefault("PKCS11_MODULE", "/usr/local/lib/libxkms_pkcs11.so")
-
-	if _, err := os.Stat(modulePath); os.IsNotExist(err) {
-		t.Skipf("PKCS#11 module not found at %s - skipping test", modulePath)
-	}
-
-	// Check if pkcs11-tool is available
-	if _, err := exec.LookPath("pkcs11-tool"); err != nil {
-		t.Skip("pkcs11-tool not found in PATH - skipping test")
-	}
+	modulePath := requireModulePath(t)
+	requireBinary(t, "pkcs11-tool", "the opensc package")
 
 	cmd := exec.Command("pkcs11-tool", "--module", modulePath, "--show-info")
 	output, err := cmd.CombinedOutput()
-
-	// Log output regardless of error
 	t.Logf("pkcs11-tool --show-info output:\n%s", string(output))
-
 	if err != nil {
-		t.Logf("Warning: pkcs11-tool returned error (may be expected): %v", err)
+		t.Fatalf("pkcs11-tool --show-info failed: %v", err)
 	}
 
-	// Check for expected fields in output
+	// C_GetInfo is answered entirely from the module's own CK_INFO, so every
+	// one of these fields is always present. The old loop logged the ones it
+	// found and never failed on the ones it did not, which meant a module
+	// returning an empty CK_INFO still passed.
 	outputStr := string(output)
-	expectedFields := []string{"Cryptoki version", "Library", "Manufacturer"}
-	for _, field := range expectedFields {
-		if strings.Contains(outputStr, field) {
-			t.Logf("Found expected field: %s", field)
+	for _, field := range []string{"Cryptoki version", "Library", "Manufacturer"} {
+		if !strings.Contains(outputStr, field) {
+			t.Errorf("C_GetInfo output is missing %q:\n%s", field, outputStr)
 		}
 	}
 }
@@ -190,12 +190,12 @@ func TestPKCS11ToolShowInfo(t *testing.T) {
 func TestServerConnectionUnixSocket(t *testing.T) {
 	socketPath := getEnvOrDefault("XKMS_UNIX_SOCKET", "/var/run/xkms/xkms.sock")
 
+	// run_with_server polls for this socket before handing control to the test
+	// binary, so its absence means xkms-server never came up.
 	info, err := os.Stat(socketPath)
 	if err != nil {
-		if os.IsNotExist(err) {
-			t.Skipf("Unix socket not found at %s - server may not be running or using TCP mode", socketPath)
-		}
-		t.Fatalf("Failed to stat Unix socket: %v", err)
+		t.Fatalf("Unix socket not present at %s: %v; xkms-server must be running "+
+			"(XKMS_UNIX_SOCKET selects a different path)", socketPath, err)
 	}
 
 	// Verify it's a socket
@@ -208,11 +208,13 @@ func TestServerConnectionUnixSocket(t *testing.T) {
 
 // TestServerConnectionTCP verifies TCP connectivity to xkms server.
 func TestServerConnectionTCP(t *testing.T) {
-	grpcAddr := getEnvOrDefault("XKMS_GRPC_ADDR", "")
-
+	// The PKCS#11 Makefile targets export XKMS_GRPC_ADDR=xkms-server:9443.
+	grpcAddr := os.Getenv("XKMS_GRPC_ADDR")
 	if grpcAddr == "" {
-		t.Skip("XKMS_GRPC_ADDR not set - skipping TCP connection test")
+		t.Fatal("XKMS_GRPC_ADDR is not set; the PKCS#11 harness must point the test at " +
+			"the xkms-server gRPC endpoint")
 	}
+	requireBinary(t, "nc", "netcat-openbsd")
 
 	// Simple connectivity check using nc
 	parts := strings.Split(grpcAddr, ":")
@@ -224,7 +226,8 @@ func TestServerConnectionTCP(t *testing.T) {
 
 	cmd := exec.Command("nc", "-z", "-w", "5", host, port)
 	if err := cmd.Run(); err != nil {
-		t.Skipf("Cannot connect to gRPC server at %s - server may not be running: %v", grpcAddr, err)
+		t.Fatalf("cannot reach the gRPC server at %s: %v; run_with_server waits for this "+
+			"port before starting the tests", grpcAddr, err)
 	}
 
 	t.Logf("TCP connection to gRPC server successful: %s", grpcAddr)
@@ -232,16 +235,8 @@ func TestServerConnectionTCP(t *testing.T) {
 
 // TestModuleDependencies verifies that all shared library dependencies are satisfied.
 func TestModuleDependencies(t *testing.T) {
-	modulePath := getEnvOrDefault("PKCS11_MODULE", "/usr/local/lib/libxkms_pkcs11.so")
-
-	if _, err := os.Stat(modulePath); os.IsNotExist(err) {
-		t.Skipf("PKCS#11 module not found at %s - skipping test", modulePath)
-	}
-
-	// Check if ldd is available
-	if _, err := exec.LookPath("ldd"); err != nil {
-		t.Skip("ldd not found in PATH - skipping dependency test")
-	}
+	modulePath := requireModulePath(t)
+	requireBinary(t, "ldd", "libc-bin")
 
 	cmd := exec.Command("ldd", modulePath)
 	output, err := cmd.CombinedOutput()

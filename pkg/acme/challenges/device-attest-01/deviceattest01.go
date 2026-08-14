@@ -134,8 +134,9 @@ var (
 	ErrCertificateChainInvalid = errors.New("device-attest-01: AK certificate chain invalid")
 )
 
-// CertificateAuthority defines the CA interface for device attestation verification
-type CertificateAuthority interface {
+// AttestationVerifier verifies a device attestation object, its TPM quote, and
+// the attestation key's certificate chain.
+type AttestationVerifier interface {
 	// VerifyAttestationObject verifies an attestation object
 	// Returns error if verification fails
 	VerifyAttestationObject(obj *AttestationObject, expectedChallenge []byte) error
@@ -200,7 +201,7 @@ type TrustedPlatformModule interface {
 //
 // Parameters:
 //   - resolver: DNS resolver for domain name resolution
-//   - ca: Certificate Authority for attestation verification
+//   - ca: attestation verifier for the attestation object, quote, and AK chain
 //   - domain: Domain/identifier to verify
 //   - port: HTTP port for challenge communication
 //   - challengeToken: Challenge token (used as qualifying data)
@@ -211,7 +212,7 @@ type TrustedPlatformModule interface {
 //   - error if verification fails
 func Verify(
 	resolver *net.Resolver,
-	ca CertificateAuthority,
+	ca AttestationVerifier,
 	domain, port, challengeToken, expectedKeyAuth string) error {
 
 	// Retrieve attestation from client's challenge endpoint

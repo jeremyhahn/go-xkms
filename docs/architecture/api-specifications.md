@@ -353,6 +353,128 @@ Rotate key (if backend supports).
 }
 ```
 
+#### Hardware-Capability Key Operations
+
+These five operations delegate to the service layer and are available on every
+transport (REST, gRPC, QUIC, MCP, Unix socket, embedded). A backend that lacks
+the required capability reports the transport's "unimplemented" status
+(HTTP 501 / gRPC `Unimplemented` / JSON-RPC `-32601`) rather than an error.
+
+| Operation | REST route | Permission |
+|-----------|-----------|------------|
+| AttestKey | `POST /api/v1/attest` | `keys:get` |
+| DeriveKeyECDH | `POST /api/v1/keys/derive-ecdh` | `keys:derive` |
+| ExportKeyMaterial | `POST /api/v1/keys/{id}/export-material?backend=` | `keys:export` |
+| WrapKeyByID | `POST /api/v1/keys/wrap-by-id` | `keys:wrap` |
+| UnwrapKeyByID | `POST /api/v1/keys/unwrap-by-id` | `keys:unwrap` |
+
+##### POST /api/v1/attest
+
+Produce a cryptographic attestation proving a key was created in hardware
+(TPM 2.0, PKCS#11 HSM) and never left the secure boundary. Requires a backend
+whose key provider implements attestation; software and most cloud KMS
+backends return 501.
+
+**Request:**
+```json
+{
+  "backend": "tpm2",
+  "key_id": "idevid",
+  "nonce": "Y2hhbGxlbmdl"
+}
+```
+
+**Response (200 OK):**
+```json
+{
+  "format": "tpm2",
+  "certificate_chain": ["<base64 DER>"],
+  "attestation_data": "<base64>",
+  "signature": "<base64>",
+  "signature_algorithm": "ECDSA-SHA256",
+  "nonce": "Y2hhbGxlbmdl",
+  "backend": "tpm2"
+}
+```
+
+##### POST /api/v1/keys/derive-ecdh
+
+ECDH key agreement against a peer public key, with the shared secret run
+through a KDF. Requires a backend supporting key agreement.
+
+**Request:**
+```json
+{
+  "key_id": "ecdh-key",
+  "backend": "tpm2",
+  "peer_public_key": "<base64 DER>",
+  "kdf_algorithm": "HKDF",
+  "kdf_hash": "SHA-256",
+  "key_length": 32
+}
+```
+
+**Response (200 OK):**
+```json
+{"derived_key": "<base64>"}
+```
+
+##### POST /api/v1/keys/{id}/export-material
+
+Export raw symmetric key bytes. Takes no request body; the backend is a query
+parameter.
+
+> **SECURITY:** returns plaintext key material with no cryptographic
+> protection. Only succeeds for symmetric keys created with `exportable=true`.
+> A non-exportable key returns 412.
+
+**Response (200 OK):**
+```json
+{
+  "key_material": "<base64>",
+  "key_type": "AES-256-GCM",
+  "key_size": 256
+}
+```
+
+`key_size` is reported in **bits**.
+
+##### POST /api/v1/keys/wrap-by-id
+
+Wrap a server-side target key with a server-side wrapping key (PKCS#11
+`C_WrapKey`). The target key must be extractable.
+
+**Request:**
+```json
+{
+  "wrapping_key_id": "kek",
+  "wrapping_key_backend": "pkcs11",
+  "target_key_id": "dek",
+  "target_key_backend": "software",
+  "algorithm": "RSAES_OAEP_SHA_256"
+}
+```
+
+**Response (200 OK):**
+```json
+{"wrapped_key": "<base64>", "algorithm": "RSAES_OAEP_SHA_256"}
+```
+
+##### POST /api/v1/keys/unwrap-by-id
+
+Unwrap key material with a server-side unwrapping key and import the result as
+a new key (PKCS#11 `C_UnwrapKey`).
+
+**Response (200 OK):**
+```json
+{
+  "key_id": "restored-dek",
+  "backend": "pkcs11",
+  "success": true,
+  "message": "key unwrapped"
+}
+```
+
 ### Error Responses
 
 All errors follow this format:
@@ -679,6 +801,60 @@ Sign data.
   "id": 4
 }
 ```
+
+#### Hardware-Capability Key Operations
+
+The five service-layer key operations are exposed as JSON-RPC methods. Params
+are the same request objects the other transports accept, and results are the
+same response objects.
+
+| Method | Operation |
+|--------|-----------|
+| `xkms.attestKey` | Hardware attestation statement for a key |
+| `xkms.deriveKeyECDH` | ECDH key agreement + KDF |
+| `xkms.exportKeyMaterial` | Raw symmetric key bytes (plaintext) |
+| `xkms.wrapKeyByID` | Wrap a server-side key with a server-side KEK |
+| `xkms.unwrapKeyByID` | Unwrap and import as a new key |
+
+> `xkms.exportKey` is a **different** method: it returns a wrapped-envelope
+> export via the backend's `ExportKey`. `xkms.exportKeyMaterial` returns raw
+> plaintext bytes. Do not confuse the two.
+
+A backend lacking the requested capability returns error code `-32601`
+(Method not found), MCP's "unimplemented" signal. Validation failures and
+unresolved backends/keys return `-32602` (Invalid params).
+
+**Request:**
+```json
+{
+  "jsonrpc": "2.0",
+  "method": "xkms.attestKey",
+  "params": {"backend": "tpm2", "key_id": "idevid", "nonce": "Y2hhbGxlbmdl"},
+  "id": 5
+}
+```
+
+**Response:**
+```json
+{
+  "jsonrpc": "2.0",
+  "result": {
+    "format": "tpm2",
+    "certificate_chain": ["<base64 DER>"],
+    "attestation_data": "<base64>",
+    "signature": "<base64>",
+    "signature_algorithm": "ECDSA-SHA256",
+    "nonce": "Y2hhbGxlbmdl",
+    "backend": "tpm2"
+  },
+  "id": 5
+}
+```
+
+> **Note:** the MCP transport authenticates connections (mTLS) but performs no
+> per-method authorization — it has no authorizer. Every MCP key method,
+> including these five, is authenticated but not authorized. Use REST, gRPC, or
+> QUIC where per-operation permissions must be enforced.
 
 #### xkms.subscribe
 

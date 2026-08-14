@@ -17,7 +17,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
-	"os"
+	"io"
 	"strings"
 
 	"github.com/spf13/cobra"
@@ -104,6 +104,7 @@ func init() {
 }
 
 func runTPMStatus(cmd *cobra.Command, args []string) error {
+	out := cmd.OutOrStdout()
 	// Open TPM - don't require it to be initialized
 	tpm, err := openTPMForProvisioning()
 	if err != nil {
@@ -123,9 +124,9 @@ func runTPMStatus(cmd *cobra.Command, args []string) error {
 	// Output based on format
 	switch tpmCfg.outputFormat {
 	case "json":
-		return outputStatusJSON(status)
+		return outputStatusJSON(out, status)
 	default:
-		return outputStatusText(status)
+		return outputStatusText(out, status)
 	}
 }
 
@@ -373,30 +374,30 @@ func simplifyError(err error) string {
 	return errStr
 }
 
-func outputStatusJSON(status *TPMStatusOutput) error {
-	encoder := json.NewEncoder(os.Stdout)
+func outputStatusJSON(out io.Writer, status *TPMStatusOutput) error {
+	encoder := json.NewEncoder(out)
 	encoder.SetIndent("", "  ")
 	return encoder.Encode(status)
 }
 
-func outputStatusText(status *TPMStatusOutput) error {
-	fmt.Println("TPM Provisioning Status")
-	fmt.Println("=======================")
-	fmt.Println()
+func outputStatusText(out io.Writer, status *TPMStatusOutput) error {
+	fmt.Fprintln(out, "TPM Provisioning Status")
+	fmt.Fprintln(out, "=======================")
+	fmt.Fprintln(out)
 
 	// Device info
-	fmt.Printf("Device:          %s\n", status.Device)
-	fmt.Printf("Manufacturer:    %s\n", status.Manufacturer)
+	fmt.Fprintf(out, "Device:          %s\n", status.Device)
+	fmt.Fprintf(out, "Manufacturer:    %s\n", status.Manufacturer)
 	if status.VendorID != "" {
-		fmt.Printf("Vendor ID:       %s\n", status.VendorID)
+		fmt.Fprintf(out, "Vendor ID:       %s\n", status.VendorID)
 	}
-	fmt.Printf("Firmware:        %s\n", status.Firmware)
-	fmt.Printf("Type:            %s\n", status.Type)
-	fmt.Printf("Provisioned:     %s\n", formatBoolStatus(status.Provisioned))
-	fmt.Println()
+	fmt.Fprintf(out, "Firmware:        %s\n", status.Firmware)
+	fmt.Fprintf(out, "Type:            %s\n", status.Type)
+	fmt.Fprintf(out, "Provisioned:     %s\n", formatBoolStatus(status.Provisioned))
+	fmt.Fprintln(out)
 
 	// Keys
-	fmt.Println("Keys:")
+	fmt.Fprintln(out, "Keys:")
 	for _, key := range status.Keys {
 		symbol := "x"
 		stateText := "Not Present"
@@ -410,18 +411,18 @@ func outputStatusText(status *TPMStatusOutput) error {
 				}
 				stateText += ")"
 			}
-			fmt.Printf("  %-6s (%s): %s %s\n", key.Name, key.Handle, symbol, stateText)
+			fmt.Fprintf(out, "  %-6s (%s): %s %s\n", key.Name, key.Handle, symbol, stateText)
 		} else {
 			if key.Error != "" && key.Error != "not found" {
 				stateText = "Error: " + key.Error
 			}
-			fmt.Printf("  %-6s (%s): %s %s\n", key.Name, key.Handle, symbol, stateText)
+			fmt.Fprintf(out, "  %-6s (%s): %s %s\n", key.Name, key.Handle, symbol, stateText)
 		}
 	}
-	fmt.Println()
+	fmt.Fprintln(out)
 
 	// Certificates
-	fmt.Println("Certificates:")
+	fmt.Fprintln(out, "Certificates:")
 	for _, cert := range status.Certificates {
 		symbol := "x"
 		stateText := "Not Present"
@@ -439,37 +440,37 @@ func outputStatusText(status *TPMStatusOutput) error {
 		} else if cert.Error != "" && cert.Error != "not found" {
 			stateText = "Error: " + cert.Error
 		}
-		fmt.Printf("  %-12s (NV %s): %s %s\n", cert.Name, cert.NVIndex, symbol, stateText)
+		fmt.Fprintf(out, "  %-12s (NV %s): %s %s\n", cert.Name, cert.NVIndex, symbol, stateText)
 	}
-	fmt.Println()
+	fmt.Fprintln(out)
 
 	// Platform Policy
-	fmt.Println("Platform Policy:")
-	fmt.Printf("  PCR Bank:        %s\n", status.PlatformPolicy.PCRBank)
-	fmt.Printf("  Golden PCRs:     %v\n", status.PlatformPolicy.GoldenPCRs)
-	fmt.Printf("  Platform PCR:    %d\n", status.PlatformPolicy.PlatformPCR)
+	fmt.Fprintln(out, "Platform Policy:")
+	fmt.Fprintf(out, "  PCR Bank:        %s\n", status.PlatformPolicy.PCRBank)
+	fmt.Fprintf(out, "  Golden PCRs:     %v\n", status.PlatformPolicy.GoldenPCRs)
+	fmt.Fprintf(out, "  Platform PCR:    %d\n", status.PlatformPolicy.PlatformPCR)
 	if status.PlatformPolicy.Configured {
 		// Truncate long digest for display
 		digest := status.PlatformPolicy.PolicyDigest
 		if len(digest) > 32 {
 			digest = digest[:32] + "..."
 		}
-		fmt.Printf("  Policy Digest:   %s\n", digest)
+		fmt.Fprintf(out, "  Policy Digest:   %s\n", digest)
 	} else {
-		fmt.Printf("  Policy Digest:   %s\n", status.PlatformPolicy.PolicyDigest)
+		fmt.Fprintf(out, "  Policy Digest:   %s\n", status.PlatformPolicy.PolicyDigest)
 	}
-	fmt.Println()
+	fmt.Fprintln(out)
 
 	// Golden PCR Values
 	if len(status.GoldenPCRValues) > 0 {
-		fmt.Printf("Current PCR Values (%s):\n", status.PlatformPolicy.PCRBank)
+		fmt.Fprintf(out, "Current PCR Values (%s):\n", status.PlatformPolicy.PCRBank)
 		for _, pcr := range status.GoldenPCRValues {
 			// Truncate long values for display
 			value := pcr.Value
 			if len(value) > 64 {
 				value = value[:64] + "..."
 			}
-			fmt.Printf("  PCR[%2d]: %s\n", pcr.Index, value)
+			fmt.Fprintf(out, "  PCR[%2d]: %s\n", pcr.Index, value)
 		}
 	}
 

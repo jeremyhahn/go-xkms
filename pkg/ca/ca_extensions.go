@@ -28,6 +28,7 @@ import (
 	"io"
 	"log/slog"
 	"math/big"
+	"sync"
 	"time"
 
 	"github.com/jeremyhahn/go-xkms/pkg/errs"
@@ -128,29 +129,6 @@ func (ca *CA) SignedBlob(ctx context.Context, data []byte) ([]byte, error) {
 // =============================================================================
 // Certificate Existence & Retrieval
 // =============================================================================
-
-// Issued reports whether a certificate has been issued for the given CN.
-// Both the native certStore and the keystore are consulted to match the
-// behaviour of the ACME wrapper's dual-storage model.
-//
-// Thread-safe: Yes
-func (ca *CA) Issued(ctx context.Context, cn string) (bool, error) {
-	if cn == "" {
-		return false, &errs.Detail{Err: ErrInvalidCertificate, Detail: "common name required"}
-	}
-
-	if ca.certStore != nil {
-		if cert, err := ca.certStore.GetCertificate(cn); err == nil && cert != nil {
-			return true, nil
-		}
-	}
-	if ca.keyStore != nil {
-		if cert, err := ca.keyStore.GetCert(ctx, cn); err == nil && cert != nil {
-			return true, nil
-		}
-	}
-	return false, nil
-}
 
 // Exists reports whether a certificate for cn exists and matches the given
 // public-key algorithm. Returns (false, nil) when no certificate is found or
@@ -329,15 +307,25 @@ func (ca *CA) ImportBlob(key, data []byte) error {
 // Configuration & Metadata
 // =============================================================================
 
-// CAConfig returns the flat CAConfig that was provided at construction time.
-// The returned value is a copy; mutations do not affect the running CA.
+// builtinProfiles is the registry a CA falls back to when it was constructed
+// without one. Issuance requires a profile for every certificate, so a CA that
+// cannot resolve one is unusable; falling back to the built-ins keeps a
+// minimally constructed CA working instead of failing at signing time.
+var builtinProfiles = sync.OnceValue(NewDefaultProfileRegistry)
+
+// Profiles returns the certificate profile registry this CA issues with.
+//
+// Composing services read the profile they need from here rather than
+// constructing one, so that a profile registered against this CA reaches every
+// certificate the deployment issues — including the per-tenant CAs the ACME
+// admin service creates — and not only the ones pkg/ca issues directly.
 //
 // Thread-safe: Yes
-func (ca *CA) CAConfig() CAConfig {
-	if ca.caConfig == nil {
-		return CAConfig{}
+func (ca *CA) Profiles() ProfileRegistry {
+	if ca.profiles == nil {
+		return builtinProfiles()
 	}
-	return *ca.caConfig
+	return ca.profiles
 }
 
 // DefaultKeyAlgorithm returns the public-key algorithm associated with the

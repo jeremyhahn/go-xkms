@@ -54,6 +54,14 @@ const (
 	FSEXT_PRIVATE_BLOB = ".blob"
 	FSEXT_PUBLIC_BLOB  = ".pub"
 	FSEXT_TPM_CONTEXT  = ".ctx"
+
+	// FSEXT_PLATFORM_POLICY holds the PlatformPolicyPin record of an object
+	// created under the platform policy: the PCR selection and PCR digest
+	// its AuthPolicy was computed from. It lives beside the object's public
+	// and private areas because it describes that specific object and has
+	// exactly the same lifetime. Objects created before the record existed
+	// simply have none; see PlatformPolicyPin for how they are handled.
+	FSEXT_PLATFORM_POLICY = ".policy"
 )
 
 // FSExtension is re-exported from types for compatibility

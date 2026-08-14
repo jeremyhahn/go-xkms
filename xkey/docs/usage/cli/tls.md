@@ -1,5 +1,11 @@
 # TLS CLI Command
 
+> **Scope:** this page documents the go-xkms **server** CLI `xkmsctl tls`
+> (source: `cmd/xkmsctl/`), **not** the `xkey` desktop CLI. It lives under
+> `xkey/docs/` for historical reasons.
+> There is no `xkey` equivalent. For the xkey command tree see
+> [the xkey CLI reference](README.md).
+
 The `tls` command provides operations for retrieving TLS certificates with their associated private keys and certificate chains.
 
 ## Overview

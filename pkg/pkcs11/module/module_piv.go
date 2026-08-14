@@ -42,6 +42,7 @@ import (
 	"encoding/binary"
 	"errors"
 	"math/big"
+	"strings"
 
 	"github.com/jeremyhahn/go-xkms/pkg/api/transport"
 )
@@ -97,6 +98,48 @@ var (
 	// ErrPIVEmptySlot indicates an empty slot name was provided.
 	ErrPIVEmptySlot = errors.New("pkcs11/module: slot name is required")
 )
+
+// pivSlotPolicy is the PKCS#11 projection of one PIV key reference's access
+// rules.
+//
+// NIST SP 800-73-4 Part 1 §3.2.1 assigns each key reference a PIN policy, and
+// the two that differ from the default are the two that matter. Slot 9C, the
+// digital signature key, requires PIN verification IMMEDIATELY BEFORE each
+// signature -- which PKCS#11 v3.2 §4.10 expresses as CKA_ALWAYS_AUTHENTICATE.
+// Slot 9E, the card authentication key, requires no PIN at all, so it is not a
+// private object.
+//
+// Every slot previously got one identical attribute set, which told applications
+// the opposite of the card's own rules on both counts: 9C signed without limit
+// after a single login, and 9E was invisible to a client that never logged in.
+type pivSlotPolicy struct {
+	// private is the object's CKA_PRIVATE.
+	private bool
+
+	// alwaysAuthenticate is the object's CKA_ALWAYS_AUTHENTICATE.
+	alwaysAuthenticate bool
+}
+
+// pivSlotPolicies gives O(1) lookup from PIV key reference to its policy. A slot
+// absent from this table takes pivDefaultSlotPolicy.
+var pivSlotPolicies = map[string]pivSlotPolicy{
+	"9c": {private: true, alwaysAuthenticate: true},
+	"9e": {private: false},
+}
+
+// pivDefaultSlotPolicy applies to 9A (PIV authentication), 9D (key management)
+// and the retired key references 82-95: a private object usable for the life of
+// a login.
+var pivDefaultSlotPolicy = pivSlotPolicy{private: true}
+
+// policyForPIVSlot resolves a PIV key reference to its access policy,
+// case-insensitively: cards and callers spell the reference both ways.
+func policyForPIVSlot(slot string) pivSlotPolicy {
+	if policy, ok := pivSlotPolicies[strings.ToLower(slot)]; ok {
+		return policy
+	}
+	return pivDefaultSlotPolicy
+}
 
 // pivKeyInfo holds extracted key type information for PKCS#11 object creation.
 type pivKeyInfo struct {
@@ -165,6 +208,10 @@ func extractECDSAKeyInfo(pubKey interface{}) (*pivKeyInfo, error) {
 	}, nil
 }
 
+// ed25519CurveOID is id-Ed25519 (RFC 8410 §3), the CKA_EC_PARAMS value for a
+// CKK_EC_EDWARDS key on Curve25519.
+var ed25519CurveOID = asn1.ObjectIdentifier{1, 3, 101, 112}
+
 // extractEd25519KeyInfo extracts PKCS#11 attributes from an Ed25519 public key.
 func extractEd25519KeyInfo(pubKey interface{}) (*pivKeyInfo, error) {
 	edKey, ok := pubKey.(ed25519.PublicKey)
@@ -175,11 +222,23 @@ func extractEd25519KeyInfo(pubKey interface{}) (*pivKeyInfo, error) {
 	if err != nil {
 		return nil, ErrPIVUnsupportedKeyType
 	}
+	// CKA_EC_PARAMS is required on an Edwards public key and is the only thing
+	// that says whether the key is Ed25519 or Ed448. The ECDSA extractor above
+	// publishes both attributes; publishing only the point here meant
+	// C_GetAttributeValue(CKA_EC_PARAMS) answered CKR_ATTRIBUTE_TYPE_INVALID,
+	// and pkcs11-provider -- which reads it to build the EVP_PKEY -- skipped the
+	// key, so an Ed25519 PIV credential was invisible to OpenSSL even with its
+	// certificate present.
+	ecParams, err := asn1.Marshal(ed25519CurveOID)
+	if err != nil {
+		return nil, ErrPIVUnsupportedKeyType
+	}
 
 	return &pivKeyInfo{
 		keyType: CKK_EC_EDWARDS,
 		attributes: map[AttributeType][]byte{
-			CKA_EC_POINT: ecPointDER,
+			CKA_EC_POINT:  ecPointDER,
+			CKA_EC_PARAMS: ecParams,
 		},
 	}, nil
 }
@@ -300,6 +359,13 @@ func (m *Module) loadPIVSlotObjects(ctx context.Context, backend string, slot *t
 	label := "piv:" + slot.Slot
 	keyID := "piv/" + slot.Slot
 
+	// A slot's objects are replaced, not accumulated. The card holds one
+	// certificate and one key per slot, so adding a second trio would give
+	// C_FindObjects two answers for one CKA_ID -- and OpenSSH, which pairs a
+	// certificate to its key by CKA_ID, would bind whichever the handle order
+	// surfaced first, which may be the stale one.
+	m.objectManager.DestroyObjectsForKey(backend, keyID)
+
 	if err := m.addPIVCertificateObject(cert, ckaID, label, backend, keyID); err != nil {
 		return err
 	}
@@ -308,7 +374,7 @@ func (m *Module) loadPIVSlotObjects(ctx context.Context, backend string, slot *t
 		return err
 	}
 
-	if err := m.addPIVPrivateKeyObject(keyInfo, ckaID, label, backend, keyID); err != nil {
+	if err := m.addPIVPrivateKeyObject(keyInfo, ckaID, label, backend, keyID, slot.Slot); err != nil {
 		return err
 	}
 
@@ -329,14 +395,20 @@ func (m *Module) addPIVCertificateObject(cert *x509.Certificate, ckaID []byte, l
 	obj.SetAttribute(CKA_SUBJECT, cert.RawSubject)
 	obj.SetAttribute(CKA_ISSUER, cert.RawIssuer)
 
+	// CKA_SERIAL_NUMBER is a required attribute of an X.509 certificate object
+	// (v3.2 §4.6.3), so a marshalling failure is reported rather than swallowed:
+	// the alternative was a certificate object silently missing the attribute
+	// that, with CKA_ISSUER, identifies which certificate it is.
 	serialBytes, err := asn1.Marshal(cert.SerialNumber)
-	if err == nil {
-		obj.SetAttribute(CKA_SERIAL_NUMBER, serialBytes)
+	if err != nil {
+		return ErrPIVParseCertificate
 	}
+	obj.SetAttribute(CKA_SERIAL_NUMBER, serialBytes)
 
 	obj.SetAttribute(CKA_TOKEN, []byte{1})
 	obj.SetAttribute(CKA_PRIVATE, []byte{0})
 
+	obj.SlotID = m.primarySlotID()
 	if err := m.objectManager.AddObject(obj); err != nil {
 		return ErrPIVAddObject
 	}
@@ -361,6 +433,7 @@ func (m *Module) addPIVPublicKeyObject(keyInfo *pivKeyInfo, ckaID []byte, label,
 		obj.SetAttribute(attrType, attrValue)
 	}
 
+	obj.SlotID = m.primarySlotID()
 	if err := m.objectManager.AddObject(obj); err != nil {
 		return ErrPIVAddObject
 	}
@@ -370,34 +443,41 @@ func (m *Module) addPIVPublicKeyObject(keyInfo *pivKeyInfo, ckaID []byte, label,
 // addPIVPrivateKeyObject creates a CKO_PRIVATE_KEY handle object for a PIV slot.
 // This object does not contain key material; cryptographic operations are delegated
 // to the backend via the transport.Client using KeyID and BackendName.
-func (m *Module) addPIVPrivateKeyObject(keyInfo *pivKeyInfo, ckaID []byte, label, backend, keyID string) error {
+func (m *Module) addPIVPrivateKeyObject(keyInfo *pivKeyInfo, ckaID []byte, label, backend, keyID, slot string) error {
+	policy := policyForPIVSlot(slot)
+
 	obj := NewKeyObject(CKO_PRIVATE_KEY, keyInfo.keyType)
 	obj.KeyID = keyID
 	obj.BackendName = backend
 	obj.IsToken = true
-	obj.IsPrivate = true
+	obj.IsPrivate = policy.private
 	obj.IsSensitive = true
 
 	obj.SetAttribute(CKA_LABEL, []byte(label))
 	obj.SetAttribute(CKA_ID, ckaID)
 	obj.SetAttribute(CKA_TOKEN, []byte{1})
-	obj.SetAttribute(CKA_PRIVATE, []byte{1})
+	obj.SetAttribute(CKA_PRIVATE, boolAttributeValue(policy.private))
 	obj.SetAttribute(CKA_SENSITIVE, []byte{1})
 	obj.SetAttribute(CKA_SIGN, []byte{1})
 	obj.SetAttribute(CKA_DECRYPT, []byte{1})
 	obj.SetAttribute(CKA_EXTRACTABLE, []byte{0})
 	obj.SetAttribute(CKA_NEVER_EXTRACTABLE, []byte{1})
 	obj.SetAttribute(CKA_ALWAYS_SENSITIVE, []byte{1})
+	if policy.alwaysAuthenticate {
+		obj.SetAttribute(CKA_ALWAYS_AUTHENTICATE, []byte{1})
+	}
 
 	for attrType, attrValue := range keyInfo.attributes {
-		// Skip value-related attributes for private key objects
+		// The private key object carries only the attributes v3.2 §6.1.3 and
+		// §6.3.4 define for it. CKA_MODULUS_BITS is a PUBLIC key attribute and
+		// is deliberately not copied across.
 		if attrType == CKA_MODULUS || attrType == CKA_PUBLIC_EXPONENT ||
-			attrType == CKA_EC_POINT || attrType == CKA_EC_PARAMS ||
-			attrType == CKA_MODULUS_BITS {
+			attrType == CKA_EC_POINT || attrType == CKA_EC_PARAMS {
 			obj.SetAttribute(attrType, attrValue)
 		}
 	}
 
+	obj.SlotID = m.primarySlotID()
 	if err := m.objectManager.AddObject(obj); err != nil {
 		return ErrPIVAddObject
 	}
@@ -443,6 +523,13 @@ func (m *Module) GeneratePIVKeyPair(ctx context.Context, backend, slot, algorith
 	label := "piv:" + slot
 	keyID := "piv/" + slot
 
+	// A slot's objects are replaced, not accumulated. The card holds one
+	// certificate and one key per slot, so adding a second trio would give
+	// C_FindObjects two answers for one CKA_ID -- and OpenSSH, which pairs a
+	// certificate to its key by CKA_ID, would bind whichever the handle order
+	// surfaced first, which may be the stale one.
+	m.objectManager.DestroyObjectsForKey(backend, keyID)
+
 	// Create public key object and capture its handle.
 	pubObj := NewKeyObject(CKO_PUBLIC_KEY, keyInfo.keyType)
 	pubObj.KeyID = keyID
@@ -457,6 +544,7 @@ func (m *Module) GeneratePIVKeyPair(ctx context.Context, backend, slot, algorith
 	for attrType, attrValue := range keyInfo.attributes {
 		pubObj.SetAttribute(attrType, attrValue)
 	}
+	pubObj.SlotID = m.primarySlotID()
 	if err := m.objectManager.AddObject(pubObj); err != nil {
 		return ObjectHandle(InvalidHandle), ObjectHandle(InvalidHandle), ErrPIVAddObject
 	}
@@ -485,6 +573,7 @@ func (m *Module) GeneratePIVKeyPair(ctx context.Context, backend, slot, algorith
 			privObj.SetAttribute(attrType, attrValue)
 		}
 	}
+	privObj.SlotID = m.primarySlotID()
 	if err := m.objectManager.AddObject(privObj); err != nil {
 		return ObjectHandle(InvalidHandle), ObjectHandle(InvalidHandle), ErrPIVAddObject
 	}
@@ -536,6 +625,13 @@ func (m *Module) StorePIVCertificate(ctx context.Context, backend, slot string, 
 	label := "piv:" + slot
 	keyID := "piv/" + slot
 
+	// A slot's objects are replaced, not accumulated. The card holds one
+	// certificate and one key per slot, so adding a second trio would give
+	// C_FindObjects two answers for one CKA_ID -- and OpenSSH, which pairs a
+	// certificate to its key by CKA_ID, would bind whichever the handle order
+	// surfaced first, which may be the stale one.
+	m.objectManager.DestroyObjectsForKey(backend, keyID)
+
 	if err := m.addPIVCertificateObject(cert, ckaID, label, backend, keyID); err != nil {
 		return err
 	}
@@ -544,7 +640,7 @@ func (m *Module) StorePIVCertificate(ctx context.Context, backend, slot string, 
 		return err
 	}
 
-	if err := m.addPIVPrivateKeyObject(keyInfo, ckaID, label, backend, keyID); err != nil {
+	if err := m.addPIVPrivateKeyObject(keyInfo, ckaID, label, backend, keyID, slot); err != nil {
 		return err
 	}
 
@@ -574,6 +670,14 @@ func (m *Module) DeletePIVCertificate(ctx context.Context, backend, slot string)
 	}); err != nil {
 		return ErrPIVDeleteCertificate
 	}
+
+	// The mirror objects go with the credential. LoadPIVObjects runs once during
+	// Module.Initialize, so the "refreshed on the next LoadPIVObjects call" this
+	// function's comment used to promise never happened in a running token: a
+	// deleted certificate stayed findable and its private-key handle stayed
+	// usable-looking, so C_Sign failed deep in the backend instead of the key
+	// simply being absent.
+	m.objectManager.DestroyObjectsForKey(backend, "piv/"+slot)
 
 	return nil
 }
@@ -617,6 +721,13 @@ func (m *Module) ImportPIVCertificate(ctx context.Context, backend, slot string,
 	label := "piv:" + slot
 	keyID := "piv/" + slot
 
+	// A slot's objects are replaced, not accumulated. The card holds one
+	// certificate and one key per slot, so adding a second trio would give
+	// C_FindObjects two answers for one CKA_ID -- and OpenSSH, which pairs a
+	// certificate to its key by CKA_ID, would bind whichever the handle order
+	// surfaced first, which may be the stale one.
+	m.objectManager.DestroyObjectsForKey(backend, keyID)
+
 	if err := m.addPIVCertificateObject(cert, ckaID, label, backend, keyID); err != nil {
 		return err
 	}
@@ -625,7 +736,7 @@ func (m *Module) ImportPIVCertificate(ctx context.Context, backend, slot string,
 		return err
 	}
 
-	if err := m.addPIVPrivateKeyObject(keyInfo, ckaID, label, backend, keyID); err != nil {
+	if err := m.addPIVPrivateKeyObject(keyInfo, ckaID, label, backend, keyID, slot); err != nil {
 		return err
 	}
 

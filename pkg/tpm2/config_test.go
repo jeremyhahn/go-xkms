@@ -141,9 +141,9 @@ func TestParseIdentityProvisioningStrategyComprehensive(t *testing.T) {
 			expected: EnrollmentStrategyIAK_IDEVID_SINGLE_PASS,
 		},
 		{
-			name:     "unknown strategy defaults to single pass",
+			name:     "unknown strategy fails closed",
 			strategy: "unknown",
-			expected: EnrollmentStrategyIAK_IDEVID_SINGLE_PASS,
+			expected: EnrollmentStrategyUnknown,
 		},
 		{
 			name:     "empty string defaults to single pass",
@@ -839,11 +839,10 @@ func TestEKAttributesFromConfigTableDriven(t *testing.T) {
 
 func TestSRKAttributesFromConfigTableDriven(t *testing.T) {
 	tests := []struct {
-		name         string
-		config       SRKConfig
-		policyDigest *tpm2.TPM2BDigest
-		expectError  bool
-		validate     func(*testing.T, *types.KeyAttributes)
+		name        string
+		config      SRKConfig
+		expectError bool
+		validate    func(*testing.T, *types.KeyAttributes)
 	}{
 		{
 			name: "valid RSA config uses default CN",
@@ -853,8 +852,7 @@ func TestSRKAttributesFromConfigTableDriven(t *testing.T) {
 				HierarchyAuth: "password",
 				RSAConfig:     &store.RSAConfig{KeySize: 2048},
 			},
-			policyDigest: nil,
-			expectError:  false,
+			expectError: false,
 			validate: func(t *testing.T, attrs *types.KeyAttributes) {
 				assert.Equal(t, "srk", attrs.CN)
 				assert.Equal(t, x509.RSA, attrs.KeyAlgorithm)
@@ -869,8 +867,7 @@ func TestSRKAttributesFromConfigTableDriven(t *testing.T) {
 				Handle:       0x81000001,
 				ECCConfig:    &store.ECCConfig{Curve: "P-256"},
 			},
-			policyDigest: nil,
-			expectError:  false,
+			expectError: false,
 			validate: func(t *testing.T, attrs *types.KeyAttributes) {
 				assert.Equal(t, x509.ECDSA, attrs.KeyAlgorithm)
 				assert.NotNil(t, attrs.ECCAttributes)
@@ -882,31 +879,29 @@ func TestSRKAttributesFromConfigTableDriven(t *testing.T) {
 				KeyAlgorithm: "INVALID",
 				Handle:       0x81000001,
 			},
-			policyDigest: nil,
-			expectError:  true,
-			validate:     nil,
+			expectError: true,
+			validate:    nil,
 		},
 		{
-			name: "config with platform policy",
+			name: "no configuration yields a platform policy or an AuthPolicy",
 			config: SRKConfig{
-				KeyAlgorithm:   x509.RSA.String(),
-				Handle:         0x81000001,
-				PlatformPolicy: true,
-				RSAConfig:      &store.RSAConfig{KeySize: 2048},
-			},
-			policyDigest: &tpm2.TPM2BDigest{
-				Buffer: []byte{0x01, 0x02, 0x03},
+				KeyAlgorithm: x509.RSA.String(),
+				Handle:       0x81000001,
+				RSAConfig:    &store.RSAConfig{KeySize: 2048},
 			},
 			expectError: false,
 			validate: func(t *testing.T, attrs *types.KeyAttributes) {
-				assert.True(t, attrs.PlatformPolicy)
+				assert.False(t, attrs.PlatformPolicy,
+					"the shared SRK never carries a platform policy")
+				assert.Empty(t, attrs.TPMAttributes.Template.AuthPolicy.Buffer,
+					"no AuthPolicy may be baked into the shared SRK template")
 			},
 		},
 	}
 
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
-			attrs, err := SRKAttributesFromConfig(tc.config, tc.policyDigest)
+			attrs, err := SRKAttributesFromConfig(tc.config)
 			if tc.expectError {
 				assert.Error(t, err)
 			} else {
@@ -1125,12 +1120,12 @@ func TestParseIdentityProvisioningStrategy_Extended(t *testing.T) {
 	}{
 		{"IAK", "IAK", EnrollmentStrategyIAK},
 		{"IAK_IDEVID_SINGLE_PASS", "IAK_IDEVID_SINGLE_PASS", EnrollmentStrategyIAK_IDEVID_SINGLE_PASS},
-		{"Default for invalid", "INVALID", EnrollmentStrategyIAK_IDEVID_SINGLE_PASS},
+		{"Unrecognized value fails closed", "INVALID", EnrollmentStrategyUnknown},
 		{"Default for empty", "", EnrollmentStrategyIAK_IDEVID_SINGLE_PASS},
-		{"Lowercase iak", "iak", EnrollmentStrategyIAK_IDEVID_SINGLE_PASS},     // Case sensitive
-		{"Partial match", "IAK_", EnrollmentStrategyIAK_IDEVID_SINGLE_PASS},    // No partial match
-		{"Extra chars", "IAK_EXTRA", EnrollmentStrategyIAK_IDEVID_SINGLE_PASS}, // Falls to default
-		{"Whitespace", " IAK", EnrollmentStrategyIAK_IDEVID_SINGLE_PASS},       // No whitespace handling
+		{"Lowercase iak", "iak", EnrollmentStrategyUnknown},     // Case sensitive
+		{"Partial match", "IAK_", EnrollmentStrategyUnknown},    // No partial match
+		{"Extra chars", "IAK_EXTRA", EnrollmentStrategyUnknown}, // Fails closed
+		{"Whitespace", " IAK", EnrollmentStrategyUnknown},       // No whitespace handling
 	}
 
 	for _, tt := range tests {
@@ -1198,13 +1193,12 @@ func TestEKConfigStructure_Extended(t *testing.T) {
 
 func TestSRKConfigStructure_Extended(t *testing.T) {
 	config := SRKConfig{
-		CN:             "test-srk",
-		Debug:          true,
-		Handle:         0x81000001,
-		HierarchyAuth:  "test-auth",
-		KeyAlgorithm:   "RSA",
-		Password:       "test-password",
-		PlatformPolicy: true,
+		CN:            "test-srk",
+		Debug:         true,
+		Handle:        0x81000001,
+		HierarchyAuth: "test-auth",
+		KeyAlgorithm:  "RSA",
+		Password:      "test-password",
 	}
 
 	assert.Equal(t, "test-srk", config.CN)
@@ -1213,7 +1207,6 @@ func TestSRKConfigStructure_Extended(t *testing.T) {
 	assert.Equal(t, "test-auth", config.HierarchyAuth)
 	assert.Equal(t, "RSA", config.KeyAlgorithm)
 	assert.Equal(t, "test-password", config.Password)
-	assert.True(t, config.PlatformPolicy)
 }
 
 func TestIDevIDConfigStructure_Extended(t *testing.T) {
@@ -1503,8 +1496,8 @@ func TestConfigVal_ParseIdentityStrategy_All(t *testing.T) {
 		{"IAK strategy", "IAK", EnrollmentStrategyIAK},
 		{"IAK_IDEVID_SINGLE_PASS", "IAK_IDEVID_SINGLE_PASS", EnrollmentStrategyIAK_IDEVID_SINGLE_PASS},
 		{"Default for empty", "", EnrollmentStrategyIAK_IDEVID_SINGLE_PASS},
-		{"Default for unknown", "UNKNOWN", EnrollmentStrategyIAK_IDEVID_SINGLE_PASS},
-		{"Default for lowercase", "iak", EnrollmentStrategyIAK_IDEVID_SINGLE_PASS},
+		{"Unrecognized value fails closed", "UNKNOWN", EnrollmentStrategyUnknown},
+		{"Lowercase fails closed", "iak", EnrollmentStrategyUnknown},
 	}
 
 	for _, tt := range tests {

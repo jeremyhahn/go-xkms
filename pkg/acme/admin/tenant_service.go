@@ -164,57 +164,15 @@ func (s *TenantAwareAdminService) CreateTenant(ctx context.Context, req CreateTe
 		}
 	}
 
-	// Create default RBAC roles for the new tenant
-	if s.qrdbService != nil && s.qrdbService.Roles() != nil {
-		defaultRoles := []struct {
-			name        string
-			permissions []string
-		}{
-			{
-				name: string(RoleAdmin),
-				permissions: []string{
-					string(PermCertificatesRead), string(PermCertificatesList), string(PermCertificatesCreate), string(PermCertificatesRevoke),
-					string(PermAccountsRead), string(PermAccountsList), string(PermAccountsDisable),
-					string(PermOrdersRead), string(PermOrdersList),
-					string(PermTenantsRead), string(PermTenantsUpdate),
-					string(PermTenantCARead), string(PermTenantCACreate), string(PermTenantCAUpdate),
-					string(PermEABRead), string(PermEABList), string(PermEABCreate), string(PermEABDelete),
-					string(PermRolesRead), string(PermRolesList), string(PermRolesCreate), string(PermRolesUpdate), string(PermRolesDelete),
-					string(PermUsersRead), string(PermUsersList), string(PermUsersCreate), string(PermUsersUpdate), string(PermUsersDelete),
-				},
-			},
-			{
-				name: string(RoleOperator),
-				permissions: []string{
-					string(PermCertificatesRead), string(PermCertificatesList), string(PermCertificatesCreate),
-					string(PermAccountsRead), string(PermAccountsList),
-					string(PermOrdersRead), string(PermOrdersList),
-					string(PermEABRead), string(PermEABList), string(PermEABCreate),
-				},
-			},
-			{
-				name: string(RoleViewer),
-				permissions: []string{
-					string(PermCertificatesRead), string(PermCertificatesList),
-					string(PermAccountsRead), string(PermAccountsList),
-					string(PermOrdersRead), string(PermOrdersList),
-				},
-			},
-		}
-		for _, dr := range defaultRoles {
-			_, err := s.qrdbService.Roles().CreateRole(ctx, &db.CreateRoleRequest{
-				Name:        dr.name,
-				TenantID:    req.ID,
-				Permissions: dr.permissions,
-			})
-			if err != nil {
-				s.logger.Warn("failed to create default role",
-					slog.String("tenant_id", req.ID),
-					slog.String("role", dr.name),
-					slog.String("error", err.Error()))
-			}
-		}
-	}
+	// Tenant RBAC roles are NOT seeded here. go-qrdb provisions the six
+	// canonical system roles (so / admin / operator / user / auditor /
+	// custodian) for every tenant it creates, each carrying the canonical
+	// permission set that the ACME admin surface now authorizes against.
+	// Seeding a second set of roles named "admin" / "operator" / "viewer" here
+	// shadowed those canonical roles with a parallel permission vocabulary, so
+	// a tenant admin's grants meant something different on the ACME admin API
+	// than on every other transport. That is the bug this unification removes.
+
 	s.logger.Info("tenant created",
 		slog.String("id", req.ID),
 		slog.String("name", req.Name))
@@ -468,6 +426,58 @@ func (s *TenantAwareAdminService) ListTenants(ctx context.Context, req ListTenan
 	}, nil
 }
 
+// identityProvider is implemented by certificate authorities that can report
+// the identity they issue from. It is declared here rather than added to
+// ca.TrustedCA so that existing implementations and mocks stay
+// source-compatible; the tenant service type-asserts to it.
+type identityProvider interface {
+	IssuingIdentity() ca.Identity
+}
+
+// caProfile returns the certificate profile every tenant CA — root and
+// intermediate alike — is issued with.
+//
+// Resolving it from the platform CA's registry rather than constructing one
+// here is what makes a change to the CA profile reach tenant CAs: an operator
+// who registers a stricter "ca" profile changes the platform root, every
+// platform intermediate and every tenant CA in one edit. Falling back to the
+// built-in profile keeps tenant CA creation working when no platform CA is
+// configured, which is the case in the admin service's standalone mode.
+func (s *TenantAwareAdminService) caProfile() ca.ProfileProvider {
+	if s.AdminService != nil && s.ca != nil {
+		if registry, ok := s.ca.(interface {
+			Profiles() ca.ProfileRegistry
+		}); ok {
+			if profile, err := registry.Profiles().Get(ca.ProfileNameCA); err == nil {
+				return profile
+			}
+		}
+	}
+	return ca.NewCAProfile()
+}
+
+// parentIdentity returns the issuing identity whose revocation and Authority
+// Information Access endpoints belong on a tenant intermediate.
+//
+// An intermediate signed by the platform CA inherits the platform CA's
+// endpoints, because the platform CA is the authority that will publish its
+// revocation status. An intermediate signed by a tenant's own root has no such
+// authority behind it and therefore carries no endpoints.
+func (s *TenantAwareAdminService) parentIdentity(parentType string) *ca.Identity {
+	if parentType == "tenant" {
+		return nil
+	}
+	if s.AdminService == nil || s.ca == nil {
+		return nil
+	}
+	provider, ok := s.ca.(identityProvider)
+	if !ok {
+		return nil
+	}
+	identity := provider.IssuingIdentity()
+	return &identity
+}
+
 // CreateTenantRootCA creates a root CA for a tenant.
 func (s *TenantAwareAdminService) CreateTenantRootCA(ctx context.Context, tenantID string, req CreateTenantRootCARequest) (*TenantRootCAInfo, error) {
 	if tenantID == "" {
@@ -507,37 +517,37 @@ func (s *TenantAwareAdminService) CreateTenantRootCA(ctx context.Context, tenant
 		return nil, caerrors.InternalServerError("admin: failed to generate serial number: %s", err)
 	}
 
-	template := &x509.Certificate{
-		SerialNumber: serialNumber,
-		Subject: pkix.Name{
-			CommonName:   req.CommonName,
-			Organization: []string{tenantID},
-		},
-		NotBefore:             now,
-		NotAfter:              now.AddDate(req.ValidityYears, 0, 0),
-		KeyUsage:              x509.KeyUsageCertSign | x509.KeyUsageCRLSign | x509.KeyUsageDigitalSignature,
-		BasicConstraintsValid: true,
-		IsCA:                  true,
-		MaxPathLen:            1, // Allow one level of intermediate CAs
-		MaxPathLenZero:        false,
-	}
-
 	// Get signer
 	signer, ok := privateKey.(crypto.Signer)
 	if !ok {
 		return nil, caerrors.InternalServerError("admin: private key does not implement crypto.Signer")
 	}
 
-	// Self-sign the certificate
-	certDER, err := x509.CreateCertificate(rand.Reader, template, template, publicKey, signer)
+	// Create the self-signed root through pkg/ca, which is the single
+	// implementer of CA certificate creation in go-xkms. A nil
+	// Issuer.Certificate requests self-signing, and the CA profile supplies
+	// the key usage and basic constraints every CA certificate carries — the
+	// same profile the platform root and every intermediate are issued with,
+	// so a tenant root cannot drift away from them.
+	cert, err := (&ca.Issuer{Signer: signer}).Issue(rand.Reader, &ca.CertificateSpec{
+		Serial: serialNumber,
+		Subject: pkix.Name{
+			CommonName:   req.CommonName,
+			Organization: []string{tenantID},
+		},
+		NotBefore: now,
+		NotAfter:  now.AddDate(req.ValidityYears, 0, 0),
+		PublicKey: publicKey,
+		Profile:   s.caProfile(),
+		Request: &ca.CertificateRequest{
+			Subject:    ca.Subject{CommonName: req.CommonName, Organization: tenantID},
+			TenantID:   tenantID,
+			IsCA:       true,
+			MaxPathLen: 1, // Allow one level of intermediate CAs
+		},
+	})
 	if err != nil {
 		return nil, caerrors.SigningFailureError("admin: failed to create root CA certificate: %s", err)
-	}
-
-	// Parse the certificate
-	cert, err := x509.ParseCertificate(certDER)
-	if err != nil {
-		return nil, caerrors.InternalServerError("admin: failed to parse root CA certificate: %s", err)
 	}
 
 	// Store in keystore if available
@@ -653,31 +663,34 @@ func (s *TenantAwareAdminService) CreateTenantIntermediateCA(ctx context.Context
 		return nil, caerrors.InternalServerError("admin: failed to generate serial number: %s", err)
 	}
 
-	template := &x509.Certificate{
-		SerialNumber: serialNumber,
+	// Issue the intermediate through pkg/ca under the resolved parent — the
+	// tenant's own root, or the platform CA. The issuer is carried explicitly
+	// rather than assumed, which is what makes per-tenant issuance possible at
+	// all. The path length of zero forbids further subordinate CAs.
+	cert, err := (&ca.Issuer{
+		Signer:      parentSigner,
+		Certificate: parentCert,
+		Identity:    s.parentIdentity(req.ParentType),
+	}).Issue(rand.Reader, &ca.CertificateSpec{
+		Serial: serialNumber,
 		Subject: pkix.Name{
 			CommonName:   req.CommonName,
 			Organization: []string{tenantID},
 		},
-		NotBefore:             now,
-		NotAfter:              now.AddDate(req.ValidityYears, 0, 0),
-		KeyUsage:              x509.KeyUsageCertSign | x509.KeyUsageCRLSign | x509.KeyUsageDigitalSignature,
-		BasicConstraintsValid: true,
-		IsCA:                  true,
-		MaxPathLen:            0, // Cannot issue CA certificates
-		MaxPathLenZero:        true,
-	}
-
-	// Sign with parent CA
-	certDER, err := x509.CreateCertificate(rand.Reader, template, parentCert, publicKey, parentSigner)
+		NotBefore: now,
+		NotAfter:  now.AddDate(req.ValidityYears, 0, 0),
+		PublicKey: publicKey,
+		Profile:   s.caProfile(),
+		Request: &ca.CertificateRequest{
+			Subject:        ca.Subject{CommonName: req.CommonName, Organization: tenantID},
+			TenantID:       tenantID,
+			IsCA:           true,
+			MaxPathLen:     0, // Cannot issue CA certificates
+			MaxPathLenZero: true,
+		},
+	})
 	if err != nil {
 		return nil, caerrors.SigningFailureError("admin: failed to create intermediate CA certificate: %s", err)
-	}
-
-	// Parse the certificate
-	cert, err := x509.ParseCertificate(certDER)
-	if err != nil {
-		return nil, caerrors.InternalServerError("admin: failed to parse intermediate CA certificate: %s", err)
 	}
 
 	// Get signer for caching

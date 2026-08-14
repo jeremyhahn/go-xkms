@@ -36,9 +36,83 @@ tls:
   ca_file: "/path/to/ca.pem"  # Optional, for mTLS
   min_version: "1.3"  # 1.0, 1.1, 1.2, 1.3
 
+  # Client certificate policy. "require_and_verify" is what makes the mTLS
+  # authenticator below enforcing: every client must present a certificate
+  # issued by one of the CAs in client_cas.
+  client_auth: "require_and_verify"  # none, request, require, verify, require_and_verify
+  client_cas:
+    - "/path/to/client-ca.pem"
+
+# Authentication
+#
+# Authenticator selection is fail-closed: an unknown type, or a type whose
+# required companion configuration is missing, aborts startup instead of
+# serving requests anonymously.
+#
+#   mtls      - client certificate identity. Requires tls.enabled: true.
+#   jwt       - bearer tokens. Requires auth.jwt.public_key_file.
+#   adaptive  - unauthenticated only while no user exists, then delegates to
+#               the required authenticator. Requires auth.jwt.public_key_file,
+#               because the login/WebAuthn ceremony issues JWTs.
+#   composite - chains several methods. Requires auth.composite.methods.
+#   noop      - no authentication at all. xkmsd refuses to start without
+#               --insecure (XKMS_INSECURE=true).
+#
+# mTLS is the recommended production configuration: identity is bound to a
+# client certificate verified against tls.client_cas, and nothing extra has to
+# be provisioned or rotated on the server beyond the CA.
 auth:
   enabled: true
-  type: "adaptive"  # noop, mtls, jwt, adaptive
+  type: "mtls"  # noop, mtls, jwt, adaptive, composite
+  mtls: true
+  # Role-based authorization for every transport (REST, gRPC, QUIC, MCP).
+  # Requires storage.backend "qrdb" -- see the note there.
+  enable_rbac: true
+
+  # Required for type "jwt" and for type "adaptive": the PEM public key used to
+  # verify bearer tokens. Uncomment together with the matching type and replace
+  # the placeholder path -- startup fails while the key is missing or unreadable.
+  # jwt:
+  #   public_key_file: "/path/to/jwt-public.pem"  # PLACEHOLDER: replace with a real key
+  #   issuer: "https://issuer.example.com"
+  #   audience: ["xkms"]
+  #   algorithm: "RS256"
+
+  # Required for type "composite": the methods to chain, first success wins.
+  # composite:
+  #   methods: ["jwt", "mtls"]
+
+# Metadata storage for keys, certificates and service state.
+# backend: pebble (durable embedded default), file (one plain file per key),
+# qrdb (shared hosted node) or memory (tests only).
+#
+# "qrdb" is required by auth.enable_rbac above: roles and permissions live in
+# the qrdb identity plane, and it is the only backend that provides one. With
+# any other backend the authorizer cannot be built and every transport would
+# authorize every request, so the daemon refuses to start in that combination.
+storage:
+  backend: "qrdb"
+  path: "/var/lib/xkms/storage"
+
+# Default backend used when a request does not name one.
+default_backend: "pkcs8"
+
+# At least one backend must be enabled.
+backends:
+  pkcs8:
+    enabled: true
+    path: "/var/lib/xkms/keys"
+
+  # tpm2:
+  #   enabled: true
+  #   device: "/dev/tpmrm0"
+  #   key_dir: "/var/lib/xkms/keys/tpm2"
+
+  # pkcs11:
+  #   enabled: true
+  #   library_path: "/usr/lib/softhsm/libsofthsm2.so"
+  #   token_label: "xkms"
+  #   pin: "1234"  # prefer an environment variable in production
 
 # Rate limiting configuration
 # Applied uniformly across all APIs (REST, gRPC, QUIC, MCP)

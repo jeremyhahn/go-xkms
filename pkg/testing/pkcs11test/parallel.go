@@ -45,9 +45,6 @@ func (s *Suite) testGetFunctionStatus(t *testing.T) {
 		sh := openRWSession(t, m)
 
 		rv := m.GetFunctionStatus(sh)
-		if s.skipIfUnsupported(t, rv) {
-			return
-		}
 		requireRV(t, module.CKR_FUNCTION_NOT_PARALLEL, rv,
 			"GetFunctionStatus should always return CKR_FUNCTION_NOT_PARALLEL")
 	})
@@ -59,9 +56,6 @@ func (s *Suite) testGetFunctionStatus(t *testing.T) {
 		invalidSession := module.SessionHandle(0xDEADBEEF)
 
 		rv := m.GetFunctionStatus(invalidSession)
-		if s.skipIfUnsupported(t, rv) {
-			return
-		}
 		// Some implementations validate the session handle first and return
 		// CKR_SESSION_HANDLE_INVALID; others return CKR_FUNCTION_NOT_PARALLEL
 		// unconditionally. Both are spec-compliant behaviors.
@@ -83,9 +77,6 @@ func (s *Suite) testCancelFunction(t *testing.T) {
 		sh := openRWSession(t, m)
 
 		rv := m.CancelFunction(sh)
-		if s.skipIfUnsupported(t, rv) {
-			return
-		}
 		requireRV(t, module.CKR_FUNCTION_NOT_PARALLEL, rv,
 			"CancelFunction should always return CKR_FUNCTION_NOT_PARALLEL")
 	})
@@ -97,9 +88,6 @@ func (s *Suite) testCancelFunction(t *testing.T) {
 		invalidSession := module.SessionHandle(0xDEADBEEF)
 
 		rv := m.CancelFunction(invalidSession)
-		if s.skipIfUnsupported(t, rv) {
-			return
-		}
 		// Some implementations validate the session handle first and return
 		// CKR_SESSION_HANDLE_INVALID; others return CKR_FUNCTION_NOT_PARALLEL
 		// unconditionally. Both are spec-compliant behaviors.

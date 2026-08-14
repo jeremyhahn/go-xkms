@@ -185,6 +185,6 @@ trusted-acme-client service
 
 ## Related Documentation
 
-- [ACME Documentation](../acme/README.md)
+- [ACME Documentation](../README.md)
 - [Admin API Reference](../admin/api-reference.md)
 - [Configuration Guide](../deployment/)

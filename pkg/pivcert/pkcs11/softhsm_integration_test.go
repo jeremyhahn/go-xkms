@@ -25,7 +25,6 @@ import (
 	"crypto/x509/pkix"
 	"encoding/pem"
 	"math/big"
-	"os"
 	"strings"
 	"sync"
 	"testing"
@@ -36,31 +35,6 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
-
-const (
-	softHSMLibrary  = "/usr/lib/softhsm/libsofthsm2.so"
-	softHSMToken    = "e2e-piv-test"
-	softHSMPIN      = "123456"
-	softHSMAutoSlot = -1
-)
-
-// skipIfNoSoftHSM skips the test if SoftHSM is not installed.
-func skipIfNoSoftHSM(t *testing.T) {
-	t.Helper()
-	if _, err := os.Stat(softHSMLibrary); err != nil {
-		t.Skip("SoftHSM not available")
-	}
-}
-
-// softhsmConfig returns a PKCS#11 storage config pointing at the SoftHSM test token.
-func softhsmConfig() *pivcert.PKCS11StorageConfig {
-	return &pivcert.PKCS11StorageConfig{
-		LibraryPath: softHSMLibrary,
-		TokenLabel:  softHSMToken,
-		PIN:         softHSMPIN,
-		SlotID:      softHSMAutoSlot,
-	}
-}
 
 // generateSoftHSMTestCert creates a self-signed ECDSA P-256 certificate for
 // integration test use. Named differently from generateTestCert in the unit
@@ -98,10 +72,9 @@ func generateSoftHSMTestCert(t *testing.T) *x509.Certificate {
 // TestSoftHSMListAllPIVSlots verifies that List() returns all 4 pre-provisioned
 // PIV certificates with correct metadata.
 func TestSoftHSMListAllPIVSlots(t *testing.T) {
-	skipIfNoSoftHSM(t)
-	t.Parallel()
+	tok := provisionPIVToken(t)
 
-	store, err := New(softhsmConfig())
+	store, err := New(tok.config())
 	require.NoError(t, err, "create PKCS#11 storage")
 	defer store.Close()
 
@@ -163,10 +136,9 @@ func TestSoftHSMListAllPIVSlots(t *testing.T) {
 // TestSoftHSMRetrieveBySlot verifies that each pre-provisioned certificate
 // can be retrieved individually and contains correct key material.
 func TestSoftHSMRetrieveBySlot(t *testing.T) {
-	skipIfNoSoftHSM(t)
-	t.Parallel()
+	tok := provisionPIVToken(t)
 
-	store, err := New(softhsmConfig())
+	store, err := New(tok.config())
 	require.NoError(t, err, "create PKCS#11 storage")
 	defer store.Close()
 
@@ -215,10 +187,9 @@ func TestSoftHSMRetrieveBySlot(t *testing.T) {
 // TestSoftHSMRetrieveEmptySlot verifies that retrieving a certificate from
 // an unpopulated slot (f9 attestation) returns an error.
 func TestSoftHSMRetrieveEmptySlot(t *testing.T) {
-	skipIfNoSoftHSM(t)
-	t.Parallel()
+	tok := provisionPIVToken(t)
 
-	store, err := New(softhsmConfig())
+	store, err := New(tok.config())
 	require.NoError(t, err, "create PKCS#11 storage")
 	defer store.Close()
 
@@ -232,10 +203,9 @@ func TestSoftHSMRetrieveEmptySlot(t *testing.T) {
 // TestSoftHSMStoreAndDelete verifies the full store/retrieve/delete lifecycle
 // using a retired slot so we do not disturb the pre-provisioned test data.
 func TestSoftHSMStoreAndDelete(t *testing.T) {
-	skipIfNoSoftHSM(t)
-	// NOT parallel: mutates token state
+	tok := provisionPIVToken(t)
 
-	store, err := New(softhsmConfig())
+	store, err := New(tok.config())
 	require.NoError(t, err, "create PKCS#11 storage")
 	defer store.Close()
 
@@ -272,10 +242,9 @@ func TestSoftHSMStoreAndDelete(t *testing.T) {
 // TestSoftHSMImportExport verifies PEM and DER import/export round-trip
 // integrity using a retired slot.
 func TestSoftHSMImportExport(t *testing.T) {
-	skipIfNoSoftHSM(t)
-	// NOT parallel: mutates token state
+	tok := provisionPIVToken(t)
 
-	store, err := New(softhsmConfig())
+	store, err := New(tok.config())
 	require.NoError(t, err, "create PKCS#11 storage")
 	defer store.Close()
 
@@ -330,9 +299,6 @@ func TestSoftHSMImportExport(t *testing.T) {
 // TestSoftHSMCKAIDMapping verifies the PIV slot to CKA_ID byte mapping,
 // including the f9 -> 0x19 fix (previously the bug mapped f9 -> 0xf9).
 func TestSoftHSMCKAIDMapping(t *testing.T) {
-	skipIfNoSoftHSM(t)
-	t.Parallel()
-
 	tests := []struct {
 		slot     pivcert.PIVSlot
 		expected byte
@@ -366,8 +332,7 @@ func TestSoftHSMCKAIDMapping(t *testing.T) {
 // the exact path the GUI uses when it already holds a PKCS#11 context and
 // session from the module manager.
 func TestSoftHSMNewFromSession(t *testing.T) {
-	skipIfNoSoftHSM(t)
-	t.Parallel()
+	tok := provisionPIVToken(t)
 
 	// Pin the library via the module registry for the duration of this
 	// test. C_Initialize/C_Finalize are process-global, so finalizing here
@@ -375,17 +340,17 @@ func TestSoftHSMNewFromSession(t *testing.T) {
 	// holding a registry reference also prevents a parallel test's Close
 	// from finalizing the library underneath this test. The registry
 	// finalizes exactly once when the last reference is released.
-	_, err := acquireModule(softHSMLibrary)
+	_, err := acquireModule(tok.Library)
 	require.NoError(t, err, "acquireModule")
 	defer func() {
-		if rerr := releaseModule(softHSMLibrary); rerr != nil {
+		if rerr := releaseModule(tok.Library); rerr != nil {
 			t.Logf("releaseModule: %v", rerr)
 		}
 	}()
 
 	// Manually create a second context handle (simulating what the GUI
 	// does when it already holds its own PKCS#11 context).
-	ctx := p11.New(softHSMLibrary)
+	ctx := p11.New(tok.Library)
 	require.NotNil(t, ctx, "p11.New must return non-nil context")
 
 	err = ctx.Initialize()
@@ -409,20 +374,20 @@ func TestSoftHSMNewFromSession(t *testing.T) {
 		if err != nil {
 			continue
 		}
-		if strings.TrimRight(info.Label, " ") == softHSMToken {
+		if strings.TrimRight(info.Label, " ") == tok.Label {
 			slotID = s
 			found = true
 			break
 		}
 	}
-	require.True(t, found, "token %q must be found", softHSMToken)
+	require.True(t, found, "token %q must be found", tok.Label)
 
 	// Open session and login.
 	session, err := ctx.OpenSession(slotID, p11.CKF_SERIAL_SESSION|p11.CKF_RW_SESSION)
 	require.NoError(t, err, "OpenSession")
 	defer ctx.CloseSession(session)
 
-	err = ctx.Login(session, p11.CKU_USER, softHSMPIN)
+	err = ctx.Login(session, p11.CKU_USER, tok.UserPIN)
 	if err != nil {
 		require.ErrorIs(t, err, p11.Error(p11.CKR_USER_ALREADY_LOGGED_IN),
 			"Login should succeed or return CKR_USER_ALREADY_LOGGED_IN")
@@ -461,10 +426,9 @@ func TestSoftHSMNewFromSession(t *testing.T) {
 // TestSoftHSMConcurrentList verifies that concurrent List() calls through the
 // session-pool-backed New() constructor do not race or deadlock.
 func TestSoftHSMConcurrentList(t *testing.T) {
-	skipIfNoSoftHSM(t)
-	t.Parallel()
+	tok := provisionPIVToken(t)
 
-	store, err := New(softhsmConfig())
+	store, err := New(tok.config())
 	require.NoError(t, err, "create PKCS#11 storage")
 	defer store.Close()
 

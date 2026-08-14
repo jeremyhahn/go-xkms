@@ -1,5 +1,11 @@
 # Certificate Authority CLI
 
+> **Scope:** this page documents the go-xkms **server** CLI `xkmsctl ca`
+> (source: `cmd/xkmsctl/`), **not** the `xkey` desktop CLI. It lives under
+> `xkey/docs/` for historical reasons.
+> `xkey` has its own `xkey ca` command group with a different surface —
+> see [the xkey CLI reference](README.md).
+
 The `ca` command group provides Certificate Authority (CA) operations for certificate lifecycle management, including certificate issuance, CSR signing, revocation, and CRL generation. A separate `ca tcg` subgroup handles Trusted Computing Group (TCG) device identity certificate operations for TPM enrollment.
 
 ## Table of Contents

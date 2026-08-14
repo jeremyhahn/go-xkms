@@ -60,6 +60,11 @@ const (
 	MethodRemoteGetTCGCSRIDevID     = "remote.getTCGCSRIDevID"
 	MethodRemoteActivateCredential  = "remote.activateCredential"
 	MethodRemoteGetAttestationQuote = "remote.getAttestationQuote"
+
+	// MethodRemoteStoreEnrollmentCerts hands the CA-issued IAK and IDevID
+	// certificates back to the desktop for provisioning into its TPM. It closes
+	// the enrollment the phone began as Certificate Authority.
+	MethodRemoteStoreEnrollmentCerts = "remote.storeEnrollmentCerts"
 )
 
 // BackendInfo describes a xkmsd backend available on the laptop.

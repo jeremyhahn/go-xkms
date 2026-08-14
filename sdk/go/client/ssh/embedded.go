@@ -448,11 +448,11 @@ func (c *embeddedAuthorizedKeysClient) Get(ctx context.Context, scope, owner, na
 	if err != nil {
 		return nil, &InvalidScopeError{Value: scope}
 	}
-	entry, err := c.store.Get(ctx, sc, owner, name)
+	rec, err := c.store.Get(ctx, sc, owner, name)
 	if err != nil {
 		return nil, err
 	}
-	return entryToDTO(scope, owner, name, entry), nil
+	return recordToDTO(rec), nil
 }
 
 // List implements AuthorizedKeysClient.List.
@@ -470,8 +470,8 @@ func (c *embeddedAuthorizedKeysClient) List(ctx context.Context, req ListAuthori
 		return nil, err
 	}
 	out := make([]*AuthorizedEntry, 0, len(list))
-	for _, e := range list {
-		out = append(out, entryToDTO(req.Scope, req.Owner, "", e))
+	for _, rec := range list {
+		out = append(out, recordToDTO(rec))
 	}
 	return out, nil
 }
@@ -504,11 +504,11 @@ func (c *embeddedAuthorizedKeysClient) Verify(ctx context.Context, scope, owner 
 	if err != nil {
 		return nil, &InvalidScopeError{Value: scope}
 	}
-	entry, err := pkgauthorized.Verify(ctx, c.store, sc, owner, received)
+	rec, err := pkgauthorized.Verify(ctx, c.store, sc, owner, received)
 	if err != nil {
 		return nil, err
 	}
-	return entryToDTO(scope, owner, "", entry), nil
+	return recordToDTO(rec), nil
 }
 
 // embeddedSessionClient implements SessionClient.
@@ -614,20 +614,29 @@ func toDTO(k *pkgkeys.Key) *Key {
 	}
 }
 
-// entryToDTO maps a *pkgauthorized.Entry to the transport AuthorizedEntry.
-// scope/owner/name are passed in because the stored Entry itself doesn't
-// carry them separately (they're the storage-path components).
-func entryToDTO(scope, owner, name string, e *pkgauthorized.Entry) *AuthorizedEntry {
-	line, err := pkgauthorized.Emit(e)
-	if err != nil {
-		line = ""
+// recordToDTO maps a *pkgauthorized.Record to the transport
+// AuthorizedEntry. The scope/owner/name reported are the ones the store
+// read back, not an echo of the request, so a listed entry carries the
+// name a caller needs for a follow-up Get or Remove.
+//
+// A nil Record maps to nil; the stores in this repository never produce
+// one, but the DTO conversion must not panic on a third-party Store.
+func recordToDTO(rec *pkgauthorized.Record) *AuthorizedEntry {
+	if rec == nil {
+		return nil
 	}
-	return &AuthorizedEntry{
-		Scope:   scope,
-		Owner:   owner,
-		Name:    name,
-		Line:    line,
-		Options: e.Options,
-		Comment: e.Comment,
+	dto := &AuthorizedEntry{
+		Scope: string(rec.Scope),
+		Owner: rec.Owner,
+		Name:  rec.Name,
 	}
+	if rec.Entry == nil {
+		return dto
+	}
+	if line, err := pkgauthorized.Emit(rec.Entry); err == nil {
+		dto.Line = line
+	}
+	dto.Options = rec.Entry.Options
+	dto.Comment = rec.Entry.Comment
+	return dto
 }

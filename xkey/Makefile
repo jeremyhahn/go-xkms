@@ -450,8 +450,19 @@ integration-test: integration-test-cli integration-test-fido2 integration-test-u
 	integration-test-phone integration-test-oath integration-test-password \
 	integration-test-piv integration-test-ssh integration-test-touch \
 	integration-test-oidc integration-test-luks integration-test-extension \
-	integration-test-gadget
+	integration-test-gadget integration-test-ble integration-test-tpm
 	@echo "$(GREEN)$(BOLD)All integration tests passed$(RESET)"
+
+.PHONY: integration-test-tpm
+## integration-test-tpm: Run TPMService integration tests against the in-process TPM simulator
+# The suite lives beside the service it exercises (pkg/gui/services) and is
+# guarded by `//go:build integration && tpm_simulator`. INTEGRATION_TEST_FLAGS
+# supplies both tags plus CGO, so the simulator links in and NO host TPM
+# character device is opened.
+integration-test-tpm:
+	@echo "$(CYAN)$(BOLD)Running TPM service integration tests (simulator)...$(RESET)"
+	@$(GO) test $(INTEGRATION_TEST_FLAGS) -timeout=15m -run 'TestIntegration_TPMService' ./pkg/gui/services/
+	@echo "$(GREEN)TPM service integration tests passed$(RESET)"
 
 .PHONY: integration-test-cli
 ## integration-test-cli: Run CLI, passkey, and backend integration tests
@@ -528,23 +539,19 @@ integration-test-piv-yubikey:
 	@$(GO) test -v -tags="integration pkcs11 yubikey $(BUILD_TAGS)" -count=1 -timeout=60m ./test/integration/piv/... -run 'TestYubiKey'
 	@echo "$(GREEN)PIV YubiKey integration tests passed$(RESET)"
 
-.PHONY: integration-test-oath-yubikey
-## integration-test-oath-yubikey: Run OATH YubiKey integration tests (placeholder — requires xkey oath YubiKey backend)
-integration-test-oath-yubikey:
-	@echo "$(CYAN)$(BOLD)Running OATH YubiKey integration tests...$(RESET)"
-	@$(GO) test -v -tags="integration yubikey $(BUILD_TAGS)" -count=1 -timeout=30m ./test/integration/oath/... -run 'TestYubiKey'
-	@echo "$(GREEN)OATH YubiKey integration tests passed$(RESET)"
-
-.PHONY: integration-test-fido2-yubikey
-## integration-test-fido2-yubikey: Run FIDO2 YubiKey integration tests (placeholder — requires xkey fido2 YubiKey pass-through)
-integration-test-fido2-yubikey:
-	@echo "$(CYAN)$(BOLD)Running FIDO2 YubiKey integration tests...$(RESET)"
-	@$(GO) test -v -tags="integration linux yubikey $(BUILD_TAGS)" -count=1 -timeout=30m ./test/integration/fido2/... -run 'TestYubiKey'
-	@echo "$(GREEN)FIDO2 YubiKey integration tests passed$(RESET)"
+# NOTE: There are no OATH or FIDO2 YubiKey integration targets because xkey has
+# no YubiKey backend for either capability yet:
+#   - xkey oath routes every command through oath.NewFileStore; there is no
+#     CCID OATH applet client and no --backend yubikey flag.
+#   - xkey fido2 is a virtual CTAP2 authenticator over UHID; --backend accepts
+#     only software/tpm2/phone, with no pass-through to a physical YubiKey.
+# The placeholder suites that used to sit here contained only unconditional
+# t.Skip calls, so they asserted nothing while implying YubiKey coverage
+# existed. Add the backends first, then add real suites and targets.
 
 .PHONY: integration-test-yubikey
-## integration-test-yubikey: Run ALL YubiKey hardware integration tests (PIV + OATH + FIDO2) — NOT part of global integration-test
-integration-test-yubikey: integration-test-piv-yubikey integration-test-oath-yubikey integration-test-fido2-yubikey
+## integration-test-yubikey: Run ALL YubiKey hardware integration tests (PIV) — NOT part of global integration-test
+integration-test-yubikey: integration-test-piv-yubikey
 	@echo "$(GREEN)$(BOLD)All YubiKey hardware integration tests passed$(RESET)"
 
 .PHONY: integration-test-ssh
@@ -602,6 +609,13 @@ integration-test-gadget:
 	@echo "$(CYAN)$(BOLD)Running USB gadget integration tests...$(RESET)"
 	@docker compose -f test/integration/gadget/docker-compose.yml up --build --abort-on-container-exit --exit-code-from gadget-tests
 	@echo "$(GREEN)USB gadget integration tests passed$(RESET)"
+
+.PHONY: integration-test-ble
+## integration-test-ble: Run virtual-hardware BLE integration tests (privileged Docker + host netns)
+integration-test-ble:
+	@echo "$(CYAN)$(BOLD)Running BLE integration tests (virtual HCI controllers)...$(RESET)"
+	@docker compose -f test/integration/ble/docker-compose.yml up --build --abort-on-container-exit --exit-code-from ble-tests
+	@echo "$(GREEN)BLE integration tests passed$(RESET)"
 
 # ==============================================================================
 # Coverage Targets

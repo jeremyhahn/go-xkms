@@ -26,6 +26,7 @@ import (
 	"github.com/aws/aws-sdk-go-v2/service/kms"
 	awstypes "github.com/aws/aws-sdk-go-v2/service/kms/types"
 	"github.com/jeremyhahn/go-xkms/pkg/backend"
+	"github.com/jeremyhahn/go-xkms/pkg/crypto/aead"
 	"github.com/jeremyhahn/go-xkms/pkg/types"
 )
 
@@ -262,6 +263,14 @@ func (b *Backend) SymmetricEncrypter(ctx context.Context, attrs *types.KeyAttrib
 // Note: Nonce reuse tracking is not applicable since AWS KMS manages nonces server-side.
 // Only bytes encrypted tracking is performed to enforce NIST cryptographic limits.
 func (e *awsKMSSymmetricEncrypter) Encrypt(plaintext []byte, opts *types.EncryptOptions) (*types.EncryptedData, error) {
+	// AWS KMS returns an opaque ciphertext blob and never exposes the
+	// authentication tag, so the tag length is not this backend's to choose.
+	if opts != nil {
+		if err := aead.RequireDefaultTagSize(opts.TagSize, "AWS KMS"); err != nil {
+			return nil, err
+		}
+	}
+
 	ctx := context.Background()
 	if err := e.backend.initClient(ctx); err != nil {
 		return nil, err
@@ -312,6 +321,13 @@ func (e *awsKMSSymmetricEncrypter) Encrypt(plaintext []byte, opts *types.Encrypt
 // AWS KMS automatically verifies authentication before decrypting.
 // Additional authenticated data (AAD) must match what was provided during encryption.
 func (e *awsKMSSymmetricEncrypter) Decrypt(data *types.EncryptedData, opts *types.DecryptOptions) ([]byte, error) {
+	// See the matching check in Encrypt.
+	if opts != nil {
+		if err := aead.RequireDefaultTagSize(opts.TagSize, "AWS KMS"); err != nil {
+			return nil, err
+		}
+	}
+
 	ctx := context.Background()
 	if err := e.backend.initClient(ctx); err != nil {
 		return nil, err

@@ -152,6 +152,43 @@ type AuthorizationList struct {
 
 	// RootOfTrust contains device boot state information, if present.
 	RootOfTrust *RootOfTrust
+
+	// AttestationApplicationID identifies the application that requested the
+	// attestation, if present. Populated by the Keystore daemon rather than
+	// by the calling application, so an app cannot name itself something else.
+	//
+	// It appears in the softwareEnforced list, which means a compromised
+	// system image could forge it -- it identifies the caller, it does not by
+	// itself prove the platform is sound. Pair it with the RootOfTrust checks,
+	// which are TEE-enforced.
+	AttestationApplicationID *AttestationApplicationID
+}
+
+// AttestationApplicationID names the application a key was attested for.
+//
+//	AttestationApplicationId ::= SEQUENCE {
+//	    packageInfos     SET OF AttestationPackageInfo,
+//	    signatureDigests SET OF OCTET_STRING,
+//	}
+type AttestationApplicationID struct {
+	// Packages lists the packages sharing the calling UID.
+	Packages []AttestationPackageInfo
+
+	// SignatureDigests holds the SHA-256 digests of the signing certificates
+	// of those packages. This is what pins a build: a rebuild signed with a
+	// different key produces a different digest, so an attacker's repackaged
+	// copy of the app cannot pass as the real one.
+	SignatureDigests [][]byte
+}
+
+// AttestationPackageInfo is one package entry inside an
+// AttestationApplicationID.
+type AttestationPackageInfo struct {
+	// Name is the Android package name.
+	Name string
+
+	// Version is the package's version code.
+	Version int64
 }
 
 // RootOfTrust contains device boot state information from Android Verified Boot.
@@ -318,6 +355,74 @@ func ParseKeyAttestation(cert *x509.Certificate) (*KeyDescription, error) {
 // ASN.1 structure. The AuthorizationList contains IMPLICIT tagged fields
 // that are difficult to parse generically, so we extract only the fields
 // we need.
+// Context-specific tag numbers inside an AuthorizationList, from the Android
+// KeyMint attestation schema.
+const (
+	tagRootOfTrust              = 704
+	tagAttestationApplicationID = 709
+)
+
+// attestationApplicationIDASN1 mirrors the DER inside the tag-709 OCTET STRING.
+type attestationApplicationIDASN1 struct {
+	PackageInfos     []attestationPackageInfoASN1 `asn1:"set"`
+	SignatureDigests [][]byte                     `asn1:"set"`
+}
+
+type attestationPackageInfoASN1 struct {
+	PackageName []byte
+	Version     int64
+}
+
+// findAttestationApplicationID walks the AuthorizationList for tag 709 and
+// decodes the application identity inside it.
+//
+// The value is an OCTET STRING whose contents are themselves DER, so it takes
+// two decodes: the outer tagged element, then the structure within.
+func findAttestationApplicationID(data []byte) *AttestationApplicationID {
+	var outer asn1.RawValue
+	rest, err := asn1.Unmarshal(data, &outer)
+	if err != nil || len(rest) > 0 {
+		return nil
+	}
+
+	remaining := outer.Bytes
+	for len(remaining) > 0 {
+		var elem asn1.RawValue
+		remaining, err = asn1.Unmarshal(remaining, &elem)
+		if err != nil {
+			break
+		}
+		if elem.Class != asn1.ClassContextSpecific || elem.Tag != tagAttestationApplicationID {
+			continue
+		}
+
+		// Unwrap the OCTET STRING, then decode what it wraps.
+		var wrapped []byte
+		if _, wrapErr := asn1.Unmarshal(elem.Bytes, &wrapped); wrapErr != nil {
+			return nil
+		}
+
+		var parsed attestationApplicationIDASN1
+		if _, parseErr := asn1.Unmarshal(wrapped, &parsed); parseErr != nil {
+			return nil
+		}
+
+		appID := &AttestationApplicationID{
+			Packages:         make([]AttestationPackageInfo, 0, len(parsed.PackageInfos)),
+			SignatureDigests: parsed.SignatureDigests,
+		}
+		for _, pkg := range parsed.PackageInfos {
+			appID.Packages = append(appID.Packages, AttestationPackageInfo{
+				Name:    string(pkg.PackageName),
+				Version: pkg.Version,
+			})
+		}
+		return appID
+	}
+
+	return nil
+}
+
 func parseAuthorizationList(rawVal asn1.RawValue) AuthorizationList {
 	authList := AuthorizationList{}
 
@@ -336,6 +441,10 @@ func parseAuthorizationList(rawVal asn1.RawValue) AuthorizationList {
 	rot := findRootOfTrust(rawVal.FullBytes)
 	if rot != nil {
 		authList.RootOfTrust = rot
+	}
+
+	if appID := findAttestationApplicationID(rawVal.FullBytes); appID != nil {
+		authList.AttestationApplicationID = appID
 	}
 
 	return authList
@@ -366,8 +475,13 @@ func findRootOfTrust(data []byte) *RootOfTrust {
 			break
 		}
 
-		// RootOfTrust is context-specific class, constructed
-		if elem.Class == asn1.ClassContextSpecific && elem.IsCompound {
+		// RootOfTrust is context-specific class, constructed, tag 704.
+		// The tag is checked rather than trying every compound element in
+		// turn: several other entries in this list are also context-specific
+		// SEQUENCEs, and one of them parsing as a RootOfTrust by coincidence
+		// would report a boot state that was never attested.
+		if elem.Class == asn1.ClassContextSpecific && elem.IsCompound &&
+			elem.Tag == tagRootOfTrust {
 			// Try to parse as RootOfTrust
 			var rot rootOfTrustASN1
 			if _, parseErr := asn1.Unmarshal(elem.Bytes, &rot); parseErr == nil {

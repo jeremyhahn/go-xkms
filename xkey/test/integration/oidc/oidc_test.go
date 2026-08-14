@@ -25,19 +25,22 @@ import (
 	"time"
 )
 
-// requireHydra verifies that the Hydra OIDC server is reachable.
-// Tests that need Hydra call this and are skipped when Hydra is unavailable.
+// requireHydra verifies that the Hydra OIDC server is reachable. Hydra is
+// brought up by the integration docker-compose stack, so an unreachable server
+// is an environment fault: it fails the test rather than silently dropping the
+// OIDC coverage.
 func requireHydra(t *testing.T) {
 	t.Helper()
 	url := getHydraPublicURL() + "/health/ready"
 	client := &http.Client{Timeout: 3 * time.Second}
 	resp, err := client.Get(url)
 	if err != nil {
-		t.Skipf("Hydra not reachable at %s: %v", url, err)
+		t.Fatalf("Hydra not reachable at %s: %v; start the OIDC stack "+
+			"(make integration-test-oidc) or set XKEY_TEST_HYDRA_PUBLIC_URL", url, err)
 	}
-	resp.Body.Close()
+	defer resp.Body.Close()
 	if resp.StatusCode != http.StatusOK {
-		t.Skipf("Hydra not ready at %s: status %d", url, resp.StatusCode)
+		t.Fatalf("Hydra not ready at %s: status %d", url, resp.StatusCode)
 	}
 }
 

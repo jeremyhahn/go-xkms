@@ -503,11 +503,34 @@ func TestGenerateMLKEM768KeyPair(t *testing.T) {
 	})
 
 	t.Run("returns error for unsupported security levels", func(t *testing.T) {
-		_, err := qcm.GenerateMLKEMKeyPair(512)
+		// 512 is supported; TestGenerateMLKEM512KeyPair covers it. The levels
+		// below are not parameter sets FIPS 203 defines at all.
+		_, err := qcm.GenerateMLKEMKeyPair(256)
 		assert.Error(t, err)
 
-		_, err = qcm.GenerateMLKEMKeyPair(256)
+		_, err = qcm.GenerateMLKEMKeyPair(0)
 		assert.Error(t, err)
+
+		_, err = qcm.GenerateMLKEMKeyPair(2048)
+		assert.Error(t, err)
+	})
+
+	t.Run("generates every FIPS 203 parameter set", func(t *testing.T) {
+		for _, tc := range []struct {
+			level           int
+			publicKeyLength int
+		}{
+			{512, MLKEM512PublicKeySize},
+			{768, MLKEM768PublicKeySize},
+			{1024, MLKEM1024PublicKeySize},
+		} {
+			pair, err := qcm.GenerateMLKEMKeyPair(tc.level)
+			require.NoError(t, err, "ML-KEM-%d must generate", tc.level)
+			assert.Len(t, pair.PublicKey, tc.publicKeyLength,
+				"ML-KEM-%d encapsulation key length", tc.level)
+			assert.Len(t, pair.SecretKey, mlkemSeedSize,
+				"every ML-KEM level stores the same 64-byte seed")
+		}
 	})
 }
 

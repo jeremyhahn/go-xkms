@@ -82,6 +82,7 @@ func (fb *FileBackend) Delete(attrs *types.KeyAttributes) error {
 		FSEXT_PRIVATE_BLOB,
 		FSEXT_PUBLIC_BLOB,
 		FSEXT_TPM_CONTEXT,
+		FSEXT_PLATFORM_POLICY,
 	}
 
 	var lastErr error

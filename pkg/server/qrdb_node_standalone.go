@@ -16,26 +16,33 @@
 package server
 
 import (
-	"errors"
-
 	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
 	qrdbnode "github.com/jeremyhahn/go-qrdb/sdk/go/node"
+
+	"github.com/jeremyhahn/go-xkms/pkg/daemon"
 )
 
 // ErrClusterRequiresRaftBuild is returned when cluster.enabled is set but xkms
 // was built without the raft build tag. Clustering pulls in the Raft transport
 // and is compiled in only with `-tags raft`.
-var ErrClusterRequiresRaftBuild = errors.New(
-	"server: clustering requires building xkms with -tags raft")
+var ErrClusterRequiresRaftBuild = daemon.ErrClusterRequiresRaftBuild
 
-// newQRDBNode hosts a standalone (single-node) qrdb engine. This is the default
-// build; the clustered path lives in qrdb_node_cluster.go under `-tags raft`.
-// If cluster.enabled is set in this build, it fails loudly rather than silently
-// running unclustered.
+// newQRDBNode hosts a standalone (single-node) qrdb engine through the shared
+// pkg/daemon node builder — the single node-construction path for the stack.
+// This is the default build; the clustered path lives in qrdb_node_cluster.go
+// under `-tags raft`. If cluster.enabled is set in this build, pkg/daemon
+// fails loudly rather than silently running unclustered.
 func (s *Server) newQRDBNode(qcfg *qrdbsdk.DaemonConfig, serverOpts []qrdbsdk.ServerOption, nodeOpts []qrdbnode.NodeOption) (*qrdbnode.Node, error) {
-	if s.config.Cluster.Enabled {
-		return nil, ErrClusterRequiresRaftBuild
+	res, err := daemon.NewNode(s.ctx, &daemon.Options{
+		QRDB:          qcfg,
+		Cluster:       daemon.ClusterOptions{Enabled: s.config.Cluster.Enabled},
+		StoragePath:   s.config.Storage.Path,
+		Logger:        s.logger,
+		ServerOptions: serverOpts,
+		NodeOptions:   nodeOpts,
+	})
+	if err != nil {
+		return nil, err
 	}
-	s.logger.Info("Hosting qrdb engine in-process via NewStandaloneNode")
-	return qrdbnode.NewStandaloneNode(s.ctx, qcfg, serverOpts, nodeOpts...)
+	return res.Node, nil
 }

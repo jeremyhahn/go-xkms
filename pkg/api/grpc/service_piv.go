@@ -17,12 +17,14 @@ import (
 	"context"
 	"errors"
 
-	pb "github.com/jeremyhahn/go-xkms/pkg/api/grpc/proto/xkmsv1"
-	"github.com/jeremyhahn/go-xkms/pkg/api/transport"
-	"github.com/jeremyhahn/go-xkms/pkg/xkms"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 	"google.golang.org/protobuf/types/known/emptypb"
+
+	pb "github.com/jeremyhahn/go-xkms/pkg/api/grpc/proto/xkmsv1"
+	"github.com/jeremyhahn/go-xkms/pkg/api/transport"
+	"github.com/jeremyhahn/go-xkms/pkg/auth"
+	"github.com/jeremyhahn/go-xkms/pkg/xkms"
 )
 
 // Typed errors for PIV gRPC operations.
@@ -73,7 +75,7 @@ func (s *Service) ListPIVSlots(ctx context.Context, req *pb.ListPIVSlotsRequest)
 		return nil, status.Error(codes.InvalidArgument, ErrPIVBackendRequired.Error())
 	}
 
-	if err := s.authorize(ctx, "piv", "read", req.GetBackend()); err != nil {
+	if err := s.authorize(ctx, auth.ResourcePIV, auth.ActionRead, req.GetBackend()); err != nil {
 		return nil, err
 	}
 
@@ -118,7 +120,7 @@ func (s *Service) GetPIVCertificate(ctx context.Context, req *pb.GetPIVCertifica
 		return nil, status.Error(codes.InvalidArgument, ErrPIVFormatRequired.Error())
 	}
 
-	if err := s.authorize(ctx, "piv", "read", req.GetSlot()); err != nil {
+	if err := s.authorize(ctx, auth.ResourcePIV, auth.ActionRead, req.GetSlot()); err != nil {
 		return nil, err
 	}
 
@@ -155,7 +157,7 @@ func (s *Service) StorePIVCertificate(ctx context.Context, req *pb.StorePIVCerti
 		return nil, status.Error(codes.InvalidArgument, ErrPIVCertificateRequired.Error())
 	}
 
-	if err := s.authorize(ctx, "piv", "write", req.GetSlot()); err != nil {
+	if err := s.authorize(ctx, auth.ResourcePIV, auth.ActionWrite, req.GetSlot()); err != nil {
 		return nil, err
 	}
 
@@ -182,7 +184,7 @@ func (s *Service) DeletePIVCertificate(ctx context.Context, req *pb.DeletePIVCer
 		return nil, status.Error(codes.InvalidArgument, ErrPIVSlotRequired.Error())
 	}
 
-	if err := s.authorize(ctx, "piv", "delete", req.GetSlot()); err != nil {
+	if err := s.authorize(ctx, auth.ResourcePIV, auth.ActionDelete, req.GetSlot()); err != nil {
 		return nil, err
 	}
 
@@ -207,7 +209,7 @@ func (s *Service) GeneratePIVKey(ctx context.Context, req *pb.GeneratePIVKeyRequ
 		return nil, status.Error(codes.InvalidArgument, ErrPIVSlotRequired.Error())
 	}
 
-	if err := s.authorize(ctx, "piv", "write", req.GetSlot()); err != nil {
+	if err := s.authorize(ctx, auth.ResourcePIV, auth.ActionWrite, req.GetSlot()); err != nil {
 		return nil, err
 	}
 
@@ -245,7 +247,7 @@ func (s *Service) ImportPIVCertificate(ctx context.Context, req *pb.StorePIVCert
 		return nil, status.Error(codes.InvalidArgument, ErrPIVCertificateRequired.Error())
 	}
 
-	if err := s.authorize(ctx, "piv", "write", req.GetSlot()); err != nil {
+	if err := s.authorize(ctx, auth.ResourcePIV, auth.ActionWrite, req.GetSlot()); err != nil {
 		return nil, err
 	}
 
@@ -275,7 +277,7 @@ func (s *Service) ExportPIVCertificate(ctx context.Context, req *pb.GetPIVCertif
 		return nil, status.Error(codes.InvalidArgument, ErrPIVFormatRequired.Error())
 	}
 
-	if err := s.authorize(ctx, "piv", "read", req.GetSlot()); err != nil {
+	if err := s.authorize(ctx, auth.ResourcePIV, auth.ActionRead, req.GetSlot()); err != nil {
 		return nil, err
 	}
 
@@ -306,7 +308,7 @@ func (s *Service) GeneratePIVCSR(ctx context.Context, req *pb.GeneratePIVCSRRequ
 		return nil, status.Error(codes.InvalidArgument, ErrPIVSlotRequired.Error())
 	}
 
-	if err := s.authorize(ctx, "piv", "use", req.GetSlot()); err != nil {
+	if err := s.authorize(ctx, auth.ResourcePIV, auth.ActionUse, req.GetSlot()); err != nil {
 		return nil, err
 	}
 

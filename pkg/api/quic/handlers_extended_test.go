@@ -30,6 +30,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/jeremyhahn/go-xkms/pkg/auth"
+
 	"github.com/jeremyhahn/go-xkms/pkg/xkms"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -53,8 +55,9 @@ func createImportExportTestServer(t *testing.T) (*Server, *MockKeyStoreWithImpor
 	svc, _ := xkms.Get()
 
 	cfg := &Config{
-		Addr:        "localhost:8444",
-		XKMSService: svc,
+		Authenticator: auth.NewNoOpAuthenticator(),
+		Addr:          "localhost:8444",
+		XKMSService:   svc,
 	}
 
 	server, err := NewServer(cfg)
@@ -386,6 +389,10 @@ func TestHandleEncryptDecryptRSA(t *testing.T) {
 	require.Equal(t, http.StatusCreated, w.Code)
 	_ = mockKS
 
+	// The decrypt leg now has to state its padding and digest. Both used to be
+	// hard-wired to OAEP-SHA-256 in the handler, which is why this round trip
+	// once worked with an empty request body -- and why a PKCS#1 v1.5
+	// ciphertext could not be decrypted over this transport at all.
 	t.Run("asymmetric encrypt then decrypt", func(t *testing.T) {
 		// Encrypt
 		encBody, _ := json.Marshal(AsymmetricEncryptRequest{Plaintext: []byte("hello")})
@@ -401,6 +408,8 @@ func TestHandleEncryptDecryptRSA(t *testing.T) {
 		// Decrypt
 		decBody, _ := json.Marshal(DecryptRequest{
 			Ciphertext: encResp.Ciphertext,
+			Padding:    "oaep",
+			Hash:       "SHA-256",
 		})
 		decReq := httptest.NewRequest(http.MethodPost, "/api/v1/keys/enc-dec-key/decrypt?backend=software", bytes.NewReader(decBody))
 		decW := httptest.NewRecorder()
@@ -428,7 +437,14 @@ func TestHandleEncryptDecryptRSA(t *testing.T) {
 		encReq := httptest.NewRequest(http.MethodPost, "/api/v1/keys/ecdsa-enc-key/asymmetric-encrypt?backend=software", bytes.NewReader(encBody))
 		encW := httptest.NewRecorder()
 		server.handler.ServeHTTP(encW, encReq)
-		assert.Equal(t, http.StatusBadRequest, encW.Code)
+		// The key-type refusal comes from the service layer, which reports it
+		// as xkms.ErrEncryptionFailed. That maps to 500 here, the same answer
+		// the gRPC transport gives for the same condition. What matters is
+		// that a non-RSA key is refused rather than encrypted under something
+		// else; see the note in handleAsymmetricEncrypt for why the check is
+		// not duplicated against KeyAttributes.KeyAlgorithm.
+		assert.Equal(t, http.StatusInternalServerError, encW.Code)
+		assert.Contains(t, encW.Body.String(), "key is not RSA")
 	})
 }
 

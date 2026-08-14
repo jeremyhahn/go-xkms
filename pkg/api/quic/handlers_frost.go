@@ -23,6 +23,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/jeremyhahn/go-xkms/pkg/auth"
 	"github.com/jeremyhahn/go-xkms/pkg/errs"
 
 	"github.com/jeremyhahn/go-xkms/pkg/keyprovider/frost"
@@ -198,7 +199,7 @@ func (s *Server) handleFrostKeys(w http.ResponseWriter, r *http.Request) {
 
 // handleFrostListKeys handles listing FROST keys
 func (s *Server) handleFrostListKeys(w http.ResponseWriter, r *http.Request) {
-	if !s.authorize(w, r, "keys", "list") {
+	if !s.authorize(w, r, auth.ResourceKeys, auth.ActionList) {
 		return
 	}
 
@@ -246,7 +247,7 @@ func (s *Server) handleFrostListKeys(w http.ResponseWriter, r *http.Request) {
 
 // handleFrostGenerateKey handles FROST key generation
 func (s *Server) handleFrostGenerateKey(w http.ResponseWriter, r *http.Request) {
-	if !s.authorize(w, r, "keys", "create") {
+	if !s.authorize(w, r, auth.ResourceKeys, auth.ActionCreate) {
 		return
 	}
 
@@ -408,7 +409,7 @@ func (s *Server) handleFrostKeyOperations(w http.ResponseWriter, r *http.Request
 
 // handleFrostGetKey handles retrieving a FROST key
 func (s *Server) handleFrostGetKey(w http.ResponseWriter, r *http.Request, keyID string) {
-	if !s.authorize(w, r, "keys", "get") {
+	if !s.authorize(w, r, auth.ResourceKeys, auth.ActionGet) {
 		return
 	}
 
@@ -465,7 +466,7 @@ func (s *Server) handleFrostGetKey(w http.ResponseWriter, r *http.Request, keyID
 
 // handleFrostDeleteKey handles deleting a FROST key
 func (s *Server) handleFrostDeleteKey(w http.ResponseWriter, r *http.Request, keyID string) {
-	if !s.authorize(w, r, "keys", "delete") {
+	if !s.authorize(w, r, auth.ResourceKeys, auth.ActionDelete) {
 		return
 	}
 
@@ -499,7 +500,7 @@ func (s *Server) handleFrostGenerateNonces(w http.ResponseWriter, r *http.Reques
 		return
 	}
 
-	if !s.authorize(w, r, "keys", "sign") {
+	if !s.authorize(w, r, auth.ResourceKeys, auth.ActionSign) {
 		return
 	}
 
@@ -532,7 +533,7 @@ func (s *Server) handleFrostSignRound(w http.ResponseWriter, r *http.Request, ke
 		return
 	}
 
-	if !s.authorize(w, r, "keys", "sign") {
+	if !s.authorize(w, r, auth.ResourceKeys, auth.ActionSign) {
 		return
 	}
 
@@ -647,7 +648,7 @@ func (s *Server) handleFrostImport(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if !s.authorize(w, r, "keys", "import") {
+	if !s.authorize(w, r, auth.ResourceKeys, auth.ActionImport) {
 		return
 	}
 
@@ -735,7 +736,7 @@ func (s *Server) handleFrostAggregate(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if !s.authorize(w, r, "keys", "sign") {
+	if !s.authorize(w, r, auth.ResourceKeys, auth.ActionSign) {
 		return
 	}
 
@@ -824,7 +825,7 @@ func (s *Server) handleFrostVerify(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if !s.authorize(w, r, "keys", "verify") {
+	if !s.authorize(w, r, auth.ResourceKeys, auth.ActionVerify) {
 		return
 	}
 

@@ -67,7 +67,7 @@ func TestGetTenantEABHandler_TenantNotFound(t *testing.T) {
 
 	req := httptest.NewRequest("GET", "/api/v1/tenants/nonexistent/eab/kid-123", nil)
 	req = mux.SetURLVars(req, map[string]string{"id": "nonexistent", "kid": "kid-123"})
-	req = addUserToRequest(req, createSuperAdminUser())
+	req = addUserToRequest(req, createPlatformAdminUser())
 	w := httptest.NewRecorder()
 
 	handlers.GetTenantEAB(w, req)
@@ -129,7 +129,7 @@ func TestDeleteTenantEABHandler_TenantNotFound(t *testing.T) {
 
 	req := httptest.NewRequest("DELETE", "/api/v1/tenants/nonexistent/eab/kid-123", nil)
 	req = mux.SetURLVars(req, map[string]string{"id": "nonexistent", "kid": "kid-123"})
-	req = addUserToRequest(req, createSuperAdminUser())
+	req = addUserToRequest(req, createPlatformAdminUser())
 	w := httptest.NewRecorder()
 
 	handlers.DeleteTenantEAB(w, req)
@@ -209,7 +209,7 @@ func TestListTenantEABsHandler_TenantNotFound(t *testing.T) {
 
 	req := httptest.NewRequest("GET", "/api/v1/tenants/nonexistent/eab", nil)
 	req = mux.SetURLVars(req, map[string]string{"id": "nonexistent"})
-	req = addUserToRequest(req, createSuperAdminUser())
+	req = addUserToRequest(req, createPlatformAdminUser())
 	w := httptest.NewRecorder()
 
 	handlers.ListTenantEABs(w, req)
@@ -325,7 +325,7 @@ func TestCreateTenantRootCAHandler_TenantNotFound(t *testing.T) {
 	body := `{"common_name": "Test Root CA", "key_algorithm": "RSA-2048", "validity_years": 10}`
 	req := httptest.NewRequest("POST", "/api/v1/tenants/nonexistent/root-ca", bytes.NewBufferString(body))
 	req = mux.SetURLVars(req, map[string]string{"id": "nonexistent"})
-	req = addUserToRequest(req, createSuperAdminUser())
+	req = addUserToRequest(req, createPlatformAdminUser())
 	w := httptest.NewRecorder()
 
 	handlers.CreateTenantRootCA(w, req)
@@ -436,7 +436,7 @@ func TestGetTenantCAStatusHandler_TenantNotFound(t *testing.T) {
 
 	req := httptest.NewRequest("GET", "/api/v1/tenants/nonexistent/ca-status", nil)
 	req = mux.SetURLVars(req, map[string]string{"id": "nonexistent"})
-	req = addUserToRequest(req, createSuperAdminUser())
+	req = addUserToRequest(req, createPlatformAdminUser())
 	w := httptest.NewRecorder()
 
 	handlers.GetTenantCAStatus(w, req)
@@ -552,7 +552,7 @@ func TestUpdateTenantIntermediateCAStatusHandler_TenantNotFound(t *testing.T) {
 	body := `{"status": "active"}`
 	req := httptest.NewRequest("PUT", "/api/v1/tenants/nonexistent/intermediate-cas/ca-1/status", bytes.NewBufferString(body))
 	req = mux.SetURLVars(req, map[string]string{"id": "nonexistent", "caid": "ca-1"})
-	req = addUserToRequest(req, createSuperAdminUser())
+	req = addUserToRequest(req, createPlatformAdminUser())
 	w := httptest.NewRecorder()
 
 	handlers.UpdateTenantIntermediateCAStatus(w, req)
@@ -685,7 +685,7 @@ func TestSetTenantDefaultIntermediateCAHandler_TenantNotFound(t *testing.T) {
 	body := `{"intermediate_ca_id": "ca-1"}`
 	req := httptest.NewRequest("PUT", "/api/v1/tenants/nonexistent/default-intermediate-ca", bytes.NewBufferString(body))
 	req = mux.SetURLVars(req, map[string]string{"id": "nonexistent"})
-	req = addUserToRequest(req, createSuperAdminUser())
+	req = addUserToRequest(req, createPlatformAdminUser())
 	w := httptest.NewRecorder()
 
 	handlers.SetTenantDefaultIntermediateCA(w, req)

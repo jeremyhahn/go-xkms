@@ -82,6 +82,13 @@ var luksIsUnlocked = func(name string) bool {
 	return luks2.IsUnlocked(name)
 }
 
+// statPath stats a filesystem path. Tests replace this to describe a
+// synthetic device node without depending on a real device existing on
+// the host.
+var statPath = func(path string) (os.FileInfo, error) {
+	return os.Stat(path)
+}
+
 // readMountsFile reads the mount information file. Tests replace
 // this to provide synthetic mount data without reading /proc/mounts.
 var readMountsFile = func() ([]byte, error) {

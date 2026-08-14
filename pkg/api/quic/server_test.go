@@ -67,9 +67,10 @@ func TestNewServer_Success(t *testing.T) {
 	svc, _ := xkms.Get()
 
 	cfg := &Config{
-		Addr:        "localhost:8444",
-		Logger:      testLogger(),
-		XKMSService: svc,
+		Authenticator: auth.NewNoOpAuthenticator(),
+		Addr:          "localhost:8444",
+		Logger:        testLogger(),
+		XKMSService:   svc,
 	}
 
 	server, err := NewServer(cfg)
@@ -88,9 +89,10 @@ func TestNewServer_DefaultAddr(t *testing.T) {
 	svc, _ := xkms.Get()
 
 	cfg := &Config{
-		Addr:        "",
-		Logger:      testLogger(),
-		XKMSService: svc,
+		Authenticator: auth.NewNoOpAuthenticator(),
+		Addr:          "",
+		Logger:        testLogger(),
+		XKMSService:   svc,
 	}
 
 	server, err := NewServer(cfg)
@@ -113,10 +115,11 @@ func TestNewServer_WithTLSConfig(t *testing.T) {
 	svc, _ := xkms.Get()
 
 	cfg := &Config{
-		Addr:        "localhost:8444",
-		TLSConfig:   tlsCfg,
-		Logger:      testLogger(),
-		XKMSService: svc,
+		Authenticator: auth.NewNoOpAuthenticator(),
+		Addr:          "localhost:8444",
+		TLSConfig:     tlsCfg,
+		Logger:        testLogger(),
+		XKMSService:   svc,
 	}
 
 	server, err := NewServer(cfg)
@@ -164,10 +167,11 @@ func TestNewServer_WithRateLimiter(t *testing.T) {
 	svc, _ := xkms.Get()
 
 	cfg := &Config{
-		Addr:        "localhost:8444",
-		RateLimiter: rateLimiter,
-		Logger:      testLogger(),
-		XKMSService: svc,
+		Authenticator: auth.NewNoOpAuthenticator(),
+		Addr:          "localhost:8444",
+		RateLimiter:   rateLimiter,
+		Logger:        testLogger(),
+		XKMSService:   svc,
 	}
 
 	server, err := NewServer(cfg)
@@ -182,8 +186,9 @@ func TestNewServer_XKMSNotInitialized(t *testing.T) {
 	xkms.Reset()
 
 	cfg := &Config{
-		Addr:   "localhost:8444",
-		Logger: testLogger(),
+		Authenticator: auth.NewNoOpAuthenticator(),
+		Addr:          "localhost:8444",
+		Logger:        testLogger(),
 	}
 
 	server, err := NewServer(cfg)
@@ -200,9 +205,10 @@ func TestNewServer_DefaultLogger(t *testing.T) {
 	svc, _ := xkms.Get()
 
 	cfg := &Config{
-		Addr:        "localhost:8444",
-		Logger:      nil, // Should use default
-		XKMSService: svc,
+		Authenticator: auth.NewNoOpAuthenticator(),
+		Addr:          "localhost:8444",
+		Logger:        nil, // Should use default
+		XKMSService:   svc,
 	}
 
 	server, err := NewServer(cfg)
@@ -212,7 +218,9 @@ func TestNewServer_DefaultLogger(t *testing.T) {
 	assert.NotNil(t, server.logger)
 }
 
-func TestNewServer_DefaultAuthenticator(t *testing.T) {
+// TestNewServer_NilAuthenticatorRejected proves the constructor is fail-closed:
+// omitting the authenticator must not silently yield an unauthenticated server.
+func TestNewServer_NilAuthenticatorRejected(t *testing.T) {
 	mockKS := setupTestXKMS(t)
 	defer cleanupXKMS()
 	_ = mockKS
@@ -221,7 +229,28 @@ func TestNewServer_DefaultAuthenticator(t *testing.T) {
 
 	cfg := &Config{
 		Addr:          "localhost:8444",
-		Authenticator: nil, // Should use NoOp
+		Authenticator: nil,
+		Logger:        testLogger(),
+		XKMSService:   svc,
+	}
+
+	server, err := NewServer(cfg)
+	require.ErrorIs(t, err, ErrAuthenticatorRequired)
+	assert.Nil(t, server, "no server must be returned when authentication is unconfigured")
+}
+
+// TestNewServer_ExplicitNoOpAuthenticator proves a NoOp authenticator remains
+// available, but only as a deliberate caller decision.
+func TestNewServer_ExplicitNoOpAuthenticator(t *testing.T) {
+	mockKS := setupTestXKMS(t)
+	defer cleanupXKMS()
+	_ = mockKS
+
+	svc, _ := xkms.Get()
+
+	cfg := &Config{
+		Addr:          "localhost:8444",
+		Authenticator: auth.NewNoOpAuthenticator(),
 		Logger:        testLogger(),
 		XKMSService:   svc,
 	}
@@ -242,9 +271,10 @@ func TestServer_Stop_NotStarted(t *testing.T) {
 	svc, _ := xkms.Get()
 
 	cfg := &Config{
-		Addr:        "localhost:8444",
-		Logger:      testLogger(),
-		XKMSService: svc,
+		Authenticator: auth.NewNoOpAuthenticator(),
+		Addr:          "localhost:8444",
+		Logger:        testLogger(),
+		XKMSService:   svc,
 	}
 
 	server, err := NewServer(cfg)
@@ -265,9 +295,10 @@ func TestServerMiddleware_CorrelationID(t *testing.T) {
 	svc, _ := xkms.Get()
 
 	cfg := &Config{
-		Addr:        "localhost:8444",
-		Logger:      testLogger(),
-		XKMSService: svc,
+		Authenticator: auth.NewNoOpAuthenticator(),
+		Addr:          "localhost:8444",
+		Logger:        testLogger(),
+		XKMSService:   svc,
 	}
 
 	server, err := NewServer(cfg)

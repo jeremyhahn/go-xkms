@@ -21,7 +21,6 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
-	"time"
 
 	xkms "github.com/jeremyhahn/go-xkms/sdk/go"
 
@@ -228,63 +227,11 @@ func TestFinal2_Barrier_Unseal_NoBarrierData(t *testing.T) {
 // clipboard_service.go
 // =========================================================================
 
-func TestFinal2_Clipboard_CopySecure_WithTimeout(t *testing.T) {
-	// Covers L93-99: CopySecure with a positive timeout.
-	svc := NewClipboardService()
-	if svc.tool == clipToolNone {
-		t.Skip("no clipboard tool available")
-	}
-	svc.timeout.Store(int32(1)) // 1 second timeout.
-	err := svc.CopyWithClear("test-secure-data")
-	assert.NoError(t, err)
-}
-
-func TestFinal2_Clipboard_CopySecure_NoTimeout(t *testing.T) {
-	// Covers L93-96: CopySecure with timeout=0 -> early return.
-	svc := NewClipboardService()
-	if svc.tool == clipToolNone {
-		t.Skip("no clipboard tool available")
-	}
-	svc.timeout.Store(int32(0))
-	err := svc.CopyWithClear("test-no-timeout")
-	assert.NoError(t, err)
-}
-
-func TestFinal2_Clipboard_ClearClipboard(t *testing.T) {
-	// Covers L126: writeClipboard("").
-	svc := NewClipboardService()
-	if svc.tool == clipToolNone {
-		t.Skip("no clipboard tool available")
-	}
-	err := svc.ClearClipboard()
-	assert.NoError(t, err)
-}
-
-func TestFinal2_Clipboard_ScheduleClear(t *testing.T) {
-	// Covers L158-163: scheduleClear comparison + clear path.
-	svc := NewClipboardService()
-	if svc.tool == clipToolNone {
-		t.Skip("no clipboard tool available")
-	}
-	// Write something to clipboard.
-	require.NoError(t, svc.Copy("clear-me"))
-	// Schedule clear with very short delay.
-	svc.scheduleClear("clear-me", 100*time.Millisecond)
-	// Wait for the clear to happen.
-	time.Sleep(300 * time.Millisecond)
-}
-
-func TestFinal2_Clipboard_ReadClipboard(t *testing.T) {
-	// Covers L190, L213: readClipboard.
-	svc := NewClipboardService()
-	if svc.tool == clipToolNone {
-		t.Skip("no clipboard tool available")
-	}
-	require.NoError(t, svc.Copy("read-test"))
-	text, err := svc.readClipboard()
-	assert.NoError(t, err)
-	assert.Contains(t, text, "read-test")
-}
+// The CopySecure / ClearClipboard / ScheduleClear / readClipboard paths are
+// covered by the TestCB91_* clipboard tests in coverage_boost91_test.go, which
+// drive the service through a fake xclip on a temp PATH. Those tests assert the
+// actual clipboard contents and never touch the host clipboard, so the weaker
+// host-dependent duplicates that used to live here were removed.
 
 func TestFinal2_Clipboard_DetectTool(t *testing.T) {
 	// Covers L218-226: detectClipboardTool runs the LookPath checks.

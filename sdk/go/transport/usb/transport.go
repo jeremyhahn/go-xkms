@@ -26,10 +26,17 @@ var (
 	ErrNotConnected       = pkgusb.ErrNotConnected
 	ErrNotSupported       = pkgusb.ErrNotSupported
 	ErrStreamNotSupported = pkgusb.ErrStreamNotSupported
+	ErrNoiseNotConfigured = pkgusb.ErrNoiseNotConfigured
+	ErrRequestFailed      = pkgusb.ErrRequestFailed
 )
 
 // Transport is an alias for the canonical USB transport implementation.
 type Transport = pkgusb.Transport
+
+// NoiseConfig is an alias for the canonical pairing key material type. It must
+// be attached with Transport.WithNoiseConfig before connecting; the phone's USB
+// responder speaks Noise XX and rejects a plaintext channel.
+type NoiseConfig = pkgusb.NoiseConfig
 
 // New creates a new USB transport with the given options.
 func New(opts ...transport.Option) (*Transport, error) {

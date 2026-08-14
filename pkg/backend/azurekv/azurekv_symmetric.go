@@ -18,7 +18,6 @@ package azurekv
 import (
 	"context"
 	"crypto/aes"
-	"crypto/cipher"
 	"crypto/rand"
 	"encoding/base64"
 	"encoding/json"
@@ -29,6 +28,7 @@ import (
 	"github.com/Azure/azure-sdk-for-go/sdk/azidentity"
 	"github.com/Azure/azure-sdk-for-go/sdk/security/keyvault/azsecrets"
 	"github.com/jeremyhahn/go-xkms/pkg/backend"
+	"github.com/jeremyhahn/go-xkms/pkg/crypto/aead"
 	"github.com/jeremyhahn/go-xkms/pkg/types"
 )
 
@@ -95,7 +95,14 @@ func (b *Backend) GenerateSymmetricKey(ctx context.Context, attrs *types.KeyAttr
 	// Initialize AEAD tracking options for this key
 	keyID := attrs.ID()
 	if b.tracker != nil {
-		if err := b.tracker.SetAEADOptions(keyID, types.DefaultAEADOptions()); err != nil {
+		// The caller's policy wins; the default only applies when none was
+		// given. Discarding it would silently downgrade a conservative nonce
+		// or bytes limit to the default.
+		aeadOpts := attrs.AEADOptions
+		if aeadOpts == nil {
+			aeadOpts = types.DefaultAEADOptions()
+		}
+		if err := b.tracker.SetAEADOptions(keyID, aeadOpts); err != nil {
 			// Log but don't fail key generation
 			fmt.Printf("Warning: failed to set AEAD options: %v\n", err)
 		}
@@ -316,6 +323,10 @@ func (k *azureSymmetricKey) Raw() ([]byte, error) {
 
 // Encrypt encrypts plaintext using AES-GCM
 func (k *azureSymmetricKey) Encrypt(plaintext []byte, opts *types.EncryptOptions) (*types.EncryptedData, error) {
+	if opts == nil {
+		opts = &types.EncryptOptions{}
+	}
+
 	// Get key ID for tracking
 	keyID := k.attrs.ID()
 
@@ -332,15 +343,18 @@ func (k *azureSymmetricKey) Encrypt(plaintext []byte, opts *types.EncryptOptions
 		return nil, &errs.Wrapped{Msg: "failed to create cipher", Err: err}
 	}
 
-	// Create GCM mode
-	gcm, err := cipher.NewGCM(block)
+	// Create GCM mode. The tag length comes from the request, not from a
+	// fixed constant: NIST SP 800-38D section 5.2.1.2 defines a t-bit tag as
+	// the leading t bits of the full tag, and a caller that asked for one and
+	// got 128 bits back has a ciphertext its peer cannot authenticate.
+	gcm, err := aead.NewGCM(block, opts.TagSize)
 	if err != nil {
 		return nil, &errs.Wrapped{Msg: "failed to create GCM", Err: err}
 	}
 
 	// STEP 2: Generate or use provided nonce
 	var nonce []byte
-	if opts != nil && opts.Nonce != nil {
+	if opts.Nonce != nil {
 		nonce = opts.Nonce
 		if len(nonce) != gcm.NonceSize() {
 			return nil, &errs.Message{Msg: fmt.Sprintf("invalid nonce size: %d (expected %d)", len(nonce), gcm.NonceSize())}
@@ -360,15 +374,13 @@ func (k *azureSymmetricKey) Encrypt(plaintext []byte, opts *types.EncryptOptions
 	}
 
 	// Get additional data if provided
-	var aad []byte
-	if opts != nil && opts.AdditionalData != nil {
-		aad = opts.AdditionalData
-	}
+	aad := opts.AdditionalData
 
 	// STEP 4: Encrypt (GCM appends the tag to the ciphertext)
 	ciphertextWithTag := gcm.Seal(nil, nonce, plaintext, aad)
 
-	// GCM tag is the last 16 bytes
+	// The tag is the trailing gcm.Overhead() bytes, which is the requested
+	// length rather than a fixed 16.
 	tagSize := gcm.Overhead()
 	ciphertext := ciphertextWithTag[:len(ciphertextWithTag)-tagSize]
 	tag := ciphertextWithTag[len(ciphertextWithTag)-tagSize:]
@@ -394,6 +406,9 @@ func (k *azureSymmetricKey) Decrypt(encrypted *types.EncryptedData, opts *types.
 	if encrypted == nil {
 		return nil, &errs.Message{Msg: "encrypted data cannot be nil"}
 	}
+	if opts == nil {
+		opts = &types.DecryptOptions{}
+	}
 
 	// Create AES cipher
 	block, err := aes.NewCipher(k.keyData)
@@ -401,17 +416,31 @@ func (k *azureSymmetricKey) Decrypt(encrypted *types.EncryptedData, opts *types.
 		return nil, &errs.Wrapped{Msg: "failed to create cipher", Err: err}
 	}
 
-	// Create GCM mode
-	gcm, err := cipher.NewGCM(block)
+	// The tag length is taken from the request, never inferred from the tag
+	// that arrived: SP 800-38D section 5.2.2 verifies a t-bit tag by
+	// recomputing it at t bits, and letting the ciphertext bundle choose t
+	// would let an attacker pick how many bits get checked.
+	gcm, err := aead.NewGCM(block, opts.TagSize)
 	if err != nil {
 		return nil, &errs.Wrapped{Msg: "failed to create GCM", Err: err}
 	}
 
-	// Get additional data if provided
-	var aad []byte
-	if opts != nil && opts.AdditionalData != nil {
-		aad = opts.AdditionalData
+	if len(encrypted.Tag) != gcm.Overhead() {
+		return nil, &errs.Message{Msg: fmt.Sprintf(
+			"azurekv: authentication tag is %d bytes, want %d", len(encrypted.Tag), gcm.Overhead())}
 	}
+
+	// crypto/cipher panics rather than returning an error when the nonce is
+	// not exactly NonceSize bytes. The nonce arrives from the caller, so
+	// without this check any request carrying a short nonce takes the whole
+	// daemon down.
+	if len(encrypted.Nonce) != gcm.NonceSize() {
+		return nil, &errs.Message{Msg: fmt.Sprintf(
+			"azurekv: nonce is %d bytes, want %d", len(encrypted.Nonce), gcm.NonceSize())}
+	}
+
+	// Get additional data if provided
+	aad := opts.AdditionalData
 
 	// Reconstruct ciphertext with tag
 	ciphertextWithTag := append(encrypted.Ciphertext, encrypted.Tag...)

@@ -75,24 +75,26 @@ func (tpm *TPM2) ECDHZGen(
 	tpm.logger.Debug("tpm: ECDHZGen - loaded key",
 		slog.String("handle", fmt.Sprintf("0x%x", loadResponse.ObjectHandle)))
 
-	// Create session for key authorization
-	var auth tpm2.Session
-	if keyAttrs.Password != nil && !keyAttrs.PlatformPolicy {
-		auth = tpm.HMAC(keyAttrs.Password.Bytes())
-	} else if keyAttrs.PlatformPolicy {
-		session, closer, err := tpm.PlatformPolicySession(nil)
-		if err != nil {
-			return nil, &errs.Wrapped{Msg: "failed to create platform policy session", Err: err}
-		}
-		defer func() {
-			if err := closer(); err != nil {
-				tpm.logger.Error("failed to close policy session", slog.String("error", err.Error()))
-			}
-		}()
-		auth = session
-	} else {
-		auth = tpm.HMAC(nil)
+	// Create session for key authorization through the canonical selector.
+	//
+	// This used to hand-roll the choice and, for any platform-policy key, call
+	// PlatformPolicySession(nil) -- the PCR branch -- unconditionally. A
+	// platform-policy ECDH key carrying a PIN could therefore never use it:
+	// the password branch of the PolicyOR was unreachable from here, so the
+	// key was usable only while the PCRs were unchanged, with no recovery.
+	//
+	// createKeySession selects the branch from the key's own attributes and
+	// resolves the policy pin from the backend the key's blobs live in, so
+	// ECDH keys behave like every other platform-policy key.
+	auth, closer, err := tpm.createKeySession(keyAttrs, backend)
+	if err != nil {
+		return nil, &errs.Wrapped{Msg: "failed to create key session", Err: err}
 	}
+	defer func() {
+		if err := closer(); err != nil {
+			tpm.logger.Error("failed to close key session", slog.String("error", err.Error()))
+		}
+	}()
 
 	// Execute ECDH_ZGen command
 	// Per TCG TPM 2.0 specification Part 3, section 14.5:

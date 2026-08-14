@@ -30,11 +30,24 @@ var _ qrdbsdk.CeremonyCA = (*CAAdapter)(nil)
 // tenant barrier unseals.
 const systemTenantID = "system"
 
-// CAAdapter implements go-qrdb CeremonyCA using go-xkms ca.TrustedCA.
-// This bridges the go-xkms CA interface to the go-qrdb ceremony's expected
-// CA interface, translating types at the boundary.
+// CeremonyCA is the subset of ca.TrustedCA the init ceremony depends on:
+// checking that the CA is ready (ca.CALifecycle), certificate issuance
+// (ca.CAIssuer), and reading the CA's own certificate and bundle
+// (ca.CATrustChain). Declaring the narrow dependency here instead of the
+// full 76-method ca.TrustedCA keeps the ceremony's CA surface honest about
+// what it actually calls.
+type CeremonyCA interface {
+	ca.CALifecycle
+	ca.CAIssuer
+	ca.CATrustChain
+}
+
+// CAAdapter implements go-qrdb CeremonyCA using go-xkms's CeremonyCA (a
+// narrow slice of ca.TrustedCA). This bridges the go-xkms CA interface to
+// the go-qrdb ceremony's expected CA interface, translating types at the
+// boundary.
 type CAAdapter struct {
-	ca ca.TrustedCA
+	ca CeremonyCA
 
 	// spiffeTrustDomain, when non-empty, causes the adapter to stamp a
 	// system-tenant SPIFFE SAN (spiffe://<td>/tenant/system/user/<CN>) onto
@@ -45,10 +58,11 @@ type CAAdapter struct {
 	spiffeTrustDomain string
 }
 
-// NewCAAdapter creates a new CAAdapter wrapping the given TrustedCA instance.
-// trustDomain is the operator-configured SPIFFE trust domain; when empty no
-// SPIFFE SAN is stamped (legacy behavior).
-func NewCAAdapter(xkmsCA ca.TrustedCA, trustDomain string) *CAAdapter {
+// NewCAAdapter creates a new CAAdapter wrapping the given CeremonyCA
+// instance (any ca.TrustedCA satisfies CeremonyCA). trustDomain is the
+// operator-configured SPIFFE trust domain; when empty no SPIFFE SAN is
+// stamped (legacy behavior).
+func NewCAAdapter(xkmsCA CeremonyCA, trustDomain string) *CAAdapter {
 	return &CAAdapter{ca: xkmsCA, spiffeTrustDomain: trustDomain}
 }
 
@@ -100,15 +114,9 @@ func (a *CAAdapter) IssueCertificate(ctx context.Context, req *qrdbsdk.IssueCert
 
 	// Stamp the system-tenant SPIFFE SAN onto the directly-issued SO /
 	// bootstrap certificate so login derives the system tenant from it.
-	if a.spiffeTrustDomain != "" {
-		spiffeURI, err := spiffe.BuildURI(a.spiffeTrustDomain, systemTenantID, spiffe.KindUser, req.CommonName)
-		if err != nil {
-			return nil, err
-		}
-		if xkmsReq.SANS == nil {
-			xkmsReq.SANS = &ca.SubjectAlternativeNames{}
-		}
-		xkmsReq.SANS.URIs = append(xkmsReq.SANS.URIs, spiffeURI.String())
+	// (An empty tenant resolves to the system tenant in stampSPIFFE.)
+	if err := a.stampSPIFFE(xkmsReq, "", req.CommonName); err != nil {
+		return nil, err
 	}
 
 	issued, err := a.ca.IssueCertificate(ctx, xkmsReq)

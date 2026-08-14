@@ -29,6 +29,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync/atomic"
 
 	"github.com/google/go-tpm/tpm2"
 	"github.com/google/go-tpm/tpm2/transport"
@@ -277,11 +278,20 @@ type TPM2 struct {
 	certStore    store.CertificateStorer
 	config       *Config
 	debugSecrets bool
-	device       *os.File
-	ekAttrs      *types.KeyAttributes
-	ekECCPubKey  *ecdsa.PublicKey
-	ekRSAPubKey  *rsa.PublicKey
-	fqdn         string
+	// deviceCaps caches the algorithm and curve sets this TPM reports. The
+	// answer cannot change while the device is open, and the pointer is
+	// published atomically so concurrent callers share one snapshot without a
+	// lock on the hot path.
+	deviceCaps atomic.Pointer[DeviceCapabilities]
+	// rsaKeyBits caches the RSA modulus sizes this TPM accepts. They are not
+	// reported by any capability property, so they are learned by offering each
+	// defined size to TPM2_TestParms.
+	rsaKeyBits  atomic.Pointer[[]int]
+	device      *os.File
+	ekAttrs     *types.KeyAttributes
+	ekECCPubKey *ecdsa.PublicKey
+	ekRSAPubKey *rsa.PublicKey
+	fqdn        string
 	// hash         crypto.Hash
 	iakAttrs         *types.KeyAttributes
 	idevidAttrs      *types.KeyAttributes
@@ -649,6 +659,256 @@ func (tpm *TPM2) AlgID() tpm2.TPMAlgID {
 	return tpm.algID
 }
 
+// platformPolicyPCRSelection returns the TPML_PCR_SELECTION used by every
+// branch of the platform policy: the single platform PCR in the platform PCR
+// bank (TCG TPM 2.0 Part 2, Section 10.6.2).
+func platformPolicyPCRSelection(hashAlgID tpm2.TPMAlgID, pcr uint) tpm2.TPMLPCRSelection {
+	return tpm2.TPMLPCRSelection{
+		PCRSelections: []tpm2.TPMSPCRSelection{{
+			Hash:      hashAlgID,
+			PCRSelect: tpm2.PCClientCompatible.PCRs(pcr),
+		}},
+	}
+}
+
+// platformPolicyBranchDigests computes the two branch digests of the platform
+// policy with trial policy calculators: branch 1 is TPM2_PolicyPCR over the
+// supplied PCR selection and PCR digest, branch 2 is TPM2_PolicyAuthValue.
+//
+// pcrDigest is a parameter rather than a live PCR read so a caller can rebuild
+// the branch digests a given object was created with. Every producer of a
+// platform policy digest -- object creation, the trial digest and the live
+// policy session -- routes through this one function, so the branches cannot
+// drift apart.
+func platformPolicyBranchDigests(
+	hashAlgID tpm2.TPMAlgID,
+	pcr uint,
+	pcrDigest []byte) (branch1, branch2 []byte, err error) {
+
+	pcrCalc, err := tpm2.NewPolicyCalculator(hashAlgID)
+	if err != nil {
+		return nil, nil, &errs.Detail{Err: ErrPlatformPolicyDigestCompute, Detail: fmt.Sprintf("%v", err)}
+	}
+	pcrCmd := tpm2.PolicyPCR{
+		PcrDigest: tpm2.TPM2BDigest{
+			Buffer: pcrDigest,
+		},
+		Pcrs: platformPolicyPCRSelection(hashAlgID, pcr),
+	}
+	if err := pcrCmd.Update(pcrCalc); err != nil {
+		return nil, nil, &errs.Detail{Err: ErrPlatformPolicyDigestCompute, Detail: fmt.Sprintf("PolicyPCR trial: %v", err)}
+	}
+
+	authCalc, err := tpm2.NewPolicyCalculator(hashAlgID)
+	if err != nil {
+		return nil, nil, &errs.Detail{Err: ErrPlatformPolicyDigestCompute, Detail: fmt.Sprintf("%v", err)}
+	}
+	authCmd := tpm2.PolicyAuthValue{}
+	if err := authCmd.Update(authCalc); err != nil {
+		return nil, nil, &errs.Detail{Err: ErrPlatformPolicyDigestCompute, Detail: fmt.Sprintf("PolicyAuthValue trial: %v", err)}
+	}
+
+	return pcrCalc.Hash().Digest, authCalc.Hash().Digest, nil
+}
+
+// platformPolicyORDigest computes the TPM2_PolicyOR digest over both platform
+// policy branches (TCG TPM 2.0 Part 3, Section 23.6). The result is the value
+// attached to an object as its AuthPolicy, and the value a policy session must
+// reach before the TPM will honour it.
+func platformPolicyORDigest(hashAlgID tpm2.TPMAlgID, branch1, branch2 []byte) ([]byte, error) {
+
+	orCalc, err := tpm2.NewPolicyCalculator(hashAlgID)
+	if err != nil {
+		return nil, &errs.Detail{Err: ErrPlatformPolicyDigestCompute, Detail: fmt.Sprintf("%v", err)}
+	}
+
+	orCmd := tpm2.PolicyOr{
+		PHashList: tpm2.TPMLDigest{
+			Digests: []tpm2.TPM2BDigest{
+				{Buffer: branch1},
+				{Buffer: branch2},
+			},
+		},
+	}
+	if err := orCmd.Update(orCalc); err != nil {
+		return nil, &errs.Detail{Err: ErrPlatformPolicyDigestCompute, Detail: fmt.Sprintf("PolicyOR trial: %v", err)}
+	}
+
+	return orCalc.Hash().Digest, nil
+}
+
+// capturePlatformPolicyPin reads the live platform PCR and records it, together
+// with the PCR selection it was read from, as the pin for an object about to be
+// created under the platform policy. The pin is what later lets the
+// PolicyAuthValue (PIN) branch rebuild the object's PolicyPCR branch digest
+// without consulting live PCRs.
+func (tpm *TPM2) capturePlatformPolicyPin() (*store.PlatformPolicyPin, error) {
+
+	hashAlgID, err := ParsePCRBankAlgID(tpm.config.PlatformPCRBank)
+	if err != nil {
+		return nil, &errs.Detail{Err: ErrPlatformPolicyDigestCompute, Detail: fmt.Sprintf("%v", err)}
+	}
+
+	pcrDigest, err := tpm.PlatformPolicyDigestHash()
+	if err != nil {
+		return nil, &errs.Detail{Err: ErrPlatformPolicyDigestCompute, Detail: fmt.Sprintf("%v", err)}
+	}
+
+	return &store.PlatformPolicyPin{
+		PCRBank:   uint16(hashAlgID),
+		PCRIndex:  uint32(tpm.config.PlatformPCR),
+		PCRDigest: pcrDigest,
+	}, nil
+}
+
+// platformPolicyDigestFromPin computes the platform policy AuthPolicy digest
+// from a pin instead of from live PCRs. Called with a freshly captured pin it
+// produces exactly the value PlatformPolicyDigest produces; called with a
+// stored pin it reproduces the value an existing object was created with.
+func platformPolicyDigestFromPin(pin *store.PlatformPolicyPin) (tpm2.TPM2BDigest, error) {
+
+	if pin == nil {
+		return tpm2.TPM2BDigest{}, &errs.Detail{
+			Err:    ErrPlatformPolicyDigestCompute,
+			Detail: "nil platform policy pin",
+		}
+	}
+
+	hashAlgID := tpm2.TPMAlgID(pin.PCRBank)
+
+	branch1, branch2, err := platformPolicyBranchDigests(
+		hashAlgID, uint(pin.PCRIndex), pin.PCRDigest)
+	if err != nil {
+		return tpm2.TPM2BDigest{}, err
+	}
+
+	compoundDigest, err := platformPolicyORDigest(hashAlgID, branch1, branch2)
+	if err != nil {
+		return tpm2.TPM2BDigest{}, err
+	}
+
+	return tpm2.TPM2BDigest{Buffer: compoundDigest}, nil
+}
+
+// primaryPolicyPinAttrs returns the key attributes under which a persistent
+// primary key's platform policy pin is recorded.
+//
+// A primary key has no blobs in the key store -- it is identified by the
+// handle it was persisted to -- and several of them share the configured CN,
+// because they are all built from the same SRK configuration and differ only
+// by handle. The handle is therefore folded into the record name so their pins
+// cannot overwrite one another.
+//
+// Only platform-policy primaries record a pin, so in practice this names the
+// Platform SRK's record. The shared SRK carries no platform policy and writes
+// no record; the qualification exists so that no two platform-bound primaries
+// -- present or future -- can collide.
+//
+// Returns nil when the key carries no TPM attributes, which is also the
+// condition under which no pin was ever recorded for it.
+func primaryPolicyPinAttrs(attrs *types.KeyAttributes) *types.KeyAttributes {
+	if attrs == nil || attrs.TPMAttributes == nil {
+		return nil
+	}
+	pinAttrs := *attrs
+	pinAttrs.CN = fmt.Sprintf("%s-%08x", attrs.CN, uint32(attrs.TPMAttributes.Handle))
+	return &pinAttrs
+}
+
+// recordPrimaryPolicyPin persists a persistent primary key's platform policy
+// pin to the platform key backend under its handle-qualified name, overwriting
+// any record left by a previous key at the same handle.
+//
+// Overwriting is the correct behaviour and the reason a stale record is never
+// a hazard: a pin is only ever read back for a key that uses the platform
+// policy, and every creation of such a key writes its own pin first.
+//
+// The primary key backend is deliberate. A primary key has no blobs in any
+// caller's key store -- it is platform state, identified by the handle it was
+// persisted to -- so its pin has exactly one writer and one reader.
+func (tpm *TPM2) recordPrimaryPolicyPin(
+	keyAttrs *types.KeyAttributes,
+	pin *store.PlatformPolicyPin) error {
+
+	pinAttrs := primaryPolicyPinAttrs(keyAttrs)
+	if pinAttrs == nil {
+		return &errs.Detail{
+			Err:    ErrPlatformPolicyDigestCompute,
+			Detail: "cannot record a platform policy pin without TPM key attributes",
+		}
+	}
+
+	if tpm.backend == nil {
+		tpm.logger.Warn("tpm: no key backend configured to record the platform policy pin; "+
+			"the password branch of this key will not survive a platform change",
+			slog.String("cn", pinAttrs.CN))
+		return nil
+	}
+
+	record, err := pin.MarshalBinary()
+	if err != nil {
+		return err
+	}
+
+	if err := tpm.backend.Save(
+		pinAttrs, record, store.FSEXT_PLATFORM_POLICY, true); err != nil {
+
+		return err
+	}
+
+	tpm.logger.Debug("tpm: platform policy pin recorded",
+		slog.String("cn", pinAttrs.CN),
+		slog.String("pcr_digest", fmt.Sprintf("%x", pin.PCRDigest)))
+
+	return nil
+}
+
+// recordKeyPolicyPin persists a child key's platform policy pin beside that
+// key's public and private areas, under the key's own name.
+//
+// Unlike a primary key, a child key already owns a name in the key store -- the
+// one its blobs are written under -- so its pin shares exactly the blobs'
+// collision domain and needs no further qualification: two keys that could
+// overwrite one another's pin would already be overwriting one another's
+// blobs. It also follows the blobs' lifetime, including deletion.
+//
+// backend may be nil, in which case the platform backend is used, and
+// overwrite carries the caller's own overwrite policy so the record cannot
+// replace a record the blobs themselves were not allowed to replace.
+func (tpm *TPM2) recordKeyPolicyPin(
+	keyAttrs *types.KeyAttributes,
+	backend store.KeyBackend,
+	pin *store.PlatformPolicyPin,
+	overwrite bool) error {
+
+	if backend == nil {
+		backend = tpm.backend
+	}
+	if backend == nil {
+		tpm.logger.Warn("tpm: no key backend configured to record the platform policy pin; "+
+			"the password branch of this key will not survive a platform change",
+			slog.String("cn", keyAttrs.CN))
+		return nil
+	}
+
+	record, err := pin.MarshalBinary()
+	if err != nil {
+		return err
+	}
+
+	if err := backend.Save(
+		keyAttrs, record, store.FSEXT_PLATFORM_POLICY, overwrite); err != nil {
+
+		return err
+	}
+
+	tpm.logger.Debug("tpm: platform policy pin recorded",
+		slog.String("cn", keyAttrs.CN),
+		slog.String("pcr_digest", fmt.Sprintf("%x", pin.PCRDigest)))
+
+	return nil
+}
+
 // PlatformPolicyDigest computes a PolicyOR digest that combines two policy
 // branches: a PCR-based branch (PolicyPCR) and a password-based branch
 // (PolicyAuthValue). This digest is used as the AuthPolicy when creating
@@ -656,82 +916,32 @@ func (tpm *TPM2) AlgID() tpm2.TPMAlgID {
 // unlock and manual PIN-based fallback.
 //
 // The computation follows the TPM 2.0 specification (Part 3, Section 23.6):
-//  1. Compute Branch 1 digest: trial PolicyPCR
+//  1. Compute Branch 1 digest: trial PolicyPCR over the live platform PCR
 //  2. Compute Branch 2 digest: trial PolicyAuthValue
 //  3. Compute PolicyOR over both branch digests
+//
+// The digest is derived from the platform PCR as it reads right now, so an
+// object created with it is bound to the current platform state. Callers that
+// also need to know which PCR state a created object was bound to (sealed
+// objects, so their PIN branch survives a platform change) capture the pin
+// with capturePlatformPolicyPin and use platformPolicyDigestFromPin instead;
+// both paths compute the same digest.
 func (tpm *TPM2) PlatformPolicyDigest() (tpm2.TPM2BDigest, error) {
 
-	hashAlgID, err := ParsePCRBankAlgID(tpm.config.PlatformPCRBank)
+	pin, err := tpm.capturePlatformPolicyPin()
 	if err != nil {
-		return tpm2.TPM2BDigest{}, &errs.Detail{Err: ErrPlatformPolicyDigestCompute, Detail: fmt.Sprintf("%v", err)}
+		return tpm2.TPM2BDigest{}, err
 	}
 
-	pcrDigest, err := tpm.PlatformPolicyDigestHash()
+	digest, err := platformPolicyDigestFromPin(pin)
 	if err != nil {
-		return tpm2.TPM2BDigest{}, &errs.Detail{Err: ErrPlatformPolicyDigestCompute, Detail: fmt.Sprintf("%v", err)}
+		return tpm2.TPM2BDigest{}, err
 	}
-
-	// Branch 1: PolicyPCR digest (computed via trial/calculator)
-	pcrCalc, err := tpm2.NewPolicyCalculator(hashAlgID)
-	if err != nil {
-		return tpm2.TPM2BDigest{}, &errs.Detail{Err: ErrPlatformPolicyDigestCompute, Detail: fmt.Sprintf("%v", err)}
-	}
-
-	pcrCmd := tpm2.PolicyPCR{
-		PcrDigest: tpm2.TPM2BDigest{
-			Buffer: pcrDigest,
-		},
-		Pcrs: tpm2.TPMLPCRSelection{
-			PCRSelections: []tpm2.TPMSPCRSelection{{
-				Hash:      hashAlgID,
-				PCRSelect: tpm2.PCClientCompatible.PCRs(tpm.config.PlatformPCR),
-			}},
-		},
-	}
-	if err := pcrCmd.Update(pcrCalc); err != nil {
-		return tpm2.TPM2BDigest{}, &errs.Detail{Err: ErrPlatformPolicyDigestCompute, Detail: fmt.Sprintf("PolicyPCR trial: %v", err)}
-	}
-	branch1Digest := pcrCalc.Hash().Digest
-
-	// Branch 2: PolicyAuthValue digest (computed via trial/calculator)
-	authCalc, err := tpm2.NewPolicyCalculator(hashAlgID)
-	if err != nil {
-		return tpm2.TPM2BDigest{}, &errs.Detail{Err: ErrPlatformPolicyDigestCompute, Detail: fmt.Sprintf("%v", err)}
-	}
-
-	authCmd := tpm2.PolicyAuthValue{}
-	if err := authCmd.Update(authCalc); err != nil {
-		return tpm2.TPM2BDigest{}, &errs.Detail{Err: ErrPlatformPolicyDigestCompute, Detail: fmt.Sprintf("PolicyAuthValue trial: %v", err)}
-	}
-	branch2Digest := authCalc.Hash().Digest
-
-	tpm.logger.Debug("tpm: PlatformPolicyDigest - branch digests",
-		slog.String("pcr_branch", fmt.Sprintf("%x", branch1Digest)),
-		slog.String("auth_branch", fmt.Sprintf("%x", branch2Digest)))
-
-	// Compute PolicyOR over both branches
-	orCalc, err := tpm2.NewPolicyCalculator(hashAlgID)
-	if err != nil {
-		return tpm2.TPM2BDigest{}, &errs.Detail{Err: ErrPlatformPolicyDigestCompute, Detail: fmt.Sprintf("%v", err)}
-	}
-
-	orCmd := tpm2.PolicyOr{
-		PHashList: tpm2.TPMLDigest{
-			Digests: []tpm2.TPM2BDigest{
-				{Buffer: branch1Digest},
-				{Buffer: branch2Digest},
-			},
-		},
-	}
-	if err := orCmd.Update(orCalc); err != nil {
-		return tpm2.TPM2BDigest{}, &errs.Detail{Err: ErrPlatformPolicyDigestCompute, Detail: fmt.Sprintf("PolicyOR trial: %v", err)}
-	}
-	compoundDigest := orCalc.Hash().Digest
 
 	tpm.logger.Info("tpm: PlatformPolicyDigest computed",
-		slog.String("digest", fmt.Sprintf("%x", compoundDigest)))
+		slog.String("digest", fmt.Sprintf("%x", digest.Buffer)))
 
-	return tpm2.TPM2BDigest{Buffer: compoundDigest}, nil
+	return digest, nil
 }
 
 // Returns the TPM device path
@@ -1208,27 +1418,30 @@ func (tpm *TPM2) Sign(
 			return nil, err
 		}
 
-		var algo tpm2.TPMIAlgHash
-		if opts == nil {
-			algo = tpm2.TPMAlgSHA256
-		} else {
-			if opts.HashFunc() == crypto.SHA256 {
-				algo = tpm2.TPMAlgSHA256
-			} else if opts.HashFunc() == crypto.SHA384 {
-				algo = tpm2.TPMAlgSHA384
-			} else if opts.HashFunc() == crypto.SHA512 {
-				algo = tpm2.TPMAlgSHA512
-			} else {
-				tpm.logger.Error("invalid hash function",
-					slog.String("error", store.ErrInvalidHashFunction.Error()),
-					slog.String("hash", opts.HashFunc().String()))
-				return nil, store.ErrInvalidHashFunction
-			}
-		}
-
 		rsaDetails, err := outPub.Parameters.RSADetail()
 		if err != nil {
 			tpm.logger.Error("failed to get RSA details", slog.String("error", err.Error()))
+			return nil, err
+		}
+
+		// An attestation or IDevID key is RSA here, and TPM2_Sign builds the
+		// PKCS#1 v1.5 DigestInfo for it, so the digest algorithm has to be
+		// named. These keys are restricted and therefore always name a scheme
+		// of their own, which the resolution below both honours and enforces.
+		// See rsaSchemeHash and rsaSignScheme.
+		algo, err := rsaSchemeHash(requestedSignHash(opts), rsaDetails.Scheme, len(digest))
+		if err != nil {
+			tpm.logger.Error("failed to resolve signature scheme hash",
+				slog.String("error", err.Error()),
+				slog.String("hash", requestedSignHash(opts).String()))
+			return nil, err
+		}
+
+		schemeAlg, err := rsaSignScheme(rsaDetails.Scheme, isPSSRequest(keyAttrs, ksSignerOpts))
+		if err != nil {
+			tpm.logger.Error("failed to resolve signature scheme",
+				slog.String("error", err.Error()),
+				slog.String("cn", keyAttrs.CN))
 			return nil, err
 		}
 
@@ -1242,9 +1455,9 @@ func (tpm *TPM2) Sign(
 				Buffer: digest,
 			},
 			InScheme: tpm2.TPMTSigScheme{
-				Scheme: rsaDetails.Scheme.Scheme,
+				Scheme: schemeAlg,
 				Details: tpm2.NewTPMUSigScheme(
-					rsaDetails.Scheme.Scheme, &tpm2.TPMSSchemeHash{
+					schemeAlg, &tpm2.TPMSSchemeHash{
 						HashAlg: algo,
 					}),
 			},
@@ -1253,8 +1466,11 @@ func (tpm *TPM2) Sign(
 		if err != nil {
 			return nil, err
 		}
+
+		// The signature is unpacked as the shape that was asked of the TPM,
+		// which is the only shape it can be.
 		var rsaSig *tpm2.TPMSSignatureRSA
-		if opts.(*store.SignerOpts).PSSOptions != nil {
+		if schemeAlg == tpm2.TPMAlgRSAPSS {
 			rsaSig, err = signResponse.Signature.Signature.RSAPSS()
 			if err != nil {
 				return nil, err
@@ -1293,26 +1509,19 @@ func (tpm *TPM2) Sign(
 		return nil, err
 	}
 
-	var algo tpm2.TPMIAlgHash
-	if opts == nil {
-		algo = tpm2.TPMAlgSHA256
-	} else {
-		if opts.HashFunc() == crypto.SHA256 {
-			algo = tpm2.TPMAlgSHA256
-		} else if opts.HashFunc() == crypto.SHA384 {
-			algo = tpm2.TPMAlgSHA384
-		} else if opts.HashFunc() == crypto.SHA512 {
-			algo = tpm2.TPMAlgSHA512
-		} else {
-			tpm.logger.Error("invalid hash function",
-				slog.String("error", store.ErrInvalidHashFunction.Error()),
-				slog.String("hash", opts.HashFunc().String()))
-			return nil, store.ErrInvalidHashFunction
-		}
-	}
+	// The hash algorithm for the TPMT_SIG_SCHEME is resolved inside each key
+	// type's branch below. It cannot be resolved here because hash "NONE"
+	// (crypto.Hash(0) -- the caller has already produced the digest) has a
+	// different answer per key type: for ECDSA it is the key's own scheme hash,
+	// which the TPM requires inScheme to match, while for RSA it cannot be
+	// honoured at all. See eccSchemeHash and rsaSchemeHash.
+	requestedHash := requestedSignHash(opts)
 
-	// Create key session to sign with
-	session2, closer2, err2 := tpm.CreateKeySession(keyAttrs)
+	// Create key session to sign with. The backend is threaded through so the
+	// key's platform policy pin is read from the same store its blobs came
+	// from, which is what lets a PIN-carrying signing key still sign after the
+	// platform measurements change.
+	session2, closer2, err2 := tpm.createKeySession(keyAttrs, backend)
 	if err2 != nil {
 		tpm.logger.Error("failed to create key session", slog.String("error", err2.Error()))
 		return nil, err2
@@ -1331,6 +1540,28 @@ func (tpm *TPM2) Sign(
 			return nil, err
 		}
 
+		algo, err := rsaSchemeHash(requestedHash, rsaDetails.Scheme, len(digest))
+		if err != nil {
+			tpm.logger.Error("failed to resolve RSA signature scheme hash",
+				slog.String("error", err.Error()),
+				slog.String("cn", keyAttrs.CN),
+				slog.String("hash", requestedHash.String()))
+			return nil, err
+		}
+
+		// The padding scheme comes from the key when the key fixes one, and
+		// from the request when it does not. A key created with TPM_ALG_NULL
+		// can produce both PKCS#1 v1.5 and PSS signatures, which is what lets
+		// one RSA key serve a certificate signed v1.5 and a TLS 1.3 handshake
+		// that requires PSS.
+		schemeAlg, err := rsaSignScheme(rsaDetails.Scheme, isPSSRequest(keyAttrs, ksSignerOpts))
+		if err != nil {
+			tpm.logger.Error("failed to resolve RSA signature scheme",
+				slog.String("error", err.Error()),
+				slog.String("cn", keyAttrs.CN))
+			return nil, err
+		}
+
 		signResponse, err := tpm2.Sign{
 			KeyHandle: tpm2.AuthHandle{
 				Handle: handle,
@@ -1341,9 +1572,9 @@ func (tpm *TPM2) Sign(
 				Buffer: digest,
 			},
 			InScheme: tpm2.TPMTSigScheme{
-				Scheme: rsaDetails.Scheme.Scheme,
+				Scheme: schemeAlg,
 				Details: tpm2.NewTPMUSigScheme(
-					rsaDetails.Scheme.Scheme, &tpm2.TPMSSchemeHash{
+					schemeAlg, &tpm2.TPMSSchemeHash{
 						HashAlg: algo,
 					}),
 			},
@@ -1355,8 +1586,7 @@ func (tpm *TPM2) Sign(
 		}
 
 		var rsaSig *tpm2.TPMSSignatureRSA
-		if store.IsRSAPSS(keyAttrs.SignatureAlgorithm) ||
-			opts.(*store.SignerOpts).PSSOptions != nil {
+		if schemeAlg == tpm2.TPMAlgRSAPSS {
 
 			rsaSig, err = signResponse.Signature.Signature.RSAPSS()
 			if err != nil {
@@ -1367,14 +1597,19 @@ func (tpm *TPM2) Sign(
 			if err != nil {
 				return nil, err
 			}
+
+			// The salt-length check below is performed under the digest the
+			// caller actually asked for. It used to be hardcoded to SHA-256,
+			// which made every PSS signature over a SHA-384 or SHA-512 digest
+			// fail this check rather than the TPM's.
 			err = rsa.VerifyPSS(
 				pubKey.(*rsa.PublicKey),
-				crypto.SHA256,
+				requestedHash,
 				digest,
 				rsaSig.Sig.Buffer,
 				&rsa.PSSOptions{
 					SaltLength: rsa.PSSSaltLengthEqualsHash,
-					Hash:       crypto.SHA256,
+					Hash:       requestedHash,
 				})
 			if err != nil {
 				return nil, err
@@ -1404,6 +1639,21 @@ func (tpm *TPM2) Sign(
 		return rsaSig.Sig.Buffer, nil
 
 	} else if outPub.Type == tpm2.TPMAlgECC {
+
+		eccDetails, err := outPub.Parameters.ECCDetail()
+		if err != nil {
+			tpm.logger.Error("failed to get ECC details", slog.String("error", err.Error()))
+			return nil, err
+		}
+
+		algo, err := eccSchemeHash(requestedHash, eccDetails.Scheme, len(digest))
+		if err != nil {
+			tpm.logger.Error("failed to resolve ECDSA signature scheme hash",
+				slog.String("error", err.Error()),
+				slog.String("cn", keyAttrs.CN),
+				slog.String("hash", requestedHash.String()))
+			return nil, err
+		}
 
 		signResponse, err := tpm2.Sign{
 			KeyHandle: tpm2.AuthHandle{
@@ -1514,6 +1764,20 @@ func (tpm *TPM2) HashSequence(
 		return nil, nil, err
 	}
 
+	// TPM2_HashSequenceStart allocates an object slot to hold the sequence
+	// context (TCG TPM 2.0 Library Part 3, section 17.3). TPM2_SequenceComplete
+	// releases that slot, but only when it succeeds -- so a failure in any
+	// TPM2_SequenceUpdate, or in TPM2_SequenceComplete itself, strands the slot
+	// for the life of the connection. Signing an attestation payload larger than
+	// one TPM2B_MAX_BUFFER is what reaches this path, and a handful of failures
+	// there is enough to exhaust a real TPM's object memory.
+	sequenceCompleted := false
+	defer func() {
+		if !sequenceCompleted {
+			tpm.Flush(rspHSS.SequenceHandle)
+		}
+	}()
+
 	authHandle := tpm2.AuthHandle{
 		Handle: rspHSS.SequenceHandle,
 		Name: tpm2.TPM2BName{
@@ -1549,6 +1813,7 @@ func (tpm *TPM2) HashSequence(
 	if err != nil {
 		return nil, nil, err
 	}
+	sequenceCompleted = true
 	digest := rspSC.Result.Buffer
 
 	return digest, rspSC.Validation.Digest.Buffer, nil
@@ -1773,13 +2038,24 @@ func (tpm *TPM2) ReadPCRs(pcrList []uint) ([]PCRBank, error) {
 	maxPCR := uint(23)
 	banks := make([]PCRBank, 0)
 
-	supportedBanks := make(map[string]tpm2.TPMAlgID, 4)
-	supportedBanks["SHA1"] = tpm2.TPMAlgSHA1
-	supportedBanks["SHA256"] = tpm2.TPMAlgSHA256
-	supportedBanks["SHA384"] = tpm2.TPMAlgSHA384
-	supportedBanks["SHA512"] = tpm2.TPMAlgSHA512
+	// Ordered, not a map. Ranging over a map randomizes the order of the
+	// returned banks on every call, so any caller indexing the result --
+	// banks[0] to mean "the SHA-1 bank", say -- reads a different bank run to
+	// run. That already cost this package a disabled test whose failure was
+	// misattributed to test isolation. Callers should still match on
+	// PCRBank.Algorithm, but the order is now at least stable and predictable.
+	supportedBanks := []struct {
+		name string
+		algo tpm2.TPMAlgID
+	}{
+		{"SHA1", tpm2.TPMAlgSHA1},
+		{"SHA256", tpm2.TPMAlgSHA256},
+		{"SHA384", tpm2.TPMAlgSHA384},
+		{"SHA512", tpm2.TPMAlgSHA512},
+	}
 
-	for name, algo := range supportedBanks {
+	for _, supported := range supportedBanks {
+		name, algo := supported.name, supported.algo
 
 		tpm.logger.Debug(name)
 

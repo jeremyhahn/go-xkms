@@ -142,125 +142,41 @@ func (am *AuthorizationMiddleware) Authorize(action, resource string) func(http.
 }
 ```
 
-## Roles
+## Authorization
 
-The Admin API implements a 5-level hierarchical RBAC system. Higher-level roles inherit all permissions from lower levels.
+The Admin API delegates every authorization decision to the hosted go-qrdb
+node's RBAC service through the xkms `auth.Authorizer` — the same seam the xkms
+REST, gRPC, QUIC, and MCP transports use. It defines no roles and no permissions
+of its own, so a grant means the same thing here as it does everywhere else in
+the stack.
 
-| Role | Level | Description |
-|------|-------|-------------|
-| **super-admin** | 100 | Global access: manage all tenants, root CA, system configuration |
-| **admin** | 80 | Tenant-level full access: manage tenant CA, users, certificates |
-| **endorser** | 60 | Operator permissions plus endorse-01 EAB operations |
-| **operator** | 40 | Read and write access, no destructive operations |
-| **viewer** | 20 | Read-only access to all resources |
+The canonical roles are go-qrdb's six FIPS 140-3 / PCI-DSS v4 system roles:
+`so`, `admin`, `operator`, `user`, `auditor`, `custodian`. The previous
+ACME-local hierarchy (`super-admin` / `admin` / `endorser` / `operator` /
+`viewer`) was removed; it shared no members with the qrdb roles, so granting or
+revoking `admin` in qrdb had no effect on the Admin API.
 
-### Role Hierarchy
+| Role | ACME admin reach |
+|---|---|
+| `so` | Full: CA hierarchy, ACME accounts / orders / EABs, barrier governance, role management |
+| `admin` | Full ACME administration; CA hierarchy; tenant, user, certificate, and EAB lifecycle |
+| `operator` | Read-only ACME registration data and CA hierarchy; barrier seal/unseal/status |
+| `user` | None |
+| `auditor` | Read-only registration metadata, CA hierarchy, certificates, tenants, audit trail |
+| `custodian` | `barrier:unseal-share` only |
 
-```
-+----------------+
-|  super-admin   |  Level: 100 - Global system administrator
-|  (Global)      |
-+-------+--------+
-        |
-        v
-+----------------+
-|     admin      |  Level: 80 - Tenant administrator
-|   (Tenant)     |
-+-------+--------+
-        |
-        v
-+----------------+
-|   endorser     |  Level: 60 - Device provisioning
-|   (Device)     |
-+-------+--------+
-        |
-        v
-+----------------+
-|   operator     |  Level: 40 - Standard operations
-|  (Read/Write)  |
-+-------+--------+
-        |
-        v
-+----------------+
-|    viewer      |  Level: 20 - Read-only access
-|  (Read-Only)   |
-+----------------+
-```
+Cross-tenant reach follows qrdb's system-tenant rule: an identity rooted in the
+reserved system tenant, or one carrying no tenant at all (empty `TenantID` --
+the bootstrap case), is platform-scoped; any other identity is confined to its
+own tenant (`auth.IsCrossTenant`). That is the authority the deleted
+`super-admin` role used to carry.
 
-### Permission Matrix
+The `endorser` role expressed exactly one authority — minting External Account
+Bindings. A deployment that needs an endorse-only principal creates a qrdb role
+holding `acme_eab:create` and nothing else.
 
-| Operation | super-admin | admin | endorser | operator | viewer |
-|-----------|:-----------:|:-----:|:--------:|:--------:|:------:|
-| Manage tenants | X | - | - | - | - |
-| Manage root CA | X | - | - | - | - |
-| System configuration | X | - | - | - | - |
-| Manage tenant CA | X | X | - | - | - |
-| Create intermediate CA | X | X | - | - | - |
-| Manage RBAC policies | X | X | - | - | - |
-| Create EAB (all types) | X | X | X | - | - |
-| Revoke certificates | X | X | - | - | - |
-| Disable accounts | X | X | - | - | - |
-| Create/update resources | X | X | X | X | - |
-| Read/list resources | X | X | X | X | X |
-
-## RBAC Policies (CEL)
-
-RBAC policies are defined using the Common Expression Language (CEL) and stored in QRDB IAM. Policies provide fine-grained access control beyond the hierarchical RBAC roles.
-
-### Policy Structure
-
-```yaml
-apiVersion: rbac.qrdb.io/v1
-kind: Policy
-metadata:
-  name: policy-name
-  tenant: tenant-id
-  description: "Policy description"
-  priority: 100
-  labels:
-    purpose: access-control
-    managed: system
-spec:
-  subjects:
-    authenticated: true
-    roles: ["admin", "endorser"]
-    groups: ["engineering"]
-  rules:
-    - name: rule-name
-      effect: allow
-      priority: 100
-      actions: ["create", "read"]
-      resources: ["acme/tenants/{tenant}/**"]
-      when:
-        - expression: "time.hour >= 9 && time.hour < 17"
-      unless:
-        - expression: "subject.roles.exists(r, r == 'super-admin')"
-```
-
-### CEL Expression Examples
-
-| Expression | Description |
-|------------|-------------|
-| `subject.tenant_id == 'acme-corp'` | Match specific tenant |
-| `subject.roles.exists(r, r == 'admin')` | Check for role membership |
-| `request.ip.startsWith('10.0.')` | IP prefix matching |
-| `time.hour >= 9 && time.hour < 17` | Business hours restriction |
-| `resource.path.matches('/api/v1/tenants/.*')` | Resource path matching |
-| `subject.groups.size() > 0` | Check group membership |
-
-### Default Policies
-
-When a tenant is created, QRDB automatically provisions default policies:
-
-1. **Tenant Isolation Policy** (priority: 9999)
-   - Allows access to own tenant resources
-   - Denies cross-tenant access except for super-admin
-
-2. **EAB Creation Policy** (priority: 100)
-   - Allows super-admin, admin, and endorser to create EAB tokens
-
-3. **Endorse-01 Policy** (priority: 150)
-   - Allows endorser role to create endorse-01 EAB tokens for TPM enrollment
+See [authorization.md](authorization.md) for the complete
+operation-to-permission mapping across REST, gRPC, and MCP.
 
 ## Quick Start
 
@@ -439,58 +355,58 @@ curl -H "Authorization: Bearer $TOKEN" \
 
 ### Core Admin Endpoints (`/admin`)
 
-| Endpoint | Method | Role | Description |
-|----------|--------|------|-------------|
-| `/admin/certificates` | GET | viewer | List all certificates |
+| Endpoint | Method | Permission | Description |
+|----------|--------|------------|-------------|
+| `/admin/certificates` | GET | `certs:list` | List all certificates |
 | `/admin/certificates/expiring` | GET | viewer | List expiring certificates |
 | `/admin/certificates/{serial}` | GET | viewer | Get certificate by serial |
 | `/admin/certificates/{serial}/revoke` | POST | admin | Revoke certificate |
 | `/admin/accounts` | GET | viewer | List all accounts |
 | `/admin/accounts/{id}` | GET | viewer | Get account details |
 | `/admin/accounts/{id}` | DELETE | admin | Disable account |
-| `/admin/orders` | GET | viewer | List all orders |
-| `/admin/orders/{id}` | GET | viewer | Get order details |
-| `/admin/status` | GET | viewer | CA status |
-| `/admin/stats` | GET | viewer | CA statistics |
+| `/admin/orders` | GET | `acme_orders:list` | List all orders |
+| `/admin/orders/{id}` | GET | `acme_orders:read` | Get order details |
+| `/admin/status` | GET | `admin:status` | CA status |
+| `/admin/stats` | GET | `admin:status` | CA statistics |
 
 ### Tenant Management (`/api/v1/tenants`)
 
-| Endpoint | Method | Role | Description |
-|----------|--------|------|-------------|
-| `/api/v1/tenants` | GET | super-admin | List tenants |
-| `/api/v1/tenants` | POST | super-admin | Create tenant |
-| `/api/v1/tenants/{id}` | GET | admin | Get tenant |
-| `/api/v1/tenants/{id}` | PUT | admin | Update tenant |
-| `/api/v1/tenants/{id}` | DELETE | super-admin | Delete tenant |
-| `/api/v1/tenants/{id}/status` | PUT | super-admin | Update status |
+| Endpoint | Method | Permission | Description |
+|----------|--------|------------|-------------|
+| `/api/v1/tenants` | GET | `tenants:list` | List tenants |
+| `/api/v1/tenants` | POST | `tenants:create` | Create tenant |
+| `/api/v1/tenants/{id}` | GET | `tenants:read` | Get tenant |
+| `/api/v1/tenants/{id}` | PUT | `tenants:update` | Update tenant |
+| `/api/v1/tenants/{id}` | DELETE | `tenants:delete` | Delete tenant |
+| `/api/v1/tenants/{id}/status` | PUT | `tenants:update` | Update status |
 
 ### Tenant CA Management
 
-| Endpoint | Method | Role | Description |
-|----------|--------|------|-------------|
-| `/api/v1/tenants/{id}/root-ca` | POST | admin | Create root CA |
-| `/api/v1/tenants/{id}/intermediate-cas` | GET | admin | List intermediate CAs |
-| `/api/v1/tenants/{id}/intermediate-cas` | POST | admin | Create intermediate CA |
-| `/api/v1/tenants/{id}/intermediate-cas/{caid}` | GET | admin | Get intermediate CA |
-| `/api/v1/tenants/{id}/intermediate-cas/{caid}/status` | PUT | admin | Update CA status |
-| `/api/v1/tenants/{id}/default-intermediate-ca` | PUT | admin | Set default CA |
-| `/api/v1/tenants/{id}/ca-status` | GET | admin | Get CA status |
+| Endpoint | Method | Permission | Description |
+|----------|--------|------------|-------------|
+| `/api/v1/tenants/{id}/root-ca` | POST | `ca:create` | Create root CA |
+| `/api/v1/tenants/{id}/intermediate-cas` | GET | `ca:list` | List intermediate CAs |
+| `/api/v1/tenants/{id}/intermediate-cas` | POST | `ca:create` | Create intermediate CA |
+| `/api/v1/tenants/{id}/intermediate-cas/{caid}` | GET | `ca:read` | Get intermediate CA |
+| `/api/v1/tenants/{id}/intermediate-cas/{caid}/status` | PUT | `ca:update` | Update CA status |
+| `/api/v1/tenants/{id}/default-intermediate-ca` | PUT | `ca:update` | Set default CA |
+| `/api/v1/tenants/{id}/ca-status` | GET | `ca:read` | Get CA status |
 
 ### EAB Management (QRDB Storage)
 
-| Endpoint | Method | Role | Description |
-|----------|--------|------|-------------|
-| `/api/v1/tenants/{id}/eab` | GET | endorser | List EABs |
-| `/api/v1/tenants/{id}/eab` | POST | endorser | Create EAB |
-| `/api/v1/tenants/{id}/eab/{kid}` | GET | endorser | Get EAB |
-| `/api/v1/tenants/{id}/eab/{kid}` | DELETE | admin | Delete EAB |
+| Endpoint | Method | Permission | Description |
+|----------|--------|------------|-------------|
+| `/api/v1/tenants/{id}/eab` | GET | `acme_eab:list` | List EABs |
+| `/api/v1/tenants/{id}/eab` | POST | `acme_eab:create` | Create EAB |
+| `/api/v1/tenants/{id}/eab/{kid}` | GET | `acme_eab:read` | Get EAB |
+| `/api/v1/tenants/{id}/eab/{kid}` | DELETE | `acme_eab:delete` | Delete EAB |
 
 EAB tokens are stored in QRDB using the KV storage layer with the key pattern: `tenants/{tenant_id}/eab/{kid}`.
 
 ### Policy Management (QRDB RBAC)
 
-| Endpoint | Method | Role | Description |
-|----------|--------|------|-------------|
+| Endpoint | Method | Permission | Description |
+|----------|--------|------------|-------------|
 | `/api/v1/tenants/{id}/policies` | GET | admin | List policies |
 | `/api/v1/tenants/{id}/policies` | POST | admin | Create policy |
 | `/api/v1/tenants/{id}/policies/{name}` | GET | admin | Get policy |
@@ -536,6 +452,6 @@ type QRDBAuthService interface {
 
 ## Related Documentation
 
-- [ACME API Documentation](../acme/README.md) - RFC 8555 ACME protocol
+- [ACME API Documentation](../README.md) - RFC 8555 ACME protocol
 - [QRDB Storage](../qrdb/) - KV storage and RBAC backend
 - [OpenAPI Specification](../api/openapi.yaml) - Complete API specification

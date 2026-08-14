@@ -1,6 +1,6 @@
 # FIDO2/WebAuthn Security Key
 
-xkey provides a **FIDO 2.1 compliant** FIDO2/WebAuthn security key that appears as a USB HID device via Linux UHID. It supports pinUvAuthProtocol 1 and 2 (Protocol 2 preferred), CTAPHID WINK capability, and works with both Chrome and Firefox. Unlike hardware-only keys, xkey can use **any go-xkms backend** for cryptographic operations - from local software/TPM to cloud KMS services via xkmsd.
+xkey provides a **FIDO 2.1 compliant** FIDO2/WebAuthn security key that appears as a USB HID device via Linux UHID. It supports pinUvAuthProtocol 1 and 2 (Protocol 2 preferred), CTAPHID WINK capability, and works with both Chrome and Firefox. Cryptographic operations are backed by local software, a TPM 2.0, or a paired phone.
 
 ## Quick Start
 
@@ -11,11 +11,14 @@ sudo xkey fido2 --backend software
 # TPM backend (local hardware security)
 sudo xkey fido2 --backend tpm2
 
-# xkmsd backend (any go-xkms backend)
-sudo xkey fido2 --backend xkmsd --xkmsd-url https://localhost:8443
+# Phone backend (paired Android device, TEE/StrongBox)
+sudo xkey fido2 --backend phone
 
 # With PIN and interactive mode
 sudo xkey fido2 --backend software --pin --set-pin 123456 --interactive
+
+# Unattended: never block on a touch, and let Chrome skip its PIN dialog
+sudo xkey fido2 --require-touch=false --auto-uv
 ```
 
 ## Command Reference
@@ -26,52 +29,62 @@ xkey fido2 [flags]
 
 Aliases: `xkey fido`
 
+Subcommands: `start` (an alias for the bare command), `status` (exits non-zero
+when no daemon is listening), `policy`, `profile`.
+
+The flags below are **local to `xkey fido2`**, not persistent — they are not
+available on `policy` or `profile`. `xkey fido2 start` accepts all of them: it
+copies the daemon's flag set at registration time, so an invocation moves
+between the bare form and `start` unchanged.
+
 ### Storage Options
 
 | Flag | Default | Description |
 |------|---------|-------------|
-| `--storage` | `memory` | Storage type: `memory` or `file` |
-| `--storage-path` | `/var/lib/xkey` | Path for file storage |
+| `--storage` | `memory` | Storage type: `memory`, `file` or `barrier` |
+| `--storage-path` | `./data` | Path for file storage |
+| `--barrier-password` | (none) | Barrier password for the credential store |
+| `--barrier-password-file` | (none) | File to read the barrier password from |
+
+Any other `--storage` value is rejected. `file` requires `--storage-path`, and
+`barrier` requires one of `--barrier-password` / `--barrier-password-file`.
 
 ### Device Options
 
 | Flag | Default | Description |
 |------|---------|-------------|
-| `--name` | `xkey (go-xkms)` | Device name visible to the OS |
+| `--name` | `xKey (go-xkms)` | Device name visible to the OS |
 | `--serial` | (auto-generated) | Device serial number (16-char hex) |
 
 ### PIN Options
 
 | Flag | Default | Description |
 |------|---------|-------------|
-| `--pin` | `false` | Enable PIN support |
+| `--pin` | `true` | Enable PIN support (required for FIDO 2.1 credential management) |
 | `--set-pin` | (none) | Set initial PIN (requires `--pin`) |
+| `--unified-pin` | `true` | Synchronize the PIN across FIDO2, PKCS#11, and file PIN systems |
 
-### Security Officer (SO) PIN Options
-
-| Flag | Default | Description |
-|------|---------|-------------|
-| `--so-pin` | `false` | Enable SO PIN support for admin operations |
-| `--set-so-pin` | (none) | Set initial SO PIN (requires `--so-pin`) |
-| `--so-pin-retries` | `8` | Maximum SO PIN retry attempts before lockout |
+The Security Officer PIN is **not** configured from `xkey fido2`. It is managed
+by the `xkey pin` command group — `xkey pin set-so`, `xkey pin change-so`,
+`xkey pin status`, `xkey pin reset-lockout` — and over CTAP2 by the vendor
+subcommands documented below.
 
 ### User Presence Options
 
 | Flag | Default | Description |
 |------|---------|-------------|
 | `--interactive` | `false` | Enable interactive mode (prompt for touch/PIN) |
+| `--require-touch` | `true` | Require touch even after PIN verification (like a hardware YubiKey) |
+| `--auto-uv` | `false` | Report built-in user verification so Chrome skips its PIN dialog |
 | `--timeout` | `30s` | Timeout for user presence requests |
 
 ### Key Backend Options
 
 | Flag | Default | Description |
 |------|---------|-------------|
-| `--backend` | `software` | Key backend: `software`, `tpm2`, or `xkmsd` |
+| `--backend` | `software` | Key backend: `software`, `tpm2`, or `phone` |
 | `--tpm-device` | `/dev/tpmrm0` | TPM device path (when `--backend tpm2`) |
-| `--xkmsd-url` | `https://localhost:8443` | xkmsd URL (when `--backend xkmsd`) |
-| `--xkmsd-ca` | (system) | CA certificate for xkmsd TLS |
-| `--xkmsd-cert` | (none) | Client certificate for mTLS |
-| `--xkmsd-key` | (none) | Client key for mTLS |
+| `--phone-device` | (default paired phone) | Phone name or address (when `--backend phone`) |
 
 ### Attestation Options
 
@@ -79,35 +92,60 @@ Aliases: `xkey fido`
 |------|---------|-------------|
 | `--attestation` | `none` | Attestation format: `none`, `packed`, or `tpm` |
 
+### Chrome DevTools Bridge Options
+
+Drives Chrome's virtual authenticator over CDP instead of creating a UHID
+device — which means no `/dev/uhid` and no `sudo`, at the cost of only working
+against a Chrome started with remote debugging.
+
+| Flag | Default | Description |
+|------|---------|-------------|
+| `--cdp` | `false` | Enable the Chrome DevTools virtual authenticator bridge |
+| `--cdp-host` | `localhost` | Chrome DevTools host |
+| `--cdp-port` | `9222` | Chrome DevTools debugging port |
+
 ### IPC and Notification Options
 
 | Flag | Default | Description |
 |------|---------|-------------|
 | `--socket` | (auto) | IPC socket path (`$XDG_RUNTIME_DIR/xkey/xkey.sock`) |
-| `--notify` | `dialog` | Notification type: `dialog`, `log`, or `none` |
-| `--notify-command` | (none) | Custom notification command (overrides `--notify`) |
-| `--password-store` | `/var/lib/xkey/staticpw` | Static password store path |
+| `--notify` | `dialog` | Notification type: `dialog` (interactive), `passive` (desktop notification), `log`, or `none` |
+| `--notify-command` | (none) | Custom notification command (overrides built-in notifications) |
+| `--password-store` | `./data/staticpw` | Static password store path |
 | `--default-password` | (none) | Password name to type on bare touch |
+
+Every flag also has an `XKEY_FIDO2_*` environment variable and a config-file
+key. Flags take precedence over environment variables, which take precedence
+over the config file.
 
 ## User Presence Modes
 
-### Auto-Grant Mode (Default)
+### Auto-Grant Mode
 
-All user presence and verification requests are automatically approved. Ideal for:
+`--require-touch` defaults to `true`, so out of the box a ceremony waits for a
+touch — it is not auto-granted. Turn presence off explicitly to have all user
+presence requests approved automatically:
+
+```bash
+sudo xkey fido2 --require-touch=false
+```
+
+Adding `--auto-uv` also reports built-in user verification, so Chrome skips its
+PIN dialog and the ceremony completes with no interaction at all:
+
+```bash
+sudo xkey fido2 --require-touch=false --auto-uv
+```
+
+This combination is what makes the daemon suitable for:
 
 - Automated testing and CI/CD pipelines
 - Development and debugging
 - Integration testing with WebAuthn clients
 
-```bash
-sudo xkey fido2
-```
-
-When PIN is enabled with auto-grant, the configured PIN is automatically provided:
-
-```bash
-sudo xkey fido2 --pin --set-pin 123456
-```
+Leaving `--require-touch` at its default and approving each request with
+`xkey touch` from a script is the other way to automate, and keeps the presence
+check honest.
 
 ### Interactive Mode
 
@@ -194,7 +232,8 @@ When running in daemon mode, xkey sends desktop notifications when touch is requ
 
 | Type | Description |
 |------|-------------|
-| `dialog` | D-Bus desktop notification (default on Linux) |
+| `dialog` | Interactive D-Bus dialog (the default) |
+| `passive` | Desktop notification, no prompt |
 | `log` | Log message only |
 | `none` | No notifications |
 
@@ -248,44 +287,33 @@ sudo xkey fido2 --backend tpm2 --tpm-device /dev/tpmrm0
 - TPM 2.0 hardware or software TPM (swtpm)
 - Access to the TPM resource manager device (`/dev/tpmrm0`)
 
-### xkmsd Backend (All Backends)
+### Phone Backend
 
-Connect to the xkmsd service to use **any** go-xkms backend:
+Proxy signing to a paired Android phone's secure hardware. Private keys never
+leave the phone's TEE/StrongBox; the backend is a transparent proxy for the
+cryptographic operations, and an operation may require biometric confirmation
+on the handset.
 
-- **Hardware HSMs**: PKCS#11, YubiKey, SmartCard-HSM, Nitrokey
-- **Cloud KMS**: AWS KMS, GCP KMS, Azure Key Vault, HashiCorp Vault
-- **Software**: PKCS#8, memory
-- **Use Case**: Enterprise deployments, centralized key management
+- **Key storage**: Android TEE / StrongBox
+- **Transport**: BLE, or TCP over ADB for USB, encrypted with Noise XX
+- **Attestation**: Android Key Attestation via the platform verifier
+- **Use Case**: Hardware-backed keys without a TPM or a hardware key
 
 ```bash
-# Start xkmsd with your desired backend
-xkmsd serve --config /etc/xkmsd/config.yaml
+# Use the default paired phone
+sudo xkey fido2 --backend phone
 
-# Connect xkey to xkmsd
-sudo xkey fido2 --backend xkmsd --xkmsd-url https://localhost:8443
+# Target a specific phone
+sudo xkey fido2 --backend phone --phone-device "John's Pixel"
 ```
 
 | Flag | Default | Description |
 |------|---------|-------------|
-| `--xkmsd-url` | `https://localhost:8443` | xkmsd service URL |
-| `--xkmsd-ca` | (system) | CA certificate for TLS |
-| `--xkmsd-cert` | (none) | Client certificate for mTLS |
-| `--xkmsd-key` | (none) | Client key for mTLS |
+| `--phone-device` | (default paired phone) | Phone name or address to use |
 
-**Example with AWS KMS via xkmsd:**
-
-```yaml
-# /etc/xkmsd/config.yaml
-backends:
-  fido2:
-    type: awskms
-    region: us-east-1
-    key_id: alias/xkey-fido2
-```
-
-```bash
-sudo xkey fido2 --backend xkmsd --xkmsd-url https://xkmsd.internal:8443
-```
+The phone must be paired first — see [device pairing](../device/qr-pairing.md).
+`software`, `tpm2` and `phone` are the only values `--backend` accepts; anything
+else fails with "fido2: invalid backend type".
 
 ## Attestation Formats
 
@@ -479,39 +507,26 @@ SO PIN                          User PIN
 
 ### SO PIN Commands
 
-xkey implements CTAP2.1 vendor-specific subcommands for SO PIN management.
-
-#### Initialize SO PIN
-
-Set the SO PIN during initial device setup:
+The SO PIN is managed from the `xkey pin` command group — **not** from
+`xkey fido2`, which registers no SO PIN flags:
 
 ```bash
-# Via command line
-sudo xkey fido2 --so-pin --set-so-pin "SecureAdminPIN123!"
-
-# Via CTAP2.1 authenticatorConfig (vendorSetSOPIN)
-# Subcommand: 0x80
+xkey pin set-so           # set the SO PIN for the first time
+xkey pin change-so        # change an existing SO PIN
+xkey pin set-user         # set the User PIN (requires the SO PIN)
+xkey pin change-user      # change the User PIN
+xkey pin verify           # verify a PIN
+xkey pin status           # whether each PIN is set, and retry counts
+xkey pin reset-lockout    # clear a lockout
 ```
 
-#### Change SO PIN
+`xkey pin set-so` prompts for the PIN rather than taking it on the command
+line, so it never lands in the shell history or process list. It accepts
+`--data-dir` to target a specific store. The SO PIN must be at least 6
+characters.
 
-Change an existing SO PIN:
-
-```bash
-# Via CTAP2.1 authenticatorConfig (vendorChangeSOPIN)
-# Subcommand: 0x81
-# Requires: current SO PIN
-```
-
-#### Get SO PIN Retries
-
-Query remaining SO PIN attempts:
-
-```bash
-# Via CTAP2.1 authenticatorConfig (vendorGetSOPINRetries)
-# Subcommand: 0x85
-# Returns: remaining retry count, locked status
-```
+The same operations are reachable over CTAP2.1 through the vendor subcommands
+below.
 
 ### Protected Operations
 
@@ -520,9 +535,9 @@ Operations requiring SO PIN authentication:
 | Operation | CTAP2 Command | Description |
 |-----------|---------------|-------------|
 | Factory Reset | `authenticatorReset` (0x07) | Wipe all credentials and state |
-| Replace Attestation Key | `vendorReplaceAttestKey` (0x84) | Install new attestation certificate |
-| Reset User PIN | `vendorResetUserPIN` (0x83) | Reset locked user PIN |
-| Change SO PIN | `vendorChangeSOPIN` (0x81) | Update SO PIN |
+| Replace Attestation Key | `VendorCmdReplaceAttestKey` (0x05) | Install new attestation certificate |
+| Reset User PIN | `VendorCmdResetUserPIN` (0x04) | Reset locked user PIN |
+| Change SO PIN | `VendorCmdChangeSOPIN` (0x02) | Update SO PIN |
 
 ### CTAP2.1 authenticatorConfig Command
 
@@ -536,16 +551,29 @@ xkey implements the CTAP2.1 `authenticatorConfig` command (0x0D) with standard a
 | ToggleAlwaysUv | 0x02 | Toggle always-require-UV flag |
 | SetMinPINLength | 0x03 | Set minimum PIN length policy |
 
-**Vendor Subcommands (0x80+):**
+**Vendor Subcommands:**
+
+Vendor operations are nested, not flat. `authenticatorConfig` takes the single
+vendor subcommand `AuthConfigCmdVendorPrototype` (0x80); the operation below is
+then selected by a vendor command ID carried inside it. The IDs are therefore
+small numbers, not `0x80`-range values (`pkg/authenticator/cmd_config.go`):
 
 | Subcommand | ID | Description |
 |------------|----|-------------|
-| VendorSetSOPIN | 0x80 | Initialize SO PIN (first-time setup) |
-| VendorChangeSOPIN | 0x81 | Change existing SO PIN |
-| VendorUnlockWithSOPIN | 0x82 | Unlock authenticator with SO PIN |
-| VendorResetUserPIN | 0x83 | SO resets user PIN |
-| VendorReplaceAttestKey | 0x84 | Replace attestation key |
-| VendorGetSOPINRetries | 0x85 | Query SO PIN retry status |
+| VendorCmdSetSOPIN | 0x01 | Initialize SO PIN (first-time setup) |
+| VendorCmdChangeSOPIN | 0x02 | Change existing SO PIN |
+| VendorCmdUnlockWithSOPIN | 0x03 | Unlock the KeyManager with the SO PIN |
+| VendorCmdResetUserPIN | 0x04 | SO resets user PIN (requires SO unlock) |
+| VendorCmdReplaceAttestKey | 0x05 | Replace attestation key (requires SO unlock) |
+| VendorCmdGetSOPINRetries | 0x06 | Query SO PIN retry status |
+| VendorCmdSetRPPolicy | 0x07 | Set a per-RP policy (requires SO unlock) |
+| VendorCmdGetRPPolicy | 0x08 | Get a per-RP policy |
+| VendorCmdDeleteRPPolicy | 0x09 | Delete a per-RP policy (requires SO unlock) |
+| VendorCmdListRPPolicies | 0x0A | List all per-RP policies |
+| VendorCmdSetProfile | 0x0B | Set authenticator profile (requires SO unlock) |
+
+The per-RP policy and profile operations are also exposed on the CLI as
+`xkey fido2 policy list|set|get|delete` and `xkey fido2 profile set|show`.
 
 ### deviceConfig FIDO2 Extension
 
@@ -589,12 +617,17 @@ Relying parties can detect configuration changes by comparing `attestedHash` wit
 
 #### Initialize Device with SO PIN
 
+The SO PIN is set separately from starting the daemon:
+
 ```bash
-# Start device with both user PIN and SO PIN
+# Set the SO PIN, then the user PIN (prompts for each; never passed as a flag)
+xkey pin set-so
+xkey pin set-user
+
+# Start the device with persistent storage
 sudo xkey fido2 \
   --backend tpm2 \
   --pin --set-pin 123456 \
-  --so-pin --set-so-pin "SecureAdmin123!" \
   --storage file \
   --storage-path /var/lib/xkey
 ```
@@ -603,15 +636,17 @@ sudo xkey fido2 \
 
 When a user PIN is locked after too many failed attempts:
 
-1. Authenticate with SO PIN via `authenticatorConfig` (vendorResetUserPIN, 0x83)
+1. Authenticate with SO PIN via `authenticatorConfig` (VendorCmdResetUserPIN, 0x04)
 2. Provide new user PIN
 3. User PIN counter is reset and new PIN is active
+
+`xkey pin reset-lockout` is the CLI equivalent.
 
 #### Replace Attestation Key
 
 For enterprise deployments requiring custom attestation:
 
-1. Authenticate with SO PIN via `authenticatorConfig` (vendorReplaceAttestKey, 0x84)
+1. Authenticate with SO PIN via `authenticatorConfig` (VendorCmdReplaceAttestKey, 0x05)
 2. Provide new attestation private key and certificate chain
 3. New attestation key is wrapped and stored
 

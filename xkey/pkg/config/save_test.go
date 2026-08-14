@@ -17,7 +17,6 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
-	"runtime"
 	"strings"
 	"testing"
 
@@ -312,30 +311,24 @@ func TestSaveToPath_DirectoryCreationFailure(t *testing.T) {
 // TestSaveToPath_ReadOnlyDirectory verifies that SaveToPath returns
 // ErrConfigSaveFailed when it cannot create a temp file in a read-only
 // parent directory.
-func TestSaveToPath_ReadOnlyDirectory(t *testing.T) {
-	if runtime.GOOS != "linux" {
-		t.Skip("read-only directory test only reliable on Linux")
-	}
-	if os.Getuid() == 0 {
-		t.Skip("test requires non-root user for permission checks")
-	}
-
+// TestSaveToPath_UnwritableDirectory verifies that SaveToPath returns
+// ErrConfigSaveFailed when it cannot create its temp file in the parent
+// directory. A regular file is placed where the parent directory would be, so
+// the write fails with ENOTDIR for every uid, including root. Permission bits
+// alone would not work here because root bypasses them.
+func TestSaveToPath_UnwritableDirectory(t *testing.T) {
 	tmpDir := t.TempDir()
-	readOnlyDir := filepath.Join(tmpDir, "readonly")
-	require.NoError(t, os.MkdirAll(readOnlyDir, 0500))
+	blocker := filepath.Join(tmpDir, "not-a-directory")
+	require.NoError(t, os.WriteFile(blocker, []byte("x"), 0600))
 
-	// Ensure cleanup can remove the directory.
-	t.Cleanup(func() {
-		os.Chmod(readOnlyDir, 0700)
-	})
-
-	cfgPath := filepath.Join(readOnlyDir, "xkey.yaml")
+	cfgPath := filepath.Join(blocker, "xkey.yaml")
 	cfg := DefaultConfig()
 
 	err := SaveToPath(cfg, cfgPath)
 	require.Error(t, err)
-	assert.True(t, errors.Is(err, ErrConfigSaveFailed),
-		"expected ErrConfigSaveFailed for read-only directory, got %v", err)
+	assert.True(t,
+		errors.Is(err, ErrConfigSaveFailed) || errors.Is(err, ErrConfigDirCreate),
+		"expected a save or dir-create failure, got %v", err)
 }
 
 // TestSaveToPath_InvalidConfigZeroWindowWidth verifies that SaveToPath

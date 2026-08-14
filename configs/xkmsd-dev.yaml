@@ -25,12 +25,27 @@ logging:
   level: "debug"
   format: "text"
 
+# xkmsd refuses to start unless encryption-at-rest, TLS, authentication and a CA
+# are all configured (cmd/xkmsd checks config.ComplianceGaps; there is no
+# override), so a "just run it locally" config still has to be a compliant one.
+# Nothing here needs provisioning: the embedded CA at the end of this file mints
+# the TLS server certificate on first start.
 tls:
-  enabled: false
+  enabled: true
 
 auth:
-  enabled: false
-  type: "noop"
+  enabled: true
+  type: "adaptive"
+
+# Encryption at rest. Unlike configs/xkmsd.yaml this names a literal passphrase,
+# because the point of this file is to start a throwaway local daemon with no
+# out-of-band setup. It is a development secret and must not be used anywhere
+# else; a real deployment supplies XKMS_SEAL_PASSPHRASE or a credential://
+# reference instead, and `xkmsd init` provisions one.
+barrier:
+  enabled: true
+  strategy: "passphrase"
+  passphrase: "dev-only-passphrase"
 
 ratelimit:
   enabled: false
@@ -58,3 +73,23 @@ backends:
   software:
     enabled: true
     path: "xkms-data/keys"
+
+# Embedded certificate authority. On first start xkmsd creates this root, issues
+# its own TLS server certificate from it, and persists both under storage.path;
+# subsequent starts load them. A development root -- do not trust it anywhere.
+ca:
+  identity:
+    - subject:
+        cn: "xkms Development Root CA"
+        organization: "go-xkms"
+      valid: 10
+      keys:
+        - algorithm: "ECDSA"
+          ecc:
+            curve: "P-256"
+          hash: "SHA-256"
+          key_type: "CA"
+      keystore-type: "software"
+      is-root: true
+  selected-ca: 0
+  default-validity-days: 365

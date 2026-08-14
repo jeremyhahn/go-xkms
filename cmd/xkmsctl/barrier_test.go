@@ -43,29 +43,34 @@ type mockBarrierClient struct {
 	closeErr    error
 
 	// Barrier ops
-	initErr         error
-	initReq         *transport.BarrierInitializeRequest
-	initShamirResp  *transport.BarrierInitializeShamirResponse
-	initShamirErr   error
-	initShamirReq   *transport.BarrierInitializeShamirRequest
-	unsealErr       error
-	unsealReq       *transport.BarrierUnsealRequest
-	unsealSharesErr error
-	unsealSharesReq *transport.BarrierUnsealSharesRequest
-	statusResp      *transport.BarrierStatusResponse
-	statusErr       error
-	sealErr         error
-	rekeyResp       *transport.BarrierRekeyResponse
-	rekeyErr        error
-	rekeyReq        *transport.BarrierRekeyRequest
-	genKeysResp     *transport.BarrierRecoveryKeysResponse
-	genKeysErr      error
-	genKeysReq      *transport.BarrierGenerateRecoveryKeysRequest
-	recoverErr      error
-	recoverReq      *transport.BarrierRecoverWithKeysRequest
-	enableEncResp   *transport.BarrierEnableEncryptionResponse
-	enableEncErr    error
-	enableEncReq    *transport.BarrierEnableEncryptionRequest
+	initErr          error
+	initReq          *transport.BarrierInitializeRequest
+	initShamirResp   *transport.BarrierInitializeShamirResponse
+	initShamirErr    error
+	initShamirReq    *transport.BarrierInitializeShamirRequest
+	unsealErr        error
+	unsealReq        *transport.BarrierUnsealRequest
+	unsealSharesErr  error
+	unsealSharesReq  *transport.BarrierUnsealSharesRequest
+	statusResp       *transport.BarrierStatusResponse
+	statusErr        error
+	sealErr          error
+	rekeyResp        *transport.BarrierRekeyResponse
+	rekeyErr         error
+	rekeyReq         *transport.BarrierRekeyRequest
+	genKeysResp      *transport.BarrierRecoveryKeysResponse
+	genKeysErr       error
+	genKeysReq       *transport.BarrierGenerateRecoveryKeysRequest
+	recoverErr       error
+	recoverReq       *transport.BarrierRecoverWithKeysRequest
+	deleteKeysErr    error
+	deleteKeysCalled bool
+	rootTokenResp    *transport.BarrierRootTokenResponse
+	rootTokenErr     error
+	rootTokenReq     *transport.BarrierGenerateRootTokenRequest
+	enableEncResp    *transport.BarrierEnableEncryptionResponse
+	enableEncErr     error
+	enableEncReq     *transport.BarrierEnableEncryptionRequest
 
 	// PIN ops
 	setSOPINReq    *transport.SetSOPINRequest

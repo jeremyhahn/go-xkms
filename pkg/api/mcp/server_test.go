@@ -89,7 +89,8 @@ func TestNewServer_Success(t *testing.T) {
 	defer cleanupXKMS()
 
 	config := &Config{
-		Addr: "localhost:0",
+		Authenticator: auth.NewNoOpAuthenticator(),
+		Addr:          "localhost:0",
 
 		XKMSService: svc,
 	}
@@ -109,7 +110,8 @@ func TestNewServer_DefaultAddress(t *testing.T) {
 	defer cleanupXKMS()
 
 	config := &Config{
-		XKMSService: svc,
+		Authenticator: auth.NewNoOpAuthenticator(),
+		XKMSService:   svc,
 	} // Empty address
 
 	server, err := NewServer(config)
@@ -150,8 +152,9 @@ func TestNewServer_WithRateLimiter(t *testing.T) {
 	defer limiter.Stop()
 
 	config := &Config{
-		Addr:        "localhost:0",
-		RateLimiter: limiter,
+		Authenticator: auth.NewNoOpAuthenticator(),
+		Addr:          "localhost:0",
+		RateLimiter:   limiter,
 
 		XKMSService: svc,
 	}
@@ -168,7 +171,8 @@ func TestNewServer_NotInitialized(t *testing.T) {
 	xkms.Reset()
 
 	config := &Config{
-		Addr: "localhost:0",
+		Authenticator: auth.NewNoOpAuthenticator(),
+		Addr:          "localhost:0",
 	}
 
 	_, err := NewServer(config)
@@ -181,7 +185,8 @@ func TestServer_StartStop(t *testing.T) {
 	defer cleanupXKMS()
 
 	config := &Config{
-		Addr: "localhost:0",
+		Authenticator: auth.NewNoOpAuthenticator(),
+		Addr:          "localhost:0",
 
 		XKMSService: svc,
 	}
@@ -205,7 +210,8 @@ func TestServer_StartInvalidAddress(t *testing.T) {
 	defer cleanupXKMS()
 
 	config := &Config{
-		Addr: "invalid:address:too:many:colons",
+		Authenticator: auth.NewNoOpAuthenticator(),
+		Addr:          "invalid:address:too:many:colons",
 
 		XKMSService: svc,
 	}
@@ -222,7 +228,7 @@ func TestServer_HandleRequest_InvalidVersion(t *testing.T) {
 	svc := setupTestXKMS(t)
 	defer cleanupXKMS()
 
-	server, err := NewServer(&Config{Addr: "localhost:0", XKMSService: svc})
+	server, err := NewServer(&Config{Addr: "localhost:0", XKMSService: svc, Authenticator: auth.NewNoOpAuthenticator()})
 	require.NoError(t, err)
 
 	req := &JSONRPCRequest{
@@ -242,7 +248,7 @@ func TestServer_HandleRequest_MethodNotFound(t *testing.T) {
 	svc := setupTestXKMS(t)
 	defer cleanupXKMS()
 
-	server, err := NewServer(&Config{Addr: "localhost:0", XKMSService: svc})
+	server, err := NewServer(&Config{Addr: "localhost:0", XKMSService: svc, Authenticator: auth.NewNoOpAuthenticator()})
 	require.NoError(t, err)
 
 	req := &JSONRPCRequest{
@@ -261,7 +267,7 @@ func TestServer_HandleRequest_NoResponseForNotification(t *testing.T) {
 	svc := setupTestXKMS(t)
 	defer cleanupXKMS()
 
-	server, err := NewServer(&Config{Addr: "localhost:0", XKMSService: svc})
+	server, err := NewServer(&Config{Addr: "localhost:0", XKMSService: svc, Authenticator: auth.NewNoOpAuthenticator()})
 	require.NoError(t, err)
 
 	// Notification has no ID
@@ -279,7 +285,7 @@ func TestServer_HandleRequest_WithCorrelationID(t *testing.T) {
 	svc := setupTestXKMS(t)
 	defer cleanupXKMS()
 
-	server, err := NewServer(&Config{Addr: "localhost:0", XKMSService: svc})
+	server, err := NewServer(&Config{Addr: "localhost:0", XKMSService: svc, Authenticator: auth.NewNoOpAuthenticator()})
 	require.NoError(t, err)
 
 	req := &JSONRPCRequest{
@@ -298,7 +304,7 @@ func TestServer_HandleRequest_GeneratesCorrelationID(t *testing.T) {
 	svc := setupTestXKMS(t)
 	defer cleanupXKMS()
 
-	server, err := NewServer(&Config{Addr: "localhost:0", XKMSService: svc})
+	server, err := NewServer(&Config{Addr: "localhost:0", XKMSService: svc, Authenticator: auth.NewNoOpAuthenticator()})
 	require.NoError(t, err)
 
 	req := &JSONRPCRequest{
@@ -317,7 +323,7 @@ func TestServer_MakeErrorResponse(t *testing.T) {
 	svc := setupTestXKMS(t)
 	defer cleanupXKMS()
 
-	server, err := NewServer(&Config{Addr: "localhost:0", XKMSService: svc})
+	server, err := NewServer(&Config{Addr: "localhost:0", XKMSService: svc, Authenticator: auth.NewNoOpAuthenticator()})
 	require.NoError(t, err)
 
 	resp := server.makeErrorResponse(1, "corr-123", ErrCodeInvalidParams, "test error", nil)
@@ -335,7 +341,7 @@ func TestServer_NotifyEvent(t *testing.T) {
 	svc := setupTestXKMS(t)
 	defer cleanupXKMS()
 
-	server, err := NewServer(&Config{Addr: "localhost:0", XKMSService: svc})
+	server, err := NewServer(&Config{Addr: "localhost:0", XKMSService: svc, Authenticator: auth.NewNoOpAuthenticator()})
 	require.NoError(t, err)
 
 	// Create a mock connection using a pipe
@@ -383,7 +389,7 @@ func TestServer_NotifyEvent_NoMatchingSubscribers(t *testing.T) {
 	svc := setupTestXKMS(t)
 	defer cleanupXKMS()
 
-	server, err := NewServer(&Config{Addr: "localhost:0", XKMSService: svc})
+	server, err := NewServer(&Config{Addr: "localhost:0", XKMSService: svc, Authenticator: auth.NewNoOpAuthenticator()})
 	require.NoError(t, err)
 
 	// Create a mock connection
@@ -407,7 +413,7 @@ func TestServer_RouteFrostMethods_NonFrostMethod(t *testing.T) {
 	svc := setupTestXKMS(t)
 	defer cleanupXKMS()
 
-	server, err := NewServer(&Config{Addr: "localhost:0", XKMSService: svc})
+	server, err := NewServer(&Config{Addr: "localhost:0", XKMSService: svc, Authenticator: auth.NewNoOpAuthenticator()})
 	require.NoError(t, err)
 
 	req := &JSONRPCRequest{
@@ -424,7 +430,7 @@ func TestServer_ClientConnection(t *testing.T) {
 	svc := setupTestXKMS(t)
 	defer cleanupXKMS()
 
-	server, err := NewServer(&Config{Addr: "localhost:0", XKMSService: svc})
+	server, err := NewServer(&Config{Addr: "localhost:0", XKMSService: svc, Authenticator: auth.NewNoOpAuthenticator()})
 	require.NoError(t, err)
 
 	err = server.Start()
@@ -470,7 +476,7 @@ func TestServer_BatchRequest(t *testing.T) {
 	svc := setupTestXKMS(t)
 	defer cleanupXKMS()
 
-	server, err := NewServer(&Config{Addr: "localhost:0", XKMSService: svc})
+	server, err := NewServer(&Config{Addr: "localhost:0", XKMSService: svc, Authenticator: auth.NewNoOpAuthenticator()})
 	require.NoError(t, err)
 
 	err = server.Start()
@@ -508,7 +514,7 @@ func TestServer_InvalidJSON(t *testing.T) {
 	svc := setupTestXKMS(t)
 	defer cleanupXKMS()
 
-	server, err := NewServer(&Config{Addr: "localhost:0", XKMSService: svc})
+	server, err := NewServer(&Config{Addr: "localhost:0", XKMSService: svc, Authenticator: auth.NewNoOpAuthenticator()})
 	require.NoError(t, err)
 
 	err = server.Start()
@@ -565,8 +571,9 @@ func TestServer_WithTLS(t *testing.T) {
 	}
 
 	config := &Config{
-		Addr:      "localhost:0",
-		TLSConfig: tlsConfig,
+		Authenticator: auth.NewNoOpAuthenticator(),
+		Addr:          "localhost:0",
+		TLSConfig:     tlsConfig,
 
 		XKMSService: svc,
 	}
@@ -620,7 +627,7 @@ func TestServer_HandleRequest_AllMethods(t *testing.T) {
 	svc := setupTestXKMS(t)
 	defer cleanupXKMS()
 
-	server, err := NewServer(&Config{Addr: "localhost:0", XKMSService: svc})
+	server, err := NewServer(&Config{Addr: "localhost:0", XKMSService: svc, Authenticator: auth.NewNoOpAuthenticator()})
 	require.NoError(t, err)
 
 	ctx := context.Background()
@@ -689,7 +696,7 @@ func TestServer_HandleRequest_MoreMethods(t *testing.T) {
 	svc := setupTestXKMS(t)
 	defer cleanupXKMS()
 
-	server, err := NewServer(&Config{Addr: "localhost:0", XKMSService: svc})
+	server, err := NewServer(&Config{Addr: "localhost:0", XKMSService: svc, Authenticator: auth.NewNoOpAuthenticator()})
 	require.NoError(t, err)
 
 	ctx := context.Background()
@@ -799,7 +806,7 @@ func TestServer_HandleRequest_EncryptDecrypt(t *testing.T) {
 	svc := setupTestXKMS(t)
 	defer cleanupXKMS()
 
-	server, err := NewServer(&Config{Addr: "localhost:0", XKMSService: svc})
+	server, err := NewServer(&Config{Addr: "localhost:0", XKMSService: svc, Authenticator: auth.NewNoOpAuthenticator()})
 	require.NoError(t, err)
 
 	ctx := context.Background()
@@ -850,7 +857,7 @@ func TestServer_HandleRequest_AsymmetricOps(t *testing.T) {
 	svc := setupTestXKMS(t)
 	defer cleanupXKMS()
 
-	server, err := NewServer(&Config{Addr: "localhost:0", XKMSService: svc})
+	server, err := NewServer(&Config{Addr: "localhost:0", XKMSService: svc, Authenticator: auth.NewNoOpAuthenticator()})
 	require.NoError(t, err)
 
 	ctx := context.Background()
@@ -920,7 +927,7 @@ func TestServer_HandleRequest_CertOps(t *testing.T) {
 	svc := setupTestXKMS(t)
 	defer cleanupXKMS()
 
-	server, err := NewServer(&Config{Addr: "localhost:0", XKMSService: svc})
+	server, err := NewServer(&Config{Addr: "localhost:0", XKMSService: svc, Authenticator: auth.NewNoOpAuthenticator()})
 	require.NoError(t, err)
 
 	ctx := context.Background()
@@ -1016,7 +1023,7 @@ func TestServer_HandleRequest_VerifyRoute(t *testing.T) {
 	svc := setupTestXKMS(t)
 	defer cleanupXKMS()
 
-	server, err := NewServer(&Config{Addr: "localhost:0", XKMSService: svc})
+	server, err := NewServer(&Config{Addr: "localhost:0", XKMSService: svc, Authenticator: auth.NewNoOpAuthenticator()})
 	require.NoError(t, err)
 
 	ctx := context.Background()
@@ -1084,7 +1091,7 @@ func TestServer_HandleRequest_DecryptRoute(t *testing.T) {
 	svc := setupTestXKMS(t)
 	defer cleanupXKMS()
 
-	server, err := NewServer(&Config{Addr: "localhost:0", XKMSService: svc})
+	server, err := NewServer(&Config{Addr: "localhost:0", XKMSService: svc, Authenticator: auth.NewNoOpAuthenticator()})
 	require.NoError(t, err)
 
 	ctx := context.Background()
@@ -1151,7 +1158,7 @@ func TestServer_HandleRequest_AsymmetricDecryptRoute(t *testing.T) {
 	svc := setupTestXKMS(t)
 	defer cleanupXKMS()
 
-	server, err := NewServer(&Config{Addr: "localhost:0", XKMSService: svc})
+	server, err := NewServer(&Config{Addr: "localhost:0", XKMSService: svc, Authenticator: auth.NewNoOpAuthenticator()})
 	require.NoError(t, err)
 
 	ctx := context.Background()
@@ -1217,7 +1224,7 @@ func TestServer_HandleRequest_ImportExportRoutes(t *testing.T) {
 	svc := setupTestXKMS(t)
 	defer cleanupXKMS()
 
-	server, err := NewServer(&Config{Addr: "localhost:0", XKMSService: svc})
+	server, err := NewServer(&Config{Addr: "localhost:0", XKMSService: svc, Authenticator: auth.NewNoOpAuthenticator()})
 	require.NoError(t, err)
 
 	ctx := context.Background()
@@ -1328,7 +1335,7 @@ func TestServer_HandleRequest_CertChainRoutes(t *testing.T) {
 	svc := setupTestXKMS(t)
 	defer cleanupXKMS()
 
-	server, err := NewServer(&Config{Addr: "localhost:0", XKMSService: svc})
+	server, err := NewServer(&Config{Addr: "localhost:0", XKMSService: svc, Authenticator: auth.NewNoOpAuthenticator()})
 	require.NoError(t, err)
 
 	ctx := context.Background()
@@ -1411,7 +1418,7 @@ func TestServer_HandleRequest_Subscribe(t *testing.T) {
 	svc := setupTestXKMS(t)
 	defer cleanupXKMS()
 
-	server, err := NewServer(&Config{Addr: "localhost:0", XKMSService: svc})
+	server, err := NewServer(&Config{Addr: "localhost:0", XKMSService: svc, Authenticator: auth.NewNoOpAuthenticator()})
 	require.NoError(t, err)
 
 	// Create a mock connection
@@ -1445,7 +1452,7 @@ func TestServer_BatchWithNotifications(t *testing.T) {
 	svc := setupTestXKMS(t)
 	defer cleanupXKMS()
 
-	server, err := NewServer(&Config{Addr: "localhost:0", XKMSService: svc})
+	server, err := NewServer(&Config{Addr: "localhost:0", XKMSService: svc, Authenticator: auth.NewNoOpAuthenticator()})
 	require.NoError(t, err)
 
 	err = server.Start()
@@ -1510,8 +1517,9 @@ func TestServer_StopWithTLS(t *testing.T) {
 	}
 
 	config := &Config{
-		Addr:      "localhost:0",
-		TLSConfig: tlsConfig,
+		Authenticator: auth.NewNoOpAuthenticator(),
+		Addr:          "localhost:0",
+		TLSConfig:     tlsConfig,
 
 		XKMSService: svc,
 	}
@@ -1540,8 +1548,9 @@ func TestServer_ConnectionWithRateLimit(t *testing.T) {
 	defer limiter.Stop()
 
 	config := &Config{
-		Addr:        "localhost:0",
-		RateLimiter: limiter,
+		Authenticator: auth.NewNoOpAuthenticator(),
+		Addr:          "localhost:0",
+		RateLimiter:   limiter,
 
 		XKMSService: svc,
 	}
@@ -1585,7 +1594,7 @@ func TestServer_EmptyBatchRequest(t *testing.T) {
 	svc := setupTestXKMS(t)
 	defer cleanupXKMS()
 
-	server, err := NewServer(&Config{Addr: "localhost:0", XKMSService: svc})
+	server, err := NewServer(&Config{Addr: "localhost:0", XKMSService: svc, Authenticator: auth.NewNoOpAuthenticator()})
 	require.NoError(t, err)
 
 	err = server.Start()
@@ -1611,7 +1620,7 @@ func TestServer_InvalidBatchRequest(t *testing.T) {
 	svc := setupTestXKMS(t)
 	defer cleanupXKMS()
 
-	server, err := NewServer(&Config{Addr: "localhost:0", XKMSService: svc})
+	server, err := NewServer(&Config{Addr: "localhost:0", XKMSService: svc, Authenticator: auth.NewNoOpAuthenticator()})
 	require.NoError(t, err)
 
 	err = server.Start()
@@ -1717,8 +1726,9 @@ func TestServer_WithMTLS(t *testing.T) {
 	}
 
 	config := &Config{
-		Addr:      "localhost:0",
-		TLSConfig: serverTLSConfig,
+		Authenticator: auth.NewNoOpAuthenticator(),
+		Addr:          "localhost:0",
+		TLSConfig:     serverTLSConfig,
 
 		XKMSService: svc,
 	}
@@ -1768,7 +1778,7 @@ func TestServer_NotifyEvent_ClosedConnection(t *testing.T) {
 	svc := setupTestXKMS(t)
 	defer cleanupXKMS()
 
-	server, err := NewServer(&Config{Addr: "localhost:0", XKMSService: svc})
+	server, err := NewServer(&Config{Addr: "localhost:0", XKMSService: svc, Authenticator: auth.NewNoOpAuthenticator()})
 	require.NoError(t, err)
 
 	// Create a mock connection using a pipe
@@ -1795,7 +1805,7 @@ func TestServer_StopWithoutStart(t *testing.T) {
 	svc := setupTestXKMS(t)
 	defer cleanupXKMS()
 
-	server, err := NewServer(&Config{Addr: "localhost:0", XKMSService: svc})
+	server, err := NewServer(&Config{Addr: "localhost:0", XKMSService: svc, Authenticator: auth.NewNoOpAuthenticator()})
 	require.NoError(t, err)
 
 	// Server was never started, so listener is nil
@@ -1808,7 +1818,7 @@ func TestServer_HandleRequest_FrostMethodWithError(t *testing.T) {
 	svc := setupTestXKMS(t)
 	defer cleanupXKMS()
 
-	server, err := NewServer(&Config{Addr: "localhost:0", XKMSService: svc})
+	server, err := NewServer(&Config{Addr: "localhost:0", XKMSService: svc, Authenticator: auth.NewNoOpAuthenticator()})
 	require.NoError(t, err)
 
 	ctx := context.Background()
@@ -1831,7 +1841,7 @@ func TestServer_HandleRequest_WithAuthenticatedIdentity(t *testing.T) {
 	svc := setupTestXKMS(t)
 	defer cleanupXKMS()
 
-	server, err := NewServer(&Config{Addr: "localhost:0", XKMSService: svc})
+	server, err := NewServer(&Config{Addr: "localhost:0", XKMSService: svc, Authenticator: auth.NewNoOpAuthenticator()})
 	require.NoError(t, err)
 
 	// Create context with identity

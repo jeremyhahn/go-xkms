@@ -376,6 +376,17 @@ func bridge(conn *websocket.Conn, cons Console) {
 		}
 	}
 stop:
+	// No more keystrokes can arrive on this WebSocket, so signal EOF to the
+	// remote shell and let it exit on its own terms before ServeHTTP's
+	// deferred Close tears the session down. Console.Close used to send this
+	// EOF implicitly; it now closes the session instead (that implicit EOF
+	// raced in-flight writes), so the bridge sends it explicitly and the
+	// remote-side semantics are unchanged.
+	//
+	// Best-effort: this runs on the way out with the WebSocket already gone,
+	// so there is nobody left to report a failure to, and Close still
+	// terminates the session unconditionally.
+	_ = cons.CloseWrite()
 	closeDone()
 }
 

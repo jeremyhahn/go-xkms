@@ -28,4 +28,21 @@ var (
 	//  2. Log the incident for security review
 	//  3. Consider rotating the key immediately
 	ErrNonceReuse = errors.New("aead: catastrophic nonce reuse detected - encryption rejected for security")
+
+	// ErrNonceTrackerFull is returned when a bounded NonceTracker has reached
+	// its limit and cannot record another nonce.
+	//
+	// The tracker fails closed rather than evicting an entry, because evicting
+	// one turns a reuse it would have detected into one it would not, which is
+	// the failure the tracker exists to prevent. Reaching the limit means the
+	// key has been used for more encryptions than one process should perform
+	// under it: rotate the key, or reinitialize the component that owns the
+	// tracker.
+	ErrNonceTrackerFull = errors.New("aead: nonce tracker is full - rotate the key or reinitialize the tracker")
+
+	// ErrNonceGuardInput is returned by KeyNonceGuard when the key material or
+	// the nonce is empty. Both are required: a guard that accepted an empty
+	// value would map every such call onto a single tracker entry and report
+	// unrelated operations as reuse.
+	ErrNonceGuardInput = errors.New("aead: key material and nonce are both required to guard against nonce reuse")
 )

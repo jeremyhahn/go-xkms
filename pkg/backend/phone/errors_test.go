@@ -54,9 +54,6 @@ func TestErrors_AllDefined(t *testing.T) {
 		{"ErrInvalidPeerPublicKey", ErrInvalidPeerPublicKey},
 		{"ErrEmptySharedSecret", ErrEmptySharedSecret},
 		{"ErrInvalidKDFParams", ErrInvalidKDFParams},
-		{"ErrUnsupportedKDFAlgorithm", ErrUnsupportedKDFAlgorithm},
-		{"ErrUnsupportedHashAlgorithm", ErrUnsupportedHashAlgorithm},
-		{"ErrKDFDerivationFailed", ErrKDFDerivationFailed},
 		{"ErrSymmetricEncryptFailed", ErrSymmetricEncryptFailed},
 		{"ErrSymmetricDecryptFailed", ErrSymmetricDecryptFailed},
 	}
@@ -103,9 +100,6 @@ func TestErrors_Uniqueness(t *testing.T) {
 		ErrInvalidPeerPublicKey,
 		ErrEmptySharedSecret,
 		ErrInvalidKDFParams,
-		ErrUnsupportedKDFAlgorithm,
-		ErrUnsupportedHashAlgorithm,
-		ErrKDFDerivationFailed,
 		ErrSymmetricEncryptFailed,
 		ErrSymmetricDecryptFailed,
 	}
@@ -158,9 +152,6 @@ func TestErrors_PrefixConvention(t *testing.T) {
 		{"ErrInvalidPeerPublicKey", ErrInvalidPeerPublicKey},
 		{"ErrEmptySharedSecret", ErrEmptySharedSecret},
 		{"ErrInvalidKDFParams", ErrInvalidKDFParams},
-		{"ErrUnsupportedKDFAlgorithm", ErrUnsupportedKDFAlgorithm},
-		{"ErrUnsupportedHashAlgorithm", ErrUnsupportedHashAlgorithm},
-		{"ErrKDFDerivationFailed", ErrKDFDerivationFailed},
 		{"ErrSymmetricEncryptFailed", ErrSymmetricEncryptFailed},
 		{"ErrSymmetricDecryptFailed", ErrSymmetricDecryptFailed},
 	}

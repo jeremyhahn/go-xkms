@@ -278,7 +278,7 @@ func (v *Volume) CopyDataToVolume(sourceDir string) error {
 // calling user cannot be determined, it logs a warning and returns
 // without error so that the unlock operation is not disrupted.
 func ChownToCallingUser(path string) {
-	if os.Geteuid() != 0 {
+	if geteuid() != 0 {
 		return
 	}
 
@@ -306,7 +306,7 @@ func ChownToCallingUser(path string) {
 // Best-effort: individual file chown errors are logged but do not
 // abort the walk.
 func chownTreeToCallingUser(root string) {
-	if os.Geteuid() != 0 {
+	if geteuid() != 0 {
 		return
 	}
 

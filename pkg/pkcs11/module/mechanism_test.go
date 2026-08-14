@@ -14,6 +14,8 @@
 package module
 
 import (
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 	"strings"
 	"testing"
 )
@@ -341,18 +343,28 @@ func TestMechanismGetMechanismInfo(t *testing.T) {
 		wantMaxKey uint32
 	}{
 		{
-			name:       "RSA PKCS",
-			mechType:   CKM_RSA_PKCS,
-			wantErr:    false,
-			wantMinKey: 512,
-			wantMaxKey: 16384,
+			name:     "RSA PKCS",
+			mechType: CKM_RSA_PKCS,
+			wantErr:  false,
+			// 2048 is the floor the module enforces and advertises. PKCS#11
+			// v3.2 §6.1.21 permits only 1024, 2048 and 3072 for CKM_RSA_PKCS in
+			// FIPS mode -- 512 is not a permitted modulus length at all -- and
+			// NIST SP 800-131A has disallowed RSA below 2048 since 2014.
+			wantMinKey: rsaModulusBitsMin,
+			// The ceiling is a size the module actually generates. It read
+			// 16384 until generating a key at that advertised maximum
+			// exhausted the daemon's memory; see rsaModulusBitsMax.
+			wantMaxKey: rsaModulusBitsMax,
 		},
 		{
+			// CKM_AES_GCM's MinKeySize/MaxKeySize are in bytes (PKCS#11
+			// v3.2 §6.13.7), so AES-128/256 are expressed here as 16/32,
+			// not their bit lengths 128/256.
 			name:       "AES GCM",
 			mechType:   CKM_AES_GCM,
 			wantErr:    false,
-			wantMinKey: 128,
-			wantMaxKey: 256,
+			wantMinKey: 16,
+			wantMaxKey: 32,
 		},
 		{
 			name:       "SHA256 digest",
@@ -391,114 +403,6 @@ func TestMechanismGetMechanismInfo(t *testing.T) {
 			}
 			if info.MaxKeySize != tt.wantMaxKey {
 				t.Errorf("MaxKeySize = %d, want %d", info.MaxKeySize, tt.wantMaxKey)
-			}
-		})
-	}
-}
-
-// TestMechanismRequiresParams tests MechanismRequiresParams function.
-func TestMechanismRequiresParams(t *testing.T) {
-	tests := []struct {
-		name     string
-		mechType MechanismType
-		want     bool
-	}{
-		{
-			name:     "AES GCM requires params",
-			mechType: CKM_AES_GCM,
-			want:     true,
-		},
-		{
-			name:     "RSA OAEP requires params",
-			mechType: CKM_RSA_PKCS_OAEP,
-			want:     true,
-		},
-		{
-			name:     "RSA PSS requires params",
-			mechType: CKM_RSA_PKCS_PSS,
-			want:     true,
-		},
-		{
-			name:     "HKDF derive requires params",
-			mechType: CKM_HKDF_DERIVE,
-			want:     true,
-		},
-		{
-			name:     "AES ECB no params",
-			mechType: CKM_AES_ECB,
-			want:     false,
-		},
-		{
-			name:     "SHA256 no params",
-			mechType: CKM_SHA256,
-			want:     false,
-		},
-		{
-			name:     "unknown mechanism",
-			mechType: MechanismType(0xFFFFFFFF),
-			want:     false,
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			got := MechanismRequiresParams(tt.mechType)
-			if got != tt.want {
-				t.Errorf("MechanismRequiresParams(%v) = %v, want %v", tt.mechType, got, tt.want)
-			}
-		})
-	}
-}
-
-// TestGetMechanismParamsType tests GetMechanismParamsType function.
-func TestGetMechanismParamsType(t *testing.T) {
-	tests := []struct {
-		name     string
-		mechType MechanismType
-		want     string
-	}{
-		{
-			name:     "AES GCM",
-			mechType: CKM_AES_GCM,
-			want:     "AESGCMParams",
-		},
-		{
-			name:     "RSA OAEP",
-			mechType: CKM_RSA_PKCS_OAEP,
-			want:     "RSAOAEPParams",
-		},
-		{
-			name:     "RSA PSS",
-			mechType: CKM_RSA_PKCS_PSS,
-			want:     "RSAPSSParams",
-		},
-		{
-			name:     "HKDF derive",
-			mechType: CKM_HKDF_DERIVE,
-			want:     "HKDFParams",
-		},
-		{
-			name:     "ECDH derive",
-			mechType: CKM_ECDH1_DERIVE,
-			want:     "ECDHParams",
-		},
-		{
-			name:     "AES ECB no params",
-			mechType: CKM_AES_ECB,
-			want:     "",
-		},
-		{
-			name:     "unknown mechanism",
-			mechType: MechanismType(0xFFFFFFFF),
-			want:     "",
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			got := GetMechanismParamsType(tt.mechType)
-			if got != tt.want {
-				t.Errorf("GetMechanismParamsType(%v) = %v, want %v", tt.mechType, got, tt.want)
 			}
 		})
 	}
@@ -722,10 +626,14 @@ func TestCanGenerateKey(t *testing.T) {
 			mechType: CKM_AES_KEY_GEN,
 			want:     true,
 		},
+		// CKM_HKDF_KEY_GEN carried CKF_GENERATE with no entry in the
+		// mechanism-to-key-type mapping, so C_GenerateKey could not build a
+		// request for it and failed with CKR_GENERAL_ERROR. Its descriptor has
+		// been removed, so CanGenerateKey must now say so.
 		{
-			name:     "HKDF key gen",
+			name:     "HKDF key gen is not implemented and must not claim to generate",
 			mechType: CKM_HKDF_KEY_GEN,
-			want:     true,
+			want:     false,
 		},
 		{
 			name:     "generic secret key gen",
@@ -840,10 +748,14 @@ func TestCanWrap(t *testing.T) {
 			mechType: CKM_RSA_PKCS_OAEP,
 			want:     true,
 		},
+		// This asserted that CKM_AES_GCM cannot wrap while module.go routed it
+		// through C_WrapKey, so C_GetMechanismInfo and the module disagreed.
+		// PKCS#11 v3.2 §6.10 lists AES-GCM among the wrapping mechanisms and
+		// the descriptor now carries CKF_WRAP.
 		{
-			name:     "AES GCM cannot wrap",
+			name:     "AES GCM can wrap",
 			mechType: CKM_AES_GCM,
-			want:     false,
+			want:     true,
 		},
 		{
 			name:     "SHA256 cannot wrap",
@@ -894,10 +806,11 @@ func TestCanUnwrap(t *testing.T) {
 			mechType: CKM_RSA_PKCS_OAEP,
 			want:     true,
 		},
+		// The CKF_UNWRAP half of the same disagreement; see TestCanWrap.
 		{
-			name:     "AES GCM cannot unwrap",
+			name:     "AES GCM can unwrap",
 			mechType: CKM_AES_GCM,
-			want:     false,
+			want:     true,
 		},
 		{
 			name:     "SHA256 cannot unwrap",
@@ -998,9 +911,25 @@ func TestCanDigest(t *testing.T) {
 			want:     true,
 		},
 		{
-			name:     "SHA3-256",
-			mechType: CKM_SHA3_256,
+			name:     "SHA512/224",
+			mechType: CKM_SHA512_224,
 			want:     true,
+		},
+		{
+			name:     "SHA512/256",
+			mechType: CKM_SHA512_256,
+			want:     true,
+		},
+		// This case asserted CanDigest(CKM_SHA3_256) == true, which was the
+		// defect stated as a test: the registry carried CKF_DIGEST for the
+		// SHA-3 mechanisms while newDigestOperation has no SHA-3 case, so
+		// C_DigestInit accepted the mechanism and C_Digest then failed with
+		// CKR_MECHANISM_INVALID. The registry no longer claims a SHA-3 digest,
+		// so CanDigest must now say so.
+		{
+			name:     "SHA3-256 is not implemented and must not claim to digest",
+			mechType: CKM_SHA3_256,
+			want:     false,
 		},
 		{
 			name:     "AES GCM cannot digest",
@@ -1038,33 +967,36 @@ func TestIsValidKeySize(t *testing.T) {
 		want     bool
 	}{
 		{
-			name:     "AES 128 valid",
+			// CKM_AES_KEY_GEN's MinKeySize/MaxKeySize are in bytes (PKCS#11
+			// v3.2 §6.10.3), so AES-128's 128-bit key is expressed as 16
+			// bytes here, not 128.
+			name:     "AES-128 (16 bytes) valid",
 			mechType: CKM_AES_KEY_GEN,
-			keySize:  128,
+			keySize:  16,
 			want:     true,
 		},
 		{
-			name:     "AES 256 valid",
+			name:     "AES-256 (32 bytes) valid",
 			mechType: CKM_AES_KEY_GEN,
-			keySize:  256,
+			keySize:  32,
 			want:     true,
 		},
 		{
-			name:     "AES 192 valid",
+			name:     "AES-192 (24 bytes) valid",
 			mechType: CKM_AES_KEY_GEN,
-			keySize:  192,
+			keySize:  24,
 			want:     true,
 		},
 		{
-			name:     "AES 64 too small",
+			name:     "AES 8 bytes (64 bits) too small",
 			mechType: CKM_AES_KEY_GEN,
-			keySize:  64,
+			keySize:  8,
 			want:     false,
 		},
 		{
-			name:     "AES 512 too large",
+			name:     "AES 64 bytes (512 bits) too large",
 			mechType: CKM_AES_KEY_GEN,
-			keySize:  512,
+			keySize:  64,
 			want:     false,
 		},
 		{
@@ -2456,42 +2388,70 @@ func TestMechanismConstants(t *testing.T) {
 			constant: CKM_VENDOR_DEFINED,
 			want:     0x80000000,
 		},
-		// SHA-3 digest mechanism hex-pinning (corrected from draft values)
+		// SHA-3 digest mechanism hex-pinning. OASIS allocates SHA3-256 the
+		// lowest block, ahead of SHA3-224, so these are not in ascending
+		// digest-size order.
+		{
+			name:     "CKM_SHA3_256",
+			constant: CKM_SHA3_256,
+			want:     0x000002B0,
+		},
 		{
 			name:     "CKM_SHA3_224",
 			constant: CKM_SHA3_224,
 			want:     0x000002B5,
 		},
 		{
-			name:     "CKM_SHA3_256",
-			constant: CKM_SHA3_256,
-			want:     0x000002C0,
-		},
-		{
 			name:     "CKM_SHA3_384",
 			constant: CKM_SHA3_384,
-			want:     0x000002D0,
+			want:     0x000002C0,
 		},
 		{
 			name:     "CKM_SHA3_512",
 			constant: CKM_SHA3_512,
-			want:     0x000002E0,
+			want:     0x000002D0,
 		},
 		// SHA-3 HMAC hex-pinning
 		{
 			name:     "CKM_SHA3_256_HMAC",
 			constant: CKM_SHA3_256_HMAC,
-			want:     0x000002C1,
+			want:     0x000002B1,
+		},
+		{
+			name:     "CKM_SHA3_224_HMAC",
+			constant: CKM_SHA3_224_HMAC,
+			want:     0x000002B6,
 		},
 		{
 			name:     "CKM_SHA3_384_HMAC",
 			constant: CKM_SHA3_384_HMAC,
-			want:     0x000002D1,
+			want:     0x000002C1,
 		},
 		{
 			name:     "CKM_SHA3_512_HMAC",
 			constant: CKM_SHA3_512_HMAC,
-			want:     0x000002E1,
+			want:     0x000002D1,
+		},
+		// SHA-3 general-length HMAC hex-pinning
+		{
+			name:     "CKM_SHA3_256_HMAC_GENERAL",
+			constant: CKM_SHA3_256_HMAC_GENERAL,
+			want:     0x000002B2,
+		},
+		{
+			name:     "CKM_SHA3_224_HMAC_GENERAL",
+			constant: CKM_SHA3_224_HMAC_GENERAL,
+			want:     0x000002B7,
+		},
+		{
+			name:     "CKM_SHA3_384_HMAC_GENERAL",
+			constant: CKM_SHA3_384_HMAC_GENERAL,
+			want:     0x000002C2,
+		},
+		{
+			name:     "CKM_SHA3_512_HMAC_GENERAL",
+			constant: CKM_SHA3_512_HMAC_GENERAL,
+			want:     0x000002D2,
 		},
 		// DES3_CMAC hex-pinning (name/value swap corrected)
 		{
@@ -2510,21 +2470,53 @@ func TestMechanismConstants(t *testing.T) {
 			constant: CKM_RSA_AES_KEY_WRAP,
 			want:     0x00001054,
 		},
-		// HKDF mechanism hex-pinning (corrected from shifted values)
+		// HKDF mechanism hex-pinning. The block starts at 0x402A; 0x402C is
+		// CKM_HKDF_KEY_GEN, not CKM_HKDF_DERIVE.
 		{
 			name:     "CKM_HKDF_DERIVE",
 			constant: CKM_HKDF_DERIVE,
-			want:     0x0000402C,
+			want:     0x0000402A,
 		},
 		{
 			name:     "CKM_HKDF_DATA",
 			constant: CKM_HKDF_DATA,
-			want:     0x0000402D,
+			want:     0x0000402B,
 		},
 		{
 			name:     "CKM_HKDF_KEY_GEN",
 			constant: CKM_HKDF_KEY_GEN,
-			want:     0x0000402E,
+			want:     0x0000402C,
+		},
+		// XEdDSA hex-pinning. OASIS places it in the 0x4000 block, not
+		// alongside the Edwards mechanisms at 0x1055-0x1057.
+		{
+			name:     "CKM_XEDDSA",
+			constant: CKM_XEDDSA,
+			want:     0x00004029,
+		},
+		// AES-XTS hex-pinning. OASIS allocates these after
+		// CKM_RSA_AES_KEY_WRAP (0x1054), not in the 0x2100 AES block.
+		{
+			name:     "CKM_AES_XTS",
+			constant: CKM_AES_XTS,
+			want:     0x00001071,
+		},
+		{
+			name:     "CKM_AES_XTS_KEY_GEN",
+			constant: CKM_AES_XTS_KEY_GEN,
+			want:     0x00001072,
+		},
+		// ACTI hex-pinning. The operation precedes the key generator here,
+		// unlike the SecurID and HOTP blocks.
+		{
+			name:     "CKM_ACTI",
+			constant: CKM_ACTI,
+			want:     0x000002A0,
+		},
+		{
+			name:     "CKM_ACTI_KEY_GEN",
+			constant: CKM_ACTI_KEY_GEN,
+			want:     0x000002A1,
 		},
 	}
 
@@ -2671,9 +2663,11 @@ func TestHKDFSaltTypeConstants(t *testing.T) {
 			want:     0x00000002,
 		},
 		{
+			// The salt types are single-bit flags, so this is 0x4; 0x3 is
+			// the union of CKF_HKDF_SALT_NULL and CKF_HKDF_SALT_DATA.
 			name:     "CKF_HKDF_SALT_KEY",
 			constant: CKF_HKDF_SALT_KEY,
-			want:     0x00000003,
+			want:     0x00000004,
 		},
 	}
 
@@ -2845,5 +2839,781 @@ func TestMechanismInfo_Consistency(t *testing.T) {
 		if info.Flags != desc.Flags {
 			t.Errorf("Flags mismatch for %v: info=%v, desc=%v", mech, info.Flags, desc.Flags)
 		}
+	}
+}
+
+// TestMechanismKeySizeUnits asserts the PKCS#11 v3.2-mandated unit (bits vs
+// bytes) for a representative mechanism from each family in the registry.
+//
+// CK_MECHANISM_INFO.ulMinKeySize/ulMaxKeySize are mechanism-dependent: some
+// families report bits, others bytes, and the spec states which per
+// mechanism (see MechanismInfo's doc comment for the full citation list).
+// This test exists to catch exactly the defect that previously shipped:
+// CKM_AES_KEY_GEN reported MinKeySize/MaxKeySize as 128/256 (AES-128 and
+// AES-256's BIT lengths, per PKCS#11 v3.2 §6.1's own convention for RSA)
+// instead of 16/32 (their BYTE lengths, which is what §6.10.3 actually
+// mandates for AES) -- a caller reading ulMinKeySize=128 for an AES
+// mechanism would conclude the token's minimum key size was 1024 bits.
+func TestMechanismKeySizeUnits(t *testing.T) {
+	tests := []struct {
+		name    string
+		mech    MechanismType
+		wantMin uint32
+		wantMax uint32
+		unit    string
+	}{
+		{
+			name:    "RSA key pair gen reports modulus size in bits (PKCS#11 v3.2 §6.1.2)",
+			mech:    CKM_RSA_PKCS_KEY_PAIR_GEN,
+			wantMin: rsaModulusBitsMin,
+			wantMax: rsaModulusBitsMax,
+			unit:    "bits",
+		},
+		{
+			name:    "EC key pair gen reports field size in bits (PKCS#11 v3.2 §6.3.1)",
+			mech:    CKM_EC_KEY_PAIR_GEN,
+			wantMin: 256,
+			wantMax: 521,
+			unit:    "bits",
+		},
+		{
+			name:    "Edwards curve key pair gen reports field size in bits (PKCS#11 v3.2 §6.3.9)",
+			mech:    CKM_EC_EDWARDS_KEY_PAIR_GEN,
+			wantMin: 255,
+			wantMax: 448,
+			unit:    "bits",
+		},
+		{
+			name:    "AES key gen reports key size in bytes, not bits (PKCS#11 v3.2 §6.10.3)",
+			mech:    CKM_AES_KEY_GEN,
+			wantMin: 16,
+			wantMax: 32,
+			unit:    "bytes",
+		},
+		{
+			name:    "AES CBC reports key size in bytes, not bits (PKCS#11 v3.2 §6.10.5)",
+			mech:    CKM_AES_CBC,
+			wantMin: 16,
+			wantMax: 32,
+			unit:    "bytes",
+		},
+		{
+			name:    "AES GCM reports key size in bytes, not bits (PKCS#11 v3.2 §6.13.7)",
+			mech:    CKM_AES_GCM,
+			wantMin: 16,
+			wantMax: 32,
+			unit:    "bytes",
+		},
+		{
+			name:    "AES key wrap reports key size in bytes, consistent with the AES family",
+			mech:    CKM_AES_KEY_WRAP,
+			wantMin: 16,
+			wantMax: 32,
+			unit:    "bytes",
+		},
+		{
+			name:    "SHA-256 HMAC reports key size in bytes (PKCS#11 v3.2 §6.22)",
+			mech:    CKM_SHA256_HMAC,
+			wantMin: 1,
+			wantMax: 0,
+			unit:    "bytes",
+		},
+		{
+			name:    "Generic secret key gen reports key size in bits (PKCS#11 v3.2 §6.9)",
+			mech:    CKM_GENERIC_SECRET_KEY_GEN,
+			wantMin: 1,
+			wantMax: 0,
+			unit:    "bits",
+		},
+		{
+			name:    "Pure digest mechanisms have no key size at all (PKCS#11 v3.2 §6.1 Table 10)",
+			mech:    CKM_SHA256,
+			wantMin: 0,
+			wantMax: 0,
+			unit:    "n/a",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			desc := GetMechanismDescriptor(tt.mech)
+			if desc == nil {
+				t.Fatalf("GetMechanismDescriptor(%v) returned nil", tt.mech)
+			}
+			if desc.MinKeySize != tt.wantMin {
+				t.Errorf("%v MinKeySize = %d, want %d (%s)", tt.mech, desc.MinKeySize, tt.wantMin, tt.unit)
+			}
+			if desc.MaxKeySize != tt.wantMax {
+				t.Errorf("%v MaxKeySize = %d, want %d (%s)", tt.mech, desc.MaxKeySize, tt.wantMax, tt.unit)
+			}
+		})
+	}
+}
+
+// TestMechanismAESKeySizeRegression is a targeted regression test for the
+// AES key-size unit defect described in TestMechanismKeySizeUnits above:
+// CKM_AES_KEY_GEN previously reported MinKeySize/MaxKeySize as 128/256 (the
+// BIT lengths of AES-128 and AES-256) instead of 16/32 (their BYTE
+// lengths). Multiplying the byte-denominated field by 8 must reproduce the
+// real AES key sizes in bits; multiplying the old, incorrectly
+// bit-denominated field by 8 would have produced 1024/2048 instead.
+func TestMechanismAESKeySizeRegression(t *testing.T) {
+	info, err := GetMechanismInfo(CKM_AES_KEY_GEN)
+	if err != nil {
+		t.Fatalf("GetMechanismInfo(CKM_AES_KEY_GEN) error: %v", err)
+	}
+
+	minBits := info.MinKeySize * 8
+	maxBits := info.MaxKeySize * 8
+
+	if minBits != 128 {
+		t.Errorf("CKM_AES_KEY_GEN MinKeySize*8 = %d bits, want 128 bits (AES-128); "+
+			"MinKeySize=%d suggests the field is reporting bits instead of bytes",
+			minBits, info.MinKeySize)
+	}
+	if maxBits != 256 {
+		t.Errorf("CKM_AES_KEY_GEN MaxKeySize*8 = %d bits, want 256 bits (AES-256); "+
+			"MaxKeySize=%d suggests the field is reporting bits instead of bytes",
+			maxBits, info.MaxKeySize)
+	}
+}
+
+// TestAdvertisedMechanismsAreDeliberate pins the exact set of mechanisms the
+// token offers through C_GetMechanismList.
+//
+// Advertising a mechanism is a promise an application may rely on, so the set
+// must change only when someone means it to. This test exists because the
+// advertised set used to live in a second hardcoded table maintained by hand
+// alongside mechanismRegistry: the two drifted apart on the key-size range and
+// flags of nearly every RSA and EC mechanism, and the registry accumulated
+// dozens of implemented mechanisms the table never listed, so applications
+// could not discover them. defaultMechanismInfo now projects from the registry,
+// which makes disagreement unrepresentable — but nothing stops a stray
+// Advertised: true from silently widening the promise, and this catches that.
+func TestAdvertisedMechanismsAreDeliberate(t *testing.T) {
+	want := map[MechanismType]bool{
+		CKM_RSA_PKCS_KEY_PAIR_GEN: true,
+		CKM_RSA_PKCS:              true,
+		CKM_RSA_PKCS_OAEP:         true,
+		CKM_RSA_PKCS_PSS:          true,
+		CKM_SHA1_RSA_PKCS:         true,
+		CKM_SHA256_RSA_PKCS:       true,
+		CKM_SHA384_RSA_PKCS:       true,
+		CKM_SHA512_RSA_PKCS:       true,
+		CKM_SHA256_RSA_PKCS_PSS:   true,
+		CKM_SHA384_RSA_PKCS_PSS:   true,
+		CKM_SHA512_RSA_PKCS_PSS:   true,
+
+		CKM_EC_KEY_PAIR_GEN: true,
+		CKM_ECDSA:           true,
+		// CKM_ECDSA_SHA1 and CKM_ECDSA_SHA224 were registered but unadvertised.
+		// Both sign and verify end to end against a P-256 key, and C_Verify
+		// rejects an altered message, so they are promises the module keeps.
+		CKM_ECDSA_SHA1:              true,
+		CKM_ECDSA_SHA224:            true,
+		CKM_ECDSA_SHA256:            true,
+		CKM_ECDSA_SHA384:            true,
+		CKM_ECDSA_SHA512:            true,
+		CKM_ECDH1_DERIVE:            true,
+		CKM_ECDH1_COFACTOR_DERIVE:   true,
+		CKM_EC_EDWARDS_KEY_PAIR_GEN: true,
+		CKM_EDDSA:                   true,
+
+		CKM_AES_KEY_GEN:  true,
+		CKM_AES_ECB:      true,
+		CKM_AES_CBC:      true,
+		CKM_AES_CBC_PAD:  true,
+		CKM_AES_GCM:      true,
+		CKM_AES_KEY_WRAP: true,
+		// CKM_AES_KEY_WRAP_KWP is the current RFC 5649 identifier and
+		// CKM_AES_KEY_WRAP_PAD its deprecated alias (v3.2 §6.10). KWP was
+		// declared and name-mapped but never registered, so the current
+		// identifier was the one that failed; both are advertised and both
+		// route to the same construction.
+		CKM_AES_KEY_WRAP_KWP: true,
+		CKM_AES_KEY_WRAP_PAD: true,
+
+		// The digest mechanisms. CKM_SHA224 was registered but unadvertised;
+		// CKM_SHA512_224 and CKM_SHA512_256 had working hashers and no registry
+		// entry at all. C_Digest never leaves this process, so for this family
+		// "implemented" and "works end to end" are the same claim.
+		CKM_SHA_1:      true,
+		CKM_SHA224:     true,
+		CKM_SHA256:     true,
+		CKM_SHA384:     true,
+		CKM_SHA512:     true,
+		CKM_SHA512_224: true,
+		CKM_SHA512_256: true,
+
+		// The key-derivation functions. They were withheld while C_DeriveKey
+		// substituted the base key's identifier string for its input keying
+		// material; the derivation now runs over the base key's own material,
+		// either bytes the application supplied through C_CreateObject or, for
+		// a backend-held key, inside the backend that holds it.
+		CKM_HKDF_DERIVE:                   true,
+		CKM_HKDF_DATA:                     true,
+		CKM_SP800_108_COUNTER_KDF:         true,
+		CKM_SP800_108_FEEDBACK_KDF:        true,
+		CKM_SP800_108_DOUBLE_PIPELINE_KDF: true,
+
+		// The post-quantum mechanisms, proven end to end before being
+		// advertised. Key generation reaches the real algorithm through BOTH
+		// addressing forms -- the v3.2 standard mechanism with
+		// CKA_PARAMETER_SET and the per-level vendor mechanism -- and the
+		// generated keys are checked against a reference implementation, not
+		// against the module's own inverse:
+		// TestGenerateKeyPairMLKEMRoundTripsUnderTheReferenceImplementation
+		// encapsulates with the reference and decapsulates on the token, and
+		// TestGenerateKeyPairMLDSAProducesARealSigningKey signs on the token
+		// and verifies with the reference.
+		//
+		// They were registered-but-unadvertised while C_GenerateKeyPair failed
+		// for every parameter set, which left them undiscoverable through
+		// C_GetMechanismList yet reachable by raw constant -- the worst of both.
+		CKM_ML_KEM_KEY_PAIR_GEN: true,
+		CKM_ML_KEM:              true,
+		CKM_ML_DSA_KEY_PAIR_GEN: true,
+		CKM_ML_DSA:              true,
+	}
+
+	got := defaultMechanismInfo()
+
+	for mechType := range want {
+		if _, ok := got[mechType]; !ok {
+			t.Errorf("%v is expected to be advertised but is not; applications can no "+
+				"longer discover it through C_GetMechanismList", mechType)
+		}
+	}
+	for mechType := range got {
+		if !want[mechType] {
+			t.Errorf("%v is advertised but is not in the deliberate set. Advertising a "+
+				"mechanism promises applications they may rely on it -- add it to this "+
+				"test only once its implementation is proven end to end", mechType)
+		}
+	}
+}
+
+// TestAdvertisedInfoMatchesTheRegistry proves the advertised description of a
+// mechanism is the same one the crypto layer validates against.
+//
+// These were two independent tables that disagreed. An application would read
+// one set of key-size limits and capability flags from C_GetMechanismInfo while
+// the module enforced another, so a request the token said it supported could
+// still be refused, and vice versa.
+func TestAdvertisedInfoMatchesTheRegistry(t *testing.T) {
+	for mechType, info := range defaultMechanismInfo() {
+		desc := GetMechanismDescriptor(mechType)
+		if desc == nil {
+			t.Errorf("%v is advertised but has no registry descriptor, so the crypto "+
+				"layer has no definition to validate it against", mechType)
+			continue
+		}
+		// The comparison is against the effective range rather than the raw
+		// registry fields because the FIPS ceiling narrows one and not the
+		// other; effectiveKeySizeRange is the single answer both the advertised
+		// info and IsValidKeySize are built from.
+		wantMin, wantMax := effectiveKeySizeRange(desc)
+		if info.MinKeySize != wantMin || info.MaxKeySize != wantMax {
+			t.Errorf("%v advertises key sizes %d-%d but the registry enforces %d-%d",
+				mechType, info.MinKeySize, info.MaxKeySize, wantMin, wantMax)
+		}
+		if info.Flags != desc.Flags {
+			t.Errorf("%v advertises flags 0x%x but the registry defines 0x%x",
+				mechType, info.Flags, desc.Flags)
+		}
+	}
+}
+
+// TestRSAKeySizeFloorIsStandardsCompliant asserts no RSA mechanism accepts a
+// modulus below 2048 bits.
+//
+// PKCS#11 v3.2 §6.1.21 permits only 1024, 2048 or 3072 bits for CKM_RSA_PKCS in
+// FIPS mode, so 512 is not a permitted modulus length at all, and NIST
+// SP 800-131A has disallowed RSA below 2048 since 2014. This module targets
+// FedRAMP, PCI and HIPAA deployments, so 2048 is the floor. The registry
+// previously declared 512, which meant the module would have generated and
+// signed with a 512-bit RSA key on request.
+func TestRSAKeySizeFloorIsStandardsCompliant(t *testing.T) {
+	const floor = 2048
+
+	for mechType, desc := range mechanismRegistry {
+		if desc.MinKeySize == 0 {
+			continue // no meaningful key size for this mechanism
+		}
+		name := desc.Name
+		if !strings.Contains(name, "RSA") {
+			continue
+		}
+		if desc.MinKeySize < floor {
+			t.Errorf("%s (%v) accepts a %d-bit RSA modulus; the floor is %d bits",
+				name, mechType, desc.MinKeySize, floor)
+		}
+	}
+}
+
+// TestFIPSMode covers the algorithm restriction the module applies when FIPS
+// mode is active.
+//
+// The two claims are separate and both matter. PKCS#11 conformance says what a
+// Cryptoki module must implement; FIPS 140-3 says which of it a validated
+// deployment may use. So the module ships the full OASIS surface by default —
+// including SHA-1 signing, which the spec defines and applications still need
+// for legacy interop — and narrows to approved algorithms only when a
+// deployment asks for FIPS.
+//
+// The restriction is applied at the mechanism lookup every operation's *Init
+// goes through, so what the module advertises and what it will actually perform
+// cannot drift apart: an offered mechanism works, an unoffered one is refused,
+// and there is no third state.
+func TestFIPSMode(t *testing.T) {
+	// SHA-1 signature generation is disallowed by NIST SP 800-131A. SHA-1 as a
+	// plain digest stays approved (FIPS 180-4), so only the signing mechanism
+	// is withheld.
+	const nonApproved = CKM_SHA1_RSA_PKCS
+
+	t.Run("the full OASIS surface is available by default", func(t *testing.T) {
+		t.Setenv(fipsEnvForTest, "")
+
+		desc := GetMechanismDescriptor(nonApproved)
+		require.NotNil(t, desc, "a spec-defined mechanism must be available outside FIPS mode")
+		assert.False(t, desc.FIPSApproved)
+
+		_, advertised := defaultMechanismInfo()[nonApproved]
+		assert.True(t, advertised, "C_GetMechanismList must offer it outside FIPS mode")
+	})
+
+	t.Run("FIPS mode withholds a non-approved mechanism", func(t *testing.T) {
+		t.Setenv(fipsEnvForTest, "1")
+
+		assert.Nil(t, GetMechanismDescriptor(nonApproved),
+			"every *Init resolves through this lookup, so a nil descriptor is what "+
+				"turns into CKR_MECHANISM_INVALID for a non-approved mechanism")
+
+		_, advertised := defaultMechanismInfo()[nonApproved]
+		assert.False(t, advertised,
+			"a mechanism the module will refuse must not be advertised")
+	})
+
+	t.Run("FIPS mode keeps the approved mechanisms", func(t *testing.T) {
+		t.Setenv(fipsEnvForTest, "1")
+
+		for _, mechType := range []MechanismType{
+			CKM_RSA_PKCS_KEY_PAIR_GEN, CKM_SHA256_RSA_PKCS, CKM_SHA256_RSA_PKCS_PSS,
+			CKM_EC_KEY_PAIR_GEN, CKM_ECDSA_SHA256, CKM_ECDH1_DERIVE,
+			CKM_AES_KEY_GEN, CKM_AES_GCM, CKM_AES_KEY_WRAP,
+			CKM_SHA256, CKM_SHA384, CKM_SHA512,
+			CKM_EDDSA, // FIPS 186-5 approves EdDSA
+		} {
+			assert.NotNil(t, GetMechanismDescriptor(mechType),
+				"%v is FIPS-approved and must remain usable", mechType)
+			_, advertised := defaultMechanismInfo()[mechType]
+			assert.True(t, advertised, "%v must remain advertised in FIPS mode", mechType)
+		}
+	})
+
+	t.Run("every advertised mechanism declares its FIPS status deliberately", func(t *testing.T) {
+		// The flag defaults to false, so a mechanism added without thinking
+		// about it silently disappears in FIPS mode. This pins the one
+		// mechanism that is meant to.
+		t.Setenv(fipsEnvForTest, "")
+
+		var withheld []MechanismType
+		for mechType := range defaultMechanismInfo() {
+			if !mechanismRegistry[mechType].FIPSApproved {
+				withheld = append(withheld, mechType)
+			}
+		}
+		// ElementsMatch, not Equal: the set is built by ranging a map, so any
+		// expectation with more than one member would be order-dependent and
+		// flaky.
+		//
+		// The two HKDF mechanisms join SHA-1 signature generation here on
+		// purpose. SP 800-56C Rev. 2 approves extract-then-expand for deriving
+		// from a shared secret an approved key-establishment scheme produced;
+		// C_DeriveKey applies it to an arbitrary base key, which that document
+		// does not cover. The SP 800-108 modes are approved and are marked so.
+		//
+		// CKM_ECDSA_SHA1 joins CKM_SHA1_RSA_PKCS for the same reason the latter
+		// is here: SP 800-131A Rev. 2 disallows SHA-1 for signature generation,
+		// whichever signature algorithm consumes the digest.
+		assert.ElementsMatch(t,
+			[]MechanismType{nonApproved, CKM_ECDSA_SHA1, CKM_HKDF_DERIVE, CKM_HKDF_DATA},
+			withheld,
+			"only SHA-1 signature generation and the two HKDF derivations are expected to be "+
+				"non-approved; a new entry here means a mechanism will vanish in FIPS mode")
+	})
+}
+
+// TestRSAModulusCeilingIsASizeTheModuleGenerates holds ulMaxKeySize to the only
+// thing it can honestly mean.
+//
+// PKCS#11 v3.2 §6.1.4 defines the RSA family's ulMinKeySize/ulMaxKeySize as
+// "the supported range of RSA modulus sizes, in bits", and §5.5 makes that
+// range how an application chooses what to ask for. Every value inside it must
+// therefore be a modulus the token will produce. The registry advertised 16384,
+// and generating a key at that advertised maximum exhausted memory and killed
+// the daemon serving the token: an authenticated caller could take the service
+// down with a CKA_MODULUS_BITS value the module itself had called valid.
+//
+// The ceiling is asserted, never generated. Producing a 16384-bit modulus is
+// precisely the operation that caused the outage, and it would prove nothing
+// that the advertised number does not already state.
+func TestRSAModulusCeilingIsASizeTheModuleGenerates(t *testing.T) {
+	t.Setenv(fipsEnvForTest, "")
+
+	if rsaModulusBitsMax > 4096 {
+		t.Fatalf("the advertised RSA ceiling is %d bits; nothing in this stack generates a "+
+			"modulus above 4096 (types.RSAKeySize4096), so a larger ceiling promises a size "+
+			"the token cannot produce", rsaModulusBitsMax)
+	}
+	if rsaModulusBitsMax <= rsaModulusBitsMin {
+		t.Fatalf("the RSA ceiling %d is not above the floor %d, so the advertised range is empty",
+			rsaModulusBitsMax, rsaModulusBitsMin)
+	}
+
+	for mechType, desc := range mechanismRegistry {
+		if !strings.Contains(desc.Name, "RSA") || desc.MaxKeySize == 0 {
+			continue
+		}
+		if desc.MaxKeySize != rsaModulusBitsMax {
+			t.Errorf("%s (%v) advertises a %d-bit ceiling; every RSA mechanism must advertise "+
+				"the same %d-bit ceiling, or an application that picks a size from one "+
+				"mechanism's range is refused by another", desc.Name, mechType,
+				desc.MaxKeySize, rsaModulusBitsMax)
+		}
+		if desc.FIPSMaxKeySize != rsaModulusBitsFIPSMax {
+			t.Errorf("%s (%v) declares FIPSMaxKeySize %d; PKCS#11 v3.2 §6.1.21 permits only "+
+				"1024, 2048 or 3072 bits in FIPS mode, so every RSA mechanism must declare "+
+				"a %d-bit FIPS ceiling", desc.Name, mechType, desc.FIPSMaxKeySize,
+				rsaModulusBitsFIPSMax)
+		}
+	}
+
+	if !IsValidKeySize(CKM_RSA_PKCS_KEY_PAIR_GEN, rsaModulusBitsMax) {
+		t.Errorf("the module refuses its own advertised ceiling of %d bits", rsaModulusBitsMax)
+	}
+	if IsValidKeySize(CKM_RSA_PKCS_KEY_PAIR_GEN, rsaModulusBitsMax+1) {
+		t.Errorf("%d bits is accepted although the advertised ceiling is %d; an unbounded "+
+			"CKA_MODULUS_BITS is what let a caller exhaust the daemon",
+			rsaModulusBitsMax+1, rsaModulusBitsMax)
+	}
+	if IsValidKeySize(CKM_RSA_PKCS_KEY_PAIR_GEN, 16384) {
+		t.Error("16384 bits is still accepted; that is the size whose generation killed the daemon")
+	}
+}
+
+// TestRSAModulusCeilingNarrowsUnderFIPS pins the §6.1.21 ceiling to both halves
+// of the contract: what the module advertises and what it will accept.
+//
+// PKCS#11 v3.2 §6.1.21 (FIPS 186-4): "When CKM_RSA_PKCS is operated in FIPS
+// mode, the length of the modulus SHALL only be 1024, 2048, or 3072 bits."
+// 4096 was accepted under FIPS while C_GetMechanismInfo reported a maximum far
+// above it, so nothing in the module contradicted a caller who asked for a size
+// FIPS forbids.
+func TestRSAModulusCeilingNarrowsUnderFIPS(t *testing.T) {
+	t.Setenv(fipsEnvForTest, "1")
+
+	info, err := GetMechanismInfo(CKM_RSA_PKCS_KEY_PAIR_GEN)
+	if err != nil {
+		t.Fatalf("GetMechanismInfo(CKM_RSA_PKCS_KEY_PAIR_GEN): %v", err)
+	}
+	if info.MaxKeySize != rsaModulusBitsFIPSMax {
+		t.Errorf("C_GetMechanismInfo advertises ulMaxKeySize=%d under FIPS, want %d; "+
+			"PKCS#11 v3.2 §6.1.21 permits only 1024, 2048 or 3072 bits",
+			info.MaxKeySize, rsaModulusBitsFIPSMax)
+	}
+	if info.MinKeySize != rsaModulusBitsMin {
+		t.Errorf("the FIPS floor moved to %d; narrowing the ceiling must not disturb the floor",
+			info.MinKeySize)
+	}
+
+	advertised, ok := defaultMechanismInfo()[CKM_RSA_PKCS_KEY_PAIR_GEN]
+	if !ok {
+		t.Fatal("CKM_RSA_PKCS_KEY_PAIR_GEN vanished from C_GetMechanismList under FIPS")
+	}
+	if advertised.MaxKeySize != info.MaxKeySize {
+		t.Errorf("C_GetMechanismList describes a %d-bit ceiling while C_GetMechanismInfo "+
+			"reports %d; the two halves of mechanism discovery must agree",
+			advertised.MaxKeySize, info.MaxKeySize)
+	}
+
+	if !IsValidKeySize(CKM_RSA_PKCS_KEY_PAIR_GEN, rsaModulusBitsFIPSMax) {
+		t.Errorf("%d bits is refused under FIPS although §6.1.21 permits it", rsaModulusBitsFIPSMax)
+	}
+	if IsValidKeySize(CKM_RSA_PKCS_KEY_PAIR_GEN, 4096) {
+		t.Error("a 4096-bit modulus is accepted under FIPS; PKCS#11 v3.2 §6.1.21 permits " +
+			"only 1024, 2048 or 3072 bits")
+	}
+}
+
+// TestRSAModulusFloorNeverInvertsBetweenRegimes pins the one size where the
+// module's own floor and §6.1.21 disagree.
+//
+// §6.1.21 permits a 1024-bit modulus in FIPS mode; this module refuses it in
+// both regimes because NIST SP 800-131A disallowed RSA below 2048 bits in 2014
+// and FIPS 140-3 no longer approves 1024-bit RSA for signature generation. A
+// module may be stricter than §6.1.21. What it must never be is stricter
+// outside FIPS than inside: a size available *only* under FIPS would mean
+// turning the mode on weakened the module.
+func TestRSAModulusFloorNeverInvertsBetweenRegimes(t *testing.T) {
+	const belowFloor = 1024
+
+	t.Run("refused outside FIPS", func(t *testing.T) {
+		t.Setenv(fipsEnvForTest, "")
+		if IsValidKeySize(CKM_RSA_PKCS_KEY_PAIR_GEN, belowFloor) {
+			t.Errorf("a %d-bit modulus is accepted; the floor is %d bits", belowFloor, rsaModulusBitsMin)
+		}
+	})
+
+	t.Run("refused under FIPS", func(t *testing.T) {
+		t.Setenv(fipsEnvForTest, "1")
+		if IsValidKeySize(CKM_RSA_PKCS_KEY_PAIR_GEN, belowFloor) {
+			t.Errorf("a %d-bit modulus is accepted under FIPS but refused outside it; FIPS "+
+				"mode must only ever narrow what the module accepts", belowFloor)
+		}
+	})
+
+	t.Run("FIPS never widens the range", func(t *testing.T) {
+		for mechType, desc := range mechanismRegistry {
+			if desc.FIPSMaxKeySize == 0 {
+				continue
+			}
+			if desc.FIPSMaxKeySize > desc.MaxKeySize {
+				t.Errorf("%s (%v) allows %d in FIPS mode but only %d outside it",
+					desc.Name, mechType, desc.FIPSMaxKeySize, desc.MaxKeySize)
+			}
+		}
+	})
+}
+
+// TestIsValidKeySizeHonoursTheNoMaximumSentinel covers the registry's
+// MaxKeySize: 0 convention, used by the generic-secret and KDF families where
+// PKCS#11 v3.2 §6.9 and §6.62.3 place no upper bound on the key.
+//
+// Comparing a key size against that sentinel literally made the predicate false
+// for every size those mechanisms accept, so the one check meant to keep an
+// oversized RSA modulus out would have rejected every legal key had a caller
+// consulted it.
+//
+// CKM_SHA256_HMAC used to stand in for the family here. It has been removed
+// from the registry: it carried CKF_SIGN and CKF_VERIFY while C_Sign with it
+// fails with CKR_FUNCTION_FAILED, since the module has no symmetric-MAC signing
+// path. The constant survives as a KDF PRF selector, which
+// mechanismToHashFromPRF resolves by switch rather than through this registry.
+func TestIsValidKeySizeHonoursTheNoMaximumSentinel(t *testing.T) {
+	t.Setenv(fipsEnvForTest, "")
+
+	for _, mechType := range []MechanismType{CKM_GENERIC_SECRET_KEY_GEN} {
+		desc := GetMechanismDescriptor(mechType)
+		if desc == nil {
+			t.Fatalf("%v is missing from the registry", mechType)
+		}
+		if desc.MaxKeySize != 0 {
+			t.Fatalf("%v no longer uses the no-maximum sentinel; this test is testing nothing", mechType)
+		}
+
+		for _, size := range []uint32{desc.MinKeySize, 32, 1 << 20} {
+			if !IsValidKeySize(mechType, size) {
+				t.Errorf("IsValidKeySize(%v, %d) = false; MaxKeySize 0 means no enforced "+
+					"maximum, not a maximum of zero", mechType, size)
+			}
+		}
+		if desc.MinKeySize > 0 && IsValidKeySize(mechType, desc.MinKeySize-1) {
+			t.Errorf("IsValidKeySize(%v, %d) = true, below the declared minimum of %d; the "+
+				"absent maximum must not disable the minimum", mechType,
+				desc.MinKeySize-1, desc.MinKeySize)
+		}
+	}
+}
+
+// TestIsValidKeySizeRejectsBadInput covers the inputs that carry no valid
+// answer: a mechanism the registry does not define, and one FIPS mode has
+// withheld. Both must be false rather than defaulting to permissive, because a
+// caller uses this to decide whether to start an operation.
+func TestIsValidKeySizeRejectsBadInput(t *testing.T) {
+	t.Run("unknown mechanism", func(t *testing.T) {
+		t.Setenv(fipsEnvForTest, "")
+		if IsValidKeySize(MechanismType(0xFFFFFFFF), 2048) {
+			t.Error("an unregistered mechanism reported a valid key size")
+		}
+	})
+
+	t.Run("mechanism withheld by FIPS", func(t *testing.T) {
+		t.Setenv(fipsEnvForTest, "1")
+		if IsValidKeySize(CKM_SHA1_RSA_PKCS, 2048) {
+			t.Error("CKM_SHA1_RSA_PKCS reported a valid key size under FIPS although the " +
+				"mechanism itself is withheld; every size is invalid for a mechanism the " +
+				"module will refuse")
+		}
+	})
+}
+
+// TestECDH1CofactorDeriveIsDiscoverable covers the mechanism that worked but
+// could not be found.
+//
+// C_DeriveKey has always performed CKM_ECDH1_COFACTOR_DERIVE — module.DeriveKey
+// routes it and CKM_ECDH1_DERIVE to the same key-agreement path — but
+// C_GetMechanismList did not offer it, so p11-kit, OpenSSL's pkcs11-provider
+// and every other caller that enumerates before it calls could never reach it.
+//
+// Its description must also be true, not merely present: PKCS#11 v3.2 §6.3.18
+// gives the mechanism CK_ECDH1_DERIVE_PARAMS and the same EC field-size range
+// as §6.3.17, and an application reads CKF_DERIVE to decide it may be used for
+// derivation at all.
+func TestECDH1CofactorDeriveIsDiscoverable(t *testing.T) {
+	t.Setenv(fipsEnvForTest, "")
+
+	info, err := GetMechanismInfo(CKM_ECDH1_COFACTOR_DERIVE)
+	if err != nil {
+		t.Fatalf("GetMechanismInfo(CKM_ECDH1_COFACTOR_DERIVE): %v", err)
+	}
+	if _, advertised := defaultMechanismInfo()[CKM_ECDH1_COFACTOR_DERIVE]; !advertised {
+		t.Fatal("CKM_ECDH1_COFACTOR_DERIVE is absent from C_GetMechanismList, so an " +
+			"application that enumerates mechanisms cannot discover a derivation the " +
+			"module performs")
+	}
+
+	if info.Flags&CKF_DERIVE == 0 {
+		t.Error("CKM_ECDH1_COFACTOR_DERIVE is advertised without CKF_DERIVE, so no " +
+			"application would select it for the one operation it supports")
+	}
+
+	plain, err := GetMechanismInfo(CKM_ECDH1_DERIVE)
+	if err != nil {
+		t.Fatalf("GetMechanismInfo(CKM_ECDH1_DERIVE): %v", err)
+	}
+	if info.MinKeySize != plain.MinKeySize || info.MaxKeySize != plain.MaxKeySize {
+		t.Errorf("cofactor derive advertises the field-size range %d-%d but plain ECDH1 "+
+			"advertises %d-%d; both run over the same curves on the same code path",
+			info.MinKeySize, info.MaxKeySize, plain.MinKeySize, plain.MaxKeySize)
+	}
+
+	t.Run("stays available under FIPS", func(t *testing.T) {
+		t.Setenv(fipsEnvForTest, "1")
+		if _, advertised := defaultMechanismInfo()[CKM_ECDH1_COFACTOR_DERIVE]; !advertised {
+			t.Error("cofactor ECDH is withheld under FIPS although NIST SP 800-56A approves " +
+				"it and the non-cofactor form remains advertised")
+		}
+	})
+}
+
+// TestKDFsAreAdvertisedAndDescribedTruthfully replaces the guard that used to
+// pin these mechanisms as withheld.
+//
+// They were withheld because module.DeriveKey substituted the base key's
+// identifier string for its input keying material whenever CKA_VALUE was
+// absent — which was every key C_GenerateKey produced — so the KDF ran over a
+// label-plus-timestamp string and anyone who knew the label could reproduce
+// the derived key. That fallback is gone: a base key that resolves to neither
+// CKA_VALUE nor a backend key identifier is now refused, and a backend-held
+// key is derived from inside the backend.
+//
+// C_GetMechanismList must therefore offer them (v3.2 §5.5), and
+// C_GetMechanismInfo must describe them the way the module actually behaves:
+// derivation-capable, with no key-size bound, because neither RFC 5869 nor
+// SP 800-108r1 bounds the length of the key they derive from.
+func TestKDFsAreAdvertisedAndDescribedTruthfully(t *testing.T) {
+	t.Setenv(fipsEnvForTest, "")
+
+	advertised := defaultMechanismInfo()
+	for _, mechType := range []MechanismType{
+		CKM_HKDF_DERIVE, CKM_HKDF_DATA,
+		CKM_SP800_108_COUNTER_KDF, CKM_SP800_108_FEEDBACK_KDF,
+		CKM_SP800_108_DOUBLE_PIPELINE_KDF,
+	} {
+		info, ok := advertised[mechType]
+		if !ok {
+			t.Errorf("%v is not offered by C_GetMechanismList; C_DeriveKey performs it, and an "+
+				"application that enumerates mechanisms before using them can never reach it", mechType)
+			continue
+		}
+		if info.Flags&CKF_DERIVE == 0 {
+			t.Errorf("%v is advertised without CKF_DERIVE, so C_GetMechanismInfo denies the one "+
+				"function C_DeriveKey will actually perform with it", mechType)
+		}
+		// 0/0 is PKCS#11 v3.2 §6.1 Table 10's "the ulMinKeySize and
+		// ulMaxKeySize fields have meaningless values" encoding, which is what
+		// IsValidKeySize reads it as. It is the truthful answer here: neither
+		// RFC 5869 nor SP 800-108r1 bounds the length of the key derived from,
+		// and the module enforces no bound. A non-zero minimum with a zero
+		// maximum is this registry's separate "no enforced maximum" sentinel,
+		// and it reads to an application — and to the conformance suite — as
+		// ulMinKeySize > ulMaxKeySize, which is an impossible range.
+		if info.MinKeySize != 0 || info.MaxKeySize != 0 {
+			t.Errorf("%v advertises a base-key size range of %d..%d; the module enforces no bound "+
+				"on the base key, so anything other than 0..0 is either a promise it does not keep "+
+				"or an impossible range",
+				mechType, info.MinKeySize, info.MaxKeySize)
+		}
+		if GetMechanismDescriptor(mechType) == nil {
+			t.Errorf("%v is advertised but absent from the registry, so C_DeriveKey would refuse "+
+				"the mechanism C_GetMechanismList just offered", mechType)
+		}
+	}
+}
+
+// TestEffectiveKeySizeRange covers the one function that decides which regime's
+// key-size ceiling applies, directly rather than through its three callers.
+//
+// The degenerate rows matter as much as the FIPS row: a mechanism that declares
+// no FIPS ceiling, or declares one no narrower than its own, must come back
+// unchanged, or turning FIPS on would silently move a limit nobody set.
+func TestEffectiveKeySizeRange(t *testing.T) {
+	tests := []struct {
+		name    string
+		desc    MechanismDescriptor
+		fips    string
+		wantMin uint32
+		wantMax uint32
+	}{
+		{
+			name:    "FIPS ceiling applies in FIPS mode",
+			desc:    MechanismDescriptor{MinKeySize: 2048, MaxKeySize: 4096, FIPSMaxKeySize: 3072},
+			fips:    "1",
+			wantMin: 2048,
+			wantMax: 3072,
+		},
+		{
+			name:    "FIPS ceiling is ignored outside FIPS mode",
+			desc:    MechanismDescriptor{MinKeySize: 2048, MaxKeySize: 4096, FIPSMaxKeySize: 3072},
+			fips:    "",
+			wantMin: 2048,
+			wantMax: 4096,
+		},
+		{
+			name:    "no declared FIPS ceiling leaves the range alone",
+			desc:    MechanismDescriptor{MinKeySize: 16, MaxKeySize: 32},
+			fips:    "1",
+			wantMin: 16,
+			wantMax: 32,
+		},
+		{
+			name: "a FIPS ceiling above the mechanism's own never widens it",
+			desc: MechanismDescriptor{MinKeySize: 16, MaxKeySize: 32, FIPSMaxKeySize: 64},
+			fips: "1",
+			// FIPS may only narrow what the module offers; a wider FIPS
+			// ceiling is a data error and must not take effect.
+			wantMin: 16,
+			wantMax: 32,
+		},
+		{
+			name:    "the no-maximum sentinel survives the clamp",
+			desc:    MechanismDescriptor{MinKeySize: 1, MaxKeySize: 0},
+			fips:    "1",
+			wantMin: 1,
+			wantMax: 0,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Setenv(fipsEnvForTest, tt.fips)
+
+			gotMin, gotMax := effectiveKeySizeRange(&tt.desc)
+			if gotMin != tt.wantMin || gotMax != tt.wantMax {
+				t.Errorf("effectiveKeySizeRange() = %d-%d, want %d-%d",
+					gotMin, gotMax, tt.wantMin, tt.wantMax)
+			}
+		})
 	}
 }

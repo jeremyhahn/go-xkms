@@ -38,6 +38,7 @@ import (
 
 	"github.com/gorilla/mux"
 	"github.com/jeremyhahn/go-xkms/pkg/acme/admin"
+	"github.com/jeremyhahn/go-xkms/pkg/acme/audit"
 	"github.com/jeremyhahn/go-xkms/pkg/acme/auth"
 	acmecommon "github.com/jeremyhahn/go-xkms/pkg/acme/common"
 	caerrors "github.com/jeremyhahn/go-xkms/pkg/acme/errors"
@@ -47,6 +48,7 @@ import (
 	"github.com/jeremyhahn/go-xkms/pkg/acme/server/handlers"
 	"github.com/jeremyhahn/go-xkms/pkg/acme/server/metrics"
 	"github.com/jeremyhahn/go-xkms/pkg/acme/storage"
+	xkmsauth "github.com/jeremyhahn/go-xkms/pkg/auth"
 	"github.com/jeremyhahn/go-xkms/pkg/ca"
 	"github.com/prometheus/client_golang/prometheus/promhttp"
 )
@@ -86,6 +88,7 @@ type TrustedCA struct {
 	storageFactory storage.Factory
 	qrdbService    qrdb.Service
 	authClient     auth.Client
+	authorizer     *xkmsauth.Authorizer
 	kmsService     kms.KMSService
 	challengeMap   map[string]acmecommon.ChallengeVerifierFunc
 	logger         *slog.Logger
@@ -103,6 +106,12 @@ type TrustedCA struct {
 
 	// ACME service
 	restService handlers.RestServicer
+
+	// Audit trail. auditLog records the CA's decisions and auditQuerier serves
+	// them back through the admin API's GET /admin/audit. Both are built from
+	// config.Audit, so the endpoint always reads the trail the CA writes.
+	auditLog     audit.AuditLogger
+	auditQuerier audit.Querier
 
 	// State
 	mu          sync.RWMutex
@@ -286,8 +295,31 @@ func (tca *TrustedCA) Serve(ctx context.Context) error {
 	tlsConfig.MinVersion = tls.VersionTLS13
 	tlsConfig.MaxVersion = tls.VersionTLS13
 
+	// Open the audit trail before the CA can sign anything. A disabled trail
+	// yields the no-op logger; an enabled trail whose file cannot be created
+	// fails the start-up rather than running a CA that records nothing.
+	auditLog, err := audit.NewFileAuditLogger(&tca.config.Audit)
+	if err != nil {
+		return caerrors.InternalServerError("failed to open audit trail: %v", err)
+	}
+	tca.auditLog = auditLog
+
+	// The admin API reads back the same trail. A disabled trail has no querier,
+	// so GET /admin/audit reports that none is configured.
+	if auditLog.Enabled() {
+		querier, err := audit.NewFileQuerier(&tca.config.Audit)
+		if err != nil {
+			return caerrors.InternalServerError("failed to open audit trail for querying: %v", err)
+		}
+		tca.auditQuerier = querier
+		tca.logger.Info("audit trail enabled", slog.String("log_path", tca.config.Audit.LogPath))
+	} else {
+		tca.logger.Warn("audit trail disabled: certificate issuance and revocation will not be recorded")
+	}
+
 	// Initialize ACME REST service
 	restService, err := handlers.NewRestService(&handlers.Params{
+		AuditLogger:    auditLog,
 		BaseRESTURI:    externalURL,
 		CA:             tca.ca,
 		CAAIdentities:  tca.config.ACME.CAIdentifiers,
@@ -391,22 +423,27 @@ func (tca *TrustedCA) Serve(ctx context.Context) error {
 
 			// Set up admin router
 			adminRouter := mux.NewRouter()
-			adminHandlers := admin.NewHandlers(tca.adminService, tca.logger)
+			var adminOpts []admin.HandlerOption
+			if tca.auditQuerier != nil {
+				adminOpts = append(adminOpts, admin.WithAuditQuerier(tca.auditQuerier))
+			}
+			adminHandlers := admin.NewHandlers(tca.adminService, tca.logger, adminOpts...)
 
-			// Use auth middleware if available, otherwise use simple auth
-			if tca.authClient != nil && tca.multiTenant {
-				// Multi-tenant: use auth client
-				authMiddleware := admin.NewAuthMiddleware(tca.authClient)
-				adminHandlers.RegisterRoutes(adminRouter, authMiddleware)
+			// Every admin route authorizes through the qrdb-backed gate. A
+			// deployment with no authorizer wired leaves RBAC disabled (the
+			// documented stack-wide "RBAC disabled => allow all"), but the
+			// authentication middleware below is never optional: registering
+			// the admin surface with nil authentication left the whole
+			// certificate / account / order / audit read surface reachable
+			// without credentials.
+			gate := admin.NewPermissionGate(tca.authorizer, tca.logger)
+			authMiddleware := tca.adminAuthMiddleware()
+			adminHandlers.RegisterRoutes(adminRouter, authMiddleware, gate)
 
-				// Register tenant-specific routes if TenantService is available
-				if tenantService, ok := tca.adminService.(admin.TenantAwareService); ok {
-					tenantHandlers := admin.NewTenantHandlers(tenantService, tca.logger)
-					tenantHandlers.RegisterRoutes(adminRouter, authMiddleware)
-				}
-			} else {
-				// Single-tenant: use basic auth middleware or nil
-				adminHandlers.RegisterRoutes(adminRouter, nil)
+			// Register tenant-specific routes if TenantService is available
+			if tenantService, ok := tca.adminService.(admin.TenantAwareService); ok {
+				tenantHandlers := admin.NewTenantHandlers(tenantService, tca.logger)
+				tenantHandlers.RegisterRoutes(adminRouter, authMiddleware, gate)
 			}
 
 			// Create admin HTTPS server with TLS 1.3
@@ -467,6 +504,15 @@ func (tca *TrustedCA) Shutdown(ctx context.Context) error {
 		}
 	}
 
+	// Close the trail last so events recorded by in-flight requests are
+	// flushed to disk before the process exits.
+	if tca.auditLog != nil {
+		if err := tca.auditLog.Close(); err != nil {
+			errs = append(errs, caerrors.InternalServerError("audit trail close: %v", err))
+		}
+		tca.auditLog = nil
+	}
+
 	tca.started = false
 
 	if len(errs) > 0 {
@@ -478,4 +524,17 @@ func (tca *TrustedCA) Shutdown(ctx context.Context) error {
 // Close releases all resources.
 func (tca *TrustedCA) Close() error {
 	return tca.Shutdown(context.Background())
+}
+
+// adminAuthMiddleware selects the authentication middleware for the admin API.
+// A configured auth client yields JWT authentication; otherwise the admin
+// listener authenticates with mTLS client certificates, which is the
+// passwordless default for the ACME admin surface. There is no "no
+// authentication" branch: the admin API always identifies its caller, and the
+// qrdb-backed PermissionGate then decides what that caller may do.
+func (tca *TrustedCA) adminAuthMiddleware() admin.AuthHandler {
+	if tca.authClient != nil {
+		return admin.NewAuthMiddleware(tca.authClient)
+	}
+	return admin.NewMTLSAuthMiddleware(nil)
 }

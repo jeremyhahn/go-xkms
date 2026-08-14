@@ -23,6 +23,7 @@ import (
 	"crypto/elliptic"
 	"crypto/rsa"
 	"crypto/x509"
+	"errors"
 	"fmt"
 	"io"
 	"strings"
@@ -69,6 +70,12 @@ const (
 	// CKM_ML_KEM performs ML-KEM encapsulation and decapsulation on the HSM.
 	CKM_ML_KEM = 0x00000017
 )
+
+// validAESKeySizes holds the AES key lengths in bits that FIPS 197 defines and
+// that CKM_AES_KEY_GEN therefore accepts. A map keeps the check O(1) and keeps
+// the accepted set in one place, so the generator and any future validator
+// cannot drift apart.
+var validAESKeySizes = map[int]bool{128: true, 192: true, 256: true}
 
 // Backend implements the types.KeyProvider interface for PKCS#11 hardware security modules.
 // It provides secure key storage where private keys never leave the HSM hardware.
@@ -150,7 +157,23 @@ func (b *Backend) Capabilities() types.Capabilities {
 	caps.Import = true // PKCS#11 supports key import
 	caps.Export = true // PKCS#11 supports key export (if CKA_EXTRACTABLE=true)
 	caps.QuantumSigning = b.supportsMLDSA
-	caps.KeyEncapsulation = b.supportsMLKEM
+
+	// KeyEncapsulation stays false even on a token that advertises ML-KEM.
+	//
+	// The flag feeds pkg/xkms/algorithms.go, which publishes ML-KEM-1024 as an
+	// algorithm this backend offers — but the backend implements no
+	// encapsulate or decapsulate operation at all, and types.KeyProvider
+	// defines none, so an ML-KEM key here can be generated, listed, resolved
+	// and deleted and never actually used. Advertising an algorithm the
+	// backend cannot perform is the defect; b.supportsMLKEM is retained
+	// because it correctly records what the TOKEN supports, which is what a
+	// future implementation will gate on.
+	//
+	// Making this true requires Encapsulate/Decapsulate on the multi-backend
+	// KeyProvider contract, which this project requires to ship a complete
+	// implementation for every backend in one change set.
+	caps.KeyEncapsulation = false
+
 	caps.SecurityLevel = types.SecurityLevelHigh // Explicit for clarity
 	return caps
 }
@@ -191,11 +214,16 @@ func (b *Backend) probeQuantumMechanisms() {
 	}
 }
 
-// Get retrieves a key handle from the PKCS#11 backend by CN.
-// This returns the public key material, as private keys cannot be exported from HSM.
+// Get reports that key material cannot be read out of a PKCS#11 token through
+// the file-oriented storage interface, for any extension.
 //
-// Note: For PKCS#11, use the Signer() method to perform operations with keys.
-// Direct private key material retrieval is not possible for security.
+// A token exists precisely so that private key material never leaves the
+// device, and the public half is obtained from the crypto.Signer that Signer()
+// returns rather than as opaque bytes. Since no key on the token can satisfy
+// this call, it answers backend.ErrNotSupported without consulting the device:
+// searching for the key first would spend a session on a lookup whose outcome
+// cannot change the answer, and would report a missing key as the reason a
+// supported operation failed.
 func (b *Backend) Get(attrs *types.KeyAttributes, extension types.FSExtension) ([]byte, error) {
 	b.mu.RLock()
 	defer b.mu.RUnlock()
@@ -204,19 +232,7 @@ func (b *Backend) Get(attrs *types.KeyAttributes, extension types.FSExtension) (
 		return nil, ErrNotInitialized
 	}
 
-	// Find the key pair
-	id := []byte(createKeyID(attrs))
-	signer, err := findKeyPairByID(b.pool, id)
-	if err != nil {
-		return nil, &errs.Wrapped{Msg: "failed to find key", Err: err}
-	}
-	if signer == nil {
-		return nil, &errs.Detail{Err: backend.ErrKeyNotFound, Detail: fmt.Sprintf("%s", attrs.CN)}
-	}
-
-	// For PKCS#11, we can only return public key
-	// Private key material never leaves the HSM
-	return nil, &errs.Detail{Err: backend.ErrNotSupported, Detail: "PKCS#11 private keys cannot be exported"}
+	return nil, &errs.Detail{Err: backend.ErrNotSupported, Detail: "PKCS#11 private keys cannot be exported; use Signer() for the public key"}
 }
 
 // Save stores key metadata to the PKCS#11 backend.
@@ -242,31 +258,63 @@ func (b *Backend) Save(attrs *types.KeyAttributes, data []byte, extension types.
 //
 // Note: Some HSMs may not support key deletion or may require special permissions.
 // The behavior depends on the specific HSM and its configuration.
-// findObjectsByClassAndID locates all PKCS#11 objects with the given CKA_CLASS
-// and CKA_ID within an open session. Caller must hold b.mu.
-func (b *Backend) findObjectsByClassAndID(session pkcs11.SessionHandle, class uint, id []byte) ([]pkcs11.ObjectHandle, error) {
-	tmpl := []*pkcs11.Attribute{
-		pkcs11.NewAttribute(pkcs11.CKA_CLASS, class),
-		pkcs11.NewAttribute(pkcs11.CKA_ID, id),
-	}
-	if err := b.p11ctx.FindObjectsInit(session, tmpl); err != nil {
+// findObjectsBatchSize is the number of object handles requested per
+// C_FindObjects call. It trades round trips against the size of the handle
+// buffer the token fills; it is not a limit on the result, because
+// findAllObjects keeps calling until the search is exhausted.
+const findObjectsBatchSize = 256
+
+// findAllObjects returns every object on the token matching template.
+//
+// C_FindObjects is an iterative interface (PKCS#11 v3.0 section 5.7): each call
+// returns at most the requested number of handles and must be repeated until it
+// returns none. A single call therefore answers "here is a batch", not "here is
+// everything", and treating it as the latter truncates the result silently,
+// which a caller reads as a complete answer.
+//
+// The search is finalized on every path, including the error path, because a
+// session that still has a search active rejects the next C_FindObjectsInit
+// with CKR_OPERATION_ACTIVE.
+func (b *Backend) findAllObjects(session pkcs11.SessionHandle, template []*pkcs11.Attribute) ([]pkcs11.ObjectHandle, error) {
+	if err := b.p11ctx.FindObjectsInit(session, template); err != nil {
 		return nil, &errs.Wrapped{Msg: "failed to init find objects", Err: err}
 	}
-	objs, _, err := b.p11ctx.FindObjects(session, 10)
-	if err != nil {
-		b.p11ctx.FindObjectsFinal(session)
-		return nil, &errs.Wrapped{Msg: "failed to find objects", Err: err}
+
+	var objs []pkcs11.ObjectHandle
+	for {
+		batch, _, err := b.p11ctx.FindObjects(session, findObjectsBatchSize)
+		if err != nil {
+			if finalErr := b.p11ctx.FindObjectsFinal(session); finalErr != nil {
+				return nil, &errs.Wrapped{Msg: "failed to find objects, and the search could not be finalized", Err: err}
+			}
+			return nil, &errs.Wrapped{Msg: "failed to find objects", Err: err}
+		}
+		if len(batch) == 0 {
+			break
+		}
+		objs = append(objs, batch...)
 	}
+
 	if err := b.p11ctx.FindObjectsFinal(session); err != nil {
 		return nil, &errs.Wrapped{Msg: "failed to finalize find objects", Err: err}
 	}
 	return objs, nil
 }
 
+// findObjectsByClassAndID locates all PKCS#11 objects with the given CKA_CLASS
+// and CKA_ID within an open session. Caller must hold b.mu.
+func (b *Backend) findObjectsByClassAndID(session pkcs11.SessionHandle, class uint, id []byte) ([]pkcs11.ObjectHandle, error) {
+	return b.findAllObjects(session, []*pkcs11.Attribute{
+		pkcs11.NewAttribute(pkcs11.CKA_CLASS, class),
+		pkcs11.NewAttribute(pkcs11.CKA_ID, id),
+	})
+}
+
 // deleteKeyInSession performs the find+destroy sequence for both the private
-// and public key objects matching id. It returns an error that wraps
-// hardware.ErrDeleteNotSupportedOnToken when the object survives DestroyObject,
-// which happens on YubiKey PIV because libykcs11 silently no-ops the call.
+// and public key objects matching id, then verifies the objects are gone. It
+// returns an error that wraps hardware.ErrDeleteNotSupportedOnToken when an
+// object survives DestroyObject, which happens on YubiKey PIV because
+// libykcs11 silently no-ops the call.
 func (b *Backend) deleteKeyInSession(session pkcs11.SessionHandle, id []byte, cn string) error {
 	privObjs, err := b.findObjectsByClassAndID(session, pkcs11.CKO_PRIVATE_KEY, id)
 	if err != nil {
@@ -292,8 +340,18 @@ func (b *Backend) deleteKeyInSession(session pkcs11.SessionHandle, id []byte, cn
 		return &errs.Detail{Err: backend.ErrKeyNotFound, Detail: fmt.Sprintf("%s", cn)}
 	}
 
-	// Verify objects are actually gone. YubiKey PIV libykcs11 accepts
-	// C_DestroyObject under CKU_SO but leaves PIV slot contents in place.
+	return b.verifyKeyRemoved(session, id, cn)
+}
+
+// verifyKeyRemoved reports an error when either half of the key pair is still
+// present in the session's view of the token. YubiKey PIV libykcs11 accepts
+// C_DestroyObject under CKU_SO but leaves the PIV slot contents in place, so a
+// successful C_DestroyObject is not evidence that the key is gone.
+//
+// The session matters: a token that hides private objects from the logged-in
+// user type reports the key as absent no matter what, which is why DeleteKey
+// repeats this check under CKU_USER after deleting under CKU_SO.
+func (b *Backend) verifyKeyRemoved(session pkcs11.SessionHandle, id []byte, cn string) error {
 	if remaining, verr := b.findObjectsByClassAndID(session, pkcs11.CKO_PRIVATE_KEY, id); verr == nil && len(remaining) > 0 {
 		return &errs.Detail{Err: hardware.ErrDeleteNotSupportedOnToken, Detail: fmt.Sprintf("private key %q still present after DestroyObject -- token does not support deletion (YubiKey PIV slots must be overwritten or reset via 'ykman piv reset')", cn)}
 	}
@@ -330,7 +388,17 @@ func (b *Backend) DeleteKey(ctx context.Context, attrs *types.KeyAttributes) err
 	}
 
 	if b.config.IsYubiKeyPIV() && b.config.SOPIN != "" {
-		return b.pool.WithSOSession(b.config.SOPIN, b.config.PIN, fn)
+		if err := b.pool.WithSOSession(b.config.SOPIN, b.config.PIN, fn); err != nil {
+			return err
+		}
+		// A CKU_SO session cannot see private objects on every token, so the
+		// verification inside deleteKeyInSession may have been blind to a
+		// private key that survived. Repeat it under the restored CKU_USER
+		// login, where private objects are visible, so a token that quietly
+		// keeps the key can never be reported as a successful deletion.
+		return b.pool.WithSession(func(session pkcs11.SessionHandle) error {
+			return b.verifyKeyRemoved(session, id, attrs.CN)
+		})
 	}
 	return b.pool.WithSession(fn)
 }
@@ -354,18 +422,12 @@ func (b *Backend) ListKeys(ctx context.Context) ([]*types.KeyAttributes, error) 
 
 	var results []*types.KeyAttributes
 	err := b.pool.WithSession(func(session pkcs11.SessionHandle) error {
-		template := []*pkcs11.Attribute{
+		handles, err := b.findAllObjects(session, []*pkcs11.Attribute{
 			pkcs11.NewAttribute(pkcs11.CKA_CLASS, pkcs11.CKO_PRIVATE_KEY),
 			pkcs11.NewAttribute(pkcs11.CKA_TOKEN, true),
-		}
-		if err := b.p11ctx.FindObjectsInit(session, template); err != nil {
-			return &errs.Wrapped{Msg: "list keys: init search", Err: err}
-		}
-		defer b.p11ctx.FindObjectsFinal(session)
-
-		handles, _, err := b.p11ctx.FindObjects(session, 256)
+		})
 		if err != nil {
-			return &errs.Wrapped{Msg: "list keys: find objects", Err: err}
+			return &errs.Wrapped{Msg: "list keys", Err: err}
 		}
 
 		for _, h := range handles {
@@ -382,11 +444,6 @@ func (b *Backend) ListKeys(ctx context.Context) ([]*types.KeyAttributes, error) 
 				StoreType: types.StorePKCS11,
 			}
 
-			// Set CN from label
-			if len(readAttrs[1].Value) > 0 {
-				ka.CN = string(readAttrs[1].Value)
-			}
-
 			// Map CKA_ID to PIV slot if applicable
 			if len(readAttrs[0].Value) == 1 {
 				if slot, ok := pivpkcs11.CKAIDToPIVSlot(readAttrs[0].Value[0]); ok {
@@ -394,16 +451,7 @@ func (b *Backend) ListKeys(ctx context.Context) ([]*types.KeyAttributes, error) 
 				}
 			}
 
-			// Determine algorithm from key type
-			if len(readAttrs[2].Value) > 0 {
-				keyType := readAttrs[2].Value[0]
-				switch keyType {
-				case 0x00: // CKK_RSA
-					ka.KeyAlgorithm = x509.RSA
-				case 0x03: // CKK_EC
-					ka.KeyAlgorithm = x509.ECDSA
-				}
-			}
+			decodeKeyType(ka, ckULong(readAttrs[2].Value), string(readAttrs[1].Value))
 
 			results = append(results, ka)
 		}
@@ -411,6 +459,75 @@ func (b *Backend) ListKeys(ctx context.Context) ([]*types.KeyAttributes, error) 
 	})
 
 	return results, err
+}
+
+// ckULong decodes a CK_ULONG attribute value. PKCS#11 returns these as the
+// raw little-endian bytes of the platform's CK_ULONG, so the whole value is
+// reassembled rather than assuming the interesting bits sit in the low byte.
+func ckULong(value []byte) uint {
+	var n uint
+	for i, b := range value {
+		n |= uint(b) << (8 * i)
+	}
+	return n
+}
+
+// keyTypeDecoder fills in the algorithm-dependent attributes of an enumerated
+// key from the CKA_LABEL the generator wrote.
+type keyTypeDecoder func(ka *types.KeyAttributes, label string)
+
+// keyTypeDecoders maps CKA_KEY_TYPE to the decoder for that key type. Every
+// algorithm this backend can generate must appear here: a key type that is
+// missing enumerates with no algorithm at all, which then makes resolveKeyID
+// compute the wrong CKA_ID and route operations such as DeleteKey to the wrong
+// object (or to no object).
+var keyTypeDecoders = map[uint]keyTypeDecoder{
+	pkcs11.CKK_RSA: classicalKeyDecoder(x509.RSA),
+	pkcs11.CKK_EC:  classicalKeyDecoder(x509.ECDSA),
+	CKK_EC_EDWARDS: classicalKeyDecoder(x509.Ed25519),
+	CKK_ML_DSA:     decodeQuantumKey,
+	CKK_ML_KEM:     decodeQuantumKey,
+}
+
+// decodeKeyType populates ka from a token object's CKA_KEY_TYPE and CKA_LABEL.
+// An unrecognized key type leaves ka carrying only its CN, which is the most
+// that can be said about it.
+func decodeKeyType(ka *types.KeyAttributes, keyType uint, label string) {
+	decode, ok := keyTypeDecoders[keyType]
+	if !ok {
+		ka.CN = label
+		return
+	}
+	decode(ka, label)
+}
+
+// classicalKeyDecoder builds the decoder for a key type that maps onto an
+// x509.PublicKeyAlgorithm. CKA_LABEL carries the composite key ID createKeyID
+// wrote, so the algorithm suffix is stripped back off. Without this the
+// returned attributes would not resolve to the same CKA_ID and every
+// enumerated key would be unaddressable.
+func classicalKeyDecoder(algorithm x509.PublicKeyAlgorithm) keyTypeDecoder {
+	return func(ka *types.KeyAttributes, label string) {
+		ka.KeyAlgorithm = algorithm
+		ka.CN = keyIDToCN(label, algorithm)
+	}
+}
+
+// decodeQuantumKey recovers the CN and the post-quantum parameter set from the
+// composite key ID createQuantumKeyID wrote.
+//
+// CKA_KEY_TYPE alone cannot answer this: CKK_ML_DSA is one key type covering
+// ML-DSA-44, -65 and -87, and x509.PublicKeyAlgorithm has no ML-DSA member at
+// all, so the parameter set is reported through QuantumAttributes and read back
+// out of the label.
+func decodeQuantumKey(ka *types.KeyAttributes, label string) {
+	cn, algorithm, ok := quantumKeyIDToCN(label)
+	if !ok {
+		ka.CN = label
+		return
+	}
+	ka.CN = cn
+	ka.QuantumAttributes = &types.QuantumAttributes{Algorithm: algorithm}
 }
 
 // Decrypter returns a crypto.Decrypter for the specified key.
@@ -737,13 +854,96 @@ func (b *Backend) GenerateKey(ctx context.Context, attrs *types.KeyAttributes) (
 	}
 }
 
+// quantumFamily describes one post-quantum algorithm family as PKCS#11 v3.2
+// models it: the CKA_KEY_TYPE its keys carry, the mechanism that generates
+// them, and the mechanism that uses them.
+//
+// One record per family is the single source of truth for every layer that has
+// to agree on those numbers. Generation picks the family from the requested
+// parameter set; key lookup picks the same family back out of the CKA_KEY_TYPE
+// it reads off the token. Splitting that correspondence across two independent
+// switch statements is what previously let generation write a key type that
+// lookup did not recognise.
+type quantumFamily struct {
+	// name is the parameter-set prefix, for example "ML-DSA".
+	name string
+
+	// keyType is the CKA_KEY_TYPE that objects of this family carry.
+	keyType uint
+
+	// keyPairGen is the CKM_* mechanism that generates a key pair.
+	keyPairGen uint
+
+	// operation is the CKM_* mechanism that uses the key.
+	operation uint
+
+	// signs reports whether operation is a signature mechanism. ML-KEM is a
+	// key-encapsulation mechanism, so C_SignInit and C_VerifyInit are not
+	// defined over it and a conforming token answers CKR_MECHANISM_INVALID.
+	signs bool
+
+	// supported reports whether the token advertised this family's generation
+	// mechanism when the backend probed it.
+	supported func(b *Backend) bool
+}
+
+// quantumFamilyMLDSA is the ML-DSA (FIPS 204) signature family.
+var quantumFamilyMLDSA = &quantumFamily{
+	name:       "ML-DSA",
+	keyType:    CKK_ML_DSA,
+	keyPairGen: CKM_ML_DSA_KEY_PAIR_GEN,
+	operation:  CKM_ML_DSA,
+	signs:      true,
+	supported:  func(b *Backend) bool { return b.supportsMLDSA },
+}
+
+// quantumFamilyMLKEM is the ML-KEM (FIPS 203) key-encapsulation family.
+var quantumFamilyMLKEM = &quantumFamily{
+	name:       "ML-KEM",
+	keyType:    CKK_ML_KEM,
+	keyPairGen: CKM_ML_KEM_KEY_PAIR_GEN,
+	operation:  CKM_ML_KEM,
+	signs:      false,
+	supported:  func(b *Backend) bool { return b.supportsMLKEM },
+}
+
+// quantumFamilies holds every post-quantum family this backend implements.
+var quantumFamilies = []*quantumFamily{quantumFamilyMLDSA, quantumFamilyMLKEM}
+
+// quantumFamilyForAlgorithm returns the family that owns a parameter set such
+// as "ML-DSA-65", and reports whether one was found.
+func quantumFamilyForAlgorithm(algorithm string) (*quantumFamily, bool) {
+	for _, family := range quantumFamilies {
+		if strings.HasPrefix(algorithm, family.name) {
+			return family, true
+		}
+	}
+	return nil, false
+}
+
+// parameterSet recovers the exact parameter set a key object's identifier
+// encodes, for example "ML-DSA-65" from "signing-key.ml-dsa-65".
+//
+// The identifier is what generateQuantumKey wrote to CKA_ID and CKA_LABEL, so
+// a key this backend created always yields its parameter set. A key some other
+// tool put on the token under an identifier of its own choosing yields the
+// family name instead: the parameter set is reported metadata, whereas the
+// mechanism that actually drives the token comes from CKA_KEY_TYPE, so an
+// unrecognised identifier costs precision and not correctness.
+func (f *quantumFamily) parameterSet(id []byte) string {
+	if _, algorithm, ok := quantumKeyIDToCN(string(id)); ok && strings.HasPrefix(string(algorithm), f.name) {
+		return string(algorithm)
+	}
+	return f.name
+}
+
 // generateQuantumKey generates a post-quantum key pair on the HSM using PKCS#11 v3.2 mechanisms.
 // It supports ML-DSA (signing) and ML-KEM (key encapsulation) algorithms. The private key
-// never leaves the HSM hardware; a wrapper signer type is returned that delegates cryptographic
-// operations to the HSM.
+// never leaves the HSM hardware; a wrapper type carrying the object handles is returned.
 //
-// For ML-DSA, the returned signer implements crypto.Signer and can be used for signing.
-// For ML-KEM, key encapsulation handles are returned (currently wrapped as a signer).
+// For ML-DSA the returned value implements crypto.Signer and signs on the token.
+// For ML-KEM it carries the key-encapsulation handles; signing with it is refused,
+// because C_SignInit is not defined over CKM_ML_KEM.
 func (b *Backend) generateQuantumKey(attrs *types.KeyAttributes) (crypto.PrivateKey, error) {
 	b.mu.Lock()
 	defer b.mu.Unlock()
@@ -758,64 +958,23 @@ func (b *Backend) generateQuantumKey(attrs *types.KeyAttributes) (crypto.Private
 
 	algorithm := string(attrs.QuantumAttributes.Algorithm)
 
-	// Determine key type and mechanism based on quantum algorithm
-	var keyType uint
-	var keyPairGenMechanism uint
-	var signMechanism uint
-
-	switch {
-	case strings.HasPrefix(algorithm, "ML-DSA"):
-		if !b.supportsMLDSA {
-			return nil, &errs.Detail{Err: ErrUnsupportedKeyAlgorithm, Detail: "token does not support ML-DSA"}
-		}
-		keyType = CKK_ML_DSA
-		keyPairGenMechanism = CKM_ML_DSA_KEY_PAIR_GEN
-		signMechanism = CKM_ML_DSA
-
-	case strings.HasPrefix(algorithm, "ML-KEM"):
-		if !b.supportsMLKEM {
-			return nil, &errs.Detail{Err: ErrUnsupportedKeyAlgorithm, Detail: "token does not support ML-KEM"}
-		}
-		keyType = CKK_ML_KEM
-		keyPairGenMechanism = CKM_ML_KEM_KEY_PAIR_GEN
-		signMechanism = CKM_ML_KEM
-
-	default:
+	family, ok := quantumFamilyForAlgorithm(algorithm)
+	if !ok {
 		return nil, &errs.Detail{Err: ErrUnsupportedKeyAlgorithm, Detail: fmt.Sprintf("unsupported quantum algorithm: %s", algorithm)}
 	}
+	if !family.supported(b) {
+		return nil, &errs.Detail{Err: ErrUnsupportedKeyAlgorithm, Detail: fmt.Sprintf("token does not support %s", family.name)}
+	}
 
-	// Create key ID and label
 	id := []byte(createQuantumKeyID(attrs))
-	label := []byte(attrs.CN)
-
-	// Public key template
-	publicKeyTemplate := []*pkcs11.Attribute{
-		pkcs11.NewAttribute(pkcs11.CKA_CLASS, pkcs11.CKO_PUBLIC_KEY),
-		pkcs11.NewAttribute(pkcs11.CKA_KEY_TYPE, keyType),
-		pkcs11.NewAttribute(pkcs11.CKA_TOKEN, true),
-		pkcs11.NewAttribute(pkcs11.CKA_VERIFY, true),
-		pkcs11.NewAttribute(pkcs11.CKA_LABEL, label),
-		pkcs11.NewAttribute(pkcs11.CKA_ID, id),
-	}
-
-	// Private key template
-	privateKeyTemplate := []*pkcs11.Attribute{
-		pkcs11.NewAttribute(pkcs11.CKA_CLASS, pkcs11.CKO_PRIVATE_KEY),
-		pkcs11.NewAttribute(pkcs11.CKA_KEY_TYPE, keyType),
-		pkcs11.NewAttribute(pkcs11.CKA_TOKEN, true),
-		pkcs11.NewAttribute(pkcs11.CKA_PRIVATE, true),
-		pkcs11.NewAttribute(pkcs11.CKA_SENSITIVE, true),
-		pkcs11.NewAttribute(pkcs11.CKA_SIGN, true),
-		pkcs11.NewAttribute(pkcs11.CKA_LABEL, label),
-		pkcs11.NewAttribute(pkcs11.CKA_ID, id),
-	}
+	publicKeyTemplate, privateKeyTemplate := quantumKeyTemplates(family.keyType, id)
 
 	var pubHandle, privHandle pkcs11.ObjectHandle
 	err := b.pool.WithSession(func(session pkcs11.SessionHandle) error {
 		var err error
 		pubHandle, privHandle, err = b.p11ctx.GenerateKeyPair(
 			session,
-			[]*pkcs11.Mechanism{pkcs11.NewMechanism(keyPairGenMechanism, nil)},
+			[]*pkcs11.Mechanism{pkcs11.NewMechanism(family.keyPairGen, nil)},
 			publicKeyTemplate,
 			privateKeyTemplate,
 		)
@@ -825,17 +984,60 @@ func (b *Backend) generateQuantumKey(attrs *types.KeyAttributes) (crypto.Private
 		return nil, &errs.Wrapped{Msg: fmt.Sprintf("failed to generate %s key pair", algorithm), Err: err}
 	}
 
-	// Create a signer wrapper that delegates operations to the HSM
-	signer := &pkcs11MLDSASigner{
-		pool:          b.pool,
+	// The same wrapper findKeyPairByID hands back for a key read off the
+	// token, so a key is used through one code path whether it was just
+	// generated or found later by CKA_ID.
+	return newQuantumSigner(family, b.pool, pubHandle, privHandle, id)
+}
+
+// newQuantumSigner builds the wrapper that delegates post-quantum operations on
+// a key pair to the token.
+func newQuantumSigner(family *quantumFamily, pool *SessionPool, pubHandle, privHandle pkcs11.ObjectHandle, id []byte) (crypto.Signer, error) {
+	return &pkcs11MLDSASigner{
+		pool:          pool,
 		publicHandle:  pubHandle,
 		privateHandle: privHandle,
-		label:         string(label),
-		algorithm:     algorithm,
-		signMechanism: signMechanism,
+		label:         string(id),
+		algorithm:     family.parameterSet(id),
+		family:        family,
+	}, nil
+}
+
+// quantumKeyTemplates builds the public and private CKA templates for a
+// post-quantum key pair of the given CKA_KEY_TYPE.
+//
+// id is written to both CKA_ID and CKA_LABEL, which is the convention every
+// generation path in this backend follows. ListKeys recovers the CN and the
+// parameter set from CKA_LABEL and resolveKeyID rebuilds CKA_ID from the
+// attributes it reported, so a label holding anything else -- the bare CN, for
+// instance -- would enumerate a key whose reported CN resolves to a CKA_ID no
+// object has, leaving every listed post-quantum key unaddressable.
+//
+// The private half is created CKA_SENSITIVE and CKA_PRIVATE so the key is
+// unreadable and unlistable outside an authenticated session, which is the
+// whole point of generating it on the token.
+func quantumKeyTemplates(keyType uint, id []byte) (public, private []*pkcs11.Attribute) {
+	public = []*pkcs11.Attribute{
+		pkcs11.NewAttribute(pkcs11.CKA_CLASS, pkcs11.CKO_PUBLIC_KEY),
+		pkcs11.NewAttribute(pkcs11.CKA_KEY_TYPE, keyType),
+		pkcs11.NewAttribute(pkcs11.CKA_TOKEN, true),
+		pkcs11.NewAttribute(pkcs11.CKA_VERIFY, true),
+		pkcs11.NewAttribute(pkcs11.CKA_LABEL, id),
+		pkcs11.NewAttribute(pkcs11.CKA_ID, id),
 	}
 
-	return signer, nil
+	private = []*pkcs11.Attribute{
+		pkcs11.NewAttribute(pkcs11.CKA_CLASS, pkcs11.CKO_PRIVATE_KEY),
+		pkcs11.NewAttribute(pkcs11.CKA_KEY_TYPE, keyType),
+		pkcs11.NewAttribute(pkcs11.CKA_TOKEN, true),
+		pkcs11.NewAttribute(pkcs11.CKA_PRIVATE, true),
+		pkcs11.NewAttribute(pkcs11.CKA_SENSITIVE, true),
+		pkcs11.NewAttribute(pkcs11.CKA_SIGN, true),
+		pkcs11.NewAttribute(pkcs11.CKA_LABEL, id),
+		pkcs11.NewAttribute(pkcs11.CKA_ID, id),
+	}
+
+	return public, private
 }
 
 // GenerateRSA creates an RSA key pair on the HSM with the specified key size.
@@ -955,7 +1157,12 @@ func (b *Backend) GenerateEd25519(attrs *types.KeyAttributes) (crypto.Signer, er
 	if err != nil {
 		return nil, err
 	}
-	label := []byte(attrs.CN)
+
+	// CKA_LABEL carries the same key ID as CKA_ID, matching the RSA, ECDSA and
+	// secret key generators and the repair step the import path applies after
+	// C_UnwrapKey. A generated key and an imported one must be labelled
+	// identically or ListKeys reports two different names for the same key.
+	label := id
 
 	// Ed25519 OID (1.3.101.112) - RFC 8410
 	ed25519OID := []byte{0x06, 0x03, 0x2b, 0x65, 0x70}
@@ -1013,11 +1220,12 @@ func (b *Backend) GenerateEd25519(attrs *types.KeyAttributes) (crypto.Signer, er
 //
 // Supported key sizes:
 //   - 128 bits (16 bytes) - AES-128
+//   - 192 bits (24 bytes) - AES-192
 //   - 256 bits (32 bytes) - AES-256
 //
 // Parameters:
 //   - attrs: Key attributes (CN, key type, etc.)
-//   - keySize: AES key size in bits (128 or 256)
+//   - keySize: AES key size in bits (128, 192 or 256)
 //
 // Returns the object handle of the generated secret key, or an error if generation fails.
 func (b *Backend) GenerateSecretKey(attrs *types.KeyAttributes, keySize int) (pkcs11.ObjectHandle, error) {
@@ -1026,8 +1234,11 @@ func (b *Backend) GenerateSecretKey(attrs *types.KeyAttributes, keySize int) (pk
 		return 0, ErrNotInitialized
 	}
 
-	if keySize != 128 && keySize != 256 {
-		return 0, &errs.Detail{Err: backend.ErrInvalidAlgorithm, Detail: fmt.Sprintf("AES key size %d bits (only 128 and 256 are supported)", keySize)}
+	// FIPS 197 defines three AES key sizes and PKCS#11 CKM_AES_KEY_GEN accepts
+	// all three, so refusing 192 here would reject a size the token advertises
+	// as supported through CK_MECHANISM_INFO's ulMinKeySize/ulMaxKeySize range.
+	if !validAESKeySizes[keySize] {
+		return 0, &errs.Detail{Err: backend.ErrInvalidAlgorithm, Detail: fmt.Sprintf("AES key size %d bits (only 128, 192 and 256 are supported)", keySize)}
 	}
 
 	label := createKeyID(attrs)
@@ -1184,7 +1395,17 @@ func (b *Backend) Sign(attrs *types.KeyAttributes, digest []byte, opts crypto.Si
 }
 
 // Verify verifies a signature using the public key.
-// This is performed in software using the public key retrieved from the HSM.
+// Classical signatures are checked in software using the public key retrieved
+// from the HSM; post-quantum signatures are checked on the token.
+//
+// For RSA, attrs.SignatureAlgorithm selects both the digest and the padding
+// scheme; see verifyRSA for why it is required rather than defaulted. For
+// ECDSA the signature is ASN.1 DER as CKM_ECDSA produces it via the signer.
+// For Ed25519 the digest argument is the message itself, because Ed25519
+// signs the message rather than a pre-computed digest (RFC 8032 section 4).
+// For ML-DSA the digest argument is likewise the message, and the check runs
+// on the token because Go's standard library has no ML-DSA public key type to
+// verify against in software.
 func (b *Backend) Verify(attrs *types.KeyAttributes, digest, signature []byte) error {
 	b.mu.RLock()
 	defer b.mu.RUnlock()
@@ -1193,7 +1414,11 @@ func (b *Backend) Verify(attrs *types.KeyAttributes, digest, signature []byte) e
 		return ErrNotInitialized
 	}
 
-	id := []byte(createKeyID(attrs))
+	id, err := b.resolveKeyID(attrs)
+	if err != nil {
+		return err
+	}
+
 	signer, err := findKeyPairByID(b.pool, id)
 	if err != nil {
 		return &errs.Wrapped{Msg: "failed to find key", Err: err}
@@ -1202,22 +1427,164 @@ func (b *Backend) Verify(attrs *types.KeyAttributes, digest, signature []byte) e
 		return &errs.Detail{Err: backend.ErrKeyNotFound, Detail: fmt.Sprintf("%s", attrs.CN)}
 	}
 
-	pubKey := signer.Public()
+	return verifyPublicKey(signer.Public(), attrs, digest, signature)
+}
 
-	// Verify based on key type
-	switch pub := pubKey.(type) {
+// verifyPublicKey routes a signature check to the scheme that belongs to the
+// public key the token handed back.
+//
+// It is separate from Verify so the routing can be exercised for a key type the
+// test token cannot hold: SoftHSM2 refuses post-quantum objects, so the ML-DSA
+// branch is unreachable through Verify itself.
+func verifyPublicKey(public crypto.PublicKey, attrs *types.KeyAttributes, digest, signature []byte) error {
+	switch pub := public.(type) {
 	case *rsa.PublicKey:
-		// For RSA, we'd need to know the hash algorithm
-		return &errs.Detail{Err: backend.ErrInvalidAlgorithm, Detail: "RSA verification requires hash algorithm specification"}
+		return verifyRSA(pub, attrs, digest, signature)
 	case *ecdsa.PublicKey:
-		// Verify ECDSA signature
 		if !ecdsa.VerifyASN1(pub, digest, signature) {
 			return &errs.Message{Msg: "signature verification failed"}
 		}
 		return nil
+	case ed25519.PublicKey:
+		if !ed25519.Verify(pub, digest, signature) {
+			return &errs.Message{Msg: "signature verification failed"}
+		}
+		return nil
+	case *pkcs11QuantumPublicKey:
+		return verifyQuantum(pub, digest, signature)
 	default:
 		return &errs.Detail{Err: backend.ErrInvalidKeyType, Detail: "unsupported key type for verification"}
 	}
+}
+
+// verifyQuantum checks a post-quantum signature with C_VerifyInit and C_Verify
+// against the public key object on the token.
+//
+// The token is the only thing that can answer: the private key never left it,
+// the public half is an opaque object handle rather than exportable bytes for
+// any type Go models, and CKM_ML_DSA is defined over the message, so digest
+// carries the message itself.
+//
+// A signature the token rejects is reported as a verification failure, matching
+// the classical branches, while a device or session fault keeps its CKR_ detail
+// so an outage is not mistaken for a bad signature.
+func verifyQuantum(pub *pkcs11QuantumPublicKey, digest, signature []byte) error {
+	if pub.family == nil {
+		return &errs.Detail{Err: backend.ErrInvalidKeyType, Detail: "post-quantum public key has no algorithm family"}
+	}
+	if !pub.family.signs {
+		return &errs.Detail{Err: backend.ErrInvalidKeyType, Detail: fmt.Sprintf("%s is a key encapsulation mechanism and produces no signature to verify", pub.algorithm)}
+	}
+	if pub.pool == nil {
+		return &errs.Message{Msg: "pkcs11: session pool not initialized"}
+	}
+
+	return pub.pool.WithSession(func(session pkcs11.SessionHandle) error {
+		if err := pub.pool.Ctx().VerifyInit(session, []*pkcs11.Mechanism{
+			pkcs11.NewMechanism(pub.family.operation, nil),
+		}, pub.handle); err != nil {
+			return &errs.Wrapped{Msg: fmt.Sprintf("pkcs11: %s VerifyInit", pub.algorithm), Err: err}
+		}
+
+		if err := pub.pool.Ctx().Verify(session, digest, signature); err != nil {
+			if isSignatureRejection(err) {
+				return &errs.Message{Msg: "signature verification failed"}
+			}
+			return &errs.Wrapped{Msg: fmt.Sprintf("pkcs11: %s Verify", pub.algorithm), Err: err}
+		}
+		return nil
+	})
+}
+
+// signatureRejections holds the CKR_ codes a token returns when C_Verify
+// completes and the signature does not check out, as opposed to the codes that
+// report the operation could not be carried out at all.
+var signatureRejections = map[pkcs11.Error]bool{
+	pkcs11.CKR_SIGNATURE_INVALID:   true,
+	pkcs11.CKR_SIGNATURE_LEN_RANGE: true,
+}
+
+// isSignatureRejection reports whether a C_Verify error means the token
+// checked the signature and found it wrong.
+func isSignatureRejection(err error) bool {
+	var ckr pkcs11.Error
+	if !errors.As(err, &ckr) {
+		return false
+	}
+	return signatureRejections[ckr]
+}
+
+// rsaScheme describes how one x509.SignatureAlgorithm verifies an RSA
+// signature: the digest it is defined over, and the padding scheme.
+type rsaScheme struct {
+	hash   crypto.Hash
+	verify func(pub *rsa.PublicKey, hash crypto.Hash, digest, signature []byte) error
+}
+
+// rsaSchemes maps an RSA signature algorithm to its digest and padding scheme.
+//
+// The two paddings are kept apart deliberately. Verifying a PSS signature as
+// PKCS#1 v1.5 (or the reverse) does not merely fail: it answers a question the
+// caller did not ask, so a signature could be accepted under a scheme the
+// caller never agreed to. SHA-1 algorithms are absent because a SHA-1 RSA
+// signature is not a result this backend will vouch for.
+var rsaSchemes = map[x509.SignatureAlgorithm]rsaScheme{
+	x509.SHA256WithRSA:    {hash: crypto.SHA256, verify: verifyRSAPKCS1v15},
+	x509.SHA384WithRSA:    {hash: crypto.SHA384, verify: verifyRSAPKCS1v15},
+	x509.SHA512WithRSA:    {hash: crypto.SHA512, verify: verifyRSAPKCS1v15},
+	x509.SHA256WithRSAPSS: {hash: crypto.SHA256, verify: verifyRSAPSS},
+	x509.SHA384WithRSAPSS: {hash: crypto.SHA384, verify: verifyRSAPSS},
+	x509.SHA512WithRSAPSS: {hash: crypto.SHA512, verify: verifyRSAPSS},
+}
+
+// verifyRSA verifies an RSA signature over digest using the scheme named by
+// attrs.SignatureAlgorithm.
+//
+// The algorithm has to be stated rather than inferred. attrs.Hash names the
+// digest but says nothing about the padding, and PKCS#1 v1.5 and PSS are not
+// interchangeable, so defaulting to either one would decide on the caller's
+// behalf which scheme a signature is accepted under. A missing or unsupported
+// algorithm is reported as backend.ErrInvalidAlgorithm naming the field.
+func verifyRSA(pub *rsa.PublicKey, attrs *types.KeyAttributes, digest, signature []byte) error {
+	if attrs.SignatureAlgorithm == x509.UnknownSignatureAlgorithm {
+		return &errs.Detail{Err: backend.ErrInvalidAlgorithm, Detail: "RSA verification requires KeyAttributes.SignatureAlgorithm; PKCS#1 v1.5 and PSS cannot be distinguished from the digest alone"}
+	}
+
+	scheme, ok := rsaSchemes[attrs.SignatureAlgorithm]
+	if !ok {
+		return &errs.Detail{Err: backend.ErrInvalidAlgorithm, Detail: fmt.Sprintf("unsupported RSA signature algorithm: %s", attrs.SignatureAlgorithm)}
+	}
+
+	if attrs.Hash != crypto.Hash(0) && attrs.Hash != scheme.hash {
+		return &errs.Detail{Err: backend.ErrInvalidAlgorithm, Detail: fmt.Sprintf("KeyAttributes.Hash is %s but %s is defined over %s", attrs.Hash, attrs.SignatureAlgorithm, scheme.hash)}
+	}
+
+	if len(digest) != scheme.hash.Size() {
+		return &errs.Detail{Err: backend.ErrInvalidAlgorithm, Detail: fmt.Sprintf("%s expects a %d byte digest, got %d", attrs.SignatureAlgorithm, scheme.hash.Size(), len(digest))}
+	}
+
+	return scheme.verify(pub, scheme.hash, digest, signature)
+}
+
+// verifyRSAPKCS1v15 verifies an RFC 8017 RSASSA-PKCS1-v1_5 signature.
+func verifyRSAPKCS1v15(pub *rsa.PublicKey, hash crypto.Hash, digest, signature []byte) error {
+	if err := rsa.VerifyPKCS1v15(pub, hash, digest, signature); err != nil {
+		return &errs.Message{Msg: "signature verification failed"}
+	}
+	return nil
+}
+
+// verifyRSAPSS verifies an RFC 8017 RSASSA-PSS signature.
+//
+// The salt length is taken from the signature (rsa.PSSSaltLengthAuto) because
+// the signer's choice is recoverable from the encoding and is not part of the
+// agreement between signer and verifier.
+func verifyRSAPSS(pub *rsa.PublicKey, hash crypto.Hash, digest, signature []byte) error {
+	opts := &rsa.PSSOptions{SaltLength: rsa.PSSSaltLengthAuto, Hash: hash}
+	if err := rsa.VerifyPSS(pub, hash, digest, signature, opts); err != nil {
+		return &errs.Message{Msg: "signature verification failed"}
+	}
+	return nil
 }
 
 // Pool returns the session pool. Returns nil if not initialized.
@@ -1248,14 +1615,22 @@ func (b *Backend) SetP11Ctx(ctx *pkcs11.Ctx) {
 	b.ownsP11ctx = false
 }
 
-// findKey finds a key object by label.
+// findKey finds a key object by its resolved CKA_ID.
 // Must be called with mutex held.
+//
+// The CKA_ID comes from resolveKeyID, the same routing Signer uses, so a PIV
+// or post-quantum key is looked up under the identifier it was created with
+// rather than under a CN-and-algorithm composite it does not carry.
 func (b *Backend) findKey(attrs *types.KeyAttributes) (crypto.Signer, error) {
 	if b.pool == nil {
 		return nil, ErrNotInitialized
 	}
 
-	id := []byte(createKeyID(attrs))
+	id, err := b.resolveKeyID(attrs)
+	if err != nil {
+		return nil, err
+	}
+
 	signer, err := findKeyPairByID(b.pool, id)
 	if err != nil {
 		return nil, &errs.Wrapped{Msg: "failed to find key", Err: err}
@@ -1267,8 +1642,76 @@ func (b *Backend) findKey(attrs *types.KeyAttributes) (crypto.Signer, error) {
 	return signer, nil
 }
 
+// signerFactory builds the wrapper that performs operations on one key pair,
+// from the handles findKeyPairByID located on the token.
+type signerFactory func(pool *SessionPool, pubHandle, privHandle pkcs11.ObjectHandle, id []byte) (crypto.Signer, error)
+
+// signerFactories maps CKA_KEY_TYPE to the wrapper construction for that key
+// type.
+//
+// Every key type keyTypeDecoders can enumerate must appear here. Signer, Sign,
+// Verify and findKey all reach the token through this table, so a key type that
+// is listable but missing here describes a key that can be generated and
+// enumerated and then never used again.
+var signerFactories = map[uint]signerFactory{
+	pkcs11.CKK_RSA: newRSASigner,
+	pkcs11.CKK_EC:  newECDSASigner,
+	CKK_EC_EDWARDS: newEd25519Signer,
+	CKK_ML_DSA:     quantumSignerFactory(quantumFamilyMLDSA),
+	CKK_ML_KEM:     quantumSignerFactory(quantumFamilyMLKEM),
+}
+
+// newRSASigner builds the wrapper for an RSA key pair. The public key is read
+// off the token so signatures can be verified without another lookup.
+func newRSASigner(pool *SessionPool, pubHandle, privHandle pkcs11.ObjectHandle, id []byte) (crypto.Signer, error) {
+	pub, err := exportRSAPublicKey(pool, pubHandle)
+	if err != nil {
+		return nil, err
+	}
+	return &pkcs11RSASigner{
+		pool:          pool,
+		privateHandle: privHandle,
+		publicKey:     pub,
+		label:         string(id),
+	}, nil
+}
+
+// newECDSASigner builds the wrapper for an EC key pair.
+func newECDSASigner(pool *SessionPool, pubHandle, privHandle pkcs11.ObjectHandle, id []byte) (crypto.Signer, error) {
+	pub, err := exportECDSAPublicKey(pool, pubHandle)
+	if err != nil {
+		return nil, err
+	}
+	return &pkcs11ECDSASigner{
+		pool:          pool,
+		privateHandle: privHandle,
+		publicKey:     pub,
+		label:         string(id),
+	}, nil
+}
+
+// newEd25519Signer builds the wrapper for an Edwards key pair. The public key
+// is read lazily from CKA_EC_POINT, so only the handles are captured here.
+func newEd25519Signer(pool *SessionPool, pubHandle, privHandle pkcs11.ObjectHandle, id []byte) (crypto.Signer, error) {
+	return &pkcs11Ed25519Signer{
+		pool:          pool,
+		publicHandle:  pubHandle,
+		privateHandle: privHandle,
+		label:         string(id),
+	}, nil
+}
+
+// quantumSignerFactory builds the signerFactory for one post-quantum family,
+// binding the family so the wrapper drives the token with the mechanism that
+// belongs to the key type it was found under.
+func quantumSignerFactory(family *quantumFamily) signerFactory {
+	return func(pool *SessionPool, pubHandle, privHandle pkcs11.ObjectHandle, id []byte) (crypto.Signer, error) {
+		return newQuantumSigner(family, pool, pubHandle, privHandle, id)
+	}
+}
+
 // findKeyPairByID locates a key pair on the token by CKA_ID and returns the
-// appropriate crypto.Signer based on the key type (RSA, ECDSA, Ed25519).
+// wrapper for its key type, dispatched through signerFactories.
 // Returns nil, nil if no key is found.
 func findKeyPairByID(pool *SessionPool, id []byte) (crypto.Signer, error) {
 	var keyType uint
@@ -1306,10 +1749,7 @@ func findKeyPairByID(pool *SessionPool, id []byte) (crypto.Signer, error) {
 		if len(attrs) == 0 || len(attrs[0].Value) == 0 {
 			return &errs.Message{Msg: "pkcs11: could not determine key type"}
 		}
-		// CKA_KEY_TYPE is a CK_ULONG, encoded as little-endian bytes
-		for i, b := range attrs[0].Value {
-			keyType |= uint(b) << (8 * i)
-		}
+		keyType = ckULong(attrs[0].Value)
 
 		// Find public key
 		if err := pool.Ctx().FindObjectsInit(session, []*pkcs11.Attribute{
@@ -1339,49 +1779,23 @@ func findKeyPairByID(pool *SessionPool, id []byte) (crypto.Signer, error) {
 		return nil, nil
 	}
 
-	// Dispatch to type-specific signer construction
-	switch keyType {
-	case pkcs11.CKK_RSA:
-		pub, err := exportRSAPublicKey(pool, pubHandle)
-		if err != nil {
-			return nil, err
-		}
-		return &pkcs11RSASigner{
-			pool:          pool,
-			privateHandle: privHandle,
-			publicKey:     pub,
-			label:         string(id),
-		}, nil
-
-	case pkcs11.CKK_EC:
-		pub, err := exportECDSAPublicKey(pool, pubHandle)
-		if err != nil {
-			return nil, err
-		}
-		return &pkcs11ECDSASigner{
-			pool:          pool,
-			privateHandle: privHandle,
-			publicKey:     pub,
-			label:         string(id),
-		}, nil
-
-	case CKK_EC_EDWARDS:
-		return &pkcs11Ed25519Signer{
-			pool:          pool,
-			publicHandle:  pubHandle,
-			privateHandle: privHandle,
-			label:         string(id),
-		}, nil
-
-	default:
+	newSigner, ok := signerFactories[keyType]
+	if !ok {
 		return nil, &errs.Detail{Err: ErrUnsupportedKeyAlgorithm, Detail: fmt.Sprintf("unknown key type 0x%04x", keyType)}
 	}
+	return newSigner(pool, pubHandle, privHandle, id)
 }
 
 // resolveKeyID determines the PKCS#11 CKA_ID for a key based on:
 //  1. KeyAttributes.PIVSlot (explicit PIV slot from caller) - highest priority
 //  2. Config.Slot for YubiKey PIV (existing behavior)
-//  3. createKeyID for generic PKCS#11 tokens (CN.algorithm format)
+//  3. createQuantumKeyID for post-quantum keys (CN.quantum-algorithm format)
+//  4. createKeyID for generic PKCS#11 tokens (CN.algorithm format)
+//
+// The post-quantum branch exists because generateQuantumKey writes a CKA_ID
+// built from the parameter set, not from KeyAlgorithm, which is unset for an
+// ML-DSA or ML-KEM key. Without it every operation that resolves a key by
+// attributes would look for "CN." and miss the object entirely.
 func (b *Backend) resolveKeyID(attrs *types.KeyAttributes) ([]byte, error) {
 	if attrs.PIVSlot != "" {
 		slot := pivcert.PIVSlot(attrs.PIVSlot)
@@ -1397,6 +1811,9 @@ func (b *Backend) resolveKeyID(attrs *types.KeyAttributes) ([]byte, error) {
 	if b.config.IsYubiKeyPIV() && b.config.Slot != nil {
 		return createSlotID(uint(*b.config.Slot)), nil
 	}
+	if attrs.QuantumAttributes != nil {
+		return []byte(createQuantumKeyID(attrs)), nil
+	}
 	return []byte(createKeyID(attrs)), nil
 }
 
@@ -1409,8 +1826,25 @@ func createKeyID(attrs *types.KeyAttributes) string {
 	return fmt.Sprintf("%s.%s", attrs.CN, strings.ToLower(attrs.KeyAlgorithm.String()))
 }
 
+// keyIDToCN recovers the common name from a PKCS#11 object label that
+// createKeyID produced. It is the exact inverse of createKeyID, so attributes
+// reported by ListKeys resolve back to the CKA_ID they were read from. A
+// label that was not written by createKeyID is returned unchanged.
+func keyIDToCN(label string, algorithm x509.PublicKeyAlgorithm) string {
+	suffix := "."
+	if algorithm != x509.UnknownPublicKeyAlgorithm {
+		suffix += strings.ToLower(algorithm.String())
+	}
+	return strings.TrimSuffix(label, suffix)
+}
+
 // createQuantumKeyID generates a PKCS#11 object identifier for a quantum key.
 // Format: {CN}.{quantum-algorithm}
+//
+// It exists separately from createKeyID because a post-quantum key carries no
+// x509.PublicKeyAlgorithm: the parameter set (ML-DSA-65, ML-KEM-768, ...) lives
+// in QuantumAttributes, and it is the parameter set, not the bare key type,
+// that has to be recoverable from the object on the token.
 func createQuantumKeyID(attrs *types.KeyAttributes) string {
 	if attrs.QuantumAttributes == nil {
 		return fmt.Sprintf("%s.", attrs.CN)
@@ -1418,33 +1852,48 @@ func createQuantumKeyID(attrs *types.KeyAttributes) string {
 	return fmt.Sprintf("%s.%s", attrs.CN, strings.ToLower(string(attrs.QuantumAttributes.Algorithm)))
 }
 
-// createSlotID generates a PKCS#11 CKA_ID from a YubiKey PIV slot number.
-// YubiKey PIV uses a specific mapping from slot numbers to CKA_ID values:
-//   - Slot 0x9a (Authentication) -> CKA_ID 0x01
-//   - Slot 0x9c (Signature) -> CKA_ID 0x02
-//   - Slot 0x9d (Key Management) -> CKA_ID 0x03
-//   - Slot 0x9e (Card Auth) -> CKA_ID 0x04
-//   - Retired slots 0x82-0x95 -> CKA_ID 0x05-0x18
-func createSlotID(slot uint) []byte {
-	var ckaid byte
-	switch slot {
-	case 0x9a:
-		ckaid = 0x01
-	case 0x9c:
-		ckaid = 0x02
-	case 0x9d:
-		ckaid = 0x03
-	case 0x9e:
-		ckaid = 0x04
-	case 0x82, 0x83, 0x84, 0x85, 0x86, 0x87, 0x88, 0x89, 0x8a, 0x8b,
-		0x8c, 0x8d, 0x8e, 0x8f, 0x90, 0x91, 0x92, 0x93, 0x94, 0x95:
-		// Retired slots: 0x82-0x95 map to CKA_ID 0x05-0x18
-		ckaid = byte(slot - 0x82 + 0x05)
-	default:
-		// Unknown slot, use raw value
-		ckaid = byte(slot)
+// quantumKeyIDs maps the lowercased suffix createQuantumKeyID writes back to
+// the canonical parameter set. Reversing the algorithm through a table rather
+// than through strings.ToUpper keeps an arbitrary label from being reported as
+// a post-quantum algorithm that the stack does not implement.
+var quantumKeyIDs = map[string]types.QuantumAlgorithm{
+	strings.ToLower(string(types.QuantumAlgorithmMLDSA44)):   types.QuantumAlgorithmMLDSA44,
+	strings.ToLower(string(types.QuantumAlgorithmMLDSA65)):   types.QuantumAlgorithmMLDSA65,
+	strings.ToLower(string(types.QuantumAlgorithmMLDSA87)):   types.QuantumAlgorithmMLDSA87,
+	strings.ToLower(string(types.QuantumAlgorithmMLKEM512)):  types.QuantumAlgorithmMLKEM512,
+	strings.ToLower(string(types.QuantumAlgorithmMLKEM768)):  types.QuantumAlgorithmMLKEM768,
+	strings.ToLower(string(types.QuantumAlgorithmMLKEM1024)): types.QuantumAlgorithmMLKEM1024,
+}
+
+// quantumKeyIDToCN splits a label that createQuantumKeyID produced back into
+// its common name and parameter set. It reports false for a label that does not
+// end in a known post-quantum algorithm, so a caller can fall back to treating
+// the label as an opaque name instead of inventing an algorithm for it.
+func quantumKeyIDToCN(label string) (string, types.QuantumAlgorithm, bool) {
+	dot := strings.LastIndex(label, ".")
+	if dot < 0 {
+		return "", "", false
 	}
-	return []byte{ckaid}
+	algorithm, ok := quantumKeyIDs[label[dot+1:]]
+	if !ok {
+		return "", "", false
+	}
+	return label[:dot], algorithm, true
+}
+
+// createSlotID generates a PKCS#11 CKA_ID from a YubiKey PIV slot number,
+// for example slot 0x9a (Authentication) -> CKA_ID 0x01.
+//
+// The translation is delegated to the canonical PIV slot table in
+// pkg/pivcert/pkcs11 so that a key and the certificate issued for it always
+// land on the same CKA_ID. Slot numbers that table does not define keep their
+// raw byte value.
+func createSlotID(slot uint) []byte {
+	if ckaID, ok := pivpkcs11.PIVSlotToCKAID(pivcert.PIVSlot(fmt.Sprintf("%02x", slot))); ok {
+		return []byte{ckaID}
+	}
+	// Not a PIV slot: use the raw value.
+	return []byte{byte(slot)}
 }
 
 // pkcs11Ed25519Signer implements crypto.Signer for Ed25519 keys stored in PKCS#11.
@@ -1530,8 +1979,8 @@ type pkcs11MLDSASigner struct {
 	publicHandle  pkcs11.ObjectHandle
 	privateHandle pkcs11.ObjectHandle
 	label         string
-	algorithm     string // e.g., "ML-DSA-44", "ML-DSA-65", "ML-KEM-768"
-	signMechanism uint   // CKM_ML_DSA or CKM_ML_KEM
+	algorithm     string         // e.g., "ML-DSA-44", "ML-DSA-65", "ML-KEM-768"
+	family        *quantumFamily // the family whose mechanisms drive the token
 	publicKey     crypto.PublicKey
 	mu            sync.RWMutex
 }
@@ -1539,6 +1988,10 @@ type pkcs11MLDSASigner struct {
 // Public returns the public key corresponding to the opaque private key.
 // For ML-DSA/ML-KEM, we return a pkcs11QuantumPublicKey wrapper since Go's
 // standard library does not have native types for post-quantum keys.
+//
+// The wrapper carries the session pool as well as the handle, because a
+// post-quantum signature can only be checked by the token: there is no ML-DSA
+// type in Go's standard library to verify it against in software.
 func (s *pkcs11MLDSASigner) Public() crypto.PublicKey {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -1549,18 +2002,30 @@ func (s *pkcs11MLDSASigner) Public() crypto.PublicKey {
 
 	// Wrap the public handle in a quantum public key type
 	s.publicKey = &pkcs11QuantumPublicKey{
+		pool:      s.pool,
 		handle:    s.publicHandle,
 		algorithm: s.algorithm,
+		family:    s.family,
 	}
 	return s.publicKey
 }
 
 // Sign signs the given digest using ML-DSA with the PKCS#11 private key.
 // The signing operation is performed entirely within the HSM hardware.
+//
+// An ML-KEM key is refused here rather than at the token: FIPS 203 defines a
+// key-encapsulation mechanism, C_SignInit is not defined over CKM_ML_KEM, and
+// a caller is better served by being told that than by CKR_MECHANISM_INVALID.
 func (s *pkcs11MLDSASigner) Sign(_ io.Reader, digest []byte, _ crypto.SignerOpts) ([]byte, error) {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 
+	if s.family == nil {
+		return nil, &errs.Detail{Err: ErrUnsupportedKeyAlgorithm, Detail: "post-quantum signer has no algorithm family"}
+	}
+	if !s.family.signs {
+		return nil, &errs.Detail{Err: ErrUnsupportedKeyAlgorithm, Detail: fmt.Sprintf("%s is a key encapsulation mechanism and cannot sign", s.algorithm)}
+	}
 	if s.pool == nil {
 		return nil, &errs.Message{Msg: "pkcs11: session pool not initialized"}
 	}
@@ -1568,7 +2033,7 @@ func (s *pkcs11MLDSASigner) Sign(_ io.Reader, digest []byte, _ crypto.SignerOpts
 	var signature []byte
 	err := s.pool.WithSession(func(session pkcs11.SessionHandle) error {
 		if err := s.pool.Ctx().SignInit(session, []*pkcs11.Mechanism{
-			pkcs11.NewMechanism(s.signMechanism, nil),
+			pkcs11.NewMechanism(s.family.operation, nil),
 		}, s.privateHandle); err != nil {
 			return &errs.Wrapped{Msg: fmt.Sprintf("pkcs11: %s SignInit", s.algorithm), Err: err}
 		}
@@ -1588,10 +2053,13 @@ func (s *pkcs11MLDSASigner) Sign(_ io.Reader, digest []byte, _ crypto.SignerOpts
 
 // pkcs11QuantumPublicKey wraps a PKCS#11 object handle for a quantum public key.
 // Since Go's crypto library has no native ML-DSA/ML-KEM key types, this wrapper
-// provides a type-safe representation that carries the algorithm metadata.
+// provides a type-safe representation that carries the algorithm metadata and
+// the session pool needed to verify against the key on the token.
 type pkcs11QuantumPublicKey struct {
+	pool      *SessionPool
 	handle    pkcs11.ObjectHandle
-	algorithm string // e.g., "ML-DSA-44", "ML-KEM-768"
+	algorithm string         // e.g., "ML-DSA-44", "ML-KEM-768"
+	family    *quantumFamily // the family whose mechanisms drive the token
 }
 
 // Algorithm returns the quantum algorithm name for this public key.

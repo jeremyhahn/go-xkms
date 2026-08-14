@@ -400,7 +400,7 @@ func copyBinary(srcPath, dstDir string) error {
 
 // Status returns the status of an existing image or block device.
 func Status(path string) (*ImageStatus, error) {
-	info, err := os.Stat(path)
+	info, err := statPath(path)
 	if err != nil {
 		if os.IsNotExist(err) {
 			return nil, &USBError{
@@ -449,7 +449,7 @@ func UpdateBinaries(path string, binaries []string) error {
 		return ErrPermissionDenied
 	}
 
-	if _, err := os.Stat(path); err != nil {
+	if _, err := statPath(path); err != nil {
 		if os.IsNotExist(err) {
 			return &USBError{Operation: "update", Path: path, Err: ErrImageNotFound}
 		}

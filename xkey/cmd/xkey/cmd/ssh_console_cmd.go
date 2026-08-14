@@ -187,7 +187,13 @@ func runConsoleSession(cons sshsdk.ConsoleSession, fd int) error {
 	}()
 
 	// Pump stdin → console; console → stdout blocks until the session ends.
-	go func() { _, _ = io.Copy(cons, os.Stdin) }()
+	// When local stdin ends (a piped script, or Ctrl-D on a non-raw stdin)
+	// the write half is half-closed so the remote command sees EOF and can
+	// exit — Close only tears the session down, it no longer signals EOF.
+	go func() {
+		_, _ = io.Copy(cons, os.Stdin)
+		_ = cons.CloseWrite()
+	}()
 	_, copyErr := io.Copy(os.Stdout, cons)
 	if copyErr != nil && !errors.Is(copyErr, io.EOF) {
 		return copyErr

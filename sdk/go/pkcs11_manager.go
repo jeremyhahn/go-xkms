@@ -96,6 +96,19 @@ type PKCS11SlotID = pkcs11module.SlotID
 // PKCS11UserType identifies a PKCS#11 login user type.
 type PKCS11UserType = pkcs11module.UserType
 
+// PKCS11AESGCMMessageParams is CK_GCM_MESSAGE_PARAMS, the per-message
+// parameters of the PKCS#11 v3 AEAD message-based encryption API
+// (C_EncryptMessage / C_DecryptMessage and their *Next variants).
+//
+// Field direction depends on the operation, which is what a marshalling layer
+// has to get right: on encrypt the IV is an output whenever IVGenerator is not
+// CKG_NO_GENERATE (the token produces it) and the Tag is always an output; on
+// decrypt both are inputs supplied by the caller.
+type PKCS11AESGCMMessageParams = pkcs11module.AESGCMMessageParams
+
+// PKCS11IVGenerator selects who produces the IV for message-based AEAD and how.
+type PKCS11IVGenerator = pkcs11module.IVGenerator
+
 const (
 	// PKCS11CKMECDH1DeriveMechanism is CKM_ECDH1_DERIVE.
 	PKCS11CKMECDH1DeriveMechanism = pkcs11module.CKM_ECDH1_DERIVE
@@ -103,6 +116,19 @@ const (
 	PKCS11CKMECDH1CofactorDeriveMechanism = pkcs11module.CKM_ECDH1_COFACTOR_DERIVE
 	// PKCS11CKROK is the CKR_OK return code.
 	PKCS11CKROK = pkcs11module.CKR_OK
+
+	// PKCS11CKGNoGenerate (CKG_NO_GENERATE) means the caller supplied the IV
+	// and the token must use it as given.
+	PKCS11CKGNoGenerate = pkcs11module.CKG_NO_GENERATE
+	// PKCS11CKGGenerate (CKG_GENERATE) means the token generates the IV,
+	// preserving the caller's fixed leading bits.
+	PKCS11CKGGenerate = pkcs11module.CKG_GENERATE
+	// PKCS11CKGGenerateCounter (CKG_GENERATE_COUNTER) means the token
+	// generates the IV as a counter.
+	PKCS11CKGGenerateCounter = pkcs11module.CKG_GENERATE_COUNTER
+	// PKCS11CKGGenerateRandom (CKG_GENERATE_RANDOM) means the token generates
+	// the IV at random.
+	PKCS11CKGGenerateRandom = pkcs11module.CKG_GENERATE_RANDOM
 )
 
 // GetGlobalPKCS11Module returns the process-global PKCS#11 module instance.

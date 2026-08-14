@@ -3409,3 +3409,68 @@ func TestConfig_ComplianceGaps_ClusterCAKeyProtection(t *testing.T) {
 		t.Errorf("plaintext CA key with ACME off should not be flagged, got %v", gaps)
 	}
 }
+
+// TestConfig_ComplianceGaps_RBACWithoutIdentityPlane verifies that enabling
+// RBAC against a storage backend that provides no qrdb identity plane is
+// reported as a posture gap.
+//
+// This is a fail-open, not a fail-closed: auth.enable_rbac=true with a non-qrdb
+// backend leaves Server.rbacAuthorizer nil, and every transport (REST, gRPC,
+// QUIC, MCP) then admits every authenticated caller with every permission. The
+// operator asked for role enforcement and silently got none, so the daemon must
+// refuse to start unless development mode is explicitly requested.
+func TestConfig_ComplianceGaps_RBACWithoutIdentityPlane(t *testing.T) {
+	// baseline returns a config that is compliant on every other dimension, so
+	// any gap reported is attributable to the RBAC/storage combination alone.
+	// The barrier passphrase matters: selecting the qrdb backend also brings the
+	// embedded data plane under the auto-unseal check, and without a boot secret
+	// that would report its own gap and mask the one under test.
+	baseline := func() *Config {
+		c := &Config{}
+		c.Barrier.Enabled = true
+		c.Barrier.Passphrase = "test-boot-secret"
+		c.TLS.Enabled = true
+		c.Auth.Enabled = true
+		c.Auth.Type = "mtls"
+		c.CA = &ca.MultiIdentityCAConfig{}
+		return c
+	}
+
+	tests := []struct {
+		name       string
+		enableRBAC bool
+		backend    string
+		wantGap    bool
+	}{
+		{"rbac on, qrdb backend", true, "qrdb", false},
+		{"rbac on, qrdb backend cased", true, "QRDB", false},
+		{"rbac on, pebble backend", true, "pebble", true},
+		{"rbac on, file backend", true, "file", true},
+		{"rbac on, memory backend", true, "memory", true},
+		{"rbac on, unset backend", true, "", true},
+		{"rbac off, pebble backend", false, "pebble", false},
+		{"rbac off, unset backend", false, "", false},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			c := baseline()
+			c.Auth.EnableRBAC = tt.enableRBAC
+			c.Storage.Backend = tt.backend
+
+			gaps := c.ComplianceGaps()
+			if tt.wantGap {
+				if len(gaps) != 1 {
+					t.Fatalf("want exactly the RBAC gap, got %d: %v", len(gaps), gaps)
+				}
+				if !strings.Contains(gaps[0], "enable_rbac") {
+					t.Errorf("gap should name auth.enable_rbac, got %q", gaps[0])
+				}
+				return
+			}
+			if len(gaps) != 0 {
+				t.Errorf("want no gaps, got %v", gaps)
+			}
+		})
+	}
+}

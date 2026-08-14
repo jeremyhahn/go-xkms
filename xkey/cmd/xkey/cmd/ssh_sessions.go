@@ -81,7 +81,8 @@ func sessionOrigin(s *sshsdk.ConsoleSessionRecord) string {
 	}
 }
 
-func runSSHSessionsList(_ *cobra.Command, _ []string) error {
+func runSSHSessionsList(cmd *cobra.Command, _ []string) error {
+	out := cmd.OutOrStdout()
 	store, err := xkeySessionStore()
 	if err != nil {
 		return err
@@ -91,17 +92,18 @@ func runSSHSessionsList(_ *cobra.Command, _ []string) error {
 		return err
 	}
 	if len(all) == 0 {
-		fmt.Println("No persistent sessions found")
+		fmt.Fprintln(out, "No persistent sessions found")
 		return nil
 	}
 	for _, s := range all {
-		fmt.Printf("%s\t%s\t%s\tlast=%s\n",
+		fmt.Fprintf(out, "%s\t%s\t%s\tlast=%s\n",
 			s.ID, s.Title, sessionOrigin(s), s.LastConnectedAt.Local().Format(time.RFC3339))
 	}
 	return nil
 }
 
-func runSSHSessionsRemove(_ *cobra.Command, args []string) error {
+func runSSHSessionsRemove(cmd *cobra.Command, args []string) error {
+	out := cmd.OutOrStdout()
 	store, err := xkeySessionStore()
 	if err != nil {
 		return err
@@ -109,6 +111,6 @@ func runSSHSessionsRemove(_ *cobra.Command, args []string) error {
 	if derr := store.Delete(args[0]); derr != nil {
 		return derr
 	}
-	fmt.Printf("Deleted persistent session %q\n", args[0])
+	fmt.Fprintf(out, "Deleted persistent session %q\n", args[0])
 	return nil
 }

@@ -779,17 +779,6 @@ func TestWriteEnrollmentOutput_NoBlobNoSecret(t *testing.T) {
 }
 
 // =============================================================================
-// generateNoiseKeyPair (71.4%)
-// =============================================================================
-
-func TestGenerateNoiseKeyPair_ReturnsValidKeys(t *testing.T) {
-	pubKey, privKey, err := generateNoiseKeyPair()
-	require.NoError(t, err)
-	require.NotEmpty(t, pubKey)
-	require.NotNil(t, privKey)
-}
-
-// =============================================================================
 // printTenantInfo - JSON format (87.5%)
 // =============================================================================
 

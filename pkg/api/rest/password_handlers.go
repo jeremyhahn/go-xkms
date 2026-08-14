@@ -14,23 +14,46 @@
 package rest
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
+	"io"
 	"net/http"
 
 	"github.com/go-chi/chi/v5"
+	"github.com/jeremyhahn/go-xkms/pkg/api/transport"
 	"github.com/jeremyhahn/go-xkms/pkg/auth"
 	"github.com/jeremyhahn/go-xkms/pkg/seal"
 	"github.com/jeremyhahn/go-xkms/pkg/staticpw"
+	"github.com/jeremyhahn/go-xkms/pkg/xkms"
 )
 
 // PasswordHandlers provides HTTP handlers for password store operations.
 // When a TenantPasswordStoreManager is provided, operations are routed
 // to per-tenant encrypted stores based on the authenticated identity.
 type PasswordHandlers struct {
-	store   staticpw.Store
-	manager *staticpw.TenantPasswordStoreManager
+	store    staticpw.Store
+	manager  *staticpw.TenantPasswordStoreManager
+	servicer PasswordServicer
 }
+
+// PasswordServicer is the service-layer seam used by the password store
+// endpoints that carry business rules. It keeps the handlers free of password
+// store business logic; *xkms.XKMSService satisfies it.
+type PasswordServicer interface {
+	// PasswordStoreSetAccessMode selects the access-control strategy for the
+	// password store addressed by the request context.
+	PasswordStoreSetAccessMode(ctx context.Context, req *transport.PasswordStoreSetAccessModeRequest) error
+
+	// PasswordStoreUnlock opens a session on the tenant password store. The
+	// servicer verifies the caller's user PIN before unlocking; the handler
+	// must never call TenantPasswordStoreManager.UnlockTenant directly or the
+	// credential check is bypassed entirely.
+	PasswordStoreUnlock(ctx context.Context, req *transport.PasswordStoreUnlockRequest) error
+}
+
+// Compile-time check that the canonical servicer satisfies the seam.
+var _ PasswordServicer = (*xkms.XKMSService)(nil)
 
 // NewPasswordHandlers creates a new PasswordHandlers instance. The manager
 // parameter may be nil for single-tenant (backward compatible) mode.
@@ -39,6 +62,14 @@ func NewPasswordHandlers(store staticpw.Store, manager *staticpw.TenantPasswordS
 		store:   store,
 		manager: manager,
 	}
+}
+
+// SetServicer wires the XKMS service layer into the password handlers. It
+// follows the same injection convention as HandlerContext.SetXKMSService and
+// must be called by the composition root for the access-mode and unlock
+// endpoints to be available.
+func (h *PasswordHandlers) SetServicer(servicer PasswordServicer) {
+	h.servicer = servicer
 }
 
 // resolveStore returns the appropriate store for the request. When a manager
@@ -91,6 +122,13 @@ type PasswordGenerateRequest struct {
 // PasswordStoreUnlockRequest is the request body for unlocking the password store.
 type PasswordStoreUnlockRequest struct {
 	PIN string `json:"pin"`
+}
+
+// PasswordStoreAccessModeRequest is the request body for selecting the
+// password store access mode. Mode must be one of the staticpw access modes:
+// "pin_per_operation" or "session_based".
+type PasswordStoreAccessModeRequest struct {
+	Mode string `json:"mode"`
 }
 
 // --- Response types ---
@@ -155,6 +193,12 @@ type PasswordDeleteResponse struct {
 type PasswordGenerateResponse struct {
 	Password string `json:"password"`
 	Length   int    `json:"length"`
+}
+
+// PasswordStoreAccessModeResponse is the response for the access-mode endpoint.
+type PasswordStoreAccessModeResponse struct {
+	Mode    string `json:"mode"`
+	Message string `json:"message"`
 }
 
 // PasswordStoreStatusResponse is the response for the password store status endpoint.
@@ -457,29 +501,42 @@ func (h *PasswordHandlers) DeletePasswordHandler(w http.ResponseWriter, r *http.
 // UnlockHandler handles POST /api/v1/passwords/unlock requests.
 // When a TenantPasswordStoreManager is configured, it unlocks the
 // tenant's session allowing password store access.
+//
+// The unlock itself is performed by the service layer, which verifies the
+// caller's user PIN first. The handler must not call
+// TenantPasswordStoreManager.UnlockTenant directly: that path carries no
+// credential check, so any authenticated tenant user could open the store.
 func (h *PasswordHandlers) UnlockHandler(w http.ResponseWriter, r *http.Request) {
 	if h.manager == nil {
 		passwordWriteJSONError(w, "Password store unlock requires server integration", http.StatusNotImplemented)
 		return
 	}
 
+	if h.servicer == nil {
+		passwordWriteJSONError(w, "Password store unlock requires server integration", http.StatusNotImplemented)
+		return
+	}
+
 	identity := auth.GetIdentity(r.Context())
-	if identity == nil || identity.TenantID == "" {
+	if auth.IsCrossTenant(identity) {
 		passwordWriteJSONError(w, "Tenant identity required", http.StatusUnauthorized)
 		return
 	}
 
-	if err := h.manager.UnlockTenant(identity.TenantID); err != nil {
-		switch {
-		case errors.Is(err, staticpw.ErrStoreNotLocked):
-			passwordWriteJSONError(w, "Store is already unlocked", http.StatusConflict)
-		case errors.Is(err, seal.ErrTenantSealed):
-			passwordWriteJSONError(w, "Tenant barrier is sealed", http.StatusServiceUnavailable)
-		case errors.Is(err, seal.ErrTenantNotFound):
-			passwordWriteJSONError(w, "Tenant not found", http.StatusNotFound)
-		default:
-			passwordWriteJSONError(w, "Failed to unlock store", http.StatusInternalServerError)
+	// The user PIN is optional on the wire so an unprovisioned deployment gets
+	// the servicer's precise "not provisioned" answer rather than a decode
+	// failure. An absent body is an unlock attempt with no PIN, which the
+	// servicer rejects.
+	var unlockReq transport.PasswordStoreUnlockRequest
+	if r.Body != nil {
+		if err := json.NewDecoder(r.Body).Decode(&unlockReq); err != nil && !errors.Is(err, io.EOF) {
+			passwordWriteJSONError(w, "Invalid request body", http.StatusBadRequest)
+			return
 		}
+	}
+
+	if err := h.servicer.PasswordStoreUnlock(r.Context(), &unlockReq); err != nil {
+		passwordWriteUnlockError(w, err)
 		return
 	}
 
@@ -510,7 +567,7 @@ func (h *PasswordHandlers) LockHandler(w http.ResponseWriter, r *http.Request) {
 	}
 
 	identity := auth.GetIdentity(r.Context())
-	if identity == nil || identity.TenantID == "" {
+	if auth.IsCrossTenant(identity) {
 		passwordWriteJSONError(w, "Tenant identity required", http.StatusUnauthorized)
 		return
 	}
@@ -581,11 +638,54 @@ func (h *PasswordHandlers) StatusHandler(w http.ResponseWriter, r *http.Request)
 	writeJSON(w, resp, http.StatusOK)
 }
 
-// SetAccessModeHandler handles PUT /api/v1/passwords/access-mode requests.
-// This endpoint is a stub that returns 501 Not Implemented. Access mode
-// management requires server-level integration with the access control layer.
+// SetAccessModeHandler handles POST /api/v1/passwords/access-mode requests.
+// It delegates to the XKMS service layer, which owns the rules for which
+// access-control strategy a given password store can enforce.
 func (h *PasswordHandlers) SetAccessModeHandler(w http.ResponseWriter, r *http.Request) {
-	passwordWriteJSONError(w, "Access mode management requires server integration", http.StatusNotImplemented)
+	if h.servicer == nil {
+		passwordWriteJSONError(w, "Password store service not configured", http.StatusServiceUnavailable)
+		return
+	}
+
+	var req PasswordStoreAccessModeRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		passwordWriteJSONError(w, "Invalid request body", http.StatusBadRequest)
+		return
+	}
+	if req.Mode == "" {
+		passwordWriteJSONError(w, "Missing access mode", http.StatusBadRequest)
+		return
+	}
+
+	if err := h.servicer.PasswordStoreSetAccessMode(r.Context(), &transport.PasswordStoreSetAccessModeRequest{
+		Mode: req.Mode,
+	}); err != nil {
+		passwordHandleAccessModeError(w, err)
+		return
+	}
+
+	writeJSON(w, PasswordStoreAccessModeResponse{
+		Mode:    req.Mode,
+		Message: "Password store access mode set",
+	}, http.StatusOK)
+}
+
+// passwordHandleAccessModeError maps service-layer access mode errors to HTTP
+// status codes. An unsupported (but well formed) mode is a capability
+// boundary of the wired store, not a malformed request, so it maps to 501.
+func passwordHandleAccessModeError(w http.ResponseWriter, err error) {
+	switch {
+	case errors.Is(err, xkms.ErrInvalidAccessMode):
+		passwordWriteJSONError(w, "Invalid access mode (allowed: pin_per_operation, session_based)", http.StatusBadRequest)
+	case errors.Is(err, xkms.ErrNilRequest):
+		passwordWriteJSONError(w, "Missing access mode", http.StatusBadRequest)
+	case errors.Is(err, xkms.ErrNotConfigured):
+		passwordWriteJSONError(w, "Password store not configured", http.StatusServiceUnavailable)
+	case errors.Is(err, xkms.ErrOperationNotSupported):
+		passwordWriteJSONError(w, "The wired password store cannot enforce the requested access mode", http.StatusNotImplemented)
+	default:
+		passwordHandleStoreError(w, err)
+	}
 }
 
 // GeneratePasswordHandler handles POST /api/v1/passwords/generate requests.
@@ -649,6 +749,33 @@ func passwordHandleStoreError(w http.ResponseWriter, err error) {
 }
 
 // passwordWriteJSONError writes an error response in the standard JSON format.
+// passwordWriteUnlockError maps the errors returned by
+// XKMSService.PasswordStoreUnlock onto HTTP statuses. The user-PIN sentinels
+// are distinguished from one another so an operator can tell "you sent no PIN"
+// from "this deployment has no PIN to check" from "your PIN was wrong"; the
+// last of those must not leak any detail beyond 401.
+func passwordWriteUnlockError(w http.ResponseWriter, err error) {
+	switch {
+	case errors.Is(err, xkms.ErrPasswordStoreUserPINRequired):
+		passwordWriteJSONError(w, "User PIN is required to unlock the password store", http.StatusBadRequest)
+	case errors.Is(err, xkms.ErrPasswordStoreUserPINNotProvisioned):
+		passwordWriteJSONError(w, "User PIN is not provisioned; enable PIN management and set a user PIN", http.StatusPreconditionFailed)
+	case errors.Is(err, staticpw.ErrStoreNotLocked):
+		passwordWriteJSONError(w, "Store is already unlocked", http.StatusConflict)
+	case errors.Is(err, seal.ErrTenantSealed):
+		passwordWriteJSONError(w, "Tenant barrier is sealed", http.StatusServiceUnavailable)
+	case errors.Is(err, seal.ErrTenantNotFound):
+		passwordWriteJSONError(w, "Tenant not found", http.StatusNotFound)
+	case errors.Is(err, xkms.ErrNotConfigured), errors.Is(err, xkms.ErrOperationNotSupported):
+		passwordWriteJSONError(w, "Password store unlock requires server integration", http.StatusNotImplemented)
+	default:
+		// Any remaining error is a failed PIN verification from the PIN
+		// backend. Report it as an authentication failure without echoing the
+		// backend's message, which can carry retry counters and lockout state.
+		passwordWriteJSONError(w, "User PIN verification failed", http.StatusUnauthorized)
+	}
+}
+
 func passwordWriteJSONError(w http.ResponseWriter, message string, status int) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(status)

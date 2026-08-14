@@ -72,12 +72,16 @@ func NewDBusNotifier(logger *slog.Logger) (*DBusNotifier, error) {
 	}, nil
 }
 
+// getuid reports the process UID. It is a package variable so tests can
+// exercise the sudo/root session-bus resolution path without running as root.
+var getuid = os.Getuid
+
 // connectSessionBus connects to the appropriate D-Bus session bus. When running
 // as root via sudo, it connects to the invoking user's session bus so that
 // desktop notifications reach the user's notification daemon.
 func connectSessionBus(logger *slog.Logger) (*dbus.Conn, error) {
 	// If not running as root, use default session bus
-	if os.Getuid() != 0 {
+	if getuid() != 0 {
 		logger.Info("connecting to D-Bus session bus (non-root)")
 		return dbus.ConnectSessionBus()
 	}

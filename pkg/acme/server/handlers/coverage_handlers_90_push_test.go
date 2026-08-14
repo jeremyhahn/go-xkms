@@ -81,6 +81,10 @@ func (m *CoverageMockEABDAO) SaveWithCondition(_ context.Context, _ *entities.Ex
 	panic("not implemented")
 }
 
+func (m *CoverageMockEABDAO) SaveIfAbsent(_ context.Context, _ *entities.ExternalAccountBinding) (bool, error) {
+	panic("not implemented")
+}
+
 func (m *CoverageMockEABDAO) Get(_ context.Context, _ uint64) (*entities.ExternalAccountBinding, error) {
 	m.getCalled = true
 	if m.getErr != nil {

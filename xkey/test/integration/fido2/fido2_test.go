@@ -57,8 +57,8 @@ func TestFIDO2_HelpOutput(t *testing.T) {
 // TestFIDO2_DaemonStartStop verifies that the fido2 daemon starts, creates a
 // virtual HID device discoverable by fido2-token, and cleanly stops.
 func TestFIDO2_DaemonStartStop(t *testing.T) {
-	skipIfNoUHID(t)
-	skipIfNoFido2Token(t)
+	requireUHID(t)
+	requireFido2Token(t)
 
 	h := NewFIDO2TestHelper(t)
 	cmd := h.StartDaemon()
@@ -96,8 +96,8 @@ func TestFIDO2_DaemonStartStop(t *testing.T) {
 // TestFIDO2_DeviceInfo verifies that fido2-token -I returns valid device
 // information from the running daemon.
 func TestFIDO2_DeviceInfo(t *testing.T) {
-	skipIfNoUHID(t)
-	skipIfNoFido2Token(t)
+	requireUHID(t)
+	requireFido2Token(t)
 
 	h := NewFIDO2TestHelper(t)
 	h.StartDaemon()
@@ -127,8 +127,8 @@ func TestFIDO2_DeviceInfo(t *testing.T) {
 // that the libfido2 HID_NAME fallback is working and that the daemon
 // correctly propagates the --name flag to the UHID device descriptor.
 func TestFIDO2_DeviceProductName(t *testing.T) {
-	skipIfNoUHID(t)
-	skipIfNoFido2Token(t)
+	requireUHID(t)
+	requireFido2Token(t)
 
 	const expectedName = "xKey Test Authenticator"
 
@@ -175,8 +175,8 @@ func TestFIDO2_DeviceProductName(t *testing.T) {
 // TestFIDO2_StorageOptions verifies the daemon starts successfully with
 // different storage configurations.
 func TestFIDO2_StorageOptions(t *testing.T) {
-	skipIfNoUHID(t)
-	skipIfNoFido2Token(t)
+	requireUHID(t)
+	requireFido2Token(t)
 
 	tests := []struct {
 		name        string
@@ -221,8 +221,8 @@ func TestFIDO2_StorageOptions(t *testing.T) {
 // TestFIDO2_CustomFlags verifies the daemon starts with various custom flag
 // combinations and that flag values are applied correctly.
 func TestFIDO2_CustomFlags(t *testing.T) {
-	skipIfNoUHID(t)
-	skipIfNoFido2Token(t)
+	requireUHID(t)
+	requireFido2Token(t)
 
 	tests := []struct {
 		name         string
@@ -290,8 +290,8 @@ func TestFIDO2_CustomFlags(t *testing.T) {
 // TestFIDO2_PINEnabled verifies that starting the daemon with --set-pin
 // correctly enables PIN support, visible in device info output.
 func TestFIDO2_PINEnabled(t *testing.T) {
-	skipIfNoUHID(t)
-	skipIfNoFido2Token(t)
+	requireUHID(t)
+	requireFido2Token(t)
 
 	h := NewFIDO2TestHelper(t)
 	h.StartDaemon("--set-pin", "123456")
@@ -353,8 +353,8 @@ func TestFIDO2_InvalidArgs(t *testing.T) {
 
 // TestFIDO2_CleanShutdown verifies the daemon exits cleanly when sent SIGTERM.
 func TestFIDO2_CleanShutdown(t *testing.T) {
-	skipIfNoUHID(t)
-	skipIfNoFido2Token(t)
+	requireUHID(t)
+	requireFido2Token(t)
 
 	h := NewFIDO2TestHelper(t)
 	cmd := h.StartDaemon()
@@ -391,8 +391,8 @@ func TestFIDO2_CleanShutdown(t *testing.T) {
 // restarts. The daemon is started with file storage, stopped, and restarted
 // with the same storage path.
 func TestFIDO2_StoragePersistence(t *testing.T) {
-	skipIfNoUHID(t)
-	skipIfNoFido2Token(t)
+	requireUHID(t)
+	requireFido2Token(t)
 
 	h := NewFIDO2TestHelper(t)
 
@@ -433,8 +433,8 @@ func TestFIDO2_StoragePersistence(t *testing.T) {
 // data hash, relying party info, and user info, we verify device operability
 // via fido2-token -I instead.
 func TestFIDO2_MakeCredential(t *testing.T) {
-	skipIfNoUHID(t)
-	skipIfNoFido2Token(t)
+	requireUHID(t)
+	requireFido2Token(t)
 
 	h := NewFIDO2TestHelper(t)
 	h.StartDaemon("--pin=false")
@@ -456,8 +456,8 @@ func TestFIDO2_MakeCredential(t *testing.T) {
 // Like MakeCredential, this has complex stdin requirements. The test verifies
 // device operability as a precondition.
 func TestFIDO2_GetAssertion(t *testing.T) {
-	skipIfNoUHID(t)
-	skipIfNoFido2Token(t)
+	requireUHID(t)
+	requireFido2Token(t)
 
 	h := NewFIDO2TestHelper(t)
 	h.StartDaemon("--pin=false")

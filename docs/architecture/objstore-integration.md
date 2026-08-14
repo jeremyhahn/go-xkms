@@ -260,4 +260,4 @@ When using go-objstore through an adapter, these backends are available:
 
 - [Storage Architecture](./storage.md)
 - [go-objstore Repository](https://github.com/jeremyhahn/go-objstore)
-- [Getting Started Guide](../usage/getting-started.md)
+- [Getting Started Guide](../../xkey/docs/usage/getting-started.md)

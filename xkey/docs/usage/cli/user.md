@@ -1,5 +1,11 @@
 # User Management CLI
 
+> **Scope:** this page documents the go-xkms **server** CLI `xkmsctl user`
+> (source: `cmd/xkmsctl/`), **not** the `xkey` desktop CLI. It lives under
+> `xkey/docs/` for historical reasons.
+> There is no `xkey` equivalent. For the xkey command tree see
+> [the xkey CLI reference](README.md).
+
 ## Overview
 
 The `user` command group provides comprehensive user account management for the go-xkms system. It supports passwordless authentication using FIDO2 security keys, enabling secure access without the need for traditional passwords.

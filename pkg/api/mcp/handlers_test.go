@@ -23,11 +23,14 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"encoding/pem"
+	"github.com/jeremyhahn/go-xkms/pkg/auth"
 	"math/big"
 	"net"
 	"testing"
 	"time"
 
+	"github.com/jeremyhahn/go-xkms/pkg/types"
+	"github.com/jeremyhahn/go-xkms/pkg/xkms"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -40,7 +43,7 @@ func createTestServer(t *testing.T) *Server {
 	svc := setupTestXKMS(t)
 	t.Cleanup(cleanupXKMS)
 
-	server, err := NewServer(&Config{Addr: "localhost:0", XKMSService: svc})
+	server, err := NewServer(&Config{Addr: "localhost:0", XKMSService: svc, Authenticator: auth.NewNoOpAuthenticator()})
 	require.NoError(t, err)
 
 	return server
@@ -259,7 +262,13 @@ func TestHandler_GenerateKey(t *testing.T) {
 
 		_, err := server.handleGenerateKey(context.Background(), req)
 		require.Error(t, err)
-		assert.Contains(t, err.Error(), "invalid backend")
+		// An unregistered backend is now refused in the service layer's
+		// vocabulary. The local gate this replaces went through
+		// types.ParseStoreType, which also rejected every registered backend
+		// name that is not itself a store type. The condition under test --
+		// an unknown backend must not be served by the default one -- is
+		// unchanged.
+		assert.Contains(t, err.Error(), "backend not found")
 	})
 
 	t.Run("fails with unsupported key type", func(t *testing.T) {
@@ -279,7 +288,7 @@ func TestHandler_GenerateKey(t *testing.T) {
 
 		_, err := server.handleGenerateKey(context.Background(), req)
 		require.Error(t, err)
-		assert.Contains(t, err.Error(), "unsupported key type")
+		assert.Contains(t, err.Error(), "unsupported key algorithm")
 	})
 
 	t.Run("generates key with default backend", func(t *testing.T) {
@@ -901,7 +910,13 @@ func TestHandler_RotateKey(t *testing.T) {
 
 		_, err := server.handleRotateKey(context.Background(), req)
 		require.Error(t, err)
-		assert.Contains(t, err.Error(), "invalid backend")
+		// An unregistered backend is now refused in the service layer's
+		// vocabulary. The local gate this replaces went through
+		// types.ParseStoreType, which also rejected every registered backend
+		// name that is not itself a store type. The condition under test --
+		// an unknown backend must not be served by the default one -- is
+		// unchanged.
+		assert.Contains(t, err.Error(), "backend not found")
 	})
 }
 
@@ -1616,7 +1631,9 @@ func TestHandler_AsymmetricEncrypt(t *testing.T) {
 
 		_, err = server.handleAsymmetricEncrypt(context.Background(), req)
 		require.Error(t, err)
-		assert.Contains(t, err.Error(), "not an RSA key")
+		// The key-type refusal now comes from the service layer, which owns
+		// the OAEP construction; the wording is its own.
+		assert.Contains(t, err.Error(), "key is not RSA")
 	})
 }
 
@@ -1653,6 +1670,9 @@ func TestHandler_AsymmetricDecrypt(t *testing.T) {
 	require.NoError(t, err)
 
 	t.Run("decrypts data", func(t *testing.T) {
+		// No padding or hash: xkms.asymmetricDecrypt defaults to the
+		// OAEP-SHA-256 its counterpart xkms.asymmetricEncrypt produces, so an
+		// unchanged caller keeps working.
 		params := AsymmetricDecryptParams{
 			KeyID:      "test-asym-decrypt-key",
 			Backend:    "software",
@@ -2051,7 +2071,7 @@ func TestHandler_ExportKeyMaterial(t *testing.T) {
 			ID:      1,
 		}
 
-		_, err := server.handleExportKeyMaterial(context.Background(), req)
+		_, err := server.handleExportKey(context.Background(), req)
 		require.Error(t, err)
 		assert.Contains(t, err.Error(), "key_id is required")
 	})
@@ -2064,7 +2084,7 @@ func TestHandler_ExportKeyMaterial(t *testing.T) {
 			ID:      1,
 		}
 
-		_, err := server.handleExportKeyMaterial(context.Background(), req)
+		_, err := server.handleExportKey(context.Background(), req)
 		require.Error(t, err)
 		assert.Contains(t, err.Error(), "invalid params")
 	})
@@ -2084,7 +2104,7 @@ func TestHandler_ExportKeyMaterial(t *testing.T) {
 			ID:      1,
 		}
 
-		_, err := server.handleExportKeyMaterial(context.Background(), req)
+		_, err := server.handleExportKey(context.Background(), req)
 		require.Error(t, err)
 		assert.Contains(t, err.Error(), "failed to find key")
 	})
@@ -2663,7 +2683,10 @@ func TestHandler_RotateKey_NonExistent(t *testing.T) {
 
 		_, err := server.handleRotateKey(context.Background(), req)
 		require.Error(t, err)
-		assert.Contains(t, err.Error(), "failed to find key")
+		// Rotation now reports a missing key in the service layer's vocabulary,
+		// the same one sign and verify use in this package. The condition under
+		// test is unchanged: a key that does not exist must be refused.
+		assert.Contains(t, err.Error(), "key not found")
 	})
 }
 
@@ -3105,7 +3128,7 @@ func TestHandler_Sign_WithDifferentHashes(t *testing.T) {
 	_, err := server.handleGenerateKey(context.Background(), genReq)
 	require.NoError(t, err)
 
-	hashAlgs := []string{"SHA1", "SHA224", "SHA256", "SHA384", "SHA512"}
+	hashAlgs := []string{"SHA224", "SHA256", "SHA384", "SHA512", "SHA3-256"}
 
 	for _, hash := range hashAlgs {
 		t.Run("signs with "+hash, func(t *testing.T) {
@@ -3352,6 +3375,8 @@ func TestHandler_DecryptAsymmetric(t *testing.T) {
 			KeyID:      "test-asym-decrypt-path",
 			Ciphertext: ciphertext,
 			// No backend specified - should search
+			Padding: "oaep",
+			Hash:    "SHA-256",
 		}
 		paramsJSON, _ := json.Marshal(params)
 
@@ -3375,6 +3400,8 @@ func TestHandler_DecryptAsymmetric(t *testing.T) {
 			KeyID:      "test-asym-decrypt-path",
 			Backend:    "software",
 			Ciphertext: ciphertext,
+			Padding:    "oaep",
+			Hash:       "SHA-256",
 		}
 		paramsJSON, _ := json.Marshal(params)
 
@@ -3566,7 +3593,12 @@ func TestHandler_SymmetricEncrypt_WithNonSymmetricBackend(t *testing.T) {
 	_, err := server.handleGenerateKey(context.Background(), genReq)
 	require.NoError(t, err)
 
-	t.Run("fails when trying symmetric encrypt with asymmetric key", func(t *testing.T) {
+	// Encrypting an RSA key through xkms.encrypt is no longer an error. The
+	// service layer falls back to PKCS#1 v1.5 encryption under the key's public
+	// half, which is what makes a key wrapped under an RSA KEK work; this
+	// transport now gets that behaviour instead of its own refusal, matching
+	// REST and gRPC.
+	t.Run("falls back to asymmetric encryption for an RSA key", func(t *testing.T) {
 		params := EncryptParams{
 			KeyID:     "test-rsa-not-sym",
 			Backend:   "software",
@@ -3581,8 +3613,26 @@ func TestHandler_SymmetricEncrypt_WithNonSymmetricBackend(t *testing.T) {
 			ID:      1,
 		}
 
-		_, err := server.handleEncrypt(context.Background(), req)
-		require.Error(t, err)
+		result, err := server.handleEncrypt(context.Background(), req)
+		require.NoError(t, err)
+
+		encryptResult, ok := result.(EncryptResult)
+		require.True(t, ok)
+		require.NotEmpty(t, encryptResult.Ciphertext)
+		assert.NotEqual(t, []byte("secret data"), encryptResult.Ciphertext)
+
+		// The ciphertext must be openable by the key that produced it, and by
+		// the matching padding scheme.
+		decParams := DecryptParams{
+			KeyID:      "test-rsa-not-sym",
+			Backend:    "software",
+			Ciphertext: encryptResult.Ciphertext,
+		}
+		decParamsJSON, _ := json.Marshal(decParams)
+		decReq := &JSONRPCRequest{JSONRPC: "2.0", Method: "xkms.decrypt", Params: decParamsJSON, ID: 2}
+		decResult, err := server.handleDecrypt(context.Background(), decReq)
+		require.NoError(t, err)
+		assert.Equal(t, []byte("secret data"), decResult.(DecryptResult).Plaintext)
 	})
 }
 
@@ -3678,8 +3728,15 @@ func TestHandler_GenerateKey_SymmetricBadBackend(t *testing.T) {
 	})
 }
 
-// TestHandler_Verify_SHA1Hash tests verify with SHA1 hash
-func TestHandler_Verify_SHA1Hash(t *testing.T) {
+// TestHandler_SHA1Hash asserts that the MCP transport applies the same
+// weak-hash policy as every other transport. It used to resolve hash names from
+// its own private table, which admitted SHA-1 unconditionally, so a caller
+// could obtain a SHA-1 signature over MCP that REST and gRPC refuse.
+//
+// The second half asserts the escape hatch still reaches this transport: an
+// operator who accepted the compliance gap must actually be able to do the
+// legacy interop it was granted for.
+func TestHandler_SHA1Hash(t *testing.T) {
 	server := createTestServer(t)
 	defer cleanupXKMS()
 
@@ -3695,7 +3752,6 @@ func TestHandler_Verify_SHA1Hash(t *testing.T) {
 	_, err := server.handleGenerateKey(context.Background(), genReq)
 	require.NoError(t, err)
 
-	// Sign with SHA1
 	signParams := SignParams{
 		KeyID:   "test-verify-sha1-key",
 		Backend: "software",
@@ -3704,12 +3760,40 @@ func TestHandler_Verify_SHA1Hash(t *testing.T) {
 	}
 	signParamsJSON, _ := json.Marshal(signParams)
 	signReq := &JSONRPCRequest{JSONRPC: "2.0", Method: "xkms.sign", Params: signParamsJSON, ID: 1}
-	signResult, err := server.handleSign(context.Background(), signReq)
-	require.NoError(t, err)
 
-	signature := signResult.(SignResult).Signature
+	t.Run("SHA-1 signing is refused and yields no signature", func(t *testing.T) {
+		result, signErr := server.handleSign(context.Background(), signReq)
+		require.Error(t, signErr)
+		require.ErrorIs(t, signErr, xkms.ErrInvalidHashFunction)
+		assert.Nil(t, result)
+	})
 
-	t.Run("verifies with SHA1", func(t *testing.T) {
+	t.Run("SHA-1 verification is refused", func(t *testing.T) {
+		params := VerifyParams{
+			KeyID:     "test-verify-sha1-key",
+			Backend:   "software",
+			Data:      []byte("test data sha1"),
+			Signature: []byte("irrelevant"),
+			Hash:      "SHA1",
+		}
+		paramsJSON, _ := json.Marshal(params)
+
+		req := &JSONRPCRequest{JSONRPC: "2.0", Method: "xkms.verify", Params: paramsJSON, ID: 1}
+		result, verifyErr := server.handleVerify(context.Background(), req)
+		require.Error(t, verifyErr)
+		require.ErrorIs(t, verifyErr, xkms.ErrInvalidHashFunction)
+		assert.Nil(t, result)
+	})
+
+	t.Run("SHA-1 round-trips under the weak-hash policy", func(t *testing.T) {
+		types.SetAllowWeakHashes(true)
+		defer types.SetAllowWeakHashes(false)
+
+		signResult, signErr := server.handleSign(context.Background(), signReq)
+		require.NoError(t, signErr)
+		signature := signResult.(SignResult).Signature
+		require.NotEmpty(t, signature)
+
 		params := VerifyParams{
 			KeyID:     "test-verify-sha1-key",
 			Backend:   "software",
@@ -3719,15 +3803,9 @@ func TestHandler_Verify_SHA1Hash(t *testing.T) {
 		}
 		paramsJSON, _ := json.Marshal(params)
 
-		req := &JSONRPCRequest{
-			JSONRPC: "2.0",
-			Method:  "xkms.verify",
-			Params:  paramsJSON,
-			ID:      1,
-		}
-
-		result, err := server.handleVerify(context.Background(), req)
-		require.NoError(t, err)
+		req := &JSONRPCRequest{JSONRPC: "2.0", Method: "xkms.verify", Params: paramsJSON, ID: 1}
+		result, verifyErr := server.handleVerify(context.Background(), req)
+		require.NoError(t, verifyErr)
 
 		verifyResult, ok := result.(VerifyResult)
 		require.True(t, ok)
@@ -4108,7 +4186,7 @@ func TestHandler_ImportExportKeyFlow(t *testing.T) {
 			ID:      1,
 		}
 
-		_, err := server.handleExportKeyMaterial(context.Background(), req)
+		_, err := server.handleExportKey(context.Background(), req)
 		// This will error due to key size limitations
 		require.Error(t, err)
 	})
@@ -4268,7 +4346,7 @@ func TestHandler_ExportKey_NonExportableKey(t *testing.T) {
 			ID:      1,
 		}
 
-		_, err := server.handleExportKeyMaterial(context.Background(), req)
+		_, err := server.handleExportKey(context.Background(), req)
 		require.Error(t, err)
 		assert.Contains(t, err.Error(), "not exportable")
 	})
@@ -5096,10 +5174,14 @@ func TestHandler_Decrypt_Asymmetric(t *testing.T) {
 	require.NoError(t, err)
 
 	t.Run("decrypts asymmetric data", func(t *testing.T) {
+		// xkms.decrypt is the general-purpose method and defaults to PKCS#1
+		// v1.5, so an OAEP ciphertext names its scheme and digest.
 		params := DecryptParams{
 			KeyID:      "test-asym-decrypt-key",
 			Backend:    "software",
 			Ciphertext: ciphertext,
+			Padding:    "oaep",
+			Hash:       "SHA-256",
 		}
 		paramsJSON, _ := json.Marshal(params)
 
@@ -5275,7 +5357,7 @@ func TestHandler_HandleGenerateKey_MoreErrorPaths(t *testing.T) {
 	server := createTestServer(t)
 	defer cleanupXKMS()
 
-	t.Run("unsupported key type", func(t *testing.T) {
+	t.Run("unsupported key algorithm", func(t *testing.T) {
 		params := GenerateKeyParams{
 			KeyID:   "test-unsupported",
 			Backend: "software",
@@ -5292,7 +5374,7 @@ func TestHandler_HandleGenerateKey_MoreErrorPaths(t *testing.T) {
 
 		_, err := server.handleGenerateKey(context.Background(), req)
 		assert.Error(t, err)
-		assert.Contains(t, err.Error(), "unsupported key type")
+		assert.Contains(t, err.Error(), "unsupported key algorithm")
 	})
 }
 
@@ -5506,10 +5588,16 @@ func TestHandler_Decrypt_SearchInSoftwareBackend(t *testing.T) {
 	require.NoError(t, err)
 
 	t.Run("finds key in software backend after symmetric lookup fails", func(t *testing.T) {
+		// The padding and digest are now stated rather than hard-wired to
+		// OAEP-SHA-256 inside the handler, which is why this call once worked
+		// with neither -- and why a PKCS#1 v1.5 ciphertext could not be
+		// decrypted over this transport at all.
 		params := DecryptParams{
 			KeyID: "test-decrypt-rsa-search",
 			// No backend - will search symmetric first, then software
 			Ciphertext: ciphertext,
+			Padding:    "oaep",
+			Hash:       "SHA-256",
 		}
 		paramsJSON, _ := json.Marshal(params)
 
@@ -5593,13 +5681,15 @@ func TestHandler_Verify_SignatureAsStruct(t *testing.T) {
 			ID:      1,
 		}
 
-		result, err := server.handleVerify(context.Background(), req)
-		require.NoError(t, err)
-
-		verifyResult, ok := result.(VerifyResult)
-		require.True(t, ok)
-		// Signature will be invalid but should not error
-		assert.False(t, verifyResult.Valid)
+		// A JSON object is not one of the three signature encodings this
+		// transport accepts. It used to be marshaled back to JSON and
+		// unmarshaled into a byte slice, an operation that fails, whose error
+		// was discarded; the empty slice that survived was then reported as an
+		// invalid signature -- an answer indistinguishable from a genuine
+		// verification failure.
+		_, err := server.handleVerify(context.Background(), req)
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "signature")
 	})
 
 	t.Run("handles signature as integer type", func(t *testing.T) {
@@ -5619,12 +5709,11 @@ func TestHandler_Verify_SignatureAsStruct(t *testing.T) {
 			ID:      1,
 		}
 
-		result, err := server.handleVerify(context.Background(), req)
-		require.NoError(t, err)
-
-		verifyResult, ok := result.(VerifyResult)
-		require.True(t, ok)
-		assert.False(t, verifyResult.Valid)
+		// A bare number is not a signature encoding either; see the map case
+		// above for why decoding it to an empty slice was worse than refusing.
+		_, err := server.handleVerify(context.Background(), req)
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "signature")
 	})
 }
 

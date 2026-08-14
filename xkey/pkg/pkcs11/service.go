@@ -22,6 +22,7 @@ import (
 	"crypto"
 	"crypto/ecdsa"
 	"crypto/ed25519"
+	"crypto/rand"
 	"crypto/rsa"
 	"crypto/x509"
 	"encoding/pem"
@@ -246,6 +247,54 @@ func (t *EmbeddedTransport) Encrypt(ctx context.Context, req *transport.EncryptR
 	}, nil
 }
 
+// EncryptAsym encrypts plaintext with an RSA public key using OAEP padding.
+//
+// The module routes CKM_RSA_PKCS_OAEP here rather than through Encrypt because
+// the generic encrypt request carries no digest selector, so a caller's
+// CK_RSA_PKCS_OAEP_PARAMS.hashAlg would have nowhere to travel.
+//
+// The OAEP digest is resolved by the SDK's shared ResolveOAEPHash, not by a
+// rule restated here, so this transport rejects a weak digest exactly as the
+// server does. Re-deriving that check locally is how two entry points end up
+// disagreeing about padding strength.
+func (t *EmbeddedTransport) EncryptAsym(ctx context.Context, req *transport.EncryptAsymRequest) (*transport.EncryptAsymResponse, error) {
+	if req == nil {
+		return nil, ErrNilRequest
+	}
+
+	ks, err := xkms.GetBackend(req.Backend)
+	if err != nil {
+		return nil, &DetailError{Err: ErrBackendNotFound, Detail: fmt.Sprintf(": %s", req.Backend)}
+	}
+
+	attrs, err := findKeyAttributes(ctx, ks, req.KeyID)
+	if err != nil {
+		return nil, err
+	}
+
+	signer, err := ks.Signer(ctx, attrs)
+	if err != nil {
+		return nil, &SentinelCauseError{Sentinel: ErrEncryptionFailed, Cause: err}
+	}
+
+	rsaPub, ok := signer.Public().(*rsa.PublicKey)
+	if !ok {
+		return nil, &DetailError{Err: ErrEncryptionFailed, Detail: ": key is not RSA, asymmetric encryption requires RSA"}
+	}
+
+	hash, err := xkms.ResolveOAEPHash(req.Hash)
+	if err != nil {
+		return nil, err
+	}
+
+	ciphertext, err := rsa.EncryptOAEP(hash.New(), rand.Reader, rsaPub, req.Plaintext, nil)
+	if err != nil {
+		return nil, &SentinelCauseError{Sentinel: ErrEncryptionFailed, Cause: err}
+	}
+
+	return &transport.EncryptAsymResponse{Ciphertext: ciphertext}, nil
+}
+
 // Decrypt decrypts data with the specified symmetric key.
 func (t *EmbeddedTransport) Decrypt(ctx context.Context, req *transport.DecryptRequest) (*transport.DecryptResponse, error) {
 	if req == nil {
@@ -284,58 +333,46 @@ func (t *EmbeddedTransport) Decrypt(ctx context.Context, req *transport.DecryptR
 	}, nil
 }
 
-// DeriveKey derives a key using the HKDF algorithm and the provided parameters.
+// DeriveKey derives a key with the KDF the request names, running the
+// derivation in the service layer rather than in this process's address space.
+//
+// The whole body is a delegation on purpose. The algorithm dispatch, the
+// per-construction parameter applicability rules, the hash approval sets and
+// the choice of where the KDF executes all live in the one service-layer
+// implementation every other transport reaches; a second assembly of them here
+// is how the two paths drift, and this one had already drifted twice:
+//
+//   - It ignored req.Algorithm entirely and always ran HKDF. A
+//     CKM_SP800_108_COUNTER_KDF request derived HKDF bytes and returned
+//     CKR_OK — wrong key material under a successful status, which no
+//     status check can detect.
+//   - It resolved a base key named by identity by calling ExportKeyMaterial
+//     and running the KDF locally. That is precisely what
+//     types.SymmetricKeyDeriver exists to prevent (see its doc comment): the
+//     module runs inside the calling application, so pulling a base key's
+//     material there either fails outright for a TPM- or HSM-resident key —
+//     the keys that most need C_DeriveKey — or strips the protection that
+//     made the key worth storing in hardware.
+//
+// The service layer resolves the base key from exactly one of the two forms
+// the request may carry: raw InputKeyMaterial, which is the application's own
+// CKA_VALUE arriving from C_CreateObject and is legitimately already in this
+// process, or the backend+key identity, which is derived from inside the
+// backend that holds the key. A backend that cannot derive from its own stored
+// key implements no SymmetricKeyDeriver and the caller receives
+// ErrOperationNotSupported naming it, never a local derivation over exported
+// material.
 func (t *EmbeddedTransport) DeriveKey(ctx context.Context, req *transport.DeriveKeyRequest) (*transport.DeriveKeyResponse, error) {
 	if req == nil {
 		return nil, ErrNilRequest
 	}
 
-	hashAlg := parseHashAlgorithm(req.Hash)
-	adapter := &xkms.HKDFAdapter{}
-	params := &xkms.CryptoKDFParams{
-		Algorithm: xkms.AlgorithmHKDF,
-		Salt:      req.Salt,
-		Info:      req.Info,
-		KeyLength: req.KeyLength,
-		Hash:      hashAlg,
-	}
-	if params.KeyLength <= 0 {
-		params.KeyLength = 32
-	}
-
-	// Use InputKeyMaterial if provided, otherwise derive from the backend key.
-	ikm := req.InputKeyMaterial
-	if len(ikm) == 0 && req.KeyID != "" {
-		ks, err := xkms.GetBackend(req.Backend)
-		if err != nil {
-			return nil, &DetailError{Err: ErrBackendNotFound, Detail: fmt.Sprintf(": %s", req.Backend)}
-		}
-		ieBackend, ok := ks.KeyProvider().(xkms.ImportExportBackend)
-		if !ok {
-			return nil, &DetailError{Err: ErrDerivationFailed, Detail: ": backend does not support key material export for derivation"}
-		}
-		attrs, err := findKeyAttributes(ctx, ks, req.KeyID)
-		if err != nil {
-			return nil, &DetailError{Err: ErrKeyNotFound, Detail: fmt.Sprintf(": %s", req.KeyID)}
-		}
-		ikm, err = ieBackend.ExportKeyMaterial(ctx, attrs)
-		if err != nil {
-			return nil, &DetailError{Err: ErrDerivationFailed, Detail: fmt.Sprintf(": failed to export key material: %v", err)}
-		}
-	}
-
-	if len(ikm) == 0 {
-		return nil, &DetailError{Err: ErrDerivationFailed, Detail: ": no input key material provided"}
-	}
-
-	derived, err := adapter.DeriveKey(ikm, params)
+	service, err := xkms.Get()
 	if err != nil {
-		return nil, &SentinelCauseError{Sentinel: ErrDerivationFailed, Cause: err}
+		return nil, &SentinelCauseError{Sentinel: ErrServiceNotInitialized, Cause: err}
 	}
 
-	return &transport.DeriveKeyResponse{
-		DerivedKey: derived,
-	}, nil
+	return service.DeriveKey(ctx, req)
 }
 
 // DeriveKeyECDH performs ECDH key agreement and derives a symmetric key.
@@ -481,6 +518,168 @@ func (t *EmbeddedTransport) ExportKeyMaterial(ctx context.Context, req *transpor
 		KeyMaterial: keyMaterial,
 		KeyType:     getAlgorithmString(attrs),
 		KeySize:     len(keyMaterial) * 8,
+	}, nil
+}
+
+// GetImportParameters obtains the wrapping public key and import token a
+// key-import ceremony requires, delegating to the in-process xkms backend.
+//
+// It is the first half of the ceremony that ImportKey completes: the caller
+// wraps its externally generated key material under the returned public key
+// before sending it, so plaintext key material never crosses the boundary.
+//
+// The key template is optional. A caller that has not chosen a key kind can
+// still request a wrapping key; when a kind is named, it decides the KeySpec
+// the backend negotiates. Only asymmetric kinds are honoured here, matching
+// what this transport's GenerateKey produces -- a symmetric template is refused
+// rather than negotiated for a key spec the embedded module cannot fulfil.
+func (t *EmbeddedTransport) GetImportParameters(ctx context.Context, req *transport.GetImportParametersRequest) (*transport.GetImportParametersResponse, error) {
+	if req == nil {
+		return nil, ErrNilRequest
+	}
+
+	attrs := &xkms.KeyAttributes{
+		CN:        req.KeyID,
+		StoreType: xkms.StoreType(req.Backend),
+	}
+	if err := applyImportKeyTemplate(attrs, req); err != nil {
+		return nil, err
+	}
+
+	params, err := xkms.ServiceGetImportParameters(
+		ctx, req.Backend, attrs, xkms.WrappingAlgorithm(req.Algorithm),
+	)
+	if err != nil {
+		return nil, &SentinelCauseError{Sentinel: ErrGetImportParamsFailed, Cause: err}
+	}
+
+	wrappingPubKeyBytes, err := x509.MarshalPKIXPublicKey(params.WrappingPublicKey)
+	if err != nil {
+		return nil, &WrappedError{Msg: "marshal wrapping public key", Err: err}
+	}
+
+	resp := &transport.GetImportParametersResponse{
+		WrappingPublicKey: wrappingPubKeyBytes,
+		ImportToken:       params.ImportToken,
+		Algorithm:         string(params.Algorithm),
+		KeySpec:           params.KeySpec,
+	}
+	if params.ExpiresAt != nil {
+		resp.ExpiresAt = params.ExpiresAt.UTC().Format("2006-01-02T15:04:05Z")
+	}
+	return resp, nil
+}
+
+// applyImportKeyTemplate sets the asymmetric key kind on attrs from an import
+// request, using the same mapping as GenerateKey so the negotiated KeySpec
+// agrees with what this transport can generate.
+//
+// An empty key type is left untouched: the caller is asking for a wrapping key
+// without committing to a kind. A symmetric or otherwise unrecognised type is
+// refused, because negotiating import parameters for a key the embedded module
+// does not produce would return a KeySpec the caller cannot satisfy.
+func applyImportKeyTemplate(attrs *xkms.KeyAttributes, req *transport.GetImportParametersRequest) error {
+	return applyKeyTemplate(attrs, keyTemplate{
+		KeyType: req.KeyType,
+		KeySize: req.KeySize,
+		Curve:   req.Curve,
+	})
+}
+
+// keyTemplate is the key-shape subset shared by GetImportParametersRequest and
+// ImportKeyRequest.
+//
+// The two requests carry identical shape fields and MUST produce identical key
+// attributes: the wrapping parameters are minted from one and the key is
+// installed from the other, so any divergence yields a key that imports
+// "successfully" at the wrong size or curve — a failure that surfaces much
+// later, as a signature nobody can verify. One template function, two callers.
+type keyTemplate struct {
+	KeyType string
+	KeySize int
+	Curve   string
+}
+
+// applyKeyTemplate sets the asymmetric key kind on attrs from a key template.
+// An empty KeyType leaves attrs untouched, which is how symmetric imports opt
+// out of asymmetric shaping.
+func applyKeyTemplate(attrs *xkms.KeyAttributes, tmpl keyTemplate) error {
+	if tmpl.KeyType == "" {
+		return nil
+	}
+
+	switch {
+	case xkms.AlgorithmRSA.Equals(tmpl.KeyType):
+		keySize := tmpl.KeySize
+		if keySize == 0 {
+			keySize = xkms.RSAKeySize2048
+		}
+		attrs.KeyType = xkms.KeyTypeSigning
+		attrs.KeyAlgorithm = x509.RSA
+		attrs.RSAAttributes = &xkms.RSAAttributes{KeySize: keySize}
+		return nil
+
+	case xkms.AlgorithmECDSA.Equals(tmpl.KeyType):
+		curve := tmpl.Curve
+		if curve == "" {
+			curve = string(xkms.CurveP256)
+		}
+		parsedCurve, err := xkms.ParseCurve(curve)
+		if err != nil {
+			return &WrappedError{Msg: "invalid curve", Err: err}
+		}
+		attrs.KeyType = xkms.KeyTypeSigning
+		attrs.KeyAlgorithm = x509.ECDSA
+		attrs.ECCAttributes = &xkms.ECCAttributes{Curve: parsedCurve}
+		return nil
+
+	case xkms.AlgorithmEd25519.Equals(tmpl.KeyType):
+		attrs.KeyType = xkms.KeyTypeSigning
+		attrs.KeyAlgorithm = x509.Ed25519
+		return nil
+
+	default:
+		return &DetailError{Err: ErrImportTemplateUnsupported, Detail: ": " + tmpl.KeyType}
+	}
+}
+
+// ImportKey installs externally generated key material that was wrapped under
+// the public key GetImportParameters issued.
+//
+// It is the second half of that ceremony. The plaintext key never exists
+// outside the backend: what arrives here is the wrapped blob plus the
+// single-use import token that binds it to the parameters previously minted
+// for this key ID.
+func (t *EmbeddedTransport) ImportKey(ctx context.Context, req *transport.ImportKeyRequest) (*transport.ImportKeyResponse, error) {
+	if req == nil {
+		return nil, ErrNilRequest
+	}
+
+	attrs := &xkms.KeyAttributes{
+		CN:        req.KeyID,
+		StoreType: xkms.StoreType(req.Backend),
+	}
+	if err := applyKeyTemplate(attrs, keyTemplate{
+		KeyType: req.KeyType,
+		KeySize: req.KeySize,
+		Curve:   req.Curve,
+	}); err != nil {
+		return nil, err
+	}
+
+	wrapped := &xkms.WrappedKeyMaterial{
+		WrappedKey:  req.WrappedKeyMaterial,
+		Algorithm:   xkms.WrappingAlgorithm(req.Algorithm),
+		ImportToken: req.ImportToken,
+	}
+
+	if err := xkms.ServiceImportKey(ctx, req.Backend, attrs, wrapped); err != nil {
+		return nil, &SentinelCauseError{Sentinel: ErrImportKeyFailed, Cause: err}
+	}
+
+	return &transport.ImportKeyResponse{
+		Success: true,
+		KeyID:   req.KeyID,
 	}, nil
 }
 

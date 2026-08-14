@@ -20,6 +20,7 @@ import (
 	"strings"
 
 	"github.com/jeremyhahn/go-xkms/pkg/api/transport"
+	"github.com/jeremyhahn/go-xkms/pkg/auth"
 	"github.com/jeremyhahn/go-xkms/pkg/xkms"
 )
 
@@ -37,7 +38,7 @@ func (s *Server) handlePIVSlots(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if !s.authorize(w, r, "piv", "read") {
+	if !s.authorize(w, r, auth.ResourcePIV, auth.ActionRead) {
 		return
 	}
 
@@ -117,7 +118,7 @@ func (s *Server) handlePIVCertificate(w http.ResponseWriter, r *http.Request, sl
 // handleGetPIVCertificate retrieves a certificate from a PIV slot.
 // GET /api/v1/piv/slots/{slot}/certificate?backend={backend}&format={format}
 func (s *Server) handleGetPIVCertificate(w http.ResponseWriter, r *http.Request, slot, backendParam string) {
-	if !s.authorize(w, r, "piv", "read") {
+	if !s.authorize(w, r, auth.ResourcePIV, auth.ActionRead) {
 		return
 	}
 
@@ -148,7 +149,7 @@ func (s *Server) handleGetPIVCertificate(w http.ResponseWriter, r *http.Request,
 // handleStorePIVCertificate stores a certificate in a PIV slot.
 // POST /api/v1/piv/slots/{slot}/certificate
 func (s *Server) handleStorePIVCertificate(w http.ResponseWriter, r *http.Request, slot string) {
-	if !s.authorize(w, r, "piv", "write") {
+	if !s.authorize(w, r, auth.ResourcePIV, auth.ActionWrite) {
 		return
 	}
 
@@ -180,7 +181,7 @@ func (s *Server) handleStorePIVCertificate(w http.ResponseWriter, r *http.Reques
 // handleDeletePIVCertificate removes a certificate from a PIV slot.
 // DELETE /api/v1/piv/slots/{slot}/certificate?backend={backend}
 func (s *Server) handleDeletePIVCertificate(w http.ResponseWriter, r *http.Request, slot, backendParam string) {
-	if !s.authorize(w, r, "piv", "delete") {
+	if !s.authorize(w, r, auth.ResourcePIV, auth.ActionDelete) {
 		return
 	}
 
@@ -212,7 +213,7 @@ func (s *Server) handlePIVGenerateKey(w http.ResponseWriter, r *http.Request, sl
 		return
 	}
 
-	if !s.authorize(w, r, "piv", "write") {
+	if !s.authorize(w, r, auth.ResourcePIV, auth.ActionWrite) {
 		return
 	}
 
@@ -247,7 +248,7 @@ func (s *Server) handlePIVImportCertificate(w http.ResponseWriter, r *http.Reque
 		return
 	}
 
-	if !s.authorize(w, r, "piv", "write") {
+	if !s.authorize(w, r, auth.ResourcePIV, auth.ActionWrite) {
 		return
 	}
 
@@ -284,7 +285,7 @@ func (s *Server) handlePIVExportCertificate(w http.ResponseWriter, r *http.Reque
 		return
 	}
 
-	if !s.authorize(w, r, "piv", "read") {
+	if !s.authorize(w, r, auth.ResourcePIV, auth.ActionRead) {
 		return
 	}
 
@@ -320,7 +321,7 @@ func (s *Server) handlePIVGenerateCSR(w http.ResponseWriter, r *http.Request, sl
 		return
 	}
 
-	if !s.authorize(w, r, "piv", "use") {
+	if !s.authorize(w, r, auth.ResourcePIV, auth.ActionUse) {
 		return
 	}
 

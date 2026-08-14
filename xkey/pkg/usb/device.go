@@ -30,7 +30,7 @@ type USBDevice struct {
 
 // IsBlockDevice returns true if the path is a block device.
 func IsBlockDevice(path string) bool {
-	info, err := os.Stat(path)
+	info, err := statPath(path)
 	if err != nil {
 		return false
 	}
@@ -154,7 +154,7 @@ func BlockDeviceSize(path string) (int64, error) {
 	}
 
 	// Fallback: use stat for regular files or partitions.
-	info, err := os.Stat(path)
+	info, err := statPath(path)
 	if err != nil {
 		return 0, &USBError{Operation: "get_size", Path: path, Err: err}
 	}

@@ -20,35 +20,10 @@ import (
 	"strconv"
 	"time"
 
+	"github.com/jeremyhahn/go-xkms/pkg/acme/audit"
 	"github.com/jeremyhahn/go-xkms/pkg/errs"
 
 	xkmssdk "github.com/jeremyhahn/go-xkms/sdk/go"
-)
-
-// Resource constants for ACME CA operations.
-const (
-	ResourceTenants      = "acme/tenants"
-	ResourceTenantCA     = "acme/tenants/{tenant}/ca"
-	ResourceTenantEAB    = "acme/tenants/{tenant}/eab"
-	ResourceTenantRoles  = "acme/tenants/{tenant}/roles"
-	ResourceTenantUsers  = "acme/tenants/{tenant}/users"
-	ResourceCertificates = "acme/certificates"
-	ResourceAccounts     = "acme/accounts"
-	ResourceOrders       = "acme/orders"
-	ResourceStatus       = "acme/status"
-	ResourceStats        = "acme/stats"
-)
-
-// Action constants for authorization checks.
-const (
-	ActionRead   = "read"
-	ActionWrite  = "write"
-	ActionDelete = "delete"
-	ActionAdmin  = "admin"
-	ActionList   = "list"
-	ActionRevoke = "revoke"
-	ActionCreate = "create"
-	ActionUpdate = "update"
 )
 
 // Error types for admin operations
@@ -119,75 +94,6 @@ func IsUnauthorizedError(err error) bool {
 		return true
 	}
 	return false
-}
-
-// Role defines admin user roles
-type Role string
-
-const (
-	// RoleSuperAdmin is the highest tier in the ACME admin RBAC hierarchy
-	// (SuperAdmin/Admin/Endorser/Operator/Viewer). It is scoped to the ACME
-	// server's tenant-management API and is DISTINCT from the deleted qrdb
-	// "superadmin" role. The qrdb platform identity model uses Admin@system
-	// (system-tenant rule) for cross-tenant authority; this role gates ACME
-	// admin operations only.
-	RoleSuperAdmin Role = "super-admin"
-	// RoleAdmin has tenant-level full access, manage intermediate CA
-	RoleAdmin Role = "admin"
-	// RoleEndorser has operator permissions plus endorse-01 EAB operations
-	RoleEndorser Role = "endorser"
-	// RoleOperator has read/write access, cannot delete or manage CA
-	RoleOperator Role = "operator"
-	// RoleViewer has read-only access
-	RoleViewer Role = "viewer"
-)
-
-// RoleLevel returns the numeric level for a role (higher = more permissions)
-func (r Role) Level() int {
-	switch r {
-	case RoleSuperAdmin:
-		return 100
-	case RoleAdmin:
-		return 80
-	case RoleEndorser:
-		return 60
-	case RoleOperator:
-		return 40
-	case RoleViewer:
-		return 20
-	default:
-		return 0
-	}
-}
-
-// IsValid returns true if the role is a recognized role
-func (r Role) IsValid() bool {
-	return r.Level() > 0
-}
-
-// CanManageTenants returns true if the role can create/delete tenants
-func (r Role) CanManageTenants() bool {
-	return r == RoleSuperAdmin
-}
-
-// CanManageRootCA returns true if the role can manage the global root CA
-func (r Role) CanManageRootCA() bool {
-	return r == RoleSuperAdmin
-}
-
-// CanManageTenantCA returns true if the role can manage tenant CAs (root + intermediate)
-func (r Role) CanManageTenantCA() bool {
-	return r == RoleSuperAdmin || r == RoleAdmin
-}
-
-// CanCreateEAB returns true if the role can create External Account Bindings
-func (r Role) CanCreateEAB() bool {
-	return r == RoleSuperAdmin || r == RoleAdmin || r == RoleEndorser
-}
-
-// CanRevokeAccess returns true if the role can revoke certificates or disable accounts
-func (r Role) CanRevokeAccess() bool {
-	return r == RoleSuperAdmin || r == RoleAdmin
 }
 
 // Config defines the admin API configuration.
@@ -392,6 +298,25 @@ type ListAuditLogsRequest struct {
 	Actor     string    `json:"actor,omitempty"`
 	Action    string    `json:"action,omitempty"`
 	Resource  string    `json:"resource,omitempty"`
+	EventType string    `json:"event_type,omitempty"`
+	Result    string    `json:"result,omitempty"`
+	RequestID string    `json:"request_id,omitempty"`
+}
+
+// auditQuery converts the admin request into an audit trail query.
+func (r ListAuditLogsRequest) auditQuery() audit.Query {
+	return audit.Query{
+		Page:      r.Page,
+		PerPage:   r.PerPage,
+		EventType: audit.EventType(r.EventType),
+		Actor:     r.Actor,
+		Resource:  r.Resource,
+		Action:    r.Action,
+		Result:    audit.Result(r.Result),
+		RequestID: r.RequestID,
+		Since:     r.StartTime,
+		Until:     r.EndTime,
+	}
 }
 
 // TenantInfo represents tenant information for admin responses

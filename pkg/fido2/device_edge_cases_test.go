@@ -30,135 +30,81 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// Tests for UnlockWithKey retry paths - covers fido2.go:156
-// Skipped: Complex HID protocol mock implementation issues
+// unlockRetrySalt is a distinctive salt so that the derived key asserted by
+// the retry tests can only have come from the simulator's CredRandom.
+func unlockRetrySalt() []byte {
+	salt := make([]byte, 32)
+	for i := range salt {
+		salt[i] = byte(0x40 + i)
+	}
+	return salt
+}
+
+// expectedUnlockKey is the key UnlockWithKey must return for a salt: the
+// authenticator keys the hmac-secret output with CredRandom, which never
+// leaves the simulator, and the platform runs that output through the KDF.
+func expectedUnlockKey(t *testing.T, sim *authenticatorSim, salt []byte) []byte {
+	t.Helper()
+
+	key, err := GenerateDerivedKey(sim.hmacOutput(salt))
+	require.NoError(t, err)
+	return key
+}
+
+// runUnlockRetry drives UnlockWithKey against a device whose first
+// assertions fail with transient statuses, and asserts the platform retried
+// and returned the genuine derived key.
+func runUnlockRetry(t *testing.T, transientStatuses ...byte) {
+	t.Helper()
+
+	config := DefaultConfig
+	config.RetryCount = len(transientStatuses) + 1
+	config.RetryDelay = time.Millisecond
+
+	mockDev := NewMockHIDDevice("/dev/hidraw0")
+	mockDev.FailNextAssertions(transientStatuses...)
+
+	handler, err := NewHandler(&config, &SingleDeviceEnumeratorFC{device: mockDev})
+	require.NoError(t, err)
+
+	salt := unlockRetrySalt()
+	derivedKey, err := handler.UnlockWithKey(DefaultAuthenticationConfig(make([]byte, 32), salt))
+	require.NoError(t, err)
+	assert.Equal(t, expectedUnlockKey(t, mockDev.sim, salt), derivedKey)
+	assert.Empty(t, mockDev.assertionFailures, "every transient failure should have been consumed by a retry")
+}
+
+// TestUnlockWithKey_RetryOnTimeout_FC covers the retry branch taken when the
+// authenticator reports CTAP2_ERR_USER_ACTION_TIMEOUT.
 func TestUnlockWithKey_RetryOnTimeout_FC(t *testing.T) {
-	t.Skip("Complex HID protocol mock requires real device behavior")
+	runUnlockRetry(t, StatusUserActionTimeout, StatusUserActionTimeout)
 }
 
-// TimeoutThenSuccessDeviceFC fails with timeout, then succeeds
-type TimeoutThenSuccessDeviceFC struct {
-	*MockHIDDevice
-	failCount int
-	attempts  int
-	mu        sync.Mutex
+// TestUnlockWithKey_RetryOnUserPresenceRequired_FC covers the retry branch
+// taken when the authenticator reports CTAP2_ERR_UP_REQUIRED.
+func TestUnlockWithKey_RetryOnUserPresenceRequired_FC(t *testing.T) {
+	runUnlockRetry(t, StatusUPRequired)
 }
 
-func (d *TimeoutThenSuccessDeviceFC) Write(data []byte) (int, error) {
-	if len(data) < HIDPacketSize {
-		return 0, &errs.Message{Msg: "packet too short"}
-	}
+// TestUnlockWithKey_RetryExhaustedOnUserPresence_FC proves the retry loop is
+// bounded: more transient failures than retries must surface an error rather
+// than loop forever.
+func TestUnlockWithKey_RetryExhaustedOnUserPresence_FC(t *testing.T) {
+	config := DefaultConfig
+	config.RetryCount = 2
+	config.RetryDelay = time.Millisecond
 
-	cmd := data[4]
+	mockDev := NewMockHIDDevice("/dev/hidraw0")
+	mockDev.FailNextAssertions(StatusUPRequired, StatusUPRequired, StatusUPRequired)
 
-	switch cmd {
-	case CTAPHID_INIT:
-		d.fcInitResp(data[7:])
-	case CTAPHID_CBOR:
-		d.fcCBORResp(data[7:])
-	}
+	handler, err := NewHandler(&config, &SingleDeviceEnumeratorFC{device: mockDev})
+	require.NoError(t, err)
 
-	return len(data), nil
-}
-
-func (d *TimeoutThenSuccessDeviceFC) fcInitResp(nonce []byte) {
-	d.mu.Lock()
-	defer d.mu.Unlock()
-
-	response := make([]byte, HIDPacketSize)
-	binary.BigEndian.PutUint32(response[0:4], CIDBroadcast)
-	response[4] = CTAPHID_INIT
-	binary.BigEndian.PutUint16(response[5:7], 17)
-	copy(response[7:15], nonce[:8])
-	binary.BigEndian.PutUint32(response[15:19], 0x12345678)
-	response[19] = 2
-	response[20] = 1
-	response[21] = 0
-	response[22] = 0
-	response[23] = 0x01
-
-	d.readBuf.Write(response)
-}
-
-func (d *TimeoutThenSuccessDeviceFC) fcCBORResp(payload []byte) {
-	d.mu.Lock()
-	defer d.mu.Unlock()
-
-	if len(payload) == 0 {
-		return
-	}
-
-	ctapCmd := payload[0]
-
-	switch ctapCmd {
-	case CmdGetInfo:
-		info := map[int]interface{}{
-			0x01: []string{"FIDO_2_0"},
-			0x02: []string{"hmac-secret"},
-			0x03: make([]byte, 16),
-			0x04: map[string]bool{"up": true},
-		}
-		encoded, _ := cbor.Marshal(info)
-		d.fcWritePkts(0x12345678, append([]byte{StatusOK}, encoded...))
-	case CmdGetAssertion:
-		d.mu.Lock()
-		d.attempts++
-		attempt := d.attempts
-		d.mu.Unlock()
-
-		if attempt <= d.failCount {
-			// Return timeout error
-			d.fcWritePkts(0x12345678, []byte{StatusUserActionTimeout})
-		} else {
-			// Return success
-			authData := make([]byte, 37+32)
-			copy(authData[0:32], make([]byte, 32))
-			authData[32] = 0x81
-			binary.BigEndian.PutUint32(authData[33:37], 2)
-			hmacOutput := make([]byte, 32)
-			for i := range hmacOutput {
-				hmacOutput[i] = byte(i + 100)
-			}
-			copy(authData[37:], hmacOutput)
-
-			respMap := map[int]interface{}{
-				0x01: map[string]interface{}{"type": "public-key", "id": make([]byte, 32)},
-				0x02: authData,
-				0x03: make([]byte, 64),
-			}
-			encoded, _ := cbor.Marshal(respMap)
-			d.fcWritePkts(0x12345678, append([]byte{StatusOK}, encoded...))
-		}
-	}
-}
-
-func (d *TimeoutThenSuccessDeviceFC) fcWritePkts(cid uint32, fullPayload []byte) {
-	payloadLen := len(fullPayload)
-
-	firstPacket := make([]byte, HIDPacketSize)
-	binary.BigEndian.PutUint32(firstPacket[0:4], cid)
-	firstPacket[4] = CTAPHID_CBOR
-	binary.BigEndian.PutUint16(firstPacket[5:7], uint16(payloadLen))
-
-	if payloadLen <= HIDPacketSize-7 {
-		copy(firstPacket[7:], fullPayload)
-		d.readBuf.Write(firstPacket)
-		return
-	}
-
-	copy(firstPacket[7:], fullPayload[:HIDPacketSize-7])
-	d.readBuf.Write(firstPacket)
-}
-
-func (d *TimeoutThenSuccessDeviceFC) Read(data []byte) (int, error) {
-	d.mu.Lock()
-	defer d.mu.Unlock()
-
-	if d.readBuf.Len() > 0 {
-		return d.readBuf.Read(data)
-	}
-
-	return 0, &errs.Message{Msg: "no data"}
+	derivedKey, err := handler.UnlockWithKey(DefaultAuthenticationConfig(make([]byte, 32), unlockRetrySalt()))
+	require.Error(t, err)
+	assert.Nil(t, derivedKey)
+	assert.ErrorIs(t, err, ErrUserPresenceRequired)
+	assert.Len(t, mockDev.assertionFailures, 1, "the loop must stop after RetryCount attempts")
 }
 
 // SingleDeviceEnumeratorFC returns a single device
@@ -258,6 +204,8 @@ func (d *AlwaysTimeoutDeviceFC) atCBORResp(payload []byte) {
 		}
 		encoded, _ := cbor.Marshal(info)
 		d.atWritePkts(0x12345678, append([]byte{StatusOK}, encoded...))
+	case CmdClientPIN:
+		writeCTAPHIDResponse(d.readBuf, 0x12345678, d.sim.respond(payload))
 	case CmdGetAssertion:
 		// Always return timeout
 		d.atWritePkts(0x12345678, []byte{StatusUserActionTimeout})
@@ -283,137 +231,6 @@ func (d *AlwaysTimeoutDeviceFC) atWritePkts(cid uint32, fullPayload []byte) {
 }
 
 func (d *AlwaysTimeoutDeviceFC) Read(data []byte) (int, error) {
-	d.mu.Lock()
-	defer d.mu.Unlock()
-
-	if d.readBuf.Len() > 0 {
-		return d.readBuf.Read(data)
-	}
-
-	return 0, &errs.Message{Msg: "no data"}
-}
-
-// Tests for UnlockWithKey retry on user presence required - covers fido2.go:215-216
-// Skipped: Complex HID protocol mock implementation issues
-func TestUnlockWithKey_RetryOnUserPresenceRequired_FC(t *testing.T) {
-	t.Skip("Complex HID protocol mock requires real device behavior")
-}
-
-// UserPresenceThenSuccessDeviceFC fails with user presence required, then succeeds
-type UserPresenceThenSuccessDeviceFC struct {
-	*MockHIDDevice
-	failCount int
-	attempts  int
-	mu        sync.Mutex
-}
-
-func (d *UserPresenceThenSuccessDeviceFC) Write(data []byte) (int, error) {
-	if len(data) < HIDPacketSize {
-		return 0, &errs.Message{Msg: "packet too short"}
-	}
-
-	cmd := data[4]
-
-	switch cmd {
-	case CTAPHID_INIT:
-		d.upInitResp(data[7:])
-	case CTAPHID_CBOR:
-		d.upCBORResp(data[7:])
-	}
-
-	return len(data), nil
-}
-
-func (d *UserPresenceThenSuccessDeviceFC) upInitResp(nonce []byte) {
-	d.mu.Lock()
-	defer d.mu.Unlock()
-
-	response := make([]byte, HIDPacketSize)
-	binary.BigEndian.PutUint32(response[0:4], CIDBroadcast)
-	response[4] = CTAPHID_INIT
-	binary.BigEndian.PutUint16(response[5:7], 17)
-	copy(response[7:15], nonce[:8])
-	binary.BigEndian.PutUint32(response[15:19], 0x12345678)
-	response[19] = 2
-	response[20] = 1
-	response[21] = 0
-	response[22] = 0
-	response[23] = 0x01
-
-	d.readBuf.Write(response)
-}
-
-func (d *UserPresenceThenSuccessDeviceFC) upCBORResp(payload []byte) {
-	d.mu.Lock()
-	defer d.mu.Unlock()
-
-	if len(payload) == 0 {
-		return
-	}
-
-	ctapCmd := payload[0]
-
-	switch ctapCmd {
-	case CmdGetInfo:
-		info := map[int]interface{}{
-			0x01: []string{"FIDO_2_0"},
-			0x02: []string{"hmac-secret"},
-			0x03: make([]byte, 16),
-			0x04: map[string]bool{"up": true},
-		}
-		encoded, _ := cbor.Marshal(info)
-		d.upWritePkts(0x12345678, append([]byte{StatusOK}, encoded...))
-	case CmdGetAssertion:
-		d.mu.Lock()
-		d.attempts++
-		attempt := d.attempts
-		d.mu.Unlock()
-
-		if attempt <= d.failCount {
-			// Return user presence required
-			d.upWritePkts(0x12345678, []byte{StatusUPRequired})
-		} else {
-			// Return success
-			authData := make([]byte, 37+32)
-			copy(authData[0:32], make([]byte, 32))
-			authData[32] = 0x81
-			binary.BigEndian.PutUint32(authData[33:37], 2)
-			hmacOutput := make([]byte, 32)
-			for i := range hmacOutput {
-				hmacOutput[i] = byte(i + 100)
-			}
-			copy(authData[37:], hmacOutput)
-
-			respMap := map[int]interface{}{
-				0x01: map[string]interface{}{"type": "public-key", "id": make([]byte, 32)},
-				0x02: authData,
-				0x03: make([]byte, 64),
-			}
-			encoded, _ := cbor.Marshal(respMap)
-			d.upWritePkts(0x12345678, append([]byte{StatusOK}, encoded...))
-		}
-	}
-}
-
-func (d *UserPresenceThenSuccessDeviceFC) upWritePkts(cid uint32, fullPayload []byte) {
-	payloadLen := len(fullPayload)
-
-	firstPacket := make([]byte, HIDPacketSize)
-	binary.BigEndian.PutUint32(firstPacket[0:4], cid)
-	firstPacket[4] = CTAPHID_CBOR
-	binary.BigEndian.PutUint16(firstPacket[5:7], uint16(payloadLen))
-
-	if payloadLen <= HIDPacketSize-7 {
-		copy(firstPacket[7:], fullPayload)
-		d.readBuf.Write(firstPacket)
-		return
-	}
-
-	copy(firstPacket[7:], fullPayload[:HIDPacketSize-7])
-	d.readBuf.Write(firstPacket)
-}
-
-func (d *UserPresenceThenSuccessDeviceFC) Read(data []byte) (int, error) {
 	d.mu.Lock()
 	defer d.mu.Unlock()
 

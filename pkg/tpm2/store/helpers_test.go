@@ -311,22 +311,48 @@ func TestParseCurve(t *testing.T) {
 	}
 }
 
-func TestAvailableHashes(t *testing.T) {
-	hashes := AvailableHashes()
+// TestAvailableHashes_IsTheCanonicalTable asserts this package no longer keeps
+// its own copy of the hash table. Two hand-maintained tables that must agree
+// drift: the copy this replaced admitted SHA-1 unconditionally — so a TPM
+// could be configured to sign and attest with a digest NIST SP 800-131A Rev. 2
+// disallows — and omitted SHA-3 entirely, so a TPM configured with "SHA3-256"
+// was rejected outright.
+//
+// Comparing the whole map, not a sample, is the assertion: a future edit that
+// re-introduces a local table fails here.
+func TestAvailableHashes_IsTheCanonicalTable(t *testing.T) {
+	assert.Equal(t, types.AvailableHashes(), AvailableHashes(),
+		"pkg/tpm2/store must delegate to types.AvailableHashes, not keep a second table")
+}
 
-	expectedHashes := map[string]crypto.Hash{
-		"SHA-1":   crypto.SHA1,
-		"SHA-224": crypto.SHA224,
+// TestAvailableHashes_RetainsTPMAlgorithms guards the delegation from being too
+// narrow: every hash a TPM 2.0 device can execute must still resolve by name,
+// otherwise a valid tpm.hash configuration stops loading.
+func TestAvailableHashes_RetainsTPMAlgorithms(t *testing.T) {
+	hashes := AvailableHashes()
+	for name, want := range map[string]crypto.Hash{
 		"SHA-256": crypto.SHA256,
 		"SHA-384": crypto.SHA384,
 		"SHA-512": crypto.SHA512,
-	}
-
-	assert.Equal(t, len(expectedHashes), len(hashes))
-
-	for name, expected := range expectedHashes {
-		actual, ok := hashes[name]
+	} {
+		got, ok := hashes[name]
 		assert.True(t, ok, "missing hash: %s", name)
-		assert.Equal(t, expected, actual)
+		assert.Equal(t, want, got)
+		// New panics for an unlinked hash; a passing call proves the entry is
+		// backed by a working implementation.
+		assert.Equal(t, want.Size(), got.New().Size())
 	}
+}
+
+// TestAvailableHashes_RefusesWeakHashesByDefault asserts the weak-hash policy
+// reaches the TPM configuration path. A TPM signing key or attestation quote
+// whose digest is SHA-1 is forgeable, so "SHA-1" must not resolve unless the
+// operator set crypto.allow_weak_hashes and started the daemon with --insecure.
+func TestAvailableHashes_RefusesWeakHashesByDefault(t *testing.T) {
+	assert.NotContains(t, AvailableHashes(), "SHA-1")
+
+	types.SetAllowWeakHashes(true)
+	defer types.SetAllowWeakHashes(false)
+	assert.Equal(t, crypto.SHA1, AvailableHashes()["SHA-1"],
+		"the documented escape hatch must actually re-admit SHA-1")
 }

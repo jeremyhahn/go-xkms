@@ -47,7 +47,8 @@ func TestCrypto_DigestOperations(t *testing.T) {
 	t.Run("SHA256_SinglePart", func(t *testing.T) {
 		rv := env.Module.DigestInit(session, &module.Mechanism{Type: module.CKM_SHA256})
 		if rv != module.CKR_OK {
-			t.Skipf("DigestInit SHA256: %s", rv.String())
+			t.Fatalf("C_DigestInit CKM_SHA256: expected CKR_OK, got %s (the token advertises "+
+				"CKM_SHA256 with CKF_DIGEST)", rv.String())
 		}
 
 		testData := []byte("The quick brown fox jumps over the lazy dog")
@@ -61,7 +62,28 @@ func TestCrypto_DigestOperations(t *testing.T) {
 			t.Errorf("SHA-256 digest length: expected 32, got %d", len(digest))
 		}
 
-		// Verify operation is finalized (calling Digest again should fail)
+		// The operation stays active until the caller confirms it collected the
+		// output. PKCS#11 v3.2 §5.2 lets an application call C_Digest twice —
+		// once with a NULL buffer to learn the length, once to collect the
+		// bytes — so a successful length query must NOT terminate it. The Go
+		// API has no NULL buffer to distinguish the two, so it caches the
+		// result and leaves termination to FinishOperation, which is what the
+		// C_Digest export calls once it has copied the digest out.
+		repeat, rv := env.Module.Digest(session, testData)
+		if rv != module.CKR_OK {
+			t.Fatalf("the repeated C_Digest returned %s; the operation must survive a "+
+				"length query", rv.String())
+		}
+		if !bytes.Equal(repeat, digest) {
+			t.Errorf("the repeated C_Digest returned different bytes\nfirst  %x\nsecond %x",
+				digest, repeat)
+		}
+
+		if rv := env.Module.FinishOperation(session, module.OperationDigest); rv != module.CKR_OK {
+			t.Fatalf("FinishOperation: expected CKR_OK, got %s", rv.String())
+		}
+
+		// Only now is the operation gone.
 		_, rv = env.Module.Digest(session, testData)
 		if rv != module.CKR_OPERATION_NOT_INITIALIZED {
 			t.Errorf("Digest after finalize: expected CKR_OPERATION_NOT_INITIALIZED, got %s", rv.String())
@@ -73,7 +95,8 @@ func TestCrypto_DigestOperations(t *testing.T) {
 		// Start first digest
 		rv := env.Module.DigestInit(session, &module.Mechanism{Type: module.CKM_SHA256})
 		if rv != module.CKR_OK {
-			t.Skipf("DigestInit SHA256: %s", rv.String())
+			t.Fatalf("C_DigestInit CKM_SHA256: expected CKR_OK, got %s (the token advertises "+
+				"CKM_SHA256 with CKF_DIGEST)", rv.String())
 		}
 
 		// Finalize first digest
@@ -81,6 +104,8 @@ func TestCrypto_DigestOperations(t *testing.T) {
 		if rv != module.CKR_OK {
 			t.Fatalf("Digest: expected CKR_OK, got %s", rv.String())
 		}
+		testutil.RequireOK(t, env.Module.FinishOperation(session, module.OperationDigest),
+			"FinishOperation after the first digest")
 
 		// Start second digest - should work
 		rv = env.Module.DigestInit(session, &module.Mechanism{Type: module.CKM_SHA256})
@@ -90,6 +115,7 @@ func TestCrypto_DigestOperations(t *testing.T) {
 
 		// Clean up
 		env.Module.Digest(session, []byte("test2"))
+		env.Module.FinishOperation(session, module.OperationDigest)
 	})
 
 	// Test different digest mechanisms
@@ -108,7 +134,8 @@ func TestCrypto_DigestOperations(t *testing.T) {
 		t.Run(dm.name, func(t *testing.T) {
 			rv := env.Module.DigestInit(session, &module.Mechanism{Type: dm.mech})
 			if rv != module.CKR_OK {
-				t.Skipf("DigestInit %s: %s", dm.name, rv.String())
+				t.Fatalf("C_DigestInit %s: expected CKR_OK, got %s (the token advertises "+
+					"this mechanism with CKF_DIGEST)", dm.name, rv.String())
 			}
 
 			digest, rv := env.Module.Digest(session, []byte("test data"))
@@ -119,6 +146,11 @@ func TestCrypto_DigestOperations(t *testing.T) {
 			if len(digest) != dm.size {
 				t.Errorf("%s digest length: expected %d, got %d", dm.name, dm.size, len(digest))
 			}
+
+			// Release the operation so the next mechanism can initialize on the
+			// same session; C_Digest deliberately leaves it active.
+			testutil.RequireOK(t, env.Module.FinishOperation(session, module.OperationDigest),
+				"FinishOperation for "+dm.name)
 		})
 	}
 }
@@ -218,7 +250,8 @@ func TestCrypto_KeyGeneration(t *testing.T) {
 
 		handle, rv := env.Module.GenerateKey(session, &module.Mechanism{Type: module.CKM_AES_KEY_GEN}, template)
 		if rv != module.CKR_OK {
-			t.Skipf("GenerateKey AES: %s", rv.String())
+			t.Fatalf("C_GenerateKey CKM_AES_KEY_GEN: expected CKR_OK, got %s (the token "+
+				"advertises this mechanism with CKF_GENERATE)", rv.String())
 		}
 		defer env.Module.DestroyObject(session, handle)
 
@@ -286,7 +319,8 @@ func TestCrypto_KeyGeneration(t *testing.T) {
 			privateTemplate,
 		)
 		if rv != module.CKR_OK {
-			t.Skipf("GenerateKeyPair RSA: %s", rv.String())
+			t.Fatalf("C_GenerateKeyPair CKM_RSA_PKCS_KEY_PAIR_GEN: expected CKR_OK, got %s "+
+				"(the token advertises this mechanism with CKF_GENERATE_KEY_PAIR)", rv.String())
 		}
 		defer env.Module.DestroyObject(session, pubHandle)
 		defer env.Module.DestroyObject(session, privHandle)
@@ -370,7 +404,8 @@ func TestCrypto_KeyGeneration(t *testing.T) {
 			privateTemplate,
 		)
 		if rv != module.CKR_OK {
-			t.Skipf("GenerateKeyPair EC: %s", rv.String())
+			t.Fatalf("C_GenerateKeyPair CKM_EC_KEY_PAIR_GEN: expected CKR_OK, got %s "+
+				"(the token advertises this mechanism with CKF_GENERATE_KEY_PAIR)", rv.String())
 		}
 		defer env.Module.DestroyObject(session, pubHandle)
 		defer env.Module.DestroyObject(session, privHandle)
@@ -649,7 +684,7 @@ func TestCrypto_OperationCancellation(t *testing.T) {
 	// Start digest operation
 	rv := env.Module.DigestInit(session, &module.Mechanism{Type: module.CKM_SHA256})
 	if rv != module.CKR_OK {
-		t.Skipf("DigestInit: %s", rv.String())
+		t.Fatalf("C_DigestInit CKM_SHA256: expected CKR_OK, got %s", rv.String())
 	}
 
 	// Complete the operation normally (this cancels/finalizes it)
@@ -657,6 +692,9 @@ func TestCrypto_OperationCancellation(t *testing.T) {
 	if rv != module.CKR_OK {
 		t.Fatalf("Digest: expected CKR_OK, got %s", rv.String())
 	}
+
+	testutil.RequireOK(t, env.Module.FinishOperation(session, module.OperationDigest),
+		"FinishOperation after the completed digest")
 
 	// Starting a new operation should now work
 	rv = env.Module.DigestInit(session, &module.Mechanism{Type: module.CKM_SHA256})
@@ -666,4 +704,5 @@ func TestCrypto_OperationCancellation(t *testing.T) {
 
 	// Clean up
 	env.Module.Digest(session, []byte("cleanup"))
+	env.Module.FinishOperation(session, module.OperationDigest)
 }

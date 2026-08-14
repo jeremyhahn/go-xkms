@@ -33,7 +33,7 @@ Retrieves a paginated list of certificates.
 GET /admin/certificates
 ```
 
-**Required Role:** viewer
+**Required Permission:** `certs:list`
 
 **Query Parameters:**
 
@@ -85,7 +85,7 @@ Retrieves certificates expiring within the specified number of days.
 GET /admin/certificates/expiring
 ```
 
-**Required Role:** viewer
+**Required Permission:** `certs:list`
 
 **Query Parameters:**
 
@@ -111,7 +111,7 @@ Retrieves a certificate by serial number.
 GET /admin/certificates/{serial}
 ```
 
-**Required Role:** viewer
+**Required Permission:** `certs:read`
 
 **Path Parameters:**
 
@@ -164,7 +164,7 @@ Revokes a certificate by serial number.
 POST /admin/certificates/{serial}/revoke
 ```
 
-**Required Role:** admin
+**Required Permission:** `certs:revoke`
 
 **Path Parameters:**
 
@@ -225,7 +225,7 @@ Retrieves a paginated list of ACME accounts.
 GET /admin/accounts
 ```
 
-**Required Role:** viewer
+**Required Permission:** `acme_accounts:list`
 
 **Query Parameters:**
 
@@ -274,7 +274,7 @@ Retrieves an ACME account by ID.
 GET /admin/accounts/{id}
 ```
 
-**Required Role:** viewer
+**Required Permission:** `acme_accounts:read`
 
 **Path Parameters:**
 
@@ -298,7 +298,7 @@ Disables an ACME account.
 DELETE /admin/accounts/{id}
 ```
 
-**Required Role:** admin
+**Required Permission:** `acme_accounts:disable`
 
 **Path Parameters:**
 
@@ -335,7 +335,7 @@ Retrieves a paginated list of ACME orders.
 GET /admin/orders
 ```
 
-**Required Role:** viewer
+**Required Permission:** `acme_orders:list`
 
 **Query Parameters:**
 
@@ -387,7 +387,7 @@ Retrieves an ACME order by ID.
 GET /admin/orders/{id}
 ```
 
-**Required Role:** viewer
+**Required Permission:** `acme_orders:read`
 
 **Query Parameters:**
 
@@ -413,7 +413,7 @@ Retrieves the current CA operational status.
 GET /admin/status
 ```
 
-**Required Role:** viewer
+**Required Permission:** `admin:status`
 
 **Example Request:**
 ```bash
@@ -448,7 +448,7 @@ Retrieves aggregate statistics about the CA.
 GET /admin/stats
 ```
 
-**Required Role:** viewer
+**Required Permission:** `admin:status`
 
 **Example Request:**
 ```bash
@@ -486,7 +486,7 @@ Retrieves a paginated list of tenants.
 GET /api/v1/tenants
 ```
 
-**Required Role:** super-admin
+**Required Permission:** `tenants:list`
 
 **Query Parameters:**
 
@@ -555,7 +555,7 @@ Creates a new tenant.
 POST /api/v1/tenants
 ```
 
-**Required Role:** super-admin
+**Required Permission:** `tenants:create`
 
 **Request Body:**
 ```json
@@ -617,7 +617,7 @@ Retrieves a tenant by ID.
 GET /api/v1/tenants/{id}
 ```
 
-**Required Role:** admin (own tenant) or super-admin (any tenant)
+**Required Permission:** `tenants:read`
 
 ---
 
@@ -629,7 +629,7 @@ Updates a tenant.
 PUT /api/v1/tenants/{id}
 ```
 
-**Required Role:** admin
+**Required Permission:** `tenants:update`
 
 **Request Body:**
 ```json
@@ -651,7 +651,7 @@ Deletes a tenant and all associated resources.
 DELETE /api/v1/tenants/{id}
 ```
 
-**Required Role:** super-admin
+**Required Permission:** `tenants:delete`
 
 ---
 
@@ -663,7 +663,7 @@ Updates the status of a tenant.
 PUT /api/v1/tenants/{id}/status
 ```
 
-**Required Role:** super-admin
+**Required Permission:** `tenants:update`
 
 **Request Body:**
 ```json
@@ -686,7 +686,7 @@ Creates a root CA for a tenant.
 POST /api/v1/tenants/{id}/root-ca
 ```
 
-**Required Role:** admin
+**Required Permission:** `ca:create`
 
 **Request Body:**
 ```json
@@ -709,7 +709,7 @@ Lists all intermediate CAs for a tenant.
 GET /api/v1/tenants/{id}/intermediate-cas
 ```
 
-**Required Role:** admin
+**Required Permission:** `ca:list`
 
 ---
 
@@ -721,7 +721,7 @@ Creates an intermediate CA for a tenant.
 POST /api/v1/tenants/{id}/intermediate-cas
 ```
 
-**Required Role:** admin
+**Required Permission:** `ca:create`
 
 **Request Body:**
 ```json
@@ -756,7 +756,7 @@ Retrieves details of a specific intermediate CA.
 GET /api/v1/tenants/{id}/intermediate-cas/{caid}
 ```
 
-**Required Role:** admin
+**Required Permission:** `ca:read`
 
 ---
 
@@ -768,7 +768,7 @@ Updates the status of an intermediate CA.
 PUT /api/v1/tenants/{id}/intermediate-cas/{caid}/status
 ```
 
-**Required Role:** admin
+**Required Permission:** `ca:update`
 
 **Request Body:**
 ```json
@@ -789,7 +789,7 @@ Sets the default intermediate CA for certificate signing.
 PUT /api/v1/tenants/{id}/default-intermediate-ca
 ```
 
-**Required Role:** admin
+**Required Permission:** `ca:update`
 
 **Request Body:**
 ```json
@@ -808,7 +808,7 @@ Retrieves the overall CA status for a tenant.
 GET /api/v1/tenants/{id}/ca-status
 ```
 
-**Required Role:** admin
+**Required Permission:** `ca:read`
 
 **Response:**
 ```json
@@ -846,7 +846,7 @@ Lists External Account Binding tokens for a tenant.
 GET /api/v1/tenants/{id}/eab
 ```
 
-**Required Role:** endorser
+**Required Permission:** `acme_eab:list`
 
 **Query Parameters:**
 
@@ -867,7 +867,7 @@ Creates an EAB token.
 POST /api/v1/tenants/{id}/eab
 ```
 
-**Required Role:** endorser
+**Required Permission:** `acme_eab:create`
 
 **Request Body:**
 ```json
@@ -924,7 +924,7 @@ Retrieves an EAB token by key ID.
 GET /api/v1/tenants/{id}/eab/{kid}
 ```
 
-**Required Role:** endorser
+**Required Permission:** `acme_eab:read`
 
 **Note:** The MAC key is not returned (it was only shown at creation).
 
@@ -938,7 +938,7 @@ Deletes an EAB token.
 DELETE /api/v1/tenants/{id}/eab/{kid}
 ```
 
-**Required Role:** admin
+**Required Permission:** `acme_eab:delete`
 
 ---
 
@@ -952,7 +952,7 @@ Lists ABAC policies for a tenant.
 GET /api/v1/tenants/{id}/policies
 ```
 
-**Required Role:** admin
+**Required Permission:** `roles:list`
 
 **Query Parameters:**
 
@@ -972,7 +972,7 @@ Creates an ABAC policy.
 POST /api/v1/tenants/{id}/policies
 ```
 
-**Required Role:** admin
+**Required Permission:** `roles:create`
 
 **Request Body (RBAC role format):**
 ```json
@@ -1038,7 +1038,7 @@ Retrieves a policy by name.
 GET /api/v1/tenants/{id}/policies/{name}
 ```
 
-**Required Role:** admin
+**Required Permission:** `users:list`
 
 ---
 
@@ -1050,7 +1050,7 @@ Updates an existing policy.
 PUT /api/v1/tenants/{id}/policies/{name}
 ```
 
-**Required Role:** admin
+**Required Permission:** `users:create`
 
 **Note:** System-managed (immutable) policies cannot be modified.
 
@@ -1064,7 +1064,7 @@ Deletes a policy.
 DELETE /api/v1/tenants/{id}/policies/{name}
 ```
 
-**Required Role:** admin
+**Required Permission:** `users:read`
 
 **Note:** System-managed (immutable) policies cannot be deleted.
 

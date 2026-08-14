@@ -94,6 +94,21 @@ const (
 	ErrorCodeSyncRemoteUnavail   = -32032
 	ErrorCodeSyncNoData          = -32033
 	ErrorCodeSyncVersionMismatch = -32034
+
+	// ErrorCodeFeatureUnavailable means the method family exists on the peer
+	// but its collaborator was not supplied on this transport, so the request
+	// can never succeed there. Distinct from ErrorCodeInternalError, which
+	// means the peer hit a bug.
+	ErrorCodeFeatureUnavailable = -32035
+
+	// ErrorCodeNotApplicable means the peer understood the method but its
+	// platform cannot implement it at all -- an Android phone asked for a
+	// TPM2 operation, say. Retrying, on any transport, cannot help.
+	//
+	// It is deliberately distinct from ErrorCodeAttestUnsupported, which says
+	// attestation failed to produce evidence; this says the question does not
+	// apply to this hardware.
+	ErrorCodeNotApplicable = -32036
 )
 
 // requestIDCounter provides unique request IDs.

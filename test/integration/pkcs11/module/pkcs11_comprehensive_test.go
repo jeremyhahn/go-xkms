@@ -183,10 +183,11 @@ func TestRSAPSSMechanisms(t *testing.T) {
 	testCases := []struct {
 		name     string
 		signMech module.MechanismType
+		hashAlg  module.MechanismType
 	}{
-		{"SHA256_RSA_PKCS_PSS", module.CKM_SHA256_RSA_PKCS_PSS},
-		{"SHA384_RSA_PKCS_PSS", module.CKM_SHA384_RSA_PKCS_PSS},
-		{"SHA512_RSA_PKCS_PSS", module.CKM_SHA512_RSA_PKCS_PSS},
+		{"SHA256_RSA_PKCS_PSS", module.CKM_SHA256_RSA_PKCS_PSS, module.CKM_SHA256},
+		{"SHA384_RSA_PKCS_PSS", module.CKM_SHA384_RSA_PKCS_PSS, module.CKM_SHA384},
+		{"SHA512_RSA_PKCS_PSS", module.CKM_SHA512_RSA_PKCS_PSS, module.CKM_SHA512},
 	}
 
 	for _, tc := range testCases {
@@ -204,8 +205,15 @@ func TestRSAPSSMechanisms(t *testing.T) {
 
 			data := []byte("Test data for RSA-PSS signature")
 
-			// Sign
-			signMech := &module.Mechanism{Type: tc.signMech}
+			// PSS requires its parameters: PKCS#11 v3.2 §6.1.10 says the
+			// mechanism "has a parameter, a CK_RSA_PKCS_PSS_PARAMS structure",
+			// which carries the hash, the MGF and the salt length. Omitting it
+			// leaves the salt length and MGF undefined, so the module refuses
+			// with CKR_MECHANISM_PARAM_INVALID rather than picking values the
+			// caller did not choose — a signature made under a different salt
+			// length is a different signature.
+			signMech := module.NewMechanismWithTypedParams(tc.signMech,
+				module.NewRSAPSSParams(tc.hashAlg))
 			rv = env.Module.SignInit(session, signMech, privHandle)
 			RequireOK(t, rv, "SignInit "+tc.name)
 
@@ -331,9 +339,12 @@ func TestEdDSAMechanisms(t *testing.T) {
 	})
 
 	t.Run("Ed25519_EmptyMessage", func(t *testing.T) {
-		// NOTE: Ed25519 signing of empty messages is allowed by RFC 8032 but our
-		// implementation currently does not support it. This is a known limitation.
-		t.Skip("Ed25519 empty message signing not currently supported")
+		// RFC 8032 permits a zero-length message, and the server honors it:
+		// pkg/api/grpc/service.go routes Ed25519 through pure signing
+		// (crypto.Hash(0), raw message) BEFORE the "data is required" guard that
+		// applies to prehashed algorithms, and nothing in the PKCS#11 module path
+		// rejects an empty buffer either. The skip that used to sit here claimed
+		// this was unimplemented, which kept the whole branch unexercised.
 
 		env, session := SetupAuthenticatedModule(t)
 
@@ -425,6 +436,17 @@ func TestAESKeyGeneration(t *testing.T) {
 	}
 }
 
+// comprehensiveGCMIV returns a fixed AES-GCM initialization vector.
+//
+// A fixed value keeps a failure reproducible, which is what a conformance test
+// needs. Production code must never reuse a GCM IV under the same key.
+func comprehensiveGCMIV() []byte {
+	return []byte{
+		0x10, 0x11, 0x12, 0x13, 0x14, 0x15,
+		0x16, 0x17, 0x18, 0x19, 0x1a, 0x1b,
+	}
+}
+
 // TestAESEncryptionModes tests all AES encryption modes.
 func TestAESEncryptionModes(t *testing.T) {
 	testCases := []struct {
@@ -448,7 +470,12 @@ func TestAESEncryptionModes(t *testing.T) {
 			plaintext := []byte("Test plaintext for AES encryption mode testing - pad to 32 bytes")
 
 			// Encrypt
-			encMech := &module.Mechanism{Type: tc.encMech}
+			// AES-GCM carries its IV, AAD and tag length in CK_GCM_PARAMS
+			// (v3.2 §6.13.5). The module refuses the mechanism without them
+			// rather than inventing an IV, because a GCM IV reused under one
+			// key destroys the mode's security.
+			encMech := module.NewMechanismWithTypedParams(tc.encMech,
+				module.NewAESGCMParams(comprehensiveGCMIV(), 128))
 			rv = env.Module.EncryptInit(session, encMech, keyHandle)
 			RequireOK(t, rv, "EncryptInit "+tc.name)
 
@@ -934,19 +961,50 @@ func TestErrorHandling(t *testing.T) {
 		RequireReturnValue(t, rv, module.CKR_KEY_HANDLE_INVALID, "SignInit invalid key")
 	})
 
+	// C_SignInit validates the KEY before the mechanism. PKCS#11 v3.2 §5.1.6
+	// leaves the order open — "there are in general no particular priorities
+	// among the errors listed below" — so the module picks one and applies it
+	// everywhere; key-first is what SoftHSM does, and applications are written
+	// against SoftHSM. See validateInitMechanism in pkg/pkcs11/module/module.go.
+	//
+	// Both halves are asserted separately because a single case cannot tell an
+	// ordering apart from a coincidence: this test used to pass an AES key,
+	// which C_SignInit will not sign with, to a bad-mechanism check, so it would
+	// have reported CKR_MECHANISM_INVALID under either ordering and said nothing
+	// about which one the module implements. That is how the module carried
+	// three different orderings across its ten initializers without any test
+	// noticing.
 	t.Run("CKR_MECHANISM_INVALID", func(t *testing.T) {
 		env, session := SetupAuthenticatedModule(t)
 
-		// Generate a key
-		template := BuildAESKeyTemplate("test-invalid-mech", 32)
-		keyMech := &module.Mechanism{Type: module.CKM_AES_KEY_GEN}
-		handle, rv := env.Module.GenerateKey(session, keyMech, template)
+		// A key with nothing wrong with it: CKA_SIGN is set, so the mechanism
+		// is the only fault left for C_SignInit to report.
+		_, privateKey, rv := env.Module.GenerateKeyPair(session,
+			&module.Mechanism{Type: module.CKM_RSA_PKCS_KEY_PAIR_GEN},
+			BuildRSAPublicKeyTemplate("test-invalid-mech-pub", 2048),
+			BuildRSAPrivateKeyTemplate("test-invalid-mech-priv"))
+		RequireOK(t, rv, "GenerateKeyPair")
+
+		invalidMech := &module.Mechanism{Type: module.MechanismType(0xFFFFFFFF)}
+		rv = env.Module.SignInit(session, invalidMech, privateKey)
+		RequireReturnValue(t, rv, module.CKR_MECHANISM_INVALID,
+			"SignInit with a signing key and an invalid mechanism")
+	})
+
+	t.Run("CKR_KEY_FUNCTION_NOT_PERMITTED_precedes_CKR_MECHANISM_INVALID", func(t *testing.T) {
+		env, session := SetupAuthenticatedModule(t)
+
+		// An AES key carries no CKA_SIGN, so both faults hold at once. The key
+		// is what must be reported.
+		template := BuildAESKeyTemplate("test-invalid-mech-aes", 32)
+		handle, rv := env.Module.GenerateKey(session,
+			&module.Mechanism{Type: module.CKM_AES_KEY_GEN}, template)
 		RequireOK(t, rv, "GenerateKey")
 
-		// Try to sign with invalid mechanism
 		invalidMech := &module.Mechanism{Type: module.MechanismType(0xFFFFFFFF)}
 		rv = env.Module.SignInit(session, invalidMech, handle)
-		RequireReturnValue(t, rv, module.CKR_MECHANISM_INVALID, "SignInit invalid mechanism")
+		RequireReturnValue(t, rv, module.CKR_KEY_FUNCTION_NOT_PERMITTED,
+			"SignInit reports the key fault first when both the key and the mechanism are wrong")
 	})
 
 	t.Run("CKR_OPERATION_NOT_INITIALIZED", func(t *testing.T) {

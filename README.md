@@ -5,7 +5,7 @@
 [![Tests](https://img.shields.io/badge/tests-151%20passing-brightgreen.svg)](test/integration)
 [![Coverage](https://img.shields.io/badge/coverage-92.5%25-brightgreen.svg)](pkg)
 [![Backends](https://img.shields.io/badge/backends-8-blue.svg)](#backend-support-)
-[![AGPL-3.0 License](https://img.shields.io/badge/license-AGPL--3.0-blue.svg)](LICENSE-AGPL-3.txt)
+[![AGPL-3.0 License](https://img.shields.io/badge/license-AGPL--3.0-blue.svg)](LICENSE)
 [![Commercial License](https://img.shields.io/badge/license-Commercial-green.svg)](LICENSE-COMMERCIAL.md)
 
 A secure cryptographic key and certificate management solution for on-prem, hybrid, and/or cloud.
@@ -115,16 +115,16 @@ go-xkms provides **5 client interfaces** for accessing key and certificate opera
 | **CLI** | Command-line | 100% (17/17) | Complete | Interactive, scripts |
 | **MCP** | JSON-RPC | 100% (17/17) | Complete | Model Context Protocol |
 
-All interfaces expose the complete KeyStore API for keys and certificates. See [docs/api-parity.md](docs/api-parity.md) for detailed method coverage.
+All interfaces expose the complete KeyStore API for keys and certificates — each transport is served from the same `Servicer` interface (`pkg/api/transport/servicer.go`), which is what keeps them in step. See [docs/architecture/api-specifications.md](docs/architecture/api-specifications.md) for per-protocol method coverage.
 
 ### Interface Examples
 
 **CLI (Command Line):**
 ```bash
-# Key Management
-xkmsctl key generate --name my-key --type rsa --size 2048
-xkmsctl key generate --name signing-key --type ecdsa --curve P-256
-xkmsctl key generate --name ed-key --type ed25519
+# Key Management (the key ID is positional)
+xkmsctl key generate my-key --key-algorithm rsa --key-size 2048
+xkmsctl key generate signing-key --key-algorithm ecdsa --curve P-256
+xkmsctl key generate ed-key --key-algorithm ed25519
 xkmsctl key list
 xkmsctl key get my-key
 xkmsctl key delete my-key
@@ -135,42 +135,52 @@ xkmsctl cert list
 xkmsctl cert get my-key
 xkmsctl cert delete my-key
 
-# Admin Management (requires FIDO2 security key)
+# Admin Management (--method fido2 is the default; mtls is also supported)
 xkmsctl admin status
 xkmsctl admin create admin@example.com --display-name "Admin"
+xkmsctl admin create admin@example.com --method mtls --cert-file client.pem
 xkmsctl admin list
 xkmsctl admin get admin@example.com
 xkmsctl admin disable admin@example.com
 xkmsctl admin enable admin@example.com
 
-# FIDO2 Operations
-xkmsctl fido2 list        # List connected security keys
-xkmsctl fido2 info        # Show device information
+# FIDO2 Operations (external hardware security keys)
+xkmsctl fido2 list-devices   # List connected security keys
+xkmsctl fido2 info           # Show device information
 
 # Backend Information
-xkmsctl backends          # List available backends
+xkmsctl backends list          # List available backends
+xkmsctl backends info software # Show one backend's capabilities
 ```
 
 **REST API:**
+
+The REST port is TLS, so these are `https`. `-k` accepts a development root; a
+real deployment passes `--cacert`. Every `/api/v1` route requires
+authentication — supply a bearer token or a client certificate. Only `/health*`
+and the discovery endpoints are public.
+
 ```bash
 # Generate a key
-curl -X POST http://localhost:8443/api/v1/keys \
+curl -k -X POST https://localhost:8443/api/v1/keys \
   -H "Content-Type: application/json" \
+  -H "Authorization: Bearer $TOKEN" \
   -d '{"key_id": "my-key", "key_type": "rsa", "key_size": 2048}'
 
 # List keys
-curl http://localhost:8443/api/v1/keys
+curl -k -H "Authorization: Bearer $TOKEN" https://localhost:8443/api/v1/keys
 
 # Get a key's public info
-curl http://localhost:8443/api/v1/keys/my-key
+curl -k -H "Authorization: Bearer $TOKEN" https://localhost:8443/api/v1/keys/my-key
 
 # Sign data
-curl -X POST http://localhost:8443/api/v1/keys/my-key/sign \
+curl -k -X POST https://localhost:8443/api/v1/keys/my-key/sign \
   -H "Content-Type: application/json" \
+  -H "Authorization: Bearer $TOKEN" \
   -d '{"data": "SGVsbG8gV29ybGQ=", "hash": "sha256"}'
 
-# Health check
-curl http://localhost:8443/api/v1/health
+# Health check -- at the root, not under /api/v1, and needs no auth
+curl -k https://localhost:8443/health
 ```
 
 **gRPC:**
@@ -204,9 +214,11 @@ keys, _ := client.ListKeys(ctx, &pb.ListKeysRequest{})
 
 **QUIC (HTTP/3 - low latency UDP-based):**
 ```bash
-# Same REST API over QUIC/HTTP3
-curl --http3 https://localhost:8444/api/v1/keys
-curl --http3 https://localhost:8444/api/v1/health
+# Same REST API over QUIC/HTTP3 (8444/udp)
+curl -k --http3 -H "Authorization: Bearer $TOKEN" https://localhost:8444/api/v1/keys
+
+# Health check -- at the root, not under /api/v1
+curl -k --http3 https://localhost:8444/health
 ```
 
 ---
@@ -222,12 +234,19 @@ go get github.com/jeremyhahn/go-xkms
 ### As a Server
 
 ```bash
-# Build the server and CLI
-make build-server build-cli
+# Build the CLI (pure Go, no CGO)
+make build-cli
+
+# Build the server (uses a Docker builder image for the CGO dependencies)
+make build-server
 
 # Copy binaries to system path
 sudo cp bin/xkmsd bin/xkmsctl /usr/bin/
 ```
+
+`make build-server` builds inside a container because the daemon links CGO
+dependencies. `make build-local` builds everything on the host instead, if you
+have the development packages installed.
 
 See [deploy/README.md](deploy/README.md) for systemd and OpenRC service installation.
 
@@ -235,69 +254,148 @@ See [deploy/README.md](deploy/README.md) for systemd and OpenRC service installa
 
 ## Server Quick Start
 
-### 1. First-Time Setup
+**xkmsd refuses to start with an insecure configuration.** Before serving, it
+checks `config.ComplianceGaps()` and exits if encryption-at-rest, TLS,
+authentication or a CA is missing — there is no override flag. The config below
+satisfies all four. Nothing needs provisioning up front: the embedded CA mints
+the daemon's own TLS certificate on first start.
 
-Before using go-xkms as a service, you must create an administrator account with a FIDO2 security key:
+### 1. Write a Configuration File
 
-```bash
-# Check if setup is required
-xkmsctl admin status
-
-# Create the first administrator (requires FIDO2 security key)
-xkmsctl admin create admin@example.com --display-name "Admin User"
-# Touch your security key when prompted...
-
-# Verify the admin was created
-xkmsctl admin list
-```
-
-**Requirements:**
-- A FIDO2-compatible security key (YubiKey 5, SoloKey, Nitrokey, etc.)
-- The security key must be connected via USB
-
-### 2. Configure the Server
-
-Create a configuration file at `/etc/xkms/config.yaml`:
+Save this as `xkmsd.yaml`. It is the shipped development configuration
+([configs/xkmsd-dev.yaml](configs/xkmsd-dev.yaml)) with REST enabled, and it
+starts as-is:
 
 ```yaml
-# Server configuration
 server:
-  host: "0.0.0.0"
+  host: "127.0.0.1"
   rest_port: 8443
   grpc_port: 9443
   quic_port: 8444
+  mcp_port: 8445
 
-# Default backend
-default: pkcs8
+protocols:
+  unix: true      # xkmsctl's default transport
+  rest: true      # needed for the curl check in step 4
+  grpc: false
+  quic: false
+  mcp: false
 
-# Backend configurations
+unix:
+  enabled: true
+  socket_path: "xkms-data/xkms.sock"
+  socket_mode: "0660"
+  protocol: "grpc"
+
+# --- the four settings the compliance gate requires ---
+
+tls:
+  enabled: true
+
+auth:
+  enabled: true
+  type: "adaptive"          # must not be "", "none" or "noop"
+
+barrier:
+  enabled: true
+  strategy: "passphrase"
+  passphrase: "dev-only-passphrase"   # development only; see below
+
+# Embedded certificate authority. On first start xkmsd creates this root,
+# issues its own TLS server certificate from it, and persists both under
+# storage.path. A development root -- do not trust it anywhere.
+ca:
+  identity:
+    - subject:
+        cn: "xkms Development Root CA"
+        organization: "go-xkms"
+      valid: 10
+      keys:
+        - algorithm: "ECDSA"
+          ecc:
+            curve: "P-256"
+          hash: "SHA-256"
+          key_type: "CA"
+      keystore-type: "software"
+      is-root: true
+  selected-ca: 0
+  default-validity-days: 365
+
+# --- storage and backends ---
+
+storage:
+  backend: "file"
+  path: "xkms-data/storage"
+
+default_backend: "software"
+
 backends:
-  pkcs8:
+  software:
     enabled: true
-    key_dir: /var/lib/xkms/keys
+    path: "xkms-data/keys"
+
+logging:
+  level: "info"
+  format: "text"
 ```
+
+The literal `barrier.passphrase` above exists so a throwaway local daemon needs
+no out-of-band setup. **A real deployment supplies `XKMS_SEAL_PASSPHRASE` or a
+`credential://` reference instead** — or lets `xkmsd init` provision one.
+
+### 2. Provision the Deployment
+
+`xkmsd init` performs the whole bootstrap ceremony in one call — barrier,
+credentials, and the administrator identity. Both PINs are required:
+
+```bash
+xkmsd init --config xkmsd.yaml \
+  --so-pin "$SO_PIN" \
+  --user-pin "$USER_PIN" \
+  --hostname localhost
+```
+
+It reports the SPKI pin of the server certificate, which is what clients use to
+pin their first connection. The default `--barrier-strategy` is `passphrase`;
+`shamir` (with `--shares` and `--threshold`), `tpm2`, `pkcs11` and the cloud KMS
+strategies are also available. The default login factor for the administrator is
+`mtls` — pass `--admin-factor` to enroll something else, such as a FIDO2
+security key.
+
+The canonical `XKMS_*` environment variables (`XKMS_SO_PIN`, `XKMS_USER_PIN`,
+`XKMS_BARRIER_STRATEGY`, …) are equivalent to the flags. Run
+`xkmsd init --help` for the full list.
 
 ### 3. Start the Server
 
 ```bash
 # Direct execution
-xkmsd -config /etc/xkms/config.yaml
+xkmsd --config xkmsd.yaml
 
 # Or via systemd (after installing service files)
 sudo systemctl start xkms
 ```
 
-### 4. Verify Server is Running
+`--config` defaults to `/etc/xkms/xkmsd.yaml` when not given. If the daemon
+exits immediately, read the `gaps` field in the error — each entry names the
+exact configuration key to turn on.
+
+### 4. Verify the Server is Running
 
 ```bash
-# REST API health check
-curl http://localhost:8443/api/v1/health
+# Health check. The endpoint is /health at the root, not under /api/v1,
+# and the port is TLS -- so https, and -k to accept the development root.
+curl -k https://localhost:8443/health
 
-# List keys via CLI
+# Kubernetes-style probes are also served, unauthenticated
+curl -k https://localhost:8443/health/ready
+
+# List keys via CLI (defaults to the unix transport and xkms-data/xkms.sock,
+# so run this from the same directory as the config)
 xkmsctl key list
 
-# Generate a test key
-xkmsctl key generate --name test-key --type rsa --size 2048
+# Generate a test key. The key ID is positional.
+xkmsctl key generate test-key --key-algorithm rsa --key-size 2048
 ```
 
 ---
@@ -851,12 +949,13 @@ go doc github.com/jeremyhahn/go-xkms/pkg/certstore
 
 Comprehensive documentation is available in the [docs/](docs/) directory:
 
-- [Getting Started Guide](docs/getting-started.md) - Step-by-step guide to using go-xkms
-- [Certificate Management](docs/certificate-management.md) - Certificate storage modes and best practices
+- [Getting Started Guide](xkey/docs/usage/getting-started.md) - Step-by-step guide to using go-xkms
+- [Certificate Authority](docs/ca/README.md) - CA module, certificate lifecycle, and ACME
+- [Hardware Certificate Storage](docs/architecture/hardware-certificate-storage.md) - Storing certificates in PKCS#11 and TPM2 modules
 - [Backend Guide](docs/backends/) - Backend-specific configuration and usage
-- [Storage Abstraction](docs/storage-abstraction.md) - Storage layer architecture
+- [Storage Architecture](docs/architecture/storage.md) - Storage interfaces and abstraction layer
 - [Testing Guide](docs/testing/) - Running tests and writing new tests
-- [Build System](docs/build-system.md) - Build and deployment instructions
+- [Build System](docs/configuration/build-system.md) - Build tags and compilation options
 
 ### Core Interfaces
 
@@ -929,7 +1028,7 @@ go-xkms is available under a **dual-license model**:
 
 ### Option 1: GNU Affero General Public License v3.0 (AGPL-3.0)
 
-The open-source version of go-xkms is licensed under the [AGPL-3.0](LICENSE-AGPL-3.txt).
+The open-source version of go-xkms is licensed under the [AGPL-3.0](LICENSE).
 
 **What does this mean?**
 

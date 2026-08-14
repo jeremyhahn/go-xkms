@@ -341,8 +341,10 @@ func TestAvailableBackends_ReturnsCopy(t *testing.T) {
 	first := AvailableBackends()
 	second := AvailableBackends()
 
+	// The software backend is always compiled in, so the registry is never
+	// empty; an empty result would itself be the bug.
 	if len(first) == 0 {
-		t.Skip("No backends available to test")
+		t.Fatal("AvailableBackends() returned nothing: the software backend is always available")
 	}
 
 	// Modify first slice

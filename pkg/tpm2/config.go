@@ -3,6 +3,7 @@ package tpm2
 import (
 	"crypto"
 	"crypto/x509"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"strings"
@@ -10,6 +11,7 @@ import (
 	"github.com/google/go-tpm/tpm2"
 	"github.com/jeremyhahn/go-xkms/pkg/tpm2/store"
 	"github.com/jeremyhahn/go-xkms/pkg/types"
+	"gopkg.in/yaml.v3"
 )
 
 type PCRBankAlgo string
@@ -48,6 +50,30 @@ var (
 func (pcrBankAlgo PCRBankAlgo) String() string {
 	return string(pcrBankAlgo)
 }
+
+// ErrSSRKPlatformPolicy reports a configuration that asks for a platform
+// policy on the Shared SRK. The Shared SRK never carries one; platform binding
+// belongs to the Platform SRK. See SRKConfig for why.
+var ErrSSRKPlatformPolicy = errors.New(
+	"tpm2: the shared SRK cannot carry a platform policy")
+
+// SSRKPlatformPolicyError is the typed error returned when an ssrk
+// configuration section asks for a platform policy. Format and Key name the
+// serialization and the offending key so the operator can find it.
+type SSRKPlatformPolicyError struct {
+	Format string
+	Key    string
+}
+
+func (e *SSRKPlatformPolicyError) Error() string {
+	return fmt.Sprintf(
+		"%s (%s key %q): platform binding belongs on the platform SRK; "+
+			"set platform-srk.platform-policy instead and remove the key from the ssrk section",
+		ErrSSRKPlatformPolicy.Error(), e.Format, e.Key)
+}
+
+// Unwrap reports ErrSSRKPlatformPolicy so callers can match with errors.Is.
+func (e *SSRKPlatformPolicyError) Unwrap() error { return ErrSSRKPlatformPolicy }
 
 var (
 	ErrInvalidHierarchyType = errors.New("tpm2: invalid hierarchy type")
@@ -112,8 +138,7 @@ var (
 			Debug:  true,
 			Handle: 0x81000001,
 			// HierarchyAuth: types.DEFAULT_PASSWORD,
-			PlatformPolicy: true,
-			KeyAlgorithm:   x509.RSA.String(),
+			KeyAlgorithm: x509.RSA.String(),
 			RSAConfig: &store.RSAConfig{
 				KeySize: 2048,
 			},
@@ -174,16 +199,94 @@ type EKConfig struct {
 	RSAConfig      *store.RSAConfig `yaml:"rsa,omitempty" json:"rsa" mapstructure:"rsa"`
 }
 
+// SRKConfig configures the Shared Storage Root Key (SSRK), the TCG-standard
+// storage parent persisted at 0x81000001.
+//
+// The SSRK carries NO platform policy, and the type deliberately offers no way
+// to ask for one: the field a caller would set does not exist. Platform binding
+// belongs to the Platform SRK (PlatformSRKConfig.PlatformPolicy), which is
+// created after CreatePlatformPolicy has extended the golden measurement into
+// the platform PCR and therefore describes the state the machine is actually
+// running in.
+//
+// The SSRK cannot be given the same treatment. Provision creates it inside
+// ProvisionOwner, before CreatePlatformPolicy runs, so any AuthPolicy computed
+// for it describes a PCR state that no longer exists once provisioning returns.
+// Reordering is not an option either: AuthPolicy is part of the template, and
+// the template is an input to TPM2_CreatePrimary's key derivation (TPM 2.0
+// Part 1, Section 27.2), so changing it derives a different key and orphans
+// every existing child.
+//
+// A configuration file that still asks for one is rejected rather than quietly
+// dropped -- see UnmarshalYAML and UnmarshalJSON.
 type SRKConfig struct {
-	CN             string           `yaml:"cn,omitempty" json:"cn" mapstructure:"cn"`
-	Debug          bool             `json:"debug" yaml:"debug" mapstructure:"debug"`
-	ECCConfig      *store.ECCConfig `yaml:"ecc,omitempty" json:"ecc" mapstructure:"ecc"`
-	Handle         uint32           `yaml:"handle" json:"handle" mapstructure:"handle"`
-	HierarchyAuth  string           `yaml:"hierarchy-auth,omitempty" json:"hierarchy-auth" mapstructure:"hierarchy-auth"`
-	KeyAlgorithm   string           `yaml:"algorithm" json:"algorithm" mapstructure:"algorithm"`
-	Password       string           `yaml:"password,omitempty" json:"password" mapstructure:"password"`
-	PlatformPolicy bool             `yaml:"platform-policy" json:"_platform_policy" mapstructure:"platform-policy"`
-	RSAConfig      *store.RSAConfig `yaml:"rsa,omitempty" json:"rsa" mapstructure:"rsa"`
+	CN            string           `yaml:"cn,omitempty" json:"cn" mapstructure:"cn"`
+	Debug         bool             `json:"debug" yaml:"debug" mapstructure:"debug"`
+	ECCConfig     *store.ECCConfig `yaml:"ecc,omitempty" json:"ecc" mapstructure:"ecc"`
+	Handle        uint32           `yaml:"handle" json:"handle" mapstructure:"handle"`
+	HierarchyAuth string           `yaml:"hierarchy-auth,omitempty" json:"hierarchy-auth" mapstructure:"hierarchy-auth"`
+	KeyAlgorithm  string           `yaml:"algorithm" json:"algorithm" mapstructure:"algorithm"`
+	Password      string           `yaml:"password,omitempty" json:"password" mapstructure:"password"`
+	RSAConfig     *store.RSAConfig `yaml:"rsa,omitempty" json:"rsa" mapstructure:"rsa"`
+}
+
+// UnmarshalYAML decodes an ssrk configuration section and rejects one that
+// asks for a platform policy.
+//
+// Deleting the field alone would make an operator's `platform-policy: true`
+// vanish silently, leaving them to believe the SSRK is platform-bound when it
+// is not -- the fail-open behaviour that made the stale-policy defect so hard
+// to see in the first place. An explicit false, and an absent key, decode
+// normally.
+func (c *SRKConfig) UnmarshalYAML(node *yaml.Node) error {
+	var legacy struct {
+		PlatformPolicy *bool `yaml:"platform-policy"`
+	}
+	if err := node.Decode(&legacy); err != nil {
+		return err
+	}
+	if legacy.PlatformPolicy != nil && *legacy.PlatformPolicy {
+		return &SSRKPlatformPolicyError{Format: "yaml", Key: "platform-policy"}
+	}
+
+	// srkConfig has no methods, so decoding into it does not recurse.
+	type srkConfig SRKConfig
+	var decoded srkConfig
+	if err := node.Decode(&decoded); err != nil {
+		return err
+	}
+
+	*c = SRKConfig(decoded)
+	return nil
+}
+
+// UnmarshalJSON decodes an ssrk configuration object and rejects one that asks
+// for a platform policy. Both the current spelling and the legacy
+// "_platform_policy" spelling this field was serialized under are refused, for
+// the reason given on UnmarshalYAML.
+func (c *SRKConfig) UnmarshalJSON(data []byte) error {
+	var legacy struct {
+		PlatformPolicy       *bool `json:"platform_policy"`
+		LegacyPlatformPolicy *bool `json:"_platform_policy"`
+	}
+	if err := json.Unmarshal(data, &legacy); err != nil {
+		return err
+	}
+	if legacy.PlatformPolicy != nil && *legacy.PlatformPolicy {
+		return &SSRKPlatformPolicyError{Format: "json", Key: "platform_policy"}
+	}
+	if legacy.LegacyPlatformPolicy != nil && *legacy.LegacyPlatformPolicy {
+		return &SSRKPlatformPolicyError{Format: "json", Key: "_platform_policy"}
+	}
+
+	type srkConfig SRKConfig
+	var decoded srkConfig
+	if err := json.Unmarshal(data, &decoded); err != nil {
+		return err
+	}
+
+	*c = SRKConfig(decoded)
+	return nil
 }
 
 type IDevIDConfig struct {
@@ -340,7 +443,15 @@ func EKAttributesFromConfig(config EKConfig, policyDigest *tpm2.TPM2BDigest, ide
 	return attrs, nil
 }
 
-func SRKAttributesFromConfig(config SRKConfig, policyDigest *tpm2.TPM2BDigest) (*types.KeyAttributes, error) {
+// SRKAttributesFromConfig builds storage-root-key attributes from an SRKConfig.
+//
+// The attributes never carry a platform policy: SRKConfig cannot express one
+// (see its documentation), so no AuthPolicy is baked into the template here.
+// The Platform SRK, which is built from the same shape by
+// buildSRKAttrsFromConfig, has its PlatformPolicy set from
+// PlatformSRKConfig.PlatformPolicy and its AuthPolicy computed by CreateSRK
+// from the platform state that is live at creation time.
+func SRKAttributesFromConfig(config SRKConfig) (*types.KeyAttributes, error) {
 
 	if config.CN == "" {
 		config.CN = "srk"
@@ -364,10 +475,6 @@ func SRKAttributesFromConfig(config SRKConfig, policyDigest *tpm2.TPM2BDigest) (
 		srkTemplate = tpm2.ECCSRKTemplate
 	}
 
-	if config.PlatformPolicy && policyDigest != nil {
-		srkTemplate.AuthPolicy = *policyDigest
-	}
-
 	// Only set Password when the config value is non-empty. An empty
 	// password must remain nil so that CreateSession selects the PCR branch
 	// of PlatformPolicySession (auto-unseal) instead of the password branch.
@@ -387,13 +494,12 @@ func SRKAttributesFromConfig(config SRKConfig, policyDigest *tpm2.TPM2BDigest) (
 	}
 
 	attrs := &types.KeyAttributes{
-		CN:             config.CN,
-		Debug:          config.Debug,
-		KeyAlgorithm:   algorithm,
-		KeyType:        types.KeyTypeStorage,
-		Password:       srkPassword,
-		PlatformPolicy: config.PlatformPolicy,
-		StoreType:      types.StoreTPM2,
+		CN:           config.CN,
+		Debug:        config.Debug,
+		KeyAlgorithm: algorithm,
+		KeyType:      types.KeyTypeStorage,
+		Password:     srkPassword,
+		StoreType:    types.StoreTPM2,
 		TPMAttributes: &types.TPMAttributes{
 			Handle:        tpm2.TPMHandle(config.Handle),
 			HandleType:    tpm2.TPMHTPersistent,
@@ -677,10 +783,25 @@ func ParseHierarchy(hierarchyType string) (tpm2.TPMIRHHierarchy, error) {
 	return 0, ErrInvalidHierarchyType
 }
 
-// Parses the identity provisioning strategy, using one of the mentioned methods
-// in "TPM 2.0 Keys for Device Identity and Attestation", section 6 - Identity Provisioning.
+// ParseIdentityProvisioningStrategy resolves the configured identity
+// provisioning strategy, one of the methods in "TPM 2.0 Keys for Device
+// Identity and Attestation", section 6 - Identity Provisioning.
+//
+// An unset value selects section 6.2 (IAK and IDevID in a single pass), the
+// documented default. Any other unrecognized value returns
+// EnrollmentStrategyUnknown, which no strategy switch accepts, so the caller
+// reports ErrInvalidEnrollmentStrategy.
+//
+// This used to fall back to the 6.2 default for every unrecognized value, so a
+// typo in identity-provisioning-strategy silently ran a different
+// device-identity ceremony than the operator configured, with no diagnostic --
+// and made ErrInvalidEnrollmentStrategy unreachable in both VerifyTCGCSR and
+// CreateTCG_CSR_IDEVID.
 func ParseIdentityProvisioningStrategy(strategy string) EnrollmentStrategy {
 	switch strategy {
+	// Unset: the documented default, section 6.2.
+	case "":
+		return EnrollmentStrategyIAK_IDEVID_SINGLE_PASS
 	// 6.1 OEM Creation of an IAK Certificate
 	case string(EnrollmentStrategyIAK):
 		return EnrollmentStrategyIAK
@@ -688,7 +809,7 @@ func ParseIdentityProvisioningStrategy(strategy string) EnrollmentStrategy {
 	case string(EnrollmentStrategyIAK_IDEVID_SINGLE_PASS):
 		return EnrollmentStrategyIAK_IDEVID_SINGLE_PASS
 	default:
-		return EnrollmentStrategyIAK_IDEVID_SINGLE_PASS
+		return EnrollmentStrategyUnknown
 	}
 }
 

@@ -443,10 +443,10 @@ func TestClaimCertComplete_HTTPError(t *testing.T) {
 	require.Error(t, err)
 }
 
-func TestClaimShare_HTTPError(t *testing.T) {
+func TestClaimShareBegin_HTTPError(t *testing.T) {
 	tr, cleanup := newErrTransport(t)
 	defer cleanup()
-	_, err := tr.ClaimShare(context.Background(), &transport.ClaimShareRequest{})
+	_, err := tr.ClaimShareBegin(context.Background(), &transport.ClaimShareBeginRequest{})
 	require.Error(t, err)
 }
 

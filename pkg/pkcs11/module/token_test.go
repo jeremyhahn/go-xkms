@@ -336,6 +336,34 @@ func TestToken_PinOperations(t *testing.T) {
 	}
 }
 
+// TestToken_ClearUserPin tests that ClearUserPin zeroizes the stored user PIN
+// verifier and clears CKF_USER_PIN_INITIALIZED, per C_InitToken's requirement
+// (v3.2 §5.5.7) that the user PIN be invalidated whenever the SO reinitializes
+// the token.
+func TestToken_ClearUserPin(t *testing.T) {
+	token := NewToken()
+	token.SetUserPin("userpin")
+
+	if !token.Info.Flags.Has(CKF_USER_PIN_INITIALIZED) {
+		t.Fatal("CKF_USER_PIN_INITIALIZED not set after SetUserPin()")
+	}
+	if !token.VerifyUserPin("userpin") {
+		t.Fatal("VerifyUserPin() failed for the PIN that was just set")
+	}
+
+	token.ClearUserPin()
+
+	if token.Info.Flags.Has(CKF_USER_PIN_INITIALIZED) {
+		t.Error("CKF_USER_PIN_INITIALIZED still set after ClearUserPin()")
+	}
+	if token.VerifyUserPin("userpin") {
+		t.Error("VerifyUserPin() succeeded for a PIN cleared by ClearUserPin()")
+	}
+	if token.UserPinHash != nil {
+		t.Error("UserPinHash not nil after ClearUserPin()")
+	}
+}
+
 func TestToken_PinVerificationEmptyHash(t *testing.T) {
 	token := NewToken()
 
@@ -680,11 +708,11 @@ func TestSlotManager_GetMechanismInfo(t *testing.T) {
 	}
 
 	// Check RSA key size limits
-	if info.MinKeySize != 2048 {
-		t.Errorf("RSA MinKeySize = %d, want 2048", info.MinKeySize)
+	if info.MinKeySize != rsaModulusBitsMin {
+		t.Errorf("RSA MinKeySize = %d, want %d", info.MinKeySize, rsaModulusBitsMin)
 	}
-	if info.MaxKeySize != 4096 {
-		t.Errorf("RSA MaxKeySize = %d, want 4096", info.MaxKeySize)
+	if info.MaxKeySize != rsaModulusBitsMax {
+		t.Errorf("RSA MaxKeySize = %d, want %d", info.MaxKeySize, rsaModulusBitsMax)
 	}
 	if info.Flags&CKF_GENERATE_KEY_PAIR == 0 {
 		t.Error("RSA key gen missing CKF_GENERATE_KEY_PAIR flag")
@@ -730,376 +758,6 @@ func TestSlotManager_GetMechanismInfo_NoToken(t *testing.T) {
 	var pkcs11Err *PKCS11Error
 	if !errors.As(err, &pkcs11Err) || pkcs11Err.Code != CKR_TOKEN_NOT_PRESENT {
 		t.Errorf("GetMechanismInfo() error = %v, want CKR_TOKEN_NOT_PRESENT", err)
-	}
-}
-
-func TestSlotManager_InitToken(t *testing.T) {
-	sm := NewSlotManager()
-
-	soPin := "12345678"
-	label := "Test Token"
-
-	// Initialize token
-	err := sm.InitToken(0, soPin, label)
-	if err != nil {
-		t.Fatalf("InitToken() error = %v", err)
-	}
-
-	// Get token info and verify
-	info, err := sm.GetTokenInfo(0)
-	if err != nil {
-		t.Fatalf("GetTokenInfo() error = %v", err)
-	}
-
-	// Check label
-	if info.GetLabel() != label {
-		t.Errorf("Token label = %q, want %q", info.GetLabel(), label)
-	}
-
-	// Check CKF_TOKEN_INITIALIZED flag
-	if !info.Flags.Has(CKF_TOKEN_INITIALIZED) {
-		t.Error("CKF_TOKEN_INITIALIZED not set after InitToken()")
-	}
-
-	// Check serial number is set
-	sn := info.GetSerialNumber()
-	if sn == "" {
-		t.Error("Serial number not set after InitToken()")
-	}
-
-	// Verify SO PIN works
-	slot, _ := sm.GetSlot(0)
-	token := slot.GetToken()
-	if !token.VerifySOPin(soPin) {
-		t.Error("SO PIN verification failed after InitToken()")
-	}
-}
-
-func TestSlotManager_InitToken_InvalidSlot(t *testing.T) {
-	sm := NewSlotManager()
-
-	err := sm.InitToken(999, "sopin", "label")
-	if err == nil {
-		t.Error("InitToken(999) expected error")
-	}
-	var pkcs11Err *PKCS11Error
-	if !errors.As(err, &pkcs11Err) || pkcs11Err.Code != CKR_SLOT_ID_INVALID {
-		t.Errorf("InitToken(999) error = %v, want CKR_SLOT_ID_INVALID", err)
-	}
-}
-
-func TestSlotManager_InitToken_NoToken(t *testing.T) {
-	sm := NewSlotManager()
-
-	// Remove the token
-	slot, _ := sm.GetSlot(0)
-	slot.SetToken(nil)
-
-	err := sm.InitToken(0, "sopin", "label")
-	if err == nil {
-		t.Error("InitToken() expected error for slot without token")
-	}
-	var pkcs11Err *PKCS11Error
-	if !errors.As(err, &pkcs11Err) || pkcs11Err.Code != CKR_TOKEN_NOT_PRESENT {
-		t.Errorf("InitToken() error = %v, want CKR_TOKEN_NOT_PRESENT", err)
-	}
-}
-
-func TestSlotManager_InitToken_PinLenRange(t *testing.T) {
-	sm := NewSlotManager()
-
-	// PIN too short
-	err := sm.InitToken(0, "123", "label")
-	if err == nil {
-		t.Error("InitToken() expected error for short PIN")
-	}
-	var pkcs11Err *PKCS11Error
-	if !errors.As(err, &pkcs11Err) || pkcs11Err.Code != CKR_PIN_LEN_RANGE {
-		t.Errorf("InitToken() error = %v, want CKR_PIN_LEN_RANGE", err)
-	}
-}
-
-func TestSlotManager_InitToken_Reinitialize(t *testing.T) {
-	sm := NewSlotManager()
-
-	soPin := "12345678"
-	label1 := "Token Label 1"
-	label2 := "Token Label 2"
-
-	// Initialize token
-	err := sm.InitToken(0, soPin, label1)
-	if err != nil {
-		t.Fatalf("InitToken() error = %v", err)
-	}
-
-	// Re-initialize with same PIN
-	err = sm.InitToken(0, soPin, label2)
-	if err != nil {
-		t.Fatalf("InitToken() re-init error = %v", err)
-	}
-
-	// Verify new label
-	info, _ := sm.GetTokenInfo(0)
-	if info.GetLabel() != label2 {
-		t.Errorf("Token label = %q, want %q", info.GetLabel(), label2)
-	}
-
-	// Re-initialize with wrong PIN should fail
-	err = sm.InitToken(0, "wrongpin", "Another Label")
-	if err == nil {
-		t.Error("InitToken() expected error for wrong PIN")
-	}
-	var pkcs11Err *PKCS11Error
-	if !errors.As(err, &pkcs11Err) || pkcs11Err.Code != CKR_PIN_INCORRECT {
-		t.Errorf("InitToken() error = %v, want CKR_PIN_INCORRECT", err)
-	}
-}
-
-func TestSlotManager_InitPIN(t *testing.T) {
-	sm := NewSlotManager()
-
-	// Initialize token first
-	soPin := "sopin123"
-	err := sm.InitToken(0, soPin, "Test Token")
-	if err != nil {
-		t.Fatalf("InitToken() error = %v", err)
-	}
-
-	// Get the token and login as SO
-	slot, _ := sm.GetSlot(0)
-	token := slot.GetToken()
-	token.LoginSO()
-
-	// Initialize user PIN
-	userPin := "userpin456"
-	err = sm.InitPIN(0, userPin)
-	if err != nil {
-		t.Fatalf("InitPIN() error = %v", err)
-	}
-
-	// Verify user PIN
-	if !token.VerifyUserPin(userPin) {
-		t.Error("User PIN verification failed after InitPIN()")
-	}
-
-	// Check CKF_USER_PIN_INITIALIZED flag
-	info, _ := sm.GetTokenInfo(0)
-	if !info.Flags.Has(CKF_USER_PIN_INITIALIZED) {
-		t.Error("CKF_USER_PIN_INITIALIZED not set after InitPIN()")
-	}
-}
-
-func TestSlotManager_InitPIN_NotLoggedIn(t *testing.T) {
-	sm := NewSlotManager()
-
-	// Initialize token but don't login
-	err := sm.InitToken(0, "sopin123", "Test Token")
-	if err != nil {
-		t.Fatalf("InitToken() error = %v", err)
-	}
-
-	// Try to init PIN without SO login
-	err = sm.InitPIN(0, "userpin")
-	if err == nil {
-		t.Error("InitPIN() expected error when SO not logged in")
-	}
-	var pkcs11Err *PKCS11Error
-	if !errors.As(err, &pkcs11Err) || pkcs11Err.Code != CKR_USER_NOT_LOGGED_IN {
-		t.Errorf("InitPIN() error = %v, want CKR_USER_NOT_LOGGED_IN", err)
-	}
-}
-
-func TestSlotManager_InitPIN_InvalidSlot(t *testing.T) {
-	sm := NewSlotManager()
-
-	err := sm.InitPIN(999, "userpin")
-	if err == nil {
-		t.Error("InitPIN(999) expected error")
-	}
-	var pkcs11Err *PKCS11Error
-	if !errors.As(err, &pkcs11Err) || pkcs11Err.Code != CKR_SLOT_ID_INVALID {
-		t.Errorf("InitPIN(999) error = %v, want CKR_SLOT_ID_INVALID", err)
-	}
-}
-
-func TestSlotManager_InitPIN_PinLenRange(t *testing.T) {
-	sm := NewSlotManager()
-
-	// Initialize token and login as SO
-	err := sm.InitToken(0, "sopin123", "Test Token")
-	if err != nil {
-		t.Fatalf("InitToken() error = %v", err)
-	}
-	slot, _ := sm.GetSlot(0)
-	token := slot.GetToken()
-	token.LoginSO()
-
-	// PIN too short
-	err = sm.InitPIN(0, "123")
-	if err == nil {
-		t.Error("InitPIN() expected error for short PIN")
-	}
-	var pkcs11Err *PKCS11Error
-	if !errors.As(err, &pkcs11Err) || pkcs11Err.Code != CKR_PIN_LEN_RANGE {
-		t.Errorf("InitPIN() error = %v, want CKR_PIN_LEN_RANGE", err)
-	}
-}
-
-func TestSlotManager_SetPIN_SO(t *testing.T) {
-	sm := NewSlotManager()
-
-	oldPin := "sopin123"
-	newPin := "newsopin"
-
-	// Initialize token
-	err := sm.InitToken(0, oldPin, "Test Token")
-	if err != nil {
-		t.Fatalf("InitToken() error = %v", err)
-	}
-
-	// Change SO PIN
-	err = sm.SetPIN(0, oldPin, newPin, CKU_SO)
-	if err != nil {
-		t.Fatalf("SetPIN(SO) error = %v", err)
-	}
-
-	// Verify new PIN works
-	slot, _ := sm.GetSlot(0)
-	token := slot.GetToken()
-	if !token.VerifySOPin(newPin) {
-		t.Error("New SO PIN verification failed after SetPIN()")
-	}
-
-	// Verify old PIN no longer works
-	if token.VerifySOPin(oldPin) {
-		t.Error("Old SO PIN still works after SetPIN()")
-	}
-}
-
-func TestSlotManager_SetPIN_User(t *testing.T) {
-	sm := NewSlotManager()
-
-	soPin := "sopin123"
-	oldUserPin := "userpin123"
-	newUserPin := "newuserpin"
-
-	// Initialize token and user PIN
-	err := sm.InitToken(0, soPin, "Test Token")
-	if err != nil {
-		t.Fatalf("InitToken() error = %v", err)
-	}
-
-	slot, _ := sm.GetSlot(0)
-	token := slot.GetToken()
-	token.LoginSO()
-	err = sm.InitPIN(0, oldUserPin)
-	if err != nil {
-		t.Fatalf("InitPIN() error = %v", err)
-	}
-	token.LogoutSO()
-
-	// Change user PIN
-	err = sm.SetPIN(0, oldUserPin, newUserPin, CKU_USER)
-	if err != nil {
-		t.Fatalf("SetPIN(USER) error = %v", err)
-	}
-
-	// Verify new PIN works
-	if !token.VerifyUserPin(newUserPin) {
-		t.Error("New user PIN verification failed after SetPIN()")
-	}
-
-	// Verify old PIN no longer works
-	if token.VerifyUserPin(oldUserPin) {
-		t.Error("Old user PIN still works after SetPIN()")
-	}
-}
-
-func TestSlotManager_SetPIN_InvalidUserType(t *testing.T) {
-	sm := NewSlotManager()
-
-	err := sm.InitToken(0, "sopin123", "Test Token")
-	if err != nil {
-		t.Fatalf("InitToken() error = %v", err)
-	}
-
-	err = sm.SetPIN(0, "oldpin", "newpin", UserType(99))
-	if err == nil {
-		t.Error("SetPIN() expected error for invalid user type")
-	}
-	var pkcs11Err *PKCS11Error
-	if !errors.As(err, &pkcs11Err) || pkcs11Err.Code != CKR_USER_TYPE_INVALID {
-		t.Errorf("SetPIN() error = %v, want CKR_USER_TYPE_INVALID", err)
-	}
-}
-
-func TestSlotManager_SetPIN_WrongOldPin(t *testing.T) {
-	sm := NewSlotManager()
-
-	err := sm.InitToken(0, "sopin123", "Test Token")
-	if err != nil {
-		t.Fatalf("InitToken() error = %v", err)
-	}
-
-	// Try with wrong old PIN
-	err = sm.SetPIN(0, "wrongpin", "newpin", CKU_SO)
-	if err == nil {
-		t.Error("SetPIN() expected error for wrong old PIN")
-	}
-	var pkcs11Err *PKCS11Error
-	if !errors.As(err, &pkcs11Err) || pkcs11Err.Code != CKR_PIN_INCORRECT {
-		t.Errorf("SetPIN() error = %v, want CKR_PIN_INCORRECT", err)
-	}
-}
-
-func TestSlotManager_SetPIN_UserNotInitialized(t *testing.T) {
-	sm := NewSlotManager()
-
-	err := sm.InitToken(0, "sopin123", "Test Token")
-	if err != nil {
-		t.Fatalf("InitToken() error = %v", err)
-	}
-
-	// Try to change user PIN when not initialized
-	err = sm.SetPIN(0, "oldpin", "newpin", CKU_USER)
-	if err == nil {
-		t.Error("SetPIN(USER) expected error when user PIN not initialized")
-	}
-	var pkcs11Err *PKCS11Error
-	if !errors.As(err, &pkcs11Err) || pkcs11Err.Code != CKR_USER_PIN_NOT_INITIALIZED {
-		t.Errorf("SetPIN() error = %v, want CKR_USER_PIN_NOT_INITIALIZED", err)
-	}
-}
-
-func TestSlotManager_SetPIN_InvalidSlot(t *testing.T) {
-	sm := NewSlotManager()
-
-	err := sm.SetPIN(999, "old", "new", CKU_SO)
-	if err == nil {
-		t.Error("SetPIN(999) expected error")
-	}
-	var pkcs11Err *PKCS11Error
-	if !errors.As(err, &pkcs11Err) || pkcs11Err.Code != CKR_SLOT_ID_INVALID {
-		t.Errorf("SetPIN(999) error = %v, want CKR_SLOT_ID_INVALID", err)
-	}
-}
-
-func TestSlotManager_SetPIN_PinLenRange(t *testing.T) {
-	sm := NewSlotManager()
-
-	err := sm.InitToken(0, "sopin123", "Test Token")
-	if err != nil {
-		t.Fatalf("InitToken() error = %v", err)
-	}
-
-	// New PIN too short
-	err = sm.SetPIN(0, "sopin123", "123", CKU_SO)
-	if err == nil {
-		t.Error("SetPIN() expected error for short new PIN")
-	}
-	var pkcs11Err *PKCS11Error
-	if !errors.As(err, &pkcs11Err) || pkcs11Err.Code != CKR_PIN_LEN_RANGE {
-		t.Errorf("SetPIN() error = %v, want CKR_PIN_LEN_RANGE", err)
 	}
 }
 
@@ -1229,50 +887,134 @@ func TestSetPaddedString(t *testing.T) {
 	}
 }
 
+// TestHashPin tests that hashPin produces a self-describing, randomly salted
+// verifier: two calls for the same PIN must NOT be byte-identical (a fresh
+// salt is drawn every time), and each verifier must still authenticate the
+// PIN that produced it via verifyPin. Comparing hashPin outputs directly, as
+// this test previously did, is wrong by construction once the salt is random.
 func TestHashPin(t *testing.T) {
-	// Test that same PIN gives same hash
 	pin := "testpin123"
-	hash1 := hashPin(pin)
-	hash2 := hashPin(pin)
+	hash1 := mustHashPin(pin)
+	hash2 := mustHashPin(pin)
 
-	if len(hash1) != 32 { // SHA-256 produces 32 bytes
-		t.Errorf("hashPin() length = %d, want 32", len(hash1))
+	if len(hash1) == 0 || len(hash2) == 0 {
+		t.Fatal("hashPin() returned an empty verifier")
 	}
 
-	for i := range hash1 {
-		if hash1[i] != hash2[i] {
-			t.Error("hashPin() not deterministic")
-			break
+	identical := len(hash1) == len(hash2)
+	if identical {
+		for i := range hash1 {
+			if hash1[i] != hash2[i] {
+				identical = false
+				break
+			}
 		}
 	}
-
-	// Test that different PINs give different hashes
-	hash3 := hashPin("differentpin")
-	same := true
-	for i := range hash1 {
-		if hash1[i] != hash3[i] {
-			same = false
-			break
-		}
+	if identical {
+		t.Error("hashPin() produced identical verifiers for two calls with the same PIN; salt is not random")
 	}
-	if same {
-		t.Error("hashPin() collision for different PINs")
+
+	// Each verifier must authenticate the PIN that produced it.
+	if !verifyPin(hash1, pin) {
+		t.Error("verifyPin() rejected the PIN against its own verifier (first hashPin call)")
+	}
+	if !verifyPin(hash2, pin) {
+		t.Error("verifyPin() rejected the PIN against its own verifier (second hashPin call)")
+	}
+
+	// A different PIN must not verify against either verifier.
+	if verifyPin(hash1, "differentpin") {
+		t.Error("verifyPin() accepted an incorrect PIN")
+	}
+	if verifyPin(hash2, "differentpin") {
+		t.Error("verifyPin() accepted an incorrect PIN")
 	}
 }
 
-func TestGenerateSerialNumber(t *testing.T) {
-	sn1 := generateSerialNumber()
+// TestVerifyPin_MalformedStored tests that verifyPin fails closed -- never
+// panicking and never authenticating -- for stored values that are not a
+// well-formed hashPin verifier (nil, empty, wrong version byte, or truncated).
+// This matters because a corrupted or pre-migration stored PIN must not be
+// silently treated as "any PIN accepted".
+func TestVerifyPin_MalformedStored(t *testing.T) {
+	valid := mustHashPin("somepin")
 
-	// Check length
-	if len(sn1) != 16 {
-		t.Errorf("generateSerialNumber() length = %d, want 16", len(sn1))
+	tests := []struct {
+		name   string
+		stored []byte
+	}{
+		{"nil", nil},
+		{"empty", []byte{}},
+		{"too short", []byte{0x01}},
+		{"wrong version byte", append([]byte{0x02}, valid[1:]...)},
+		{"zero salt length", []byte{0x01, 0x00, 1, 2, 3, 4}},
+		{"truncated after salt length claim", []byte{0x01, 16, 1, 2, 3}},
 	}
 
-	// Check format (should be numeric)
-	for _, c := range sn1 {
-		if c < '0' || c > '9' {
-			t.Errorf("generateSerialNumber() contains non-numeric: %q", sn1)
-			break
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if verifyPin(tt.stored, "somepin") {
+				t.Errorf("verifyPin() accepted a PIN against malformed stored value %v", tt.stored)
+			}
+		})
+	}
+}
+
+// TestGenerateSerialNumber pins what CK_TOKEN_INFO.serialNumber is for.
+//
+// The field is CK_CHAR[16] and the spec places no numeric restriction on it;
+// what it must do is IDENTIFY the token, because pkcs11:serial= selects on it
+// and a fleet inventory distinguishes tokens by it. The implementation this
+// replaces formatted the clock to one-second resolution and appended a literal
+// "00", so two tokens provisioned in the same second were byte-identical --
+// a property no assertion here caught, because uniqueness was never tested.
+func TestGenerateSerialNumber(t *testing.T) {
+	const samples = 64
+
+	seen := make(map[string]bool, samples)
+	for i := 0; i < samples; i++ {
+		sn := mustGenerateSerialNumber()
+
+		if len(sn) != 16 {
+			t.Fatalf("generateSerialNumber() length = %d, want 16", len(sn))
+		}
+		for _, c := range sn {
+			if (c < '0' || c > '9') && (c < 'A' || c > 'F') {
+				t.Fatalf("generateSerialNumber() = %q, want uppercase hex", sn)
+			}
+		}
+		if seen[sn] {
+			t.Fatalf("generateSerialNumber() repeated %q within %d calls; "+
+				"a serial that collides cannot identify a token", sn, samples)
+		}
+		seen[sn] = true
+	}
+}
+
+// TestNewTokenBlankPadsCharacterFields pins PKCS#11 v3.2 §3.2: the character
+// arrays in CK_TOKEN_INFO are blank-padded and are NOT NUL-terminated.
+//
+// A token reports a label and a serial number before C_InitToken supplies real
+// ones. Left at their zero value these fields were runs of NUL bytes, which
+// pkcs11-tool renders as control characters, p11-kit percent-encodes into the
+// token URI, and a C application comparing against its own space-padded
+// constant fails to match.
+func TestNewTokenBlankPadsCharacterFields(t *testing.T) {
+	token := NewToken()
+
+	fields := map[string][]byte{
+		"label":          token.Info.Label[:],
+		"manufacturerID": token.Info.ManufacturerID[:],
+		"model":          token.Info.Model[:],
+		"serialNumber":   token.Info.SerialNumber[:],
+	}
+
+	for name, field := range fields {
+		for i, b := range field {
+			if b == 0 {
+				t.Errorf("CK_TOKEN_INFO.%s byte %d is NUL; the field must be blank-padded", name, i)
+				break
+			}
 		}
 	}
 }
@@ -1351,11 +1093,19 @@ func TestDefaultMechanismInfo(t *testing.T) {
 func TestConcurrentSlotManagerAccess(t *testing.T) {
 	sm := NewSlotManager()
 
-	// Initialize the token first
-	err := sm.InitToken(0, "sopin123", "Test Token")
+	// Provision the token directly. SlotManager no longer carries its own
+	// InitToken: Module owns that flow, and the SlotManager copy was a second,
+	// weaker implementation whose PIN checks were skipped entirely when the
+	// stored hash was empty. What this test needs is a provisioned token, not
+	// that particular way of reaching one.
+	slot, err := sm.GetSlot(0)
 	if err != nil {
-		t.Fatalf("InitToken() error = %v", err)
+		t.Fatalf("GetSlot() error = %v", err)
 	}
+	slot.Token.SetSOPin("sopin123")
+	slot.Token.Info.SetLabel("Test Token")
+	slot.Token.Info.Flags |= CKF_TOKEN_INITIALIZED
+	slot.Token.Initialized = true
 
 	var wg sync.WaitGroup
 	numGoroutines := 100

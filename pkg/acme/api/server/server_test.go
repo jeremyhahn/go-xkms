@@ -447,7 +447,7 @@ func TestRunning(t *testing.T) {
 func TestHandleMCP_ParseError(t *testing.T) {
 	server := newTestServer(&mockAdminService{}, nil)
 
-	req := httptest.NewRequest(http.MethodPost, "/mcp", bytes.NewBufferString("invalid json"))
+	req := mcpAuthenticatedRequest(httptest.NewRequest(http.MethodPost, "/mcp", bytes.NewBufferString("invalid json")))
 	rec := httptest.NewRecorder()
 
 	server.handleMCP(rec, req)
@@ -472,7 +472,7 @@ func TestHandleMCP_InvalidJSONRPCVersion(t *testing.T) {
 	}
 	body, _ := json.Marshal(mcpReq)
 
-	req := httptest.NewRequest(http.MethodPost, "/mcp", bytes.NewBuffer(body))
+	req := mcpAuthenticatedRequest(httptest.NewRequest(http.MethodPost, "/mcp", bytes.NewBuffer(body)))
 	rec := httptest.NewRecorder()
 
 	server.handleMCP(rec, req)
@@ -504,7 +504,7 @@ func TestHandleMCP_GetStatus_Success(t *testing.T) {
 	}
 	body, _ := json.Marshal(mcpReq)
 
-	req := httptest.NewRequest(http.MethodPost, "/mcp", bytes.NewBuffer(body))
+	req := mcpAuthenticatedRequest(httptest.NewRequest(http.MethodPost, "/mcp", bytes.NewBuffer(body)))
 	rec := httptest.NewRecorder()
 
 	server.handleMCP(rec, req)
@@ -536,7 +536,7 @@ func TestHandleMCP_GetStats_Success(t *testing.T) {
 	}
 	body, _ := json.Marshal(mcpReq)
 
-	req := httptest.NewRequest(http.MethodPost, "/mcp", bytes.NewBuffer(body))
+	req := mcpAuthenticatedRequest(httptest.NewRequest(http.MethodPost, "/mcp", bytes.NewBuffer(body)))
 	rec := httptest.NewRecorder()
 
 	server.handleMCP(rec, req)
@@ -579,7 +579,7 @@ func TestHandleMCP_ListCertificates(t *testing.T) {
 	}
 	body, _ := json.Marshal(mcpReq)
 
-	req := httptest.NewRequest(http.MethodPost, "/mcp", bytes.NewBuffer(body))
+	req := mcpAuthenticatedRequest(httptest.NewRequest(http.MethodPost, "/mcp", bytes.NewBuffer(body)))
 	rec := httptest.NewRecorder()
 
 	server.handleMCP(rec, req)
@@ -616,7 +616,7 @@ func TestHandleMCP_GetCertificate(t *testing.T) {
 	}
 	body, _ := json.Marshal(mcpReq)
 
-	req := httptest.NewRequest(http.MethodPost, "/mcp", bytes.NewBuffer(body))
+	req := mcpAuthenticatedRequest(httptest.NewRequest(http.MethodPost, "/mcp", bytes.NewBuffer(body)))
 	rec := httptest.NewRecorder()
 
 	server.handleMCP(rec, req)
@@ -643,7 +643,7 @@ func TestHandleMCP_RevokeCertificate(t *testing.T) {
 	}
 	body, _ := json.Marshal(mcpReq)
 
-	req := httptest.NewRequest(http.MethodPost, "/mcp", bytes.NewBuffer(body))
+	req := mcpAuthenticatedRequest(httptest.NewRequest(http.MethodPost, "/mcp", bytes.NewBuffer(body)))
 	rec := httptest.NewRecorder()
 
 	server.handleMCP(rec, req)
@@ -672,7 +672,7 @@ func TestHandleMCP_NotFoundError(t *testing.T) {
 	}
 	body, _ := json.Marshal(mcpReq)
 
-	req := httptest.NewRequest(http.MethodPost, "/mcp", bytes.NewBuffer(body))
+	req := mcpAuthenticatedRequest(httptest.NewRequest(http.MethodPost, "/mcp", bytes.NewBuffer(body)))
 	rec := httptest.NewRecorder()
 
 	server.handleMCP(rec, req)
@@ -699,7 +699,7 @@ func TestHandleMCP_UnauthorizedError(t *testing.T) {
 	}
 	body, _ := json.Marshal(mcpReq)
 
-	req := httptest.NewRequest(http.MethodPost, "/mcp", bytes.NewBuffer(body))
+	req := mcpAuthenticatedRequest(httptest.NewRequest(http.MethodPost, "/mcp", bytes.NewBuffer(body)))
 	rec := httptest.NewRecorder()
 
 	server.handleMCP(rec, req)
@@ -723,7 +723,7 @@ func TestHandleMCP_MethodNotFound(t *testing.T) {
 	}
 	body, _ := json.Marshal(mcpReq)
 
-	req := httptest.NewRequest(http.MethodPost, "/mcp", bytes.NewBuffer(body))
+	req := mcpAuthenticatedRequest(httptest.NewRequest(http.MethodPost, "/mcp", bytes.NewBuffer(body)))
 	rec := httptest.NewRecorder()
 
 	server.handleMCP(rec, req)
@@ -777,7 +777,7 @@ func TestHandleMCP_TenantOperations_NoTenantService(t *testing.T) {
 			}
 			body, _ := json.Marshal(mcpReq)
 
-			req := httptest.NewRequest(http.MethodPost, "/mcp", bytes.NewBuffer(body))
+			req := mcpAuthenticatedRequest(httptest.NewRequest(http.MethodPost, "/mcp", bytes.NewBuffer(body)))
 			rec := httptest.NewRecorder()
 
 			server.handleMCP(rec, req)
@@ -816,7 +816,7 @@ func TestHandleMCP_CreateTenant(t *testing.T) {
 	}
 	body, _ := json.Marshal(mcpReq)
 
-	req := httptest.NewRequest(http.MethodPost, "/mcp", bytes.NewBuffer(body))
+	req := mcpAuthenticatedRequest(httptest.NewRequest(http.MethodPost, "/mcp", bytes.NewBuffer(body)))
 	rec := httptest.NewRecorder()
 
 	server.handleMCP(rec, req)
@@ -851,7 +851,7 @@ func TestHandleMCP_CreateTenant_AutoGenerateID(t *testing.T) {
 	}
 	body, _ := json.Marshal(mcpReq)
 
-	req := httptest.NewRequest(http.MethodPost, "/mcp", bytes.NewBuffer(body))
+	req := mcpAuthenticatedRequest(httptest.NewRequest(http.MethodPost, "/mcp", bytes.NewBuffer(body)))
 	rec := httptest.NewRecorder()
 
 	server.handleMCP(rec, req)
@@ -884,7 +884,7 @@ func TestHandleMCP_GetTenant(t *testing.T) {
 	}
 	body, _ := json.Marshal(mcpReq)
 
-	req := httptest.NewRequest(http.MethodPost, "/mcp", bytes.NewBuffer(body))
+	req := mcpAuthenticatedRequest(httptest.NewRequest(http.MethodPost, "/mcp", bytes.NewBuffer(body)))
 	rec := httptest.NewRecorder()
 
 	server.handleMCP(rec, req)
@@ -923,7 +923,7 @@ func TestHandleMCP_UpdateTenant(t *testing.T) {
 	}
 	body, _ := json.Marshal(mcpReq)
 
-	req := httptest.NewRequest(http.MethodPost, "/mcp", bytes.NewBuffer(body))
+	req := mcpAuthenticatedRequest(httptest.NewRequest(http.MethodPost, "/mcp", bytes.NewBuffer(body)))
 	rec := httptest.NewRecorder()
 
 	server.handleMCP(rec, req)
@@ -950,7 +950,7 @@ func TestHandleMCP_DeleteTenant(t *testing.T) {
 	}
 	body, _ := json.Marshal(mcpReq)
 
-	req := httptest.NewRequest(http.MethodPost, "/mcp", bytes.NewBuffer(body))
+	req := mcpAuthenticatedRequest(httptest.NewRequest(http.MethodPost, "/mcp", bytes.NewBuffer(body)))
 	rec := httptest.NewRecorder()
 
 	server.handleMCP(rec, req)
@@ -983,7 +983,7 @@ func TestHandleMCP_ListTenants(t *testing.T) {
 	}
 	body, _ := json.Marshal(mcpReq)
 
-	req := httptest.NewRequest(http.MethodPost, "/mcp", bytes.NewBuffer(body))
+	req := mcpAuthenticatedRequest(httptest.NewRequest(http.MethodPost, "/mcp", bytes.NewBuffer(body)))
 	rec := httptest.NewRecorder()
 
 	server.handleMCP(rec, req)
@@ -1024,7 +1024,7 @@ func TestHandleMCP_CreateEAB(t *testing.T) {
 	}
 	body, _ := json.Marshal(mcpReq)
 
-	req := httptest.NewRequest(http.MethodPost, "/mcp", bytes.NewBuffer(body))
+	req := mcpAuthenticatedRequest(httptest.NewRequest(http.MethodPost, "/mcp", bytes.NewBuffer(body)))
 	rec := httptest.NewRecorder()
 
 	server.handleMCP(rec, req)
@@ -1061,7 +1061,7 @@ func TestHandleMCP_GetEAB(t *testing.T) {
 	}
 	body, _ := json.Marshal(mcpReq)
 
-	req := httptest.NewRequest(http.MethodPost, "/mcp", bytes.NewBuffer(body))
+	req := mcpAuthenticatedRequest(httptest.NewRequest(http.MethodPost, "/mcp", bytes.NewBuffer(body)))
 	rec := httptest.NewRecorder()
 
 	server.handleMCP(rec, req)
@@ -1091,7 +1091,7 @@ func TestHandleMCP_DeleteEAB(t *testing.T) {
 	}
 	body, _ := json.Marshal(mcpReq)
 
-	req := httptest.NewRequest(http.MethodPost, "/mcp", bytes.NewBuffer(body))
+	req := mcpAuthenticatedRequest(httptest.NewRequest(http.MethodPost, "/mcp", bytes.NewBuffer(body)))
 	rec := httptest.NewRecorder()
 
 	server.handleMCP(rec, req)
@@ -1128,7 +1128,7 @@ func TestHandleMCP_ListEABs(t *testing.T) {
 	}
 	body, _ := json.Marshal(mcpReq)
 
-	req := httptest.NewRequest(http.MethodPost, "/mcp", bytes.NewBuffer(body))
+	req := mcpAuthenticatedRequest(httptest.NewRequest(http.MethodPost, "/mcp", bytes.NewBuffer(body)))
 	rec := httptest.NewRecorder()
 
 	server.handleMCP(rec, req)
@@ -1172,7 +1172,7 @@ func TestHandleMCP_InvalidParamsUnmarshal(t *testing.T) {
 			body, err := json.Marshal(mcpReq)
 			require.NoError(t, err)
 
-			req := httptest.NewRequest(http.MethodPost, "/mcp", bytes.NewBuffer(body))
+			req := mcpAuthenticatedRequest(httptest.NewRequest(http.MethodPost, "/mcp", bytes.NewBuffer(body)))
 			rec := httptest.NewRecorder()
 
 			server.handleMCP(rec, req)
@@ -1191,7 +1191,7 @@ func TestHandleMCP_MalformedRequestBody(t *testing.T) {
 	// Test that completely malformed JSON request body returns parse error
 	server := newTestServer(&mockAdminService{}, nil)
 
-	req := httptest.NewRequest(http.MethodPost, "/mcp", bytes.NewBufferString(`{"invalid json`))
+	req := mcpAuthenticatedRequest(httptest.NewRequest(http.MethodPost, "/mcp", bytes.NewBufferString(`{"invalid json`)))
 	rec := httptest.NewRecorder()
 
 	server.handleMCP(rec, req)
@@ -2131,7 +2131,7 @@ func TestHandleMCP_AccountNotFoundError(t *testing.T) {
 	}
 	body, _ := json.Marshal(mcpReq)
 
-	req := httptest.NewRequest(http.MethodPost, "/mcp", bytes.NewBuffer(body))
+	req := mcpAuthenticatedRequest(httptest.NewRequest(http.MethodPost, "/mcp", bytes.NewBuffer(body)))
 	rec := httptest.NewRecorder()
 
 	server.handleMCP(rec, req)
@@ -2157,7 +2157,7 @@ func TestHandleMCP_OrderNotFoundError(t *testing.T) {
 	}
 	body, _ := json.Marshal(mcpReq)
 
-	req := httptest.NewRequest(http.MethodPost, "/mcp", bytes.NewBuffer(body))
+	req := mcpAuthenticatedRequest(httptest.NewRequest(http.MethodPost, "/mcp", bytes.NewBuffer(body)))
 	rec := httptest.NewRecorder()
 
 	server.handleMCP(rec, req)
@@ -2187,7 +2187,7 @@ func TestHandleMCP_TenantNotFoundError(t *testing.T) {
 	}
 	body, _ := json.Marshal(mcpReq)
 
-	req := httptest.NewRequest(http.MethodPost, "/mcp", bytes.NewBuffer(body))
+	req := mcpAuthenticatedRequest(httptest.NewRequest(http.MethodPost, "/mcp", bytes.NewBuffer(body)))
 	rec := httptest.NewRecorder()
 
 	server.handleMCP(rec, req)
@@ -2441,7 +2441,7 @@ func TestHandleMCP_ListCertificates_Error(t *testing.T) {
 	}
 	body, _ := json.Marshal(mcpReq)
 
-	req := httptest.NewRequest(http.MethodPost, "/mcp", bytes.NewBuffer(body))
+	req := mcpAuthenticatedRequest(httptest.NewRequest(http.MethodPost, "/mcp", bytes.NewBuffer(body)))
 	rec := httptest.NewRecorder()
 
 	server.handleMCP(rec, req)
@@ -2471,7 +2471,7 @@ func TestHandleMCP_CreateTenant_Error(t *testing.T) {
 	}
 	body, _ := json.Marshal(mcpReq)
 
-	req := httptest.NewRequest(http.MethodPost, "/mcp", bytes.NewBuffer(body))
+	req := mcpAuthenticatedRequest(httptest.NewRequest(http.MethodPost, "/mcp", bytes.NewBuffer(body)))
 	rec := httptest.NewRecorder()
 
 	server.handleMCP(rec, req)
@@ -2500,7 +2500,7 @@ func TestHandleMCP_UpdateTenant_Error(t *testing.T) {
 	}
 	body, _ := json.Marshal(mcpReq)
 
-	req := httptest.NewRequest(http.MethodPost, "/mcp", bytes.NewBuffer(body))
+	req := mcpAuthenticatedRequest(httptest.NewRequest(http.MethodPost, "/mcp", bytes.NewBuffer(body)))
 	rec := httptest.NewRecorder()
 
 	server.handleMCP(rec, req)
@@ -2529,7 +2529,7 @@ func TestHandleMCP_DeleteTenant_Error(t *testing.T) {
 	}
 	body, _ := json.Marshal(mcpReq)
 
-	req := httptest.NewRequest(http.MethodPost, "/mcp", bytes.NewBuffer(body))
+	req := mcpAuthenticatedRequest(httptest.NewRequest(http.MethodPost, "/mcp", bytes.NewBuffer(body)))
 	rec := httptest.NewRecorder()
 
 	server.handleMCP(rec, req)
@@ -2558,7 +2558,7 @@ func TestHandleMCP_ListTenants_Error(t *testing.T) {
 	}
 	body, _ := json.Marshal(mcpReq)
 
-	req := httptest.NewRequest(http.MethodPost, "/mcp", bytes.NewBuffer(body))
+	req := mcpAuthenticatedRequest(httptest.NewRequest(http.MethodPost, "/mcp", bytes.NewBuffer(body)))
 	rec := httptest.NewRecorder()
 
 	server.handleMCP(rec, req)
@@ -2587,7 +2587,7 @@ func TestHandleMCP_CreateEAB_Error(t *testing.T) {
 	}
 	body, _ := json.Marshal(mcpReq)
 
-	req := httptest.NewRequest(http.MethodPost, "/mcp", bytes.NewBuffer(body))
+	req := mcpAuthenticatedRequest(httptest.NewRequest(http.MethodPost, "/mcp", bytes.NewBuffer(body)))
 	rec := httptest.NewRecorder()
 
 	server.handleMCP(rec, req)
@@ -2616,7 +2616,7 @@ func TestHandleMCP_GetEAB_Error(t *testing.T) {
 	}
 	body, _ := json.Marshal(mcpReq)
 
-	req := httptest.NewRequest(http.MethodPost, "/mcp", bytes.NewBuffer(body))
+	req := mcpAuthenticatedRequest(httptest.NewRequest(http.MethodPost, "/mcp", bytes.NewBuffer(body)))
 	rec := httptest.NewRecorder()
 
 	server.handleMCP(rec, req)
@@ -2645,7 +2645,7 @@ func TestHandleMCP_DeleteEAB_Error(t *testing.T) {
 	}
 	body, _ := json.Marshal(mcpReq)
 
-	req := httptest.NewRequest(http.MethodPost, "/mcp", bytes.NewBuffer(body))
+	req := mcpAuthenticatedRequest(httptest.NewRequest(http.MethodPost, "/mcp", bytes.NewBuffer(body)))
 	rec := httptest.NewRecorder()
 
 	server.handleMCP(rec, req)
@@ -2674,7 +2674,7 @@ func TestHandleMCP_ListEABs_Error(t *testing.T) {
 	}
 	body, _ := json.Marshal(mcpReq)
 
-	req := httptest.NewRequest(http.MethodPost, "/mcp", bytes.NewBuffer(body))
+	req := mcpAuthenticatedRequest(httptest.NewRequest(http.MethodPost, "/mcp", bytes.NewBuffer(body)))
 	rec := httptest.NewRecorder()
 
 	server.handleMCP(rec, req)
@@ -2703,7 +2703,7 @@ func TestHandleMCP_RevokeCertificate_Error(t *testing.T) {
 	}
 	body, _ := json.Marshal(mcpReq)
 
-	req := httptest.NewRequest(http.MethodPost, "/mcp", bytes.NewBuffer(body))
+	req := mcpAuthenticatedRequest(httptest.NewRequest(http.MethodPost, "/mcp", bytes.NewBuffer(body)))
 	rec := httptest.NewRecorder()
 
 	server.handleMCP(rec, req)
@@ -2805,7 +2805,7 @@ func TestBuildRouter_WithTenantService(t *testing.T) {
 	assert.NotNil(t, server.router)
 
 	// Verify /mcp endpoint is registered
-	req := httptest.NewRequest(http.MethodPost, "/mcp", nil)
+	req := mcpAuthenticatedRequest(httptest.NewRequest(http.MethodPost, "/mcp", nil))
 	rec := httptest.NewRecorder()
 	server.router.ServeHTTP(rec, req)
 	// Should get a response (even if error due to empty body)
@@ -2869,7 +2869,7 @@ func TestHandleMCP_CreateEAB_WithDeviceInfo(t *testing.T) {
 	}
 	body, _ := json.Marshal(mcpReq)
 
-	req := httptest.NewRequest(http.MethodPost, "/mcp", bytes.NewBuffer(body))
+	req := mcpAuthenticatedRequest(httptest.NewRequest(http.MethodPost, "/mcp", bytes.NewBuffer(body)))
 	rec := httptest.NewRecorder()
 
 	server.handleMCP(rec, req)
@@ -2896,7 +2896,7 @@ func TestHandleMCP_GetStatus_Error(t *testing.T) {
 	}
 	body, _ := json.Marshal(mcpReq)
 
-	req := httptest.NewRequest(http.MethodPost, "/mcp", bytes.NewBuffer(body))
+	req := mcpAuthenticatedRequest(httptest.NewRequest(http.MethodPost, "/mcp", bytes.NewBuffer(body)))
 	rec := httptest.NewRecorder()
 
 	server.handleMCP(rec, req)
@@ -2922,7 +2922,7 @@ func TestHandleMCP_GetStats_Error(t *testing.T) {
 	}
 	body, _ := json.Marshal(mcpReq)
 
-	req := httptest.NewRequest(http.MethodPost, "/mcp", bytes.NewBuffer(body))
+	req := mcpAuthenticatedRequest(httptest.NewRequest(http.MethodPost, "/mcp", bytes.NewBuffer(body)))
 	rec := httptest.NewRecorder()
 
 	server.handleMCP(rec, req)
@@ -2952,7 +2952,7 @@ func TestHandleMCP_GetCertificate_Error(t *testing.T) {
 	}
 	body, _ := json.Marshal(mcpReq)
 
-	req := httptest.NewRequest(http.MethodPost, "/mcp", bytes.NewBuffer(body))
+	req := mcpAuthenticatedRequest(httptest.NewRequest(http.MethodPost, "/mcp", bytes.NewBuffer(body)))
 	rec := httptest.NewRecorder()
 
 	server.handleMCP(rec, req)

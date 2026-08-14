@@ -433,44 +433,6 @@ func TestImportIssuingCAs_Success_B13(t *testing.T) {
 // ca_extensions.go — Issued: success path (88.9%)
 // =============================================================================
 
-// TestIssued_Success_B13 exercises Issued() on a CA that has issued a cert.
-func TestIssued_Success_B13(t *testing.T) {
-	t.Parallel()
-	ca := setupTestCA(t)
-
-	_, err := ca.IssueCertificate(context.Background(), &CertificateRequest{
-		Subject: Subject{CommonName: "issued-b13"},
-		Valid:   365,
-	})
-	require.NoError(t, err)
-
-	// Issued(ctx, cn) returns (bool, error) indicating whether the cert was issued.
-	found, err := ca.Issued(context.Background(), "issued-b13")
-	require.NoError(t, err)
-	assert.True(t, found)
-}
-
-// =============================================================================
-// config.go — GetSignatureAlgorithm inner switch default with custom-sized curve
-// =============================================================================
-
-// TestGetSignatureAlgorithm_ECDSAUnknownBitSize_B13 exercises the inner switch
-// default branch in GetSignatureAlgorithm via a curve with non-standard bit size.
-// This requires GetSignatureAlgorithm to reach the inner switch with a non-nil
-// curve whose BitSize is not 224, 256, 384, or 521.
-func TestGetSignatureAlgorithm_ECDSAUnknownBitSize_B13(t *testing.T) {
-	t.Parallel()
-	// Use the b12UnknownCurve (bit size 448) by creating an Identity that
-	// uses parsedCurve != nil but not-known-size via direct method invocation.
-	// We call the inner helper directly since config.go uses types.ParseCurve.
-	// The inner switch default in GetSignatureAlgorithm is reached only if
-	// parsedCurve != nil and BitSize not in {224,256,384,521}.
-	// Since types.ParseCurve only returns standard curves, this branch is
-	// structurally unreachable via normal Identity config — skip it.
-	// (Already documented as a permanent gap.)
-	t.Skip("inner ECDSA switch default is structurally unreachable via types.ParseCurve")
-}
-
 // =============================================================================
 // constructors.go — NewCA: single-identity path (line 394-396)
 // =============================================================================

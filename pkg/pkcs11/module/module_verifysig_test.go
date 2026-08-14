@@ -18,7 +18,42 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+
+	"github.com/jeremyhahn/go-xkms/pkg/quantum/dilithium2"
 )
+
+// createMLDSAVerifyFixture provisions an initialized, logged-in module with a
+// real ML-DSA-44 public key object, using the reference dilithium2
+// implementation (never the module under test) to generate the key pair.
+// Tests use this to drive VerifySignatureInit for real rather than planting
+// CryptoOp state directly with session.SetOperationByType: a test that
+// bypasses VerifySignatureInit cannot catch a defect in what
+// VerifySignatureInit itself stores there, which is exactly how the
+// CryptoOp-wrapper mismatch between Init and Update/Final went uncaught.
+func createMLDSAVerifyFixture(t *testing.T) (m *Module, sessionHandle SessionHandle, keyHandle ObjectHandle, signer *dilithium2.Dilithium2) {
+	t.Helper()
+	m = initializeTestModule(t)
+	sessionHandle = loginAsNormalUser(t, m)
+
+	signer, err := dilithium2.New()
+	require.NoError(t, err)
+	pub, err := signer.GenerateKeyPair()
+	require.NoError(t, err)
+	t.Cleanup(signer.Clean)
+
+	template := []Attribute{
+		NewUint32Attribute(CKA_CLASS, uint32(CKO_PUBLIC_KEY)),
+		NewUint32Attribute(CKA_KEY_TYPE, uint32(CKK_ML_DSA)),
+		NewStringAttribute(CKA_LABEL, "verifysig-fixture"),
+		NewBoolAttribute(CKA_VERIFY, true),
+		NewBoolAttribute(CKA_TOKEN, false),
+		NewAttribute(CKA_VALUE, pub),
+	}
+	keyHandle, rv := m.CreateObject(sessionHandle, template)
+	require.Equal(t, CKR_OK, rv)
+
+	return m, sessionHandle, keyHandle, signer
+}
 
 // ----------------------------------------------------------------------------
 // VerifySignatureInit
@@ -33,19 +68,23 @@ func TestVerifySignatureInit(t *testing.T) {
 		mechanism := NewMechanism(CKM_ML_DSA)
 		signature := []byte("mock-pqc-signature")
 
+		// CKM_ML_DSA is a standard v3.2 mechanism and now dispatches, so the
+		// mechanism itself is valid and the failure comes from elsewhere.
 		err := m.VerifySignatureInit(sessionHandle, mechanism, keyHandle, signature)
 		require.Error(t, err)
 		var pkcsErr *PKCS11Error
 		require.ErrorAs(t, err, &pkcsErr)
-		assert.Equal(t, CKR_MECHANISM_INVALID, pkcsErr.Code)
+		assert.NotEqual(t, CKR_MECHANISM_INVALID, pkcsErr.Code,
+			"CKM_ML_DSA must be recognised as a valid mechanism")
 	})
 
 	t.Run("cancels active operation with nil mechanism", func(t *testing.T) {
 		m := initializeTestModule(t)
 		defer m.Finalize()
 
-		sessionHandle, rv := m.OpenSession(0, CKF_SERIAL_SESSION|CKF_RW_SESSION)
-		require.Equal(t, CKR_OK, rv)
+		// CKF_LOGIN_REQUIRED gates key-bearing operations, so the fixture
+		// authenticates before exercising them.
+		sessionHandle := loginAsNormalUser(t, m)
 
 		// Plant an active VerifySignature operation
 		_, session, findRV := m.findSession(sessionHandle)
@@ -69,8 +108,9 @@ func TestVerifySignatureInit(t *testing.T) {
 		m := initializeTestModule(t)
 		defer m.Finalize()
 
-		sessionHandle, rv := m.OpenSession(0, CKF_SERIAL_SESSION|CKF_RW_SESSION)
-		require.Equal(t, CKR_OK, rv)
+		// CKF_LOGIN_REQUIRED gates key-bearing operations, so the fixture
+		// authenticates before exercising them.
+		sessionHandle := loginAsNormalUser(t, m)
 
 		// Nil mechanism with no active operation should still return CKR_OK
 		err := m.VerifySignatureInit(sessionHandle, nil, ObjectHandle(0), nil)
@@ -81,8 +121,9 @@ func TestVerifySignatureInit(t *testing.T) {
 		m := initializeTestModule(t)
 		defer m.Finalize()
 
-		sessionHandle, rv := m.OpenSession(0, CKF_SERIAL_SESSION|CKF_RW_SESSION)
-		require.Equal(t, CKR_OK, rv)
+		// CKF_LOGIN_REQUIRED gates key-bearing operations, so the fixture
+		// authenticates before exercising them.
+		sessionHandle := loginAsNormalUser(t, m)
 
 		mechanism := NewMechanism(CKM_ML_DSA)
 		err := m.VerifySignatureInit(sessionHandle, mechanism, ObjectHandle(99999), []byte("sig"))
@@ -108,13 +149,16 @@ func TestVerifySignatureInit(t *testing.T) {
 		m := initializeTestModule(t)
 		defer m.Finalize()
 
-		sessionHandle, rv := m.OpenSession(0, CKF_SERIAL_SESSION|CKF_RW_SESSION)
-		require.Equal(t, CKR_OK, rv)
+		// CKF_LOGIN_REQUIRED gates key-bearing operations, so the fixture
+		// authenticates before exercising them.
+		sessionHandle := loginAsNormalUser(t, m)
 
 		// Create a key with CKA_VERIFY explicitly set to false
 		template := []Attribute{
 			NewUint32Attribute(CKA_CLASS, uint32(CKO_PUBLIC_KEY)),
 			NewUint32Attribute(CKA_KEY_TYPE, uint32(CKK_RSA)),
+			NewAttribute(CKA_MODULUS, make([]byte, 256)),
+			NewAttribute(CKA_PUBLIC_EXPONENT, []byte{0x01, 0x00, 0x01}),
 			NewStringAttribute(CKA_LABEL, "test-no-verify-key"),
 			NewBoolAttribute(CKA_VERIFY, false),
 			NewBoolAttribute(CKA_TOKEN, false),
@@ -170,8 +214,9 @@ func TestVerifySignatureInitOperationActive(t *testing.T) {
 		m := initializeTestModule(t)
 		defer m.Finalize()
 
-		sessionHandle, rv := m.OpenSession(0, CKF_SERIAL_SESSION|CKF_RW_SESSION)
-		require.Equal(t, CKR_OK, rv)
+		// CKF_LOGIN_REQUIRED gates key-bearing operations, so the fixture
+		// authenticates before exercising them.
+		sessionHandle := loginAsNormalUser(t, m)
 
 		// Create a key with CKA_VERIFY set to true
 		template := []Attribute{
@@ -220,13 +265,16 @@ func TestVerifySignatureInitKeyWithoutVerifyAttribute(t *testing.T) {
 		m := initializeTestModule(t)
 		defer m.Finalize()
 
-		sessionHandle, rv := m.OpenSession(0, CKF_SERIAL_SESSION|CKF_RW_SESSION)
-		require.Equal(t, CKR_OK, rv)
+		// CKF_LOGIN_REQUIRED gates key-bearing operations, so the fixture
+		// authenticates before exercising them.
+		sessionHandle := loginAsNormalUser(t, m)
 
 		// Create key without CKA_VERIFY attribute at all
 		template := []Attribute{
 			NewUint32Attribute(CKA_CLASS, uint32(CKO_PUBLIC_KEY)),
 			NewUint32Attribute(CKA_KEY_TYPE, uint32(CKK_RSA)),
+			NewAttribute(CKA_MODULUS, make([]byte, 256)),
+			NewAttribute(CKA_PUBLIC_EXPONENT, []byte{0x01, 0x00, 0x01}),
 			NewStringAttribute(CKA_LABEL, "test-no-verify-attr"),
 			NewBoolAttribute(CKA_TOKEN, false),
 		}
@@ -252,8 +300,9 @@ func TestVerifySignature(t *testing.T) {
 		m := initializeTestModule(t)
 		defer m.Finalize()
 
-		sessionHandle, rv := m.OpenSession(0, CKF_SERIAL_SESSION|CKF_RW_SESSION)
-		require.Equal(t, CKR_OK, rv)
+		// CKF_LOGIN_REQUIRED gates key-bearing operations, so the fixture
+		// authenticates before exercising them.
+		sessionHandle := loginAsNormalUser(t, m)
 
 		err := m.VerifySignature(sessionHandle, []byte("data to verify"))
 		require.Error(t, err)
@@ -262,40 +311,46 @@ func TestVerifySignature(t *testing.T) {
 		assert.Equal(t, CKR_OPERATION_NOT_INITIALIZED, pkcsErr.Code)
 	})
 
-	t.Run("consumes operation and dispatches to verifySigVerify stub", func(t *testing.T) {
-		m := initializeTestModule(t)
+	t.Run("accepts a genuine signature after a real VerifySignatureInit", func(t *testing.T) {
+		m, sessionHandle, keyHandle, signer := createMLDSAVerifyFixture(t)
 		defer m.Finalize()
 
-		sessionHandle, rv := m.OpenSession(0, CKF_SERIAL_SESSION|CKF_RW_SESSION)
-		require.Equal(t, CKR_OK, rv)
+		message := []byte("verify-signature single-part payload")
+		signature, err := signer.Sign(message)
+		require.NoError(t, err)
 
-		// Plant a VerifySignature operation with a nil CryptoOp.
-		// verifySigVerify receives a non-nil QuantumCryptoManager but a nil
-		// CryptoOp, which fails the *QuantumVerifyOperation type assertion,
-		// returning CKR_OPERATION_NOT_INITIALIZED. This confirms the dispatch
-		// path executes through to verifySigVerify.
+		mechanism := &Mechanism{Type: CKM_VENDOR_ML_DSA_44}
+		require.NoError(t, m.VerifySignatureInit(sessionHandle, mechanism, keyHandle, signature))
+
+		err = m.VerifySignature(sessionHandle, message)
+		require.NoError(t, err, "a signature the reference ML-DSA-44 implementation produced "+
+			"over the same message and key must verify")
+
+		// The operation must be consumed (removed from session) after the
+		// terminal call.
 		_, session, findRV := m.findSession(sessionHandle)
 		require.Equal(t, CKR_OK, findRV)
+		assert.False(t, session.HasOperationType(OperationVerifySignature))
+	})
 
-		session.SetOperationByType(OperationVerifySignature, &OperationState{
-			Type:      OperationVerifySignature,
-			Mechanism: CKM_ML_DSA,
-			KeyHandle: ObjectHandle(1),
-			Data:      []byte("planted-signature"),
-			CryptoOp:  nil,
-		})
-		require.True(t, session.HasOperationType(OperationVerifySignature))
+	t.Run("rejects a tampered message after a real VerifySignatureInit", func(t *testing.T) {
+		m, sessionHandle, keyHandle, signer := createMLDSAVerifyFixture(t)
+		defer m.Finalize()
 
-		// VerifySignature should consume the operation and call verifySigVerify,
-		// which returns CKR_OPERATION_NOT_INITIALIZED due to nil CryptoOp.
-		err := m.VerifySignature(sessionHandle, []byte("data to verify"))
+		message := []byte("original message that will be tampered with")
+		signature, err := signer.Sign(message)
+		require.NoError(t, err)
+		tampered := append([]byte(nil), message...)
+		tampered[0] ^= 0xff
+
+		mechanism := &Mechanism{Type: CKM_VENDOR_ML_DSA_44}
+		require.NoError(t, m.VerifySignatureInit(sessionHandle, mechanism, keyHandle, signature))
+
+		err = m.VerifySignature(sessionHandle, tampered)
 		require.Error(t, err)
 		var pkcsErr *PKCS11Error
 		require.ErrorAs(t, err, &pkcsErr)
-		assert.Equal(t, CKR_OPERATION_NOT_INITIALIZED, pkcsErr.Code)
-
-		// The operation should have been consumed (removed from session)
-		assert.False(t, session.HasOperationType(OperationVerifySignature))
+		assert.Equal(t, CKR_SIGNATURE_INVALID, pkcsErr.Code)
 	})
 }
 
@@ -336,8 +391,9 @@ func TestVerifySignatureUpdate(t *testing.T) {
 		m := initializeTestModule(t)
 		defer m.Finalize()
 
-		sessionHandle, rv := m.OpenSession(0, CKF_SERIAL_SESSION|CKF_RW_SESSION)
-		require.Equal(t, CKR_OK, rv)
+		// CKF_LOGIN_REQUIRED gates key-bearing operations, so the fixture
+		// authenticates before exercising them.
+		sessionHandle := loginAsNormalUser(t, m)
 
 		err := m.VerifySignatureUpdate(sessionHandle, []byte("data chunk"))
 		require.Error(t, err)
@@ -346,41 +402,37 @@ func TestVerifySignatureUpdate(t *testing.T) {
 		assert.Equal(t, CKR_OPERATION_NOT_INITIALIZED, pkcsErr.Code)
 	})
 
-	t.Run("accumulates data with properly typed multi-part state", func(t *testing.T) {
-		m := initializeTestModule(t)
+	t.Run("accumulates data after a real VerifySignatureInit", func(t *testing.T) {
+		m, sessionHandle, keyHandle, signer := createMLDSAVerifyFixture(t)
 		defer m.Finalize()
 
-		sessionHandle, rv := m.OpenSession(0, CKF_SERIAL_SESSION|CKF_RW_SESSION)
-		require.Equal(t, CKR_OK, rv)
+		whole := []byte("chunk-1-chunk-2")
+		signature, err := signer.Sign(whole)
+		require.NoError(t, err)
 
-		// Plant a VerifySignature operation with a properly typed multi-part state
+		mechanism := &Mechanism{Type: CKM_VENDOR_ML_DSA_44}
+		require.NoError(t, m.VerifySignatureInit(sessionHandle, mechanism, keyHandle, signature))
+
+		// Reach into the session only to observe the accumulator's internal
+		// state; VerifySignatureInit itself constructed it -- this is not a
+		// substitute for calling it.
 		_, session, findRV := m.findSession(sessionHandle)
 		require.Equal(t, CKR_OK, findRV)
 
-		multiPartState := &verifySigMultiPartState{
-			quantumOp:       nil,
-			accumulatedData: nil,
-		}
-		session.SetOperationByType(OperationVerifySignature, &OperationState{
-			Type:      OperationVerifySignature,
-			Mechanism: CKM_ML_DSA,
-			KeyHandle: ObjectHandle(1),
-			Data:      []byte("planted-signature"),
-			CryptoOp:  multiPartState,
-		})
-
 		// First chunk
-		err := m.VerifySignatureUpdate(sessionHandle, []byte("chunk-1-"))
+		err = m.VerifySignatureUpdate(sessionHandle, []byte("chunk-1-"))
 		require.NoError(t, err)
-		assert.Equal(t, []byte("chunk-1-"), multiPartState.accumulatedData)
 
 		// Second chunk -- data should be appended
 		err = m.VerifySignatureUpdate(sessionHandle, []byte("chunk-2"))
 		require.NoError(t, err)
-		assert.Equal(t, []byte("chunk-1-chunk-2"), multiPartState.accumulatedData)
 
 		// Operation should still be active
-		assert.True(t, session.HasOperationType(OperationVerifySignature))
+		require.True(t, session.HasOperationType(OperationVerifySignature))
+
+		// Finalizing over the accumulated chunks must accept the signature
+		// produced over their concatenation.
+		require.NoError(t, m.VerifySignatureFinal(sessionHandle))
 	})
 }
 
@@ -421,8 +473,9 @@ func TestVerifySignatureFinal(t *testing.T) {
 		m := initializeTestModule(t)
 		defer m.Finalize()
 
-		sessionHandle, rv := m.OpenSession(0, CKF_SERIAL_SESSION|CKF_RW_SESSION)
-		require.Equal(t, CKR_OK, rv)
+		// CKF_LOGIN_REQUIRED gates key-bearing operations, so the fixture
+		// authenticates before exercising them.
+		sessionHandle := loginAsNormalUser(t, m)
 
 		err := m.VerifySignatureFinal(sessionHandle)
 		require.Error(t, err)
@@ -431,39 +484,26 @@ func TestVerifySignatureFinal(t *testing.T) {
 		assert.Equal(t, CKR_OPERATION_NOT_INITIALIZED, pkcsErr.Code)
 	})
 
-	t.Run("consumes multi-part operation and dispatches to verifySigVerify stub", func(t *testing.T) {
-		m := initializeTestModule(t)
+	t.Run("consumes a multi-part operation started by a real VerifySignatureInit", func(t *testing.T) {
+		m, sessionHandle, keyHandle, signer := createMLDSAVerifyFixture(t)
 		defer m.Finalize()
 
-		sessionHandle, rv := m.OpenSession(0, CKF_SERIAL_SESSION|CKF_RW_SESSION)
-		require.Equal(t, CKR_OK, rv)
+		message := []byte("accumulated-data-from-updates")
+		signature, err := signer.Sign(message)
+		require.NoError(t, err)
 
-		// Plant a VerifySignature operation with a properly typed multi-part state
-		// that has accumulated data, simulating Update calls that already occurred.
-		_, session, findRV := m.findSession(sessionHandle)
-		require.Equal(t, CKR_OK, findRV)
+		mechanism := &Mechanism{Type: CKM_VENDOR_ML_DSA_44}
+		require.NoError(t, m.VerifySignatureInit(sessionHandle, mechanism, keyHandle, signature))
+		require.NoError(t, m.VerifySignatureUpdate(sessionHandle, message))
 
-		multiPartState := &verifySigMultiPartState{
-			quantumOp:       nil,
-			accumulatedData: []byte("accumulated-data-from-updates"),
-		}
-		session.SetOperationByType(OperationVerifySignature, &OperationState{
-			Type:      OperationVerifySignature,
-			Mechanism: CKM_ML_DSA,
-			KeyHandle: ObjectHandle(1),
-			Data:      []byte("planted-signature"),
-			CryptoOp:  multiPartState,
-		})
-
-		// VerifySignatureFinal should consume the operation and call verifySigVerify,
-		// which returns CKR_OPERATION_NOT_INITIALIZED due to nil quantumOp.
-		err := m.VerifySignatureFinal(sessionHandle)
-		require.Error(t, err)
-		var pkcsErr *PKCS11Error
-		require.ErrorAs(t, err, &pkcsErr)
-		assert.Equal(t, CKR_OPERATION_NOT_INITIALIZED, pkcsErr.Code)
+		// VerifySignatureFinal should consume the operation and accept the
+		// signature produced over the fed data.
+		err = m.VerifySignatureFinal(sessionHandle)
+		require.NoError(t, err)
 
 		// The operation should have been consumed (removed from session)
+		_, session, findRV := m.findSession(sessionHandle)
+		require.Equal(t, CKR_OK, findRV)
 		assert.False(t, session.HasOperationType(OperationVerifySignature))
 	})
 }
@@ -509,8 +549,9 @@ func TestVerifySignatureUpdateCryptoOpTypeMismatch(t *testing.T) {
 		m := initializeTestModule(t)
 		defer m.Finalize()
 
-		sessionHandle, rv := m.OpenSession(0, CKF_SERIAL_SESSION|CKF_RW_SESSION)
-		require.Equal(t, CKR_OK, rv)
+		// CKF_LOGIN_REQUIRED gates key-bearing operations, so the fixture
+		// authenticates before exercising them.
+		sessionHandle := loginAsNormalUser(t, m)
 
 		// Directly inject an operation with a non-multipart CryptoOp type
 		_, session, findRV := m.findSession(sessionHandle)
@@ -540,8 +581,9 @@ func TestVerifySignatureUpdateErrorTerminatesOperation(t *testing.T) {
 		m := initializeTestModule(t)
 		defer m.Finalize()
 
-		sessionHandle, rv := m.OpenSession(0, CKF_SERIAL_SESSION|CKF_RW_SESSION)
-		require.Equal(t, CKR_OK, rv)
+		// CKF_LOGIN_REQUIRED gates key-bearing operations, so the fixture
+		// authenticates before exercising them.
+		sessionHandle := loginAsNormalUser(t, m)
 
 		// Plant a VerifySignature operation with a wrong CryptoOp type to
 		// trigger an error inside WithOperation.
@@ -569,53 +611,40 @@ func TestVerifySignatureUpdateErrorTerminatesOperation(t *testing.T) {
 }
 
 // TestVerifySignatureMultiPartFlow tests the complete multi-part verification
-// flow: plant a properly typed operation, accumulate data via Update, then
-// finalize via Final. Without the quantum build tag, Final dispatches to the
-// verifySigVerify stub which returns CKR_MECHANISM_INVALID, confirming the
-// full data path executes.
+// flow through the real entry points: VerifySignatureInit, two
+// VerifySignatureUpdate calls that split the signed message, then
+// VerifySignatureFinal. Splitting the message across Update calls the way a
+// streaming caller would is what catches an accumulator that resets on each
+// call or drops a chunk: either defect still returns a definite
+// CKR_OK/CKR_SIGNATURE_INVALID, just the wrong one, so only comparing against
+// a known-good signature over the exact concatenation catches it.
 func TestVerifySignatureMultiPartFlow(t *testing.T) {
 
-	t.Run("Update accumulates data and Final dispatches to stub", func(t *testing.T) {
-		m := initializeTestModule(t)
+	t.Run("Update accumulates data across chunks and Final verifies the whole", func(t *testing.T) {
+		m, sessionHandle, keyHandle, signer := createMLDSAVerifyFixture(t)
 		defer m.Finalize()
 
-		sessionHandle, rv := m.OpenSession(0, CKF_SERIAL_SESSION|CKF_RW_SESSION)
-		require.Equal(t, CKR_OK, rv)
+		signature, err := signer.Sign([]byte("hello world"))
+		require.NoError(t, err)
 
-		_, session, findRV := m.findSession(sessionHandle)
-		require.Equal(t, CKR_OK, findRV)
-
-		multiPartState := &verifySigMultiPartState{
-			quantumOp:       nil,
-			accumulatedData: nil,
-		}
-		session.SetOperationByType(OperationVerifySignature, &OperationState{
-			Type:      OperationVerifySignature,
-			Mechanism: CKM_ML_DSA,
-			KeyHandle: ObjectHandle(1),
-			Data:      []byte("test-signature"),
-			CryptoOp:  multiPartState,
-		})
+		mechanism := &Mechanism{Type: CKM_VENDOR_ML_DSA_44}
+		require.NoError(t, m.VerifySignatureInit(sessionHandle, mechanism, keyHandle, signature))
 
 		// Feed data in multiple chunks
-		err := m.VerifySignatureUpdate(sessionHandle, []byte("hello "))
+		err = m.VerifySignatureUpdate(sessionHandle, []byte("hello "))
 		require.NoError(t, err)
 
 		err = m.VerifySignatureUpdate(sessionHandle, []byte("world"))
 		require.NoError(t, err)
 
-		// Verify accumulated data
-		assert.Equal(t, []byte("hello world"), multiPartState.accumulatedData)
-
-		// Final should consume the operation and dispatch to verifySigVerify,
-		// which returns CKR_OPERATION_NOT_INITIALIZED due to nil quantumOp.
+		// Final must accept the signature over the concatenation of the fed
+		// chunks.
 		err = m.VerifySignatureFinal(sessionHandle)
-		require.Error(t, err)
-		var pkcsErr *PKCS11Error
-		require.ErrorAs(t, err, &pkcsErr)
-		assert.Equal(t, CKR_OPERATION_NOT_INITIALIZED, pkcsErr.Code)
+		require.NoError(t, err)
 
 		// Operation must be consumed after Final
+		_, session, findRV := m.findSession(sessionHandle)
+		require.Equal(t, CKR_OK, findRV)
 		assert.False(t, session.HasOperationType(OperationVerifySignature))
 	})
 
@@ -623,8 +652,9 @@ func TestVerifySignatureMultiPartFlow(t *testing.T) {
 		m := initializeTestModule(t)
 		defer m.Finalize()
 
-		sessionHandle, rv := m.OpenSession(0, CKF_SERIAL_SESSION|CKF_RW_SESSION)
-		require.Equal(t, CKR_OK, rv)
+		// CKF_LOGIN_REQUIRED gates key-bearing operations, so the fixture
+		// authenticates before exercising them.
+		sessionHandle := loginAsNormalUser(t, m)
 
 		_, session, findRV := m.findSession(sessionHandle)
 		require.Equal(t, CKR_OK, findRV)
@@ -662,8 +692,9 @@ func TestVerifySignatureFinalCryptoOpTypeMismatch(t *testing.T) {
 		m := initializeTestModule(t)
 		defer m.Finalize()
 
-		sessionHandle, rv := m.OpenSession(0, CKF_SERIAL_SESSION|CKF_RW_SESSION)
-		require.Equal(t, CKR_OK, rv)
+		// CKF_LOGIN_REQUIRED gates key-bearing operations, so the fixture
+		// authenticates before exercising them.
+		sessionHandle := loginAsNormalUser(t, m)
 
 		// Directly inject an operation with a non-multipart CryptoOp type
 		_, session, findRV := m.findSession(sessionHandle)

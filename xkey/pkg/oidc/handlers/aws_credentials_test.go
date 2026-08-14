@@ -410,10 +410,10 @@ aws_secret_access_key = SECRET3
 }
 
 func TestExpandPath(t *testing.T) {
-	home, err := os.UserHomeDir()
-	if err != nil {
-		t.Skipf("Cannot get home dir: %v", err)
-	}
+	// Pin HOME so the expansion target is deterministic and the assertion
+	// does not depend on the environment the tests were launched from.
+	home := t.TempDir()
+	t.Setenv("HOME", home)
 
 	tests := []struct {
 		input    string

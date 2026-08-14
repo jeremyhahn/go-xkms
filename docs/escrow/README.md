@@ -108,5 +108,4 @@ escrow:
 ## Cross-References
 
 - [Barrier Encryption Architecture](../seal/README.md) -- barrier root key can be escrowed
-- [MFA Policy Engine](../auth/mfa-policy.md) -- `escrow_key` and `recover_key` require 3FA by default
 - [Custodian Groups](../custodian/README.md) -- human custodians for key ceremonies

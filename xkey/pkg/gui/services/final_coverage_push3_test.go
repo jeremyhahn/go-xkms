@@ -607,19 +607,31 @@ func TestFCP5_PlatformPolicyService_SavePolicy(t *testing.T) {
 // BrowserService: knownBrowsers, openSystemBrowser, saveConfig
 // ---------------------------------------------------------------------------
 
-func TestFCP5_KnownBrowsers_Linux(t *testing.T) {
-	if runtime.GOOS != "linux" {
-		t.Skip("linux-specific test")
-	}
-
+// TestFCP5_KnownBrowsers verifies knownBrowsers returns the candidate list
+// for the platform it is running on. knownBrowsers switches on runtime.GOOS
+// at run time rather than at build time, so the expectation is selected the
+// same way instead of skipping on non-Linux.
+func TestFCP5_KnownBrowsers(t *testing.T) {
 	browsers := knownBrowsers()
-	assert.NotEmpty(t, browsers)
 
-	names := make(map[string]bool)
+	names := make(map[string]bool, len(browsers))
+	paths := make(map[string]bool, len(browsers))
 	for _, b := range browsers {
 		names[b.Name] = true
+		paths[b.Path] = true
 	}
-	assert.True(t, names["Firefox"])
+
+	switch runtime.GOOS {
+	case "linux":
+		assert.NotEmpty(t, browsers)
+		assert.True(t, names["Firefox"], "Firefox must be a Linux candidate")
+		assert.True(t, paths["/usr/bin/firefox"], "Firefox must map to its Linux path")
+	case "darwin":
+		assert.NotEmpty(t, browsers)
+		assert.True(t, names["Safari"], "Safari must be a macOS candidate")
+	default:
+		assert.Nil(t, browsers, "unsupported platforms must report no candidates")
+	}
 }
 
 func TestFCP5_BrowserService_OpenSystemBrowser(t *testing.T) {

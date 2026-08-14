@@ -63,6 +63,9 @@ const (
 // PIVMaxCertSizeFile is the maximum stored certificate size for the file backend.
 const PIVMaxCertSizeFile = pivcert.MaxCertSizeFile
 
+// PIVMaxCertSizeTPM2 is the maximum stored certificate size for the TPM2 backend.
+const PIVMaxCertSizeTPM2 = pivcert.MaxCertSizeTPM2
+
 // --- Storage type constants ---
 
 const (
@@ -70,6 +73,8 @@ const (
 	PIVStorageTypeFile = pivcert.StorageTypeFile
 	// PIVStorageTypePKCS11 selects the PKCS#11-backed PIV store.
 	PIVStorageTypePKCS11 = pivcert.StorageTypePKCS11
+	// PIVStorageTypeTPM2 selects the TPM2 NV-backed PIV store.
+	PIVStorageTypeTPM2 = pivcert.StorageTypeTPM2
 )
 
 // --- Slot constants ---
@@ -137,6 +142,12 @@ var (
 	ErrPIVNoFormatEnabled = pivcert.ErrNoFormatEnabled
 	// ErrPIVPKCS11NotAvailable is returned when the PKCS#11 backend is unavailable.
 	ErrPIVPKCS11NotAvailable = pivcert.ErrPKCS11NotAvailable
+	// ErrPIVTPMNotAvailable is returned when the TPM cannot be reached.
+	ErrPIVTPMNotAvailable = pivcert.ErrTPMNotAvailable
+	// ErrPIVStorageFull is returned when the store has no room for a certificate.
+	ErrPIVStorageFull = pivcert.ErrStorageFull
+	// ErrPIVPermissionDenied is returned when the store rejects the caller's authorization.
+	ErrPIVPermissionDenied = pivcert.ErrPermissionDenied
 )
 
 // PIVVerifyChain verifies a PIV certificate chain against the given root and
@@ -145,3 +156,12 @@ var PIVVerifyChain = pivcert.VerifyChain
 
 // PIVThumbprintSHA256 computes the SHA-256 thumbprint of a PIV certificate.
 var PIVThumbprintSHA256 = pivcert.ThumbprintSHA256
+
+// NewPIVSlotInfo describes a certificate occupying a PIV slot.
+var NewPIVSlotInfo = pivcert.NewSlotInfo
+
+// PIVKeyAlgorithmName returns the public key algorithm of a PIV certificate.
+var PIVKeyAlgorithmName = pivcert.KeyAlgorithmName
+
+// PIVKeySize returns the public key size in bits of a PIV certificate.
+var PIVKeySize = pivcert.KeySize

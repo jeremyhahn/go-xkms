@@ -98,7 +98,8 @@ The private key object is a handle -- it contains no key material. All cryptogra
 | `CKA_CLASS`             | `CKO_PRIVATE_KEY`                         |
 | `CKA_KEY_TYPE`          | Matches public key type                   |
 | `CKA_TOKEN`             | `CK_TRUE`                                 |
-| `CKA_PRIVATE`           | `CK_TRUE` (login required)                |
+| `CKA_PRIVATE`           | `CK_TRUE` (login required) -- except slot 9E, see below |
+| `CKA_ALWAYS_AUTHENTICATE` | `CK_TRUE` on slot 9C only                |
 | `CKA_SENSITIVE`         | `CK_TRUE`                                 |
 | `CKA_LABEL`             | `piv:{slot}`                              |
 | `CKA_ID`                | SHA-256(SPKI)[:20]                        |
@@ -109,6 +110,26 @@ The private key object is a handle -- it contains no key material. All cryptogra
 | `CKA_ALWAYS_SENSITIVE`  | `CK_TRUE`                                 |
 
 The private key also carries the same algorithm-specific attributes as the public key (modulus, exponent, EC params, etc.) for mechanism compatibility checks.
+
+### Per-slot access policy
+
+Two PIV slots have card-defined access rules that differ from the default, per NIST SP 800-73-4 Part 1 §3.2.1. The module encodes them rather than treating every slot alike:
+
+| Slot | Purpose | `CKA_PRIVATE` | `CKA_ALWAYS_AUTHENTICATE` |
+|------|---------|---------------|---------------------------|
+| 9A | PIV authentication | `CK_TRUE` | -- |
+| 9C | Digital signature | `CK_TRUE` | `CK_TRUE` -- the PIN must be verified immediately before **each** signature |
+| 9D | Key management | `CK_TRUE` | -- |
+| 9E | Card authentication | `CK_FALSE` -- the card requires no PIN, so it is not a private object | -- |
+| 82-95 | Retired key management | `CK_TRUE` | -- |
+
+Slots are discovered from the backend rather than enumerated from a fixed list; any occupied slot gets objects, and the table above is the policy applied to it.
+
+### Object lifecycle
+
+A slot's objects are **replaced, not accumulated**. The card holds one certificate and one key per slot, so the module destroys the existing trio before creating a new one -- otherwise `C_FindObjects` would return two answers for one `CKA_ID`.
+
+Deleting a certificate removes its PKCS#11 objects with it. Previously the object set was loaded once at startup, so a deleted certificate stayed findable and its private-key handle stayed usable-looking.
 
 ### Internal Linking
 

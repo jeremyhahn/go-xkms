@@ -73,6 +73,21 @@ func (e *ConsoleUnsupportedError) Error() string {
 		" client (use embedded/gRPC, or the WebSocket bridge for REST/QUIC)"
 }
 
+// ConsoleClosedError indicates an operation on a console session that has
+// already been closed. It mirrors pkg/ssh/console.ClosedError for the
+// transports whose ConsoleSession is not the in-process console.
+type ConsoleClosedError struct{}
+
+// Error implements the error interface.
+func (e *ConsoleClosedError) Error() string { return "sdk/ssh: console session is closed" }
+
+// ConsoleWriteClosedError indicates a Write after CloseWrite: the session's
+// write half is shut and the remote has already seen EOF on its stdin.
+type ConsoleWriteClosedError struct{}
+
+// Error implements the error interface.
+func (e *ConsoleWriteClosedError) Error() string { return "sdk/ssh: console write half is closed" }
+
 // InvalidScopeError is returned when a DTO carries an unrecognized
 // scope string.
 type InvalidScopeError struct {

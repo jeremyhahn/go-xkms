@@ -11,13 +11,24 @@ Client → Protocol Handler → Service Layer → KeyStore → Backend
 
 ## Ports
 
-| Protocol | Port | TLS Required |
-|----------|------|--------------|
-| REST     | 8443 | Yes          |
-| gRPC     | 9443 | Yes          |
-| MCP      | 9444 | No (TCP)     |
-| QUIC     | 8444 | Yes (1.3)    |
-| Metrics  | 9090 | No           |
+`xkmsd` has no port flags and no built-in port defaults -- it binds exactly what
+the YAML names (`cmd/xkmsd/main.go:67-74`). The "shipped default" column is what
+`configs/*.yaml` sets, which is what a stock daemon actually binds. The
+"library fallback" column is what the API server packages substitute when they
+are embedded with a zero port, and it is not the same number for MCP.
+
+| Protocol | Shipped default (`configs/*.yaml`) | Library fallback | TLS Required |
+|----------|------------------------------------|------------------|--------------|
+| REST     | 8443 (`rest_port`)  | 8443 (`pkg/api/rest/server.go:311`) | Yes |
+| gRPC     | 9443 (`grpc_port`)  | none | Yes |
+| QUIC     | 8444 (`quic_port`)  | 8444 (`pkg/api/quic/server.go:119`) | Yes (1.3) |
+| MCP      | 8445 (`mcp_port`)   | 9444 (`pkg/api/mcp/server.go:178`) | No (TCP) |
+| Noise    | 8447 (`noise_port`, `configs/xkmsd-local.yaml:10`) | 8445 (`DefaultNoisePort`, `pkg/trust/bootstrap/bootstrap.go:98`) | Noise_NK |
+| Metrics  | 9090 (`metrics.port`) | none | No |
+
+MCP is the one to watch: the shipped configurations bind it on 8445, but the SDK
+client dials `localhost:9444` by default (`sdk/go/options.go:33`). Point the
+client at the configured port or change `mcp_port` to 9444.
 
 ## Directory Structure
 
@@ -119,40 +130,44 @@ xkmsctl key verify <id> <data> --signature <sig> --backend <name>
 
 ## Configuration
 
+Ports live under `server:` as `*_port` integers and protocols are switched on
+under `protocols:` -- there are no top-level `rest:` / `grpc:` / `mcp:` / `quic:`
+sections and no `address:` keys (`pkg/config/config.go:198-217`). Compare
+`configs/xkmsd.yaml`.
+
 ```yaml
 server:
-  data_dir: /var/lib/xkms
-  log_level: info
+  host: "0.0.0.0"
+  rest_port: 8443
+  grpc_port: 9443
+  quic_port: 8444
+  mcp_port: 8445
 
-rest:
-  enabled: true
-  address: :8443
-
-grpc:
-  enabled: true
-  address: :9443
-
-mcp:
-  enabled: true
-  address: :9444
-
-quic:
-  enabled: true
-  address: :8444
+protocols:
+  unix: true
+  rest: true
+  grpc: true
+  quic: true
+  mcp: true
 
 auth:
   enabled: true
-  type: adaptive  # jwt, mtls, oidc, adaptive, composite
+  type: adaptive  # noop|none, mtls, jwt, adaptive, composite -- there is no oidc type
+  # Adaptive escalates to JWT once the first user exists, so a JWT
+  # verification key is required; startup fails without it.
+  jwt:
+    public_key_file: /etc/xkms/jwt-public.pem
 
 metrics:
   enabled: true
-  address: :9090
+  path: /metrics
+  port: 9090
 
+# backends is a map keyed by backend name, not a list
 backends:
-  - name: software
-    type: software
-    config:
-      key_dir: /var/lib/xkms/keys
+  software:
+    enabled: true
+    path: "xkms-data/keys/software"
 ```
 
 ## Error Handling
@@ -310,7 +325,8 @@ grpcurl -plaintext -d '{"key_id":"test","backend":"software","key_type":"rsa","k
 
 **MCP:**
 ```bash
-echo '{"jsonrpc":"2.0","method":"health","id":1}' | nc localhost 9444
+# mcp_port is 8445 in the shipped configs; the SDK client default is 9444
+echo '{"jsonrpc":"2.0","method":"health","id":1}' | nc localhost 8445
 ```
 
 ### Check Docker Services
@@ -321,7 +337,7 @@ docker-compose logs xkms-server
 
 ### Check Ports
 ```bash
-netstat -tuln | grep -E '8443|9443|9444|9090'
+netstat -tuln | grep -E '8443|9443|8444|8445|9090'
 ```
 
 ## Performance Targets
@@ -369,7 +385,7 @@ go mod tidy
 ```bash
 docker-compose ps
 docker-compose restart
-netstat -tuln | grep -E '8443|9443|9444'
+netstat -tuln | grep -E '8443|9443|8444|8445'
 ```
 
 **Issue:** TLS certificate errors
@@ -383,8 +399,9 @@ openssl req -x509 -newkey rsa:4096 -nodes \
 
 ### Documentation
 - [server-architecture.md](./server-architecture.md) - Complete design
-- [IMPLEMENTATION_GUIDE.md](./IMPLEMENTATION_GUIDE.md) - Step-by-step
-- [API_SPECIFICATIONS.md](./API_SPECIFICATIONS.md) - API reference
+- [overview.md](./overview.md) - System architecture and design philosophy
+- [api-specifications.md](./api-specifications.md) - API reference
+- [../configuration/build-system.md](../configuration/build-system.md) - Build tags and compilation options
 - [README.md](./README.md) - Overview
 
 ### External
@@ -394,4 +411,4 @@ openssl req -x509 -newkey rsa:4096 -nodes \
 - [Viper Config](https://github.com/spf13/viper)
 
 
-**Quick Start:** Follow [IMPLEMENTATION_GUIDE.md](./IMPLEMENTATION_GUIDE.md) to begin!
+**Quick Start:** Follow the [Getting Started guide](../../xkey/docs/usage/getting-started.md) to begin.

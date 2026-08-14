@@ -25,6 +25,10 @@ type BackendCapabilities = pkgtransport.BackendCapabilities
 type BackendInfo = pkgtransport.BackendInfo
 type ListBackendsResponse = pkgtransport.ListBackendsResponse
 
+// Algorithm discovery types.
+type AlgorithmInfo = pkgtransport.AlgorithmInfo
+type AlgorithmsResponse = pkgtransport.AlgorithmsResponse
+
 // Key management types.
 type GenerateKeyRequest = pkgtransport.GenerateKeyRequest
 type GenerateKeyResponse = pkgtransport.GenerateKeyResponse
@@ -210,6 +214,11 @@ type PolicyVerifyRequest = pkgtransport.PolicyVerifyRequest
 type PolicyVerifyResponse = pkgtransport.PolicyVerifyResponse
 type PolicyExportRequest = pkgtransport.PolicyExportRequest
 type PolicyExportResponse = pkgtransport.PolicyExportResponse
+
+// Audit types.
+type AuditEvent = pkgtransport.AuditEvent
+type AuditFilter = pkgtransport.AuditFilter
+type AuditPage = pkgtransport.AuditPage
 
 // Pagination types and functional options.
 type PageRequest = pkgtransport.PageRequest

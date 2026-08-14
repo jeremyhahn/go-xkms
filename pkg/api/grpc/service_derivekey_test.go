@@ -392,7 +392,15 @@ func TestService_DeriveKey_Errors(t *testing.T) {
 		}
 	})
 
-	t.Run("key-based derivation not supported", func(t *testing.T) {
+	t.Run("key-based derivation reaches the backend", func(t *testing.T) {
+		// This used to assert Unimplemented, pinning a refusal that had to go:
+		// naming a base key by identity is the only way a key whose material
+		// stays in the backend can be derived from at all.
+		//
+		// The setup's backends hold no key material, so the request cannot
+		// succeed here. What matters is that it is refused for a reason about
+		// this key or this backend, and not with the blanket "the operation
+		// does not do that" the old code returned for every such request.
 		_, err := service.DeriveKey(context.Background(), &pb.DeriveKeyRequest{
 			Algorithm: "HKDF",
 			Backend:   "software",
@@ -400,12 +408,30 @@ func TestService_DeriveKey_Errors(t *testing.T) {
 			KeyLength: 32,
 		})
 		if err == nil {
-			t.Fatal("Expected error for key-based derivation")
+			t.Fatal("Expected an error: no key named test-key exists in this backend")
 		}
-		if st, ok := status.FromError(err); ok {
-			if st.Code() != codes.Unimplemented {
-				t.Errorf("Expected Unimplemented, got %v", st.Code())
-			}
+		st, ok := status.FromError(err)
+		if !ok {
+			t.Fatalf("Expected a gRPC status error, got %v", err)
+		}
+		if st.Code() == codes.InvalidArgument {
+			t.Errorf("Expected the request itself to be well-formed, got InvalidArgument: %v", st.Message())
+		}
+	})
+
+	t.Run("input key material and key id together are refused", func(t *testing.T) {
+		// The two name different base keys. Answering the request means
+		// choosing one and returning a key derived from material the caller
+		// did not select, in a response identical to the one they wanted.
+		_, err := service.DeriveKey(context.Background(), &pb.DeriveKeyRequest{
+			Algorithm:        "HKDF",
+			Backend:          "software",
+			KeyId:            "test-key",
+			InputKeyMaterial: []byte("test-input-key-material-32bytes!"),
+			KeyLength:        32,
+		})
+		if err == nil {
+			t.Fatal("Expected an error for a request naming two base keys")
 		}
 	})
 }

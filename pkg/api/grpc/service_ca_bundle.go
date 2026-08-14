@@ -19,10 +19,12 @@ import (
 	"encoding/pem"
 	"errors"
 
-	pb "github.com/jeremyhahn/go-xkms/pkg/api/grpc/proto/xkmsv1"
-	"github.com/jeremyhahn/go-xkms/pkg/api/transport"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
+
+	pb "github.com/jeremyhahn/go-xkms/pkg/api/grpc/proto/xkmsv1"
+	"github.com/jeremyhahn/go-xkms/pkg/api/transport"
+	"github.com/jeremyhahn/go-xkms/pkg/auth"
 )
 
 // ContentTypePEMCertificateChain is the content type for PEM-encoded certificate chains.
@@ -132,7 +134,7 @@ func (s *Service) GetCABundle(ctx context.Context, req *pb.GetCABundleRequest) (
 		}
 	}
 
-	if err := s.authorize(ctx, "certs", "read", ""); err != nil {
+	if err := s.authorize(ctx, auth.ResourceCerts, auth.ActionRead, ""); err != nil {
 		return nil, err
 	}
 	// Build filter from request

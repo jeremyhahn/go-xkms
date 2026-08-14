@@ -108,8 +108,7 @@ func (f *FileStorage) Put(ctx context.Context, key string, value []byte) error {
 	}
 	// The engine writes 0600; widen only the prefixes that require it.
 	if perm := filePermissionsForKey(key); perm != defaultPerms {
-		path := filepath.Join(f.rootDir, filepath.FromSlash(key))
-		if err := os.Chmod(path, perm); err != nil {
+		if err := os.Chmod(f.keyPath(key), perm); err != nil {
 			return &errs.Wrapped{Msg: fmt.Sprintf("file storage: failed to set permissions for key %q", key), Err: err}
 		}
 	}

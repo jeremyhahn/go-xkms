@@ -43,6 +43,10 @@ var (
 	// ErrInvalidKeyAttributes indicates the key attributes are invalid
 	ErrInvalidKeyAttributes = errors.New("tpm2: invalid key attributes")
 
+	// ErrInvalidKDFParams indicates the key derivation parameters supplied
+	// for an ECDH derivation are missing or unusable
+	ErrInvalidKDFParams = errors.New("tpm2: invalid KDF parameters")
+
 	// ErrTPMNotAvailable indicates the TPM device is not available
 	ErrTPMNotAvailable = errors.New("tpm2: TPM device not available")
 

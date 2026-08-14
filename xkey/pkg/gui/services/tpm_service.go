@@ -205,14 +205,39 @@ type TPMInfo struct {
 	VariableProperties []xkms.TPMProperty `json:"variable_properties,omitempty"`
 }
 
-// TPMKey describes a key managed by the TPM.
+// TPMKey describes a key the TPM holds. Every field is derived from the
+// object's public area, read from the TPM itself.
+//
+// There is no CreatedAt: TPM2_ReadPublic reports no creation time for a
+// persistent object, and the creation ticket that TPM2_CertifyCreation would
+// need is discarded once the object is evicted to a persistent handle. A field
+// that can never be filled is worse than an absent one.
 type TPMKey struct {
-	ID         string    `json:"id"`
-	Algorithm  string    `json:"algorithm"`
-	KeySize    int       `json:"key_size"`
-	Persistent bool      `json:"persistent"`
-	Purpose    string    `json:"purpose"`
-	CreatedAt  time.Time `json:"created_at"`
+	// ID is the object's persistent handle in 0x%08X form, e.g. "0x81010001".
+	// It is unique within the list and stable across calls.
+	ID string `json:"id"`
+
+	// Algorithm names the key algorithm, including the signing scheme when the
+	// object declares one ("RSA-PSS", "RSA-SSA", "ECDSA"). RSA-PSS and RSA-SSA
+	// keys are not interchangeable, so the scheme is part of the identity of
+	// the key rather than a detail.
+	Algorithm string `json:"algorithm"`
+
+	// KeySize is the key size in bits: the RSA modulus size, the ECC curve's
+	// bit size, or the symmetric key size. Zero for objects that have no key
+	// size, such as sealed data.
+	KeySize int `json:"key_size"`
+
+	// Persistent reports whether the object survives a TPM reset. Enumeration
+	// covers the persistent hierarchy, so this is true for every listed key;
+	// it is carried explicitly so the GUI never has to infer it.
+	Persistent bool `json:"persistent"`
+
+	// Purpose is the operator-facing role of the key: the user-assigned handle
+	// description when one exists, else the TCG well-known role ("Endorsement
+	// Key (EK-RSA)"), else the role implied by the object attributes
+	// ("Storage", "Attestation", "Signing").
+	Purpose string `json:"purpose"`
 }
 
 // PCRValue holds the digest for a single PCR register.
@@ -1381,8 +1406,22 @@ func (s *TPMService) ReadPCRs(bank string) ([]PCRValue, error) {
 	return s.GetPCRs(bank)
 }
 
-// ListKeys returns TPM-managed keys. Currently returns empty as there
-// is no key enumeration API on the TrustedPlatformModule interface.
+// ListKeys returns the keys the TPM holds.
+//
+// The inventory comes from the TPM itself, in two commands per key: the
+// persistent handle list reported by TPM2_GetCapability(TPM_CAP_HANDLES) --
+// surfaced by the SDK as PropertiesFixed.PersistentHandles -- and the public
+// area of each of those handles, read with TPM2_ReadPublic. Nothing is
+// inferred from configuration: a key the TPM does not hold is not listed, and
+// a key the TPM holds is listed whether or not xkey put it there.
+//
+// The public area is read rather than KeyAttributes because it describes every
+// object type. KeyAttributes rejects anything that is not RSA or ECC, which
+// would drop sealed keyedhash and symmetric objects from a list whose whole
+// job is to say what the TPM holds.
+//
+// A TPM with no persistent objects reports an empty list and no error; that is
+// the state of an unprovisioned TPM, not a failure.
 func (s *TPMService) ListKeys() (retVal []TPMKey, retErr error) {
 	defer func() {
 		if r := recover(); r != nil {
@@ -1391,7 +1430,57 @@ func (s *TPMService) ListKeys() (retVal []TPMKey, retErr error) {
 		}
 	}()
 
-	return []TPMKey{}, nil
+	tpm, err := s.getTPM()
+	if err != nil {
+		return nil, ErrTPMNotAvailable
+	}
+	defer s.tpmAccessor.Release()
+
+	props, err := tpm.FixedProperties()
+	if err != nil {
+		return nil, &WrappedError{Msg: "tpm_service: list keys", Err: err}
+	}
+	if props == nil {
+		return []TPMKey{}, nil
+	}
+
+	descriptions := s.loadHandleDescriptions()
+	platformSRK := platformSRKHandleHex(tpm)
+
+	keys := make([]TPMKey, 0, len(props.PersistentHandles))
+	for _, handle := range props.PersistentHandles {
+		hexHandle := formatTPMHandle(handle)
+		key := TPMKey{
+			ID:         hexHandle,
+			Algorithm:  unknownTPMValue,
+			Persistent: true,
+			Purpose:    describeHandle(descriptions, platformSRK, hexHandle),
+		}
+
+		_, pub, readErr := tpm.ReadHandle(handle)
+		if readErr != nil {
+			// The capability query just reported this handle, so the object
+			// exists; only its public area could not be read -- a transport
+			// error, or an eviction racing this call. Report the key with what
+			// is known instead of dropping it: a handle the operator can see
+			// in the handles tab must not vanish from the keys tab.
+			s.log.Debug("reading the public area of a persistent handle",
+				"handle", hexHandle, "error", readErr)
+		} else {
+			key.Algorithm = tpmPublicAlgorithm(pub)
+			key.KeySize = tpmPublicKeySize(pub)
+			if key.Purpose == "" {
+				key.Purpose = tpmPublicPurpose(pub)
+			}
+		}
+
+		if key.Purpose == "" {
+			key.Purpose = unknownTPMValue
+		}
+		keys = append(keys, key)
+	}
+
+	return keys, nil
 }
 
 // Provision performs TPM provisioning with the given options.
@@ -2003,24 +2092,12 @@ func (s *TPMService) ListPersistentHandles() (retVal []HandleInfo, retErr error)
 	}
 	handles := props.PersistentHandles
 
-	// Resolve the configured Platform SRK handle for dynamic labeling.
-	var platformSRKHandle string
-	if cfg := tpm.Config(); cfg != nil && cfg.PlatformSRK != nil && cfg.PlatformSRK.SRKHandle != 0 {
-		platformSRKHandle = fmt.Sprintf("0x%08X", cfg.PlatformSRK.SRKHandle)
-	}
-
+	platformSRKHandle := platformSRKHandleHex(tpm)
 	descriptions := s.loadHandleDescriptions()
+
 	result := make([]HandleInfo, len(handles))
 	for i, h := range handles {
-		hexHandle := fmt.Sprintf("0x%08X", h)
-		desc := descriptions[hexHandle]
-		if desc == "" {
-			if platformSRKHandle != "" && hexHandle == platformSRKHandle {
-				desc = "Platform SRK"
-			} else {
-				desc = wellKnownHandles[hexHandle]
-			}
-		}
+		hexHandle := formatTPMHandle(h)
 
 		// Read key attributes for algorithm display.
 		algo := ""
@@ -2033,7 +2110,7 @@ func (s *TPMService) ListPersistentHandles() (retVal []HandleInfo, retErr error)
 			Handle:      hexHandle,
 			Algorithm:   algo,
 			Type:        "persistent",
-			Description: desc,
+			Description: describeHandle(descriptions, platformSRKHandle, hexHandle),
 		}
 	}
 
@@ -2064,7 +2141,7 @@ func (s *TPMService) ListTransientHandles() (retVal []HandleInfo, retErr error) 
 	result := make([]HandleInfo, len(handles))
 	for i, h := range handles {
 		result[i] = HandleInfo{
-			Handle: fmt.Sprintf("0x%08X", h),
+			Handle: formatTPMHandle(h),
 			Type:   "transient",
 		}
 	}
@@ -2970,6 +3047,210 @@ func certToPEM(cert *x509.Certificate) string {
 		Type:  "CERTIFICATE",
 		Bytes: cert.Raw,
 	}))
+}
+
+// unknownTPMValue labels a field whose real value the TPM did not report.
+// It is never used to paper over a value that was simply not looked up.
+const unknownTPMValue = "Unknown"
+
+// eccCurveBits maps the TPMECCCurve constants of TCG TPM 2.0 Part 2:
+// Structures, section 6.4 to the bit size of the curve's order. Ed25519 is
+// reported as 256 rather than its 255-bit order to match how the rest of the
+// service reports Ed25519 key sizes.
+var eccCurveBits = map[tpm2.TPMECCCurve]int{
+	tpm2.TPMECCNistP192:        192,
+	tpm2.TPMECCNistP224:        224,
+	tpm2.TPMECCNistP256:        256,
+	tpm2.TPMECCNistP384:        384,
+	tpm2.TPMECCNistP521:        521,
+	tpm2.TPMECCBNP256:          256,
+	tpm2.TPMECCBNP638:          638,
+	tpm2.TPMECCSM2P256:         256,
+	tpm2.TPMECCBrainpoolP256R1: 256,
+	tpm2.TPMECCBrainpoolP384R1: 384,
+	tpm2.TPMECCBrainpoolP512R1: 512,
+	tpm2.TPMECCCurve25519:      256,
+	tpm2.TPMECCCurve448:        448,
+}
+
+// symCipherNames maps the symmetric block ciphers a TPM object may declare to
+// their display names.
+var symCipherNames = map[tpm2.TPMAlgID]string{
+	tpm2.TPMAlgAES:      "AES",
+	tpm2.TPMAlgTDES:     "TDES",
+	tpm2.TPMAlgSM4:      "SM4",
+	tpm2.TPMAlgCamellia: "Camellia",
+}
+
+// formatTPMHandle renders a TPM handle the way the TCG registry and every
+// tpm2-tools invocation write it, so an operator can paste it straight into
+// tpm2_readpublic.
+func formatTPMHandle(handle tpm2.TPMHandle) string {
+	return fmt.Sprintf("0x%08X", handle)
+}
+
+// platformSRKHandleHex returns the configured Platform SRK handle in the same
+// form as formatTPMHandle, or "" when the TPM has no Platform SRK configured.
+func platformSRKHandleHex(tpm xkms.TrustedPlatformModule) string {
+	cfg := tpm.Config()
+	if cfg == nil || cfg.PlatformSRK == nil || cfg.PlatformSRK.SRKHandle == 0 {
+		return ""
+	}
+	return formatTPMHandle(tpm2.TPMHandle(cfg.PlatformSRK.SRKHandle))
+}
+
+// describeHandle resolves the operator-facing label for a persistent handle.
+// A description the operator set wins, then the Platform SRK the TPM is
+// configured with, then the TCG well-known handle registry. An unrecognized
+// handle has no label, and the caller decides what to show instead.
+func describeHandle(descriptions map[string]string, platformSRKHandle, hexHandle string) string {
+	if desc := descriptions[hexHandle]; desc != "" {
+		return desc
+	}
+	if platformSRKHandle != "" && hexHandle == platformSRKHandle {
+		return "Platform SRK"
+	}
+	return wellKnownHandles[hexHandle]
+}
+
+// tpmPublicAlgorithm names the algorithm of a TPM object from its public area,
+// including the signing scheme when the object declares one. A restricted
+// storage key declares TPM_ALG_NULL and is reported as plain "RSA" or "ECC":
+// claiming a scheme it does not have would misreport what the key can do.
+func tpmPublicAlgorithm(pub tpm2.TPMTPublic) string {
+	switch pub.Type {
+
+	case tpm2.TPMAlgRSA:
+		detail, err := pub.Parameters.RSADetail()
+		if err != nil {
+			return "RSA"
+		}
+		switch detail.Scheme.Scheme {
+		case tpm2.TPMAlgRSAPSS:
+			return "RSA-PSS"
+		case tpm2.TPMAlgRSASSA:
+			return "RSA-SSA"
+		case tpm2.TPMAlgOAEP:
+			return "RSA-OAEP"
+		case tpm2.TPMAlgRSAES:
+			return "RSA-ES"
+		default:
+			return "RSA"
+		}
+
+	case tpm2.TPMAlgECC:
+		detail, err := pub.Parameters.ECCDetail()
+		if err != nil {
+			return "ECC"
+		}
+		switch detail.Scheme.Scheme {
+		case tpm2.TPMAlgECDSA:
+			return "ECDSA"
+		case tpm2.TPMAlgECDAA:
+			return "ECDAA"
+		case tpm2.TPMAlgECSchnorr:
+			return "EC-Schnorr"
+		case tpm2.TPMAlgSM2:
+			return "SM2"
+		default:
+			return "ECC"
+		}
+
+	case tpm2.TPMAlgKeyedHash:
+		detail, err := pub.Parameters.KeyedHashDetail()
+		if err != nil {
+			return "KeyedHash"
+		}
+		switch detail.Scheme.Scheme {
+		case tpm2.TPMAlgHMAC:
+			return "HMAC"
+		case tpm2.TPMAlgXOR:
+			return "XOR"
+		default:
+			// TPM_ALG_NULL: a sealed data object, which holds data rather
+			// than a key.
+			return "KeyedHash"
+		}
+
+	case tpm2.TPMAlgSymCipher:
+		detail, err := pub.Parameters.SymDetail()
+		if err != nil {
+			return "SymCipher"
+		}
+		if name, ok := symCipherNames[detail.Sym.Algorithm]; ok {
+			return name
+		}
+		return "SymCipher"
+
+	default:
+		return unknownTPMValue
+	}
+}
+
+// tpmPublicKeySize returns the key size of a TPM object in bits: the RSA
+// modulus size, the bit size of the ECC curve, or the symmetric key size.
+// Sealed data objects have no key size and return 0.
+func tpmPublicKeySize(pub tpm2.TPMTPublic) int {
+	switch pub.Type {
+
+	case tpm2.TPMAlgRSA:
+		detail, err := pub.Parameters.RSADetail()
+		if err != nil {
+			return 0
+		}
+		return int(detail.KeyBits)
+
+	case tpm2.TPMAlgECC:
+		detail, err := pub.Parameters.ECCDetail()
+		if err != nil {
+			return 0
+		}
+		return eccCurveBits[detail.CurveID]
+
+	case tpm2.TPMAlgSymCipher:
+		detail, err := pub.Parameters.SymDetail()
+		if err != nil {
+			return 0
+		}
+		bits, err := detail.Sym.KeyBits.Sym()
+		if err != nil || bits == nil {
+			return 0
+		}
+		return int(*bits)
+
+	default:
+		return 0
+	}
+}
+
+// tpmPublicPurpose describes what an object may be used for, derived from the
+// object attributes of TCG TPM 2.0 Part 2: Structures, section 8.3. It is the
+// fallback for handles the TCG registry does not name, so an operator can tell
+// a storage parent from an attestation key without decoding attributes.
+func tpmPublicPurpose(pub tpm2.TPMTPublic) string {
+	attrs := pub.ObjectAttributes
+
+	switch {
+	case attrs.Restricted && attrs.Decrypt:
+		// A restricted decryption key is a storage parent: an SRK, or the
+		// parent of a key hierarchy.
+		return "Storage"
+	case attrs.Restricted && attrs.SignEncrypt:
+		// A restricted signing key signs only TPM-produced data, which is
+		// what makes it an attestation key.
+		return "Attestation"
+	case attrs.Decrypt && attrs.SignEncrypt:
+		return "Signing and Decryption"
+	case attrs.SignEncrypt:
+		return "Signing"
+	case attrs.Decrypt:
+		return "Decryption"
+	case pub.Type == tpm2.TPMAlgKeyedHash:
+		// Neither sign nor decrypt on a keyedhash object means sealed data.
+		return "Sealed Data"
+	default:
+		return unknownTPMValue
+	}
 }
 
 // algoDisplayName returns a human-readable algorithm name that distinguishes

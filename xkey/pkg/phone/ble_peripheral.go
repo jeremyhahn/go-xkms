@@ -28,6 +28,11 @@ import (
 	"tinygo.org/x/bluetooth"
 )
 
+// handshakeReceiveTimeout bounds how long the peripheral waits for each
+// handshake message. An established session has no such bound: it waits for
+// the next request until the context is cancelled or the peripheral stops.
+const handshakeReceiveTimeout = 30 * time.Second
+
 // BLE Peripheral errors.
 var (
 	ErrPeripheralAlreadyRunning = errors.New("phone: peripheral already running")
@@ -48,6 +53,14 @@ type BLEPeripheralConfig struct {
 
 	// DeviceName is the advertised device name.
 	DeviceName string
+
+	// MTU is the preferred Maximum Transmission Unit. Values below MinMTU
+	// fall back to DefaultMTU.
+	MTU int
+
+	// AdapterID selects the local Bluetooth adapter (for example "hci1").
+	// Empty uses the system default adapter.
+	AdapterID string
 
 	// Logger is the structured logger.
 	Logger *slog.Logger
@@ -72,10 +85,19 @@ type BLEPeripheral struct {
 
 	adapter *bluetooth.Adapter
 
-	// GATT characteristics
+	// GATT characteristics. The handles are bound by AddService and are what
+	// the peripheral writes to in order to notify the connected central.
 	controlPoint *bluetooth.Characteristic
 	response     *bluetooth.Characteristic
 	status       *bluetooth.Characteristic
+
+	// notifier is the writer that carries outbound fragments. It is the
+	// response characteristic in production; tests substitute an in-memory
+	// writer to exercise the notify path without hardware.
+	notifier FragmentWriter
+
+	// sender fragments and notifies outbound messages.
+	sender *fragmentSender
 
 	// Session state
 	mu         sync.Mutex
@@ -108,10 +130,15 @@ func NewBLEPeripheral(cfg *BLEPeripheralConfig) (*BLEPeripheral, error) {
 		cfg.DeviceName = "xKey"
 	}
 
+	mtu := cfg.MTU
+	if mtu < MinMTU {
+		mtu = DefaultMTU
+	}
+
 	return &BLEPeripheral{
 		cfg:          cfg,
 		log:          logger.With("component", "ble_peripheral"),
-		mtu:          DefaultMTU,
+		mtu:          mtu,
 		incomingData: make(chan []byte, 100),
 		stopChan:     make(chan struct{}),
 	}, nil
@@ -129,6 +156,9 @@ func (p *BLEPeripheral) Start(ctx context.Context) error {
 
 	// Enable the BLE adapter
 	p.adapter = bluetooth.DefaultAdapter
+	if p.cfg.AdapterID != "" {
+		p.adapter = bluetooth.NewAdapter(p.cfg.AdapterID)
+	}
 	if err := p.adapter.Enable(); err != nil {
 		p.log.Error("failed to enable bluetooth adapter", slog.String("error", err.Error()))
 		return &SentinelCauseError{Sentinel: ErrPeripheralStartFailed, Cause: err}
@@ -162,24 +192,36 @@ func (p *BLEPeripheral) Start(ctx context.Context) error {
 }
 
 // setupGATTService creates the GATT service and characteristics.
+//
+// Every characteristic is registered with a Handle so AddService binds it to
+// the exported GATT object. Without a handle the peripheral would have no way
+// to notify the central, because writing the handle is what emits the
+// notification.
 func (p *BLEPeripheral) setupGATTService() error {
+	p.controlPoint = &bluetooth.Characteristic{}
+	p.response = &bluetooth.Characteristic{}
+	p.status = &bluetooth.Characteristic{}
+
 	// Create characteristics
 	controlPointChar := bluetooth.CharacteristicConfig{
-		UUID:  ControlPointUUID,
-		Flags: bluetooth.CharacteristicWritePermission | bluetooth.CharacteristicWriteWithoutResponsePermission,
+		Handle: p.controlPoint,
+		UUID:   ControlPointUUID,
+		Flags:  bluetooth.CharacteristicWritePermission | bluetooth.CharacteristicWriteWithoutResponsePermission,
 		WriteEvent: func(client bluetooth.Connection, offset int, value []byte) {
 			p.handleWrite(value)
 		},
 	}
 
 	responseChar := bluetooth.CharacteristicConfig{
-		UUID:  ResponseUUID,
-		Flags: bluetooth.CharacteristicNotifyPermission | bluetooth.CharacteristicReadPermission,
+		Handle: p.response,
+		UUID:   ResponseUUID,
+		Flags:  bluetooth.CharacteristicNotifyPermission | bluetooth.CharacteristicReadPermission,
 	}
 
 	statusChar := bluetooth.CharacteristicConfig{
-		UUID:  StatusUUID,
-		Flags: bluetooth.CharacteristicNotifyPermission | bluetooth.CharacteristicReadPermission,
+		Handle: p.status,
+		UUID:   StatusUUID,
+		Flags:  bluetooth.CharacteristicNotifyPermission | bluetooth.CharacteristicReadPermission,
 	}
 
 	// Add the service
@@ -194,6 +236,9 @@ func (p *BLEPeripheral) setupGATTService() error {
 	if err != nil {
 		return &WrappedError{Msg: "failed to add service", Err: err}
 	}
+
+	// Responses are notified on the response characteristic.
+	p.notifier = p.response
 
 	p.log.Debug("GATT service configured")
 	return nil
@@ -218,9 +263,11 @@ func (p *BLEPeripheral) handleWrite(data []byte) {
 func (p *BLEPeripheral) AcceptConnection(ctx context.Context) error {
 	p.log.Info("waiting for phone connection...")
 
-	// Initialize fragmentation helpers
-	p.fragmenter = NewFragmenter(p.mtu - 7) // Account for ATT header
+	// Initialize fragmentation helpers. Outbound fragments are sized to fit
+	// inside a single ATT notification PDU; see bleNotifyOverhead.
+	p.fragmenter = NewFragmenter(p.mtu - bleNotifyOverhead)
 	p.reassembler = NewReassembler()
+	p.sender = newFragmentSender(p.notifier, p.fragmenter, p.log)
 
 	// Create Noise session as responder
 	var localStatic noise.DHKey
@@ -309,12 +356,29 @@ func (p *BLEPeripheral) performHandshake(ctx context.Context) error {
 	return nil
 }
 
-// receiveMessage reads a complete message from the phone.
+// receiveMessage reads a complete message from the phone, failing if the
+// message does not arrive within handshakeReceiveTimeout.
 func (p *BLEPeripheral) receiveMessage(ctx context.Context) ([]byte, error) {
+	return p.receiveMessageTimeout(ctx, handshakeReceiveTimeout)
+}
+
+// receiveMessageTimeout reassembles the fragments arriving on the control
+// point into one complete message. A non-positive timeout waits indefinitely,
+// which is what an established session does between requests.
+func (p *BLEPeripheral) receiveMessageTimeout(ctx context.Context, timeout time.Duration) ([]byte, error) {
+	var expired <-chan time.Time
+	if timeout > 0 {
+		timer := time.NewTimer(timeout)
+		defer timer.Stop()
+		expired = timer.C
+	}
+
 	for {
 		select {
 		case <-ctx.Done():
 			return nil, ctx.Err()
+		case <-p.stopChan:
+			return nil, ErrPeripheralNotRunning
 		case data := <-p.incomingData:
 			// Decode fragment
 			fragment, err := DecodeFragment(data)
@@ -341,45 +405,38 @@ func (p *BLEPeripheral) receiveMessage(ctx context.Context) ([]byte, error) {
 				p.reassembler.Reset() // Ready for next message
 				return message, nil
 			}
-		case <-time.After(30 * time.Second):
+		case <-expired:
 			return nil, &MessageError{Msg: "receive timeout"}
 		}
 	}
 }
 
-// sendMessage sends a complete message to the phone.
+// sendMessage fragments a complete message and notifies every fragment on the
+// response characteristic. It returns a typed error - never a silent success -
+// when the transport rejects or truncates a fragment.
 func (p *BLEPeripheral) sendMessage(ctx context.Context, data []byte) error {
-	// Fragment the message if needed
-	fragments, err := p.fragmenter.Fragment(data)
-	if err != nil {
-		return &WrappedError{Msg: "fragmentation failed", Err: err}
+	sender := p.sender
+	if sender == nil {
+		return ErrNotifyUnavailable
 	}
-
-	for _, fragBytes := range fragments {
-		// TODO: Send via notification on response characteristic
-		// This requires the TinyGo bluetooth library to support notifications
-		// For now, we'll need to implement this when the library supports it
-		p.log.Debug("would send fragment",
-			slog.Int("size", len(fragBytes)),
-			slog.String("hex", hex.EncodeToString(fragBytes)),
-		)
-	}
-
-	return nil
+	return sender.send(ctx, data)
 }
 
-// handleRequests processes incoming requests from the phone.
+// handleRequests processes incoming requests from the phone. Requests are
+// reassembled from their fragments before they are decrypted: the control
+// point delivers BLE-sized fragments, never whole messages.
 func (p *BLEPeripheral) handleRequests(ctx context.Context) error {
 	for {
-		select {
-		case <-ctx.Done():
-			return ctx.Err()
-		case <-p.stopChan:
-			return nil
-		case data := <-p.incomingData:
-			if err := p.processRequest(ctx, data); err != nil {
-				p.log.Error("failed to process request", slog.String("error", err.Error()))
+		request, err := p.receiveMessageTimeout(ctx, 0)
+		if err != nil {
+			if errors.Is(err, ErrPeripheralNotRunning) {
+				return nil
 			}
+			return err
+		}
+
+		if err := p.processRequest(ctx, request); err != nil {
+			p.log.Error("failed to process request", slog.String("error", err.Error()))
 		}
 	}
 }
@@ -442,17 +499,4 @@ func (p *BLEPeripheral) LocalStaticPublicKey() []byte {
 		return nil
 	}
 	return p.session.LocalStaticPublicKey()
-}
-
-// safeSlice returns a slice of data up to maxLen bytes starting at start,
-// or the remaining data if shorter. Used for debug logging of BLE payloads.
-func safeSlice(data []byte, start, maxLen int) []byte {
-	if start >= len(data) {
-		return nil
-	}
-	end := start + maxLen
-	if end > len(data) {
-		end = len(data)
-	}
-	return data[start:end]
 }

@@ -1184,13 +1184,13 @@ func TestClaimCertComplete_Connected(t *testing.T) {
 	assert.NotNil(t, resp)
 }
 
-func TestClaimShare_Connected(t *testing.T) {
+func TestClaimShareBegin_Connected(t *testing.T) {
 	addr, cleanup := newCatchAllMCPServer(t)
 	defer cleanup()
 	tr := connectToMockServer(t, addr)
 	defer tr.Close()
 
-	resp, err := tr.ClaimShare(context.Background(), &transport.ClaimShareRequest{})
+	resp, err := tr.ClaimShareBegin(context.Background(), &transport.ClaimShareBeginRequest{})
 	require.NoError(t, err)
 	assert.NotNil(t, resp)
 }

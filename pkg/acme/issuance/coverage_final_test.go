@@ -220,9 +220,11 @@ func TestIssuer_CTIssuerChainError(t *testing.T) {
 	linter := &mockLinter{passed: true}
 	ctSubmitter := &mockCTSubmitter{}
 
-	// Signer that fails on specific Certificate() call (during getIssuerChain)
+	// Signer that fails on the Certificate() call getIssuerChain makes. The
+	// issuer resolves its signing identity once up front, so that is the
+	// second call.
 	signer := &issuerChainFailSigner{
-		failOnCall: 4, // After lint and precert signing
+		failOnCall: 2,
 	}
 
 	config := Config{

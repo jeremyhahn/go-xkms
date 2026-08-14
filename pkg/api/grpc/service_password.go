@@ -19,14 +19,16 @@ import (
 	"strings"
 	"time"
 
-	pb "github.com/jeremyhahn/go-xkms/pkg/api/grpc/proto/xkmsv1"
-	"github.com/jeremyhahn/go-xkms/pkg/api/transport"
-	"github.com/jeremyhahn/go-xkms/pkg/seal"
-	"github.com/jeremyhahn/go-xkms/pkg/staticpw"
-	"github.com/jeremyhahn/go-xkms/pkg/xkms"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 	"google.golang.org/protobuf/types/known/timestamppb"
+
+	pb "github.com/jeremyhahn/go-xkms/pkg/api/grpc/proto/xkmsv1"
+	"github.com/jeremyhahn/go-xkms/pkg/api/transport"
+	"github.com/jeremyhahn/go-xkms/pkg/auth"
+	"github.com/jeremyhahn/go-xkms/pkg/seal"
+	"github.com/jeremyhahn/go-xkms/pkg/staticpw"
+	"github.com/jeremyhahn/go-xkms/pkg/xkms"
 )
 
 // PasswordAdd creates a new password entry in the encrypted store.
@@ -41,7 +43,7 @@ func (s *Service) PasswordAdd(ctx context.Context, req *pb.PasswordAddRequest) (
 		return nil, status.Error(codes.InvalidArgument, "password is required")
 	}
 
-	if err := s.authorize(ctx, "passwords", "write", req.Name); err != nil {
+	if err := s.authorize(ctx, auth.ResourcePasswords, auth.ActionWrite, req.Name); err != nil {
 		return nil, err
 	}
 
@@ -82,7 +84,7 @@ func (s *Service) PasswordGet(ctx context.Context, req *pb.PasswordGetRequest) (
 		return nil, status.Error(codes.InvalidArgument, "id is required")
 	}
 
-	if err := s.authorize(ctx, "passwords", "read", req.Id); err != nil {
+	if err := s.authorize(ctx, auth.ResourcePasswords, auth.ActionRead, req.Id); err != nil {
 		return nil, err
 	}
 
@@ -110,7 +112,7 @@ func (s *Service) PasswordList(ctx context.Context, req *pb.PasswordListRequest)
 		req = &pb.PasswordListRequest{}
 	}
 
-	if err := s.authorize(ctx, "passwords", "read", ""); err != nil {
+	if err := s.authorize(ctx, auth.ResourcePasswords, auth.ActionRead, ""); err != nil {
 		return nil, err
 	}
 
@@ -149,7 +151,7 @@ func (s *Service) PasswordUpdate(ctx context.Context, req *pb.PasswordUpdateRequ
 		return nil, status.Error(codes.InvalidArgument, "id is required")
 	}
 
-	if err := s.authorize(ctx, "passwords", "write", req.Id); err != nil {
+	if err := s.authorize(ctx, auth.ResourcePasswords, auth.ActionWrite, req.Id); err != nil {
 		return nil, err
 	}
 
@@ -204,7 +206,7 @@ func (s *Service) PasswordDelete(ctx context.Context, req *pb.PasswordDeleteRequ
 		return nil, status.Error(codes.InvalidArgument, "id is required")
 	}
 
-	if err := s.authorize(ctx, "passwords", "delete", req.Id); err != nil {
+	if err := s.authorize(ctx, auth.ResourcePasswords, auth.ActionDelete, req.Id); err != nil {
 		return nil, err
 	}
 
@@ -233,10 +235,18 @@ func (s *Service) PasswordStoreUnlock(ctx context.Context, req *pb.PasswordStore
 		req = &pb.PasswordStoreUnlockRequest{}
 	}
 
-	if err := s.authorize(ctx, "passwords", "unlock", ""); err != nil {
+	if err := s.authorize(ctx, auth.ResourcePasswords, auth.ActionUnlock, ""); err != nil {
 		return nil, err
 	}
 
+	// NOTE: unlike the REST, QUIC, and MCP handlers, this deliberately does NOT
+	// reject a platform-scoped caller up front. This same service is served
+	// over the Unix socket, which sets no authentication interceptor because
+	// the trust boundary is the socket's file mode — so a nil identity is
+	// legitimate there, not an unauthenticated caller. The scoping is enforced
+	// one layer down instead: XKMSService.scopedTenantIDFromContext resolves a
+	// platform-scoped caller to the system store rather than inventing a
+	// per-tenant store named "system".
 	svc := s.xkmsService
 	if svc == nil {
 		return nil, status.Error(codes.Unavailable, "xkms service not initialized")
@@ -247,7 +257,7 @@ func (s *Service) PasswordStoreUnlock(ctx context.Context, req *pb.PasswordStore
 	}
 
 	if unlockErr := svc.PasswordStoreUnlock(ctx, transportReq); unlockErr != nil {
-		return nil, mapPasswordError(unlockErr)
+		return nil, mapPasswordUnlockError(unlockErr)
 	}
 
 	// Return updated status
@@ -272,10 +282,12 @@ func (s *Service) PasswordStoreUnlock(ctx context.Context, req *pb.PasswordStore
 
 // PasswordStoreLock locks the tenant password store session.
 func (s *Service) PasswordStoreLock(ctx context.Context, req *pb.PasswordStoreLockRequest) (*pb.PasswordStoreStatusResponse, error) {
-	if err := s.authorize(ctx, "passwords", "lock", ""); err != nil {
+	if err := s.authorize(ctx, auth.ResourcePasswords, auth.ActionLock, ""); err != nil {
 		return nil, err
 	}
 
+	// See PasswordStoreUnlock: no up-front scope rejection here, because the
+	// Unix socket serves this same service with a nil identity by design.
 	svc := s.xkmsService
 	if svc == nil {
 		return nil, status.Error(codes.Unavailable, "xkms service not initialized")
@@ -307,7 +319,7 @@ func (s *Service) PasswordStoreLock(ctx context.Context, req *pb.PasswordStoreLo
 
 // PasswordStoreStatus returns the current status of the password store.
 func (s *Service) PasswordStoreStatus(ctx context.Context, req *pb.PasswordStoreStatusRequest) (*pb.PasswordStoreStatusResponse, error) {
-	if err := s.authorize(ctx, "passwords", "read", "status"); err != nil {
+	if err := s.authorize(ctx, auth.ResourcePasswords, auth.ActionRead, "status"); err != nil {
 		return nil, err
 	}
 
@@ -336,7 +348,7 @@ func (s *Service) PasswordGenerate(ctx context.Context, req *pb.PasswordGenerate
 		req = &pb.PasswordGenerateRequest{}
 	}
 
-	if err := s.authorize(ctx, "passwords", "generate", ""); err != nil {
+	if err := s.authorize(ctx, auth.ResourcePasswords, auth.ActionGenerate, ""); err != nil {
 		return nil, err
 	}
 
@@ -365,6 +377,36 @@ func (s *Service) PasswordGenerate(ctx context.Context, req *pb.PasswordGenerate
 }
 
 // mapPasswordError converts staticpw and xkms errors to appropriate gRPC status codes.
+// mapPasswordUnlockError maps the errors returned by
+// XKMSService.PasswordStoreUnlock. It defers to mapPasswordError for every
+// recognised sentinel and differs only in its fallback: on the unlock path a
+// residual error is a failed PIN verification from the PIN backend, which is
+// PermissionDenied rather than Internal. The backend's message is not echoed
+// because it can carry retry counters and lockout state.
+func mapPasswordUnlockError(err error) error {
+	if err == nil {
+		return nil
+	}
+
+	// A wrong PIN produces an error that matches none of the known sentinels,
+	// so mapPasswordError would report it as Internal. Detect that case by
+	// checking whether the mapping fell through to its default.
+	mapped := mapPasswordError(err)
+	if status.Code(mapped) == codes.Internal && !isKnownInternalPasswordError(err) {
+		return status.Error(codes.PermissionDenied, "user PIN verification failed")
+	}
+	return mapped
+}
+
+// isKnownInternalPasswordError reports whether err is one of the genuine
+// internal faults mapPasswordError deliberately maps to codes.Internal, as
+// opposed to an unrecognised error that merely fell through to the default.
+func isKnownInternalPasswordError(err error) bool {
+	return errors.Is(err, staticpw.ErrNilStore) ||
+		errors.Is(err, staticpw.ErrNilEncrypter) ||
+		errors.Is(err, staticpw.ErrNilBarrierRegistry)
+}
+
 func mapPasswordError(err error) error {
 	if err == nil {
 		return nil
@@ -434,6 +476,17 @@ func mapPasswordError(err error) error {
 		return status.Error(codes.Unimplemented, "operation not supported")
 	case errors.Is(err, xkms.ErrNilRequest):
 		return status.Error(codes.InvalidArgument, "request is required")
+
+	// Password store user-PIN errors. These are distinguished from one another
+	// so an operator can tell "you sent no PIN" from "this deployment has no
+	// PIN to check"; a wrong PIN is reported by the PIN backend and is mapped
+	// by mapPasswordUnlockError, which owns the unlock path.
+	case errors.Is(err, xkms.ErrPasswordStoreUserPINRequired):
+		return status.Error(codes.InvalidArgument, xkms.ErrPasswordStoreUserPINRequired.Error())
+	case errors.Is(err, xkms.ErrPasswordStoreUserPINNotProvisioned):
+		return status.Error(codes.FailedPrecondition, xkms.ErrPasswordStoreUserPINNotProvisioned.Error())
+	case errors.Is(err, xkms.ErrPasswordDecryptNotSupported):
+		return status.Error(codes.Unimplemented, xkms.ErrPasswordDecryptNotSupported.Error())
 
 	default:
 		// Check for error message patterns for errors that may be wrapped

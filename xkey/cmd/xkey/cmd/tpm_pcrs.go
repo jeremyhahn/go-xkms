@@ -17,7 +17,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
-	"os"
+	"io"
 	"strconv"
 	"strings"
 
@@ -92,6 +92,7 @@ func init() {
 }
 
 func runTPMPCRs(cmd *cobra.Command, args []string) error {
+	out := cmd.OutOrStdout()
 	// Parse PCR indices
 	var indices []uint
 	var err error
@@ -161,11 +162,11 @@ func runTPMPCRs(cmd *cobra.Command, args []string) error {
 	// Output based on format
 	switch tpmCfg.outputFormat {
 	case "json":
-		encoder := json.NewEncoder(os.Stdout)
+		encoder := json.NewEncoder(out)
 		encoder.SetIndent("", "  ")
 		return encoder.Encode(output)
 	default:
-		return outputPCRsText(output)
+		return outputPCRsText(out, output)
 	}
 }
 
@@ -224,14 +225,14 @@ func parsePCRIndicesForPCRs(pcrString string) ([]uint, error) {
 	return pcrs, nil
 }
 
-func outputPCRsText(output *PCRsOutput) error {
-	fmt.Println("Platform Configuration Registers (PCRs)")
-	fmt.Println("=======================================")
+func outputPCRsText(out io.Writer, output *PCRsOutput) error {
+	fmt.Fprintln(out, "Platform Configuration Registers (PCRs)")
+	fmt.Fprintln(out, "=======================================")
 
 	for _, bank := range output.Banks {
-		fmt.Println()
-		fmt.Printf("Bank: %s\n", bank.Algorithm)
-		fmt.Println(strings.Repeat("-", 40+len(bank.Algorithm)))
+		fmt.Fprintln(out)
+		fmt.Fprintf(out, "Bank: %s\n", bank.Algorithm)
+		fmt.Fprintln(out, strings.Repeat("-", 40+len(bank.Algorithm)))
 
 		for _, pcr := range bank.PCRs {
 			// Indicate special PCRs
@@ -271,7 +272,7 @@ func outputPCRsText(output *PCRsOutput) error {
 				valueHex = valueHex[:64] + "..."
 			}
 
-			fmt.Printf("  PCR[%2d]: %s%s\n", pcr.Index, valueHex, description)
+			fmt.Fprintf(out, "  PCR[%2d]: %s%s\n", pcr.Index, valueHex, description)
 		}
 	}
 

@@ -203,6 +203,20 @@ func buildYubiKeyECDSATemplates(id, encodedOID []byte) (pub, priv []*pkcs11.Attr
 // When isYubiKeyPIV is true, a minimal attribute template is used as required by
 // YubiKey's libykcs11 (which rejects extra attributes with CKR_ATTRIBUTE_VALUE_INVALID).
 // Otherwise, the full template suitable for SoftHSM and generic PKCS#11 modules is used.
+//
+// The generic private key template grants CKA_DERIVE as well as CKA_SIGN. An EC
+// private key is the base key of CKM_ECDH1_DERIVE, and PKCS#11 3.2 §4.9 defaults
+// CKA_DERIVE to CK_FALSE, so a template that omits it produces a key the token
+// refuses to derive from: Backend.DeriveKeyECDH fails with
+// CKR_KEY_FUNCTION_NOT_PERMITTED for every key this function generated. The flag
+// has to be granted at generation because §4.9 makes CKA_DERIVE modifiable only
+// while the object is being created.
+//
+// CKA_DERIVE is granted on the private half alone. C_DeriveKey takes the local
+// private key as its base key and the peer's point as a mechanism parameter, so
+// the public object is never a base key and does not need the permission.
+//
+// For CKA_SENSITIVE and CKA_EXTRACTABLE see generatedKeySensitive.
 func generateECDSAKeyPair(pool *SessionPool, id, label []byte, curve elliptic.Curve, isYubiKeyPIV bool, soPIN, userPIN string) (*pkcs11ECDSASigner, error) {
 	oid, ok := curveToOID[curve]
 	if !ok {
@@ -232,8 +246,10 @@ func generateECDSAKeyPair(pool *SessionPool, id, label []byte, curve elliptic.Cu
 			pkcs11.NewAttribute(pkcs11.CKA_KEY_TYPE, pkcs11.CKK_EC),
 			pkcs11.NewAttribute(pkcs11.CKA_TOKEN, true),
 			pkcs11.NewAttribute(pkcs11.CKA_PRIVATE, true),
-			pkcs11.NewAttribute(pkcs11.CKA_SENSITIVE, true),
+			pkcs11.NewAttribute(pkcs11.CKA_SENSITIVE, generatedKeySensitive),
+			pkcs11.NewAttribute(pkcs11.CKA_EXTRACTABLE, generatedKeyExtractable),
 			pkcs11.NewAttribute(pkcs11.CKA_SIGN, true),
+			pkcs11.NewAttribute(pkcs11.CKA_DERIVE, true),
 			pkcs11.NewAttribute(pkcs11.CKA_LABEL, label),
 			pkcs11.NewAttribute(pkcs11.CKA_ID, id),
 		}

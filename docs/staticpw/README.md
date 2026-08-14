@@ -383,11 +383,34 @@ Two independent protection layers:
 - When the barrier is sealed, all store operations fail regardless of session lock state
 - `LockTenant` is always permitted (lightweight API gate)
 
+### Unlock Credential (XKMS Servicer)
+
+`TenantPasswordStoreManager.UnlockTenant` only checks the barrier. The service
+layer (`XKMSService.PasswordStoreUnlock`) adds the credential check, so no
+transport can open a tenant vault without one:
+
+| Condition | Result |
+|-----------|--------|
+| Correct `user_pin` | Session unlocked |
+| Wrong `user_pin` | `PINBackend.VerifyUserPIN` error, store stays locked |
+| Missing `user_pin` | `ErrPasswordStoreUserPINRequired`, store stays locked |
+| No PIN backend (`pin.enabled: false`) or user PIN never set | `ErrPasswordStoreUserPINNotProvisioned`, store stays locked |
+
+The PIN is verified with `PINBackend.VerifyUserPIN`, the same call
+`SessionStore.Unlock` makes, so there is exactly one credential path. Locking
+needs no credential: it only removes access.
+
+`XKMSService.PasswordGet` refuses `decrypt` / `user_pin`
+(`ErrPasswordDecryptNotSupported`): the barrier-backed stores reachable from
+the servicer return entries exactly as stored and have no field-level
+decryption entry point, so the request is reported instead of silently
+answered with the stored value.
+
 ### REST API Endpoints
 
 | Endpoint | Method | Description |
 |----------|--------|-------------|
-| `/passwords/unlock` | POST | Unlock tenant session (requires unsealed barrier) |
+| `/passwords/unlock` | POST | Unlock tenant session (requires unsealed barrier **and** the user PIN) |
 | `/passwords/lock` | POST | Lock tenant session |
 | `/passwords/status` | GET | Returns lock state, barrier seal state, password count |
 

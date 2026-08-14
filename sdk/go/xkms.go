@@ -73,6 +73,11 @@ var (
 	ErrBackendNotFound = errors.New("backend not found")
 	// ErrInvalidRequest is returned when a request is malformed or invalid.
 	ErrInvalidRequest = errors.New("invalid request")
+	// ErrIncompleteTLSMaterial is returned when TLS client-certificate
+	// material is only half configured (certificate without key, or key
+	// without certificate). The client fails closed instead of connecting
+	// without the credential the caller asked for.
+	ErrIncompleteTLSMaterial = errors.New("incomplete TLS client certificate material")
 )
 
 // Client is a type alias for transport.Client.
@@ -142,7 +147,10 @@ func New(cfg *BackendConfig) (Client, error) {
 		address = defaultAddressForProtocol(protocol)
 	}
 
-	opts := optsFromConfig(cfg, address)
+	opts, err := optsFromConfig(cfg, address)
+	if err != nil {
+		return nil, err
+	}
 
 	switch protocol {
 	case ProtocolUnix, ProtocolUnixGRPC:
@@ -172,18 +180,20 @@ func New(cfg *BackendConfig) (Client, error) {
 }
 
 // optsFromConfig converts a BackendConfig to a slice of transport options.
-func optsFromConfig(cfg *BackendConfig, address string) []transport.Option {
+// It returns an error when TLS is requested but the supplied material cannot
+// produce a usable TLS client; the caller must not fall back to plaintext.
+func optsFromConfig(cfg *BackendConfig, address string) ([]transport.Option, error) {
 	var opts []transport.Option
 
 	if address != "" {
 		opts = append(opts, transport.WithAddress(address))
 	}
-	if cfg.TLSConfig != nil {
-		opts = append(opts, transport.WithTLSConfig(cfg.TLSConfig))
-	} else if cfg.TLSCertFile != "" && cfg.TLSKeyFile != "" {
-		opts = append(opts, transport.WithMTLS(cfg.TLSCertFile, cfg.TLSKeyFile, cfg.TLSCAFile))
-	} else if cfg.TLSCAFile != "" {
-		opts = append(opts, transport.WithTLS(cfg.TLSCAFile))
+	tlsOpt, err := tlsOptionFromConfig(cfg)
+	if err != nil {
+		return nil, err
+	}
+	if tlsOpt != nil {
+		opts = append(opts, tlsOpt)
 	}
 	if cfg.SPKIPin != "" {
 		opts = append(opts, transport.WithSPKIPin(cfg.SPKIPin))
@@ -195,7 +205,37 @@ func optsFromConfig(cfg *BackendConfig, address string) []transport.Option {
 		opts = append(opts, transport.WithHeaders(cfg.Headers))
 	}
 
-	return opts
+	return opts, nil
+}
+
+// tlsOptionFromConfig selects the single transport TLS option implied by cfg.
+// Exactly one option is emitted, in descending order of specificity:
+//
+//  1. TLSConfig — a caller-built *tls.Config (hardware-backed mTLS, pinning).
+//  2. TLSCertFile + TLSKeyFile — mTLS, optionally with TLSCAFile.
+//  3. TLSCAFile — server verification against a private CA bundle.
+//  4. TLSEnabled — server verification against the system root pool.
+//
+// Each of the first three enables TLS on its own, so the more specific
+// options always win over the bare TLSEnabled flag. A nil option means the
+// caller asked for plaintext.
+func tlsOptionFromConfig(cfg *BackendConfig) (transport.Option, error) {
+	switch {
+	case cfg.TLSConfig != nil:
+		return transport.WithTLSConfig(cfg.TLSConfig), nil
+	case cfg.TLSCertFile != "" && cfg.TLSKeyFile != "":
+		return transport.WithMTLS(cfg.TLSCertFile, cfg.TLSKeyFile, cfg.TLSCAFile), nil
+	case cfg.TLSCertFile != "":
+		return nil, &IncompleteTLSMaterialError{Missing: "TLSKeyFile"}
+	case cfg.TLSKeyFile != "":
+		return nil, &IncompleteTLSMaterialError{Missing: "TLSCertFile"}
+	case cfg.TLSCAFile != "":
+		return transport.WithTLS(cfg.TLSCAFile), nil
+	case cfg.TLSEnabled:
+		return transport.WithTLSEnabled(true), nil
+	default:
+		return nil, nil
+	}
 }
 
 // NewEmbedded creates a new embedded xkms client using the given service implementation.
@@ -214,6 +254,19 @@ func NewFromURL(rawURL string) (Client, error) {
 		return New(nil)
 	}
 
+	cfg, err := configFromURL(rawURL)
+	if err != nil {
+		return nil, err
+	}
+
+	return New(cfg)
+}
+
+// configFromURL maps a client URL onto a BackendConfig. The TLS-implying
+// schemes (https, grpcs, mcps, quic) set TLSEnabled so the transport dials
+// with TLS even when the caller supplies no CA bundle; the plaintext schemes
+// (http, grpc, mcp, unix) leave it unset.
+func configFromURL(rawURL string) (*BackendConfig, error) {
 	// Handle host:port without scheme
 	if !strings.Contains(rawURL, "://") {
 		rawURL = "http://" + rawURL
@@ -248,6 +301,9 @@ func NewFromURL(rawURL string) (Client, error) {
 		cfg.TLSEnabled = true
 	case "quic":
 		cfg.Protocol = ProtocolQUIC
+		// QUIC mandates TLS 1.3; record it so the config never claims the
+		// connection is plaintext.
+		cfg.TLSEnabled = true
 	case "mcp":
 		cfg.Protocol = ProtocolMCP
 	case "mcps":
@@ -257,7 +313,7 @@ func NewFromURL(rawURL string) (Client, error) {
 		return nil, &UnsupportedProtocolError{Detail: "scheme " + u.Scheme}
 	}
 
-	return New(cfg)
+	return cfg, nil
 }
 
 // Type aliases for transport types to provide a clean public API.
@@ -444,6 +500,11 @@ type (
 	PolicyExportRequest  = transport.PolicyExportRequest
 	PolicyExportResponse = transport.PolicyExportResponse
 
+	// Audit Operations
+	AuditEvent  = transport.AuditEvent
+	AuditFilter = transport.AuditFilter
+	AuditPage   = transport.AuditPage
+
 	// Custodian Group Operations
 	CustodianGroupInfo           = transport.CustodianGroupInfo
 	CustodianMemberInfo          = transport.CustodianMemberInfo
@@ -484,8 +545,10 @@ type (
 	ClaimCertBeginResponse     = transport.ClaimCertBeginResponse
 	ClaimCertCompleteRequest   = transport.ClaimCertCompleteRequest
 	ClaimCertCompleteResponse  = transport.ClaimCertCompleteResponse
-	ClaimShareRequest          = transport.ClaimShareRequest
-	ClaimShareResponse         = transport.ClaimShareResponse
+	ClaimShareBeginRequest     = transport.ClaimShareBeginRequest
+	ClaimShareBeginResponse    = transport.ClaimShareBeginResponse
+	ClaimShareCompleteRequest  = transport.ClaimShareCompleteRequest
+	ClaimShareCompleteResponse = transport.ClaimShareCompleteResponse
 	SignCSRInitRequest         = transport.SignCSRInitRequest
 	SignCSRInitResponse        = transport.SignCSRInitResponse
 	CredentialSubmitRequest    = transport.CredentialSubmitRequest

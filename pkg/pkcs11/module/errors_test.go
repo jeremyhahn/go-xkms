@@ -15,6 +15,7 @@ package module
 
 import (
 	"errors"
+	"github.com/jeremyhahn/go-xkms/pkg/errs"
 	"testing"
 )
 
@@ -976,7 +977,6 @@ func TestSentinelErrorMapping(t *testing.T) {
 		sentinel error
 		code     CK_RV
 	}{
-		{ErrOK, CKR_OK},
 		{ErrCancel, CKR_CANCEL},
 		{ErrHostMemory, CKR_HOST_MEMORY},
 		{ErrSlotIDInvalid, CKR_SLOT_ID_INVALID},
@@ -1068,5 +1068,90 @@ func TestCKRVAllKnownCodes(t *testing.T) {
 				}
 			}
 		})
+	}
+}
+
+// TestCKRTokenNotInitialized asserts that 0x00000208 carries the identity
+// OASIS gives it. PKCS#11 v3.2 section 5.1.3 defines CKR_TOKEN_NOT_INITIALIZED
+// as the code a token returns while it is still in factory state and awaiting
+// C_InitToken, and the normative header assigns it 0x00000208. This module
+// previously gave that value to an invented CKR_OPERATION_INCOMPATIBLE, so a
+// factory-state token was reported under a name absent from the specification.
+func TestCKRTokenNotInitialized(t *testing.T) {
+	if CKR_TOKEN_NOT_INITIALIZED != 0x00000208 {
+		t.Errorf("CKR_TOKEN_NOT_INITIALIZED is 0x%08X, OASIS assigns 0x00000208", uint32(CKR_TOKEN_NOT_INITIALIZED))
+	}
+	if got := CKR_TOKEN_NOT_INITIALIZED.String(); got != "CKR_TOKEN_NOT_INITIALIZED" {
+		t.Errorf("CKR_TOKEN_NOT_INITIALIZED.String() = %q, want %q", got, "CKR_TOKEN_NOT_INITIALIZED")
+	}
+
+	err := ToError(CKR_TOKEN_NOT_INITIALIZED)
+	if !errors.Is(err, ErrTokenNotInitialized) {
+		t.Errorf("ToError(CKR_TOKEN_NOT_INITIALIZED) = %v, want it to wrap ErrTokenNotInitialized", err)
+	}
+	if got := FromError(ErrTokenNotInitialized); got != CKR_TOKEN_NOT_INITIALIZED {
+		t.Errorf("FromError(ErrTokenNotInitialized) = %s, want CKR_TOKEN_NOT_INITIALIZED", got)
+	}
+
+	// Section 5.1.3 groups the code with the token-state returns, alongside
+	// CKR_TOKEN_NOT_PRESENT and CKR_DEVICE_REMOVED. It reports what the token
+	// is, not that a validation policy rejected the request, so classifying it
+	// as a validation error would tell an operator to fix a policy when the
+	// token needs initializing.
+	if !IsDeviceError(err) {
+		t.Error("IsDeviceError(CKR_TOKEN_NOT_INITIALIZED) = false, want true: v3.2 section 5.1.3 lists it among the token-state returns")
+	}
+	if IsValidationError(err) {
+		t.Error("IsValidationError(CKR_TOKEN_NOT_INITIALIZED) = true, want false: factory state is not a validation-policy failure")
+	}
+	if IsRetryable(err) {
+		t.Error("IsRetryable(CKR_TOKEN_NOT_INITIALIZED) = true, want false: the token needs C_InitToken, not another attempt")
+	}
+}
+
+// TestCKRNamesRejectNonSpecCodes asserts that the name table resolves only
+// codes OASIS actually defines. Rendering an unassigned code under an invented
+// name is worse than rendering it as unknown, because it hands an operator a
+// diagnosis that no specification supports.
+func TestCKRNamesRejectNonSpecCodes(t *testing.T) {
+	for code, name := range ckrNames {
+		if name == "CKR_OPERATION_INCOMPATIBLE" {
+			t.Errorf("0x%08X is named CKR_OPERATION_INCOMPATIBLE, a code that does not exist in PKCS#11", uint32(code))
+		}
+	}
+
+	// 0x0000020A is past CKR_PARAMETER_SET_NOT_SUPPORTED, the highest code the
+	// v3.2 header assigns below the vendor range, so it must not resolve.
+	const unassigned CK_RV = 0x0000020A
+	if _, ok := ckrNames[unassigned]; ok {
+		t.Errorf("0x%08X resolves to a name but OASIS does not assign it", uint32(unassigned))
+	}
+	if got := unassigned.String(); got == "CKR_TOKEN_NOT_INITIALIZED" {
+		t.Errorf("0x%08X.String() = %q, an unassigned code must not borrow an assigned name", uint32(unassigned), got)
+	}
+}
+
+// TestFromErrorNeverReportsSuccessForAnError pins that CKR_OK is reserved for a
+// nil error.
+//
+// ErrOK exists only so ToError and sentinelErrors are total; nothing should
+// return it. While it was also in errorToCKR, FromError answered CKR_OK for a
+// NON-NIL error that wrapped it -- and every C_* entry point ends in
+// return C.CK_RV(FromError(err)), so such a failure was reported to the
+// application as a successful call.
+func TestFromErrorNeverReportsSuccessForAnError(t *testing.T) {
+	if rv := FromError(nil); rv != CKR_OK {
+		t.Fatalf("FromError(nil) = %v, want CKR_OK", rv)
+	}
+
+	if rv := FromError(ErrOK); rv == CKR_OK {
+		t.Error("FromError(ErrOK) reported CKR_OK for a non-nil error; CKR_OK must be " +
+			"reachable only from a nil error")
+	}
+
+	wrapped := &errs.Wrapped{Msg: "an operation that failed", Err: ErrOK}
+	if rv := FromError(wrapped); rv == CKR_OK {
+		t.Error("FromError reported CKR_OK for an error wrapping ErrOK; a failure that " +
+			"happens to wrap the success sentinel must not become a successful call")
 	}
 }

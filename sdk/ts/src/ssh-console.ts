@@ -18,8 +18,18 @@ import { parseControl, encodeResize, encodeHostKeyResponse } from './protocol.js
 /** Connection details for SSHConsoleClient.open. */
 export interface ConsoleConnection {
   /** Full WebSocket URL including any one-time token query, e.g.
-   * `ws://127.0.0.1:54321/console?token=abc` or `wss://host/xkms/v1/ssh/console?...`. */
+   * `ws://127.0.0.1:54321/console?token=abc`. */
   url: string;
+  /**
+   * Optional WebSocket subprotocols, for a host whose bridge authenticates
+   * that way. Browsers cannot set an Authorization header on a WebSocket
+   * upgrade, so such a host reads the credential from here instead. Note that
+   * the xkms server serves no console endpoint — it stores SSH keys and signs
+   * authentication challenges, and never terminates an SSH session — so this
+   * client always connects to a bridge running on the operator's own machine
+   * (xkey's loopback server).
+   */
+  protocols?: string[];
 }
 
 /** Construction options. */
@@ -87,7 +97,10 @@ export class SSHConsoleClient {
     this.fitAddon = fitAddon;
     this.safeFit();
 
-    const ws = new WebSocket(conn.url);
+    const ws =
+      conn.protocols !== undefined && conn.protocols.length > 0
+        ? new WebSocket(conn.url, conn.protocols)
+        : new WebSocket(conn.url);
     ws.binaryType = 'arraybuffer';
     this.ws = ws;
 

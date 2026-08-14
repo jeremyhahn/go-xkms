@@ -465,12 +465,25 @@ func getChain(cfg *Config, printer *Printer, keyID string) {
 
 // Helper functions for certificate generation
 
-// generateCA creates a self-signed CA certificate
+// generateCA creates a self-signed CA certificate.
+//
+// Issuance itself is delegated to client.Issuer (pkg/ca.Issuer aliased
+// through the SDK, per this package's rule against importing pkg/ directly):
+// pkg/ca is the single implementer of certificate template construction and
+// x509.CreateCertificate calls in go-xkms, and this offline, file-based CA
+// command reaches it exactly like every other issuance path does, through
+// the same canonical CA profile (client.NewCAProfile) that the platform root
+// CA and tenant root CAs are issued with — so a change to that profile is
+// observable here too.
 func generateCA(cn, org, ou, country, province, locality string, validityDays int, keyAlg string, keySize int) (*x509.Certificate, crypto.PrivateKey, error) {
 	// Generate key pair
 	privKey, err := generateKeyPair(keyAlg, keySize)
 	if err != nil {
 		return nil, nil, &WrappedError{Sentinel: ErrKeyGenFailed, Err: err}
+	}
+	signer, ok := privKey.(crypto.Signer)
+	if !ok {
+		return nil, nil, &WrappedDetailError{Sentinel: ErrUnsupportedPrivateKeyType, Detail: fmt.Sprintf("%T", privKey)}
 	}
 
 	// Generate serial number
@@ -499,41 +512,36 @@ func generateCA(cn, org, ou, country, province, locality string, validityDays in
 		subject.Locality = []string{locality}
 	}
 
-	// Create certificate template
 	notBefore := time.Now()
 	notAfter := notBefore.Add(time.Duration(validityDays) * 24 * time.Hour)
 
-	template := &x509.Certificate{
-		SerialNumber:          serialNumber,
-		Subject:               subject,
-		NotBefore:             notBefore,
-		NotAfter:              notAfter,
-		KeyUsage:              x509.KeyUsageCertSign | x509.KeyUsageCRLSign | x509.KeyUsageDigitalSignature,
-		BasicConstraintsValid: true,
-		IsCA:                  true,
-		MaxPathLen:            2,
-		MaxPathLenZero:        false,
-	}
-
-	// Get public key
-	pubKey := getPublicKey(privKey)
-
-	// Self-sign the certificate
-	certBytes, err := x509.CreateCertificate(rand.Reader, template, template, pubKey, privKey)
+	// A path length of 2 is this command's fixed policy for a locally
+	// generated CA (matches the CLI's historical behavior); the canonical CA
+	// profile treats it as a ceiling a caller may tighten but never widen.
+	cert, err := (&client.Issuer{Signer: signer}).Issue(rand.Reader, &client.CertificateSpec{
+		Serial:    serialNumber,
+		Subject:   subject,
+		NotBefore: notBefore,
+		NotAfter:  notAfter,
+		Profile:   client.NewCAProfile(),
+		Request:   &client.TrustedCACertificateRequest{MaxPathLen: 2},
+	})
 	if err != nil {
 		return nil, nil, &WrappedError{Sentinel: ErrCreateCertificateFailed, Err: err}
-	}
-
-	// Parse the certificate
-	cert, err := x509.ParseCertificate(certBytes)
-	if err != nil {
-		return nil, nil, &WrappedError{Sentinel: ErrParseCertificateFailed, Err: err}
 	}
 
 	return cert, privKey, nil
 }
 
-// issueCertificate creates a certificate signed by a CA
+// issueCertificate creates a certificate signed by a CA.
+//
+// Like generateCA, issuance is delegated to client.Issuer so this command
+// does not hand-roll a second x509.Certificate template and
+// x509.CreateCertificate call. The profile is built with client.ProfileBuilder
+// to reproduce this command's historical certificate shape exactly — in
+// particular, these certificates carry no Basic Constraints extension,
+// matching the CLI's long-standing (and CA/Browser-Forum-compliant) output
+// for locally issued leaf certificates.
 func issueCertificate(
 	caCert *x509.Certificate, caKey interface{},
 	cn, certType, org, ou, country, province, locality string,
@@ -545,6 +553,10 @@ func issueCertificate(
 	if err != nil {
 		return nil, nil, &WrappedError{Sentinel: ErrKeyGenFailed, Err: err}
 	}
+	caSigner, ok := caKey.(crypto.Signer)
+	if !ok {
+		return nil, nil, &WrappedDetailError{Sentinel: ErrUnsupportedPrivateKeyType, Detail: fmt.Sprintf("%T", caKey)}
+	}
 
 	// Generate serial number
 	serialNumber, err := rand.Int(rand.Reader, new(big.Int).Lsh(big.NewInt(1), 128))
@@ -572,52 +584,61 @@ func issueCertificate(
 		subject.Locality = []string{locality}
 	}
 
-	// Create certificate template
 	notBefore := time.Now()
 	notAfter := notBefore.Add(time.Duration(validityDays) * 24 * time.Hour)
 
-	template := &x509.Certificate{
-		SerialNumber: serialNumber,
-		Subject:      subject,
-		NotBefore:    notBefore,
-		NotAfter:     notAfter,
-		KeyUsage:     x509.KeyUsageDigitalSignature | x509.KeyUsageKeyEncipherment,
-		DNSNames:     dnsNames,
-		IPAddresses:  ipAddresses,
+	spec := &client.CertificateSpec{
+		Serial:      serialNumber,
+		Subject:     subject,
+		NotBefore:   notBefore,
+		NotAfter:    notAfter,
+		PublicKey:   getPublicKey(privKey),
+		DNSNames:    dnsNames,
+		IPAddresses: ipAddresses,
 	}
 
-	// Set extended key usage based on certificate type
+	// The certificate shape comes from the canonical profiles the rest of the
+	// platform issues with, not from a CLI-local copy. A near-identical local
+	// profile is how the shapes drift apart: it would keep the same key usage
+	// and EKU as client.NewServerProfile() until someone changed one of them,
+	// and only the CLI would be left behind.
+	//
+	// This is a deliberate change to the CLI's output. It previously omitted
+	// the Basic Constraints extension on leaf certificates; the canonical
+	// profiles set it, so leaves now carry basicConstraints with cA=FALSE.
+	// That is optional for end-entity certificates under RFC 5280 §4.2.1.9 and
+	// under the CA/Browser Forum Baseline Requirements (which require only
+	// that cA be FALSE when the extension is present), so both shapes are
+	// valid; emitting it is the more explicit of the two and is what every
+	// other issuance path in this project already produces.
 	switch strings.ToLower(certType) {
 	case "server":
-		template.ExtKeyUsage = []x509.ExtKeyUsage{x509.ExtKeyUsageServerAuth}
+		spec.Profile = client.NewServerProfile()
 		// Add CN to DNS names if not already present
 		if len(dnsNames) == 0 {
-			template.DNSNames = []string{cn}
+			spec.DNSNames = []string{cn}
 		}
 	case "client":
-		template.ExtKeyUsage = []x509.ExtKeyUsage{x509.ExtKeyUsageClientAuth}
-		template.EmailAddresses = emailAddresses
+		spec.Profile = client.NewClientProfile()
+		spec.EmailAddresses = emailAddresses
 		if len(emailAddresses) == 0 && strings.Contains(cn, "@") {
-			template.EmailAddresses = []string{cn}
+			spec.EmailAddresses = []string{cn}
 		}
 	default:
-		// Both server and client auth
-		template.ExtKeyUsage = []x509.ExtKeyUsage{x509.ExtKeyUsageServerAuth, x509.ExtKeyUsageClientAuth}
+		// Both server and client auth. There is no canonical dual-purpose
+		// profile, so this composes one from the server profile's key usage
+		// and both EKUs rather than restating them.
+		serverProfile := client.NewServerProfile()
+		spec.Profile = client.NewProfileBuilder("xkmsctl-server-and-client").
+			WithKeyUsage(serverProfile.KeyUsage()).
+			WithExtKeyUsage(x509.ExtKeyUsageServerAuth, x509.ExtKeyUsageClientAuth).
+			WithBasicConstraints(true).
+			Build()
 	}
 
-	// Get public key
-	pubKey := getPublicKey(privKey)
-
-	// Sign the certificate with CA
-	certBytes, err := x509.CreateCertificate(rand.Reader, template, caCert, pubKey, caKey)
+	cert, err := (&client.Issuer{Signer: caSigner, Certificate: caCert}).Issue(rand.Reader, spec)
 	if err != nil {
 		return nil, nil, &WrappedError{Sentinel: ErrCreateCertificateFailed, Err: err}
-	}
-
-	// Parse the certificate
-	cert, err := x509.ParseCertificate(certBytes)
-	if err != nil {
-		return nil, nil, &WrappedError{Sentinel: ErrParseCertificateFailed, Err: err}
 	}
 
 	return cert, privKey, nil

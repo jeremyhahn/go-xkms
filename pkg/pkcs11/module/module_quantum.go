@@ -11,14 +11,17 @@
 // 2. Commercial License
 //    Contact licensing@automatethethings.com for commercial licensing options.
 
-// Package module provides quantum build initialization for the PKCS#11 module.
+// Package module provides quantum initialization for the PKCS#11 module.
 //
-// When built with the "quantum" build tag, this file provides access to the
-// QuantumCryptoManager for ML-DSA, ML-KEM, and future PQC algorithm support.
+// This file gives access to the QuantumCryptoManager for ML-DSA, ML-KEM and
+// future PQC algorithm support. It is compiled unconditionally: there is no
+// "quantum" build tag on this package, and Module.Initialize assigns
+// m.quantumCrypto in every build. The comments that said otherwise were the
+// stated reason mechanism_v32.go shadowed the shared category and key-size
+// constants, so the false claim had a real cost.
 package module
 
 // getQuantumCryptoManager returns a new QuantumCryptoManager instance.
-// Available only when built with the "quantum" build tag.
 func getQuantumCryptoManager() *QuantumCryptoManager {
 	return NewQuantumCryptoManager()
 }

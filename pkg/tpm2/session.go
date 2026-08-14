@@ -3,11 +3,13 @@ package tpm2
 import (
 	"errors"
 	"fmt"
+	"io/fs"
 	"log/slog"
 
 	"github.com/jeremyhahn/go-xkms/pkg/errs"
 
 	"github.com/google/go-tpm/tpm2"
+	"github.com/jeremyhahn/go-xkms/pkg/storage"
 	"github.com/jeremyhahn/go-xkms/pkg/tpm2/store"
 	"github.com/jeremyhahn/go-xkms/pkg/types"
 )
@@ -126,8 +128,51 @@ func (tpm *TPM2) HMACSaltedSession(
 // the session so the HMAC computation includes it (per TPM 2.0 Part 1,
 // Section 19.6: HMAC key = sessionKey || authValue).
 //
+// Both branch digests are derived from the live platform PCR. This is the
+// right behaviour for an object whose recorded policy pin is unknown -- every
+// object created before pins existed, and every non-sealed platform-policy key
+// -- and it is what makes the PCR branch fail once the platform state moves.
+// Callers holding an object's pin build the session through
+// platformPolicySession so the PIN branch survives a platform change.
+//
 // The resulting policy digest is cached in tpm.policyDigest.
 func (tpm *TPM2) PlatformPolicySession(auth []byte) (tpm2.Session, func() error, error) {
+	return tpm.platformPolicySession(auth, nil)
+}
+
+// platformPolicySession is the single implementation behind
+// PlatformPolicySession. It differs only in where the PolicyPCR branch digest
+// comes from.
+//
+// A policy session has to reach the exact PolicyOR digest that was attached to
+// the key as its AuthPolicy, and that digest covers BOTH branch digests --
+// including the branch the session does not take. The rule this function
+// follows is: a branch digest the session actually demonstrates is computed
+// from what was demonstrated; a branch digest the session merely names as an
+// operand of TPM2_PolicyOR comes from the key's pin.
+//
+//   - PCR branch (auth == nil): the session runs TPM2_PolicyPCR against live
+//     PCRs, so branch 1 is computed from the live platform PCR whether or not
+//     a pin exists. If the platform state moved, the session digest no longer
+//     equals the key's AuthPolicy and the TPM refuses the authorization with
+//     TPM_RC_POLICY_FAIL. That is the platform binding and it is deliberately
+//     untouched.
+//
+//   - Password branch (auth != nil): the session never demonstrates any PCR
+//     state, so branch 1 is a pure operand. Recomputing it from live PCRs --
+//     the historical behaviour -- made the OR digest change whenever the PCRs
+//     moved, which locked out the PIN branch in exactly the situation a
+//     recovery PIN exists for. With a pin, branch 1 is rebuilt from the PCR
+//     digest recorded when the key was created, so a correct PIN still opens
+//     it after a platform change.
+//
+// This applies to both kinds of platform-policy key: a sealed object, whose pin
+// is recorded beside its blobs, and a persistent SRK, whose pin is recorded
+// under its handle. pin may be nil, in which case the historical live-PCR
+// behaviour is used for both branches.
+func (tpm *TPM2) platformPolicySession(
+	auth []byte,
+	pin *store.PlatformPolicyPin) (tpm2.Session, func() error, error) {
 
 	usePCRBranch := auth == nil
 
@@ -136,43 +181,33 @@ func (tpm *TPM2) PlatformPolicySession(auth []byte) (tpm2.Session, func() error,
 		return nil, nil, &errs.Detail{Err: ErrPlatformPolicySession, Detail: fmt.Sprintf("%v", err)}
 	}
 
-	// Compute branch digests for PolicyOR (needed for both branches)
-	pcrDigest, err := tpm.PlatformPolicyDigestHash()
-	if err != nil {
-		return nil, nil, &errs.Detail{Err: ErrPlatformPolicySession, Detail: fmt.Sprintf("%v", err)}
+	// Branch digests for PolicyOR. pcrDigest is only read from the TPM when
+	// the branch digests are derived from live PCRs; the pinned password
+	// branch needs no PCR read at all.
+	var pcrDigest, branch1Digest, branch2Digest []byte
+	pinned := !usePCRBranch && pin != nil
+	if pinned {
+		branch1Digest, branch2Digest, err = platformPolicyBranchDigests(
+			tpm2.TPMAlgID(pin.PCRBank), uint(pin.PCRIndex), pin.PCRDigest)
+		if err != nil {
+			return nil, nil, &errs.Detail{Err: ErrPlatformPolicySession, Detail: fmt.Sprintf("%v", err)}
+		}
+		if tpm2.TPMAlgID(pin.PCRBank) != hashAlgID {
+			tpm.logger.Warn("tpm: platform policy pin was recorded in a different PCR bank",
+				slog.String("pin_bank", fmt.Sprintf("0x%x", pin.PCRBank)),
+				slog.String("configured_bank", fmt.Sprintf("0x%x", hashAlgID)))
+		}
+	} else {
+		pcrDigest, err = tpm.PlatformPolicyDigestHash()
+		if err != nil {
+			return nil, nil, &errs.Detail{Err: ErrPlatformPolicySession, Detail: fmt.Sprintf("%v", err)}
+		}
+		branch1Digest, branch2Digest, err = platformPolicyBranchDigests(
+			hashAlgID, tpm.config.PlatformPCR, pcrDigest)
+		if err != nil {
+			return nil, nil, &errs.Detail{Err: ErrPlatformPolicySession, Detail: fmt.Sprintf("%v", err)}
+		}
 	}
-
-	// Branch 1 trial digest: PolicyPCR
-	pcrCalc, err := tpm2.NewPolicyCalculator(hashAlgID)
-	if err != nil {
-		return nil, nil, &errs.Detail{Err: ErrPlatformPolicySession, Detail: fmt.Sprintf("%v", err)}
-	}
-	pcrCmd := tpm2.PolicyPCR{
-		PcrDigest: tpm2.TPM2BDigest{
-			Buffer: pcrDigest,
-		},
-		Pcrs: tpm2.TPMLPCRSelection{
-			PCRSelections: []tpm2.TPMSPCRSelection{{
-				Hash:      hashAlgID,
-				PCRSelect: tpm2.PCClientCompatible.PCRs(tpm.config.PlatformPCR),
-			}},
-		},
-	}
-	if err := pcrCmd.Update(pcrCalc); err != nil {
-		return nil, nil, &errs.Detail{Err: ErrPlatformPolicySession, Detail: fmt.Sprintf("PolicyPCR trial: %v", err)}
-	}
-	branch1Digest := pcrCalc.Hash().Digest
-
-	// Branch 2 trial digest: PolicyAuthValue
-	authCalc, err := tpm2.NewPolicyCalculator(hashAlgID)
-	if err != nil {
-		return nil, nil, &errs.Detail{Err: ErrPlatformPolicySession, Detail: fmt.Sprintf("%v", err)}
-	}
-	authCmd := tpm2.PolicyAuthValue{}
-	if err := authCmd.Update(authCalc); err != nil {
-		return nil, nil, &errs.Detail{Err: ErrPlatformPolicySession, Detail: fmt.Sprintf("PolicyAuthValue trial: %v", err)}
-	}
-	branch2Digest := authCalc.Hash().Digest
 
 	// Create the real policy session.
 	// When using the password branch (PolicyAuthValue), the auth value must
@@ -195,12 +230,7 @@ func (tpm *TPM2) PlatformPolicySession(auth []byte) (tpm2.Session, func() error,
 			PcrDigest: tpm2.TPM2BDigest{
 				Buffer: pcrDigest,
 			},
-			Pcrs: tpm2.TPMLPCRSelection{
-				PCRSelections: []tpm2.TPMSPCRSelection{{
-					Hash:      hashAlgID,
-					PCRSelect: tpm2.PCClientCompatible.PCRs(tpm.config.PlatformPCR),
-				}},
-			},
+			Pcrs: platformPolicyPCRSelection(hashAlgID, tpm.config.PlatformPCR),
 		}.Execute(tpm.transport)
 		if err != nil {
 			if closeErr := closer(); closeErr != nil {
@@ -251,6 +281,7 @@ func (tpm *TPM2) PlatformPolicySession(auth []byte) (tpm2.Session, func() error,
 		tpm.policyDigest = pgd.PolicyDigest
 		tpm.logger.Info("tpm: PlatformPolicySession - final session policy digest",
 			slog.Bool("pcr_branch", usePCRBranch),
+			slog.Bool("pinned_pcr_branch_digest", pinned),
 			slog.String("session_digest", fmt.Sprintf("%x", pgd.PolicyDigest.Buffer)),
 			slog.String("branch1_pcr", fmt.Sprintf("%x", branch1Digest)),
 			slog.String("branch2_auth", fmt.Sprintf("%x", branch2Digest)))
@@ -342,7 +373,22 @@ func (tpm *TPM2) CreateSession(
 			// Password + PlatformPolicy: use compound policy password branch.
 			// The parent's auth value must be passed so the session HMAC
 			// includes it (TPM 2.0 Part 1, Section 19.6).
-			session, closer, err = tpm.PlatformPolicySession(parentAuth)
+			//
+			// The parent is a persistent primary key, so its pin is read from
+			// the platform backend -- the one CreateSRK recorded it in. It is
+			// deliberately not read from a caller-supplied key store: the SRK
+			// is platform state and has exactly one writer and one reader.
+			//
+			// Without this the PIN branch of a platform-policy SRK could only
+			// be satisfied while the measurements were unchanged, and TPM2_Load
+			// of any child failed on the parent before the child's own PIN
+			// branch was ever reached.
+			pin, pinErr := tpm.loadPlatformPolicyPin(
+				primaryPolicyPinAttrs(keyAttrs.Parent), nil)
+			if pinErr != nil {
+				return nil, closer, pinErr
+			}
+			session, closer, err = tpm.platformPolicySession(parentAuth, pin)
 			if err != nil {
 				return session, closer, err
 			}
@@ -389,6 +435,62 @@ func (tpm *TPM2) CreateSession(
 	return session, closer, nil
 }
 
+// loadPlatformPolicyPin returns the platform policy pin recorded beside the
+// object's key blobs, or nil when the object carries none.
+//
+// A missing record is the pre-pin on-disk form: every object created before
+// pins existed, and every platform-policy key that is not a sealed object.
+// Those are answered with a nil pin so the caller reproduces the historical
+// live-PCR behaviour; nothing is migrated or re-created behind the caller's
+// back. Any other failure -- including a record that exists but cannot be
+// decoded -- is returned, because silently authorizing with a policy the
+// object was not created with would only turn a clear error into an obscure
+// TPM authorization failure.
+//
+// backend may be nil, in which case the platform backend is used.
+func (tpm *TPM2) loadPlatformPolicyPin(
+	keyAttrs *types.KeyAttributes,
+	backend store.KeyBackend) (*store.PlatformPolicyPin, error) {
+
+	// No attributes to look a record up by is the same answer as no record:
+	// nothing was ever written for such a key either.
+	if keyAttrs == nil {
+		return nil, nil
+	}
+
+	if backend == nil {
+		backend = tpm.backend
+	}
+	if backend == nil {
+		return nil, nil
+	}
+
+	record, err := backend.Get(keyAttrs, store.FSEXT_PLATFORM_POLICY)
+	if err != nil {
+		if errors.Is(err, storage.ErrNotFound) || errors.Is(err, fs.ErrNotExist) {
+			tpm.logger.Debug("tpm: no platform policy pin recorded for key",
+				slog.String("cn", keyAttrs.CN))
+			return nil, nil
+		}
+		return nil, err
+	}
+
+	pin, err := store.UnmarshalPlatformPolicyPin(record)
+	if err != nil {
+		tpm.logger.Error("tpm: failed to decode platform policy pin",
+			slog.String("cn", keyAttrs.CN),
+			slog.String("error", err.Error()))
+		return nil, err
+	}
+
+	tpm.logger.Debug("tpm: loaded platform policy pin",
+		slog.String("cn", keyAttrs.CN),
+		slog.Uint64("pcr", uint64(pin.PCRIndex)),
+		slog.String("pcr_digest", fmt.Sprintf("%x", pin.PCRDigest)))
+
+	return pin, nil
+}
+
 // Returns an authorization session for a child key based on the provided
 // key attributes.
 //
@@ -401,14 +503,37 @@ func (tpm *TPM2) CreateSession(
 //     (default password-only, no auto-unseal)
 //   - Neither: empty password auth
 //
+// The key's platform policy pin, when it has one, is resolved from the
+// platform backend. Callers holding a different backend -- the seal and unseal
+// paths take one as a parameter -- use createKeySession directly.
+//
 // This function returns a session closer function that needs to be called
 // to close the session when complete.
 func (tpm *TPM2) CreateKeySession(
 	keyAttrs *types.KeyAttributes) (tpm2.Session, func() error, error) {
 
+	return tpm.createKeySession(keyAttrs, nil)
+}
+
+// createKeySession is the implementation behind CreateKeySession, resolving
+// the key's platform policy pin from the supplied backend. backend may be nil,
+// in which case the platform backend is used.
+//
+// The pin is only consulted for the password branch, which is the only branch
+// that needs it (see platformPolicySession) -- so keys that never carry one
+// cost no extra storage lookup.
+func (tpm *TPM2) createKeySession(
+	keyAttrs *types.KeyAttributes,
+	backend store.KeyBackend) (tpm2.Session, func() error, error) {
+
 	var session tpm2.Session
 	var closer func() error
 	var err error
+
+	// Callers register their closer in a defer before inspecting the error,
+	// so every return path -- including the failures -- has to hand back a
+	// callable closer.
+	noopCloser := func() error { return nil }
 
 	if keyAttrs.PlatformPolicy {
 
@@ -424,14 +549,24 @@ func (tpm *TPM2) CreateKeySession(
 			// Password + PlatformPolicy: use platform policy password branch.
 			// The key's auth value must be passed so the session HMAC
 			// includes it (TPM 2.0 Part 1, Section 19.6).
-			session, closer, err = tpm.PlatformPolicySession(keyAuth)
+			pin, pinErr := tpm.loadPlatformPolicyPin(keyAttrs, backend)
+			if pinErr != nil {
+				return nil, noopCloser, pinErr
+			}
+			session, closer, err = tpm.platformPolicySession(keyAuth, pin)
 			if err != nil {
+				if closer == nil {
+					closer = noopCloser
+				}
 				return session, closer, err
 			}
 		} else {
 			// PlatformPolicy without password: use platform policy PCR branch
 			session, closer, err = tpm.PlatformPolicySession(nil)
 			if err != nil {
+				if closer == nil {
+					closer = noopCloser
+				}
 				return session, closer, err
 			}
 		}
@@ -441,7 +576,12 @@ func (tpm *TPM2) CreateKeySession(
 			// Check if password is valid (error passwords return error from String())
 			_, err = keyAttrs.Password.String()
 			if err != nil {
-				return nil, nil, err
+				// noopCloser, not nil: UnsealKey registers its deferred
+				// closer call before inspecting this error, so returning a nil
+				// closer here panicked inside the deferred function instead of
+				// reporting the bad password. A panic unwinding through the
+				// unseal path skips the transient-object flushes below it.
+				return nil, noopCloser, err
 			}
 			keyAuth := keyAttrs.Password.Bytes()
 			session = tpm2.PasswordAuth(keyAuth)

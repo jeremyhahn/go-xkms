@@ -30,7 +30,9 @@ import (
 	"net/http"
 	"net/url"
 	"os"
+	"strconv"
 	"strings"
+	"time"
 
 	"github.com/jeremyhahn/go-xkms/pkg/errs"
 
@@ -49,6 +51,32 @@ var (
 	// ErrNotImplemented is returned when an operation has not been implemented yet.
 	ErrNotImplemented = errors.New("not implemented")
 )
+
+// headerLeaderAPIAddress is the response header the QUIC server (see
+// pkg/api/quic/errors.go's sendNotLeader) sets to the shard leader's dialable
+// QUIC endpoint on a 421 Misdirected Request. It is empty/absent when the
+// leader endpoint could not be resolved server-side.
+const headerLeaderAPIAddress = "X-XKMS-Leader-API-Address"
+
+// ErrInvalidLeaderRedirect is returned when a 421 Misdirected Request response
+// advertises a leader API address that cannot be parsed into a dialable base
+// URL. It is distinct from a plain not-leader error because it signals a
+// malformed redirect target rather than a legitimate "retry elsewhere"
+// condition.
+type ErrInvalidLeaderRedirect struct {
+	// Address is the raw, unparsed header value the server sent.
+	Address string
+	// Err is the underlying parse failure.
+	Err error
+}
+
+// Error returns a human-readable description of the malformed redirect.
+func (e *ErrInvalidLeaderRedirect) Error() string {
+	return fmt.Sprintf("quic: invalid leader redirect address %q: %v", e.Address, e.Err)
+}
+
+// Unwrap returns the underlying parse error.
+func (e *ErrInvalidLeaderRedirect) Unwrap() error { return e.Err }
 
 // Transport implements the transport.Client interface using HTTP/3 over QUIC.
 type Transport struct {
@@ -92,42 +120,9 @@ func NewWithConfig(cfg *transport.Config) (*Transport, error) {
 // Connect establishes a connection to the xkms server via QUIC.
 func (t *Transport) Connect(ctx context.Context) error {
 	// Create TLS config (QUIC always uses TLS)
-	tlsConfig := &tls.Config{
-		MinVersion: tls.VersionTLS13, // QUIC requires TLS 1.3
-		NextProtos: []string{"h3"},
-	}
-
-	// Load CA certificate if specified
-	if t.config.TLSCAFile != "" {
-		caCert, err := os.ReadFile(t.config.TLSCAFile)
-		if err != nil {
-			return &errs.Wrapped{Msg: "failed to read CA certificate", Err: err}
-		}
-		caCertPool := x509.NewCertPool()
-		if !caCertPool.AppendCertsFromPEM(caCert) {
-			return &errs.Message{Msg: "failed to parse CA certificate"}
-		}
-		tlsConfig.RootCAs = caCertPool
-	}
-
-	// Load client certificate if specified (mTLS)
-	if t.config.TLSCertFile != "" && t.config.TLSKeyFile != "" {
-		cert, err := tls.LoadX509KeyPair(t.config.TLSCertFile, t.config.TLSKeyFile)
-		if err != nil {
-			return &errs.Wrapped{Msg: "failed to load client certificate", Err: err}
-		}
-		tlsConfig.Certificates = []tls.Certificate{cert}
-	}
-
-	// SPKI pin verification
-	if t.config.SPKIPin != "" {
-		if t.config.TLSCAFile == "" && tlsConfig.RootCAs == nil {
-			// Trust bootstrap: no CA cert available, SPKI pin IS the trust anchor
-			tlsConfig = spki.NewPinnedTLSConfig(t.config.SPKIPin)
-		} else {
-			// Additive: CA chain validated first, pin adds extra verification
-			tlsConfig.VerifyConnection = spki.VerifyConnection(t.config.SPKIPin)
-		}
+	tlsConfig, err := t.buildTLSConfig()
+	if err != nil {
+		return err
 	}
 
 	// Create HTTP/3 transport
@@ -140,13 +135,117 @@ func (t *Transport) Connect(ctx context.Context) error {
 	}
 
 	// Test connection with health check
-	_, err := t.Health(ctx)
-	if err != nil {
+	if _, err := t.Health(ctx); err != nil {
 		return &errs.Detail{Err: ErrConnectionFailed, Detail: fmt.Sprintf("%v", err)}
 	}
 
 	t.connected = true
 	return nil
+}
+
+// alpnHTTP3 is the ALPN protocol identifier for HTTP/3 (RFC 9114 section 3.1).
+const alpnHTTP3 = "h3"
+
+// buildTLSConfig constructs the client TLS configuration for the HTTP/3 over
+// QUIC transport.
+//
+// A caller-supplied transport.Config.TLSConfig takes precedence over the
+// TLSCertFile/TLSKeyFile/TLSCAFile file-based fields, mirroring the REST, MCP,
+// and Unix transports. This is the only way to present an mTLS client
+// certificate whose private key never leaves hardware (a PKCS#11 or TPM-backed
+// crypto.Signer surfaced through Certificates or GetClientCertificate), so it
+// must never be discarded.
+//
+// The caller's config is cloned before the QUIC-specific requirements below are
+// applied, so this transport never mutates a config the caller may share with
+// other clients.
+//
+// QUIC mandates TLS 1.3 (RFC 9001 section 4.2): older versions cannot be
+// negotiated over QUIC at all. A caller-supplied config whose MinVersion is
+// lower than TLS 1.3 is therefore RAISED to TLS 1.3 rather than silently
+// accepted; accepting the weaker floor would advertise a protection level this
+// transport cannot deliver. MinVersion is never lowered.
+func (t *Transport) buildTLSConfig() (*tls.Config, error) {
+	if t.config.TLSConfig != nil {
+		tlsConfig := t.config.TLSConfig.Clone()
+
+		// QUIC requires TLS 1.3; raise a weaker caller floor, never lower it.
+		if tlsConfig.MinVersion < tls.VersionTLS13 {
+			tlsConfig.MinVersion = tls.VersionTLS13
+		}
+		if len(tlsConfig.NextProtos) == 0 {
+			tlsConfig.NextProtos = []string{alpnHTTP3}
+		}
+
+		// SPKI pin verification is strictly ADDITIVE on a caller-supplied
+		// config: the caller owns the trust anchors (and any client
+		// certificate), so the pinned-bootstrap config that replaces the whole
+		// config in the file-based path below is never substituted here — doing
+		// so would drop the caller's client certificate and silently disable
+		// mTLS. Any VerifyConnection the caller already installed is preserved
+		// and both callbacks must pass.
+		if t.config.SPKIPin != "" {
+			tlsConfig.VerifyConnection = chainVerifyConnection(
+				tlsConfig.VerifyConnection, spki.VerifyConnection(t.config.SPKIPin))
+		}
+
+		return tlsConfig, nil
+	}
+
+	tlsConfig := &tls.Config{
+		MinVersion: tls.VersionTLS13, // QUIC requires TLS 1.3
+		NextProtos: []string{alpnHTTP3},
+	}
+
+	// Load CA certificate if specified
+	if t.config.TLSCAFile != "" {
+		caCert, err := os.ReadFile(t.config.TLSCAFile)
+		if err != nil {
+			return nil, &errs.Wrapped{Msg: "failed to read CA certificate", Err: err}
+		}
+		caCertPool := x509.NewCertPool()
+		if !caCertPool.AppendCertsFromPEM(caCert) {
+			return nil, &errs.Message{Msg: "failed to parse CA certificate"}
+		}
+		tlsConfig.RootCAs = caCertPool
+	}
+
+	// Load client certificate if specified (mTLS)
+	if t.config.TLSCertFile != "" && t.config.TLSKeyFile != "" {
+		cert, err := tls.LoadX509KeyPair(t.config.TLSCertFile, t.config.TLSKeyFile)
+		if err != nil {
+			return nil, &errs.Wrapped{Msg: "failed to load client certificate", Err: err}
+		}
+		tlsConfig.Certificates = []tls.Certificate{cert}
+	}
+
+	// SPKI pin verification
+	if t.config.SPKIPin != "" {
+		if t.config.TLSCAFile == "" && tlsConfig.RootCAs == nil {
+			// Trust bootstrap: no CA cert available, SPKI pin IS the trust anchor
+			tlsConfig = spki.NewPinnedTLSConfig(t.config.SPKIPin)
+			tlsConfig.NextProtos = []string{alpnHTTP3}
+		} else {
+			// Additive: CA chain validated first, pin adds extra verification
+			tlsConfig.VerifyConnection = spki.VerifyConnection(t.config.SPKIPin)
+		}
+	}
+
+	return tlsConfig, nil
+}
+
+// chainVerifyConnection composes two tls.Config.VerifyConnection callbacks so
+// that both must succeed. A nil first callback yields the second unchanged.
+func chainVerifyConnection(first, second func(tls.ConnectionState) error) func(tls.ConnectionState) error {
+	if first == nil {
+		return second
+	}
+	return func(cs tls.ConnectionState) error {
+		if err := first(cs); err != nil {
+			return err
+		}
+		return second(cs)
+	}
 }
 
 // Close closes the QUIC client.
@@ -243,28 +342,95 @@ func (t *Transport) DoRequest(ctx context.Context, httpMethod, path string, body
 }
 
 // DoRawRequest performs an HTTP/3 request and returns the raw response body.
+//
+// This is the single choke point nearly every typed API method on this
+// transport funnels through (directly or via doRawRequest/DoRequest), which is
+// why the cluster leader redirect below lives here instead of being
+// duplicated across every method.
+//
+// When a clustered write reaches a Raft follower, the QUIC server answers with
+// 421 Misdirected Request and, when it could resolve one, a
+// headerLeaderAPIAddress header naming the current leader's QUIC endpoint (see
+// pkg/api/quic/errors.go's sendNotLeader). This transport follows that
+// redirect itself -- retrying the identical request against the leader
+// exactly once -- rather than pushing that retry loop onto every caller.
+//
+// Design rationale for redirecting the CLIENT instead of forwarding the
+// request server-side: a follower cannot re-present the caller's client
+// certificate to the leader, because it does not hold the caller's private
+// key. Forwarding server-side would therefore require either the follower
+// dialing the leader under its own node identity plus an "acting for user X"
+// assertion (an impersonation channel), or a full delegation/token-exchange
+// protocol. Retrying client-side instead, with this SAME *http.Client and its
+// TLS configuration, means the caller re-presents its OWN credentials to the
+// leader, so the leader authenticates and authorizes the real caller directly
+// and identity is never delegated.
+//
+// The redirect is strictly a single hop: whatever the leader answers --
+// success, failure, or even another 421 -- is returned to the caller as-is,
+// never chased again. It is also strictly per-request: t.baseURL is never
+// mutated, so a transient leadership change never permanently repoints this
+// client at a stale leader.
 func (t *Transport) DoRawRequest(ctx context.Context, method, path string, body interface{}) ([]byte, error) {
 	if t.httpClient == nil {
 		return nil, ErrNotConnected
 	}
 
-	var reqBody io.Reader
+	// The request body is marshaled once into a byte slice here (rather than
+	// streamed straight into a single http.Request) specifically so a retry
+	// against the leader can replay the exact same bytes.
+	var bodyBytes []byte
 	if body != nil {
 		data, err := json.Marshal(body)
 		if err != nil {
 			return nil, &errs.Wrapped{Msg: "failed to marshal request body", Err: err}
 		}
-		reqBody = bytes.NewReader(data)
+		bodyBytes = data
 	}
 
-	reqURL := t.baseURL + path
+	respBody, status, header, err := t.doOnce(ctx, t.baseURL, method, path, bodyBytes)
+	if err != nil {
+		return nil, err
+	}
+
+	if status == http.StatusMisdirectedRequest {
+		if leaderAddr := header.Get(headerLeaderAPIAddress); leaderAddr != "" {
+			leaderBaseURL, redirectErr := leaderRedirectBaseURL(leaderAddr)
+			if redirectErr != nil {
+				return nil, redirectErr
+			}
+
+			// Exactly one hop: the second response -- whatever it is -- is
+			// handled below like any other response and never inspected again
+			// for a further redirect.
+			respBody, status, _, err = t.doOnce(ctx, leaderBaseURL, method, path, bodyBytes)
+			if err != nil {
+				return nil, err
+			}
+		}
+	}
+
+	return finishRawResponse(respBody, status)
+}
+
+// doOnce performs a single HTTP/3 round trip against baseURL+path and returns
+// the raw response body, status code, and response headers. It carries no
+// retry or redirect logic itself; DoRawRequest composes at most two calls to
+// it (the original request and, at most, one leader retry).
+func (t *Transport) doOnce(ctx context.Context, baseURL, method, path string, bodyBytes []byte) ([]byte, int, http.Header, error) {
+	var reqBody io.Reader
+	if bodyBytes != nil {
+		reqBody = bytes.NewReader(bodyBytes)
+	}
+
+	reqURL := baseURL + path
 
 	req, err := http.NewRequestWithContext(ctx, method, reqURL, reqBody)
 	if err != nil {
-		return nil, &errs.Wrapped{Msg: "failed to create request", Err: err}
+		return nil, 0, nil, &errs.Wrapped{Msg: "failed to create request", Err: err}
 	}
 
-	if body != nil {
+	if bodyBytes != nil {
 		req.Header.Set("Content-Type", "application/json")
 	}
 
@@ -280,7 +446,7 @@ func (t *Transport) DoRawRequest(ctx context.Context, method, path string, body 
 
 	resp, err := t.httpClient.Do(req)
 	if err != nil {
-		return nil, &errs.Wrapped{Msg: "request failed", Err: err}
+		return nil, 0, nil, &errs.Wrapped{Msg: "request failed", Err: err}
 	}
 	defer func() {
 		if closeErr := resp.Body.Close(); closeErr != nil {
@@ -290,10 +456,17 @@ func (t *Transport) DoRawRequest(ctx context.Context, method, path string, body 
 
 	respBody, err := io.ReadAll(resp.Body)
 	if err != nil {
-		return nil, &errs.Wrapped{Msg: "failed to read response body", Err: err}
+		return nil, 0, nil, &errs.Wrapped{Msg: "failed to read response body", Err: err}
 	}
 
-	if resp.StatusCode >= 400 {
+	return respBody, resp.StatusCode, resp.Header, nil
+}
+
+// finishRawResponse turns a completed response's body and status code into
+// the (respBody, error) shape DoRawRequest returns to callers, mirroring the
+// server-error decoding that was previously inline in DoRawRequest.
+func finishRawResponse(respBody []byte, status int) ([]byte, error) {
+	if status >= 400 {
 		var errResp struct {
 			Error   string `json:"error"`
 			Message string `json:"message"`
@@ -304,10 +477,34 @@ func (t *Transport) DoRawRequest(ctx context.Context, method, path string, body 
 		if err := json.Unmarshal(respBody, &errResp); err == nil && errResp.Message != "" {
 			return nil, &errs.Message{Msg: fmt.Sprintf("server error: %s", errResp.Message)}
 		}
-		return nil, &errs.Message{Msg: fmt.Sprintf("server returned status %d: %s", resp.StatusCode, string(respBody))}
+		return nil, &errs.Message{Msg: fmt.Sprintf("server returned status %d: %s", status, string(respBody))}
 	}
 
 	return respBody, nil
+}
+
+// leaderRedirectBaseURL turns a leader API address (typically bare "host:port",
+// matching the format the cluster registry advertises) into a dialable base
+// URL, applying the same "https://" defaulting DoRawRequest's baseURL already
+// uses. It returns *ErrInvalidLeaderRedirect when the address cannot be parsed
+// into a URL with a non-empty host, so a malformed advertisement surfaces as a
+// clear, typed error instead of a confusing downstream dial failure.
+func leaderRedirectBaseURL(addr string) (string, error) {
+	base := addr
+	if !strings.HasPrefix(base, "https://") {
+		base = "https://" + base
+	}
+	base = strings.TrimSuffix(base, "/")
+
+	parsed, err := url.Parse(base)
+	if err != nil {
+		return "", &ErrInvalidLeaderRedirect{Address: addr, Err: err}
+	}
+	if parsed.Host == "" {
+		return "", &ErrInvalidLeaderRedirect{Address: addr, Err: errors.New("leader address has no host")}
+	}
+
+	return base, nil
 }
 
 // doRawRequest is an unexported alias for DoRawRequest used by service methods.
@@ -398,6 +595,21 @@ func (t *Transport) GetBackend(ctx context.Context, backendID string) (*transpor
 	return &resp, nil
 }
 
+// Algorithms reports the algorithms the server supports.
+func (t *Transport) Algorithms(ctx context.Context) (*transport.AlgorithmsResponse, error) {
+	data, err := t.doRawRequest(ctx, http.MethodGet, "/api/v1/algorithms", nil)
+	if err != nil {
+		return nil, err
+	}
+
+	var resp transport.AlgorithmsResponse
+	if err := json.Unmarshal(data, &resp); err != nil {
+		return nil, &errs.Wrapped{Msg: "failed to parse response", Err: err}
+	}
+
+	return &resp, nil
+}
+
 // GenerateKey generates a new key.
 func (t *Transport) GenerateKey(ctx context.Context, req *transport.GenerateKeyRequest) (*transport.GenerateKeyResponse, error) {
 	data, err := t.doRawRequest(ctx, http.MethodPost, "/api/v1/keys", req)
@@ -471,6 +683,15 @@ func (t *Transport) Sign(ctx context.Context, req *transport.SignRequest) (*tran
 	if req.Hash != "" {
 		body["hash"] = req.Hash
 	}
+	if req.Padding != "" {
+		body["padding"] = req.Padding
+	}
+	if req.SaltLength != 0 {
+		body["salt_length"] = req.SaltLength
+	}
+	if req.DataIsDigest {
+		body["data_is_digest"] = true
+	}
 
 	data, err := t.doRawRequest(ctx, http.MethodPost, path, body)
 	if err != nil {
@@ -495,6 +716,15 @@ func (t *Transport) Verify(ctx context.Context, req *transport.VerifyRequest) (*
 	if req.Hash != "" {
 		body["hash"] = req.Hash
 	}
+	if req.Padding != "" {
+		body["padding"] = req.Padding
+	}
+	if req.SaltLength != 0 {
+		body["salt_length"] = req.SaltLength
+	}
+	if req.DataIsDigest {
+		body["data_is_digest"] = true
+	}
 
 	data, err := t.doRawRequest(ctx, http.MethodPost, path, body)
 	if err != nil {
@@ -517,6 +747,18 @@ func (t *Transport) Encrypt(ctx context.Context, req *transport.EncryptRequest) 
 	}
 	if len(req.AdditionalData) > 0 {
 		body["additional_data"] = req.AdditionalData
+	}
+	if len(req.Nonce) > 0 {
+		body["nonce"] = req.Nonce
+	}
+	if req.Mode != "" {
+		body["mode"] = req.Mode
+	}
+	if len(req.IV) > 0 {
+		body["iv"] = req.IV
+	}
+	if req.TagSize != 0 {
+		body["tag_size"] = req.TagSize
 	}
 
 	data, err := t.doRawRequest(ctx, http.MethodPost, path, body)
@@ -547,6 +789,15 @@ func (t *Transport) Decrypt(ctx context.Context, req *transport.DecryptRequest) 
 	if len(req.AdditionalData) > 0 {
 		body["additional_data"] = req.AdditionalData
 	}
+	if req.Mode != "" {
+		body["mode"] = req.Mode
+	}
+	if len(req.IV) > 0 {
+		body["iv"] = req.IV
+	}
+	if req.TagSize != 0 {
+		body["tag_size"] = req.TagSize
+	}
 
 	data, err := t.doRawRequest(ctx, http.MethodPost, path, body)
 	if err != nil {
@@ -569,6 +820,12 @@ func (t *Transport) EncryptAsym(ctx context.Context, req *transport.EncryptAsymR
 	}
 	if req.Hash != "" {
 		body["hash"] = req.Hash
+	}
+	// The OAEP label travels with the request, for the reason the REST
+	// transport gives: the matching Decrypt sends it, so dropping it here
+	// produced a ciphertext that could never be decrypted.
+	if len(req.Label) > 0 {
+		body["label"] = req.Label
 	}
 
 	data, err := t.doRawRequest(ctx, http.MethodPost, path, body)
@@ -988,12 +1245,7 @@ func (t *Transport) AttestKey(ctx context.Context, req *transport.AttestKeyReque
 		return nil, ErrNotConnected
 	}
 
-	body, err := json.Marshal(req)
-	if err != nil {
-		return nil, &errs.Wrapped{Msg: "failed to marshal request", Err: err}
-	}
-
-	data, err := t.doRawRequest(ctx, http.MethodPost, "/api/v1/attest", body)
+	data, err := t.doRawRequest(ctx, http.MethodPost, "/api/v1/attest", req)
 	if err != nil {
 		return nil, err
 	}
@@ -2116,6 +2368,35 @@ func (t *Transport) ListShares(ctx context.Context) (*transport.ListSharesRespon
 	return &resp, nil
 }
 
+// GetShare returns a single stored share. Share material is never included
+// in the response — the server returns metadata only.
+func (t *Transport) GetShare(ctx context.Context, serverURL, groupID string, shareIndex int) (*transport.ShareInfo, error) {
+	data, err := t.doRawRequest(ctx, http.MethodGet, sharePath(serverURL, groupID, shareIndex), nil)
+	if err != nil {
+		return nil, err
+	}
+
+	var resp transport.ShareInfo
+	if err := json.Unmarshal(data, &resp); err != nil {
+		return nil, &errs.Wrapped{Msg: "failed to parse response", Err: err}
+	}
+
+	return &resp, nil
+}
+
+// DeleteShare removes a single stored share.
+func (t *Transport) DeleteShare(ctx context.Context, serverURL, groupID string, shareIndex int) error {
+	_, err := t.doRawRequest(ctx, http.MethodDelete, sharePath(serverURL, groupID, shareIndex), nil)
+	return err
+}
+
+// sharePath builds the per-share request path. The server URL is a URL
+// itself, so it is escaped as a single path segment.
+func sharePath(serverURL, groupID string, shareIndex int) string {
+	return fmt.Sprintf("/api/v1/shares/%s/%s/%d",
+		url.PathEscape(serverURL), url.PathEscape(groupID), shareIndex)
+}
+
 // GetShareCollectionStatus returns the share collection status for a group.
 func (t *Transport) GetShareCollectionStatus(ctx context.Context, groupID string) (*transport.ShareCollectionStatus, error) {
 	path := fmt.Sprintf("/api/v1/shares/status/%s", url.PathEscape(groupID))
@@ -2125,6 +2406,64 @@ func (t *Transport) GetShareCollectionStatus(ctx context.Context, groupID string
 	}
 
 	var resp transport.ShareCollectionStatus
+	if err := json.Unmarshal(data, &resp); err != nil {
+		return nil, &errs.Wrapped{Msg: "failed to parse response", Err: err}
+	}
+
+	return &resp, nil
+}
+
+// AuditService methods.
+
+// QueryAudit returns one page of audit events from the tamper-evident audit
+// chain owned by the embedded qrdb node, filtered by the given AuditFilter.
+// The filter is carried entirely in the query string; zero/empty fields are
+// omitted rather than sent as blanks so a zero From/To stays unbounded.
+func (t *Transport) QueryAudit(ctx context.Context, filter *transport.AuditFilter) (*transport.AuditPage, error) {
+	if filter == nil {
+		return nil, transport.ErrInvalidRequest
+	}
+
+	q := url.Values{}
+	if !filter.From.IsZero() {
+		q.Set("from", filter.From.Format(time.RFC3339))
+	}
+	if !filter.To.IsZero() {
+		q.Set("to", filter.To.Format(time.RFC3339))
+	}
+	if filter.Actor != "" {
+		q.Set("actor", filter.Actor)
+	}
+	if filter.Resource != "" {
+		q.Set("resource", filter.Resource)
+	}
+	if filter.Action != "" {
+		q.Set("action", filter.Action)
+	}
+	if filter.Outcome != "" {
+		q.Set("outcome", filter.Outcome)
+	}
+	if filter.TenantID != "" {
+		q.Set("tenant_id", filter.TenantID)
+	}
+	if filter.Limit > 0 {
+		q.Set("limit", strconv.Itoa(filter.Limit))
+	}
+	if filter.Cursor != "" {
+		q.Set("cursor", filter.Cursor)
+	}
+
+	path := "/api/v1/audit"
+	if encoded := q.Encode(); encoded != "" {
+		path = path + "?" + encoded
+	}
+
+	data, err := t.doRawRequest(ctx, http.MethodGet, path, nil)
+	if err != nil {
+		return nil, err
+	}
+
+	var resp transport.AuditPage
 	if err := json.Unmarshal(data, &resp); err != nil {
 		return nil, &errs.Wrapped{Msg: "failed to parse response", Err: err}
 	}
@@ -2303,17 +2642,37 @@ func (t *Transport) ClaimCertComplete(ctx context.Context, req *transport.ClaimC
 }
 
 // ClaimShare retrieves the Shamir share for the named officer.
-func (t *Transport) ClaimShare(ctx context.Context, req *transport.ClaimShareRequest) (*transport.ClaimShareResponse, error) {
+func (t *Transport) ClaimShareBegin(ctx context.Context, req *transport.ClaimShareBeginRequest) (*transport.ClaimShareBeginResponse, error) {
 	if !t.connected {
 		return nil, ErrNotConnected
 	}
 
-	data, err := t.doRawRequest(ctx, http.MethodPost, "/api/v1/init/claim-share", req)
+	data, err := t.doRawRequest(ctx, http.MethodPost, "/api/v1/init/claim-share/begin", req)
 	if err != nil {
 		return nil, err
 	}
 
-	var resp transport.ClaimShareResponse
+	var resp transport.ClaimShareBeginResponse
+	if err := json.Unmarshal(data, &resp); err != nil {
+		return nil, &errs.Wrapped{Msg: "failed to parse response", Err: err}
+	}
+
+	return &resp, nil
+}
+
+// ClaimShareComplete completes the Shamir share claim handshake for the named
+// officer.
+func (t *Transport) ClaimShareComplete(ctx context.Context, req *transport.ClaimShareCompleteRequest) (*transport.ClaimShareCompleteResponse, error) {
+	if !t.connected {
+		return nil, ErrNotConnected
+	}
+
+	data, err := t.doRawRequest(ctx, http.MethodPost, "/api/v1/init/claim-share/complete", req)
+	if err != nil {
+		return nil, err
+	}
+
+	var resp transport.ClaimShareCompleteResponse
 	if err := json.Unmarshal(data, &resp); err != nil {
 		return nil, &errs.Wrapped{Msg: "failed to parse response", Err: err}
 	}

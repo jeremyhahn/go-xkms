@@ -15,6 +15,7 @@ package rest
 
 import (
 	"bytes"
+	"context"
 	"encoding/base64"
 	"encoding/json"
 	"net/http"
@@ -274,4 +275,63 @@ func TestMapCredentialError_KnownCodes(t *testing.T) {
 			assert.Equal(t, tt.expected, status)
 		})
 	}
+}
+
+// ---------------------------------------------------------------------------
+// HandleList tests
+// ---------------------------------------------------------------------------
+
+// TestCredentialHandleList_Empty verifies an empty store serializes as [] and
+// not null, so a client can iterate the result without a nil check.
+func TestCredentialHandleList_Empty(t *testing.T) {
+	handlers := credTestHandlers(t)
+
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/credentials", nil)
+	w := httptest.NewRecorder()
+	handlers.HandleList(w, req)
+
+	require.Equal(t, http.StatusOK, w.Code)
+	require.Contains(t, w.Body.String(), `"names":[]`)
+
+	var resp CredentialListResponse
+	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &resp))
+	require.NotNil(t, resp.Names)
+	require.Empty(t, resp.Names)
+}
+
+// TestCredentialHandleList_ReportsSubmittedNames verifies submitted
+// credentials appear in the listing.
+func TestCredentialHandleList_ReportsSubmittedNames(t *testing.T) {
+	svc := credTestService(t)
+	handlers := NewCredentialHandlers(svc, initTestLogger())
+
+	require.NoError(t, svc.SubmitCredential(context.Background(), "pkcs11-user-pin", []byte("secret-value")))
+
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/credentials", nil)
+	w := httptest.NewRecorder()
+	handlers.HandleList(w, req)
+
+	require.Equal(t, http.StatusOK, w.Code)
+
+	var resp CredentialListResponse
+	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &resp))
+	require.Equal(t, []string{"pkcs11-user-pin"}, resp.Names)
+}
+
+// TestCredentialHandleList_NeverLeaksValues is the security property at the
+// HTTP boundary: the response body must not contain the credential value.
+func TestCredentialHandleList_NeverLeaksValues(t *testing.T) {
+	svc := credTestService(t)
+	handlers := NewCredentialHandlers(svc, initTestLogger())
+
+	const secret = "TOP-SECRET-PIN-VALUE"
+	require.NoError(t, svc.SubmitCredential(context.Background(), "pkcs11-user-pin", []byte(secret)))
+
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/credentials", nil)
+	w := httptest.NewRecorder()
+	handlers.HandleList(w, req)
+
+	require.Equal(t, http.StatusOK, w.Code)
+	require.NotContains(t, w.Body.String(), secret,
+		"a credential value must never appear in a listing response")
 }

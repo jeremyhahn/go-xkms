@@ -316,7 +316,12 @@ func TestHandleUnwrapKey(t *testing.T) {
 		assert.Equal(t, http.StatusBadRequest, w.Code)
 	})
 
-	t.Run("POST missing wrapping_public_key_pem", func(t *testing.T) {
+	// An omitted wrapping_public_key_pem is NOT an error: unwrapping uses the
+	// private half, which lives in the backend, and the service layer does not
+	// read the public half at all. The refusal below belongs entirely to this
+	// backend's lack of import/export support. See
+	// TestHandleUnwrapKey_WrappingPublicKeyIsOptional for the accepted case.
+	t.Run("POST without wrapping_public_key_pem reaches the backend", func(t *testing.T) {
 		body, _ := json.Marshal(UnwrapKeyRequest{
 			WrappedKey: []byte("data"),
 			Algorithm:  "RSA_OAEP_SHA256",
@@ -325,6 +330,7 @@ func TestHandleUnwrapKey(t *testing.T) {
 		w := httptest.NewRecorder()
 		server.handler.ServeHTTP(w, req)
 		assert.Equal(t, http.StatusBadRequest, w.Code)
+		assert.Contains(t, w.Body.String(), "import/export")
 	})
 
 	t.Run("POST missing algorithm", func(t *testing.T) {

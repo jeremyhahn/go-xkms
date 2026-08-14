@@ -15,15 +15,9 @@ package phone
 
 import (
 	"context"
-	"crypto/sha256"
-	"crypto/sha512"
-	"hash"
-	"io"
 
 	"github.com/jeremyhahn/go-xkms/pkg/types"
 	phoneproto "github.com/jeremyhahn/go-xkms/xkey/pkg/phone"
-	"golang.org/x/crypto/hkdf"
-	"golang.org/x/crypto/sha3"
 )
 
 // Compile-time interface satisfaction check.
@@ -33,17 +27,6 @@ var _ types.KeyAgreementProvider = (*Backend)(nil)
 // Keystore for key agreement. These are the NIST curves available in
 // TEE/StrongBox secure hardware.
 var phoneSupportedCurves = []string{"P-256", "P-384", "P-521"}
-
-// hashFuncMapping provides O(1) constant-time lookup for hash algorithm names
-// to their constructor functions.
-var hashFuncMapping = map[string]func() hash.Hash{
-	"SHA-256":  sha256.New,
-	"SHA-384":  sha512.New384,
-	"SHA-512":  sha512.New,
-	"SHA3-256": sha3.New256,
-	"SHA3-384": sha3.New384,
-	"SHA3-512": sha3.New512,
-}
 
 // SupportedCurves returns the list of elliptic curves supported for key
 // agreement by the Android Keystore hardware backend.
@@ -125,25 +108,14 @@ func (b *Backend) DeriveKeyECDH(
 	return applyKDF(result.SharedSecret, kdfParams)
 }
 
-// applyKDF applies the specified key derivation function to the raw shared
-// secret. Only HKDF (RFC 5869) is supported; other KDF algorithms return
-// ErrUnsupportedKDFAlgorithm.
+// applyKDF derives a key from the raw shared secret using the canonical KDF
+// implementation in pkg/crypto/kdf, reached through types.KDFParams.Derive.
+// Every backend derives through that one entry point, so the same parameters
+// yield the same bytes here as on the TPM 2.0, software, and PKCS#11
+// backends.
 func applyKDF(sharedSecret []byte, params *types.KDFParams) ([]byte, error) {
-	if params.Algorithm != types.KDFAlgorithmHKDF {
-		return nil, ErrUnsupportedKDFAlgorithm
+	if params == nil {
+		return nil, ErrInvalidKDFParams
 	}
-
-	hashFunc, ok := hashFuncMapping[params.Hash]
-	if !ok {
-		return nil, ErrUnsupportedHashAlgorithm
-	}
-
-	reader := hkdf.New(hashFunc, sharedSecret, params.Salt, params.Info)
-
-	derivedKey := make([]byte, params.KeyLength)
-	if _, err := io.ReadFull(reader, derivedKey); err != nil {
-		return nil, ErrKDFDerivationFailed
-	}
-
-	return derivedKey, nil
+	return params.Derive(sharedSecret)
 }

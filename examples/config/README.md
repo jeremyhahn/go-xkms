@@ -92,20 +92,22 @@ Configure authentication method:
 ```yaml
 auth:
   enabled: true
-  type: mtls  # Options: noop, apikey, mtls, jwt
+  type: mtls  # Options: noop, mtls, jwt, adaptive, composite
+  mtls: true
 
-  # API Key example
-  # type: apikey
-  # api_keys:
-  #   key123:
-  #     subject: client1
-  #     roles: [admin]
+  # Role-based authorization for every transport. Roles and permissions live in
+  # the qrdb identity plane, so this requires storage.backend "qrdb"; with any
+  # other backend the authorizer cannot be built and every transport would
+  # authorize every request, which the daemon refuses to start with.
+  enable_rbac: true
 
-  # JWT example
+  # JWT example. public_key_file is required for type jwt and for type
+  # adaptive; the daemon refuses to start without it.
   # type: jwt
   # jwt:
-  #   secret: your-secret
+  #   public_key_file: /etc/xkms/jwt-public.pem
   #   issuer: xkms
+  #   audience: ["xkms"]
 ```
 
 ### Backends

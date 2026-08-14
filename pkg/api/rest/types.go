@@ -48,6 +48,7 @@ type GenerateKeyRequest struct {
 	Hash       string `json:"hash,omitempty"`
 	Algorithm  string `json:"algorithm,omitempty"` // "aes-128-gcm", "aes-192-gcm", "aes-256-gcm"
 	Exportable bool   `json:"exportable,omitempty"`
+	Sensitive  bool   `json:"sensitive,omitempty"` // CKA_SENSITIVE: plaintext is never released
 }
 
 // GenerateKeyResponse represents the response for key generation.
@@ -83,6 +84,15 @@ type SignRequest struct {
 	Backend string `json:"backend,omitempty"` // Optional, defaults to default backend
 	Data    []byte `json:"data"`
 	Hash    string `json:"hash,omitempty"`
+	// Padding selects the RSA signature scheme: "" or "pkcs1v15" (default), or "pss".
+	Padding string `json:"padding,omitempty"`
+	// SaltLength is the RSA-PSS salt length in bytes; 0 selects the largest
+	// salt the modulus allows. Ignored unless Padding is "pss".
+	SaltLength int `json:"salt_length,omitempty"`
+	// DataIsDigest states that Data is already the digest and must not be
+	// hashed again, while Hash still names which digest produced it. Required
+	// for RSASSA-PSS over a caller-supplied digest.
+	DataIsDigest bool `json:"data_is_digest,omitempty"`
 }
 
 // SignResponse represents the response for a signing operation.
@@ -97,6 +107,14 @@ type VerifyRequest struct {
 	Data      []byte `json:"data"`
 	Signature []byte `json:"signature"`
 	Hash      string `json:"hash,omitempty"`
+	// Padding selects the RSA signature scheme: "" or "pkcs1v15" (default), or "pss".
+	Padding string `json:"padding,omitempty"`
+	// SaltLength is the RSA-PSS salt length in bytes the signature is expected
+	// to use; 0 auto-detects. Ignored unless Padding is "pss".
+	SaltLength int `json:"salt_length,omitempty"`
+	// DataIsDigest states that Data is already the digest and must not be
+	// hashed again. See SignRequest.DataIsDigest.
+	DataIsDigest bool `json:"data_is_digest,omitempty"`
 }
 
 // VerifyResponse represents the response for a verification operation.
@@ -138,6 +156,22 @@ type EncryptRequest struct {
 	Backend        string `json:"backend,omitempty"` // Optional, defaults to default backend
 	Plaintext      []byte `json:"plaintext"`
 	AdditionalData []byte `json:"additional_data,omitempty"` // Optional AAD for GCM mode
+	// Nonce optionally supplies the IV/nonce. When empty the backend generates
+	// one and returns it in EncryptResponse.Nonce. Only meaningful for the
+	// default AEAD mode; AES-CBC uses IV instead.
+	Nonce []byte `json:"nonce,omitempty"`
+	// Mode selects the cipher mode of operation: "" (default AEAD, AES-GCM or
+	// ChaCha20-Poly1305), "cbc" (unpadded AES-CBC; Plaintext must already be a
+	// whole number of AES blocks), or "cbc-pad" (AES-CBC with PKCS#7 padding).
+	Mode string `json:"mode,omitempty"`
+	// IV supplies the AES-CBC initialization vector, exactly 16 bytes. Ignored
+	// for the default AEAD mode. If empty with a CBC Mode, a random IV is
+	// generated and returned in EncryptResponse.IV.
+	IV []byte `json:"iv,omitempty"`
+	// TagSize is the AEAD authentication tag length in bytes; 0 selects the
+	// cipher's full-length tag. AES-GCM admits 12-16 bytes per NIST
+	// SP 800-38D section 5.2.1.2.
+	TagSize int `json:"tag_size,omitempty"`
 }
 
 // EncryptResponse represents the response for an encryption operation.
@@ -145,6 +179,9 @@ type EncryptResponse struct {
 	Ciphertext []byte `json:"ciphertext"`
 	Nonce      []byte `json:"nonce"`
 	Tag        []byte `json:"tag"`
+	// IV is the AES-CBC initialization vector used for encryption. Populated
+	// only when the request's Mode was "cbc" or "cbc-pad".
+	IV []byte `json:"iv,omitempty"`
 }
 
 // DecryptRequest represents a decryption request.
@@ -154,6 +191,29 @@ type DecryptRequest struct {
 	AdditionalData []byte `json:"additional_data,omitempty"` // Optional AAD for symmetric decryption
 	Nonce          []byte `json:"nonce,omitempty"`           // Required for symmetric decryption
 	Tag            []byte `json:"tag,omitempty"`             // Required for symmetric decryption (GCM)
+	// Mode selects the cipher mode of operation. See EncryptRequest.Mode;
+	// must match the Mode used to produce Ciphertext.
+	Mode string `json:"mode,omitempty"`
+	// IV is the AES-CBC initialization vector used at encryption time,
+	// exactly 16 bytes. Required when Mode is "cbc" or "cbc-pad".
+	IV []byte `json:"iv,omitempty"`
+	// TagSize is the AEAD authentication tag length in bytes that Tag
+	// carries; 0 selects the cipher's full-length tag. It must equal the
+	// TagSize used to encrypt.
+	TagSize int `json:"tag_size,omitempty"`
+	// Padding selects the RSA decryption scheme for an asymmetric key:
+	// "" or "pkcs1v15" (default), or "oaep". The handler used to force
+	// OAEP-SHA-256 unconditionally, so a PKCS#1 v1.5 ciphertext -- which is
+	// what this API's own asymmetric Encrypt produces -- could not be
+	// decrypted here at all, and an OAEP ciphertext under any other digest
+	// failed with an error that read like corruption.
+	Padding string `json:"padding,omitempty"`
+	// Hash names the OAEP digest (e.g. "SHA-256"). Ignored unless Padding is
+	// "oaep"; empty selects SHA-256, which is what the encrypt half of this
+	// service produces for an unnamed digest.
+	Hash string `json:"hash,omitempty"`
+	// Label is the optional OAEP label. Ignored unless Padding is "oaep".
+	Label []byte `json:"label,omitempty"`
 }
 
 // DecryptResponse represents the response for a decryption operation.
@@ -166,6 +226,11 @@ type EncryptAsymRequest struct {
 	Backend   string `json:"backend,omitempty"` // Optional, defaults to default backend
 	Plaintext []byte `json:"plaintext"`
 	Hash      string `json:"hash,omitempty"` // Hash algorithm for OAEP (e.g., "sha256")
+	// Label is the optional OAEP label, RFC 8017's encoding parameter L. It
+	// must match the label the matching decrypt carries; dropping it here made
+	// every REST encryption run under the empty label while the decrypt sent
+	// the caller's, so the round trip could not close.
+	Label []byte `json:"label,omitempty"`
 }
 
 // EncryptAsymResponse represents the response for an asymmetric encryption operation.
@@ -249,7 +314,11 @@ type GetImportParametersResponse struct {
 }
 
 // WrapKeyRequest represents a request to wrap key material.
+// Backend names the backend whose wrapping semantics are used and is
+// required: wrapping is backend specific, so the caller must state which
+// backend the material is being prepared for.
 type WrapKeyRequest struct {
+	Backend              string `json:"backend"`
 	KeyMaterial          []byte `json:"key_material"`
 	WrappingPublicKeyPEM string `json:"wrapping_public_key_pem"`
 	ImportToken          []byte `json:"import_token,omitempty"`
@@ -264,7 +333,11 @@ type WrapKeyResponse struct {
 }
 
 // UnwrapKeyRequest represents a request to unwrap key material.
+// Backend names the backend that performs the unwrap and is required: it
+// must be the same backend that produced the wrapped material, because
+// wrapping semantics differ between backends.
 type UnwrapKeyRequest struct {
+	Backend              string `json:"backend"`
 	WrappedKey           []byte `json:"wrapped_key"`
 	WrappingPublicKeyPEM string `json:"wrapping_public_key_pem"`
 	ImportToken          []byte `json:"import_token,omitempty"`

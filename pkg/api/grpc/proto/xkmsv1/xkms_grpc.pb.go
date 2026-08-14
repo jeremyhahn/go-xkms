@@ -125,8 +125,11 @@ const (
 	KeystoreService_AddCustodianMember_FullMethodName          = "/xkms.v1.KeystoreService/AddCustodianMember"
 	KeystoreService_RemoveCustodianMember_FullMethodName       = "/xkms.v1.KeystoreService/RemoveCustodianMember"
 	KeystoreService_DistributeShares_FullMethodName            = "/xkms.v1.KeystoreService/DistributeShares"
+	KeystoreService_Algorithms_FullMethodName                  = "/xkms.v1.KeystoreService/Algorithms"
 	KeystoreService_SubmitShare_FullMethodName                 = "/xkms.v1.KeystoreService/SubmitShare"
 	KeystoreService_ListShares_FullMethodName                  = "/xkms.v1.KeystoreService/ListShares"
+	KeystoreService_GetShare_FullMethodName                    = "/xkms.v1.KeystoreService/GetShare"
+	KeystoreService_DeleteShare_FullMethodName                 = "/xkms.v1.KeystoreService/DeleteShare"
 	KeystoreService_GetShareCollectionStatus_FullMethodName    = "/xkms.v1.KeystoreService/GetShareCollectionStatus"
 	KeystoreService_CreateTenant_FullMethodName                = "/xkms.v1.KeystoreService/CreateTenant"
 	KeystoreService_GetTenant_FullMethodName                   = "/xkms.v1.KeystoreService/GetTenant"
@@ -139,6 +142,8 @@ const (
 	KeystoreService_UpdateTenantQuotas_FullMethodName          = "/xkms.v1.KeystoreService/UpdateTenantQuotas"
 	KeystoreService_GetClusterStatus_FullMethodName            = "/xkms.v1.KeystoreService/GetClusterStatus"
 	KeystoreService_ListClusterMembers_FullMethodName          = "/xkms.v1.KeystoreService/ListClusterMembers"
+	KeystoreService_AddClusterReplica_FullMethodName           = "/xkms.v1.KeystoreService/AddClusterReplica"
+	KeystoreService_RemoveClusterReplica_FullMethodName        = "/xkms.v1.KeystoreService/RemoveClusterReplica"
 	KeystoreService_PasswordAdd_FullMethodName                 = "/xkms.v1.KeystoreService/PasswordAdd"
 	KeystoreService_PasswordGet_FullMethodName                 = "/xkms.v1.KeystoreService/PasswordGet"
 	KeystoreService_PasswordList_FullMethodName                = "/xkms.v1.KeystoreService/PasswordList"
@@ -148,6 +153,12 @@ const (
 	KeystoreService_PasswordStoreLock_FullMethodName           = "/xkms.v1.KeystoreService/PasswordStoreLock"
 	KeystoreService_PasswordStoreStatus_FullMethodName         = "/xkms.v1.KeystoreService/PasswordStoreStatus"
 	KeystoreService_PasswordGenerate_FullMethodName            = "/xkms.v1.KeystoreService/PasswordGenerate"
+	KeystoreService_PKCS11StatePut_FullMethodName              = "/xkms.v1.KeystoreService/PKCS11StatePut"
+	KeystoreService_PKCS11StatePutIfAbsent_FullMethodName      = "/xkms.v1.KeystoreService/PKCS11StatePutIfAbsent"
+	KeystoreService_PKCS11StateCAS_FullMethodName              = "/xkms.v1.KeystoreService/PKCS11StateCAS"
+	KeystoreService_PKCS11StateGet_FullMethodName              = "/xkms.v1.KeystoreService/PKCS11StateGet"
+	KeystoreService_PKCS11StateDelete_FullMethodName           = "/xkms.v1.KeystoreService/PKCS11StateDelete"
+	KeystoreService_PKCS11StateList_FullMethodName             = "/xkms.v1.KeystoreService/PKCS11StateList"
 	KeystoreService_CreateUser_FullMethodName                  = "/xkms.v1.KeystoreService/CreateUser"
 	KeystoreService_ListUsers_FullMethodName                   = "/xkms.v1.KeystoreService/ListUsers"
 	KeystoreService_GetUser_FullMethodName                     = "/xkms.v1.KeystoreService/GetUser"
@@ -173,7 +184,7 @@ const (
 	KeystoreService_SSHAddAuthorizedKey_FullMethodName         = "/xkms.v1.KeystoreService/SSHAddAuthorizedKey"
 	KeystoreService_SSHListAuthorizedKeys_FullMethodName       = "/xkms.v1.KeystoreService/SSHListAuthorizedKeys"
 	KeystoreService_SSHRemoveAuthorizedKey_FullMethodName      = "/xkms.v1.KeystoreService/SSHRemoveAuthorizedKey"
-	KeystoreService_SSHConsole_FullMethodName                  = "/xkms.v1.KeystoreService/SSHConsole"
+	KeystoreService_QueryAudit_FullMethodName                  = "/xkms.v1.KeystoreService/QueryAudit"
 )
 
 // KeystoreServiceClient is the client API for KeystoreService service.
@@ -422,10 +433,19 @@ type KeystoreServiceClient interface {
 	RemoveCustodianMember(ctx context.Context, in *RemoveCustodianMemberRequest, opts ...grpc.CallOption) (*emptypb.Empty, error)
 	// DistributeShares triggers share distribution for a custodian group.
 	DistributeShares(ctx context.Context, in *DistributeSharesRequest, opts ...grpc.CallOption) (*DistributeSharesResponse, error)
+	// Algorithms reports the cryptographic algorithms this build supports and
+	// which backends provide each one. Public discovery: it reflects compiled-in
+	// capability only and reads no state.
+	Algorithms(ctx context.Context, in *AlgorithmsRequest, opts ...grpc.CallOption) (*AlgorithmsResponse, error)
 	// SubmitShare submits a Shamir share for storage.
 	SubmitShare(ctx context.Context, in *SubmitShareRequest, opts ...grpc.CallOption) (*SubmitShareResponse, error)
 	// ListShares returns all stored shares.
 	ListShares(ctx context.Context, in *ListSharesRequest, opts ...grpc.CallOption) (*ListSharesResponse, error)
+	// GetShare returns a single stored share. Sensitive share material is
+	// never included in the response.
+	GetShare(ctx context.Context, in *GetShareRequest, opts ...grpc.CallOption) (*ShareInfo, error)
+	// DeleteShare removes a single stored share.
+	DeleteShare(ctx context.Context, in *DeleteShareRequest, opts ...grpc.CallOption) (*emptypb.Empty, error)
 	// GetShareCollectionStatus returns the share collection status for a group.
 	GetShareCollectionStatus(ctx context.Context, in *GetShareCollectionStatusRequest, opts ...grpc.CallOption) (*ShareCollectionStatusResponse, error)
 	// CreateTenant creates a new tenant.
@@ -453,6 +473,14 @@ type KeystoreServiceClient interface {
 	// ListClusterMembers returns the Raft replicas for the configured shard. A
 	// standalone node returns an empty membership set.
 	ListClusterMembers(ctx context.Context, in *emptypb.Empty, opts ...grpc.CallOption) (*ListClusterMembersResponse, error)
+	// AddClusterReplica adds a replica to the configured shard's Raft group.
+	// Privileged: requires the canonical qrdb "admin:add_member" grant. Fails
+	// with FAILED_PRECONDITION on a standalone node.
+	AddClusterReplica(ctx context.Context, in *AddClusterReplicaRequest, opts ...grpc.CallOption) (*ClusterReplicaResponse, error)
+	// RemoveClusterReplica removes a replica from the configured shard's Raft
+	// group. Privileged: requires the canonical qrdb "admin:remove_member"
+	// grant. Fails with FAILED_PRECONDITION on a standalone node.
+	RemoveClusterReplica(ctx context.Context, in *RemoveClusterReplicaRequest, opts ...grpc.CallOption) (*ClusterReplicaResponse, error)
 	// PasswordAdd adds a new password entry to the encrypted store.
 	PasswordAdd(ctx context.Context, in *PasswordAddRequest, opts ...grpc.CallOption) (*PasswordAddResponse, error)
 	// PasswordGet retrieves a password entry by ID or name.
@@ -471,6 +499,12 @@ type KeystoreServiceClient interface {
 	PasswordStoreStatus(ctx context.Context, in *PasswordStoreStatusRequest, opts ...grpc.CallOption) (*PasswordStoreStatusResponse, error)
 	// PasswordGenerate generates a random password with specified constraints.
 	PasswordGenerate(ctx context.Context, in *PasswordGenerateRequest, opts ...grpc.CallOption) (*PasswordGenerateResponse, error)
+	PKCS11StatePut(ctx context.Context, in *PKCS11StatePutRequest, opts ...grpc.CallOption) (*PKCS11StatePutResponse, error)
+	PKCS11StatePutIfAbsent(ctx context.Context, in *PKCS11StatePutIfAbsentRequest, opts ...grpc.CallOption) (*PKCS11StatePutIfAbsentResponse, error)
+	PKCS11StateCAS(ctx context.Context, in *PKCS11StateCASRequest, opts ...grpc.CallOption) (*PKCS11StateCASResponse, error)
+	PKCS11StateGet(ctx context.Context, in *PKCS11StateGetRequest, opts ...grpc.CallOption) (*PKCS11StateGetResponse, error)
+	PKCS11StateDelete(ctx context.Context, in *PKCS11StateDeleteRequest, opts ...grpc.CallOption) (*PKCS11StateDeleteResponse, error)
+	PKCS11StateList(ctx context.Context, in *PKCS11StateListRequest, opts ...grpc.CallOption) (*PKCS11StateListResponse, error)
 	// User management. xkms presents its own user model; the backing store is
 	// the embedded qrdb node.
 	CreateUser(ctx context.Context, in *CreateUserRequest, opts ...grpc.CallOption) (*UserResponse, error)
@@ -522,11 +556,11 @@ type KeystoreServiceClient interface {
 	SSHListAuthorizedKeys(ctx context.Context, in *SSHListAuthorizedKeysRequest, opts ...grpc.CallOption) (*SSHListAuthorizedKeysResponse, error)
 	// SSHRemoveAuthorizedKey removes an authorized_keys entry.
 	SSHRemoveAuthorizedKey(ctx context.Context, in *SSHAuthorizedKeyRef, opts ...grpc.CallOption) (*emptypb.Empty, error)
-	// SSHConsole opens an interactive PTY shell as a bidirectional stream. The
-	// first client message MUST be an Open; subsequent client messages carry
-	// stdin or resize; server messages carry stdout (and a final Exit). This is
-	// the gRPC/unix transport's implementation of the SSH console capability.
-	SSHConsole(ctx context.Context, opts ...grpc.CallOption) (grpc.BidiStreamingClient[SSHConsoleClientMsg, SSHConsoleServerMsg], error)
+	// QueryAudit returns one page of audit events from the tamper-evident
+	// chain owned by the embedded qrdb node. There is deliberately no emit
+	// RPC: events are written server-side as a side effect of the audited
+	// operation, never on a caller's request.
+	QueryAudit(ctx context.Context, in *QueryAuditRequest, opts ...grpc.CallOption) (*QueryAuditResponse, error)
 }
 
 type keystoreServiceClient struct {
@@ -1557,6 +1591,16 @@ func (c *keystoreServiceClient) DistributeShares(ctx context.Context, in *Distri
 	return out, nil
 }
 
+func (c *keystoreServiceClient) Algorithms(ctx context.Context, in *AlgorithmsRequest, opts ...grpc.CallOption) (*AlgorithmsResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(AlgorithmsResponse)
+	err := c.cc.Invoke(ctx, KeystoreService_Algorithms_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
 func (c *keystoreServiceClient) SubmitShare(ctx context.Context, in *SubmitShareRequest, opts ...grpc.CallOption) (*SubmitShareResponse, error) {
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
 	out := new(SubmitShareResponse)
@@ -1571,6 +1615,26 @@ func (c *keystoreServiceClient) ListShares(ctx context.Context, in *ListSharesRe
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
 	out := new(ListSharesResponse)
 	err := c.cc.Invoke(ctx, KeystoreService_ListShares_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *keystoreServiceClient) GetShare(ctx context.Context, in *GetShareRequest, opts ...grpc.CallOption) (*ShareInfo, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(ShareInfo)
+	err := c.cc.Invoke(ctx, KeystoreService_GetShare_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *keystoreServiceClient) DeleteShare(ctx context.Context, in *DeleteShareRequest, opts ...grpc.CallOption) (*emptypb.Empty, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(emptypb.Empty)
+	err := c.cc.Invoke(ctx, KeystoreService_DeleteShare_FullMethodName, in, out, cOpts...)
 	if err != nil {
 		return nil, err
 	}
@@ -1697,6 +1761,26 @@ func (c *keystoreServiceClient) ListClusterMembers(ctx context.Context, in *empt
 	return out, nil
 }
 
+func (c *keystoreServiceClient) AddClusterReplica(ctx context.Context, in *AddClusterReplicaRequest, opts ...grpc.CallOption) (*ClusterReplicaResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(ClusterReplicaResponse)
+	err := c.cc.Invoke(ctx, KeystoreService_AddClusterReplica_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *keystoreServiceClient) RemoveClusterReplica(ctx context.Context, in *RemoveClusterReplicaRequest, opts ...grpc.CallOption) (*ClusterReplicaResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(ClusterReplicaResponse)
+	err := c.cc.Invoke(ctx, KeystoreService_RemoveClusterReplica_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
 func (c *keystoreServiceClient) PasswordAdd(ctx context.Context, in *PasswordAddRequest, opts ...grpc.CallOption) (*PasswordAddResponse, error) {
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
 	out := new(PasswordAddResponse)
@@ -1781,6 +1865,66 @@ func (c *keystoreServiceClient) PasswordGenerate(ctx context.Context, in *Passwo
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
 	out := new(PasswordGenerateResponse)
 	err := c.cc.Invoke(ctx, KeystoreService_PasswordGenerate_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *keystoreServiceClient) PKCS11StatePut(ctx context.Context, in *PKCS11StatePutRequest, opts ...grpc.CallOption) (*PKCS11StatePutResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(PKCS11StatePutResponse)
+	err := c.cc.Invoke(ctx, KeystoreService_PKCS11StatePut_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *keystoreServiceClient) PKCS11StatePutIfAbsent(ctx context.Context, in *PKCS11StatePutIfAbsentRequest, opts ...grpc.CallOption) (*PKCS11StatePutIfAbsentResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(PKCS11StatePutIfAbsentResponse)
+	err := c.cc.Invoke(ctx, KeystoreService_PKCS11StatePutIfAbsent_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *keystoreServiceClient) PKCS11StateCAS(ctx context.Context, in *PKCS11StateCASRequest, opts ...grpc.CallOption) (*PKCS11StateCASResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(PKCS11StateCASResponse)
+	err := c.cc.Invoke(ctx, KeystoreService_PKCS11StateCAS_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *keystoreServiceClient) PKCS11StateGet(ctx context.Context, in *PKCS11StateGetRequest, opts ...grpc.CallOption) (*PKCS11StateGetResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(PKCS11StateGetResponse)
+	err := c.cc.Invoke(ctx, KeystoreService_PKCS11StateGet_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *keystoreServiceClient) PKCS11StateDelete(ctx context.Context, in *PKCS11StateDeleteRequest, opts ...grpc.CallOption) (*PKCS11StateDeleteResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(PKCS11StateDeleteResponse)
+	err := c.cc.Invoke(ctx, KeystoreService_PKCS11StateDelete_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *keystoreServiceClient) PKCS11StateList(ctx context.Context, in *PKCS11StateListRequest, opts ...grpc.CallOption) (*PKCS11StateListResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(PKCS11StateListResponse)
+	err := c.cc.Invoke(ctx, KeystoreService_PKCS11StateList_FullMethodName, in, out, cOpts...)
 	if err != nil {
 		return nil, err
 	}
@@ -2037,18 +2181,15 @@ func (c *keystoreServiceClient) SSHRemoveAuthorizedKey(ctx context.Context, in *
 	return out, nil
 }
 
-func (c *keystoreServiceClient) SSHConsole(ctx context.Context, opts ...grpc.CallOption) (grpc.BidiStreamingClient[SSHConsoleClientMsg, SSHConsoleServerMsg], error) {
+func (c *keystoreServiceClient) QueryAudit(ctx context.Context, in *QueryAuditRequest, opts ...grpc.CallOption) (*QueryAuditResponse, error) {
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
-	stream, err := c.cc.NewStream(ctx, &KeystoreService_ServiceDesc.Streams[0], KeystoreService_SSHConsole_FullMethodName, cOpts...)
+	out := new(QueryAuditResponse)
+	err := c.cc.Invoke(ctx, KeystoreService_QueryAudit_FullMethodName, in, out, cOpts...)
 	if err != nil {
 		return nil, err
 	}
-	x := &grpc.GenericClientStream[SSHConsoleClientMsg, SSHConsoleServerMsg]{ClientStream: stream}
-	return x, nil
+	return out, nil
 }
-
-// This type alias is provided for backwards compatibility with existing code that references the prior non-generic stream type by name.
-type KeystoreService_SSHConsoleClient = grpc.BidiStreamingClient[SSHConsoleClientMsg, SSHConsoleServerMsg]
 
 // KeystoreServiceServer is the server API for KeystoreService service.
 // All implementations must embed UnimplementedKeystoreServiceServer
@@ -2296,10 +2437,19 @@ type KeystoreServiceServer interface {
 	RemoveCustodianMember(context.Context, *RemoveCustodianMemberRequest) (*emptypb.Empty, error)
 	// DistributeShares triggers share distribution for a custodian group.
 	DistributeShares(context.Context, *DistributeSharesRequest) (*DistributeSharesResponse, error)
+	// Algorithms reports the cryptographic algorithms this build supports and
+	// which backends provide each one. Public discovery: it reflects compiled-in
+	// capability only and reads no state.
+	Algorithms(context.Context, *AlgorithmsRequest) (*AlgorithmsResponse, error)
 	// SubmitShare submits a Shamir share for storage.
 	SubmitShare(context.Context, *SubmitShareRequest) (*SubmitShareResponse, error)
 	// ListShares returns all stored shares.
 	ListShares(context.Context, *ListSharesRequest) (*ListSharesResponse, error)
+	// GetShare returns a single stored share. Sensitive share material is
+	// never included in the response.
+	GetShare(context.Context, *GetShareRequest) (*ShareInfo, error)
+	// DeleteShare removes a single stored share.
+	DeleteShare(context.Context, *DeleteShareRequest) (*emptypb.Empty, error)
 	// GetShareCollectionStatus returns the share collection status for a group.
 	GetShareCollectionStatus(context.Context, *GetShareCollectionStatusRequest) (*ShareCollectionStatusResponse, error)
 	// CreateTenant creates a new tenant.
@@ -2327,6 +2477,14 @@ type KeystoreServiceServer interface {
 	// ListClusterMembers returns the Raft replicas for the configured shard. A
 	// standalone node returns an empty membership set.
 	ListClusterMembers(context.Context, *emptypb.Empty) (*ListClusterMembersResponse, error)
+	// AddClusterReplica adds a replica to the configured shard's Raft group.
+	// Privileged: requires the canonical qrdb "admin:add_member" grant. Fails
+	// with FAILED_PRECONDITION on a standalone node.
+	AddClusterReplica(context.Context, *AddClusterReplicaRequest) (*ClusterReplicaResponse, error)
+	// RemoveClusterReplica removes a replica from the configured shard's Raft
+	// group. Privileged: requires the canonical qrdb "admin:remove_member"
+	// grant. Fails with FAILED_PRECONDITION on a standalone node.
+	RemoveClusterReplica(context.Context, *RemoveClusterReplicaRequest) (*ClusterReplicaResponse, error)
 	// PasswordAdd adds a new password entry to the encrypted store.
 	PasswordAdd(context.Context, *PasswordAddRequest) (*PasswordAddResponse, error)
 	// PasswordGet retrieves a password entry by ID or name.
@@ -2345,6 +2503,12 @@ type KeystoreServiceServer interface {
 	PasswordStoreStatus(context.Context, *PasswordStoreStatusRequest) (*PasswordStoreStatusResponse, error)
 	// PasswordGenerate generates a random password with specified constraints.
 	PasswordGenerate(context.Context, *PasswordGenerateRequest) (*PasswordGenerateResponse, error)
+	PKCS11StatePut(context.Context, *PKCS11StatePutRequest) (*PKCS11StatePutResponse, error)
+	PKCS11StatePutIfAbsent(context.Context, *PKCS11StatePutIfAbsentRequest) (*PKCS11StatePutIfAbsentResponse, error)
+	PKCS11StateCAS(context.Context, *PKCS11StateCASRequest) (*PKCS11StateCASResponse, error)
+	PKCS11StateGet(context.Context, *PKCS11StateGetRequest) (*PKCS11StateGetResponse, error)
+	PKCS11StateDelete(context.Context, *PKCS11StateDeleteRequest) (*PKCS11StateDeleteResponse, error)
+	PKCS11StateList(context.Context, *PKCS11StateListRequest) (*PKCS11StateListResponse, error)
 	// User management. xkms presents its own user model; the backing store is
 	// the embedded qrdb node.
 	CreateUser(context.Context, *CreateUserRequest) (*UserResponse, error)
@@ -2396,11 +2560,11 @@ type KeystoreServiceServer interface {
 	SSHListAuthorizedKeys(context.Context, *SSHListAuthorizedKeysRequest) (*SSHListAuthorizedKeysResponse, error)
 	// SSHRemoveAuthorizedKey removes an authorized_keys entry.
 	SSHRemoveAuthorizedKey(context.Context, *SSHAuthorizedKeyRef) (*emptypb.Empty, error)
-	// SSHConsole opens an interactive PTY shell as a bidirectional stream. The
-	// first client message MUST be an Open; subsequent client messages carry
-	// stdin or resize; server messages carry stdout (and a final Exit). This is
-	// the gRPC/unix transport's implementation of the SSH console capability.
-	SSHConsole(grpc.BidiStreamingServer[SSHConsoleClientMsg, SSHConsoleServerMsg]) error
+	// QueryAudit returns one page of audit events from the tamper-evident
+	// chain owned by the embedded qrdb node. There is deliberately no emit
+	// RPC: events are written server-side as a side effect of the audited
+	// operation, never on a caller's request.
+	QueryAudit(context.Context, *QueryAuditRequest) (*QueryAuditResponse, error)
 	mustEmbedUnimplementedKeystoreServiceServer()
 }
 
@@ -2717,11 +2881,20 @@ func (UnimplementedKeystoreServiceServer) RemoveCustodianMember(context.Context,
 func (UnimplementedKeystoreServiceServer) DistributeShares(context.Context, *DistributeSharesRequest) (*DistributeSharesResponse, error) {
 	return nil, status.Error(codes.Unimplemented, "method DistributeShares not implemented")
 }
+func (UnimplementedKeystoreServiceServer) Algorithms(context.Context, *AlgorithmsRequest) (*AlgorithmsResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method Algorithms not implemented")
+}
 func (UnimplementedKeystoreServiceServer) SubmitShare(context.Context, *SubmitShareRequest) (*SubmitShareResponse, error) {
 	return nil, status.Error(codes.Unimplemented, "method SubmitShare not implemented")
 }
 func (UnimplementedKeystoreServiceServer) ListShares(context.Context, *ListSharesRequest) (*ListSharesResponse, error) {
 	return nil, status.Error(codes.Unimplemented, "method ListShares not implemented")
+}
+func (UnimplementedKeystoreServiceServer) GetShare(context.Context, *GetShareRequest) (*ShareInfo, error) {
+	return nil, status.Error(codes.Unimplemented, "method GetShare not implemented")
+}
+func (UnimplementedKeystoreServiceServer) DeleteShare(context.Context, *DeleteShareRequest) (*emptypb.Empty, error) {
+	return nil, status.Error(codes.Unimplemented, "method DeleteShare not implemented")
 }
 func (UnimplementedKeystoreServiceServer) GetShareCollectionStatus(context.Context, *GetShareCollectionStatusRequest) (*ShareCollectionStatusResponse, error) {
 	return nil, status.Error(codes.Unimplemented, "method GetShareCollectionStatus not implemented")
@@ -2759,6 +2932,12 @@ func (UnimplementedKeystoreServiceServer) GetClusterStatus(context.Context, *emp
 func (UnimplementedKeystoreServiceServer) ListClusterMembers(context.Context, *emptypb.Empty) (*ListClusterMembersResponse, error) {
 	return nil, status.Error(codes.Unimplemented, "method ListClusterMembers not implemented")
 }
+func (UnimplementedKeystoreServiceServer) AddClusterReplica(context.Context, *AddClusterReplicaRequest) (*ClusterReplicaResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method AddClusterReplica not implemented")
+}
+func (UnimplementedKeystoreServiceServer) RemoveClusterReplica(context.Context, *RemoveClusterReplicaRequest) (*ClusterReplicaResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method RemoveClusterReplica not implemented")
+}
 func (UnimplementedKeystoreServiceServer) PasswordAdd(context.Context, *PasswordAddRequest) (*PasswordAddResponse, error) {
 	return nil, status.Error(codes.Unimplemented, "method PasswordAdd not implemented")
 }
@@ -2785,6 +2964,24 @@ func (UnimplementedKeystoreServiceServer) PasswordStoreStatus(context.Context, *
 }
 func (UnimplementedKeystoreServiceServer) PasswordGenerate(context.Context, *PasswordGenerateRequest) (*PasswordGenerateResponse, error) {
 	return nil, status.Error(codes.Unimplemented, "method PasswordGenerate not implemented")
+}
+func (UnimplementedKeystoreServiceServer) PKCS11StatePut(context.Context, *PKCS11StatePutRequest) (*PKCS11StatePutResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method PKCS11StatePut not implemented")
+}
+func (UnimplementedKeystoreServiceServer) PKCS11StatePutIfAbsent(context.Context, *PKCS11StatePutIfAbsentRequest) (*PKCS11StatePutIfAbsentResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method PKCS11StatePutIfAbsent not implemented")
+}
+func (UnimplementedKeystoreServiceServer) PKCS11StateCAS(context.Context, *PKCS11StateCASRequest) (*PKCS11StateCASResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method PKCS11StateCAS not implemented")
+}
+func (UnimplementedKeystoreServiceServer) PKCS11StateGet(context.Context, *PKCS11StateGetRequest) (*PKCS11StateGetResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method PKCS11StateGet not implemented")
+}
+func (UnimplementedKeystoreServiceServer) PKCS11StateDelete(context.Context, *PKCS11StateDeleteRequest) (*PKCS11StateDeleteResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method PKCS11StateDelete not implemented")
+}
+func (UnimplementedKeystoreServiceServer) PKCS11StateList(context.Context, *PKCS11StateListRequest) (*PKCS11StateListResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method PKCS11StateList not implemented")
 }
 func (UnimplementedKeystoreServiceServer) CreateUser(context.Context, *CreateUserRequest) (*UserResponse, error) {
 	return nil, status.Error(codes.Unimplemented, "method CreateUser not implemented")
@@ -2861,8 +3058,8 @@ func (UnimplementedKeystoreServiceServer) SSHListAuthorizedKeys(context.Context,
 func (UnimplementedKeystoreServiceServer) SSHRemoveAuthorizedKey(context.Context, *SSHAuthorizedKeyRef) (*emptypb.Empty, error) {
 	return nil, status.Error(codes.Unimplemented, "method SSHRemoveAuthorizedKey not implemented")
 }
-func (UnimplementedKeystoreServiceServer) SSHConsole(grpc.BidiStreamingServer[SSHConsoleClientMsg, SSHConsoleServerMsg]) error {
-	return status.Error(codes.Unimplemented, "method SSHConsole not implemented")
+func (UnimplementedKeystoreServiceServer) QueryAudit(context.Context, *QueryAuditRequest) (*QueryAuditResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method QueryAudit not implemented")
 }
 func (UnimplementedKeystoreServiceServer) mustEmbedUnimplementedKeystoreServiceServer() {}
 func (UnimplementedKeystoreServiceServer) testEmbeddedByValue()                         {}
@@ -4721,6 +4918,24 @@ func _KeystoreService_DistributeShares_Handler(srv interface{}, ctx context.Cont
 	return interceptor(ctx, in, info, handler)
 }
 
+func _KeystoreService_Algorithms_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(AlgorithmsRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(KeystoreServiceServer).Algorithms(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: KeystoreService_Algorithms_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(KeystoreServiceServer).Algorithms(ctx, req.(*AlgorithmsRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
 func _KeystoreService_SubmitShare_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
 	in := new(SubmitShareRequest)
 	if err := dec(in); err != nil {
@@ -4753,6 +4968,42 @@ func _KeystoreService_ListShares_Handler(srv interface{}, ctx context.Context, d
 	}
 	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
 		return srv.(KeystoreServiceServer).ListShares(ctx, req.(*ListSharesRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _KeystoreService_GetShare_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(GetShareRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(KeystoreServiceServer).GetShare(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: KeystoreService_GetShare_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(KeystoreServiceServer).GetShare(ctx, req.(*GetShareRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _KeystoreService_DeleteShare_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(DeleteShareRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(KeystoreServiceServer).DeleteShare(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: KeystoreService_DeleteShare_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(KeystoreServiceServer).DeleteShare(ctx, req.(*DeleteShareRequest))
 	}
 	return interceptor(ctx, in, info, handler)
 }
@@ -4973,6 +5224,42 @@ func _KeystoreService_ListClusterMembers_Handler(srv interface{}, ctx context.Co
 	return interceptor(ctx, in, info, handler)
 }
 
+func _KeystoreService_AddClusterReplica_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(AddClusterReplicaRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(KeystoreServiceServer).AddClusterReplica(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: KeystoreService_AddClusterReplica_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(KeystoreServiceServer).AddClusterReplica(ctx, req.(*AddClusterReplicaRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _KeystoreService_RemoveClusterReplica_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(RemoveClusterReplicaRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(KeystoreServiceServer).RemoveClusterReplica(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: KeystoreService_RemoveClusterReplica_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(KeystoreServiceServer).RemoveClusterReplica(ctx, req.(*RemoveClusterReplicaRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
 func _KeystoreService_PasswordAdd_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
 	in := new(PasswordAddRequest)
 	if err := dec(in); err != nil {
@@ -5131,6 +5418,114 @@ func _KeystoreService_PasswordGenerate_Handler(srv interface{}, ctx context.Cont
 	}
 	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
 		return srv.(KeystoreServiceServer).PasswordGenerate(ctx, req.(*PasswordGenerateRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _KeystoreService_PKCS11StatePut_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(PKCS11StatePutRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(KeystoreServiceServer).PKCS11StatePut(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: KeystoreService_PKCS11StatePut_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(KeystoreServiceServer).PKCS11StatePut(ctx, req.(*PKCS11StatePutRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _KeystoreService_PKCS11StatePutIfAbsent_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(PKCS11StatePutIfAbsentRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(KeystoreServiceServer).PKCS11StatePutIfAbsent(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: KeystoreService_PKCS11StatePutIfAbsent_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(KeystoreServiceServer).PKCS11StatePutIfAbsent(ctx, req.(*PKCS11StatePutIfAbsentRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _KeystoreService_PKCS11StateCAS_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(PKCS11StateCASRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(KeystoreServiceServer).PKCS11StateCAS(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: KeystoreService_PKCS11StateCAS_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(KeystoreServiceServer).PKCS11StateCAS(ctx, req.(*PKCS11StateCASRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _KeystoreService_PKCS11StateGet_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(PKCS11StateGetRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(KeystoreServiceServer).PKCS11StateGet(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: KeystoreService_PKCS11StateGet_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(KeystoreServiceServer).PKCS11StateGet(ctx, req.(*PKCS11StateGetRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _KeystoreService_PKCS11StateDelete_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(PKCS11StateDeleteRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(KeystoreServiceServer).PKCS11StateDelete(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: KeystoreService_PKCS11StateDelete_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(KeystoreServiceServer).PKCS11StateDelete(ctx, req.(*PKCS11StateDeleteRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _KeystoreService_PKCS11StateList_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(PKCS11StateListRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(KeystoreServiceServer).PKCS11StateList(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: KeystoreService_PKCS11StateList_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(KeystoreServiceServer).PKCS11StateList(ctx, req.(*PKCS11StateListRequest))
 	}
 	return interceptor(ctx, in, info, handler)
 }
@@ -5585,12 +5980,23 @@ func _KeystoreService_SSHRemoveAuthorizedKey_Handler(srv interface{}, ctx contex
 	return interceptor(ctx, in, info, handler)
 }
 
-func _KeystoreService_SSHConsole_Handler(srv interface{}, stream grpc.ServerStream) error {
-	return srv.(KeystoreServiceServer).SSHConsole(&grpc.GenericServerStream[SSHConsoleClientMsg, SSHConsoleServerMsg]{ServerStream: stream})
+func _KeystoreService_QueryAudit_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(QueryAuditRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(KeystoreServiceServer).QueryAudit(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: KeystoreService_QueryAudit_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(KeystoreServiceServer).QueryAudit(ctx, req.(*QueryAuditRequest))
+	}
+	return interceptor(ctx, in, info, handler)
 }
-
-// This type alias is provided for backwards compatibility with existing code that references the prior non-generic stream type by name.
-type KeystoreService_SSHConsoleServer = grpc.BidiStreamingServer[SSHConsoleClientMsg, SSHConsoleServerMsg]
 
 // KeystoreService_ServiceDesc is the grpc.ServiceDesc for KeystoreService service.
 // It's only intended for direct use with grpc.RegisterService,
@@ -6008,12 +6414,24 @@ var KeystoreService_ServiceDesc = grpc.ServiceDesc{
 			Handler:    _KeystoreService_DistributeShares_Handler,
 		},
 		{
+			MethodName: "Algorithms",
+			Handler:    _KeystoreService_Algorithms_Handler,
+		},
+		{
 			MethodName: "SubmitShare",
 			Handler:    _KeystoreService_SubmitShare_Handler,
 		},
 		{
 			MethodName: "ListShares",
 			Handler:    _KeystoreService_ListShares_Handler,
+		},
+		{
+			MethodName: "GetShare",
+			Handler:    _KeystoreService_GetShare_Handler,
+		},
+		{
+			MethodName: "DeleteShare",
+			Handler:    _KeystoreService_DeleteShare_Handler,
 		},
 		{
 			MethodName: "GetShareCollectionStatus",
@@ -6064,6 +6482,14 @@ var KeystoreService_ServiceDesc = grpc.ServiceDesc{
 			Handler:    _KeystoreService_ListClusterMembers_Handler,
 		},
 		{
+			MethodName: "AddClusterReplica",
+			Handler:    _KeystoreService_AddClusterReplica_Handler,
+		},
+		{
+			MethodName: "RemoveClusterReplica",
+			Handler:    _KeystoreService_RemoveClusterReplica_Handler,
+		},
+		{
 			MethodName: "PasswordAdd",
 			Handler:    _KeystoreService_PasswordAdd_Handler,
 		},
@@ -6098,6 +6524,30 @@ var KeystoreService_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "PasswordGenerate",
 			Handler:    _KeystoreService_PasswordGenerate_Handler,
+		},
+		{
+			MethodName: "PKCS11StatePut",
+			Handler:    _KeystoreService_PKCS11StatePut_Handler,
+		},
+		{
+			MethodName: "PKCS11StatePutIfAbsent",
+			Handler:    _KeystoreService_PKCS11StatePutIfAbsent_Handler,
+		},
+		{
+			MethodName: "PKCS11StateCAS",
+			Handler:    _KeystoreService_PKCS11StateCAS_Handler,
+		},
+		{
+			MethodName: "PKCS11StateGet",
+			Handler:    _KeystoreService_PKCS11StateGet_Handler,
+		},
+		{
+			MethodName: "PKCS11StateDelete",
+			Handler:    _KeystoreService_PKCS11StateDelete_Handler,
+		},
+		{
+			MethodName: "PKCS11StateList",
+			Handler:    _KeystoreService_PKCS11StateList_Handler,
 		},
 		{
 			MethodName: "CreateUser",
@@ -6199,14 +6649,11 @@ var KeystoreService_ServiceDesc = grpc.ServiceDesc{
 			MethodName: "SSHRemoveAuthorizedKey",
 			Handler:    _KeystoreService_SSHRemoveAuthorizedKey_Handler,
 		},
-	},
-	Streams: []grpc.StreamDesc{
 		{
-			StreamName:    "SSHConsole",
-			Handler:       _KeystoreService_SSHConsole_Handler,
-			ServerStreams: true,
-			ClientStreams: true,
+			MethodName: "QueryAudit",
+			Handler:    _KeystoreService_QueryAudit_Handler,
 		},
 	},
+	Streams:  []grpc.StreamDesc{},
 	Metadata: "pkg/api/grpc/proto/xkmsv1/xkms.proto",
 }

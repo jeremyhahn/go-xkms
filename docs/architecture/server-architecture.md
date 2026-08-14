@@ -591,7 +591,10 @@ quic:
 auth:
   enabled: true
   type: adaptive  # jwt, mtls, oidc, adaptive, composite
+  # Adaptive escalates to JWT once the first user exists, so a JWT
+  # verification key is required; startup fails without it.
   jwt:
+    public_key_file: /etc/xkms/jwt-public.pem
     issuer: "my-issuer"
     audience: ["xkms"]
 
@@ -1046,7 +1049,7 @@ spec:
 
 ### Related Documents
 - [KeyStore Interface](../../pkg/xkms/keystore.go)
-- [Backend Interface](../../pkg/backend/backend.go)
+- [Backend Interface](../../pkg/xkms/keystore.go) (`pkg/xkms/keystore.go:36`)
 - [Integration Tests](../../test/integration/api/)
 
 ### External Standards

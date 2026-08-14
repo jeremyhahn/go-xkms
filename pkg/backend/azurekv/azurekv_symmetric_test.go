@@ -17,6 +17,7 @@ package azurekv
 
 import (
 	"context"
+	"crypto/rand"
 	"crypto/x509"
 	"testing"
 
@@ -40,167 +41,118 @@ func testBackend(t *testing.T) (*Backend, *MockKeyVaultClient) {
 	return b, mockClient
 }
 
+// newLocalSymmetricKey builds the concrete symmetric key the backend returns,
+// with locally generated key material and the backend's real AEAD tracker
+// attached.
+//
+// GenerateSymmetricKey and GetSymmetricKey persist and fetch the key bytes
+// through the Azure Secrets API, which the key-vault mock does not implement;
+// that round trip is covered by the emulator-backed suite in
+// test/integration/azurekv. Everything the tests below assert — AES-GCM
+// encrypt/decrypt, AAD binding, nonce-reuse detection and the bytes limit —
+// runs locally in azureSymmetricKey, so injecting the key material directly
+// exercises the production code path without a cloud dependency.
+func newLocalSymmetricKey(t *testing.T, b *Backend, attrs *types.KeyAttributes) *azureSymmetricKey {
+	t.Helper()
+
+	keySize := attrs.SymmetricAlgorithm.KeySize()
+	if keySize == 0 {
+		t.Fatalf("algorithm %s reports no key size", attrs.SymmetricAlgorithm)
+	}
+
+	keyBytes := make([]byte, keySize/8)
+	if _, err := rand.Read(keyBytes); err != nil {
+		t.Fatalf("generate key material: %v", err)
+	}
+
+	// Mirror GenerateSymmetricKey: register the caller's AEAD policy, or the
+	// default when none was requested.
+	aeadOptions := types.DefaultAEADOptions()
+	if attrs.AEADOptions != nil {
+		aeadOptions = attrs.AEADOptions
+	}
+	if b.tracker != nil {
+		if err := b.tracker.SetAEADOptions(attrs.ID(), aeadOptions); err != nil {
+			t.Fatalf("set AEAD options: %v", err)
+		}
+	}
+
+	return &azureSymmetricKey{
+		algorithm: string(attrs.SymmetricAlgorithm),
+		keySize:   keySize,
+		backend:   b,
+		attrs:     attrs,
+		keyData:   keyBytes,
+	}
+}
+
 // TestSymmetricBackendImplementation verifies that Backend implements SymmetricBackend interface
 func TestSymmetricBackendImplementation(t *testing.T) {
 	var _ types.SymmetricKeyProvider = (*Backend)(nil)
 }
 
-// TestGenerateSymmetricKey tests symmetric key generation
-func TestGenerateSymmetricKey(t *testing.T) {
-	// Skip symmetric tests - they require Azure Secrets API which isn't mocked
-	t.Skip("Skipping: Symmetric encryption requires Azure Secrets API (not mocked)")
+// TestGenerateSymmetricKey_RejectsUnsupportedKeySize verifies GenerateSymmetricKey
+// validates the requested AES key size before it ever contacts Azure.
+//
+// The success path — generate, store as a Key Vault secret, read back — is
+// covered end to end against the Key Vault emulator by
+// test/integration/azurekv. Duplicating it here is impossible without a
+// Secrets API double and would add no coverage.
+func TestGenerateSymmetricKey_RejectsUnsupportedKeySize(t *testing.T) {
+	b, _ := testBackend(t)
+	defer func() { _ = b.Close() }()
 
-	tests := []struct {
-		name      string
-		keySize   int
-		algorithm types.SymmetricAlgorithm
-		wantErr   bool
-	}{
-		{
-			name:      "AES-128-GCM",
-			keySize:   128,
-			algorithm: types.SymmetricAES128GCM,
-			wantErr:   false,
-		},
-		{
-			name:      "AES-192-GCM",
-			keySize:   192,
-			algorithm: types.SymmetricAES192GCM,
-			wantErr:   false,
-		},
-		{
-			name:      "AES-256-GCM",
-			keySize:   256,
-			algorithm: types.SymmetricAES256GCM,
-			wantErr:   false,
-		},
-		{
-			name:      "Invalid key size",
-			keySize:   512,
-			algorithm: types.SymmetricAES256GCM,
-			wantErr:   true,
-		},
+	attrs := &types.KeyAttributes{
+		CN:                 "test-symmetric-key",
+		KeyType:            backend.KEY_TYPE_SECRET,
+		StoreType:          backend.STORE_AZUREKV,
+		SymmetricAlgorithm: types.SymmetricAlgorithm("aes-512-gcm"),
 	}
 
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
+	key, err := b.GenerateSymmetricKey(context.Background(), attrs)
+	if err == nil {
+		t.Fatal("GenerateSymmetricKey must reject an unsupported AES key size")
+	}
+	if key != nil {
+		t.Error("GenerateSymmetricKey must not return a key alongside an error")
+	}
+}
+
+// TestSupportedSymmetricAlgorithmsReportTheirKeySize pins the AES sizes the
+// backend accepts, which is the property GenerateSymmetricKey validates
+// against before storing anything.
+func TestSupportedSymmetricAlgorithmsReportTheirKeySize(t *testing.T) {
+	for _, tc := range []struct {
+		algorithm types.SymmetricAlgorithm
+		keySize   int
+	}{
+		{types.SymmetricAES128GCM, 128},
+		{types.SymmetricAES192GCM, 192},
+		{types.SymmetricAES256GCM, 256},
+	} {
+		t.Run(string(tc.algorithm), func(t *testing.T) {
+			if got := tc.algorithm.KeySize(); got != tc.keySize {
+				t.Errorf("KeySize() = %d, want %d", got, tc.keySize)
+			}
+
+			// The local key the backend hands back must carry that size.
 			b, _ := testBackend(t)
 			defer func() { _ = b.Close() }()
 
-			// Create key attributes
 			attrs := &types.KeyAttributes{
-				CN:                 "test-symmetric-key",
+				CN:                 "test-" + string(tc.algorithm),
 				KeyType:            backend.KEY_TYPE_SECRET,
 				StoreType:          backend.STORE_AZUREKV,
-				SymmetricAlgorithm: tt.algorithm,
+				SymmetricAlgorithm: tc.algorithm,
 			}
-
-			// Generate symmetric key
-			key, err := b.GenerateSymmetricKey(context.Background(), attrs)
-
-			if tt.wantErr {
-				if err == nil {
-					t.Errorf("Expected error but got none")
-				}
-				return
+			key := newLocalSymmetricKey(t, b, attrs)
+			if key.KeySize() != tc.keySize {
+				t.Errorf("key.KeySize() = %d, want %d", key.KeySize(), tc.keySize)
 			}
-
-			if err != nil {
-				t.Fatalf("Failed to generate symmetric key: %v", err)
-			}
-
-			if key == nil {
-				t.Fatal("Generated key is nil")
-			}
-
-			// Verify key properties
-			if key.Algorithm() != string(tt.algorithm) {
-				t.Errorf("Algorithm mismatch: got %s, want %s", key.Algorithm(), tt.algorithm)
-			}
-
-			if key.KeySize() != tt.keySize {
-				t.Errorf("Key size mismatch: got %d, want %d", key.KeySize(), tt.keySize)
-			}
-
-			// For Azure Key Vault, Raw() should return nil (key is not extractable)
-			rawKey, _ := key.Raw()
-			if rawKey != nil {
-				t.Error("Expected Raw() to return nil for Azure Key Vault symmetric key")
+			if key.Algorithm() != string(tc.algorithm) {
+				t.Errorf("key.Algorithm() = %s, want %s", key.Algorithm(), tc.algorithm)
 			}
 		})
-	}
-}
-
-// TestGenerateSymmetricKeyIdempotent verifies that generating the same key twice returns existing key
-func TestGenerateSymmetricKeyIdempotent(t *testing.T) {
-	t.Skip("Skipping: Symmetric encryption requires Azure Secrets API (not mocked)")
-	b, _ := testBackend(t)
-	defer func() { _ = b.Close() }()
-
-	attrs := &types.KeyAttributes{
-		CN:                 "test-idempotent-key",
-		KeyType:            backend.KEY_TYPE_SECRET,
-		StoreType:          backend.STORE_AZUREKV,
-		SymmetricAlgorithm: types.SymmetricAES256GCM,
-	}
-
-	// Generate first time
-	key1, err := b.GenerateSymmetricKey(context.Background(), attrs)
-	if err != nil {
-		t.Fatalf("Failed to generate symmetric key: %v", err)
-	}
-
-	// Generate second time with same attributes
-	key2, err := b.GenerateSymmetricKey(context.Background(), attrs)
-	if err != nil {
-		t.Fatalf("Failed to generate symmetric key on second attempt: %v", err)
-	}
-
-	// Verify both keys have the same properties
-	if key1.Algorithm() != key2.Algorithm() {
-		t.Errorf("Algorithm mismatch between keys: %s != %s", key1.Algorithm(), key2.Algorithm())
-	}
-
-	if key1.KeySize() != key2.KeySize() {
-		t.Errorf("Key size mismatch between keys: %d != %d", key1.KeySize(), key2.KeySize())
-	}
-}
-
-// TestGetSymmetricKey tests retrieving an existing symmetric key
-func TestGetSymmetricKey(t *testing.T) {
-	t.Skip("Skipping: Symmetric encryption requires Azure Secrets API (not mocked)")
-	b, _ := testBackend(t)
-	defer func() { _ = b.Close() }()
-
-	attrs := &types.KeyAttributes{
-		CN:                 "test-get-key",
-		KeyType:            backend.KEY_TYPE_SECRET,
-		StoreType:          backend.STORE_AZUREKV,
-		SymmetricAlgorithm: types.SymmetricAES256GCM,
-	}
-
-	// Generate key first
-	_, err := b.GenerateSymmetricKey(context.Background(), attrs)
-	if err != nil {
-		t.Fatalf("Failed to generate symmetric key: %v", err)
-	}
-
-	// Retrieve the key
-	key, err := b.GetSymmetricKey(context.Background(), attrs)
-	if err != nil {
-		t.Fatalf("Failed to get symmetric key: %v", err)
-	}
-
-	if key == nil {
-		t.Fatal("Retrieved key is nil")
-	}
-
-	if key.Algorithm() != string(types.SymmetricAES256GCM) {
-		t.Errorf("Algorithm mismatch: got %s, want %s", key.Algorithm(), types.SymmetricAES256GCM)
-	}
-
-	if key.KeySize() != 256 {
-		t.Errorf("Key size mismatch: got %d, want 256", key.KeySize())
 	}
 }
 
@@ -225,7 +177,6 @@ func TestGetSymmetricKeyNotFound(t *testing.T) {
 
 // TestSymmetricEncryptDecrypt tests encryption and decryption operations
 func TestSymmetricEncryptDecrypt(t *testing.T) {
-	t.Skip("Skipping: Symmetric encryption requires Azure Secrets API (not mocked)")
 	b, _ := testBackend(t)
 	defer func() { _ = b.Close() }()
 
@@ -236,17 +187,7 @@ func TestSymmetricEncryptDecrypt(t *testing.T) {
 		SymmetricAlgorithm: types.SymmetricAES256GCM,
 	}
 
-	// Generate symmetric key
-	_, err := b.GenerateSymmetricKey(context.Background(), attrs)
-	if err != nil {
-		t.Fatalf("Failed to generate symmetric key: %v", err)
-	}
-
-	// Get encrypter
-	encrypter, err := b.SymmetricEncrypter(context.Background(), attrs)
-	if err != nil {
-		t.Fatalf("Failed to get symmetric encrypter: %v", err)
-	}
+	encrypter := newLocalSymmetricKey(t, b, attrs)
 
 	// Test data
 	plaintext := []byte("Sensitive data to encrypt using Azure Key Vault")
@@ -290,7 +231,6 @@ func TestSymmetricEncryptDecrypt(t *testing.T) {
 
 // TestSymmetricEncryptDecryptWithAAD tests encryption/decryption with Additional Authenticated Data
 func TestSymmetricEncryptDecryptWithAAD(t *testing.T) {
-	t.Skip("Skipping: Symmetric encryption requires Azure Secrets API (not mocked)")
 	b, _ := testBackend(t)
 	defer func() { _ = b.Close() }()
 
@@ -301,17 +241,7 @@ func TestSymmetricEncryptDecryptWithAAD(t *testing.T) {
 		SymmetricAlgorithm: types.SymmetricAES256GCM,
 	}
 
-	// Generate symmetric key
-	_, err := b.GenerateSymmetricKey(context.Background(), attrs)
-	if err != nil {
-		t.Fatalf("Failed to generate symmetric key: %v", err)
-	}
-
-	// Get encrypter
-	encrypter, err := b.SymmetricEncrypter(context.Background(), attrs)
-	if err != nil {
-		t.Fatalf("Failed to get symmetric encrypter: %v", err)
-	}
+	encrypter := newLocalSymmetricKey(t, b, attrs)
 
 	plaintext := []byte("Secret message")
 	aad := []byte("context-information")
@@ -346,9 +276,52 @@ func TestSymmetricEncryptDecryptWithAAD(t *testing.T) {
 	}
 }
 
+// TestSymmetricDecrypt_WrongNonceLength verifies that Decrypt returns an
+// error instead of panicking when the encrypted data carries a nonce that
+// is not exactly the GCM nonce size. crypto/cipher.AEAD.Open panics on a
+// mismatched nonce length, so a caller-controlled nonce must be validated
+// before it reaches Open.
+func TestSymmetricDecrypt_WrongNonceLength(t *testing.T) {
+	b, _ := testBackend(t)
+	defer func() { _ = b.Close() }()
+
+	attrs := &types.KeyAttributes{
+		CN:                 "test-nonce-length-key",
+		KeyType:            backend.KEY_TYPE_SECRET,
+		StoreType:          backend.STORE_AZUREKV,
+		SymmetricAlgorithm: types.SymmetricAES256GCM,
+	}
+
+	encrypter := newLocalSymmetricKey(t, b, attrs)
+
+	encrypted, err := encrypter.Encrypt([]byte("Sensitive data"), nil)
+	if err != nil {
+		t.Fatalf("Encryption failed: %v", err)
+	}
+
+	tests := []struct {
+		name      string
+		nonceSize int
+	}{
+		{name: "16-byte AES-CBC-style IV", nonceSize: 16},
+		{name: "empty nonce", nonceSize: 0},
+		{name: "single byte nonce", nonceSize: 1},
+		{name: "oversized nonce", nonceSize: 32},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			tampered := *encrypted
+			tampered.Nonce = make([]byte, tt.nonceSize)
+			if _, err := encrypter.Decrypt(&tampered, nil); err == nil {
+				t.Fatalf("Decrypt() with %d-byte nonce should return an error, not panic", tt.nonceSize)
+			}
+		})
+	}
+}
+
 // TestSymmetricEncryptEmptyData tests encryption of empty data
 func TestSymmetricEncryptEmptyData(t *testing.T) {
-	t.Skip("Skipping: Symmetric encryption requires Azure Secrets API (not mocked)")
 	b, _ := testBackend(t)
 	defer func() { _ = b.Close() }()
 
@@ -359,17 +332,7 @@ func TestSymmetricEncryptEmptyData(t *testing.T) {
 		SymmetricAlgorithm: types.SymmetricAES256GCM,
 	}
 
-	// Generate symmetric key
-	_, err := b.GenerateSymmetricKey(context.Background(), attrs)
-	if err != nil {
-		t.Fatalf("Failed to generate symmetric key: %v", err)
-	}
-
-	// Get encrypter
-	encrypter, err := b.SymmetricEncrypter(context.Background(), attrs)
-	if err != nil {
-		t.Fatalf("Failed to get symmetric encrypter: %v", err)
-	}
+	encrypter := newLocalSymmetricKey(t, b, attrs)
 
 	// Encrypt empty data
 	plaintext := []byte{}
@@ -391,7 +354,6 @@ func TestSymmetricEncryptEmptyData(t *testing.T) {
 
 // TestSymmetricEncryptLargeData tests encryption of larger data
 func TestSymmetricEncryptLargeData(t *testing.T) {
-	t.Skip("Skipping: Symmetric encryption requires Azure Secrets API (not mocked)")
 	b, _ := testBackend(t)
 	defer func() { _ = b.Close() }()
 
@@ -402,17 +364,7 @@ func TestSymmetricEncryptLargeData(t *testing.T) {
 		SymmetricAlgorithm: types.SymmetricAES256GCM,
 	}
 
-	// Generate symmetric key
-	_, err := b.GenerateSymmetricKey(context.Background(), attrs)
-	if err != nil {
-		t.Fatalf("Failed to generate symmetric key: %v", err)
-	}
-
-	// Get encrypter
-	encrypter, err := b.SymmetricEncrypter(context.Background(), attrs)
-	if err != nil {
-		t.Fatalf("Failed to get symmetric encrypter: %v", err)
-	}
+	encrypter := newLocalSymmetricKey(t, b, attrs)
 
 	// Create 1MB of test data
 	plaintext := make([]byte, 1024*1024)
@@ -505,7 +457,6 @@ func TestCapabilitiesSymmetricEncryption(t *testing.T) {
 
 // TestAzureKVBackend_NonceReuse tests AEAD nonce reuse detection.
 func TestAzureKVBackend_NonceReuse(t *testing.T) {
-	t.Skip("Skipping: Symmetric encryption requires Azure Secrets API (not mocked)")
 	b, _ := testBackend(t)
 	defer func() { _ = b.Close() }()
 
@@ -522,16 +473,7 @@ func TestAzureKVBackend_NonceReuse(t *testing.T) {
 		},
 	}
 
-	_, err := b.GenerateSymmetricKey(context.Background(), attrs)
-	if err != nil {
-		t.Fatalf("Failed to generate key: %v", err)
-	}
-
-	// Get encrypter
-	encrypter, err := b.SymmetricEncrypter(context.Background(), attrs)
-	if err != nil {
-		t.Fatalf("Failed to get encrypter: %v", err)
-	}
+	encrypter := newLocalSymmetricKey(t, b, attrs)
 
 	// Generate a fixed nonce for testing
 	fixedNonce := make([]byte, 12)
@@ -543,7 +485,7 @@ func TestAzureKVBackend_NonceReuse(t *testing.T) {
 	}
 
 	// First encryption with fixed nonce - should succeed
-	_, err = encrypter.Encrypt(plaintext, opts)
+	_, err := encrypter.Encrypt(plaintext, opts)
 	if err != nil {
 		t.Fatalf("First encryption with fixed nonce failed: %v", err)
 	}
@@ -562,7 +504,6 @@ func TestAzureKVBackend_NonceReuse(t *testing.T) {
 
 // TestAzureKVBackend_BytesLimit tests AEAD bytes limit enforcement.
 func TestAzureKVBackend_BytesLimit(t *testing.T) {
-	t.Skip("Skipping: Symmetric encryption requires Azure Secrets API (not mocked)")
 	b, _ := testBackend(t)
 	defer func() { _ = b.Close() }()
 
@@ -580,22 +521,13 @@ func TestAzureKVBackend_BytesLimit(t *testing.T) {
 		},
 	}
 
-	_, err := b.GenerateSymmetricKey(context.Background(), attrs)
-	if err != nil {
-		t.Fatalf("Failed to generate key: %v", err)
-	}
-
-	// Get encrypter
-	encrypter, err := b.SymmetricEncrypter(context.Background(), attrs)
-	if err != nil {
-		t.Fatalf("Failed to get encrypter: %v", err)
-	}
+	encrypter := newLocalSymmetricKey(t, b, attrs)
 
 	// Encrypt up to the limit
 	plaintext := make([]byte, 50)
 
 	// First 50 bytes - should succeed
-	_, err = encrypter.Encrypt(plaintext, nil)
+	_, err := encrypter.Encrypt(plaintext, nil)
 	if err != nil {
 		t.Fatalf("First encryption failed: %v", err)
 	}

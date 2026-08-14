@@ -29,6 +29,7 @@ import (
 
 	grpcinternal "github.com/jeremyhahn/go-xkms/pkg/api/grpc"
 	pb "github.com/jeremyhahn/go-xkms/pkg/api/grpc/proto/xkmsv1"
+	"github.com/jeremyhahn/go-xkms/pkg/seal"
 	"github.com/jeremyhahn/go-xkms/pkg/xkms"
 	sdkssh "github.com/jeremyhahn/go-xkms/sdk/go/client/ssh"
 )
@@ -69,9 +70,16 @@ type GRPCConfig struct {
 	// the SSH RPCs return codes.Unavailable.
 	SSHClient sdkssh.Client
 
-	// SSHHostKeys is the host-key pin store forwarded to the keystore gRPC
-	// service for the SSHConsole stream's host verification. Optional.
-	SSHHostKeys sdkssh.HostKeyStore
+	// BarrierRegistry gates per-request tenant access the same way the
+	// network gRPC, REST, QUIC, and MCP transports do (see
+	// pkg/api/tenantgate). Unlike the network gRPC server -- which resolves
+	// the registry per call from grpcinternal.GetBarrierRegistry() so it can
+	// be reconfigured after that server starts -- this listener captures the
+	// registry once at construction time: the Unix socket is brought up by
+	// the same composition root that already holds the final
+	// *seal.BarrierRegistry, so there is no later reconfiguration to track.
+	// Nil disables tenant enforcement.
+	BarrierRegistry *seal.BarrierRegistry
 }
 
 // GRPCServer represents a gRPC server listening on a Unix domain socket
@@ -160,12 +168,20 @@ func (s *GRPCServer) Start() error {
 
 	s.logger.Info("gRPC Unix socket created", slog.String("path", s.config.SocketPath))
 
-	// Create gRPC server with options
+	// Create gRPC server with options. The tenant interceptors are the same
+	// constructors the network gRPC server uses (see
+	// pkg/api/grpc/interceptor_tenant.go); the Unix socket has no
+	// authentication interceptor and therefore ordinarily carries no
+	// identity, so tenant scoping is a no-op passthrough unless a caller
+	// context ever carries one -- kept for parity with every other transport
+	// rather than because a nil identity needs gating today.
 	opts := []grpc.ServerOption{
 		grpc.MaxRecvMsgSize(s.config.MaxRecvMsgSize),
 		grpc.MaxSendMsgSize(s.config.MaxSendMsgSize),
 		grpc.ConnectionTimeout(s.config.ConnectionTimeout),
 		grpc.MaxConcurrentStreams(s.config.MaxConcurrentStreams),
+		grpc.ChainUnaryInterceptor(grpcinternal.TenantUnaryInterceptor(s.config.BarrierRegistry, s.logger)),
+		grpc.ChainStreamInterceptor(grpcinternal.TenantStreamInterceptor(s.config.BarrierRegistry, s.logger)),
 	}
 
 	s.mu.Lock()
@@ -181,10 +197,15 @@ func (s *GRPCServer) Start() error {
 	}
 	s.server = grpc.NewServer(opts...)
 
-	// Register the keystore service with the injected XKMS service.
-	service := grpcinternal.NewService(nil, nil, s.config.XKMSService)
+	// Register the keystore service with the injected XKMS service. The nil
+	// authorizer disables RBAC the way every other RPC on this listener
+	// already treats it; WithLocalTrust makes that explicit for the
+	// privileged cluster-membership RPCs, whose fail-closed policy would
+	// otherwise deny them outright on a nil authorizer (see
+	// Service.authorizeClusterMutation). This listener's trust boundary is
+	// the Unix socket's file mode and directory permissions, not RBAC.
+	service := grpcinternal.NewService(nil, nil, s.config.XKMSService, grpcinternal.WithLocalTrust())
 	service.SetSSHClient(s.config.SSHClient)
-	service.SetSSHHostKeyStore(s.config.SSHHostKeys)
 	pb.RegisterKeystoreServiceServer(s.server, service)
 	s.mu.Unlock()
 

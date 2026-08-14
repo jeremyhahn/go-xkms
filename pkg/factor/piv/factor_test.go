@@ -15,6 +15,8 @@ package piv
 
 import (
 	"context"
+	"crypto/x509"
+	"encoding/pem"
 	"errors"
 	"testing"
 
@@ -25,6 +27,45 @@ import (
 func TestPIVFactor_Name(t *testing.T) {
 	if got := New(Config{}).Name(); got != FactorName {
 		t.Fatalf("Name() = %q, want %q", got, FactorName)
+	}
+}
+
+// TestPIVFactor_Enroll_UsesCanonicalIssuer locks in that Enroll's
+// certificate is issued through pkg/ca.Issuer (buildSelfSignedCert) with
+// selfSignedProfile, rather than a hand-rolled x509.CreateCertificate call.
+// It reads the profile's current KeyUsage live rather than hardcoding the
+// expected flags, so a change to selfSignedProfile is observable here
+// without editing this test.
+func TestPIVFactor_Enroll_UsesCanonicalIssuer(t *testing.T) {
+	ctx := context.Background()
+	f := New(Config{})
+
+	enrollment, err := f.Enroll(ctx, &qrdbsdk.AuthFactorEnrollParams{UserID: "custodian-profile"})
+	if err != nil {
+		t.Fatalf("Enroll: %v", err)
+	}
+
+	block, _ := pem.Decode(enrollment.PublicKey)
+	if block == nil {
+		t.Fatal("expected a PEM-encoded certificate")
+	}
+	cert, err := x509.ParseCertificate(block.Bytes)
+	if err != nil {
+		t.Fatalf("parse enrolled certificate: %v", err)
+	}
+
+	want := selfSignedProfile()
+	if cert.KeyUsage != want.KeyUsage() {
+		t.Errorf("KeyUsage = %v, want %v (from selfSignedProfile)", cert.KeyUsage, want.KeyUsage())
+	}
+	if len(cert.ExtKeyUsage) != 0 {
+		t.Errorf("ExtKeyUsage = %v, want none", cert.ExtKeyUsage)
+	}
+	if !cert.BasicConstraintsValid {
+		t.Error("expected BasicConstraintsValid true")
+	}
+	if cert.IsCA {
+		t.Error("expected IsCA false for a PIV factor enrollment certificate")
 	}
 }
 

@@ -842,3 +842,7 @@ func hexDecode(s string) ([]byte, error) {
 	s = strings.TrimPrefix(s, "0X")
 	return hex.DecodeString(s)
 }
+
+// frostEnabled reports whether FROST threshold-signature support was
+// compiled into this binary (the "frost" build tag).
+const frostEnabled = true

@@ -58,11 +58,24 @@ type Config struct {
 	// AuditLogger logs audit events.
 	AuditLogger AuditLogger
 
-	// Profiles maps profile names to profiles.
+	// Profiles maps profile names to profiles. An issuance Profile is a
+	// validation policy — which key algorithms, key usages and validity
+	// periods a request may ask for. What the issued certificate actually
+	// carries is decided by CertificateProfile.
 	Profiles map[string]Profile
 
 	// DefaultProfile is the default profile name.
 	DefaultProfile string
+
+	// CertificateProfile is the pkg/ca profile that decides the key usage,
+	// extended key usage and basic constraints of the certificates this
+	// issuer produces. A nil CertificateProfile uses the ACME leaf profile.
+	CertificateProfile ca.ProfileProvider
+
+	// IssuerIdentity supplies the CRL distribution points, OCSP responders and
+	// issuing-certificate URLs stamped onto issued certificates. A nil
+	// IssuerIdentity issues without those endpoints.
+	IssuerIdentity *ca.Identity
 
 	// Enabled controls whether issuance is enabled.
 	Enabled bool
@@ -162,8 +175,19 @@ func (i *issuer) Issue(ctx context.Context, req *Request) (*Result, error) {
 		_ = i.config.AuditLogger.LogIssuanceIntent(ctx, req, serial)
 	}
 
+	// Resolve the signing identity once. Every stage below — the lint
+	// certificate, the precertificate and the final certificate — is signed by
+	// the same issuer, so resolving it per stage would let a keystore that
+	// rotates or fails midway produce a chain of certificates signed by
+	// different keys.
+	certIssuer, err := i.certificateIssuer()
+	if err != nil {
+		i.logFailure(ctx, req, PhasePrecertSigning, err)
+		return nil, err
+	}
+
 	// Step 5: Build template and add precert poison extension
-	template, err := i.buildTemplate(req, serial)
+	template, err := i.buildTemplate(certIssuer, req, serial)
 	if err != nil {
 		i.logFailure(ctx, req, PhaseLinting, err)
 		return nil, err
@@ -173,7 +197,7 @@ func (i *issuer) Issue(ctx context.Context, req *Request) (*Result, error) {
 	precertTemplate := i.addPrecertPoison(template)
 
 	// Step 6: Create lint precertificate (with poison extension for linting)
-	lintCertDER, err := i.createLintDER(precertTemplate)
+	lintCertDER, err := certIssuer.Sign(rand.Reader, precertTemplate, precertTemplate.PublicKey)
 	if err != nil {
 		i.logFailure(ctx, req, PhaseLinting, err)
 		return nil, NewIssuanceError(PhaseLinting, "failed to create lint certificate", err)
@@ -188,7 +212,7 @@ func (i *issuer) Issue(ctx context.Context, req *Request) (*Result, error) {
 	}
 
 	// Step 8: Sign precertificate
-	precertDER, err := i.signCertificate(precertTemplate)
+	precertDER, err := certIssuer.Sign(rand.Reader, precertTemplate, precertTemplate.PublicKey)
 	if err != nil {
 		i.logFailure(ctx, req, PhasePrecertSigning, err)
 		return nil, NewIssuanceError(PhasePrecertSigning, "failed to sign precert", err)
@@ -243,14 +267,14 @@ func (i *issuer) Issue(ctx context.Context, req *Request) (*Result, error) {
 	finalTemplate := i.replacePoisonWithSCTs(template, scts)
 
 	// Step 12: Create lint certificate for final cert (for TBS verification)
-	finalLintDER, err := i.createLintDER(finalTemplate)
+	finalLintDER, err := certIssuer.Sign(rand.Reader, finalTemplate, finalTemplate.PublicKey)
 	if err != nil {
 		i.logFailure(ctx, req, PhaseFinalSigning, err)
 		return nil, NewIssuanceError(PhaseFinalSigning, "failed to create final lint cert", err)
 	}
 
 	// Step 13: Sign final certificate
-	finalCertDER, err := i.signCertificate(finalTemplate)
+	finalCertDER, err := certIssuer.Sign(rand.Reader, finalTemplate, finalTemplate.PublicKey)
 	if err != nil {
 		i.logFailure(ctx, req, PhaseFinalSigning, err)
 		return nil, NewIssuanceError(PhaseFinalSigning, "failed to sign final cert", err)
@@ -422,7 +446,12 @@ func (i *issuer) persistSerial(ctx context.Context, serial *big.Int, req *Reques
 }
 
 // buildTemplate builds the certificate template from the request.
-func (i *issuer) buildTemplate(req *Request, serial *big.Int) (*x509.Certificate, error) {
+//
+// The template is built by pkg/ca, the single implementer of CA certificate
+// construction in go-xkms, so that the key usage, extended key usage and
+// revocation endpoints an ACME subscriber certificate carries are decided in
+// the same place as they are for every other certificate this project issues.
+func (i *issuer) buildTemplate(certIssuer *ca.Issuer, req *Request, serial *big.Int) (*x509.Certificate, error) {
 	if req.Template != nil {
 		template := *req.Template
 		template.SerialNumber = serial
@@ -431,39 +460,63 @@ func (i *issuer) buildTemplate(req *Request, serial *big.Int) (*x509.Certificate
 		return &template, nil
 	}
 
-	// Build from CSR
 	csr := req.CSR
-	template := &x509.Certificate{
-		SerialNumber:       serial,
-		Subject:            csr.Subject,
-		NotBefore:          req.NotBefore,
-		NotAfter:           req.NotAfter,
-		DNSNames:           csr.DNSNames,
-		EmailAddresses:     csr.EmailAddresses,
-		IPAddresses:        csr.IPAddresses,
-		URIs:               csr.URIs,
-		PublicKey:          csr.PublicKey,
-		PublicKeyAlgorithm: csr.PublicKeyAlgorithm,
-		KeyUsage:           x509.KeyUsageDigitalSignature | x509.KeyUsageKeyEncipherment,
-		ExtKeyUsage:        []x509.ExtKeyUsage{x509.ExtKeyUsageServerAuth, x509.ExtKeyUsageClientAuth},
+	template, err := certIssuer.Template(&ca.CertificateSpec{
+		Serial:         serial,
+		Subject:        csr.Subject,
+		NotBefore:      req.NotBefore,
+		NotAfter:       req.NotAfter,
+		PublicKey:      csr.PublicKey,
+		Profile:        i.certificateProfile(),
+		DNSNames:       csr.DNSNames,
+		EmailAddresses: csr.EmailAddresses,
+		IPAddresses:    csr.IPAddresses,
+		URIs:           csr.URIs,
+	})
+	if err != nil {
+		return nil, NewIssuanceError(PhasePrecertSigning, "failed to build certificate template", err)
 	}
+
+	// The Certificate Transparency stages sign the template directly, so the
+	// subject public key has to travel on it rather than as a separate
+	// argument.
+	template.PublicKey = csr.PublicKey
+	template.PublicKeyAlgorithm = csr.PublicKeyAlgorithm
 
 	return template, nil
 }
 
-// createLintDER creates a DER-encoded certificate for linting.
-func (i *issuer) createLintDER(template *x509.Certificate) ([]byte, error) {
+// certificateProfile returns the pkg/ca profile that classifies the
+// certificates this issuer produces. A deployment that must issue something
+// other than a standard ACME subscriber certificate configures its own; the
+// default is the ACME leaf profile from the CA's registry.
+func (i *issuer) certificateProfile() ca.ProfileProvider {
+	if i.config.CertificateProfile != nil {
+		return i.config.CertificateProfile
+	}
+	return ca.NewACMELeafProfile()
+}
+
+// certificateIssuer resolves the signing identity for one issuance: the CA key
+// that signs, the certificate that appears as the issuer, and the identity
+// whose revocation and Authority Information Access endpoints are stamped onto
+// the result.
+func (i *issuer) certificateIssuer() (*ca.Issuer, error) {
 	issuerCert, err := i.config.Signer.Certificate()
 	if err != nil {
-		return nil, err
+		return nil, NewIssuanceError(PhasePrecertSigning, "failed to resolve issuer certificate", err)
 	}
 
 	signer, err := i.config.Signer.Signer()
 	if err != nil {
-		return nil, err
+		return nil, NewIssuanceError(PhasePrecertSigning, "failed to resolve issuer signer", err)
 	}
 
-	return x509.CreateCertificate(rand.Reader, template, issuerCert, template.PublicKey, signer)
+	return &ca.Issuer{
+		Signer:      signer,
+		Certificate: issuerCert,
+		Identity:    i.config.IssuerIdentity,
+	}, nil
 }
 
 // lintCertificate lints a DER-encoded certificate.
@@ -489,21 +542,6 @@ func (i *issuer) addPrecertPoison(template *x509.Certificate) *x509.Certificate 
 	precertTemplate.ExtraExtensions = append(precertTemplate.ExtraExtensions, poison)
 
 	return &precertTemplate
-}
-
-// signCertificate signs a certificate template.
-func (i *issuer) signCertificate(template *x509.Certificate) ([]byte, error) {
-	issuerCert, err := i.config.Signer.Certificate()
-	if err != nil {
-		return nil, err
-	}
-
-	signer, err := i.config.Signer.Signer()
-	if err != nil {
-		return nil, err
-	}
-
-	return x509.CreateCertificate(rand.Reader, template, issuerCert, template.PublicKey, signer)
 }
 
 // getIssuerChain returns the issuer certificate chain in DER format.

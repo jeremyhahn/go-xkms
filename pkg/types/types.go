@@ -1002,6 +1002,23 @@ type KeyAttributes struct {
 	// Default is false for security - keys must be explicitly marked as exportable.
 	Exportable bool
 
+	// Sensitive indicates the key's plaintext must never be released through
+	// the API, mirroring PKCS#11 CKA_SENSITIVE. It is distinct from Exportable
+	// (CKA_EXTRACTABLE): a sensitive key may still be wrapped out under another
+	// key, which is what Exportable governs, but its raw bytes may not be read.
+	//
+	// This is recorded here, on the backend's own key record, because it is the
+	// only copy a caller cannot edit. A PKCS#11 module keeps the same flag in
+	// its local object store to answer C_GetAttributeValue without a round
+	// trip, but that store is client-side state; a caller who can write to it
+	// could clear the flag and ask for the material. The service layer refuses
+	// on the strength of this field instead.
+	//
+	// The zero value is false so that key records written before this field
+	// existed keep the behaviour they had, which is the same rule Exportable
+	// already applies to them.
+	Sensitive bool
+
 	// TPMAttributes contains TPM-specific configuration
 	TPMAttributes *TPMAttributes
 
@@ -1620,20 +1637,101 @@ type SymmetricKey interface {
 	Raw() ([]byte, error)
 }
 
+// CipherMode selects the block cipher mode of operation for a symmetric
+// encrypt/decrypt call. The zero value selects the key's native AEAD mode
+// (AES-GCM or ChaCha20-Poly1305/XChaCha20-Poly1305, chosen by the key's
+// SymmetricAlgorithm); "cbc", "cbc-pad" and "ecb" select non-AEAD AES modes
+// and only apply to AES keys. Unlike SymmetricAlgorithm, CipherMode is an
+// operation-time parameter, not a key attribute: PKCS#11 selects the
+// mechanism (CKM_AES_GCM vs CKM_AES_CBC vs CKM_AES_CBC_PAD vs CKM_AES_ECB)
+// per C_EncryptInit call against the same CKK_AES key object, and this
+// mirrors that contract.
+type CipherMode string
+
+const (
+	// CipherModeECB is AES-ECB (PKCS#11's CKM_AES_ECB). Each block is
+	// enciphered independently, so the plaintext (encrypt) or ciphertext
+	// (decrypt) must already be a whole number of AES blocks (16 bytes) and
+	// no IV is used.
+	//
+	// SECURITY: ECB is deterministic and stateless. Identical plaintext
+	// blocks encipher to identical ciphertext blocks under the same key, so
+	// it leaks the block-level structure of whatever it encrypts and offers
+	// no integrity protection whatsoever. It exists here because PKCS#11
+	// defines the mechanism and applications use it as a building block for
+	// key transport; it is not a general-purpose choice for message
+	// confidentiality. Prefer the default AEAD mode.
+	CipherModeECB CipherMode = "ecb"
+
+	// CipherModeCBC is unpadded AES-CBC (PKCS#11's CKM_AES_CBC). The
+	// plaintext (encrypt) or ciphertext (decrypt) must already be a whole
+	// number of AES blocks (16 bytes); the caller is responsible for
+	// padding/unpadding.
+	CipherModeCBC CipherMode = "cbc"
+
+	// CipherModeCBCPad is AES-CBC with PKCS#7 padding (PKCS#11's
+	// CKM_AES_CBC_PAD, RFC 5652 section 6.3).
+	CipherModeCBCPad CipherMode = "cbc-pad"
+)
+
 // EncryptOptions contains options for symmetric encryption operations.
 type EncryptOptions struct {
-	// AdditionalData is authenticated but not encrypted (AEAD)
+	// AdditionalData is authenticated but not encrypted (AEAD). Only valid
+	// with the default (AEAD) Mode; AES-CBC has no authenticated-data input.
 	AdditionalData []byte
 
-	// Nonce is the nonce/IV to use. If nil, a random nonce is generated.
-	// For GCM, this should be 12 bytes (96 bits) unless you have a specific reason.
+	// Nonce is the nonce to use for AEAD modes (the default empty Mode). If
+	// nil, a random nonce is generated. For GCM, this should be 12 bytes
+	// (96 bits) unless you have a specific reason. Ignored for AES-CBC
+	// modes, which use IV instead.
 	Nonce []byte
+
+	// Mode selects the cipher mode of operation. The zero value selects the
+	// key's native AEAD mode (the pre-existing default behavior).
+	Mode CipherMode
+
+	// IV is the AES-CBC initialization vector, exactly aes.BlockSize (16)
+	// bytes. Unlike a GCM Nonce, an IV carries no authentication role: CBC's
+	// confidentiality only requires the IV be unpredictable, not secret, but
+	// reuse still leaks equal-prefix plaintext information across messages.
+	// Ignored for AEAD modes. If empty on encrypt, a random IV is generated
+	// and returned in EncryptedData.IV.
+	IV []byte
+
+	// TagSize is the AEAD authentication tag length in bytes. The zero value
+	// selects the cipher's full-length tag, which is what NIST SP 800-38D
+	// appendix C recommends absent a supporting analysis.
+	//
+	// SP 800-38D section 5.2.1.2 defines a t-bit GCM tag as the leading t
+	// bits of the full 128-bit tag, so AES-GCM admits 12, 13, 14, 15 and 16
+	// bytes. Poly1305 has no equivalent construction and accepts only its
+	// full 16-byte tag. An implementation that cannot produce the requested
+	// length must return an error: substituting a different length yields a
+	// ciphertext whose peer cannot authenticate it, and the substitution is
+	// invisible to the caller that asked.
+	//
+	// The non-AEAD CBC modes produce no tag and refuse any non-zero value.
+	TagSize int
 }
 
 // DecryptOptions contains options for symmetric decryption operations.
 type DecryptOptions struct {
-	// AdditionalData is authenticated data that must match encryption (AEAD)
+	// AdditionalData is authenticated data that must match encryption (AEAD).
+	// Only valid with the default (AEAD) Mode.
 	AdditionalData []byte
+
+	// Mode selects the cipher mode of operation. The zero value selects the
+	// key's native AEAD mode (the pre-existing default behavior). Must match
+	// the Mode used to produce the ciphertext.
+	Mode CipherMode
+
+	// TagSize is the AEAD authentication tag length in bytes carried by
+	// EncryptedData.Tag. The zero value selects the cipher's full-length tag.
+	// It must equal the EncryptOptions.TagSize used to produce the
+	// ciphertext: NIST SP 800-38D section 5.2.2 verifies a t-bit tag against
+	// a tag recomputed at t bits, so a verifier that assumes the full length
+	// rejects every truncated tag as a forgery.
+	TagSize int
 }
 
 // EncryptedData represents the result of an encryption operation.
@@ -1642,12 +1740,20 @@ type EncryptedData struct {
 	// Ciphertext is the encrypted data
 	Ciphertext []byte
 
-	// Nonce is the nonce/IV used for encryption (must be stored with ciphertext)
+	// Nonce is the AEAD nonce used for encryption (must be stored with
+	// ciphertext). Populated for the default AEAD modes; empty for AES-CBC,
+	// which populates IV instead.
 	Nonce []byte
 
 	// Tag is the authentication tag (for AEAD modes like GCM)
 	// For GCM, this is typically 16 bytes and may be appended to Ciphertext
 	Tag []byte
+
+	// IV is the AES-CBC initialization vector used for encryption (must be
+	// stored with ciphertext to decrypt it). Populated for CipherModeCBC and
+	// CipherModeCBCPad; empty for the default AEAD modes, which populate
+	// Nonce instead.
+	IV []byte
 
 	// Algorithm identifies the encryption algorithm used
 	Algorithm string
@@ -1720,6 +1826,22 @@ const (
 	// KDFAlgorithmX963 uses ANSI X9.63 Key Derivation Function.
 	// Compatible with many cryptographic libraries and standards.
 	KDFAlgorithmX963 KDFAlgorithm = "X963"
+
+	// KDFAlgorithmRaw applies no key derivation function: the shared secret
+	// is the derived key, truncated to KeyLength.
+	//
+	// It is PKCS#11's CKD_NULL (v3.2, CK_ECDH1_DERIVE_PARAMS: "With the key
+	// derivation function CKD_NULL, pSharedData must be NULL and
+	// ulSharedDataLen must be zero"), which is the form TLS key exchange and
+	// OpenSSL's pkcs11-provider request, and therefore the most common ECDH
+	// derivation rather than an exotic one.
+	//
+	// It is a named value and not the zero value on purpose. An empty
+	// Algorithm means "the caller did not choose", which Validate resolves to
+	// HKDF; if raw were spelled the same way, every caller that asked for the
+	// unmodified secret would silently receive an HKDF expansion of it under a
+	// success response, and no peer could reproduce the key.
+	KDFAlgorithmRaw KDFAlgorithm = "RAW"
 )
 
 // String returns the string representation of the KDF algorithm.
@@ -1731,7 +1853,7 @@ func (k KDFAlgorithm) String() string {
 func (k KDFAlgorithm) IsValid() bool {
 	switch k {
 	case KDFAlgorithmHKDF, KDFAlgorithmSP800108Counter, KDFAlgorithmSP800108Feedback,
-		KDFAlgorithmSP80056A, KDFAlgorithmX963:
+		KDFAlgorithmSP80056A, KDFAlgorithmX963, KDFAlgorithmRaw:
 		return true
 	default:
 		return false
@@ -1752,16 +1874,41 @@ type KDFParams struct {
 	Hash string
 
 	// Salt is the optional salt value for the KDF.
-	// For HKDF, this is used in the extract phase.
-	// For SP800-108, this may be incorporated into the context.
+	// HKDF only, where it is used in the extract phase; the SP 800-108 modes
+	// and the concatenation KDFs have no salt and reject it.
 	// Can be nil for unsalted derivation.
 	Salt []byte
 
 	// Info is the optional context and application specific information.
-	// For HKDF, this is used in the expand phase.
-	// For SP800-108, this is the Label || 0x00 || Context || L structure.
+	// Used by HKDF (expand phase), ANSI X9.63 (SharedInfo), and NIST
+	// SP 800-56A (OtherInfo). The SP 800-108 modes reject it; supply Label
+	// and Context instead.
 	// Can be nil if no additional context is needed.
 	Info []byte
+
+	// Label is the SP 800-108 Label, the purpose string bound into the fixed
+	// input data as Label || 0x00 || Context || [L]_2. SP 800-108 only.
+	// May be empty.
+	Label []byte
+
+	// Context is the SP 800-108 Context, the application-specific data bound
+	// into the fixed input data. SP 800-108 only. May be empty.
+	Context []byte
+
+	// CounterLength is the width in bits of the SP 800-108 iteration counter
+	// [i]_r. Must be 8, 16, 24, or 32. Zero selects the 32-bit default.
+	// SP 800-108 only.
+	CounterLength int
+
+	// CounterLocation places the SP 800-108 iteration counter within the
+	// fixed input data: "before", "middle", or "after". Empty selects
+	// "before". SP 800-108 only.
+	CounterLocation string
+
+	// IV is the SP 800-108 Feedback Mode initial value K(0). Feedback mode
+	// only; any other algorithm rejects it. May be empty, in which case the
+	// first PRF invocation chains an empty value.
+	IV []byte
 
 	// KeyLength specifies the desired output key length in bytes.
 	// Must be positive and appropriate for the intended use.
@@ -1788,11 +1935,13 @@ type KDFParams struct {
 
 // Validate validates the KDF parameters and sets defaults.
 func (p *KDFParams) Validate() error {
-	// Set defaults
+	// Set defaults. The hash default is applied only where a hash is an input:
+	// KDFAlgorithmRaw runs no pseudorandom function, so naming a digest for it
+	// would advertise a derivation step that does not happen.
 	if p.Algorithm == "" {
 		p.Algorithm = KDFAlgorithmHKDF
 	}
-	if p.Hash == "" {
+	if p.Hash == "" && p.Algorithm != KDFAlgorithmRaw {
 		p.Hash = "SHA-256"
 	}
 
@@ -1801,12 +1950,35 @@ func (p *KDFParams) Validate() error {
 		return &errs.Message{Msg: fmt.Sprintf("invalid KDF algorithm: %s", p.Algorithm)}
 	}
 
-	// Validate hash
-	switch p.Hash {
-	case "SHA-256", "SHA-384", "SHA-512", "SHA3-256", "SHA3-384", "SHA3-512":
-		// Valid hash algorithms
-	default:
-		return &errs.Message{Msg: fmt.Sprintf("unsupported hash algorithm: %s", p.Hash)}
+	// KDFAlgorithmRaw has no bridge to resolve: it consumes no hash and no
+	// KDF input at all, so everything below would reject it for lacking an
+	// approved digest. Its own applicability check runs in rawKDFApplicable.
+	if p.Algorithm == KDFAlgorithmRaw {
+		if err := p.rawKDFApplicable(); err != nil {
+			return err
+		}
+		if p.KeyLength <= 0 {
+			return &errs.Message{Msg: fmt.Sprintf("key length must be positive, got %d", p.KeyLength)}
+		}
+		if !p.DerivationMode.IsValid() {
+			return &errs.Message{Msg: fmt.Sprintf("invalid derivation mode: %d", p.DerivationMode)}
+		}
+		return nil
+	}
+
+	// The approved hash set is a property of the KDF construction, so the
+	// bridge has to be resolved before the hash can be checked against it:
+	// the concatenation KDFs accept the hashes ANSI X9.63 / SP 800-56A and
+	// PKCS#11 name, which the HMAC-based KDFs do not.
+	bridge, ok := kdfBridges[p.Algorithm]
+	if !ok {
+		return &errs.Detail{Err: ErrUnsupportedKDFAlgorithm, Detail: p.Algorithm.String()}
+	}
+	if _, ok := bridge.hash(p.Hash); !ok {
+		return &errs.Detail{
+			Err:    ErrUnsupportedKDFHash,
+			Detail: p.Hash + " is not an approved hash for " + p.Algorithm.String(),
+		}
 	}
 
 	// Validate key length
@@ -1820,6 +1992,14 @@ func (p *KDFParams) Validate() error {
 	// Validate derivation mode
 	if !p.DerivationMode.IsValid() {
 		return &errs.Message{Msg: fmt.Sprintf("invalid derivation mode: %d", p.DerivationMode)}
+	}
+
+	// Reject parameters the selected algorithm does not consume. A KDF that
+	// drops a caller-supplied Label, Context, Salt, or IV derives a key from
+	// inputs the caller never chose, so the mismatch is reported here rather
+	// than at derivation time.
+	if err := bridge.checkApplicability(p); err != nil {
+		return err
 	}
 
 	return nil
@@ -2552,60 +2732,96 @@ type SealingKeyProvider interface {
 // Helper Functions
 // =============================================================================
 
-// AvailableHashes returns a map of all supported hash functions.
-// Supports both standard Go crypto.Hash.String() format (e.g., "SHA-256")
-// and common aliases (e.g., "sha256", "SHA256").
+// AvailableHashes returns the hash functions this binary may use, keyed by
+// standard Go crypto.Hash.String() format (e.g. "SHA-256") and by common
+// aliases (e.g. "sha256", "SHA256"). It is the single name-to-hash table for
+// the signing, certificate, and TPM attestation paths; pkg/tpm2/store re-exports
+// it rather than keeping a second copy.
+//
+// Two filters apply, both of which make the function's name true:
+//
+// Linkage. Entries whose implementation is not linked into the binary are
+// removed. crypto.Hash.New panics rather than erroring for an unlinked hash,
+// and several names below (MD4, RIPEMD-160, MD5+SHA1 and the BLAKE2 family)
+// are only linked when something imports their package. Returning them turned
+// a caller-supplied algorithm name — which arrives from API request bodies —
+// into a process-killing panic instead of an unsupported-algorithm error.
+//
+// Strength. The collision-broken digests (MD4, MD5, SHA-1, MD5+SHA1,
+// RIPEMD-160) are removed unless the process-wide weak-hash policy re-admits
+// them; see SetAllowWeakHashes. A signature or certificate over a broken
+// digest is forgeable, and NIST SP 800-131A Rev. 2 disallows all five for
+// signature generation, so a caller who names one gets an unsupported-algorithm
+// error rather than a signature that cannot be relied on. Operators who need
+// them for legacy interop set crypto.allow_weak_hashes, which server.New
+// applies to this policy at startup and which the daemon warns about, naming
+// the re-admitted digests, on every start. FIPS mode ignores the setting.
+//
+// The KDF path does not use this table: key derivation has its own,
+// purpose-scoped allowlist in kdf.go, because SP 800-131A Rev. 2 keeps SHA-1
+// acceptable for non-signature uses such as the ANSI X9.63 concatenation KDF.
 func AvailableHashes() map[string]crypto.Hash {
-	return map[string]crypto.Hash{
-		// Standard format (crypto.Hash.String())
-		crypto.MD4.String():         crypto.MD4,
-		crypto.MD5.String():         crypto.MD5,
-		crypto.SHA1.String():        crypto.SHA1,
-		crypto.SHA224.String():      crypto.SHA224,
-		crypto.SHA256.String():      crypto.SHA256,
-		crypto.SHA384.String():      crypto.SHA384,
-		crypto.SHA512.String():      crypto.SHA512,
-		crypto.MD5SHA1.String():     crypto.MD5SHA1,
-		crypto.RIPEMD160.String():   crypto.RIPEMD160,
-		crypto.SHA3_224.String():    crypto.SHA3_224,
-		crypto.SHA3_256.String():    crypto.SHA3_256,
-		crypto.SHA3_384.String():    crypto.SHA3_384,
-		crypto.SHA3_512.String():    crypto.SHA3_512,
-		crypto.SHA512_224.String():  crypto.SHA512_224,
-		crypto.SHA512_256.String():  crypto.SHA512_256,
-		crypto.BLAKE2s_256.String(): crypto.BLAKE2s_256,
-		crypto.BLAKE2b_256.String(): crypto.BLAKE2b_256,
-		crypto.BLAKE2b_384.String(): crypto.BLAKE2b_384,
-		crypto.BLAKE2b_512.String(): crypto.BLAKE2b_512,
-		// Common aliases (lowercase without hyphens)
-		"md4":        crypto.MD4,
-		"md5":        crypto.MD5,
-		"sha1":       crypto.SHA1,
-		"sha224":     crypto.SHA224,
-		"sha256":     crypto.SHA256,
-		"sha384":     crypto.SHA384,
-		"sha512":     crypto.SHA512,
-		"sha3-224":   crypto.SHA3_224,
-		"sha3-256":   crypto.SHA3_256,
-		"sha3-384":   crypto.SHA3_384,
-		"sha3-512":   crypto.SHA3_512,
-		"sha512-224": crypto.SHA512_224,
-		"sha512-256": crypto.SHA512_256,
-		// Uppercase without hyphens
-		"MD4":        crypto.MD4,
-		"MD5":        crypto.MD5,
-		"SHA1":       crypto.SHA1,
-		"SHA224":     crypto.SHA224,
-		"SHA256":     crypto.SHA256,
-		"SHA384":     crypto.SHA384,
-		"SHA512":     crypto.SHA512,
-		"SHA3_224":   crypto.SHA3_224,
-		"SHA3_256":   crypto.SHA3_256,
-		"SHA3_384":   crypto.SHA3_384,
-		"SHA3_512":   crypto.SHA3_512,
-		"SHA512_224": crypto.SHA512_224,
-		"SHA512_256": crypto.SHA512_256,
+	available := make(map[string]crypto.Hash, len(allKnownHashes))
+	for name, h := range allKnownHashes {
+		if hashPermitted(h) {
+			available[name] = h
+		}
 	}
+	return available
+}
+
+// allKnownHashes is every hash name this package recognizes, including ones
+// whose implementation may not be linked. AvailableHashes filters it; do not
+// use it directly to construct a hash.
+var allKnownHashes = map[string]crypto.Hash{
+	// Standard format (crypto.Hash.String())
+	crypto.MD4.String():         crypto.MD4,
+	crypto.MD5.String():         crypto.MD5,
+	crypto.SHA1.String():        crypto.SHA1,
+	crypto.SHA224.String():      crypto.SHA224,
+	crypto.SHA256.String():      crypto.SHA256,
+	crypto.SHA384.String():      crypto.SHA384,
+	crypto.SHA512.String():      crypto.SHA512,
+	crypto.MD5SHA1.String():     crypto.MD5SHA1,
+	crypto.RIPEMD160.String():   crypto.RIPEMD160,
+	crypto.SHA3_224.String():    crypto.SHA3_224,
+	crypto.SHA3_256.String():    crypto.SHA3_256,
+	crypto.SHA3_384.String():    crypto.SHA3_384,
+	crypto.SHA3_512.String():    crypto.SHA3_512,
+	crypto.SHA512_224.String():  crypto.SHA512_224,
+	crypto.SHA512_256.String():  crypto.SHA512_256,
+	crypto.BLAKE2s_256.String(): crypto.BLAKE2s_256,
+	crypto.BLAKE2b_256.String(): crypto.BLAKE2b_256,
+	crypto.BLAKE2b_384.String(): crypto.BLAKE2b_384,
+	crypto.BLAKE2b_512.String(): crypto.BLAKE2b_512,
+	// Common aliases (lowercase without hyphens)
+	"md4":        crypto.MD4,
+	"md5":        crypto.MD5,
+	"sha1":       crypto.SHA1,
+	"sha224":     crypto.SHA224,
+	"sha256":     crypto.SHA256,
+	"sha384":     crypto.SHA384,
+	"sha512":     crypto.SHA512,
+	"sha3-224":   crypto.SHA3_224,
+	"sha3-256":   crypto.SHA3_256,
+	"sha3-384":   crypto.SHA3_384,
+	"sha3-512":   crypto.SHA3_512,
+	"sha512-224": crypto.SHA512_224,
+	"sha512-256": crypto.SHA512_256,
+	// Uppercase without hyphens
+	"MD4":        crypto.MD4,
+	"MD5":        crypto.MD5,
+	"SHA1":       crypto.SHA1,
+	"SHA224":     crypto.SHA224,
+	"SHA256":     crypto.SHA256,
+	"SHA384":     crypto.SHA384,
+	"SHA512":     crypto.SHA512,
+	"SHA3_224":   crypto.SHA3_224,
+	"SHA3_256":   crypto.SHA3_256,
+	"SHA3_384":   crypto.SHA3_384,
+	"SHA3_512":   crypto.SHA3_512,
+	"SHA512_224": crypto.SHA512_224,
+	"SHA512_256": crypto.SHA512_256,
 }
 
 // AvailableSignatureAlgorithms returns a map of all supported signature algorithms.
@@ -2792,54 +3008,53 @@ func ParseKeyType(s string) KeyType {
 	}
 }
 
-// ParseHash converts a hash algorithm name string to a crypto.Hash.
-// Returns 0 (invalid) if the string is not recognized.
+// ParseHash converts a caller-supplied hash algorithm name to a crypto.Hash.
+// It returns 0 when the name is unrecognized, when the named hash is not
+// linked into this binary, or when it is one of the collision-broken digests
+// the weak-hash policy refuses (see SetAllowWeakHashes). A zero result always
+// means "this binary will not hash with that name"; it never means "hash with
+// something else", so callers must surface it rather than substitute a default
+// silently.
+//
+// Name matching is case-insensitive and treats "-" and "_" as equivalent, so
+// "SHA-256", "sha256" and "SHA_256" all resolve. The table is derived from
+// allKnownHashes so there is exactly one name-to-hash mapping in this package.
 func ParseHash(s string) crypto.Hash {
-	s = strings.ToUpper(strings.TrimSpace(s))
-	s = strings.ReplaceAll(s, "-", "_")
-
-	switch s {
-	case "MD4":
-		return crypto.MD4
-	case "MD5":
-		return crypto.MD5
-	case "SHA1", "SHA_1":
-		return crypto.SHA1
-	case "SHA224", "SHA_224":
-		return crypto.SHA224
-	case "SHA256", "SHA_256":
-		return crypto.SHA256
-	case "SHA384", "SHA_384":
-		return crypto.SHA384
-	case "SHA512", "SHA_512":
-		return crypto.SHA512
-	case "MD5SHA1":
-		return crypto.MD5SHA1
-	case "RIPEMD160":
-		return crypto.RIPEMD160
-	case "SHA3_224":
-		return crypto.SHA3_224
-	case "SHA3_256":
-		return crypto.SHA3_256
-	case "SHA3_384":
-		return crypto.SHA3_384
-	case "SHA3_512":
-		return crypto.SHA3_512
-	case "SHA512_224":
-		return crypto.SHA512_224
-	case "SHA512_256":
-		return crypto.SHA512_256
-	case "BLAKE2S_256":
-		return crypto.BLAKE2s_256
-	case "BLAKE2B_256":
-		return crypto.BLAKE2b_256
-	case "BLAKE2B_384":
-		return crypto.BLAKE2b_384
-	case "BLAKE2B_512":
-		return crypto.BLAKE2b_512
-	default:
+	h, ok := normalizedHashNames[normalizeHashName(s)]
+	if !ok || !hashPermitted(h) {
 		return 0
 	}
+	return h
+}
+
+// normalizeHashName folds a hash name to the single spelling
+// normalizedHashNames is keyed by: upper-cased, trimmed, with "-" mapped to
+// "_" so that "SHA-256", "sha256" and "SHA_256" collide.
+func normalizeHashName(s string) string {
+	return strings.ReplaceAll(strings.ToUpper(strings.TrimSpace(s)), "-", "_")
+}
+
+// hashNameSpellings carries the two accepted spellings that normalizing
+// allKnownHashes cannot produce, because crypto.Hash.String renders them with
+// punctuation ("MD5+SHA1", "RIPEMD-160") that historical callers omit.
+var hashNameSpellings = map[string]crypto.Hash{
+	"MD5SHA1":   crypto.MD5SHA1,
+	"RIPEMD160": crypto.RIPEMD160,
+}
+
+// normalizedHashNames is the ParseHash lookup table, derived from
+// allKnownHashes so a hash added there is parseable without a second edit.
+var normalizedHashNames = buildNormalizedHashNames()
+
+func buildNormalizedHashNames() map[string]crypto.Hash {
+	names := make(map[string]crypto.Hash, len(allKnownHashes)+len(hashNameSpellings))
+	for name, h := range allKnownHashes {
+		names[normalizeHashName(name)] = h
+	}
+	for name, h := range hashNameSpellings {
+		names[normalizeHashName(name)] = h
+	}
+	return names
 }
 
 // ParseSignatureAlgorithm converts a signature algorithm string to x509.SignatureAlgorithm.

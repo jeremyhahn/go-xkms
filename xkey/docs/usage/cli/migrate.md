@@ -1,5 +1,11 @@
 # CLI Reference: migrate Command Group
 
+> **Scope:** this page documents the go-xkms **server** CLI `xkmsctl migrate`
+> (source: `cmd/xkmsctl/`), **not** the `xkey` desktop CLI. It lives under
+> `xkey/docs/` for historical reasons.
+> There is no `xkey` equivalent. For the xkey command tree see
+> [the xkey CLI reference](README.md).
+
 The `migrate` command group provides tools for migrating cryptographic keys between different backend storage systems. It supports safe, verified migrations with comprehensive validation and rollback capabilities.
 
 ## Overview

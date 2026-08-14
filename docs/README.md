@@ -46,9 +46,8 @@ First-boot server initialization ceremony:
 
 ### [Auth](auth/)
 Authentication, authorization, and bootstrap:
-- [Bootstrap Authentication](auth/bootstrap.md) - First-admin flow driven against the embedded qrdb node's first-boot
+- [Bootstrap Authentication](auth/bootstrap.md) - Cert-based admin enrollment: the `xkmsd init` ceremony, officer claim protocol, and `xkmsctl admin` mTLS/FIDO2 enrollment
 - [Layering](auth/layering.md) - Identity (qrdb) vs key-domain (xkms) split, Factor adapter composition
-- [MFA Policy](auth/mfa-policy.md) - Operation-level MFA requirements
 
 ### [WebAuthn](webauthn/)
 - [WebAuthn / FIDO2 Relying Party](webauthn/README.md) - Canonical RP implementation consumed by every binary in the stack via the QuicBaaS SDK re-export
@@ -59,6 +58,11 @@ Authentication, authorization, and bootstrap:
 
 ### [Seal](seal/)
 - [Barrier Encryption Architecture](seal/README.md) - qrdb owns the barrier and StrategyRegistry; xkms owns every hardware/cloud strategy
+
+### [Custodian](custodian/)
+- [Custodian Groups](custodian/README.md) - M-of-N roster naming who holds each Shamir share; service API, REST routes, and `xkmsctl custodian`
+- [Share Collection Plane](custodian/shares.md) - submitting, inspecting, and removing returned shares
+- [Key Share Persistence](sharestore/README.md) - client-side storage of received shares
 
 ### [Usage](../xkey/docs/usage/)
 CLI usage guides and tutorials have moved to [xkey/docs/usage/](../xkey/docs/usage/README.md).
@@ -152,7 +156,7 @@ resp, _ := client.GenerateKey(ctx, &xkms.GenerateKeyRequest{
 })
 ```
 
-See the [Getting Started](usage/getting-started.md) guide for all initialization patterns.
+See the [Getting Started](../xkey/docs/usage/getting-started.md) guide for all initialization patterns.
 
 ## Key Features
 
@@ -195,7 +199,10 @@ make integration-test
 
 ## Contributing
 
-See [CONTRIBUTING.md](../CONTRIBUTING.md) for contribution guidelines.
+There is no `CONTRIBUTING.md` yet. The contribution guidelines currently live in
+the [Contributing section of the root README](../README.md#contributing), and the
+coding, testing, and documentation rules agents and contributors must follow are
+in [CLAUDE.md](../CLAUDE.md).
 
 ## License
 

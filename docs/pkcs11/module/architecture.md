@@ -124,6 +124,20 @@ Handle characteristics:
 - Never reused within a session
 - Session-scoped invalidation
 
+#### Access Control
+
+Every object operation an application can reach is authorized through an `AccessContext{Session, LoggedIn,
+ReadWrite}`, built fresh per call from the live session. `GetObjectFor` is the mandatory lookup path for
+application-driven access -- it hides private objects from an unauthenticated session behind
+`CKR_OBJECT_HANDLE_INVALID` -- while the unchecked `GetObject` is reserved for internal callers such as restoring
+persisted objects at startup. See [Security: Access Control Model](security.md#access-control-model) for the full
+authorization rules and [Attribute Protection](security.md#attribute-protection) for how individual attributes are
+guarded.
+
+> **Known limitation:** the `ObjectManager` is currently shared across all slots the module exposes, so objects do
+> not carry a slot identity. See [Security: Known Limitation](security.md#known-limitation-objects-are-not-slot-scoped)
+> for the details and the reason it has not yet been fixed.
+
 ### Crypto Manager
 
 Routes cryptographic operations to the backend:
@@ -188,18 +202,16 @@ Locking hierarchy:
 PKCS#11 memory conventions:
 
 1. **Caller-allocated buffers**: Output uses caller-provided buffers
-2. **Two-call pattern**: First call returns required size, second gets data
+2. **Two-call pattern**: A length query (NULL buffer) or a `CKR_BUFFER_TOO_SMALL` result returns the required size
+   without terminating the operation, so the caller can retry with a correctly sized buffer.
 
-```go
-// First call: get required size
-sig, rv := module.Sign(session, data)  // sig == nil returns size
-
-// Second call: get actual data
-sig, rv = module.Sign(session, data)   // sig contains signature
-```
-
-The Go implementation handles this internally, allocating and returning
-slices as needed.
+The two-call convention is implemented at the C ABI boundary (`cmd/pkcs11-module/exports.go`), not inside the Go
+`*Module` methods. A terminal operation such as `Sign` computes its result once and caches it
+(`cacheResult`/`cachedResult` in `pkg/pkcs11/module/module.go`) rather than terminating on success; the operation
+stays active until the C export calls `FinishOperation` after it has copied the output into the caller's buffer.
+Repeated calls -- from a length query followed by the real call, or from a `CKR_BUFFER_TOO_SMALL` retry -- return
+the identical cached bytes without re-invoking the backend. See [API: Two-Call Output Convention](api.md#two-call-output-convention)
+for the exact sequence.
 
 ## Error Handling
 
@@ -448,8 +460,8 @@ data, rv := module.VerifyRecover(session, signature)
 ```
 
 Supported mechanisms:
-- CKM_RSA_X_509 (raw RSA)
-- CKM_RSA_PKCS (PKCS#1 v1.5 padding)
+- `CKM_RSA_PKCS` (PKCS#1 v1.5 padding) -- both directions, sign-recover and verify-recover
+- `CKM_RSA_X_509` (raw RSA) -- **verify-recover only**. It carries `CKF_VERIFY_RECOVER` and nothing else, so `C_SignRecoverInit` naming it is refused with `CKR_MECHANISM_INVALID`; see [deviations.md](deviations.md#no-raw-rsa-signing-or-decryption). It is also unadvertised, so `C_GetMechanismList` does not offer it.
 
 ### Dual-Function Operations
 
@@ -495,12 +507,12 @@ All PKCS#11 v2.40 and v3.0 functions are fully implemented:
 - ✅ Verification: C_VerifyInit, C_Verify, C_VerifyUpdate, C_VerifyFinal, C_VerifyRecoverInit, C_VerifyRecover
 - ✅ Dual-function: C_DigestEncryptUpdate, C_DecryptDigestUpdate, C_SignEncryptUpdate, C_DecryptVerifyUpdate
 - ✅ Key Management: C_GenerateKey, C_GenerateKeyPair, C_WrapKey, C_UnwrapKey, C_DeriveKey
-- ✅ Random: C_SeedRandom (returns CKR_RANDOM_SEED_NOT_SUPPORTED), C_GenerateRandom
+- ✅ Random: C_SeedRandom, C_GenerateRandom. `C_SeedRandom` validates its entry-point preconditions -- `CKR_CRYPTOKI_NOT_INITIALIZED`, `CKR_SESSION_HANDLE_INVALID`, and `CKR_ARGUMENTS_BAD` for an empty seed -- then accepts the seed and returns `CKR_OK` without mixing it in, which v3.2 permits when the RNG is already sufficiently random. It draws from the operating system CSPRNG, which does not accept external seeding.
 - ✅ Parallel: C_GetFunctionStatus, C_CancelFunction (legacy, return CKR_FUNCTION_NOT_PARALLEL)
-- ✅ Slot Events: C_WaitForSlotEvent
+- ✅ Slot Events: C_WaitForSlotEvent -- `CKF_DONT_BLOCK` is required. Without it the call is refused with `CKR_FUNCTION_NOT_SUPPORTED`, because the token is virtual and generates no events, so a blocking wait could never be satisfied; with it, `CKR_NO_EVENT`.
 
 ### v3.0 Extensions (24 functions)
-- ✅ Interface: C_GetInterfaceList, C_GetInterface
+- ✅ Interface: C_GetInterfaceList (v2.x, v3.0, v3.2), C_GetInterface -- name `"PKCS 11"` only, and any non-zero `flags` (including `CKF_INTERFACE_FORK_SAFE`) is `CKR_ARGUMENTS_BAD`; this module is not fork-safe
 - ✅ Session: C_LoginUser, C_SessionCancel
 - ✅ Message Encryption: C_MessageEncryptInit, C_EncryptMessage, C_EncryptMessageBegin, C_EncryptMessageNext, C_MessageEncryptFinal
 - ✅ Message Decryption: C_MessageDecryptInit, C_DecryptMessage, C_DecryptMessageBegin, C_DecryptMessageNext, C_MessageDecryptFinal

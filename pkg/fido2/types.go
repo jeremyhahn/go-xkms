@@ -34,6 +34,9 @@ var (
 	ErrPINRequired           = errors.New("fido2: PIN required")
 	ErrInvalidPIN            = errors.New("fido2: invalid PIN")
 	ErrPINBlocked            = errors.New("fido2: PIN blocked")
+	ErrPINNotSet             = errors.New("fido2: no PIN is set on this authenticator")
+	ErrPINAuthInvalid        = errors.New("fido2: pinUvAuthParam verification failed")
+	ErrPINAuthBlocked        = errors.New("fido2: pinUvAuthParam blocked; power-cycle the authenticator")
 	ErrUVRequired            = errors.New("fido2: user verification required")
 	ErrInvalidRelyingParty   = errors.New("fido2: invalid relying party")
 	ErrInvalidClientDataHash = errors.New("fido2: invalid client data hash")
@@ -45,6 +48,34 @@ var (
 	ErrAssertionOptionsRequired  = errors.New("assertion options JSON required")
 	ErrAssertionChallengeMissing = errors.New("assertion options missing challenge")
 	ErrAssertionRPIDMissing      = errors.New("assertion options missing rpId")
+
+	// Authenticator data parsing errors, surfaced by
+	// ParseAuthDataExtensions when the authenticator data supplied by a
+	// device (or relayed by a client) does not conform to the structure
+	// defined in WebAuthn Level 3 6.1.
+	ErrAuthDataTooShort              = errors.New("fido2: authenticator data shorter than the fixed 37-byte header")
+	ErrInvalidAttestedCredentialData = errors.New("fido2: malformed attested credential data")
+	ErrInvalidCOSEKey                = errors.New("fido2: malformed credential public key")
+	ErrInvalidExtensions             = errors.New("fido2: malformed authenticator extension data")
+	ErrAuthDataTrailingBytes         = errors.New("fido2: trailing bytes after authenticator data")
+
+	// PIN/UV auth protocol errors, surfaced while establishing the ECDH
+	// shared secret that protects hmac-secret salts and outputs
+	// (CTAP 2.1 6.5).
+	ErrUnsupportedPINUVAuthProtocol = errors.New("fido2: unsupported PIN/UV auth protocol")
+	ErrKeyAgreementFailed           = errors.New("fido2: PIN/UV auth key agreement failed")
+	ErrPINTokenFailed               = errors.New("fido2: failed to obtain pinUvAuthToken")
+	ErrInvalidCOSEKeyAgreement      = errors.New("fido2: malformed PIN/UV auth key agreement key")
+	ErrInvalidPINUVAuthPlaintext    = errors.New("fido2: malformed PIN/UV auth plaintext")
+	ErrInvalidPINUVAuthCiphertext   = errors.New("fido2: malformed PIN/UV auth ciphertext")
+
+	// hmac-secret extension errors, surfaced by DeriveSecret when the
+	// authenticator does not return a usable hmac-secret output. Every one
+	// of these is terminal: no key is derived, because a key that is not
+	// the authenticator's secret is not hardware-bound.
+	ErrHMACSecretMissing       = errors.New("fido2: authenticator returned no hmac-secret extension output")
+	ErrHMACSecretOutputInvalid = errors.New("fido2: malformed hmac-secret extension output")
+	ErrAuthenticationConfigNil = errors.New("fido2: authentication configuration required")
 )
 
 // CTAP2 Command codes
@@ -297,19 +328,60 @@ type EnrollmentResult struct {
 	Created      time.Time
 }
 
+// DerivationMode selects how DeriveSecret obtains an hmac-secret value.
+// The zero value is the CTAP2 derivation, so a caller must opt in
+// explicitly to anything else.
+type DerivationMode uint8
+
+const (
+	// DerivationModeCTAP2 extracts the genuine hmac-secret extension
+	// output and decrypts it with the PIN/UV auth shared secret, as
+	// specified by CTAP 2.1 12.5. It is the only mode that yields a
+	// hardware-bound key.
+	DerivationModeCTAP2 DerivationMode = iota
+
+	// DerivationModeLegacyInsecure reproduces the derivation go-xkms used
+	// before the hmac-secret extension was parsed correctly. It reads raw
+	// bytes from a fixed offset in the authenticator data and, when that
+	// yields nothing, computes SHA-256(credentialID || salt) — a value
+	// derived entirely from non-secret material that is normally stored
+	// beside the encrypted volume. A key produced in this mode is NOT
+	// hardware-bound and can be recomputed without the authenticator.
+	//
+	// It exists for one purpose: unlocking a volume that was enrolled with
+	// the broken derivation, once, so it can be re-enrolled with
+	// DerivationModeCTAP2. It is deprecated and will be removed.
+	//
+	// Deprecated: migration only. Re-enroll the volume immediately.
+	DerivationModeLegacyInsecure
+)
+
 // AuthenticationConfig for FIDO2 authentication
 type AuthenticationConfig struct {
 	RelyingPartyID          string
 	CredentialID            []byte
 	Salt                    []byte
+	Salt2                   []byte
 	Challenge               []byte
 	RequireUserVerification bool
 	Timeout                 time.Duration
+
+	// DerivationMode selects the hmac-secret derivation. It is tagged out
+	// of every serialization format on purpose: the insecure legacy mode
+	// must never become reachable through a configuration file, only
+	// through an explicit in-process decision such as a CLI flag.
+	DerivationMode DerivationMode `yaml:"-" json:"-" mapstructure:"-"`
 }
 
 // AuthenticationResult contains authentication data
 type AuthenticationResult struct {
-	HMACSecret     []byte
+	// HMACSecret is the hmac-secret output for Salt.
+	HMACSecret []byte
+
+	// HMACSecret2 is the hmac-secret output for Salt2, populated only when
+	// a second salt was requested.
+	HMACSecret2 []byte
+
 	SignCount      uint32
 	UserPresent    bool
 	UserVerified   bool

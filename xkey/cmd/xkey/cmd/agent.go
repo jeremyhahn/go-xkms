@@ -39,6 +39,7 @@ var (
 	ErrAgentCertWriteFailed    = errors.New("agent: failed to write certificate")
 	ErrAgentDeviceRemoveFailed = errors.New("agent: failed to remove device")
 	ErrAgentMissingDeviceName  = errors.New("agent: device name is required")
+	ErrAgentStatusFailed       = errors.New("agent: failed to read agent status")
 )
 
 // AgentCmd is the parent command for server-side agent operations.
@@ -66,9 +67,19 @@ var agentStartCmd = &cobra.Command{
 accepts connections from enrolled remote agents and proxies their
 requests to local xKey services.
 
+Enrolling agents receive certificates signed by the xkmsd certificate
+authority, so a reachable xkmsd server is required: set --xkmsd-url or
+XKMSD_URL. The command fails closed when no authority is reachable; xkey
+never signs certificates locally.
+
+The process records its PID and bound listen address under the xKey home
+directory so 'xkey agent status' and 'xkey agent stop' can find it, and
+removes that record on shutdown. A second 'agent start' against the same
+home fails with an already-running error.
+
 Examples:
-  xkey agent start
-  xkey agent start --listen :9443
+  xkey agent start --xkmsd-url unix:///var/run/xkmsd.sock
+  xkey agent start --xkmsd-url grpcs://xkms.example.com:8443 --listen :9443
   xkey agent start --tls-cert server.pem --tls-key server-key.pem`,
 	RunE: runAgentStart,
 }
@@ -79,6 +90,16 @@ var agentStopCmd = &cobra.Command{
 	Short: "Stop the agent server",
 	Long: `Stop the running agent server gracefully.
 
+The server started by 'xkey agent start' records its process ID and bound
+listen address in a run-state file under the xKey home directory. This
+command reads that record, verifies the process is still a live agent
+server, sends SIGTERM, and waits up to 10 seconds for a graceful exit
+before escalating to SIGKILL. The run-state file is removed once the
+process is gone.
+
+When no agent server is running the command reports that and exits with a
+non-zero status; it never claims to have stopped a server it did not stop.
+
 Examples:
   xkey agent stop`,
 	RunE: runAgentStop,
@@ -88,7 +109,12 @@ Examples:
 var agentStatusCmd = &cobra.Command{
 	Use:   "status",
 	Short: "Show agent server status and connections",
-	Long: `Show the status of the agent server and list all active connections.
+	Long: `Show whether the agent server is running - including its process ID
+and bound listen address - followed by the list of enrolled agents.
+
+A run-state file left behind by a crashed server is detected (the recorded
+process is gone or has been recycled by an unrelated program), reported as
+not running, and removed.
 
 Examples:
   xkey agent status`,
@@ -97,6 +123,7 @@ Examples:
 
 // runAgentStart starts the agent server.
 func runAgentStart(cmd *cobra.Command, args []string) error {
+	out := cmd.OutOrStdout()
 	listenAddr, _ := cmd.Flags().GetString("listen")
 	tlsCert, _ := cmd.Flags().GetString("tls-cert")
 	tlsKey, _ := cmd.Flags().GetString("tls-key")
@@ -116,6 +143,28 @@ func runAgentStart(cmd *cobra.Command, args []string) error {
 
 	logger := slog.Default()
 
+	// Claim the run-state file before binding anything so a second
+	// "agent start" fails fast with a clear error instead of racing the
+	// listener bind.
+	state, err := newAgentServerState(cfg.ListenAddress, tlsCert != "")
+	if err != nil {
+		return err
+	}
+	if err := claimAgentServerState(state); err != nil {
+		return err
+	}
+	stateReleased := false
+	releaseState := func() {
+		if stateReleased {
+			return
+		}
+		stateReleased = true
+		if releaseErr := releaseAgentServerState(state.PID); releaseErr != nil {
+			logger.Warn("failed to remove agent server state file", "error", releaseErr)
+		}
+	}
+	defer releaseState()
+
 	// Create enrollment store.
 	storeDir := agentStoreDir()
 	store, err := agent.NewFileStore(storeDir, logger)
@@ -123,9 +172,21 @@ func runAgentStart(cmd *cobra.Command, args []string) error {
 		return &SentinelCauseError{Sentinel: ErrAgentStartFailed, Cause: err}
 	}
 
-	// Create enrollment service with a placeholder CA.
-	// In production, the CA service would be wired to the barrier-backed CA.
-	enrollment, err := agent.NewEnrollmentService(cfg, &placeholderCA{}, store, logger)
+	// Connect the enrollment service to the xkmsd certificate authority.
+	// Agent enrollment issues real client certificates, so the server
+	// fails closed when no authority is reachable.
+	certValidityDays, _ := cmd.Flags().GetInt("cert-validity-days")
+	ca, err := newAgentCA(agentCertProfile(cmd), certValidityDays)
+	if err != nil {
+		return err
+	}
+	defer func() {
+		if closeErr := ca.Close(); closeErr != nil {
+			logger.Warn("failed to close certificate authority client", "error", closeErr)
+		}
+	}()
+
+	enrollment, err := agent.NewEnrollmentService(cfg, ca, store, logger)
 	if err != nil {
 		return &SentinelCauseError{Sentinel: ErrAgentStartFailed, Cause: err}
 	}
@@ -139,12 +200,23 @@ func runAgentStart(cmd *cobra.Command, args []string) error {
 		return &SentinelCauseError{Sentinel: ErrAgentStartFailed, Cause: err}
 	}
 
-	fmt.Printf("Agent server started\n")
-	fmt.Printf("  Listen: %s\n", server.Addr())
+	// Record the resolved bound address (the configured address may use
+	// an ephemeral port) so "agent status" and "agent stop" can report it.
+	state.ListenAddr = server.Addr()
+	if err := updateAgentServerState(state); err != nil {
+		if stopErr := server.Stop(); stopErr != nil {
+			logger.Error("failed to stop agent server after state update failure", "error", stopErr)
+		}
+		return err
+	}
+
+	fmt.Fprintf(out, "Agent server started\n")
+	fmt.Fprintf(out, "  PID:    %d\n", state.PID)
+	fmt.Fprintf(out, "  Listen: %s\n", server.Addr())
 	if tlsCert != "" {
-		fmt.Printf("  TLS:    enabled (mTLS)\n")
+		fmt.Fprintf(out, "  TLS:    enabled (mTLS)\n")
 	} else {
-		fmt.Printf("  TLS:    disabled (development mode)\n")
+		fmt.Fprintf(out, "  TLS:    disabled (development mode)\n")
 	}
 
 	// Wait for signal.
@@ -156,98 +228,114 @@ func runAgentStart(cmd *cobra.Command, args []string) error {
 
 	select {
 	case <-sigCh:
-		fmt.Println("\nShutting down agent server...")
+		fmt.Fprintln(out, "\nShutting down agent server...")
 	case <-ctx.Done():
 	}
 
 	return server.Stop()
 }
 
-// runAgentStop stops the agent server.
+// runAgentStop stops the running agent server, returning
+// ErrAgentServerNotRunning (a non-zero exit) when there is nothing to stop.
 func runAgentStop(cmd *cobra.Command, args []string) error {
-	fmt.Println("Agent server stopped")
+	out := cmd.OutOrStdout()
+	state, forced, err := stopAgentServer(agentStopGracePeriod, agentKillGracePeriod)
+	if err != nil {
+		return err
+	}
+
+	fmt.Fprintln(out, "Agent server stopped")
+	fmt.Fprintf(out, "  PID:    %d\n", state.PID)
+	fmt.Fprintf(out, "  Listen: %s\n", state.ListenAddr)
+	if forced {
+		fmt.Fprintf(out, "  Signal: SIGKILL (graceful shutdown exceeded %s)\n", agentStopGracePeriod)
+	} else {
+		fmt.Fprintf(out, "  Signal: SIGTERM\n")
+	}
 	return nil
 }
 
-// runAgentStatus shows the agent server status.
+// runAgentStatus reports whether the agent server process is running and
+// lists the agents enrolled against this master.
 func runAgentStatus(cmd *cobra.Command, args []string) error {
+	out := cmd.OutOrStdout()
+	state, running, err := agentServerStatus()
+	if err != nil {
+		return err
+	}
+
+	if running {
+		fmt.Fprintln(out, "Agent server: running")
+		fmt.Fprintf(out, "  PID:     %d\n", state.PID)
+		fmt.Fprintf(out, "  Listen:  %s\n", state.ListenAddr)
+		if state.TLS {
+			fmt.Fprintf(out, "  TLS:     enabled (mTLS)\n")
+		} else {
+			fmt.Fprintf(out, "  TLS:     disabled (development mode)\n")
+		}
+		fmt.Fprintf(out, "  Started: %s\n", state.StartedAt.Format(time.RFC3339))
+	} else {
+		fmt.Fprintln(out, "Agent server: not running")
+	}
+	fmt.Fprintln(out)
+
 	storeDir := agentStoreDir()
 	logger := slog.Default()
 
 	store, err := agent.NewFileStore(storeDir, logger)
 	if err != nil {
-		fmt.Println("Agent server: not running")
-		return nil
+		return &SentinelCauseError{Sentinel: ErrAgentStatusFailed, Cause: err}
 	}
 
 	agents, err := store.ListAgents()
 	if err != nil {
-		fmt.Println("Agent server: not running")
-		return nil
+		return &SentinelCauseError{Sentinel: ErrAgentStatusFailed, Cause: err}
 	}
 
 	if len(agents) == 0 {
-		fmt.Println("No enrolled agents")
+		fmt.Fprintln(out, "No enrolled agents")
 		return nil
 	}
 
-	fmt.Printf("Enrolled Agents (%d):\n\n", len(agents))
+	fmt.Fprintf(out, "Enrolled Agents (%d):\n\n", len(agents))
 	for _, a := range agents {
-		fmt.Printf("  ID:          %s\n", a.ID)
-		fmt.Printf("  Name:        %s\n", a.Name)
-		fmt.Printf("  Status:      %s\n", a.Status)
-		fmt.Printf("  Enrolled:    %s\n", a.EnrolledAt.Format(time.RFC3339))
-		fmt.Printf("  Last Seen:   %s\n", a.LastSeen.Format(time.RFC3339))
+		fmt.Fprintf(out, "  ID:          %s\n", a.ID)
+		fmt.Fprintf(out, "  Name:        %s\n", a.Name)
+		fmt.Fprintf(out, "  Status:      %s\n", a.Status)
+		fmt.Fprintf(out, "  Enrolled:    %s\n", a.EnrolledAt.Format(time.RFC3339))
+		fmt.Fprintf(out, "  Last Seen:   %s\n", a.LastSeen.Format(time.RFC3339))
 		if a.Address != "" {
-			fmt.Printf("  Address:     %s\n", a.Address)
+			fmt.Fprintf(out, "  Address:     %s\n", a.Address)
 		}
-		fmt.Println()
+		fmt.Fprintln(out)
 	}
 
 	return nil
 }
 
-// placeholderCA is a minimal CA service for initial development. It will
-// be replaced by the barrier-backed CA once the enrollment gRPC service
-// definitions are available.
-type placeholderCA struct{}
-
-func (c *placeholderCA) SignCSR(csrPEM []byte) ([]byte, error) {
-	return []byte("-----BEGIN CERTIFICATE-----\nplaceholder\n-----END CERTIFICATE-----\n"), nil
-}
-
-func (c *placeholderCA) GetCACertificate() ([]byte, error) {
-	return []byte("-----BEGIN CERTIFICATE-----\nplaceholder-ca\n-----END CERTIFICATE-----\n"), nil
-}
-
-func (c *placeholderCA) RevokeCertificate(serialNumber string) error {
-	return nil
+// agentDataDir returns the base directory holding all agent state. It
+// uses the resolved xKey home when available (the same resolution the
+// rest of the CLI performs in PersistentPreRunE), falling back to
+// $HOME/.xkey/data and finally to a temporary directory.
+func agentDataDir() string {
+	if home := resolvedHome; home != nil {
+		return filepath.Join(home.DataDir(), "agent")
+	}
+	homeDir, err := os.UserHomeDir()
+	if err != nil {
+		return filepath.Join(os.TempDir(), "xkey", "agent")
+	}
+	return filepath.Join(homeDir, ".xkey", "data", "agent")
 }
 
 // agentStoreDir returns the directory for agent enrollment data.
 func agentStoreDir() string {
-	home := resolvedHome
-	if home != nil {
-		return filepath.Join(home.DataDir(), "agent", "enrollments")
-	}
-	homeDir, err := os.UserHomeDir()
-	if err != nil {
-		return filepath.Join(os.TempDir(), "xkey", "agent", "enrollments")
-	}
-	return filepath.Join(homeDir, ".xkey", "data", "agent", "enrollments")
+	return filepath.Join(agentDataDir(), "enrollments")
 }
 
 // agentCertDir returns the directory for agent certificates.
 func agentCertDir() string {
-	home := resolvedHome
-	if home != nil {
-		return filepath.Join(home.DataDir(), "agent", "certs")
-	}
-	homeDir, err := os.UserHomeDir()
-	if err != nil {
-		return filepath.Join(os.TempDir(), "xkey", "agent", "certs")
-	}
-	return filepath.Join(homeDir, ".xkey", "data", "agent", "certs")
+	return filepath.Join(agentDataDir(), "certs")
 }
 
 func init() {
@@ -262,5 +350,10 @@ func init() {
 	agentStartCmd.Flags().String("listen", "", "Listen address (default: :9443)")
 	agentStartCmd.Flags().String("tls-cert", "", "TLS certificate file")
 	agentStartCmd.Flags().String("tls-key", "", "TLS private key file")
-	agentStartCmd.Flags().String("tls-ca", "", "TLS CA certificate file for client verification")
+	agentStartCmd.Flags().String("tls-ca", "",
+		"TLS CA certificate file used to verify connecting agents (the xkmsd trust bundle comes from XKMSD_TLS_CA)")
+	agentStartCmd.Flags().String("cert-profile", agentCertProfileDefault,
+		"xkmsd CA profile used to sign enrolling agent CSRs")
+	agentStartCmd.Flags().Int("cert-validity-days", 0,
+		"validity period for issued agent certificates (0 uses the CA default)")
 }

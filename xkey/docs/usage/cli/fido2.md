@@ -1,10 +1,17 @@
 # FIDO2 CLI Commands
 
+> **This page documents `xkmsctl fido2`** — the go-xkms **server** CLI
+> (`cmd/xkmsctl/fido2.go`), which drives *external* FIDO2 hardware security
+> keys over CTAP2/HID. It is **not** `xkey fido2`, which runs xKey's own
+> virtual authenticator. For that, see
+> [../../fido2/overview.md](../../fido2/overview.md) and
+> [../../fido2/daemon-configuration.md](../../fido2/daemon-configuration.md).
+
 The `fido2` command group provides tools for managing FIDO2/WebAuthn security keys for authentication and key derivation.
 
 ## Overview
 
-FIDO2 (Fast Identity Online 2) is a passwordless authentication standard that uses hardware security keys. The go-xkms FIDO2 CLI enables:
+FIDO2 (Fast Identity Online 2) is a passwordless authentication standard that uses hardware security keys. The `xkmsctl fido2` command group enables:
 
 - Device enumeration and discovery
 - Credential registration with security keys
@@ -32,7 +39,7 @@ List all connected FIDO2-compatible security keys.
 
 **Usage:**
 ```bash
-go-xkms fido2 list-devices
+xkmsctl fido2 list-devices
 ```
 
 **Output:**
@@ -49,7 +56,7 @@ FIDO2 Devices:
 
 **JSON Output:**
 ```bash
-go-xkms fido2 list-devices --output json
+xkmsctl fido2 list-devices --output json
 ```
 ```json
 {
@@ -80,7 +87,7 @@ Wait for a FIDO2 security key to be connected to the system.
 
 **Usage:**
 ```bash
-go-xkms fido2 wait-device [flags]
+xkmsctl fido2 wait-device [flags]
 ```
 
 **Flags:**
@@ -90,12 +97,12 @@ go-xkms fido2 wait-device [flags]
 
 Wait up to 60 seconds (default):
 ```bash
-go-xkms fido2 wait-device
+xkmsctl fido2 wait-device
 ```
 
 Wait up to 2 minutes:
 ```bash
-go-xkms fido2 wait-device --timeout 2m
+xkmsctl fido2 wait-device --timeout 2m
 ```
 
 **Output:**
@@ -116,7 +123,7 @@ Register a new FIDO2 credential for a user. This creates a credential that can b
 
 **Usage:**
 ```bash
-go-xkms fido2 register <username> [flags]
+xkmsctl fido2 register <username> [flags]
 ```
 
 **Arguments:**
@@ -134,12 +141,12 @@ go-xkms fido2 register <username> [flags]
 
 Basic registration:
 ```bash
-go-xkms fido2 register alice
+xkmsctl fido2 register alice
 ```
 
 Registration with custom relying party:
 ```bash
-go-xkms fido2 register alice \
+xkmsctl fido2 register alice \
   --rp-id example.com \
   --rp-name "Example App" \
   --display-name "Alice Smith"
@@ -147,12 +154,12 @@ go-xkms fido2 register alice \
 
 Registration requiring PIN verification:
 ```bash
-go-xkms fido2 register alice --user-verification
+xkmsctl fido2 register alice --user-verification
 ```
 
 Registration with specific device:
 ```bash
-go-xkms fido2 register alice --device /dev/hidraw0
+xkmsctl fido2 register alice --device /dev/hidraw0
 ```
 
 **Output:**
@@ -180,7 +187,7 @@ Created: 2025-12-24T10:30:45Z
 
 **JSON Output:**
 ```bash
-go-xkms fido2 register alice --output json
+xkmsctl fido2 register alice --output json
 ```
 ```json
 {
@@ -216,7 +223,7 @@ Authenticate using a previously registered FIDO2 credential and derive a secret 
 
 **Usage:**
 ```bash
-go-xkms fido2 authenticate [flags]
+xkmsctl fido2 authenticate [flags]
 ```
 
 **Flags:**
@@ -232,14 +239,14 @@ go-xkms fido2 authenticate [flags]
 
 Basic authentication (with base64-encoded values):
 ```bash
-go-xkms fido2 authenticate \
+xkmsctl fido2 authenticate \
   --credential-id "pQECAyYgASFYIL8..." \
   --salt "rT8vN2kL..."
 ```
 
 Authentication with hex output:
 ```bash
-go-xkms fido2 authenticate \
+xkmsctl fido2 authenticate \
   --credential-id "pQECAyYgASFYIL8..." \
   --salt "rT8vN2kL..." \
   --hex
@@ -247,7 +254,7 @@ go-xkms fido2 authenticate \
 
 Authentication requiring PIN:
 ```bash
-go-xkms fido2 authenticate \
+xkmsctl fido2 authenticate \
   --credential-id "pQECAyYgASFYIL8..." \
   --salt "rT8vN2kL..." \
   --user-verification
@@ -255,7 +262,7 @@ go-xkms fido2 authenticate \
 
 Authentication with hex-encoded input:
 ```bash
-go-xkms fido2 authenticate \
+xkmsctl fido2 authenticate \
   --credential-id "a1010226200121..." \
   --salt "ad3f2f37690b..."
 ```
@@ -269,7 +276,7 @@ Derived Key (64 bytes): vT9kL3mN8pQ2rS5uV7wX0yZ1aB3cD4eF6gH8iJ9kL0mN2oP4qR6sT8uV
 
 **JSON Output:**
 ```bash
-go-xkms fido2 authenticate \
+xkmsctl fido2 authenticate \
   --credential-id "pQECAyYgASFYIL8..." \
   --salt "rT8vN2kL..." \
   --output json
@@ -294,7 +301,7 @@ Display detailed information about a connected FIDO2 security key.
 
 **Usage:**
 ```bash
-go-xkms fido2 info [flags]
+xkmsctl fido2 info [flags]
 ```
 
 **Flags:**
@@ -304,12 +311,12 @@ go-xkms fido2 info [flags]
 
 Get info for first available device:
 ```bash
-go-xkms fido2 info
+xkmsctl fido2 info
 ```
 
 Get info for specific device:
 ```bash
-go-xkms fido2 info --device /dev/hidraw0
+xkmsctl fido2 info --device /dev/hidraw0
 ```
 
 **Output:**
@@ -326,7 +333,7 @@ FIDO2 Device Information:
 
 **JSON Output:**
 ```bash
-go-xkms fido2 info --output json
+xkmsctl fido2 info --output json
 ```
 ```json
 {
@@ -352,7 +359,7 @@ All `fido2` commands support these global flags:
 
 - `--output string` - Output format: `text` or `json` (default: "text")
 - `--verbose` - Enable verbose output
-- `--config string` - Config file path (default: ~/.go-xkms/config.yaml)
+- `--config string` - Config file path (default: `$HOME/.xkms.yaml`)
 
 ## Common Use Cases
 
@@ -361,17 +368,17 @@ All `fido2` commands support these global flags:
 Before performing operations, verify a security key is connected:
 
 ```bash
-go-xkms fido2 list-devices
+xkmsctl fido2 list-devices
 ```
 
 ### 2. Interactive Registration Workflow
 
 ```bash
 # Wait for key insertion
-go-xkms fido2 wait-device
+xkmsctl fido2 wait-device
 
 # Register new credential
-go-xkms fido2 register myuser --rp-id myapp.example.com
+xkmsctl fido2 register myuser --rp-id myapp.example.com
 
 # Save the credential_id and salt from output for later use
 ```
@@ -385,7 +392,7 @@ CRED_ID="pQECAyYgASFYIL8..."
 SALT="rT8vN2kL..."
 
 # Authenticate and capture derived key
-KEY=$(go-xkms fido2 authenticate \
+KEY=$(xkmsctl fido2 authenticate \
   --credential-id "$CRED_ID" \
   --salt "$SALT" \
   --output json | jq -r '.derived_key')
@@ -398,13 +405,13 @@ echo "Derived key: $KEY"
 
 ```bash
 # List all devices
-go-xkms fido2 list-devices --output json | jq -r '.devices[].path'
+xkmsctl fido2 list-devices --output json | jq -r '.devices[].path'
 
 # Register with specific device
-go-xkms fido2 register alice --device /dev/hidraw1
+xkmsctl fido2 register alice --device /dev/hidraw1
 
 # Authenticate with specific device
-go-xkms fido2 authenticate \
+xkmsctl fido2 authenticate \
   --credential-id "$CRED_ID" \
   --salt "$SALT" \
   --device /dev/hidraw1
@@ -414,12 +421,12 @@ go-xkms fido2 authenticate \
 
 ```bash
 # Register with user verification (requires PIN-capable device)
-go-xkms fido2 register alice \
+xkmsctl fido2 register alice \
   --user-verification \
   --rp-id secure.example.com
 
 # Authenticate requiring PIN
-go-xkms fido2 authenticate \
+xkmsctl fido2 authenticate \
   --credential-id "$CRED_ID" \
   --salt "$SALT" \
   --user-verification
@@ -571,7 +578,7 @@ authentication failed: user verification required but not performed
 set -e
 
 # Register once
-REGISTRATION=$(go-xkms fido2 register myapp-encrypt \
+REGISTRATION=$(xkmsctl fido2 register myapp-encrypt \
   --rp-id myapp.local \
   --output json)
 
@@ -583,7 +590,7 @@ echo "$CRED_ID" > ~/.myapp/fido2-cred-id
 echo "$SALT" > ~/.myapp/fido2-salt
 
 # Later: Derive encryption key
-KEY=$(go-xkms fido2 authenticate \
+KEY=$(xkmsctl fido2 authenticate \
   --credential-id "$CRED_ID" \
   --salt "$SALT" \
   --output json \
@@ -605,7 +612,7 @@ SALT=$(cat ~/.backup/fido2-salt)
 echo "Insert security key and touch when prompted..."
 
 # Derive decryption key
-KEY=$(go-xkms fido2 authenticate \
+KEY=$(xkmsctl fido2 authenticate \
   --credential-id "$CRED_ID" \
   --salt "$SALT" \
   --timeout 60s \

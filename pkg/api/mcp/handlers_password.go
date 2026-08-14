@@ -18,9 +18,12 @@ import (
 	"encoding/json"
 	"errors"
 
+	"github.com/jeremyhahn/go-xkms/pkg/api/transport"
 	"github.com/jeremyhahn/go-xkms/pkg/auth"
+	"github.com/jeremyhahn/go-xkms/pkg/errs"
 	"github.com/jeremyhahn/go-xkms/pkg/seal"
 	"github.com/jeremyhahn/go-xkms/pkg/staticpw"
+	"github.com/jeremyhahn/go-xkms/pkg/xkms"
 )
 
 // --- Request types ---
@@ -392,18 +395,34 @@ func (s *Server) handlePasswordDelete(ctx context.Context, req *JSONRPCRequest) 
 }
 
 // handlePasswordUnlock handles the password.unlock method.
+//
+// The unlock itself is performed by the service layer, which verifies the
+// caller's user PIN first. The handler must not call
+// TenantPasswordStoreManager.UnlockTenant directly: that path carries no
+// credential check, so any authenticated tenant user could open the store.
 func (s *Server) handlePasswordUnlock(ctx context.Context, req *JSONRPCRequest) (interface{}, error) {
-	if s.passwordManager == nil {
+	if s.passwordManager == nil || s.xkmsService == nil {
 		return nil, ErrPasswordStoreNotConfigured
 	}
 
 	identity := auth.GetIdentity(ctx)
-	if identity == nil || identity.TenantID == "" {
+	if auth.IsCrossTenant(identity) {
 		return nil, staticpw.ErrInvalidTenantID
 	}
 
-	if err := s.passwordManager.UnlockTenant(identity.TenantID); err != nil {
-		return nil, mapPasswordStoreError(err)
+	// The user PIN is optional on the wire so an unprovisioned deployment gets
+	// the servicer's precise "not provisioned" answer rather than a decode
+	// failure. Absent params are an unlock attempt with no PIN, which the
+	// servicer rejects.
+	var unlockReq transport.PasswordStoreUnlockRequest
+	if len(req.Params) > 0 {
+		if err := json.Unmarshal(req.Params, &unlockReq); err != nil {
+			return nil, &errs.Wrapped{Msg: "invalid params", Err: err}
+		}
+	}
+
+	if err := s.xkmsService.PasswordStoreUnlock(ctx, &unlockReq); err != nil {
+		return nil, mapPasswordUnlockError(err)
 	}
 
 	status, err := s.passwordManager.TenantStoreStatus(identity.TenantID)
@@ -427,7 +446,7 @@ func (s *Server) handlePasswordLock(ctx context.Context, req *JSONRPCRequest) (i
 	}
 
 	identity := auth.GetIdentity(ctx)
-	if identity == nil || identity.TenantID == "" {
+	if auth.IsCrossTenant(identity) {
 		return nil, staticpw.ErrInvalidTenantID
 	}
 
@@ -534,6 +553,34 @@ func mapPasswordError(err error) error {
 }
 
 // mapPasswordStoreError maps store resolution errors to appropriate MCP error messages.
+// mapPasswordUnlockError converts an error returned by
+// XKMSService.PasswordStoreUnlock into a *KeyOpError carrying the JSON-RPC
+// code handleRequest should report. It reuses the KeyOpError envelope so the
+// dispatcher does not collapse a missing-PIN rejection into a generic internal
+// error, which would make an unlock denial indistinguishable from a crash.
+//
+// A failed PIN verification reports Invalid params without echoing the PIN
+// backend's message, which can carry retry counters and lockout state.
+func mapPasswordUnlockError(err error) error {
+	if err == nil {
+		return nil
+	}
+
+	switch {
+	case errors.Is(err, xkms.ErrPasswordStoreUserPINRequired),
+		errors.Is(err, xkms.ErrPasswordStoreUserPINNotProvisioned):
+		return &KeyOpError{Code: ErrCodeInvalidParams, Err: err}
+	case errors.Is(err, xkms.ErrNotConfigured), errors.Is(err, xkms.ErrOperationNotSupported):
+		return &KeyOpError{Code: ErrCodeMethodNotFound, Err: err}
+	case errors.Is(err, staticpw.ErrStoreNotLocked),
+		errors.Is(err, seal.ErrTenantSealed),
+		errors.Is(err, seal.ErrTenantNotFound):
+		return &KeyOpError{Code: ErrCodeInternalError, Err: mapPasswordStoreError(err)}
+	default:
+		return &KeyOpError{Code: ErrCodeInvalidParams, Err: &errs.Message{Msg: "user PIN verification failed"}}
+	}
+}
+
 func mapPasswordStoreError(err error) error {
 	switch {
 	case errors.Is(err, staticpw.ErrStoreLocked):

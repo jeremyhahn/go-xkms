@@ -56,9 +56,12 @@ func (s *XKMSService) ClaimCertComplete(ctx context.Context, req *transport.Clai
 	return cs.ClaimCertComplete(ctx, req)
 }
 
-// ClaimShare retrieves the Shamir share for the named officer.
+// ClaimShareBegin starts the Shamir share claim handshake for the named
+// officer. req.CallerCertThumbprint must already have been populated by the
+// transport from the verified mTLS peer certificate; this service layer only
+// forwards it.
 // Returns ErrNotConfigured if the ceremony service is not wired.
-func (s *XKMSService) ClaimShare(ctx context.Context, req *transport.ClaimShareRequest) (*transport.ClaimShareResponse, error) {
+func (s *XKMSService) ClaimShareBegin(ctx context.Context, req *transport.ClaimShareBeginRequest) (*transport.ClaimShareBeginResponse, error) {
 	cs, err := s.getCeremonyServicer()
 	if err != nil {
 		return nil, err
@@ -66,7 +69,21 @@ func (s *XKMSService) ClaimShare(ctx context.Context, req *transport.ClaimShareR
 	if req == nil {
 		return nil, ErrNilRequest
 	}
-	return cs.ClaimShare(ctx, req)
+	return cs.ClaimShareBegin(ctx, req)
+}
+
+// ClaimShareComplete completes the Shamir share claim handshake for the named
+// officer, releasing the share exactly once.
+// Returns ErrNotConfigured if the ceremony service is not wired.
+func (s *XKMSService) ClaimShareComplete(ctx context.Context, req *transport.ClaimShareCompleteRequest) (*transport.ClaimShareCompleteResponse, error) {
+	cs, err := s.getCeremonyServicer()
+	if err != nil {
+		return nil, err
+	}
+	if req == nil {
+		return nil, ErrNilRequest
+	}
+	return cs.ClaimShareComplete(ctx, req)
 }
 
 // SignCSRInit signs a CSR during initialization with SO authorization (dual auth).

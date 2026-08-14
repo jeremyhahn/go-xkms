@@ -35,6 +35,12 @@ import (
 
 // TestV3InterfaceList tests C_GetInterfaceList returns correct interfaces.
 // OASIS PKCS#11 v3.0 Section 5.2.1
+// The spec's requirement that CK_INTERFACE.pFunctionList be non-NULL is not
+// asserted here, and cannot be: the function list is a table of C function
+// pointers that only exists in the shared library built by cmd/pkcs11-module,
+// and this suite drives the pure-Go module directly. Module.CK_INTERFACE
+// carries a nil FunctionList by construction. The ABI-level rule is covered by
+// the tests that dlopen the .so.
 func TestV3InterfaceList(t *testing.T) {
 	env := testutil.SetupTestEnvironment(t, nil)
 
@@ -53,10 +59,6 @@ func TestV3InterfaceList(t *testing.T) {
 			t.Logf("Found interface: %s (flags: 0x%x)", iface.Name, iface.Flags)
 			if iface.Name == "PKCS 11" {
 				found = true
-				// Verify FunctionList is set
-				if iface.FunctionList == nil {
-					t.Error("Interface FunctionList should not be nil")
-				}
 			}
 		}
 		if !found {
@@ -90,8 +92,8 @@ func TestV3GetInterface(t *testing.T) {
 		if iface == nil {
 			t.Fatal("Expected non-nil interface")
 		}
-		if iface.FunctionList == nil {
-			t.Error("Expected non-nil FunctionList in interface")
+		if iface.Name != "PKCS 11" {
+			t.Errorf("the default interface is named %q, want \"PKCS 11\"", iface.Name)
 		}
 	})
 
@@ -164,7 +166,7 @@ func TestV3MessageEncryption(t *testing.T) {
 		// Encrypt a single message with associated data
 		plaintext := []byte("PKCS#11 v3.0 test message for AEAD encryption")
 		aad := []byte("additional authenticated data")
-		ciphertext, rv := env.Module.EncryptMessage(session, aad, plaintext)
+		ciphertext, rv := env.Module.EncryptMessage(session, nil, aad, plaintext)
 		testutil.RequireOK(t, rv, "EncryptMessage failed")
 
 		if len(ciphertext) == 0 {
@@ -185,17 +187,17 @@ func TestV3MessageEncryption(t *testing.T) {
 
 		// Begin multi-part message encryption with AAD
 		aad := []byte("associated data for multi-part")
-		rv = env.Module.EncryptMessageBegin(session, aad)
+		rv = env.Module.EncryptMessageBegin(session, nil, aad)
 		testutil.RequireOK(t, rv, "EncryptMessageBegin failed")
 
 		// Encrypt first part (not final)
 		part1 := []byte("First part of the message. ")
-		_, rv = env.Module.EncryptMessageNext(session, part1, false)
+		_, rv = env.Module.EncryptMessageNext(session, nil, part1, false)
 		testutil.RequireOK(t, rv, "EncryptMessageNext (part 1) failed")
 
 		// Encrypt second part (final)
 		part2 := []byte("Second and final part.")
-		ciphertext, rv := env.Module.EncryptMessageNext(session, part2, true)
+		ciphertext, rv := env.Module.EncryptMessageNext(session, nil, part2, true)
 		testutil.RequireOK(t, rv, "EncryptMessageNext (final) failed")
 
 		if len(ciphertext) == 0 {
@@ -207,7 +209,7 @@ func TestV3MessageEncryption(t *testing.T) {
 
 	t.Run("MessageEncryptWithoutInit", func(t *testing.T) {
 		// Try to encrypt without calling MessageEncryptInit first
-		_, rv := env.Module.EncryptMessage(session, nil, []byte("test"))
+		_, rv := env.Module.EncryptMessage(session, nil, nil, []byte("test"))
 		if rv == module.CKR_OK {
 			t.Error("Expected error when encrypting without init")
 		}
@@ -234,8 +236,21 @@ func TestV3MessageDecryption(t *testing.T) {
 		rv := env.Module.MessageEncryptInit(session, &module.Mechanism{Type: module.CKM_AES_GCM}, keyHandle)
 		testutil.RequireOK(t, rv, "MessageEncryptInit failed")
 
-		ciphertext, rv := env.Module.EncryptMessage(session, aad, plaintext)
+		// The IV and tag ride on each message rather than on the Init, because
+		// C_MessageEncryptInit binds a mechanism and key that outlive any one
+		// message (v3.2 §5.9.1, §6.13.5). CKG_GENERATE asks the token for the
+		// IV and it writes back the one it used — without that write-back the
+		// caller could never decrypt what it just encrypted.
+		encParams := &module.AESGCMMessageParams{IVGenerator: module.CKG_GENERATE, TagBits: 128}
+		ciphertext, rv := env.Module.EncryptMessage(session, encParams, aad, plaintext)
 		testutil.RequireOK(t, rv, "EncryptMessage failed")
+
+		if len(encParams.IV) == 0 {
+			t.Fatal("EncryptMessage did not return the generated IV")
+		}
+		if len(encParams.Tag) != 16 {
+			t.Fatalf("EncryptMessage returned a %d-byte tag, want 16", len(encParams.Tag))
+		}
 
 		rv = env.Module.MessageEncryptFinal(session)
 		testutil.RequireOK(t, rv, "MessageEncryptFinal failed")
@@ -244,7 +259,13 @@ func TestV3MessageDecryption(t *testing.T) {
 		rv = env.Module.MessageDecryptInit(session, &module.Mechanism{Type: module.CKM_AES_GCM}, keyHandle)
 		testutil.RequireOK(t, rv, "MessageDecryptInit failed")
 
-		decrypted, rv := env.Module.DecryptMessage(session, aad, ciphertext)
+		decParams := &module.AESGCMMessageParams{
+			IV:          encParams.IV,
+			IVGenerator: module.CKG_NO_GENERATE,
+			Tag:         encParams.Tag,
+			TagBits:     128,
+		}
+		decrypted, rv := env.Module.DecryptMessage(session, decParams, aad, ciphertext)
 		testutil.RequireOK(t, rv, "DecryptMessage failed")
 
 		rv = env.Module.MessageDecryptFinal(session)
@@ -266,7 +287,8 @@ func TestV3MessageDecryption(t *testing.T) {
 		rv := env.Module.MessageEncryptInit(session, &module.Mechanism{Type: module.CKM_AES_GCM}, keyHandle)
 		testutil.RequireOK(t, rv, "MessageEncryptInit failed")
 
-		ciphertext, rv := env.Module.EncryptMessage(session, aad, plaintext)
+		encParams := &module.AESGCMMessageParams{IVGenerator: module.CKG_GENERATE, TagBits: 128}
+		ciphertext, rv := env.Module.EncryptMessage(session, encParams, aad, plaintext)
 		testutil.RequireOK(t, rv, "EncryptMessage failed")
 
 		rv = env.Module.MessageEncryptFinal(session)
@@ -276,11 +298,18 @@ func TestV3MessageDecryption(t *testing.T) {
 		rv = env.Module.MessageDecryptInit(session, &module.Mechanism{Type: module.CKM_AES_GCM}, keyHandle)
 		testutil.RequireOK(t, rv, "MessageDecryptInit failed")
 
-		rv = env.Module.DecryptMessageBegin(session, aad)
+		rv = env.Module.DecryptMessageBegin(session, nil, aad)
 		testutil.RequireOK(t, rv, "DecryptMessageBegin failed")
 
-		// Decrypt final part
-		decrypted, rv := env.Module.DecryptMessageNext(session, ciphertext, true)
+		// The per-message IV and tag are inputs to the multi-part path exactly
+		// as they are to the single-part one (v3.2 §6.13.5).
+		decParams := &module.AESGCMMessageParams{
+			IV:          encParams.IV,
+			IVGenerator: module.CKG_NO_GENERATE,
+			Tag:         encParams.Tag,
+			TagBits:     128,
+		}
+		decrypted, rv := env.Module.DecryptMessageNext(session, decParams, ciphertext, true)
 		testutil.RequireOK(t, rv, "DecryptMessageNext failed")
 
 		if string(decrypted) != string(plaintext) {
@@ -292,7 +321,7 @@ func TestV3MessageDecryption(t *testing.T) {
 
 	t.Run("MessageDecryptWithoutInit", func(t *testing.T) {
 		// Try to decrypt without calling MessageDecryptInit first
-		_, rv := env.Module.DecryptMessage(session, nil, []byte("test"))
+		_, rv := env.Module.DecryptMessage(session, nil, nil, []byte("test"))
 		if rv == module.CKR_OK {
 			t.Error("Expected error when decrypting without init")
 		}
@@ -366,6 +395,11 @@ func TestV3MessageSigning(t *testing.T) {
 		}
 
 		t.Logf("Multi-part signing produced %d bytes signature", len(signature))
+
+		// The message-based process outlives the message (v3.2 §5.14.5), so it
+		// must be finished explicitly. Leaving it active makes the next subtest
+		// assert against a session that still has a signing process running.
+		testutil.RequireOK(t, env.Module.MessageSignFinal(session), "MessageSignFinal failed")
 	})
 
 	t.Run("MessageSignWithoutInit", func(t *testing.T) {
@@ -441,7 +475,7 @@ func TestV3MessageVerification(t *testing.T) {
 		testutil.RequireOK(t, rv, "VerifyMessageBegin failed")
 
 		// Verify with data and signature
-		rv = env.Module.VerifyMessageNext(session, data, signature)
+		rv = env.Module.VerifyMessageNext(session, data, signature, true)
 		testutil.RequireOK(t, rv, "VerifyMessageNext failed")
 
 		t.Logf("Multi-part verification successful")
@@ -491,21 +525,26 @@ func TestV3SessionCancel(t *testing.T) {
 		testutil.RequireOK(t, rv, "OpenSession failed")
 		defer env.Module.CloseSession(session)
 
-		// Per OASIS PKCS#11 v3.0 Section 5.16.1:
-		// C_SessionCancel with flags=0 (cancel all) should return CKR_OK
-		// even if there is no active operation
+		// PKCS#11 v3.2 C_SessionCancel: "If no flags are set, the session state
+		// will not be modified and CKR_OK will be returned." A zero flags
+		// argument names no operation, so it is a no-op rather than a request
+		// to cancel everything.
 		rv = env.Module.SessionCancel(session, 0)
 		testutil.RequireOK(t, rv, "SessionCancel with flags=0 should succeed")
+
+		// The same holds when a flag names an operation that is not running:
+		// "the operation flag will be ignored and C_SessionCancel will behave
+		// as if the operation flag was not set."
+		rv = env.Module.SessionCancel(session, uint64(module.CKF_ENCRYPT))
+		testutil.RequireOK(t, rv,
+			"SessionCancel naming an operation that is not active must be ignored, not an error")
 	})
 
 	t.Run("CancelActiveOperation", func(t *testing.T) {
-		session, rv := env.Module.OpenSession(0, module.CKF_SERIAL_SESSION|module.CKF_RW_SESSION)
-		testutil.RequireOK(t, rv, "OpenSession failed")
-		defer env.Module.CloseSession(session)
-
-		// Login as user
-		rv = env.Module.Login(session, module.CKU_USER, testutil.TestPINs.User)
-		testutil.RequireOK(t, rv, "Login failed")
+		// This subtest needs a logged-in user, and the token created above has
+		// only an SO PIN. SetupAuthenticatedModule does the SO-login and
+		// C_InitPIN dance that makes a user login possible.
+		env, session := testutil.SetupAuthenticatedModule(t)
 
 		// Generate an AES key
 		aesTemplate := testutil.BuildAESKeyTemplate("test-aes-cancel", 32)
@@ -516,8 +555,9 @@ func TestV3SessionCancel(t *testing.T) {
 		rv = env.Module.EncryptInit(session, &module.Mechanism{Type: module.CKM_AES_GCM}, keyHandle)
 		testutil.RequireOK(t, rv, "EncryptInit failed")
 
-		// Cancel the active operation
-		rv = env.Module.SessionCancel(session, 0)
+		// Cancel the active operation by naming it. The flags select which
+		// categories to cancel, so an encryption is cancelled with CKF_ENCRYPT.
+		rv = env.Module.SessionCancel(session, uint64(module.CKF_ENCRYPT))
 		testutil.RequireOK(t, rv, "SessionCancel with active operation failed")
 
 		// Verify operation was cancelled (trying to encrypt should fail)
@@ -525,8 +565,6 @@ func TestV3SessionCancel(t *testing.T) {
 		if rv == module.CKR_OK {
 			t.Error("Expected error after cancelling operation")
 		}
-
-		env.Module.Logout(session)
 	})
 
 	t.Run("CancelInvalidSession", func(t *testing.T) {

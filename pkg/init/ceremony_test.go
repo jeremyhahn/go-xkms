@@ -488,6 +488,53 @@ func initServiceMofN(t *testing.T, threshold, numOfficers int) (*CeremonyService
 	return svc, keys, mockCA
 }
 
+// claimOfficerCertThumbprint runs the certificate claim handshake for username
+// and returns the thumbprint of the issued certificate — exactly the value the
+// officer's mTLS peer certificate hashes to on the next request.
+func claimOfficerCertThumbprint(t *testing.T, svc *CeremonyService, username string, key *ecdsa.PrivateKey) string {
+	t.Helper()
+	ctx := context.Background()
+
+	challenge, err := svc.BeginClaimCert(ctx, username)
+	require.NoError(t, err)
+
+	hash := sha256.Sum256(challenge.Nonce)
+	sig, err := ecdsa.SignASN1(rand.Reader, key, hash[:])
+	require.NoError(t, err)
+
+	result, err := svc.CompleteClaimCert(ctx, username, hex.EncodeToString(challenge.Nonce), sig)
+	require.NoError(t, err)
+
+	block, _ := pem.Decode(result.CertPEM)
+	require.NotNil(t, block)
+	cert, err := x509.ParseCertificate(block.Bytes)
+	require.NoError(t, err)
+
+	return CertThumbprint(cert.Raw)
+}
+
+// claimOfficerShare runs the two-round-trip officer share claim, signing the
+// challenge nonce with key and presenting thumbprint as the caller certificate
+// thumbprint the transport would have derived from the TLS handshake.
+func claimOfficerShare(t *testing.T, svc *CeremonyService, username string, key *ecdsa.PrivateKey, thumbprint string) (*ShareClaimResult, error) {
+	t.Helper()
+	ctx := context.Background()
+
+	challenge, err := svc.BeginClaimShare(ctx, username, thumbprint)
+	if err != nil {
+		return nil, err
+	}
+
+	hash := sha256.Sum256(challenge.Nonce)
+	sig, signErr := ecdsa.SignASN1(rand.Reader, key, hash[:])
+	require.NoError(t, signErr)
+
+	return svc.CompleteClaimShare(ctx, username, hex.EncodeToString(challenge.Nonce), sig, thumbprint)
+}
+
+// officerUsernames is the fixed username order validMofNConfig produces.
+var officerUsernames = []string{"officer-A", "officer-B", "officer-C"}
+
 // initServiceSingleAdmin creates and initializes a ceremony service in
 // single-admin mode. Returns the service and the mock CA.
 func initServiceSingleAdmin(t *testing.T) (*CeremonyService, *mockCA) {
@@ -607,7 +654,6 @@ func TestInitialize_SingleAdmin_Success(t *testing.T) {
 	assert.Equal(t, StateOperational, svc.State())
 	assert.NotEmpty(t, result.SPKIPin)
 	assert.NotEmpty(t, result.CACertPEM)
-	assert.NotEmpty(t, result.SOCertPEM)
 	assert.Equal(t, 0, result.ShareCount)
 }
 
@@ -644,13 +690,10 @@ func TestInitialize_MofN_Success(t *testing.T) {
 	assert.NotEmpty(t, result.SPKIPin)
 	assert.NotEmpty(t, result.CACertPEM)
 	assert.Equal(t, 3, result.ShareCount)
-	// SOCertPEM/SOKeyPEM should be empty for M-of-N mode.
-	assert.Empty(t, result.SOCertPEM)
-	assert.Empty(t, result.SOKeyPEM)
 }
 
 func TestInitialize_MofN_SharesSealed(t *testing.T) {
-	cfg, _ := validMofNConfig(t, 2, 3)
+	cfg, keys := validMofNConfig(t, 2, 3)
 	barrier := testBarrier(t)
 	svc, err := NewCeremonyService(cfg, barrier, testCredService(t), testLogger())
 	require.NoError(t, err)
@@ -663,11 +706,12 @@ func TestInitialize_MofN_SharesSealed(t *testing.T) {
 	// Verify shares were created by checking the result share count.
 	assert.Equal(t, len(cfg.Officers), result.ShareCount)
 
-	// Verify shares can be claimed via the public API.
-	for _, officer := range cfg.Officers {
-		shareJSON, claimErr := svc.ClaimShare(context.Background(), officer.Username)
+	// Verify shares can be claimed via the public API by the enrolled officers.
+	for i, officer := range cfg.Officers {
+		thumb := claimOfficerCertThumbprint(t, svc, officer.Username, keys[i])
+		claimed, claimErr := claimOfficerShare(t, svc, officer.Username, keys[i], thumb)
 		require.NoError(t, claimErr)
-		assert.NotEmpty(t, shareJSON)
+		assert.NotEmpty(t, claimed.ShareBytes)
 	}
 }
 
@@ -995,21 +1039,130 @@ func TestCompleteClaimCert_AlreadyClaimed(t *testing.T) {
 }
 
 // ---------------------------------------------------------------------------
-// ClaimShare
+// Officer share claim (BeginClaimShare / CompleteClaimShare)
 // ---------------------------------------------------------------------------
 
 func TestClaimShare_Success(t *testing.T) {
-	svc, _, _ := initServiceMofN(t, 2, 3)
+	svc, keys, _ := initServiceMofN(t, 2, 3)
+
+	thumb := claimOfficerCertThumbprint(t, svc, "officer-A", keys[0])
+	claimed, err := claimOfficerShare(t, svc, "officer-A", keys[0], thumb)
+	require.NoError(t, err)
+	assert.NotEmpty(t, claimed.ShareBytes)
+	assert.Equal(t, 1, claimed.ShareIndex)
+
+	// The share is released exactly once.
+	again, err := claimOfficerShare(t, svc, "officer-A", keys[0], thumb)
+	require.Error(t, err)
+	assert.Nil(t, again, "the share must never be released twice")
+}
+
+// TestClaimShare_NoCallerCertificateRefused is the security regression test for
+// the username-only share release: an enrolled officer who presents no
+// certificate is refused and receives no share bytes.
+func TestClaimShare_NoCallerCertificateRefused(t *testing.T) {
+	svc, keys, _ := initServiceMofN(t, 2, 3)
+
+	claimOfficerCertThumbprint(t, svc, "officer-A", keys[0])
+
+	// An empty thumbprint is what a transport produces for a request that
+	// carries no mTLS peer certificate.
+	stolen, err := claimOfficerShare(t, svc, "officer-A", keys[0], "")
+	assert.ErrorIs(t, err, ErrCertThumbprintMismatch)
+	assert.Nil(t, stolen, "no share material may accompany a refusal")
+}
+
+// TestClaimShare_WrongOfficerCertificateRefused proves officer-B cannot take
+// officer-A's share by naming officer-A while presenting its own certificate.
+func TestClaimShare_WrongOfficerCertificateRefused(t *testing.T) {
+	svc, keys, _ := initServiceMofN(t, 2, 3)
+
+	victimThumb := claimOfficerCertThumbprint(t, svc, "officer-A", keys[0])
+	attackerThumb := claimOfficerCertThumbprint(t, svc, "officer-B", keys[1])
+	require.NotEqual(t, victimThumb, attackerThumb)
+
+	stolen, err := claimOfficerShare(t, svc, "officer-A", keys[1], attackerThumb)
+	assert.ErrorIs(t, err, ErrCertThumbprintMismatch)
+	assert.Nil(t, stolen, "no share material may accompany a refusal")
+
+	// The victim's share is untouched and still claimable by the victim.
+	legit, err := claimOfficerShare(t, svc, "officer-A", keys[0], victimThumb)
+	require.NoError(t, err)
+	assert.NotEmpty(t, legit.ShareBytes)
+}
+
+// TestClaimShare_NonceReplayRejected proves a nonce is single-use.
+func TestClaimShare_NonceReplayRejected(t *testing.T) {
+	svc, keys, _ := initServiceMofN(t, 2, 3)
 	ctx := context.Background()
 
-	shareJSON, err := svc.ClaimShare(ctx, "officer-A")
-	require.NoError(t, err)
-	assert.NotEmpty(t, shareJSON)
+	thumb := claimOfficerCertThumbprint(t, svc, "officer-A", keys[0])
 
-	// Shares are managed internally by go-qrdb's memguard share store.
-	// Verify the share cannot be claimed again (already claimed).
-	_, err = svc.ClaimShare(ctx, "officer-A")
-	assert.ErrorIs(t, err, ErrShareAlreadyClaimed)
+	challenge, err := svc.BeginClaimShare(ctx, "officer-A", thumb)
+	require.NoError(t, err)
+	nonceHex := hex.EncodeToString(challenge.Nonce)
+	hash := sha256.Sum256(challenge.Nonce)
+	sig, err := ecdsa.SignASN1(rand.Reader, keys[0], hash[:])
+	require.NoError(t, err)
+
+	_, err = svc.CompleteClaimShare(ctx, "officer-A", nonceHex, sig, thumb)
+	require.NoError(t, err)
+
+	replayed, err := svc.CompleteClaimShare(ctx, "officer-A", nonceHex, sig, thumb)
+	require.Error(t, err)
+	assert.Nil(t, replayed, "a replayed nonce must not release the share again")
+}
+
+// TestClaimShare_SupersededNonceRejected proves a re-begin invalidates the
+// previously issued nonce.
+func TestClaimShare_SupersededNonceRejected(t *testing.T) {
+	svc, keys, _ := initServiceMofN(t, 2, 3)
+	ctx := context.Background()
+
+	thumb := claimOfficerCertThumbprint(t, svc, "officer-A", keys[0])
+
+	first, err := svc.BeginClaimShare(ctx, "officer-A", thumb)
+	require.NoError(t, err)
+	firstHex := hex.EncodeToString(first.Nonce)
+	firstHash := sha256.Sum256(first.Nonce)
+	firstSig, err := ecdsa.SignASN1(rand.Reader, keys[0], firstHash[:])
+	require.NoError(t, err)
+
+	second, err := svc.BeginClaimShare(ctx, "officer-A", thumb)
+	require.NoError(t, err)
+	require.NotEqual(t, firstHex, hex.EncodeToString(second.Nonce))
+
+	stale, err := svc.CompleteClaimShare(ctx, "officer-A", firstHex, firstSig, thumb)
+	assert.ErrorIs(t, err, ErrChallengeVerificationFailed)
+	assert.Nil(t, stale, "a superseded nonce must not release the share")
+
+	// The current nonce still works.
+	secondHash := sha256.Sum256(second.Nonce)
+	secondSig, err := ecdsa.SignASN1(rand.Reader, keys[0], secondHash[:])
+	require.NoError(t, err)
+	fresh, err := svc.CompleteClaimShare(ctx, "officer-A", hex.EncodeToString(second.Nonce), secondSig, thumb)
+	require.NoError(t, err)
+	assert.NotEmpty(t, fresh.ShareBytes)
+}
+
+// TestClaimShare_WrongSignatureRejected proves the nonce must be signed by the
+// key matching the officer's enrolled public key.
+func TestClaimShare_WrongSignatureRejected(t *testing.T) {
+	svc, keys, _ := initServiceMofN(t, 2, 3)
+	ctx := context.Background()
+
+	thumb := claimOfficerCertThumbprint(t, svc, "officer-A", keys[0])
+
+	challenge, err := svc.BeginClaimShare(ctx, "officer-A", thumb)
+	require.NoError(t, err)
+
+	hash := sha256.Sum256(challenge.Nonce)
+	wrongSig, err := ecdsa.SignASN1(rand.Reader, keys[1], hash[:])
+	require.NoError(t, err)
+
+	result, err := svc.CompleteClaimShare(ctx, "officer-A", hex.EncodeToString(challenge.Nonce), wrongSig, thumb)
+	require.Error(t, err)
+	assert.Nil(t, result, "no share material may accompany a refusal")
 }
 
 func TestClaimShare_NotEnrolling(t *testing.T) {
@@ -1018,54 +1171,47 @@ func TestClaimShare_NotEnrolling(t *testing.T) {
 	svc, err := NewCeremonyService(cfg, barrier, testCredService(t), testLogger())
 	require.NoError(t, err)
 
-	_, err = svc.ClaimShare(context.Background(), "anyone")
-	assert.ErrorIs(t, err, ErrNotInEnrollingState)
+	_, err = svc.BeginClaimShare(context.Background(), "anyone", "some-thumbprint")
+	assert.ErrorIs(t, err, ErrOfficerNotFound)
 }
 
 func TestClaimShare_UnknownUsername(t *testing.T) {
 	svc, _, _ := initServiceMofN(t, 2, 3)
 
-	_, err := svc.ClaimShare(context.Background(), "nonexistent")
-	assert.ErrorIs(t, err, ErrShareNotFound)
+	_, err := svc.BeginClaimShare(context.Background(), "nonexistent", "some-thumbprint")
+	assert.ErrorIs(t, err, ErrOfficerNotFound)
+}
+
+func TestClaimShare_EmptyUsername(t *testing.T) {
+	svc, _, _ := initServiceMofN(t, 2, 3)
+
+	_, err := svc.BeginClaimShare(context.Background(), "", "some-thumbprint")
+	assert.ErrorIs(t, err, ErrMissingUsername)
 }
 
 func TestClaimShare_AlreadyClaimed(t *testing.T) {
-	svc, _, _ := initServiceMofN(t, 2, 3)
-	ctx := context.Background()
+	svc, keys, _ := initServiceMofN(t, 2, 3)
 
-	_, err := svc.ClaimShare(ctx, "officer-A")
+	thumb := claimOfficerCertThumbprint(t, svc, "officer-A", keys[0])
+	_, err := claimOfficerShare(t, svc, "officer-A", keys[0], thumb)
 	require.NoError(t, err)
 
-	_, err = svc.ClaimShare(ctx, "officer-A")
-	assert.ErrorIs(t, err, ErrShareAlreadyClaimed)
+	_, err = svc.BeginClaimShare(context.Background(), "officer-A", thumb)
+	assert.ErrorIs(t, err, ErrNoPendingShare)
 }
 
+// TestClaimShare_AllClaimedTransitionsToOperational drives the whole M-of-N
+// ceremony through the strong claim flow and asserts it lands operational.
 func TestClaimShare_AllClaimedTransitionsToOperational(t *testing.T) {
 	svc, keys, _ := initServiceMofN(t, 2, 3)
-	ctx := context.Background()
 
 	require.Equal(t, StateEnrolling, svc.State())
 
-	// Claim all certs for all officers.
-	officers := []string{"officer-A", "officer-B", "officer-C"}
-	for i, username := range officers {
-		challenge, err := svc.BeginClaimCert(ctx, username)
+	for i, username := range officerUsernames {
+		thumb := claimOfficerCertThumbprint(t, svc, username, keys[i])
+		claimed, err := claimOfficerShare(t, svc, username, keys[i], thumb)
 		require.NoError(t, err)
-
-		hash := sha256.Sum256(challenge.Nonce)
-		sig, err := ecdsa.SignASN1(rand.Reader, keys[i], hash[:])
-		require.NoError(t, err)
-
-		nonceHex := hex.EncodeToString(challenge.Nonce)
-		_, err = svc.CompleteClaimCert(ctx, username, nonceHex, sig)
-		require.NoError(t, err)
-	}
-
-	// Claim all shares.
-	for _, username := range officers {
-		shareJSON, err := svc.ClaimShare(ctx, username)
-		require.NoError(t, err)
-		assert.NotEmpty(t, shareJSON)
+		assert.NotEmpty(t, claimed.ShareBytes)
 	}
 
 	assert.Equal(t, StateOperational, svc.State())
@@ -1134,19 +1280,10 @@ func TestCompleteClaimCert_NotEnrolling(t *testing.T) {
 
 func TestPartialClaimsDoNotTransition(t *testing.T) {
 	svc, keys, _ := initServiceMofN(t, 2, 3)
-	ctx := context.Background()
 
 	// Claim only one officer's cert and share.
-	challenge, err := svc.BeginClaimCert(ctx, "officer-A")
-	require.NoError(t, err)
-	hash := sha256.Sum256(challenge.Nonce)
-	sig, err := ecdsa.SignASN1(rand.Reader, keys[0], hash[:])
-	require.NoError(t, err)
-	nonceHex := hex.EncodeToString(challenge.Nonce)
-	_, err = svc.CompleteClaimCert(ctx, "officer-A", nonceHex, sig)
-	require.NoError(t, err)
-
-	_, err = svc.ClaimShare(ctx, "officer-A")
+	thumb := claimOfficerCertThumbprint(t, svc, "officer-A", keys[0])
+	_, err := claimOfficerShare(t, svc, "officer-A", keys[0], thumb)
 	require.NoError(t, err)
 
 	// State should still be enrolling because other officers haven't claimed.
@@ -1465,22 +1602,70 @@ func TestCeremonyAdapter_ClaimCertComplete_InnerCompleteError(t *testing.T) {
 }
 
 func TestCeremonyAdapter_ClaimShare_Success(t *testing.T) {
-	svc, _, _ := initServiceMofN(t, 2, 3)
+	svc, keys, _ := initServiceMofN(t, 2, 3)
 	adapter := NewCeremonyAdapter(svc)
+	ctx := context.Background()
 
-	req := &transport.ClaimShareRequest{Username: "officer-A"}
-	resp, err := adapter.ClaimShare(context.Background(), req)
+	thumb := claimOfficerCertThumbprint(t, svc, "officer-A", keys[0])
+
+	begun, err := adapter.ClaimShareBegin(ctx, &transport.ClaimShareBeginRequest{
+		Username:             "officer-A",
+		CallerCertThumbprint: thumb,
+	})
+	require.NoError(t, err)
+	require.NotEmpty(t, begun.Nonce)
+
+	nonce, err := hex.DecodeString(begun.Nonce)
+	require.NoError(t, err)
+	hash := sha256.Sum256(nonce)
+	sig, err := ecdsa.SignASN1(rand.Reader, keys[0], hash[:])
+	require.NoError(t, err)
+
+	resp, err := adapter.ClaimShareComplete(ctx, &transport.ClaimShareCompleteRequest{
+		Username:             "officer-A",
+		Nonce:                begun.Nonce,
+		Signature:            base64.StdEncoding.EncodeToString(sig),
+		CallerCertThumbprint: thumb,
+	})
 	require.NoError(t, err)
 	assert.NotEmpty(t, resp.Share)
+	assert.Equal(t, 1, resp.ShareIndex)
 }
 
 func TestCeremonyAdapter_ClaimShare_NotFound(t *testing.T) {
 	svc, _, _ := initServiceMofN(t, 2, 3)
 	adapter := NewCeremonyAdapter(svc)
 
-	req := &transport.ClaimShareRequest{Username: "nonexistent"}
-	_, err := adapter.ClaimShare(context.Background(), req)
-	assert.ErrorIs(t, err, ErrShareNotFound)
+	req := &transport.ClaimShareBeginRequest{Username: "nonexistent", CallerCertThumbprint: "thumb"}
+	_, err := adapter.ClaimShareBegin(context.Background(), req)
+	assert.ErrorIs(t, err, ErrOfficerNotFound)
+}
+
+// TestCeremonyAdapter_ClaimShare_WrongThumbprintRefused proves the adapter
+// forwards the caller thumbprint verbatim and refuses a mismatch without
+// returning any share material.
+func TestCeremonyAdapter_ClaimShare_WrongThumbprintRefused(t *testing.T) {
+	svc, keys, _ := initServiceMofN(t, 2, 3)
+	adapter := NewCeremonyAdapter(svc)
+	ctx := context.Background()
+
+	claimOfficerCertThumbprint(t, svc, "officer-A", keys[0])
+	attackerThumb := claimOfficerCertThumbprint(t, svc, "officer-B", keys[1])
+
+	_, err := adapter.ClaimShareBegin(ctx, &transport.ClaimShareBeginRequest{
+		Username:             "officer-A",
+		CallerCertThumbprint: attackerThumb,
+	})
+	assert.ErrorIs(t, err, ErrCertThumbprintMismatch)
+
+	resp, err := adapter.ClaimShareComplete(ctx, &transport.ClaimShareCompleteRequest{
+		Username:             "officer-A",
+		Nonce:                "deadbeef",
+		Signature:            base64.StdEncoding.EncodeToString([]byte("sig")),
+		CallerCertThumbprint: attackerThumb,
+	})
+	require.Error(t, err)
+	assert.Nil(t, resp, "no share material may accompany a refusal")
 }
 
 func TestCeremonyAdapter_SignCSRInit_Success(t *testing.T) {

@@ -65,6 +65,7 @@ func init() {
 // runTouch executes the touch command. It connects to the daemon via IPC and
 // either approves a pending user presence request or types a named password.
 func runTouch(cmd *cobra.Command, args []string) error {
+	out := cmd.OutOrStdout()
 	passwordName, _ := cmd.Flags().GetString("password")
 	socketPath, _ := cmd.Flags().GetString("socket")
 
@@ -98,13 +99,13 @@ func runTouch(cmd *cobra.Command, args []string) error {
 	// Print action result.
 	switch resp.Action {
 	case ipc.ActionApprovedUP:
-		fmt.Println("User presence approved")
+		fmt.Fprintln(out, "User presence approved")
 	case ipc.ActionTypedPassword:
-		fmt.Println("Password typed")
+		fmt.Fprintln(out, "Password typed")
 	case ipc.ActionNoPending:
-		fmt.Println("No pending request")
+		fmt.Fprintln(out, "No pending request")
 	default:
-		fmt.Printf("OK: %s\n", resp.Action)
+		fmt.Fprintf(out, "OK: %s\n", resp.Action)
 	}
 
 	return nil

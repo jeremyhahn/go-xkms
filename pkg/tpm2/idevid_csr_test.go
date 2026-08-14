@@ -988,7 +988,6 @@ func TestUnpackIDevIDContent_ShortBuffer(t *testing.T) {
 	}{
 		{"Empty buffer", []byte{}},
 		{"Too short for header", make([]byte, 10)},
-		{"Header only no data", make([]byte, 64)},
 	}
 
 	for _, tc := range testCases {
@@ -998,6 +997,25 @@ func TestUnpackIDevIDContent_ShortBuffer(t *testing.T) {
 			require.Error(t, err, "Should fail on short buffer")
 		})
 	}
+}
+
+// TestUnpackIDevIDContent_HeaderOnlyIsValid covers the boundary the case above
+// used to assert incorrectly. A 64-byte header (16 four-byte size fields) with
+// every size zero is a complete content structure whose variable-length fields
+// are all empty, so it must parse.
+//
+// It previously errored, and this case lived in the short-buffer table: reading
+// each empty field with bytes.Reader.Read returned io.EOF once the reader sat at
+// the end, so a well-formed empty structure looked truncated. That is the same
+// defect that made PackIDevIDContent output unreadable by UnpackIDevIDContent
+// whenever padding was disabled. io.ReadFull returns (0, nil) for an empty
+// buffer, so the boundary now behaves correctly.
+func TestUnpackIDevIDContent_HeaderOnlyIsValid(t *testing.T) {
+	content, err := UnpackIDevIDContent(bytes.NewReader(make([]byte, 16*4)))
+	require.NoError(t, err, "an all-zero header is a valid empty content structure")
+	require.NotNil(t, content)
+	require.Empty(t, content.Pad)
+	require.Empty(t, content.EkCert)
 }
 
 // TestUnpackIDevIDCSR_InvalidData tests various invalid input scenarios
@@ -1246,9 +1264,9 @@ func TestParseIdentityProvisioningStrategy(t *testing.T) {
 			expected: EnrollmentStrategyIAK_IDEVID_SINGLE_PASS,
 		},
 		{
-			name:     "Unknown strategy defaults to single pass",
+			name:     "Unknown strategy fails closed",
 			input:    "UNKNOWN",
-			expected: EnrollmentStrategyIAK_IDEVID_SINGLE_PASS,
+			expected: EnrollmentStrategyUnknown,
 		},
 		{
 			name:     "Empty string defaults to single pass",
@@ -3305,9 +3323,9 @@ func TestEnrollmentStrategyParsing(t *testing.T) {
 			expected: EnrollmentStrategyIAK_IDEVID_SINGLE_PASS,
 		},
 		{
-			name:     "unknown defaults to single pass",
+			name:     "unknown fails closed",
 			input:    "UNKNOWN",
-			expected: EnrollmentStrategyIAK_IDEVID_SINGLE_PASS,
+			expected: EnrollmentStrategyUnknown,
 		},
 		{
 			name:     "empty string defaults to single pass",
@@ -3761,95 +3779,103 @@ func TestUnmarshalIDevIDCSRCoverage(t *testing.T) {
 	}
 }
 
-func TestUnpackIDevIDContentCoverage(t *testing.T) {
-	t.Skip("Test has hex decoding issues")
-	tests := []struct {
-		name        string
-		setup       func() *bytes.Reader
-		expectError bool
-	}{
-		{
-			name: "unpack valid content",
-			setup: func() *bytes.Reader {
-				content := &TCG_IDEVID_CONTENT{}
-				binary.BigEndian.PutUint32(content.StructVer[:], 0x00000100)
-				binary.BigEndian.PutUint32(content.HashAlgoId[:], uint32(tpm2.TPMAlgSHA256))
-				binary.BigEndian.PutUint32(content.HashSz[:], 32)
-				binary.BigEndian.PutUint32(content.ProdModelSz[:], 4)
-				binary.BigEndian.PutUint32(content.ProdSerialSz[:], 3)
-				content.ProdModel = []byte("test")
-				content.ProdSerial = []byte("001")
-				content.ProdCaData = []byte{}
-				content.BootEvntLog = []byte{}
-				content.EkCert = []byte{}
-				content.AttestPub = []byte{}
-				content.AtCreateTkt = []byte{}
-				content.AtCertifyInfo = []byte{}
-				content.AtCertifyInfoSig = []byte{}
-				content.SigningPub = []byte{}
-				content.SgnCertifyInfo = []byte{}
-				content.SgnCertifyInfoSig = []byte{}
-				content.Pad = []byte{}
-				packed, _ := PackIDevIDContent(content)
-				return bytes.NewReader(packed)
-			},
-			expectError: false,
-		},
-		{
-			name: "unpack content with large fields",
-			setup: func() *bytes.Reader {
-				content := &TCG_IDEVID_CONTENT{}
-				binary.BigEndian.PutUint32(content.StructVer[:], 0x00000100)
-				binary.BigEndian.PutUint32(content.HashAlgoId[:], uint32(tpm2.TPMAlgSHA512))
-				binary.BigEndian.PutUint32(content.HashSz[:], 64)
-				binary.BigEndian.PutUint32(content.ProdModelSz[:], 20)
-				binary.BigEndian.PutUint32(content.ProdSerialSz[:], 15)
-				binary.BigEndian.PutUint32(content.BootEvntLogSz[:], 100)
-				content.ProdModel = make([]byte, 20)
-				content.ProdSerial = make([]byte, 15)
-				content.ProdCaData = []byte{}
-				content.BootEvntLog = make([]byte, 100)
-				content.EkCert = []byte{}
-				content.AttestPub = []byte{}
-				content.AtCreateTkt = []byte{}
-				content.AtCertifyInfo = []byte{}
-				content.AtCertifyInfoSig = []byte{}
-				content.SigningPub = []byte{}
-				content.SgnCertifyInfo = []byte{}
-				content.SgnCertifyInfoSig = []byte{}
-				content.Pad = []byte{}
-				packed, _ := PackIDevIDContent(content)
-				return bytes.NewReader(packed)
-			},
-			expectError: false,
-		},
-		{
-			name: "unpack truncated data",
-			setup: func() *bytes.Reader {
-				return bytes.NewReader(make([]byte, 10))
-			},
-			expectError: true,
-		},
+// TestUnpackIDevIDContent_EmptyTrailingFieldsRoundTrip is the non-simulator
+// regression test for the zero-length-read-at-EOF defect in
+// UnpackIDevIDContent.
+//
+// Every optional field here is empty, so PackIDevIDContent emits a 64-byte
+// header followed by only the two populated payloads and nothing else. Reading
+// the empty trailing fields back with bytes.Reader.Read returned io.EOF once the
+// reader sat at the end, so well-formed content produced by the product's own
+// packer could not be read back by its own unpacker. All fifteen read sites now
+// use io.ReadFull, which returns (0, nil) for an empty buffer.
+//
+// TestUnpackIDevIDContent above covers the same codec with every field
+// populated, which is why it never saw this; the empty-trailing-field shape is
+// what this test exists for. It used to be disabled outright with a skip
+// blaming "hex decoding issues" -- there is no hex decoding anywhere in it --
+// and even when it ran it asserted only that the result was non-nil, so the
+// fields it packed were never compared. They are now.
+func TestUnpackIDevIDContent_EmptyTrailingFieldsRoundTrip(t *testing.T) {
+	newContent := func(hashAlg tpm2.TPMAlgID, hashSz uint32, model, serial, bootLog []byte) *TCG_IDEVID_CONTENT {
+		content := &TCG_IDEVID_CONTENT{}
+		binary.BigEndian.PutUint32(content.StructVer[:], 0x00000100)
+		binary.BigEndian.PutUint32(content.HashAlgoId[:], uint32(hashAlg))
+		binary.BigEndian.PutUint32(content.HashSz[:], hashSz)
+		binary.BigEndian.PutUint32(content.ProdModelSz[:], uint32(len(model)))
+		binary.BigEndian.PutUint32(content.ProdSerialSz[:], uint32(len(serial)))
+		binary.BigEndian.PutUint32(content.BootEvntLogSz[:], uint32(len(bootLog)))
+		content.ProdModel = model
+		content.ProdSerial = serial
+		content.BootEvntLog = bootLog
+		// Every remaining field, including the trailing Pad, stays empty.
+		content.ProdCaData = []byte{}
+		content.EkCert = []byte{}
+		content.AttestPub = []byte{}
+		content.AtCreateTkt = []byte{}
+		content.AtCertifyInfo = []byte{}
+		content.AtCertifyInfoSig = []byte{}
+		content.SigningPub = []byte{}
+		content.SgnCertifyInfo = []byte{}
+		content.SgnCertifyInfoSig = []byte{}
+		content.Pad = []byte{}
+		return content
 	}
 
-	for _, tc := range tests {
-		t.Run(tc.name, func(t *testing.T) {
-			reader := tc.setup()
-			content, err := UnpackIDevIDContent(reader)
-			if tc.expectError {
-				if err == nil {
-					t.Errorf("expected error but got none")
-				}
-				return
-			}
-			if err != nil {
-				t.Fatalf("unexpected error: %v", err)
-			}
-			if content == nil {
-				t.Fatal("unpacked content should not be nil")
-			}
+	for name, original := range map[string]*TCG_IDEVID_CONTENT{
+		"short payloads": newContent(
+			tpm2.TPMAlgSHA256, 32, []byte("test"), []byte("001"), []byte{}),
+		"multi-block payloads": newContent(
+			tpm2.TPMAlgSHA512, 64,
+			bytes.Repeat([]byte{0xA5}, 20),
+			bytes.Repeat([]byte{0x5A}, 15),
+			bytes.Repeat([]byte{0xC3}, 100)),
+	} {
+		t.Run(name, func(t *testing.T) {
+			packed, err := PackIDevIDContent(original)
+			require.NoError(t, err)
+			require.Len(t, packed,
+				16*4+len(original.ProdModel)+len(original.ProdSerial)+len(original.BootEvntLog),
+				"the packed form must carry the header plus exactly the populated payloads")
+
+			unpacked, err := UnpackIDevIDContent(bytes.NewReader(packed))
+			require.NoError(t, err,
+				"content packed by PackIDevIDContent must be readable by UnpackIDevIDContent")
+			require.NotNil(t, unpacked)
+
+			// Every size field and payload must survive, and the empty fields
+			// must come back empty rather than absorbing the bytes of a
+			// neighbour.
+			assert.Equal(t, original.StructVer, unpacked.StructVer)
+			assert.Equal(t, original.HashAlgoId, unpacked.HashAlgoId)
+			assert.Equal(t, original.HashSz, unpacked.HashSz)
+			assert.Equal(t, original.ProdModel, unpacked.ProdModel)
+			assert.Equal(t, original.ProdSerial, unpacked.ProdSerial)
+			assert.Equal(t, original.BootEvntLog, unpacked.BootEvntLog)
+			assert.Empty(t, unpacked.ProdCaData)
+			assert.Empty(t, unpacked.EkCert)
+			assert.Empty(t, unpacked.AttestPub)
+			assert.Empty(t, unpacked.AtCreateTkt)
+			assert.Empty(t, unpacked.AtCertifyInfo)
+			assert.Empty(t, unpacked.AtCertifyInfoSig)
+			assert.Empty(t, unpacked.SigningPub)
+			assert.Empty(t, unpacked.SgnCertifyInfo)
+			assert.Empty(t, unpacked.SgnCertifyInfoSig)
+			assert.Empty(t, unpacked.Pad)
+
+			// Re-packing must reproduce identical bytes; the CSR signature is
+			// computed over exactly this encoding.
+			repacked, err := PackIDevIDContent(unpacked)
+			require.NoError(t, err)
+			assert.Equal(t, packed, repacked)
 		})
 	}
+
+	t.Run("truncated header is rejected", func(t *testing.T) {
+		content, err := UnpackIDevIDContent(bytes.NewReader(make([]byte, 10)))
+		require.Error(t, err, "a buffer shorter than the 64-byte header must be rejected")
+		assert.Nil(t, content)
+	})
 }
 
 func TestBytesToUint32Coverage(t *testing.T) {
@@ -3984,14 +4010,14 @@ func TestParseIdentityProvisioningStrategyCoverage(t *testing.T) {
 			expected: EnrollmentStrategyIAK_IDEVID_SINGLE_PASS,
 		},
 		{
-			name:     "invalid strategy defaults to single pass",
+			name:     "invalid strategy fails closed",
 			strategy: "INVALID",
-			expected: EnrollmentStrategyIAK_IDEVID_SINGLE_PASS,
+			expected: EnrollmentStrategyUnknown,
 		},
 		{
-			name:     "case sensitive - lowercase fails",
+			name:     "case sensitive - lowercase fails closed",
 			strategy: "iak",
-			expected: EnrollmentStrategyIAK_IDEVID_SINGLE_PASS,
+			expected: EnrollmentStrategyUnknown,
 		},
 	}
 

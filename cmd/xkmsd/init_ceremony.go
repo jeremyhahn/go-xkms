@@ -18,14 +18,17 @@ import (
 	"crypto/x509"
 	"errors"
 	"fmt"
-	"io"
 	"log/slog"
 	"os"
 	"path/filepath"
+	"strings"
+
+	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
 
 	"github.com/jeremyhahn/go-xkms/pkg/backend/software"
 	"github.com/jeremyhahn/go-xkms/pkg/ca"
 	"github.com/jeremyhahn/go-xkms/pkg/certstore"
+	pkgfido2 "github.com/jeremyhahn/go-xkms/pkg/fido2"
 	initialize "github.com/jeremyhahn/go-xkms/pkg/init"
 	"github.com/jeremyhahn/go-xkms/pkg/storage"
 	"github.com/jeremyhahn/go-xkms/pkg/types"
@@ -61,10 +64,6 @@ var (
 	// rejects the request (CSR validation, share splitting, cert issuance).
 	ErrCeremonyInitFailed = errors.New("init: ceremony initialization failed")
 
-	// ErrAdminBundleWriteFailed is returned when the SO admin client bundle
-	// cannot be written to its destination.
-	ErrAdminBundleWriteFailed = errors.New("init: failed to write admin bundle")
-
 	// ErrCABundleWriteFailed is returned when the CA bundle cannot be
 	// persisted to the data directory.
 	ErrCABundleWriteFailed = errors.New("init: failed to write CA bundle")
@@ -93,14 +92,41 @@ type ceremonyEnv struct {
 	logger   *slog.Logger
 	hostname string
 	dataDir  string
-	// adminBundlePath is the destination for the SO admin client bundle in
-	// single-admin mode. The literal "-" means stdout (one-shot).
-	adminBundlePath string
+
+	// enrollmentPlan is the ordered set of login factors to enroll for the
+	// administrator (--admin-factor). Nil means the mTLS baseline.
+	enrollmentPlan *qrdbsdk.AdminEnrollmentPlan
+
+	// passkeyDevice selects one FIDO2 authenticator when several are
+	// attached (--passkey-device).
+	passkeyDevice string
+
+	// passkeyPIN is the CTAP2 PIN of the authenticator being enrolled
+	// (--passkey-pin-stdin / XKMS_PASSKEY_PIN). Empty when the key has none.
+	passkeyPIN string
+
+	// relyingPartyID / relyingPartyName scope an enrolled passkey to the
+	// domain the console is served from.
+	relyingPartyID   string
+	relyingPartyName string
+
+	// fido2Handler drives an attached authenticator. Nil when this build or
+	// host has no FIDO2 support.
+	fido2Handler *pkgfido2.FIDO2Handler
+
+	// enrolledFactors records what the ceremony enrolled, for the summary.
+	enrolledFactors []qrdbsdk.AdminEnrollmentResult
 }
 
+// adminUsername is the administrator identity the ceremony enrolls factors
+// against.
+const adminUsername = "administrator"
+
+// systemTenantID scopes the bootstrap administrator.
+const systemTenantID = "system"
+
 // executeCeremony constructs a software-backed CA, runs the ceremony
-// against it, and persists the public artifacts (CA bundle, SPKI pin,
-// admin bundle). The CA's signing key and certificate live in the same
+// against it, and persists the public artifacts (CA bundle, SPKI pin). The CA's signing key and certificate live in the same
 // in-memory storage tier the rest of `xkmsd init` already uses — this
 // command remains a one-shot bootstrap that emits the durable artifacts
 // the operator needs while keeping any sealed material ephemeral by
@@ -131,11 +157,13 @@ func executeCeremony(
 		return nil, err
 	}
 
-	// Single-admin mode is the only path that returns an SO cert+key pair
-	// during Initialize; M-of-N mode clears them in the wrapper because the
-	// shares (and therefore the certs) are claimed asynchronously.
-	if result.State == initialize.StateOperational && len(result.SOCertPEM) > 0 {
-		if err := writeAdminBundle(env.adminBundlePath, result); err != nil {
+	// Single-admin mode transitions straight to operational, so admin login
+	// factors are enrolled here; M-of-N mode enrolls asynchronously as each
+	// officer claims their certificate and share. The SO identity is
+	// CSR-based; the server never holds officer private keys, so there is no
+	// credential bundle to write.
+	if result.State == initialize.StateOperational {
+		if err := enrollAdminFactors(ctx, env); err != nil {
 			return nil, err
 		}
 	}
@@ -154,7 +182,7 @@ func executeCeremony(
 // administrator / operator / user / auditor for SignCSRInit) so the
 // upstream ceremony can call SignCSR with these profile names without
 // the default xkms registry returning ErrProfileNotFound.
-func newCeremonyCA(ctx context.Context, env *ceremonyEnv) (ca.TrustedCA, error) {
+func newCeremonyCA(ctx context.Context, env *ceremonyEnv) (initialize.CeremonyCA, error) {
 	keyStorage := storage.NewMemory()
 	swBackend, err := software.NewBackend(&software.Config{KeyStorage: keyStorage})
 	if err != nil {
@@ -318,49 +346,25 @@ func persistSPKIPin(dataDir string, result *initialize.InitResult) error {
 	return nil
 }
 
-// writeAdminBundle emits the SO admin client bundle (certificate + private
-// key, both PEM-encoded) to the configured destination. The literal "-"
-// directs the bundle to stdout; any other value is treated as a filesystem
-// path. The bundle is a single concatenated PEM stream — cert first, then
-// key — so it can be consumed unchanged by tooling that expects a combined
-// client bundle (curl --cert, kubectl --client-certificate, etc.).
-//
-// The destination file is created with 0600 permissions because it
-// contains a private key. Stdout is the canonical default per the
-// `--admin-bundle` flag documentation; operators are expected to capture
-// it once and discard the terminal output.
-func writeAdminBundle(path string, result *initialize.InitResult) error {
-	bundle := append(append([]byte{}, result.SOCertPEM...), result.SOKeyPEM...)
-	if path == "" || path == "-" {
-		return writeAdminBundleTo(os.Stdout, bundle)
-	}
-	// #nosec G304 -- path comes from operator-supplied flag during init
-	f, err := os.OpenFile(path, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0o600)
-	if err != nil {
-		return &WrappedDetailError{Sentinel: ErrAdminBundleWriteFailed, Detail: path, Err: err}
-	}
-	defer func() { _ = f.Close() }()
-	if err := writeAdminBundleTo(f, bundle); err != nil {
-		return err
-	}
-	return nil
-}
-
-// writeAdminBundleTo streams the PEM bundle to w and wraps the io error
-// in ErrAdminBundleWriteFailed. Split from writeAdminBundle so the same
-// formatting path covers both the stdout and file destinations.
-func writeAdminBundleTo(w io.Writer, bundle []byte) error {
-	if _, err := w.Write(bundle); err != nil {
-		return &WrappedError{Sentinel: ErrAdminBundleWriteFailed, Err: err}
-	}
-	return nil
-}
-
 // printCeremonyOutcome writes a human-readable summary of the ceremony
 // outcome to stderr. The summary is informational only — the durable
-// artifacts have already been written to dataDir / adminBundlePath when
-// this is invoked.
+// artifacts have already been written to dataDir when this is invoked.
+// printEnrolledFactors lists the administrator's login credentials so the
+// operator knows exactly what they can sign in with — and, on a partial
+// failure, what they cannot.
+func printEnrolledFactors(env *ceremonyEnv) {
+	if len(env.enrolledFactors) == 0 {
+		return
+	}
+	names := make([]string, 0, len(env.enrolledFactors))
+	for _, e := range env.enrolledFactors {
+		names = append(names, e.Factor.String())
+	}
+	fmt.Fprintf(os.Stderr, "  Login factors: %s\n", strings.Join(names, ", "))
+}
+
 func printCeremonyOutcome(env *ceremonyEnv, result *initialize.InitResult) {
+	defer printEnrolledFactors(env)
 	fmt.Fprintln(os.Stderr)
 	fmt.Fprintln(os.Stderr, "=== xkmsd init: Ceremony Outcome ===")
 	fmt.Fprintln(os.Stderr)
@@ -373,18 +377,56 @@ func printCeremonyOutcome(env *ceremonyEnv, result *initialize.InitResult) {
 		fmt.Fprintf(os.Stderr, "  CA Bundle:    %s\n", filepath.Join(env.dataDir, "ca-bundle.pem"))
 	}
 	switch result.State {
-	case initialize.StateOperational:
-		if len(result.SOCertPEM) > 0 {
-			dest := env.adminBundlePath
-			if dest == "" || dest == "-" {
-				dest = "stdout"
-			}
-			fmt.Fprintf(os.Stderr, "  Admin Bundle: %s (cert+key, 0600 if on-disk)\n", dest)
-		}
 	case initialize.StateEnrolling:
 		fmt.Fprintf(os.Stderr, "  Shares:       %d Shamir shares generated; run\n", result.ShareCount)
 		fmt.Fprintln(os.Stderr, "                `xkmsctl init claim-cert` then `xkmsctl init claim-share`")
 		fmt.Fprintln(os.Stderr, "                from each officer host to enroll.")
 	}
 	fmt.Fprintln(os.Stderr)
+}
+
+// adminEnrollmentConfig projects the ceremony environment onto the reusable
+// go-xkms admin-enrollment orchestration (pkg/init/admin_enrollment.go). The
+// registry construction, hardware preflight, and enrollment all live there so
+// every project embedding go-qrdb through go-xkms performs them identically;
+// xkmsd is just its first consumer.
+func adminEnrollmentConfig(env *ceremonyEnv) initialize.AdminEnrollmentConfig {
+	return initialize.AdminEnrollmentConfig{
+		Plan:             env.enrollmentPlan,
+		Username:         adminUsername,
+		DisplayName:      adminUsername,
+		TenantID:         systemTenantID,
+		RelyingPartyID:   env.relyingPartyID,
+		RelyingPartyName: env.relyingPartyName,
+		PasskeyDevice:    env.passkeyDevice,
+		PasskeyPIN:       env.passkeyPIN,
+		FIDO2Handler:     env.fido2Handler,
+		// TODO(P1): supply the factor persister once xkmsd init runs on the
+		// durable qrdb-backed store. A nil persister preserves today's
+		// behaviour exactly -- factors enroll and are reported but not stored
+		// -- rather than silently appearing to persist.
+		Persister: nil,
+	}
+}
+
+// preflightAdminFactors refuses the ceremony before it changes any state when
+// a planned factor cannot succeed.
+func preflightAdminFactors(ctx context.Context, env *ceremonyEnv) error {
+	return initialize.PreflightAdminFactors(ctx, adminEnrollmentConfig(env))
+}
+
+// enrollAdminFactors runs the planned login factors for the administrator the
+// ceremony just created.
+func enrollAdminFactors(ctx context.Context, env *ceremonyEnv) error {
+	enrolled, err := initialize.EnrollAdminFactors(ctx, adminEnrollmentConfig(env))
+	// Report what IS live even on failure, so an operator is not left guessing
+	// whether the administrator has any usable credential.
+	for _, e := range enrolled {
+		env.logger.Info("admin login factor enrolled", slog.String("factor", e.Factor.String()))
+	}
+	if err != nil {
+		return err
+	}
+	env.enrolledFactors = enrolled
+	return nil
 }

@@ -493,6 +493,10 @@ type mockFIDO2Handler struct {
 	enrollKeyErr     error
 	unlockWithKeyErr error
 	waitForDeviceDev *fido2.Device
+
+	// lastAuthConfig records the configuration UnlockWithKey was called
+	// with, so a test can assert which derivation the CLI selected.
+	lastAuthConfig *fido2.AuthenticationConfig
 }
 
 func (m *mockFIDO2Handler) ListDevices() ([]fido2.Device, error) {
@@ -523,6 +527,7 @@ func (m *mockFIDO2Handler) EnrollKey(config *fido2.EnrollmentConfig) (*fido2.Enr
 }
 
 func (m *mockFIDO2Handler) UnlockWithKey(config *fido2.AuthenticationConfig) ([]byte, error) {
+	m.lastAuthConfig = config
 	if m.unlockWithKeyErr != nil {
 		return nil, m.unlockWithKeyErr
 	}
@@ -1665,4 +1670,122 @@ func TestDefaultFIDO2HandlerFactory_VirtualWithoutStateDir(t *testing.T) {
 		t.Fatal("defaultFIDO2HandlerFactory without state dir returned nil handler")
 	}
 	defer func() { _ = handler.Close() }()
+}
+
+// =============================================================================
+// Legacy hmac-secret derivation opt-in
+// =============================================================================
+
+// newAuthenticateFlagSet builds the flag set the authenticate command reads.
+func newAuthenticateFlagSet(credID, salt string, legacy bool) *cobra.Command {
+	cmd := &cobra.Command{}
+	cmd.Flags().String("credential-id", credID, "")
+	cmd.Flags().String("salt", salt, "")
+	cmd.Flags().String("rp-id", "example.com", "")
+	cmd.Flags().Duration("timeout", 30*time.Second, "")
+	cmd.Flags().String("device", "", "")
+	cmd.Flags().Bool("user-verification", false, "")
+	cmd.Flags().Bool("hex", false, "")
+	cmd.Flags().Bool("legacy-hmac-derivation", legacy, "")
+	return cmd
+}
+
+// TestFIDO2AuthenticateCmd_LegacyDerivationOptIn checks that the deprecated
+// derivation is selected only by the explicit flag, and that using it warns
+// the operator that the key is not hardware-bound.
+func TestFIDO2AuthenticateCmd_LegacyDerivationOptIn(t *testing.T) {
+	cleanup := testSetupFIDO2(t)
+	defer cleanup()
+
+	mockHandler := &mockFIDO2Handler{derivedKey: make([]byte, 64)}
+	fido2HandlerFactory = createMockFIDO2HandlerFactory(mockHandler, nil)
+
+	defer func(previous *Config) { globalConfig = previous }(globalConfig)
+	globalConfig = NewConfig()
+	globalConfig.OutputFormat = "text"
+
+	credID := base64.StdEncoding.EncodeToString([]byte("test-credential-id"))
+	salt := base64.StdEncoding.EncodeToString([]byte("test-salt"))
+
+	var buf bytes.Buffer
+	runFIDO2AuthenticateWithWriter(newAuthenticateFlagSet(credID, salt, true), []string{}, &buf)
+
+	if mockHandler.lastAuthConfig == nil {
+		t.Fatal("expected UnlockWithKey to be called")
+	}
+	if mockHandler.lastAuthConfig.DerivationMode != fido2.DerivationModeLegacyInsecure {
+		t.Errorf("expected the legacy derivation to be selected, got %v", mockHandler.lastAuthConfig.DerivationMode)
+	}
+
+	output := buf.String()
+	if !strings.Contains(output, "NOT bound to your security key") {
+		t.Errorf("expected a warning that the key is not hardware-bound, got: %s", output)
+	}
+	if !strings.Contains(output, "re-enroll") {
+		t.Errorf("expected the warning to demand re-enrollment, got: %s", output)
+	}
+}
+
+// TestFIDO2AuthenticateCmd_DefaultsToCTAP2Derivation checks that without the
+// flag the CLI never selects the deprecated derivation and never warns.
+func TestFIDO2AuthenticateCmd_DefaultsToCTAP2Derivation(t *testing.T) {
+	cleanup := testSetupFIDO2(t)
+	defer cleanup()
+
+	mockHandler := &mockFIDO2Handler{derivedKey: make([]byte, 64)}
+	fido2HandlerFactory = createMockFIDO2HandlerFactory(mockHandler, nil)
+
+	defer func(previous *Config) { globalConfig = previous }(globalConfig)
+	globalConfig = NewConfig()
+	globalConfig.OutputFormat = "text"
+
+	credID := base64.StdEncoding.EncodeToString([]byte("test-credential-id"))
+	salt := base64.StdEncoding.EncodeToString([]byte("test-salt"))
+
+	var buf bytes.Buffer
+	runFIDO2AuthenticateWithWriter(newAuthenticateFlagSet(credID, salt, false), []string{}, &buf)
+
+	if mockHandler.lastAuthConfig == nil {
+		t.Fatal("expected UnlockWithKey to be called")
+	}
+	if mockHandler.lastAuthConfig.DerivationMode != fido2.DerivationModeCTAP2 {
+		t.Errorf("expected the CTAP2 derivation by default, got %v", mockHandler.lastAuthConfig.DerivationMode)
+	}
+	if strings.Contains(buf.String(), "WARNING") {
+		t.Errorf("the default path must not warn, got: %s", buf.String())
+	}
+}
+
+// TestPrinterPrintWarning checks the warning surface used by the legacy
+// opt-in.
+func TestPrinterPrintWarning(t *testing.T) {
+	var buf bytes.Buffer
+
+	printer := NewPrinter("text", &buf)
+	if err := printer.PrintWarning("do not do this"); err != nil {
+		t.Fatalf("PrintWarning returned an error: %v", err)
+	}
+	if !strings.Contains(buf.String(), "WARNING: do not do this") {
+		t.Errorf("expected the warning in the output, got: %s", buf.String())
+	}
+
+	// JSON output must stay a clean document, so the warning is diverted.
+	buf.Reset()
+	jsonPrinter := NewPrinter("json", &buf)
+	if err := jsonPrinter.PrintWarning("do not do this"); err != nil {
+		t.Fatalf("PrintWarning returned an error: %v", err)
+	}
+	if buf.Len() != 0 {
+		t.Errorf("expected JSON output to stay clean, got: %s", buf.String())
+	}
+}
+
+// TestPrinterPrintWarning_UnknownFormat checks the error path.
+func TestPrinterPrintWarning_UnknownFormat(t *testing.T) {
+	var buf bytes.Buffer
+
+	printer := NewPrinter("yaml-ish", &buf)
+	if err := printer.PrintWarning("message"); err == nil {
+		t.Error("expected an error for an unknown output format")
+	}
 }

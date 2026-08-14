@@ -60,6 +60,21 @@ func softhsmLibPath() string {
 	return ""
 }
 
+// requireSoftHSMLib returns the SoftHSM2 module path, failing the test if the
+// library is absent. SoftHSM2 is a software token and is installed in the
+// devcontainer/docker image these integration suites are required to run in,
+// so a missing library is an environment fault that must be reported loudly
+// rather than silently dropping coverage.
+func requireSoftHSMLib(t *testing.T) string {
+	t.Helper()
+	libPath := softhsmLibPath()
+	if libPath == "" {
+		t.Fatal("SoftHSM2 module not found; install softhsm2 or run this suite " +
+			"via the devcontainer (make integration-test)")
+	}
+	return libPath
+}
+
 // initSoftHSMToken creates a temporary SoftHSM2 token for testing.
 // Returns the token label, slot ID, and cleanup function.
 func initSoftHSMToken(t *testing.T) (tokenLabel string, slotID int, cleanup func()) {
@@ -190,10 +205,7 @@ func newSOSessionStorage(t *testing.T, libPath string, slotID int) *xkms.PIVPKCS
 // TestPKCS11CertStorage_FullLifecycle tests the complete lifecycle of certificate
 // storage operations on a real SoftHSM2 token: store, retrieve, list, delete, close.
 func TestPKCS11CertStorage_FullLifecycle(t *testing.T) {
-	libPath := softhsmLibPath()
-	if libPath == "" {
-		t.Skip("SoftHSM2 not available")
-	}
+	libPath := requireSoftHSMLib(t)
 
 	_, slotID, cleanup := initSoftHSMToken(t)
 	defer cleanup()
@@ -249,10 +261,7 @@ func TestPKCS11CertStorage_FullLifecycle(t *testing.T) {
 // TestPKCS11CertStorage_StoreRetrieveRoundtrip verifies that DER bytes are
 // preserved exactly through a store/retrieve cycle.
 func TestPKCS11CertStorage_StoreRetrieveRoundtrip(t *testing.T) {
-	libPath := softhsmLibPath()
-	if libPath == "" {
-		t.Skip("SoftHSM2 not available")
-	}
+	libPath := requireSoftHSMLib(t)
 
 	_, slotID, cleanup := initSoftHSMToken(t)
 	defer cleanup()
@@ -274,10 +283,7 @@ func TestPKCS11CertStorage_StoreRetrieveRoundtrip(t *testing.T) {
 // TestPKCS11CertStorage_Overwrite verifies that storing to an occupied slot
 // replaces the existing certificate.
 func TestPKCS11CertStorage_Overwrite(t *testing.T) {
-	libPath := softhsmLibPath()
-	if libPath == "" {
-		t.Skip("SoftHSM2 not available")
-	}
+	libPath := requireSoftHSMLib(t)
 
 	_, slotID, cleanup := initSoftHSMToken(t)
 	defer cleanup()
@@ -321,10 +327,7 @@ func TestPKCS11CertStorage_Overwrite(t *testing.T) {
 // TestPKCS11CertStorage_MultiSlot tests storing different certificates in
 // multiple PIV slots simultaneously.
 func TestPKCS11CertStorage_MultiSlot(t *testing.T) {
-	libPath := softhsmLibPath()
-	if libPath == "" {
-		t.Skip("SoftHSM2 not available")
-	}
+	libPath := requireSoftHSMLib(t)
 
 	_, slotID, cleanup := initSoftHSMToken(t)
 	defer cleanup()
@@ -372,10 +375,7 @@ func TestPKCS11CertStorage_MultiSlot(t *testing.T) {
 
 // TestPKCS11CertStorage_ImportExportDER tests the DER import/export roundtrip.
 func TestPKCS11CertStorage_ImportExportDER(t *testing.T) {
-	libPath := softhsmLibPath()
-	if libPath == "" {
-		t.Skip("SoftHSM2 not available")
-	}
+	libPath := requireSoftHSMLib(t)
 
 	_, slotID, cleanup := initSoftHSMToken(t)
 	defer cleanup()
@@ -399,10 +399,7 @@ func TestPKCS11CertStorage_ImportExportDER(t *testing.T) {
 
 // TestPKCS11CertStorage_ImportExportPEM tests the PEM import/export roundtrip.
 func TestPKCS11CertStorage_ImportExportPEM(t *testing.T) {
-	libPath := softhsmLibPath()
-	if libPath == "" {
-		t.Skip("SoftHSM2 not available")
-	}
+	libPath := requireSoftHSMLib(t)
 
 	_, slotID, cleanup := initSoftHSMToken(t)
 	defer cleanup()
@@ -443,10 +440,7 @@ func TestPKCS11CertStorage_ImportExportPEM(t *testing.T) {
 // TestPKCS11CertStorage_DeleteNotFound verifies that deleting from an empty slot
 // returns ErrCertificateNotFound.
 func TestPKCS11CertStorage_DeleteNotFound(t *testing.T) {
-	libPath := softhsmLibPath()
-	if libPath == "" {
-		t.Skip("SoftHSM2 not available")
-	}
+	libPath := requireSoftHSMLib(t)
 
 	_, slotID, cleanup := initSoftHSMToken(t)
 	defer cleanup()
@@ -462,10 +456,7 @@ func TestPKCS11CertStorage_DeleteNotFound(t *testing.T) {
 // TestPKCS11CertStorage_RetrieveNotFound verifies that retrieving from an empty slot
 // returns ErrCertificateNotFound.
 func TestPKCS11CertStorage_RetrieveNotFound(t *testing.T) {
-	libPath := softhsmLibPath()
-	if libPath == "" {
-		t.Skip("SoftHSM2 not available")
-	}
+	libPath := requireSoftHSMLib(t)
 
 	_, slotID, cleanup := initSoftHSMToken(t)
 	defer cleanup()
@@ -483,10 +474,7 @@ func TestPKCS11CertStorage_RetrieveNotFound(t *testing.T) {
 // then uses raw PKCS#11 operations via the Export/Retrieve API to verify that
 // the correct CKA_ID values (0x01, 0x02, 0x03, 0x04) are assigned.
 func TestPKCS11CertStorage_CKAIDMapping(t *testing.T) {
-	libPath := softhsmLibPath()
-	if libPath == "" {
-		t.Skip("SoftHSM2 not available")
-	}
+	libPath := requireSoftHSMLib(t)
 
 	_, slotID, cleanup := initSoftHSMToken(t)
 	defer cleanup()
@@ -549,10 +537,7 @@ func TestPKCS11CertStorage_CKAIDMapping(t *testing.T) {
 // created via NewFromSessionWithSO can perform the full Store/Retrieve/Delete
 // lifecycle, proving SO session elevation works for write operations.
 func TestPKCS11CertStorage_NewFromSessionWithSO(t *testing.T) {
-	libPath := softhsmLibPath()
-	if libPath == "" {
-		t.Skip("SoftHSM2 not available")
-	}
+	libPath := requireSoftHSMLib(t)
 
 	_, slotID, cleanup := initSoftHSMToken(t)
 	defer cleanup()
@@ -601,10 +586,7 @@ func TestPKCS11CertStorage_NewFromSessionWithSO(t *testing.T) {
 // session support was added: the delete-then-create pattern during overwrite
 // requires SO login on YubiKey PIV tokens.
 func TestPKCS11CertStorage_SOSessionOverwrite(t *testing.T) {
-	libPath := softhsmLibPath()
-	if libPath == "" {
-		t.Skip("SoftHSM2 not available")
-	}
+	libPath := requireSoftHSMLib(t)
 
 	_, slotID, cleanup := initSoftHSMToken(t)
 	defer cleanup()
@@ -664,10 +646,7 @@ func TestPKCS11CertStorage_NewFromSessionWithSO_InvalidConfig(t *testing.T) {
 // to verify data integrity across session types. This proves that the cert
 // object written by the SO session is accessible to normal CKU_USER sessions.
 func TestPKCS11CertStorage_SOSessionStore_ThenRegularRetrieve(t *testing.T) {
-	libPath := softhsmLibPath()
-	if libPath == "" {
-		t.Skip("SoftHSM2 not available")
-	}
+	libPath := requireSoftHSMLib(t)
 
 	_, slotID, cleanup := initSoftHSMToken(t)
 	defer cleanup()

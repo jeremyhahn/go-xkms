@@ -1,7 +1,7 @@
 {
   "name": "@go-xkms/sdk",
   "version": "0.1.0",
-  "description": "TypeScript SDK for go-xkms — SSH console client and WebSocket terminal protocol",
+  "description": "TypeScript SDK for go-xkms — framework-free REST client, WebAuthn wire bridge, SSH console client and WebSocket terminal protocol",
   "type": "module",
   "main": "./dist/index.cjs",
   "module": "./dist/index.js",
@@ -16,6 +16,16 @@
         "types": "./dist/index.d.ts",
         "default": "./dist/index.cjs"
       }
+    },
+    "./ssh-console": {
+      "import": {
+        "types": "./dist/ssh-console.d.ts",
+        "default": "./dist/ssh-console.js"
+      },
+      "require": {
+        "types": "./dist/ssh-console.d.ts",
+        "default": "./dist/ssh-console.cjs"
+      }
     }
   },
   "files": [
@@ -26,7 +36,8 @@
     "build": "tsup",
     "test": "vitest run",
     "test:watch": "vitest",
-    "typecheck": "tsc --noEmit"
+    "typecheck": "tsc --noEmit",
+    "test:coverage": "vitest run --coverage"
   },
   "keywords": [
     "go-xkms",
@@ -48,9 +59,11 @@
   },
   "devDependencies": {
     "@types/node": "^20.0.0",
+    "@vitest/coverage-v8": "^2.1.9",
     "jsdom": "^24.0.0",
     "tsup": "^8.0.0",
     "typescript": "^5.4.0",
-    "vitest": "^1.6.0"
-  }
+    "vitest": "^2.1.9"
+  },
+  "sideEffects": false
 }

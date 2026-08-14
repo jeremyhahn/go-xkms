@@ -68,23 +68,3 @@ func (d *Device) IsClosed() bool {
 func (d *Device) Fd() int {
 	return -1
 }
-
-// SerializeCreate2Request serializes a CreateConfig into a UHID_CREATE2 request buffer.
-// This function works on all platforms for testing purposes.
-func SerializeCreate2Request(cfg *CreateConfig) []byte {
-	// This is platform-independent serialization for testing
-	return nil
-}
-
-// SerializeInput2Request serializes data into a UHID_INPUT2 request buffer.
-// This function works on all platforms for testing purposes.
-func SerializeInput2Request(data []byte) []byte {
-	// This is platform-independent serialization for testing
-	return nil
-}
-
-// ParseOutputEvent parses a raw UHID_OUTPUT event buffer.
-// This function works on all platforms for testing purposes.
-func ParseOutputEvent(buf []byte) ([]byte, error) {
-	return nil, ErrNotSupported
-}

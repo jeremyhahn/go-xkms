@@ -140,6 +140,16 @@ type FIDO2Service struct {
 	bridgeRunning atomic.Bool
 	bridgeStart   time.Time
 	bridgeReqs    atomic.Int64
+
+	// TCG device enrollment. tpmEnrollment is off until the app wires it from
+	// configuration, because enrollment hands the phone this host's EK
+	// certificate and lets it drive TPM2_ActivateCredential. tpmEnroller holds
+	// the TPM the running bridge answers enrollment from; it is opened when
+	// the bridge starts and closed when it stops, so the device handle is not
+	// held while the bridge is idle. All three are guarded by bridgeMu.
+	tpmEnrollment bool
+	tpmDevice     string
+	tpmEnroller   phone.TPMEnrollerCloser
 }
 
 // NewFIDO2Service creates a new FIDO2Service.
@@ -170,6 +180,21 @@ func (s *FIDO2Service) SetRPPolicyStore(store authenticator.RPPolicyStore) {
 // SetClientFunc sets the function used to obtain the SDK client for the phone bridge.
 func (s *FIDO2Service) SetClientFunc(fn func() xkms.Client) {
 	s.clientFunc = fn
+}
+
+// SetTPMEnrollment configures whether the phone bridge offers TCG-CSR-IDEVID
+// device enrollment from this host's TPM, and which device it is opened from.
+// An empty devicePath means the platform default. Enrollment is off until
+// this is called: it lets the phone, acting as a Certificate Authority, read
+// the EK certificate and run TPM2_ActivateCredential against this TPM, so it
+// is an explicit choice rather than a consequence of owning a TPM.
+//
+// The setting takes effect the next time the bridge starts.
+func (s *FIDO2Service) SetTPMEnrollment(enabled bool, devicePath string) {
+	s.bridgeMu.Lock()
+	defer s.bridgeMu.Unlock()
+	s.tpmEnrollment = enabled
+	s.tpmDevice = devicePath
 }
 
 // SetAuditLogger sets the audit logger for FIDO2 operations.
@@ -360,13 +385,21 @@ func (s *FIDO2Service) StartPhoneBridge() error {
 		return ErrFIDO2BridgeNoClient
 	}
 
+	// Open the TPM once, here, so the bridge's TCG enrollment handlers have
+	// something to answer from. openTPMEnroller returns nil when enrollment is
+	// off or no TPM is reachable, which leaves those handlers reporting the
+	// feature as unavailable while the rest of the bridge works normally.
+	s.tpmEnroller = s.openTPMEnroller()
+
 	bridgeCfg := &phone.BridgeConfig{
 		RequestTimeout: phone.DefaultBridgeRequestTimeout,
 		Logger:         slog.Default(),
 		AuditLogger:    s.auditLogger,
+		TPM:            s.tpmEnroller,
 	}
 	bridge, err := phone.NewBridge(client, bridgeCfg)
 	if err != nil {
+		s.closeTPMEnroller()
 		return err
 	}
 
@@ -395,6 +428,7 @@ func (s *FIDO2Service) StopPhoneBridge() error {
 		_ = s.bridge.Close()
 		s.bridge = nil
 	}
+	s.closeTPMEnroller()
 	s.bridgeRunning.Store(false)
 
 	if s.auditLogger != nil {
@@ -403,6 +437,37 @@ func (s *FIDO2Service) StopPhoneBridge() error {
 		})
 	}
 	return nil
+}
+
+// openTPMEnroller opens this host's TPM for TCG device enrollment, or returns
+// nil when enrollment is off or no TPM is reachable. Enrollment is optional,
+// so neither is an error that should stop the bridge: OpenTPMEnroller has
+// already reported at INFO that the host has no TPM, or at WARN that it has
+// one xkey cannot reach. Callers must hold bridgeMu.
+func (s *FIDO2Service) openTPMEnroller() phone.TPMEnrollerCloser {
+	if !s.tpmEnrollment {
+		return nil
+	}
+	enroller, err := phone.OpenTPMEnroller(&phone.TPMEnrollerConfig{
+		Device: s.tpmDevice,
+		Logger: slog.Default(),
+	})
+	if err != nil {
+		return nil
+	}
+	return enroller
+}
+
+// closeTPMEnroller releases the enrollment TPM device handle, if one is held.
+// Callers must hold bridgeMu.
+func (s *FIDO2Service) closeTPMEnroller() {
+	if s.tpmEnroller == nil {
+		return
+	}
+	if err := s.tpmEnroller.Close(); err != nil {
+		slog.Warn("failed to close enrollment TPM", "error", err)
+	}
+	s.tpmEnroller = nil
 }
 
 // GetBridgeStatus returns the current state of the phone bridge.

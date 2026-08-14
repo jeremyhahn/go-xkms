@@ -111,9 +111,20 @@ func (c *PKCS11ToolMultiProtocolConfig) SetProtocolEnv(t *testing.T) {
 	os.Setenv("XKMS_PKCS11_TARGET", cfg.Target)
 	os.Setenv("XKMS_PKCS11_DEFAULT_BACKEND", string(c.Backend))
 
+	// pkcs11-tool runs as a separate process, so the module inside it builds its
+	// configuration from the environment. A non-unix target without TLS is
+	// refused by the module's mandatory-TLS guard -- PKCS#11 traffic can carry
+	// exported key material, so plaintext to a remote endpoint is not something
+	// it will do silently. The guard is correct; the test server is a plaintext
+	// loopback, which is the case the opt-out exists for.
+	if cfg.AllowInsecureTransport {
+		os.Setenv("XKMS_PKCS11_ALLOW_INSECURE_TRANSPORT", "true")
+	}
+
 	t.Cleanup(func() {
 		os.Unsetenv("XKMS_PKCS11_TARGET")
 		os.Unsetenv("XKMS_PKCS11_DEFAULT_BACKEND")
+		os.Unsetenv("XKMS_PKCS11_ALLOW_INSECURE_TRANSPORT")
 	})
 }
 
@@ -164,16 +175,22 @@ func isSoftHSMAvailable() bool {
 	return false
 }
 
-// skipIfPKCS11BackendUnavailable skips the test if SoftHSM library is not available.
-// The pkcs11 backend tests require SoftHSM to be installed in the test environment.
-func skipIfPKCS11BackendUnavailable(t *testing.T, backend module.BackendType) {
+// requirePKCS11Backend asserts SoftHSM is installed when the pkcs11 backend is
+// under test.
+//
+// The pkcs11 backend only enters the matrix when XKMS_TEST_PKCS11_BACKEND is
+// set, which is an explicit statement that the server has a PKCS#11 provider
+// configured. The devcontainer installs softhsm2 unconditionally, so a missing
+// library at that point is a broken environment, not an absent feature.
+func requirePKCS11Backend(t *testing.T, backend module.BackendType) {
 	t.Helper()
 	if backend != module.BackendPKCS11 {
 		return
 	}
 
 	if !isSoftHSMAvailable() {
-		t.Skip("Skipping: pkcs11 backend requires SoftHSM library which is not installed")
+		t.Fatal("the pkcs11 backend was requested (XKMS_TEST_PKCS11_BACKEND) but no " +
+			"libsofthsm2.so was found; install softhsm2 or point SOFTHSM_LIBRARY at it")
 	}
 }
 
@@ -366,19 +383,17 @@ func RandomCommands() []PKCS11Command {
 
 // TestPKCS11ToolMultiProtocol_CoreCommands tests core commands across all protocols.
 func TestPKCS11ToolMultiProtocol_CoreCommands(t *testing.T) {
-	skipIfToolUnavailable(t)
+	requireTool(t)
 	suite := NewMultiProtocolTestSuite()
 	commands := CoreCommands()
 
 	for _, protocol := range AllProtocols() {
 		protocol := protocol
 		t.Run(string(protocol), func(t *testing.T) {
-			if !suite.IsProtocolAvailable(protocol) {
-				t.Skipf("protocol %s not available", protocol)
-			}
+			suite.RequireProtocol(t, protocol)
 
 			cfg := NewPKCS11ToolMultiProtocolConfig(t, protocol, module.BackendSoftware)
-			skipIfModuleUnavailable(t, cfg.ModulePath)
+			requireModule(t, cfg.ModulePath)
 			cfg.SetProtocolEnv(t)
 
 			for _, cmd := range commands {
@@ -402,24 +417,22 @@ func TestPKCS11ToolMultiProtocol_CoreCommands(t *testing.T) {
 
 // TestPKCS11ToolMultiProtocol_KeyGeneration tests key generation across all protocols and backends.
 func TestPKCS11ToolMultiProtocol_KeyGeneration(t *testing.T) {
-	skipIfToolUnavailable(t)
+	requireTool(t)
 	suite := NewMultiProtocolTestSuite()
 
 	for _, protocol := range AllProtocols() {
 		protocol := protocol
 		t.Run(string(protocol), func(t *testing.T) {
-			if !suite.IsProtocolAvailable(protocol) {
-				t.Skipf("protocol %s not available", protocol)
-			}
+			suite.RequireProtocol(t, protocol)
 
 			for _, backend := range suite.Backends {
 				backend := backend
 				t.Run(string(backend), func(t *testing.T) {
 					// Skip pkcs11 backend if SoftHSM is not available
-					skipIfPKCS11BackendUnavailable(t, backend)
+					requirePKCS11Backend(t, backend)
 
 					cfg := NewPKCS11ToolMultiProtocolConfig(t, protocol, backend)
-					skipIfModuleUnavailable(t, cfg.ModulePath)
+					requireModule(t, cfg.ModulePath)
 					cfg.SetProtocolEnv(t)
 
 					// Generate unique label for this test run
@@ -441,25 +454,23 @@ func TestPKCS11ToolMultiProtocol_KeyGeneration(t *testing.T) {
 
 // TestPKCS11ToolMultiProtocol_ObjectOperations tests object operations across all protocols and backends.
 func TestPKCS11ToolMultiProtocol_ObjectOperations(t *testing.T) {
-	skipIfToolUnavailable(t)
+	requireTool(t)
 	suite := NewMultiProtocolTestSuite()
 	commands := ObjectCommands()
 
 	for _, protocol := range AllProtocols() {
 		protocol := protocol
 		t.Run(string(protocol), func(t *testing.T) {
-			if !suite.IsProtocolAvailable(protocol) {
-				t.Skipf("protocol %s not available", protocol)
-			}
+			suite.RequireProtocol(t, protocol)
 
 			for _, backend := range suite.Backends {
 				backend := backend
 				t.Run(string(backend), func(t *testing.T) {
 					// Skip pkcs11 backend if SoftHSM is not available
-					skipIfPKCS11BackendUnavailable(t, backend)
+					requirePKCS11Backend(t, backend)
 
 					cfg := NewPKCS11ToolMultiProtocolConfig(t, protocol, backend)
-					skipIfModuleUnavailable(t, cfg.ModulePath)
+					requireModule(t, cfg.ModulePath)
 					cfg.SetProtocolEnv(t)
 
 					for _, cmd := range commands {
@@ -477,25 +488,23 @@ func TestPKCS11ToolMultiProtocol_ObjectOperations(t *testing.T) {
 
 // TestPKCS11ToolMultiProtocol_RandomGeneration tests random generation across all protocols and backends.
 func TestPKCS11ToolMultiProtocol_RandomGeneration(t *testing.T) {
-	skipIfToolUnavailable(t)
+	requireTool(t)
 	suite := NewMultiProtocolTestSuite()
 	commands := RandomCommands()
 
 	for _, protocol := range AllProtocols() {
 		protocol := protocol
 		t.Run(string(protocol), func(t *testing.T) {
-			if !suite.IsProtocolAvailable(protocol) {
-				t.Skipf("protocol %s not available", protocol)
-			}
+			suite.RequireProtocol(t, protocol)
 
 			for _, backend := range suite.Backends {
 				backend := backend
 				t.Run(string(backend), func(t *testing.T) {
 					// Skip pkcs11 backend if SoftHSM is not available
-					skipIfPKCS11BackendUnavailable(t, backend)
+					requirePKCS11Backend(t, backend)
 
 					cfg := NewPKCS11ToolMultiProtocolConfig(t, protocol, backend)
-					skipIfModuleUnavailable(t, cfg.ModulePath)
+					requireModule(t, cfg.ModulePath)
 					cfg.SetProtocolEnv(t)
 
 					for _, cmd := range commands {
@@ -514,8 +523,8 @@ func TestPKCS11ToolMultiProtocol_RandomGeneration(t *testing.T) {
 // TestPKCS11ToolMultiProtocol_SignVerify tests sign/verify workflow across all protocols and backends.
 // NOTE: Requires persistent backend - in-memory module doesn't persist keys across pkcs11-tool invocations.
 func TestPKCS11ToolMultiProtocol_SignVerify(t *testing.T) {
-	skipIfNoFilePersistence(t)
-	skipIfToolUnavailable(t)
+	requireFilePersistence(t)
+	requireTool(t)
 	suite := NewMultiProtocolTestSuite()
 
 	mechanisms := []struct {
@@ -531,18 +540,16 @@ func TestPKCS11ToolMultiProtocol_SignVerify(t *testing.T) {
 	for _, protocol := range AllProtocols() {
 		protocol := protocol
 		t.Run(string(protocol), func(t *testing.T) {
-			if !suite.IsProtocolAvailable(protocol) {
-				t.Skipf("protocol %s not available", protocol)
-			}
+			suite.RequireProtocol(t, protocol)
 
 			for _, backend := range suite.Backends {
 				backend := backend
 				t.Run(string(backend), func(t *testing.T) {
 					// Skip pkcs11 backend if SoftHSM is not available
-					skipIfPKCS11BackendUnavailable(t, backend)
+					requirePKCS11Backend(t, backend)
 
 					cfg := NewPKCS11ToolMultiProtocolConfig(t, protocol, backend)
-					skipIfModuleUnavailable(t, cfg.ModulePath)
+					requireModule(t, cfg.ModulePath)
 					cfg.SetProtocolEnv(t)
 
 					for _, mech := range mechanisms {
@@ -611,25 +618,23 @@ func TestPKCS11ToolMultiProtocol_SignVerify(t *testing.T) {
 // TestPKCS11ToolMultiProtocol_FullLifecycle tests complete key lifecycle across protocols.
 // NOTE: Requires persistent backend - in-memory module doesn't persist keys across pkcs11-tool invocations.
 func TestPKCS11ToolMultiProtocol_FullLifecycle(t *testing.T) {
-	skipIfNoFilePersistence(t)
-	skipIfToolUnavailable(t)
+	requireFilePersistence(t)
+	requireTool(t)
 	suite := NewMultiProtocolTestSuite()
 
 	for _, protocol := range AllProtocols() {
 		protocol := protocol
 		t.Run(string(protocol), func(t *testing.T) {
-			if !suite.IsProtocolAvailable(protocol) {
-				t.Skipf("protocol %s not available", protocol)
-			}
+			suite.RequireProtocol(t, protocol)
 
 			for _, backend := range suite.Backends {
 				backend := backend
 				t.Run(string(backend), func(t *testing.T) {
 					// Skip pkcs11 backend if SoftHSM is not available
-					skipIfPKCS11BackendUnavailable(t, backend)
+					requirePKCS11Backend(t, backend)
 
 					cfg := NewPKCS11ToolMultiProtocolConfig(t, protocol, backend)
-					skipIfModuleUnavailable(t, cfg.ModulePath)
+					requireModule(t, cfg.ModulePath)
 					cfg.SetProtocolEnv(t)
 
 					label := fmt.Sprintf("lifecycle-%s-%s", protocol, backend)
@@ -718,11 +723,15 @@ func TestPKCS11ToolMultiProtocol_FullLifecycle(t *testing.T) {
 
 // TestPKCS11ToolMultiProtocol_ProtocolParity verifies all protocols produce identical results.
 func TestPKCS11ToolMultiProtocol_ProtocolParity(t *testing.T) {
-	skipIfToolUnavailable(t)
+	requireTool(t)
 	suite := NewMultiProtocolTestSuite()
 
+	// run_with_server brings up both the Unix socket and the gRPC port, so a
+	// parity test that cannot compare two transports means one of them is down.
 	if len(suite.AvailableProtocols) < 2 {
-		t.Skip("need at least 2 available protocols for parity test")
+		t.Fatalf("protocol parity needs at least 2 reachable protocols, got %d (%v); "+
+			"xkms-server must serve both the Unix socket and the gRPC port",
+			len(suite.AvailableProtocols), suite.AvailableProtocols)
 	}
 
 	// Collect mechanism lists from each protocol
@@ -730,7 +739,7 @@ func TestPKCS11ToolMultiProtocol_ProtocolParity(t *testing.T) {
 
 	for _, protocol := range suite.AvailableProtocols {
 		cfg := NewPKCS11ToolMultiProtocolConfig(t, protocol, module.BackendSoftware)
-		skipIfModuleUnavailable(t, cfg.ModulePath)
+		requireModule(t, cfg.ModulePath)
 		cfg.SetProtocolEnv(t)
 
 		stdout, stderr, err := cfg.RunPKCS11Tool(t, "--list-mechanisms")

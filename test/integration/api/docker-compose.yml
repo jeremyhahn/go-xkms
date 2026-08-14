@@ -37,7 +37,6 @@ services:
       - XKMS_CONFIG=/etc/xkms/xkmsd.yaml
       # The harness runs barrier/auth disabled by design (tests drive the
       # API surface directly); opt out of the refuse-to-start security gate.
-      - XKMS_INSECURE=true
       - KEYSTORE_LOG_LEVEL=debug
       - KEYSTORE_DATA_DIR=/data
       # TPM configuration

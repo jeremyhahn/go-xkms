@@ -614,7 +614,7 @@ func newAuthedTenantRequest(method, path string, body []byte) *http.Request {
 	} else {
 		req = httptest.NewRequest(method, path, nil)
 	}
-	return addUserToRequest(req, createSuperAdminUser())
+	return addUserToRequest(req, createPlatformAdminUser())
 }
 
 func TestTenantHandlers_CreateTenantRole_Success(t *testing.T) {

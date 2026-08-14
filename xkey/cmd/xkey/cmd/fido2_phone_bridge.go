@@ -18,6 +18,7 @@ package cmd
 import (
 	"context"
 	"errors"
+	"io"
 	"log/slog"
 	"time"
 
@@ -76,6 +77,17 @@ type XKMSdBridgeConfig struct {
 
 	// DeniedBackends explicitly denies access to specific backends.
 	DeniedBackends []string
+
+	// TPMEnrollment offers this host's TPM to the phone acting as the
+	// enterprise CA, serving the remote.* TCG/IDevID enrollment methods.
+	TPMEnrollment bool
+
+	// TPMDevice is the TPM2 device path (default: /dev/tpmrm0).
+	TPMDevice string
+
+	// TPMPCRBank overrides the PCR bank the platform policy digest is
+	// computed over. Empty uses the pkg/tpm2 default (SHA-256).
+	TPMPCRBank string
 }
 
 // loadXKMSdBridgeConfig reads the xkmsd bridge configuration from viper.
@@ -90,6 +102,9 @@ func loadXKMSdBridgeConfig() *XKMSdBridgeConfig {
 		TLSCAFile:       viper.GetString("xkmsd.tls.ca_file"),
 		AllowedBackends: viper.GetStringSlice("xkmsd.sharing.allowed_backends"),
 		DeniedBackends:  viper.GetStringSlice("xkmsd.sharing.denied_backends"),
+		TPMEnrollment:   viper.GetBool("xkmsd.tpm.enrollment"),
+		TPMDevice:       viper.GetString("xkmsd.tpm.device"),
+		TPMPCRBank:      viper.GetString("xkmsd.tpm.pcr_bank"),
 	}
 }
 
@@ -116,7 +131,10 @@ type phoneBackendWithBridge struct {
 	*phone.PhoneKeyBackend
 	xkmsdClient transport.Client
 	bridge      *phone.Bridge
-	logger      *slog.Logger
+	// enrollerCloser owns the TPM handle opened for device enrollment, when
+	// this bridge opened one of its own rather than borrowing a shared TPM.
+	enrollerCloser io.Closer
+	logger         *slog.Logger
 }
 
 // Close closes the phone backend, stops the message router, and closes the
@@ -134,7 +152,17 @@ func (b *phoneBackendWithBridge) Close() error {
 		}
 	}
 
-	return errors.Join(backendErr, clientErr)
+	// Release the TPM handle last: the router must be stopped before the
+	// device the enrollment handlers read from goes away.
+	var enrollerErr error
+	if b.enrollerCloser != nil {
+		enrollerErr = b.enrollerCloser.Close()
+		if enrollerErr != nil {
+			b.logger.Warn("failed to close TPM enroller", "error", enrollerErr)
+		}
+	}
+
+	return errors.Join(backendErr, clientErr, enrollerErr)
 }
 
 // Ensure phoneBackendWithBridge implements FIDO2KeyBackend.
@@ -151,40 +179,33 @@ func connectXKMSdBridge(backend *phone.PhoneKeyBackend, logger *slog.Logger) (*p
 		return nil, nil
 	}
 
-	cfg.applyDefaults()
-
-	logger.Info("connecting to xkmsd",
-		slog.String("protocol", cfg.Protocol),
-		slog.String("address", cfg.Address),
-	)
-
-	// Create the SDK transport client based on protocol.
-	client, err := createXKMSdClient(cfg)
+	client, err := dialXKMSd(cfg, logger)
 	if err != nil {
-		return nil, errors.Join(ErrXKMSdConnectionFailed, err)
+		return nil, err
 	}
 
-	// Connect to xkmsd.
-	ctx, cancel := context.WithTimeout(context.Background(), cfg.ConnectTimeout)
-	defer cancel()
-
-	if err := client.Connect(ctx); err != nil {
-		_ = client.Close()
-		return nil, errors.Join(ErrXKMSdConnectionFailed, err)
-	}
-
-	logger.Info("connected to xkmsd")
+	// Resolve the TPM the remote.* enrollment methods answer from. This is
+	// the same resolution device_listen uses; an open failure is not fatal to
+	// the bridge, it is carried through so the phone is told the difference
+	// between "no TPM here" and "a TPM I could not open".
+	enroller, enrollerCloser, enrollerErr := resolveListenEnroller(
+		cfg.TPMEnrollment, nil, cfg.TPMDevice, cfg.TPMPCRBank, logger)
 
 	// Create the Bridge for routing remote.* requests.
 	bridgeCfg := &phone.BridgeConfig{
 		AllowedBackends: cfg.AllowedBackends,
 		DeniedBackends:  cfg.DeniedBackends,
 		RequestTimeout:  cfg.RequestTimeout,
+		TPM:             enroller,
+		TPMOpenErr:      enrollerErr,
 		Logger:          logger,
 	}
 
 	bridge, err := phone.NewBridge(client, bridgeCfg)
 	if err != nil {
+		if enrollerCloser != nil {
+			_ = enrollerCloser.Close()
+		}
 		_ = client.Close()
 		return nil, errors.Join(ErrXKMSdBridgeCreationFailed, err)
 	}
@@ -204,8 +225,37 @@ func connectXKMSdBridge(backend *phone.PhoneKeyBackend, logger *slog.Logger) (*p
 		PhoneKeyBackend: backend,
 		xkmsdClient:     client,
 		bridge:          bridge,
+		enrollerCloser:  enrollerCloser,
 		logger:          logger,
 	}, nil
+}
+
+// dialXKMSd creates and connects an SDK transport client from the given
+// configuration, filling in defaults first. The caller owns the returned
+// client and must close it.
+func dialXKMSd(cfg *XKMSdBridgeConfig, logger *slog.Logger) (transport.Client, error) {
+	cfg.applyDefaults()
+
+	logger.Info("connecting to xkmsd",
+		slog.String("protocol", cfg.Protocol),
+		slog.String("address", cfg.Address),
+	)
+
+	client, err := createXKMSdClient(cfg)
+	if err != nil {
+		return nil, errors.Join(ErrXKMSdConnectionFailed, err)
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), cfg.ConnectTimeout)
+	defer cancel()
+
+	if err := client.Connect(ctx); err != nil {
+		_ = client.Close()
+		return nil, errors.Join(ErrXKMSdConnectionFailed, err)
+	}
+
+	logger.Info("connected to xkmsd")
+	return client, nil
 }
 
 // createXKMSdClient creates an SDK transport client for the given protocol.

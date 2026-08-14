@@ -212,7 +212,7 @@ func gapMockHandler() http.Handler {
 		case strings.Contains(path, "/init/claim-cert/complete"):
 			respond(transport.ClaimCertCompleteResponse{CertPEM: "cert", CACertPEM: "ca"})
 		case strings.Contains(path, "/init/claim-share"):
-			respond(transport.ClaimShareResponse{Share: json.RawMessage(`"share"`)})
+			respond(transport.ClaimShareBeginResponse{Nonce: "abcd"})
 		case strings.Contains(path, "/init/sign-csr"):
 			respond(transport.SignCSRInitResponse{CertPEM: "cert"})
 
@@ -1053,10 +1053,10 @@ func TestClaimCertComplete_BadJSON(t *testing.T) {
 	require.Error(t, err)
 }
 
-func TestClaimShare_BadJSON(t *testing.T) {
+func TestClaimShareBegin_BadJSON(t *testing.T) {
 	tr, cleanup := newBadJSONTransport(t)
 	defer cleanup()
-	_, err := tr.ClaimShare(context.Background(), &transport.ClaimShareRequest{})
+	_, err := tr.ClaimShareBegin(context.Background(), &transport.ClaimShareBeginRequest{})
 	require.Error(t, err)
 }
 

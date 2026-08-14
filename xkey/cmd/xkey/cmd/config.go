@@ -117,6 +117,7 @@ func init() {
 
 // runConfigShow executes the config show command.
 func runConfigShow(cmd *cobra.Command, args []string) error {
+	out := cmd.OutOrStdout()
 	cfg := loadedConfig
 	if cfg == nil {
 		cfg = xkeyconfig.DefaultConfig()
@@ -129,33 +130,41 @@ func runConfigShow(cmd *cobra.Command, args []string) error {
 	}
 
 	if _, err := os.Stat(configPath); err == nil {
-		fmt.Printf("# Configuration loaded from: %s\n", configPath)
+		fmt.Fprintf(out, "# Configuration loaded from: %s\n", configPath)
 	} else {
-		fmt.Println("# No configuration file loaded (using defaults and environment)")
+		fmt.Fprintln(out, "# No configuration file loaded (using defaults and environment)")
 	}
-	fmt.Println()
+	fmt.Fprintln(out)
 
 	yamlData, err := yaml.Marshal(cfg)
 	if err != nil {
 		return &ConfigShowError{Err: err}
 	}
 
-	fmt.Print(string(yamlData))
+	fmt.Fprint(out, string(yamlData))
 	return nil
 }
 
 // runConfigInit executes the config init command.
 func runConfigInit(cmd *cobra.Command, args []string) error {
+	out := cmd.OutOrStdout()
+	// Honor the global --config flag, as `config show` and `config path`
+	// already do. Without this, `xkey --config /etc/xkey/x.yaml config init`
+	// silently wrote to the default XDG path instead — and performed its
+	// exists/--force check against that wrong path too.
 	configPath := xkeyconfig.ConfigPath()
+	if cfgFile != "" {
+		configPath = cfgFile
+	}
 
 	// Check if file exists
 	if _, err := os.Stat(configPath); err == nil {
 		if !configInitForce {
-			fmt.Printf("Configuration file already exists: %s\n", configPath)
-			fmt.Println("Use --force to overwrite.")
+			fmt.Fprintf(out, "Configuration file already exists: %s\n", configPath)
+			fmt.Fprintln(out, "Use --force to overwrite.")
 			return ErrConfigFileExists
 		}
-		fmt.Printf("Overwriting existing configuration file: %s\n", configPath)
+		fmt.Fprintf(out, "Overwriting existing configuration file: %s\n", configPath)
 	}
 
 	// Write the default config using the config package for consistency
@@ -168,12 +177,13 @@ func runConfigInit(cmd *cobra.Command, args []string) error {
 		}
 	}
 
-	fmt.Printf("Created configuration file: %s\n", configPath)
+	fmt.Fprintf(out, "Created configuration file: %s\n", configPath)
 	return nil
 }
 
 // runConfigPath executes the config path command.
 func runConfigPath(cmd *cobra.Command, args []string) error {
+	out := cmd.OutOrStdout()
 	// Define search paths using the config package
 	paths := []string{
 		xkeyconfig.ConfigPath(),
@@ -182,33 +192,33 @@ func runConfigPath(cmd *cobra.Command, args []string) error {
 
 	// If a config file was specified via flag, show it first
 	if cfgFile != "" {
-		fmt.Println("Configuration search paths:")
-		fmt.Println()
-		fmt.Printf("  %s (from --config flag)\n", cfgFile)
+		fmt.Fprintln(out, "Configuration search paths:")
+		fmt.Fprintln(out)
+		fmt.Fprintf(out, "  %s (from --config flag)\n", cfgFile)
 	} else {
-		fmt.Println("Configuration search paths:")
-		fmt.Println()
+		fmt.Fprintln(out, "Configuration search paths:")
+		fmt.Fprintln(out)
 	}
 
 	// Show standard search paths
 	for _, path := range paths {
 		// Check if file exists
 		if _, err := os.Stat(path); err == nil {
-			fmt.Printf("  %s (exists)\n", path)
+			fmt.Fprintf(out, "  %s (exists)\n", path)
 		} else {
-			fmt.Printf("  %s\n", path)
+			fmt.Fprintf(out, "  %s\n", path)
 		}
 	}
 
-	fmt.Println()
+	fmt.Fprintln(out)
 	if cfgFile != "" {
-		fmt.Printf("Currently using: %s\n", cfgFile)
+		fmt.Fprintf(out, "Currently using: %s\n", cfgFile)
 	} else if _, err := os.Stat(xkeyconfig.ConfigPath()); err == nil {
-		fmt.Printf("Currently using: %s\n", xkeyconfig.ConfigPath())
+		fmt.Fprintf(out, "Currently using: %s\n", xkeyconfig.ConfigPath())
 	} else if _, err := os.Stat(xkeyconfig.SystemConfigPath()); err == nil {
-		fmt.Printf("Currently using: %s\n", xkeyconfig.SystemConfigPath())
+		fmt.Fprintf(out, "Currently using: %s\n", xkeyconfig.SystemConfigPath())
 	} else {
-		fmt.Println("No configuration file currently loaded.")
+		fmt.Fprintln(out, "No configuration file currently loaded.")
 	}
 
 	return nil

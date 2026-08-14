@@ -303,8 +303,17 @@ See `/examples/advanced/x25519-ecdh/` for a complete working example demonstrati
 
 Run with: `go run examples/advanced/x25519-ecdh/main.go`
 
+## Key Derivation
+
+The KDF applied to an ECDH shared secret is selected by `types.KDFParams`.
+Every backend derives through one implementation; see
+[Key Derivation Functions](crypto/kdf.md) for the algorithm list, the
+parameter applicability rules, and the SP 800-108 breaking change.
+
 ## References
 
+- [Key Derivation Functions](crypto/kdf.md)
+- [Weak hash policy](crypto/weak-hashes.md)
 - [RFC 7748 - Elliptic Curves for Security](https://tools.ietf.org/html/rfc7748)
 - [RFC 5869 - HMAC-based Extract-and-Expand Key Derivation Function](https://tools.ietf.org/html/rfc5869)
 - [Curve25519](https://cr.yp.to/ecdh.html) - Original design

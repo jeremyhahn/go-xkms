@@ -772,7 +772,9 @@ func TestIssuer_SignCertificate_Error_Coverage(t *testing.T) {
 	assert.Error(t, err)
 }
 
-// signFailSigner90 fails during signing
+// signFailSigner90 resolves successfully but produces a signer that cannot
+// sign, so the failure surfaces where a failing hardware key would surface it:
+// inside the signature operation rather than while resolving the key.
 
 type signFailSigner90 struct {
 	*mockSigner
@@ -781,10 +783,11 @@ type signFailSigner90 struct {
 
 func (s *signFailSigner90) Signer() (crypto.Signer, error) {
 	s.callCount++
-	if s.callCount > 3 { // Fail after initial setup
-		return nil, errors.New("signer failed")
+	inner, err := s.mockSigner.Signer()
+	if err != nil {
+		return nil, err
 	}
-	return s.mockSigner.Signer()
+	return &stageFailingSigner{Signer: inner, failOnCall: 1}, nil
 }
 
 func (s *signFailSigner90) Certificate() (*x509.Certificate, error) {

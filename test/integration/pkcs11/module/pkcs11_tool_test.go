@@ -107,20 +107,16 @@ func NewPKCS11ToolTestConfig(t *testing.T) *PKCS11ToolTestConfig {
 	}
 }
 
-// skipIfToolUnavailable skips the test if pkcs11-tool is not available.
-func skipIfToolUnavailable(t *testing.T) {
+// requireTool asserts pkcs11-tool is available.
+func requireTool(t *testing.T) {
 	t.Helper()
-	if _, err := exec.LookPath("pkcs11-tool"); err != nil {
-		t.Skip("pkcs11-tool not available in PATH, skipping test")
-	}
+	requirePKCS11Tool(t)
 }
 
-// skipIfModuleUnavailable skips the test if the PKCS#11 module is not available.
-func skipIfModuleUnavailable(t *testing.T, path string) {
+// requireModule asserts the built PKCS#11 shared library is present.
+func requireModule(t *testing.T, path string) {
 	t.Helper()
-	if _, err := os.Stat(path); os.IsNotExist(err) {
-		t.Skipf("PKCS#11 module not found at %s, skipping test", path)
-	}
+	requireSharedLibrary(t, path)
 }
 
 // runPKCS11ToolCommand executes pkcs11-tool with given arguments and returns output.
@@ -182,9 +178,9 @@ func readTestDataFile(t *testing.T, path string) []byte {
 // =============================================================================
 
 func TestPKCS11Tool_ShowInfo(t *testing.T) {
-	skipIfToolUnavailable(t)
+	requireTool(t)
 	cfg := NewPKCS11ToolTestConfig(t)
-	skipIfModuleUnavailable(t, cfg.ModulePath)
+	requireModule(t, cfg.ModulePath)
 
 	// Initialize module backend for tests
 	env := SetupTestEnvironment(t, nil)
@@ -232,9 +228,9 @@ func TestPKCS11Tool_ShowInfo(t *testing.T) {
 // =============================================================================
 
 func TestPKCS11Tool_SlotOperations(t *testing.T) {
-	skipIfToolUnavailable(t)
+	requireTool(t)
 	cfg := NewPKCS11ToolTestConfig(t)
-	skipIfModuleUnavailable(t, cfg.ModulePath)
+	requireModule(t, cfg.ModulePath)
 
 	env := SetupTestEnvironment(t, nil)
 	env.MustInitializeModule(t)
@@ -268,9 +264,9 @@ func TestPKCS11Tool_SlotOperations(t *testing.T) {
 }
 
 func TestPKCS11Tool_TokenInfo(t *testing.T) {
-	skipIfToolUnavailable(t)
+	requireTool(t)
 	cfg := NewPKCS11ToolTestConfig(t)
-	skipIfModuleUnavailable(t, cfg.ModulePath)
+	requireModule(t, cfg.ModulePath)
 
 	env := SetupTestEnvironment(t, nil)
 	env.MustInitializeModule(t)
@@ -289,9 +285,9 @@ func TestPKCS11Tool_TokenInfo(t *testing.T) {
 }
 
 func TestPKCS11Tool_TokenInit(t *testing.T) {
-	skipIfToolUnavailable(t)
+	requireTool(t)
 	cfg := NewPKCS11ToolTestConfig(t)
-	skipIfModuleUnavailable(t, cfg.ModulePath)
+	requireModule(t, cfg.ModulePath)
 
 	t.Run("init_token", func(t *testing.T) {
 		// Setup fresh environment
@@ -337,7 +333,7 @@ func TestPKCS11Tool_TokenInit(t *testing.T) {
 	})
 
 	t.Run("change_pin", func(t *testing.T) {
-		skipIfNoFilePersistence(t)
+		requireFilePersistence(t)
 
 		oldPIN := cfg.PIN
 		newPIN := "newpin1234"
@@ -391,9 +387,9 @@ func TestPKCS11Tool_TokenInit(t *testing.T) {
 // =============================================================================
 
 func TestPKCS11Tool_Mechanisms(t *testing.T) {
-	skipIfToolUnavailable(t)
+	requireTool(t)
 	cfg := NewPKCS11ToolTestConfig(t)
-	skipIfModuleUnavailable(t, cfg.ModulePath)
+	requireModule(t, cfg.ModulePath)
 
 	env := SetupTestEnvironment(t, nil)
 	env.MustInitializeModule(t)
@@ -507,9 +503,9 @@ func TestPKCS11Tool_Mechanisms(t *testing.T) {
 // =============================================================================
 
 func TestPKCS11Tool_KeyGeneration(t *testing.T) {
-	skipIfToolUnavailable(t)
+	requireTool(t)
 	cfg := NewPKCS11ToolTestConfig(t)
-	skipIfModuleUnavailable(t, cfg.ModulePath)
+	requireModule(t, cfg.ModulePath)
 
 	t.Run("generate_rsa_2048", func(t *testing.T) {
 		env, session := SetupInitializedModule(t)
@@ -679,9 +675,9 @@ func TestPKCS11Tool_KeyGeneration(t *testing.T) {
 // =============================================================================
 
 func TestPKCS11Tool_ObjectOperations(t *testing.T) {
-	skipIfToolUnavailable(t)
+	requireTool(t)
 	cfg := NewPKCS11ToolTestConfig(t)
-	skipIfModuleUnavailable(t, cfg.ModulePath)
+	requireModule(t, cfg.ModulePath)
 
 	t.Run("list_objects", func(t *testing.T) {
 		env, session := SetupAuthenticatedModule(t)
@@ -838,10 +834,10 @@ func TestPKCS11Tool_ObjectOperations(t *testing.T) {
 // =============================================================================
 
 func TestPKCS11Tool_SigningOperations(t *testing.T) {
-	skipIfNoFilePersistence(t)
-	skipIfToolUnavailable(t)
+	requireFilePersistence(t)
+	requireTool(t)
 	cfg := NewPKCS11ToolTestConfig(t)
-	skipIfModuleUnavailable(t, cfg.ModulePath)
+	requireModule(t, cfg.ModulePath)
 
 	t.Run("sign_rsa_pkcs", func(t *testing.T) {
 		env, session := SetupAuthenticatedModule(t)
@@ -993,15 +989,20 @@ func TestPKCS11Tool_SigningOperations(t *testing.T) {
 // Note: Cryptographic signature verification is tested in the Go module unit tests.
 // This test focuses on pkcs11-tool CLI compatibility rather than cryptographic correctness.
 func TestPKCS11Tool_VerificationOperations(t *testing.T) {
-	skipIfNoFilePersistence(t)
-	skipIfToolUnavailable(t)
+	requireFilePersistence(t)
+	requireTool(t)
 	cfg := NewPKCS11ToolTestConfig(t)
-	skipIfModuleUnavailable(t, cfg.ModulePath)
+	requireModule(t, cfg.ModulePath)
+
+	// One setup for the whole test, not one per subtest.
+	//
+	// SetupInitializedModule calls C_InitToken, which destroys every token
+	// object (PKCS#11 v3.2 §5.5.5). Running it inside each subtest meant each
+	// one wiped the keys its predecessor had created, so the final listing
+	// subtest could only ever see the last key and failed looking for the rest.
+	SetupInitializedModule(t)
 
 	t.Run("sign_rsa_sha256", func(t *testing.T) {
-		// Initialize module for this test
-		_, session := SetupInitializedModule(t)
-		_ = session
 
 		keyLabel := "rsa-verify-test"
 		keyID := "30"
@@ -1057,9 +1058,6 @@ func TestPKCS11Tool_VerificationOperations(t *testing.T) {
 	})
 
 	t.Run("sign_ecdsa_p256", func(t *testing.T) {
-		// Initialize module for this test
-		_, session := SetupInitializedModule(t)
-		_ = session
 
 		keyLabel := "ecdsa-verify-test"
 		keyID := "31"
@@ -1121,6 +1119,9 @@ func TestPKCS11Tool_VerificationOperations(t *testing.T) {
 	})
 
 	t.Run("list_generated_keys", func(t *testing.T) {
+		// The keys listed here are the ones the sibling subtests created, so
+		// this must not re-initialize the token: C_InitToken would destroy
+		// them. It only needs the PIN those subtests already established.
 		// Verify the keys we generated are listed
 		output, _, err := runPKCS11ToolCommand(t, cfg,
 			"--login",
@@ -1149,9 +1150,9 @@ func TestPKCS11Tool_VerificationOperations(t *testing.T) {
 // =============================================================================
 
 func TestPKCS11Tool_EncryptionOperations(t *testing.T) {
-	skipIfToolUnavailable(t)
+	requireTool(t)
 	cfg := NewPKCS11ToolTestConfig(t)
-	skipIfModuleUnavailable(t, cfg.ModulePath)
+	requireModule(t, cfg.ModulePath)
 
 	t.Run("encrypt_aes_cbc", func(t *testing.T) {
 		env, session := SetupAuthenticatedModule(t)
@@ -1162,10 +1163,15 @@ func TestPKCS11Tool_EncryptionOperations(t *testing.T) {
 		_, rv := env.Module.GenerateKey(session, mechanism, template)
 		RequireOK(t, rv, "GenerateKey")
 
-		// AES-CBC requires 16-byte aligned plaintext
-		plaintext := []byte("0123456789ABCDEF0123456789ABCDEF") // 32 bytes
+		// AES-CBC requires 16-byte aligned plaintext and an explicit IV: the
+		// CK_AES_CBC mechanism carries the IV as its parameter, and pkcs11-tool
+		// passes it through --iv. Omitting it is why this assertion used to be
+		// soft (the tool errored on the missing parameter); with the IV supplied
+		// the operation must actually succeed, so this is a hard assertion.
+		plaintext := []byte("0123456789ABCDEF0123456789ABCDEF") // 32 bytes, two AES blocks
 		plainFile := writeTestDataFile(t, cfg.TempDir, "aes_plain.bin", plaintext)
 		cipherFile := filepath.Join(cfg.TempDir, "aes_cipher.bin")
+		const cbcIV = "000102030405060708090a0b0c0d0e0f" // 16-byte IV as hex
 
 		output, _, err := runPKCS11ToolCommand(t, cfg,
 			"--login",
@@ -1173,17 +1179,24 @@ func TestPKCS11Tool_EncryptionOperations(t *testing.T) {
 			"--slot", cfg.SlotID,
 			"--encrypt",
 			"--mechanism", "AES-CBC",
+			"--iv", cbcIV,
 			"--label", keyLabel,
 			"--input-file", plainFile,
 			"--output-file", cipherFile,
 		)
-
 		if err != nil {
-			t.Logf("AES-CBC encryption may not be directly supported by pkcs11-tool: %v", err)
-		} else {
-			cipherData := readTestDataFile(t, cipherFile)
-			t.Logf("AES-CBC encryption output:\n%s", output)
-			t.Logf("Ciphertext size: %d bytes", len(cipherData))
+			t.Fatalf("AES-CBC encryption failed: %v, output: %s", err, output)
+		}
+
+		cipherData := readTestDataFile(t, cipherFile)
+		if len(cipherData) == 0 {
+			t.Fatal("AES-CBC produced no ciphertext")
+		}
+		if len(cipherData)%16 != 0 {
+			t.Fatalf("AES-CBC ciphertext must be a whole number of 16-byte blocks, got %d bytes", len(cipherData))
+		}
+		if bytes.Equal(cipherData, plaintext) {
+			t.Fatal("AES-CBC ciphertext equals the plaintext; nothing was encrypted")
 		}
 	})
 
@@ -1227,9 +1240,9 @@ func TestPKCS11Tool_EncryptionOperations(t *testing.T) {
 // =============================================================================
 
 func TestPKCS11Tool_RandomGeneration(t *testing.T) {
-	skipIfToolUnavailable(t)
+	requireTool(t)
 	cfg := NewPKCS11ToolTestConfig(t)
-	skipIfModuleUnavailable(t, cfg.ModulePath)
+	requireModule(t, cfg.ModulePath)
 
 	randomSizes := []struct {
 		name string
@@ -1323,9 +1336,9 @@ func TestPKCS11Tool_RandomGeneration(t *testing.T) {
 // =============================================================================
 
 func TestPKCS11Tool_LoginOperations(t *testing.T) {
-	skipIfToolUnavailable(t)
+	requireTool(t)
 	cfg := NewPKCS11ToolTestConfig(t)
-	skipIfModuleUnavailable(t, cfg.ModulePath)
+	requireModule(t, cfg.ModulePath)
 
 	t.Run("user_login", func(t *testing.T) {
 		env, session := SetupInitializedModule(t)
@@ -1397,10 +1410,20 @@ func TestPKCS11Tool_LoginOperations(t *testing.T) {
 // each pkcs11-tool invocation loads a fresh library instance and keys don't persist
 // between invocations. Skip this test when running against the in-memory backend.
 func TestPKCS11Tool_AllSigningMechanisms(t *testing.T) {
-	skipIfNoFilePersistence(t)
-	skipIfToolUnavailable(t)
+	requireFilePersistence(t)
+	requireTool(t)
 	cfg := NewPKCS11ToolTestConfig(t)
-	skipIfModuleUnavailable(t, cfg.ModulePath)
+	requireModule(t, cfg.ModulePath)
+
+	// Establish the token state this test needs rather than inheriting it.
+	//
+	// C_InitToken resets the user PIN, as PKCS#11 v3.2 §5.5.5 requires, and
+	// several tests in this package legitimately call it on the shared token.
+	// A test that drives pkcs11-tool in a separate process therefore cannot
+	// assume a usable PIN survives from whatever ran before it: the subprocess
+	// logs in for itself and fails with CKR_USER_PIN_NOT_INITIALIZED. Setting
+	// the token up here makes the test independent of execution order.
+	SetupInitializedModule(t)
 
 	testCases := []struct {
 		name      string
@@ -1532,9 +1555,9 @@ func TestPKCS11Tool_AllSigningMechanisms(t *testing.T) {
 
 // TestPKCS11Tool_AllKeyTypes tests key generation for all supported key types.
 func TestPKCS11Tool_AllKeyTypes(t *testing.T) {
-	skipIfToolUnavailable(t)
+	requireTool(t)
 	cfg := NewPKCS11ToolTestConfig(t)
-	skipIfModuleUnavailable(t, cfg.ModulePath)
+	requireModule(t, cfg.ModulePath)
 
 	testCases := []struct {
 		name    string

@@ -251,6 +251,24 @@ type BackupAdapter interface {
 	GetStatistics(ctx context.Context) (*BackupStatistics, error)
 }
 
+// KeyRestorer is the destination a restore writes recovered keys to.
+//
+// A backup adapter owns the archive: it reads, decrypts, validates, and
+// filters it. Where the recovered key material belongs is the caller's
+// decision, so the caller supplies the key store. An adapter without a
+// restorer cannot restore anything and must say so rather than report a
+// count for keys it never wrote.
+type KeyRestorer interface {
+	// HasKey reports whether the destination already holds the given key.
+	// It is consulted before anything is written so a restore that would
+	// overwrite existing material can be refused while the destination is
+	// still untouched.
+	HasKey(ctx context.Context, key *BackupKey) (bool, error)
+
+	// RestoreKey writes one backed-up key to the destination.
+	RestoreKey(ctx context.Context, key *BackupKey) error
+}
+
 // BackupStatistics contains statistical information about backups
 type BackupStatistics struct {
 	// TotalBackups is the total number of backups

@@ -67,12 +67,37 @@ The `device` command is aliased as `phone` for backward compatibility.
 ### Server-Side (Agent Management)
 
 ```
-xkey agent start                          # Start agent gRPC server
-xkey agent start --listen :9443           # Custom listen address
+xkey agent start --xkmsd-url unix:///var/run/xkmsd.sock   # Start agent gRPC server
+xkey agent start --listen :9443                           # Custom listen address
 xkey agent start --tls-cert server.pem --tls-key server-key.pem  # With mTLS
-xkey agent stop                           # Stop agent server
-xkey agent status                         # Show enrolled agents
+xkey agent start --cert-profile client --cert-validity-days 90   # Agent cert issuance
+xkey agent stop                           # Stop the running agent server
+xkey agent status                         # Show server status and enrolled agents
 ```
+
+Enrolling agents receive certificates signed by the xkmsd certificate
+authority, so `agent start` requires a reachable xkmsd server (`--xkmsd-url`
+or `XKMSD_URL`) and fails closed when none is configured; xkey never signs
+certificates locally. `--tls-ca` supplies the bundle used to verify
+connecting agents, while the trust bundle used to reach xkmsd comes from
+`XKMSD_TLS_CA` or the xkey config.
+
+#### Server lifecycle
+
+`agent start` records its process ID and bound listen address in
+`$XKEY_HOME/data/agent/server.state.json` (mode 0600) and removes the file on
+graceful shutdown, whether triggered by `agent stop` or by SIGINT/SIGTERM.
+
+- `agent status` reports whether the recorded process is a live agent server
+  (PID, listen address, TLS mode, start time) before listing enrolled agents.
+  A record left behind by a crashed server is reported as not running and
+  removed.
+- `agent stop` verifies the recorded process is still an agent server, sends
+  SIGTERM, waits up to 10 seconds, escalates to SIGKILL if needed, and removes
+  the record. With no server running it prints `agent: no agent server is
+  running` and exits non-zero; it never reports a stop it did not perform.
+- A second `agent start` against the same home fails with
+  `agent: agent server is already running` instead of double-binding.
 
 ## Pairing Protocols
 

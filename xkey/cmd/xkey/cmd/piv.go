@@ -544,6 +544,7 @@ func createPIVStorage(cfg *PIVConfig, logger *slog.Logger) (xkms.PIVCertificateS
 
 // runPIVList executes the piv list command.
 func runPIVList(cmd *cobra.Command, args []string) error {
+	out := cmd.OutOrStdout()
 	logger := slog.Default()
 	cfg := buildPIVConfig()
 
@@ -559,24 +560,24 @@ func runPIVList(cmd *cobra.Command, args []string) error {
 	}
 
 	if len(slots) == 0 {
-		fmt.Println("No certificates found in PIV slots.")
+		fmt.Fprintln(out, "No certificates found in PIV slots.")
 		return nil
 	}
 
-	fmt.Printf("PIV Certificates (%d):\n\n", len(slots))
+	fmt.Fprintf(out, "PIV Certificates (%d):\n\n", len(slots))
 
 	for _, slot := range slots {
 		slotName := xkms.PIVSlotName(slot.Slot)
-		fmt.Printf("  Slot:        %s (%s)\n", slot.Slot, slotName)
-		fmt.Printf("  Subject:     %s\n", slot.Subject)
-		fmt.Printf("  Issuer:      %s\n", slot.Issuer)
-		fmt.Printf("  Not Before:  %s\n", slot.NotBefore)
-		fmt.Printf("  Not After:   %s\n", slot.NotAfter)
-		fmt.Printf("  Algorithm:   %s\n", slot.Algorithm)
+		fmt.Fprintf(out, "  Slot:        %s (%s)\n", slot.Slot, slotName)
+		fmt.Fprintf(out, "  Subject:     %s\n", slot.Subject)
+		fmt.Fprintf(out, "  Issuer:      %s\n", slot.Issuer)
+		fmt.Fprintf(out, "  Not Before:  %s\n", slot.NotBefore)
+		fmt.Fprintf(out, "  Not After:   %s\n", slot.NotAfter)
+		fmt.Fprintf(out, "  Algorithm:   %s\n", slot.Algorithm)
 		if slot.Fingerprint != "" {
-			fmt.Printf("  Fingerprint: %s\n", slot.Fingerprint)
+			fmt.Fprintf(out, "  Fingerprint: %s\n", slot.Fingerprint)
 		}
-		fmt.Println()
+		fmt.Fprintln(out)
 	}
 
 	return nil
@@ -584,6 +585,7 @@ func runPIVList(cmd *cobra.Command, args []string) error {
 
 // runPIVShow executes the piv show command.
 func runPIVShow(cmd *cobra.Command, args []string) error {
+	out := cmd.OutOrStdout()
 	logger := slog.Default()
 	cfg := buildPIVConfig()
 
@@ -604,40 +606,41 @@ func runPIVShow(cmd *cobra.Command, args []string) error {
 	}
 
 	slotName := xkms.PIVSlotName(slot)
-	fmt.Printf("PIV Certificate - Slot %s (%s)\n", slot, slotName)
-	fmt.Printf("========================================\n\n")
+	fmt.Fprintf(out, "PIV Certificate - Slot %s (%s)\n", slot, slotName)
+	fmt.Fprintf(out, "========================================\n\n")
 
-	fmt.Printf("Subject:       %s\n", cert.Subject.String())
-	fmt.Printf("Issuer:        %s\n", cert.Issuer.String())
-	fmt.Printf("Serial Number: %s\n", cert.SerialNumber.String())
-	fmt.Printf("Not Before:    %s\n", cert.NotBefore.Format(time.RFC3339))
-	fmt.Printf("Not After:     %s\n", cert.NotAfter.Format(time.RFC3339))
-	fmt.Printf("Key Algorithm: %s\n", cert.PublicKeyAlgorithm.String())
-	fmt.Printf("Signature:     %s\n", cert.SignatureAlgorithm.String())
+	fmt.Fprintf(out, "Subject:       %s\n", cert.Subject.String())
+	fmt.Fprintf(out, "Issuer:        %s\n", cert.Issuer.String())
+	fmt.Fprintf(out, "Serial Number: %s\n", cert.SerialNumber.String())
+	fmt.Fprintf(out, "Not Before:    %s\n", cert.NotBefore.Format(time.RFC3339))
+	fmt.Fprintf(out, "Not After:     %s\n", cert.NotAfter.Format(time.RFC3339))
+	fmt.Fprintf(out, "Key Algorithm: %s\n", cert.PublicKeyAlgorithm.String())
+	fmt.Fprintf(out, "Signature:     %s\n", cert.SignatureAlgorithm.String())
 
 	if len(cert.DNSNames) > 0 {
-		fmt.Printf("DNS Names:     %s\n", strings.Join(cert.DNSNames, ", "))
+		fmt.Fprintf(out, "DNS Names:     %s\n", strings.Join(cert.DNSNames, ", "))
 	}
 
 	if len(cert.EmailAddresses) > 0 {
-		fmt.Printf("Email:         %s\n", strings.Join(cert.EmailAddresses, ", "))
+		fmt.Fprintf(out, "Email:         %s\n", strings.Join(cert.EmailAddresses, ", "))
 	}
 
 	if cert.KeyUsage != 0 {
-		fmt.Printf("Key Usage:     %s\n", formatKeyUsage(cert.KeyUsage))
+		fmt.Fprintf(out, "Key Usage:     %s\n", formatKeyUsage(cert.KeyUsage))
 	}
 
 	if len(cert.ExtKeyUsage) > 0 {
-		fmt.Printf("Ext Key Usage: %s\n", formatExtKeyUsage(cert.ExtKeyUsage))
+		fmt.Fprintf(out, "Ext Key Usage: %s\n", formatExtKeyUsage(cert.ExtKeyUsage))
 	}
 
-	fmt.Printf("Is CA:         %t\n", cert.IsCA)
+	fmt.Fprintf(out, "Is CA:         %t\n", cert.IsCA)
 
 	return nil
 }
 
 // runPIVStore executes the piv store command.
 func runPIVStore(cmd *cobra.Command, args []string) error {
+	out := cmd.OutOrStdout()
 	logger := slog.Default()
 	cfg := buildPIVConfig()
 
@@ -671,16 +674,17 @@ func runPIVStore(cmd *cobra.Command, args []string) error {
 	}
 
 	slotName := xkms.PIVSlotName(slot)
-	fmt.Printf("Certificate stored in slot %s (%s)\n", slot, slotName)
-	fmt.Printf("  Subject:  %s\n", cert.Subject.CommonName)
-	fmt.Printf("  Format:   %s\n", format)
-	fmt.Printf("  Expires:  %s\n", cert.NotAfter.Format(time.RFC3339))
+	fmt.Fprintf(out, "Certificate stored in slot %s (%s)\n", slot, slotName)
+	fmt.Fprintf(out, "  Subject:  %s\n", cert.Subject.CommonName)
+	fmt.Fprintf(out, "  Format:   %s\n", format)
+	fmt.Fprintf(out, "  Expires:  %s\n", cert.NotAfter.Format(time.RFC3339))
 
 	return nil
 }
 
 // runPIVDelete executes the piv delete command.
 func runPIVDelete(cmd *cobra.Command, args []string) error {
+	out := cmd.OutOrStdout()
 	logger := slog.Default()
 	cfg := buildPIVConfig()
 	force, _ := cmd.Flags().GetBool("force")
@@ -705,10 +709,10 @@ func runPIVDelete(cmd *cobra.Command, args []string) error {
 	slotName := xkms.PIVSlotName(slot)
 
 	if !force {
-		fmt.Printf("Delete certificate from slot %s (%s)?\n", slot, slotName)
-		fmt.Printf("  Subject: %s\n", cert.Subject.CommonName)
-		fmt.Printf("  Expires: %s\n", cert.NotAfter.Format(time.RFC3339))
-		fmt.Print("\nConfirm deletion [y/N]: ")
+		fmt.Fprintf(out, "Delete certificate from slot %s (%s)?\n", slot, slotName)
+		fmt.Fprintf(out, "  Subject: %s\n", cert.Subject.CommonName)
+		fmt.Fprintf(out, "  Expires: %s\n", cert.NotAfter.Format(time.RFC3339))
+		fmt.Fprint(out, "\nConfirm deletion [y/N]: ")
 
 		var confirm string
 		if _, err := fmt.Scanln(&confirm); err != nil {
@@ -716,7 +720,7 @@ func runPIVDelete(cmd *cobra.Command, args []string) error {
 		}
 		confirm = strings.TrimSpace(strings.ToLower(confirm))
 		if confirm != "y" && confirm != "yes" {
-			fmt.Println("Deletion cancelled.")
+			fmt.Fprintln(out, "Deletion cancelled.")
 			return nil
 		}
 	}
@@ -725,12 +729,13 @@ func runPIVDelete(cmd *cobra.Command, args []string) error {
 		return errors.Join(ErrPIVDeleteFailed, err)
 	}
 
-	fmt.Printf("Certificate deleted from slot %s (%s)\n", slot, slotName)
+	fmt.Fprintf(out, "Certificate deleted from slot %s (%s)\n", slot, slotName)
 	return nil
 }
 
 // runPIVExport executes the piv export command.
 func runPIVExport(cmd *cobra.Command, args []string) error {
+	out := cmd.OutOrStdout()
 	logger := slog.Default()
 	cfg := buildPIVConfig()
 
@@ -772,7 +777,7 @@ func runPIVExport(cmd *cobra.Command, args []string) error {
 			return errors.Join(ErrPIVExportFailed, err)
 		}
 		slotName := xkms.PIVSlotName(slot)
-		fmt.Printf("Certificate exported from slot %s (%s) to %s\n", slot, slotName, outputPath)
+		fmt.Fprintf(out, "Certificate exported from slot %s (%s) to %s\n", slot, slotName, outputPath)
 	} else {
 		// Write to stdout
 		if _, err := os.Stdout.Write(data); err != nil {
@@ -785,43 +790,44 @@ func runPIVExport(cmd *cobra.Command, args []string) error {
 
 // runPIVStatus executes the piv status command.
 func runPIVStatus(cmd *cobra.Command, args []string) error {
+	out := cmd.OutOrStdout()
 	logger := slog.Default()
 	cfg := buildPIVConfig()
 
-	fmt.Println("PIV Certificate Storage Status")
-	fmt.Println("==============================")
-	fmt.Println()
+	fmt.Fprintln(out, "PIV Certificate Storage Status")
+	fmt.Fprintln(out, "==============================")
+	fmt.Fprintln(out)
 
-	fmt.Printf("Key Backend:       %s\n", cfg.Backend)
-	fmt.Printf("Storage Type:      %s\n", cfg.StorageType)
+	fmt.Fprintf(out, "Key Backend:       %s\n", cfg.Backend)
+	fmt.Fprintf(out, "Storage Type:      %s\n", cfg.StorageType)
 
 	switch cfg.StorageType {
 	case PIVStorageTypeFile:
-		fmt.Printf("Storage Path:      %s\n", cfg.StoragePath)
+		fmt.Fprintf(out, "Storage Path:      %s\n", cfg.StoragePath)
 	case PIVStorageTypeTPM2:
-		fmt.Printf("TPM Device:        %s\n", cfg.TPMDevice)
+		fmt.Fprintf(out, "TPM Device:        %s\n", cfg.TPMDevice)
 	case PIVStorageTypePKCS11:
-		fmt.Printf("PKCS#11 Library:   %s\n", cfg.PKCS11Library)
-		fmt.Printf("PKCS#11 Token:     %s\n", cfg.PKCS11Token)
+		fmt.Fprintf(out, "PKCS#11 Library:   %s\n", cfg.PKCS11Library)
+		fmt.Fprintf(out, "PKCS#11 Token:     %s\n", cfg.PKCS11Token)
 	}
 
-	fmt.Println()
+	fmt.Fprintln(out)
 
 	storage, err := createPIVStorage(cfg, logger)
 	if err != nil {
-		fmt.Printf("Storage Status:    Error - %v\n", err)
+		fmt.Fprintf(out, "Storage Status:    Error - %v\n", err)
 		return nil // Don't fail, just report status
 	}
 	defer func() { _ = storage.Close() }()
 
 	slots, err := storage.List()
 	if err != nil {
-		fmt.Printf("Storage Status:    Error listing certificates - %v\n", err)
+		fmt.Fprintf(out, "Storage Status:    Error listing certificates - %v\n", err)
 		return nil
 	}
 
-	fmt.Println("Slot Status:")
-	fmt.Println()
+	fmt.Fprintln(out, "Slot Status:")
+	fmt.Fprintln(out)
 
 	// Build map of occupied slots
 	occupied := make(map[xkms.PIVSlot]xkms.PIVSlotInfo)
@@ -835,15 +841,15 @@ func runPIVStatus(cmd *cobra.Command, args []string) error {
 	for _, slot := range allSlots {
 		slotName := xkms.PIVSlotName(slot)
 		if info, ok := occupied[slot]; ok {
-			fmt.Printf("  [%s] %s\n", slot, slotName)
-			fmt.Printf("        Subject:  %s\n", info.Subject)
-			fmt.Printf("        Expires:  %s\n", info.NotAfter)
+			fmt.Fprintf(out, "  [%s] %s\n", slot, slotName)
+			fmt.Fprintf(out, "        Subject:  %s\n", info.Subject)
+			fmt.Fprintf(out, "        Expires:  %s\n", info.NotAfter)
 		} else {
-			fmt.Printf("  [%s] %s - Empty\n", slot, slotName)
+			fmt.Fprintf(out, "  [%s] %s - Empty\n", slot, slotName)
 		}
 	}
 
-	fmt.Printf("\nTotal Certificates: %d/4\n", len(slots))
+	fmt.Fprintf(out, "\nTotal Certificates: %d/4\n", len(slots))
 
 	return nil
 }

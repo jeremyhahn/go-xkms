@@ -26,41 +26,46 @@ import (
 	"time"
 
 	"github.com/gorilla/mux"
+	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
+	"github.com/jeremyhahn/go-xkms/pkg/auth"
 	"github.com/stretchr/testify/assert"
 )
 
-// createViewerUser creates an AuthenticatedUser with viewer role for testing
+// createViewerUser creates a read-only tenant-scoped user. The read-only
+// canonical qrdb role is auditor; the deleted local "viewer" role has no
+// counterpart because qrdb already models read-only access.
 func createViewerUser(tenantID string) *AuthenticatedUser {
 	return &AuthenticatedUser{
 		UserID:   "viewer-user-1",
 		Username: "viewer",
 		Email:    "viewer@example.com",
-		Role:     RoleViewer,
 		TenantID: tenantID,
-		Roles:    []string{string(RoleViewer)},
+		Roles:    []string{qrdbsdk.RoleNameAuditor},
 		Groups:   []string{"viewers"},
 	}
 }
 
-// createEndorserUser creates an AuthenticatedUser with endorser role for testing
+// createEndorserUser creates a tenant-scoped user holding the EAB-minting
+// authority. The deleted local "endorser" role is expressed in qrdb as a custom
+// role carrying acme_eab:create; the canonical role that already holds it is
+// admin.
 func createEndorserUser(tenantID string) *AuthenticatedUser {
 	return &AuthenticatedUser{
 		UserID:   "endorser-user-1",
 		Username: "endorser",
 		Email:    "endorser@example.com",
-		Role:     RoleEndorser,
 		TenantID: tenantID,
-		Roles:    []string{string(RoleEndorser)},
+		Roles:    []string{qrdbsdk.RoleNameAdmin},
 		Groups:   []string{"endorsers"},
 	}
 }
 
 func TestCheckTenantAccess_SuperAdmin(t *testing.T) {
 	handlers := NewTenantHandlers(&mockTenantService{}, slog.Default())
-	user := createSuperAdminUser()
+	user := createPlatformAdminUser()
 
 	req := httptest.NewRequest("GET", "/api/v1/tenants/any-tenant", nil)
-	err := handlers.checkTenantAccess(context.Background(), req, user, "any-tenant", ActionRead)
+	err := handlers.checkTenantAccess(withUser(context.Background(), user), req, user, "any-tenant", auth.ActionRead)
 
 	assert.NoError(t, err)
 }
@@ -70,7 +75,7 @@ func TestCheckTenantAccess_SameTenant(t *testing.T) {
 	user := createAdminUser("tenant-1")
 
 	req := httptest.NewRequest("GET", "/api/v1/tenants/tenant-1", nil)
-	err := handlers.checkTenantAccess(context.Background(), req, user, "tenant-1", ActionRead)
+	err := handlers.checkTenantAccess(withUser(context.Background(), user), req, user, "tenant-1", auth.ActionRead)
 
 	assert.NoError(t, err)
 }
@@ -80,7 +85,7 @@ func TestCheckTenantAccess_CrossTenantDenied(t *testing.T) {
 	user := createAdminUser("tenant-1")
 
 	req := httptest.NewRequest("GET", "/api/v1/tenants/tenant-2", nil)
-	err := handlers.checkTenantAccess(context.Background(), req, user, "tenant-2", ActionRead)
+	err := handlers.checkTenantAccess(withUser(context.Background(), user), req, user, "tenant-2", auth.ActionRead)
 
 	assert.Equal(t, ErrForbidden, err)
 }
@@ -121,7 +126,7 @@ func TestGetTenantHandler_InternalError(t *testing.T) {
 
 	req := httptest.NewRequest("GET", "/api/v1/tenants/tenant-1", nil)
 	req = mux.SetURLVars(req, map[string]string{"id": "tenant-1"})
-	req = addUserToRequest(req, createSuperAdminUser())
+	req = addUserToRequest(req, createPlatformAdminUser())
 	w := httptest.NewRecorder()
 
 	handlers.GetTenant(w, req)
@@ -184,7 +189,7 @@ func TestDeleteTenantHandler_Success(t *testing.T) {
 
 	req := httptest.NewRequest("DELETE", "/api/v1/tenants/tenant-1", nil)
 	req = mux.SetURLVars(req, map[string]string{"id": "tenant-1"})
-	req = addUserToRequest(req, createSuperAdminUser())
+	req = addUserToRequest(req, createPlatformAdminUser())
 	w := httptest.NewRecorder()
 
 	handlers.DeleteTenant(w, req)
@@ -202,7 +207,7 @@ func TestDeleteTenantHandler_NotFound(t *testing.T) {
 
 	req := httptest.NewRequest("DELETE", "/api/v1/tenants/nonexistent", nil)
 	req = mux.SetURLVars(req, map[string]string{"id": "nonexistent"})
-	req = addUserToRequest(req, createSuperAdminUser())
+	req = addUserToRequest(req, createPlatformAdminUser())
 	w := httptest.NewRecorder()
 
 	handlers.DeleteTenant(w, req)
@@ -220,7 +225,7 @@ func TestDeleteTenantHandler_InternalError(t *testing.T) {
 
 	req := httptest.NewRequest("DELETE", "/api/v1/tenants/tenant-1", nil)
 	req = mux.SetURLVars(req, map[string]string{"id": "tenant-1"})
-	req = addUserToRequest(req, createSuperAdminUser())
+	req = addUserToRequest(req, createPlatformAdminUser())
 	w := httptest.NewRecorder()
 
 	handlers.DeleteTenant(w, req)
@@ -241,7 +246,7 @@ func TestListTenantsHandler_Success(t *testing.T) {
 	handlers := NewTenantHandlers(service, slog.Default())
 
 	req := httptest.NewRequest("GET", "/api/v1/tenants", nil)
-	req = addUserToRequest(req, createSuperAdminUser())
+	req = addUserToRequest(req, createPlatformAdminUser())
 	w := httptest.NewRecorder()
 
 	handlers.ListTenants(w, req)
@@ -258,7 +263,7 @@ func TestListTenantsHandler_InternalError(t *testing.T) {
 	handlers := NewTenantHandlers(service, slog.Default())
 
 	req := httptest.NewRequest("GET", "/api/v1/tenants", nil)
-	req = addUserToRequest(req, createSuperAdminUser())
+	req = addUserToRequest(req, createPlatformAdminUser())
 	w := httptest.NewRecorder()
 
 	handlers.ListTenants(w, req)

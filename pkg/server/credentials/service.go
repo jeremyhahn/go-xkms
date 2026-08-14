@@ -21,6 +21,7 @@ import (
 	"context"
 	"errors"
 	"log/slog"
+	"sort"
 	"strings"
 	"sync"
 
@@ -222,6 +223,79 @@ func (s *Service) DeleteCredential(ctx context.Context, name string) error {
 	default:
 		return s.deletePlatform(ctx, name)
 	}
+}
+
+// ListCredentials returns the names of the stored credentials, sorted.
+//
+// Names only: a credential's value never leaves the seal boundary through
+// this call, and there is no read path that returns one to an operator. The
+// question this answers is "which credentials has this server been given?",
+// which an operator needs in order to know what is still outstanding before
+// a backend can unseal.
+func (s *Service) ListCredentials(ctx context.Context) ([]string, error) {
+	var (
+		names []string
+		err   error
+	)
+
+	switch s.strategy {
+	case StrategyManual:
+		names = s.listManual()
+	case "barrier":
+		names, err = s.listBarrier(ctx)
+	default:
+		names, err = s.listPlatform(ctx)
+	}
+	if err != nil {
+		return nil, err
+	}
+
+	sort.Strings(names)
+	return names, nil
+}
+
+// listManual returns the names held in memory for the manual strategy.
+func (s *Service) listManual() []string {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+
+	names := make([]string, 0, len(s.manualCreds))
+	for name := range s.manualCreds {
+		names = append(names, name)
+	}
+	return names
+}
+
+// listBarrier returns the credential names stored inside the barrier.
+func (s *Service) listBarrier(ctx context.Context) ([]string, error) {
+	keys, err := s.barrier.List(ctx, credentialPrefix)
+	if err != nil {
+		return nil, err
+	}
+	return stripCredentialPrefix(keys), nil
+}
+
+// listPlatform returns the credential names held in the PlatformStore. The
+// store holds more than credentials, so entries outside the credential
+// namespace are filtered out rather than reported as credentials.
+func (s *Service) listPlatform(ctx context.Context) ([]string, error) {
+	keys, err := s.platformStore.List(ctx)
+	if err != nil {
+		return nil, err
+	}
+	return stripCredentialPrefix(keys), nil
+}
+
+// stripCredentialPrefix keeps only credential-namespaced keys and returns
+// them with the namespace removed, which is the name the operator submitted.
+func stripCredentialPrefix(keys []string) []string {
+	names := make([]string, 0, len(keys))
+	for _, key := range keys {
+		if name, ok := strings.CutPrefix(key, credentialPrefix); ok {
+			names = append(names, name)
+		}
+	}
+	return names
 }
 
 // AutoUnsealAvailable returns true if the configured strategy supports

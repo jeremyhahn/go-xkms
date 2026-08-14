@@ -35,6 +35,7 @@ import (
 	kms "cloud.google.com/go/kms/apiv1"
 	"cloud.google.com/go/kms/apiv1/kmspb"
 	"github.com/jeremyhahn/go-xkms/pkg/backend"
+	"github.com/jeremyhahn/go-xkms/pkg/crypto/aead"
 	"github.com/jeremyhahn/go-xkms/pkg/storage"
 	"github.com/jeremyhahn/go-xkms/pkg/types"
 	"google.golang.org/api/iterator"
@@ -1356,6 +1357,14 @@ type gcpKMSSymmetricEncrypter struct {
 // Note: Nonce reuse tracking is not applicable since GCP KMS manages nonces server-side.
 // Only bytes encrypted tracking is performed to enforce NIST cryptographic limits.
 func (e *gcpKMSSymmetricEncrypter) Encrypt(plaintext []byte, opts *types.EncryptOptions) (*types.EncryptedData, error) {
+	// GCP KMS returns an opaque ciphertext blob and never exposes the
+	// authentication tag, so the tag length is not this backend's to choose.
+	if opts != nil {
+		if err := aead.RequireDefaultTagSize(opts.TagSize, "GCP KMS"); err != nil {
+			return nil, err
+		}
+	}
+
 	e.backend.mu.RLock()
 	defer e.backend.mu.RUnlock()
 
@@ -1412,6 +1421,13 @@ func (e *gcpKMSSymmetricEncrypter) Encrypt(plaintext []byte, opts *types.Encrypt
 // Decrypt decrypts ciphertext using GCP KMS symmetric decryption.
 // The decryption is performed entirely within GCP KMS infrastructure.
 func (e *gcpKMSSymmetricEncrypter) Decrypt(data *types.EncryptedData, opts *types.DecryptOptions) ([]byte, error) {
+	// See the matching check in Encrypt.
+	if opts != nil {
+		if err := aead.RequireDefaultTagSize(opts.TagSize, "GCP KMS"); err != nil {
+			return nil, err
+		}
+	}
+
 	e.backend.mu.RLock()
 	defer e.backend.mu.RUnlock()
 

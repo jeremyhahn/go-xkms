@@ -360,7 +360,7 @@ If your binary is larger than expected:
 
 ## See Also
 
-- [Getting Started](../usage/getting-started.md)
-- [Backend Registry](../architecture/backend-registry.md)
-- [Storage Abstraction](../architecture/storage-abstraction.md)
+- [Getting Started](../../xkey/docs/usage/getting-started.md)
+- Backend Registry - no standalone document yet; see `pkg/xkms/registry.go` and the `pkg/xkms/register_*.go` files
+- [Storage Architecture](../architecture/storage.md)
 - [Architecture Overview](../architecture/overview.md)

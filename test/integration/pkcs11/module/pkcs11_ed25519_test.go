@@ -314,6 +314,13 @@ func TestEd25519ViaSDK(t *testing.T) {
 			signature, rv := env.Module.Sign(session, data)
 			RequireOK(t, rv, "Sign EdDSA")
 
+			// C_Sign deliberately leaves the operation active so a caller can
+			// invoke it twice under the two-call convention (v3.2 §5.2). The
+			// next iteration reuses this session, so the operation has to be
+			// released or its C_SignInit fails with CKR_OPERATION_ACTIVE.
+			RequireOK(t, env.Module.FinishOperation(session, module.OperationSign),
+				"FinishOperation after signing")
+
 			rv = env.Module.VerifyInit(session, signMech, pubHandle)
 			RequireOK(t, rv, "VerifyInit EdDSA")
 
@@ -360,9 +367,12 @@ func TestEd25519ViaSDK(t *testing.T) {
 	})
 
 	t.Run("Ed25519_EmptyData", func(t *testing.T) {
-		// NOTE: Ed25519 signing of empty messages is allowed by RFC 8032 but our
-		// implementation currently does not support it. This is a known limitation.
-		t.Skip("Ed25519 empty message signing not currently supported")
+		// RFC 8032 permits a zero-length message, and the server honors it:
+		// pkg/api/grpc/service.go routes Ed25519 through pure signing
+		// (crypto.Hash(0), raw message) BEFORE the "data is required" guard that
+		// applies to prehashed algorithms, and nothing in the PKCS#11 module path
+		// rejects an empty buffer either. The skip that used to sit here claimed
+		// this was unimplemented, which kept the whole branch unexercised.
 
 		env, session := SetupAuthenticatedModule(t)
 

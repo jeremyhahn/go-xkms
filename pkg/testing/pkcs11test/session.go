@@ -362,7 +362,7 @@ func (s *Suite) testLoginLogout(t *testing.T) {
 		loginAsUser(t, m, handle)
 
 		// Second login as the same user type must fail
-		rv := m.Login(handle, module.CKU_USER, []byte("userpin"))
+		rv := m.Login(handle, module.CKU_USER, suiteUserPIN())
 		requireRV(t, module.CKR_USER_ALREADY_LOGGED_IN, rv,
 			"double login should return CKR_USER_ALREADY_LOGGED_IN")
 	})
@@ -385,7 +385,7 @@ func (s *Suite) testLoginLogout(t *testing.T) {
 		m, cleanup := s.createInitializedModule(t)
 		defer cleanup()
 
-		rv := m.Login(module.SessionHandle(0xDEADBEEF), module.CKU_USER, []byte("userpin"))
+		rv := m.Login(module.SessionHandle(0xDEADBEEF), module.CKU_USER, suiteUserPIN())
 		requireRV(t, module.CKR_SESSION_HANDLE_INVALID, rv,
 			"Login with invalid handle should return CKR_SESSION_HANDLE_INVALID")
 	})
@@ -491,10 +491,7 @@ func (s *Suite) testLoginUser(t *testing.T) {
 			m.CloseSession(handle)
 		}()
 
-		rv := m.LoginUser(handle, module.CKU_USER, []byte("userpin"), "testuser")
-		if s.skipIfUnsupported(t, rv) {
-			return
-		}
+		rv := m.LoginUser(handle, module.CKU_USER, suiteUserPIN(), "testuser")
 		requireRV(t, module.CKR_OK, rv, "LoginUser as CKU_USER should succeed")
 
 		// Verify the session transitioned to user functions state
@@ -520,9 +517,6 @@ func (s *Suite) testLoginUser(t *testing.T) {
 		}()
 
 		rv := m.LoginUser(handle, module.CKU_SO, []byte("12345678"), "admin")
-		if s.skipIfUnsupported(t, rv) {
-			return
-		}
 		requireRV(t, module.CKR_OK, rv, "LoginUser as CKU_SO should succeed")
 
 		info, rv := m.GetSessionInfo(handle)
@@ -538,10 +532,7 @@ func (s *Suite) testLoginUser(t *testing.T) {
 		m, cleanup := s.createInitializedModule(t)
 		defer cleanup()
 
-		rv := m.LoginUser(module.SessionHandle(0xDEADBEEF), module.CKU_USER, []byte("userpin"), "testuser")
-		if s.skipIfUnsupported(t, rv) {
-			return
-		}
+		rv := m.LoginUser(module.SessionHandle(0xDEADBEEF), module.CKU_USER, suiteUserPIN(), "testuser")
 		requireRV(t, module.CKR_SESSION_HANDLE_INVALID, rv,
 			"LoginUser with invalid handle should return CKR_SESSION_HANDLE_INVALID")
 	})
@@ -559,14 +550,20 @@ func (s *Suite) testSessionCancel(t *testing.T) {
 		handle := openRWSession(t, m)
 		defer func() { m.CloseSession(handle) }()
 
+		// PKCS#11 v3.2 C_SessionCancel: "If no flags are set, the session state
+		// will not be modified and CKR_OK will be returned." A zero flags
+		// argument names no operation, so there is nothing that could fail to
+		// be cancelled and nothing to report as uninitialized.
 		rv := m.SessionCancel(handle, 0)
-		if s.skipIfUnsupported(t, rv) {
-			return
-		}
+		requireRV(t, module.CKR_OK, rv,
+			"SessionCancel with flags=0 must leave the session unmodified and return CKR_OK")
 
-		// With no active operation, the spec says CKR_OPERATION_NOT_INITIALIZED
-		requireRV(t, module.CKR_OPERATION_NOT_INITIALIZED, rv,
-			"SessionCancel with no active operation should return CKR_OPERATION_NOT_INITIALIZED")
+		// A flag naming an operation that is not running is likewise not an
+		// error: "the operation flag will be ignored and C_SessionCancel will
+		// behave as if the operation flag was not set."
+		rv = m.SessionCancel(handle, uint64(module.CKF_DIGEST))
+		requireRV(t, module.CKR_OK, rv,
+			"SessionCancel naming an inactive operation must ignore the flag, not fail")
 	})
 
 	t.Run("cancel_invalid_handle_fails", func(t *testing.T) {
@@ -574,9 +571,6 @@ func (s *Suite) testSessionCancel(t *testing.T) {
 		defer cleanup()
 
 		rv := m.SessionCancel(module.SessionHandle(0xDEADBEEF), 0)
-		if s.skipIfUnsupported(t, rv) {
-			return
-		}
 		requireRV(t, module.CKR_SESSION_HANDLE_INVALID, rv,
 			"SessionCancel with invalid handle should return CKR_SESSION_HANDLE_INVALID")
 	})

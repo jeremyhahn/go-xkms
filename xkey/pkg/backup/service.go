@@ -655,6 +655,15 @@ func decrypt(ciphertext, nonce, key []byte) ([]byte, error) {
 		return nil, &SentinelCauseError{Sentinel: ErrDecryptionFailed, Cause: err}
 	}
 
+	// chacha20poly1305.AEAD.Open panics rather than returning an error when
+	// the nonce is not exactly NonceSize bytes (24 for XChaCha20-Poly1305).
+	// The nonce is read back from an imported backup file, so a corrupted
+	// or maliciously crafted file must not be able to crash the process.
+	if len(nonce) != aead.NonceSize() {
+		return nil, &DetailError{Err: ErrDecryptionFailed, Detail: fmt.Sprintf(
+			": nonce is %d bytes, want %d", len(nonce), aead.NonceSize())}
+	}
+
 	plaintext, err := aead.Open(nil, nonce, ciphertext, nil)
 	if err != nil {
 		return nil, &SentinelCauseError{Sentinel: ErrDecryptionFailed, Cause: err}

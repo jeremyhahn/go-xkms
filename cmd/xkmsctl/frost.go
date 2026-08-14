@@ -1143,9 +1143,21 @@ func createFrostBackend(cfg *Config, algorithm client.FrostAlgorithm, participan
 	return client.NewFrostBackend(frostConfig)
 }
 
+// frostSecretPrefix is the storage key prefix under which fileSecretBackend
+// keeps FROST secret shares.
+const frostSecretPrefix = "frost/secrets/"
+
+// frostSecretSuffix is the storage key suffix of a FROST secret share.
+const frostSecretSuffix = ".secret"
+
 // fileSecretBackend is a simple file-based backend for storing FROST secrets
 type fileSecretBackend struct {
 	storage client.StorageBackend
+}
+
+// frostSecretPath returns the storage key holding the secret share for cn.
+func frostSecretPath(cn string) string {
+	return frostSecretPrefix + cn + frostSecretSuffix
 }
 
 func newFileSecretBackend(storage client.StorageBackend) *fileSecretBackend {
@@ -1173,7 +1185,7 @@ func (b *fileSecretBackend) GenerateKey(ctx context.Context, attrs *client.KeyAt
 	if attrs.SealData != nil {
 		data := attrs.SealData.Bytes()
 		if len(data) > 0 {
-			path := "frost/secrets/" + attrs.CN + ".secret"
+			path := frostSecretPath(attrs.CN)
 			if err := b.storage.Put(ctx, path, data); err != nil {
 				return nil, &WrappedError{Sentinel: ErrStoreSecretFailed, Err: err}
 			}
@@ -1185,7 +1197,7 @@ func (b *fileSecretBackend) GenerateKey(ctx context.Context, attrs *client.KeyAt
 
 func (b *fileSecretBackend) GetKey(ctx context.Context, attrs *client.KeyAttributes) (crypto.PrivateKey, error) {
 	// For FROST, we retrieve the secret share data
-	path := "frost/secrets/" + attrs.CN + ".secret"
+	path := frostSecretPath(attrs.CN)
 	data, err := b.storage.Get(ctx, path)
 	if err != nil {
 		return nil, &WrappedError{Sentinel: ErrGetSecretFailed, Err: err}
@@ -1197,12 +1209,48 @@ func (b *fileSecretBackend) GetKey(ctx context.Context, attrs *client.KeyAttribu
 }
 
 func (b *fileSecretBackend) DeleteKey(ctx context.Context, attrs *client.KeyAttributes) error {
-	path := "frost/secrets/" + attrs.CN + ".secret"
+	path := frostSecretPath(attrs.CN)
 	return b.storage.Delete(ctx, path)
 }
 
+// ListKeys enumerates the FROST secret shares held by this backend by
+// scanning the frost/secrets/ prefix. The returned attributes carry the CN
+// recovered from the storage key and the store and key types used by
+// GenerateKey, so each entry can be passed straight back to GetKey or
+// DeleteKey. Keys that do not carry the secret-share suffix are skipped;
+// they are not shares written by this backend.
 func (b *fileSecretBackend) ListKeys(ctx context.Context) ([]*client.KeyAttributes, error) {
-	return nil, nil
+	keys, err := b.storage.List(ctx, frostSecretPrefix)
+	if err != nil {
+		return nil, &WrappedError{Sentinel: ErrListKeysFailed, Err: err}
+	}
+
+	attrs := make([]*client.KeyAttributes, 0, len(keys))
+	for _, key := range keys {
+		cn, ok := frostSecretCN(key)
+		if !ok {
+			continue
+		}
+		attrs = append(attrs, &client.KeyAttributes{
+			CN:        cn,
+			KeyType:   client.KeyTypeSigning,
+			StoreType: client.StoreFrost,
+		})
+	}
+	return attrs, nil
+}
+
+// frostSecretCN recovers the common name from a FROST secret storage key.
+// It reports false when the key is not a secret share of this backend.
+func frostSecretCN(key string) (string, bool) {
+	if !strings.HasPrefix(key, frostSecretPrefix) || !strings.HasSuffix(key, frostSecretSuffix) {
+		return "", false
+	}
+	cn := key[len(frostSecretPrefix) : len(key)-len(frostSecretSuffix)]
+	if cn == "" {
+		return "", false
+	}
+	return cn, true
 }
 
 func (b *fileSecretBackend) Signer(ctx context.Context, attrs *client.KeyAttributes) (crypto.Signer, error) {

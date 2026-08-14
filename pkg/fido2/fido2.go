@@ -15,6 +15,7 @@ package fido2
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"log"
@@ -214,7 +215,10 @@ func (h *FIDO2Handler) UnlockWithKey(config *AuthenticationConfig) ([]byte, erro
 		result, err := hmacExt.DeriveSecret(config)
 		if err != nil {
 			lastErr = err
-			if err == ErrUserPresenceRequired || err == ErrOperationTimeout {
+			// The sentinel arrives wrapped by the CTAP2 and hmac-secret
+			// layers, so identity comparison would never match and the
+			// retry would never run.
+			if errors.Is(err, ErrUserPresenceRequired) || errors.Is(err, ErrOperationTimeout) {
 				continue // Retry
 			}
 			return nil, err // Non-retriable error

@@ -23,8 +23,10 @@ type ClaimCertBeginRequest = pkgtransport.ClaimCertBeginRequest
 type ClaimCertBeginResponse = pkgtransport.ClaimCertBeginResponse
 type ClaimCertCompleteRequest = pkgtransport.ClaimCertCompleteRequest
 type ClaimCertCompleteResponse = pkgtransport.ClaimCertCompleteResponse
-type ClaimShareRequest = pkgtransport.ClaimShareRequest
-type ClaimShareResponse = pkgtransport.ClaimShareResponse
+type ClaimShareBeginRequest = pkgtransport.ClaimShareBeginRequest
+type ClaimShareBeginResponse = pkgtransport.ClaimShareBeginResponse
+type ClaimShareCompleteRequest = pkgtransport.ClaimShareCompleteRequest
+type ClaimShareCompleteResponse = pkgtransport.ClaimShareCompleteResponse
 type SignCSRInitRequest = pkgtransport.SignCSRInitRequest
 type SignCSRInitResponse = pkgtransport.SignCSRInitResponse
 

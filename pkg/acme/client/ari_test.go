@@ -741,6 +741,10 @@ func (m *mockARIAccountDAO) SaveWithCondition(_ context.Context, _ *entities.ACM
 	panic("not implemented")
 }
 
+func (m *mockARIAccountDAO) SaveIfAbsent(_ context.Context, _ *entities.ACMEAccount) (bool, error) {
+	panic("not implemented")
+}
+
 func (m *mockARIAccountDAO) Get(_ context.Context, _ uint64) (*entities.ACMEAccount, error) {
 	return nil, nil
 }

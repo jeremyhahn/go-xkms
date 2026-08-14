@@ -39,6 +39,14 @@ type SessionPool struct {
 	slotID uint
 	pool   chan pkcs11.SessionHandle
 	closed atomic.Bool
+
+	// done is closed by Close to release any caller already blocked waiting for
+	// a session. The closed flag alone cannot do that: a caller checks it,
+	// passes, and may then be preempted before its receive on pool, by which
+	// time Close has drained the channel and nothing will ever be sent again.
+	// That goroutine would block forever -- a leak on every shutdown that races
+	// in-flight work, which is exactly when shutdown happens.
+	done chan struct{}
 }
 
 // NewSessionPool creates a new session pool with the specified number of RW sessions.
@@ -62,6 +70,7 @@ func NewSessionPool(ctx *pkcs11.Ctx, slotID uint, pin string, size int) (*Sessio
 		ctx:    ctx,
 		slotID: slotID,
 		pool:   make(chan pkcs11.SessionHandle, size),
+		done:   make(chan struct{}),
 	}
 
 	// Open sessions and add them to the pool
@@ -106,7 +115,19 @@ func (p *SessionPool) WithSession(fn func(session pkcs11.SessionHandle) error) e
 		return ErrSessionPoolClosed
 	}
 
-	session := <-p.pool
+	// Wait for a session, but stay responsive to Close. Receiving from pool
+	// alone reintroduces the block-forever race the done channel exists to
+	// prevent.
+	var session pkcs11.SessionHandle
+	select {
+	case session = <-p.pool:
+	case <-p.done:
+		// A nil done channel blocks forever in a select, which is the correct
+		// behaviour here: a zero-value pool has no Close to race with, so the
+		// receive above is the only case that can fire.
+		return ErrSessionPoolClosed
+	}
+
 	err := fn(session)
 	if !p.closed.Load() {
 		p.pool <- session
@@ -188,6 +209,14 @@ func (p *SessionPool) SlotID() uint {
 func (p *SessionPool) Close() {
 	if !p.closed.CompareAndSwap(false, true) {
 		return // already closed
+	}
+	// Release anyone already blocked on a session before draining, so a waiter
+	// cannot be left holding a receive against a channel that will never be
+	// written to again. A pool built as a zero value rather than through
+	// NewSessionPool has no done channel; closing nil would panic, and such a
+	// pool has no waiters to release anyway.
+	if p.done != nil {
+		close(p.done)
 	}
 	p.drainAndClose()
 }

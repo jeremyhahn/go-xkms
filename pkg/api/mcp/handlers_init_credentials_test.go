@@ -103,16 +103,30 @@ func TestHandleClaimShare(t *testing.T) {
 
 	ctx := context.Background()
 
-	t.Run("fails with invalid JSON params", func(t *testing.T) {
+	t.Run("begin refuses a session with no client certificate", func(t *testing.T) {
 		req := &JSONRPCRequest{
 			JSONRPC: "2.0",
-			Method:  "init.claimShare",
-			Params:  json.RawMessage(`{bad`),
+			Method:  "init.claimShareBegin",
+			Params:  json.RawMessage(`{"username":"officer-A"}`),
 			ID:      1,
 		}
 
-		_, err := server.handleClaimShare(ctx, req)
-		require.Error(t, err)
+		result, err := server.handleClaimShareBegin(ctx, req)
+		require.ErrorIs(t, err, ErrClientCertRequired)
+		require.Nil(t, result)
+	})
+
+	t.Run("complete refuses a session with no client certificate", func(t *testing.T) {
+		req := &JSONRPCRequest{
+			JSONRPC: "2.0",
+			Method:  "init.claimShareComplete",
+			Params:  json.RawMessage(`{"username":"officer-A"}`),
+			ID:      1,
+		}
+
+		result, err := server.handleClaimShareComplete(ctx, req)
+		require.ErrorIs(t, err, ErrClientCertRequired)
+		require.Nil(t, result, "no share material may accompany a refusal")
 	})
 }
 

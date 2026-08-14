@@ -78,22 +78,27 @@ func DefaultPKCS11ToolConfig() *PKCS11ToolConfig {
 	}
 }
 
-// checkPKCS11ToolAvailable checks if pkcs11-tool is available in PATH.
-func checkPKCS11ToolAvailable(t *testing.T) {
+// requirePKCS11Tool asserts pkcs11-tool is on PATH.
+//
+// The devcontainer installs the opensc package, and every pkcs11-tool Makefile
+// target runs inside it, so a missing binary means the image drifted rather
+// than that this compatibility surface is optional.
+func requirePKCS11Tool(t *testing.T) {
 	t.Helper()
 
-	_, err := exec.LookPath("pkcs11-tool")
-	if err != nil {
-		t.Skip("pkcs11-tool not available in PATH, skipping compatibility tests")
+	if _, err := exec.LookPath("pkcs11-tool"); err != nil {
+		t.Fatalf("pkcs11-tool is not on PATH: %v; the devcontainer image provides it "+
+			"via the opensc package", err)
 	}
 }
 
-// checkSharedLibraryAvailable checks if the PKCS#11 shared library exists.
-func checkSharedLibraryAvailable(t *testing.T, path string) {
+// requireSharedLibrary asserts the built PKCS#11 shared library is present.
+func requireSharedLibrary(t *testing.T, path string) {
 	t.Helper()
 
 	if _, err := os.Stat(path); err != nil {
-		t.Skipf("PKCS#11 shared library not found at %s, skipping compatibility tests", path)
+		t.Fatalf("PKCS#11 shared library not readable at %s: %v; run_with_server builds it "+
+			"before every PKCS#11 target", path, err)
 	}
 }
 
@@ -153,10 +158,10 @@ func initializeTokenViaPKCS11Tool(t *testing.T, cfg *PKCS11ToolConfig) {
 // TestPKCS11ToolListSlots tests that pkcs11-tool --list-slots works correctly.
 // This validates the module's C_GetSlotList and C_GetSlotInfo implementations.
 func TestPKCS11ToolListSlots(t *testing.T) {
-	checkPKCS11ToolAvailable(t)
+	requirePKCS11Tool(t)
 
 	cfg := DefaultPKCS11ToolConfig()
-	checkSharedLibraryAvailable(t, cfg.ModulePath)
+	requireSharedLibrary(t, cfg.ModulePath)
 
 	// Set up the module backend first
 	env := SetupTestEnvironment(t, nil)
@@ -195,10 +200,10 @@ func TestPKCS11ToolListSlots(t *testing.T) {
 // TestPKCS11ToolListMechanisms tests that pkcs11-tool --list-mechanisms works.
 // This validates the module's C_GetMechanismList and C_GetMechanismInfo implementations.
 func TestPKCS11ToolListMechanisms(t *testing.T) {
-	checkPKCS11ToolAvailable(t)
+	requirePKCS11Tool(t)
 
 	cfg := DefaultPKCS11ToolConfig()
-	checkSharedLibraryAvailable(t, cfg.ModulePath)
+	requireSharedLibrary(t, cfg.ModulePath)
 
 	// Set up the module
 	env := SetupTestEnvironment(t, nil)
@@ -249,10 +254,10 @@ func TestPKCS11ToolListMechanisms(t *testing.T) {
 // TestPKCS11ToolGenerateKey tests key generation via pkcs11-tool.
 // This validates the module's C_GenerateKeyPair and C_GenerateKey implementations.
 func TestPKCS11ToolGenerateKey(t *testing.T) {
-	checkPKCS11ToolAvailable(t)
+	requirePKCS11Tool(t)
 
 	cfg := DefaultPKCS11ToolConfig()
-	checkSharedLibraryAvailable(t, cfg.ModulePath)
+	requireSharedLibrary(t, cfg.ModulePath)
 
 	// Initialize token via pkcs11-tool (not Go API) since pkcs11-tool loads its own module instance
 	initializeTokenViaPKCS11Tool(t, cfg)
@@ -364,12 +369,12 @@ func TestPKCS11ToolGenerateKey(t *testing.T) {
 // This validates the module's C_SignInit and C_Sign implementations.
 // NOTE: Requires persistent backend - in-memory module doesn't persist keys across pkcs11-tool invocations.
 func TestPKCS11ToolSign(t *testing.T) {
-	skipIfNoFilePersistence(t)
+	requireFilePersistence(t)
 
-	checkPKCS11ToolAvailable(t)
+	requirePKCS11Tool(t)
 
 	cfg := DefaultPKCS11ToolConfig()
-	checkSharedLibraryAvailable(t, cfg.ModulePath)
+	requireSharedLibrary(t, cfg.ModulePath)
 
 	// Initialize token and generate keys via pkcs11-tool (separate module instance)
 	initializeTokenViaPKCS11Tool(t, cfg)
@@ -477,10 +482,10 @@ func TestPKCS11ToolSign(t *testing.T) {
 // TestPKCS11ToolListObjects tests object listing via pkcs11-tool.
 // This validates the module's C_FindObjectsInit, C_FindObjects, and C_FindObjectsFinal.
 func TestPKCS11ToolListObjects(t *testing.T) {
-	checkPKCS11ToolAvailable(t)
+	requirePKCS11Tool(t)
 
 	cfg := DefaultPKCS11ToolConfig()
-	checkSharedLibraryAvailable(t, cfg.ModulePath)
+	requireSharedLibrary(t, cfg.ModulePath)
 
 	// Initialize token via pkcs11-tool
 	initializeTokenViaPKCS11Tool(t, cfg)
@@ -559,10 +564,10 @@ func TestPKCS11ToolListObjects(t *testing.T) {
 // TestPKCS11ToolTokenInfo tests token information retrieval via pkcs11-tool.
 // This validates the module's C_GetTokenInfo implementation.
 func TestPKCS11ToolTokenInfo(t *testing.T) {
-	checkPKCS11ToolAvailable(t)
+	requirePKCS11Tool(t)
 
 	cfg := DefaultPKCS11ToolConfig()
-	checkSharedLibraryAvailable(t, cfg.ModulePath)
+	requireSharedLibrary(t, cfg.ModulePath)
 
 	// Set up the module
 	env := SetupTestEnvironment(t, nil)
@@ -596,15 +601,18 @@ func TestPKCS11ToolTokenInfo(t *testing.T) {
 	})
 
 	t.Run("token_info", func(t *testing.T) {
+		// -T / --list-token-slots is how OpenSC reports token information.
+		// There is no --token-info flag in any pkcs11-tool release, so the
+		// earlier spelling failed with "unrecognized option" — a tool usage
+		// error that this test then attributed to the module.
 		output, err := runPKCS11Tool(t, cfg,
 			"--slot", cfg.SlotID,
-			"--token-info",
+			"--list-token-slots",
 		)
 
-		// Some versions of pkcs11-tool may not support --token-info
 		if err != nil {
-			t.Logf("pkcs11-tool --token-info may not be supported: %v", err)
-			t.Skip("--token-info not supported by this version of pkcs11-tool")
+			t.Fatalf("pkcs11-tool --list-token-slots failed: %v; the module must report "+
+				"its token through C_GetTokenInfo", err)
 		}
 
 		t.Logf("pkcs11-tool --token-info output:\n%s", output)
@@ -614,10 +622,10 @@ func TestPKCS11ToolTokenInfo(t *testing.T) {
 // TestPKCS11ToolInitToken tests token initialization via pkcs11-tool.
 // This validates the module's C_InitToken implementation.
 func TestPKCS11ToolInitToken(t *testing.T) {
-	checkPKCS11ToolAvailable(t)
+	requirePKCS11Tool(t)
 
 	cfg := DefaultPKCS11ToolConfig()
-	checkSharedLibraryAvailable(t, cfg.ModulePath)
+	requireSharedLibrary(t, cfg.ModulePath)
 
 	t.Run("init_token", func(t *testing.T) {
 		tokenLabel := "pkcs11-tool-init-token"
@@ -651,10 +659,10 @@ func TestPKCS11ToolInitToken(t *testing.T) {
 // TestPKCS11ToolInitPIN tests PIN initialization via pkcs11-tool.
 // This validates the module's C_InitPIN implementation.
 func TestPKCS11ToolInitPIN(t *testing.T) {
-	checkPKCS11ToolAvailable(t)
+	requirePKCS11Tool(t)
 
 	cfg := DefaultPKCS11ToolConfig()
-	checkSharedLibraryAvailable(t, cfg.ModulePath)
+	requireSharedLibrary(t, cfg.ModulePath)
 
 	// Initialize token first via pkcs11-tool (no user PIN yet)
 	output, err := runPKCS11Tool(t, cfg,
@@ -702,12 +710,12 @@ func TestPKCS11ToolInitPIN(t *testing.T) {
 // TestPKCS11ToolChangePIN tests PIN change via pkcs11-tool.
 // This validates the module's C_SetPIN implementation.
 func TestPKCS11ToolChangePIN(t *testing.T) {
-	skipIfNoFilePersistence(t)
+	requireFilePersistence(t)
 
-	checkPKCS11ToolAvailable(t)
+	requirePKCS11Tool(t)
 
 	cfg := DefaultPKCS11ToolConfig()
-	checkSharedLibraryAvailable(t, cfg.ModulePath)
+	requireSharedLibrary(t, cfg.ModulePath)
 
 	// Initialize token via pkcs11-tool
 	initializeTokenViaPKCS11Tool(t, cfg)
@@ -776,12 +784,12 @@ func TestPKCS11ToolChangePIN(t *testing.T) {
 // TestPKCS11ToolDelete tests object deletion via pkcs11-tool.
 // This validates the module's C_DestroyObject implementation.
 func TestPKCS11ToolDelete(t *testing.T) {
-	skipIfNoFilePersistence(t)
+	requireFilePersistence(t)
 
-	checkPKCS11ToolAvailable(t)
+	requirePKCS11Tool(t)
 
 	cfg := DefaultPKCS11ToolConfig()
-	checkSharedLibraryAvailable(t, cfg.ModulePath)
+	requireSharedLibrary(t, cfg.ModulePath)
 
 	// Initialize token via pkcs11-tool
 	initializeTokenViaPKCS11Tool(t, cfg)
@@ -848,10 +856,10 @@ func TestPKCS11ToolDelete(t *testing.T) {
 // TestPKCS11ToolRandomData tests random data generation via pkcs11-tool.
 // This validates the module's C_GenerateRandom implementation.
 func TestPKCS11ToolRandomData(t *testing.T) {
-	checkPKCS11ToolAvailable(t)
+	requirePKCS11Tool(t)
 
 	cfg := DefaultPKCS11ToolConfig()
-	checkSharedLibraryAvailable(t, cfg.ModulePath)
+	requireSharedLibrary(t, cfg.ModulePath)
 
 	// Random generation doesn't require token initialization or login
 	t.Run("generate_random", func(t *testing.T) {
@@ -899,12 +907,13 @@ func TestPKCS11ToolRandomData(t *testing.T) {
 // This is a basic compatibility check for the C interface.
 func TestPKCS11ModuleExportedSymbols(t *testing.T) {
 	cfg := DefaultPKCS11ToolConfig()
-	checkSharedLibraryAvailable(t, cfg.ModulePath)
+	requireSharedLibrary(t, cfg.ModulePath)
 
 	// Use nm to check exported symbols
 	nmPath, err := exec.LookPath("nm")
 	if err != nil {
-		t.Skip("nm not available, skipping symbol export test")
+		t.Fatalf("nm is not on PATH: %v; the devcontainer image provides it via "+
+			"build-essential/binutils", err)
 	}
 
 	t.Run("check_c_getfunctionlist", func(t *testing.T) {
@@ -941,10 +950,10 @@ func TestPKCS11ModuleExportedSymbols(t *testing.T) {
 
 // TestPKCS11ModuleVersionInfo tests that module version info is retrievable.
 func TestPKCS11ModuleVersionInfo(t *testing.T) {
-	checkPKCS11ToolAvailable(t)
+	requirePKCS11Tool(t)
 
 	cfg := DefaultPKCS11ToolConfig()
-	checkSharedLibraryAvailable(t, cfg.ModulePath)
+	requireSharedLibrary(t, cfg.ModulePath)
 
 	t.Run("version_info", func(t *testing.T) {
 		output, err := runPKCS11Tool(t, cfg, "-I")

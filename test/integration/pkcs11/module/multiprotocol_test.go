@@ -58,9 +58,7 @@ func TestMultiProtocol_ModuleInitialization(t *testing.T) {
 	for _, protocol := range AllProtocols() {
 		protocol := protocol // capture range variable
 		t.Run(string(protocol), func(t *testing.T) {
-			if !suite.IsProtocolAvailable(protocol) {
-				t.Skipf("protocol %s not available", protocol)
-			}
+			suite.RequireProtocol(t, protocol)
 
 			cfg := suite.GetProtocolConfig(protocol)
 			env := SetupTestEnvironment(t, cfg.ToModuleConfig())
@@ -100,9 +98,7 @@ func TestMultiProtocol_SlotAndTokenInfo(t *testing.T) {
 	for _, protocol := range AllProtocols() {
 		protocol := protocol
 		t.Run(string(protocol), func(t *testing.T) {
-			if !suite.IsProtocolAvailable(protocol) {
-				t.Skipf("protocol %s not available", protocol)
-			}
+			suite.RequireProtocol(t, protocol)
 
 			cfg := suite.GetProtocolConfig(protocol)
 			env := SetupTestEnvironment(t, cfg.ToModuleConfig())
@@ -153,9 +149,7 @@ func TestMultiProtocol_SessionManagement(t *testing.T) {
 	for _, protocol := range AllProtocols() {
 		protocol := protocol
 		t.Run(string(protocol), func(t *testing.T) {
-			if !suite.IsProtocolAvailable(protocol) {
-				t.Skipf("protocol %s not available", protocol)
-			}
+			suite.RequireProtocol(t, protocol)
 
 			cfg := suite.GetProtocolConfig(protocol)
 			env := SetupTestEnvironment(t, cfg.ToModuleConfig())
@@ -214,9 +208,7 @@ func TestMultiProtocol_LoginLogout(t *testing.T) {
 	for _, protocol := range AllProtocols() {
 		protocol := protocol
 		t.Run(string(protocol), func(t *testing.T) {
-			if !suite.IsProtocolAvailable(protocol) {
-				t.Skipf("protocol %s not available", protocol)
-			}
+			suite.RequireProtocol(t, protocol)
 
 			cfg := suite.GetProtocolConfig(protocol)
 			env, session := SetupInitializedModuleWithConfig(t, cfg.ToModuleConfig())
@@ -269,9 +261,7 @@ func TestMultiProtocol_RSAKeyGeneration(t *testing.T) {
 	for _, protocol := range AllProtocols() {
 		protocol := protocol
 		t.Run(string(protocol), func(t *testing.T) {
-			if !suite.IsProtocolAvailable(protocol) {
-				t.Skipf("protocol %s not available", protocol)
-			}
+			suite.RequireProtocol(t, protocol)
 
 			for _, backend := range suite.Backends {
 				backend := backend
@@ -331,9 +321,7 @@ func TestMultiProtocol_ECKeyGeneration(t *testing.T) {
 	for _, protocol := range AllProtocols() {
 		protocol := protocol
 		t.Run(string(protocol), func(t *testing.T) {
-			if !suite.IsProtocolAvailable(protocol) {
-				t.Skipf("protocol %s not available", protocol)
-			}
+			suite.RequireProtocol(t, protocol)
 
 			for _, backend := range suite.Backends {
 				backend := backend
@@ -387,9 +375,7 @@ func TestMultiProtocol_AESKeyGeneration(t *testing.T) {
 	for _, protocol := range AllProtocols() {
 		protocol := protocol
 		t.Run(string(protocol), func(t *testing.T) {
-			if !suite.IsProtocolAvailable(protocol) {
-				t.Skipf("protocol %s not available", protocol)
-			}
+			suite.RequireProtocol(t, protocol)
 
 			for _, backend := range suite.Backends {
 				backend := backend
@@ -435,9 +421,7 @@ func TestMultiProtocol_SignVerify(t *testing.T) {
 	for _, protocol := range AllProtocols() {
 		protocol := protocol
 		t.Run(string(protocol), func(t *testing.T) {
-			if !suite.IsProtocolAvailable(protocol) {
-				t.Skipf("protocol %s not available", protocol)
-			}
+			suite.RequireProtocol(t, protocol)
 
 			for _, backend := range suite.Backends {
 				backend := backend
@@ -477,8 +461,13 @@ func TestMultiProtocol_SignVerify(t *testing.T) {
 						t.Error("signature is empty")
 					}
 
-					// Find public key for verification
-					pubHandle := MustFindKeyByLabel(t, env, session, label)
+					// Find the PUBLIC key for verification. The pair shares one
+					// label, so a label-only search can return the private half
+					// and C_VerifyInit then fails with
+					// CKR_KEY_FUNCTION_NOT_PERMITTED -- correctly, since a
+					// private key has no CKA_VERIFY.
+					pubHandle := MustFindKeyByLabelAndClass(t, env, session, label,
+						module.CKO_PUBLIC_KEY)
 
 					// Verify
 					rv = env.Module.VerifyInit(session, signMech, pubHandle)
@@ -519,9 +508,7 @@ func TestMultiProtocol_RandomGeneration(t *testing.T) {
 	for _, protocol := range AllProtocols() {
 		protocol := protocol
 		t.Run(string(protocol), func(t *testing.T) {
-			if !suite.IsProtocolAvailable(protocol) {
-				t.Skipf("protocol %s not available", protocol)
-			}
+			suite.RequireProtocol(t, protocol)
 
 			for _, backend := range suite.Backends {
 				backend := backend
@@ -592,9 +579,7 @@ func TestMultiProtocol_AESEncryptDecrypt(t *testing.T) {
 	for _, protocol := range AllProtocols() {
 		protocol := protocol
 		t.Run(string(protocol), func(t *testing.T) {
-			if !suite.IsProtocolAvailable(protocol) {
-				t.Skipf("protocol %s not available", protocol)
-			}
+			suite.RequireProtocol(t, protocol)
 
 			for _, backend := range suite.Backends {
 				backend := backend
@@ -691,9 +676,7 @@ func TestMultiProtocol_FullKeyLifecycle(t *testing.T) {
 	for _, protocol := range AllProtocols() {
 		protocol := protocol
 		t.Run(string(protocol), func(t *testing.T) {
-			if !suite.IsProtocolAvailable(protocol) {
-				t.Skipf("protocol %s not available", protocol)
-			}
+			suite.RequireProtocol(t, protocol)
 
 			cfg := suite.GetProtocolConfig(protocol)
 			env, session := SetupAuthenticatedModuleWithConfig(t, cfg.ToModuleConfig())
@@ -782,9 +765,7 @@ func TestMultiProtocol_ConcurrentSessions(t *testing.T) {
 	for _, protocol := range AllProtocols() {
 		protocol := protocol
 		t.Run(string(protocol), func(t *testing.T) {
-			if !suite.IsProtocolAvailable(protocol) {
-				t.Skipf("protocol %s not available", protocol)
-			}
+			suite.RequireProtocol(t, protocol)
 
 			cfg := suite.GetProtocolConfig(protocol)
 			env := SetupTestEnvironment(t, cfg.ToModuleConfig())

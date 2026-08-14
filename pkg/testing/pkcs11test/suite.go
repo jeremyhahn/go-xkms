@@ -48,20 +48,10 @@ type ModuleFactory func(t *testing.T) (m *module.Module, cleanup func())
 // SuiteOption configures the conformance suite.
 type SuiteOption func(*Suite)
 
-// WithSkipUnsupported causes the suite to skip tests for operations that
-// return CKR_FUNCTION_NOT_SUPPORTED instead of failing them.
-// This is intended for embedded/xkey transports that do not support all operations.
-func WithSkipUnsupported(skip bool) SuiteOption {
-	return func(s *Suite) {
-		s.skipUnsupported = skip
-	}
-}
-
 // Suite is a shared PKCS#11 v3.0 conformance test suite.
 // It verifies PKCS#11 state machine behavior across any backend.
 type Suite struct {
-	factory         ModuleFactory
-	skipUnsupported bool
+	factory ModuleFactory
 }
 
 // NewSuite creates a new conformance suite with the given module factory.
@@ -91,33 +81,6 @@ func (s *Suite) RunAll(t *testing.T) {
 	t.Run("Section5.15_Random", s.RunRandomTests)
 	t.Run("Section5.16_Parallel", s.RunParallelFunctionTests)
 	t.Run("Section5.17_Message", s.RunMessageTests)
-}
-
-// skipIfUnsupported skips the test if the return value indicates the operation
-// is not supported or cannot be performed by this backend.
-// When skipUnsupported is true, the following return codes cause a skip:
-//   - CKR_FUNCTION_NOT_SUPPORTED: operation not implemented
-//   - CKR_FUNCTION_FAILED: operation implemented but backend cannot perform it
-//   - CKR_GENERAL_ERROR: backend-level failure (e.g., mock backend without real crypto)
-//
-// Returns true if the test was skipped.
-func (s *Suite) skipIfUnsupported(t *testing.T, rv module.CK_RV) bool {
-	t.Helper()
-	if !s.skipUnsupported {
-		return false
-	}
-	switch rv {
-	case module.CKR_FUNCTION_NOT_SUPPORTED:
-		t.Skipf("operation not supported by this backend (CKR_FUNCTION_NOT_SUPPORTED)")
-		return true
-	case module.CKR_FUNCTION_FAILED:
-		t.Skipf("operation failed on this backend (CKR_FUNCTION_FAILED)")
-		return true
-	case module.CKR_GENERAL_ERROR:
-		t.Skipf("operation failed on this backend (CKR_GENERAL_ERROR)")
-		return true
-	}
-	return false
 }
 
 // requireRV asserts that the return value matches the expected value.

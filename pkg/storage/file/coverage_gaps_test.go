@@ -19,15 +19,15 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+
+	"github.com/jeremyhahn/go-xkms/pkg/storage"
 )
 
-// TestPut_MkdirAllFailure verifies Put returns an error when directory creation fails.
-// This covers the os.MkdirAll error branch in Put (line 113-114 in storage.go).
-// The scenario: the *parent* of the required directory exists but is read-only,
-// so creating a new child directory inside it fails with permission denied.
+// TestPut_MkdirAllFailure verifies Put returns an error when directory creation
+// fails. A regular file where the key needs a directory makes os.MkdirAll fail
+// with ENOTDIR, which the kernel enforces for every user including root — a
+// read-only parent directory would not, because root ignores permission bits.
 func TestPut_MkdirAllFailure(t *testing.T) {
-	skipIfRoot(t)
-
 	ctx := context.Background()
 	dir := setupTestDir(t)
 	store, err := New(dir)
@@ -36,102 +36,65 @@ func TestPut_MkdirAllFailure(t *testing.T) {
 	}
 	defer func() { _ = store.Close() }()
 
-	// Create a read-only parent directory.
-	roParent := filepath.Join(dir, "ro-parent")
-	if err := os.MkdirAll(roParent, 0700); err != nil {
-		t.Fatalf("MkdirAll() error = %v", err)
+	if err := os.WriteFile(filepath.Join(dir, "blocker"), []byte("not a directory"), 0600); err != nil {
+		t.Fatalf("WriteFile() error = %v", err)
 	}
-	if err := os.Chmod(roParent, 0500); err != nil {
-		t.Fatalf("Chmod() error = %v", err)
-	}
-	defer func() { _ = os.Chmod(roParent, 0700) }()
 
-	// Attempt to write to a key whose parent directory requires creating a NEW
-	// subdirectory inside ro-parent. MkdirAll will fail trying to create
-	// ro-parent/new-child because ro-parent is not writable.
-	key := "ro-parent/new-child/deep/file"
-	err = store.Put(ctx, key, []byte("data"))
-	if err == nil {
+	if err := store.Put(ctx, "blocker/new-child/deep/file", []byte("data")); err == nil {
 		t.Error("Put() should return error when MkdirAll fails")
 	}
 }
 
-// TestList_WalkEntryError verifies List returns an error when WalkDir
-// passes a non-nil error into the walk callback for a specific entry.
-// This covers the "if err != nil { return err }" branch at the top of
-// the walk callback in List.
-func TestList_WalkEntryError(t *testing.T) {
-	skipIfRoot(t)
+// walkErrorStore returns a store whose root directory has been removed, so any
+// directory walk fails with ENOENT. The kernel reports that to every user,
+// unlike an unreadable directory, which root traverses regardless of its mode.
+func walkErrorStore(t *testing.T, ctx context.Context) storage.Backend {
+	t.Helper()
 
-	ctx := context.Background()
-	dir := setupTestDir(t)
+	parent := setupTestDir(t)
+	dir := filepath.Join(parent, "root")
+	if err := os.MkdirAll(dir, 0700); err != nil {
+		t.Fatalf("MkdirAll() error = %v", err)
+	}
+
 	store, err := New(dir)
 	if err != nil {
 		t.Fatalf("New() error = %v", err)
 	}
-	defer func() { _ = store.Close() }()
+	t.Cleanup(func() { _ = store.Close() })
 
-	// Put a real key so the walk has something to traverse.
 	if err := store.Put(ctx, "visible/key", []byte("data")); err != nil {
 		t.Fatalf("Put() error = %v", err)
 	}
+	if err := os.RemoveAll(dir); err != nil {
+		t.Fatalf("RemoveAll() error = %v", err)
+	}
 
-	// Create a directory that WalkDir will attempt to descend into,
-	// then make it inaccessible. WalkDir passes the OS error into the callback.
-	badDir := filepath.Join(dir, "bad-dir")
-	if err := os.MkdirAll(badDir, 0700); err != nil {
-		t.Fatalf("MkdirAll() error = %v", err)
-	}
-	// Place a file inside so WalkDir must enter the directory.
-	if err := os.WriteFile(filepath.Join(badDir, "entry"), []byte("x"), 0600); err != nil {
-		t.Fatalf("WriteFile() error = %v", err)
-	}
-	if err := os.Chmod(badDir, 0000); err != nil {
-		t.Fatalf("Chmod() error = %v", err)
-	}
-	defer func() { _ = os.Chmod(badDir, 0700) }()
+	return store
+}
 
-	_, err = store.List(ctx, "")
-	if err == nil {
-		t.Error("List() should return error when WalkDir encounters an inaccessible entry")
+// TestList_WalkEntryError verifies List returns an error when WalkDir passes a
+// non-nil error into the walk callback. This covers the
+// "if err != nil { return err }" branch at the top of the callback in List.
+func TestList_WalkEntryError(t *testing.T) {
+	ctx := context.Background()
+	store := walkErrorStore(t, ctx)
+
+	if _, err := store.List(ctx, ""); err == nil {
+		t.Error("List() should return error when WalkDir reports a failure")
 	}
 }
 
-// TestScan_WalkEntryError verifies Scan returns an error when WalkDir
-// passes a non-nil error into the walk callback for a specific entry.
-// This covers the "if err != nil { return err }" branch at the top of
-// the walk callback in Scan.
+// TestScan_WalkEntryError verifies Scan returns an error when WalkDir passes a
+// non-nil error into the walk callback. This covers the
+// "if err != nil { return err }" branch at the top of the callback in Scan.
 func TestScan_WalkEntryError(t *testing.T) {
-	skipIfRoot(t)
-
 	ctx := context.Background()
-	dir := setupTestDir(t)
-	store, err := New(dir)
-	if err != nil {
-		t.Fatalf("New() error = %v", err)
-	}
-	defer func() { _ = store.Close() }()
+	store := walkErrorStore(t, ctx)
 
-	if err := store.Put(ctx, "visible/key", []byte("data")); err != nil {
-		t.Fatalf("Put() error = %v", err)
-	}
-
-	// Same strategy as TestList_WalkEntryError.
-	badDir := filepath.Join(dir, "bad-dir-scan")
-	if err := os.MkdirAll(badDir, 0700); err != nil {
-		t.Fatalf("MkdirAll() error = %v", err)
-	}
-	if err := os.WriteFile(filepath.Join(badDir, "entry"), []byte("x"), 0600); err != nil {
-		t.Fatalf("WriteFile() error = %v", err)
-	}
-	if err := os.Chmod(badDir, 0000); err != nil {
-		t.Fatalf("Chmod() error = %v", err)
-	}
-	defer func() { _ = os.Chmod(badDir, 0700) }()
-
-	err = store.Scan(ctx, "", func(_ string, _ []byte) error { return nil })
+	err := store.Scan(ctx, "", func(_ string, _ []byte) error { return nil })
 	if err == nil {
-		t.Error("Scan() should return error when WalkDir encounters an inaccessible entry")
+		t.Error("Scan() should return error when WalkDir reports a failure")
 	}
 }
 
@@ -166,38 +129,38 @@ func TestNew_AbsPathFailure(t *testing.T) {
 }
 
 // TestPut_ChmodFailure verifies Put returns an error when the post-write
-// os.Chmod call fails. The write itself (via the underlying engine's
-// os.WriteFile) follows symlinks, so pre-creating a dangling symlink to
-// /dev/null at the key's on-disk path lets the write succeed (data is
-// discarded by the kernel) while the subsequent os.Chmod — which also
-// follows the symlink — fails with EPERM because the test process does not
-// own /dev/null. This exercises the chmod-error branch without corrupting
-// any real data.
+// os.Chmod call fails.
+//
+// The fault is injected through FileStorage's own fields rather than through
+// file ownership: the engine writes into one directory while rootDir — the
+// path Put chmods — resolves through a regular file, so the write succeeds and
+// the chmod fails with ENOTDIR. Ownership-based setups (chmod'ing a file the
+// process does not own) cannot fail for root, which is exactly where CI runs.
 func TestPut_ChmodFailure(t *testing.T) {
-	skipIfRoot(t) // root owns everything, including /dev/null; chmod would succeed.
-
 	ctx := context.Background()
-	dir := setupTestDir(t)
-	store, err := New(dir)
+
+	engineDir := setupTestDir(t)
+	engine, err := storage.OpenEngine(storage.EngineConfig{Kind: storage.EngineFile, Path: engineDir})
 	if err != nil {
-		t.Fatalf("New() error = %v", err)
+		t.Fatalf("OpenEngine() error = %v", err)
 	}
-	defer func() { _ = store.Close() }()
+	defer func() { _ = engine.Close() }()
 
-	// certs/ prefix so Put actually attempts the widen-permission Chmod
-	// (keys/ maps to 0600, which equals defaultPerms, so no chmod happens).
-	key := "certs/devnull-target"
-	path := filepath.Join(dir, filepath.FromSlash(key))
-	if err := os.MkdirAll(filepath.Dir(path), 0700); err != nil {
-		t.Fatalf("MkdirAll() error = %v", err)
-	}
-	if err := os.Symlink("/dev/null", path); err != nil {
-		t.Fatalf("Symlink() error = %v", err)
+	chmodDir := setupTestDir(t)
+	if err := os.WriteFile(filepath.Join(chmodDir, "certs"), []byte("not a directory"), 0600); err != nil {
+		t.Fatalf("WriteFile() error = %v", err)
 	}
 
-	err = store.Put(ctx, key, []byte("data"))
-	if err == nil {
-		t.Fatal("Put() through a dangling symlink to /dev/null should fail on chmod")
+	store := &FileStorage{backend: engine, rootDir: chmodDir}
+
+	// certs/ is the prefix whose permissions Put widens, so the chmod runs.
+	if err := store.Put(ctx, "certs/widened.pem", []byte("data")); err == nil {
+		t.Fatal("Put() should return an error when the permission chmod fails")
+	}
+
+	// The write itself succeeded: the failure reported is the chmod, not the write.
+	if _, err := engine.Get(ctx, "certs/widened.pem"); err != nil {
+		t.Fatalf("the engine write must have succeeded before the chmod failed: %v", err)
 	}
 }
 
@@ -208,8 +171,6 @@ func TestPut_ChmodFailure(t *testing.T) {
 // "backend.PutIfAbsent returned an error" branch distinct from the
 // stored=false "already exists" branch.
 func TestPutIfAbsent_BackendError(t *testing.T) {
-	skipIfRoot(t)
-
 	ctx := context.Background()
 	dir := setupTestDir(t)
 	store, err := New(dir)
@@ -218,16 +179,13 @@ func TestPutIfAbsent_BackendError(t *testing.T) {
 	}
 	defer func() { _ = store.Close() }()
 
-	roDir := filepath.Join(dir, "ro-putifabsent")
-	if err := os.MkdirAll(roDir, 0700); err != nil {
-		t.Fatalf("MkdirAll() error = %v", err)
+	// A regular file where a directory is required: Exists reports absent, the
+	// write then fails with ENOTDIR for every user including root.
+	if err := os.WriteFile(filepath.Join(dir, "blocker"), []byte("not a directory"), 0600); err != nil {
+		t.Fatalf("WriteFile() error = %v", err)
 	}
-	if err := os.Chmod(roDir, 0500); err != nil { // r-x: Stat succeeds, WriteFile does not.
-		t.Fatalf("Chmod() error = %v", err)
-	}
-	defer func() { _ = os.Chmod(roDir, 0700) }()
 
-	stored, err := store.PutIfAbsent(ctx, "ro-putifabsent/new-key", []byte("data"))
+	stored, err := store.PutIfAbsent(ctx, "blocker/new-key", []byte("data"))
 	if err == nil {
 		t.Fatal("PutIfAbsent() should return the backend's write error")
 	}
@@ -250,8 +208,6 @@ func TestPutIfAbsent_BackendError(t *testing.T) {
 // mechanisms (immutable inode attributes, foreign ownership) — both outside
 // what a deterministic, non-destructive unit test may do.
 func TestPutIfAbsent_WidensCertsPermission(t *testing.T) {
-	skipIfRoot(t)
-
 	ctx := context.Background()
 	dir := setupTestDir(t)
 	store, err := New(dir)

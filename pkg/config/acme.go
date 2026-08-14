@@ -15,7 +15,9 @@ package config
 
 import (
 	"errors"
+	"path/filepath"
 
+	"github.com/jeremyhahn/go-xkms/pkg/acme/audit"
 	"github.com/jeremyhahn/go-xkms/pkg/errs"
 )
 
@@ -37,6 +39,15 @@ var (
 	// ErrACMEMissingTLS is returned when acme.enabled is true, acme.reuse_tls
 	// is false, and no TLS cert/key pair has been configured.
 	ErrACMEMissingTLS = errors.New("acme: tls.cert_file and tls.key_file are required when acme.reuse_tls is false")
+
+	// ErrACMEAuditNegativeRetention is returned when an audit rotation knob is
+	// configured with a negative value. Zero selects the built-in default;
+	// a negative value has no meaning.
+	ErrACMEAuditNegativeRetention = errors.New("acme: audit rotation values (max_size_mb, max_age_days, max_backups, buffer_size, flush_interval_seconds) must not be negative")
+
+	// ErrACMEAuditUnsupportedFormat is returned when acme.audit.format names a
+	// serialization the audit trail cannot be written or queried in.
+	ErrACMEAuditUnsupportedFormat = errors.New("acme: audit.format must be \"json\" (the only queryable audit trail format)")
 )
 
 // ACMEConfig configures the optional ACME (RFC 8555) server that xkmsd may
@@ -104,6 +115,167 @@ type ACMEConfig struct {
 
 	// TLS configures the ACME listener's TLS settings when ReuseTLS is false.
 	TLS ACMETLSConfig `yaml:"tls"`
+
+	// Audit configures the ACME audit trail: the tamper-evident record of
+	// every account, order, issuance, revocation, and enrollment decision the
+	// ACME CA makes. It is on unless the operator turns it off; see
+	// ACMEAuditConfig.
+	Audit ACMEAuditConfig `yaml:"audit"`
+}
+
+// Audit trail defaults. Zero-valued rotation knobs in the configuration select
+// these, which match the defaults the audit logger itself applies.
+const (
+	// DefaultACMEAuditFileName is the audit log file created inside the ACME
+	// data directory when acme.audit.log_path is not set.
+	DefaultACMEAuditFileName = "audit.log"
+
+	// DefaultACMEAuditMaxSizeMB rotates the live log once it reaches this size.
+	DefaultACMEAuditMaxSizeMB = 100
+
+	// DefaultACMEAuditMaxAgeDays retains rotated backups for one year, the
+	// shortest retention the supported compliance regimes accept.
+	DefaultACMEAuditMaxAgeDays = 365
+
+	// DefaultACMEAuditMaxBackups is how many rotated backups are retained.
+	DefaultACMEAuditMaxBackups = 10
+
+	// DefaultACMEAuditBufferSize is how many events may be queued in memory
+	// before writes become synchronous.
+	DefaultACMEAuditBufferSize = 100
+
+	// DefaultACMEAuditFlushIntervalSeconds is how often queued events are
+	// forced to disk.
+	DefaultACMEAuditFlushIntervalSeconds = 5
+
+	// DefaultACMEAuditFormat is the only audit trail format that can be both
+	// written and read back through the admin query API.
+	DefaultACMEAuditFormat = "json"
+)
+
+// ACMEAuditConfig configures the ACME audit trail.
+//
+// The audit trail is a compliance control (FedRAMP AU-2/AU-3/AU-9, PCI-DSS v4
+// 10.2, HIPAA 164.312(b)), so it is enabled by default whenever the ACME
+// server is enabled: an absent "audit" section means the trail runs with the
+// defaults below, not that it is off. Turning it off is an explicit act that
+// Config.ComplianceGaps reports, and the daemon then refuses to start unless
+// the operator opts into development mode.
+type ACMEAuditConfig struct {
+	// Enabled controls whether the audit trail is recorded. It is a pointer so
+	// an omitted "enabled" key can be told apart from an explicit "false":
+	// omitting it leaves the trail on. Use IsEnabled to read it.
+	Enabled *bool `yaml:"enabled,omitempty"`
+
+	// LogPath is the audit log file. When empty it defaults to
+	// "<acme.data_dir>/audit.log", so the trail lives beside the ACME state it
+	// describes. Rotated backups are written alongside it.
+	LogPath string `yaml:"log_path,omitempty"`
+
+	// MaxSizeMB is the size at which the live log rotates, in megabytes.
+	// Zero selects DefaultACMEAuditMaxSizeMB.
+	MaxSizeMB int `yaml:"max_size_mb,omitempty"`
+
+	// MaxAgeDays is how long rotated backups are retained.
+	// Zero selects DefaultACMEAuditMaxAgeDays.
+	MaxAgeDays int `yaml:"max_age_days,omitempty"`
+
+	// MaxBackups is how many rotated backups are retained.
+	// Zero selects DefaultACMEAuditMaxBackups.
+	MaxBackups int `yaml:"max_backups,omitempty"`
+
+	// BufferSize is how many events may be queued before writes become
+	// synchronous. Zero selects DefaultACMEAuditBufferSize. Events are never
+	// dropped: a full buffer makes the emitting request write through.
+	BufferSize int `yaml:"buffer_size,omitempty"`
+
+	// FlushIntervalSeconds is how often queued events are forced to disk.
+	// Zero selects DefaultACMEAuditFlushIntervalSeconds.
+	FlushIntervalSeconds int `yaml:"flush_interval_seconds,omitempty"`
+
+	// Compress gzips rotated backups. The audit query API reads compressed
+	// backups transparently.
+	Compress bool `yaml:"compress,omitempty"`
+
+	// Format is the on-disk record format. Only "json" is supported, because
+	// it is the only format the admin audit query API can read back.
+	Format string `yaml:"format,omitempty"`
+}
+
+// IsEnabled reports whether the audit trail should be recorded. An omitted
+// "enabled" key leaves the trail on, so only an explicit false disables it.
+func (a ACMEAuditConfig) IsEnabled() bool {
+	return a.Enabled == nil || *a.Enabled
+}
+
+// ResolveLogPath returns the audit log file, defaulting to "audit.log" inside
+// the supplied ACME data directory when the operator did not name one.
+func (a ACMEAuditConfig) ResolveLogPath(dataDir string) string {
+	if a.LogPath != "" {
+		return a.LogPath
+	}
+	return filepath.Join(dataDir, DefaultACMEAuditFileName)
+}
+
+// ResolveFormat returns the configured record format, defaulting to json.
+func (a ACMEAuditConfig) ResolveFormat() string {
+	if a.Format == "" {
+		return DefaultACMEAuditFormat
+	}
+	return a.Format
+}
+
+// AuditConfig translates the audit section into the configuration the audit
+// subsystem consumes, resolving the log path against the ACME data directory
+// and substituting the documented defaults for unset rotation knobs. It is the
+// single mapping between the daemon's YAML and the audit trail, so the logger
+// and the query API are always configured from the same values.
+func (a ACMEAuditConfig) AuditConfig(dataDir string) *audit.Config {
+	cfg := &audit.Config{
+		Enabled:              a.IsEnabled(),
+		LogPath:              a.ResolveLogPath(dataDir),
+		MaxSizeMB:            a.MaxSizeMB,
+		MaxAgeDays:           a.MaxAgeDays,
+		MaxBackups:           a.MaxBackups,
+		BufferSize:           a.BufferSize,
+		FlushIntervalSeconds: a.FlushIntervalSeconds,
+		Compress:             a.Compress,
+		Format:               a.ResolveFormat(),
+	}
+
+	if cfg.MaxSizeMB == 0 {
+		cfg.MaxSizeMB = DefaultACMEAuditMaxSizeMB
+	}
+	if cfg.MaxAgeDays == 0 {
+		cfg.MaxAgeDays = DefaultACMEAuditMaxAgeDays
+	}
+	if cfg.MaxBackups == 0 {
+		cfg.MaxBackups = DefaultACMEAuditMaxBackups
+	}
+	if cfg.BufferSize == 0 {
+		cfg.BufferSize = DefaultACMEAuditBufferSize
+	}
+	if cfg.FlushIntervalSeconds == 0 {
+		cfg.FlushIntervalSeconds = DefaultACMEAuditFlushIntervalSeconds
+	}
+
+	return cfg
+}
+
+// Validate checks the audit section. It is only meaningful when the trail is
+// enabled; a disabled trail is reported by Config.ComplianceGaps instead.
+func (a ACMEAuditConfig) Validate() error {
+	if !a.IsEnabled() {
+		return nil
+	}
+	if a.MaxSizeMB < 0 || a.MaxAgeDays < 0 || a.MaxBackups < 0 ||
+		a.BufferSize < 0 || a.FlushIntervalSeconds < 0 {
+		return ErrACMEAuditNegativeRetention
+	}
+	if a.ResolveFormat() != DefaultACMEAuditFormat {
+		return ErrACMEAuditUnsupportedFormat
+	}
+	return nil
 }
 
 // ACMEChallengesConfig selects which challenge verifiers are registered.
@@ -170,6 +342,9 @@ func (c *ACMEConfig) Validate() error {
 	}
 	if !c.Challenges.HTTP01 && !c.Challenges.DNS01 && !c.Challenges.Enroll01 && !c.Challenges.Endorse01 {
 		return &errs.Message{Msg: "acme: at least one challenge type must be enabled (challenges.http01, dns01, enroll01, or endorse01)"}
+	}
+	if err := c.Audit.Validate(); err != nil {
+		return err
 	}
 	return nil
 }

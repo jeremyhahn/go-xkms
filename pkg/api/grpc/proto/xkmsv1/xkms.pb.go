@@ -13,6 +13,7 @@ import (
 	protoreflect "google.golang.org/protobuf/reflect/protoreflect"
 	protoimpl "google.golang.org/protobuf/runtime/protoimpl"
 	emptypb "google.golang.org/protobuf/types/known/emptypb"
+	structpb "google.golang.org/protobuf/types/known/structpb"
 	timestamppb "google.golang.org/protobuf/types/known/timestamppb"
 	reflect "reflect"
 	sync "sync"
@@ -150,11 +151,15 @@ func (ResidentKeyOperation) EnumDescriptor() ([]byte, []int) {
 
 // UserInfo describes an xkms user.
 type UserInfo struct {
-	state         protoimpl.MessageState `protogen:"open.v1"`
-	Username      string                 `protobuf:"bytes,1,opt,name=username,proto3" json:"username,omitempty"`
-	DisplayName   string                 `protobuf:"bytes,2,opt,name=display_name,json=displayName,proto3" json:"display_name,omitempty"`
-	Role          string                 `protobuf:"bytes,3,opt,name=role,proto3" json:"role,omitempty"`
-	Enabled       bool                   `protobuf:"varint,4,opt,name=enabled,proto3" json:"enabled,omitempty"`
+	state       protoimpl.MessageState `protogen:"open.v1"`
+	Username    string                 `protobuf:"bytes,1,opt,name=username,proto3" json:"username,omitempty"`
+	DisplayName string                 `protobuf:"bytes,2,opt,name=display_name,json=displayName,proto3" json:"display_name,omitempty"`
+	Role        string                 `protobuf:"bytes,3,opt,name=role,proto3" json:"role,omitempty"`
+	Enabled     bool                   `protobuf:"varint,4,opt,name=enabled,proto3" json:"enabled,omitempty"`
+	// id is the numeric identifier the embedded qrdb node assigns. The
+	// N-factor endpoints are keyed by it, so callers that manage factors need
+	// it alongside the username.
+	Id            uint64 `protobuf:"varint,5,opt,name=id,proto3" json:"id,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -215,6 +220,13 @@ func (x *UserInfo) GetEnabled() bool {
 		return x.Enabled
 	}
 	return false
+}
+
+func (x *UserInfo) GetId() uint64 {
+	if x != nil {
+		return x.Id
+	}
+	return 0
 }
 
 // CreateUserRequest creates a new xkms user.
@@ -943,7 +955,12 @@ type ClusterMember struct {
 	// address is the replica's Raft network address.
 	Address string `protobuf:"bytes,2,opt,name=address,proto3" json:"address,omitempty"`
 	// is_leader is true when this replica is the shard's current leader.
-	IsLeader      bool `protobuf:"varint,3,opt,name=is_leader,json=isLeader,proto3" json:"is_leader,omitempty"`
+	IsLeader bool `protobuf:"varint,3,opt,name=is_leader,json=isLeader,proto3" json:"is_leader,omitempty"`
+	// api_endpoints maps each client-facing API protocol this replica serves
+	// ("rest", "grpc", "quic", "mcp") to the address a client should dial for
+	// it. Empty when the replica advertises nothing, which a consumer treats as
+	// "unknown" and degrades to the Raft address alone.
+	ApiEndpoints  map[string]string `protobuf:"bytes,4,rep,name=api_endpoints,json=apiEndpoints,proto3" json:"api_endpoints,omitempty" protobuf_key:"bytes,1,opt,name=key" protobuf_val:"bytes,2,opt,name=value"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -999,6 +1016,13 @@ func (x *ClusterMember) GetIsLeader() bool {
 	return false
 }
 
+func (x *ClusterMember) GetApiEndpoints() map[string]string {
+	if x != nil {
+		return x.ApiEndpoints
+	}
+	return nil
+}
+
 // ListClusterMembersResponse returns the Raft replicas for the configured shard.
 type ListClusterMembersResponse struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
@@ -1044,6 +1068,164 @@ func (x *ListClusterMembersResponse) GetMembers() []*ClusterMember {
 	return nil
 }
 
+// AddClusterReplicaRequest asks the server to add a replica to the shard's
+// Raft group.
+type AddClusterReplicaRequest struct {
+	state protoimpl.MessageState `protogen:"open.v1"`
+	// replica_id is the replica identifier to add. Must be non-zero.
+	ReplicaId uint64 `protobuf:"varint,1,opt,name=replica_id,json=replicaId,proto3" json:"replica_id,omitempty"`
+	// raft_address is the new replica's Raft peer address ("host:port").
+	RaftAddress   string `protobuf:"bytes,2,opt,name=raft_address,json=raftAddress,proto3" json:"raft_address,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *AddClusterReplicaRequest) Reset() {
+	*x = AddClusterReplicaRequest{}
+	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[17]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *AddClusterReplicaRequest) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*AddClusterReplicaRequest) ProtoMessage() {}
+
+func (x *AddClusterReplicaRequest) ProtoReflect() protoreflect.Message {
+	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[17]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use AddClusterReplicaRequest.ProtoReflect.Descriptor instead.
+func (*AddClusterReplicaRequest) Descriptor() ([]byte, []int) {
+	return file_pkg_api_grpc_proto_xkmsv1_xkms_proto_rawDescGZIP(), []int{17}
+}
+
+func (x *AddClusterReplicaRequest) GetReplicaId() uint64 {
+	if x != nil {
+		return x.ReplicaId
+	}
+	return 0
+}
+
+func (x *AddClusterReplicaRequest) GetRaftAddress() string {
+	if x != nil {
+		return x.RaftAddress
+	}
+	return ""
+}
+
+// RemoveClusterReplicaRequest asks the server to remove a replica from the
+// shard's Raft group.
+type RemoveClusterReplicaRequest struct {
+	state protoimpl.MessageState `protogen:"open.v1"`
+	// replica_id is the replica identifier to remove.
+	ReplicaId     uint64 `protobuf:"varint,1,opt,name=replica_id,json=replicaId,proto3" json:"replica_id,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *RemoveClusterReplicaRequest) Reset() {
+	*x = RemoveClusterReplicaRequest{}
+	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[18]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *RemoveClusterReplicaRequest) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*RemoveClusterReplicaRequest) ProtoMessage() {}
+
+func (x *RemoveClusterReplicaRequest) ProtoReflect() protoreflect.Message {
+	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[18]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use RemoveClusterReplicaRequest.ProtoReflect.Descriptor instead.
+func (*RemoveClusterReplicaRequest) Descriptor() ([]byte, []int) {
+	return file_pkg_api_grpc_proto_xkmsv1_xkms_proto_rawDescGZIP(), []int{18}
+}
+
+func (x *RemoveClusterReplicaRequest) GetReplicaId() uint64 {
+	if x != nil {
+		return x.ReplicaId
+	}
+	return 0
+}
+
+// ClusterReplicaResponse acknowledges a membership mutation.
+type ClusterReplicaResponse struct {
+	state protoimpl.MessageState `protogen:"open.v1"`
+	// shard_id is the shard whose Raft group was reconfigured.
+	ShardId uint64 `protobuf:"varint,1,opt,name=shard_id,json=shardId,proto3" json:"shard_id,omitempty"`
+	// replica_id is the replica the mutation applied to.
+	ReplicaId     uint64 `protobuf:"varint,2,opt,name=replica_id,json=replicaId,proto3" json:"replica_id,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *ClusterReplicaResponse) Reset() {
+	*x = ClusterReplicaResponse{}
+	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[19]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *ClusterReplicaResponse) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*ClusterReplicaResponse) ProtoMessage() {}
+
+func (x *ClusterReplicaResponse) ProtoReflect() protoreflect.Message {
+	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[19]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use ClusterReplicaResponse.ProtoReflect.Descriptor instead.
+func (*ClusterReplicaResponse) Descriptor() ([]byte, []int) {
+	return file_pkg_api_grpc_proto_xkmsv1_xkms_proto_rawDescGZIP(), []int{19}
+}
+
+func (x *ClusterReplicaResponse) GetShardId() uint64 {
+	if x != nil {
+		return x.ShardId
+	}
+	return 0
+}
+
+func (x *ClusterReplicaResponse) GetReplicaId() uint64 {
+	if x != nil {
+		return x.ReplicaId
+	}
+	return 0
+}
+
 // HealthRequest is the request for health check
 type HealthRequest struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
@@ -1053,7 +1235,7 @@ type HealthRequest struct {
 
 func (x *HealthRequest) Reset() {
 	*x = HealthRequest{}
-	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[17]
+	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[20]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1065,7 +1247,7 @@ func (x *HealthRequest) String() string {
 func (*HealthRequest) ProtoMessage() {}
 
 func (x *HealthRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[17]
+	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[20]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1078,7 +1260,7 @@ func (x *HealthRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use HealthRequest.ProtoReflect.Descriptor instead.
 func (*HealthRequest) Descriptor() ([]byte, []int) {
-	return file_pkg_api_grpc_proto_xkmsv1_xkms_proto_rawDescGZIP(), []int{17}
+	return file_pkg_api_grpc_proto_xkmsv1_xkms_proto_rawDescGZIP(), []int{20}
 }
 
 // HealthResponse contains the health status
@@ -1092,7 +1274,7 @@ type HealthResponse struct {
 
 func (x *HealthResponse) Reset() {
 	*x = HealthResponse{}
-	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[18]
+	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[21]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1104,7 +1286,7 @@ func (x *HealthResponse) String() string {
 func (*HealthResponse) ProtoMessage() {}
 
 func (x *HealthResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[18]
+	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[21]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1117,7 +1299,7 @@ func (x *HealthResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use HealthResponse.ProtoReflect.Descriptor instead.
 func (*HealthResponse) Descriptor() ([]byte, []int) {
-	return file_pkg_api_grpc_proto_xkmsv1_xkms_proto_rawDescGZIP(), []int{18}
+	return file_pkg_api_grpc_proto_xkmsv1_xkms_proto_rawDescGZIP(), []int{21}
 }
 
 func (x *HealthResponse) GetStatus() string {
@@ -1151,7 +1333,7 @@ type BackendInfo struct {
 
 func (x *BackendInfo) Reset() {
 	*x = BackendInfo{}
-	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[19]
+	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[22]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1163,7 +1345,7 @@ func (x *BackendInfo) String() string {
 func (*BackendInfo) ProtoMessage() {}
 
 func (x *BackendInfo) ProtoReflect() protoreflect.Message {
-	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[19]
+	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[22]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1176,7 +1358,7 @@ func (x *BackendInfo) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use BackendInfo.ProtoReflect.Descriptor instead.
 func (*BackendInfo) Descriptor() ([]byte, []int) {
-	return file_pkg_api_grpc_proto_xkmsv1_xkms_proto_rawDescGZIP(), []int{19}
+	return file_pkg_api_grpc_proto_xkmsv1_xkms_proto_rawDescGZIP(), []int{22}
 }
 
 func (x *BackendInfo) GetName() string {
@@ -1244,7 +1426,7 @@ type ListBackendsRequest struct {
 
 func (x *ListBackendsRequest) Reset() {
 	*x = ListBackendsRequest{}
-	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[20]
+	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[23]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1256,7 +1438,7 @@ func (x *ListBackendsRequest) String() string {
 func (*ListBackendsRequest) ProtoMessage() {}
 
 func (x *ListBackendsRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[20]
+	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[23]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1269,7 +1451,7 @@ func (x *ListBackendsRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ListBackendsRequest.ProtoReflect.Descriptor instead.
 func (*ListBackendsRequest) Descriptor() ([]byte, []int) {
-	return file_pkg_api_grpc_proto_xkmsv1_xkms_proto_rawDescGZIP(), []int{20}
+	return file_pkg_api_grpc_proto_xkmsv1_xkms_proto_rawDescGZIP(), []int{23}
 }
 
 // ListBackendsResponse contains the list of backends
@@ -1283,7 +1465,7 @@ type ListBackendsResponse struct {
 
 func (x *ListBackendsResponse) Reset() {
 	*x = ListBackendsResponse{}
-	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[21]
+	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[24]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1295,7 +1477,7 @@ func (x *ListBackendsResponse) String() string {
 func (*ListBackendsResponse) ProtoMessage() {}
 
 func (x *ListBackendsResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[21]
+	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[24]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1308,7 +1490,7 @@ func (x *ListBackendsResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ListBackendsResponse.ProtoReflect.Descriptor instead.
 func (*ListBackendsResponse) Descriptor() ([]byte, []int) {
-	return file_pkg_api_grpc_proto_xkmsv1_xkms_proto_rawDescGZIP(), []int{21}
+	return file_pkg_api_grpc_proto_xkmsv1_xkms_proto_rawDescGZIP(), []int{24}
 }
 
 func (x *ListBackendsResponse) GetBackends() []*BackendInfo {
@@ -1335,7 +1517,7 @@ type GetBackendInfoRequest struct {
 
 func (x *GetBackendInfoRequest) Reset() {
 	*x = GetBackendInfoRequest{}
-	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[22]
+	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[25]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1347,7 +1529,7 @@ func (x *GetBackendInfoRequest) String() string {
 func (*GetBackendInfoRequest) ProtoMessage() {}
 
 func (x *GetBackendInfoRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[22]
+	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[25]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1360,7 +1542,7 @@ func (x *GetBackendInfoRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use GetBackendInfoRequest.ProtoReflect.Descriptor instead.
 func (*GetBackendInfoRequest) Descriptor() ([]byte, []int) {
-	return file_pkg_api_grpc_proto_xkmsv1_xkms_proto_rawDescGZIP(), []int{22}
+	return file_pkg_api_grpc_proto_xkmsv1_xkms_proto_rawDescGZIP(), []int{25}
 }
 
 func (x *GetBackendInfoRequest) GetName() string {
@@ -1380,7 +1562,7 @@ type GetBackendInfoResponse struct {
 
 func (x *GetBackendInfoResponse) Reset() {
 	*x = GetBackendInfoResponse{}
-	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[23]
+	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[26]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1392,7 +1574,7 @@ func (x *GetBackendInfoResponse) String() string {
 func (*GetBackendInfoResponse) ProtoMessage() {}
 
 func (x *GetBackendInfoResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[23]
+	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[26]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1405,7 +1587,7 @@ func (x *GetBackendInfoResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use GetBackendInfoResponse.ProtoReflect.Descriptor instead.
 func (*GetBackendInfoResponse) Descriptor() ([]byte, []int) {
-	return file_pkg_api_grpc_proto_xkmsv1_xkms_proto_rawDescGZIP(), []int{23}
+	return file_pkg_api_grpc_proto_xkmsv1_xkms_proto_rawDescGZIP(), []int{26}
 }
 
 func (x *GetBackendInfoResponse) GetBackend() *BackendInfo {
@@ -1417,23 +1599,27 @@ func (x *GetBackendInfoResponse) GetBackend() *BackendInfo {
 
 // GenerateKeyRequest requests generation of a new key
 type GenerateKeyRequest struct {
-	state         protoimpl.MessageState `protogen:"open.v1"`
-	KeyId         string                 `protobuf:"bytes,1,opt,name=key_id,json=keyId,proto3" json:"key_id,omitempty"`
-	Backend       string                 `protobuf:"bytes,2,opt,name=backend,proto3" json:"backend,omitempty"`
-	KeyType       string                 `protobuf:"bytes,3,opt,name=key_type,json=keyType,proto3" json:"key_type,omitempty"` // "rsa", "ecdsa", "ed25519", "symmetric"
-	KeySize       int32                  `protobuf:"varint,4,opt,name=key_size,json=keySize,proto3" json:"key_size,omitempty"`
-	Curve         string                 `protobuf:"bytes,5,opt,name=curve,proto3" json:"curve,omitempty"`
-	Hash          string                 `protobuf:"bytes,6,opt,name=hash,proto3" json:"hash,omitempty"`
-	Partition     string                 `protobuf:"bytes,7,opt,name=partition,proto3" json:"partition,omitempty"`
-	Algorithm     string                 `protobuf:"bytes,8,opt,name=algorithm,proto3" json:"algorithm,omitempty"`    // Explicit algorithm: "aes-128-gcm", "aes-192-gcm", "aes-256-gcm"
-	Exportable    bool                   `protobuf:"varint,9,opt,name=exportable,proto3" json:"exportable,omitempty"` // Whether the key can be exported
+	state      protoimpl.MessageState `protogen:"open.v1"`
+	KeyId      string                 `protobuf:"bytes,1,opt,name=key_id,json=keyId,proto3" json:"key_id,omitempty"`
+	Backend    string                 `protobuf:"bytes,2,opt,name=backend,proto3" json:"backend,omitempty"`
+	KeyType    string                 `protobuf:"bytes,3,opt,name=key_type,json=keyType,proto3" json:"key_type,omitempty"` // "rsa", "ecdsa", "ed25519", "symmetric"
+	KeySize    int32                  `protobuf:"varint,4,opt,name=key_size,json=keySize,proto3" json:"key_size,omitempty"`
+	Curve      string                 `protobuf:"bytes,5,opt,name=curve,proto3" json:"curve,omitempty"`
+	Hash       string                 `protobuf:"bytes,6,opt,name=hash,proto3" json:"hash,omitempty"`
+	Partition  string                 `protobuf:"bytes,7,opt,name=partition,proto3" json:"partition,omitempty"`
+	Algorithm  string                 `protobuf:"bytes,8,opt,name=algorithm,proto3" json:"algorithm,omitempty"`    // Explicit algorithm: "aes-128-gcm", "aes-192-gcm", "aes-256-gcm"
+	Exportable bool                   `protobuf:"varint,9,opt,name=exportable,proto3" json:"exportable,omitempty"` // Whether the key can be exported
+	// Whether the key's plaintext may ever be released (PKCS#11 CKA_SENSITIVE).
+	// Independent of exportable: a sensitive key may still be wrapped out, but
+	// ExportKeyMaterial refuses it.
+	Sensitive     bool `protobuf:"varint,10,opt,name=sensitive,proto3" json:"sensitive,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
 
 func (x *GenerateKeyRequest) Reset() {
 	*x = GenerateKeyRequest{}
-	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[24]
+	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[27]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1445,7 +1631,7 @@ func (x *GenerateKeyRequest) String() string {
 func (*GenerateKeyRequest) ProtoMessage() {}
 
 func (x *GenerateKeyRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[24]
+	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[27]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1458,7 +1644,7 @@ func (x *GenerateKeyRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use GenerateKeyRequest.ProtoReflect.Descriptor instead.
 func (*GenerateKeyRequest) Descriptor() ([]byte, []int) {
-	return file_pkg_api_grpc_proto_xkmsv1_xkms_proto_rawDescGZIP(), []int{24}
+	return file_pkg_api_grpc_proto_xkmsv1_xkms_proto_rawDescGZIP(), []int{27}
 }
 
 func (x *GenerateKeyRequest) GetKeyId() string {
@@ -1524,6 +1710,13 @@ func (x *GenerateKeyRequest) GetExportable() bool {
 	return false
 }
 
+func (x *GenerateKeyRequest) GetSensitive() bool {
+	if x != nil {
+		return x.Sensitive
+	}
+	return false
+}
+
 // GenerateKeyResponse contains the generated key information
 type GenerateKeyResponse struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
@@ -1538,7 +1731,7 @@ type GenerateKeyResponse struct {
 
 func (x *GenerateKeyResponse) Reset() {
 	*x = GenerateKeyResponse{}
-	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[25]
+	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[28]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1550,7 +1743,7 @@ func (x *GenerateKeyResponse) String() string {
 func (*GenerateKeyResponse) ProtoMessage() {}
 
 func (x *GenerateKeyResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[25]
+	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[28]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1563,7 +1756,7 @@ func (x *GenerateKeyResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use GenerateKeyResponse.ProtoReflect.Descriptor instead.
 func (*GenerateKeyResponse) Descriptor() ([]byte, []int) {
-	return file_pkg_api_grpc_proto_xkmsv1_xkms_proto_rawDescGZIP(), []int{25}
+	return file_pkg_api_grpc_proto_xkmsv1_xkms_proto_rawDescGZIP(), []int{28}
 }
 
 func (x *GenerateKeyResponse) GetKeyId() string {
@@ -1618,7 +1811,7 @@ type KeyInfo struct {
 
 func (x *KeyInfo) Reset() {
 	*x = KeyInfo{}
-	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[26]
+	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[29]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1630,7 +1823,7 @@ func (x *KeyInfo) String() string {
 func (*KeyInfo) ProtoMessage() {}
 
 func (x *KeyInfo) ProtoReflect() protoreflect.Message {
-	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[26]
+	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[29]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1643,7 +1836,7 @@ func (x *KeyInfo) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use KeyInfo.ProtoReflect.Descriptor instead.
 func (*KeyInfo) Descriptor() ([]byte, []int) {
-	return file_pkg_api_grpc_proto_xkmsv1_xkms_proto_rawDescGZIP(), []int{26}
+	return file_pkg_api_grpc_proto_xkmsv1_xkms_proto_rawDescGZIP(), []int{29}
 }
 
 func (x *KeyInfo) GetKeyId() string {
@@ -1715,7 +1908,7 @@ type ListKeysRequest struct {
 
 func (x *ListKeysRequest) Reset() {
 	*x = ListKeysRequest{}
-	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[27]
+	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[30]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1727,7 +1920,7 @@ func (x *ListKeysRequest) String() string {
 func (*ListKeysRequest) ProtoMessage() {}
 
 func (x *ListKeysRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[27]
+	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[30]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1740,7 +1933,7 @@ func (x *ListKeysRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ListKeysRequest.ProtoReflect.Descriptor instead.
 func (*ListKeysRequest) Descriptor() ([]byte, []int) {
-	return file_pkg_api_grpc_proto_xkmsv1_xkms_proto_rawDescGZIP(), []int{27}
+	return file_pkg_api_grpc_proto_xkmsv1_xkms_proto_rawDescGZIP(), []int{30}
 }
 
 func (x *ListKeysRequest) GetBackend() string {
@@ -1782,7 +1975,7 @@ type ListKeysResponse struct {
 
 func (x *ListKeysResponse) Reset() {
 	*x = ListKeysResponse{}
-	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[28]
+	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[31]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1794,7 +1987,7 @@ func (x *ListKeysResponse) String() string {
 func (*ListKeysResponse) ProtoMessage() {}
 
 func (x *ListKeysResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[28]
+	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[31]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1807,7 +2000,7 @@ func (x *ListKeysResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ListKeysResponse.ProtoReflect.Descriptor instead.
 func (*ListKeysResponse) Descriptor() ([]byte, []int) {
-	return file_pkg_api_grpc_proto_xkmsv1_xkms_proto_rawDescGZIP(), []int{28}
+	return file_pkg_api_grpc_proto_xkmsv1_xkms_proto_rawDescGZIP(), []int{31}
 }
 
 func (x *ListKeysResponse) GetKeys() []*KeyInfo {
@@ -1835,7 +2028,7 @@ type GetKeyRequest struct {
 
 func (x *GetKeyRequest) Reset() {
 	*x = GetKeyRequest{}
-	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[29]
+	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[32]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1847,7 +2040,7 @@ func (x *GetKeyRequest) String() string {
 func (*GetKeyRequest) ProtoMessage() {}
 
 func (x *GetKeyRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[29]
+	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[32]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1860,7 +2053,7 @@ func (x *GetKeyRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use GetKeyRequest.ProtoReflect.Descriptor instead.
 func (*GetKeyRequest) Descriptor() ([]byte, []int) {
-	return file_pkg_api_grpc_proto_xkmsv1_xkms_proto_rawDescGZIP(), []int{29}
+	return file_pkg_api_grpc_proto_xkmsv1_xkms_proto_rawDescGZIP(), []int{32}
 }
 
 func (x *GetKeyRequest) GetKeyId() string {
@@ -1888,7 +2081,7 @@ type GetKeyResponse struct {
 
 func (x *GetKeyResponse) Reset() {
 	*x = GetKeyResponse{}
-	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[30]
+	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[33]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1900,7 +2093,7 @@ func (x *GetKeyResponse) String() string {
 func (*GetKeyResponse) ProtoMessage() {}
 
 func (x *GetKeyResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[30]
+	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[33]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1913,7 +2106,7 @@ func (x *GetKeyResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use GetKeyResponse.ProtoReflect.Descriptor instead.
 func (*GetKeyResponse) Descriptor() ([]byte, []int) {
-	return file_pkg_api_grpc_proto_xkmsv1_xkms_proto_rawDescGZIP(), []int{30}
+	return file_pkg_api_grpc_proto_xkmsv1_xkms_proto_rawDescGZIP(), []int{33}
 }
 
 func (x *GetKeyResponse) GetKey() *KeyInfo {
@@ -1932,18 +2125,29 @@ func (x *GetKeyResponse) GetPublicKeyPem() string {
 
 // SignRequest requests data to be signed
 type SignRequest struct {
-	state         protoimpl.MessageState `protogen:"open.v1"`
-	KeyId         string                 `protobuf:"bytes,1,opt,name=key_id,json=keyId,proto3" json:"key_id,omitempty"`
-	Backend       string                 `protobuf:"bytes,2,opt,name=backend,proto3" json:"backend,omitempty"`
-	Data          []byte                 `protobuf:"bytes,3,opt,name=data,proto3" json:"data,omitempty"`
-	Hash          string                 `protobuf:"bytes,4,opt,name=hash,proto3" json:"hash,omitempty"`
+	state   protoimpl.MessageState `protogen:"open.v1"`
+	KeyId   string                 `protobuf:"bytes,1,opt,name=key_id,json=keyId,proto3" json:"key_id,omitempty"`
+	Backend string                 `protobuf:"bytes,2,opt,name=backend,proto3" json:"backend,omitempty"`
+	Data    []byte                 `protobuf:"bytes,3,opt,name=data,proto3" json:"data,omitempty"`
+	Hash    string                 `protobuf:"bytes,4,opt,name=hash,proto3" json:"hash,omitempty"`
+	// padding selects the RSA signature scheme: "" or "pkcs1v15" (default), or "pss".
+	Padding string `protobuf:"bytes,5,opt,name=padding,proto3" json:"padding,omitempty"`
+	// salt_length is the RSA-PSS salt length in bytes; 0 selects the largest
+	// salt the modulus allows. Ignored unless padding is "pss".
+	SaltLength int32 `protobuf:"varint,6,opt,name=salt_length,json=saltLength,proto3" json:"salt_length,omitempty"`
+	// data_is_digest states that data is already the digest and must not be
+	// hashed again, while hash still names which digest produced it. Required
+	// for RSASSA-PSS over a caller-supplied digest (PKCS#11 v3.2 section
+	// 6.1.15), where the hash identity is needed for MGF1 but the data is not
+	// to be hashed a second time.
+	DataIsDigest  bool `protobuf:"varint,7,opt,name=data_is_digest,json=dataIsDigest,proto3" json:"data_is_digest,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
 
 func (x *SignRequest) Reset() {
 	*x = SignRequest{}
-	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[31]
+	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[34]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1955,7 +2159,7 @@ func (x *SignRequest) String() string {
 func (*SignRequest) ProtoMessage() {}
 
 func (x *SignRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[31]
+	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[34]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1968,7 +2172,7 @@ func (x *SignRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use SignRequest.ProtoReflect.Descriptor instead.
 func (*SignRequest) Descriptor() ([]byte, []int) {
-	return file_pkg_api_grpc_proto_xkmsv1_xkms_proto_rawDescGZIP(), []int{31}
+	return file_pkg_api_grpc_proto_xkmsv1_xkms_proto_rawDescGZIP(), []int{34}
 }
 
 func (x *SignRequest) GetKeyId() string {
@@ -1999,6 +2203,27 @@ func (x *SignRequest) GetHash() string {
 	return ""
 }
 
+func (x *SignRequest) GetPadding() string {
+	if x != nil {
+		return x.Padding
+	}
+	return ""
+}
+
+func (x *SignRequest) GetSaltLength() int32 {
+	if x != nil {
+		return x.SaltLength
+	}
+	return 0
+}
+
+func (x *SignRequest) GetDataIsDigest() bool {
+	if x != nil {
+		return x.DataIsDigest
+	}
+	return false
+}
+
 // SignResponse contains the signature
 type SignResponse struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
@@ -2009,7 +2234,7 @@ type SignResponse struct {
 
 func (x *SignResponse) Reset() {
 	*x = SignResponse{}
-	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[32]
+	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[35]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -2021,7 +2246,7 @@ func (x *SignResponse) String() string {
 func (*SignResponse) ProtoMessage() {}
 
 func (x *SignResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[32]
+	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[35]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -2034,7 +2259,7 @@ func (x *SignResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use SignResponse.ProtoReflect.Descriptor instead.
 func (*SignResponse) Descriptor() ([]byte, []int) {
-	return file_pkg_api_grpc_proto_xkmsv1_xkms_proto_rawDescGZIP(), []int{32}
+	return file_pkg_api_grpc_proto_xkmsv1_xkms_proto_rawDescGZIP(), []int{35}
 }
 
 func (x *SignResponse) GetSignature() []byte {
@@ -2046,19 +2271,27 @@ func (x *SignResponse) GetSignature() []byte {
 
 // VerifyRequest requests signature verification
 type VerifyRequest struct {
-	state         protoimpl.MessageState `protogen:"open.v1"`
-	KeyId         string                 `protobuf:"bytes,1,opt,name=key_id,json=keyId,proto3" json:"key_id,omitempty"`
-	Backend       string                 `protobuf:"bytes,2,opt,name=backend,proto3" json:"backend,omitempty"`
-	Data          []byte                 `protobuf:"bytes,3,opt,name=data,proto3" json:"data,omitempty"`
-	Signature     []byte                 `protobuf:"bytes,4,opt,name=signature,proto3" json:"signature,omitempty"`
-	Hash          string                 `protobuf:"bytes,5,opt,name=hash,proto3" json:"hash,omitempty"`
+	state     protoimpl.MessageState `protogen:"open.v1"`
+	KeyId     string                 `protobuf:"bytes,1,opt,name=key_id,json=keyId,proto3" json:"key_id,omitempty"`
+	Backend   string                 `protobuf:"bytes,2,opt,name=backend,proto3" json:"backend,omitempty"`
+	Data      []byte                 `protobuf:"bytes,3,opt,name=data,proto3" json:"data,omitempty"`
+	Signature []byte                 `protobuf:"bytes,4,opt,name=signature,proto3" json:"signature,omitempty"`
+	Hash      string                 `protobuf:"bytes,5,opt,name=hash,proto3" json:"hash,omitempty"`
+	// padding selects the RSA signature scheme: "" or "pkcs1v15" (default), or "pss".
+	Padding string `protobuf:"bytes,6,opt,name=padding,proto3" json:"padding,omitempty"`
+	// salt_length is the RSA-PSS salt length in bytes the signature is expected
+	// to use; 0 auto-detects. Ignored unless padding is "pss".
+	SaltLength int32 `protobuf:"varint,7,opt,name=salt_length,json=saltLength,proto3" json:"salt_length,omitempty"`
+	// data_is_digest states that data is already the digest and must not be
+	// hashed again. See SignRequest.data_is_digest.
+	DataIsDigest  bool `protobuf:"varint,8,opt,name=data_is_digest,json=dataIsDigest,proto3" json:"data_is_digest,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
 
 func (x *VerifyRequest) Reset() {
 	*x = VerifyRequest{}
-	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[33]
+	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[36]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -2070,7 +2303,7 @@ func (x *VerifyRequest) String() string {
 func (*VerifyRequest) ProtoMessage() {}
 
 func (x *VerifyRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[33]
+	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[36]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -2083,7 +2316,7 @@ func (x *VerifyRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use VerifyRequest.ProtoReflect.Descriptor instead.
 func (*VerifyRequest) Descriptor() ([]byte, []int) {
-	return file_pkg_api_grpc_proto_xkmsv1_xkms_proto_rawDescGZIP(), []int{33}
+	return file_pkg_api_grpc_proto_xkmsv1_xkms_proto_rawDescGZIP(), []int{36}
 }
 
 func (x *VerifyRequest) GetKeyId() string {
@@ -2121,6 +2354,27 @@ func (x *VerifyRequest) GetHash() string {
 	return ""
 }
 
+func (x *VerifyRequest) GetPadding() string {
+	if x != nil {
+		return x.Padding
+	}
+	return ""
+}
+
+func (x *VerifyRequest) GetSaltLength() int32 {
+	if x != nil {
+		return x.SaltLength
+	}
+	return 0
+}
+
+func (x *VerifyRequest) GetDataIsDigest() bool {
+	if x != nil {
+		return x.DataIsDigest
+	}
+	return false
+}
+
 // VerifyResponse contains verification result
 type VerifyResponse struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
@@ -2132,7 +2386,7 @@ type VerifyResponse struct {
 
 func (x *VerifyResponse) Reset() {
 	*x = VerifyResponse{}
-	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[34]
+	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[37]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -2144,7 +2398,7 @@ func (x *VerifyResponse) String() string {
 func (*VerifyResponse) ProtoMessage() {}
 
 func (x *VerifyResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[34]
+	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[37]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -2157,7 +2411,7 @@ func (x *VerifyResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use VerifyResponse.ProtoReflect.Descriptor instead.
 func (*VerifyResponse) Descriptor() ([]byte, []int) {
-	return file_pkg_api_grpc_proto_xkmsv1_xkms_proto_rawDescGZIP(), []int{34}
+	return file_pkg_api_grpc_proto_xkmsv1_xkms_proto_rawDescGZIP(), []int{37}
 }
 
 func (x *VerifyResponse) GetValid() bool {
@@ -2185,7 +2439,7 @@ type DeleteKeyRequest struct {
 
 func (x *DeleteKeyRequest) Reset() {
 	*x = DeleteKeyRequest{}
-	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[35]
+	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[38]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -2197,7 +2451,7 @@ func (x *DeleteKeyRequest) String() string {
 func (*DeleteKeyRequest) ProtoMessage() {}
 
 func (x *DeleteKeyRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[35]
+	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[38]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -2210,7 +2464,7 @@ func (x *DeleteKeyRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use DeleteKeyRequest.ProtoReflect.Descriptor instead.
 func (*DeleteKeyRequest) Descriptor() ([]byte, []int) {
-	return file_pkg_api_grpc_proto_xkmsv1_xkms_proto_rawDescGZIP(), []int{35}
+	return file_pkg_api_grpc_proto_xkmsv1_xkms_proto_rawDescGZIP(), []int{38}
 }
 
 func (x *DeleteKeyRequest) GetKeyId() string {
@@ -2238,7 +2492,7 @@ type DeleteKeyResponse struct {
 
 func (x *DeleteKeyResponse) Reset() {
 	*x = DeleteKeyResponse{}
-	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[36]
+	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[39]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -2250,7 +2504,7 @@ func (x *DeleteKeyResponse) String() string {
 func (*DeleteKeyResponse) ProtoMessage() {}
 
 func (x *DeleteKeyResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[36]
+	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[39]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -2263,7 +2517,7 @@ func (x *DeleteKeyResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use DeleteKeyResponse.ProtoReflect.Descriptor instead.
 func (*DeleteKeyResponse) Descriptor() ([]byte, []int) {
-	return file_pkg_api_grpc_proto_xkmsv1_xkms_proto_rawDescGZIP(), []int{36}
+	return file_pkg_api_grpc_proto_xkmsv1_xkms_proto_rawDescGZIP(), []int{39}
 }
 
 func (x *DeleteKeyResponse) GetSuccess() bool {
@@ -2291,7 +2545,7 @@ type RotateKeyRequest struct {
 
 func (x *RotateKeyRequest) Reset() {
 	*x = RotateKeyRequest{}
-	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[37]
+	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[40]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -2303,7 +2557,7 @@ func (x *RotateKeyRequest) String() string {
 func (*RotateKeyRequest) ProtoMessage() {}
 
 func (x *RotateKeyRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[37]
+	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[40]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -2316,7 +2570,7 @@ func (x *RotateKeyRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use RotateKeyRequest.ProtoReflect.Descriptor instead.
 func (*RotateKeyRequest) Descriptor() ([]byte, []int) {
-	return file_pkg_api_grpc_proto_xkmsv1_xkms_proto_rawDescGZIP(), []int{37}
+	return file_pkg_api_grpc_proto_xkmsv1_xkms_proto_rawDescGZIP(), []int{40}
 }
 
 func (x *RotateKeyRequest) GetKeyId() string {
@@ -2347,7 +2601,7 @@ type RotateKeyResponse struct {
 
 func (x *RotateKeyResponse) Reset() {
 	*x = RotateKeyResponse{}
-	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[38]
+	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[41]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -2359,7 +2613,7 @@ func (x *RotateKeyResponse) String() string {
 func (*RotateKeyResponse) ProtoMessage() {}
 
 func (x *RotateKeyResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[38]
+	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[41]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -2372,7 +2626,7 @@ func (x *RotateKeyResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use RotateKeyResponse.ProtoReflect.Descriptor instead.
 func (*RotateKeyResponse) Descriptor() ([]byte, []int) {
-	return file_pkg_api_grpc_proto_xkmsv1_xkms_proto_rawDescGZIP(), []int{38}
+	return file_pkg_api_grpc_proto_xkmsv1_xkms_proto_rawDescGZIP(), []int{41}
 }
 
 func (x *RotateKeyResponse) GetKeyId() string {
@@ -2423,7 +2677,7 @@ type KeyVersionInfo struct {
 
 func (x *KeyVersionInfo) Reset() {
 	*x = KeyVersionInfo{}
-	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[39]
+	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[42]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -2435,7 +2689,7 @@ func (x *KeyVersionInfo) String() string {
 func (*KeyVersionInfo) ProtoMessage() {}
 
 func (x *KeyVersionInfo) ProtoReflect() protoreflect.Message {
-	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[39]
+	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[42]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -2448,7 +2702,7 @@ func (x *KeyVersionInfo) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use KeyVersionInfo.ProtoReflect.Descriptor instead.
 func (*KeyVersionInfo) Descriptor() ([]byte, []int) {
-	return file_pkg_api_grpc_proto_xkmsv1_xkms_proto_rawDescGZIP(), []int{39}
+	return file_pkg_api_grpc_proto_xkmsv1_xkms_proto_rawDescGZIP(), []int{42}
 }
 
 func (x *KeyVersionInfo) GetVersion() int32 {
@@ -2490,7 +2744,7 @@ type ListKeyVersionsRequest struct {
 
 func (x *ListKeyVersionsRequest) Reset() {
 	*x = ListKeyVersionsRequest{}
-	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[40]
+	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[43]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -2502,7 +2756,7 @@ func (x *ListKeyVersionsRequest) String() string {
 func (*ListKeyVersionsRequest) ProtoMessage() {}
 
 func (x *ListKeyVersionsRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[40]
+	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[43]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -2515,7 +2769,7 @@ func (x *ListKeyVersionsRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ListKeyVersionsRequest.ProtoReflect.Descriptor instead.
 func (*ListKeyVersionsRequest) Descriptor() ([]byte, []int) {
-	return file_pkg_api_grpc_proto_xkmsv1_xkms_proto_rawDescGZIP(), []int{40}
+	return file_pkg_api_grpc_proto_xkmsv1_xkms_proto_rawDescGZIP(), []int{43}
 }
 
 func (x *ListKeyVersionsRequest) GetKeyId() string {
@@ -2544,7 +2798,7 @@ type ListKeyVersionsResponse struct {
 
 func (x *ListKeyVersionsResponse) Reset() {
 	*x = ListKeyVersionsResponse{}
-	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[41]
+	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[44]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -2556,7 +2810,7 @@ func (x *ListKeyVersionsResponse) String() string {
 func (*ListKeyVersionsResponse) ProtoMessage() {}
 
 func (x *ListKeyVersionsResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[41]
+	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[44]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -2569,7 +2823,7 @@ func (x *ListKeyVersionsResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ListKeyVersionsResponse.ProtoReflect.Descriptor instead.
 func (*ListKeyVersionsResponse) Descriptor() ([]byte, []int) {
-	return file_pkg_api_grpc_proto_xkmsv1_xkms_proto_rawDescGZIP(), []int{41}
+	return file_pkg_api_grpc_proto_xkmsv1_xkms_proto_rawDescGZIP(), []int{44}
 }
 
 func (x *ListKeyVersionsResponse) GetKeyId() string {
@@ -2605,7 +2859,7 @@ type EnableKeyVersionRequest struct {
 
 func (x *EnableKeyVersionRequest) Reset() {
 	*x = EnableKeyVersionRequest{}
-	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[42]
+	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[45]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -2617,7 +2871,7 @@ func (x *EnableKeyVersionRequest) String() string {
 func (*EnableKeyVersionRequest) ProtoMessage() {}
 
 func (x *EnableKeyVersionRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[42]
+	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[45]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -2630,7 +2884,7 @@ func (x *EnableKeyVersionRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use EnableKeyVersionRequest.ProtoReflect.Descriptor instead.
 func (*EnableKeyVersionRequest) Descriptor() ([]byte, []int) {
-	return file_pkg_api_grpc_proto_xkmsv1_xkms_proto_rawDescGZIP(), []int{42}
+	return file_pkg_api_grpc_proto_xkmsv1_xkms_proto_rawDescGZIP(), []int{45}
 }
 
 func (x *EnableKeyVersionRequest) GetKeyId() string {
@@ -2666,7 +2920,7 @@ type EnableKeyVersionResponse struct {
 
 func (x *EnableKeyVersionResponse) Reset() {
 	*x = EnableKeyVersionResponse{}
-	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[43]
+	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[46]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -2678,7 +2932,7 @@ func (x *EnableKeyVersionResponse) String() string {
 func (*EnableKeyVersionResponse) ProtoMessage() {}
 
 func (x *EnableKeyVersionResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[43]
+	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[46]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -2691,7 +2945,7 @@ func (x *EnableKeyVersionResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use EnableKeyVersionResponse.ProtoReflect.Descriptor instead.
 func (*EnableKeyVersionResponse) Descriptor() ([]byte, []int) {
-	return file_pkg_api_grpc_proto_xkmsv1_xkms_proto_rawDescGZIP(), []int{43}
+	return file_pkg_api_grpc_proto_xkmsv1_xkms_proto_rawDescGZIP(), []int{46}
 }
 
 func (x *EnableKeyVersionResponse) GetKeyId() string {
@@ -2727,7 +2981,7 @@ type DisableKeyVersionRequest struct {
 
 func (x *DisableKeyVersionRequest) Reset() {
 	*x = DisableKeyVersionRequest{}
-	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[44]
+	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[47]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -2739,7 +2993,7 @@ func (x *DisableKeyVersionRequest) String() string {
 func (*DisableKeyVersionRequest) ProtoMessage() {}
 
 func (x *DisableKeyVersionRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[44]
+	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[47]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -2752,7 +3006,7 @@ func (x *DisableKeyVersionRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use DisableKeyVersionRequest.ProtoReflect.Descriptor instead.
 func (*DisableKeyVersionRequest) Descriptor() ([]byte, []int) {
-	return file_pkg_api_grpc_proto_xkmsv1_xkms_proto_rawDescGZIP(), []int{44}
+	return file_pkg_api_grpc_proto_xkmsv1_xkms_proto_rawDescGZIP(), []int{47}
 }
 
 func (x *DisableKeyVersionRequest) GetKeyId() string {
@@ -2788,7 +3042,7 @@ type DisableKeyVersionResponse struct {
 
 func (x *DisableKeyVersionResponse) Reset() {
 	*x = DisableKeyVersionResponse{}
-	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[45]
+	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[48]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -2800,7 +3054,7 @@ func (x *DisableKeyVersionResponse) String() string {
 func (*DisableKeyVersionResponse) ProtoMessage() {}
 
 func (x *DisableKeyVersionResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[45]
+	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[48]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -2813,7 +3067,7 @@ func (x *DisableKeyVersionResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use DisableKeyVersionResponse.ProtoReflect.Descriptor instead.
 func (*DisableKeyVersionResponse) Descriptor() ([]byte, []int) {
-	return file_pkg_api_grpc_proto_xkmsv1_xkms_proto_rawDescGZIP(), []int{45}
+	return file_pkg_api_grpc_proto_xkmsv1_xkms_proto_rawDescGZIP(), []int{48}
 }
 
 func (x *DisableKeyVersionResponse) GetKeyId() string {
@@ -2848,7 +3102,7 @@ type EnableAllKeyVersionsRequest struct {
 
 func (x *EnableAllKeyVersionsRequest) Reset() {
 	*x = EnableAllKeyVersionsRequest{}
-	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[46]
+	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[49]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -2860,7 +3114,7 @@ func (x *EnableAllKeyVersionsRequest) String() string {
 func (*EnableAllKeyVersionsRequest) ProtoMessage() {}
 
 func (x *EnableAllKeyVersionsRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[46]
+	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[49]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -2873,7 +3127,7 @@ func (x *EnableAllKeyVersionsRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use EnableAllKeyVersionsRequest.ProtoReflect.Descriptor instead.
 func (*EnableAllKeyVersionsRequest) Descriptor() ([]byte, []int) {
-	return file_pkg_api_grpc_proto_xkmsv1_xkms_proto_rawDescGZIP(), []int{46}
+	return file_pkg_api_grpc_proto_xkmsv1_xkms_proto_rawDescGZIP(), []int{49}
 }
 
 func (x *EnableAllKeyVersionsRequest) GetKeyId() string {
@@ -2902,7 +3156,7 @@ type EnableAllKeyVersionsResponse struct {
 
 func (x *EnableAllKeyVersionsResponse) Reset() {
 	*x = EnableAllKeyVersionsResponse{}
-	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[47]
+	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[50]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -2914,7 +3168,7 @@ func (x *EnableAllKeyVersionsResponse) String() string {
 func (*EnableAllKeyVersionsResponse) ProtoMessage() {}
 
 func (x *EnableAllKeyVersionsResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[47]
+	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[50]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -2927,7 +3181,7 @@ func (x *EnableAllKeyVersionsResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use EnableAllKeyVersionsResponse.ProtoReflect.Descriptor instead.
 func (*EnableAllKeyVersionsResponse) Descriptor() ([]byte, []int) {
-	return file_pkg_api_grpc_proto_xkmsv1_xkms_proto_rawDescGZIP(), []int{47}
+	return file_pkg_api_grpc_proto_xkmsv1_xkms_proto_rawDescGZIP(), []int{50}
 }
 
 func (x *EnableAllKeyVersionsResponse) GetKeyId() string {
@@ -2962,7 +3216,7 @@ type DisableAllKeyVersionsRequest struct {
 
 func (x *DisableAllKeyVersionsRequest) Reset() {
 	*x = DisableAllKeyVersionsRequest{}
-	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[48]
+	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[51]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -2974,7 +3228,7 @@ func (x *DisableAllKeyVersionsRequest) String() string {
 func (*DisableAllKeyVersionsRequest) ProtoMessage() {}
 
 func (x *DisableAllKeyVersionsRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[48]
+	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[51]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -2987,7 +3241,7 @@ func (x *DisableAllKeyVersionsRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use DisableAllKeyVersionsRequest.ProtoReflect.Descriptor instead.
 func (*DisableAllKeyVersionsRequest) Descriptor() ([]byte, []int) {
-	return file_pkg_api_grpc_proto_xkmsv1_xkms_proto_rawDescGZIP(), []int{48}
+	return file_pkg_api_grpc_proto_xkmsv1_xkms_proto_rawDescGZIP(), []int{51}
 }
 
 func (x *DisableAllKeyVersionsRequest) GetKeyId() string {
@@ -3016,7 +3270,7 @@ type DisableAllKeyVersionsResponse struct {
 
 func (x *DisableAllKeyVersionsResponse) Reset() {
 	*x = DisableAllKeyVersionsResponse{}
-	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[49]
+	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[52]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -3028,7 +3282,7 @@ func (x *DisableAllKeyVersionsResponse) String() string {
 func (*DisableAllKeyVersionsResponse) ProtoMessage() {}
 
 func (x *DisableAllKeyVersionsResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[49]
+	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[52]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -3041,7 +3295,7 @@ func (x *DisableAllKeyVersionsResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use DisableAllKeyVersionsResponse.ProtoReflect.Descriptor instead.
 func (*DisableAllKeyVersionsResponse) Descriptor() ([]byte, []int) {
-	return file_pkg_api_grpc_proto_xkmsv1_xkms_proto_rawDescGZIP(), []int{49}
+	return file_pkg_api_grpc_proto_xkmsv1_xkms_proto_rawDescGZIP(), []int{52}
 }
 
 func (x *DisableAllKeyVersionsResponse) GetKeyId() string {
@@ -3072,13 +3326,34 @@ type EncryptRequest struct {
 	Backend        string                 `protobuf:"bytes,2,opt,name=backend,proto3" json:"backend,omitempty"`
 	Plaintext      []byte                 `protobuf:"bytes,3,opt,name=plaintext,proto3" json:"plaintext,omitempty"`
 	AdditionalData []byte                 `protobuf:"bytes,4,opt,name=additional_data,json=additionalData,proto3" json:"additional_data,omitempty"` // Optional AAD for GCM mode
-	unknownFields  protoimpl.UnknownFields
-	sizeCache      protoimpl.SizeCache
+	// nonce optionally supplies the IV/nonce. When empty the backend generates
+	// one and returns it in EncryptResponse.nonce. Only meaningful for the
+	// default AEAD mode; AES-CBC uses iv instead.
+	Nonce []byte `protobuf:"bytes,5,opt,name=nonce,proto3" json:"nonce,omitempty"`
+	// mode selects the symmetric cipher mode of operation: "" (default)
+	// selects the key's native AEAD mode (AES-GCM or
+	// ChaCha20-Poly1305/XChaCha20-Poly1305); "cbc" selects unpadded AES-CBC
+	// (plaintext must already be a whole number of AES blocks); "cbc-pad"
+	// selects AES-CBC with PKCS#7 padding. CBC modes require an AES key and
+	// reject additional_data.
+	Mode string `protobuf:"bytes,6,opt,name=mode,proto3" json:"mode,omitempty"`
+	// iv supplies the AES-CBC initialization vector, exactly 16 bytes. Ignored
+	// for the default AEAD modes, which use nonce instead. If empty on
+	// encrypt with a CBC mode, a random IV is generated and returned in
+	// EncryptResponse.iv.
+	Iv []byte `protobuf:"bytes,7,opt,name=iv,proto3" json:"iv,omitempty"`
+	// tag_size is the AEAD authentication tag length in bytes; 0 selects the
+	// cipher's full-length tag. NIST SP 800-38D section 5.2.1.2 defines a
+	// t-bit GCM tag as the leading t bits of the full tag, so AES-GCM admits
+	// 12, 13, 14, 15 and 16 bytes.
+	TagSize       int32 `protobuf:"varint,8,opt,name=tag_size,json=tagSize,proto3" json:"tag_size,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
 }
 
 func (x *EncryptRequest) Reset() {
 	*x = EncryptRequest{}
-	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[50]
+	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[53]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -3090,7 +3365,7 @@ func (x *EncryptRequest) String() string {
 func (*EncryptRequest) ProtoMessage() {}
 
 func (x *EncryptRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[50]
+	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[53]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -3103,7 +3378,7 @@ func (x *EncryptRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use EncryptRequest.ProtoReflect.Descriptor instead.
 func (*EncryptRequest) Descriptor() ([]byte, []int) {
-	return file_pkg_api_grpc_proto_xkmsv1_xkms_proto_rawDescGZIP(), []int{50}
+	return file_pkg_api_grpc_proto_xkmsv1_xkms_proto_rawDescGZIP(), []int{53}
 }
 
 func (x *EncryptRequest) GetKeyId() string {
@@ -3134,19 +3409,51 @@ func (x *EncryptRequest) GetAdditionalData() []byte {
 	return nil
 }
 
+func (x *EncryptRequest) GetNonce() []byte {
+	if x != nil {
+		return x.Nonce
+	}
+	return nil
+}
+
+func (x *EncryptRequest) GetMode() string {
+	if x != nil {
+		return x.Mode
+	}
+	return ""
+}
+
+func (x *EncryptRequest) GetIv() []byte {
+	if x != nil {
+		return x.Iv
+	}
+	return nil
+}
+
+func (x *EncryptRequest) GetTagSize() int32 {
+	if x != nil {
+		return x.TagSize
+	}
+	return 0
+}
+
 // EncryptResponse contains the encrypted data
 type EncryptResponse struct {
-	state         protoimpl.MessageState `protogen:"open.v1"`
-	Ciphertext    []byte                 `protobuf:"bytes,1,opt,name=ciphertext,proto3" json:"ciphertext,omitempty"`
-	Nonce         []byte                 `protobuf:"bytes,2,opt,name=nonce,proto3" json:"nonce,omitempty"`
-	Tag           []byte                 `protobuf:"bytes,3,opt,name=tag,proto3" json:"tag,omitempty"`
+	state      protoimpl.MessageState `protogen:"open.v1"`
+	Ciphertext []byte                 `protobuf:"bytes,1,opt,name=ciphertext,proto3" json:"ciphertext,omitempty"`
+	Nonce      []byte                 `protobuf:"bytes,2,opt,name=nonce,proto3" json:"nonce,omitempty"`
+	Tag        []byte                 `protobuf:"bytes,3,opt,name=tag,proto3" json:"tag,omitempty"`
+	// iv is the AES-CBC initialization vector used for encryption. Populated
+	// when the request's mode was "cbc" or "cbc-pad"; empty for the default
+	// AEAD modes, which populate nonce instead.
+	Iv            []byte `protobuf:"bytes,4,opt,name=iv,proto3" json:"iv,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
 
 func (x *EncryptResponse) Reset() {
 	*x = EncryptResponse{}
-	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[51]
+	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[54]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -3158,7 +3465,7 @@ func (x *EncryptResponse) String() string {
 func (*EncryptResponse) ProtoMessage() {}
 
 func (x *EncryptResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[51]
+	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[54]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -3171,7 +3478,7 @@ func (x *EncryptResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use EncryptResponse.ProtoReflect.Descriptor instead.
 func (*EncryptResponse) Descriptor() ([]byte, []int) {
-	return file_pkg_api_grpc_proto_xkmsv1_xkms_proto_rawDescGZIP(), []int{51}
+	return file_pkg_api_grpc_proto_xkmsv1_xkms_proto_rawDescGZIP(), []int{54}
 }
 
 func (x *EncryptResponse) GetCiphertext() []byte {
@@ -3195,6 +3502,13 @@ func (x *EncryptResponse) GetTag() []byte {
 	return nil
 }
 
+func (x *EncryptResponse) GetIv() []byte {
+	if x != nil {
+		return x.Iv
+	}
+	return nil
+}
+
 // DecryptRequest requests decryption of data
 type DecryptRequest struct {
 	state          protoimpl.MessageState `protogen:"open.v1"`
@@ -3204,13 +3518,32 @@ type DecryptRequest struct {
 	AdditionalData []byte                 `protobuf:"bytes,4,opt,name=additional_data,json=additionalData,proto3" json:"additional_data,omitempty"` // Optional AAD for symmetric decryption
 	Nonce          []byte                 `protobuf:"bytes,5,opt,name=nonce,proto3" json:"nonce,omitempty"`                                         // Required for symmetric decryption
 	Tag            []byte                 `protobuf:"bytes,6,opt,name=tag,proto3" json:"tag,omitempty"`                                             // Required for symmetric decryption (GCM)
-	unknownFields  protoimpl.UnknownFields
-	sizeCache      protoimpl.SizeCache
+	// padding selects the RSA decryption scheme for an asymmetric key:
+	// "" or "pkcs1v15" (default), or "oaep".
+	Padding string `protobuf:"bytes,7,opt,name=padding,proto3" json:"padding,omitempty"`
+	// hash names the OAEP digest. Ignored unless padding is "oaep"; empty
+	// selects SHA-1, which is OAEP's own default.
+	Hash string `protobuf:"bytes,8,opt,name=hash,proto3" json:"hash,omitempty"`
+	// label is the optional OAEP label. Ignored unless padding is "oaep".
+	Label []byte `protobuf:"bytes,9,opt,name=label,proto3" json:"label,omitempty"`
+	// mode selects the symmetric cipher mode of operation. See
+	// EncryptRequest.mode; must match the mode used to produce ciphertext.
+	// Ignored for asymmetric (RSA) decryption, which uses padding/hash/label.
+	Mode string `protobuf:"bytes,10,opt,name=mode,proto3" json:"mode,omitempty"`
+	// iv is the AES-CBC initialization vector used at encryption time, exactly
+	// 16 bytes. Required when mode is "cbc" or "cbc-pad".
+	Iv []byte `protobuf:"bytes,11,opt,name=iv,proto3" json:"iv,omitempty"`
+	// tag_size is the AEAD authentication tag length in bytes that tag
+	// carries; 0 selects the cipher's full-length tag. It must equal the
+	// tag_size used to encrypt.
+	TagSize       int32 `protobuf:"varint,12,opt,name=tag_size,json=tagSize,proto3" json:"tag_size,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
 }
 
 func (x *DecryptRequest) Reset() {
 	*x = DecryptRequest{}
-	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[52]
+	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[55]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -3222,7 +3555,7 @@ func (x *DecryptRequest) String() string {
 func (*DecryptRequest) ProtoMessage() {}
 
 func (x *DecryptRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[52]
+	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[55]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -3235,7 +3568,7 @@ func (x *DecryptRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use DecryptRequest.ProtoReflect.Descriptor instead.
 func (*DecryptRequest) Descriptor() ([]byte, []int) {
-	return file_pkg_api_grpc_proto_xkmsv1_xkms_proto_rawDescGZIP(), []int{52}
+	return file_pkg_api_grpc_proto_xkmsv1_xkms_proto_rawDescGZIP(), []int{55}
 }
 
 func (x *DecryptRequest) GetKeyId() string {
@@ -3280,6 +3613,48 @@ func (x *DecryptRequest) GetTag() []byte {
 	return nil
 }
 
+func (x *DecryptRequest) GetPadding() string {
+	if x != nil {
+		return x.Padding
+	}
+	return ""
+}
+
+func (x *DecryptRequest) GetHash() string {
+	if x != nil {
+		return x.Hash
+	}
+	return ""
+}
+
+func (x *DecryptRequest) GetLabel() []byte {
+	if x != nil {
+		return x.Label
+	}
+	return nil
+}
+
+func (x *DecryptRequest) GetMode() string {
+	if x != nil {
+		return x.Mode
+	}
+	return ""
+}
+
+func (x *DecryptRequest) GetIv() []byte {
+	if x != nil {
+		return x.Iv
+	}
+	return nil
+}
+
+func (x *DecryptRequest) GetTagSize() int32 {
+	if x != nil {
+		return x.TagSize
+	}
+	return 0
+}
+
 // DecryptResponse contains the decrypted data
 type DecryptResponse struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
@@ -3290,7 +3665,7 @@ type DecryptResponse struct {
 
 func (x *DecryptResponse) Reset() {
 	*x = DecryptResponse{}
-	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[53]
+	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[56]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -3302,7 +3677,7 @@ func (x *DecryptResponse) String() string {
 func (*DecryptResponse) ProtoMessage() {}
 
 func (x *DecryptResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[53]
+	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[56]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -3315,7 +3690,7 @@ func (x *DecryptResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use DecryptResponse.ProtoReflect.Descriptor instead.
 func (*DecryptResponse) Descriptor() ([]byte, []int) {
-	return file_pkg_api_grpc_proto_xkmsv1_xkms_proto_rawDescGZIP(), []int{53}
+	return file_pkg_api_grpc_proto_xkmsv1_xkms_proto_rawDescGZIP(), []int{56}
 }
 
 func (x *DecryptResponse) GetPlaintext() []byte {
@@ -3327,18 +3702,24 @@ func (x *DecryptResponse) GetPlaintext() []byte {
 
 // EncryptAsymRequest requests asymmetric encryption (RSA-OAEP)
 type EncryptAsymRequest struct {
-	state         protoimpl.MessageState `protogen:"open.v1"`
-	KeyId         string                 `protobuf:"bytes,1,opt,name=key_id,json=keyId,proto3" json:"key_id,omitempty"`
-	Backend       string                 `protobuf:"bytes,2,opt,name=backend,proto3" json:"backend,omitempty"`
-	Plaintext     []byte                 `protobuf:"bytes,3,opt,name=plaintext,proto3" json:"plaintext,omitempty"`
-	Hash          string                 `protobuf:"bytes,4,opt,name=hash,proto3" json:"hash,omitempty"` // Hash algorithm for OAEP (e.g., "sha256")
+	state     protoimpl.MessageState `protogen:"open.v1"`
+	KeyId     string                 `protobuf:"bytes,1,opt,name=key_id,json=keyId,proto3" json:"key_id,omitempty"`
+	Backend   string                 `protobuf:"bytes,2,opt,name=backend,proto3" json:"backend,omitempty"`
+	Plaintext []byte                 `protobuf:"bytes,3,opt,name=plaintext,proto3" json:"plaintext,omitempty"`
+	Hash      string                 `protobuf:"bytes,4,opt,name=hash,proto3" json:"hash,omitempty"` // Hash algorithm for OAEP (e.g., "sha256")
+	// label is the optional OAEP label, RFC 8017's encoding parameter L. It must
+	// match the label the matching Decrypt carries, or the decryption fails as
+	// though the ciphertext were corrupt. DecryptRequest already carries one;
+	// omitting it here meant every encryption over gRPC ran under the empty label
+	// while the decryption sent the caller's, so the round trip could not close.
+	Label         []byte `protobuf:"bytes,5,opt,name=label,proto3" json:"label,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
 
 func (x *EncryptAsymRequest) Reset() {
 	*x = EncryptAsymRequest{}
-	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[54]
+	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[57]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -3350,7 +3731,7 @@ func (x *EncryptAsymRequest) String() string {
 func (*EncryptAsymRequest) ProtoMessage() {}
 
 func (x *EncryptAsymRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[54]
+	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[57]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -3363,7 +3744,7 @@ func (x *EncryptAsymRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use EncryptAsymRequest.ProtoReflect.Descriptor instead.
 func (*EncryptAsymRequest) Descriptor() ([]byte, []int) {
-	return file_pkg_api_grpc_proto_xkmsv1_xkms_proto_rawDescGZIP(), []int{54}
+	return file_pkg_api_grpc_proto_xkmsv1_xkms_proto_rawDescGZIP(), []int{57}
 }
 
 func (x *EncryptAsymRequest) GetKeyId() string {
@@ -3394,6 +3775,13 @@ func (x *EncryptAsymRequest) GetHash() string {
 	return ""
 }
 
+func (x *EncryptAsymRequest) GetLabel() []byte {
+	if x != nil {
+		return x.Label
+	}
+	return nil
+}
+
 // EncryptAsymResponse contains the asymmetrically encrypted data
 type EncryptAsymResponse struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
@@ -3404,7 +3792,7 @@ type EncryptAsymResponse struct {
 
 func (x *EncryptAsymResponse) Reset() {
 	*x = EncryptAsymResponse{}
-	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[55]
+	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[58]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -3416,7 +3804,7 @@ func (x *EncryptAsymResponse) String() string {
 func (*EncryptAsymResponse) ProtoMessage() {}
 
 func (x *EncryptAsymResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[55]
+	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[58]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -3429,7 +3817,7 @@ func (x *EncryptAsymResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use EncryptAsymResponse.ProtoReflect.Descriptor instead.
 func (*EncryptAsymResponse) Descriptor() ([]byte, []int) {
-	return file_pkg_api_grpc_proto_xkmsv1_xkms_proto_rawDescGZIP(), []int{55}
+	return file_pkg_api_grpc_proto_xkmsv1_xkms_proto_rawDescGZIP(), []int{58}
 }
 
 func (x *EncryptAsymResponse) GetCiphertext() []byte {
@@ -3466,7 +3854,7 @@ type DeriveKeyRequest struct {
 
 func (x *DeriveKeyRequest) Reset() {
 	*x = DeriveKeyRequest{}
-	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[56]
+	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[59]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -3478,7 +3866,7 @@ func (x *DeriveKeyRequest) String() string {
 func (*DeriveKeyRequest) ProtoMessage() {}
 
 func (x *DeriveKeyRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[56]
+	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[59]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -3491,7 +3879,7 @@ func (x *DeriveKeyRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use DeriveKeyRequest.ProtoReflect.Descriptor instead.
 func (*DeriveKeyRequest) Descriptor() ([]byte, []int) {
-	return file_pkg_api_grpc_proto_xkmsv1_xkms_proto_rawDescGZIP(), []int{56}
+	return file_pkg_api_grpc_proto_xkmsv1_xkms_proto_rawDescGZIP(), []int{59}
 }
 
 func (x *DeriveKeyRequest) GetBackend() string {
@@ -3633,7 +4021,7 @@ type DeriveKeyResponse struct {
 
 func (x *DeriveKeyResponse) Reset() {
 	*x = DeriveKeyResponse{}
-	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[57]
+	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[60]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -3645,7 +4033,7 @@ func (x *DeriveKeyResponse) String() string {
 func (*DeriveKeyResponse) ProtoMessage() {}
 
 func (x *DeriveKeyResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[57]
+	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[60]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -3658,7 +4046,7 @@ func (x *DeriveKeyResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use DeriveKeyResponse.ProtoReflect.Descriptor instead.
 func (*DeriveKeyResponse) Descriptor() ([]byte, []int) {
-	return file_pkg_api_grpc_proto_xkmsv1_xkms_proto_rawDescGZIP(), []int{57}
+	return file_pkg_api_grpc_proto_xkmsv1_xkms_proto_rawDescGZIP(), []int{60}
 }
 
 func (x *DeriveKeyResponse) GetDerivedKey() []byte {
@@ -3715,19 +4103,27 @@ type DeriveKeyECDHRequest struct {
 	KdfSalt []byte `protobuf:"bytes,6,opt,name=kdf_salt,json=kdfSalt,proto3" json:"kdf_salt,omitempty"`
 	// kdf_info is optional context/application-specific information
 	// For HKDF, this is used in the expand phase
-	// For SP800-108, this is incorporated into the context
+	// For SP800-108, this is the Context
 	KdfInfo []byte `protobuf:"bytes,7,opt,name=kdf_info,json=kdfInfo,proto3" json:"kdf_info,omitempty"`
 	// key_length specifies the desired output key length in bytes
 	// Must be positive. Common values: 16 (AES-128), 32 (AES-256)
 	// If not specified or 0, defaults to 32 bytes
-	KeyLength     int32 `protobuf:"varint,8,opt,name=key_length,json=keyLength,proto3" json:"key_length,omitempty"`
+	KeyLength int32 `protobuf:"varint,8,opt,name=key_length,json=keyLength,proto3" json:"key_length,omitempty"`
+	// kdf_label is the SP800-108 Label, the purpose string bound into the fixed
+	// input data as Label || 0x00 || Context || [L]_2 (SP 800-108r1 section 4).
+	// It provides domain separation: two protocols deriving from the same shared
+	// secret with the same context but different labels get different keys.
+	// SP800-108 only; the other constructions have no label input and reject a
+	// non-empty value. An empty label is valid and is the default, so a client
+	// that does not set it derives exactly what it did before this field existed.
+	KdfLabel      []byte `protobuf:"bytes,9,opt,name=kdf_label,json=kdfLabel,proto3" json:"kdf_label,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
 
 func (x *DeriveKeyECDHRequest) Reset() {
 	*x = DeriveKeyECDHRequest{}
-	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[58]
+	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[61]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -3739,7 +4135,7 @@ func (x *DeriveKeyECDHRequest) String() string {
 func (*DeriveKeyECDHRequest) ProtoMessage() {}
 
 func (x *DeriveKeyECDHRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[58]
+	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[61]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -3752,7 +4148,7 @@ func (x *DeriveKeyECDHRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use DeriveKeyECDHRequest.ProtoReflect.Descriptor instead.
 func (*DeriveKeyECDHRequest) Descriptor() ([]byte, []int) {
-	return file_pkg_api_grpc_proto_xkmsv1_xkms_proto_rawDescGZIP(), []int{58}
+	return file_pkg_api_grpc_proto_xkmsv1_xkms_proto_rawDescGZIP(), []int{61}
 }
 
 func (x *DeriveKeyECDHRequest) GetKeyId() string {
@@ -3811,6 +4207,13 @@ func (x *DeriveKeyECDHRequest) GetKeyLength() int32 {
 	return 0
 }
 
+func (x *DeriveKeyECDHRequest) GetKdfLabel() []byte {
+	if x != nil {
+		return x.KdfLabel
+	}
+	return nil
+}
+
 // DeriveKeyECDHResponse contains the derived key from ECDH key agreement
 type DeriveKeyECDHResponse struct {
 	state protoimpl.MessageState `protogen:"open.v1"`
@@ -3823,7 +4226,7 @@ type DeriveKeyECDHResponse struct {
 
 func (x *DeriveKeyECDHResponse) Reset() {
 	*x = DeriveKeyECDHResponse{}
-	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[59]
+	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[62]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -3835,7 +4238,7 @@ func (x *DeriveKeyECDHResponse) String() string {
 func (*DeriveKeyECDHResponse) ProtoMessage() {}
 
 func (x *DeriveKeyECDHResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[59]
+	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[62]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -3848,7 +4251,7 @@ func (x *DeriveKeyECDHResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use DeriveKeyECDHResponse.ProtoReflect.Descriptor instead.
 func (*DeriveKeyECDHResponse) Descriptor() ([]byte, []int) {
-	return file_pkg_api_grpc_proto_xkmsv1_xkms_proto_rawDescGZIP(), []int{59}
+	return file_pkg_api_grpc_proto_xkmsv1_xkms_proto_rawDescGZIP(), []int{62}
 }
 
 func (x *DeriveKeyECDHResponse) GetDerivedKey() []byte {
@@ -3883,7 +4286,7 @@ type DerivedKeyHandle struct {
 
 func (x *DerivedKeyHandle) Reset() {
 	*x = DerivedKeyHandle{}
-	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[60]
+	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[63]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -3895,7 +4298,7 @@ func (x *DerivedKeyHandle) String() string {
 func (*DerivedKeyHandle) ProtoMessage() {}
 
 func (x *DerivedKeyHandle) ProtoReflect() protoreflect.Message {
-	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[60]
+	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[63]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -3908,7 +4311,7 @@ func (x *DerivedKeyHandle) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use DerivedKeyHandle.ProtoReflect.Descriptor instead.
 func (*DerivedKeyHandle) Descriptor() ([]byte, []int) {
-	return file_pkg_api_grpc_proto_xkmsv1_xkms_proto_rawDescGZIP(), []int{60}
+	return file_pkg_api_grpc_proto_xkmsv1_xkms_proto_rawDescGZIP(), []int{63}
 }
 
 func (x *DerivedKeyHandle) GetId() string {
@@ -3986,7 +4389,7 @@ type TPMDerivedKeyHandle struct {
 
 func (x *TPMDerivedKeyHandle) Reset() {
 	*x = TPMDerivedKeyHandle{}
-	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[61]
+	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[64]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -3998,7 +4401,7 @@ func (x *TPMDerivedKeyHandle) String() string {
 func (*TPMDerivedKeyHandle) ProtoMessage() {}
 
 func (x *TPMDerivedKeyHandle) ProtoReflect() protoreflect.Message {
-	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[61]
+	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[64]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -4011,7 +4414,7 @@ func (x *TPMDerivedKeyHandle) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use TPMDerivedKeyHandle.ProtoReflect.Descriptor instead.
 func (*TPMDerivedKeyHandle) Descriptor() ([]byte, []int) {
-	return file_pkg_api_grpc_proto_xkmsv1_xkms_proto_rawDescGZIP(), []int{61}
+	return file_pkg_api_grpc_proto_xkmsv1_xkms_proto_rawDescGZIP(), []int{64}
 }
 
 func (x *TPMDerivedKeyHandle) GetHandle() uint32 {
@@ -4080,7 +4483,7 @@ type DerivedKeyTemplate struct {
 
 func (x *DerivedKeyTemplate) Reset() {
 	*x = DerivedKeyTemplate{}
-	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[62]
+	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[65]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -4092,7 +4495,7 @@ func (x *DerivedKeyTemplate) String() string {
 func (*DerivedKeyTemplate) ProtoMessage() {}
 
 func (x *DerivedKeyTemplate) ProtoReflect() protoreflect.Message {
-	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[62]
+	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[65]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -4105,7 +4508,7 @@ func (x *DerivedKeyTemplate) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use DerivedKeyTemplate.ProtoReflect.Descriptor instead.
 func (*DerivedKeyTemplate) Descriptor() ([]byte, []int) {
-	return file_pkg_api_grpc_proto_xkmsv1_xkms_proto_rawDescGZIP(), []int{62}
+	return file_pkg_api_grpc_proto_xkmsv1_xkms_proto_rawDescGZIP(), []int{65}
 }
 
 func (x *DerivedKeyTemplate) GetLabel() string {
@@ -4202,7 +4605,7 @@ type OperationParams struct {
 
 func (x *OperationParams) Reset() {
 	*x = OperationParams{}
-	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[63]
+	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[66]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -4214,7 +4617,7 @@ func (x *OperationParams) String() string {
 func (*OperationParams) ProtoMessage() {}
 
 func (x *OperationParams) ProtoReflect() protoreflect.Message {
-	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[63]
+	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[66]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -4227,7 +4630,7 @@ func (x *OperationParams) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use OperationParams.ProtoReflect.Descriptor instead.
 func (*OperationParams) Descriptor() ([]byte, []int) {
-	return file_pkg_api_grpc_proto_xkmsv1_xkms_proto_rawDescGZIP(), []int{63}
+	return file_pkg_api_grpc_proto_xkmsv1_xkms_proto_rawDescGZIP(), []int{66}
 }
 
 func (x *OperationParams) GetAlgorithm() string {
@@ -4290,7 +4693,7 @@ type DeriveKeyECDHSecureRequest struct {
 
 func (x *DeriveKeyECDHSecureRequest) Reset() {
 	*x = DeriveKeyECDHSecureRequest{}
-	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[64]
+	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[67]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -4302,7 +4705,7 @@ func (x *DeriveKeyECDHSecureRequest) String() string {
 func (*DeriveKeyECDHSecureRequest) ProtoMessage() {}
 
 func (x *DeriveKeyECDHSecureRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[64]
+	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[67]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -4315,7 +4718,7 @@ func (x *DeriveKeyECDHSecureRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use DeriveKeyECDHSecureRequest.ProtoReflect.Descriptor instead.
 func (*DeriveKeyECDHSecureRequest) Descriptor() ([]byte, []int) {
-	return file_pkg_api_grpc_proto_xkmsv1_xkms_proto_rawDescGZIP(), []int{64}
+	return file_pkg_api_grpc_proto_xkmsv1_xkms_proto_rawDescGZIP(), []int{67}
 }
 
 func (x *DeriveKeyECDHSecureRequest) GetKeyId() string {
@@ -4412,7 +4815,7 @@ type DeriveKeyECDHSecureResponse struct {
 
 func (x *DeriveKeyECDHSecureResponse) Reset() {
 	*x = DeriveKeyECDHSecureResponse{}
-	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[65]
+	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[68]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -4424,7 +4827,7 @@ func (x *DeriveKeyECDHSecureResponse) String() string {
 func (*DeriveKeyECDHSecureResponse) ProtoMessage() {}
 
 func (x *DeriveKeyECDHSecureResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[65]
+	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[68]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -4437,7 +4840,7 @@ func (x *DeriveKeyECDHSecureResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use DeriveKeyECDHSecureResponse.ProtoReflect.Descriptor instead.
 func (*DeriveKeyECDHSecureResponse) Descriptor() ([]byte, []int) {
-	return file_pkg_api_grpc_proto_xkmsv1_xkms_proto_rawDescGZIP(), []int{65}
+	return file_pkg_api_grpc_proto_xkmsv1_xkms_proto_rawDescGZIP(), []int{68}
 }
 
 func (x *DeriveKeyECDHSecureResponse) GetMode() KeyDerivationMode {
@@ -4485,7 +4888,7 @@ type UseResidentKeyRequest struct {
 
 func (x *UseResidentKeyRequest) Reset() {
 	*x = UseResidentKeyRequest{}
-	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[66]
+	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[69]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -4497,7 +4900,7 @@ func (x *UseResidentKeyRequest) String() string {
 func (*UseResidentKeyRequest) ProtoMessage() {}
 
 func (x *UseResidentKeyRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[66]
+	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[69]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -4510,7 +4913,7 @@ func (x *UseResidentKeyRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use UseResidentKeyRequest.ProtoReflect.Descriptor instead.
 func (*UseResidentKeyRequest) Descriptor() ([]byte, []int) {
-	return file_pkg_api_grpc_proto_xkmsv1_xkms_proto_rawDescGZIP(), []int{66}
+	return file_pkg_api_grpc_proto_xkmsv1_xkms_proto_rawDescGZIP(), []int{69}
 }
 
 func (x *UseResidentKeyRequest) GetHandle() *DerivedKeyHandle {
@@ -4552,7 +4955,7 @@ type UseResidentKeyResponse struct {
 
 func (x *UseResidentKeyResponse) Reset() {
 	*x = UseResidentKeyResponse{}
-	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[67]
+	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[70]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -4564,7 +4967,7 @@ func (x *UseResidentKeyResponse) String() string {
 func (*UseResidentKeyResponse) ProtoMessage() {}
 
 func (x *UseResidentKeyResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[67]
+	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[70]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -4577,7 +4980,7 @@ func (x *UseResidentKeyResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use UseResidentKeyResponse.ProtoReflect.Descriptor instead.
 func (*UseResidentKeyResponse) Descriptor() ([]byte, []int) {
-	return file_pkg_api_grpc_proto_xkmsv1_xkms_proto_rawDescGZIP(), []int{67}
+	return file_pkg_api_grpc_proto_xkmsv1_xkms_proto_rawDescGZIP(), []int{70}
 }
 
 func (x *UseResidentKeyResponse) GetResult() []byte {
@@ -4598,7 +5001,7 @@ type DestroyResidentKeyRequest struct {
 
 func (x *DestroyResidentKeyRequest) Reset() {
 	*x = DestroyResidentKeyRequest{}
-	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[68]
+	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[71]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -4610,7 +5013,7 @@ func (x *DestroyResidentKeyRequest) String() string {
 func (*DestroyResidentKeyRequest) ProtoMessage() {}
 
 func (x *DestroyResidentKeyRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[68]
+	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[71]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -4623,7 +5026,7 @@ func (x *DestroyResidentKeyRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use DestroyResidentKeyRequest.ProtoReflect.Descriptor instead.
 func (*DestroyResidentKeyRequest) Descriptor() ([]byte, []int) {
-	return file_pkg_api_grpc_proto_xkmsv1_xkms_proto_rawDescGZIP(), []int{68}
+	return file_pkg_api_grpc_proto_xkmsv1_xkms_proto_rawDescGZIP(), []int{71}
 }
 
 func (x *DestroyResidentKeyRequest) GetHandle() *DerivedKeyHandle {
@@ -4644,7 +5047,7 @@ type DestroyResidentKeyResponse struct {
 
 func (x *DestroyResidentKeyResponse) Reset() {
 	*x = DestroyResidentKeyResponse{}
-	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[69]
+	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[72]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -4656,7 +5059,7 @@ func (x *DestroyResidentKeyResponse) String() string {
 func (*DestroyResidentKeyResponse) ProtoMessage() {}
 
 func (x *DestroyResidentKeyResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[69]
+	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[72]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -4669,7 +5072,7 @@ func (x *DestroyResidentKeyResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use DestroyResidentKeyResponse.ProtoReflect.Descriptor instead.
 func (*DestroyResidentKeyResponse) Descriptor() ([]byte, []int) {
-	return file_pkg_api_grpc_proto_xkmsv1_xkms_proto_rawDescGZIP(), []int{69}
+	return file_pkg_api_grpc_proto_xkmsv1_xkms_proto_rawDescGZIP(), []int{72}
 }
 
 func (x *DestroyResidentKeyResponse) GetSuccess() bool {
@@ -4706,7 +5109,7 @@ type GenerateEphemeralECDHRequest struct {
 
 func (x *GenerateEphemeralECDHRequest) Reset() {
 	*x = GenerateEphemeralECDHRequest{}
-	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[70]
+	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[73]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -4718,7 +5121,7 @@ func (x *GenerateEphemeralECDHRequest) String() string {
 func (*GenerateEphemeralECDHRequest) ProtoMessage() {}
 
 func (x *GenerateEphemeralECDHRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[70]
+	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[73]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -4731,7 +5134,7 @@ func (x *GenerateEphemeralECDHRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use GenerateEphemeralECDHRequest.ProtoReflect.Descriptor instead.
 func (*GenerateEphemeralECDHRequest) Descriptor() ([]byte, []int) {
-	return file_pkg_api_grpc_proto_xkmsv1_xkms_proto_rawDescGZIP(), []int{70}
+	return file_pkg_api_grpc_proto_xkmsv1_xkms_proto_rawDescGZIP(), []int{73}
 }
 
 func (x *GenerateEphemeralECDHRequest) GetBackend() string {
@@ -4815,7 +5218,7 @@ type GenerateEphemeralECDHResponse struct {
 
 func (x *GenerateEphemeralECDHResponse) Reset() {
 	*x = GenerateEphemeralECDHResponse{}
-	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[71]
+	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[74]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -4827,7 +5230,7 @@ func (x *GenerateEphemeralECDHResponse) String() string {
 func (*GenerateEphemeralECDHResponse) ProtoMessage() {}
 
 func (x *GenerateEphemeralECDHResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[71]
+	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[74]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -4840,7 +5243,7 @@ func (x *GenerateEphemeralECDHResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use GenerateEphemeralECDHResponse.ProtoReflect.Descriptor instead.
 func (*GenerateEphemeralECDHResponse) Descriptor() ([]byte, []int) {
-	return file_pkg_api_grpc_proto_xkmsv1_xkms_proto_rawDescGZIP(), []int{71}
+	return file_pkg_api_grpc_proto_xkmsv1_xkms_proto_rawDescGZIP(), []int{74}
 }
 
 func (x *GenerateEphemeralECDHResponse) GetMode() KeyDerivationMode {
@@ -4882,7 +5285,7 @@ type SaveCertRequest struct {
 
 func (x *SaveCertRequest) Reset() {
 	*x = SaveCertRequest{}
-	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[72]
+	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[75]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -4894,7 +5297,7 @@ func (x *SaveCertRequest) String() string {
 func (*SaveCertRequest) ProtoMessage() {}
 
 func (x *SaveCertRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[72]
+	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[75]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -4907,7 +5310,7 @@ func (x *SaveCertRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use SaveCertRequest.ProtoReflect.Descriptor instead.
 func (*SaveCertRequest) Descriptor() ([]byte, []int) {
-	return file_pkg_api_grpc_proto_xkmsv1_xkms_proto_rawDescGZIP(), []int{72}
+	return file_pkg_api_grpc_proto_xkmsv1_xkms_proto_rawDescGZIP(), []int{75}
 }
 
 func (x *SaveCertRequest) GetKeyId() string {
@@ -4935,7 +5338,7 @@ type SaveCertResponse struct {
 
 func (x *SaveCertResponse) Reset() {
 	*x = SaveCertResponse{}
-	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[73]
+	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[76]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -4947,7 +5350,7 @@ func (x *SaveCertResponse) String() string {
 func (*SaveCertResponse) ProtoMessage() {}
 
 func (x *SaveCertResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[73]
+	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[76]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -4960,7 +5363,7 @@ func (x *SaveCertResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use SaveCertResponse.ProtoReflect.Descriptor instead.
 func (*SaveCertResponse) Descriptor() ([]byte, []int) {
-	return file_pkg_api_grpc_proto_xkmsv1_xkms_proto_rawDescGZIP(), []int{73}
+	return file_pkg_api_grpc_proto_xkmsv1_xkms_proto_rawDescGZIP(), []int{76}
 }
 
 func (x *SaveCertResponse) GetSuccess() bool {
@@ -4987,7 +5390,7 @@ type GetCertRequest struct {
 
 func (x *GetCertRequest) Reset() {
 	*x = GetCertRequest{}
-	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[74]
+	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[77]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -4999,7 +5402,7 @@ func (x *GetCertRequest) String() string {
 func (*GetCertRequest) ProtoMessage() {}
 
 func (x *GetCertRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[74]
+	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[77]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -5012,7 +5415,7 @@ func (x *GetCertRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use GetCertRequest.ProtoReflect.Descriptor instead.
 func (*GetCertRequest) Descriptor() ([]byte, []int) {
-	return file_pkg_api_grpc_proto_xkmsv1_xkms_proto_rawDescGZIP(), []int{74}
+	return file_pkg_api_grpc_proto_xkmsv1_xkms_proto_rawDescGZIP(), []int{77}
 }
 
 func (x *GetCertRequest) GetKeyId() string {
@@ -5032,7 +5435,7 @@ type GetCertResponse struct {
 
 func (x *GetCertResponse) Reset() {
 	*x = GetCertResponse{}
-	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[75]
+	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[78]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -5044,7 +5447,7 @@ func (x *GetCertResponse) String() string {
 func (*GetCertResponse) ProtoMessage() {}
 
 func (x *GetCertResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[75]
+	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[78]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -5057,7 +5460,7 @@ func (x *GetCertResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use GetCertResponse.ProtoReflect.Descriptor instead.
 func (*GetCertResponse) Descriptor() ([]byte, []int) {
-	return file_pkg_api_grpc_proto_xkmsv1_xkms_proto_rawDescGZIP(), []int{75}
+	return file_pkg_api_grpc_proto_xkmsv1_xkms_proto_rawDescGZIP(), []int{78}
 }
 
 func (x *GetCertResponse) GetCertPem() string {
@@ -5077,7 +5480,7 @@ type DeleteCertRequest struct {
 
 func (x *DeleteCertRequest) Reset() {
 	*x = DeleteCertRequest{}
-	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[76]
+	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[79]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -5089,7 +5492,7 @@ func (x *DeleteCertRequest) String() string {
 func (*DeleteCertRequest) ProtoMessage() {}
 
 func (x *DeleteCertRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[76]
+	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[79]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -5102,7 +5505,7 @@ func (x *DeleteCertRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use DeleteCertRequest.ProtoReflect.Descriptor instead.
 func (*DeleteCertRequest) Descriptor() ([]byte, []int) {
-	return file_pkg_api_grpc_proto_xkmsv1_xkms_proto_rawDescGZIP(), []int{76}
+	return file_pkg_api_grpc_proto_xkmsv1_xkms_proto_rawDescGZIP(), []int{79}
 }
 
 func (x *DeleteCertRequest) GetKeyId() string {
@@ -5123,7 +5526,7 @@ type DeleteCertResponse struct {
 
 func (x *DeleteCertResponse) Reset() {
 	*x = DeleteCertResponse{}
-	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[77]
+	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[80]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -5135,7 +5538,7 @@ func (x *DeleteCertResponse) String() string {
 func (*DeleteCertResponse) ProtoMessage() {}
 
 func (x *DeleteCertResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[77]
+	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[80]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -5148,7 +5551,7 @@ func (x *DeleteCertResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use DeleteCertResponse.ProtoReflect.Descriptor instead.
 func (*DeleteCertResponse) Descriptor() ([]byte, []int) {
-	return file_pkg_api_grpc_proto_xkmsv1_xkms_proto_rawDescGZIP(), []int{77}
+	return file_pkg_api_grpc_proto_xkmsv1_xkms_proto_rawDescGZIP(), []int{80}
 }
 
 func (x *DeleteCertResponse) GetSuccess() bool {
@@ -5174,7 +5577,7 @@ type ListCertsRequest struct {
 
 func (x *ListCertsRequest) Reset() {
 	*x = ListCertsRequest{}
-	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[78]
+	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[81]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -5186,7 +5589,7 @@ func (x *ListCertsRequest) String() string {
 func (*ListCertsRequest) ProtoMessage() {}
 
 func (x *ListCertsRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[78]
+	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[81]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -5199,7 +5602,7 @@ func (x *ListCertsRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ListCertsRequest.ProtoReflect.Descriptor instead.
 func (*ListCertsRequest) Descriptor() ([]byte, []int) {
-	return file_pkg_api_grpc_proto_xkmsv1_xkms_proto_rawDescGZIP(), []int{78}
+	return file_pkg_api_grpc_proto_xkmsv1_xkms_proto_rawDescGZIP(), []int{81}
 }
 
 // ListCertsResponse contains the list of certificate IDs
@@ -5213,7 +5616,7 @@ type ListCertsResponse struct {
 
 func (x *ListCertsResponse) Reset() {
 	*x = ListCertsResponse{}
-	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[79]
+	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[82]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -5225,7 +5628,7 @@ func (x *ListCertsResponse) String() string {
 func (*ListCertsResponse) ProtoMessage() {}
 
 func (x *ListCertsResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[79]
+	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[82]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -5238,7 +5641,7 @@ func (x *ListCertsResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ListCertsResponse.ProtoReflect.Descriptor instead.
 func (*ListCertsResponse) Descriptor() ([]byte, []int) {
-	return file_pkg_api_grpc_proto_xkmsv1_xkms_proto_rawDescGZIP(), []int{79}
+	return file_pkg_api_grpc_proto_xkmsv1_xkms_proto_rawDescGZIP(), []int{82}
 }
 
 func (x *ListCertsResponse) GetKeyIds() []string {
@@ -5265,7 +5668,7 @@ type CertExistsRequest struct {
 
 func (x *CertExistsRequest) Reset() {
 	*x = CertExistsRequest{}
-	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[80]
+	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[83]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -5277,7 +5680,7 @@ func (x *CertExistsRequest) String() string {
 func (*CertExistsRequest) ProtoMessage() {}
 
 func (x *CertExistsRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[80]
+	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[83]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -5290,7 +5693,7 @@ func (x *CertExistsRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use CertExistsRequest.ProtoReflect.Descriptor instead.
 func (*CertExistsRequest) Descriptor() ([]byte, []int) {
-	return file_pkg_api_grpc_proto_xkmsv1_xkms_proto_rawDescGZIP(), []int{80}
+	return file_pkg_api_grpc_proto_xkmsv1_xkms_proto_rawDescGZIP(), []int{83}
 }
 
 func (x *CertExistsRequest) GetKeyId() string {
@@ -5310,7 +5713,7 @@ type CertExistsResponse struct {
 
 func (x *CertExistsResponse) Reset() {
 	*x = CertExistsResponse{}
-	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[81]
+	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[84]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -5322,7 +5725,7 @@ func (x *CertExistsResponse) String() string {
 func (*CertExistsResponse) ProtoMessage() {}
 
 func (x *CertExistsResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[81]
+	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[84]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -5335,7 +5738,7 @@ func (x *CertExistsResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use CertExistsResponse.ProtoReflect.Descriptor instead.
 func (*CertExistsResponse) Descriptor() ([]byte, []int) {
-	return file_pkg_api_grpc_proto_xkmsv1_xkms_proto_rawDescGZIP(), []int{81}
+	return file_pkg_api_grpc_proto_xkmsv1_xkms_proto_rawDescGZIP(), []int{84}
 }
 
 func (x *CertExistsResponse) GetExists() bool {
@@ -5356,7 +5759,7 @@ type SaveCertChainRequest struct {
 
 func (x *SaveCertChainRequest) Reset() {
 	*x = SaveCertChainRequest{}
-	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[82]
+	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[85]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -5368,7 +5771,7 @@ func (x *SaveCertChainRequest) String() string {
 func (*SaveCertChainRequest) ProtoMessage() {}
 
 func (x *SaveCertChainRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[82]
+	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[85]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -5381,7 +5784,7 @@ func (x *SaveCertChainRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use SaveCertChainRequest.ProtoReflect.Descriptor instead.
 func (*SaveCertChainRequest) Descriptor() ([]byte, []int) {
-	return file_pkg_api_grpc_proto_xkmsv1_xkms_proto_rawDescGZIP(), []int{82}
+	return file_pkg_api_grpc_proto_xkmsv1_xkms_proto_rawDescGZIP(), []int{85}
 }
 
 func (x *SaveCertChainRequest) GetKeyId() string {
@@ -5409,7 +5812,7 @@ type SaveCertChainResponse struct {
 
 func (x *SaveCertChainResponse) Reset() {
 	*x = SaveCertChainResponse{}
-	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[83]
+	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[86]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -5421,7 +5824,7 @@ func (x *SaveCertChainResponse) String() string {
 func (*SaveCertChainResponse) ProtoMessage() {}
 
 func (x *SaveCertChainResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[83]
+	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[86]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -5434,7 +5837,7 @@ func (x *SaveCertChainResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use SaveCertChainResponse.ProtoReflect.Descriptor instead.
 func (*SaveCertChainResponse) Descriptor() ([]byte, []int) {
-	return file_pkg_api_grpc_proto_xkmsv1_xkms_proto_rawDescGZIP(), []int{83}
+	return file_pkg_api_grpc_proto_xkmsv1_xkms_proto_rawDescGZIP(), []int{86}
 }
 
 func (x *SaveCertChainResponse) GetSuccess() bool {
@@ -5461,7 +5864,7 @@ type GetCertChainRequest struct {
 
 func (x *GetCertChainRequest) Reset() {
 	*x = GetCertChainRequest{}
-	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[84]
+	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[87]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -5473,7 +5876,7 @@ func (x *GetCertChainRequest) String() string {
 func (*GetCertChainRequest) ProtoMessage() {}
 
 func (x *GetCertChainRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[84]
+	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[87]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -5486,7 +5889,7 @@ func (x *GetCertChainRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use GetCertChainRequest.ProtoReflect.Descriptor instead.
 func (*GetCertChainRequest) Descriptor() ([]byte, []int) {
-	return file_pkg_api_grpc_proto_xkmsv1_xkms_proto_rawDescGZIP(), []int{84}
+	return file_pkg_api_grpc_proto_xkmsv1_xkms_proto_rawDescGZIP(), []int{87}
 }
 
 func (x *GetCertChainRequest) GetKeyId() string {
@@ -5506,7 +5909,7 @@ type GetCertChainResponse struct {
 
 func (x *GetCertChainResponse) Reset() {
 	*x = GetCertChainResponse{}
-	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[85]
+	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[88]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -5518,7 +5921,7 @@ func (x *GetCertChainResponse) String() string {
 func (*GetCertChainResponse) ProtoMessage() {}
 
 func (x *GetCertChainResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[85]
+	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[88]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -5531,7 +5934,7 @@ func (x *GetCertChainResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use GetCertChainResponse.ProtoReflect.Descriptor instead.
 func (*GetCertChainResponse) Descriptor() ([]byte, []int) {
-	return file_pkg_api_grpc_proto_xkmsv1_xkms_proto_rawDescGZIP(), []int{85}
+	return file_pkg_api_grpc_proto_xkmsv1_xkms_proto_rawDescGZIP(), []int{88}
 }
 
 func (x *GetCertChainResponse) GetCertChainPem() []string {
@@ -5552,7 +5955,7 @@ type GetTLSCertificateRequest struct {
 
 func (x *GetTLSCertificateRequest) Reset() {
 	*x = GetTLSCertificateRequest{}
-	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[86]
+	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[89]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -5564,7 +5967,7 @@ func (x *GetTLSCertificateRequest) String() string {
 func (*GetTLSCertificateRequest) ProtoMessage() {}
 
 func (x *GetTLSCertificateRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[86]
+	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[89]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -5577,7 +5980,7 @@ func (x *GetTLSCertificateRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use GetTLSCertificateRequest.ProtoReflect.Descriptor instead.
 func (*GetTLSCertificateRequest) Descriptor() ([]byte, []int) {
-	return file_pkg_api_grpc_proto_xkmsv1_xkms_proto_rawDescGZIP(), []int{86}
+	return file_pkg_api_grpc_proto_xkmsv1_xkms_proto_rawDescGZIP(), []int{89}
 }
 
 func (x *GetTLSCertificateRequest) GetKeyId() string {
@@ -5606,7 +6009,7 @@ type GetTLSCertificateResponse struct {
 
 func (x *GetTLSCertificateResponse) Reset() {
 	*x = GetTLSCertificateResponse{}
-	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[87]
+	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[90]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -5618,7 +6021,7 @@ func (x *GetTLSCertificateResponse) String() string {
 func (*GetTLSCertificateResponse) ProtoMessage() {}
 
 func (x *GetTLSCertificateResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[87]
+	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[90]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -5631,7 +6034,7 @@ func (x *GetTLSCertificateResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use GetTLSCertificateResponse.ProtoReflect.Descriptor instead.
 func (*GetTLSCertificateResponse) Descriptor() ([]byte, []int) {
-	return file_pkg_api_grpc_proto_xkmsv1_xkms_proto_rawDescGZIP(), []int{87}
+	return file_pkg_api_grpc_proto_xkmsv1_xkms_proto_rawDescGZIP(), []int{90}
 }
 
 func (x *GetTLSCertificateResponse) GetCertPem() string {
@@ -5672,7 +6075,7 @@ type GetImportParametersRequest struct {
 
 func (x *GetImportParametersRequest) Reset() {
 	*x = GetImportParametersRequest{}
-	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[88]
+	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[91]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -5684,7 +6087,7 @@ func (x *GetImportParametersRequest) String() string {
 func (*GetImportParametersRequest) ProtoMessage() {}
 
 func (x *GetImportParametersRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[88]
+	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[91]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -5697,7 +6100,7 @@ func (x *GetImportParametersRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use GetImportParametersRequest.ProtoReflect.Descriptor instead.
 func (*GetImportParametersRequest) Descriptor() ([]byte, []int) {
-	return file_pkg_api_grpc_proto_xkmsv1_xkms_proto_rawDescGZIP(), []int{88}
+	return file_pkg_api_grpc_proto_xkmsv1_xkms_proto_rawDescGZIP(), []int{91}
 }
 
 func (x *GetImportParametersRequest) GetKeyId() string {
@@ -5770,7 +6173,7 @@ type GetImportParametersResponse struct {
 
 func (x *GetImportParametersResponse) Reset() {
 	*x = GetImportParametersResponse{}
-	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[89]
+	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[92]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -5782,7 +6185,7 @@ func (x *GetImportParametersResponse) String() string {
 func (*GetImportParametersResponse) ProtoMessage() {}
 
 func (x *GetImportParametersResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[89]
+	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[92]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -5795,7 +6198,7 @@ func (x *GetImportParametersResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use GetImportParametersResponse.ProtoReflect.Descriptor instead.
 func (*GetImportParametersResponse) Descriptor() ([]byte, []int) {
-	return file_pkg_api_grpc_proto_xkmsv1_xkms_proto_rawDescGZIP(), []int{89}
+	return file_pkg_api_grpc_proto_xkmsv1_xkms_proto_rawDescGZIP(), []int{92}
 }
 
 func (x *GetImportParametersResponse) GetWrappingPublicKey() []byte {
@@ -5841,13 +6244,17 @@ type WrapKeyRequest struct {
 	ImportToken       []byte                 `protobuf:"bytes,3,opt,name=import_token,json=importToken,proto3" json:"import_token,omitempty"`
 	Algorithm         string                 `protobuf:"bytes,4,opt,name=algorithm,proto3" json:"algorithm,omitempty"`
 	KeySpec           string                 `protobuf:"bytes,5,opt,name=key_spec,json=keySpec,proto3" json:"key_spec,omitempty"`
-	unknownFields     protoimpl.UnknownFields
-	sizeCache         protoimpl.SizeCache
+	// Backend whose wrapping semantics are used. The server used to loop over
+	// every registered backend until one answered, which made the choice depend
+	// on map iteration order; it is now named by the caller.
+	Backend       string `protobuf:"bytes,6,opt,name=backend,proto3" json:"backend,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
 }
 
 func (x *WrapKeyRequest) Reset() {
 	*x = WrapKeyRequest{}
-	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[90]
+	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[93]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -5859,7 +6266,7 @@ func (x *WrapKeyRequest) String() string {
 func (*WrapKeyRequest) ProtoMessage() {}
 
 func (x *WrapKeyRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[90]
+	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[93]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -5872,7 +6279,7 @@ func (x *WrapKeyRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use WrapKeyRequest.ProtoReflect.Descriptor instead.
 func (*WrapKeyRequest) Descriptor() ([]byte, []int) {
-	return file_pkg_api_grpc_proto_xkmsv1_xkms_proto_rawDescGZIP(), []int{90}
+	return file_pkg_api_grpc_proto_xkmsv1_xkms_proto_rawDescGZIP(), []int{93}
 }
 
 func (x *WrapKeyRequest) GetKeyMaterial() []byte {
@@ -5910,6 +6317,13 @@ func (x *WrapKeyRequest) GetKeySpec() string {
 	return ""
 }
 
+func (x *WrapKeyRequest) GetBackend() string {
+	if x != nil {
+		return x.Backend
+	}
+	return ""
+}
+
 // WrapKeyResponse contains wrapped key material
 type WrapKeyResponse struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
@@ -5923,7 +6337,7 @@ type WrapKeyResponse struct {
 
 func (x *WrapKeyResponse) Reset() {
 	*x = WrapKeyResponse{}
-	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[91]
+	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[94]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -5935,7 +6349,7 @@ func (x *WrapKeyResponse) String() string {
 func (*WrapKeyResponse) ProtoMessage() {}
 
 func (x *WrapKeyResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[91]
+	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[94]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -5948,7 +6362,7 @@ func (x *WrapKeyResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use WrapKeyResponse.ProtoReflect.Descriptor instead.
 func (*WrapKeyResponse) Descriptor() ([]byte, []int) {
-	return file_pkg_api_grpc_proto_xkmsv1_xkms_proto_rawDescGZIP(), []int{91}
+	return file_pkg_api_grpc_proto_xkmsv1_xkms_proto_rawDescGZIP(), []int{94}
 }
 
 func (x *WrapKeyResponse) GetWrappedKey() []byte {
@@ -5988,13 +6402,20 @@ type UnwrapKeyRequest struct {
 	WrappingPublicKey []byte                 `protobuf:"bytes,4,opt,name=wrapping_public_key,json=wrappingPublicKey,proto3" json:"wrapping_public_key,omitempty"` // DER-encoded public key
 	KeySpec           string                 `protobuf:"bytes,5,opt,name=key_spec,json=keySpec,proto3" json:"key_spec,omitempty"`
 	Metadata          map[string]string      `protobuf:"bytes,6,rep,name=metadata,proto3" json:"metadata,omitempty" protobuf_key:"bytes,1,opt,name=key" protobuf_val:"bytes,2,opt,name=value"`
-	unknownFields     protoimpl.UnknownFields
-	sizeCache         protoimpl.SizeCache
+	// Backend that performs the unwrap. It has to be the backend that produced
+	// the wrapped material. The server used to try every registered backend in
+	// turn and return the first success, which both made the choice
+	// non-deterministic and turned this RPC into an unwrap oracle across
+	// backends: a caller learned which backend held a key from which attempt
+	// succeeded, and got a free unwrap attempt against every other one.
+	Backend       string `protobuf:"bytes,7,opt,name=backend,proto3" json:"backend,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
 }
 
 func (x *UnwrapKeyRequest) Reset() {
 	*x = UnwrapKeyRequest{}
-	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[92]
+	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[95]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -6006,7 +6427,7 @@ func (x *UnwrapKeyRequest) String() string {
 func (*UnwrapKeyRequest) ProtoMessage() {}
 
 func (x *UnwrapKeyRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[92]
+	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[95]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -6019,7 +6440,7 @@ func (x *UnwrapKeyRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use UnwrapKeyRequest.ProtoReflect.Descriptor instead.
 func (*UnwrapKeyRequest) Descriptor() ([]byte, []int) {
-	return file_pkg_api_grpc_proto_xkmsv1_xkms_proto_rawDescGZIP(), []int{92}
+	return file_pkg_api_grpc_proto_xkmsv1_xkms_proto_rawDescGZIP(), []int{95}
 }
 
 func (x *UnwrapKeyRequest) GetWrappedKey() []byte {
@@ -6064,6 +6485,13 @@ func (x *UnwrapKeyRequest) GetMetadata() map[string]string {
 	return nil
 }
 
+func (x *UnwrapKeyRequest) GetBackend() string {
+	if x != nil {
+		return x.Backend
+	}
+	return ""
+}
+
 // UnwrapKeyResponse contains unwrapped key material
 type UnwrapKeyResponse struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
@@ -6074,7 +6502,7 @@ type UnwrapKeyResponse struct {
 
 func (x *UnwrapKeyResponse) Reset() {
 	*x = UnwrapKeyResponse{}
-	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[93]
+	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[96]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -6086,7 +6514,7 @@ func (x *UnwrapKeyResponse) String() string {
 func (*UnwrapKeyResponse) ProtoMessage() {}
 
 func (x *UnwrapKeyResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[93]
+	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[96]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -6099,7 +6527,7 @@ func (x *UnwrapKeyResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use UnwrapKeyResponse.ProtoReflect.Descriptor instead.
 func (*UnwrapKeyResponse) Descriptor() ([]byte, []int) {
-	return file_pkg_api_grpc_proto_xkmsv1_xkms_proto_rawDescGZIP(), []int{93}
+	return file_pkg_api_grpc_proto_xkmsv1_xkms_proto_rawDescGZIP(), []int{96}
 }
 
 func (x *UnwrapKeyResponse) GetKeyMaterial() []byte {
@@ -6117,19 +6545,33 @@ type WrapKeyByIDRequest struct {
 	WrappingKeyId string `protobuf:"bytes,1,opt,name=wrapping_key_id,json=wrappingKeyId,proto3" json:"wrapping_key_id,omitempty"`
 	// Backend containing the wrapping key
 	WrappingKeyBackend string `protobuf:"bytes,2,opt,name=wrapping_key_backend,json=wrappingKeyBackend,proto3" json:"wrapping_key_backend,omitempty"`
-	// ID of the key to be wrapped (must be extractable/exportable)
+	// ID of the key to be wrapped (must be extractable/exportable).
+	// Exactly one of target_key_id and target_key_material must be set.
 	TargetKeyId string `protobuf:"bytes,3,opt,name=target_key_id,json=targetKeyId,proto3" json:"target_key_id,omitempty"`
 	// Backend containing the target key
 	TargetKeyBackend string `protobuf:"bytes,4,opt,name=target_key_backend,json=targetKeyBackend,proto3" json:"target_key_backend,omitempty"`
 	// Wrapping algorithm (e.g., "RSAES_OAEP_SHA_256", "AES_KEY_WRAP")
-	Algorithm     string `protobuf:"bytes,5,opt,name=algorithm,proto3" json:"algorithm,omitempty"`
+	Algorithm string `protobuf:"bytes,5,opt,name=algorithm,proto3" json:"algorithm,omitempty"`
+	// Plaintext of a key the caller holds that is resident in no backend, for
+	// PKCS#11 C_WrapKey on a key imported with C_CreateObject and CKA_VALUE.
+	TargetKeyMaterial []byte `protobuf:"bytes,6,opt,name=target_key_material,json=targetKeyMaterial,proto3" json:"target_key_material,omitempty"`
+	// CK_GCM_PARAMS.pIv, or the 16-byte AES-CBC IV. Empty asks the service to
+	// generate one; it is carried in the wrapped blob either way.
+	Iv []byte `protobuf:"bytes,7,opt,name=iv,proto3" json:"iv,omitempty"`
+	// CK_GCM_PARAMS.pAAD. Authenticated but not encrypted, so it is not carried
+	// in the blob and must be repeated on unwrap.
+	Aad []byte `protobuf:"bytes,8,opt,name=aad,proto3" json:"aad,omitempty"`
+	// CK_GCM_PARAMS.ulTagBits (96, 104, 112, 120 or 128). Zero means full length.
+	TagBits int32 `protobuf:"varint,9,opt,name=tag_bits,json=tagBits,proto3" json:"tag_bits,omitempty"`
+	// CK_RSA_PKCS_OAEP_PARAMS.pSourceData, the RSA-OAEP label.
+	OaepLabel     []byte `protobuf:"bytes,10,opt,name=oaep_label,json=oaepLabel,proto3" json:"oaep_label,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
 
 func (x *WrapKeyByIDRequest) Reset() {
 	*x = WrapKeyByIDRequest{}
-	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[94]
+	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[97]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -6141,7 +6583,7 @@ func (x *WrapKeyByIDRequest) String() string {
 func (*WrapKeyByIDRequest) ProtoMessage() {}
 
 func (x *WrapKeyByIDRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[94]
+	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[97]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -6154,7 +6596,7 @@ func (x *WrapKeyByIDRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use WrapKeyByIDRequest.ProtoReflect.Descriptor instead.
 func (*WrapKeyByIDRequest) Descriptor() ([]byte, []int) {
-	return file_pkg_api_grpc_proto_xkmsv1_xkms_proto_rawDescGZIP(), []int{94}
+	return file_pkg_api_grpc_proto_xkmsv1_xkms_proto_rawDescGZIP(), []int{97}
 }
 
 func (x *WrapKeyByIDRequest) GetWrappingKeyId() string {
@@ -6192,6 +6634,41 @@ func (x *WrapKeyByIDRequest) GetAlgorithm() string {
 	return ""
 }
 
+func (x *WrapKeyByIDRequest) GetTargetKeyMaterial() []byte {
+	if x != nil {
+		return x.TargetKeyMaterial
+	}
+	return nil
+}
+
+func (x *WrapKeyByIDRequest) GetIv() []byte {
+	if x != nil {
+		return x.Iv
+	}
+	return nil
+}
+
+func (x *WrapKeyByIDRequest) GetAad() []byte {
+	if x != nil {
+		return x.Aad
+	}
+	return nil
+}
+
+func (x *WrapKeyByIDRequest) GetTagBits() int32 {
+	if x != nil {
+		return x.TagBits
+	}
+	return 0
+}
+
+func (x *WrapKeyByIDRequest) GetOaepLabel() []byte {
+	if x != nil {
+		return x.OaepLabel
+	}
+	return nil
+}
+
 // WrapKeyByIDResponse contains the wrapped key material
 type WrapKeyByIDResponse struct {
 	state protoimpl.MessageState `protogen:"open.v1"`
@@ -6205,7 +6682,7 @@ type WrapKeyByIDResponse struct {
 
 func (x *WrapKeyByIDResponse) Reset() {
 	*x = WrapKeyByIDResponse{}
-	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[95]
+	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[98]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -6217,7 +6694,7 @@ func (x *WrapKeyByIDResponse) String() string {
 func (*WrapKeyByIDResponse) ProtoMessage() {}
 
 func (x *WrapKeyByIDResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[95]
+	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[98]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -6230,7 +6707,7 @@ func (x *WrapKeyByIDResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use WrapKeyByIDResponse.ProtoReflect.Descriptor instead.
 func (*WrapKeyByIDResponse) Descriptor() ([]byte, []int) {
-	return file_pkg_api_grpc_proto_xkmsv1_xkms_proto_rawDescGZIP(), []int{95}
+	return file_pkg_api_grpc_proto_xkmsv1_xkms_proto_rawDescGZIP(), []int{98}
 }
 
 func (x *WrapKeyByIDResponse) GetWrappedKey() []byte {
@@ -6274,13 +6751,23 @@ type UnwrapKeyByIDRequest struct {
 	TargetPartition string `protobuf:"bytes,10,opt,name=target_partition,json=targetPartition,proto3" json:"target_partition,omitempty"`
 	// Whether the new key can be exported
 	TargetExportable bool `protobuf:"varint,11,opt,name=target_exportable,json=targetExportable,proto3" json:"target_exportable,omitempty"`
-	unknownFields    protoimpl.UnknownFields
-	sizeCache        protoimpl.SizeCache
+	// CK_GCM_PARAMS.pIv, or the 16-byte AES-CBC IV. Normally empty: the framing
+	// WrapKeyByID produced carries it inside wrapped_key.
+	Iv []byte `protobuf:"bytes,12,opt,name=iv,proto3" json:"iv,omitempty"`
+	// CK_GCM_PARAMS.pAAD. Never carried in the blob, so an AES-GCM wrap made
+	// with AAD can only be reversed by repeating it here.
+	Aad []byte `protobuf:"bytes,13,opt,name=aad,proto3" json:"aad,omitempty"`
+	// CK_GCM_PARAMS.ulTagBits. Must equal the value the wrap used.
+	TagBits int32 `protobuf:"varint,14,opt,name=tag_bits,json=tagBits,proto3" json:"tag_bits,omitempty"`
+	// CK_RSA_PKCS_OAEP_PARAMS.pSourceData. Must equal the label the wrap used.
+	OaepLabel     []byte `protobuf:"bytes,15,opt,name=oaep_label,json=oaepLabel,proto3" json:"oaep_label,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
 }
 
 func (x *UnwrapKeyByIDRequest) Reset() {
 	*x = UnwrapKeyByIDRequest{}
-	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[96]
+	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[99]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -6292,7 +6779,7 @@ func (x *UnwrapKeyByIDRequest) String() string {
 func (*UnwrapKeyByIDRequest) ProtoMessage() {}
 
 func (x *UnwrapKeyByIDRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[96]
+	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[99]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -6305,7 +6792,7 @@ func (x *UnwrapKeyByIDRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use UnwrapKeyByIDRequest.ProtoReflect.Descriptor instead.
 func (*UnwrapKeyByIDRequest) Descriptor() ([]byte, []int) {
-	return file_pkg_api_grpc_proto_xkmsv1_xkms_proto_rawDescGZIP(), []int{96}
+	return file_pkg_api_grpc_proto_xkmsv1_xkms_proto_rawDescGZIP(), []int{99}
 }
 
 func (x *UnwrapKeyByIDRequest) GetWrappedKey() []byte {
@@ -6385,6 +6872,34 @@ func (x *UnwrapKeyByIDRequest) GetTargetExportable() bool {
 	return false
 }
 
+func (x *UnwrapKeyByIDRequest) GetIv() []byte {
+	if x != nil {
+		return x.Iv
+	}
+	return nil
+}
+
+func (x *UnwrapKeyByIDRequest) GetAad() []byte {
+	if x != nil {
+		return x.Aad
+	}
+	return nil
+}
+
+func (x *UnwrapKeyByIDRequest) GetTagBits() int32 {
+	if x != nil {
+		return x.TagBits
+	}
+	return 0
+}
+
+func (x *UnwrapKeyByIDRequest) GetOaepLabel() []byte {
+	if x != nil {
+		return x.OaepLabel
+	}
+	return nil
+}
+
 // UnwrapKeyByIDResponse contains the result of the unwrap operation
 type UnwrapKeyByIDResponse struct {
 	state protoimpl.MessageState `protogen:"open.v1"`
@@ -6402,7 +6917,7 @@ type UnwrapKeyByIDResponse struct {
 
 func (x *UnwrapKeyByIDResponse) Reset() {
 	*x = UnwrapKeyByIDResponse{}
-	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[97]
+	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[100]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -6414,7 +6929,7 @@ func (x *UnwrapKeyByIDResponse) String() string {
 func (*UnwrapKeyByIDResponse) ProtoMessage() {}
 
 func (x *UnwrapKeyByIDResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[97]
+	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[100]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -6427,7 +6942,7 @@ func (x *UnwrapKeyByIDResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use UnwrapKeyByIDResponse.ProtoReflect.Descriptor instead.
 func (*UnwrapKeyByIDResponse) Descriptor() ([]byte, []int) {
-	return file_pkg_api_grpc_proto_xkmsv1_xkms_proto_rawDescGZIP(), []int{97}
+	return file_pkg_api_grpc_proto_xkmsv1_xkms_proto_rawDescGZIP(), []int{100}
 }
 
 func (x *UnwrapKeyByIDResponse) GetKeyId() string {
@@ -6478,7 +6993,7 @@ type ImportKeyRequest struct {
 
 func (x *ImportKeyRequest) Reset() {
 	*x = ImportKeyRequest{}
-	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[98]
+	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[101]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -6490,7 +7005,7 @@ func (x *ImportKeyRequest) String() string {
 func (*ImportKeyRequest) ProtoMessage() {}
 
 func (x *ImportKeyRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[98]
+	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[101]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -6503,7 +7018,7 @@ func (x *ImportKeyRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ImportKeyRequest.ProtoReflect.Descriptor instead.
 func (*ImportKeyRequest) Descriptor() ([]byte, []int) {
-	return file_pkg_api_grpc_proto_xkmsv1_xkms_proto_rawDescGZIP(), []int{98}
+	return file_pkg_api_grpc_proto_xkmsv1_xkms_proto_rawDescGZIP(), []int{101}
 }
 
 func (x *ImportKeyRequest) GetKeyId() string {
@@ -6595,7 +7110,7 @@ type ImportKeyResponse struct {
 
 func (x *ImportKeyResponse) Reset() {
 	*x = ImportKeyResponse{}
-	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[99]
+	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[102]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -6607,7 +7122,7 @@ func (x *ImportKeyResponse) String() string {
 func (*ImportKeyResponse) ProtoMessage() {}
 
 func (x *ImportKeyResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[99]
+	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[102]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -6620,7 +7135,7 @@ func (x *ImportKeyResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ImportKeyResponse.ProtoReflect.Descriptor instead.
 func (*ImportKeyResponse) Descriptor() ([]byte, []int) {
-	return file_pkg_api_grpc_proto_xkmsv1_xkms_proto_rawDescGZIP(), []int{99}
+	return file_pkg_api_grpc_proto_xkmsv1_xkms_proto_rawDescGZIP(), []int{102}
 }
 
 func (x *ImportKeyResponse) GetSuccess() bool {
@@ -6656,7 +7171,7 @@ type ExportKeyRequest struct {
 
 func (x *ExportKeyRequest) Reset() {
 	*x = ExportKeyRequest{}
-	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[100]
+	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[103]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -6668,7 +7183,7 @@ func (x *ExportKeyRequest) String() string {
 func (*ExportKeyRequest) ProtoMessage() {}
 
 func (x *ExportKeyRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[100]
+	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[103]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -6681,7 +7196,7 @@ func (x *ExportKeyRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ExportKeyRequest.ProtoReflect.Descriptor instead.
 func (*ExportKeyRequest) Descriptor() ([]byte, []int) {
-	return file_pkg_api_grpc_proto_xkmsv1_xkms_proto_rawDescGZIP(), []int{100}
+	return file_pkg_api_grpc_proto_xkmsv1_xkms_proto_rawDescGZIP(), []int{103}
 }
 
 func (x *ExportKeyRequest) GetKeyId() string {
@@ -6718,7 +7233,7 @@ type ExportKeyResponse struct {
 
 func (x *ExportKeyResponse) Reset() {
 	*x = ExportKeyResponse{}
-	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[101]
+	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[104]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -6730,7 +7245,7 @@ func (x *ExportKeyResponse) String() string {
 func (*ExportKeyResponse) ProtoMessage() {}
 
 func (x *ExportKeyResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[101]
+	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[104]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -6743,7 +7258,7 @@ func (x *ExportKeyResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ExportKeyResponse.ProtoReflect.Descriptor instead.
 func (*ExportKeyResponse) Descriptor() ([]byte, []int) {
-	return file_pkg_api_grpc_proto_xkmsv1_xkms_proto_rawDescGZIP(), []int{101}
+	return file_pkg_api_grpc_proto_xkmsv1_xkms_proto_rawDescGZIP(), []int{104}
 }
 
 func (x *ExportKeyResponse) GetWrappedKey() []byte {
@@ -6790,7 +7305,7 @@ type ExportKeyMaterialRequest struct {
 
 func (x *ExportKeyMaterialRequest) Reset() {
 	*x = ExportKeyMaterialRequest{}
-	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[102]
+	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[105]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -6802,7 +7317,7 @@ func (x *ExportKeyMaterialRequest) String() string {
 func (*ExportKeyMaterialRequest) ProtoMessage() {}
 
 func (x *ExportKeyMaterialRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[102]
+	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[105]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -6815,7 +7330,7 @@ func (x *ExportKeyMaterialRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ExportKeyMaterialRequest.ProtoReflect.Descriptor instead.
 func (*ExportKeyMaterialRequest) Descriptor() ([]byte, []int) {
-	return file_pkg_api_grpc_proto_xkmsv1_xkms_proto_rawDescGZIP(), []int{102}
+	return file_pkg_api_grpc_proto_xkmsv1_xkms_proto_rawDescGZIP(), []int{105}
 }
 
 func (x *ExportKeyMaterialRequest) GetKeyId() string {
@@ -6851,7 +7366,7 @@ type ExportKeyMaterialResponse struct {
 
 func (x *ExportKeyMaterialResponse) Reset() {
 	*x = ExportKeyMaterialResponse{}
-	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[103]
+	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[106]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -6863,7 +7378,7 @@ func (x *ExportKeyMaterialResponse) String() string {
 func (*ExportKeyMaterialResponse) ProtoMessage() {}
 
 func (x *ExportKeyMaterialResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[103]
+	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[106]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -6876,7 +7391,7 @@ func (x *ExportKeyMaterialResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ExportKeyMaterialResponse.ProtoReflect.Descriptor instead.
 func (*ExportKeyMaterialResponse) Descriptor() ([]byte, []int) {
-	return file_pkg_api_grpc_proto_xkmsv1_xkms_proto_rawDescGZIP(), []int{103}
+	return file_pkg_api_grpc_proto_xkmsv1_xkms_proto_rawDescGZIP(), []int{106}
 }
 
 func (x *ExportKeyMaterialResponse) GetKeyMaterial() []byte {
@@ -6914,7 +7429,7 @@ type CopyKeyRequest struct {
 
 func (x *CopyKeyRequest) Reset() {
 	*x = CopyKeyRequest{}
-	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[104]
+	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[107]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -6926,7 +7441,7 @@ func (x *CopyKeyRequest) String() string {
 func (*CopyKeyRequest) ProtoMessage() {}
 
 func (x *CopyKeyRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[104]
+	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[107]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -6939,7 +7454,7 @@ func (x *CopyKeyRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use CopyKeyRequest.ProtoReflect.Descriptor instead.
 func (*CopyKeyRequest) Descriptor() ([]byte, []int) {
-	return file_pkg_api_grpc_proto_xkmsv1_xkms_proto_rawDescGZIP(), []int{104}
+	return file_pkg_api_grpc_proto_xkmsv1_xkms_proto_rawDescGZIP(), []int{107}
 }
 
 func (x *CopyKeyRequest) GetSourceBackend() string {
@@ -6989,7 +7504,7 @@ type CopyKeyResponse struct {
 
 func (x *CopyKeyResponse) Reset() {
 	*x = CopyKeyResponse{}
-	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[105]
+	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[108]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -7001,7 +7516,7 @@ func (x *CopyKeyResponse) String() string {
 func (*CopyKeyResponse) ProtoMessage() {}
 
 func (x *CopyKeyResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[105]
+	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[108]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -7014,7 +7529,7 @@ func (x *CopyKeyResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use CopyKeyResponse.ProtoReflect.Descriptor instead.
 func (*CopyKeyResponse) Descriptor() ([]byte, []int) {
-	return file_pkg_api_grpc_proto_xkmsv1_xkms_proto_rawDescGZIP(), []int{105}
+	return file_pkg_api_grpc_proto_xkmsv1_xkms_proto_rawDescGZIP(), []int{108}
 }
 
 func (x *CopyKeyResponse) GetSuccess() bool {
@@ -7051,7 +7566,7 @@ type SealRequest struct {
 
 func (x *SealRequest) Reset() {
 	*x = SealRequest{}
-	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[106]
+	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[109]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -7063,7 +7578,7 @@ func (x *SealRequest) String() string {
 func (*SealRequest) ProtoMessage() {}
 
 func (x *SealRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[106]
+	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[109]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -7076,7 +7591,7 @@ func (x *SealRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use SealRequest.ProtoReflect.Descriptor instead.
 func (*SealRequest) Descriptor() ([]byte, []int) {
-	return file_pkg_api_grpc_proto_xkmsv1_xkms_proto_rawDescGZIP(), []int{106}
+	return file_pkg_api_grpc_proto_xkmsv1_xkms_proto_rawDescGZIP(), []int{109}
 }
 
 func (x *SealRequest) GetBackend() string {
@@ -7121,7 +7636,7 @@ type SealResponse struct {
 
 func (x *SealResponse) Reset() {
 	*x = SealResponse{}
-	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[107]
+	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[110]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -7133,7 +7648,7 @@ func (x *SealResponse) String() string {
 func (*SealResponse) ProtoMessage() {}
 
 func (x *SealResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[107]
+	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[110]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -7146,7 +7661,7 @@ func (x *SealResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use SealResponse.ProtoReflect.Descriptor instead.
 func (*SealResponse) Descriptor() ([]byte, []int) {
-	return file_pkg_api_grpc_proto_xkmsv1_xkms_proto_rawDescGZIP(), []int{107}
+	return file_pkg_api_grpc_proto_xkmsv1_xkms_proto_rawDescGZIP(), []int{110}
 }
 
 func (x *SealResponse) GetBackend() string {
@@ -7199,7 +7714,7 @@ type UnsealRequest struct {
 
 func (x *UnsealRequest) Reset() {
 	*x = UnsealRequest{}
-	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[108]
+	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[111]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -7211,7 +7726,7 @@ func (x *UnsealRequest) String() string {
 func (*UnsealRequest) ProtoMessage() {}
 
 func (x *UnsealRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[108]
+	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[111]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -7224,7 +7739,7 @@ func (x *UnsealRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use UnsealRequest.ProtoReflect.Descriptor instead.
 func (*UnsealRequest) Descriptor() ([]byte, []int) {
-	return file_pkg_api_grpc_proto_xkmsv1_xkms_proto_rawDescGZIP(), []int{108}
+	return file_pkg_api_grpc_proto_xkmsv1_xkms_proto_rawDescGZIP(), []int{111}
 }
 
 func (x *UnsealRequest) GetBackend() string {
@@ -7279,7 +7794,7 @@ type UnsealResponse struct {
 
 func (x *UnsealResponse) Reset() {
 	*x = UnsealResponse{}
-	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[109]
+	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[112]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -7291,7 +7806,7 @@ func (x *UnsealResponse) String() string {
 func (*UnsealResponse) ProtoMessage() {}
 
 func (x *UnsealResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[109]
+	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[112]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -7304,7 +7819,7 @@ func (x *UnsealResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use UnsealResponse.ProtoReflect.Descriptor instead.
 func (*UnsealResponse) Descriptor() ([]byte, []int) {
-	return file_pkg_api_grpc_proto_xkmsv1_xkms_proto_rawDescGZIP(), []int{109}
+	return file_pkg_api_grpc_proto_xkmsv1_xkms_proto_rawDescGZIP(), []int{112}
 }
 
 func (x *UnsealResponse) GetPlaintext() []byte {
@@ -7324,7 +7839,7 @@ type CanSealRequest struct {
 
 func (x *CanSealRequest) Reset() {
 	*x = CanSealRequest{}
-	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[110]
+	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[113]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -7336,7 +7851,7 @@ func (x *CanSealRequest) String() string {
 func (*CanSealRequest) ProtoMessage() {}
 
 func (x *CanSealRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[110]
+	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[113]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -7349,7 +7864,7 @@ func (x *CanSealRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use CanSealRequest.ProtoReflect.Descriptor instead.
 func (*CanSealRequest) Descriptor() ([]byte, []int) {
-	return file_pkg_api_grpc_proto_xkmsv1_xkms_proto_rawDescGZIP(), []int{110}
+	return file_pkg_api_grpc_proto_xkmsv1_xkms_proto_rawDescGZIP(), []int{113}
 }
 
 func (x *CanSealRequest) GetBackend() string {
@@ -7369,7 +7884,7 @@ type CanSealResponse struct {
 
 func (x *CanSealResponse) Reset() {
 	*x = CanSealResponse{}
-	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[111]
+	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[114]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -7381,7 +7896,7 @@ func (x *CanSealResponse) String() string {
 func (*CanSealResponse) ProtoMessage() {}
 
 func (x *CanSealResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[111]
+	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[114]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -7394,7 +7909,7 @@ func (x *CanSealResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use CanSealResponse.ProtoReflect.Descriptor instead.
 func (*CanSealResponse) Descriptor() ([]byte, []int) {
-	return file_pkg_api_grpc_proto_xkmsv1_xkms_proto_rawDescGZIP(), []int{111}
+	return file_pkg_api_grpc_proto_xkmsv1_xkms_proto_rawDescGZIP(), []int{114}
 }
 
 func (x *CanSealResponse) GetCanSeal() bool {
@@ -7416,7 +7931,7 @@ type AttestKeyRequest struct {
 
 func (x *AttestKeyRequest) Reset() {
 	*x = AttestKeyRequest{}
-	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[112]
+	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[115]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -7428,7 +7943,7 @@ func (x *AttestKeyRequest) String() string {
 func (*AttestKeyRequest) ProtoMessage() {}
 
 func (x *AttestKeyRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[112]
+	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[115]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -7441,7 +7956,7 @@ func (x *AttestKeyRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use AttestKeyRequest.ProtoReflect.Descriptor instead.
 func (*AttestKeyRequest) Descriptor() ([]byte, []int) {
-	return file_pkg_api_grpc_proto_xkmsv1_xkms_proto_rawDescGZIP(), []int{112}
+	return file_pkg_api_grpc_proto_xkmsv1_xkms_proto_rawDescGZIP(), []int{115}
 }
 
 func (x *AttestKeyRequest) GetBackend() string {
@@ -7481,7 +7996,7 @@ type AttestKeyResponse struct {
 
 func (x *AttestKeyResponse) Reset() {
 	*x = AttestKeyResponse{}
-	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[113]
+	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[116]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -7493,7 +8008,7 @@ func (x *AttestKeyResponse) String() string {
 func (*AttestKeyResponse) ProtoMessage() {}
 
 func (x *AttestKeyResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[113]
+	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[116]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -7506,7 +8021,7 @@ func (x *AttestKeyResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use AttestKeyResponse.ProtoReflect.Descriptor instead.
 func (*AttestKeyResponse) Descriptor() ([]byte, []int) {
-	return file_pkg_api_grpc_proto_xkmsv1_xkms_proto_rawDescGZIP(), []int{113}
+	return file_pkg_api_grpc_proto_xkmsv1_xkms_proto_rawDescGZIP(), []int{116}
 }
 
 func (x *AttestKeyResponse) GetFormat() string {
@@ -7575,7 +8090,7 @@ type FrostKeyInfo struct {
 
 func (x *FrostKeyInfo) Reset() {
 	*x = FrostKeyInfo{}
-	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[114]
+	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[117]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -7587,7 +8102,7 @@ func (x *FrostKeyInfo) String() string {
 func (*FrostKeyInfo) ProtoMessage() {}
 
 func (x *FrostKeyInfo) ProtoReflect() protoreflect.Message {
-	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[114]
+	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[117]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -7600,7 +8115,7 @@ func (x *FrostKeyInfo) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use FrostKeyInfo.ProtoReflect.Descriptor instead.
 func (*FrostKeyInfo) Descriptor() ([]byte, []int) {
-	return file_pkg_api_grpc_proto_xkmsv1_xkms_proto_rawDescGZIP(), []int{114}
+	return file_pkg_api_grpc_proto_xkmsv1_xkms_proto_rawDescGZIP(), []int{117}
 }
 
 func (x *FrostKeyInfo) GetKeyId() string {
@@ -7677,7 +8192,7 @@ type FrostKeyPackage struct {
 
 func (x *FrostKeyPackage) Reset() {
 	*x = FrostKeyPackage{}
-	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[115]
+	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[118]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -7689,7 +8204,7 @@ func (x *FrostKeyPackage) String() string {
 func (*FrostKeyPackage) ProtoMessage() {}
 
 func (x *FrostKeyPackage) ProtoReflect() protoreflect.Message {
-	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[115]
+	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[118]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -7702,7 +8217,7 @@ func (x *FrostKeyPackage) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use FrostKeyPackage.ProtoReflect.Descriptor instead.
 func (*FrostKeyPackage) Descriptor() ([]byte, []int) {
-	return file_pkg_api_grpc_proto_xkmsv1_xkms_proto_rawDescGZIP(), []int{115}
+	return file_pkg_api_grpc_proto_xkmsv1_xkms_proto_rawDescGZIP(), []int{118}
 }
 
 func (x *FrostKeyPackage) GetKeyId() string {
@@ -7780,7 +8295,7 @@ type FrostCommitment struct {
 
 func (x *FrostCommitment) Reset() {
 	*x = FrostCommitment{}
-	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[116]
+	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[119]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -7792,7 +8307,7 @@ func (x *FrostCommitment) String() string {
 func (*FrostCommitment) ProtoMessage() {}
 
 func (x *FrostCommitment) ProtoReflect() protoreflect.Message {
-	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[116]
+	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[119]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -7805,7 +8320,7 @@ func (x *FrostCommitment) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use FrostCommitment.ProtoReflect.Descriptor instead.
 func (*FrostCommitment) Descriptor() ([]byte, []int) {
-	return file_pkg_api_grpc_proto_xkmsv1_xkms_proto_rawDescGZIP(), []int{116}
+	return file_pkg_api_grpc_proto_xkmsv1_xkms_proto_rawDescGZIP(), []int{119}
 }
 
 func (x *FrostCommitment) GetParticipantId() uint32 {
@@ -7841,7 +8356,7 @@ type FrostSignatureShare struct {
 
 func (x *FrostSignatureShare) Reset() {
 	*x = FrostSignatureShare{}
-	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[117]
+	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[120]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -7853,7 +8368,7 @@ func (x *FrostSignatureShare) String() string {
 func (*FrostSignatureShare) ProtoMessage() {}
 
 func (x *FrostSignatureShare) ProtoReflect() protoreflect.Message {
-	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[117]
+	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[120]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -7866,7 +8381,7 @@ func (x *FrostSignatureShare) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use FrostSignatureShare.ProtoReflect.Descriptor instead.
 func (*FrostSignatureShare) Descriptor() ([]byte, []int) {
-	return file_pkg_api_grpc_proto_xkmsv1_xkms_proto_rawDescGZIP(), []int{117}
+	return file_pkg_api_grpc_proto_xkmsv1_xkms_proto_rawDescGZIP(), []int{120}
 }
 
 func (x *FrostSignatureShare) GetParticipantId() uint32 {
@@ -7906,7 +8421,7 @@ type FrostGenerateKeyRequest struct {
 
 func (x *FrostGenerateKeyRequest) Reset() {
 	*x = FrostGenerateKeyRequest{}
-	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[118]
+	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[121]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -7918,7 +8433,7 @@ func (x *FrostGenerateKeyRequest) String() string {
 func (*FrostGenerateKeyRequest) ProtoMessage() {}
 
 func (x *FrostGenerateKeyRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[118]
+	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[121]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -7931,7 +8446,7 @@ func (x *FrostGenerateKeyRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use FrostGenerateKeyRequest.ProtoReflect.Descriptor instead.
 func (*FrostGenerateKeyRequest) Descriptor() ([]byte, []int) {
-	return file_pkg_api_grpc_proto_xkmsv1_xkms_proto_rawDescGZIP(), []int{118}
+	return file_pkg_api_grpc_proto_xkmsv1_xkms_proto_rawDescGZIP(), []int{121}
 }
 
 func (x *FrostGenerateKeyRequest) GetKeyId() string {
@@ -8000,7 +8515,7 @@ type FrostGenerateKeyResponse struct {
 
 func (x *FrostGenerateKeyResponse) Reset() {
 	*x = FrostGenerateKeyResponse{}
-	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[119]
+	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[122]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -8012,7 +8527,7 @@ func (x *FrostGenerateKeyResponse) String() string {
 func (*FrostGenerateKeyResponse) ProtoMessage() {}
 
 func (x *FrostGenerateKeyResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[119]
+	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[122]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -8025,7 +8540,7 @@ func (x *FrostGenerateKeyResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use FrostGenerateKeyResponse.ProtoReflect.Descriptor instead.
 func (*FrostGenerateKeyResponse) Descriptor() ([]byte, []int) {
-	return file_pkg_api_grpc_proto_xkmsv1_xkms_proto_rawDescGZIP(), []int{119}
+	return file_pkg_api_grpc_proto_xkmsv1_xkms_proto_rawDescGZIP(), []int{122}
 }
 
 func (x *FrostGenerateKeyResponse) GetKeyId() string {
@@ -8094,7 +8609,7 @@ type FrostImportKeyRequest struct {
 
 func (x *FrostImportKeyRequest) Reset() {
 	*x = FrostImportKeyRequest{}
-	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[120]
+	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[123]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -8106,7 +8621,7 @@ func (x *FrostImportKeyRequest) String() string {
 func (*FrostImportKeyRequest) ProtoMessage() {}
 
 func (x *FrostImportKeyRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[120]
+	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[123]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -8119,7 +8634,7 @@ func (x *FrostImportKeyRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use FrostImportKeyRequest.ProtoReflect.Descriptor instead.
 func (*FrostImportKeyRequest) Descriptor() ([]byte, []int) {
-	return file_pkg_api_grpc_proto_xkmsv1_xkms_proto_rawDescGZIP(), []int{120}
+	return file_pkg_api_grpc_proto_xkmsv1_xkms_proto_rawDescGZIP(), []int{123}
 }
 
 func (x *FrostImportKeyRequest) GetPackage() *FrostKeyPackage {
@@ -8143,7 +8658,7 @@ type FrostImportKeyResponse struct {
 
 func (x *FrostImportKeyResponse) Reset() {
 	*x = FrostImportKeyResponse{}
-	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[121]
+	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[124]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -8155,7 +8670,7 @@ func (x *FrostImportKeyResponse) String() string {
 func (*FrostImportKeyResponse) ProtoMessage() {}
 
 func (x *FrostImportKeyResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[121]
+	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[124]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -8168,7 +8683,7 @@ func (x *FrostImportKeyResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use FrostImportKeyResponse.ProtoReflect.Descriptor instead.
 func (*FrostImportKeyResponse) Descriptor() ([]byte, []int) {
-	return file_pkg_api_grpc_proto_xkmsv1_xkms_proto_rawDescGZIP(), []int{121}
+	return file_pkg_api_grpc_proto_xkmsv1_xkms_proto_rawDescGZIP(), []int{124}
 }
 
 func (x *FrostImportKeyResponse) GetSuccess() bool {
@@ -8217,7 +8732,7 @@ type FrostListKeysRequest struct {
 
 func (x *FrostListKeysRequest) Reset() {
 	*x = FrostListKeysRequest{}
-	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[122]
+	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[125]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -8229,7 +8744,7 @@ func (x *FrostListKeysRequest) String() string {
 func (*FrostListKeysRequest) ProtoMessage() {}
 
 func (x *FrostListKeysRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[122]
+	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[125]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -8242,7 +8757,7 @@ func (x *FrostListKeysRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use FrostListKeysRequest.ProtoReflect.Descriptor instead.
 func (*FrostListKeysRequest) Descriptor() ([]byte, []int) {
-	return file_pkg_api_grpc_proto_xkmsv1_xkms_proto_rawDescGZIP(), []int{122}
+	return file_pkg_api_grpc_proto_xkmsv1_xkms_proto_rawDescGZIP(), []int{125}
 }
 
 func (x *FrostListKeysRequest) GetLimit() int32 {
@@ -8270,7 +8785,7 @@ type FrostListKeysResponse struct {
 
 func (x *FrostListKeysResponse) Reset() {
 	*x = FrostListKeysResponse{}
-	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[123]
+	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[126]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -8282,7 +8797,7 @@ func (x *FrostListKeysResponse) String() string {
 func (*FrostListKeysResponse) ProtoMessage() {}
 
 func (x *FrostListKeysResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[123]
+	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[126]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -8295,7 +8810,7 @@ func (x *FrostListKeysResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use FrostListKeysResponse.ProtoReflect.Descriptor instead.
 func (*FrostListKeysResponse) Descriptor() ([]byte, []int) {
-	return file_pkg_api_grpc_proto_xkmsv1_xkms_proto_rawDescGZIP(), []int{123}
+	return file_pkg_api_grpc_proto_xkmsv1_xkms_proto_rawDescGZIP(), []int{126}
 }
 
 func (x *FrostListKeysResponse) GetKeys() []*FrostKeyInfo {
@@ -8322,7 +8837,7 @@ type FrostGetKeyRequest struct {
 
 func (x *FrostGetKeyRequest) Reset() {
 	*x = FrostGetKeyRequest{}
-	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[124]
+	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[127]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -8334,7 +8849,7 @@ func (x *FrostGetKeyRequest) String() string {
 func (*FrostGetKeyRequest) ProtoMessage() {}
 
 func (x *FrostGetKeyRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[124]
+	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[127]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -8347,7 +8862,7 @@ func (x *FrostGetKeyRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use FrostGetKeyRequest.ProtoReflect.Descriptor instead.
 func (*FrostGetKeyRequest) Descriptor() ([]byte, []int) {
-	return file_pkg_api_grpc_proto_xkmsv1_xkms_proto_rawDescGZIP(), []int{124}
+	return file_pkg_api_grpc_proto_xkmsv1_xkms_proto_rawDescGZIP(), []int{127}
 }
 
 func (x *FrostGetKeyRequest) GetKeyId() string {
@@ -8367,7 +8882,7 @@ type FrostGetKeyResponse struct {
 
 func (x *FrostGetKeyResponse) Reset() {
 	*x = FrostGetKeyResponse{}
-	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[125]
+	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[128]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -8379,7 +8894,7 @@ func (x *FrostGetKeyResponse) String() string {
 func (*FrostGetKeyResponse) ProtoMessage() {}
 
 func (x *FrostGetKeyResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[125]
+	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[128]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -8392,7 +8907,7 @@ func (x *FrostGetKeyResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use FrostGetKeyResponse.ProtoReflect.Descriptor instead.
 func (*FrostGetKeyResponse) Descriptor() ([]byte, []int) {
-	return file_pkg_api_grpc_proto_xkmsv1_xkms_proto_rawDescGZIP(), []int{125}
+	return file_pkg_api_grpc_proto_xkmsv1_xkms_proto_rawDescGZIP(), []int{128}
 }
 
 func (x *FrostGetKeyResponse) GetKey() *FrostKeyInfo {
@@ -8412,7 +8927,7 @@ type FrostDeleteKeyRequest struct {
 
 func (x *FrostDeleteKeyRequest) Reset() {
 	*x = FrostDeleteKeyRequest{}
-	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[126]
+	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[129]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -8424,7 +8939,7 @@ func (x *FrostDeleteKeyRequest) String() string {
 func (*FrostDeleteKeyRequest) ProtoMessage() {}
 
 func (x *FrostDeleteKeyRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[126]
+	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[129]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -8437,7 +8952,7 @@ func (x *FrostDeleteKeyRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use FrostDeleteKeyRequest.ProtoReflect.Descriptor instead.
 func (*FrostDeleteKeyRequest) Descriptor() ([]byte, []int) {
-	return file_pkg_api_grpc_proto_xkmsv1_xkms_proto_rawDescGZIP(), []int{126}
+	return file_pkg_api_grpc_proto_xkmsv1_xkms_proto_rawDescGZIP(), []int{129}
 }
 
 func (x *FrostDeleteKeyRequest) GetKeyId() string {
@@ -8458,7 +8973,7 @@ type FrostDeleteKeyResponse struct {
 
 func (x *FrostDeleteKeyResponse) Reset() {
 	*x = FrostDeleteKeyResponse{}
-	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[127]
+	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[130]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -8470,7 +8985,7 @@ func (x *FrostDeleteKeyResponse) String() string {
 func (*FrostDeleteKeyResponse) ProtoMessage() {}
 
 func (x *FrostDeleteKeyResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[127]
+	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[130]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -8483,7 +8998,7 @@ func (x *FrostDeleteKeyResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use FrostDeleteKeyResponse.ProtoReflect.Descriptor instead.
 func (*FrostDeleteKeyResponse) Descriptor() ([]byte, []int) {
-	return file_pkg_api_grpc_proto_xkmsv1_xkms_proto_rawDescGZIP(), []int{127}
+	return file_pkg_api_grpc_proto_xkmsv1_xkms_proto_rawDescGZIP(), []int{130}
 }
 
 func (x *FrostDeleteKeyResponse) GetSuccess() bool {
@@ -8510,7 +9025,7 @@ type FrostGenerateNoncesRequest struct {
 
 func (x *FrostGenerateNoncesRequest) Reset() {
 	*x = FrostGenerateNoncesRequest{}
-	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[128]
+	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[131]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -8522,7 +9037,7 @@ func (x *FrostGenerateNoncesRequest) String() string {
 func (*FrostGenerateNoncesRequest) ProtoMessage() {}
 
 func (x *FrostGenerateNoncesRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[128]
+	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[131]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -8535,7 +9050,7 @@ func (x *FrostGenerateNoncesRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use FrostGenerateNoncesRequest.ProtoReflect.Descriptor instead.
 func (*FrostGenerateNoncesRequest) Descriptor() ([]byte, []int) {
-	return file_pkg_api_grpc_proto_xkmsv1_xkms_proto_rawDescGZIP(), []int{128}
+	return file_pkg_api_grpc_proto_xkmsv1_xkms_proto_rawDescGZIP(), []int{131}
 }
 
 func (x *FrostGenerateNoncesRequest) GetKeyId() string {
@@ -8560,7 +9075,7 @@ type FrostGenerateNoncesResponse struct {
 
 func (x *FrostGenerateNoncesResponse) Reset() {
 	*x = FrostGenerateNoncesResponse{}
-	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[129]
+	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[132]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -8572,7 +9087,7 @@ func (x *FrostGenerateNoncesResponse) String() string {
 func (*FrostGenerateNoncesResponse) ProtoMessage() {}
 
 func (x *FrostGenerateNoncesResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[129]
+	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[132]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -8585,7 +9100,7 @@ func (x *FrostGenerateNoncesResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use FrostGenerateNoncesResponse.ProtoReflect.Descriptor instead.
 func (*FrostGenerateNoncesResponse) Descriptor() ([]byte, []int) {
-	return file_pkg_api_grpc_proto_xkmsv1_xkms_proto_rawDescGZIP(), []int{129}
+	return file_pkg_api_grpc_proto_xkmsv1_xkms_proto_rawDescGZIP(), []int{132}
 }
 
 func (x *FrostGenerateNoncesResponse) GetParticipantId() uint32 {
@@ -8647,7 +9162,7 @@ type FrostSignRoundRequest struct {
 
 func (x *FrostSignRoundRequest) Reset() {
 	*x = FrostSignRoundRequest{}
-	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[130]
+	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[133]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -8659,7 +9174,7 @@ func (x *FrostSignRoundRequest) String() string {
 func (*FrostSignRoundRequest) ProtoMessage() {}
 
 func (x *FrostSignRoundRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[130]
+	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[133]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -8672,7 +9187,7 @@ func (x *FrostSignRoundRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use FrostSignRoundRequest.ProtoReflect.Descriptor instead.
 func (*FrostSignRoundRequest) Descriptor() ([]byte, []int) {
-	return file_pkg_api_grpc_proto_xkmsv1_xkms_proto_rawDescGZIP(), []int{130}
+	return file_pkg_api_grpc_proto_xkmsv1_xkms_proto_rawDescGZIP(), []int{133}
 }
 
 func (x *FrostSignRoundRequest) GetKeyId() string {
@@ -8743,7 +9258,7 @@ type FrostSignRoundResponse struct {
 
 func (x *FrostSignRoundResponse) Reset() {
 	*x = FrostSignRoundResponse{}
-	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[131]
+	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[134]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -8755,7 +9270,7 @@ func (x *FrostSignRoundResponse) String() string {
 func (*FrostSignRoundResponse) ProtoMessage() {}
 
 func (x *FrostSignRoundResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[131]
+	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[134]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -8768,7 +9283,7 @@ func (x *FrostSignRoundResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use FrostSignRoundResponse.ProtoReflect.Descriptor instead.
 func (*FrostSignRoundResponse) Descriptor() ([]byte, []int) {
-	return file_pkg_api_grpc_proto_xkmsv1_xkms_proto_rawDescGZIP(), []int{131}
+	return file_pkg_api_grpc_proto_xkmsv1_xkms_proto_rawDescGZIP(), []int{134}
 }
 
 func (x *FrostSignRoundResponse) GetParticipantId() uint32 {
@@ -8806,7 +9321,7 @@ type FrostAggregateRequest struct {
 
 func (x *FrostAggregateRequest) Reset() {
 	*x = FrostAggregateRequest{}
-	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[132]
+	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[135]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -8818,7 +9333,7 @@ func (x *FrostAggregateRequest) String() string {
 func (*FrostAggregateRequest) ProtoMessage() {}
 
 func (x *FrostAggregateRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[132]
+	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[135]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -8831,7 +9346,7 @@ func (x *FrostAggregateRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use FrostAggregateRequest.ProtoReflect.Descriptor instead.
 func (*FrostAggregateRequest) Descriptor() ([]byte, []int) {
-	return file_pkg_api_grpc_proto_xkmsv1_xkms_proto_rawDescGZIP(), []int{132}
+	return file_pkg_api_grpc_proto_xkmsv1_xkms_proto_rawDescGZIP(), []int{135}
 }
 
 func (x *FrostAggregateRequest) GetKeyId() string {
@@ -8880,7 +9395,7 @@ type FrostAggregateResponse struct {
 
 func (x *FrostAggregateResponse) Reset() {
 	*x = FrostAggregateResponse{}
-	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[133]
+	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[136]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -8892,7 +9407,7 @@ func (x *FrostAggregateResponse) String() string {
 func (*FrostAggregateResponse) ProtoMessage() {}
 
 func (x *FrostAggregateResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[133]
+	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[136]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -8905,7 +9420,7 @@ func (x *FrostAggregateResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use FrostAggregateResponse.ProtoReflect.Descriptor instead.
 func (*FrostAggregateResponse) Descriptor() ([]byte, []int) {
-	return file_pkg_api_grpc_proto_xkmsv1_xkms_proto_rawDescGZIP(), []int{133}
+	return file_pkg_api_grpc_proto_xkmsv1_xkms_proto_rawDescGZIP(), []int{136}
 }
 
 func (x *FrostAggregateResponse) GetSignature() []byte {
@@ -8934,7 +9449,7 @@ type FrostVerifyRequest struct {
 
 func (x *FrostVerifyRequest) Reset() {
 	*x = FrostVerifyRequest{}
-	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[134]
+	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[137]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -8946,7 +9461,7 @@ func (x *FrostVerifyRequest) String() string {
 func (*FrostVerifyRequest) ProtoMessage() {}
 
 func (x *FrostVerifyRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[134]
+	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[137]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -8959,7 +9474,7 @@ func (x *FrostVerifyRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use FrostVerifyRequest.ProtoReflect.Descriptor instead.
 func (*FrostVerifyRequest) Descriptor() ([]byte, []int) {
-	return file_pkg_api_grpc_proto_xkmsv1_xkms_proto_rawDescGZIP(), []int{134}
+	return file_pkg_api_grpc_proto_xkmsv1_xkms_proto_rawDescGZIP(), []int{137}
 }
 
 func (x *FrostVerifyRequest) GetKeyId() string {
@@ -8994,7 +9509,7 @@ type FrostVerifyResponse struct {
 
 func (x *FrostVerifyResponse) Reset() {
 	*x = FrostVerifyResponse{}
-	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[135]
+	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[138]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -9006,7 +9521,7 @@ func (x *FrostVerifyResponse) String() string {
 func (*FrostVerifyResponse) ProtoMessage() {}
 
 func (x *FrostVerifyResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[135]
+	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[138]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -9019,7 +9534,7 @@ func (x *FrostVerifyResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use FrostVerifyResponse.ProtoReflect.Descriptor instead.
 func (*FrostVerifyResponse) Descriptor() ([]byte, []int) {
-	return file_pkg_api_grpc_proto_xkmsv1_xkms_proto_rawDescGZIP(), []int{135}
+	return file_pkg_api_grpc_proto_xkmsv1_xkms_proto_rawDescGZIP(), []int{138}
 }
 
 func (x *FrostVerifyResponse) GetValid() bool {
@@ -9049,7 +9564,7 @@ type GetCABundleRequest struct {
 
 func (x *GetCABundleRequest) Reset() {
 	*x = GetCABundleRequest{}
-	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[136]
+	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[139]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -9061,7 +9576,7 @@ func (x *GetCABundleRequest) String() string {
 func (*GetCABundleRequest) ProtoMessage() {}
 
 func (x *GetCABundleRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[136]
+	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[139]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -9074,7 +9589,7 @@ func (x *GetCABundleRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use GetCABundleRequest.ProtoReflect.Descriptor instead.
 func (*GetCABundleRequest) Descriptor() ([]byte, []int) {
-	return file_pkg_api_grpc_proto_xkmsv1_xkms_proto_rawDescGZIP(), []int{136}
+	return file_pkg_api_grpc_proto_xkmsv1_xkms_proto_rawDescGZIP(), []int{139}
 }
 
 func (x *GetCABundleRequest) GetStoreType() string {
@@ -9106,7 +9621,7 @@ type GetCABundleResponse struct {
 
 func (x *GetCABundleResponse) Reset() {
 	*x = GetCABundleResponse{}
-	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[137]
+	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[140]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -9118,7 +9633,7 @@ func (x *GetCABundleResponse) String() string {
 func (*GetCABundleResponse) ProtoMessage() {}
 
 func (x *GetCABundleResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[137]
+	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[140]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -9131,7 +9646,7 @@ func (x *GetCABundleResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use GetCABundleResponse.ProtoReflect.Descriptor instead.
 func (*GetCABundleResponse) Descriptor() ([]byte, []int) {
-	return file_pkg_api_grpc_proto_xkmsv1_xkms_proto_rawDescGZIP(), []int{137}
+	return file_pkg_api_grpc_proto_xkmsv1_xkms_proto_rawDescGZIP(), []int{140}
 }
 
 func (x *GetCABundleResponse) GetBundlePem() []byte {
@@ -9165,7 +9680,7 @@ type GetCACertificateRequest struct {
 
 func (x *GetCACertificateRequest) Reset() {
 	*x = GetCACertificateRequest{}
-	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[138]
+	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[141]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -9177,7 +9692,7 @@ func (x *GetCACertificateRequest) String() string {
 func (*GetCACertificateRequest) ProtoMessage() {}
 
 func (x *GetCACertificateRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[138]
+	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[141]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -9190,7 +9705,7 @@ func (x *GetCACertificateRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use GetCACertificateRequest.ProtoReflect.Descriptor instead.
 func (*GetCACertificateRequest) Descriptor() ([]byte, []int) {
-	return file_pkg_api_grpc_proto_xkmsv1_xkms_proto_rawDescGZIP(), []int{138}
+	return file_pkg_api_grpc_proto_xkmsv1_xkms_proto_rawDescGZIP(), []int{141}
 }
 
 func (x *GetCACertificateRequest) GetIdentity() string {
@@ -9216,7 +9731,7 @@ type GetCACertificateResponse struct {
 
 func (x *GetCACertificateResponse) Reset() {
 	*x = GetCACertificateResponse{}
-	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[139]
+	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[142]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -9228,7 +9743,7 @@ func (x *GetCACertificateResponse) String() string {
 func (*GetCACertificateResponse) ProtoMessage() {}
 
 func (x *GetCACertificateResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[139]
+	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[142]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -9241,7 +9756,7 @@ func (x *GetCACertificateResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use GetCACertificateResponse.ProtoReflect.Descriptor instead.
 func (*GetCACertificateResponse) Descriptor() ([]byte, []int) {
-	return file_pkg_api_grpc_proto_xkmsv1_xkms_proto_rawDescGZIP(), []int{139}
+	return file_pkg_api_grpc_proto_xkmsv1_xkms_proto_rawDescGZIP(), []int{142}
 }
 
 func (x *GetCACertificateResponse) GetCertificatePem() []byte {
@@ -9305,7 +9820,7 @@ type SignCSRRequest struct {
 
 func (x *SignCSRRequest) Reset() {
 	*x = SignCSRRequest{}
-	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[140]
+	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[143]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -9317,7 +9832,7 @@ func (x *SignCSRRequest) String() string {
 func (*SignCSRRequest) ProtoMessage() {}
 
 func (x *SignCSRRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[140]
+	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[143]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -9330,7 +9845,7 @@ func (x *SignCSRRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use SignCSRRequest.ProtoReflect.Descriptor instead.
 func (*SignCSRRequest) Descriptor() ([]byte, []int) {
-	return file_pkg_api_grpc_proto_xkmsv1_xkms_proto_rawDescGZIP(), []int{140}
+	return file_pkg_api_grpc_proto_xkmsv1_xkms_proto_rawDescGZIP(), []int{143}
 }
 
 func (x *SignCSRRequest) GetCsrPem() []byte {
@@ -9366,7 +9881,7 @@ type SignCSRResponse struct {
 
 func (x *SignCSRResponse) Reset() {
 	*x = SignCSRResponse{}
-	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[141]
+	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[144]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -9378,7 +9893,7 @@ func (x *SignCSRResponse) String() string {
 func (*SignCSRResponse) ProtoMessage() {}
 
 func (x *SignCSRResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[141]
+	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[144]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -9391,7 +9906,7 @@ func (x *SignCSRResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use SignCSRResponse.ProtoReflect.Descriptor instead.
 func (*SignCSRResponse) Descriptor() ([]byte, []int) {
-	return file_pkg_api_grpc_proto_xkmsv1_xkms_proto_rawDescGZIP(), []int{141}
+	return file_pkg_api_grpc_proto_xkmsv1_xkms_proto_rawDescGZIP(), []int{144}
 }
 
 func (x *SignCSRResponse) GetCertificatePem() []byte {
@@ -9430,7 +9945,7 @@ type IssueCertificateRequest struct {
 
 func (x *IssueCertificateRequest) Reset() {
 	*x = IssueCertificateRequest{}
-	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[142]
+	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[145]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -9442,7 +9957,7 @@ func (x *IssueCertificateRequest) String() string {
 func (*IssueCertificateRequest) ProtoMessage() {}
 
 func (x *IssueCertificateRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[142]
+	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[145]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -9455,7 +9970,7 @@ func (x *IssueCertificateRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use IssueCertificateRequest.ProtoReflect.Descriptor instead.
 func (*IssueCertificateRequest) Descriptor() ([]byte, []int) {
-	return file_pkg_api_grpc_proto_xkmsv1_xkms_proto_rawDescGZIP(), []int{142}
+	return file_pkg_api_grpc_proto_xkmsv1_xkms_proto_rawDescGZIP(), []int{145}
 }
 
 func (x *IssueCertificateRequest) GetProfile() string {
@@ -9513,7 +10028,7 @@ type IssueCertificateResponse struct {
 
 func (x *IssueCertificateResponse) Reset() {
 	*x = IssueCertificateResponse{}
-	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[143]
+	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[146]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -9525,7 +10040,7 @@ func (x *IssueCertificateResponse) String() string {
 func (*IssueCertificateResponse) ProtoMessage() {}
 
 func (x *IssueCertificateResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[143]
+	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[146]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -9538,7 +10053,7 @@ func (x *IssueCertificateResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use IssueCertificateResponse.ProtoReflect.Descriptor instead.
 func (*IssueCertificateResponse) Descriptor() ([]byte, []int) {
-	return file_pkg_api_grpc_proto_xkmsv1_xkms_proto_rawDescGZIP(), []int{143}
+	return file_pkg_api_grpc_proto_xkmsv1_xkms_proto_rawDescGZIP(), []int{146}
 }
 
 func (x *IssueCertificateResponse) GetCertificatePem() []byte {
@@ -9580,7 +10095,7 @@ type RevokeCertificateRequest struct {
 
 func (x *RevokeCertificateRequest) Reset() {
 	*x = RevokeCertificateRequest{}
-	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[144]
+	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[147]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -9592,7 +10107,7 @@ func (x *RevokeCertificateRequest) String() string {
 func (*RevokeCertificateRequest) ProtoMessage() {}
 
 func (x *RevokeCertificateRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[144]
+	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[147]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -9605,7 +10120,7 @@ func (x *RevokeCertificateRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use RevokeCertificateRequest.ProtoReflect.Descriptor instead.
 func (*RevokeCertificateRequest) Descriptor() ([]byte, []int) {
-	return file_pkg_api_grpc_proto_xkmsv1_xkms_proto_rawDescGZIP(), []int{144}
+	return file_pkg_api_grpc_proto_xkmsv1_xkms_proto_rawDescGZIP(), []int{147}
 }
 
 func (x *RevokeCertificateRequest) GetSerialNumber() string {
@@ -9633,7 +10148,7 @@ type RevokeCertificateResponse struct {
 
 func (x *RevokeCertificateResponse) Reset() {
 	*x = RevokeCertificateResponse{}
-	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[145]
+	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[148]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -9645,7 +10160,7 @@ func (x *RevokeCertificateResponse) String() string {
 func (*RevokeCertificateResponse) ProtoMessage() {}
 
 func (x *RevokeCertificateResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[145]
+	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[148]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -9658,7 +10173,7 @@ func (x *RevokeCertificateResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use RevokeCertificateResponse.ProtoReflect.Descriptor instead.
 func (*RevokeCertificateResponse) Descriptor() ([]byte, []int) {
-	return file_pkg_api_grpc_proto_xkmsv1_xkms_proto_rawDescGZIP(), []int{145}
+	return file_pkg_api_grpc_proto_xkmsv1_xkms_proto_rawDescGZIP(), []int{148}
 }
 
 func (x *RevokeCertificateResponse) GetSuccess() bool {
@@ -9684,7 +10199,7 @@ type GenerateCRLRequest struct {
 
 func (x *GenerateCRLRequest) Reset() {
 	*x = GenerateCRLRequest{}
-	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[146]
+	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[149]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -9696,7 +10211,7 @@ func (x *GenerateCRLRequest) String() string {
 func (*GenerateCRLRequest) ProtoMessage() {}
 
 func (x *GenerateCRLRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[146]
+	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[149]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -9709,7 +10224,7 @@ func (x *GenerateCRLRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use GenerateCRLRequest.ProtoReflect.Descriptor instead.
 func (*GenerateCRLRequest) Descriptor() ([]byte, []int) {
-	return file_pkg_api_grpc_proto_xkmsv1_xkms_proto_rawDescGZIP(), []int{146}
+	return file_pkg_api_grpc_proto_xkmsv1_xkms_proto_rawDescGZIP(), []int{149}
 }
 
 // GenerateCRLResponse contains the generated CRL.
@@ -9722,7 +10237,7 @@ type GenerateCRLResponse struct {
 
 func (x *GenerateCRLResponse) Reset() {
 	*x = GenerateCRLResponse{}
-	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[147]
+	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[150]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -9734,7 +10249,7 @@ func (x *GenerateCRLResponse) String() string {
 func (*GenerateCRLResponse) ProtoMessage() {}
 
 func (x *GenerateCRLResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[147]
+	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[150]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -9747,7 +10262,7 @@ func (x *GenerateCRLResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use GenerateCRLResponse.ProtoReflect.Descriptor instead.
 func (*GenerateCRLResponse) Descriptor() ([]byte, []int) {
-	return file_pkg_api_grpc_proto_xkmsv1_xkms_proto_rawDescGZIP(), []int{147}
+	return file_pkg_api_grpc_proto_xkmsv1_xkms_proto_rawDescGZIP(), []int{150}
 }
 
 func (x *GenerateCRLResponse) GetCrlPem() []byte {
@@ -9767,7 +10282,7 @@ type IsRevokedRequest struct {
 
 func (x *IsRevokedRequest) Reset() {
 	*x = IsRevokedRequest{}
-	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[148]
+	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[151]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -9779,7 +10294,7 @@ func (x *IsRevokedRequest) String() string {
 func (*IsRevokedRequest) ProtoMessage() {}
 
 func (x *IsRevokedRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[148]
+	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[151]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -9792,7 +10307,7 @@ func (x *IsRevokedRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use IsRevokedRequest.ProtoReflect.Descriptor instead.
 func (*IsRevokedRequest) Descriptor() ([]byte, []int) {
-	return file_pkg_api_grpc_proto_xkmsv1_xkms_proto_rawDescGZIP(), []int{148}
+	return file_pkg_api_grpc_proto_xkmsv1_xkms_proto_rawDescGZIP(), []int{151}
 }
 
 func (x *IsRevokedRequest) GetSerialNumber() string {
@@ -9814,7 +10329,7 @@ type IsRevokedResponse struct {
 
 func (x *IsRevokedResponse) Reset() {
 	*x = IsRevokedResponse{}
-	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[149]
+	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[152]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -9826,7 +10341,7 @@ func (x *IsRevokedResponse) String() string {
 func (*IsRevokedResponse) ProtoMessage() {}
 
 func (x *IsRevokedResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[149]
+	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[152]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -9839,7 +10354,7 @@ func (x *IsRevokedResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use IsRevokedResponse.ProtoReflect.Descriptor instead.
 func (*IsRevokedResponse) Descriptor() ([]byte, []int) {
-	return file_pkg_api_grpc_proto_xkmsv1_xkms_proto_rawDescGZIP(), []int{149}
+	return file_pkg_api_grpc_proto_xkmsv1_xkms_proto_rawDescGZIP(), []int{152}
 }
 
 func (x *IsRevokedResponse) GetRevoked() bool {
@@ -9875,7 +10390,7 @@ type IssueEKCertificateRequest struct {
 
 func (x *IssueEKCertificateRequest) Reset() {
 	*x = IssueEKCertificateRequest{}
-	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[150]
+	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[153]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -9887,7 +10402,7 @@ func (x *IssueEKCertificateRequest) String() string {
 func (*IssueEKCertificateRequest) ProtoMessage() {}
 
 func (x *IssueEKCertificateRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[150]
+	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[153]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -9900,7 +10415,7 @@ func (x *IssueEKCertificateRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use IssueEKCertificateRequest.ProtoReflect.Descriptor instead.
 func (*IssueEKCertificateRequest) Descriptor() ([]byte, []int) {
-	return file_pkg_api_grpc_proto_xkmsv1_xkms_proto_rawDescGZIP(), []int{150}
+	return file_pkg_api_grpc_proto_xkmsv1_xkms_proto_rawDescGZIP(), []int{153}
 }
 
 func (x *IssueEKCertificateRequest) GetCommonName() string {
@@ -9936,7 +10451,7 @@ type IssueEKCertificateResponse struct {
 
 func (x *IssueEKCertificateResponse) Reset() {
 	*x = IssueEKCertificateResponse{}
-	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[151]
+	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[154]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -9948,7 +10463,7 @@ func (x *IssueEKCertificateResponse) String() string {
 func (*IssueEKCertificateResponse) ProtoMessage() {}
 
 func (x *IssueEKCertificateResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[151]
+	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[154]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -9961,7 +10476,7 @@ func (x *IssueEKCertificateResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use IssueEKCertificateResponse.ProtoReflect.Descriptor instead.
 func (*IssueEKCertificateResponse) Descriptor() ([]byte, []int) {
-	return file_pkg_api_grpc_proto_xkmsv1_xkms_proto_rawDescGZIP(), []int{151}
+	return file_pkg_api_grpc_proto_xkmsv1_xkms_proto_rawDescGZIP(), []int{154}
 }
 
 func (x *IssueEKCertificateResponse) GetCertificateDer() []byte {
@@ -9997,7 +10512,7 @@ type IssueAKCertificateRequest struct {
 
 func (x *IssueAKCertificateRequest) Reset() {
 	*x = IssueAKCertificateRequest{}
-	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[152]
+	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[155]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -10009,7 +10524,7 @@ func (x *IssueAKCertificateRequest) String() string {
 func (*IssueAKCertificateRequest) ProtoMessage() {}
 
 func (x *IssueAKCertificateRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[152]
+	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[155]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -10022,7 +10537,7 @@ func (x *IssueAKCertificateRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use IssueAKCertificateRequest.ProtoReflect.Descriptor instead.
 func (*IssueAKCertificateRequest) Descriptor() ([]byte, []int) {
-	return file_pkg_api_grpc_proto_xkmsv1_xkms_proto_rawDescGZIP(), []int{152}
+	return file_pkg_api_grpc_proto_xkmsv1_xkms_proto_rawDescGZIP(), []int{155}
 }
 
 func (x *IssueAKCertificateRequest) GetCommonName() string {
@@ -10058,7 +10573,7 @@ type IssueAKCertificateResponse struct {
 
 func (x *IssueAKCertificateResponse) Reset() {
 	*x = IssueAKCertificateResponse{}
-	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[153]
+	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[156]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -10070,7 +10585,7 @@ func (x *IssueAKCertificateResponse) String() string {
 func (*IssueAKCertificateResponse) ProtoMessage() {}
 
 func (x *IssueAKCertificateResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[153]
+	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[156]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -10083,7 +10598,7 @@ func (x *IssueAKCertificateResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use IssueAKCertificateResponse.ProtoReflect.Descriptor instead.
 func (*IssueAKCertificateResponse) Descriptor() ([]byte, []int) {
-	return file_pkg_api_grpc_proto_xkmsv1_xkms_proto_rawDescGZIP(), []int{153}
+	return file_pkg_api_grpc_proto_xkmsv1_xkms_proto_rawDescGZIP(), []int{156}
 }
 
 func (x *IssueAKCertificateResponse) GetCertificateDer() []byte {
@@ -10119,7 +10634,7 @@ type SignTCGCSRRequest struct {
 
 func (x *SignTCGCSRRequest) Reset() {
 	*x = SignTCGCSRRequest{}
-	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[154]
+	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[157]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -10131,7 +10646,7 @@ func (x *SignTCGCSRRequest) String() string {
 func (*SignTCGCSRRequest) ProtoMessage() {}
 
 func (x *SignTCGCSRRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[154]
+	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[157]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -10144,7 +10659,7 @@ func (x *SignTCGCSRRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use SignTCGCSRRequest.ProtoReflect.Descriptor instead.
 func (*SignTCGCSRRequest) Descriptor() ([]byte, []int) {
-	return file_pkg_api_grpc_proto_xkmsv1_xkms_proto_rawDescGZIP(), []int{154}
+	return file_pkg_api_grpc_proto_xkmsv1_xkms_proto_rawDescGZIP(), []int{157}
 }
 
 func (x *SignTCGCSRRequest) GetCommonName() string {
@@ -10179,7 +10694,7 @@ type SignTCGCSRResponse struct {
 
 func (x *SignTCGCSRResponse) Reset() {
 	*x = SignTCGCSRResponse{}
-	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[155]
+	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[158]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -10191,7 +10706,7 @@ func (x *SignTCGCSRResponse) String() string {
 func (*SignTCGCSRResponse) ProtoMessage() {}
 
 func (x *SignTCGCSRResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[155]
+	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[158]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -10204,7 +10719,7 @@ func (x *SignTCGCSRResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use SignTCGCSRResponse.ProtoReflect.Descriptor instead.
 func (*SignTCGCSRResponse) Descriptor() ([]byte, []int) {
-	return file_pkg_api_grpc_proto_xkmsv1_xkms_proto_rawDescGZIP(), []int{155}
+	return file_pkg_api_grpc_proto_xkmsv1_xkms_proto_rawDescGZIP(), []int{158}
 }
 
 func (x *SignTCGCSRResponse) GetIakCertDer() []byte {
@@ -10233,7 +10748,7 @@ type EnrollDeviceRequest struct {
 
 func (x *EnrollDeviceRequest) Reset() {
 	*x = EnrollDeviceRequest{}
-	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[156]
+	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[159]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -10245,7 +10760,7 @@ func (x *EnrollDeviceRequest) String() string {
 func (*EnrollDeviceRequest) ProtoMessage() {}
 
 func (x *EnrollDeviceRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[156]
+	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[159]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -10258,7 +10773,7 @@ func (x *EnrollDeviceRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use EnrollDeviceRequest.ProtoReflect.Descriptor instead.
 func (*EnrollDeviceRequest) Descriptor() ([]byte, []int) {
-	return file_pkg_api_grpc_proto_xkmsv1_xkms_proto_rawDescGZIP(), []int{156}
+	return file_pkg_api_grpc_proto_xkmsv1_xkms_proto_rawDescGZIP(), []int{159}
 }
 
 func (x *EnrollDeviceRequest) GetCommonName() string {
@@ -10296,7 +10811,7 @@ type EnrollDeviceResponse struct {
 
 func (x *EnrollDeviceResponse) Reset() {
 	*x = EnrollDeviceResponse{}
-	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[157]
+	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[160]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -10308,7 +10823,7 @@ func (x *EnrollDeviceResponse) String() string {
 func (*EnrollDeviceResponse) ProtoMessage() {}
 
 func (x *EnrollDeviceResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[157]
+	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[160]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -10321,7 +10836,7 @@ func (x *EnrollDeviceResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use EnrollDeviceResponse.ProtoReflect.Descriptor instead.
 func (*EnrollDeviceResponse) Descriptor() ([]byte, []int) {
-	return file_pkg_api_grpc_proto_xkmsv1_xkms_proto_rawDescGZIP(), []int{157}
+	return file_pkg_api_grpc_proto_xkmsv1_xkms_proto_rawDescGZIP(), []int{160}
 }
 
 func (x *EnrollDeviceResponse) GetIakCertDer() []byte {
@@ -10371,7 +10886,7 @@ type BarrierInitializeRequest struct {
 
 func (x *BarrierInitializeRequest) Reset() {
 	*x = BarrierInitializeRequest{}
-	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[158]
+	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[161]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -10383,7 +10898,7 @@ func (x *BarrierInitializeRequest) String() string {
 func (*BarrierInitializeRequest) ProtoMessage() {}
 
 func (x *BarrierInitializeRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[158]
+	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[161]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -10396,7 +10911,7 @@ func (x *BarrierInitializeRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use BarrierInitializeRequest.ProtoReflect.Descriptor instead.
 func (*BarrierInitializeRequest) Descriptor() ([]byte, []int) {
-	return file_pkg_api_grpc_proto_xkmsv1_xkms_proto_rawDescGZIP(), []int{158}
+	return file_pkg_api_grpc_proto_xkmsv1_xkms_proto_rawDescGZIP(), []int{161}
 }
 
 func (x *BarrierInitializeRequest) GetSecret() string {
@@ -10417,7 +10932,7 @@ type BarrierUnsealRequest struct {
 
 func (x *BarrierUnsealRequest) Reset() {
 	*x = BarrierUnsealRequest{}
-	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[159]
+	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[162]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -10429,7 +10944,7 @@ func (x *BarrierUnsealRequest) String() string {
 func (*BarrierUnsealRequest) ProtoMessage() {}
 
 func (x *BarrierUnsealRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[159]
+	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[162]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -10442,7 +10957,7 @@ func (x *BarrierUnsealRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use BarrierUnsealRequest.ProtoReflect.Descriptor instead.
 func (*BarrierUnsealRequest) Descriptor() ([]byte, []int) {
-	return file_pkg_api_grpc_proto_xkmsv1_xkms_proto_rawDescGZIP(), []int{159}
+	return file_pkg_api_grpc_proto_xkmsv1_xkms_proto_rawDescGZIP(), []int{162}
 }
 
 func (x *BarrierUnsealRequest) GetSecret() string {
@@ -10470,7 +10985,7 @@ type BarrierStatusResponse struct {
 
 func (x *BarrierStatusResponse) Reset() {
 	*x = BarrierStatusResponse{}
-	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[160]
+	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[163]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -10482,7 +10997,7 @@ func (x *BarrierStatusResponse) String() string {
 func (*BarrierStatusResponse) ProtoMessage() {}
 
 func (x *BarrierStatusResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[160]
+	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[163]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -10495,7 +11010,7 @@ func (x *BarrierStatusResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use BarrierStatusResponse.ProtoReflect.Descriptor instead.
 func (*BarrierStatusResponse) Descriptor() ([]byte, []int) {
-	return file_pkg_api_grpc_proto_xkmsv1_xkms_proto_rawDescGZIP(), []int{160}
+	return file_pkg_api_grpc_proto_xkmsv1_xkms_proto_rawDescGZIP(), []int{163}
 }
 
 func (x *BarrierStatusResponse) GetSealed() bool {
@@ -10537,7 +11052,7 @@ type BarrierInitializeShamirRequest struct {
 
 func (x *BarrierInitializeShamirRequest) Reset() {
 	*x = BarrierInitializeShamirRequest{}
-	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[161]
+	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[164]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -10549,7 +11064,7 @@ func (x *BarrierInitializeShamirRequest) String() string {
 func (*BarrierInitializeShamirRequest) ProtoMessage() {}
 
 func (x *BarrierInitializeShamirRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[161]
+	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[164]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -10562,7 +11077,7 @@ func (x *BarrierInitializeShamirRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use BarrierInitializeShamirRequest.ProtoReflect.Descriptor instead.
 func (*BarrierInitializeShamirRequest) Descriptor() ([]byte, []int) {
-	return file_pkg_api_grpc_proto_xkmsv1_xkms_proto_rawDescGZIP(), []int{161}
+	return file_pkg_api_grpc_proto_xkmsv1_xkms_proto_rawDescGZIP(), []int{164}
 }
 
 func (x *BarrierInitializeShamirRequest) GetSecret() string {
@@ -10590,7 +11105,7 @@ type BarrierShamirInitResponse struct {
 
 func (x *BarrierShamirInitResponse) Reset() {
 	*x = BarrierShamirInitResponse{}
-	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[162]
+	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[165]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -10602,7 +11117,7 @@ func (x *BarrierShamirInitResponse) String() string {
 func (*BarrierShamirInitResponse) ProtoMessage() {}
 
 func (x *BarrierShamirInitResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[162]
+	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[165]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -10615,7 +11130,7 @@ func (x *BarrierShamirInitResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use BarrierShamirInitResponse.ProtoReflect.Descriptor instead.
 func (*BarrierShamirInitResponse) Descriptor() ([]byte, []int) {
-	return file_pkg_api_grpc_proto_xkmsv1_xkms_proto_rawDescGZIP(), []int{162}
+	return file_pkg_api_grpc_proto_xkmsv1_xkms_proto_rawDescGZIP(), []int{165}
 }
 
 func (x *BarrierShamirInitResponse) GetThreshold() int32 {
@@ -10650,7 +11165,7 @@ type BarrierUnsealShareRequest struct {
 
 func (x *BarrierUnsealShareRequest) Reset() {
 	*x = BarrierUnsealShareRequest{}
-	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[163]
+	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[166]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -10662,7 +11177,7 @@ func (x *BarrierUnsealShareRequest) String() string {
 func (*BarrierUnsealShareRequest) ProtoMessage() {}
 
 func (x *BarrierUnsealShareRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[163]
+	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[166]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -10675,7 +11190,7 @@ func (x *BarrierUnsealShareRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use BarrierUnsealShareRequest.ProtoReflect.Descriptor instead.
 func (*BarrierUnsealShareRequest) Descriptor() ([]byte, []int) {
-	return file_pkg_api_grpc_proto_xkmsv1_xkms_proto_rawDescGZIP(), []int{163}
+	return file_pkg_api_grpc_proto_xkmsv1_xkms_proto_rawDescGZIP(), []int{166}
 }
 
 func (x *BarrierUnsealShareRequest) GetShare() string {
@@ -10696,7 +11211,7 @@ type BarrierUnsealSharesRequest struct {
 
 func (x *BarrierUnsealSharesRequest) Reset() {
 	*x = BarrierUnsealSharesRequest{}
-	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[164]
+	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[167]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -10708,7 +11223,7 @@ func (x *BarrierUnsealSharesRequest) String() string {
 func (*BarrierUnsealSharesRequest) ProtoMessage() {}
 
 func (x *BarrierUnsealSharesRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[164]
+	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[167]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -10721,7 +11236,7 @@ func (x *BarrierUnsealSharesRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use BarrierUnsealSharesRequest.ProtoReflect.Descriptor instead.
 func (*BarrierUnsealSharesRequest) Descriptor() ([]byte, []int) {
-	return file_pkg_api_grpc_proto_xkmsv1_xkms_proto_rawDescGZIP(), []int{164}
+	return file_pkg_api_grpc_proto_xkmsv1_xkms_proto_rawDescGZIP(), []int{167}
 }
 
 func (x *BarrierUnsealSharesRequest) GetShares() []string {
@@ -10746,7 +11261,7 @@ type BarrierQuorumProgressResponse struct {
 
 func (x *BarrierQuorumProgressResponse) Reset() {
 	*x = BarrierQuorumProgressResponse{}
-	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[165]
+	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[168]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -10758,7 +11273,7 @@ func (x *BarrierQuorumProgressResponse) String() string {
 func (*BarrierQuorumProgressResponse) ProtoMessage() {}
 
 func (x *BarrierQuorumProgressResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[165]
+	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[168]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -10771,7 +11286,7 @@ func (x *BarrierQuorumProgressResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use BarrierQuorumProgressResponse.ProtoReflect.Descriptor instead.
 func (*BarrierQuorumProgressResponse) Descriptor() ([]byte, []int) {
-	return file_pkg_api_grpc_proto_xkmsv1_xkms_proto_rawDescGZIP(), []int{165}
+	return file_pkg_api_grpc_proto_xkmsv1_xkms_proto_rawDescGZIP(), []int{168}
 }
 
 func (x *BarrierQuorumProgressResponse) GetRequired() int32 {
@@ -10808,7 +11323,7 @@ type BarrierRekeyRequest struct {
 
 func (x *BarrierRekeyRequest) Reset() {
 	*x = BarrierRekeyRequest{}
-	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[166]
+	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[169]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -10820,7 +11335,7 @@ func (x *BarrierRekeyRequest) String() string {
 func (*BarrierRekeyRequest) ProtoMessage() {}
 
 func (x *BarrierRekeyRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[166]
+	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[169]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -10833,7 +11348,7 @@ func (x *BarrierRekeyRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use BarrierRekeyRequest.ProtoReflect.Descriptor instead.
 func (*BarrierRekeyRequest) Descriptor() ([]byte, []int) {
-	return file_pkg_api_grpc_proto_xkmsv1_xkms_proto_rawDescGZIP(), []int{166}
+	return file_pkg_api_grpc_proto_xkmsv1_xkms_proto_rawDescGZIP(), []int{169}
 }
 
 func (x *BarrierRekeyRequest) GetThreshold() int32 {
@@ -10863,7 +11378,7 @@ type BarrierGenerateRecoveryKeysRequest struct {
 
 func (x *BarrierGenerateRecoveryKeysRequest) Reset() {
 	*x = BarrierGenerateRecoveryKeysRequest{}
-	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[167]
+	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[170]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -10875,7 +11390,7 @@ func (x *BarrierGenerateRecoveryKeysRequest) String() string {
 func (*BarrierGenerateRecoveryKeysRequest) ProtoMessage() {}
 
 func (x *BarrierGenerateRecoveryKeysRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[167]
+	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[170]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -10888,7 +11403,7 @@ func (x *BarrierGenerateRecoveryKeysRequest) ProtoReflect() protoreflect.Message
 
 // Deprecated: Use BarrierGenerateRecoveryKeysRequest.ProtoReflect.Descriptor instead.
 func (*BarrierGenerateRecoveryKeysRequest) Descriptor() ([]byte, []int) {
-	return file_pkg_api_grpc_proto_xkmsv1_xkms_proto_rawDescGZIP(), []int{167}
+	return file_pkg_api_grpc_proto_xkmsv1_xkms_proto_rawDescGZIP(), []int{170}
 }
 
 func (x *BarrierGenerateRecoveryKeysRequest) GetThreshold() int32 {
@@ -10919,7 +11434,7 @@ type BarrierHasRecoveryKeysResponse struct {
 
 func (x *BarrierHasRecoveryKeysResponse) Reset() {
 	*x = BarrierHasRecoveryKeysResponse{}
-	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[168]
+	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[171]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -10931,7 +11446,7 @@ func (x *BarrierHasRecoveryKeysResponse) String() string {
 func (*BarrierHasRecoveryKeysResponse) ProtoMessage() {}
 
 func (x *BarrierHasRecoveryKeysResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[168]
+	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[171]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -10944,7 +11459,7 @@ func (x *BarrierHasRecoveryKeysResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use BarrierHasRecoveryKeysResponse.ProtoReflect.Descriptor instead.
 func (*BarrierHasRecoveryKeysResponse) Descriptor() ([]byte, []int) {
-	return file_pkg_api_grpc_proto_xkmsv1_xkms_proto_rawDescGZIP(), []int{168}
+	return file_pkg_api_grpc_proto_xkmsv1_xkms_proto_rawDescGZIP(), []int{171}
 }
 
 func (x *BarrierHasRecoveryKeysResponse) GetHasKeys() bool {
@@ -10968,7 +11483,7 @@ type BarrierRecoveryKeysResponse struct {
 
 func (x *BarrierRecoveryKeysResponse) Reset() {
 	*x = BarrierRecoveryKeysResponse{}
-	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[169]
+	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[172]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -10980,7 +11495,7 @@ func (x *BarrierRecoveryKeysResponse) String() string {
 func (*BarrierRecoveryKeysResponse) ProtoMessage() {}
 
 func (x *BarrierRecoveryKeysResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[169]
+	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[172]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -10993,7 +11508,7 @@ func (x *BarrierRecoveryKeysResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use BarrierRecoveryKeysResponse.ProtoReflect.Descriptor instead.
 func (*BarrierRecoveryKeysResponse) Descriptor() ([]byte, []int) {
-	return file_pkg_api_grpc_proto_xkmsv1_xkms_proto_rawDescGZIP(), []int{169}
+	return file_pkg_api_grpc_proto_xkmsv1_xkms_proto_rawDescGZIP(), []int{172}
 }
 
 func (x *BarrierRecoveryKeysResponse) GetThreshold() int32 {
@@ -11028,7 +11543,7 @@ type BarrierRecoverWithKeysRequest struct {
 
 func (x *BarrierRecoverWithKeysRequest) Reset() {
 	*x = BarrierRecoverWithKeysRequest{}
-	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[170]
+	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[173]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -11040,7 +11555,7 @@ func (x *BarrierRecoverWithKeysRequest) String() string {
 func (*BarrierRecoverWithKeysRequest) ProtoMessage() {}
 
 func (x *BarrierRecoverWithKeysRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[170]
+	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[173]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -11053,7 +11568,7 @@ func (x *BarrierRecoverWithKeysRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use BarrierRecoverWithKeysRequest.ProtoReflect.Descriptor instead.
 func (*BarrierRecoverWithKeysRequest) Descriptor() ([]byte, []int) {
-	return file_pkg_api_grpc_proto_xkmsv1_xkms_proto_rawDescGZIP(), []int{170}
+	return file_pkg_api_grpc_proto_xkmsv1_xkms_proto_rawDescGZIP(), []int{173}
 }
 
 func (x *BarrierRecoverWithKeysRequest) GetKeys() []string {
@@ -11074,7 +11589,7 @@ type BarrierGenerateRootTokenRequest struct {
 
 func (x *BarrierGenerateRootTokenRequest) Reset() {
 	*x = BarrierGenerateRootTokenRequest{}
-	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[171]
+	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[174]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -11086,7 +11601,7 @@ func (x *BarrierGenerateRootTokenRequest) String() string {
 func (*BarrierGenerateRootTokenRequest) ProtoMessage() {}
 
 func (x *BarrierGenerateRootTokenRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[171]
+	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[174]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -11099,7 +11614,7 @@ func (x *BarrierGenerateRootTokenRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use BarrierGenerateRootTokenRequest.ProtoReflect.Descriptor instead.
 func (*BarrierGenerateRootTokenRequest) Descriptor() ([]byte, []int) {
-	return file_pkg_api_grpc_proto_xkmsv1_xkms_proto_rawDescGZIP(), []int{171}
+	return file_pkg_api_grpc_proto_xkmsv1_xkms_proto_rawDescGZIP(), []int{174}
 }
 
 func (x *BarrierGenerateRootTokenRequest) GetShares() []string {
@@ -11122,7 +11637,7 @@ type BarrierRootTokenResponse struct {
 
 func (x *BarrierRootTokenResponse) Reset() {
 	*x = BarrierRootTokenResponse{}
-	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[172]
+	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[175]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -11134,7 +11649,7 @@ func (x *BarrierRootTokenResponse) String() string {
 func (*BarrierRootTokenResponse) ProtoMessage() {}
 
 func (x *BarrierRootTokenResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[172]
+	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[175]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -11147,7 +11662,7 @@ func (x *BarrierRootTokenResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use BarrierRootTokenResponse.ProtoReflect.Descriptor instead.
 func (*BarrierRootTokenResponse) Descriptor() ([]byte, []int) {
-	return file_pkg_api_grpc_proto_xkmsv1_xkms_proto_rawDescGZIP(), []int{172}
+	return file_pkg_api_grpc_proto_xkmsv1_xkms_proto_rawDescGZIP(), []int{175}
 }
 
 func (x *BarrierRootTokenResponse) GetToken() string {
@@ -11189,7 +11704,7 @@ type BarrierEnableEncryptionRequest struct {
 
 func (x *BarrierEnableEncryptionRequest) Reset() {
 	*x = BarrierEnableEncryptionRequest{}
-	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[173]
+	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[176]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -11201,7 +11716,7 @@ func (x *BarrierEnableEncryptionRequest) String() string {
 func (*BarrierEnableEncryptionRequest) ProtoMessage() {}
 
 func (x *BarrierEnableEncryptionRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[173]
+	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[176]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -11214,7 +11729,7 @@ func (x *BarrierEnableEncryptionRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use BarrierEnableEncryptionRequest.ProtoReflect.Descriptor instead.
 func (*BarrierEnableEncryptionRequest) Descriptor() ([]byte, []int) {
-	return file_pkg_api_grpc_proto_xkmsv1_xkms_proto_rawDescGZIP(), []int{173}
+	return file_pkg_api_grpc_proto_xkmsv1_xkms_proto_rawDescGZIP(), []int{176}
 }
 
 func (x *BarrierEnableEncryptionRequest) GetTenantId() string {
@@ -11279,7 +11794,7 @@ type BarrierEnableEncryptionResponse struct {
 
 func (x *BarrierEnableEncryptionResponse) Reset() {
 	*x = BarrierEnableEncryptionResponse{}
-	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[174]
+	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[177]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -11291,7 +11806,7 @@ func (x *BarrierEnableEncryptionResponse) String() string {
 func (*BarrierEnableEncryptionResponse) ProtoMessage() {}
 
 func (x *BarrierEnableEncryptionResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[174]
+	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[177]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -11304,7 +11819,7 @@ func (x *BarrierEnableEncryptionResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use BarrierEnableEncryptionResponse.ProtoReflect.Descriptor instead.
 func (*BarrierEnableEncryptionResponse) Descriptor() ([]byte, []int) {
-	return file_pkg_api_grpc_proto_xkmsv1_xkms_proto_rawDescGZIP(), []int{174}
+	return file_pkg_api_grpc_proto_xkmsv1_xkms_proto_rawDescGZIP(), []int{177}
 }
 
 func (x *BarrierEnableEncryptionResponse) GetStatus() string {
@@ -11334,7 +11849,7 @@ type SetSOPINRequest struct {
 
 func (x *SetSOPINRequest) Reset() {
 	*x = SetSOPINRequest{}
-	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[175]
+	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[178]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -11346,7 +11861,7 @@ func (x *SetSOPINRequest) String() string {
 func (*SetSOPINRequest) ProtoMessage() {}
 
 func (x *SetSOPINRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[175]
+	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[178]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -11359,7 +11874,7 @@ func (x *SetSOPINRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use SetSOPINRequest.ProtoReflect.Descriptor instead.
 func (*SetSOPINRequest) Descriptor() ([]byte, []int) {
-	return file_pkg_api_grpc_proto_xkmsv1_xkms_proto_rawDescGZIP(), []int{175}
+	return file_pkg_api_grpc_proto_xkmsv1_xkms_proto_rawDescGZIP(), []int{178}
 }
 
 func (x *SetSOPINRequest) GetCurrentSoPin() string {
@@ -11389,7 +11904,7 @@ type SetUserPINRequest struct {
 
 func (x *SetUserPINRequest) Reset() {
 	*x = SetUserPINRequest{}
-	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[176]
+	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[179]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -11401,7 +11916,7 @@ func (x *SetUserPINRequest) String() string {
 func (*SetUserPINRequest) ProtoMessage() {}
 
 func (x *SetUserPINRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[176]
+	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[179]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -11414,7 +11929,7 @@ func (x *SetUserPINRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use SetUserPINRequest.ProtoReflect.Descriptor instead.
 func (*SetUserPINRequest) Descriptor() ([]byte, []int) {
-	return file_pkg_api_grpc_proto_xkmsv1_xkms_proto_rawDescGZIP(), []int{176}
+	return file_pkg_api_grpc_proto_xkmsv1_xkms_proto_rawDescGZIP(), []int{179}
 }
 
 func (x *SetUserPINRequest) GetSoPin() string {
@@ -11444,7 +11959,7 @@ type ChangeSOPINRequest struct {
 
 func (x *ChangeSOPINRequest) Reset() {
 	*x = ChangeSOPINRequest{}
-	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[177]
+	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[180]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -11456,7 +11971,7 @@ func (x *ChangeSOPINRequest) String() string {
 func (*ChangeSOPINRequest) ProtoMessage() {}
 
 func (x *ChangeSOPINRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[177]
+	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[180]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -11469,7 +11984,7 @@ func (x *ChangeSOPINRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ChangeSOPINRequest.ProtoReflect.Descriptor instead.
 func (*ChangeSOPINRequest) Descriptor() ([]byte, []int) {
-	return file_pkg_api_grpc_proto_xkmsv1_xkms_proto_rawDescGZIP(), []int{177}
+	return file_pkg_api_grpc_proto_xkmsv1_xkms_proto_rawDescGZIP(), []int{180}
 }
 
 func (x *ChangeSOPINRequest) GetCurrentSoPin() string {
@@ -11499,7 +12014,7 @@ type ChangeUserPINRequest struct {
 
 func (x *ChangeUserPINRequest) Reset() {
 	*x = ChangeUserPINRequest{}
-	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[178]
+	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[181]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -11511,7 +12026,7 @@ func (x *ChangeUserPINRequest) String() string {
 func (*ChangeUserPINRequest) ProtoMessage() {}
 
 func (x *ChangeUserPINRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[178]
+	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[181]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -11524,7 +12039,7 @@ func (x *ChangeUserPINRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ChangeUserPINRequest.ProtoReflect.Descriptor instead.
 func (*ChangeUserPINRequest) Descriptor() ([]byte, []int) {
-	return file_pkg_api_grpc_proto_xkmsv1_xkms_proto_rawDescGZIP(), []int{178}
+	return file_pkg_api_grpc_proto_xkmsv1_xkms_proto_rawDescGZIP(), []int{181}
 }
 
 func (x *ChangeUserPINRequest) GetCurrentUserPin() string {
@@ -11552,7 +12067,7 @@ type VerifySOPINRequest struct {
 
 func (x *VerifySOPINRequest) Reset() {
 	*x = VerifySOPINRequest{}
-	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[179]
+	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[182]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -11564,7 +12079,7 @@ func (x *VerifySOPINRequest) String() string {
 func (*VerifySOPINRequest) ProtoMessage() {}
 
 func (x *VerifySOPINRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[179]
+	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[182]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -11577,7 +12092,7 @@ func (x *VerifySOPINRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use VerifySOPINRequest.ProtoReflect.Descriptor instead.
 func (*VerifySOPINRequest) Descriptor() ([]byte, []int) {
-	return file_pkg_api_grpc_proto_xkmsv1_xkms_proto_rawDescGZIP(), []int{179}
+	return file_pkg_api_grpc_proto_xkmsv1_xkms_proto_rawDescGZIP(), []int{182}
 }
 
 func (x *VerifySOPINRequest) GetSoPin() string {
@@ -11598,7 +12113,7 @@ type VerifyUserPINRequest struct {
 
 func (x *VerifyUserPINRequest) Reset() {
 	*x = VerifyUserPINRequest{}
-	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[180]
+	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[183]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -11610,7 +12125,7 @@ func (x *VerifyUserPINRequest) String() string {
 func (*VerifyUserPINRequest) ProtoMessage() {}
 
 func (x *VerifyUserPINRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[180]
+	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[183]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -11623,7 +12138,7 @@ func (x *VerifyUserPINRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use VerifyUserPINRequest.ProtoReflect.Descriptor instead.
 func (*VerifyUserPINRequest) Descriptor() ([]byte, []int) {
-	return file_pkg_api_grpc_proto_xkmsv1_xkms_proto_rawDescGZIP(), []int{180}
+	return file_pkg_api_grpc_proto_xkmsv1_xkms_proto_rawDescGZIP(), []int{183}
 }
 
 func (x *VerifyUserPINRequest) GetUserPin() string {
@@ -11653,7 +12168,7 @@ type LockoutStatusResponse struct {
 
 func (x *LockoutStatusResponse) Reset() {
 	*x = LockoutStatusResponse{}
-	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[181]
+	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[184]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -11665,7 +12180,7 @@ func (x *LockoutStatusResponse) String() string {
 func (*LockoutStatusResponse) ProtoMessage() {}
 
 func (x *LockoutStatusResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[181]
+	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[184]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -11678,7 +12193,7 @@ func (x *LockoutStatusResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use LockoutStatusResponse.ProtoReflect.Descriptor instead.
 func (*LockoutStatusResponse) Descriptor() ([]byte, []int) {
-	return file_pkg_api_grpc_proto_xkmsv1_xkms_proto_rawDescGZIP(), []int{181}
+	return file_pkg_api_grpc_proto_xkmsv1_xkms_proto_rawDescGZIP(), []int{184}
 }
 
 func (x *LockoutStatusResponse) GetFailedAttempts() int32 {
@@ -11727,7 +12242,7 @@ type ResetLockoutRequest struct {
 
 func (x *ResetLockoutRequest) Reset() {
 	*x = ResetLockoutRequest{}
-	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[182]
+	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[185]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -11739,7 +12254,7 @@ func (x *ResetLockoutRequest) String() string {
 func (*ResetLockoutRequest) ProtoMessage() {}
 
 func (x *ResetLockoutRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[182]
+	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[185]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -11752,7 +12267,7 @@ func (x *ResetLockoutRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ResetLockoutRequest.ProtoReflect.Descriptor instead.
 func (*ResetLockoutRequest) Descriptor() ([]byte, []int) {
-	return file_pkg_api_grpc_proto_xkmsv1_xkms_proto_rawDescGZIP(), []int{182}
+	return file_pkg_api_grpc_proto_xkmsv1_xkms_proto_rawDescGZIP(), []int{185}
 }
 
 func (x *ResetLockoutRequest) GetSoPin() string {
@@ -11789,7 +12304,7 @@ type PIVSlotStatus struct {
 
 func (x *PIVSlotStatus) Reset() {
 	*x = PIVSlotStatus{}
-	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[183]
+	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[186]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -11801,7 +12316,7 @@ func (x *PIVSlotStatus) String() string {
 func (*PIVSlotStatus) ProtoMessage() {}
 
 func (x *PIVSlotStatus) ProtoReflect() protoreflect.Message {
-	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[183]
+	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[186]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -11814,7 +12329,7 @@ func (x *PIVSlotStatus) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use PIVSlotStatus.ProtoReflect.Descriptor instead.
 func (*PIVSlotStatus) Descriptor() ([]byte, []int) {
-	return file_pkg_api_grpc_proto_xkmsv1_xkms_proto_rawDescGZIP(), []int{183}
+	return file_pkg_api_grpc_proto_xkmsv1_xkms_proto_rawDescGZIP(), []int{186}
 }
 
 func (x *PIVSlotStatus) GetSlot() string {
@@ -11891,7 +12406,7 @@ type ListPIVSlotsRequest struct {
 
 func (x *ListPIVSlotsRequest) Reset() {
 	*x = ListPIVSlotsRequest{}
-	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[184]
+	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[187]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -11903,7 +12418,7 @@ func (x *ListPIVSlotsRequest) String() string {
 func (*ListPIVSlotsRequest) ProtoMessage() {}
 
 func (x *ListPIVSlotsRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[184]
+	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[187]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -11916,7 +12431,7 @@ func (x *ListPIVSlotsRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ListPIVSlotsRequest.ProtoReflect.Descriptor instead.
 func (*ListPIVSlotsRequest) Descriptor() ([]byte, []int) {
-	return file_pkg_api_grpc_proto_xkmsv1_xkms_proto_rawDescGZIP(), []int{184}
+	return file_pkg_api_grpc_proto_xkmsv1_xkms_proto_rawDescGZIP(), []int{187}
 }
 
 func (x *ListPIVSlotsRequest) GetBackend() string {
@@ -11937,7 +12452,7 @@ type ListPIVSlotsResponse struct {
 
 func (x *ListPIVSlotsResponse) Reset() {
 	*x = ListPIVSlotsResponse{}
-	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[185]
+	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[188]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -11949,7 +12464,7 @@ func (x *ListPIVSlotsResponse) String() string {
 func (*ListPIVSlotsResponse) ProtoMessage() {}
 
 func (x *ListPIVSlotsResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[185]
+	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[188]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -11962,7 +12477,7 @@ func (x *ListPIVSlotsResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ListPIVSlotsResponse.ProtoReflect.Descriptor instead.
 func (*ListPIVSlotsResponse) Descriptor() ([]byte, []int) {
-	return file_pkg_api_grpc_proto_xkmsv1_xkms_proto_rawDescGZIP(), []int{185}
+	return file_pkg_api_grpc_proto_xkmsv1_xkms_proto_rawDescGZIP(), []int{188}
 }
 
 func (x *ListPIVSlotsResponse) GetSlots() []*PIVSlotStatus {
@@ -11987,7 +12502,7 @@ type GetPIVCertificateRequest struct {
 
 func (x *GetPIVCertificateRequest) Reset() {
 	*x = GetPIVCertificateRequest{}
-	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[186]
+	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[189]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -11999,7 +12514,7 @@ func (x *GetPIVCertificateRequest) String() string {
 func (*GetPIVCertificateRequest) ProtoMessage() {}
 
 func (x *GetPIVCertificateRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[186]
+	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[189]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -12012,7 +12527,7 @@ func (x *GetPIVCertificateRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use GetPIVCertificateRequest.ProtoReflect.Descriptor instead.
 func (*GetPIVCertificateRequest) Descriptor() ([]byte, []int) {
-	return file_pkg_api_grpc_proto_xkmsv1_xkms_proto_rawDescGZIP(), []int{186}
+	return file_pkg_api_grpc_proto_xkmsv1_xkms_proto_rawDescGZIP(), []int{189}
 }
 
 func (x *GetPIVCertificateRequest) GetBackend() string {
@@ -12051,7 +12566,7 @@ type GetPIVCertificateResponse struct {
 
 func (x *GetPIVCertificateResponse) Reset() {
 	*x = GetPIVCertificateResponse{}
-	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[187]
+	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[190]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -12063,7 +12578,7 @@ func (x *GetPIVCertificateResponse) String() string {
 func (*GetPIVCertificateResponse) ProtoMessage() {}
 
 func (x *GetPIVCertificateResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[187]
+	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[190]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -12076,7 +12591,7 @@ func (x *GetPIVCertificateResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use GetPIVCertificateResponse.ProtoReflect.Descriptor instead.
 func (*GetPIVCertificateResponse) Descriptor() ([]byte, []int) {
-	return file_pkg_api_grpc_proto_xkmsv1_xkms_proto_rawDescGZIP(), []int{187}
+	return file_pkg_api_grpc_proto_xkmsv1_xkms_proto_rawDescGZIP(), []int{190}
 }
 
 func (x *GetPIVCertificateResponse) GetSlot() string {
@@ -12117,7 +12632,7 @@ type StorePIVCertificateRequest struct {
 
 func (x *StorePIVCertificateRequest) Reset() {
 	*x = StorePIVCertificateRequest{}
-	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[188]
+	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[191]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -12129,7 +12644,7 @@ func (x *StorePIVCertificateRequest) String() string {
 func (*StorePIVCertificateRequest) ProtoMessage() {}
 
 func (x *StorePIVCertificateRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[188]
+	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[191]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -12142,7 +12657,7 @@ func (x *StorePIVCertificateRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use StorePIVCertificateRequest.ProtoReflect.Descriptor instead.
 func (*StorePIVCertificateRequest) Descriptor() ([]byte, []int) {
-	return file_pkg_api_grpc_proto_xkmsv1_xkms_proto_rawDescGZIP(), []int{188}
+	return file_pkg_api_grpc_proto_xkmsv1_xkms_proto_rawDescGZIP(), []int{191}
 }
 
 func (x *StorePIVCertificateRequest) GetBackend() string {
@@ -12186,7 +12701,7 @@ type DeletePIVCertificateRequest struct {
 
 func (x *DeletePIVCertificateRequest) Reset() {
 	*x = DeletePIVCertificateRequest{}
-	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[189]
+	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[192]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -12198,7 +12713,7 @@ func (x *DeletePIVCertificateRequest) String() string {
 func (*DeletePIVCertificateRequest) ProtoMessage() {}
 
 func (x *DeletePIVCertificateRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[189]
+	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[192]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -12211,7 +12726,7 @@ func (x *DeletePIVCertificateRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use DeletePIVCertificateRequest.ProtoReflect.Descriptor instead.
 func (*DeletePIVCertificateRequest) Descriptor() ([]byte, []int) {
-	return file_pkg_api_grpc_proto_xkmsv1_xkms_proto_rawDescGZIP(), []int{189}
+	return file_pkg_api_grpc_proto_xkmsv1_xkms_proto_rawDescGZIP(), []int{192}
 }
 
 func (x *DeletePIVCertificateRequest) GetBackend() string {
@@ -12245,7 +12760,7 @@ type GeneratePIVKeyRequest struct {
 
 func (x *GeneratePIVKeyRequest) Reset() {
 	*x = GeneratePIVKeyRequest{}
-	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[190]
+	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[193]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -12257,7 +12772,7 @@ func (x *GeneratePIVKeyRequest) String() string {
 func (*GeneratePIVKeyRequest) ProtoMessage() {}
 
 func (x *GeneratePIVKeyRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[190]
+	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[193]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -12270,7 +12785,7 @@ func (x *GeneratePIVKeyRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use GeneratePIVKeyRequest.ProtoReflect.Descriptor instead.
 func (*GeneratePIVKeyRequest) Descriptor() ([]byte, []int) {
-	return file_pkg_api_grpc_proto_xkmsv1_xkms_proto_rawDescGZIP(), []int{190}
+	return file_pkg_api_grpc_proto_xkmsv1_xkms_proto_rawDescGZIP(), []int{193}
 }
 
 func (x *GeneratePIVKeyRequest) GetBackend() string {
@@ -12316,7 +12831,7 @@ type GeneratePIVKeyResponse struct {
 
 func (x *GeneratePIVKeyResponse) Reset() {
 	*x = GeneratePIVKeyResponse{}
-	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[191]
+	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[194]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -12328,7 +12843,7 @@ func (x *GeneratePIVKeyResponse) String() string {
 func (*GeneratePIVKeyResponse) ProtoMessage() {}
 
 func (x *GeneratePIVKeyResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[191]
+	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[194]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -12341,7 +12856,7 @@ func (x *GeneratePIVKeyResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use GeneratePIVKeyResponse.ProtoReflect.Descriptor instead.
 func (*GeneratePIVKeyResponse) Descriptor() ([]byte, []int) {
-	return file_pkg_api_grpc_proto_xkmsv1_xkms_proto_rawDescGZIP(), []int{191}
+	return file_pkg_api_grpc_proto_xkmsv1_xkms_proto_rawDescGZIP(), []int{194}
 }
 
 func (x *GeneratePIVKeyResponse) GetSlot() string {
@@ -12380,7 +12895,7 @@ type GeneratePIVCSRRequest struct {
 
 func (x *GeneratePIVCSRRequest) Reset() {
 	*x = GeneratePIVCSRRequest{}
-	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[192]
+	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[195]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -12392,7 +12907,7 @@ func (x *GeneratePIVCSRRequest) String() string {
 func (*GeneratePIVCSRRequest) ProtoMessage() {}
 
 func (x *GeneratePIVCSRRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[192]
+	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[195]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -12405,7 +12920,7 @@ func (x *GeneratePIVCSRRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use GeneratePIVCSRRequest.ProtoReflect.Descriptor instead.
 func (*GeneratePIVCSRRequest) Descriptor() ([]byte, []int) {
-	return file_pkg_api_grpc_proto_xkmsv1_xkms_proto_rawDescGZIP(), []int{192}
+	return file_pkg_api_grpc_proto_xkmsv1_xkms_proto_rawDescGZIP(), []int{195}
 }
 
 func (x *GeneratePIVCSRRequest) GetBackend() string {
@@ -12442,7 +12957,7 @@ type GeneratePIVCSRResponse struct {
 
 func (x *GeneratePIVCSRResponse) Reset() {
 	*x = GeneratePIVCSRResponse{}
-	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[193]
+	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[196]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -12454,7 +12969,7 @@ func (x *GeneratePIVCSRResponse) String() string {
 func (*GeneratePIVCSRResponse) ProtoMessage() {}
 
 func (x *GeneratePIVCSRResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[193]
+	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[196]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -12467,7 +12982,7 @@ func (x *GeneratePIVCSRResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use GeneratePIVCSRResponse.ProtoReflect.Descriptor instead.
 func (*GeneratePIVCSRResponse) Descriptor() ([]byte, []int) {
-	return file_pkg_api_grpc_proto_xkmsv1_xkms_proto_rawDescGZIP(), []int{193}
+	return file_pkg_api_grpc_proto_xkmsv1_xkms_proto_rawDescGZIP(), []int{196}
 }
 
 func (x *GeneratePIVCSRResponse) GetSlot() string {
@@ -12497,7 +13012,7 @@ type CustodianMember struct {
 
 func (x *CustodianMember) Reset() {
 	*x = CustodianMember{}
-	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[194]
+	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[197]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -12509,7 +13024,7 @@ func (x *CustodianMember) String() string {
 func (*CustodianMember) ProtoMessage() {}
 
 func (x *CustodianMember) ProtoReflect() protoreflect.Message {
-	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[194]
+	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[197]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -12522,7 +13037,7 @@ func (x *CustodianMember) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use CustodianMember.ProtoReflect.Descriptor instead.
 func (*CustodianMember) Descriptor() ([]byte, []int) {
-	return file_pkg_api_grpc_proto_xkmsv1_xkms_proto_rawDescGZIP(), []int{194}
+	return file_pkg_api_grpc_proto_xkmsv1_xkms_proto_rawDescGZIP(), []int{197}
 }
 
 func (x *CustodianMember) GetUserId() string {
@@ -12569,7 +13084,7 @@ type CustodianGroup struct {
 
 func (x *CustodianGroup) Reset() {
 	*x = CustodianGroup{}
-	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[195]
+	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[198]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -12581,7 +13096,7 @@ func (x *CustodianGroup) String() string {
 func (*CustodianGroup) ProtoMessage() {}
 
 func (x *CustodianGroup) ProtoReflect() protoreflect.Message {
-	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[195]
+	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[198]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -12594,7 +13109,7 @@ func (x *CustodianGroup) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use CustodianGroup.ProtoReflect.Descriptor instead.
 func (*CustodianGroup) Descriptor() ([]byte, []int) {
-	return file_pkg_api_grpc_proto_xkmsv1_xkms_proto_rawDescGZIP(), []int{195}
+	return file_pkg_api_grpc_proto_xkmsv1_xkms_proto_rawDescGZIP(), []int{198}
 }
 
 func (x *CustodianGroup) GetId() string {
@@ -12658,7 +13173,7 @@ type CreateCustodianGroupRequest struct {
 
 func (x *CreateCustodianGroupRequest) Reset() {
 	*x = CreateCustodianGroupRequest{}
-	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[196]
+	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[199]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -12670,7 +13185,7 @@ func (x *CreateCustodianGroupRequest) String() string {
 func (*CreateCustodianGroupRequest) ProtoMessage() {}
 
 func (x *CreateCustodianGroupRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[196]
+	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[199]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -12683,7 +13198,7 @@ func (x *CreateCustodianGroupRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use CreateCustodianGroupRequest.ProtoReflect.Descriptor instead.
 func (*CreateCustodianGroupRequest) Descriptor() ([]byte, []int) {
-	return file_pkg_api_grpc_proto_xkmsv1_xkms_proto_rawDescGZIP(), []int{196}
+	return file_pkg_api_grpc_proto_xkmsv1_xkms_proto_rawDescGZIP(), []int{199}
 }
 
 func (x *CreateCustodianGroupRequest) GetName() string {
@@ -12717,7 +13232,7 @@ type CreateCustodianGroupResponse struct {
 
 func (x *CreateCustodianGroupResponse) Reset() {
 	*x = CreateCustodianGroupResponse{}
-	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[197]
+	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[200]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -12729,7 +13244,7 @@ func (x *CreateCustodianGroupResponse) String() string {
 func (*CreateCustodianGroupResponse) ProtoMessage() {}
 
 func (x *CreateCustodianGroupResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[197]
+	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[200]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -12742,7 +13257,7 @@ func (x *CreateCustodianGroupResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use CreateCustodianGroupResponse.ProtoReflect.Descriptor instead.
 func (*CreateCustodianGroupResponse) Descriptor() ([]byte, []int) {
-	return file_pkg_api_grpc_proto_xkmsv1_xkms_proto_rawDescGZIP(), []int{197}
+	return file_pkg_api_grpc_proto_xkmsv1_xkms_proto_rawDescGZIP(), []int{200}
 }
 
 func (x *CreateCustodianGroupResponse) GetGroup() *CustodianGroup {
@@ -12762,7 +13277,7 @@ type GetCustodianGroupRequest struct {
 
 func (x *GetCustodianGroupRequest) Reset() {
 	*x = GetCustodianGroupRequest{}
-	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[198]
+	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[201]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -12774,7 +13289,7 @@ func (x *GetCustodianGroupRequest) String() string {
 func (*GetCustodianGroupRequest) ProtoMessage() {}
 
 func (x *GetCustodianGroupRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[198]
+	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[201]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -12787,7 +13302,7 @@ func (x *GetCustodianGroupRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use GetCustodianGroupRequest.ProtoReflect.Descriptor instead.
 func (*GetCustodianGroupRequest) Descriptor() ([]byte, []int) {
-	return file_pkg_api_grpc_proto_xkmsv1_xkms_proto_rawDescGZIP(), []int{198}
+	return file_pkg_api_grpc_proto_xkmsv1_xkms_proto_rawDescGZIP(), []int{201}
 }
 
 func (x *GetCustodianGroupRequest) GetGroupId() string {
@@ -12807,7 +13322,7 @@ type GetCustodianGroupResponse struct {
 
 func (x *GetCustodianGroupResponse) Reset() {
 	*x = GetCustodianGroupResponse{}
-	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[199]
+	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[202]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -12819,7 +13334,7 @@ func (x *GetCustodianGroupResponse) String() string {
 func (*GetCustodianGroupResponse) ProtoMessage() {}
 
 func (x *GetCustodianGroupResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[199]
+	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[202]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -12832,7 +13347,7 @@ func (x *GetCustodianGroupResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use GetCustodianGroupResponse.ProtoReflect.Descriptor instead.
 func (*GetCustodianGroupResponse) Descriptor() ([]byte, []int) {
-	return file_pkg_api_grpc_proto_xkmsv1_xkms_proto_rawDescGZIP(), []int{199}
+	return file_pkg_api_grpc_proto_xkmsv1_xkms_proto_rawDescGZIP(), []int{202}
 }
 
 func (x *GetCustodianGroupResponse) GetGroup() *CustodianGroup {
@@ -12851,7 +13366,7 @@ type ListCustodianGroupsRequest struct {
 
 func (x *ListCustodianGroupsRequest) Reset() {
 	*x = ListCustodianGroupsRequest{}
-	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[200]
+	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[203]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -12863,7 +13378,7 @@ func (x *ListCustodianGroupsRequest) String() string {
 func (*ListCustodianGroupsRequest) ProtoMessage() {}
 
 func (x *ListCustodianGroupsRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[200]
+	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[203]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -12876,7 +13391,7 @@ func (x *ListCustodianGroupsRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ListCustodianGroupsRequest.ProtoReflect.Descriptor instead.
 func (*ListCustodianGroupsRequest) Descriptor() ([]byte, []int) {
-	return file_pkg_api_grpc_proto_xkmsv1_xkms_proto_rawDescGZIP(), []int{200}
+	return file_pkg_api_grpc_proto_xkmsv1_xkms_proto_rawDescGZIP(), []int{203}
 }
 
 // ListCustodianGroupsResponse contains the list of custodian groups.
@@ -12889,7 +13404,7 @@ type ListCustodianGroupsResponse struct {
 
 func (x *ListCustodianGroupsResponse) Reset() {
 	*x = ListCustodianGroupsResponse{}
-	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[201]
+	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[204]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -12901,7 +13416,7 @@ func (x *ListCustodianGroupsResponse) String() string {
 func (*ListCustodianGroupsResponse) ProtoMessage() {}
 
 func (x *ListCustodianGroupsResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[201]
+	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[204]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -12914,7 +13429,7 @@ func (x *ListCustodianGroupsResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ListCustodianGroupsResponse.ProtoReflect.Descriptor instead.
 func (*ListCustodianGroupsResponse) Descriptor() ([]byte, []int) {
-	return file_pkg_api_grpc_proto_xkmsv1_xkms_proto_rawDescGZIP(), []int{201}
+	return file_pkg_api_grpc_proto_xkmsv1_xkms_proto_rawDescGZIP(), []int{204}
 }
 
 func (x *ListCustodianGroupsResponse) GetGroups() []*CustodianGroup {
@@ -12934,7 +13449,7 @@ type DeleteCustodianGroupRequest struct {
 
 func (x *DeleteCustodianGroupRequest) Reset() {
 	*x = DeleteCustodianGroupRequest{}
-	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[202]
+	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[205]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -12946,7 +13461,7 @@ func (x *DeleteCustodianGroupRequest) String() string {
 func (*DeleteCustodianGroupRequest) ProtoMessage() {}
 
 func (x *DeleteCustodianGroupRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[202]
+	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[205]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -12959,7 +13474,7 @@ func (x *DeleteCustodianGroupRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use DeleteCustodianGroupRequest.ProtoReflect.Descriptor instead.
 func (*DeleteCustodianGroupRequest) Descriptor() ([]byte, []int) {
-	return file_pkg_api_grpc_proto_xkmsv1_xkms_proto_rawDescGZIP(), []int{202}
+	return file_pkg_api_grpc_proto_xkmsv1_xkms_proto_rawDescGZIP(), []int{205}
 }
 
 func (x *DeleteCustodianGroupRequest) GetGroupId() string {
@@ -12983,7 +13498,7 @@ type AddCustodianMemberRequest struct {
 
 func (x *AddCustodianMemberRequest) Reset() {
 	*x = AddCustodianMemberRequest{}
-	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[203]
+	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[206]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -12995,7 +13510,7 @@ func (x *AddCustodianMemberRequest) String() string {
 func (*AddCustodianMemberRequest) ProtoMessage() {}
 
 func (x *AddCustodianMemberRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[203]
+	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[206]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -13008,7 +13523,7 @@ func (x *AddCustodianMemberRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use AddCustodianMemberRequest.ProtoReflect.Descriptor instead.
 func (*AddCustodianMemberRequest) Descriptor() ([]byte, []int) {
-	return file_pkg_api_grpc_proto_xkmsv1_xkms_proto_rawDescGZIP(), []int{203}
+	return file_pkg_api_grpc_proto_xkmsv1_xkms_proto_rawDescGZIP(), []int{206}
 }
 
 func (x *AddCustodianMemberRequest) GetGroupId() string {
@@ -13056,7 +13571,7 @@ type AddCustodianMemberResponse struct {
 
 func (x *AddCustodianMemberResponse) Reset() {
 	*x = AddCustodianMemberResponse{}
-	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[204]
+	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[207]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -13068,7 +13583,7 @@ func (x *AddCustodianMemberResponse) String() string {
 func (*AddCustodianMemberResponse) ProtoMessage() {}
 
 func (x *AddCustodianMemberResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[204]
+	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[207]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -13081,7 +13596,7 @@ func (x *AddCustodianMemberResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use AddCustodianMemberResponse.ProtoReflect.Descriptor instead.
 func (*AddCustodianMemberResponse) Descriptor() ([]byte, []int) {
-	return file_pkg_api_grpc_proto_xkmsv1_xkms_proto_rawDescGZIP(), []int{204}
+	return file_pkg_api_grpc_proto_xkmsv1_xkms_proto_rawDescGZIP(), []int{207}
 }
 
 func (x *AddCustodianMemberResponse) GetMember() *CustodianMember {
@@ -13102,7 +13617,7 @@ type RemoveCustodianMemberRequest struct {
 
 func (x *RemoveCustodianMemberRequest) Reset() {
 	*x = RemoveCustodianMemberRequest{}
-	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[205]
+	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[208]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -13114,7 +13629,7 @@ func (x *RemoveCustodianMemberRequest) String() string {
 func (*RemoveCustodianMemberRequest) ProtoMessage() {}
 
 func (x *RemoveCustodianMemberRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[205]
+	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[208]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -13127,7 +13642,7 @@ func (x *RemoveCustodianMemberRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use RemoveCustodianMemberRequest.ProtoReflect.Descriptor instead.
 func (*RemoveCustodianMemberRequest) Descriptor() ([]byte, []int) {
-	return file_pkg_api_grpc_proto_xkmsv1_xkms_proto_rawDescGZIP(), []int{205}
+	return file_pkg_api_grpc_proto_xkmsv1_xkms_proto_rawDescGZIP(), []int{208}
 }
 
 func (x *RemoveCustodianMemberRequest) GetGroupId() string {
@@ -13154,7 +13669,7 @@ type DistributeSharesRequest struct {
 
 func (x *DistributeSharesRequest) Reset() {
 	*x = DistributeSharesRequest{}
-	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[206]
+	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[209]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -13166,7 +13681,7 @@ func (x *DistributeSharesRequest) String() string {
 func (*DistributeSharesRequest) ProtoMessage() {}
 
 func (x *DistributeSharesRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[206]
+	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[209]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -13179,7 +13694,7 @@ func (x *DistributeSharesRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use DistributeSharesRequest.ProtoReflect.Descriptor instead.
 func (*DistributeSharesRequest) Descriptor() ([]byte, []int) {
-	return file_pkg_api_grpc_proto_xkmsv1_xkms_proto_rawDescGZIP(), []int{206}
+	return file_pkg_api_grpc_proto_xkmsv1_xkms_proto_rawDescGZIP(), []int{209}
 }
 
 func (x *DistributeSharesRequest) GetGroupId() string {
@@ -13199,7 +13714,7 @@ type DistributeSharesResponse struct {
 
 func (x *DistributeSharesResponse) Reset() {
 	*x = DistributeSharesResponse{}
-	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[207]
+	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[210]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -13211,7 +13726,7 @@ func (x *DistributeSharesResponse) String() string {
 func (*DistributeSharesResponse) ProtoMessage() {}
 
 func (x *DistributeSharesResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[207]
+	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[210]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -13224,7 +13739,7 @@ func (x *DistributeSharesResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use DistributeSharesResponse.ProtoReflect.Descriptor instead.
 func (*DistributeSharesResponse) Descriptor() ([]byte, []int) {
-	return file_pkg_api_grpc_proto_xkmsv1_xkms_proto_rawDescGZIP(), []int{207}
+	return file_pkg_api_grpc_proto_xkmsv1_xkms_proto_rawDescGZIP(), []int{210}
 }
 
 func (x *DistributeSharesResponse) GetDistributed() int32 {
@@ -13232,6 +13747,173 @@ func (x *DistributeSharesResponse) GetDistributed() int32 {
 		return x.Distributed
 	}
 	return 0
+}
+
+// AlgorithmsRequest requests the supported-algorithm inventory.
+type AlgorithmsRequest struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *AlgorithmsRequest) Reset() {
+	*x = AlgorithmsRequest{}
+	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[211]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *AlgorithmsRequest) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*AlgorithmsRequest) ProtoMessage() {}
+
+func (x *AlgorithmsRequest) ProtoReflect() protoreflect.Message {
+	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[211]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use AlgorithmsRequest.ProtoReflect.Descriptor instead.
+func (*AlgorithmsRequest) Descriptor() ([]byte, []int) {
+	return file_pkg_api_grpc_proto_xkmsv1_xkms_proto_rawDescGZIP(), []int{211}
+}
+
+// AlgorithmInfo describes one algorithm and the backends providing it.
+type AlgorithmInfo struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Algorithm     string                 `protobuf:"bytes,1,opt,name=algorithm,proto3" json:"algorithm,omitempty"`
+	Curves        []string               `protobuf:"bytes,2,rep,name=curves,proto3" json:"curves,omitempty"`
+	KeySizes      []int32                `protobuf:"varint,3,rep,packed,name=key_sizes,json=keySizes,proto3" json:"key_sizes,omitempty"`
+	Backends      []string               `protobuf:"bytes,4,rep,name=backends,proto3" json:"backends,omitempty"`
+	PostQuantum   bool                   `protobuf:"varint,5,opt,name=post_quantum,json=postQuantum,proto3" json:"post_quantum,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *AlgorithmInfo) Reset() {
+	*x = AlgorithmInfo{}
+	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[212]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *AlgorithmInfo) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*AlgorithmInfo) ProtoMessage() {}
+
+func (x *AlgorithmInfo) ProtoReflect() protoreflect.Message {
+	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[212]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use AlgorithmInfo.ProtoReflect.Descriptor instead.
+func (*AlgorithmInfo) Descriptor() ([]byte, []int) {
+	return file_pkg_api_grpc_proto_xkmsv1_xkms_proto_rawDescGZIP(), []int{212}
+}
+
+func (x *AlgorithmInfo) GetAlgorithm() string {
+	if x != nil {
+		return x.Algorithm
+	}
+	return ""
+}
+
+func (x *AlgorithmInfo) GetCurves() []string {
+	if x != nil {
+		return x.Curves
+	}
+	return nil
+}
+
+func (x *AlgorithmInfo) GetKeySizes() []int32 {
+	if x != nil {
+		return x.KeySizes
+	}
+	return nil
+}
+
+func (x *AlgorithmInfo) GetBackends() []string {
+	if x != nil {
+		return x.Backends
+	}
+	return nil
+}
+
+func (x *AlgorithmInfo) GetPostQuantum() bool {
+	if x != nil {
+		return x.PostQuantum
+	}
+	return false
+}
+
+// AlgorithmsResponse groups the supported algorithms by purpose.
+type AlgorithmsResponse struct {
+	state            protoimpl.MessageState `protogen:"open.v1"`
+	Signing          []*AlgorithmInfo       `protobuf:"bytes,1,rep,name=signing,proto3" json:"signing,omitempty"`
+	KeyEncapsulation []*AlgorithmInfo       `protobuf:"bytes,2,rep,name=key_encapsulation,json=keyEncapsulation,proto3" json:"key_encapsulation,omitempty"`
+	unknownFields    protoimpl.UnknownFields
+	sizeCache        protoimpl.SizeCache
+}
+
+func (x *AlgorithmsResponse) Reset() {
+	*x = AlgorithmsResponse{}
+	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[213]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *AlgorithmsResponse) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*AlgorithmsResponse) ProtoMessage() {}
+
+func (x *AlgorithmsResponse) ProtoReflect() protoreflect.Message {
+	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[213]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use AlgorithmsResponse.ProtoReflect.Descriptor instead.
+func (*AlgorithmsResponse) Descriptor() ([]byte, []int) {
+	return file_pkg_api_grpc_proto_xkmsv1_xkms_proto_rawDescGZIP(), []int{213}
+}
+
+func (x *AlgorithmsResponse) GetSigning() []*AlgorithmInfo {
+	if x != nil {
+		return x.Signing
+	}
+	return nil
+}
+
+func (x *AlgorithmsResponse) GetKeyEncapsulation() []*AlgorithmInfo {
+	if x != nil {
+		return x.KeyEncapsulation
+	}
+	return nil
 }
 
 // ShareInfo represents a stored Shamir share.
@@ -13251,7 +13933,7 @@ type ShareInfo struct {
 
 func (x *ShareInfo) Reset() {
 	*x = ShareInfo{}
-	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[208]
+	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[214]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -13263,7 +13945,7 @@ func (x *ShareInfo) String() string {
 func (*ShareInfo) ProtoMessage() {}
 
 func (x *ShareInfo) ProtoReflect() protoreflect.Message {
-	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[208]
+	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[214]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -13276,7 +13958,7 @@ func (x *ShareInfo) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ShareInfo.ProtoReflect.Descriptor instead.
 func (*ShareInfo) Descriptor() ([]byte, []int) {
-	return file_pkg_api_grpc_proto_xkmsv1_xkms_proto_rawDescGZIP(), []int{208}
+	return file_pkg_api_grpc_proto_xkmsv1_xkms_proto_rawDescGZIP(), []int{214}
 }
 
 func (x *ShareInfo) GetId() string {
@@ -13351,7 +14033,7 @@ type SubmitShareRequest struct {
 
 func (x *SubmitShareRequest) Reset() {
 	*x = SubmitShareRequest{}
-	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[209]
+	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[215]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -13363,7 +14045,7 @@ func (x *SubmitShareRequest) String() string {
 func (*SubmitShareRequest) ProtoMessage() {}
 
 func (x *SubmitShareRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[209]
+	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[215]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -13376,7 +14058,7 @@ func (x *SubmitShareRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use SubmitShareRequest.ProtoReflect.Descriptor instead.
 func (*SubmitShareRequest) Descriptor() ([]byte, []int) {
-	return file_pkg_api_grpc_proto_xkmsv1_xkms_proto_rawDescGZIP(), []int{209}
+	return file_pkg_api_grpc_proto_xkmsv1_xkms_proto_rawDescGZIP(), []int{215}
 }
 
 func (x *SubmitShareRequest) GetGroupId() string {
@@ -13439,7 +14121,7 @@ type SubmitShareResponse struct {
 
 func (x *SubmitShareResponse) Reset() {
 	*x = SubmitShareResponse{}
-	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[210]
+	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[216]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -13451,7 +14133,7 @@ func (x *SubmitShareResponse) String() string {
 func (*SubmitShareResponse) ProtoMessage() {}
 
 func (x *SubmitShareResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[210]
+	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[216]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -13464,7 +14146,7 @@ func (x *SubmitShareResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use SubmitShareResponse.ProtoReflect.Descriptor instead.
 func (*SubmitShareResponse) Descriptor() ([]byte, []int) {
-	return file_pkg_api_grpc_proto_xkmsv1_xkms_proto_rawDescGZIP(), []int{210}
+	return file_pkg_api_grpc_proto_xkmsv1_xkms_proto_rawDescGZIP(), []int{216}
 }
 
 func (x *SubmitShareResponse) GetId() string {
@@ -13490,7 +14172,7 @@ type ListSharesRequest struct {
 
 func (x *ListSharesRequest) Reset() {
 	*x = ListSharesRequest{}
-	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[211]
+	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[217]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -13502,7 +14184,7 @@ func (x *ListSharesRequest) String() string {
 func (*ListSharesRequest) ProtoMessage() {}
 
 func (x *ListSharesRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[211]
+	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[217]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -13515,7 +14197,7 @@ func (x *ListSharesRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ListSharesRequest.ProtoReflect.Descriptor instead.
 func (*ListSharesRequest) Descriptor() ([]byte, []int) {
-	return file_pkg_api_grpc_proto_xkmsv1_xkms_proto_rawDescGZIP(), []int{211}
+	return file_pkg_api_grpc_proto_xkmsv1_xkms_proto_rawDescGZIP(), []int{217}
 }
 
 // ListSharesResponse contains the list of shares.
@@ -13528,7 +14210,7 @@ type ListSharesResponse struct {
 
 func (x *ListSharesResponse) Reset() {
 	*x = ListSharesResponse{}
-	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[212]
+	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[218]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -13540,7 +14222,7 @@ func (x *ListSharesResponse) String() string {
 func (*ListSharesResponse) ProtoMessage() {}
 
 func (x *ListSharesResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[212]
+	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[218]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -13553,7 +14235,7 @@ func (x *ListSharesResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ListSharesResponse.ProtoReflect.Descriptor instead.
 func (*ListSharesResponse) Descriptor() ([]byte, []int) {
-	return file_pkg_api_grpc_proto_xkmsv1_xkms_proto_rawDescGZIP(), []int{212}
+	return file_pkg_api_grpc_proto_xkmsv1_xkms_proto_rawDescGZIP(), []int{218}
 }
 
 func (x *ListSharesResponse) GetShares() []*ShareInfo {
@@ -13561,6 +14243,128 @@ func (x *ListSharesResponse) GetShares() []*ShareInfo {
 		return x.Shares
 	}
 	return nil
+}
+
+// GetShareRequest identifies a single stored share.
+type GetShareRequest struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	ServerUrl     string                 `protobuf:"bytes,1,opt,name=server_url,json=serverUrl,proto3" json:"server_url,omitempty"`
+	GroupId       string                 `protobuf:"bytes,2,opt,name=group_id,json=groupId,proto3" json:"group_id,omitempty"`
+	ShareIndex    int32                  `protobuf:"varint,3,opt,name=share_index,json=shareIndex,proto3" json:"share_index,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *GetShareRequest) Reset() {
+	*x = GetShareRequest{}
+	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[219]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *GetShareRequest) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*GetShareRequest) ProtoMessage() {}
+
+func (x *GetShareRequest) ProtoReflect() protoreflect.Message {
+	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[219]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use GetShareRequest.ProtoReflect.Descriptor instead.
+func (*GetShareRequest) Descriptor() ([]byte, []int) {
+	return file_pkg_api_grpc_proto_xkmsv1_xkms_proto_rawDescGZIP(), []int{219}
+}
+
+func (x *GetShareRequest) GetServerUrl() string {
+	if x != nil {
+		return x.ServerUrl
+	}
+	return ""
+}
+
+func (x *GetShareRequest) GetGroupId() string {
+	if x != nil {
+		return x.GroupId
+	}
+	return ""
+}
+
+func (x *GetShareRequest) GetShareIndex() int32 {
+	if x != nil {
+		return x.ShareIndex
+	}
+	return 0
+}
+
+// DeleteShareRequest identifies a single stored share to remove.
+type DeleteShareRequest struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	ServerUrl     string                 `protobuf:"bytes,1,opt,name=server_url,json=serverUrl,proto3" json:"server_url,omitempty"`
+	GroupId       string                 `protobuf:"bytes,2,opt,name=group_id,json=groupId,proto3" json:"group_id,omitempty"`
+	ShareIndex    int32                  `protobuf:"varint,3,opt,name=share_index,json=shareIndex,proto3" json:"share_index,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *DeleteShareRequest) Reset() {
+	*x = DeleteShareRequest{}
+	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[220]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *DeleteShareRequest) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*DeleteShareRequest) ProtoMessage() {}
+
+func (x *DeleteShareRequest) ProtoReflect() protoreflect.Message {
+	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[220]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use DeleteShareRequest.ProtoReflect.Descriptor instead.
+func (*DeleteShareRequest) Descriptor() ([]byte, []int) {
+	return file_pkg_api_grpc_proto_xkmsv1_xkms_proto_rawDescGZIP(), []int{220}
+}
+
+func (x *DeleteShareRequest) GetServerUrl() string {
+	if x != nil {
+		return x.ServerUrl
+	}
+	return ""
+}
+
+func (x *DeleteShareRequest) GetGroupId() string {
+	if x != nil {
+		return x.GroupId
+	}
+	return ""
+}
+
+func (x *DeleteShareRequest) GetShareIndex() int32 {
+	if x != nil {
+		return x.ShareIndex
+	}
+	return 0
 }
 
 // GetShareCollectionStatusRequest requests the collection status for a group.
@@ -13573,7 +14377,7 @@ type GetShareCollectionStatusRequest struct {
 
 func (x *GetShareCollectionStatusRequest) Reset() {
 	*x = GetShareCollectionStatusRequest{}
-	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[213]
+	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[221]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -13585,7 +14389,7 @@ func (x *GetShareCollectionStatusRequest) String() string {
 func (*GetShareCollectionStatusRequest) ProtoMessage() {}
 
 func (x *GetShareCollectionStatusRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[213]
+	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[221]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -13598,7 +14402,7 @@ func (x *GetShareCollectionStatusRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use GetShareCollectionStatusRequest.ProtoReflect.Descriptor instead.
 func (*GetShareCollectionStatusRequest) Descriptor() ([]byte, []int) {
-	return file_pkg_api_grpc_proto_xkmsv1_xkms_proto_rawDescGZIP(), []int{213}
+	return file_pkg_api_grpc_proto_xkmsv1_xkms_proto_rawDescGZIP(), []int{221}
 }
 
 func (x *GetShareCollectionStatusRequest) GetGroupId() string {
@@ -13621,7 +14425,7 @@ type ShareCollectionStatusResponse struct {
 
 func (x *ShareCollectionStatusResponse) Reset() {
 	*x = ShareCollectionStatusResponse{}
-	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[214]
+	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[222]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -13633,7 +14437,7 @@ func (x *ShareCollectionStatusResponse) String() string {
 func (*ShareCollectionStatusResponse) ProtoMessage() {}
 
 func (x *ShareCollectionStatusResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[214]
+	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[222]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -13646,7 +14450,7 @@ func (x *ShareCollectionStatusResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ShareCollectionStatusResponse.ProtoReflect.Descriptor instead.
 func (*ShareCollectionStatusResponse) Descriptor() ([]byte, []int) {
-	return file_pkg_api_grpc_proto_xkmsv1_xkms_proto_rawDescGZIP(), []int{214}
+	return file_pkg_api_grpc_proto_xkmsv1_xkms_proto_rawDescGZIP(), []int{222}
 }
 
 func (x *ShareCollectionStatusResponse) GetGroupId() string {
@@ -13699,7 +14503,7 @@ type TenantInfo struct {
 
 func (x *TenantInfo) Reset() {
 	*x = TenantInfo{}
-	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[215]
+	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[223]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -13711,7 +14515,7 @@ func (x *TenantInfo) String() string {
 func (*TenantInfo) ProtoMessage() {}
 
 func (x *TenantInfo) ProtoReflect() protoreflect.Message {
-	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[215]
+	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[223]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -13724,7 +14528,7 @@ func (x *TenantInfo) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use TenantInfo.ProtoReflect.Descriptor instead.
 func (*TenantInfo) Descriptor() ([]byte, []int) {
-	return file_pkg_api_grpc_proto_xkmsv1_xkms_proto_rawDescGZIP(), []int{215}
+	return file_pkg_api_grpc_proto_xkmsv1_xkms_proto_rawDescGZIP(), []int{223}
 }
 
 func (x *TenantInfo) GetId() string {
@@ -13813,7 +14617,7 @@ type TenantQuotas struct {
 
 func (x *TenantQuotas) Reset() {
 	*x = TenantQuotas{}
-	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[216]
+	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[224]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -13825,7 +14629,7 @@ func (x *TenantQuotas) String() string {
 func (*TenantQuotas) ProtoMessage() {}
 
 func (x *TenantQuotas) ProtoReflect() protoreflect.Message {
-	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[216]
+	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[224]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -13838,7 +14642,7 @@ func (x *TenantQuotas) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use TenantQuotas.ProtoReflect.Descriptor instead.
 func (*TenantQuotas) Descriptor() ([]byte, []int) {
-	return file_pkg_api_grpc_proto_xkmsv1_xkms_proto_rawDescGZIP(), []int{216}
+	return file_pkg_api_grpc_proto_xkmsv1_xkms_proto_rawDescGZIP(), []int{224}
 }
 
 func (x *TenantQuotas) GetMaxDatabases() int64 {
@@ -13953,7 +14757,7 @@ type TenantEntitlements struct {
 
 func (x *TenantEntitlements) Reset() {
 	*x = TenantEntitlements{}
-	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[217]
+	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[225]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -13965,7 +14769,7 @@ func (x *TenantEntitlements) String() string {
 func (*TenantEntitlements) ProtoMessage() {}
 
 func (x *TenantEntitlements) ProtoReflect() protoreflect.Message {
-	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[217]
+	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[225]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -13978,7 +14782,7 @@ func (x *TenantEntitlements) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use TenantEntitlements.ProtoReflect.Descriptor instead.
 func (*TenantEntitlements) Descriptor() ([]byte, []int) {
-	return file_pkg_api_grpc_proto_xkmsv1_xkms_proto_rawDescGZIP(), []int{217}
+	return file_pkg_api_grpc_proto_xkmsv1_xkms_proto_rawDescGZIP(), []int{225}
 }
 
 func (x *TenantEntitlements) GetAllowedIsolationModes() []string {
@@ -14019,7 +14823,7 @@ type TenantBarrierStatusRequest struct {
 
 func (x *TenantBarrierStatusRequest) Reset() {
 	*x = TenantBarrierStatusRequest{}
-	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[218]
+	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[226]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -14031,7 +14835,7 @@ func (x *TenantBarrierStatusRequest) String() string {
 func (*TenantBarrierStatusRequest) ProtoMessage() {}
 
 func (x *TenantBarrierStatusRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[218]
+	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[226]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -14044,7 +14848,7 @@ func (x *TenantBarrierStatusRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use TenantBarrierStatusRequest.ProtoReflect.Descriptor instead.
 func (*TenantBarrierStatusRequest) Descriptor() ([]byte, []int) {
-	return file_pkg_api_grpc_proto_xkmsv1_xkms_proto_rawDescGZIP(), []int{218}
+	return file_pkg_api_grpc_proto_xkmsv1_xkms_proto_rawDescGZIP(), []int{226}
 }
 
 func (x *TenantBarrierStatusRequest) GetTenantId() string {
@@ -14070,7 +14874,7 @@ type TenantBarrierStatusResponse struct {
 
 func (x *TenantBarrierStatusResponse) Reset() {
 	*x = TenantBarrierStatusResponse{}
-	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[219]
+	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[227]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -14082,7 +14886,7 @@ func (x *TenantBarrierStatusResponse) String() string {
 func (*TenantBarrierStatusResponse) ProtoMessage() {}
 
 func (x *TenantBarrierStatusResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[219]
+	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[227]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -14095,7 +14899,7 @@ func (x *TenantBarrierStatusResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use TenantBarrierStatusResponse.ProtoReflect.Descriptor instead.
 func (*TenantBarrierStatusResponse) Descriptor() ([]byte, []int) {
-	return file_pkg_api_grpc_proto_xkmsv1_xkms_proto_rawDescGZIP(), []int{219}
+	return file_pkg_api_grpc_proto_xkmsv1_xkms_proto_rawDescGZIP(), []int{227}
 }
 
 func (x *TenantBarrierStatusResponse) GetTenantId() string {
@@ -14158,7 +14962,7 @@ type UpdateTenantEntitlementsRequest struct {
 
 func (x *UpdateTenantEntitlementsRequest) Reset() {
 	*x = UpdateTenantEntitlementsRequest{}
-	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[220]
+	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[228]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -14170,7 +14974,7 @@ func (x *UpdateTenantEntitlementsRequest) String() string {
 func (*UpdateTenantEntitlementsRequest) ProtoMessage() {}
 
 func (x *UpdateTenantEntitlementsRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[220]
+	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[228]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -14183,7 +14987,7 @@ func (x *UpdateTenantEntitlementsRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use UpdateTenantEntitlementsRequest.ProtoReflect.Descriptor instead.
 func (*UpdateTenantEntitlementsRequest) Descriptor() ([]byte, []int) {
-	return file_pkg_api_grpc_proto_xkmsv1_xkms_proto_rawDescGZIP(), []int{220}
+	return file_pkg_api_grpc_proto_xkmsv1_xkms_proto_rawDescGZIP(), []int{228}
 }
 
 func (x *UpdateTenantEntitlementsRequest) GetTenantId() string {
@@ -14210,7 +15014,7 @@ type UpdateTenantEntitlementsResponse struct {
 
 func (x *UpdateTenantEntitlementsResponse) Reset() {
 	*x = UpdateTenantEntitlementsResponse{}
-	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[221]
+	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[229]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -14222,7 +15026,7 @@ func (x *UpdateTenantEntitlementsResponse) String() string {
 func (*UpdateTenantEntitlementsResponse) ProtoMessage() {}
 
 func (x *UpdateTenantEntitlementsResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[221]
+	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[229]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -14235,7 +15039,7 @@ func (x *UpdateTenantEntitlementsResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use UpdateTenantEntitlementsResponse.ProtoReflect.Descriptor instead.
 func (*UpdateTenantEntitlementsResponse) Descriptor() ([]byte, []int) {
-	return file_pkg_api_grpc_proto_xkmsv1_xkms_proto_rawDescGZIP(), []int{221}
+	return file_pkg_api_grpc_proto_xkmsv1_xkms_proto_rawDescGZIP(), []int{229}
 }
 
 func (x *UpdateTenantEntitlementsResponse) GetTenant() *TenantInfo {
@@ -14256,7 +15060,7 @@ type UpdateTenantQuotasRequest struct {
 
 func (x *UpdateTenantQuotasRequest) Reset() {
 	*x = UpdateTenantQuotasRequest{}
-	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[222]
+	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[230]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -14268,7 +15072,7 @@ func (x *UpdateTenantQuotasRequest) String() string {
 func (*UpdateTenantQuotasRequest) ProtoMessage() {}
 
 func (x *UpdateTenantQuotasRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[222]
+	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[230]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -14281,7 +15085,7 @@ func (x *UpdateTenantQuotasRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use UpdateTenantQuotasRequest.ProtoReflect.Descriptor instead.
 func (*UpdateTenantQuotasRequest) Descriptor() ([]byte, []int) {
-	return file_pkg_api_grpc_proto_xkmsv1_xkms_proto_rawDescGZIP(), []int{222}
+	return file_pkg_api_grpc_proto_xkmsv1_xkms_proto_rawDescGZIP(), []int{230}
 }
 
 func (x *UpdateTenantQuotasRequest) GetTenantId() string {
@@ -14308,7 +15112,7 @@ type UpdateTenantQuotasResponse struct {
 
 func (x *UpdateTenantQuotasResponse) Reset() {
 	*x = UpdateTenantQuotasResponse{}
-	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[223]
+	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[231]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -14320,7 +15124,7 @@ func (x *UpdateTenantQuotasResponse) String() string {
 func (*UpdateTenantQuotasResponse) ProtoMessage() {}
 
 func (x *UpdateTenantQuotasResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[223]
+	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[231]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -14333,7 +15137,7 @@ func (x *UpdateTenantQuotasResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use UpdateTenantQuotasResponse.ProtoReflect.Descriptor instead.
 func (*UpdateTenantQuotasResponse) Descriptor() ([]byte, []int) {
-	return file_pkg_api_grpc_proto_xkmsv1_xkms_proto_rawDescGZIP(), []int{223}
+	return file_pkg_api_grpc_proto_xkmsv1_xkms_proto_rawDescGZIP(), []int{231}
 }
 
 func (x *UpdateTenantQuotasResponse) GetTenant() *TenantInfo {
@@ -14361,7 +15165,7 @@ type CreateTenantRequest struct {
 
 func (x *CreateTenantRequest) Reset() {
 	*x = CreateTenantRequest{}
-	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[224]
+	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[232]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -14373,7 +15177,7 @@ func (x *CreateTenantRequest) String() string {
 func (*CreateTenantRequest) ProtoMessage() {}
 
 func (x *CreateTenantRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[224]
+	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[232]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -14386,7 +15190,7 @@ func (x *CreateTenantRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use CreateTenantRequest.ProtoReflect.Descriptor instead.
 func (*CreateTenantRequest) Descriptor() ([]byte, []int) {
-	return file_pkg_api_grpc_proto_xkmsv1_xkms_proto_rawDescGZIP(), []int{224}
+	return file_pkg_api_grpc_proto_xkmsv1_xkms_proto_rawDescGZIP(), []int{232}
 }
 
 func (x *CreateTenantRequest) GetId() string {
@@ -14434,7 +15238,7 @@ type CreateTenantResponse struct {
 
 func (x *CreateTenantResponse) Reset() {
 	*x = CreateTenantResponse{}
-	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[225]
+	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[233]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -14446,7 +15250,7 @@ func (x *CreateTenantResponse) String() string {
 func (*CreateTenantResponse) ProtoMessage() {}
 
 func (x *CreateTenantResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[225]
+	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[233]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -14459,7 +15263,7 @@ func (x *CreateTenantResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use CreateTenantResponse.ProtoReflect.Descriptor instead.
 func (*CreateTenantResponse) Descriptor() ([]byte, []int) {
-	return file_pkg_api_grpc_proto_xkmsv1_xkms_proto_rawDescGZIP(), []int{225}
+	return file_pkg_api_grpc_proto_xkmsv1_xkms_proto_rawDescGZIP(), []int{233}
 }
 
 func (x *CreateTenantResponse) GetTenant() *TenantInfo {
@@ -14479,7 +15283,7 @@ type GetTenantRequest struct {
 
 func (x *GetTenantRequest) Reset() {
 	*x = GetTenantRequest{}
-	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[226]
+	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[234]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -14491,7 +15295,7 @@ func (x *GetTenantRequest) String() string {
 func (*GetTenantRequest) ProtoMessage() {}
 
 func (x *GetTenantRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[226]
+	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[234]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -14504,7 +15308,7 @@ func (x *GetTenantRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use GetTenantRequest.ProtoReflect.Descriptor instead.
 func (*GetTenantRequest) Descriptor() ([]byte, []int) {
-	return file_pkg_api_grpc_proto_xkmsv1_xkms_proto_rawDescGZIP(), []int{226}
+	return file_pkg_api_grpc_proto_xkmsv1_xkms_proto_rawDescGZIP(), []int{234}
 }
 
 func (x *GetTenantRequest) GetTenantId() string {
@@ -14524,7 +15328,7 @@ type GetTenantResponse struct {
 
 func (x *GetTenantResponse) Reset() {
 	*x = GetTenantResponse{}
-	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[227]
+	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[235]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -14536,7 +15340,7 @@ func (x *GetTenantResponse) String() string {
 func (*GetTenantResponse) ProtoMessage() {}
 
 func (x *GetTenantResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[227]
+	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[235]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -14549,7 +15353,7 @@ func (x *GetTenantResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use GetTenantResponse.ProtoReflect.Descriptor instead.
 func (*GetTenantResponse) Descriptor() ([]byte, []int) {
-	return file_pkg_api_grpc_proto_xkmsv1_xkms_proto_rawDescGZIP(), []int{227}
+	return file_pkg_api_grpc_proto_xkmsv1_xkms_proto_rawDescGZIP(), []int{235}
 }
 
 func (x *GetTenantResponse) GetTenant() *TenantInfo {
@@ -14568,7 +15372,7 @@ type ListTenantsRequest struct {
 
 func (x *ListTenantsRequest) Reset() {
 	*x = ListTenantsRequest{}
-	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[228]
+	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[236]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -14580,7 +15384,7 @@ func (x *ListTenantsRequest) String() string {
 func (*ListTenantsRequest) ProtoMessage() {}
 
 func (x *ListTenantsRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[228]
+	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[236]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -14593,7 +15397,7 @@ func (x *ListTenantsRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ListTenantsRequest.ProtoReflect.Descriptor instead.
 func (*ListTenantsRequest) Descriptor() ([]byte, []int) {
-	return file_pkg_api_grpc_proto_xkmsv1_xkms_proto_rawDescGZIP(), []int{228}
+	return file_pkg_api_grpc_proto_xkmsv1_xkms_proto_rawDescGZIP(), []int{236}
 }
 
 // ListTenantsResponse contains the list of tenants.
@@ -14606,7 +15410,7 @@ type ListTenantsResponse struct {
 
 func (x *ListTenantsResponse) Reset() {
 	*x = ListTenantsResponse{}
-	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[229]
+	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[237]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -14618,7 +15422,7 @@ func (x *ListTenantsResponse) String() string {
 func (*ListTenantsResponse) ProtoMessage() {}
 
 func (x *ListTenantsResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[229]
+	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[237]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -14631,7 +15435,7 @@ func (x *ListTenantsResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ListTenantsResponse.ProtoReflect.Descriptor instead.
 func (*ListTenantsResponse) Descriptor() ([]byte, []int) {
-	return file_pkg_api_grpc_proto_xkmsv1_xkms_proto_rawDescGZIP(), []int{229}
+	return file_pkg_api_grpc_proto_xkmsv1_xkms_proto_rawDescGZIP(), []int{237}
 }
 
 func (x *ListTenantsResponse) GetTenants() []*TenantInfo {
@@ -14651,7 +15455,7 @@ type DeleteTenantRequest struct {
 
 func (x *DeleteTenantRequest) Reset() {
 	*x = DeleteTenantRequest{}
-	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[230]
+	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[238]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -14663,7 +15467,7 @@ func (x *DeleteTenantRequest) String() string {
 func (*DeleteTenantRequest) ProtoMessage() {}
 
 func (x *DeleteTenantRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[230]
+	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[238]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -14676,7 +15480,7 @@ func (x *DeleteTenantRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use DeleteTenantRequest.ProtoReflect.Descriptor instead.
 func (*DeleteTenantRequest) Descriptor() ([]byte, []int) {
-	return file_pkg_api_grpc_proto_xkmsv1_xkms_proto_rawDescGZIP(), []int{230}
+	return file_pkg_api_grpc_proto_xkmsv1_xkms_proto_rawDescGZIP(), []int{238}
 }
 
 func (x *DeleteTenantRequest) GetTenantId() string {
@@ -14703,7 +15507,7 @@ type TenantBarrierInitRequest struct {
 
 func (x *TenantBarrierInitRequest) Reset() {
 	*x = TenantBarrierInitRequest{}
-	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[231]
+	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[239]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -14715,7 +15519,7 @@ func (x *TenantBarrierInitRequest) String() string {
 func (*TenantBarrierInitRequest) ProtoMessage() {}
 
 func (x *TenantBarrierInitRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[231]
+	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[239]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -14728,7 +15532,7 @@ func (x *TenantBarrierInitRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use TenantBarrierInitRequest.ProtoReflect.Descriptor instead.
 func (*TenantBarrierInitRequest) Descriptor() ([]byte, []int) {
-	return file_pkg_api_grpc_proto_xkmsv1_xkms_proto_rawDescGZIP(), []int{231}
+	return file_pkg_api_grpc_proto_xkmsv1_xkms_proto_rawDescGZIP(), []int{239}
 }
 
 func (x *TenantBarrierInitRequest) GetTenantId() string {
@@ -14778,7 +15582,7 @@ type TenantBarrierUnsealRequest struct {
 
 func (x *TenantBarrierUnsealRequest) Reset() {
 	*x = TenantBarrierUnsealRequest{}
-	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[232]
+	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[240]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -14790,7 +15594,7 @@ func (x *TenantBarrierUnsealRequest) String() string {
 func (*TenantBarrierUnsealRequest) ProtoMessage() {}
 
 func (x *TenantBarrierUnsealRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[232]
+	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[240]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -14803,7 +15607,7 @@ func (x *TenantBarrierUnsealRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use TenantBarrierUnsealRequest.ProtoReflect.Descriptor instead.
 func (*TenantBarrierUnsealRequest) Descriptor() ([]byte, []int) {
-	return file_pkg_api_grpc_proto_xkmsv1_xkms_proto_rawDescGZIP(), []int{232}
+	return file_pkg_api_grpc_proto_xkmsv1_xkms_proto_rawDescGZIP(), []int{240}
 }
 
 func (x *TenantBarrierUnsealRequest) GetTenantId() string {
@@ -14851,7 +15655,7 @@ type PasswordEntry struct {
 
 func (x *PasswordEntry) Reset() {
 	*x = PasswordEntry{}
-	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[233]
+	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[241]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -14863,7 +15667,7 @@ func (x *PasswordEntry) String() string {
 func (*PasswordEntry) ProtoMessage() {}
 
 func (x *PasswordEntry) ProtoReflect() protoreflect.Message {
-	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[233]
+	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[241]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -14876,7 +15680,7 @@ func (x *PasswordEntry) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use PasswordEntry.ProtoReflect.Descriptor instead.
 func (*PasswordEntry) Descriptor() ([]byte, []int) {
-	return file_pkg_api_grpc_proto_xkmsv1_xkms_proto_rawDescGZIP(), []int{233}
+	return file_pkg_api_grpc_proto_xkmsv1_xkms_proto_rawDescGZIP(), []int{241}
 }
 
 func (x *PasswordEntry) GetId() string {
@@ -15001,7 +15805,7 @@ type PasswordAddRequest struct {
 
 func (x *PasswordAddRequest) Reset() {
 	*x = PasswordAddRequest{}
-	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[234]
+	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[242]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -15013,7 +15817,7 @@ func (x *PasswordAddRequest) String() string {
 func (*PasswordAddRequest) ProtoMessage() {}
 
 func (x *PasswordAddRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[234]
+	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[242]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -15026,7 +15830,7 @@ func (x *PasswordAddRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use PasswordAddRequest.ProtoReflect.Descriptor instead.
 func (*PasswordAddRequest) Descriptor() ([]byte, []int) {
-	return file_pkg_api_grpc_proto_xkmsv1_xkms_proto_rawDescGZIP(), []int{234}
+	return file_pkg_api_grpc_proto_xkmsv1_xkms_proto_rawDescGZIP(), []int{242}
 }
 
 func (x *PasswordAddRequest) GetName() string {
@@ -15097,7 +15901,7 @@ type PasswordAddResponse struct {
 
 func (x *PasswordAddResponse) Reset() {
 	*x = PasswordAddResponse{}
-	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[235]
+	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[243]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -15109,7 +15913,7 @@ func (x *PasswordAddResponse) String() string {
 func (*PasswordAddResponse) ProtoMessage() {}
 
 func (x *PasswordAddResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[235]
+	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[243]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -15122,7 +15926,7 @@ func (x *PasswordAddResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use PasswordAddResponse.ProtoReflect.Descriptor instead.
 func (*PasswordAddResponse) Descriptor() ([]byte, []int) {
-	return file_pkg_api_grpc_proto_xkmsv1_xkms_proto_rawDescGZIP(), []int{235}
+	return file_pkg_api_grpc_proto_xkmsv1_xkms_proto_rawDescGZIP(), []int{243}
 }
 
 func (x *PasswordAddResponse) GetId() string {
@@ -15157,7 +15961,7 @@ type PasswordGetRequest struct {
 
 func (x *PasswordGetRequest) Reset() {
 	*x = PasswordGetRequest{}
-	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[236]
+	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[244]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -15169,7 +15973,7 @@ func (x *PasswordGetRequest) String() string {
 func (*PasswordGetRequest) ProtoMessage() {}
 
 func (x *PasswordGetRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[236]
+	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[244]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -15182,7 +15986,7 @@ func (x *PasswordGetRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use PasswordGetRequest.ProtoReflect.Descriptor instead.
 func (*PasswordGetRequest) Descriptor() ([]byte, []int) {
-	return file_pkg_api_grpc_proto_xkmsv1_xkms_proto_rawDescGZIP(), []int{236}
+	return file_pkg_api_grpc_proto_xkmsv1_xkms_proto_rawDescGZIP(), []int{244}
 }
 
 func (x *PasswordGetRequest) GetId() string {
@@ -15209,7 +16013,7 @@ type PasswordGetResponse struct {
 
 func (x *PasswordGetResponse) Reset() {
 	*x = PasswordGetResponse{}
-	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[237]
+	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[245]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -15221,7 +16025,7 @@ func (x *PasswordGetResponse) String() string {
 func (*PasswordGetResponse) ProtoMessage() {}
 
 func (x *PasswordGetResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[237]
+	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[245]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -15234,7 +16038,7 @@ func (x *PasswordGetResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use PasswordGetResponse.ProtoReflect.Descriptor instead.
 func (*PasswordGetResponse) Descriptor() ([]byte, []int) {
-	return file_pkg_api_grpc_proto_xkmsv1_xkms_proto_rawDescGZIP(), []int{237}
+	return file_pkg_api_grpc_proto_xkmsv1_xkms_proto_rawDescGZIP(), []int{245}
 }
 
 func (x *PasswordGetResponse) GetEntry() *PasswordEntry {
@@ -15255,7 +16059,7 @@ type PasswordListRequest struct {
 
 func (x *PasswordListRequest) Reset() {
 	*x = PasswordListRequest{}
-	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[238]
+	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[246]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -15267,7 +16071,7 @@ func (x *PasswordListRequest) String() string {
 func (*PasswordListRequest) ProtoMessage() {}
 
 func (x *PasswordListRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[238]
+	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[246]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -15280,7 +16084,7 @@ func (x *PasswordListRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use PasswordListRequest.ProtoReflect.Descriptor instead.
 func (*PasswordListRequest) Descriptor() ([]byte, []int) {
-	return file_pkg_api_grpc_proto_xkmsv1_xkms_proto_rawDescGZIP(), []int{238}
+	return file_pkg_api_grpc_proto_xkmsv1_xkms_proto_rawDescGZIP(), []int{246}
 }
 
 func (x *PasswordListRequest) GetFolderPath() string {
@@ -15308,7 +16112,7 @@ type PasswordListResponse struct {
 
 func (x *PasswordListResponse) Reset() {
 	*x = PasswordListResponse{}
-	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[239]
+	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[247]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -15320,7 +16124,7 @@ func (x *PasswordListResponse) String() string {
 func (*PasswordListResponse) ProtoMessage() {}
 
 func (x *PasswordListResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[239]
+	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[247]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -15333,7 +16137,7 @@ func (x *PasswordListResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use PasswordListResponse.ProtoReflect.Descriptor instead.
 func (*PasswordListResponse) Descriptor() ([]byte, []int) {
-	return file_pkg_api_grpc_proto_xkmsv1_xkms_proto_rawDescGZIP(), []int{239}
+	return file_pkg_api_grpc_proto_xkmsv1_xkms_proto_rawDescGZIP(), []int{247}
 }
 
 func (x *PasswordListResponse) GetPasswords() []*PasswordEntry {
@@ -15367,7 +16171,7 @@ type PasswordUpdateRequest struct {
 
 func (x *PasswordUpdateRequest) Reset() {
 	*x = PasswordUpdateRequest{}
-	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[240]
+	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[248]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -15379,7 +16183,7 @@ func (x *PasswordUpdateRequest) String() string {
 func (*PasswordUpdateRequest) ProtoMessage() {}
 
 func (x *PasswordUpdateRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[240]
+	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[248]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -15392,7 +16196,7 @@ func (x *PasswordUpdateRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use PasswordUpdateRequest.ProtoReflect.Descriptor instead.
 func (*PasswordUpdateRequest) Descriptor() ([]byte, []int) {
-	return file_pkg_api_grpc_proto_xkmsv1_xkms_proto_rawDescGZIP(), []int{240}
+	return file_pkg_api_grpc_proto_xkmsv1_xkms_proto_rawDescGZIP(), []int{248}
 }
 
 func (x *PasswordUpdateRequest) GetId() string {
@@ -15462,7 +16266,7 @@ type PasswordUpdateResponse struct {
 
 func (x *PasswordUpdateResponse) Reset() {
 	*x = PasswordUpdateResponse{}
-	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[241]
+	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[249]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -15474,7 +16278,7 @@ func (x *PasswordUpdateResponse) String() string {
 func (*PasswordUpdateResponse) ProtoMessage() {}
 
 func (x *PasswordUpdateResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[241]
+	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[249]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -15487,7 +16291,7 @@ func (x *PasswordUpdateResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use PasswordUpdateResponse.ProtoReflect.Descriptor instead.
 func (*PasswordUpdateResponse) Descriptor() ([]byte, []int) {
-	return file_pkg_api_grpc_proto_xkmsv1_xkms_proto_rawDescGZIP(), []int{241}
+	return file_pkg_api_grpc_proto_xkmsv1_xkms_proto_rawDescGZIP(), []int{249}
 }
 
 func (x *PasswordUpdateResponse) GetId() string {
@@ -15514,7 +16318,7 @@ type PasswordDeleteRequest struct {
 
 func (x *PasswordDeleteRequest) Reset() {
 	*x = PasswordDeleteRequest{}
-	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[242]
+	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[250]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -15526,7 +16330,7 @@ func (x *PasswordDeleteRequest) String() string {
 func (*PasswordDeleteRequest) ProtoMessage() {}
 
 func (x *PasswordDeleteRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[242]
+	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[250]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -15539,7 +16343,7 @@ func (x *PasswordDeleteRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use PasswordDeleteRequest.ProtoReflect.Descriptor instead.
 func (*PasswordDeleteRequest) Descriptor() ([]byte, []int) {
-	return file_pkg_api_grpc_proto_xkmsv1_xkms_proto_rawDescGZIP(), []int{242}
+	return file_pkg_api_grpc_proto_xkmsv1_xkms_proto_rawDescGZIP(), []int{250}
 }
 
 func (x *PasswordDeleteRequest) GetId() string {
@@ -15560,7 +16364,7 @@ type PasswordDeleteResponse struct {
 
 func (x *PasswordDeleteResponse) Reset() {
 	*x = PasswordDeleteResponse{}
-	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[243]
+	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[251]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -15572,7 +16376,7 @@ func (x *PasswordDeleteResponse) String() string {
 func (*PasswordDeleteResponse) ProtoMessage() {}
 
 func (x *PasswordDeleteResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[243]
+	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[251]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -15585,7 +16389,7 @@ func (x *PasswordDeleteResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use PasswordDeleteResponse.ProtoReflect.Descriptor instead.
 func (*PasswordDeleteResponse) Descriptor() ([]byte, []int) {
-	return file_pkg_api_grpc_proto_xkmsv1_xkms_proto_rawDescGZIP(), []int{243}
+	return file_pkg_api_grpc_proto_xkmsv1_xkms_proto_rawDescGZIP(), []int{251}
 }
 
 func (x *PasswordDeleteResponse) GetSuccess() bool {
@@ -15602,6 +16406,670 @@ func (x *PasswordDeleteResponse) GetMessage() string {
 	return ""
 }
 
+type PKCS11StatePutRequest struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	TenantId      string                 `protobuf:"bytes,1,opt,name=tenant_id,json=tenantId,proto3" json:"tenant_id,omitempty"`
+	Token         string                 `protobuf:"bytes,2,opt,name=token,proto3" json:"token,omitempty"`
+	Key           string                 `protobuf:"bytes,3,opt,name=key,proto3" json:"key,omitempty"`
+	Value         []byte                 `protobuf:"bytes,4,opt,name=value,proto3" json:"value,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *PKCS11StatePutRequest) Reset() {
+	*x = PKCS11StatePutRequest{}
+	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[252]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *PKCS11StatePutRequest) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*PKCS11StatePutRequest) ProtoMessage() {}
+
+func (x *PKCS11StatePutRequest) ProtoReflect() protoreflect.Message {
+	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[252]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use PKCS11StatePutRequest.ProtoReflect.Descriptor instead.
+func (*PKCS11StatePutRequest) Descriptor() ([]byte, []int) {
+	return file_pkg_api_grpc_proto_xkmsv1_xkms_proto_rawDescGZIP(), []int{252}
+}
+
+func (x *PKCS11StatePutRequest) GetTenantId() string {
+	if x != nil {
+		return x.TenantId
+	}
+	return ""
+}
+
+func (x *PKCS11StatePutRequest) GetToken() string {
+	if x != nil {
+		return x.Token
+	}
+	return ""
+}
+
+func (x *PKCS11StatePutRequest) GetKey() string {
+	if x != nil {
+		return x.Key
+	}
+	return ""
+}
+
+func (x *PKCS11StatePutRequest) GetValue() []byte {
+	if x != nil {
+		return x.Value
+	}
+	return nil
+}
+
+type PKCS11StatePutResponse struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *PKCS11StatePutResponse) Reset() {
+	*x = PKCS11StatePutResponse{}
+	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[253]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *PKCS11StatePutResponse) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*PKCS11StatePutResponse) ProtoMessage() {}
+
+func (x *PKCS11StatePutResponse) ProtoReflect() protoreflect.Message {
+	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[253]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use PKCS11StatePutResponse.ProtoReflect.Descriptor instead.
+func (*PKCS11StatePutResponse) Descriptor() ([]byte, []int) {
+	return file_pkg_api_grpc_proto_xkmsv1_xkms_proto_rawDescGZIP(), []int{253}
+}
+
+type PKCS11StatePutIfAbsentRequest struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	TenantId      string                 `protobuf:"bytes,1,opt,name=tenant_id,json=tenantId,proto3" json:"tenant_id,omitempty"`
+	Token         string                 `protobuf:"bytes,2,opt,name=token,proto3" json:"token,omitempty"`
+	Key           string                 `protobuf:"bytes,3,opt,name=key,proto3" json:"key,omitempty"`
+	Value         []byte                 `protobuf:"bytes,4,opt,name=value,proto3" json:"value,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *PKCS11StatePutIfAbsentRequest) Reset() {
+	*x = PKCS11StatePutIfAbsentRequest{}
+	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[254]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *PKCS11StatePutIfAbsentRequest) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*PKCS11StatePutIfAbsentRequest) ProtoMessage() {}
+
+func (x *PKCS11StatePutIfAbsentRequest) ProtoReflect() protoreflect.Message {
+	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[254]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use PKCS11StatePutIfAbsentRequest.ProtoReflect.Descriptor instead.
+func (*PKCS11StatePutIfAbsentRequest) Descriptor() ([]byte, []int) {
+	return file_pkg_api_grpc_proto_xkmsv1_xkms_proto_rawDescGZIP(), []int{254}
+}
+
+func (x *PKCS11StatePutIfAbsentRequest) GetTenantId() string {
+	if x != nil {
+		return x.TenantId
+	}
+	return ""
+}
+
+func (x *PKCS11StatePutIfAbsentRequest) GetToken() string {
+	if x != nil {
+		return x.Token
+	}
+	return ""
+}
+
+func (x *PKCS11StatePutIfAbsentRequest) GetKey() string {
+	if x != nil {
+		return x.Key
+	}
+	return ""
+}
+
+func (x *PKCS11StatePutIfAbsentRequest) GetValue() []byte {
+	if x != nil {
+		return x.Value
+	}
+	return nil
+}
+
+type PKCS11StatePutIfAbsentResponse struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Stored        bool                   `protobuf:"varint,1,opt,name=stored,proto3" json:"stored,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *PKCS11StatePutIfAbsentResponse) Reset() {
+	*x = PKCS11StatePutIfAbsentResponse{}
+	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[255]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *PKCS11StatePutIfAbsentResponse) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*PKCS11StatePutIfAbsentResponse) ProtoMessage() {}
+
+func (x *PKCS11StatePutIfAbsentResponse) ProtoReflect() protoreflect.Message {
+	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[255]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use PKCS11StatePutIfAbsentResponse.ProtoReflect.Descriptor instead.
+func (*PKCS11StatePutIfAbsentResponse) Descriptor() ([]byte, []int) {
+	return file_pkg_api_grpc_proto_xkmsv1_xkms_proto_rawDescGZIP(), []int{255}
+}
+
+func (x *PKCS11StatePutIfAbsentResponse) GetStored() bool {
+	if x != nil {
+		return x.Stored
+	}
+	return false
+}
+
+type PKCS11StateCASRequest struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	TenantId      string                 `protobuf:"bytes,1,opt,name=tenant_id,json=tenantId,proto3" json:"tenant_id,omitempty"`
+	Token         string                 `protobuf:"bytes,2,opt,name=token,proto3" json:"token,omitempty"`
+	Key           string                 `protobuf:"bytes,3,opt,name=key,proto3" json:"key,omitempty"`
+	Expected      []byte                 `protobuf:"bytes,4,opt,name=expected,proto3" json:"expected,omitempty"`
+	New           []byte                 `protobuf:"bytes,5,opt,name=new,proto3" json:"new,omitempty"`
+	ExpectAbsent  bool                   `protobuf:"varint,6,opt,name=expect_absent,json=expectAbsent,proto3" json:"expect_absent,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *PKCS11StateCASRequest) Reset() {
+	*x = PKCS11StateCASRequest{}
+	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[256]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *PKCS11StateCASRequest) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*PKCS11StateCASRequest) ProtoMessage() {}
+
+func (x *PKCS11StateCASRequest) ProtoReflect() protoreflect.Message {
+	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[256]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use PKCS11StateCASRequest.ProtoReflect.Descriptor instead.
+func (*PKCS11StateCASRequest) Descriptor() ([]byte, []int) {
+	return file_pkg_api_grpc_proto_xkmsv1_xkms_proto_rawDescGZIP(), []int{256}
+}
+
+func (x *PKCS11StateCASRequest) GetTenantId() string {
+	if x != nil {
+		return x.TenantId
+	}
+	return ""
+}
+
+func (x *PKCS11StateCASRequest) GetToken() string {
+	if x != nil {
+		return x.Token
+	}
+	return ""
+}
+
+func (x *PKCS11StateCASRequest) GetKey() string {
+	if x != nil {
+		return x.Key
+	}
+	return ""
+}
+
+func (x *PKCS11StateCASRequest) GetExpected() []byte {
+	if x != nil {
+		return x.Expected
+	}
+	return nil
+}
+
+func (x *PKCS11StateCASRequest) GetNew() []byte {
+	if x != nil {
+		return x.New
+	}
+	return nil
+}
+
+func (x *PKCS11StateCASRequest) GetExpectAbsent() bool {
+	if x != nil {
+		return x.ExpectAbsent
+	}
+	return false
+}
+
+type PKCS11StateCASResponse struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Swapped       bool                   `protobuf:"varint,1,opt,name=swapped,proto3" json:"swapped,omitempty"`
+	Current       []byte                 `protobuf:"bytes,2,opt,name=current,proto3" json:"current,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *PKCS11StateCASResponse) Reset() {
+	*x = PKCS11StateCASResponse{}
+	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[257]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *PKCS11StateCASResponse) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*PKCS11StateCASResponse) ProtoMessage() {}
+
+func (x *PKCS11StateCASResponse) ProtoReflect() protoreflect.Message {
+	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[257]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use PKCS11StateCASResponse.ProtoReflect.Descriptor instead.
+func (*PKCS11StateCASResponse) Descriptor() ([]byte, []int) {
+	return file_pkg_api_grpc_proto_xkmsv1_xkms_proto_rawDescGZIP(), []int{257}
+}
+
+func (x *PKCS11StateCASResponse) GetSwapped() bool {
+	if x != nil {
+		return x.Swapped
+	}
+	return false
+}
+
+func (x *PKCS11StateCASResponse) GetCurrent() []byte {
+	if x != nil {
+		return x.Current
+	}
+	return nil
+}
+
+type PKCS11StateGetRequest struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	TenantId      string                 `protobuf:"bytes,1,opt,name=tenant_id,json=tenantId,proto3" json:"tenant_id,omitempty"`
+	Token         string                 `protobuf:"bytes,2,opt,name=token,proto3" json:"token,omitempty"`
+	Key           string                 `protobuf:"bytes,3,opt,name=key,proto3" json:"key,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *PKCS11StateGetRequest) Reset() {
+	*x = PKCS11StateGetRequest{}
+	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[258]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *PKCS11StateGetRequest) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*PKCS11StateGetRequest) ProtoMessage() {}
+
+func (x *PKCS11StateGetRequest) ProtoReflect() protoreflect.Message {
+	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[258]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use PKCS11StateGetRequest.ProtoReflect.Descriptor instead.
+func (*PKCS11StateGetRequest) Descriptor() ([]byte, []int) {
+	return file_pkg_api_grpc_proto_xkmsv1_xkms_proto_rawDescGZIP(), []int{258}
+}
+
+func (x *PKCS11StateGetRequest) GetTenantId() string {
+	if x != nil {
+		return x.TenantId
+	}
+	return ""
+}
+
+func (x *PKCS11StateGetRequest) GetToken() string {
+	if x != nil {
+		return x.Token
+	}
+	return ""
+}
+
+func (x *PKCS11StateGetRequest) GetKey() string {
+	if x != nil {
+		return x.Key
+	}
+	return ""
+}
+
+type PKCS11StateGetResponse struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Value         []byte                 `protobuf:"bytes,1,opt,name=value,proto3" json:"value,omitempty"`
+	Found         bool                   `protobuf:"varint,2,opt,name=found,proto3" json:"found,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *PKCS11StateGetResponse) Reset() {
+	*x = PKCS11StateGetResponse{}
+	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[259]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *PKCS11StateGetResponse) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*PKCS11StateGetResponse) ProtoMessage() {}
+
+func (x *PKCS11StateGetResponse) ProtoReflect() protoreflect.Message {
+	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[259]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use PKCS11StateGetResponse.ProtoReflect.Descriptor instead.
+func (*PKCS11StateGetResponse) Descriptor() ([]byte, []int) {
+	return file_pkg_api_grpc_proto_xkmsv1_xkms_proto_rawDescGZIP(), []int{259}
+}
+
+func (x *PKCS11StateGetResponse) GetValue() []byte {
+	if x != nil {
+		return x.Value
+	}
+	return nil
+}
+
+func (x *PKCS11StateGetResponse) GetFound() bool {
+	if x != nil {
+		return x.Found
+	}
+	return false
+}
+
+type PKCS11StateDeleteRequest struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	TenantId      string                 `protobuf:"bytes,1,opt,name=tenant_id,json=tenantId,proto3" json:"tenant_id,omitempty"`
+	Token         string                 `protobuf:"bytes,2,opt,name=token,proto3" json:"token,omitempty"`
+	Key           string                 `protobuf:"bytes,3,opt,name=key,proto3" json:"key,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *PKCS11StateDeleteRequest) Reset() {
+	*x = PKCS11StateDeleteRequest{}
+	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[260]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *PKCS11StateDeleteRequest) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*PKCS11StateDeleteRequest) ProtoMessage() {}
+
+func (x *PKCS11StateDeleteRequest) ProtoReflect() protoreflect.Message {
+	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[260]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use PKCS11StateDeleteRequest.ProtoReflect.Descriptor instead.
+func (*PKCS11StateDeleteRequest) Descriptor() ([]byte, []int) {
+	return file_pkg_api_grpc_proto_xkmsv1_xkms_proto_rawDescGZIP(), []int{260}
+}
+
+func (x *PKCS11StateDeleteRequest) GetTenantId() string {
+	if x != nil {
+		return x.TenantId
+	}
+	return ""
+}
+
+func (x *PKCS11StateDeleteRequest) GetToken() string {
+	if x != nil {
+		return x.Token
+	}
+	return ""
+}
+
+func (x *PKCS11StateDeleteRequest) GetKey() string {
+	if x != nil {
+		return x.Key
+	}
+	return ""
+}
+
+type PKCS11StateDeleteResponse struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *PKCS11StateDeleteResponse) Reset() {
+	*x = PKCS11StateDeleteResponse{}
+	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[261]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *PKCS11StateDeleteResponse) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*PKCS11StateDeleteResponse) ProtoMessage() {}
+
+func (x *PKCS11StateDeleteResponse) ProtoReflect() protoreflect.Message {
+	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[261]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use PKCS11StateDeleteResponse.ProtoReflect.Descriptor instead.
+func (*PKCS11StateDeleteResponse) Descriptor() ([]byte, []int) {
+	return file_pkg_api_grpc_proto_xkmsv1_xkms_proto_rawDescGZIP(), []int{261}
+}
+
+type PKCS11StateListRequest struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	TenantId      string                 `protobuf:"bytes,1,opt,name=tenant_id,json=tenantId,proto3" json:"tenant_id,omitempty"`
+	Token         string                 `protobuf:"bytes,2,opt,name=token,proto3" json:"token,omitempty"`
+	Prefix        string                 `protobuf:"bytes,3,opt,name=prefix,proto3" json:"prefix,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *PKCS11StateListRequest) Reset() {
+	*x = PKCS11StateListRequest{}
+	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[262]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *PKCS11StateListRequest) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*PKCS11StateListRequest) ProtoMessage() {}
+
+func (x *PKCS11StateListRequest) ProtoReflect() protoreflect.Message {
+	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[262]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use PKCS11StateListRequest.ProtoReflect.Descriptor instead.
+func (*PKCS11StateListRequest) Descriptor() ([]byte, []int) {
+	return file_pkg_api_grpc_proto_xkmsv1_xkms_proto_rawDescGZIP(), []int{262}
+}
+
+func (x *PKCS11StateListRequest) GetTenantId() string {
+	if x != nil {
+		return x.TenantId
+	}
+	return ""
+}
+
+func (x *PKCS11StateListRequest) GetToken() string {
+	if x != nil {
+		return x.Token
+	}
+	return ""
+}
+
+func (x *PKCS11StateListRequest) GetPrefix() string {
+	if x != nil {
+		return x.Prefix
+	}
+	return ""
+}
+
+type PKCS11StateListResponse struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Keys          []string               `protobuf:"bytes,1,rep,name=keys,proto3" json:"keys,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *PKCS11StateListResponse) Reset() {
+	*x = PKCS11StateListResponse{}
+	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[263]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *PKCS11StateListResponse) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*PKCS11StateListResponse) ProtoMessage() {}
+
+func (x *PKCS11StateListResponse) ProtoReflect() protoreflect.Message {
+	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[263]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use PKCS11StateListResponse.ProtoReflect.Descriptor instead.
+func (*PKCS11StateListResponse) Descriptor() ([]byte, []int) {
+	return file_pkg_api_grpc_proto_xkmsv1_xkms_proto_rawDescGZIP(), []int{263}
+}
+
+func (x *PKCS11StateListResponse) GetKeys() []string {
+	if x != nil {
+		return x.Keys
+	}
+	return nil
+}
+
 // PasswordStoreUnlockRequest requests unlocking the password store.
 type PasswordStoreUnlockRequest struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
@@ -15612,7 +17080,7 @@ type PasswordStoreUnlockRequest struct {
 
 func (x *PasswordStoreUnlockRequest) Reset() {
 	*x = PasswordStoreUnlockRequest{}
-	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[244]
+	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[264]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -15624,7 +17092,7 @@ func (x *PasswordStoreUnlockRequest) String() string {
 func (*PasswordStoreUnlockRequest) ProtoMessage() {}
 
 func (x *PasswordStoreUnlockRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[244]
+	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[264]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -15637,7 +17105,7 @@ func (x *PasswordStoreUnlockRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use PasswordStoreUnlockRequest.ProtoReflect.Descriptor instead.
 func (*PasswordStoreUnlockRequest) Descriptor() ([]byte, []int) {
-	return file_pkg_api_grpc_proto_xkmsv1_xkms_proto_rawDescGZIP(), []int{244}
+	return file_pkg_api_grpc_proto_xkmsv1_xkms_proto_rawDescGZIP(), []int{264}
 }
 
 func (x *PasswordStoreUnlockRequest) GetPin() string {
@@ -15656,7 +17124,7 @@ type PasswordStoreLockRequest struct {
 
 func (x *PasswordStoreLockRequest) Reset() {
 	*x = PasswordStoreLockRequest{}
-	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[245]
+	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[265]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -15668,7 +17136,7 @@ func (x *PasswordStoreLockRequest) String() string {
 func (*PasswordStoreLockRequest) ProtoMessage() {}
 
 func (x *PasswordStoreLockRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[245]
+	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[265]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -15681,7 +17149,7 @@ func (x *PasswordStoreLockRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use PasswordStoreLockRequest.ProtoReflect.Descriptor instead.
 func (*PasswordStoreLockRequest) Descriptor() ([]byte, []int) {
-	return file_pkg_api_grpc_proto_xkmsv1_xkms_proto_rawDescGZIP(), []int{245}
+	return file_pkg_api_grpc_proto_xkmsv1_xkms_proto_rawDescGZIP(), []int{265}
 }
 
 // PasswordStoreStatusRequest requests the password store status.
@@ -15693,7 +17161,7 @@ type PasswordStoreStatusRequest struct {
 
 func (x *PasswordStoreStatusRequest) Reset() {
 	*x = PasswordStoreStatusRequest{}
-	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[246]
+	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[266]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -15705,7 +17173,7 @@ func (x *PasswordStoreStatusRequest) String() string {
 func (*PasswordStoreStatusRequest) ProtoMessage() {}
 
 func (x *PasswordStoreStatusRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[246]
+	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[266]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -15718,7 +17186,7 @@ func (x *PasswordStoreStatusRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use PasswordStoreStatusRequest.ProtoReflect.Descriptor instead.
 func (*PasswordStoreStatusRequest) Descriptor() ([]byte, []int) {
-	return file_pkg_api_grpc_proto_xkmsv1_xkms_proto_rawDescGZIP(), []int{246}
+	return file_pkg_api_grpc_proto_xkmsv1_xkms_proto_rawDescGZIP(), []int{266}
 }
 
 // PasswordStoreStatusResponse contains the password store status.
@@ -15736,7 +17204,7 @@ type PasswordStoreStatusResponse struct {
 
 func (x *PasswordStoreStatusResponse) Reset() {
 	*x = PasswordStoreStatusResponse{}
-	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[247]
+	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[267]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -15748,7 +17216,7 @@ func (x *PasswordStoreStatusResponse) String() string {
 func (*PasswordStoreStatusResponse) ProtoMessage() {}
 
 func (x *PasswordStoreStatusResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[247]
+	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[267]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -15761,7 +17229,7 @@ func (x *PasswordStoreStatusResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use PasswordStoreStatusResponse.ProtoReflect.Descriptor instead.
 func (*PasswordStoreStatusResponse) Descriptor() ([]byte, []int) {
-	return file_pkg_api_grpc_proto_xkmsv1_xkms_proto_rawDescGZIP(), []int{247}
+	return file_pkg_api_grpc_proto_xkmsv1_xkms_proto_rawDescGZIP(), []int{267}
 }
 
 func (x *PasswordStoreStatusResponse) GetAccessMode() string {
@@ -15820,7 +17288,7 @@ type PasswordGenerateRequest struct {
 
 func (x *PasswordGenerateRequest) Reset() {
 	*x = PasswordGenerateRequest{}
-	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[248]
+	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[268]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -15832,7 +17300,7 @@ func (x *PasswordGenerateRequest) String() string {
 func (*PasswordGenerateRequest) ProtoMessage() {}
 
 func (x *PasswordGenerateRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[248]
+	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[268]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -15845,7 +17313,7 @@ func (x *PasswordGenerateRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use PasswordGenerateRequest.ProtoReflect.Descriptor instead.
 func (*PasswordGenerateRequest) Descriptor() ([]byte, []int) {
-	return file_pkg_api_grpc_proto_xkmsv1_xkms_proto_rawDescGZIP(), []int{248}
+	return file_pkg_api_grpc_proto_xkmsv1_xkms_proto_rawDescGZIP(), []int{268}
 }
 
 func (x *PasswordGenerateRequest) GetLength() int32 {
@@ -15894,7 +17362,7 @@ type PasswordGenerateResponse struct {
 
 func (x *PasswordGenerateResponse) Reset() {
 	*x = PasswordGenerateResponse{}
-	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[249]
+	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[269]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -15906,7 +17374,7 @@ func (x *PasswordGenerateResponse) String() string {
 func (*PasswordGenerateResponse) ProtoMessage() {}
 
 func (x *PasswordGenerateResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[249]
+	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[269]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -15919,7 +17387,7 @@ func (x *PasswordGenerateResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use PasswordGenerateResponse.ProtoReflect.Descriptor instead.
 func (*PasswordGenerateResponse) Descriptor() ([]byte, []int) {
-	return file_pkg_api_grpc_proto_xkmsv1_xkms_proto_rawDescGZIP(), []int{249}
+	return file_pkg_api_grpc_proto_xkmsv1_xkms_proto_rawDescGZIP(), []int{269}
 }
 
 func (x *PasswordGenerateResponse) GetPassword() string {
@@ -15947,7 +17415,7 @@ type BeginRegistrationRequest struct {
 
 func (x *BeginRegistrationRequest) Reset() {
 	*x = BeginRegistrationRequest{}
-	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[250]
+	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[270]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -15959,7 +17427,7 @@ func (x *BeginRegistrationRequest) String() string {
 func (*BeginRegistrationRequest) ProtoMessage() {}
 
 func (x *BeginRegistrationRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[250]
+	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[270]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -15972,7 +17440,7 @@ func (x *BeginRegistrationRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use BeginRegistrationRequest.ProtoReflect.Descriptor instead.
 func (*BeginRegistrationRequest) Descriptor() ([]byte, []int) {
-	return file_pkg_api_grpc_proto_xkmsv1_xkms_proto_rawDescGZIP(), []int{250}
+	return file_pkg_api_grpc_proto_xkmsv1_xkms_proto_rawDescGZIP(), []int{270}
 }
 
 func (x *BeginRegistrationRequest) GetUsername() string {
@@ -16001,7 +17469,7 @@ type BeginRegistrationResponse struct {
 
 func (x *BeginRegistrationResponse) Reset() {
 	*x = BeginRegistrationResponse{}
-	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[251]
+	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[271]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -16013,7 +17481,7 @@ func (x *BeginRegistrationResponse) String() string {
 func (*BeginRegistrationResponse) ProtoMessage() {}
 
 func (x *BeginRegistrationResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[251]
+	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[271]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -16026,7 +17494,7 @@ func (x *BeginRegistrationResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use BeginRegistrationResponse.ProtoReflect.Descriptor instead.
 func (*BeginRegistrationResponse) Descriptor() ([]byte, []int) {
-	return file_pkg_api_grpc_proto_xkmsv1_xkms_proto_rawDescGZIP(), []int{251}
+	return file_pkg_api_grpc_proto_xkmsv1_xkms_proto_rawDescGZIP(), []int{271}
 }
 
 func (x *BeginRegistrationResponse) GetSessionId() string {
@@ -16054,7 +17522,7 @@ type FinishRegistrationRequest struct {
 
 func (x *FinishRegistrationRequest) Reset() {
 	*x = FinishRegistrationRequest{}
-	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[252]
+	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[272]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -16066,7 +17534,7 @@ func (x *FinishRegistrationRequest) String() string {
 func (*FinishRegistrationRequest) ProtoMessage() {}
 
 func (x *FinishRegistrationRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[252]
+	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[272]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -16079,7 +17547,7 @@ func (x *FinishRegistrationRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use FinishRegistrationRequest.ProtoReflect.Descriptor instead.
 func (*FinishRegistrationRequest) Descriptor() ([]byte, []int) {
-	return file_pkg_api_grpc_proto_xkmsv1_xkms_proto_rawDescGZIP(), []int{252}
+	return file_pkg_api_grpc_proto_xkmsv1_xkms_proto_rawDescGZIP(), []int{272}
 }
 
 func (x *FinishRegistrationRequest) GetSessionId() string {
@@ -16109,7 +17577,7 @@ type FinishRegistrationResponse struct {
 
 func (x *FinishRegistrationResponse) Reset() {
 	*x = FinishRegistrationResponse{}
-	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[253]
+	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[273]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -16121,7 +17589,7 @@ func (x *FinishRegistrationResponse) String() string {
 func (*FinishRegistrationResponse) ProtoMessage() {}
 
 func (x *FinishRegistrationResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[253]
+	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[273]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -16134,7 +17602,7 @@ func (x *FinishRegistrationResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use FinishRegistrationResponse.ProtoReflect.Descriptor instead.
 func (*FinishRegistrationResponse) Descriptor() ([]byte, []int) {
-	return file_pkg_api_grpc_proto_xkmsv1_xkms_proto_rawDescGZIP(), []int{253}
+	return file_pkg_api_grpc_proto_xkmsv1_xkms_proto_rawDescGZIP(), []int{273}
 }
 
 func (x *FinishRegistrationResponse) GetSuccess() bool {
@@ -16175,7 +17643,7 @@ type BeginAuthenticationRequest struct {
 
 func (x *BeginAuthenticationRequest) Reset() {
 	*x = BeginAuthenticationRequest{}
-	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[254]
+	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[274]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -16187,7 +17655,7 @@ func (x *BeginAuthenticationRequest) String() string {
 func (*BeginAuthenticationRequest) ProtoMessage() {}
 
 func (x *BeginAuthenticationRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[254]
+	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[274]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -16200,7 +17668,7 @@ func (x *BeginAuthenticationRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use BeginAuthenticationRequest.ProtoReflect.Descriptor instead.
 func (*BeginAuthenticationRequest) Descriptor() ([]byte, []int) {
-	return file_pkg_api_grpc_proto_xkmsv1_xkms_proto_rawDescGZIP(), []int{254}
+	return file_pkg_api_grpc_proto_xkmsv1_xkms_proto_rawDescGZIP(), []int{274}
 }
 
 func (x *BeginAuthenticationRequest) GetUsername() string {
@@ -16222,7 +17690,7 @@ type BeginAuthenticationResponse struct {
 
 func (x *BeginAuthenticationResponse) Reset() {
 	*x = BeginAuthenticationResponse{}
-	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[255]
+	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[275]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -16234,7 +17702,7 @@ func (x *BeginAuthenticationResponse) String() string {
 func (*BeginAuthenticationResponse) ProtoMessage() {}
 
 func (x *BeginAuthenticationResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[255]
+	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[275]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -16247,7 +17715,7 @@ func (x *BeginAuthenticationResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use BeginAuthenticationResponse.ProtoReflect.Descriptor instead.
 func (*BeginAuthenticationResponse) Descriptor() ([]byte, []int) {
-	return file_pkg_api_grpc_proto_xkmsv1_xkms_proto_rawDescGZIP(), []int{255}
+	return file_pkg_api_grpc_proto_xkmsv1_xkms_proto_rawDescGZIP(), []int{275}
 }
 
 func (x *BeginAuthenticationResponse) GetSessionId() string {
@@ -16276,7 +17744,7 @@ type FinishAuthenticationRequest struct {
 
 func (x *FinishAuthenticationRequest) Reset() {
 	*x = FinishAuthenticationRequest{}
-	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[256]
+	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[276]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -16288,7 +17756,7 @@ func (x *FinishAuthenticationRequest) String() string {
 func (*FinishAuthenticationRequest) ProtoMessage() {}
 
 func (x *FinishAuthenticationRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[256]
+	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[276]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -16301,7 +17769,7 @@ func (x *FinishAuthenticationRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use FinishAuthenticationRequest.ProtoReflect.Descriptor instead.
 func (*FinishAuthenticationRequest) Descriptor() ([]byte, []int) {
-	return file_pkg_api_grpc_proto_xkmsv1_xkms_proto_rawDescGZIP(), []int{256}
+	return file_pkg_api_grpc_proto_xkmsv1_xkms_proto_rawDescGZIP(), []int{276}
 }
 
 func (x *FinishAuthenticationRequest) GetSessionId() string {
@@ -16338,7 +17806,7 @@ type FinishAuthenticationResponse struct {
 
 func (x *FinishAuthenticationResponse) Reset() {
 	*x = FinishAuthenticationResponse{}
-	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[257]
+	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[277]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -16350,7 +17818,7 @@ func (x *FinishAuthenticationResponse) String() string {
 func (*FinishAuthenticationResponse) ProtoMessage() {}
 
 func (x *FinishAuthenticationResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[257]
+	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[277]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -16363,7 +17831,7 @@ func (x *FinishAuthenticationResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use FinishAuthenticationResponse.ProtoReflect.Descriptor instead.
 func (*FinishAuthenticationResponse) Descriptor() ([]byte, []int) {
-	return file_pkg_api_grpc_proto_xkmsv1_xkms_proto_rawDescGZIP(), []int{257}
+	return file_pkg_api_grpc_proto_xkmsv1_xkms_proto_rawDescGZIP(), []int{277}
 }
 
 func (x *FinishAuthenticationResponse) GetSuccess() bool {
@@ -16406,7 +17874,7 @@ type SSHKeyRef struct {
 
 func (x *SSHKeyRef) Reset() {
 	*x = SSHKeyRef{}
-	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[258]
+	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[278]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -16418,7 +17886,7 @@ func (x *SSHKeyRef) String() string {
 func (*SSHKeyRef) ProtoMessage() {}
 
 func (x *SSHKeyRef) ProtoReflect() protoreflect.Message {
-	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[258]
+	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[278]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -16431,7 +17899,7 @@ func (x *SSHKeyRef) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use SSHKeyRef.ProtoReflect.Descriptor instead.
 func (*SSHKeyRef) Descriptor() ([]byte, []int) {
-	return file_pkg_api_grpc_proto_xkmsv1_xkms_proto_rawDescGZIP(), []int{258}
+	return file_pkg_api_grpc_proto_xkmsv1_xkms_proto_rawDescGZIP(), []int{278}
 }
 
 func (x *SSHKeyRef) GetScope() string {
@@ -16475,7 +17943,7 @@ type SSHKeyInfo struct {
 
 func (x *SSHKeyInfo) Reset() {
 	*x = SSHKeyInfo{}
-	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[259]
+	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[279]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -16487,7 +17955,7 @@ func (x *SSHKeyInfo) String() string {
 func (*SSHKeyInfo) ProtoMessage() {}
 
 func (x *SSHKeyInfo) ProtoReflect() protoreflect.Message {
-	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[259]
+	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[279]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -16500,7 +17968,7 @@ func (x *SSHKeyInfo) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use SSHKeyInfo.ProtoReflect.Descriptor instead.
 func (*SSHKeyInfo) Descriptor() ([]byte, []int) {
-	return file_pkg_api_grpc_proto_xkmsv1_xkms_proto_rawDescGZIP(), []int{259}
+	return file_pkg_api_grpc_proto_xkmsv1_xkms_proto_rawDescGZIP(), []int{279}
 }
 
 func (x *SSHKeyInfo) GetScope() string {
@@ -16588,7 +18056,7 @@ type SSHGenerateKeyRequest struct {
 
 func (x *SSHGenerateKeyRequest) Reset() {
 	*x = SSHGenerateKeyRequest{}
-	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[260]
+	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[280]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -16600,7 +18068,7 @@ func (x *SSHGenerateKeyRequest) String() string {
 func (*SSHGenerateKeyRequest) ProtoMessage() {}
 
 func (x *SSHGenerateKeyRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[260]
+	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[280]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -16613,7 +18081,7 @@ func (x *SSHGenerateKeyRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use SSHGenerateKeyRequest.ProtoReflect.Descriptor instead.
 func (*SSHGenerateKeyRequest) Descriptor() ([]byte, []int) {
-	return file_pkg_api_grpc_proto_xkmsv1_xkms_proto_rawDescGZIP(), []int{260}
+	return file_pkg_api_grpc_proto_xkmsv1_xkms_proto_rawDescGZIP(), []int{280}
 }
 
 func (x *SSHGenerateKeyRequest) GetScope() string {
@@ -16678,7 +18146,7 @@ type SSHImportKeyRequest struct {
 
 func (x *SSHImportKeyRequest) Reset() {
 	*x = SSHImportKeyRequest{}
-	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[261]
+	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[281]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -16690,7 +18158,7 @@ func (x *SSHImportKeyRequest) String() string {
 func (*SSHImportKeyRequest) ProtoMessage() {}
 
 func (x *SSHImportKeyRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[261]
+	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[281]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -16703,7 +18171,7 @@ func (x *SSHImportKeyRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use SSHImportKeyRequest.ProtoReflect.Descriptor instead.
 func (*SSHImportKeyRequest) Descriptor() ([]byte, []int) {
-	return file_pkg_api_grpc_proto_xkmsv1_xkms_proto_rawDescGZIP(), []int{261}
+	return file_pkg_api_grpc_proto_xkmsv1_xkms_proto_rawDescGZIP(), []int{281}
 }
 
 func (x *SSHImportKeyRequest) GetScope() string {
@@ -16750,7 +18218,7 @@ type SSHKeyResponse struct {
 
 func (x *SSHKeyResponse) Reset() {
 	*x = SSHKeyResponse{}
-	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[262]
+	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[282]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -16762,7 +18230,7 @@ func (x *SSHKeyResponse) String() string {
 func (*SSHKeyResponse) ProtoMessage() {}
 
 func (x *SSHKeyResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[262]
+	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[282]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -16775,7 +18243,7 @@ func (x *SSHKeyResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use SSHKeyResponse.ProtoReflect.Descriptor instead.
 func (*SSHKeyResponse) Descriptor() ([]byte, []int) {
-	return file_pkg_api_grpc_proto_xkmsv1_xkms_proto_rawDescGZIP(), []int{262}
+	return file_pkg_api_grpc_proto_xkmsv1_xkms_proto_rawDescGZIP(), []int{282}
 }
 
 func (x *SSHKeyResponse) GetKey() *SSHKeyInfo {
@@ -16795,7 +18263,7 @@ type SSHListKeysRequest struct {
 
 func (x *SSHListKeysRequest) Reset() {
 	*x = SSHListKeysRequest{}
-	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[263]
+	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[283]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -16807,7 +18275,7 @@ func (x *SSHListKeysRequest) String() string {
 func (*SSHListKeysRequest) ProtoMessage() {}
 
 func (x *SSHListKeysRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[263]
+	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[283]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -16820,7 +18288,7 @@ func (x *SSHListKeysRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use SSHListKeysRequest.ProtoReflect.Descriptor instead.
 func (*SSHListKeysRequest) Descriptor() ([]byte, []int) {
-	return file_pkg_api_grpc_proto_xkmsv1_xkms_proto_rawDescGZIP(), []int{263}
+	return file_pkg_api_grpc_proto_xkmsv1_xkms_proto_rawDescGZIP(), []int{283}
 }
 
 func (x *SSHListKeysRequest) GetScope() string {
@@ -16846,7 +18314,7 @@ type SSHListKeysResponse struct {
 
 func (x *SSHListKeysResponse) Reset() {
 	*x = SSHListKeysResponse{}
-	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[264]
+	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[284]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -16858,7 +18326,7 @@ func (x *SSHListKeysResponse) String() string {
 func (*SSHListKeysResponse) ProtoMessage() {}
 
 func (x *SSHListKeysResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[264]
+	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[284]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -16871,7 +18339,7 @@ func (x *SSHListKeysResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use SSHListKeysResponse.ProtoReflect.Descriptor instead.
 func (*SSHListKeysResponse) Descriptor() ([]byte, []int) {
-	return file_pkg_api_grpc_proto_xkmsv1_xkms_proto_rawDescGZIP(), []int{264}
+	return file_pkg_api_grpc_proto_xkmsv1_xkms_proto_rawDescGZIP(), []int{284}
 }
 
 func (x *SSHListKeysResponse) GetKeys() []*SSHKeyInfo {
@@ -16892,7 +18360,7 @@ type SSHPublicKeyResponse struct {
 
 func (x *SSHPublicKeyResponse) Reset() {
 	*x = SSHPublicKeyResponse{}
-	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[265]
+	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[285]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -16904,7 +18372,7 @@ func (x *SSHPublicKeyResponse) String() string {
 func (*SSHPublicKeyResponse) ProtoMessage() {}
 
 func (x *SSHPublicKeyResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[265]
+	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[285]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -16917,7 +18385,7 @@ func (x *SSHPublicKeyResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use SSHPublicKeyResponse.ProtoReflect.Descriptor instead.
 func (*SSHPublicKeyResponse) Descriptor() ([]byte, []int) {
-	return file_pkg_api_grpc_proto_xkmsv1_xkms_proto_rawDescGZIP(), []int{265}
+	return file_pkg_api_grpc_proto_xkmsv1_xkms_proto_rawDescGZIP(), []int{285}
 }
 
 func (x *SSHPublicKeyResponse) GetAlgorithm() string {
@@ -16951,7 +18419,7 @@ type SSHSignRequest struct {
 
 func (x *SSHSignRequest) Reset() {
 	*x = SSHSignRequest{}
-	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[266]
+	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[286]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -16963,7 +18431,7 @@ func (x *SSHSignRequest) String() string {
 func (*SSHSignRequest) ProtoMessage() {}
 
 func (x *SSHSignRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[266]
+	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[286]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -16976,7 +18444,7 @@ func (x *SSHSignRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use SSHSignRequest.ProtoReflect.Descriptor instead.
 func (*SSHSignRequest) Descriptor() ([]byte, []int) {
-	return file_pkg_api_grpc_proto_xkmsv1_xkms_proto_rawDescGZIP(), []int{266}
+	return file_pkg_api_grpc_proto_xkmsv1_xkms_proto_rawDescGZIP(), []int{286}
 }
 
 func (x *SSHSignRequest) GetKey() *SSHKeyRef {
@@ -17003,7 +18471,7 @@ type SSHSignResponse struct {
 
 func (x *SSHSignResponse) Reset() {
 	*x = SSHSignResponse{}
-	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[267]
+	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[287]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -17015,7 +18483,7 @@ func (x *SSHSignResponse) String() string {
 func (*SSHSignResponse) ProtoMessage() {}
 
 func (x *SSHSignResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[267]
+	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[287]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -17028,7 +18496,7 @@ func (x *SSHSignResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use SSHSignResponse.ProtoReflect.Descriptor instead.
 func (*SSHSignResponse) Descriptor() ([]byte, []int) {
-	return file_pkg_api_grpc_proto_xkmsv1_xkms_proto_rawDescGZIP(), []int{267}
+	return file_pkg_api_grpc_proto_xkmsv1_xkms_proto_rawDescGZIP(), []int{287}
 }
 
 func (x *SSHSignResponse) GetFormat() string {
@@ -17061,7 +18529,7 @@ type SSHPin struct {
 
 func (x *SSHPin) Reset() {
 	*x = SSHPin{}
-	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[268]
+	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[288]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -17073,7 +18541,7 @@ func (x *SSHPin) String() string {
 func (*SSHPin) ProtoMessage() {}
 
 func (x *SSHPin) ProtoReflect() protoreflect.Message {
-	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[268]
+	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[288]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -17086,7 +18554,7 @@ func (x *SSHPin) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use SSHPin.ProtoReflect.Descriptor instead.
 func (*SSHPin) Descriptor() ([]byte, []int) {
-	return file_pkg_api_grpc_proto_xkmsv1_xkms_proto_rawDescGZIP(), []int{268}
+	return file_pkg_api_grpc_proto_xkmsv1_xkms_proto_rawDescGZIP(), []int{288}
 }
 
 func (x *SSHPin) GetScope() string {
@@ -17152,7 +18620,7 @@ type SSHAddKnownHostRequest struct {
 
 func (x *SSHAddKnownHostRequest) Reset() {
 	*x = SSHAddKnownHostRequest{}
-	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[269]
+	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[289]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -17164,7 +18632,7 @@ func (x *SSHAddKnownHostRequest) String() string {
 func (*SSHAddKnownHostRequest) ProtoMessage() {}
 
 func (x *SSHAddKnownHostRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[269]
+	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[289]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -17177,7 +18645,7 @@ func (x *SSHAddKnownHostRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use SSHAddKnownHostRequest.ProtoReflect.Descriptor instead.
 func (*SSHAddKnownHostRequest) Descriptor() ([]byte, []int) {
-	return file_pkg_api_grpc_proto_xkmsv1_xkms_proto_rawDescGZIP(), []int{269}
+	return file_pkg_api_grpc_proto_xkmsv1_xkms_proto_rawDescGZIP(), []int{289}
 }
 
 func (x *SSHAddKnownHostRequest) GetScope() string {
@@ -17232,7 +18700,7 @@ type SSHListKnownHostsRequest struct {
 
 func (x *SSHListKnownHostsRequest) Reset() {
 	*x = SSHListKnownHostsRequest{}
-	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[270]
+	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[290]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -17244,7 +18712,7 @@ func (x *SSHListKnownHostsRequest) String() string {
 func (*SSHListKnownHostsRequest) ProtoMessage() {}
 
 func (x *SSHListKnownHostsRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[270]
+	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[290]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -17257,7 +18725,7 @@ func (x *SSHListKnownHostsRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use SSHListKnownHostsRequest.ProtoReflect.Descriptor instead.
 func (*SSHListKnownHostsRequest) Descriptor() ([]byte, []int) {
-	return file_pkg_api_grpc_proto_xkmsv1_xkms_proto_rawDescGZIP(), []int{270}
+	return file_pkg_api_grpc_proto_xkmsv1_xkms_proto_rawDescGZIP(), []int{290}
 }
 
 func (x *SSHListKnownHostsRequest) GetScope() string {
@@ -17283,7 +18751,7 @@ type SSHListKnownHostsResponse struct {
 
 func (x *SSHListKnownHostsResponse) Reset() {
 	*x = SSHListKnownHostsResponse{}
-	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[271]
+	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[291]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -17295,7 +18763,7 @@ func (x *SSHListKnownHostsResponse) String() string {
 func (*SSHListKnownHostsResponse) ProtoMessage() {}
 
 func (x *SSHListKnownHostsResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[271]
+	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[291]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -17308,7 +18776,7 @@ func (x *SSHListKnownHostsResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use SSHListKnownHostsResponse.ProtoReflect.Descriptor instead.
 func (*SSHListKnownHostsResponse) Descriptor() ([]byte, []int) {
-	return file_pkg_api_grpc_proto_xkmsv1_xkms_proto_rawDescGZIP(), []int{271}
+	return file_pkg_api_grpc_proto_xkmsv1_xkms_proto_rawDescGZIP(), []int{291}
 }
 
 func (x *SSHListKnownHostsResponse) GetPins() []*SSHPin {
@@ -17329,7 +18797,7 @@ type SSHRemoveKnownHostRequest struct {
 
 func (x *SSHRemoveKnownHostRequest) Reset() {
 	*x = SSHRemoveKnownHostRequest{}
-	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[272]
+	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[292]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -17341,7 +18809,7 @@ func (x *SSHRemoveKnownHostRequest) String() string {
 func (*SSHRemoveKnownHostRequest) ProtoMessage() {}
 
 func (x *SSHRemoveKnownHostRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[272]
+	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[292]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -17354,7 +18822,7 @@ func (x *SSHRemoveKnownHostRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use SSHRemoveKnownHostRequest.ProtoReflect.Descriptor instead.
 func (*SSHRemoveKnownHostRequest) Descriptor() ([]byte, []int) {
-	return file_pkg_api_grpc_proto_xkmsv1_xkms_proto_rawDescGZIP(), []int{272}
+	return file_pkg_api_grpc_proto_xkmsv1_xkms_proto_rawDescGZIP(), []int{292}
 }
 
 func (x *SSHRemoveKnownHostRequest) GetScope() string {
@@ -17393,7 +18861,7 @@ type SSHAuthorizedEntry struct {
 
 func (x *SSHAuthorizedEntry) Reset() {
 	*x = SSHAuthorizedEntry{}
-	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[273]
+	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[293]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -17405,7 +18873,7 @@ func (x *SSHAuthorizedEntry) String() string {
 func (*SSHAuthorizedEntry) ProtoMessage() {}
 
 func (x *SSHAuthorizedEntry) ProtoReflect() protoreflect.Message {
-	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[273]
+	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[293]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -17418,7 +18886,7 @@ func (x *SSHAuthorizedEntry) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use SSHAuthorizedEntry.ProtoReflect.Descriptor instead.
 func (*SSHAuthorizedEntry) Descriptor() ([]byte, []int) {
-	return file_pkg_api_grpc_proto_xkmsv1_xkms_proto_rawDescGZIP(), []int{273}
+	return file_pkg_api_grpc_proto_xkmsv1_xkms_proto_rawDescGZIP(), []int{293}
 }
 
 func (x *SSHAuthorizedEntry) GetScope() string {
@@ -17477,7 +18945,7 @@ type SSHAddAuthorizedKeyRequest struct {
 
 func (x *SSHAddAuthorizedKeyRequest) Reset() {
 	*x = SSHAddAuthorizedKeyRequest{}
-	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[274]
+	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[294]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -17489,7 +18957,7 @@ func (x *SSHAddAuthorizedKeyRequest) String() string {
 func (*SSHAddAuthorizedKeyRequest) ProtoMessage() {}
 
 func (x *SSHAddAuthorizedKeyRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[274]
+	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[294]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -17502,7 +18970,7 @@ func (x *SSHAddAuthorizedKeyRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use SSHAddAuthorizedKeyRequest.ProtoReflect.Descriptor instead.
 func (*SSHAddAuthorizedKeyRequest) Descriptor() ([]byte, []int) {
-	return file_pkg_api_grpc_proto_xkmsv1_xkms_proto_rawDescGZIP(), []int{274}
+	return file_pkg_api_grpc_proto_xkmsv1_xkms_proto_rawDescGZIP(), []int{294}
 }
 
 func (x *SSHAddAuthorizedKeyRequest) GetScope() string {
@@ -17557,7 +19025,7 @@ type SSHListAuthorizedKeysRequest struct {
 
 func (x *SSHListAuthorizedKeysRequest) Reset() {
 	*x = SSHListAuthorizedKeysRequest{}
-	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[275]
+	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[295]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -17569,7 +19037,7 @@ func (x *SSHListAuthorizedKeysRequest) String() string {
 func (*SSHListAuthorizedKeysRequest) ProtoMessage() {}
 
 func (x *SSHListAuthorizedKeysRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[275]
+	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[295]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -17582,7 +19050,7 @@ func (x *SSHListAuthorizedKeysRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use SSHListAuthorizedKeysRequest.ProtoReflect.Descriptor instead.
 func (*SSHListAuthorizedKeysRequest) Descriptor() ([]byte, []int) {
-	return file_pkg_api_grpc_proto_xkmsv1_xkms_proto_rawDescGZIP(), []int{275}
+	return file_pkg_api_grpc_proto_xkmsv1_xkms_proto_rawDescGZIP(), []int{295}
 }
 
 func (x *SSHListAuthorizedKeysRequest) GetScope() string {
@@ -17608,7 +19076,7 @@ type SSHListAuthorizedKeysResponse struct {
 
 func (x *SSHListAuthorizedKeysResponse) Reset() {
 	*x = SSHListAuthorizedKeysResponse{}
-	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[276]
+	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[296]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -17620,7 +19088,7 @@ func (x *SSHListAuthorizedKeysResponse) String() string {
 func (*SSHListAuthorizedKeysResponse) ProtoMessage() {}
 
 func (x *SSHListAuthorizedKeysResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[276]
+	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[296]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -17633,7 +19101,7 @@ func (x *SSHListAuthorizedKeysResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use SSHListAuthorizedKeysResponse.ProtoReflect.Descriptor instead.
 func (*SSHListAuthorizedKeysResponse) Descriptor() ([]byte, []int) {
-	return file_pkg_api_grpc_proto_xkmsv1_xkms_proto_rawDescGZIP(), []int{276}
+	return file_pkg_api_grpc_proto_xkmsv1_xkms_proto_rawDescGZIP(), []int{296}
 }
 
 func (x *SSHListAuthorizedKeysResponse) GetEntries() []*SSHAuthorizedEntry {
@@ -17654,7 +19122,7 @@ type SSHAuthorizedKeyRef struct {
 
 func (x *SSHAuthorizedKeyRef) Reset() {
 	*x = SSHAuthorizedKeyRef{}
-	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[277]
+	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[297]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -17666,7 +19134,7 @@ func (x *SSHAuthorizedKeyRef) String() string {
 func (*SSHAuthorizedKeyRef) ProtoMessage() {}
 
 func (x *SSHAuthorizedKeyRef) ProtoReflect() protoreflect.Message {
-	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[277]
+	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[297]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -17679,7 +19147,7 @@ func (x *SSHAuthorizedKeyRef) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use SSHAuthorizedKeyRef.ProtoReflect.Descriptor instead.
 func (*SSHAuthorizedKeyRef) Descriptor() ([]byte, []int) {
-	return file_pkg_api_grpc_proto_xkmsv1_xkms_proto_rawDescGZIP(), []int{277}
+	return file_pkg_api_grpc_proto_xkmsv1_xkms_proto_rawDescGZIP(), []int{297}
 }
 
 func (x *SSHAuthorizedKeyRef) GetScope() string {
@@ -17703,34 +19171,43 @@ func (x *SSHAuthorizedKeyRef) GetName() string {
 	return ""
 }
 
-// SSHConsoleClientMsg is a client→server console stream frame.
-type SSHConsoleClientMsg struct {
-	state protoimpl.MessageState `protogen:"open.v1"`
-	// Types that are valid to be assigned to Msg:
-	//
-	//	*SSHConsoleClientMsg_Open
-	//	*SSHConsoleClientMsg_Stdin
-	//	*SSHConsoleClientMsg_Resize
-	Msg           isSSHConsoleClientMsg_Msg `protobuf_oneof:"msg"`
+// AuditEvent is one record from the tamper-evident audit chain.
+type AuditEvent struct {
+	state     protoimpl.MessageState `protogen:"open.v1"`
+	Timestamp *timestamppb.Timestamp `protobuf:"bytes,1,opt,name=timestamp,proto3" json:"timestamp,omitempty"`
+	Actor     string                 `protobuf:"bytes,2,opt,name=actor,proto3" json:"actor,omitempty"`
+	TenantId  string                 `protobuf:"bytes,3,opt,name=tenant_id,json=tenantId,proto3" json:"tenant_id,omitempty"`
+	Role      string                 `protobuf:"bytes,4,opt,name=role,proto3" json:"role,omitempty"`
+	Resource  string                 `protobuf:"bytes,5,opt,name=resource,proto3" json:"resource,omitempty"`
+	Action    string                 `protobuf:"bytes,6,opt,name=action,proto3" json:"action,omitempty"`
+	Outcome   string                 `protobuf:"bytes,7,opt,name=outcome,proto3" json:"outcome,omitempty"`
+	// attributes carries free-form event detail. It is a Struct rather than
+	// map<string,string> so a value that was a number or bool at emission does
+	// not come back as a string over gRPC while REST keeps its real type.
+	Attributes *structpb.Struct `protobuf:"bytes,8,opt,name=attributes,proto3" json:"attributes,omitempty"`
+	ClientIp   string           `protobuf:"bytes,9,opt,name=client_ip,json=clientIp,proto3" json:"client_ip,omitempty"`
+	RequestId  string           `protobuf:"bytes,10,opt,name=request_id,json=requestId,proto3" json:"request_id,omitempty"`
+	// prev_hash is the chain link that makes the log verifiable.
+	PrevHash      string `protobuf:"bytes,11,opt,name=prev_hash,json=prevHash,proto3" json:"prev_hash,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
 
-func (x *SSHConsoleClientMsg) Reset() {
-	*x = SSHConsoleClientMsg{}
-	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[278]
+func (x *AuditEvent) Reset() {
+	*x = AuditEvent{}
+	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[298]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
 
-func (x *SSHConsoleClientMsg) String() string {
+func (x *AuditEvent) String() string {
 	return protoimpl.X.MessageStringOf(x)
 }
 
-func (*SSHConsoleClientMsg) ProtoMessage() {}
+func (*AuditEvent) ProtoMessage() {}
 
-func (x *SSHConsoleClientMsg) ProtoReflect() protoreflect.Message {
-	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[278]
+func (x *AuditEvent) ProtoReflect() protoreflect.Message {
+	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[298]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -17741,98 +19218,120 @@ func (x *SSHConsoleClientMsg) ProtoReflect() protoreflect.Message {
 	return mi.MessageOf(x)
 }
 
-// Deprecated: Use SSHConsoleClientMsg.ProtoReflect.Descriptor instead.
-func (*SSHConsoleClientMsg) Descriptor() ([]byte, []int) {
-	return file_pkg_api_grpc_proto_xkmsv1_xkms_proto_rawDescGZIP(), []int{278}
+// Deprecated: Use AuditEvent.ProtoReflect.Descriptor instead.
+func (*AuditEvent) Descriptor() ([]byte, []int) {
+	return file_pkg_api_grpc_proto_xkmsv1_xkms_proto_rawDescGZIP(), []int{298}
 }
 
-func (x *SSHConsoleClientMsg) GetMsg() isSSHConsoleClientMsg_Msg {
+func (x *AuditEvent) GetTimestamp() *timestamppb.Timestamp {
 	if x != nil {
-		return x.Msg
+		return x.Timestamp
 	}
 	return nil
 }
 
-func (x *SSHConsoleClientMsg) GetOpen() *SSHConsoleOpen {
+func (x *AuditEvent) GetActor() string {
 	if x != nil {
-		if x, ok := x.Msg.(*SSHConsoleClientMsg_Open); ok {
-			return x.Open
-		}
+		return x.Actor
+	}
+	return ""
+}
+
+func (x *AuditEvent) GetTenantId() string {
+	if x != nil {
+		return x.TenantId
+	}
+	return ""
+}
+
+func (x *AuditEvent) GetRole() string {
+	if x != nil {
+		return x.Role
+	}
+	return ""
+}
+
+func (x *AuditEvent) GetResource() string {
+	if x != nil {
+		return x.Resource
+	}
+	return ""
+}
+
+func (x *AuditEvent) GetAction() string {
+	if x != nil {
+		return x.Action
+	}
+	return ""
+}
+
+func (x *AuditEvent) GetOutcome() string {
+	if x != nil {
+		return x.Outcome
+	}
+	return ""
+}
+
+func (x *AuditEvent) GetAttributes() *structpb.Struct {
+	if x != nil {
+		return x.Attributes
 	}
 	return nil
 }
 
-func (x *SSHConsoleClientMsg) GetStdin() []byte {
+func (x *AuditEvent) GetClientIp() string {
 	if x != nil {
-		if x, ok := x.Msg.(*SSHConsoleClientMsg_Stdin); ok {
-			return x.Stdin
-		}
+		return x.ClientIp
 	}
-	return nil
+	return ""
 }
 
-func (x *SSHConsoleClientMsg) GetResize() *SSHConsoleResize {
+func (x *AuditEvent) GetRequestId() string {
 	if x != nil {
-		if x, ok := x.Msg.(*SSHConsoleClientMsg_Resize); ok {
-			return x.Resize
-		}
+		return x.RequestId
 	}
-	return nil
+	return ""
 }
 
-type isSSHConsoleClientMsg_Msg interface {
-	isSSHConsoleClientMsg_Msg()
+func (x *AuditEvent) GetPrevHash() string {
+	if x != nil {
+		return x.PrevHash
+	}
+	return ""
 }
 
-type SSHConsoleClientMsg_Open struct {
-	Open *SSHConsoleOpen `protobuf:"bytes,1,opt,name=open,proto3,oneof"` // first frame only
-}
-
-type SSHConsoleClientMsg_Stdin struct {
-	Stdin []byte `protobuf:"bytes,2,opt,name=stdin,proto3,oneof"` // keystrokes
-}
-
-type SSHConsoleClientMsg_Resize struct {
-	Resize *SSHConsoleResize `protobuf:"bytes,3,opt,name=resize,proto3,oneof"` // window resize
-}
-
-func (*SSHConsoleClientMsg_Open) isSSHConsoleClientMsg_Msg() {}
-
-func (*SSHConsoleClientMsg_Stdin) isSSHConsoleClientMsg_Msg() {}
-
-func (*SSHConsoleClientMsg_Resize) isSSHConsoleClientMsg_Msg() {}
-
-// SSHConsoleOpen is the first client frame: it selects the key and target.
-type SSHConsoleOpen struct {
+// QueryAuditRequest narrows an audit query. Unset from/to means unbounded on
+// that side; cursor continues a previous page.
+type QueryAuditRequest struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
-	Scope         string                 `protobuf:"bytes,1,opt,name=scope,proto3" json:"scope,omitempty"`
-	Owner         string                 `protobuf:"bytes,2,opt,name=owner,proto3" json:"owner,omitempty"`
-	KeyName       string                 `protobuf:"bytes,3,opt,name=key_name,json=keyName,proto3" json:"key_name,omitempty"`
-	Host          string                 `protobuf:"bytes,4,opt,name=host,proto3" json:"host,omitempty"`
-	Port          int32                  `protobuf:"varint,5,opt,name=port,proto3" json:"port,omitempty"`
-	User          string                 `protobuf:"bytes,6,opt,name=user,proto3" json:"user,omitempty"`
-	Term          string                 `protobuf:"bytes,7,opt,name=term,proto3" json:"term,omitempty"`
-	Rows          int32                  `protobuf:"varint,8,opt,name=rows,proto3" json:"rows,omitempty"`
-	Cols          int32                  `protobuf:"varint,9,opt,name=cols,proto3" json:"cols,omitempty"`
+	From          *timestamppb.Timestamp `protobuf:"bytes,1,opt,name=from,proto3" json:"from,omitempty"`
+	To            *timestamppb.Timestamp `protobuf:"bytes,2,opt,name=to,proto3" json:"to,omitempty"`
+	Actor         string                 `protobuf:"bytes,3,opt,name=actor,proto3" json:"actor,omitempty"`
+	Resource      string                 `protobuf:"bytes,4,opt,name=resource,proto3" json:"resource,omitempty"`
+	Action        string                 `protobuf:"bytes,5,opt,name=action,proto3" json:"action,omitempty"`
+	Outcome       string                 `protobuf:"bytes,6,opt,name=outcome,proto3" json:"outcome,omitempty"`
+	TenantId      string                 `protobuf:"bytes,7,opt,name=tenant_id,json=tenantId,proto3" json:"tenant_id,omitempty"`
+	Limit         int32                  `protobuf:"varint,8,opt,name=limit,proto3" json:"limit,omitempty"`
+	Cursor        string                 `protobuf:"bytes,9,opt,name=cursor,proto3" json:"cursor,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
 
-func (x *SSHConsoleOpen) Reset() {
-	*x = SSHConsoleOpen{}
-	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[279]
+func (x *QueryAuditRequest) Reset() {
+	*x = QueryAuditRequest{}
+	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[299]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
 
-func (x *SSHConsoleOpen) String() string {
+func (x *QueryAuditRequest) String() string {
 	return protoimpl.X.MessageStringOf(x)
 }
 
-func (*SSHConsoleOpen) ProtoMessage() {}
+func (*QueryAuditRequest) ProtoMessage() {}
 
-func (x *SSHConsoleOpen) ProtoReflect() protoreflect.Message {
-	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[279]
+func (x *QueryAuditRequest) ProtoReflect() protoreflect.Message {
+	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[299]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -17843,98 +19342,100 @@ func (x *SSHConsoleOpen) ProtoReflect() protoreflect.Message {
 	return mi.MessageOf(x)
 }
 
-// Deprecated: Use SSHConsoleOpen.ProtoReflect.Descriptor instead.
-func (*SSHConsoleOpen) Descriptor() ([]byte, []int) {
-	return file_pkg_api_grpc_proto_xkmsv1_xkms_proto_rawDescGZIP(), []int{279}
+// Deprecated: Use QueryAuditRequest.ProtoReflect.Descriptor instead.
+func (*QueryAuditRequest) Descriptor() ([]byte, []int) {
+	return file_pkg_api_grpc_proto_xkmsv1_xkms_proto_rawDescGZIP(), []int{299}
 }
 
-func (x *SSHConsoleOpen) GetScope() string {
+func (x *QueryAuditRequest) GetFrom() *timestamppb.Timestamp {
 	if x != nil {
-		return x.Scope
+		return x.From
+	}
+	return nil
+}
+
+func (x *QueryAuditRequest) GetTo() *timestamppb.Timestamp {
+	if x != nil {
+		return x.To
+	}
+	return nil
+}
+
+func (x *QueryAuditRequest) GetActor() string {
+	if x != nil {
+		return x.Actor
 	}
 	return ""
 }
 
-func (x *SSHConsoleOpen) GetOwner() string {
+func (x *QueryAuditRequest) GetResource() string {
 	if x != nil {
-		return x.Owner
+		return x.Resource
 	}
 	return ""
 }
 
-func (x *SSHConsoleOpen) GetKeyName() string {
+func (x *QueryAuditRequest) GetAction() string {
 	if x != nil {
-		return x.KeyName
+		return x.Action
 	}
 	return ""
 }
 
-func (x *SSHConsoleOpen) GetHost() string {
+func (x *QueryAuditRequest) GetOutcome() string {
 	if x != nil {
-		return x.Host
+		return x.Outcome
 	}
 	return ""
 }
 
-func (x *SSHConsoleOpen) GetPort() int32 {
+func (x *QueryAuditRequest) GetTenantId() string {
 	if x != nil {
-		return x.Port
+		return x.TenantId
+	}
+	return ""
+}
+
+func (x *QueryAuditRequest) GetLimit() int32 {
+	if x != nil {
+		return x.Limit
 	}
 	return 0
 }
 
-func (x *SSHConsoleOpen) GetUser() string {
+func (x *QueryAuditRequest) GetCursor() string {
 	if x != nil {
-		return x.User
+		return x.Cursor
 	}
 	return ""
 }
 
-func (x *SSHConsoleOpen) GetTerm() string {
-	if x != nil {
-		return x.Term
-	}
-	return ""
-}
-
-func (x *SSHConsoleOpen) GetRows() int32 {
-	if x != nil {
-		return x.Rows
-	}
-	return 0
-}
-
-func (x *SSHConsoleOpen) GetCols() int32 {
-	if x != nil {
-		return x.Cols
-	}
-	return 0
-}
-
-// SSHConsoleResize updates the remote PTY window.
-type SSHConsoleResize struct {
+// QueryAuditResponse is one page of audit events. next is empty on the last
+// page and is a cursor, not an offset.
+type QueryAuditResponse struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
-	Rows          int32                  `protobuf:"varint,1,opt,name=rows,proto3" json:"rows,omitempty"`
-	Cols          int32                  `protobuf:"varint,2,opt,name=cols,proto3" json:"cols,omitempty"`
+	Events        []*AuditEvent          `protobuf:"bytes,1,rep,name=events,proto3" json:"events,omitempty"`
+	Next          string                 `protobuf:"bytes,2,opt,name=next,proto3" json:"next,omitempty"`
+	Total         int32                  `protobuf:"varint,3,opt,name=total,proto3" json:"total,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
 
-func (x *SSHConsoleResize) Reset() {
-	*x = SSHConsoleResize{}
-	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[280]
+func (x *QueryAuditResponse) Reset() {
+	*x = QueryAuditResponse{}
+	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[300]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
 
-func (x *SSHConsoleResize) String() string {
+func (x *QueryAuditResponse) String() string {
 	return protoimpl.X.MessageStringOf(x)
 }
 
-func (*SSHConsoleResize) ProtoMessage() {}
+func (*QueryAuditResponse) ProtoMessage() {}
 
-func (x *SSHConsoleResize) ProtoReflect() protoreflect.Message {
-	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[280]
+func (x *QueryAuditResponse) ProtoReflect() protoreflect.Message {
+	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[300]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -17945,163 +19446,43 @@ func (x *SSHConsoleResize) ProtoReflect() protoreflect.Message {
 	return mi.MessageOf(x)
 }
 
-// Deprecated: Use SSHConsoleResize.ProtoReflect.Descriptor instead.
-func (*SSHConsoleResize) Descriptor() ([]byte, []int) {
-	return file_pkg_api_grpc_proto_xkmsv1_xkms_proto_rawDescGZIP(), []int{280}
+// Deprecated: Use QueryAuditResponse.ProtoReflect.Descriptor instead.
+func (*QueryAuditResponse) Descriptor() ([]byte, []int) {
+	return file_pkg_api_grpc_proto_xkmsv1_xkms_proto_rawDescGZIP(), []int{300}
 }
 
-func (x *SSHConsoleResize) GetRows() int32 {
+func (x *QueryAuditResponse) GetEvents() []*AuditEvent {
 	if x != nil {
-		return x.Rows
-	}
-	return 0
-}
-
-func (x *SSHConsoleResize) GetCols() int32 {
-	if x != nil {
-		return x.Cols
-	}
-	return 0
-}
-
-// SSHConsoleServerMsg is a server→client console stream frame.
-type SSHConsoleServerMsg struct {
-	state protoimpl.MessageState `protogen:"open.v1"`
-	// Types that are valid to be assigned to Msg:
-	//
-	//	*SSHConsoleServerMsg_Stdout
-	//	*SSHConsoleServerMsg_Exit
-	Msg           isSSHConsoleServerMsg_Msg `protobuf_oneof:"msg"`
-	unknownFields protoimpl.UnknownFields
-	sizeCache     protoimpl.SizeCache
-}
-
-func (x *SSHConsoleServerMsg) Reset() {
-	*x = SSHConsoleServerMsg{}
-	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[281]
-	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
-	ms.StoreMessageInfo(mi)
-}
-
-func (x *SSHConsoleServerMsg) String() string {
-	return protoimpl.X.MessageStringOf(x)
-}
-
-func (*SSHConsoleServerMsg) ProtoMessage() {}
-
-func (x *SSHConsoleServerMsg) ProtoReflect() protoreflect.Message {
-	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[281]
-	if x != nil {
-		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
-		if ms.LoadMessageInfo() == nil {
-			ms.StoreMessageInfo(mi)
-		}
-		return ms
-	}
-	return mi.MessageOf(x)
-}
-
-// Deprecated: Use SSHConsoleServerMsg.ProtoReflect.Descriptor instead.
-func (*SSHConsoleServerMsg) Descriptor() ([]byte, []int) {
-	return file_pkg_api_grpc_proto_xkmsv1_xkms_proto_rawDescGZIP(), []int{281}
-}
-
-func (x *SSHConsoleServerMsg) GetMsg() isSSHConsoleServerMsg_Msg {
-	if x != nil {
-		return x.Msg
+		return x.Events
 	}
 	return nil
 }
 
-func (x *SSHConsoleServerMsg) GetStdout() []byte {
+func (x *QueryAuditResponse) GetNext() string {
 	if x != nil {
-		if x, ok := x.Msg.(*SSHConsoleServerMsg_Stdout); ok {
-			return x.Stdout
-		}
-	}
-	return nil
-}
-
-func (x *SSHConsoleServerMsg) GetExit() *SSHConsoleExit {
-	if x != nil {
-		if x, ok := x.Msg.(*SSHConsoleServerMsg_Exit); ok {
-			return x.Exit
-		}
-	}
-	return nil
-}
-
-type isSSHConsoleServerMsg_Msg interface {
-	isSSHConsoleServerMsg_Msg()
-}
-
-type SSHConsoleServerMsg_Stdout struct {
-	Stdout []byte `protobuf:"bytes,1,opt,name=stdout,proto3,oneof"` // terminal output
-}
-
-type SSHConsoleServerMsg_Exit struct {
-	Exit *SSHConsoleExit `protobuf:"bytes,2,opt,name=exit,proto3,oneof"` // session ended
-}
-
-func (*SSHConsoleServerMsg_Stdout) isSSHConsoleServerMsg_Msg() {}
-
-func (*SSHConsoleServerMsg_Exit) isSSHConsoleServerMsg_Msg() {}
-
-// SSHConsoleExit signals the console session ended.
-type SSHConsoleExit struct {
-	state         protoimpl.MessageState `protogen:"open.v1"`
-	Message       string                 `protobuf:"bytes,1,opt,name=message,proto3" json:"message,omitempty"`
-	unknownFields protoimpl.UnknownFields
-	sizeCache     protoimpl.SizeCache
-}
-
-func (x *SSHConsoleExit) Reset() {
-	*x = SSHConsoleExit{}
-	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[282]
-	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
-	ms.StoreMessageInfo(mi)
-}
-
-func (x *SSHConsoleExit) String() string {
-	return protoimpl.X.MessageStringOf(x)
-}
-
-func (*SSHConsoleExit) ProtoMessage() {}
-
-func (x *SSHConsoleExit) ProtoReflect() protoreflect.Message {
-	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[282]
-	if x != nil {
-		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
-		if ms.LoadMessageInfo() == nil {
-			ms.StoreMessageInfo(mi)
-		}
-		return ms
-	}
-	return mi.MessageOf(x)
-}
-
-// Deprecated: Use SSHConsoleExit.ProtoReflect.Descriptor instead.
-func (*SSHConsoleExit) Descriptor() ([]byte, []int) {
-	return file_pkg_api_grpc_proto_xkmsv1_xkms_proto_rawDescGZIP(), []int{282}
-}
-
-func (x *SSHConsoleExit) GetMessage() string {
-	if x != nil {
-		return x.Message
+		return x.Next
 	}
 	return ""
+}
+
+func (x *QueryAuditResponse) GetTotal() int32 {
+	if x != nil {
+		return x.Total
+	}
+	return 0
 }
 
 var File_pkg_api_grpc_proto_xkmsv1_xkms_proto protoreflect.FileDescriptor
 
 const file_pkg_api_grpc_proto_xkmsv1_xkms_proto_rawDesc = "" +
 	"\n" +
-	"$pkg/api/grpc/proto/xkmsv1/xkms.proto\x12\axkms.v1\x1a\x1bgoogle/protobuf/empty.proto\x1a\x1fgoogle/protobuf/timestamp.proto\"w\n" +
+	"$pkg/api/grpc/proto/xkmsv1/xkms.proto\x12\axkms.v1\x1a\x1bgoogle/protobuf/empty.proto\x1a\x1cgoogle/protobuf/struct.proto\x1a\x1fgoogle/protobuf/timestamp.proto\"\x87\x01\n" +
 	"\bUserInfo\x12\x1a\n" +
 	"\busername\x18\x01 \x01(\tR\busername\x12!\n" +
 	"\fdisplay_name\x18\x02 \x01(\tR\vdisplayName\x12\x12\n" +
 	"\x04role\x18\x03 \x01(\tR\x04role\x12\x18\n" +
-	"\aenabled\x18\x04 \x01(\bR\aenabled\"\x83\x01\n" +
+	"\aenabled\x18\x04 \x01(\bR\aenabled\x12\x0e\n" +
+	"\x02id\x18\x05 \x01(\x04R\x02id\"\x83\x01\n" +
 	"\x11CreateUserRequest\x12\x1a\n" +
 	"\busername\x18\x01 \x01(\tR\busername\x12!\n" +
 	"\fdisplay_name\x18\x02 \x01(\tR\vdisplayName\x12\x12\n" +
@@ -18142,13 +19523,28 @@ const file_pkg_api_grpc_proto_xkmsv1_xkms_proto_rawDesc = "" +
 	"\n" +
 	"has_leader\x18\x03 \x01(\bR\thasLeader\x12\x17\n" +
 	"\anode_id\x18\x04 \x01(\x04R\x06nodeId\x12\x1c\n" +
-	"\tclustered\x18\x05 \x01(\bR\tclustered\"_\n" +
+	"\tclustered\x18\x05 \x01(\bR\tclustered\"\xef\x01\n" +
 	"\rClusterMember\x12\x17\n" +
 	"\anode_id\x18\x01 \x01(\x04R\x06nodeId\x12\x18\n" +
 	"\aaddress\x18\x02 \x01(\tR\aaddress\x12\x1b\n" +
-	"\tis_leader\x18\x03 \x01(\bR\bisLeader\"N\n" +
+	"\tis_leader\x18\x03 \x01(\bR\bisLeader\x12M\n" +
+	"\rapi_endpoints\x18\x04 \x03(\v2(.xkms.v1.ClusterMember.ApiEndpointsEntryR\fapiEndpoints\x1a?\n" +
+	"\x11ApiEndpointsEntry\x12\x10\n" +
+	"\x03key\x18\x01 \x01(\tR\x03key\x12\x14\n" +
+	"\x05value\x18\x02 \x01(\tR\x05value:\x028\x01\"N\n" +
 	"\x1aListClusterMembersResponse\x120\n" +
-	"\amembers\x18\x01 \x03(\v2\x16.xkms.v1.ClusterMemberR\amembers\"\x0f\n" +
+	"\amembers\x18\x01 \x03(\v2\x16.xkms.v1.ClusterMemberR\amembers\"\\\n" +
+	"\x18AddClusterReplicaRequest\x12\x1d\n" +
+	"\n" +
+	"replica_id\x18\x01 \x01(\x04R\treplicaId\x12!\n" +
+	"\fraft_address\x18\x02 \x01(\tR\vraftAddress\"<\n" +
+	"\x1bRemoveClusterReplicaRequest\x12\x1d\n" +
+	"\n" +
+	"replica_id\x18\x01 \x01(\x04R\treplicaId\"R\n" +
+	"\x16ClusterReplicaResponse\x12\x19\n" +
+	"\bshard_id\x18\x01 \x01(\x04R\ashardId\x12\x1d\n" +
+	"\n" +
+	"replica_id\x18\x02 \x01(\x04R\treplicaId\"\x0f\n" +
 	"\rHealthRequest\"B\n" +
 	"\x0eHealthResponse\x12\x16\n" +
 	"\x06status\x18\x01 \x01(\tR\x06status\x12\x18\n" +
@@ -18169,7 +19565,7 @@ const file_pkg_api_grpc_proto_xkmsv1_xkms_proto_rawDesc = "" +
 	"\x15GetBackendInfoRequest\x12\x12\n" +
 	"\x04name\x18\x01 \x01(\tR\x04name\"H\n" +
 	"\x16GetBackendInfoResponse\x12.\n" +
-	"\abackend\x18\x01 \x01(\v2\x14.xkms.v1.BackendInfoR\abackend\"\x81\x02\n" +
+	"\abackend\x18\x01 \x01(\v2\x14.xkms.v1.BackendInfoR\abackend\"\x9f\x02\n" +
 	"\x12GenerateKeyRequest\x12\x15\n" +
 	"\x06key_id\x18\x01 \x01(\tR\x05keyId\x12\x18\n" +
 	"\abackend\x18\x02 \x01(\tR\abackend\x12\x19\n" +
@@ -18181,7 +19577,9 @@ const file_pkg_api_grpc_proto_xkmsv1_xkms_proto_rawDesc = "" +
 	"\talgorithm\x18\b \x01(\tR\talgorithm\x12\x1e\n" +
 	"\n" +
 	"exportable\x18\t \x01(\bR\n" +
-	"exportable\"\xc2\x01\n" +
+	"exportable\x12\x1c\n" +
+	"\tsensitive\x18\n" +
+	" \x01(\bR\tsensitive\"\xc2\x01\n" +
 	"\x13GenerateKeyResponse\x12\x15\n" +
 	"\x06key_id\x18\x01 \x01(\tR\x05keyId\x12\x18\n" +
 	"\abackend\x18\x02 \x01(\tR\abackend\x12\x19\n" +
@@ -18212,20 +19610,28 @@ const file_pkg_api_grpc_proto_xkmsv1_xkms_proto_rawDesc = "" +
 	"\abackend\x18\x02 \x01(\tR\abackend\"Z\n" +
 	"\x0eGetKeyResponse\x12\"\n" +
 	"\x03key\x18\x01 \x01(\v2\x10.xkms.v1.KeyInfoR\x03key\x12$\n" +
-	"\x0epublic_key_pem\x18\x02 \x01(\tR\fpublicKeyPem\"f\n" +
+	"\x0epublic_key_pem\x18\x02 \x01(\tR\fpublicKeyPem\"\xc7\x01\n" +
 	"\vSignRequest\x12\x15\n" +
 	"\x06key_id\x18\x01 \x01(\tR\x05keyId\x12\x18\n" +
 	"\abackend\x18\x02 \x01(\tR\abackend\x12\x12\n" +
 	"\x04data\x18\x03 \x01(\fR\x04data\x12\x12\n" +
-	"\x04hash\x18\x04 \x01(\tR\x04hash\",\n" +
+	"\x04hash\x18\x04 \x01(\tR\x04hash\x12\x18\n" +
+	"\apadding\x18\x05 \x01(\tR\apadding\x12\x1f\n" +
+	"\vsalt_length\x18\x06 \x01(\x05R\n" +
+	"saltLength\x12$\n" +
+	"\x0edata_is_digest\x18\a \x01(\bR\fdataIsDigest\",\n" +
 	"\fSignResponse\x12\x1c\n" +
-	"\tsignature\x18\x01 \x01(\fR\tsignature\"\x86\x01\n" +
+	"\tsignature\x18\x01 \x01(\fR\tsignature\"\xe7\x01\n" +
 	"\rVerifyRequest\x12\x15\n" +
 	"\x06key_id\x18\x01 \x01(\tR\x05keyId\x12\x18\n" +
 	"\abackend\x18\x02 \x01(\tR\abackend\x12\x12\n" +
 	"\x04data\x18\x03 \x01(\fR\x04data\x12\x1c\n" +
 	"\tsignature\x18\x04 \x01(\fR\tsignature\x12\x12\n" +
-	"\x04hash\x18\x05 \x01(\tR\x04hash\"@\n" +
+	"\x04hash\x18\x05 \x01(\tR\x04hash\x12\x18\n" +
+	"\apadding\x18\x06 \x01(\tR\apadding\x12\x1f\n" +
+	"\vsalt_length\x18\a \x01(\x05R\n" +
+	"saltLength\x12$\n" +
+	"\x0edata_is_digest\x18\b \x01(\bR\fdataIsDigest\"@\n" +
 	"\x0eVerifyResponse\x12\x14\n" +
 	"\x05valid\x18\x01 \x01(\bR\x05valid\x12\x18\n" +
 	"\amessage\x18\x02 \x01(\tR\amessage\"C\n" +
@@ -18288,18 +19694,23 @@ const file_pkg_api_grpc_proto_xkmsv1_xkms_proto_rawDesc = "" +
 	"\x1dDisableAllKeyVersionsResponse\x12\x15\n" +
 	"\x06key_id\x18\x01 \x01(\tR\x05keyId\x12\x14\n" +
 	"\x05count\x18\x02 \x01(\x05R\x05count\x12\x18\n" +
-	"\amessage\x18\x03 \x01(\tR\amessage\"\x88\x01\n" +
+	"\amessage\x18\x03 \x01(\tR\amessage\"\xdd\x01\n" +
 	"\x0eEncryptRequest\x12\x15\n" +
 	"\x06key_id\x18\x01 \x01(\tR\x05keyId\x12\x18\n" +
 	"\abackend\x18\x02 \x01(\tR\abackend\x12\x1c\n" +
 	"\tplaintext\x18\x03 \x01(\fR\tplaintext\x12'\n" +
-	"\x0fadditional_data\x18\x04 \x01(\fR\x0eadditionalData\"Y\n" +
+	"\x0fadditional_data\x18\x04 \x01(\fR\x0eadditionalData\x12\x14\n" +
+	"\x05nonce\x18\x05 \x01(\fR\x05nonce\x12\x12\n" +
+	"\x04mode\x18\x06 \x01(\tR\x04mode\x12\x0e\n" +
+	"\x02iv\x18\a \x01(\fR\x02iv\x12\x19\n" +
+	"\btag_size\x18\b \x01(\x05R\atagSize\"i\n" +
 	"\x0fEncryptResponse\x12\x1e\n" +
 	"\n" +
 	"ciphertext\x18\x01 \x01(\fR\n" +
 	"ciphertext\x12\x14\n" +
 	"\x05nonce\x18\x02 \x01(\fR\x05nonce\x12\x10\n" +
-	"\x03tag\x18\x03 \x01(\fR\x03tag\"\xb2\x01\n" +
+	"\x03tag\x18\x03 \x01(\fR\x03tag\x12\x0e\n" +
+	"\x02iv\x18\x04 \x01(\fR\x02iv\"\xb5\x02\n" +
 	"\x0eDecryptRequest\x12\x15\n" +
 	"\x06key_id\x18\x01 \x01(\tR\x05keyId\x12\x18\n" +
 	"\abackend\x18\x02 \x01(\tR\abackend\x12\x1e\n" +
@@ -18308,14 +19719,22 @@ const file_pkg_api_grpc_proto_xkmsv1_xkms_proto_rawDesc = "" +
 	"ciphertext\x12'\n" +
 	"\x0fadditional_data\x18\x04 \x01(\fR\x0eadditionalData\x12\x14\n" +
 	"\x05nonce\x18\x05 \x01(\fR\x05nonce\x12\x10\n" +
-	"\x03tag\x18\x06 \x01(\fR\x03tag\"/\n" +
+	"\x03tag\x18\x06 \x01(\fR\x03tag\x12\x18\n" +
+	"\apadding\x18\a \x01(\tR\apadding\x12\x12\n" +
+	"\x04hash\x18\b \x01(\tR\x04hash\x12\x14\n" +
+	"\x05label\x18\t \x01(\fR\x05label\x12\x12\n" +
+	"\x04mode\x18\n" +
+	" \x01(\tR\x04mode\x12\x0e\n" +
+	"\x02iv\x18\v \x01(\fR\x02iv\x12\x19\n" +
+	"\btag_size\x18\f \x01(\x05R\atagSize\"/\n" +
 	"\x0fDecryptResponse\x12\x1c\n" +
-	"\tplaintext\x18\x01 \x01(\fR\tplaintext\"w\n" +
+	"\tplaintext\x18\x01 \x01(\fR\tplaintext\"\x8d\x01\n" +
 	"\x12EncryptAsymRequest\x12\x15\n" +
 	"\x06key_id\x18\x01 \x01(\tR\x05keyId\x12\x18\n" +
 	"\abackend\x18\x02 \x01(\tR\abackend\x12\x1c\n" +
 	"\tplaintext\x18\x03 \x01(\fR\tplaintext\x12\x12\n" +
-	"\x04hash\x18\x04 \x01(\tR\x04hash\"5\n" +
+	"\x04hash\x18\x04 \x01(\tR\x04hash\x12\x14\n" +
+	"\x05label\x18\x05 \x01(\fR\x05label\"5\n" +
 	"\x13EncryptAsymResponse\x12\x1e\n" +
 	"\n" +
 	"ciphertext\x18\x01 \x01(\fR\n" +
@@ -18349,7 +19768,7 @@ const file_pkg_api_grpc_proto_xkmsv1_xkms_proto_rawDesc = "" +
 	"\x06key_id\x18\x02 \x01(\tR\x05keyId\x12\x1c\n" +
 	"\talgorithm\x18\x03 \x01(\tR\talgorithm\x12\x1d\n" +
 	"\n" +
-	"key_length\x18\x04 \x01(\x05R\tkeyLength\"\x84\x02\n" +
+	"key_length\x18\x04 \x01(\x05R\tkeyLength\"\xa1\x02\n" +
 	"\x14DeriveKeyECDHRequest\x12\x15\n" +
 	"\x06key_id\x18\x01 \x01(\tR\x05keyId\x12\x18\n" +
 	"\abackend\x18\x02 \x01(\tR\abackend\x12&\n" +
@@ -18359,7 +19778,8 @@ const file_pkg_api_grpc_proto_xkmsv1_xkms_proto_rawDesc = "" +
 	"\bkdf_salt\x18\x06 \x01(\fR\akdfSalt\x12\x19\n" +
 	"\bkdf_info\x18\a \x01(\fR\akdfInfo\x12\x1d\n" +
 	"\n" +
-	"key_length\x18\b \x01(\x05R\tkeyLength\"8\n" +
+	"key_length\x18\b \x01(\x05R\tkeyLength\x12\x1b\n" +
+	"\tkdf_label\x18\t \x01(\fR\bkdfLabel\"8\n" +
 	"\x15DeriveKeyECDHResponse\x12\x1f\n" +
 	"\vderived_key\x18\x01 \x01(\fR\n" +
 	"derivedKey\"\x95\x02\n" +
@@ -18505,13 +19925,14 @@ const file_pkg_api_grpc_proto_xkmsv1_xkms_proto_rawDesc = "" +
 	"\talgorithm\x18\x03 \x01(\tR\talgorithm\x129\n" +
 	"\n" +
 	"expires_at\x18\x04 \x01(\v2\x1a.google.protobuf.TimestampR\texpiresAt\x12\x19\n" +
-	"\bkey_spec\x18\x05 \x01(\tR\akeySpec\"\xbf\x01\n" +
+	"\bkey_spec\x18\x05 \x01(\tR\akeySpec\"\xd9\x01\n" +
 	"\x0eWrapKeyRequest\x12!\n" +
 	"\fkey_material\x18\x01 \x01(\fR\vkeyMaterial\x12.\n" +
 	"\x13wrapping_public_key\x18\x02 \x01(\fR\x11wrappingPublicKey\x12!\n" +
 	"\fimport_token\x18\x03 \x01(\fR\vimportToken\x12\x1c\n" +
 	"\talgorithm\x18\x04 \x01(\tR\talgorithm\x12\x19\n" +
-	"\bkey_spec\x18\x05 \x01(\tR\akeySpec\"\xf4\x01\n" +
+	"\bkey_spec\x18\x05 \x01(\tR\akeySpec\x12\x18\n" +
+	"\abackend\x18\x06 \x01(\tR\abackend\"\xf4\x01\n" +
 	"\x0fWrapKeyResponse\x12\x1f\n" +
 	"\vwrapped_key\x18\x01 \x01(\fR\n" +
 	"wrappedKey\x12\x1c\n" +
@@ -18520,7 +19941,7 @@ const file_pkg_api_grpc_proto_xkmsv1_xkms_proto_rawDesc = "" +
 	"\bmetadata\x18\x04 \x03(\v2&.xkms.v1.WrapKeyResponse.MetadataEntryR\bmetadata\x1a;\n" +
 	"\rMetadataEntry\x12\x10\n" +
 	"\x03key\x18\x01 \x01(\tR\x03key\x12\x14\n" +
-	"\x05value\x18\x02 \x01(\tR\x05value:\x028\x01\"\xc1\x02\n" +
+	"\x05value\x18\x02 \x01(\tR\x05value:\x028\x01\"\xdb\x02\n" +
 	"\x10UnwrapKeyRequest\x12\x1f\n" +
 	"\vwrapped_key\x18\x01 \x01(\fR\n" +
 	"wrappedKey\x12\x1c\n" +
@@ -18528,22 +19949,30 @@ const file_pkg_api_grpc_proto_xkmsv1_xkms_proto_rawDesc = "" +
 	"\fimport_token\x18\x03 \x01(\fR\vimportToken\x12.\n" +
 	"\x13wrapping_public_key\x18\x04 \x01(\fR\x11wrappingPublicKey\x12\x19\n" +
 	"\bkey_spec\x18\x05 \x01(\tR\akeySpec\x12C\n" +
-	"\bmetadata\x18\x06 \x03(\v2'.xkms.v1.UnwrapKeyRequest.MetadataEntryR\bmetadata\x1a;\n" +
+	"\bmetadata\x18\x06 \x03(\v2'.xkms.v1.UnwrapKeyRequest.MetadataEntryR\bmetadata\x12\x18\n" +
+	"\abackend\x18\a \x01(\tR\abackend\x1a;\n" +
 	"\rMetadataEntry\x12\x10\n" +
 	"\x03key\x18\x01 \x01(\tR\x03key\x12\x14\n" +
 	"\x05value\x18\x02 \x01(\tR\x05value:\x028\x01\"6\n" +
 	"\x11UnwrapKeyResponse\x12!\n" +
-	"\fkey_material\x18\x01 \x01(\fR\vkeyMaterial\"\xde\x01\n" +
+	"\fkey_material\x18\x01 \x01(\fR\vkeyMaterial\"\xea\x02\n" +
 	"\x12WrapKeyByIDRequest\x12&\n" +
 	"\x0fwrapping_key_id\x18\x01 \x01(\tR\rwrappingKeyId\x120\n" +
 	"\x14wrapping_key_backend\x18\x02 \x01(\tR\x12wrappingKeyBackend\x12\"\n" +
 	"\rtarget_key_id\x18\x03 \x01(\tR\vtargetKeyId\x12,\n" +
 	"\x12target_key_backend\x18\x04 \x01(\tR\x10targetKeyBackend\x12\x1c\n" +
-	"\talgorithm\x18\x05 \x01(\tR\talgorithm\"T\n" +
+	"\talgorithm\x18\x05 \x01(\tR\talgorithm\x12.\n" +
+	"\x13target_key_material\x18\x06 \x01(\fR\x11targetKeyMaterial\x12\x0e\n" +
+	"\x02iv\x18\a \x01(\fR\x02iv\x12\x10\n" +
+	"\x03aad\x18\b \x01(\fR\x03aad\x12\x19\n" +
+	"\btag_bits\x18\t \x01(\x05R\atagBits\x12\x1d\n" +
+	"\n" +
+	"oaep_label\x18\n" +
+	" \x01(\fR\toaepLabel\"T\n" +
 	"\x13WrapKeyByIDResponse\x12\x1f\n" +
 	"\vwrapped_key\x18\x01 \x01(\fR\n" +
 	"wrappedKey\x12\x1c\n" +
-	"\talgorithm\x18\x02 \x01(\tR\talgorithm\"\xd4\x03\n" +
+	"\talgorithm\x18\x02 \x01(\tR\talgorithm\"\xb0\x04\n" +
 	"\x14UnwrapKeyByIDRequest\x12\x1f\n" +
 	"\vwrapped_key\x18\x01 \x01(\fR\n" +
 	"wrappedKey\x12*\n" +
@@ -18557,7 +19986,12 @@ const file_pkg_api_grpc_proto_xkmsv1_xkms_proto_rawDesc = "" +
 	"\ftarget_curve\x18\t \x01(\tR\vtargetCurve\x12)\n" +
 	"\x10target_partition\x18\n" +
 	" \x01(\tR\x0ftargetPartition\x12+\n" +
-	"\x11target_exportable\x18\v \x01(\bR\x10targetExportable\"|\n" +
+	"\x11target_exportable\x18\v \x01(\bR\x10targetExportable\x12\x0e\n" +
+	"\x02iv\x18\f \x01(\fR\x02iv\x12\x10\n" +
+	"\x03aad\x18\r \x01(\fR\x03aad\x12\x19\n" +
+	"\btag_bits\x18\x0e \x01(\x05R\atagBits\x12\x1d\n" +
+	"\n" +
+	"oaep_label\x18\x0f \x01(\fR\toaepLabel\"|\n" +
 	"\x15UnwrapKeyByIDResponse\x12\x15\n" +
 	"\x06key_id\x18\x01 \x01(\tR\x05keyId\x12\x18\n" +
 	"\abackend\x18\x02 \x01(\tR\abackend\x12\x18\n" +
@@ -19046,7 +20480,17 @@ const file_pkg_api_grpc_proto_xkmsv1_xkms_proto_rawDesc = "" +
 	"\x17DistributeSharesRequest\x12\x19\n" +
 	"\bgroup_id\x18\x01 \x01(\tR\agroupId\"<\n" +
 	"\x18DistributeSharesResponse\x12 \n" +
-	"\vdistributed\x18\x01 \x01(\x05R\vdistributed\"\xef\x01\n" +
+	"\vdistributed\x18\x01 \x01(\x05R\vdistributed\"\x13\n" +
+	"\x11AlgorithmsRequest\"\xa1\x01\n" +
+	"\rAlgorithmInfo\x12\x1c\n" +
+	"\talgorithm\x18\x01 \x01(\tR\talgorithm\x12\x16\n" +
+	"\x06curves\x18\x02 \x03(\tR\x06curves\x12\x1b\n" +
+	"\tkey_sizes\x18\x03 \x03(\x05R\bkeySizes\x12\x1a\n" +
+	"\bbackends\x18\x04 \x03(\tR\bbackends\x12!\n" +
+	"\fpost_quantum\x18\x05 \x01(\bR\vpostQuantum\"\x8b\x01\n" +
+	"\x12AlgorithmsResponse\x120\n" +
+	"\asigning\x18\x01 \x03(\v2\x16.xkms.v1.AlgorithmInfoR\asigning\x12C\n" +
+	"\x11key_encapsulation\x18\x02 \x03(\v2\x16.xkms.v1.AlgorithmInfoR\x10keyEncapsulation\"\xef\x01\n" +
 	"\tShareInfo\x12\x0e\n" +
 	"\x02id\x18\x01 \x01(\tR\x02id\x12\x19\n" +
 	"\bgroup_id\x18\x02 \x01(\tR\agroupId\x12\x1d\n" +
@@ -19076,7 +20520,19 @@ const file_pkg_api_grpc_proto_xkmsv1_xkms_proto_rawDesc = "" +
 	"\amessage\x18\x02 \x01(\tR\amessage\"\x13\n" +
 	"\x11ListSharesRequest\"@\n" +
 	"\x12ListSharesResponse\x12*\n" +
-	"\x06shares\x18\x01 \x03(\v2\x12.xkms.v1.ShareInfoR\x06shares\"<\n" +
+	"\x06shares\x18\x01 \x03(\v2\x12.xkms.v1.ShareInfoR\x06shares\"l\n" +
+	"\x0fGetShareRequest\x12\x1d\n" +
+	"\n" +
+	"server_url\x18\x01 \x01(\tR\tserverUrl\x12\x19\n" +
+	"\bgroup_id\x18\x02 \x01(\tR\agroupId\x12\x1f\n" +
+	"\vshare_index\x18\x03 \x01(\x05R\n" +
+	"shareIndex\"o\n" +
+	"\x12DeleteShareRequest\x12\x1d\n" +
+	"\n" +
+	"server_url\x18\x01 \x01(\tR\tserverUrl\x12\x19\n" +
+	"\bgroup_id\x18\x02 \x01(\tR\agroupId\x12\x1f\n" +
+	"\vshare_index\x18\x03 \x01(\x05R\n" +
+	"shareIndex\"<\n" +
 	"\x1fGetShareCollectionStatusRequest\x12\x19\n" +
 	"\bgroup_id\x18\x01 \x01(\tR\agroupId\"\x90\x01\n" +
 	"\x1dShareCollectionStatusResponse\x12\x19\n" +
@@ -19241,7 +20697,48 @@ const file_pkg_api_grpc_proto_xkmsv1_xkms_proto_rawDesc = "" +
 	"\x02id\x18\x01 \x01(\tR\x02id\"L\n" +
 	"\x16PasswordDeleteResponse\x12\x18\n" +
 	"\asuccess\x18\x01 \x01(\bR\asuccess\x12\x18\n" +
-	"\amessage\x18\x02 \x01(\tR\amessage\".\n" +
+	"\amessage\x18\x02 \x01(\tR\amessage\"r\n" +
+	"\x15PKCS11StatePutRequest\x12\x1b\n" +
+	"\ttenant_id\x18\x01 \x01(\tR\btenantId\x12\x14\n" +
+	"\x05token\x18\x02 \x01(\tR\x05token\x12\x10\n" +
+	"\x03key\x18\x03 \x01(\tR\x03key\x12\x14\n" +
+	"\x05value\x18\x04 \x01(\fR\x05value\"\x18\n" +
+	"\x16PKCS11StatePutResponse\"z\n" +
+	"\x1dPKCS11StatePutIfAbsentRequest\x12\x1b\n" +
+	"\ttenant_id\x18\x01 \x01(\tR\btenantId\x12\x14\n" +
+	"\x05token\x18\x02 \x01(\tR\x05token\x12\x10\n" +
+	"\x03key\x18\x03 \x01(\tR\x03key\x12\x14\n" +
+	"\x05value\x18\x04 \x01(\fR\x05value\"8\n" +
+	"\x1ePKCS11StatePutIfAbsentResponse\x12\x16\n" +
+	"\x06stored\x18\x01 \x01(\bR\x06stored\"\xaf\x01\n" +
+	"\x15PKCS11StateCASRequest\x12\x1b\n" +
+	"\ttenant_id\x18\x01 \x01(\tR\btenantId\x12\x14\n" +
+	"\x05token\x18\x02 \x01(\tR\x05token\x12\x10\n" +
+	"\x03key\x18\x03 \x01(\tR\x03key\x12\x1a\n" +
+	"\bexpected\x18\x04 \x01(\fR\bexpected\x12\x10\n" +
+	"\x03new\x18\x05 \x01(\fR\x03new\x12#\n" +
+	"\rexpect_absent\x18\x06 \x01(\bR\fexpectAbsent\"L\n" +
+	"\x16PKCS11StateCASResponse\x12\x18\n" +
+	"\aswapped\x18\x01 \x01(\bR\aswapped\x12\x18\n" +
+	"\acurrent\x18\x02 \x01(\fR\acurrent\"\\\n" +
+	"\x15PKCS11StateGetRequest\x12\x1b\n" +
+	"\ttenant_id\x18\x01 \x01(\tR\btenantId\x12\x14\n" +
+	"\x05token\x18\x02 \x01(\tR\x05token\x12\x10\n" +
+	"\x03key\x18\x03 \x01(\tR\x03key\"D\n" +
+	"\x16PKCS11StateGetResponse\x12\x14\n" +
+	"\x05value\x18\x01 \x01(\fR\x05value\x12\x14\n" +
+	"\x05found\x18\x02 \x01(\bR\x05found\"_\n" +
+	"\x18PKCS11StateDeleteRequest\x12\x1b\n" +
+	"\ttenant_id\x18\x01 \x01(\tR\btenantId\x12\x14\n" +
+	"\x05token\x18\x02 \x01(\tR\x05token\x12\x10\n" +
+	"\x03key\x18\x03 \x01(\tR\x03key\"\x1b\n" +
+	"\x19PKCS11StateDeleteResponse\"c\n" +
+	"\x16PKCS11StateListRequest\x12\x1b\n" +
+	"\ttenant_id\x18\x01 \x01(\tR\btenantId\x12\x14\n" +
+	"\x05token\x18\x02 \x01(\tR\x05token\x12\x16\n" +
+	"\x06prefix\x18\x03 \x01(\tR\x06prefix\"-\n" +
+	"\x17PKCS11StateListResponse\x12\x12\n" +
+	"\x04keys\x18\x01 \x03(\tR\x04keys\".\n" +
 	"\x1aPasswordStoreUnlockRequest\x12\x10\n" +
 	"\x03pin\x18\x01 \x01(\tR\x03pin\"\x1a\n" +
 	"\x18PasswordStoreLockRequest\"\x1c\n" +
@@ -19391,31 +20888,38 @@ const file_pkg_api_grpc_proto_xkmsv1_xkms_proto_rawDesc = "" +
 	"\x13SSHAuthorizedKeyRef\x12\x14\n" +
 	"\x05scope\x18\x01 \x01(\tR\x05scope\x12\x14\n" +
 	"\x05owner\x18\x02 \x01(\tR\x05owner\x12\x12\n" +
-	"\x04name\x18\x03 \x01(\tR\x04name\"\x98\x01\n" +
-	"\x13SSHConsoleClientMsg\x12-\n" +
-	"\x04open\x18\x01 \x01(\v2\x17.xkms.v1.SSHConsoleOpenH\x00R\x04open\x12\x16\n" +
-	"\x05stdin\x18\x02 \x01(\fH\x00R\x05stdin\x123\n" +
-	"\x06resize\x18\x03 \x01(\v2\x19.xkms.v1.SSHConsoleResizeH\x00R\x06resizeB\x05\n" +
-	"\x03msg\"\xcf\x01\n" +
-	"\x0eSSHConsoleOpen\x12\x14\n" +
-	"\x05scope\x18\x01 \x01(\tR\x05scope\x12\x14\n" +
-	"\x05owner\x18\x02 \x01(\tR\x05owner\x12\x19\n" +
-	"\bkey_name\x18\x03 \x01(\tR\akeyName\x12\x12\n" +
-	"\x04host\x18\x04 \x01(\tR\x04host\x12\x12\n" +
-	"\x04port\x18\x05 \x01(\x05R\x04port\x12\x12\n" +
-	"\x04user\x18\x06 \x01(\tR\x04user\x12\x12\n" +
-	"\x04term\x18\a \x01(\tR\x04term\x12\x12\n" +
-	"\x04rows\x18\b \x01(\x05R\x04rows\x12\x12\n" +
-	"\x04cols\x18\t \x01(\x05R\x04cols\":\n" +
-	"\x10SSHConsoleResize\x12\x12\n" +
-	"\x04rows\x18\x01 \x01(\x05R\x04rows\x12\x12\n" +
-	"\x04cols\x18\x02 \x01(\x05R\x04cols\"e\n" +
-	"\x13SSHConsoleServerMsg\x12\x18\n" +
-	"\x06stdout\x18\x01 \x01(\fH\x00R\x06stdout\x12-\n" +
-	"\x04exit\x18\x02 \x01(\v2\x17.xkms.v1.SSHConsoleExitH\x00R\x04exitB\x05\n" +
-	"\x03msg\"*\n" +
-	"\x0eSSHConsoleExit\x12\x18\n" +
-	"\amessage\x18\x01 \x01(\tR\amessage*\x9f\x01\n" +
+	"\x04name\x18\x03 \x01(\tR\x04name\"\xed\x02\n" +
+	"\n" +
+	"AuditEvent\x128\n" +
+	"\ttimestamp\x18\x01 \x01(\v2\x1a.google.protobuf.TimestampR\ttimestamp\x12\x14\n" +
+	"\x05actor\x18\x02 \x01(\tR\x05actor\x12\x1b\n" +
+	"\ttenant_id\x18\x03 \x01(\tR\btenantId\x12\x12\n" +
+	"\x04role\x18\x04 \x01(\tR\x04role\x12\x1a\n" +
+	"\bresource\x18\x05 \x01(\tR\bresource\x12\x16\n" +
+	"\x06action\x18\x06 \x01(\tR\x06action\x12\x18\n" +
+	"\aoutcome\x18\a \x01(\tR\aoutcome\x127\n" +
+	"\n" +
+	"attributes\x18\b \x01(\v2\x17.google.protobuf.StructR\n" +
+	"attributes\x12\x1b\n" +
+	"\tclient_ip\x18\t \x01(\tR\bclientIp\x12\x1d\n" +
+	"\n" +
+	"request_id\x18\n" +
+	" \x01(\tR\trequestId\x12\x1b\n" +
+	"\tprev_hash\x18\v \x01(\tR\bprevHash\"\x9e\x02\n" +
+	"\x11QueryAuditRequest\x12.\n" +
+	"\x04from\x18\x01 \x01(\v2\x1a.google.protobuf.TimestampR\x04from\x12*\n" +
+	"\x02to\x18\x02 \x01(\v2\x1a.google.protobuf.TimestampR\x02to\x12\x14\n" +
+	"\x05actor\x18\x03 \x01(\tR\x05actor\x12\x1a\n" +
+	"\bresource\x18\x04 \x01(\tR\bresource\x12\x16\n" +
+	"\x06action\x18\x05 \x01(\tR\x06action\x12\x18\n" +
+	"\aoutcome\x18\x06 \x01(\tR\aoutcome\x12\x1b\n" +
+	"\ttenant_id\x18\a \x01(\tR\btenantId\x12\x14\n" +
+	"\x05limit\x18\b \x01(\x05R\x05limit\x12\x16\n" +
+	"\x06cursor\x18\t \x01(\tR\x06cursor\"k\n" +
+	"\x12QueryAuditResponse\x12+\n" +
+	"\x06events\x18\x01 \x03(\v2\x13.xkms.v1.AuditEventR\x06events\x12\x12\n" +
+	"\x04next\x18\x02 \x01(\tR\x04next\x12\x14\n" +
+	"\x05total\x18\x03 \x01(\x05R\x05total*\x9f\x01\n" +
 	"\x11KeyDerivationMode\x12\x1e\n" +
 	"\x1aKEY_DERIVATION_MODE_EXPORT\x10\x00\x12$\n" +
 	" KEY_DERIVATION_MODE_HSM_RESIDENT\x10\x01\x12\x1f\n" +
@@ -19427,7 +20931,7 @@ const file_pkg_api_grpc_proto_xkmsv1_xkms_proto_rawDesc = "" +
 	"\x13RESIDENT_KEY_OP_MAC\x10\x02\x12\x1e\n" +
 	"\x1aRESIDENT_KEY_OP_VERIFY_MAC\x10\x03\x12\x18\n" +
 	"\x14RESIDENT_KEY_OP_WRAP\x10\x04\x12\x1a\n" +
-	"\x16RESIDENT_KEY_OP_UNWRAP\x10\x052\xc5^\n" +
+	"\x16RESIDENT_KEY_OP_UNWRAP\x10\x052\xd1e\n" +
 	"\x0fKeystoreService\x129\n" +
 	"\x06Health\x12\x16.xkms.v1.HealthRequest\x1a\x17.xkms.v1.HealthResponse\x12K\n" +
 	"\fListBackends\x12\x1c.xkms.v1.ListBackendsRequest\x1a\x1d.xkms.v1.ListBackendsResponse\x12Q\n" +
@@ -19534,10 +21038,14 @@ const file_pkg_api_grpc_proto_xkmsv1_xkms_proto_rawDesc = "" +
 	"\x14DeleteCustodianGroup\x12$.xkms.v1.DeleteCustodianGroupRequest\x1a\x16.google.protobuf.Empty\x12]\n" +
 	"\x12AddCustodianMember\x12\".xkms.v1.AddCustodianMemberRequest\x1a#.xkms.v1.AddCustodianMemberResponse\x12V\n" +
 	"\x15RemoveCustodianMember\x12%.xkms.v1.RemoveCustodianMemberRequest\x1a\x16.google.protobuf.Empty\x12W\n" +
-	"\x10DistributeShares\x12 .xkms.v1.DistributeSharesRequest\x1a!.xkms.v1.DistributeSharesResponse\x12H\n" +
+	"\x10DistributeShares\x12 .xkms.v1.DistributeSharesRequest\x1a!.xkms.v1.DistributeSharesResponse\x12E\n" +
+	"\n" +
+	"Algorithms\x12\x1a.xkms.v1.AlgorithmsRequest\x1a\x1b.xkms.v1.AlgorithmsResponse\x12H\n" +
 	"\vSubmitShare\x12\x1b.xkms.v1.SubmitShareRequest\x1a\x1c.xkms.v1.SubmitShareResponse\x12E\n" +
 	"\n" +
-	"ListShares\x12\x1a.xkms.v1.ListSharesRequest\x1a\x1b.xkms.v1.ListSharesResponse\x12l\n" +
+	"ListShares\x12\x1a.xkms.v1.ListSharesRequest\x1a\x1b.xkms.v1.ListSharesResponse\x128\n" +
+	"\bGetShare\x12\x18.xkms.v1.GetShareRequest\x1a\x12.xkms.v1.ShareInfo\x12B\n" +
+	"\vDeleteShare\x12\x1b.xkms.v1.DeleteShareRequest\x1a\x16.google.protobuf.Empty\x12l\n" +
 	"\x18GetShareCollectionStatus\x12(.xkms.v1.GetShareCollectionStatusRequest\x1a&.xkms.v1.ShareCollectionStatusResponse\x12K\n" +
 	"\fCreateTenant\x12\x1c.xkms.v1.CreateTenantRequest\x1a\x1d.xkms.v1.CreateTenantResponse\x12B\n" +
 	"\tGetTenant\x12\x19.xkms.v1.GetTenantRequest\x1a\x1a.xkms.v1.GetTenantResponse\x12H\n" +
@@ -19549,7 +21057,9 @@ const file_pkg_api_grpc_proto_xkmsv1_xkms_proto_rawDesc = "" +
 	"\x18UpdateTenantEntitlements\x12(.xkms.v1.UpdateTenantEntitlementsRequest\x1a).xkms.v1.UpdateTenantEntitlementsResponse\x12]\n" +
 	"\x12UpdateTenantQuotas\x12\".xkms.v1.UpdateTenantQuotasRequest\x1a#.xkms.v1.UpdateTenantQuotasResponse\x12J\n" +
 	"\x10GetClusterStatus\x12\x16.google.protobuf.Empty\x1a\x1e.xkms.v1.ClusterStatusResponse\x12Q\n" +
-	"\x12ListClusterMembers\x12\x16.google.protobuf.Empty\x1a#.xkms.v1.ListClusterMembersResponse\x12H\n" +
+	"\x12ListClusterMembers\x12\x16.google.protobuf.Empty\x1a#.xkms.v1.ListClusterMembersResponse\x12W\n" +
+	"\x11AddClusterReplica\x12!.xkms.v1.AddClusterReplicaRequest\x1a\x1f.xkms.v1.ClusterReplicaResponse\x12]\n" +
+	"\x14RemoveClusterReplica\x12$.xkms.v1.RemoveClusterReplicaRequest\x1a\x1f.xkms.v1.ClusterReplicaResponse\x12H\n" +
 	"\vPasswordAdd\x12\x1b.xkms.v1.PasswordAddRequest\x1a\x1c.xkms.v1.PasswordAddResponse\x12H\n" +
 	"\vPasswordGet\x12\x1b.xkms.v1.PasswordGetRequest\x1a\x1c.xkms.v1.PasswordGetResponse\x12K\n" +
 	"\fPasswordList\x12\x1c.xkms.v1.PasswordListRequest\x1a\x1d.xkms.v1.PasswordListResponse\x12Q\n" +
@@ -19558,7 +21068,13 @@ const file_pkg_api_grpc_proto_xkmsv1_xkms_proto_rawDesc = "" +
 	"\x13PasswordStoreUnlock\x12#.xkms.v1.PasswordStoreUnlockRequest\x1a$.xkms.v1.PasswordStoreStatusResponse\x12\\\n" +
 	"\x11PasswordStoreLock\x12!.xkms.v1.PasswordStoreLockRequest\x1a$.xkms.v1.PasswordStoreStatusResponse\x12`\n" +
 	"\x13PasswordStoreStatus\x12#.xkms.v1.PasswordStoreStatusRequest\x1a$.xkms.v1.PasswordStoreStatusResponse\x12W\n" +
-	"\x10PasswordGenerate\x12 .xkms.v1.PasswordGenerateRequest\x1a!.xkms.v1.PasswordGenerateResponse\x12?\n" +
+	"\x10PasswordGenerate\x12 .xkms.v1.PasswordGenerateRequest\x1a!.xkms.v1.PasswordGenerateResponse\x12Q\n" +
+	"\x0ePKCS11StatePut\x12\x1e.xkms.v1.PKCS11StatePutRequest\x1a\x1f.xkms.v1.PKCS11StatePutResponse\x12i\n" +
+	"\x16PKCS11StatePutIfAbsent\x12&.xkms.v1.PKCS11StatePutIfAbsentRequest\x1a'.xkms.v1.PKCS11StatePutIfAbsentResponse\x12Q\n" +
+	"\x0ePKCS11StateCAS\x12\x1e.xkms.v1.PKCS11StateCASRequest\x1a\x1f.xkms.v1.PKCS11StateCASResponse\x12Q\n" +
+	"\x0ePKCS11StateGet\x12\x1e.xkms.v1.PKCS11StateGetRequest\x1a\x1f.xkms.v1.PKCS11StateGetResponse\x12Z\n" +
+	"\x11PKCS11StateDelete\x12!.xkms.v1.PKCS11StateDeleteRequest\x1a\".xkms.v1.PKCS11StateDeleteResponse\x12T\n" +
+	"\x0fPKCS11StateList\x12\x1f.xkms.v1.PKCS11StateListRequest\x1a .xkms.v1.PKCS11StateListResponse\x12?\n" +
 	"\n" +
 	"CreateUser\x12\x1a.xkms.v1.CreateUserRequest\x1a\x15.xkms.v1.UserResponse\x12B\n" +
 	"\tListUsers\x12\x19.xkms.v1.ListUsersRequest\x1a\x1a.xkms.v1.ListUsersResponse\x129\n" +
@@ -19586,9 +21102,9 @@ const file_pkg_api_grpc_proto_xkmsv1_xkms_proto_rawDesc = "" +
 	"\x12SSHRemoveKnownHost\x12\".xkms.v1.SSHRemoveKnownHostRequest\x1a\x16.google.protobuf.Empty\x12R\n" +
 	"\x13SSHAddAuthorizedKey\x12#.xkms.v1.SSHAddAuthorizedKeyRequest\x1a\x16.google.protobuf.Empty\x12f\n" +
 	"\x15SSHListAuthorizedKeys\x12%.xkms.v1.SSHListAuthorizedKeysRequest\x1a&.xkms.v1.SSHListAuthorizedKeysResponse\x12N\n" +
-	"\x16SSHRemoveAuthorizedKey\x12\x1c.xkms.v1.SSHAuthorizedKeyRef\x1a\x16.google.protobuf.Empty\x12L\n" +
+	"\x16SSHRemoveAuthorizedKey\x12\x1c.xkms.v1.SSHAuthorizedKeyRef\x1a\x16.google.protobuf.Empty\x12E\n" +
 	"\n" +
-	"SSHConsole\x12\x1c.xkms.v1.SSHConsoleClientMsg\x1a\x1c.xkms.v1.SSHConsoleServerMsg(\x010\x01B9Z7github.com/jeremyhahn/go-xkms/pkg/api/grpc/proto/xkmsv1b\x06proto3"
+	"QueryAudit\x12\x1a.xkms.v1.QueryAuditRequest\x1a\x1b.xkms.v1.QueryAuditResponseB9Z7github.com/jeremyhahn/go-xkms/pkg/api/grpc/proto/xkmsv1b\x06proto3"
 
 var (
 	file_pkg_api_grpc_proto_xkmsv1_xkms_proto_rawDescOnce sync.Once
@@ -19603,7 +21119,7 @@ func file_pkg_api_grpc_proto_xkmsv1_xkms_proto_rawDescGZIP() []byte {
 }
 
 var file_pkg_api_grpc_proto_xkmsv1_xkms_proto_enumTypes = make([]protoimpl.EnumInfo, 2)
-var file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes = make([]protoimpl.MessageInfo, 289)
+var file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes = make([]protoimpl.MessageInfo, 308)
 var file_pkg_api_grpc_proto_xkmsv1_xkms_proto_goTypes = []any{
 	(KeyDerivationMode)(0),                     // 0: xkms.v1.KeyDerivationMode
 	(ResidentKeyOperation)(0),                  // 1: xkms.v1.ResidentKeyOperation
@@ -19624,660 +21140,707 @@ var file_pkg_api_grpc_proto_xkmsv1_xkms_proto_goTypes = []any{
 	(*ClusterStatusResponse)(nil),              // 16: xkms.v1.ClusterStatusResponse
 	(*ClusterMember)(nil),                      // 17: xkms.v1.ClusterMember
 	(*ListClusterMembersResponse)(nil),         // 18: xkms.v1.ListClusterMembersResponse
-	(*HealthRequest)(nil),                      // 19: xkms.v1.HealthRequest
-	(*HealthResponse)(nil),                     // 20: xkms.v1.HealthResponse
-	(*BackendInfo)(nil),                        // 21: xkms.v1.BackendInfo
-	(*ListBackendsRequest)(nil),                // 22: xkms.v1.ListBackendsRequest
-	(*ListBackendsResponse)(nil),               // 23: xkms.v1.ListBackendsResponse
-	(*GetBackendInfoRequest)(nil),              // 24: xkms.v1.GetBackendInfoRequest
-	(*GetBackendInfoResponse)(nil),             // 25: xkms.v1.GetBackendInfoResponse
-	(*GenerateKeyRequest)(nil),                 // 26: xkms.v1.GenerateKeyRequest
-	(*GenerateKeyResponse)(nil),                // 27: xkms.v1.GenerateKeyResponse
-	(*KeyInfo)(nil),                            // 28: xkms.v1.KeyInfo
-	(*ListKeysRequest)(nil),                    // 29: xkms.v1.ListKeysRequest
-	(*ListKeysResponse)(nil),                   // 30: xkms.v1.ListKeysResponse
-	(*GetKeyRequest)(nil),                      // 31: xkms.v1.GetKeyRequest
-	(*GetKeyResponse)(nil),                     // 32: xkms.v1.GetKeyResponse
-	(*SignRequest)(nil),                        // 33: xkms.v1.SignRequest
-	(*SignResponse)(nil),                       // 34: xkms.v1.SignResponse
-	(*VerifyRequest)(nil),                      // 35: xkms.v1.VerifyRequest
-	(*VerifyResponse)(nil),                     // 36: xkms.v1.VerifyResponse
-	(*DeleteKeyRequest)(nil),                   // 37: xkms.v1.DeleteKeyRequest
-	(*DeleteKeyResponse)(nil),                  // 38: xkms.v1.DeleteKeyResponse
-	(*RotateKeyRequest)(nil),                   // 39: xkms.v1.RotateKeyRequest
-	(*RotateKeyResponse)(nil),                  // 40: xkms.v1.RotateKeyResponse
-	(*KeyVersionInfo)(nil),                     // 41: xkms.v1.KeyVersionInfo
-	(*ListKeyVersionsRequest)(nil),             // 42: xkms.v1.ListKeyVersionsRequest
-	(*ListKeyVersionsResponse)(nil),            // 43: xkms.v1.ListKeyVersionsResponse
-	(*EnableKeyVersionRequest)(nil),            // 44: xkms.v1.EnableKeyVersionRequest
-	(*EnableKeyVersionResponse)(nil),           // 45: xkms.v1.EnableKeyVersionResponse
-	(*DisableKeyVersionRequest)(nil),           // 46: xkms.v1.DisableKeyVersionRequest
-	(*DisableKeyVersionResponse)(nil),          // 47: xkms.v1.DisableKeyVersionResponse
-	(*EnableAllKeyVersionsRequest)(nil),        // 48: xkms.v1.EnableAllKeyVersionsRequest
-	(*EnableAllKeyVersionsResponse)(nil),       // 49: xkms.v1.EnableAllKeyVersionsResponse
-	(*DisableAllKeyVersionsRequest)(nil),       // 50: xkms.v1.DisableAllKeyVersionsRequest
-	(*DisableAllKeyVersionsResponse)(nil),      // 51: xkms.v1.DisableAllKeyVersionsResponse
-	(*EncryptRequest)(nil),                     // 52: xkms.v1.EncryptRequest
-	(*EncryptResponse)(nil),                    // 53: xkms.v1.EncryptResponse
-	(*DecryptRequest)(nil),                     // 54: xkms.v1.DecryptRequest
-	(*DecryptResponse)(nil),                    // 55: xkms.v1.DecryptResponse
-	(*EncryptAsymRequest)(nil),                 // 56: xkms.v1.EncryptAsymRequest
-	(*EncryptAsymResponse)(nil),                // 57: xkms.v1.EncryptAsymResponse
-	(*DeriveKeyRequest)(nil),                   // 58: xkms.v1.DeriveKeyRequest
-	(*DeriveKeyResponse)(nil),                  // 59: xkms.v1.DeriveKeyResponse
-	(*DeriveKeyECDHRequest)(nil),               // 60: xkms.v1.DeriveKeyECDHRequest
-	(*DeriveKeyECDHResponse)(nil),              // 61: xkms.v1.DeriveKeyECDHResponse
-	(*DerivedKeyHandle)(nil),                   // 62: xkms.v1.DerivedKeyHandle
-	(*TPMDerivedKeyHandle)(nil),                // 63: xkms.v1.TPMDerivedKeyHandle
-	(*DerivedKeyTemplate)(nil),                 // 64: xkms.v1.DerivedKeyTemplate
-	(*OperationParams)(nil),                    // 65: xkms.v1.OperationParams
-	(*DeriveKeyECDHSecureRequest)(nil),         // 66: xkms.v1.DeriveKeyECDHSecureRequest
-	(*DeriveKeyECDHSecureResponse)(nil),        // 67: xkms.v1.DeriveKeyECDHSecureResponse
-	(*UseResidentKeyRequest)(nil),              // 68: xkms.v1.UseResidentKeyRequest
-	(*UseResidentKeyResponse)(nil),             // 69: xkms.v1.UseResidentKeyResponse
-	(*DestroyResidentKeyRequest)(nil),          // 70: xkms.v1.DestroyResidentKeyRequest
-	(*DestroyResidentKeyResponse)(nil),         // 71: xkms.v1.DestroyResidentKeyResponse
-	(*GenerateEphemeralECDHRequest)(nil),       // 72: xkms.v1.GenerateEphemeralECDHRequest
-	(*GenerateEphemeralECDHResponse)(nil),      // 73: xkms.v1.GenerateEphemeralECDHResponse
-	(*SaveCertRequest)(nil),                    // 74: xkms.v1.SaveCertRequest
-	(*SaveCertResponse)(nil),                   // 75: xkms.v1.SaveCertResponse
-	(*GetCertRequest)(nil),                     // 76: xkms.v1.GetCertRequest
-	(*GetCertResponse)(nil),                    // 77: xkms.v1.GetCertResponse
-	(*DeleteCertRequest)(nil),                  // 78: xkms.v1.DeleteCertRequest
-	(*DeleteCertResponse)(nil),                 // 79: xkms.v1.DeleteCertResponse
-	(*ListCertsRequest)(nil),                   // 80: xkms.v1.ListCertsRequest
-	(*ListCertsResponse)(nil),                  // 81: xkms.v1.ListCertsResponse
-	(*CertExistsRequest)(nil),                  // 82: xkms.v1.CertExistsRequest
-	(*CertExistsResponse)(nil),                 // 83: xkms.v1.CertExistsResponse
-	(*SaveCertChainRequest)(nil),               // 84: xkms.v1.SaveCertChainRequest
-	(*SaveCertChainResponse)(nil),              // 85: xkms.v1.SaveCertChainResponse
-	(*GetCertChainRequest)(nil),                // 86: xkms.v1.GetCertChainRequest
-	(*GetCertChainResponse)(nil),               // 87: xkms.v1.GetCertChainResponse
-	(*GetTLSCertificateRequest)(nil),           // 88: xkms.v1.GetTLSCertificateRequest
-	(*GetTLSCertificateResponse)(nil),          // 89: xkms.v1.GetTLSCertificateResponse
-	(*GetImportParametersRequest)(nil),         // 90: xkms.v1.GetImportParametersRequest
-	(*GetImportParametersResponse)(nil),        // 91: xkms.v1.GetImportParametersResponse
-	(*WrapKeyRequest)(nil),                     // 92: xkms.v1.WrapKeyRequest
-	(*WrapKeyResponse)(nil),                    // 93: xkms.v1.WrapKeyResponse
-	(*UnwrapKeyRequest)(nil),                   // 94: xkms.v1.UnwrapKeyRequest
-	(*UnwrapKeyResponse)(nil),                  // 95: xkms.v1.UnwrapKeyResponse
-	(*WrapKeyByIDRequest)(nil),                 // 96: xkms.v1.WrapKeyByIDRequest
-	(*WrapKeyByIDResponse)(nil),                // 97: xkms.v1.WrapKeyByIDResponse
-	(*UnwrapKeyByIDRequest)(nil),               // 98: xkms.v1.UnwrapKeyByIDRequest
-	(*UnwrapKeyByIDResponse)(nil),              // 99: xkms.v1.UnwrapKeyByIDResponse
-	(*ImportKeyRequest)(nil),                   // 100: xkms.v1.ImportKeyRequest
-	(*ImportKeyResponse)(nil),                  // 101: xkms.v1.ImportKeyResponse
-	(*ExportKeyRequest)(nil),                   // 102: xkms.v1.ExportKeyRequest
-	(*ExportKeyResponse)(nil),                  // 103: xkms.v1.ExportKeyResponse
-	(*ExportKeyMaterialRequest)(nil),           // 104: xkms.v1.ExportKeyMaterialRequest
-	(*ExportKeyMaterialResponse)(nil),          // 105: xkms.v1.ExportKeyMaterialResponse
-	(*CopyKeyRequest)(nil),                     // 106: xkms.v1.CopyKeyRequest
-	(*CopyKeyResponse)(nil),                    // 107: xkms.v1.CopyKeyResponse
-	(*SealRequest)(nil),                        // 108: xkms.v1.SealRequest
-	(*SealResponse)(nil),                       // 109: xkms.v1.SealResponse
-	(*UnsealRequest)(nil),                      // 110: xkms.v1.UnsealRequest
-	(*UnsealResponse)(nil),                     // 111: xkms.v1.UnsealResponse
-	(*CanSealRequest)(nil),                     // 112: xkms.v1.CanSealRequest
-	(*CanSealResponse)(nil),                    // 113: xkms.v1.CanSealResponse
-	(*AttestKeyRequest)(nil),                   // 114: xkms.v1.AttestKeyRequest
-	(*AttestKeyResponse)(nil),                  // 115: xkms.v1.AttestKeyResponse
-	(*FrostKeyInfo)(nil),                       // 116: xkms.v1.FrostKeyInfo
-	(*FrostKeyPackage)(nil),                    // 117: xkms.v1.FrostKeyPackage
-	(*FrostCommitment)(nil),                    // 118: xkms.v1.FrostCommitment
-	(*FrostSignatureShare)(nil),                // 119: xkms.v1.FrostSignatureShare
-	(*FrostGenerateKeyRequest)(nil),            // 120: xkms.v1.FrostGenerateKeyRequest
-	(*FrostGenerateKeyResponse)(nil),           // 121: xkms.v1.FrostGenerateKeyResponse
-	(*FrostImportKeyRequest)(nil),              // 122: xkms.v1.FrostImportKeyRequest
-	(*FrostImportKeyResponse)(nil),             // 123: xkms.v1.FrostImportKeyResponse
-	(*FrostListKeysRequest)(nil),               // 124: xkms.v1.FrostListKeysRequest
-	(*FrostListKeysResponse)(nil),              // 125: xkms.v1.FrostListKeysResponse
-	(*FrostGetKeyRequest)(nil),                 // 126: xkms.v1.FrostGetKeyRequest
-	(*FrostGetKeyResponse)(nil),                // 127: xkms.v1.FrostGetKeyResponse
-	(*FrostDeleteKeyRequest)(nil),              // 128: xkms.v1.FrostDeleteKeyRequest
-	(*FrostDeleteKeyResponse)(nil),             // 129: xkms.v1.FrostDeleteKeyResponse
-	(*FrostGenerateNoncesRequest)(nil),         // 130: xkms.v1.FrostGenerateNoncesRequest
-	(*FrostGenerateNoncesResponse)(nil),        // 131: xkms.v1.FrostGenerateNoncesResponse
-	(*FrostSignRoundRequest)(nil),              // 132: xkms.v1.FrostSignRoundRequest
-	(*FrostSignRoundResponse)(nil),             // 133: xkms.v1.FrostSignRoundResponse
-	(*FrostAggregateRequest)(nil),              // 134: xkms.v1.FrostAggregateRequest
-	(*FrostAggregateResponse)(nil),             // 135: xkms.v1.FrostAggregateResponse
-	(*FrostVerifyRequest)(nil),                 // 136: xkms.v1.FrostVerifyRequest
-	(*FrostVerifyResponse)(nil),                // 137: xkms.v1.FrostVerifyResponse
-	(*GetCABundleRequest)(nil),                 // 138: xkms.v1.GetCABundleRequest
-	(*GetCABundleResponse)(nil),                // 139: xkms.v1.GetCABundleResponse
-	(*GetCACertificateRequest)(nil),            // 140: xkms.v1.GetCACertificateRequest
-	(*GetCACertificateResponse)(nil),           // 141: xkms.v1.GetCACertificateResponse
-	(*SignCSRRequest)(nil),                     // 142: xkms.v1.SignCSRRequest
-	(*SignCSRResponse)(nil),                    // 143: xkms.v1.SignCSRResponse
-	(*IssueCertificateRequest)(nil),            // 144: xkms.v1.IssueCertificateRequest
-	(*IssueCertificateResponse)(nil),           // 145: xkms.v1.IssueCertificateResponse
-	(*RevokeCertificateRequest)(nil),           // 146: xkms.v1.RevokeCertificateRequest
-	(*RevokeCertificateResponse)(nil),          // 147: xkms.v1.RevokeCertificateResponse
-	(*GenerateCRLRequest)(nil),                 // 148: xkms.v1.GenerateCRLRequest
-	(*GenerateCRLResponse)(nil),                // 149: xkms.v1.GenerateCRLResponse
-	(*IsRevokedRequest)(nil),                   // 150: xkms.v1.IsRevokedRequest
-	(*IsRevokedResponse)(nil),                  // 151: xkms.v1.IsRevokedResponse
-	(*IssueEKCertificateRequest)(nil),          // 152: xkms.v1.IssueEKCertificateRequest
-	(*IssueEKCertificateResponse)(nil),         // 153: xkms.v1.IssueEKCertificateResponse
-	(*IssueAKCertificateRequest)(nil),          // 154: xkms.v1.IssueAKCertificateRequest
-	(*IssueAKCertificateResponse)(nil),         // 155: xkms.v1.IssueAKCertificateResponse
-	(*SignTCGCSRRequest)(nil),                  // 156: xkms.v1.SignTCGCSRRequest
-	(*SignTCGCSRResponse)(nil),                 // 157: xkms.v1.SignTCGCSRResponse
-	(*EnrollDeviceRequest)(nil),                // 158: xkms.v1.EnrollDeviceRequest
-	(*EnrollDeviceResponse)(nil),               // 159: xkms.v1.EnrollDeviceResponse
-	(*BarrierInitializeRequest)(nil),           // 160: xkms.v1.BarrierInitializeRequest
-	(*BarrierUnsealRequest)(nil),               // 161: xkms.v1.BarrierUnsealRequest
-	(*BarrierStatusResponse)(nil),              // 162: xkms.v1.BarrierStatusResponse
-	(*BarrierInitializeShamirRequest)(nil),     // 163: xkms.v1.BarrierInitializeShamirRequest
-	(*BarrierShamirInitResponse)(nil),          // 164: xkms.v1.BarrierShamirInitResponse
-	(*BarrierUnsealShareRequest)(nil),          // 165: xkms.v1.BarrierUnsealShareRequest
-	(*BarrierUnsealSharesRequest)(nil),         // 166: xkms.v1.BarrierUnsealSharesRequest
-	(*BarrierQuorumProgressResponse)(nil),      // 167: xkms.v1.BarrierQuorumProgressResponse
-	(*BarrierRekeyRequest)(nil),                // 168: xkms.v1.BarrierRekeyRequest
-	(*BarrierGenerateRecoveryKeysRequest)(nil), // 169: xkms.v1.BarrierGenerateRecoveryKeysRequest
-	(*BarrierHasRecoveryKeysResponse)(nil),     // 170: xkms.v1.BarrierHasRecoveryKeysResponse
-	(*BarrierRecoveryKeysResponse)(nil),        // 171: xkms.v1.BarrierRecoveryKeysResponse
-	(*BarrierRecoverWithKeysRequest)(nil),      // 172: xkms.v1.BarrierRecoverWithKeysRequest
-	(*BarrierGenerateRootTokenRequest)(nil),    // 173: xkms.v1.BarrierGenerateRootTokenRequest
-	(*BarrierRootTokenResponse)(nil),           // 174: xkms.v1.BarrierRootTokenResponse
-	(*BarrierEnableEncryptionRequest)(nil),     // 175: xkms.v1.BarrierEnableEncryptionRequest
-	(*BarrierEnableEncryptionResponse)(nil),    // 176: xkms.v1.BarrierEnableEncryptionResponse
-	(*SetSOPINRequest)(nil),                    // 177: xkms.v1.SetSOPINRequest
-	(*SetUserPINRequest)(nil),                  // 178: xkms.v1.SetUserPINRequest
-	(*ChangeSOPINRequest)(nil),                 // 179: xkms.v1.ChangeSOPINRequest
-	(*ChangeUserPINRequest)(nil),               // 180: xkms.v1.ChangeUserPINRequest
-	(*VerifySOPINRequest)(nil),                 // 181: xkms.v1.VerifySOPINRequest
-	(*VerifyUserPINRequest)(nil),               // 182: xkms.v1.VerifyUserPINRequest
-	(*LockoutStatusResponse)(nil),              // 183: xkms.v1.LockoutStatusResponse
-	(*ResetLockoutRequest)(nil),                // 184: xkms.v1.ResetLockoutRequest
-	(*PIVSlotStatus)(nil),                      // 185: xkms.v1.PIVSlotStatus
-	(*ListPIVSlotsRequest)(nil),                // 186: xkms.v1.ListPIVSlotsRequest
-	(*ListPIVSlotsResponse)(nil),               // 187: xkms.v1.ListPIVSlotsResponse
-	(*GetPIVCertificateRequest)(nil),           // 188: xkms.v1.GetPIVCertificateRequest
-	(*GetPIVCertificateResponse)(nil),          // 189: xkms.v1.GetPIVCertificateResponse
-	(*StorePIVCertificateRequest)(nil),         // 190: xkms.v1.StorePIVCertificateRequest
-	(*DeletePIVCertificateRequest)(nil),        // 191: xkms.v1.DeletePIVCertificateRequest
-	(*GeneratePIVKeyRequest)(nil),              // 192: xkms.v1.GeneratePIVKeyRequest
-	(*GeneratePIVKeyResponse)(nil),             // 193: xkms.v1.GeneratePIVKeyResponse
-	(*GeneratePIVCSRRequest)(nil),              // 194: xkms.v1.GeneratePIVCSRRequest
-	(*GeneratePIVCSRResponse)(nil),             // 195: xkms.v1.GeneratePIVCSRResponse
-	(*CustodianMember)(nil),                    // 196: xkms.v1.CustodianMember
-	(*CustodianGroup)(nil),                     // 197: xkms.v1.CustodianGroup
-	(*CreateCustodianGroupRequest)(nil),        // 198: xkms.v1.CreateCustodianGroupRequest
-	(*CreateCustodianGroupResponse)(nil),       // 199: xkms.v1.CreateCustodianGroupResponse
-	(*GetCustodianGroupRequest)(nil),           // 200: xkms.v1.GetCustodianGroupRequest
-	(*GetCustodianGroupResponse)(nil),          // 201: xkms.v1.GetCustodianGroupResponse
-	(*ListCustodianGroupsRequest)(nil),         // 202: xkms.v1.ListCustodianGroupsRequest
-	(*ListCustodianGroupsResponse)(nil),        // 203: xkms.v1.ListCustodianGroupsResponse
-	(*DeleteCustodianGroupRequest)(nil),        // 204: xkms.v1.DeleteCustodianGroupRequest
-	(*AddCustodianMemberRequest)(nil),          // 205: xkms.v1.AddCustodianMemberRequest
-	(*AddCustodianMemberResponse)(nil),         // 206: xkms.v1.AddCustodianMemberResponse
-	(*RemoveCustodianMemberRequest)(nil),       // 207: xkms.v1.RemoveCustodianMemberRequest
-	(*DistributeSharesRequest)(nil),            // 208: xkms.v1.DistributeSharesRequest
-	(*DistributeSharesResponse)(nil),           // 209: xkms.v1.DistributeSharesResponse
-	(*ShareInfo)(nil),                          // 210: xkms.v1.ShareInfo
-	(*SubmitShareRequest)(nil),                 // 211: xkms.v1.SubmitShareRequest
-	(*SubmitShareResponse)(nil),                // 212: xkms.v1.SubmitShareResponse
-	(*ListSharesRequest)(nil),                  // 213: xkms.v1.ListSharesRequest
-	(*ListSharesResponse)(nil),                 // 214: xkms.v1.ListSharesResponse
-	(*GetShareCollectionStatusRequest)(nil),    // 215: xkms.v1.GetShareCollectionStatusRequest
-	(*ShareCollectionStatusResponse)(nil),      // 216: xkms.v1.ShareCollectionStatusResponse
-	(*TenantInfo)(nil),                         // 217: xkms.v1.TenantInfo
-	(*TenantQuotas)(nil),                       // 218: xkms.v1.TenantQuotas
-	(*TenantEntitlements)(nil),                 // 219: xkms.v1.TenantEntitlements
-	(*TenantBarrierStatusRequest)(nil),         // 220: xkms.v1.TenantBarrierStatusRequest
-	(*TenantBarrierStatusResponse)(nil),        // 221: xkms.v1.TenantBarrierStatusResponse
-	(*UpdateTenantEntitlementsRequest)(nil),    // 222: xkms.v1.UpdateTenantEntitlementsRequest
-	(*UpdateTenantEntitlementsResponse)(nil),   // 223: xkms.v1.UpdateTenantEntitlementsResponse
-	(*UpdateTenantQuotasRequest)(nil),          // 224: xkms.v1.UpdateTenantQuotasRequest
-	(*UpdateTenantQuotasResponse)(nil),         // 225: xkms.v1.UpdateTenantQuotasResponse
-	(*CreateTenantRequest)(nil),                // 226: xkms.v1.CreateTenantRequest
-	(*CreateTenantResponse)(nil),               // 227: xkms.v1.CreateTenantResponse
-	(*GetTenantRequest)(nil),                   // 228: xkms.v1.GetTenantRequest
-	(*GetTenantResponse)(nil),                  // 229: xkms.v1.GetTenantResponse
-	(*ListTenantsRequest)(nil),                 // 230: xkms.v1.ListTenantsRequest
-	(*ListTenantsResponse)(nil),                // 231: xkms.v1.ListTenantsResponse
-	(*DeleteTenantRequest)(nil),                // 232: xkms.v1.DeleteTenantRequest
-	(*TenantBarrierInitRequest)(nil),           // 233: xkms.v1.TenantBarrierInitRequest
-	(*TenantBarrierUnsealRequest)(nil),         // 234: xkms.v1.TenantBarrierUnsealRequest
-	(*PasswordEntry)(nil),                      // 235: xkms.v1.PasswordEntry
-	(*PasswordAddRequest)(nil),                 // 236: xkms.v1.PasswordAddRequest
-	(*PasswordAddResponse)(nil),                // 237: xkms.v1.PasswordAddResponse
-	(*PasswordGetRequest)(nil),                 // 238: xkms.v1.PasswordGetRequest
-	(*PasswordGetResponse)(nil),                // 239: xkms.v1.PasswordGetResponse
-	(*PasswordListRequest)(nil),                // 240: xkms.v1.PasswordListRequest
-	(*PasswordListResponse)(nil),               // 241: xkms.v1.PasswordListResponse
-	(*PasswordUpdateRequest)(nil),              // 242: xkms.v1.PasswordUpdateRequest
-	(*PasswordUpdateResponse)(nil),             // 243: xkms.v1.PasswordUpdateResponse
-	(*PasswordDeleteRequest)(nil),              // 244: xkms.v1.PasswordDeleteRequest
-	(*PasswordDeleteResponse)(nil),             // 245: xkms.v1.PasswordDeleteResponse
-	(*PasswordStoreUnlockRequest)(nil),         // 246: xkms.v1.PasswordStoreUnlockRequest
-	(*PasswordStoreLockRequest)(nil),           // 247: xkms.v1.PasswordStoreLockRequest
-	(*PasswordStoreStatusRequest)(nil),         // 248: xkms.v1.PasswordStoreStatusRequest
-	(*PasswordStoreStatusResponse)(nil),        // 249: xkms.v1.PasswordStoreStatusResponse
-	(*PasswordGenerateRequest)(nil),            // 250: xkms.v1.PasswordGenerateRequest
-	(*PasswordGenerateResponse)(nil),           // 251: xkms.v1.PasswordGenerateResponse
-	(*BeginRegistrationRequest)(nil),           // 252: xkms.v1.BeginRegistrationRequest
-	(*BeginRegistrationResponse)(nil),          // 253: xkms.v1.BeginRegistrationResponse
-	(*FinishRegistrationRequest)(nil),          // 254: xkms.v1.FinishRegistrationRequest
-	(*FinishRegistrationResponse)(nil),         // 255: xkms.v1.FinishRegistrationResponse
-	(*BeginAuthenticationRequest)(nil),         // 256: xkms.v1.BeginAuthenticationRequest
-	(*BeginAuthenticationResponse)(nil),        // 257: xkms.v1.BeginAuthenticationResponse
-	(*FinishAuthenticationRequest)(nil),        // 258: xkms.v1.FinishAuthenticationRequest
-	(*FinishAuthenticationResponse)(nil),       // 259: xkms.v1.FinishAuthenticationResponse
-	(*SSHKeyRef)(nil),                          // 260: xkms.v1.SSHKeyRef
-	(*SSHKeyInfo)(nil),                         // 261: xkms.v1.SSHKeyInfo
-	(*SSHGenerateKeyRequest)(nil),              // 262: xkms.v1.SSHGenerateKeyRequest
-	(*SSHImportKeyRequest)(nil),                // 263: xkms.v1.SSHImportKeyRequest
-	(*SSHKeyResponse)(nil),                     // 264: xkms.v1.SSHKeyResponse
-	(*SSHListKeysRequest)(nil),                 // 265: xkms.v1.SSHListKeysRequest
-	(*SSHListKeysResponse)(nil),                // 266: xkms.v1.SSHListKeysResponse
-	(*SSHPublicKeyResponse)(nil),               // 267: xkms.v1.SSHPublicKeyResponse
-	(*SSHSignRequest)(nil),                     // 268: xkms.v1.SSHSignRequest
-	(*SSHSignResponse)(nil),                    // 269: xkms.v1.SSHSignResponse
-	(*SSHPin)(nil),                             // 270: xkms.v1.SSHPin
-	(*SSHAddKnownHostRequest)(nil),             // 271: xkms.v1.SSHAddKnownHostRequest
-	(*SSHListKnownHostsRequest)(nil),           // 272: xkms.v1.SSHListKnownHostsRequest
-	(*SSHListKnownHostsResponse)(nil),          // 273: xkms.v1.SSHListKnownHostsResponse
-	(*SSHRemoveKnownHostRequest)(nil),          // 274: xkms.v1.SSHRemoveKnownHostRequest
-	(*SSHAuthorizedEntry)(nil),                 // 275: xkms.v1.SSHAuthorizedEntry
-	(*SSHAddAuthorizedKeyRequest)(nil),         // 276: xkms.v1.SSHAddAuthorizedKeyRequest
-	(*SSHListAuthorizedKeysRequest)(nil),       // 277: xkms.v1.SSHListAuthorizedKeysRequest
-	(*SSHListAuthorizedKeysResponse)(nil),      // 278: xkms.v1.SSHListAuthorizedKeysResponse
-	(*SSHAuthorizedKeyRef)(nil),                // 279: xkms.v1.SSHAuthorizedKeyRef
-	(*SSHConsoleClientMsg)(nil),                // 280: xkms.v1.SSHConsoleClientMsg
-	(*SSHConsoleOpen)(nil),                     // 281: xkms.v1.SSHConsoleOpen
-	(*SSHConsoleResize)(nil),                   // 282: xkms.v1.SSHConsoleResize
-	(*SSHConsoleServerMsg)(nil),                // 283: xkms.v1.SSHConsoleServerMsg
-	(*SSHConsoleExit)(nil),                     // 284: xkms.v1.SSHConsoleExit
-	nil,                                        // 285: xkms.v1.WrapKeyResponse.MetadataEntry
-	nil,                                        // 286: xkms.v1.UnwrapKeyRequest.MetadataEntry
-	nil,                                        // 287: xkms.v1.ImportKeyRequest.MetadataEntry
-	nil,                                        // 288: xkms.v1.ExportKeyResponse.MetadataEntry
-	nil,                                        // 289: xkms.v1.SealResponse.MetadataEntry
-	nil,                                        // 290: xkms.v1.FrostKeyPackage.VerificationSharesEntry
-	(*timestamppb.Timestamp)(nil),              // 291: google.protobuf.Timestamp
-	(*emptypb.Empty)(nil),                      // 292: google.protobuf.Empty
+	(*AddClusterReplicaRequest)(nil),           // 19: xkms.v1.AddClusterReplicaRequest
+	(*RemoveClusterReplicaRequest)(nil),        // 20: xkms.v1.RemoveClusterReplicaRequest
+	(*ClusterReplicaResponse)(nil),             // 21: xkms.v1.ClusterReplicaResponse
+	(*HealthRequest)(nil),                      // 22: xkms.v1.HealthRequest
+	(*HealthResponse)(nil),                     // 23: xkms.v1.HealthResponse
+	(*BackendInfo)(nil),                        // 24: xkms.v1.BackendInfo
+	(*ListBackendsRequest)(nil),                // 25: xkms.v1.ListBackendsRequest
+	(*ListBackendsResponse)(nil),               // 26: xkms.v1.ListBackendsResponse
+	(*GetBackendInfoRequest)(nil),              // 27: xkms.v1.GetBackendInfoRequest
+	(*GetBackendInfoResponse)(nil),             // 28: xkms.v1.GetBackendInfoResponse
+	(*GenerateKeyRequest)(nil),                 // 29: xkms.v1.GenerateKeyRequest
+	(*GenerateKeyResponse)(nil),                // 30: xkms.v1.GenerateKeyResponse
+	(*KeyInfo)(nil),                            // 31: xkms.v1.KeyInfo
+	(*ListKeysRequest)(nil),                    // 32: xkms.v1.ListKeysRequest
+	(*ListKeysResponse)(nil),                   // 33: xkms.v1.ListKeysResponse
+	(*GetKeyRequest)(nil),                      // 34: xkms.v1.GetKeyRequest
+	(*GetKeyResponse)(nil),                     // 35: xkms.v1.GetKeyResponse
+	(*SignRequest)(nil),                        // 36: xkms.v1.SignRequest
+	(*SignResponse)(nil),                       // 37: xkms.v1.SignResponse
+	(*VerifyRequest)(nil),                      // 38: xkms.v1.VerifyRequest
+	(*VerifyResponse)(nil),                     // 39: xkms.v1.VerifyResponse
+	(*DeleteKeyRequest)(nil),                   // 40: xkms.v1.DeleteKeyRequest
+	(*DeleteKeyResponse)(nil),                  // 41: xkms.v1.DeleteKeyResponse
+	(*RotateKeyRequest)(nil),                   // 42: xkms.v1.RotateKeyRequest
+	(*RotateKeyResponse)(nil),                  // 43: xkms.v1.RotateKeyResponse
+	(*KeyVersionInfo)(nil),                     // 44: xkms.v1.KeyVersionInfo
+	(*ListKeyVersionsRequest)(nil),             // 45: xkms.v1.ListKeyVersionsRequest
+	(*ListKeyVersionsResponse)(nil),            // 46: xkms.v1.ListKeyVersionsResponse
+	(*EnableKeyVersionRequest)(nil),            // 47: xkms.v1.EnableKeyVersionRequest
+	(*EnableKeyVersionResponse)(nil),           // 48: xkms.v1.EnableKeyVersionResponse
+	(*DisableKeyVersionRequest)(nil),           // 49: xkms.v1.DisableKeyVersionRequest
+	(*DisableKeyVersionResponse)(nil),          // 50: xkms.v1.DisableKeyVersionResponse
+	(*EnableAllKeyVersionsRequest)(nil),        // 51: xkms.v1.EnableAllKeyVersionsRequest
+	(*EnableAllKeyVersionsResponse)(nil),       // 52: xkms.v1.EnableAllKeyVersionsResponse
+	(*DisableAllKeyVersionsRequest)(nil),       // 53: xkms.v1.DisableAllKeyVersionsRequest
+	(*DisableAllKeyVersionsResponse)(nil),      // 54: xkms.v1.DisableAllKeyVersionsResponse
+	(*EncryptRequest)(nil),                     // 55: xkms.v1.EncryptRequest
+	(*EncryptResponse)(nil),                    // 56: xkms.v1.EncryptResponse
+	(*DecryptRequest)(nil),                     // 57: xkms.v1.DecryptRequest
+	(*DecryptResponse)(nil),                    // 58: xkms.v1.DecryptResponse
+	(*EncryptAsymRequest)(nil),                 // 59: xkms.v1.EncryptAsymRequest
+	(*EncryptAsymResponse)(nil),                // 60: xkms.v1.EncryptAsymResponse
+	(*DeriveKeyRequest)(nil),                   // 61: xkms.v1.DeriveKeyRequest
+	(*DeriveKeyResponse)(nil),                  // 62: xkms.v1.DeriveKeyResponse
+	(*DeriveKeyECDHRequest)(nil),               // 63: xkms.v1.DeriveKeyECDHRequest
+	(*DeriveKeyECDHResponse)(nil),              // 64: xkms.v1.DeriveKeyECDHResponse
+	(*DerivedKeyHandle)(nil),                   // 65: xkms.v1.DerivedKeyHandle
+	(*TPMDerivedKeyHandle)(nil),                // 66: xkms.v1.TPMDerivedKeyHandle
+	(*DerivedKeyTemplate)(nil),                 // 67: xkms.v1.DerivedKeyTemplate
+	(*OperationParams)(nil),                    // 68: xkms.v1.OperationParams
+	(*DeriveKeyECDHSecureRequest)(nil),         // 69: xkms.v1.DeriveKeyECDHSecureRequest
+	(*DeriveKeyECDHSecureResponse)(nil),        // 70: xkms.v1.DeriveKeyECDHSecureResponse
+	(*UseResidentKeyRequest)(nil),              // 71: xkms.v1.UseResidentKeyRequest
+	(*UseResidentKeyResponse)(nil),             // 72: xkms.v1.UseResidentKeyResponse
+	(*DestroyResidentKeyRequest)(nil),          // 73: xkms.v1.DestroyResidentKeyRequest
+	(*DestroyResidentKeyResponse)(nil),         // 74: xkms.v1.DestroyResidentKeyResponse
+	(*GenerateEphemeralECDHRequest)(nil),       // 75: xkms.v1.GenerateEphemeralECDHRequest
+	(*GenerateEphemeralECDHResponse)(nil),      // 76: xkms.v1.GenerateEphemeralECDHResponse
+	(*SaveCertRequest)(nil),                    // 77: xkms.v1.SaveCertRequest
+	(*SaveCertResponse)(nil),                   // 78: xkms.v1.SaveCertResponse
+	(*GetCertRequest)(nil),                     // 79: xkms.v1.GetCertRequest
+	(*GetCertResponse)(nil),                    // 80: xkms.v1.GetCertResponse
+	(*DeleteCertRequest)(nil),                  // 81: xkms.v1.DeleteCertRequest
+	(*DeleteCertResponse)(nil),                 // 82: xkms.v1.DeleteCertResponse
+	(*ListCertsRequest)(nil),                   // 83: xkms.v1.ListCertsRequest
+	(*ListCertsResponse)(nil),                  // 84: xkms.v1.ListCertsResponse
+	(*CertExistsRequest)(nil),                  // 85: xkms.v1.CertExistsRequest
+	(*CertExistsResponse)(nil),                 // 86: xkms.v1.CertExistsResponse
+	(*SaveCertChainRequest)(nil),               // 87: xkms.v1.SaveCertChainRequest
+	(*SaveCertChainResponse)(nil),              // 88: xkms.v1.SaveCertChainResponse
+	(*GetCertChainRequest)(nil),                // 89: xkms.v1.GetCertChainRequest
+	(*GetCertChainResponse)(nil),               // 90: xkms.v1.GetCertChainResponse
+	(*GetTLSCertificateRequest)(nil),           // 91: xkms.v1.GetTLSCertificateRequest
+	(*GetTLSCertificateResponse)(nil),          // 92: xkms.v1.GetTLSCertificateResponse
+	(*GetImportParametersRequest)(nil),         // 93: xkms.v1.GetImportParametersRequest
+	(*GetImportParametersResponse)(nil),        // 94: xkms.v1.GetImportParametersResponse
+	(*WrapKeyRequest)(nil),                     // 95: xkms.v1.WrapKeyRequest
+	(*WrapKeyResponse)(nil),                    // 96: xkms.v1.WrapKeyResponse
+	(*UnwrapKeyRequest)(nil),                   // 97: xkms.v1.UnwrapKeyRequest
+	(*UnwrapKeyResponse)(nil),                  // 98: xkms.v1.UnwrapKeyResponse
+	(*WrapKeyByIDRequest)(nil),                 // 99: xkms.v1.WrapKeyByIDRequest
+	(*WrapKeyByIDResponse)(nil),                // 100: xkms.v1.WrapKeyByIDResponse
+	(*UnwrapKeyByIDRequest)(nil),               // 101: xkms.v1.UnwrapKeyByIDRequest
+	(*UnwrapKeyByIDResponse)(nil),              // 102: xkms.v1.UnwrapKeyByIDResponse
+	(*ImportKeyRequest)(nil),                   // 103: xkms.v1.ImportKeyRequest
+	(*ImportKeyResponse)(nil),                  // 104: xkms.v1.ImportKeyResponse
+	(*ExportKeyRequest)(nil),                   // 105: xkms.v1.ExportKeyRequest
+	(*ExportKeyResponse)(nil),                  // 106: xkms.v1.ExportKeyResponse
+	(*ExportKeyMaterialRequest)(nil),           // 107: xkms.v1.ExportKeyMaterialRequest
+	(*ExportKeyMaterialResponse)(nil),          // 108: xkms.v1.ExportKeyMaterialResponse
+	(*CopyKeyRequest)(nil),                     // 109: xkms.v1.CopyKeyRequest
+	(*CopyKeyResponse)(nil),                    // 110: xkms.v1.CopyKeyResponse
+	(*SealRequest)(nil),                        // 111: xkms.v1.SealRequest
+	(*SealResponse)(nil),                       // 112: xkms.v1.SealResponse
+	(*UnsealRequest)(nil),                      // 113: xkms.v1.UnsealRequest
+	(*UnsealResponse)(nil),                     // 114: xkms.v1.UnsealResponse
+	(*CanSealRequest)(nil),                     // 115: xkms.v1.CanSealRequest
+	(*CanSealResponse)(nil),                    // 116: xkms.v1.CanSealResponse
+	(*AttestKeyRequest)(nil),                   // 117: xkms.v1.AttestKeyRequest
+	(*AttestKeyResponse)(nil),                  // 118: xkms.v1.AttestKeyResponse
+	(*FrostKeyInfo)(nil),                       // 119: xkms.v1.FrostKeyInfo
+	(*FrostKeyPackage)(nil),                    // 120: xkms.v1.FrostKeyPackage
+	(*FrostCommitment)(nil),                    // 121: xkms.v1.FrostCommitment
+	(*FrostSignatureShare)(nil),                // 122: xkms.v1.FrostSignatureShare
+	(*FrostGenerateKeyRequest)(nil),            // 123: xkms.v1.FrostGenerateKeyRequest
+	(*FrostGenerateKeyResponse)(nil),           // 124: xkms.v1.FrostGenerateKeyResponse
+	(*FrostImportKeyRequest)(nil),              // 125: xkms.v1.FrostImportKeyRequest
+	(*FrostImportKeyResponse)(nil),             // 126: xkms.v1.FrostImportKeyResponse
+	(*FrostListKeysRequest)(nil),               // 127: xkms.v1.FrostListKeysRequest
+	(*FrostListKeysResponse)(nil),              // 128: xkms.v1.FrostListKeysResponse
+	(*FrostGetKeyRequest)(nil),                 // 129: xkms.v1.FrostGetKeyRequest
+	(*FrostGetKeyResponse)(nil),                // 130: xkms.v1.FrostGetKeyResponse
+	(*FrostDeleteKeyRequest)(nil),              // 131: xkms.v1.FrostDeleteKeyRequest
+	(*FrostDeleteKeyResponse)(nil),             // 132: xkms.v1.FrostDeleteKeyResponse
+	(*FrostGenerateNoncesRequest)(nil),         // 133: xkms.v1.FrostGenerateNoncesRequest
+	(*FrostGenerateNoncesResponse)(nil),        // 134: xkms.v1.FrostGenerateNoncesResponse
+	(*FrostSignRoundRequest)(nil),              // 135: xkms.v1.FrostSignRoundRequest
+	(*FrostSignRoundResponse)(nil),             // 136: xkms.v1.FrostSignRoundResponse
+	(*FrostAggregateRequest)(nil),              // 137: xkms.v1.FrostAggregateRequest
+	(*FrostAggregateResponse)(nil),             // 138: xkms.v1.FrostAggregateResponse
+	(*FrostVerifyRequest)(nil),                 // 139: xkms.v1.FrostVerifyRequest
+	(*FrostVerifyResponse)(nil),                // 140: xkms.v1.FrostVerifyResponse
+	(*GetCABundleRequest)(nil),                 // 141: xkms.v1.GetCABundleRequest
+	(*GetCABundleResponse)(nil),                // 142: xkms.v1.GetCABundleResponse
+	(*GetCACertificateRequest)(nil),            // 143: xkms.v1.GetCACertificateRequest
+	(*GetCACertificateResponse)(nil),           // 144: xkms.v1.GetCACertificateResponse
+	(*SignCSRRequest)(nil),                     // 145: xkms.v1.SignCSRRequest
+	(*SignCSRResponse)(nil),                    // 146: xkms.v1.SignCSRResponse
+	(*IssueCertificateRequest)(nil),            // 147: xkms.v1.IssueCertificateRequest
+	(*IssueCertificateResponse)(nil),           // 148: xkms.v1.IssueCertificateResponse
+	(*RevokeCertificateRequest)(nil),           // 149: xkms.v1.RevokeCertificateRequest
+	(*RevokeCertificateResponse)(nil),          // 150: xkms.v1.RevokeCertificateResponse
+	(*GenerateCRLRequest)(nil),                 // 151: xkms.v1.GenerateCRLRequest
+	(*GenerateCRLResponse)(nil),                // 152: xkms.v1.GenerateCRLResponse
+	(*IsRevokedRequest)(nil),                   // 153: xkms.v1.IsRevokedRequest
+	(*IsRevokedResponse)(nil),                  // 154: xkms.v1.IsRevokedResponse
+	(*IssueEKCertificateRequest)(nil),          // 155: xkms.v1.IssueEKCertificateRequest
+	(*IssueEKCertificateResponse)(nil),         // 156: xkms.v1.IssueEKCertificateResponse
+	(*IssueAKCertificateRequest)(nil),          // 157: xkms.v1.IssueAKCertificateRequest
+	(*IssueAKCertificateResponse)(nil),         // 158: xkms.v1.IssueAKCertificateResponse
+	(*SignTCGCSRRequest)(nil),                  // 159: xkms.v1.SignTCGCSRRequest
+	(*SignTCGCSRResponse)(nil),                 // 160: xkms.v1.SignTCGCSRResponse
+	(*EnrollDeviceRequest)(nil),                // 161: xkms.v1.EnrollDeviceRequest
+	(*EnrollDeviceResponse)(nil),               // 162: xkms.v1.EnrollDeviceResponse
+	(*BarrierInitializeRequest)(nil),           // 163: xkms.v1.BarrierInitializeRequest
+	(*BarrierUnsealRequest)(nil),               // 164: xkms.v1.BarrierUnsealRequest
+	(*BarrierStatusResponse)(nil),              // 165: xkms.v1.BarrierStatusResponse
+	(*BarrierInitializeShamirRequest)(nil),     // 166: xkms.v1.BarrierInitializeShamirRequest
+	(*BarrierShamirInitResponse)(nil),          // 167: xkms.v1.BarrierShamirInitResponse
+	(*BarrierUnsealShareRequest)(nil),          // 168: xkms.v1.BarrierUnsealShareRequest
+	(*BarrierUnsealSharesRequest)(nil),         // 169: xkms.v1.BarrierUnsealSharesRequest
+	(*BarrierQuorumProgressResponse)(nil),      // 170: xkms.v1.BarrierQuorumProgressResponse
+	(*BarrierRekeyRequest)(nil),                // 171: xkms.v1.BarrierRekeyRequest
+	(*BarrierGenerateRecoveryKeysRequest)(nil), // 172: xkms.v1.BarrierGenerateRecoveryKeysRequest
+	(*BarrierHasRecoveryKeysResponse)(nil),     // 173: xkms.v1.BarrierHasRecoveryKeysResponse
+	(*BarrierRecoveryKeysResponse)(nil),        // 174: xkms.v1.BarrierRecoveryKeysResponse
+	(*BarrierRecoverWithKeysRequest)(nil),      // 175: xkms.v1.BarrierRecoverWithKeysRequest
+	(*BarrierGenerateRootTokenRequest)(nil),    // 176: xkms.v1.BarrierGenerateRootTokenRequest
+	(*BarrierRootTokenResponse)(nil),           // 177: xkms.v1.BarrierRootTokenResponse
+	(*BarrierEnableEncryptionRequest)(nil),     // 178: xkms.v1.BarrierEnableEncryptionRequest
+	(*BarrierEnableEncryptionResponse)(nil),    // 179: xkms.v1.BarrierEnableEncryptionResponse
+	(*SetSOPINRequest)(nil),                    // 180: xkms.v1.SetSOPINRequest
+	(*SetUserPINRequest)(nil),                  // 181: xkms.v1.SetUserPINRequest
+	(*ChangeSOPINRequest)(nil),                 // 182: xkms.v1.ChangeSOPINRequest
+	(*ChangeUserPINRequest)(nil),               // 183: xkms.v1.ChangeUserPINRequest
+	(*VerifySOPINRequest)(nil),                 // 184: xkms.v1.VerifySOPINRequest
+	(*VerifyUserPINRequest)(nil),               // 185: xkms.v1.VerifyUserPINRequest
+	(*LockoutStatusResponse)(nil),              // 186: xkms.v1.LockoutStatusResponse
+	(*ResetLockoutRequest)(nil),                // 187: xkms.v1.ResetLockoutRequest
+	(*PIVSlotStatus)(nil),                      // 188: xkms.v1.PIVSlotStatus
+	(*ListPIVSlotsRequest)(nil),                // 189: xkms.v1.ListPIVSlotsRequest
+	(*ListPIVSlotsResponse)(nil),               // 190: xkms.v1.ListPIVSlotsResponse
+	(*GetPIVCertificateRequest)(nil),           // 191: xkms.v1.GetPIVCertificateRequest
+	(*GetPIVCertificateResponse)(nil),          // 192: xkms.v1.GetPIVCertificateResponse
+	(*StorePIVCertificateRequest)(nil),         // 193: xkms.v1.StorePIVCertificateRequest
+	(*DeletePIVCertificateRequest)(nil),        // 194: xkms.v1.DeletePIVCertificateRequest
+	(*GeneratePIVKeyRequest)(nil),              // 195: xkms.v1.GeneratePIVKeyRequest
+	(*GeneratePIVKeyResponse)(nil),             // 196: xkms.v1.GeneratePIVKeyResponse
+	(*GeneratePIVCSRRequest)(nil),              // 197: xkms.v1.GeneratePIVCSRRequest
+	(*GeneratePIVCSRResponse)(nil),             // 198: xkms.v1.GeneratePIVCSRResponse
+	(*CustodianMember)(nil),                    // 199: xkms.v1.CustodianMember
+	(*CustodianGroup)(nil),                     // 200: xkms.v1.CustodianGroup
+	(*CreateCustodianGroupRequest)(nil),        // 201: xkms.v1.CreateCustodianGroupRequest
+	(*CreateCustodianGroupResponse)(nil),       // 202: xkms.v1.CreateCustodianGroupResponse
+	(*GetCustodianGroupRequest)(nil),           // 203: xkms.v1.GetCustodianGroupRequest
+	(*GetCustodianGroupResponse)(nil),          // 204: xkms.v1.GetCustodianGroupResponse
+	(*ListCustodianGroupsRequest)(nil),         // 205: xkms.v1.ListCustodianGroupsRequest
+	(*ListCustodianGroupsResponse)(nil),        // 206: xkms.v1.ListCustodianGroupsResponse
+	(*DeleteCustodianGroupRequest)(nil),        // 207: xkms.v1.DeleteCustodianGroupRequest
+	(*AddCustodianMemberRequest)(nil),          // 208: xkms.v1.AddCustodianMemberRequest
+	(*AddCustodianMemberResponse)(nil),         // 209: xkms.v1.AddCustodianMemberResponse
+	(*RemoveCustodianMemberRequest)(nil),       // 210: xkms.v1.RemoveCustodianMemberRequest
+	(*DistributeSharesRequest)(nil),            // 211: xkms.v1.DistributeSharesRequest
+	(*DistributeSharesResponse)(nil),           // 212: xkms.v1.DistributeSharesResponse
+	(*AlgorithmsRequest)(nil),                  // 213: xkms.v1.AlgorithmsRequest
+	(*AlgorithmInfo)(nil),                      // 214: xkms.v1.AlgorithmInfo
+	(*AlgorithmsResponse)(nil),                 // 215: xkms.v1.AlgorithmsResponse
+	(*ShareInfo)(nil),                          // 216: xkms.v1.ShareInfo
+	(*SubmitShareRequest)(nil),                 // 217: xkms.v1.SubmitShareRequest
+	(*SubmitShareResponse)(nil),                // 218: xkms.v1.SubmitShareResponse
+	(*ListSharesRequest)(nil),                  // 219: xkms.v1.ListSharesRequest
+	(*ListSharesResponse)(nil),                 // 220: xkms.v1.ListSharesResponse
+	(*GetShareRequest)(nil),                    // 221: xkms.v1.GetShareRequest
+	(*DeleteShareRequest)(nil),                 // 222: xkms.v1.DeleteShareRequest
+	(*GetShareCollectionStatusRequest)(nil),    // 223: xkms.v1.GetShareCollectionStatusRequest
+	(*ShareCollectionStatusResponse)(nil),      // 224: xkms.v1.ShareCollectionStatusResponse
+	(*TenantInfo)(nil),                         // 225: xkms.v1.TenantInfo
+	(*TenantQuotas)(nil),                       // 226: xkms.v1.TenantQuotas
+	(*TenantEntitlements)(nil),                 // 227: xkms.v1.TenantEntitlements
+	(*TenantBarrierStatusRequest)(nil),         // 228: xkms.v1.TenantBarrierStatusRequest
+	(*TenantBarrierStatusResponse)(nil),        // 229: xkms.v1.TenantBarrierStatusResponse
+	(*UpdateTenantEntitlementsRequest)(nil),    // 230: xkms.v1.UpdateTenantEntitlementsRequest
+	(*UpdateTenantEntitlementsResponse)(nil),   // 231: xkms.v1.UpdateTenantEntitlementsResponse
+	(*UpdateTenantQuotasRequest)(nil),          // 232: xkms.v1.UpdateTenantQuotasRequest
+	(*UpdateTenantQuotasResponse)(nil),         // 233: xkms.v1.UpdateTenantQuotasResponse
+	(*CreateTenantRequest)(nil),                // 234: xkms.v1.CreateTenantRequest
+	(*CreateTenantResponse)(nil),               // 235: xkms.v1.CreateTenantResponse
+	(*GetTenantRequest)(nil),                   // 236: xkms.v1.GetTenantRequest
+	(*GetTenantResponse)(nil),                  // 237: xkms.v1.GetTenantResponse
+	(*ListTenantsRequest)(nil),                 // 238: xkms.v1.ListTenantsRequest
+	(*ListTenantsResponse)(nil),                // 239: xkms.v1.ListTenantsResponse
+	(*DeleteTenantRequest)(nil),                // 240: xkms.v1.DeleteTenantRequest
+	(*TenantBarrierInitRequest)(nil),           // 241: xkms.v1.TenantBarrierInitRequest
+	(*TenantBarrierUnsealRequest)(nil),         // 242: xkms.v1.TenantBarrierUnsealRequest
+	(*PasswordEntry)(nil),                      // 243: xkms.v1.PasswordEntry
+	(*PasswordAddRequest)(nil),                 // 244: xkms.v1.PasswordAddRequest
+	(*PasswordAddResponse)(nil),                // 245: xkms.v1.PasswordAddResponse
+	(*PasswordGetRequest)(nil),                 // 246: xkms.v1.PasswordGetRequest
+	(*PasswordGetResponse)(nil),                // 247: xkms.v1.PasswordGetResponse
+	(*PasswordListRequest)(nil),                // 248: xkms.v1.PasswordListRequest
+	(*PasswordListResponse)(nil),               // 249: xkms.v1.PasswordListResponse
+	(*PasswordUpdateRequest)(nil),              // 250: xkms.v1.PasswordUpdateRequest
+	(*PasswordUpdateResponse)(nil),             // 251: xkms.v1.PasswordUpdateResponse
+	(*PasswordDeleteRequest)(nil),              // 252: xkms.v1.PasswordDeleteRequest
+	(*PasswordDeleteResponse)(nil),             // 253: xkms.v1.PasswordDeleteResponse
+	(*PKCS11StatePutRequest)(nil),              // 254: xkms.v1.PKCS11StatePutRequest
+	(*PKCS11StatePutResponse)(nil),             // 255: xkms.v1.PKCS11StatePutResponse
+	(*PKCS11StatePutIfAbsentRequest)(nil),      // 256: xkms.v1.PKCS11StatePutIfAbsentRequest
+	(*PKCS11StatePutIfAbsentResponse)(nil),     // 257: xkms.v1.PKCS11StatePutIfAbsentResponse
+	(*PKCS11StateCASRequest)(nil),              // 258: xkms.v1.PKCS11StateCASRequest
+	(*PKCS11StateCASResponse)(nil),             // 259: xkms.v1.PKCS11StateCASResponse
+	(*PKCS11StateGetRequest)(nil),              // 260: xkms.v1.PKCS11StateGetRequest
+	(*PKCS11StateGetResponse)(nil),             // 261: xkms.v1.PKCS11StateGetResponse
+	(*PKCS11StateDeleteRequest)(nil),           // 262: xkms.v1.PKCS11StateDeleteRequest
+	(*PKCS11StateDeleteResponse)(nil),          // 263: xkms.v1.PKCS11StateDeleteResponse
+	(*PKCS11StateListRequest)(nil),             // 264: xkms.v1.PKCS11StateListRequest
+	(*PKCS11StateListResponse)(nil),            // 265: xkms.v1.PKCS11StateListResponse
+	(*PasswordStoreUnlockRequest)(nil),         // 266: xkms.v1.PasswordStoreUnlockRequest
+	(*PasswordStoreLockRequest)(nil),           // 267: xkms.v1.PasswordStoreLockRequest
+	(*PasswordStoreStatusRequest)(nil),         // 268: xkms.v1.PasswordStoreStatusRequest
+	(*PasswordStoreStatusResponse)(nil),        // 269: xkms.v1.PasswordStoreStatusResponse
+	(*PasswordGenerateRequest)(nil),            // 270: xkms.v1.PasswordGenerateRequest
+	(*PasswordGenerateResponse)(nil),           // 271: xkms.v1.PasswordGenerateResponse
+	(*BeginRegistrationRequest)(nil),           // 272: xkms.v1.BeginRegistrationRequest
+	(*BeginRegistrationResponse)(nil),          // 273: xkms.v1.BeginRegistrationResponse
+	(*FinishRegistrationRequest)(nil),          // 274: xkms.v1.FinishRegistrationRequest
+	(*FinishRegistrationResponse)(nil),         // 275: xkms.v1.FinishRegistrationResponse
+	(*BeginAuthenticationRequest)(nil),         // 276: xkms.v1.BeginAuthenticationRequest
+	(*BeginAuthenticationResponse)(nil),        // 277: xkms.v1.BeginAuthenticationResponse
+	(*FinishAuthenticationRequest)(nil),        // 278: xkms.v1.FinishAuthenticationRequest
+	(*FinishAuthenticationResponse)(nil),       // 279: xkms.v1.FinishAuthenticationResponse
+	(*SSHKeyRef)(nil),                          // 280: xkms.v1.SSHKeyRef
+	(*SSHKeyInfo)(nil),                         // 281: xkms.v1.SSHKeyInfo
+	(*SSHGenerateKeyRequest)(nil),              // 282: xkms.v1.SSHGenerateKeyRequest
+	(*SSHImportKeyRequest)(nil),                // 283: xkms.v1.SSHImportKeyRequest
+	(*SSHKeyResponse)(nil),                     // 284: xkms.v1.SSHKeyResponse
+	(*SSHListKeysRequest)(nil),                 // 285: xkms.v1.SSHListKeysRequest
+	(*SSHListKeysResponse)(nil),                // 286: xkms.v1.SSHListKeysResponse
+	(*SSHPublicKeyResponse)(nil),               // 287: xkms.v1.SSHPublicKeyResponse
+	(*SSHSignRequest)(nil),                     // 288: xkms.v1.SSHSignRequest
+	(*SSHSignResponse)(nil),                    // 289: xkms.v1.SSHSignResponse
+	(*SSHPin)(nil),                             // 290: xkms.v1.SSHPin
+	(*SSHAddKnownHostRequest)(nil),             // 291: xkms.v1.SSHAddKnownHostRequest
+	(*SSHListKnownHostsRequest)(nil),           // 292: xkms.v1.SSHListKnownHostsRequest
+	(*SSHListKnownHostsResponse)(nil),          // 293: xkms.v1.SSHListKnownHostsResponse
+	(*SSHRemoveKnownHostRequest)(nil),          // 294: xkms.v1.SSHRemoveKnownHostRequest
+	(*SSHAuthorizedEntry)(nil),                 // 295: xkms.v1.SSHAuthorizedEntry
+	(*SSHAddAuthorizedKeyRequest)(nil),         // 296: xkms.v1.SSHAddAuthorizedKeyRequest
+	(*SSHListAuthorizedKeysRequest)(nil),       // 297: xkms.v1.SSHListAuthorizedKeysRequest
+	(*SSHListAuthorizedKeysResponse)(nil),      // 298: xkms.v1.SSHListAuthorizedKeysResponse
+	(*SSHAuthorizedKeyRef)(nil),                // 299: xkms.v1.SSHAuthorizedKeyRef
+	(*AuditEvent)(nil),                         // 300: xkms.v1.AuditEvent
+	(*QueryAuditRequest)(nil),                  // 301: xkms.v1.QueryAuditRequest
+	(*QueryAuditResponse)(nil),                 // 302: xkms.v1.QueryAuditResponse
+	nil,                                        // 303: xkms.v1.ClusterMember.ApiEndpointsEntry
+	nil,                                        // 304: xkms.v1.WrapKeyResponse.MetadataEntry
+	nil,                                        // 305: xkms.v1.UnwrapKeyRequest.MetadataEntry
+	nil,                                        // 306: xkms.v1.ImportKeyRequest.MetadataEntry
+	nil,                                        // 307: xkms.v1.ExportKeyResponse.MetadataEntry
+	nil,                                        // 308: xkms.v1.SealResponse.MetadataEntry
+	nil,                                        // 309: xkms.v1.FrostKeyPackage.VerificationSharesEntry
+	(*timestamppb.Timestamp)(nil),              // 310: google.protobuf.Timestamp
+	(*structpb.Struct)(nil),                    // 311: google.protobuf.Struct
+	(*emptypb.Empty)(nil),                      // 312: google.protobuf.Empty
 }
 var file_pkg_api_grpc_proto_xkmsv1_xkms_proto_depIdxs = []int32{
 	2,   // 0: xkms.v1.UserResponse.user:type_name -> xkms.v1.UserInfo
 	2,   // 1: xkms.v1.ListUsersResponse.users:type_name -> xkms.v1.UserInfo
 	14,  // 2: xkms.v1.ListUserCredentialsResponse.credentials:type_name -> xkms.v1.UserCredential
-	17,  // 3: xkms.v1.ListClusterMembersResponse.members:type_name -> xkms.v1.ClusterMember
-	21,  // 4: xkms.v1.ListBackendsResponse.backends:type_name -> xkms.v1.BackendInfo
-	21,  // 5: xkms.v1.GetBackendInfoResponse.backend:type_name -> xkms.v1.BackendInfo
-	291, // 6: xkms.v1.GenerateKeyResponse.created_at:type_name -> google.protobuf.Timestamp
-	291, // 7: xkms.v1.KeyInfo.created_at:type_name -> google.protobuf.Timestamp
-	28,  // 8: xkms.v1.ListKeysResponse.keys:type_name -> xkms.v1.KeyInfo
-	28,  // 9: xkms.v1.GetKeyResponse.key:type_name -> xkms.v1.KeyInfo
-	291, // 10: xkms.v1.RotateKeyResponse.rotated_at:type_name -> google.protobuf.Timestamp
-	41,  // 11: xkms.v1.ListKeyVersionsResponse.versions:type_name -> xkms.v1.KeyVersionInfo
-	63,  // 12: xkms.v1.DerivedKeyHandle.tpm_handle:type_name -> xkms.v1.TPMDerivedKeyHandle
-	0,   // 13: xkms.v1.DeriveKeyECDHSecureRequest.derivation_mode:type_name -> xkms.v1.KeyDerivationMode
-	64,  // 14: xkms.v1.DeriveKeyECDHSecureRequest.derived_key_template:type_name -> xkms.v1.DerivedKeyTemplate
-	0,   // 15: xkms.v1.DeriveKeyECDHSecureResponse.mode:type_name -> xkms.v1.KeyDerivationMode
-	62,  // 16: xkms.v1.DeriveKeyECDHSecureResponse.handle:type_name -> xkms.v1.DerivedKeyHandle
-	62,  // 17: xkms.v1.UseResidentKeyRequest.handle:type_name -> xkms.v1.DerivedKeyHandle
-	1,   // 18: xkms.v1.UseResidentKeyRequest.operation:type_name -> xkms.v1.ResidentKeyOperation
-	65,  // 19: xkms.v1.UseResidentKeyRequest.params:type_name -> xkms.v1.OperationParams
-	62,  // 20: xkms.v1.DestroyResidentKeyRequest.handle:type_name -> xkms.v1.DerivedKeyHandle
-	0,   // 21: xkms.v1.GenerateEphemeralECDHRequest.derivation_mode:type_name -> xkms.v1.KeyDerivationMode
-	0,   // 22: xkms.v1.GenerateEphemeralECDHResponse.mode:type_name -> xkms.v1.KeyDerivationMode
-	62,  // 23: xkms.v1.GenerateEphemeralECDHResponse.handle:type_name -> xkms.v1.DerivedKeyHandle
-	291, // 24: xkms.v1.GetImportParametersResponse.expires_at:type_name -> google.protobuf.Timestamp
-	285, // 25: xkms.v1.WrapKeyResponse.metadata:type_name -> xkms.v1.WrapKeyResponse.MetadataEntry
-	286, // 26: xkms.v1.UnwrapKeyRequest.metadata:type_name -> xkms.v1.UnwrapKeyRequest.MetadataEntry
-	287, // 27: xkms.v1.ImportKeyRequest.metadata:type_name -> xkms.v1.ImportKeyRequest.MetadataEntry
-	288, // 28: xkms.v1.ExportKeyResponse.metadata:type_name -> xkms.v1.ExportKeyResponse.MetadataEntry
-	289, // 29: xkms.v1.SealResponse.metadata:type_name -> xkms.v1.SealResponse.MetadataEntry
-	291, // 30: xkms.v1.FrostKeyInfo.created_at:type_name -> google.protobuf.Timestamp
-	290, // 31: xkms.v1.FrostKeyPackage.verification_shares:type_name -> xkms.v1.FrostKeyPackage.VerificationSharesEntry
-	117, // 32: xkms.v1.FrostGenerateKeyResponse.packages:type_name -> xkms.v1.FrostKeyPackage
-	291, // 33: xkms.v1.FrostGenerateKeyResponse.created_at:type_name -> google.protobuf.Timestamp
-	117, // 34: xkms.v1.FrostImportKeyRequest.package:type_name -> xkms.v1.FrostKeyPackage
-	116, // 35: xkms.v1.FrostListKeysResponse.keys:type_name -> xkms.v1.FrostKeyInfo
-	116, // 36: xkms.v1.FrostGetKeyResponse.key:type_name -> xkms.v1.FrostKeyInfo
-	118, // 37: xkms.v1.FrostSignRoundRequest.commitments:type_name -> xkms.v1.FrostCommitment
-	118, // 38: xkms.v1.FrostAggregateRequest.commitments:type_name -> xkms.v1.FrostCommitment
-	119, // 39: xkms.v1.FrostAggregateRequest.shares:type_name -> xkms.v1.FrostSignatureShare
-	185, // 40: xkms.v1.ListPIVSlotsResponse.slots:type_name -> xkms.v1.PIVSlotStatus
-	196, // 41: xkms.v1.CustodianGroup.members:type_name -> xkms.v1.CustodianMember
-	197, // 42: xkms.v1.CreateCustodianGroupResponse.group:type_name -> xkms.v1.CustodianGroup
-	197, // 43: xkms.v1.GetCustodianGroupResponse.group:type_name -> xkms.v1.CustodianGroup
-	197, // 44: xkms.v1.ListCustodianGroupsResponse.groups:type_name -> xkms.v1.CustodianGroup
-	196, // 45: xkms.v1.AddCustodianMemberResponse.member:type_name -> xkms.v1.CustodianMember
-	210, // 46: xkms.v1.ListSharesResponse.shares:type_name -> xkms.v1.ShareInfo
-	218, // 47: xkms.v1.TenantInfo.quotas:type_name -> xkms.v1.TenantQuotas
-	219, // 48: xkms.v1.TenantInfo.entitlements:type_name -> xkms.v1.TenantEntitlements
-	219, // 49: xkms.v1.UpdateTenantEntitlementsRequest.entitlements:type_name -> xkms.v1.TenantEntitlements
-	217, // 50: xkms.v1.UpdateTenantEntitlementsResponse.tenant:type_name -> xkms.v1.TenantInfo
-	218, // 51: xkms.v1.UpdateTenantQuotasRequest.quotas:type_name -> xkms.v1.TenantQuotas
-	217, // 52: xkms.v1.UpdateTenantQuotasResponse.tenant:type_name -> xkms.v1.TenantInfo
-	217, // 53: xkms.v1.CreateTenantResponse.tenant:type_name -> xkms.v1.TenantInfo
-	217, // 54: xkms.v1.GetTenantResponse.tenant:type_name -> xkms.v1.TenantInfo
-	217, // 55: xkms.v1.ListTenantsResponse.tenants:type_name -> xkms.v1.TenantInfo
-	291, // 56: xkms.v1.PasswordEntry.expires_at:type_name -> google.protobuf.Timestamp
-	291, // 57: xkms.v1.PasswordEntry.created_at:type_name -> google.protobuf.Timestamp
-	291, // 58: xkms.v1.PasswordEntry.updated_at:type_name -> google.protobuf.Timestamp
-	235, // 59: xkms.v1.PasswordGetResponse.entry:type_name -> xkms.v1.PasswordEntry
-	235, // 60: xkms.v1.PasswordListResponse.passwords:type_name -> xkms.v1.PasswordEntry
-	291, // 61: xkms.v1.SSHKeyInfo.created_at:type_name -> google.protobuf.Timestamp
-	261, // 62: xkms.v1.SSHKeyResponse.key:type_name -> xkms.v1.SSHKeyInfo
-	261, // 63: xkms.v1.SSHListKeysResponse.keys:type_name -> xkms.v1.SSHKeyInfo
-	260, // 64: xkms.v1.SSHSignRequest.key:type_name -> xkms.v1.SSHKeyRef
-	291, // 65: xkms.v1.SSHPin.added_at:type_name -> google.protobuf.Timestamp
-	270, // 66: xkms.v1.SSHListKnownHostsResponse.pins:type_name -> xkms.v1.SSHPin
-	275, // 67: xkms.v1.SSHListAuthorizedKeysResponse.entries:type_name -> xkms.v1.SSHAuthorizedEntry
-	281, // 68: xkms.v1.SSHConsoleClientMsg.open:type_name -> xkms.v1.SSHConsoleOpen
-	282, // 69: xkms.v1.SSHConsoleClientMsg.resize:type_name -> xkms.v1.SSHConsoleResize
-	284, // 70: xkms.v1.SSHConsoleServerMsg.exit:type_name -> xkms.v1.SSHConsoleExit
-	19,  // 71: xkms.v1.KeystoreService.Health:input_type -> xkms.v1.HealthRequest
-	22,  // 72: xkms.v1.KeystoreService.ListBackends:input_type -> xkms.v1.ListBackendsRequest
-	24,  // 73: xkms.v1.KeystoreService.GetBackendInfo:input_type -> xkms.v1.GetBackendInfoRequest
-	26,  // 74: xkms.v1.KeystoreService.GenerateKey:input_type -> xkms.v1.GenerateKeyRequest
-	29,  // 75: xkms.v1.KeystoreService.ListKeys:input_type -> xkms.v1.ListKeysRequest
-	31,  // 76: xkms.v1.KeystoreService.GetKey:input_type -> xkms.v1.GetKeyRequest
-	33,  // 77: xkms.v1.KeystoreService.Sign:input_type -> xkms.v1.SignRequest
-	35,  // 78: xkms.v1.KeystoreService.Verify:input_type -> xkms.v1.VerifyRequest
-	37,  // 79: xkms.v1.KeystoreService.DeleteKey:input_type -> xkms.v1.DeleteKeyRequest
-	39,  // 80: xkms.v1.KeystoreService.RotateKey:input_type -> xkms.v1.RotateKeyRequest
-	42,  // 81: xkms.v1.KeystoreService.ListKeyVersions:input_type -> xkms.v1.ListKeyVersionsRequest
-	44,  // 82: xkms.v1.KeystoreService.EnableKeyVersion:input_type -> xkms.v1.EnableKeyVersionRequest
-	46,  // 83: xkms.v1.KeystoreService.DisableKeyVersion:input_type -> xkms.v1.DisableKeyVersionRequest
-	48,  // 84: xkms.v1.KeystoreService.EnableAllKeyVersions:input_type -> xkms.v1.EnableAllKeyVersionsRequest
-	50,  // 85: xkms.v1.KeystoreService.DisableAllKeyVersions:input_type -> xkms.v1.DisableAllKeyVersionsRequest
-	52,  // 86: xkms.v1.KeystoreService.Encrypt:input_type -> xkms.v1.EncryptRequest
-	54,  // 87: xkms.v1.KeystoreService.Decrypt:input_type -> xkms.v1.DecryptRequest
-	56,  // 88: xkms.v1.KeystoreService.EncryptAsym:input_type -> xkms.v1.EncryptAsymRequest
-	58,  // 89: xkms.v1.KeystoreService.DeriveKey:input_type -> xkms.v1.DeriveKeyRequest
-	60,  // 90: xkms.v1.KeystoreService.DeriveKeyECDH:input_type -> xkms.v1.DeriveKeyECDHRequest
-	66,  // 91: xkms.v1.KeystoreService.DeriveKeyECDHSecure:input_type -> xkms.v1.DeriveKeyECDHSecureRequest
-	68,  // 92: xkms.v1.KeystoreService.UseResidentKey:input_type -> xkms.v1.UseResidentKeyRequest
-	70,  // 93: xkms.v1.KeystoreService.DestroyResidentKey:input_type -> xkms.v1.DestroyResidentKeyRequest
-	72,  // 94: xkms.v1.KeystoreService.GenerateEphemeralECDH:input_type -> xkms.v1.GenerateEphemeralECDHRequest
-	74,  // 95: xkms.v1.KeystoreService.SaveCert:input_type -> xkms.v1.SaveCertRequest
-	76,  // 96: xkms.v1.KeystoreService.GetCert:input_type -> xkms.v1.GetCertRequest
-	78,  // 97: xkms.v1.KeystoreService.DeleteCert:input_type -> xkms.v1.DeleteCertRequest
-	80,  // 98: xkms.v1.KeystoreService.ListCerts:input_type -> xkms.v1.ListCertsRequest
-	82,  // 99: xkms.v1.KeystoreService.CertExists:input_type -> xkms.v1.CertExistsRequest
-	84,  // 100: xkms.v1.KeystoreService.SaveCertChain:input_type -> xkms.v1.SaveCertChainRequest
-	86,  // 101: xkms.v1.KeystoreService.GetCertChain:input_type -> xkms.v1.GetCertChainRequest
-	88,  // 102: xkms.v1.KeystoreService.GetTLSCertificate:input_type -> xkms.v1.GetTLSCertificateRequest
-	90,  // 103: xkms.v1.KeystoreService.GetImportParameters:input_type -> xkms.v1.GetImportParametersRequest
-	92,  // 104: xkms.v1.KeystoreService.WrapKey:input_type -> xkms.v1.WrapKeyRequest
-	94,  // 105: xkms.v1.KeystoreService.UnwrapKey:input_type -> xkms.v1.UnwrapKeyRequest
-	96,  // 106: xkms.v1.KeystoreService.WrapKeyByID:input_type -> xkms.v1.WrapKeyByIDRequest
-	98,  // 107: xkms.v1.KeystoreService.UnwrapKeyByID:input_type -> xkms.v1.UnwrapKeyByIDRequest
-	100, // 108: xkms.v1.KeystoreService.ImportKey:input_type -> xkms.v1.ImportKeyRequest
-	102, // 109: xkms.v1.KeystoreService.ExportKey:input_type -> xkms.v1.ExportKeyRequest
-	104, // 110: xkms.v1.KeystoreService.ExportKeyMaterial:input_type -> xkms.v1.ExportKeyMaterialRequest
-	106, // 111: xkms.v1.KeystoreService.CopyKey:input_type -> xkms.v1.CopyKeyRequest
-	108, // 112: xkms.v1.KeystoreService.Seal:input_type -> xkms.v1.SealRequest
-	110, // 113: xkms.v1.KeystoreService.Unseal:input_type -> xkms.v1.UnsealRequest
-	112, // 114: xkms.v1.KeystoreService.CanSeal:input_type -> xkms.v1.CanSealRequest
-	114, // 115: xkms.v1.KeystoreService.AttestKey:input_type -> xkms.v1.AttestKeyRequest
-	120, // 116: xkms.v1.KeystoreService.FrostGenerateKey:input_type -> xkms.v1.FrostGenerateKeyRequest
-	122, // 117: xkms.v1.KeystoreService.FrostImportKey:input_type -> xkms.v1.FrostImportKeyRequest
-	124, // 118: xkms.v1.KeystoreService.FrostListKeys:input_type -> xkms.v1.FrostListKeysRequest
-	126, // 119: xkms.v1.KeystoreService.FrostGetKey:input_type -> xkms.v1.FrostGetKeyRequest
-	128, // 120: xkms.v1.KeystoreService.FrostDeleteKey:input_type -> xkms.v1.FrostDeleteKeyRequest
-	130, // 121: xkms.v1.KeystoreService.FrostGenerateNonces:input_type -> xkms.v1.FrostGenerateNoncesRequest
-	132, // 122: xkms.v1.KeystoreService.FrostSignRound:input_type -> xkms.v1.FrostSignRoundRequest
-	134, // 123: xkms.v1.KeystoreService.FrostAggregate:input_type -> xkms.v1.FrostAggregateRequest
-	136, // 124: xkms.v1.KeystoreService.FrostVerify:input_type -> xkms.v1.FrostVerifyRequest
-	138, // 125: xkms.v1.KeystoreService.GetCABundle:input_type -> xkms.v1.GetCABundleRequest
-	140, // 126: xkms.v1.KeystoreService.GetCACertificate:input_type -> xkms.v1.GetCACertificateRequest
-	142, // 127: xkms.v1.KeystoreService.SignCSR:input_type -> xkms.v1.SignCSRRequest
-	144, // 128: xkms.v1.KeystoreService.IssueCertificate:input_type -> xkms.v1.IssueCertificateRequest
-	146, // 129: xkms.v1.KeystoreService.RevokeCertificate:input_type -> xkms.v1.RevokeCertificateRequest
-	148, // 130: xkms.v1.KeystoreService.GenerateCRL:input_type -> xkms.v1.GenerateCRLRequest
-	150, // 131: xkms.v1.KeystoreService.IsRevoked:input_type -> xkms.v1.IsRevokedRequest
-	152, // 132: xkms.v1.KeystoreService.IssueEKCertificate:input_type -> xkms.v1.IssueEKCertificateRequest
-	154, // 133: xkms.v1.KeystoreService.IssueAKCertificate:input_type -> xkms.v1.IssueAKCertificateRequest
-	156, // 134: xkms.v1.KeystoreService.SignTCGCSR:input_type -> xkms.v1.SignTCGCSRRequest
-	158, // 135: xkms.v1.KeystoreService.EnrollDevice:input_type -> xkms.v1.EnrollDeviceRequest
-	160, // 136: xkms.v1.KeystoreService.BarrierInitialize:input_type -> xkms.v1.BarrierInitializeRequest
-	161, // 137: xkms.v1.KeystoreService.BarrierUnseal:input_type -> xkms.v1.BarrierUnsealRequest
-	292, // 138: xkms.v1.KeystoreService.BarrierSeal:input_type -> google.protobuf.Empty
-	292, // 139: xkms.v1.KeystoreService.BarrierStatus:input_type -> google.protobuf.Empty
-	163, // 140: xkms.v1.KeystoreService.BarrierInitializeShamir:input_type -> xkms.v1.BarrierInitializeShamirRequest
-	165, // 141: xkms.v1.KeystoreService.BarrierUnsealShare:input_type -> xkms.v1.BarrierUnsealShareRequest
-	166, // 142: xkms.v1.KeystoreService.BarrierUnsealShares:input_type -> xkms.v1.BarrierUnsealSharesRequest
-	168, // 143: xkms.v1.KeystoreService.BarrierRekey:input_type -> xkms.v1.BarrierRekeyRequest
-	169, // 144: xkms.v1.KeystoreService.BarrierGenerateRecoveryKeys:input_type -> xkms.v1.BarrierGenerateRecoveryKeysRequest
-	172, // 145: xkms.v1.KeystoreService.BarrierRecoverWithKeys:input_type -> xkms.v1.BarrierRecoverWithKeysRequest
-	292, // 146: xkms.v1.KeystoreService.BarrierDeleteRecoveryKeys:input_type -> google.protobuf.Empty
-	292, // 147: xkms.v1.KeystoreService.BarrierHasRecoveryKeys:input_type -> google.protobuf.Empty
-	173, // 148: xkms.v1.KeystoreService.BarrierGenerateRootToken:input_type -> xkms.v1.BarrierGenerateRootTokenRequest
-	175, // 149: xkms.v1.KeystoreService.BarrierEnableEncryption:input_type -> xkms.v1.BarrierEnableEncryptionRequest
-	177, // 150: xkms.v1.KeystoreService.SetSOPIN:input_type -> xkms.v1.SetSOPINRequest
-	178, // 151: xkms.v1.KeystoreService.SetUserPIN:input_type -> xkms.v1.SetUserPINRequest
-	179, // 152: xkms.v1.KeystoreService.ChangeSOPIN:input_type -> xkms.v1.ChangeSOPINRequest
-	180, // 153: xkms.v1.KeystoreService.ChangeUserPIN:input_type -> xkms.v1.ChangeUserPINRequest
-	181, // 154: xkms.v1.KeystoreService.VerifySOPIN:input_type -> xkms.v1.VerifySOPINRequest
-	182, // 155: xkms.v1.KeystoreService.VerifyUserPIN:input_type -> xkms.v1.VerifyUserPINRequest
-	292, // 156: xkms.v1.KeystoreService.GetLockoutStatus:input_type -> google.protobuf.Empty
-	184, // 157: xkms.v1.KeystoreService.ResetLockout:input_type -> xkms.v1.ResetLockoutRequest
-	186, // 158: xkms.v1.KeystoreService.ListPIVSlots:input_type -> xkms.v1.ListPIVSlotsRequest
-	188, // 159: xkms.v1.KeystoreService.GetPIVCertificate:input_type -> xkms.v1.GetPIVCertificateRequest
-	190, // 160: xkms.v1.KeystoreService.StorePIVCertificate:input_type -> xkms.v1.StorePIVCertificateRequest
-	191, // 161: xkms.v1.KeystoreService.DeletePIVCertificate:input_type -> xkms.v1.DeletePIVCertificateRequest
-	192, // 162: xkms.v1.KeystoreService.GeneratePIVKey:input_type -> xkms.v1.GeneratePIVKeyRequest
-	190, // 163: xkms.v1.KeystoreService.ImportPIVCertificate:input_type -> xkms.v1.StorePIVCertificateRequest
-	188, // 164: xkms.v1.KeystoreService.ExportPIVCertificate:input_type -> xkms.v1.GetPIVCertificateRequest
-	194, // 165: xkms.v1.KeystoreService.GeneratePIVCSR:input_type -> xkms.v1.GeneratePIVCSRRequest
-	198, // 166: xkms.v1.KeystoreService.CreateCustodianGroup:input_type -> xkms.v1.CreateCustodianGroupRequest
-	200, // 167: xkms.v1.KeystoreService.GetCustodianGroup:input_type -> xkms.v1.GetCustodianGroupRequest
-	202, // 168: xkms.v1.KeystoreService.ListCustodianGroups:input_type -> xkms.v1.ListCustodianGroupsRequest
-	204, // 169: xkms.v1.KeystoreService.DeleteCustodianGroup:input_type -> xkms.v1.DeleteCustodianGroupRequest
-	205, // 170: xkms.v1.KeystoreService.AddCustodianMember:input_type -> xkms.v1.AddCustodianMemberRequest
-	207, // 171: xkms.v1.KeystoreService.RemoveCustodianMember:input_type -> xkms.v1.RemoveCustodianMemberRequest
-	208, // 172: xkms.v1.KeystoreService.DistributeShares:input_type -> xkms.v1.DistributeSharesRequest
-	211, // 173: xkms.v1.KeystoreService.SubmitShare:input_type -> xkms.v1.SubmitShareRequest
-	213, // 174: xkms.v1.KeystoreService.ListShares:input_type -> xkms.v1.ListSharesRequest
-	215, // 175: xkms.v1.KeystoreService.GetShareCollectionStatus:input_type -> xkms.v1.GetShareCollectionStatusRequest
-	226, // 176: xkms.v1.KeystoreService.CreateTenant:input_type -> xkms.v1.CreateTenantRequest
-	228, // 177: xkms.v1.KeystoreService.GetTenant:input_type -> xkms.v1.GetTenantRequest
-	230, // 178: xkms.v1.KeystoreService.ListTenants:input_type -> xkms.v1.ListTenantsRequest
-	232, // 179: xkms.v1.KeystoreService.DeleteTenant:input_type -> xkms.v1.DeleteTenantRequest
-	233, // 180: xkms.v1.KeystoreService.TenantBarrierInit:input_type -> xkms.v1.TenantBarrierInitRequest
-	234, // 181: xkms.v1.KeystoreService.TenantBarrierUnseal:input_type -> xkms.v1.TenantBarrierUnsealRequest
-	220, // 182: xkms.v1.KeystoreService.TenantBarrierStatus:input_type -> xkms.v1.TenantBarrierStatusRequest
-	222, // 183: xkms.v1.KeystoreService.UpdateTenantEntitlements:input_type -> xkms.v1.UpdateTenantEntitlementsRequest
-	224, // 184: xkms.v1.KeystoreService.UpdateTenantQuotas:input_type -> xkms.v1.UpdateTenantQuotasRequest
-	292, // 185: xkms.v1.KeystoreService.GetClusterStatus:input_type -> google.protobuf.Empty
-	292, // 186: xkms.v1.KeystoreService.ListClusterMembers:input_type -> google.protobuf.Empty
-	236, // 187: xkms.v1.KeystoreService.PasswordAdd:input_type -> xkms.v1.PasswordAddRequest
-	238, // 188: xkms.v1.KeystoreService.PasswordGet:input_type -> xkms.v1.PasswordGetRequest
-	240, // 189: xkms.v1.KeystoreService.PasswordList:input_type -> xkms.v1.PasswordListRequest
-	242, // 190: xkms.v1.KeystoreService.PasswordUpdate:input_type -> xkms.v1.PasswordUpdateRequest
-	244, // 191: xkms.v1.KeystoreService.PasswordDelete:input_type -> xkms.v1.PasswordDeleteRequest
-	246, // 192: xkms.v1.KeystoreService.PasswordStoreUnlock:input_type -> xkms.v1.PasswordStoreUnlockRequest
-	247, // 193: xkms.v1.KeystoreService.PasswordStoreLock:input_type -> xkms.v1.PasswordStoreLockRequest
-	248, // 194: xkms.v1.KeystoreService.PasswordStoreStatus:input_type -> xkms.v1.PasswordStoreStatusRequest
-	250, // 195: xkms.v1.KeystoreService.PasswordGenerate:input_type -> xkms.v1.PasswordGenerateRequest
-	3,   // 196: xkms.v1.KeystoreService.CreateUser:input_type -> xkms.v1.CreateUserRequest
-	5,   // 197: xkms.v1.KeystoreService.ListUsers:input_type -> xkms.v1.ListUsersRequest
-	7,   // 198: xkms.v1.KeystoreService.GetUser:input_type -> xkms.v1.GetUserRequest
-	8,   // 199: xkms.v1.KeystoreService.DeleteUser:input_type -> xkms.v1.DeleteUserRequest
-	10,  // 200: xkms.v1.KeystoreService.EnableUser:input_type -> xkms.v1.EnableUserRequest
-	11,  // 201: xkms.v1.KeystoreService.DisableUser:input_type -> xkms.v1.DisableUserRequest
-	12,  // 202: xkms.v1.KeystoreService.BindUserCert:input_type -> xkms.v1.BindUserCertRequest
-	13,  // 203: xkms.v1.KeystoreService.ListUserCredentials:input_type -> xkms.v1.ListUserCredentialsRequest
-	252, // 204: xkms.v1.KeystoreService.BeginRegistration:input_type -> xkms.v1.BeginRegistrationRequest
-	254, // 205: xkms.v1.KeystoreService.FinishRegistration:input_type -> xkms.v1.FinishRegistrationRequest
-	256, // 206: xkms.v1.KeystoreService.BeginAuthentication:input_type -> xkms.v1.BeginAuthenticationRequest
-	258, // 207: xkms.v1.KeystoreService.FinishAuthentication:input_type -> xkms.v1.FinishAuthenticationRequest
-	262, // 208: xkms.v1.KeystoreService.SSHGenerateKey:input_type -> xkms.v1.SSHGenerateKeyRequest
-	263, // 209: xkms.v1.KeystoreService.SSHImportKey:input_type -> xkms.v1.SSHImportKeyRequest
-	265, // 210: xkms.v1.KeystoreService.SSHListKeys:input_type -> xkms.v1.SSHListKeysRequest
-	260, // 211: xkms.v1.KeystoreService.SSHGetKey:input_type -> xkms.v1.SSHKeyRef
-	260, // 212: xkms.v1.KeystoreService.SSHDeleteKey:input_type -> xkms.v1.SSHKeyRef
-	260, // 213: xkms.v1.KeystoreService.SSHExportPublic:input_type -> xkms.v1.SSHKeyRef
-	268, // 214: xkms.v1.KeystoreService.SSHSign:input_type -> xkms.v1.SSHSignRequest
-	271, // 215: xkms.v1.KeystoreService.SSHAddKnownHost:input_type -> xkms.v1.SSHAddKnownHostRequest
-	272, // 216: xkms.v1.KeystoreService.SSHListKnownHosts:input_type -> xkms.v1.SSHListKnownHostsRequest
-	274, // 217: xkms.v1.KeystoreService.SSHRemoveKnownHost:input_type -> xkms.v1.SSHRemoveKnownHostRequest
-	276, // 218: xkms.v1.KeystoreService.SSHAddAuthorizedKey:input_type -> xkms.v1.SSHAddAuthorizedKeyRequest
-	277, // 219: xkms.v1.KeystoreService.SSHListAuthorizedKeys:input_type -> xkms.v1.SSHListAuthorizedKeysRequest
-	279, // 220: xkms.v1.KeystoreService.SSHRemoveAuthorizedKey:input_type -> xkms.v1.SSHAuthorizedKeyRef
-	280, // 221: xkms.v1.KeystoreService.SSHConsole:input_type -> xkms.v1.SSHConsoleClientMsg
-	20,  // 222: xkms.v1.KeystoreService.Health:output_type -> xkms.v1.HealthResponse
-	23,  // 223: xkms.v1.KeystoreService.ListBackends:output_type -> xkms.v1.ListBackendsResponse
-	25,  // 224: xkms.v1.KeystoreService.GetBackendInfo:output_type -> xkms.v1.GetBackendInfoResponse
-	27,  // 225: xkms.v1.KeystoreService.GenerateKey:output_type -> xkms.v1.GenerateKeyResponse
-	30,  // 226: xkms.v1.KeystoreService.ListKeys:output_type -> xkms.v1.ListKeysResponse
-	32,  // 227: xkms.v1.KeystoreService.GetKey:output_type -> xkms.v1.GetKeyResponse
-	34,  // 228: xkms.v1.KeystoreService.Sign:output_type -> xkms.v1.SignResponse
-	36,  // 229: xkms.v1.KeystoreService.Verify:output_type -> xkms.v1.VerifyResponse
-	38,  // 230: xkms.v1.KeystoreService.DeleteKey:output_type -> xkms.v1.DeleteKeyResponse
-	40,  // 231: xkms.v1.KeystoreService.RotateKey:output_type -> xkms.v1.RotateKeyResponse
-	43,  // 232: xkms.v1.KeystoreService.ListKeyVersions:output_type -> xkms.v1.ListKeyVersionsResponse
-	45,  // 233: xkms.v1.KeystoreService.EnableKeyVersion:output_type -> xkms.v1.EnableKeyVersionResponse
-	47,  // 234: xkms.v1.KeystoreService.DisableKeyVersion:output_type -> xkms.v1.DisableKeyVersionResponse
-	49,  // 235: xkms.v1.KeystoreService.EnableAllKeyVersions:output_type -> xkms.v1.EnableAllKeyVersionsResponse
-	51,  // 236: xkms.v1.KeystoreService.DisableAllKeyVersions:output_type -> xkms.v1.DisableAllKeyVersionsResponse
-	53,  // 237: xkms.v1.KeystoreService.Encrypt:output_type -> xkms.v1.EncryptResponse
-	55,  // 238: xkms.v1.KeystoreService.Decrypt:output_type -> xkms.v1.DecryptResponse
-	57,  // 239: xkms.v1.KeystoreService.EncryptAsym:output_type -> xkms.v1.EncryptAsymResponse
-	59,  // 240: xkms.v1.KeystoreService.DeriveKey:output_type -> xkms.v1.DeriveKeyResponse
-	61,  // 241: xkms.v1.KeystoreService.DeriveKeyECDH:output_type -> xkms.v1.DeriveKeyECDHResponse
-	67,  // 242: xkms.v1.KeystoreService.DeriveKeyECDHSecure:output_type -> xkms.v1.DeriveKeyECDHSecureResponse
-	69,  // 243: xkms.v1.KeystoreService.UseResidentKey:output_type -> xkms.v1.UseResidentKeyResponse
-	71,  // 244: xkms.v1.KeystoreService.DestroyResidentKey:output_type -> xkms.v1.DestroyResidentKeyResponse
-	73,  // 245: xkms.v1.KeystoreService.GenerateEphemeralECDH:output_type -> xkms.v1.GenerateEphemeralECDHResponse
-	75,  // 246: xkms.v1.KeystoreService.SaveCert:output_type -> xkms.v1.SaveCertResponse
-	77,  // 247: xkms.v1.KeystoreService.GetCert:output_type -> xkms.v1.GetCertResponse
-	79,  // 248: xkms.v1.KeystoreService.DeleteCert:output_type -> xkms.v1.DeleteCertResponse
-	81,  // 249: xkms.v1.KeystoreService.ListCerts:output_type -> xkms.v1.ListCertsResponse
-	83,  // 250: xkms.v1.KeystoreService.CertExists:output_type -> xkms.v1.CertExistsResponse
-	85,  // 251: xkms.v1.KeystoreService.SaveCertChain:output_type -> xkms.v1.SaveCertChainResponse
-	87,  // 252: xkms.v1.KeystoreService.GetCertChain:output_type -> xkms.v1.GetCertChainResponse
-	89,  // 253: xkms.v1.KeystoreService.GetTLSCertificate:output_type -> xkms.v1.GetTLSCertificateResponse
-	91,  // 254: xkms.v1.KeystoreService.GetImportParameters:output_type -> xkms.v1.GetImportParametersResponse
-	93,  // 255: xkms.v1.KeystoreService.WrapKey:output_type -> xkms.v1.WrapKeyResponse
-	95,  // 256: xkms.v1.KeystoreService.UnwrapKey:output_type -> xkms.v1.UnwrapKeyResponse
-	97,  // 257: xkms.v1.KeystoreService.WrapKeyByID:output_type -> xkms.v1.WrapKeyByIDResponse
-	99,  // 258: xkms.v1.KeystoreService.UnwrapKeyByID:output_type -> xkms.v1.UnwrapKeyByIDResponse
-	101, // 259: xkms.v1.KeystoreService.ImportKey:output_type -> xkms.v1.ImportKeyResponse
-	103, // 260: xkms.v1.KeystoreService.ExportKey:output_type -> xkms.v1.ExportKeyResponse
-	105, // 261: xkms.v1.KeystoreService.ExportKeyMaterial:output_type -> xkms.v1.ExportKeyMaterialResponse
-	107, // 262: xkms.v1.KeystoreService.CopyKey:output_type -> xkms.v1.CopyKeyResponse
-	109, // 263: xkms.v1.KeystoreService.Seal:output_type -> xkms.v1.SealResponse
-	111, // 264: xkms.v1.KeystoreService.Unseal:output_type -> xkms.v1.UnsealResponse
-	113, // 265: xkms.v1.KeystoreService.CanSeal:output_type -> xkms.v1.CanSealResponse
-	115, // 266: xkms.v1.KeystoreService.AttestKey:output_type -> xkms.v1.AttestKeyResponse
-	121, // 267: xkms.v1.KeystoreService.FrostGenerateKey:output_type -> xkms.v1.FrostGenerateKeyResponse
-	123, // 268: xkms.v1.KeystoreService.FrostImportKey:output_type -> xkms.v1.FrostImportKeyResponse
-	125, // 269: xkms.v1.KeystoreService.FrostListKeys:output_type -> xkms.v1.FrostListKeysResponse
-	127, // 270: xkms.v1.KeystoreService.FrostGetKey:output_type -> xkms.v1.FrostGetKeyResponse
-	129, // 271: xkms.v1.KeystoreService.FrostDeleteKey:output_type -> xkms.v1.FrostDeleteKeyResponse
-	131, // 272: xkms.v1.KeystoreService.FrostGenerateNonces:output_type -> xkms.v1.FrostGenerateNoncesResponse
-	133, // 273: xkms.v1.KeystoreService.FrostSignRound:output_type -> xkms.v1.FrostSignRoundResponse
-	135, // 274: xkms.v1.KeystoreService.FrostAggregate:output_type -> xkms.v1.FrostAggregateResponse
-	137, // 275: xkms.v1.KeystoreService.FrostVerify:output_type -> xkms.v1.FrostVerifyResponse
-	139, // 276: xkms.v1.KeystoreService.GetCABundle:output_type -> xkms.v1.GetCABundleResponse
-	141, // 277: xkms.v1.KeystoreService.GetCACertificate:output_type -> xkms.v1.GetCACertificateResponse
-	143, // 278: xkms.v1.KeystoreService.SignCSR:output_type -> xkms.v1.SignCSRResponse
-	145, // 279: xkms.v1.KeystoreService.IssueCertificate:output_type -> xkms.v1.IssueCertificateResponse
-	147, // 280: xkms.v1.KeystoreService.RevokeCertificate:output_type -> xkms.v1.RevokeCertificateResponse
-	149, // 281: xkms.v1.KeystoreService.GenerateCRL:output_type -> xkms.v1.GenerateCRLResponse
-	151, // 282: xkms.v1.KeystoreService.IsRevoked:output_type -> xkms.v1.IsRevokedResponse
-	153, // 283: xkms.v1.KeystoreService.IssueEKCertificate:output_type -> xkms.v1.IssueEKCertificateResponse
-	155, // 284: xkms.v1.KeystoreService.IssueAKCertificate:output_type -> xkms.v1.IssueAKCertificateResponse
-	157, // 285: xkms.v1.KeystoreService.SignTCGCSR:output_type -> xkms.v1.SignTCGCSRResponse
-	159, // 286: xkms.v1.KeystoreService.EnrollDevice:output_type -> xkms.v1.EnrollDeviceResponse
-	292, // 287: xkms.v1.KeystoreService.BarrierInitialize:output_type -> google.protobuf.Empty
-	292, // 288: xkms.v1.KeystoreService.BarrierUnseal:output_type -> google.protobuf.Empty
-	292, // 289: xkms.v1.KeystoreService.BarrierSeal:output_type -> google.protobuf.Empty
-	162, // 290: xkms.v1.KeystoreService.BarrierStatus:output_type -> xkms.v1.BarrierStatusResponse
-	164, // 291: xkms.v1.KeystoreService.BarrierInitializeShamir:output_type -> xkms.v1.BarrierShamirInitResponse
-	167, // 292: xkms.v1.KeystoreService.BarrierUnsealShare:output_type -> xkms.v1.BarrierQuorumProgressResponse
-	292, // 293: xkms.v1.KeystoreService.BarrierUnsealShares:output_type -> google.protobuf.Empty
-	164, // 294: xkms.v1.KeystoreService.BarrierRekey:output_type -> xkms.v1.BarrierShamirInitResponse
-	171, // 295: xkms.v1.KeystoreService.BarrierGenerateRecoveryKeys:output_type -> xkms.v1.BarrierRecoveryKeysResponse
-	292, // 296: xkms.v1.KeystoreService.BarrierRecoverWithKeys:output_type -> google.protobuf.Empty
-	292, // 297: xkms.v1.KeystoreService.BarrierDeleteRecoveryKeys:output_type -> google.protobuf.Empty
-	170, // 298: xkms.v1.KeystoreService.BarrierHasRecoveryKeys:output_type -> xkms.v1.BarrierHasRecoveryKeysResponse
-	174, // 299: xkms.v1.KeystoreService.BarrierGenerateRootToken:output_type -> xkms.v1.BarrierRootTokenResponse
-	176, // 300: xkms.v1.KeystoreService.BarrierEnableEncryption:output_type -> xkms.v1.BarrierEnableEncryptionResponse
-	292, // 301: xkms.v1.KeystoreService.SetSOPIN:output_type -> google.protobuf.Empty
-	292, // 302: xkms.v1.KeystoreService.SetUserPIN:output_type -> google.protobuf.Empty
-	292, // 303: xkms.v1.KeystoreService.ChangeSOPIN:output_type -> google.protobuf.Empty
-	292, // 304: xkms.v1.KeystoreService.ChangeUserPIN:output_type -> google.protobuf.Empty
-	292, // 305: xkms.v1.KeystoreService.VerifySOPIN:output_type -> google.protobuf.Empty
-	292, // 306: xkms.v1.KeystoreService.VerifyUserPIN:output_type -> google.protobuf.Empty
-	183, // 307: xkms.v1.KeystoreService.GetLockoutStatus:output_type -> xkms.v1.LockoutStatusResponse
-	292, // 308: xkms.v1.KeystoreService.ResetLockout:output_type -> google.protobuf.Empty
-	187, // 309: xkms.v1.KeystoreService.ListPIVSlots:output_type -> xkms.v1.ListPIVSlotsResponse
-	189, // 310: xkms.v1.KeystoreService.GetPIVCertificate:output_type -> xkms.v1.GetPIVCertificateResponse
-	292, // 311: xkms.v1.KeystoreService.StorePIVCertificate:output_type -> google.protobuf.Empty
-	292, // 312: xkms.v1.KeystoreService.DeletePIVCertificate:output_type -> google.protobuf.Empty
-	193, // 313: xkms.v1.KeystoreService.GeneratePIVKey:output_type -> xkms.v1.GeneratePIVKeyResponse
-	292, // 314: xkms.v1.KeystoreService.ImportPIVCertificate:output_type -> google.protobuf.Empty
-	189, // 315: xkms.v1.KeystoreService.ExportPIVCertificate:output_type -> xkms.v1.GetPIVCertificateResponse
-	195, // 316: xkms.v1.KeystoreService.GeneratePIVCSR:output_type -> xkms.v1.GeneratePIVCSRResponse
-	199, // 317: xkms.v1.KeystoreService.CreateCustodianGroup:output_type -> xkms.v1.CreateCustodianGroupResponse
-	201, // 318: xkms.v1.KeystoreService.GetCustodianGroup:output_type -> xkms.v1.GetCustodianGroupResponse
-	203, // 319: xkms.v1.KeystoreService.ListCustodianGroups:output_type -> xkms.v1.ListCustodianGroupsResponse
-	292, // 320: xkms.v1.KeystoreService.DeleteCustodianGroup:output_type -> google.protobuf.Empty
-	206, // 321: xkms.v1.KeystoreService.AddCustodianMember:output_type -> xkms.v1.AddCustodianMemberResponse
-	292, // 322: xkms.v1.KeystoreService.RemoveCustodianMember:output_type -> google.protobuf.Empty
-	209, // 323: xkms.v1.KeystoreService.DistributeShares:output_type -> xkms.v1.DistributeSharesResponse
-	212, // 324: xkms.v1.KeystoreService.SubmitShare:output_type -> xkms.v1.SubmitShareResponse
-	214, // 325: xkms.v1.KeystoreService.ListShares:output_type -> xkms.v1.ListSharesResponse
-	216, // 326: xkms.v1.KeystoreService.GetShareCollectionStatus:output_type -> xkms.v1.ShareCollectionStatusResponse
-	227, // 327: xkms.v1.KeystoreService.CreateTenant:output_type -> xkms.v1.CreateTenantResponse
-	229, // 328: xkms.v1.KeystoreService.GetTenant:output_type -> xkms.v1.GetTenantResponse
-	231, // 329: xkms.v1.KeystoreService.ListTenants:output_type -> xkms.v1.ListTenantsResponse
-	292, // 330: xkms.v1.KeystoreService.DeleteTenant:output_type -> google.protobuf.Empty
-	292, // 331: xkms.v1.KeystoreService.TenantBarrierInit:output_type -> google.protobuf.Empty
-	292, // 332: xkms.v1.KeystoreService.TenantBarrierUnseal:output_type -> google.protobuf.Empty
-	221, // 333: xkms.v1.KeystoreService.TenantBarrierStatus:output_type -> xkms.v1.TenantBarrierStatusResponse
-	223, // 334: xkms.v1.KeystoreService.UpdateTenantEntitlements:output_type -> xkms.v1.UpdateTenantEntitlementsResponse
-	225, // 335: xkms.v1.KeystoreService.UpdateTenantQuotas:output_type -> xkms.v1.UpdateTenantQuotasResponse
-	16,  // 336: xkms.v1.KeystoreService.GetClusterStatus:output_type -> xkms.v1.ClusterStatusResponse
-	18,  // 337: xkms.v1.KeystoreService.ListClusterMembers:output_type -> xkms.v1.ListClusterMembersResponse
-	237, // 338: xkms.v1.KeystoreService.PasswordAdd:output_type -> xkms.v1.PasswordAddResponse
-	239, // 339: xkms.v1.KeystoreService.PasswordGet:output_type -> xkms.v1.PasswordGetResponse
-	241, // 340: xkms.v1.KeystoreService.PasswordList:output_type -> xkms.v1.PasswordListResponse
-	243, // 341: xkms.v1.KeystoreService.PasswordUpdate:output_type -> xkms.v1.PasswordUpdateResponse
-	245, // 342: xkms.v1.KeystoreService.PasswordDelete:output_type -> xkms.v1.PasswordDeleteResponse
-	249, // 343: xkms.v1.KeystoreService.PasswordStoreUnlock:output_type -> xkms.v1.PasswordStoreStatusResponse
-	249, // 344: xkms.v1.KeystoreService.PasswordStoreLock:output_type -> xkms.v1.PasswordStoreStatusResponse
-	249, // 345: xkms.v1.KeystoreService.PasswordStoreStatus:output_type -> xkms.v1.PasswordStoreStatusResponse
-	251, // 346: xkms.v1.KeystoreService.PasswordGenerate:output_type -> xkms.v1.PasswordGenerateResponse
-	4,   // 347: xkms.v1.KeystoreService.CreateUser:output_type -> xkms.v1.UserResponse
-	6,   // 348: xkms.v1.KeystoreService.ListUsers:output_type -> xkms.v1.ListUsersResponse
-	4,   // 349: xkms.v1.KeystoreService.GetUser:output_type -> xkms.v1.UserResponse
-	9,   // 350: xkms.v1.KeystoreService.DeleteUser:output_type -> xkms.v1.DeleteUserResponse
-	4,   // 351: xkms.v1.KeystoreService.EnableUser:output_type -> xkms.v1.UserResponse
-	4,   // 352: xkms.v1.KeystoreService.DisableUser:output_type -> xkms.v1.UserResponse
-	4,   // 353: xkms.v1.KeystoreService.BindUserCert:output_type -> xkms.v1.UserResponse
-	15,  // 354: xkms.v1.KeystoreService.ListUserCredentials:output_type -> xkms.v1.ListUserCredentialsResponse
-	253, // 355: xkms.v1.KeystoreService.BeginRegistration:output_type -> xkms.v1.BeginRegistrationResponse
-	255, // 356: xkms.v1.KeystoreService.FinishRegistration:output_type -> xkms.v1.FinishRegistrationResponse
-	257, // 357: xkms.v1.KeystoreService.BeginAuthentication:output_type -> xkms.v1.BeginAuthenticationResponse
-	259, // 358: xkms.v1.KeystoreService.FinishAuthentication:output_type -> xkms.v1.FinishAuthenticationResponse
-	264, // 359: xkms.v1.KeystoreService.SSHGenerateKey:output_type -> xkms.v1.SSHKeyResponse
-	264, // 360: xkms.v1.KeystoreService.SSHImportKey:output_type -> xkms.v1.SSHKeyResponse
-	266, // 361: xkms.v1.KeystoreService.SSHListKeys:output_type -> xkms.v1.SSHListKeysResponse
-	264, // 362: xkms.v1.KeystoreService.SSHGetKey:output_type -> xkms.v1.SSHKeyResponse
-	292, // 363: xkms.v1.KeystoreService.SSHDeleteKey:output_type -> google.protobuf.Empty
-	267, // 364: xkms.v1.KeystoreService.SSHExportPublic:output_type -> xkms.v1.SSHPublicKeyResponse
-	269, // 365: xkms.v1.KeystoreService.SSHSign:output_type -> xkms.v1.SSHSignResponse
-	292, // 366: xkms.v1.KeystoreService.SSHAddKnownHost:output_type -> google.protobuf.Empty
-	273, // 367: xkms.v1.KeystoreService.SSHListKnownHosts:output_type -> xkms.v1.SSHListKnownHostsResponse
-	292, // 368: xkms.v1.KeystoreService.SSHRemoveKnownHost:output_type -> google.protobuf.Empty
-	292, // 369: xkms.v1.KeystoreService.SSHAddAuthorizedKey:output_type -> google.protobuf.Empty
-	278, // 370: xkms.v1.KeystoreService.SSHListAuthorizedKeys:output_type -> xkms.v1.SSHListAuthorizedKeysResponse
-	292, // 371: xkms.v1.KeystoreService.SSHRemoveAuthorizedKey:output_type -> google.protobuf.Empty
-	283, // 372: xkms.v1.KeystoreService.SSHConsole:output_type -> xkms.v1.SSHConsoleServerMsg
-	222, // [222:373] is the sub-list for method output_type
-	71,  // [71:222] is the sub-list for method input_type
-	71,  // [71:71] is the sub-list for extension type_name
-	71,  // [71:71] is the sub-list for extension extendee
-	0,   // [0:71] is the sub-list for field type_name
+	303, // 3: xkms.v1.ClusterMember.api_endpoints:type_name -> xkms.v1.ClusterMember.ApiEndpointsEntry
+	17,  // 4: xkms.v1.ListClusterMembersResponse.members:type_name -> xkms.v1.ClusterMember
+	24,  // 5: xkms.v1.ListBackendsResponse.backends:type_name -> xkms.v1.BackendInfo
+	24,  // 6: xkms.v1.GetBackendInfoResponse.backend:type_name -> xkms.v1.BackendInfo
+	310, // 7: xkms.v1.GenerateKeyResponse.created_at:type_name -> google.protobuf.Timestamp
+	310, // 8: xkms.v1.KeyInfo.created_at:type_name -> google.protobuf.Timestamp
+	31,  // 9: xkms.v1.ListKeysResponse.keys:type_name -> xkms.v1.KeyInfo
+	31,  // 10: xkms.v1.GetKeyResponse.key:type_name -> xkms.v1.KeyInfo
+	310, // 11: xkms.v1.RotateKeyResponse.rotated_at:type_name -> google.protobuf.Timestamp
+	44,  // 12: xkms.v1.ListKeyVersionsResponse.versions:type_name -> xkms.v1.KeyVersionInfo
+	66,  // 13: xkms.v1.DerivedKeyHandle.tpm_handle:type_name -> xkms.v1.TPMDerivedKeyHandle
+	0,   // 14: xkms.v1.DeriveKeyECDHSecureRequest.derivation_mode:type_name -> xkms.v1.KeyDerivationMode
+	67,  // 15: xkms.v1.DeriveKeyECDHSecureRequest.derived_key_template:type_name -> xkms.v1.DerivedKeyTemplate
+	0,   // 16: xkms.v1.DeriveKeyECDHSecureResponse.mode:type_name -> xkms.v1.KeyDerivationMode
+	65,  // 17: xkms.v1.DeriveKeyECDHSecureResponse.handle:type_name -> xkms.v1.DerivedKeyHandle
+	65,  // 18: xkms.v1.UseResidentKeyRequest.handle:type_name -> xkms.v1.DerivedKeyHandle
+	1,   // 19: xkms.v1.UseResidentKeyRequest.operation:type_name -> xkms.v1.ResidentKeyOperation
+	68,  // 20: xkms.v1.UseResidentKeyRequest.params:type_name -> xkms.v1.OperationParams
+	65,  // 21: xkms.v1.DestroyResidentKeyRequest.handle:type_name -> xkms.v1.DerivedKeyHandle
+	0,   // 22: xkms.v1.GenerateEphemeralECDHRequest.derivation_mode:type_name -> xkms.v1.KeyDerivationMode
+	0,   // 23: xkms.v1.GenerateEphemeralECDHResponse.mode:type_name -> xkms.v1.KeyDerivationMode
+	65,  // 24: xkms.v1.GenerateEphemeralECDHResponse.handle:type_name -> xkms.v1.DerivedKeyHandle
+	310, // 25: xkms.v1.GetImportParametersResponse.expires_at:type_name -> google.protobuf.Timestamp
+	304, // 26: xkms.v1.WrapKeyResponse.metadata:type_name -> xkms.v1.WrapKeyResponse.MetadataEntry
+	305, // 27: xkms.v1.UnwrapKeyRequest.metadata:type_name -> xkms.v1.UnwrapKeyRequest.MetadataEntry
+	306, // 28: xkms.v1.ImportKeyRequest.metadata:type_name -> xkms.v1.ImportKeyRequest.MetadataEntry
+	307, // 29: xkms.v1.ExportKeyResponse.metadata:type_name -> xkms.v1.ExportKeyResponse.MetadataEntry
+	308, // 30: xkms.v1.SealResponse.metadata:type_name -> xkms.v1.SealResponse.MetadataEntry
+	310, // 31: xkms.v1.FrostKeyInfo.created_at:type_name -> google.protobuf.Timestamp
+	309, // 32: xkms.v1.FrostKeyPackage.verification_shares:type_name -> xkms.v1.FrostKeyPackage.VerificationSharesEntry
+	120, // 33: xkms.v1.FrostGenerateKeyResponse.packages:type_name -> xkms.v1.FrostKeyPackage
+	310, // 34: xkms.v1.FrostGenerateKeyResponse.created_at:type_name -> google.protobuf.Timestamp
+	120, // 35: xkms.v1.FrostImportKeyRequest.package:type_name -> xkms.v1.FrostKeyPackage
+	119, // 36: xkms.v1.FrostListKeysResponse.keys:type_name -> xkms.v1.FrostKeyInfo
+	119, // 37: xkms.v1.FrostGetKeyResponse.key:type_name -> xkms.v1.FrostKeyInfo
+	121, // 38: xkms.v1.FrostSignRoundRequest.commitments:type_name -> xkms.v1.FrostCommitment
+	121, // 39: xkms.v1.FrostAggregateRequest.commitments:type_name -> xkms.v1.FrostCommitment
+	122, // 40: xkms.v1.FrostAggregateRequest.shares:type_name -> xkms.v1.FrostSignatureShare
+	188, // 41: xkms.v1.ListPIVSlotsResponse.slots:type_name -> xkms.v1.PIVSlotStatus
+	199, // 42: xkms.v1.CustodianGroup.members:type_name -> xkms.v1.CustodianMember
+	200, // 43: xkms.v1.CreateCustodianGroupResponse.group:type_name -> xkms.v1.CustodianGroup
+	200, // 44: xkms.v1.GetCustodianGroupResponse.group:type_name -> xkms.v1.CustodianGroup
+	200, // 45: xkms.v1.ListCustodianGroupsResponse.groups:type_name -> xkms.v1.CustodianGroup
+	199, // 46: xkms.v1.AddCustodianMemberResponse.member:type_name -> xkms.v1.CustodianMember
+	214, // 47: xkms.v1.AlgorithmsResponse.signing:type_name -> xkms.v1.AlgorithmInfo
+	214, // 48: xkms.v1.AlgorithmsResponse.key_encapsulation:type_name -> xkms.v1.AlgorithmInfo
+	216, // 49: xkms.v1.ListSharesResponse.shares:type_name -> xkms.v1.ShareInfo
+	226, // 50: xkms.v1.TenantInfo.quotas:type_name -> xkms.v1.TenantQuotas
+	227, // 51: xkms.v1.TenantInfo.entitlements:type_name -> xkms.v1.TenantEntitlements
+	227, // 52: xkms.v1.UpdateTenantEntitlementsRequest.entitlements:type_name -> xkms.v1.TenantEntitlements
+	225, // 53: xkms.v1.UpdateTenantEntitlementsResponse.tenant:type_name -> xkms.v1.TenantInfo
+	226, // 54: xkms.v1.UpdateTenantQuotasRequest.quotas:type_name -> xkms.v1.TenantQuotas
+	225, // 55: xkms.v1.UpdateTenantQuotasResponse.tenant:type_name -> xkms.v1.TenantInfo
+	225, // 56: xkms.v1.CreateTenantResponse.tenant:type_name -> xkms.v1.TenantInfo
+	225, // 57: xkms.v1.GetTenantResponse.tenant:type_name -> xkms.v1.TenantInfo
+	225, // 58: xkms.v1.ListTenantsResponse.tenants:type_name -> xkms.v1.TenantInfo
+	310, // 59: xkms.v1.PasswordEntry.expires_at:type_name -> google.protobuf.Timestamp
+	310, // 60: xkms.v1.PasswordEntry.created_at:type_name -> google.protobuf.Timestamp
+	310, // 61: xkms.v1.PasswordEntry.updated_at:type_name -> google.protobuf.Timestamp
+	243, // 62: xkms.v1.PasswordGetResponse.entry:type_name -> xkms.v1.PasswordEntry
+	243, // 63: xkms.v1.PasswordListResponse.passwords:type_name -> xkms.v1.PasswordEntry
+	310, // 64: xkms.v1.SSHKeyInfo.created_at:type_name -> google.protobuf.Timestamp
+	281, // 65: xkms.v1.SSHKeyResponse.key:type_name -> xkms.v1.SSHKeyInfo
+	281, // 66: xkms.v1.SSHListKeysResponse.keys:type_name -> xkms.v1.SSHKeyInfo
+	280, // 67: xkms.v1.SSHSignRequest.key:type_name -> xkms.v1.SSHKeyRef
+	310, // 68: xkms.v1.SSHPin.added_at:type_name -> google.protobuf.Timestamp
+	290, // 69: xkms.v1.SSHListKnownHostsResponse.pins:type_name -> xkms.v1.SSHPin
+	295, // 70: xkms.v1.SSHListAuthorizedKeysResponse.entries:type_name -> xkms.v1.SSHAuthorizedEntry
+	310, // 71: xkms.v1.AuditEvent.timestamp:type_name -> google.protobuf.Timestamp
+	311, // 72: xkms.v1.AuditEvent.attributes:type_name -> google.protobuf.Struct
+	310, // 73: xkms.v1.QueryAuditRequest.from:type_name -> google.protobuf.Timestamp
+	310, // 74: xkms.v1.QueryAuditRequest.to:type_name -> google.protobuf.Timestamp
+	300, // 75: xkms.v1.QueryAuditResponse.events:type_name -> xkms.v1.AuditEvent
+	22,  // 76: xkms.v1.KeystoreService.Health:input_type -> xkms.v1.HealthRequest
+	25,  // 77: xkms.v1.KeystoreService.ListBackends:input_type -> xkms.v1.ListBackendsRequest
+	27,  // 78: xkms.v1.KeystoreService.GetBackendInfo:input_type -> xkms.v1.GetBackendInfoRequest
+	29,  // 79: xkms.v1.KeystoreService.GenerateKey:input_type -> xkms.v1.GenerateKeyRequest
+	32,  // 80: xkms.v1.KeystoreService.ListKeys:input_type -> xkms.v1.ListKeysRequest
+	34,  // 81: xkms.v1.KeystoreService.GetKey:input_type -> xkms.v1.GetKeyRequest
+	36,  // 82: xkms.v1.KeystoreService.Sign:input_type -> xkms.v1.SignRequest
+	38,  // 83: xkms.v1.KeystoreService.Verify:input_type -> xkms.v1.VerifyRequest
+	40,  // 84: xkms.v1.KeystoreService.DeleteKey:input_type -> xkms.v1.DeleteKeyRequest
+	42,  // 85: xkms.v1.KeystoreService.RotateKey:input_type -> xkms.v1.RotateKeyRequest
+	45,  // 86: xkms.v1.KeystoreService.ListKeyVersions:input_type -> xkms.v1.ListKeyVersionsRequest
+	47,  // 87: xkms.v1.KeystoreService.EnableKeyVersion:input_type -> xkms.v1.EnableKeyVersionRequest
+	49,  // 88: xkms.v1.KeystoreService.DisableKeyVersion:input_type -> xkms.v1.DisableKeyVersionRequest
+	51,  // 89: xkms.v1.KeystoreService.EnableAllKeyVersions:input_type -> xkms.v1.EnableAllKeyVersionsRequest
+	53,  // 90: xkms.v1.KeystoreService.DisableAllKeyVersions:input_type -> xkms.v1.DisableAllKeyVersionsRequest
+	55,  // 91: xkms.v1.KeystoreService.Encrypt:input_type -> xkms.v1.EncryptRequest
+	57,  // 92: xkms.v1.KeystoreService.Decrypt:input_type -> xkms.v1.DecryptRequest
+	59,  // 93: xkms.v1.KeystoreService.EncryptAsym:input_type -> xkms.v1.EncryptAsymRequest
+	61,  // 94: xkms.v1.KeystoreService.DeriveKey:input_type -> xkms.v1.DeriveKeyRequest
+	63,  // 95: xkms.v1.KeystoreService.DeriveKeyECDH:input_type -> xkms.v1.DeriveKeyECDHRequest
+	69,  // 96: xkms.v1.KeystoreService.DeriveKeyECDHSecure:input_type -> xkms.v1.DeriveKeyECDHSecureRequest
+	71,  // 97: xkms.v1.KeystoreService.UseResidentKey:input_type -> xkms.v1.UseResidentKeyRequest
+	73,  // 98: xkms.v1.KeystoreService.DestroyResidentKey:input_type -> xkms.v1.DestroyResidentKeyRequest
+	75,  // 99: xkms.v1.KeystoreService.GenerateEphemeralECDH:input_type -> xkms.v1.GenerateEphemeralECDHRequest
+	77,  // 100: xkms.v1.KeystoreService.SaveCert:input_type -> xkms.v1.SaveCertRequest
+	79,  // 101: xkms.v1.KeystoreService.GetCert:input_type -> xkms.v1.GetCertRequest
+	81,  // 102: xkms.v1.KeystoreService.DeleteCert:input_type -> xkms.v1.DeleteCertRequest
+	83,  // 103: xkms.v1.KeystoreService.ListCerts:input_type -> xkms.v1.ListCertsRequest
+	85,  // 104: xkms.v1.KeystoreService.CertExists:input_type -> xkms.v1.CertExistsRequest
+	87,  // 105: xkms.v1.KeystoreService.SaveCertChain:input_type -> xkms.v1.SaveCertChainRequest
+	89,  // 106: xkms.v1.KeystoreService.GetCertChain:input_type -> xkms.v1.GetCertChainRequest
+	91,  // 107: xkms.v1.KeystoreService.GetTLSCertificate:input_type -> xkms.v1.GetTLSCertificateRequest
+	93,  // 108: xkms.v1.KeystoreService.GetImportParameters:input_type -> xkms.v1.GetImportParametersRequest
+	95,  // 109: xkms.v1.KeystoreService.WrapKey:input_type -> xkms.v1.WrapKeyRequest
+	97,  // 110: xkms.v1.KeystoreService.UnwrapKey:input_type -> xkms.v1.UnwrapKeyRequest
+	99,  // 111: xkms.v1.KeystoreService.WrapKeyByID:input_type -> xkms.v1.WrapKeyByIDRequest
+	101, // 112: xkms.v1.KeystoreService.UnwrapKeyByID:input_type -> xkms.v1.UnwrapKeyByIDRequest
+	103, // 113: xkms.v1.KeystoreService.ImportKey:input_type -> xkms.v1.ImportKeyRequest
+	105, // 114: xkms.v1.KeystoreService.ExportKey:input_type -> xkms.v1.ExportKeyRequest
+	107, // 115: xkms.v1.KeystoreService.ExportKeyMaterial:input_type -> xkms.v1.ExportKeyMaterialRequest
+	109, // 116: xkms.v1.KeystoreService.CopyKey:input_type -> xkms.v1.CopyKeyRequest
+	111, // 117: xkms.v1.KeystoreService.Seal:input_type -> xkms.v1.SealRequest
+	113, // 118: xkms.v1.KeystoreService.Unseal:input_type -> xkms.v1.UnsealRequest
+	115, // 119: xkms.v1.KeystoreService.CanSeal:input_type -> xkms.v1.CanSealRequest
+	117, // 120: xkms.v1.KeystoreService.AttestKey:input_type -> xkms.v1.AttestKeyRequest
+	123, // 121: xkms.v1.KeystoreService.FrostGenerateKey:input_type -> xkms.v1.FrostGenerateKeyRequest
+	125, // 122: xkms.v1.KeystoreService.FrostImportKey:input_type -> xkms.v1.FrostImportKeyRequest
+	127, // 123: xkms.v1.KeystoreService.FrostListKeys:input_type -> xkms.v1.FrostListKeysRequest
+	129, // 124: xkms.v1.KeystoreService.FrostGetKey:input_type -> xkms.v1.FrostGetKeyRequest
+	131, // 125: xkms.v1.KeystoreService.FrostDeleteKey:input_type -> xkms.v1.FrostDeleteKeyRequest
+	133, // 126: xkms.v1.KeystoreService.FrostGenerateNonces:input_type -> xkms.v1.FrostGenerateNoncesRequest
+	135, // 127: xkms.v1.KeystoreService.FrostSignRound:input_type -> xkms.v1.FrostSignRoundRequest
+	137, // 128: xkms.v1.KeystoreService.FrostAggregate:input_type -> xkms.v1.FrostAggregateRequest
+	139, // 129: xkms.v1.KeystoreService.FrostVerify:input_type -> xkms.v1.FrostVerifyRequest
+	141, // 130: xkms.v1.KeystoreService.GetCABundle:input_type -> xkms.v1.GetCABundleRequest
+	143, // 131: xkms.v1.KeystoreService.GetCACertificate:input_type -> xkms.v1.GetCACertificateRequest
+	145, // 132: xkms.v1.KeystoreService.SignCSR:input_type -> xkms.v1.SignCSRRequest
+	147, // 133: xkms.v1.KeystoreService.IssueCertificate:input_type -> xkms.v1.IssueCertificateRequest
+	149, // 134: xkms.v1.KeystoreService.RevokeCertificate:input_type -> xkms.v1.RevokeCertificateRequest
+	151, // 135: xkms.v1.KeystoreService.GenerateCRL:input_type -> xkms.v1.GenerateCRLRequest
+	153, // 136: xkms.v1.KeystoreService.IsRevoked:input_type -> xkms.v1.IsRevokedRequest
+	155, // 137: xkms.v1.KeystoreService.IssueEKCertificate:input_type -> xkms.v1.IssueEKCertificateRequest
+	157, // 138: xkms.v1.KeystoreService.IssueAKCertificate:input_type -> xkms.v1.IssueAKCertificateRequest
+	159, // 139: xkms.v1.KeystoreService.SignTCGCSR:input_type -> xkms.v1.SignTCGCSRRequest
+	161, // 140: xkms.v1.KeystoreService.EnrollDevice:input_type -> xkms.v1.EnrollDeviceRequest
+	163, // 141: xkms.v1.KeystoreService.BarrierInitialize:input_type -> xkms.v1.BarrierInitializeRequest
+	164, // 142: xkms.v1.KeystoreService.BarrierUnseal:input_type -> xkms.v1.BarrierUnsealRequest
+	312, // 143: xkms.v1.KeystoreService.BarrierSeal:input_type -> google.protobuf.Empty
+	312, // 144: xkms.v1.KeystoreService.BarrierStatus:input_type -> google.protobuf.Empty
+	166, // 145: xkms.v1.KeystoreService.BarrierInitializeShamir:input_type -> xkms.v1.BarrierInitializeShamirRequest
+	168, // 146: xkms.v1.KeystoreService.BarrierUnsealShare:input_type -> xkms.v1.BarrierUnsealShareRequest
+	169, // 147: xkms.v1.KeystoreService.BarrierUnsealShares:input_type -> xkms.v1.BarrierUnsealSharesRequest
+	171, // 148: xkms.v1.KeystoreService.BarrierRekey:input_type -> xkms.v1.BarrierRekeyRequest
+	172, // 149: xkms.v1.KeystoreService.BarrierGenerateRecoveryKeys:input_type -> xkms.v1.BarrierGenerateRecoveryKeysRequest
+	175, // 150: xkms.v1.KeystoreService.BarrierRecoverWithKeys:input_type -> xkms.v1.BarrierRecoverWithKeysRequest
+	312, // 151: xkms.v1.KeystoreService.BarrierDeleteRecoveryKeys:input_type -> google.protobuf.Empty
+	312, // 152: xkms.v1.KeystoreService.BarrierHasRecoveryKeys:input_type -> google.protobuf.Empty
+	176, // 153: xkms.v1.KeystoreService.BarrierGenerateRootToken:input_type -> xkms.v1.BarrierGenerateRootTokenRequest
+	178, // 154: xkms.v1.KeystoreService.BarrierEnableEncryption:input_type -> xkms.v1.BarrierEnableEncryptionRequest
+	180, // 155: xkms.v1.KeystoreService.SetSOPIN:input_type -> xkms.v1.SetSOPINRequest
+	181, // 156: xkms.v1.KeystoreService.SetUserPIN:input_type -> xkms.v1.SetUserPINRequest
+	182, // 157: xkms.v1.KeystoreService.ChangeSOPIN:input_type -> xkms.v1.ChangeSOPINRequest
+	183, // 158: xkms.v1.KeystoreService.ChangeUserPIN:input_type -> xkms.v1.ChangeUserPINRequest
+	184, // 159: xkms.v1.KeystoreService.VerifySOPIN:input_type -> xkms.v1.VerifySOPINRequest
+	185, // 160: xkms.v1.KeystoreService.VerifyUserPIN:input_type -> xkms.v1.VerifyUserPINRequest
+	312, // 161: xkms.v1.KeystoreService.GetLockoutStatus:input_type -> google.protobuf.Empty
+	187, // 162: xkms.v1.KeystoreService.ResetLockout:input_type -> xkms.v1.ResetLockoutRequest
+	189, // 163: xkms.v1.KeystoreService.ListPIVSlots:input_type -> xkms.v1.ListPIVSlotsRequest
+	191, // 164: xkms.v1.KeystoreService.GetPIVCertificate:input_type -> xkms.v1.GetPIVCertificateRequest
+	193, // 165: xkms.v1.KeystoreService.StorePIVCertificate:input_type -> xkms.v1.StorePIVCertificateRequest
+	194, // 166: xkms.v1.KeystoreService.DeletePIVCertificate:input_type -> xkms.v1.DeletePIVCertificateRequest
+	195, // 167: xkms.v1.KeystoreService.GeneratePIVKey:input_type -> xkms.v1.GeneratePIVKeyRequest
+	193, // 168: xkms.v1.KeystoreService.ImportPIVCertificate:input_type -> xkms.v1.StorePIVCertificateRequest
+	191, // 169: xkms.v1.KeystoreService.ExportPIVCertificate:input_type -> xkms.v1.GetPIVCertificateRequest
+	197, // 170: xkms.v1.KeystoreService.GeneratePIVCSR:input_type -> xkms.v1.GeneratePIVCSRRequest
+	201, // 171: xkms.v1.KeystoreService.CreateCustodianGroup:input_type -> xkms.v1.CreateCustodianGroupRequest
+	203, // 172: xkms.v1.KeystoreService.GetCustodianGroup:input_type -> xkms.v1.GetCustodianGroupRequest
+	205, // 173: xkms.v1.KeystoreService.ListCustodianGroups:input_type -> xkms.v1.ListCustodianGroupsRequest
+	207, // 174: xkms.v1.KeystoreService.DeleteCustodianGroup:input_type -> xkms.v1.DeleteCustodianGroupRequest
+	208, // 175: xkms.v1.KeystoreService.AddCustodianMember:input_type -> xkms.v1.AddCustodianMemberRequest
+	210, // 176: xkms.v1.KeystoreService.RemoveCustodianMember:input_type -> xkms.v1.RemoveCustodianMemberRequest
+	211, // 177: xkms.v1.KeystoreService.DistributeShares:input_type -> xkms.v1.DistributeSharesRequest
+	213, // 178: xkms.v1.KeystoreService.Algorithms:input_type -> xkms.v1.AlgorithmsRequest
+	217, // 179: xkms.v1.KeystoreService.SubmitShare:input_type -> xkms.v1.SubmitShareRequest
+	219, // 180: xkms.v1.KeystoreService.ListShares:input_type -> xkms.v1.ListSharesRequest
+	221, // 181: xkms.v1.KeystoreService.GetShare:input_type -> xkms.v1.GetShareRequest
+	222, // 182: xkms.v1.KeystoreService.DeleteShare:input_type -> xkms.v1.DeleteShareRequest
+	223, // 183: xkms.v1.KeystoreService.GetShareCollectionStatus:input_type -> xkms.v1.GetShareCollectionStatusRequest
+	234, // 184: xkms.v1.KeystoreService.CreateTenant:input_type -> xkms.v1.CreateTenantRequest
+	236, // 185: xkms.v1.KeystoreService.GetTenant:input_type -> xkms.v1.GetTenantRequest
+	238, // 186: xkms.v1.KeystoreService.ListTenants:input_type -> xkms.v1.ListTenantsRequest
+	240, // 187: xkms.v1.KeystoreService.DeleteTenant:input_type -> xkms.v1.DeleteTenantRequest
+	241, // 188: xkms.v1.KeystoreService.TenantBarrierInit:input_type -> xkms.v1.TenantBarrierInitRequest
+	242, // 189: xkms.v1.KeystoreService.TenantBarrierUnseal:input_type -> xkms.v1.TenantBarrierUnsealRequest
+	228, // 190: xkms.v1.KeystoreService.TenantBarrierStatus:input_type -> xkms.v1.TenantBarrierStatusRequest
+	230, // 191: xkms.v1.KeystoreService.UpdateTenantEntitlements:input_type -> xkms.v1.UpdateTenantEntitlementsRequest
+	232, // 192: xkms.v1.KeystoreService.UpdateTenantQuotas:input_type -> xkms.v1.UpdateTenantQuotasRequest
+	312, // 193: xkms.v1.KeystoreService.GetClusterStatus:input_type -> google.protobuf.Empty
+	312, // 194: xkms.v1.KeystoreService.ListClusterMembers:input_type -> google.protobuf.Empty
+	19,  // 195: xkms.v1.KeystoreService.AddClusterReplica:input_type -> xkms.v1.AddClusterReplicaRequest
+	20,  // 196: xkms.v1.KeystoreService.RemoveClusterReplica:input_type -> xkms.v1.RemoveClusterReplicaRequest
+	244, // 197: xkms.v1.KeystoreService.PasswordAdd:input_type -> xkms.v1.PasswordAddRequest
+	246, // 198: xkms.v1.KeystoreService.PasswordGet:input_type -> xkms.v1.PasswordGetRequest
+	248, // 199: xkms.v1.KeystoreService.PasswordList:input_type -> xkms.v1.PasswordListRequest
+	250, // 200: xkms.v1.KeystoreService.PasswordUpdate:input_type -> xkms.v1.PasswordUpdateRequest
+	252, // 201: xkms.v1.KeystoreService.PasswordDelete:input_type -> xkms.v1.PasswordDeleteRequest
+	266, // 202: xkms.v1.KeystoreService.PasswordStoreUnlock:input_type -> xkms.v1.PasswordStoreUnlockRequest
+	267, // 203: xkms.v1.KeystoreService.PasswordStoreLock:input_type -> xkms.v1.PasswordStoreLockRequest
+	268, // 204: xkms.v1.KeystoreService.PasswordStoreStatus:input_type -> xkms.v1.PasswordStoreStatusRequest
+	270, // 205: xkms.v1.KeystoreService.PasswordGenerate:input_type -> xkms.v1.PasswordGenerateRequest
+	254, // 206: xkms.v1.KeystoreService.PKCS11StatePut:input_type -> xkms.v1.PKCS11StatePutRequest
+	256, // 207: xkms.v1.KeystoreService.PKCS11StatePutIfAbsent:input_type -> xkms.v1.PKCS11StatePutIfAbsentRequest
+	258, // 208: xkms.v1.KeystoreService.PKCS11StateCAS:input_type -> xkms.v1.PKCS11StateCASRequest
+	260, // 209: xkms.v1.KeystoreService.PKCS11StateGet:input_type -> xkms.v1.PKCS11StateGetRequest
+	262, // 210: xkms.v1.KeystoreService.PKCS11StateDelete:input_type -> xkms.v1.PKCS11StateDeleteRequest
+	264, // 211: xkms.v1.KeystoreService.PKCS11StateList:input_type -> xkms.v1.PKCS11StateListRequest
+	3,   // 212: xkms.v1.KeystoreService.CreateUser:input_type -> xkms.v1.CreateUserRequest
+	5,   // 213: xkms.v1.KeystoreService.ListUsers:input_type -> xkms.v1.ListUsersRequest
+	7,   // 214: xkms.v1.KeystoreService.GetUser:input_type -> xkms.v1.GetUserRequest
+	8,   // 215: xkms.v1.KeystoreService.DeleteUser:input_type -> xkms.v1.DeleteUserRequest
+	10,  // 216: xkms.v1.KeystoreService.EnableUser:input_type -> xkms.v1.EnableUserRequest
+	11,  // 217: xkms.v1.KeystoreService.DisableUser:input_type -> xkms.v1.DisableUserRequest
+	12,  // 218: xkms.v1.KeystoreService.BindUserCert:input_type -> xkms.v1.BindUserCertRequest
+	13,  // 219: xkms.v1.KeystoreService.ListUserCredentials:input_type -> xkms.v1.ListUserCredentialsRequest
+	272, // 220: xkms.v1.KeystoreService.BeginRegistration:input_type -> xkms.v1.BeginRegistrationRequest
+	274, // 221: xkms.v1.KeystoreService.FinishRegistration:input_type -> xkms.v1.FinishRegistrationRequest
+	276, // 222: xkms.v1.KeystoreService.BeginAuthentication:input_type -> xkms.v1.BeginAuthenticationRequest
+	278, // 223: xkms.v1.KeystoreService.FinishAuthentication:input_type -> xkms.v1.FinishAuthenticationRequest
+	282, // 224: xkms.v1.KeystoreService.SSHGenerateKey:input_type -> xkms.v1.SSHGenerateKeyRequest
+	283, // 225: xkms.v1.KeystoreService.SSHImportKey:input_type -> xkms.v1.SSHImportKeyRequest
+	285, // 226: xkms.v1.KeystoreService.SSHListKeys:input_type -> xkms.v1.SSHListKeysRequest
+	280, // 227: xkms.v1.KeystoreService.SSHGetKey:input_type -> xkms.v1.SSHKeyRef
+	280, // 228: xkms.v1.KeystoreService.SSHDeleteKey:input_type -> xkms.v1.SSHKeyRef
+	280, // 229: xkms.v1.KeystoreService.SSHExportPublic:input_type -> xkms.v1.SSHKeyRef
+	288, // 230: xkms.v1.KeystoreService.SSHSign:input_type -> xkms.v1.SSHSignRequest
+	291, // 231: xkms.v1.KeystoreService.SSHAddKnownHost:input_type -> xkms.v1.SSHAddKnownHostRequest
+	292, // 232: xkms.v1.KeystoreService.SSHListKnownHosts:input_type -> xkms.v1.SSHListKnownHostsRequest
+	294, // 233: xkms.v1.KeystoreService.SSHRemoveKnownHost:input_type -> xkms.v1.SSHRemoveKnownHostRequest
+	296, // 234: xkms.v1.KeystoreService.SSHAddAuthorizedKey:input_type -> xkms.v1.SSHAddAuthorizedKeyRequest
+	297, // 235: xkms.v1.KeystoreService.SSHListAuthorizedKeys:input_type -> xkms.v1.SSHListAuthorizedKeysRequest
+	299, // 236: xkms.v1.KeystoreService.SSHRemoveAuthorizedKey:input_type -> xkms.v1.SSHAuthorizedKeyRef
+	301, // 237: xkms.v1.KeystoreService.QueryAudit:input_type -> xkms.v1.QueryAuditRequest
+	23,  // 238: xkms.v1.KeystoreService.Health:output_type -> xkms.v1.HealthResponse
+	26,  // 239: xkms.v1.KeystoreService.ListBackends:output_type -> xkms.v1.ListBackendsResponse
+	28,  // 240: xkms.v1.KeystoreService.GetBackendInfo:output_type -> xkms.v1.GetBackendInfoResponse
+	30,  // 241: xkms.v1.KeystoreService.GenerateKey:output_type -> xkms.v1.GenerateKeyResponse
+	33,  // 242: xkms.v1.KeystoreService.ListKeys:output_type -> xkms.v1.ListKeysResponse
+	35,  // 243: xkms.v1.KeystoreService.GetKey:output_type -> xkms.v1.GetKeyResponse
+	37,  // 244: xkms.v1.KeystoreService.Sign:output_type -> xkms.v1.SignResponse
+	39,  // 245: xkms.v1.KeystoreService.Verify:output_type -> xkms.v1.VerifyResponse
+	41,  // 246: xkms.v1.KeystoreService.DeleteKey:output_type -> xkms.v1.DeleteKeyResponse
+	43,  // 247: xkms.v1.KeystoreService.RotateKey:output_type -> xkms.v1.RotateKeyResponse
+	46,  // 248: xkms.v1.KeystoreService.ListKeyVersions:output_type -> xkms.v1.ListKeyVersionsResponse
+	48,  // 249: xkms.v1.KeystoreService.EnableKeyVersion:output_type -> xkms.v1.EnableKeyVersionResponse
+	50,  // 250: xkms.v1.KeystoreService.DisableKeyVersion:output_type -> xkms.v1.DisableKeyVersionResponse
+	52,  // 251: xkms.v1.KeystoreService.EnableAllKeyVersions:output_type -> xkms.v1.EnableAllKeyVersionsResponse
+	54,  // 252: xkms.v1.KeystoreService.DisableAllKeyVersions:output_type -> xkms.v1.DisableAllKeyVersionsResponse
+	56,  // 253: xkms.v1.KeystoreService.Encrypt:output_type -> xkms.v1.EncryptResponse
+	58,  // 254: xkms.v1.KeystoreService.Decrypt:output_type -> xkms.v1.DecryptResponse
+	60,  // 255: xkms.v1.KeystoreService.EncryptAsym:output_type -> xkms.v1.EncryptAsymResponse
+	62,  // 256: xkms.v1.KeystoreService.DeriveKey:output_type -> xkms.v1.DeriveKeyResponse
+	64,  // 257: xkms.v1.KeystoreService.DeriveKeyECDH:output_type -> xkms.v1.DeriveKeyECDHResponse
+	70,  // 258: xkms.v1.KeystoreService.DeriveKeyECDHSecure:output_type -> xkms.v1.DeriveKeyECDHSecureResponse
+	72,  // 259: xkms.v1.KeystoreService.UseResidentKey:output_type -> xkms.v1.UseResidentKeyResponse
+	74,  // 260: xkms.v1.KeystoreService.DestroyResidentKey:output_type -> xkms.v1.DestroyResidentKeyResponse
+	76,  // 261: xkms.v1.KeystoreService.GenerateEphemeralECDH:output_type -> xkms.v1.GenerateEphemeralECDHResponse
+	78,  // 262: xkms.v1.KeystoreService.SaveCert:output_type -> xkms.v1.SaveCertResponse
+	80,  // 263: xkms.v1.KeystoreService.GetCert:output_type -> xkms.v1.GetCertResponse
+	82,  // 264: xkms.v1.KeystoreService.DeleteCert:output_type -> xkms.v1.DeleteCertResponse
+	84,  // 265: xkms.v1.KeystoreService.ListCerts:output_type -> xkms.v1.ListCertsResponse
+	86,  // 266: xkms.v1.KeystoreService.CertExists:output_type -> xkms.v1.CertExistsResponse
+	88,  // 267: xkms.v1.KeystoreService.SaveCertChain:output_type -> xkms.v1.SaveCertChainResponse
+	90,  // 268: xkms.v1.KeystoreService.GetCertChain:output_type -> xkms.v1.GetCertChainResponse
+	92,  // 269: xkms.v1.KeystoreService.GetTLSCertificate:output_type -> xkms.v1.GetTLSCertificateResponse
+	94,  // 270: xkms.v1.KeystoreService.GetImportParameters:output_type -> xkms.v1.GetImportParametersResponse
+	96,  // 271: xkms.v1.KeystoreService.WrapKey:output_type -> xkms.v1.WrapKeyResponse
+	98,  // 272: xkms.v1.KeystoreService.UnwrapKey:output_type -> xkms.v1.UnwrapKeyResponse
+	100, // 273: xkms.v1.KeystoreService.WrapKeyByID:output_type -> xkms.v1.WrapKeyByIDResponse
+	102, // 274: xkms.v1.KeystoreService.UnwrapKeyByID:output_type -> xkms.v1.UnwrapKeyByIDResponse
+	104, // 275: xkms.v1.KeystoreService.ImportKey:output_type -> xkms.v1.ImportKeyResponse
+	106, // 276: xkms.v1.KeystoreService.ExportKey:output_type -> xkms.v1.ExportKeyResponse
+	108, // 277: xkms.v1.KeystoreService.ExportKeyMaterial:output_type -> xkms.v1.ExportKeyMaterialResponse
+	110, // 278: xkms.v1.KeystoreService.CopyKey:output_type -> xkms.v1.CopyKeyResponse
+	112, // 279: xkms.v1.KeystoreService.Seal:output_type -> xkms.v1.SealResponse
+	114, // 280: xkms.v1.KeystoreService.Unseal:output_type -> xkms.v1.UnsealResponse
+	116, // 281: xkms.v1.KeystoreService.CanSeal:output_type -> xkms.v1.CanSealResponse
+	118, // 282: xkms.v1.KeystoreService.AttestKey:output_type -> xkms.v1.AttestKeyResponse
+	124, // 283: xkms.v1.KeystoreService.FrostGenerateKey:output_type -> xkms.v1.FrostGenerateKeyResponse
+	126, // 284: xkms.v1.KeystoreService.FrostImportKey:output_type -> xkms.v1.FrostImportKeyResponse
+	128, // 285: xkms.v1.KeystoreService.FrostListKeys:output_type -> xkms.v1.FrostListKeysResponse
+	130, // 286: xkms.v1.KeystoreService.FrostGetKey:output_type -> xkms.v1.FrostGetKeyResponse
+	132, // 287: xkms.v1.KeystoreService.FrostDeleteKey:output_type -> xkms.v1.FrostDeleteKeyResponse
+	134, // 288: xkms.v1.KeystoreService.FrostGenerateNonces:output_type -> xkms.v1.FrostGenerateNoncesResponse
+	136, // 289: xkms.v1.KeystoreService.FrostSignRound:output_type -> xkms.v1.FrostSignRoundResponse
+	138, // 290: xkms.v1.KeystoreService.FrostAggregate:output_type -> xkms.v1.FrostAggregateResponse
+	140, // 291: xkms.v1.KeystoreService.FrostVerify:output_type -> xkms.v1.FrostVerifyResponse
+	142, // 292: xkms.v1.KeystoreService.GetCABundle:output_type -> xkms.v1.GetCABundleResponse
+	144, // 293: xkms.v1.KeystoreService.GetCACertificate:output_type -> xkms.v1.GetCACertificateResponse
+	146, // 294: xkms.v1.KeystoreService.SignCSR:output_type -> xkms.v1.SignCSRResponse
+	148, // 295: xkms.v1.KeystoreService.IssueCertificate:output_type -> xkms.v1.IssueCertificateResponse
+	150, // 296: xkms.v1.KeystoreService.RevokeCertificate:output_type -> xkms.v1.RevokeCertificateResponse
+	152, // 297: xkms.v1.KeystoreService.GenerateCRL:output_type -> xkms.v1.GenerateCRLResponse
+	154, // 298: xkms.v1.KeystoreService.IsRevoked:output_type -> xkms.v1.IsRevokedResponse
+	156, // 299: xkms.v1.KeystoreService.IssueEKCertificate:output_type -> xkms.v1.IssueEKCertificateResponse
+	158, // 300: xkms.v1.KeystoreService.IssueAKCertificate:output_type -> xkms.v1.IssueAKCertificateResponse
+	160, // 301: xkms.v1.KeystoreService.SignTCGCSR:output_type -> xkms.v1.SignTCGCSRResponse
+	162, // 302: xkms.v1.KeystoreService.EnrollDevice:output_type -> xkms.v1.EnrollDeviceResponse
+	312, // 303: xkms.v1.KeystoreService.BarrierInitialize:output_type -> google.protobuf.Empty
+	312, // 304: xkms.v1.KeystoreService.BarrierUnseal:output_type -> google.protobuf.Empty
+	312, // 305: xkms.v1.KeystoreService.BarrierSeal:output_type -> google.protobuf.Empty
+	165, // 306: xkms.v1.KeystoreService.BarrierStatus:output_type -> xkms.v1.BarrierStatusResponse
+	167, // 307: xkms.v1.KeystoreService.BarrierInitializeShamir:output_type -> xkms.v1.BarrierShamirInitResponse
+	170, // 308: xkms.v1.KeystoreService.BarrierUnsealShare:output_type -> xkms.v1.BarrierQuorumProgressResponse
+	312, // 309: xkms.v1.KeystoreService.BarrierUnsealShares:output_type -> google.protobuf.Empty
+	167, // 310: xkms.v1.KeystoreService.BarrierRekey:output_type -> xkms.v1.BarrierShamirInitResponse
+	174, // 311: xkms.v1.KeystoreService.BarrierGenerateRecoveryKeys:output_type -> xkms.v1.BarrierRecoveryKeysResponse
+	312, // 312: xkms.v1.KeystoreService.BarrierRecoverWithKeys:output_type -> google.protobuf.Empty
+	312, // 313: xkms.v1.KeystoreService.BarrierDeleteRecoveryKeys:output_type -> google.protobuf.Empty
+	173, // 314: xkms.v1.KeystoreService.BarrierHasRecoveryKeys:output_type -> xkms.v1.BarrierHasRecoveryKeysResponse
+	177, // 315: xkms.v1.KeystoreService.BarrierGenerateRootToken:output_type -> xkms.v1.BarrierRootTokenResponse
+	179, // 316: xkms.v1.KeystoreService.BarrierEnableEncryption:output_type -> xkms.v1.BarrierEnableEncryptionResponse
+	312, // 317: xkms.v1.KeystoreService.SetSOPIN:output_type -> google.protobuf.Empty
+	312, // 318: xkms.v1.KeystoreService.SetUserPIN:output_type -> google.protobuf.Empty
+	312, // 319: xkms.v1.KeystoreService.ChangeSOPIN:output_type -> google.protobuf.Empty
+	312, // 320: xkms.v1.KeystoreService.ChangeUserPIN:output_type -> google.protobuf.Empty
+	312, // 321: xkms.v1.KeystoreService.VerifySOPIN:output_type -> google.protobuf.Empty
+	312, // 322: xkms.v1.KeystoreService.VerifyUserPIN:output_type -> google.protobuf.Empty
+	186, // 323: xkms.v1.KeystoreService.GetLockoutStatus:output_type -> xkms.v1.LockoutStatusResponse
+	312, // 324: xkms.v1.KeystoreService.ResetLockout:output_type -> google.protobuf.Empty
+	190, // 325: xkms.v1.KeystoreService.ListPIVSlots:output_type -> xkms.v1.ListPIVSlotsResponse
+	192, // 326: xkms.v1.KeystoreService.GetPIVCertificate:output_type -> xkms.v1.GetPIVCertificateResponse
+	312, // 327: xkms.v1.KeystoreService.StorePIVCertificate:output_type -> google.protobuf.Empty
+	312, // 328: xkms.v1.KeystoreService.DeletePIVCertificate:output_type -> google.protobuf.Empty
+	196, // 329: xkms.v1.KeystoreService.GeneratePIVKey:output_type -> xkms.v1.GeneratePIVKeyResponse
+	312, // 330: xkms.v1.KeystoreService.ImportPIVCertificate:output_type -> google.protobuf.Empty
+	192, // 331: xkms.v1.KeystoreService.ExportPIVCertificate:output_type -> xkms.v1.GetPIVCertificateResponse
+	198, // 332: xkms.v1.KeystoreService.GeneratePIVCSR:output_type -> xkms.v1.GeneratePIVCSRResponse
+	202, // 333: xkms.v1.KeystoreService.CreateCustodianGroup:output_type -> xkms.v1.CreateCustodianGroupResponse
+	204, // 334: xkms.v1.KeystoreService.GetCustodianGroup:output_type -> xkms.v1.GetCustodianGroupResponse
+	206, // 335: xkms.v1.KeystoreService.ListCustodianGroups:output_type -> xkms.v1.ListCustodianGroupsResponse
+	312, // 336: xkms.v1.KeystoreService.DeleteCustodianGroup:output_type -> google.protobuf.Empty
+	209, // 337: xkms.v1.KeystoreService.AddCustodianMember:output_type -> xkms.v1.AddCustodianMemberResponse
+	312, // 338: xkms.v1.KeystoreService.RemoveCustodianMember:output_type -> google.protobuf.Empty
+	212, // 339: xkms.v1.KeystoreService.DistributeShares:output_type -> xkms.v1.DistributeSharesResponse
+	215, // 340: xkms.v1.KeystoreService.Algorithms:output_type -> xkms.v1.AlgorithmsResponse
+	218, // 341: xkms.v1.KeystoreService.SubmitShare:output_type -> xkms.v1.SubmitShareResponse
+	220, // 342: xkms.v1.KeystoreService.ListShares:output_type -> xkms.v1.ListSharesResponse
+	216, // 343: xkms.v1.KeystoreService.GetShare:output_type -> xkms.v1.ShareInfo
+	312, // 344: xkms.v1.KeystoreService.DeleteShare:output_type -> google.protobuf.Empty
+	224, // 345: xkms.v1.KeystoreService.GetShareCollectionStatus:output_type -> xkms.v1.ShareCollectionStatusResponse
+	235, // 346: xkms.v1.KeystoreService.CreateTenant:output_type -> xkms.v1.CreateTenantResponse
+	237, // 347: xkms.v1.KeystoreService.GetTenant:output_type -> xkms.v1.GetTenantResponse
+	239, // 348: xkms.v1.KeystoreService.ListTenants:output_type -> xkms.v1.ListTenantsResponse
+	312, // 349: xkms.v1.KeystoreService.DeleteTenant:output_type -> google.protobuf.Empty
+	312, // 350: xkms.v1.KeystoreService.TenantBarrierInit:output_type -> google.protobuf.Empty
+	312, // 351: xkms.v1.KeystoreService.TenantBarrierUnseal:output_type -> google.protobuf.Empty
+	229, // 352: xkms.v1.KeystoreService.TenantBarrierStatus:output_type -> xkms.v1.TenantBarrierStatusResponse
+	231, // 353: xkms.v1.KeystoreService.UpdateTenantEntitlements:output_type -> xkms.v1.UpdateTenantEntitlementsResponse
+	233, // 354: xkms.v1.KeystoreService.UpdateTenantQuotas:output_type -> xkms.v1.UpdateTenantQuotasResponse
+	16,  // 355: xkms.v1.KeystoreService.GetClusterStatus:output_type -> xkms.v1.ClusterStatusResponse
+	18,  // 356: xkms.v1.KeystoreService.ListClusterMembers:output_type -> xkms.v1.ListClusterMembersResponse
+	21,  // 357: xkms.v1.KeystoreService.AddClusterReplica:output_type -> xkms.v1.ClusterReplicaResponse
+	21,  // 358: xkms.v1.KeystoreService.RemoveClusterReplica:output_type -> xkms.v1.ClusterReplicaResponse
+	245, // 359: xkms.v1.KeystoreService.PasswordAdd:output_type -> xkms.v1.PasswordAddResponse
+	247, // 360: xkms.v1.KeystoreService.PasswordGet:output_type -> xkms.v1.PasswordGetResponse
+	249, // 361: xkms.v1.KeystoreService.PasswordList:output_type -> xkms.v1.PasswordListResponse
+	251, // 362: xkms.v1.KeystoreService.PasswordUpdate:output_type -> xkms.v1.PasswordUpdateResponse
+	253, // 363: xkms.v1.KeystoreService.PasswordDelete:output_type -> xkms.v1.PasswordDeleteResponse
+	269, // 364: xkms.v1.KeystoreService.PasswordStoreUnlock:output_type -> xkms.v1.PasswordStoreStatusResponse
+	269, // 365: xkms.v1.KeystoreService.PasswordStoreLock:output_type -> xkms.v1.PasswordStoreStatusResponse
+	269, // 366: xkms.v1.KeystoreService.PasswordStoreStatus:output_type -> xkms.v1.PasswordStoreStatusResponse
+	271, // 367: xkms.v1.KeystoreService.PasswordGenerate:output_type -> xkms.v1.PasswordGenerateResponse
+	255, // 368: xkms.v1.KeystoreService.PKCS11StatePut:output_type -> xkms.v1.PKCS11StatePutResponse
+	257, // 369: xkms.v1.KeystoreService.PKCS11StatePutIfAbsent:output_type -> xkms.v1.PKCS11StatePutIfAbsentResponse
+	259, // 370: xkms.v1.KeystoreService.PKCS11StateCAS:output_type -> xkms.v1.PKCS11StateCASResponse
+	261, // 371: xkms.v1.KeystoreService.PKCS11StateGet:output_type -> xkms.v1.PKCS11StateGetResponse
+	263, // 372: xkms.v1.KeystoreService.PKCS11StateDelete:output_type -> xkms.v1.PKCS11StateDeleteResponse
+	265, // 373: xkms.v1.KeystoreService.PKCS11StateList:output_type -> xkms.v1.PKCS11StateListResponse
+	4,   // 374: xkms.v1.KeystoreService.CreateUser:output_type -> xkms.v1.UserResponse
+	6,   // 375: xkms.v1.KeystoreService.ListUsers:output_type -> xkms.v1.ListUsersResponse
+	4,   // 376: xkms.v1.KeystoreService.GetUser:output_type -> xkms.v1.UserResponse
+	9,   // 377: xkms.v1.KeystoreService.DeleteUser:output_type -> xkms.v1.DeleteUserResponse
+	4,   // 378: xkms.v1.KeystoreService.EnableUser:output_type -> xkms.v1.UserResponse
+	4,   // 379: xkms.v1.KeystoreService.DisableUser:output_type -> xkms.v1.UserResponse
+	4,   // 380: xkms.v1.KeystoreService.BindUserCert:output_type -> xkms.v1.UserResponse
+	15,  // 381: xkms.v1.KeystoreService.ListUserCredentials:output_type -> xkms.v1.ListUserCredentialsResponse
+	273, // 382: xkms.v1.KeystoreService.BeginRegistration:output_type -> xkms.v1.BeginRegistrationResponse
+	275, // 383: xkms.v1.KeystoreService.FinishRegistration:output_type -> xkms.v1.FinishRegistrationResponse
+	277, // 384: xkms.v1.KeystoreService.BeginAuthentication:output_type -> xkms.v1.BeginAuthenticationResponse
+	279, // 385: xkms.v1.KeystoreService.FinishAuthentication:output_type -> xkms.v1.FinishAuthenticationResponse
+	284, // 386: xkms.v1.KeystoreService.SSHGenerateKey:output_type -> xkms.v1.SSHKeyResponse
+	284, // 387: xkms.v1.KeystoreService.SSHImportKey:output_type -> xkms.v1.SSHKeyResponse
+	286, // 388: xkms.v1.KeystoreService.SSHListKeys:output_type -> xkms.v1.SSHListKeysResponse
+	284, // 389: xkms.v1.KeystoreService.SSHGetKey:output_type -> xkms.v1.SSHKeyResponse
+	312, // 390: xkms.v1.KeystoreService.SSHDeleteKey:output_type -> google.protobuf.Empty
+	287, // 391: xkms.v1.KeystoreService.SSHExportPublic:output_type -> xkms.v1.SSHPublicKeyResponse
+	289, // 392: xkms.v1.KeystoreService.SSHSign:output_type -> xkms.v1.SSHSignResponse
+	312, // 393: xkms.v1.KeystoreService.SSHAddKnownHost:output_type -> google.protobuf.Empty
+	293, // 394: xkms.v1.KeystoreService.SSHListKnownHosts:output_type -> xkms.v1.SSHListKnownHostsResponse
+	312, // 395: xkms.v1.KeystoreService.SSHRemoveKnownHost:output_type -> google.protobuf.Empty
+	312, // 396: xkms.v1.KeystoreService.SSHAddAuthorizedKey:output_type -> google.protobuf.Empty
+	298, // 397: xkms.v1.KeystoreService.SSHListAuthorizedKeys:output_type -> xkms.v1.SSHListAuthorizedKeysResponse
+	312, // 398: xkms.v1.KeystoreService.SSHRemoveAuthorizedKey:output_type -> google.protobuf.Empty
+	302, // 399: xkms.v1.KeystoreService.QueryAudit:output_type -> xkms.v1.QueryAuditResponse
+	238, // [238:400] is the sub-list for method output_type
+	76,  // [76:238] is the sub-list for method input_type
+	76,  // [76:76] is the sub-list for extension type_name
+	76,  // [76:76] is the sub-list for extension extendee
+	0,   // [0:76] is the sub-list for field type_name
 }
 
 func init() { file_pkg_api_grpc_proto_xkmsv1_xkms_proto_init() }
@@ -20285,23 +21848,14 @@ func file_pkg_api_grpc_proto_xkmsv1_xkms_proto_init() {
 	if File_pkg_api_grpc_proto_xkmsv1_xkms_proto != nil {
 		return
 	}
-	file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[240].OneofWrappers = []any{}
-	file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[278].OneofWrappers = []any{
-		(*SSHConsoleClientMsg_Open)(nil),
-		(*SSHConsoleClientMsg_Stdin)(nil),
-		(*SSHConsoleClientMsg_Resize)(nil),
-	}
-	file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[281].OneofWrappers = []any{
-		(*SSHConsoleServerMsg_Stdout)(nil),
-		(*SSHConsoleServerMsg_Exit)(nil),
-	}
+	file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[248].OneofWrappers = []any{}
 	type x struct{}
 	out := protoimpl.TypeBuilder{
 		File: protoimpl.DescBuilder{
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_pkg_api_grpc_proto_xkmsv1_xkms_proto_rawDesc), len(file_pkg_api_grpc_proto_xkmsv1_xkms_proto_rawDesc)),
 			NumEnums:      2,
-			NumMessages:   289,
+			NumMessages:   308,
 			NumExtensions: 0,
 			NumServices:   1,
 		},

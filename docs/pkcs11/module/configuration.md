@@ -13,6 +13,7 @@ Environment variables take precedence over configuration file settings.
 | `XKMS_PKCS11_TLS_CERT` | Client certificate file | - |
 | `XKMS_PKCS11_TLS_KEY` | Client private key file | - |
 | `XKMS_PKCS11_TLS_CA` | CA certificate file | - |
+| `XKMS_PKCS11_ALLOW_INSECURE_TRANSPORT` | Opt out of the mandatory-TLS guard for non-`unix://` targets (test/dev only) | `false` |
 | `XKMS_PKCS11_TIMEOUT` | Operation timeout | `30s` |
 
 ## Configuration File
@@ -43,6 +44,16 @@ tls_ca = /etc/xkms/ca.crt
 timeout = 30s
 ```
 
+### Configuration File Permissions
+
+The configuration file must not be group- or world-readable. `LoadFromFile` stats the file before parsing it and
+refuses to load one whose mode has any of the `0077` bits set (`ErrConfigFilePermissions`), because the INI
+format accepts `so_pin` and `user_pin` in cleartext:
+
+```bash
+chmod 600 /etc/xkms/pkcs11.conf
+```
+
 ## Configuration Precedence
 
 Configuration loads in the following order (highest precedence first):
@@ -55,9 +66,23 @@ Configuration loads in the following order (highest precedence first):
 
 For local connections using Unix domain sockets:
 
+The socket path is a YAML setting, not a flag (`pkg/config/config.go:219-230`).
+
+```yaml
+# /etc/xkms/xkmsd.yaml
+protocols:
+  unix: true
+
+unix:
+  enabled: true
+  socket_path: "/var/run/xkms/xkms.sock"
+  socket_mode: "0660"
+  protocol: "grpc"
+```
+
 ```bash
 # Start the xkms daemon
-xkms daemon --unix /var/run/xkms/xkms.sock
+xkmsd -config /etc/xkms/xkmsd.yaml
 
 # Configure PKCS#11 module
 export XKMS_PKCS11_TARGET=unix:///var/run/xkms/xkms.sock
@@ -79,9 +104,23 @@ Unix socket advantages:
 
 For remote connections over TCP:
 
+The daemon binary is `xkmsd` and it takes no listen flag -- the gRPC port comes
+from `server.grpc_port` in the YAML config (`cmd/xkmsd/main.go:67-74`,
+`pkg/config/config.go:202`). 9443 is what every shipped `configs/*.yaml` sets.
+
+```yaml
+# /etc/xkms/xkmsd.yaml
+server:
+  host: "0.0.0.0"
+  grpc_port: 9443
+
+protocols:
+  grpc: true
+```
+
 ```bash
-# Start the xkms server
-xkms server --listen :9443
+# Start the xkms daemon
+xkmsd -config /etc/xkms/xkmsd.yaml
 
 # Configure PKCS#11 module
 export XKMS_PKCS11_TARGET=xkms.example.com:9443
@@ -98,12 +137,21 @@ timeout = 30s
 
 For secure remote connections:
 
+TLS is configured in the `tls:` section of the daemon YAML, not by flags
+(`pkg/config/config.go:240-253`). `xkmsd` refuses to start without TLS enabled.
+
+```yaml
+# /etc/xkms/xkmsd.yaml
+tls:
+  enabled: true
+  cert_file: /etc/xkms/server.crt
+  key_file: /etc/xkms/server.key
+  ca_file: /etc/xkms/ca.crt
+```
+
 ```bash
-# Start the xkms server with TLS
-xkms server --listen :9443 \
-  --tls-cert /etc/xkms/server.crt \
-  --tls-key /etc/xkms/server.key \
-  --tls-ca /etc/xkms/ca.crt
+# Start the xkms daemon with TLS
+xkmsd -config /etc/xkms/xkmsd.yaml
 
 # Configure PKCS#11 module
 export XKMS_PKCS11_TARGET=xkms.example.com:9443
@@ -119,6 +167,25 @@ tls_enabled = true
 tls_ca = /etc/xkms/ca.crt
 timeout = 30s
 ```
+
+## Transport Security
+
+TLS is mandatory for any target other than `unix://` -- a `unix://` socket never leaves the host, but PKCS#11
+traffic to a remote target can carry raw exported key material, and the gRPC transport falls back to plaintext
+credentials whenever TLS is disabled. `Validate` refuses a remote target with `tls_enabled = false`
+(`ErrInsecureRemoteTarget`) unless the operator explicitly sets `allow_insecure_transport`:
+
+```ini
+target = xkms-dev.internal:9443
+tls_enabled = false
+allow_insecure_transport = true
+```
+
+`allow_insecure_transport` (or `XKMS_PKCS11_ALLOW_INSECURE_TRANSPORT=true`) exists only for test and development
+use against a loopback or containerized server. It must never be set in a production configuration.
+
+A configuration that fails to load or fails validation now fails `C_Initialize` closed -- the module does not
+fall back to default values when the configuration file is unreadable, malformed, or invalid.
 
 ## mTLS Configuration
 
@@ -221,6 +288,25 @@ tls_enabled = true
 tls_ca = /etc/xkms/ca.crt
 timeout = 60s
 ```
+
+## Token Auto-Initialization
+
+For testing, the module can initialize its token automatically on load instead of requiring a separate
+`C_InitToken` call:
+
+```ini
+auto_init_token = true
+so_pin = 12345678
+user_pin = 123456
+token_label = test-token
+```
+
+Equivalent environment variables: `XKMS_PKCS11_AUTO_INIT_TOKEN`, `XKMS_PKCS11_SO_PIN`, `XKMS_PKCS11_USER_PIN`,
+`XKMS_PKCS11_TOKEN_LABEL`. Whichever path sets the PINs, they are never stored in the clear -- the token stores a
+salted Argon2id verifier for each, and re-initializing an already-initialized token (`C_InitToken`) requires the
+existing SO PIN. See [Security: PIN Storage and Lockout](security.md#pin-storage-and-lockout) for the hashing and
+lockout details. Because the config file can carry `so_pin`/`user_pin` in cleartext INI, the file permission
+requirement above applies with extra force when `auto_init_token` is used.
 
 ## Programmatic Configuration
 

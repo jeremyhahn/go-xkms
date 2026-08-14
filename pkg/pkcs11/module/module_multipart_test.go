@@ -15,6 +15,8 @@ package module
 
 import (
 	"bytes"
+	"encoding/binary"
+	"sync/atomic"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -28,8 +30,9 @@ func setupTestModuleWithKey(t *testing.T) (*Module, SessionHandle, ObjectHandle)
 	m := initializeTestModule(t)
 
 	// Open a session
-	sessionHandle, rv := m.OpenSession(0, CKF_SERIAL_SESSION|CKF_RW_SESSION)
-	require.Equal(t, CKR_OK, rv, "OpenSession should succeed")
+	// The token sets CKF_LOGIN_REQUIRED at creation, so key-bearing operations
+	// are refused until the session authenticates.
+	sessionHandle := loginAsNormalUser(t, m)
 
 	// Create a test key object
 	keyTemplate := []Attribute{
@@ -50,7 +53,7 @@ func setupTestModuleWithKey(t *testing.T) (*Module, SessionHandle, ObjectHandle)
 	require.Equal(t, CKR_OK, rv, "CreateObject should succeed")
 
 	// Set the key metadata in the object
-	obj, err := m.objectManager.GetObject(keyHandle)
+	obj, err := m.objectManager.getObjectUnchecked(keyHandle)
 	require.NoError(t, err)
 	obj.KeyID = "test-key-id"
 	obj.BackendName = "default"
@@ -63,8 +66,9 @@ func setupTestModuleWithRSAKey(t *testing.T) (*Module, SessionHandle, ObjectHand
 	t.Helper()
 	m := initializeTestModule(t)
 
-	sessionHandle, rv := m.OpenSession(0, CKF_SERIAL_SESSION|CKF_RW_SESSION)
-	require.Equal(t, CKR_OK, rv)
+	// CKF_LOGIN_REQUIRED gates key-bearing operations, so the fixture
+	// authenticates before exercising them.
+	sessionHandle := loginAsNormalUser(t, m)
 
 	keyTemplate := []Attribute{
 		NewUint32Attribute(CKA_CLASS, uint32(CKO_PRIVATE_KEY)),
@@ -77,7 +81,7 @@ func setupTestModuleWithRSAKey(t *testing.T) (*Module, SessionHandle, ObjectHand
 	keyHandle, rv := m.CreateObject(sessionHandle, keyTemplate)
 	require.Equal(t, CKR_OK, rv)
 
-	obj, err := m.objectManager.GetObject(keyHandle)
+	obj, err := m.objectManager.getObjectUnchecked(keyHandle)
 	require.NoError(t, err)
 	obj.KeyID = "test-rsa-key-id"
 	obj.BackendName = "default"
@@ -117,11 +121,12 @@ func TestModule_SignUpdate_NotInitialized(t *testing.T) {
 	m := initializeTestModule(t)
 	defer m.Finalize()
 
-	sessionHandle, rv := m.OpenSession(0, CKF_SERIAL_SESSION|CKF_RW_SESSION)
-	require.Equal(t, CKR_OK, rv)
+	// CKF_LOGIN_REQUIRED gates key-bearing operations, so the fixture
+	// authenticates before exercising them.
+	sessionHandle := loginAsNormalUser(t, m)
 
 	// SignUpdate without SignInit
-	rv = m.SignUpdate(sessionHandle, []byte("data"))
+	rv := m.SignUpdate(sessionHandle, []byte("data"))
 	assert.Equal(t, CKR_OPERATION_NOT_INITIALIZED, rv, "SignUpdate should fail without SignInit")
 }
 
@@ -146,11 +151,12 @@ func TestModule_SignFinal_NotInitialized(t *testing.T) {
 	m := initializeTestModule(t)
 	defer m.Finalize()
 
-	sessionHandle, rv := m.OpenSession(0, CKF_SERIAL_SESSION|CKF_RW_SESSION)
-	require.Equal(t, CKR_OK, rv)
+	// CKF_LOGIN_REQUIRED gates key-bearing operations, so the fixture
+	// authenticates before exercising them.
+	sessionHandle := loginAsNormalUser(t, m)
 
 	// SignFinal without SignInit
-	_, rv = m.SignFinal(sessionHandle)
+	_, rv := m.SignFinal(sessionHandle)
 	assert.Equal(t, CKR_OPERATION_NOT_INITIALIZED, rv, "SignFinal should fail without SignInit")
 }
 
@@ -176,7 +182,7 @@ func TestModule_SignUpdate_WrongOperationType(t *testing.T) {
 	defer m.Finalize()
 
 	// Initialize encryption instead of signing
-	mechanism := &Mechanism{Type: CKM_AES_GCM}
+	mechanism := NewMechanismWithTypedParams(CKM_AES_GCM, NewAESGCMParams(testGCMIV(), 128))
 	rv := m.EncryptInit(sessionHandle, mechanism, keyHandle)
 	require.Equal(t, CKR_OK, rv)
 
@@ -190,7 +196,7 @@ func TestModule_SignFinal_WrongOperationType(t *testing.T) {
 	defer m.Finalize()
 
 	// Initialize encryption instead of signing
-	mechanism := &Mechanism{Type: CKM_AES_GCM}
+	mechanism := NewMechanismWithTypedParams(CKM_AES_GCM, NewAESGCMParams(testGCMIV(), 128))
 	rv := m.EncryptInit(sessionHandle, mechanism, keyHandle)
 	require.Equal(t, CKR_OK, rv)
 
@@ -253,11 +259,12 @@ func TestModule_VerifyUpdate_NotInitialized(t *testing.T) {
 	m := initializeTestModule(t)
 	defer m.Finalize()
 
-	sessionHandle, rv := m.OpenSession(0, CKF_SERIAL_SESSION|CKF_RW_SESSION)
-	require.Equal(t, CKR_OK, rv)
+	// CKF_LOGIN_REQUIRED gates key-bearing operations, so the fixture
+	// authenticates before exercising them.
+	sessionHandle := loginAsNormalUser(t, m)
 
 	// VerifyUpdate without VerifyInit
-	rv = m.VerifyUpdate(sessionHandle, []byte("data"))
+	rv := m.VerifyUpdate(sessionHandle, []byte("data"))
 	assert.Equal(t, CKR_OPERATION_NOT_INITIALIZED, rv, "VerifyUpdate should fail without VerifyInit")
 }
 
@@ -282,11 +289,12 @@ func TestModule_VerifyFinal_NotInitialized(t *testing.T) {
 	m := initializeTestModule(t)
 	defer m.Finalize()
 
-	sessionHandle, rv := m.OpenSession(0, CKF_SERIAL_SESSION|CKF_RW_SESSION)
-	require.Equal(t, CKR_OK, rv)
+	// CKF_LOGIN_REQUIRED gates key-bearing operations, so the fixture
+	// authenticates before exercising them.
+	sessionHandle := loginAsNormalUser(t, m)
 
 	// VerifyFinal without VerifyInit
-	rv = m.VerifyFinal(sessionHandle, []byte("signature"))
+	rv := m.VerifyFinal(sessionHandle, []byte("signature"))
 	assert.Equal(t, CKR_OPERATION_NOT_INITIALIZED, rv, "VerifyFinal should fail without VerifyInit")
 }
 
@@ -364,7 +372,7 @@ func TestModule_EncryptUpdate_Success(t *testing.T) {
 	m, sessionHandle, keyHandle := setupTestModuleWithKey(t)
 	defer m.Finalize()
 
-	mechanism := &Mechanism{Type: CKM_AES_GCM}
+	mechanism := NewMechanismWithTypedParams(CKM_AES_GCM, NewAESGCMParams(testGCMIV(), 128))
 
 	// Initialize encryption
 	rv := m.EncryptInit(sessionHandle, mechanism, keyHandle)
@@ -388,11 +396,12 @@ func TestModule_EncryptUpdate_NotInitialized(t *testing.T) {
 	m := initializeTestModule(t)
 	defer m.Finalize()
 
-	sessionHandle, rv := m.OpenSession(0, CKF_SERIAL_SESSION|CKF_RW_SESSION)
-	require.Equal(t, CKR_OK, rv)
+	// CKF_LOGIN_REQUIRED gates key-bearing operations, so the fixture
+	// authenticates before exercising them.
+	sessionHandle := loginAsNormalUser(t, m)
 
 	// EncryptUpdate without EncryptInit
-	_, rv = m.EncryptUpdate(sessionHandle, []byte("data"))
+	_, rv := m.EncryptUpdate(sessionHandle, []byte("data"))
 	assert.Equal(t, CKR_OPERATION_NOT_INITIALIZED, rv, "EncryptUpdate should fail without EncryptInit")
 }
 
@@ -417,11 +426,12 @@ func TestModule_EncryptFinal_NotInitialized(t *testing.T) {
 	m := initializeTestModule(t)
 	defer m.Finalize()
 
-	sessionHandle, rv := m.OpenSession(0, CKF_SERIAL_SESSION|CKF_RW_SESSION)
-	require.Equal(t, CKR_OK, rv)
+	// CKF_LOGIN_REQUIRED gates key-bearing operations, so the fixture
+	// authenticates before exercising them.
+	sessionHandle := loginAsNormalUser(t, m)
 
 	// EncryptFinal without EncryptInit
-	_, rv = m.EncryptFinal(sessionHandle)
+	_, rv := m.EncryptFinal(sessionHandle)
 	assert.Equal(t, CKR_OPERATION_NOT_INITIALIZED, rv, "EncryptFinal should fail without EncryptInit")
 }
 
@@ -447,7 +457,7 @@ func TestModule_EncryptUpdate_WrongOperationType(t *testing.T) {
 	defer m.Finalize()
 
 	// Initialize decryption instead of encryption
-	mechanism := &Mechanism{Type: CKM_AES_GCM}
+	mechanism := NewMechanismWithTypedParams(CKM_AES_GCM, NewAESGCMParams(testGCMIV(), 128))
 	rv := m.DecryptInit(sessionHandle, mechanism, keyHandle)
 	require.Equal(t, CKR_OK, rv)
 
@@ -461,7 +471,7 @@ func TestModule_EncryptFinal_WrongOperationType(t *testing.T) {
 	defer m.Finalize()
 
 	// Initialize decryption instead of encryption
-	mechanism := &Mechanism{Type: CKM_AES_GCM}
+	mechanism := NewMechanismWithTypedParams(CKM_AES_GCM, NewAESGCMParams(testGCMIV(), 128))
 	rv := m.DecryptInit(sessionHandle, mechanism, keyHandle)
 	require.Equal(t, CKR_OK, rv)
 
@@ -474,7 +484,7 @@ func TestModule_EncryptUpdate_EmptyData(t *testing.T) {
 	m, sessionHandle, keyHandle := setupTestModuleWithKey(t)
 	defer m.Finalize()
 
-	mechanism := &Mechanism{Type: CKM_AES_GCM}
+	mechanism := NewMechanismWithTypedParams(CKM_AES_GCM, NewAESGCMParams(testGCMIV(), 128))
 	rv := m.EncryptInit(sessionHandle, mechanism, keyHandle)
 	require.Equal(t, CKR_OK, rv)
 
@@ -500,7 +510,7 @@ func TestModule_DecryptUpdate_Success(t *testing.T) {
 	m, sessionHandle, keyHandle := setupTestModuleWithKey(t)
 	defer m.Finalize()
 
-	mechanism := &Mechanism{Type: CKM_AES_GCM}
+	mechanism := NewMechanismWithTypedParams(CKM_AES_GCM, NewAESGCMParams(testGCMIV(), 128))
 
 	// Initialize decryption
 	rv := m.DecryptInit(sessionHandle, mechanism, keyHandle)
@@ -524,11 +534,12 @@ func TestModule_DecryptUpdate_NotInitialized(t *testing.T) {
 	m := initializeTestModule(t)
 	defer m.Finalize()
 
-	sessionHandle, rv := m.OpenSession(0, CKF_SERIAL_SESSION|CKF_RW_SESSION)
-	require.Equal(t, CKR_OK, rv)
+	// CKF_LOGIN_REQUIRED gates key-bearing operations, so the fixture
+	// authenticates before exercising them.
+	sessionHandle := loginAsNormalUser(t, m)
 
 	// DecryptUpdate without DecryptInit
-	_, rv = m.DecryptUpdate(sessionHandle, []byte("data"))
+	_, rv := m.DecryptUpdate(sessionHandle, []byte("data"))
 	assert.Equal(t, CKR_OPERATION_NOT_INITIALIZED, rv, "DecryptUpdate should fail without DecryptInit")
 }
 
@@ -553,11 +564,12 @@ func TestModule_DecryptFinal_NotInitialized(t *testing.T) {
 	m := initializeTestModule(t)
 	defer m.Finalize()
 
-	sessionHandle, rv := m.OpenSession(0, CKF_SERIAL_SESSION|CKF_RW_SESSION)
-	require.Equal(t, CKR_OK, rv)
+	// CKF_LOGIN_REQUIRED gates key-bearing operations, so the fixture
+	// authenticates before exercising them.
+	sessionHandle := loginAsNormalUser(t, m)
 
 	// DecryptFinal without DecryptInit
-	_, rv = m.DecryptFinal(sessionHandle)
+	_, rv := m.DecryptFinal(sessionHandle)
 	assert.Equal(t, CKR_OPERATION_NOT_INITIALIZED, rv, "DecryptFinal should fail without DecryptInit")
 }
 
@@ -583,7 +595,7 @@ func TestModule_DecryptUpdate_WrongOperationType(t *testing.T) {
 	defer m.Finalize()
 
 	// Initialize encryption instead of decryption
-	mechanism := &Mechanism{Type: CKM_AES_GCM}
+	mechanism := NewMechanismWithTypedParams(CKM_AES_GCM, NewAESGCMParams(testGCMIV(), 128))
 	rv := m.EncryptInit(sessionHandle, mechanism, keyHandle)
 	require.Equal(t, CKR_OK, rv)
 
@@ -597,7 +609,7 @@ func TestModule_DecryptFinal_WrongOperationType(t *testing.T) {
 	defer m.Finalize()
 
 	// Initialize encryption instead of decryption
-	mechanism := &Mechanism{Type: CKM_AES_GCM}
+	mechanism := NewMechanismWithTypedParams(CKM_AES_GCM, NewAESGCMParams(testGCMIV(), 128))
 	rv := m.EncryptInit(sessionHandle, mechanism, keyHandle)
 	require.Equal(t, CKR_OK, rv)
 
@@ -610,7 +622,7 @@ func TestModule_DecryptUpdate_EmptyData(t *testing.T) {
 	m, sessionHandle, keyHandle := setupTestModuleWithKey(t)
 	defer m.Finalize()
 
-	mechanism := &Mechanism{Type: CKM_AES_GCM}
+	mechanism := NewMechanismWithTypedParams(CKM_AES_GCM, NewAESGCMParams(testGCMIV(), 128))
 	rv := m.DecryptInit(sessionHandle, mechanism, keyHandle)
 	require.Equal(t, CKR_OK, rv)
 
@@ -622,10 +634,11 @@ func TestModule_DecryptUpdate_EmptyData(t *testing.T) {
 	_, rv = m.DecryptUpdate(sessionHandle, nil)
 	assert.Equal(t, CKR_OK, rv, "DecryptUpdate with nil data should succeed")
 
-	// DecryptFinal should still work
-	plaintext, rv := m.DecryptFinal(sessionHandle)
-	assert.Equal(t, CKR_OK, rv, "DecryptFinal should succeed")
-	assert.NotNil(t, plaintext, "plaintext should not be nil")
+	// With nothing buffered there is no AES-GCM tag to authenticate, and a
+	// ciphertext shorter than the tag cannot be valid (v3.2 6.13.7).
+	_, rv = m.DecryptFinal(sessionHandle)
+	assert.Equal(t, CKR_ENCRYPTED_DATA_LEN_RANGE, rv,
+		"DecryptFinal should reject a buffer too short to hold a GCM tag")
 }
 
 // ----------------------------------------------------------------------------
@@ -636,13 +649,14 @@ func TestModule_DigestUpdate_Success(t *testing.T) {
 	m := initializeTestModule(t)
 	defer m.Finalize()
 
-	sessionHandle, rv := m.OpenSession(0, CKF_SERIAL_SESSION|CKF_RW_SESSION)
-	require.Equal(t, CKR_OK, rv)
+	// CKF_LOGIN_REQUIRED gates key-bearing operations, so the fixture
+	// authenticates before exercising them.
+	sessionHandle := loginAsNormalUser(t, m)
 
 	mechanism := &Mechanism{Type: CKM_SHA256}
 
 	// Initialize digest
-	rv = m.DigestInit(sessionHandle, mechanism)
+	rv := m.DigestInit(sessionHandle, mechanism)
 	require.Equal(t, CKR_OK, rv, "DigestInit should succeed")
 
 	// DigestUpdate with first part
@@ -663,11 +677,12 @@ func TestModule_DigestUpdate_NotInitialized(t *testing.T) {
 	m := initializeTestModule(t)
 	defer m.Finalize()
 
-	sessionHandle, rv := m.OpenSession(0, CKF_SERIAL_SESSION|CKF_RW_SESSION)
-	require.Equal(t, CKR_OK, rv)
+	// CKF_LOGIN_REQUIRED gates key-bearing operations, so the fixture
+	// authenticates before exercising them.
+	sessionHandle := loginAsNormalUser(t, m)
 
 	// DigestUpdate without DigestInit
-	rv = m.DigestUpdate(sessionHandle, []byte("data"))
+	rv := m.DigestUpdate(sessionHandle, []byte("data"))
 	assert.Equal(t, CKR_OPERATION_NOT_INITIALIZED, rv, "DigestUpdate should fail without DigestInit")
 }
 
@@ -692,11 +707,12 @@ func TestModule_DigestFinal_NotInitialized(t *testing.T) {
 	m := initializeTestModule(t)
 	defer m.Finalize()
 
-	sessionHandle, rv := m.OpenSession(0, CKF_SERIAL_SESSION|CKF_RW_SESSION)
-	require.Equal(t, CKR_OK, rv)
+	// CKF_LOGIN_REQUIRED gates key-bearing operations, so the fixture
+	// authenticates before exercising them.
+	sessionHandle := loginAsNormalUser(t, m)
 
 	// DigestFinal without DigestInit
-	_, rv = m.DigestFinal(sessionHandle)
+	_, rv := m.DigestFinal(sessionHandle)
 	assert.Equal(t, CKR_OPERATION_NOT_INITIALIZED, rv, "DigestFinal should fail without DigestInit")
 }
 
@@ -722,7 +738,7 @@ func TestModule_DigestUpdate_WrongOperationType(t *testing.T) {
 	defer m.Finalize()
 
 	// Initialize encryption instead of digest
-	mechanism := &Mechanism{Type: CKM_AES_GCM}
+	mechanism := NewMechanismWithTypedParams(CKM_AES_GCM, NewAESGCMParams(testGCMIV(), 128))
 	rv := m.EncryptInit(sessionHandle, mechanism, keyHandle)
 	require.Equal(t, CKR_OK, rv)
 
@@ -736,7 +752,7 @@ func TestModule_DigestFinal_WrongOperationType(t *testing.T) {
 	defer m.Finalize()
 
 	// Initialize encryption instead of digest
-	mechanism := &Mechanism{Type: CKM_AES_GCM}
+	mechanism := NewMechanismWithTypedParams(CKM_AES_GCM, NewAESGCMParams(testGCMIV(), 128))
 	rv := m.EncryptInit(sessionHandle, mechanism, keyHandle)
 	require.Equal(t, CKR_OK, rv)
 
@@ -749,8 +765,9 @@ func TestModule_DigestFinal_MultipleChunks(t *testing.T) {
 	m := initializeTestModule(t)
 	defer m.Finalize()
 
-	sessionHandle, rv := m.OpenSession(0, CKF_SERIAL_SESSION|CKF_RW_SESSION)
-	require.Equal(t, CKR_OK, rv)
+	// CKF_LOGIN_REQUIRED gates key-bearing operations, so the fixture
+	// authenticates before exercising them.
+	sessionHandle := loginAsNormalUser(t, m)
 
 	// Test multiple hash algorithms
 	algorithms := []MechanismType{CKM_SHA256, CKM_SHA384, CKM_SHA512}
@@ -759,7 +776,7 @@ func TestModule_DigestFinal_MultipleChunks(t *testing.T) {
 	for i, algo := range algorithms {
 		mechanism := &Mechanism{Type: algo}
 
-		rv = m.DigestInit(sessionHandle, mechanism)
+		rv := m.DigestInit(sessionHandle, mechanism)
 		require.Equal(t, CKR_OK, rv)
 
 		// Add data in multiple chunks
@@ -771,6 +788,10 @@ func TestModule_DigestFinal_MultipleChunks(t *testing.T) {
 		hash, rv := m.DigestFinal(sessionHandle)
 		assert.Equal(t, CKR_OK, rv)
 		assert.Len(t, hash, expectedLengths[i], "hash length should match expected for algorithm")
+
+		// The digest stays active until the caller confirms it received the
+		// output, so the next DigestInit needs it terminated first.
+		require.Equal(t, CKR_OK, m.FinishOperation(sessionHandle, OperationDigest))
 	}
 }
 
@@ -778,11 +799,12 @@ func TestModule_DigestUpdate_EmptyData(t *testing.T) {
 	m := initializeTestModule(t)
 	defer m.Finalize()
 
-	sessionHandle, rv := m.OpenSession(0, CKF_SERIAL_SESSION|CKF_RW_SESSION)
-	require.Equal(t, CKR_OK, rv)
+	// CKF_LOGIN_REQUIRED gates key-bearing operations, so the fixture
+	// authenticates before exercising them.
+	sessionHandle := loginAsNormalUser(t, m)
 
 	mechanism := &Mechanism{Type: CKM_SHA256}
-	rv = m.DigestInit(sessionHandle, mechanism)
+	rv := m.DigestInit(sessionHandle, mechanism)
 	require.Equal(t, CKR_OK, rv)
 
 	// DigestUpdate with empty data should succeed
@@ -803,50 +825,40 @@ func TestModule_DigestUpdate_EmptyData(t *testing.T) {
 // WrapKey / UnwrapKey Tests
 // ----------------------------------------------------------------------------
 
+// TestModule_WrapKey_Success proves C_WrapKey emits a blob that recovers the
+// original key bytes, rather than merely returning CKR_OK and some bytes.
+//
+// It used to assert only CKR_OK and a non-empty slice, which holds for any
+// non-empty byte slice at all -- including the AES-GCM blob this module
+// actually produced, whose token-generated nonce was discarded, so nothing
+// could ever unwrap it. The round trip is the assertion that had been missing:
+// see module_wrapframing_test.go for the same proof across every mechanism.
 func TestModule_WrapKey_Success(t *testing.T) {
-	m, sessionHandle, _ := setupTestModuleWithKey(t)
+	value := []byte("SECRETKEYVALUE!!")
+	m, oracle, sessionHandle, wrapKeyHandle, targetKeyHandle := newWrapRoundTripModule(t, value)
 	defer m.Finalize()
 
-	// Create wrapping key
-	wrapKeyTemplate := []Attribute{
-		NewUint32Attribute(CKA_CLASS, uint32(CKO_SECRET_KEY)),
-		NewUint32Attribute(CKA_KEY_TYPE, uint32(CKK_AES)),
-		NewStringAttribute(CKA_LABEL, "wrap-key"),
-		NewAttribute(CKA_VALUE, []byte("0123456789ABCDEF")),
-		NewBoolAttribute(CKA_WRAP, true),
-		NewBoolAttribute(CKA_ENCRYPT, true),
-	}
-	wrapKeyHandle, rv := m.CreateObject(sessionHandle, wrapKeyTemplate)
-	require.Equal(t, CKR_OK, rv)
+	mechanism := NewMechanismWithTypedParams(CKM_AES_GCM, NewAESGCMParams(testGCMIV(), 128))
 
-	wrapKeyObj, _ := m.objectManager.GetObject(wrapKeyHandle)
-	wrapKeyObj.KeyID = "wrap-key-id"
-	wrapKeyObj.BackendName = "default"
-
-	// Create key to be wrapped
-	targetKeyTemplate := []Attribute{
-		NewUint32Attribute(CKA_CLASS, uint32(CKO_SECRET_KEY)),
-		NewUint32Attribute(CKA_KEY_TYPE, uint32(CKK_AES)),
-		NewStringAttribute(CKA_LABEL, "target-key"),
-		NewAttribute(CKA_VALUE, []byte("SECRETKEYVALUE!!")),
-		NewBoolAttribute(CKA_EXTRACTABLE, true),
-	}
-	targetKeyHandle, rv := m.CreateObject(sessionHandle, targetKeyTemplate)
-	require.Equal(t, CKR_OK, rv)
-
-	mechanism := &Mechanism{Type: CKM_AES_GCM}
-
-	// Wrap the key
 	wrappedKey, rv := m.WrapKey(sessionHandle, mechanism, wrapKeyHandle, targetKeyHandle)
-	assert.Equal(t, CKR_OK, rv, "WrapKey should succeed")
-	assert.NotEmpty(t, wrappedKey, "wrapped key should not be empty")
+	require.Equal(t, CKR_OK, rv, "WrapKey should succeed")
+	require.NotEmpty(t, wrappedKey, "wrapped key should not be empty")
+	assert.NotEqual(t, value, wrappedKey, "the wrapped key must not be the plaintext")
+
+	handle, rv := m.UnwrapKey(sessionHandle,
+		NewMechanismWithTypedParams(CKM_AES_GCM, NewAESGCMParams(testGCMIV(), 128)),
+		wrapKeyHandle, wrappedKey, unwrapTemplate())
+	require.Equal(t, CKR_OK, rv, "the blob C_WrapKey produced must be one C_UnwrapKey can consume")
+	require.NotEqual(t, ObjectHandle(InvalidHandle), handle)
+
+	assert.Equal(t, value, oracle.unwrapped, "the round trip must recover the original key bytes")
 }
 
 func TestModule_WrapKey_InvalidWrappingKey(t *testing.T) {
 	m, sessionHandle, targetKeyHandle := setupTestModuleWithKey(t)
 	defer m.Finalize()
 
-	mechanism := &Mechanism{Type: CKM_AES_GCM}
+	mechanism := NewMechanismWithTypedParams(CKM_AES_GCM, NewAESGCMParams(testGCMIV(), 128))
 
 	// WrapKey with invalid wrapping key handle
 	_, rv := m.WrapKey(sessionHandle, mechanism, ObjectHandle(99999), targetKeyHandle)
@@ -857,7 +869,7 @@ func TestModule_WrapKey_InvalidTargetKey(t *testing.T) {
 	m, sessionHandle, wrapKeyHandle := setupTestModuleWithKey(t)
 	defer m.Finalize()
 
-	mechanism := &Mechanism{Type: CKM_AES_GCM}
+	mechanism := NewMechanismWithTypedParams(CKM_AES_GCM, NewAESGCMParams(testGCMIV(), 128))
 
 	// WrapKey with invalid target key handle
 	_, rv := m.WrapKey(sessionHandle, mechanism, wrapKeyHandle, ObjectHandle(99999))
@@ -878,7 +890,7 @@ func TestModule_WrapKey_KeyNotExtractable(t *testing.T) {
 	targetKeyHandle, rv := m.CreateObject(sessionHandle, targetKeyTemplate)
 	require.Equal(t, CKR_OK, rv)
 
-	mechanism := &Mechanism{Type: CKM_AES_GCM}
+	mechanism := NewMechanismWithTypedParams(CKM_AES_GCM, NewAESGCMParams(testGCMIV(), 128))
 
 	// WrapKey should fail because key is not extractable
 	_, rv = m.WrapKey(sessionHandle, mechanism, wrapKeyHandle, targetKeyHandle)
@@ -888,7 +900,7 @@ func TestModule_WrapKey_KeyNotExtractable(t *testing.T) {
 func TestModule_WrapKey_ModuleNotInitialized(t *testing.T) {
 	m := createTestModule(t)
 
-	mechanism := &Mechanism{Type: CKM_AES_GCM}
+	mechanism := NewMechanismWithTypedParams(CKM_AES_GCM, NewAESGCMParams(testGCMIV(), 128))
 
 	_, rv := m.WrapKey(SessionHandle(1), mechanism, ObjectHandle(1), ObjectHandle(2))
 	assert.Equal(t, CKR_CRYPTOKI_NOT_INITIALIZED, rv, "WrapKey should fail when module not initialized")
@@ -898,7 +910,7 @@ func TestModule_WrapKey_InvalidSession(t *testing.T) {
 	m := initializeTestModule(t)
 	defer m.Finalize()
 
-	mechanism := &Mechanism{Type: CKM_AES_GCM}
+	mechanism := NewMechanismWithTypedParams(CKM_AES_GCM, NewAESGCMParams(testGCMIV(), 128))
 
 	_, rv := m.WrapKey(SessionHandle(99999), mechanism, ObjectHandle(1), ObjectHandle(2))
 	assert.Equal(t, CKR_SESSION_HANDLE_INVALID, rv, "WrapKey should fail with invalid session")
@@ -920,11 +932,11 @@ func TestModule_UnwrapKey_Success(t *testing.T) {
 	unwrapKeyHandle, rv := m.CreateObject(sessionHandle, unwrapKeyTemplate)
 	require.Equal(t, CKR_OK, rv)
 
-	unwrapKeyObj, _ := m.objectManager.GetObject(unwrapKeyHandle)
+	unwrapKeyObj, _ := m.objectManager.getObjectUnchecked(unwrapKeyHandle)
 	unwrapKeyObj.KeyID = "unwrap-key-id"
 	unwrapKeyObj.BackendName = "default"
 
-	mechanism := &Mechanism{Type: CKM_AES_GCM}
+	mechanism := NewMechanismWithTypedParams(CKM_AES_GCM, NewAESGCMParams(testGCMIV(), 128))
 	wrappedKey := []byte("wrapped-key-data")
 
 	newKeyTemplate := []Attribute{
@@ -943,19 +955,20 @@ func TestModule_UnwrapKey_InvalidUnwrappingKey(t *testing.T) {
 	m := initializeTestModule(t)
 	defer m.Finalize()
 
-	sessionHandle, rv := m.OpenSession(0, CKF_SERIAL_SESSION|CKF_RW_SESSION)
-	require.Equal(t, CKR_OK, rv)
+	// CKF_LOGIN_REQUIRED gates key-bearing operations, so the fixture
+	// authenticates before exercising them.
+	sessionHandle := loginAsNormalUser(t, m)
 
-	mechanism := &Mechanism{Type: CKM_AES_GCM}
+	mechanism := NewMechanismWithTypedParams(CKM_AES_GCM, NewAESGCMParams(testGCMIV(), 128))
 
-	_, rv = m.UnwrapKey(sessionHandle, mechanism, ObjectHandle(99999), []byte("data"), nil)
+	_, rv := m.UnwrapKey(sessionHandle, mechanism, ObjectHandle(99999), []byte("data"), nil)
 	assert.Equal(t, CKR_UNWRAPPING_KEY_HANDLE_INVALID, rv, "UnwrapKey should fail with invalid unwrapping key")
 }
 
 func TestModule_UnwrapKey_ModuleNotInitialized(t *testing.T) {
 	m := createTestModule(t)
 
-	mechanism := &Mechanism{Type: CKM_AES_GCM}
+	mechanism := NewMechanismWithTypedParams(CKM_AES_GCM, NewAESGCMParams(testGCMIV(), 128))
 
 	_, rv := m.UnwrapKey(SessionHandle(1), mechanism, ObjectHandle(1), []byte("data"), nil)
 	assert.Equal(t, CKR_CRYPTOKI_NOT_INITIALIZED, rv, "UnwrapKey should fail when module not initialized")
@@ -965,7 +978,7 @@ func TestModule_UnwrapKey_InvalidSession(t *testing.T) {
 	m := initializeTestModule(t)
 	defer m.Finalize()
 
-	mechanism := &Mechanism{Type: CKM_AES_GCM}
+	mechanism := NewMechanismWithTypedParams(CKM_AES_GCM, NewAESGCMParams(testGCMIV(), 128))
 
 	_, rv := m.UnwrapKey(SessionHandle(99999), mechanism, ObjectHandle(1), []byte("data"), nil)
 	assert.Equal(t, CKR_SESSION_HANDLE_INVALID, rv, "UnwrapKey should fail with invalid session")
@@ -987,21 +1000,22 @@ func TestModule_UnwrapKey_EmptyWrappedKey(t *testing.T) {
 	unwrapKeyHandle, rv := m.CreateObject(sessionHandle, unwrapKeyTemplate)
 	require.Equal(t, CKR_OK, rv)
 
-	unwrapKeyObj, _ := m.objectManager.GetObject(unwrapKeyHandle)
+	unwrapKeyObj, _ := m.objectManager.getObjectUnchecked(unwrapKeyHandle)
 	unwrapKeyObj.KeyID = "unwrap-key-id"
 	unwrapKeyObj.BackendName = "default"
 
-	mechanism := &Mechanism{Type: CKM_AES_GCM}
+	mechanism := NewMechanismWithTypedParams(CKM_AES_GCM, NewAESGCMParams(testGCMIV(), 128))
 
 	newKeyTemplate := []Attribute{
 		NewUint32Attribute(CKA_CLASS, uint32(CKO_SECRET_KEY)),
 		NewUint32Attribute(CKA_KEY_TYPE, uint32(CKK_AES)),
 	}
 
-	// UnwrapKey with empty wrapped key - should work (mock returns plaintext)
+	// An empty wrapped key carries no key material to unwrap, so it is
+	// rejected rather than producing a zero-length key.
 	newKeyHandle, rv := m.UnwrapKey(sessionHandle, mechanism, unwrapKeyHandle, []byte{}, newKeyTemplate)
-	assert.Equal(t, CKR_OK, rv, "UnwrapKey with empty data should succeed with mock")
-	assert.NotEqual(t, ObjectHandle(InvalidHandle), newKeyHandle, "new key handle should be valid")
+	assert.Equal(t, CKR_WRAPPED_KEY_INVALID, rv, "UnwrapKey should reject an empty wrapped key")
+	assert.Equal(t, ObjectHandle(InvalidHandle), newKeyHandle, "no key object should be created")
 }
 
 // ----------------------------------------------------------------------------
@@ -1021,10 +1035,11 @@ func TestModule_GetObjectSize_InvalidObject(t *testing.T) {
 	m := initializeTestModule(t)
 	defer m.Finalize()
 
-	sessionHandle, rv := m.OpenSession(0, CKF_SERIAL_SESSION|CKF_RW_SESSION)
-	require.Equal(t, CKR_OK, rv)
+	// CKF_LOGIN_REQUIRED gates key-bearing operations, so the fixture
+	// authenticates before exercising them.
+	sessionHandle := loginAsNormalUser(t, m)
 
-	_, rv = m.GetObjectSize(sessionHandle, ObjectHandle(99999))
+	_, rv := m.GetObjectSize(sessionHandle, ObjectHandle(99999))
 	assert.Equal(t, CKR_OBJECT_HANDLE_INVALID, rv, "GetObjectSize should fail with invalid object handle")
 }
 
@@ -1047,8 +1062,9 @@ func TestModule_GetObjectSize_WithAttributes(t *testing.T) {
 	m := initializeTestModule(t)
 	defer m.Finalize()
 
-	sessionHandle, rv := m.OpenSession(0, CKF_SERIAL_SESSION|CKF_RW_SESSION)
-	require.Equal(t, CKR_OK, rv)
+	// CKF_LOGIN_REQUIRED gates key-bearing operations, so the fixture
+	// authenticates before exercising them.
+	sessionHandle := loginAsNormalUser(t, m)
 
 	// Create object with various attributes
 	template := []Attribute{
@@ -1070,8 +1086,9 @@ func TestModule_GetObjectSize_MinimalObject(t *testing.T) {
 	m := initializeTestModule(t)
 	defer m.Finalize()
 
-	sessionHandle, rv := m.OpenSession(0, CKF_SERIAL_SESSION|CKF_RW_SESSION)
-	require.Equal(t, CKR_OK, rv)
+	// CKF_LOGIN_REQUIRED gates key-bearing operations, so the fixture
+	// authenticates before exercising them.
+	sessionHandle := loginAsNormalUser(t, m)
 
 	// Create minimal object
 	template := []Attribute{
@@ -1110,10 +1127,11 @@ func TestModule_GetOperationStateBytes_NoActiveOperation(t *testing.T) {
 	m := initializeTestModule(t)
 	defer m.Finalize()
 
-	sessionHandle, rv := m.OpenSession(0, CKF_SERIAL_SESSION|CKF_RW_SESSION)
-	require.Equal(t, CKR_OK, rv)
+	// CKF_LOGIN_REQUIRED gates key-bearing operations, so the fixture
+	// authenticates before exercising them.
+	sessionHandle := loginAsNormalUser(t, m)
 
-	_, rv = m.GetOperationStateBytes(sessionHandle)
+	_, rv := m.GetOperationStateBytes(sessionHandle)
 	assert.Equal(t, CKR_OPERATION_NOT_INITIALIZED, rv, "GetOperationStateBytes should fail without active operation")
 }
 
@@ -1149,45 +1167,91 @@ func TestModule_SetOperationStateBytes_InvalidState(t *testing.T) {
 	m := initializeTestModule(t)
 	defer m.Finalize()
 
-	sessionHandle, rv := m.OpenSession(0, CKF_SERIAL_SESSION|CKF_RW_SESSION)
-	require.Equal(t, CKR_OK, rv)
+	// CKF_LOGIN_REQUIRED gates key-bearing operations, so the fixture
+	// authenticates before exercising them.
+	sessionHandle := loginAsNormalUser(t, m)
 
 	// State too short
-	rv = m.SetOperationStateBytes(sessionHandle, []byte{0x01, 0x02, 0x03}, 0, 0)
+	rv := m.SetOperationStateBytes(sessionHandle, []byte{0x01, 0x02, 0x03}, 0, 0)
 	assert.Equal(t, CKR_SAVED_STATE_INVALID, rv, "SetOperationStateBytes should fail with invalid state")
 }
 
-func TestModule_SetOperationStateBytes_Success(t *testing.T) {
-	m := initializeTestModule(t)
-	defer m.Finalize()
-
-	sessionHandle, rv := m.OpenSession(0, CKF_SERIAL_SESSION|CKF_RW_SESSION)
-	require.Equal(t, CKR_OK, rv)
-
-	// Create valid state bytes (13 byte minimum)
-	// Format: [opType][mechanism 4 bytes][keyHandle 8 bytes][data...]
-	state := []byte{
-		byte(OperationDigest),  // operation type
-		0x00, 0x02, 0x50, 0x00, // mechanism (CKM_SHA256 = 0x00000250)
-		0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, // key handle (0)
+func TestModule_SetOperationStateBytes_RejectsForgedState(t *testing.T) {
+	// PKCS#11 v3.2 §5.6.7 restores state "obtained with C_GetOperationState".
+	// This module's C_GetOperationState answers CKR_STATE_UNSAVEABLE for every
+	// savable operation (§5.6.6: the running state lives in the backend and
+	// cannot leave the token), so no byte string handed to this function can be
+	// valid saved state, and §5.6.7 names the answer: CKR_SAVED_STATE_INVALID.
+	//
+	// These three cases previously asserted CKR_OK and so CERTIFIED the defects
+	// rather than catching them. The blob was parsed and "restored", but the
+	// accumulated data was silently ignored — a restored digest returned the
+	// hash of only the bytes supplied afterwards — and an out-of-range operation
+	// type wiped the session's whole operation map while still reporting
+	// success.
+	cases := []struct {
+		name  string
+		state []byte
+	}{
+		{
+			// Format the old parser accepted: [opType][mechanism][keyHandle].
+			name: "well-formed blob for a digest operation",
+			state: []byte{
+				byte(OperationDigest),
+				0x00, 0x02, 0x50, 0x00,
+				0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+			},
+		},
+		{
+			name: "blob carrying accumulated data",
+			state: []byte{
+				byte(OperationDigest),
+				0x00, 0x02, 0x50, 0x00,
+				0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+				0xAA, 0xBB, 0xCC, 0xDD,
+			},
+		},
+		{
+			// An operation type outside the dispatch range used to return
+			// CKR_OK and cancel every operation on the session.
+			name: "blob naming an out-of-range operation type",
+			state: []byte{
+				0xFF,
+				0x00, 0x02, 0x50, 0x00,
+				0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+			},
+		},
 	}
 
-	rv = m.SetOperationStateBytes(sessionHandle, state, 0, 0)
-	assert.Equal(t, CKR_OK, rv, "SetOperationStateBytes should succeed with valid state")
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			m := initializeTestModule(t)
+			defer m.Finalize()
+
+			sessionHandle := loginAsNormalUser(t, m)
+
+			rv := m.SetOperationStateBytes(sessionHandle, tc.state, 0, 0)
+			assert.Equal(t, CKR_SAVED_STATE_INVALID, rv,
+				"no blob can be valid saved state when C_GetOperationState never produces any")
+		})
+	}
 }
 
-func TestModule_SetOperationStateBytes_OperationAlreadyActive(t *testing.T) {
+func TestModule_SetOperationStateBytes_DoesNotDisturbAnActiveOperation(t *testing.T) {
+	// §5.6.7 explicitly permits restoring over an active operation: "C_Set-
+	// OperationState can successfully restore cryptographic operations state to
+	// a session even if that session has active cryptographic or object search
+	// operations". Refusing with CKR_OPERATION_ACTIVE, as this module used to,
+	// contradicts that outright — so the refusal must be about the state being
+	// invalid, and the running operation must survive untouched.
 	m := initializeTestModule(t)
 	defer m.Finalize()
 
-	sessionHandle, rv := m.OpenSession(0, CKF_SERIAL_SESSION|CKF_RW_SESSION)
+	sessionHandle := loginAsNormalUser(t, m)
+
+	rv := m.DigestInit(sessionHandle, &Mechanism{Type: CKM_SHA256})
 	require.Equal(t, CKR_OK, rv)
 
-	// Start a digest operation
-	rv = m.DigestInit(sessionHandle, &Mechanism{Type: CKM_SHA256})
-	require.Equal(t, CKR_OK, rv)
-
-	// Try to set operation state - should fail because operation is active
 	state := []byte{
 		byte(OperationDigest),
 		0x00, 0x02, 0x50, 0x00,
@@ -1195,34 +1259,23 @@ func TestModule_SetOperationStateBytes_OperationAlreadyActive(t *testing.T) {
 	}
 
 	rv = m.SetOperationStateBytes(sessionHandle, state, 0, 0)
-	assert.Equal(t, CKR_OPERATION_ACTIVE, rv, "SetOperationStateBytes should fail when operation is active")
-}
+	assert.Equal(t, CKR_SAVED_STATE_INVALID, rv,
+		"the refusal must be about the state, not about an operation being active")
 
-func TestModule_SetOperationStateBytes_WithData(t *testing.T) {
-	m := initializeTestModule(t)
-	defer m.Finalize()
-
-	sessionHandle, rv := m.OpenSession(0, CKF_SERIAL_SESSION|CKF_RW_SESSION)
-	require.Equal(t, CKR_OK, rv)
-
-	// Create valid state bytes with additional data
-	state := []byte{
-		byte(OperationDigest),
-		0x00, 0x02, 0x50, 0x00, // mechanism (CKM_SHA256)
-		0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
-		0xAA, 0xBB, 0xCC, 0xDD, // additional data
-	}
-
-	rv = m.SetOperationStateBytes(sessionHandle, state, 0, 0)
-	assert.Equal(t, CKR_OK, rv, "SetOperationStateBytes should succeed with additional data")
+	// The digest must still be usable, which is what proves the refusal did not
+	// cancel it the way the old out-of-range path silently did.
+	digest, rv := m.Digest(sessionHandle, []byte("still running"))
+	assert.Equal(t, CKR_OK, rv, "the active digest must survive a rejected restore")
+	assert.Len(t, digest, 32)
 }
 
 func TestModule_SetOperationStateBytes_InvalidKeyHandle(t *testing.T) {
 	m := initializeTestModule(t)
 	defer m.Finalize()
 
-	sessionHandle, rv := m.OpenSession(0, CKF_SERIAL_SESSION|CKF_RW_SESSION)
-	require.Equal(t, CKR_OK, rv)
+	// CKF_LOGIN_REQUIRED gates key-bearing operations, so the fixture
+	// authenticates before exercising them.
+	sessionHandle := loginAsNormalUser(t, m)
 
 	// Create state with non-zero key handle that doesn't exist
 	state := []byte{
@@ -1231,8 +1284,13 @@ func TestModule_SetOperationStateBytes_InvalidKeyHandle(t *testing.T) {
 		0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0xFF, 0xFF, // invalid key handle
 	}
 
-	rv = m.SetOperationStateBytes(sessionHandle, state, 0, 0)
-	assert.Equal(t, CKR_KEY_HANDLE_INVALID, rv, "SetOperationStateBytes should fail with invalid key handle")
+	// The blob is rejected as invalid saved state before its key handle is ever
+	// reached, which is the correct order: §5.6.7's key-handle errors
+	// (CKR_KEY_NEEDED, CKR_KEY_NOT_NEEDED, CKR_KEY_CHANGED) only apply to state
+	// that IS valid saved state, and this module can produce none.
+	rv := m.SetOperationStateBytes(sessionHandle, state, 0, 0)
+	assert.Equal(t, CKR_SAVED_STATE_INVALID, rv,
+		"a forged blob is rejected as invalid state, whatever key handle it names")
 }
 
 // ----------------------------------------------------------------------------
@@ -1284,7 +1342,7 @@ func TestModule_EncryptUpdate_AccumulatesData(t *testing.T) {
 	m, sessionHandle, keyHandle := setupTestModuleWithKey(t)
 	defer m.Finalize()
 
-	mechanism := &Mechanism{Type: CKM_AES_GCM}
+	mechanism := NewMechanismWithTypedParams(CKM_AES_GCM, NewAESGCMParams(testGCMIV(), 128))
 	rv := m.EncryptInit(sessionHandle, mechanism, keyHandle)
 	require.Equal(t, CKR_OK, rv)
 
@@ -1305,7 +1363,7 @@ func TestModule_DecryptUpdate_AccumulatesData(t *testing.T) {
 	m, sessionHandle, keyHandle := setupTestModuleWithKey(t)
 	defer m.Finalize()
 
-	mechanism := &Mechanism{Type: CKM_AES_GCM}
+	mechanism := NewMechanismWithTypedParams(CKM_AES_GCM, NewAESGCMParams(testGCMIV(), 128))
 	rv := m.DecryptInit(sessionHandle, mechanism, keyHandle)
 	require.Equal(t, CKR_OK, rv)
 
@@ -1326,11 +1384,12 @@ func TestModule_DigestUpdate_AccumulatesData(t *testing.T) {
 	m := initializeTestModule(t)
 	defer m.Finalize()
 
-	sessionHandle, rv := m.OpenSession(0, CKF_SERIAL_SESSION|CKF_RW_SESSION)
-	require.Equal(t, CKR_OK, rv)
+	// CKF_LOGIN_REQUIRED gates key-bearing operations, so the fixture
+	// authenticates before exercising them.
+	sessionHandle := loginAsNormalUser(t, m)
 
 	mechanism := &Mechanism{Type: CKM_SHA256}
-	rv = m.DigestInit(sessionHandle, mechanism)
+	rv := m.DigestInit(sessionHandle, mechanism)
 	require.Equal(t, CKR_OK, rv)
 
 	// Add multiple chunks
@@ -1354,28 +1413,44 @@ func TestModule_WrapKey_ReadOnlySession(t *testing.T) {
 	m := initializeTestModule(t)
 	defer m.Finalize()
 
-	// Open read-only session
+	// Provision and authenticate first: C_InitToken refuses to run while
+	// any session is open.
+	sessionHandle := loginAsNormalUser(t, m)
+
 	sessionHandle, rv := m.OpenSession(0, CKF_SERIAL_SESSION)
 	require.Equal(t, CKR_OK, rv)
 
-	mechanism := &Mechanism{Type: CKM_AES_GCM}
+	mechanism := NewMechanismWithTypedParams(CKM_AES_GCM, NewAESGCMParams(testGCMIV(), 128))
 
+	// C_WrapKey creates no object, so a read-only session may wrap: the spec
+	// does not list CKR_SESSION_READ_ONLY among its return values. Handle
+	// validation is what rejects this call.
 	_, rv = m.WrapKey(sessionHandle, mechanism, ObjectHandle(1), ObjectHandle(2))
-	assert.Equal(t, CKR_SESSION_READ_ONLY, rv, "WrapKey should fail on read-only session")
+	assert.Equal(t, CKR_WRAPPING_KEY_HANDLE_INVALID, rv,
+		"WrapKey should reject an unknown wrapping key handle, not the read-only session")
 }
 
 func TestModule_UnwrapKey_ReadOnlySession(t *testing.T) {
 	m := initializeTestModule(t)
 	defer m.Finalize()
 
+	// Provision and authenticate first: CKF_LOGIN_REQUIRED gates key management,
+	// and that gate is reported before the handle is even looked at.
+	rwSession := loginAsNormalUser(t, m)
+	require.NotEqual(t, SessionHandle(InvalidHandle), rwSession)
+
 	// Open read-only session
 	sessionHandle, rv := m.OpenSession(0, CKF_SERIAL_SESSION)
 	require.Equal(t, CKR_OK, rv)
 
-	mechanism := &Mechanism{Type: CKM_AES_GCM}
+	mechanism := NewMechanismWithTypedParams(CKM_AES_GCM, NewAESGCMParams(testGCMIV(), 128))
 
+	// C_UnwrapKey creates a session object by default (CKA_TOKEN is CK_FALSE),
+	// which a read-only session may do. Only a token object would be refused
+	// with CKR_SESSION_READ_ONLY, so the unknown handle is what fails here.
 	_, rv = m.UnwrapKey(sessionHandle, mechanism, ObjectHandle(1), []byte("data"), nil)
-	assert.Equal(t, CKR_SESSION_READ_ONLY, rv, "UnwrapKey should fail on read-only session")
+	assert.Equal(t, CKR_UNWRAPPING_KEY_HANDLE_INVALID, rv,
+		"UnwrapKey should reject an unknown unwrapping key handle")
 }
 
 // ----------------------------------------------------------------------------
@@ -1386,8 +1461,7 @@ func TestModule_WrapKey_WrapNotPermitted(t *testing.T) {
 	m := initializeTestModule(t)
 	defer m.Finalize()
 
-	sessionHandle, rv := m.OpenSession(0, CKF_SERIAL_SESSION|CKF_RW_SESSION)
-	require.Equal(t, CKR_OK, rv)
+	sessionHandle := loginAsNormalUser(t, m)
 
 	// Create key that cannot wrap (CKA_WRAP = false)
 	wrapKeyTemplate := []Attribute{
@@ -1400,7 +1474,7 @@ func TestModule_WrapKey_WrapNotPermitted(t *testing.T) {
 	wrapKeyHandle, rv := m.CreateObject(sessionHandle, wrapKeyTemplate)
 	require.Equal(t, CKR_OK, rv)
 
-	wrapKeyObj, _ := m.objectManager.GetObject(wrapKeyHandle)
+	wrapKeyObj, _ := m.objectManager.getObjectUnchecked(wrapKeyHandle)
 	wrapKeyObj.KeyID = "wrap-key-id"
 	wrapKeyObj.BackendName = "default"
 
@@ -1414,18 +1488,22 @@ func TestModule_WrapKey_WrapNotPermitted(t *testing.T) {
 	targetKeyHandle, rv := m.CreateObject(sessionHandle, targetKeyTemplate)
 	require.Equal(t, CKR_OK, rv)
 
-	mechanism := &Mechanism{Type: CKM_AES_GCM}
+	mechanism := NewMechanismWithTypedParams(CKM_AES_GCM, NewAESGCMParams(testGCMIV(), 128))
 
+	// CKR_WRAPPING_KEY_TYPE_INCONSISTENT, not CKR_KEY_FUNCTION_NOT_PERMITTED:
+	// the latter is absent from C_WrapKey's return table (v3.2 §5.18.3), so a
+	// conforming application never learns to expect it here.
 	_, rv = m.WrapKey(sessionHandle, mechanism, wrapKeyHandle, targetKeyHandle)
-	assert.Equal(t, CKR_KEY_FUNCTION_NOT_PERMITTED, rv, "WrapKey should fail when wrap not permitted")
+	assert.Equal(t, CKR_WRAPPING_KEY_TYPE_INCONSISTENT, rv, "WrapKey should fail when wrap not permitted")
 }
 
 func TestModule_UnwrapKey_UnwrapNotPermitted(t *testing.T) {
 	m := initializeTestModule(t)
 	defer m.Finalize()
 
-	sessionHandle, rv := m.OpenSession(0, CKF_SERIAL_SESSION|CKF_RW_SESSION)
-	require.Equal(t, CKR_OK, rv)
+	// CKF_LOGIN_REQUIRED gates key-bearing operations, so the fixture
+	// authenticates before exercising them.
+	sessionHandle := loginAsNormalUser(t, m)
 
 	// Create key that cannot unwrap (CKA_UNWRAP = false)
 	unwrapKeyTemplate := []Attribute{
@@ -1438,14 +1516,17 @@ func TestModule_UnwrapKey_UnwrapNotPermitted(t *testing.T) {
 	unwrapKeyHandle, rv := m.CreateObject(sessionHandle, unwrapKeyTemplate)
 	require.Equal(t, CKR_OK, rv)
 
-	unwrapKeyObj, _ := m.objectManager.GetObject(unwrapKeyHandle)
+	unwrapKeyObj, _ := m.objectManager.getObjectUnchecked(unwrapKeyHandle)
 	unwrapKeyObj.KeyID = "unwrap-key-id"
 	unwrapKeyObj.BackendName = "default"
 
-	mechanism := &Mechanism{Type: CKM_AES_GCM}
+	mechanism := NewMechanismWithTypedParams(CKM_AES_GCM, NewAESGCMParams(testGCMIV(), 128))
 
+	// CKR_UNWRAPPING_KEY_TYPE_INCONSISTENT, not CKR_KEY_FUNCTION_NOT_PERMITTED:
+	// the latter is absent from C_UnwrapKey's return table (v3.2 §5.18.4), so a
+	// conforming application never learns to expect it here.
 	_, rv = m.UnwrapKey(sessionHandle, mechanism, unwrapKeyHandle, []byte("wrapped-data"), nil)
-	assert.Equal(t, CKR_KEY_FUNCTION_NOT_PERMITTED, rv, "UnwrapKey should fail when unwrap not permitted")
+	assert.Equal(t, CKR_UNWRAPPING_KEY_TYPE_INCONSISTENT, rv, "UnwrapKey should fail when unwrap not permitted")
 }
 
 // ----------------------------------------------------------------------------
@@ -1456,8 +1537,9 @@ func TestModule_WrapKey_NoKeyValue(t *testing.T) {
 	m := initializeTestModule(t)
 	defer m.Finalize()
 
-	sessionHandle, rv := m.OpenSession(0, CKF_SERIAL_SESSION|CKF_RW_SESSION)
-	require.Equal(t, CKR_OK, rv)
+	// CKF_LOGIN_REQUIRED gates key-bearing operations, so the fixture
+	// authenticates before exercising them.
+	sessionHandle := loginAsNormalUser(t, m)
 
 	// Create wrapping key
 	wrapKeyTemplate := []Attribute{
@@ -1470,21 +1552,17 @@ func TestModule_WrapKey_NoKeyValue(t *testing.T) {
 	wrapKeyHandle, rv := m.CreateObject(sessionHandle, wrapKeyTemplate)
 	require.Equal(t, CKR_OK, rv)
 
-	wrapKeyObj, _ := m.objectManager.GetObject(wrapKeyHandle)
+	wrapKeyObj, _ := m.objectManager.getObjectUnchecked(wrapKeyHandle)
 	wrapKeyObj.KeyID = "wrap-key-id"
 	wrapKeyObj.BackendName = "default"
 
-	// Create key without CKA_VALUE
-	targetKeyTemplate := []Attribute{
-		NewUint32Attribute(CKA_CLASS, uint32(CKO_SECRET_KEY)),
-		NewUint32Attribute(CKA_KEY_TYPE, uint32(CKK_AES)),
-		NewBoolAttribute(CKA_EXTRACTABLE, true),
-		// No CKA_VALUE
-	}
-	targetKeyHandle, rv := m.CreateObject(sessionHandle, targetKeyTemplate)
-	require.Equal(t, CKR_OK, rv)
+	// A key with no CKA_VALUE. C_CreateObject cannot produce this state any
+	// more, but restore-from-storage and C_UnwrapKey can, which is what
+	// C_WrapKey's refusal defends.
+	targetKeyHandle := createSecretKeyWithoutValue(t, m, sessionHandle,
+		NewBoolAttribute(CKA_EXTRACTABLE, true))
 
-	mechanism := &Mechanism{Type: CKM_AES_GCM}
+	mechanism := NewMechanismWithTypedParams(CKM_AES_GCM, NewAESGCMParams(testGCMIV(), 128))
 
 	_, rv = m.WrapKey(sessionHandle, mechanism, wrapKeyHandle, targetKeyHandle)
 	assert.Equal(t, CKR_KEY_NOT_WRAPPABLE, rv, "WrapKey should fail when key has no value")
@@ -1498,11 +1576,12 @@ func TestModule_DigestUpdate_LargeData(t *testing.T) {
 	m := initializeTestModule(t)
 	defer m.Finalize()
 
-	sessionHandle, rv := m.OpenSession(0, CKF_SERIAL_SESSION|CKF_RW_SESSION)
-	require.Equal(t, CKR_OK, rv)
+	// CKF_LOGIN_REQUIRED gates key-bearing operations, so the fixture
+	// authenticates before exercising them.
+	sessionHandle := loginAsNormalUser(t, m)
 
 	mechanism := &Mechanism{Type: CKM_SHA256}
-	rv = m.DigestInit(sessionHandle, mechanism)
+	rv := m.DigestInit(sessionHandle, mechanism)
 	require.Equal(t, CKR_OK, rv)
 
 	// Add large data in chunks
@@ -1523,7 +1602,7 @@ func TestModule_EncryptUpdate_LargeData(t *testing.T) {
 	m, sessionHandle, keyHandle := setupTestModuleWithKey(t)
 	defer m.Finalize()
 
-	mechanism := &Mechanism{Type: CKM_AES_GCM}
+	mechanism := NewMechanismWithTypedParams(CKM_AES_GCM, NewAESGCMParams(testGCMIV(), 128))
 	rv := m.EncryptInit(sessionHandle, mechanism, keyHandle)
 	require.Equal(t, CKR_OK, rv)
 
@@ -1550,16 +1629,18 @@ func TestModule_MultipleSessionsDigest(t *testing.T) {
 	defer m.Finalize()
 
 	// Open multiple sessions
-	session1, rv := m.OpenSession(0, CKF_SERIAL_SESSION|CKF_RW_SESSION)
-	require.Equal(t, CKR_OK, rv)
+	// CKF_LOGIN_REQUIRED gates key-bearing operations, so the fixture
+	// authenticates before exercising them.
+	session1 := loginAsNormalUser(t, m)
 
-	session2, rv := m.OpenSession(0, CKF_SERIAL_SESSION|CKF_RW_SESSION)
-	require.Equal(t, CKR_OK, rv)
+	// CKF_LOGIN_REQUIRED gates key-bearing operations, so the fixture
+	// authenticates before exercising them.
+	session2 := loginAsNormalUser(t, m)
 
 	// Initialize digest on both sessions
 	mechanism := &Mechanism{Type: CKM_SHA256}
 
-	rv = m.DigestInit(session1, mechanism)
+	rv := m.DigestInit(session1, mechanism)
 	require.Equal(t, CKR_OK, rv)
 
 	rv = m.DigestInit(session2, mechanism)
@@ -1582,4 +1663,25 @@ func TestModule_MultipleSessionsDigest(t *testing.T) {
 
 	// Hashes should be different (different input data)
 	assert.NotEqual(t, hash1, hash2, "different inputs should produce different hashes")
+}
+
+// testGCMIVCounter numbers the IVs testGCMIV hands out.
+var testGCMIVCounter atomic.Uint64
+
+// testGCMIV returns a 12-byte AES-GCM IV no other call has produced.
+// CKM_AES_GCM carries its IV in CK_GCM_PARAMS, and decryption cannot proceed
+// without one.
+//
+// It used to return one fixed string for every fixture, which worked only
+// while each CryptoManager tracked consumed (key, IV) pairs in a map of its
+// own. NIST SP 800-38D section 8.2 constrains the pair and not the manager
+// instance, so that tracking is now process-wide (see checkGCMNonce) and a
+// shared constant would make every fixture after the first a reuse of the
+// first one's IV under the same test key. Callers that need the same IV twice
+// -- to decrypt what they encrypted -- must keep the value, which every caller
+// already does.
+func testGCMIV() []byte {
+	iv := make([]byte, GCMNonceSize)
+	binary.BigEndian.PutUint64(iv[GCMNonceSize-8:], testGCMIVCounter.Add(1))
+	return iv
 }

@@ -38,11 +38,18 @@ const (
 	xkmsBundlePath = "/v1/ca/bootstrap"
 )
 
+// requiredEnv reads a harness-supplied environment variable.
+//
+// test/integration/bootstrap/docker-compose.yml exports every BOOTSTRAP_* value
+// these tests consume, so a missing one means the compose harness is misconfigured.
+// That is a broken run and must fail loudly rather than report a pass for a
+// bootstrap mode that was never exercised.
 func requiredEnv(t *testing.T, key string) string {
 	t.Helper()
 	val := os.Getenv(key)
 	if val == "" {
-		t.Skipf("required environment variable %s not set", key)
+		t.Fatalf("required environment variable %s is not set; the bootstrap harness "+
+			"(test/integration/bootstrap/docker-compose.yml) must export it", key)
 	}
 	return val
 }

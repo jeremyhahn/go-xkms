@@ -808,12 +808,15 @@ func (h *autoApproveHandler) RequestUserVerification(ctx context.Context, req *a
 	return nil, authenticator.ErrTerminalUnavailable
 }
 
-// skipIfNoUHID skips the test if /dev/uhid is not available or not accessible.
-func skipIfNoUHID(t *testing.T) {
+// requireUHID fails the test if /dev/uhid is not available or not accessible.
+// The integration container loads the uhid module and runs with access to the
+// device, so an unusable device is an environment fault.
+func requireUHID(t *testing.T) {
 	t.Helper()
 	f, err := os.OpenFile("/dev/uhid", os.O_RDWR, 0)
 	if err != nil {
-		t.Skipf("UHID not available: %v", err)
+		t.Fatalf("cannot open /dev/uhid: %v; run this suite via the devcontainer, "+
+			"which loads the uhid module and grants device access", err)
 	}
 	f.Close()
 }

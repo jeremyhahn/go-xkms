@@ -610,7 +610,9 @@ func TestTransportMatrixOutputFormatConsistency(t *testing.T) {
 	requireMatrixBinary(t)
 	protos := configuredProtocols()
 	if len(protos) < 2 {
-		t.Skip("need at least 2 protocols to test cross-protocol consistency")
+		t.Fatalf("cross-protocol consistency requires at least 2 configured protocols, got %d; "+
+			"the harness must export CACTL_REST_ADDR/CACTL_GRPC_ADDR/CACTL_QUIC_ADDR/CACTL_MCP_ADDR/CACTL_UNIX_PATH",
+			len(protos))
 	}
 
 	// Create tenant on first protocol

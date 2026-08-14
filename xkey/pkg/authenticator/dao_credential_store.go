@@ -157,18 +157,23 @@ func (s *DAOCredentialStore) LoadByRPID(rpID string) ([]*StoredCredential, error
 
 	// Try index-based lookup first.
 	entities, err := s.dao.QueryByIndex(context.Background(), "RPID", rpID)
-	if err != nil {
+	switch {
+	case errors.Is(err, xkms.ErrIndexingNotSupported):
+		// The store cannot answer index queries at all (the KVStoreAdapter
+		// cannot maintain one, because the entity encoding is the DAO's
+		// choice and is never communicated to the store). Scan instead.
+		//
+		// This has to key off the sentinel rather than an empty result: the
+		// adapter used to return (nil, nil), which made "cannot index" and
+		// "index matched nothing" indistinguishable, so a genuine empty match
+		// silently paid for a full scan and a broken index would have gone
+		// unnoticed.
+		return s.loadByRPIDScan(rpID)
+	case err != nil:
 		return nil, wrapStorageError(err)
 	}
 
-	// If index returned results, use them directly.
-	if len(entities) > 0 {
-		return s.entitiesToCredentials(entities), nil
-	}
-
-	// Fall back to full scan with filter when the KVStore does not
-	// support indexing (e.g., the kvadapter returns nil, nil).
-	return s.loadByRPIDScan(rpID)
+	return s.entitiesToCredentials(entities), nil
 }
 
 // loadByRPIDScan does a full scan and filters by RPID.

@@ -22,6 +22,7 @@ import (
 	"github.com/jeremyhahn/go-xkms/pkg/acme/kms"
 	"github.com/jeremyhahn/go-xkms/pkg/acme/qrdb"
 	"github.com/jeremyhahn/go-xkms/pkg/acme/storage"
+	xkmsauth "github.com/jeremyhahn/go-xkms/pkg/auth"
 	"github.com/jeremyhahn/go-xkms/pkg/ca"
 )
 
@@ -42,6 +43,18 @@ func WithQRDB(svc qrdb.Service) Option {
 func WithAuthClient(client auth.Client) Option {
 	return func(tca *TrustedCA) error {
 		tca.authClient = client
+		return nil
+	}
+}
+
+// WithAuthorizer sets the qrdb-backed authorizer the admin API authorizes
+// through. It is the same *auth.Authorizer the xkms REST/gRPC/QUIC/MCP
+// transports use, so a role grant means the same thing on every surface.
+// Leaving it unset disables authorization (RBAC-disabled deployments) but never
+// disables authentication.
+func WithAuthorizer(authorizer *xkmsauth.Authorizer) Option {
+	return func(tca *TrustedCA) error {
+		tca.authorizer = authorizer
 		return nil
 	}
 }

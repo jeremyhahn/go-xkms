@@ -14,6 +14,7 @@
 package cmd
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"log/slog"
@@ -27,6 +28,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	"github.com/jeremyhahn/go-xkms/sdk/go/transport"
 	"github.com/jeremyhahn/go-xkms/xkey/pkg/serverregistry"
 	"github.com/jeremyhahn/go-xkms/xkey/pkg/tokenstore"
 )
@@ -1062,4 +1064,612 @@ func TestOpenRegistryAndTokenStore_SharedStoragePath(t *testing.T) {
 	foundToken, err := store.Load(ctx, "https://shared-path.example.com:8443")
 	require.NoError(t, err)
 	assert.Equal(t, "bootstrap-token", foundToken.Token)
+}
+
+// --- WebAuthn ceremony test doubles ---
+
+// fakeAuthClient is an AuthClientService double that records what the auth
+// commands send and replays scripted server responses.
+type fakeAuthClient struct {
+	connectErr error
+	closed     bool
+
+	beginRegistrationResp *transport.BeginRegistrationResponse
+	beginRegistrationErr  error
+	beginRegistrationReq  *transport.BeginRegistrationRequest
+
+	finishRegistrationResp *transport.FinishRegistrationResponse
+	finishRegistrationErr  error
+	finishRegistrationReq  *transport.FinishRegistrationRequest
+
+	beginAuthenticationResp *transport.BeginAuthenticationResponse
+	beginAuthenticationErr  error
+	beginAuthenticationReq  *transport.BeginAuthenticationRequest
+
+	finishAuthenticationResp *transport.FinishAuthenticationResponse
+	finishAuthenticationErr  error
+	finishAuthenticationReq  *transport.FinishAuthenticationRequest
+}
+
+func (f *fakeAuthClient) Connect(_ context.Context) error { return f.connectErr }
+
+func (f *fakeAuthClient) Close() error {
+	f.closed = true
+	return nil
+}
+
+func (f *fakeAuthClient) BeginRegistration(_ context.Context, req *transport.BeginRegistrationRequest) (*transport.BeginRegistrationResponse, error) {
+	f.beginRegistrationReq = req
+	return f.beginRegistrationResp, f.beginRegistrationErr
+}
+
+func (f *fakeAuthClient) FinishRegistration(_ context.Context, req *transport.FinishRegistrationRequest) (*transport.FinishRegistrationResponse, error) {
+	f.finishRegistrationReq = req
+	return f.finishRegistrationResp, f.finishRegistrationErr
+}
+
+func (f *fakeAuthClient) BeginAuthentication(_ context.Context, req *transport.BeginAuthenticationRequest) (*transport.BeginAuthenticationResponse, error) {
+	f.beginAuthenticationReq = req
+	return f.beginAuthenticationResp, f.beginAuthenticationErr
+}
+
+func (f *fakeAuthClient) FinishAuthentication(_ context.Context, req *transport.FinishAuthenticationRequest) (*transport.FinishAuthenticationResponse, error) {
+	f.finishAuthenticationReq = req
+	return f.finishAuthenticationResp, f.finishAuthenticationErr
+}
+
+// fakeCeremony is a WebAuthnCeremony double standing in for an attached
+// CTAP2 authenticator.
+type fakeCeremony struct {
+	registerJSON []byte
+	registerErr  error
+	registerOpts []byte
+
+	assertJSON []byte
+	assertErr  error
+	assertOpts []byte
+
+	origin string
+	closed bool
+}
+
+func (f *fakeCeremony) Register(_ context.Context, optionsJSON []byte, origin string) ([]byte, error) {
+	f.registerOpts = optionsJSON
+	f.origin = origin
+	return f.registerJSON, f.registerErr
+}
+
+func (f *fakeCeremony) Assert(_ context.Context, optionsJSON []byte, origin string) ([]byte, error) {
+	f.assertOpts = optionsJSON
+	f.origin = origin
+	return f.assertJSON, f.assertErr
+}
+
+func (f *fakeCeremony) Close() error {
+	f.closed = true
+	return nil
+}
+
+// installAuthDoubles points the auth commands at the supplied client and
+// ceremony doubles for the duration of the test.
+func installAuthDoubles(t *testing.T, client AuthClientService, ceremony WebAuthnCeremony, ceremonyErr error) {
+	t.Helper()
+
+	originalClient := authClientFactory
+	originalCeremony := webauthnCeremonyFactory
+
+	authClientFactory = func(_, _, _ string) (AuthClientService, error) { return client, nil }
+	webauthnCeremonyFactory = func() (WebAuthnCeremony, error) {
+		if ceremonyErr != nil {
+			return nil, ceremonyErr
+		}
+		return ceremony, nil
+	}
+
+	t.Cleanup(func() {
+		authClientFactory = originalClient
+		webauthnCeremonyFactory = originalCeremony
+	})
+}
+
+// newAuthRegisterCmd builds a register command carrying the flags the real
+// command declares, bound to an output buffer.
+func newAuthRegisterCmd(t *testing.T, out *bytes.Buffer) *cobra.Command {
+	t.Helper()
+
+	cmd := &cobra.Command{}
+	cmd.Flags().String("server", "", "")
+	cmd.Flags().String("spki-pin", "", "")
+	cmd.Flags().String("setup-token", "", "")
+	cmd.Flags().String("username", "", "")
+	cmd.Flags().String("display-name", "", "")
+	cmd.SetOut(out)
+	return cmd
+}
+
+// newAuthLoginCmd builds a login command carrying the flags the real command
+// declares, bound to an output buffer.
+func newAuthLoginCmd(t *testing.T, out *bytes.Buffer) *cobra.Command {
+	t.Helper()
+
+	cmd := &cobra.Command{}
+	cmd.Flags().String("server", "", "")
+	cmd.Flags().String("username", "", "")
+	cmd.SetOut(out)
+	return cmd
+}
+
+// --- runAuthRegister WebAuthn ceremony tests ---
+
+// TestRunAuthRegister_CompletesCeremony verifies register drives the full
+// WebAuthn registration ceremony - begin, authenticator attestation, finish -
+// and reports the credential the server created. Before this was implemented
+// the command printed "not yet implemented" and exited 0.
+func TestRunAuthRegister_CompletesCeremony(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+
+	client := &fakeAuthClient{
+		beginRegistrationResp: &transport.BeginRegistrationResponse{
+			SessionID:   "session-abc",
+			OptionsJSON: `{"publicKey":{"challenge":"Y2hhbGxlbmdl","rp":{"id":"xkms.example.com"}}}`,
+		},
+		finishRegistrationResp: &transport.FinishRegistrationResponse{
+			Success:      true,
+			CredentialID: "cred-123",
+		},
+	}
+	ceremony := &fakeCeremony{registerJSON: []byte(`{"id":"cred-123"}`)}
+	installAuthDoubles(t, client, ceremony, nil)
+
+	var out bytes.Buffer
+	cmd := newAuthRegisterCmd(t, &out)
+	require.NoError(t, cmd.Flags().Set("server", "https://xkms.example.com:8443"))
+	require.NoError(t, cmd.Flags().Set("username", "alice"))
+	require.NoError(t, cmd.Flags().Set("display-name", "Alice Example"))
+
+	require.NoError(t, runAuthRegister(cmd, nil))
+
+	// The server was asked to begin the ceremony for the named account.
+	require.NotNil(t, client.beginRegistrationReq)
+	assert.Equal(t, "alice", client.beginRegistrationReq.Username)
+	assert.Equal(t, "Alice Example", client.beginRegistrationReq.DisplayName)
+
+	// The authenticator received the server's options and the server origin.
+	assert.Equal(t, client.beginRegistrationResp.OptionsJSON, string(ceremony.registerOpts))
+	assert.Equal(t, "https://xkms.example.com:8443", ceremony.origin)
+
+	// The attestation went back with the correlating session id.
+	require.NotNil(t, client.finishRegistrationReq)
+	assert.Equal(t, "session-abc", client.finishRegistrationReq.SessionID)
+	assert.Equal(t, `{"id":"cred-123"}`, client.finishRegistrationReq.AttestationJSON)
+
+	assert.Contains(t, out.String(), "Server registered: https://xkms.example.com:8443")
+	assert.Contains(t, out.String(), "Credential registered: cred-123")
+	assert.True(t, ceremony.closed, "authenticator should be released")
+	assert.True(t, client.closed, "transport client should be closed")
+
+	// The server was recorded in the local registry.
+	registry, cleanup, err := openServerRegistry(slog.Default())
+	require.NoError(t, err)
+	defer cleanup()
+	entry, err := registry.Lookup(context.Background(), "https://xkms.example.com:8443")
+	require.NoError(t, err)
+	assert.Equal(t, "https://xkms.example.com:8443", entry.URL)
+}
+
+// TestRunAuthRegister_StoresIssuedToken verifies a token returned alongside
+// registration is persisted in the token store.
+func TestRunAuthRegister_StoresIssuedToken(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+
+	client := &fakeAuthClient{
+		beginRegistrationResp: &transport.BeginRegistrationResponse{SessionID: "s", OptionsJSON: "{}"},
+		finishRegistrationResp: &transport.FinishRegistrationResponse{
+			Success:      true,
+			CredentialID: "cred-1",
+			Token:        "issued-jwt",
+		},
+	}
+	installAuthDoubles(t, client, &fakeCeremony{registerJSON: []byte("{}")}, nil)
+
+	var out bytes.Buffer
+	cmd := newAuthRegisterCmd(t, &out)
+	require.NoError(t, cmd.Flags().Set("server", "https://xkms.example.com:8443"))
+	require.NoError(t, cmd.Flags().Set("username", "alice"))
+
+	require.NoError(t, runAuthRegister(cmd, nil))
+
+	tokens, cleanup, err := openTokenStore(slog.Default())
+	require.NoError(t, err)
+	defer cleanup()
+
+	entry, err := tokens.Load(context.Background(), "https://xkms.example.com:8443")
+	require.NoError(t, err)
+	assert.Equal(t, "issued-jwt", entry.Token)
+	assert.Equal(t, tokenstore.SourceFIDO2, entry.Source)
+}
+
+// TestRunAuthRegister_ExistingServerStillEnrolls verifies an already
+// registered server no longer short-circuits to a silent success: the
+// credential ceremony still runs.
+func TestRunAuthRegister_ExistingServerStillEnrolls(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+
+	registry, cleanup, err := openServerRegistry(slog.Default())
+	require.NoError(t, err)
+	require.NoError(t, registry.Register(context.Background(), &serverregistry.ServerEntry{
+		URL:      "https://existing.example.com:8443",
+		Name:     "existing",
+		Protocol: serverregistry.ProtocolREST,
+	}))
+	cleanup()
+
+	client := &fakeAuthClient{
+		beginRegistrationResp:  &transport.BeginRegistrationResponse{SessionID: "s", OptionsJSON: "{}"},
+		finishRegistrationResp: &transport.FinishRegistrationResponse{Success: true, CredentialID: "cred-9"},
+	}
+	installAuthDoubles(t, client, &fakeCeremony{registerJSON: []byte("{}")}, nil)
+
+	var out bytes.Buffer
+	cmd := newAuthRegisterCmd(t, &out)
+	require.NoError(t, cmd.Flags().Set("server", "https://existing.example.com:8443"))
+	require.NoError(t, cmd.Flags().Set("username", "alice"))
+
+	require.NoError(t, runAuthRegister(cmd, nil))
+
+	assert.Contains(t, out.String(), "Server already registered")
+	assert.Contains(t, out.String(), "Credential registered: cred-9")
+	require.NotNil(t, client.finishRegistrationReq)
+}
+
+// TestRunAuthRegister_NoAuthenticator verifies the command fails closed when
+// no CTAP2 authenticator can be opened.
+func TestRunAuthRegister_NoAuthenticator(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+
+	client := &fakeAuthClient{
+		beginRegistrationResp: &transport.BeginRegistrationResponse{SessionID: "s", OptionsJSON: "{}"},
+	}
+	installAuthDoubles(t, client, nil, ErrWebAuthnAuthenticatorUnavailable)
+
+	var out bytes.Buffer
+	cmd := newAuthRegisterCmd(t, &out)
+	require.NoError(t, cmd.Flags().Set("server", "https://xkms.example.com:8443"))
+
+	err := runAuthRegister(cmd, nil)
+	require.Error(t, err)
+	assert.ErrorIs(t, err, ErrWebAuthnAuthenticatorUnavailable)
+	assert.NotContains(t, out.String(), "Credential registered")
+}
+
+// TestRunAuthRegister_BeginRejected verifies a server that refuses to start
+// the ceremony surfaces a typed error.
+func TestRunAuthRegister_BeginRejected(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+
+	client := &fakeAuthClient{beginRegistrationErr: errors.New("registration disabled")}
+	installAuthDoubles(t, client, &fakeCeremony{}, nil)
+
+	cmd := newAuthRegisterCmd(t, &bytes.Buffer{})
+	require.NoError(t, cmd.Flags().Set("server", "https://xkms.example.com:8443"))
+
+	err := runAuthRegister(cmd, nil)
+	require.Error(t, err)
+	assert.ErrorIs(t, err, ErrAuthBeginRegistrationFailed)
+	assert.Contains(t, err.Error(), "registration disabled")
+}
+
+// TestRunAuthRegister_ServerRejectsAttestation verifies an unsuccessful
+// finish is reported with the server's message instead of exiting 0.
+func TestRunAuthRegister_ServerRejectsAttestation(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+
+	client := &fakeAuthClient{
+		beginRegistrationResp:  &transport.BeginRegistrationResponse{SessionID: "s", OptionsJSON: "{}"},
+		finishRegistrationResp: &transport.FinishRegistrationResponse{Success: false, Message: "attestation not trusted"},
+	}
+	installAuthDoubles(t, client, &fakeCeremony{registerJSON: []byte("{}")}, nil)
+
+	cmd := newAuthRegisterCmd(t, &bytes.Buffer{})
+	require.NoError(t, cmd.Flags().Set("server", "https://xkms.example.com:8443"))
+
+	err := runAuthRegister(cmd, nil)
+	require.Error(t, err)
+	assert.ErrorIs(t, err, ErrAuthRegistrationRejected)
+	assert.Contains(t, err.Error(), "attestation not trusted")
+}
+
+// TestRunAuthRegister_ConnectFails verifies an unreachable server is reported
+// before anything is written to the registry.
+func TestRunAuthRegister_ConnectFails(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+
+	client := &fakeAuthClient{connectErr: errors.New("connection refused")}
+	installAuthDoubles(t, client, &fakeCeremony{}, nil)
+
+	cmd := newAuthRegisterCmd(t, &bytes.Buffer{})
+	require.NoError(t, cmd.Flags().Set("server", "https://xkms.example.com:8443"))
+
+	err := runAuthRegister(cmd, nil)
+	require.Error(t, err)
+	assert.ErrorIs(t, err, ErrAuthConnectFailed)
+
+	registry, cleanup, regErr := openServerRegistry(slog.Default())
+	require.NoError(t, regErr)
+	defer cleanup()
+	servers, listErr := registry.List(context.Background())
+	require.NoError(t, listErr)
+	assert.Empty(t, servers)
+}
+
+// --- runAuthLogin WebAuthn ceremony tests ---
+
+// registerLoginServer pre-registers a server so login can look it up.
+func registerLoginServer(t *testing.T, serverURL string) {
+	t.Helper()
+
+	registry, cleanup, err := openServerRegistry(slog.Default())
+	require.NoError(t, err)
+	defer cleanup()
+	require.NoError(t, registry.Register(context.Background(), &serverregistry.ServerEntry{
+		URL:      serverURL,
+		Name:     serverURL,
+		Protocol: serverregistry.ProtocolREST,
+	}))
+}
+
+// TestRunAuthLogin_ObtainsAndStoresToken verifies login drives the assertion
+// ceremony and persists the issued JWT with its claims. Before this was
+// implemented the command printed "not yet implemented" and never obtained a
+// token.
+func TestRunAuthLogin_ObtainsAndStoresToken(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+
+	const serverURL = "https://xkms.example.com:8443"
+	registerLoginServer(t, serverURL)
+
+	// HS256 JWT with iss/sub/exp claims; only the claims are read.
+	const jwtToken = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9." +
+		"eyJpc3MiOiJ4a21zLmV4YW1wbGUuY29tIiwic3ViIjoiYWxpY2UiLCJleHAiOjQ4NzE1MTIwMDB9." +
+		"c2lnbmF0dXJl"
+
+	client := &fakeAuthClient{
+		beginAuthenticationResp: &transport.BeginAuthenticationResponse{
+			SessionID:   "login-session",
+			OptionsJSON: `{"publicKey":{"challenge":"Y2hhbGxlbmdl","rpId":"xkms.example.com"}}`,
+		},
+		finishAuthenticationResp: &transport.FinishAuthenticationResponse{
+			Success:  true,
+			Token:    jwtToken,
+			Username: "alice",
+		},
+	}
+	ceremony := &fakeCeremony{assertJSON: []byte(`{"id":"cred-123"}`)}
+	installAuthDoubles(t, client, ceremony, nil)
+
+	var out bytes.Buffer
+	cmd := newAuthLoginCmd(t, &out)
+	require.NoError(t, cmd.Flags().Set("server", serverURL))
+	require.NoError(t, cmd.Flags().Set("username", "alice"))
+
+	require.NoError(t, runAuthLogin(cmd, nil))
+
+	require.NotNil(t, client.beginAuthenticationReq)
+	assert.Equal(t, "alice", client.beginAuthenticationReq.Username)
+	assert.Equal(t, client.beginAuthenticationResp.OptionsJSON, string(ceremony.assertOpts))
+	assert.Equal(t, serverURL, ceremony.origin)
+
+	require.NotNil(t, client.finishAuthenticationReq)
+	assert.Equal(t, "login-session", client.finishAuthenticationReq.SessionID)
+	assert.Equal(t, "alice", client.finishAuthenticationReq.Username)
+	assert.Equal(t, `{"id":"cred-123"}`, client.finishAuthenticationReq.AssertionJSON)
+
+	tokens, cleanup, err := openTokenStore(slog.Default())
+	require.NoError(t, err)
+	defer cleanup()
+
+	entry, err := tokens.Load(context.Background(), serverURL)
+	require.NoError(t, err)
+	assert.Equal(t, jwtToken, entry.Token)
+	assert.Equal(t, tokenstore.TypeBearer, entry.TokenType)
+	assert.Equal(t, tokenstore.SourceFIDO2, entry.Source)
+	assert.Equal(t, "xkms.example.com", entry.Issuer)
+	assert.Equal(t, "alice", entry.Subject)
+	assert.False(t, entry.IsExpired())
+
+	// The registry records the successful connection.
+	registry, regCleanup, err := openServerRegistry(slog.Default())
+	require.NoError(t, err)
+	defer regCleanup()
+	serverEntry, err := registry.Lookup(context.Background(), serverURL)
+	require.NoError(t, err)
+	assert.False(t, serverEntry.LastConnectedAt.IsZero(), "login should record the connection time")
+
+	assert.Contains(t, out.String(), "Token stored")
+	assert.True(t, ceremony.closed)
+}
+
+// TestRunAuthLogin_ServerRejectsAssertion verifies a rejected assertion is a
+// failure, not a silent success.
+func TestRunAuthLogin_ServerRejectsAssertion(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+
+	const serverURL = "https://xkms.example.com:8443"
+	registerLoginServer(t, serverURL)
+
+	client := &fakeAuthClient{
+		beginAuthenticationResp:  &transport.BeginAuthenticationResponse{SessionID: "s", OptionsJSON: "{}"},
+		finishAuthenticationResp: &transport.FinishAuthenticationResponse{Success: false, Message: "unknown credential"},
+	}
+	installAuthDoubles(t, client, &fakeCeremony{assertJSON: []byte("{}")}, nil)
+
+	cmd := newAuthLoginCmd(t, &bytes.Buffer{})
+	require.NoError(t, cmd.Flags().Set("server", serverURL))
+
+	err := runAuthLogin(cmd, nil)
+	require.Error(t, err)
+	assert.ErrorIs(t, err, ErrAuthLoginRejected)
+	assert.Contains(t, err.Error(), "unknown credential")
+}
+
+// TestRunAuthLogin_NoTokenIssued verifies a success response without a token
+// fails closed, since login exists to obtain a JWT.
+func TestRunAuthLogin_NoTokenIssued(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+
+	const serverURL = "https://xkms.example.com:8443"
+	registerLoginServer(t, serverURL)
+
+	client := &fakeAuthClient{
+		beginAuthenticationResp:  &transport.BeginAuthenticationResponse{SessionID: "s", OptionsJSON: "{}"},
+		finishAuthenticationResp: &transport.FinishAuthenticationResponse{Success: true},
+	}
+	installAuthDoubles(t, client, &fakeCeremony{assertJSON: []byte("{}")}, nil)
+
+	cmd := newAuthLoginCmd(t, &bytes.Buffer{})
+	require.NoError(t, cmd.Flags().Set("server", serverURL))
+
+	err := runAuthLogin(cmd, nil)
+	require.Error(t, err)
+	assert.ErrorIs(t, err, ErrAuthNoToken)
+}
+
+// TestRunAuthLogin_AuthenticatorFails verifies a ceremony failure at the
+// authenticator is surfaced.
+func TestRunAuthLogin_AuthenticatorFails(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+
+	const serverURL = "https://xkms.example.com:8443"
+	registerLoginServer(t, serverURL)
+
+	client := &fakeAuthClient{
+		beginAuthenticationResp: &transport.BeginAuthenticationResponse{SessionID: "s", OptionsJSON: "{}"},
+	}
+	ceremony := &fakeCeremony{assertErr: &SentinelCauseError{
+		Sentinel: ErrWebAuthnAssertionFailed,
+		Cause:    errors.New("user presence timeout"),
+	}}
+	installAuthDoubles(t, client, ceremony, nil)
+
+	cmd := newAuthLoginCmd(t, &bytes.Buffer{})
+	require.NoError(t, cmd.Flags().Set("server", serverURL))
+
+	err := runAuthLogin(cmd, nil)
+	require.Error(t, err)
+	assert.ErrorIs(t, err, ErrWebAuthnAssertionFailed)
+	assert.Contains(t, err.Error(), "user presence timeout")
+}
+
+// TestRunAuthLogin_BeginRejected verifies a server that refuses to start the
+// assertion ceremony surfaces a typed error.
+func TestRunAuthLogin_BeginRejected(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+
+	const serverURL = "https://xkms.example.com:8443"
+	registerLoginServer(t, serverURL)
+
+	client := &fakeAuthClient{beginAuthenticationErr: errors.New("no credentials enrolled")}
+	installAuthDoubles(t, client, &fakeCeremony{}, nil)
+
+	cmd := newAuthLoginCmd(t, &bytes.Buffer{})
+	require.NoError(t, cmd.Flags().Set("server", serverURL))
+
+	err := runAuthLogin(cmd, nil)
+	require.Error(t, err)
+	assert.ErrorIs(t, err, ErrAuthBeginAuthenticationFailed)
+	assert.Contains(t, err.Error(), "no credentials enrolled")
+}
+
+// TestRunAuthLogin_ConnectFails verifies an unreachable registered server is
+// reported before any ceremony work.
+func TestRunAuthLogin_ConnectFails(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+
+	const serverURL = "https://xkms.example.com:8443"
+	registerLoginServer(t, serverURL)
+
+	client := &fakeAuthClient{connectErr: errors.New("connection refused")}
+	installAuthDoubles(t, client, &fakeCeremony{}, nil)
+
+	cmd := newAuthLoginCmd(t, &bytes.Buffer{})
+	require.NoError(t, cmd.Flags().Set("server", serverURL))
+
+	err := runAuthLogin(cmd, nil)
+	require.Error(t, err)
+	assert.ErrorIs(t, err, ErrAuthConnectFailed)
+	assert.Nil(t, client.beginAuthenticationReq)
+}
+
+// --- username resolution and token metadata ---
+
+// TestResolveAuthUsername_FlagWins verifies the explicit flag takes
+// precedence over the environment-derived default.
+func TestResolveAuthUsername_FlagWins(t *testing.T) {
+	cmd := &cobra.Command{}
+	cmd.Flags().String("username", "", "")
+	require.NoError(t, cmd.Flags().Set("username", "  bob  "))
+
+	username, err := resolveAuthUsername(cmd)
+	require.NoError(t, err)
+	assert.Equal(t, "bob", username)
+}
+
+// TestResolveAuthUsername_DefaultsToOSUser verifies a command without the
+// flag still resolves an account name from the environment.
+func TestResolveAuthUsername_DefaultsToOSUser(t *testing.T) {
+	cmd := &cobra.Command{}
+
+	username, err := resolveAuthUsername(cmd)
+	require.NoError(t, err)
+	assert.NotEmpty(t, username)
+}
+
+// TestApplyJWTClaims_PopulatesMetadata verifies registered claims are copied
+// onto the stored token entry.
+func TestApplyJWTClaims_PopulatesMetadata(t *testing.T) {
+	const jwtToken = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9." +
+		"eyJpc3MiOiJ4a21zLmV4YW1wbGUuY29tIiwic3ViIjoiYWxpY2UiLCJleHAiOjQ4NzE1MTIwMDB9." +
+		"c2lnbmF0dXJl"
+
+	entry := &tokenstore.TokenEntry{}
+	applyJWTClaims(entry, jwtToken)
+
+	assert.Equal(t, "xkms.example.com", entry.Issuer)
+	assert.Equal(t, "alice", entry.Subject)
+	assert.Equal(t, int64(4871512000), entry.ExpiresAt.Unix())
+}
+
+// TestApplyJWTClaims_NonJWTLeavesMetadataUnset verifies an opaque token is
+// stored without inventing metadata.
+func TestApplyJWTClaims_NonJWTLeavesMetadataUnset(t *testing.T) {
+	entry := &tokenstore.TokenEntry{}
+	applyJWTClaims(entry, "not-a-jwt")
+
+	assert.Empty(t, entry.Issuer)
+	assert.Empty(t, entry.Subject)
+	assert.True(t, entry.ExpiresAt.IsZero())
+}
+
+// TestAuthServerDetail verifies server messages are formatted as error detail
+// only when present.
+func TestAuthServerDetail(t *testing.T) {
+	assert.Equal(t, "", authServerDetail(""))
+	assert.Equal(t, ": denied", authServerDetail("denied"))
+}
+
+// TestDefaultAuthClientFactory_BuildsClient verifies the production factory
+// returns a usable, unconnected SDK client.
+func TestDefaultAuthClientFactory_BuildsClient(t *testing.T) {
+	client, err := defaultAuthClientFactory("https://xkms.example.com:8443", "", "")
+	require.NoError(t, err)
+	require.NotNil(t, client)
+	assert.NoError(t, client.Close())
+}
+
+// TestDefaultAuthClientFactory_RejectsEmptyAddress verifies an unusable
+// configuration is refused rather than producing a half-built client.
+func TestDefaultAuthClientFactory_RejectsEmptyAddress(t *testing.T) {
+	client, err := defaultAuthClientFactory("", "", "")
+	assert.Nil(t, client)
+	assert.ErrorIs(t, err, ErrAuthClientCreationFailed)
 }

@@ -352,6 +352,7 @@ func runSSHConnectLocal(host string, port int, user, alias, identity string) err
 }
 
 func runSSHProfileAdd(cmd *cobra.Command, _ []string) error {
+	out := cmd.OutOrStdout()
 	name, _ := cmd.Flags().GetString("name")
 	host, _ := cmd.Flags().GetString("host")
 	keySource, _ := cmd.Flags().GetString("key-source")
@@ -387,11 +388,12 @@ func runSSHProfileAdd(cmd *cobra.Command, _ []string) error {
 	}); aerr != nil {
 		return aerr
 	}
-	fmt.Printf("Added SSH profile %q (%s)\n", name, host)
+	fmt.Fprintf(out, "Added SSH profile %q (%s)\n", name, host)
 	return nil
 }
 
 func runSSHProfileList(cmd *cobra.Command, _ []string) error {
+	out := cmd.OutOrStdout()
 	folder, _ := cmd.Flags().GetString("folder")
 	store, err := xkeyProfileStore()
 	if err != nil {
@@ -407,7 +409,7 @@ func runSSHProfileList(cmd *cobra.Command, _ []string) error {
 		return err
 	}
 	if len(profiles) == 0 {
-		fmt.Println("No SSH profiles found")
+		fmt.Fprintln(out, "No SSH profiles found")
 		return nil
 	}
 	for _, p := range profiles {
@@ -415,12 +417,13 @@ func runSSHProfileList(cmd *cobra.Command, _ []string) error {
 		if p.User != "" {
 			loc = p.User + "@" + p.Host
 		}
-		fmt.Printf("%s\t%s:%d\t%s\tkey=%s\n", p.Name, loc, p.EffectivePort(), p.FolderPath, p.KeyName)
+		fmt.Fprintf(out, "%s\t%s:%d\t%s\tkey=%s\n", p.Name, loc, p.EffectivePort(), p.FolderPath, p.KeyName)
 	}
 	return nil
 }
 
-func runSSHProfileGet(_ *cobra.Command, args []string) error {
+func runSSHProfileGet(cmd *cobra.Command, args []string) error {
+	out := cmd.OutOrStdout()
 	store, err := xkeyProfileStore()
 	if err != nil {
 		return err
@@ -429,12 +432,13 @@ func runSSHProfileGet(_ *cobra.Command, args []string) error {
 	if err != nil {
 		return err
 	}
-	fmt.Printf("Name: %s\nFolder: %s\nHost: %s\nPort: %d\nUser: %s\nKey: %s/%s/%s\nNotes: %s\n",
+	fmt.Fprintf(out, "Name: %s\nFolder: %s\nHost: %s\nPort: %d\nUser: %s\nKey: %s/%s/%s\nNotes: %s\n",
 		p.Name, p.FolderPath, p.Host, p.EffectivePort(), p.User, p.KeyScope, p.KeyOwner, p.KeyName, p.Notes)
 	return nil
 }
 
-func runSSHProfileRemove(_ *cobra.Command, args []string) error {
+func runSSHProfileRemove(cmd *cobra.Command, args []string) error {
+	out := cmd.OutOrStdout()
 	store, err := xkeyProfileStore()
 	if err != nil {
 		return err
@@ -442,11 +446,12 @@ func runSSHProfileRemove(_ *cobra.Command, args []string) error {
 	if derr := store.Delete(args[0]); derr != nil {
 		return derr
 	}
-	fmt.Printf("Deleted SSH profile %q\n", args[0])
+	fmt.Fprintf(out, "Deleted SSH profile %q\n", args[0])
 	return nil
 }
 
 func runSSHProfileMove(cmd *cobra.Command, args []string) error {
+	out := cmd.OutOrStdout()
 	folder, _ := cmd.Flags().GetString("folder")
 	if folder == "" {
 		return errors.New("ssh profile mv: --folder is required")
@@ -458,6 +463,6 @@ func runSSHProfileMove(cmd *cobra.Command, args []string) error {
 	if merr := store.MoveToFolder(args[0], folder); merr != nil {
 		return merr
 	}
-	fmt.Printf("Moved %q to %q\n", args[0], folder)
+	fmt.Fprintf(out, "Moved %q to %q\n", args[0], folder)
 	return nil
 }

@@ -21,6 +21,7 @@ import (
 	"time"
 
 	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
+	"github.com/jeremyhahn/go-xkms/pkg/acme/audit"
 	"github.com/jeremyhahn/go-xkms/pkg/acme/common"
 	"github.com/jeremyhahn/go-xkms/pkg/acme/entities"
 	caerrors "github.com/jeremyhahn/go-xkms/pkg/acme/errors"
@@ -132,6 +133,11 @@ func (s *RestService) NewAccountHandler(w http.ResponseWriter, r *http.Request) 
 		if err != nil {
 			s.logger.Error("External account binding verification failed", "error", err)
 
+			// A rejected external account binding is a refused enrollment, not
+			// a protocol nicety: record it before the request is answered.
+			s.recordAudit(audit.LogAuthenticationFailed(auditContext(r), s.auditLog,
+				"external account binding verification failed: "+err.Error()))
+
 			// Return appropriate error based on the verification failure.
 			// Check sentinel errors first (returned directly by the verifier),
 			// then check typed errors from the caerrors package.
@@ -214,5 +220,7 @@ func (s *RestService) NewAccountHandler(w http.ResponseWriter, r *http.Request) 
 
 	s.logger.Info("Account created", "id", accountID, "contacts", req.Contact,
 		"external_account_bound", verifiedBinding != nil, "tenant_id", newAccount.TenantID)
+	s.recordAudit(audit.LogAccountCreated(auditContext(r), s.auditLog,
+		auditAccountID(accountID), req.Contact, verifiedBinding != nil))
 	s.respondWithAccount(w, newAccount, http.StatusCreated)
 }

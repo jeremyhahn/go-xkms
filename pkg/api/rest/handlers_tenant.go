@@ -35,12 +35,12 @@ var (
 )
 
 // isCrossTenantAccess reports whether the given identity is attempting to act
-// on a tenant other than its own. A nil identity, a system-level identity
-// (empty TenantID), a request scoped to no tenant, and same-tenant access all
-// return false; only a tenant-scoped identity targeting a different tenant is
-// cross-tenant.
+// on a tenant other than its own. A cross-tenant-scoped identity per
+// auth.IsCrossTenant (nil, empty TenantID, or the reserved system tenant), a
+// request scoped to no tenant, and same-tenant access all return false; only
+// a tenant-scoped identity targeting a different tenant is cross-tenant.
 func isCrossTenantAccess(identity *auth.Identity, tenantID string) bool {
-	if identity == nil || identity.TenantID == "" || tenantID == "" {
+	if auth.IsCrossTenant(identity) || tenantID == "" {
 		return false
 	}
 	return identity.TenantID != tenantID

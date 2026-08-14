@@ -29,18 +29,22 @@ import (
 // It is created by TestMain and cleaned up after all tests complete.
 var pkgTempDir string
 
-// skipIfNoUHID skips the test if /dev/uhid is not available.
-func skipIfNoUHID(t *testing.T) {
+// requireUHID fails the test if /dev/uhid is not available. The integration
+// container loads the uhid module and runs with access to the device, so an
+// unusable device is an environment fault rather than a reason to skip.
+func requireUHID(t *testing.T) {
 	t.Helper()
 
 	if _, err := os.Stat(uhid.UHIDDevicePath); os.IsNotExist(err) {
-		t.Skip("UHID not available at /dev/uhid - skipping integration test")
+		t.Fatalf("UHID not available at %s; run this suite via the devcontainer, "+
+			"which loads the uhid module", uhid.UHIDDevicePath)
 	}
 
-	// Also check if we have permission to open the device.
+	// Also check that we have permission to open the device.
 	file, err := os.OpenFile(uhid.UHIDDevicePath, os.O_RDWR, 0)
 	if err != nil {
-		t.Skipf("Cannot open /dev/uhid (permission denied?) - skipping: %v", err)
+		t.Fatalf("cannot open %s: %v; the integration container must run with "+
+			"access to the uhid device", uhid.UHIDDevicePath, err)
 	}
 	file.Close()
 }

@@ -122,8 +122,10 @@ func (s *AuditService) GetEntries(filter *AuditFilter) ([]AuditEntry, error) {
 }
 
 // ExportEntries exports audit entries in the specified format.
-// Supported formats: "json", "csv".
-// TODO: wire to the audit store export functionality.
+// Supported formats: "json", "csv"; any other format is rejected with
+// ErrAuditInvalidFormat. The entries are read from the audit store using the
+// same filter semantics as GetEntries, and an empty result is reported as
+// ErrAuditNoEntries rather than an empty document.
 func (s *AuditService) ExportEntries(format string, filter *AuditFilter) ([]byte, error) {
 	if _, ok := validExportFormats[format]; !ok {
 		return nil, ErrAuditInvalidFormat

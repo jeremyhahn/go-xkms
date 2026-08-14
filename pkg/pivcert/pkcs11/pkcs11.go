@@ -22,17 +22,14 @@
 package pkcs11
 
 import (
-	"crypto/ecdsa"
-	"crypto/rsa"
-	"crypto/sha256"
 	"crypto/x509"
-	"encoding/hex"
 	"encoding/pem"
 	"errors"
 	"fmt"
 	"log/slog"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/jeremyhahn/go-xkms/pkg/errs"
@@ -196,7 +193,9 @@ type PKCS11CertStorage struct {
 	// libPath is non-empty only when New acquired a module reference;
 	// Close releases it via releaseModule.
 	libPath string
-	closed  bool
+	// closed is atomic because PIVCertificateStorage implementations must be
+	// safe for concurrent use: every operation reads it while Close writes it.
+	closed atomic.Bool
 }
 
 // New creates a new PKCS#11-backed PIV certificate storage.
@@ -317,7 +316,7 @@ func pivID(slot pivcert.PIVSlot) (string, error) {
 
 // Store stores a certificate for the given PIV slot on the PKCS#11 token.
 func (s *PKCS11CertStorage) Store(slot pivcert.PIVSlot, cert *x509.Certificate) error {
-	if s.closed {
+	if s.closed.Load() {
 		return pivcert.NewStorageError("Store", slot, pivcert.ErrStorageClosed)
 	}
 	if !slot.IsValid() {
@@ -342,7 +341,7 @@ func (s *PKCS11CertStorage) Store(slot pivcert.PIVSlot, cert *x509.Certificate) 
 
 // Retrieve retrieves the certificate for the given PIV slot from the token.
 func (s *PKCS11CertStorage) Retrieve(slot pivcert.PIVSlot) (*x509.Certificate, error) {
-	if s.closed {
+	if s.closed.Load() {
 		return nil, pivcert.NewStorageError("Retrieve", slot, pivcert.ErrStorageClosed)
 	}
 	if !slot.IsValid() {
@@ -362,7 +361,7 @@ func (s *PKCS11CertStorage) Retrieve(slot pivcert.PIVSlot) (*x509.Certificate, e
 
 // Delete removes the certificate from the given PIV slot on the token.
 func (s *PKCS11CertStorage) Delete(slot pivcert.PIVSlot) error {
-	if s.closed {
+	if s.closed.Load() {
 		return pivcert.NewStorageError("Delete", slot, pivcert.ErrStorageClosed)
 	}
 	if !slot.IsValid() {
@@ -388,7 +387,7 @@ func (s *PKCS11CertStorage) Delete(slot pivcert.PIVSlot) error {
 // List returns information about all certificate objects stored on the token.
 // Only objects whose CKA_ID maps to a known PIV slot are included.
 func (s *PKCS11CertStorage) List() ([]pivcert.PIVSlotInfo, error) {
-	if s.closed {
+	if s.closed.Load() {
 		return nil, pivcert.NewStorageTypeError("List", pivcert.StorageTypePKCS11, pivcert.ErrStorageClosed)
 	}
 
@@ -413,19 +412,7 @@ func (s *PKCS11CertStorage) List() ([]pivcert.PIVSlotInfo, error) {
 			continue
 		}
 
-		fingerprint := sha256.Sum256(cert.Raw)
-		result = append(result, pivcert.PIVSlotInfo{
-			Slot:         slot,
-			Subject:      cert.Subject.String(),
-			Issuer:       cert.Issuer.String(),
-			SerialNumber: cert.SerialNumber.Text(16),
-			NotBefore:    cert.NotBefore.Format(time.RFC3339),
-			NotAfter:     cert.NotAfter.Format(time.RFC3339),
-			Algorithm:    keyAlgorithmName(cert),
-			KeySize:      keySize(cert),
-			Fingerprint:  hex.EncodeToString(fingerprint[:]),
-			StoredAt:     time.Now().UTC(),
-		})
+		result = append(result, pivcert.NewSlotInfo(slot, cert, time.Now().UTC()))
 	}
 	return result, nil
 }
@@ -466,10 +453,11 @@ func (s *PKCS11CertStorage) Export(slot pivcert.PIVSlot, format pivcert.CertForm
 // last reference is released); storages created from an external pool or
 // session leave the caller-owned context untouched.
 func (s *PKCS11CertStorage) Close() error {
-	if s.closed {
+	// CompareAndSwap so two concurrent Close calls cannot both proceed to tear
+	// down the pool and release the module reference.
+	if !s.closed.CompareAndSwap(false, true) {
 		return pivcert.NewStorageTypeError("Close", pivcert.StorageTypePKCS11, pivcert.ErrStorageClosed)
 	}
-	s.closed = true
 
 	err := s.hw.Close()
 	if s.pool != nil {
@@ -678,33 +666,4 @@ func isPKCS11Error(err error, rv uint) bool {
 		return false
 	}
 	return uint(p11Err) == rv
-}
-
-// keyAlgorithmName returns a human-readable name for the certificate's public key algorithm.
-func keyAlgorithmName(cert *x509.Certificate) string {
-	switch cert.PublicKeyAlgorithm {
-	case x509.RSA:
-		return "RSA"
-	case x509.ECDSA:
-		return "ECDSA"
-	case x509.Ed25519:
-		return "Ed25519"
-	default:
-		return "Unknown"
-	}
-}
-
-// keySize returns the key size in bits for the certificate's public key.
-func keySize(cert *x509.Certificate) int {
-	switch pub := cert.PublicKey.(type) {
-	case *rsa.PublicKey:
-		return pub.N.BitLen()
-	case *ecdsa.PublicKey:
-		return pub.Curve.Params().BitSize
-	default:
-		if cert.PublicKeyAlgorithm == x509.Ed25519 {
-			return 256
-		}
-		return 0
-	}
 }

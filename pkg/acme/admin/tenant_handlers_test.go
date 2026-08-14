@@ -28,6 +28,7 @@ import (
 	"time"
 
 	"github.com/gorilla/mux"
+	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
 	db "github.com/jeremyhahn/go-qrdb/sdk/go/transport"
 )
 
@@ -426,8 +427,8 @@ func TestGetTenant_NotFound(t *testing.T) {
 
 	req := httptest.NewRequest("GET", "/api/v1/tenants/nonexistent", nil)
 	req = mux.SetURLVars(req, map[string]string{"id": "nonexistent"})
-	req = addUserToRequest(req, createSuperAdminUser())
-	req = addUserToRequest(req, createSuperAdminUser())
+	req = addUserToRequest(req, createPlatformAdminUser())
+	req = addUserToRequest(req, createPlatformAdminUser())
 	w := httptest.NewRecorder()
 
 	handlers.GetTenant(w, req)
@@ -477,8 +478,8 @@ func TestUpdateTenant_NotFound(t *testing.T) {
 	body := `{"name": "Updated Tenant"}`
 	req := httptest.NewRequest("PUT", "/api/v1/tenants/nonexistent", bytes.NewBufferString(body))
 	req = mux.SetURLVars(req, map[string]string{"id": "nonexistent"})
-	req = addUserToRequest(req, createSuperAdminUser())
-	req = addUserToRequest(req, createSuperAdminUser())
+	req = addUserToRequest(req, createPlatformAdminUser())
+	req = addUserToRequest(req, createPlatformAdminUser())
 	w := httptest.NewRecorder()
 
 	handlers.UpdateTenant(w, req)
@@ -594,8 +595,8 @@ func TestUpdateTenantStatus_NotFound(t *testing.T) {
 	body := `{"status": "suspended"}`
 	req := httptest.NewRequest("PUT", "/api/v1/tenants/nonexistent/status", bytes.NewBufferString(body))
 	req = mux.SetURLVars(req, map[string]string{"id": "nonexistent"})
-	req = addUserToRequest(req, createSuperAdminUser())
-	req = addUserToRequest(req, createSuperAdminUser())
+	req = addUserToRequest(req, createPlatformAdminUser())
+	req = addUserToRequest(req, createPlatformAdminUser())
 	w := httptest.NewRecorder()
 
 	handlers.UpdateTenantStatus(w, req)
@@ -675,8 +676,8 @@ func TestDeleteTenant_NotFound(t *testing.T) {
 
 	req := httptest.NewRequest("DELETE", "/api/v1/tenants/nonexistent", nil)
 	req = mux.SetURLVars(req, map[string]string{"id": "nonexistent"})
-	req = addUserToRequest(req, createSuperAdminUser())
-	req = addUserToRequest(req, createSuperAdminUser())
+	req = addUserToRequest(req, createPlatformAdminUser())
+	req = addUserToRequest(req, createPlatformAdminUser())
 	w := httptest.NewRecorder()
 
 	handlers.DeleteTenant(w, req)
@@ -1375,9 +1376,9 @@ func TestTenantHandlers_RegisterRoutes(t *testing.T) {
 	handlers := NewTenantHandlers(service, slog.Default())
 
 	router := mux.NewRouter()
-	authMiddleware := newTestAuthMiddleware(RoleSuperAdmin)
+	authMiddleware := newTestAuthMiddleware(qrdbsdk.RoleNameSO)
 
-	handlers.RegisterRoutes(router, authMiddleware)
+	handlers.RegisterRoutes(router, authMiddleware, newPermissiveGate())
 
 	// Verify routes were registered by checking the router can match them
 	testCases := []struct {

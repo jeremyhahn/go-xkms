@@ -81,32 +81,37 @@ func (c *WebAuthnClient) doWebAuthnRequestWithSession(method, path string, body 
 	return c.client.Do(req)
 }
 
-// isWebAuthnEnabled checks if WebAuthn is enabled on the server
-func isWebAuthnEnabled(t *testing.T, cfg *TestConfig) bool {
+// requireWebAuthnEnabled asserts that the server has the WebAuthn relying-party
+// endpoints mounted.
+//
+// test/integration/api/config.test.yaml sets `webauthn.enabled: true`, so the
+// harness always serves these routes. A 404 means the server was started with
+// the wrong configuration and every WebAuthn assertion below would be
+// vacuous — that is a broken run, not an inapplicable one.
+func requireWebAuthnEnabled(t *testing.T, cfg *TestConfig) {
 	t.Helper()
 
 	client := NewRESTClient(cfg.RESTBaseURL)
 	resp, err := client.doRequest("GET", "/api/v1/webauthn/registration/status", nil)
 	if err != nil {
-		return false
+		t.Fatalf("WebAuthn registration status endpoint unreachable at %s: %v", cfg.RESTBaseURL, err)
 	}
 	defer resp.Body.Close()
 
-	// If we get 404, WebAuthn is not enabled
-	// If we get any other response, WebAuthn is enabled
-	return resp.StatusCode != http.StatusNotFound
+	if resp.StatusCode == http.StatusNotFound {
+		t.Fatalf("WebAuthn is not mounted on %s (registration status returned 404); "+
+			"the harness config must set webauthn.enabled: true", cfg.RESTBaseURL)
+	}
 }
 
 // TestWebAuthnRegistrationStatus tests the registration status endpoint
 func TestWebAuthnRegistrationStatus(t *testing.T) {
 	cfg := LoadTestConfig()
 	if !isServerAvailable(t, cfg) {
-		t.Skip("Server not available for integration tests")
+		t.Fatal("Server required for integration tests. Run: make integration-test (uses Docker)")
 	}
 
-	if !isWebAuthnEnabled(t, cfg) {
-		t.Skip("WebAuthn not enabled on server")
-	}
+	requireWebAuthnEnabled(t, cfg)
 
 	client := NewWebAuthnClient(cfg.RESTBaseURL)
 
@@ -161,12 +166,10 @@ func TestWebAuthnRegistrationStatus(t *testing.T) {
 func TestWebAuthnBeginRegistration(t *testing.T) {
 	cfg := LoadTestConfig()
 	if !isServerAvailable(t, cfg) {
-		t.Skip("Server not available for integration tests")
+		t.Fatal("Server required for integration tests. Run: make integration-test (uses Docker)")
 	}
 
-	if !isWebAuthnEnabled(t, cfg) {
-		t.Skip("WebAuthn not enabled on server")
-	}
+	requireWebAuthnEnabled(t, cfg)
 
 	client := NewWebAuthnClient(cfg.RESTBaseURL)
 	testEmail := fmt.Sprintf("test-%s@example.com", generateUniqueID("webauthn"))
@@ -251,12 +254,10 @@ func TestWebAuthnBeginRegistration(t *testing.T) {
 func TestWebAuthnBeginLogin(t *testing.T) {
 	cfg := LoadTestConfig()
 	if !isServerAvailable(t, cfg) {
-		t.Skip("Server not available for integration tests")
+		t.Fatal("Server required for integration tests. Run: make integration-test (uses Docker)")
 	}
 
-	if !isWebAuthnEnabled(t, cfg) {
-		t.Skip("WebAuthn not enabled on server")
-	}
+	requireWebAuthnEnabled(t, cfg)
 
 	client := NewWebAuthnClient(cfg.RESTBaseURL)
 
@@ -310,12 +311,10 @@ func TestWebAuthnBeginLogin(t *testing.T) {
 func TestWebAuthnFinishRegistration(t *testing.T) {
 	cfg := LoadTestConfig()
 	if !isServerAvailable(t, cfg) {
-		t.Skip("Server not available for integration tests")
+		t.Fatal("Server required for integration tests. Run: make integration-test (uses Docker)")
 	}
 
-	if !isWebAuthnEnabled(t, cfg) {
-		t.Skip("WebAuthn not enabled on server")
-	}
+	requireWebAuthnEnabled(t, cfg)
 
 	client := NewWebAuthnClient(cfg.RESTBaseURL)
 
@@ -350,12 +349,10 @@ func TestWebAuthnFinishRegistration(t *testing.T) {
 func TestWebAuthnFinishLogin(t *testing.T) {
 	cfg := LoadTestConfig()
 	if !isServerAvailable(t, cfg) {
-		t.Skip("Server not available for integration tests")
+		t.Fatal("Server required for integration tests. Run: make integration-test (uses Docker)")
 	}
 
-	if !isWebAuthnEnabled(t, cfg) {
-		t.Skip("WebAuthn not enabled on server")
-	}
+	requireWebAuthnEnabled(t, cfg)
 
 	client := NewWebAuthnClient(cfg.RESTBaseURL)
 
@@ -390,12 +387,10 @@ func TestWebAuthnFinishLogin(t *testing.T) {
 func TestWebAuthnMethodNotAllowed(t *testing.T) {
 	cfg := LoadTestConfig()
 	if !isServerAvailable(t, cfg) {
-		t.Skip("Server not available for integration tests")
+		t.Fatal("Server required for integration tests. Run: make integration-test (uses Docker)")
 	}
 
-	if !isWebAuthnEnabled(t, cfg) {
-		t.Skip("WebAuthn not enabled on server")
-	}
+	requireWebAuthnEnabled(t, cfg)
 
 	client := NewWebAuthnClient(cfg.RESTBaseURL)
 
@@ -429,13 +424,11 @@ func TestWebAuthnMethodNotAllowed(t *testing.T) {
 func TestWebAuthnRoutesMounted(t *testing.T) {
 	cfg := LoadTestConfig()
 	if !isServerAvailable(t, cfg) {
-		t.Skip("Server not available for integration tests")
+		t.Fatal("Server required for integration tests. Run: make integration-test (uses Docker)")
 	}
 
 	// Skip if WebAuthn is not enabled on the server
-	if !isWebAuthnEnabled(t, cfg) {
-		t.Skip("WebAuthn not enabled on server")
-	}
+	requireWebAuthnEnabled(t, cfg)
 
 	client := NewWebAuthnClient(cfg.RESTBaseURL)
 

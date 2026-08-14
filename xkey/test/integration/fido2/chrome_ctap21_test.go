@@ -122,7 +122,7 @@ func hkdfDeriveKey(ikm []byte, info string) ([]byte, error) {
 // Chrome requires FIDO_2_1_PRE, pinUvAuthToken option, and permission-based
 // PIN tokens for CTAP2.1 authenticators.
 func TestChromeCTAP21Flow(t *testing.T) {
-	skipIfNoUHID(t)
+	requireUHID(t)
 
 	cfg := DefaultTestConfig()
 	cfg.EnablePIN = true

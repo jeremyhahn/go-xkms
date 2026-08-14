@@ -112,19 +112,6 @@ func TestSignedBlob_NotInitialized(t *testing.T) {
 // Issued / Exists / Certificate / CertificatePEM / PEM / ImportCertificate*
 // =============================================================================
 
-func TestIssued_FindsRootCertificate(t *testing.T) {
-	ca := setupTestCA(t)
-	ok, err := ca.Issued(context.Background(), "Test Root CA")
-	require.NoError(t, err)
-	assert.True(t, ok)
-}
-
-func TestIssued_EmptyCN(t *testing.T) {
-	ca := setupTestCA(t)
-	_, err := ca.Issued(context.Background(), "")
-	assert.ErrorIs(t, err, ErrInvalidCertificate)
-}
-
 func TestExists_MatchesAlgorithm(t *testing.T) {
 	ca := setupTestCA(t)
 	ok, err := ca.Exists(context.Background(), "Test Root CA", x509.ECDSA)
@@ -385,12 +372,6 @@ func TestTLSConfigWithXSigner_NilAttrs(t *testing.T) {
 // =============================================================================
 // CAConfig / Default accessors
 // =============================================================================
-
-func TestCAConfig_ReturnsFlatConfig(t *testing.T) {
-	ca := setupTestCA(t)
-	cfg := ca.CAConfig()
-	assert.NotEmpty(t, cfg.Identity)
-}
 
 func TestDefaultKeyAlgorithm(t *testing.T) {
 	ca := setupTestCA(t)

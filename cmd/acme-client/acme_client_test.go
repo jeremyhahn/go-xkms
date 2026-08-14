@@ -111,10 +111,11 @@ func TestRunGUI_ReturnsError(t *testing.T) {
 // =============================================================================
 
 func TestExpandPath_Tilde(t *testing.T) {
-	home, err := os.UserHomeDir()
-	if err != nil {
-		t.Skip("cannot determine home dir:", err)
-	}
+	// Pin HOME so the expansion is deterministic and independent of whatever
+	// home directory the test runner happens to have.
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+
 	got := expandPath("~/foo/bar")
 	want := filepath.Join(home, "foo/bar")
 	if got != want {

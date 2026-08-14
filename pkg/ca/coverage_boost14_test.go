@@ -332,30 +332,6 @@ func TestCertificate_IntermediateMatch_B14(t *testing.T) {
 // ca_extensions.go — Issued: keyStore path when certStore is nil (line 146)
 // =============================================================================
 
-// TestIssued_KeyStorePath_B14 exercises the keyStore lookup branch in Issued
-// (ca_extensions.go line 146) by constructing a minimal CA with no certStore
-// so only the keyStore branch is taken.
-func TestIssued_KeyStorePath_B14(t *testing.T) {
-	t.Parallel()
-	// Issue a cert using a full CA so the key/cert are stored in the keyStore.
-	fullCA := setupTestCA(t)
-	const cn = "issued-keystore-only-b14"
-	issueCertAndSaveToKeyStore(t, fullCA, cn)
-
-	// Build a minimal CA with the same keyStore but no certStore.
-	// This forces the Issued() call to skip the certStore path and use keyStore.
-	caNoCS := &CA{
-		keyStore:    fullCA.keyStore,
-		certStore:   nil,
-		revocations: make(map[string]*RevocationInfo),
-	}
-	caNoCS.initialized.Store(true)
-
-	found, err := caNoCS.Issued(context.Background(), cn)
-	require.NoError(t, err)
-	assert.True(t, found)
-}
-
 // =============================================================================
 // ca_extensions.go — CAKeyAttributes: storeType mismatch (line 453)
 // =============================================================================

@@ -27,9 +27,6 @@ import (
 
 // CA command errors.
 var (
-	// ErrCANotInitialized indicates the CA client is not initialized.
-	ErrCANotInitialized = errors.New("ca: client not initialized")
-
 	// ErrCAInfoFailed indicates failure to retrieve CA certificate info.
 	ErrCAInfoFailed = errors.New("ca: failed to get CA info")
 
@@ -86,10 +83,14 @@ var reasonCodes = map[string]int{
 	"cessation-of-operation": 5,
 }
 
-// getSDKClient returns a transport.Client connected to the xkms service.
-func getSDKClient() (transport.Client, error) {
-	// TODO: Initialize from config (embedded or remote mode)
-	return nil, ErrCANotInitialized
+// getSDKClient returns a transport.Client connected to xkmsd's CA. The CA
+// commands are remote-mode only: the certificate authority lives in the
+// daemon (xkey never runs an in-process CA), so every verb is served over the
+// SDK transport resolved by resolveXKMSdEndpoint. An "embedded://" or any
+// other unknown URL scheme is rejected with ErrXKMSdUnsupportedScheme.
+// Callers own Close on the returned client.
+func getSDKClient(cmd *cobra.Command) (transport.Client, error) {
+	return connectXKMSdClient(cmd)
 }
 
 // caCmd is the parent command for CA operations.
@@ -102,6 +103,12 @@ The CA commands provide certificate lifecycle management including issuance,
 revocation, CRL generation, and trust chain inspection. All operations are
 performed through the SDK transport layer, which communicates with the
 xkms daemon's built-in CA.
+
+Server selection follows --xkmsd-url, then the XKMSD_URL environment
+variable, then the xkmsd_url config key. The URL scheme picks the transport
+(unix://, http://, https://, grpc://, grpcs://, quic://, mcp://, mcps://).
+XKMSD_TOKEN supplies a bearer token; --tls-ca (or XKMSD_TLS_CA) supplies the
+CA bundle used to verify TLS transports.
 
 Examples:
   # Show CA certificate information
@@ -298,6 +305,11 @@ func init() {
 	caCmd.AddCommand(caInfoCmd, caIssueCmd, caSignCSRCmd, caRevokeCmd,
 		caCRLCmd, caCheckRevocationCmd, caBundleCmd)
 
+	// Shared connection flag: the CA bundle used to verify TLS-bearing
+	// transports (https/grpcs/quic/mcps).
+	caCmd.PersistentFlags().String("tls-ca", "",
+		"TLS CA certificate file used to verify the xkmsd server")
+
 	// Issue command flags
 	caIssueCmd.Flags().String("profile", "", "certificate profile (server, client, idevid)")
 	caIssueCmd.Flags().String("cn", "", "common name for the certificate subject")
@@ -397,7 +409,8 @@ func writeOutput(outputPath string, data []byte) error {
 
 // runCAInfo executes the ca info command.
 func runCAInfo(cmd *cobra.Command, args []string) error {
-	client, err := getSDKClient()
+	out := cmd.OutOrStdout()
+	client, err := getSDKClient(cmd)
 	if err != nil {
 		return &SentinelCauseError{Sentinel: ErrCAInfoFailed, Cause: err}
 	}
@@ -409,14 +422,14 @@ func runCAInfo(cmd *cobra.Command, args []string) error {
 		return &SentinelCauseError{Sentinel: ErrCAInfoFailed, Cause: err}
 	}
 
-	fmt.Printf("CA Certificate Information\n")
-	fmt.Printf("==========================\n\n")
-	fmt.Printf("Subject:       %s\n", resp.Subject)
-	fmt.Printf("Issuer:        %s\n", resp.Issuer)
-	fmt.Printf("Serial Number: %s\n", resp.SerialNumber)
-	fmt.Printf("Not Before:    %s\n", resp.NotBefore)
-	fmt.Printf("Not After:     %s\n", resp.NotAfter)
-	fmt.Printf("Is CA:         %t\n", resp.IsCA)
+	fmt.Fprintf(out, "CA Certificate Information\n")
+	fmt.Fprintf(out, "==========================\n\n")
+	fmt.Fprintf(out, "Subject:       %s\n", resp.Subject)
+	fmt.Fprintf(out, "Issuer:        %s\n", resp.Issuer)
+	fmt.Fprintf(out, "Serial Number: %s\n", resp.SerialNumber)
+	fmt.Fprintf(out, "Not Before:    %s\n", resp.NotBefore)
+	fmt.Fprintf(out, "Not After:     %s\n", resp.NotAfter)
+	fmt.Fprintf(out, "Is CA:         %t\n", resp.IsCA)
 
 	return nil
 }
@@ -444,7 +457,7 @@ func runCAIssue(cmd *cobra.Command, args []string) error {
 		return &SentinelCauseError{Sentinel: ErrCAIssueFailed, Cause: err}
 	}
 
-	client, err := getSDKClient()
+	client, err := getSDKClient(cmd)
 	if err != nil {
 		return &SentinelCauseError{Sentinel: ErrCAIssueFailed, Cause: err}
 	}
@@ -494,7 +507,7 @@ func runCASignCSR(cmd *cobra.Command, args []string) error {
 		return &SentinelCauseError{Sentinel: ErrCACSRReadFailed, Cause: err}
 	}
 
-	client, err := getSDKClient()
+	client, err := getSDKClient(cmd)
 	if err != nil {
 		return &SentinelCauseError{Sentinel: ErrCASignCSRFailed, Cause: err}
 	}
@@ -523,6 +536,7 @@ func runCASignCSR(cmd *cobra.Command, args []string) error {
 
 // runCARevoke executes the ca revoke command.
 func runCARevoke(cmd *cobra.Command, args []string) error {
+	out := cmd.OutOrStdout()
 	serial := strings.TrimSpace(args[0])
 
 	reasonStr, _ := cmd.Flags().GetString("reason")
@@ -531,7 +545,7 @@ func runCARevoke(cmd *cobra.Command, args []string) error {
 		return &SentinelCauseError{Sentinel: ErrCARevokeFailed, Cause: err}
 	}
 
-	client, err := getSDKClient()
+	client, err := getSDKClient(cmd)
 	if err != nil {
 		return &SentinelCauseError{Sentinel: ErrCARevokeFailed, Cause: err}
 	}
@@ -547,9 +561,9 @@ func runCARevoke(cmd *cobra.Command, args []string) error {
 	}
 
 	if resp.Success {
-		fmt.Printf("Certificate %s revoked successfully\n", serial)
+		fmt.Fprintf(out, "Certificate %s revoked successfully\n", serial)
 	} else {
-		fmt.Printf("Certificate %s revocation: %s\n", serial, resp.Message)
+		fmt.Fprintf(out, "Certificate %s revocation: %s\n", serial, resp.Message)
 	}
 
 	return nil
@@ -559,7 +573,7 @@ func runCARevoke(cmd *cobra.Command, args []string) error {
 func runCACRL(cmd *cobra.Command, args []string) error {
 	outputPath, _ := cmd.Flags().GetString("output")
 
-	client, err := getSDKClient()
+	client, err := getSDKClient(cmd)
 	if err != nil {
 		return &SentinelCauseError{Sentinel: ErrCACRLFailed, Cause: err}
 	}
@@ -576,9 +590,10 @@ func runCACRL(cmd *cobra.Command, args []string) error {
 
 // runCACheckRevocation executes the ca check-revocation command.
 func runCACheckRevocation(cmd *cobra.Command, args []string) error {
+	out := cmd.OutOrStdout()
 	serial := strings.TrimSpace(args[0])
 
-	client, err := getSDKClient()
+	client, err := getSDKClient(cmd)
 	if err != nil {
 		return &SentinelCauseError{Sentinel: ErrCACheckRevocationFailed, Cause: err}
 	}
@@ -594,9 +609,9 @@ func runCACheckRevocation(cmd *cobra.Command, args []string) error {
 
 	if resp.Revoked {
 		reasonName := reasonCodeName(resp.Reason)
-		fmt.Printf("Certificate %s: REVOKED (reason: %s, code: %d)\n", serial, reasonName, resp.Reason)
+		fmt.Fprintf(out, "Certificate %s: REVOKED (reason: %s, code: %d)\n", serial, reasonName, resp.Reason)
 	} else {
-		fmt.Printf("Certificate %s: VALID (not revoked)\n", serial)
+		fmt.Fprintf(out, "Certificate %s: VALID (not revoked)\n", serial)
 	}
 
 	return nil
@@ -606,7 +621,7 @@ func runCACheckRevocation(cmd *cobra.Command, args []string) error {
 func runCABundle(cmd *cobra.Command, args []string) error {
 	outputPath, _ := cmd.Flags().GetString("output")
 
-	client, err := getSDKClient()
+	client, err := getSDKClient(cmd)
 	if err != nil {
 		return &SentinelCauseError{Sentinel: ErrCABundleFailed, Cause: err}
 	}

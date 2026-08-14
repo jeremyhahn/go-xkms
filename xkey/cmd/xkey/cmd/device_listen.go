@@ -21,12 +21,14 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"log/slog"
 	"os"
 	"os/signal"
 	"syscall"
 
 	xkms "github.com/jeremyhahn/go-xkms/sdk/go"
+	"github.com/jeremyhahn/go-xkms/sdk/go/transport"
 	"github.com/jeremyhahn/go-xkms/xkey/pkg/phone"
 	"github.com/spf13/cobra"
 	"github.com/spf13/viper"
@@ -73,6 +75,14 @@ Attestation Modes:
   - tpm2: Require TPM2 attestation, fail if TPM2 is not available
   - software: Always use software attestation, even if TPM2 is available
 
+TCG Device Enrollment:
+  --tpm-enrollment additionally offers this laptop's TPM to the phone acting
+  as a Certificate Authority, so the phone can run the TCG-CSR-IDEVID
+  enrollment ceremony against it. It is off by default: enrollment hands the
+  phone the EK certificate and lets it drive TPM2_ActivateCredential, so it is
+  an explicit decision. A host with no TPM still listens, pairs and serves
+  every other method; it simply reports enrollment as unavailable.
+
 This is useful when:
   - The phone needs to verify the laptop's integrity
   - Re-attestation is triggered from the phone
@@ -95,7 +105,10 @@ Examples:
   xkey device listen --attestation-mode tpm2
 
   # Use software attestation only
-  xkey device listen --attestation-mode software`,
+  xkey device listen --attestation-mode software
+
+  # Also let the phone enroll this laptop's TPM as a TCG device identity
+  xkey device listen --tpm-enrollment`,
 	RunE: runDeviceListen,
 }
 
@@ -108,6 +121,8 @@ func init() {
 	deviceListenCmd.Flags().Duration("timeout", 0, "Listen timeout (0 for indefinite)")
 	deviceListenCmd.Flags().String("attestation-mode", "auto", "Attestation mode: auto, tpm2, software")
 	deviceListenCmd.Flags().String("tpm-device", "", "TPM2 device path (default: /dev/tpmrm0)")
+	deviceListenCmd.Flags().Bool("tpm-enrollment", false, "Serve TCG-CSR-IDEVID device enrollment from this host's TPM")
+	deviceListenCmd.Flags().String("tpm-pcr-bank", "", "PCR bank for the platform policy digest (default: SHA-256); set only if this TPM's SHA-256 bank is not allocated")
 
 	// Bind flags to viper
 	_ = viper.BindPFlag("device.listen.device", deviceListenCmd.Flags().Lookup("device"))
@@ -115,6 +130,8 @@ func init() {
 	_ = viper.BindPFlag("device.listen.timeout", deviceListenCmd.Flags().Lookup("timeout"))
 	_ = viper.BindPFlag("device.listen.attestation-mode", deviceListenCmd.Flags().Lookup("attestation-mode"))
 	_ = viper.BindPFlag("device.listen.tpm-device", deviceListenCmd.Flags().Lookup("tpm-device"))
+	_ = viper.BindPFlag("device.listen.tpm-enrollment", deviceListenCmd.Flags().Lookup("tpm-enrollment"))
+	_ = viper.BindPFlag("device.listen.tpm-pcr-bank", deviceListenCmd.Flags().Lookup("tpm-pcr-bank"))
 }
 
 // runDeviceListen executes the phone listen command.
@@ -126,6 +143,8 @@ func runDeviceListen(cmd *cobra.Command, args []string) error {
 	timeout, _ := cmd.Flags().GetDuration("timeout")
 	attestModeStr, _ := cmd.Flags().GetString("attestation-mode")
 	tpmDevice, _ := cmd.Flags().GetString("tpm-device")
+	tpmPCRBank, _ := cmd.Flags().GetString("tpm-pcr-bank")
+	tpmEnrollment, _ := cmd.Flags().GetBool("tpm-enrollment")
 
 	// Parse attestation mode
 	attestMode := phone.ParseAttestationMode(attestModeStr)
@@ -209,8 +228,34 @@ func runDeviceListen(cmd *cobra.Command, args []string) error {
 		}()
 	}
 
+	// Resolve the TPM the bridge answers TCG enrollment from. When the
+	// attestor already holds this host's TPM open, that same handle is used —
+	// the device is opened once per process, not once per feature.
+	enroller, ownedEnroller, enrollerErr := resolveListenEnroller(tpmEnrollment, tpmModule, tpmDevice, tpmPCRBank, logger)
+	if ownedEnroller != nil {
+		defer func() {
+			if closeErr := ownedEnroller.Close(); closeErr != nil {
+				logger.Error("failed to close enrollment TPM", slog.String("error", closeErr.Error()))
+			}
+		}()
+	}
+
+	// Wire the xkmsd bridge so the phone's full remote.* method set is served,
+	// not just ping and attestation.
+	bridgeClient, bridge, err := connectListenBridge(logger, enroller, enrollerErr)
+	if err != nil {
+		return err
+	}
+	if bridgeClient != nil {
+		defer func() {
+			if closeErr := bridgeClient.Close(); closeErr != nil {
+				logger.Warn("failed to close xkmsd client", slog.String("error", closeErr.Error()))
+			}
+		}()
+	}
+
 	// Create the request handler that processes phone requests
-	handler, err := newListenRequestHandler(logger, tpmModule, attestMode)
+	handler, err := newListenRequestHandler(logger, tpmModule, attestMode, bridge)
 	if err != nil {
 		return &WrappedError{Msg: "failed to create request handler", Err: err}
 	}
@@ -263,6 +308,19 @@ func runDeviceListen(cmd *cobra.Command, args []string) error {
 		fmt.Println("Attestation mode: TPM2 (hardware)")
 	} else {
 		fmt.Println("Attestation mode: software")
+	}
+	if bridge != nil {
+		fmt.Println("xkmsd bridge: enabled (full remote.* method set)")
+	} else {
+		fmt.Println("xkmsd bridge: disabled (only ping and attestation are served)")
+	}
+	switch {
+	case !tpmEnrollment:
+		fmt.Println("TCG device enrollment: disabled (pass --tpm-enrollment to offer it)")
+	case enroller != nil:
+		fmt.Println("TCG device enrollment: enabled")
+	default:
+		fmt.Println("TCG device enrollment: requested but no TPM is reachable (see log)")
 	}
 	fmt.Println("Press Ctrl+C to stop")
 	fmt.Println()
@@ -318,17 +376,103 @@ func initTPMForAttestation(devicePath string, logger *slog.Logger) (xkms.Trusted
 	return tpmModule, nil
 }
 
+// resolveListenEnroller decides which TPM, if any, the bridge answers TCG
+// device enrollment from, and reports whether this command owns the handle.
+//
+// Enrollment is off unless requested. When it is requested and the attestor
+// already opened this host's TPM, that handle is shared rather than opening
+// the device a second time, and the returned closer is nil because the
+// attestor's deferred Close still owns it. Only when no TPM is open yet does
+// this open one, in which case the caller must close it.
+//
+// A host with no reachable TPM yields a nil enroller and no error: the bridge
+// still serves every other method, and OpenTPMEnroller has already said at
+// INFO or WARN why enrollment is unavailable.
+func resolveListenEnroller(
+	enabled bool,
+	attestTPM xkms.TrustedPlatformModule,
+	devicePath string,
+	pcrBank string,
+	logger *slog.Logger,
+) (phone.TPMEnroller, io.Closer, error) {
+	if !enabled {
+		return nil, nil, nil
+	}
+	if attestTPM != nil {
+		logger.Info("TCG device enrollment enabled on the attestation TPM")
+		return attestTPM, nil, nil
+	}
+
+	// The reason is logged by OpenTPMEnroller, at INFO when this host simply
+	// has no TPM and at WARN when it has one that cannot be opened.
+	enroller, err := phone.OpenTPMEnroller(&phone.TPMEnrollerConfig{
+		Device:          devicePath,
+		PlatformPCRBank: pcrBank,
+		Logger:          logger,
+	})
+	if err != nil {
+		// A host with no TPM reports nothing to the phone beyond "unsupported".
+		// A TPM we could not open is a fault someone can fix, so the cause is
+		// carried to the bridge and reported distinctly.
+		if errors.Is(err, phone.ErrTPMNotConfigured) {
+			return nil, nil, nil
+		}
+		return nil, nil, err
+	}
+	return enroller, enroller, nil
+}
+
+// connectListenBridge creates the xkmsd bridge that serves the phone's
+// remote.* requests while this laptop is listening. It returns a nil client
+// and bridge when xkmsd is not enabled, in which case only the locally
+// handled methods are served. The enroller, when non-nil, is the TPM the
+// bridge answers the TCG/IDevID enrollment methods from.
+func connectListenBridge(
+	logger *slog.Logger,
+	enroller phone.TPMEnroller,
+	enrollerErr error,
+) (transport.Client, *phone.Bridge, error) {
+	cfg := loadXKMSdBridgeConfig()
+	if !cfg.Enabled {
+		return nil, nil, nil
+	}
+
+	client, err := dialXKMSd(cfg, logger)
+	if err != nil {
+		return nil, nil, err
+	}
+
+	bridge, err := phone.NewBridge(client, &phone.BridgeConfig{
+		AllowedBackends: cfg.AllowedBackends,
+		DeniedBackends:  cfg.DeniedBackends,
+		RequestTimeout:  cfg.RequestTimeout,
+		Logger:          logger,
+		TPM:             enroller,
+		TPMOpenErr:      enrollerErr,
+	})
+	if err != nil {
+		_ = client.Close()
+		return nil, nil, errors.Join(ErrXKMSdBridgeCreationFailed, err)
+	}
+
+	return client, bridge, nil
+}
+
 // listenRequestHandler handles incoming requests from the phone.
 type listenRequestHandler struct {
 	logger   *slog.Logger
 	attestor phone.LaptopAttestor
+	bridge   *phone.Bridge
 }
 
-// newListenRequestHandler creates a new listen request handler with attestation support.
+// newListenRequestHandler creates a new listen request handler with
+// attestation support. The bridge, when non-nil, serves every remote.* method
+// the locally handled set does not cover.
 func newListenRequestHandler(
 	logger *slog.Logger,
 	tpmModule xkms.TrustedPlatformModule,
 	mode phone.AttestationMode,
+	bridge *phone.Bridge,
 ) (*listenRequestHandler, error) {
 	attestor, err := phone.NewLaptopAttestor(&phone.LaptopAttestorConfig{
 		Mode:   mode,
@@ -342,6 +486,7 @@ func newListenRequestHandler(
 	return &listenRequestHandler{
 		logger:   logger,
 		attestor: attestor,
+		bridge:   bridge,
 	}, nil
 }
 
@@ -361,14 +506,31 @@ func (h *listenRequestHandler) HandleRequest(ctx context.Context, request []byte
 		slog.Uint64("id", req.ID),
 	)
 
-	// Route the request based on method using map-based dispatch
-	handler, ok := h.methodHandlers()[req.Method]
-	if !ok {
-		h.logger.Warn("unsupported method", slog.String("method", req.Method))
-		return phone.EncodeErrorResponse(req.ID, phone.ErrorCodeMethodNotFound, "Method not supported", nil)
+	// Route the request based on method using map-based dispatch. Locally
+	// handled methods win: laptop attestation is produced by the TPM attestor
+	// configured here, not by xkmsd.
+	if handler, ok := h.methodHandlers()[req.Method]; ok {
+		return handler(ctx, req)
 	}
 
-	return handler(ctx, req)
+	// Everything else is a xkmsd operation, served by the bridge.
+	if h.bridge != nil {
+		return h.handleViaBridge(ctx, req)
+	}
+
+	h.logger.Warn("unsupported method", slog.String("method", req.Method))
+	return phone.EncodeErrorResponse(req.ID, phone.ErrorCodeMethodNotFound, "Method not supported", nil)
+}
+
+// handleViaBridge dispatches a request to the xkmsd bridge and encodes the
+// bridge's JSON-RPC response.
+func (h *listenRequestHandler) handleViaBridge(ctx context.Context, req *phone.Request) ([]byte, error) {
+	resp := h.bridge.HandleRequest(ctx, req)
+	if resp == nil {
+		h.logger.Error("bridge returned no response", slog.String("method", req.Method))
+		return phone.EncodeErrorResponse(req.ID, phone.ErrorCodeInternalError, "Bridge returned no response", nil)
+	}
+	return json.Marshal(resp)
 }
 
 // methodHandler is a function type for handling specific methods.

@@ -16,6 +16,7 @@
 package admin
 
 import (
+	"context"
 	"crypto/rand"
 	"crypto/rsa"
 	"crypto/tls"
@@ -29,6 +30,8 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+
+	"github.com/jeremyhahn/go-xkms/pkg/auth"
 )
 
 // createTestCertificate creates a test x509 certificate with the specified attributes
@@ -181,8 +184,10 @@ func TestMTLSAuthMiddleware_Authenticate_ValidCertificate(t *testing.T) {
 	middleware := NewMTLSAuthMiddleware(nil)
 
 	var capturedUser *AuthenticatedUser
+	var capturedCtx context.Context
 	handler := middleware.Authenticate(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		capturedUser = GetUserFromContext(r.Context())
+		capturedCtx = r.Context()
 		w.WriteHeader(http.StatusOK)
 	}))
 
@@ -210,8 +215,15 @@ func TestMTLSAuthMiddleware_Authenticate_ValidCertificate(t *testing.T) {
 	assert.Equal(t, "testuser", capturedUser.Username)
 	assert.Equal(t, "user@example.com", capturedUser.Email)
 	assert.Equal(t, "test-org", capturedUser.TenantID)
-	assert.Equal(t, RoleAdmin, capturedUser.Role)
 	assert.Contains(t, capturedUser.Roles, "admin")
+
+	// The middleware must also publish the canonical identity the qrdb-backed
+	// PermissionGate reads; without it every privileged route is denied.
+	identity := auth.GetIdentity(capturedCtx)
+	require.NotNil(t, identity)
+	assert.Equal(t, "testuser", identity.Subject)
+	assert.Equal(t, "test-org", identity.TenantID)
+	assert.Equal(t, []string{"admin"}, identity.Roles)
 }
 
 func TestMTLSAuthMiddleware_Authenticate_CustomExtractors(t *testing.T) {
@@ -254,7 +266,7 @@ func TestMTLSAuthMiddleware_Authenticate_CustomExtractors(t *testing.T) {
 
 	require.NotNil(t, capturedUser)
 	assert.Equal(t, "custom-tenant-id", capturedUser.TenantID)
-	assert.Equal(t, RoleSuperAdmin, capturedUser.Role)
+	assert.Equal(t, []string{"super-admin"}, capturedUser.Roles)
 }
 
 func TestMTLSAuthMiddleware_Authenticate_NoEmailUsesCN(t *testing.T) {
@@ -321,49 +333,6 @@ func TestMTLSAuthMiddleware_Authenticate_EmptyCNUsesEmail(t *testing.T) {
 	assert.Equal(t, "email@example.com", capturedUser.Email)
 }
 
-func TestDefaultRoleExtractor(t *testing.T) {
-	tests := []struct {
-		name          string
-		ous           []string
-		expectedRoles []string
-	}{
-		{
-			name:          "single valid role",
-			ous:           []string{"admin"},
-			expectedRoles: []string{"admin"},
-		},
-		{
-			name:          "multiple valid roles",
-			ous:           []string{"admin", "operator"},
-			expectedRoles: []string{"admin", "operator"},
-		},
-		{
-			name:          "no valid roles defaults to viewer",
-			ous:           []string{"invalid-role"},
-			expectedRoles: []string{"viewer"},
-		},
-		{
-			name:          "empty OU defaults to viewer",
-			ous:           []string{},
-			expectedRoles: []string{"viewer"},
-		},
-		{
-			name:          "mixed valid and invalid",
-			ous:           []string{"invalid", "super-admin", "unknown"},
-			expectedRoles: []string{"super-admin"},
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			cert := createTestCertificate(t, "test", nil, tt.ous, nil,
-				time.Now().Add(-1*time.Hour), time.Now().Add(24*time.Hour))
-			roles := defaultRoleExtractor(cert)
-			assert.Equal(t, tt.expectedRoles, roles)
-		})
-	}
-}
-
 func TestDefaultTenantExtractor(t *testing.T) {
 	tests := []struct {
 		name             string
@@ -402,98 +371,72 @@ func TestDefaultTenantExtractor(t *testing.T) {
 	}
 }
 
-func TestDerivePermissionsFromRole(t *testing.T) {
+// TestDefaultRoleExtractor_MintsNoFallbackRole is the fail-closed assertion for
+// mTLS role extraction. The previous extractor defaulted to "viewer" whenever a
+// certificate named no recognized role, which handed the entire read surface of
+// the ACME admin API to any client certificate the CA had ever issued. Role
+// names now pass through verbatim and an unlabelled certificate yields none.
+func TestDefaultRoleExtractor_MintsNoFallbackRole(t *testing.T) {
 	tests := []struct {
-		name                string
-		role                Role
-		expectedPermissions []string
+		name string
+		ous  []string
+		want []string
 	}{
-		{
-			name:                "super-admin has all permissions",
-			role:                RoleSuperAdmin,
-			expectedPermissions: []string{"*"},
-		},
-		{
-			name: "admin has tenant management permissions",
-			role: RoleAdmin,
-			expectedPermissions: []string{
-				"read", "write", "create", "update", "delete",
-				"manage_tenant_ca", "create_eab", "revoke_certificate", "disable_account",
-			},
-		},
-		{
-			name: "operator has write and create_eab permissions",
-			role: RoleOperator,
-			expectedPermissions: []string{
-				"read", "write", "create", "update",
-				"create_eab", "revoke_certificate",
-			},
-		},
-		{
-			name:                "viewer has read-only permissions",
-			role:                RoleViewer,
-			expectedPermissions: []string{"read", "list", "get"},
-		},
-		{
-			name:                "unknown role has no permissions",
-			role:                Role("unknown"),
-			expectedPermissions: []string{},
-		},
+		{"single role", []string{"admin"}, []string{"admin"}},
+		{"multiple roles", []string{"operator", "auditor"}, []string{"operator", "auditor"}},
+		{"unknown name passes through for qrdb to resolve", []string{"tenant-reviewer"}, []string{"tenant-reviewer"}},
+		{"no organizational unit yields no roles", nil, nil},
+		{"empty organizational unit yields no roles", []string{""}, nil},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			permissions := derivePermissionsFromRole(tt.role)
-			assert.Equal(t, tt.expectedPermissions, permissions)
+			cert := createTestCertificate(t, "test", []string{"org"}, tt.ous, nil,
+				time.Now().Add(-1*time.Hour), time.Now().Add(24*time.Hour))
+			// x509 does not preserve OU ordering through encode/decode, so
+			// compare as a set.
+			assert.ElementsMatch(t, tt.want, defaultRoleExtractor(cert))
 		})
 	}
 }
 
-func TestNewDevModeAuthMiddleware(t *testing.T) {
-	middleware := NewDevModeAuthMiddleware()
-	require.NotNil(t, middleware)
-}
+// TestMTLSAuthMiddleware_UnlabelledCertificateGetsNoGrants verifies the
+// end-to-end fail-closed path: a certificate naming no role authenticates but
+// carries an identity with no roles, so the authorizer denies everything.
+func TestMTLSAuthMiddleware_UnlabelledCertificateGetsNoGrants(t *testing.T) {
+	middleware := NewMTLSAuthMiddleware(nil)
 
-func TestDevModeAuthMiddleware_Authenticate(t *testing.T) {
-	middleware := NewDevModeAuthMiddleware()
-
-	var capturedUser *AuthenticatedUser
-	var capturedRole Role
-	var capturedTenantID string
-
+	var identity *auth.Identity
 	handler := middleware.Authenticate(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		capturedUser = GetUserFromContext(r.Context())
-		capturedRole, _ = GetRoleFromContext(r.Context())
-		capturedTenantID = GetTenantIDFromContext(r.Context())
+		identity = auth.GetIdentity(r.Context())
 		w.WriteHeader(http.StatusOK)
 	}))
 
+	cert := createTestCertificate(t, "nobody", []string{"org"}, nil, nil,
+		time.Now().Add(-1*time.Hour), time.Now().Add(24*time.Hour))
+
 	req := httptest.NewRequest("GET", "/test", nil)
-	w := httptest.NewRecorder()
+	req.TLS = &tls.ConnectionState{PeerCertificates: []*x509.Certificate{cert}}
+	handler.ServeHTTP(httptest.NewRecorder(), req)
 
-	handler.ServeHTTP(w, req)
+	require.NotNil(t, identity)
+	assert.Empty(t, identity.Roles)
 
-	assert.Equal(t, http.StatusOK, w.Code)
-	require.NotNil(t, capturedUser)
-	assert.Equal(t, "dev-admin", capturedUser.UserID)
-	assert.Equal(t, "dev-admin", capturedUser.Username)
-	assert.Equal(t, "dev@localhost", capturedUser.Email)
-	assert.Equal(t, "default", capturedUser.TenantID)
-	assert.Equal(t, RoleSuperAdmin, capturedUser.Role)
-	assert.Equal(t, []string{"*"}, capturedUser.Permissions)
-	assert.Equal(t, RoleSuperAdmin, capturedRole)
-	assert.Equal(t, "default", capturedTenantID)
+	gate, _ := newQRDBGate()
+	require.Error(t, gate.Authorize(auth.WithIdentity(context.Background(), identity),
+		auth.ResourceCerts, auth.ActionList))
 }
 
 func TestMTLSAuthMiddleware_ContextValues(t *testing.T) {
 	middleware := NewMTLSAuthMiddleware(nil)
 
-	var capturedRole Role
-	var roleOk bool
+	var capturedRoles []string
 	var capturedTenantID string
 
 	handler := middleware.Authenticate(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		capturedRole, roleOk = GetRoleFromContext(r.Context())
+		if id := auth.GetIdentity(r.Context()); id != nil {
+			capturedRoles = id.Roles
+		}
 		capturedTenantID = GetTenantIDFromContext(r.Context())
 		w.WriteHeader(http.StatusOK)
 	}))
@@ -516,7 +459,6 @@ func TestMTLSAuthMiddleware_ContextValues(t *testing.T) {
 	handler.ServeHTTP(w, req)
 
 	assert.Equal(t, http.StatusOK, w.Code)
-	assert.True(t, roleOk)
-	assert.Equal(t, RoleOperator, capturedRole)
+	assert.Equal(t, []string{"operator"}, capturedRoles)
 	assert.Equal(t, "my-tenant", capturedTenantID)
 }

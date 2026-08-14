@@ -19,7 +19,6 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
-	"os/user"
 	"runtime"
 	"sort"
 	"strconv"
@@ -140,15 +139,20 @@ type AdminService struct {
 	tpmProvider      TPMStatusProvider
 	phoneProvider    PhoneStatusProvider
 	pkcs11Tester     PKCS11ConnectionTester
+	cloudTester      CloudConnectionTester
 	sealSvc          *SealService
 	configUpdateFunc func(backendID string) error
 	pivRegisterFn    func(backendID, category string)
 	keyLister        BackendKeyLister
 }
 
-// NewAdminService creates a new AdminService.
+// NewAdminService creates a new AdminService. The cloud connection tester is
+// wired to the providers compiled into this build so backend availability and
+// connection tests reflect what the binary can actually reach.
 func NewAdminService() *AdminService {
-	return &AdminService{}
+	return &AdminService{
+		cloudTester: NewCloudConnectionTester(),
+	}
 }
 
 // SetAuditStore sets the queryable audit store for admin operations.
@@ -216,7 +220,7 @@ func (s *AdminService) SetContext(ctx context.Context) {
 
 // IsAdmin returns true if the current user has administrative privileges.
 func (s *AdminService) IsAdmin() bool {
-	u, err := user.Current()
+	u, err := currentUser()
 	if err != nil {
 		return false
 	}
@@ -782,8 +786,9 @@ func (s *AdminService) fallbackBackends() []BackendInfo {
 	return backends
 }
 
-// GetBackendInfo returns details about a specific backend.
-// TODO: wire to xkmsd backend info endpoint.
+// GetBackendInfo returns details about the backend with the given ID,
+// selected from the set ListBackends reports. An empty or unknown ID is
+// reported as ErrAdminBackendNotFound.
 func (s *AdminService) GetBackendInfo(id string) (*BackendInfo, error) {
 	if id == "" {
 		return nil, ErrAdminBackendNotFound
@@ -800,9 +805,10 @@ func (s *AdminService) GetBackendInfo(id string) (*BackendInfo, error) {
 	return nil, ErrAdminBackendNotFound
 }
 
-// GetAuditLogs returns audit entries via the admin interface.
-// This delegates to the AuditService but adds an authorization check.
-// TODO: wire to a shared queryable audit store.
+// GetAuditLogs returns audit entries via the admin interface. Callers must
+// hold the admin role; unauthorized callers receive ErrAdminNotAuthorized.
+// The query itself is delegated to AuditService over the same audit store so
+// both surfaces report identical entries.
 func (s *AdminService) GetAuditLogs(filter *AuditFilter) ([]AuditEntry, error) {
 	if !s.IsAdmin() {
 		return nil, ErrAdminNotAuthorized
@@ -971,6 +977,13 @@ func (s *AdminService) SetPKCS11Tester(tester PKCS11ConnectionTester) {
 	s.pkcs11Tester = tester
 }
 
+// SetCloudTester sets the cloud provider connection tester. It replaces the
+// tester built from the providers compiled into this build, which lets tests
+// substitute a probe that never reaches the network.
+func (s *AdminService) SetCloudTester(tester CloudConnectionTester) {
+	s.cloudTester = tester
+}
+
 // SetSealService sets the seal service for default backend synchronization.
 func (s *AdminService) SetSealService(svc *SealService) {
 	s.sealSvc = svc
@@ -1038,101 +1051,67 @@ func (s *AdminService) testYubiKeyConnection(config map[string]string) *Connecti
 
 // testAWSKMSConnection tests connectivity to AWS KMS.
 func (s *AdminService) testAWSKMSConnection(config map[string]string) *ConnectionTestResult {
-	region := config["region"]
-	if region == "" {
-		return &ConnectionTestResult{
-			Success: false,
-			Message: "Region is required",
-		}
-	}
-
-	// TODO: Implement actual AWS KMS connection test using AWS SDK
-	// This should:
-	// 1. Create a KMS client with the provided credentials
-	// 2. Call ListKeys or similar to verify access
-	// 3. Return success/failure with appropriate message
-	return &ConnectionTestResult{
-		Success: true,
-		Message: "AWS KMS configuration valid (connection test not implemented)",
-	}
+	return s.testCloudConnection(CloudProviderAWSKMS, config)
 }
 
 // testGCPKMSConnection tests connectivity to GCP Cloud KMS.
 func (s *AdminService) testGCPKMSConnection(config map[string]string) *ConnectionTestResult {
-	project := config["project"]
-	if project == "" {
-		return &ConnectionTestResult{
-			Success: false,
-			Message: "Project ID is required",
-		}
-	}
-
-	location := config["location"]
-	if location == "" {
-		return &ConnectionTestResult{
-			Success: false,
-			Message: "Location is required",
-		}
-	}
-
-	keyring := config["keyring"]
-	if keyring == "" {
-		return &ConnectionTestResult{
-			Success: false,
-			Message: "Key Ring is required",
-		}
-	}
-
-	// TODO: Implement actual GCP KMS connection test
-	// This should:
-	// 1. Create a KMS client with the provided credentials
-	// 2. Try to get the keyring or list keys
-	// 3. Return success/failure with appropriate message
-	return &ConnectionTestResult{
-		Success: true,
-		Message: "GCP KMS configuration valid (connection test not implemented)",
-	}
+	return s.testCloudConnection(CloudProviderGCPKMS, config)
 }
 
 // testAzureKVConnection tests connectivity to Azure Key Vault.
 func (s *AdminService) testAzureKVConnection(config map[string]string) *ConnectionTestResult {
-	vaultURL := config["vault_url"]
-	if vaultURL == "" {
-		return &ConnectionTestResult{
-			Success: false,
-			Message: "Vault URL is required",
-		}
-	}
-
-	// TODO: Implement actual Azure Key Vault connection test
-	// This should:
-	// 1. Create a Key Vault client with the provided credentials
-	// 2. Try to list keys or get vault properties
-	// 3. Return success/failure with appropriate message
-	return &ConnectionTestResult{
-		Success: true,
-		Message: "Azure Key Vault configuration valid (connection test not implemented)",
-	}
+	return s.testCloudConnection(CloudProviderAzureKV, config)
 }
 
 // testVaultConnection tests connectivity to HashiCorp Vault.
 func (s *AdminService) testVaultConnection(config map[string]string) *ConnectionTestResult {
-	address := config["address"]
-	if address == "" {
+	return s.testCloudConnection(CloudProviderVault, config)
+}
+
+// testCloudConnection validates the required configuration and then performs
+// a read-only liveness call against the provider. Success is reported only
+// when the provider answered the call; the message never repeats a credential
+// the provider may have echoed back in its error.
+func (s *AdminService) testCloudConnection(provider CloudProvider, config map[string]string) *ConnectionTestResult {
+	if field, missing := missingCloudConfig(provider, config); missing {
 		return &ConnectionTestResult{
 			Success: false,
-			Message: "Vault address is required",
+			Message: field.Label + " is required",
 		}
 	}
 
-	// TODO: Implement actual Vault connection test
-	// This should:
-	// 1. Create a Vault client with the provided address and token
-	// 2. Try to authenticate or check health
-	// 3. Return success/failure with appropriate message
+	name := cloudProviderName(provider)
+
+	if s.cloudTester == nil {
+		return &ConnectionTestResult{
+			Success: false,
+			Message: name + " connection testing is not configured",
+		}
+	}
+
+	if !s.cloudTester.IsAvailable(provider) {
+		return &ConnectionTestResult{
+			Success: false,
+			Message: name + " support is not compiled into this build",
+		}
+	}
+
+	if err := s.cloudTester.TestConnection(s.ctx, provider, config); err != nil {
+		// Redact before the error reaches either the log or the GUI: a
+		// provider may echo the credential it rejected back in its message.
+		detail := redactCloudSecrets(err.Error(), config)
+		slog.Warn("cloud backend connection test failed",
+			"provider", string(provider), "error", detail)
+		return &ConnectionTestResult{
+			Success: false,
+			Message: "Connection to " + name + " failed: " + detail,
+		}
+	}
+
 	return &ConnectionTestResult{
 		Success: true,
-		Message: "HashiCorp Vault configuration valid (connection test not implemented)",
+		Message: "Successfully connected to " + name,
 	}
 }
 
@@ -1352,30 +1331,32 @@ func (s *AdminService) isPKCS11Available() bool {
 	return s.pkcs11Tester.IsAvailable()
 }
 
-// isAWSKMSAvailable checks if AWS KMS support is compiled in.
+// isCloudProviderAvailable reports whether this build can reach the provider,
+// which requires the provider's backend to be compiled in and a connection
+// tester to be wired up.
+func (s *AdminService) isCloudProviderAvailable(provider CloudProvider) bool {
+	if s.cloudTester == nil {
+		return false
+	}
+	return s.cloudTester.IsAvailable(provider)
+}
+
+// isAWSKMSAvailable reports whether AWS KMS support is compiled into this build.
 func (s *AdminService) isAWSKMSAvailable() bool {
-	// TODO: Check if AWS KMS backend is compiled in
-	// For now, return true as a placeholder
-	return true
+	return s.isCloudProviderAvailable(CloudProviderAWSKMS)
 }
 
-// isGCPKMSAvailable checks if GCP KMS support is compiled in.
+// isGCPKMSAvailable reports whether GCP Cloud KMS support is compiled into this build.
 func (s *AdminService) isGCPKMSAvailable() bool {
-	// TODO: Check if GCP KMS backend is compiled in
-	// For now, return true as a placeholder
-	return true
+	return s.isCloudProviderAvailable(CloudProviderGCPKMS)
 }
 
-// isAzureKVAvailable checks if Azure Key Vault support is compiled in.
+// isAzureKVAvailable reports whether Azure Key Vault support is compiled into this build.
 func (s *AdminService) isAzureKVAvailable() bool {
-	// TODO: Check if Azure KV backend is compiled in
-	// For now, return true as a placeholder
-	return true
+	return s.isCloudProviderAvailable(CloudProviderAzureKV)
 }
 
-// isVaultAvailable checks if HashiCorp Vault support is compiled in.
+// isVaultAvailable reports whether HashiCorp Vault support is compiled into this build.
 func (s *AdminService) isVaultAvailable() bool {
-	// TODO: Check if Vault backend is compiled in
-	// For now, return true as a placeholder
-	return true
+	return s.isCloudProviderAvailable(CloudProviderVault)
 }

@@ -27,7 +27,7 @@ import (
 func init() {
 	registerBackend(backendEntry{
 		name:     "pkcs11",
-		skip:     skipIfNoSoftHSM,
+		skip:     requireSoftHSM,
 		adapter:  newPKCS11Adapter,
 		hardware: true,
 	})
@@ -49,21 +49,23 @@ func softHSMLibPath() string {
 	return ""
 }
 
-// skipIfNoSoftHSM skips the test if SoftHSM is not available.
-func skipIfNoSoftHSM(t *testing.T) {
+// requireSoftHSM fails the test if SoftHSM is not available. SoftHSM is a
+// software token that ships in the devcontainer/docker image these integration
+// suites must run in, so a missing library is an environment fault rather than
+// a reason to drop coverage.
+func requireSoftHSM(t *testing.T) {
 	t.Helper()
 	if softHSMLibPath() == "" {
-		t.Skip("SoftHSM not available")
+		t.Fatal("SoftHSM module not found; install softhsm2 or run this suite " +
+			"via the devcontainer (make integration-test)")
 	}
 }
 
 // newPKCS11Adapter creates a BackendAdapter backed by a real PKCS#11 backend using SoftHSM.
 func newPKCS11Adapter(t *testing.T) *BackendAdapter {
 	t.Helper()
+	requireSoftHSM(t)
 	lib := softHSMLibPath()
-	if lib == "" {
-		t.Skip("SoftHSM not available")
-	}
 	config := &xkms.PKCS11BackendConfig{
 		Library:     lib,
 		TokenLabel:  "e2e-piv-test",
@@ -87,7 +89,7 @@ func newPKCS11Adapter(t *testing.T) *BackendAdapter {
 // with a PIVSlotModel attached for auto-allocation testing.
 func newPKCS11AdapterWithSlotModel(t *testing.T) (*BackendAdapter, xkms.PIVSlotModel) {
 	t.Helper()
-	skipIfNoSoftHSM(t)
+	requireSoftHSM(t)
 
 	adapter := newPKCS11Adapter(t)
 
@@ -110,7 +112,7 @@ func newPKCS11AdapterWithSlotModel(t *testing.T) (*BackendAdapter, xkms.PIVSlotM
 // ---------------------------------------------------------------------------
 
 func TestPKCS11_SlotModel_AutoAllocation(t *testing.T) {
-	skipIfNoSoftHSM(t)
+	requireSoftHSM(t)
 
 	adapter, sm := newPKCS11AdapterWithSlotModel(t)
 
@@ -161,7 +163,7 @@ func TestPKCS11_SlotModel_AutoAllocation(t *testing.T) {
 // ---------------------------------------------------------------------------
 
 func TestPKCS11_SlotModel_DeleteFreesSlot(t *testing.T) {
-	skipIfNoSoftHSM(t)
+	requireSoftHSM(t)
 
 	adapter, sm := newPKCS11AdapterWithSlotModel(t)
 
@@ -195,7 +197,7 @@ func TestPKCS11_SlotModel_DeleteFreesSlot(t *testing.T) {
 // ---------------------------------------------------------------------------
 
 func TestPKCS11_SlotModel_OccupancyTracking(t *testing.T) {
-	skipIfNoSoftHSM(t)
+	requireSoftHSM(t)
 
 	adapter, sm := newPKCS11AdapterWithSlotModel(t)
 

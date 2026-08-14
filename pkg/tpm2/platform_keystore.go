@@ -73,6 +73,18 @@ var (
 	// hierarchy has auth from a prior installation that is unknown.
 	ErrPlatformKeyStoreEvictSRK = errors.New("tpm2: platform key store failed to evict existing SRK (owner hierarchy auth unknown; clear TPM or provide correct SO PIN)")
 
+	// ErrPlatformSRKHierarchyAuth is returned when the TPM rejects an SRK
+	// operation because the owner hierarchy has an authorization value the
+	// caller did not supply.
+	//
+	// The common case is a TPM whose owner hierarchy was given an auth value by
+	// ProvisionOwner, followed by an enrollment that supplies a different value
+	// or none at all. Creating the persistent Platform SRK and evicting an old
+	// one are both owner-hierarchy operations, so both need that auth. The TPM
+	// reports only TPM_RC_BAD_AUTH, which names neither the hierarchy nor the
+	// mismatch, so this wraps it with both.
+	ErrPlatformSRKHierarchyAuth = errors.New("tpm2: owner hierarchy rejected the SRK operation: the hierarchy has an authorization value that was not supplied (pass it as the soPIN argument to EnrollPlatformSRK/Initialize, or clear the TPM)")
+
 	// ErrPlatformSRKAlreadyEnrolled is returned by EnrollPlatformSRK when the
 	// Platform SRK auth is already in a known-good state (IsAuthReady), so a
 	// first-boot enrollment must not run again.
@@ -174,8 +186,14 @@ func NewPlatformKeyStore(
 
 // Initialize sets up the platform key store by creating the Storage Root Key
 // (SRK) with the user PIN as its auth value, then registering the PIN in the
-// backend. The soPIN parameter is accepted for backward compatibility but
-// is not used by the TPM2 PIN backend (TPM has no separate SO PIN concept).
+// backend.
+//
+// soPIN is the TPM owner hierarchy authorization value. The Platform SRK is a
+// persistent object in the owner hierarchy, so creating it -- and evicting a
+// stale one -- requires that auth whenever ProvisionOwner installed one. It is
+// NOT a PKCS#11-style security-officer PIN: the TPM2 PIN backend has no such
+// concept and ignores the value. When soPIN is empty the hierarchy auth
+// configured for the SRK (config.SSRK.HierarchyAuth) is used unchanged.
 //
 // If the SRK already exists (from a prior session or auto-initialization),
 // Initialize ensures its auth value matches userPIN. This handles the case
@@ -190,8 +208,13 @@ func (pks *PlatformKeyStore) Initialize(soPIN, userPIN string) error {
 	// before the TPM2Backend can verify PINs against it.
 	srkAttrs := *pks.srkAttrs
 	srkAttrs.Password = store.NewPassword([]byte(userPIN))
-	if pks.PlatformPolicyEnabled() {
-		srkAttrs.PlatformPolicy = true
+	// Creating a persistent SRK is an owner-hierarchy operation, so it needs the
+	// owner hierarchy's auth when one is set. ensureSRKAuth already applies the
+	// SO PIN this way on its evict/recreate path; this path did not, so a
+	// caller supplying an SO PIN still hit TPM_RC_BAD_AUTH on a TPM whose owner
+	// hierarchy ProvisionOwner had given an auth value.
+	if soPIN != "" {
+		srkAttrs.TPMAttributes.HierarchyAuth = store.NewPassword([]byte(soPIN))
 	}
 	if err := pks.tpm.CreateSRK(&srkAttrs); err != nil {
 		// TPM_RC_NV_DEFINED (0x14c) means the persistent handle is already
@@ -201,6 +224,12 @@ func (pks *PlatformKeyStore) Initialize(soPIN, userPIN string) error {
 			pks.logger.Info("platform SRK already exists at persistent handle")
 			pks.initialized.Store(true)
 			return pks.ensureSRKAuth(soPIN, userPIN)
+		}
+		if isTPMAuthError(err) {
+			pks.logger.Error("platform SRK creation rejected by the owner hierarchy",
+				slog.Bool("so_pin_supplied", soPIN != ""),
+				slog.String("error", err.Error()))
+			return errors.Join(ErrPlatformSRKHierarchyAuth, err)
 		}
 		return errors.Join(ErrPlatformKeyStoreCreateSRK, err)
 	}
@@ -230,22 +259,29 @@ func (pks *PlatformKeyStore) Initialize(soPIN, userPIN string) error {
 // Platform SRK, binding the operator-supplied userPIN as its authorization
 // value so the TPM2 PIN backend works end-to-end on subsequent boots.
 //
+// soPIN is the TPM owner hierarchy authorization value, the same argument
+// Initialize takes. Enrollment creates a persistent object in the owner
+// hierarchy, so a TPM whose hierarchy ProvisionOwner gave an auth value can
+// only be enrolled by a caller that supplies it; without it the TPM answers
+// TPM_RC_BAD_AUTH and enrollment reports ErrPlatformSRKHierarchyAuth. Callers
+// whose owner hierarchy has no auth value pass an empty string, which leaves
+// the hierarchy auth configured for the SRK in force.
+//
 // It is idempotent: when the SRK auth is already in a known-good state
 // (IsAuthReady), it returns ErrPlatformSRKAlreadyEnrolled so a daemon can skip
 // enrollment on every boot after the first without treating it as a failure.
 // An empty userPIN is rejected with ErrPlatformSRKEnrollEmptyPIN.
 //
 // Enrollment reuses the existing Initialize/ensureSRKAuth machinery; it adds no
-// new TPM primitives. The TPM SO-PIN concept is unused by the TPM2 backend, so
-// an empty SO PIN is passed through.
-func (pks *PlatformKeyStore) EnrollPlatformSRK(userPIN string) error {
+// new TPM primitives.
+func (pks *PlatformKeyStore) EnrollPlatformSRK(soPIN, userPIN string) error {
 	if userPIN == "" {
 		return ErrPlatformSRKEnrollEmptyPIN
 	}
 	if pks.IsAuthReady() {
 		return ErrPlatformSRKAlreadyEnrolled
 	}
-	if err := pks.Initialize("", userPIN); err != nil {
+	if err := pks.Initialize(soPIN, userPIN); err != nil {
 		return err
 	}
 	pks.logger.Info("platform SRK enrolled at first boot")
@@ -287,9 +323,13 @@ func (pks *PlatformKeyStore) ensureSRKAuth(soPIN, userPIN string) error {
 	evictAttrs.TPMAttributes.Name = name
 	if err := pks.tpm.DeleteKey(&evictAttrs, pks.backend); err != nil {
 		pks.logger.Error("failed to evict platform SRK",
+			slog.Bool("so_pin_supplied", soPIN != ""),
 			slog.String("error", err.Error()),
 			slog.String("hint", "clear the TPM or provide the correct SO PIN"))
 		pks.authReady.Store(false)
+		if isTPMAuthError(err) {
+			return errors.Join(ErrPlatformSRKHierarchyAuth, err)
+		}
 		return errors.Join(ErrPlatformKeyStoreEvictSRK, err)
 	}
 
@@ -297,9 +337,6 @@ func (pks *PlatformKeyStore) ensureSRKAuth(soPIN, userPIN string) error {
 	srkAttrs.Password = store.NewPassword([]byte(userPIN))
 	if soPIN != "" {
 		srkAttrs.TPMAttributes.HierarchyAuth = store.NewPassword([]byte(soPIN))
-	}
-	if pks.PlatformPolicyEnabled() {
-		srkAttrs.PlatformPolicy = true
 	}
 	if err := pks.tpm.CreateSRK(&srkAttrs); err != nil {
 		return errors.Join(ErrPlatformKeyStoreCreateSRK, err)
@@ -326,9 +363,6 @@ func (pks *PlatformKeyStore) InitializeWithDefaults() error {
 	// Create SRK with empty auth (TPM default).
 	srkAttrs := *pks.srkAttrs
 	srkAttrs.Password = store.NewPassword(nil)
-	if pks.PlatformPolicyEnabled() {
-		srkAttrs.PlatformPolicy = true
-	}
 	if err := pks.tpm.CreateSRK(&srkAttrs); err != nil {
 		// TPM_RC_NV_DEFINED (0x14c) means the persistent handle is already
 		// occupied - the SRK exists from a prior provisioning attempt.
@@ -388,10 +422,15 @@ func (pks *PlatformKeyStore) PINBackend() qrdbsdk.PINBackend {
 // PlatformPolicyEnabled returns true if TPM platform policy is enabled in
 // the key store configuration.
 func (pks *PlatformKeyStore) PlatformPolicyEnabled() bool {
-	if pks.config.PlatformSRK == nil {
-		return false
-	}
-	return pks.config.PlatformSRK.PlatformPolicy
+	return platformPolicyEnabled(pks.config)
+}
+
+// platformPolicyEnabled reports whether the Platform SRK is platform-bound.
+// It is the single reading of that setting: the Platform SRK's attributes and
+// every predicate that reports on them must agree, and the SSRK configuration
+// has no say in it.
+func platformPolicyEnabled(config *Config) bool {
+	return config != nil && config.PlatformSRK != nil && config.PlatformSRK.PlatformPolicy
 }
 
 // VerifyAuth verifies the user PIN against the PlatformSRK's password auth.
@@ -499,6 +538,11 @@ func (pks *PlatformKeyStore) SetAuthReady(ready bool) {
 // seal SSRK at a different handle is unaffected — makes each wrong PIN
 // increment the DA counter toward hardware lockout while a correct PIN still
 // authorizes normally.
+//
+// The SSRK configuration supplies nothing but algorithm and key parameters.
+// Whether the Platform SRK is platform-bound is decided by
+// PlatformSRKConfig.PlatformPolicy and nowhere else — the SSRK cannot express
+// a platform policy at all, and could not lend one to a key it is not.
 func buildSRKAttrsFromConfig(config *Config) (*types.KeyAttributes, error) {
 	var srkHandle uint32
 
@@ -508,23 +552,27 @@ func buildSRKAttrsFromConfig(config *Config) (*types.KeyAttributes, error) {
 		srkHandle = tpSRKIndex
 	}
 
+	platformPolicy := platformPolicyEnabled(config)
+
 	// Use SSRK config if available for algorithm/key parameters
 	if config.SSRK != nil {
 		cfg := *config.SSRK
 		cfg.Handle = srkHandle
-		attrs, err := SRKAttributesFromConfig(cfg, nil)
+		attrs, err := SRKAttributesFromConfig(cfg)
 		if err != nil {
 			return nil, err
 		}
+		attrs.PlatformPolicy = platformPolicy
 		enableDAOnSRK(attrs)
 		return attrs, nil
 	}
 
 	// Minimal SRK attributes from keystore config
 	attrs := &types.KeyAttributes{
-		CN:        "srk",
-		KeyType:   types.KeyTypeStorage,
-		StoreType: types.StoreTPM2,
+		CN:             "srk",
+		KeyType:        types.KeyTypeStorage,
+		PlatformPolicy: platformPolicy,
+		StoreType:      types.StoreTPM2,
 		TPMAttributes: &types.TPMAttributes{
 			Handle:     tpm2.TPMHandle(srkHandle),
 			HandleType: tpm2.TPMHTPersistent,

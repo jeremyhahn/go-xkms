@@ -18,6 +18,7 @@ import (
 	"encoding/json"
 	"encoding/pem"
 	"fmt"
+	"io"
 	"os"
 
 	"github.com/spf13/cobra"
@@ -177,6 +178,7 @@ func init() {
 }
 
 func runIAKShow(cmd *cobra.Command, args []string) error {
+	out := cmd.OutOrStdout()
 	tpm, err := openTPM()
 	if err != nil {
 		return err
@@ -221,45 +223,46 @@ func runIAKShow(cmd *cobra.Command, args []string) error {
 	// Output based on format
 	switch tpmCfg.outputFormat {
 	case "json":
-		encoder := json.NewEncoder(os.Stdout)
+		encoder := json.NewEncoder(out)
 		encoder.SetIndent("", "  ")
 		return encoder.Encode(info)
 	default:
-		return outputIAKText(info)
+		return outputIAKText(out, info)
 	}
 }
 
-func outputIAKText(info *IAKInfo) error {
-	fmt.Println("Initial Attestation Key (IAK) Information")
-	fmt.Println("==========================================")
-	fmt.Println()
+func outputIAKText(out io.Writer, info *IAKInfo) error {
+	fmt.Fprintln(out, "Initial Attestation Key (IAK) Information")
+	fmt.Fprintln(out, "==========================================")
+	fmt.Fprintln(out)
 
-	fmt.Println("Key Details:")
-	fmt.Printf("  Handle:              %s\n", info.Handle)
-	fmt.Printf("  Algorithm:           %s\n", info.Algorithm)
+	fmt.Fprintln(out, "Key Details:")
+	fmt.Fprintf(out, "  Handle:              %s\n", info.Handle)
+	fmt.Fprintf(out, "  Algorithm:           %s\n", info.Algorithm)
 	if info.KeySize > 0 {
-		fmt.Printf("  Key Size:            %d bits\n", info.KeySize)
+		fmt.Fprintf(out, "  Key Size:            %d bits\n", info.KeySize)
 	}
 	if info.Curve != "" {
-		fmt.Printf("  Curve:               %s\n", info.Curve)
+		fmt.Fprintf(out, "  Curve:               %s\n", info.Curve)
 	}
-	fmt.Printf("  Signature Algorithm: %s\n", info.SignatureAlgorithm)
-	fmt.Println()
+	fmt.Fprintf(out, "  Signature Algorithm: %s\n", info.SignatureAlgorithm)
+	fmt.Fprintln(out)
 
 	if info.HasCert {
-		fmt.Println("Certificate Details:")
-		fmt.Printf("  Subject:    %s\n", info.CertSubject)
-		fmt.Printf("  Issuer:     %s\n", info.CertIssuer)
-		fmt.Printf("  Serial:     %s\n", info.CertSerial)
-		fmt.Printf("  Not After:  %s\n", info.CertNotAfter)
+		fmt.Fprintln(out, "Certificate Details:")
+		fmt.Fprintf(out, "  Subject:    %s\n", info.CertSubject)
+		fmt.Fprintf(out, "  Issuer:     %s\n", info.CertIssuer)
+		fmt.Fprintf(out, "  Serial:     %s\n", info.CertSerial)
+		fmt.Fprintf(out, "  Not After:  %s\n", info.CertNotAfter)
 	} else {
-		fmt.Println("Certificate: Not available")
+		fmt.Fprintln(out, "Certificate: Not available")
 	}
 
 	return nil
 }
 
 func runIAKCreate(cmd *cobra.Command, args []string) error {
+	out := cmd.OutOrStdout()
 	// Validate template
 	switch iakCreateTemplate {
 	case "rsa2048", "rsa-pss", "ecc256":
@@ -288,17 +291,18 @@ func runIAKCreate(cmd *cobra.Command, args []string) error {
 	}
 
 	// Create IAK
-	fmt.Println("Creating Initial Attestation Key...")
+	fmt.Fprintln(out, "Creating Initial Attestation Key...")
 	_, err = tpm.CreateIAK(ekAttrs, nil)
 	if err != nil {
 		return &WrappedError{Msg: "failed to create IAK", Err: err}
 	}
 
-	fmt.Println("IAK created successfully")
+	fmt.Fprintln(out, "IAK created successfully")
 	return nil
 }
 
 func runIAKExport(cmd *cobra.Command, args []string) error {
+	out := cmd.OutOrStdout()
 	tpm, err := openTPM()
 	if err != nil {
 		return err
@@ -320,7 +324,7 @@ func runIAKExport(cmd *cobra.Command, args []string) error {
 
 	// Output to file or stdout
 	if iakExportOutput == "-" {
-		fmt.Print(string(pemData))
+		fmt.Fprint(out, string(pemData))
 		return nil
 	}
 
@@ -328,11 +332,12 @@ func runIAKExport(cmd *cobra.Command, args []string) error {
 		return &SentinelCauseError{Sentinel: ErrExportFailed, Cause: err}
 	}
 
-	fmt.Printf("IAK certificate exported to: %s\n", iakExportOutput)
+	fmt.Fprintf(out, "IAK certificate exported to: %s\n", iakExportOutput)
 	return nil
 }
 
 func runIAKCSR(cmd *cobra.Command, args []string) error {
+	out := cmd.OutOrStdout()
 	tpm, err := openTPM()
 	if err != nil {
 		return err
@@ -342,7 +347,7 @@ func runIAKCSR(cmd *cobra.Command, args []string) error {
 	// Get EK certificate
 	ekCert, err := tpm.EKCertificate()
 	if err != nil {
-		fmt.Println("Warning: EK certificate not available, CSR will have limited attestation capability")
+		fmt.Fprintln(out, "Warning: EK certificate not available, CSR will have limited attestation capability")
 	}
 
 	// Get IAK attributes
@@ -352,7 +357,7 @@ func runIAKCSR(cmd *cobra.Command, args []string) error {
 	}
 
 	// Create TCG-CSR-IDEVID for IAK
-	fmt.Println("Generating IAK CSR...")
+	fmt.Fprintln(out, "Generating IAK CSR...")
 	csr, err := tpm.CreateTCG_CSR_IDEVID(ekCert, iakAttrs, nil)
 	if err != nil {
 		return &SentinelCauseError{Sentinel: ErrCSRGenerationFailed, Cause: err}
@@ -369,6 +374,6 @@ func runIAKCSR(cmd *cobra.Command, args []string) error {
 		return &SentinelCauseError{Sentinel: ErrExportFailed, Cause: err}
 	}
 
-	fmt.Printf("IAK CSR written to: %s\n", iakCSROutput)
+	fmt.Fprintf(out, "IAK CSR written to: %s\n", iakCSROutput)
 	return nil
 }

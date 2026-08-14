@@ -824,6 +824,34 @@ func TestGetTenantHandler_TenantFiltering(t *testing.T) {
 		require.NoError(t, err)
 		assert.Equal(t, "tenant-a", resp.Tenant.ID)
 	})
+
+	t.Run("system-tenant identity can access any tenant (regression)", func(t *testing.T) {
+		// Regression test: a caller minted with the reserved "system" TenantID
+		// (e.g. a WebAuthn-registered identity, see pkg/server.webAuthnSystemTenant)
+		// must be treated as cross-tenant scoped exactly like an empty TenantID.
+		// Before isCrossTenantAccess delegated to auth.IsCrossTenant, "system" was
+		// compared literally against the target tenant and this test failed with
+		// 404.
+		_, router := setupTenantTestHandlers(t)
+
+		rec := createTenantViaAPI(t, router, "tenant-b", "Tenant B")
+		require.Equal(t, http.StatusCreated, rec.Code)
+
+		req := httptest.NewRequest(http.MethodGet, "/tenants/tenant-b", nil)
+		identity := &auth.Identity{Subject: "system-user", TenantID: "system"}
+		ctx := auth.WithIdentity(req.Context(), identity)
+		req = req.WithContext(ctx)
+
+		rec = httptest.NewRecorder()
+		router.ServeHTTP(rec, req)
+
+		assert.Equal(t, http.StatusOK, rec.Code)
+
+		var resp wrappedTenantResponse
+		err := json.NewDecoder(rec.Body).Decode(&resp)
+		require.NoError(t, err)
+		assert.Equal(t, "tenant-b", resp.Tenant.ID)
+	})
 }
 
 // TestDeleteTenantHandler_TenantFiltering tests tenant-scoped filtering for DeleteTenantHandler.

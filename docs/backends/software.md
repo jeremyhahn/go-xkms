@@ -229,4 +229,4 @@ The Software backend stores keys in software and memory. For environments requir
 - [Backend Selection Guide](README.md)
 - [Symmetric Encryption Architecture](../architecture/symmetric-encryption.md)
 - [AEAD Configuration](../configuration/aead-auto-selection.md)
-- [Getting Started](../usage/getting-started.md)
+- [Getting Started](../../xkey/docs/usage/getting-started.md)

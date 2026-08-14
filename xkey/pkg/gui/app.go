@@ -1850,6 +1850,10 @@ func NewApp(cfg *GUIConfig) *App {
 	browsersDir := filepath.Join(home, ".xkey", "browsers")
 	secureBrowserSvc := services.NewSecureBrowserService(
 		browsersDir, browserSvc, trustSvc, log)
+	// Without this the generic launcher only exports SSL_CERT_FILE, which no
+	// browser reads: Chrome uses NSS and Firefox its profile cert9.db. The
+	// syncer is what actually makes a launched browser trust platform CAs.
+	browserSvc.SetTrustSyncer(secureBrowserSvc)
 	trustSvc.SetOnMutate(func() {
 		if err := secureBrowserSvc.Rebuild(); err != nil {
 			log.Warn("browser cert rebuild failed", "error", err)
@@ -2065,6 +2069,12 @@ func NewApp(cfg *GUIConfig) *App {
 	keySvc.SetRegistry(a.backendRegistry)
 	a.fido2Service.SetClientFunc(connSvc.GetClient)
 	a.fido2Service.SetAuditLogger(auditStore)
+	// TCG device enrollment over the phone bridge, opened from the configured
+	// TPM device. Off unless phone.tpm_enrollment is set; when the unified
+	// config cannot be read the feature simply stays off.
+	if ucfg, ucfgErr := config.Load(); ucfgErr == nil {
+		a.fido2Service.SetTPMEnrollment(ucfg.Phone.TPMEnrollment, ucfg.TPM.Device)
+	}
 	fido2DeviceSvc.SetAuditLogger(auditStore)
 	a.pinService.SetAuditLogger(auditStore)
 	a.tpmService.SetAuditLogger(auditStore)
@@ -3240,8 +3250,29 @@ type guiIPCHandler struct {
 	app *App
 }
 
+// HandleTouch approves a pending FIDO2 user-presence request.
+//
+// This used to be a stub that unconditionally answered "no pending action",
+// so `xkey touch` could never approve anything: the virtual authenticator
+// parks the request on the FIDO2 device service's SocketHandler, and nothing
+// consulted it. Every CTAP2 ceremony therefore waited out its 30s presence
+// timeout and failed with "operation denied" — which reads as an authenticator
+// rejection rather than "nobody answered the prompt".
+//
+// The approval path it needs (HasPendingTouch / ApproveTouchRequest) already
+// existed on the service; only this bridge was missing.
 func (h *guiIPCHandler) HandleTouch() (*ipc.Response, error) {
-	return ipc.OKResponse("gui: no pending action"), nil
+	svc := h.app.fido2DeviceService
+	if svc == nil || !svc.HasPendingTouch() {
+		return ipc.OKResponse(ipc.ActionNoPending), nil
+	}
+	if !svc.ApproveTouchRequest() {
+		// The request resolved between the check and the approval — a
+		// concurrent GUI click, or it timed out. Report it as no-pending
+		// rather than an error: nothing is wrong, the work is just done.
+		return ipc.OKResponse(ipc.ActionNoPending), nil
+	}
+	return ipc.OKResponse(ipc.ActionApprovedUP), nil
 }
 
 func (h *guiIPCHandler) HandleTypePassword(name string) (*ipc.Response, error) {

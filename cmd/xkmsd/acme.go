@@ -30,6 +30,7 @@ import (
 	"github.com/gorilla/mux"
 
 	clusterenroll "github.com/jeremyhahn/go-qrdb/sdk/go/clusterenroll"
+	"github.com/jeremyhahn/go-xkms/pkg/acme/audit"
 	dns01 "github.com/jeremyhahn/go-xkms/pkg/acme/challenges/dns-01"
 	http01 "github.com/jeremyhahn/go-xkms/pkg/acme/challenges/http-01"
 	"github.com/jeremyhahn/go-xkms/pkg/acme/common"
@@ -77,6 +78,11 @@ var (
 
 	// ErrACMEListen is returned when the ACME listener cannot be bound.
 	ErrACMEListen = errors.New("acme: failed to bind listener")
+
+	// ErrACMEAuditLogger is returned when the audit trail cannot be opened.
+	// The ACME CA does not start without it: a CA that issues and revokes
+	// certificates it cannot record is not a CA any compliance regime accepts.
+	ErrACMEAuditLogger = errors.New("acme: failed to open audit trail")
 )
 
 // acmeServer holds the runtime state of the embedded ACME HTTPS server so it
@@ -85,6 +91,10 @@ type acmeServer struct {
 	httpServer *http.Server
 	listener   net.Listener
 	logger     *slog.Logger
+
+	// auditLog is the ACME audit trail. It is flushed and closed during
+	// Shutdown so no recorded event is lost on a clean stop.
+	auditLog audit.AuditLogger
 
 	// doneCh is closed when the server goroutine exits.
 	doneCh chan struct{}
@@ -111,17 +121,6 @@ func startACMEServer(srv *server.Server, cfg *config.Config, logger *slog.Logger
 		slog.String("external_url", acmeCfg.ExternalURL),
 		slog.String("keystore_backend", acmeCfg.KeystoreBackend))
 
-	// Resolve the keystore backend from the xkmsd server. The ACME CA reuses
-	// the same keystore as the primary xkmsd CA when configured identically,
-	// so the same physical keys back both subsystems.
-	backend := srv.Backend(acmeCfg.KeystoreBackend)
-	if backend == nil {
-		return nil, &acmeBackendError{
-			Backend: acmeCfg.KeystoreBackend,
-			Err:     ErrACMEBackendUnavailable,
-		}
-	}
-
 	// Resolve data directory for ACME state. Defaults to "<storage.path>/acme".
 	dataDir := acmeCfg.DataDir
 	if dataDir == "" {
@@ -133,6 +132,39 @@ func startACMEServer(srv *server.Server, cfg *config.Config, logger *slog.Logger
 	}
 	if err := os.MkdirAll(dataDir, 0o750); err != nil {
 		return nil, &acmeInitError{Stage: "create data dir", Err: err}
+	}
+
+	// Open the audit trail before anything else that can issue a certificate.
+	// A disabled trail yields the no-op logger; an enabled trail whose log file
+	// cannot be created fails the start-up rather than running a CA that
+	// silently keeps no record of what it signs.
+	auditCfg := acmeCfg.Audit.AuditConfig(dataDir)
+	auditLogger, err := audit.NewFileAuditLogger(auditCfg)
+	if err != nil {
+		return nil, &acmeInitError{Stage: "open audit trail", Sentinel: ErrACMEAuditLogger, Err: err}
+	}
+	// Every failure below this point must release the audit writer goroutine.
+	started := false
+	defer func() {
+		if !started {
+			_ = auditLogger.Close()
+		}
+	}()
+	if auditLogger.Enabled() {
+		logger.Info("ACME audit trail enabled", slog.String("log_path", auditCfg.LogPath))
+	} else {
+		logger.Warn("ACME audit trail disabled: certificate issuance and revocation will not be recorded")
+	}
+
+	// Resolve the keystore backend from the xkmsd server. The ACME CA reuses
+	// the same keystore as the primary xkmsd CA when configured identically,
+	// so the same physical keys back both subsystems.
+	backend := srv.Backend(acmeCfg.KeystoreBackend)
+	if backend == nil {
+		return nil, &acmeBackendError{
+			Backend: acmeCfg.KeystoreBackend,
+			Err:     ErrACMEBackendUnavailable,
+		}
 	}
 
 	// Resolve the primary xkmsd CA. ACME issues certificates through the
@@ -190,6 +222,7 @@ func startACMEServer(srv *server.Server, cfg *config.Config, logger *slog.Logger
 	// ACME handlers rely on the TCG extensions (IssueEKCertificate,
 	// SignTCGCSRIDevID, ...) exposed by *pkg/ca.CA.
 	service, err := handlers.NewRestService(&handlers.Params{
+		AuditLogger:             auditLogger,
 		BaseRESTURI:             acmeCfg.ExternalURL,
 		CA:                      tcgCA,
 		CAAIdentities:           acmeCfg.CAAIdentities,
@@ -248,8 +281,10 @@ func startACMEServer(srv *server.Server, cfg *config.Config, logger *slog.Logger
 		httpServer: httpSrv,
 		listener:   ln,
 		logger:     logger,
+		auditLog:   auditLogger,
 		doneCh:     make(chan struct{}),
 	}
+	started = true
 
 	go func() {
 		defer close(as.doneCh)
@@ -282,6 +317,14 @@ func (a *acmeServer) Shutdown(ctx context.Context) error {
 		// proceed to release remaining resources. httpServer.Shutdown will
 		// have already returned ctx.Err() in this case.
 	}
+	// Close the audit trail last so any event recorded by an in-flight request
+	// is flushed to disk before the process exits.
+	if a.auditLog != nil {
+		if err := a.auditLog.Close(); err != nil {
+			a.logger.Error("Failed to close ACME audit trail", slog.Any("error", err))
+		}
+	}
+
 	a.mu.Lock()
 	defer a.mu.Unlock()
 	if a.err != nil {
@@ -300,7 +343,7 @@ func buildChallengeMap(cfg config.ACMEChallengesConfig) map[string]common.Challe
 			resolver *net.Resolver,
 			_ common.CertificateAuthority,
 			authzValue, challengePort, challengeToken, expectedKeyAuth string) error {
-			return http01.Verify(resolver, nil, authzValue, challengePort, challengeToken, expectedKeyAuth)
+			return http01.Verify(resolver, authzValue, challengePort, challengeToken, expectedKeyAuth)
 		}
 	}
 	if cfg.DNS01 {
@@ -308,7 +351,7 @@ func buildChallengeMap(cfg config.ACMEChallengesConfig) map[string]common.Challe
 			resolver *net.Resolver,
 			_ common.CertificateAuthority,
 			authzValue, challengePort, challengeToken, expectedKeyAuth string) error {
-			return dns01.Verify(resolver, nil, authzValue, challengePort, challengeToken, expectedKeyAuth)
+			return dns01.Verify(resolver, authzValue, challengePort, challengeToken, expectedKeyAuth)
 		}
 	}
 	// The TPM attestation challenges (enroll-01/endorse-01) use the shared SDK

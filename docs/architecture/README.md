@@ -68,15 +68,15 @@ This directory contains the complete architecture and implementation guidance fo
      - Logging adapters
      - Custom adapter development
 
-7. **[rbac.md](./rbac.md)** (12KB)
+7. **[rbac.md](./rbac.md)**
    - **Purpose:** Role-based access control documentation
    - **Audience:** Developers implementing authorization
    - **Contents:**
+     - The qrdb-backed `auth.Authorizer` seam
+     - Why RBAC requires `storage.backend: "qrdb"`
      - Permission model (resource:action pairs)
-     - Predefined roles (admin, operator, auditor, user, readonly, guest)
-     - RBAC adapter interface
-     - Integration with user management
-     - HTTP middleware examples
+     - The six canonical roles (so, admin, operator, user, auditor, custodian)
+     - Per-transport authorization gates
 
 8. **[unified-keyid-jwk-integration.md](./unified-keyid-jwk-integration.md)**
    - **Purpose:** Key ID format and JWK integration guide
@@ -366,6 +366,10 @@ quic:
 auth:
   enabled: true
   type: adaptive  # jwt, mtls, oidc, adaptive, composite
+  # Adaptive escalates to JWT once the first user exists, so a JWT
+  # verification key is required; startup fails without it.
+  jwt:
+    public_key_file: /etc/xkms/jwt-public.pem
 
 metrics:
   enabled: true
@@ -583,7 +587,7 @@ The following documents have been consolidated to reduce duplication and improve
 - [Storage Architecture](./storage.md) - Storage layer design
 - [RBAC](./rbac.md) - Role-based access control
 - [KeyStore Interface](../../pkg/xkms/keystore.go) - Core interface
-- [Backend Interface](../../pkg/backend/backend.go) - Backend contract
+- [Backend Interface](../../pkg/xkms/keystore.go) - `Backend` contract (`pkg/xkms/keystore.go:36`)
 - [Existing Tests](../../test/integration/api/) - Integration test suite
 
 ### External Standards

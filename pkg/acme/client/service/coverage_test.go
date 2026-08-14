@@ -764,18 +764,15 @@ func TestCleanupHTTP01TokenFile_WarnPath(t *testing.T) {
 // ==========================================================================
 
 // TestWriteHTTP01TokenFile_WriteFailure exercises the os.WriteFile error branch
-// by making the challenge directory non-writable after creation.
+// by making the token path unwritable.
+//
+// A directory occupying the token's path makes the write fail with EISDIR,
+// which the kernel enforces for every user. A non-writable directory would not
+// stop root, so the branch would silently stop being tested under CI's uid 0.
 func TestWriteHTTP01TokenFile_WriteFailure(t *testing.T) {
-	if os.Getuid() == 0 {
-		t.Skip("skipping permission test: running as root")
-	}
 	webroot := t.TempDir()
 	challengeDir := webroot + "/.well-known/acme-challenge"
-	require.NoError(t, os.MkdirAll(challengeDir, 0750))
-
-	// Remove write permission so WriteFile fails.
-	require.NoError(t, os.Chmod(challengeDir, 0555))
-	t.Cleanup(func() { _ = os.Chmod(challengeDir, 0750) })
+	require.NoError(t, os.MkdirAll(challengeDir+"/tok", 0750))
 
 	err := WriteHTTP01TokenFile(webroot, "tok", "keyauth", testLogger())
 	require.Error(t, err)
@@ -859,15 +856,11 @@ func TestBuildCSR_SignError(t *testing.T) {
 // TestDeploy_CertWriteFileError verifies Deploy returns ErrDeployFailed when
 // writing the certificate file fails (parent dir exists but is non-writable).
 func TestDeploy_CertWriteFileError(t *testing.T) {
-	if os.Getuid() == 0 {
-		t.Skip("skipping permission test: running as root")
-	}
 	dir := t.TempDir()
 	certDir := dir + "/certs"
-	require.NoError(t, os.MkdirAll(certDir, 0750))
-	// Make cert directory non-writable so WriteFile(certPath) fails.
-	require.NoError(t, os.Chmod(certDir, 0555))
-	t.Cleanup(func() { _ = os.Chmod(certDir, 0750) })
+	// A directory at the certificate's path makes WriteFile fail with EISDIR
+	// for every user, unlike a non-writable directory which root ignores.
+	require.NoError(t, os.MkdirAll(certDir+"/cert.pem", 0750))
 
 	d := NewDeployer(testLogger())
 	cert, key := selfSignedCert(t, "test", time.Hour)
@@ -888,15 +881,11 @@ func TestDeploy_CertWriteFileError(t *testing.T) {
 // TestDeploy_KeyWriteFileError verifies Deploy returns ErrDeployFailed when
 // writing the private key file fails (cert written successfully; key dir non-writable).
 func TestDeploy_KeyWriteFileError(t *testing.T) {
-	if os.Getuid() == 0 {
-		t.Skip("skipping permission test: running as root")
-	}
 	dir := t.TempDir()
 	keyDir := dir + "/keys"
-	require.NoError(t, os.MkdirAll(keyDir, 0750))
-	// Make key directory non-writable so WriteFile(keyPath) fails.
-	require.NoError(t, os.Chmod(keyDir, 0555))
-	t.Cleanup(func() { _ = os.Chmod(keyDir, 0750) })
+	// A directory at the key's path makes WriteFile fail with EISDIR for every
+	// user, unlike a non-writable directory which root ignores.
+	require.NoError(t, os.MkdirAll(keyDir+"/key.pem", 0750))
 
 	d := NewDeployer(testLogger())
 	cert, key := selfSignedCert(t, "test", time.Hour)

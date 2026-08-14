@@ -210,10 +210,10 @@ func buildAttestationExtensionWithRootOfTrust(
 		return nil, err
 	}
 
-	// Wrap RootOfTrust in context-specific constructed tag (simulating tag 704)
+	// Wrap RootOfTrust in its context-specific constructed tag, 704.
 	rotTagged := asn1.RawValue{
 		Class:      asn1.ClassContextSpecific,
-		Tag:        0, // tag number within context-specific class
+		Tag:        704, // rootOfTrust, as every real device encodes it
 		IsCompound: true,
 		Bytes:      rotBytes,
 	}
@@ -924,7 +924,7 @@ func TestFindRootOfTrust_ValidRootOfTrust(t *testing.T) {
 	// Wrap in context-specific constructed tag
 	rotTagged := asn1.RawValue{
 		Class:      asn1.ClassContextSpecific,
-		Tag:        0,
+		Tag:        704,
 		IsCompound: true,
 		Bytes:      rotBytes,
 	}
@@ -1016,7 +1016,7 @@ func TestFindRootOfTrust_NonCompoundContextSpecific(t *testing.T) {
 	// Create a context-specific PRIMITIVE element (not compound)
 	primitiveElem := asn1.RawValue{
 		Class:      asn1.ClassContextSpecific,
-		Tag:        0,
+		Tag:        704, // the right tag, deliberately not constructed
 		IsCompound: false,
 		Bytes:      []byte{0x01, 0x02, 0x03},
 	}
@@ -1049,7 +1049,7 @@ func TestFindRootOfTrust_CompoundButNotRootOfTrust(t *testing.T) {
 	invalidContent := []byte{0x02, 0x01, 0x05} // Just an INTEGER 5
 	compoundElem := asn1.RawValue{
 		Class:      asn1.ClassContextSpecific,
-		Tag:        0,
+		Tag:        704, // the right tag, with content that is not a RootOfTrust
 		IsCompound: true,
 		Bytes:      invalidContent,
 	}
@@ -1095,7 +1095,9 @@ func TestFindRootOfTrust_MixedElementsWithRootOfTrust(t *testing.T) {
 		t.Fatalf("failed to marshal bad compound: %v", err)
 	}
 
-	// Third element: valid RootOfTrust
+	// Third element: the real RootOfTrust, under its own tag. The decoy above
+	// keeps a different tag, so this now proves the walk selects by tag rather
+	// than by whatever happens to decode.
 	rot := rootOfTrustASN1{
 		VerifiedBootKey:   []byte("boot-key-for-mixed-test-32byte!"),
 		DeviceLocked:      false,
@@ -1108,7 +1110,7 @@ func TestFindRootOfTrust_MixedElementsWithRootOfTrust(t *testing.T) {
 	}
 	rotTagged := asn1.RawValue{
 		Class:      asn1.ClassContextSpecific,
-		Tag:        2,
+		Tag:        704,
 		IsCompound: true,
 		Bytes:      rotBytes,
 	}
@@ -1163,7 +1165,7 @@ func TestParseAuthorizationList_WithRootOfTrust(t *testing.T) {
 
 	rotTagged := asn1.RawValue{
 		Class:      asn1.ClassContextSpecific,
-		Tag:        0,
+		Tag:        704,
 		IsCompound: true,
 		Bytes:      rotBytes,
 	}

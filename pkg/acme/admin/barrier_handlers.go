@@ -20,6 +20,8 @@ import (
 	"net/http"
 
 	"github.com/gorilla/mux"
+
+	"github.com/jeremyhahn/go-xkms/pkg/auth"
 )
 
 // BarrierHandlers provides HTTP handlers for barrier management API endpoints.
@@ -37,29 +39,40 @@ func NewBarrierHandlers(service BarrierService, logger *slog.Logger) *BarrierHan
 }
 
 // RegisterRoutes registers all barrier API routes with the router.
-func (h *BarrierHandlers) RegisterRoutes(router *mux.Router, authMiddleware AuthHandler) {
+//
+// Each route declares the canonical go-qrdb seal:* / barrier:* grant it
+// requires — the same vocabulary the QUIC and MCP barrier surfaces already
+// enforce — so a seal grant means the same thing on every transport. The
+// blanket "super-admin" gate this replaced conflated bootstrap, unseal, rekey,
+// and root-token issuance into one role check.
+func (h *BarrierHandlers) RegisterRoutes(router *mux.Router, authMiddleware AuthHandler, gate *PermissionGate) {
 	barrierRouter := router.PathPrefix("/admin/barrier").Subrouter()
 	if authMiddleware != nil {
 		barrierRouter.Use(authMiddleware.Authenticate)
 	}
 
-	// Status is available to all authenticated users
-	barrierRouter.HandleFunc("/status", h.handleBarrierStatus).Methods("GET")
-
-	// All mutating operations require super-admin
-	mutateRouter := barrierRouter.NewRoute().Subrouter()
-	mutateRouter.Use(RequireRole(RoleSuperAdmin))
-
-	mutateRouter.HandleFunc("/initialize", h.handleBarrierInitialize).Methods("POST")
-	mutateRouter.HandleFunc("/seal", h.handleBarrierSeal).Methods("POST")
-	mutateRouter.HandleFunc("/unseal", h.handleBarrierUnseal).Methods("POST")
-	mutateRouter.HandleFunc("/shamir/initialize", h.handleBarrierShamirInitialize).Methods("POST")
-	mutateRouter.HandleFunc("/shamir/unseal-share", h.handleBarrierShamirUnsealShare).Methods("POST")
-	mutateRouter.HandleFunc("/rekey", h.handleBarrierRekey).Methods("POST")
-	mutateRouter.HandleFunc("/recovery/generate", h.handleBarrierRecoveryGenerate).Methods("POST")
-	mutateRouter.HandleFunc("/recovery/recover", h.handleBarrierRecoveryRecover).Methods("POST")
-	mutateRouter.HandleFunc("/recovery/status", h.handleBarrierRecoveryStatus).Methods("GET")
-	mutateRouter.HandleFunc("/root-token", h.handleBarrierRootToken).Methods("POST")
+	barrierRouter.Handle("/status",
+		gate.Wrap(auth.ResourceSeal, auth.ActionStatus, h.handleBarrierStatus)).Methods("GET")
+	barrierRouter.Handle("/initialize",
+		gate.Wrap(auth.ResourceSeal, auth.ActionBootstrap, h.handleBarrierInitialize)).Methods("POST")
+	barrierRouter.Handle("/seal",
+		gate.Wrap(auth.ResourceSeal, auth.ActionSeal, h.handleBarrierSeal)).Methods("POST")
+	barrierRouter.Handle("/unseal",
+		gate.Wrap(auth.ResourceSeal, auth.ActionUnseal, h.handleBarrierUnseal)).Methods("POST")
+	barrierRouter.Handle("/shamir/initialize",
+		gate.Wrap(auth.ResourceSeal, auth.ActionInitializeShamir, h.handleBarrierShamirInitialize)).Methods("POST")
+	barrierRouter.Handle("/shamir/unseal-share",
+		gate.Wrap(auth.ResourceBarrier, auth.ActionUnsealShare, h.handleBarrierShamirUnsealShare)).Methods("POST")
+	barrierRouter.Handle("/rekey",
+		gate.Wrap(auth.ResourceSeal, auth.ActionRekey, h.handleBarrierRekey)).Methods("POST")
+	barrierRouter.Handle("/recovery/generate",
+		gate.Wrap(auth.ResourceSeal, auth.ActionGenerateRecovery, h.handleBarrierRecoveryGenerate)).Methods("POST")
+	barrierRouter.Handle("/recovery/recover",
+		gate.Wrap(auth.ResourceSeal, auth.ActionRecoverWithKeys, h.handleBarrierRecoveryRecover)).Methods("POST")
+	barrierRouter.Handle("/recovery/status",
+		gate.Wrap(auth.ResourceSeal, auth.ActionStatus, h.handleBarrierRecoveryStatus)).Methods("GET")
+	barrierRouter.Handle("/root-token",
+		gate.Wrap(auth.ResourceSeal, auth.ActionRotateRootKey, h.handleBarrierRootToken)).Methods("POST")
 }
 
 // handleBarrierStatus handles GET /admin/barrier/status.

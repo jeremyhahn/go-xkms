@@ -1,5 +1,11 @@
 # Admin Account Management
 
+> **Scope:** this page documents the go-xkms **server** CLI `xkmsctl admin`
+> (source: `cmd/xkmsctl/`), **not** the `xkey` desktop CLI. It lives under
+> `xkey/docs/` for historical reasons.
+> There is no `xkey` equivalent. For the xkey command tree see
+> [the xkey CLI reference](README.md).
+
 The `admin` command group manages administrator accounts. All accounts created
 through these commands receive the `admin` role with full system access.
 

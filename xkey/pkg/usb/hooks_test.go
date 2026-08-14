@@ -15,11 +15,18 @@ package usb
 
 import (
 	"errors"
+	"io/fs"
+	"os"
 	"testing"
+	"time"
 
 	"github.com/jeremyhahn/go-luks2/pkg/luks2"
 	"github.com/stretchr/testify/assert"
 )
+
+// testDevicePath is a synthetic device node path used by tests. It never
+// exists on the host; statPath is seamed to describe it.
+const testDevicePath = "/dev/xkey-test-usb0"
 
 // savedHooks captures all package-level function variables so they
 // can be restored after a test mutates them.
@@ -34,6 +41,7 @@ type savedHooks struct {
 	luksLock           func(string) error
 	luksIsUnlocked     func(string) bool
 	readMountsFile     func() ([]byte, error)
+	statPath           func(string) (os.FileInfo, error)
 }
 
 // saveHooks captures the current state of all hooks and returns a
@@ -51,6 +59,7 @@ func saveHooks(t *testing.T) func() {
 		luksLock:           luksLock,
 		luksIsUnlocked:     luksIsUnlocked,
 		readMountsFile:     readMountsFile,
+		statPath:           statPath,
 	}
 	return func() {
 		execCommand = saved.execCommand
@@ -63,6 +72,7 @@ func saveHooks(t *testing.T) func() {
 		luksLock = saved.luksLock
 		luksIsUnlocked = saved.luksIsUnlocked
 		readMountsFile = saved.readMountsFile
+		statPath = saved.statPath
 	}
 }
 
@@ -123,4 +133,29 @@ func TestCommandError_NoArgs(t *testing.T) {
 		Err:    errors.New("fail"),
 	}
 	assert.Equal(t, "true : fail: ", err.Error())
+}
+
+// fakeFileInfo is a synthetic os.FileInfo used to describe a device node
+// without requiring a real device to exist on the host.
+type fakeFileInfo struct {
+	name string
+	mode os.FileMode
+}
+
+func (f fakeFileInfo) Name() string       { return f.name }
+func (f fakeFileInfo) Size() int64        { return 0 }
+func (f fakeFileInfo) Mode() os.FileMode  { return f.mode }
+func (f fakeFileInfo) ModTime() time.Time { return time.Time{} }
+func (f fakeFileInfo) IsDir() bool        { return f.mode.IsDir() }
+func (f fakeFileInfo) Sys() any           { return nil }
+
+// mockDeviceNode makes statPath report path as a character/block device
+// node so IsBlockDevice returns true without touching the host.
+func mockDeviceNode(path string) {
+	statPath = func(p string) (os.FileInfo, error) {
+		if p == path {
+			return fakeFileInfo{name: p, mode: os.ModeDevice | 0o660}, nil
+		}
+		return nil, &fs.PathError{Op: "stat", Path: p, Err: fs.ErrNotExist}
+	}
 }

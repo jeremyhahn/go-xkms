@@ -124,17 +124,31 @@ sudo xkey fido2 --backend software
 sudo xkey fido2 --backend tpm2
 ```
 
-### xkmsd Mode
+### Phone Mode
 
 ```bash
-xkmsd serve --config /etc/xkmsd/config.yaml
-sudo xkey fido2 --backend xkmsd --xkmsd-url https://localhost:8443
+# Keys stay in a paired Android phone's TEE/StrongBox
+sudo xkey fido2 --backend phone
+sudo xkey fido2 --backend phone --phone-device "John's Pixel"
+```
+
+### Unattended Mode
+
+```bash
+# Never block on a touch; let Chrome skip its PIN dialog
+sudo xkey fido2 --require-touch=false --auto-uv
+
+# No /dev/uhid and no sudo — drive Chrome's virtual authenticator
+xkey fido2 --cdp --cdp-port 9222
 ```
 
 ## Component Documentation
 
 ### [FIDO2](fido2/)
 - [Overview](fido2/README.md) -- FIDO2 daemon with all backend options
+- [Daemon Overview](fido2/overview.md) -- what `xkey fido2` is and what it owns
+- [Daemon Architecture](fido2/daemon-architecture.md) -- UHID device, IPC socket, keyboard, CDP bridge
+- [Daemon Configuration](fido2/daemon-configuration.md) -- flags, environment variables, config file
 - [Authenticator Overview](fido2/authenticator-overview.md) -- CTAP2 virtual authenticator implementation
 - [Authenticator API](fido2/authenticator-api.md) -- Complete API documentation
 - [Authenticator Architecture](fido2/authenticator-architecture.md) -- Component design and data flows
@@ -212,7 +226,7 @@ sudo xkey fido2 --backend xkmsd --xkmsd-url https://localhost:8443
 - [Attestation](phone/attestation.md) -- Bidirectional attestation flows
 - [Bidirectional](phone/bidirectional.md) -- Bidirectional key sharing design
 - [Transport](phone/transport.md) -- BLE and USB transport layers
-- [Backend](phone/backend.md) -- Phone-as-a-token integration
+- [Backend](phone/backend/README.md) -- Phone-as-a-token integration
 - [Backend Architecture](phone/backend/architecture.md) -- Phone backend internals
 
 ### [Seal](seal/)

@@ -37,11 +37,14 @@ type Client interface {
 	Session() SessionClient
 
 	// Console opens an interactive PTY console to a host, authenticated by the
-	// named key (software or hardware). It is the SDK's transport-agnostic SSH
-	// console surface: embedded runs the PTY in-process; gRPC/unix stream it
-	// over the bidi RPC; REST/QUIC are served by the WebSocket bridge handler
-	// (use NewConsoleWSHandler server-side and an HTTP/WS client, or sdk/ts in
-	// the browser); MCP returns *ConsoleUnsupportedError.
+	// named key (software or hardware). Only the embedded transport supports
+	// it: the PTY runs in the caller's own process, which is where an SSH
+	// session belongs. Every remote transport returns
+	// *ConsoleUnsupportedError, because a console there would be terminated by
+	// the xkms server — turning a key vault into an SSH proxy that dials
+	// arbitrary hosts on a caller's behalf. Remote keys still drive a local
+	// session: resolve a Signer through Keys().Signer, which delegates each
+	// signature to the server and never moves the private key.
 	Console(ctx context.Context, req ConsoleConnectRequest, cfg ConsoleConfig) (ConsoleSession, error)
 
 	// Close releases any resources held by the Client (e.g., storage

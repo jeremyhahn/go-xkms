@@ -12,12 +12,19 @@
 //    Contact licensing@automatethethings.com for commercial licensing options.
 
 // Package usb provides a USB Accessory Mode (AOA) transport implementation
-// for the xkms SDK. It wraps the phone-level USBTransport and Noise XX
-// session to present the SDK transport.Transport interface.
+// for the xkms SDK. It wraps the phone-level USBTransport in a Noise XX
+// session and presents the SDK transport.Transport interface.
 //
 // This transport communicates directly with an Android phone over USB without
 // requiring ADB. The phone acts as a USB accessory; the laptop acts as the
 // USB host.
+//
+// The phone's USB responder speaks the same pairing protocol as its BLE and
+// TCP responders: a pre-handshake identity exchange, a Noise XX handshake, and
+// then JSON-RPC 2.0 messages encrypted under the resulting session. The
+// transport therefore requires the pairing key material from a prior
+// "xkey device pair" run; without it Connect fails rather than falling back to
+// plaintext, which the phone would read as a malformed handshake.
 package usb
 
 import (
@@ -26,6 +33,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"sync"
 
 	"github.com/jeremyhahn/go-xkms/pkg/errs"
 
@@ -42,13 +50,42 @@ var (
 
 	// ErrStreamNotSupported is returned when streaming is requested.
 	ErrStreamNotSupported = transport.ErrStreamNotSupported
+
+	// ErrNoiseNotConfigured is returned when the transport is asked to connect
+	// without the pairing key material the Noise handshake needs.
+	ErrNoiseNotConfigured = errors.New("usb transport: noise pairing keys not configured")
+
+	// ErrRequestFailed is returned when the phone answers a request with a
+	// JSON-RPC error.
+	ErrRequestFailed = errors.New("usb transport: request failed")
 )
 
+// NoiseConfig carries the pairing key material for the Noise XX handshake.
+// It is produced by pairing with the phone ("xkey device pair"), which stores
+// this host's static private key and the phone's static public key.
+type NoiseConfig struct {
+	// LocalStaticPrivateKey is this host's 32-byte Curve25519 private key.
+	LocalStaticPrivateKey []byte
+
+	// ExpectedRemoteStatic is the phone's Noise static public key. When set,
+	// the handshake fails unless the phone presents this key.
+	ExpectedRemoteStatic []byte
+
+	// ExpectedDeviceFingerprint is the phone's attestation fingerprint. When
+	// set, the identity exchange fails unless the phone reports it, and the
+	// value is bound into the Noise prologue.
+	ExpectedDeviceFingerprint []byte
+}
+
 // phoneTransport defines the operations needed from the phone USB layer.
+// The method set is a superset of the pairing transport contract, so a value
+// of this type can drive the shared Noise handshake.
 type phoneTransport interface {
 	Connect(ctx context.Context) error
 	Close() error
 	IsConnected() bool
+	Send(ctx context.Context, message []byte) error
+	Receive(ctx context.Context) ([]byte, error)
 	SendAndReceive(ctx context.Context, message []byte) ([]byte, error)
 }
 
@@ -57,12 +94,20 @@ type phoneTransport interface {
 // and exposes SDK-level Request/Response operations.
 type Transport struct {
 	config    *transport.Config
+	noise     *NoiseConfig
 	phoneUSB  phoneTransport
+	session   *phone.NoiseSession
 	connected bool
 	log       *slog.Logger
+
+	// mu serializes requests. A Noise cipherstate advances a monotonic nonce
+	// per message, so concurrent senders would put frames on the wire out of
+	// nonce order and the phone would reject them.
+	mu sync.Mutex
 }
 
-// New creates a new USB transport with the given options.
+// New creates a new USB transport with the given options. The transport must
+// be given pairing keys with WithNoiseConfig before it can connect.
 func New(opts ...transport.Option) (*Transport, error) {
 	cfg := transport.DefaultConfig()
 	if err := transport.ApplyOptions(cfg, opts...); err != nil {
@@ -87,24 +132,69 @@ func NewWithConfig(cfg *transport.Config) (*Transport, error) {
 	}, nil
 }
 
-// Connect establishes a USB AOA connection to the phone.
+// WithNoiseConfig attaches the pairing key material used by Connect. It
+// returns the transport so it can be chained onto a constructor.
+func (t *Transport) WithNoiseConfig(cfg *NoiseConfig) *Transport {
+	t.noise = cfg
+	return t
+}
+
+// Connect opens the USB AOA channel, performs the identity exchange, and runs
+// the Noise XX handshake. It fails without touching the bus when no pairing
+// keys are configured.
 func (t *Transport) Connect(ctx context.Context) error {
-	usbCfg := phone.DefaultUSBTransportConfig()
-	if t.config.Timeout > 0 {
-		usbCfg.OperationTimeout = t.config.Timeout
+	if t.noise == nil || len(t.noise.LocalStaticPrivateKey) == 0 {
+		return ErrNoiseNotConfigured
 	}
-	usbCfg.Logger = t.log
 
-	usb, err := phone.NewUSBTransport(usbCfg)
+	localKey, err := phone.LoadStaticKey(t.noise.LocalStaticPrivateKey)
 	if err != nil {
+		return &errs.Detail{Err: ErrNoiseNotConfigured, Detail: fmt.Sprintf("%v", err)}
+	}
+
+	if t.phoneUSB == nil {
+		usbCfg := phone.DefaultUSBTransportConfig()
+		if t.config.Timeout > 0 {
+			usbCfg.OperationTimeout = t.config.Timeout
+		}
+		usbCfg.Logger = t.log
+
+		usb, err := phone.NewUSBTransport(usbCfg)
+		if err != nil {
+			return &errs.Detail{Err: transport.ErrConnectionFailed, Detail: fmt.Sprintf("%v", err)}
+		}
+		t.phoneUSB = usb
+	}
+
+	if err := t.phoneUSB.Connect(ctx); err != nil {
 		return &errs.Detail{Err: transport.ErrConnectionFailed, Detail: fmt.Sprintf("%v", err)}
 	}
 
-	if err := usb.Connect(ctx); err != nil {
-		return &errs.Detail{Err: transport.ErrConnectionFailed, Detail: fmt.Sprintf("%v", err)}
+	session, err := phone.NewNoiseSession(&phone.NoiseSessionConfig{
+		LocalStaticKey:       localKey,
+		ExpectedRemoteStatic: t.noise.ExpectedRemoteStatic,
+		IsInitiator:          true,
+	})
+	if err != nil {
+		_ = t.phoneUSB.Close()
+		return &errs.Detail{Err: transport.ErrConnectionFailed, Detail: fmt.Sprintf("noise session: %v", err)}
 	}
 
-	t.phoneUSB = usb
+	// The identity exchange runs on every connection: the phone's stream
+	// responder always expects it, and it binds the phone's attestation
+	// fingerprint into the prologue.
+	if err := phone.PerformHandshake(ctx, &phone.HandshakeConfig{
+		Transport:                 t.phoneUSB,
+		Session:                   session,
+		Logger:                    t.log,
+		LocalStaticPublicKey:      session.LocalStaticPublicKey(),
+		ExpectedDeviceFingerprint: t.noise.ExpectedDeviceFingerprint,
+	}); err != nil {
+		_ = t.phoneUSB.Close()
+		return &errs.Detail{Err: transport.ErrConnectionFailed, Detail: fmt.Sprintf("noise handshake: %v", err)}
+	}
+
+	t.session = session
 	t.connected = true
 	t.log.Info("SDK USB transport connected")
 	return nil
@@ -112,12 +202,13 @@ func (t *Transport) Connect(ctx context.Context) error {
 
 // Close closes the USB connection and releases resources.
 func (t *Transport) Close() error {
+	t.connected = false
+	t.session = nil
 	if t.phoneUSB != nil {
 		if err := t.phoneUSB.Close(); err != nil {
 			return err
 		}
 	}
-	t.connected = false
 	return nil
 }
 
@@ -131,31 +222,51 @@ func (t *Transport) Conn() interface{} {
 	return t.phoneUSB
 }
 
-// Request performs a unary request/response operation over USB.
-// The method parameter is used as the JSON-RPC method name.
-// The req parameter is marshalled to JSON and sent as the request payload.
-// The resp parameter is unmarshalled from the JSON response payload.
+// Request performs a unary request/response operation over the encrypted USB
+// channel. The method parameter becomes the JSON-RPC method name and req its
+// params; the JSON-RPC result is unmarshalled into resp.
 func (t *Transport) Request(ctx context.Context, method string, req, resp interface{}) error {
-	if !t.connected || t.phoneUSB == nil {
+	if !t.connected || t.phoneUSB == nil || t.session == nil {
 		return ErrNotConnected
 	}
 
-	// Marshal request to JSON-RPC format.
-	reqBytes, err := json.Marshal(req)
+	plaintext, err := phone.EncodeRequest(phone.NewRequest(method, req))
 	if err != nil {
 		return &errs.Detail{Err: transport.ErrInvalidRequest, Detail: fmt.Sprintf("failed to marshal request: %v", err)}
 	}
 
-	// Send and receive over USB transport.
-	respBytes, err := t.phoneUSB.SendAndReceive(ctx, reqBytes)
+	t.mu.Lock()
+	defer t.mu.Unlock()
+
+	ciphertext, err := t.session.Encrypt(plaintext)
+	if err != nil {
+		return &errs.Detail{Err: transport.ErrInvalidRequest, Detail: fmt.Sprintf("failed to encrypt request: %v", err)}
+	}
+
+	responseCiphertext, err := t.phoneUSB.SendAndReceive(ctx, ciphertext)
 	if err != nil {
 		t.connected = false
 		return &errs.Detail{Err: transport.ErrConnectionFailed, Detail: fmt.Sprintf("%v", err)}
 	}
 
-	// Unmarshal response.
+	responsePlaintext, err := t.session.Decrypt(responseCiphertext)
+	if err != nil {
+		return &errs.Detail{Err: transport.ErrInvalidResponse, Detail: fmt.Sprintf("failed to decrypt response: %v", err)}
+	}
+
+	rpcResp, err := phone.DecodeResponse(responsePlaintext)
+	if err != nil {
+		return &errs.Detail{Err: transport.ErrInvalidResponse, Detail: fmt.Sprintf("failed to decode response: %v", err)}
+	}
+	if rpcResp.Error != nil {
+		return &errs.Detail{
+			Err:    ErrRequestFailed,
+			Detail: fmt.Sprintf("[%d] %s", rpcResp.Error.Code, rpcResp.Error.Message),
+		}
+	}
+
 	if resp != nil {
-		if err := json.Unmarshal(respBytes, resp); err != nil {
+		if err := json.Unmarshal(rpcResp.Result, resp); err != nil {
 			return &errs.Detail{Err: transport.ErrInvalidResponse, Detail: fmt.Sprintf("failed to unmarshal response: %v", err)}
 		}
 	}

@@ -14,6 +14,7 @@
 package main
 
 import (
+	"errors"
 	"io"
 	"log/slog"
 	"os"
@@ -61,10 +62,10 @@ backends:
 
 // TestReloadConfiguration_RefusesInsecureConfig verifies that a SIGHUP-triggered
 // reload re-applies the secure-by-default gate: an insecure configuration is
-// refused unless the daemon was started in insecure (development) mode. Without
-// this gate a SIGHUP could quietly drop a running daemon to a non-compliant
-// posture. The gate short-circuits before srv.Reload, so the nil *server.Server
-// is never dereferenced on the refuse path.
+// refused, unconditionally. Without this gate a SIGHUP could quietly drop a
+// running daemon to a non-compliant posture. The gate short-circuits before
+// srv.Reload, so the nil *server.Server is never dereferenced on the refuse
+// path.
 func TestReloadConfiguration_RefusesInsecureConfig(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "xkmsd.yaml")
@@ -74,11 +75,21 @@ func TestReloadConfiguration_RefusesInsecureConfig(t *testing.T) {
 
 	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
 
-	err := reloadConfiguration(nil, path, false, logger)
+	err := reloadConfiguration(nil, path, logger)
 	if err == nil {
 		t.Fatal("expected reload to be refused for an insecure configuration")
 	}
 	if !strings.Contains(err.Error(), "refusing to reload an insecure configuration") {
 		t.Fatalf("expected refuse-insecure error, got: %v", err)
+	}
+
+	// The refusal must hold no matter how the daemon was started: there is no
+	// development override to fall back to.
+	var insecureErr *InsecureReloadError
+	if !errors.As(err, &insecureErr) {
+		t.Fatalf("expected *InsecureReloadError, got %T", err)
+	}
+	if len(insecureErr.Gaps) == 0 {
+		t.Error("refusal must name the compliance gaps that caused it")
 	}
 }

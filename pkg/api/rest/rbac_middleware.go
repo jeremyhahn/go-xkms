@@ -24,8 +24,10 @@ import (
 // RBACConfig holds configuration for RBAC middleware.
 type RBACConfig struct {
 	// Authorizer is the qrdb-backed authorizer used for permission checks.
-	// A nil authorizer (or one without a backing RBAC client) allows every
-	// request — authorization is treated as disabled.
+	// It must be usable (Enabled() true): rest.NewServer fails closed with
+	// ErrAuthorizerRequired before constructing this middleware when RBAC is
+	// enabled without a backing RBAC client, so the middleware never runs in
+	// a fail-open (allow-all) configuration.
 	Authorizer *auth.Authorizer
 
 	// Logger is the logging adapter.

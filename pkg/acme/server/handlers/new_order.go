@@ -17,9 +17,11 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"strconv"
 	"strings"
 	"time"
 
+	"github.com/jeremyhahn/go-xkms/pkg/acme/audit"
 	"github.com/jeremyhahn/go-xkms/pkg/acme/common"
 	"github.com/jeremyhahn/go-xkms/pkg/acme/entities"
 	caerrors "github.com/jeremyhahn/go-xkms/pkg/acme/errors"
@@ -159,6 +161,13 @@ func (s *RestService) NewOrderHandler(w http.ResponseWriter, r *http.Request) {
 		writeError(w, common.ServerInternal("Failed to save order"))
 		return
 	}
+
+	orderIdentifiers := make([]string, 0, len(order.Identifiers))
+	for _, identifier := range order.Identifiers {
+		orderIdentifiers = append(orderIdentifiers, identifier.Value)
+	}
+	s.recordAudit(audit.LogOrderCreated(auditContext(r), s.auditLog,
+		auditAccountID(account.ID), strconv.FormatUint(order.ID, 10), orderIdentifiers))
 
 	// Respond with the order object
 	w.Header().Set("Location", orderURL)

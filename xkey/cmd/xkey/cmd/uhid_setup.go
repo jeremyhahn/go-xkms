@@ -100,7 +100,8 @@ func init() {
 }
 
 // runUHIDSetup performs the privileged UHID setup operations.
-func runUHIDSetup(_ *cobra.Command, _ []string) error {
+func runUHIDSetup(cmd *cobra.Command, _ []string) error {
+	out := cmd.OutOrStdout()
 	if os.Geteuid() != 0 {
 		return ErrUHIDSetupRequiresRoot
 	}
@@ -112,7 +113,7 @@ func runUHIDSetup(_ *cobra.Command, _ []string) error {
 	if err := os.WriteFile(uhidUdevRulePath, []byte(uhidUdevRuleContent), 0644); err != nil {
 		return &SentinelCauseError{Sentinel: ErrUHIDSetupUdevWriteFailed, Cause: err}
 	}
-	fmt.Println("Created udev rule:", uhidUdevRulePath)
+	fmt.Fprintln(out, "Created udev rule:", uhidUdevRulePath)
 
 	// Step 2: Ensure uhid module loads at boot.
 	if err := os.MkdirAll(filepath.Dir(uhidModuleLoadPath), 0755); err != nil {
@@ -121,13 +122,13 @@ func runUHIDSetup(_ *cobra.Command, _ []string) error {
 	if err := os.WriteFile(uhidModuleLoadPath, []byte(uhidModuleLoadContent), 0644); err != nil {
 		return &SentinelCauseError{Sentinel: ErrUHIDSetupModulesWriteFailed, Cause: err}
 	}
-	fmt.Println("Created module load config:", uhidModuleLoadPath)
+	fmt.Fprintln(out, "Created module load config:", uhidModuleLoadPath)
 
 	// Step 3: Load uhid module now (may already be loaded).
 	if err := exec.Command("modprobe", "uhid").Run(); err != nil { // #nosec G204
-		fmt.Printf("Warning: modprobe uhid failed (may already be loaded): %v\n", err)
+		fmt.Fprintf(out, "Warning: modprobe uhid failed (may already be loaded): %v\n", err)
 	} else {
-		fmt.Println("Loaded uhid kernel module")
+		fmt.Fprintln(out, "Loaded uhid kernel module")
 	}
 
 	// Step 4: Reload udev rules and trigger device rescan.
@@ -137,7 +138,7 @@ func runUHIDSetup(_ *cobra.Command, _ []string) error {
 	if err := exec.Command("udevadm", "trigger", "--subsystem-match=misc").Run(); err != nil { // #nosec G204
 		return &SentinelCauseError{Sentinel: ErrUHIDSetupUdevTriggerFailed, Cause: err}
 	}
-	fmt.Println("Reloaded udev rules and triggered device rescan")
+	fmt.Fprintln(out, "Reloaded udev rules and triggered device rescan")
 
 	// Step 5: Add the calling user to the "input" group so the udev rule
 	// takes effect. Detect the unprivileged caller from pkexec/sudo env vars.
@@ -147,9 +148,9 @@ func runUHIDSetup(_ *cobra.Command, _ []string) error {
 			if err := exec.Command("usermod", "-aG", "input", callingUser).Run(); err != nil { // #nosec G204
 				return &DetailError{Err: ErrUHIDSetupUserAddFailed, Detail: fmt.Sprintf(": user %s: %v", callingUser, err)}
 			}
-			fmt.Printf("Added user %q to input group (session restart required for group membership)\n", callingUser)
+			fmt.Fprintf(out, "Added user %q to input group (session restart required for group membership)\n", callingUser)
 		} else {
-			fmt.Printf("User %q is already in input group\n", callingUser)
+			fmt.Fprintf(out, "User %q is already in input group\n", callingUser)
 		}
 	}
 

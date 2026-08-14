@@ -16,6 +16,7 @@ package rest
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
@@ -24,13 +25,84 @@ import (
 	"testing"
 
 	"github.com/go-chi/chi/v5"
+	"github.com/jeremyhahn/go-xkms/pkg/api/transport"
 	"github.com/jeremyhahn/go-xkms/pkg/auth"
 	"github.com/jeremyhahn/go-xkms/pkg/seal"
 	"github.com/jeremyhahn/go-xkms/pkg/staticpw"
 	"github.com/jeremyhahn/go-xkms/pkg/storage"
+	"github.com/jeremyhahn/go-xkms/pkg/xkms"
+	xkmsmocks "github.com/jeremyhahn/go-xkms/pkg/xkms/mocks"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
+
+// testUserPIN is the PIN the stub servicer treats as provisioned and correct.
+const testUserPIN = "123456"
+
+// unlockServicerStub stands in for *xkms.XKMSService in password handler tests.
+// It reproduces XKMSService.PasswordStoreUnlock's contract: the user PIN is
+// verified before the tenant store is unlocked, and every rejection path
+// returns the same typed sentinel the real servicer returns. The real PIN
+// verification itself is covered in pkg/xkms; what these tests must pin is
+// that the handler routes through the servicer at all, so that a rejection
+// leaves the store locked.
+type unlockServicerStub struct {
+	manager *staticpw.TenantPasswordStoreManager
+
+	// provisionedPIN is the PIN the deployment has set. An empty value models
+	// a deployment with no PIN backend or no user PIN.
+	provisionedPIN string
+
+	// called records whether the handler delegated to the servicer at all.
+	called bool
+}
+
+func (s *unlockServicerStub) PasswordStoreSetAccessMode(_ context.Context, _ *transport.PasswordStoreSetAccessModeRequest) error {
+	return nil
+}
+
+func (s *unlockServicerStub) PasswordStoreUnlock(ctx context.Context, req *transport.PasswordStoreUnlockRequest) error {
+	s.called = true
+
+	if s.provisionedPIN == "" {
+		return xkms.ErrPasswordStoreUserPINNotProvisioned
+	}
+	if req.UserPIN == "" {
+		return xkms.ErrPasswordStoreUserPINRequired
+	}
+	if req.UserPIN != s.provisionedPIN {
+		return errors.New("pin: verification failed, 2 attempts remaining")
+	}
+
+	identity := auth.GetIdentity(ctx)
+	if identity == nil || identity.TenantID == "" {
+		return staticpw.ErrInvalidTenantID
+	}
+	return s.manager.UnlockTenant(identity.TenantID)
+}
+
+// newUnlockHandlers builds password handlers wired to a stub servicer holding
+// a provisioned PIN, which is the configuration a real deployment has.
+func newUnlockHandlers(store staticpw.Store, manager *staticpw.TenantPasswordStoreManager) (*PasswordHandlers, *unlockServicerStub) {
+	servicer := &unlockServicerStub{manager: manager, provisionedPIN: testUserPIN}
+	handlers := NewPasswordHandlers(store, manager)
+	handlers.SetServicer(servicer)
+	return handlers, servicer
+}
+
+// unlockBody renders an unlock request body carrying the given PIN.
+func unlockBody(pin string) string {
+	return `{"user_pin":"` + pin + `"}`
+}
+
+// unlockTenantForTest opens the tenant store as a test precondition. Tests
+// whose subject is some other handler use this instead of driving
+// UnlockHandler, so they do not have to model the unlock credential flow that
+// UnlockHandler's own tests cover.
+func unlockTenantForTest(t *testing.T, manager *staticpw.TenantPasswordStoreManager, tenantID string) {
+	t.Helper()
+	require.NoError(t, manager.UnlockTenant(tenantID))
+}
 
 // testPasswordSetup creates a BarrierRegistry with one registered, initialized,
 // and unsealed tenant. Returns the registry, the system store, and the manager.
@@ -99,9 +171,9 @@ func passwordIDPath(base, id string) string {
 
 func TestUnlockHandler_Success(t *testing.T) {
 	_, systemStore, manager := testPasswordSetup(t)
-	handlers := NewPasswordHandlers(systemStore, manager)
+	handlers, _ := newUnlockHandlers(systemStore, manager)
 
-	req := requestWithTenantIdentity(http.MethodPost, "/api/v1/passwords/unlock", "", "tenant-1")
+	req := requestWithTenantIdentity(http.MethodPost, "/api/v1/passwords/unlock", unlockBody(testUserPIN), "tenant-1")
 	w := httptest.NewRecorder()
 
 	handlers.UnlockHandler(w, req)
@@ -137,7 +209,7 @@ func TestUnlockHandler_NoManager(t *testing.T) {
 
 func TestUnlockHandler_NoIdentity(t *testing.T) {
 	_, systemStore, manager := testPasswordSetup(t)
-	handlers := NewPasswordHandlers(systemStore, manager)
+	handlers, _ := newUnlockHandlers(systemStore, manager)
 
 	// No identity in context.
 	req := httptest.NewRequest(http.MethodPost, "/api/v1/passwords/unlock", nil)
@@ -155,13 +227,13 @@ func TestUnlockHandler_NoIdentity(t *testing.T) {
 
 func TestUnlockHandler_TenantSealed(t *testing.T) {
 	registry, systemStore, manager := testPasswordSetup(t)
-	handlers := NewPasswordHandlers(systemStore, manager)
+	handlers, _ := newUnlockHandlers(systemStore, manager)
 
 	// Seal the tenant's barrier so unlock fails.
 	err := registry.SealTenant("tenant-1")
 	require.NoError(t, err)
 
-	req := requestWithTenantIdentity(http.MethodPost, "/api/v1/passwords/unlock", "", "tenant-1")
+	req := requestWithTenantIdentity(http.MethodPost, "/api/v1/passwords/unlock", unlockBody(testUserPIN), "tenant-1")
 	w := httptest.NewRecorder()
 
 	handlers.UnlockHandler(w, req)
@@ -176,16 +248,16 @@ func TestUnlockHandler_TenantSealed(t *testing.T) {
 
 func TestUnlockHandler_AlreadyUnlocked(t *testing.T) {
 	_, systemStore, manager := testPasswordSetup(t)
-	handlers := NewPasswordHandlers(systemStore, manager)
+	handlers, _ := newUnlockHandlers(systemStore, manager)
 
 	// First unlock.
-	req := requestWithTenantIdentity(http.MethodPost, "/api/v1/passwords/unlock", "", "tenant-1")
+	req := requestWithTenantIdentity(http.MethodPost, "/api/v1/passwords/unlock", unlockBody(testUserPIN), "tenant-1")
 	w := httptest.NewRecorder()
 	handlers.UnlockHandler(w, req)
 	require.Equal(t, http.StatusOK, w.Code)
 
 	// Second unlock should return conflict (already unlocked).
-	req2 := requestWithTenantIdentity(http.MethodPost, "/api/v1/passwords/unlock", "", "tenant-1")
+	req2 := requestWithTenantIdentity(http.MethodPost, "/api/v1/passwords/unlock", unlockBody(testUserPIN), "tenant-1")
 	w2 := httptest.NewRecorder()
 	handlers.UnlockHandler(w2, req2)
 
@@ -197,12 +269,104 @@ func TestUnlockHandler_AlreadyUnlocked(t *testing.T) {
 	assert.Contains(t, resp["error"], "already unlocked")
 }
 
+// TestUnlockHandler_NoPINIsRejected is the regression test for the unlock
+// bypass: the handler used to call TenantPasswordStoreManager.UnlockTenant
+// directly, so any authenticated tenant user could open the tenant password
+// store with no credential whatsoever. The handler must now route through the
+// servicer, and a rejected unlock must leave the store locked.
+func TestUnlockHandler_NoPINIsRejected(t *testing.T) {
+	_, systemStore, manager := testPasswordSetup(t)
+	handlers, servicer := newUnlockHandlers(systemStore, manager)
+
+	// No body at all: an unlock attempt carrying no PIN.
+	req := requestWithTenantIdentity(http.MethodPost, "/api/v1/passwords/unlock", "", "tenant-1")
+	w := httptest.NewRecorder()
+
+	handlers.UnlockHandler(w, req)
+
+	assert.Equal(t, http.StatusBadRequest, w.Code)
+	assert.True(t, servicer.called, "handler must delegate to the servicer, not unlock directly")
+
+	var resp map[string]string
+	require.NoError(t, json.NewDecoder(w.Body).Decode(&resp))
+	assert.Contains(t, resp["error"], "User PIN is required")
+
+	// The critical assertion: the store must still be locked.
+	status, err := manager.TenantStoreStatus("tenant-1")
+	require.NoError(t, err)
+	assert.True(t, status.IsLocked, "a rejected unlock must leave the store locked")
+}
+
+// TestUnlockHandler_WrongPINIsRejected proves a bad PIN is reported as an
+// authentication failure and does not leak the PIN backend's message, which
+// can carry retry counters and lockout state.
+func TestUnlockHandler_WrongPINIsRejected(t *testing.T) {
+	_, systemStore, manager := testPasswordSetup(t)
+	handlers, _ := newUnlockHandlers(systemStore, manager)
+
+	req := requestWithTenantIdentity(http.MethodPost, "/api/v1/passwords/unlock", unlockBody("999999"), "tenant-1")
+	w := httptest.NewRecorder()
+
+	handlers.UnlockHandler(w, req)
+
+	assert.Equal(t, http.StatusUnauthorized, w.Code)
+
+	var resp map[string]string
+	require.NoError(t, json.NewDecoder(w.Body).Decode(&resp))
+	assert.Equal(t, "User PIN verification failed", resp["error"])
+	assert.NotContains(t, resp["error"], "attempts remaining")
+
+	status, err := manager.TenantStoreStatus("tenant-1")
+	require.NoError(t, err)
+	assert.True(t, status.IsLocked, "a rejected unlock must leave the store locked")
+}
+
+// TestUnlockHandler_UnprovisionedPINIsRejected proves a deployment with no
+// user PIN reports the condition instead of unlocking without a credential.
+func TestUnlockHandler_UnprovisionedPINIsRejected(t *testing.T) {
+	_, systemStore, manager := testPasswordSetup(t)
+	servicer := &unlockServicerStub{manager: manager} // no provisioned PIN
+	handlers := NewPasswordHandlers(systemStore, manager)
+	handlers.SetServicer(servicer)
+
+	req := requestWithTenantIdentity(http.MethodPost, "/api/v1/passwords/unlock", unlockBody(testUserPIN), "tenant-1")
+	w := httptest.NewRecorder()
+
+	handlers.UnlockHandler(w, req)
+
+	assert.Equal(t, http.StatusPreconditionFailed, w.Code)
+
+	status, err := manager.TenantStoreStatus("tenant-1")
+	require.NoError(t, err)
+	assert.True(t, status.IsLocked, "a rejected unlock must leave the store locked")
+}
+
+// TestUnlockHandler_NoServicerDoesNotUnlock proves the handler fails closed
+// when the composition root did not wire the service layer: it must report
+// "requires server integration" rather than falling back to the uncredentialed
+// manager path.
+func TestUnlockHandler_NoServicerDoesNotUnlock(t *testing.T) {
+	_, systemStore, manager := testPasswordSetup(t)
+	handlers := NewPasswordHandlers(systemStore, manager) // servicer deliberately unset
+
+	req := requestWithTenantIdentity(http.MethodPost, "/api/v1/passwords/unlock", unlockBody(testUserPIN), "tenant-1")
+	w := httptest.NewRecorder()
+
+	handlers.UnlockHandler(w, req)
+
+	assert.Equal(t, http.StatusNotImplemented, w.Code)
+
+	status, err := manager.TenantStoreStatus("tenant-1")
+	require.NoError(t, err)
+	assert.True(t, status.IsLocked, "an unwired servicer must not unlock the store")
+}
+
 func TestUnlockHandler_TenantNotFound(t *testing.T) {
 	_, systemStore, manager := testPasswordSetup(t)
-	handlers := NewPasswordHandlers(systemStore, manager)
+	handlers, _ := newUnlockHandlers(systemStore, manager)
 
 	// Use a tenant ID that is not registered in the registry.
-	req := requestWithTenantIdentity(http.MethodPost, "/api/v1/passwords/unlock", "", "nonexistent-tenant")
+	req := requestWithTenantIdentity(http.MethodPost, "/api/v1/passwords/unlock", unlockBody(testUserPIN), "nonexistent-tenant")
 	w := httptest.NewRecorder()
 
 	handlers.UnlockHandler(w, req)
@@ -217,10 +381,30 @@ func TestUnlockHandler_TenantNotFound(t *testing.T) {
 
 func TestUnlockHandler_EmptyTenantID(t *testing.T) {
 	_, systemStore, manager := testPasswordSetup(t)
-	handlers := NewPasswordHandlers(systemStore, manager)
+	handlers, _ := newUnlockHandlers(systemStore, manager)
 
 	// Identity with empty TenantID.
 	req := requestWithTenantIdentity(http.MethodPost, "/api/v1/passwords/unlock", "", "")
+	w := httptest.NewRecorder()
+
+	handlers.UnlockHandler(w, req)
+
+	assert.Equal(t, http.StatusUnauthorized, w.Code)
+}
+
+// TestUnlockHandler_SystemTenantIDRejected proves the password store unlock
+// path treats a "system"-tenant caller the same as an empty-tenant caller: it
+// has no per-tenant password store to unlock, so it is rejected rather than
+// attempting (and mis-resolving) a scoped store for the reserved system
+// tenant. This is the opposite polarity from the tenant *scope gates*
+// (middleware_tenant.go, interceptor_tenant.go): those pass a system-scoped
+// caller through, this rejects it, because a concrete tenant store is
+// required here.
+func TestUnlockHandler_SystemTenantIDRejected(t *testing.T) {
+	_, systemStore, manager := testPasswordSetup(t)
+	handlers, _ := newUnlockHandlers(systemStore, manager)
+
+	req := requestWithTenantIdentity(http.MethodPost, "/api/v1/passwords/unlock", unlockBody(testUserPIN), "system")
 	w := httptest.NewRecorder()
 
 	handlers.UnlockHandler(w, req)
@@ -234,11 +418,9 @@ func TestLockHandler_Success(t *testing.T) {
 	_, systemStore, manager := testPasswordSetup(t)
 	handlers := NewPasswordHandlers(systemStore, manager)
 
-	// Unlock first.
-	req := requestWithTenantIdentity(http.MethodPost, "/api/v1/passwords/unlock", "", "tenant-1")
-	w := httptest.NewRecorder()
-	handlers.UnlockHandler(w, req)
-	require.Equal(t, http.StatusOK, w.Code)
+	// Unlock first (precondition; the unlock credential flow itself is covered
+	// by UnlockHandler's own tests).
+	unlockTenantForTest(t, manager, "tenant-1")
 
 	// Now lock.
 	req2 := requestWithTenantIdentity(http.MethodPost, "/api/v1/passwords/lock", "", "tenant-1")
@@ -289,6 +471,20 @@ func TestLockHandler_AlreadyLocked(t *testing.T) {
 	err := json.NewDecoder(w.Body).Decode(&resp)
 	require.NoError(t, err)
 	assert.Contains(t, resp["error"], "already locked")
+}
+
+// TestLockHandler_SystemTenantIDRejected mirrors
+// TestUnlockHandler_SystemTenantIDRejected for the lock path.
+func TestLockHandler_SystemTenantIDRejected(t *testing.T) {
+	_, systemStore, manager := testPasswordSetup(t)
+	handlers := NewPasswordHandlers(systemStore, manager)
+
+	req := requestWithTenantIdentity(http.MethodPost, "/api/v1/passwords/lock", "", "system")
+	w := httptest.NewRecorder()
+
+	handlers.LockHandler(w, req)
+
+	assert.Equal(t, http.StatusUnauthorized, w.Code)
 }
 
 func TestLockHandler_NoIdentity(t *testing.T) {
@@ -398,11 +594,9 @@ func TestAddPasswordHandler_WithTenant(t *testing.T) {
 	_, systemStore, manager := testPasswordSetup(t)
 	handlers := NewPasswordHandlers(systemStore, manager)
 
-	// Unlock tenant first.
-	unlockReq := requestWithTenantIdentity(http.MethodPost, "/api/v1/passwords/unlock", "", "tenant-1")
-	unlockW := httptest.NewRecorder()
-	handlers.UnlockHandler(unlockW, unlockReq)
-	require.Equal(t, http.StatusOK, unlockW.Code)
+	// Unlock tenant first (precondition; the unlock credential flow itself is
+	// covered by UnlockHandler's own tests).
+	unlockTenantForTest(t, manager, "tenant-1")
 
 	// Add a password.
 	body := `{"name":"MyLogin","username":"user@example.com","password":"s3cr3t!"}`
@@ -535,11 +729,9 @@ func TestResolveStore_TenantWithManager(t *testing.T) {
 	_, systemStore, manager := testPasswordSetup(t)
 	handlers := NewPasswordHandlers(systemStore, manager)
 
-	// Unlock the tenant first.
-	unlockReq := requestWithTenantIdentity(http.MethodPost, "/api/v1/passwords/unlock", "", "tenant-1")
-	unlockW := httptest.NewRecorder()
-	handlers.UnlockHandler(unlockW, unlockReq)
-	require.Equal(t, http.StatusOK, unlockW.Code)
+	// Unlock the tenant first (precondition; the unlock credential flow itself
+	// is covered by UnlockHandler's own tests).
+	unlockTenantForTest(t, manager, "tenant-1")
 
 	// List should use tenant store (empty).
 	req := requestWithTenantIdentity(http.MethodGet, "/api/v1/passwords", "", "tenant-1")
@@ -879,17 +1071,197 @@ func TestGeneratePasswordHandler_InvalidBody(t *testing.T) {
 
 // --- SetAccessModeHandler tests ---
 
-func TestSetAccessModeHandler_ReturnsNotImplemented(t *testing.T) {
-	systemBackend := storage.NewMemory()
-	systemStore := staticpw.NewStore(systemBackend)
-	handlers := NewPasswordHandlers(systemStore, nil)
+// accessModeHandlers builds password handlers backed by a real XKMSService so
+// the endpoint is exercised through the service layer rather than a mock.
+func accessModeHandlers(t *testing.T) *PasswordHandlers {
+	t.Helper()
 
-	req := httptest.NewRequest(http.MethodPut, "/api/v1/passwords/access-mode", nil)
+	_, systemStore, manager := testPasswordSetup(t)
+	handlers := NewPasswordHandlers(systemStore, manager)
+
+	backendStore, ok := systemStore.(*staticpw.BackendStore)
+	require.True(t, ok)
+
+	xkms.Reset()
+	require.NoError(t, xkms.Initialize(&xkms.ServiceConfig{
+		Backends:       map[string]xkms.Backend{"mem": xkmsmocks.NewMockKeyStore()},
+		DefaultBackend: "mem",
+	}))
+	t.Cleanup(xkms.Reset)
+
+	svc, err := xkms.Get()
+	require.NoError(t, err)
+	svc.SetPasswordStore(backendStore)
+	svc.SetPasswordStoreManager(manager)
+	handlers.SetServicer(svc)
+
+	return handlers
+}
+
+func TestSetAccessModeHandler_SetsSessionModeForTenant(t *testing.T) {
+	handlers := accessModeHandlers(t)
+
+	req := requestWithTenantIdentity(http.MethodPost, "/api/v1/passwords/access-mode",
+		`{"mode": "session_based"}`, "tenant-1")
+	w := httptest.NewRecorder()
+
+	handlers.SetAccessModeHandler(w, req)
+
+	require.Equal(t, http.StatusOK, w.Code)
+
+	var resp PasswordStoreAccessModeResponse
+	require.NoError(t, json.NewDecoder(w.Body).Decode(&resp))
+	assert.Equal(t, string(staticpw.AccessSessionBased), resp.Mode)
+
+	// The service layer agrees the tenant store is in the mode just set.
+	svc, err := xkms.Get()
+	require.NoError(t, err)
+	mode, err := svc.PasswordAccessMode(req.Context())
+	require.NoError(t, err)
+	assert.Equal(t, staticpw.AccessSessionBased, mode)
+}
+
+// TestSetAccessModeHandler_NoLongerHardcodedNotImplemented pins the defect
+// that the endpoint answered every request with 501 regardless of input.
+func TestSetAccessModeHandler_NoLongerHardcodedNotImplemented(t *testing.T) {
+	handlers := accessModeHandlers(t)
+
+	req := requestWithTenantIdentity(http.MethodPost, "/api/v1/passwords/access-mode",
+		`{"mode": "session_based"}`, "tenant-1")
+	w := httptest.NewRecorder()
+
+	handlers.SetAccessModeHandler(w, req)
+
+	assert.NotEqual(t, http.StatusNotImplemented, w.Code)
+	assert.Equal(t, http.StatusOK, w.Code)
+}
+
+func TestSetAccessModeHandler_InvalidMode(t *testing.T) {
+	handlers := accessModeHandlers(t)
+
+	for _, mode := range []string{"banana", "session-based", "direct"} {
+		req := requestWithTenantIdentity(http.MethodPost, "/api/v1/passwords/access-mode",
+			`{"mode": "`+mode+`"}`, "tenant-1")
+		w := httptest.NewRecorder()
+
+		handlers.SetAccessModeHandler(w, req)
+
+		assert.Equal(t, http.StatusBadRequest, w.Code, "mode %q", mode)
+		assert.Contains(t, w.Body.String(), "Invalid access mode")
+	}
+}
+
+func TestSetAccessModeHandler_MissingMode(t *testing.T) {
+	handlers := accessModeHandlers(t)
+
+	req := requestWithTenantIdentity(http.MethodPost, "/api/v1/passwords/access-mode", `{}`, "tenant-1")
+	w := httptest.NewRecorder()
+
+	handlers.SetAccessModeHandler(w, req)
+
+	assert.Equal(t, http.StatusBadRequest, w.Code)
+}
+
+func TestSetAccessModeHandler_InvalidJSON(t *testing.T) {
+	handlers := accessModeHandlers(t)
+
+	req := requestWithTenantIdentity(http.MethodPost, "/api/v1/passwords/access-mode", `not-json`, "tenant-1")
+	w := httptest.NewRecorder()
+
+	handlers.SetAccessModeHandler(w, req)
+
+	assert.Equal(t, http.StatusBadRequest, w.Code)
+}
+
+// A mode the wired store cannot enforce is a capability boundary, reported as
+// 501 with an explanation rather than silently accepted.
+func TestSetAccessModeHandler_UnsupportedModeReportsBoundary(t *testing.T) {
+	handlers := accessModeHandlers(t)
+
+	req := requestWithTenantIdentity(http.MethodPost, "/api/v1/passwords/access-mode",
+		`{"mode": "pin_per_operation"}`, "tenant-1")
 	w := httptest.NewRecorder()
 
 	handlers.SetAccessModeHandler(w, req)
 
 	assert.Equal(t, http.StatusNotImplemented, w.Code)
+	assert.Contains(t, w.Body.String(), "cannot enforce the requested access mode")
+}
+
+func TestSetAccessModeHandler_SystemScopeReportsBoundary(t *testing.T) {
+	handlers := accessModeHandlers(t)
+
+	// No tenant identity: the request addresses the system store, which has
+	// no session or PIN strategy.
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/passwords/access-mode",
+		strings.NewReader(`{"mode": "session_based"}`))
+	w := httptest.NewRecorder()
+
+	handlers.SetAccessModeHandler(w, req)
+
+	assert.Equal(t, http.StatusNotImplemented, w.Code)
+}
+
+func TestSetAccessModeHandler_ServicerNotWired(t *testing.T) {
+	systemBackend := storage.NewMemory()
+	systemStore := staticpw.NewStore(systemBackend)
+	handlers := NewPasswordHandlers(systemStore, nil)
+
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/passwords/access-mode",
+		strings.NewReader(`{"mode": "session_based"}`))
+	w := httptest.NewRecorder()
+
+	handlers.SetAccessModeHandler(w, req)
+
+	assert.Equal(t, http.StatusServiceUnavailable, w.Code)
+}
+
+func TestSetAccessModeHandler_PasswordStoreNotConfigured(t *testing.T) {
+	handlers := NewPasswordHandlers(nil, nil)
+
+	xkms.Reset()
+	require.NoError(t, xkms.Initialize(&xkms.ServiceConfig{
+		Backends:       map[string]xkms.Backend{"mem": xkmsmocks.NewMockKeyStore()},
+		DefaultBackend: "mem",
+	}))
+	t.Cleanup(xkms.Reset)
+
+	svc, err := xkms.Get()
+	require.NoError(t, err)
+	handlers.SetServicer(svc)
+
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/passwords/access-mode",
+		strings.NewReader(`{"mode": "session_based"}`))
+	w := httptest.NewRecorder()
+
+	handlers.SetAccessModeHandler(w, req)
+
+	assert.Equal(t, http.StatusServiceUnavailable, w.Code)
+}
+
+// --- passwordHandleAccessModeError tests ---
+
+func TestPasswordHandleAccessModeError_Mapping(t *testing.T) {
+	cases := []struct {
+		name string
+		err  error
+		want int
+	}{
+		{"invalid mode", xkms.ErrInvalidAccessMode, http.StatusBadRequest},
+		{"nil request", xkms.ErrNilRequest, http.StatusBadRequest},
+		{"not configured", xkms.ErrNotConfigured, http.StatusServiceUnavailable},
+		{"capability boundary", xkms.ErrOperationNotSupported, http.StatusNotImplemented},
+		{"store locked falls through to the store mapper", staticpw.ErrStoreLocked, http.StatusLocked},
+		{"unknown error", errors.New("boom"), http.StatusInternalServerError},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			w := httptest.NewRecorder()
+			passwordHandleAccessModeError(w, tc.err)
+			assert.Equal(t, tc.want, w.Code)
+		})
+	}
 }
 
 // --- passwordHandleStoreError tests ---
@@ -967,13 +1339,14 @@ func TestNewPasswordHandlers_WithoutManager(t *testing.T) {
 
 // --- Scope/Shared password tests ---
 
-// unlockTenantHelper unlocks tenant-1 and returns the handlers instance.
+// unlockTenantHelper unlocks tenant-1 as a precondition for tests whose
+// subject is some other handler. It opens the store through the manager rather
+// than driving UnlockHandler, so these tests do not have to model the unlock
+// credential flow that UnlockHandler's own tests cover.
 func unlockTenantHelper(t *testing.T, handlers *PasswordHandlers) {
 	t.Helper()
-	unlockReq := requestWithTenantIdentity(http.MethodPost, "/api/v1/passwords/unlock", "", "tenant-1")
-	unlockW := httptest.NewRecorder()
-	handlers.UnlockHandler(unlockW, unlockReq)
-	require.Equal(t, http.StatusOK, unlockW.Code)
+	require.NotNil(t, handlers.manager)
+	require.NoError(t, handlers.manager.UnlockTenant("tenant-1"))
 }
 
 // addPasswordViaTenant adds a password through the REST handler with tenant identity

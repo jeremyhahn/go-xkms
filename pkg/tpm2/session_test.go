@@ -966,9 +966,9 @@ func TestEnrollmentStrategyParsingExtended(t *testing.T) {
 		assert.Equal(t, EnrollmentStrategyIAK_IDEVID_SINGLE_PASS, strategy)
 	})
 
-	t.Run("unknown strategy defaults to IAK_IDEVID_SINGLE_PASS", func(t *testing.T) {
+	t.Run("unknown strategy fails closed", func(t *testing.T) {
 		strategy := ParseIdentityProvisioningStrategy("UNKNOWN")
-		assert.Equal(t, EnrollmentStrategyIAK_IDEVID_SINGLE_PASS, strategy)
+		assert.Equal(t, EnrollmentStrategyUnknown, strategy)
 	})
 
 	t.Run("empty strategy defaults to IAK_IDEVID_SINGLE_PASS", func(t *testing.T) {

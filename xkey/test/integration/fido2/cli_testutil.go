@@ -558,10 +558,13 @@ func parseFido2TokenLine(line string) Fido2TokenDevice {
 	return dev
 }
 
-// skipIfNoFido2Token skips the test if fido2-token is not available in PATH.
-func skipIfNoFido2Token(t *testing.T) {
+// requireFido2Token fails the test if fido2-token is not available in PATH.
+// libfido2's tooling ships in the integration container, so a missing binary
+// is an environment fault rather than a reason to drop the coverage.
+func requireFido2Token(t *testing.T) {
 	t.Helper()
 	if _, err := exec.LookPath("fido2-token"); err != nil {
-		t.Skip("fido2-token not available in PATH")
+		t.Fatalf("fido2-token not found in PATH: %v; install libfido2 tools or "+
+			"run this suite via the devcontainer (make integration-test-fido2)", err)
 	}
 }

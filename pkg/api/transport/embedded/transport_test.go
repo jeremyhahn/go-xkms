@@ -817,6 +817,27 @@ func (m *mockService) ListShares(_ context.Context) (*transport.ListSharesRespon
 	return &transport.ListSharesResponse{}, nil
 }
 
+func (m *mockService) Algorithms(_ context.Context) (*transport.AlgorithmsResponse, error) {
+	if m.shouldFail {
+		return nil, errMock
+	}
+	return &transport.AlgorithmsResponse{}, nil
+}
+
+func (m *mockService) GetShare(_ context.Context, _, _ string, _ int) (*transport.ShareInfo, error) {
+	if m.shouldFail {
+		return nil, errMock
+	}
+	return &transport.ShareInfo{}, nil
+}
+
+func (m *mockService) DeleteShare(_ context.Context, _, _ string, _ int) error {
+	if m.shouldFail {
+		return errMock
+	}
+	return nil
+}
+
 func (m *mockService) GetShareCollectionStatus(_ context.Context, _ string) (*transport.ShareCollectionStatus, error) {
 	if m.shouldFail {
 		return nil, errMock
@@ -899,11 +920,18 @@ func (m *mockService) ClaimCertComplete(_ context.Context, _ *transport.ClaimCer
 	return &transport.ClaimCertCompleteResponse{}, nil
 }
 
-func (m *mockService) ClaimShare(_ context.Context, _ *transport.ClaimShareRequest) (*transport.ClaimShareResponse, error) {
+func (m *mockService) ClaimShareBegin(_ context.Context, _ *transport.ClaimShareBeginRequest) (*transport.ClaimShareBeginResponse, error) {
 	if m.shouldFail {
 		return nil, errMock
 	}
-	return &transport.ClaimShareResponse{Share: json.RawMessage(`{}`)}, nil
+	return &transport.ClaimShareBeginResponse{Nonce: "abcd", Username: "officer"}, nil
+}
+
+func (m *mockService) ClaimShareComplete(_ context.Context, _ *transport.ClaimShareCompleteRequest) (*transport.ClaimShareCompleteResponse, error) {
+	if m.shouldFail {
+		return nil, errMock
+	}
+	return &transport.ClaimShareCompleteResponse{ShareIndex: 1, Share: json.RawMessage(`{}`)}, nil
 }
 
 func (m *mockService) SignCSRInit(_ context.Context, _ *transport.SignCSRInitRequest) (*transport.SignCSRInitResponse, error) {
@@ -981,6 +1009,19 @@ func (m *mockService) ListUserCredentials(_ context.Context, _ string) (*transpo
 		return nil, errMock
 	}
 	return &transport.ListUserCredentialsResponse{}, nil
+}
+
+func (m *mockService) QueryAudit(_ context.Context, filter *transport.AuditFilter) (*transport.AuditPage, error) {
+	if m.shouldFail {
+		return nil, errMock
+	}
+	if filter == nil {
+		return nil, transport.ErrInvalidRequest
+	}
+	return &transport.AuditPage{
+		Events: []transport.AuditEvent{{Actor: filter.Actor}},
+		Total:  1,
+	}, nil
 }
 
 // --- Constructor tests ---
@@ -1171,6 +1212,40 @@ func TestDeleteKey_NotConnected(t *testing.T) {
 	assert.ErrorIs(t, err, ErrNotConnected)
 }
 
+func TestQueryAudit_Connected(t *testing.T) {
+	tr, err := New(&mockService{})
+	require.NoError(t, err)
+	resp, err := tr.QueryAudit(context.Background(), &transport.AuditFilter{Actor: "alice"})
+	require.NoError(t, err)
+	require.Len(t, resp.Events, 1)
+	assert.Equal(t, "alice", resp.Events[0].Actor)
+	assert.Equal(t, 1, resp.Total)
+}
+
+func TestQueryAudit_NotConnected(t *testing.T) {
+	tr, err := New(&mockService{})
+	require.NoError(t, err)
+	require.NoError(t, tr.Close())
+	_, err = tr.QueryAudit(context.Background(), &transport.AuditFilter{})
+	assert.ErrorIs(t, err, ErrNotConnected)
+}
+
+func TestQueryAudit_NilFilterRejected(t *testing.T) {
+	tr, err := New(&mockService{})
+	require.NoError(t, err)
+	resp, err := tr.QueryAudit(context.Background(), nil)
+	assert.ErrorIs(t, err, transport.ErrInvalidRequest)
+	assert.Nil(t, resp)
+}
+
+func TestQueryAudit_ServiceError(t *testing.T) {
+	tr, err := New(&mockService{shouldFail: true})
+	require.NoError(t, err)
+	resp, err := tr.QueryAudit(context.Background(), &transport.AuditFilter{})
+	assert.ErrorIs(t, err, errMock)
+	assert.Nil(t, resp)
+}
+
 func TestDeleteKey_ServiceError(t *testing.T) {
 	tr, err := New(&mockService{shouldFail: true})
 	require.NoError(t, err)
@@ -1317,10 +1392,11 @@ func TestAllMethods_NotConnected(t *testing.T) {
 		{"GetInitStatus", func() error { _, e := tr.GetInitStatus(ctx); return e }},
 		{"ClaimCertBegin", func() error { _, e := tr.ClaimCertBegin(ctx, &transport.ClaimCertBeginRequest{}); return e }},
 		{"ClaimCertComplete", func() error { _, e := tr.ClaimCertComplete(ctx, &transport.ClaimCertCompleteRequest{}); return e }},
-		{"ClaimShare", func() error { _, e := tr.ClaimShare(ctx, &transport.ClaimShareRequest{}); return e }},
+		{"ClaimShareBegin", func() error { _, e := tr.ClaimShareBegin(ctx, &transport.ClaimShareBeginRequest{}); return e }},
 		{"SignCSRInit", func() error { _, e := tr.SignCSRInit(ctx, &transport.SignCSRInitRequest{}); return e }},
 		{"SubmitCredential", func() error { _, e := tr.SubmitCredential(ctx, &transport.CredentialSubmitRequest{}); return e }},
 		{"GetCredentialStrategy", func() error { _, e := tr.GetCredentialStrategy(ctx); return e }},
+		{"QueryAudit", func() error { _, e := tr.QueryAudit(ctx, &transport.AuditFilter{}); return e }},
 	}
 
 	for _, tt := range tests {
@@ -1470,10 +1546,11 @@ func TestAllMethods_Connected(t *testing.T) {
 		{"GetInitStatus", func() error { _, e := tr.GetInitStatus(ctx); return e }},
 		{"ClaimCertBegin", func() error { _, e := tr.ClaimCertBegin(ctx, &transport.ClaimCertBeginRequest{}); return e }},
 		{"ClaimCertComplete", func() error { _, e := tr.ClaimCertComplete(ctx, &transport.ClaimCertCompleteRequest{}); return e }},
-		{"ClaimShare", func() error { _, e := tr.ClaimShare(ctx, &transport.ClaimShareRequest{}); return e }},
+		{"ClaimShareBegin", func() error { _, e := tr.ClaimShareBegin(ctx, &transport.ClaimShareBeginRequest{}); return e }},
 		{"SignCSRInit", func() error { _, e := tr.SignCSRInit(ctx, &transport.SignCSRInitRequest{}); return e }},
 		{"SubmitCredential", func() error { _, e := tr.SubmitCredential(ctx, &transport.CredentialSubmitRequest{}); return e }},
 		{"GetCredentialStrategy", func() error { _, e := tr.GetCredentialStrategy(ctx); return e }},
+		{"QueryAudit", func() error { _, e := tr.QueryAudit(ctx, &transport.AuditFilter{}); return e }},
 	}
 
 	for _, tt := range tests {

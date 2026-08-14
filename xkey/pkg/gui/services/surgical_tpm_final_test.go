@@ -1168,10 +1168,10 @@ func TestSurgTPM_GetVerificationStatus_Success(t *testing.T) {
 }
 
 // ---------------------------------------------------------------------------
-// ListKeys: returns empty list
+// ListKeys: a TPM holding no persistent objects lists no keys
 // ---------------------------------------------------------------------------
 
-func TestSurgTPM_ListKeys_ReturnsEmpty(t *testing.T) {
+func TestSurgTPM_ListKeys_NoPersistentObjects(t *testing.T) {
 	mock := defaultMockTPM()
 	svc := newServiceWithMock(mock)
 	keys, err := svc.ListKeys()

@@ -27,33 +27,22 @@ import (
 // deviceCounter ensures unique device names across tests.
 var deviceCounter atomic.Uint64
 
-// skipIfNoUHID skips the test if /dev/uhid is not available.
-func skipIfNoUHID(t *testing.T) {
-	t.Helper()
-
-	if _, err := os.Stat(uhid.UHIDDevicePath); os.IsNotExist(err) {
-		t.Skip("UHID not available at /dev/uhid - skipping integration test")
-	}
-
-	// Also check if we have permission to open the device
-	file, err := os.OpenFile(uhid.UHIDDevicePath, os.O_RDWR, 0)
-	if err != nil {
-		t.Skipf("Cannot open /dev/uhid (permission denied?) - skipping: %v", err)
-	}
-	file.Close()
-}
-
-// requireUHID fails the test if /dev/uhid is not available.
+// requireUHID fails the test if /dev/uhid is not available or not
+// accessible. The integration container loads the uhid module and runs with
+// access to the device, so an unusable device is an environment fault.
 func requireUHID(t *testing.T) {
 	t.Helper()
 
 	if _, err := os.Stat(uhid.UHIDDevicePath); os.IsNotExist(err) {
-		t.Fatalf("UHID not available at /dev/uhid - test requires privileged access")
+		t.Fatalf("UHID not available at %s; run this suite via the devcontainer, "+
+			"which loads the uhid module", uhid.UHIDDevicePath)
 	}
 
+	// Also check that we have permission to open the device.
 	file, err := os.OpenFile(uhid.UHIDDevicePath, os.O_RDWR, 0)
 	if err != nil {
-		t.Fatalf("Cannot open /dev/uhid: %v", err)
+		t.Fatalf("cannot open %s: %v; the integration container must run with "+
+			"access to the uhid device", uhid.UHIDDevicePath, err)
 	}
 	file.Close()
 }
@@ -62,7 +51,7 @@ func requireUHID(t *testing.T) {
 // The device is created with a unique name to avoid conflicts between parallel tests.
 func createTestDevice(t *testing.T, namePrefix string) (*uhid.Device, func()) {
 	t.Helper()
-	skipIfNoUHID(t)
+	requireUHID(t)
 
 	device, err := uhid.Open()
 	if err != nil {
@@ -101,7 +90,7 @@ func createTestDevice(t *testing.T, namePrefix string) (*uhid.Device, func()) {
 // createTestDeviceWithConfig creates a UHID device with a custom configuration.
 func createTestDeviceWithConfig(t *testing.T, cfg *uhid.CreateConfig) (*uhid.Device, func()) {
 	t.Helper()
-	skipIfNoUHID(t)
+	requireUHID(t)
 
 	device, err := uhid.Open()
 	if err != nil {

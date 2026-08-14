@@ -60,11 +60,6 @@ var (
 	ErrProviderNotConfigured    = errors.New("dns-01: provider not configured")
 )
 
-// CertificateAuthority defines the minimal CA interface needed for challenge verification
-type CertificateAuthority interface {
-	// Methods needed for challenge verification can be added here
-}
-
 // Resolver defines the DNS resolver interface for TXT record lookups
 type Resolver interface {
 	LookupTXT(ctx context.Context, name string) ([]string, error)
@@ -121,7 +116,6 @@ func SetDNSService(service DNSServiceInterface) {
 //
 // Parameters:
 //   - resolver: DNS resolver for TXT record lookups
-//   - ca: Certificate Authority instance (reserved for future use)
 //   - domain: Domain name to verify (e.g., "example.com")
 //   - port: Not used for dns-01 challenges (reserved for interface compatibility)
 //   - challengeToken: Not used directly (reserved for interface compatibility)
@@ -134,7 +128,6 @@ func SetDNSService(service DNSServiceInterface) {
 //   - error for DNS query failures or zone update errors
 func Verify(
 	resolver Resolver,
-	ca CertificateAuthority,
 	domain, port, challengeToken, expectedKeyAuth string) error {
 
 	if DNSService == nil {

@@ -129,29 +129,6 @@ func (t *HandleTable[T]) Lookup(handle uint64) (T, bool) {
 	return value, ok
 }
 
-// LookupOrError retrieves a value by its handle or returns an error.
-// Thread-safe: uses read lock for concurrent access.
-func (t *HandleTable[T]) LookupOrError(handle uint64) (T, error) {
-	if handle == InvalidHandle {
-		var zero T
-		return zero, ErrHandleInvalid
-	}
-
-	t.mu.RLock()
-	defer t.mu.RUnlock()
-
-	value, ok := t.handles[handle]
-	if !ok {
-		var zero T
-		return zero, &HandleError{
-			Op:     "lookup",
-			Handle: handle,
-			Msg:    "handle not found",
-		}
-	}
-	return value, nil
-}
-
 // Release invalidates a handle and removes its associated value.
 // Returns the removed value and true if successful, or zero value and false if not found.
 // Thread-safe: uses write lock for map modification.
@@ -169,30 +146,6 @@ func (t *HandleTable[T]) Release(handle uint64) (T, bool) {
 		delete(t.handles, handle)
 	}
 	return value, ok
-}
-
-// ReleaseOrError invalidates a handle or returns an error.
-// Thread-safe: uses write lock for map modification.
-func (t *HandleTable[T]) ReleaseOrError(handle uint64) (T, error) {
-	if handle == InvalidHandle {
-		var zero T
-		return zero, ErrHandleInvalid
-	}
-
-	t.mu.Lock()
-	defer t.mu.Unlock()
-
-	value, ok := t.handles[handle]
-	if !ok {
-		var zero T
-		return zero, &HandleError{
-			Op:     "release",
-			Handle: handle,
-			Msg:    "handle not found",
-		}
-	}
-	delete(t.handles, handle)
-	return value, nil
 }
 
 // Contains checks if a handle exists in the table.

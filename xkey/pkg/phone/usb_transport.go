@@ -48,6 +48,19 @@ const (
 // Compile-time interface check.
 var _ Transport = (*USBTransport)(nil)
 
+// usbInEndpoint is the read side of a USB bulk endpoint. It is the subset of
+// *gousb.InEndpoint used by this transport, declared as an interface so the
+// framing logic can be exercised without a physical device.
+type usbInEndpoint interface {
+	ReadContext(ctx context.Context, p []byte) (int, error)
+}
+
+// usbOutEndpoint is the write side of a USB bulk endpoint. It is the subset of
+// *gousb.OutEndpoint used by this transport.
+type usbOutEndpoint interface {
+	WriteContext(ctx context.Context, p []byte) (int, error)
+}
+
 // USBTransportConfig configures the USB transport for phone communication.
 type USBTransportConfig struct {
 	// OperationTimeout is the timeout for individual send/receive operations.
@@ -76,8 +89,8 @@ type USBTransport struct {
 	usbCtx *gousb.Context
 	device *gousb.Device
 	intf   *gousb.Interface
-	inEP   *gousb.InEndpoint
-	outEP  *gousb.OutEndpoint
+	inEP   usbInEndpoint
+	outEP  usbOutEndpoint
 
 	connected atomic.Bool
 	closed    atomic.Bool
@@ -382,7 +395,7 @@ func (t *USBTransport) Receive(ctx context.Context) ([]byte, error) {
 }
 
 // readFull reads exactly len(buf) bytes from the USB IN endpoint.
-func (t *USBTransport) readFull(ctx context.Context, inEP *gousb.InEndpoint, buf []byte) error {
+func (t *USBTransport) readFull(ctx context.Context, inEP usbInEndpoint, buf []byte) error {
 	offset := 0
 	for offset < len(buf) {
 		n, err := inEP.ReadContext(ctx, buf[offset:])

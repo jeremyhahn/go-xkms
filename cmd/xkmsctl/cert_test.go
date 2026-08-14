@@ -23,6 +23,7 @@ import (
 	"encoding/pem"
 	"errors"
 	"net"
+	"reflect"
 	"strings"
 	"testing"
 
@@ -2077,6 +2078,113 @@ func TestCertGenerateCA_BasicCertTest(t *testing.T) {
 	}
 }
 
+// TestCertGenerateCA_UsesCanonicalCAProfile locks in that generateCA is
+// wired to pkg/ca's canonical CA profile (client.NewCAProfile, aliased from
+// pkg/ca.NewCAProfile / pkg/ca.ProfileNameCA) instead of a hand-rolled
+// template. It reads the profile's current KeyUsage rather than hardcoding
+// the expected flags, so a change to that profile is observable here without
+// editing this test — the same profile the platform root CA and every
+// tenant root CA (pkg/acme/admin.TenantAwareAdminService.CreateTenantRootCA)
+// are issued with.
+func TestCertGenerateCA_UsesCanonicalCAProfile(t *testing.T) {
+	cert, _, err := generateCA("Profile Wiring CA", "", "", "", "", "", 365, "ecdsa", 256)
+	if err != nil {
+		t.Fatalf("generateCA failed: %v", err)
+	}
+
+	want := client.NewCAProfile()
+	if cert.KeyUsage != want.KeyUsage() {
+		t.Errorf("KeyUsage = %v, want %v (from client.NewCAProfile)", cert.KeyUsage, want.KeyUsage())
+	}
+	if !cert.IsCA {
+		t.Error("expected IsCA true from the canonical CA profile")
+	}
+	if !cert.BasicConstraintsValid {
+		t.Error("expected BasicConstraintsValid true from the canonical CA profile")
+	}
+}
+
+// TestCertIssue_UsesCanonicalLeafProfiles is the leaf counterpart of
+// TestCertGenerateCA_UsesCanonicalCAProfile: it proves a change to the
+// canonical server/client profiles is observable from the CLI.
+//
+// The CLI previously built its own near-copy of client.NewServerProfile()
+// that differed only in Basic Constraints. A near-copy is how issuance shapes
+// drift: it stays correct until someone edits the canonical profile, and then
+// only the CLI is left behind. Each expectation is read from the canonical
+// profile at run time rather than written out here, so this test tracks the
+// profile instead of restating it.
+func TestCertIssue_UsesCanonicalLeafProfiles(t *testing.T) {
+	caCert, caKey, err := generateCA("Leaf Profile Wiring CA", "", "", "", "", "", 365, "ecdsa", 256)
+	if err != nil {
+		t.Fatalf("generateCA failed: %v", err)
+	}
+
+	tests := []struct {
+		certType string
+		want     client.ProfileProvider
+	}{
+		{"server", client.NewServerProfile()},
+		{"client", client.NewClientProfile()},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.certType, func(t *testing.T) {
+			cert, _, err := issueCertificate(
+				caCert, caKey,
+				"leaf.example.com", tt.certType, "", "", "", "", "",
+				365, "ecdsa", 256, nil, nil, nil)
+			if err != nil {
+				t.Fatalf("issueCertificate(%s) failed: %v", tt.certType, err)
+			}
+
+			if cert.KeyUsage != tt.want.KeyUsage() {
+				t.Errorf("KeyUsage = %v, want %v (from the canonical %s profile)",
+					cert.KeyUsage, tt.want.KeyUsage(), tt.certType)
+			}
+			if got, want := cert.ExtKeyUsage, tt.want.ExtKeyUsage(); !reflect.DeepEqual(got, want) {
+				t.Errorf("ExtKeyUsage = %v, want %v (from the canonical %s profile)",
+					got, want, tt.certType)
+			}
+			if !cert.BasicConstraintsValid {
+				t.Error("expected BasicConstraintsValid from the canonical leaf profile")
+			}
+			if cert.IsCA {
+				t.Error("a leaf certificate must not be a CA")
+			}
+		})
+	}
+}
+
+// TestCertIssue_DualPurposeCarriesBothEKUs covers the certType default, which
+// has no canonical profile. Its key usage is still taken from the canonical
+// server profile rather than restated, so it cannot drift away from it.
+func TestCertIssue_DualPurposeCarriesBothEKUs(t *testing.T) {
+	caCert, caKey, err := generateCA("Dual Purpose CA", "", "", "", "", "", 365, "ecdsa", 256)
+	if err != nil {
+		t.Fatalf("generateCA failed: %v", err)
+	}
+
+	cert, _, err := issueCertificate(
+		caCert, caKey,
+		"dual.example.com", "", "", "", "", "", "",
+		365, "ecdsa", 256, nil, nil, nil)
+	if err != nil {
+		t.Fatalf("issueCertificate failed: %v", err)
+	}
+
+	if want := client.NewServerProfile().KeyUsage(); cert.KeyUsage != want {
+		t.Errorf("KeyUsage = %v, want %v (from the canonical server profile)", cert.KeyUsage, want)
+	}
+	wantEKU := []x509.ExtKeyUsage{x509.ExtKeyUsageServerAuth, x509.ExtKeyUsageClientAuth}
+	if !reflect.DeepEqual(cert.ExtKeyUsage, wantEKU) {
+		t.Errorf("ExtKeyUsage = %v, want %v", cert.ExtKeyUsage, wantEKU)
+	}
+	if !cert.BasicConstraintsValid {
+		t.Error("expected BasicConstraintsValid on the dual-purpose leaf")
+	}
+}
+
 func TestCertGenerateCA_RSACert(t *testing.T) {
 	cert, key, err := generateCA("RSA CA", "Test Org", "", "", "", "", 365, "rsa", 2048)
 	if err != nil {
@@ -2992,6 +3100,18 @@ func (m *mockCertClient) ListShares(_ context.Context) (*transport.ListSharesRes
 	return nil, nil
 }
 
+func (m *mockCertClient) Algorithms(_ context.Context) (*transport.AlgorithmsResponse, error) {
+	return nil, nil
+}
+
+func (m *mockCertClient) GetShare(_ context.Context, _, _ string, _ int) (*transport.ShareInfo, error) {
+	return nil, nil
+}
+
+func (m *mockCertClient) DeleteShare(_ context.Context, _, _ string, _ int) error {
+	return nil
+}
+
 func (m *mockCertClient) GetShareCollectionStatus(_ context.Context, _ string) (*transport.ShareCollectionStatus, error) {
 	return nil, nil
 }
@@ -3046,7 +3166,11 @@ func (m *mockCertClient) ClaimCertComplete(_ context.Context, _ *transport.Claim
 	return nil, nil
 }
 
-func (m *mockCertClient) ClaimShare(_ context.Context, _ *transport.ClaimShareRequest) (*transport.ClaimShareResponse, error) {
+func (m *mockCertClient) ClaimShareBegin(_ context.Context, _ *transport.ClaimShareBeginRequest) (*transport.ClaimShareBeginResponse, error) {
+	return nil, nil
+}
+
+func (m *mockCertClient) ClaimShareComplete(_ context.Context, _ *transport.ClaimShareCompleteRequest) (*transport.ClaimShareCompleteResponse, error) {
 	return nil, nil
 }
 
@@ -3092,5 +3216,9 @@ func (m *mockCertClient) BindUserCert(_ context.Context, _, _ string, _ int64) e
 }
 
 func (m *mockCertClient) ListUserCredentials(_ context.Context, _ string) (*transport.ListUserCredentialsResponse, error) {
+	return nil, nil
+}
+
+func (m *mockCertClient) QueryAudit(_ context.Context, _ *transport.AuditFilter) (*transport.AuditPage, error) {
 	return nil, nil
 }

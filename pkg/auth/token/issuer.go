@@ -1,0 +1,380 @@
+// Copyright (c) 2025 Jeremy Hahn
+// Copyright (c) 2025 Automate The Things, LLC
+//
+// This file is part of go-xkms.
+//
+// go-xkms is dual-licensed:
+//
+// 1. GNU Affero General Public License v3.0 (AGPL-3.0)
+//    See LICENSE file or visit https://www.gnu.org/licenses/agpl-3.0.html
+//
+// 2. Commercial License
+//    Contact licensing@automatethethings.com for commercial licensing options.
+
+// Package token issues and rotates the access/refresh token pairs behind the
+// browser and desktop login flows (WebAuthn passkey login, PIV/mTLS cert
+// login). Access tokens are short-lived JWTs whose claims match exactly what
+// auth.JWTAuthenticator consumes; refresh tokens are long-lived rotating JWTs
+// tracked in a RefreshStore so replaying a rotated token revokes the whole
+// session family. Signing goes through crypto.Signer, so the issuing key can
+// live in any xkms backend, hardware included.
+package token
+
+import (
+	"context"
+	"crypto"
+	"crypto/rand"
+	"encoding/hex"
+	"time"
+
+	"github.com/golang-jwt/jwt/v5"
+
+	"github.com/jeremyhahn/go-xkms/pkg/auth"
+	xkmsjwt "github.com/jeremyhahn/go-xkms/pkg/encoding/jwt"
+	"github.com/jeremyhahn/go-xkms/pkg/types"
+)
+
+// Defaults for token lifetimes: a passkey or PIV re-auth prompts a physical
+// user-presence ceremony, so the access token is kept short and renewal rides
+// the rotating refresh token instead.
+const (
+	DefaultAccessTTL  = 15 * time.Minute
+	DefaultRefreshTTL = 8 * time.Hour
+
+	// refreshTokenType is the typ claim distinguishing refresh tokens from
+	// access tokens, so one can never be presented as the other.
+	refreshTokenType = "refresh"
+)
+
+// Pair is one issued access/refresh token pair.
+type Pair struct {
+	// AccessToken is the short-lived bearer JWT.
+	AccessToken string `json:"access_token"`
+
+	// RefreshToken is the rotating long-lived refresh JWT.
+	RefreshToken string `json:"refresh_token"`
+
+	// TokenType is always "Bearer".
+	TokenType string `json:"token_type"`
+
+	// ExpiresIn is the access token lifetime in seconds.
+	ExpiresIn int64 `json:"expires_in"`
+}
+
+// Config configures an Issuer.
+type Config struct {
+	// Signer signs both token kinds. Required. May be hardware-backed.
+	Signer crypto.Signer
+
+	// KeyAttributes describe the signing key (algorithm and hash) for JWT
+	// method selection. Required.
+	KeyAttributes *types.KeyAttributes
+
+	// KeyID is the kid header stamped on issued tokens (optional).
+	KeyID string
+
+	// Issuer is the iss claim. Defaults to "go-xkms".
+	Issuer string
+
+	// Audience is the aud claim. Defaults to ["go-xkms"].
+	Audience []string
+
+	// AccessTTL is the access token lifetime. Defaults to DefaultAccessTTL.
+	AccessTTL time.Duration
+
+	// RefreshTTL is the refresh token lifetime. Defaults to DefaultRefreshTTL.
+	RefreshTTL time.Duration
+
+	// RefreshStore tracks issued refresh tokens. Required.
+	RefreshStore RefreshStore
+}
+
+// Issuer mints and rotates token pairs.
+type Issuer struct {
+	signer     crypto.Signer
+	keyAttrs   *types.KeyAttributes
+	keyID      string
+	issuer     string
+	audience   []string
+	accessTTL  time.Duration
+	refreshTTL time.Duration
+	store      RefreshStore
+	jwtSigner  *xkmsjwt.Signer
+}
+
+// NewIssuer validates cfg and constructs an Issuer.
+func NewIssuer(cfg *Config) (*Issuer, error) {
+	if cfg == nil {
+		return nil, &NilInputError{Field: "config"}
+	}
+	if cfg.Signer == nil {
+		return nil, &NilInputError{Field: "signer"}
+	}
+	if cfg.KeyAttributes == nil {
+		return nil, &NilInputError{Field: "key attributes"}
+	}
+	if cfg.RefreshStore == nil {
+		return nil, &NilInputError{Field: "refresh store"}
+	}
+
+	issuer := cfg.Issuer
+	if issuer == "" {
+		issuer = "go-xkms"
+	}
+	audience := cfg.Audience
+	if len(audience) == 0 {
+		audience = []string{"go-xkms"}
+	}
+	accessTTL := cfg.AccessTTL
+	if accessTTL <= 0 {
+		accessTTL = DefaultAccessTTL
+	}
+	refreshTTL := cfg.RefreshTTL
+	if refreshTTL <= 0 {
+		refreshTTL = DefaultRefreshTTL
+	}
+
+	return &Issuer{
+		signer:     cfg.Signer,
+		keyAttrs:   cfg.KeyAttributes,
+		keyID:      cfg.KeyID,
+		issuer:     issuer,
+		audience:   audience,
+		accessTTL:  accessTTL,
+		refreshTTL: refreshTTL,
+		store:      cfg.RefreshStore,
+		jwtSigner:  xkmsjwt.NewSigner(),
+	}, nil
+}
+
+// PublicKey returns the verification key for issued tokens.
+func (i *Issuer) PublicKey() crypto.PublicKey {
+	return i.signer.Public()
+}
+
+// Issuer returns the iss claim value.
+func (i *Issuer) IssuerName() string { return i.issuer }
+
+// Audience returns the aud claim values.
+func (i *Issuer) Audience() []string { return i.audience }
+
+// AccessTTL returns the access token lifetime.
+func (i *Issuer) AccessTTL() time.Duration { return i.accessTTL }
+
+// Mint issues a fresh token pair for the identity, opening a new refresh
+// family.
+func (i *Issuer) Mint(ctx context.Context, id *auth.Identity) (*Pair, error) {
+	if id == nil || id.Subject == "" {
+		return nil, &NilInputError{Field: "identity subject"}
+	}
+
+	family, err := randomID()
+	if err != nil {
+		return nil, &SigningError{Err: err}
+	}
+
+	return i.mintPair(ctx, id, family)
+}
+
+// Refresh exchanges a valid, unrotated refresh token for a new pair, rotating
+// the refresh token. Presenting an already-rotated token revokes the entire
+// family and fails: replay of a rotated refresh token means two parties hold
+// the same lineage, which is the signature of theft.
+func (i *Issuer) Refresh(ctx context.Context, refreshToken string) (*Pair, error) {
+	claims, err := i.verifyRefresh(refreshToken)
+	if err != nil {
+		return nil, err
+	}
+
+	jti, _ := claims["jti"].(string)
+	family, _ := claims["fam"].(string)
+	if jti == "" || family == "" {
+		return nil, &InvalidTokenError{Reason: "missing jti or fam claim"}
+	}
+
+	rec, err := i.store.Get(ctx, family, jti)
+	if err != nil {
+		return nil, err
+	}
+	if rec == nil {
+		return nil, &RefreshRevokedError{}
+	}
+	if rec.Rotated {
+		// Reuse: revoke the lineage before failing.
+		if revokeErr := i.store.RevokeFamily(ctx, family); revokeErr != nil {
+			return nil, revokeErr
+		}
+		return nil, &RefreshReuseError{Family: family}
+	}
+
+	if err := i.store.MarkRotated(ctx, family, jti); err != nil {
+		return nil, err
+	}
+
+	return i.mintPair(ctx, identityFromClaims(claims), family)
+}
+
+// Revoke invalidates the refresh token's whole family (logout). An invalid
+// or unknown token is a no-op: logout must be idempotent.
+func (i *Issuer) Revoke(ctx context.Context, refreshToken string) error {
+	claims, err := i.verifyRefresh(refreshToken)
+	if err != nil {
+		return nil
+	}
+	family, _ := claims["fam"].(string)
+	if family == "" {
+		return nil
+	}
+	return i.store.RevokeFamily(ctx, family)
+}
+
+// mintPair signs an access/refresh pair inside the given family and records
+// the refresh token.
+func (i *Issuer) mintPair(ctx context.Context, id *auth.Identity, family string) (*Pair, error) {
+	now := time.Now()
+
+	accessClaims := jwt.MapClaims{
+		"iss": i.issuer,
+		"aud": i.audience,
+		"sub": id.Subject,
+		"iat": now.Unix(),
+		"nbf": now.Unix(),
+		"exp": now.Add(i.accessTTL).Unix(),
+	}
+	if id.TenantID != "" {
+		accessClaims["tenant_id"] = id.TenantID
+	}
+	if len(id.Roles) > 0 {
+		accessClaims["roles"] = id.Roles
+	}
+	if username := id.Metadata["username"]; username != "" {
+		accessClaims["username"] = username
+	}
+	if name := id.Metadata["display_name"]; name != "" {
+		accessClaims["name"] = name
+	}
+
+	accessToken, err := i.sign(accessClaims)
+	if err != nil {
+		return nil, &SigningError{Err: err}
+	}
+
+	jti, err := randomID()
+	if err != nil {
+		return nil, &SigningError{Err: err}
+	}
+
+	refreshExp := now.Add(i.refreshTTL)
+	refreshClaims := jwt.MapClaims{
+		"iss": i.issuer,
+		"aud": i.audience,
+		"sub": id.Subject,
+		"iat": now.Unix(),
+		"nbf": now.Unix(),
+		"exp": refreshExp.Unix(),
+		"typ": refreshTokenType,
+		"jti": jti,
+		"fam": family,
+	}
+	if id.TenantID != "" {
+		refreshClaims["tenant_id"] = id.TenantID
+	}
+	if len(id.Roles) > 0 {
+		refreshClaims["roles"] = id.Roles
+	}
+	if username := id.Metadata["username"]; username != "" {
+		refreshClaims["username"] = username
+	}
+	if name := id.Metadata["display_name"]; name != "" {
+		refreshClaims["name"] = name
+	}
+
+	refreshToken, err := i.sign(refreshClaims)
+	if err != nil {
+		return nil, &SigningError{Err: err}
+	}
+
+	if err := i.store.Save(ctx, &Record{
+		JTI:       jti,
+		Family:    family,
+		Subject:   id.Subject,
+		ExpiresAt: refreshExp.Unix(),
+	}); err != nil {
+		return nil, err
+	}
+
+	return &Pair{
+		AccessToken:  accessToken,
+		RefreshToken: refreshToken,
+		TokenType:    "Bearer",
+		ExpiresIn:    int64(i.accessTTL.Seconds()),
+	}, nil
+}
+
+// sign signs claims with the configured crypto.Signer.
+func (i *Issuer) sign(claims jwt.MapClaims) (string, error) {
+	if i.keyID != "" {
+		return i.jwtSigner.SignWithSignerAndKID(i.signer, claims, i.keyAttrs, i.keyID)
+	}
+	return i.jwtSigner.SignWithSigner(i.signer, claims, i.keyAttrs)
+}
+
+// verifyRefresh validates a refresh token's signature, expiry, issuer, and
+// typ claim, returning its claims.
+func (i *Issuer) verifyRefresh(refreshToken string) (jwt.MapClaims, error) {
+	if refreshToken == "" {
+		return nil, &InvalidTokenError{Reason: "empty token"}
+	}
+
+	verifier := xkmsjwt.NewVerifier()
+	parsed, err := verifier.VerifyWithOptions(refreshToken, i.PublicKey(), &xkmsjwt.VerifyOptions{
+		ValidateIssuer: true,
+		ExpectedIssuer: i.issuer,
+		ValidateExpiry: true,
+	})
+	if err != nil {
+		return nil, &InvalidTokenError{Reason: "verification failed", Err: err}
+	}
+
+	claims, ok := parsed.Claims.(jwt.MapClaims)
+	if !ok {
+		return nil, &InvalidTokenError{Reason: "unexpected claims type"}
+	}
+	if typ, _ := claims["typ"].(string); typ != refreshTokenType {
+		return nil, &InvalidTokenError{Reason: "not a refresh token"}
+	}
+	return claims, nil
+}
+
+// identityFromClaims rebuilds the identity carried in refresh-token claims.
+// Role changes therefore take effect at the next full login, not on refresh —
+// the refresh lineage carries the identity snapshot from the original
+// ceremony.
+func identityFromClaims(claims jwt.MapClaims) *auth.Identity {
+	id := &auth.Identity{Metadata: make(map[string]string)}
+	id.Subject, _ = claims["sub"].(string)
+	id.TenantID, _ = claims["tenant_id"].(string)
+	if roles, ok := claims["roles"].([]interface{}); ok {
+		for _, r := range roles {
+			if s, ok := r.(string); ok && s != "" {
+				id.Roles = append(id.Roles, s)
+			}
+		}
+	}
+	if username, ok := claims["username"].(string); ok && username != "" {
+		id.Metadata["username"] = username
+	}
+	if name, ok := claims["name"].(string); ok && name != "" {
+		id.Metadata["display_name"] = name
+	}
+	return id
+}
+
+// randomID returns a 128-bit hex identifier for jti/family values.
+func randomID() (string, error) {
+	buf := make([]byte, 16)
+	if _, err := rand.Read(buf); err != nil {
+		return "", err
+	}
+	return hex.EncodeToString(buf), nil
+}

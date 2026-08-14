@@ -115,7 +115,7 @@ func TestXKey_Fido2Help(t *testing.T) {
 // in-memory storage, verifies the process is running, then sends SIGTERM
 // and verifies a clean exit.
 func TestXKey_Fido2DaemonStartStop(t *testing.T) {
-	skipIfNoUHID(t)
+	requireUHID(t)
 
 	binaryPath := findBinary(t)
 	if binaryPath == "" {

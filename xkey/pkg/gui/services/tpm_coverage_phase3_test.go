@@ -61,10 +61,10 @@ func phase3CertPEM(t *testing.T) string {
 }
 
 // ---------------------------------------------------------------------------
-// ListKeys: panic recovery (60% -> higher)
+// ListKeys: an empty persistent inventory is not an error
 // ---------------------------------------------------------------------------
 
-func TestP3_ListKeys_PanicRecovery(t *testing.T) {
+func TestP3_ListKeys_EmptyInventory(t *testing.T) {
 	svc := newServiceWithMock(defaultMockTPM())
 	keys, err := svc.ListKeys()
 	require.NoError(t, err)

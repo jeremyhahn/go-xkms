@@ -120,13 +120,14 @@ func TestUnlockWithKey_CTAPDeviceInitError(t *testing.T) {
 	assert.Contains(t, err.Error(), "failed to initialize CTAP")
 }
 
-// TestParseAuthDataExtensions_NoExtensionDataAtEnd tests when auth data is exactly at offset
+// TestParseAuthDataExtensions_NoExtensionDataAtEnd tests auth data whose ED
+// flag promises an extension map that the buffer does not actually contain.
 func TestParseAuthDataExtensions_NoExtensionDataAtEnd(t *testing.T) {
 	authData := make([]byte, 37)
 	authData[32] = 0x80 // ED flag only
 
 	extensions, err := ParseAuthDataExtensions(authData)
-	assert.NoError(t, err)
+	assert.ErrorIs(t, err, ErrInvalidExtensions)
 	assert.Nil(t, extensions)
 }
 

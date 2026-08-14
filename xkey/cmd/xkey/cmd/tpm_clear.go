@@ -17,6 +17,7 @@ import (
 	"bufio"
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"strings"
@@ -103,9 +104,10 @@ func init() {
 }
 
 func runTPMClear(cmd *cobra.Command, args []string) error {
+	out := cmd.OutOrStdout()
 	// Confirmation prompt
 	if !clearCfg.yes {
-		if !confirmClear(clearCfg.force) {
+		if !confirmClear(out, clearCfg.force) {
 			return ErrTPMClearCancelled
 		}
 	}
@@ -222,30 +224,30 @@ func runStandardTPMClear(cmd *cobra.Command) error {
 }
 
 // confirmClear prompts the user for confirmation before clearing the TPM
-func confirmClear(force bool) bool {
+func confirmClear(out io.Writer, force bool) bool {
 	reader := bufio.NewReader(os.Stdin)
 
-	fmt.Println("")
-	fmt.Println("========================================")
-	fmt.Println("  WARNING: TPM CLEAR OPERATION")
-	fmt.Println("========================================")
-	fmt.Println("")
-	fmt.Println("This operation will:")
-	fmt.Println("  - Erase ALL TPM-protected keys and secrets")
-	fmt.Println("  - Reset ALL hierarchy authorizations to empty")
-	fmt.Println("  - Delete sealed data and NV indexes")
-	fmt.Println("")
+	fmt.Fprintln(out, "")
+	fmt.Fprintln(out, "========================================")
+	fmt.Fprintln(out, "  WARNING: TPM CLEAR OPERATION")
+	fmt.Fprintln(out, "========================================")
+	fmt.Fprintln(out, "")
+	fmt.Fprintln(out, "This operation will:")
+	fmt.Fprintln(out, "  - Erase ALL TPM-protected keys and secrets")
+	fmt.Fprintln(out, "  - Reset ALL hierarchy authorizations to empty")
+	fmt.Fprintln(out, "  - Delete sealed data and NV indexes")
+	fmt.Fprintln(out, "")
 
 	if force {
-		fmt.Println("Mode: FORCE (UEFI Physical Presence Interface)")
-		fmt.Println("  - System will REBOOT to complete the operation")
-		fmt.Println("  - You may need to confirm in UEFI/BIOS firmware")
-		fmt.Println("")
+		fmt.Fprintln(out, "Mode: FORCE (UEFI Physical Presence Interface)")
+		fmt.Fprintln(out, "  - System will REBOOT to complete the operation")
+		fmt.Fprintln(out, "  - You may need to confirm in UEFI/BIOS firmware")
+		fmt.Fprintln(out, "")
 	}
 
-	fmt.Println("This action CANNOT be undone!")
-	fmt.Println("")
-	fmt.Print("Type 'yes' to proceed: ")
+	fmt.Fprintln(out, "This action CANNOT be undone!")
+	fmt.Fprintln(out, "")
+	fmt.Fprint(out, "Type 'yes' to proceed: ")
 
 	input, err := reader.ReadString('\n')
 	if err != nil {

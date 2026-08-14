@@ -627,7 +627,11 @@ func (b *baseSDKClient) ClaimCertComplete(_ context.Context, _ *transport.ClaimC
 	return nil, errNotImplemented
 }
 
-func (b *baseSDKClient) ClaimShare(_ context.Context, _ *transport.ClaimShareRequest) (*transport.ClaimShareResponse, error) {
+func (b *baseSDKClient) ClaimShareBegin(_ context.Context, _ *transport.ClaimShareBeginRequest) (*transport.ClaimShareBeginResponse, error) {
+	return nil, errNotImplemented
+}
+
+func (b *baseSDKClient) ClaimShareComplete(_ context.Context, _ *transport.ClaimShareCompleteRequest) (*transport.ClaimShareCompleteResponse, error) {
 	return nil, errNotImplemented
 }
 

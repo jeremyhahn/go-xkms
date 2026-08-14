@@ -502,10 +502,6 @@ func TestIntegration_Quote_EdgeCases(t *testing.T) {
 
 // TestIntegration_Quote_Performance tests quote operation performance
 func TestIntegration_Quote_Performance(t *testing.T) {
-	if testing.Short() {
-		t.Fatal("Skipping performance test in short mode")
-	}
-
 	tpmInstance, cleanup := setupQuoteTPM(t)
 	defer cleanup()
 

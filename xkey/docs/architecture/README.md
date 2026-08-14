@@ -175,7 +175,7 @@ type VirtualFIDO2Device struct {
 
 ### CTAPHIDHandler
 
-**Location**: `pkg/fido2/authenticator/hid_adapter.go`
+**Location**: `pkg/authenticator/hid_adapter.go`
 
 Handles CTAP-HID protocol framing over the 64-byte HID packets.
 
@@ -187,7 +187,7 @@ Handles CTAP-HID protocol framing over the 64-byte HID packets.
 
 ### Authenticator
 
-**Location**: `pkg/fido2/authenticator/authenticator.go`
+**Location**: `pkg/authenticator/authenticator.go`
 
 The core CTAP2 authenticator implementation.
 
@@ -306,7 +306,7 @@ func (c *DeviceConfig) Hash() []byte {
 
 ## UserPresenceHandler Interface
 
-**Location**: `pkg/fido2/authenticator/user_presence.go`
+**Location**: `pkg/authenticator/user_presence.go`
 
 Abstracts user presence and verification handling, allowing different implementations for automation vs. interactive use.
 
@@ -352,7 +352,7 @@ type UserVerificationResult struct {
 
 ### AutoGrantHandler
 
-**Location**: `pkg/fido2/authenticator/user_presence_auto.go`
+**Location**: `pkg/authenticator/user_presence_auto.go`
 
 Automatically approves all user presence and verification requests. Default for automation scenarios.
 
@@ -371,7 +371,7 @@ Behavior:
 
 ### InteractiveHandler
 
-**Location**: `pkg/fido2/authenticator/user_presence_interactive.go`
+**Location**: `pkg/authenticator/user_presence_interactive.go`
 
 Prompts the user via terminal for presence confirmation and PIN entry.
 
@@ -394,7 +394,7 @@ Behavior:
 
 ## FIDO2KeyBackend Interface
 
-**Location**: `pkg/fido2/authenticator/keybackend/keybackend.go`
+**Location**: `pkg/authenticator/keybackend/keybackend.go`
 
 Abstracts cryptographic key operations, allowing different backend implementations.
 
@@ -441,57 +441,35 @@ type FIDO2KeyCapabilities struct {
 }
 ```
 
-### SoftwareKeyBackend
+### BackendAdapter
 
-**Location**: `pkg/fido2/authenticator/keybackend/software/software.go`
+**Location**: `pkg/authenticator/keybackend/adapter.go`
 
-In-memory key storage with PKCS#8 serialization support.
-
-```go
-type SoftwareKeyBackend struct {
-    mu     sync.RWMutex
-    keys   map[string]*softwareKeyHandle
-    closed atomic.Bool
-}
-
-func NewSoftwareKeyBackend() *SoftwareKeyBackend
-```
-
-Capabilities:
-- Algorithms: ES256 (-7), ES384 (-35), ES512 (-36), EdDSA (-8)
-- Export: Yes (PKCS#8)
-- Import: Yes (PKCS#8)
-- Hardware Backed: No
-
-### TPM2KeyBackend
-
-**Location**: `pkg/fido2/authenticator/keybackend/tpm2/tpm2.go`
-
-Hardware-backed keys via TPM 2.0 persistent handles. All credentials share a single
-persistent TPM key -- the private key never leaves the TPM.
+There are no per-backend FIDO2 implementations. A single adapter wraps any
+go-xkms `KeyProvider` and implements `FIDO2KeyBackend` on top of it, translating
+between FIDO2 credential IDs / COSE algorithms and go-xkms `KeyAttributes` and
+handling COSE public key encoding. Any provider that supports EC key generation
+and signing works automatically, so software, TPM 2.0, PKCS#11, and the cloud
+KMS backends are all reached through the same type, selected by `BackendType`.
 
 ```go
-type TPM2KeyBackend struct {
-    tpm        TPMSigner
-    handle     uint32 // persistent TPM handle
-    devicePath string
-    closed     atomic.Bool
+type BackendAdapter struct {
+    provider    xkms.KeyProvider
+    backendType xkms.BackendType
+    // ...
 }
 
-type TPM2Config struct {
-    DevicePath string    // TPM device path
-    Handle     uint32    // Persistent TPM handle (default: 0x81020001 = IAK)
-    TPM        TPMSigner // Pre-initialized TPM signer
-}
-
-func NewTPM2KeyBackend(cfg *TPM2Config) (*TPM2KeyBackend, error)
+func NewBackendAdapter(provider xkms.KeyProvider, backendType xkms.BackendType) *BackendAdapter
 ```
 
-Capabilities:
-- Algorithms: ES256 (-7), ES384 (-35)
-- Export: No (hardware-protected)
-- Import: No
-- Hardware Backed: Yes
+`xkms` here is `github.com/jeremyhahn/go-xkms/sdk/go`. Backend selection uses the
+`BackendType` constants re-exported by that SDK (`sdk/go/types.go`), among them
+`BackendTypeSoftware`, `BackendTypeTPM2`, `BackendTypePKCS11`, `BackendTypeYubiKey`,
+and `BackendTypePhone`.
+
+Per-backend capabilities are reported at runtime by `Capabilities()`, and the
+algorithm set is derived from the backend type by `algorithmsForBackend`
+(`adapter.go:86`, `adapter.go:112`) rather than being fixed per implementation.
 
 ### Attestation Interface
 
@@ -538,7 +516,7 @@ For full details on the barrier and LUKS integration, see [Barrier Encryption Ar
 
 ### CredentialStorage Interface
 
-**Location**: `pkg/fido2/authenticator/config.go`
+**Location**: `pkg/authenticator/config.go`
 
 Basic credential persistence interface.
 
@@ -555,7 +533,7 @@ type CredentialStorage interface {
 
 ### StatefulCredentialStorage Interface
 
-**Location**: `pkg/fido2/authenticator/storage.go`
+**Location**: `pkg/authenticator/storage.go`
 
 Extended interface with authenticator state persistence.
 

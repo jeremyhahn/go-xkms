@@ -18,7 +18,6 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
-	"runtime"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -486,29 +485,22 @@ func TestWritePolicyHMAC_DirectoryCreationFailure(t *testing.T) {
 // TestWritePolicyHMAC_ReadOnlyDirectory verifies that WritePolicyHMAC returns
 // ErrPolicyHMACSaveFailed when it cannot create a temp file in a read-only
 // directory.
-func TestWritePolicyHMAC_ReadOnlyDirectory(t *testing.T) {
-	if runtime.GOOS != "linux" {
-		t.Skip("read-only directory test only reliable on Linux")
-	}
-	if os.Getuid() == 0 {
-		t.Skip("test requires non-root user for permission checks")
-	}
-
+// TestWritePolicyHMAC_UnwritableDirectory verifies that WritePolicyHMAC
+// returns ErrPolicyHMACSaveFailed when it cannot create its temp file. A
+// regular file stands in for the parent directory so the write fails with
+// ENOTDIR for every uid, including root.
+func TestWritePolicyHMAC_UnwritableDirectory(t *testing.T) {
 	tmpDir := t.TempDir()
-	readOnlyDir := filepath.Join(tmpDir, "readonly")
-	require.NoError(t, os.MkdirAll(readOnlyDir, 0500))
+	blocker := filepath.Join(tmpDir, "not-a-directory")
+	require.NoError(t, os.WriteFile(blocker, []byte("x"), 0600))
 
-	t.Cleanup(func() {
-		os.Chmod(readOnlyDir, 0700)
-	})
-
-	hmacPath := filepath.Join(readOnlyDir, hmacFileName)
+	hmacPath := filepath.Join(blocker, hmacFileName)
 	policy := testPolicy()
 
 	err := WritePolicyHMAC(policy, "some-pin", hmacPath)
 	require.Error(t, err)
 	assert.True(t, errors.Is(err, ErrPolicyHMACSaveFailed),
-		"expected ErrPolicyHMACSaveFailed for read-only directory, got %v", err)
+		"expected ErrPolicyHMACSaveFailed for an unwritable directory, got %v", err)
 }
 
 // TestWritePolicyHMAC_OverwriteExisting verifies that WritePolicyHMAC can
@@ -541,22 +533,14 @@ func TestWritePolicyHMAC_OverwriteExisting(t *testing.T) {
 
 // TestLoadPolicyHMAC_ReadPermissionError verifies that LoadPolicyHMAC returns
 // ErrPolicyHMACLoadFailed when the file exists but cannot be read.
-func TestLoadPolicyHMAC_ReadPermissionError(t *testing.T) {
-	if runtime.GOOS != "linux" {
-		t.Skip("permission test only reliable on Linux")
-	}
-	if os.Getuid() == 0 {
-		t.Skip("test requires non-root user for permission checks")
-	}
-
+// TestLoadPolicyHMAC_ReadError verifies that LoadPolicyHMAC returns
+// ErrPolicyHMACLoadFailed when the path exists but cannot be read as a file.
+// A directory is used instead of unreadable permission bits so the read fails
+// with EISDIR for every uid, including root.
+func TestLoadPolicyHMAC_ReadError(t *testing.T) {
 	dir := t.TempDir()
 	hmacPath := filepath.Join(dir, hmacFileName)
-
-	// Write a valid HMAC file, then remove read permissions.
-	require.NoError(t, os.WriteFile(hmacPath, []byte(`{"version":1}`), 0000))
-	t.Cleanup(func() {
-		os.Chmod(hmacPath, 0600)
-	})
+	require.NoError(t, os.Mkdir(hmacPath, 0700))
 
 	loaded, err := LoadPolicyHMAC(hmacPath)
 	assert.Nil(t, loaded)

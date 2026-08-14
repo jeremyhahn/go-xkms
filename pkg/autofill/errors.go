@@ -15,18 +15,18 @@ package autofill
 
 import "errors"
 
+// This package supplies the autofill primitives — policy validation, domain
+// matching, rate limiting and assertion verification — and reports policy
+// outcomes as booleans (AutoFillPolicy.IsDomainAllowed, RateLimiter.Allow).
+// Turning a denied outcome into an error is the calling service's job, and the
+// deny vocabulary lives there with it (xkey's AutoFillService owns
+// ErrAutoFillDomainBlocked, ErrAutoFillRateLimit, ErrAutoFillAppLocked and
+// friends). Only the errors this package actually returns belong here.
 var (
-	ErrInvalidFillMode        = errors.New("autofill: invalid fill mode")
-	ErrInvalidTOTPPolicy      = errors.New("autofill: invalid TOTP policy")
-	ErrInvalidSessionTimeout  = errors.New("autofill: session timeout must be non-negative")
-	ErrInvalidMaxFills        = errors.New("autofill: max fills per minute must be non-negative")
-	ErrDomainBlocked          = errors.New("autofill: domain is blocked by policy")
-	ErrDomainNotAllowed       = errors.New("autofill: domain is not in allowed list")
-	ErrRateLimitExceeded      = errors.New("autofill: rate limit exceeded")
-	ErrAppLocked              = errors.New("autofill: application is locked")
-	ErrExtensionDisabled      = errors.New("autofill: browser extension is disabled")
-	ErrAuditRequired          = errors.New("autofill: audit logging is required but not available")
-	ErrAuthenticationRequired = errors.New("autofill: CTAP2 authentication required")
-	ErrAuthenticationFailed   = errors.New("autofill: CTAP2 authentication failed")
-	ErrChallengeRequired      = errors.New("autofill: challenge required for authentication")
+	ErrInvalidFillMode       = errors.New("autofill: invalid fill mode")
+	ErrInvalidTOTPPolicy     = errors.New("autofill: invalid TOTP policy")
+	ErrInvalidSessionTimeout = errors.New("autofill: session timeout must be non-negative")
+	ErrInvalidMaxFills       = errors.New("autofill: max fills per minute must be non-negative")
+	ErrRateLimitExceeded     = errors.New("autofill: rate limit exceeded")
+	ErrAuthenticationFailed  = errors.New("autofill: CTAP2 authentication failed")
 )

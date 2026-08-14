@@ -20,37 +20,32 @@ import (
 	"path/filepath"
 	"testing"
 
+	"github.com/jeremyhahn/go-xkms/internal/softhsmtest"
 	"github.com/jeremyhahn/go-xkms/pkg/types"
 	xkms "github.com/jeremyhahn/go-xkms/sdk/go"
 )
 
-// softHSMLib resolves the SoftHSM2 PKCS#11 module path, honoring PKCS11_MODULE.
-func softHSMLib() string {
+// softHSMLib resolves the SoftHSM2 PKCS#11 module path, honoring PKCS11_MODULE
+// and otherwise deferring to the shared softhsmtest resolver, which fails the
+// test when SoftHSM2 is not installed.
+func softHSMLib(t *testing.T) string {
+	t.Helper()
 	if p := os.Getenv("PKCS11_MODULE"); p != "" {
+		if _, err := os.Stat(p); err != nil {
+			t.Fatalf("PKCS11_MODULE=%s is not readable: %v", p, err)
+		}
 		return p
 	}
-	for _, p := range []string{
-		"/usr/lib/softhsm/libsofthsm2.so",
-		"/usr/lib/x86_64-linux-gnu/softhsm/libsofthsm2.so",
-		"/usr/local/lib/softhsm/libsofthsm2.so",
-	} {
-		if _, err := os.Stat(p); err == nil {
-			return p
-		}
-	}
-	return ""
+	return softhsmtest.Library(t)
 }
 
 // TestSSHBackend_PKCS11 proves SSH key generation + signing on a PKCS#11 backend
 // using SoftHSM2. The private key stays in the token; signing is delegated. The
 // token store is a hermetic temp directory (the host's SoftHSM config is never
-// touched). Skipped when the SoftHSM2 module is not installed.
+// touched). SoftHSM2 is a declared dependency of the pkcs11 lane, so a missing
+// module fails the run instead of silently skipping it.
 func TestSSHBackend_PKCS11(t *testing.T) {
-	lib := softHSMLib()
-	if lib == "" {
-		t.Skip("SoftHSM2 module not found; set PKCS11_MODULE to run the PKCS#11 SSH lane")
-	}
-	kp := newSoftHSMProvider(t, lib)
+	kp := newSoftHSMProvider(t, softHSMLib(t))
 	runMatrix(t, resolverFor("pkcs11", kp), "pkcs11", hardwareAlgos, true)
 }
 

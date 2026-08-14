@@ -71,7 +71,13 @@ mTLS. The `tls` section controls the TLS handshake (certificate verification
 policy), while the `auth` section controls identity extraction and RBAC
 enforcement.
 
+`enable_rbac: true` additionally requires `storage.backend: "qrdb"` — see
+[RBAC requires the qrdb storage backend](#rbac-requires-the-qrdb-storage-backend).
+
 ```yaml
+storage:
+  backend: "qrdb"   # required by auth.enable_rbac below
+
 tls:
   enabled: true
   cert_file: /etc/xkms/tls/server.pem
@@ -109,11 +115,34 @@ auth:
 For production mTLS, use `require_and_verify`. The `client_cas` list must
 include every CA that signs client certificates.
 
+### RBAC requires the qrdb storage backend
+
+Roles and permissions live in the qrdb identity plane, and that plane exists
+only when qrdb is the storage backend. `auth.enable_rbac: true` therefore
+requires:
+
+```yaml
+storage:
+  backend: "qrdb"
+```
+
+With any other backend (`pebble`, `file`, `memory`) there is no qrdb client, the
+authorizer cannot be built, and every transport authorizes every request. The
+daemon refuses to start in that combination: `Config.ComplianceGaps`
+(`pkg/config/config.go`) reports it as a posture gap, and startup aborts unless
+the operator explicitly opts into development mode with `--insecure` /
+`XKMS_INSECURE=true`.
+
+Set `storage.backend: "qrdb"` or disable `auth.enable_rbac`.
+
 ### Composite mTLS + JWT
 
 To accept both JWT tokens and mTLS client certificates on the same port:
 
 ```yaml
+storage:
+  backend: "qrdb"   # required by auth.enable_rbac below
+
 tls:
   enabled: true
   cert_file: /etc/xkms/tls/server.pem
@@ -128,6 +157,12 @@ auth:
   type: composite
   mtls: true
   enable_rbac: true
+  # The jwt method needs a verification key; a composite chain that lists
+  # "jwt" without auth.jwt.public_key_file fails startup.
+  jwt:
+    public_key_file: /etc/xkms/jwt-public.pem
+    issuer: "https://issuer.example.com"
+    audience: ["xkms"]
   composite:
     methods:
       - jwt
@@ -221,20 +256,26 @@ extracts identity from the client certificate and maps it to RBAC roles.
 ### Identity Extraction
 
 The authenticator builds an `Identity` from the client certificate with two
-resolution strategies, tried in order:
+resolution strategies, tried in order (`MTLSAuthenticator.buildIdentity`,
+`pkg/auth/mtls.go`):
 
-1. **Certificate fingerprint lookup** -- If a `UserStore` is configured, the
-   SHA-256 fingerprint of the client certificate's DER bytes is computed via
-   `ComputeCertFingerprint` and looked up against user `CertBindings`. When a
-   match is found, the user's `Username` becomes the identity subject and the
-   user's `Role` is injected into claims.
+1. **SPKI thumbprint lookup** -- If a `UserStore` is configured, the canonical
+   SPKI thumbprint (SHA-256 over SubjectPublicKeyInfo, base64url) is computed
+   with `qrdbsdk.ComputeSPKIThumbprint` and looked up against the user's cert
+   bindings. When a match is found and the user is enabled, `Username` becomes
+   the identity subject, the user's `TenantID` becomes the identity tenant, and
+   the user's `Role` becomes `Identity.Roles`. A matched but disabled user
+   yields `ErrUserDisabled`. Binding by public key rather than by certificate
+   DER means a re-issued certificate for the same key still resolves.
 
-2. **Certificate field extraction** -- When no fingerprint match exists (or no
+2. **Certificate field extraction** -- When no thumbprint match exists (or no
    `UserStore` is configured), identity is extracted directly from the X.509
-   subject fields:
-   - `Subject.CommonName` becomes the identity subject
-   - `Subject.Organization`, `Subject.OrganizationalUnit`, DNS SANs, and email
-     addresses are added as claims
+   fields: `Subject.CommonName` becomes the subject (falling back to the first
+   DNS SAN, then the serial), the first `Subject.OrganizationalUnit` becomes the
+   tenant, and `Subject.Organization`, OU, DNS SANs, email addresses, and
+   extended key usages are recorded in `Identity.Metadata`. **No roles are
+   assigned on this path**, so with RBAC enabled such an identity holds no
+   grants.
 
 The `auth.UserStore` interface bridges the identity store to the
 authenticator, translating user records into `auth.MTLSUser` values. The
@@ -244,46 +285,81 @@ thumbprint — there is no local xkms user package.
 
 ### Certificate Binding
 
-Bind a client certificate to a user account so the fingerprint lookup succeeds:
+Create the user and bind its client certificate in one step, so the thumbprint
+lookup succeeds:
 
 ```bash
-xkmsctl admin user bind-cert \
-  --username alice \
-  --cert /tmp/alice.pem \
-  --name "alice workstation"
+xkmsctl admin create alice \
+  --method mtls \
+  --cert-file /tmp/alice.pem \
+  --display-name "Alice"
 ```
 
-This stores a `CertBinding` containing the SHA-256 fingerprint, subject DN,
-issuer DN, serial, and expiry on the user record.
+This creates the user with the `admin` role and stores a cert binding holding
+the certificate's SPKI thumbprint and `NotAfter`. A PKCS#11 token can be used
+instead of a PEM file with `--pkcs11-module`.
 
 ### RBAC Role Model
 
-Roles follow FIPS 140-2 separation of duties. Each user has exactly one role.
+Role definitions and grants live in the qrdb identity plane, not in xkms. The
+canonical names are qrdb's FIPS 140-3 six-role model, mirrored by
+`cmd/xkmsctl/roles.go` so the strings the CLI sends match what the server
+understands. Each user has exactly one role.
 
-| Role | Permissions |
-|------|-------------|
-| `admin` | `*:*` -- full access to all resources |
-| `operator` | `keys:*`, `certificates:*`, `secrets:create/read/update/delete` |
-| `auditor` | `audit:read/list`, `keys:list`, `certificates:list`, `users:list` |
-| `user` | `keys:sign/verify/encrypt/decrypt`, `secrets:read` |
+| Role | Intent |
+|------|--------|
+| `so` | Security Officer: module initialization and PIN management |
+| `admin` | Full access to manage xkms and its users |
+| `operator` | Manage keys and certificates, not users |
+| `user` | Use keys for cryptographic operations, not manage them |
+| `auditor` | View audit logs and key metadata only |
+| `custodian` | Participate in key ceremonies and manage key shares |
 
 The user's role is resolved from the embedded qrdb identity store via
-`auth.QRDBUserStore`; key-domain permissions are then checked against the role
-definitions in `pkg/keyrbac` (`MemoryRBACAdapter`).
+`auth.QRDBUserStore`; the permission check for the role is then made by qrdb
+itself through `auth.Authorizer` (`pkg/auth/authorize.go`). Inspect or change
+grants with `xkms.Auth(qrdbClient).Roles()` / `.Permissions()` / `.RBAC()`.
+See [RBAC](../architecture/rbac.md) for the resource:action vocabulary.
 
-### Claim-to-Role Mapping (No UserStore)
+### Transport Enforcement
 
-When operating without a `UserStore`, the authenticator extracts the
-`organizational_unit` claim from the certificate's OU field. The server
-application is responsible for mapping OU values to RBAC roles. A typical
-convention:
+Every transport authorizes through the same qrdb-backed `auth.Authorizer`, so a
+role grant means the same thing regardless of how the request arrives.
 
-| Certificate OU | Mapped Role |
-|---------------|-------------|
-| `admins` | `admin` |
-| `operators` | `operator` |
-| `auditors` | `auditor` |
-| (default) | `user` |
+| Transport | Gate | RBAC disabled (`enable_rbac: false`) |
+|-----------|------|--------------------------------------|
+| REST | `RBACMiddleware.RequirePermission` per route | Routes registered without the decorator — no check |
+| gRPC | `Service.authorize(ctx, resource, action, id)` | Disabled `Authorizer` allows all |
+| QUIC | `Server.authorize(w, r, resource, action)` | Disabled `Authorizer` allows all |
+| MCP | `Server.authorizeMethod(ctx, method)` before dispatch | Gate is a no-op — no check |
+
+Authentication is mandatory on every transport whether or not RBAC is enabled.
+
+MCP maps each JSON-RPC method to the resource:action pair the equivalent
+REST/gRPC/QUIC operation already requires (`pkg/api/mcp/authz.go`); the gate
+runs in `handleRequest` before any dispatch path, so the method table, the
+connection-bound `xkms.subscribe`, and the build-tagged `frost.*` namespace are
+all covered. Only `health` is public. Denials are reported as JSON-RPC errors
+in the implementation-defined range: `-32002` for a missing identity (the
+REST/QUIC 401) and `-32003` for a missing grant (403). A dispatchable method
+with no permission mapping is denied, so the surface fails closed.
+
+Enabling RBAC without a usable authorizer is refused at construction
+(`mcp: authorizer is required when rbac is enabled`): xkmsd logs the failure
+and does not start the MCP listener rather than serving an unauthorized surface
+that operators believe is protected.
+
+### Certificate-Only Identity (No UserStore)
+
+Without a `UserStore` — or when the certificate's SPKI thumbprint is not bound
+to any user — the authenticator produces a certificate-only identity. It carries
+the certificate's fields in `Identity.Metadata` (including
+`organizational_unit`) and takes its tenant from the first OU, but **it carries
+no roles**. There is no OU-to-role convention in the code.
+
+With RBAC enabled such an identity holds no grants and is denied by every
+transport gate. Bind the certificate to a user (see
+[Certificate Binding](#certificate-binding)) so a role is resolved.
 
 ### Authentication Flow
 
@@ -296,16 +372,19 @@ Server verifies cert chain (client_auth: require_and_verify)
   v
 MTLSAuthenticator.AuthenticateHTTP / AuthenticateGRPC
   |
-  +---> UserStore lookup by SHA-256 fingerprint
+  +---> UserStore lookup by SPKI thumbprint
   |       |
-  |       +-- Found + Enabled --> Identity{Subject: username, Claims: {roles: [role]}}
+  |       +-- Found + Enabled --> Identity{Subject: username,
+  |       |                                TenantID: user tenant,
+  |       |                                Roles: [role]}
   |       +-- Found + Disabled -> ErrUserDisabled
   |       +-- Not found --------+
   |                              |
-  +---> Extract from cert fields: CN, OU, O, SANs
+  +---> Identity from cert fields: CN, OU (tenant), O, SANs -- no roles
   |
   v
-RBAC CheckPermission(subject, resource:action)
+auth.Authorizer.Authorize(ctx, identity, resource, action)
+  -> qrdbClient.RBAC().Authorize(...)
   |
   v
 Allow / Deny
@@ -375,8 +454,19 @@ on another.
 
 **Symptom**: `user account is disabled` (`ErrUserDisabled`).
 
-- The `MTLSAuthenticator` returns this error when the certificate fingerprint
-  matches a user whose `Enabled` field is `false`.
-- Re-enable the account: `xkmsctl admin user enable --username alice`.
+- The `MTLSAuthenticator` returns this error when the certificate's SPKI
+  thumbprint matches a user whose `Enabled` field is `false`.
+- Re-enable the account: `xkmsctl admin enable alice`.
 
-See the [RBAC role model](./README.md) for permission details.
+### RBAC Enabled but Every Request Is Allowed
+
+**Symptom**: `enable_rbac: true`, yet callers with no grants succeed; the log
+shows `RBAC enabled but no qrdb identity plane; authorization is permissive`.
+
+- The storage backend is not `qrdb`, so the authorizer could not be built. Set
+  `storage.backend: "qrdb"`.
+- This state is only reachable when the daemon was started with `--insecure` /
+  `XKMS_INSECURE=true`; a normal start refuses the combination. See
+  [RBAC requires the qrdb storage backend](#rbac-requires-the-qrdb-storage-backend).
+
+See [RBAC](../architecture/rbac.md) for the role model and permission details.

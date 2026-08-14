@@ -52,47 +52,51 @@ type TestData struct {
 	Dirs  []string          // directory paths
 }
 
-// skipIfNotRoot skips the test if not running as root.
-func skipIfNotRoot(t *testing.T) {
+// requireRoot fails the test if not running as root. The LUKS suite runs in a
+// privileged container, so a non-root uid means the suite was launched outside
+// its supported environment.
+func requireRoot(t *testing.T) {
 	t.Helper()
 	if os.Geteuid() != 0 {
-		t.Skip("Test requires root privileges - skipping")
+		t.Fatal("LUKS integration tests require root; run them via the privileged " +
+			"container (make integration-test-luks)")
 	}
 }
 
-// skipIfNoDMCrypt skips the test if dm-crypt kernel module is not available.
-func skipIfNoDMCrypt(t *testing.T) {
+// requireDMCrypt fails the test if the dm-crypt kernel module is unavailable.
+func requireDMCrypt(t *testing.T) {
 	t.Helper()
-	// Check if dm-crypt is available by looking for /dev/mapper
+	// Check if dm-crypt is available by looking for /dev/mapper.
 	if _, err := os.Stat("/dev/mapper/control"); os.IsNotExist(err) {
-		t.Skip("dm-crypt not available - skipping LUKS integration tests")
+		t.Fatal("dm-crypt not available (/dev/mapper/control missing); load the " +
+			"dm_crypt module or run via the privileged container")
 	}
 }
 
-// skipIfNoMkfsExt4 skips the test if mkfs.ext4 is not available.
-func skipIfNoMkfsExt4(t *testing.T) {
+// requireMkfsExt4 fails the test if mkfs.ext4 is not available.
+func requireMkfsExt4(t *testing.T) {
 	t.Helper()
-	_, err := exec.LookPath("mkfs.ext4")
-	if err != nil {
-		t.Skip("mkfs.ext4 not found - skipping LUKS integration tests")
+	if _, err := exec.LookPath("mkfs.ext4"); err != nil {
+		t.Fatalf("mkfs.ext4 not found: %v; install e2fsprogs or run via the "+
+			"integration container", err)
 	}
 }
 
-// skipIfDevMapperUnavailable skips if /dev/mapper is not available.
-func skipIfDevMapperUnavailable(t *testing.T) {
+// requireDevMapper fails the test if /dev/mapper is not available.
+func requireDevMapper(t *testing.T) {
 	t.Helper()
 	if _, err := os.Stat("/dev/mapper"); os.IsNotExist(err) {
-		t.Skip("/dev/mapper not available - skipping LUKS integration tests")
+		t.Fatal("/dev/mapper not available; run via the privileged container")
 	}
 }
 
 // requireLUKSDependencies checks all LUKS test dependencies.
 func requireLUKSDependencies(t *testing.T) {
 	t.Helper()
-	skipIfNotRoot(t)
-	skipIfNoDMCrypt(t)
-	skipIfNoMkfsExt4(t)
-	skipIfDevMapperUnavailable(t)
+	requireRoot(t)
+	requireDMCrypt(t)
+	requireMkfsExt4(t)
+	requireDevMapper(t)
 }
 
 // ensureCleanState cleans up any leftover LUKS devices from previous tests.

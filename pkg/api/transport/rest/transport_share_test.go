@@ -133,8 +133,11 @@ func newShareTestTransport(t *testing.T) (*Transport, *httptest.Server) {
 		r.Post("/submit", handlers.SubmitShareHandler)
 		r.Get("/", handlers.ListSharesHandler)
 		r.Get("/status/{groupID}", handlers.GetShareCollectionStatusHandler)
-		r.Get("/{serverURL}/{groupID}", handlers.GetShareHandler)
-		r.Delete("/{serverURL}/{groupID}", handlers.DeleteShareHandler)
+		// The share index is part of a share's identity, so these routes
+		// must match pkg/api/rest/server.go exactly — a fixture missing
+		// {shareIndex} would leave the handlers permanently unreachable.
+		r.Get("/{serverURL}/{groupID}/{shareIndex}", handlers.GetShareHandler)
+		r.Delete("/{serverURL}/{groupID}/{shareIndex}", handlers.DeleteShareHandler)
 	})
 
 	server := httptest.NewServer(r)
@@ -358,4 +361,127 @@ func TestTransport_GetShareCollectionStatus_DifferentGroups(t *testing.T) {
 	if resp.Collected != 1 {
 		t.Errorf("expected collected 1 for grp-mixed-a, got %d", resp.Collected)
 	}
+}
+
+// TestTransport_GetShare_RoundTrip drives a share through submit and back out
+// through GetShare. The server URL carries a scheme, "//", and a port, so the
+// path escaping the client applies — and the unescaping the handler applies —
+// are both exercised end to end.
+func TestTransport_GetShare_RoundTrip(t *testing.T) {
+	tr, _ := newShareTestTransport(t)
+	ctx := context.Background()
+
+	const serverURL = "https://kms1.example.com:8443"
+	_, err := tr.SubmitShare(ctx, &transport.SubmitShareRequest{
+		ServerURL:  serverURL,
+		GroupID:    "grp-get",
+		GroupName:  "ops",
+		ShareIndex: 3,
+		ShareData:  []byte("share-material"),
+		Purpose:    "barrier",
+	})
+	require.NoError(t, err)
+
+	info, err := tr.GetShare(ctx, serverURL, "grp-get", 3)
+	require.NoError(t, err)
+	require.NotNil(t, info)
+
+	require.Equal(t, serverURL, info.ServerURL, "the escaped server URL must survive the round trip")
+	require.Equal(t, "grp-get", info.GroupID)
+	require.Equal(t, "ops", info.GroupName)
+	require.Equal(t, 3, info.ShareIndex)
+	require.Equal(t, "barrier", info.Purpose)
+	require.False(t, info.ReceivedAt.IsZero(), "received_at must decode into a real time")
+}
+
+// TestTransport_GetShare_NeverReturnsShareData pins the security property:
+// share material is write-only over the API. A share that was submitted with
+// bytes must come back without them.
+func TestTransport_GetShare_NeverReturnsShareData(t *testing.T) {
+	tr, _ := newShareTestTransport(t)
+	ctx := context.Background()
+
+	const serverURL = "https://kms1.example.com:8443"
+	_, err := tr.SubmitShare(ctx, &transport.SubmitShareRequest{
+		ServerURL:  serverURL,
+		GroupID:    "grp-secret",
+		ShareIndex: 1,
+		ShareData:  []byte("top-secret-share"),
+	})
+	require.NoError(t, err)
+
+	info, err := tr.GetShare(ctx, serverURL, "grp-secret", 1)
+	require.NoError(t, err)
+	require.Nil(t, info.ShareData, "share material must never cross the wire on read")
+}
+
+func TestTransport_GetShare_NotFound(t *testing.T) {
+	tr, _ := newShareTestTransport(t)
+
+	_, err := tr.GetShare(context.Background(), "https://kms1.example.com:8443", "absent", 1)
+	require.Error(t, err, "an unknown share must surface an error, not a zero value")
+}
+
+// TestTransport_DeleteShare_RoundTrip proves a deleted share stops resolving
+// and drops out of the group's collected count.
+func TestTransport_DeleteShare_RoundTrip(t *testing.T) {
+	tr, _ := newShareTestTransport(t)
+	ctx := context.Background()
+
+	const serverURL = "https://kms1.example.com:8443"
+	_, err := tr.SubmitShare(ctx, &transport.SubmitShareRequest{
+		ServerURL:  serverURL,
+		GroupID:    "grp-del",
+		ShareIndex: 2,
+		ShareData:  []byte("share-material"),
+	})
+	require.NoError(t, err)
+
+	status, err := tr.GetShareCollectionStatus(ctx, "grp-del")
+	require.NoError(t, err)
+	require.Equal(t, 1, status.Collected)
+
+	require.NoError(t, tr.DeleteShare(ctx, serverURL, "grp-del", 2))
+
+	_, err = tr.GetShare(ctx, serverURL, "grp-del", 2)
+	require.Error(t, err, "a deleted share must no longer resolve")
+
+	status, err = tr.GetShareCollectionStatus(ctx, "grp-del")
+	require.NoError(t, err)
+	require.Equal(t, 0, status.Collected, "deleting a share must lower the collected count")
+}
+
+func TestTransport_DeleteShare_NotFound(t *testing.T) {
+	tr, _ := newShareTestTransport(t)
+
+	err := tr.DeleteShare(context.Background(), "https://kms1.example.com:8443", "absent", 1)
+	require.Error(t, err, "deleting an unknown share must surface an error")
+}
+
+// TestTransport_ShareIndexDistinguishesShares proves the index is part of a
+// share's identity: two shares differing only by index are addressed
+// independently.
+func TestTransport_ShareIndexDistinguishesShares(t *testing.T) {
+	tr, _ := newShareTestTransport(t)
+	ctx := context.Background()
+
+	const serverURL = "https://kms1.example.com:8443"
+	for _, idx := range []int{1, 2} {
+		_, err := tr.SubmitShare(ctx, &transport.SubmitShareRequest{
+			ServerURL:  serverURL,
+			GroupID:    "grp-idx",
+			ShareIndex: idx,
+			ShareData:  []byte("share-material"),
+		})
+		require.NoError(t, err)
+	}
+
+	require.NoError(t, tr.DeleteShare(ctx, serverURL, "grp-idx", 1))
+
+	_, err := tr.GetShare(ctx, serverURL, "grp-idx", 1)
+	require.Error(t, err, "the deleted index must be gone")
+
+	surviving, err := tr.GetShare(ctx, serverURL, "grp-idx", 2)
+	require.NoError(t, err, "the other index must be untouched")
+	require.Equal(t, 2, surviving.ShareIndex)
 }

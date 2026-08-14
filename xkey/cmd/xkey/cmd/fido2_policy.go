@@ -14,9 +14,11 @@
 package cmd
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"strings"
 	"text/tabwriter"
@@ -124,21 +126,52 @@ var fido2ProfileCmd = &cobra.Command{
 	Long: `Configure authenticator profile settings that affect the GetInfo response.
 
 Profile settings control how the authenticator advertises its capabilities
-to relying parties and browsers.
+to relying parties and browsers. They are persisted under the FIDO2 storage
+path (--storage-path) and are read back by "profile show".
 
 Examples:
   # Set transports to USB and internal
   xkey fido2 profile set --transports usb,internal
 
   # Enable enterprise attestation
-  xkey fido2 profile set --enterprise-attestation`,
+  xkey fido2 profile set --enterprise-attestation
+
+  # Show the persisted profile
+  xkey fido2 profile show`,
 }
 
 // fido2ProfileSetCmd sets authenticator profile configuration.
 var fido2ProfileSetCmd = &cobra.Command{
 	Use:   "set",
 	Short: "Set authenticator profile settings",
-	RunE:  runFIDO2ProfileSet,
+	Long: `Persist authenticator profile settings.
+
+Only the settings named on the command line are changed; anything already
+stored is preserved. Passing --transports with an empty value clears the
+override and restores the authenticator's built-in default.
+
+Examples:
+  # Advertise USB and platform transports
+  xkey fido2 profile set --transports usb,internal
+
+  # Enable enterprise attestation without touching the transports list
+  xkey fido2 profile set --enterprise-attestation
+
+  # Clear the transports override
+  xkey fido2 profile set --transports ""`,
+	RunE: runFIDO2ProfileSet,
+}
+
+// fido2ProfileShowCmd prints the persisted authenticator profile.
+var fido2ProfileShowCmd = &cobra.Command{
+	Use:     "show",
+	Aliases: []string{"get"},
+	Short:   "Show the persisted authenticator profile settings",
+	Long: `Show the authenticator profile settings persisted by "profile set".
+
+Examples:
+  xkey fido2 profile show`,
+	RunE: runFIDO2ProfileShow,
 }
 
 // fido2ValidTransports is the set of valid FIDO2 transport values.
@@ -163,6 +196,7 @@ func init() {
 
 	// Profile subcommands.
 	fido2ProfileCmd.AddCommand(fido2ProfileSetCmd)
+	fido2ProfileCmd.AddCommand(fido2ProfileShowCmd)
 
 	// Policy set command flags.
 	rpPolicySetCmd.Flags().String("rpid", "", "Relying party ID (required)")
@@ -382,47 +416,103 @@ func runRPPolicyDelete(cmd *cobra.Command, args []string) error {
 	return nil
 }
 
-// runFIDO2ProfileSet displays the profile settings that would be applied.
+// runFIDO2ProfileSet updates the persisted authenticator profile. Only the
+// settings named on the command line are changed; the rest keep their stored
+// values, so "set" composes across invocations.
 func runFIDO2ProfileSet(cmd *cobra.Command, args []string) error {
-	transportsStr, err := cmd.Flags().GetString("transports")
+	transportsChanged := cmd.Flags().Changed("transports")
+	enterpriseChanged := cmd.Flags().Changed("enterprise-attestation")
+	if !transportsChanged && !enterpriseChanged {
+		return ErrFIDO2ProfileNoSettings
+	}
+
+	cfg := buildFIDO2Config()
+	ctx := context.Background()
+
+	profile, err := loadFIDO2Profile(ctx, cfg)
 	if err != nil {
 		return err
 	}
 
-	enterpriseAttestation, err := cmd.Flags().GetBool("enterprise-attestation")
-	if err != nil {
-		return err
-	}
-
-	// Parse and validate transports.
-	var transports []string
-	if transportsStr != "" {
-		for _, t := range strings.Split(transportsStr, ",") {
-			t = strings.TrimSpace(t)
-			if t == "" {
-				continue
-			}
-			if !fido2ValidTransports[t] {
-				return &DetailError{Err: ErrFIDO2ProfileInvalidTransport, Detail: fmt.Sprintf(": %q", t)}
-			}
-			transports = append(transports, t)
+	if transportsChanged {
+		transportsStr, err := cmd.Flags().GetString("transports")
+		if err != nil {
+			return err
 		}
+		transports, err := parseFIDO2Transports(transportsStr)
+		if err != nil {
+			return err
+		}
+		profile.Transports = transports
 	}
 
-	// Print the profile settings that would be applied.
-	w := tabwriter.NewWriter(os.Stdout, 0, 0, 2, ' ', 0)
+	if enterpriseChanged {
+		enterpriseAttestation, err := cmd.Flags().GetBool("enterprise-attestation")
+		if err != nil {
+			return err
+		}
+		profile.EnterpriseAttestation = enterpriseAttestation
+	}
+
+	if err := saveFIDO2Profile(ctx, cfg, profile); err != nil {
+		return err
+	}
+
+	out := cmd.OutOrStdout()
+	if err := writeFIDO2ProfileTable(out, profile); err != nil {
+		return err
+	}
+	_, _ = fmt.Fprintf(out, "\nProfile saved to %s\n", fido2ProfileStorePath(cfg))
+	return nil
+}
+
+// runFIDO2ProfileShow prints the persisted authenticator profile.
+func runFIDO2ProfileShow(cmd *cobra.Command, args []string) error {
+	cfg := buildFIDO2Config()
+
+	profile, err := loadFIDO2Profile(context.Background(), cfg)
+	if err != nil {
+		return err
+	}
+
+	out := cmd.OutOrStdout()
+	if err := writeFIDO2ProfileTable(out, profile); err != nil {
+		return err
+	}
+	_, _ = fmt.Fprintf(out, "\nProfile store: %s\n", fido2ProfileStorePath(cfg))
+	return nil
+}
+
+// parseFIDO2Transports splits and validates a comma-separated transports
+// list. An empty list clears the override, restoring the authenticator's
+// built-in default.
+func parseFIDO2Transports(value string) ([]string, error) {
+	var transports []string
+	for _, t := range strings.Split(value, ",") {
+		t = strings.TrimSpace(t)
+		if t == "" {
+			continue
+		}
+		if !fido2ValidTransports[t] {
+			return nil, &DetailError{Err: ErrFIDO2ProfileInvalidTransport, Detail: fmt.Sprintf(": %q", t)}
+		}
+		transports = append(transports, t)
+	}
+	return transports, nil
+}
+
+// writeFIDO2ProfileTable renders a profile as an aligned two-column table.
+func writeFIDO2ProfileTable(out io.Writer, profile *FIDO2Profile) error {
+	w := tabwriter.NewWriter(out, 0, 0, 2, ' ', 0)
 	_, _ = fmt.Fprintln(w, "Setting\tValue")
 	_, _ = fmt.Fprintln(w, "-------\t-----")
 
-	if len(transports) > 0 {
-		_, _ = fmt.Fprintf(w, "Transports\t%s\n", strings.Join(transports, ", "))
+	transports := "(default: usb)"
+	if len(profile.Transports) > 0 {
+		transports = strings.Join(profile.Transports, ", ")
 	}
-	_, _ = fmt.Fprintf(w, "Enterprise Attestation\t%t\n", enterpriseAttestation)
+	_, _ = fmt.Fprintf(w, "Transports\t%s\n", transports)
+	_, _ = fmt.Fprintf(w, "Enterprise Attestation\t%t\n", profile.EnterpriseAttestation)
 
-	if err := w.Flush(); err != nil {
-		return err
-	}
-
-	_, _ = fmt.Fprintln(os.Stdout, "\nProfile settings displayed. Config file persistence is not yet implemented.")
-	return nil
+	return w.Flush()
 }

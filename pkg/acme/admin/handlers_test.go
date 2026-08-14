@@ -26,6 +26,7 @@ import (
 	"testing"
 
 	"github.com/gorilla/mux"
+	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -37,10 +38,10 @@ func TestHandlers_ListCertificates(t *testing.T) {
 	logger := slog.New(slog.NewTextHandler(os.Stdout, &slog.HandlerOptions{Level: slog.LevelDebug}))
 	handlers := NewHandlers(service, logger)
 
-	authMiddleware := newTestAuthMiddleware(RoleViewer)
+	authMiddleware := newTestAuthMiddleware(qrdbsdk.RoleNameAuditor)
 
 	router := mux.NewRouter()
-	handlers.RegisterRoutes(router, authMiddleware)
+	handlers.RegisterRoutes(router, authMiddleware, newPermissiveGate())
 
 	req := httptest.NewRequest("GET", "/admin/certificates?page=1&per_page=10", nil)
 	req.Header.Set("Authorization", "Bearer test-viewer-key")
@@ -66,7 +67,7 @@ func TestHandlers_ListCertificates_Unauthorized(t *testing.T) {
 	authMiddleware := newTestAuthMiddlewareInvalid()
 
 	router := mux.NewRouter()
-	handlers.RegisterRoutes(router, authMiddleware)
+	handlers.RegisterRoutes(router, authMiddleware, newPermissiveGate())
 
 	req := httptest.NewRequest("GET", "/admin/certificates", nil)
 	req.Header.Set("Authorization", "Bearer invalid-key")
@@ -89,10 +90,10 @@ func TestHandlers_GetCertificate(t *testing.T) {
 	logger := slog.New(slog.NewTextHandler(os.Stdout, &slog.HandlerOptions{Level: slog.LevelDebug}))
 	handlers := NewHandlers(service, logger)
 
-	authMiddleware := newTestAuthMiddleware(RoleViewer)
+	authMiddleware := newTestAuthMiddleware(qrdbsdk.RoleNameAuditor)
 
 	router := mux.NewRouter()
-	handlers.RegisterRoutes(router, authMiddleware)
+	handlers.RegisterRoutes(router, authMiddleware, newPermissiveGate())
 
 	req := httptest.NewRequest("GET", "/admin/certificates/12345", nil)
 	req.Header.Set("Authorization", "Bearer test-viewer-key")
@@ -111,10 +112,10 @@ func TestHandlers_RevokeCertificate_ForbiddenForViewer(t *testing.T) {
 	logger := slog.New(slog.NewTextHandler(os.Stdout, &slog.HandlerOptions{Level: slog.LevelDebug}))
 	handlers := NewHandlers(service, logger)
 
-	authMiddleware := newTestAuthMiddleware(RoleViewer)
+	authMiddleware := newTestAuthMiddleware(qrdbsdk.RoleNameAuditor)
 
 	router := mux.NewRouter()
-	handlers.RegisterRoutes(router, authMiddleware)
+	handlers.RegisterRoutes(router, authMiddleware, newEnforcingGate())
 
 	revokeReq := RevokeRequest{Reason: "Test revocation"}
 	body, _ := json.Marshal(revokeReq)
@@ -136,10 +137,10 @@ func TestHandlers_RevokeCertificate_AllowedForAdmin(t *testing.T) {
 	logger := slog.New(slog.NewTextHandler(os.Stdout, &slog.HandlerOptions{Level: slog.LevelDebug}))
 	handlers := NewHandlers(service, logger)
 
-	authMiddleware := newTestAuthMiddleware(RoleAdmin)
+	authMiddleware := newTestAuthMiddleware(qrdbsdk.RoleNameAdmin)
 
 	router := mux.NewRouter()
-	handlers.RegisterRoutes(router, authMiddleware)
+	handlers.RegisterRoutes(router, authMiddleware, newPermissiveGate())
 
 	revokeReq := RevokeRequest{Reason: "Test revocation"}
 	body, _ := json.Marshal(revokeReq)
@@ -162,10 +163,10 @@ func TestHandlers_ListAccounts(t *testing.T) {
 	logger := slog.New(slog.NewTextHandler(os.Stdout, &slog.HandlerOptions{Level: slog.LevelDebug}))
 	handlers := NewHandlers(service, logger)
 
-	authMiddleware := newTestAuthMiddleware(RoleViewer)
+	authMiddleware := newTestAuthMiddleware(qrdbsdk.RoleNameAuditor)
 
 	router := mux.NewRouter()
-	handlers.RegisterRoutes(router, authMiddleware)
+	handlers.RegisterRoutes(router, authMiddleware, newPermissiveGate())
 
 	req := httptest.NewRequest("GET", "/admin/accounts?page=1&per_page=10", nil)
 	req.Header.Set("Authorization", "Bearer test-viewer-key")
@@ -188,10 +189,10 @@ func TestHandlers_DisableAccount_ForbiddenForViewer(t *testing.T) {
 	logger := slog.New(slog.NewTextHandler(os.Stdout, &slog.HandlerOptions{Level: slog.LevelDebug}))
 	handlers := NewHandlers(service, logger)
 
-	authMiddleware := newTestAuthMiddleware(RoleViewer)
+	authMiddleware := newTestAuthMiddleware(qrdbsdk.RoleNameAuditor)
 
 	router := mux.NewRouter()
-	handlers.RegisterRoutes(router, authMiddleware)
+	handlers.RegisterRoutes(router, authMiddleware, newEnforcingGate())
 
 	req := httptest.NewRequest("DELETE", "/admin/accounts/123", nil)
 	req.Header.Set("Authorization", "Bearer test-viewer-key")
@@ -209,10 +210,10 @@ func TestHandlers_GetStatus(t *testing.T) {
 	logger := slog.New(slog.NewTextHandler(os.Stdout, &slog.HandlerOptions{Level: slog.LevelDebug}))
 	handlers := NewHandlers(service, logger)
 
-	authMiddleware := newTestAuthMiddleware(RoleViewer)
+	authMiddleware := newTestAuthMiddleware(qrdbsdk.RoleNameAuditor)
 
 	router := mux.NewRouter()
-	handlers.RegisterRoutes(router, authMiddleware)
+	handlers.RegisterRoutes(router, authMiddleware, newPermissiveGate())
 
 	req := httptest.NewRequest("GET", "/admin/status", nil)
 	req.Header.Set("Authorization", "Bearer test-viewer-key")
@@ -236,10 +237,10 @@ func TestHandlers_GetStats(t *testing.T) {
 	logger := slog.New(slog.NewTextHandler(os.Stdout, &slog.HandlerOptions{Level: slog.LevelDebug}))
 	handlers := NewHandlers(service, logger)
 
-	authMiddleware := newTestAuthMiddleware(RoleViewer)
+	authMiddleware := newTestAuthMiddleware(qrdbsdk.RoleNameAuditor)
 
 	router := mux.NewRouter()
-	handlers.RegisterRoutes(router, authMiddleware)
+	handlers.RegisterRoutes(router, authMiddleware, newPermissiveGate())
 
 	req := httptest.NewRequest("GET", "/admin/stats", nil)
 	req.Header.Set("Authorization", "Bearer test-viewer-key")
@@ -264,10 +265,10 @@ func TestHandlers_ListOrders(t *testing.T) {
 	logger := slog.New(slog.NewTextHandler(os.Stdout, &slog.HandlerOptions{Level: slog.LevelDebug}))
 	handlers := NewHandlers(service, logger)
 
-	authMiddleware := newTestAuthMiddleware(RoleViewer)
+	authMiddleware := newTestAuthMiddleware(qrdbsdk.RoleNameAuditor)
 
 	router := mux.NewRouter()
-	handlers.RegisterRoutes(router, authMiddleware)
+	handlers.RegisterRoutes(router, authMiddleware, newPermissiveGate())
 
 	req := httptest.NewRequest("GET", "/admin/orders?page=1&per_page=10", nil)
 	req.Header.Set("Authorization", "Bearer test-viewer-key")
@@ -293,7 +294,7 @@ func TestHandlers_MissingAuthorizationHeader(t *testing.T) {
 	authMiddleware := newTestAuthMiddlewareInvalid()
 
 	router := mux.NewRouter()
-	handlers.RegisterRoutes(router, authMiddleware)
+	handlers.RegisterRoutes(router, authMiddleware, newPermissiveGate())
 
 	req := httptest.NewRequest("GET", "/admin/certificates", nil)
 	// No Authorization header
@@ -314,7 +315,7 @@ func TestHandlers_InvalidAuthorizationFormat(t *testing.T) {
 	authMiddleware := newTestAuthMiddlewareInvalid()
 
 	router := mux.NewRouter()
-	handlers.RegisterRoutes(router, authMiddleware)
+	handlers.RegisterRoutes(router, authMiddleware, newPermissiveGate())
 
 	req := httptest.NewRequest("GET", "/admin/certificates", nil)
 	req.Header.Set("Authorization", "InvalidFormat")
@@ -332,10 +333,10 @@ func TestHandlers_ListExpiringCertificates(t *testing.T) {
 	logger := slog.New(slog.NewTextHandler(os.Stdout, &slog.HandlerOptions{Level: slog.LevelDebug}))
 	handlers := NewHandlers(service, logger)
 
-	authMiddleware := newTestAuthMiddleware(RoleViewer)
+	authMiddleware := newTestAuthMiddleware(qrdbsdk.RoleNameAuditor)
 
 	router := mux.NewRouter()
-	handlers.RegisterRoutes(router, authMiddleware)
+	handlers.RegisterRoutes(router, authMiddleware, newPermissiveGate())
 
 	req := httptest.NewRequest("GET", "/admin/certificates/expiring?days=30", nil)
 	req.Header.Set("Authorization", "Bearer test-viewer-key")
@@ -358,10 +359,10 @@ func TestHandlers_GetAccount(t *testing.T) {
 	logger := slog.New(slog.NewTextHandler(os.Stdout, &slog.HandlerOptions{Level: slog.LevelDebug}))
 	handlers := NewHandlers(service, logger)
 
-	authMiddleware := newTestAuthMiddleware(RoleViewer)
+	authMiddleware := newTestAuthMiddleware(qrdbsdk.RoleNameAuditor)
 
 	router := mux.NewRouter()
-	handlers.RegisterRoutes(router, authMiddleware)
+	handlers.RegisterRoutes(router, authMiddleware, newPermissiveGate())
 
 	req := httptest.NewRequest("GET", "/admin/accounts/12345", nil)
 	req.Header.Set("Authorization", "Bearer test-viewer-key")
@@ -380,10 +381,10 @@ func TestHandlers_DisableAccount_AllowedForAdmin(t *testing.T) {
 	logger := slog.New(slog.NewTextHandler(os.Stdout, &slog.HandlerOptions{Level: slog.LevelDebug}))
 	handlers := NewHandlers(service, logger)
 
-	authMiddleware := newTestAuthMiddleware(RoleAdmin)
+	authMiddleware := newTestAuthMiddleware(qrdbsdk.RoleNameAdmin)
 
 	router := mux.NewRouter()
-	handlers.RegisterRoutes(router, authMiddleware)
+	handlers.RegisterRoutes(router, authMiddleware, newPermissiveGate())
 
 	req := httptest.NewRequest("DELETE", "/admin/accounts/12345", nil)
 	req.Header.Set("Authorization", "Bearer test-admin-key")
@@ -402,10 +403,10 @@ func TestHandlers_GetOrder(t *testing.T) {
 	logger := slog.New(slog.NewTextHandler(os.Stdout, &slog.HandlerOptions{Level: slog.LevelDebug}))
 	handlers := NewHandlers(service, logger)
 
-	authMiddleware := newTestAuthMiddleware(RoleViewer)
+	authMiddleware := newTestAuthMiddleware(qrdbsdk.RoleNameAuditor)
 
 	router := mux.NewRouter()
-	handlers.RegisterRoutes(router, authMiddleware)
+	handlers.RegisterRoutes(router, authMiddleware, newPermissiveGate())
 
 	req := httptest.NewRequest("GET", "/admin/orders/12345", nil)
 	req.Header.Set("Authorization", "Bearer test-viewer-key")
@@ -424,10 +425,10 @@ func TestHandlers_GetOrder_InvalidID(t *testing.T) {
 	logger := slog.New(slog.NewTextHandler(os.Stdout, &slog.HandlerOptions{Level: slog.LevelDebug}))
 	handlers := NewHandlers(service, logger)
 
-	authMiddleware := newTestAuthMiddleware(RoleViewer)
+	authMiddleware := newTestAuthMiddleware(qrdbsdk.RoleNameAuditor)
 
 	router := mux.NewRouter()
-	handlers.RegisterRoutes(router, authMiddleware)
+	handlers.RegisterRoutes(router, authMiddleware, newPermissiveGate())
 
 	req := httptest.NewRequest("GET", "/admin/orders/invalid-order", nil)
 	req.Header.Set("Authorization", "Bearer test-viewer-key")
@@ -445,10 +446,10 @@ func TestHandlers_RevokeCertificate_MalformedJSON(t *testing.T) {
 	logger := slog.New(slog.NewTextHandler(os.Stdout, &slog.HandlerOptions{Level: slog.LevelDebug}))
 	handlers := NewHandlers(service, logger)
 
-	authMiddleware := newTestAuthMiddleware(RoleAdmin)
+	authMiddleware := newTestAuthMiddleware(qrdbsdk.RoleNameAdmin)
 
 	router := mux.NewRouter()
-	handlers.RegisterRoutes(router, authMiddleware)
+	handlers.RegisterRoutes(router, authMiddleware, newPermissiveGate())
 
 	req := httptest.NewRequest("POST", "/admin/certificates/12345/revoke", bytes.NewReader([]byte("not valid json")))
 	req.Header.Set("Authorization", "Bearer test-admin-key")
@@ -467,10 +468,10 @@ func TestHandlers_ListOrders_InvalidAccountID(t *testing.T) {
 	logger := slog.New(slog.NewTextHandler(os.Stdout, &slog.HandlerOptions{Level: slog.LevelDebug}))
 	handlers := NewHandlers(service, logger)
 
-	authMiddleware := newTestAuthMiddleware(RoleViewer)
+	authMiddleware := newTestAuthMiddleware(qrdbsdk.RoleNameAuditor)
 
 	router := mux.NewRouter()
-	handlers.RegisterRoutes(router, authMiddleware)
+	handlers.RegisterRoutes(router, authMiddleware, newPermissiveGate())
 
 	req := httptest.NewRequest("GET", "/admin/orders?account_id=invalid&page=1&per_page=10", nil)
 	req.Header.Set("Authorization", "Bearer test-viewer-key")
@@ -489,10 +490,10 @@ func TestHandlers_ListCertificates_InvalidPage(t *testing.T) {
 	logger := slog.New(slog.NewTextHandler(os.Stdout, &slog.HandlerOptions{Level: slog.LevelDebug}))
 	handlers := NewHandlers(service, logger)
 
-	authMiddleware := newTestAuthMiddleware(RoleViewer)
+	authMiddleware := newTestAuthMiddleware(qrdbsdk.RoleNameAuditor)
 
 	router := mux.NewRouter()
-	handlers.RegisterRoutes(router, authMiddleware)
+	handlers.RegisterRoutes(router, authMiddleware, newPermissiveGate())
 
 	req := httptest.NewRequest("GET", "/admin/certificates?page=invalid&per_page=10", nil)
 	req.Header.Set("Authorization", "Bearer test-viewer-key")
@@ -511,10 +512,10 @@ func TestHandlers_GetCertificate_InvalidSerialNumber(t *testing.T) {
 	logger := slog.New(slog.NewTextHandler(os.Stdout, &slog.HandlerOptions{Level: slog.LevelDebug}))
 	handlers := NewHandlers(service, logger)
 
-	authMiddleware := newTestAuthMiddleware(RoleViewer)
+	authMiddleware := newTestAuthMiddleware(qrdbsdk.RoleNameAuditor)
 
 	router := mux.NewRouter()
-	handlers.RegisterRoutes(router, authMiddleware)
+	handlers.RegisterRoutes(router, authMiddleware, newPermissiveGate())
 
 	// Test with empty serial number
 	req := httptest.NewRequest("GET", "/admin/certificates/", nil)
@@ -535,10 +536,10 @@ func TestHandlers_ListExpiringCertificates_InvalidDays(t *testing.T) {
 	logger := slog.New(slog.NewTextHandler(os.Stdout, &slog.HandlerOptions{Level: slog.LevelDebug}))
 	handlers := NewHandlers(service, logger)
 
-	authMiddleware := newTestAuthMiddleware(RoleViewer)
+	authMiddleware := newTestAuthMiddleware(qrdbsdk.RoleNameAuditor)
 
 	router := mux.NewRouter()
-	handlers.RegisterRoutes(router, authMiddleware)
+	handlers.RegisterRoutes(router, authMiddleware, newPermissiveGate())
 
 	req := httptest.NewRequest("GET", "/admin/certificates/expiring?days=invalid", nil)
 	req.Header.Set("Authorization", "Bearer test-viewer-key")
@@ -558,10 +559,10 @@ func TestHandlers_ListAccounts_WithFilters(t *testing.T) {
 	logger := slog.New(slog.NewTextHandler(os.Stdout, &slog.HandlerOptions{Level: slog.LevelDebug}))
 	handlers := NewHandlers(service, logger)
 
-	authMiddleware := newTestAuthMiddleware(RoleViewer)
+	authMiddleware := newTestAuthMiddleware(qrdbsdk.RoleNameAuditor)
 
 	router := mux.NewRouter()
-	handlers.RegisterRoutes(router, authMiddleware)
+	handlers.RegisterRoutes(router, authMiddleware, newPermissiveGate())
 
 	// Test with status filter
 	req := httptest.NewRequest("GET", "/admin/accounts?status=valid&page=1&per_page=10", nil)
@@ -585,10 +586,10 @@ func TestHandlers_ListCertificates_WithFilters(t *testing.T) {
 	logger := slog.New(slog.NewTextHandler(os.Stdout, &slog.HandlerOptions{Level: slog.LevelDebug}))
 	handlers := NewHandlers(service, logger)
 
-	authMiddleware := newTestAuthMiddleware(RoleViewer)
+	authMiddleware := newTestAuthMiddleware(qrdbsdk.RoleNameAuditor)
 
 	router := mux.NewRouter()
-	handlers.RegisterRoutes(router, authMiddleware)
+	handlers.RegisterRoutes(router, authMiddleware, newPermissiveGate())
 
 	// Test with status and subject filters
 	req := httptest.NewRequest("GET", "/admin/certificates?status=active&subject=example.com&page=1&per_page=10", nil)
@@ -612,10 +613,10 @@ func TestHandlers_GetAccount_InvalidIDString(t *testing.T) {
 	logger := slog.New(slog.NewTextHandler(os.Stdout, &slog.HandlerOptions{Level: slog.LevelDebug}))
 	handlers := NewHandlers(service, logger)
 
-	authMiddleware := newTestAuthMiddleware(RoleViewer)
+	authMiddleware := newTestAuthMiddleware(qrdbsdk.RoleNameAuditor)
 
 	router := mux.NewRouter()
-	handlers.RegisterRoutes(router, authMiddleware)
+	handlers.RegisterRoutes(router, authMiddleware, newPermissiveGate())
 
 	// Test with invalid account ID string
 	req := httptest.NewRequest("GET", "/admin/accounts/invalid", nil)
@@ -634,10 +635,10 @@ func TestHandlers_DisableAccount_ViewerForbidden(t *testing.T) {
 	logger := slog.New(slog.NewTextHandler(os.Stdout, &slog.HandlerOptions{Level: slog.LevelDebug}))
 	handlers := NewHandlers(service, logger)
 
-	authMiddleware := newTestAuthMiddleware(RoleViewer)
+	authMiddleware := newTestAuthMiddleware(qrdbsdk.RoleNameAuditor)
 
 	router := mux.NewRouter()
-	handlers.RegisterRoutes(router, authMiddleware)
+	handlers.RegisterRoutes(router, authMiddleware, newEnforcingGate())
 
 	// Viewer should not be able to delete accounts
 	req := httptest.NewRequest("DELETE", "/admin/accounts/1", nil)
@@ -656,10 +657,10 @@ func TestHandlers_RevokeCertificate_ViewerForbidden(t *testing.T) {
 	logger := slog.New(slog.NewTextHandler(os.Stdout, &slog.HandlerOptions{Level: slog.LevelDebug}))
 	handlers := NewHandlers(service, logger)
 
-	authMiddleware := newTestAuthMiddleware(RoleViewer)
+	authMiddleware := newTestAuthMiddleware(qrdbsdk.RoleNameAuditor)
 
 	router := mux.NewRouter()
-	handlers.RegisterRoutes(router, authMiddleware)
+	handlers.RegisterRoutes(router, authMiddleware, newEnforcingGate())
 
 	// Viewer should not be able to revoke certificates
 	body := bytes.NewBufferString(`{"reason": "keyCompromise"}`)
@@ -680,10 +681,10 @@ func TestHandlers_RevokeCertificate_AdminAllowed(t *testing.T) {
 	logger := slog.New(slog.NewTextHandler(os.Stdout, &slog.HandlerOptions{Level: slog.LevelDebug}))
 	handlers := NewHandlers(service, logger)
 
-	authMiddleware := newTestAuthMiddleware(RoleAdmin)
+	authMiddleware := newTestAuthMiddleware(qrdbsdk.RoleNameAdmin)
 
 	router := mux.NewRouter()
-	handlers.RegisterRoutes(router, authMiddleware)
+	handlers.RegisterRoutes(router, authMiddleware, newPermissiveGate())
 
 	// Admin should be able to revoke (certificate may not exist)
 	body := bytes.NewBufferString(`{"reason": "keyCompromise"}`)

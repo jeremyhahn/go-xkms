@@ -229,14 +229,18 @@ func runDevicePair(cmd *cobra.Command, args []string) error {
 		return &WrappedError{Msg: "connection failed", Err: err}
 	}
 
-	// Perform Noise XX handshake using the centralized implementation
+	// Perform Noise XX handshake using the centralized implementation.
+	// The identity exchange runs on every connection, pairing included: the
+	// phone answers an unknown key with "new device" and both sides fall back
+	// to an empty prologue, so pairing and reconnecting negotiate the same way.
 	fmt.Println("Performing secure key exchange...")
 	handshakeCfg := &phone.HandshakeConfig{
-		Transport:           transport,
-		Session:             session,
-		Logger:              logger,
-		StripEnvelopeHeader: false, // Android sends raw Noise messages, no envelope
-		EnvelopeHeaderSize:  0,
+		Transport:            transport,
+		Session:              session,
+		Logger:               logger,
+		StripEnvelopeHeader:  false, // Android sends raw Noise messages, no envelope
+		EnvelopeHeaderSize:   0,
+		LocalStaticPublicKey: session.LocalStaticPublicKey(),
 	}
 	if err := phone.PerformHandshake(connectCtx, handshakeCfg); err != nil {
 		transport.Disconnect()

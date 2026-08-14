@@ -25,14 +25,6 @@ import (
 	"github.com/jeremyhahn/go-xkms/pkg/storage"
 )
 
-// skipIfRoot skips the test if running as root, since root bypasses file permission checks
-func skipIfRoot(t *testing.T) {
-	t.Helper()
-	if os.Geteuid() == 0 {
-		t.Skip("Skipping test that relies on file permissions (running as root)")
-	}
-}
-
 // Helper to create a temporary directory for tests
 func setupTestDir(t *testing.T) string {
 	t.Helper()
@@ -1017,8 +1009,13 @@ func TestErrorConditions(t *testing.T) {
 		}
 	})
 
+	// The error paths below are driven with POSIX conditions the kernel
+	// enforces for every user — EISDIR, ENOTDIR, ENOTEMPTY, ENOENT — rather
+	// than with chmod. Permission bits are bypassed by root, so a chmod-based
+	// setup silently stops testing anything the moment the suite runs in a
+	// container as uid 0, which is exactly where CI runs it.
+
 	t.Run("get with read error", func(t *testing.T) {
-		skipIfRoot(t)
 		dir := setupTestDir(t)
 		store, err := New(dir)
 		if err != nil {
@@ -1026,31 +1023,22 @@ func TestErrorConditions(t *testing.T) {
 		}
 		defer func() { _ = store.Close() }()
 
+		// A directory at the key's path makes the read fail with EISDIR.
 		key := "test-key"
-		// Put a key
-		if err := store.Put(ctx, key, []byte("data")); err != nil {
-			t.Fatalf("Put() error = %v", err)
+		if err := os.MkdirAll(filepath.Join(dir, key), 0700); err != nil {
+			t.Fatalf("Failed to create dir: %v", err)
 		}
 
-		// Make the file unreadable
-		filePath := filepath.Join(dir, key)
-		if err := os.Chmod(filePath, 0000); err != nil {
-			t.Fatalf("Failed to chmod file: %v", err)
-		}
-		defer func() { _ = os.Chmod(filePath, 0600) }() // Restore for cleanup
-
-		// Try to read - should get error
 		_, err = store.Get(ctx, key)
 		if err == nil {
-			t.Error("Get() on unreadable file should return error")
+			t.Error("Get() on a directory should return error")
 		}
 		if err == storage.ErrNotFound {
-			t.Error("Get() on unreadable file should not return ErrNotFound")
+			t.Error("Get() on a directory should not return ErrNotFound")
 		}
 	})
 
 	t.Run("put with write error", func(t *testing.T) {
-		skipIfRoot(t)
 		dir := setupTestDir(t)
 		store, err := New(dir)
 		if err != nil {
@@ -1058,26 +1046,18 @@ func TestErrorConditions(t *testing.T) {
 		}
 		defer func() { _ = store.Close() }()
 
-		// Create a read-only directory
-		roDir := filepath.Join(dir, "readonly")
-		if err := os.MkdirAll(roDir, 0700); err != nil {
-			t.Fatalf("Failed to create dir: %v", err)
+		// A regular file where a parent directory is expected makes the write
+		// fail with ENOTDIR.
+		if err := os.WriteFile(filepath.Join(dir, "notadir"), []byte("blocker"), 0600); err != nil {
+			t.Fatalf("Failed to write blocker file: %v", err)
 		}
-		if err := os.Chmod(roDir, 0500); err != nil {
-			t.Fatalf("Failed to chmod dir: %v", err)
-		}
-		defer func() { _ = os.Chmod(roDir, 0700) }() // Restore for cleanup
 
-		// Try to write to read-only directory
-		key := "readonly/file"
-		err = store.Put(ctx, key, []byte("data"))
-		if err == nil {
-			t.Error("Put() in read-only directory should return error")
+		if err := store.Put(ctx, "notadir/file", []byte("data")); err == nil {
+			t.Error("Put() beneath a regular file should return error")
 		}
 	})
 
 	t.Run("delete with stat error", func(t *testing.T) {
-		skipIfRoot(t)
 		dir := setupTestDir(t)
 		store, err := New(dir)
 		if err != nil {
@@ -1085,25 +1065,11 @@ func TestErrorConditions(t *testing.T) {
 		}
 		defer func() { _ = store.Close() }()
 
-		// Create a directory that we'll make inaccessible
-		subdir := filepath.Join(dir, "statdir")
-		if err := os.MkdirAll(subdir, 0700); err != nil {
-			t.Fatalf("Failed to create dir: %v", err)
+		if err := os.WriteFile(filepath.Join(dir, "notadir"), []byte("blocker"), 0600); err != nil {
+			t.Fatalf("Failed to write blocker file: %v", err)
 		}
 
-		key := "statdir/file"
-		if err := store.Put(ctx, key, []byte("data")); err != nil {
-			t.Fatalf("Put() error = %v", err)
-		}
-
-		// Make directory unreadable/unsearchable (cannot stat files inside)
-		if err := os.Chmod(subdir, 0000); err != nil {
-			t.Fatalf("Failed to chmod dir: %v", err)
-		}
-		defer func() { _ = os.Chmod(subdir, 0700) }() // Restore for cleanup
-
-		// Try to delete - should get stat error
-		err = store.Delete(ctx, key)
+		err = store.Delete(ctx, "notadir/file")
 		if err == nil {
 			t.Error("Delete() with stat error should return error")
 		}
@@ -1113,7 +1079,6 @@ func TestErrorConditions(t *testing.T) {
 	})
 
 	t.Run("delete with remove error", func(t *testing.T) {
-		skipIfRoot(t)
 		dir := setupTestDir(t)
 		store, err := New(dir)
 		if err != nil {
@@ -1121,62 +1086,26 @@ func TestErrorConditions(t *testing.T) {
 		}
 		defer func() { _ = store.Close() }()
 
-		key := "rodir/file"
-		if err := store.Put(ctx, key, []byte("data")); err != nil {
-			t.Fatalf("Put() error = %v", err)
-		}
-
-		// Make the key's PARENT directory (<root>/rodir) read-only so removing
-		// the file (<root>/rodir/file) fails.
-		subdir := filepath.Join(dir, "rodir")
-		if err := os.Chmod(subdir, 0500); err != nil {
-			t.Fatalf("Failed to chmod dir: %v", err)
-		}
-		defer func() { _ = os.Chmod(subdir, 0700) }() // Restore for cleanup
-
-		// Try to delete - should get error
-		err = store.Delete(ctx, key)
-		if err == nil {
-			t.Error("Delete() in read-only directory should return error")
-		}
-		if err == storage.ErrNotFound {
-			t.Error("Delete() in read-only directory should not return ErrNotFound")
-		}
-	})
-
-	t.Run("list with walk error", func(t *testing.T) {
-		skipIfRoot(t)
-		dir := setupTestDir(t)
-		store, err := New(dir)
-		if err != nil {
-			t.Fatalf("New() error = %v", err)
-		}
-		defer func() { _ = store.Close() }()
-
-		// Create some test data
-		if err := store.Put(ctx, "test-key", []byte("data")); err != nil {
-			t.Fatalf("Put() error = %v", err)
-		}
-
-		// Create an inaccessible directory
-		badDir := filepath.Join(dir, "baddir")
-		if err := os.MkdirAll(badDir, 0700); err != nil {
+		// A non-empty directory at the key's path makes the unlink fail with
+		// ENOTEMPTY.
+		key := "occupied"
+		if err := os.MkdirAll(filepath.Join(dir, key, "child"), 0700); err != nil {
 			t.Fatalf("Failed to create dir: %v", err)
 		}
-		if err := os.Chmod(badDir, 0000); err != nil {
-			t.Fatalf("Failed to chmod dir: %v", err)
+		if err := os.WriteFile(filepath.Join(dir, key, "child", "f"), []byte("x"), 0600); err != nil {
+			t.Fatalf("Failed to write nested file: %v", err)
 		}
-		defer func() { _ = os.Chmod(badDir, 0700) }() // Restore for cleanup
 
-		// List should return error
-		_, err = store.List(ctx, "")
+		err = store.Delete(ctx, key)
 		if err == nil {
-			t.Error("List() with inaccessible directory should return error")
+			t.Error("Delete() of a non-empty directory should return error")
+		}
+		if err == storage.ErrNotFound {
+			t.Error("Delete() of a non-empty directory should not return ErrNotFound")
 		}
 	})
 
 	t.Run("exists with stat error", func(t *testing.T) {
-		skipIfRoot(t)
 		dir := setupTestDir(t)
 		store, err := New(dir)
 		if err != nil {
@@ -1184,27 +1113,16 @@ func TestErrorConditions(t *testing.T) {
 		}
 		defer func() { _ = store.Close() }()
 
-		// Create a directory with a file, then make it inaccessible
-		subdir := filepath.Join(dir, "existsdir")
-		if err := os.MkdirAll(subdir, 0700); err != nil {
-			t.Fatalf("Failed to create dir: %v", err)
+		if err := os.WriteFile(filepath.Join(dir, "notadir"), []byte("blocker"), 0600); err != nil {
+			t.Fatalf("Failed to write blocker file: %v", err)
 		}
 
-		key := "existsdir/file"
-		if err := store.Put(ctx, key, []byte("data")); err != nil {
-			t.Fatalf("Put() error = %v", err)
-		}
-
-		// Make directory unsearchable (cannot stat files inside)
-		if err := os.Chmod(subdir, 0000); err != nil {
-			t.Fatalf("Failed to chmod dir: %v", err)
-		}
-		defer func() { _ = os.Chmod(subdir, 0700) }() // Restore for cleanup
-
-		// Try to check existence - should get stat error
-		_, err = store.Exists(ctx, key)
+		exists, err := store.Exists(ctx, "notadir/file")
 		if err == nil {
 			t.Error("Exists() with stat error should return error")
+		}
+		if exists {
+			t.Error("Exists() must not report a key behind a stat error as present")
 		}
 	})
 }

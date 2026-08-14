@@ -45,6 +45,9 @@ var (
 
 	// logLevel holds the logging level specified via flag.
 	logLevel string
+	// logLevelExplicit records whether --log-level was actually passed, as
+	// opposed to sitting at its default. Set in PersistentPreRunE.
+	logLevelExplicit bool
 
 	// logFile holds the path to the log file specified via flag.
 	logFile string
@@ -65,29 +68,45 @@ var (
 // luksExemptCommands is the set of command names that bypass the LUKS
 // volume check. These commands manage LUKS volumes themselves, or run
 // before the barrier is unsealed.
-var luksExemptCommands = map[string]bool{
-	// LUKS management commands
-	"seal":        true,
-	"unseal":      true,
-	"lock":        true,
-	"migrate":     true,
-	"wipe":        true,
-	"import-data": true,
-	"luks2":       true,
-	// Barrier commands (run before barrier is unsealed)
-	"barrier": true,
-	"init":    true,
-	"status":  true,
-	// PIN commands (run before barrier is unsealed)
-	"pin":           true,
-	"set-so":        true,
-	"set-user":      true,
-	"change-so":     true,
-	"change-user":   true,
-	"verify":        true,
-	"reset-lockout": true,
-	// Native messaging host (invoked by Chrome, must not prompt or read stdin)
-	"host": true,
+// luksExemptGroups are the top-level command groups whose subcommands must
+// run BEFORE the encrypted home is unlocked: they manage LUKS, barrier or
+// PIN state themselves, or (the extension host) are invoked by Chrome and
+// must never prompt or read stdin.
+//
+// Matching is by command GROUP, walking the parent chain — not by leaf
+// name. Leaf names are not unique: 13 commands are named "status" alone
+// (piv, agent, password, device, auth, extension, …), and "init", "lock",
+// "unseal" and "verify" are each claimed by unrelated groups. Keying on
+// cmd.Name() therefore exempted ~14 unrelated commands, letting e.g.
+// `xkey piv status` and `xkey config init` skip the unlock gate entirely
+// and run against an unmounted home.
+var luksExemptGroups = map[string]bool{
+	"luks2":   true, // seal/unseal/lock/migrate/wipe/import-data
+	"barrier": true, // init/status/unseal — run before the barrier is unsealed
+	"pin":     true, // set-so/set-user/change-*/verify/reset-lockout/status
+	// usb provisions and runs the portable image / virtual CCID device, so
+	// it must work without an unlocked home. Registering the group covers
+	// `usb create|update` and `usb device start|stop`; the previous
+	// per-leaf registration added the bare names "create", "update",
+	// "start", "stop" and "device" — the last of which exempted the entire
+	// top-level `device` command group.
+	"usb": true,
+}
+
+// isLUKSExempt reports whether cmd (or any ancestor) belongs to a group
+// that must bypass the LUKS unlock gate.
+func isLUKSExempt(cmd *cobra.Command) bool {
+	for c := cmd; c != nil; c = c.Parent() {
+		if luksExemptGroups[c.Name()] {
+			return true
+		}
+		// The Chrome native-messaging host is a leaf under `extension`;
+		// match it by full path so `extension status` is NOT exempt.
+		if c.Name() == "host" && c.Parent() != nil && c.Parent().Name() == "extension" {
+			return true
+		}
+	}
+	return false
 }
 
 // RootCmd is the base command for the xKey CLI application.
@@ -134,6 +153,11 @@ Examples:
 	SilenceUsage:  true,
 	SilenceErrors: true,
 	PersistentPreRunE: func(cmd *cobra.Command, args []string) error {
+		// Record whether --log-level was explicitly passed. This must be
+		// captured here (cmd is in scope) rather than read from RootCmd
+		// inside initLogging, which would create an initialization cycle.
+		logLevelExplicit = cmd.Flags().Changed("log-level")
+
 		// Resolve the xKey home directory first. All path-dependent
 		// operations (config loading, LUKS check) use this.
 		home, err := xhome.Resolve()
@@ -144,7 +168,7 @@ Examples:
 
 		// Skip LUKS check for exempt commands (they manage LUKS, barrier,
 		// or PIN state themselves and must run before the barrier is unsealed).
-		if luksExemptCommands[cmd.Name()] {
+		if isLUKSExempt(cmd) {
 			return initConfig()
 		}
 
@@ -238,8 +262,13 @@ func initLogging() error {
 	// Start with the config file value
 	levelStr := loadedConfig.Log.Level
 
-	// CLI flag overrides config file value when explicitly set
-	if logLevel != "" && logLevel != "info" {
+	// CLI flag overrides the config file value when EXPLICITLY set (see
+	// logLevelExplicit, captured in PersistentPreRunE). The previous check
+	// compared against the flag's default ("info"), which made
+	// `--log-level info` indistinguishable from "not passed" — so a config
+	// file setting log.level: debug could never be turned back down from
+	// the command line.
+	if logLevelExplicit && logLevel != "" {
 		levelStr = logLevel
 	}
 

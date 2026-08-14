@@ -78,6 +78,7 @@ package trustedca
 import (
 	"crypto/tls"
 	"crypto/x509"
+	"fmt"
 	"log/slog"
 	"os"
 	"strings"
@@ -784,16 +785,42 @@ func createUnixTransport(opts *clientOptions) (Transport, error) {
 	return unix.NewTransport(cfg)
 }
 
+// createEmbeddedTransport builds the in-process transport for WithEmbedded.
+//
+// WithEmbedded takes an interface{} because a caller may supply an ACME
+// servicer, an admin servicer, or one value implementing both. The service is
+// routed by asking which of the embedded transport's two service interfaces it
+// satisfies, and a value satisfying both registers both route sets. Supplying a
+// value that implements neither is a caller error rather than a client that
+// silently answers nothing.
+//
+// The service used to be validated here and then dropped: NewTransport was
+// called with no options, and it requires at least one service, so every
+// WithEmbedded client failed to construct and TransportEmbedded was unreachable
+// through NewClient.
 func createEmbeddedTransport(opts *clientOptions) (Transport, error) {
 	if opts.embeddedService == nil {
 		return nil, errors.NewInvalidInput("createEmbeddedTransport", "embedded service cannot be nil")
 	}
+
+	var transportOpts []embedded.Option
+	if svc, ok := opts.embeddedService.(embedded.RestServicer); ok {
+		transportOpts = append(transportOpts, embedded.WithService(svc))
+	}
+	if svc, ok := opts.embeddedService.(embedded.AdminServicer); ok {
+		transportOpts = append(transportOpts, embedded.WithAdminService(svc))
+	}
+	if len(transportOpts) == 0 {
+		return nil, errors.NewInvalidInput("createEmbeddedTransport",
+			fmt.Sprintf("embedded service %T implements neither embedded.RestServicer nor embedded.AdminServicer", opts.embeddedService))
+	}
+
 	cfg := &transport.Config{
 		Address:     "embedded://local",
 		AddressType: transport.AddressTypeEmbedded,
 		Timeout:     opts.timeout,
 	}
-	return embedded.NewTransport(cfg)
+	return embedded.NewTransport(cfg, transportOpts...)
 }
 
 func createMCPTransport(address string, opts *clientOptions) (Transport, error) {

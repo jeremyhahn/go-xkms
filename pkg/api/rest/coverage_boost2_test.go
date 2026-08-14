@@ -27,6 +27,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/jeremyhahn/go-xkms/pkg/auth"
+
 	"github.com/go-chi/chi/v5"
 	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
 	"github.com/jeremyhahn/go-xkms/pkg/seal"
@@ -59,8 +61,9 @@ func TestNewServer_WithBarrier(t *testing.T) {
 	require.NoError(t, err)
 
 	cfg := &Config{
-		Backends: map[string]xkms.Backend{"test": ks},
-		Barrier:  barrier,
+		Authenticator: auth.NewNoOpAuthenticator(),
+		Backends:      map[string]xkms.Backend{"test": ks},
+		Barrier:       barrier,
 	}
 
 	server, err := NewServer(cfg)
@@ -74,8 +77,9 @@ func TestNewServer_WithPINManager(t *testing.T) {
 	pinMgr := &mockPINManager{strategy: qrdbsdk.PINStrategySoftware, initialized: true}
 
 	cfg := &Config{
-		Backends:   map[string]xkms.Backend{"test": ks},
-		PINManager: pinMgr,
+		Authenticator: auth.NewNoOpAuthenticator(),
+		Backends:      map[string]xkms.Backend{"test": ks},
+		PINManager:    pinMgr,
 	}
 
 	server, err := NewServer(cfg)
@@ -84,26 +88,28 @@ func TestNewServer_WithPINManager(t *testing.T) {
 	require.NotNil(t, server.handlers.PINManager)
 }
 
-func TestNewServer_WithRBACEnabled_DefaultAdapter(t *testing.T) {
+func TestNewServer_WithRBACEnabled_NoAuthorizerFailsClosed(t *testing.T) {
 	ks := newMockKeyStore()
 
 	cfg := &Config{
-		Backends:   map[string]xkms.Backend{"test": ks},
-		EnableRBAC: true,
+		Authenticator: auth.NewNoOpAuthenticator(),
+		Backends:      map[string]xkms.Backend{"test": ks},
+		EnableRBAC:    true,
 	}
 
+	// EnableRBAC without a usable authorizer is a wiring bug, not a permissive
+	// deployment mode: the constructor refuses to build a server that believes
+	// it enforces RBAC while allowing every request.
 	server, err := NewServer(cfg)
-	require.NoError(t, err)
-	require.NotNil(t, server)
-	// RBAC enabled wires the middleware; authorization itself is delegated to
-	// the hosted qrdb node's RBAC service via the Authorizer.
-	assert.NotNil(t, server.rbacMiddleware)
+	require.ErrorIs(t, err, ErrAuthorizerRequired)
+	assert.Nil(t, server)
 }
 
 func TestNewServer_WithCustodianService(t *testing.T) {
 	ks := newMockKeyStore()
 
 	cfg := &Config{
+		Authenticator:    auth.NewNoOpAuthenticator(),
 		Backends:         map[string]xkms.Backend{"test": ks},
 		CustodianEnabled: true,
 	}
@@ -118,8 +124,9 @@ func TestNewServer_WithShareEnabled(t *testing.T) {
 	ks := newMockKeyStore()
 
 	cfg := &Config{
-		Backends:     map[string]xkms.Backend{"test": ks},
-		ShareEnabled: true,
+		Authenticator: auth.NewNoOpAuthenticator(),
+		Backends:      map[string]xkms.Backend{"test": ks},
+		ShareEnabled:  true,
 	}
 
 	server, err := NewServer(cfg)
@@ -145,6 +152,7 @@ func TestNewServer_WithBarrierRegistry(t *testing.T) {
 	require.NoError(t, regErr)
 
 	cfg := &Config{
+		Authenticator:   auth.NewNoOpAuthenticator(),
 		Backends:        map[string]xkms.Backend{"test": ks},
 		BarrierRegistry: registry,
 	}
@@ -161,6 +169,7 @@ func TestNewServer_WithPasswordStore(t *testing.T) {
 	pwStore := staticpw.NewStore(memStore)
 
 	cfg := &Config{
+		Authenticator: auth.NewNoOpAuthenticator(),
 		Backends:      map[string]xkms.Backend{"test": ks},
 		PasswordStore: pwStore,
 	}
@@ -188,6 +197,7 @@ func TestNewServer_WithPasswordStoreAndRegistry(t *testing.T) {
 	require.NoError(t, regErr)
 
 	cfg := &Config{
+		Authenticator:   auth.NewNoOpAuthenticator(),
 		Backends:        map[string]xkms.Backend{"test": ks},
 		PasswordStore:   pwStore,
 		BarrierRegistry: registry,
@@ -207,6 +217,7 @@ func TestNewServer_WithPolicyManager(t *testing.T) {
 	require.NoError(t, err)
 
 	cfg := &Config{
+		Authenticator: auth.NewNoOpAuthenticator(),
 		Backends:      map[string]xkms.Backend{"test": ks},
 		PolicyManager: mgr,
 	}
@@ -221,6 +232,7 @@ func TestNewServer_WithCredentialService(t *testing.T) {
 	ks := newMockKeyStore()
 
 	cfg := &Config{
+		Authenticator:     auth.NewNoOpAuthenticator(),
 		Backends:          map[string]xkms.Backend{"test": ks},
 		CredentialService: &credentialspkg.Service{},
 	}
@@ -613,8 +625,9 @@ func TestSaveCertHandler_Success(t *testing.T) {
 func TestRecoveryMiddleware_PanicRecovery(t *testing.T) {
 	ks := newMockKeyStore()
 	cfg := &Config{
-		Backends: map[string]xkms.Backend{"test": ks},
-		Logger:   testLogger(),
+		Authenticator: auth.NewNoOpAuthenticator(),
+		Backends:      map[string]xkms.Backend{"test": ks},
+		Logger:        testLogger(),
 	}
 
 	server, err := NewServer(cfg)

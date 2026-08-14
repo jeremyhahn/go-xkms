@@ -17,6 +17,7 @@ package pkcs11
 
 import (
 	"crypto/ecdsa"
+	"crypto/ed25519"
 	"crypto/elliptic"
 	"crypto/rand"
 	"crypto/rsa"
@@ -247,7 +248,7 @@ func generateECDSATestCert(t *testing.T, curve elliptic.Curve) *x509.Certificate
 // newTestStorage creates a PKCS11CertStorage backed by the in-memory mock.
 func newTestStorage() (*PKCS11CertStorage, *mockHWCertStorage) {
 	hw := newMockHWCertStorage()
-	return &PKCS11CertStorage{hw: hw, closed: false}, hw
+	return &PKCS11CertStorage{hw: hw}, hw
 }
 
 // ---------------------------------------------------------------------------
@@ -451,9 +452,9 @@ func TestKeyAlgorithmName(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			cert := &x509.Certificate{PublicKeyAlgorithm: tt.algorithm}
-			got := keyAlgorithmName(cert)
+			got := pivcert.KeyAlgorithmName(cert)
 			if got != tt.want {
-				t.Errorf("keyAlgorithmName() = %q, want %q", got, tt.want)
+				t.Errorf("pivcert.KeyAlgorithmName() = %q, want %q", got, tt.want)
 			}
 		})
 	}
@@ -466,37 +467,53 @@ func TestKeyAlgorithmName(t *testing.T) {
 func TestKeySize(t *testing.T) {
 	t.Run("RSA 2048", func(t *testing.T) {
 		cert := generateRSATestCert(t, 2048)
-		got := keySize(cert)
+		got := pivcert.KeySize(cert)
 		if got != 2048 {
-			t.Errorf("keySize(RSA-2048) = %d, want 2048", got)
+			t.Errorf("pivcert.KeySize(RSA-2048) = %d, want 2048", got)
 		}
 	})
 
 	t.Run("ECDSA P-256", func(t *testing.T) {
 		cert := generateECDSATestCert(t, elliptic.P256())
-		got := keySize(cert)
+		got := pivcert.KeySize(cert)
 		if got != 256 {
-			t.Errorf("keySize(ECDSA P-256) = %d, want 256", got)
+			t.Errorf("pivcert.KeySize(ECDSA P-256) = %d, want 256", got)
 		}
 	})
 
 	t.Run("ECDSA P-384", func(t *testing.T) {
 		cert := generateECDSATestCert(t, elliptic.P384())
-		got := keySize(cert)
+		got := pivcert.KeySize(cert)
 		if got != 384 {
-			t.Errorf("keySize(ECDSA P-384) = %d, want 384", got)
+			t.Errorf("pivcert.KeySize(ECDSA P-384) = %d, want 384", got)
 		}
 	})
 
 	t.Run("Ed25519", func(t *testing.T) {
-		// Ed25519 falls through to the default case that checks PublicKeyAlgorithm.
+		// KeySize switches on the public key's Go type, so the certificate
+		// must carry a real Ed25519 key. A certificate that only declares
+		// PublicKeyAlgorithm has no key to measure and correctly reports 0.
+		pub, _, err := ed25519.GenerateKey(rand.Reader)
+		if err != nil {
+			t.Fatalf("generate Ed25519 key: %v", err)
+		}
+		cert := &x509.Certificate{
+			PublicKeyAlgorithm: x509.Ed25519,
+			PublicKey:          pub,
+		}
+		got := pivcert.KeySize(cert)
+		if got != 256 {
+			t.Errorf("pivcert.KeySize(Ed25519) = %d, want 256", got)
+		}
+	})
+
+	t.Run("Ed25519 algorithm declared without a key", func(t *testing.T) {
 		cert := &x509.Certificate{
 			PublicKeyAlgorithm: x509.Ed25519,
 			PublicKey:          nil,
 		}
-		got := keySize(cert)
-		if got != 256 {
-			t.Errorf("keySize(Ed25519) = %d, want 256", got)
+		if got := pivcert.KeySize(cert); got != 0 {
+			t.Errorf("pivcert.KeySize(no key) = %d, want 0", got)
 		}
 	})
 
@@ -505,9 +522,9 @@ func TestKeySize(t *testing.T) {
 			PublicKeyAlgorithm: x509.PublicKeyAlgorithm(99),
 			PublicKey:          nil,
 		}
-		got := keySize(cert)
+		got := pivcert.KeySize(cert)
 		if got != 0 {
-			t.Errorf("keySize(Unknown) = %d, want 0", got)
+			t.Errorf("pivcert.KeySize(Unknown) = %d, want 0", got)
 		}
 	})
 }
@@ -549,7 +566,7 @@ func TestCkaIDToPIVSlotMap(t *testing.T) {
 // ---------------------------------------------------------------------------
 
 func TestPKCS11CertStorage_Store_Closed(t *testing.T) {
-	s := &PKCS11CertStorage{closed: true}
+	s := newClosedStorage()
 	cert := generateTestCert(t)
 
 	err := s.Store(pivcert.PIVSlotAuthentication, cert)
@@ -617,7 +634,7 @@ func TestPKCS11CertStorage_Store_NilCert(t *testing.T) {
 // ---------------------------------------------------------------------------
 
 func TestPKCS11CertStorage_Retrieve_Closed(t *testing.T) {
-	s := &PKCS11CertStorage{closed: true}
+	s := newClosedStorage()
 
 	_, err := s.Retrieve(pivcert.PIVSlotAuthentication)
 	if !errors.Is(err, pivcert.ErrStorageClosed) {
@@ -638,7 +655,7 @@ func TestPKCS11CertStorage_Retrieve_Closed(t *testing.T) {
 // ---------------------------------------------------------------------------
 
 func TestPKCS11CertStorage_Delete_Closed(t *testing.T) {
-	s := &PKCS11CertStorage{closed: true}
+	s := newClosedStorage()
 
 	err := s.Delete(pivcert.PIVSlotAuthentication)
 	if !errors.Is(err, pivcert.ErrStorageClosed) {
@@ -659,7 +676,7 @@ func TestPKCS11CertStorage_Delete_Closed(t *testing.T) {
 // ---------------------------------------------------------------------------
 
 func TestPKCS11CertStorage_List_Closed(t *testing.T) {
-	s := &PKCS11CertStorage{closed: true}
+	s := newClosedStorage()
 
 	_, err := s.List()
 	if !errors.Is(err, pivcert.ErrStorageClosed) {
@@ -1042,7 +1059,7 @@ func TestIsPKCS11Error(t *testing.T) {
 // ---------------------------------------------------------------------------
 
 func TestPKCS11CertStorage_Import_Closed(t *testing.T) {
-	s := &PKCS11CertStorage{closed: true}
+	s := newClosedStorage()
 	cert := generateTestCert(t)
 
 	err := s.Import(pivcert.PIVSlotAuthentication, cert.Raw, pivcert.FormatDER)
@@ -1052,10 +1069,84 @@ func TestPKCS11CertStorage_Import_Closed(t *testing.T) {
 }
 
 func TestPKCS11CertStorage_Export_Closed(t *testing.T) {
-	s := &PKCS11CertStorage{closed: true}
+	s := newClosedStorage()
 
 	_, err := s.Export(pivcert.PIVSlotAuthentication, pivcert.FormatDER)
 	if !errors.Is(err, pivcert.ErrStorageClosed) {
 		t.Errorf("Export() on closed storage error = %v, want ErrStorageClosed", err)
+	}
+}
+
+// newClosedStorage returns a storage already in the closed state, for asserting
+// that every operation refuses to run after Close.
+func newClosedStorage() *PKCS11CertStorage {
+	s := &PKCS11CertStorage{}
+	s.closed.Store(true)
+	return s
+}
+
+// TestConcurrentCloseAndOperations is the race regression guard. The
+// PIVCertificateStorage contract states implementations "must be safe for
+// concurrent use", but `closed` was a plain bool read by every operation and
+// written by Close with no synchronization, so a Close racing any in-flight
+// operation was a data race. Under -race this test fails against that version.
+func TestConcurrentCloseAndOperations(t *testing.T) {
+	s, _ := newTestStorage()
+
+	var wg sync.WaitGroup
+	for i := 0; i < 8; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			// Errors are expected once Close wins the race; what matters is
+			// that reading the closed flag is synchronized.
+			_, _ = s.Retrieve(pivcert.PIVSlotAuthentication)
+			_, _ = s.List()
+			_ = s.Delete(pivcert.PIVSlotAuthentication)
+		}()
+	}
+
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		_ = s.Close()
+	}()
+
+	wg.Wait()
+}
+
+// TestDoubleClose_OnlyOneSucceeds verifies Close is idempotent under
+// concurrency: exactly one caller may tear down the pool and release the module
+// reference, and every other caller gets ErrStorageClosed. A plain bool would
+// let two callers both observe false and both proceed.
+func TestDoubleClose_OnlyOneSucceeds(t *testing.T) {
+	s, _ := newTestStorage()
+
+	const closers = 6
+	results := make(chan error, closers)
+
+	var wg sync.WaitGroup
+	for i := 0; i < closers; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			results <- s.Close()
+		}()
+	}
+	wg.Wait()
+	close(results)
+
+	var succeeded int
+	for err := range results {
+		if err == nil {
+			succeeded++
+			continue
+		}
+		if !errors.Is(err, pivcert.ErrStorageClosed) {
+			t.Errorf("losing Close returned %v, want ErrStorageClosed", err)
+		}
+	}
+	if succeeded != 1 {
+		t.Errorf("%d Close calls succeeded, want exactly 1", succeeded)
 	}
 }

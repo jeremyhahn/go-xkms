@@ -22,20 +22,33 @@ import (
 )
 
 // WrappingAlgorithm identifies the algorithm used to wrap key material for secure transport.
-type WrappingAlgorithm string
+// WrappingAlgorithm is an alias of types.KeyWrapAlgorithm, not a second type.
+//
+// The two were separate types carrying identical strings, so the same
+// algorithm had two Go identities depending on which package a caller reached
+// for, and a value could not cross between them without a conversion. Aliasing
+// makes them one type; the strings are unchanged, so nothing on the wire moves.
+type WrappingAlgorithm = types.KeyWrapAlgorithm
 
+// The shared algorithms are defined once, in pkg/types, and named here for the
+// callers that already spell them WrappingAlgorithm*.
 const (
 	// RSA-based wrapping algorithms (PKCS#1 OAEP)
-	WrappingAlgorithmRSAES_OAEP_SHA_1   WrappingAlgorithm = "RSAES_OAEP_SHA_1"
-	WrappingAlgorithmRSAES_OAEP_SHA_256 WrappingAlgorithm = "RSAES_OAEP_SHA_256"
+	WrappingAlgorithmRSAES_OAEP_SHA_1   = types.WrapRSAOAEPSHA1
+	WrappingAlgorithmRSAES_OAEP_SHA_256 = types.WrapRSAOAEPSHA256
 
 	// Hybrid wrapping algorithms (RSA + AES-KWP)
 	// These use RSA to wrap a temporary AES key, then use that AES key to wrap the target key.
 	// Required for wrapping RSA private keys which may exceed RSA key size limits.
-	WrappingAlgorithmRSA_AES_KEY_WRAP_SHA_1   WrappingAlgorithm = "RSA_AES_KEY_WRAP_SHA_1"
-	WrappingAlgorithmRSA_AES_KEY_WRAP_SHA_256 WrappingAlgorithm = "RSA_AES_KEY_WRAP_SHA_256"
+	WrappingAlgorithmRSA_AES_KEY_WRAP_SHA_1   = types.WrapRSAAESKWSHA1
+	WrappingAlgorithmRSA_AES_KEY_WRAP_SHA_256 = types.WrapRSAAESKWSHA256
+)
 
-	// GCP-specific hybrid algorithms
+// GCP-specific hybrid algorithms. These stay declared here rather than in
+// pkg/types: they name a single cloud provider's import scheme, not a
+// construction the project's own vocabulary needs. They share the aliased
+// type, so they interoperate with every canonical constant.
+const (
 	WrappingAlgorithmRSA_OAEP_3072_SHA256_AES_256 WrappingAlgorithm = "RSA_OAEP_3072_SHA256_AES_256"
 	WrappingAlgorithmRSA_OAEP_4096_SHA256_AES_256 WrappingAlgorithm = "RSA_OAEP_4096_SHA256_AES_256"
 	WrappingAlgorithmRSA_OAEP_4096_SHA256         WrappingAlgorithm = "RSA_OAEP_4096_SHA256"

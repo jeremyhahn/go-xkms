@@ -404,6 +404,14 @@ func TestAuthzDeny_CustodianShareTenantMethods(t *testing.T) {
 			return err
 		}},
 		{"ListShares", func() error { _, err := svc.ListShares(ctx, &pb.ListSharesRequest{}); return err }},
+		{"GetShare", func() error {
+			_, err := svc.GetShare(ctx, &pb.GetShareRequest{ServerUrl: "http://x", GroupId: "g", ShareIndex: 1})
+			return err
+		}},
+		{"DeleteShare", func() error {
+			_, err := svc.DeleteShare(ctx, &pb.DeleteShareRequest{ServerUrl: "http://x", GroupId: "g", ShareIndex: 1})
+			return err
+		}},
 		{"GetShareCollectionStatus", func() error {
 			_, err := svc.GetShareCollectionStatus(ctx, &pb.GetShareCollectionStatusRequest{GroupId: "g"})
 			return err

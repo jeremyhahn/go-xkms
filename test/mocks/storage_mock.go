@@ -46,6 +46,13 @@ func (m *MockAccountDAO) SaveWithCondition(ctx context.Context, entity *entities
 	return args.Error(0)
 }
 
+// SaveIfAbsent mocks the SaveIfAbsent method. The bool reports whether this
+// call created the entity.
+func (m *MockAccountDAO) SaveIfAbsent(ctx context.Context, entity *entities.ACMEAccount) (bool, error) {
+	args := m.Called(ctx, entity)
+	return args.Bool(0), args.Error(1)
+}
+
 // Get mocks the Get method.
 func (m *MockAccountDAO) Get(ctx context.Context, id uint64) (*entities.ACMEAccount, error) {
 	args := m.Called(ctx, id)
@@ -173,6 +180,13 @@ func (m *MockOrderDAO) Save(ctx context.Context, entity *entities.ACMEOrder) err
 func (m *MockOrderDAO) SaveWithCondition(ctx context.Context, entity *entities.ACMEOrder, cond qrdbsdk.Condition) error {
 	args := m.Called(ctx, entity, cond)
 	return args.Error(0)
+}
+
+// SaveIfAbsent mocks the SaveIfAbsent method. The bool reports whether this
+// call created the entity.
+func (m *MockOrderDAO) SaveIfAbsent(ctx context.Context, entity *entities.ACMEOrder) (bool, error) {
+	args := m.Called(ctx, entity)
+	return args.Bool(0), args.Error(1)
 }
 
 // Get mocks the Get method.
@@ -304,6 +318,13 @@ func (m *MockAuthorizationDAO) SaveWithCondition(ctx context.Context, entity *en
 	return args.Error(0)
 }
 
+// SaveIfAbsent mocks the SaveIfAbsent method. The bool reports whether this
+// call created the entity.
+func (m *MockAuthorizationDAO) SaveIfAbsent(ctx context.Context, entity *entities.ACMEAuthorization) (bool, error) {
+	args := m.Called(ctx, entity)
+	return args.Bool(0), args.Error(1)
+}
+
 // Get mocks the Get method.
 func (m *MockAuthorizationDAO) Get(ctx context.Context, id uint64) (*entities.ACMEAuthorization, error) {
 	args := m.Called(ctx, id)
@@ -431,6 +452,13 @@ func (m *MockChallengeDAO) Save(ctx context.Context, entity *entities.ACMEChalle
 func (m *MockChallengeDAO) SaveWithCondition(ctx context.Context, entity *entities.ACMEChallenge, cond qrdbsdk.Condition) error {
 	args := m.Called(ctx, entity, cond)
 	return args.Error(0)
+}
+
+// SaveIfAbsent mocks the SaveIfAbsent method. The bool reports whether this
+// call created the entity.
+func (m *MockChallengeDAO) SaveIfAbsent(ctx context.Context, entity *entities.ACMEChallenge) (bool, error) {
+	args := m.Called(ctx, entity)
+	return args.Bool(0), args.Error(1)
 }
 
 // Get mocks the Get method.
@@ -562,6 +590,13 @@ func (m *MockCertificateDAO) SaveWithCondition(ctx context.Context, entity *enti
 	return args.Error(0)
 }
 
+// SaveIfAbsent mocks the SaveIfAbsent method. The bool reports whether this
+// call created the entity.
+func (m *MockCertificateDAO) SaveIfAbsent(ctx context.Context, entity *entities.ACMECertificate) (bool, error) {
+	args := m.Called(ctx, entity)
+	return args.Bool(0), args.Error(1)
+}
+
 // Get mocks the Get method.
 func (m *MockCertificateDAO) Get(ctx context.Context, id uint64) (*entities.ACMECertificate, error) {
 	args := m.Called(ctx, id)
@@ -689,6 +724,13 @@ func (m *MockNonceDAO) Save(ctx context.Context, entity *entities.ACMENonce) err
 func (m *MockNonceDAO) SaveWithCondition(ctx context.Context, entity *entities.ACMENonce, cond qrdbsdk.Condition) error {
 	args := m.Called(ctx, entity, cond)
 	return args.Error(0)
+}
+
+// SaveIfAbsent mocks the SaveIfAbsent method. The bool reports whether this
+// call created the entity.
+func (m *MockNonceDAO) SaveIfAbsent(ctx context.Context, entity *entities.ACMENonce) (bool, error) {
+	args := m.Called(ctx, entity)
+	return args.Bool(0), args.Error(1)
 }
 
 // Get mocks the Get method.
@@ -821,6 +863,13 @@ func (m *MockExternalAccountBindingDAO) SaveWithCondition(ctx context.Context, e
 	return args.Error(0)
 }
 
+// SaveIfAbsent mocks the SaveIfAbsent method. The bool reports whether this
+// call created the entity.
+func (m *MockExternalAccountBindingDAO) SaveIfAbsent(ctx context.Context, entity *entities.ExternalAccountBinding) (bool, error) {
+	args := m.Called(ctx, entity)
+	return args.Bool(0), args.Error(1)
+}
+
 // Get mocks the Get method.
 func (m *MockExternalAccountBindingDAO) Get(ctx context.Context, id uint64) (*entities.ExternalAccountBinding, error) {
 	args := m.Called(ctx, id)
@@ -948,6 +997,13 @@ func (m *MockTenantDAO) Save(ctx context.Context, entity *entities.Tenant) error
 func (m *MockTenantDAO) SaveWithCondition(ctx context.Context, entity *entities.Tenant, cond qrdbsdk.Condition) error {
 	args := m.Called(ctx, entity, cond)
 	return args.Error(0)
+}
+
+// SaveIfAbsent mocks the SaveIfAbsent method. The bool reports whether this
+// call created the entity.
+func (m *MockTenantDAO) SaveIfAbsent(ctx context.Context, entity *entities.Tenant) (bool, error) {
+	args := m.Called(ctx, entity)
+	return args.Bool(0), args.Error(1)
 }
 
 // Get mocks the Get method.

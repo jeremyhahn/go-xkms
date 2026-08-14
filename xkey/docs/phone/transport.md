@@ -347,4 +347,4 @@ Biometric operations share the same timeout regardless of transport, since the b
 - [Protocol Specification](protocol.md) - JSON-RPC method reference
 - [BLE Architecture](../ble/architecture.md) - Detailed BLE GATT and Noise design
 - [BLE Protocol](../ble/protocol.md) - Existing FIDO2 BLE protocol
-- [Phone Backend](backend.md) - Full phone backend reference
+- [Phone Backend](backend/README.md) - Full phone backend reference

@@ -422,9 +422,11 @@ func (a *Adapter) ListOrders(ctx context.Context, req *admin.ListOrdersRequest) 
 	return orders, pagination, nil
 }
 
-// GetOrder retrieves an order by ID.
+// GetOrder retrieves an order by ID. The admin handler scopes the lookup by
+// account and rejects the request with 400 when account_id is absent, so the
+// parameter must be carried in the query string.
 func (a *Adapter) GetOrder(ctx context.Context, orderID uint64, accountID uint64) (*admin.OrderInfo, error) {
-	path := fmt.Sprintf("/admin/orders/%d", orderID)
+	path := fmt.Sprintf("/admin/orders/%d?account_id=%d", orderID, accountID)
 	resp, err := a.doRequest(ctx, http.MethodGet, path, nil)
 	if err != nil {
 		return nil, err

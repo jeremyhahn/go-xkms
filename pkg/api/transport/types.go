@@ -15,6 +15,8 @@ package transport
 
 import (
 	"time"
+
+	"github.com/jeremyhahn/go-xkms/pkg/types"
 )
 
 // HealthResponse contains health check information.
@@ -72,6 +74,17 @@ type GenerateKeyRequest struct {
 	Hash       string `json:"hash,omitempty"`
 	Algorithm  string `json:"algorithm,omitempty"`
 	Exportable bool   `json:"exportable,omitempty"`
+	// Sensitive carries PKCS#11 CKA_SENSITIVE to the backend's key record so
+	// the service layer, not the caller, decides whether the key's plaintext
+	// may ever be released. It is independent of Exportable: a sensitive key
+	// may still be wrapped out, but ExportKeyMaterial will refuse it.
+	Sensitive bool `json:"sensitive,omitempty"`
+	// Partition names the sub-namespace the key is stored in. It is part of
+	// the key's identity (types.KeyAttributes.ID encodes it), so a request that
+	// cannot express it cannot address a partitioned key at all. The gRPC
+	// GenerateKeyRequest message has always carried a partition field, which
+	// this struct could not represent.
+	Partition string `json:"partition,omitempty"`
 	// TenantID optionally scopes this operation to a specific tenant.
 	TenantID string `json:"tenant_id,omitempty"`
 }
@@ -122,7 +135,51 @@ type SignRequest struct {
 	Backend string `json:"backend"`
 	KeyID   string `json:"key_id"`
 	Data    []byte `json:"data"`
-	Hash    string `json:"hash,omitempty"`
+	// Hash names the digest algorithm to apply to Data before signing.
+	// Empty selects the SHA-256 default. The sentinel value "NONE" means
+	// Data is already a complete digest (e.g. a caller-built DigestInfo, as
+	// PKCS#11's raw CKM_RSA_PKCS mechanism requires) and must be signed
+	// as-is, with no hashing applied.
+	Hash string `json:"hash,omitempty"`
+	// DataIsDigest states that Data is already the digest and must not be
+	// hashed again, while leaving Hash to name which digest produced it.
+	//
+	// Hash alone conflates two independent questions -- which hash function,
+	// and whether to apply it -- and the sentinel "NONE" can only answer both
+	// at once, by declaring that no hash function is involved at all. That is
+	// exactly right for PKCS#11's raw CKM_RSA_PKCS and CKM_ECDSA, where the
+	// signature scheme itself needs no digest identity. It cannot express
+	// RSASSA-PSS: PKCS#11 v3.2 section 6.1.15 defines the input to
+	// CKM_RSA_PKCS_PSS as already hashed, yet the scheme still needs the
+	// digest's identity for MGF1 and the salt length (RFC 8017 section 9.1).
+	// Naming the hash was therefore taken as an instruction to apply it, and
+	// the digest the caller supplied got hashed a second time, producing
+	// signatures that verified only against this implementation.
+	//
+	// It is an error to set DataIsDigest without also naming Hash unless the
+	// scheme genuinely has no digest identity, in which case Hash is "NONE".
+	DataIsDigest bool `json:"data_is_digest,omitempty"`
+	// Padding selects the RSA signature padding scheme: "" or "pkcs1v15"
+	// (default, PKCS#1 v1.5) or "pss" (RSASSA-PSS). Only meaningful for RSA
+	// keys; a non-default value on an ECDSA or Ed25519 key is rejected.
+	Padding string `json:"padding,omitempty"`
+	// SaltLength is the RSA-PSS salt length in bytes. Zero selects
+	// rsa.PSSSaltLengthAuto (the largest salt that fits the modulus).
+	// A literal zero-byte salt cannot be requested: crypto/rsa has no encoding
+	// for it, so the PKCS#11 layer refuses CK_RSA_PKCS_PSS_PARAMS.sLen of 0
+	// rather than silently signing under "auto".
+	// Ignored unless Padding is "pss".
+	SaltLength int `json:"salt_length,omitempty"`
+	// PreHash selects the pre-hashed EdDSA variant (Ed25519ph / Ed448ph)
+	// per RFC 8032 Table 73. Only meaningful for Ed25519/Ed448 keys signed
+	// under CKM_EDDSA with a CK_EDDSA_PARAMS.phFlag of CK_TRUE; ignored
+	// for every other key algorithm.
+	PreHash bool `json:"pre_hash,omitempty"`
+	// Context is the optional EdDSA context string (CK_EDDSA_PARAMS.
+	// pContextData), 0-255 bytes, shared between signer and verifier.
+	// Selects Ed25519ctx/Ed25519ph when non-empty or when PreHash is set;
+	// ignored for every non-EdDSA key algorithm.
+	Context []byte `json:"context,omitempty"`
 	// TenantID optionally scopes this operation to a specific tenant.
 	TenantID string `json:"tenant_id,omitempty"`
 }
@@ -139,7 +196,32 @@ type VerifyRequest struct {
 	KeyID     string `json:"key_id"`
 	Data      []byte `json:"data"`
 	Signature []byte `json:"signature"`
-	Hash      string `json:"hash,omitempty"`
+	// Hash names the digest algorithm applied to Data before verification.
+	// Empty selects the SHA-256 default. The sentinel value "NONE" means
+	// Data is already a complete digest and must be verified as-is, with no
+	// hashing applied (PKCS#11's raw CKM_RSA_PKCS contract).
+	Hash string `json:"hash,omitempty"`
+	// DataIsDigest states that Data is already the digest and must not be
+	// hashed again, while Hash still names which digest produced it. It must
+	// match the value used to produce Signature. See SignRequest.DataIsDigest
+	// for why the two are separate fields.
+	DataIsDigest bool `json:"data_is_digest,omitempty"`
+	// Padding selects the RSA signature padding scheme: "" or "pkcs1v15"
+	// (default, PKCS#1 v1.5) or "pss" (RSASSA-PSS). Only meaningful for RSA
+	// keys; a non-default value on an ECDSA or Ed25519 key is rejected.
+	Padding string `json:"padding,omitempty"`
+	// SaltLength is the RSA-PSS salt length in bytes the signature is
+	// expected to use. Zero selects rsa.PSSSaltLengthAuto, which accepts a
+	// signature carrying ANY salt length. A verifier that must require an exact
+	// length has to name it positively; see SignRequest.SaltLength.
+	// Ignored unless Padding is "pss".
+	SaltLength int `json:"salt_length,omitempty"`
+	// PreHash selects the pre-hashed EdDSA variant (Ed25519ph / Ed448ph)
+	// per RFC 8032 Table 73. See SignRequest.PreHash.
+	PreHash bool `json:"pre_hash,omitempty"`
+	// Context is the optional EdDSA context string (CK_EDDSA_PARAMS.
+	// pContextData). See SignRequest.Context.
+	Context []byte `json:"context,omitempty"`
 	// TenantID optionally scopes this operation to a specific tenant.
 	TenantID string `json:"tenant_id,omitempty"`
 }
@@ -156,6 +238,41 @@ type EncryptRequest struct {
 	KeyID          string `json:"key_id"`
 	Plaintext      []byte `json:"plaintext"`
 	AdditionalData []byte `json:"additional_data,omitempty"`
+	// Nonce optionally supplies the IV/nonce to use for this encryption. If
+	// nil or empty, a random nonce is generated by the backend's configured
+	// RNG (the existing behavior) and returned in EncryptResponse.Nonce.
+	// When supplied, its length must match the cipher's nonce size (12 bytes
+	// for AES-GCM; 12 or 24 bytes for ChaCha20-Poly1305/XChaCha20-Poly1305).
+	// Only meaningful for the default AEAD Mode; AES-CBC uses IV instead.
+	Nonce []byte `json:"nonce,omitempty"`
+	// Mode selects the symmetric cipher mode of operation: "" (default)
+	// selects the key's native AEAD mode (AES-GCM or
+	// ChaCha20-Poly1305/XChaCha20-Poly1305); "cbc" selects unpadded AES-CBC
+	// (PKCS#11's CKM_AES_CBC -- Plaintext must already be a whole number of
+	// AES blocks); "cbc-pad" selects AES-CBC with PKCS#7 padding (PKCS#11's
+	// CKM_AES_CBC_PAD, RFC 5652 section 6.3). CBC modes require an AES key
+	// and reject AdditionalData (AES-CBC has no authenticated-data input).
+	Mode string `json:"mode,omitempty"`
+	// IV supplies the AES-CBC initialization vector, exactly 16 bytes (the
+	// AES block size). Ignored for the default AEAD modes, which use Nonce
+	// instead. Unlike Nonce, an IV carries no authentication role -- CBC's
+	// confidentiality only requires it be unpredictable, not secret -- but
+	// reuse still leaks equal-prefix plaintext information across messages.
+	// If empty on encrypt with a CBC Mode, a random IV is generated and
+	// returned in EncryptResponse.IV.
+	IV []byte `json:"iv,omitempty"`
+	// TagSize is the AEAD authentication tag length in bytes. Zero selects
+	// the cipher's full-length tag, which is the only length NIST SP 800-38D
+	// appendix C recommends without a supporting analysis.
+	//
+	// SP 800-38D section 5.2.1.2 defines a t-bit tag as the leading t bits of
+	// the full 128-bit GCM tag, so AES-GCM admits 12, 13, 14, 15 and 16 bytes
+	// (96, 104, 112, 120 and 128 bits). Poly1305 has no such construction and
+	// accepts only its full 16-byte tag. A backend that cannot produce the
+	// requested length must refuse rather than substitute one: a caller that
+	// asked for a short tag and got a long one, or the reverse, has a
+	// ciphertext its peer cannot authenticate.
+	TagSize int `json:"tag_size,omitempty"`
 	// TenantID optionally scopes this operation to a specific tenant.
 	TenantID string `json:"tenant_id,omitempty"`
 }
@@ -165,6 +282,11 @@ type EncryptResponse struct {
 	Ciphertext []byte `json:"ciphertext"`
 	Nonce      []byte `json:"nonce,omitempty"`
 	Tag        []byte `json:"tag,omitempty"`
+	// IV is the AES-CBC initialization vector used for encryption. Populated
+	// when the request's Mode was "cbc" or "cbc-pad"; empty for the default
+	// AEAD modes, which populate Nonce instead. Required (unchanged) on the
+	// matching DecryptRequest.
+	IV []byte `json:"iv,omitempty"`
 }
 
 // DecryptRequest contains parameters for decryption.
@@ -175,6 +297,30 @@ type DecryptRequest struct {
 	Nonce          []byte `json:"nonce,omitempty"`
 	Tag            []byte `json:"tag,omitempty"`
 	AdditionalData []byte `json:"additional_data,omitempty"`
+	// Mode selects the symmetric cipher mode of operation. See
+	// EncryptRequest.Mode; must match the Mode used to produce Ciphertext.
+	// Ignored for asymmetric (RSA) decryption, which uses Padding/Hash/Label
+	// below instead.
+	Mode string `json:"mode,omitempty"`
+	// IV is the AES-CBC initialization vector used at encryption time,
+	// exactly 16 bytes. Required when Mode is "cbc" or "cbc-pad"; ignored
+	// for the default AEAD modes, which use Nonce instead.
+	IV []byte `json:"iv,omitempty"`
+	// Padding selects the RSA decryption scheme for an asymmetric key:
+	// "" or "pkcs1v15" (default), or "oaep".
+	Padding string `json:"padding,omitempty"`
+	// Hash names the OAEP digest (e.g. "SHA-256"). Ignored unless Padding is
+	// "oaep"; an empty value selects SHA-1, which is OAEP's own default.
+	Hash string `json:"hash,omitempty"`
+	// Label is the optional OAEP label. Ignored unless Padding is "oaep".
+	Label []byte `json:"label,omitempty"`
+	// TagSize is the AEAD authentication tag length in bytes that Tag
+	// carries. Zero selects the cipher's full-length tag. It must equal the
+	// TagSize the matching EncryptRequest used: a truncated tag has to be
+	// verified against a tag recomputed at the same length (NIST SP 800-38D
+	// section 5.2.2, step 5), so a decrypt that assumes the full length
+	// rejects every short tag as a forgery.
+	TagSize int `json:"tag_size,omitempty"`
 	// TenantID optionally scopes this operation to a specific tenant.
 	TenantID string `json:"tenant_id,omitempty"`
 }
@@ -190,6 +336,17 @@ type EncryptAsymRequest struct {
 	KeyID     string `json:"key_id"`
 	Plaintext []byte `json:"plaintext"`
 	Hash      string `json:"hash,omitempty"`
+	// Label is the optional OAEP label, RFC 8017's encoding parameter L. It
+	// must match the Label the matching DecryptRequest carries, or the
+	// decryption fails as though the ciphertext were corrupt.
+	//
+	// It exists because the field's absence was silent: PKCS#11 callers set
+	// CK_RSA_PKCS_OAEP_PARAMS.pSourceData, the module parsed it, and this
+	// request had nowhere to put it, so every encryption ran under the empty
+	// label while the matching decryption sent the caller's. The round trip
+	// could not close, and against an external peer the ciphertext was simply
+	// undecryptable, with nothing anywhere reporting the substitution.
+	Label []byte `json:"label,omitempty"`
 	// TenantID optionally scopes this operation to a specific tenant.
 	TenantID string `json:"tenant_id,omitempty"`
 }
@@ -333,6 +490,10 @@ type SaveCertificateRequest struct {
 // ImportKeyRequest contains parameters for importing a key.
 // Uses BYOK (Bring Your Own Key) protocol: the key material must be wrapped
 // using the wrapping key and import token obtained from GetImportParameters.
+// KeyType names the ALGORITHM of the key being imported -- "rsa", "ecdsa",
+// "ed25519", "symmetric" or "aes" -- not the key's purpose. Algorithm below is
+// already taken by the wrapping algorithm, so this is the only field that can
+// carry it, and the service derives the purpose from it.
 type ImportKeyRequest struct {
 	Backend            string `json:"backend"`
 	KeyID              string `json:"key_id"`
@@ -344,6 +505,15 @@ type ImportKeyRequest struct {
 	WrappedKeyMaterial []byte `json:"wrapped_key_material"`
 	Algorithm          string `json:"algorithm"`
 	ImportToken        []byte `json:"import_token,omitempty"`
+	// Partition names the sub-namespace the imported key is stored in, as it
+	// does for GenerateKeyRequest.
+	Partition string `json:"partition,omitempty"`
+	// Metadata carries backend-specific information about the wrapped key
+	// (key usage flags, provenance, and so on) through to the backend's
+	// ImportKey. The gRPC ImportKeyRequest message has always carried it; this
+	// struct could not represent it, so every transport routed through here
+	// silently dropped it.
+	Metadata map[string]string `json:"metadata,omitempty"`
 	// TenantID optionally scopes this operation to a specific tenant.
 	TenantID string `json:"tenant_id,omitempty"`
 }
@@ -409,6 +579,11 @@ type GetImportParametersResponse struct {
 	ImportToken       []byte `json:"import_token,omitempty"`
 	Algorithm         string `json:"algorithm"`
 	ExpiresAt         string `json:"expires_at,omitempty"`
+	// KeySpec describes the kind of key these parameters accept, as the
+	// backend named it ("RSA_2048", "AES_256", "ECC_NIST_P256"). An
+	// AWS-KMS-style ceremony carries it back into WrapKey, so a response that
+	// omits it forces the caller to guess.
+	KeySpec string `json:"key_spec,omitempty"`
 }
 
 // WrapKeyRequest contains parameters for wrapping a key.
@@ -418,6 +593,10 @@ type WrapKeyRequest struct {
 	Algorithm         string `json:"algorithm"`
 	WrappingPublicKey []byte `json:"wrapping_public_key,omitempty"`
 	ImportToken       []byte `json:"import_token,omitempty"`
+	// KeySpec is the key spec from GetImportParametersResponse. Backends whose
+	// import ceremony is key-spec aware -- AWS KMS most visibly -- need it back
+	// to wrap for the right target key kind.
+	KeySpec string `json:"key_spec,omitempty"`
 	// TenantID optionally scopes this operation to a specific tenant.
 	TenantID string `json:"tenant_id,omitempty"`
 }
@@ -426,6 +605,10 @@ type WrapKeyRequest struct {
 type WrapKeyResponse struct {
 	WrappedKeyMaterial []byte `json:"wrapped_key_material"`
 	Algorithm          string `json:"algorithm"`
+	// Metadata is the backend's own description of the wrapped material. It
+	// travels with the blob to ImportKey, so dropping it here loses whatever
+	// the wrapping backend recorded about the key.
+	Metadata map[string]string `json:"metadata,omitempty"`
 }
 
 // UnwrapKeyRequest contains parameters for unwrapping a key.
@@ -434,6 +617,16 @@ type UnwrapKeyRequest struct {
 	WrappedKeyMaterial []byte `json:"wrapped_key_material"`
 	Algorithm          string `json:"algorithm"`
 	ImportToken        []byte `json:"import_token,omitempty"`
+	// WrappingPublicKey is the DER-encoded PKIX public key the material was
+	// wrapped under. Backends that hold more than one wrapping key pair at a
+	// time use it to select the matching private key.
+	WrappingPublicKey []byte `json:"wrapping_public_key,omitempty"`
+	// KeySpec is the key spec the material was wrapped for, as returned by
+	// GetImportParameters.
+	KeySpec string `json:"key_spec,omitempty"`
+	// Metadata is the backend-specific description that accompanied the
+	// wrapped material, as returned by WrapKeyResponse.
+	Metadata map[string]string `json:"metadata,omitempty"`
 	// TenantID optionally scopes this operation to a specific tenant.
 	TenantID string `json:"tenant_id,omitempty"`
 }
@@ -514,12 +707,57 @@ type GetTLSCertificateResponse struct {
 // UserInfo contains information about an xkms user. xkms presents its own
 // user model; the backing store is the embedded qrdb node.
 type UserInfo struct {
+	// ID is the numeric identifier assigned by the embedded qrdb node. It is
+	// marshalled as a string, matching qrdb's own User DTO: a uint64 exceeds
+	// the range JSON numbers represent exactly, so a JavaScript client would
+	// silently round large ids. The N-factor endpoints are keyed by this id.
+	ID          uint64     `json:"id,string"`
 	Username    string     `json:"username"`
 	DisplayName string     `json:"display_name,omitempty"`
 	Role        string     `json:"role,omitempty"`
 	Enabled     bool       `json:"enabled"`
 	CreatedAt   time.Time  `json:"created_at"`
 	LastLogin   *time.Time `json:"last_login,omitempty"`
+}
+
+// AuditEvent is one record from the tamper-evident audit chain owned by the
+// embedded qrdb node. It mirrors qrdb's transport.AuditEvent; PrevHash is the
+// chain link that makes the log verifiable, so it is carried through rather
+// than dropped.
+type AuditEvent struct {
+	Timestamp  time.Time      `json:"timestamp"`
+	Actor      string         `json:"actor"`
+	TenantID   string         `json:"tenant_id,omitempty"`
+	Role       string         `json:"role,omitempty"`
+	Resource   string         `json:"resource"`
+	Action     string         `json:"action"`
+	Outcome    string         `json:"outcome"`
+	Attributes map[string]any `json:"attributes,omitempty"`
+	ClientIP   string         `json:"client_ip,omitempty"`
+	RequestID  string         `json:"request_id,omitempty"`
+	PrevHash   string         `json:"prev_hash,omitempty"`
+}
+
+// AuditFilter narrows an audit query. A zero From/To means unbounded on that
+// side; Cursor continues a previous page and is opaque to the caller.
+type AuditFilter struct {
+	From     time.Time `json:"from,omitempty"`
+	To       time.Time `json:"to,omitempty"`
+	Actor    string    `json:"actor,omitempty"`
+	Resource string    `json:"resource,omitempty"`
+	Action   string    `json:"action,omitempty"`
+	Outcome  string    `json:"outcome,omitempty"`
+	TenantID string    `json:"tenant_id,omitempty"`
+	Limit    int       `json:"limit,omitempty"`
+	Cursor   string    `json:"cursor,omitempty"`
+}
+
+// AuditPage is one page of audit events. Next is empty when the page is the
+// last one; it is a cursor, not an offset.
+type AuditPage struct {
+	Events []AuditEvent `json:"events"`
+	Next   string       `json:"next,omitempty"`
+	Total  int          `json:"total"`
 }
 
 // CredentialInfo contains information about a user credential.
@@ -691,7 +929,21 @@ type DeriveKeyECDHRequest struct {
 
 	// KDFInfo is optional context/application-specific information
 	// For HKDF, this is used in the expand phase
+	// For the SP 800-108 modes, this is the Context
 	KDFInfo []byte `json:"kdf_info,omitempty"`
+
+	// KDFLabel is the SP 800-108 Label, the purpose string bound into the
+	// fixed input data as Label || 0x00 || Context || [L]_2 (SP 800-108r1 §4).
+	//
+	// It is what gives a derivation domain separation: two protocols deriving
+	// from the same ECDH shared secret with the same Context but different
+	// Labels get different keys, and without it they get the same key. An
+	// empty label is valid SP 800-108 and remains the default, so a caller
+	// that omits it derives exactly what it did before this field existed.
+	//
+	// SP 800-108 only. The concatenation KDFs (X9.63, SP 800-56A) and HKDF
+	// have no label input and reject a non-empty value rather than dropping it.
+	KDFLabel []byte `json:"kdf_label,omitempty"`
 
 	// KeyLength specifies the desired output key length in bytes
 	// Common values: 16 (AES-128), 32 (AES-256). Defaults to 32
@@ -716,15 +968,55 @@ type WrapKeyByIDRequest struct {
 	// WrappingKeyBackend is the backend containing the wrapping key
 	WrappingKeyBackend string `json:"wrapping_key_backend"`
 
-	// TargetKeyID is the ID of the key to be wrapped (must be extractable)
+	// TargetKeyID is the ID of the key to be wrapped (must be extractable).
+	// Exactly one of TargetKeyID and TargetKeyMaterial must be set.
 	TargetKeyID string `json:"target_key_id"`
 
-	// TargetKeyBackend is the backend containing the target key
+	// TargetKeyBackend is the backend containing the target key. It is
+	// required with TargetKeyID and ignored with TargetKeyMaterial.
 	TargetKeyBackend string `json:"target_key_backend"`
+
+	// TargetKeyMaterial is the plaintext of a key the caller already holds,
+	// for a wrap whose target is not resident in any backend.
+	//
+	// PKCS#11 C_WrapKey must work on a key imported with C_CreateObject and
+	// CKA_VALUE, which exists only in the caller's own object store and has no
+	// backend key ID to name here. Sending the material is what lets such a
+	// wrap run through the one wrap implementation (servicer_wrapkey.go)
+	// instead of a second one: a caller that encrypts the material itself
+	// produces a blob framed differently from the one UnwrapKeyByID parses,
+	// which is unrecoverable rather than merely non-interoperable.
+	//
+	// This grants no capability the API did not already have: EncryptRequest
+	// carries caller plaintext to the same backend under the same key, and is
+	// exactly what such a caller used before.
+	TargetKeyMaterial []byte `json:"target_key_material,omitempty"`
 
 	// Algorithm specifies the wrapping algorithm
 	// Supported: "RSAES_OAEP_SHA_256", "AES_KEY_WRAP", etc.
 	Algorithm string `json:"algorithm"`
+
+	// IV is the initialization vector or nonce the mechanism requires:
+	// CK_GCM_PARAMS.pIv for AES-GCM, the 16-byte IV for AES-CBC and
+	// AES-CBC-PAD. Empty asks the service to generate one; either way it is
+	// carried in the wrapped blob, so UnwrapKeyByID needs no IV to reverse it.
+	IV []byte `json:"iv,omitempty"`
+
+	// AAD is CK_GCM_PARAMS.pAAD, the additional authenticated data bound to an
+	// AES-GCM wrap. It is authenticated, not encrypted, so it is not carried
+	// in the blob: UnwrapKeyByIDRequest.AAD must repeat it.
+	AAD []byte `json:"aad,omitempty"`
+
+	// TagBits is CK_GCM_PARAMS.ulTagBits, the AES-GCM authentication tag
+	// length in bits (96, 104, 112, 120 or 128). Zero selects the full-length
+	// tag.
+	TagBits int `json:"tag_bits,omitempty"`
+
+	// OAEPLabel is CK_RSA_PKCS_OAEP_PARAMS.pSourceData, the RSA-OAEP label
+	// (the "encoding parameter" of RFC 8017 §7.1). It is bound into the
+	// ciphertext, so UnwrapKeyByIDRequest.OAEPLabel must repeat it exactly or
+	// the unwrap fails. Empty means no label.
+	OAEPLabel []byte `json:"oaep_label,omitempty"`
 
 	// TenantID optionally scopes this operation to a specific tenant.
 	TenantID string `json:"tenant_id,omitempty"`
@@ -753,6 +1045,26 @@ type UnwrapKeyByIDRequest struct {
 
 	// Algorithm is the unwrapping algorithm used
 	Algorithm string `json:"algorithm"`
+
+	// IV is the initialization vector or nonce the mechanism requires. It is
+	// normally left empty: every mechanism that needs one carries it inside
+	// WrappedKey, in the framing WrapKeyByID produced. It exists so a caller
+	// holding a blob produced elsewhere, without that framing, can supply it.
+	IV []byte `json:"iv,omitempty"`
+
+	// AAD is CK_GCM_PARAMS.pAAD. Unlike the IV it is never carried in the
+	// blob, because it is authenticated rather than encrypted, so an AES-GCM
+	// wrap made with AAD can only be reversed by repeating it here.
+	AAD []byte `json:"aad,omitempty"`
+
+	// TagBits is CK_GCM_PARAMS.ulTagBits. It must equal the value the wrap
+	// used: NIST SP 800-38D §5.2.2 verifies a t-bit tag against a tag
+	// recomputed at t bits, so a mismatch reads as a forgery.
+	TagBits int `json:"tag_bits,omitempty"`
+
+	// OAEPLabel is CK_RSA_PKCS_OAEP_PARAMS.pSourceData. It must equal the
+	// label the wrap used, or RSA-OAEP decoding fails.
+	OAEPLabel []byte `json:"oaep_label,omitempty"`
 
 	// TargetKeyID is the ID for the new key
 	TargetKeyID string `json:"target_key_id"`
@@ -1627,3 +1939,14 @@ type PolicyExportRequest struct {
 type PolicyExportResponse struct {
 	Data string `json:"data"`
 }
+
+// Algorithm discovery types are aliased from pkg/types, which is where the
+// discovery logic (xkms.DiscoverAlgorithms) already builds them. Redefining
+// them here would fork the wire shape from the one the server emits.
+type (
+	// AlgorithmInfo describes one algorithm and the backends providing it.
+	AlgorithmInfo = types.AlgorithmInfo
+
+	// AlgorithmsResponse groups the supported algorithms by purpose.
+	AlgorithmsResponse = types.AlgorithmsResponse
+)

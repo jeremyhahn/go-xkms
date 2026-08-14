@@ -23,6 +23,7 @@ import (
 	"github.com/jeremyhahn/go-xkms/pkg/errs"
 
 	pb "github.com/jeremyhahn/go-xkms/pkg/api/grpc/proto/xkmsv1"
+	"github.com/jeremyhahn/go-xkms/pkg/auth"
 	"github.com/jeremyhahn/go-xkms/pkg/keyprovider/frost"
 	"github.com/jeremyhahn/go-xkms/pkg/types"
 	"google.golang.org/grpc/codes"
@@ -38,6 +39,14 @@ func (s *Service) FrostGenerateKey(ctx context.Context, req *pb.FrostGenerateKey
 	}
 	if req.Total < req.Threshold {
 		return nil, status.Error(codes.InvalidArgument, "total must be >= threshold")
+	}
+
+	// FROST key generation creates threshold key material, so it is gated by
+	// the same permission as any other key creation (see GenerateKey in
+	// service.go), and identically in the QUIC handlers and the MCP
+	// frost.generateKey permission entry.
+	if err := s.authorize(ctx, auth.ResourceKeys, auth.ActionCreate, req.KeyId); err != nil {
+		return nil, err
 	}
 
 	// Set defaults
@@ -152,6 +161,12 @@ func (s *Service) FrostImportKey(ctx context.Context, req *pb.FrostImportKeyRequ
 		return nil, status.Error(codes.InvalidArgument, "package is required")
 	}
 
+	// Importing a key package installs externally supplied secret-share
+	// material, which is the same privilege ImportKey carries.
+	if err := s.authorize(ctx, auth.ResourceKeys, auth.ActionImport, req.Package.KeyId); err != nil {
+		return nil, err
+	}
+
 	pkg := req.Package
 	if pkg.KeyId == "" {
 		return nil, status.Error(codes.InvalidArgument, "package.key_id is required")
@@ -209,6 +224,12 @@ func (s *Service) FrostImportKey(ctx context.Context, req *pb.FrostImportKeyRequ
 
 // FrostListKeys lists all FROST keys
 func (s *Service) FrostListKeys(ctx context.Context, req *pb.FrostListKeysRequest) (*pb.FrostListKeysResponse, error) {
+	// Enumerating key material is a listing, exactly as ListKeys is. There is
+	// no per-key subject to name, so the resource ID is empty.
+	if err := s.authorize(ctx, auth.ResourceKeys, auth.ActionList, ""); err != nil {
+		return nil, err
+	}
+
 	be, err := s.getFrostBackend()
 	if err != nil {
 		return nil, status.Errorf(codes.Internal, "failed to get FROST backend: %v", err)
@@ -274,6 +295,11 @@ func (s *Service) FrostGetKey(ctx context.Context, req *pb.FrostGetKeyRequest) (
 		return nil, status.Error(codes.InvalidArgument, "key_id is required")
 	}
 
+	// Reading a key's metadata is the GetKey privilege.
+	if err := s.authorize(ctx, auth.ResourceKeys, auth.ActionGet, req.KeyId); err != nil {
+		return nil, err
+	}
+
 	be, err := s.getFrostBackend()
 	if err != nil {
 		return nil, status.Errorf(codes.Internal, "failed to get FROST backend: %v", err)
@@ -332,6 +358,11 @@ func (s *Service) FrostDeleteKey(ctx context.Context, req *pb.FrostDeleteKeyRequ
 		return nil, status.Error(codes.InvalidArgument, "key_id is required")
 	}
 
+	// Destroying a share is the DeleteKey privilege.
+	if err := s.authorize(ctx, auth.ResourceKeys, auth.ActionDelete, req.KeyId); err != nil {
+		return nil, err
+	}
+
 	be, err := s.getFrostBackend()
 	if err != nil {
 		return nil, status.Errorf(codes.Internal, "failed to get FROST backend: %v", err)
@@ -357,6 +388,12 @@ func (s *Service) FrostDeleteKey(ctx context.Context, req *pb.FrostDeleteKeyRequ
 func (s *Service) FrostGenerateNonces(ctx context.Context, req *pb.FrostGenerateNoncesRequest) (*pb.FrostGenerateNoncesResponse, error) {
 	if req.KeyId == "" {
 		return nil, status.Error(codes.InvalidArgument, "key_id is required")
+	}
+
+	// Round 1 commits this participant's share to a signing session: it is a
+	// step of signing with the key, so it takes the signing permission.
+	if err := s.authorize(ctx, auth.ResourceKeys, auth.ActionSign, req.KeyId); err != nil {
+		return nil, err
 	}
 
 	be, err := s.getFrostBackend()
@@ -392,6 +429,11 @@ func (s *Service) FrostSignRound(ctx context.Context, req *pb.FrostSignRoundRequ
 	}
 	if len(req.Commitments) == 0 {
 		return nil, status.Error(codes.InvalidArgument, "commitments are required")
+	}
+
+	// Round 2 produces a signature share over the caller's message: signing.
+	if err := s.authorize(ctx, auth.ResourceKeys, auth.ActionSign, req.KeyId); err != nil {
+		return nil, err
 	}
 
 	be, err := s.getFrostBackend()
@@ -466,6 +508,12 @@ func (s *Service) FrostAggregate(ctx context.Context, req *pb.FrostAggregateRequ
 		return nil, status.Error(codes.InvalidArgument, "shares are required")
 	}
 
+	// Aggregation is the step that yields the completed group signature, so it
+	// carries the signing permission rather than a weaker read verb.
+	if err := s.authorize(ctx, auth.ResourceKeys, auth.ActionSign, req.KeyId); err != nil {
+		return nil, err
+	}
+
 	be, err := s.getFrostBackend()
 	if err != nil {
 		return nil, status.Errorf(codes.Internal, "failed to get FROST backend: %v", err)
@@ -523,6 +571,11 @@ func (s *Service) FrostVerify(ctx context.Context, req *pb.FrostVerifyRequest) (
 	}
 	if len(req.Signature) == 0 {
 		return nil, status.Error(codes.InvalidArgument, "signature is required")
+	}
+
+	// Verification only reads the group public key: the Verify privilege.
+	if err := s.authorize(ctx, auth.ResourceKeys, auth.ActionVerify, req.KeyId); err != nil {
+		return nil, err
 	}
 
 	be, err := s.getFrostBackend()

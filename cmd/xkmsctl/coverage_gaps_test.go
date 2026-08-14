@@ -758,7 +758,7 @@ func TestResolveCanonicalInitEnvFallbacks_NothingSet(t *testing.T) {
 	for _, key := range []string{
 		"XKMS_SO_PIN", "XKMS_USER_PIN", "XKMS_BARRIER_STRATEGY",
 		"XKMS_SHARES", "XKMS_THRESHOLD", "XKMS_HOSTNAME",
-		"XKMS_SANS", "XKMS_ADMIN_BUNDLE",
+		"XKMS_SANS",
 	} {
 		t.Setenv(key, "")
 	}
@@ -776,15 +776,35 @@ func TestResolveCanonicalInitEnvFallbacks_EnvVarApplied(t *testing.T) {
 	t.Setenv("XKMS_SO_PIN", "env-so-pin")
 	defer os.Unsetenv("XKMS_SO_PIN")
 
-	f := &canonicalInitFlags{}
-	// Reset the flag so Changed = false
-	if err := initCmd.Flags().Set("so-pin", ""); err != nil {
-		// If the flag doesn't exist on initCmd, skip gracefully.
-		t.Skipf("so-pin flag not on initCmd: %v", err)
+	soPin := initCmd.Flags().Lookup("so-pin")
+	if soPin == nil {
+		t.Fatal("initCmd must register the canonical so-pin flag")
 	}
-	_ = resolveCanonicalInitEnvFallbacks(initCmd, f)
-	// We verify the function completes without error; the exact flag state
-	// depends on cobra flag registration which is exercised by the surface tests.
+	original := soPin.Value.String()
+	originalChanged := soPin.Changed
+	t.Cleanup(func() {
+		if err := soPin.Value.Set(original); err != nil {
+			t.Errorf("restore so-pin: %v", err)
+		}
+		soPin.Changed = originalChanged
+	})
+
+	// Clear the flag so Changed = false and the environment fallback applies.
+	if err := soPin.Value.Set(""); err != nil {
+		t.Fatalf("clear so-pin: %v", err)
+	}
+	soPin.Changed = false
+
+	f := &canonicalInitFlags{}
+	if err := resolveCanonicalInitEnvFallbacks(initCmd, f); err != nil {
+		t.Fatalf("resolveCanonicalInitEnvFallbacks: %v", err)
+	}
+
+	// XKMS_SO_PIN must reach the flag, otherwise operators who configure the
+	// ceremony through the environment get an empty SO PIN.
+	if got := soPin.Value.String(); got != "env-so-pin" {
+		t.Errorf("so-pin = %q, want %q from XKMS_SO_PIN", got, "env-so-pin")
+	}
 }
 
 // =============================================================================
@@ -948,7 +968,7 @@ func TestRunCanonicalInit_NonShamirWithSharesFlags(t *testing.T) {
 }
 
 // TestRunCanonicalInit_PassphraseSuccess exercises the passphrase success path
-// with a non-empty AdminBundle path and SANs.
+// with SANs.
 func TestRunCanonicalInit_PassphraseSuccess(t *testing.T) {
 	orig := *canonicalSurfaceFlags
 	t.Cleanup(func() { *canonicalSurfaceFlags = orig })
@@ -959,7 +979,6 @@ func TestRunCanonicalInit_PassphraseSuccess(t *testing.T) {
 	canonicalSurfaceFlags.threshold = 0
 	canonicalSurfaceFlags.hostname = "xkms.example.com"
 	canonicalSurfaceFlags.sans = "xkms.internal,192.168.1.1"
-	canonicalSurfaceFlags.adminBundle = "/tmp/bundle.pem"
 
 	var buf bytes.Buffer
 	cmd := initCmd

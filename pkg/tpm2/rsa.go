@@ -2,6 +2,7 @@ package tpm2
 
 import (
 	"crypto/rsa"
+	"crypto/x509"
 	"log/slog"
 
 	"github.com/google/go-tpm/tpm2"
@@ -38,43 +39,66 @@ func (tpm *TPM2) CreateRSA(
 		keyUserAuth = keyAttrs.Password.Bytes()
 	}
 
-	// Create new RSA key under the SRK, optionally sealing a secret
-	// protected by the platform auth policy that requires the platform
-	// PCR value with the Golden Integrity Measurements to release.
-	rsaTemplate := RSASSATemplate
-	rsaTemplate.NameAlg = tpm.algID
-
-	if types.IsRSAPSS(keyAttrs.SignatureAlgorithm) {
-		rsaTemplate = RSAPSSTemplate
-		rsaTemplate.NameAlg = tpm.algID
+	// Build the template for the key the caller asked for.
+	//
+	// The modulus size comes from the request rather than from a template
+	// constant, and the algorithms involved are checked against what this TPM
+	// reports through TPM2_GetCapability, so a request the device cannot serve
+	// is refused by name instead of failing inside TPM2_Create.
+	//
+	// The scheme is left TPM_ALG_NULL for signing keys so the digest and the
+	// padding are chosen per operation (TCG TPM 2.0 Library Part 3, section
+	// 12.1). An RSA-PSS signature algorithm in the key attributes is the one
+	// case that still pins the key, because that is what asking for a PSS-only
+	// key means; see RSAPSSTemplate.
+	spec := KeyTemplateSpec{
+		Algorithm: x509.RSA,
+		KeyBits:   DefaultRSAKeyBits,
+		NameAlg:   tpm.algID,
+	}
+	if keyAttrs.RSAAttributes != nil && keyAttrs.RSAAttributes.KeySize > 0 {
+		spec.KeyBits = uint16(keyAttrs.RSAAttributes.KeySize)
 	}
 
-	// For encryption keys, set Decrypt attribute instead of SignEncrypt
 	if keyAttrs.KeyType == types.KeyTypeEncryption {
-		rsaTemplate.ObjectAttributes.Decrypt = true
-		rsaTemplate.ObjectAttributes.SignEncrypt = false
-		// Encryption keys must be unrestricted
-		rsaTemplate.ObjectAttributes.Restricted = false
-		// Set scheme to Null for unrestricted decryption
-		// Use standard 2048-bit key size (same as templates default)
-		rsaTemplate.Parameters = tpm2.NewTPMUPublicParms(
-			tpm2.TPMAlgRSA,
-			&tpm2.TPMSRSAParms{
-				Scheme: tpm2.TPMTRSAScheme{
-					Scheme: tpm2.TPMAlgNull,
-				},
-				KeyBits: 2048,
-			},
-		)
+		// A decryption key carries the decrypt attribute rather than
+		// signEncrypt, and stays unrestricted so TPM2_RSA_Decrypt may be used
+		// on it with a caller-supplied scheme.
+		spec.Sign = false
+		spec.Decrypt = true
+	} else if types.IsRSAPSS(keyAttrs.SignatureAlgorithm) {
+		spec.Scheme = tpm2.TPMAlgRSAPSS
+		spec.SchemeHash = tpm.algID
 	}
 
-	// Attach platform PCR policy digest if configured
+	rsaTemplate, err := tpm.KeyTemplate(spec)
+	if err != nil {
+		tpm.logger.Error("failed to build RSA key template",
+			slog.String("error", err.Error()),
+			slog.String("cn", keyAttrs.CN))
+		return nil, err
+	}
+
+	// Attach platform PCR policy digest if configured.
+	//
+	// The digest is computed from a captured pin rather than straight from live
+	// PCRs. The value is identical, but capturing it lets the record written
+	// after the blobs are saved name the exact PolicyPCR branch this key's
+	// AuthPolicy covers, so the key's PIN branch can still reproduce the
+	// PolicyOR digest once the platform measurements change.
+	var policyPin *store.PlatformPolicyPin
+
 	if keyAttrs.PlatformPolicy {
-		policyDigest, err := tpm.PlatformPolicyDigest()
+		pin, err := tpm.capturePlatformPolicyPin()
+		if err != nil {
+			return nil, err
+		}
+		policyDigest, err := platformPolicyDigestFromPin(pin)
 		if err != nil {
 			return nil, err
 		}
 		rsaTemplate.AuthPolicy = policyDigest
+		policyPin = pin
 	}
 
 	// Create the parent key authorization session
@@ -154,7 +178,6 @@ func (tpm *TPM2) CreateRSA(
 			name = loadResponse.Name
 			private = createRsp.OutPrivate
 			public = createRsp.OutPublic
-			// Caller is responsible for flushing the handle
 		} else {
 			tpm.logger.Error("failed to create RSA key", slog.String("error", err.Error()))
 			return nil, err
@@ -164,8 +187,24 @@ func (tpm *TPM2) CreateRSA(
 		name = response.Name
 		private = response.OutPrivate
 		public = response.OutPublic
-		// Caller is responsible for flushing the handle
 	}
+
+	// TPM2_CreateLoaded -- and the TPM2_Create plus TPM2_Load fallback above --
+	// leave the new object LOADED in transient TPM memory (TCG TPM 2.0 Library
+	// Part 3, sections 12.9 and 12.2). A TPM offers only a handful of transient
+	// object slots, so the handle has to be released on every path out of this
+	// function, the successful one included.
+	//
+	// Nothing after this point needs the object to stay loaded: what is
+	// persisted is the public/private blob pair, and every later operation on
+	// this key reloads those under the SRK through LoadKeyPair. Holding the
+	// handle open past the return stranded one object slot per key created --
+	// the caller was told it owned the handle but no caller ever flushed it --
+	// and a TPM with three slots then failed every subsequent TPM2_Load with
+	// TPM_RC_OBJECT_MEMORY, including for unrelated keys that had been working.
+	//
+	// This mirrors CreateECDSA, which has always released its handle here.
+	defer tpm.Flush(handle)
 
 	tpm.logger.Debug("RSA key loaded to transient handle", slog.String("handle", Encode([]byte{byte(handle >> 24), byte(handle >> 16), byte(handle >> 8), byte(handle)})))
 	tpm.logger.Debug("RSA key name", slog.String("name", Encode(name.Buffer)))
@@ -184,6 +223,17 @@ func (tpm *TPM2) CreateRSA(
 	// Save the public and private areas to blob storage
 	if err := tpm.SaveKeyPair(keyAttrs, private, public, backend, overwrite); err != nil {
 		return nil, err
+	}
+
+	// Record the platform policy pin beside the blobs it describes. Without it
+	// this key's PIN branch could only be satisfied while the platform PCR
+	// still held the value it holds right now.
+	if policyPin != nil {
+		if err := tpm.recordKeyPolicyPin(
+			keyAttrs, backend, policyPin, overwrite); err != nil {
+
+			return nil, err
+		}
 	}
 
 	pub, err := public.Contents()

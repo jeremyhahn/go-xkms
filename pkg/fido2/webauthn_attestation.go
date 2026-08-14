@@ -40,6 +40,15 @@ type WebAuthnRegistrationOptions struct {
 	UserDisplayName         string
 	RequireUserVerification bool
 	Timeout                 time.Duration
+
+	// PIN is the authenticator's CTAP2 PIN. An authenticator with a PIN set
+	// refuses MakeCredential outright (CTAP2_ERR_PIN_REQUIRED) unless the
+	// request carries a pinUvAuthParam, so this is what makes registration
+	// possible against a PIN-protected key with no browser to prompt for it.
+	//
+	// Empty leaves the request unauthorized, which is correct for a key with
+	// no PIN configured.
+	PIN string
 }
 
 // WebAuthnAttestation is the result of a WebAuthn registration ceremony. The
@@ -247,6 +256,14 @@ func buildWebAuthnAttestation(resp *MakeCredentialResponse, challenge []byte, or
 // authenticatorMakeCredential, encodes the returned fmt/authData/attStmt into a
 // CBOR attestationObject, extracts the credential id from the attested credential
 // data, and assembles the PublicKeyCredential document.
+// BindDevice pins subsequent ceremonies to one authenticator path.
+//
+// Callers that have already resolved which of several attached authenticators
+// to use call this so selectDevice does not independently choose another.
+func (h *FIDO2Handler) BindDevice(path string) {
+	h.config.DevicePath = path
+}
+
 func (h *FIDO2Handler) RegisterWebAuthn(opts WebAuthnRegistrationOptions) (*WebAuthnAttestation, error) {
 	if len(opts.Challenge) == 0 {
 		return nil, &errs.Message{Msg: "fido2: registration challenge required"}
@@ -307,6 +324,21 @@ func (h *FIDO2Handler) RegisterWebAuthn(opts WebAuthnRegistrationOptions) (*WebA
 		Options: AuthenticatorOptions{
 			UV: opts.RequireUserVerification,
 		},
+	}
+
+	if opts.PIN != "" {
+		param, protocol, perr := auth.AuthorizeWithPIN(opts.PIN, clientDataHash[:])
+		if perr != nil {
+			return nil, perr
+		}
+		req.PinUVAuthParam = param
+		req.PinUVAuthProtocol = protocol
+
+		// A pinUvAuthToken IS the user verification, and it supersedes the
+		// "uv" option: CTAP 2.1 6.1.2 reserves "uv" for an authenticator's
+		// BUILT-IN verification method, so a PIN-only key answers uv:true with
+		// CTAP2_ERR_INVALID_OPTION even as it verifies the user by PIN.
+		req.Options.UV = false
 	}
 
 	h.logger.Printf("Please touch your security key to register...")

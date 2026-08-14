@@ -30,6 +30,20 @@ import (
 // platform's default URL handler (xdg-open, open, rundll32).
 const BrowserSystem = "system"
 
+// TrustSyncer injects the trust store's certificates into the browsers' own
+// certificate databases. *SecureBrowserService satisfies it.
+//
+// This exists because SSL_CERT_FILE does NOT make a browser trust anything:
+// Chrome reads NSS (~/.pki/nssdb) and Firefox reads its profile's cert9.db,
+// and both ignore the OpenSSL environment entirely. Setting the variable and
+// calling it done produced exactly the failure it was meant to prevent — a
+// TLS interstitial in a browser the user was told was trusted.
+type TrustSyncer interface {
+	// Rebuild writes the current trust-store contents into every browser
+	// certificate database it manages.
+	Rebuild() error
+}
+
 // Profile mode constants for browser cert injection.
 const (
 	// ProfileModeIsolated launches the browser with a separate, clean profile.
@@ -87,7 +101,12 @@ type BrowserService struct {
 	config          BrowserConfig
 	configPath      string
 	trustBundlePath string
-	logger          *slog.Logger
+
+	// trustSyncer injects certificates into the browsers' own stores. Set
+	// after construction (SecureBrowserService depends on this service, so
+	// the wiring cannot be a constructor argument in both directions).
+	trustSyncer TrustSyncer
+	logger      *slog.Logger
 
 	// execCommand is the function used to create exec.Cmd instances.
 	// It defaults to exec.CommandContext and can be overridden in tests.
@@ -138,6 +157,14 @@ func (s *BrowserService) SetContext(ctx context.Context) {
 	s.ctx = ctx
 }
 
+// SetTrustSyncer wires the browser certificate-database injector. Without it,
+// IncludeTrustBundle only reaches OpenSSL-based child processes — no browser.
+func (s *BrowserService) SetTrustSyncer(syncer TrustSyncer) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.trustSyncer = syncer
+}
+
 // SetTrustBundlePath configures the path to the PEM trust bundle that
 // will be applied to browser processes via the SSL_CERT_FILE environment
 // variable.
@@ -175,6 +202,12 @@ func (s *BrowserService) OpenURL(url string) error {
 		"default_browser", config.DefaultBrowser,
 		"custom_command", config.CustomCommand,
 	)
+
+	// Make the browser actually trust the platform CAs before it starts.
+	// A sync failure is logged, not fatal: the user asked to open a URL, and
+	// refusing to launch would be a worse outcome than launching into a
+	// certificate warning they can still read.
+	s.syncBrowserTrust()
 
 	// Custom command takes precedence.
 	if config.CustomCommand != "" {
@@ -315,6 +348,23 @@ func (s *BrowserService) openBrowserBinary(ctx context.Context, binary, url stri
 	return nil
 }
 
+// syncBrowserTrust injects the trust store into the browsers' certificate
+// databases when IncludeTrustBundle is configured.
+func (s *BrowserService) syncBrowserTrust() {
+	s.mu.RLock()
+	syncer := s.trustSyncer
+	include := s.config.IncludeTrustBundle
+	s.mu.RUnlock()
+
+	if !include || syncer == nil {
+		return
+	}
+	if err := syncer.Rebuild(); err != nil {
+		s.logger.Warn("browser trust sync failed; the browser may not trust platform certificates",
+			"error", err)
+	}
+}
+
 // applyTrustBundle sets environment variables on the command to load the
 // custom CA trust bundle. This works for browsers that use the system's
 // SSL/TLS library (OpenSSL, NSS, GnuTLS). The SSL_CERT_FILE environment
@@ -336,8 +386,11 @@ func (s *BrowserService) applyTrustBundle(cmd *exec.Cmd) {
 		return
 	}
 
+	// SSL_CERT_FILE reaches OpenSSL-based children (curl, native-messaging
+	// helpers, anything linking OpenSSL) — NOT the browser itself. Browser
+	// trust comes from syncBrowserTrust writing into NSS / cert9.db.
 	cmd.Env = append(os.Environ(), "SSL_CERT_FILE="+bundlePath)
-	s.logger.Debug("applied trust bundle to browser command",
+	s.logger.Debug("applied trust bundle to child environment (OpenSSL consumers only)",
 		"bundle", bundlePath)
 }
 

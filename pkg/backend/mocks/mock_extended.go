@@ -406,6 +406,10 @@ func (e *MockSymmetricEncrypter) Decrypt(encrypted *types.EncryptedData, opts *t
 		return nil, e.DecryptError
 	}
 
+	if encrypted == nil {
+		return nil, &errs.Message{Msg: "mocks: encrypted data is nil"}
+	}
+
 	block, err := aes.NewCipher(e.KeyMaterial)
 	if err != nil {
 		return nil, &errs.Wrapped{Msg: "failed to create cipher", Err: err}
@@ -414,6 +418,14 @@ func (e *MockSymmetricEncrypter) Decrypt(encrypted *types.EncryptedData, opts *t
 	gcm, err := cipher.NewGCM(block)
 	if err != nil {
 		return nil, &errs.Wrapped{Msg: "failed to create GCM", Err: err}
+	}
+
+	// crypto/cipher panics rather than returning an error when the nonce is
+	// not exactly NonceSize bytes. Validate before calling Open so a
+	// misbehaving caller under test gets an error instead of a panic.
+	if len(encrypted.Nonce) != gcm.NonceSize() {
+		return nil, &errs.Message{Msg: fmt.Sprintf(
+			"mocks: nonce is %d bytes, want %d", len(encrypted.Nonce), gcm.NonceSize())}
 	}
 
 	var aad []byte

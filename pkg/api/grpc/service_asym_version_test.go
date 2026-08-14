@@ -292,7 +292,11 @@ func TestService_EncryptAsym(t *testing.T) {
 		}
 	})
 
-	t.Run("encrypts data with unknown hash defaults to SHA256", func(t *testing.T) {
+	// An OAEP hash name the caller did supply that does not resolve must be
+	// refused. Defaulting it to SHA-256 produces a ciphertext under a hash the
+	// caller did not choose, and the peer that decrypts it has no way to know
+	// which hash was actually used.
+	t.Run("unknown hash is refused, not defaulted", func(t *testing.T) {
 		// Generate RSA key first
 		_, err := service.GenerateKey(context.Background(), &pb.GenerateKeyRequest{
 			KeyId:   "rsa-asym-key-unknown-hash",
@@ -304,19 +308,20 @@ func TestService_EncryptAsym(t *testing.T) {
 			t.Fatalf("Failed to generate RSA key: %v", err)
 		}
 
-		// Encrypt with RSA key using unknown hash (should default to SHA256)
 		resp, err := service.EncryptAsym(context.Background(), &pb.EncryptAsymRequest{
 			KeyId:     "rsa-asym-key-unknown-hash",
 			Backend:   "software",
 			Plaintext: []byte("test data to encrypt"),
 			Hash:      "unknown-hash",
 		})
-		if err != nil {
-			t.Fatalf("EncryptAsym failed: %v", err)
+		if err == nil {
+			t.Fatal("EncryptAsym with an unresolvable hash must return an error")
 		}
-
-		if len(resp.Ciphertext) == 0 {
-			t.Error("Expected non-empty ciphertext")
+		if status.Code(err) != codes.InvalidArgument {
+			t.Errorf("Expected InvalidArgument, got %v", status.Code(err))
+		}
+		if resp != nil {
+			t.Error("Expected no ciphertext when the hash is refused")
 		}
 	})
 
@@ -345,8 +350,13 @@ func TestService_EncryptAsym(t *testing.T) {
 		if !ok {
 			t.Fatal("Expected gRPC status error")
 		}
-		if st.Code() != codes.InvalidArgument {
-			t.Errorf("Expected InvalidArgument, got %v", st.Code())
+		// The key-type check belongs to the service layer, which has to make
+		// it against the resolved public key rather than against
+		// KeyAttributes.KeyAlgorithm, and which reports it as
+		// xkms.ErrEncryptionFailed -- codes.Internal. It is the same answer
+		// QUIC already gave for the identical request.
+		if st.Code() != codes.Internal {
+			t.Errorf("Expected Internal, got %v", st.Code())
 		}
 	})
 
@@ -374,54 +384,13 @@ func TestService_EncryptAsym(t *testing.T) {
 		if !ok {
 			t.Fatal("Expected gRPC status error")
 		}
-		if st.Code() != codes.InvalidArgument {
-			t.Errorf("Expected InvalidArgument, got %v", st.Code())
+		// The key-type check belongs to the service layer, which has to make
+		// it against the resolved public key rather than against
+		// KeyAttributes.KeyAlgorithm, and which reports it as
+		// xkms.ErrEncryptionFailed -- codes.Internal. It is the same answer
+		// QUIC already gave for the identical request.
+		if st.Code() != codes.Internal {
+			t.Errorf("Expected Internal, got %v", st.Code())
 		}
 	})
-}
-
-// TestParseHashAlgorithmForOAEP tests the hash parsing helper function.
-// SHA-1 inputs must be rejected with an error; everything else resolves to
-// SHA-256 or stronger.
-func TestParseHashAlgorithmForOAEP(t *testing.T) {
-	testCases := []struct {
-		name      string
-		input     string
-		expected  string
-		expectErr bool
-	}{
-		{"empty string defaults to SHA256", "", "SHA-256", false},
-		{"sha256 lowercase", "sha256", "SHA-256", false},
-		{"SHA-256 uppercase with dash", "SHA-256", "SHA-256", false},
-		{"256 only", "256", "SHA-256", false},
-		{"sha384 lowercase", "sha384", "SHA-384", false},
-		{"SHA-384 uppercase with dash", "SHA-384", "SHA-384", false},
-		{"384 only", "384", "SHA-384", false},
-		{"sha512 lowercase", "sha512", "SHA-512", false},
-		{"SHA-512 uppercase with dash", "SHA-512", "SHA-512", false},
-		{"512 only", "512", "SHA-512", false},
-		{"sha1 lowercase is rejected", "sha1", "", true},
-		{"SHA-1 uppercase with dash is rejected", "SHA-1", "", true},
-		{"1 only is rejected", "1", "", true},
-		{"unknown defaults to SHA256", "md5", "SHA-256", false},
-	}
-
-	for _, tc := range testCases {
-		t.Run(tc.name, func(t *testing.T) {
-			result, err := parseHashAlgorithmForOAEP(tc.input)
-			if tc.expectErr {
-				if err == nil {
-					t.Errorf("parseHashAlgorithmForOAEP(%q) = %s, expected error", tc.input, result.String())
-				}
-				return
-			}
-			if err != nil {
-				t.Errorf("parseHashAlgorithmForOAEP(%q) returned unexpected error: %v", tc.input, err)
-				return
-			}
-			if result.String() != tc.expected {
-				t.Errorf("parseHashAlgorithmForOAEP(%q) = %s, expected %s", tc.input, result.String(), tc.expected)
-			}
-		})
-	}
 }

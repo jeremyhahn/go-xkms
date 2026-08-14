@@ -1105,7 +1105,14 @@ func TestEncryptAsymHandler(t *testing.T) {
 
 		router.ServeHTTP(w, req)
 
-		assert.Equal(t, http.StatusBadRequest, w.Code)
+		// The key-type check belongs to the service layer, which has to make it
+		// against the resolved public key rather than against
+		// KeyAttributes.KeyAlgorithm, and which reports it as
+		// xkms.ErrEncryptionFailed -- a 500. This is the same answer gRPC and
+		// QUIC already gave for the identical request; this handler used to
+		// answer 400 only because it repeated the check locally, which is the
+		// duplication that let the hash handling diverge in the first place.
+		assert.Equal(t, http.StatusInternalServerError, w.Code)
 	})
 
 	t.Run("supports different hash algorithms", func(t *testing.T) {
@@ -1761,7 +1768,7 @@ func TestWrapKeyHandler(t *testing.T) {
 
 	t.Run("returns error for missing key_material", func(t *testing.T) {
 		ctx := newTestHandlerContext()
-		body := `{"wrapping_public_key_pem": "test", "algorithm": "RSA-OAEP"}`
+		body := `{"backend": "test-backend", "wrapping_public_key_pem": "test", "algorithm": "RSA-OAEP"}`
 		req := httptest.NewRequest(http.MethodPost, "/api/v1/keys/wrap", strings.NewReader(body))
 		w := httptest.NewRecorder()
 
@@ -1772,7 +1779,7 @@ func TestWrapKeyHandler(t *testing.T) {
 
 	t.Run("returns error for missing wrapping_public_key_pem", func(t *testing.T) {
 		ctx := newTestHandlerContext()
-		body := `{"key_material": "dGVzdA==", "algorithm": "RSA-OAEP"}`
+		body := `{"backend": "test-backend", "key_material": "dGVzdA==", "algorithm": "RSA-OAEP"}`
 		req := httptest.NewRequest(http.MethodPost, "/api/v1/keys/wrap", strings.NewReader(body))
 		w := httptest.NewRecorder()
 
@@ -1783,7 +1790,7 @@ func TestWrapKeyHandler(t *testing.T) {
 
 	t.Run("returns error for missing algorithm", func(t *testing.T) {
 		ctx := newTestHandlerContext()
-		body := `{"key_material": "dGVzdA==", "wrapping_public_key_pem": "test"}`
+		body := `{"backend": "test-backend", "key_material": "dGVzdA==", "wrapping_public_key_pem": "test"}`
 		req := httptest.NewRequest(http.MethodPost, "/api/v1/keys/wrap", strings.NewReader(body))
 		w := httptest.NewRecorder()
 
@@ -1794,7 +1801,7 @@ func TestWrapKeyHandler(t *testing.T) {
 
 	t.Run("returns error for invalid wrapping public key PEM", func(t *testing.T) {
 		ctx := newTestHandlerContext()
-		body := `{"key_material": "dGVzdA==", "wrapping_public_key_pem": "invalid-pem", "algorithm": "RSA-OAEP"}`
+		body := `{"backend": "test-backend", "key_material": "dGVzdA==", "wrapping_public_key_pem": "invalid-pem", "algorithm": "RSA-OAEP"}`
 		req := httptest.NewRequest(http.MethodPost, "/api/v1/keys/wrap", strings.NewReader(body))
 		w := httptest.NewRecorder()
 
@@ -1818,7 +1825,7 @@ func TestUnwrapKeyHandler(t *testing.T) {
 
 	t.Run("returns error for missing wrapped_key", func(t *testing.T) {
 		ctx := newTestHandlerContext()
-		body := `{"wrapping_public_key_pem": "test", "algorithm": "RSA-OAEP"}`
+		body := `{"backend": "test-backend", "wrapping_public_key_pem": "test", "algorithm": "RSA-OAEP"}`
 		req := httptest.NewRequest(http.MethodPost, "/api/v1/keys/unwrap", strings.NewReader(body))
 		w := httptest.NewRecorder()
 
@@ -1829,7 +1836,7 @@ func TestUnwrapKeyHandler(t *testing.T) {
 
 	t.Run("returns error for missing wrapping_public_key_pem", func(t *testing.T) {
 		ctx := newTestHandlerContext()
-		body := `{"wrapped_key": "dGVzdA==", "algorithm": "RSA-OAEP"}`
+		body := `{"backend": "test-backend", "wrapped_key": "dGVzdA==", "algorithm": "RSA-OAEP"}`
 		req := httptest.NewRequest(http.MethodPost, "/api/v1/keys/unwrap", strings.NewReader(body))
 		w := httptest.NewRecorder()
 
@@ -1840,7 +1847,7 @@ func TestUnwrapKeyHandler(t *testing.T) {
 
 	t.Run("returns error for missing algorithm", func(t *testing.T) {
 		ctx := newTestHandlerContext()
-		body := `{"wrapped_key": "dGVzdA==", "wrapping_public_key_pem": "test"}`
+		body := `{"backend": "test-backend", "wrapped_key": "dGVzdA==", "wrapping_public_key_pem": "test"}`
 		req := httptest.NewRequest(http.MethodPost, "/api/v1/keys/unwrap", strings.NewReader(body))
 		w := httptest.NewRecorder()
 
@@ -1851,7 +1858,7 @@ func TestUnwrapKeyHandler(t *testing.T) {
 
 	t.Run("returns error for invalid wrapping public key PEM", func(t *testing.T) {
 		ctx := newTestHandlerContext()
-		body := `{"wrapped_key": "dGVzdA==", "wrapping_public_key_pem": "invalid-pem", "algorithm": "RSA-OAEP"}`
+		body := `{"backend": "test-backend", "wrapped_key": "dGVzdA==", "wrapping_public_key_pem": "invalid-pem", "algorithm": "RSA-OAEP"}`
 		req := httptest.NewRequest(http.MethodPost, "/api/v1/keys/unwrap", strings.NewReader(body))
 		w := httptest.NewRecorder()
 
@@ -2124,7 +2131,8 @@ func TestCopyKeyHandler(t *testing.T) {
 // TestBuildKeyAttributes tests building key attributes from request parameters
 func TestBuildKeyAttributes(t *testing.T) {
 	t.Run("builds RSA attributes", func(t *testing.T) {
-		attrs := buildKeyAttributes("test-key", "rsa", 4096, "", "", 0)
+		attrs, err := buildKeyAttributes("test-key", "rsa", 4096, "", "", 0)
+		require.NoError(t, err)
 		assert.Equal(t, "test-key", attrs.CN)
 		assert.Equal(t, x509.RSA, attrs.KeyAlgorithm)
 		assert.NotNil(t, attrs.RSAAttributes)
@@ -2132,30 +2140,35 @@ func TestBuildKeyAttributes(t *testing.T) {
 	})
 
 	t.Run("builds RSA attributes with default key size", func(t *testing.T) {
-		attrs := buildKeyAttributes("test-key", "rsa", 0, "", "", 0)
+		attrs, err := buildKeyAttributes("test-key", "rsa", 0, "", "", 0)
+		require.NoError(t, err)
 		assert.NotNil(t, attrs.RSAAttributes)
 		assert.Equal(t, types.RSAKeySize2048, attrs.RSAAttributes.KeySize)
 	})
 
 	t.Run("builds ECDSA attributes", func(t *testing.T) {
-		attrs := buildKeyAttributes("test-key", "ecdsa", 0, "P384", "", 0)
+		attrs, err := buildKeyAttributes("test-key", "ecdsa", 0, "P384", "", 0)
+		require.NoError(t, err)
 		assert.Equal(t, "test-key", attrs.CN)
 		assert.Equal(t, x509.ECDSA, attrs.KeyAlgorithm)
 		assert.NotNil(t, attrs.ECCAttributes)
 	})
 
 	t.Run("builds ECDSA attributes with default curve", func(t *testing.T) {
-		attrs := buildKeyAttributes("test-key", "ecdsa", 0, "", "", 0)
+		attrs, err := buildKeyAttributes("test-key", "ecdsa", 0, "", "", 0)
+		require.NoError(t, err)
 		assert.NotNil(t, attrs.ECCAttributes)
 	})
 
 	t.Run("builds Ed25519 attributes", func(t *testing.T) {
-		attrs := buildKeyAttributes("test-key", "ed25519", 0, "", "", 0)
+		attrs, err := buildKeyAttributes("test-key", "ed25519", 0, "", "", 0)
+		require.NoError(t, err)
 		assert.Equal(t, x509.Ed25519, attrs.KeyAlgorithm)
 	})
 
 	t.Run("builds symmetric attributes", func(t *testing.T) {
-		attrs := buildKeyAttributes("test-key", "symmetric", 0, "", "", 256)
+		attrs, err := buildKeyAttributes("test-key", "symmetric", 0, "", "", 256)
+		require.NoError(t, err)
 		assert.Equal(t, types.KeyTypeSecret, attrs.KeyType)
 		assert.Equal(t, types.SymmetricAES256GCM, attrs.SymmetricAlgorithm)
 	})
@@ -2173,19 +2186,34 @@ func TestBuildKeyAttributes(t *testing.T) {
 		}
 
 		for _, tc := range tests {
-			attrs := buildKeyAttributes("test-key", "symmetric", 0, "", "", tc.size)
+			attrs, err := buildKeyAttributes("test-key", "symmetric", 0, "", "", tc.size)
+			require.NoError(t, err)
 			assert.Equal(t, tc.expected, attrs.SymmetricAlgorithm, "size=%d", tc.size)
 		}
 	})
 
 	t.Run("sets hash algorithm", func(t *testing.T) {
-		attrs := buildKeyAttributes("test-key", "rsa", 0, "", "sha384", 0)
+		attrs, err := buildKeyAttributes("test-key", "rsa", 0, "", "sha384", 0)
+		require.NoError(t, err)
 		assert.Equal(t, crypto.SHA384, attrs.Hash)
 	})
 
 	t.Run("uses default hash for empty string", func(t *testing.T) {
-		attrs := buildKeyAttributes("test-key", "rsa", 0, "", "", 0)
+		attrs, err := buildKeyAttributes("test-key", "rsa", 0, "", "", 0)
+		require.NoError(t, err)
 		assert.Equal(t, crypto.SHA256, attrs.Hash)
+	})
+
+	// A hash name the caller did supply that does not resolve must be an
+	// error, not a SHA-256 substitution. A key whose attributes name a digest
+	// the caller never chose signs with that digest for the rest of its life.
+	t.Run("unresolvable hash is an error, not a default", func(t *testing.T) {
+		for _, hash := range []string{"not-a-hash", "MD5", "SHA-1", "SHA-999"} {
+			attrs, err := buildKeyAttributes("test-key", "rsa", 0, "", hash, 0)
+			require.Error(t, err, hash)
+			require.ErrorIs(t, err, xkms.ErrInvalidHashFunction, hash)
+			assert.Nil(t, attrs, hash)
+		}
 	})
 }
 

@@ -740,10 +740,13 @@ func TestAvailableHashes(t *testing.T) {
 	assert.Equal(t, crypto.SHA256, hashes["SHA-256"])
 	assert.Equal(t, crypto.SHA384, hashes["SHA-384"])
 	assert.Equal(t, crypto.SHA512, hashes["SHA-512"])
-	assert.Equal(t, crypto.SHA1, hashes["SHA-1"])
-	assert.Equal(t, crypto.MD5, hashes["MD5"])
 	assert.Equal(t, crypto.SHA3_256, hashes["SHA3-256"])
-	assert.Equal(t, crypto.BLAKE2b_256, hashes["BLAKE2b-256"])
+
+	// The collision-broken digests are refused until a deployment opts in via
+	// crypto.allow_weak_hashes (and never in FIPS mode); see
+	// TestAvailableHashes_AdmitsWeakHashesUnderPolicy for the accept side.
+	assert.NotContains(t, hashes, "SHA-1")
+	assert.NotContains(t, hashes, "MD5")
 }
 
 func TestAvailableSignatureAlgorithms(t *testing.T) {
@@ -1122,25 +1125,27 @@ func TestParseHash(t *testing.T) {
 		s    string
 		want crypto.Hash
 	}{
-		{"MD4", "MD4", crypto.MD4},
-		{"MD5", "MD5", crypto.MD5},
-		{"SHA1", "SHA1", crypto.SHA1},
+		{"MD4", "MD4", weakOr(crypto.MD4)},
+		{"MD5", "MD5", weakOr(crypto.MD5)},
+		{"SHA1", "SHA1", weakOr(crypto.SHA1)},
 		{"SHA224", "SHA224", crypto.SHA224},
 		{"SHA256", "SHA256", crypto.SHA256},
 		{"SHA384", "SHA384", crypto.SHA384},
 		{"SHA512", "SHA512", crypto.SHA512},
-		{"MD5SHA1", "MD5SHA1", crypto.MD5SHA1},
-		{"RIPEMD160", "RIPEMD160", crypto.RIPEMD160},
+		{"MD5SHA1", "MD5SHA1", weakOr(crypto.MD5SHA1)},
+		{"RIPEMD160", "RIPEMD160", weakOr(crypto.RIPEMD160)},
 		{"SHA3_224", "SHA3_224", crypto.SHA3_224},
 		{"SHA3_256", "SHA3_256", crypto.SHA3_256},
 		{"SHA3_384", "SHA3_384", crypto.SHA3_384},
 		{"SHA3_512", "SHA3_512", crypto.SHA3_512},
 		{"SHA512_224", "SHA512_224", crypto.SHA512_224},
 		{"SHA512_256", "SHA512_256", crypto.SHA512_256},
-		{"BLAKE2s_256", "BLAKE2s_256", crypto.BLAKE2s_256},
-		{"BLAKE2b_256", "BLAKE2b_256", crypto.BLAKE2b_256},
-		{"BLAKE2b_384", "BLAKE2b_384", crypto.BLAKE2b_384},
-		{"BLAKE2b_512", "BLAKE2b_512", crypto.BLAKE2b_512},
+		// BLAKE2 is only linked when something imports golang.org/x/crypto/blake2*.
+		// ParseHash refuses an unlinked hash because crypto.Hash.New panics for
+		// one; see TestParseHash_RefusesUnlinkedHashes.
+		{"BLAKE2b_256", "BLAKE2b_256", blake2Or(crypto.BLAKE2b_256)},
+		{"BLAKE2b_384", "BLAKE2b_384", blake2Or(crypto.BLAKE2b_384)},
+		{"BLAKE2b_512", "BLAKE2b_512", blake2Or(crypto.BLAKE2b_512)},
 		{"WithHyphen", "SHA3-256", crypto.SHA3_256},
 		{"Lowercase", "sha256", crypto.SHA256},
 		{"WithWhitespace", "  SHA256  ", crypto.SHA256},
@@ -1709,4 +1714,69 @@ func TestCapabilities_String_IncludesSecurityLevel(t *testing.T) {
 	str := caps.String()
 	assert.Contains(t, str, "SecurityLevel")
 	assert.Contains(t, str, "High")
+}
+
+// TestAvailableHashes_OnlyReturnsConstructibleHashes is the panic regression
+// guard. AvailableHashes previously returned every hash name this package knows,
+// including MD4, RIPEMD-160, MD5+SHA1 and the BLAKE2 family, whose
+// implementations are only linked when something imports their package.
+// crypto.Hash.New panics for an unlinked hash rather than returning an error, so
+// a caller-supplied algorithm name — KDFParams.Hash arrives from API request
+// bodies — could kill the process instead of being rejected.
+//
+// Calling New on every returned entry is the assertion: it panics against the
+// unfiltered version.
+func TestAvailableHashes_OnlyReturnsConstructibleHashes(t *testing.T) {
+	hashes := AvailableHashes()
+	if len(hashes) == 0 {
+		t.Fatal("AvailableHashes returned nothing")
+	}
+
+	for name, h := range hashes {
+		if !h.Available() {
+			t.Errorf("%q reports Available() == false but was returned", name)
+			continue
+		}
+		// New panics for an unlinked hash; a passing call is the real proof.
+		if got := h.New(); got == nil {
+			t.Errorf("%q constructed a nil hash", name)
+		}
+	}
+}
+
+// TestAvailableHashes_ExcludesUnlinkedHashes asserts the filter actually removes
+// something in this build. If every known hash were linked, the test above would
+// pass vacuously and would not prove the filter works.
+func TestAvailableHashes_ExcludesUnlinkedHashes(t *testing.T) {
+	hashes := AvailableHashes()
+
+	var excluded []string
+	for name, h := range allKnownHashes {
+		if !h.Available() {
+			excluded = append(excluded, name)
+			if _, present := hashes[name]; present {
+				t.Errorf("%q is not linked into the binary but was returned", name)
+			}
+		}
+	}
+
+	// The filter must have something to do in this build, otherwise the
+	// assertion above passes vacuously and proves nothing.
+	if len(excluded) == 0 {
+		t.Fatal("every known hash is linked in this build, so the filter is untested here; " +
+			"if a dependency started linking MD4/RIPEMD-160, pick a different unlinked hash")
+	}
+	t.Logf("filtered %d unlinked hash name(s), e.g. %v", len(excluded), excluded[:min(3, len(excluded))])
+}
+
+// TestAvailableHashes_RetainsCoreAlgorithms guards against the filter being too
+// aggressive: the SHA-2 family underpins every signing and KDF path and must
+// always survive.
+func TestAvailableHashes_RetainsCoreAlgorithms(t *testing.T) {
+	hashes := AvailableHashes()
+	for _, name := range []string{"SHA-256", "SHA-384", "SHA-512", "sha256", "SHA256"} {
+		if _, ok := hashes[name]; !ok {
+			t.Errorf("core hash %q missing from AvailableHashes", name)
+		}
+	}
 }

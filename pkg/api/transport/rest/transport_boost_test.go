@@ -1141,12 +1141,12 @@ func TestClaimCertComplete_InvalidJSON(t *testing.T) {
 	assert.Contains(t, err.Error(), "failed to parse response")
 }
 
-func TestClaimShare_InvalidJSON(t *testing.T) {
+func TestClaimShareBegin_InvalidJSON(t *testing.T) {
 	srv, tr := newInvalidJSONServer(t)
 	defer srv.Close()
 	defer tr.Close()
 
-	_, err := tr.ClaimShare(context.Background(), &transport.ClaimShareRequest{})
+	_, err := tr.ClaimShareBegin(context.Background(), &transport.ClaimShareBeginRequest{})
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "failed to parse response")
 }
@@ -2383,10 +2383,10 @@ func TestClaimCertComplete_NotConnected(t *testing.T) {
 	assert.ErrorIs(t, err, ErrNotConnected)
 }
 
-func TestClaimShare_NotConnected(t *testing.T) {
+func TestClaimShareBegin_NotConnected(t *testing.T) {
 	tr, err := NewWithConfig(nil)
 	require.NoError(t, err)
-	_, err = tr.ClaimShare(context.Background(), &transport.ClaimShareRequest{})
+	_, err = tr.ClaimShareBegin(context.Background(), &transport.ClaimShareBeginRequest{})
 	assert.ErrorIs(t, err, ErrNotConnected)
 }
 

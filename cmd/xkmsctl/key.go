@@ -16,12 +16,14 @@ package main
 import (
 	"context"
 	"crypto"
+	"crypto/rand"
 	"crypto/x509"
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 
 	client "github.com/jeremyhahn/go-xkms/sdk/go"
 	"github.com/spf13/cobra"
@@ -52,15 +54,17 @@ var keyGenerateCmd = &cobra.Command{
 		keySize, _ := cmd.Flags().GetInt("key-size")
 		curve, _ := cmd.Flags().GetString("curve")
 		exportable, _ := cmd.Flags().GetBool("exportable")
+		sensitive, _ := cmd.Flags().GetBool("sensitive")
 
-		printVerbose("Generating %s key with ID: %s (exportable: %v)", keyType, keyID, exportable)
+		printVerbose("Generating %s key with ID: %s (exportable: %v, sensitive: %v)",
+			keyType, keyID, exportable, sensitive)
 
-		generateKey(cfg, printer, keyID, keyType, algorithm, keyAlgorithm, keySize, curve, exportable)
+		generateKey(cfg, printer, keyID, keyType, algorithm, keyAlgorithm, keySize, curve, exportable, sensitive)
 	},
 }
 
 // generateKey generates a key using the SDK client
-func generateKey(cfg *Config, printer *Printer, keyID, keyType, algorithm, keyAlgorithm string, keySize int, curve string, exportable bool) {
+func generateKey(cfg *Config, printer *Printer, keyID, keyType, algorithm, keyAlgorithm string, keySize int, curve string, exportable, sensitive bool) {
 	cl, err := cfg.CreateClient()
 	if err != nil {
 		handleError(&WrappedError{Sentinel: ErrCreateClientFailed, Err: err})
@@ -96,9 +100,10 @@ func generateKey(cfg *Config, printer *Printer, keyID, keyType, algorithm, keyAl
 		Curve:      curve,
 		Algorithm:  algoForRequest,
 		Exportable: exportable,
+		Sensitive:  sensitive,
 	}
 
-	printVerbose("Generating key with exportable=%v", exportable)
+	printVerbose("Generating key with exportable=%v sensitive=%v", exportable, sensitive)
 
 	resp, err := cl.GenerateKey(ctx, req)
 	if err != nil {
@@ -684,12 +689,45 @@ var keyImportCmd = &cobra.Command{
 
 		printVerbose("Wrapped key algorithm: %s", wrapped.Algorithm)
 
-		importKey(cfg, printer, keyID, &wrapped)
+		importKeyType, _ := cmd.Flags().GetString("key-type")
+		importKeySize, _ := cmd.Flags().GetInt("key-size")
+		importAESKeySize, _ := cmd.Flags().GetInt("aes-key-size")
+		importCurve, _ := cmd.Flags().GetString("curve")
+		importHash, _ := cmd.Flags().GetString("hash")
+		importPartition, _ := cmd.Flags().GetString("partition")
+
+		spec := importKeySpec{
+			keyType:    strings.TrimSpace(importKeyType),
+			keySize:    importKeySize,
+			aesKeySize: importAESKeySize,
+			curve:      strings.TrimSpace(importCurve),
+			hash:       strings.TrimSpace(importHash),
+			partition:  strings.TrimSpace(importPartition),
+		}
+		if spec.keyType == "" {
+			handleError(ErrImportKeyTypeRequired)
+			return
+		}
+
+		importKey(cfg, printer, keyID, &wrapped, spec)
 	},
 }
 
+// importKeySpec carries the key's own parameters, which the wrapped material
+// cannot supply. The server receives ciphertext and an unwrapping key; nothing
+// in that describes the algorithm, modulus size or curve of what is inside, so
+// the caller has to state it.
+type importKeySpec struct {
+	keyType    string
+	keySize    int
+	aesKeySize int
+	curve      string
+	hash       string
+	partition  string
+}
+
 // importKey imports a wrapped key using the SDK client
-func importKey(cfg *Config, printer *Printer, keyID string, wrapped *client.WrappedKeyMaterial) {
+func importKey(cfg *Config, printer *Printer, keyID string, wrapped *client.WrappedKeyMaterial, spec importKeySpec) {
 	cl, err := cfg.CreateClient()
 	if err != nil {
 		handleError(&WrappedError{Sentinel: ErrCreateClientFailed, Err: err})
@@ -710,6 +748,12 @@ func importKey(cfg *Config, printer *Printer, keyID string, wrapped *client.Wrap
 		KeyID:              keyID,
 		WrappedKeyMaterial: wrapped.WrappedKey,
 		Algorithm:          string(wrapped.Algorithm),
+		KeyType:            spec.keyType,
+		KeySize:            spec.keySize,
+		AESKeySize:         spec.aesKeySize,
+		Curve:              spec.curve,
+		Hash:               spec.hash,
+		Partition:          spec.partition,
 	}
 
 	_, err = cl.ImportKey(ctx, req)
@@ -1180,6 +1224,515 @@ func unwrapKey(cfg *Config, printer *Printer, wrapped *client.WrappedKeyMaterial
 	}
 }
 
+// keyAttestCmd requests key attestation from a backend.
+var keyAttestCmd = &cobra.Command{
+	Use:   "attest <key-id>",
+	Short: "Attest that a key resides in hardware",
+	Long: `Request a key attestation statement from the backend, proving the
+key was created in hardware (TPM 2.0, TEE/StrongBox, etc.) and never
+left the secure boundary.
+
+A random 32-byte nonce is generated for freshness unless --nonce is
+provided (base64).
+
+Examples:
+  xkmsctl key attest my-key --backend tpm2
+  xkmsctl key attest my-key --backend tpm2 --output attestation.json`,
+	Args: cobra.ExactArgs(1),
+	Run: func(cmd *cobra.Command, args []string) {
+		keyID := args[0]
+		cfg := getConfig()
+		printer := NewPrinter(cfg.OutputFormat, os.Stdout)
+
+		nonceBase64, _ := cmd.Flags().GetString("nonce")
+		outputFile, _ := cmd.Flags().GetString("output")
+
+		var nonce []byte
+		if nonceBase64 != "" {
+			decoded, err := base64.StdEncoding.DecodeString(nonceBase64)
+			if err != nil {
+				handleError(&WrappedError{Sentinel: ErrInvalidBase64Nonce, Err: err})
+				return
+			}
+			nonce = decoded
+		} else {
+			nonce = make([]byte, 32)
+			if _, err := rand.Read(nonce); err != nil {
+				handleError(&WrappedError{Sentinel: ErrGenerateNonceFailed, Err: err})
+				return
+			}
+		}
+
+		printVerbose("Requesting attestation for key: %s", keyID)
+
+		attestKey(cfg, printer, keyID, nonce, outputFile)
+	},
+}
+
+// attestKey requests key attestation using the SDK client.
+func attestKey(cfg *Config, printer *Printer, keyID string, nonce []byte, outputFile string) {
+	cl, err := cfg.CreateClient()
+	if err != nil {
+		handleError(&WrappedError{Sentinel: ErrCreateClientFailed, Err: err})
+		return
+	}
+	defer func() { _ = cl.Close() }()
+
+	ctx := context.Background()
+	if err := cl.Connect(ctx); err != nil {
+		handleError(&WrappedError{Sentinel: ErrConnectFailed, Err: err})
+		return
+	}
+
+	printVerbose("Connected to xkmsd")
+
+	req := &client.AttestKeyRequest{
+		Backend: cfg.Backend,
+		KeyID:   keyID,
+		Nonce:   nonce,
+	}
+
+	resp, err := cl.AttestKey(ctx, req)
+	if err != nil {
+		handleError(&WrappedError{Sentinel: ErrAttestKeyFailed, Err: err})
+		return
+	}
+
+	if outputFile != "" {
+		data, err := json.MarshalIndent(resp, "", "  ")
+		if err != nil {
+			handleError(&WrappedError{Sentinel: ErrJSONMarshalFailed, Err: err})
+			return
+		}
+		if err := os.WriteFile(outputFile, data, 0600); err != nil {
+			handleError(&WrappedError{Sentinel: ErrWriteAttestationFileFailed, Err: err})
+			return
+		}
+		if err := printer.PrintSuccess(fmt.Sprintf("Attestation written to: %s", outputFile)); err != nil {
+			handleError(err)
+		}
+		return
+	}
+
+	switch printer.format {
+	case OutputFormatJSON:
+		if err := printer.PrintJSON(resp); err != nil {
+			handleError(err)
+		}
+	case OutputFormatTable, OutputFormatText:
+		_, _ = fmt.Fprintf(printer.writer, "Key Attestation:\n")
+		_, _ = fmt.Fprintf(printer.writer, "  Backend:      %s\n", resp.Backend)
+		_, _ = fmt.Fprintf(printer.writer, "  Format:       %s\n", resp.Format)
+		if resp.SignatureAlgorithm != "" {
+			_, _ = fmt.Fprintf(printer.writer, "  Sig Alg:      %s\n", resp.SignatureAlgorithm)
+		}
+		_, _ = fmt.Fprintf(printer.writer, "  Nonce:        %s\n", base64.StdEncoding.EncodeToString(resp.Nonce))
+		_, _ = fmt.Fprintf(printer.writer, "  Data:         %s\n", base64.StdEncoding.EncodeToString(resp.AttestationData))
+		_, _ = fmt.Fprintf(printer.writer, "  Signature:    %s\n", base64.StdEncoding.EncodeToString(resp.Signature))
+		_, _ = fmt.Fprintf(printer.writer, "  Certificates: %d\n", len(resp.CertificateChain))
+	}
+}
+
+// keyDeriveECDHCmd performs ECDH key agreement and derives a symmetric key.
+var keyDeriveECDHCmd = &cobra.Command{
+	Use:   "derive-ecdh <key-id>",
+	Short: "Derive a symmetric key via ECDH key agreement",
+	Long: `Perform ECDH key agreement between the named private key and a peer
+public key, then derive a symmetric key with the selected KDF. The
+private key never leaves the backend's secure boundary.
+
+The peer public key file must contain the key in DER or uncompressed
+point format on the same curve as the private key.
+
+Examples:
+  xkmsctl key derive-ecdh my-ec-key --peer-key peer.der
+  xkmsctl key derive-ecdh my-ec-key --peer-key peer.der --kdf HKDF --kdf-hash SHA-384 --length 32`,
+	Args: cobra.ExactArgs(1),
+	Run: func(cmd *cobra.Command, args []string) {
+		keyID := args[0]
+		cfg := getConfig()
+		printer := NewPrinter(cfg.OutputFormat, os.Stdout)
+
+		peerKeyFile, _ := cmd.Flags().GetString("peer-key")
+		kdf, _ := cmd.Flags().GetString("kdf")
+		kdfHash, _ := cmd.Flags().GetString("kdf-hash")
+		saltBase64, _ := cmd.Flags().GetString("salt")
+		info, _ := cmd.Flags().GetString("info")
+		label, _ := cmd.Flags().GetString("label")
+		keyLength, _ := cmd.Flags().GetInt("length")
+		outputFile, _ := cmd.Flags().GetString("output")
+
+		if peerKeyFile == "" {
+			handleError(ErrPeerPublicKeyRequired)
+			return
+		}
+
+		peerKey, err := os.ReadFile(filepath.Clean(peerKeyFile))
+		if err != nil {
+			handleError(&WrappedError{Sentinel: ErrReadPublicKeyFileFailed, Err: err})
+			return
+		}
+
+		var salt []byte
+		if saltBase64 != "" {
+			decoded, decodeErr := base64.StdEncoding.DecodeString(saltBase64)
+			if decodeErr != nil {
+				handleError(&WrappedError{Sentinel: ErrInvalidSalt, Err: decodeErr})
+				return
+			}
+			salt = decoded
+		}
+
+		printVerbose("Deriving key via ECDH with key: %s", keyID)
+
+		req := &client.DeriveKeyECDHRequest{
+			KeyID:         keyID,
+			Backend:       cfg.Backend,
+			PeerPublicKey: peerKey,
+			KDFAlgorithm:  kdf,
+			KDFHash:       kdfHash,
+			KDFSalt:       salt,
+			KeyLength:     keyLength,
+		}
+		if info != "" {
+			req.KDFInfo = []byte(info)
+		}
+		if label != "" {
+			req.KDFLabel = []byte(label)
+		}
+
+		deriveKeyECDH(cfg, printer, req, outputFile)
+	},
+}
+
+// deriveKeyECDH derives a key via ECDH using the SDK client.
+func deriveKeyECDH(cfg *Config, printer *Printer, req *client.DeriveKeyECDHRequest, outputFile string) {
+	cl, err := cfg.CreateClient()
+	if err != nil {
+		handleError(&WrappedError{Sentinel: ErrCreateClientFailed, Err: err})
+		return
+	}
+	defer func() { _ = cl.Close() }()
+
+	ctx := context.Background()
+	if err := cl.Connect(ctx); err != nil {
+		handleError(&WrappedError{Sentinel: ErrConnectFailed, Err: err})
+		return
+	}
+
+	printVerbose("Connected to xkmsd")
+
+	resp, err := cl.DeriveKeyECDH(ctx, req)
+	if err != nil {
+		handleError(&WrappedError{Sentinel: ErrDeriveKeyECDHFailed, Err: err})
+		return
+	}
+
+	if outputFile != "" {
+		if err := os.WriteFile(outputFile, resp.DerivedKey, 0600); err != nil {
+			handleError(&WrappedError{Sentinel: ErrWriteDerivedKeyFileFailed, Err: err})
+			return
+		}
+		if err := printer.PrintSuccess(fmt.Sprintf("Derived key written to: %s", outputFile)); err != nil {
+			handleError(err)
+		}
+		return
+	}
+
+	switch printer.format {
+	case OutputFormatJSON:
+		if err := printer.PrintJSON(map[string]interface{}{
+			"derived_key": base64.StdEncoding.EncodeToString(resp.DerivedKey),
+			"length":      len(resp.DerivedKey),
+		}); err != nil {
+			handleError(err)
+		}
+	case OutputFormatTable, OutputFormatText:
+		_, _ = fmt.Fprintf(printer.writer, "Derived Key (%d bytes):\n", len(resp.DerivedKey))
+		_, _ = fmt.Fprintf(printer.writer, "  %s\n", base64.StdEncoding.EncodeToString(resp.DerivedKey))
+	}
+}
+
+// keyWrapByIDCmd wraps a server-side key using another server-side key.
+var keyWrapByIDCmd = &cobra.Command{
+	Use:   "wrap-by-id <target-key-id>",
+	Short: "Wrap a key using another key, both identified by ID",
+	Long: `Wrap an extractable target key using a wrapping key (Key
+Encryption Key); both keys are identified by their server-side IDs.
+This is the CLI equivalent of PKCS#11 C_WrapKey.
+
+The target backend defaults to the wrapping key backend (--backend).
+
+Examples:
+  xkmsctl key wrap-by-id data-key --wrapping-key kek --algorithm AES_KEY_WRAP
+  xkmsctl key wrap-by-id data-key --wrapping-key kek --output wrapped.bin`,
+	Args: cobra.ExactArgs(1),
+	Run: func(cmd *cobra.Command, args []string) {
+		targetKeyID := args[0]
+		cfg := getConfig()
+		printer := NewPrinter(cfg.OutputFormat, os.Stdout)
+
+		wrappingKeyID, _ := cmd.Flags().GetString("wrapping-key")
+		wrappingBackend, _ := cmd.Flags().GetString("wrapping-backend")
+		targetBackend, _ := cmd.Flags().GetString("target-backend")
+		algorithm, _ := cmd.Flags().GetString("algorithm")
+		outputFile, _ := cmd.Flags().GetString("output")
+
+		if wrappingKeyID == "" {
+			handleError(ErrWrappingKeyIDRequired)
+			return
+		}
+		if wrappingBackend == "" {
+			wrappingBackend = cfg.Backend
+		}
+		if targetBackend == "" {
+			targetBackend = cfg.Backend
+		}
+
+		printVerbose("Wrapping key %s with %s", targetKeyID, wrappingKeyID)
+
+		wrapKeyByID(cfg, printer, &client.WrapKeyByIDRequest{
+			WrappingKeyID:      wrappingKeyID,
+			WrappingKeyBackend: wrappingBackend,
+			TargetKeyID:        targetKeyID,
+			TargetKeyBackend:   targetBackend,
+			Algorithm:          algorithm,
+		}, outputFile)
+	},
+}
+
+// wrapKeyByID wraps a key by ID using the SDK client.
+func wrapKeyByID(cfg *Config, printer *Printer, req *client.WrapKeyByIDRequest, outputFile string) {
+	cl, err := cfg.CreateClient()
+	if err != nil {
+		handleError(&WrappedError{Sentinel: ErrCreateClientFailed, Err: err})
+		return
+	}
+	defer func() { _ = cl.Close() }()
+
+	ctx := context.Background()
+	if err := cl.Connect(ctx); err != nil {
+		handleError(&WrappedError{Sentinel: ErrConnectFailed, Err: err})
+		return
+	}
+
+	printVerbose("Connected to xkmsd")
+
+	resp, err := cl.WrapKeyByID(ctx, req)
+	if err != nil {
+		handleError(&WrappedError{Sentinel: ErrWrapKeyByIDFailed, Err: err})
+		return
+	}
+
+	if outputFile != "" {
+		if err := os.WriteFile(outputFile, resp.WrappedKey, 0600); err != nil {
+			handleError(&WrappedError{Sentinel: ErrWriteWrappedKeyFileFailed, Err: err})
+			return
+		}
+		if err := printer.PrintSuccess(fmt.Sprintf("Wrapped key written to: %s", outputFile)); err != nil {
+			handleError(err)
+		}
+		return
+	}
+
+	switch printer.format {
+	case OutputFormatJSON:
+		if err := printer.PrintJSON(map[string]interface{}{
+			"wrapped_key": base64.StdEncoding.EncodeToString(resp.WrappedKey),
+			"algorithm":   resp.Algorithm,
+		}); err != nil {
+			handleError(err)
+		}
+	case OutputFormatTable, OutputFormatText:
+		_, _ = fmt.Fprintf(printer.writer, "Wrapped Key (%s):\n", resp.Algorithm)
+		_, _ = fmt.Fprintf(printer.writer, "  %s\n", base64.StdEncoding.EncodeToString(resp.WrappedKey))
+	}
+}
+
+// keyUnwrapByIDCmd unwraps key material and imports it as a new key.
+var keyUnwrapByIDCmd = &cobra.Command{
+	Use:   "unwrap-by-id <new-key-id>",
+	Short: "Unwrap key material and import it as a new key",
+	Long: `Unwrap wrapped key material using a server-side unwrapping key and
+import the result as a new key. This is the CLI equivalent of PKCS#11
+C_UnwrapKey.
+
+The wrapped material is read from --wrapped-file (as produced by
+"key wrap-by-id --output").
+
+Examples:
+  xkmsctl key unwrap-by-id restored-key --wrapped-file wrapped.bin --unwrapping-key kek
+  xkmsctl key unwrap-by-id restored-key --wrapped-file wrapped.bin --unwrapping-key kek \
+    --key-type symmetric --key-size 256 --exportable`,
+	Args: cobra.ExactArgs(1),
+	Run: func(cmd *cobra.Command, args []string) {
+		newKeyID := args[0]
+		cfg := getConfig()
+		printer := NewPrinter(cfg.OutputFormat, os.Stdout)
+
+		wrappedFile, _ := cmd.Flags().GetString("wrapped-file")
+		unwrappingKeyID, _ := cmd.Flags().GetString("unwrapping-key")
+		unwrappingBackend, _ := cmd.Flags().GetString("unwrapping-backend")
+		targetBackend, _ := cmd.Flags().GetString("target-backend")
+		algorithm, _ := cmd.Flags().GetString("algorithm")
+		keyType, _ := cmd.Flags().GetString("key-type")
+		keySize, _ := cmd.Flags().GetInt("key-size")
+		curve, _ := cmd.Flags().GetString("curve")
+		exportable, _ := cmd.Flags().GetBool("exportable")
+
+		if wrappedFile == "" {
+			handleError(ErrWrappedKeyFileRequired)
+			return
+		}
+		if unwrappingKeyID == "" {
+			handleError(ErrUnwrappingKeyIDRequired)
+			return
+		}
+		if unwrappingBackend == "" {
+			unwrappingBackend = cfg.Backend
+		}
+		if targetBackend == "" {
+			targetBackend = cfg.Backend
+		}
+
+		wrappedKey, err := os.ReadFile(filepath.Clean(wrappedFile))
+		if err != nil {
+			handleError(&WrappedError{Sentinel: ErrReadWrappedKeyFileFailed, Err: err})
+			return
+		}
+
+		printVerbose("Unwrapping key material into %s with %s", newKeyID, unwrappingKeyID)
+
+		unwrapKeyByID(cfg, printer, &client.UnwrapKeyByIDRequest{
+			WrappedKey:           wrappedKey,
+			UnwrappingKeyID:      unwrappingKeyID,
+			UnwrappingKeyBackend: unwrappingBackend,
+			Algorithm:            algorithm,
+			TargetKeyID:          newKeyID,
+			TargetKeyBackend:     targetBackend,
+			TargetKeyType:        keyType,
+			TargetKeySize:        keySize,
+			TargetCurve:          curve,
+			TargetExportable:     exportable,
+		})
+	},
+}
+
+// unwrapKeyByID unwraps key material by ID using the SDK client.
+func unwrapKeyByID(cfg *Config, printer *Printer, req *client.UnwrapKeyByIDRequest) {
+	cl, err := cfg.CreateClient()
+	if err != nil {
+		handleError(&WrappedError{Sentinel: ErrCreateClientFailed, Err: err})
+		return
+	}
+	defer func() { _ = cl.Close() }()
+
+	ctx := context.Background()
+	if err := cl.Connect(ctx); err != nil {
+		handleError(&WrappedError{Sentinel: ErrConnectFailed, Err: err})
+		return
+	}
+
+	printVerbose("Connected to xkmsd")
+
+	resp, err := cl.UnwrapKeyByID(ctx, req)
+	if err != nil {
+		handleError(&WrappedError{Sentinel: ErrUnwrapKeyByIDFailed, Err: err})
+		return
+	}
+
+	if !resp.Success {
+		handleError(&WrappedDetailError{Sentinel: ErrUnwrapKeyByIDFailed, Detail: resp.Message})
+		return
+	}
+
+	if err := printer.PrintSuccess(fmt.Sprintf("Successfully unwrapped key material into %s:%s",
+		resp.Backend, resp.KeyID)); err != nil {
+		handleError(err)
+	}
+}
+
+// keyExportMaterialCmd exports raw symmetric key bytes.
+var keyExportMaterialCmd = &cobra.Command{
+	Use:   "export-material <key-id>",
+	Short: "Export raw symmetric key material (plaintext)",
+	Long: `Export the raw bytes of an extractable symmetric key.
+
+SECURITY WARNING: This returns PLAINTEXT key material without any
+cryptographic protection. Prefer "key export" (wrapped export) for
+transport between systems.
+
+Examples:
+  xkmsctl key export-material my-aes-key --output key.bin
+  xkmsctl key export-material my-aes-key`,
+	Args: cobra.ExactArgs(1),
+	Run: func(cmd *cobra.Command, args []string) {
+		keyID := args[0]
+		cfg := getConfig()
+		printer := NewPrinter(cfg.OutputFormat, os.Stdout)
+
+		outputFile, _ := cmd.Flags().GetString("output")
+
+		printVerbose("Exporting raw key material for: %s", keyID)
+
+		exportKeyMaterial(cfg, printer, keyID, outputFile)
+	},
+}
+
+// exportKeyMaterial exports raw key material using the SDK client.
+func exportKeyMaterial(cfg *Config, printer *Printer, keyID, outputFile string) {
+	cl, err := cfg.CreateClient()
+	if err != nil {
+		handleError(&WrappedError{Sentinel: ErrCreateClientFailed, Err: err})
+		return
+	}
+	defer func() { _ = cl.Close() }()
+
+	ctx := context.Background()
+	if err := cl.Connect(ctx); err != nil {
+		handleError(&WrappedError{Sentinel: ErrConnectFailed, Err: err})
+		return
+	}
+
+	printVerbose("Connected to xkmsd")
+
+	req := &client.ExportKeyMaterialRequest{
+		Backend: cfg.Backend,
+		KeyID:   keyID,
+	}
+
+	resp, err := cl.ExportKeyMaterial(ctx, req)
+	if err != nil {
+		handleError(&WrappedError{Sentinel: ErrExportKeyMaterialFailed, Err: err})
+		return
+	}
+
+	if outputFile != "" {
+		if err := os.WriteFile(outputFile, resp.KeyMaterial, 0600); err != nil {
+			handleError(&WrappedError{Sentinel: ErrWriteKeyMaterialFileFailed, Err: err})
+			return
+		}
+		if err := printer.PrintSuccess(fmt.Sprintf("Key material written to: %s", outputFile)); err != nil {
+			handleError(err)
+		}
+		return
+	}
+
+	switch printer.format {
+	case OutputFormatJSON:
+		if err := printer.PrintJSON(map[string]interface{}{
+			"key_material": base64.StdEncoding.EncodeToString(resp.KeyMaterial),
+			"key_type":     resp.KeyType,
+			"key_size":     resp.KeySize,
+		}); err != nil {
+			handleError(err)
+		}
+	case OutputFormatTable, OutputFormatText:
+		_, _ = fmt.Fprintf(printer.writer, "Key Material (%s, %d bits):\n", resp.KeyType, resp.KeySize)
+		_, _ = fmt.Fprintf(printer.writer, "  %s\n", base64.StdEncoding.EncodeToString(resp.KeyMaterial))
+	}
+}
+
 func init() {
 	// Add key subcommands
 	keyCmd.AddCommand(keyGenerateCmd)
@@ -1198,6 +1751,11 @@ func init() {
 	keyCmd.AddCommand(keyUnwrapCmd)
 	keyCmd.AddCommand(keyVerifyCmd)
 	keyCmd.AddCommand(keyEncryptAsymCmd)
+	keyCmd.AddCommand(keyAttestCmd)
+	keyCmd.AddCommand(keyDeriveECDHCmd)
+	keyCmd.AddCommand(keyWrapByIDCmd)
+	keyCmd.AddCommand(keyUnwrapByIDCmd)
+	keyCmd.AddCommand(keyExportMaterialCmd)
 
 	// Flags for generate command
 	keyGenerateCmd.Flags().String("key-type", "tls", "Key type (tls, signing, encryption, symmetric)")
@@ -1206,6 +1764,13 @@ func init() {
 	keyGenerateCmd.Flags().Int("key-size", 2048, "Key size in bits (128, 192, 256 for AES; 2048+ for RSA)")
 	keyGenerateCmd.Flags().String("curve", "P-256", "Elliptic curve (for ECDSA: P-256, P-384, P-521)")
 	keyGenerateCmd.Flags().Bool("exportable", false, "Allow the key to be exported")
+	// --sensitive is PKCS#11 CKA_SENSITIVE and is independent of --exportable:
+	// a sensitive key may still be wrapped out under another key, but its
+	// plaintext is never released. Without this flag a key generated through the
+	// CLI could never be marked sensitive, so the protection was reachable only
+	// from the PKCS#11 module.
+	keyGenerateCmd.Flags().Bool("sensitive", false,
+		"Never release the key's plaintext (PKCS#11 CKA_SENSITIVE); the key may still be wrapped if --exportable")
 
 	// Flags for get command (simplified - no longer needs algorithm params for SDK)
 	keyGetCmd.Flags().String("key-type", "tls", "Key type")
@@ -1227,8 +1792,17 @@ func init() {
 	keyDecryptCmd.Flags().String("nonce", "", "Nonce/IV (base64, required for symmetric decryption)")
 	keyDecryptCmd.Flags().String("tag", "", "Authentication tag (base64, required for symmetric decryption)")
 
-	// Flags for import command (simplified)
-	keyImportCmd.Flags().String("key-type", "tls", "Key type")
+	// Flags for import command. --key-type names the ALGORITHM of the material
+	// being imported, not a purpose: the server receives opaque wrapped bytes
+	// and cannot infer it. There is deliberately no default -- guessing "rsa"
+	// would store Ed25519 material under the wrong algorithm and report it as
+	// RSA rather than failing.
+	keyImportCmd.Flags().String("key-type", "", "Algorithm of the imported key: rsa, ecdsa, ed25519, aes (required)")
+	keyImportCmd.Flags().Int("key-size", 0, "RSA modulus size in bits (2048, 3072, 4096); required for rsa")
+	keyImportCmd.Flags().Int("aes-key-size", 0, "AES key size in bits (128, 192, 256); required for aes")
+	keyImportCmd.Flags().String("curve", "", "ECDSA curve (P-256, P-384, P-521); required for ecdsa")
+	keyImportCmd.Flags().String("hash", "", "Signing hash to associate with the key (e.g. SHA-256)")
+	keyImportCmd.Flags().String("partition", "", "Backend partition to import into")
 
 	// Flags for export command
 	keyExportCmd.Flags().String("algorithm", "RSAES_OAEP_SHA_256", "Wrapping algorithm")
@@ -1255,6 +1829,41 @@ func init() {
 
 	// Flags for encrypt-asym command
 	keyEncryptAsymCmd.Flags().String("hash", "sha256", "Hash algorithm for OAEP (sha256, sha384, sha512)")
+
+	// Flags for attest command
+	keyAttestCmd.Flags().String("nonce", "", "Attestation nonce (base64; random 32 bytes when omitted)")
+	keyAttestCmd.Flags().String("output", "", "Write the attestation statement to a JSON file")
+
+	// Flags for derive-ecdh command
+	keyDeriveECDHCmd.Flags().String("peer-key", "", "Peer public key file (DER or uncompressed point, required)")
+	keyDeriveECDHCmd.Flags().String("kdf", "HKDF", "KDF algorithm (HKDF, SP800-108-COUNTER, SP800-108-FEEDBACK, SP800-56A, X963)")
+	keyDeriveECDHCmd.Flags().String("kdf-hash", "SHA-256", "KDF hash algorithm (SHA-256, SHA-384, SHA-512)")
+	keyDeriveECDHCmd.Flags().String("salt", "", "KDF salt (base64, optional)")
+	keyDeriveECDHCmd.Flags().String("info", "", "KDF context/info string (optional)")
+	keyDeriveECDHCmd.Flags().String("label", "", "SP 800-108 label for domain separation (optional)")
+	keyDeriveECDHCmd.Flags().Int("length", 32, "Derived key length in bytes")
+	keyDeriveECDHCmd.Flags().String("output", "", "Write the derived key bytes to a file (mode 0600)")
+
+	// Flags for wrap-by-id command
+	keyWrapByIDCmd.Flags().String("wrapping-key", "", "Wrapping key ID (Key Encryption Key, required)")
+	keyWrapByIDCmd.Flags().String("wrapping-backend", "", "Backend containing the wrapping key (default: --backend)")
+	keyWrapByIDCmd.Flags().String("target-backend", "", "Backend containing the target key (default: --backend)")
+	keyWrapByIDCmd.Flags().String("algorithm", "AES_KEY_WRAP", "Wrapping algorithm (AES_KEY_WRAP, RSAES_OAEP_SHA_256, ...)")
+	keyWrapByIDCmd.Flags().String("output", "", "Write the wrapped key bytes to a file (mode 0600)")
+
+	// Flags for unwrap-by-id command
+	keyUnwrapByIDCmd.Flags().String("wrapped-file", "", "File containing the wrapped key bytes (required)")
+	keyUnwrapByIDCmd.Flags().String("unwrapping-key", "", "Unwrapping key ID (required)")
+	keyUnwrapByIDCmd.Flags().String("unwrapping-backend", "", "Backend containing the unwrapping key (default: --backend)")
+	keyUnwrapByIDCmd.Flags().String("target-backend", "", "Backend to store the new key (default: --backend)")
+	keyUnwrapByIDCmd.Flags().String("algorithm", "AES_KEY_WRAP", "Unwrapping algorithm (must match the wrap)")
+	keyUnwrapByIDCmd.Flags().String("key-type", "symmetric", "New key type (symmetric, rsa, ecdsa, ed25519)")
+	keyUnwrapByIDCmd.Flags().Int("key-size", 256, "New key size in bits")
+	keyUnwrapByIDCmd.Flags().String("curve", "", "Curve for ECDSA keys (P-256, P-384, P-521)")
+	keyUnwrapByIDCmd.Flags().Bool("exportable", false, "Allow the new key to be exported")
+
+	// Flags for export-material command
+	keyExportMaterialCmd.Flags().String("output", "", "Write the raw key bytes to a file (mode 0600)")
 }
 
 // buildKeyAttributesFromFlags creates KeyAttributes from separate key type and algorithm flags.

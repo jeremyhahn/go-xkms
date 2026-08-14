@@ -1272,29 +1272,27 @@ func TestCreateImage_FullFlow_SizeTooSmall(t *testing.T) {
 }
 
 // ---------------------------------------------------------------------------
-// CreateImage -- block device path (uses /dev/null as device node)
+// CreateImage -- block device path (uses a synthetic device node)
 // ---------------------------------------------------------------------------
 
 // TestCreateImage_BlockDevice_ValidateBlockDeviceError verifies that
 // CreateImage returns the ValidateBlockDevice error for a block device.
-// /dev/null passes IsBlockDevice but ValidateBlockDevice will find
+// the synthetic device node passes IsBlockDevice but ValidateBlockDevice will find
 // it on a critical mount.
 func TestCreateImage_BlockDevice_ValidateBlockDeviceError(t *testing.T) {
-	if _, err := os.Stat("/dev/null"); err != nil {
-		t.Skip("/dev/null not accessible")
-	}
-
 	restore := saveHooks(t)
 	defer restore()
 	mockRootUser()
 
-	// Simulate /dev/null being on a system mount.
+	mockDeviceNode(testDevicePath)
+
+	// Simulate the device being on a system mount.
 	readMountsFile = func() ([]byte, error) {
-		return []byte("/dev/null / ext4 rw 0 0\n"), nil
+		return []byte(testDevicePath + " / ext4 rw 0 0\n"), nil
 	}
 
 	cfg := ImageConfig{
-		Path:       "/dev/null",
+		Path:       testDevicePath,
 		Passphrase: "test-passphrase",
 	}
 	err := CreateImage(cfg)
@@ -1305,15 +1303,13 @@ func TestCreateImage_BlockDevice_ValidateBlockDeviceError(t *testing.T) {
 // TestCreateImage_BlockDevice_ValidatePassesPartitionFails verifies
 // the full block device path when validation passes but partition fails.
 func TestCreateImage_BlockDevice_ValidatePassesPartitionFails(t *testing.T) {
-	if _, err := os.Stat("/dev/null"); err != nil {
-		t.Skip("/dev/null not accessible")
-	}
-
 	restore := saveHooks(t)
 	defer restore()
 	mockRootUser()
 
-	// No critical mounts for /dev/null.
+	mockDeviceNode(testDevicePath)
+
+	// No critical mounts for the device.
 	readMountsFile = func() ([]byte, error) {
 		return []byte("/dev/sda1 / ext4 rw 0 0\n"), nil
 	}
@@ -1326,7 +1322,7 @@ func TestCreateImage_BlockDevice_ValidatePassesPartitionFails(t *testing.T) {
 	}
 
 	cfg := ImageConfig{
-		Path:       "/dev/null",
+		Path:       testDevicePath,
 		Passphrase: "test-passphrase",
 	}
 	err := CreateImage(cfg)
@@ -1501,24 +1497,22 @@ func TestUpdateBinaries_DetachCalledOnImageFile(t *testing.T) {
 // ---------------------------------------------------------------------------
 
 // TestDetectBinaries_BlockDevice verifies the block device branch
-// by using /dev/null as a device node.
+// using a synthetic device node.
 func TestDetectBinaries_BlockDevice(t *testing.T) {
-	if _, err := os.Stat("/dev/null"); err != nil {
-		t.Skip("/dev/null not accessible")
-	}
-
 	restore := saveHooks(t)
 	defer restore()
+
+	mockDeviceNode(testDevicePath)
 
 	// Create a temp dir with xkey binaries.
 	binDir := t.TempDir()
 	require.NoError(t, os.WriteFile(filepath.Join(binDir, "xkey-linux-amd64"), []byte("bin"), 0755))
 
 	readMountsFile = func() ([]byte, error) {
-		return []byte("/dev/null1 " + binDir + " vfat rw 0 0\n"), nil
+		return []byte(testDevicePath + "1 " + binDir + " vfat rw 0 0\n"), nil
 	}
 
-	result := detectBinaries("/dev/null")
+	result := detectBinaries(testDevicePath)
 	require.NotNil(t, result)
 	assert.Len(t, result, 1)
 	assert.Contains(t, result, "xkey-linux-amd64")
@@ -1527,18 +1521,16 @@ func TestDetectBinaries_BlockDevice(t *testing.T) {
 // TestDetectBinaries_BlockDevice_NoMountMatch verifies the block
 // device branch when the partition is not mounted.
 func TestDetectBinaries_BlockDevice_NoMountMatch(t *testing.T) {
-	if _, err := os.Stat("/dev/null"); err != nil {
-		t.Skip("/dev/null not accessible")
-	}
-
 	restore := saveHooks(t)
 	defer restore()
+
+	mockDeviceNode(testDevicePath)
 
 	readMountsFile = func() ([]byte, error) {
 		return []byte("/dev/sda1 / ext4 rw 0 0\n"), nil
 	}
 
-	result := detectBinaries("/dev/null")
+	result := detectBinaries(testDevicePath)
 	assert.Nil(t, result)
 }
 
@@ -1546,21 +1538,19 @@ func TestDetectBinaries_BlockDevice_NoMountMatch(t *testing.T) {
 // ValidateBlockDevice -- symlink resolution fallback
 // ---------------------------------------------------------------------------
 
-// TestValidateBlockDevice_DevNull_ResolvedPath verifies that
+// TestValidateBlockDevice_Device_ResolvedPath verifies that
 // ValidateBlockDevice resolves symlinks and uses the resolved path.
-func TestValidateBlockDevice_DevNull_ResolvedPath(t *testing.T) {
-	if _, err := os.Stat("/dev/null"); err != nil {
-		t.Skip("/dev/null not accessible")
-	}
-
+func TestValidateBlockDevice_Device_ResolvedPath(t *testing.T) {
 	restore := saveHooks(t)
 	defer restore()
+
+	mockDeviceNode(testDevicePath)
 
 	readMountsFile = func() ([]byte, error) {
 		return []byte(""), nil
 	}
 
-	err := ValidateBlockDevice("/dev/null")
+	err := ValidateBlockDevice(testDevicePath)
 	assert.NoError(t, err)
 }
 
@@ -1657,25 +1647,23 @@ func TestCreateOnImageFile_SuccessWithBinaries(t *testing.T) {
 }
 
 // ---------------------------------------------------------------------------
-// Status on /dev/null (block device path)
+// Status on a device node (block device path)
 // ---------------------------------------------------------------------------
 
-// TestStatus_DevNullBlockDevice verifies Status for /dev/null which
+// TestStatus_DeviceNodeBlockDevice verifies Status for a device node which
 // is a device node, exercising the IsBlockDevice branch.
-func TestStatus_DevNullBlockDevice(t *testing.T) {
-	if _, err := os.Stat("/dev/null"); err != nil {
-		t.Skip("/dev/null not accessible")
-	}
-
+func TestStatus_DeviceNodeBlockDevice(t *testing.T) {
 	restore := saveHooks(t)
 	defer restore()
+
+	mockDeviceNode(testDevicePath)
 	luksIsUnlocked = func(name string) bool { return false }
 	readMountsFile = func() ([]byte, error) { return []byte(""), nil }
 
-	status, err := Status("/dev/null")
+	status, err := Status(testDevicePath)
 	require.NoError(t, err)
 	assert.True(t, status.IsBlockDevice)
-	assert.Equal(t, "/dev/null", status.Path)
+	assert.Equal(t, testDevicePath, status.Path)
 }
 
 // ---------------------------------------------------------------------------
@@ -1685,13 +1673,11 @@ func TestStatus_DevNullBlockDevice(t *testing.T) {
 // TestUpdateBinaries_BlockDevice_MountFails verifies the block device
 // path of UpdateBinaries when mount fails.
 func TestUpdateBinaries_BlockDevice_MountFails(t *testing.T) {
-	if _, err := os.Stat("/dev/null"); err != nil {
-		t.Skip("/dev/null not accessible")
-	}
-
 	restore := saveHooks(t)
 	defer restore()
 	mockRootUser()
+
+	mockDeviceNode(testDevicePath)
 
 	execCommand = func(name string, args ...string) error {
 		if name == "mount" {
@@ -1700,7 +1686,7 @@ func TestUpdateBinaries_BlockDevice_MountFails(t *testing.T) {
 		return nil
 	}
 
-	err := UpdateBinaries("/dev/null", []string{"/some/binary"})
+	err := UpdateBinaries(testDevicePath, []string{"/some/binary"})
 	require.Error(t, err)
 	assert.True(t, errors.Is(err, ErrMountFailed))
 }
@@ -1708,19 +1694,17 @@ func TestUpdateBinaries_BlockDevice_MountFails(t *testing.T) {
 // TestUpdateBinaries_BlockDevice_Success verifies the block device
 // path of UpdateBinaries succeeds.
 func TestUpdateBinaries_BlockDevice_Success(t *testing.T) {
-	if _, err := os.Stat("/dev/null"); err != nil {
-		t.Skip("/dev/null not accessible")
-	}
-
 	restore := saveHooks(t)
 	defer restore()
 	mockRootUser()
+
+	mockDeviceNode(testDevicePath)
 	mockAllCommandsSuccess(t)
 
 	binDir := t.TempDir()
 	binPath := filepath.Join(binDir, "xkey-linux-amd64")
 	require.NoError(t, os.WriteFile(binPath, []byte("binary"), 0755))
 
-	err := UpdateBinaries("/dev/null", []string{binPath})
+	err := UpdateBinaries(testDevicePath, []string{binPath})
 	require.NoError(t, err)
 }

@@ -17,8 +17,13 @@ import (
 	"bytes"
 	"errors"
 	"log/slog"
+	"os"
+	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
+
+	"golang.org/x/sys/unix"
 
 	"github.com/jeremyhahn/go-xkms/xkey/pkg/authenticator"
 	"github.com/jeremyhahn/go-xkms/xkey/pkg/ipc"
@@ -466,7 +471,51 @@ func TestCreateNotifier_InvalidCommand(t *testing.T) {
 	}
 }
 
+// withPTYStdin points os.Stdin at a freshly allocated pseudo-terminal for the
+// duration of the test and restores the original stdin afterwards. This lets
+// terminal-gated code paths run in-process on a headless machine without
+// depending on how the test binary was launched. The PTY is private to the
+// process and nothing is written to the host.
+func withPTYStdin(t *testing.T) {
+	t.Helper()
+
+	ptmx, err := os.OpenFile("/dev/ptmx", os.O_RDWR, 0)
+	if err != nil {
+		t.Fatalf("failed to open /dev/ptmx: %v", err)
+	}
+
+	if err := unix.IoctlSetPointerInt(int(ptmx.Fd()), unix.TIOCSPTLCK, 0); err != nil {
+		_ = ptmx.Close()
+		t.Fatalf("failed to unlock pty: %v", err)
+	}
+
+	ptyN, err := unix.IoctlGetInt(int(ptmx.Fd()), unix.TIOCGPTN)
+	if err != nil {
+		_ = ptmx.Close()
+		t.Fatalf("failed to resolve pty number: %v", err)
+	}
+
+	pts, err := os.OpenFile(filepath.Join("/dev/pts", strconv.Itoa(ptyN)), os.O_RDWR|unix.O_NOCTTY, 0)
+	if err != nil {
+		_ = ptmx.Close()
+		t.Fatalf("failed to open pty slave: %v", err)
+	}
+
+	orig := os.Stdin
+	os.Stdin = pts
+	t.Cleanup(func() {
+		os.Stdin = orig
+		_ = pts.Close()
+		_ = ptmx.Close()
+	})
+}
+
+// TestCreateFIDO2UserPresenceHandler_Interactive verifies that interactive mode
+// yields a real interactive handler and deliberately no socket handler and no
+// notifier, so daemon-only plumbing is not silently constructed.
 func TestCreateFIDO2UserPresenceHandler_Interactive(t *testing.T) {
+	withPTYStdin(t)
+
 	logger := slog.Default()
 	cfg := &FIDO2Config{
 		Interactive:       true,
@@ -476,14 +525,16 @@ func TestCreateFIDO2UserPresenceHandler_Interactive(t *testing.T) {
 	}
 
 	handler, socketHandler, notifier, err := createFIDO2UserPresenceHandler(cfg, logger)
-	// On CI/headless environments, NewInteractiveHandler may fail if no terminal.
-	// That is acceptable; we verify error handling path.
 	if err != nil {
-		t.Skipf("interactive handler unavailable (no terminal): %v", err)
+		t.Fatalf("createFIDO2UserPresenceHandler returned error: %v", err)
 	}
 
 	if handler == nil {
 		t.Fatal("interactive handler is nil")
+	}
+
+	if _, ok := handler.(*authenticator.InteractiveHandler); !ok {
+		t.Fatalf("handler is %T, want *authenticator.InteractiveHandler", handler)
 	}
 
 	if socketHandler != nil {
@@ -492,6 +543,39 @@ func TestCreateFIDO2UserPresenceHandler_Interactive(t *testing.T) {
 
 	if notifier != nil {
 		t.Error("notifier should be nil in interactive mode")
+	}
+}
+
+// TestCreateFIDO2UserPresenceHandler_InteractiveNoTerminal verifies that
+// interactive mode fails loudly when stdin is not a terminal rather than
+// silently degrading to the socket handler.
+func TestCreateFIDO2UserPresenceHandler_InteractiveNoTerminal(t *testing.T) {
+	r, w, err := os.Pipe()
+	if err != nil {
+		t.Fatalf("failed to create pipe: %v", err)
+	}
+	orig := os.Stdin
+	os.Stdin = r
+	t.Cleanup(func() {
+		os.Stdin = orig
+		_ = r.Close()
+		_ = w.Close()
+	})
+
+	logger := slog.Default()
+	cfg := &FIDO2Config{
+		Interactive:       true,
+		Backend:           "software",
+		StorageType:       FIDO2StorageTypeMemory,
+		AttestationFormat: "none",
+	}
+
+	handler, socketHandler, notifier, err := createFIDO2UserPresenceHandler(cfg, logger)
+	if !errors.Is(err, authenticator.ErrTerminalUnavailable) {
+		t.Fatalf("error = %v, want ErrTerminalUnavailable", err)
+	}
+	if handler != nil || socketHandler != nil || notifier != nil {
+		t.Error("no handler, socket handler or notifier should be returned on failure")
 	}
 }
 

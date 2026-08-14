@@ -46,6 +46,7 @@ type XKMSServicer interface {
 	TenantServicer
 	InitCeremonyServicer
 	CredentialManagementServicer
+	AuditServicer
 }
 
 // HealthServicer handles health checks.
@@ -63,6 +64,10 @@ type HealthServicer interface {
 type BackendServicer interface {
 	ListBackends(ctx context.Context, opts ...ListOption) ([]BackendInfo, error)
 	GetBackend(ctx context.Context, backendID string) (*BackendInfo, error)
+
+	// Algorithms reports the cryptographic algorithms this build supports and
+	// which backends provide each one.
+	Algorithms(ctx context.Context) (*AlgorithmsResponse, error)
 }
 
 // KeyServicer handles key lifecycle management.
@@ -244,11 +249,22 @@ type CustodianGroupServicer interface {
 	DistributeShares(ctx context.Context, req *DistributeSharesRequest) (*DistributeSharesResponse, error)
 }
 
-// ShareServicer provides share management operations.
+// ShareServicer provides share management operations. A share is addressed
+// by the triple (serverURL, groupID, shareIndex); sensitive share material
+// is never returned by GetShare.
 type ShareServicer interface {
 	SubmitShare(ctx context.Context, req *SubmitShareRequest) (*SubmitShareResponse, error)
 	ListShares(ctx context.Context) (*ListSharesResponse, error)
+	GetShare(ctx context.Context, serverURL, groupID string, shareIndex int) (*ShareInfo, error)
+	DeleteShare(ctx context.Context, serverURL, groupID string, shareIndex int) error
 	GetShareCollectionStatus(ctx context.Context, groupID string) (*ShareCollectionStatus, error)
+}
+
+// AuditServicer provides read access to the audit chain. Emission is not part
+// of this contract: events are written through pkg/audit's Logger seam as a
+// side effect of the operation being audited, never by an API caller.
+type AuditServicer interface {
+	QueryAudit(ctx context.Context, filter *AuditFilter) (*AuditPage, error)
 }
 
 // TenantServicer provides tenant management operations.
@@ -269,7 +285,8 @@ type InitCeremonyServicer interface {
 	GetInitStatus(ctx context.Context) (*InitStatusResponse, error)
 	ClaimCertBegin(ctx context.Context, req *ClaimCertBeginRequest) (*ClaimCertBeginResponse, error)
 	ClaimCertComplete(ctx context.Context, req *ClaimCertCompleteRequest) (*ClaimCertCompleteResponse, error)
-	ClaimShare(ctx context.Context, req *ClaimShareRequest) (*ClaimShareResponse, error)
+	ClaimShareBegin(ctx context.Context, req *ClaimShareBeginRequest) (*ClaimShareBeginResponse, error)
+	ClaimShareComplete(ctx context.Context, req *ClaimShareCompleteRequest) (*ClaimShareCompleteResponse, error)
 	SignCSRInit(ctx context.Context, req *SignCSRInitRequest) (*SignCSRInitResponse, error)
 }
 

@@ -614,6 +614,12 @@ func TestPanic_TPMService_ImportIDevIDCert(t *testing.T) {
 	assertPanicRecovered(t, err)
 }
 
+func TestPanic_TPMService_ListKeys(t *testing.T) {
+	svc := panicTPMService(t)
+	_, err := svc.ListKeys()
+	assertPanicRecovered(t, err)
+}
+
 func TestPanic_TPMService_ListPersistentHandles(t *testing.T) {
 	svc := panicTPMService(t)
 	_, err := svc.ListPersistentHandles()

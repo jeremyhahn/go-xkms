@@ -50,6 +50,25 @@ var (
 	// ErrExportFailed indicates a key material export operation failed.
 	ErrExportFailed = errors.New("xkey/pkcs11: key export failed")
 
+	// ErrImportFailed indicates externally generated key material could not be
+	// imported into the backend.
+	ErrImportFailed = errors.New("xkey/pkcs11: key import failed")
+
+	// ErrGetImportParamsFailed indicates the wrapping key and import token for
+	// a key-import ceremony could not be obtained from the backend.
+	ErrGetImportParamsFailed = errors.New("xkey/pkcs11: get import parameters failed")
+
+	// ErrImportTemplateUnsupported indicates a requested key template names a
+	// kind the embedded transport does not negotiate imports for. The transport
+	// generates only asymmetric keys, so symmetric imports are refused here
+	// rather than negotiated for the wrong key spec.
+	// ErrImportKeyFailed indicates the backend rejected the wrapped key
+	// material. It wraps the backend's cause so a bad import token is
+	// distinguishable from malformed material.
+	ErrImportKeyFailed = errors.New("pkcs11: import key failed")
+
+	ErrImportTemplateUnsupported = errors.New("xkey/pkcs11: import key template not supported by the embedded transport")
+
 	// ErrIPCConnectionFailed indicates the IPC transport could not connect
 	// to the xkey daemon socket.
 	ErrIPCConnectionFailed = errors.New("xkey/pkcs11: ipc connection failed")

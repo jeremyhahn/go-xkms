@@ -138,25 +138,48 @@ func TestV32MechanismRegistration(t *testing.T) {
 		assert.Len(t, v32MechanismNames, 39)
 	})
 
-	t.Run("v32MechanismRegistry map has exactly 39 entries", func(t *testing.T) {
-		assert.Len(t, v32MechanismRegistry, 39)
+	// The registry holds 34 of the 39 named v3.2 mechanisms. The five missing
+	// ones -- CKM_TLS12_EXTENDED_MASTER_KEY_DERIVE and its _DH variant,
+	// CKM_ECDH_X_AES_KEY_WRAP, CKM_ECDH_COF_AES_KEY_WRAP and
+	// CKM_PUB_KEY_FROM_PRIV_KEY -- were removed because their descriptors
+	// claimed capabilities the module does not have: the three derivations are
+	// not among the mechanisms C_DeriveKey dispatches on and returned
+	// CKR_MECHANISM_INVALID, and the two key wraps are routed to no wrapping
+	// algorithm, so C_WrapKey resolved them to a name the service refuses. They
+	// keep their names in v32MechanismNames, because the module still has to be
+	// able to name a constant it refuses.
+	t.Run("v32MechanismRegistry map has exactly 34 entries", func(t *testing.T) {
+		assert.Len(t, v32MechanismRegistry, 34)
 	})
 
-	t.Run("v32KeyTypeMap has exactly 36 entries", func(t *testing.T) {
-		assert.Len(t, v32KeyTypeMap, 36)
+	// Thirty-four, one per registered mechanism: the map answers "what CKK_*
+	// key type does this mechanism produce", which is only asked of a mechanism
+	// the module can perform. It held 36 while it still carried
+	// CKM_ECDH_X_AES_KEY_WRAP and CKM_ECDH_COF_AES_KEY_WRAP, whose descriptors
+	// had already been removed, so neither entry could be reached.
+	t.Run("v32KeyTypeMap has one entry per registered mechanism", func(t *testing.T) {
+		assert.Len(t, v32KeyTypeMap, 34)
+
+		for mech := range v32KeyTypeMap {
+			_, registered := v32MechanismRegistry[mech]
+			assert.Truef(t, registered,
+				"%s has a key type but no descriptor, so the entry is unreachable",
+				GetMechanismName(mech))
+		}
 	})
 }
 
 func TestV32MechanismFlags(t *testing.T) {
 
 	t.Run("key pair generation mechanisms have CKF_GENERATE_KEY_PAIR flag", func(t *testing.T) {
+		// Only the implemented families claim the capability. The SLH-DSA, HSS,
+		// XMSS and XMSS^MT keygen descriptors exist so their constants resolve,
+		// but carry no flags: there is nothing behind them to generate with, and
+		// a capability flag would make C_GenerateKeyPair accept the mechanism and
+		// fail from the backend afterwards.
 		keygenMechs := []MechanismType{
 			CKM_ML_DSA_KEY_PAIR_GEN,
 			CKM_ML_KEM_KEY_PAIR_GEN,
-			CKM_SLH_DSA_KEY_PAIR_GEN,
-			CKM_HSS_KEY_PAIR_GEN,
-			CKM_XMSS_KEY_PAIR_GEN,
-			CKM_XMSSMT_KEY_PAIR_GEN,
 		}
 		for _, mech := range keygenMechs {
 			desc := mechanismRegistry[mech]
@@ -165,25 +188,40 @@ func TestV32MechanismFlags(t *testing.T) {
 				"%s should have CKF_GENERATE_KEY_PAIR flag", desc.Name)
 			assert.Contains(t, desc.Categories, CategoryKeyPairGen)
 		}
-	})
 
-	t.Run("sign/verify mechanisms have CKF_SIGN and CKF_VERIFY flags", func(t *testing.T) {
-		signVerifyMechs := []MechanismType{
-			CKM_ML_DSA,
-			CKM_SLH_DSA,
-			CKM_HSS,
-			CKM_XMSS,
-			CKM_XMSSMT,
-		}
-		for _, mech := range signVerifyMechs {
+		for _, mech := range []MechanismType{CKM_SLH_DSA_KEY_PAIR_GEN, CKM_HSS_KEY_PAIR_GEN,
+			CKM_XMSS_KEY_PAIR_GEN, CKM_XMSSMT_KEY_PAIR_GEN} {
 			desc := mechanismRegistry[mech]
 			require.NotNil(t, desc, "mechanism 0x%08X descriptor should exist", mech)
-			assert.True(t, desc.Flags&CKF_SIGN != 0,
-				"%s should have CKF_SIGN flag", desc.Name)
-			assert.True(t, desc.Flags&CKF_VERIFY != 0,
-				"%s should have CKF_VERIFY flag", desc.Name)
-			assert.Contains(t, desc.Categories, CategorySign)
-			assert.Contains(t, desc.Categories, CategoryVerify)
+			assert.Zero(t, desc.Flags,
+				"%s must claim no capability it cannot perform", desc.Name)
+		}
+	})
+
+	t.Run("the implemented signature mechanism carries CKF_SIGN and CKF_VERIFY", func(t *testing.T) {
+		desc := mechanismRegistry[CKM_ML_DSA]
+		require.NotNil(t, desc)
+		assert.True(t, desc.Flags&CKF_SIGN != 0, "%s should have CKF_SIGN flag", desc.Name)
+		assert.True(t, desc.Flags&CKF_VERIFY != 0, "%s should have CKF_VERIFY flag", desc.Name)
+		assert.Contains(t, desc.Categories, CategorySign)
+		assert.Contains(t, desc.Categories, CategoryVerify)
+	})
+
+	t.Run("the unimplemented signature mechanisms claim no capability", func(t *testing.T) {
+		// SLH-DSA, HSS, XMSS and XMSS^MT have descriptors so their constants and
+		// parameter sets resolve, but no implementation: Go's standard library
+		// provides none and pkg/quantum carries only Kyber, ML-KEM and ML-DSA.
+		//
+		// Their flags must stay clear. CryptoManager.SignInit gates on CKF_SIGN
+		// and validateInitMechanism gates on registration rather than
+		// advertisement, so a capability flag here made C_SignInit answer CKR_OK
+		// and the operation fail from the backend afterwards -- the caller
+		// learned the token could not do it only after committing to it.
+		for _, mech := range []MechanismType{CKM_SLH_DSA, CKM_HSS, CKM_XMSS, CKM_XMSSMT} {
+			desc := mechanismRegistry[mech]
+			require.NotNil(t, desc, "mechanism 0x%08X descriptor should exist", mech)
+			assert.Zero(t, desc.Flags,
+				"%s must claim no capability it cannot perform", desc.Name)
 		}
 	})
 
@@ -194,8 +232,8 @@ func TestV32MechanismFlags(t *testing.T) {
 			"CKM_ML_KEM should have CKF_ENCAPSULATE flag")
 		assert.True(t, desc.Flags&CKF_DECAPSULATE != 0,
 			"CKM_ML_KEM should have CKF_DECAPSULATE flag")
-		assert.Contains(t, desc.Categories, v32CategoryEncapsulate)
-		assert.Contains(t, desc.Categories, v32CategoryDecapsulate)
+		assert.Contains(t, desc.Categories, CategoryEncapsulate)
+		assert.Contains(t, desc.Categories, CategoryDecapsulate)
 	})
 
 	t.Run("CKF_ENCAPSULATE and CKF_DECAPSULATE have correct values", func(t *testing.T) {
@@ -206,18 +244,44 @@ func TestV32MechanismFlags(t *testing.T) {
 
 func TestV32MechanismKeySizes(t *testing.T) {
 
+	// Per PKCS#11 v3.2 CSD01 sections 6.67.4/6.67.5 and 6.68.4/6.68.5,
+	// ulMinKeySize/ulMaxKeySize for ML-DSA and ML-KEM mechanisms specify the
+	// supported range of the *public* key size *in bytes* -- not bits, and
+	// not the (much larger) private/secret key size. ML-DSA-44 public key =
+	// 1312 bytes, ML-DSA-87 public key = 2592 bytes (FIPS 204); ML-KEM-512
+	// public key = 800 bytes, ML-KEM-1024 public key = 1568 bytes (FIPS 203).
 	t.Run("ML-DSA keygen has correct key size bounds", func(t *testing.T) {
 		desc := mechanismRegistry[CKM_ML_DSA_KEY_PAIR_GEN]
 		require.NotNil(t, desc)
-		assert.Equal(t, uint32(v32MLDSA44PublicKeySize*8), desc.MinKeySize)
-		assert.Equal(t, uint32(v32MLDSA87SecretKeySize*8), desc.MaxKeySize)
+		assert.Equal(t, uint32(1312), desc.MinKeySize, "ML-DSA-44 public key size in bytes")
+		assert.Equal(t, uint32(2592), desc.MaxKeySize, "ML-DSA-87 public key size in bytes")
+		assert.Equal(t, uint32(MLDSA44PublicKeySize), desc.MinKeySize)
+		assert.Equal(t, uint32(MLDSA87PublicKeySize), desc.MaxKeySize)
+	})
+
+	t.Run("ML-DSA sign/verify mechanism has correct key size bounds", func(t *testing.T) {
+		desc := mechanismRegistry[CKM_ML_DSA]
+		require.NotNil(t, desc)
+		assert.Equal(t, uint32(MLDSA44PublicKeySize), desc.MinKeySize)
+		assert.Equal(t, uint32(MLDSA87PublicKeySize), desc.MaxKeySize)
 	})
 
 	t.Run("ML-KEM keygen has correct key size bounds", func(t *testing.T) {
 		desc := mechanismRegistry[CKM_ML_KEM_KEY_PAIR_GEN]
 		require.NotNil(t, desc)
-		assert.Equal(t, uint32(v32MLKEM512PublicKeySize*8), desc.MinKeySize)
-		assert.Equal(t, uint32(v32MLKEM1024SecretKeySize*8), desc.MaxKeySize)
+		// The floor is ML-KEM-512. It was raised to 768 for a period, while only
+		// those two parameter sets were implemented and advertising 800 offered
+		// a level the token could not serve; pkg/quantum/mlkem512 supplies it
+		// now, so the advertised range covers all three FIPS 203 sets again.
+		assert.Equal(t, uint32(MLKEM512PublicKeySize), desc.MinKeySize, "ML-KEM-512 public key size in bytes")
+		assert.Equal(t, uint32(MLKEM1024PublicKeySize), desc.MaxKeySize, "ML-KEM-1024 public key size in bytes")
+	})
+
+	t.Run("CKM_ML_KEM encapsulate/decapsulate mechanism has correct key size bounds", func(t *testing.T) {
+		desc := mechanismRegistry[CKM_ML_KEM]
+		require.NotNil(t, desc)
+		assert.Equal(t, uint32(MLKEM512PublicKeySize), desc.MinKeySize)
+		assert.Equal(t, uint32(MLKEM1024PublicKeySize), desc.MaxKeySize)
 	})
 }
 
@@ -229,8 +293,10 @@ func TestV32SLHDSAKeygenKeySizeBounds(t *testing.T) {
 		assert.Equal(t, CKM_SLH_DSA_KEY_PAIR_GEN, desc.Type)
 		assert.Equal(t, "CKM_SLH_DSA_KEY_PAIR_GEN", desc.Name)
 		assert.Contains(t, desc.Categories, CategoryKeyPairGen)
-		assert.True(t, desc.Flags&CKF_GENERATE_KEY_PAIR != 0,
-			"CKM_SLH_DSA_KEY_PAIR_GEN should have CKF_GENERATE_KEY_PAIR flag")
+		// No CKF_GENERATE_KEY_PAIR: there is no SLH-DSA implementation to
+		// generate with. See the sign/verify subtest below.
+		assert.Zero(t, desc.Flags,
+			"CKM_SLH_DSA_KEY_PAIR_GEN must claim no capability it cannot perform")
 	})
 
 	t.Run("SLH-DSA keygen has zero key size bounds (parameter-set driven)", func(t *testing.T) {
@@ -251,10 +317,15 @@ func TestV32SLHDSAKeygenKeySizeBounds(t *testing.T) {
 		require.True(t, ok, "CKM_SLH_DSA should be in mechanismRegistry")
 		assert.Equal(t, uint32(0), desc.MinKeySize)
 		assert.Equal(t, uint32(0), desc.MaxKeySize)
-		assert.True(t, desc.Flags&CKF_SIGN != 0,
-			"CKM_SLH_DSA should have CKF_SIGN flag")
-		assert.True(t, desc.Flags&CKF_VERIFY != 0,
-			"CKM_SLH_DSA should have CKF_VERIFY flag")
+		// No operation flags. This module has no SLH-DSA implementation -- Go's
+		// standard library provides none and pkg/quantum carries only Kyber,
+		// ML-KEM and ML-DSA -- so CKF_SIGN would make CryptoManager.SignInit
+		// admit the mechanism, C_SignInit answer CKR_OK, and the operation fail
+		// from the backend afterwards. The descriptor stays so the constant
+		// resolves and the parameter sets below are reachable; the capability
+		// claim does not.
+		assert.Zero(t, desc.Flags,
+			"CKM_SLH_DSA must claim no capability it cannot perform")
 	})
 
 	t.Run("SLH-DSA parameter sets are defined for all 12 variants", func(t *testing.T) {
@@ -385,8 +456,8 @@ func TestV32MechanismDescriptorConsistency(t *testing.T) {
 func TestV32CategoryConstants(t *testing.T) {
 
 	t.Run("v32 encapsulation categories have expected values", func(t *testing.T) {
-		assert.Equal(t, MechanismCategory(10), v32CategoryEncapsulate)
-		assert.Equal(t, MechanismCategory(11), v32CategoryDecapsulate)
+		assert.Equal(t, MechanismCategory(10), CategoryEncapsulate)
+		assert.Equal(t, MechanismCategory(11), CategoryDecapsulate)
 	})
 
 	t.Run("v32 categories do not collide with standard categories", func(t *testing.T) {
@@ -395,10 +466,10 @@ func TestV32CategoryConstants(t *testing.T) {
 			CategoryKeyPairGen,
 		}
 		for _, cat := range standardCategories {
-			assert.NotEqual(t, cat, v32CategoryEncapsulate,
-				"v32CategoryEncapsulate should not equal standard category %d", cat)
-			assert.NotEqual(t, cat, v32CategoryDecapsulate,
-				"v32CategoryDecapsulate should not equal standard category %d", cat)
+			assert.NotEqual(t, cat, CategoryEncapsulate,
+				"CategoryEncapsulate should not equal standard category %d", cat)
+			assert.NotEqual(t, cat, CategoryDecapsulate,
+				"CategoryDecapsulate should not equal standard category %d", cat)
 		}
 	})
 }
@@ -445,17 +516,19 @@ func TestV32HashMLDSAMechanisms(t *testing.T) {
 		}
 	})
 
-	t.Run("all registered in mechanismRegistry with CKF_SIGN|CKF_VERIFY", func(t *testing.T) {
+	t.Run("all registered in mechanismRegistry with no operation flags", func(t *testing.T) {
+		// Pre-hash ML-DSA / SLH-DSA are unimplemented, so the descriptors are
+		// registered (constant resolution + C_GetMechanismInfo) but advertise no
+		// operation flag they cannot honour. The Sign/Verify categories remain as
+		// descriptive metadata; the flags are what *Init gates on, and they are 0.
 		for _, e := range entries {
 			t.Run(e.name, func(t *testing.T) {
 				desc, ok := mechanismRegistry[e.mech]
 				require.True(t, ok, "%s should be in global mechanismRegistry", e.name)
 				assert.Equal(t, e.mech, desc.Type)
 				assert.Equal(t, e.name, desc.Name)
-				assert.True(t, desc.Flags&CKF_SIGN != 0,
-					"%s should have CKF_SIGN flag", e.name)
-				assert.True(t, desc.Flags&CKF_VERIFY != 0,
-					"%s should have CKF_VERIFY flag", e.name)
+				assert.Zero(t, desc.Flags,
+					"%s must advertise no operation flag it cannot perform", e.name)
 				assert.Contains(t, desc.Categories, CategorySign)
 				assert.Contains(t, desc.Categories, CategoryVerify)
 			})
@@ -483,13 +556,26 @@ func TestV32HashMLDSAMechanisms(t *testing.T) {
 		}
 	})
 
-	t.Run("CKM_HASH_ML_DSA base variant has multi-part message flags", func(t *testing.T) {
-		desc := mechanismRegistry[CKM_HASH_ML_DSA]
-		require.NotNil(t, desc)
-		assert.True(t, desc.Flags&CKF_MESSAGE_SIGN != 0,
-			"CKM_HASH_ML_DSA should have CKF_MESSAGE_SIGN flag")
-		assert.True(t, desc.Flags&CKF_MESSAGE_VERIFY != 0,
-			"CKM_HASH_ML_DSA should have CKF_MESSAGE_VERIFY flag")
+	t.Run("HashML-DSA mechanisms advertise no operation flags", func(t *testing.T) {
+		// Pre-hash ML-DSA is not implemented (IsMLDSAMechanism routes only
+		// CKM_ML_DSA and the vendor range), so no CKM_HASH_ML_DSA* mechanism may
+		// advertise an operation flag it cannot honour. The descriptors remain
+		// for constant resolution and C_GetMechanismInfo only; every *Init
+		// refuses them at the gate because desc.Flags is 0.
+		mechs := []MechanismType{
+			CKM_HASH_ML_DSA,
+			CKM_HASH_ML_DSA_SHA224, CKM_HASH_ML_DSA_SHA256,
+			CKM_HASH_ML_DSA_SHA384, CKM_HASH_ML_DSA_SHA512,
+			CKM_HASH_ML_DSA_SHA3_224, CKM_HASH_ML_DSA_SHA3_256,
+			CKM_HASH_ML_DSA_SHA3_384, CKM_HASH_ML_DSA_SHA3_512,
+			CKM_HASH_ML_DSA_SHAKE128, CKM_HASH_ML_DSA_SHAKE256,
+		}
+		for _, mech := range mechs {
+			desc := mechanismRegistry[mech]
+			require.NotNil(t, desc, "mechanism 0x%08X descriptor should exist", mech)
+			assert.Zero(t, desc.Flags,
+				"%s must advertise no operation flags: pre-hash ML-DSA is unimplemented", desc.Name)
+		}
 	})
 
 	t.Run("SHA variant mechanisms do not have multi-part message flags", func(t *testing.T) {
@@ -569,17 +655,19 @@ func TestV32HashSLHDSAMechanisms(t *testing.T) {
 		}
 	})
 
-	t.Run("all registered in mechanismRegistry with CKF_SIGN|CKF_VERIFY", func(t *testing.T) {
+	t.Run("all registered in mechanismRegistry with no operation flags", func(t *testing.T) {
+		// Pre-hash ML-DSA / SLH-DSA are unimplemented, so the descriptors are
+		// registered (constant resolution + C_GetMechanismInfo) but advertise no
+		// operation flag they cannot honour. The Sign/Verify categories remain as
+		// descriptive metadata; the flags are what *Init gates on, and they are 0.
 		for _, e := range entries {
 			t.Run(e.name, func(t *testing.T) {
 				desc, ok := mechanismRegistry[e.mech]
 				require.True(t, ok, "%s should be in global mechanismRegistry", e.name)
 				assert.Equal(t, e.mech, desc.Type)
 				assert.Equal(t, e.name, desc.Name)
-				assert.True(t, desc.Flags&CKF_SIGN != 0,
-					"%s should have CKF_SIGN flag", e.name)
-				assert.True(t, desc.Flags&CKF_VERIFY != 0,
-					"%s should have CKF_VERIFY flag", e.name)
+				assert.Zero(t, desc.Flags,
+					"%s must advertise no operation flag it cannot perform", e.name)
 				assert.Contains(t, desc.Categories, CategorySign)
 				assert.Contains(t, desc.Categories, CategoryVerify)
 			})
@@ -607,13 +695,24 @@ func TestV32HashSLHDSAMechanisms(t *testing.T) {
 		}
 	})
 
-	t.Run("CKM_HASH_SLH_DSA base variant has multi-part message flags", func(t *testing.T) {
-		desc := mechanismRegistry[CKM_HASH_SLH_DSA]
-		require.NotNil(t, desc)
-		assert.True(t, desc.Flags&CKF_MESSAGE_SIGN != 0,
-			"CKM_HASH_SLH_DSA should have CKF_MESSAGE_SIGN flag")
-		assert.True(t, desc.Flags&CKF_MESSAGE_VERIFY != 0,
-			"CKM_HASH_SLH_DSA should have CKF_MESSAGE_VERIFY flag")
+	t.Run("HashSLH-DSA mechanisms advertise no operation flags", func(t *testing.T) {
+		// The module has no SLH-DSA implementation at all, so neither the base
+		// nor any pre-hash variant may advertise an operation flag. Descriptors
+		// remain for constant resolution and C_GetMechanismInfo only.
+		mechs := []MechanismType{
+			CKM_HASH_SLH_DSA,
+			CKM_HASH_SLH_DSA_SHA224, CKM_HASH_SLH_DSA_SHA256,
+			CKM_HASH_SLH_DSA_SHA384, CKM_HASH_SLH_DSA_SHA512,
+			CKM_HASH_SLH_DSA_SHA3_224, CKM_HASH_SLH_DSA_SHA3_256,
+			CKM_HASH_SLH_DSA_SHA3_384, CKM_HASH_SLH_DSA_SHA3_512,
+			CKM_HASH_SLH_DSA_SHAKE128, CKM_HASH_SLH_DSA_SHAKE256,
+		}
+		for _, mech := range mechs {
+			desc := mechanismRegistry[mech]
+			require.NotNil(t, desc, "mechanism 0x%08X descriptor should exist", mech)
+			assert.Zero(t, desc.Flags,
+				"%s must advertise no operation flags: SLH-DSA is unimplemented", desc.Name)
+		}
 	})
 
 	t.Run("SHA variant mechanisms do not have multi-part message flags", func(t *testing.T) {
@@ -689,70 +788,108 @@ func TestV32AdditionalMechanisms(t *testing.T) {
 		})
 	})
 
-	t.Run("ECDH key wrap mechanisms registered with CKF_WRAP|CKF_UNWRAP", func(t *testing.T) {
-		wrapMechs := []struct {
-			mech MechanismType
-			name string
-		}{
-			{CKM_ECDH_X_AES_KEY_WRAP, "CKM_ECDH_X_AES_KEY_WRAP"},
-			{CKM_ECDH_COF_AES_KEY_WRAP, "CKM_ECDH_COF_AES_KEY_WRAP"},
-		}
-		for _, wm := range wrapMechs {
-			t.Run(wm.name, func(t *testing.T) {
-				desc, ok := mechanismRegistry[wm.mech]
-				require.True(t, ok, "%s should be in mechanismRegistry", wm.name)
-				assert.Equal(t, wm.name, desc.Name)
-				assert.True(t, desc.Flags&CKF_WRAP != 0,
-					"%s should have CKF_WRAP flag", wm.name)
-				assert.True(t, desc.Flags&CKF_UNWRAP != 0,
-					"%s should have CKF_UNWRAP flag", wm.name)
-				assert.Contains(t, desc.Categories, CategoryWrap)
-				assert.Contains(t, desc.Categories, CategoryUnwrap)
+	// These subtests used to assert that CKM_ECDH_X_AES_KEY_WRAP and
+	// CKM_ECDH_COF_AES_KEY_WRAP were registered with CKF_WRAP|CKF_UNWRAP. That
+	// was the defect stated as a test: nothing routes either mechanism to a
+	// wrapping algorithm, so C_WrapKey resolved them to a bare mechanism name
+	// the service refuses, and C_GetMechanismInfo had promised a capability the
+	// module does not have. They are unregistered now, so the module refuses
+	// them at validateInitMechanism instead of failing inside the operation.
+	t.Run("ECDH key wrap mechanisms are not registered while nothing routes them", func(t *testing.T) {
+		for _, mech := range []MechanismType{CKM_ECDH_X_AES_KEY_WRAP, CKM_ECDH_COF_AES_KEY_WRAP} {
+			t.Run(GetMechanismName(mech), func(t *testing.T) {
+				_, ok := mechanismRegistry[mech]
+				assert.False(t, ok,
+					"%s must stay out of the registry until C_WrapKey can route it; a "+
+						"descriptor is a promise, and this one cannot be kept",
+					GetMechanismName(mech))
+				_, routed := wrapAlgorithmNames[mech]
+				assert.False(t, routed,
+					"%s is now routed, so restore its descriptor along with this test",
+					GetMechanismName(mech))
 			})
 		}
 	})
 
-	t.Run("ECDH key wrap mechanisms map to CKK_EC in v32KeyTypeMap", func(t *testing.T) {
-		t.Run("CKM_ECDH_X_AES_KEY_WRAP maps to CKK_EC", func(t *testing.T) {
-			kt, ok := v32KeyTypeMap[CKM_ECDH_X_AES_KEY_WRAP]
-			require.True(t, ok, "CKM_ECDH_X_AES_KEY_WRAP should be in v32KeyTypeMap")
-			assert.Equal(t, CKK_EC, kt)
-		})
+	// These two subtests asserted the opposite -- that both ECDH key wrap
+	// mechanisms mapped to CKK_EC in v32KeyTypeMap. The mapping outlived the
+	// descriptors it existed for: v32KeyTypeMap answers "what CKK_* key type
+	// does this mechanism produce", a question only ever asked of a mechanism
+	// the module can perform, so an entry for a mechanism refused at
+	// validateInitMechanism can never be read. Both entries are gone, and
+	// GetV32KeyType reports the same CKK_VENDOR_DEFINED it reports for any
+	// other mechanism it does not know.
+	t.Run("ECDH key wrap mechanisms are not in v32KeyTypeMap while nothing performs them", func(t *testing.T) {
+		for _, mech := range []MechanismType{CKM_ECDH_X_AES_KEY_WRAP, CKM_ECDH_COF_AES_KEY_WRAP} {
+			t.Run(GetMechanismName(mech), func(t *testing.T) {
+				_, registered := mechanismRegistry[mech]
+				require.False(t, registered,
+					"%s gained a descriptor: restore its v32KeyTypeMap entry along with it",
+					GetMechanismName(mech))
 
-		t.Run("CKM_ECDH_COF_AES_KEY_WRAP maps to CKK_EC", func(t *testing.T) {
-			kt, ok := v32KeyTypeMap[CKM_ECDH_COF_AES_KEY_WRAP]
-			require.True(t, ok, "CKM_ECDH_COF_AES_KEY_WRAP should be in v32KeyTypeMap")
-			assert.Equal(t, CKK_EC, kt)
-		})
-	})
-
-	t.Run("TLS 1.2 extended master key mechanisms registered with CKF_DERIVE", func(t *testing.T) {
-		tlsMechs := []struct {
-			mech MechanismType
-			name string
-		}{
-			{CKM_TLS12_EXTENDED_MASTER_KEY_DERIVE, "CKM_TLS12_EXTENDED_MASTER_KEY_DERIVE"},
-			{CKM_TLS12_EXTENDED_MASTER_KEY_DERIVE_DH, "CKM_TLS12_EXTENDED_MASTER_KEY_DERIVE_DH"},
-		}
-		for _, tm := range tlsMechs {
-			t.Run(tm.name, func(t *testing.T) {
-				desc, ok := mechanismRegistry[tm.mech]
-				require.True(t, ok, "%s should be in mechanismRegistry", tm.name)
-				assert.Equal(t, tm.name, desc.Name)
-				assert.True(t, desc.Flags&CKF_DERIVE != 0,
-					"%s should have CKF_DERIVE flag", tm.name)
-				assert.Contains(t, desc.Categories, CategoryDerive)
+				_, ok := v32KeyTypeMap[mech]
+				assert.False(t, ok,
+					"%s has no descriptor, so a key type for it is unreachable dead weight",
+					GetMechanismName(mech))
+				assert.Equal(t, CKK_VENDOR_DEFINED, GetV32KeyType(mech),
+					"GetV32KeyType must not claim a key type for a mechanism the module refuses")
 			})
 		}
 	})
 
-	t.Run("CKM_PUB_KEY_FROM_PRIV_KEY registered with CKF_DERIVE", func(t *testing.T) {
-		desc, ok := mechanismRegistry[CKM_PUB_KEY_FROM_PRIV_KEY]
-		require.True(t, ok, "CKM_PUB_KEY_FROM_PRIV_KEY should be in mechanismRegistry")
-		assert.Equal(t, "CKM_PUB_KEY_FROM_PRIV_KEY", desc.Name)
-		assert.True(t, desc.Flags&CKF_DERIVE != 0,
-			"CKM_PUB_KEY_FROM_PRIV_KEY should have CKF_DERIVE flag")
-		assert.Contains(t, desc.Categories, CategoryDerive)
+	// The names are the deliberate other half of that decision: a mechanism
+	// refused by number is harder to diagnose than one refused by name, and
+	// nothing gates an operation on mechanismNames -- mechanismRegistry does
+	// that -- so keeping them costs no capability claim.
+	t.Run("refused mechanisms keep their names so the refusal is legible", func(t *testing.T) {
+		for _, mech := range []MechanismType{
+			CKM_ECDH_X_AES_KEY_WRAP,
+			CKM_ECDH_COF_AES_KEY_WRAP,
+			CKM_PUB_KEY_FROM_PRIV_KEY,
+			CKM_TLS12_EXTENDED_MASTER_KEY_DERIVE,
+			CKM_TLS12_EXTENDED_MASTER_KEY_DERIVE_DH,
+		} {
+			expected := v32MechanismNames[mech]
+			t.Run(expected, func(t *testing.T) {
+				require.NotEmpty(t, expected, "every refused mechanism must still have a name")
+
+				_, registered := mechanismRegistry[mech]
+				assert.False(t, registered,
+					"%s is registered now, so this subtest no longer describes a refused mechanism",
+					expected)
+
+				// MechanismType.String is the path every error and log line
+				// takes, and it is what a name being present or absent changes.
+				assert.Equal(t, expected, mech.String(),
+					"a refused mechanism must report its name, not CKM_UNKNOWN(0x%08X)", uint32(mech))
+				assert.NotContains(t, mech.String(), "CKM_UNKNOWN",
+					"dropping the name would leave an operator decoding %#08x by hand", uint32(mech))
+			})
+		}
+	})
+
+	// As above: these asserted CKF_DERIVE on two mechanisms C_DeriveKey does not
+	// dispatch on, so every use returned CKR_MECHANISM_INVALID after the
+	// descriptor had said the module could derive with them.
+	t.Run("TLS 1.2 extended master key mechanisms are not registered while C_DeriveKey cannot perform them", func(t *testing.T) {
+		for _, mech := range []MechanismType{
+			CKM_TLS12_EXTENDED_MASTER_KEY_DERIVE,
+			CKM_TLS12_EXTENDED_MASTER_KEY_DERIVE_DH,
+		} {
+			t.Run(GetMechanismName(mech), func(t *testing.T) {
+				_, ok := mechanismRegistry[mech]
+				assert.False(t, ok,
+					"%s must stay out of the registry until C_DeriveKey implements it",
+					GetMechanismName(mech))
+			})
+		}
+	})
+
+	t.Run("CKM_PUB_KEY_FROM_PRIV_KEY is not registered while C_DeriveKey cannot perform it", func(t *testing.T) {
+		_, ok := mechanismRegistry[CKM_PUB_KEY_FROM_PRIV_KEY]
+		assert.False(t, ok,
+			"CKM_PUB_KEY_FROM_PRIV_KEY carried CKF_DERIVE but is not among the mechanisms "+
+				"C_DeriveKey dispatches on, so every use returned CKR_MECHANISM_INVALID")
 	})
 
 	t.Run("CKM_PUB_KEY_FROM_PRIV_KEY not in v32KeyTypeMap (algorithm-agnostic)", func(t *testing.T) {
@@ -834,14 +971,16 @@ func TestV32NewAttributeConstants(t *testing.T) {
 		}
 	})
 
-	t.Run("KEM template attributes have correct hex values with CKF_ARRAY_ATTRIBUTE", func(t *testing.T) {
+	// OASIS gives the KEM template attributes plain values, without the
+	// CKF_ARRAY_ATTRIBUTE bit the other *_TEMPLATE attributes carry.
+	t.Run("KEM template attributes have correct hex values without CKF_ARRAY_ATTRIBUTE", func(t *testing.T) {
 		t.Run("CKA_ENCAPSULATE_TEMPLATE", func(t *testing.T) {
-			assert.Equal(t, AttributeType(0x4000062A), CKA_ENCAPSULATE_TEMPLATE)
+			assert.Equal(t, AttributeType(0x0000062A), CKA_ENCAPSULATE_TEMPLATE)
 			assert.True(t, CKA_ENCAPSULATE_TEMPLATE < CKA_VENDOR_DEFINED)
 		})
 
 		t.Run("CKA_DECAPSULATE_TEMPLATE", func(t *testing.T) {
-			assert.Equal(t, AttributeType(0x4000062B), CKA_DECAPSULATE_TEMPLATE)
+			assert.Equal(t, AttributeType(0x0000062B), CKA_DECAPSULATE_TEMPLATE)
 			assert.True(t, CKA_DECAPSULATE_TEMPLATE < CKA_VENDOR_DEFINED)
 		})
 	})
@@ -1311,16 +1450,27 @@ func TestV32NewFlags(t *testing.T) {
 		assert.Equal(t, uint32(0x02000000), CKF_SEED_RANDOM_REQUIRED)
 	})
 
-	t.Run("CKF_END_OF_MESSAGE has correct spec value", func(t *testing.T) {
-		// Per PKCS#11 v3.2 spec, CKF_END_OF_MESSAGE = 0x00000001
-		assert.Equal(t, MechanismFlag(0x00000001), CKF_END_OF_MESSAGE)
+	t.Run("CKF_END_OF_MESSAGE has correct spec value and type", func(t *testing.T) {
+		// Per PKCS#11 v3.2, CKF_END_OF_MESSAGE = 0x00000001.
+		//
+		// It is a uint32 rather than a MechanismFlag, and the type is the point.
+		// It is the flags argument of C_EncryptMessageNext and its siblings, not
+		// a CK_MECHANISM_INFO flag, and it shares the low bit with CKF_HW. While
+		// it carried the mechanism-flag type,
+		// MechanismInfo.HasFlag(CKF_END_OF_MESSAGE) compiled and returned true
+		// for every hardware mechanism -- the collision this subtest's own name
+		// describes, made reachable by the typing.
+		assert.Equal(t, uint32(0x00000001), CKF_END_OF_MESSAGE)
 	})
 
-	t.Run("CKF_END_OF_MESSAGE equals CKF_HW in numeric value but different semantic context", func(t *testing.T) {
-		// Both are 0x00000001 but used in different flag namespaces:
-		// CKF_HW is for CK_MECHANISM_INFO.flags
-		// CKF_END_OF_MESSAGE is for CK_FLAGS in message Next functions
-		assert.Equal(t, CKF_HW, CKF_END_OF_MESSAGE)
+	t.Run("CKF_END_OF_MESSAGE cannot be confused with CKF_HW", func(t *testing.T) {
+		// The two share a numeric value and belong to different namespaces, so
+		// the types must differ: a compile-time separation is what keeps them
+		// from being tested against the same field.
+		assert.Equal(t, uint32(CKF_HW), CKF_END_OF_MESSAGE,
+			"the numeric value is shared, as OASIS assigns it")
+		assert.IsType(t, MechanismFlag(0), CKF_HW)
+		assert.IsType(t, uint32(0), CKF_END_OF_MESSAGE)
 	})
 
 	t.Run("session/token flags do not collide with each other", func(t *testing.T) {
@@ -1380,16 +1530,6 @@ func TestArrayAttributeConstants(t *testing.T) {
 			constant: CKA_ALLOWED_MECHANISMS,
 			want:     0x40000600,
 		},
-		{
-			name:     "CKA_ENCAPSULATE_TEMPLATE",
-			constant: CKA_ENCAPSULATE_TEMPLATE,
-			want:     0x4000062A,
-		},
-		{
-			name:     "CKA_DECAPSULATE_TEMPLATE",
-			constant: CKA_DECAPSULATE_TEMPLATE,
-			want:     0x4000062B,
-		},
 	}
 
 	for _, tt := range tests {
@@ -1399,6 +1539,26 @@ func TestArrayAttributeConstants(t *testing.T) {
 			// Verify the flag bit is set
 			assert.True(t, uint32(tt.constant)&0x40000000 != 0,
 				"%s should have CKF_ARRAY_ATTRIBUTE bit set", tt.name)
+		})
+	}
+
+	// The two KEM template attributes are the exception OASIS made: they
+	// name a template but carry no array bit. Guard the exception so that
+	// nobody "fixes" them back into the table above.
+	notArray := []struct {
+		name     string
+		constant AttributeType
+		want     uint32
+	}{
+		{"CKA_ENCAPSULATE_TEMPLATE", CKA_ENCAPSULATE_TEMPLATE, 0x0000062A},
+		{"CKA_DECAPSULATE_TEMPLATE", CKA_DECAPSULATE_TEMPLATE, 0x0000062B},
+	}
+	for _, tt := range notArray {
+		t.Run(tt.name, func(t *testing.T) {
+			assert.Equal(t, tt.want, uint32(tt.constant),
+				"%s should hold the plain OASIS value", tt.name)
+			assert.Zero(t, uint32(tt.constant)&0x40000000,
+				"%s must not carry CKF_ARRAY_ATTRIBUTE: OASIS defines it without the bit", tt.name)
 		})
 	}
 }

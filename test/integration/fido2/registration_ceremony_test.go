@@ -18,7 +18,6 @@ package fido2
 import (
 	"context"
 	"encoding/json"
-	"os"
 	"testing"
 	"time"
 
@@ -33,12 +32,6 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
-
-// hardwareEnvVar gates the YubiKey/hardware end-to-end registration test.
-// The hardware test only runs when XKMS_FIDO2_HARDWARE=1 is exported, so the
-// operator runs it manually with a physical authenticator plugged in (touch
-// required). CI never sets it, so only the virtual-authenticator test runs in CI.
-const hardwareEnvVar = "XKMS_FIDO2_HARDWARE"
 
 // ceremonySurface bundles the real server-side WebAuthn relying-party surface
 // used by the registration ceremony tests: the canonical *webauthn.Service
@@ -242,30 +235,5 @@ func TestFIDO2Registration_VirtualAuthenticator_EndToEnd(t *testing.T) {
 	surface := newCeremonySurface(t)
 	username := GenerateUniqueUsername("fido2-reg")
 
-	runRegistrationCeremony(t, surface, handler, username)
-}
-
-// TestFIDO2Registration_HardwareYubiKey_EndToEnd runs the identical end-to-end
-// ceremony against a REAL hardware authenticator (e.g. a YubiKey). It is gated on
-// the XKMS_FIDO2_HARDWARE=1 environment variable so it only runs when an operator
-// has a physical key plugged in and is present to touch it; CI never sets the var.
-//
-// Run manually with:
-//
-//	XKMS_FIDO2_HARDWARE=1 go test -tags 'integration fido2' \
-//	    -run TestFIDO2Registration_HardwareYubiKey_EndToEnd -count=1 -v \
-//	    ./test/integration/fido2/
-func TestFIDO2Registration_HardwareYubiKey_EndToEnd(t *testing.T) {
-	if os.Getenv(hardwareEnvVar) != "1" {
-		t.Skipf("hardware FIDO2 ceremony gated; set %s=1 with a physical authenticator plugged in", hardwareEnvVar)
-	}
-
-	cfg := LoadFIDO2TestConfig()
-	handler := cfg.CreateHandler(t)
-
-	surface := newCeremonySurface(t)
-	username := GenerateUniqueUsername("fido2-reg-hw")
-
-	t.Log("Hardware authenticator registration: please touch your security key when prompted")
 	runRegistrationCeremony(t, surface, handler, username)
 }

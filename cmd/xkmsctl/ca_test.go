@@ -454,6 +454,15 @@ func (m *mockCAClient) SubmitShare(_ context.Context, _ *transport.SubmitShareRe
 func (m *mockCAClient) ListShares(_ context.Context) (*transport.ListSharesResponse, error) {
 	return nil, nil
 }
+func (m *mockCAClient) Algorithms(_ context.Context) (*transport.AlgorithmsResponse, error) {
+	return nil, nil
+}
+func (m *mockCAClient) GetShare(_ context.Context, _, _ string, _ int) (*transport.ShareInfo, error) {
+	return nil, nil
+}
+func (m *mockCAClient) DeleteShare(_ context.Context, _, _ string, _ int) error {
+	return nil
+}
 func (m *mockCAClient) GetShareCollectionStatus(_ context.Context, _ string) (*transport.ShareCollectionStatus, error) {
 	return nil, nil
 }
@@ -495,7 +504,11 @@ func (m *mockCAClient) ClaimCertBegin(_ context.Context, _ *transport.ClaimCertB
 func (m *mockCAClient) ClaimCertComplete(_ context.Context, _ *transport.ClaimCertCompleteRequest) (*transport.ClaimCertCompleteResponse, error) {
 	return nil, nil
 }
-func (m *mockCAClient) ClaimShare(_ context.Context, _ *transport.ClaimShareRequest) (*transport.ClaimShareResponse, error) {
+func (m *mockCAClient) ClaimShareBegin(_ context.Context, _ *transport.ClaimShareBeginRequest) (*transport.ClaimShareBeginResponse, error) {
+	return nil, nil
+}
+
+func (m *mockCAClient) ClaimShareComplete(_ context.Context, _ *transport.ClaimShareCompleteRequest) (*transport.ClaimShareCompleteResponse, error) {
 	return nil, nil
 }
 func (m *mockCAClient) SignCSRInit(_ context.Context, _ *transport.SignCSRInitRequest) (*transport.SignCSRInitResponse, error) {
@@ -537,6 +550,10 @@ func (m *mockCAClient) BindUserCert(_ context.Context, _, _ string, _ int64) err
 }
 
 func (m *mockCAClient) ListUserCredentials(_ context.Context, _ string) (*transport.ListUserCredentialsResponse, error) {
+	return nil, nil
+}
+
+func (m *mockCAClient) QueryAudit(_ context.Context, _ *transport.AuditFilter) (*transport.AuditPage, error) {
 	return nil, nil
 }
 

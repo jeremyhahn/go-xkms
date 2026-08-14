@@ -456,6 +456,23 @@ func TestHandlePasswordUnlock(t *testing.T) {
 		_, err := server.handlePasswordUnlock(ctx, req)
 		require.Error(t, err)
 	})
+
+	// TestHandlePasswordUnlock/system-tenant caller is rejected proves a
+	// caller minted with the reserved "system" TenantID (e.g. a
+	// WebAuthn-registered identity, see pkg/server.webAuthnSystemTenant) is
+	// rejected exactly like an identity with no TenantID: it has no per-tenant
+	// password store to unlock. This is the opposite polarity from the tenant
+	// *scope gates* (tenant.go's tenantAccess): those pass a system-scoped
+	// caller through, this rejects it.
+	t.Run("system-tenant caller is rejected", func(t *testing.T) {
+		server.passwordManager = createPasswordManager(t)
+		ctx := auth.WithIdentity(context.Background(), &auth.Identity{Subject: "webauthn-user", TenantID: "system"})
+		req := &JSONRPCRequest{JSONRPC: "2.0", Method: "password.unlock", ID: 1}
+
+		_, err := server.handlePasswordUnlock(ctx, req)
+		require.Error(t, err)
+		assert.ErrorIs(t, err, staticpw.ErrInvalidTenantID)
+	})
 }
 
 func TestHandlePasswordLock(t *testing.T) {
@@ -480,6 +497,19 @@ func TestHandlePasswordLock(t *testing.T) {
 
 		_, err := server.handlePasswordLock(ctx, req)
 		require.Error(t, err)
+	})
+
+	// TestHandlePasswordLock/system-tenant caller is rejected mirrors
+	// TestHandlePasswordUnlock's system-tenant regression test for the lock
+	// path.
+	t.Run("system-tenant caller is rejected", func(t *testing.T) {
+		server.passwordManager = createPasswordManager(t)
+		ctx := auth.WithIdentity(context.Background(), &auth.Identity{Subject: "webauthn-user", TenantID: "system"})
+		req := &JSONRPCRequest{JSONRPC: "2.0", Method: "password.lock", ID: 1}
+
+		_, err := server.handlePasswordLock(ctx, req)
+		require.Error(t, err)
+		assert.ErrorIs(t, err, staticpw.ErrInvalidTenantID)
 	})
 }
 

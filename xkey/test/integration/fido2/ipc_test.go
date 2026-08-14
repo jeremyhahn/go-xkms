@@ -30,7 +30,7 @@ import (
 // TestIPC_TouchStatus verifies that running `xkey touch` against a running
 // daemon reports no pending user presence request when none is active.
 func TestIPC_TouchStatus(t *testing.T) {
-	skipIfNoUHID(t)
+	requireUHID(t)
 
 	h := NewFIDO2TestHelper(t)
 	h.StartDaemon()

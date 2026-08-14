@@ -22,6 +22,7 @@ import (
 	"fmt"
 	"time"
 
+	xkms "github.com/jeremyhahn/go-xkms/sdk/go"
 	"github.com/jeremyhahn/go-xkms/xkey/pkg/truststore"
 )
 
@@ -127,16 +128,27 @@ func (v *Verifier) VerifyTPMAttestation(ekCert *x509.Certificate) (*Verification
 }
 
 // VerifyAndroidAttestation verifies an Android hardware attestation certificate
-// chain. The chain should be ordered as [leaf, intermediate(s)..., root].
-// It queries the trust store for PurposeAndroidHardware certificates and
-// merges in any embedded Google Hardware Attestation roots.
+// chain and binds it to the caller's challenge. The chain should be ordered as
+// [leaf, intermediate(s)..., root]. It queries the trust store for
+// PurposeAndroidHardware certificates and merges in any embedded Google
+// Hardware Attestation roots.
 //
-// If nonce is non-nil, it is noted for future Android attestation extension
-// parsing (OID 1.3.6.1.4.1.11129.2.1.17). Currently nonce verification is
-// deferred until full Android extension parsing is implemented.
+// The nonce is mandatory. A chain proves only that some key was attested by a
+// genuine device at some point in the past; the challenge recorded in the
+// Android Key Attestation extension (OID 1.3.6.1.4.1.11129.2.1.17) is what
+// binds that proof to this verification. Verifying a chain without comparing
+// the challenge accepts any previously captured attestation, so an empty nonce
+// is refused with ErrMissingNonce rather than silently verified.
+//
+// The reported trust level follows the attestation security level recorded in
+// the extension: TEE and StrongBox attestations are hardware-backed, a
+// software attestation is not.
 func (v *Verifier) VerifyAndroidAttestation(chain []*x509.Certificate, nonce []byte) (*VerificationResult, error) {
 	if len(chain) == 0 {
 		return nil, ErrEmptyCertChain
+	}
+	if len(nonce) == 0 {
+		return nil, ErrMissingNonce
 	}
 
 	leaf := chain[0]
@@ -160,11 +172,6 @@ func (v *Verifier) VerifyAndroidAttestation(chain []*x509.Certificate, nonce []b
 		intermediates = chain[1:]
 	}
 
-	// TODO: When nonce is non-nil, extract the Android key attestation extension
-	// (OID 1.3.6.1.4.1.11129.2.1.17) from the leaf certificate and verify
-	// that the challenge/nonce matches. This requires deeper ASN.1 parsing
-	// of the Android-specific extension structure.
-
 	chains, err := v.verifyLeaf(leaf, intermediates, roots)
 	if err != nil {
 		return &VerificationResult{
@@ -177,14 +184,42 @@ func (v *Verifier) VerifyAndroidAttestation(chain []*x509.Certificate, nonce []b
 		}, &SentinelCauseError{Sentinel: ErrChainVerification, Cause: err}
 	}
 
+	// Bind the verified chain to this request. The chain is already anchored
+	// above, so the canonical verifier is asked for the extension claims only
+	// (TrustedRoots nil skips its own chain build).
+	description, err := xkms.VerifyAndroidKeyAttestation(chain, &xkms.AndroidVerifyOptions{
+		ExpectedNonce: nonce,
+	})
+	if err != nil {
+		return &VerificationResult{
+			Verified:    false,
+			TrustLevel:  TrustLevelUnknown,
+			Subject:     leaf.Subject.String(),
+			Issuer:      leaf.Issuer.String(),
+			ChainLength: len(chains[0]),
+			Message:     fmt.Sprintf("attestation challenge verification failed: %v", err),
+		}, &SentinelCauseError{Sentinel: ErrChallengeVerification, Cause: err}
+	}
+
 	return &VerificationResult{
 		Verified:    true,
-		TrustLevel:  TrustLevelHardware,
+		TrustLevel:  androidTrustLevel(description),
 		Subject:     leaf.Subject.String(),
 		Issuer:      leaf.Issuer.String(),
 		ChainLength: len(chains[0]),
-		Message:     "Android attestation chain verified",
+		Message: fmt.Sprintf("Android attestation chain verified and bound to challenge (security level %s)",
+			description.AttestationSecurityLevel),
 	}, nil
+}
+
+// androidTrustLevel maps the attestation security level recorded in the key
+// attestation extension onto an xkey trust level. TEE and StrongBox both
+// place the key inside a hardware boundary; anything below that is software.
+func androidTrustLevel(description *xkms.AndroidKeyDescription) TrustLevel {
+	if description.AttestationSecurityLevel >= xkms.AndroidSecurityLevelTrustedEnvironment {
+		return TrustLevelHardware
+	}
+	return TrustLevelSoftware
 }
 
 // VerifyIDevID verifies an IDevID certificate against IDevID issuer trust

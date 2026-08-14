@@ -15,10 +15,12 @@ package cmd
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"errors"
 	"io"
 	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -43,6 +45,7 @@ func resetFIDO2PolicyFlags() {
 		rpPolicyDeleteCmd.Flags(),
 		fido2ProfileCmd.Flags(),
 		fido2ProfileSetCmd.Flags(),
+		fido2ProfileShowCmd.Flags(),
 	}
 	for _, fs := range cmds {
 		fs.VisitAll(func(f *pflag.Flag) {
@@ -610,31 +613,186 @@ func TestRPPolicyDelete_NotFound(t *testing.T) {
 
 // --- Profile subcommand tests ---
 
-func TestFIDO2ProfileSet_ValidTransports(t *testing.T) {
+// newFIDO2ProfileTestDir points the FIDO2 storage path at an isolated
+// temporary directory so profile persistence tests never touch the
+// repository-relative default store, and restores the previous viper state.
+func newFIDO2ProfileTestDir(t *testing.T) string {
+	t.Helper()
+
+	dir := t.TempDir()
+	previous := viper.GetString("fido2.storage_path")
+	viper.Set("fido2.storage_path", dir)
+	t.Cleanup(func() { viper.Set("fido2.storage_path", previous) })
+	return dir
+}
+
+// runFIDO2ProfileCommand executes a fido2 profile subcommand through the root
+// command, returning what the command wrote to its output stream. The stream
+// is bound explicitly rather than by redirecting os.Stdout so the result does
+// not depend on output plumbing left behind by other tests in the package.
+func runFIDO2ProfileCommand(t *testing.T, args ...string) string {
+	t.Helper()
+
 	resetFIDO2PolicyFlags()
 
-	output := captureRPPolicyStdout(t, func() {
-		RootCmd.SetArgs([]string{
-			"fido2", "profile", "set",
-			"--transports", "usb,internal",
-		})
-		if execErr := RootCmd.Execute(); execErr != nil {
-			t.Fatalf("fido2 profile set failed: %v", execErr)
-		}
+	var buf bytes.Buffer
+	RootCmd.SetOut(&buf)
+	RootCmd.SetErr(&buf)
+	t.Cleanup(func() {
+		RootCmd.SetOut(os.Stdout)
+		RootCmd.SetErr(os.Stderr)
 	})
 
-	if !strings.Contains(output, "usb") {
-		t.Error("profile set output missing 'usb'")
+	RootCmd.SetArgs(args)
+	if execErr := RootCmd.Execute(); execErr != nil {
+		t.Fatalf("%v failed: %v", args, execErr)
 	}
-	if !strings.Contains(output, "internal") {
-		t.Error("profile set output missing 'internal'")
+	return buf.String()
+}
+
+// TestFIDO2ProfileSet_PersistsTransports verifies the transports override is
+// written to the profile store and read back, not merely printed.
+func TestFIDO2ProfileSet_PersistsTransports(t *testing.T) {
+	cfgDir := newFIDO2ProfileTestDir(t)
+
+	output := runFIDO2ProfileCommand(t, "fido2", "profile", "set", "--transports", "usb,internal")
+
+	if !strings.Contains(output, "usb, internal") {
+		t.Errorf("profile set output missing transports, got: %s", output)
 	}
-	if !strings.Contains(output, "Transports") {
-		t.Error("profile set output missing 'Transports' header")
+	if !strings.Contains(output, "Profile saved to") {
+		t.Errorf("profile set output missing save confirmation, got: %s", output)
+	}
+
+	stored, err := loadFIDO2Profile(context.Background(), buildFIDO2Config())
+	if err != nil {
+		t.Fatalf("loadFIDO2Profile: %v", err)
+	}
+	if len(stored.Transports) != 2 || stored.Transports[0] != "usb" || stored.Transports[1] != "internal" {
+		t.Errorf("persisted transports = %v, want [usb internal]", stored.Transports)
+	}
+
+	// The document really landed on disk under the configured storage path.
+	if _, statErr := os.Stat(fido2ProfileStorePath(buildFIDO2Config())); statErr != nil {
+		t.Errorf("profile store directory missing under %s: %v", cfgDir, statErr)
+	}
+
+	// "profile show" reports the same persisted values.
+	showOutput := runFIDO2ProfileCommand(t, "fido2", "profile", "show")
+	if !strings.Contains(showOutput, "usb, internal") {
+		t.Errorf("profile show output missing persisted transports, got: %s", showOutput)
+	}
+}
+
+// TestFIDO2ProfileSet_AllTransports verifies every accepted transport value
+// round-trips through the store.
+func TestFIDO2ProfileSet_AllTransports(t *testing.T) {
+	newFIDO2ProfileTestDir(t)
+
+	runFIDO2ProfileCommand(t, "fido2", "profile", "set", "--transports", "usb,nfc,ble,internal,hybrid")
+
+	stored, err := loadFIDO2Profile(context.Background(), buildFIDO2Config())
+	if err != nil {
+		t.Fatalf("loadFIDO2Profile: %v", err)
+	}
+	want := []string{"usb", "nfc", "ble", "internal", "hybrid"}
+	if len(stored.Transports) != len(want) {
+		t.Fatalf("persisted transports = %v, want %v", stored.Transports, want)
+	}
+	for i, transport := range want {
+		if stored.Transports[i] != transport {
+			t.Errorf("transport[%d] = %q, want %q", i, stored.Transports[i], transport)
+		}
+	}
+}
+
+// TestFIDO2ProfileSet_EnterpriseAttestation verifies the enterprise
+// attestation flag is persisted.
+func TestFIDO2ProfileSet_EnterpriseAttestation(t *testing.T) {
+	newFIDO2ProfileTestDir(t)
+
+	output := runFIDO2ProfileCommand(t, "fido2", "profile", "set", "--enterprise-attestation")
+
+	if !strings.Contains(output, "Enterprise Attestation") {
+		t.Error("profile set output missing 'Enterprise Attestation'")
+	}
+
+	stored, err := loadFIDO2Profile(context.Background(), buildFIDO2Config())
+	if err != nil {
+		t.Fatalf("loadFIDO2Profile: %v", err)
+	}
+	if !stored.EnterpriseAttestation {
+		t.Error("enterprise attestation was not persisted")
+	}
+}
+
+// TestFIDO2ProfileSet_PartialUpdatePreservesStoredSettings verifies a second
+// "set" that names only one setting leaves the other stored value intact.
+func TestFIDO2ProfileSet_PartialUpdatePreservesStoredSettings(t *testing.T) {
+	newFIDO2ProfileTestDir(t)
+
+	runFIDO2ProfileCommand(t, "fido2", "profile", "set", "--transports", "nfc")
+	runFIDO2ProfileCommand(t, "fido2", "profile", "set", "--enterprise-attestation")
+
+	stored, err := loadFIDO2Profile(context.Background(), buildFIDO2Config())
+	if err != nil {
+		t.Fatalf("loadFIDO2Profile: %v", err)
+	}
+	if !stored.EnterpriseAttestation {
+		t.Error("enterprise attestation was not persisted")
+	}
+	if len(stored.Transports) != 1 || stored.Transports[0] != "nfc" {
+		t.Errorf("transports = %v, want [nfc] preserved across the partial update", stored.Transports)
+	}
+}
+
+// TestFIDO2ProfileSet_ClearsTransports verifies an explicit empty value
+// removes the override and restores the authenticator default.
+func TestFIDO2ProfileSet_ClearsTransports(t *testing.T) {
+	newFIDO2ProfileTestDir(t)
+
+	runFIDO2ProfileCommand(t, "fido2", "profile", "set", "--transports", "ble")
+	output := runFIDO2ProfileCommand(t, "fido2", "profile", "set", "--transports", "")
+
+	if !strings.Contains(output, "(default: usb)") {
+		t.Errorf("cleared profile should report the authenticator default, got: %s", output)
+	}
+
+	stored, err := loadFIDO2Profile(context.Background(), buildFIDO2Config())
+	if err != nil {
+		t.Fatalf("loadFIDO2Profile: %v", err)
+	}
+	if len(stored.Transports) != 0 {
+		t.Errorf("transports = %v, want empty after clearing", stored.Transports)
+	}
+}
+
+// TestFIDO2ProfileSet_NoSettings verifies the command fails closed rather
+// than writing an empty profile when no setting is named.
+func TestFIDO2ProfileSet_NoSettings(t *testing.T) {
+	newFIDO2ProfileTestDir(t)
+	resetFIDO2PolicyFlags()
+
+	RootCmd.SetArgs([]string{"fido2", "profile", "set"})
+	err := RootCmd.Execute()
+	if err == nil {
+		t.Fatal("expected an error when no profile setting is supplied")
+	}
+	if !errors.Is(err, ErrFIDO2ProfileNoSettings) {
+		t.Errorf("error = %v, want %v", err, ErrFIDO2ProfileNoSettings)
+	}
+
+	stored, loadErr := loadFIDO2Profile(context.Background(), buildFIDO2Config())
+	if loadErr != nil {
+		t.Fatalf("loadFIDO2Profile: %v", loadErr)
+	}
+	if len(stored.Transports) != 0 || stored.EnterpriseAttestation {
+		t.Errorf("no profile should have been written, got %+v", stored)
 	}
 }
 
 func TestFIDO2ProfileSet_InvalidTransport(t *testing.T) {
+	newFIDO2ProfileTestDir(t)
 	resetFIDO2PolicyFlags()
 
 	RootCmd.SetArgs([]string{
@@ -651,68 +809,99 @@ func TestFIDO2ProfileSet_InvalidTransport(t *testing.T) {
 	if !strings.Contains(err.Error(), "carrier-pigeon") {
 		t.Errorf("error should mention the invalid transport, got: %v", err)
 	}
-}
 
-func TestFIDO2ProfileSet_AllTransports(t *testing.T) {
-	resetFIDO2PolicyFlags()
-
-	output := captureRPPolicyStdout(t, func() {
-		RootCmd.SetArgs([]string{
-			"fido2", "profile", "set",
-			"--transports", "usb,nfc,ble,internal,hybrid",
-		})
-		if execErr := RootCmd.Execute(); execErr != nil {
-			t.Fatalf("fido2 profile set failed: %v", execErr)
-		}
-	})
-
-	for _, transport := range []string{"usb", "nfc", "ble", "internal", "hybrid"} {
-		if !strings.Contains(output, transport) {
-			t.Errorf("profile set output missing transport %q", transport)
-		}
+	stored, loadErr := loadFIDO2Profile(context.Background(), buildFIDO2Config())
+	if loadErr != nil {
+		t.Fatalf("loadFIDO2Profile: %v", loadErr)
+	}
+	if len(stored.Transports) != 0 {
+		t.Errorf("a rejected transports list must not be persisted, got %v", stored.Transports)
 	}
 }
 
-func TestFIDO2ProfileSet_EnterpriseAttestation(t *testing.T) {
-	resetFIDO2PolicyFlags()
+// TestFIDO2ProfileShow_Default verifies "profile show" reports the
+// authenticator defaults against a store that was never written.
+func TestFIDO2ProfileShow_Default(t *testing.T) {
+	newFIDO2ProfileTestDir(t)
 
-	output := captureRPPolicyStdout(t, func() {
-		RootCmd.SetArgs([]string{
-			"fido2", "profile", "set",
-			"--enterprise-attestation",
-		})
-		if execErr := RootCmd.Execute(); execErr != nil {
-			t.Fatalf("fido2 profile set failed: %v", execErr)
-		}
-	})
+	output := runFIDO2ProfileCommand(t, "fido2", "profile", "show")
 
+	if !strings.Contains(output, "(default: usb)") {
+		t.Errorf("show output missing the transports default, got: %s", output)
+	}
 	if !strings.Contains(output, "Enterprise Attestation") {
-		t.Error("profile set output missing 'Enterprise Attestation'")
+		t.Errorf("show output missing 'Enterprise Attestation', got: %s", output)
 	}
-	if !strings.Contains(output, "true") {
-		t.Error("profile set output missing 'true' for enterprise attestation")
+	if !strings.Contains(output, "Profile store:") {
+		t.Errorf("show output missing the store path, got: %s", output)
 	}
 }
 
-func TestFIDO2ProfileSet_EmptyTransports(t *testing.T) {
-	resetFIDO2PolicyFlags()
+// TestLoadFIDO2Profile_CorruptDocument verifies a corrupt stored profile is
+// reported rather than silently treated as the default.
+func TestLoadFIDO2Profile_CorruptDocument(t *testing.T) {
+	newFIDO2ProfileTestDir(t)
+	cfg := buildFIDO2Config()
 
-	output := captureRPPolicyStdout(t, func() {
-		RootCmd.SetArgs([]string{
-			"fido2", "profile", "set",
-		})
-		if execErr := RootCmd.Execute(); execErr != nil {
-			t.Fatalf("fido2 profile set failed: %v", execErr)
-		}
-	})
-
-	// With no transports, the output should not contain a Transports row
-	// but should still show the Enterprise Attestation row.
-	if !strings.Contains(output, "Enterprise Attestation") {
-		t.Error("profile set output missing 'Enterprise Attestation'")
+	backend, err := openFIDO2ProfileStore(cfg)
+	if err != nil {
+		t.Fatalf("openFIDO2ProfileStore: %v", err)
 	}
-	if !strings.Contains(output, "Profile settings displayed") {
-		t.Error("profile set output missing trailing message")
+	if putErr := backend.Put(context.Background(), fido2ProfileKey, []byte("{not json")); putErr != nil {
+		t.Fatalf("Put: %v", putErr)
+	}
+	if closeErr := backend.Close(); closeErr != nil {
+		t.Fatalf("Close: %v", closeErr)
+	}
+
+	if _, err := loadFIDO2Profile(context.Background(), cfg); !errors.Is(err, ErrFIDO2ProfileDecodeFailed) {
+		t.Errorf("error = %v, want %v", err, ErrFIDO2ProfileDecodeFailed)
+	}
+}
+
+// TestSaveFIDO2Profile_InvalidTransport verifies the store layer validates
+// the profile before writing anything.
+func TestSaveFIDO2Profile_InvalidTransport(t *testing.T) {
+	newFIDO2ProfileTestDir(t)
+	cfg := buildFIDO2Config()
+
+	err := saveFIDO2Profile(context.Background(), cfg, &FIDO2Profile{Transports: []string{"telepathy"}})
+	if !errors.Is(err, ErrFIDO2ProfileInvalidTransport) {
+		t.Errorf("error = %v, want %v", err, ErrFIDO2ProfileInvalidTransport)
+	}
+
+	stored, loadErr := loadFIDO2Profile(context.Background(), cfg)
+	if loadErr != nil {
+		t.Fatalf("loadFIDO2Profile: %v", loadErr)
+	}
+	if len(stored.Transports) != 0 {
+		t.Errorf("invalid profile must not be written, got %v", stored.Transports)
+	}
+}
+
+// TestOpenFIDO2ProfileStore_UnusableStoragePath verifies the store fails
+// closed when the configured storage path cannot hold a directory.
+func TestOpenFIDO2ProfileStore_UnusableStoragePath(t *testing.T) {
+	dir := newFIDO2ProfileTestDir(t)
+
+	// A regular file where the store directory must go.
+	blocker := filepath.Join(dir, fido2ProfileStoreSubdir)
+	if err := os.WriteFile(blocker, []byte("not a directory"), 0600); err != nil {
+		t.Fatalf("WriteFile: %v", err)
+	}
+
+	if _, err := openFIDO2ProfileStore(buildFIDO2Config()); !errors.Is(err, ErrFIDO2ProfileStoreOpenFailed) {
+		t.Errorf("error = %v, want %v", err, ErrFIDO2ProfileStoreOpenFailed)
+	}
+}
+
+// TestFIDO2ProfileStorePath_DefaultsWhenUnset verifies the store falls back
+// to the default FIDO2 storage path.
+func TestFIDO2ProfileStorePath_DefaultsWhenUnset(t *testing.T) {
+	path := fido2ProfileStorePath(&FIDO2Config{})
+	want := filepath.Join(defaultFIDO2StoragePath, fido2ProfileStoreSubdir)
+	if path != want {
+		t.Errorf("path = %q, want %q", path, want)
 	}
 }
 

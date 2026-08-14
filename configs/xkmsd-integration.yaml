@@ -30,8 +30,18 @@ tls:
   server_cn: "xkms-server"
 
 auth:
-  enabled: false
-  type: "noop"
+  enabled: true
+  type: "adaptive"
+
+# Encryption at rest. xkmsd refuses to start without this: cmd/xkmsd has no
+# --insecure override, so a config that leaves the barrier off cannot serve the
+# suite at all. The passphrase is a throwaway for a container-local daemon on a
+# private network, and is kept in step with scripts/start-test-xkmsd.sh, the
+# fallback that serves the same socket when this service is not running.
+barrier:
+  enabled: true
+  strategy: "passphrase"
+  passphrase: "integration-test-barrier"
 
 ratelimit:
   enabled: false
@@ -55,6 +65,23 @@ rng:
 
 default_backend: "software"
 
+# The PKCS#11 module implements the full OASIS mechanism set, which includes the
+# SHA-1 signature mechanisms the spec defines and legacy applications still use
+# (CKM_SHA1_RSA_PKCS, CKM_ECDSA_SHA1). The module names the digest on the wire
+# and the daemon performs it, so the conformance suite can only exercise those
+# mechanisms against a daemon that has opted in: xkms refuses the
+# collision-broken digests by default, whether or not it is running in FIPS
+# mode. This is the documented opt-in, scoped to a container-local test daemon.
+#
+# The opt-in is a ceiling, not a floor: a FIPS run of the same suite ignores it
+# (types.SetAllowWeakHashes refuses to loosen inside the validated module's
+# boundary), withholds the non-approved mechanisms from C_GetMechanismList and
+# refuses them outright, so nothing tries to use one. Kept in step with
+# scripts/start-test-xkmsd.sh, the fallback that serves the same socket when
+# the compose xkms-server service is not running.
+crypto:
+  allow_weak_hashes: true
+
 backends:
   software:
     enabled: true
@@ -68,6 +95,42 @@ backends:
     token: "xkms-test"
     pin: "1234"
 
+  # TPM 2.0 backend, served by the swtpm software TPM the compose stack runs
+  # alongside xkms-server on the xkms-dev network. No hardware TPM is touched:
+  # the host's /dev/tpmrm0 is never opened, which is what keeps this safe to
+  # run in CI.
+  #
+  # The address is given as simulator_host / simulator_port, not device_path.
+  # A device_path is opened as a file (or a Unix socket when it ends in
+  # ".sock") — pkg/backend/tpm2/config.go passes it straight to
+  # pkgtpm2.Config.Device, and pkg/tpm2/tpm.go os.OpenFile()s it — so a
+  # "tcp://host:port" string there names a file that does not exist and never
+  # reaches swtpm. Only the simulator_host pair is translated into the TCP
+  # transport (Config.ToTPMConfig maps it to CommandAddress and clears
+  # UseSimulator), and it is the pairing test/integration/api/config.test.yaml
+  # already uses against the same image. Setting use_simulator with no
+  # simulator_host instead selects the in-process go-tpm-tools simulator, which
+  # is absent unless the daemon is built with -tags tpm_simulator, and the
+  # server refuses to start.
+  #
+  # enabled is false, and flipping it to true is the only change needed to run
+  # the OpenSSL matrix against the TPM. It is off by default because the daemon
+  # holds the swtpm connection for its whole lifetime and swtpm's mssim command
+  # port serves exactly one client: a second connection blocks instead of being
+  # refused, so the compose healthcheck ("nc -z localhost 2321",
+  # .devcontainer/docker-compose.yml) stops returning and swtpm is marked
+  # unhealthy for as long as the daemon runs. Every integration target gates on
+  # "swtpm: condition: service_healthy", so leaving this on takes out the whole
+  # suite, not just the TPM lane — observed here as "dependency failed to start:
+  # container xkms-dev-swtpm is unhealthy" on targets that never touch the TPM.
+  # Fixing the healthcheck to probe something that does not open a second client
+  # session is what makes this safe to enable by default.
+  tpm2:
+    enabled: false
+    use_simulator: true
+    simulator_host: "swtpm"
+    simulator_port: 2321
+
 # Certificate Authority configuration
 # Auto-initialized on first startup, loaded on subsequent startups
 ca:
@@ -79,11 +142,12 @@ ca:
       valid: 10
       keys:
         - algorithm: "ECDSA"
-          ecc_curve: "P-256"
+          ecc:
+            curve: "P-256"
           hash: "SHA-256"
           signature-algorithm: "ECDSAWithSHA256"
           store: "software"
-          key_type: "CA"
+          key-type: "CA"
       keystore-type: "software"
       is-root: true
       max-path-length: 1

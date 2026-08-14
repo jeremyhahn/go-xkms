@@ -866,9 +866,9 @@ CK_DECLARE_FUNCTION(CK_RV, C_EncapsulateKey)(
     CK_OBJECT_HANDLE hKey,
     CK_ATTRIBUTE_PTR pTemplate,
     CK_ULONG ulCount,
-    CK_OBJECT_HANDLE_PTR phKey,
     CK_BYTE_PTR pCiphertext,
-    CK_ULONG_PTR pulCiphertextLen
+    CK_ULONG_PTR pulCiphertextLen,
+    CK_OBJECT_HANDLE_PTR phKey
 );
 
 CK_DECLARE_FUNCTION(CK_RV, C_DecapsulateKey)(
@@ -951,12 +951,12 @@ CK_DECLARE_FUNCTION(CK_RV, C_UnwrapKeyAuthenticated)(
     CK_SESSION_HANDLE hSession,
     CK_MECHANISM_PTR pMechanism,
     CK_OBJECT_HANDLE hUnwrappingKey,
-    CK_BYTE_PTR pAssociatedData,
-    CK_ULONG ulAssociatedDataLen,
     CK_BYTE_PTR pWrappedKey,
     CK_ULONG ulWrappedKeyLen,
     CK_ATTRIBUTE_PTR pTemplate,
     CK_ULONG ulAttributeCount,
+    CK_BYTE_PTR pAssociatedData,
+    CK_ULONG ulAssociatedDataLen,
     CK_OBJECT_HANDLE_PTR phKey
 );
 
@@ -1063,7 +1063,7 @@ struct CK_FUNCTION_LIST_3_2 {
     CK_RV (*C_VerifyMessageNext)(CK_SESSION_HANDLE hSession, CK_VOID_PTR pParameter, CK_ULONG ulParameterLen, CK_BYTE_PTR pData, CK_ULONG ulDataLen, CK_BYTE_PTR pSignature, CK_ULONG ulSignatureLen);
     CK_RV (*C_MessageVerifyFinal)(CK_SESSION_HANDLE hSession);
     /* PKCS#11 3.2 KEM functions */
-    CK_RV (*C_EncapsulateKey)(CK_SESSION_HANDLE hSession, CK_MECHANISM_PTR pMechanism, CK_OBJECT_HANDLE hKey, CK_ATTRIBUTE_PTR pTemplate, CK_ULONG ulCount, CK_OBJECT_HANDLE_PTR phKey, CK_BYTE_PTR pCiphertext, CK_ULONG_PTR pulCiphertextLen);
+    CK_RV (*C_EncapsulateKey)(CK_SESSION_HANDLE hSession, CK_MECHANISM_PTR pMechanism, CK_OBJECT_HANDLE hKey, CK_ATTRIBUTE_PTR pTemplate, CK_ULONG ulCount, CK_BYTE_PTR pCiphertext, CK_ULONG_PTR pulCiphertextLen, CK_OBJECT_HANDLE_PTR phKey);
     CK_RV (*C_DecapsulateKey)(CK_SESSION_HANDLE hSession, CK_MECHANISM_PTR pMechanism, CK_OBJECT_HANDLE hKey, CK_ATTRIBUTE_PTR pTemplate, CK_ULONG ulCount, CK_BYTE_PTR pCiphertext, CK_ULONG ulCiphertextLen, CK_OBJECT_HANDLE_PTR phKey);
     /* PKCS#11 3.2 signature-first verification */
     CK_RV (*C_VerifySignatureInit)(CK_SESSION_HANDLE hSession, CK_MECHANISM_PTR pMechanism, CK_OBJECT_HANDLE hKey, CK_BYTE_PTR pSignature, CK_ULONG ulSignatureLen);
@@ -1078,7 +1078,7 @@ struct CK_FUNCTION_LIST_3_2 {
     CK_RV (*C_AsyncJoin)(CK_SESSION_HANDLE hSession, CK_UTF8CHAR_PTR pFunctionName, CK_ULONG ulID, CK_BYTE_PTR pData, CK_ULONG ulData);
     /* PKCS#11 3.2 authenticated wrapping */
     CK_RV (*C_WrapKeyAuthenticated)(CK_SESSION_HANDLE hSession, CK_MECHANISM_PTR pMechanism, CK_OBJECT_HANDLE hWrappingKey, CK_OBJECT_HANDLE hKey, CK_BYTE_PTR pAssociatedData, CK_ULONG ulAssociatedDataLen, CK_BYTE_PTR pWrappedKey, CK_ULONG_PTR pulWrappedKeyLen);
-    CK_RV (*C_UnwrapKeyAuthenticated)(CK_SESSION_HANDLE hSession, CK_MECHANISM_PTR pMechanism, CK_OBJECT_HANDLE hUnwrappingKey, CK_BYTE_PTR pAssociatedData, CK_ULONG ulAssociatedDataLen, CK_BYTE_PTR pWrappedKey, CK_ULONG ulWrappedKeyLen, CK_ATTRIBUTE_PTR pTemplate, CK_ULONG ulAttributeCount, CK_OBJECT_HANDLE_PTR phKey);
+    CK_RV (*C_UnwrapKeyAuthenticated)(CK_SESSION_HANDLE hSession, CK_MECHANISM_PTR pMechanism, CK_OBJECT_HANDLE hUnwrappingKey, CK_BYTE_PTR pWrappedKey, CK_ULONG ulWrappedKeyLen, CK_ATTRIBUTE_PTR pTemplate, CK_ULONG ulAttributeCount, CK_BYTE_PTR pAssociatedData, CK_ULONG ulAssociatedDataLen, CK_OBJECT_HANDLE_PTR phKey);
 };
 
 #ifdef __cplusplus

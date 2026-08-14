@@ -36,37 +36,18 @@
 //   - RFC 8391: XMSS: eXtended Merkle Signature Scheme
 package module
 
-// v3.2 mechanism categories for encapsulation operations.
-// These use unexported names to avoid symbol conflicts with the vendor-defined
-// CategoryEncapsulate and CategoryDecapsulate in mechanism_quantum.go
-// (build-tagged with "quantum"). Both use identical numeric values for
-// compatibility when mechanisms from either source are registered together.
-const (
-	v32CategoryEncapsulate MechanismCategory = 10
-	v32CategoryDecapsulate MechanismCategory = 11
-)
-
-// v3.2 PQC key sizes in bytes per algorithm and security level.
-// These mirror the values in mechanism_quantum.go (build-tagged "quantum")
-// using unexported names to avoid duplicate symbol errors when both files
-// are compiled together.
-const (
-	// ML-DSA-44 (NIST Category 2)
-	v32MLDSA44PublicKeySize = 1312
-	v32MLDSA44SecretKeySize = 2560
-
-	// ML-DSA-87 (NIST Category 5)
-	v32MLDSA87PublicKeySize = 2592
-	v32MLDSA87SecretKeySize = 4896
-
-	// ML-KEM-512 (NIST Category 1)
-	v32MLKEM512PublicKeySize = 800
-	v32MLKEM512SecretKeySize = 1632
-
-	// ML-KEM-1024 (NIST Category 5)
-	v32MLKEM1024PublicKeySize = 1568
-	v32MLKEM1024SecretKeySize = 3168
-)
+// The v3.2 descriptors below use the canonical MechanismCategory and PQC key
+// size constants from mechanism_quantum.go directly.
+//
+// They used to shadow them under v32-prefixed names, justified by a claimed
+// "quantum" build tag on that file. No such tag exists -- every *_quantum.go
+// file in this package compiles unconditionally -- so the shadows guarded
+// against a conflict that could not occur, and left three independent spellings
+// of the same numbers: these constants, the canonical ones, and a pair of bare
+// 10 and 11 literals in module_kem.go. Renumbering CategoryEncapsulate, a plain
+// iota expression, would have desynchronised them silently: CKM_ML_KEM
+// registered under one category while isEncapsulateMechanism tested another,
+// and C_EncapsulateKey refusing the only KEM the module advertises.
 
 // PKCS#11 v3.2 Post-Quantum Mechanism Type Constants (CKM_*)
 // Reference: OASIS PKCS#11 v3.2 CSD01 pkcs11t.h
@@ -214,7 +195,13 @@ const (
 	CKM_PUB_KEY_FROM_PRIV_KEY MechanismType = 0x0000403a
 )
 
-// v32MechanismNames maps v3.2 PQC mechanism types to their string names.
+// v32MechanismNames maps the v3.2 mechanism types this file defines to their
+// string names, for diagnostics. init merges it into the global mechanismNames
+// table that GetMechanismName and MechanismType.String read.
+//
+// A name here says nothing about whether the module can perform the mechanism;
+// v32MechanismRegistry answers that, and several entries below are named
+// precisely so that refusing them is legible.
 var v32MechanismNames = map[MechanismType]string{
 	// ML-KEM mechanisms
 	CKM_ML_KEM_KEY_PAIR_GEN: "CKM_ML_KEM_KEY_PAIR_GEN",
@@ -264,6 +251,11 @@ var v32MechanismNames = map[MechanismType]string{
 	CKM_XMSSMT_KEY_PAIR_GEN: "CKM_XMSSMT_KEY_PAIR_GEN",
 	CKM_XMSSMT:              "CKM_XMSSMT",
 
+	// The five below name mechanisms the module refuses: they have no
+	// v32MechanismRegistry descriptor (see the note at the end of that table
+	// for why). Their names are kept on purpose, so the refusal reads
+	// "CKM_ECDH_X_AES_KEY_WRAP" rather than "CKM_UNKNOWN(0x00004038)".
+
 	// TLS 1.2 extended master key mechanisms
 	CKM_TLS12_EXTENDED_MASTER_KEY_DERIVE:    "CKM_TLS12_EXTENDED_MASTER_KEY_DERIVE",
 	CKM_TLS12_EXTENDED_MASTER_KEY_DERIVE_DH: "CKM_TLS12_EXTENDED_MASTER_KEY_DERIVE_DH",
@@ -279,131 +271,171 @@ var v32MechanismNames = map[MechanismType]string{
 // v32MechanismRegistry contains descriptors for v3.2 standard PQC mechanisms.
 var v32MechanismRegistry = map[MechanismType]*MechanismDescriptor{
 	// ML-KEM (FIPS 203) - Key Encapsulation
+	// Per spec section 6.68.4, ulMinKeySize/ulMaxKeySize for ML-KEM mechanisms
+	// specify the supported range of the ML-KEM *public* key size *in bytes*
+	// (not bits, and not the private key/seed size).
 	CKM_ML_KEM_KEY_PAIR_GEN: {
 		Type:       CKM_ML_KEM_KEY_PAIR_GEN,
 		Name:       "CKM_ML_KEM_KEY_PAIR_GEN",
 		Categories: []MechanismCategory{CategoryKeyPairGen},
-		MinKeySize: v32MLKEM512PublicKeySize * 8,  // ML-KEM-512 public key in bits
-		MaxKeySize: v32MLKEM1024SecretKeySize * 8, // ML-KEM-1024 secret key in bits
+		// The floor is ML-KEM-768's public key, not ML-KEM-512's: this module
+		// implements only the 768 and 1024 parameter sets, and CK_MECHANISM_INFO's
+		// key-size range is what an application reads to decide what to ask for.
+		MinKeySize: MLKEM512PublicKeySize,  // ML-KEM-512 public key, bytes
+		MaxKeySize: MLKEM1024PublicKeySize, // ML-KEM-1024 public key, bytes
 		Flags:      CKF_GENERATE_KEY_PAIR,
+		Advertised: true,
+		// FIPS 203 (ML-KEM) and FIPS 204 (ML-DSA) are approved NIST
+		// standards, so these remain available under FIPS mode.
+		FIPSApproved: true,
 	},
+	// Per spec section 6.68.5, ulMinKeySize/ulMaxKeySize for CKM_ML_KEM
+	// likewise specify the ML-KEM public key size range in bytes.
 	CKM_ML_KEM: {
 		Type:       CKM_ML_KEM,
 		Name:       "CKM_ML_KEM",
-		Categories: []MechanismCategory{v32CategoryEncapsulate, v32CategoryDecapsulate},
-		MinKeySize: v32MLKEM512PublicKeySize * 8,
-		MaxKeySize: v32MLKEM1024SecretKeySize * 8,
+		Categories: []MechanismCategory{CategoryEncapsulate, CategoryDecapsulate},
+		// The floor is the ML-KEM-768 public key, not ML-KEM-512's. Advertising
+		// 800 told applications this token serves a parameter set it does not
+		// implement, and CK_MECHANISM_INFO's key-size range is exactly what an
+		// application reads to decide what to ask for (v3.2 §5.5).
+		MinKeySize: MLKEM512PublicKeySize,
+		MaxKeySize: MLKEM1024PublicKeySize,
 		Flags:      CKF_ENCAPSULATE | CKF_DECAPSULATE,
+		Advertised: true,
+		// FIPS 203 (ML-KEM) and FIPS 204 (ML-DSA) are approved NIST
+		// standards, so these remain available under FIPS mode.
+		FIPSApproved: true,
 	},
 
 	// ML-DSA (FIPS 204) - Digital Signatures
+	//
+	// Per spec sections 6.67.4/6.67.5, ulMinKeySize/ulMaxKeySize for ML-DSA
+	// mechanisms specify the supported range of the ML-DSA *public* key size
+	// *in bytes* (not bits, and not the private key/seed size).
 	CKM_ML_DSA_KEY_PAIR_GEN: {
 		Type:       CKM_ML_DSA_KEY_PAIR_GEN,
 		Name:       "CKM_ML_DSA_KEY_PAIR_GEN",
 		Categories: []MechanismCategory{CategoryKeyPairGen},
-		MinKeySize: v32MLDSA44PublicKeySize * 8, // ML-DSA-44 public key in bits
-		MaxKeySize: v32MLDSA87SecretKeySize * 8, // ML-DSA-87 secret key in bits
+		MinKeySize: MLDSA44PublicKeySize, // ML-DSA-44 public key, bytes
+		MaxKeySize: MLDSA87PublicKeySize, // ML-DSA-87 public key, bytes
 		Flags:      CKF_GENERATE_KEY_PAIR,
+		Advertised: true,
+		// FIPS 203 (ML-KEM) and FIPS 204 (ML-DSA) are approved NIST
+		// standards, so these remain available under FIPS mode.
+		FIPSApproved: true,
 	},
 	CKM_ML_DSA: {
 		Type:       CKM_ML_DSA,
 		Name:       "CKM_ML_DSA",
 		Categories: []MechanismCategory{CategorySign, CategoryVerify},
-		MinKeySize: v32MLDSA44PublicKeySize * 8,
-		MaxKeySize: v32MLDSA87SecretKeySize * 8,
+		MinKeySize: MLDSA44PublicKeySize,
+		MaxKeySize: MLDSA87PublicKeySize,
 		Flags:      CKF_SIGN | CKF_VERIFY,
+		Advertised: true,
+		// FIPS 203 (ML-KEM) and FIPS 204 (ML-DSA) are approved NIST
+		// standards, so these remain available under FIPS mode.
+		FIPSApproved: true,
 	},
 
-	// HashML-DSA - multi-part capable
+	// HashML-DSA (pre-hash ML-DSA) and its per-hash variants.
+	//
+	// No operation flags: IsMLDSAMechanism recognises only CKM_ML_DSA and the
+	// vendor ML-DSA range, so nothing routes a CKM_HASH_ML_DSA* mechanism to the
+	// ML-DSA signer -- the pre-hash construction (hash the message with the named
+	// digest, then sign per FIPS 204 §5.4) is not implemented. Carrying CKF_SIGN
+	// let CryptoManager.SignInit admit the mechanism, so C_SignInit answered
+	// CKR_OK and the operation then failed deep in C_Sign, after the caller had
+	// committed to it. Matches the CKM_SLH_DSA / CKM_HSS / CKM_XMSS precedent
+	// below: the descriptor stays so the constant resolves and C_GetMechanismInfo
+	// can describe the parameter set, but every *Init refuses it at the gate.
 	CKM_HASH_ML_DSA: {
 		Type:       CKM_HASH_ML_DSA,
 		Name:       "CKM_HASH_ML_DSA",
 		Categories: []MechanismCategory{CategorySign, CategoryVerify},
-		MinKeySize: v32MLDSA44PublicKeySize * 8,
-		MaxKeySize: v32MLDSA87SecretKeySize * 8,
-		Flags:      CKF_SIGN | CKF_VERIFY | CKF_MESSAGE_SIGN | CKF_MESSAGE_VERIFY,
+		MinKeySize: MLDSA44PublicKeySize,
+		MaxKeySize: MLDSA87PublicKeySize,
+		Flags:      0,
 	},
-
-	// HashML-DSA SHA variants - single-part sign/verify only
 	CKM_HASH_ML_DSA_SHA224: {
 		Type:       CKM_HASH_ML_DSA_SHA224,
 		Name:       "CKM_HASH_ML_DSA_SHA224",
 		Categories: []MechanismCategory{CategorySign, CategoryVerify},
-		MinKeySize: v32MLDSA44PublicKeySize * 8,
-		MaxKeySize: v32MLDSA87SecretKeySize * 8,
-		Flags:      CKF_SIGN | CKF_VERIFY,
+		MinKeySize: MLDSA44PublicKeySize,
+		MaxKeySize: MLDSA87PublicKeySize,
+		Flags:      0,
 	},
 	CKM_HASH_ML_DSA_SHA256: {
 		Type:       CKM_HASH_ML_DSA_SHA256,
 		Name:       "CKM_HASH_ML_DSA_SHA256",
 		Categories: []MechanismCategory{CategorySign, CategoryVerify},
-		MinKeySize: v32MLDSA44PublicKeySize * 8,
-		MaxKeySize: v32MLDSA87SecretKeySize * 8,
-		Flags:      CKF_SIGN | CKF_VERIFY,
+		MinKeySize: MLDSA44PublicKeySize,
+		MaxKeySize: MLDSA87PublicKeySize,
+		Flags:      0,
 	},
 	CKM_HASH_ML_DSA_SHA384: {
 		Type:       CKM_HASH_ML_DSA_SHA384,
 		Name:       "CKM_HASH_ML_DSA_SHA384",
 		Categories: []MechanismCategory{CategorySign, CategoryVerify},
-		MinKeySize: v32MLDSA44PublicKeySize * 8,
-		MaxKeySize: v32MLDSA87SecretKeySize * 8,
-		Flags:      CKF_SIGN | CKF_VERIFY,
+		MinKeySize: MLDSA44PublicKeySize,
+		MaxKeySize: MLDSA87PublicKeySize,
+		Flags:      0,
 	},
 	CKM_HASH_ML_DSA_SHA512: {
 		Type:       CKM_HASH_ML_DSA_SHA512,
 		Name:       "CKM_HASH_ML_DSA_SHA512",
 		Categories: []MechanismCategory{CategorySign, CategoryVerify},
-		MinKeySize: v32MLDSA44PublicKeySize * 8,
-		MaxKeySize: v32MLDSA87SecretKeySize * 8,
-		Flags:      CKF_SIGN | CKF_VERIFY,
+		MinKeySize: MLDSA44PublicKeySize,
+		MaxKeySize: MLDSA87PublicKeySize,
+		Flags:      0,
 	},
 	CKM_HASH_ML_DSA_SHA3_224: {
 		Type:       CKM_HASH_ML_DSA_SHA3_224,
 		Name:       "CKM_HASH_ML_DSA_SHA3_224",
 		Categories: []MechanismCategory{CategorySign, CategoryVerify},
-		MinKeySize: v32MLDSA44PublicKeySize * 8,
-		MaxKeySize: v32MLDSA87SecretKeySize * 8,
-		Flags:      CKF_SIGN | CKF_VERIFY,
+		MinKeySize: MLDSA44PublicKeySize,
+		MaxKeySize: MLDSA87PublicKeySize,
+		Flags:      0,
 	},
 	CKM_HASH_ML_DSA_SHA3_256: {
 		Type:       CKM_HASH_ML_DSA_SHA3_256,
 		Name:       "CKM_HASH_ML_DSA_SHA3_256",
 		Categories: []MechanismCategory{CategorySign, CategoryVerify},
-		MinKeySize: v32MLDSA44PublicKeySize * 8,
-		MaxKeySize: v32MLDSA87SecretKeySize * 8,
-		Flags:      CKF_SIGN | CKF_VERIFY,
+		MinKeySize: MLDSA44PublicKeySize,
+		MaxKeySize: MLDSA87PublicKeySize,
+		Flags:      0,
 	},
 	CKM_HASH_ML_DSA_SHA3_384: {
 		Type:       CKM_HASH_ML_DSA_SHA3_384,
 		Name:       "CKM_HASH_ML_DSA_SHA3_384",
 		Categories: []MechanismCategory{CategorySign, CategoryVerify},
-		MinKeySize: v32MLDSA44PublicKeySize * 8,
-		MaxKeySize: v32MLDSA87SecretKeySize * 8,
-		Flags:      CKF_SIGN | CKF_VERIFY,
+		MinKeySize: MLDSA44PublicKeySize,
+		MaxKeySize: MLDSA87PublicKeySize,
+		Flags:      0,
 	},
 	CKM_HASH_ML_DSA_SHA3_512: {
 		Type:       CKM_HASH_ML_DSA_SHA3_512,
 		Name:       "CKM_HASH_ML_DSA_SHA3_512",
 		Categories: []MechanismCategory{CategorySign, CategoryVerify},
-		MinKeySize: v32MLDSA44PublicKeySize * 8,
-		MaxKeySize: v32MLDSA87SecretKeySize * 8,
-		Flags:      CKF_SIGN | CKF_VERIFY,
+		MinKeySize: MLDSA44PublicKeySize,
+		MaxKeySize: MLDSA87PublicKeySize,
+		Flags:      0,
 	},
 	CKM_HASH_ML_DSA_SHAKE128: {
 		Type:       CKM_HASH_ML_DSA_SHAKE128,
 		Name:       "CKM_HASH_ML_DSA_SHAKE128",
 		Categories: []MechanismCategory{CategorySign, CategoryVerify},
-		MinKeySize: v32MLDSA44PublicKeySize * 8,
-		MaxKeySize: v32MLDSA87SecretKeySize * 8,
-		Flags:      CKF_SIGN | CKF_VERIFY,
+		MinKeySize: MLDSA44PublicKeySize,
+		MaxKeySize: MLDSA87PublicKeySize,
+		Flags:      0,
 	},
 	CKM_HASH_ML_DSA_SHAKE256: {
 		Type:       CKM_HASH_ML_DSA_SHAKE256,
 		Name:       "CKM_HASH_ML_DSA_SHAKE256",
 		Categories: []MechanismCategory{CategorySign, CategoryVerify},
-		MinKeySize: v32MLDSA44PublicKeySize * 8,
-		MaxKeySize: v32MLDSA87SecretKeySize * 8,
-		Flags:      CKF_SIGN | CKF_VERIFY,
+		MinKeySize: MLDSA44PublicKeySize,
+		MaxKeySize: MLDSA87PublicKeySize,
+		Flags:      0,
 	},
 
 	// SLH-DSA (FIPS 205) - Stateless Hash-Based Signatures
@@ -411,83 +443,97 @@ var v32MechanismRegistry = map[MechanismType]*MechanismDescriptor{
 		Type:       CKM_SLH_DSA_KEY_PAIR_GEN,
 		Name:       "CKM_SLH_DSA_KEY_PAIR_GEN",
 		Categories: []MechanismCategory{CategoryKeyPairGen},
-		Flags:      CKF_GENERATE_KEY_PAIR,
+		// No CKF_GENERATE_KEY_PAIR: see CKM_SLH_DSA above.
+		Flags: 0,
 	},
 	CKM_SLH_DSA: {
 		Type:       CKM_SLH_DSA,
 		Name:       "CKM_SLH_DSA",
 		Categories: []MechanismCategory{CategorySign, CategoryVerify},
-		Flags:      CKF_SIGN | CKF_VERIFY,
+		// No operation flags: this module has no SLH-DSA / HSS / XMSS
+		// implementation. Go's standard library provides none and pkg/quantum
+		// carries only Kyber, ML-KEM and ML-DSA. Carrying CKF_SIGN made
+		// CryptoManager.SignInit admit the mechanism, so C_SignInit answered
+		// CKR_OK and the operation then failed from the backend -- the caller
+		// learned the token could not do it only after committing to it. The
+		// descriptor stays so the constant resolves and C_GetMechanismInfo can
+		// describe the parameter set, but every *Init now refuses it with
+		// CKR_MECHANISM_INVALID at the gate.
+		Flags: 0,
 	},
 
-	// HashSLH-DSA - multi-part capable
+	// HashSLH-DSA (pre-hash SLH-DSA) and its per-hash variants.
+	//
+	// No operation flags: the module has no SLH-DSA implementation at all (see
+	// CKM_SLH_DSA above), so the pre-hash variants have nothing to route to
+	// either. Advertising CKF_SIGN made C_SignInit answer CKR_OK and then fail in
+	// C_Sign; the descriptors stay for constant resolution and C_GetMechanismInfo
+	// only, and every *Init refuses them at the gate.
 	CKM_HASH_SLH_DSA: {
 		Type:       CKM_HASH_SLH_DSA,
 		Name:       "CKM_HASH_SLH_DSA",
 		Categories: []MechanismCategory{CategorySign, CategoryVerify},
-		Flags:      CKF_SIGN | CKF_VERIFY | CKF_MESSAGE_SIGN | CKF_MESSAGE_VERIFY,
+		Flags:      0,
 	},
-
-	// HashSLH-DSA SHA variants - single-part sign/verify only
 	CKM_HASH_SLH_DSA_SHA224: {
 		Type:       CKM_HASH_SLH_DSA_SHA224,
 		Name:       "CKM_HASH_SLH_DSA_SHA224",
 		Categories: []MechanismCategory{CategorySign, CategoryVerify},
-		Flags:      CKF_SIGN | CKF_VERIFY,
+		Flags:      0,
 	},
 	CKM_HASH_SLH_DSA_SHA256: {
 		Type:       CKM_HASH_SLH_DSA_SHA256,
 		Name:       "CKM_HASH_SLH_DSA_SHA256",
 		Categories: []MechanismCategory{CategorySign, CategoryVerify},
-		Flags:      CKF_SIGN | CKF_VERIFY,
+		Flags:      0,
 	},
 	CKM_HASH_SLH_DSA_SHA384: {
 		Type:       CKM_HASH_SLH_DSA_SHA384,
 		Name:       "CKM_HASH_SLH_DSA_SHA384",
 		Categories: []MechanismCategory{CategorySign, CategoryVerify},
-		Flags:      CKF_SIGN | CKF_VERIFY,
+		Flags:      0,
 	},
 	CKM_HASH_SLH_DSA_SHA512: {
 		Type:       CKM_HASH_SLH_DSA_SHA512,
 		Name:       "CKM_HASH_SLH_DSA_SHA512",
 		Categories: []MechanismCategory{CategorySign, CategoryVerify},
-		Flags:      CKF_SIGN | CKF_VERIFY,
+		Flags:      0,
 	},
 	CKM_HASH_SLH_DSA_SHA3_224: {
 		Type:       CKM_HASH_SLH_DSA_SHA3_224,
 		Name:       "CKM_HASH_SLH_DSA_SHA3_224",
 		Categories: []MechanismCategory{CategorySign, CategoryVerify},
-		Flags:      CKF_SIGN | CKF_VERIFY,
+		Flags:      0,
 	},
 	CKM_HASH_SLH_DSA_SHA3_256: {
 		Type:       CKM_HASH_SLH_DSA_SHA3_256,
 		Name:       "CKM_HASH_SLH_DSA_SHA3_256",
 		Categories: []MechanismCategory{CategorySign, CategoryVerify},
-		Flags:      CKF_SIGN | CKF_VERIFY,
+		Flags:      0,
 	},
 	CKM_HASH_SLH_DSA_SHA3_384: {
 		Type:       CKM_HASH_SLH_DSA_SHA3_384,
 		Name:       "CKM_HASH_SLH_DSA_SHA3_384",
 		Categories: []MechanismCategory{CategorySign, CategoryVerify},
-		Flags:      CKF_SIGN | CKF_VERIFY,
+		Flags:      0,
 	},
 	CKM_HASH_SLH_DSA_SHA3_512: {
 		Type:       CKM_HASH_SLH_DSA_SHA3_512,
 		Name:       "CKM_HASH_SLH_DSA_SHA3_512",
 		Categories: []MechanismCategory{CategorySign, CategoryVerify},
-		Flags:      CKF_SIGN | CKF_VERIFY,
+		Flags:      0,
 	},
 	CKM_HASH_SLH_DSA_SHAKE128: {
 		Type:       CKM_HASH_SLH_DSA_SHAKE128,
 		Name:       "CKM_HASH_SLH_DSA_SHAKE128",
 		Categories: []MechanismCategory{CategorySign, CategoryVerify},
-		Flags:      CKF_SIGN | CKF_VERIFY,
+		Flags:      0,
 	},
 	CKM_HASH_SLH_DSA_SHAKE256: {
 		Type:       CKM_HASH_SLH_DSA_SHAKE256,
 		Name:       "CKM_HASH_SLH_DSA_SHAKE256",
 		Categories: []MechanismCategory{CategorySign, CategoryVerify},
-		Flags:      CKF_SIGN | CKF_VERIFY,
+		Flags:      0,
 	},
 
 	// HSS/LMS (RFC 8554) - Stateful Hash-Based Signatures
@@ -495,13 +541,23 @@ var v32MechanismRegistry = map[MechanismType]*MechanismDescriptor{
 		Type:       CKM_HSS_KEY_PAIR_GEN,
 		Name:       "CKM_HSS_KEY_PAIR_GEN",
 		Categories: []MechanismCategory{CategoryKeyPairGen},
-		Flags:      CKF_GENERATE_KEY_PAIR,
+		// No CKF_GENERATE_KEY_PAIR: see CKM_SLH_DSA above.
+		Flags: 0,
 	},
 	CKM_HSS: {
 		Type:       CKM_HSS,
 		Name:       "CKM_HSS",
 		Categories: []MechanismCategory{CategorySign, CategoryVerify},
-		Flags:      CKF_SIGN | CKF_VERIFY,
+		// No operation flags: this module has no SLH-DSA / HSS / XMSS
+		// implementation. Go's standard library provides none and pkg/quantum
+		// carries only Kyber, ML-KEM and ML-DSA. Carrying CKF_SIGN made
+		// CryptoManager.SignInit admit the mechanism, so C_SignInit answered
+		// CKR_OK and the operation then failed from the backend -- the caller
+		// learned the token could not do it only after committing to it. The
+		// descriptor stays so the constant resolves and C_GetMechanismInfo can
+		// describe the parameter set, but every *Init now refuses it with
+		// CKR_MECHANISM_INVALID at the gate.
+		Flags: 0,
 	},
 
 	// XMSS (RFC 8391) - Single-Tree
@@ -509,13 +565,23 @@ var v32MechanismRegistry = map[MechanismType]*MechanismDescriptor{
 		Type:       CKM_XMSS_KEY_PAIR_GEN,
 		Name:       "CKM_XMSS_KEY_PAIR_GEN",
 		Categories: []MechanismCategory{CategoryKeyPairGen},
-		Flags:      CKF_GENERATE_KEY_PAIR,
+		// No CKF_GENERATE_KEY_PAIR: see CKM_SLH_DSA above.
+		Flags: 0,
 	},
 	CKM_XMSS: {
 		Type:       CKM_XMSS,
 		Name:       "CKM_XMSS",
 		Categories: []MechanismCategory{CategorySign, CategoryVerify},
-		Flags:      CKF_SIGN | CKF_VERIFY,
+		// No operation flags: this module has no SLH-DSA / HSS / XMSS
+		// implementation. Go's standard library provides none and pkg/quantum
+		// carries only Kyber, ML-KEM and ML-DSA. Carrying CKF_SIGN made
+		// CryptoManager.SignInit admit the mechanism, so C_SignInit answered
+		// CKR_OK and the operation then failed from the backend -- the caller
+		// learned the token could not do it only after committing to it. The
+		// descriptor stays so the constant resolves and C_GetMechanismInfo can
+		// describe the parameter set, but every *Init now refuses it with
+		// CKR_MECHANISM_INVALID at the gate.
+		Flags: 0,
 	},
 
 	// XMSS^MT (RFC 8391) - Multi-Tree
@@ -523,50 +589,60 @@ var v32MechanismRegistry = map[MechanismType]*MechanismDescriptor{
 		Type:       CKM_XMSSMT_KEY_PAIR_GEN,
 		Name:       "CKM_XMSSMT_KEY_PAIR_GEN",
 		Categories: []MechanismCategory{CategoryKeyPairGen},
-		Flags:      CKF_GENERATE_KEY_PAIR,
+		// No CKF_GENERATE_KEY_PAIR: see CKM_SLH_DSA above.
+		Flags: 0,
 	},
 	CKM_XMSSMT: {
 		Type:       CKM_XMSSMT,
 		Name:       "CKM_XMSSMT",
 		Categories: []MechanismCategory{CategorySign, CategoryVerify},
-		Flags:      CKF_SIGN | CKF_VERIFY,
+		// No operation flags: this module has no SLH-DSA / HSS / XMSS
+		// implementation. Go's standard library provides none and pkg/quantum
+		// carries only Kyber, ML-KEM and ML-DSA. Carrying CKF_SIGN made
+		// CryptoManager.SignInit admit the mechanism, so C_SignInit answered
+		// CKR_OK and the operation then failed from the backend -- the caller
+		// learned the token could not do it only after committing to it. The
+		// descriptor stays so the constant resolves and C_GetMechanismInfo can
+		// describe the parameter set, but every *Init now refuses it with
+		// CKR_MECHANISM_INVALID at the gate.
+		Flags: 0,
 	},
 
-	// TLS 1.2 Extended Master Key Derivation
-	CKM_TLS12_EXTENDED_MASTER_KEY_DERIVE: {
-		Type:       CKM_TLS12_EXTENDED_MASTER_KEY_DERIVE,
-		Name:       "CKM_TLS12_EXTENDED_MASTER_KEY_DERIVE",
-		Categories: []MechanismCategory{CategoryDerive},
-		Flags:      CKF_DERIVE,
-	},
-	CKM_TLS12_EXTENDED_MASTER_KEY_DERIVE_DH: {
-		Type:       CKM_TLS12_EXTENDED_MASTER_KEY_DERIVE_DH,
-		Name:       "CKM_TLS12_EXTENDED_MASTER_KEY_DERIVE_DH",
-		Categories: []MechanismCategory{CategoryDerive},
-		Flags:      CKF_DERIVE,
-	},
-
-	// ECDH Key Wrap Mechanisms
-	CKM_ECDH_X_AES_KEY_WRAP: {
-		Type:       CKM_ECDH_X_AES_KEY_WRAP,
-		Name:       "CKM_ECDH_X_AES_KEY_WRAP",
-		Categories: []MechanismCategory{CategoryWrap, CategoryUnwrap},
-		Flags:      CKF_WRAP | CKF_UNWRAP,
-	},
-	CKM_ECDH_COF_AES_KEY_WRAP: {
-		Type:       CKM_ECDH_COF_AES_KEY_WRAP,
-		Name:       "CKM_ECDH_COF_AES_KEY_WRAP",
-		Categories: []MechanismCategory{CategoryWrap, CategoryUnwrap},
-		Flags:      CKF_WRAP | CKF_UNWRAP,
-	},
-
-	// Public Key from Private Key
-	CKM_PUB_KEY_FROM_PRIV_KEY: {
-		Type:       CKM_PUB_KEY_FROM_PRIV_KEY,
-		Name:       "CKM_PUB_KEY_FROM_PRIV_KEY",
-		Categories: []MechanismCategory{CategoryDerive},
-		Flags:      CKF_DERIVE,
-	},
+	// TLS 1.2 Extended Master Key Derivation, the ECDH AES key wraps, and
+	// CKM_PUB_KEY_FROM_PRIV_KEY have no descriptor here, deliberately.
+	//
+	// CKM_TLS12_EXTENDED_MASTER_KEY_DERIVE, its _DH variant and
+	// CKM_PUB_KEY_FROM_PRIV_KEY carried CKF_DERIVE but are not among the
+	// mechanisms C_DeriveKey dispatches on, so every use returned
+	// CKR_MECHANISM_INVALID after the descriptor had already said the module
+	// could derive with them. CKM_ECDH_X_AES_KEY_WRAP and
+	// CKM_ECDH_COF_AES_KEY_WRAP carried CKF_WRAP and CKF_UNWRAP but nothing
+	// routes either to a wrapping algorithm, so C_WrapKey resolved them to a
+	// bare mechanism name the service refuses.
+	//
+	// Leaving them registered but unadvertised was the worst of both states:
+	// C_GetMechanismList hid them, so no application could discover them, while
+	// GetMechanismDescriptor still resolved them for any caller that named the
+	// raw constant and let the failure surface deep inside the operation. With
+	// no entry the refusal is immediate and honest, and each becomes a
+	// candidate to restore the moment its operation works end to end.
+	//
+	// It is only the descriptor that is absent. The five constants and their
+	// v32MechanismNames entries stay, because a name is a diagnostic and not a
+	// capability: nothing consults mechanismNames to decide whether an
+	// operation may proceed -- that is mechanismRegistry's job, via
+	// IsMechanismSupported, CanWrap/CanUnwrap/CanDerive and
+	// validateInitMechanism -- while MechanismType.String() reads it for every
+	// error and log line the module emits. Dropping the names would turn
+	// "CKM_ECDH_X_AES_KEY_WRAP: CKR_MECHANISM_INVALID" into
+	// "CKM_UNKNOWN(0x00004038): CKR_MECHANISM_INVALID" and leave the operator
+	// to decode the constant by hand, which is a worse refusal for no gain.
+	//
+	// v32KeyTypeMap is the opposite case and its two ECDH entries are gone: it
+	// answers "what CKK_* key type does this mechanism produce", which is only
+	// asked of a mechanism the module can perform, so entries for mechanisms it
+	// refuses are unreachable by construction. Restoring a descriptor is the
+	// point at which the matching key-type entry comes back with it.
 }
 
 // v32KeyTypeMap provides O(1) lookup from v3.2 mechanism type to standard key type.
@@ -605,8 +681,6 @@ var v32KeyTypeMap = map[MechanismType]KeyType{
 	CKM_XMSS:                  CKK_XMSS,
 	CKM_XMSSMT_KEY_PAIR_GEN:   CKK_XMSSMT,
 	CKM_XMSSMT:                CKK_XMSSMT,
-	CKM_ECDH_X_AES_KEY_WRAP:   CKK_EC,
-	CKM_ECDH_COF_AES_KEY_WRAP: CKK_EC,
 }
 
 // init registers v3.2 PQC mechanisms into the global registry.

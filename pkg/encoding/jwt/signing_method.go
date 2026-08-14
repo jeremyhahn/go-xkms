@@ -20,8 +20,10 @@ import (
 	"crypto/rand"
 	"crypto/rsa"
 	"crypto/x509"
+	"encoding/asn1"
 	"errors"
 	"fmt"
+	"math/big"
 
 	"github.com/jeremyhahn/go-xkms/pkg/errs"
 
@@ -114,7 +116,21 @@ func (sm *SigningMethodSigner) Sign(signingString string, key interface{}) ([]by
 	} else {
 		opts = sm.hash
 	}
-	return signer.Sign(rand.Reader, digest, opts)
+
+	sig, err := signer.Sign(rand.Reader, digest, opts)
+	if err != nil {
+		return nil, err
+	}
+
+	// RFC 7518 §3.4: ES* JWS signatures are the raw fixed-width r||s
+	// concatenation, not ASN.1 DER. crypto.Signer implementations return DER
+	// (software ecdsa, TPM, PKCS#11) or occasionally raw already (some cloud
+	// KMS backends); normalize to raw so every standards-compliant verifier
+	// — including golang-jwt's ES methods — accepts the token.
+	if sm.keyAttributes.KeyAlgorithm == x509.ECDSA {
+		return ecdsaSigToP1363(sig, signer.Public())
+	}
+	return sig, nil
 }
 
 // Verify verifies the signature of the signing string using the provided public key.
@@ -153,14 +169,56 @@ func (sm *SigningMethodSigner) Verify(signingString string, signature []byte, ke
 		return rsa.VerifyPKCS1v15(pub, sm.hash, digest, signature)
 
 	case *ecdsa.PublicKey:
-		if !ecdsa.VerifyASN1(pub, digest, signature) {
-			return jwt.ErrSignatureInvalid
+		// Canonical form is the RFC 7518 raw r||s concatenation; DER is
+		// accepted as a legacy fallback for tokens minted before the
+		// normalization in Sign.
+		if verifyECDSAP1363(pub, digest, signature) {
+			return nil
 		}
-		return nil
+		if ecdsa.VerifyASN1(pub, digest, signature) {
+			return nil
+		}
+		return jwt.ErrSignatureInvalid
 
 	default:
 		return &errs.Message{Msg: fmt.Sprintf("unsupported public key type: %T", publicKey)}
 	}
+}
+
+// ecdsaSigToP1363 converts an ECDSA signature to the RFC 7518 raw r||s form.
+// DER input (the crypto.Signer norm) is parsed and re-encoded; input that is
+// already exactly two curve-widths long is passed through untouched.
+func ecdsaSigToP1363(sig []byte, pub crypto.PublicKey) ([]byte, error) {
+	ecPub, ok := pub.(*ecdsa.PublicKey)
+	if !ok {
+		return nil, ErrInvalidKey
+	}
+	byteLen := (ecPub.Curve.Params().BitSize + 7) / 8
+
+	var parsed struct{ R, S *big.Int }
+	if _, err := asn1.Unmarshal(sig, &parsed); err != nil {
+		if len(sig) == 2*byteLen {
+			// Already raw r||s (some cloud KMS signers).
+			return sig, nil
+		}
+		return nil, &errs.Wrapped{Msg: "jwt: ECDSA signature is neither DER nor raw r||s", Err: err}
+	}
+
+	out := make([]byte, 2*byteLen)
+	parsed.R.FillBytes(out[:byteLen])
+	parsed.S.FillBytes(out[byteLen:])
+	return out, nil
+}
+
+// verifyECDSAP1363 verifies a raw r||s signature.
+func verifyECDSAP1363(pub *ecdsa.PublicKey, digest, sig []byte) bool {
+	byteLen := (pub.Curve.Params().BitSize + 7) / 8
+	if len(sig) != 2*byteLen {
+		return false
+	}
+	r := new(big.Int).SetBytes(sig[:byteLen])
+	s := new(big.Int).SetBytes(sig[byteLen:])
+	return ecdsa.Verify(pub, digest, r, s)
 }
 
 // AlgorithmFromKeyAttributes determines the JWT algorithm string from key attributes.

@@ -545,7 +545,7 @@ func TestDecrypt_AsymmetricRSA_ErrorPath(t *testing.T) {
 	st, ok := status.FromError(err)
 	require.True(t, ok)
 	assert.Equal(t, codes.Internal, st.Code())
-	assert.Contains(t, st.Message(), "failed to decrypt")
+	assert.Contains(t, st.Message(), "decryption failed")
 }
 
 func TestDecrypt_KeyNotFoundError(t *testing.T) {
@@ -710,8 +710,12 @@ func TestEncryptAsym_NonRSAKeyError(t *testing.T) {
 	require.Error(t, err)
 	st, ok := status.FromError(err)
 	require.True(t, ok)
-	assert.Equal(t, codes.InvalidArgument, st.Code())
-	assert.Contains(t, st.Message(), "asymmetric encryption only supported for RSA keys")
+	// The key-type check is made by the service layer against the resolved
+	// public key and reported as xkms.ErrEncryptionFailed, so it reaches the
+	// caller as Internal. Every transport answers this request the same way —
+	// see service_asym_version_test.go and the QUIC/REST/MCP equivalents.
+	assert.Equal(t, codes.Internal, st.Code())
+	assert.Contains(t, st.Message(), "key is not RSA")
 }
 
 // ===================== RotateKey tests =====================
@@ -1426,9 +1430,9 @@ func TestUnwrapKeyByID_FullPath(t *testing.T) {
 	})
 	require.NoError(t, err)
 
-	// Unwrap into new key. The unwrap path goes through GetImportParameters
-	// which exercises the deep code path even if the import token mismatch
-	// causes a downstream error.
+	// Unwrap into a new key. A wrap immediately followed by an unwrap of the
+	// same blob is the round trip the import ceremony is built on, so it must
+	// succeed and land a usable key under the target id.
 	_, err = svc.UnwrapKeyByID(context.Background(), &pb.UnwrapKeyByIDRequest{
 		WrappedKey:           wrapResp.WrappedKey,
 		UnwrappingKeyId:      "unwrap-rsa-key",
@@ -1439,9 +1443,13 @@ func TestUnwrapKeyByID_FullPath(t *testing.T) {
 		TargetKeyType:        "symmetric",
 		TargetKeySize:        256,
 	})
-	// May fail due to import token requirements in the software backend
-	// but exercises the full unwrap code path
-	assert.Error(t, err)
+	require.NoError(t, err)
+
+	_, err = svc.GetKey(context.Background(), &pb.GetKeyRequest{
+		KeyId:   "imported-sym-key",
+		Backend: "software",
+	})
+	require.NoError(t, err, "the unwrapped key must exist under the target id")
 }
 
 func TestUnwrapKeyByID_RSATargetType(t *testing.T) {
@@ -1611,7 +1619,8 @@ func TestUnwrapKeyByID_AES128TargetType(t *testing.T) {
 	})
 	require.NoError(t, err)
 
-	// Unwrap as AES-128 symmetric key - exercises the 128 branch
+	// Unwrap as an AES-128 symmetric key — the 128 branch of the target-size
+	// switch must produce a real key, not merely be reached.
 	_, err = svc.UnwrapKeyByID(context.Background(), &pb.UnwrapKeyByIDRequest{
 		WrappedKey:           wrapResp.WrappedKey,
 		UnwrappingKeyId:      "unwrap-rsa-key5",
@@ -1622,8 +1631,13 @@ func TestUnwrapKeyByID_AES128TargetType(t *testing.T) {
 		TargetKeyType:        "symmetric",
 		TargetKeySize:        128,
 	})
-	// May fail due to import token requirements but exercises the code path
-	assert.Error(t, err)
+	require.NoError(t, err)
+
+	_, err = svc.GetKey(context.Background(), &pb.GetKeyRequest{
+		KeyId:   "imported-aes128-key",
+		Backend: "software",
+	})
+	require.NoError(t, err, "the unwrapped AES-128 key must exist under the target id")
 }
 
 func TestUnwrapKeyByID_AES192TargetType(t *testing.T) {
@@ -1657,6 +1671,7 @@ func TestUnwrapKeyByID_AES192TargetType(t *testing.T) {
 	})
 	require.NoError(t, err)
 
+	// The 192 branch of the target-size switch must produce a real key.
 	_, err = svc.UnwrapKeyByID(context.Background(), &pb.UnwrapKeyByIDRequest{
 		WrappedKey:           wrapResp.WrappedKey,
 		UnwrappingKeyId:      "unwrap-rsa-key6",
@@ -1667,8 +1682,13 @@ func TestUnwrapKeyByID_AES192TargetType(t *testing.T) {
 		TargetKeyType:        "symmetric",
 		TargetKeySize:        192,
 	})
-	// May fail due to import token requirements but exercises the code path
-	assert.Error(t, err)
+	require.NoError(t, err)
+
+	_, err = svc.GetKey(context.Background(), &pb.GetKeyRequest{
+		KeyId:   "imported-aes192-key",
+		Backend: "software",
+	})
+	require.NoError(t, err, "the unwrapped AES-192 key must exist under the target id")
 }
 
 func TestUnwrapKeyByID_InvalidTargetKeyType(t *testing.T) {
@@ -2547,12 +2567,32 @@ func TestWrapKey_InvalidPublicKey(t *testing.T) {
 		KeyMaterial:       []byte("key-material"),
 		WrappingPublicKey: []byte("invalid-public-key"),
 		Algorithm:         "RSAES_OAEP_SHA_256",
+		Backend:           "software",
 	})
 	require.Error(t, err)
 	st, ok := status.FromError(err)
 	require.True(t, ok)
 	assert.Equal(t, codes.InvalidArgument, st.Code())
 	assert.Contains(t, st.Message(), "failed to parse wrapping public key")
+}
+
+// TestWrapKey_BackendRequired pins the validation that made the tests above
+// name a backend: WrapKey wraps on one named backend and only that one, so a
+// request that names none is rejected before any key material is touched.
+func TestWrapKey_BackendRequired(t *testing.T) {
+	svc := setupServiceTest(t)
+	defer xkms.Reset()
+
+	_, err := svc.WrapKey(context.Background(), &pb.WrapKeyRequest{
+		KeyMaterial:       []byte("key-material"),
+		WrappingPublicKey: []byte("invalid-public-key"),
+		Algorithm:         "RSAES_OAEP_SHA_256",
+	})
+	require.Error(t, err)
+	st, ok := status.FromError(err)
+	require.True(t, ok)
+	assert.Equal(t, codes.InvalidArgument, st.Code())
+	assert.Contains(t, st.Message(), "backend is required")
 }
 
 func TestUnwrapKey_InvalidPublicKey(t *testing.T) {
@@ -2689,6 +2729,7 @@ func TestWrapKey_SuccessPath(t *testing.T) {
 		WrappingPublicKey: importParams.WrappingPublicKey,
 		Algorithm:         "RSAES_OAEP_SHA_256",
 		ImportToken:       importParams.ImportToken,
+		Backend:           "software",
 	})
 	require.NoError(t, err)
 	assert.NotEmpty(t, resp.WrappedKey)
@@ -2725,6 +2766,7 @@ func TestUnwrapKey_SuccessPath(t *testing.T) {
 		WrappingPublicKey: importParams.WrappingPublicKey,
 		Algorithm:         "RSAES_OAEP_SHA_256",
 		ImportToken:       importParams.ImportToken,
+		Backend:           "software",
 	})
 	require.NoError(t, err)
 
@@ -2734,9 +2776,14 @@ func TestUnwrapKey_SuccessPath(t *testing.T) {
 		Algorithm:         "RSAES_OAEP_SHA_256",
 		WrappingPublicKey: importParams.WrappingPublicKey,
 		ImportToken:       importParams.ImportToken,
+		Backend:           "software",
 	})
 	require.NoError(t, err)
-	assert.NotEmpty(t, unwrapResp.KeyMaterial)
+
+	// The round trip must return the original material, not merely something
+	// non-empty — a wrap/unwrap pair that returned different bytes would
+	// silently corrupt every imported key.
+	assert.Equal(t, []byte("0123456789abcdef"), unwrapResp.KeyMaterial)
 }
 
 // ===================== GetBackendInfo tests =====================
@@ -2935,15 +2982,20 @@ func TestWrapKey_NoBackendsAvailable(t *testing.T) {
 	pubKeyDER, err := x509.MarshalPKIXPublicKey(&key.PublicKey)
 	require.NoError(t, err)
 
+	// The backend is named so the call is rejected for the condition under
+	// test — no backends configured — rather than for a missing field. An
+	// unresolvable backend is NotFound: the caller named something that does
+	// not exist, which is not a server fault.
 	_, err = svc.WrapKey(context.Background(), &pb.WrapKeyRequest{
 		KeyMaterial:       []byte("data"),
 		WrappingPublicKey: pubKeyDER,
 		Algorithm:         "RSAES_OAEP_SHA_256",
+		Backend:           "software",
 	})
 	require.Error(t, err)
 	st, ok := status.FromError(err)
 	require.True(t, ok)
-	assert.Equal(t, codes.Internal, st.Code())
+	assert.Equal(t, codes.NotFound, st.Code())
 }
 
 func TestUnwrapKey_NoBackendsAvailable(t *testing.T) {
@@ -2955,15 +3007,20 @@ func TestUnwrapKey_NoBackendsAvailable(t *testing.T) {
 	pubKeyDER, err := x509.MarshalPKIXPublicKey(&key.PublicKey)
 	require.NoError(t, err)
 
+	// The backend is named so the call is rejected for the condition under
+	// test — no backends configured — rather than for a missing field. An
+	// unresolvable backend is NotFound: the caller named something that does
+	// not exist, which is not a server fault.
 	_, err = svc.UnwrapKey(context.Background(), &pb.UnwrapKeyRequest{
 		WrappedKey:        []byte("data"),
 		Algorithm:         "RSAES_OAEP_SHA_256",
 		WrappingPublicKey: pubKeyDER,
+		Backend:           "software",
 	})
 	require.Error(t, err)
 	st, ok := status.FromError(err)
 	require.True(t, ok)
-	assert.Equal(t, codes.Internal, st.Code())
+	assert.Equal(t, codes.NotFound, st.Code())
 }
 
 func TestListBackends_NoBackendsAvailable(t *testing.T) {
@@ -3085,8 +3142,12 @@ func TestAuthzDeny_PINMethods(t *testing.T) {
 	}
 }
 
-// ===================== Encrypt with asymmetric key (not supported for symmetric encrypt) =====================
+// ===================== Encrypt dispatches on key type =====================
 
+// TestEncrypt_WithAsymmetricKey pins the key-type dispatch: Encrypt is one
+// verb over both key kinds, so naming an RSA key encrypts under RSA-OAEP
+// instead of AEAD. The distinguishing evidence is the shape of the result —
+// a single RSA modulus-sized block with none of the AEAD fields set.
 func TestEncrypt_WithAsymmetricKey(t *testing.T) {
 	svc := setupServiceTest(t)
 	defer xkms.Reset()
@@ -3099,16 +3160,17 @@ func TestEncrypt_WithAsymmetricKey(t *testing.T) {
 	})
 	require.NoError(t, err)
 
-	// Try symmetric encrypt with an RSA key - should fail
-	_, err = svc.Encrypt(context.Background(), &pb.EncryptRequest{
+	resp, err := svc.Encrypt(context.Background(), &pb.EncryptRequest{
 		KeyId:     "rsa-for-sym-encrypt",
 		Backend:   "software",
 		Plaintext: []byte("data"),
 	})
-	require.Error(t, err)
-	st, ok := status.FromError(err)
-	require.True(t, ok)
-	assert.True(t, st.Code() == codes.InvalidArgument || st.Code() == codes.Internal)
+	require.NoError(t, err)
+
+	assert.Len(t, resp.Ciphertext, 256, "RSA-2048 OAEP output is one 256-byte block")
+	assert.Empty(t, resp.Nonce, "the RSA path must not report an AEAD nonce")
+	assert.Empty(t, resp.Tag, "the RSA path must not report an AEAD tag")
+	assert.Empty(t, resp.Iv, "the RSA path must not report an IV")
 }
 
 // ===================== Decrypt with symmetric key =====================
@@ -3245,6 +3307,7 @@ func TestWrapKey_WrappingFailure(t *testing.T) {
 		KeyMaterial:       []byte("0123456789abcdef"),
 		WrappingPublicKey: pubKeyDER,
 		Algorithm:         "RSAES_OAEP_SHA_256",
+		Backend:           "software",
 	})
 	require.NoError(t, err)
 	assert.NotEmpty(t, resp.WrappedKey)

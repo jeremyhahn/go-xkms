@@ -22,6 +22,8 @@ package module
 import (
 	"context"
 	"os"
+	"path/filepath"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -105,10 +107,52 @@ func DefaultTestConfig() *module.Config {
 	return cfg
 }
 
+// isolateTokenStorage gives each top-level test its own file-backed token.
+//
+// These tests share one token by default, and several of them legitimately call
+// C_InitToken, which PKCS#11 v3.2 §5.5.5 requires to destroy every token object
+// and reset the user PIN. One test therefore destroys another's keys and PIN,
+// and the victim fails with CKR_USER_PIN_NOT_INITIALIZED or a missing object for
+// reasons that have nothing to do with what it was testing. Which tests collide
+// depends on execution order, so the same suite passes when a test is run alone
+// and fails in a full run -- the least useful failure mode there is.
+//
+// The isolation is per top-level test rather than per subtest, because subtests
+// routinely build on each other: one generates keys and a later one lists or
+// signs with them. Sharing within a test is intended; sharing across tests is
+// not.
+//
+// t.Setenv is what makes this reach the pkcs11-tool and openssl subprocesses
+// too: they load the module in their own process and read the storage path from
+// the environment they inherit.
+func isolateTokenStorage(t *testing.T) {
+	t.Helper()
+
+	// Only file-backed storage has cross-process state to isolate; a memory
+	// token is already private to the process that created it.
+	if os.Getenv("XKMS_PKCS11_STORAGE_TYPE") != module.StorageTypeFile {
+		return
+	}
+
+	root, _, _ := strings.Cut(t.Name(), "/")
+	base := os.Getenv("XKMS_PKCS11_STORAGE_PATH")
+	if base == "" {
+		base = filepath.Join(os.TempDir(), "xkms-pkcs11-tests")
+	}
+
+	path := filepath.Join(base, "by-test", root)
+	if err := os.MkdirAll(path, 0o700); err != nil {
+		t.Fatalf("creating an isolated token storage directory failed: %v", err)
+	}
+	t.Setenv("XKMS_PKCS11_STORAGE_PATH", path)
+}
+
 // SetupTestEnvironment creates and initializes a new test environment.
 // It creates a fresh PKCS#11 module instance with the provided configuration.
 func SetupTestEnvironment(t *testing.T, cfg *module.Config) *TestEnvironment {
 	t.Helper()
+
+	isolateTokenStorage(t)
 
 	if cfg == nil {
 		cfg = DefaultTestConfig()
@@ -345,6 +389,12 @@ func SetupInitializedModuleWithConfig(t *testing.T, cfg *module.Config) (*TestEn
 }
 
 // SetupAuthenticatedModule sets up an initialized module with an authenticated user session.
+//
+// Anything that touches a key needs this rather than SetupInitializedModule,
+// which deliberately leaves the session logged out so that tests exercising the
+// unauthenticated state can use it: the token sets CKF_LOGIN_REQUIRED, and
+// secret and private keys default to CKA_PRIVATE, so key generation and every
+// crypto *Init call are refused until the user has logged in.
 func SetupAuthenticatedModule(t *testing.T) (*TestEnvironment, module.SessionHandle) {
 	t.Helper()
 	return SetupAuthenticatedModuleWithConfig(t, nil)
@@ -359,6 +409,28 @@ func SetupAuthenticatedModuleWithConfig(t *testing.T, cfg *module.Config) (*Test
 	env.MustLoginUser(t, session, TestPINs.User)
 
 	return env, session
+}
+
+// mustSlotsWithTokens returns the slots that currently hold a token, failing the
+// test when there are none.
+//
+// The xkms PKCS#11 module is a virtual token backed by xkmsd: it always presents
+// exactly one slot with a token once C_Initialize has succeeded. An empty slot
+// list therefore means the module failed to reach its backend or failed to
+// auto-initialize the token, which is a defect in the code under test. Skipping
+// on it - as these tests used to - turned a broken module into a green run.
+func mustSlotsWithTokens(t *testing.T, m *module.Module) []module.SlotID {
+	t.Helper()
+
+	slots, rv := m.GetSlotList(true)
+	if rv != module.CKR_OK {
+		t.Fatalf("C_GetSlotList(tokenPresent=true) returned %s, want CKR_OK", rv.String())
+	}
+	if len(slots) == 0 {
+		t.Fatal("C_GetSlotList(tokenPresent=true) reported no slots; the xkms PKCS#11 module " +
+			"must always present its virtual token once initialized")
+	}
+	return slots
 }
 
 // RequireReturnValue checks that the return value matches the expected value.
@@ -552,6 +624,43 @@ func MustFindKeyByLabel(t *testing.T, env *TestEnvironment, session module.Sessi
 	return handle
 }
 
+// MustFindKeyByLabelAndClass finds the one object with the given label and
+// object class, failing the test if there is not exactly one.
+//
+// A key pair's public and private halves normally share a CKA_LABEL, so a
+// search on the label alone can return either. Which one it returns depends on
+// object enumeration order, so a test that then uses it for a class-specific
+// operation passes or fails depending on ordering -- verifying with the private
+// key, for instance, fails with CKR_KEY_FUNCTION_NOT_PERMITTED because the
+// private key has no CKA_VERIFY. Naming the class is what a real application
+// does and is what makes the search deterministic.
+func MustFindKeyByLabelAndClass(t *testing.T, env *TestEnvironment, session module.SessionHandle,
+	label string, class module.ObjectClass) module.ObjectHandle {
+	t.Helper()
+
+	template := []module.Attribute{
+		module.NewStringAttribute(module.CKA_LABEL, label),
+		module.NewUint32Attribute(module.CKA_CLASS, uint32(class)),
+	}
+
+	if rv := env.Module.FindObjectsInit(session, template); rv != module.CKR_OK {
+		t.Fatalf("FindObjectsInit failed: %s", rv.String())
+	}
+	handles, rv := env.Module.FindObjects(session, 10)
+	if rv != module.CKR_OK {
+		t.Fatalf("FindObjects failed: %s", rv.String())
+	}
+	if rv := env.Module.FindObjectsFinal(session); rv != module.CKR_OK {
+		t.Fatalf("FindObjectsFinal failed: %s", rv.String())
+	}
+
+	if len(handles) != 1 {
+		t.Fatalf("expected exactly one object with label %q and class %v, found %d",
+			label, class, len(handles))
+	}
+	return handles[0]
+}
+
 // GetCurveOID returns the DER-encoded OID for the given curve name.
 // Supported curves: P-256, P-384, P-521, Ed25519, Ed448
 func GetCurveOID(curve string) []byte {
@@ -699,12 +808,18 @@ func isAutoInitEnabled() bool {
 	return autoInit == "true" || autoInit == "1"
 }
 
-// skipIfNoFilePersistence skips the test if neither file persistence nor auto-init
-// is configured. pkcs11-tool tests require one of these because each pkcs11-tool
-// invocation loads a fresh library instance.
-func skipIfNoFilePersistence(t *testing.T) {
+// requireFilePersistence asserts that the module is configured so state survives
+// across pkcs11-tool invocations, which each load a fresh copy of the library.
+//
+// Every pkcs11-tool Makefile target exports XKMS_PKCS11_STORAGE_TYPE=file,
+// XKMS_PKCS11_STORAGE_PATH and XKMS_PKCS11_AUTO_INIT_TOKEN=true, so neither
+// being set means the harness is misconfigured and the tool tests below would be
+// asserting against a token that silently forgets everything between calls.
+func requireFilePersistence(t *testing.T) {
 	t.Helper()
 	if !isFilePersistenceEnabled() && !isAutoInitEnabled() {
-		t.Skip("Skipping: pkcs11-tool tests require file persistence or auto-init (set XKMS_PKCS11_STORAGE_TYPE=file or XKMS_PKCS11_AUTO_INIT_TOKEN=true)")
+		t.Fatal("pkcs11-tool tests need state to survive across invocations: set " +
+			"XKMS_PKCS11_STORAGE_TYPE=file with XKMS_PKCS11_STORAGE_PATH, or " +
+			"XKMS_PKCS11_AUTO_INIT_TOKEN=true (every pkcs11-tool Makefile target does)")
 	}
 }

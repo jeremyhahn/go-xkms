@@ -170,6 +170,28 @@ func (s *enclaveSigner) Sign(rand io.Reader, data []byte) (*ssh.Signature, error
 	return signer.Sign(rand, data)
 }
 
+// SignWithAlgorithm implements ssh.AlgorithmSigner so RSA keys can produce
+// rsa-sha2-256/512 signatures instead of the legacy ssh-rsa (SHA-1), which
+// modern OpenSSH servers reject. It re-opens the Secret, parses the PEM into a
+// transient signer, and forwards to that signer's algorithm-aware Sign when
+// available (falling back to the default algorithm otherwise).
+func (s *enclaveSigner) SignWithAlgorithm(rand io.Reader, data []byte, algorithm string) (*ssh.Signature, error) {
+	buf, err := s.key.Material.Open()
+	if err != nil {
+		return nil, &KeyMaterialError{Op: "open secret for sign", Err: err}
+	}
+	defer buf.Destroy()
+
+	signer, err := ssh.ParsePrivateKey(buf.Bytes())
+	if err != nil {
+		return nil, &PEMParseError{Err: err}
+	}
+	if as, ok := signer.(ssh.AlgorithmSigner); ok {
+		return as.SignWithAlgorithm(rand, data, algorithm)
+	}
+	return signer.Sign(rand, data)
+}
+
 // persistentSigner is an ssh.Signer that retains the decrypted PEM
 // inside a long-lived *secure.Buffer rather than re-opening the Secret
 // on every Sign call. The paired closer returned by Key.SignerWithClose
@@ -191,6 +213,19 @@ func (s *persistentSigner) PublicKey() ssh.PublicKey {
 func (s *persistentSigner) Sign(rand io.Reader, data []byte) (*ssh.Signature, error) {
 	if s.closed.Load() || s.inner == nil {
 		return nil, &ClosedSignerError{}
+	}
+	return s.inner.Sign(rand, data)
+}
+
+// SignWithAlgorithm implements ssh.AlgorithmSigner, forwarding to the retained
+// inner signer when it is algorithm-aware (enabling rsa-sha2-256/512 for RSA
+// keys). Returns *ClosedSignerError if the closer has already run.
+func (s *persistentSigner) SignWithAlgorithm(rand io.Reader, data []byte, algorithm string) (*ssh.Signature, error) {
+	if s.closed.Load() || s.inner == nil {
+		return nil, &ClosedSignerError{}
+	}
+	if as, ok := s.inner.(ssh.AlgorithmSigner); ok {
+		return as.SignWithAlgorithm(rand, data, algorithm)
 	}
 	return s.inner.Sign(rand, data)
 }

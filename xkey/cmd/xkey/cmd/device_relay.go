@@ -64,6 +64,7 @@ func init() {
 
 // runDeviceRelay executes the device relay command.
 func runDeviceRelay(cmd *cobra.Command, args []string) error {
+	out := cmd.OutOrStdout()
 	logger := slog.Default()
 
 	listenAddr, _ := cmd.Flags().GetString("listen")
@@ -96,8 +97,8 @@ func runDeviceRelay(cmd *cobra.Command, args []string) error {
 	actualAddr := server.Addr()
 	pubKeyB64 := base64.RawURLEncoding.EncodeToString(server.LocalStaticPublicKey())
 
-	fmt.Printf("TCP pairing relay listening on %s\n", actualAddr)
-	fmt.Printf("Public key: %s\n", pubKeyB64)
+	fmt.Fprintf(out, "TCP pairing relay listening on %s\n", actualAddr)
+	fmt.Fprintf(out, "Public key: %s\n", pubKeyB64)
 
 	// Show QR code if requested.
 	if showQR {
@@ -114,18 +115,18 @@ func runDeviceRelay(cmd *cobra.Command, args []string) error {
 		if qrErr != nil {
 			logger.Warn("failed to generate QR code", slog.String("error", qrErr.Error()))
 		} else {
-			fmt.Println(qrStr)
+			fmt.Fprintln(out, qrStr)
 		}
 
 		uri, uriErr := qrgen.ToURI(payload)
 		if uriErr != nil {
 			logger.Warn("failed to generate pairing URI", slog.String("error", uriErr.Error()))
 		} else {
-			fmt.Printf("Pairing URI: %s\n", uri)
+			fmt.Fprintf(out, "Pairing URI: %s\n", uri)
 		}
 	}
 
-	fmt.Println("Press Ctrl+C to stop")
+	fmt.Fprintln(out, "Press Ctrl+C to stop")
 
 	// Block until interrupt signal.
 	sigChan := make(chan os.Signal, 1)
@@ -133,7 +134,7 @@ func runDeviceRelay(cmd *cobra.Command, args []string) error {
 	<-sigChan
 	signal.Stop(sigChan)
 
-	fmt.Println("\nStopping relay server...")
+	fmt.Fprintln(out, "\nStopping relay server...")
 	if stopErr := server.Stop(); stopErr != nil {
 		logger.Error("relay server stop error", slog.String("error", stopErr.Error()))
 		return &SentinelCauseError{Sentinel: ErrDeviceRelayStopFailed, Cause: stopErr}

@@ -1,7 +1,7 @@
 <script lang="ts">
   import { onMount, onDestroy } from 'svelte';
   import '@xterm/xterm/css/xterm.css';
-  import { SSHConsoleClient, type HostKeyPrompt } from '@go-xkms/sdk';
+  import { SSHConsoleClient, type HostKeyPrompt } from '@go-xkms/sdk/ssh-console';
 
   /** The WebSocket URL to connect to, e.g. ws://127.0.0.1:PORT/console?token=XXX. */
   export let url: string;

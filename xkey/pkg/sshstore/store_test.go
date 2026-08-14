@@ -21,6 +21,8 @@ import (
 	"testing"
 
 	xkmssdk "github.com/jeremyhahn/go-xkms/sdk/go"
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 // withHome points $HOME at dir for the duration of the test, so
@@ -206,4 +208,70 @@ func TestMigrateLegacyStores_NilDestination(t *testing.T) {
 	if !errors.As(err, &target) {
 		t.Fatalf("expected *NilDestinationError, got %v", err)
 	}
+}
+
+// TestSSHStoreErrors verifies the typed error messages and unwrapping the CLI
+// and GUI surface to users.
+func TestSSHStoreErrors(t *testing.T) {
+	t.Parallel()
+
+	assert.Equal(t,
+		"sshstore: dataDir is required when no barrier backend is supplied",
+		(&MissingDataDirError{}).Error())
+
+	assert.Equal(t, "sshstore: destination backend is required", (&NilDestinationError{}).Error())
+
+	cause := errors.New("permission denied")
+	migErr := &MigrationError{Dir: "/data/ssh", Op: "rename", Err: cause}
+	assert.Equal(t, "sshstore: migrate /data/ssh: rename: permission denied", migErr.Error())
+	assert.ErrorIs(t, migErr, cause)
+}
+
+// TestMigrateLegacyStores_StatFailure covers the non-ENOENT stat branch: a
+// legacy path that cannot be inspected must abort the migration with a typed
+// error rather than silently skipping (which would strand plaintext keys).
+func TestMigrateLegacyStores_StatFailure(t *testing.T) {
+	t.Parallel()
+
+	dataDir := t.TempDir()
+
+	// Put a regular file where the "ssh" directory's parent must be, so
+	// stat("<dataDir>/blocker/ssh") fails with ENOTDIR rather than ENOENT.
+	blocker := filepath.Join(dataDir, "blocker")
+	require.NoError(t, os.WriteFile(blocker, []byte("x"), 0600))
+
+	dst := xkmssdk.NewStorageMemory()
+
+	err := MigrateLegacyStores(context.Background(), blocker, dst)
+	require.Error(t, err)
+
+	var migErr *MigrationError
+	require.ErrorAs(t, err, &migErr)
+	assert.Equal(t, "stat", migErr.Op)
+	assert.Equal(t, filepath.Join(blocker, "ssh"), migErr.Dir)
+}
+
+// TestMigrateLegacyStores_RenameFailure verifies a legacy directory whose
+// contents were imported but which cannot be renamed away is reported, so the
+// caller does not believe the plaintext store is gone.
+func TestMigrateLegacyStores_RenameFailure(t *testing.T) {
+	dataDir := t.TempDir()
+	legacy := filepath.Join(dataDir, "ssh")
+	require.NoError(t, os.MkdirAll(legacy, 0700))
+	require.NoError(t, os.WriteFile(filepath.Join(legacy, "key"), []byte("value"), 0600))
+
+	// Occupy the backup path with a non-empty directory so the rename fails
+	// for any user, including root.
+	backup := legacy + ".pre-barrier.bak"
+	require.NoError(t, os.MkdirAll(filepath.Join(backup, "occupied"), 0700))
+
+	// Isolate the home candidate so only the dataDir candidate is consulted.
+	t.Setenv("HOME", t.TempDir())
+
+	err := MigrateLegacyStores(context.Background(), dataDir, xkmssdk.NewStorageMemory())
+	require.Error(t, err)
+
+	var migErr *MigrationError
+	require.ErrorAs(t, err, &migErr)
+	assert.Equal(t, "rename", migErr.Op)
 }

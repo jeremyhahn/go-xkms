@@ -72,6 +72,13 @@ var (
 	// ErrXKMSServiceRequired is returned when NewServer is called without
 	// an XKMSService in the Config.
 	ErrXKMSServiceRequired = errors.New("xkms service is required")
+
+	// ErrAuthenticatorRequired is returned by NewServer when Config carries no
+	// Authenticator. The constructor refuses to substitute a NoOp authenticator
+	// because doing so would silently disable authentication; a caller that
+	// really wants an unauthenticated server must pass
+	// auth.NewNoOpAuthenticator() explicitly.
+	ErrAuthenticatorRequired = errors.New("mcp: authenticator is required")
 )
 
 // Server represents an MCP JSON-RPC 2.0 server
@@ -80,6 +87,7 @@ type Server struct {
 	keystore        xkms.Backend // Default keystore for backward compatibility
 	xkmsService     *xkms.XKMSService
 	barrier         *seal.Barrier
+	barrierRegistry *seal.BarrierRegistry
 	passwordManager *staticpw.TenantPasswordStoreManager
 	// mu guards listener across the Start goroutine and Stop (called from the
 	// embedding server's Shutdown on a different goroutine).
@@ -90,8 +98,16 @@ type Server struct {
 	wg            sync.WaitGroup
 	tlsConfig     *tls.Config
 	authenticator auth.Authenticator
-	logger        *slog.Logger
-	rateLimiter   *ratelimit.Limiter
+	// authorizer is the qrdb-backed authorization seam shared with the REST,
+	// gRPC, and QUIC transports. It is never nil: when RBAC is disabled it is
+	// a disabled Authorizer (no RBAC client) that allows every request.
+	authorizer *auth.Authorizer
+	// rbacEnabled mirrors Config.EnableRBAC. When false, authorizeMethod is a
+	// no-op, matching the REST server's un-decorated routes and the QUIC
+	// server's default (RBAC-client-less) authorizer.
+	rbacEnabled bool
+	logger      *slog.Logger
+	rateLimiter *ratelimit.Limiter
 
 	// sshClient is the optional SSH sub-system. When non-nil, SSH
 	// JSON-RPC methods (ssh.keys.*, ssh.knownHosts.*, etc.) are
@@ -113,12 +129,16 @@ type Subscriber struct {
 
 // Config holds the MCP server configuration
 type Config struct {
-	Addr            string
-	TLSConfig       *tls.Config
-	Authenticator   auth.Authenticator
-	Logger          *slog.Logger
-	RateLimiter     *ratelimit.Limiter
-	Barrier         *seal.Barrier
+	Addr          string
+	TLSConfig     *tls.Config
+	Authenticator auth.Authenticator
+	Logger        *slog.Logger
+	RateLimiter   *ratelimit.Limiter
+	Barrier       *seal.Barrier
+	// BarrierRegistry gates per-request tenant access the same way REST,
+	// gRPC, and QUIC do (see pkg/api/tenantgate). Nil disables tenant
+	// enforcement.
+	BarrierRegistry *seal.BarrierRegistry
 	PasswordManager *staticpw.TenantPasswordStoreManager
 	// XKMSService is the injected XKMS service; replaces the package singleton lookup.
 	XKMSService *xkms.XKMSService
@@ -127,6 +147,22 @@ type Config struct {
 	// ssh.authorizedKeys.* methods. When nil those namespaces return
 	// ErrSSHNotConfigured.
 	SSHClient sdkssh.Client
+
+	// Authorizer is the qrdb-backed authorizer (optional). It gates every
+	// privileged JSON-RPC method against the hosted go-qrdb node's RBAC
+	// service, scoped to the caller identity's tenant. It is consulted only
+	// when EnableRBAC is true; production wiring passes the same
+	// auth.NewAuthorizer instance the REST, gRPC, and QUIC transports use.
+	Authorizer *auth.Authorizer
+
+	// EnableRBAC enables role-based access control on JSON-RPC methods
+	// (default: false). When false no authorization check runs at all —
+	// identical to the REST server registering its routes without the RBAC
+	// decorator and the QUIC server defaulting to an RBAC-client-less
+	// authorizer. When true, Authorizer must be non-nil and backed by an RBAC
+	// client or NewServer returns ErrAuthorizerRequired: MCP refuses to run a
+	// server that believes it enforces RBAC but would allow everything.
+	EnableRBAC bool
 }
 
 // NewServer creates a new MCP JSON-RPC server. The XKMS service is injected
@@ -142,10 +178,27 @@ func NewServer(config *Config) (*Server, error) {
 		config.Addr = "localhost:9444"
 	}
 
-	// Set up authenticator (default to NoOp if not provided)
+	// The authenticator is mandatory. Substituting a NoOp authenticator for a
+	// missing one would silently disable authentication for every JSON-RPC
+	// method, so an omitted authenticator is an error: selecting
+	// auth.NewNoOpAuthenticator() must always be an explicit caller decision.
 	authenticator := config.Authenticator
 	if authenticator == nil {
-		authenticator = auth.NewNoOpAuthenticator()
+		return nil, ErrAuthenticatorRequired
+	}
+
+	// The authorizer is mandatory whenever RBAC is enabled. A nil (or
+	// RBAC-client-less) authorizer under EnableRBAC would authorize every
+	// method while the operator believes RBAC is enforced, so the constructor
+	// fails closed instead. With RBAC disabled the server keeps a disabled
+	// authorizer, which allows all — the documented open-gate configuration.
+	authorizer := config.Authorizer
+	if config.EnableRBAC {
+		if !authorizer.Enabled() {
+			return nil, ErrAuthorizerRequired
+		}
+	} else if authorizer == nil {
+		authorizer = auth.NewAuthorizer(nil)
 	}
 
 	// Set up logger (default to stdlib if not provided)
@@ -160,11 +213,14 @@ func NewServer(config *Config) (*Server, error) {
 		addr:            config.Addr,
 		xkmsService:     svc,
 		barrier:         config.Barrier,
+		barrierRegistry: config.BarrierRegistry,
 		passwordManager: config.PasswordManager,
 		ctx:             ctx,
 		cancel:          cancel,
 		tlsConfig:       config.TLSConfig,
 		authenticator:   authenticator,
+		authorizer:      authorizer,
+		rbacEnabled:     config.EnableRBAC,
 		logger:          log,
 		rateLimiter:     config.RateLimiter,
 		subscribers:     make(map[net.Conn]*Subscriber),
@@ -174,6 +230,10 @@ func NewServer(config *Config) (*Server, error) {
 	// Log if rate limiting is enabled
 	if config.RateLimiter != nil && config.RateLimiter.IsEnabled() {
 		log.Info("Rate limiting enabled for MCP")
+	}
+
+	if config.EnableRBAC {
+		log.Info("RBAC enabled for MCP")
 	}
 
 	if config.SSHClient != nil {
@@ -194,6 +254,13 @@ func NewServer(config *Config) (*Server, error) {
 // SetBarrier configures the barrier for the MCP server.
 func (s *Server) SetBarrier(b *seal.Barrier) {
 	s.barrier = b
+}
+
+// SetBarrierRegistry configures the tenant barrier registry for the MCP
+// server. This allows tenant enforcement to be configured after server
+// creation.
+func (s *Server) SetBarrierRegistry(registry *seal.BarrierRegistry) {
+	s.barrierRegistry = registry
 }
 
 // SetPasswordManager configures the password store manager for the MCP server.
@@ -284,6 +351,14 @@ func (s *Server) handleConnection(conn net.Conn) {
 					},
 				}
 				ctx = auth.WithIdentity(ctx, identity)
+
+				// Carry the verified peer chain on the context so operations
+				// that bind to the caller's certificate -- the Security
+				// Officer share claim -- can derive the thumbprint from the
+				// real handshake rather than from anything the client sent.
+				connState := state
+				ctx = auth.WithTLSState(ctx, &connState)
+
 				s.logger.DebugContext(ctx, "Client authenticated via mTLS",
 					slog.String("subject", identity.Subject))
 			}
@@ -364,6 +439,9 @@ var rpcMethodHandlers = map[string]rpcHandler{
 	// Health
 	"health": (*Server).handleHealth,
 
+	// Public algorithm discovery, mirroring the unauthenticated REST route.
+	"xkms.algorithms": (*Server).handleAlgorithms,
+
 	// XKMS key operations
 	"xkms.listBackends":        (*Server).handleListBackends,
 	"xkms.generateKey":         (*Server).handleGenerateKey,
@@ -381,8 +459,19 @@ var rpcMethodHandlers = map[string]rpcHandler{
 	"xkms.wrapKey":             (*Server).handleWrapKey,
 	"xkms.unwrapKey":           (*Server).handleUnwrapKey,
 	"xkms.importKey":           (*Server).handleImportKeyMaterial,
-	"xkms.exportKey":           (*Server).handleExportKeyMaterial,
+	"xkms.exportKey":           (*Server).handleExportKey,
 	"xkms.copyKey":             (*Server).handleCopyKey,
+
+	// Hardware-capability key operations (attestation, ECDH, server-side
+	// wrap/unwrap by key ID, raw symmetric key material export). These
+	// delegate entirely to the xkms service layer; see errors_keyops.go for
+	// how capability-boundary errors (ErrOperationNotSupported) map onto
+	// JSON-RPC error codes.
+	"xkms.attestKey":         (*Server).handleAttestKey,
+	"xkms.deriveKeyECDH":     (*Server).handleDeriveKeyECDH,
+	"xkms.exportKeyMaterial": (*Server).handleExportKeyMaterial,
+	"xkms.wrapKeyByID":       (*Server).handleWrapKeyByID,
+	"xkms.unwrapKeyByID":     (*Server).handleUnwrapKeyByID,
 
 	// XKMS certificate operations
 	"xkms.saveCert":          (*Server).handleSaveCert,
@@ -440,12 +529,25 @@ var rpcMethodHandlers = map[string]rpcHandler{
 	"barrier.generateRootToken":    (*Server).handleBarrierGenerateRootToken,
 	"barrier.enableEncryption":     (*Server).handleBarrierEnableEncryption,
 
+	// Shamir share operations. Share state lives in the embedded go-qrdb
+	// node, reached through the XKMS service.
+	"xkms.submitShare":              (*Server).handleSubmitShare,
+	"xkms.listShares":               (*Server).handleListShares,
+	"xkms.getShare":                 (*Server).handleGetShare,
+	"xkms.deleteShare":              (*Server).handleDeleteShare,
+	"xkms.getShareCollectionStatus": (*Server).handleGetShareCollectionStatus,
+
+	// Audit read endpoint. Audit state lives in the embedded go-qrdb node,
+	// reached through the XKMS service.
+	"xkms.queryAudit": (*Server).handleQueryAudit,
+
 	// Init ceremony operations
-	"init.getStatus":         (*Server).handleGetInitStatus,
-	"init.claimCertBegin":    (*Server).handleClaimCertBegin,
-	"init.claimCertComplete": (*Server).handleClaimCertComplete,
-	"init.claimShare":        (*Server).handleClaimShare,
-	"init.signCSR":           (*Server).handleSignCSRInit,
+	"init.getStatus":          (*Server).handleGetInitStatus,
+	"init.claimCertBegin":     (*Server).handleClaimCertBegin,
+	"init.claimCertComplete":  (*Server).handleClaimCertComplete,
+	"init.claimShareBegin":    (*Server).handleClaimShareBegin,
+	"init.claimShareComplete": (*Server).handleClaimShareComplete,
+	"init.signCSR":            (*Server).handleSignCSRInit,
 
 	// Credential management operations
 	"credentials.submit":   (*Server).handleCredentialSubmit,
@@ -509,6 +611,38 @@ func (s *Server) handleRequest(ctx context.Context, req *JSONRPCRequest, conn ne
 		slog.String("method", req.Method),
 		slog.String("subject", subject))
 
+	// Tenant scoping runs before authorization and independent of RBAC,
+	// mirroring the REST TenantMiddleware / gRPC tenant interceptor / QUIC
+	// tenantMiddleware placement: it uses only the authenticated identity and
+	// the barrier registry, never the RBAC authorizer.
+	var tenantErr error
+	ctx, tenantErr = s.tenantAccess(ctx, req.Method)
+	if tenantErr != nil {
+		code := ErrCodeForbidden
+		var keyOpErr *KeyOpError
+		if errors.As(tenantErr, &keyOpErr) {
+			code = keyOpErr.Code
+		}
+		return s.makeErrorResponse(req.ID, correlationID, code, tenantErr.Error(), nil)
+	}
+
+	// Authorize before dispatch. Every privileged method is gated here rather
+	// than inside each handler so no dispatch path — the rpcMethodHandlers
+	// table, the connection-bound xkms.subscribe, or the build-tagged FROST
+	// namespace — can reach the service layer unauthorized.
+	if authzErr := s.authorizeMethod(ctx, req.Method); authzErr != nil {
+		code := ErrCodeForbidden
+		var keyOpErr *KeyOpError
+		if errors.As(authzErr, &keyOpErr) {
+			code = keyOpErr.Code
+		}
+		s.logger.WarnContext(ctx, "RPC request denied",
+			slog.String("method", req.Method),
+			slog.String("subject", subject),
+			slog.String("error", authzErr.Error()))
+		return s.makeErrorResponse(req.ID, correlationID, code, authzErr.Error(), nil)
+	}
+
 	// Route to appropriate handler
 	var result interface{}
 	var err error
@@ -554,7 +688,17 @@ func (s *Server) handleRequest(ctx context.Context, req *JSONRPCRequest, conn ne
 			slog.String("method", req.Method),
 			slog.String("subject", subject),
 			slog.String("error", err.Error()))
-		return s.makeErrorResponse(req.ID, correlationID, ErrCodeInternalError, err.Error(), nil)
+
+		// A handler that delegated to the key-operations service layer
+		// (attestation, ECDH, wrap/unwrap by ID, key material export)
+		// carries its capability-boundary classification in a *KeyOpError;
+		// every other handler falls back to the generic internal-error code.
+		code := ErrCodeInternalError
+		var keyOpErr *KeyOpError
+		if errors.As(err, &keyOpErr) {
+			code = keyOpErr.Code
+		}
+		return s.makeErrorResponse(req.ID, correlationID, code, err.Error(), nil)
 	}
 
 	// Don't send response for notifications (no ID)

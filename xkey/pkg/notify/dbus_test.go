@@ -17,6 +17,7 @@ import (
 	"context"
 	"errors"
 	"log/slog"
+	"os"
 	"testing"
 
 	"github.com/godbus/dbus/v5"
@@ -254,4 +255,70 @@ func TestBuildNotificationBody(t *testing.T) {
 			assert.Equal(t, tc.expected, body)
 		})
 	}
+}
+
+// TestNewDBusNotifier_SessionBusUnavailable verifies the constructor reports
+// the documented sentinel when no session bus is reachable, so callers fall
+// back to a no-op notifier instead of failing startup.
+func TestNewDBusNotifier_SessionBusUnavailable(t *testing.T) {
+	t.Setenv("DBUS_SESSION_BUS_ADDRESS", "unix:path=/nonexistent/xkey-test-session-bus")
+
+	notifier, err := NewDBusNotifier(slog.New(slog.DiscardHandler))
+	assert.ErrorIs(t, err, ErrDBusUnavailable)
+	assert.Nil(t, notifier)
+}
+
+// TestConnectSessionBus_RootResolvesInvokingUserBus covers the sudo path: when
+// the process runs as root, notifications must be delivered to the invoking
+// user's bus at /run/user/<SUDO_UID>/bus, and DBUS_SESSION_BUS_ADDRESS must be
+// restored afterwards so the override does not leak into the rest of the
+// process.
+func TestConnectSessionBus_RootResolvesInvokingUserBus(t *testing.T) {
+	original := getuid
+	getuid = func() int { return 0 }
+	t.Cleanup(func() { getuid = original })
+
+	t.Run("valid SUDO_UID targets the user bus and restores the env", func(t *testing.T) {
+		t.Setenv("SUDO_UID", "4242")
+		t.Setenv("DBUS_SESSION_BUS_ADDRESS", "unix:path=/nonexistent/original-bus")
+
+		conn, err := connectSessionBus(slog.New(slog.DiscardHandler))
+		assert.Error(t, err, "there is no bus at /run/user/4242/bus in the test environment")
+		assert.Nil(t, conn)
+		assert.Equal(t, "unix:path=/nonexistent/original-bus", os.Getenv("DBUS_SESSION_BUS_ADDRESS"),
+			"the previous bus address must be restored")
+	})
+
+	t.Run("no prior address is unset again", func(t *testing.T) {
+		t.Setenv("SUDO_UID", "4242")
+		t.Setenv("DBUS_SESSION_BUS_ADDRESS", "")
+		require.NoError(t, os.Unsetenv("DBUS_SESSION_BUS_ADDRESS"))
+
+		conn, err := connectSessionBus(slog.New(slog.DiscardHandler))
+		assert.Error(t, err)
+		assert.Nil(t, conn)
+
+		_, present := os.LookupEnv("DBUS_SESSION_BUS_ADDRESS")
+		assert.False(t, present, "the temporary override must be removed")
+	})
+
+	t.Run("missing SUDO_UID falls back to the default bus", func(t *testing.T) {
+		require.NoError(t, os.Unsetenv("SUDO_UID"))
+		t.Setenv("DBUS_SESSION_BUS_ADDRESS", "unix:path=/nonexistent/xkey-test-bus")
+
+		conn, err := connectSessionBus(slog.New(slog.DiscardHandler))
+		assert.Error(t, err)
+		assert.Nil(t, conn)
+	})
+
+	t.Run("non-numeric SUDO_UID falls back to the default bus", func(t *testing.T) {
+		t.Setenv("SUDO_UID", "not-a-number")
+		t.Setenv("DBUS_SESSION_BUS_ADDRESS", "unix:path=/nonexistent/xkey-test-bus")
+
+		conn, err := connectSessionBus(slog.New(slog.DiscardHandler))
+		assert.Error(t, err)
+		assert.Nil(t, conn)
+		assert.Equal(t, "unix:path=/nonexistent/xkey-test-bus", os.Getenv("DBUS_SESSION_BUS_ADDRESS"),
+			"an invalid SUDO_UID must not rewrite the bus address")
+	})
 }

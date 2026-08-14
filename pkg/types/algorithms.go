@@ -406,6 +406,42 @@ const (
 
 	// WrapAES256KWP is AES-256 Key Wrap with Padding.
 	WrapAES256KWP KeyWrapAlgorithm = "AES_256_KWP"
+
+	// The following name mechanisms PKCS#11 exposes through C_WrapKey /
+	// C_UnwrapKey that previously had no canonical name. Without one, the
+	// PKCS#11 module had to invent its own lowercase vocabulary ("aes-kw",
+	// "rsa-pkcs", ...) that no other transport spoke, and the service had to
+	// translate between the two. These close that gap so there is exactly one
+	// wrap-algorithm vocabulary in the project.
+
+	// WrapAESKW is AES Key Wrap WITHOUT padding (RFC 3394, CKM_AES_KEY_WRAP).
+	// Distinct from WrapAESKWP: it has no Alternative Initial Value and
+	// therefore only wraps material that is already a multiple of 8 bytes.
+	WrapAESKW KeyWrapAlgorithm = "AES_KW"
+
+	// WrapAESGCM is AES-GCM used as a key-wrapping construction
+	// (CKM_AES_GCM). The nonce and authentication tag travel with the wrapped
+	// blob, since a wrapped key is carried as a single opaque value.
+	WrapAESGCM KeyWrapAlgorithm = "AES_GCM"
+
+	// WrapAESCBC is AES-CBC without padding (CKM_AES_CBC).
+	WrapAESCBC KeyWrapAlgorithm = "AES_CBC"
+
+	// WrapAESCBCPad is AES-CBC with PKCS#7 padding (CKM_AES_CBC_PAD).
+	WrapAESCBCPad KeyWrapAlgorithm = "AES_CBC_PAD"
+
+	// WrapRSAPKCS1v15 is RSA PKCS#1 v1.5 encryption (CKM_RSA_PKCS).
+	// Retained because PKCS#11 applications request it; prefer an OAEP
+	// algorithm for new deployments.
+	WrapRSAPKCS1v15 KeyWrapAlgorithm = "RSA_PKCS1_V1_5"
+
+	// WrapRSAOAEPSHA384 and WrapRSAOAEPSHA512 let a caller select an OAEP
+	// digest the older vocabulary could not express. The PKCS#11 module reads
+	// the digest from CK_RSA_PKCS_OAEP_PARAMS.hashAlg and names it here, so
+	// the choice rides in the algorithm name rather than needing a separate
+	// hash field on the request.
+	WrapRSAOAEPSHA384 KeyWrapAlgorithm = "RSAES_OAEP_SHA_384"
+	WrapRSAOAEPSHA512 KeyWrapAlgorithm = "RSAES_OAEP_SHA_512"
 )
 
 // String returns the string representation.

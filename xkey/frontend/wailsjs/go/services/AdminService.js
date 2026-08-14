@@ -58,6 +58,10 @@ export function SetBackendRegistry(arg1) {
   return window['go']['services']['AdminService']['SetBackendRegistry'](arg1);
 }
 
+export function SetCloudTester(arg1) {
+  return window['go']['services']['AdminService']['SetCloudTester'](arg1);
+}
+
 export function SetConfigUpdateFunc(arg1) {
   return window['go']['services']['AdminService']['SetConfigUpdateFunc'](arg1);
 }

@@ -24,10 +24,13 @@ import (
 	"fmt"
 	"io"
 	"log"
+	"net"
 	"net/http"
 	"net/url"
 	"os"
+	"strconv"
 	"strings"
+	"time"
 
 	"github.com/jeremyhahn/go-xkms/pkg/errs"
 
@@ -45,6 +48,26 @@ var (
 	// ErrNotImplemented is returned when an operation has not been implemented yet.
 	ErrNotImplemented = errors.New("not implemented")
 )
+
+// ErrMalformedLeaderAddress indicates the leader API address advertised in
+// the X-XKMS-Leader-API-Address header of a 421 Misdirected Request response
+// could not be parsed into a dialable host:port. The transport refuses to
+// guess at a redirect target from malformed data; the caller gets this error
+// instead of a request silently sent nowhere (or somewhere wrong).
+type ErrMalformedLeaderAddress struct {
+	// Address is the raw, unparseable header value.
+	Address string
+	// Err is the underlying parse failure.
+	Err error
+}
+
+// Error returns the error message.
+func (e *ErrMalformedLeaderAddress) Error() string {
+	return fmt.Sprintf("rest: malformed leader API address %q: %v", e.Address, e.Err)
+}
+
+// Unwrap returns the underlying error.
+func (e *ErrMalformedLeaderAddress) Unwrap() error { return e.Err }
 
 // Transport implements the transport.Client interface using HTTP/REST.
 type Transport struct {
@@ -247,28 +270,87 @@ func (t *Transport) DoRequest(ctx context.Context, httpMethod, path string, body
 }
 
 // DoRawRequest performs an HTTP request and returns the raw response body.
+//
+// Transparent leader redirect: a clustered write that reaches a Raft
+// follower comes back as 421 Misdirected Request with the leader's dialable
+// REST address in the X-XKMS-Leader-API-Address header (see
+// pkg/api/rest.writeNotLeader). When that header is present, DoRawRequest
+// retries the identical request — same method, path, query, headers, and
+// body — against the leader's address exactly once, reusing this
+// Transport's own *http.Client so its TLS configuration (including any
+// client certificate) is presented to the leader unchanged.
+//
+// The retry is a client-side redirect rather than the follower forwarding
+// the request itself: forwarding would mean the follower re-presents ITS
+// OWN credentials to the leader on the caller's behalf, silently delegating
+// the caller's identity to a peer node. Retrying from here means the
+// caller's own credentials reach the leader directly, so authorization on
+// the write is evaluated against the identity that actually made the
+// request.
+//
+// A 421 from the retry is returned to the caller as-is: exactly one hop is
+// attempted, never chased further. A 421 with no address header is also
+// returned as-is, unchanged from the pre-redirect behavior.
 func (t *Transport) DoRawRequest(ctx context.Context, method, path string, body interface{}) ([]byte, error) {
 	if t.httpClient == nil {
 		return nil, ErrNotConnected
 	}
 
-	var reqBody io.Reader
+	var bodyBytes []byte
 	if body != nil {
 		data, err := json.Marshal(body)
 		if err != nil {
 			return nil, &errs.Wrapped{Msg: "failed to marshal request body", Err: err}
 		}
-		reqBody = bytes.NewReader(data)
+		bodyBytes = data
 	}
 
-	reqURL := t.baseURL + path
+	respBody, statusCode, header, err := t.doRawRequestOnce(ctx, method, t.baseURL, path, bodyBytes)
+	if err != nil {
+		return nil, err
+	}
+
+	if statusCode == http.StatusMisdirectedRequest {
+		if leaderAddr := header.Get("X-XKMS-Leader-API-Address"); leaderAddr != "" {
+			leaderBaseURL, addrErr := t.leaderBaseURL(leaderAddr)
+			if addrErr != nil {
+				return nil, addrErr
+			}
+			// Exactly one hop: whatever the leader returns (including another
+			// 421) is what the caller gets back.
+			respBody, statusCode, _, err = t.doRawRequestOnce(ctx, method, leaderBaseURL, path, bodyBytes)
+			if err != nil {
+				return nil, err
+			}
+		}
+	}
+
+	if statusCode >= 400 {
+		return nil, parseRESTErrorResponse(statusCode, respBody)
+	}
+
+	return respBody, nil
+}
+
+// doRawRequestOnce sends a single HTTP request to baseURL+path and returns
+// the raw response status, headers, and body without interpreting the status
+// code. It is the one place a request is actually built and sent, used both
+// for a request's initial attempt and its one-hop leader retry so the two
+// attempts are identical apart from scheme+host.
+func (t *Transport) doRawRequestOnce(ctx context.Context, method, baseURL, path string, bodyBytes []byte) ([]byte, int, http.Header, error) {
+	var reqBody io.Reader
+	if bodyBytes != nil {
+		reqBody = bytes.NewReader(bodyBytes)
+	}
+
+	reqURL := baseURL + path
 
 	req, err := http.NewRequestWithContext(ctx, method, reqURL, reqBody)
 	if err != nil {
-		return nil, &errs.Wrapped{Msg: "failed to create request", Err: err}
+		return nil, 0, nil, &errs.Wrapped{Msg: "failed to create request", Err: err}
 	}
 
-	if body != nil {
+	if bodyBytes != nil {
 		req.Header.Set("Content-Type", "application/json")
 	}
 
@@ -284,7 +366,7 @@ func (t *Transport) DoRawRequest(ctx context.Context, method, path string, body 
 
 	resp, err := t.httpClient.Do(req)
 	if err != nil {
-		return nil, &errs.Wrapped{Msg: "request failed", Err: err}
+		return nil, 0, nil, &errs.Wrapped{Msg: "request failed", Err: err}
 	}
 	defer func() {
 		if closeErr := resp.Body.Close(); closeErr != nil {
@@ -294,24 +376,51 @@ func (t *Transport) DoRawRequest(ctx context.Context, method, path string, body 
 
 	respBody, err := io.ReadAll(resp.Body)
 	if err != nil {
-		return nil, &errs.Wrapped{Msg: "failed to read response body", Err: err}
+		return nil, 0, nil, &errs.Wrapped{Msg: "failed to read response body", Err: err}
 	}
 
-	if resp.StatusCode >= 400 {
-		var errResp struct {
-			Error   string `json:"error"`
-			Message string `json:"message"`
-		}
-		if err := json.Unmarshal(respBody, &errResp); err == nil && errResp.Error != "" {
-			return nil, &errs.Message{Msg: fmt.Sprintf("server error: %s", errResp.Error)}
-		}
-		if err := json.Unmarshal(respBody, &errResp); err == nil && errResp.Message != "" {
-			return nil, &errs.Message{Msg: fmt.Sprintf("server error: %s", errResp.Message)}
-		}
-		return nil, &errs.Message{Msg: fmt.Sprintf("server returned status %d: %s", resp.StatusCode, string(respBody))}
+	return respBody, resp.StatusCode, resp.Header, nil
+}
+
+// leaderBaseURL turns a leader's advertised "host:port" API address into a
+// base URL a retry can dial, reusing this Transport's own scheme so only
+// scheme+host change between the original request and the retry — the path,
+// query, and headers are untouched.
+func (t *Transport) leaderBaseURL(addr string) (string, error) {
+	if strings.Contains(addr, "://") {
+		return "", &ErrMalformedLeaderAddress{Address: addr, Err: errors.New("must be a bare host:port, not a URL")}
+	}
+	host, port, err := net.SplitHostPort(addr)
+	if err != nil {
+		return "", &ErrMalformedLeaderAddress{Address: addr, Err: err}
+	}
+	if host == "" || port == "" {
+		return "", &ErrMalformedLeaderAddress{Address: addr, Err: errors.New("host and port must both be present")}
 	}
 
-	return respBody, nil
+	u, err := url.Parse(t.baseURL)
+	if err != nil {
+		return "", &ErrMalformedLeaderAddress{Address: addr, Err: err}
+	}
+
+	return u.Scheme + "://" + addr, nil
+}
+
+// parseRESTErrorResponse renders a non-2xx REST response body into the
+// client-facing error, preferring the server's structured "error"/"message"
+// field over the raw body.
+func parseRESTErrorResponse(statusCode int, respBody []byte) error {
+	var errResp struct {
+		Error   string `json:"error"`
+		Message string `json:"message"`
+	}
+	if err := json.Unmarshal(respBody, &errResp); err == nil && errResp.Error != "" {
+		return &errs.Message{Msg: fmt.Sprintf("server error: %s", errResp.Error)}
+	}
+	if err := json.Unmarshal(respBody, &errResp); err == nil && errResp.Message != "" {
+		return &errs.Message{Msg: fmt.Sprintf("server error: %s", errResp.Message)}
+	}
+	return &errs.Message{Msg: fmt.Sprintf("server returned status %d: %s", statusCode, string(respBody))}
 }
 
 // DoRequestWithHeaders performs an HTTP request and returns response headers.
@@ -470,6 +579,21 @@ func (t *Transport) GetBackend(ctx context.Context, backendID string) (*transpor
 	return &resp, nil
 }
 
+// Algorithms reports the algorithms the server supports.
+func (t *Transport) Algorithms(ctx context.Context) (*transport.AlgorithmsResponse, error) {
+	data, err := t.DoRawRequest(ctx, http.MethodGet, "/api/v1/algorithms", nil)
+	if err != nil {
+		return nil, err
+	}
+
+	var resp transport.AlgorithmsResponse
+	if err := json.Unmarshal(data, &resp); err != nil {
+		return nil, &errs.Wrapped{Msg: "failed to parse response", Err: err}
+	}
+
+	return &resp, nil
+}
+
 // GenerateKey generates a new key.
 func (t *Transport) GenerateKey(ctx context.Context, req *transport.GenerateKeyRequest) (*transport.GenerateKeyResponse, error) {
 	data, err := t.DoRawRequest(ctx, http.MethodPost, "/api/v1/keys", req)
@@ -543,6 +667,15 @@ func (t *Transport) Sign(ctx context.Context, req *transport.SignRequest) (*tran
 	if req.Hash != "" {
 		body["hash"] = req.Hash
 	}
+	if req.Padding != "" {
+		body["padding"] = req.Padding
+	}
+	if req.SaltLength != 0 {
+		body["salt_length"] = req.SaltLength
+	}
+	if req.DataIsDigest {
+		body["data_is_digest"] = true
+	}
 
 	data, err := t.DoRawRequest(ctx, http.MethodPost, path, body)
 	if err != nil {
@@ -567,6 +700,15 @@ func (t *Transport) Verify(ctx context.Context, req *transport.VerifyRequest) (*
 	if req.Hash != "" {
 		body["hash"] = req.Hash
 	}
+	if req.Padding != "" {
+		body["padding"] = req.Padding
+	}
+	if req.SaltLength != 0 {
+		body["salt_length"] = req.SaltLength
+	}
+	if req.DataIsDigest {
+		body["data_is_digest"] = true
+	}
 
 	data, err := t.DoRawRequest(ctx, http.MethodPost, path, body)
 	if err != nil {
@@ -589,6 +731,18 @@ func (t *Transport) Encrypt(ctx context.Context, req *transport.EncryptRequest) 
 	}
 	if len(req.AdditionalData) > 0 {
 		body["additional_data"] = req.AdditionalData
+	}
+	if len(req.Nonce) > 0 {
+		body["nonce"] = req.Nonce
+	}
+	if req.Mode != "" {
+		body["mode"] = req.Mode
+	}
+	if len(req.IV) > 0 {
+		body["iv"] = req.IV
+	}
+	if req.TagSize != 0 {
+		body["tag_size"] = req.TagSize
 	}
 
 	data, err := t.DoRawRequest(ctx, http.MethodPost, path, body)
@@ -619,6 +773,15 @@ func (t *Transport) Decrypt(ctx context.Context, req *transport.DecryptRequest) 
 	if len(req.AdditionalData) > 0 {
 		body["additional_data"] = req.AdditionalData
 	}
+	if req.Mode != "" {
+		body["mode"] = req.Mode
+	}
+	if len(req.IV) > 0 {
+		body["iv"] = req.IV
+	}
+	if req.TagSize != 0 {
+		body["tag_size"] = req.TagSize
+	}
 
 	data, err := t.DoRawRequest(ctx, http.MethodPost, path, body)
 	if err != nil {
@@ -641,6 +804,12 @@ func (t *Transport) EncryptAsym(ctx context.Context, req *transport.EncryptAsymR
 	}
 	if req.Hash != "" {
 		body["hash"] = req.Hash
+	}
+	// The OAEP label travels with the request or the round trip cannot close:
+	// the matching Decrypt sends it, so an encryption that silently dropped it
+	// produced a ciphertext neither this token nor any peer could decrypt.
+	if len(req.Label) > 0 {
+		body["label"] = req.Label
 	}
 
 	data, err := t.DoRawRequest(ctx, http.MethodPost, path, body)
@@ -1064,12 +1233,7 @@ func (t *Transport) AttestKey(ctx context.Context, req *transport.AttestKeyReque
 		return nil, ErrNotConnected
 	}
 
-	body, err := json.Marshal(req)
-	if err != nil {
-		return nil, &errs.Wrapped{Msg: "failed to marshal request", Err: err}
-	}
-
-	data, err := t.DoRawRequest(ctx, http.MethodPost, "/api/v1/attest", body)
+	data, err := t.DoRawRequest(ctx, http.MethodPost, "/api/v1/attest", req)
 	if err != nil {
 		return nil, err
 	}
@@ -2235,6 +2399,91 @@ func (t *Transport) ListShares(ctx context.Context) (*transport.ListSharesRespon
 	return &resp, nil
 }
 
+// GetShare returns a single stored share. Share material is never included
+// in the response — the server returns metadata only.
+func (t *Transport) GetShare(ctx context.Context, serverURL, groupID string, shareIndex int) (*transport.ShareInfo, error) {
+	data, err := t.DoRawRequest(ctx, http.MethodGet, sharePath(serverURL, groupID, shareIndex), nil)
+	if err != nil {
+		return nil, err
+	}
+
+	var resp transport.ShareInfo
+	if err := json.Unmarshal(data, &resp); err != nil {
+		return nil, &errs.Wrapped{Msg: "failed to parse response", Err: err}
+	}
+
+	return &resp, nil
+}
+
+// DeleteShare removes a single stored share.
+func (t *Transport) DeleteShare(ctx context.Context, serverURL, groupID string, shareIndex int) error {
+	_, err := t.DoRawRequest(ctx, http.MethodDelete, sharePath(serverURL, groupID, shareIndex), nil)
+	return err
+}
+
+// sharePath builds the per-share REST path. The server URL is a URL itself,
+// so it is escaped as a single path segment.
+func sharePath(serverURL, groupID string, shareIndex int) string {
+	return fmt.Sprintf("/api/v1/shares/%s/%s/%d",
+		url.PathEscape(serverURL), url.PathEscape(groupID), shareIndex)
+}
+
+// QueryAudit returns one page of audit events from the tamper-evident audit
+// chain owned by the embedded qrdb node, filtered by the given AuditFilter.
+// The filter is carried entirely in the query string; zero/empty fields are
+// omitted rather than sent as blanks so a zero From/To stays unbounded.
+func (t *Transport) QueryAudit(ctx context.Context, filter *transport.AuditFilter) (*transport.AuditPage, error) {
+	if filter == nil {
+		return nil, transport.ErrInvalidRequest
+	}
+
+	q := url.Values{}
+	if !filter.From.IsZero() {
+		q.Set("from", filter.From.Format(time.RFC3339))
+	}
+	if !filter.To.IsZero() {
+		q.Set("to", filter.To.Format(time.RFC3339))
+	}
+	if filter.Actor != "" {
+		q.Set("actor", filter.Actor)
+	}
+	if filter.Resource != "" {
+		q.Set("resource", filter.Resource)
+	}
+	if filter.Action != "" {
+		q.Set("action", filter.Action)
+	}
+	if filter.Outcome != "" {
+		q.Set("outcome", filter.Outcome)
+	}
+	if filter.TenantID != "" {
+		q.Set("tenant_id", filter.TenantID)
+	}
+	if filter.Limit > 0 {
+		q.Set("limit", strconv.Itoa(filter.Limit))
+	}
+	if filter.Cursor != "" {
+		q.Set("cursor", filter.Cursor)
+	}
+
+	path := "/api/v1/audit"
+	if encoded := q.Encode(); encoded != "" {
+		path = path + "?" + encoded
+	}
+
+	data, err := t.DoRawRequest(ctx, http.MethodGet, path, nil)
+	if err != nil {
+		return nil, err
+	}
+
+	var resp transport.AuditPage
+	if err := json.Unmarshal(data, &resp); err != nil {
+		return nil, &errs.Wrapped{Msg: "failed to parse response", Err: err}
+	}
+
+	return &resp, nil
+}
+
 // GetShareCollectionStatus returns the share collection status for a group.
 func (t *Transport) GetShareCollectionStatus(ctx context.Context, groupID string) (*transport.ShareCollectionStatus, error) {
 	path := fmt.Sprintf("/api/v1/shares/status/%s", url.PathEscape(groupID))
@@ -2422,17 +2671,37 @@ func (t *Transport) ClaimCertComplete(ctx context.Context, req *transport.ClaimC
 }
 
 // ClaimShare retrieves the Shamir share for the named officer.
-func (t *Transport) ClaimShare(ctx context.Context, req *transport.ClaimShareRequest) (*transport.ClaimShareResponse, error) {
+func (t *Transport) ClaimShareBegin(ctx context.Context, req *transport.ClaimShareBeginRequest) (*transport.ClaimShareBeginResponse, error) {
 	if !t.connected {
 		return nil, ErrNotConnected
 	}
 
-	data, err := t.DoRawRequest(ctx, http.MethodPost, "/api/v1/init/claim-share", req)
+	data, err := t.DoRawRequest(ctx, http.MethodPost, "/api/v1/init/claim-share/begin", req)
 	if err != nil {
 		return nil, err
 	}
 
-	var resp transport.ClaimShareResponse
+	var resp transport.ClaimShareBeginResponse
+	if err := json.Unmarshal(data, &resp); err != nil {
+		return nil, &errs.Wrapped{Msg: "failed to parse response", Err: err}
+	}
+
+	return &resp, nil
+}
+
+// ClaimShareComplete completes the Shamir share claim handshake for the named
+// officer.
+func (t *Transport) ClaimShareComplete(ctx context.Context, req *transport.ClaimShareCompleteRequest) (*transport.ClaimShareCompleteResponse, error) {
+	if !t.connected {
+		return nil, ErrNotConnected
+	}
+
+	data, err := t.DoRawRequest(ctx, http.MethodPost, "/api/v1/init/claim-share/complete", req)
+	if err != nil {
+		return nil, err
+	}
+
+	var resp transport.ClaimShareCompleteResponse
 	if err := json.Unmarshal(data, &resp); err != nil {
 		return nil, &errs.Wrapped{Msg: "failed to parse response", Err: err}
 	}
@@ -2688,6 +2957,44 @@ func (t *Transport) ClusterMembers(ctx context.Context) (*transport.ListClusterM
 	return &resp, nil
 }
 
+// ClusterMutator methods.
+
+// AddClusterReplica adds a replica to the configured shard's Raft group. The
+// underlying operation is idempotent: adding a replica already present
+// succeeds without changing the configuration.
+func (t *Transport) AddClusterReplica(ctx context.Context, replicaID uint64, raftAddr string) (*transport.ClusterReplicaResponse, error) {
+	req := transport.AddClusterReplicaRequest{ReplicaID: replicaID, RaftAddress: raftAddr}
+	data, err := t.DoRawRequest(ctx, http.MethodPost, "/api/v1/cluster/members", req)
+	if err != nil {
+		return nil, err
+	}
+	var resp transport.ClusterReplicaResponse
+	if err := json.Unmarshal(data, &resp); err != nil {
+		return nil, &errs.Wrapped{Msg: "failed to parse response", Err: err}
+	}
+	return &resp, nil
+}
+
+// RemoveClusterReplica removes a replica from the configured shard's Raft
+// group. The underlying operation is idempotent: removing a replica that is
+// already absent succeeds.
+func (t *Transport) RemoveClusterReplica(ctx context.Context, replicaID uint64) (*transport.ClusterReplicaResponse, error) {
+	path := fmt.Sprintf("/api/v1/cluster/members/%d", replicaID)
+	data, err := t.DoRawRequest(ctx, http.MethodDelete, path, nil)
+	if err != nil {
+		return nil, err
+	}
+	var resp transport.ClusterReplicaResponse
+	if err := json.Unmarshal(data, &resp); err != nil {
+		return nil, &errs.Wrapped{Msg: "failed to parse response", Err: err}
+	}
+	return &resp, nil
+}
+
 // Compile-time assertion that the REST transport satisfies the read-only
 // cluster surface the SDK Cluster() accessor type-asserts to.
 var _ transport.ClusterReader = (*Transport)(nil)
+
+// Compile-time assertion that the REST transport satisfies the full cluster
+// surface, read and mutation together.
+var _ transport.ClusterClient = (*Transport)(nil)

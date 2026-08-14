@@ -172,22 +172,30 @@ func TestBaselineProfile_RSAKeySize(t *testing.T) {
 	defer m.Finalize()
 
 	// Get RSA key gen mechanism info
+	// CKM_RSA_PKCS_KEY_PAIR_GEN is REQUIRED by the Baseline Provider profile
+	// this test asserts, so its absence is exactly the conformance failure the
+	// test exists to catch - not grounds for opting out.
 	mechInfo, rv := m.GetMechanismInfo(0, module.CKM_RSA_PKCS_KEY_PAIR_GEN)
 	if rv == module.CKR_MECHANISM_INVALID {
-		t.Skip("RSA key generation not supported")
+		t.Fatal("CKM_RSA_PKCS_KEY_PAIR_GEN is not supported; the Baseline Provider profile " +
+			"requires RSA key generation")
 	}
 	testutil.RequireOK(t, rv, "C_GetMechanismInfo failed")
 
 	t.Run("MinKeySize", func(t *testing.T) {
-		// Per profile spec: minimum 2048 bits required
-		require.LessOrEqual(t, mechInfo.MinKeySize, BaselineProfile.MinRSAKeySize,
+		// Per profile spec: minimum 2048 bits required.
+		// mechInfo.MinKeySize is uint32 (per CK_MECHANISM_INFO's ulMinKeySize)
+		// while BaselineProfile.MinRSAKeySize is uint64; require.LessOrEqual
+		// fails a type-mismatch comparison silently reported as "Elements
+		// should be the same type" unless both operands share a type.
+		require.LessOrEqual(t, uint64(mechInfo.MinKeySize), BaselineProfile.MinRSAKeySize,
 			"Module must support at least %d-bit RSA keys", BaselineProfile.MinRSAKeySize)
 		t.Logf("Module minimum RSA key size: %d bits", mechInfo.MinKeySize)
 	})
 
 	t.Run("MaxKeySize", func(t *testing.T) {
-		// Per profile spec: should support up to 4096 bits
-		require.GreaterOrEqual(t, mechInfo.MaxKeySize, BaselineProfile.MinRSAKeySize,
+		// Per profile spec: should support up to 4096 bits.
+		require.GreaterOrEqual(t, uint64(mechInfo.MaxKeySize), BaselineProfile.MinRSAKeySize,
 			"Module must support at least %d-bit RSA keys", BaselineProfile.MinRSAKeySize)
 		t.Logf("Module maximum RSA key size: %d bits", mechInfo.MaxKeySize)
 	})
@@ -237,6 +245,16 @@ func TestBaselineProfile_DigestMechanisms(t *testing.T) {
 			require.Len(t, digest, dm.digestSize,
 				"%s digest should be %d bytes", dm.name, dm.digestSize)
 			t.Logf("%s produces %d-byte digest", dm.name, len(digest))
+
+			// PKCS#11 v3.2 §5.2 lets an application call C_Digest twice -- once
+			// with a NULL buffer to learn the length, once to collect the bytes
+			// -- so a successful call must not implicitly terminate the
+			// operation. Module.Digest deliberately leaves it ACTIVE and
+			// requires this explicit FinishOperation before the next
+			// DigestInit on the same session, or that call returns
+			// CKR_OPERATION_ACTIVE.
+			testutil.RequireOK(t, m.FinishOperation(session, module.OperationDigest),
+				"FinishOperation for "+dm.name)
 		})
 	}
 }
@@ -297,17 +315,26 @@ func TestExtendedProfile_AESSupport(t *testing.T) {
 	defer m.Finalize()
 
 	// Check AES key generation mechanism info
+	// CKM_AES_KEY_GEN is REQUIRED by the Extended Provider profile this test
+	// asserts; skipping on its absence reported conformance the module did not have.
 	mechInfo, rv := m.GetMechanismInfo(0, module.CKM_AES_KEY_GEN)
 	if rv == module.CKR_MECHANISM_INVALID {
-		t.Skip("AES key generation not supported (required for Extended profile)")
+		t.Fatal("CKM_AES_KEY_GEN is not supported; the Extended Provider profile " +
+			"requires AES key generation")
 	}
 	testutil.RequireOK(t, rv, "C_GetMechanismInfo failed")
 
 	t.Run("KeySizeRange", func(t *testing.T) {
-		// Extended profile requires 128-256 bit AES keys
-		// Mechanism info reports key size in bytes
-		minBits := mechInfo.MinKeySize * 8
-		maxBits := mechInfo.MaxKeySize * 8
+		// Extended profile requires 128-256 bit AES keys.
+		// Per PKCS#11 v3.2 section 6.10.3, ulMinKeySize/ulMaxKeySize for
+		// CKM_AES_KEY_GEN (and every other AES mechanism) report the AES key
+		// size range in BYTES, not bits -- converting to bits for the profile
+		// comparison requires the *8 below. mechInfo.MinKeySize/MaxKeySize are
+		// uint32; require.LessOrEqual/GreaterOrEqual fail a type-mismatch
+		// comparison ("Elements should be the same type") against the uint64
+		// literals unless both operands share a type.
+		minBits := uint64(mechInfo.MinKeySize) * 8
+		maxBits := uint64(mechInfo.MaxKeySize) * 8
 
 		require.LessOrEqual(t, minBits, uint64(128),
 			"Module should support 128-bit AES keys")
@@ -339,13 +366,16 @@ func TestExtendedProfile_AESSupport(t *testing.T) {
 // TestExtendedProfile_ECCSupport tests ECC mechanism requirements.
 // OASIS PKCS#11 Profiles v3.0 Section 2.3.3
 func TestExtendedProfile_ECCSupport(t *testing.T) {
-	env := testutil.SetupTestEnvironment(t, nil)
+	// SupportedCurves below logs in as the normal user to generate EC key
+	// pairs, so the token and user PIN must be initialized first.
+	// testutil.SetupTestEnvironment only constructs the module; it never
+	// calls InitToken/InitPIN, so a direct Login always fails with
+	// CKR_USER_PIN_NOT_INITIALIZED. SetupAuthenticatedModule performs the
+	// full SO-login + C_InitPIN dance and returns an already-authenticated
+	// session.
+	env, session := testutil.SetupAuthenticatedModule(t)
 
 	m := env.Module
-
-	rv := m.Initialize(env.Config)
-	testutil.RequireOK(t, rv, "C_Initialize failed")
-	defer m.Finalize()
 
 	t.Run("EC_KEY_PAIR_GEN", func(t *testing.T) {
 		_, rv := m.GetMechanismInfo(0, module.CKM_EC_KEY_PAIR_GEN)
@@ -366,13 +396,8 @@ func TestExtendedProfile_ECCSupport(t *testing.T) {
 	})
 
 	t.Run("SupportedCurves", func(t *testing.T) {
-		session, rv := m.OpenSession(0, module.CKF_SERIAL_SESSION|module.CKF_RW_SESSION)
-		testutil.RequireOK(t, rv, "C_OpenSession failed")
-		defer m.CloseSession(session)
-
-		rv = m.Login(session, module.CKU_USER, []byte(testutil.TestPINs.User))
-		testutil.RequireOK(t, rv, "C_Login failed")
-		defer m.Logout(session)
+		// session is already authenticated as the normal user via
+		// testutil.SetupAuthenticatedModule above.
 
 		// Test curve support by attempting key generation
 		curves := []struct {
@@ -500,17 +525,19 @@ func TestAuthDeviceProfile_PINProtection(t *testing.T) {
 // TestAuthDeviceProfile_PrivateKeyProtection tests private key access control.
 // OASIS PKCS#11 Profiles v3.0 Section 2.4.3
 func TestAuthDeviceProfile_PrivateKeyProtection(t *testing.T) {
-	env := testutil.SetupTestEnvironment(t, nil)
+	// PrivateKeyAccessRequiresLogin below depends on the session starting out
+	// unauthenticated, so this cannot use testutil.SetupAuthenticatedModule
+	// (which logs in as part of setup). It still needs the token and user
+	// PIN initialized, though, since PrivateKeyAccessAfterLogin logs in
+	// afterward -- testutil.SetupTestEnvironment alone never calls
+	// InitToken/InitPIN, which is what previously made that later Login fail
+	// with CKR_USER_PIN_NOT_INITIALIZED.
+	// SetupInitializedModuleWithConfig performs the InitToken + C_InitPIN
+	// dance and hands back a fresh RW session that is deliberately left
+	// logged out.
+	env, session := testutil.SetupInitializedModuleWithConfig(t, nil)
 
 	m := env.Module
-
-	rv := m.Initialize(env.Config)
-	testutil.RequireOK(t, rv, "C_Initialize failed")
-	defer m.Finalize()
-
-	session, rv := m.OpenSession(0, module.CKF_SERIAL_SESSION|module.CKF_RW_SESSION)
-	testutil.RequireOK(t, rv, "C_OpenSession failed")
-	defer m.CloseSession(session)
 
 	t.Run("PrivateKeyAccessRequiresLogin", func(t *testing.T) {
 		// Without login, should not be able to access private keys

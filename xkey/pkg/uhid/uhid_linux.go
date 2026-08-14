@@ -38,7 +38,15 @@ type Device struct {
 // Open opens the UHID device at /dev/uhid.
 // The caller must call Close when done with the device.
 func Open() (*Device, error) {
-	file, err := os.OpenFile(UHIDDevicePath, os.O_RDWR, 0)
+	return openAt(UHIDDevicePath)
+}
+
+// openAt opens a UHID character device at the given path. Open delegates
+// here so tests can exercise the not-available and permission-denied
+// branches against a controlled path instead of depending on whether the
+// host happens to expose /dev/uhid.
+func openAt(path string) (*Device, error) {
+	file, err := os.OpenFile(path, os.O_RDWR, 0)
 	if err != nil {
 		if os.IsNotExist(err) {
 			return nil, ErrUHIDNotAvailable
@@ -66,73 +74,10 @@ func (d *Device) Create(cfg *CreateConfig) error {
 		cfg = DefaultCreateConfig()
 	}
 
-	// Build the UHID_CREATE2 request
-	buf := make([]byte, uhidEventHeaderSize+uhidCreate2ReqSize)
-
-	// Event type
-	binary.LittleEndian.PutUint32(buf[0:4], UHID_CREATE2)
-
-	offset := uhidEventHeaderSize
-
-	// Copy name (max 127 chars + null terminator)
-	nameBytes := []byte(cfg.Name)
-	if len(nameBytes) > 127 {
-		nameBytes = nameBytes[:127]
-	}
-	copy(buf[offset:offset+128], nameBytes)
-	offset += 128
-
-	// Copy phys (max 63 chars + null terminator)
-	physBytes := []byte(cfg.Phys)
-	if len(physBytes) > 63 {
-		physBytes = physBytes[:63]
-	}
-	copy(buf[offset:offset+64], physBytes)
-	offset += 64
-
-	// Copy uniq (max 63 chars + null terminator)
-	uniqBytes := []byte(cfg.Uniq)
-	if len(uniqBytes) > 63 {
-		uniqBytes = uniqBytes[:63]
-	}
-	copy(buf[offset:offset+64], uniqBytes)
-	offset += 64
-
-	// Report descriptor
-	rdesc := cfg.ReportDescriptor
-	if rdesc == nil {
-		rdesc = FIDO2HIDReportDescriptor
-	}
-	if len(rdesc) > MaxReportDescriptorSize {
-		rdesc = rdesc[:MaxReportDescriptorSize]
-	}
-
-	// rd_size (2 bytes)
-	binary.LittleEndian.PutUint16(buf[offset:offset+2], uint16(len(rdesc)))
-	offset += 2
-
-	// bus (2 bytes)
-	binary.LittleEndian.PutUint16(buf[offset:offset+2], BUS_USB)
-	offset += 2
-
-	// vendor (4 bytes)
-	binary.LittleEndian.PutUint32(buf[offset:offset+4], uint32(cfg.VendorID))
-	offset += 4
-
-	// product (4 bytes)
-	binary.LittleEndian.PutUint32(buf[offset:offset+4], uint32(cfg.ProductID))
-	offset += 4
-
-	// version (4 bytes)
-	binary.LittleEndian.PutUint32(buf[offset:offset+4], uint32(cfg.Version))
-	offset += 4
-
-	// country (4 bytes)
-	binary.LittleEndian.PutUint32(buf[offset:offset+4], 0)
-	offset += 4
-
-	// rd_data
-	copy(buf[offset:], rdesc)
+	// Build the UHID_CREATE2 request with the shared codec so the bytes on
+	// the wire are exactly the ones serialize.go's cross-platform tests
+	// assert.
+	buf := SerializeCreate2Request(cfg)
 
 	d.mu.Lock()
 	defer d.mu.Unlock()
@@ -206,50 +151,11 @@ func (d *Device) ReadOutput() ([]byte, error) {
 		return d.ReadOutput()
 
 	case UHID_OUTPUT:
-		// Parse the output event
-		// Linux kernel uhid_output_req structure (packed):
-		//   __u8 data[UHID_DATA_MAX];  // 4096 bytes
-		//   __u16 size;                // 2 bytes
-		//   __u8 rtype;                // 1 byte
-		// Total: 4099 bytes after event header
-
-		// We need at least the header + size field location
-		minLen := uhidEventHeaderSize + MaxReportDescriptorSize + 2
-		if n < minLen {
-			return nil, &DetailError{Err: ErrInvalidPacket, Detail: fmt.Sprintf(": output event too short (%d bytes, need %d)", n, minLen)}
-		}
-
-		// Size is at offset 4096 (after data array)
-		sizeOffset := uhidEventHeaderSize + MaxReportDescriptorSize
-		dataSize := binary.LittleEndian.Uint16(buf[sizeOffset : sizeOffset+2])
-		// rtype := buf[sizeOffset+2] // Report type (not used for basic HID)
-
-		if dataSize > MaxReportDescriptorSize {
-			return nil, &DetailError{Err: ErrInvalidPacket, Detail: fmt.Sprintf(": data size too large (%d)", dataSize)}
-		}
-
-		if dataSize == 0 {
-			return nil, &DetailError{Err: ErrInvalidPacket, Detail: ": zero data size"}
-		}
-
-		// Data is at the beginning of the payload (after event header)
-		// Note: When the HID report descriptor doesn't define explicit Report IDs,
-		// the kernel prepends a Report ID byte (0x00) to the output data.
-		// For FIDO2 HID, we expect 65 bytes (1 byte Report ID + 64 bytes HID packet).
-		// We need to skip the Report ID byte to get the actual HID packet.
-		dataStart := uhidEventHeaderSize
-		actualSize := int(dataSize)
-
-		// Check if there's a Report ID prefix (65 bytes instead of 64)
-		if dataSize == HIDReportSize+1 {
-			// Skip the Report ID byte (first byte)
-			dataStart++
-			actualSize = HIDReportSize
-		}
-
-		data := make([]byte, actualSize)
-		copy(data, buf[dataStart:dataStart+actualSize])
-		return data, nil
+		// Parsing lives in the shared codec (serialize.go) so the device
+		// path and ParseOutputEvent can never drift apart. buf[:n] is
+		// passed so a short read is reported as a malformed packet rather
+		// than reading uninitialised tail bytes.
+		return ParseOutputEvent(buf[:n])
 
 	default:
 		// Unknown event type, try reading again
@@ -271,17 +177,9 @@ func (d *Device) WriteInput(data []byte) error {
 		return &DetailError{Err: ErrInvalidPacket, Detail: fmt.Sprintf(": data too large (%d bytes)", len(data))}
 	}
 
-	// Build the UHID_INPUT2 request
-	buf := make([]byte, uhidEventHeaderSize+uhidInput2ReqSize)
-
-	// Event type
-	binary.LittleEndian.PutUint32(buf[0:4], UHID_INPUT2)
-
-	// Size (2 bytes)
-	binary.LittleEndian.PutUint16(buf[uhidEventHeaderSize:uhidEventHeaderSize+2], uint16(len(data)))
-
-	// Data (raw HID report without Report ID)
-	copy(buf[uhidEventHeaderSize+2:], data)
+	// Raw report data WITHOUT a report ID prefix: the kernel adds the
+	// appropriate one when delivering to the hidraw reader.
+	buf := SerializeInput2Request(data)
 
 	d.mu.Lock()
 	defer d.mu.Unlock()
@@ -387,141 +285,4 @@ func (d *Device) Fd() int {
 	}
 
 	return int(d.file.Fd())
-}
-
-// SerializeCreate2Request serializes a CreateConfig into a UHID_CREATE2 request buffer.
-// This is useful for testing and debugging.
-func SerializeCreate2Request(cfg *CreateConfig) []byte {
-	if cfg == nil {
-		cfg = DefaultCreateConfig()
-	}
-
-	buf := make([]byte, uhidEventHeaderSize+uhidCreate2ReqSize)
-
-	// Event type
-	binary.LittleEndian.PutUint32(buf[0:4], UHID_CREATE2)
-
-	offset := uhidEventHeaderSize
-
-	// Copy name
-	nameBytes := []byte(cfg.Name)
-	if len(nameBytes) > 127 {
-		nameBytes = nameBytes[:127]
-	}
-	copy(buf[offset:offset+128], nameBytes)
-	offset += 128
-
-	// Copy phys
-	physBytes := []byte(cfg.Phys)
-	if len(physBytes) > 63 {
-		physBytes = physBytes[:63]
-	}
-	copy(buf[offset:offset+64], physBytes)
-	offset += 64
-
-	// Copy uniq
-	uniqBytes := []byte(cfg.Uniq)
-	if len(uniqBytes) > 63 {
-		uniqBytes = uniqBytes[:63]
-	}
-	copy(buf[offset:offset+64], uniqBytes)
-	offset += 64
-
-	// Report descriptor
-	rdesc := cfg.ReportDescriptor
-	if rdesc == nil {
-		rdesc = FIDO2HIDReportDescriptor
-	}
-	if len(rdesc) > MaxReportDescriptorSize {
-		rdesc = rdesc[:MaxReportDescriptorSize]
-	}
-
-	binary.LittleEndian.PutUint16(buf[offset:offset+2], uint16(len(rdesc)))
-	offset += 2
-
-	binary.LittleEndian.PutUint16(buf[offset:offset+2], BUS_USB)
-	offset += 2
-
-	binary.LittleEndian.PutUint32(buf[offset:offset+4], uint32(cfg.VendorID))
-	offset += 4
-
-	binary.LittleEndian.PutUint32(buf[offset:offset+4], uint32(cfg.ProductID))
-	offset += 4
-
-	binary.LittleEndian.PutUint32(buf[offset:offset+4], uint32(cfg.Version))
-	offset += 4
-
-	binary.LittleEndian.PutUint32(buf[offset:offset+4], 0) // country
-	offset += 4
-
-	copy(buf[offset:], rdesc)
-
-	return buf
-}
-
-// SerializeInput2Request serializes data into a UHID_INPUT2 request buffer.
-// This is useful for testing and debugging.
-func SerializeInput2Request(data []byte) []byte {
-	buf := make([]byte, uhidEventHeaderSize+uhidInput2ReqSize)
-
-	binary.LittleEndian.PutUint32(buf[0:4], UHID_INPUT2)
-	binary.LittleEndian.PutUint16(buf[uhidEventHeaderSize:uhidEventHeaderSize+2], uint16(len(data)))
-	copy(buf[uhidEventHeaderSize+2:], data)
-
-	return buf
-}
-
-// ParseOutputEvent parses a raw UHID_OUTPUT event buffer and returns the HID report data.
-// This is useful for testing and debugging.
-// Linux kernel uhid_output_req structure (packed):
-//
-//	__u8 data[UHID_DATA_MAX];  // 4096 bytes - data comes FIRST
-//	__u16 size;                // 2 bytes - actual size of data
-//	__u8 rtype;                // 1 byte - report type
-//
-// Note: When the HID report descriptor doesn't define explicit Report IDs,
-// the kernel prepends a Report ID byte (0x00) to the output data.
-// For FIDO2 HID, we expect 65 bytes (1 byte Report ID + 64 bytes HID packet).
-// This function strips the Report ID byte and returns the raw 64-byte HID packet.
-func ParseOutputEvent(buf []byte) ([]byte, error) {
-	if len(buf) < uhidEventHeaderSize {
-		return nil, &DetailError{Err: ErrInvalidPacket, Detail: ": buffer too short"}
-	}
-
-	eventType := binary.LittleEndian.Uint32(buf[0:4])
-	if eventType != UHID_OUTPUT {
-		return nil, &DetailError{Err: ErrInvalidPacket, Detail: fmt.Sprintf(": not an output event (type=%d)", eventType)}
-	}
-
-	// Need header + data[4096] + size[2]
-	minLen := uhidEventHeaderSize + MaxReportDescriptorSize + 2
-	if len(buf) < minLen {
-		return nil, &DetailError{Err: ErrInvalidPacket, Detail: fmt.Sprintf(": output event too short (%d, need %d)", len(buf), minLen)}
-	}
-
-	// Size is at offset 4096 after the data array
-	sizeOffset := uhidEventHeaderSize + MaxReportDescriptorSize
-	dataSize := binary.LittleEndian.Uint16(buf[sizeOffset : sizeOffset+2])
-	if dataSize > MaxReportDescriptorSize {
-		return nil, &DetailError{Err: ErrInvalidPacket, Detail: fmt.Sprintf(": data size too large (%d)", dataSize)}
-	}
-
-	if dataSize == 0 {
-		return nil, &DetailError{Err: ErrInvalidPacket, Detail: ": zero data size"}
-	}
-
-	// Data is at the beginning of the payload (after event header)
-	// Check if there's a Report ID prefix (65 bytes instead of 64)
-	dataStart := uhidEventHeaderSize
-	actualSize := int(dataSize)
-
-	if dataSize == HIDReportSize+1 {
-		// Skip the Report ID byte (first byte)
-		dataStart++
-		actualSize = HIDReportSize
-	}
-
-	data := make([]byte, actualSize)
-	copy(data, buf[dataStart:dataStart+actualSize])
-	return data, nil
 }

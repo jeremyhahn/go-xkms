@@ -25,6 +25,7 @@ import (
 	"fmt"
 	"net"
 	"os"
+	"testing"
 	"time"
 
 	"github.com/jeremyhahn/go-xkms/pkg/pkcs11/module"
@@ -89,6 +90,15 @@ type ProtocolConfig struct {
 	// TLSCAFile is the CA certificate path.
 	TLSCAFile string
 
+	// AllowInsecureTransport opts out of the module's mandatory-TLS guard.
+	//
+	// The module refuses a non-unix:// target that has no TLS, because the gRPC
+	// transport would fall back to plaintext credentials and PKCS#11 traffic can
+	// carry exported key material. That guard is correct and must stay; this
+	// field exists so a test can reach a plaintext loopback server deliberately,
+	// which is the only reason the opt-out exists at all.
+	AllowInsecureTransport bool
+
 	// Timeout is the operation timeout.
 	Timeout time.Duration
 }
@@ -113,6 +123,11 @@ func DefaultProtocolConfig(protocol ProtocolType) *ProtocolConfig {
 		cfg.TLSCertFile = os.Getenv("XKMS_GRPC_TLS_CERT")
 		cfg.TLSKeyFile = os.Getenv("XKMS_GRPC_TLS_KEY")
 		cfg.TLSCAFile = os.Getenv("XKMS_GRPC_TLS_CA")
+
+		// Without TLS the module's guard refuses the target outright, so the
+		// gRPC cases could never initialize. Opting out only when TLS is off
+		// keeps a TLS-configured run on the normal, guarded path.
+		cfg.AllowInsecureTransport = !cfg.TLSEnabled
 	}
 
 	return cfg
@@ -121,8 +136,9 @@ func DefaultProtocolConfig(protocol ProtocolType) *ProtocolConfig {
 // ToModuleConfig converts the protocol config to a PKCS#11 module config.
 func (pc *ProtocolConfig) ToModuleConfig() *module.Config {
 	return &module.Config{
-		Target:  pc.Target,
-		Timeout: pc.Timeout,
+		Target:                 pc.Target,
+		Timeout:                pc.Timeout,
+		AllowInsecureTransport: pc.AllowInsecureTransport,
 		TLS: module.TLSConfig{
 			Enabled:  pc.TLSEnabled,
 			CertFile: pc.TLSCertFile,
@@ -269,6 +285,30 @@ func (s *MultiProtocolTestSuite) IsProtocolAvailable(protocol ProtocolType) bool
 		}
 	}
 	return false
+}
+
+// RequireProtocol asserts that a protocol's endpoint is reachable.
+//
+// The PKCS#11 module Makefile targets all run through run_with_server, which
+// starts xkms-server and blocks until both the Unix socket and the gRPC port
+// answer. An unreachable endpoint therefore means the server never came up or
+// the harness pointed the test at the wrong address; either way the protocol
+// went untested, so it must be reported as a failure rather than a pass.
+func (s *MultiProtocolTestSuite) RequireProtocol(t *testing.T, protocol ProtocolType) {
+	t.Helper()
+
+	if s.IsProtocolAvailable(protocol) {
+		return
+	}
+
+	cfg := s.GetProtocolConfig(protocol)
+	target := "<unconfigured>"
+	if cfg != nil {
+		target = cfg.Target
+	}
+
+	t.Fatalf("protocol %s is not reachable at %s; xkms-server must be running and "+
+		"XKMS_UNIX_SOCKET / XKMS_GRPC_ADDR must point at it", protocol, target)
 }
 
 // Helper functions

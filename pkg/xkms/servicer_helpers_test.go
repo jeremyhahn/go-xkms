@@ -9,6 +9,7 @@ import (
 	"crypto/rand"
 	"crypto/rsa"
 	"crypto/x509"
+	"fmt"
 	"io"
 	"testing"
 
@@ -114,32 +115,51 @@ func TestAlgorithmString_Unknown(t *testing.T) {
 	assert.Equal(t, "", result)
 }
 
-func TestParseHash_Empty(t *testing.T) {
-	h := parseHash("")
+func TestResolveHash_EmptyDefaultsToSHA256(t *testing.T) {
+	h, err := ResolveHash("")
+	require.NoError(t, err)
 	assert.Equal(t, crypto.SHA256, h)
 }
 
-func TestParseHash_SHA256(t *testing.T) {
-	h := parseHash("SHA-256")
-	assert.Equal(t, crypto.SHA256, h)
-}
-
-func TestParseHash_SHA512(t *testing.T) {
-	// "SHA-512" is normalized to "SHA_512" by ParseHash which doesn't match "SHA512",
-	// so it falls back to SHA-256. Use "SHA512" for an exact match.
-	h := parseHash("SHA512")
-	assert.Equal(t, crypto.SHA512, h)
-}
-
-func TestParseHash_SHA384(t *testing.T) {
-	h := parseHash("SHA384")
+func TestResolveHash_NamedHashes(t *testing.T) {
+	// Spelling is normalized: case, "-" and "_" are all equivalent.
+	for _, name := range []string{"SHA-256", "sha256", "SHA_256"} {
+		h, err := ResolveHash(name)
+		require.NoError(t, err, name)
+		assert.Equal(t, crypto.SHA256, h, name)
+	}
+	for _, name := range []string{"SHA-512", "SHA512", "sha512"} {
+		h, err := ResolveHash(name)
+		require.NoError(t, err, name)
+		assert.Equal(t, crypto.SHA512, h, name)
+	}
+	h, err := ResolveHash("SHA384")
+	require.NoError(t, err)
 	assert.Equal(t, crypto.SHA384, h)
 }
 
-func TestParseHash_Unrecognized(t *testing.T) {
-	h := parseHash("INVALID-HASH")
-	// Falls back to SHA-256
-	assert.Equal(t, crypto.SHA256, h)
+// A name the caller did supply but that does not resolve must be an error, not
+// a substitution. Silently signing with SHA-256 when the caller asked for
+// something else reports success for an operation that never happened.
+func TestResolveHash_NamedButUnresolvableIsAnError(t *testing.T) {
+	for _, name := range []string{"INVALID-HASH", "SHA-999", "MD5", "SHA-1", "MD4", "RIPEMD-160"} {
+		h, err := ResolveHash(name)
+		require.Error(t, err, name)
+		assert.ErrorIs(t, err, ErrInvalidHashFunction, name)
+		assert.Equal(t, crypto.Hash(0), h, name)
+	}
+}
+
+// The weak-hash escape hatch has to reach this layer too, otherwise an
+// operator who accepted the compliance gap still cannot do the legacy interop
+// it was granted for.
+func TestResolveHash_WeakHashesUnderPolicy(t *testing.T) {
+	types.SetAllowWeakHashes(true)
+	defer types.SetAllowWeakHashes(false)
+
+	h, err := ResolveHash("SHA-1")
+	require.NoError(t, err)
+	assert.Equal(t, crypto.SHA1, h)
 }
 
 func TestPubKeyPEM_RSA(t *testing.T) {
@@ -252,30 +272,30 @@ func TestParseCurveString_Empty(t *testing.T) {
 	assert.Nil(t, c)
 }
 
-// --- parseSymmetricAlgorithm tests ---
+// --- ParseSymmetricAlgorithm tests ---
 
 func TestParseSymmetricAlgorithm_AES(t *testing.T) {
-	a := parseSymmetricAlgorithm("AES-256-GCM")
+	a := ParseSymmetricAlgorithm("AES-256-GCM")
 	assert.NotEmpty(t, a)
 }
 
 func TestParseSymmetricAlgorithm_ChaCha(t *testing.T) {
-	a := parseSymmetricAlgorithm("ChaCha20-Poly1305")
+	a := ParseSymmetricAlgorithm("ChaCha20-Poly1305")
 	assert.NotEmpty(t, a)
 }
 
 func TestParseSymmetricAlgorithm_Symmetric(t *testing.T) {
-	a := parseSymmetricAlgorithm("symmetric")
+	a := ParseSymmetricAlgorithm("symmetric")
 	assert.NotEmpty(t, a)
 }
 
 func TestParseSymmetricAlgorithm_Secret(t *testing.T) {
-	a := parseSymmetricAlgorithm("secret")
+	a := ParseSymmetricAlgorithm("secret")
 	assert.NotEmpty(t, a)
 }
 
 func TestParseSymmetricAlgorithm_Unknown(t *testing.T) {
-	a := parseSymmetricAlgorithm("rsa")
+	a := ParseSymmetricAlgorithm("rsa")
 	assert.Empty(t, a)
 }
 
@@ -401,38 +421,189 @@ func TestBuildKeyAttributes_DefaultKeyType(t *testing.T) {
 
 // --- buildImportKeyAttributes tests ---
 
+// TestBuildImportKeyAttributes_Basic covers an asymmetric import request.
+//
+// ImportKeyRequest.KeyType names the ALGORITHM -- Algorithm is already the
+// wrapping algorithm, so it is the only field that can -- and the key's purpose
+// follows from it. The algorithm has to be recorded: types.KeyAttributes.ID()
+// encodes it, so attributes that omit it store the key under an identifier
+// ending in "unknown" that no other code path constructs.
 func TestBuildImportKeyAttributes_Basic(t *testing.T) {
-	attrs := buildImportKeyAttributes(&transport.ImportKeyRequest{
-		KeyID: "import-key",
-	}, "software")
-	assert.Equal(t, "import-key", attrs.CN)
-	assert.Equal(t, types.KeyTypeSigning, attrs.KeyType)
-}
-
-func TestBuildImportKeyAttributes_WithKeyType(t *testing.T) {
-	attrs := buildImportKeyAttributes(&transport.ImportKeyRequest{
+	attrs, err := buildImportKeyAttributes(&transport.ImportKeyRequest{
 		KeyID:   "import-key",
-		KeyType: "signing",
+		KeyType: "ecdsa",
 	}, "software")
+	require.NoError(t, err)
 	assert.Equal(t, "import-key", attrs.CN)
 	assert.Equal(t, types.KeyTypeSigning, attrs.KeyType)
+	assert.Equal(t, x509.ECDSA, attrs.KeyAlgorithm)
+	assert.NotContains(t, attrs.ID(), "unknown")
 }
 
-func TestBuildImportKeyAttributes_DefaultKeyType(t *testing.T) {
-	// No key type specified, should default to signing
-	attrs := buildImportKeyAttributes(&transport.ImportKeyRequest{
+// TestBuildImportKeyAttributes_WithKeyType covers every asymmetric algorithm
+// name the field accepts, in the backend-name form the store type is derived
+// from.
+func TestBuildImportKeyAttributes_WithKeyType(t *testing.T) {
+	algorithms := map[string]x509.PublicKeyAlgorithm{
+		"rsa":     x509.RSA,
+		"ecdsa":   x509.ECDSA,
+		"ec":      x509.ECDSA,
+		"ecc":     x509.ECDSA,
+		"Ed25519": x509.Ed25519,
+	}
+
+	for name, want := range algorithms {
+		t.Run(name, func(t *testing.T) {
+			attrs, err := buildImportKeyAttributes(&transport.ImportKeyRequest{
+				KeyID:   "import-key",
+				KeyType: name,
+			}, "pkcs11")
+			require.NoError(t, err)
+			assert.Equal(t, "import-key", attrs.CN)
+			assert.Equal(t, types.KeyTypeSigning, attrs.KeyType)
+			assert.Equal(t, want, attrs.KeyAlgorithm)
+		})
+	}
+}
+
+// TestBuildImportKeyAttributes_PurposeNameIsNotAnAlgorithm pins that a purpose
+// name is refused.
+//
+// "signing" used to be accepted and mapped to KeyTypeSigning with no algorithm
+// at all, which is how an Ed25519 import came to be reported as an RSA key by
+// ListKeys and how an RSA import came to fail inside the backend rather than at
+// the request that caused it.
+func TestBuildImportKeyAttributes_PurposeNameIsNotAnAlgorithm(t *testing.T) {
+	for _, purpose := range []string{"signing", "tls", "encryption", "ca"} {
+		t.Run(purpose, func(t *testing.T) {
+			_, err := buildImportKeyAttributes(&transport.ImportKeyRequest{
+				KeyID:   "import-key",
+				KeyType: purpose,
+			}, "software")
+			require.Error(t, err)
+			assert.ErrorIs(t, err, ErrInvalidKeyType)
+		})
+	}
+}
+
+// TestBuildImportKeyAttributes_KeyTypeRequired pins that there is no default
+// algorithm for an import: it cannot be recovered from the wrapped material at
+// this layer, so a request that omits it is refused rather than answered with a
+// key stored under an identifier that misdescribes it.
+func TestBuildImportKeyAttributes_KeyTypeRequired(t *testing.T) {
+	_, err := buildImportKeyAttributes(&transport.ImportKeyRequest{
 		KeyID: "no-type-key",
 	}, "pkcs11")
-	assert.Equal(t, types.KeyTypeSigning, attrs.KeyType)
+	require.Error(t, err)
+	assert.ErrorIs(t, err, ErrMissingRequiredField)
 }
 
 func TestBuildImportKeyAttributes_UnknownKeyType(t *testing.T) {
-	// Unknown key type string should result in default (signing)
-	attrs := buildImportKeyAttributes(&transport.ImportKeyRequest{
+	_, err := buildImportKeyAttributes(&transport.ImportKeyRequest{
 		KeyID:   "unknown-type",
 		KeyType: "unknown-type-xyz",
 	}, "software")
-	assert.Equal(t, types.KeyTypeSigning, attrs.KeyType)
+	require.Error(t, err)
+	assert.ErrorIs(t, err, ErrInvalidKeyType)
+}
+
+// TestBuildImportKeyAttributes_Symmetric proves an import request that names a
+// symmetric key produces attributes a backend will actually import.
+//
+// types.KeyAttributes.IsSymmetric is SymmetricAlgorithm != "", and every
+// backend's ImportKey dispatches on it, so attributes without it send raw AES
+// bytes into x509.ParsePKCS8PrivateKey. Asserting KeyType alone would not
+// catch that: the old code set KeyType and nothing else, and the import still
+// failed. SymmetricAlgorithm is the field that decides.
+func TestBuildImportKeyAttributes_Symmetric(t *testing.T) {
+	sizes := map[int]types.SymmetricAlgorithm{
+		128: types.SymmetricAES128GCM,
+		192: types.SymmetricAES192GCM,
+		256: types.SymmetricAES256GCM,
+	}
+
+	for _, keyType := range []string{"symmetric", "aes"} {
+		for size, want := range sizes {
+			t.Run(fmt.Sprintf("%s-%d", keyType, size), func(t *testing.T) {
+				attrs, err := buildImportKeyAttributes(&transport.ImportKeyRequest{
+					KeyID:   "sym-import",
+					KeyType: keyType,
+					KeySize: size,
+				}, "software")
+				require.NoError(t, err)
+				assert.Equal(t, types.KeyTypeSecret, attrs.KeyType)
+				assert.Equal(t, want, attrs.SymmetricAlgorithm,
+					"the symmetric algorithm is what makes IsSymmetric true and routes the import")
+				assert.True(t, attrs.Exportable,
+					"an imported secret key must be readable back, per v3.2 Table 30's CKA_EXTRACTABLE default")
+			})
+		}
+	}
+}
+
+// TestBuildImportKeyAttributes_SymmetricSizeFromKeySizeNotAESKeySize pins which
+// of the two size fields is authoritative.
+//
+// Both name the same quantity, but the gRPC ImportKeyRequest message carries
+// key_size and has no aes_key_size field. Reading AESKeySize first would make
+// one call produce a 256-bit key over gRPC and a 128-bit key over the unix
+// socket, from a request that looked identical to the caller.
+func TestBuildImportKeyAttributes_SymmetricSizeFromKeySizeNotAESKeySize(t *testing.T) {
+	attrs, err := buildImportKeyAttributes(&transport.ImportKeyRequest{
+		KeyID:      "sym-import",
+		KeyType:    "symmetric",
+		KeySize:    128,
+		AESKeySize: 256,
+	}, "software")
+	require.NoError(t, err)
+	assert.Equal(t, types.SymmetricAES128GCM, attrs.SymmetricAlgorithm,
+		"KeySize wins over AESKeySize, because only KeySize survives every transport")
+
+	// AESKeySize is still honoured when it is the only size the caller sent,
+	// which is what the REST and MCP request shapes populate.
+	fallback, err := buildImportKeyAttributes(&transport.ImportKeyRequest{
+		KeyID:      "sym-import",
+		KeyType:    "symmetric",
+		AESKeySize: 192,
+	}, "software")
+	require.NoError(t, err)
+	assert.Equal(t, types.SymmetricAES192GCM, fallback.SymmetricAlgorithm)
+}
+
+// TestBuildImportKeyAttributes_SymmetricInvalidSize proves an unsupported size
+// is refused here rather than left to fail later as a PKCS#8 parse error.
+//
+// Returning attributes with no SymmetricAlgorithm would send the request down
+// the asymmetric path, where the caller's real mistake -- an impossible key
+// size -- is reported as "failed to parse PKCS8 private key". Refusing names
+// the actual problem.
+func TestBuildImportKeyAttributes_SymmetricInvalidSize(t *testing.T) {
+	for _, size := range []int{1, 64, 127, 255, 512, -256} {
+		t.Run(fmt.Sprintf("size-%d", size), func(t *testing.T) {
+			attrs, err := buildImportKeyAttributes(&transport.ImportKeyRequest{
+				KeyID:   "sym-import",
+				KeyType: "symmetric",
+				KeySize: size,
+			}, "software")
+			require.Error(t, err)
+			assert.Nil(t, attrs, "a refused request must yield no attributes to act on")
+			assert.ErrorIs(t, err, ErrInvalidKeyAttributes)
+		})
+	}
+}
+
+// TestBuildImportKeyAttributes_SymmetricZeroSizeDefaults proves an omitted size
+// selects AES-256, the same default UnwrapKeyByID applies through the shared
+// unwrapSymmetricAlgorithms table. A caller importing a key it did not generate
+// has no reason to know the size in advance.
+func TestBuildImportKeyAttributes_SymmetricZeroSizeDefaults(t *testing.T) {
+	attrs, err := buildImportKeyAttributes(&transport.ImportKeyRequest{
+		KeyID:   "sym-import",
+		KeyType: "symmetric",
+	}, "software")
+	require.NoError(t, err)
+	assert.Equal(t, types.SymmetricAES256GCM, attrs.SymmetricAlgorithm)
+	assert.Equal(t, types.KeyTypeSecret, attrs.KeyType)
 }
 
 // --- attrsToKeyInfoList tests ---

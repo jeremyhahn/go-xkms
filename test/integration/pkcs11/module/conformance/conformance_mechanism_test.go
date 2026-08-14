@@ -34,6 +34,59 @@ import (
 	testutil "github.com/jeremyhahn/go-xkms/test/integration/pkcs11/module"
 )
 
+// advertisedMechanisms returns the mechanism set the token reports through
+// C_GetMechanismList for the given slot.
+func advertisedMechanisms(t *testing.T, env *testutil.TestEnvironment, slot module.SlotID) map[module.MechanismType]bool {
+	t.Helper()
+
+	mechs, rv := env.Module.GetMechanismList(slot)
+	if rv != module.CKR_OK {
+		t.Fatalf("C_GetMechanismList(slot %d) returned %s, want CKR_OK", slot, rv.String())
+	}
+
+	set := make(map[module.MechanismType]bool, len(mechs))
+	for _, mech := range mechs {
+		set[mech] = true
+	}
+	return set
+}
+
+// mechanismInfo asserts that C_GetMechanismInfo agrees with C_GetMechanismList
+// and returns the info when the mechanism is advertised.
+//
+// PKCS#11 v3.0 Section 5.5.5 ties the two calls together: C_GetMechanismInfo
+// must succeed for every mechanism C_GetMechanismList reports, and must return
+// CKR_MECHANISM_INVALID for every mechanism it does not. Checking both
+// directions means a mechanism the token does not offer still gets a real
+// assertion instead of the skip that used to stand in for one - and a mechanism
+// that vanishes from the list is caught immediately.
+//
+// The bool result reports whether the mechanism is advertised, so per-mechanism
+// flag checks apply only where they are meaningful.
+func mechanismInfo(t *testing.T, env *testutil.TestEnvironment, advertised map[module.MechanismType]bool,
+	mech module.MechanismType, name string) (*module.MechanismInfo, bool) {
+	t.Helper()
+
+	info, rv := env.Module.GetMechanismInfo(0, mech)
+
+	if !advertised[mech] {
+		if rv != module.CKR_MECHANISM_INVALID {
+			t.Errorf("%s is absent from C_GetMechanismList, so C_GetMechanismInfo must return "+
+				"CKR_MECHANISM_INVALID, got %s", name, rv.String())
+		}
+		return nil, false
+	}
+
+	if rv != module.CKR_OK {
+		t.Fatalf("%s is advertised by C_GetMechanismList, so C_GetMechanismInfo must return "+
+			"CKR_OK, got %s", name, rv.String())
+	}
+	if info == nil {
+		t.Fatalf("%s: C_GetMechanismInfo returned CKR_OK with a nil info", name)
+	}
+	return info, true
+}
+
 // TestMechanism_GetMechanismList tests C_GetMechanismList conformance.
 //
 // Reference: OASIS PKCS#11 v3.0, Section 5.5.4
@@ -123,12 +176,13 @@ func TestMechanism_GetMechanismInfo(t *testing.T) {
 // "The flags field contains flag bits that describe capabilities of the mechanism."
 func TestMechanism_FlagsMatchOperations(t *testing.T) {
 	env, session := testutil.SetupAuthenticatedModule(t)
+	advertised := advertisedMechanisms(t, env, 0)
 
 	// Test RSA signing mechanism
 	t.Run("RSA_PKCS_Signing", func(t *testing.T) {
-		info, rv := env.Module.GetMechanismInfo(0, module.CKM_RSA_PKCS)
-		if rv != module.CKR_OK {
-			t.Skipf("CKM_RSA_PKCS not supported: %s", rv.String())
+		info, ok := mechanismInfo(t, env, advertised, module.CKM_RSA_PKCS, "CKM_RSA_PKCS")
+		if !ok {
+			return
 		}
 
 		// CKM_RSA_PKCS should have CKF_SIGN flag
@@ -144,9 +198,9 @@ func TestMechanism_FlagsMatchOperations(t *testing.T) {
 
 	// Test AES encryption mechanism
 	t.Run("AES_CBC_Encryption", func(t *testing.T) {
-		info, rv := env.Module.GetMechanismInfo(0, module.CKM_AES_CBC)
-		if rv != module.CKR_OK {
-			t.Skipf("CKM_AES_CBC not supported: %s", rv.String())
+		info, ok := mechanismInfo(t, env, advertised, module.CKM_AES_CBC, "CKM_AES_CBC")
+		if !ok {
+			return
 		}
 
 		// CKM_AES_CBC should have CKF_ENCRYPT flag
@@ -162,9 +216,9 @@ func TestMechanism_FlagsMatchOperations(t *testing.T) {
 
 	// Test RSA key generation mechanism
 	t.Run("RSA_KEY_PAIR_GEN", func(t *testing.T) {
-		info, rv := env.Module.GetMechanismInfo(0, module.CKM_RSA_PKCS_KEY_PAIR_GEN)
-		if rv != module.CKR_OK {
-			t.Skipf("CKM_RSA_PKCS_KEY_PAIR_GEN not supported: %s", rv.String())
+		info, ok := mechanismInfo(t, env, advertised, module.CKM_RSA_PKCS_KEY_PAIR_GEN, "CKM_RSA_PKCS_KEY_PAIR_GEN")
+		if !ok {
+			return
 		}
 
 		// Should have CKF_GENERATE_KEY_PAIR flag
@@ -175,9 +229,9 @@ func TestMechanism_FlagsMatchOperations(t *testing.T) {
 
 	// Test AES key generation mechanism
 	t.Run("AES_KEY_GEN", func(t *testing.T) {
-		info, rv := env.Module.GetMechanismInfo(0, module.CKM_AES_KEY_GEN)
-		if rv != module.CKR_OK {
-			t.Skipf("CKM_AES_KEY_GEN not supported: %s", rv.String())
+		info, ok := mechanismInfo(t, env, advertised, module.CKM_AES_KEY_GEN, "CKM_AES_KEY_GEN")
+		if !ok {
+			return
 		}
 
 		// Should have CKF_GENERATE flag
@@ -188,9 +242,9 @@ func TestMechanism_FlagsMatchOperations(t *testing.T) {
 
 	// Test digest mechanism
 	t.Run("SHA256_Digest", func(t *testing.T) {
-		info, rv := env.Module.GetMechanismInfo(0, module.CKM_SHA256)
-		if rv != module.CKR_OK {
-			t.Skipf("CKM_SHA256 not supported: %s", rv.String())
+		info, ok := mechanismInfo(t, env, advertised, module.CKM_SHA256, "CKM_SHA256")
+		if !ok {
+			return
 		}
 
 		// Should have CKF_DIGEST flag
@@ -201,9 +255,9 @@ func TestMechanism_FlagsMatchOperations(t *testing.T) {
 
 	// Test ECDSA mechanism
 	t.Run("ECDSA_Signing", func(t *testing.T) {
-		info, rv := env.Module.GetMechanismInfo(0, module.CKM_ECDSA)
-		if rv != module.CKR_OK {
-			t.Skipf("CKM_ECDSA not supported: %s", rv.String())
+		info, ok := mechanismInfo(t, env, advertised, module.CKM_ECDSA, "CKM_ECDSA")
+		if !ok {
+			return
 		}
 
 		// Should have CKF_SIGN and CKF_VERIFY flags
@@ -217,9 +271,9 @@ func TestMechanism_FlagsMatchOperations(t *testing.T) {
 
 	// Test EC key generation mechanism
 	t.Run("EC_KEY_PAIR_GEN", func(t *testing.T) {
-		info, rv := env.Module.GetMechanismInfo(0, module.CKM_EC_KEY_PAIR_GEN)
-		if rv != module.CKR_OK {
-			t.Skipf("CKM_EC_KEY_PAIR_GEN not supported: %s", rv.String())
+		info, ok := mechanismInfo(t, env, advertised, module.CKM_EC_KEY_PAIR_GEN, "CKM_EC_KEY_PAIR_GEN")
+		if !ok {
+			return
 		}
 
 		// Should have CKF_GENERATE_KEY_PAIR flag
@@ -238,12 +292,13 @@ func TestMechanism_FlagsMatchOperations(t *testing.T) {
 // by the mechanism."
 func TestMechanism_KeySizeRange(t *testing.T) {
 	env, session := testutil.SetupAuthenticatedModule(t)
+	advertised := advertisedMechanisms(t, env, 0)
 
 	// Test RSA key size range
 	t.Run("RSA_KeySizeRange", func(t *testing.T) {
-		info, rv := env.Module.GetMechanismInfo(0, module.CKM_RSA_PKCS_KEY_PAIR_GEN)
-		if rv != module.CKR_OK {
-			t.Skipf("CKM_RSA_PKCS_KEY_PAIR_GEN not supported: %s", rv.String())
+		info, ok := mechanismInfo(t, env, advertised, module.CKM_RSA_PKCS_KEY_PAIR_GEN, "CKM_RSA_PKCS_KEY_PAIR_GEN")
+		if !ok {
+			return
 		}
 
 		t.Logf("RSA key size range: %d - %d bits", info.MinKeySize, info.MaxKeySize)
@@ -257,9 +312,9 @@ func TestMechanism_KeySizeRange(t *testing.T) {
 
 	// Test AES key size range
 	t.Run("AES_KeySizeRange", func(t *testing.T) {
-		info, rv := env.Module.GetMechanismInfo(0, module.CKM_AES_KEY_GEN)
-		if rv != module.CKR_OK {
-			t.Skipf("CKM_AES_KEY_GEN not supported: %s", rv.String())
+		info, ok := mechanismInfo(t, env, advertised, module.CKM_AES_KEY_GEN, "CKM_AES_KEY_GEN")
+		if !ok {
+			return
 		}
 
 		t.Logf("AES key size range: %d - %d bits", info.MinKeySize, info.MaxKeySize)
@@ -278,9 +333,9 @@ func TestMechanism_KeySizeRange(t *testing.T) {
 
 	// Test EC key size range
 	t.Run("EC_KeySizeRange", func(t *testing.T) {
-		info, rv := env.Module.GetMechanismInfo(0, module.CKM_EC_KEY_PAIR_GEN)
-		if rv != module.CKR_OK {
-			t.Skipf("CKM_EC_KEY_PAIR_GEN not supported: %s", rv.String())
+		info, ok := mechanismInfo(t, env, advertised, module.CKM_EC_KEY_PAIR_GEN, "CKM_EC_KEY_PAIR_GEN")
+		if !ok {
+			return
 		}
 
 		t.Logf("EC key size range: %d - %d bits", info.MinKeySize, info.MaxKeySize)
@@ -325,6 +380,7 @@ func TestMechanism_InvalidMechanism(t *testing.T) {
 // Reference: OASIS PKCS#11 Current Mechanisms v3.0, Section 6
 func TestMechanism_DigestMechanisms(t *testing.T) {
 	env, session := testutil.SetupAuthenticatedModule(t)
+	advertised := advertisedMechanisms(t, env, 0)
 
 	digestMechs := []struct {
 		mech       module.MechanismType
@@ -342,9 +398,9 @@ func TestMechanism_DigestMechanisms(t *testing.T) {
 
 	for _, dm := range digestMechs {
 		t.Run(dm.name, func(t *testing.T) {
-			info, rv := env.Module.GetMechanismInfo(0, dm.mech)
-			if rv != module.CKR_OK {
-				t.Skipf("%s not supported: %s", dm.name, rv.String())
+			info, ok := mechanismInfo(t, env, advertised, dm.mech, dm.name)
+			if !ok {
+				return
 			}
 
 			// Should have CKF_DIGEST flag
@@ -352,11 +408,12 @@ func TestMechanism_DigestMechanisms(t *testing.T) {
 				t.Errorf("%s missing CKF_DIGEST flag", dm.name)
 			}
 
-			// Test actual digest operation
-			rv = env.Module.DigestInit(session, &module.Mechanism{Type: dm.mech})
+			// The mechanism is advertised with CKF_DIGEST, so the digest
+			// operation itself must work end to end.
+			rv := env.Module.DigestInit(session, &module.Mechanism{Type: dm.mech})
 			if rv != module.CKR_OK {
-				t.Logf("DigestInit %s: %s", dm.name, rv.String())
-				return
+				t.Fatalf("C_DigestInit %s: expected CKR_OK, got %s (the mechanism is "+
+					"advertised with CKF_DIGEST)", dm.name, rv.String())
 			}
 
 			testData := []byte("test data for digest")
@@ -369,6 +426,16 @@ func TestMechanism_DigestMechanisms(t *testing.T) {
 			if len(digest) != dm.digestSize {
 				t.Errorf("%s digest size: expected %d, got %d", dm.name, dm.digestSize, len(digest))
 			}
+
+			// PKCS#11 v3.2 §5.2 lets an application call C_Digest twice -- once
+			// with a NULL buffer to learn the length, once to collect the bytes
+			// -- so a successful call must not implicitly terminate the
+			// operation. Module.Digest deliberately leaves it ACTIVE and
+			// requires this explicit FinishOperation before the next
+			// DigestInit on this shared session, or that call returns
+			// CKR_OPERATION_ACTIVE.
+			testutil.RequireOK(t, env.Module.FinishOperation(session, module.OperationDigest),
+				"FinishOperation for "+dm.name)
 		})
 	}
 }
@@ -380,6 +447,7 @@ func TestMechanism_SignatureMechanisms(t *testing.T) {
 	env := testutil.SetupTestEnvironment(t, nil)
 	env.MustInitializeModule(t)
 	env.MustInitializeToken(t, testutil.TestPINs.SO, testutil.TestLabels.Token)
+	advertised := advertisedMechanisms(t, env, 0)
 
 	sigMechs := []struct {
 		mech module.MechanismType
@@ -399,9 +467,9 @@ func TestMechanism_SignatureMechanisms(t *testing.T) {
 
 	for _, sm := range sigMechs {
 		t.Run(sm.name, func(t *testing.T) {
-			info, rv := env.Module.GetMechanismInfo(0, sm.mech)
-			if rv != module.CKR_OK {
-				t.Skipf("%s not supported: %s", sm.name, rv.String())
+			info, ok := mechanismInfo(t, env, advertised, sm.mech, sm.name)
+			if !ok {
+				return
 			}
 
 			// Should have CKF_SIGN and CKF_VERIFY flags
@@ -424,6 +492,7 @@ func TestMechanism_EncryptionMechanisms(t *testing.T) {
 	env := testutil.SetupTestEnvironment(t, nil)
 	env.MustInitializeModule(t)
 	env.MustInitializeToken(t, testutil.TestPINs.SO, testutil.TestLabels.Token)
+	advertised := advertisedMechanisms(t, env, 0)
 
 	encMechs := []struct {
 		mech module.MechanismType
@@ -443,9 +512,9 @@ func TestMechanism_EncryptionMechanisms(t *testing.T) {
 
 	for _, em := range encMechs {
 		t.Run(em.name, func(t *testing.T) {
-			info, rv := env.Module.GetMechanismInfo(0, em.mech)
-			if rv != module.CKR_OK {
-				t.Skipf("%s not supported: %s", em.name, rv.String())
+			info, ok := mechanismInfo(t, env, advertised, em.mech, em.name)
+			if !ok {
+				return
 			}
 
 			// Should have CKF_ENCRYPT and CKF_DECRYPT flags
@@ -468,6 +537,7 @@ func TestMechanism_KeyGenerationMechanisms(t *testing.T) {
 	env := testutil.SetupTestEnvironment(t, nil)
 	env.MustInitializeModule(t)
 	env.MustInitializeToken(t, testutil.TestPINs.SO, testutil.TestLabels.Token)
+	advertised := advertisedMechanisms(t, env, 0)
 
 	keyGenMechs := []struct {
 		mech     module.MechanismType
@@ -487,9 +557,9 @@ func TestMechanism_KeyGenerationMechanisms(t *testing.T) {
 
 	for _, km := range keyGenMechs {
 		t.Run(km.name, func(t *testing.T) {
-			info, rv := env.Module.GetMechanismInfo(0, km.mech)
-			if rv != module.CKR_OK {
-				t.Skipf("%s not supported: %s", km.name, rv.String())
+			info, ok := mechanismInfo(t, env, advertised, km.mech, km.name)
+			if !ok {
+				return
 			}
 
 			if km.isKeyGen {
@@ -516,6 +586,7 @@ func TestMechanism_KeyDeriveMechanisms(t *testing.T) {
 	env := testutil.SetupTestEnvironment(t, nil)
 	env.MustInitializeModule(t)
 	env.MustInitializeToken(t, testutil.TestPINs.SO, testutil.TestLabels.Token)
+	advertised := advertisedMechanisms(t, env, 0)
 
 	deriveMechs := []struct {
 		mech module.MechanismType
@@ -534,9 +605,9 @@ func TestMechanism_KeyDeriveMechanisms(t *testing.T) {
 
 	for _, dm := range deriveMechs {
 		t.Run(dm.name, func(t *testing.T) {
-			info, rv := env.Module.GetMechanismInfo(0, dm.mech)
-			if rv != module.CKR_OK {
-				t.Skipf("%s not supported: %s", dm.name, rv.String())
+			info, ok := mechanismInfo(t, env, advertised, dm.mech, dm.name)
+			if !ok {
+				return
 			}
 
 			// Should have CKF_DERIVE flag
@@ -556,6 +627,7 @@ func TestMechanism_WrapUnwrapMechanisms(t *testing.T) {
 	env := testutil.SetupTestEnvironment(t, nil)
 	env.MustInitializeModule(t)
 	env.MustInitializeToken(t, testutil.TestPINs.SO, testutil.TestLabels.Token)
+	advertised := advertisedMechanisms(t, env, 0)
 
 	wrapMechs := []struct {
 		mech module.MechanismType
@@ -571,9 +643,9 @@ func TestMechanism_WrapUnwrapMechanisms(t *testing.T) {
 
 	for _, wm := range wrapMechs {
 		t.Run(wm.name, func(t *testing.T) {
-			info, rv := env.Module.GetMechanismInfo(0, wm.mech)
-			if rv != module.CKR_OK {
-				t.Skipf("%s not supported: %s", wm.name, rv.String())
+			info, ok := mechanismInfo(t, env, advertised, wm.mech, wm.name)
+			if !ok {
+				return
 			}
 
 			hasWrap := info.Flags&module.CKF_WRAP != 0

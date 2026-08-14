@@ -17,6 +17,7 @@ import (
 	"context"
 	"errors"
 	"log/slog"
+	"strings"
 	"testing"
 	"time"
 
@@ -978,5 +979,190 @@ func TestDeleteCredential_PlatformStore_BackendError(t *testing.T) {
 	}
 	if !errors.Is(err, errGeneric) {
 		t.Errorf("DeleteCredential: got %v, want errGeneric", err)
+	}
+}
+
+// --- ListCredentials tests ---
+
+// TestListCredentials_Manual walks the manual strategy: an empty store, then
+// submitted names, reported sorted.
+func TestListCredentials_Manual(t *testing.T) {
+	svc, err := New(&Config{Strategy: StrategyManual}, nil, nil, testLogger())
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	ctx := context.Background()
+
+	names, err := svc.ListCredentials(ctx)
+	if err != nil {
+		t.Fatalf("ListCredentials: %v", err)
+	}
+	if len(names) != 0 {
+		t.Fatalf("expected no credentials, got %v", names)
+	}
+
+	// Submitted out of alphabetical order so the sort is actually proven.
+	for _, name := range []string{"pkcs11-user-pin", "aws-kms-key", "vault-token"} {
+		if err := svc.SubmitCredential(ctx, name, []byte("secret-value")); err != nil {
+			t.Fatalf("SubmitCredential(%s): %v", name, err)
+		}
+	}
+
+	names, err = svc.ListCredentials(ctx)
+	if err != nil {
+		t.Fatalf("ListCredentials: %v", err)
+	}
+
+	want := []string{"aws-kms-key", "pkcs11-user-pin", "vault-token"}
+	if len(names) != len(want) {
+		t.Fatalf("expected %d credentials, got %v", len(want), names)
+	}
+	for i := range want {
+		if names[i] != want[i] {
+			t.Errorf("names[%d] = %q, want %q (result must be sorted)", i, names[i], want[i])
+		}
+	}
+}
+
+// TestListCredentials_NeverReturnsValues is the security property: the
+// listing reports names only. A value crossing this boundary would create a
+// read path for sealed material that no other API offers.
+func TestListCredentials_NeverReturnsValues(t *testing.T) {
+	svc, err := New(&Config{Strategy: StrategyManual}, nil, nil, testLogger())
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	ctx := context.Background()
+
+	const secret = "TOP-SECRET-PIN-VALUE"
+	if err := svc.SubmitCredential(ctx, "pkcs11-user-pin", []byte(secret)); err != nil {
+		t.Fatalf("SubmitCredential: %v", err)
+	}
+
+	names, err := svc.ListCredentials(ctx)
+	if err != nil {
+		t.Fatalf("ListCredentials: %v", err)
+	}
+	for _, name := range names {
+		if strings.Contains(name, secret) {
+			t.Fatal("credential value must never appear in a listing")
+		}
+	}
+}
+
+// TestListCredentials_Barrier proves the barrier strategy lists what it
+// stored, with the storage namespace stripped back off.
+func TestListCredentials_Barrier(t *testing.T) {
+	barrier := newTestBarrier(t)
+	svc, err := New(&Config{Strategy: "barrier"}, nil, barrier, testLogger())
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	ctx := context.Background()
+
+	if err := svc.StoreCredential(ctx, "tpm-owner-auth", []byte("secret-value")); err != nil {
+		t.Fatalf("StoreCredential: %v", err)
+	}
+
+	names, err := svc.ListCredentials(ctx)
+	if err != nil {
+		t.Fatalf("ListCredentials: %v", err)
+	}
+	if len(names) != 1 || names[0] != "tpm-owner-auth" {
+		t.Fatalf("expected [tpm-owner-auth] with the namespace stripped, got %v", names)
+	}
+}
+
+// TestListCredentials_Platform proves the platform strategy round-trips a
+// stored credential through the listing.
+func TestListCredentials_Platform(t *testing.T) {
+	barrier := newTestBarrier(t)
+	store := newTestPlatformStore(t, barrier)
+	svc, err := New(&Config{Strategy: "tpm2"}, store, nil, testLogger())
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	ctx := context.Background()
+
+	if err := svc.StoreCredential(ctx, "pkcs11-user-pin", []byte("secret-value")); err != nil {
+		t.Fatalf("StoreCredential: %v", err)
+	}
+
+	names, err := svc.ListCredentials(ctx)
+	if err != nil {
+		t.Fatalf("ListCredentials: %v", err)
+	}
+	if len(names) != 1 || names[0] != "pkcs11-user-pin" {
+		t.Fatalf("expected [pkcs11-user-pin], got %v", names)
+	}
+}
+
+// TestListCredentials_PlatformIgnoresForeignKeys proves the listing reports
+// only the credential namespace. The PlatformStore holds other secrets, and
+// reporting them as credentials would misinform an operator deciding whether
+// a ceremony is complete.
+func TestListCredentials_PlatformIgnoresForeignKeys(t *testing.T) {
+	barrier := newTestBarrier(t)
+	store := newTestPlatformStore(t, barrier)
+	ctx := context.Background()
+
+	// A secret written outside the credential namespace.
+	if err := store.Put(ctx, "some-other-secret", []byte("unrelated")); err != nil {
+		t.Fatalf("Put: %v", err)
+	}
+
+	svc, err := New(&Config{Strategy: "tpm2"}, store, nil, testLogger())
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	if err := svc.StoreCredential(ctx, "pkcs11-user-pin", []byte("secret-value")); err != nil {
+		t.Fatalf("StoreCredential: %v", err)
+	}
+
+	names, err := svc.ListCredentials(ctx)
+	if err != nil {
+		t.Fatalf("ListCredentials: %v", err)
+	}
+	if len(names) != 1 || names[0] != "pkcs11-user-pin" {
+		t.Fatalf("expected only the credential-namespaced entry, got %v", names)
+	}
+}
+
+// TestListCredentials_PlatformError proves a store failure surfaces rather
+// than being reported as an empty credential set — "none submitted" and "we
+// could not tell" must not look the same to an operator.
+func TestListCredentials_PlatformError(t *testing.T) {
+	svc, err := New(&Config{Strategy: "tpm2"}, &mockErrorPlatformStore{}, nil, testLogger())
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+
+	if _, err := svc.ListCredentials(context.Background()); err == nil {
+		t.Fatal("expected an error when the platform store fails")
+	}
+}
+
+// TestListCredentials_DeleteRemovesName proves a deleted credential drops out
+// of the listing.
+func TestListCredentials_DeleteRemovesName(t *testing.T) {
+	svc, err := New(&Config{Strategy: StrategyManual}, nil, nil, testLogger())
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	ctx := context.Background()
+
+	if err := svc.SubmitCredential(ctx, "pkcs11-user-pin", []byte("secret-value")); err != nil {
+		t.Fatalf("SubmitCredential: %v", err)
+	}
+	if err := svc.DeleteCredential(ctx, "pkcs11-user-pin"); err != nil {
+		t.Fatalf("DeleteCredential: %v", err)
+	}
+
+	names, err := svc.ListCredentials(ctx)
+	if err != nil {
+		t.Fatalf("ListCredentials: %v", err)
+	}
+	if len(names) != 0 {
+		t.Fatalf("expected the deleted credential to be gone, got %v", names)
 	}
 }

@@ -261,8 +261,10 @@ auth:
   enabled: true
   type: adaptive    # noop, mtls, jwt, adaptive, composite
 
-  # JWT configuration
+  # JWT configuration. public_key_file is required for type jwt and for type
+  # adaptive (which escalates to JWT once a user exists); startup fails without it.
   jwt:
+    public_key_file: "/etc/xkms/jwt-public.pem"
     issuer: "my-issuer"
     audience: ["xkms"]
 
@@ -276,9 +278,18 @@ auth:
   composite:
     methods: ["jwt", "mtls"]
 
-  # RBAC
-  rbac: true
+  # RBAC. Roles and permissions live in the qrdb identity plane, so this
+  # requires storage.backend "qrdb"; with any other backend the authorizer
+  # cannot be built and every transport would authorize every request, which
+  # the daemon refuses to start with.
+  enable_rbac: true
+
+storage:
+  backend: "qrdb"   # required by auth.enable_rbac above
 ```
+
+See [RBAC](rbac.md) and
+[Authentication configuration](../configuration/auth.md#rbac-requires-the-qrdb-storage-backend).
 
 ## Examples
 

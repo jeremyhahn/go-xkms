@@ -201,8 +201,11 @@ func TestStore_AddGetListRemove(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Get: %v", err)
 	}
-	if got.Key.Fingerprint != k.Fingerprint {
+	if got.Entry.Key.Fingerprint != k.Fingerprint {
 		t.Fatalf("fingerprint mismatch after store")
+	}
+	if got.Scope != scope.User || got.Owner != "alice" || got.Name != "laptop" {
+		t.Fatalf("Get coordinates = %s/%s/%s, want user/alice/laptop", got.Scope, got.Owner, got.Name)
 	}
 
 	list, err := store.List(ctx, scope.User, "alice")
@@ -211,6 +214,9 @@ func TestStore_AddGetListRemove(t *testing.T) {
 	}
 	if len(list) != 1 {
 		t.Fatalf("expected 1 entry, got %d", len(list))
+	}
+	if list[0].Name != "laptop" {
+		t.Fatalf("List dropped the stored name: got %q, want %q", list[0].Name, "laptop")
 	}
 
 	if err := store.Remove(ctx, scope.User, "alice", "laptop"); err != nil {
@@ -282,8 +288,13 @@ func TestVerify_Match(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Verify: %v", err)
 	}
-	if got.Key.Fingerprint != k.Fingerprint {
+	if got.Entry.Key.Fingerprint != k.Fingerprint {
 		t.Fatalf("verify returned wrong entry")
+	}
+	// Verify must name the record that granted access so the caller can
+	// log or revoke it.
+	if got.Name != "laptop" {
+		t.Fatalf("Verify record name = %q, want %q", got.Name, "laptop")
 	}
 }
 

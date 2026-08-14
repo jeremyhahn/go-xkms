@@ -14,7 +14,7 @@ The server-side configuration controls the Noise_NK bootstrap listener and SPKI 
 server:
   host: "0.0.0.0"
   rest_port: 8443
-  grpc_port: 9090
+  grpc_port: 9443
   noise_port: 8445
 
 protocols:
@@ -42,12 +42,24 @@ TCP port for the Noise_NK bootstrap listener.
 | Property | Value |
 |----------|-------|
 | Type | int |
-| Default | 8445 |
+| Default | none on the server; clients dial 8445 |
 | YAML key | `server.noise_port` |
 | Environment | `XKMS_NOISE_PORT` |
 | Required | Yes, when `protocols.noise` is true |
 
-The port must be in the range 1-65535. It should be distinct from `rest_port`, `grpc_port`, `quic_port`, and `mcp_port`.
+The loader applies no default: `ServerConfig.NoisePort` is a plain `int`
+(`pkg/config/config.go:205`) and `config.Load` only unmarshals, applies env
+overrides, and validates (`pkg/config/config.go:1026-1049`). The 8445 figure is
+the *client* side: `DefaultNoisePort = "8445"` is what
+`pkg/trust/bootstrap/bootstrap.go:98` appends when a bootstrap address carries
+no port. A server that leaves `noise_port` unset with `protocols.noise: true`
+fails validation (`pkg/config/config.go:1501-1503`), so set it explicitly and
+set it to 8445 unless something else already holds that port.
+
+Note that `configs/xkmsd-local.yaml:10` uses 8447, because the shipped
+configurations put MCP on 8445 (`mcp_port: 8445`). The port must be in the range
+1-65535 and must be distinct from `rest_port`, `grpc_port`, `quic_port`, and
+`mcp_port`.
 
 #### `protocols.noise`
 
@@ -332,7 +344,7 @@ Production configuration with key stored on disk:
 server:
   host: "0.0.0.0"
   rest_port: 8443
-  grpc_port: 9090
+  grpc_port: 9443
   noise_port: 8445
 
 protocols:
@@ -577,7 +589,7 @@ If a method does not complete within this timeout, it fails and the next method 
 server:
   host: "0.0.0.0"
   rest_port: 8443
-  grpc_port: 9090
+  grpc_port: 9443
   noise_port: 8445
 
 protocols:
@@ -655,6 +667,6 @@ docker run -e XKMS_DANE_ENABLED=true \
 - [CA Bundle Bootstrap](../ca/bootstrap.md) -- Protocol details, security properties, and SDK API
 - [Integration Guide](../ca/bootstrap-integration.md) -- Project-specific usage for go-xkms, xkey, and go-trusted-platform
 - [DANE/TLSA Concepts](../ca/dane.md) -- RFC 6698 details, DNSSEC trust chain, and record format
-- [Bootstrap CLI Commands](../usage/cli/bootstrap.md) -- CLI reference for DANE and other bootstrap commands
-- [Noise CLI Commands](../usage/cli/noise.md) -- Key generation and SPKI pin tools (legacy path)
+- [Bootstrap CLI Commands](../../xkey/docs/usage/cli/bootstrap.md) -- CLI reference for DANE and other bootstrap commands
+- [Noise CLI Commands](../../xkey/docs/usage/cli/noise.md) -- Key generation and SPKI pin tools (legacy path)
 - [Configuration Overview](./README.md) -- All configuration topics

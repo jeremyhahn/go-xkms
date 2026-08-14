@@ -35,6 +35,7 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+	"time"
 )
 
 // ---------------------------------------------------------------------------
@@ -127,66 +128,6 @@ func TestSignNonce_NilKey(t *testing.T) {
 	}
 	if !errors.Is(err, ErrUnsupportedKeyType) {
 		t.Fatalf("expected ErrUnsupportedKeyType, got: %v", err)
-	}
-}
-
-// ---------------------------------------------------------------------------
-// generateNoiseKeyPair tests
-// ---------------------------------------------------------------------------
-
-func TestGenerateNoiseKeyPair_Success(t *testing.T) {
-	pubKey, privKey, err := generateNoiseKeyPair()
-	if err != nil {
-		t.Fatalf("generateNoiseKeyPair failed: %v", err)
-	}
-	if len(pubKey) == 0 {
-		t.Fatal("public key should not be empty")
-	}
-	if privKey == nil {
-		t.Fatal("private key should not be nil")
-	}
-
-	// Verify the returned private key is ECDSA P-256
-	ecKey, ok := privKey.(*ecdsa.PrivateKey)
-	if !ok {
-		t.Fatal("expected *ecdsa.PrivateKey")
-	}
-	if ecKey.Curve != elliptic.P256() {
-		t.Fatal("expected P-256 curve")
-	}
-
-	// Verify the public key bytes can be parsed back
-	parsed, err := x509.ParsePKIXPublicKey(pubKey)
-	if err != nil {
-		t.Fatalf("failed to parse public key bytes: %v", err)
-	}
-	_, ok = parsed.(*ecdsa.PublicKey)
-	if !ok {
-		t.Fatal("parsed key should be *ecdsa.PublicKey")
-	}
-}
-
-func TestGenerateNoiseKeyPair_SignNonceRoundtrip(t *testing.T) {
-	pubKey, privKey, err := generateNoiseKeyPair()
-	if err != nil {
-		t.Fatalf("generateNoiseKeyPair failed: %v", err)
-	}
-
-	nonce := []byte("roundtrip-nonce")
-	sig, err := signNonce(nonce, privKey)
-	if err != nil {
-		t.Fatalf("signNonce failed: %v", err)
-	}
-
-	// Verify using the public key bytes
-	parsed, err := x509.ParsePKIXPublicKey(pubKey)
-	if err != nil {
-		t.Fatalf("failed to parse public key: %v", err)
-	}
-	ecPub := parsed.(*ecdsa.PublicKey)
-	hash := sha256.Sum256(nonce)
-	if !ecdsa.VerifyASN1(ecPub, hash[:], sig) {
-		t.Fatal("signature verification failed on roundtrip")
 	}
 }
 
@@ -615,7 +556,7 @@ func TestInitCmd_SubcommandRegistration(t *testing.T) {
 }
 
 func TestClaimCertCmd_Flags(t *testing.T) {
-	flags := []string{"username", "spki-pin", "output"}
+	flags := []string{"username", "key", "spki-pin", "output", "ca-output"}
 	for _, name := range flags {
 		f := claimCertCmd.Flags().Lookup(name)
 		if f == nil {
@@ -625,7 +566,7 @@ func TestClaimCertCmd_Flags(t *testing.T) {
 }
 
 func TestClaimShareCmd_Flags(t *testing.T) {
-	flags := []string{"username", "spki-pin", "output"}
+	flags := []string{"username", "cert", "key", "ca-cert", "spki-pin", "output"}
 	for _, name := range flags {
 		f := claimShareCmd.Flags().Lookup(name)
 		if f == nil {
@@ -798,6 +739,103 @@ func TestRunInitStatus_ClientCreateError(t *testing.T) {
 // runClaimCert tests
 // ---------------------------------------------------------------------------
 
+// ---------------------------------------------------------------------------
+// runClaimCert tests
+//
+// The claim-cert protocol is a proof of possession: the officer signs the
+// server's nonce with the private key whose public half was submitted in the
+// CSR. Every success-path test below therefore verifies the signature server
+// side with a real key, which is what makes these tests catch the class of bug
+// where the client signs with the wrong key.
+// ---------------------------------------------------------------------------
+
+// writeTestKeyPEM writes key to a PKCS#8 PEM file in a temp dir and returns
+// the path.
+func writeTestKeyPEM(t *testing.T, key *ecdsa.PrivateKey) string {
+	t.Helper()
+	der, err := x509.MarshalPKCS8PrivateKey(key)
+	if err != nil {
+		t.Fatalf("marshal key: %v", err)
+	}
+	path := filepath.Join(t.TempDir(), "officer.key")
+	if err := os.WriteFile(path, pem.EncodeToMemory(&pem.Block{Type: "PRIVATE KEY", Bytes: der}), 0600); err != nil {
+		t.Fatalf("write key: %v", err)
+	}
+	return path
+}
+
+// claimCertTestServer serves the two claim-cert routes and verifies the
+// challenge signature against pub, exactly as the ceremony service does.
+func claimCertTestServer(t *testing.T, nonceHex string, pub *ecdsa.PublicKey, certPEM, caPEM string) *httptest.Server {
+	t.Helper()
+	return httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/api/v1/init/claim-cert/begin":
+			var req claimCertBeginRequest
+			if err := json.NewDecoder(r.Body).Decode(&req); err != nil || req.Username == "" {
+				w.WriteHeader(http.StatusBadRequest)
+				return
+			}
+			respBytes, _ := json.Marshal(claimCertBeginResponse{Nonce: nonceHex})
+			w.WriteHeader(http.StatusOK)
+			_, _ = w.Write(respBytes)
+
+		case "/api/v1/init/claim-cert/complete":
+			var req claimCertCompleteRequest
+			if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+				w.WriteHeader(http.StatusBadRequest)
+				return
+			}
+			if req.Username == "" || req.Nonce != nonceHex || req.Signature == "" {
+				w.WriteHeader(http.StatusBadRequest)
+				_, _ = w.Write([]byte(`{"error":"missing fields"}`))
+				return
+			}
+			sig, err := base64.StdEncoding.DecodeString(req.Signature)
+			if err != nil {
+				w.WriteHeader(http.StatusBadRequest)
+				return
+			}
+			nonce, err := hex.DecodeString(req.Nonce)
+			if err != nil {
+				w.WriteHeader(http.StatusBadRequest)
+				return
+			}
+			digest := sha256.Sum256(nonce)
+			if !ecdsa.VerifyASN1(pub, digest[:], sig) {
+				w.WriteHeader(http.StatusUnauthorized)
+				_, _ = w.Write([]byte(`{"error":"challenge verification failed"}`))
+				return
+			}
+			respBytes, _ := json.Marshal(claimCertCompleteResponse{CertPEM: certPEM, CACertPEM: caPEM})
+			w.WriteHeader(http.StatusOK)
+			_, _ = w.Write(respBytes)
+
+		default:
+			w.WriteHeader(http.StatusNotFound)
+		}
+	}))
+}
+
+// withClaimCertFlags saves and restores every global the claim-cert command
+// reads, then applies the supplied values.
+func withClaimCertFlags(t *testing.T, server *httptest.Server, username, keyFile, pin, output, caOutput string) {
+	t.Helper()
+	oldConfig, oldFactory := globalConfig, initHTTPClientFactory
+	oldUsername, oldKey, oldPin := claimCertUsername, claimCertKeyFile, claimCertSpkiPin
+	oldOutput, oldCAOutput := claimCertOutput, claimCertCAOutput
+	t.Cleanup(func() {
+		globalConfig, initHTTPClientFactory = oldConfig, oldFactory
+		claimCertUsername, claimCertKeyFile, claimCertSpkiPin = oldUsername, oldKey, oldPin
+		claimCertOutput, claimCertCAOutput = oldOutput, oldCAOutput
+	})
+
+	globalConfig = &Config{Server: server.URL, OutputFormat: "text"}
+	initHTTPClientFactory = func(cfg *Config) (*http.Client, error) { return server.Client(), nil }
+	claimCertUsername, claimCertKeyFile, claimCertSpkiPin = username, keyFile, pin
+	claimCertOutput, claimCertCAOutput = output, caOutput
+}
+
 func TestRunClaimCert_NoUsername(t *testing.T) {
 	oldUsername := claimCertUsername
 	oldPin := claimCertSpkiPin
@@ -815,15 +853,32 @@ func TestRunClaimCert_NoUsername(t *testing.T) {
 	}
 }
 
-func TestRunClaimCert_NoSPKIPin(t *testing.T) {
-	oldUsername := claimCertUsername
-	oldPin := claimCertSpkiPin
+// TestRunClaimCert_NoKeyFile verifies claim-cert refuses to run without the
+// CSR private key: without it the challenge cannot be answered at all.
+func TestRunClaimCert_NoKeyFile(t *testing.T) {
+	oldUsername, oldKey, oldPin := claimCertUsername, claimCertKeyFile, claimCertSpkiPin
 	defer func() {
-		claimCertUsername = oldUsername
-		claimCertSpkiPin = oldPin
+		claimCertUsername, claimCertKeyFile, claimCertSpkiPin = oldUsername, oldKey, oldPin
+	}()
+
+	claimCertUsername = "officer-a"
+	claimCertKeyFile = ""
+	claimCertSpkiPin = "abc123"
+
+	err := runClaimCert(claimCertCmd, nil)
+	if !errors.Is(err, ErrKeyFileRequired) {
+		t.Fatalf("expected ErrKeyFileRequired, got: %v", err)
+	}
+}
+
+func TestRunClaimCert_NoSPKIPin(t *testing.T) {
+	oldUsername, oldKey, oldPin := claimCertUsername, claimCertKeyFile, claimCertSpkiPin
+	defer func() {
+		claimCertUsername, claimCertKeyFile, claimCertSpkiPin = oldUsername, oldKey, oldPin
 	}()
 
 	claimCertUsername = "test@example.com"
+	claimCertKeyFile = "/nonexistent/officer.key"
 	claimCertSpkiPin = ""
 
 	err := runClaimCert(claimCertCmd, nil)
@@ -832,176 +887,153 @@ func TestRunClaimCert_NoSPKIPin(t *testing.T) {
 	}
 }
 
-func TestRunClaimCert_FullProtocol(t *testing.T) {
-	// Set up a test server that handles the full begin/complete protocol
-	nonce := hex.EncodeToString([]byte("test-nonce-12345678"))
-	certPEM := pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: []byte("fake-cert-der")})
-	certB64 := base64.StdEncoding.EncodeToString(certPEM)
-
+// TestRunClaimCert_UnreadableKeyFile verifies the key is loaded before any
+// network round trip, so a bad path cannot burn a server-issued nonce.
+func TestRunClaimCert_UnreadableKeyFile(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		switch r.URL.Path {
-		case "/api/v1/init/claim-cert/begin":
-			var req claimCertBeginRequest
-			if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-				w.WriteHeader(http.StatusBadRequest)
-				return
-			}
-			w.WriteHeader(http.StatusOK)
-			resp := claimCertBeginResponse{Nonce: nonce}
-			respBytes, _ := json.Marshal(resp)
-			_, _ = w.Write(respBytes)
-
-		case "/api/v1/init/claim-cert/complete":
-			var req claimCertCompleteRequest
-			if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-				w.WriteHeader(http.StatusBadRequest)
-				return
-			}
-			// Verify required fields are present
-			if req.Username == "" || req.Nonce == "" || req.PublicKey == "" || req.Signature == "" {
-				w.WriteHeader(http.StatusBadRequest)
-				_, _ = w.Write([]byte(`{"error":"missing fields"}`))
-				return
-			}
-			w.WriteHeader(http.StatusOK)
-			resp := claimCertCompleteResponse{Certificate: certB64}
-			respBytes, _ := json.Marshal(resp)
-			_, _ = w.Write(respBytes)
-
-		default:
-			w.WriteHeader(http.StatusNotFound)
-		}
+		t.Errorf("server must not be contacted when the key file is unreadable (path %s)", r.URL.Path)
 	}))
 	defer server.Close()
 
-	oldConfig := globalConfig
-	oldFactory := initHTTPClientFactory
-	oldUsername := claimCertUsername
-	oldPin := claimCertSpkiPin
-	oldOutput := claimCertOutput
-	defer func() {
-		globalConfig = oldConfig
-		initHTTPClientFactory = oldFactory
-		claimCertUsername = oldUsername
-		claimCertSpkiPin = oldPin
-		claimCertOutput = oldOutput
-	}()
-
-	globalConfig = &Config{
-		Server:       server.URL,
-		OutputFormat: "text",
-	}
-	initHTTPClientFactory = func(cfg *Config) (*http.Client, error) {
-		return server.Client(), nil
-	}
-
-	claimCertUsername = "test@example.com"
-	claimCertSpkiPin = "abc123deadbeef"
-	claimCertOutput = "" // print to stdout
+	withClaimCertFlags(t, server, "officer-a", filepath.Join(t.TempDir(), "missing.key"), "abc123", "", "")
 
 	err := runClaimCert(claimCertCmd, nil)
+	if !errors.Is(err, ErrPrivateKeyRead) {
+		t.Fatalf("expected ErrPrivateKeyRead, got: %v", err)
+	}
+}
+
+// TestRunClaimCert_MalformedKeyFile verifies a non-PEM key file is rejected
+// with the parse sentinel rather than panicking or reaching the server.
+func TestRunClaimCert_MalformedKeyFile(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		t.Errorf("server must not be contacted for a malformed key (path %s)", r.URL.Path)
+	}))
+	defer server.Close()
+
+	badPath := filepath.Join(t.TempDir(), "bad.key")
+	if err := os.WriteFile(badPath, []byte("not a pem file"), 0600); err != nil {
+		t.Fatalf("write bad key: %v", err)
+	}
+
+	withClaimCertFlags(t, server, "officer-a", badPath, "abc123", "", "")
+
+	err := runClaimCert(claimCertCmd, nil)
+	if !errors.Is(err, ErrPrivateKeyParse) {
+		t.Fatalf("expected ErrPrivateKeyParse, got: %v", err)
+	}
+}
+
+// TestRunClaimCert_FullProtocol drives begin then complete against a server
+// that verifies the challenge signature with the CSR public key.
+func TestRunClaimCert_FullProtocol(t *testing.T) {
+	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
 	if err != nil {
+		t.Fatalf("generate key: %v", err)
+	}
+	keyPath := writeTestKeyPEM(t, key)
+
+	nonce := hex.EncodeToString([]byte("test-nonce-12345678"))
+	certPEM := string(pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: []byte("officer-cert-der")}))
+	caPEM := string(pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: []byte("ca-cert-der")}))
+
+	server := claimCertTestServer(t, nonce, &key.PublicKey, certPEM, caPEM)
+	defer server.Close()
+
+	withClaimCertFlags(t, server, "test@example.com", keyPath, "abc123deadbeef", "", "")
+
+	if err := runClaimCert(claimCertCmd, nil); err != nil {
 		t.Fatalf("runClaimCert failed: %v", err)
 	}
 }
 
-func TestRunClaimCert_OutputToFile(t *testing.T) {
-	nonce := hex.EncodeToString([]byte("test-nonce-12345678"))
-	certPEM := pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: []byte("fake-cert-der")})
-	certB64 := base64.StdEncoding.EncodeToString(certPEM)
+// TestRunClaimCert_WrongKeyRejected is the regression test for the shipped
+// bug: signing the challenge with a freshly generated key instead of the CSR
+// key must fail, and the client must surface the server's rejection.
+func TestRunClaimCert_WrongKeyRejected(t *testing.T) {
+	csrKey, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	if err != nil {
+		t.Fatalf("generate csr key: %v", err)
+	}
+	otherKey, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	if err != nil {
+		t.Fatalf("generate other key: %v", err)
+	}
+	wrongKeyPath := writeTestKeyPEM(t, otherKey)
 
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		switch r.URL.Path {
-		case "/api/v1/init/claim-cert/begin":
-			w.WriteHeader(http.StatusOK)
-			resp := claimCertBeginResponse{Nonce: nonce}
-			respBytes, _ := json.Marshal(resp)
-			_, _ = w.Write(respBytes)
-		case "/api/v1/init/claim-cert/complete":
-			w.WriteHeader(http.StatusOK)
-			resp := claimCertCompleteResponse{Certificate: certB64}
-			respBytes, _ := json.Marshal(resp)
-			_, _ = w.Write(respBytes)
-		default:
-			w.WriteHeader(http.StatusNotFound)
-		}
-	}))
+	nonce := hex.EncodeToString([]byte("test-nonce-12345678"))
+	server := claimCertTestServer(t, nonce, &csrKey.PublicKey, "cert", "ca")
 	defer server.Close()
 
-	oldConfig := globalConfig
-	oldFactory := initHTTPClientFactory
-	oldUsername := claimCertUsername
-	oldPin := claimCertSpkiPin
-	oldOutput := claimCertOutput
-	defer func() {
-		globalConfig = oldConfig
-		initHTTPClientFactory = oldFactory
-		claimCertUsername = oldUsername
-		claimCertSpkiPin = oldPin
-		claimCertOutput = oldOutput
-	}()
+	withClaimCertFlags(t, server, "test@example.com", wrongKeyPath, "abc123deadbeef", "", "")
 
-	globalConfig = &Config{
-		Server:       server.URL,
-		OutputFormat: "text",
+	err = runClaimCert(claimCertCmd, nil)
+	if err == nil {
+		t.Fatal("expected the server to reject a signature made with a non-CSR key")
 	}
-	initHTTPClientFactory = func(cfg *Config) (*http.Client, error) {
-		return server.Client(), nil
+	if !errors.Is(err, ErrServerResponseError) {
+		t.Fatalf("expected ErrServerResponseError, got: %v", err)
 	}
+}
 
-	outFile := filepath.Join(t.TempDir(), "claimed-cert.pem")
-	claimCertUsername = "test@example.com"
-	claimCertSpkiPin = "abc123deadbeef"
-	claimCertOutput = outFile
-
-	err := runClaimCert(claimCertCmd, nil)
+// TestRunClaimCert_OutputToFile verifies the issued certificate and the CA
+// bundle land in the requested files as PEM (not base64).
+func TestRunClaimCert_OutputToFile(t *testing.T) {
+	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
 	if err != nil {
+		t.Fatalf("generate key: %v", err)
+	}
+	keyPath := writeTestKeyPEM(t, key)
+
+	nonce := hex.EncodeToString([]byte("test-nonce-12345678"))
+	certPEM := string(pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: []byte("officer-cert-der")}))
+	caPEM := string(pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: []byte("ca-cert-der")}))
+
+	server := claimCertTestServer(t, nonce, &key.PublicKey, certPEM, caPEM)
+	defer server.Close()
+
+	dir := t.TempDir()
+	certOut := filepath.Join(dir, "claimed-cert.pem")
+	caOut := filepath.Join(dir, "ca-bundle.pem")
+	withClaimCertFlags(t, server, "test@example.com", keyPath, "abc123deadbeef", certOut, caOut)
+
+	if err := runClaimCert(claimCertCmd, nil); err != nil {
 		t.Fatalf("runClaimCert failed: %v", err)
 	}
 
-	// Verify file was written
-	written, err := os.ReadFile(outFile)
+	written, err := os.ReadFile(certOut)
 	if err != nil {
-		t.Fatalf("failed to read output file: %v", err)
+		t.Fatalf("failed to read certificate file: %v", err)
 	}
-	if len(written) == 0 {
-		t.Fatal("output file should not be empty")
+	if string(written) != certPEM {
+		t.Fatalf("certificate file mismatch:\ngot:  %q\nwant: %q", written, certPEM)
+	}
+
+	writtenCA, err := os.ReadFile(caOut)
+	if err != nil {
+		t.Fatalf("failed to read CA file: %v", err)
+	}
+	if string(writtenCA) != caPEM {
+		t.Fatalf("CA bundle file mismatch:\ngot:  %q\nwant: %q", writtenCA, caPEM)
 	}
 }
 
 func TestRunClaimCert_BeginServerError(t *testing.T) {
+	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	if err != nil {
+		t.Fatalf("generate key: %v", err)
+	}
+	keyPath := writeTestKeyPEM(t, key)
+
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusForbidden)
 		_, _ = w.Write([]byte(`{"error":"forbidden"}`))
 	}))
 	defer server.Close()
 
-	oldConfig := globalConfig
-	oldFactory := initHTTPClientFactory
-	oldUsername := claimCertUsername
-	oldPin := claimCertSpkiPin
-	oldOutput := claimCertOutput
-	defer func() {
-		globalConfig = oldConfig
-		initHTTPClientFactory = oldFactory
-		claimCertUsername = oldUsername
-		claimCertSpkiPin = oldPin
-		claimCertOutput = oldOutput
-	}()
+	withClaimCertFlags(t, server, "test@example.com", keyPath, "abc123", "", "")
 
-	globalConfig = &Config{
-		Server:       server.URL,
-		OutputFormat: "text",
-	}
-	initHTTPClientFactory = func(cfg *Config) (*http.Client, error) {
-		return server.Client(), nil
-	}
-
-	claimCertUsername = "test@example.com"
-	claimCertSpkiPin = "abc123"
-	claimCertOutput = ""
-
-	err := runClaimCert(claimCertCmd, nil)
+	err = runClaimCert(claimCertCmd, nil)
 	if err == nil {
 		t.Fatal("expected error for server error on begin")
 	}
@@ -1012,7 +1044,110 @@ func TestRunClaimCert_BeginServerError(t *testing.T) {
 
 // ---------------------------------------------------------------------------
 // runClaimShare tests
+//
+// Share claim is a two round-trip challenge-response against
+// /api/v1/init/claim-share/begin and /api/v1/init/claim-share/complete. The
+// officer presents the certificate claim-cert issued them as an mTLS client
+// certificate; the server binds the challenge to its thumbprint. A
+// single-round-trip client would leave the server unable to bind the claim to
+// anything but a username, which is the hole this flow closes.
 // ---------------------------------------------------------------------------
+
+// writeTestCertPEM writes a self-signed certificate for key and returns its
+// path. It stands in for the certificate claim-cert issued the officer.
+func writeTestCertPEM(t *testing.T, key *ecdsa.PrivateKey) string {
+	t.Helper()
+	tmpl := &x509.Certificate{
+		SerialNumber: big.NewInt(1),
+		Subject:      pkix.Name{CommonName: "so@example.com"},
+		NotBefore:    time.Now().Add(-time.Minute),
+		NotAfter:     time.Now().Add(time.Hour),
+	}
+	der, err := x509.CreateCertificate(rand.Reader, tmpl, tmpl, &key.PublicKey, key)
+	if err != nil {
+		t.Fatalf("create cert: %v", err)
+	}
+	path := filepath.Join(t.TempDir(), "officer.crt")
+	if err := os.WriteFile(path, pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: der}), 0600); err != nil {
+		t.Fatalf("write cert: %v", err)
+	}
+	return path
+}
+
+// withClaimShareFlags saves and restores every global the claim-share command
+// reads, then applies the supplied values.
+func withClaimShareFlags(t *testing.T, server *httptest.Server, username, certFile, keyFile, pin, output string) {
+	t.Helper()
+	oldConfig, oldFactory := globalConfig, initHTTPClientFactory
+	oldUsername, oldPin, oldOutput := claimShareUsername, claimShareSpkiPin, claimShareOutput
+	oldCert, oldKey, oldCA := claimShareCertFile, claimShareKeyFile, claimShareCAFile
+	t.Cleanup(func() {
+		globalConfig, initHTTPClientFactory = oldConfig, oldFactory
+		claimShareUsername, claimShareSpkiPin, claimShareOutput = oldUsername, oldPin, oldOutput
+		claimShareCertFile, claimShareKeyFile, claimShareCAFile = oldCert, oldKey, oldCA
+	})
+
+	globalConfig = &Config{Server: server.URL, OutputFormat: "text"}
+	initHTTPClientFactory = func(cfg *Config) (*http.Client, error) { return server.Client(), nil }
+	claimShareUsername, claimShareSpkiPin, claimShareOutput = username, pin, output
+	claimShareCertFile, claimShareKeyFile, claimShareCAFile = certFile, keyFile, ""
+}
+
+// claimShareTestServer serves the two claim-share routes and verifies the
+// challenge signature against pub, exactly as the ceremony service does. Every
+// other path 404s, so a client that reverts to a single round trip fails.
+func claimShareTestServer(t *testing.T, nonceHex string, pub *ecdsa.PublicKey, shareJSON string, seen *[]string) *httptest.Server {
+	t.Helper()
+	return httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		*seen = append(*seen, r.URL.Path)
+		switch r.URL.Path {
+		case "/api/v1/init/claim-share/begin":
+			var req claimShareBeginRequest
+			if err := json.NewDecoder(r.Body).Decode(&req); err != nil || req.Username == "" {
+				w.WriteHeader(http.StatusBadRequest)
+				return
+			}
+			respBytes, _ := json.Marshal(claimShareBeginResponse{Nonce: nonceHex})
+			w.WriteHeader(http.StatusOK)
+			_, _ = w.Write(respBytes)
+
+		case "/api/v1/init/claim-share/complete":
+			var req claimShareCompleteRequest
+			if err := json.NewDecoder(r.Body).Decode(&req); err != nil || req.Username == "" {
+				w.WriteHeader(http.StatusBadRequest)
+				return
+			}
+			if req.Nonce != nonceHex {
+				w.WriteHeader(http.StatusUnauthorized)
+				return
+			}
+			sig, err := base64.StdEncoding.DecodeString(req.Signature)
+			if err != nil {
+				w.WriteHeader(http.StatusBadRequest)
+				return
+			}
+			nonce, err := hex.DecodeString(req.Nonce)
+			if err != nil {
+				w.WriteHeader(http.StatusBadRequest)
+				return
+			}
+			digest := sha256.Sum256(nonce)
+			if !ecdsa.VerifyASN1(pub, digest[:], sig) {
+				w.WriteHeader(http.StatusUnauthorized)
+				return
+			}
+			respBytes, _ := json.Marshal(claimShareCompleteResponse{
+				ShareIndex: 1,
+				Share:      json.RawMessage(shareJSON),
+			})
+			w.WriteHeader(http.StatusOK)
+			_, _ = w.Write(respBytes)
+
+		default:
+			w.WriteHeader(http.StatusNotFound)
+		}
+	}))
+}
 
 func TestRunClaimShare_NoUsername(t *testing.T) {
 	oldUsername := claimShareUsername
@@ -1031,148 +1166,139 @@ func TestRunClaimShare_NoUsername(t *testing.T) {
 	}
 }
 
-func TestRunClaimShare_NoSPKIPin(t *testing.T) {
-	oldUsername := claimShareUsername
-	oldPin := claimShareSpkiPin
+// TestRunClaimShare_NoCertOrKey verifies the command refuses to run without
+// the officer certificate and its key: the server derives the caller
+// thumbprint from the mTLS handshake, so a claim without a certificate can
+// never succeed and must fail before any network round trip.
+func TestRunClaimShare_NoCertOrKey(t *testing.T) {
+	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	if err != nil {
+		t.Fatalf("generate key: %v", err)
+	}
+	keyFile := writeTestKeyPEM(t, key)
+
+	oldUsername, oldPin := claimShareUsername, claimShareSpkiPin
+	oldCert, oldKey := claimShareCertFile, claimShareKeyFile
 	defer func() {
-		claimShareUsername = oldUsername
-		claimShareSpkiPin = oldPin
+		claimShareUsername, claimShareSpkiPin = oldUsername, oldPin
+		claimShareCertFile, claimShareKeyFile = oldCert, oldKey
+	}()
+
+	claimShareUsername, claimShareSpkiPin = "so@example.com", "abc123"
+
+	claimShareCertFile, claimShareKeyFile = "", keyFile
+	if err := runClaimShare(claimShareCmd, nil); !errors.Is(err, ErrCertFileRequired) {
+		t.Fatalf("expected ErrCertFileRequired, got: %v", err)
+	}
+
+	claimShareCertFile, claimShareKeyFile = writeTestCertPEM(t, key), ""
+	if err := runClaimShare(claimShareCmd, nil); !errors.Is(err, ErrKeyFileRequired) {
+		t.Fatalf("expected ErrKeyFileRequired, got: %v", err)
+	}
+}
+
+func TestRunClaimShare_NoSPKIPin(t *testing.T) {
+	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	if err != nil {
+		t.Fatalf("generate key: %v", err)
+	}
+
+	oldUsername, oldPin := claimShareUsername, claimShareSpkiPin
+	oldCert, oldKey := claimShareCertFile, claimShareKeyFile
+	defer func() {
+		claimShareUsername, claimShareSpkiPin = oldUsername, oldPin
+		claimShareCertFile, claimShareKeyFile = oldCert, oldKey
 	}()
 
 	claimShareUsername = "so@example.com"
+	claimShareCertFile = writeTestCertPEM(t, key)
+	claimShareKeyFile = writeTestKeyPEM(t, key)
 	claimShareSpkiPin = ""
 
-	err := runClaimShare(claimShareCmd, nil)
+	err = runClaimShare(claimShareCmd, nil)
 	if !errors.Is(err, ErrSPKIPinRequired) {
 		t.Fatalf("expected ErrSPKIPinRequired, got: %v", err)
 	}
 }
 
-func TestRunClaimShare_FullProtocol(t *testing.T) {
-	nonce := hex.EncodeToString([]byte("share-nonce-data"))
-	sharePEM := pem.EncodeToMemory(&pem.Block{Type: "SHARE", Bytes: []byte("fake-share-data")})
-	shareB64 := base64.StdEncoding.EncodeToString(sharePEM)
+// TestRunClaimShare_TwoRoundTrips is the regression test for the username-only
+// share release: the client must complete a challenge-response, posting to
+// begin and then complete. The handler 404s every other path, so a client that
+// reverts to a single POST fails the test.
+func TestRunClaimShare_TwoRoundTrips(t *testing.T) {
+	shareJSON := `{"index":1,"value":"c2hhcmU="}`
+	nonceHex := hex.EncodeToString([]byte("0123456789abcdef0123456789abcdef"))
 
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		switch r.URL.Path {
-		case "/api/v1/init/claim-share/begin":
-			w.WriteHeader(http.StatusOK)
-			resp := claimShareBeginResponse{Nonce: nonce}
-			respBytes, _ := json.Marshal(resp)
-			_, _ = w.Write(respBytes)
+	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	if err != nil {
+		t.Fatalf("generate key: %v", err)
+	}
 
-		case "/api/v1/init/claim-share/complete":
-			var req claimShareCompleteRequest
-			if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-				w.WriteHeader(http.StatusBadRequest)
-				return
-			}
-			if req.Username == "" || req.Nonce == "" || req.PublicKey == "" || req.Signature == "" {
-				w.WriteHeader(http.StatusBadRequest)
-				_, _ = w.Write([]byte(`{"error":"missing fields"}`))
-				return
-			}
-			w.WriteHeader(http.StatusOK)
-			resp := claimShareCompleteResponse{
-				Share:      shareB64,
-				ShareIndex: 1,
-				Threshold:  3,
-			}
-			respBytes, _ := json.Marshal(resp)
-			_, _ = w.Write(respBytes)
-
-		default:
-			w.WriteHeader(http.StatusNotFound)
-		}
-	}))
+	var seen []string
+	server := claimShareTestServer(t, nonceHex, &key.PublicKey, shareJSON, &seen)
 	defer server.Close()
 
-	oldConfig := globalConfig
-	oldFactory := initHTTPClientFactory
-	oldUsername := claimShareUsername
-	oldPin := claimShareSpkiPin
-	oldOutput := claimShareOutput
-	defer func() {
-		globalConfig = oldConfig
-		initHTTPClientFactory = oldFactory
-		claimShareUsername = oldUsername
-		claimShareSpkiPin = oldPin
-		claimShareOutput = oldOutput
-	}()
+	withClaimShareFlags(t, server, "so@example.com",
+		writeTestCertPEM(t, key), writeTestKeyPEM(t, key), "abc123deadbeef", "")
 
-	globalConfig = &Config{
-		Server:       server.URL,
-		OutputFormat: "text",
-	}
-	initHTTPClientFactory = func(cfg *Config) (*http.Client, error) {
-		return server.Client(), nil
-	}
-
-	claimShareUsername = "so@example.com"
-	claimShareSpkiPin = "abc123deadbeef"
-	claimShareOutput = "" // print to stdout
-
-	err := runClaimShare(claimShareCmd, nil)
-	if err != nil {
+	if err := runClaimShare(claimShareCmd, nil); err != nil {
 		t.Fatalf("runClaimShare failed: %v", err)
+	}
+	want := []string{"/api/v1/init/claim-share/begin", "/api/v1/init/claim-share/complete"}
+	if len(seen) != len(want) || seen[0] != want[0] || seen[1] != want[1] {
+		t.Fatalf("expected begin then complete, got %v", seen)
 	}
 }
 
-func TestRunClaimShare_OutputToFile(t *testing.T) {
-	nonce := hex.EncodeToString([]byte("share-nonce-data"))
-	sharePEM := pem.EncodeToMemory(&pem.Block{Type: "SHARE", Bytes: []byte("fake-share-data")})
-	shareB64 := base64.StdEncoding.EncodeToString(sharePEM)
+// TestRunClaimShare_WrongKeyRejected verifies the client signs the nonce with
+// the key it was given: a mismatched key produces a signature the server
+// refuses, and no share is written.
+func TestRunClaimShare_WrongKeyRejected(t *testing.T) {
+	nonceHex := hex.EncodeToString([]byte("0123456789abcdef0123456789abcdef"))
 
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		switch r.URL.Path {
-		case "/api/v1/init/claim-share/begin":
-			w.WriteHeader(http.StatusOK)
-			resp := claimShareBeginResponse{Nonce: nonce}
-			respBytes, _ := json.Marshal(resp)
-			_, _ = w.Write(respBytes)
-		case "/api/v1/init/claim-share/complete":
-			w.WriteHeader(http.StatusOK)
-			resp := claimShareCompleteResponse{
-				Share:      shareB64,
-				ShareIndex: 2,
-				Threshold:  5,
-			}
-			respBytes, _ := json.Marshal(resp)
-			_, _ = w.Write(respBytes)
-		default:
-			w.WriteHeader(http.StatusNotFound)
-		}
-	}))
+	officerKey, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	if err != nil {
+		t.Fatalf("generate key: %v", err)
+	}
+	otherKey, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	if err != nil {
+		t.Fatalf("generate key: %v", err)
+	}
+
+	var seen []string
+	server := claimShareTestServer(t, nonceHex, &officerKey.PublicKey, `{"index":1}`, &seen)
 	defer server.Close()
 
-	oldConfig := globalConfig
-	oldFactory := initHTTPClientFactory
-	oldUsername := claimShareUsername
-	oldPin := claimShareSpkiPin
-	oldOutput := claimShareOutput
-	defer func() {
-		globalConfig = oldConfig
-		initHTTPClientFactory = oldFactory
-		claimShareUsername = oldUsername
-		claimShareSpkiPin = oldPin
-		claimShareOutput = oldOutput
-	}()
+	// The command signs with otherKey while the server expects officerKey.
+	withClaimShareFlags(t, server, "so@example.com",
+		writeTestCertPEM(t, otherKey), writeTestKeyPEM(t, otherKey), "abc123deadbeef", "")
 
-	globalConfig = &Config{
-		Server:       server.URL,
-		OutputFormat: "text",
+	err = runClaimShare(claimShareCmd, nil)
+	if !errors.Is(err, ErrServerResponseError) {
+		t.Fatalf("expected ErrServerResponseError for a bad signature, got: %v", err)
 	}
-	initHTTPClientFactory = func(cfg *Config) (*http.Client, error) {
-		return server.Client(), nil
-	}
+}
 
-	outFile := filepath.Join(t.TempDir(), "claimed-share.pem")
-	claimShareUsername = "so@example.com"
-	claimShareSpkiPin = "abc123deadbeef"
-	claimShareOutput = outFile
+// TestRunClaimShare_OutputToFile verifies the raw share document is written
+// verbatim so it can be fed straight back to an unseal command.
+func TestRunClaimShare_OutputToFile(t *testing.T) {
+	shareJSON := `{"index":2,"value":"c2hhcmUtdHdv"}`
+	nonceHex := hex.EncodeToString([]byte("0123456789abcdef0123456789abcdef"))
 
-	err := runClaimShare(claimShareCmd, nil)
+	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
 	if err != nil {
+		t.Fatalf("generate key: %v", err)
+	}
+
+	var seen []string
+	server := claimShareTestServer(t, nonceHex, &key.PublicKey, shareJSON, &seen)
+	defer server.Close()
+
+	outFile := filepath.Join(t.TempDir(), "claimed-share.json")
+	withClaimShareFlags(t, server, "so@example.com",
+		writeTestCertPEM(t, key), writeTestKeyPEM(t, key), "abc123deadbeef", outFile)
+
+	if err := runClaimShare(claimShareCmd, nil); err != nil {
 		t.Fatalf("runClaimShare failed: %v", err)
 	}
 
@@ -1180,49 +1306,135 @@ func TestRunClaimShare_OutputToFile(t *testing.T) {
 	if err != nil {
 		t.Fatalf("failed to read output file: %v", err)
 	}
-	if len(written) == 0 {
-		t.Fatal("output file should not be empty")
+	if string(written) != shareJSON {
+		t.Fatalf("share file mismatch:\ngot:  %q\nwant: %q", written, shareJSON)
 	}
 }
 
-func TestRunClaimShare_BeginServerError(t *testing.T) {
+// TestRunClaimShare_EmptyShare verifies a 200 response carrying no share is
+// reported as an error rather than silently writing an empty file.
+func TestRunClaimShare_EmptyShare(t *testing.T) {
+	nonceHex := hex.EncodeToString([]byte("0123456789abcdef0123456789abcdef"))
+	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	if err != nil {
+		t.Fatalf("generate key: %v", err)
+	}
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/api/v1/init/claim-share/begin" {
+			respBytes, _ := json.Marshal(claimShareBeginResponse{Nonce: nonceHex})
+			w.WriteHeader(http.StatusOK)
+			_, _ = w.Write(respBytes)
+			return
+		}
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte(`{}`))
+	}))
+	defer server.Close()
+
+	withClaimShareFlags(t, server, "so@example.com",
+		writeTestCertPEM(t, key), writeTestKeyPEM(t, key), "abc123deadbeef", "")
+
+	err = runClaimShare(claimShareCmd, nil)
+	if !errors.Is(err, ErrShareMissingInResponse) {
+		t.Fatalf("expected ErrShareMissingInResponse, got: %v", err)
+	}
+}
+
+func TestRunClaimShare_ServerError(t *testing.T) {
+	key, keyErr := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	if keyErr != nil {
+		t.Fatalf("generate key: %v", keyErr)
+	}
+
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusForbidden)
 		_, _ = w.Write([]byte(`{"error":"forbidden"}`))
 	}))
 	defer server.Close()
 
-	oldConfig := globalConfig
-	oldFactory := initHTTPClientFactory
-	oldUsername := claimShareUsername
-	oldPin := claimShareSpkiPin
-	oldOutput := claimShareOutput
-	defer func() {
-		globalConfig = oldConfig
-		initHTTPClientFactory = oldFactory
-		claimShareUsername = oldUsername
-		claimShareSpkiPin = oldPin
-		claimShareOutput = oldOutput
-	}()
-
-	globalConfig = &Config{
-		Server:       server.URL,
-		OutputFormat: "text",
-	}
-	initHTTPClientFactory = func(cfg *Config) (*http.Client, error) {
-		return server.Client(), nil
-	}
-
-	claimShareUsername = "so@example.com"
-	claimShareSpkiPin = "abc123"
-	claimShareOutput = ""
+	withClaimShareFlags(t, server, "so@example.com",
+		writeTestCertPEM(t, key), writeTestKeyPEM(t, key), "abc123", "")
 
 	err := runClaimShare(claimShareCmd, nil)
 	if err == nil {
-		t.Fatal("expected error for server error on begin")
+		t.Fatal("expected error for server error")
 	}
 	if !errors.Is(err, ErrServerResponseError) {
 		t.Fatalf("expected ErrServerResponseError, got: %v", err)
+	}
+}
+
+// TestLoadCSRPrivateKey_Encodings verifies every PEM private key encoding the
+// officer might hold is accepted and round-trips through signNonce.
+func TestLoadCSRPrivateKey_Encodings(t *testing.T) {
+	ecKey, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	if err != nil {
+		t.Fatalf("generate ecdsa key: %v", err)
+	}
+	pkcs8DER, err := x509.MarshalPKCS8PrivateKey(ecKey)
+	if err != nil {
+		t.Fatalf("marshal pkcs8: %v", err)
+	}
+	sec1DER, err := x509.MarshalECPrivateKey(ecKey)
+	if err != nil {
+		t.Fatalf("marshal sec1: %v", err)
+	}
+	rsaKey, err := rsa.GenerateKey(rand.Reader, 2048)
+	if err != nil {
+		t.Fatalf("generate rsa key: %v", err)
+	}
+
+	tests := []struct {
+		name      string
+		blockType string
+		der       []byte
+	}{
+		{"pkcs8", "PRIVATE KEY", pkcs8DER},
+		{"sec1", "EC PRIVATE KEY", sec1DER},
+		{"pkcs1", "RSA PRIVATE KEY", x509.MarshalPKCS1PrivateKey(rsaKey)},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			path := filepath.Join(t.TempDir(), "key.pem")
+			if err := os.WriteFile(path, pem.EncodeToMemory(&pem.Block{Type: tc.blockType, Bytes: tc.der}), 0600); err != nil {
+				t.Fatalf("write key: %v", err)
+			}
+
+			key, err := loadCSRPrivateKey(path)
+			if err != nil {
+				t.Fatalf("loadCSRPrivateKey failed: %v", err)
+			}
+			if _, err := signNonce([]byte("nonce"), key); err != nil {
+				t.Fatalf("signNonce with loaded key failed: %v", err)
+			}
+		})
+	}
+}
+
+// TestLoadCSRPrivateKey_Invalid verifies malformed inputs produce the typed
+// parse error rather than a nil key.
+func TestLoadCSRPrivateKey_Invalid(t *testing.T) {
+	dir := t.TempDir()
+
+	notPEM := filepath.Join(dir, "not.pem")
+	if err := os.WriteFile(notPEM, []byte("plain text"), 0600); err != nil {
+		t.Fatalf("write: %v", err)
+	}
+	badDER := filepath.Join(dir, "bad.pem")
+	if err := os.WriteFile(badDER, pem.EncodeToMemory(&pem.Block{Type: "PRIVATE KEY", Bytes: []byte("nonsense")}), 0600); err != nil {
+		t.Fatalf("write: %v", err)
+	}
+
+	for _, path := range []string{notPEM, badDER} {
+		if _, err := loadCSRPrivateKey(path); !errors.Is(err, ErrPrivateKeyParse) {
+			t.Fatalf("expected ErrPrivateKeyParse for %s, got: %v", path, err)
+		}
+	}
+
+	if _, err := loadCSRPrivateKey(filepath.Join(dir, "missing.pem")); !errors.Is(err, ErrPrivateKeyRead) {
+		t.Fatalf("expected ErrPrivateKeyRead for a missing file, got: %v", err)
 	}
 }
 

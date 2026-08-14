@@ -265,14 +265,21 @@ func (r *TestRunner) BuildCommandArgs(cmd CommandDefinition, overrides map[strin
 	}
 
 	// Add optional args if provided in overrides
+	//
+	// A boolean flag is emitted bare, and is emitted whether or not it appears
+	// in the overrides: it carries no value, so an empty Value is the normal
+	// case for one rather than a signal that it was left unset. The flag names
+	// this used to test for -- "dealer" and "local" -- matched no command
+	// definition in this package, so every boolean argument fell through to the
+	// value-carrying branch and was either dropped or passed a value the flag
+	// does not accept.
 	for _, arg := range cmd.OptionalArgs {
+		if arg.IsBoolean {
+			args = append(args, "--"+arg.Flag)
+			continue
+		}
 		if value, ok := overrides[arg.Flag]; ok {
-			if arg.Flag == "dealer" || arg.Flag == "local" {
-				// Boolean flags
-				args = append(args, "--"+arg.Flag)
-			} else {
-				args = append(args, "--"+arg.Flag, value)
-			}
+			args = append(args, "--"+arg.Flag, value)
 		} else if arg.Value != "" {
 			// Use default value
 			args = append(args, "--"+arg.Flag, arg.Value)
@@ -353,14 +360,7 @@ func (r *TestRunner) RunAllCommandsForProtocol(t *testing.T, protocol ProtocolTy
 
 	// Generate unique key IDs for this test run to avoid conflicts
 	runID := time.Now().UnixNano()
-	keyIDs := map[string]string{
-		"test-rsa-key":     fmt.Sprintf("test-rsa-key-%d", runID),
-		"test-ecdsa-key":   fmt.Sprintf("test-ecdsa-key-%d", runID),
-		"test-ed25519-key": fmt.Sprintf("test-ed25519-key-%d", runID),
-		"test-key":         fmt.Sprintf("test-rsa-key-%d", runID), // Use RSA key for sign/verify/delete
-		"frost-test-key":   fmt.Sprintf("frost-test-key-%d", runID),
-		"frost-dealer-key": fmt.Sprintf("frost-dealer-key-%d", runID),
-	}
+	keyIDs := uniqueKeyIDs(runID)
 
 	// Track signature from key-sign for use in key-verify
 	var capturedSignature string
@@ -475,4 +475,30 @@ func CreateTempKeyDir(t *testing.T) string {
 // GenerateUniqueKeyID generates a unique key ID for tests
 func GenerateUniqueKeyID(prefix string) string {
 	return fmt.Sprintf("%s-%d", prefix, time.Now().UnixNano())
+}
+
+// uniqueKeyIDs maps each key identifier that appears literally in a command
+// definition to a per-run unique one.
+//
+// The suite runs every command against every protocol in a single process, so a
+// literal identifier is created by the first protocol and then collides on the
+// remaining five with "key already exists". A command whose key ID is missing
+// from this map therefore passes exactly once and fails five times, which reads
+// as a protocol-specific defect rather than a test-fixture one.
+//
+// TestEveryKeyIDIsUniquified pins the correspondence, so a new command
+// definition that forgets an entry fails in the unit suite rather than ten
+// minutes into a container run.
+func uniqueKeyIDs(runID int64) map[string]string {
+	return map[string]string{
+		"test-rsa-key":     fmt.Sprintf("test-rsa-key-%d", runID),
+		"test-ecdsa-key":   fmt.Sprintf("test-ecdsa-key-%d", runID),
+		"test-ed25519-key": fmt.Sprintf("test-ed25519-key-%d", runID),
+		"test-key":         fmt.Sprintf("test-rsa-key-%d", runID), // Use RSA key for sign/verify/delete
+		"frost-test-key":   fmt.Sprintf("frost-test-key-%d", runID),
+		"frost-dealer-key": fmt.Sprintf("frost-dealer-key-%d", runID),
+
+		"test-symmetric-exportable": fmt.Sprintf("test-symmetric-exportable-%d", runID),
+		"test-symmetric-sensitive":  fmt.Sprintf("test-symmetric-sensitive-%d", runID),
+	}
 }

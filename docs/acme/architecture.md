@@ -565,18 +565,24 @@ Device                  ACME Server              CA                   TPM
 | Component | Authentication | Authorization |
 |-----------|----------------|---------------|
 | ACME API | JWS signatures | Account-based |
-| Admin API | Bearer tokens (JWT) | RBAC (5 roles) |
+| Admin API | Bearer tokens (JWT) or mTLS | go-qrdb RBAC |
 | QRDB IAM | JWT tokens | RBAC policies |
 
-### Role Hierarchy
+### Roles
 
-| Role | Level | Scope | Capabilities |
-|------|-------|-------|--------------|
-| super-admin | 100 | Global | Full system access |
-| admin | 80 | Tenant | Tenant management |
-| endorser | 60 | Tenant | EAB creation |
-| operator | 40 | Tenant | Read + limited write |
-| viewer | 20 | Tenant | Read-only access |
+| Role | Scope | Capabilities |
+|------|-------|--------------|
+| so | Own tenant; all tenants from the system tenant | CA hierarchy, ACME administration, barrier governance, role management |
+| admin | Own tenant; all tenants from the system tenant | Tenant, CA hierarchy, user, certificate, and EAB lifecycle |
+| operator | Own tenant | Read-only ACME registration data and CA hierarchy |
+| user | Own tenant | No ACME administration |
+| auditor | Own tenant | Read-only metadata plus the audit trail |
+| custodian | Own tenant | `barrier:unseal-share` only |
+
+These are go-qrdb's canonical roles. The Admin API defines none of its own;
+cross-tenant reach follows qrdb's system-tenant rule rather than a role level:
+an identity rooted in the reserved system tenant, or one carrying no tenant at
+all (empty `TenantID`), reaches every tenant (`auth.IsCrossTenant`).
 
 ## API Endpoints
 
@@ -611,5 +617,5 @@ Device                  ACME Server              CA                   TPM
 ## Configuration
 
 See configuration examples:
-- [Single Node](../config/config.yaml) - Standalone mode for development
-- [Cluster](../config/config-cluster.yaml) - Raft cluster for production HA
+- Single Node - standalone mode for development; see [configuration.md](configuration.md) and the shipped `configs/xkmsd-local.yaml`
+- Cluster - Raft cluster for production HA; see [qrdb/configuration.md](qrdb/configuration.md). No standalone `config.yaml` / `config-cluster.yaml` sample ships in this repository.

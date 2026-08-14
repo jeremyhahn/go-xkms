@@ -1,5 +1,11 @@
 # FROST CLI Documentation
 
+> **Scope:** this page documents the go-xkms **server** CLI `xkmsctl frost`
+> (source: `cmd/xkmsctl/`), **not** the `xkey` desktop CLI. It lives under
+> `xkey/docs/` for historical reasons.
+> There is no `xkey` equivalent. For the xkey command tree see
+> [the xkey CLI reference](README.md).
+
 ## Overview
 
 The FROST (Flexible Round-Optimized Schnorr Threshold) command group provides threshold signature operations where M-of-N participants can collaboratively sign messages without ever reconstructing the private key. This enables secure, distributed signing with no single point of failure.

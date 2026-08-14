@@ -99,11 +99,19 @@ type FileAuditLogger struct {
 	buffer      chan *AuditEvent
 	flushTicker *time.Ticker
 	flushChan   chan chan error // Channel to request flush operations
-	closed      atomic.Bool
-	wg          sync.WaitGroup
-	mu          sync.Mutex
-	enabled     bool
-	logPath     string // Store path for potential direct file operations
+	// procDone is closed by processEvents on exit. Flush selects on it so a
+	// flush requested after the processor has stopped drains directly,
+	// while a flush during normal operation always goes THROUGH the
+	// processor. Draining concurrently with a live processor would let two
+	// goroutines pull from buffer and write in nondeterministic order,
+	// breaking the append-order guarantee the query layer depends on for
+	// non-overlapping pages.
+	procDone chan struct{}
+	closed   atomic.Bool
+	wg       sync.WaitGroup
+	mu       sync.Mutex
+	enabled  bool
+	logPath  string // Store path for potential direct file operations
 }
 
 // NewFileAuditLogger creates a new file-based audit logger
@@ -157,6 +165,7 @@ func NewFileAuditLogger(config *Config) (AuditLogger, error) {
 		buffer:      make(chan *AuditEvent, config.BufferSize),
 		flushTicker: time.NewTicker(time.Duration(config.FlushIntervalSeconds) * time.Second),
 		flushChan:   make(chan chan error),
+		procDone:    make(chan struct{}),
 		enabled:     true,
 		logPath:     config.LogPath,
 	}
@@ -238,16 +247,19 @@ func (l *FileAuditLogger) Flush() error {
 		return ErrLoggerClosed
 	}
 
-	// Send flush request to processor and wait for completion
+	// Send the flush request to the processor and wait for completion. We
+	// deliberately do NOT fall back to draining directly while the
+	// processor is alive: that raced the processor for buffer entries and
+	// could persist records out of order (see procDone). If the processor
+	// has already exited there is no concurrent reader, so a direct drain
+	// is both safe and necessary to avoid blocking forever.
 	doneChan := make(chan error, 1)
 	select {
 	case l.flushChan <- doneChan:
-		err := <-doneChan
-		if err != nil {
+		if err := <-doneChan; err != nil {
 			return err
 		}
-	default:
-		// Flush channel full or processor not ready, drain directly
+	case <-l.procDone:
 		if err := l.drainBufferSync(); err != nil {
 			return err
 		}
@@ -324,6 +336,9 @@ func (l *FileAuditLogger) Enabled() bool {
 // processEvents runs in a background goroutine to process buffered events
 func (l *FileAuditLogger) processEvents() {
 	defer l.wg.Done()
+	// Signal Flush that no concurrent buffer reader remains, so a late
+	// flush drains directly instead of blocking on a dead processor.
+	defer close(l.procDone)
 
 	for {
 		select {

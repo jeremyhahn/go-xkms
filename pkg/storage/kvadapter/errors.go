@@ -13,6 +13,8 @@
 
 package kvadapter
 
+import "errors"
+
 // NilBackendError is returned when a nil storage.Backend is provided
 // to the adapter constructor.
 type NilBackendError struct{}
@@ -132,4 +134,33 @@ func (e *ExistsError) Error() string {
 // Unwrap returns the underlying error.
 func (e *ExistsError) Unwrap() error {
 	return e.Err
+}
+
+// ErrIndexingNotSupported is the sentinel reported by every secondary-index
+// operation on KVStoreAdapter. Callers that can fall back to a full scan
+// detect it with errors.Is; callers that require index support must treat it
+// as fatal. The adapter never answers an index query with an empty result,
+// so "no error" always means the returned data is authoritative.
+var ErrIndexingNotSupported = errors.New("kvadapter: secondary indexing is not supported")
+
+// IndexingNotSupportedError reports an index operation attempted against the
+// KVStoreAdapter, which bridges an opaque byte-oriented storage.Backend and
+// therefore cannot decode entity payloads to maintain or evaluate indexes.
+// It unwraps to ErrIndexingNotSupported.
+type IndexingNotSupportedError struct {
+	// Op is the adapter method that was called, such as "QueryIndex".
+	Op string
+
+	// Name is the index name, or the entity type for RegisterEntityIndexes.
+	Name string
+}
+
+// Error returns a human-readable description of the unsupported operation.
+func (e *IndexingNotSupportedError) Error() string {
+	return "kvadapter: " + e.Op + " " + e.Name + ": secondary indexing is not supported"
+}
+
+// Unwrap returns ErrIndexingNotSupported so errors.Is identifies the class.
+func (e *IndexingNotSupportedError) Unwrap() error {
+	return ErrIndexingNotSupported
 }

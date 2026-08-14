@@ -21,6 +21,8 @@ import (
 	"time"
 
 	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
+
+	"github.com/jeremyhahn/go-xkms/pkg/auth"
 	"github.com/jeremyhahn/go-xkms/pkg/seal"
 )
 
@@ -181,7 +183,7 @@ func (s *Server) handleBarrierInitialize(w http.ResponseWriter, r *http.Request)
 		return
 	}
 
-	if !s.authorize(w, r, "seal", "bootstrap") {
+	if !s.authorize(w, r, auth.ResourceSeal, auth.ActionBootstrap) {
 		return
 	}
 
@@ -220,7 +222,7 @@ func (s *Server) handleBarrierUnseal(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if !s.authorize(w, r, "seal", "unseal") {
+	if !s.authorize(w, r, auth.ResourceSeal, auth.ActionUnseal) {
 		return
 	}
 
@@ -259,7 +261,7 @@ func (s *Server) handleBarrierSeal(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if !s.authorize(w, r, "seal", "seal") {
+	if !s.authorize(w, r, auth.ResourceSeal, auth.ActionSeal) {
 		return
 	}
 
@@ -286,7 +288,7 @@ func (s *Server) handleBarrierStatus(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if !s.authorize(w, r, "seal", "status") {
+	if !s.authorize(w, r, auth.ResourceSeal, auth.ActionStatus) {
 		return
 	}
 
@@ -313,7 +315,7 @@ func (s *Server) handleSetSOPIN(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if !s.authorize(w, r, "pin", "write") {
+	if !s.authorize(w, r, auth.ResourcePIN, auth.ActionWrite) {
 		return
 	}
 
@@ -351,7 +353,7 @@ func (s *Server) handleSetUserPIN(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if !s.authorize(w, r, "pin", "write") {
+	if !s.authorize(w, r, auth.ResourcePIN, auth.ActionWrite) {
 		return
 	}
 
@@ -394,7 +396,7 @@ func (s *Server) handleChangeSOPIN(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if !s.authorize(w, r, "pin", "write") {
+	if !s.authorize(w, r, auth.ResourcePIN, auth.ActionWrite) {
 		return
 	}
 
@@ -437,7 +439,7 @@ func (s *Server) handleChangeUserPIN(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if !s.authorize(w, r, "pin", "write") {
+	if !s.authorize(w, r, auth.ResourcePIN, auth.ActionWrite) {
 		return
 	}
 
@@ -480,7 +482,7 @@ func (s *Server) handleVerifySOPIN(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if !s.authorize(w, r, "pin", "read") {
+	if !s.authorize(w, r, auth.ResourcePIN, auth.ActionRead) {
 		return
 	}
 
@@ -518,7 +520,7 @@ func (s *Server) handleVerifyUserPIN(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if !s.authorize(w, r, "pin", "read") {
+	if !s.authorize(w, r, auth.ResourcePIN, auth.ActionRead) {
 		return
 	}
 
@@ -556,7 +558,7 @@ func (s *Server) handleGetLockoutStatus(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 
-	if !s.authorize(w, r, "pin", "read") {
+	if !s.authorize(w, r, auth.ResourcePIN, auth.ActionRead) {
 		return
 	}
 
@@ -582,7 +584,7 @@ func (s *Server) handleResetLockout(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if !s.authorize(w, r, "pin", "write") {
+	if !s.authorize(w, r, auth.ResourcePIN, auth.ActionWrite) {
 		return
 	}
 

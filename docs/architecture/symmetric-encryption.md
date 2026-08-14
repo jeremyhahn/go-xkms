@@ -42,6 +42,35 @@ go-xkms automatically selects the optimal algorithm based on the environment:
 
 All symmetric-capable backends implement `SymmetricKeyProviderWithTracking`, exposing `GetTracker()` for AEAD safety tracking (nonce reuse prevention and byte limit enforcement).
 
+### Key derivation from a stored key
+
+`types.SymmetricKeyDeriver` is a separate capability: running a KDF (HKDF, or
+any of the three SP 800-108r1 modes) over a symmetric key the backend already
+holds, named only by its attributes. The base key's material never leaves the
+backend; only the derived bytes are returned.
+
+| Backend | Derives from a stored key | Why |
+|---------|:-------------------------:|-----|
+| Software | ✓ | holds the key material itself |
+| Symmetric | ✓ | holds the key material itself |
+| TPM 2.0 | ✓ | TPM2_Unseal inside the daemon, zeroized after the derivation |
+| PKCS#11 | ✓ | for a token key whose `CKA_EXTRACTABLE` permits the token to release it |
+| AWS KMS | ✗ | no exportable material and no KDF over the key |
+| GCP KMS | ✗ | no exportable material and no KDF over the key |
+| Azure Key Vault | ✗ | no exportable material and no KDF over the key |
+| HashiCorp Vault | ✗ | Transit keys are not released and expose no KDF |
+| Phone | ✗ | key material stays in the phone's TEE/StrongBox |
+
+Backends in the second group do not implement the interface at all, so the
+service layer's capability check fails and the caller receives
+`ErrOperationNotSupported` naming the backend. A backend that cannot derive
+must never answer with a key derived from something that is not the key —
+that is what made PKCS#11 `C_DeriveKey` reproducible from a key's label.
+
+Deriving does not require `Exportable`. PKCS#11 v3.2 §5.18.5 constrains the
+derived key's sensitivity and extractability from the base key's, and places
+no extractability requirement on the base key itself.
+
 ## Usage
 
 ### Generate Symmetric Key
@@ -155,5 +184,5 @@ err := xkms.RotateSymmetricKey(attrs)
 ## See Also
 
 - [AEAD Auto-Selection](../configuration/aead-auto-selection.md)
-- [Key Management](../usage/cli/key.md)
+- [Key Management](../../xkey/docs/usage/cli/key.md)
 - [Backend Configuration](../backends/README.md)

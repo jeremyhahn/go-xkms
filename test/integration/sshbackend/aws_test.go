@@ -27,12 +27,17 @@ import (
 // TestSSHBackend_AWSKMS proves SSH key generation + signing on the AWS KMS
 // backend against a Floci emulator (real KMS API, real verifiable ECDSA
 // signatures). ECDSA-P256 is the only SSH-valid algorithm on AWS — AWS KMS RSA
-// is PSS-only (invalid for SSH) and ed25519 is unsupported. Skipped when no
-// Floci endpoint is configured (AWS_ENDPOINT_URL).
+// is PSS-only (invalid for SSH) and ed25519 is unsupported.
+//
+// The awskms build tag is only set by `make integration-test-ssh-backends`,
+// which brings the Floci emulator up and exports AWS_ENDPOINT_URL. A missing
+// endpoint therefore means the harness is broken, not that the lane is
+// inapplicable.
 func TestSSHBackend_AWSKMS(t *testing.T) {
 	endpoint := os.Getenv("AWS_ENDPOINT_URL")
 	if endpoint == "" {
-		t.Skip("AWS_ENDPOINT_URL not set; start Floci to run the AWS KMS SSH lane")
+		t.Fatal("AWS_ENDPOINT_URL is not set: the AWS KMS SSH lane requires the Floci emulator " +
+			"started by `make integration-test-ssh-backends`")
 	}
 
 	keyStorage, err := xkms.NewMemoryBackend()

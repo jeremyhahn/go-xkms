@@ -84,4 +84,18 @@ var (
 
 	// ErrMarshalAttestedKey indicates the attested public key could not be marshaled.
 	ErrMarshalAttestedKey = errors.New("attestation: failed to marshal attested key")
+
+	// ErrNilStatement indicates the attestation statement is nil.
+	ErrNilStatement = errors.New("attestation: nil attestation statement")
+
+	// ErrNoTrustAnchors indicates anchored verification was requested but no
+	// trust anchors are configured. Anchored verification fails closed: a
+	// caller that cannot name a trust anchor cannot establish hardware
+	// provenance, so the attestation is rejected rather than accepted.
+	ErrNoTrustAnchors = errors.New("attestation: no trust anchors configured")
+
+	// ErrChainNotAnchored indicates the certificate chain is internally
+	// consistent but does not terminate at any configured trust anchor. This is
+	// the error returned for an attacker-supplied, self-consistent chain.
+	ErrChainNotAnchored = errors.New("attestation: certificate chain does not chain to a trusted anchor")
 )

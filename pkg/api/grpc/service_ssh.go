@@ -23,6 +23,7 @@ import (
 	"google.golang.org/protobuf/types/known/timestamppb"
 
 	pb "github.com/jeremyhahn/go-xkms/pkg/api/grpc/proto/xkmsv1"
+	"github.com/jeremyhahn/go-xkms/pkg/auth"
 	sdkssh "github.com/jeremyhahn/go-xkms/sdk/go/client/ssh"
 )
 
@@ -34,6 +35,9 @@ func (s *Service) sshUnavailable() error {
 
 // SSHGenerateKey implements KeystoreService.SSHGenerateKey.
 func (s *Service) SSHGenerateKey(ctx context.Context, req *pb.SSHGenerateKeyRequest) (*pb.SSHKeyResponse, error) {
+	if err := s.authorize(ctx, auth.ResourceSSH, auth.ActionWrite, "ssh-key"); err != nil {
+		return nil, err
+	}
 	if s.sshClient == nil {
 		return nil, s.sshUnavailable()
 	}
@@ -56,6 +60,9 @@ func (s *Service) SSHGenerateKey(ctx context.Context, req *pb.SSHGenerateKeyRequ
 // are accepted over the wire (no passphrase channel); encrypted PEMs return
 // an error from the SDK.
 func (s *Service) SSHImportKey(ctx context.Context, req *pb.SSHImportKeyRequest) (*pb.SSHKeyResponse, error) {
+	if err := s.authorize(ctx, auth.ResourceSSH, auth.ActionWrite, "ssh-key"); err != nil {
+		return nil, err
+	}
 	if s.sshClient == nil {
 		return nil, s.sshUnavailable()
 	}
@@ -74,6 +81,9 @@ func (s *Service) SSHImportKey(ctx context.Context, req *pb.SSHImportKeyRequest)
 
 // SSHListKeys implements KeystoreService.SSHListKeys.
 func (s *Service) SSHListKeys(ctx context.Context, req *pb.SSHListKeysRequest) (*pb.SSHListKeysResponse, error) {
+	if err := s.authorize(ctx, auth.ResourceSSH, auth.ActionRead, "ssh-keys"); err != nil {
+		return nil, err
+	}
 	if s.sshClient == nil {
 		return nil, s.sshUnavailable()
 	}
@@ -93,6 +103,9 @@ func (s *Service) SSHListKeys(ctx context.Context, req *pb.SSHListKeysRequest) (
 
 // SSHGetKey implements KeystoreService.SSHGetKey.
 func (s *Service) SSHGetKey(ctx context.Context, req *pb.SSHKeyRef) (*pb.SSHKeyResponse, error) {
+	if err := s.authorize(ctx, auth.ResourceSSH, auth.ActionRead, "ssh-key"); err != nil {
+		return nil, err
+	}
 	if s.sshClient == nil {
 		return nil, s.sshUnavailable()
 	}
@@ -109,6 +122,9 @@ func (s *Service) SSHGetKey(ctx context.Context, req *pb.SSHKeyRef) (*pb.SSHKeyR
 
 // SSHDeleteKey implements KeystoreService.SSHDeleteKey.
 func (s *Service) SSHDeleteKey(ctx context.Context, req *pb.SSHKeyRef) (*emptypb.Empty, error) {
+	if err := s.authorize(ctx, auth.ResourceSSH, auth.ActionDelete, "ssh-key"); err != nil {
+		return nil, err
+	}
 	if s.sshClient == nil {
 		return nil, s.sshUnavailable()
 	}
@@ -124,6 +140,9 @@ func (s *Service) SSHDeleteKey(ctx context.Context, req *pb.SSHKeyRef) (*emptypb
 
 // SSHExportPublic implements KeystoreService.SSHExportPublic.
 func (s *Service) SSHExportPublic(ctx context.Context, req *pb.SSHKeyRef) (*pb.SSHPublicKeyResponse, error) {
+	if err := s.authorize(ctx, auth.ResourceSSH, auth.ActionRead, "ssh-public-key"); err != nil {
+		return nil, err
+	}
 	if s.sshClient == nil {
 		return nil, s.sshUnavailable()
 	}
@@ -145,6 +164,9 @@ func (s *Service) SSHExportPublic(ctx context.Context, req *pb.SSHKeyRef) (*pb.S
 // SSHSign implements KeystoreService.SSHSign. It resolves the key's signer
 // (delegated to the backend for hardware-backed keys) and signs the digest.
 func (s *Service) SSHSign(ctx context.Context, req *pb.SSHSignRequest) (*pb.SSHSignResponse, error) {
+	if err := s.authorize(ctx, auth.ResourceSSH, auth.ActionWrite, "ssh-sign"); err != nil {
+		return nil, err
+	}
 	if s.sshClient == nil {
 		return nil, s.sshUnavailable()
 	}
@@ -166,6 +188,9 @@ func (s *Service) SSHSign(ctx context.Context, req *pb.SSHSignRequest) (*pb.SSHS
 
 // SSHAddKnownHost implements KeystoreService.SSHAddKnownHost.
 func (s *Service) SSHAddKnownHost(ctx context.Context, req *pb.SSHAddKnownHostRequest) (*emptypb.Empty, error) {
+	if err := s.authorize(ctx, auth.ResourceSSH, auth.ActionWrite, "ssh-known-host"); err != nil {
+		return nil, err
+	}
 	if s.sshClient == nil {
 		return nil, s.sshUnavailable()
 	}
@@ -184,6 +209,9 @@ func (s *Service) SSHAddKnownHost(ctx context.Context, req *pb.SSHAddKnownHostRe
 
 // SSHListKnownHosts implements KeystoreService.SSHListKnownHosts.
 func (s *Service) SSHListKnownHosts(ctx context.Context, req *pb.SSHListKnownHostsRequest) (*pb.SSHListKnownHostsResponse, error) {
+	if err := s.authorize(ctx, auth.ResourceSSH, auth.ActionRead, "ssh-known-hosts"); err != nil {
+		return nil, err
+	}
 	if s.sshClient == nil {
 		return nil, s.sshUnavailable()
 	}
@@ -211,6 +239,9 @@ func (s *Service) SSHListKnownHosts(ctx context.Context, req *pb.SSHListKnownHos
 
 // SSHRemoveKnownHost implements KeystoreService.SSHRemoveKnownHost.
 func (s *Service) SSHRemoveKnownHost(ctx context.Context, req *pb.SSHRemoveKnownHostRequest) (*emptypb.Empty, error) {
+	if err := s.authorize(ctx, auth.ResourceSSH, auth.ActionDelete, "ssh-known-host"); err != nil {
+		return nil, err
+	}
 	if s.sshClient == nil {
 		return nil, s.sshUnavailable()
 	}
@@ -226,6 +257,9 @@ func (s *Service) SSHRemoveKnownHost(ctx context.Context, req *pb.SSHRemoveKnown
 
 // SSHAddAuthorizedKey implements KeystoreService.SSHAddAuthorizedKey.
 func (s *Service) SSHAddAuthorizedKey(ctx context.Context, req *pb.SSHAddAuthorizedKeyRequest) (*emptypb.Empty, error) {
+	if err := s.authorize(ctx, auth.ResourceSSH, auth.ActionWrite, "ssh-authorized-key"); err != nil {
+		return nil, err
+	}
 	if s.sshClient == nil {
 		return nil, s.sshUnavailable()
 	}
@@ -244,6 +278,9 @@ func (s *Service) SSHAddAuthorizedKey(ctx context.Context, req *pb.SSHAddAuthori
 
 // SSHListAuthorizedKeys implements KeystoreService.SSHListAuthorizedKeys.
 func (s *Service) SSHListAuthorizedKeys(ctx context.Context, req *pb.SSHListAuthorizedKeysRequest) (*pb.SSHListAuthorizedKeysResponse, error) {
+	if err := s.authorize(ctx, auth.ResourceSSH, auth.ActionRead, "ssh-authorized-keys"); err != nil {
+		return nil, err
+	}
 	if s.sshClient == nil {
 		return nil, s.sshUnavailable()
 	}
@@ -270,6 +307,9 @@ func (s *Service) SSHListAuthorizedKeys(ctx context.Context, req *pb.SSHListAuth
 
 // SSHRemoveAuthorizedKey implements KeystoreService.SSHRemoveAuthorizedKey.
 func (s *Service) SSHRemoveAuthorizedKey(ctx context.Context, req *pb.SSHAuthorizedKeyRef) (*emptypb.Empty, error) {
+	if err := s.authorize(ctx, auth.ResourceSSH, auth.ActionDelete, "ssh-authorized-key"); err != nil {
+		return nil, err
+	}
 	if s.sshClient == nil {
 		return nil, s.sshUnavailable()
 	}
