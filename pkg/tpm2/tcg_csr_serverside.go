@@ -105,11 +105,12 @@ func VerifyTCG_CSR_IDevID_Stateless(
 
 	// Verify signature using IDevID key
 	var pubKey crypto.PublicKey
-	if idevidPub.Type == tpm2.TPMAlgRSA { //nolint:staticcheck // QF1003: if-else preferred over switch
+	switch idevidPub.Type {
+	case tpm2.TPMAlgRSA:
 		pubKey, err = verifyRSASignatureStateless(idevidPub, digest, csr.Signature, signatureAlgorithm, hash)
-	} else if idevidPub.Type == tpm2.TPMAlgECC {
+	case tpm2.TPMAlgECC:
 		pubKey, err = verifyECDSASignatureStateless(idevidPub, digest, csr.Signature)
-	} else {
+	default:
 		return nil, nil, ErrInvalidAKAttributes
 	}
 
@@ -210,11 +211,12 @@ func VerifyTCG_CSR_IAK_Stateless(
 
 	// Verify signature based on key type
 	var pubKey crypto.PublicKey
-	if iakPub.Type == tpm2.TPMAlgRSA { //nolint:staticcheck // QF1003: if-else preferred over switch
+	switch iakPub.Type {
+	case tpm2.TPMAlgRSA:
 		pubKey, err = verifyRSASignatureStateless(iakPub, digest, csr.Signature, signatureAlgorithm, hash)
-	} else if iakPub.Type == tpm2.TPMAlgECC {
+	case tpm2.TPMAlgECC:
 		pubKey, err = verifyECDSASignatureStateless(iakPub, digest, csr.Signature)
-	} else {
+	default:
 		return nil, nil, ErrInvalidAKAttributes
 	}
 

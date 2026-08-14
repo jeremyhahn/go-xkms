@@ -43,6 +43,21 @@ type certifyFixture struct {
 // an attesting key.
 func eccPublicArea(t *testing.T, key *ecdsa.PrivateKey, restricted bool) tpm2.TPMTPublic {
 	t.Helper()
+
+	// PublicKey.Bytes returns the SEC 1 uncompressed encoding, 0x04 || X || Y
+	// with each coordinate padded to the curve's field size. Slicing it is the
+	// supported way to reach the affine coordinates; the PublicKey.X and .Y
+	// big.Int fields are deprecated as of Go 1.25.
+	point, err := key.PublicKey.Bytes()
+	if err != nil {
+		t.Fatalf("encode P-256 public key: %v", err)
+	}
+	const coordLen = 32
+	if len(point) != 1+2*coordLen {
+		t.Fatalf("expected a %d-byte uncompressed P-256 point, got %d", 1+2*coordLen, len(point))
+	}
+	x, y := point[1:1+coordLen], point[1+coordLen:]
+
 	return tpm2.TPMTPublic{
 		Type:    tpm2.TPMAlgECC,
 		NameAlg: tpm2.TPMAlgSHA256,
@@ -65,8 +80,8 @@ func eccPublicArea(t *testing.T, key *ecdsa.PrivateKey, restricted bool) tpm2.TP
 			}),
 		Unique: tpm2.NewTPMUPublicID(tpm2.TPMAlgECC,
 			&tpm2.TPMSECCPoint{
-				X: tpm2.TPM2BECCParameter{Buffer: key.PublicKey.X.FillBytes(make([]byte, 32))},
-				Y: tpm2.TPM2BECCParameter{Buffer: key.PublicKey.Y.FillBytes(make([]byte, 32))},
+				X: tpm2.TPM2BECCParameter{Buffer: x},
+				Y: tpm2.TPM2BECCParameter{Buffer: y},
 			}),
 	}
 }

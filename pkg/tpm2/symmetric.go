@@ -17,11 +17,13 @@ import (
 	"crypto/aes"
 	"fmt"
 	"log/slog"
+	"slices"
 	"sync"
 
 	"github.com/jeremyhahn/go-xkms/pkg/errs"
 
 	"github.com/google/go-tpm/tpm2"
+
 	kbackend "github.com/jeremyhahn/go-xkms/pkg/backend"
 	"github.com/jeremyhahn/go-xkms/pkg/crypto/aead"
 	"github.com/jeremyhahn/go-xkms/pkg/types"
@@ -446,7 +448,7 @@ func (e *tpm2AESEncrypter) Decrypt(data *types.EncryptedData, opts *types.Decryp
 	}
 
 	// Reconstruct ciphertext with tag (GCM expects tag appended)
-	fullCiphertext := append(data.Ciphertext, data.Tag...)
+	fullCiphertext := slices.Concat(data.Ciphertext, data.Tag)
 
 	// Decrypt and verify
 	plaintext, err := gcm.Open(nil, data.Nonce, fullCiphertext, opts.AdditionalData)

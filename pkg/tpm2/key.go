@@ -448,11 +448,12 @@ func (tpm *TPM2) KeyAttributes(
 		},
 	}
 
-	if keyPub.Type == tpm2.TPMAlgRSA { //nolint:staticcheck // QF1003: if-else preferred over switch
+	switch keyPub.Type {
+	case tpm2.TPMAlgRSA:
 		attrs.KeyAlgorithm = x509.RSA
-	} else if keyPub.Type == tpm2.TPMAlgECC {
+	case tpm2.TPMAlgECC:
 		attrs.KeyAlgorithm = x509.ECDSA
-	} else {
+	default:
 		return nil, store.ErrInvalidKeyAlgorithm
 	}
 
@@ -1213,13 +1214,6 @@ func (tpm *TPM2) CreateIDevID(
 	}
 	ekAttrs := akAttrs.Parent
 
-	// if ekAttrs.Password != nil {
-	// 	ekAuth, err = ekAttrs.Password.Bytes()
-	// 	if err != nil {
-	// 		return nil, nil, nil, err
-	// 	}
-	// }
-
 	// Create IDevID key attributes from platform configuration file
 	if tpm.config.IDevID == nil {
 		return nil, nil, ErrNotConfigured
@@ -1288,17 +1282,6 @@ func (tpm *TPM2) CreateIDevID(
 	if akAttrs.TPMAttributes != nil && len(akAttrs.TPMAttributes.PCRSelection.PCRSelections) > 0 {
 		primaryKeyCMD.CreationPCR = akAttrs.TPMAttributes.PCRSelection
 	}
-	// unique := tpm2.NewTPMUPublicID(
-	// 	tpm2.TPMAlgRSA,
-	// 	&tpm2.TPM2BPublicKeyRSA{
-	// 		Buffer: []byte(idevidAttrs.CN),
-	// 	},
-	// )
-	// inPub, err := primaryKeyCMD.InPublic.Contents()
-	// if err != nil {
-	// 	return nil, nil, err
-	// }
-	// inPub.Unique = unique
 
 	primaryKey, err := primaryKeyCMD.Execute(tpm.transport)
 	if err != nil {

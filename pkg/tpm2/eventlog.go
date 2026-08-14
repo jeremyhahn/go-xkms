@@ -298,13 +298,22 @@ func readDigest(file *os.File, size int) string {
 	return hex.EncodeToString(digestBytes)
 }
 
-// parseEventString finds the longest ASCII sequence in the event data, treating it as the primary string.
+// printableASCIIRun matches a maximal run of printable ASCII, U+0020 (space)
+// through U+007E (tilde). The bounds are written as hex escapes rather than as
+// the literal " -~" so that the range is unambiguous to a reader: the intent is
+// the printable ASCII block, not an arbitrary span of punctuation. Control
+// bytes, DEL (0x7F) and every byte at or above 0x80 fall outside the class and
+// therefore act as separators between runs.
+var printableASCIIRun = regexp.MustCompile(`[\x20-\x7e]+`)
+
+// parseEventString finds the longest printable ASCII sequence in the event
+// data, treating it as the primary string. Event log entries interleave binary
+// structure with human-readable labels, so the longest printable run is the
+// best available heuristic for the label.
 func parseEventString(data []byte) string {
 	dataStr := string(data)
 
-	// Regex to capture all printable ASCII text sequences
-	re := regexp.MustCompile(`[ -~]+`)
-	matches := re.FindAllString(dataStr, -1)
+	matches := printableASCIIRun.FindAllString(dataStr, -1)
 
 	// Return the longest match if available
 	if len(matches) > 0 {

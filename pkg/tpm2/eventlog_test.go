@@ -1669,6 +1669,33 @@ func TestParseEventString(t *testing.T) {
 			data:     []byte("   test   "),
 			expected: "   test   ",
 		},
+		{
+			// 0x20 (space) and 0x7E (~) are the inclusive bounds of the
+			// printable ASCII class, so a run made only of the two boundary
+			// bytes must survive intact.
+			name:     "range boundaries are inclusive",
+			data:     []byte{0x00, 0x20, 0x7e, 0x00},
+			expected: " ~",
+		},
+		{
+			// 0x1F sits one below the lower bound and 0x7F (DEL) one above the
+			// upper bound; both must break the run rather than join it.
+			name:     "bytes just outside the range separate runs",
+			data:     []byte{0x1f, 'a', 'b', 'c', 0x7f, 'd', 'e', 'f', 'g'},
+			expected: "defg",
+		},
+		{
+			// High bytes are not printable ASCII and must not be folded into a
+			// run, whether they form valid UTF-8 or not.
+			name:     "high bytes separate runs",
+			data:     []byte{'a', 'b', 0xff, 0xfe, 'l', 'o', 'n', 'g', 'e', 'r'},
+			expected: "longer",
+		},
+		{
+			name:     "valid multi-byte UTF-8 is not printable ASCII",
+			data:     []byte("abélonger"),
+			expected: "longer",
+		},
 	}
 
 	for _, tt := range tests {

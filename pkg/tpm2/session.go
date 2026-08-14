@@ -721,7 +721,6 @@ func (tpm *TPM2) LoadKeyPair(
 			slog.String("error", err.Error()))
 		return nil, err
 	}
-	// defer tpm.Flush(loadResponse.ObjectHandle)
 
 	tpm.logger.Debug("tpm: loaded key pair", slog.String("handle", fmt.Sprintf("0x%x", loadResponse.ObjectHandle)))
 

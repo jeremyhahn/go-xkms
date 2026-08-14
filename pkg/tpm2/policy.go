@@ -76,7 +76,7 @@ func EncodePCRSelection(bank string, indices []int) []byte {
 		0, 0, 0, 1,
 		// algorithm ID (uint16 big-endian)
 		byte(algID >> 8), byte(algID),
-		// sizeofSelect = 3
+		// sizeofSelect, always three octets for the 24 PCRs
 		3,
 		// PCR bitmap
 		bitmap[0], bitmap[1], bitmap[2],
@@ -112,7 +112,7 @@ func ComputePolicyPCRDigest(bank string, pcrIndices []int, pcrDigests map[string
 		if d, ok := pcrDigests[key]; ok {
 			b, err := hex.DecodeString(d)
 			if err != nil {
-				return nil, &errs.Detail{Err: ErrPolicyInvalidDigest, Detail: fmt.Sprintf("%s", key)}
+				return nil, &errs.Detail{Err: ErrPolicyInvalidDigest, Detail: key}
 			}
 			pcrComposite = append(pcrComposite, b...)
 		} else {

@@ -812,9 +812,6 @@ func (tpm *TPM2) PlatformPolicyDigestHash() ([]byte, error) {
 	hash.Write(buffer)
 	digest := hash.Sum(nil)
 
-	// tpm.logger.Debug("PlatformPolicyDigest: PCRRead buffer", slog.String("buffer", fmt.Sprintf("%x", buffer)))
-	// tpm.logger.Debug("PlatformPolicyDigest: PCRRead digest", slog.String("digest", fmt.Sprintf("%x", digest)))
-
 	return digest, nil
 }
 

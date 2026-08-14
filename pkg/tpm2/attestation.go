@@ -5,15 +5,14 @@ import (
 	"crypto/ecdsa"
 	"crypto/x509"
 	"encoding/asn1"
-	"errors"
 	"fmt"
 	"log/slog"
 	"math/big"
-	"os"
 
 	"github.com/jeremyhahn/go-xkms/pkg/errs"
 
 	"github.com/google/go-tpm/tpm2"
+
 	"github.com/jeremyhahn/go-xkms/pkg/tpm2/store"
 	"github.com/jeremyhahn/go-xkms/pkg/types"
 )
@@ -195,8 +194,8 @@ func (tpm *TPM2) CertifyKey(
 	// pattern as Quote() for handling RSA and ECDSA signatures
 	var signature []byte
 
-	if iakPub.Type == tpm2.TPMAlgRSA { //nolint:staticcheck // QF1003: if-else preferred over switch
-
+	switch iakPub.Type {
+	case tpm2.TPMAlgRSA:
 		var rsaSig *tpm2.TPMSSignatureRSA
 		if store.IsRSAPSS(tpm.iakAttrs.SignatureAlgorithm) {
 			rsaSig, err = rspCert.Signature.Signature.RSAPSS()
@@ -211,8 +210,7 @@ func (tpm *TPM2) CertifyKey(
 		}
 		signature = rsaSig.Sig.Buffer
 
-	} else if iakPub.Type == tpm2.TPMAlgECC {
-
+	case tpm2.TPMAlgECC:
 		sig, err := rspCert.Signature.Signature.ECDSA()
 		if err != nil {
 			return nil, &errs.Wrapped{Msg: "failed to extract ECDSA signature", Err: err}
@@ -224,7 +222,7 @@ func (tpm *TPM2) CertifyKey(
 		if err != nil {
 			return nil, &errs.Wrapped{Msg: "failed to marshal ECDSA signature", Err: err}
 		}
-	} else {
+	default:
 		return nil, &errs.Detail{Err: store.ErrUnsupportedKeyAlgorithm, Detail: fmt.Sprintf("unsupported IAK key type: %v", iakPub.Type)}
 	}
 
@@ -673,14 +671,11 @@ func (tpm *TPM2) Quote(pcrs []uint, nonce []byte) (Quote, error) {
 	// https://github.com/google/go-attestation/blob/master/docs/event-log-disclosure.md
 	eventLog, err := tpm.EventLog()
 	if err != nil {
-		if errors.Is(err, os.ErrNotExist) || errors.Is(err, os.ErrPermission) {
-			// Some embedded systems may not have a measurement log or there may be a permission
-			// problem. Log the warning and carry on...
-			tpm.logger.Warn(ErrMissingMeasurementLog.Error())
-		} else {
-			tpm.logger.Warn(ErrMissingMeasurementLog.Error())
-			// Continue without event log for simulator or permission-denied cases
-		}
+		// Some embedded systems have no measurement log, the log may be
+		// unreadable for permission reasons, and simulators have none at all.
+		// None of those is fatal: the quote below stands on its own, so log the
+		// warning and carry on without an event log.
+		tpm.logger.Warn(ErrMissingMeasurementLog.Error())
 	}
 
 	allBanks, err := tpm.ReadPCRs(pcrs)

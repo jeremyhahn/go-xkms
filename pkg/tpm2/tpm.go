@@ -330,11 +330,12 @@ func NewTPM2(params *Params) (TrustedPlatformModule, error) {
 	}
 
 	if params.Config.EK.KeyAlgorithm == "" {
-		if params.Config.EK.RSAConfig != nil {
+		switch {
+		case params.Config.EK.RSAConfig != nil:
 			params.Config.EK.KeyAlgorithm = x509.RSA.String()
-		} else if params.Config.EK.ECCConfig != nil {
+		case params.Config.EK.ECCConfig != nil:
 			params.Config.EK.KeyAlgorithm = x509.ECDSA.String()
-		} else {
+		default:
 			// Use default EK config if no algorithm specified
 			params.Config.EK = DefaultConfig.EK
 		}
@@ -361,10 +362,11 @@ func NewTPM2(params *Params) (TrustedPlatformModule, error) {
 	var err error
 
 	// Use custom transport if provided (for testing)
-	if params.Transport != nil {
+	switch {
+	case params.Transport != nil:
 		params.Logger.Info("Using custom TPM transport")
 		tpmTransport = params.Transport
-	} else if params.Config.CommandAddress != "" {
+	case params.Config.CommandAddress != "":
 		// External TPM over TCP (e.g. swtpm socket). CommandAddress carries the
 		// "host:port" of the TPM command channel; PlatformAddress carries the
 		// control channel (command port+1 by convention). This path is used when
@@ -390,7 +392,7 @@ func NewTPM2(params *Params) (TrustedPlatformModule, error) {
 			params.Logger.Error("failed to open TCP TPM", slog.String("error", err.Error()))
 			return nil, &errs.Wrapped{Msg: fmt.Sprintf("open TCP TPM at %s", params.Config.CommandAddress), Err: err}
 		}
-	} else if params.Config.UseSimulator {
+	case params.Config.UseSimulator:
 		params.Logger.Info(infoOpeningSimulator)
 		sim, err = simulatorOpener()
 		if err != nil {
@@ -398,7 +400,7 @@ func NewTPM2(params *Params) (TrustedPlatformModule, error) {
 			return nil, err
 		}
 		tpmTransport = sim.Transport()
-	} else if params.Config.Device != "" {
+	case params.Config.Device != "":
 		params.Logger.Info(infoOpeningDevice, slog.String("device", params.Config.Device))
 		if strings.HasSuffix(params.Config.Device, ".sock") {
 			tpmTransport, err = linuxudstpm.Open(params.Config.Device)
@@ -503,8 +505,8 @@ func (tpm *TPM2) Open() error {
 	var t transport.TPM
 	var err error
 
-	if tpm.config.UseSimulator {
-
+	switch {
+	case tpm.config.UseSimulator:
 		tpm.logger.Info(infoOpeningSimulator)
 		sim, err := simulatorOpener()
 		if err != nil {
@@ -513,15 +515,7 @@ func (tpm *TPM2) Open() error {
 		}
 		tpm.simulator = sim
 		t = sim.Transport()
-	} else if tpm.config.Device != "" {
-		// tpm.logger.Info(infoOpeningDevice, slog.String("device", tpm.config.Device))
-		// f, err := os.OpenFile(tpm.config.Device, os.O_RDWR, 0)
-		// if err != nil {
-		// 	tpm.logger.Error(err.Error())
-		// 	return ErrOpeningDevice
-		// }
-		// tpm.device = f
-		// t = transport.FromReadWriter(f)
+	case tpm.config.Device != "":
 		if strings.HasSuffix(tpm.config.Device, ".sock") {
 			t, err = linuxudstpm.Open(tpm.config.Device)
 			if err != nil {
@@ -537,7 +531,7 @@ func (tpm *TPM2) Open() error {
 			tpm.device = f
 			t = transport.FromReadWriter(f)
 		}
-	} else {
+	default:
 		return errors.New("invalid TPM transport configuration")
 	}
 
@@ -1662,7 +1656,7 @@ func (tpm *TPM2) Sign(
 				Auth:   session2,
 			},
 			Digest: tpm2.TPM2BDigest{
-				Buffer: digest[:],
+				Buffer: digest,
 			},
 			InScheme: tpm2.TPMTSigScheme{
 				Scheme: tpm2.TPMAlgECDSA,
@@ -1729,24 +1723,17 @@ func (tpm *TPM2) HashSequence(
 	keyAttrs *types.KeyAttributes,
 	data []byte) ([]byte, []byte, error) {
 
-	// var auth []byte
 	var err error
 	var maxDigestBuffer = 1024
 
-	// if keyAttrs.Password != nil {
-	// 	auth, err = keyAttrs.Password.Bytes()
-	// 	if err != nil {
-	// 		return nil, nil, err
-	// 	}
-	// }
-
 	// Try to get hierarchy auth from parent, then self, then use empty auth
 	var hierarchyAuth []byte
-	if keyAttrs.Parent != nil && keyAttrs.Parent.TPMAttributes != nil && keyAttrs.Parent.TPMAttributes.HierarchyAuth != nil {
+	switch {
+	case keyAttrs.Parent != nil && keyAttrs.Parent.TPMAttributes != nil && keyAttrs.Parent.TPMAttributes.HierarchyAuth != nil:
 		hierarchyAuth = keyAttrs.Parent.TPMAttributes.HierarchyAuth.Bytes()
-	} else if keyAttrs.TPMAttributes != nil && keyAttrs.TPMAttributes.HierarchyAuth != nil {
+	case keyAttrs.TPMAttributes != nil && keyAttrs.TPMAttributes.HierarchyAuth != nil:
 		hierarchyAuth = keyAttrs.TPMAttributes.HierarchyAuth.Bytes()
-	} else {
+	default:
 		// Use empty auth for hash sequence
 		hierarchyAuth = []byte{}
 	}
@@ -1848,7 +1835,6 @@ func (tpm *TPM2) SignValidate(
 	public := keyAttrs.TPMAttributes.Public
 	if public.Type == tpm2.TPMAlgRSA { //nolint:staticcheck // QF1003: if-else preferred over switch
 
-		// rsaDetails, err := keyAttrs.TPMAttributes.Public.Parameters.RSADetail()
 		rsaDetails, err := public.Parameters.RSADetail()
 		if err != nil {
 			tpm.logger.Error("failed to get RSA details", slog.String("error", err.Error()))
@@ -1895,40 +1881,6 @@ func (tpm *TPM2) SignValidate(
 			if err != nil {
 				return nil, err
 			}
-
-			// loadRsp, err := tpm2.LoadExternal{
-			// 	Hierarchy: tpm2.TPMRHEndorsement,
-			// 	// InPublic:  tpm2.BytesAs2B[tpm2.TPMTPublic](tcgContent.AttestPub),
-			// 	// InPublic: akAttrs.TPMAttributes.BPublic,
-			// 	InPublic: tpm2.New2B(keyAttrs.TPMAttributes.Public),
-			// 	// InPublic: tpm2.New2B(*iakPub),
-			// }.Execute(tpm.transport)
-			// if err != nil {
-			// 	return nil, err
-			// }
-			// defer tpm.Flush(loadRsp.ObjectHandle)
-
-			// _, err = tpm2.VerifySignature{
-			// 	KeyHandle: loadRsp.ObjectHandle,
-			// 	Digest: tpm2.TPM2BDigest{
-			// 		Buffer: digest,
-			// 	},
-			// 	Signature: tpm2.TPMTSignature{
-			// 		SigAlg: tpm2.TPMAlgRSASSA,
-			// 		Signature: tpm2.NewTPMUSignature[*tpm2.TPMSSignatureRSA](
-			// 			tpm2.TPMAlgRSASSA,
-			// 			&tpm2.TPMSSignatureRSA{
-			// 				Hash: keyAttrs.TPMAttributes.HashAlg,
-			// 				Sig: tpm2.TPM2BPublicKeyRSA{
-			// 					Buffer: rsaSig.Sig.Buffer,
-			// 				},
-			// 			},
-			// 		),
-			// 	},
-			// }.Execute(tpm.transport)
-			// if err != nil {
-			// 	return nil, err
-			// }
 
 		}
 		hashSig = rsaSig.Sig.Buffer
@@ -2141,7 +2093,8 @@ func intelEKURL(ekPub *rsa.PublicKey) string {
 	return intelEKCertServiceURL + url.QueryEscape(base64.URLEncoding.EncodeToString(pubHash.Sum(nil)))
 }
 
-// Downloads the EK certificate from the manufactuers EK cert service
+// downloadEKCertFromManufacturer downloads the EK certificate from the
+// manufacturer's EK cert service.
 func (tpm *TPM2) downloadEKCertFromManufacturer(ekCertIndex tpm2.TPMHandle) (*x509.Certificate, error) {
 
 	attrs, err := tpm.KeyAttributes(tpm2.TPMHandle(ekIndex))

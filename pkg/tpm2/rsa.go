@@ -20,7 +20,6 @@ func (tpm *TPM2) CreateRSA(
 		return nil, store.ErrInvalidKeyAttributes
 	}
 
-	// var keyUserAuth, secretBytes []byte
 	var keyUserAuth []byte
 	var handle tpm2.TPMHandle
 	var name tpm2.TPM2BName

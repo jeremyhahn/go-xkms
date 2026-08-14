@@ -369,11 +369,12 @@ func EKAttributesFromConfig(config EKConfig, policyDigest *tpm2.TPM2BDigest, ide
 
 	algorithm, err := types.ParseKeyAlgorithm(config.KeyAlgorithm)
 	if err != nil {
-		if config.RSAConfig != nil {
+		switch {
+		case config.RSAConfig != nil:
 			algorithm = x509.RSA
-		} else if config.ECCConfig != nil {
+		case config.ECCConfig != nil:
 			algorithm = x509.ECDSA
-		} else {
+		default:
 			return nil, err
 		}
 	}
@@ -459,11 +460,12 @@ func SRKAttributesFromConfig(config SRKConfig) (*types.KeyAttributes, error) {
 
 	algorithm, err := types.ParseKeyAlgorithm(config.KeyAlgorithm)
 	if err != nil {
-		if config.RSAConfig != nil {
+		switch {
+		case config.RSAConfig != nil:
 			algorithm = x509.RSA
-		} else if config.ECCConfig != nil {
+		case config.ECCConfig != nil:
 			algorithm = x509.ECDSA
-		} else {
+		default:
 			return nil, err
 		}
 	}
@@ -535,11 +537,12 @@ func IAKAttributesFromConfig(
 
 	algorithm, err := types.ParseKeyAlgorithm(config.KeyAlgorithm)
 	if err != nil {
-		if config.RSAConfig != nil {
+		switch {
+		case config.RSAConfig != nil:
 			algorithm = x509.RSA
-		} else if config.ECCConfig != nil {
+		case config.ECCConfig != nil:
 			algorithm = x509.ECDSA
-		} else {
+		default:
 			return nil, err
 		}
 	}
@@ -621,11 +624,12 @@ func IDevIDAttributesFromConfig(
 
 	algorithm, err := types.ParseKeyAlgorithm(config.KeyAlgorithm)
 	if err != nil {
-		if config.RSAConfig != nil {
+		switch {
+		case config.RSAConfig != nil:
 			algorithm = x509.RSA
-		} else if config.ECCConfig != nil {
+		case config.ECCConfig != nil:
 			algorithm = x509.ECDSA
-		} else {
+		default:
 			return nil, err
 		}
 	}
@@ -701,11 +705,12 @@ func LDevIDAttributesFromConfig(
 
 	algorithm, err := types.ParseKeyAlgorithm(config.KeyAlgorithm)
 	if err != nil {
-		if config.RSAConfig != nil {
+		switch {
+		case config.RSAConfig != nil:
 			algorithm = x509.RSA
-		} else if config.ECCConfig != nil {
+		case config.ECCConfig != nil:
 			algorithm = x509.ECDSA
-		} else {
+		default:
 			return nil, err
 		}
 	}

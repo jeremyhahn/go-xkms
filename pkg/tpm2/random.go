@@ -191,8 +191,8 @@ func (tpm *TPM2) RandomBytes(fixedLength int) ([]byte, error) {
 	return bytes, nil
 }
 
-// Reads a random fixed length byte slice from RNG and
-// returns the resulting bytes encoded in hexidecimal format.
+// RandomHex reads a random fixed length byte slice from the RNG and returns
+// the resulting bytes encoded in hexadecimal format.
 func (tpm *TPM2) RandomHex(fixedLength int) ([]byte, error) {
 
 	if fixedLength <= 0 || fixedLength%2 != 0 {

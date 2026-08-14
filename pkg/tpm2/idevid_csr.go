@@ -1270,29 +1270,6 @@ func (tpm *TPM2) verifyTCGCSRSignature(
 				return ErrInvalidSignature
 			}
 
-			// _, err = tpm2.VerifySignature{
-			// 	KeyHandle: keyAttrs.TPMAttributes.Handle,
-			// 	Digest: tpm2.TPM2BDigest{
-			// 		Buffer: digest,
-			// 	},
-			// 	Signature: tpm2.TPMTSignature{
-			// 		SigAlg: tpm2.TPMAlgRSAPSS,
-			// 		Signature: tpm2.NewTPMUSignature[*tpm2.TPMSSignatureRSA](
-			// 			tpm2.TPMAlgRSAPSS,
-			// 			&tpm2.TPMSSignatureRSA{
-			// 				Hash: keyAttrs.TPMAttributes.HashAlg,
-			// 				Sig: tpm2.TPM2BPublicKeyRSA{
-			// 					Buffer: csr.Signature,
-			// 				},
-			// 			},
-			// 		),
-			// 	},
-			// }.Execute(tpm.transport)
-			// if err != nil {
-			// 	tpm.logger.Error("signature verification failed", slog.String("error", err.Error()))
-			// 	return nil, nil, err
-			// }
-
 		} else {
 
 			err = rsa.VerifyPKCS1v15(rsaPub, hash, digest, csr.Signature)
@@ -1300,27 +1277,6 @@ func (tpm *TPM2) verifyTCGCSRSignature(
 				return ErrInvalidSignature
 			}
 
-			// _, err = tpm2.VerifySignature{
-			// 	KeyHandle: keyAttrs.TPMAttributes.Handle,
-			// 	Digest: tpm2.TPM2BDigest{
-			// 		Buffer: digest,
-			// 	},
-			// 	Signature: tpm2.TPMTSignature{
-			// 		SigAlg: tpm2.TPMAlgRSASSA,
-			// 		Signature: tpm2.NewTPMUSignature[*tpm2.TPMSSignatureRSA](
-			// 			tpm2.TPMAlgRSASSA,
-			// 			&tpm2.TPMSSignatureRSA{
-			// 				Hash: keyAttrs.TPMAttributes.HashAlg,
-			// 				Sig: tpm2.TPM2BPublicKeyRSA{
-			// 					Buffer: csr.Signature,
-			// 				},
-			// 			},
-			// 		),
-			// 	},
-			// }.Execute(tpm.transport)
-			// if err != nil {
-			// 	return nil, nil, err
-			// }
 		}
 
 	} else if pub.Type == tpm2.TPMAlgECC {

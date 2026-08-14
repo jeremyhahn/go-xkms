@@ -6,12 +6,12 @@ import (
 	"encoding/hex"
 )
 
-// Encodes bytes to hexidecimal form
+// Encode returns the hexadecimal form of bytes.
 func Encode(bytes []byte) string {
 	return hex.EncodeToString(bytes)
 }
 
-// Decodes hexidecimal form to byte array
+// Decode parses the hexadecimal form s into a byte slice.
 func Decode(s string) ([]byte, error) {
 	return hex.DecodeString(s)
 }
