@@ -142,7 +142,7 @@ require (
 	github.com/jeremyhahn/go-frost v0.1.7-alpha // indirect
 	github.com/jeremyhahn/go-qrdb v0.1.0-alpha // indirect
 	github.com/jeremyhahn/go-quicraft v0.3.0-alpha // indirect
-	github.com/jeremyhahn/go-xkms/xkey v0.3.0-alpha // indirect
+	github.com/jeremyhahn/go-xkms/xkey v0.3.1-alpha // indirect
 	github.com/jeroenrinzema/psql-wire v0.18.0 // indirect
 	github.com/jmespath/go-jmespath v0.4.0 // indirect
 	github.com/json-iterator/go v1.1.12 // indirect
