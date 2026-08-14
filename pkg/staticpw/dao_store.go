@@ -472,7 +472,6 @@ func (s *DAOStore) findEntityByHexID(ctx context.Context, hexID string) (*Passwo
 // findEntityByName scans all entities for a case-insensitive name match,
 // excluding folder markers.
 func (s *DAOStore) findEntityByName(ctx context.Context, name string) (*PasswordEntity, error) {
-	lower := strings.ToLower(name)
 
 	var found *PasswordEntity
 	err := s.dao.ForEachPage(ctx, qrdbsdk.PageQuery{Page: 1, PageSize: 500}, func(result qrdbsdk.PageResult[*PasswordEntity]) error {
@@ -480,7 +479,7 @@ func (s *DAOStore) findEntityByName(ctx context.Context, name string) (*Password
 			if entity.Name == folderMarkerName {
 				continue
 			}
-			if strings.ToLower(entity.Name) == lower {
+			if strings.EqualFold(entity.Name, name) {
 				found = entity
 				return nil
 			}
@@ -520,7 +519,6 @@ func (s *DAOStore) findFolderMarker(ctx context.Context, path string) (*Password
 // checkNameConflict scans for a case-insensitive name collision within the
 // same folder, optionally excluding an entity ID (for update scenarios).
 func (s *DAOStore) checkNameConflict(ctx context.Context, name string, folderPath string, excludeEntityID uint64) error {
-	lower := strings.ToLower(name)
 
 	var conflict bool
 	err := s.dao.ForEachPage(ctx, qrdbsdk.PageQuery{Page: 1, PageSize: 500}, func(result qrdbsdk.PageResult[*PasswordEntity]) error {
@@ -531,7 +529,7 @@ func (s *DAOStore) checkNameConflict(ctx context.Context, name string, folderPat
 			if excludeEntityID != 0 && entity.EntityID() == excludeEntityID {
 				continue
 			}
-			if strings.ToLower(entity.Name) == lower && entity.FolderPath == folderPath {
+			if strings.EqualFold(entity.Name, name) && entity.FolderPath == folderPath {
 				conflict = true
 				return nil
 			}

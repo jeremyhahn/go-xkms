@@ -159,7 +159,7 @@ func Serve(ctx context.Context, socketPath string, a sshagent.Agent) error {
 			return &AcceptError{Err: aerr}
 		}
 		go func(c net.Conn) {
-			defer c.Close()
+			defer func() { _ = c.Close() }()
 			_ = sshagent.ServeAgent(a, c)
 		}(conn)
 	}

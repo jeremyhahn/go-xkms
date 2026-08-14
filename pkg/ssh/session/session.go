@@ -295,7 +295,7 @@ func uploadCommand(path string, mode fs.FileMode) string {
 	b.WriteString("'")
 	if perm := mode.Perm(); perm != 0 {
 		b.WriteString(" && chmod ")
-		b.WriteString(fmt.Sprintf("%#o", uint32(perm)))
+		fmt.Fprintf(&b, "%#o", uint32(perm))
 		b.WriteString(" '")
 		b.WriteString(partial)
 		b.WriteString("'")

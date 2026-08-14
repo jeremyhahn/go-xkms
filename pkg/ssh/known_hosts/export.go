@@ -95,7 +95,7 @@ func ImportKnownHostsFile(ctx context.Context, store Store, sc scope.Scope, owne
 	if err != nil {
 		return 0, &StorageError{Op: "open known_hosts", Err: err}
 	}
-	defer f.Close()
+	defer func() { _ = f.Close() }() // read-only: a close error changes nothing
 
 	if source == "" {
 		source = SourceImport

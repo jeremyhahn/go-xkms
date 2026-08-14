@@ -615,7 +615,6 @@ func (s *BackendStore) findByName(name string) (*StaticPassword, error) {
 		return nil, ErrPasswordNotFound
 	}
 
-	lower := strings.ToLower(name)
 	for _, key := range keys {
 		if s.isFolderMarkerKey(key) {
 			continue
@@ -628,7 +627,7 @@ func (s *BackendStore) findByName(name string) (*StaticPassword, error) {
 		if unmarshalErr != nil {
 			continue
 		}
-		if strings.ToLower(pw.Name) == lower {
+		if strings.EqualFold(pw.Name, name) {
 			return pw, nil
 		}
 	}
@@ -645,7 +644,6 @@ func (s *BackendStore) checkNameConflict(name string, folderPath string, exclude
 		return nil
 	}
 
-	lower := strings.ToLower(name)
 	for _, key := range keys {
 		if s.isFolderMarkerKey(key) {
 			continue
@@ -661,7 +659,7 @@ func (s *BackendStore) checkNameConflict(name string, folderPath string, exclude
 		if excludeID != "" && pw.ID == excludeID {
 			continue
 		}
-		if strings.ToLower(pw.Name) == lower && pw.FolderPath == folderPath {
+		if strings.EqualFold(pw.Name, name) && pw.FolderPath == folderPath {
 			return ErrPasswordExists
 		}
 	}

@@ -32,7 +32,7 @@ import (
 // and unparseable lines are skipped for both dedup comparison and
 // appending, the same as everywhere else this package parses known_hosts
 // blobs (see ImportKnownHostsFile).
-func AppendMissing(srcData []byte, dstPath string) error {
+func AppendMissing(srcData []byte, dstPath string) (err error) {
 	existing := make(map[string]bool)
 	if dstData, derr := os.ReadFile(dstPath); derr == nil {
 		forEachKnownHost(dstData, func(host string, pub ssh.PublicKey) {
@@ -56,7 +56,14 @@ func AppendMissing(srcData []byte, dstPath string) error {
 	if err != nil {
 		return &StorageError{Op: "open known_hosts for append", Err: err}
 	}
-	defer f.Close()
+	// This is a write path: a failed Close can mean the appended lines never
+	// reached the disk, so it is reported rather than discarded. An error from
+	// the writes below wins, since it is the more specific failure.
+	defer func() {
+		if cerr := f.Close(); cerr != nil && err == nil {
+			err = &StorageError{Op: "close known_hosts after append", Err: cerr}
+		}
+	}()
 	for _, line := range toAppend {
 		if _, werr := f.WriteString(line + "\n"); werr != nil {
 			return &StorageError{Op: "append known_hosts", Err: werr}

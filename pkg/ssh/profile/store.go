@@ -471,7 +471,6 @@ func (s *BackendStore) findByName(name string) (*Profile, error) {
 	if err != nil {
 		return nil, ErrNotFound
 	}
-	lower := strings.ToLower(name)
 	for _, key := range keys {
 		if s.isFolderMarkerKey(key) {
 			continue
@@ -484,7 +483,7 @@ func (s *BackendStore) findByName(name string) (*Profile, error) {
 		if uErr != nil {
 			continue
 		}
-		if strings.ToLower(p.Name) == lower {
+		if strings.EqualFold(p.Name, name) {
 			return p, nil
 		}
 	}

@@ -330,12 +330,11 @@ func (s *DAOTeamStore) Close() error {
 
 // findByName scans all teams for a case-insensitive name match.
 func (s *DAOTeamStore) findByName(ctx context.Context, name string) (*TeamEntity, error) {
-	lower := strings.ToLower(name)
 
 	var found *TeamEntity
 	err := s.dao.ForEachPage(ctx, qrdbsdk.PageQuery{Page: 1, PageSize: 500}, func(result qrdbsdk.PageResult[*TeamEntity]) error {
 		for _, entity := range result.Entities {
-			if strings.ToLower(entity.Name) == lower {
+			if strings.EqualFold(entity.Name, name) {
 				found = entity
 				return nil
 			}

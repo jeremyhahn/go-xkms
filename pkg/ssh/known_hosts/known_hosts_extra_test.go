@@ -415,24 +415,24 @@ func TestKHStore_Add_PutStorageError(t *testing.T) {
 // Failing backends
 // ---------------------------------------------------------------------------
 
-var khErrFail = errors.New("injected backend failure")
+var errKHFail = errors.New("injected backend failure")
 
 // khFailingBackend always fails on every operation.
 type khFailingBackend struct{}
 
-func (khFailingBackend) Get(_ context.Context, _ string) ([]byte, error) { return nil, khErrFail }
-func (khFailingBackend) Put(_ context.Context, _ string, _ []byte) error { return khErrFail }
+func (khFailingBackend) Get(_ context.Context, _ string) ([]byte, error) { return nil, errKHFail }
+func (khFailingBackend) Put(_ context.Context, _ string, _ []byte) error { return errKHFail }
 func (khFailingBackend) PutIfAbsent(_ context.Context, _ string, _ []byte) (bool, error) {
-	return false, khErrFail
+	return false, errKHFail
 }
-func (khFailingBackend) Delete(_ context.Context, _ string) error { return khErrFail }
+func (khFailingBackend) Delete(_ context.Context, _ string) error { return errKHFail }
 func (khFailingBackend) List(_ context.Context, _ string) ([]string, error) {
-	return nil, khErrFail
+	return nil, errKHFail
 }
 func (khFailingBackend) Scan(_ context.Context, _ string, _ func(string, []byte) error) error {
-	return khErrFail
+	return errKHFail
 }
-func (khFailingBackend) Exists(_ context.Context, _ string) (bool, error) { return false, khErrFail }
+func (khFailingBackend) Exists(_ context.Context, _ string) (bool, error) { return false, errKHFail }
 func (khFailingBackend) Close() error                                     { return nil }
 
 // khCorruptBackend returns corrupt JSON from Get and Scan.
@@ -455,7 +455,7 @@ func (khPutFailBackend) Exists(_ context.Context, _ string) (bool, error) { retu
 type khRemoveErrBackend struct{ khFailingBackend }
 
 func (khRemoveErrBackend) Exists(_ context.Context, _ string) (bool, error) { return false, nil }
-func (khRemoveErrBackend) Delete(_ context.Context, _ string) error         { return khErrFail }
+func (khRemoveErrBackend) Delete(_ context.Context, _ string) error         { return errKHFail }
 
 // khPayloadBackend returns caller-provided bytes for Get.
 type khPayloadBackend struct {

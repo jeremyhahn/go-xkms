@@ -368,27 +368,27 @@ func TestSignerWithClose_NilPublicKey(t *testing.T) {
 // Store error paths using failing backends
 // ---------------------------------------------------------------------------
 
-// keysFailingBackend is a storage.Backend that always returns an error.
-var keysErrFail = errors.New("injected backend failure")
+// errKeysFail is the error every failing backend in this file returns.
+var errKeysFail = errors.New("injected backend failure")
 
 type keysFailingBackend struct{}
 
 func (keysFailingBackend) Get(_ context.Context, _ string) ([]byte, error) {
-	return nil, keysErrFail
+	return nil, errKeysFail
 }
-func (keysFailingBackend) Put(_ context.Context, _ string, _ []byte) error { return keysErrFail }
+func (keysFailingBackend) Put(_ context.Context, _ string, _ []byte) error { return errKeysFail }
 func (keysFailingBackend) PutIfAbsent(_ context.Context, _ string, _ []byte) (bool, error) {
-	return false, keysErrFail
+	return false, errKeysFail
 }
-func (keysFailingBackend) Delete(_ context.Context, _ string) error { return keysErrFail }
+func (keysFailingBackend) Delete(_ context.Context, _ string) error { return errKeysFail }
 func (keysFailingBackend) List(_ context.Context, _ string) ([]string, error) {
-	return nil, keysErrFail
+	return nil, errKeysFail
 }
 func (keysFailingBackend) Scan(_ context.Context, _ string, _ func(string, []byte) error) error {
-	return keysErrFail
+	return errKeysFail
 }
 func (keysFailingBackend) Exists(_ context.Context, _ string) (bool, error) {
-	return false, keysErrFail
+	return false, errKeysFail
 }
 func (keysFailingBackend) Close() error { return nil }
 
@@ -401,7 +401,7 @@ func (keysCorruptBackend) Get(_ context.Context, _ string) ([]byte, error) {
 func (keysCorruptBackend) Scan(_ context.Context, _ string, fn func(string, []byte) error) error {
 	return fn("k", []byte("{{{not json"))
 }
-func (keysCorruptBackend) Delete(_ context.Context, _ string) error { return keysErrFail }
+func (keysCorruptBackend) Delete(_ context.Context, _ string) error { return errKeysFail }
 
 // keysPayloadBackend returns caller-provided bytes for Get and Scan, and
 // succeeds on all other operations.
@@ -804,11 +804,4 @@ func generatePublicKey(t *testing.T) ssh.PublicKey {
 	pub := k.PublicKey
 	k.Destroy()
 	return pub
-}
-
-// generateSignData is a canonical payload for sign/verify round-trips.
-func generateSignData() []byte {
-	buf := make([]byte, 32)
-	_, _ = rand.Read(buf)
-	return buf
 }

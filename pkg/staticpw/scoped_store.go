@@ -14,6 +14,7 @@
 package staticpw
 
 import (
+	"slices"
 	"sort"
 	"strings"
 )
@@ -135,7 +136,7 @@ func (s *ScopedStore) ListByFolder(folderPath string) ([]*StaticPassword, error)
 	if err != nil {
 		return nil, err
 	}
-	merged := append(personalEntries, sharedEntries...)
+	merged := slices.Concat(personalEntries, sharedEntries)
 	sort.Slice(merged, func(i, j int) bool {
 		return strings.ToLower(merged[i].Name) < strings.ToLower(merged[j].Name)
 	})
@@ -153,7 +154,7 @@ func (s *ScopedStore) ListByFolderDirect(folderPath string) ([]*StaticPassword, 
 	if err != nil {
 		return nil, err
 	}
-	merged := append(personalEntries, sharedEntries...)
+	merged := slices.Concat(personalEntries, sharedEntries)
 	sort.Slice(merged, func(i, j int) bool {
 		return strings.ToLower(merged[i].Name) < strings.ToLower(merged[j].Name)
 	})
@@ -227,7 +228,7 @@ func (s *ScopedStore) mergedList() ([]*StaticPassword, error) {
 	if err != nil {
 		return nil, err
 	}
-	merged := append(personalPWs, sharedPWs...)
+	merged := slices.Concat(personalPWs, sharedPWs)
 	sort.Slice(merged, func(i, j int) bool {
 		return strings.ToLower(merged[i].Name) < strings.ToLower(merged[j].Name)
 	})

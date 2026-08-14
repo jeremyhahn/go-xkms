@@ -190,7 +190,7 @@ func (h *wsHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		return // Upgrade already wrote the response
 	}
-	defer conn.Close()
+	defer func() { _ = conn.Close() }()
 
 	// One write mutex serializes the hostkey-confirm frame (below, during
 	// Dial) with the post-Dial error frame. bridge() owns its own write
@@ -218,7 +218,7 @@ func (h *wsHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		writeControl(conn, &writeMu, controlMessage{Type: "error", Message: derr.Error()})
 		return
 	}
-	defer cons.Close()
+	defer func() { _ = cons.Close() }()
 
 	bridge(conn, cons)
 }
