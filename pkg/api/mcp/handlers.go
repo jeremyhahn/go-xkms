@@ -21,7 +21,6 @@ import (
 	"encoding/pem"
 	"errors"
 	"fmt"
-	"net"
 	"strings"
 
 	"github.com/jeremyhahn/go-xkms/pkg/errs"
@@ -199,14 +198,6 @@ func (s *Server) handleGenerateKey(ctx context.Context, req *JSONRPCRequest) (in
 		return nil, mapKeyOpError(err)
 	}
 
-	// Notify subscribers
-	go s.NotifyEvent("key.created", params.KeyID, map[string]interface{}{
-		"key_id":    params.KeyID,
-		"backend":   params.Backend,
-		"key_type":  params.KeyType,
-		"algorithm": params.Algorithm,
-	})
-
 	return GenerateKeyResult{
 		KeyID:        resp.KeyID,
 		PublicKeyPEM: resp.PublicKeyPEM,
@@ -295,12 +286,6 @@ func (s *Server) handleDeleteKey(ctx context.Context, req *JSONRPCRequest) (inte
 	if err := ks.DeleteKey(ctx, attrs); err != nil {
 		return nil, &errs.Wrapped{Msg: "failed to delete key", Err: err}
 	}
-
-	// Notify subscribers
-	go s.NotifyEvent("key.deleted", params.KeyID, map[string]interface{}{
-		"key_id":  params.KeyID,
-		"backend": params.Backend,
-	})
 
 	return map[string]interface{}{
 		"success": true,
@@ -491,39 +476,6 @@ func (s *Server) handleVerify(ctx context.Context, req *JSONRPCRequest) (interfa
 	}, nil
 }
 
-// handleSubscribe handles the subscribe method
-func (s *Server) handleSubscribe(ctx context.Context, req *JSONRPCRequest, conn net.Conn) (interface{}, error) {
-	var params SubscribeParams
-	if err := json.Unmarshal(req.Params, &params); err != nil {
-		return nil, &errs.Wrapped{Msg: "invalid params", Err: err}
-	}
-
-	// Create or update subscriber
-	s.subMutex.Lock()
-	sub, exists := s.subscribers[conn]
-	if !exists {
-		sub = &Subscriber{
-			conn:   conn,
-			events: make(map[string]bool),
-		}
-		s.subscribers[conn] = sub
-	}
-	s.subMutex.Unlock()
-
-	// Add events to subscription
-	sub.mutex.Lock()
-	for _, event := range params.Events {
-		sub.events[event] = true
-	}
-	sub.mutex.Unlock()
-
-	return map[string]interface{}{
-		"success":     true,
-		"events":      params.Events,
-		"total_count": len(sub.events),
-	}, nil
-}
-
 // handleRotateKey handles the rotateKey method.
 //
 // Rotation belongs to the service layer, which resolves the request's backend
@@ -551,12 +503,6 @@ func (s *Server) handleRotateKey(ctx context.Context, req *JSONRPCRequest) (inte
 	if err != nil {
 		return nil, mapKeyOpError(err)
 	}
-
-	// Notify subscribers
-	go s.NotifyEvent("key.rotated", params.KeyID, map[string]interface{}{
-		"key_id":  params.KeyID,
-		"backend": params.Backend,
-	})
 
 	return RotateKeyResult{
 		KeyID:        resp.KeyID,
@@ -737,11 +683,6 @@ func (s *Server) handleSaveCert(ctx context.Context, req *JSONRPCRequest) (inter
 		return nil, &errs.Wrapped{Msg: "failed to save certificate", Err: err}
 	}
 
-	// Notify subscribers
-	go s.NotifyEvent("cert.saved", params.KeyID, map[string]interface{}{
-		"key_id": params.KeyID,
-	})
-
 	return map[string]interface{}{
 		"success": true,
 	}, nil
@@ -790,11 +731,6 @@ func (s *Server) handleDeleteCert(ctx context.Context, req *JSONRPCRequest) (int
 	if err := s.keystore.DeleteCert(ctx, params.KeyID); err != nil {
 		return nil, &errs.Wrapped{Msg: "failed to delete certificate", Err: err}
 	}
-
-	// Notify subscribers
-	go s.NotifyEvent("cert.deleted", params.KeyID, map[string]interface{}{
-		"key_id": params.KeyID,
-	})
 
 	return map[string]interface{}{
 		"success": true,
@@ -876,12 +812,6 @@ func (s *Server) handleSaveCertChain(ctx context.Context, req *JSONRPCRequest) (
 	if err := s.keystore.SaveCertChain(ctx, params.KeyID, chain); err != nil {
 		return nil, &errs.Wrapped{Msg: "failed to save certificate chain", Err: err}
 	}
-
-	// Notify subscribers
-	go s.NotifyEvent("cert.chain.saved", params.KeyID, map[string]interface{}{
-		"key_id":      params.KeyID,
-		"chain_count": len(chain),
-	})
 
 	return map[string]interface{}{
 		"success": true,
@@ -1201,12 +1131,6 @@ func (s *Server) handleImportKeyMaterial(ctx context.Context, req *JSONRPCReques
 		return nil, &errs.Wrapped{Msg: "failed to import key", Err: err}
 	}
 
-	// Notify subscribers
-	go s.NotifyEvent("key.imported", params.KeyID, map[string]interface{}{
-		"key_id":  params.KeyID,
-		"backend": params.Backend,
-	})
-
 	return map[string]interface{}{
 		"success": true,
 	}, nil
@@ -1260,12 +1184,6 @@ func (s *Server) handleExportKey(ctx context.Context, req *JSONRPCRequest) (inte
 	if err != nil {
 		return nil, &errs.Wrapped{Msg: "failed to export key", Err: err}
 	}
-
-	// Notify subscribers
-	go s.NotifyEvent("key.exported", params.KeyID, map[string]interface{}{
-		"key_id":  params.KeyID,
-		"backend": params.Backend,
-	})
 
 	return ExportKeyResult{
 		WrappedKey:  wrapped.WrappedKey,
@@ -1601,14 +1519,6 @@ func (s *Server) handleCopyKey(ctx context.Context, req *JSONRPCRequest) (interf
 	if err := destBackend.ImportKey(ctx, destAttrs, wrapped); err != nil {
 		return nil, &errs.Wrapped{Msg: "failed to import key", Err: err}
 	}
-
-	// Notify subscribers
-	go s.NotifyEvent("key.copied", params.DestKeyID, map[string]interface{}{
-		"source_backend": params.SourceBackend,
-		"source_key_id":  params.SourceKeyID,
-		"dest_backend":   params.DestBackend,
-		"dest_key_id":    params.DestKeyID,
-	})
 
 	return CopyKeyResult{
 		Success: true,

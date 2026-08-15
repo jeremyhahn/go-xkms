@@ -4,25 +4,19 @@ services:
     build:
       context: ../../..
       dockerfile: Dockerfile
-      additional_contexts:
-        go-qrdb: ../../../../go-qrdb
-        go-quicraft: ../../../../go-quicraft
-        go-codec: ../../../../go-codec
-        go-frost: ../../../../go-frost
-        go-objstore: ../../../../go-objstore
-        go-truststrap: ../../../../go-truststrap
       args:
         - VERSION=${VERSION:-0.0.1-alpha}
+      secrets:
+        - gomodauth
     image: go-xkms-integration:latest
     container_name: xkms-integration-server
     # Ports are exposed but NOT published to the host to avoid conflicts
     # with the devcontainer. Test containers communicate via the Docker
     # network using the container name (xkms-server:8443, etc.).
     expose:
-      - "8443"       # REST API
+      - "8443/tcp"   # REST API (HTTP/2 over TCP)
+      - "8443/udp"   # QUIC/HTTP3 on the unified REST port (Alt-Svc h3)
       - "9443"       # gRPC
-      - "8444/udp"   # QUIC (UDP)
-      - "8444/tcp"   # QUIC fallback (TCP)
       - "9444"       # MCP
       - "9090"       # Metrics
     # Required for QUIC UDP buffer settings
@@ -132,13 +126,8 @@ services:
     build:
       context: ../../..
       dockerfile: Dockerfile
-      additional_contexts:
-        go-qrdb: ../../../../go-qrdb
-        go-quicraft: ../../../../go-quicraft
-        go-codec: ../../../../go-codec
-        go-frost: ../../../../go-frost
-        go-objstore: ../../../../go-objstore
-        go-truststrap: ../../../../go-truststrap
+      secrets:
+        - gomodauth
     image: go-xkms-integration:latest
     container_name: xkms-integration-tests
     # Required for QUIC UDP buffer settings
@@ -149,13 +138,6 @@ services:
         condition: service_healthy
     volumes:
       - ../../..:/workspace
-      # Sibling module mounts (for go.mod replace directives)
-      - ../../../../go-qrdb:/go-qrdb:cached
-      - ../../../../go-quicraft:/go-quicraft:cached
-      - ../../../../go-objstore:/go-objstore:cached
-      - ../../../../go-truststrap:/go-truststrap:cached
-      - ../../../../go-codec:/go-codec:cached
-      - ../../../../go-frost:/go-frost:cached
       - xkms-socket:/var/run/xkms
       - xkms-certs:/etc/xkms/certs:ro
       - cli-build:/app/build
@@ -163,11 +145,16 @@ services:
       - go-build-cache:/root/.cache/go-build
     environment:
       - CGO_ENABLED=1
+      - GOWORK=off
+      - GOPRIVATE=github.com/jeremyhahn/*
+      - GIT_CONFIG_COUNT=1
+      - GIT_CONFIG_KEY_0=url.http://x:${GITEA_GO_TOKEN}@198.51.100.91:3001/jeremyhahn/.insteadOf
+      - GIT_CONFIG_VALUE_0=https://github.com/jeremyhahn/
       # Server endpoints (all use TLS now)
       - KEYSTORE_UNIX_SOCKET=/var/run/xkms/xkms.sock
       - KEYSTORE_REST_URL=https://xkms-server:8443
       - KEYSTORE_GRPC_ADDR=xkms-server:9443
-      - KEYSTORE_QUIC_URL=https://xkms-server:8444
+      - KEYSTORE_QUIC_URL=https://xkms-server:8443
       - KEYSTORE_MCP_ADDR=xkms-server:9444
       - KEYSTORE_CLI_BIN=/app/build/bin/xkmsctl
       # TLS configuration - use CA certificate for proper verification
@@ -180,7 +167,6 @@ services:
       - xkms-integration
     command: >
       sh -c "
-      bash .devcontainer/scripts/ensure-gowork.sh && export GOWORK=/tmp/go.work &&
       echo 'Configuring UDP buffers for QUIC...' &&
       echo 2500000 > /proc/sys/net/core/rmem_max 2>/dev/null || echo 'Warning: Could not set rmem_max' &&
       echo 2500000 > /proc/sys/net/core/wmem_max 2>/dev/null || echo 'Warning: Could not set wmem_max' &&
@@ -192,7 +178,7 @@ services:
       ls -la /etc/xkms/certs/ || true &&
       echo 'Building CLI binary...' &&
       mkdir -p /app/build/bin &&
-      CGO_ENABLED=0 go build -buildvcs=false -tags=frost -o /app/build/bin/xkmsctl ./cmd/xkmsctl &&
+      CGO_ENABLED=0 go build -buildvcs=false -tags='frost gms_pure_go' -o /app/build/bin/xkmsctl ./cmd/xkmsctl &&
       echo 'Running integration tests...' &&
       go test -v -tags=integration,frost,codec_cbor,codec_json,codec_msgpack ./test/integration/api/... -timeout 15m
       "
@@ -218,3 +204,7 @@ volumes:
 networks:
   xkms-integration:
     driver: bridge
+
+secrets:
+  gomodauth:
+    file: ../../../.devcontainer/gomodauth.env

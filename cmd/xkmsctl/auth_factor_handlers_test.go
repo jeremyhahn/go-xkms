@@ -515,13 +515,20 @@ func TestXKMSAuthLogin_invalidMethod(t *testing.T) {
 	}
 }
 
-// TestXKMSAuthFactorDefaultFactory verifies the default factory
-// returns the canonical missing-client error so production binaries
-// surface a clear operator-facing message rather than a stack trace.
+// TestXKMSAuthFactorDefaultFactory verifies the default factory derives
+// a qrdb SDK transport from the standard CLI conventions and surfaces
+// the canonical typed connect error when no server is reachable. The
+// unix dial fails fast against a nonexistent socket, keeping this a
+// unit-safe negative-path test; the success path requires a live
+// UserAuthFactorService and is exercised by the integration suite.
 func TestXKMSAuthFactorDefaultFactory(t *testing.T) {
-	prev := userAuthFactorClientFactory
+	prevFactory := userAuthFactorClientFactory
 	userAuthFactorClientFactory = defaultUserAuthFactorClientFactory
-	defer func() { userAuthFactorClientFactory = prev }()
+	defer func() { userAuthFactorClientFactory = prevFactory }()
+
+	prevConfig := globalConfig
+	globalConfig = &Config{Server: "unix://" + t.TempDir() + "/does-not-exist.sock"}
+	defer func() { globalConfig = prevConfig }()
 
 	cl, closeFn, err := userAuthFactorClient(context.Background())
 	if cl != nil {
@@ -530,8 +537,29 @@ func TestXKMSAuthFactorDefaultFactory(t *testing.T) {
 	if closeFn != nil {
 		t.Fatal("expected nil closeFn")
 	}
-	var mc *AuthFactorMissingClientError
-	if !errors.As(err, &mc) {
-		t.Fatalf("want *AuthFactorMissingClientError, got %T: %v", err, err)
+	var connectErr *QRDBControlConnectError
+	if !errors.As(err, &connectErr) {
+		t.Fatalf("want *QRDBControlConnectError, got %T: %v", err, err)
+	}
+}
+
+// TestXKMSAuthFactorDefaultFactory_UnsupportedTransport verifies the
+// default factory surfaces the canonical typed error when the configured
+// transport cannot host the qrdb control plane.
+func TestXKMSAuthFactorDefaultFactory_UnsupportedTransport(t *testing.T) {
+	prevConfig := globalConfig
+	globalConfig = &Config{Protocol: "rest"}
+	defer func() { globalConfig = prevConfig }()
+
+	cl, closeFn, err := defaultUserAuthFactorClientFactory(context.Background())
+	if cl != nil {
+		t.Fatalf("expected nil client, got %T", cl)
+	}
+	if closeFn != nil {
+		t.Fatal("expected nil closeFn")
+	}
+	var unsupported *QRDBControlUnsupportedTransportError
+	if !errors.As(err, &unsupported) {
+		t.Fatalf("want *QRDBControlUnsupportedTransportError, got %T: %v", err, err)
 	}
 }

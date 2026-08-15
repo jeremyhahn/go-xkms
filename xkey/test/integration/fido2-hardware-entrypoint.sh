@@ -99,13 +99,6 @@ export GONOSUMDB='*'
 export GOFLAGS='-buildvcs=false'
 export CGO_ENABLED=1
 
-# Generate the container Go workspace via the single canonical generator
-# (scripts/gen-gowork.sh) so the replace set never drifts from the other
-# container contexts. Siblings are bind-mounted at /go-<name>; repo root is
-# /workspace.
-bash /workspace/scripts/gen-gowork.sh /workspace /tmp/go.work
-export GOWORK=/tmp/go.work
-
 # Remove any stale go-sev-guest checksum entries that cause proxy mismatches.
 for f in /workspace/go.sum /workspace/xkey/go.sum /workspace/sdk/go/go.sum; do
     if [ -f "$f" ]; then

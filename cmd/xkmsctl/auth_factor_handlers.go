@@ -182,12 +182,13 @@ func (e *InvalidCredentialHexError) Unwrap() error { return e.Cause }
 
 // AuthFactorMissingClientError is returned when the qrdb SDK user-side
 // AuthFactor client has not been wired (e.g., during tests that don't
-// construct a transport).
+// construct a transport, or when the active transport does not expose
+// the AuthFactor service).
 type AuthFactorMissingClientError struct{}
 
 // Error returns a human-readable description.
 func (e *AuthFactorMissingClientError) Error() string {
-	return "auth factor: qrdb SDK user-side AuthFactor client is not configured (set --qrdb-server or use the embedded test transport)"
+	return "auth factor: qrdb SDK user-side AuthFactor client is not configured (the active transport does not expose the AuthFactor service)"
 }
 
 // ---------------------------------------------------------------------------
@@ -204,28 +205,41 @@ type UserAuthFactorClientFactory func(ctx context.Context) (qrdbtransport.UserAu
 // Tests can override this to inject an in-process embedded client.
 var userAuthFactorClientFactory UserAuthFactorClientFactory = defaultUserAuthFactorClientFactory
 
-// defaultUserAuthFactorClientFactory builds a client against xkmsd's
-// auth-factor endpoints, which proxy the embedded qrdb node.
+// defaultUserAuthFactorClientFactory derives the qrdb transport from the
+// same --server/--transport/TLS flag conventions every other xkmsctl
+// command uses (newQRDBControlTransport, cluster.go) and returns the qrdb
+// SDK's user-side AuthFactor surface.
 //
-// The CLI reaches identity through the server it already talks to rather than
-// a second connection to qrdb: xkmsd holds the node, and factor state stays
-// qrdb's either way. When no server is configured the factory reports
-// AuthFactorMissingClientError so the caller sees a clear operator-facing
-// message instead of a stack trace.
-func defaultUserAuthFactorClientFactory(_ context.Context) (qrdbtransport.UserAuthFactorClient, func() error, error) {
+// xkmsd registers go-qrdb's own UserAuthFactorService on its gRPC server
+// and unix socket (pkg/server/qrdb_control_plane.go), so the CLI drives
+// that service directly through the qrdb SDK client — factor state stays
+// qrdb's and no bespoke proxy client sits in between.
+func defaultUserAuthFactorClientFactory(ctx context.Context) (qrdbtransport.UserAuthFactorClient, func() error, error) {
 	cfg := getConfig()
-	if cfg == nil || cfg.Server == "" {
+	if cfg == nil {
 		return nil, nil, &AuthFactorMissingClientError{}
 	}
 
-	client, err := newAuthFactorRESTClient(cfg)
+	tr, err := newQRDBControlTransport(cfg)
 	if err != nil {
 		return nil, nil, err
 	}
 
-	// The HTTP client owns no long-lived resource that needs releasing; the
-	// closer exists so callers can keep one uniform shape.
-	return client, func() error { return nil }, nil
+	qc, err := qrdbsdk.NewClient(tr)
+	if err != nil {
+		return nil, nil, &QRDBControlConnectError{Cause: err}
+	}
+	if err := qc.Connect(ctx); err != nil {
+		_ = qc.Close()
+		return nil, nil, &QRDBControlConnectError{Cause: err}
+	}
+
+	cl := qc.UserAuthFactors()
+	if cl == nil {
+		_ = qc.Close()
+		return nil, nil, &AuthFactorMissingClientError{}
+	}
+	return cl, qc.Close, nil
 }
 
 // SetUserAuthFactorClientFactory replaces the active factory. Intended

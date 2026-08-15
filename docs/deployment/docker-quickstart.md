@@ -39,8 +39,12 @@ logging:
   level: info
   format: json
 
+# Network protocols always require storage.backend "qrdb" and tls.enabled:
+# the embedded qrdb node is the unified API server, and its transports are
+# TLS-only. Omitting cert_file/key_file below is fine for quick testing --
+# a persisted bootstrap self-signed certificate serves until a CA composes.
 tls:
-  enabled: false  # Disable TLS for quick testing
+  enabled: true
 
 auth:
   enabled: false  # Disable auth for quick testing
@@ -50,7 +54,7 @@ health:
   path: /health
 
 storage:
-  backend: file
+  backend: qrdb
   path: /var/lib/xkms/metadata
 
 default_backend: software
@@ -74,8 +78,8 @@ docker run -d --name xkms \
 ### 4. Test the Server
 
 ```bash
-# Check health
-curl http://localhost:8443/health
+# Check health (TLS is mandatory; -k accepts the bootstrap self-signed cert)
+curl -k https://localhost:8443/health
 
 # View logs
 docker logs xkms
@@ -161,7 +165,7 @@ make docker-run-server
 
 # REST:  https://localhost:8443
 # gRPC:  localhost:9443
-# QUIC:  localhost:8444
+# QUIC:  HTTP/3 on https://localhost:8443 (via Alt-Svc, same port as REST)
 # MCP:   localhost:9444
 ```
 

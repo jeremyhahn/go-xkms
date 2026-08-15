@@ -19,8 +19,8 @@ This document tracks the development progress of go-xkms.
 ### API Interfaces
 - [x] **REST API** - Chi-based HTTP API with RBAC and WebAuthn (`pkg/api/rest/`)
 - [x] **gRPC API** - Full gRPC service with protobuf definitions (`pkg/api/grpc/`)
-- [x] **QUIC API** - HTTP/3 transport (`pkg/api/quic/`)
-- [x] **MCP API** - Model Context Protocol (JSON-RPC) (`pkg/api/mcp/`)
+- [x] **QUIC API** - HTTP/3 served on the REST listener's port via `Alt-Svc`, not a separate server package (`pkg/api/rest/`)
+- [x] **MCP API** - Real Model Context Protocol (Streamable HTTP) served by the embedded qrdb node; xkms methods are exposed as `xkms_*` tools dispatched through the `pkg/api/mcp/` dispatch core
 - [x] **Unix Socket IPC** - gRPC over Unix domain sockets (`pkg/api/unix/`)
 
 ### PKCS#11 v3.2 Provider Module
@@ -113,17 +113,20 @@ port.
 |----------|--------------------------|------------------|--------------------|
 | REST | `rest_port: 8443` | `8443` (`pkg/api/rest/server.go:311`) | `http://localhost:8443` (`sdk/go/options.go:30`) |
 | gRPC | `grpc_port: 9443` | none | `localhost:9443` (`sdk/go/options.go:31`) |
-| QUIC | `quic_port: 8444` | `localhost:8444` (`pkg/api/quic/server.go:119`) | `localhost:8444` (`sdk/go/options.go:32`) |
-| MCP | `mcp_port: 8445` | `localhost:9444` (`pkg/api/mcp/server.go:178`) | `localhost:9444` (`sdk/go/options.go:33`) |
+| QUIC | none — HTTP/3 on `rest_port` (8443); `quic_port: 8444` is vestigial config | n/a | `localhost:8444` (`sdk/go/options.go:32`) -- stale, the QUIC client should target the REST port |
+| MCP | `mcp_port: 8445` | `localhost:9444` (`sdk/go/options.go:33`) | `localhost:9444` (`sdk/go/options.go:33`) |
 | Noise | `noise_port: 8447` (`configs/xkmsd-local.yaml:10`) | `8445` (`pkg/trust/bootstrap/bootstrap.go:98`) | `8445` (`sdk/go/bootstrap/bootstrap.go:68`) |
 | Metrics | `port: 9090` | none | n/a |
 
-The MCP and Noise rows are the two live disagreements: the shipped daemon
+The MCP and Noise rows are two live disagreements: the shipped daemon
 configurations bind MCP on 8445, which is the same number `DefaultNoisePort`
 hard-codes, while the MCP library and the SDK client both fall back to 9444.
 An `xkmsd` started from `configs/xkmsd.yaml` will not be reachable at the SDK's
 default MCP address, and `configs/xkmsd-local.yaml` moves Noise to 8447 to keep
-it off the MCP port.
+it off the MCP port. The SDK's QUIC client default (`localhost:8444`) is a
+third: since the unified API server retired the standalone QUIC listener,
+QUIC now serves as HTTP/3 on `rest_port` (8443), so `sdk/go/options.go`'s
+`DefaultQUICAddress` should be pointed at the REST port instead.
 
 ## Build Targets (PKCS#11 Module)
 

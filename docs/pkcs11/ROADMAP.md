@@ -197,8 +197,9 @@ it is a local-only platform store (`ErrNotSupported` on every network transport)
   interfaces forces implementations in ALL SIX transports or the build breaks —
   grpc (`transport.go`, proto), unix (free via the same generated proto client),
   rest (`transport.go` + new `pkg/api/rest/pkcs11state_handlers.go` + routes in
-  **`pkg/api/rest/server.go` — THE contended file**), quic (`transport.go` + new
-  `pkg/api/quic/handlers_pkcs11state.go`), mcp (`ErrNotSupported` stub),
+  **`pkg/api/rest/server.go` — THE contended file**), quic (`transport.go`;
+  server side served by the same REST route table — QUIC is HTTP/3 on the REST
+  port, not a separate `pkg/api/quic` package), mcp (`ErrNotSupported` stub),
   embedded (`ErrNotSupported` — offline mode uses local storage per D4; **one-line
   maintainer confirm**). Server side: new `pkg/xkms/servicer_pkcs11state.go` against
   `qrdbsdk.KVStore`/`GenericDAO`; composition in `pkg/server/server.go` (~line 1592,

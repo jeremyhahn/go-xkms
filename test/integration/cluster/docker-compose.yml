@@ -27,15 +27,10 @@ services:
     build:
       context: ../../..
       dockerfile: test/integration/cluster/Dockerfile.xkmsd
-      additional_contexts:
-        go-qrdb:      ../../../../go-qrdb
-        go-quicraft:  ../../../../go-quicraft
-        go-codec:     ../../../../go-codec
-        go-frost:     ../../../../go-frost
-        go-objstore:  ../../../../go-objstore
-        go-truststrap: ../../../../go-truststrap
       args:
         - VERSION=${VERSION:-0.0.1-test}
+      secrets:
+        - gomodauth
     image: go-xkms-cluster-node:latest
     container_name: cluster-node1
     volumes:
@@ -204,18 +199,16 @@ services:
       - ../../..:/workspace
       # The resilience (chaos) tests drive docker directly to kill/restart nodes.
       - /var/run/docker.sock:/var/run/docker.sock
-      # Sibling module bind-mounts so ensure-gowork.sh resolves in-house deps.
-      - ../../../../go-qrdb:/go-qrdb:cached
-      - ../../../../go-quicraft:/go-quicraft:cached
-      - ../../../../go-objstore:/go-objstore:cached
-      - ../../../../go-truststrap:/go-truststrap:cached
-      - ../../../../go-codec:/go-codec:cached
-      - ../../../../go-frost:/go-frost:cached
       - go-cache:/root/go
       - go-build-cache:/root/.cache/go-build
     environment:
       - CGO_ENABLED=0
       - GOTOOLCHAIN=auto
+      - GOWORK=off
+      - GOPRIVATE=github.com/jeremyhahn/*
+      - GIT_CONFIG_COUNT=1
+      - GIT_CONFIG_KEY_0=url.http://x:${GITEA_GO_TOKEN}@198.51.100.91:3001/jeremyhahn/.insteadOf
+      - GIT_CONFIG_VALUE_0=https://github.com/jeremyhahn/
       # Node REST endpoints reachable inside cluster-net.
       - CLUSTER_NODE1_URL=https://node1:8443
       - CLUSTER_NODE2_URL=https://node2:8443
@@ -245,3 +238,7 @@ volumes:
 networks:
   cluster-net:
     driver: bridge
+
+secrets:
+  gomodauth:
+    file: ../../../.devcontainer/gomodauth.env

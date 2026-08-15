@@ -207,13 +207,19 @@ Read [overview.md](./overview.md) for high-level understanding of the system arc
         └───────────────────────┘
 ```
 
+The QUIC box above is logical, not a separate listener: it is HTTP/3 served
+directly on the REST port, advertised via `Alt-Svc`. MCP is served by the
+embedded qrdb node (Streamable HTTP), not a standalone xkms listener.
+
 ### Key Features
 
 **Multi-Protocol Support:**
 - REST API (HTTP/1.1 + HTTP/2) on port 8443
 - gRPC (HTTP/2) on port 9443
-- MCP (JSON-RPC 2.0) on port 9444
-- QUIC (HTTP/3) on port 8444
+- MCP (real Model Context Protocol, Streamable HTTP, served by the embedded
+  qrdb node) on port 9444
+- QUIC (HTTP/3), served on the same port as REST (8443) via `Alt-Svc` -- not
+  a separate listener
 - CLI for local and remote operations
 
 **Security:**
@@ -252,8 +258,8 @@ All protocols support:
 ### Protocol Implementations
 - REST API
 - gRPC API
-- QUIC/HTTP3
-- MCP (JSON-RPC)
+- QUIC/HTTP3 (served on the REST listener via `Alt-Svc`, not a separate server)
+- MCP (real Model Context Protocol, served by the embedded qrdb node)
 - CLI (local and remote)
 
 ### Security & Operations
@@ -280,10 +286,9 @@ go-xkms/
 │   ├── server/          # Server orchestration & service layer
 │   ├── config/          # Configuration management
 │   ├── api/
-│   │   ├── rest/        # REST API implementation
+│   │   ├── rest/        # REST API implementation (also serves QUIC/HTTP3)
 │   │   ├── grpc/        # gRPC implementation
-│   │   ├── mcp/         # MCP implementation
-│   │   ├── quic/        # QUIC/HTTP3 implementation
+│   │   ├── mcp/         # MCP dispatch core (real MCP served by the embedded qrdb node)
 │   │   └── unix/        # Unix socket gRPC
 │   ├── backend/         # Backend interface & implementations
 │   ├── crypto/          # Cryptographic primitives
@@ -361,6 +366,8 @@ mcp:
 
 quic:
   enabled: true
+  # QUIC has no listener/port of its own: it is HTTP/3 served on the REST
+  # address above via Alt-Svc. A dedicated quic.address is vestigial.
   address: :8444
 
 auth:

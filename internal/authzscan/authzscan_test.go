@@ -26,10 +26,12 @@ import (
 )
 
 // grpcSeams mirrors the gRPC transport's gate shape:
-// authorize(ctx, resource, action, resourceID).
+// authorize(ctx, resource, action, resourceID). The second seam exercises the
+// FixedResource pinning capability against a wrapper that hard-codes its
+// resource.
 var grpcSeams = []Seam{
 	{Method: "authorize", Args: 4, ResourceArg: 1, ActionArg: 2},
-	{Method: "authorizeClusterMutation", Args: 3, ResourceArg: -1, ActionArg: 1, FixedResource: "ResourceClusterAdmin"},
+	{Method: "authorizePinned", Args: 3, ResourceArg: -1, ActionArg: 1, FixedResource: "ResourceAdmin"},
 }
 
 // writePkg materializes a single-file Go package in a temp dir and returns it.
@@ -50,8 +52,8 @@ func (s *Service) GetKey() error {
 	return s.authorize(ctx, auth.ResourceKeys, auth.ActionGet, "id")
 }
 
-func (s *Service) AddReplica() error {
-	return s.authorizeClusterMutation(ctx, auth.ActionAddMember, "replica")
+func (s *Service) UpdateThing() error {
+	return s.authorizePinned(ctx, auth.ActionUpdate, "thing")
 }
 
 // authorize is the seam itself; its arguments are parameters, so it must not
@@ -60,8 +62,8 @@ func (s *Service) authorize(ctx context.Context, resource, action, id string) er
 	return nil
 }
 
-func (s *Service) authorizeClusterMutation(ctx context.Context, action, id string) error {
-	return s.authorize(ctx, auth.ResourceClusterAdmin, action, id)
+func (s *Service) authorizePinned(ctx context.Context, action, id string) error {
+	return s.authorize(ctx, auth.ResourceAdmin, action, id)
 }
 `,
 		// A _test.go file must be ignored entirely.
@@ -83,8 +85,8 @@ func TestSomething() error {
 		assert.NotEmpty(t, s.Pos, "every site must carry a source position")
 	}
 	assert.Equal(t, map[string]string{
-		"GetKey":     auth.ResourceKeys + ":" + auth.ActionGet,
-		"AddReplica": auth.ResourceClusterAdmin + ":" + auth.ActionAddMember,
+		"GetKey":      auth.ResourceKeys + ":" + auth.ActionGet,
+		"UpdateThing": auth.ResourceAdmin + ":" + auth.ActionUpdate,
 	}, got)
 }
 
@@ -193,14 +195,14 @@ func TestScan_RejectsUnknownFixedResource(t *testing.T) {
 	dir := writePkg(t, map[string]string{
 		"svc.go": `package svc
 
-func (s *Service) AddReplica() error {
-	return s.authorizeClusterMutation(ctx, auth.ActionAddMember, "replica")
+func (s *Service) UpdateThing() error {
+	return s.authorizePinned(ctx, auth.ActionUpdate, "thing")
 }
 `,
 	})
 
 	sites, err := Scan(dir, []Seam{
-		{Method: "authorizeClusterMutation", Args: 3, ResourceArg: -1, ActionArg: 1, FixedResource: "ResourceNotReal"},
+		{Method: "authorizePinned", Args: 3, ResourceArg: -1, ActionArg: 1, FixedResource: "ResourceNotReal"},
 	})
 	require.Error(t, err, "a seam pinned to a constant this package does not know must fail")
 	assert.Nil(t, sites)
@@ -270,7 +272,7 @@ func TestConstants_CoverTheCanonicalVocabulary(t *testing.T) {
 	// Spot-check that values come from pkg/auth rather than being retyped.
 	assert.Equal(t, auth.ResourceKeys, constants["ResourceKeys"])
 	assert.Equal(t, auth.ActionUnsealShare, constants["ActionUnsealShare"])
-	assert.Equal(t, auth.ResourceClusterAdmin, constants["ResourceClusterAdmin"])
+	assert.Equal(t, auth.ResourceCA, constants["ResourceCA"])
 
 	// No name may map to an empty string: an empty resource or action would
 	// authorize against a permission qrdb can never match.

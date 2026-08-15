@@ -289,6 +289,43 @@ tls_ca = /etc/xkms/ca.crt
 timeout = 60s
 ```
 
+## Storage Modes
+
+The module persists its token and object state (labels, PIN hashes, failed-attempt
+counters, object metadata) in one of three modes, selected by
+`XKMS_PKCS11_STORAGE_TYPE` (config key `storage_type`; see
+`pkg/pkcs11/module/config.go`):
+
+| Mode | Value | State lives in | Network |
+|------|-------|----------------|---------|
+| Memory | `memory` | process memory (non-durable) | none |
+| File | `file` | local disk at `XKMS_PKCS11_STORAGE_PATH` | none |
+| Remote | `remote` | xkmsd, over the active transport | required |
+
+### Local modes (`memory` / `file`) — offline, SoftHSM-style
+
+The module runs with no network dependency. With `file`, an optional **offline seal**
+(`XKMS_PKCS11_MODE=local`, `pkg/pkcs11/localseal`) encrypts the on-disk key directory
+under the User PIN via the qrdb barrier (AES-256-GCM at rest); the User PIN unseals it
+at `C_Login` and the store re-seals at `C_Logout`/`C_Finalize`. `XKMS_PKCS11_SEAL_STRATEGY`
+selects the strategy (`passphrase` default; `none` for the cleartext dev path).
+
+### Remote mode (`remote`) — server-authoritative, cluster-shareable
+
+The module keeps **no** local state; every token/object record is stored in xkmsd via
+the `PKCS11State*` RPCs (`pkg/pkcs11/module/storage_remote.go`; server store
+`pkg/pkcs11state`). `XKMS_PKCS11_TOKEN_LABEL` names the token and the `tenant_id` config key
+scopes it (empty is the system scope). When xkmsd embeds a clustered qrdb node the store is Raft-replicated, so
+several module instances can share one server-side token.
+
+**Lockout is server-authoritative here.** The consecutive-failed-PIN counters (which
+drive `CKF_USER_PIN_LOCKED`) live in dedicated keys and are incremented atomically via
+`PKCS11StateCAS` (a linearizable compare-and-swap over the replicated store), so
+concurrent failed logins across clients accumulate against one budget rather than losing
+updates — a PIN cannot be brute-forced past its budget by racing multiple modules. The
+SessionManager's in-memory counters are an optimistic cache reconciled to the durable
+value. See `docs/pkcs11/ROADMAP.md` (X1) and `pkg/pkcs11/module/storage.go`.
+
 ## Token Auto-Initialization
 
 For testing, the module can initialize its token automatically on load instead of requiring a separate

@@ -5,21 +5,18 @@ services:
     working_dir: /app
     volumes:
       - ../../..:/app
-      # Sibling module mounts (for go.mod replace directives)
-      - ../../../../go-qrdb:/go-qrdb:cached
-      - ../../../../go-quicraft:/go-quicraft:cached
-      - ../../../../go-objstore:/go-objstore:cached
-      - ../../../../go-truststrap:/go-truststrap:cached
-      - ../../../../go-codec:/go-codec:cached
-      - ../../../../go-frost:/go-frost:cached
     environment:
       - CGO_ENABLED=1
       - GOTOOLCHAIN=auto
+      - GOWORK=off
+      - GOPRIVATE=github.com/jeremyhahn/*
+      - GIT_CONFIG_COUNT=1
+      - GIT_CONFIG_KEY_0=url.http://x:${GITEA_GO_TOKEN}@198.51.100.91:3001/jeremyhahn/.insteadOf
+      - GIT_CONFIG_VALUE_0=https://github.com/jeremyhahn/
       - GOCACHE=/tmp/go-cache
       - GOPATH=/tmp/go
     command: >
       sh -c "
-      bash .devcontainer/scripts/ensure-gowork.sh && export GOWORK=/tmp/go.work &&
       apt-get update && apt-get install -y --no-install-recommends build-essential &&
       go test -v -tags='integration codec_cbor codec_json codec_msgpack' ./test/integration/storage/... -timeout 30m
       "
@@ -32,21 +29,18 @@ services:
     working_dir: /app
     volumes:
       - ../../..:/app
-      # Sibling module mounts (for go.mod replace directives)
-      - ../../../../go-qrdb:/go-qrdb:cached
-      - ../../../../go-quicraft:/go-quicraft:cached
-      - ../../../../go-objstore:/go-objstore:cached
-      - ../../../../go-truststrap:/go-truststrap:cached
-      - ../../../../go-codec:/go-codec:cached
-      - ../../../../go-frost:/go-frost:cached
     environment:
       - CGO_ENABLED=0
       - GOTOOLCHAIN=auto
+      - GOWORK=off
+      - GOPRIVATE=github.com/jeremyhahn/*
+      - GIT_CONFIG_COUNT=1
+      - GIT_CONFIG_KEY_0=url.http://x:${GITEA_GO_TOKEN}@198.51.100.91:3001/jeremyhahn/.insteadOf
+      - GIT_CONFIG_VALUE_0=https://github.com/jeremyhahn/
       - GOCACHE=/tmp/go-cache
       - GOPATH=/tmp/go
     command: >
       sh -c "
-      bash .devcontainer/scripts/ensure-gowork.sh && export GOWORK=/tmp/go.work &&
       go test -v -tags='integration codec_cbor codec_json codec_msgpack' ./test/integration/storage/...
       -run 'TestFileStorage' -timeout 15m
       "
@@ -59,21 +53,18 @@ services:
     working_dir: /app
     volumes:
       - ../../..:/app
-      # Sibling module mounts (for go.mod replace directives)
-      - ../../../../go-qrdb:/go-qrdb:cached
-      - ../../../../go-quicraft:/go-quicraft:cached
-      - ../../../../go-objstore:/go-objstore:cached
-      - ../../../../go-truststrap:/go-truststrap:cached
-      - ../../../../go-codec:/go-codec:cached
-      - ../../../../go-frost:/go-frost:cached
     environment:
       - CGO_ENABLED=0
       - GOTOOLCHAIN=auto
+      - GOWORK=off
+      - GOPRIVATE=github.com/jeremyhahn/*
+      - GIT_CONFIG_COUNT=1
+      - GIT_CONFIG_KEY_0=url.http://x:${GITEA_GO_TOKEN}@198.51.100.91:3001/jeremyhahn/.insteadOf
+      - GIT_CONFIG_VALUE_0=https://github.com/jeremyhahn/
       - GOCACHE=/tmp/go-cache
       - GOPATH=/tmp/go
     command: >
       sh -c "
-      bash .devcontainer/scripts/ensure-gowork.sh && export GOWORK=/tmp/go.work &&
       go test -v -tags='integration codec_cbor codec_json codec_msgpack' ./test/integration/storage/...
       -run 'TestMemoryStorage' -timeout 15m
       "
@@ -86,17 +77,15 @@ services:
     working_dir: /app
     volumes:
       - ../../..:/app
-      # Sibling module mounts (for go.mod replace directives)
-      - ../../../../go-qrdb:/go-qrdb:cached
-      - ../../../../go-quicraft:/go-quicraft:cached
-      - ../../../../go-objstore:/go-objstore:cached
-      - ../../../../go-truststrap:/go-truststrap:cached
-      - ../../../../go-codec:/go-codec:cached
-      - ../../../../go-frost:/go-frost:cached
       - softhsm-tokens:/var/lib/softhsm/tokens
     environment:
       - CGO_ENABLED=1
       - GOTOOLCHAIN=auto
+      - GOWORK=off
+      - GOPRIVATE=github.com/jeremyhahn/*
+      - GIT_CONFIG_COUNT=1
+      - GIT_CONFIG_KEY_0=url.http://x:${GITEA_GO_TOKEN}@198.51.100.91:3001/jeremyhahn/.insteadOf
+      - GIT_CONFIG_VALUE_0=https://github.com/jeremyhahn/
       - GOCACHE=/tmp/go-cache
       - GOPATH=/tmp/go
       - SOFTHSM2_CONF=/app/test/integration/storage/softhsm2.conf
@@ -106,7 +95,6 @@ services:
         condition: service_completed_successfully
     command: >
       sh -c "
-      bash .devcontainer/scripts/ensure-gowork.sh && export GOWORK=/tmp/go.work &&
       apt-get update && apt-get install -y --no-install-recommends build-essential softhsm2 libsofthsm2 &&
       go test -v -tags='integration,pkcs11,codec_cbor,codec_json,codec_msgpack' ./test/integration/storage/...
       -run 'TestHardwareStorage' -timeout 30m
@@ -120,16 +108,14 @@ services:
     working_dir: /app
     volumes:
       - ../../..:/app
-      # Sibling module mounts (for go.mod replace directives)
-      - ../../../../go-qrdb:/go-qrdb:cached
-      - ../../../../go-quicraft:/go-quicraft:cached
-      - ../../../../go-objstore:/go-objstore:cached
-      - ../../../../go-truststrap:/go-truststrap:cached
-      - ../../../../go-codec:/go-codec:cached
-      - ../../../../go-frost:/go-frost:cached
     environment:
       - CGO_ENABLED=1
       - GOTOOLCHAIN=auto
+      - GOWORK=off
+      - GOPRIVATE=github.com/jeremyhahn/*
+      - GIT_CONFIG_COUNT=1
+      - GIT_CONFIG_KEY_0=url.http://x:${GITEA_GO_TOKEN}@198.51.100.91:3001/jeremyhahn/.insteadOf
+      - GIT_CONFIG_VALUE_0=https://github.com/jeremyhahn/
       - GOCACHE=/tmp/go-cache
       - GOPATH=/tmp/go
       - TPM2_SIMULATOR_HOST=tpm-simulator
@@ -139,7 +125,6 @@ services:
         condition: service_healthy
     command: >
       sh -c "
-      bash .devcontainer/scripts/ensure-gowork.sh && export GOWORK=/tmp/go.work &&
       apt-get update && apt-get install -y --no-install-recommends build-essential libtss2-dev &&
       sleep 3 &&
       go test -v -tags='integration,tpm2,codec_cbor,codec_json,codec_msgpack' ./test/integration/storage/...
@@ -154,13 +139,6 @@ services:
     volumes:
       - softhsm-tokens:/var/lib/softhsm/tokens
       - ../../..:/app
-      # Sibling module mounts (for go.mod replace directives)
-      - ../../../../go-qrdb:/go-qrdb:cached
-      - ../../../../go-quicraft:/go-quicraft:cached
-      - ../../../../go-objstore:/go-objstore:cached
-      - ../../../../go-truststrap:/go-truststrap:cached
-      - ../../../../go-codec:/go-codec:cached
-      - ../../../../go-frost:/go-frost:cached
     environment:
       - SOFTHSM2_CONF=/app/test/integration/storage/softhsm2.conf
     # No Go workspace needed here — this init service only provisions the token.

@@ -23,7 +23,13 @@ import (
 	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
 	qrdbnode "github.com/jeremyhahn/go-qrdb/sdk/go/node"
 
+	"github.com/jeremyhahn/go-xkms/pkg/api/mcp"
+	"github.com/jeremyhahn/go-xkms/pkg/api/rest"
+	"github.com/jeremyhahn/go-xkms/pkg/apimodule"
 	"github.com/jeremyhahn/go-xkms/pkg/seal"
+	"github.com/jeremyhahn/go-xkms/pkg/webui"
+	"github.com/jeremyhahn/go-xkms/pkg/xkms"
+	sdkssh "github.com/jeremyhahn/go-xkms/sdk/go/client/ssh"
 )
 
 // buildXKMSQRDBConfig translates the xkms configuration into the qrdb node
@@ -90,6 +96,30 @@ func (s *Server) buildXKMSQRDBConfig() *qrdbsdk.DaemonConfig {
 		}
 	} else {
 		qcfg.Seal.Enabled = false
+	}
+
+	// Unified API server: network serving runs exclusively on the node's
+	// own multi-protocol server, which takes xkmsd's REST/gRPC/Unix/MCP
+	// ports and serves the xkms capability plane through the registered
+	// ServiceModule. QUIC is HTTP/3 on the REST port (the node's REST
+	// server runs an HTTP/3 listener alongside TCP and advertises it via
+	// Alt-Svc). Enabling protocols here means node construction runs the
+	// full qrdb server start pipeline — module surfaces answer
+	// Unavailable/503 until xkmsd finishes composing the XKMSService.
+	if s.config.NetworkServing() {
+		qcfg.Server.Host = s.config.Server.Host
+		qcfg.Server.AdminPort = s.config.Server.RESTPort
+		qcfg.Server.GRPCPort = s.config.Server.GRPCPort
+		qcfg.Protocols.REST = s.config.Protocols.REST
+		qcfg.Protocols.GRPC = s.config.Protocols.GRPC
+		qcfg.Protocols.Unix = s.config.Protocols.Unix
+		qcfg.Protocols.MCP = s.config.Protocols.MCP
+		if s.config.Protocols.Unix {
+			qcfg.Unix.SocketPath = s.config.Unix.SocketPath
+		}
+		if s.config.Protocols.MCP {
+			qcfg.MCP.Port = s.config.Server.MCPPort
+		}
 	}
 
 	// Map cluster configuration onto the qrdb Raft config. These fields are
@@ -175,6 +205,63 @@ func (s *Server) initEmbeddedQRDBNode() error {
 		qrdbsdk.WithAuditLogger(sink),
 		qrdbsdk.WithFactorRegistry(s.factorRegistry),
 	}
+
+	// Unified API server: qrdb's transports are TLS-only and take their
+	// material from the WithServerTLS option, not from the daemon config.
+	// The rotating provider serves operator files or a persisted bootstrap
+	// certificate immediately, then upgrades to the CA-issued certificate
+	// once the CA composes (upgradeUnifiedTLSCert).
+	if s.config.NetworkServing() {
+		tlsCfg, err := s.buildUnifiedTLSConfig()
+		if err != nil {
+			return &QRDBNodeError{Stage: "build unified server TLS config", Err: err}
+		}
+		serverOpts = append(serverOpts, qrdbsdk.WithServerTLS(tlsCfg))
+	}
+
+	// Phase 3 of the unified API server
+	// (plans/unified-api-server-2026-08-14.md): register xkms's WHOLESALE
+	// crypto gRPC surface as a qrdb ServiceModule. ADDITIVE — the legacy
+	// transport stacks keep serving as today; this surface activates when the
+	// node's server transports are enabled (the Phase 4 cutover), gated
+	// per-RPC by qrdb's reflection interceptor over option
+	// (qrdb.v1.permission).
+	//
+	// ORDERING: this runs near the top of server.New, long before the
+	// XKMSService is composed (s.xkmsService is assigned after backends, CA,
+	// and first-boot) — and when node transports are enabled, node
+	// construction below invokes RegisterGRPC immediately. The module
+	// therefore takes lazy resolvers and binds on the first RPC: until
+	// s.xkmsService is set, every module RPC answers Unavailable. The SSH
+	// resolver runs only after that binding, so ensureSSHClient's sync.Once
+	// cannot latch nil. NOTE for the Phase 4 cutover: an RPC arriving during
+	// server composition reads s.xkmsService without synchronization; the
+	// cutover must publish it safely (or enable transports post-composition).
+	moduleOpts := []apimodule.Option{
+		apimodule.WithSSHClient(func() sdkssh.Client { return s.ensureSSHClient() }),
+		apimodule.WithRESTServer(func() *rest.Server { return s.ModuleRESTServer() }),
+		apimodule.WithMCPServer(func() *mcp.Server { return s.ModuleMCPServer() }),
+	}
+	// Embedded web UI: registration is config-driven (assets are installed
+	// after construction via SetUIAssets and late-bind through the REST
+	// resolver).
+	if s.config.UIEnabled() {
+		if prefix, err := webui.NormalizePrefix(s.config.UI.PathPrefix); err == nil {
+			moduleOpts = append(moduleOpts,
+				apimodule.WithWebUI(prefix, s.config.UI.RedirectRoot))
+		} else {
+			s.logger.Error("web UI not registered on the unified server: invalid path prefix",
+				"prefix", s.config.UI.PathPrefix, "error", err)
+		}
+	}
+	xkmsModule, err := apimodule.NewModule(
+		func() *xkms.XKMSService { return s.xkmsServiceRef() },
+		moduleOpts...,
+	)
+	if err != nil {
+		return &QRDBNodeError{Stage: "new xkms module", Err: err}
+	}
+	serverOpts = append(serverOpts, qrdbsdk.WithModule(xkmsModule))
 
 	// Node-barrier flip: feed the resolved seal material so the node builds and
 	// auto-unseals its own barrier (encrypting the data-plane KV), and owns the

@@ -251,13 +251,6 @@ var methodPermissions = map[string]permission{
 	"frost.signRound":      {auth.ResourceKeys, auth.ActionSign},
 	"frost.aggregate":      {auth.ResourceKeys, auth.ActionSign},
 	"frost.verify":         {auth.ResourceKeys, auth.ActionVerify},
-
-	// Event subscription. xkms.subscribe has no REST/QUIC/gRPC counterpart:
-	// the event stream carries key lifecycle notifications (event name plus
-	// key ID), so it is gated with keys:list — the canonical action the other
-	// transports already require to enumerate key metadata. No new permission
-	// string is introduced.
-	"xkms.subscribe": {auth.ResourceKeys, auth.ActionList},
 }
 
 // publicCeremonyMethods is the exact-match allowlist of init ceremony JSON-RPC
@@ -300,19 +293,11 @@ func (s *Server) isPublicCeremonyMethod(ctx context.Context, method string) bool
 // treated as an unknown method.
 const frostMethodPrefix = "frost."
 
-// subscribeMethod is dispatched directly by handleRequest (it needs the live
-// connection) instead of through rpcMethodHandlers.
-const subscribeMethod = "xkms.subscribe"
-
 // isDispatchable reports whether the server has a handler for the method. It
-// covers the three dispatch paths in handleRequest: the rpcMethodHandlers
-// table, the connection-bound xkms.subscribe method, and the build-tagged
-// FROST namespace.
+// covers the two dispatch paths InvokeMethod uses: the rpcMethodHandlers
+// table and the build-tagged FROST namespace.
 func isDispatchable(method string) bool {
 	if _, ok := rpcMethodHandlers[method]; ok {
-		return true
-	}
-	if method == subscribeMethod {
 		return true
 	}
 	return strings.HasPrefix(method, frostMethodPrefix)
@@ -329,7 +314,7 @@ func isDispatchable(method string) bool {
 // When RBAC is enabled the method must resolve to a permission: a missing
 // identity is reported as ErrCodeUnauthorized, a denied grant and an unmapped
 // dispatchable method as ErrCodeForbidden. Failures are returned as
-// *KeyOpError so handleRequest's existing errors.As unwrapping selects the
+// *KeyOpError so InvokeMethod's existing errors.As unwrapping selects the
 // wire-level code.
 func (s *Server) authorizeMethod(ctx context.Context, method string) error {
 	if !s.rbacEnabled {

@@ -21,14 +21,17 @@ are embedded with a zero port, and it is not the same number for MCP.
 |----------|------------------------------------|------------------|--------------|
 | REST     | 8443 (`rest_port`)  | 8443 (`pkg/api/rest/server.go:311`) | Yes |
 | gRPC     | 9443 (`grpc_port`)  | none | Yes |
-| QUIC     | 8444 (`quic_port`)  | 8444 (`pkg/api/quic/server.go:119`) | Yes (1.3) |
-| MCP      | 8445 (`mcp_port`)   | 9444 (`pkg/api/mcp/server.go:178`) | No (TCP) |
+| QUIC     | none — HTTP/3 on `rest_port` (8443), advertised via `Alt-Svc`; `quic_port` is vestigial config | n/a | Yes (1.3) |
+| MCP      | 8445 (`mcp_port`)   | 9444 (`sdk/go/options.go:33`) | Yes — served by the embedded qrdb node at `https://host:mcp_port/mcp` |
 | Noise    | 8447 (`noise_port`, `configs/xkmsd-local.yaml:10`) | 8445 (`DefaultNoisePort`, `pkg/trust/bootstrap/bootstrap.go:98`) | Noise_NK |
 | Metrics  | 9090 (`metrics.port`) | none | No |
 
 MCP is the one to watch: the shipped configurations bind it on 8445, but the SDK
 client dials `localhost:9444` by default (`sdk/go/options.go:33`). Point the
-client at the configured port or change `mcp_port` to 9444.
+client at the configured port or change `mcp_port` to 9444. There is no
+standalone QUIC server package or port anymore -- QUIC is HTTP/3 served
+directly on the unified REST listener; the QUIC client transport
+(`pkg/api/transport/quic`) dials the REST port.
 
 ## Directory Structure
 
@@ -41,10 +44,9 @@ pkg/
 ├── server/        # Orchestration & service layer
 ├── config/        # Configuration
 ├── api/
-│   ├── rest/      # REST API
+│   ├── rest/      # REST API (also serves QUIC/HTTP3 on the same port)
 │   ├── grpc/      # gRPC
-│   ├── mcp/       # MCP
-│   ├── quic/      # QUIC
+│   ├── mcp/       # MCP dispatch core (real MCP is served by the embedded qrdb node)
 │   └── unix/      # Unix socket gRPC
 ├── backend/       # Backend implementations
 ├── crypto/        # Cryptographic primitives
@@ -102,18 +104,21 @@ service KeystoreService {
 }
 ```
 
-### MCP (JSON-RPC)
+### MCP (tool name -- xkms JSON-RPC method)
+Each method is exposed as an MCP tool named `xkms_<method>` (dots become
+underscores), taking one optional `params_json` string argument.
 ```
-health
-xkms.listBackends
-xkms.generateKey
-xkms.getKey
-xkms.listKeys
-xkms.deleteKey
-xkms.sign
-xkms.verify
-xkms.subscribe
+xkms_health
+xkms_listBackends
+xkms_generateKey
+xkms_getKey
+xkms_listKeys
+xkms_deleteKey
+xkms_sign
+xkms_verify
 ```
+`xkms.subscribe` (and its notification plane) was removed with the legacy
+MCP server; there is no live subscription/watch equivalent yet.
 
 ### CLI
 ```bash
@@ -140,7 +145,7 @@ server:
   host: "0.0.0.0"
   rest_port: 8443
   grpc_port: 9443
-  quic_port: 8444
+  quic_port: 8444  # vestigial -- QUIC is served as HTTP/3 on rest_port
   mcp_port: 8445
 
 protocols:
@@ -325,8 +330,12 @@ grpcurl -plaintext -d '{"key_id":"test","backend":"software","key_type":"rsa","k
 
 **MCP:**
 ```bash
-# mcp_port is 8445 in the shipped configs; the SDK client default is 9444
-echo '{"jsonrpc":"2.0","method":"health","id":1}' | nc localhost 8445
+# mcp_port is 8445 in the shipped configs; the SDK client default is 9444.
+# Real MCP (Streamable HTTP) served by the embedded qrdb node at /mcp; the
+# xkms "health" method is exposed as the "xkms_health" tool.
+curl -X POST https://localhost:8445/mcp \
+  -H "Content-Type: application/json" \
+  -d '{"jsonrpc":"2.0","method":"tools/call","params":{"name":"xkms_health","arguments":{}},"id":1}'
 ```
 
 ### Check Docker Services
@@ -337,7 +346,7 @@ docker-compose logs xkms-server
 
 ### Check Ports
 ```bash
-netstat -tuln | grep -E '8443|9443|8444|8445|9090'
+netstat -tuln | grep -E '8443|9443|8445|9090'
 ```
 
 ## Performance Targets

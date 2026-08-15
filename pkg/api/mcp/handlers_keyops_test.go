@@ -273,7 +273,7 @@ func TestHandler_AttestKey_BackendLacksCapability(t *testing.T) {
 	require.NoError(t, err)
 
 	req := &JSONRPCRequest{JSONRPC: "2.0", Method: "xkms.attestKey", Params: paramsJSON, ID: 1}
-	resp := server.handleRequest(context.Background(), req, nil)
+	resp := invokeRequest(server, context.Background(), req)
 	require.NotNil(t, resp.Error)
 	assert.Equal(t, ErrCodeMethodNotFound, resp.Error.Code)
 }
@@ -286,7 +286,7 @@ func TestHandler_AttestKey_ValidationError(t *testing.T) {
 	require.NoError(t, err)
 
 	req := &JSONRPCRequest{JSONRPC: "2.0", Method: "xkms.attestKey", Params: paramsJSON, ID: 1}
-	resp := server.handleRequest(context.Background(), req, nil)
+	resp := invokeRequest(server, context.Background(), req)
 	require.NotNil(t, resp.Error)
 	assert.Equal(t, ErrCodeInvalidParams, resp.Error.Code)
 	assert.Contains(t, resp.Error.Message, "key_id is required")
@@ -337,7 +337,7 @@ func TestHandler_DeriveKeyECDH_BackendLacksCapability(t *testing.T) {
 	require.NoError(t, err)
 
 	req := &JSONRPCRequest{JSONRPC: "2.0", Method: "xkms.deriveKeyECDH", Params: paramsJSON, ID: 1}
-	resp := server.handleRequest(context.Background(), req, nil)
+	resp := invokeRequest(server, context.Background(), req)
 	require.NotNil(t, resp.Error)
 	assert.Equal(t, ErrCodeMethodNotFound, resp.Error.Code)
 }
@@ -350,7 +350,7 @@ func TestHandler_DeriveKeyECDH_ValidationError(t *testing.T) {
 	require.NoError(t, err)
 
 	req := &JSONRPCRequest{JSONRPC: "2.0", Method: "xkms.deriveKeyECDH", Params: paramsJSON, ID: 1}
-	resp := server.handleRequest(context.Background(), req, nil)
+	resp := invokeRequest(server, context.Background(), req)
 	require.NotNil(t, resp.Error)
 	assert.Equal(t, ErrCodeInvalidParams, resp.Error.Code)
 	assert.Contains(t, resp.Error.Message, "peer_public_key is required")
@@ -400,7 +400,7 @@ func TestHandler_ExportKeyMaterial_BackendLacksCapability(t *testing.T) {
 	require.NoError(t, err)
 
 	req := &JSONRPCRequest{JSONRPC: "2.0", Method: "xkms.exportKeyMaterial", Params: paramsJSON, ID: 1}
-	resp := server.handleRequest(context.Background(), req, nil)
+	resp := invokeRequest(server, context.Background(), req)
 	require.NotNil(t, resp.Error)
 	assert.Equal(t, ErrCodeMethodNotFound, resp.Error.Code)
 }
@@ -413,7 +413,7 @@ func TestHandler_ExportKeyMaterial_ValidationError(t *testing.T) {
 	require.NoError(t, err)
 
 	req := &JSONRPCRequest{JSONRPC: "2.0", Method: "xkms.exportKeyMaterial", Params: paramsJSON, ID: 1}
-	resp := server.handleRequest(context.Background(), req, nil)
+	resp := invokeRequest(server, context.Background(), req)
 	require.NotNil(t, resp.Error)
 	assert.Equal(t, ErrCodeInvalidParams, resp.Error.Code)
 	assert.Contains(t, resp.Error.Message, "key_id is required")
@@ -525,7 +525,7 @@ func TestHandler_WrapKeyByID_BackendLacksCapability(t *testing.T) {
 	require.NoError(t, err)
 
 	req := &JSONRPCRequest{JSONRPC: "2.0", Method: "xkms.wrapKeyByID", Params: paramsJSON, ID: 1}
-	resp := server.handleRequest(context.Background(), req, nil)
+	resp := invokeRequest(server, context.Background(), req)
 	require.NotNil(t, resp.Error)
 	assert.Equal(t, ErrCodeMethodNotFound, resp.Error.Code)
 }
@@ -543,7 +543,7 @@ func TestHandler_WrapKeyByID_ValidationError(t *testing.T) {
 	require.NoError(t, err)
 
 	req := &JSONRPCRequest{JSONRPC: "2.0", Method: "xkms.wrapKeyByID", Params: paramsJSON, ID: 1}
-	resp := server.handleRequest(context.Background(), req, nil)
+	resp := invokeRequest(server, context.Background(), req)
 	require.NotNil(t, resp.Error)
 	assert.Equal(t, ErrCodeInvalidParams, resp.Error.Code)
 	assert.Contains(t, resp.Error.Message, "algorithm is required")
@@ -624,7 +624,7 @@ func TestHandler_UnwrapKeyByID_BackendLacksCapability(t *testing.T) {
 	require.NoError(t, err)
 
 	req := &JSONRPCRequest{JSONRPC: "2.0", Method: "xkms.unwrapKeyByID", Params: paramsJSON, ID: 1}
-	resp := server.handleRequest(context.Background(), req, nil)
+	resp := invokeRequest(server, context.Background(), req)
 	require.NotNil(t, resp.Error)
 	assert.Equal(t, ErrCodeMethodNotFound, resp.Error.Code)
 }
@@ -639,7 +639,7 @@ func TestHandler_UnwrapKeyByID_ValidationError(t *testing.T) {
 	require.NoError(t, err)
 
 	req := &JSONRPCRequest{JSONRPC: "2.0", Method: "xkms.unwrapKeyByID", Params: paramsJSON, ID: 1}
-	resp := server.handleRequest(context.Background(), req, nil)
+	resp := invokeRequest(server, context.Background(), req)
 	require.NotNil(t, resp.Error)
 	assert.Equal(t, ErrCodeInvalidParams, resp.Error.Code)
 	assert.Contains(t, resp.Error.Message, "wrapped_key is required")

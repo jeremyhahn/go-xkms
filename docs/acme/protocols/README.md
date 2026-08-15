@@ -14,9 +14,13 @@ Defaults below are the shipped configuration (`pkg/config/config.go`,
 | Unix | gRPC over UDS | xkms-data/xkms.sock | Local IPC, CLI |
 | REST | HTTP/HTTPS | localhost:8443 | Web clients, external systems |
 | gRPC | TCP | localhost:9443 | High-performance service-to-service |
-| QUIC | UDP | localhost:8444/udp | Low-latency, mobile clients |
-| MCP | stdio/HTTP | localhost:8445 | AI/LLM integration |
+| QUIC | UDP (HTTP/3 on the REST listener) | localhost:8443/udp | Low-latency, mobile clients |
+| MCP | HTTP (Streamable HTTP, served by the embedded qrdb node) | localhost:8445 | AI/LLM integration |
 | Noise | TCP | localhost:8447 | Cluster bootstrap (Noise NK) |
+
+QUIC has no server package or port of its own: it is HTTP/3 served on the
+same listener and port as REST, advertised via the `Alt-Svc` response
+header (`quic_port` in config is vestigial).
 
 The socket path is relative to the working directory by default; deployment
 configs use an absolute path (`configs/xkmsd-integration.yaml` uses
@@ -50,8 +54,8 @@ xkmsctl --transport rest --server https://localhost:8443 cert list
 # gRPC
 xkmsctl --transport grpc --server grpc://localhost:9443 cert list
 
-# QUIC
-xkmsctl --transport quic --server quic://localhost:8444 cert list
+# QUIC (dials the REST port -- there is no separate QUIC port)
+xkmsctl --transport quic --server quic://localhost:8443 cert list
 
 # MCP (for AI/LLM tooling)
 xkmsctl --transport mcp --server https://localhost:8445 cert list
@@ -86,11 +90,13 @@ server at all. `--protocol`/`-P` is a deprecated alias for `--transport`.
 - Connection migration support
 - Reduced connection establishment latency
 - Ideal for mobile and unreliable networks
+- Served as HTTP/3 on the same listener and port as REST (advertised via
+  `Alt-Svc`), not a standalone server
 
 ### MCP (Model Context Protocol)
 - Designed for AI/LLM integration
-- Structured tool definitions
-- Supports stdio and HTTP transports
+- Structured tool definitions, one per xkms method (`xkms_<method>`)
+- Streamable HTTP, served by the embedded qrdb node at `/mcp`
 - Enables AI agents to manage certificates
 
 ### Noise
@@ -107,7 +113,7 @@ server:
   host: "127.0.0.1"
   rest_port: 8443
   grpc_port: 9443
-  quic_port: 8444
+  quic_port: 8444  # vestigial -- QUIC is served as HTTP/3 on rest_port
   mcp_port: 8445
   noise_port: 8447
 

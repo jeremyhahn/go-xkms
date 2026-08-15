@@ -556,7 +556,7 @@ func mapPasswordError(err error) error {
 // mapPasswordStoreError maps store resolution errors to appropriate MCP error messages.
 // mapPasswordUnlockError converts an error returned by
 // XKMSService.PasswordStoreUnlock into a *KeyOpError carrying the JSON-RPC
-// code handleRequest should report. It reuses the KeyOpError envelope so the
+// code InvokeMethod should report. It reuses the KeyOpError envelope so the
 // dispatcher does not collapse a missing-PIN rejection into a generic internal
 // error, which would make an unlock denial indistinguishable from a crash.
 //

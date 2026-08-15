@@ -30,13 +30,13 @@ func fullMockHandler() http.Handler {
 
 		switch {
 		// TCG CA
-		case strings.Contains(path, "/tcg-ca/issue-ek-cert"):
+		case strings.Contains(path, "/ca/tcg/ek"):
 			respond(transport.IssueEKCertificateResponse{CertificatePEM: []byte("ek-cert"), SerialNumber: "EK1234"})
-		case strings.Contains(path, "/tcg-ca/issue-ak-cert"):
+		case strings.Contains(path, "/ca/tcg/ak"):
 			respond(transport.IssueAKCertificateResponse{CertificatePEM: []byte("ak-cert"), SerialNumber: "AK1234"})
-		case strings.Contains(path, "/tcg-ca/sign-tcg-csr"):
+		case strings.Contains(path, "/ca/tcg/sign-csr"):
 			respond(transport.SignTCGCSRResponse{IAKCertDER: []byte("iak"), IDevIDCertDER: []byte("idevid")})
-		case strings.Contains(path, "/tcg-ca/enroll-device"):
+		case strings.Contains(path, "/ca/tcg/enroll"):
 			respond(transport.EnrollDeviceResponse{IAKCertDER: []byte("iak"), IDevIDCertDER: []byte("idevid")})
 
 		// PIV
@@ -63,26 +63,24 @@ func fullMockHandler() http.Handler {
 			})
 
 		// Barrier ops
-		case strings.Contains(path, "/barrier/initialize-shamir"):
+		case strings.Contains(path, "/barrier/shamir/initialize"):
 			respond(transport.BarrierInitializeShamirResponse{Threshold: 2, TotalShares: 3, ShareCount: 3})
-		case strings.Contains(path, "/barrier/unseal-share") && !strings.HasSuffix(path, "s"):
+		case strings.Contains(path, "/barrier/shamir/unseal-share") && !strings.HasSuffix(path, "s"):
 			respond(map[string]interface{}{"required": 2, "submitted": 1, "complete": false})
-		case strings.Contains(path, "/barrier/unseal-shares"):
+		case strings.Contains(path, "/barrier/shamir/unseal-shares"):
 			w.WriteHeader(http.StatusOK)
 		case strings.Contains(path, "/barrier/rekey"):
 			respond(transport.BarrierRekeyResponse{Threshold: 2, TotalShares: 3, ShareCount: 3})
-		case strings.Contains(path, "/barrier/recovery-keys") && r.Method == http.MethodPost:
+		case strings.Contains(path, "/barrier/recovery/generate") && r.Method == http.MethodPost:
 			// Share-free contract: only metadata crosses the wire.
 			respond(map[string]interface{}{"threshold": 2, "total_shares": 3, "share_count": 3})
-		case strings.Contains(path, "/barrier/recovery-keys") && r.Method == http.MethodDelete:
+		case strings.Contains(path, "/barrier/recovery/recover") && r.Method == http.MethodPost:
 			w.WriteHeader(http.StatusOK)
-		case strings.Contains(path, "/barrier/recovery-keys") && r.Method == http.MethodGet:
-			respond(map[string]bool{"has_recovery_keys": true})
-		case strings.Contains(path, "/barrier/has-recovery-keys"):
-			respond(map[string]bool{"has_recovery_keys": true})
-		case strings.Contains(path, "/barrier/recover"):
+		case strings.Contains(path, "/barrier/recovery/keys") && r.Method == http.MethodDelete:
 			w.WriteHeader(http.StatusOK)
-		case strings.Contains(path, "/barrier/root-token"):
+		case strings.Contains(path, "/barrier/recovery/keys") && r.Method == http.MethodGet:
+			respond(map[string]bool{"has_recovery_keys": true})
+		case strings.Contains(path, "/barrier/recovery/root-token"):
 			respond(transport.BarrierRootTokenResponse{Token: "root-token"})
 		case strings.Contains(path, "/barrier/status"):
 			respond(transport.BarrierStatusResponse{Sealed: false, InitializedAt: "2024-01-01"})

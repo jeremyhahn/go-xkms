@@ -11,7 +11,7 @@ import "testing"
 // unspecified storage backend resolves to durable PebbleDB.
 func TestValidate_EmptyStorageBackendDefaultsToPebble(t *testing.T) {
 	c := Config{
-		Protocols: ProtocolsConfig{REST: true},
+		Protocols: ProtocolsConfig{Unix: true},
 		Server:    ServerConfig{RESTPort: 8443},
 		Logging:   LoggingConfig{Level: "info", Format: "json"},
 		Storage:   StorageConfig{Backend: "", Path: "/data"},

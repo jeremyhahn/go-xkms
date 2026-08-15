@@ -182,7 +182,7 @@ func TestServerTenantAccess_Success(t *testing.T) {
 }
 
 // TestHandleRequest_TenantGate proves the tenant gate is wired into
-// handleRequest's dispatch path (not just unit-tested in isolation): a
+// InvokeMethod's dispatch path (not just unit-tested in isolation): a
 // tenant-scoped caller whose tenant is unregistered is denied before
 // dispatch, mirroring the REST/gRPC/QUIC 403.
 func TestHandleRequest_TenantGate(t *testing.T) {
@@ -195,7 +195,7 @@ func TestHandleRequest_TenantGate(t *testing.T) {
 	ctx := auth.WithIdentity(context.Background(), identity)
 
 	req := &JSONRPCRequest{JSONRPC: "2.0", Method: "health", ID: 1}
-	resp := server.handleRequest(ctx, req, nil)
+	resp := invokeRequest(server, ctx, req)
 
 	require.NotNil(t, resp)
 	require.NotNil(t, resp.Error)
@@ -214,7 +214,7 @@ func TestHandleRequest_TenantGateSystemTenantPasses(t *testing.T) {
 	ctx := auth.WithIdentity(context.Background(), identity)
 
 	req := &JSONRPCRequest{JSONRPC: "2.0", Method: "health", ID: 1}
-	resp := server.handleRequest(ctx, req, nil)
+	resp := invokeRequest(server, ctx, req)
 
 	require.NotNil(t, resp)
 	assert.Nil(t, resp.Error)

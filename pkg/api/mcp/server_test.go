@@ -14,24 +14,19 @@
 package mcp
 
 import (
-	"bufio"
 	"context"
 	"crypto/rand"
 	"crypto/rsa"
 	"crypto/sha256"
-	"crypto/tls"
 	"crypto/x509"
-	"crypto/x509/pkix"
 	"encoding/json"
 	"encoding/pem"
 	"math/big"
-	"net"
 	"testing"
 	"time"
 
 	"github.com/jeremyhahn/go-xkms/pkg/auth"
 	"github.com/jeremyhahn/go-xkms/pkg/backend/software"
-	"github.com/jeremyhahn/go-xkms/pkg/ratelimit"
 	"github.com/jeremyhahn/go-xkms/pkg/storage"
 	"github.com/jeremyhahn/go-xkms/pkg/xkms"
 	"github.com/stretchr/testify/assert"
@@ -102,7 +97,6 @@ func TestNewServer_Success(t *testing.T) {
 	assert.Equal(t, "localhost:0", server.addr)
 	assert.NotNil(t, server.authenticator)
 	assert.NotNil(t, server.logger)
-	assert.NotNil(t, server.subscribers)
 }
 
 func TestNewServer_DefaultAddress(t *testing.T) {
@@ -140,32 +134,6 @@ func TestNewServer_WithAuthenticator(t *testing.T) {
 	assert.Equal(t, "noop", server.authenticator.Name())
 }
 
-func TestNewServer_WithRateLimiter(t *testing.T) {
-	svc := setupTestXKMS(t)
-	defer cleanupXKMS()
-
-	limiter := ratelimit.New(&ratelimit.Config{
-		Enabled:           true,
-		RequestsPerMinute: 100,
-		Burst:             10,
-	})
-	defer limiter.Stop()
-
-	config := &Config{
-		Authenticator: auth.NewNoOpAuthenticator(),
-		Addr:          "localhost:0",
-		RateLimiter:   limiter,
-
-		XKMSService: svc,
-	}
-
-	server, err := NewServer(config)
-	require.NoError(t, err)
-	require.NotNil(t, server)
-
-	assert.NotNil(t, server.rateLimiter)
-}
-
 func TestNewServer_NotInitialized(t *testing.T) {
 	// Ensure xkms is not initialized
 	xkms.Reset()
@@ -178,70 +146,6 @@ func TestNewServer_NotInitialized(t *testing.T) {
 	_, err := NewServer(config)
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "xkms service is required")
-}
-
-func TestServer_StartStop(t *testing.T) {
-	svc := setupTestXKMS(t)
-	defer cleanupXKMS()
-
-	config := &Config{
-		Authenticator: auth.NewNoOpAuthenticator(),
-		Addr:          "localhost:0",
-
-		XKMSService: svc,
-	}
-
-	server, err := NewServer(config)
-	require.NoError(t, err)
-
-	err = server.Start()
-	require.NoError(t, err)
-
-	// Verify server is listening
-	assert.NotNil(t, server.listener)
-
-	// Stop server
-	err = server.Stop()
-	require.NoError(t, err)
-}
-
-func TestServer_StartInvalidAddress(t *testing.T) {
-	svc := setupTestXKMS(t)
-	defer cleanupXKMS()
-
-	config := &Config{
-		Authenticator: auth.NewNoOpAuthenticator(),
-		Addr:          "invalid:address:too:many:colons",
-
-		XKMSService: svc,
-	}
-
-	server, err := NewServer(config)
-	require.NoError(t, err)
-
-	err = server.Start()
-	require.Error(t, err)
-	assert.Contains(t, err.Error(), "failed to listen")
-}
-
-func TestServer_HandleRequest_InvalidVersion(t *testing.T) {
-	svc := setupTestXKMS(t)
-	defer cleanupXKMS()
-
-	server, err := NewServer(&Config{Addr: "localhost:0", XKMSService: svc, Authenticator: auth.NewNoOpAuthenticator()})
-	require.NoError(t, err)
-
-	req := &JSONRPCRequest{
-		JSONRPC: "1.0", // Invalid version
-		Method:  "health",
-		ID:      1,
-	}
-
-	resp := server.handleRequest(context.Background(), req, nil)
-	require.NotNil(t, resp)
-	require.NotNil(t, resp.Error)
-	assert.Equal(t, ErrCodeInvalidRequest, resp.Error.Code)
-	assert.Contains(t, resp.Error.Message, "Invalid JSON-RPC version")
 }
 
 func TestServer_HandleRequest_MethodNotFound(t *testing.T) {
@@ -257,156 +161,10 @@ func TestServer_HandleRequest_MethodNotFound(t *testing.T) {
 		ID:      1,
 	}
 
-	resp := server.handleRequest(context.Background(), req, nil)
+	resp := invokeRequest(server, context.Background(), req)
 	require.NotNil(t, resp)
 	require.NotNil(t, resp.Error)
 	assert.Equal(t, ErrCodeMethodNotFound, resp.Error.Code)
-}
-
-func TestServer_HandleRequest_NoResponseForNotification(t *testing.T) {
-	svc := setupTestXKMS(t)
-	defer cleanupXKMS()
-
-	server, err := NewServer(&Config{Addr: "localhost:0", XKMSService: svc, Authenticator: auth.NewNoOpAuthenticator()})
-	require.NoError(t, err)
-
-	// Notification has no ID
-	req := &JSONRPCRequest{
-		JSONRPC: "2.0",
-		Method:  "health",
-		ID:      nil, // No ID means it's a notification
-	}
-
-	resp := server.handleRequest(context.Background(), req, nil)
-	assert.Nil(t, resp) // Notifications don't get a response
-}
-
-func TestServer_HandleRequest_WithCorrelationID(t *testing.T) {
-	svc := setupTestXKMS(t)
-	defer cleanupXKMS()
-
-	server, err := NewServer(&Config{Addr: "localhost:0", XKMSService: svc, Authenticator: auth.NewNoOpAuthenticator()})
-	require.NoError(t, err)
-
-	req := &JSONRPCRequest{
-		JSONRPC:       "2.0",
-		Method:        "health",
-		ID:            1,
-		CorrelationID: "test-correlation-123",
-	}
-
-	resp := server.handleRequest(context.Background(), req, nil)
-	require.NotNil(t, resp)
-	assert.Equal(t, "test-correlation-123", resp.CorrelationID)
-}
-
-func TestServer_HandleRequest_GeneratesCorrelationID(t *testing.T) {
-	svc := setupTestXKMS(t)
-	defer cleanupXKMS()
-
-	server, err := NewServer(&Config{Addr: "localhost:0", XKMSService: svc, Authenticator: auth.NewNoOpAuthenticator()})
-	require.NoError(t, err)
-
-	req := &JSONRPCRequest{
-		JSONRPC: "2.0",
-		Method:  "health",
-		ID:      1,
-		// No CorrelationID provided
-	}
-
-	resp := server.handleRequest(context.Background(), req, nil)
-	require.NotNil(t, resp)
-	assert.NotEmpty(t, resp.CorrelationID)
-}
-
-func TestServer_MakeErrorResponse(t *testing.T) {
-	svc := setupTestXKMS(t)
-	defer cleanupXKMS()
-
-	server, err := NewServer(&Config{Addr: "localhost:0", XKMSService: svc, Authenticator: auth.NewNoOpAuthenticator()})
-	require.NoError(t, err)
-
-	resp := server.makeErrorResponse(1, "corr-123", ErrCodeInvalidParams, "test error", nil)
-	require.NotNil(t, resp)
-	assert.Equal(t, "2.0", resp.JSONRPC)
-	assert.Equal(t, 1, resp.ID)
-	assert.Equal(t, "corr-123", resp.CorrelationID)
-	assert.Nil(t, resp.Result)
-	require.NotNil(t, resp.Error)
-	assert.Equal(t, ErrCodeInvalidParams, resp.Error.Code)
-	assert.Equal(t, "test error", resp.Error.Message)
-}
-
-func TestServer_NotifyEvent(t *testing.T) {
-	svc := setupTestXKMS(t)
-	defer cleanupXKMS()
-
-	server, err := NewServer(&Config{Addr: "localhost:0", XKMSService: svc, Authenticator: auth.NewNoOpAuthenticator()})
-	require.NoError(t, err)
-
-	// Create a mock connection using a pipe
-	clientConn, serverConn := net.Pipe()
-	defer func() { _ = clientConn.Close() }()
-	defer func() { _ = serverConn.Close() }()
-
-	// Add a subscriber
-	server.subMutex.Lock()
-	server.subscribers[serverConn] = &Subscriber{
-		conn:   serverConn,
-		events: map[string]bool{"key.created": true},
-	}
-	server.subMutex.Unlock()
-
-	// Start reading on client side
-	done := make(chan struct{})
-	var receivedData []byte
-	go func() {
-		defer close(done)
-		scanner := bufio.NewScanner(clientConn)
-		if scanner.Scan() {
-			receivedData = scanner.Bytes()
-		}
-	}()
-
-	// Send notification
-	server.NotifyEvent("key.created", "test-key", map[string]string{"backend": "memory"})
-
-	// Wait for notification
-	select {
-	case <-done:
-		// Notification received
-		var notification JSONRPCNotification
-		err = json.Unmarshal(receivedData, &notification)
-		require.NoError(t, err)
-		assert.Equal(t, "2.0", notification.JSONRPC)
-		assert.Equal(t, "key.created", notification.Method)
-	case <-time.After(100 * time.Millisecond):
-		t.Log("Notification timeout - acceptable in test environment")
-	}
-}
-
-func TestServer_NotifyEvent_NoMatchingSubscribers(t *testing.T) {
-	svc := setupTestXKMS(t)
-	defer cleanupXKMS()
-
-	server, err := NewServer(&Config{Addr: "localhost:0", XKMSService: svc, Authenticator: auth.NewNoOpAuthenticator()})
-	require.NoError(t, err)
-
-	// Create a mock connection
-	clientConn, serverConn := net.Pipe()
-	defer func() { _ = clientConn.Close() }()
-	defer func() { _ = serverConn.Close() }()
-
-	// Add a subscriber for different event
-	server.subMutex.Lock()
-	server.subscribers[serverConn] = &Subscriber{
-		conn:   serverConn,
-		events: map[string]bool{"key.deleted": true}, // Not key.created
-	}
-	server.subMutex.Unlock()
-
-	// This should not panic and should not send anything
-	server.NotifyEvent("key.created", "test-key", nil)
 }
 
 func TestServer_RouteFrostMethods_NonFrostMethod(t *testing.T) {
@@ -426,203 +184,7 @@ func TestServer_RouteFrostMethods_NonFrostMethod(t *testing.T) {
 	assert.False(t, handled) // Non-frost method should not be handled by frost router
 }
 
-func TestServer_ClientConnection(t *testing.T) {
-	svc := setupTestXKMS(t)
-	defer cleanupXKMS()
-
-	server, err := NewServer(&Config{Addr: "localhost:0", XKMSService: svc, Authenticator: auth.NewNoOpAuthenticator()})
-	require.NoError(t, err)
-
-	err = server.Start()
-	require.NoError(t, err)
-	defer func() { _ = server.Stop() }()
-
-	// Connect to the server
-	conn, err := net.Dial("tcp", server.listener.Addr().String())
-	require.NoError(t, err)
-	defer func() { _ = conn.Close() }()
-
-	// Send a health request
-	request := JSONRPCRequest{
-		JSONRPC: "2.0",
-		Method:  "health",
-		ID:      1,
-	}
-	requestBytes, err := json.Marshal(request)
-	require.NoError(t, err)
-
-	_, err = conn.Write(append(requestBytes, '\n'))
-	require.NoError(t, err)
-
-	// Read response
-	scanner := bufio.NewScanner(conn)
-	require.True(t, scanner.Scan())
-
-	var response JSONRPCResponse
-	err = json.Unmarshal(scanner.Bytes(), &response)
-	require.NoError(t, err)
-
-	assert.Equal(t, "2.0", response.JSONRPC)
-	assert.Equal(t, float64(1), response.ID)
-	assert.Nil(t, response.Error)
-
-	// Check result
-	result, ok := response.Result.(map[string]interface{})
-	require.True(t, ok)
-	assert.Equal(t, "healthy", result["status"])
-}
-
-func TestServer_BatchRequest(t *testing.T) {
-	svc := setupTestXKMS(t)
-	defer cleanupXKMS()
-
-	server, err := NewServer(&Config{Addr: "localhost:0", XKMSService: svc, Authenticator: auth.NewNoOpAuthenticator()})
-	require.NoError(t, err)
-
-	err = server.Start()
-	require.NoError(t, err)
-	defer func() { _ = server.Stop() }()
-
-	// Connect to the server
-	conn, err := net.Dial("tcp", server.listener.Addr().String())
-	require.NoError(t, err)
-	defer func() { _ = conn.Close() }()
-
-	// Send batch request
-	batch := []JSONRPCRequest{
-		{JSONRPC: "2.0", Method: "health", ID: 1},
-		{JSONRPC: "2.0", Method: "xkms.listBackends", ID: 2},
-	}
-	batchBytes, err := json.Marshal(batch)
-	require.NoError(t, err)
-
-	_, err = conn.Write(append(batchBytes, '\n'))
-	require.NoError(t, err)
-
-	// Read response
-	scanner := bufio.NewScanner(conn)
-	require.True(t, scanner.Scan())
-
-	var responses []JSONRPCResponse
-	err = json.Unmarshal(scanner.Bytes(), &responses)
-	require.NoError(t, err)
-
-	assert.Len(t, responses, 2)
-}
-
-func TestServer_InvalidJSON(t *testing.T) {
-	svc := setupTestXKMS(t)
-	defer cleanupXKMS()
-
-	server, err := NewServer(&Config{Addr: "localhost:0", XKMSService: svc, Authenticator: auth.NewNoOpAuthenticator()})
-	require.NoError(t, err)
-
-	err = server.Start()
-	require.NoError(t, err)
-	defer func() { _ = server.Stop() }()
-
-	// Connect to the server
-	conn, err := net.Dial("tcp", server.listener.Addr().String())
-	require.NoError(t, err)
-	defer func() { _ = conn.Close() }()
-
-	// Send invalid JSON
-	_, err = conn.Write([]byte("not valid json\n"))
-	require.NoError(t, err)
-
-	// Read response
-	scanner := bufio.NewScanner(conn)
-	require.True(t, scanner.Scan())
-
-	var response JSONRPCResponse
-	err = json.Unmarshal(scanner.Bytes(), &response)
-	require.NoError(t, err)
-
-	assert.NotNil(t, response.Error)
-	assert.Equal(t, ErrCodeParseError, response.Error.Code)
-}
-
-func TestServer_WithTLS(t *testing.T) {
-	svc := setupTestXKMS(t)
-	defer cleanupXKMS()
-
-	// Generate a self-signed certificate for testing
-	privKey, err := rsa.GenerateKey(rand.Reader, 2048)
-	require.NoError(t, err)
-
-	template := x509.Certificate{
-		SerialNumber: big.NewInt(1),
-		NotBefore:    time.Now(),
-		NotAfter:     time.Now().Add(time.Hour),
-		IPAddresses:  []net.IP{net.ParseIP("127.0.0.1")},
-	}
-
-	certDER, err := x509.CreateCertificate(rand.Reader, &template, &template, &privKey.PublicKey, privKey)
-	require.NoError(t, err)
-
-	tlsCert := tls.Certificate{
-		Certificate: [][]byte{certDER},
-		PrivateKey:  privKey,
-	}
-
-	tlsConfig := &tls.Config{
-		Certificates: []tls.Certificate{tlsCert},
-		MinVersion:   tls.VersionTLS12,
-	}
-
-	config := &Config{
-		Authenticator: auth.NewNoOpAuthenticator(),
-		Addr:          "localhost:0",
-		TLSConfig:     tlsConfig,
-
-		XKMSService: svc,
-	}
-
-	server, err := NewServer(config)
-	require.NoError(t, err)
-
-	err = server.Start()
-	require.NoError(t, err)
-	defer func() { _ = server.Stop() }()
-
-	// Connect with TLS — trust the self-signed server certificate
-	testCert, err := x509.ParseCertificate(certDER)
-	require.NoError(t, err)
-	certPool := x509.NewCertPool()
-	certPool.AddCert(testCert)
-
-	clientTLSConfig := &tls.Config{
-		RootCAs: certPool,
-	}
-
-	conn, err := tls.Dial("tcp", server.listener.Addr().String(), clientTLSConfig)
-	require.NoError(t, err)
-	defer func() { _ = conn.Close() }()
-
-	// Send a health request
-	request := JSONRPCRequest{
-		JSONRPC: "2.0",
-		Method:  "health",
-		ID:      1,
-	}
-	requestBytes, err := json.Marshal(request)
-	require.NoError(t, err)
-
-	_, err = conn.Write(append(requestBytes, '\n'))
-	require.NoError(t, err)
-
-	// Read response
-	scanner := bufio.NewScanner(conn)
-	require.True(t, scanner.Scan())
-
-	var response JSONRPCResponse
-	err = json.Unmarshal(scanner.Bytes(), &response)
-	require.NoError(t, err)
-
-	assert.Nil(t, response.Error)
-}
-
-// TestServer_HandleRequest_AllMethods tests that handleRequest routes to various handlers
+// TestServer_HandleRequest_AllMethods tests that InvokeMethod routes to various handlers
 func TestServer_HandleRequest_AllMethods(t *testing.T) {
 	svc := setupTestXKMS(t)
 	defer cleanupXKMS()
@@ -632,7 +194,7 @@ func TestServer_HandleRequest_AllMethods(t *testing.T) {
 
 	ctx := context.Background()
 
-	// Test xkms.listBackends through handleRequest
+	// Test xkms.listBackends through InvokeMethod
 	t.Run("routes xkms.listBackends", func(t *testing.T) {
 		req := &JSONRPCRequest{
 			JSONRPC: "2.0",
@@ -640,13 +202,13 @@ func TestServer_HandleRequest_AllMethods(t *testing.T) {
 			ID:      1,
 		}
 
-		resp := server.handleRequest(ctx, req, nil)
+		resp := invokeRequest(server, ctx, req)
 		require.NotNil(t, resp)
 		assert.Nil(t, resp.Error)
 		assert.NotNil(t, resp.Result)
 	})
 
-	// Test xkms.listKeys through handleRequest
+	// Test xkms.listKeys through InvokeMethod
 	t.Run("routes xkms.listKeys", func(t *testing.T) {
 		req := &JSONRPCRequest{
 			JSONRPC: "2.0",
@@ -654,12 +216,12 @@ func TestServer_HandleRequest_AllMethods(t *testing.T) {
 			ID:      2,
 		}
 
-		resp := server.handleRequest(ctx, req, nil)
+		resp := invokeRequest(server, ctx, req)
 		require.NotNil(t, resp)
 		assert.Nil(t, resp.Error)
 	})
 
-	// Test xkms.listCerts through handleRequest
+	// Test xkms.listCerts through InvokeMethod
 	t.Run("routes xkms.listCerts", func(t *testing.T) {
 		req := &JSONRPCRequest{
 			JSONRPC: "2.0",
@@ -667,12 +229,12 @@ func TestServer_HandleRequest_AllMethods(t *testing.T) {
 			ID:      3,
 		}
 
-		resp := server.handleRequest(ctx, req, nil)
+		resp := invokeRequest(server, ctx, req)
 		require.NotNil(t, resp)
 		assert.Nil(t, resp.Error)
 	})
 
-	// Test with error from handler through handleRequest
+	// Test with error from handler through InvokeMethod
 	t.Run("returns error from handler", func(t *testing.T) {
 		params := map[string]string{} // Missing required params
 		paramsJSON, _ := json.Marshal(params)
@@ -684,7 +246,7 @@ func TestServer_HandleRequest_AllMethods(t *testing.T) {
 			ID:      4,
 		}
 
-		resp := server.handleRequest(ctx, req, nil)
+		resp := invokeRequest(server, ctx, req)
 		require.NotNil(t, resp)
 		assert.NotNil(t, resp.Error)
 		assert.Equal(t, ErrCodeInternalError, resp.Error.Code)
@@ -717,11 +279,11 @@ func TestServer_HandleRequest_MoreMethods(t *testing.T) {
 		ID:      1,
 	}
 
-	resp := server.handleRequest(ctx, genReq, nil)
+	resp := invokeRequest(server, ctx, genReq)
 	require.NotNil(t, resp)
 	assert.Nil(t, resp.Error)
 
-	// Test xkms.getKey through handleRequest
+	// Test xkms.getKey through InvokeMethod
 	t.Run("routes xkms.getKey", func(t *testing.T) {
 		params := map[string]string{
 			"key_id":  "test-req-key",
@@ -736,12 +298,12 @@ func TestServer_HandleRequest_MoreMethods(t *testing.T) {
 			ID:      2,
 		}
 
-		resp := server.handleRequest(ctx, req, nil)
+		resp := invokeRequest(server, ctx, req)
 		require.NotNil(t, resp)
 		assert.Nil(t, resp.Error)
 	})
 
-	// Test xkms.sign through handleRequest
+	// Test xkms.sign through InvokeMethod
 	t.Run("routes xkms.sign", func(t *testing.T) {
 		params := SignParams{
 			KeyID:   "test-req-key",
@@ -758,12 +320,12 @@ func TestServer_HandleRequest_MoreMethods(t *testing.T) {
 			ID:      3,
 		}
 
-		resp := server.handleRequest(ctx, req, nil)
+		resp := invokeRequest(server, ctx, req)
 		require.NotNil(t, resp)
 		assert.Nil(t, resp.Error)
 	})
 
-	// Test xkms.deleteKey through handleRequest
+	// Test xkms.deleteKey through InvokeMethod
 	t.Run("routes xkms.deleteKey", func(t *testing.T) {
 		// First generate a key to delete
 		delParams := map[string]interface{}{
@@ -780,7 +342,7 @@ func TestServer_HandleRequest_MoreMethods(t *testing.T) {
 			Params:  delParamsJSON,
 			ID:      10,
 		}
-		server.handleRequest(ctx, genReq, nil)
+		invokeRequest(server, ctx, genReq)
 
 		params := map[string]string{
 			"key_id":  "test-delete-req-key",
@@ -795,7 +357,7 @@ func TestServer_HandleRequest_MoreMethods(t *testing.T) {
 			ID:      4,
 		}
 
-		resp := server.handleRequest(ctx, req, nil)
+		resp := invokeRequest(server, ctx, req)
 		require.NotNil(t, resp)
 		assert.Nil(t, resp.Error)
 	})
@@ -827,7 +389,7 @@ func TestServer_HandleRequest_EncryptDecrypt(t *testing.T) {
 		ID:      1,
 	}
 
-	resp := server.handleRequest(ctx, genReq, nil)
+	resp := invokeRequest(server, ctx, genReq)
 	require.NotNil(t, resp)
 	assert.Nil(t, resp.Error)
 
@@ -846,7 +408,7 @@ func TestServer_HandleRequest_EncryptDecrypt(t *testing.T) {
 			ID:      2,
 		}
 
-		resp := server.handleRequest(ctx, req, nil)
+		resp := invokeRequest(server, ctx, req)
 		require.NotNil(t, resp)
 		assert.Nil(t, resp.Error)
 	})
@@ -878,7 +440,7 @@ func TestServer_HandleRequest_AsymmetricOps(t *testing.T) {
 		ID:      1,
 	}
 
-	resp := server.handleRequest(ctx, genReq, nil)
+	resp := invokeRequest(server, ctx, genReq)
 	require.NotNil(t, resp)
 	assert.Nil(t, resp.Error)
 
@@ -897,7 +459,7 @@ func TestServer_HandleRequest_AsymmetricOps(t *testing.T) {
 			ID:      2,
 		}
 
-		resp := server.handleRequest(ctx, req, nil)
+		resp := invokeRequest(server, ctx, req)
 		require.NotNil(t, resp)
 		assert.Nil(t, resp.Error)
 	})
@@ -916,7 +478,7 @@ func TestServer_HandleRequest_AsymmetricOps(t *testing.T) {
 			ID:      3,
 		}
 
-		resp := server.handleRequest(ctx, req, nil)
+		resp := invokeRequest(server, ctx, req)
 		require.NotNil(t, resp)
 		assert.Nil(t, resp.Error)
 	})
@@ -964,7 +526,7 @@ func TestServer_HandleRequest_CertOps(t *testing.T) {
 			ID:      1,
 		}
 
-		resp := server.handleRequest(ctx, req, nil)
+		resp := invokeRequest(server, ctx, req)
 		require.NotNil(t, resp)
 		assert.Nil(t, resp.Error)
 	})
@@ -980,7 +542,7 @@ func TestServer_HandleRequest_CertOps(t *testing.T) {
 			ID:      2,
 		}
 
-		resp := server.handleRequest(ctx, req, nil)
+		resp := invokeRequest(server, ctx, req)
 		require.NotNil(t, resp)
 		assert.Nil(t, resp.Error)
 	})
@@ -996,7 +558,7 @@ func TestServer_HandleRequest_CertOps(t *testing.T) {
 			ID:      3,
 		}
 
-		resp := server.handleRequest(ctx, req, nil)
+		resp := invokeRequest(server, ctx, req)
 		require.NotNil(t, resp)
 		assert.Nil(t, resp.Error)
 	})
@@ -1012,7 +574,7 @@ func TestServer_HandleRequest_CertOps(t *testing.T) {
 			ID:      4,
 		}
 
-		resp := server.handleRequest(ctx, req, nil)
+		resp := invokeRequest(server, ctx, req)
 		require.NotNil(t, resp)
 		assert.Nil(t, resp.Error)
 	})
@@ -1044,7 +606,7 @@ func TestServer_HandleRequest_VerifyRoute(t *testing.T) {
 		ID:      1,
 	}
 
-	resp := server.handleRequest(ctx, genReq, nil)
+	resp := invokeRequest(server, ctx, genReq)
 	require.NotNil(t, resp)
 	assert.Nil(t, resp.Error)
 
@@ -1057,7 +619,7 @@ func TestServer_HandleRequest_VerifyRoute(t *testing.T) {
 	}
 	signParamsJSON, _ := json.Marshal(signParams)
 	signReq := &JSONRPCRequest{JSONRPC: "2.0", Method: "xkms.sign", Params: signParamsJSON, ID: 2}
-	signResp := server.handleRequest(ctx, signReq, nil)
+	signResp := invokeRequest(server, ctx, signReq)
 	require.NotNil(t, signResp)
 	require.Nil(t, signResp.Error)
 
@@ -1080,7 +642,7 @@ func TestServer_HandleRequest_VerifyRoute(t *testing.T) {
 			ID:      3,
 		}
 
-		resp := server.handleRequest(ctx, req, nil)
+		resp := invokeRequest(server, ctx, req)
 		require.NotNil(t, resp)
 		assert.Nil(t, resp.Error)
 	})
@@ -1112,7 +674,7 @@ func TestServer_HandleRequest_DecryptRoute(t *testing.T) {
 		ID:      1,
 	}
 
-	resp := server.handleRequest(ctx, genReq, nil)
+	resp := invokeRequest(server, ctx, genReq)
 	require.NotNil(t, resp)
 	assert.Nil(t, resp.Error)
 
@@ -1124,7 +686,7 @@ func TestServer_HandleRequest_DecryptRoute(t *testing.T) {
 	}
 	encryptParamsJSON, _ := json.Marshal(encryptParams)
 	encryptReq := &JSONRPCRequest{JSONRPC: "2.0", Method: "xkms.encrypt", Params: encryptParamsJSON, ID: 2}
-	encryptResp := server.handleRequest(ctx, encryptReq, nil)
+	encryptResp := invokeRequest(server, ctx, encryptReq)
 	require.NotNil(t, encryptResp)
 	require.Nil(t, encryptResp.Error)
 
@@ -1147,7 +709,7 @@ func TestServer_HandleRequest_DecryptRoute(t *testing.T) {
 			ID:      3,
 		}
 
-		resp := server.handleRequest(ctx, req, nil)
+		resp := invokeRequest(server, ctx, req)
 		require.NotNil(t, resp)
 		assert.Nil(t, resp.Error)
 	})
@@ -1179,7 +741,7 @@ func TestServer_HandleRequest_AsymmetricDecryptRoute(t *testing.T) {
 		ID:      1,
 	}
 
-	resp := server.handleRequest(ctx, genReq, nil)
+	resp := invokeRequest(server, ctx, genReq)
 	require.NotNil(t, resp)
 	assert.Nil(t, resp.Error)
 
@@ -1213,7 +775,7 @@ func TestServer_HandleRequest_AsymmetricDecryptRoute(t *testing.T) {
 			ID:      3,
 		}
 
-		resp := server.handleRequest(ctx, req, nil)
+		resp := invokeRequest(server, ctx, req)
 		require.NotNil(t, resp)
 		assert.Nil(t, resp.Error)
 	})
@@ -1244,7 +806,7 @@ func TestServer_HandleRequest_ImportExportRoutes(t *testing.T) {
 			ID:      1,
 		}
 
-		resp := server.handleRequest(ctx, req, nil)
+		resp := invokeRequest(server, ctx, req)
 		require.NotNil(t, resp)
 		assert.Nil(t, resp.Error)
 	})
@@ -1264,7 +826,7 @@ func TestServer_HandleRequest_ImportExportRoutes(t *testing.T) {
 			ID:      2,
 		}
 
-		resp := server.handleRequest(ctx, req, nil)
+		resp := invokeRequest(server, ctx, req)
 		require.NotNil(t, resp)
 		assert.NotNil(t, resp.Error)
 	})
@@ -1285,7 +847,7 @@ func TestServer_HandleRequest_ImportExportRoutes(t *testing.T) {
 			ID:      3,
 		}
 
-		resp := server.handleRequest(ctx, req, nil)
+		resp := invokeRequest(server, ctx, req)
 		require.NotNil(t, resp)
 		assert.NotNil(t, resp.Error)
 	})
@@ -1305,7 +867,7 @@ func TestServer_HandleRequest_ImportExportRoutes(t *testing.T) {
 			ID:      4,
 		}
 
-		resp := server.handleRequest(ctx, req, nil)
+		resp := invokeRequest(server, ctx, req)
 		require.NotNil(t, resp)
 		assert.NotNil(t, resp.Error)
 	})
@@ -1324,7 +886,7 @@ func TestServer_HandleRequest_ImportExportRoutes(t *testing.T) {
 			ID:      5,
 		}
 
-		resp := server.handleRequest(ctx, req, nil)
+		resp := invokeRequest(server, ctx, req)
 		require.NotNil(t, resp)
 		assert.NotNil(t, resp.Error)
 	})
@@ -1372,7 +934,7 @@ func TestServer_HandleRequest_CertChainRoutes(t *testing.T) {
 			ID:      1,
 		}
 
-		resp := server.handleRequest(ctx, req, nil)
+		resp := invokeRequest(server, ctx, req)
 		require.NotNil(t, resp)
 		assert.Nil(t, resp.Error)
 	})
@@ -1388,7 +950,7 @@ func TestServer_HandleRequest_CertChainRoutes(t *testing.T) {
 			ID:      2,
 		}
 
-		resp := server.handleRequest(ctx, req, nil)
+		resp := invokeRequest(server, ctx, req)
 		require.NotNil(t, resp)
 		assert.Nil(t, resp.Error)
 	})
@@ -1407,400 +969,15 @@ func TestServer_HandleRequest_CertChainRoutes(t *testing.T) {
 			ID:      3,
 		}
 
-		resp := server.handleRequest(ctx, req, nil)
+		resp := invokeRequest(server, ctx, req)
 		require.NotNil(t, resp)
 		assert.NotNil(t, resp.Error)
 	})
 }
 
-// TestServer_HandleRequest_Subscribe tests subscribe method routing
-func TestServer_HandleRequest_Subscribe(t *testing.T) {
-	svc := setupTestXKMS(t)
-	defer cleanupXKMS()
-
-	server, err := NewServer(&Config{Addr: "localhost:0", XKMSService: svc, Authenticator: auth.NewNoOpAuthenticator()})
-	require.NoError(t, err)
-
-	// Create a mock connection
-	clientConn, serverConn := net.Pipe()
-	defer func() { _ = clientConn.Close() }()
-	defer func() { _ = serverConn.Close() }()
-
-	ctx := context.Background()
-
-	t.Run("routes xkms.subscribe", func(t *testing.T) {
-		params := SubscribeParams{
-			Events: []string{"key.created", "key.deleted"},
-		}
-		paramsJSON, _ := json.Marshal(params)
-
-		req := &JSONRPCRequest{
-			JSONRPC: "2.0",
-			Method:  "xkms.subscribe",
-			Params:  paramsJSON,
-			ID:      1,
-		}
-
-		resp := server.handleRequest(ctx, req, serverConn)
-		require.NotNil(t, resp)
-		assert.Nil(t, resp.Error)
-	})
-}
-
-// TestServer_BatchWithNotifications tests batch requests with notifications
-func TestServer_BatchWithNotifications(t *testing.T) {
-	svc := setupTestXKMS(t)
-	defer cleanupXKMS()
-
-	server, err := NewServer(&Config{Addr: "localhost:0", XKMSService: svc, Authenticator: auth.NewNoOpAuthenticator()})
-	require.NoError(t, err)
-
-	err = server.Start()
-	require.NoError(t, err)
-	defer func() { _ = server.Stop() }()
-
-	// Connect to the server
-	conn, err := net.Dial("tcp", server.listener.Addr().String())
-	require.NoError(t, err)
-	defer func() { _ = conn.Close() }()
-
-	// Send batch request with a notification (no ID)
-	batch := []JSONRPCRequest{
-		{JSONRPC: "2.0", Method: "health", ID: 1},
-		{JSONRPC: "2.0", Method: "health"}, // No ID = notification
-	}
-	batchBytes, err := json.Marshal(batch)
-	require.NoError(t, err)
-
-	_, err = conn.Write(append(batchBytes, '\n'))
-	require.NoError(t, err)
-
-	// Read response - should only have one response (not for notification)
-	scanner := bufio.NewScanner(conn)
-	require.True(t, scanner.Scan())
-
-	var responses []JSONRPCResponse
-	err = json.Unmarshal(scanner.Bytes(), &responses)
-	require.NoError(t, err)
-
-	// Only one response because the notification doesn't get a response
-	assert.Len(t, responses, 1)
-}
-
-// TestServer_StopWithTLS tests stopping server with TLS configuration
-func TestServer_StopWithTLS(t *testing.T) {
-	svc := setupTestXKMS(t)
-	defer cleanupXKMS()
-
-	// Generate a self-signed certificate for testing
-	privKey, err := rsa.GenerateKey(rand.Reader, 2048)
-	require.NoError(t, err)
-
-	template := x509.Certificate{
-		SerialNumber: big.NewInt(1),
-		NotBefore:    time.Now(),
-		NotAfter:     time.Now().Add(time.Hour),
-		IPAddresses:  []net.IP{net.ParseIP("127.0.0.1")},
-	}
-
-	certDER, err := x509.CreateCertificate(rand.Reader, &template, &template, &privKey.PublicKey, privKey)
-	require.NoError(t, err)
-
-	tlsCert := tls.Certificate{
-		Certificate: [][]byte{certDER},
-		PrivateKey:  privKey,
-	}
-
-	tlsConfig := &tls.Config{
-		Certificates: []tls.Certificate{tlsCert},
-		MinVersion:   tls.VersionTLS12,
-	}
-
-	config := &Config{
-		Authenticator: auth.NewNoOpAuthenticator(),
-		Addr:          "localhost:0",
-		TLSConfig:     tlsConfig,
-
-		XKMSService: svc,
-	}
-
-	server, err := NewServer(config)
-	require.NoError(t, err)
-
-	err = server.Start()
-	require.NoError(t, err)
-
-	// Stop the server
-	err = server.Stop()
-	require.NoError(t, err)
-}
-
-// TestServer_ConnectionWithRateLimit tests connection handling with rate limiter
-func TestServer_ConnectionWithRateLimit(t *testing.T) {
-	svc := setupTestXKMS(t)
-	defer cleanupXKMS()
-
-	limiter := ratelimit.New(&ratelimit.Config{
-		Enabled:           true,
-		RequestsPerMinute: 1000,
-		Burst:             100,
-	})
-	defer limiter.Stop()
-
-	config := &Config{
-		Authenticator: auth.NewNoOpAuthenticator(),
-		Addr:          "localhost:0",
-		RateLimiter:   limiter,
-
-		XKMSService: svc,
-	}
-
-	server, err := NewServer(config)
-	require.NoError(t, err)
-
-	err = server.Start()
-	require.NoError(t, err)
-	defer func() { _ = server.Stop() }()
-
-	// Connect to the server
-	conn, err := net.Dial("tcp", server.listener.Addr().String())
-	require.NoError(t, err)
-	defer func() { _ = conn.Close() }()
-
-	// Send a request
-	request := JSONRPCRequest{
-		JSONRPC: "2.0",
-		Method:  "health",
-		ID:      1,
-	}
-	requestBytes, err := json.Marshal(request)
-	require.NoError(t, err)
-
-	_, err = conn.Write(append(requestBytes, '\n'))
-	require.NoError(t, err)
-
-	// Read response
-	scanner := bufio.NewScanner(conn)
-	require.True(t, scanner.Scan())
-
-	var response JSONRPCResponse
-	err = json.Unmarshal(scanner.Bytes(), &response)
-	require.NoError(t, err)
-	assert.Nil(t, response.Error)
-}
-
-// TestServer_EmptyBatchRequest tests handling of empty batch requests
-func TestServer_EmptyBatchRequest(t *testing.T) {
-	svc := setupTestXKMS(t)
-	defer cleanupXKMS()
-
-	server, err := NewServer(&Config{Addr: "localhost:0", XKMSService: svc, Authenticator: auth.NewNoOpAuthenticator()})
-	require.NoError(t, err)
-
-	err = server.Start()
-	require.NoError(t, err)
-	defer func() { _ = server.Stop() }()
-
-	// Connect to the server
-	conn, err := net.Dial("tcp", server.listener.Addr().String())
-	require.NoError(t, err)
-	defer func() { _ = conn.Close() }()
-
-	// Send an empty batch
-	_, err = conn.Write([]byte("[]\n"))
-	require.NoError(t, err)
-
-	// Server should handle empty batch gracefully and not send response for empty batch
-	// Small wait to ensure processing
-	time.Sleep(10 * time.Millisecond)
-}
-
-// TestServer_InvalidBatchRequest tests handling of invalid batch JSON
-func TestServer_InvalidBatchRequest(t *testing.T) {
-	svc := setupTestXKMS(t)
-	defer cleanupXKMS()
-
-	server, err := NewServer(&Config{Addr: "localhost:0", XKMSService: svc, Authenticator: auth.NewNoOpAuthenticator()})
-	require.NoError(t, err)
-
-	err = server.Start()
-	require.NoError(t, err)
-	defer func() { _ = server.Stop() }()
-
-	// Connect to the server
-	conn, err := net.Dial("tcp", server.listener.Addr().String())
-	require.NoError(t, err)
-	defer func() { _ = conn.Close() }()
-
-	// Send invalid batch JSON (array but invalid content)
-	_, err = conn.Write([]byte("[invalid json]\n"))
-	require.NoError(t, err)
-
-	// Read error response
-	scanner := bufio.NewScanner(conn)
-	require.True(t, scanner.Scan())
-
-	var response JSONRPCResponse
-	err = json.Unmarshal(scanner.Bytes(), &response)
-	require.NoError(t, err)
-	assert.NotNil(t, response.Error)
-	assert.Equal(t, ErrCodeParseError, response.Error.Code)
-}
-
-// TestServer_WithMTLS tests mTLS client certificate authentication
-func TestServer_WithMTLS(t *testing.T) {
-	svc := setupTestXKMS(t)
-	defer cleanupXKMS()
-
-	// Generate CA certificate
-	caPrivKey, err := rsa.GenerateKey(rand.Reader, 2048)
-	require.NoError(t, err)
-
-	caTemplate := x509.Certificate{
-		SerialNumber:          big.NewInt(1),
-		Subject:               pkix.Name{CommonName: "Test CA"},
-		NotBefore:             time.Now(),
-		NotAfter:              time.Now().Add(time.Hour),
-		IsCA:                  true,
-		KeyUsage:              x509.KeyUsageCertSign | x509.KeyUsageCRLSign,
-		BasicConstraintsValid: true,
-	}
-
-	caCertDER, err := x509.CreateCertificate(rand.Reader, &caTemplate, &caTemplate, &caPrivKey.PublicKey, caPrivKey)
-	require.NoError(t, err)
-
-	caCert, err := x509.ParseCertificate(caCertDER)
-	require.NoError(t, err)
-
-	// Generate server certificate
-	serverPrivKey, err := rsa.GenerateKey(rand.Reader, 2048)
-	require.NoError(t, err)
-
-	serverTemplate := x509.Certificate{
-		SerialNumber: big.NewInt(2),
-		Subject:      pkix.Name{CommonName: "localhost"},
-		NotBefore:    time.Now(),
-		NotAfter:     time.Now().Add(time.Hour),
-		IPAddresses:  []net.IP{net.ParseIP("127.0.0.1")},
-		ExtKeyUsage:  []x509.ExtKeyUsage{x509.ExtKeyUsageServerAuth},
-	}
-
-	serverCertDER, err := x509.CreateCertificate(rand.Reader, &serverTemplate, caCert, &serverPrivKey.PublicKey, caPrivKey)
-	require.NoError(t, err)
-
-	serverTLSCert := tls.Certificate{
-		Certificate: [][]byte{serverCertDER},
-		PrivateKey:  serverPrivKey,
-	}
-
-	// Generate client certificate
-	clientPrivKey, err := rsa.GenerateKey(rand.Reader, 2048)
-	require.NoError(t, err)
-
-	clientTemplate := x509.Certificate{
-		SerialNumber: big.NewInt(3),
-		Subject:      pkix.Name{CommonName: "test-client"},
-		NotBefore:    time.Now(),
-		NotAfter:     time.Now().Add(time.Hour),
-		ExtKeyUsage:  []x509.ExtKeyUsage{x509.ExtKeyUsageClientAuth},
-	}
-
-	clientCertDER, err := x509.CreateCertificate(rand.Reader, &clientTemplate, caCert, &clientPrivKey.PublicKey, caPrivKey)
-	require.NoError(t, err)
-
-	clientTLSCert := tls.Certificate{
-		Certificate: [][]byte{clientCertDER},
-		PrivateKey:  clientPrivKey,
-	}
-
-	// Create CA pool
-	caPool := x509.NewCertPool()
-	caPool.AddCert(caCert)
-
-	// Server TLS config with mTLS
-	serverTLSConfig := &tls.Config{
-		Certificates: []tls.Certificate{serverTLSCert},
-		ClientCAs:    caPool,
-		ClientAuth:   tls.RequireAndVerifyClientCert,
-		MinVersion:   tls.VersionTLS12,
-	}
-
-	config := &Config{
-		Authenticator: auth.NewNoOpAuthenticator(),
-		Addr:          "localhost:0",
-		TLSConfig:     serverTLSConfig,
-
-		XKMSService: svc,
-	}
-
-	server, err := NewServer(config)
-	require.NoError(t, err)
-
-	err = server.Start()
-	require.NoError(t, err)
-	defer func() { _ = server.Stop() }()
-
-	// Client TLS config with client certificate
-	clientTLSConfig := &tls.Config{
-		Certificates: []tls.Certificate{clientTLSCert},
-		RootCAs:      caPool,
-	}
-
-	conn, err := tls.Dial("tcp", server.listener.Addr().String(), clientTLSConfig)
-	require.NoError(t, err)
-	defer func() { _ = conn.Close() }()
-
-	// Send a health request
-	request := JSONRPCRequest{
-		JSONRPC: "2.0",
-		Method:  "health",
-		ID:      1,
-	}
-	requestBytes, err := json.Marshal(request)
-	require.NoError(t, err)
-
-	_, err = conn.Write(append(requestBytes, '\n'))
-	require.NoError(t, err)
-
-	// Read response
-	scanner := bufio.NewScanner(conn)
-	require.True(t, scanner.Scan())
-
-	var response JSONRPCResponse
-	err = json.Unmarshal(scanner.Bytes(), &response)
-	require.NoError(t, err)
-
-	assert.Nil(t, response.Error)
-}
-
-// TestServer_NotifyEvent_ClosedConnection tests NotifyEvent with a closed connection
-func TestServer_NotifyEvent_ClosedConnection(t *testing.T) {
-	svc := setupTestXKMS(t)
-	defer cleanupXKMS()
-
-	server, err := NewServer(&Config{Addr: "localhost:0", XKMSService: svc, Authenticator: auth.NewNoOpAuthenticator()})
-	require.NoError(t, err)
-
-	// Create a mock connection using a pipe
-	clientConn, serverConn := net.Pipe()
-
-	// Add a subscriber
-	server.subMutex.Lock()
-	server.subscribers[serverConn] = &Subscriber{
-		conn:   serverConn,
-		events: map[string]bool{"key.created": true},
-	}
-	server.subMutex.Unlock()
-
-	// Close the connection from client side
-	_ = clientConn.Close()
-	_ = serverConn.Close()
-
-	// This should not panic and should log an error
-	server.NotifyEvent("key.created", "test-key", map[string]string{"backend": "memory"})
-}
-
-// TestServer_StopWithoutStart tests stopping a server that was never started
+// TestServer_StopWithoutStart proves Stop is safe to call on a server that
+// never dispatched a request -- the only shape a *Server can have now that
+// there is no listener to have started.
 func TestServer_StopWithoutStart(t *testing.T) {
 	svc := setupTestXKMS(t)
 	defer cleanupXKMS()
@@ -1808,7 +985,6 @@ func TestServer_StopWithoutStart(t *testing.T) {
 	server, err := NewServer(&Config{Addr: "localhost:0", XKMSService: svc, Authenticator: auth.NewNoOpAuthenticator()})
 	require.NoError(t, err)
 
-	// Server was never started, so listener is nil
 	err = server.Stop()
 	require.NoError(t, err)
 }
@@ -1830,7 +1006,7 @@ func TestServer_HandleRequest_FrostMethodWithError(t *testing.T) {
 		ID:      1,
 	}
 
-	resp := server.handleRequest(ctx, req, nil)
+	resp := invokeRequest(server, ctx, req)
 	require.NotNil(t, resp)
 	assert.NotNil(t, resp.Error)
 	assert.Equal(t, ErrCodeInternalError, resp.Error.Code)
@@ -1856,7 +1032,7 @@ func TestServer_HandleRequest_WithAuthenticatedIdentity(t *testing.T) {
 		ID:      1,
 	}
 
-	resp := server.handleRequest(ctx, req, nil)
+	resp := invokeRequest(server, ctx, req)
 	require.NotNil(t, resp)
 	assert.Nil(t, resp.Error)
 }

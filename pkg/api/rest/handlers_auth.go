@@ -102,7 +102,6 @@ var uiPermissionMatrix = [][2]string{
 	{auth.ResourcePIV, auth.ActionRead},
 	{auth.ResourceSSH, auth.ActionUse},
 	{auth.ResourcePasswords, auth.ActionRead},
-	{auth.ResourceClusterAdmin, auth.ActionClusterStatus},
 	{auth.ResourceCA, auth.ActionRead},
 	{auth.ResourceCeremony, auth.ActionStatus},
 }
@@ -301,7 +300,6 @@ func (s *Server) capabilityFlags() map[string]bool {
 		"piv_login":  s.pivLogin != nil && s.pivLogin.Enabled,
 		"rbac":       s.rbacMiddleware != nil,
 		"ca":         s.caHandlers != nil,
-		"cluster":    s.clusterHandlers != nil,
 		"custodians": s.custodianHandlers != nil,
 		"shares":     s.shareHandlers != nil,
 		"tenants":    s.tenantHandlers != nil,

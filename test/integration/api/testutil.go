@@ -73,7 +73,7 @@ func LoadTestConfig() *TestConfig {
 		UnixSocketPath: getEnv("KEYSTORE_UNIX_SOCKET", "/var/run/xkms/xkms.sock"),
 		RESTBaseURL:    getEnv("KEYSTORE_REST_URL", "http://localhost:8443"),
 		GRPCAddr:       getEnv("KEYSTORE_GRPC_ADDR", "localhost:9443"),
-		QUICBaseURL:    getEnv("KEYSTORE_QUIC_URL", "https://localhost:9445"),
+		QUICBaseURL:    getEnv("KEYSTORE_QUIC_URL", "https://localhost:9443"),
 		MCPAddr:        getEnv("KEYSTORE_MCP_ADDR", "localhost:9444"),
 	}
 	return cfg

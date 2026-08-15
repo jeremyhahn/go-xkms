@@ -47,3 +47,8 @@ docker-compose.yml
 
 # OS files
 Thumbs.db
+
+# Module-fetch credentials are BuildKit secrets, never build context
+gomodauth*
+.devcontainer/.env
+.devcontainer/gomodauth.env

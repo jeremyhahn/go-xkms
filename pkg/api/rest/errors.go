@@ -126,24 +126,6 @@ func mapErrorToStatusCode(err error) int {
 	case errors.Is(err, ErrServiceUnavailable):
 		return http.StatusServiceUnavailable
 	default:
-		return clusterErrorStatusCode(err)
-	}
-}
-
-// clusterErrorStatusCode maps the typed cluster-servicer errors to precise
-// client-facing statuses. It is consulted from mapErrorToStatusCode's default
-// case so both read and mutation cluster handlers get the same mapping
-// through handleError / handleErrorWithCluster without duplicating the
-// errors.As checks at each call site.
-func clusterErrorStatusCode(err error) int {
-	var invalidReplica *xkms.ClusterReplicaInvalidError
-	var notClustered *xkms.ClusterNotClusteredError
-	switch {
-	case errors.As(err, &invalidReplica):
-		return http.StatusBadRequest
-	case errors.As(err, &notClustered):
-		return http.StatusConflict
-	default:
 		return http.StatusInternalServerError
 	}
 }
@@ -156,8 +138,8 @@ func clusterErrorStatusCode(err error) int {
 // This variant cannot enrich the redirect with the leader's dialable API
 // address: resolving that requires calling back into the servicer
 // (ClusterLeaderEndpoint), and most handleError call sites have no
-// *xkms.XKMSService in scope. Call sites that do — currently the cluster
-// handlers — use handleErrorWithCluster instead.
+// *xkms.XKMSService in scope. Call sites that do use handleErrorWithCluster
+// instead.
 func handleError(w http.ResponseWriter, err error) {
 	if nl, ok := xkms.AsNotLeader(err); ok {
 		writeNotLeader(w, nl)

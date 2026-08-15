@@ -17,7 +17,4 @@ RUN go mod download || true
 
 COPY . .
 
-# Materialize /tmp/go.work + GOWORK before running the test CMD passed as args.
-ENTRYPOINT ["bash", ".devcontainer/scripts/ensure-gowork.sh"]
-
 CMD ["go", "test", "-v", "-tags=integration codec_cbor codec_json codec_msgpack", "./test/integration/certstore/..."]

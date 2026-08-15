@@ -21,6 +21,7 @@ import (
 	"log/slog"
 	"net"
 	"net/http"
+	"strings"
 	"time"
 
 	"github.com/jeremyhahn/go-xkms/pkg/errs"
@@ -73,7 +74,6 @@ type Server struct {
 	authFactorHandlers  *AuthFactorHandlers
 	auditHandlers       *AuditHandlers
 	caHandlers          *CAHandlers
-	clusterHandlers     *ClusterHandlers
 	sshHandlers         *SSHHandlers
 	sshClient           sdkssh.Client
 
@@ -478,11 +478,6 @@ func NewServer(cfg *Config) (*Server, error) {
 		log.Info("Custodian handlers enabled")
 	}
 
-	// Cluster handlers are always available: the read-only cluster surface
-	// reports a single-node, non-clustered status when the node runs
-	// standalone, so callers (CLI, GUI, health probes) work uniformly.
-	server.clusterHandlers = NewClusterHandlers(cfg.XKMSService)
-
 	// Set up SSH handlers when an SSH SDK client is wired.
 	if cfg.SSHClient != nil {
 		sshHandlers, err := NewSSHHandlers(cfg.SSHClient, log)
@@ -615,681 +610,12 @@ func (s *Server) setupRouter() *chi.Mux {
 		s.logger.Info("Rate limiting enabled for REST API")
 	}
 
-	// Legacy health endpoint (backwards compatibility)
-	r.Get("/health", s.handlers.HealthHandler)
-	r.Head("/health", s.handlers.HealthHandler)
-
-	// Kubernetes-style health probes (no auth required)
-	r.Get("/health/live", s.handlers.LivenessHandler)
-	r.Get("/health/ready", s.handlers.ReadinessHandler)
-	r.Get("/health/startup", s.handlers.StartupHandler)
-
-	// Public algorithm discovery endpoint (no auth required)
-	r.Get("/api/v1/algorithms", s.handlers.AlgorithmsHandler)
-
-	// Public capability discovery endpoint (no auth required). It serves
-	// only the coarse flags a login page needs to render; the full
-	// capability map stays behind authentication at /api/v1/auth/me.
-	r.Get("/api/v1/capabilities", s.handleCapabilities)
-
-	// API v1 routes with authentication
-	r.Route("/api/v1", func(r chi.Router) {
-		// Apply authentication middleware to all API routes
-		r.Use(s.AuthenticationMiddleware())
-
-		// Apply tenant enforcement middleware after authentication
-		r.Use(s.TenantMiddleware())
-
-		// Backend endpoints
-		if s.rbacMiddleware != nil {
-			r.With(s.rbacMiddleware.RequirePermission(auth.ResourceBackends, auth.ActionList)).
-				Get("/backends", s.handlers.ListBackendsHandler)
-			r.With(s.rbacMiddleware.RequirePermission(auth.ResourceBackends, auth.ActionRead)).
-				Get("/backends/{id}", s.handlers.GetBackendHandler)
-		} else {
-			r.Get("/backends", s.handlers.ListBackendsHandler)
-			r.Get("/backends/{id}", s.handlers.GetBackendHandler)
-		}
-
-		// Key endpoints
-		if s.rbacMiddleware != nil {
-			r.With(s.rbacMiddleware.RequirePermission(auth.ResourceKeys, auth.ActionCreate)).
-				Post("/keys", s.handlers.GenerateKeyHandler)
-			r.With(s.rbacMiddleware.RequirePermission(auth.ResourceKeys, auth.ActionList)).
-				Get("/keys", s.handlers.ListKeysHandler)
-			r.With(s.rbacMiddleware.RequirePermission(auth.ResourceKeys, auth.ActionGet)).
-				Get("/keys/{id}", s.handlers.GetKeyHandler)
-			r.With(s.rbacMiddleware.RequirePermission(auth.ResourceKeys, auth.ActionDelete)).
-				Delete("/keys/{id}", s.handlers.DeleteKeyHandler)
-
-			// Crypto operation endpoints
-			r.With(s.rbacMiddleware.RequirePermission(auth.ResourceKeys, auth.ActionSign)).
-				Post("/keys/{id}/sign", s.handlers.SignHandler)
-			r.With(s.rbacMiddleware.RequirePermission(auth.ResourceKeys, auth.ActionVerify)).
-				Post("/keys/{id}/verify", s.handlers.VerifyHandler)
-			r.With(s.rbacMiddleware.RequirePermission(auth.ResourceKeys, auth.ActionRotate)).
-				Post("/keys/{id}/rotate", s.handlers.RotateKeyHandler)
-			r.With(s.rbacMiddleware.RequirePermission(auth.ResourceKeys, auth.ActionEncrypt)).
-				Post("/keys/{id}/encrypt", s.handlers.EncryptHandler)
-			r.With(s.rbacMiddleware.RequirePermission(auth.ResourceKeys, auth.ActionDecrypt)).
-				Post("/keys/{id}/decrypt", s.handlers.DecryptHandler)
-			r.With(s.rbacMiddleware.RequirePermission(auth.ResourceKeys, auth.ActionEncrypt)).
-				Post("/keys/{id}/encrypt-asym", s.handlers.EncryptAsymHandler)
-
-			// Import/Export endpoints
-			r.With(s.rbacMiddleware.RequirePermission(auth.ResourceKeys, auth.ActionImport)).
-				Post("/keys/import-params", s.handlers.GetImportParametersHandler)
-			r.With(s.rbacMiddleware.RequirePermission(auth.ResourceKeys, auth.ActionEncrypt)).
-				Post("/keys/wrap", s.handlers.WrapKeyHandler)
-			r.With(s.rbacMiddleware.RequirePermission(auth.ResourceKeys, auth.ActionDecrypt)).
-				Post("/keys/unwrap", s.handlers.UnwrapKeyHandler)
-			r.With(s.rbacMiddleware.RequirePermission(auth.ResourceKeys, auth.ActionImport)).
-				Post("/keys/import", s.handlers.ImportKeyHandler)
-			r.With(s.rbacMiddleware.RequirePermission(auth.ResourceKeys, auth.ActionExport)).
-				Post("/keys/{id}/export", s.handlers.ExportKeyHandler)
-			r.With(s.rbacMiddleware.RequirePermission(auth.ResourceKeys, auth.ActionCreate)).
-				Post("/keys/copy", s.handlers.CopyKeyHandler)
-
-			// Hardware-capability key operation endpoints (attestation, ECDH
-			// derive, raw key-material export, server-side wrap/unwrap by key
-			// ID). "wrap", "unwrap", and "derive" are not exported auth.Action*
-			// constants; they are the canonical go-qrdb keys:wrap / keys:unwrap
-			// / keys:derive permissions, matching pkg/api/grpc/service.go's
-			// s.authorize(ctx, "keys", "wrap"|"unwrap"|"derive", id) calls.
-			r.With(s.rbacMiddleware.RequirePermission(auth.ResourceKeys, auth.ActionGet)).
-				Post("/attest", s.handlers.AttestKeyHandler)
-			r.With(s.rbacMiddleware.RequirePermission(auth.ResourceKeys, "derive")).
-				Post("/keys/derive-ecdh", s.handlers.DeriveKeyECDHHandler)
-			r.With(s.rbacMiddleware.RequirePermission(auth.ResourceKeys, auth.ActionExport)).
-				Post("/keys/{id}/export-material", s.handlers.ExportKeyMaterialHandler)
-			r.With(s.rbacMiddleware.RequirePermission(auth.ResourceKeys, "wrap")).
-				Post("/keys/wrap-by-id", s.handlers.WrapKeyByIDHandler)
-			r.With(s.rbacMiddleware.RequirePermission(auth.ResourceKeys, "unwrap")).
-				Post("/keys/unwrap-by-id", s.handlers.UnwrapKeyByIDHandler)
-		} else {
-			r.Post("/keys", s.handlers.GenerateKeyHandler)
-			r.Get("/keys", s.handlers.ListKeysHandler)
-			r.Get("/keys/{id}", s.handlers.GetKeyHandler)
-			r.Delete("/keys/{id}", s.handlers.DeleteKeyHandler)
-
-			// Crypto operation endpoints
-			r.Post("/keys/{id}/sign", s.handlers.SignHandler)
-			r.Post("/keys/{id}/verify", s.handlers.VerifyHandler)
-			r.Post("/keys/{id}/rotate", s.handlers.RotateKeyHandler)
-			r.Post("/keys/{id}/encrypt", s.handlers.EncryptHandler)
-			r.Post("/keys/{id}/decrypt", s.handlers.DecryptHandler)
-			r.Post("/keys/{id}/encrypt-asym", s.handlers.EncryptAsymHandler)
-
-			// Import/Export endpoints
-			r.Post("/keys/import-params", s.handlers.GetImportParametersHandler)
-			r.Post("/keys/wrap", s.handlers.WrapKeyHandler)
-			r.Post("/keys/unwrap", s.handlers.UnwrapKeyHandler)
-			r.Post("/keys/import", s.handlers.ImportKeyHandler)
-			r.Post("/keys/{id}/export", s.handlers.ExportKeyHandler)
-			r.Post("/keys/copy", s.handlers.CopyKeyHandler)
-
-			// Hardware-capability key operation endpoints (attestation, ECDH
-			// derive, raw key-material export, server-side wrap/unwrap by key
-			// ID). See the rbacMiddleware arm above for the authorization
-			// resource/action pairs these routes carry when RBAC is enabled.
-			r.Post("/attest", s.handlers.AttestKeyHandler)
-			r.Post("/keys/derive-ecdh", s.handlers.DeriveKeyECDHHandler)
-			r.Post("/keys/{id}/export-material", s.handlers.ExportKeyMaterialHandler)
-			r.Post("/keys/wrap-by-id", s.handlers.WrapKeyByIDHandler)
-			r.Post("/keys/unwrap-by-id", s.handlers.UnwrapKeyByIDHandler)
-		}
-
-		// Certificate endpoints
-		if s.rbacMiddleware != nil {
-			r.With(s.rbacMiddleware.RequirePermission(auth.ResourceCerts, auth.ActionGenerate)).
-				Post("/certs", s.handlers.SaveCertHandler)
-			r.With(s.rbacMiddleware.RequirePermission(auth.ResourceCerts, auth.ActionList)).
-				Get("/certs", s.handlers.ListCertsHandler)
-			r.With(s.rbacMiddleware.RequirePermission(auth.ResourceCerts, auth.ActionRead)).
-				Get("/certs/{id}", s.handlers.GetCertHandler)
-			r.With(s.rbacMiddleware.RequirePermission(auth.ResourceCerts, auth.ActionRevoke)).
-				Delete("/certs/{id}", s.handlers.DeleteCertHandler)
-			r.With(s.rbacMiddleware.RequirePermission(auth.ResourceCerts, auth.ActionRead)).
-				Head("/certs/{id}", s.handlers.CertExistsHandler)
-			r.With(s.rbacMiddleware.RequirePermission(auth.ResourceCerts, auth.ActionGenerate)).
-				Post("/certs/{id}/chain", s.handlers.SaveCertChainHandler)
-			r.With(s.rbacMiddleware.RequirePermission(auth.ResourceCerts, auth.ActionRead)).
-				Get("/certs/{id}/chain", s.handlers.GetCertChainHandler)
-
-			// TLS helper endpoint
-			r.With(s.rbacMiddleware.RequirePermission(auth.ResourceCerts, auth.ActionRead)).
-				Get("/tls/{id}", s.handlers.GetTLSCertificateHandler)
-		} else {
-			r.Post("/certs", s.handlers.SaveCertHandler)
-			r.Get("/certs", s.handlers.ListCertsHandler)
-			r.Get("/certs/{id}", s.handlers.GetCertHandler)
-			r.Delete("/certs/{id}", s.handlers.DeleteCertHandler)
-			r.Head("/certs/{id}", s.handlers.CertExistsHandler)
-			r.Post("/certs/{id}/chain", s.handlers.SaveCertChainHandler)
-			r.Get("/certs/{id}/chain", s.handlers.GetCertChainHandler)
-
-			// TLS helper endpoint
-			r.Get("/tls/{id}", s.handlers.GetTLSCertificateHandler)
-		}
-
-		// Sealing endpoints (hardware-backed data protection)
-		if s.rbacMiddleware != nil {
-			r.With(s.rbacMiddleware.RequirePermission(auth.ResourceKeys, auth.ActionEncrypt)).
-				Post("/seal", s.handlers.SealHandler)
-			r.With(s.rbacMiddleware.RequirePermission(auth.ResourceKeys, auth.ActionDecrypt)).
-				Post("/unseal", s.handlers.UnsealHandler)
-			r.With(s.rbacMiddleware.RequirePermission(auth.ResourceKeys, auth.ActionGet)).
-				Get("/seal/capability", s.handlers.CanSealHandler)
-		} else {
-			r.Post("/seal", s.handlers.SealHandler)
-			r.Post("/unseal", s.handlers.UnsealHandler)
-			r.Get("/seal/capability", s.handlers.CanSealHandler)
-		}
-
-		// FROST threshold signature endpoints. FROST operates on threshold key
-		// material, so every route carries the keys:* permission its
-		// single-key equivalent above carries: the three signing rounds
-		// (nonces, sign, aggregate) are steps of producing a signature and take
-		// keys:sign, exactly as the QUIC handlers (pkg/api/quic/handlers_frost.go)
-		// and the MCP frost.* methodPermissions map (pkg/api/mcp/authz.go) gate
-		// them. Registering these without the decorator let any authenticated
-		// caller generate, import, sign with, and delete threshold shares.
-		r.Route("/frost", func(r chi.Router) {
-			if s.rbacMiddleware != nil {
-				// Key management
-				r.With(s.rbacMiddleware.RequirePermission(auth.ResourceKeys, auth.ActionCreate)).
-					Post("/keys", s.handlers.FrostGenerateKeyHandler)
-				r.With(s.rbacMiddleware.RequirePermission(auth.ResourceKeys, auth.ActionImport)).
-					Post("/keys/import", s.handlers.FrostImportKeyHandler)
-				r.With(s.rbacMiddleware.RequirePermission(auth.ResourceKeys, auth.ActionList)).
-					Get("/keys", s.handlers.FrostListKeysHandler)
-				r.With(s.rbacMiddleware.RequirePermission(auth.ResourceKeys, auth.ActionGet)).
-					Get("/keys/{id}", s.handlers.FrostGetKeyHandler)
-				r.With(s.rbacMiddleware.RequirePermission(auth.ResourceKeys, auth.ActionDelete)).
-					Delete("/keys/{id}", s.handlers.FrostDeleteKeyHandler)
-
-				// Signing operations
-				r.With(s.rbacMiddleware.RequirePermission(auth.ResourceKeys, auth.ActionSign)).
-					Post("/keys/{id}/nonces", s.handlers.FrostGenerateNoncesHandler)
-				r.With(s.rbacMiddleware.RequirePermission(auth.ResourceKeys, auth.ActionSign)).
-					Post("/keys/{id}/sign", s.handlers.FrostSignRoundHandler)
-
-				// Aggregation and verification
-				r.With(s.rbacMiddleware.RequirePermission(auth.ResourceKeys, auth.ActionSign)).
-					Post("/aggregate", s.handlers.FrostAggregateHandler)
-				r.With(s.rbacMiddleware.RequirePermission(auth.ResourceKeys, auth.ActionVerify)).
-					Post("/verify", s.handlers.FrostVerifyHandler)
-			} else {
-				// Key management
-				r.Post("/keys", s.handlers.FrostGenerateKeyHandler)
-				r.Post("/keys/import", s.handlers.FrostImportKeyHandler)
-				r.Get("/keys", s.handlers.FrostListKeysHandler)
-				r.Get("/keys/{id}", s.handlers.FrostGetKeyHandler)
-				r.Delete("/keys/{id}", s.handlers.FrostDeleteKeyHandler)
-
-				// Signing operations
-				r.Post("/keys/{id}/nonces", s.handlers.FrostGenerateNoncesHandler)
-				r.Post("/keys/{id}/sign", s.handlers.FrostSignRoundHandler)
-
-				// Aggregation and verification
-				r.Post("/aggregate", s.handlers.FrostAggregateHandler)
-				r.Post("/verify", s.handlers.FrostVerifyHandler)
-			}
-		})
-
-		// Barrier management endpoints. The resource:action pairs mirror the
-		// MCP barrier.* methodPermissions map (pkg/api/mcp/authz.go) and the
-		// QUIC barrier handlers one-for-one.
-		r.Route("/barrier", func(r chi.Router) {
-			if s.rbacMiddleware != nil {
-				r.With(s.rbacMiddleware.RequirePermission(auth.ResourceSeal, auth.ActionBootstrap)).
-					Post("/initialize", s.handlers.BarrierInitializeHandler)
-				r.With(s.rbacMiddleware.RequirePermission(auth.ResourceSeal, auth.ActionUnseal)).
-					Post("/unseal", s.handlers.BarrierUnsealHandler)
-				r.With(s.rbacMiddleware.RequirePermission(auth.ResourceSeal, auth.ActionSeal)).
-					Post("/seal", s.handlers.BarrierSealHandler)
-				r.With(s.rbacMiddleware.RequirePermission(auth.ResourceSeal, auth.ActionStatus)).
-					Get("/status", s.handlers.BarrierStatusHandler)
-
-				// Shamir secret sharing endpoints
-				r.With(s.rbacMiddleware.RequirePermission(auth.ResourceSeal, auth.ActionInitializeShamir)).
-					Post("/shamir/initialize", s.handlers.BarrierInitializeShamirHandler)
-				r.With(s.rbacMiddleware.RequirePermission(auth.ResourceBarrier, auth.ActionUnsealShare)).
-					Post("/shamir/unseal-share", s.handlers.BarrierUnsealShareHandler)
-				r.With(s.rbacMiddleware.RequirePermission(auth.ResourceSeal, auth.ActionUnseal)).
-					Post("/shamir/unseal-shares", s.handlers.BarrierUnsealSharesHandler)
-
-				// Rekey and recovery endpoints
-				r.With(s.rbacMiddleware.RequirePermission(auth.ResourceSeal, auth.ActionRekey)).
-					Post("/rekey", s.handlers.BarrierRekeyHandler)
-				r.With(s.rbacMiddleware.RequirePermission(auth.ResourceSeal, auth.ActionGenerateRecovery)).
-					Post("/recovery/generate", s.handlers.BarrierGenerateRecoveryKeysHandler)
-				r.With(s.rbacMiddleware.RequirePermission(auth.ResourceSeal, auth.ActionRecoverWithKeys)).
-					Post("/recovery/recover", s.handlers.BarrierRecoverWithKeysHandler)
-				r.With(s.rbacMiddleware.RequirePermission(auth.ResourceSeal, auth.ActionGenerateRecovery)).
-					Delete("/recovery/keys", s.handlers.BarrierDeleteRecoveryKeysHandler)
-				r.With(s.rbacMiddleware.RequirePermission(auth.ResourceSeal, auth.ActionRotateRootKey)).
-					Post("/recovery/root-token", s.handlers.BarrierGenerateRootTokenHandler)
-
-				// Enable at-rest encryption on an unencrypted barrier (migration).
-				r.With(s.rbacMiddleware.RequirePermission(auth.ResourceSeal, auth.ActionEnableEncryption)).
-					Post("/enable-encryption", s.handlers.BarrierEnableEncryptionHandler)
-			} else {
-				r.Post("/initialize", s.handlers.BarrierInitializeHandler)
-				r.Post("/unseal", s.handlers.BarrierUnsealHandler)
-				r.Post("/seal", s.handlers.BarrierSealHandler)
-				r.Get("/status", s.handlers.BarrierStatusHandler)
-
-				// Shamir secret sharing endpoints
-				r.Post("/shamir/initialize", s.handlers.BarrierInitializeShamirHandler)
-				r.Post("/shamir/unseal-share", s.handlers.BarrierUnsealShareHandler)
-				r.Post("/shamir/unseal-shares", s.handlers.BarrierUnsealSharesHandler)
-
-				// Rekey and recovery endpoints
-				r.Post("/rekey", s.handlers.BarrierRekeyHandler)
-				r.Post("/recovery/generate", s.handlers.BarrierGenerateRecoveryKeysHandler)
-				r.Post("/recovery/recover", s.handlers.BarrierRecoverWithKeysHandler)
-				r.Delete("/recovery/keys", s.handlers.BarrierDeleteRecoveryKeysHandler)
-				r.Post("/recovery/root-token", s.handlers.BarrierGenerateRootTokenHandler)
-
-				// Enable at-rest encryption on an unencrypted barrier (migration).
-				r.Post("/enable-encryption", s.handlers.BarrierEnableEncryptionHandler)
-			}
-		})
-
-		// PIN management endpoints
-		r.Route("/pin", func(r chi.Router) {
-			r.Post("/so/set", s.handlers.SetSOPINHandler)
-			r.Post("/user/set", s.handlers.SetUserPINHandler)
-			r.Post("/so/change", s.handlers.ChangeSOPINHandler)
-			r.Post("/user/change", s.handlers.ChangeUserPINHandler)
-			r.Post("/so/verify", s.handlers.VerifySOPINHandler)
-			r.Post("/user/verify", s.handlers.VerifyUserPINHandler)
-			r.Get("/lockout", s.handlers.GetLockoutStatusHandler)
-			r.Post("/lockout/reset", s.handlers.ResetLockoutHandler)
-		})
-
-		// PIV endpoints
-		r.Route("/piv", func(r chi.Router) {
-			r.Get("/slots", s.handlers.ListPIVSlotsHandler)
-			r.Get("/slots/{slot}/certificate", s.handlers.GetPIVCertificateHandler)
-			r.Post("/slots/{slot}/certificate", s.handlers.StorePIVCertificateHandler)
-			r.Delete("/slots/{slot}/certificate", s.handlers.DeletePIVCertificateHandler)
-			r.Post("/slots/{slot}/generate", s.handlers.GeneratePIVKeyHandler)
-			r.Post("/slots/{slot}/import", s.handlers.ImportPIVCertificateHandler)
-			r.Get("/slots/{slot}/export", s.handlers.ExportPIVCertificateHandler)
-			r.Post("/slots/{slot}/csr", s.handlers.GeneratePIVCSRHandler)
-		})
-
-		// CA endpoints
-		if s.caHandlers != nil {
-			r.Route("/ca", func(r chi.Router) {
-				r.Get("/bundle", s.caHandlers.HandleGetCABundle)
-				r.Get("/certificate", s.caHandlers.HandleGetCACertificate)
-				r.Post("/sign-csr", s.caHandlers.HandleSignCSR)
-				r.Post("/issue", s.caHandlers.HandleIssueCertificate)
-				r.Post("/revoke", s.caHandlers.HandleRevokeCertificate)
-				r.Post("/crl", s.caHandlers.HandleGenerateCRL)
-				r.Get("/revoked/{serial}", s.caHandlers.HandleIsRevoked)
-
-				// TCG CA endpoints
-				r.Post("/tcg/ek", s.caHandlers.HandleIssueEKCertificate)
-				r.Post("/tcg/ak", s.caHandlers.HandleIssueAKCertificate)
-				r.Post("/tcg/sign-csr", s.caHandlers.HandleSignTCGCSR)
-				r.Post("/tcg/enroll", s.caHandlers.HandleEnrollDevice)
-			})
-		} else {
-			// Fallback: legacy CA bundle endpoint (bootstrap only)
-			r.Get("/ca/bundle", s.handlers.GetCABundleHandler)
-		}
-
-		// Cluster endpoints. Reads are gated with backends:read when RBAC is
-		// enabled, mirroring the read-protection on the backends surface; the
-		// servicer reports single-node status when the node runs standalone, so
-		// the read routes are always registered and reachable.
-		//
-		// Membership mutation (add/remove replica) is privileged and is gated on
-		// the canonical qrdb admin:add_member / admin:remove_member permissions
-		// via auth.ResourceClusterAdmin. Unlike the read routes, mutation FAILS
-		// CLOSED when RBAC is not wired: it reconfigures the Raft group, so an
-		// operator running without RBAC gets an explicit 403
-		// (denyClusterMutationHandler) rather than an ungated reconfiguration
-		// endpoint.
-		if s.clusterHandlers != nil {
-			r.Route("/cluster", func(r chi.Router) {
-				if s.rbacMiddleware != nil {
-					r.With(s.rbacMiddleware.RequirePermission(auth.ResourceClusterAdmin, auth.ActionClusterStatus)).
-						Get("/status", s.clusterHandlers.StatusHandler)
-					r.With(s.rbacMiddleware.RequirePermission(auth.ResourceClusterAdmin, auth.ActionClusterPeers)).
-						Get("/members", s.clusterHandlers.MembersHandler)
-					r.With(s.rbacMiddleware.RequirePermission(auth.ResourceClusterAdmin, auth.ActionAddMember)).
-						Post("/members", s.clusterHandlers.AddReplicaHandler)
-					r.With(s.rbacMiddleware.RequirePermission(auth.ResourceClusterAdmin, auth.ActionRemoveMember)).
-						Delete("/members/{replicaID}", s.clusterHandlers.RemoveReplicaHandler)
-				} else {
-					r.Get("/status", s.clusterHandlers.StatusHandler)
-					r.Get("/members", s.clusterHandlers.MembersHandler)
-					r.Post("/members", denyClusterMutationHandler)
-					r.Delete("/members/{replicaID}", denyClusterMutationHandler)
-				}
-			})
-		}
-
-		// Custodian group endpoints
-		if s.custodianHandlers != nil {
-			r.Route("/custodian/groups", func(r chi.Router) {
-				r.Post("/", s.custodianHandlers.CreateGroupHandler)
-				r.Get("/", s.custodianHandlers.ListGroupsHandler)
-				r.Get("/{id}", s.custodianHandlers.GetGroupHandler)
-				r.Delete("/{id}", s.custodianHandlers.DeleteGroupHandler)
-				r.Post("/{id}/members", s.custodianHandlers.AddMemberHandler)
-				r.Delete("/{id}/members/{userID}", s.custodianHandlers.RemoveMemberHandler)
-				r.Post("/{id}/distribute", s.custodianHandlers.DistributeSharesHandler)
-			})
-		}
-
-		// Share endpoints
-		if s.shareHandlers != nil {
-			r.Route("/shares", func(r chi.Router) {
-				r.Post("/submit", s.shareHandlers.SubmitShareHandler)
-				r.Get("/", s.shareHandlers.ListSharesHandler)
-				r.Get("/{serverURL}/{groupID}/{shareIndex}", s.shareHandlers.GetShareHandler)
-				r.Delete("/{serverURL}/{groupID}/{shareIndex}", s.shareHandlers.DeleteShareHandler)
-				r.Get("/status/{groupID}", s.shareHandlers.GetShareCollectionStatusHandler)
-			})
-		}
-
-		// Tenant endpoints
-		if s.tenantHandlers != nil {
-			r.Route("/tenants", func(r chi.Router) {
-				r.Post("/", s.tenantHandlers.CreateTenantHandler)
-				r.Get("/", s.tenantHandlers.ListTenantsHandler)
-				r.Get("/{tenantID}", s.tenantHandlers.GetTenantHandler)
-				r.Delete("/{tenantID}", s.tenantHandlers.DeleteTenantHandler)
-				r.Get("/{tenantID}/barrier/status", s.tenantHandlers.TenantBarrierStatusHandler)
-				r.Post("/{tenantID}/barrier/init", s.tenantHandlers.TenantBarrierInitHandler)
-				r.Post("/{tenantID}/barrier/unseal", s.tenantHandlers.TenantBarrierUnsealHandler)
-				r.Put("/{tenantID}/entitlements", s.tenantHandlers.UpdateTenantEntitlementsHandler)
-				r.Put("/{tenantID}/quotas", s.tenantHandlers.UpdateTenantQuotasHandler)
-			})
-		}
-
-		// Password management endpoints
-		if s.passwordHandlers != nil {
-			r.Route("/passwords", func(r chi.Router) {
-				r.Post("/", s.passwordHandlers.AddPasswordHandler)
-				r.Get("/", s.passwordHandlers.ListPasswordsHandler)
-				r.Get("/{id}", s.passwordHandlers.GetPasswordHandler)
-				r.Put("/{id}", s.passwordHandlers.UpdatePasswordHandler)
-				r.Delete("/{id}", s.passwordHandlers.DeletePasswordHandler)
-				r.Post("/unlock", s.passwordHandlers.UnlockHandler)
-				r.Post("/lock", s.passwordHandlers.LockHandler)
-				r.Get("/status", s.passwordHandlers.StatusHandler)
-				r.Post("/access-mode", s.passwordHandlers.SetAccessModeHandler)
-				r.Post("/generate", s.passwordHandlers.GeneratePasswordHandler)
-			})
-		}
-
-		// PKCS#11 remote-state endpoints. Records are a token's key/object
-		// state, so they gate on the keys resource. All POST with a JSON body so
-		// an opaque binary value never rides in a URL.
-		if s.pkcs11StateHandlers != nil {
-			r.Route("/pkcs11state", func(r chi.Router) {
-				r.With(s.rbacMiddleware.RequirePermission(auth.ResourceKeys, auth.ActionCreate)).
-					Post("/put", s.pkcs11StateHandlers.PutHandler)
-				r.With(s.rbacMiddleware.RequirePermission(auth.ResourceKeys, auth.ActionCreate)).
-					Post("/put-if-absent", s.pkcs11StateHandlers.PutIfAbsentHandler)
-				r.With(s.rbacMiddleware.RequirePermission(auth.ResourceKeys, auth.ActionUpdate)).
-					Post("/compare-and-swap", s.pkcs11StateHandlers.CASHandler)
-				r.With(s.rbacMiddleware.RequirePermission(auth.ResourceKeys, auth.ActionGet)).
-					Post("/get", s.pkcs11StateHandlers.GetHandler)
-				r.With(s.rbacMiddleware.RequirePermission(auth.ResourceKeys, auth.ActionDelete)).
-					Post("/delete", s.pkcs11StateHandlers.DeleteHandler)
-				r.With(s.rbacMiddleware.RequirePermission(auth.ResourceKeys, auth.ActionList)).
-					Post("/list", s.pkcs11StateHandlers.ListHandler)
-			})
-		}
-
-		// Platform store endpoints
-		if s.platformHandlers != nil {
-			r.Route("/platform", func(r chi.Router) {
-				// Placeholder must be {name}: the handlers read
-				// chi.URLParam(r, "name") — a mismatched placeholder hands
-				// every keyed operation an empty secret name.
-				r.Put("/secrets/{name}", s.platformHandlers.PutSecretHandler)
-				r.Get("/secrets/{name}", s.platformHandlers.GetSecretHandler)
-				r.Delete("/secrets/{name}", s.platformHandlers.DeleteSecretHandler)
-				r.Get("/secrets", s.platformHandlers.ListSecretsHandler)
-				r.Post("/secrets/{name}/reseal", s.platformHandlers.ResealSecretHandler)
-				r.Get("/status", s.platformHandlers.StatusHandler)
-			})
-		}
-
-		// Policy management endpoints
-		if s.policyHandlers != nil {
-			r.Route("/policies", func(r chi.Router) {
-				r.Post("/", s.policyHandlers.CreatePolicyHandler)
-				r.Get("/", s.policyHandlers.ListPoliciesHandler)
-				r.Get("/{id}", s.policyHandlers.GetPolicyHandler)
-				r.Delete("/{id}", s.policyHandlers.DeletePolicyHandler)
-				r.Post("/{id}/refresh", s.policyHandlers.RefreshPolicyHandler)
-				r.Post("/{id}/verify", s.policyHandlers.VerifyPolicyHandler)
-				r.Get("/{id}/export", s.policyHandlers.ExportPolicyHandler)
-			})
-		}
-
-		// Init ceremony endpoints.
-		//
-		// status, claim-cert/begin, claim-cert/complete and both halves of
-		// claim-share are reachable without an *account* while the ceremony
-		// has not yet reached the operational state -- see
-		// publicCeremonyPaths in middleware_init_public.go. The two
-		// claim-share routes still require a client certificate: the officer
-		// certificate thumbprint IS their authentication, and the handlers
-		// refuse a request that carries no verified mTLS peer certificate.
-		// sign-csr is NOT in that allowlist: it stays behind authentication
-		// (and RBAC, when enabled) exactly as the QUIC and MCP transports
-		// gate it.
-		if s.initHandlers != nil {
-			r.Route("/init", func(r chi.Router) {
-				r.Get("/status", s.initHandlers.HandleGetStatus)
-				r.Post("/claim-cert/begin", s.initHandlers.HandleClaimCertBegin)
-				r.Post("/claim-cert/complete", s.initHandlers.HandleClaimCertComplete)
-				r.Post("/claim-share/begin", s.initHandlers.HandleClaimShareBegin)
-				r.Post("/claim-share/complete", s.initHandlers.HandleClaimShareComplete)
-
-				if s.rbacMiddleware != nil {
-					r.With(s.rbacMiddleware.RequirePermission(auth.ResourceCeremony, auth.ActionSignCSR)).
-						Post("/sign-csr", s.initHandlers.HandleSignCSRInit)
-				} else {
-					r.Post("/sign-csr", s.initHandlers.HandleSignCSRInit)
-				}
-
-				// Security Officer enrolment. Like sign-csr these are NOT in
-				// the public ceremony allowlist: registering an officer binds
-				// a Shamir share index to a certificate, so it stays behind
-				// authentication (and RBAC, when enabled) on every transport.
-				if s.rbacMiddleware != nil {
-					r.With(s.rbacMiddleware.RequirePermission(auth.ResourceCeremony, auth.ActionSignCSR)).
-						Post("/officer/register", s.initHandlers.HandleOfficerRegister)
-					r.With(s.rbacMiddleware.RequirePermission(auth.ResourceCeremony, auth.ActionSignCSR)).
-						Post("/enroll-external-officer", s.initHandlers.HandleEnrollExternalOfficer)
-				} else {
-					r.Post("/officer/register", s.initHandlers.HandleOfficerRegister)
-					r.Post("/enroll-external-officer", s.initHandlers.HandleEnrollExternalOfficer)
-				}
-
-				// Status is read-only public metadata (never share bytes), so
-				// it sits alongside the other read verbs.
-				r.Get("/officer/status", s.initHandlers.HandleOfficerStatus)
-			})
-		}
-
-		// Credential management endpoints
-		if s.credentialHandlers != nil {
-			r.Route("/credentials", func(r chi.Router) {
-				r.Post("/submit", s.credentialHandlers.HandleSubmit)
-				r.Get("/strategy", s.credentialHandlers.HandleGetStrategy)
-				r.Get("/", s.credentialHandlers.HandleList)
-			})
-		}
-
-		// User-side N-factor endpoints. Factor state is qrdb's; these proxy
-		// it so identity is reachable on the same endpoint as everything
-		// else. Reads are users:read, mutations users:update — enrolling or
-		// revoking someone's factor changes who can log in as them.
-		if s.authFactorHandlers != nil {
-			r.Route("/factors", func(r chi.Router) {
-				if s.rbacMiddleware != nil {
-					r.With(s.rbacMiddleware.RequirePermission(auth.ResourceUsers, auth.ActionRead)).
-						Get("/", s.authFactorHandlers.ListHandler)
-					r.With(s.rbacMiddleware.RequirePermission(auth.ResourceUsers, auth.ActionUpdate)).
-						Post("/", s.authFactorHandlers.AddHandler)
-					r.With(s.rbacMiddleware.RequirePermission(auth.ResourceUsers, auth.ActionRead)).
-						Post("/login", s.authFactorHandlers.LoginHandler)
-					r.With(s.rbacMiddleware.RequirePermission(auth.ResourceUsers, auth.ActionRead)).
-						Get("/{factorID}", s.authFactorHandlers.GetHandler)
-					r.With(s.rbacMiddleware.RequirePermission(auth.ResourceUsers, auth.ActionUpdate)).
-						Delete("/{factorID}", s.authFactorHandlers.RemoveHandler)
-					r.With(s.rbacMiddleware.RequirePermission(auth.ResourceUsers, auth.ActionUpdate)).
-						Patch("/{factorID}", s.authFactorHandlers.RelabelHandler)
-					r.With(s.rbacMiddleware.RequirePermission(auth.ResourceUsers, auth.ActionUpdate)).
-						Post("/{factorID}/rotate", s.authFactorHandlers.RotateHandler)
-				} else {
-					r.Get("/", s.authFactorHandlers.ListHandler)
-					r.Post("/", s.authFactorHandlers.AddHandler)
-					r.Post("/login", s.authFactorHandlers.LoginHandler)
-					r.Get("/{factorID}", s.authFactorHandlers.GetHandler)
-					r.Delete("/{factorID}", s.authFactorHandlers.RemoveHandler)
-					r.Patch("/{factorID}", s.authFactorHandlers.RelabelHandler)
-					r.Post("/{factorID}/rotate", s.authFactorHandlers.RotateHandler)
-				}
-			})
-		}
-
-		// Audit chain, read-only. The log records who did what to the rest of
-		// this API, so reading it is its own permission rather than a freebie
-		// for anyone already authenticated — audit:read, never keys:* or
-		// users:*. There is no write route by design.
-		if s.auditHandlers != nil {
-			r.Route("/audit", func(r chi.Router) {
-				if s.rbacMiddleware != nil {
-					r.With(s.rbacMiddleware.RequirePermission(auth.ResourceAudit, auth.ActionRead)).
-						Get("/", s.auditHandlers.QueryHandler)
-				} else {
-					r.Get("/", s.auditHandlers.QueryHandler)
-				}
-			})
-		}
-	})
-
-	// go-truststrap bootstrap endpoint (unauthenticated - serves CA bundle for
-	// DANE/TLSA and SPKI-pin trust establishment). The upstream go-truststrap
-	// library hardcodes this path and expects raw PEM (Content-Type
-	// application/pem-certificate-chain), not the JSON envelope that the
-	// CAHandlers path returns.
-	r.Get("/v1/ca/bootstrap", s.handlers.GetCABundleHandler)
-
-	// Session endpoints. The exchange endpoints (cert login, refresh) are
-	// unauthenticated — they ARE the authentication; the introspection
-	// endpoints (me, validate, logout) require a live session. All of them
-	// sit behind the dedicated login rate limiter.
-	if s.tokenIssuer != nil {
-		r.Route("/api/v1/auth", func(ar chi.Router) {
-			if s.authRateLimiter != nil && s.authRateLimiter.IsEnabled() {
-				ar.Use(ratelimit.Middleware(s.authRateLimiter))
-			}
-
-			ar.Post("/login/piv", s.handlePIVLogin)
-			ar.Post("/refresh", s.handleAuthRefresh)
-
-			ar.Group(func(g chi.Router) {
-				g.Use(s.AuthenticationMiddleware())
-				g.Get("/me", s.handleAuthMe)
-				g.Get("/validate", s.handleAuthValidate)
-				g.Post("/logout", s.handleAuthLogout)
-			})
-		})
-	}
-
-	// WebAuthn routes (no auth required - WebAuthn IS the auth mechanism)
-	if s.webauthnHandler != nil {
-		r.Route("/api/v1/webauthn", func(r chi.Router) {
-			if s.authRateLimiter != nil && s.authRateLimiter.IsEnabled() {
-				r.Use(ratelimit.Middleware(s.authRateLimiter))
-			}
-			webauthnhttp.MountChi(r, s.webauthnHandler)
-
-			// SDK registration ceremony: lossless JSON options + attestation,
-			// delegated to the XKMSService (which shares the same WebAuthn
-			// service instance as the browser handlers above).
-			r.Post("/sdk/registration/begin", s.handleSDKBeginRegistration)
-			r.Post("/sdk/registration/finish", s.handleSDKFinishRegistration)
-
-			// SDK authentication ceremony: lossless JSON options + assertion,
-			// symmetric to the registration ceremony above.
-			r.Post("/sdk/authentication/begin", s.handleSDKBeginAuthentication)
-			r.Post("/sdk/authentication/finish", s.handleSDKFinishAuthentication)
-		})
-	}
-
-	// User management. xkms presents its own user API; the backing store is
-	// the embedded qrdb node (reached via the XKMSService). The CLI/webui drive
-	// these endpoints through the xkms SDK.
-	r.Route("/api/v1/users", func(r chi.Router) {
-		r.Use(s.AuthenticationMiddleware())
-
-		if s.rbacMiddleware != nil {
-			r.With(s.rbacMiddleware.RequirePermission(auth.ResourceUsers, auth.ActionCreate)).
-				Post("/", s.handleCreateUser)
-			r.With(s.rbacMiddleware.RequirePermission(auth.ResourceUsers, auth.ActionList)).
-				Get("/", s.handleListUsers)
-			r.With(s.rbacMiddleware.RequirePermission(auth.ResourceUsers, auth.ActionRead)).
-				Get("/{username}", s.handleGetUser)
-			r.With(s.rbacMiddleware.RequirePermission(auth.ResourceUsers, auth.ActionRead)).
-				Get("/{username}/credentials", s.handleListUserCredentials)
-			r.With(s.rbacMiddleware.RequirePermission(auth.ResourceUsers, auth.ActionUpdate)).
-				Put("/{username}", s.handleUpdateUser)
-			r.With(s.rbacMiddleware.RequirePermission(auth.ResourceUsers, auth.ActionUpdate)).
-				Post("/{username}/cert-bindings", s.handleBindUserCert)
-			r.With(s.rbacMiddleware.RequirePermission(auth.ResourceUsers, auth.ActionDelete)).
-				Delete("/{username}", s.handleDeleteUser)
-		} else {
-			r.Post("/", s.handleCreateUser)
-			r.Get("/", s.handleListUsers)
-			r.Get("/{username}", s.handleGetUser)
-			r.Get("/{username}/credentials", s.handleListUserCredentials)
-			r.Put("/{username}", s.handleUpdateUser)
-			r.Post("/{username}/cert-bindings", s.handleBindUserCert)
-			r.Delete("/{username}", s.handleDeleteUser)
-		}
-	})
-
-	// SSH routes register under their own /xkms/v1/ssh prefix at the root.
-	// They carry the same authentication and tenant enforcement as /api/v1,
-	// plus a blanket ssh:use RBAC gate when RBAC is enabled — SSH key
-	// generation and signing are privileged operations and must never be
-	// reachable anonymously.
-	if s.sshHandlers != nil {
-		r.Group(func(g chi.Router) {
-			g.Use(s.AuthenticationMiddleware())
-			g.Use(s.TenantMiddleware())
-			if s.rbacMiddleware != nil {
-				g.Use(s.rbacMiddleware.RequirePermission(auth.ResourceSSH, auth.ActionUse))
-			}
-			s.sshHandlers.Register(g)
-		})
-
-		// No interactive SSH console is served here, by design. xkmsd is a key
-		// vault and CA: it stores SSH keys and signs authentication challenges
-		// with them (POST /keys/{scope}/{owner}/{name}/sign), and the SSH
-		// session itself is established by the client (xkey) that holds the
-		// connection. Terminating SSH on the vault would let any authenticated
-		// caller make the appliance open outbound connections to arbitrary
-		// hosts and proxy an interactive shell through them — server-side
-		// request forgery, a network pivot, and remote code execution against
-		// the target, all from the one host that must not offer them.
-	}
+	// Route registration is table-driven: Routes() (routes.go) is the
+	// single source of truth for the REST surface, shared with the
+	// unified-API-server ServiceModule (pkg/apimodule). Routes are grouped
+	// by middleware profile; a route whose Enabled guard reports false is
+	// not served.
+	s.registerRoutes(r)
 
 	// Embedded web UI. Mounted last so every API route above always wins;
 	// the SPA handler only ever sees paths under its own prefix (plus the
@@ -1318,6 +644,106 @@ func (s *Server) setupRouter() *chi.Mux {
 	}
 
 	return r
+}
+
+// registerRoutes registers the full table-driven route surface onto r,
+// applying each RouteGroup's middleware profile and the per-route RBAC
+// decorator. Routes whose Enabled guard reports false are skipped: their
+// backing subsystem is not configured on this server.
+func (s *Server) registerRoutes(r chi.Router) {
+	byGroup := map[RouteGroup][]RouteSpec{}
+	for _, spec := range Routes() {
+		if spec.Enabled != nil && !spec.Enabled(s) {
+			continue
+		}
+		byGroup[spec.Group] = append(byGroup[spec.Group], spec)
+	}
+
+	register := func(g chi.Router, spec RouteSpec) {
+		h := spec.Handler(s)
+		if spec.Auth == RouteAuthPermission && s.rbacMiddleware != nil {
+			g.With(s.rbacMiddleware.RequirePermission(spec.Resource, spec.Action)).
+				MethodFunc(spec.Method, spec.Pattern, h)
+			return
+		}
+		g.MethodFunc(spec.Method, spec.Pattern, h)
+	}
+
+	// Root routes: no group middleware (health, discovery, bootstrap).
+	for _, spec := range byGroup[GroupRoot] {
+		register(r, spec)
+	}
+
+	// /api/v1 is a mounted sub-router so its authentication + tenant
+	// middleware run for every request under the prefix — an unmatched
+	// /api/v1/* path answers 401 before 404, exactly as before the
+	// table-driven conversion (the init-ceremony exemption tests pin this).
+	relative := func(spec RouteSpec, prefix string) string {
+		return strings.TrimPrefix(spec.Pattern, prefix)
+	}
+	r.Route("/api/v1", func(g chi.Router) {
+		g.Use(s.AuthenticationMiddleware())
+		g.Use(s.TenantMiddleware())
+		for _, spec := range byGroup[GroupAPIv1] {
+			spec.Pattern = relative(spec, "/api/v1")
+			register(g, spec)
+		}
+	})
+
+	// Session endpoints: login rate limiter; the exchange endpoints are
+	// unauthenticated, introspection requires a live session.
+	if specs := byGroup[GroupAuthSession]; len(specs) > 0 {
+		r.Route("/api/v1/auth", func(g chi.Router) {
+			if s.authRateLimiter != nil && s.authRateLimiter.IsEnabled() {
+				g.Use(ratelimit.Middleware(s.authRateLimiter))
+			}
+			for _, spec := range specs {
+				spec.Pattern = relative(spec, "/api/v1/auth")
+				if spec.Auth == RouteAuthSession {
+					g.With(s.AuthenticationMiddleware()).
+						MethodFunc(spec.Method, spec.Pattern, spec.Handler(s))
+					continue
+				}
+				register(g, spec)
+			}
+		})
+	}
+
+	// WebAuthn: rate-limited, unauthenticated (WebAuthn IS the auth).
+	if specs := byGroup[GroupWebAuthn]; len(specs) > 0 {
+		r.Route("/api/v1/webauthn", func(g chi.Router) {
+			if s.authRateLimiter != nil && s.authRateLimiter.IsEnabled() {
+				g.Use(ratelimit.Middleware(s.authRateLimiter))
+			}
+			for _, spec := range specs {
+				spec.Pattern = relative(spec, "/api/v1/webauthn")
+				register(g, spec)
+			}
+		})
+	}
+
+	// Users: authentication only.
+	if specs := byGroup[GroupUsers]; len(specs) > 0 {
+		r.Route("/api/v1/users", func(g chi.Router) {
+			g.Use(s.AuthenticationMiddleware())
+			for _, spec := range specs {
+				spec.Pattern = relative(spec, "/api/v1/users")
+				register(g, spec)
+			}
+		})
+	}
+
+	// SSH: authentication + tenant enforcement; each route additionally
+	// carries the blanket ssh:use permission via the standard decorator.
+	if specs := byGroup[GroupSSH]; len(specs) > 0 {
+		r.Group(func(g chi.Router) {
+			g.Use(s.AuthenticationMiddleware())
+			g.Use(s.TenantMiddleware())
+			for _, spec := range specs {
+				register(g, spec)
+			}
+		})
+	}
 }
 
 // Start starts the REST API server.

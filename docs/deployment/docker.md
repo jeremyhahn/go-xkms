@@ -9,7 +9,10 @@ go-xkms provides six production-ready Docker images:
 1. **Dockerfile.server** - Unified server (all protocols: REST, gRPC, QUIC, MCP)
 2. **Dockerfile.rest** - REST-only server
 3. **Dockerfile.grpc** - gRPC-only server
-4. **Dockerfile.quic** - QUIC-only server
+4. **Dockerfile.quic** - Builds the same `xkmsd` binary as the other images;
+   with the standalone QUIC server package removed, QUIC now rides the REST
+   listener as HTTP/3, so this profile no longer isolates a distinct
+   listener the way REST-only/gRPC-only/MCP-only do
 5. **Dockerfile.mcp** - MCP-only server
 6. **Dockerfile.cli** - CLI tool
 
@@ -102,10 +105,13 @@ make compose-prod-down
 
 | Service | Protocol | Port | Description |
 |---------|----------|------|-------------|
-| REST    | HTTPS    | 8443 | REST API endpoint |
+| REST    | HTTPS    | 8443 | REST API endpoint (also serves QUIC/HTTP3 via `Alt-Svc`) |
 | gRPC    | TLS      | 9443 | gRPC endpoint |
-| QUIC    | UDP      | 8444 | QUIC endpoint |
-| MCP     | TLS      | 9444 | MCP endpoint |
+| MCP     | TLS      | 9444 | MCP endpoint (Streamable HTTP, served by the embedded qrdb node) |
+
+QUIC has no port of its own: it is HTTP/3 served on the REST port above,
+advertised via the `Alt-Svc` response header. There is no separate QUIC
+server package or container profile.
 
 ### Docker Compose Ports
 
@@ -113,13 +119,11 @@ When running multiple services, ports are mapped to avoid conflicts:
 
 | Service | External Port | Internal Port |
 |---------|--------------|---------------|
-| Unified Server (REST) | 8443 | 8443 |
+| Unified Server (REST + QUIC/HTTP3) | 8443 | 8443 |
 | Unified Server (gRPC) | 9443 | 9443 |
-| Unified Server (QUIC) | 8444 | 8444 |
 | Unified Server (MCP)  | 9444 | 9444 |
 | REST-only | 8445 | 8443 |
 | gRPC-only | 9445 | 9443 |
-| QUIC-only | 8446 | 8444 |
 | MCP-only  | 9446 | 9444 |
 
 ## Configuration
@@ -163,7 +167,7 @@ server:
   host: 0.0.0.0
   rest_port: 8443
   grpc_port: 9443
-  quic_port: 8444
+  quic_port: 8444  # vestigial -- QUIC is served as HTTP/3 on rest_port
   mcp_port: 9444
 
 protocols:

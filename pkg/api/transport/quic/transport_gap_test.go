@@ -73,13 +73,13 @@ func gapMockHandler() http.Handler {
 			respond(transport.IssueCertificateResponse{CertificatePEM: []byte("issued")})
 
 		// TCG CA
-		case strings.Contains(path, "/tcg-ca/issue-ek-cert"):
+		case strings.Contains(path, "/ca/tcg/ek"):
 			respond(transport.IssueEKCertificateResponse{CertificatePEM: []byte("ek-cert")})
-		case strings.Contains(path, "/tcg-ca/issue-ak-cert"):
+		case strings.Contains(path, "/ca/tcg/ak"):
 			respond(transport.IssueAKCertificateResponse{CertificatePEM: []byte("ak-cert")})
-		case strings.Contains(path, "/tcg-ca/sign-tcg-csr"):
+		case strings.Contains(path, "/ca/tcg/sign-csr"):
 			respond(transport.SignTCGCSRResponse{IAKCertDER: []byte("iak")})
-		case strings.Contains(path, "/tcg-ca/enroll-device"):
+		case strings.Contains(path, "/ca/tcg/enroll"):
 			respond(transport.EnrollDeviceResponse{IAKCertDER: []byte("iak")})
 
 		// PIV
@@ -103,39 +103,39 @@ func gapMockHandler() http.Handler {
 		// Barrier
 		case strings.Contains(path, "/barrier/status"):
 			respond(transport.BarrierStatusResponse{Sealed: false})
-		case strings.Contains(path, "/barrier/initialize-shamir"):
+		case strings.Contains(path, "/barrier/shamir/initialize"):
 			respond(transport.BarrierInitializeShamirResponse{Threshold: 2, TotalShares: 3, ShareCount: 3})
-		case strings.Contains(path, "/barrier/unseal-share"):
+		case strings.Contains(path, "/barrier/shamir/unseal-share"):
 			respond(map[string]interface{}{"required": 2, "submitted": 1, "complete": false})
-		case strings.Contains(path, "/barrier/unseal-shares"):
+		case strings.Contains(path, "/barrier/shamir/unseal-shares"):
 			w.WriteHeader(http.StatusOK)
 		case strings.Contains(path, "/barrier/rekey"):
 			respond(transport.BarrierRekeyResponse{Threshold: 2, TotalShares: 3, ShareCount: 3})
-		case strings.Contains(path, "/barrier/recovery-keys/generate"):
+		case strings.Contains(path, "/barrier/recovery/generate"):
 			respond(map[string]interface{}{"threshold": 2, "total_shares": 3, "share_count": 3})
-		case strings.Contains(path, "/barrier/recovery-keys/recover"):
+		case strings.Contains(path, "/barrier/recovery/recover"):
 			w.WriteHeader(http.StatusOK)
-		case strings.Contains(path, "/barrier/recovery-keys") && r.Method == http.MethodDelete:
+		case strings.Contains(path, "/barrier/recovery/keys") && r.Method == http.MethodDelete:
 			w.WriteHeader(http.StatusOK)
-		case strings.Contains(path, "/barrier/recovery-keys"):
+		case strings.Contains(path, "/barrier/recovery/keys"):
 			respond(map[string]bool{"has_recovery_keys": true})
-		case strings.Contains(path, "/barrier/root-token"):
+		case strings.Contains(path, "/barrier/recovery/root-token"):
 			respond(transport.BarrierRootTokenResponse{Token: "rt-abc"})
 		case strings.Contains(path, "/barrier"):
 			w.WriteHeader(http.StatusOK)
 
 		// PIN
-		case strings.Contains(path, "/pin/so-pin/change"):
+		case strings.Contains(path, "/pin/so/change"):
 			w.WriteHeader(http.StatusOK)
-		case strings.Contains(path, "/pin/user-pin/change"):
+		case strings.Contains(path, "/pin/user/change"):
 			w.WriteHeader(http.StatusOK)
-		case strings.Contains(path, "/pin/so-pin/verify"):
+		case strings.Contains(path, "/pin/so/verify"):
 			w.WriteHeader(http.StatusOK)
-		case strings.Contains(path, "/pin/user-pin/verify"):
+		case strings.Contains(path, "/pin/user/verify"):
 			w.WriteHeader(http.StatusOK)
-		case strings.Contains(path, "/pin/so-pin"):
+		case strings.Contains(path, "/pin/so/set"):
 			w.WriteHeader(http.StatusOK)
-		case strings.Contains(path, "/pin/user-pin"):
+		case strings.Contains(path, "/pin/user/set"):
 			w.WriteHeader(http.StatusOK)
 		case strings.Contains(path, "/pin/lockout/reset"):
 			w.WriteHeader(http.StatusOK)

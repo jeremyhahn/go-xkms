@@ -118,19 +118,19 @@ type XKMSService struct {
 	audit             qrdbtransport.AuditClient
 	credentialService *credentialspkg.Service
 
-	// cluster reads Raft shard leadership and membership from the embedded
-	// go-qrdb node's cluster client, resolves leader API endpoints, and applies
-	// membership mutations. It is nil when the node runs standalone
-	// (non-clustered), in which case the servicer reports single-node status
-	// and refuses membership mutation.
+	// cluster is the embedded go-qrdb node's cluster client, used to resolve
+	// the leader's dialable API endpoint for not-leader write redirects
+	// (ClusterLeaderEndpoint). It is nil when the node runs standalone
+	// (non-clustered), in which case no redirect target exists.
 	cluster ClusterClient
 
-	// clusterShardID is the Raft shard (group) identifier the servicer reports
-	// on. It is sourced from xkms Config.Cluster.ShardID (default 1).
+	// clusterShardID is the Raft shard (group) identifier leader-endpoint
+	// resolution operates on. It is sourced from xkms Config.Cluster.ShardID
+	// (default 1).
 	clusterShardID uint64
 
-	// clusterNodeID is this node's Raft replica identifier, surfaced in the
-	// cluster status DTO. Zero when standalone.
+	// clusterNodeID is this node's Raft replica identifier. Zero when
+	// standalone.
 	clusterNodeID uint64
 
 	// passwordStoreManager manages per-tenant password stores with
@@ -280,12 +280,12 @@ func (s *XKMSService) SetAuditClient(c qrdbtransport.AuditClient) {
 }
 
 // SetClusterClient wires the embedded qrdb node's cluster client into the
-// service along with the Raft shard and this node's replica identifier. xkms
-// presents its own cluster API on top of it; qrdb is an internal implementation
-// detail. Passing a nil client configures the service for a standalone
-// (non-clustered) node, in which case ClusterStatus reports a single-node,
-// non-clustered status, ClusterMembers returns an empty set, and membership
-// mutation fails with a *ClusterNotClusteredError.
+// service along with the Raft shard and this node's replica identifier. The
+// service uses it solely to resolve the leader's dialable API endpoint for
+// not-leader write redirects (ClusterLeaderEndpoint); cluster management
+// itself is qrdb's own control plane. Passing a nil client configures the
+// service for a standalone (non-clustered) node, in which case
+// ClusterLeaderEndpoint reports no endpoint.
 func (s *XKMSService) SetClusterClient(c ClusterClient, shardID, nodeID uint64) {
 	s.cluster = c
 	s.clusterShardID = shardID

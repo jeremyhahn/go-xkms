@@ -29,25 +29,6 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-func TestHandleRequest_InvalidVersion(t *testing.T) {
-	server := createTestServer(t)
-	defer cleanupXKMS()
-
-	ctx := context.Background()
-
-	req := &JSONRPCRequest{
-		JSONRPC: "1.0",
-		Method:  "health",
-		ID:      1,
-	}
-
-	resp := server.handleRequest(ctx, req, nil)
-	require.NotNil(t, resp)
-	require.NotNil(t, resp.Error)
-	assert.Equal(t, ErrCodeInvalidRequest, resp.Error.Code)
-	assert.Contains(t, resp.Error.Message, "Invalid JSON-RPC version")
-}
-
 func TestHandleRequest_MethodNotFound(t *testing.T) {
 	server := createTestServer(t)
 	defer cleanupXKMS()
@@ -60,26 +41,10 @@ func TestHandleRequest_MethodNotFound(t *testing.T) {
 		ID:      1,
 	}
 
-	resp := server.handleRequest(ctx, req, nil)
+	resp := invokeRequest(server, ctx, req)
 	require.NotNil(t, resp)
 	require.NotNil(t, resp.Error)
 	assert.Equal(t, ErrCodeMethodNotFound, resp.Error.Code)
-}
-
-func TestHandleRequest_NotificationNoResponse(t *testing.T) {
-	server := createTestServer(t)
-	defer cleanupXKMS()
-
-	ctx := context.Background()
-
-	req := &JSONRPCRequest{
-		JSONRPC: "2.0",
-		Method:  "health",
-		ID:      nil,
-	}
-
-	resp := server.handleRequest(ctx, req, nil)
-	assert.Nil(t, resp, "Notifications should not produce a response")
 }
 
 func TestHandleRequest_HealthRoute(t *testing.T) {
@@ -94,7 +59,7 @@ func TestHandleRequest_HealthRoute(t *testing.T) {
 		ID:      1,
 	}
 
-	resp := server.handleRequest(ctx, req, nil)
+	resp := invokeRequest(server, ctx, req)
 	require.NotNil(t, resp)
 	assert.Nil(t, resp.Error)
 	assert.NotNil(t, resp.Result)
@@ -128,7 +93,7 @@ func TestHandleRequest_PasswordRoutes(t *testing.T) {
 				ID:      1,
 			}
 
-			resp := server.handleRequest(ctx, req, nil)
+			resp := invokeRequest(server, ctx, req)
 			require.NotNil(t, resp)
 			if method == "password.status" {
 				assert.Nil(t, resp.Error)
@@ -154,7 +119,7 @@ func TestHandleRequest_PasswordGenerate(t *testing.T) {
 		ID:      1,
 	}
 
-	resp := server.handleRequest(ctx, req, nil)
+	resp := invokeRequest(server, ctx, req)
 	require.NotNil(t, resp)
 	assert.Nil(t, resp.Error)
 	assert.NotNil(t, resp.Result)
@@ -187,7 +152,7 @@ func TestHandleRequest_InitRoutes(t *testing.T) {
 				ID:      1,
 			}
 
-			resp := server.handleRequest(ctx, req, nil)
+			resp := invokeRequest(server, ctx, req)
 			require.NotNil(t, resp)
 		})
 	}
@@ -225,7 +190,7 @@ func TestHandleRequest_BarrierRoutes(t *testing.T) {
 				ID:      1,
 			}
 
-			resp := server.handleRequest(ctx, req, nil)
+			resp := invokeRequest(server, ctx, req)
 			require.NotNil(t, resp)
 			assert.NotNil(t, resp.Error)
 		})
@@ -259,7 +224,7 @@ func TestHandleRequest_PIVRoutes(t *testing.T) {
 				ID:      1,
 			}
 
-			resp := server.handleRequest(ctx, req, nil)
+			resp := invokeRequest(server, ctx, req)
 			require.NotNil(t, resp)
 			assert.NotNil(t, resp.Error)
 		})
@@ -296,43 +261,11 @@ func TestHandleRequest_CARoutes(t *testing.T) {
 				ID:      1,
 			}
 
-			resp := server.handleRequest(ctx, req, nil)
+			resp := invokeRequest(server, ctx, req)
 			require.NotNil(t, resp)
 			assert.NotNil(t, resp.Error)
 		})
 	}
-}
-
-func TestHandleRequest_CorrelationID(t *testing.T) {
-	server := createTestServer(t)
-	defer cleanupXKMS()
-
-	ctx := context.Background()
-
-	t.Run("generates correlation ID when not provided", func(t *testing.T) {
-		req := &JSONRPCRequest{
-			JSONRPC: "2.0",
-			Method:  "health",
-			ID:      1,
-		}
-
-		resp := server.handleRequest(ctx, req, nil)
-		require.NotNil(t, resp)
-		assert.NotEmpty(t, resp.CorrelationID)
-	})
-
-	t.Run("uses provided correlation ID", func(t *testing.T) {
-		req := &JSONRPCRequest{
-			JSONRPC:       "2.0",
-			Method:        "health",
-			ID:            1,
-			CorrelationID: "custom-correlation-id",
-		}
-
-		resp := server.handleRequest(ctx, req, nil)
-		require.NotNil(t, resp)
-		assert.Equal(t, "custom-correlation-id", resp.CorrelationID)
-	})
 }
 
 func TestHandleRequest_ErrorLogging(t *testing.T) {
@@ -348,7 +281,7 @@ func TestHandleRequest_ErrorLogging(t *testing.T) {
 		ID:      1,
 	}
 
-	resp := server.handleRequest(ctx, req, nil)
+	resp := invokeRequest(server, ctx, req)
 	require.NotNil(t, resp)
 	assert.NotNil(t, resp.Error)
 	assert.Equal(t, ErrCodeInternalError, resp.Error.Code)
@@ -361,37 +294,6 @@ func TestSetPasswordManager(t *testing.T) {
 	assert.Nil(t, server.passwordManager)
 	server.SetPasswordManager(nil)
 	assert.Nil(t, server.passwordManager)
-}
-
-func TestMakeErrorResponse(t *testing.T) {
-	server := createTestServer(t)
-	defer cleanupXKMS()
-
-	t.Run("creates error response with correlation ID", func(t *testing.T) {
-		resp := server.makeErrorResponse(1, "corr-123", ErrCodeInternalError, "something broke", nil)
-		require.NotNil(t, resp)
-		assert.Equal(t, "2.0", resp.JSONRPC)
-		assert.Equal(t, 1, resp.ID)
-		assert.Equal(t, "corr-123", resp.CorrelationID)
-		require.NotNil(t, resp.Error)
-		assert.Equal(t, ErrCodeInternalError, resp.Error.Code)
-		assert.Equal(t, "something broke", resp.Error.Message)
-	})
-
-	t.Run("creates error response without correlation ID", func(t *testing.T) {
-		resp := server.makeErrorResponse(nil, "", ErrCodeParseError, "parse failed", "extra")
-		require.NotNil(t, resp)
-		assert.Nil(t, resp.ID)
-		assert.Empty(t, resp.CorrelationID)
-		assert.Equal(t, "extra", resp.Error.Data)
-	})
-}
-
-func TestNotifyEvent(t *testing.T) {
-	server := createTestServer(t)
-	defer cleanupXKMS()
-
-	server.NotifyEvent("key.generated", "test-key-123", map[string]string{"algo": "rsa"})
 }
 
 func TestHandleListCertsWithPagination(t *testing.T) {

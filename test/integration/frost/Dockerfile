@@ -23,10 +23,6 @@ COPY xkey/go.mod xkey/go.sum ./xkey/
 COPY go.mod go.sum ./
 RUN go mod download || true
 
-# Materialize /tmp/go.work + GOWORK (resolves the in-house module workspace from
-# the bind-mounted siblings) before running the test CMD passed as args.
-ENTRYPOINT ["bash", ".devcontainer/scripts/ensure-gowork.sh"]
-
 # Build the frost-enabled CLI at runtime (after the workspace is resolved), then
 # run the integration tests. The CLI is required by the multi-protocol CLI tests.
 CMD ["sh", "-c", "go build -tags=frost -o /usr/local/bin/xkmsctl ./cmd/xkmsctl && go test -v -tags='integration frost codec_cbor codec_json codec_msgpack' -timeout 30m ./test/integration/frost/..."]

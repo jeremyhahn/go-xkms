@@ -5,6 +5,10 @@
 # Configuration
 # ==============================================================================
 
+# Builds never resolve through a workspace: modules come from Gitea tags
+# (dependency-resolution.md §2). Immunizes against stray go.work files.
+export GOWORK=off
+
 # Version management (use parent VERSION file, fallback to local)
 VERSION := $(shell cat ../VERSION 2>/dev/null || cat VERSION 2>/dev/null || echo "0.0.1-alpha")
 GIT_COMMIT := $(shell git rev-parse --short HEAD 2>/dev/null || echo "unknown")
@@ -227,9 +231,8 @@ dev-browser: frontend-install
 	@# wails v2.12.0 is built with gotypesalias=0 baked in which trips
 	@# x/tools/go/packages when xkey/pkg/pcr_policy imports parameterized
 	@# type aliases (e.g. qrdbsdk.PageResult[E]) from go-qrdb/sdk/go.
-	@# -nosyncgomod + -m skip 'go mod tidy' which fails outside the parent
-	@# go.work. The xkey module's deps are resolved via the workspace at
-	@# ~/sources/go.work when it exists.
+	@# -nosyncgomod + -m skip 'go mod tidy'. First-party deps resolve from
+	@# Gitea tags (dependency-resolution.md); no workspace is used.
 	@GODEBUG=gotypesalias=1 wails dev -browser -nosyncgomod -m -tags "$(DEV_TAGS)" -ldflags "$(LDFLAGS)"
 
 # Hermetic sandbox dirs used by dev-browser-e2e. Override on the command line

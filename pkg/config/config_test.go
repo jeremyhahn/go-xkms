@@ -67,7 +67,7 @@ health:
   path: "/health"
 
 storage:
-  backend: "filesystem"
+  backend: "qrdb"
   path: "/data/xkms"
 
 default_backend: "pkcs8"
@@ -120,8 +120,8 @@ backends:
 	}
 
 	// Validate storage
-	if cfg.Storage.Backend != "filesystem" {
-		t.Errorf("Storage.Backend = %v, want filesystem", cfg.Storage.Backend)
+	if cfg.Storage.Backend != "qrdb" {
+		t.Errorf("Storage.Backend = %v, want qrdb", cfg.Storage.Backend)
 	}
 	if cfg.Storage.Path != "/data/xkms" {
 		t.Errorf("Storage.Path = %v, want /data/xkms", cfg.Storage.Path)
@@ -772,7 +772,8 @@ func TestValidate_ServerPorts(t *testing.T) {
 				Protocols: ProtocolsConfig{REST: true},
 				Server:    ServerConfig{RESTPort: 8443},
 				Logging:   LoggingConfig{Level: "info", Format: "json"},
-				Storage:   StorageConfig{Backend: "filesystem", Path: "/data"},
+				Storage:   StorageConfig{Backend: "qrdb", Path: "/data"},
+				TLS:       TLSConfig{Enabled: true},
 				Default:   "pkcs8",
 				Backends:  BackendsConfig{PKCS8: &PKCS8Config{Enabled: true, Path: "/data/pkcs8"}},
 			},
@@ -784,7 +785,8 @@ func TestValidate_ServerPorts(t *testing.T) {
 				Protocols: ProtocolsConfig{REST: true},
 				Server:    ServerConfig{RESTPort: 0},
 				Logging:   LoggingConfig{Level: "info", Format: "json"},
-				Storage:   StorageConfig{Backend: "filesystem", Path: "/data"},
+				Storage:   StorageConfig{Backend: "qrdb", Path: "/data"},
+				TLS:       TLSConfig{Enabled: true},
 				Default:   "pkcs8",
 				Backends:  BackendsConfig{PKCS8: &PKCS8Config{Enabled: true, Path: "/data/pkcs8"}},
 			},
@@ -797,7 +799,8 @@ func TestValidate_ServerPorts(t *testing.T) {
 				Protocols: ProtocolsConfig{REST: true},
 				Server:    ServerConfig{RESTPort: 65536},
 				Logging:   LoggingConfig{Level: "info", Format: "json"},
-				Storage:   StorageConfig{Backend: "filesystem", Path: "/data"},
+				Storage:   StorageConfig{Backend: "qrdb", Path: "/data"},
+				TLS:       TLSConfig{Enabled: true},
 				Default:   "pkcs8",
 				Backends:  BackendsConfig{PKCS8: &PKCS8Config{Enabled: true, Path: "/data/pkcs8"}},
 			},
@@ -810,7 +813,8 @@ func TestValidate_ServerPorts(t *testing.T) {
 				Protocols: ProtocolsConfig{GRPC: true},
 				Server:    ServerConfig{GRPCPort: -1},
 				Logging:   LoggingConfig{Level: "info", Format: "json"},
-				Storage:   StorageConfig{Backend: "filesystem", Path: "/data"},
+				Storage:   StorageConfig{Backend: "qrdb", Path: "/data"},
+				TLS:       TLSConfig{Enabled: true},
 				Default:   "pkcs8",
 				Backends:  BackendsConfig{PKCS8: &PKCS8Config{Enabled: true, Path: "/data/pkcs8"}},
 			},
@@ -823,7 +827,8 @@ func TestValidate_ServerPorts(t *testing.T) {
 				Protocols: ProtocolsConfig{QUIC: true},
 				Server:    ServerConfig{QUICPort: 100000},
 				Logging:   LoggingConfig{Level: "info", Format: "json"},
-				Storage:   StorageConfig{Backend: "filesystem", Path: "/data"},
+				Storage:   StorageConfig{Backend: "qrdb", Path: "/data"},
+				TLS:       TLSConfig{Enabled: true},
 				Default:   "pkcs8",
 				Backends:  BackendsConfig{PKCS8: &PKCS8Config{Enabled: true, Path: "/data/pkcs8"}},
 			},
@@ -836,7 +841,8 @@ func TestValidate_ServerPorts(t *testing.T) {
 				Protocols: ProtocolsConfig{MCP: true},
 				Server:    ServerConfig{MCPPort: 0},
 				Logging:   LoggingConfig{Level: "info", Format: "json"},
-				Storage:   StorageConfig{Backend: "filesystem", Path: "/data"},
+				Storage:   StorageConfig{Backend: "qrdb", Path: "/data"},
+				TLS:       TLSConfig{Enabled: true},
 				Default:   "pkcs8",
 				Backends:  BackendsConfig{PKCS8: &PKCS8Config{Enabled: true, Path: "/data/pkcs8"}},
 			},
@@ -863,7 +869,8 @@ func TestValidate_Protocols(t *testing.T) {
 	baseConfig := Config{
 		Server:   ServerConfig{RESTPort: 8443},
 		Logging:  LoggingConfig{Level: "info", Format: "json"},
-		Storage:  StorageConfig{Backend: "filesystem", Path: "/data"},
+		Storage:  StorageConfig{Backend: "qrdb", Path: "/data"},
+		TLS:      TLSConfig{Enabled: true},
 		Default:  "pkcs8",
 		Backends: BackendsConfig{PKCS8: &PKCS8Config{Enabled: true, Path: "/data/pkcs8"}},
 	}
@@ -912,7 +919,8 @@ func TestValidate_Logging(t *testing.T) {
 				Protocols: ProtocolsConfig{REST: true},
 				Server:    ServerConfig{RESTPort: 8443},
 				Logging:   LoggingConfig{Level: tt.level, Format: tt.format},
-				Storage:   StorageConfig{Backend: "filesystem", Path: "/data"},
+				Storage:   StorageConfig{Backend: "qrdb", Path: "/data"},
+				TLS:       TLSConfig{Enabled: true},
 				Default:   "pkcs8",
 				Backends:  BackendsConfig{PKCS8: &PKCS8Config{Enabled: true, Path: "/data/pkcs8"}},
 			}
@@ -974,7 +982,7 @@ func TestValidate_TLS(t *testing.T) {
 			Server:    ServerConfig{RESTPort: 8443},
 			Logging:   LoggingConfig{Level: "info", Format: "json"},
 			TLS:       TLSConfig{Enabled: true, ServerCN: "test-server"},
-			Storage:   StorageConfig{Backend: "filesystem", Path: "/data"},
+			Storage:   StorageConfig{Backend: "qrdb", Path: "/data"},
 			Default:   "pkcs8",
 			Backends:  BackendsConfig{PKCS8: &PKCS8Config{Enabled: true, Path: "/data/pkcs8"}},
 			CA:        &ca.MultiIdentityCAConfig{}, // CA present — cert_file/key_file not required
@@ -984,10 +992,32 @@ func TestValidate_TLS(t *testing.T) {
 		}
 	})
 
+	// Network-serving deployments never require cert_file/key_file: the
+	// unified API server's transports carry a persisted bootstrap
+	// certificate until the CA issues the real one, so the legacy
+	// file-required rule below does not apply to them.
+	t.Run("network-serving without cert/key files is valid (bootstrap certificate)", func(t *testing.T) {
+		cfg := Config{
+			Protocols: ProtocolsConfig{REST: true},
+			Server:    ServerConfig{RESTPort: 8443},
+			Logging:   LoggingConfig{Level: "info", Format: "json"},
+			TLS:       TLSConfig{Enabled: true},
+			Storage:   StorageConfig{Backend: "qrdb", Path: "/data"},
+			Default:   "pkcs8",
+			Backends:  BackendsConfig{PKCS8: &PKCS8Config{Enabled: true, Path: "/data/pkcs8"}},
+		}
+		if err := cfg.Validate(); err != nil {
+			t.Errorf("Validate() error = %v, want nil (network-serving TLS should not require cert/key files)", err)
+		}
+	})
+
+	// The legacy cert_file/key_file-required rule only applies to
+	// non-network-serving (local IPC) deployments, so these cases run with
+	// no network protocol enabled to keep exercising it.
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			cfg := Config{
-				Protocols: ProtocolsConfig{REST: true},
+				Protocols: ProtocolsConfig{Unix: true},
 				Server:    ServerConfig{RESTPort: 8443},
 				Logging:   LoggingConfig{Level: "info", Format: "json"},
 				TLS:       tt.tls,
@@ -1036,7 +1066,7 @@ func TestValidate_Storage(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			cfg := Config{
-				Protocols: ProtocolsConfig{REST: true},
+				Protocols: ProtocolsConfig{Unix: true},
 				Server:    ServerConfig{RESTPort: 8443},
 				Logging:   LoggingConfig{Level: "info", Format: "json"},
 				Storage:   tt.storage,
@@ -1177,7 +1207,8 @@ func TestValidate_Backends(t *testing.T) {
 				Protocols: ProtocolsConfig{REST: true},
 				Server:    ServerConfig{RESTPort: 8443},
 				Logging:   LoggingConfig{Level: "info", Format: "json"},
-				Storage:   StorageConfig{Backend: "filesystem", Path: "/data"},
+				Storage:   StorageConfig{Backend: "qrdb", Path: "/data"},
+				TLS:       TLSConfig{Enabled: true},
 				Default:   "pkcs8",
 				Backends:  tt.backends,
 			}
@@ -1314,13 +1345,13 @@ logging:
   format: "json"
 
 tls:
-  enabled: false
+  enabled: true
 
 auth:
   enabled: false
 
 storage:
-  backend: "filesystem"
+  backend: "qrdb"
   path: "/data"
 
 default_backend: "pkcs8"
@@ -1771,7 +1802,8 @@ func TestValidate_SoftwareBackend(t *testing.T) {
 		Protocols: ProtocolsConfig{REST: true},
 		Server:    ServerConfig{RESTPort: 8443},
 		Logging:   LoggingConfig{Level: "info", Format: "json"},
-		Storage:   StorageConfig{Backend: "filesystem", Path: "/data"},
+		Storage:   StorageConfig{Backend: "qrdb", Path: "/data"},
+		TLS:       TLSConfig{Enabled: true},
 		Default:   "software",
 		Backends: BackendsConfig{
 			Software: &SoftwareConfig{Enabled: true, Path: "/data/software"},
@@ -2189,8 +2221,11 @@ logging:
   level: "info"
   format: "json"
 
+tls:
+  enabled: true
+
 storage:
-  backend: "filesystem"
+  backend: "qrdb"
   path: "/data/xkms"
 
 default_backend: "pkcs8"
@@ -2220,8 +2255,11 @@ logging:
   level: "info"
   format: "json"
 
+tls:
+  enabled: true
+
 storage:
-  backend: "filesystem"
+  backend: "qrdb"
   path: "/data/xkms"
 
 default_backend: "pkcs8"
@@ -2251,8 +2289,11 @@ logging:
   level: "info"
   format: "json"
 
+tls:
+  enabled: true
+
 storage:
-  backend: "filesystem"
+  backend: "qrdb"
   path: "/data/xkms"
 
 default_backend: "pkcs8"
@@ -2282,8 +2323,11 @@ logging:
   level: "info"
   format: "json"
 
+tls:
+  enabled: true
+
 storage:
-  backend: "filesystem"
+  backend: "qrdb"
   path: "/data/xkms"
 
 default_backend: "pkcs8"
@@ -2490,7 +2534,8 @@ func TestValidate_UnixSocketProtocol(t *testing.T) {
 			Protocols: ProtocolsConfig{REST: true},
 			Server:    ServerConfig{RESTPort: 8443},
 			Logging:   LoggingConfig{Level: "info", Format: "json"},
-			Storage:   StorageConfig{Backend: "filesystem", Path: "/data"},
+			Storage:   StorageConfig{Backend: "qrdb", Path: "/data"},
+			TLS:       TLSConfig{Enabled: true},
 			Default:   "pkcs8",
 			Backends:  BackendsConfig{PKCS8: &PKCS8Config{Enabled: true, Path: "/data/pkcs8"}},
 		}
@@ -2556,7 +2601,8 @@ func TestValidate_RNGMode(t *testing.T) {
 			Protocols: ProtocolsConfig{REST: true},
 			Server:    ServerConfig{RESTPort: 8443},
 			Logging:   LoggingConfig{Level: "info", Format: "json"},
-			Storage:   StorageConfig{Backend: "filesystem", Path: "/data"},
+			Storage:   StorageConfig{Backend: "qrdb", Path: "/data"},
+			TLS:       TLSConfig{Enabled: true},
 			Default:   "pkcs8",
 			Backends:  BackendsConfig{PKCS8: &PKCS8Config{Enabled: true, Path: "/data/pkcs8"}},
 		}
@@ -2662,7 +2708,8 @@ func TestValidate_PhoneBackend(t *testing.T) {
 				Protocols: ProtocolsConfig{REST: true},
 				Server:    ServerConfig{RESTPort: 8443},
 				Logging:   LoggingConfig{Level: "info", Format: "json"},
-				Storage:   StorageConfig{Backend: "filesystem", Path: "/data"},
+				Storage:   StorageConfig{Backend: "qrdb", Path: "/data"},
+				TLS:       TLSConfig{Enabled: true},
 				Default:   "pkcs8",
 				Backends: BackendsConfig{
 					Phone: &PhoneConfig{Enabled: true, Transport: "ble"},
@@ -2676,7 +2723,8 @@ func TestValidate_PhoneBackend(t *testing.T) {
 				Protocols: ProtocolsConfig{REST: true},
 				Server:    ServerConfig{RESTPort: 8443},
 				Logging:   LoggingConfig{Level: "info", Format: "json"},
-				Storage:   StorageConfig{Backend: "filesystem", Path: "/data"},
+				Storage:   StorageConfig{Backend: "qrdb", Path: "/data"},
+				TLS:       TLSConfig{Enabled: true},
 				Default:   "pkcs8",
 				Backends: BackendsConfig{
 					Phone: &PhoneConfig{Enabled: true, Transport: "tcp"},
@@ -2690,7 +2738,8 @@ func TestValidate_PhoneBackend(t *testing.T) {
 				Protocols: ProtocolsConfig{REST: true},
 				Server:    ServerConfig{RESTPort: 8443},
 				Logging:   LoggingConfig{Level: "info", Format: "json"},
-				Storage:   StorageConfig{Backend: "filesystem", Path: "/data"},
+				Storage:   StorageConfig{Backend: "qrdb", Path: "/data"},
+				TLS:       TLSConfig{Enabled: true},
 				Default:   "pkcs8",
 				Backends: BackendsConfig{
 					Phone: &PhoneConfig{Enabled: true, Transport: ""},
@@ -2705,7 +2754,8 @@ func TestValidate_PhoneBackend(t *testing.T) {
 				Protocols: ProtocolsConfig{REST: true},
 				Server:    ServerConfig{RESTPort: 8443},
 				Logging:   LoggingConfig{Level: "info", Format: "json"},
-				Storage:   StorageConfig{Backend: "filesystem", Path: "/data"},
+				Storage:   StorageConfig{Backend: "qrdb", Path: "/data"},
+				TLS:       TLSConfig{Enabled: true},
 				Default:   "pkcs8",
 				Backends: BackendsConfig{
 					Phone: &PhoneConfig{Enabled: true, Transport: "usb"},
@@ -2720,7 +2770,8 @@ func TestValidate_PhoneBackend(t *testing.T) {
 				Protocols: ProtocolsConfig{REST: true},
 				Server:    ServerConfig{RESTPort: 8443},
 				Logging:   LoggingConfig{Level: "info", Format: "json"},
-				Storage:   StorageConfig{Backend: "filesystem", Path: "/data"},
+				Storage:   StorageConfig{Backend: "qrdb", Path: "/data"},
+				TLS:       TLSConfig{Enabled: true},
 				Default:   "pkcs8",
 				Backends: BackendsConfig{
 					PKCS8: &PKCS8Config{Enabled: true, Path: "/data/pkcs8"},
@@ -2754,7 +2805,8 @@ func TestValidate_SoftwareBackendEmptyPath(t *testing.T) {
 		Protocols: ProtocolsConfig{REST: true},
 		Server:    ServerConfig{RESTPort: 8443},
 		Logging:   LoggingConfig{Level: "info", Format: "json"},
-		Storage:   StorageConfig{Backend: "filesystem", Path: "/data"},
+		Storage:   StorageConfig{Backend: "qrdb", Path: "/data"},
+		TLS:       TLSConfig{Enabled: true},
 		Default:   "software",
 		Backends: BackendsConfig{
 			Software: &SoftwareConfig{Enabled: true, Path: ""},
@@ -3153,7 +3205,8 @@ func TestValidate_UnixProtocolCaseSensitivity(t *testing.T) {
 		Protocols: ProtocolsConfig{REST: true},
 		Server:    ServerConfig{RESTPort: 8443},
 		Logging:   LoggingConfig{Level: "info", Format: "json"},
-		Storage:   StorageConfig{Backend: "filesystem", Path: "/data"},
+		Storage:   StorageConfig{Backend: "qrdb", Path: "/data"},
+		TLS:       TLSConfig{Enabled: true},
 		Default:   "pkcs8",
 		Backends:  BackendsConfig{PKCS8: &PKCS8Config{Enabled: true, Path: "/data/pkcs8"}},
 		Unix:      UnixConfig{Enabled: true, Protocol: "GRPC"},
@@ -3244,7 +3297,7 @@ func TestStorageConfig_QRDB(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			cfg := Config{
-				Protocols: ProtocolsConfig{REST: true},
+				Protocols: ProtocolsConfig{Unix: true},
 				Server:    ServerConfig{RESTPort: 8443},
 				Logging:   LoggingConfig{Level: "info", Format: "json"},
 				Storage:   tt.storage,

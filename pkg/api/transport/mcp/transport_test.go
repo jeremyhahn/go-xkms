@@ -9,10 +9,16 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
-	"net"
+	"fmt"
+	"net/http/httptest"
+	"strings"
 	"testing"
 
+	mcpserver "github.com/mark3labs/mcp-go/server"
+
+	xkmsmcp "github.com/jeremyhahn/go-xkms/pkg/api/mcp"
 	"github.com/jeremyhahn/go-xkms/pkg/api/transport"
+	"github.com/mark3labs/mcp-go/mcp"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -22,12 +28,6 @@ import (
 func TestRPCError_Error(t *testing.T) {
 	e := &RPCError{Code: -32600, Message: "invalid request"}
 	assert.Equal(t, "rpc error -32600: invalid request", e.Error())
-}
-
-func TestRPCError_Error_WithData(t *testing.T) {
-	e := &RPCError{Code: -32600, Message: "invalid", Data: json.RawMessage(`{"detail":"bad"}`)}
-	assert.Contains(t, e.Error(), "data:")
-	assert.Contains(t, e.Error(), "bad")
 }
 
 func TestMarshalError_Error(t *testing.T) {
@@ -94,16 +94,6 @@ func TestTLSSetupError_Unwrap(t *testing.T) {
 	cause := errors.New("cause")
 	e := &TLSSetupError{Detail: "test", Err: cause}
 	assert.Equal(t, cause, e.Unwrap())
-}
-
-func TestJsonrpcError_Error(t *testing.T) {
-	e := &jsonrpcError{Code: -32601, Message: "method not found"}
-	assert.Equal(t, "JSON-RPC error -32601: method not found", e.Error())
-}
-
-func TestJsonrpcError_Error_WithData(t *testing.T) {
-	e := &jsonrpcError{Code: -32602, Message: "invalid params", Data: json.RawMessage(`"detail"`)}
-	assert.Contains(t, e.Error(), "data:")
 }
 
 // --- Constructor tests ---
@@ -231,51 +221,14 @@ func TestClose_NotConnected(t *testing.T) {
 }
 
 func TestConnect_HealthCheck(t *testing.T) {
-	listener, err := net.Listen("tcp", "127.0.0.1:0")
-	require.NoError(t, err)
-	defer listener.Close()
+	addr, cleanup := newCatchAllMCPServer(t)
+	defer cleanup()
 
-	go func() {
-		conn, acceptErr := listener.Accept()
-		if acceptErr != nil {
-			return
-		}
-		defer conn.Close()
-
-		buf := make([]byte, 4096)
-		n, readErr := conn.Read(buf)
-		if readErr != nil {
-			return
-		}
-
-		var req jsonrpcRequest
-		if unmarshalErr := json.Unmarshal(buf[:n], &req); unmarshalErr != nil {
-			return
-		}
-
-		resp := jsonrpcResponse{
-			JSONRPC: "2.0",
-			ID:      req.ID,
-			Result:  json.RawMessage(`{"status":"ok","version":"1.0.0"}`),
-		}
-		data, marshalErr := json.Marshal(resp)
-		if marshalErr != nil {
-			return
-		}
-		data = append(data, '\n')
-		if _, writeErr := conn.Write(data); writeErr != nil {
-			return
-		}
-	}()
-
-	tr, err := New(transport.WithAddress(listener.Addr().String()))
-	require.NoError(t, err)
-
-	err = tr.Connect(context.Background())
-	require.NoError(t, err)
+	tr := connectToMockServer(t, addr)
 	defer tr.Close()
 
 	assert.True(t, tr.connected)
+	assert.True(t, tr.IsConnected())
 }
 
 func TestConnect_FailedDial(t *testing.T) {
@@ -293,6 +246,15 @@ func TestConn_NotConnected(t *testing.T) {
 	tr, err := NewWithConfig(nil)
 	require.NoError(t, err)
 	assert.Nil(t, tr.Conn())
+}
+
+func TestConn_Connected(t *testing.T) {
+	addr, cleanup := newCatchAllMCPServer(t)
+	defer cleanup()
+	tr := connectToMockServer(t, addr)
+	defer tr.Close()
+
+	assert.NotNil(t, tr.Conn())
 }
 
 func TestConfig(t *testing.T) {
@@ -320,39 +282,13 @@ func TestRequest_NotConnected(t *testing.T) {
 }
 
 func TestRequest_UnknownPath(t *testing.T) {
-	// Create a connected transport to test path resolution
-	listener, err := net.Listen("tcp", "127.0.0.1:0")
-	require.NoError(t, err)
+	addr, cleanup := newCatchAllMCPServer(t)
+	defer cleanup()
 
-	go func() {
-		conn, acceptErr := listener.Accept()
-		if acceptErr != nil {
-			return
-		}
-		defer conn.Close()
-		// Health check response
-		buf := make([]byte, 4096)
-		n, readErr := conn.Read(buf)
-		if readErr != nil {
-			return
-		}
-		var req jsonrpcRequest
-		if unmarshalErr := json.Unmarshal(buf[:n], &req); unmarshalErr != nil {
-			return
-		}
-		resp := jsonrpcResponse{JSONRPC: "2.0", ID: req.ID, Result: json.RawMessage(`{"status":"ok"}`)}
-		data, _ := json.Marshal(resp)
-		data = append(data, '\n')
-		conn.Write(data)
-	}()
-
-	tr, err := New(transport.WithAddress(listener.Addr().String()))
-	require.NoError(t, err)
-	require.NoError(t, tr.Connect(context.Background()))
+	tr := connectToMockServer(t, addr)
 	defer tr.Close()
-	defer listener.Close()
 
-	err = tr.Request(context.Background(), "/nonexistent/path", nil, nil)
+	err := tr.Request(context.Background(), "/nonexistent/path", nil, nil)
 	assert.Error(t, err)
 	var te *transport.TransportError
 	require.True(t, errors.As(err, &te))
@@ -377,55 +313,222 @@ func TestHealthy_NotConnected(t *testing.T) {
 	assert.False(t, tr.Healthy(context.Background()))
 }
 
-// --- rpcCall with mock server ---
+// --- rpcCall with a real in-process MCP server ---
 
-func startMockServer(t *testing.T, handler func(req jsonrpcRequest) jsonrpcResponse) (string, func()) {
-	t.Helper()
-	listener, err := net.Listen("tcp", "127.0.0.1:0")
-	require.NoError(t, err)
-
-	done := make(chan struct{})
-	go func() {
-		defer close(done)
-		for {
-			conn, acceptErr := listener.Accept()
-			if acceptErr != nil {
-				return
-			}
-			go func(c net.Conn) {
-				defer c.Close()
-				buf := make([]byte, 65536)
-				for {
-					n, readErr := c.Read(buf)
-					if readErr != nil {
-						return
-					}
-					var req jsonrpcRequest
-					if unmarshalErr := json.Unmarshal(buf[:n], &req); unmarshalErr != nil {
-						return
-					}
-					resp := handler(req)
-					resp.JSONRPC = "2.0"
-					resp.ID = req.ID
-					data, marshalErr := json.Marshal(resp)
-					if marshalErr != nil {
-						return
-					}
-					data = append(data, '\n')
-					if _, writeErr := c.Write(data); writeErr != nil {
-						return
-					}
-				}
-			}(conn)
-		}
-	}()
-
-	return listener.Addr().String(), func() {
-		listener.Close()
-		<-done
-	}
+// jsonrpcRequest and jsonrpcResponse are test-only stand-ins for the
+// method name and JSON-RPC-shaped result/error a mock tool handler works
+// with. They are not part of the wire protocol any more (the wire protocol
+// is MCP's CallToolRequest/CallToolResult); they exist purely so the mock
+// server's handler callback keeps the same convenient shape the previous
+// TCP transport's tests used.
+type jsonrpcRequest struct {
+	// Method is the legacy JSON-RPC method name the tool was registered
+	// under (see startMockServer): the mock server hands it back to the
+	// handler unchanged so the handler can switch on it exactly as before.
+	Method string
+	// Params is the raw "params_json" argument the client sent, or empty
+	// when the call carried no params.
+	Params json.RawMessage
 }
 
+// jsonrpcResponse is what a mock tool handler returns: exactly one of
+// Result (success), Error (a legacy-formatted error, to exercise the
+// rpcErrorPattern fallback in newToolError), or ErrorText (a raw tool-error
+// message, to exercise toolErrorCode's keyword classification) should be
+// set.
+type jsonrpcResponse struct {
+	Result    json.RawMessage
+	Error     *jsonrpcError
+	ErrorText string
+	// EmptyError forces a tool error result with no content at all,
+	// exercising newToolError's fallback message.
+	EmptyError bool
+}
+
+// jsonrpcError renders in the legacy "JSON-RPC error <code>: <message>"
+// shape the previous TCP transport's wire error used, so tests can confirm
+// newToolError still recovers a numeric code from a server that happens to
+// emit it.
+type jsonrpcError struct {
+	Code    int
+	Message string
+}
+
+// Error implements the error interface.
+func (e *jsonrpcError) Error() string {
+	return fmt.Sprintf("JSON-RPC error %d: %s", e.Code, e.Message)
+}
+
+// mockToolMethods is every JSON-RPC method name transport.go's rpcCall
+// call sites address, plus "test", a method name a couple of unit tests
+// below use directly. xkmsmcp.ModuleMethods() is deliberately not used
+// here: it only reports the subset of methods pkg/api/mcp's own dispatcher
+// already implements server-side, which currently lags the client method
+// surface this transport exposes, and a test double for the client belongs
+// to the client's contract, not the server's current implementation state.
+var mockToolMethods = []string{
+	"test",
+	"health",
+	"barrier.deleteRecoveryKeys",
+	"barrier.enableEncryption",
+	"barrier.generateRecoveryKeys",
+	"barrier.generateRootToken",
+	"barrier.hasRecoveryKeys",
+	"barrier.initialize",
+	"barrier.initializeShamir",
+	"barrier.recoverWithKeys",
+	"barrier.rekey",
+	"barrier.seal",
+	"barrier.status",
+	"barrier.unseal",
+	"barrier.unsealShare",
+	"barrier.unsealShares",
+	"credentials.strategy",
+	"credentials.submit",
+	"init.claimCertBegin",
+	"init.claimCertComplete",
+	"init.claimShareBegin",
+	"init.claimShareComplete",
+	"init.getStatus",
+	"init.signCSR",
+	"xkms.addCustodianMember",
+	"xkms.algorithms",
+	"xkms.asymmetricEncrypt",
+	"xkms.attestKey",
+	"xkms.ca.bundle",
+	"xkms.ca.certificate",
+	"xkms.ca.crl",
+	"xkms.ca.is-revoked",
+	"xkms.ca.issue",
+	"xkms.canSeal",
+	"xkms.ca.revoke",
+	"xkms.ca.sign-csr",
+	"xkms.ca.tcg.enroll",
+	"xkms.ca.tcg.issue-ak",
+	"xkms.ca.tcg.issue-ek",
+	"xkms.ca.tcg.sign-csr",
+	"xkms.certExists",
+	"xkms.changeSOPIN",
+	"xkms.changeUserPIN",
+	"xkms.copyKey",
+	"xkms.createCustodianGroup",
+	"xkms.createTenant",
+	"xkms.decrypt",
+	"xkms.deleteCert",
+	"xkms.deleteCustodianGroup",
+	"xkms.deleteKey",
+	"xkms.deletePIVCertificate",
+	"xkms.deleteShare",
+	"xkms.deleteTenant",
+	"xkms.deriveKey",
+	"xkms.deriveKeyECDH",
+	"xkms.distributeShares",
+	"xkms.encrypt",
+	"xkms.exportKey",
+	"xkms.exportKeyMaterial",
+	"xkms.exportPIVCertificate",
+	"xkms.generateKey",
+	"xkms.generatePIVCSR",
+	"xkms.generatePIVKey",
+	"xkms.getBackend",
+	"xkms.getCert",
+	"xkms.getCertChain",
+	"xkms.getCustodianGroup",
+	"xkms.getImportParameters",
+	"xkms.getKey",
+	"xkms.getLockoutStatus",
+	"xkms.getPIVCertificate",
+	"xkms.getShare",
+	"xkms.getShareCollectionStatus",
+	"xkms.getTenant",
+	"xkms.getTLSCertificate",
+	"xkms.importKey",
+	"xkms.importPIVCertificate",
+	"xkms.listBackends",
+	"xkms.listCerts",
+	"xkms.listCustodianGroups",
+	"xkms.listKeys",
+	"xkms.listPIVSlots",
+	"xkms.listShares",
+	"xkms.listTenants",
+	"xkms.passwordAdd",
+	"xkms.passwordDelete",
+	"xkms.passwordGenerate",
+	"xkms.passwordGet",
+	"xkms.passwordList",
+	"xkms.passwordStoreLock",
+	"xkms.passwordStoreSetAccessMode",
+	"xkms.passwordStoreStatus",
+	"xkms.passwordStoreUnlock",
+	"xkms.passwordUpdate",
+	"xkms.queryAudit",
+	"xkms.removeCustodianMember",
+	"xkms.resetLockout",
+	"xkms.rotateKey",
+	"xkms.saveCert",
+	"xkms.saveCertChain",
+	"xkms.seal",
+	"xkms.setSOPIN",
+	"xkms.setUserPIN",
+	"xkms.sign",
+	"xkms.storePIVCertificate",
+	"xkms.submitShare",
+	"xkms.tenantBarrierInit",
+	"xkms.tenantBarrierStatus",
+	"xkms.tenantBarrierUnseal",
+	"xkms.unseal",
+	"xkms.unwrapKey",
+	"xkms.unwrapKeyByID",
+	"xkms.updateTenantEntitlements",
+	"xkms.updateTenantQuotas",
+	"xkms.verify",
+	"xkms.verifySOPIN",
+	"xkms.verifyUserPIN",
+	"xkms.wrapKey",
+	"xkms.wrapKeyByID",
+}
+
+// startMockServer starts a real, in-process MCP Streamable HTTP server
+// (github.com/mark3labs/mcp-go/server) exposing one tool per entry in
+// mockToolMethods, named via xkmsmcp.ToolName — the same authoritative
+// method-to-tool-name mapping rpcCall uses against the real unified qrdb
+// MCP server. Each tool decodes its "params_json" argument into a
+// jsonrpcRequest and asks handler for a JSON-RPC-shaped response, which
+// becomes a text CallToolResult (or a tool error, when handler reports
+// one). It returns the "host:port" of the server, without a scheme, so
+// callers can plug it directly into transport.WithAddress the same way the
+// previous TCP transport's mock server address worked.
+func startMockServer(t *testing.T, handler func(req jsonrpcRequest) jsonrpcResponse) (string, func()) {
+	t.Helper()
+
+	srv := mcpserver.NewMCPServer("xkms-test", "1.0.0")
+
+	for _, method := range mockToolMethods {
+		srv.AddTool(mcp.Tool{Name: xkmsmcp.ToolName(method)}, func(_ context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+			paramsJSON, _ := req.GetArguments()["params_json"].(string)
+			resp := handler(jsonrpcRequest{Method: method, Params: json.RawMessage(paramsJSON)})
+			switch {
+			case resp.EmptyError:
+				return &mcp.CallToolResult{IsError: true}, nil
+			case resp.Error != nil:
+				return mcp.NewToolResultError(resp.Error.Error()), nil
+			case resp.ErrorText != "":
+				return mcp.NewToolResultError(resp.ErrorText), nil
+			default:
+				return mcp.NewToolResultText(string(resp.Result)), nil
+			}
+		})
+	}
+
+	httpServer := mcpserver.NewStreamableHTTPServer(srv, mcpserver.WithEndpointPath(mcpEndpointPath))
+	testServer := httptest.NewServer(httpServer)
+
+	return strings.TrimPrefix(testServer.URL, "http://"), testServer.Close
+}
+
+// connectToMockServer connects a Transport to a mock server address
+// returned by startMockServer/newCatchAllMCPServer, over plain HTTP (TLS
+// itself is exercised separately by TestConnect_MutualTLS).
 func connectToMockServer(t *testing.T, addr string) *Transport {
 	t.Helper()
 	tr, err := New(transport.WithAddress(addr))
@@ -453,10 +556,8 @@ func TestRpcCall_Success(t *testing.T) {
 }
 
 func TestRpcCall_RPCError(t *testing.T) {
-	callCount := 0
 	addr, cleanup := startMockServer(t, func(req jsonrpcRequest) jsonrpcResponse {
-		callCount++
-		// First call is health check from Connect()
+		// First call is the health check from Connect().
 		if req.Method == "health" {
 			data, _ := json.Marshal(map[string]string{"status": "ok"})
 			return jsonrpcResponse{Result: data}
@@ -473,8 +574,9 @@ func TestRpcCall_RPCError(t *testing.T) {
 	err := tr.rpcCall(context.Background(), "xkms.listBackends", nil, nil)
 	require.Error(t, err)
 	var rpcErr *RPCError
-	assert.True(t, errors.As(err, &rpcErr))
+	require.True(t, errors.As(err, &rpcErr))
 	assert.Equal(t, -32600, rpcErr.Code)
+	assert.Equal(t, "invalid request", rpcErr.Message)
 }
 
 func TestRpcCall_NotConnected(t *testing.T) {

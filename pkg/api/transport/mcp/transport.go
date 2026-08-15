@@ -12,26 +12,38 @@
 //    Contact licensing@automatethethings.com for commercial licensing options.
 
 // Package mcp provides an MCP transport implementation for the xkms SDK.
-// The MCP transport communicates with the xkms MCP server using JSON-RPC 2.0
-// over raw TCP with newline-delimited JSON framing.
+// The MCP transport speaks the real Model Context Protocol over Streamable
+// HTTP (github.com/mark3labs/mcp-go): every xkms operation is invoked as an
+// MCP tool call against the unified qrdb MCP server, mTLS-authenticated and
+// TLS-only. The tool name is "xkms_" plus the legacy JSON-RPC method name
+// with its dots replaced by underscores (see xkmsmcp.ToolName), and each
+// tool takes one optional string argument, "params_json", carrying the
+// method's params encoded exactly as the legacy JSON-RPC request carried
+// them. The tool's result is a single JSON text content item; tool-level
+// failures come back as an MCP tool error (IsError=true with a text
+// message).
 package mcp
 
 import (
-	"bufio"
 	"context"
 	"crypto/tls"
 	"crypto/x509"
 	"encoding/json"
 	"errors"
 	"fmt"
-	"net"
+	"net/http"
 	"os"
+	"regexp"
+	"strconv"
 	"strings"
-	"sync"
-	"sync/atomic"
+
+	mcpclient "github.com/mark3labs/mcp-go/client"
+	mcptransport "github.com/mark3labs/mcp-go/client/transport"
+	"github.com/mark3labs/mcp-go/mcp"
 
 	"github.com/jeremyhahn/go-xkms/pkg/errs"
 
+	xkmsmcp "github.com/jeremyhahn/go-xkms/pkg/api/mcp"
 	"github.com/jeremyhahn/go-xkms/pkg/api/transport"
 	"github.com/jeremyhahn/go-xkms/pkg/crypto/spki"
 )
@@ -47,49 +59,18 @@ var (
 	ErrNotImplemented = errors.New("not implemented")
 )
 
-// jsonrpcRequest represents a JSON-RPC 2.0 request.
-type jsonrpcRequest struct {
-	JSONRPC string          `json:"jsonrpc"`
-	Method  string          `json:"method"`
-	Params  json.RawMessage `json:"params,omitempty"`
-	ID      int64           `json:"id"`
-}
-
-// jsonrpcResponse represents a JSON-RPC 2.0 response.
-type jsonrpcResponse struct {
-	JSONRPC string          `json:"jsonrpc"`
-	Result  json.RawMessage `json:"result,omitempty"`
-	Error   *jsonrpcError   `json:"error,omitempty"`
-	ID      int64           `json:"id,omitempty"`
-}
-
-// jsonrpcError represents a JSON-RPC 2.0 error.
-type jsonrpcError struct {
-	Code    int             `json:"code"`
-	Message string          `json:"message"`
-	Data    json.RawMessage `json:"data,omitempty"`
-}
-
-// Error implements the error interface for jsonrpcError.
-func (e *jsonrpcError) Error() string {
-	if len(e.Data) > 0 {
-		return fmt.Sprintf("JSON-RPC error %d: %s (data: %s)", e.Code, e.Message, string(e.Data))
-	}
-	return fmt.Sprintf("JSON-RPC error %d: %s", e.Code, e.Message)
-}
-
-// RPCError is a typed error for JSON-RPC server errors returned to callers.
+// RPCError is a typed error for a failed MCP tool call: either a tool-level
+// failure (a CallToolResult with IsError=true, whose text content becomes
+// Message) or a legacy-formatted server error text that still embeds a
+// JSON-RPC 2.0 code. See newToolError for how Code is recovered from the
+// tool's text content.
 type RPCError struct {
 	Code    int
 	Message string
-	Data    json.RawMessage
 }
 
 // Error implements the error interface.
 func (e *RPCError) Error() string {
-	if len(e.Data) > 0 {
-		return fmt.Sprintf("rpc error %d: %s (data: %s)", e.Code, e.Message, string(e.Data))
-	}
 	return fmt.Sprintf("rpc error %d: %s", e.Code, e.Message)
 }
 
@@ -125,22 +106,15 @@ func (e *UnmarshalError) Unwrap() error {
 	return e.Err
 }
 
-// SendError is a typed error for TCP write failures.
-type SendError struct {
-	Err error
-}
-
-// Error implements the error interface.
-func (e *SendError) Error() string {
-	return fmt.Sprintf("failed to send request: %v", e.Err)
-}
-
-// Unwrap returns the underlying error.
-func (e *SendError) Unwrap() error {
-	return e.Err
-}
-
-// ReceiveError is a typed error for TCP read failures.
+// ReceiveError is a typed error for MCP tool-call failures that never
+// produced a usable result: a transport/network failure, a protocol-level
+// JSON-RPC error on the "tools/call" request itself (e.g. an unknown tool
+// name), or any other failure CallTool reports before a CallToolResult is
+// available. It is the Streamable HTTP analogue of the previous transport's
+// TCP read failure: the previous implementation could distinguish a failed
+// write from a failed read because it owned the socket directly; the MCP
+// client library performs the request and reads the response as one
+// operation, so both failure modes collapse into ReceiveError here.
 type ReceiveError struct {
 	Err error
 }
@@ -152,6 +126,28 @@ func (e *ReceiveError) Error() string {
 
 // Unwrap returns the underlying error.
 func (e *ReceiveError) Unwrap() error {
+	return e.Err
+}
+
+// SendError is a typed error retained for API compatibility with the
+// previous TCP transport, whose rpcCall could observe a request-write
+// failure distinct from a response-read failure. The Streamable HTTP
+// client library performs a tool call as one send-and-receive operation, so
+// rpcCall no longer has a distinct write-phase failure to report here; any
+// such failure now surfaces as ReceiveError. SendError is unused by rpcCall
+// but kept so callers that still type-assert against it (e.g. the sdk/go
+// re-export) continue to compile.
+type SendError struct {
+	Err error
+}
+
+// Error implements the error interface.
+func (e *SendError) Error() string {
+	return fmt.Sprintf("failed to send request: %v", e.Err)
+}
+
+// Unwrap returns the underlying error.
+func (e *SendError) Unwrap() error {
 	return e.Err
 }
 
@@ -428,23 +424,25 @@ func resolveMethod(path string) (string, bool) {
 	return "", false
 }
 
-// Transport implements the transport.Client interface using JSON-RPC 2.0
-// over raw TCP with newline-delimited JSON framing.
+// mcpEndpointPath is the Streamable HTTP path the unified qrdb MCP server
+// mounts the xkms tool surface under.
+const mcpEndpointPath = "/mcp"
+
+// clientName and clientVersion identify this SDK to the MCP server during
+// the "initialize" handshake.
+const (
+	clientName    = "go-xkms-sdk"
+	clientVersion = "1.0.0"
+)
+
+// Transport implements the transport.Client interface over the Model
+// Context Protocol's Streamable HTTP transport. Every xkms operation is
+// invoked as a "tools/call" request against the unified qrdb MCP server;
+// see the package doc for the tool-naming and argument convention.
 type Transport struct {
 	config    *transport.Config
-	conn      net.Conn
-	encoder   *json.Encoder
-	scanner   *bufio.Scanner
+	client    *mcpclient.Client
 	connected bool
-	requestID atomic.Int64
-
-	// writeMu serializes writes to the TCP connection.
-	// TCP is not safe for concurrent writes from multiple goroutines.
-	writeMu sync.Mutex
-
-	// readMu serializes reads from the TCP connection.
-	// The scanner is stateful and cannot be shared concurrently.
-	readMu sync.Mutex
 }
 
 // New creates a new MCP transport with the given options.
@@ -468,51 +466,65 @@ func NewWithConfig(cfg *transport.Config) (*Transport, error) {
 	}, nil
 }
 
-// Connect establishes a TCP connection to the xkms MCP server.
+// Connect establishes an MCP Streamable HTTP session with the xkms server:
+// it builds the mTLS HTTP client, starts the Streamable HTTP transport,
+// negotiates the MCP protocol version with Initialize, and confirms the
+// session is usable with an "xkms_health" tool call before returning.
 func (t *Transport) Connect(ctx context.Context) error {
 	addr := t.config.Address
-
-	// Strip any http/https scheme prefix if present
+	// Strip any http/https scheme prefix if present; the scheme is derived
+	// from TLSEnabled below instead.
 	addr = strings.TrimPrefix(addr, "https://")
 	addr = strings.TrimPrefix(addr, "http://")
+	addr = strings.TrimSuffix(addr, "/")
 
-	var conn net.Conn
-	var dialErr error
-
+	var tlsConfig *tls.Config
+	scheme := "http://"
 	if t.config.TLSEnabled {
-		tlsConfig, tlsErr := t.buildTLSConfig()
-		if tlsErr != nil {
-			return tlsErr
+		cfg, err := t.buildTLSConfig()
+		if err != nil {
+			return err
 		}
+		tlsConfig = cfg
+		scheme = "https://"
+	}
+	baseURL := scheme + addr + mcpEndpointPath
 
-		dialer := &tls.Dialer{
-			Config: tlsConfig,
-		}
-		conn, dialErr = dialer.DialContext(ctx, "tcp", addr)
-	} else {
-		dialer := &net.Dialer{}
-		conn, dialErr = dialer.DialContext(ctx, "tcp", addr)
+	httpClient := &http.Client{
+		Transport: &http.Transport{TLSClientConfig: tlsConfig},
 	}
 
-	if dialErr != nil {
-		return &errs.Detail{Err: ErrConnectionFailed, Detail: fmt.Sprintf("%v", dialErr)}
+	mcpClient, err := mcpclient.NewStreamableHttpClient(baseURL, mcptransport.WithHTTPBasicClient(httpClient))
+	if err != nil {
+		return &errs.Detail{Err: ErrConnectionFailed, Detail: fmt.Sprintf("%v", err)}
 	}
 
-	t.conn = conn
-	t.encoder = json.NewEncoder(conn)
-	t.scanner = bufio.NewScanner(conn)
-	// Allow up to 10 MB for large responses (certificate chains, etc.)
-	t.scanner.Buffer(make([]byte, 0, 64*1024), 10*1024*1024)
+	if startErr := mcpClient.Start(ctx); startErr != nil {
+		return &errs.Detail{Err: ErrConnectionFailed, Detail: fmt.Sprintf("%v", startErr)}
+	}
 
-	// Mark connected before health check so rpcCall doesn't reject the request
+	initReq := mcp.InitializeRequest{
+		Params: mcp.InitializeParams{
+			ProtocolVersion: mcp.LATEST_PROTOCOL_VERSION,
+			ClientInfo:      mcp.Implementation{Name: clientName, Version: clientVersion},
+			Capabilities:    mcp.ClientCapabilities{},
+		},
+	}
+	if _, initErr := mcpClient.Initialize(ctx, initReq); initErr != nil {
+		if closeErr := mcpClient.Close(); closeErr != nil {
+			return &errs.Detail{Err: ErrConnectionFailed, Detail: fmt.Sprintf("initialize failed: %v (close error: %v)", initErr, closeErr)}
+		}
+		return &errs.Detail{Err: ErrConnectionFailed, Detail: fmt.Sprintf("initialize failed: %v", initErr)}
+	}
+
+	t.client = mcpClient
+	// Mark connected before the health check so rpcCall doesn't reject the
+	// request with ErrNotConnected.
 	t.connected = true
 
-	// Test connection with health check
-	_, healthErr := t.Health(ctx)
-	if healthErr != nil {
+	if _, healthErr := t.Health(ctx); healthErr != nil {
 		t.connected = false
-		closeErr := conn.Close()
-		if closeErr != nil {
+		if closeErr := mcpClient.Close(); closeErr != nil {
 			return &errs.Detail{Err: ErrConnectionFailed, Detail: fmt.Sprintf("health check failed: %v (close error: %v)", healthErr, closeErr)}
 		}
 		return &errs.Detail{Err: ErrConnectionFailed, Detail: fmt.Sprintf("health check failed: %v", healthErr)}
@@ -566,18 +578,18 @@ func (t *Transport) buildTLSConfig() (*tls.Config, error) {
 	return tlsConfig, nil
 }
 
-// Close closes the TCP connection.
+// Close closes the MCP session.
 func (t *Transport) Close() error {
 	t.connected = false
-	if t.conn != nil {
-		return t.conn.Close()
+	if t.client != nil {
+		return t.client.Close()
 	}
 	return nil
 }
 
 // Healthy checks if the transport can communicate with the server.
 func (t *Transport) Healthy(ctx context.Context) bool {
-	if t.conn == nil {
+	if t.client == nil {
 		return false
 	}
 
@@ -585,9 +597,9 @@ func (t *Transport) Healthy(ctx context.Context) bool {
 	return err == nil
 }
 
-// Conn returns the underlying net.Conn.
+// Conn returns the underlying MCP client.
 func (t *Transport) Conn() interface{} {
-	return t.conn
+	return t.client
 }
 
 // IsConnected returns whether the transport is connected.
@@ -600,10 +612,11 @@ func (t *Transport) Config() *transport.Config {
 	return t.config
 }
 
-// Request performs a JSON-RPC 2.0 request to the MCP server.
-// The method parameter is a REST-style path that gets mapped to a JSON-RPC method name.
+// Request performs an MCP tool call to the xkms server.
+// The method parameter is a REST-style path that gets mapped to a JSON-RPC
+// method name, which in turn addresses an MCP tool.
 func (t *Transport) Request(ctx context.Context, method string, req, resp interface{}) error {
-	if t.conn == nil {
+	if !t.connected {
 		return ErrNotConnected
 	}
 
@@ -623,67 +636,108 @@ func (t *Transport) RequestStream(ctx context.Context, _ string, _ interface{}) 
 	return nil, transport.ErrStreamNotSupported
 }
 
-// rpcCall sends a JSON-RPC 2.0 request and reads the response.
+// rpcErrorPattern recovers a JSON-RPC-style error code from a tool-error
+// message, for a server that still embeds the legacy "<label> error <code>:
+// <message>" text (e.g. the format the previous TCP transport's RPCError
+// and jsonrpcError types rendered) inside the MCP tool result.
+var rpcErrorPattern = regexp.MustCompile(`^(?:JSON-RPC|rpc) error (-?\d+): (.*)$`)
+
+// toolErrorCode classifies a tool-error message into a JSON-RPC 2.0 error
+// code by best-effort keyword matching. It mirrors the sentinel-to-code
+// mapping the xkms MCP server applies server-side when it turns a service
+// error into wire text (see pkg/api/mcp/errors_keyops.go mapKeyOpError):
+// not-found and validation failures read back as Invalid params, capability
+// gaps and unsupported operations read back as Method not found, and
+// authorization failures read back as their dedicated xkms extension codes.
+// Anything unrecognized is an Internal error, the same default the old
+// transport used for opaque server failures.
+func toolErrorCode(message string) int {
+	lower := strings.ToLower(message)
+	switch {
+	case strings.Contains(lower, "not supported"), strings.Contains(lower, "unimplemented"), strings.Contains(lower, "method not found"):
+		return xkmsmcp.ErrCodeMethodNotFound
+	case strings.Contains(lower, "unauthorized"), strings.Contains(lower, "unauthenticated"):
+		return xkmsmcp.ErrCodeUnauthorized
+	case strings.Contains(lower, "forbidden"), strings.Contains(lower, "permission denied"):
+		return xkmsmcp.ErrCodeForbidden
+	case strings.Contains(lower, "unavailable"):
+		return xkmsmcp.ErrCodeServiceUnavailable
+	case strings.Contains(lower, "not found"), strings.Contains(lower, "invalid"), strings.Contains(lower, "validation"):
+		return xkmsmcp.ErrCodeInvalidParams
+	default:
+		return xkmsmcp.ErrCodeInternalError
+	}
+}
+
+// newToolError converts a tool-level MCP error result (IsError=true) into an
+// *RPCError. The MCP tool surface carries the failure as a text message
+// rather than a structured JSON-RPC error object, so the code is recovered
+// two ways: rpcErrorPattern first, in case the server still embeds a
+// legacy-formatted code; otherwise toolErrorCode classifies the message by
+// keyword, matching xkms's own sentinel-to-code table.
+func newToolError(result *mcp.CallToolResult) error {
+	message := "tool call failed"
+	if len(result.Content) > 0 {
+		if text, ok := mcp.AsTextContent(result.Content[0]); ok && text.Text != "" {
+			message = text.Text
+		}
+	}
+	if m := rpcErrorPattern.FindStringSubmatch(message); m != nil {
+		if code, err := strconv.Atoi(m[1]); err == nil {
+			return &RPCError{Code: code, Message: m[2]}
+		}
+	}
+	return &RPCError{Code: toolErrorCode(message), Message: message}
+}
+
+// rpcCall invokes method as an MCP tool call. params, when non-nil, is
+// marshaled to JSON and passed as the tool's single "params_json" string
+// argument, exactly as the legacy JSON-RPC request carried it. On success,
+// the tool's first text content item is unmarshaled into result (when
+// result is non-nil); a tool-level failure (IsError=true) becomes an
+// *RPCError, and any failure to complete the tool call at all becomes a
+// *ReceiveError.
 func (t *Transport) rpcCall(ctx context.Context, method string, params interface{}, result interface{}) error {
 	if !t.connected {
 		return ErrNotConnected
 	}
 
-	id := t.requestID.Add(1)
-
-	var rawParams json.RawMessage
+	args := map[string]any{}
 	if params != nil {
 		data, err := json.Marshal(params)
 		if err != nil {
 			return &MarshalError{Operation: "request params", Err: err}
 		}
-		rawParams = data
+		args["params_json"] = string(data)
 	}
 
-	req := &jsonrpcRequest{
-		JSONRPC: "2.0",
-		Method:  method,
-		Params:  rawParams,
-		ID:      id,
+	toolResult, err := t.client.CallTool(ctx, mcp.CallToolRequest{
+		Params: mcp.CallToolParams{
+			Name:      xkmsmcp.ToolName(method),
+			Arguments: args,
+		},
+	})
+	if err != nil {
+		return &ReceiveError{Err: err}
 	}
 
-	// Serialize write access
-	t.writeMu.Lock()
-	sendErr := t.encoder.Encode(req)
-	t.writeMu.Unlock()
-
-	if sendErr != nil {
-		return &SendError{Err: sendErr}
+	if toolResult.IsError {
+		return newToolError(toolResult)
 	}
 
-	// Serialize read access
-	t.readMu.Lock()
-	defer t.readMu.Unlock()
-
-	if !t.scanner.Scan() {
-		if err := t.scanner.Err(); err != nil {
-			return &ReceiveError{Err: err}
-		}
-		return &ReceiveError{Err: errors.New("connection closed by server")}
+	if result == nil || len(toolResult.Content) == 0 {
+		return nil
 	}
 
-	var resp jsonrpcResponse
-	if err := json.Unmarshal(t.scanner.Bytes(), &resp); err != nil {
-		return &UnmarshalError{Operation: "response", Err: err}
+	text, ok := mcp.AsTextContent(toolResult.Content[0])
+	if !ok {
+		return &UnmarshalError{Operation: "result", Err: errors.New("tool result content is not text")}
 	}
-
-	if resp.Error != nil {
-		return &RPCError{
-			Code:    resp.Error.Code,
-			Message: resp.Error.Message,
-			Data:    resp.Error.Data,
-		}
+	if text.Text == "" {
+		return nil
 	}
-
-	if result != nil && len(resp.Result) > 0 {
-		if err := json.Unmarshal(resp.Result, result); err != nil {
-			return &UnmarshalError{Operation: "result", Err: err}
-		}
+	if err := json.Unmarshal([]byte(text.Text), result); err != nil {
+		return &UnmarshalError{Operation: "result", Err: err}
 	}
 
 	return nil

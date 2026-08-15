@@ -14,6 +14,8 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     curl \
     ca-certificates \
     git \
+    # ICU regex (dolthub/go-icu-regex via the qrdb SQL engine)
+    libicu-dev \
     # Wails v2 GUI dependencies (GTK3, WebKit2GTK 4.1, libsoup3)
     libgtk-3-dev \
     libwebkit2gtk-4.1-dev \

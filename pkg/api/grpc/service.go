@@ -94,10 +94,10 @@ type Service struct {
 	sshClient   sdkssh.Client
 
 	// localTrust marks this Service as constructed for a local IPC listener
-	// (the Unix domain socket) rather than a network listener. It exists
-	// solely to resolve the ambiguity of a nil authorizer for the privileged
-	// cluster-membership mutations: see authorizeClusterMutation in
-	// service_cluster.go for the fail-closed policy it enables.
+	// (the Unix domain socket) rather than a network listener. It exists to
+	// resolve the ambiguity of a nil authorizer for privileged RPCs: only a
+	// Service marked local-trusted may treat a nil authorizer as "allow"
+	// rather than as a misconfigured network listener.
 	localTrust bool
 }
 
@@ -111,11 +111,10 @@ type ServiceOption func(*Service)
 // authorizer AND WithLocalTrust(). Without this marker a nil authorizer is
 // ambiguous: it could mean "this deployment does not enable RBAC" (the
 // long-standing allow-all behavior every other RPC relies on) or "this network
-// server forgot to wire an authorizer" (a misconfiguration). The privileged
-// cluster-membership RPCs (AddClusterReplica/RemoveClusterReplica) resolve
-// that ambiguity explicitly instead of defaulting to either interpretation:
-// only a Service marked local-trusted is allowed to treat a nil authorizer as
-// "allow".
+// server forgot to wire an authorizer" (a misconfiguration). Privileged RPCs
+// resolve that ambiguity explicitly instead of defaulting to either
+// interpretation: only a Service marked local-trusted is allowed to treat a
+// nil authorizer as "allow".
 func WithLocalTrust() ServiceOption {
 	return func(s *Service) {
 		s.localTrust = true

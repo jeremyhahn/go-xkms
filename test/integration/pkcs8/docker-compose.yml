@@ -5,13 +5,12 @@ services:
       dockerfile: test/integration/pkcs8/Dockerfile
     volumes:
       - ../../..:/app
-      # In-house module closure, resolved via /tmp/go.work (see ensure-gowork.sh)
-      - ../../../../go-codec:/go-codec:cached
-      - ../../../../go-frost:/go-frost:cached
-      - ../../../../go-objstore:/go-objstore:cached
-      - ../../../../go-qrdb:/go-qrdb:cached
-      - ../../../../go-quicraft:/go-quicraft:cached
-      - ../../../../go-truststrap:/go-truststrap:cached
+    environment:
+      - GOWORK=off
+      - GOPRIVATE=github.com/jeremyhahn/*
+      - GIT_CONFIG_COUNT=1
+      - GIT_CONFIG_KEY_0=url.http://x:${GITEA_GO_TOKEN}@198.51.100.91:3001/jeremyhahn/.insteadOf
+      - GIT_CONFIG_VALUE_0=https://github.com/jeremyhahn/
     working_dir: /app
 
 networks:

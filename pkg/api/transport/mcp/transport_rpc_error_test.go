@@ -6,121 +6,57 @@
 package mcp
 
 import (
-	"bufio"
 	"context"
 	"encoding/json"
 	"errors"
-	"net"
 	"testing"
 
-	"github.com/jeremyhahn/go-xkms/pkg/api/transport"
+	xkmsmcp "github.com/jeremyhahn/go-xkms/pkg/api/mcp"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
 
-// TestRpcCall_ServerClosesConnection exercises the scanner.Scan() == false
-// path where the server closes the connection after the health check.
-func TestRpcCall_ServerClosesConnection(t *testing.T) {
-	ln, err := net.Listen("tcp", "127.0.0.1:0")
-	require.NoError(t, err)
-	defer ln.Close()
-
-	go func() {
-		for {
-			conn, acceptErr := ln.Accept()
-			if acceptErr != nil {
-				return
-			}
-			go func(c net.Conn) {
-				scanner := bufio.NewScanner(c)
-				for scanner.Scan() {
-					var req jsonrpcRequest
-					if unmarshalErr := json.Unmarshal(scanner.Bytes(), &req); unmarshalErr != nil {
-						c.Close()
-						return
-					}
-					if req.Method == "health" {
-						resp := jsonrpcResponse{
-							JSONRPC: "2.0",
-							ID:      req.ID,
-							Result:  json.RawMessage(`{"status":"ok"}`),
-						}
-						data, _ := json.Marshal(resp)
-						data = append(data, '\n')
-						_, _ = c.Write(data)
-					} else {
-						// Close connection for non-health requests
-						c.Close()
-						return
-					}
-				}
-			}(conn)
-		}
-	}()
-
-	tr, err := New(transport.WithAddress(ln.Addr().String()))
-	require.NoError(t, err)
-
-	err = tr.Connect(context.Background())
-	require.NoError(t, err)
+// TestRpcCall_ServerUnavailable exercises the ReceiveError path: the tool
+// call cannot complete at all because the server has gone away after a
+// successful Connect. This is the Streamable HTTP analogue of the previous
+// TCP transport's "server closes the connection mid-call" test — the
+// previous transport could distinguish that from every other socket
+// failure; the MCP client library reports both as one CallTool error, which
+// rpcCall wraps as ReceiveError.
+func TestRpcCall_ServerUnavailable(t *testing.T) {
+	addr, cleanup := newCatchAllMCPServer(t)
+	tr := connectToMockServer(t, addr)
 	defer tr.Close()
 
-	// This call should hit the "connection closed by server" path
+	// Shut the server down after a successful Connect so the next call
+	// fails to reach it.
+	cleanup()
+
 	var result map[string]string
-	err = tr.rpcCall(context.Background(), "xkms.listBackends", nil, &result)
+	err := tr.rpcCall(context.Background(), "xkms.listBackends", nil, &result)
 	require.Error(t, err)
 	var recvErr *ReceiveError
 	assert.True(t, errors.As(err, &recvErr))
 }
 
 // TestRpcCall_InvalidJSONResponse exercises the unmarshal response error path
-// where the server returns invalid JSON.
+// where the tool's text content is not valid JSON for the requested result
+// type.
 func TestRpcCall_InvalidJSONResponse(t *testing.T) {
-	ln, err := net.Listen("tcp", "127.0.0.1:0")
-	require.NoError(t, err)
-	defer ln.Close()
-
-	go func() {
-		for {
-			conn, acceptErr := ln.Accept()
-			if acceptErr != nil {
-				return
-			}
-			go func(c net.Conn) {
-				defer c.Close()
-				scanner := bufio.NewScanner(c)
-				for scanner.Scan() {
-					var req jsonrpcRequest
-					if unmarshalErr := json.Unmarshal(scanner.Bytes(), &req); unmarshalErr != nil {
-						return
-					}
-					if req.Method == "health" {
-						resp := jsonrpcResponse{
-							JSONRPC: "2.0",
-							ID:      req.ID,
-							Result:  json.RawMessage(`{"status":"ok"}`),
-						}
-						data, _ := json.Marshal(resp)
-						data = append(data, '\n')
-						_, _ = c.Write(data)
-					} else {
-						// Write invalid JSON
-						_, _ = c.Write([]byte("{invalid-json\n"))
-					}
-				}
-			}(conn)
+	addr, cleanup := startMockServer(t, func(req jsonrpcRequest) jsonrpcResponse {
+		if req.Method == "health" {
+			data, _ := json.Marshal(map[string]string{"status": "ok"})
+			return jsonrpcResponse{Result: data}
 		}
-	}()
+		return jsonrpcResponse{Result: json.RawMessage(`{invalid-json`)}
+	})
+	defer cleanup()
 
-	tr, err := New(transport.WithAddress(ln.Addr().String()))
-	require.NoError(t, err)
-
-	err = tr.Connect(context.Background())
-	require.NoError(t, err)
+	tr := connectToMockServer(t, addr)
 	defer tr.Close()
 
 	var result map[string]string
-	err = tr.rpcCall(context.Background(), "xkms.listBackends", nil, &result)
+	err := tr.rpcCall(context.Background(), "xkms.listBackends", nil, &result)
 	require.Error(t, err)
 	var unmarshalErr *UnmarshalError
 	assert.True(t, errors.As(err, &unmarshalErr))
@@ -129,13 +65,7 @@ func TestRpcCall_InvalidJSONResponse(t *testing.T) {
 // TestRequest_InvalidMethod exercises the method-not-found error path
 // in Request when the REST-to-RPC mapping fails.
 func TestRequest_InvalidMethod(t *testing.T) {
-	addr, cleanup := startMockServer(t, func(req jsonrpcRequest) jsonrpcResponse {
-		if req.Method == "health" {
-			data, _ := json.Marshal(map[string]string{"status": "ok"})
-			return jsonrpcResponse{Result: data}
-		}
-		return jsonrpcResponse{Result: json.RawMessage(`{}`)}
-	})
+	addr, cleanup := newCatchAllMCPServer(t)
 	defer cleanup()
 
 	tr := connectToMockServer(t, addr)
@@ -155,4 +85,70 @@ func TestHealthy_Connected_Success(t *testing.T) {
 
 	ok := tr.Healthy(context.Background())
 	assert.True(t, ok)
+}
+
+// TestRpcCall_ToolError_KeywordMapping exercises newToolError's best-effort
+// classification of a tool-error message that carries no legacy JSON-RPC
+// code (the real unified qrdb MCP server's tool errors are plain text, not
+// a structured error object): toolErrorCode's keyword table must recover
+// the same codes the xkms MCP server's own mapKeyOpError would have used
+// server-side (see pkg/api/mcp/errors_keyops.go).
+func TestRpcCall_ToolError_KeywordMapping(t *testing.T) {
+	tests := []struct {
+		name     string
+		message  string
+		wantCode int
+	}{
+		{"not found", "key k1 not found", xkmsmcp.ErrCodeInvalidParams},
+		{"validation", "validation failed: weak hash refused", xkmsmcp.ErrCodeInvalidParams},
+		{"not supported", "operation not supported by this backend", xkmsmcp.ErrCodeMethodNotFound},
+		{"unauthorized", "unauthorized: missing credential", xkmsmcp.ErrCodeUnauthorized},
+		{"forbidden", "forbidden: role required", xkmsmcp.ErrCodeForbidden},
+		{"unavailable", "backend unavailable", xkmsmcp.ErrCodeServiceUnavailable},
+		{"opaque", "boom", xkmsmcp.ErrCodeInternalError},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			addr, cleanup := startMockServer(t, func(req jsonrpcRequest) jsonrpcResponse {
+				if req.Method == "health" {
+					data, _ := json.Marshal(map[string]string{"status": "ok"})
+					return jsonrpcResponse{Result: data}
+				}
+				return jsonrpcResponse{ErrorText: tt.message}
+			})
+			defer cleanup()
+
+			tr := connectToMockServer(t, addr)
+			defer tr.Close()
+
+			err := tr.rpcCall(context.Background(), "xkms.listBackends", nil, nil)
+			require.Error(t, err)
+			var rpcErr *RPCError
+			require.True(t, errors.As(err, &rpcErr))
+			assert.Equal(t, tt.wantCode, rpcErr.Code)
+			assert.Equal(t, tt.message, rpcErr.Message)
+		})
+	}
+}
+
+// TestNewToolError_NoContent exercises newToolError's fallback message when
+// the server reports a tool error with no text content at all.
+func TestNewToolError_NoContent(t *testing.T) {
+	addr, cleanup := startMockServer(t, func(req jsonrpcRequest) jsonrpcResponse {
+		if req.Method == "health" {
+			data, _ := json.Marshal(map[string]string{"status": "ok"})
+			return jsonrpcResponse{Result: data}
+		}
+		return jsonrpcResponse{EmptyError: true}
+	})
+	defer cleanup()
+
+	tr := connectToMockServer(t, addr)
+	defer tr.Close()
+
+	err := tr.rpcCall(context.Background(), "xkms.listBackends", nil, nil)
+	require.Error(t, err)
+	var rpcErr *RPCError
+	require.True(t, errors.As(err, &rpcErr))
+	assert.Equal(t, xkmsmcp.ErrCodeInternalError, rpcErr.Code)
 }

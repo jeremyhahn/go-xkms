@@ -101,7 +101,7 @@ means the same thing regardless of how the request arrives.
 |-----------|------|
 | REST | `RBACMiddleware.RequirePermission(resource, action)` (`pkg/api/rest/rbac_middleware.go`) applied per route |
 | gRPC | `Service.authorize(ctx, resource, action, resourceID)` (`pkg/api/grpc/service.go`) |
-| QUIC | `Server.authorize(w, r, resource, action)` (`pkg/api/quic/server.go`) |
+| QUIC | Same as REST — QUIC is HTTP/3 served on the unified REST listener, not a separate server package |
 | MCP | `Server.authorizeMethod(ctx, method)` (`pkg/api/mcp/authz.go`) before any dispatch path |
 
 Denials, status codes, and the fail-closed behaviour of the MCP gate are

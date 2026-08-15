@@ -641,18 +641,34 @@ grpcurl -plaintext -d '{
 
 ## MCP (Model Context Protocol)
 
-**Address:** `localhost:9444` (default)
-**Protocol:** JSON-RPC 2.0 over TCP
-**Transport:** Newline-delimited JSON
+**Address:** `https://localhost:9444/mcp` (SDK client default) -- shipped
+configs bind `mcp_port: 8445`, see [Quick Reference](quick-reference.md#ports)
+for the port disagreement.
+**Protocol:** Real Model Context Protocol, Streamable HTTP, served by the
+embedded qrdb node (not a standalone xkms listener).
+**Transport:** HTTPS (TLS required)
+
+Every xkms JSON-RPC method is registered as one MCP tool, named
+`xkms_<method with dots replaced by underscores>` (e.g. `xkms_generateKey`,
+`xkms_listBackends`). A tool call takes one optional `params_json` string
+argument carrying the method's params object verbatim (JSON-encoded); the
+tool result carries the method's JSON result back as text content. Dispatch
+runs through the same `pkg/api/mcp` handler (`InvokeMethod`) as before, so
+the method/param/result documentation below is unchanged -- only the
+envelope around it changed, from a hand-rolled JSON-RPC-over-TCP frame to a
+standard `tools/call` MCP request.
 
 ### Request Format
 
 ```json
 {
   "jsonrpc": "2.0",
-  "method": "method.name",
+  "method": "tools/call",
   "params": {
-    "param1": "value1"
+    "name": "xkms_method_name",
+    "arguments": {
+      "params_json": "{\"param1\":\"value1\"}"
+    }
   },
   "id": 1
 }
@@ -660,27 +676,28 @@ grpcurl -plaintext -d '{
 
 ### Response Format
 
-**Success:**
+**Success** (tool result content is the method's JSON result, as text):
 ```json
 {
   "jsonrpc": "2.0",
   "result": {
-    "key": "value"
+    "content": [
+      {"type": "text", "text": "{\"key\":\"value\"}"}
+    ]
   },
   "id": 1
 }
 ```
 
-**Error:**
+**Error** (`isError: true`, message text carries the failure):
 ```json
 {
   "jsonrpc": "2.0",
-  "error": {
-    "code": -32001,
-    "message": "Error message",
-    "data": {
-      "details": "Additional info"
-    }
+  "result": {
+    "content": [
+      {"type": "text", "text": "key not found: my-key"}
+    ],
+    "isError": true
   },
   "id": 1
 }
@@ -688,252 +705,164 @@ grpcurl -plaintext -d '{
 
 ### Methods
 
-#### health
+Each entry below shows the underlying xkms method's params/result shape,
+which goes into `params_json` verbatim and comes back as the tool result's
+text content.
 
-Health check.
+#### xkms_health
 
-**Request:**
-```json
-{"jsonrpc": "2.0", "method": "health", "id": 1}
-```
+Health check. No params.
 
-**Response:**
+**`params_json`:** *(omit)*
+
+**Result:**
 ```json
 {
-  "jsonrpc": "2.0",
-  "result": {
-    "status": "healthy",
-    "version": "0.0.1-alpha"
-  },
-  "id": 1
+  "status": "healthy",
+  "version": "0.0.1-alpha"
 }
 ```
 
-#### xkms.listBackends
+#### xkms_listBackends
 
-List backends.
+List backends. No params.
 
-**Request:**
-```json
-{"jsonrpc": "2.0", "method": "xkms.listBackends", "id": 2}
-```
+**`params_json`:** *(omit)*
 
-**Response:**
+**Result:**
 ```json
 {
-  "jsonrpc": "2.0",
-  "result": {
-    "backends": [
-      {
-        "name": "software",
-        "type": "software",
-        "hardware_backed": false
-      }
-    ],
-    "count": 1
-  },
-  "id": 2
+  "backends": [
+    {
+      "name": "software",
+      "type": "software",
+      "hardware_backed": false
+    }
+  ],
+  "count": 1
 }
 ```
 
-#### xkms.generateKey
+#### xkms_generateKey
 
 Generate key.
 
-**Request:**
+**`params_json`:**
 ```json
 {
-  "jsonrpc": "2.0",
-  "method": "xkms.generateKey",
-  "params": {
-    "key_id": "my-key",
-    "backend": "software",
-    "key_type": "rsa",
-    "key_size": 2048
-  },
-  "id": 3
+  "key_id": "my-key",
+  "backend": "software",
+  "key_type": "rsa",
+  "key_size": 2048
 }
 ```
 
-**Response:**
+**Result:**
 ```json
 {
-  "jsonrpc": "2.0",
-  "result": {
-    "key_id": "my-key",
-    "backend": "software",
-    "key_type": "rsa",
-    "key_size": 2048,
-    "public_key_pem": "-----BEGIN PUBLIC KEY-----...",
-    "created_at": "2025-11-05T12:00:00Z"
-  },
-  "id": 3
+  "key_id": "my-key",
+  "backend": "software",
+  "key_type": "rsa",
+  "key_size": 2048,
+  "public_key_pem": "-----BEGIN PUBLIC KEY-----...",
+  "created_at": "2025-11-05T12:00:00Z"
 }
 ```
 
-#### xkms.sign
+#### xkms_sign
 
 Sign data.
 
-**Request:**
+**`params_json`:**
 ```json
 {
-  "jsonrpc": "2.0",
-  "method": "xkms.sign",
-  "params": {
-    "key_id": "my-key",
-    "backend": "software",
-    "data": "SGVsbG8gV29ybGQ=",
-    "hash": "SHA256"
-  },
-  "id": 4
+  "key_id": "my-key",
+  "backend": "software",
+  "data": "SGVsbG8gV29ybGQ=",
+  "hash": "SHA256"
 }
 ```
 
-**Response:**
+**Result:**
 ```json
 {
-  "jsonrpc": "2.0",
-  "result": {
-    "signature": "MEUCIQDxYz...",
-    "algorithm": "SHA256withRSA"
-  },
-  "id": 4
+  "signature": "MEUCIQDxYz...",
+  "algorithm": "SHA256withRSA"
 }
 ```
 
 #### Hardware-Capability Key Operations
 
-The five service-layer key operations are exposed as JSON-RPC methods. Params
-are the same request objects the other transports accept, and results are the
+The five service-layer key operations are exposed as MCP tools. Params are
+the same request objects the other transports accept, and results are the
 same response objects.
 
-| Method | Operation |
-|--------|-----------|
-| `xkms.attestKey` | Hardware attestation statement for a key |
-| `xkms.deriveKeyECDH` | ECDH key agreement + KDF |
-| `xkms.exportKeyMaterial` | Raw symmetric key bytes (plaintext) |
-| `xkms.wrapKeyByID` | Wrap a server-side key with a server-side KEK |
-| `xkms.unwrapKeyByID` | Unwrap and import as a new key |
+| Tool | Underlying method | Operation |
+|------|--------------------|-----------|
+| `xkms_attestKey` | `xkms.attestKey` | Hardware attestation statement for a key |
+| `xkms_deriveKeyECDH` | `xkms.deriveKeyECDH` | ECDH key agreement + KDF |
+| `xkms_exportKeyMaterial` | `xkms.exportKeyMaterial` | Raw symmetric key bytes (plaintext) |
+| `xkms_wrapKeyByID` | `xkms.wrapKeyByID` | Wrap a server-side key with a server-side KEK |
+| `xkms_unwrapKeyByID` | `xkms.unwrapKeyByID` | Unwrap and import as a new key |
 
-> `xkms.exportKey` is a **different** method: it returns a wrapped-envelope
-> export via the backend's `ExportKey`. `xkms.exportKeyMaterial` returns raw
+> `xkms_exportKey` is a **different** tool: it returns a wrapped-envelope
+> export via the backend's `ExportKey`. `xkms_exportKeyMaterial` returns raw
 > plaintext bytes. Do not confuse the two.
 
-A backend lacking the requested capability returns error code `-32601`
-(Method not found), MCP's "unimplemented" signal. Validation failures and
-unresolved backends/keys return `-32602` (Invalid params).
+A backend lacking the requested capability surfaces the same
+"method not found" failure as an `isError` tool result. Validation failures
+and unresolved backends/keys surface as an `isError` "invalid params"
+result; the JSON-RPC-style codes in [Error Codes](#error-codes) below
+still classify the failure inside the dispatch core, they are just no
+longer wire-visible as a top-level JSON-RPC `error.code`.
 
-**Request:**
+**`params_json`:**
+```json
+{"backend": "tpm2", "key_id": "idevid", "nonce": "Y2hhbGxlbmdl"}
+```
+
+**Result:**
 ```json
 {
-  "jsonrpc": "2.0",
-  "method": "xkms.attestKey",
-  "params": {"backend": "tpm2", "key_id": "idevid", "nonce": "Y2hhbGxlbmdl"},
-  "id": 5
+  "format": "tpm2",
+  "certificate_chain": ["<base64 DER>"],
+  "attestation_data": "<base64>",
+  "signature": "<base64>",
+  "signature_algorithm": "ECDSA-SHA256",
+  "nonce": "Y2hhbGxlbmdl",
+  "backend": "tpm2"
 }
 ```
 
-**Response:**
-```json
-{
-  "jsonrpc": "2.0",
-  "result": {
-    "format": "tpm2",
-    "certificate_chain": ["<base64 DER>"],
-    "attestation_data": "<base64>",
-    "signature": "<base64>",
-    "signature_algorithm": "ECDSA-SHA256",
-    "nonce": "Y2hhbGxlbmdl",
-    "backend": "tpm2"
-  },
-  "id": 5
-}
-```
+> **Note:** authorization for MCP tool calls is layered: qrdb's MCP
+> middleware authorizes each tool call against the permissions the xkms
+> module declares (`Module.MCPToolPermissions`), and the xkms-internal
+> tenant + RBAC gates still run inside `InvokeMethod`. At go-qrdb
+> v0.3.0-alpha, module tools are fail-closed under qrdb's auth middleware
+> until qrdb exports a module tool-permission registry hook.
 
-> **Note:** the MCP transport authenticates connections (mTLS) but performs no
-> per-method authorization — it has no authorizer. Every MCP key method,
-> including these five, is authenticated but not authorized. Use REST, gRPC, or
-> QUIC where per-operation permissions must be enforced.
+#### Subscriptions and notifications
 
-#### xkms.subscribe
-
-Subscribe to events.
-
-**Request:**
-```json
-{
-  "jsonrpc": "2.0",
-  "method": "xkms.subscribe",
-  "params": {
-    "events": ["key.created", "key.deleted", "key.rotated"]
-  },
-  "id": 5
-}
-```
-
-**Response:**
-```json
-{
-  "jsonrpc": "2.0",
-  "result": {
-    "subscription_id": "sub-123",
-    "events": ["key.created", "key.deleted", "key.rotated"]
-  },
-  "id": 5
-}
-```
-
-### Notifications (Server → Client)
-
-After subscribing, server sends notifications:
-
-```json
-{
-  "jsonrpc": "2.0",
-  "method": "key.created",
-  "params": {
-    "key_id": "new-key",
-    "backend": "software",
-    "timestamp": "2025-11-05T12:00:00Z"
-  }
-}
-```
+`xkms.subscribe` and its connection-bound server-push notification plane
+were removed along with the legacy JSON-RPC-over-TCP server -- there is no
+live subscription/watch equivalent on the real MCP path today.
 
 ### Batch Requests
 
-Multiple requests in one call:
-
-**Request:**
-```json
-[
-  {"jsonrpc": "2.0", "method": "health", "id": 1},
-  {"jsonrpc": "2.0", "method": "xkms.listBackends", "id": 2}
-]
-```
-
-**Response:**
-```json
-[
-  {
-    "jsonrpc": "2.0",
-    "result": {"status": "healthy"},
-    "id": 1
-  },
-  {
-    "jsonrpc": "2.0",
-    "result": {"backends": [...], "count": 1},
-    "id": 2
-  }
-]
-```
+The legacy plane's JSON-RPC array batching is gone with it. Real MCP tool
+calls are invoked one `tools/call` request at a time.
 
 ### Error Codes
 
+The codes below are the dispatch core's internal classification
+(`pkg/api/mcp/types.go`); they no longer appear as a top-level JSON-RPC
+`error.code` on the wire (see [Response Format](#response-format) above),
+but they still determine whether a tool call succeeds or returns
+`isError: true`.
+
 | Code | Message | Description |
 |------|---------|-------------|
-| -32700 | Parse error | Invalid JSON |
-| -32600 | Invalid Request | Invalid JSON-RPC |
+| -32700 | Parse error | Invalid JSON in `params_json` |
 | -32601 | Method not found | Unknown method |
 | -32602 | Invalid params | Invalid parameters |
 | -32603 | Internal error | Server error |
@@ -944,16 +873,21 @@ Multiple requests in one call:
 
 ## QUIC/HTTP3 API
 
-**Address:** `https://localhost:8444` (default)
-**Protocol:** HTTP/3 over QUIC (UDP)
+**Address:** `https://localhost:8443` (default) -- the same address and port
+as the REST API. There is no separate QUIC server package or port; QUIC is
+HTTP/3 served directly on the unified REST listener and advertised via the
+`Alt-Svc` response header. `quic_port` in `server:` config is vestigial.
+**Protocol:** HTTP/3 over QUIC (UDP), same listener as REST
 
 ### Overview
 
-The QUIC/HTTP3 API shares the **exact same endpoints** as the REST API, but uses HTTP/3 transport.
+The QUIC/HTTP3 API shares the **exact same endpoints** as the REST API --
+literally the same route table on the same listener, just reached over
+HTTP/3 instead of HTTP/1.1 or HTTP/2.
 
-**Key Differences:**
+**Key Differences from plain REST:**
 - Transport: UDP instead of TCP
-- Protocol: HTTP/3 instead of HTTP/2
+- Protocol: HTTP/3 instead of HTTP/1.1 or HTTP/2
 - Lower latency
 - Better packet loss handling
 - Requires TLS 1.3
@@ -975,12 +909,12 @@ client := &http.Client{
     },
 }
 
-resp, err := client.Get("https://localhost:8444/health")
+resp, err := client.Get("https://localhost:8443/health")
 ```
 
 **curl (with HTTP/3 support):**
 ```bash
-curl --http3 https://localhost:8444/health
+curl --http3 https://localhost:8443/health
 ```
 
 ### All REST API endpoints work identically
@@ -1237,7 +1171,7 @@ xkmsctl server status --server http://localhost:8443
 #   REST:  :8443  (healthy)
 #   gRPC:  :9443  (healthy)
 #   MCP:   :9444  (healthy)
-#   QUIC:  :8444  (healthy)
+#   QUIC:  HTTP/3 on :8443 via Alt-Svc  (healthy)
 ```
 
 

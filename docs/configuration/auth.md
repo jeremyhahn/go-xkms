@@ -330,24 +330,29 @@ role grant means the same thing regardless of how the request arrives.
 |-----------|------|--------------------------------------|
 | REST | `RBACMiddleware.RequirePermission` per route | Routes registered without the decorator — no check |
 | gRPC | `Service.authorize(ctx, resource, action, id)` | Disabled `Authorizer` allows all |
-| QUIC | `Server.authorize(w, r, resource, action)` | Disabled `Authorizer` allows all |
+| QUIC | Same as REST — QUIC is HTTP/3 served on the REST listener, not a separate server package | Disabled `Authorizer` allows all |
 | MCP | `Server.authorizeMethod(ctx, method)` before dispatch | Gate is a no-op — no check |
 
 Authentication is mandatory on every transport whether or not RBAC is enabled.
 
 MCP maps each JSON-RPC method to the resource:action pair the equivalent
 REST/gRPC/QUIC operation already requires (`pkg/api/mcp/authz.go`); the gate
-runs in `handleRequest` before any dispatch path, so the method table, the
-connection-bound `xkms.subscribe`, and the build-tagged `frost.*` namespace are
-all covered. Only `health` is public. Denials are reported as JSON-RPC errors
-in the implementation-defined range: `-32002` for a missing identity (the
-REST/QUIC 401) and `-32003` for a missing grant (403). A dispatchable method
-with no permission mapping is denied, so the surface fails closed.
+runs in `InvokeMethod` before any dispatch path, so the method table and the
+build-tagged `frost.*` namespace are all covered. Only `health` is public.
+Denials are reported as JSON-RPC errors in the implementation-defined range:
+`-32002` for a missing identity (the REST/QUIC 401) and `-32003` for a
+missing grant (403). A dispatchable method with no permission mapping is
+denied, so the surface fails closed. (`xkms.subscribe` and its
+connection-bound notification plane were removed along with the legacy
+JSON-RPC-over-TCP server; there is no live subscription/watch equivalent on
+the real MCP path today.)
 
 Enabling RBAC without a usable authorizer is refused at construction
-(`mcp: authorizer is required when rbac is enabled`): xkmsd logs the failure
-and does not start the MCP listener rather than serving an unauthorized surface
-that operators believe is protected.
+(`mcp: authorizer is required when rbac is enabled`). There is no longer a
+standalone MCP listener to refuse to start: `xkmsd` logs the failure and the
+module's MCP tool surface (`pkg/server.ModuleMCPServer()`) stays permanently
+unavailable, so every `xkms_*` tool call answers "not yet available" rather
+than serving an unauthorized surface that operators believe is protected.
 
 ### Certificate-Only Identity (No UserStore)
 

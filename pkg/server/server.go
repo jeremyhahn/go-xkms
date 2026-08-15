@@ -37,16 +37,13 @@ import (
 	flynn_noise "github.com/flynn/noise"
 	"github.com/prometheus/client_golang/prometheus/promhttp"
 	"google.golang.org/grpc"
-	"google.golang.org/grpc/credentials"
 
 	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
 	qrdbnode "github.com/jeremyhahn/go-qrdb/sdk/go/node"
 	noiseproto "github.com/jeremyhahn/go-truststrap/pkg/noiseproto"
 	noiseboot "github.com/jeremyhahn/go-truststrap/pkg/noiseproto/bootstrap"
 	grpcinternal "github.com/jeremyhahn/go-xkms/pkg/api/grpc"
-	pb "github.com/jeremyhahn/go-xkms/pkg/api/grpc/proto/xkmsv1"
 	"github.com/jeremyhahn/go-xkms/pkg/api/mcp"
-	"github.com/jeremyhahn/go-xkms/pkg/api/quic"
 	"github.com/jeremyhahn/go-xkms/pkg/api/rest"
 	"github.com/jeremyhahn/go-xkms/pkg/api/unix"
 	"github.com/jeremyhahn/go-xkms/pkg/audit"
@@ -108,9 +105,11 @@ type Server struct {
 	// Protocol servers
 	unixGRPCServer       *unix.GRPCServer
 	restServer           *rest.Server
-	grpcServer           *grpc.Server
-	quicServer           *quic.Server
-	mcpServer            *mcp.Server
+	moduleREST           *rest.Server
+	moduleRESTOnce       sync.Once
+	moduleMCP            *mcp.Server
+	moduleMCPOnce        sync.Once
+	unifiedTLS           *unifiedTLSProvider
 	noiseBootstrapServer *noiseboot.Server
 
 	// metricsServer is the Prometheus metrics HTTP server. It is stored here so
@@ -626,7 +625,13 @@ func New(cfg *config.Config, opts ...Option) (*Server, error) {
 	// The resolved service is also captured on the server so the transport
 	// constructors receive it via dependency injection.
 	if svc, err := xkms.Get(); err == nil {
+		// Published under the lock: with the unified API server enabled the
+		// embedded node serves module RPCs concurrently with this
+		// composition, and the module resolver reads the reference through
+		// xkmsServiceRef.
+		s.mu.Lock()
 		s.xkmsService = svc
+		s.mu.Unlock()
 		if s.barrier != nil {
 			svc.SetBarrier(s.barrier)
 		}
@@ -2077,6 +2082,12 @@ func (s *Server) initializeCA() error {
 		if err := s.ensureTLSServerCert(trustedCA, keystoreType); err != nil {
 			return &ErrTLSCertOp{Operation: "ensure TLS server certificate", Err: err}
 		}
+		// Swap the CA-issued certificate into the unified API server's
+		// rotating provider; until now it served the bootstrap material.
+		if err := s.upgradeUnifiedTLSCert(); err != nil {
+			s.logger.Warn("unified API server keeps serving the bootstrap TLS certificate",
+				slog.Any("error", err))
+		}
 	}
 
 	return nil
@@ -2241,34 +2252,36 @@ func (s *Server) Start() error {
 		}
 	}
 
-	// Start Unix socket server if enabled (default: true)
-	if s.config.Protocols.Unix {
+	// Network serving runs exclusively on the unified API server: the
+	// embedded qrdb node's multi-protocol server took xkmsd's
+	// REST/gRPC/MCP ports during node construction (buildXKMSQRDBConfig;
+	// config.Validate guarantees qrdb storage + TLS material) and serves
+	// the xkms capability plane through the registered ServiceModule.
+	// QUIC is HTTP/3 on the REST port, advertised via Alt-Svc. Local IPC
+	// stays in-process: the Unix socket serves local clients when qrdb
+	// storage is absent (with qrdb storage the node's own UDS serves it),
+	// and the loopback desktop engine serves an injected listener.
+	if s.config.NetworkServing() {
+		s.logger.Info("unified API server: embedded qrdb node serves the network protocols via the xkms ServiceModule",
+			"rest_port", s.config.Server.RESTPort,
+			"grpc_port", s.config.Server.GRPCPort,
+			"mcp_port", s.config.Server.MCPPort,
+			"quic", "http3 on rest_port")
+	}
+
+	// Unix socket for local IPC when the embedded node does not serve one
+	// (non-qrdb storage; with qrdb storage buildXKMSQRDBConfig maps the
+	// socket onto the node).
+	if s.config.Protocols.Unix && !(s.config.NetworkServing() && s.config.Storage.Backend == "qrdb") {
 		s.wg.Add(1)
 		go s.startUnix()
 	}
 
-	// Start REST API if enabled
-	if s.config.Protocols.REST {
+	// Loopback desktop engine: serve REST on the injected pre-bound
+	// listener (127.0.0.1:0) only. Network REST is the unified server's.
+	if s.restListener != nil {
 		s.wg.Add(1)
 		go s.startREST()
-	}
-
-	// Start gRPC if enabled
-	if s.config.Protocols.GRPC {
-		s.wg.Add(1)
-		go s.startGRPC()
-	}
-
-	// Start QUIC if enabled
-	if s.config.Protocols.QUIC {
-		s.wg.Add(1)
-		go s.startQUIC()
-	}
-
-	// Start MCP if enabled
-	if s.config.Protocols.MCP {
-		s.wg.Add(1)
-		go s.startMCP()
 	}
 
 	// Start Noise bootstrap server if enabled
@@ -2323,6 +2336,11 @@ func (s *Server) startUnix() {
 			XKMSService:     s.xkmsService,
 			SSHClient:       s.ensureSSHClient(),
 			BarrierRegistry: s.barrierRegistry,
+			// Host the embedded qrdb node's control plane (cluster admin,
+			// rebalance, user auth factors) on the unix socket — xkmsctl's
+			// default transport. Same socket-file-mode trust boundary as the
+			// keystore service above.
+			ExtraServices: []func(*grpc.Server){s.registerQRDBControlPlane},
 		}
 
 		grpcServer, err := unix.NewGRPCServer(grpcConfig)
@@ -2352,11 +2370,64 @@ func (s *Server) startUnix() {
 	}
 }
 
-// startREST starts the REST API server
-func (s *Server) startREST() {
-	defer s.wg.Done()
+// xkmsServiceRef returns the composed XKMSService reference under the
+// server lock, or nil while composition is still running. The module's
+// lazy resolvers read through this so the unified server's concurrent RPCs
+// never race the composition-time assignment.
+func (s *Server) xkmsServiceRef() *xkms.XKMSService {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.xkmsService
+}
 
-	// Create REST server configuration
+// ModuleRESTServer resolves the *rest.Server backing the unified-API-server
+// module's HTTP surface (pkg/apimodule RegisterHTTP). It prefers the running
+// legacy REST server so both surfaces share one handler state; when the
+// legacy REST transport is disabled it lazily constructs a non-listening
+// rest.Server from the identical configuration. Returns nil while the
+// XKMSService is still composing — module routes answer 503 until then.
+func (s *Server) ModuleRESTServer() *rest.Server {
+	s.mu.Lock()
+	if s.restServer != nil {
+		srv := s.restServer
+		s.mu.Unlock()
+		return srv
+	}
+	composing := s.xkmsService == nil
+	s.mu.Unlock()
+	if composing {
+		return nil
+	}
+
+	s.moduleRESTOnce.Do(func() {
+		cfg, err := s.buildRESTConfig()
+		if err != nil {
+			s.logger.Error("module REST binding: config build failed", slog.Any("error", err))
+			return
+		}
+		srv, err := rest.NewServer(cfg)
+		if err != nil {
+			s.logger.Error("module REST binding: server construction failed", slog.Any("error", err))
+			return
+		}
+		s.mu.Lock()
+		s.moduleREST = srv
+		s.mu.Unlock()
+	})
+
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.moduleREST != nil {
+		return s.moduleREST
+	}
+	return s.restServer
+}
+
+// buildRESTConfig assembles the full REST server configuration from the
+// composed server state. It is shared by the legacy in-process REST listener
+// (startREST) and the unified-API-server ServiceModule's lazy REST binding
+// (pkg/apimodule), so both surfaces are built from identical wiring.
+func (s *Server) buildRESTConfig() (*rest.Config, error) {
 	restConfig := &rest.Config{
 		Port:              s.config.Server.RESTPort,
 		Backends:          s.backends,
@@ -2377,13 +2448,6 @@ func (s *Server) startREST() {
 		CredentialService: s.credentialService,
 		XKMSService:       s.xkmsService,
 		SSHClient:         s.ensureSSHClient(),
-	}
-
-	// Loopback launcher: serve a pre-bound listener (127.0.0.1:0) instead of
-	// binding the configured port, so the desktop standalone engine is
-	// off-box unreachable and its ephemeral port is known to the shell.
-	if s.restListener != nil {
-		restConfig.Listener = s.restListener
 	}
 
 	// Embedded web UI: serve the compiled SPA (installed via SetUIAssets)
@@ -2463,10 +2527,29 @@ func (s *Server) startREST() {
 	if s.config.TLS.Enabled {
 		tlsConfig, err := s.buildTLSConfig()
 		if err != nil {
-			s.logger.Error("Failed to build TLS config for REST server", slog.Any("error", err))
-			return
+			return nil, err
 		}
 		restConfig.TLSConfig = tlsConfig
+	}
+
+	return restConfig, nil
+}
+
+// startREST starts the REST API server
+func (s *Server) startREST() {
+	defer s.wg.Done()
+
+	restConfig, err := s.buildRESTConfig()
+	if err != nil {
+		s.logger.Error("Failed to build REST server config", slog.Any("error", err))
+		return
+	}
+
+	// Loopback launcher: serve a pre-bound listener (127.0.0.1:0) instead of
+	// binding the configured port, so the desktop standalone engine is
+	// off-box unreachable and its ephemeral port is known to the shell.
+	if s.restListener != nil {
+		restConfig.Listener = s.restListener
 	}
 
 	// Create REST server
@@ -2500,98 +2583,6 @@ func (s *Server) startREST() {
 
 	if err := restSrv.Start(); err != nil {
 		s.logger.Error("REST server error", slog.Any("error", err))
-	}
-}
-
-// startGRPC starts the gRPC server
-func (s *Server) startGRPC() {
-	defer s.wg.Done()
-
-	addr := fmt.Sprintf("%s:%d", s.config.Server.Host, s.config.Server.GRPCPort)
-
-	lis, err := net.Listen("tcp", addr)
-	if err != nil {
-		s.logger.Error("Failed to listen for gRPC", slog.Any("error", err), "address", addr)
-		return
-	}
-
-	// Build gRPC server options
-	var opts []grpc.ServerOption
-
-	// Add TLS credentials if TLS is enabled
-	if s.config.TLS.Enabled {
-		tlsConfig, err := s.buildTLSConfig()
-		if err != nil {
-			s.logger.Error("Failed to build TLS config for gRPC", slog.Any("error", err))
-			return
-		}
-		creds := credentials.NewTLS(tlsConfig)
-		opts = append(opts, grpc.Creds(creds))
-		s.logger.Info("gRPC server TLS enabled")
-	}
-
-	grpcSrv := grpc.NewServer(opts...)
-
-	// Store the server so Shutdown can stop it. If Shutdown already began (ctx
-	// cancelled) before we got here, stop the server, close the already-bound
-	// listener, and return so this goroutine releases its wg slot instead of
-	// blocking in Serve.
-	s.mu.Lock()
-	if s.ctx.Err() != nil {
-		s.mu.Unlock()
-		grpcSrv.Stop()
-		_ = lis.Close()
-		return
-	}
-	s.grpcServer = grpcSrv
-	s.mu.Unlock()
-
-	// Create and register gRPC service with the injected XKMS service
-	service := grpcinternal.NewService(s.rbacAuthorizer, s.auditLogger, s.xkmsService)
-	service.SetSSHClient(s.ensureSSHClient())
-
-	// Wire barrier and PIN manager into gRPC service
-	if s.barrier != nil {
-		grpcinternal.SetBarrier(s.barrier)
-	}
-	if s.pinManager != nil {
-		grpcinternal.SetPINManager(s.pinManager)
-	}
-
-	// Wire custodian, share, and tenant services into gRPC
-	if s.qrdbClient != nil {
-		grpcinternal.SetCustodianClient(s.qrdbClient.CustodianGroups())
-	}
-	if s.qrdbClient != nil {
-		grpcinternal.SetShareClient(s.qrdbClient.Shares())
-	}
-	if s.barrierRegistry != nil {
-		grpcinternal.SetBarrierRegistry(s.barrierRegistry)
-	}
-
-	// Wire init ceremony and credential services into gRPC
-	if s.ceremonyService != nil {
-		grpcinternal.SetCeremonyService(initialize.NewCeremonyAdapter(s.ceremonyService))
-	}
-	if s.credentialService != nil {
-		grpcinternal.SetCredentialService(s.credentialService)
-	}
-
-	// Wire CA into gRPC. The XKMSService wraps the raw CA with the
-	// transport-shaped methods (GetCACertificate, SignCSR, IssueCertificate,
-	// etc.) that the gRPC CA handlers delegate to — the same servicer
-	// delegation used by the REST and QUIC transports.
-	if s.ca != nil && s.xkmsService != nil {
-		grpcinternal.SetCA(s.xkmsService)
-	}
-
-	pb.RegisterKeystoreServiceServer(grpcSrv, service)
-
-	s.logger.Info("gRPC services registered", "backends", len(s.backends))
-	s.logger.Info("Starting gRPC server", "address", addr)
-
-	if err := grpcSrv.Serve(lis); err != nil {
-		s.logger.Error("gRPC server error", slog.Any("error", err))
 	}
 }
 
@@ -2648,9 +2639,11 @@ func (s *Server) startMetrics() {
 }
 
 // startMCP starts the MCP JSON-RPC server
-func (s *Server) startMCP() {
-	defer s.wg.Done()
-
+// buildMCPConfig assembles the MCP server configuration from the composed
+// server state. It is shared by the legacy JSON-RPC listener (startMCP) and
+// the unified-API-server ServiceModule's lazy MCP binding (pkg/apimodule),
+// so both surfaces run the identical wiring and gates.
+func (s *Server) buildMCPConfig() (*mcp.Config, error) {
 	// Get default keystore for MCP (use first available if no default specified)
 	var defaultKS xkms.Backend
 	if s.config.Default != "" {
@@ -2662,15 +2655,13 @@ func (s *Server) startMCP() {
 			break
 		}
 	}
-
 	if defaultKS == nil {
-		s.logger.Error("No keystore available for MCP server")
-		return
+		return nil, &MCPConfigError{Reason: "no keystore available"}
 	}
 
 	addr := fmt.Sprintf("%s:%d", s.config.Server.Host, s.config.Server.MCPPort)
 
-	mcpConfig := &mcp.Config{
+	return &mcp.Config{
 		Addr:        addr,
 		Logger:      s.logger.With("component", "mcp"),
 		XKMSService: s.xkmsService,
@@ -2688,31 +2679,47 @@ func (s *Server) startMCP() {
 		// BarrierRegistry gates per-request tenant access the same way REST,
 		// gRPC, and QUIC do (see pkg/api/tenantgate).
 		BarrierRegistry: s.barrierRegistry,
-	}
+	}, nil
+}
 
-	mcpSrv, err := mcp.NewServer(mcpConfig)
-	if err != nil {
-		s.logger.Error("Failed to create MCP server", slog.Any("error", err))
-		return
-	}
+// MCPConfigError reports why the MCP configuration could not be assembled.
+type MCPConfigError struct{ Reason string }
 
-	// Store server with lock
-	// Store the server so Shutdown can stop it. If Shutdown already began (ctx
-	// cancelled) before we got here, do not start — return so Shutdown does not
-	// leave an MCP server running that it copied a nil reference for.
+// Error implements the error interface.
+func (e *MCPConfigError) Error() string { return "server: mcp config: " + e.Reason }
+
+// ModuleMCPServer resolves the *mcp.Server backing the unified-API-server
+// module's real MCP tools (pkg/apimodule RegisterMCP). It prefers the
+// running legacy MCP server; when the legacy MCP transport is disabled it
+// lazily constructs a non-listening mcp.Server from the identical
+// configuration. Returns nil while the XKMSService is still composing.
+func (s *Server) ModuleMCPServer() *mcp.Server {
 	s.mu.Lock()
-	if s.ctx.Err() != nil {
-		s.mu.Unlock()
-		return
-	}
-	s.mcpServer = mcpSrv
+	composing := s.xkmsService == nil
 	s.mu.Unlock()
-
-	s.logger.Info("Starting MCP server", "address", addr)
-
-	if err := mcpSrv.Start(); err != nil {
-		s.logger.Error("MCP server error", slog.Any("error", err))
+	if composing {
+		return nil
 	}
+
+	s.moduleMCPOnce.Do(func() {
+		cfg, err := s.buildMCPConfig()
+		if err != nil {
+			s.logger.Error("module MCP binding: config build failed", slog.Any("error", err))
+			return
+		}
+		srv, err := mcp.NewServer(cfg)
+		if err != nil {
+			s.logger.Error("module MCP binding: server construction failed", slog.Any("error", err))
+			return
+		}
+		s.mu.Lock()
+		s.moduleMCP = srv
+		s.mu.Unlock()
+	})
+
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.moduleMCP
 }
 
 // startNoiseBootstrap starts the Noise_NK bootstrap server for secure CA bundle distribution.
@@ -2970,90 +2977,6 @@ func parseCipherSuites(names []string) []uint16 {
 	return result
 }
 
-// startQUIC starts the QUIC/HTTP3 server
-func (s *Server) startQUIC() {
-	defer s.wg.Done()
-
-	// RBAC enabled without a usable authorizer must not silently degrade QUIC
-	// to allow-all while the operator believes RBAC is enforced. quic.Config
-	// carries no EnableRBAC flag — a nil/disabled Authorizer means "RBAC off"
-	// by contract — so the daemon-level intent is asserted here at the wiring
-	// site, matching the construction asserts in rest.NewServer and
-	// mcp.NewServer. Under cmd/xkmsd this branch is unreachable:
-	// Config.ComplianceGaps refuses auth.enable_rbac=true without the qrdb
-	// storage backend and the daemon has no override, so it can only fire for
-	// an embedded or test caller with a broken RBAC wiring.
-	if s.config.Auth.EnableRBAC && !s.rbacAuthorizer.Enabled() {
-		s.logger.Error("RBAC enabled but no usable authorizer; refusing to start QUIC server")
-		return
-	}
-
-	// Get default keystore for QUIC (use first available if no default specified)
-	var defaultKS xkms.Backend
-	if s.config.Default != "" {
-		defaultKS = s.backends[string(s.config.Default)]
-	}
-	if defaultKS == nil {
-		for _, ks := range s.backends {
-			defaultKS = ks
-			break
-		}
-	}
-
-	if defaultKS == nil {
-		s.logger.Error("No keystore available for QUIC server")
-		return
-	}
-
-	addr := fmt.Sprintf("%s:%d", s.config.Server.Host, s.config.Server.QUICPort)
-
-	// Load TLS configuration
-	tlsConfig, err := s.buildTLSConfig()
-	if err != nil {
-		s.logger.Error("Failed to load TLS configuration for QUIC", slog.Any("error", err))
-		return
-	}
-
-	quicConfig := &quic.Config{
-		Addr:          addr,
-		Version:       getBuildVersion(),
-		TLSConfig:     tlsConfig,
-		Logger:        s.logger.With("component", "quic"),
-		Authenticator: s.liveAuthenticator,
-		Authorizer:    s.rbacAuthorizer,
-		AuditLogger:   s.auditLogger,
-		XKMSService:   s.xkmsService,
-		SSHClient:     s.ensureSSHClient(),
-		// BarrierRegistry gates per-request tenant access the same way REST,
-		// gRPC, and MCP do (see pkg/api/tenantgate).
-		BarrierRegistry: s.barrierRegistry,
-	}
-
-	quicSrv, err := quic.NewServer(quicConfig)
-	if err != nil {
-		s.logger.Error("Failed to create QUIC server", slog.Any("error", err))
-		return
-	}
-
-	// Store server with lock
-	// Store the server so Shutdown can stop it. If Shutdown already began (ctx
-	// cancelled) before we got here, do not start — return so Shutdown does not
-	// leave a QUIC server running that it copied a nil reference for.
-	s.mu.Lock()
-	if s.ctx.Err() != nil {
-		s.mu.Unlock()
-		return
-	}
-	s.quicServer = quicSrv
-	s.mu.Unlock()
-
-	s.logger.Info("Starting QUIC server", "address", addr)
-
-	if err := quicSrv.Start(); err != nil {
-		s.logger.Error("QUIC server error", slog.Any("error", err))
-	}
-}
-
 // handleHealth handles health check requests
 
 // Shutdown gracefully shuts down all servers
@@ -3079,12 +3002,9 @@ func (s *Server) Shutdown() error {
 	s.mu.RLock()
 	unixGRPC := s.unixGRPCServer
 	restSrv := s.restServer
-	grpcSrv := s.grpcServer
 	noiseSrv := s.noiseBootstrapServer
 	raftAdv := s.raftClusterAdvertiser
 	metricsSrv := s.metricsServer
-	quicSrv := s.quicServer
-	mcpSrv := s.mcpServer
 	s.mu.RUnlock()
 
 	// Shutdown metrics server. Without this its ListenAndServe blocks forever,
@@ -3094,25 +3014,6 @@ func (s *Server) Shutdown() error {
 		s.logger.Info("Shutting down metrics server...")
 		if err := metricsSrv.Shutdown(shutdownCtx); err != nil {
 			s.logger.Error("Error shutting down metrics server", slog.Any("error", err))
-		}
-	}
-
-	// Shutdown QUIC server. Its Start returns immediately after launching an
-	// internal serving goroutine, so Stop is required to close the listener and
-	// release that goroutine — otherwise it leaks across the process lifetime.
-	if quicSrv != nil {
-		s.logger.Info("Shutting down QUIC server...")
-		if err := quicSrv.Stop(); err != nil {
-			s.logger.Error("Error shutting down QUIC server", slog.Any("error", err))
-		}
-	}
-
-	// Shutdown MCP server. Like QUIC, its Start is non-blocking, so Stop is
-	// required to close its listener and release the accept goroutine.
-	if mcpSrv != nil {
-		s.logger.Info("Shutting down MCP server...")
-		if err := mcpSrv.Stop(); err != nil {
-			s.logger.Error("Error shutting down MCP server", slog.Any("error", err))
 		}
 	}
 
@@ -3130,12 +3031,6 @@ func (s *Server) Shutdown() error {
 		if err := restSrv.Stop(shutdownCtx); err != nil {
 			s.logger.Error("Error shutting down REST server", slog.Any("error", err))
 		}
-	}
-
-	// Shutdown gRPC server
-	if grpcSrv != nil {
-		s.logger.Info("Shutting down gRPC server...")
-		grpcSrv.GracefulStop()
 	}
 
 	// Shutdown Noise bootstrap server
@@ -3233,25 +3128,12 @@ func (s *Server) RESTServer() *rest.Server {
 	return s.restServer
 }
 
-// GRPCServer returns the gRPC server instance
-func (s *Server) GRPCServer() *grpc.Server {
-	s.mu.RLock()
-	defer s.mu.RUnlock()
-	return s.grpcServer
-}
-
-// QUICServer returns the QUIC server instance
-func (s *Server) QUICServer() *quic.Server {
-	s.mu.RLock()
-	defer s.mu.RUnlock()
-	return s.quicServer
-}
-
-// MCPServer returns the MCP server instance
+// MCPServer returns the MCP dispatch backend the unified server's module
+// tools drive (nil until first resolved via ModuleMCPServer).
 func (s *Server) MCPServer() *mcp.Server {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
-	return s.mcpServer
+	return s.moduleMCP
 }
 
 // NoiseBootstrapServer returns the Noise bootstrap server instance

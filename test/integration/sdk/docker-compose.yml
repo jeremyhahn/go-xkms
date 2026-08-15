@@ -18,15 +18,10 @@ services:
     build:
       context: ../../..
       dockerfile: Dockerfile
-      additional_contexts:
-        go-qrdb: ../../../../go-qrdb
-        go-quicraft: ../../../../go-quicraft
-        go-codec: ../../../../go-codec
-        go-frost: ../../../../go-frost
-        go-objstore: ../../../../go-objstore
-        go-truststrap: ../../../../go-truststrap
       args:
         - VERSION=${VERSION:-0.0.1-dev}
+      secrets:
+        - gomodauth
     image: go-xkms-sdk-test:latest
     container_name: xkms-sdk-server
     ports:
@@ -136,13 +131,8 @@ services:
     build:
       context: ../../..
       dockerfile: Dockerfile
-      additional_contexts:
-        go-qrdb: ../../../../go-qrdb
-        go-quicraft: ../../../../go-quicraft
-        go-codec: ../../../../go-codec
-        go-frost: ../../../../go-frost
-        go-objstore: ../../../../go-objstore
-        go-truststrap: ../../../../go-truststrap
+      secrets:
+        - gomodauth
     image: go-xkms-sdk-test:latest
     container_name: xkms-sdk-tests
     # Required for QUIC UDP buffer settings
@@ -153,19 +143,17 @@ services:
         condition: service_healthy
     volumes:
       - ../../..:/workspace
-      # Sibling module mounts (for go.mod replace directives)
-      - ../../../../go-qrdb:/go-qrdb:cached
-      - ../../../../go-quicraft:/go-quicraft:cached
-      - ../../../../go-objstore:/go-objstore:cached
-      - ../../../../go-truststrap:/go-truststrap:cached
-      - ../../../../go-codec:/go-codec:cached
-      - ../../../../go-frost:/go-frost:cached
       - xkms-socket:/var/run/xkms
       - xkms-certs:/etc/xkms/certs:ro
       - go-cache:/root/go
       - go-build-cache:/root/.cache/go-build
     environment:
       - CGO_ENABLED=1
+      - GOWORK=off
+      - GOPRIVATE=github.com/jeremyhahn/*
+      - GIT_CONFIG_COUNT=1
+      - GIT_CONFIG_KEY_0=url.http://x:${GITEA_GO_TOKEN}@198.51.100.91:3001/jeremyhahn/.insteadOf
+      - GIT_CONFIG_VALUE_0=https://github.com/jeremyhahn/
       # Server endpoints (container network addresses)
       - KEYSTORE_UNIX_SOCKET=/var/run/xkms/xkms.sock
       - KEYSTORE_REST_URL=https://xkms-server:8443
@@ -182,7 +170,6 @@ services:
       - xkms-sdk
     command: >
       sh -c "
-      bash .devcontainer/scripts/ensure-gowork.sh && export GOWORK=/tmp/go.work &&
       echo 'Configuring UDP buffers for QUIC...' &&
       echo 2500000 > /proc/sys/net/core/rmem_max 2>/dev/null || echo 'Warning: Could not set rmem_max' &&
       echo 2500000 > /proc/sys/net/core/wmem_max 2>/dev/null || echo 'Warning: Could not set wmem_max' &&
@@ -215,3 +202,7 @@ volumes:
 networks:
   xkms-sdk:
     driver: bridge
+
+secrets:
+  gomodauth:
+    file: ../../../.devcontainer/gomodauth.env

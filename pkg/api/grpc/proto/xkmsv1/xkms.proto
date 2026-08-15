@@ -10,6 +10,7 @@ option go_package = "github.com/jeremyhahn/go-xkms/pkg/api/grpc/proto/xkmsv1";
 import "google/protobuf/empty.proto";
 import "google/protobuf/struct.proto";
 import "google/protobuf/timestamp.proto";
+import "pkg/api/grpc/proto/qrdbv1/authz.proto";
 
 // KeystoreService provides key management and cryptographic operations
 service KeystoreService {
@@ -17,31 +18,49 @@ service KeystoreService {
   rpc Health(HealthRequest) returns (HealthResponse);
 
   // ListBackends returns all available backend providers
-  rpc ListBackends(ListBackendsRequest) returns (ListBackendsResponse);
+  rpc ListBackends(ListBackendsRequest) returns (ListBackendsResponse) {
+    option (qrdb.v1.permission) = "backends:list";
+  }
 
   // GetBackendInfo returns detailed information about a specific backend
-  rpc GetBackendInfo(GetBackendInfoRequest) returns (GetBackendInfoResponse);
+  rpc GetBackendInfo(GetBackendInfoRequest) returns (GetBackendInfoResponse) {
+    option (qrdb.v1.permission) = "backends:read";
+  }
 
   // GenerateKey generates a new cryptographic key
-  rpc GenerateKey(GenerateKeyRequest) returns (GenerateKeyResponse);
+  rpc GenerateKey(GenerateKeyRequest) returns (GenerateKeyResponse) {
+    option (qrdb.v1.permission) = "keys:create";
+  }
 
   // ListKeys lists all keys in the specified backend
-  rpc ListKeys(ListKeysRequest) returns (ListKeysResponse);
+  rpc ListKeys(ListKeysRequest) returns (ListKeysResponse) {
+    option (qrdb.v1.permission) = "keys:list";
+  }
 
   // GetKey retrieves information about a specific key
-  rpc GetKey(GetKeyRequest) returns (GetKeyResponse);
+  rpc GetKey(GetKeyRequest) returns (GetKeyResponse) {
+    option (qrdb.v1.permission) = "keys:get";
+  }
 
   // Sign signs data with the specified key
-  rpc Sign(SignRequest) returns (SignResponse);
+  rpc Sign(SignRequest) returns (SignResponse) {
+    option (qrdb.v1.permission) = "keys:sign";
+  }
 
   // Verify verifies a signature with the specified key
-  rpc Verify(VerifyRequest) returns (VerifyResponse);
+  rpc Verify(VerifyRequest) returns (VerifyResponse) {
+    option (qrdb.v1.permission) = "keys:verify";
+  }
 
   // DeleteKey deletes a key from the backend
-  rpc DeleteKey(DeleteKeyRequest) returns (DeleteKeyResponse);
+  rpc DeleteKey(DeleteKeyRequest) returns (DeleteKeyResponse) {
+    option (qrdb.v1.permission) = "keys:delete";
+  }
 
   // RotateKey rotates an existing key
-  rpc RotateKey(RotateKeyRequest) returns (RotateKeyResponse);
+  rpc RotateKey(RotateKeyRequest) returns (RotateKeyResponse) {
+    option (qrdb.v1.permission) = "keys:rotate";
+  }
 
   // ListKeyVersions lists all versions of a key
   rpc ListKeyVersions(ListKeyVersionsRequest) returns (ListKeyVersionsResponse);
@@ -59,22 +78,32 @@ service KeystoreService {
   rpc DisableAllKeyVersions(DisableAllKeyVersionsRequest) returns (DisableAllKeyVersionsResponse);
 
   // Encrypt encrypts data with the specified key (symmetric encryption)
-  rpc Encrypt(EncryptRequest) returns (EncryptResponse);
+  rpc Encrypt(EncryptRequest) returns (EncryptResponse) {
+    option (qrdb.v1.permission) = "keys:encrypt";
+  }
 
   // Decrypt decrypts data with the specified key
-  rpc Decrypt(DecryptRequest) returns (DecryptResponse);
+  rpc Decrypt(DecryptRequest) returns (DecryptResponse) {
+    option (qrdb.v1.permission) = "keys:decrypt";
+  }
 
   // EncryptAsym encrypts data using asymmetric encryption (RSA-OAEP)
-  rpc EncryptAsym(EncryptAsymRequest) returns (EncryptAsymResponse);
+  rpc EncryptAsym(EncryptAsymRequest) returns (EncryptAsymResponse) {
+    option (qrdb.v1.permission) = "keys:encrypt";
+  }
 
   // DeriveKey derives a key using the specified algorithm and parameters
   // Supports HKDF, ECDH, DH, SP800-108, PBKDF2, and other key derivation mechanisms
-  rpc DeriveKey(DeriveKeyRequest) returns (DeriveKeyResponse);
+  rpc DeriveKey(DeriveKeyRequest) returns (DeriveKeyResponse) {
+    option (qrdb.v1.permission) = "keys:derive";
+  }
 
   // DeriveKeyECDH performs ECDH key agreement and derives a symmetric key
   // This operation combines ECDH shared secret computation with a KDF to produce
   // a derived key suitable for symmetric encryption
-  rpc DeriveKeyECDH(DeriveKeyECDHRequest) returns (DeriveKeyECDHResponse);
+  rpc DeriveKeyECDH(DeriveKeyECDHRequest) returns (DeriveKeyECDHResponse) {
+    option (qrdb.v1.permission) = "keys:derive";
+  }
 
   // DeriveKeyECDHSecure performs ECDH key agreement with configurable security modes
   // Supports EXPORT (returns key bytes), HSM_RESIDENT (keeps key in HSM),
@@ -92,52 +121,82 @@ service KeystoreService {
   rpc GenerateEphemeralECDH(GenerateEphemeralECDHRequest) returns (GenerateEphemeralECDHResponse);
 
   // SaveCert stores a certificate
-  rpc SaveCert(SaveCertRequest) returns (SaveCertResponse);
+  rpc SaveCert(SaveCertRequest) returns (SaveCertResponse) {
+    option (qrdb.v1.permission) = "certs:generate";
+  }
 
   // GetCert retrieves a certificate
-  rpc GetCert(GetCertRequest) returns (GetCertResponse);
+  rpc GetCert(GetCertRequest) returns (GetCertResponse) {
+    option (qrdb.v1.permission) = "certs:read";
+  }
 
   // DeleteCert removes a certificate
-  rpc DeleteCert(DeleteCertRequest) returns (DeleteCertResponse);
+  rpc DeleteCert(DeleteCertRequest) returns (DeleteCertResponse) {
+    option (qrdb.v1.permission) = "certs:revoke";
+  }
 
   // ListCerts lists all certificates
-  rpc ListCerts(ListCertsRequest) returns (ListCertsResponse);
+  rpc ListCerts(ListCertsRequest) returns (ListCertsResponse) {
+    option (qrdb.v1.permission) = "certs:list";
+  }
 
   // CertExists checks if a certificate exists
-  rpc CertExists(CertExistsRequest) returns (CertExistsResponse);
+  rpc CertExists(CertExistsRequest) returns (CertExistsResponse) {
+    option (qrdb.v1.permission) = "certs:read";
+  }
 
   // SaveCertChain stores a certificate chain
-  rpc SaveCertChain(SaveCertChainRequest) returns (SaveCertChainResponse);
+  rpc SaveCertChain(SaveCertChainRequest) returns (SaveCertChainResponse) {
+    option (qrdb.v1.permission) = "certs:generate";
+  }
 
   // GetCertChain retrieves a certificate chain
-  rpc GetCertChain(GetCertChainRequest) returns (GetCertChainResponse);
+  rpc GetCertChain(GetCertChainRequest) returns (GetCertChainResponse) {
+    option (qrdb.v1.permission) = "certs:read";
+  }
 
   // GetTLSCertificate returns a TLS certificate with private key
-  rpc GetTLSCertificate(GetTLSCertificateRequest) returns (GetTLSCertificateResponse);
+  rpc GetTLSCertificate(GetTLSCertificateRequest) returns (GetTLSCertificateResponse) {
+    option (qrdb.v1.permission) = "certs:read";
+  }
 
   // GetImportParameters retrieves parameters needed to import a key
-  rpc GetImportParameters(GetImportParametersRequest) returns (GetImportParametersResponse);
+  rpc GetImportParameters(GetImportParametersRequest) returns (GetImportParametersResponse) {
+    option (qrdb.v1.permission) = "keys:import";
+  }
 
   // WrapKey wraps key material for secure transport
-  rpc WrapKey(WrapKeyRequest) returns (WrapKeyResponse);
+  rpc WrapKey(WrapKeyRequest) returns (WrapKeyResponse) {
+    option (qrdb.v1.permission) = "keys:wrap";
+  }
 
   // UnwrapKey unwraps previously wrapped key material
-  rpc UnwrapKey(UnwrapKeyRequest) returns (UnwrapKeyResponse);
+  rpc UnwrapKey(UnwrapKeyRequest) returns (UnwrapKeyResponse) {
+    option (qrdb.v1.permission) = "keys:unwrap";
+  }
 
   // WrapKeyByID wraps a target key using a wrapping key, both identified by key IDs.
   // This enables PKCS#11 C_WrapKey functionality with server-side keys.
   // The target key must be extractable (exportable=true for symmetric keys).
-  rpc WrapKeyByID(WrapKeyByIDRequest) returns (WrapKeyByIDResponse);
+  rpc WrapKeyByID(WrapKeyByIDRequest) returns (WrapKeyByIDResponse) {
+    option (qrdb.v1.permission) = "keys:wrap";
+  }
 
   // UnwrapKeyByID unwraps key material and imports it as a new key.
   // This enables PKCS#11 C_UnwrapKey functionality with server-side keys.
-  rpc UnwrapKeyByID(UnwrapKeyByIDRequest) returns (UnwrapKeyByIDResponse);
+  rpc UnwrapKeyByID(UnwrapKeyByIDRequest) returns (UnwrapKeyByIDResponse) {
+    option (qrdb.v1.permission) = "keys:unwrap";
+  }
 
   // ImportKey imports externally generated key material into the backend
-  rpc ImportKey(ImportKeyRequest) returns (ImportKeyResponse);
+  rpc ImportKey(ImportKeyRequest) returns (ImportKeyResponse) {
+    option (qrdb.v1.permission) = "keys:import";
+  }
 
   // ExportKey exports a key in wrapped form for secure transport
-  rpc ExportKey(ExportKeyRequest) returns (ExportKeyResponse);
+  rpc ExportKey(ExportKeyRequest) returns (ExportKeyResponse) {
+    option (qrdb.v1.permission) = "keys:export";
+  }
 
   // ExportKeyMaterial exports raw symmetric key bytes for extractable keys.
   //
@@ -152,228 +211,354 @@ service KeystoreService {
   //   - Extracting symmetric keys for use in external systems
   //   - Key backup scenarios where raw material is required
   //   - Testing and development environments
-  rpc ExportKeyMaterial(ExportKeyMaterialRequest) returns (ExportKeyMaterialResponse);
+  rpc ExportKeyMaterial(ExportKeyMaterialRequest) returns (ExportKeyMaterialResponse) {
+    option (qrdb.v1.permission) = "keys:export";
+  }
 
   // CopyKey copies a key from one backend to another
-  rpc CopyKey(CopyKeyRequest) returns (CopyKeyResponse);
+  rpc CopyKey(CopyKeyRequest) returns (CopyKeyResponse) {
+    option (qrdb.v1.permission) = "keys:create";
+  }
 
   // ==================== Sealing Operations ====================
 
   // Seal encrypts data using the backend's sealing mechanism
-  rpc Seal(SealRequest) returns (SealResponse);
+  rpc Seal(SealRequest) returns (SealResponse) {
+    option (qrdb.v1.permission) = "keys:encrypt";
+  }
 
   // Unseal decrypts previously sealed data
-  rpc Unseal(UnsealRequest) returns (UnsealResponse);
+  rpc Unseal(UnsealRequest) returns (UnsealResponse) {
+    option (qrdb.v1.permission) = "keys:decrypt";
+  }
 
   // CanSeal checks if a backend supports sealing operations
-  rpc CanSeal(CanSealRequest) returns (CanSealResponse);
+  rpc CanSeal(CanSealRequest) returns (CanSealResponse) {
+    option (qrdb.v1.permission) = "keys:get";
+  }
 
   // ==================== Attestation Operations ====================
 
   // AttestKey generates a key attestation statement proving hardware backing
-  rpc AttestKey(AttestKeyRequest) returns (AttestKeyResponse);
+  rpc AttestKey(AttestKeyRequest) returns (AttestKeyResponse) {
+    option (qrdb.v1.permission) = "keys:get";
+  }
 
   // ==================== FROST Threshold Signature Operations ====================
 
   // FrostGenerateKey generates FROST key packages using trusted dealer model
-  rpc FrostGenerateKey(FrostGenerateKeyRequest) returns (FrostGenerateKeyResponse);
+  rpc FrostGenerateKey(FrostGenerateKeyRequest) returns (FrostGenerateKeyResponse) {
+    option (qrdb.v1.permission) = "keys:create";
+  }
 
   // FrostImportKey imports a FROST key package
-  rpc FrostImportKey(FrostImportKeyRequest) returns (FrostImportKeyResponse);
+  rpc FrostImportKey(FrostImportKeyRequest) returns (FrostImportKeyResponse) {
+    option (qrdb.v1.permission) = "keys:import";
+  }
 
   // FrostListKeys lists all FROST keys
-  rpc FrostListKeys(FrostListKeysRequest) returns (FrostListKeysResponse);
+  rpc FrostListKeys(FrostListKeysRequest) returns (FrostListKeysResponse) {
+    option (qrdb.v1.permission) = "keys:list";
+  }
 
   // FrostGetKey retrieves information about a specific FROST key
-  rpc FrostGetKey(FrostGetKeyRequest) returns (FrostGetKeyResponse);
+  rpc FrostGetKey(FrostGetKeyRequest) returns (FrostGetKeyResponse) {
+    option (qrdb.v1.permission) = "keys:get";
+  }
 
   // FrostDeleteKey deletes a FROST key
-  rpc FrostDeleteKey(FrostDeleteKeyRequest) returns (FrostDeleteKeyResponse);
+  rpc FrostDeleteKey(FrostDeleteKeyRequest) returns (FrostDeleteKeyResponse) {
+    option (qrdb.v1.permission) = "keys:delete";
+  }
 
   // FrostGenerateNonces generates nonces and commitments for Round 1 of FROST signing
-  rpc FrostGenerateNonces(FrostGenerateNoncesRequest) returns (FrostGenerateNoncesResponse);
+  rpc FrostGenerateNonces(FrostGenerateNoncesRequest) returns (FrostGenerateNoncesResponse) {
+    option (qrdb.v1.permission) = "keys:sign";
+  }
 
   // FrostSignRound generates a signature share for Round 2 of FROST signing
-  rpc FrostSignRound(FrostSignRoundRequest) returns (FrostSignRoundResponse);
+  rpc FrostSignRound(FrostSignRoundRequest) returns (FrostSignRoundResponse) {
+    option (qrdb.v1.permission) = "keys:sign";
+  }
 
   // FrostAggregate combines signature shares into a final FROST signature
-  rpc FrostAggregate(FrostAggregateRequest) returns (FrostAggregateResponse);
+  rpc FrostAggregate(FrostAggregateRequest) returns (FrostAggregateResponse) {
+    option (qrdb.v1.permission) = "keys:sign";
+  }
 
   // FrostVerify verifies a FROST signature against the group public key
-  rpc FrostVerify(FrostVerifyRequest) returns (FrostVerifyResponse);
+  rpc FrostVerify(FrostVerifyRequest) returns (FrostVerifyResponse) {
+    option (qrdb.v1.permission) = "keys:verify";
+  }
 
   // ==================== CA Bundle Operations ====================
 
   // GetCABundle retrieves the CA certificate bundle for trust store population.
   // REST equivalent: GET /v1/ca/bundle
-  rpc GetCABundle(GetCABundleRequest) returns (GetCABundleResponse);
+  rpc GetCABundle(GetCABundleRequest) returns (GetCABundleResponse) {
+    option (qrdb.v1.permission) = "certs:read";
+  }
 
   // ==================== CA Operations ====================
 
   // GetCACertificate retrieves the CA certificate with metadata.
-  rpc GetCACertificate(GetCACertificateRequest) returns (GetCACertificateResponse);
+  rpc GetCACertificate(GetCACertificateRequest) returns (GetCACertificateResponse) {
+    option (qrdb.v1.permission) = "certs:read";
+  }
 
   // SignCSR signs a certificate signing request.
-  rpc SignCSR(SignCSRRequest) returns (SignCSRResponse);
+  rpc SignCSR(SignCSRRequest) returns (SignCSRResponse) {
+    option (qrdb.v1.permission) = "certs:generate";
+  }
 
   // IssueCertificate issues a new certificate.
-  rpc IssueCertificate(IssueCertificateRequest) returns (IssueCertificateResponse);
+  rpc IssueCertificate(IssueCertificateRequest) returns (IssueCertificateResponse) {
+    option (qrdb.v1.permission) = "certs:generate";
+  }
 
   // RevokeCertificate revokes a certificate by serial number.
-  rpc RevokeCertificate(RevokeCertificateRequest) returns (RevokeCertificateResponse);
+  rpc RevokeCertificate(RevokeCertificateRequest) returns (RevokeCertificateResponse) {
+    option (qrdb.v1.permission) = "certs:revoke";
+  }
 
   // GenerateCRL generates a certificate revocation list.
-  rpc GenerateCRL(GenerateCRLRequest) returns (GenerateCRLResponse);
+  rpc GenerateCRL(GenerateCRLRequest) returns (GenerateCRLResponse) {
+    option (qrdb.v1.permission) = "certs:read";
+  }
 
   // IsRevoked checks if a certificate is revoked.
-  rpc IsRevoked(IsRevokedRequest) returns (IsRevokedResponse);
+  rpc IsRevoked(IsRevokedRequest) returns (IsRevokedResponse) {
+    option (qrdb.v1.permission) = "certs:read";
+  }
 
   // ==================== TCG Certificate Operations ====================
 
   // IssueEKCertificate issues an Endorsement Key certificate for a TPM.
-  rpc IssueEKCertificate(IssueEKCertificateRequest) returns (IssueEKCertificateResponse);
+  rpc IssueEKCertificate(IssueEKCertificateRequest) returns (IssueEKCertificateResponse) {
+    option (qrdb.v1.permission) = "certs:generate";
+  }
 
   // IssueAKCertificate issues an Attestation Key certificate for a TPM.
-  rpc IssueAKCertificate(IssueAKCertificateRequest) returns (IssueAKCertificateResponse);
+  rpc IssueAKCertificate(IssueAKCertificateRequest) returns (IssueAKCertificateResponse) {
+    option (qrdb.v1.permission) = "certs:generate";
+  }
 
   // SignTCGCSR signs a TCG-CSR-IDEVID and returns IAK and IDevID certificates.
-  rpc SignTCGCSR(SignTCGCSRRequest) returns (SignTCGCSRResponse);
+  rpc SignTCGCSR(SignTCGCSRRequest) returns (SignTCGCSRResponse) {
+    option (qrdb.v1.permission) = "certs:generate";
+  }
 
   // EnrollDevice performs full TCG device enrollment with credential activation challenge.
-  rpc EnrollDevice(EnrollDeviceRequest) returns (EnrollDeviceResponse);
+  rpc EnrollDevice(EnrollDeviceRequest) returns (EnrollDeviceResponse) {
+    option (qrdb.v1.permission) = "certs:generate";
+  }
 
   // ==================== Barrier Operations ====================
 
   // BarrierInitialize generates a root key, seals it with the best available
   // strategy, and transitions the barrier to unsealed state. Must be called
   // exactly once for a new barrier.
-  rpc BarrierInitialize(BarrierInitializeRequest) returns (google.protobuf.Empty);
+  rpc BarrierInitialize(BarrierInitializeRequest) returns (google.protobuf.Empty) {
+    option (qrdb.v1.permission) = "seal:bootstrap";
+  }
 
   // BarrierUnseal loads and unseals the root key, deriving the data encryption
   // key to enable storage operations.
-  rpc BarrierUnseal(BarrierUnsealRequest) returns (google.protobuf.Empty);
+  rpc BarrierUnseal(BarrierUnsealRequest) returns (google.protobuf.Empty) {
+    option (qrdb.v1.permission) = "seal:unseal";
+  }
 
   // BarrierSeal transitions the barrier to sealed state and zeros the DEK.
   // All subsequent storage operations will fail until Unseal is called again.
-  rpc BarrierSeal(google.protobuf.Empty) returns (google.protobuf.Empty);
+  rpc BarrierSeal(google.protobuf.Empty) returns (google.protobuf.Empty) {
+    option (qrdb.v1.permission) = "seal:seal";
+  }
 
   // BarrierStatus returns the current state of the barrier including whether
   // it is sealed, which strategy is active, and hardware backing status.
-  rpc BarrierStatus(google.protobuf.Empty) returns (BarrierStatusResponse);
+  rpc BarrierStatus(google.protobuf.Empty) returns (BarrierStatusResponse) {
+    option (qrdb.v1.permission) = "seal:status";
+  }
 
   // BarrierInitializeShamir generates a root key and splits it into Shamir
   // shares. In direct mode (StrategyShamir), the root key IS the secret.
   // In credential mode, the credential password is split into shares.
-  rpc BarrierInitializeShamir(BarrierInitializeShamirRequest) returns (BarrierShamirInitResponse);
+  rpc BarrierInitializeShamir(BarrierInitializeShamirRequest) returns (BarrierShamirInitResponse) {
+    option (qrdb.v1.permission) = "seal:initialize_shamir";
+  }
 
   // BarrierUnsealShare submits a single share for quorum-based unsealing.
   // When enough shares reach the threshold, the barrier auto-unseals.
-  rpc BarrierUnsealShare(BarrierUnsealShareRequest) returns (BarrierQuorumProgressResponse);
+  rpc BarrierUnsealShare(BarrierUnsealShareRequest) returns (BarrierQuorumProgressResponse) {
+    option (qrdb.v1.permission) = "barrier:unseal-share";
+  }
 
   // BarrierUnsealShares performs stateless batch unsealing with all shares.
-  rpc BarrierUnsealShares(BarrierUnsealSharesRequest) returns (google.protobuf.Empty);
+  rpc BarrierUnsealShares(BarrierUnsealSharesRequest) returns (google.protobuf.Empty) {
+    option (qrdb.v1.permission) = "seal:unseal";
+  }
 
   // BarrierRekey generates new Shamir shares for the existing root key.
-  rpc BarrierRekey(BarrierRekeyRequest) returns (BarrierShamirInitResponse);
+  rpc BarrierRekey(BarrierRekeyRequest) returns (BarrierShamirInitResponse) {
+    option (qrdb.v1.permission) = "seal:rekey";
+  }
 
   // BarrierGenerateRecoveryKeys generates an independent set of recovery
   // shares from the current DEK for disaster recovery.
-  rpc BarrierGenerateRecoveryKeys(BarrierGenerateRecoveryKeysRequest) returns (BarrierRecoveryKeysResponse);
+  rpc BarrierGenerateRecoveryKeys(BarrierGenerateRecoveryKeysRequest) returns (BarrierRecoveryKeysResponse) {
+    option (qrdb.v1.permission) = "seal:generate_recovery";
+  }
 
   // BarrierRecoverWithKeys reconstructs the DEK from recovery shares.
-  rpc BarrierRecoverWithKeys(BarrierRecoverWithKeysRequest) returns (google.protobuf.Empty);
+  rpc BarrierRecoverWithKeys(BarrierRecoverWithKeysRequest) returns (google.protobuf.Empty) {
+    option (qrdb.v1.permission) = "seal:recover_with_keys";
+  }
 
   // BarrierDeleteRecoveryKeys removes recovery key metadata from storage.
-  rpc BarrierDeleteRecoveryKeys(google.protobuf.Empty) returns (google.protobuf.Empty);
+  rpc BarrierDeleteRecoveryKeys(google.protobuf.Empty) returns (google.protobuf.Empty) {
+    option (qrdb.v1.permission) = "seal:generate_recovery";
+  }
 
   // BarrierHasRecoveryKeys reports whether recovery keys have been generated.
-  rpc BarrierHasRecoveryKeys(google.protobuf.Empty) returns (BarrierHasRecoveryKeysResponse);
+  rpc BarrierHasRecoveryKeys(google.protobuf.Empty) returns (BarrierHasRecoveryKeysResponse) {
+    option (qrdb.v1.permission) = "seal:status";
+  }
 
   // BarrierGenerateRootToken generates a one-time root token by proving
   // knowledge of the master key through Shamir share reconstruction.
-  rpc BarrierGenerateRootToken(BarrierGenerateRootTokenRequest) returns (BarrierRootTokenResponse);
+  rpc BarrierGenerateRootToken(BarrierGenerateRootTokenRequest) returns (BarrierRootTokenResponse) {
+    option (qrdb.v1.permission) = "seal:rotate_root_key";
+  }
 
   // BarrierEnableEncryption migrates a previously-unencrypted barrier to a
   // keyed strategy in place. The migration runs asynchronously; the response
   // acknowledges the start and clients poll BarrierStatus for completion.
-  rpc BarrierEnableEncryption(BarrierEnableEncryptionRequest) returns (BarrierEnableEncryptionResponse);
+  rpc BarrierEnableEncryption(BarrierEnableEncryptionRequest) returns (BarrierEnableEncryptionResponse) {
+    option (qrdb.v1.permission) = "seal:enable_encryption";
+  }
 
   // ==================== PIN Operations ====================
 
   // SetSOPIN sets the Security Officer PIN. If the SO PIN is already set,
   // current_so_pin must match the existing PIN.
-  rpc SetSOPIN(SetSOPINRequest) returns (google.protobuf.Empty);
+  rpc SetSOPIN(SetSOPINRequest) returns (google.protobuf.Empty) {
+    option (qrdb.v1.permission) = "pin:write";
+  }
 
   // SetUserPIN sets the user PIN. Requires SO PIN authorization.
-  rpc SetUserPIN(SetUserPINRequest) returns (google.protobuf.Empty);
+  rpc SetUserPIN(SetUserPINRequest) returns (google.protobuf.Empty) {
+    option (qrdb.v1.permission) = "pin:write";
+  }
 
   // ChangeSOPIN changes the Security Officer PIN.
-  rpc ChangeSOPIN(ChangeSOPINRequest) returns (google.protobuf.Empty);
+  rpc ChangeSOPIN(ChangeSOPINRequest) returns (google.protobuf.Empty) {
+    option (qrdb.v1.permission) = "pin:write";
+  }
 
   // ChangeUserPIN changes the user PIN.
-  rpc ChangeUserPIN(ChangeUserPINRequest) returns (google.protobuf.Empty);
+  rpc ChangeUserPIN(ChangeUserPINRequest) returns (google.protobuf.Empty) {
+    option (qrdb.v1.permission) = "pin:write";
+  }
 
   // VerifySOPIN verifies the provided Security Officer PIN.
-  rpc VerifySOPIN(VerifySOPINRequest) returns (google.protobuf.Empty);
+  rpc VerifySOPIN(VerifySOPINRequest) returns (google.protobuf.Empty) {
+    option (qrdb.v1.permission) = "pin:read";
+  }
 
   // VerifyUserPIN verifies the provided user PIN.
-  rpc VerifyUserPIN(VerifyUserPINRequest) returns (google.protobuf.Empty);
+  rpc VerifyUserPIN(VerifyUserPINRequest) returns (google.protobuf.Empty) {
+    option (qrdb.v1.permission) = "pin:read";
+  }
 
   // GetLockoutStatus returns the current PIN lockout status including
   // failed attempts, max attempts, and lockout duration.
-  rpc GetLockoutStatus(google.protobuf.Empty) returns (LockoutStatusResponse);
+  rpc GetLockoutStatus(google.protobuf.Empty) returns (LockoutStatusResponse) {
+    option (qrdb.v1.permission) = "pin:read";
+  }
 
   // ResetLockout resets the PIN lockout counter using SO PIN authorization.
-  rpc ResetLockout(ResetLockoutRequest) returns (google.protobuf.Empty);
+  rpc ResetLockout(ResetLockoutRequest) returns (google.protobuf.Empty) {
+    option (qrdb.v1.permission) = "pin:write";
+  }
 
   // ==================== PIV Operations ====================
 
   // ListPIVSlots returns the status of all PIV slots for the specified backend.
-  rpc ListPIVSlots(ListPIVSlotsRequest) returns (ListPIVSlotsResponse);
+  rpc ListPIVSlots(ListPIVSlotsRequest) returns (ListPIVSlotsResponse) {
+    option (qrdb.v1.permission) = "piv:read";
+  }
 
   // GetPIVCertificate retrieves a certificate from a PIV slot.
-  rpc GetPIVCertificate(GetPIVCertificateRequest) returns (GetPIVCertificateResponse);
+  rpc GetPIVCertificate(GetPIVCertificateRequest) returns (GetPIVCertificateResponse) {
+    option (qrdb.v1.permission) = "piv:read";
+  }
 
   // StorePIVCertificate stores a certificate in a PIV slot.
-  rpc StorePIVCertificate(StorePIVCertificateRequest) returns (google.protobuf.Empty);
+  rpc StorePIVCertificate(StorePIVCertificateRequest) returns (google.protobuf.Empty) {
+    option (qrdb.v1.permission) = "piv:write";
+  }
 
   // DeletePIVCertificate removes a certificate from a PIV slot.
-  rpc DeletePIVCertificate(DeletePIVCertificateRequest) returns (google.protobuf.Empty);
+  rpc DeletePIVCertificate(DeletePIVCertificateRequest) returns (google.protobuf.Empty) {
+    option (qrdb.v1.permission) = "piv:delete";
+  }
 
   // GeneratePIVKey generates a new key pair in a PIV slot with a self-signed certificate.
-  rpc GeneratePIVKey(GeneratePIVKeyRequest) returns (GeneratePIVKeyResponse);
+  rpc GeneratePIVKey(GeneratePIVKeyRequest) returns (GeneratePIVKeyResponse) {
+    option (qrdb.v1.permission) = "piv:write";
+  }
 
   // ImportPIVCertificate imports a certificate into a PIV slot.
-  rpc ImportPIVCertificate(StorePIVCertificateRequest) returns (google.protobuf.Empty);
+  rpc ImportPIVCertificate(StorePIVCertificateRequest) returns (google.protobuf.Empty) {
+    option (qrdb.v1.permission) = "piv:write";
+  }
 
   // ExportPIVCertificate exports a certificate from a PIV slot.
-  rpc ExportPIVCertificate(GetPIVCertificateRequest) returns (GetPIVCertificateResponse);
+  rpc ExportPIVCertificate(GetPIVCertificateRequest) returns (GetPIVCertificateResponse) {
+    option (qrdb.v1.permission) = "piv:read";
+  }
 
   // GeneratePIVCSR generates a certificate signing request for a PIV slot key.
-  rpc GeneratePIVCSR(GeneratePIVCSRRequest) returns (GeneratePIVCSRResponse);
+  rpc GeneratePIVCSR(GeneratePIVCSRRequest) returns (GeneratePIVCSRResponse) {
+    option (qrdb.v1.permission) = "piv:use";
+  }
 
   // ==================== Custodian Group Operations ====================
 
   // CreateCustodianGroup creates a new custodian group for Shamir threshold ceremonies.
-  rpc CreateCustodianGroup(CreateCustodianGroupRequest) returns (CreateCustodianGroupResponse);
+  rpc CreateCustodianGroup(CreateCustodianGroupRequest) returns (CreateCustodianGroupResponse) {
+    option (qrdb.v1.permission) = "ceremony:enroll_custodian";
+  }
 
   // GetCustodianGroup retrieves a custodian group by ID.
-  rpc GetCustodianGroup(GetCustodianGroupRequest) returns (GetCustodianGroupResponse);
+  rpc GetCustodianGroup(GetCustodianGroupRequest) returns (GetCustodianGroupResponse) {
+    option (qrdb.v1.permission) = "ceremony:status";
+  }
 
   // ListCustodianGroups returns all custodian groups.
-  rpc ListCustodianGroups(ListCustodianGroupsRequest) returns (ListCustodianGroupsResponse);
+  rpc ListCustodianGroups(ListCustodianGroupsRequest) returns (ListCustodianGroupsResponse) {
+    option (qrdb.v1.permission) = "ceremony:status";
+  }
 
   // DeleteCustodianGroup deletes a custodian group.
-  rpc DeleteCustodianGroup(DeleteCustodianGroupRequest) returns (google.protobuf.Empty);
+  rpc DeleteCustodianGroup(DeleteCustodianGroupRequest) returns (google.protobuf.Empty) {
+    option (qrdb.v1.permission) = "ceremony:revoke_custodian";
+  }
 
   // AddCustodianMember adds a member to a custodian group.
-  rpc AddCustodianMember(AddCustodianMemberRequest) returns (AddCustodianMemberResponse);
+  rpc AddCustodianMember(AddCustodianMemberRequest) returns (AddCustodianMemberResponse) {
+    option (qrdb.v1.permission) = "ceremony:enroll_custodian";
+  }
 
   // RemoveCustodianMember removes a member from a custodian group.
-  rpc RemoveCustodianMember(RemoveCustodianMemberRequest) returns (google.protobuf.Empty);
+  rpc RemoveCustodianMember(RemoveCustodianMemberRequest) returns (google.protobuf.Empty) {
+    option (qrdb.v1.permission) = "ceremony:revoke_custodian";
+  }
 
   // DistributeShares triggers share distribution for a custodian group.
-  rpc DistributeShares(DistributeSharesRequest) returns (DistributeSharesResponse);
+  rpc DistributeShares(DistributeSharesRequest) returns (DistributeSharesResponse) {
+    option (qrdb.v1.permission) = "ceremony:claim_share_begin";
+  }
 
   // Algorithms reports the cryptographic algorithms this build supports and
   // which backends provide each one. Public discovery: it reflects compiled-in
@@ -383,121 +568,174 @@ service KeystoreService {
   // ==================== Share Operations ====================
 
   // SubmitShare submits a Shamir share for storage.
-  rpc SubmitShare(SubmitShareRequest) returns (SubmitShareResponse);
+  rpc SubmitShare(SubmitShareRequest) returns (SubmitShareResponse) {
+    option (qrdb.v1.permission) = "barrier:unseal-share";
+  }
 
   // ListShares returns all stored shares.
-  rpc ListShares(ListSharesRequest) returns (ListSharesResponse);
+  rpc ListShares(ListSharesRequest) returns (ListSharesResponse) {
+    option (qrdb.v1.permission) = "ceremony:status";
+  }
 
   // GetShare returns a single stored share. Sensitive share material is
   // never included in the response.
-  rpc GetShare(GetShareRequest) returns (ShareInfo);
+  rpc GetShare(GetShareRequest) returns (ShareInfo) {
+    option (qrdb.v1.permission) = "ceremony:status";
+  }
 
   // DeleteShare removes a single stored share.
-  rpc DeleteShare(DeleteShareRequest) returns (google.protobuf.Empty);
+  rpc DeleteShare(DeleteShareRequest) returns (google.protobuf.Empty) {
+    option (qrdb.v1.permission) = "barrier:unseal-share";
+  }
 
   // GetShareCollectionStatus returns the share collection status for a group.
-  rpc GetShareCollectionStatus(GetShareCollectionStatusRequest) returns (ShareCollectionStatusResponse);
+  rpc GetShareCollectionStatus(GetShareCollectionStatusRequest) returns (ShareCollectionStatusResponse) {
+    option (qrdb.v1.permission) = "ceremony:status";
+  }
 
   // ==================== Tenant Operations ====================
 
   // CreateTenant creates a new tenant.
-  rpc CreateTenant(CreateTenantRequest) returns (CreateTenantResponse);
+  rpc CreateTenant(CreateTenantRequest) returns (CreateTenantResponse) {
+    option (qrdb.v1.permission) = "tenants:create";
+  }
 
   // GetTenant retrieves a tenant by ID.
-  rpc GetTenant(GetTenantRequest) returns (GetTenantResponse);
+  rpc GetTenant(GetTenantRequest) returns (GetTenantResponse) {
+    option (qrdb.v1.permission) = "tenants:read";
+  }
 
   // ListTenants returns all tenants.
-  rpc ListTenants(ListTenantsRequest) returns (ListTenantsResponse);
+  rpc ListTenants(ListTenantsRequest) returns (ListTenantsResponse) {
+    option (qrdb.v1.permission) = "tenants:list";
+  }
 
   // DeleteTenant deletes a tenant.
-  rpc DeleteTenant(DeleteTenantRequest) returns (google.protobuf.Empty);
+  rpc DeleteTenant(DeleteTenantRequest) returns (google.protobuf.Empty) {
+    option (qrdb.v1.permission) = "tenants:delete";
+  }
 
   // TenantBarrierInit initializes the barrier for a tenant.
-  rpc TenantBarrierInit(TenantBarrierInitRequest) returns (google.protobuf.Empty);
+  rpc TenantBarrierInit(TenantBarrierInitRequest) returns (google.protobuf.Empty) {
+    option (qrdb.v1.permission) = "tenant_barrier:init";
+  }
 
   // TenantBarrierUnseal unseals the barrier for a tenant.
-  rpc TenantBarrierUnseal(TenantBarrierUnsealRequest) returns (google.protobuf.Empty);
+  rpc TenantBarrierUnseal(TenantBarrierUnsealRequest) returns (google.protobuf.Empty) {
+    option (qrdb.v1.permission) = "tenant_barrier:unseal";
+  }
 
   // TenantBarrierStatus reports the current state of a per-tenant barrier.
-  rpc TenantBarrierStatus(TenantBarrierStatusRequest) returns (TenantBarrierStatusResponse);
+  rpc TenantBarrierStatus(TenantBarrierStatusRequest) returns (TenantBarrierStatusResponse) {
+    option (qrdb.v1.permission) = "tenant_barrier:status";
+  }
 
   // UpdateTenantEntitlements updates a tenant's feature entitlements.
-  rpc UpdateTenantEntitlements(UpdateTenantEntitlementsRequest) returns (UpdateTenantEntitlementsResponse);
+  rpc UpdateTenantEntitlements(UpdateTenantEntitlementsRequest) returns (UpdateTenantEntitlementsResponse) {
+    option (qrdb.v1.permission) = "tenants:update";
+  }
 
   // UpdateTenantQuotas updates a tenant's resource quotas.
-  rpc UpdateTenantQuotas(UpdateTenantQuotasRequest) returns (UpdateTenantQuotasResponse);
-
-  // ==================== Cluster Operations ====================
-
-  // GetClusterStatus returns the Raft leadership status for the configured
-  // shard. A standalone (non-clustered) node reports a single-node,
-  // non-clustered status.
-  rpc GetClusterStatus(google.protobuf.Empty) returns (ClusterStatusResponse);
-
-  // ListClusterMembers returns the Raft replicas for the configured shard. A
-  // standalone node returns an empty membership set.
-  rpc ListClusterMembers(google.protobuf.Empty) returns (ListClusterMembersResponse);
-
-  // AddClusterReplica adds a replica to the configured shard's Raft group.
-  // Privileged: requires the canonical qrdb "admin:add_member" grant. Fails
-  // with FAILED_PRECONDITION on a standalone node.
-  rpc AddClusterReplica(AddClusterReplicaRequest) returns (ClusterReplicaResponse);
-
-  // RemoveClusterReplica removes a replica from the configured shard's Raft
-  // group. Privileged: requires the canonical qrdb "admin:remove_member"
-  // grant. Fails with FAILED_PRECONDITION on a standalone node.
-  rpc RemoveClusterReplica(RemoveClusterReplicaRequest) returns (ClusterReplicaResponse);
+  rpc UpdateTenantQuotas(UpdateTenantQuotasRequest) returns (UpdateTenantQuotasResponse) {
+    option (qrdb.v1.permission) = "tenants:update";
+  }
 
   // ==================== Password Store Operations ====================
 
   // PasswordAdd adds a new password entry to the encrypted store.
-  rpc PasswordAdd(PasswordAddRequest) returns (PasswordAddResponse);
+  rpc PasswordAdd(PasswordAddRequest) returns (PasswordAddResponse) {
+    option (qrdb.v1.permission) = "passwords:write";
+  }
 
   // PasswordGet retrieves a password entry by ID or name.
-  rpc PasswordGet(PasswordGetRequest) returns (PasswordGetResponse);
+  rpc PasswordGet(PasswordGetRequest) returns (PasswordGetResponse) {
+    option (qrdb.v1.permission) = "passwords:read";
+  }
 
   // PasswordList lists password entries, optionally filtered by folder or scope.
-  rpc PasswordList(PasswordListRequest) returns (PasswordListResponse);
+  rpc PasswordList(PasswordListRequest) returns (PasswordListResponse) {
+    option (qrdb.v1.permission) = "passwords:read";
+  }
 
   // PasswordUpdate updates an existing password entry.
-  rpc PasswordUpdate(PasswordUpdateRequest) returns (PasswordUpdateResponse);
+  rpc PasswordUpdate(PasswordUpdateRequest) returns (PasswordUpdateResponse) {
+    option (qrdb.v1.permission) = "passwords:write";
+  }
 
   // PasswordDelete removes a password entry from the store.
-  rpc PasswordDelete(PasswordDeleteRequest) returns (PasswordDeleteResponse);
+  rpc PasswordDelete(PasswordDeleteRequest) returns (PasswordDeleteResponse) {
+    option (qrdb.v1.permission) = "passwords:delete";
+  }
 
   // PasswordStoreUnlock unlocks the tenant password store session.
-  rpc PasswordStoreUnlock(PasswordStoreUnlockRequest) returns (PasswordStoreStatusResponse);
+  rpc PasswordStoreUnlock(PasswordStoreUnlockRequest) returns (PasswordStoreStatusResponse) {
+    option (qrdb.v1.permission) = "passwords:unlock";
+  }
 
   // PasswordStoreLock locks the tenant password store session.
-  rpc PasswordStoreLock(PasswordStoreLockRequest) returns (PasswordStoreStatusResponse);
+  rpc PasswordStoreLock(PasswordStoreLockRequest) returns (PasswordStoreStatusResponse) {
+    option (qrdb.v1.permission) = "passwords:lock";
+  }
 
   // PasswordStoreStatus returns the current status of the password store.
-  rpc PasswordStoreStatus(PasswordStoreStatusRequest) returns (PasswordStoreStatusResponse);
+  rpc PasswordStoreStatus(PasswordStoreStatusRequest) returns (PasswordStoreStatusResponse) {
+    option (qrdb.v1.permission) = "passwords:read";
+  }
 
   // PasswordGenerate generates a random password with specified constraints.
-  rpc PasswordGenerate(PasswordGenerateRequest) returns (PasswordGenerateResponse);
+  rpc PasswordGenerate(PasswordGenerateRequest) returns (PasswordGenerateResponse) {
+    option (qrdb.v1.permission) = "passwords:generate";
+  }
 
   // ==================== PKCS#11 State Operations ====================
   // Durable token and object state for a PKCS#11 module running with
   // StorageType "remote". Values are opaque module-serialised records.
 
-  rpc PKCS11StatePut(PKCS11StatePutRequest) returns (PKCS11StatePutResponse);
-  rpc PKCS11StatePutIfAbsent(PKCS11StatePutIfAbsentRequest) returns (PKCS11StatePutIfAbsentResponse);
-  rpc PKCS11StateCAS(PKCS11StateCASRequest) returns (PKCS11StateCASResponse);
-  rpc PKCS11StateGet(PKCS11StateGetRequest) returns (PKCS11StateGetResponse);
-  rpc PKCS11StateDelete(PKCS11StateDeleteRequest) returns (PKCS11StateDeleteResponse);
-  rpc PKCS11StateList(PKCS11StateListRequest) returns (PKCS11StateListResponse);
+  rpc PKCS11StatePut(PKCS11StatePutRequest) returns (PKCS11StatePutResponse) {
+    option (qrdb.v1.permission) = "keys:write";
+  }
+  rpc PKCS11StatePutIfAbsent(PKCS11StatePutIfAbsentRequest) returns (PKCS11StatePutIfAbsentResponse) {
+    option (qrdb.v1.permission) = "keys:write";
+  }
+  rpc PKCS11StateCAS(PKCS11StateCASRequest) returns (PKCS11StateCASResponse) {
+    option (qrdb.v1.permission) = "keys:write";
+  }
+  rpc PKCS11StateGet(PKCS11StateGetRequest) returns (PKCS11StateGetResponse) {
+    option (qrdb.v1.permission) = "keys:read";
+  }
+  rpc PKCS11StateDelete(PKCS11StateDeleteRequest) returns (PKCS11StateDeleteResponse) {
+    option (qrdb.v1.permission) = "keys:write";
+  }
+  rpc PKCS11StateList(PKCS11StateListRequest) returns (PKCS11StateListResponse) {
+    option (qrdb.v1.permission) = "keys:read";
+  }
 
   // User management. xkms presents its own user model; the backing store is
   // the embedded qrdb node.
-  rpc CreateUser(CreateUserRequest) returns (UserResponse);
-  rpc ListUsers(ListUsersRequest) returns (ListUsersResponse);
-  rpc GetUser(GetUserRequest) returns (UserResponse);
-  rpc DeleteUser(DeleteUserRequest) returns (DeleteUserResponse);
-  rpc EnableUser(EnableUserRequest) returns (UserResponse);
-  rpc DisableUser(DisableUserRequest) returns (UserResponse);
-  rpc BindUserCert(BindUserCertRequest) returns (UserResponse);
-  rpc ListUserCredentials(ListUserCredentialsRequest) returns (ListUserCredentialsResponse);
+  rpc CreateUser(CreateUserRequest) returns (UserResponse) {
+    option (qrdb.v1.permission) = "users:create";
+  }
+  rpc ListUsers(ListUsersRequest) returns (ListUsersResponse) {
+    option (qrdb.v1.permission) = "users:list";
+  }
+  rpc GetUser(GetUserRequest) returns (UserResponse) {
+    option (qrdb.v1.permission) = "users:read";
+  }
+  rpc DeleteUser(DeleteUserRequest) returns (DeleteUserResponse) {
+    option (qrdb.v1.permission) = "users:delete";
+  }
+  rpc EnableUser(EnableUserRequest) returns (UserResponse) {
+    option (qrdb.v1.permission) = "users:update";
+  }
+  rpc DisableUser(DisableUserRequest) returns (UserResponse) {
+    option (qrdb.v1.permission) = "users:update";
+  }
+  rpc BindUserCert(BindUserCertRequest) returns (UserResponse) {
+    option (qrdb.v1.permission) = "users:update";
+  }
+  rpc ListUserCredentials(ListUserCredentialsRequest) returns (ListUserCredentialsResponse) {
+    option (qrdb.v1.permission) = "users:read";
+  }
 
   // FIDO2/WebAuthn registration ceremony. BeginRegistration returns the
   // JSON-marshaled WebAuthn options plus an opaque session ID; the client
@@ -518,44 +756,70 @@ service KeystoreService {
   // SSHGenerateKey generates a new SSH key. When backend is set the key is
   // created on that crypto backend (private key never leaves a hardware
   // backend); otherwise a software key is generated server-side.
-  rpc SSHGenerateKey(SSHGenerateKeyRequest) returns (SSHKeyResponse);
+  rpc SSHGenerateKey(SSHGenerateKeyRequest) returns (SSHKeyResponse) {
+    option (qrdb.v1.permission) = "ssh:write";
+  }
 
   // SSHImportKey imports a PEM-encoded SSH private key.
-  rpc SSHImportKey(SSHImportKeyRequest) returns (SSHKeyResponse);
+  rpc SSHImportKey(SSHImportKeyRequest) returns (SSHKeyResponse) {
+    option (qrdb.v1.permission) = "ssh:write";
+  }
 
   // SSHListKeys enumerates SSH keys by (scope, owner).
-  rpc SSHListKeys(SSHListKeysRequest) returns (SSHListKeysResponse);
+  rpc SSHListKeys(SSHListKeysRequest) returns (SSHListKeysResponse) {
+    option (qrdb.v1.permission) = "ssh:read";
+  }
 
   // SSHGetKey loads metadata for a single SSH key.
-  rpc SSHGetKey(SSHKeyRef) returns (SSHKeyResponse);
+  rpc SSHGetKey(SSHKeyRef) returns (SSHKeyResponse) {
+    option (qrdb.v1.permission) = "ssh:read";
+  }
 
   // SSHDeleteKey removes an SSH key (and its backend material, if any).
-  rpc SSHDeleteKey(SSHKeyRef) returns (google.protobuf.Empty);
+  rpc SSHDeleteKey(SSHKeyRef) returns (google.protobuf.Empty) {
+    option (qrdb.v1.permission) = "ssh:delete";
+  }
 
   // SSHExportPublic returns the authorized_keys public line for a key.
-  rpc SSHExportPublic(SSHKeyRef) returns (SSHPublicKeyResponse);
+  rpc SSHExportPublic(SSHKeyRef) returns (SSHPublicKeyResponse) {
+    option (qrdb.v1.permission) = "ssh:read";
+  }
 
   // SSHSign signs a digest with the key's private half (delegated to the
   // backend for hardware-backed keys) and returns the SSH signature blob.
-  rpc SSHSign(SSHSignRequest) returns (SSHSignResponse);
+  rpc SSHSign(SSHSignRequest) returns (SSHSignResponse) {
+    option (qrdb.v1.permission) = "ssh:write";
+  }
 
   // SSHAddKnownHost pins a host key.
-  rpc SSHAddKnownHost(SSHAddKnownHostRequest) returns (google.protobuf.Empty);
+  rpc SSHAddKnownHost(SSHAddKnownHostRequest) returns (google.protobuf.Empty) {
+    option (qrdb.v1.permission) = "ssh:write";
+  }
 
   // SSHListKnownHosts enumerates host-key pins.
-  rpc SSHListKnownHosts(SSHListKnownHostsRequest) returns (SSHListKnownHostsResponse);
+  rpc SSHListKnownHosts(SSHListKnownHostsRequest) returns (SSHListKnownHostsResponse) {
+    option (qrdb.v1.permission) = "ssh:read";
+  }
 
   // SSHRemoveKnownHost removes a host-key pin.
-  rpc SSHRemoveKnownHost(SSHRemoveKnownHostRequest) returns (google.protobuf.Empty);
+  rpc SSHRemoveKnownHost(SSHRemoveKnownHostRequest) returns (google.protobuf.Empty) {
+    option (qrdb.v1.permission) = "ssh:delete";
+  }
 
   // SSHAddAuthorizedKey persists an authorized_keys entry.
-  rpc SSHAddAuthorizedKey(SSHAddAuthorizedKeyRequest) returns (google.protobuf.Empty);
+  rpc SSHAddAuthorizedKey(SSHAddAuthorizedKeyRequest) returns (google.protobuf.Empty) {
+    option (qrdb.v1.permission) = "ssh:write";
+  }
 
   // SSHListAuthorizedKeys enumerates authorized_keys entries.
-  rpc SSHListAuthorizedKeys(SSHListAuthorizedKeysRequest) returns (SSHListAuthorizedKeysResponse);
+  rpc SSHListAuthorizedKeys(SSHListAuthorizedKeysRequest) returns (SSHListAuthorizedKeysResponse) {
+    option (qrdb.v1.permission) = "ssh:read";
+  }
 
   // SSHRemoveAuthorizedKey removes an authorized_keys entry.
-  rpc SSHRemoveAuthorizedKey(SSHAuthorizedKeyRef) returns (google.protobuf.Empty);
+  rpc SSHRemoveAuthorizedKey(SSHAuthorizedKeyRef) returns (google.protobuf.Empty) {
+    option (qrdb.v1.permission) = "ssh:delete";
+  }
 
   // ==================== Audit Operations ====================
 
@@ -563,7 +827,9 @@ service KeystoreService {
   // chain owned by the embedded qrdb node. There is deliberately no emit
   // RPC: events are written server-side as a side effect of the audited
   // operation, never on a caller's request.
-  rpc QueryAudit(QueryAuditRequest) returns (QueryAuditResponse);
+  rpc QueryAudit(QueryAuditRequest) returns (QueryAuditResponse) {
+    option (qrdb.v1.permission) = "audit:read";
+  }
 }
 
 // UserInfo describes an xkms user.
@@ -646,78 +912,6 @@ message UserCredential {
 // ListUserCredentialsResponse returns a user's credentials.
 message ListUserCredentialsResponse {
   repeated UserCredential credentials = 1;
-}
-
-// ==================== Cluster Messages ====================
-
-// ClusterStatusResponse describes the Raft cluster status for the configured
-// shard. When the node is not clustered (standalone), clustered is false and
-// leader_id/node_id reflect the single-node node id.
-message ClusterStatusResponse {
-  // shard_id is the Raft shard (group) the status pertains to.
-  uint64 shard_id = 1;
-
-  // leader_id is the replica ID of the current shard leader. Zero when no
-  // leader is known.
-  uint64 leader_id = 2;
-
-  // has_leader is true when the shard currently has an elected leader.
-  bool has_leader = 3;
-
-  // node_id is this node's Raft replica identifier. Zero when standalone.
-  uint64 node_id = 4;
-
-  // clustered is true when the node participates in a Raft cluster.
-  bool clustered = 5;
-}
-
-// ClusterMember describes a single Raft replica in the configured shard.
-message ClusterMember {
-  // node_id is the replica's identifier within the shard.
-  uint64 node_id = 1;
-
-  // address is the replica's Raft network address.
-  string address = 2;
-
-  // is_leader is true when this replica is the shard's current leader.
-  bool is_leader = 3;
-
-  // api_endpoints maps each client-facing API protocol this replica serves
-  // ("rest", "grpc", "quic", "mcp") to the address a client should dial for
-  // it. Empty when the replica advertises nothing, which a consumer treats as
-  // "unknown" and degrades to the Raft address alone.
-  map<string, string> api_endpoints = 4;
-}
-
-// ListClusterMembersResponse returns the Raft replicas for the configured shard.
-message ListClusterMembersResponse {
-  repeated ClusterMember members = 1;
-}
-
-// AddClusterReplicaRequest asks the server to add a replica to the shard's
-// Raft group.
-message AddClusterReplicaRequest {
-  // replica_id is the replica identifier to add. Must be non-zero.
-  uint64 replica_id = 1;
-
-  // raft_address is the new replica's Raft peer address ("host:port").
-  string raft_address = 2;
-}
-
-// RemoveClusterReplicaRequest asks the server to remove a replica from the
-// shard's Raft group.
-message RemoveClusterReplicaRequest {
-  // replica_id is the replica identifier to remove.
-  uint64 replica_id = 1;
-}
-
-// ClusterReplicaResponse acknowledges a membership mutation.
-message ClusterReplicaResponse {
-  // shard_id is the shard whose Raft group was reconfigured.
-  uint64 shard_id = 1;
-
-  // replica_id is the replica the mutation applied to.
-  uint64 replica_id = 2;
 }
 
 // HealthRequest is the request for health check

@@ -41,7 +41,7 @@ Backend-backed generation is enabled by passing a `BackendProvider`
 | `http(s)://` | REST |
 | `grpc(s)://` | gRPC (`grpcs` = TLS) |
 | `unix://<path>` | gRPC over a Unix domain socket |
-| `quic://` | HTTP/3 |
+| `quic://` | HTTP/3 (dials the REST port -- there is no separate QUIC port) |
 | `mcp(s)://` | MCP JSON-RPC (`mcps` = TLS) |
 
 The server mounts SSH over every transport when an SSH client is wired
@@ -59,7 +59,7 @@ xkey ssh keys generate --name laptop --type ecdsa-p256 --backend tpm2
 
 # Against a remote xkmsd over any protocol
 xkey ssh keys generate --server grpcs://host:9443 --tls-ca ca.crt --name k --backend tpm2
-xkey ssh keys list   --server quic://host:8444   --tls-ca ca.crt
+xkey ssh keys list   --server quic://host:8443   --tls-ca ca.crt
 xkey ssh keys export --server unix:///run/xkms/xkms.sock --name k
 
 # xkmsctl mirrors the surface for multi-protocol parity testing

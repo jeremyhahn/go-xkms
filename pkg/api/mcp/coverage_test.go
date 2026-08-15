@@ -14,7 +14,6 @@
 package mcp
 
 import (
-	"bufio"
 	"context"
 	"crypto/rand"
 	"crypto/rsa"
@@ -23,13 +22,9 @@ import (
 	"encoding/json"
 	"encoding/pem"
 	"math/big"
-	"net"
 	"testing"
 	"time"
 
-	"github.com/jeremyhahn/go-xkms/pkg/auth"
-
-	"github.com/jeremyhahn/go-xkms/pkg/ratelimit"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -183,146 +178,6 @@ func TestHandler_UnwrapKey(t *testing.T) {
 		require.Error(t, err)
 		assert.Contains(t, err.Error(), "failed to unwrap key")
 	})
-}
-
-// TestServer_SendError tests the sendError method
-func TestServer_SendError(t *testing.T) {
-	svc := setupTestXKMS(t)
-	defer cleanupXKMS()
-
-	server, err := NewServer(&Config{Addr: "localhost:0", XKMSService: svc, Authenticator: auth.NewNoOpAuthenticator()})
-	require.NoError(t, err)
-
-	t.Run("sends error response", func(t *testing.T) {
-		// Create a pipe to simulate connection
-		clientConn, serverConn := net.Pipe()
-		defer func() { _ = clientConn.Close() }()
-		defer func() { _ = serverConn.Close() }()
-
-		// Start reading on client side
-		done := make(chan struct{})
-		var receivedData []byte
-		go func() {
-			defer close(done)
-			scanner := bufio.NewScanner(clientConn)
-			if scanner.Scan() {
-				receivedData = scanner.Bytes()
-			}
-		}()
-
-		// Send error through the server connection
-		encoder := json.NewEncoder(serverConn)
-		server.sendError(encoder, 1, ErrCodeInvalidParams, "test error", map[string]string{"detail": "extra info"})
-
-		// Wait for response
-		select {
-		case <-done:
-			var response JSONRPCResponse
-			err := json.Unmarshal(receivedData, &response)
-			require.NoError(t, err)
-			assert.Equal(t, "2.0", response.JSONRPC)
-			assert.Equal(t, float64(1), response.ID)
-			require.NotNil(t, response.Error)
-			assert.Equal(t, ErrCodeInvalidParams, response.Error.Code)
-			assert.Equal(t, "test error", response.Error.Message)
-		case <-time.After(100 * time.Millisecond):
-			t.Fatal("Timeout waiting for error response")
-		}
-	})
-
-	t.Run("sends error with nil ID", func(t *testing.T) {
-		clientConn, serverConn := net.Pipe()
-		defer func() { _ = clientConn.Close() }()
-		defer func() { _ = serverConn.Close() }()
-
-		done := make(chan struct{})
-		var receivedData []byte
-		go func() {
-			defer close(done)
-			scanner := bufio.NewScanner(clientConn)
-			if scanner.Scan() {
-				receivedData = scanner.Bytes()
-			}
-		}()
-
-		encoder := json.NewEncoder(serverConn)
-		server.sendError(encoder, nil, ErrCodeParseError, "parse error", nil)
-
-		select {
-		case <-done:
-			var response JSONRPCResponse
-			err := json.Unmarshal(receivedData, &response)
-			require.NoError(t, err)
-			assert.Nil(t, response.ID)
-			require.NotNil(t, response.Error)
-			assert.Equal(t, ErrCodeParseError, response.Error.Code)
-		case <-time.After(100 * time.Millisecond):
-			t.Fatal("Timeout waiting for error response")
-		}
-	})
-
-	t.Run("handles closed connection gracefully", func(t *testing.T) {
-		clientConn, serverConn := net.Pipe()
-		_ = clientConn.Close()
-		_ = serverConn.Close()
-
-		encoder := json.NewEncoder(serverConn)
-		// Should not panic
-		server.sendError(encoder, 1, ErrCodeInternalError, "error", nil)
-	})
-}
-
-// TestServer_HandleConnection_RateLimit tests connection handling when rate limited
-func TestServer_HandleConnection_RateLimit(t *testing.T) {
-	svc := setupTestXKMS(t)
-	defer cleanupXKMS()
-
-	// Create a rate limiter that will block all connections
-	limiter := ratelimit.New(&ratelimit.Config{
-		Enabled:           true,
-		RequestsPerMinute: 0,
-		Burst:             0,
-	})
-	defer limiter.Stop()
-
-	config := &Config{
-		Authenticator: auth.NewNoOpAuthenticator(),
-		Addr:          "localhost:0",
-		RateLimiter:   limiter,
-		XKMSService:   svc,
-	}
-
-	server, err := NewServer(config)
-	require.NoError(t, err)
-
-	err = server.Start()
-	require.NoError(t, err)
-	defer func() { _ = server.Stop() }()
-
-	// Try to connect - should be rejected due to rate limit
-	conn, err := net.Dial("tcp", server.listener.Addr().String())
-	if err == nil {
-		// Connection was accepted but should be closed immediately
-		defer func() { _ = conn.Close() }()
-
-		// Try to send data - connection might be closed
-		request := JSONRPCRequest{
-			JSONRPC: "2.0",
-			Method:  "health",
-			ID:      1,
-		}
-		requestBytes, _ := json.Marshal(request)
-		_, writeErr := conn.Write(append(requestBytes, '\n'))
-		// Either write fails or read times out
-		if writeErr == nil {
-			// Set short deadline
-			_ = conn.SetReadDeadline(time.Now().Add(50 * time.Millisecond))
-			buf := make([]byte, 1024)
-			_, readErr := conn.Read(buf)
-			// Connection should be closed or timed out
-			_ = readErr // Expected to fail
-		}
-	}
 }
 
 // TestHandler_GetTLSCertificate_InvalidBackend tests the getTLSCertificate handler with invalid backend

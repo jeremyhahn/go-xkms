@@ -124,9 +124,8 @@ func (s *Server) Reload(cfg *config.Config) error {
 func (s *Server) listenersRunning() bool {
 	return s.unixGRPCServer != nil ||
 		s.restServer != nil ||
-		s.grpcServer != nil ||
-		s.quicServer != nil ||
-		s.mcpServer != nil
+		s.qrdbNode != nil ||
+		s.moduleMCP != nil
 }
 
 // reloadedState holds the parts of the server a reload replaces, so they can be

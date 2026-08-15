@@ -19,12 +19,56 @@ import (
 	"testing"
 
 	"github.com/jeremyhahn/go-xkms/pkg/errs"
+	"github.com/jeremyhahn/go-xkms/pkg/xkms"
 
 	qrdbtransport "github.com/jeremyhahn/go-qrdb/sdk/go/transport"
 	"google.golang.org/genproto/googleapis/rpc/errdetails"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 )
+
+// grpcFakeClusterReader is a minimal xkms.ClusterClient double whose only
+// meaningful behavior is leader-endpoint resolution; the not-leader
+// translation path never touches membership or mutation.
+type grpcFakeClusterReader struct {
+	leaderID  uint64
+	hasLeader bool
+
+	leaderEndpoint    string
+	leaderEndpointErr error
+}
+
+func (f *grpcFakeClusterReader) Members(context.Context, uint64) ([]xkms.ClusterMember, error) {
+	return nil, nil
+}
+
+func (f *grpcFakeClusterReader) Leader(context.Context, uint64) (uint64, bool, error) {
+	return f.leaderID, f.hasLeader, nil
+}
+
+func (f *grpcFakeClusterReader) LeaderEndpoint(context.Context, uint64, string) (string, error) {
+	if f.leaderEndpointErr != nil {
+		return "", f.leaderEndpointErr
+	}
+	return f.leaderEndpoint, nil
+}
+
+func (f *grpcFakeClusterReader) AddReplica(context.Context, uint64, uint64, string) error {
+	return nil
+}
+
+func (f *grpcFakeClusterReader) RemoveReplica(context.Context, uint64, uint64) error {
+	return nil
+}
+
+// setClusterClientForTest wires the fake cluster client into a fresh
+// XKMSService so the not-leader translation can resolve leader endpoints.
+func setClusterClientForTest(t *testing.T, c xkms.ClusterClient, shardID, nodeID uint64) *xkms.XKMSService {
+	t.Helper()
+	svc := &xkms.XKMSService{}
+	svc.SetClusterClient(c, shardID, nodeID)
+	return svc
+}
 
 func TestNotLeaderStatus_Translation(t *testing.T) {
 	src := &qrdbtransport.NotLeaderError{ShardID: 7, LeaderID: 3, LeaderAddress: "10.0.0.3:63001"}

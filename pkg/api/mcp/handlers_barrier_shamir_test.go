@@ -855,7 +855,7 @@ func TestBarrierGenerateRootToken(t *testing.T) {
 }
 
 // TestBarrierMethodRouting tests that barrier methods are properly routed
-// through handleRequest.
+// through Server.InvokeMethod.
 func TestBarrierMethodRouting(t *testing.T) {
 	server, _, _, _ := createTestBarrierServer(t)
 	defer cleanupXKMS()
@@ -869,7 +869,7 @@ func TestBarrierMethodRouting(t *testing.T) {
 			Params:  json.RawMessage(`{}`),
 			ID:      1,
 		}
-		resp := server.handleRequest(ctx, req, nil)
+		resp := invokeRequest(server, ctx, req)
 		require.NotNil(t, resp)
 		assert.Nil(t, resp.Error)
 	})
@@ -881,7 +881,7 @@ func TestBarrierMethodRouting(t *testing.T) {
 			Params:  json.RawMessage(`{}`),
 			ID:      2,
 		}
-		resp := server.handleRequest(ctx, req, nil)
+		resp := invokeRequest(server, ctx, req)
 		require.NotNil(t, resp)
 		assert.Nil(t, resp.Error)
 	})
@@ -893,7 +893,7 @@ func TestBarrierMethodRouting(t *testing.T) {
 			Params:  json.RawMessage(`{"secret":""}`),
 			ID:      3,
 		}
-		resp := server.handleRequest(ctx, req, nil)
+		resp := invokeRequest(server, ctx, req)
 		require.NotNil(t, resp)
 		assert.NotNil(t, resp.Error)
 		assert.Equal(t, ErrCodeInternalError, resp.Error.Code)

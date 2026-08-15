@@ -140,10 +140,6 @@ const (
 	KeystoreService_TenantBarrierStatus_FullMethodName         = "/xkms.v1.KeystoreService/TenantBarrierStatus"
 	KeystoreService_UpdateTenantEntitlements_FullMethodName    = "/xkms.v1.KeystoreService/UpdateTenantEntitlements"
 	KeystoreService_UpdateTenantQuotas_FullMethodName          = "/xkms.v1.KeystoreService/UpdateTenantQuotas"
-	KeystoreService_GetClusterStatus_FullMethodName            = "/xkms.v1.KeystoreService/GetClusterStatus"
-	KeystoreService_ListClusterMembers_FullMethodName          = "/xkms.v1.KeystoreService/ListClusterMembers"
-	KeystoreService_AddClusterReplica_FullMethodName           = "/xkms.v1.KeystoreService/AddClusterReplica"
-	KeystoreService_RemoveClusterReplica_FullMethodName        = "/xkms.v1.KeystoreService/RemoveClusterReplica"
 	KeystoreService_PasswordAdd_FullMethodName                 = "/xkms.v1.KeystoreService/PasswordAdd"
 	KeystoreService_PasswordGet_FullMethodName                 = "/xkms.v1.KeystoreService/PasswordGet"
 	KeystoreService_PasswordList_FullMethodName                = "/xkms.v1.KeystoreService/PasswordList"
@@ -466,21 +462,6 @@ type KeystoreServiceClient interface {
 	UpdateTenantEntitlements(ctx context.Context, in *UpdateTenantEntitlementsRequest, opts ...grpc.CallOption) (*UpdateTenantEntitlementsResponse, error)
 	// UpdateTenantQuotas updates a tenant's resource quotas.
 	UpdateTenantQuotas(ctx context.Context, in *UpdateTenantQuotasRequest, opts ...grpc.CallOption) (*UpdateTenantQuotasResponse, error)
-	// GetClusterStatus returns the Raft leadership status for the configured
-	// shard. A standalone (non-clustered) node reports a single-node,
-	// non-clustered status.
-	GetClusterStatus(ctx context.Context, in *emptypb.Empty, opts ...grpc.CallOption) (*ClusterStatusResponse, error)
-	// ListClusterMembers returns the Raft replicas for the configured shard. A
-	// standalone node returns an empty membership set.
-	ListClusterMembers(ctx context.Context, in *emptypb.Empty, opts ...grpc.CallOption) (*ListClusterMembersResponse, error)
-	// AddClusterReplica adds a replica to the configured shard's Raft group.
-	// Privileged: requires the canonical qrdb "admin:add_member" grant. Fails
-	// with FAILED_PRECONDITION on a standalone node.
-	AddClusterReplica(ctx context.Context, in *AddClusterReplicaRequest, opts ...grpc.CallOption) (*ClusterReplicaResponse, error)
-	// RemoveClusterReplica removes a replica from the configured shard's Raft
-	// group. Privileged: requires the canonical qrdb "admin:remove_member"
-	// grant. Fails with FAILED_PRECONDITION on a standalone node.
-	RemoveClusterReplica(ctx context.Context, in *RemoveClusterReplicaRequest, opts ...grpc.CallOption) (*ClusterReplicaResponse, error)
 	// PasswordAdd adds a new password entry to the encrypted store.
 	PasswordAdd(ctx context.Context, in *PasswordAddRequest, opts ...grpc.CallOption) (*PasswordAddResponse, error)
 	// PasswordGet retrieves a password entry by ID or name.
@@ -1741,46 +1722,6 @@ func (c *keystoreServiceClient) UpdateTenantQuotas(ctx context.Context, in *Upda
 	return out, nil
 }
 
-func (c *keystoreServiceClient) GetClusterStatus(ctx context.Context, in *emptypb.Empty, opts ...grpc.CallOption) (*ClusterStatusResponse, error) {
-	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
-	out := new(ClusterStatusResponse)
-	err := c.cc.Invoke(ctx, KeystoreService_GetClusterStatus_FullMethodName, in, out, cOpts...)
-	if err != nil {
-		return nil, err
-	}
-	return out, nil
-}
-
-func (c *keystoreServiceClient) ListClusterMembers(ctx context.Context, in *emptypb.Empty, opts ...grpc.CallOption) (*ListClusterMembersResponse, error) {
-	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
-	out := new(ListClusterMembersResponse)
-	err := c.cc.Invoke(ctx, KeystoreService_ListClusterMembers_FullMethodName, in, out, cOpts...)
-	if err != nil {
-		return nil, err
-	}
-	return out, nil
-}
-
-func (c *keystoreServiceClient) AddClusterReplica(ctx context.Context, in *AddClusterReplicaRequest, opts ...grpc.CallOption) (*ClusterReplicaResponse, error) {
-	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
-	out := new(ClusterReplicaResponse)
-	err := c.cc.Invoke(ctx, KeystoreService_AddClusterReplica_FullMethodName, in, out, cOpts...)
-	if err != nil {
-		return nil, err
-	}
-	return out, nil
-}
-
-func (c *keystoreServiceClient) RemoveClusterReplica(ctx context.Context, in *RemoveClusterReplicaRequest, opts ...grpc.CallOption) (*ClusterReplicaResponse, error) {
-	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
-	out := new(ClusterReplicaResponse)
-	err := c.cc.Invoke(ctx, KeystoreService_RemoveClusterReplica_FullMethodName, in, out, cOpts...)
-	if err != nil {
-		return nil, err
-	}
-	return out, nil
-}
-
 func (c *keystoreServiceClient) PasswordAdd(ctx context.Context, in *PasswordAddRequest, opts ...grpc.CallOption) (*PasswordAddResponse, error) {
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
 	out := new(PasswordAddResponse)
@@ -2470,21 +2411,6 @@ type KeystoreServiceServer interface {
 	UpdateTenantEntitlements(context.Context, *UpdateTenantEntitlementsRequest) (*UpdateTenantEntitlementsResponse, error)
 	// UpdateTenantQuotas updates a tenant's resource quotas.
 	UpdateTenantQuotas(context.Context, *UpdateTenantQuotasRequest) (*UpdateTenantQuotasResponse, error)
-	// GetClusterStatus returns the Raft leadership status for the configured
-	// shard. A standalone (non-clustered) node reports a single-node,
-	// non-clustered status.
-	GetClusterStatus(context.Context, *emptypb.Empty) (*ClusterStatusResponse, error)
-	// ListClusterMembers returns the Raft replicas for the configured shard. A
-	// standalone node returns an empty membership set.
-	ListClusterMembers(context.Context, *emptypb.Empty) (*ListClusterMembersResponse, error)
-	// AddClusterReplica adds a replica to the configured shard's Raft group.
-	// Privileged: requires the canonical qrdb "admin:add_member" grant. Fails
-	// with FAILED_PRECONDITION on a standalone node.
-	AddClusterReplica(context.Context, *AddClusterReplicaRequest) (*ClusterReplicaResponse, error)
-	// RemoveClusterReplica removes a replica from the configured shard's Raft
-	// group. Privileged: requires the canonical qrdb "admin:remove_member"
-	// grant. Fails with FAILED_PRECONDITION on a standalone node.
-	RemoveClusterReplica(context.Context, *RemoveClusterReplicaRequest) (*ClusterReplicaResponse, error)
 	// PasswordAdd adds a new password entry to the encrypted store.
 	PasswordAdd(context.Context, *PasswordAddRequest) (*PasswordAddResponse, error)
 	// PasswordGet retrieves a password entry by ID or name.
@@ -2925,18 +2851,6 @@ func (UnimplementedKeystoreServiceServer) UpdateTenantEntitlements(context.Conte
 }
 func (UnimplementedKeystoreServiceServer) UpdateTenantQuotas(context.Context, *UpdateTenantQuotasRequest) (*UpdateTenantQuotasResponse, error) {
 	return nil, status.Error(codes.Unimplemented, "method UpdateTenantQuotas not implemented")
-}
-func (UnimplementedKeystoreServiceServer) GetClusterStatus(context.Context, *emptypb.Empty) (*ClusterStatusResponse, error) {
-	return nil, status.Error(codes.Unimplemented, "method GetClusterStatus not implemented")
-}
-func (UnimplementedKeystoreServiceServer) ListClusterMembers(context.Context, *emptypb.Empty) (*ListClusterMembersResponse, error) {
-	return nil, status.Error(codes.Unimplemented, "method ListClusterMembers not implemented")
-}
-func (UnimplementedKeystoreServiceServer) AddClusterReplica(context.Context, *AddClusterReplicaRequest) (*ClusterReplicaResponse, error) {
-	return nil, status.Error(codes.Unimplemented, "method AddClusterReplica not implemented")
-}
-func (UnimplementedKeystoreServiceServer) RemoveClusterReplica(context.Context, *RemoveClusterReplicaRequest) (*ClusterReplicaResponse, error) {
-	return nil, status.Error(codes.Unimplemented, "method RemoveClusterReplica not implemented")
 }
 func (UnimplementedKeystoreServiceServer) PasswordAdd(context.Context, *PasswordAddRequest) (*PasswordAddResponse, error) {
 	return nil, status.Error(codes.Unimplemented, "method PasswordAdd not implemented")
@@ -5188,78 +5102,6 @@ func _KeystoreService_UpdateTenantQuotas_Handler(srv interface{}, ctx context.Co
 	return interceptor(ctx, in, info, handler)
 }
 
-func _KeystoreService_GetClusterStatus_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
-	in := new(emptypb.Empty)
-	if err := dec(in); err != nil {
-		return nil, err
-	}
-	if interceptor == nil {
-		return srv.(KeystoreServiceServer).GetClusterStatus(ctx, in)
-	}
-	info := &grpc.UnaryServerInfo{
-		Server:     srv,
-		FullMethod: KeystoreService_GetClusterStatus_FullMethodName,
-	}
-	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
-		return srv.(KeystoreServiceServer).GetClusterStatus(ctx, req.(*emptypb.Empty))
-	}
-	return interceptor(ctx, in, info, handler)
-}
-
-func _KeystoreService_ListClusterMembers_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
-	in := new(emptypb.Empty)
-	if err := dec(in); err != nil {
-		return nil, err
-	}
-	if interceptor == nil {
-		return srv.(KeystoreServiceServer).ListClusterMembers(ctx, in)
-	}
-	info := &grpc.UnaryServerInfo{
-		Server:     srv,
-		FullMethod: KeystoreService_ListClusterMembers_FullMethodName,
-	}
-	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
-		return srv.(KeystoreServiceServer).ListClusterMembers(ctx, req.(*emptypb.Empty))
-	}
-	return interceptor(ctx, in, info, handler)
-}
-
-func _KeystoreService_AddClusterReplica_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
-	in := new(AddClusterReplicaRequest)
-	if err := dec(in); err != nil {
-		return nil, err
-	}
-	if interceptor == nil {
-		return srv.(KeystoreServiceServer).AddClusterReplica(ctx, in)
-	}
-	info := &grpc.UnaryServerInfo{
-		Server:     srv,
-		FullMethod: KeystoreService_AddClusterReplica_FullMethodName,
-	}
-	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
-		return srv.(KeystoreServiceServer).AddClusterReplica(ctx, req.(*AddClusterReplicaRequest))
-	}
-	return interceptor(ctx, in, info, handler)
-}
-
-func _KeystoreService_RemoveClusterReplica_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
-	in := new(RemoveClusterReplicaRequest)
-	if err := dec(in); err != nil {
-		return nil, err
-	}
-	if interceptor == nil {
-		return srv.(KeystoreServiceServer).RemoveClusterReplica(ctx, in)
-	}
-	info := &grpc.UnaryServerInfo{
-		Server:     srv,
-		FullMethod: KeystoreService_RemoveClusterReplica_FullMethodName,
-	}
-	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
-		return srv.(KeystoreServiceServer).RemoveClusterReplica(ctx, req.(*RemoveClusterReplicaRequest))
-	}
-	return interceptor(ctx, in, info, handler)
-}
-
 func _KeystoreService_PasswordAdd_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
 	in := new(PasswordAddRequest)
 	if err := dec(in); err != nil {
@@ -6472,22 +6314,6 @@ var KeystoreService_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "UpdateTenantQuotas",
 			Handler:    _KeystoreService_UpdateTenantQuotas_Handler,
-		},
-		{
-			MethodName: "GetClusterStatus",
-			Handler:    _KeystoreService_GetClusterStatus_Handler,
-		},
-		{
-			MethodName: "ListClusterMembers",
-			Handler:    _KeystoreService_ListClusterMembers_Handler,
-		},
-		{
-			MethodName: "AddClusterReplica",
-			Handler:    _KeystoreService_AddClusterReplica_Handler,
-		},
-		{
-			MethodName: "RemoveClusterReplica",
-			Handler:    _KeystoreService_RemoveClusterReplica_Handler,
 		},
 		{
 			MethodName: "PasswordAdd",

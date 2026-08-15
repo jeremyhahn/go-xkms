@@ -240,6 +240,71 @@ Tests construct a service via `xkms.Initialize()` + `xkms.Get()` in their
 setup helpers and inject it explicitly — the singleton accessor is a
 composition-root convenience, not an API for business logic.
 
+### Unified API Server: the xkms ServiceModule (Phase 3, additive)
+
+Per the unified-API-server plan
+(`plans/unified-api-server-2026-08-14.md`, Software Department), the parallel
+transport stacks above are being superseded by go-qrdb's one multi-protocol
+server, into which capabilities register as `qrdbsdk.ServiceModule`s. The
+stack-wide convention is one module per provider project, named after the
+project (registered names `xkms`, `quicbaas`, ...); each provider re-exports
+its module through its own SDK so hosts embedding a qrdb node compose modules
+without importing provider `pkg/*` (xkms's re-export is
+`sdk/go/apimodule.go`, `xkms.NewServiceModule`).
+`pkg/apimodule.Module` is xkms's module: it carries the wholesale
+`KeystoreService` gRPC surface (the same `pb.KeystoreServiceServer` every
+legacy transport drives) and is registered into xkmsd's embedded qrdb node via
+`qrdbsdk.WithModule` in `pkg/server/qrdb_node.go`. On that server,
+per-method authorization comes from the `option (qrdb.v1.permission)`
+annotation each RPC now carries in `pkg/api/grpc/proto/xkmsv1/xkms.proto`
+(enforced default-deny by qrdb's reflection interceptor;
+`pkg/api/grpc/authz_proto_option_test.go` locks the annotations to the golden
+gate table), so the module's in-handler authorizer is constructed
+nil-with-local-trust exactly like the Unix listener's. Because the node is
+built before the `XKMSService` is composed, the module binds the service
+lazily on first RPC (answering `Unavailable` until composition completes).
+
+The module now carries all three unified-server surfaces:
+
+- **gRPC** — the wholesale `KeystoreService` (above).
+- **HTTP** — `RegisterHTTP` registers the complete REST route table
+  (`pkg/api/rest/routes.go`, the same `Routes()` the legacy chi router
+  serves) through qrdb's permission-recording registrar: public routes via
+  `HandlePublic`, authenticated-session routes under the `identity:gated`
+  sentinel, permission routes under their `resource:action`. Handlers
+  late-bind through `pkg/server.ModuleRESTServer()` (the running legacy
+  REST server, or a lazily built non-listening instance from the identical
+  `buildRESTConfig`); routes answer 503 until composition and 501 when the
+  backing subsystem is absent. Group middleware (authentication, tenant
+  enforcement, login rate limiting) is reapplied per route via
+  `rest.BindRoute`, so handler context contracts hold until Phase 5
+  unifies the authentication plane.
+- **MCP** — `RegisterMCP` registers every xkms JSON-RPC method
+  (`pkg/api/mcp.ModuleMethods()`, including the frost namespace) as a real
+  mcp-go tool (`xkms_*`) whose single `params_json` argument carries the
+  method's params verbatim; dispatch runs `mcp.Server.InvokeMethod` — the
+  same tenant and authorization gates as the wire path — resolved lazily
+  via `pkg/server.ModuleMCPServer()`. At go-qrdb v0.3.0-alpha module tools
+  are fail-closed under qrdb's auth middleware until qrdb exports a module
+  tool-permission registry hook.
+
+**Network serving IS the unified server (Phase 4 complete)**: enabling any
+network protocol (`rest`, `grpc`, `quic`, `mcp`) requires
+`storage.backend: qrdb` and `tls.enabled: true` — the embedded qrdb node's
+multi-protocol server takes xkmsd's ports and serves the capability plane
+through the module; the legacy per-transport network listeners (and the
+whole legacy QUIC server package) are deleted. QUIC is HTTP/3 on the REST
+port (the unified REST server runs an HTTP/3 listener alongside TCP and
+advertises it via `Alt-Svc`), so the xkms QUIC client works against the
+REST port unchanged. TLS material: operator `cert_file`/`key_file` if
+configured, otherwise a persisted node-local bootstrap certificate serves
+from first boot and is replaced in-place by the CA-issued certificate once
+the CA composes (`pkg/server/unified_tls.go`). Local IPC is exempt: the
+Unix socket serves in-process for non-qrdb storage (with qrdb storage the
+node's own UDS serves it), and the desktop loopback engine serves a
+pre-bound injected listener. The embedded web UI registers on the unified
+server as public prefix routes with lazy SPA binding.
+
 ### 2. Configuration Management (`pkg/config/`)
 
 Hierarchical configuration system using Viper:
@@ -428,79 +493,50 @@ service KeystoreService {
 **Protocol:** JSON-RPC 2.0 over TCP or WebSocket
 
 **Transport Layer:**
-- TCP on port 9444 (default)
-- WebSocket upgrade support
-- Newline-delimited JSON
+- Real Model Context Protocol: Streamable HTTP at `https://host:<mcp_port>/mcp`
+  (TLS-only, mTLS-peer authenticated), served by the unified API server
+- Every xkms operation is an MCP tool named `xkms_` + the method with dots
+  replaced by underscores; one optional string argument `params_json`
+  carries the method's params object verbatim
 
-**Methods:**
+**Tool calls (MCP `tools/call`):**
 
 ```json
 // Health Check
-{"jsonrpc": "2.0", "method": "health", "id": 1}
+{"name": "xkms_health"}
 
 // List Backends
-{"jsonrpc": "2.0", "method": "xkms.listBackends", "id": 2}
+{"name": "xkms_listBackends"}
 
 // Generate Key
 {
-  "jsonrpc": "2.0",
-  "method": "xkms.generateKey",
-  "params": {
-    "key_id": "my-key",
-    "backend": "software",
-    "key_type": "rsa",
-    "key_size": 2048
-  },
-  "id": 3
-}
-
-// Subscribe to Events (notifications)
-{
-  "jsonrpc": "2.0",
-  "method": "xkms.subscribe",
-  "params": {
-    "events": ["key.created", "key.deleted", "key.rotated"]
-  },
-  "id": 4
-}
-```
-
-**Notifications (server-to-client):**
-
-```json
-{
-  "jsonrpc": "2.0",
-  "method": "key.created",
-  "params": {
-    "key_id": "my-key",
-    "backend": "software",
-    "timestamp": "2025-11-05T12:00:00Z"
+  "name": "xkms_generateKey",
+  "arguments": {
+    "params_json": "{\"key_id\":\"my-key\",\"backend\":\"software\",\"key_type\":\"rsa\",\"key_size\":2048}"
   }
 }
 ```
 
-**Features:**
-- Batch request support
-- Server-sent notifications for key events
-- Long-lived connections
-- WebSocket fallback
+The tool result is a text content item containing the method's JSON result;
+tool-level failures return an MCP tool error. Dispatch runs
+`pkg/api/mcp.Server.InvokeMethod` — the same tenant and authorization gates
+as every other transport. There is no subscription/notification plane yet
+(the legacy `xkms.subscribe` stream was removed with the JSON-RPC listener;
+real-MCP notifications are a future design).
 
-### 4. QUIC/HTTP3 (`pkg/api/quic/`)
+### 4. QUIC/HTTP3
 
-**Framework:** `quic-go/quic-go` with HTTP/3 support
-
-**Protocol:** HTTP/3 over QUIC (UDP-based)
+**Protocol:** HTTP/3 over QUIC (UDP-based), served by the unified API
+server's REST listener — there is no separate QUIC server package. When TLS
+is configured the unified REST server runs an HTTP/3 listener on the same
+port as TCP and advertises it via the `Alt-Svc` header.
 
 **Implementation:**
-- Shares REST API routes and handlers
+- Identical routes, handlers, and authorization to REST (it IS the REST
+  surface over HTTP/3)
 - Requires TLS 1.3
 - Benefits: Lower latency, better handling of packet loss
-- Same endpoint structure as REST API
-
-**Differences from REST:**
-- Transport: UDP instead of TCP
-- Protocol: HTTP/3 instead of HTTP/2
-- Multiplexing: Native stream multiplexing without head-of-line blocking
+- The QUIC client transport (`pkg/api/transport/quic`) dials the REST port
 
 ### 5. CLI (`cmd/xkmsctl/`)
 

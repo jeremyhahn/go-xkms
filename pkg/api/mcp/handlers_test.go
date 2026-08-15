@@ -25,7 +25,6 @@ import (
 	"encoding/pem"
 	"github.com/jeremyhahn/go-xkms/pkg/auth"
 	"math/big"
-	"net"
 	"testing"
 	"time"
 
@@ -97,8 +96,8 @@ func TestHandler_ContextPropagation(t *testing.T) {
 	require.True(t, ok)
 	assert.Equal(t, "healthy", healthResult.Status)
 
-	// handleRequest must also not panic when dispatching with a cancelled ctx.
-	resp := server.handleRequest(ctx, req, nil)
+	// InvokeMethod must also not panic when dispatching with a cancelled ctx.
+	resp := invokeRequest(server, ctx, req)
 	require.NotNil(t, resp)
 	assert.Nil(t, resp.Error)
 }
@@ -917,74 +916,6 @@ func TestHandler_RotateKey(t *testing.T) {
 		// an unknown backend must not be served by the default one -- is
 		// unchanged.
 		assert.Contains(t, err.Error(), "backend not found")
-	})
-}
-
-// TestHandler_Subscribe tests the subscribe handler
-func TestHandler_Subscribe(t *testing.T) {
-	server := createTestServer(t)
-	defer cleanupXKMS()
-
-	// Create a mock connection
-	clientConn, serverConn := net.Pipe()
-	defer func() { _ = clientConn.Close() }()
-	defer func() { _ = serverConn.Close() }()
-
-	t.Run("subscribes to events", func(t *testing.T) {
-		params := SubscribeParams{
-			Events: []string{"key.created", "key.deleted"},
-		}
-		paramsJSON, _ := json.Marshal(params)
-
-		req := &JSONRPCRequest{
-			JSONRPC: "2.0",
-			Method:  "xkms.subscribe",
-			Params:  paramsJSON,
-			ID:      1,
-		}
-
-		result, err := server.handleSubscribe(context.Background(), req, serverConn)
-		require.NoError(t, err)
-
-		subResult, ok := result.(map[string]interface{})
-		require.True(t, ok)
-		assert.True(t, subResult["success"].(bool))
-		assert.Equal(t, 2, subResult["total_count"].(int))
-	})
-
-	t.Run("fails with invalid params", func(t *testing.T) {
-		req := &JSONRPCRequest{
-			JSONRPC: "2.0",
-			Method:  "xkms.subscribe",
-			Params:  json.RawMessage(`invalid`),
-			ID:      1,
-		}
-
-		_, err := server.handleSubscribe(context.Background(), req, serverConn)
-		require.Error(t, err)
-		assert.Contains(t, err.Error(), "invalid params")
-	})
-
-	t.Run("adds events to existing subscriber", func(t *testing.T) {
-		params := SubscribeParams{
-			Events: []string{"key.rotated"},
-		}
-		paramsJSON, _ := json.Marshal(params)
-
-		req := &JSONRPCRequest{
-			JSONRPC: "2.0",
-			Method:  "xkms.subscribe",
-			Params:  paramsJSON,
-			ID:      1,
-		}
-
-		result, err := server.handleSubscribe(context.Background(), req, serverConn)
-		require.NoError(t, err)
-
-		subResult, ok := result.(map[string]interface{})
-		require.True(t, ok)
-		assert.True(t, subResult["success"].(bool))
-		assert.Equal(t, 3, subResult["total_count"].(int))
 	})
 }
 

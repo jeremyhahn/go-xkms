@@ -23,7 +23,4 @@ COPY go.mod go.sum ./
 RUN go mod download || true
 
 # Default command runs tests
-# Materialize /tmp/go.work + GOWORK before running the test CMD passed as args.
-ENTRYPOINT ["bash", ".devcontainer/scripts/ensure-gowork.sh"]
-
 CMD ["go", "test", "-v", "-tags=integration codec_cbor codec_json codec_msgpack", "-timeout", "30m", "./test/integration/quantum/..."]

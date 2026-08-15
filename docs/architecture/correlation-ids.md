@@ -94,40 +94,29 @@ ctx := metadata.NewOutgoingContext(ctx, md)
 // Make gRPC call with correlation metadata
 ```
 
-### MCP (JSON-RPC)
+### MCP (Model Context Protocol)
 
-**Implementation**: `pkg/api/mcp/server.go`, `pkg/api/mcp/types.go`
+**Implementation**: `pkg/api/mcp/server.go`, `pkg/api/mcp/types.go` (dispatch core:
+`NewServer` + `InvokeMethod`, backing the `xkms` `qrdbsdk.ServiceModule`); served
+over Streamable HTTP by the embedded qrdb node at `https://host:mcp_port/mcp`.
+Every xkms JSON-RPC method is exposed as an MCP tool named `xkms_<method with
+dots replaced by underscores>` (e.g. `xkms_generateKey`) taking one optional
+`params_json` string argument that carries the method's params object
+verbatim, unwrapped (`pkg/apimodule/module_mcp.go`); `InvokeMethod` is called
+with just the method name and that params payload.
 
-**JSON-RPC Extension**:
-```json
-{
-  "jsonrpc": "2.0",
-  "method": "xkms.generateKey",
-  "params": {...},
-  "id": 1,
-  "correlation_id": "mcp-request-789"
-}
-```
-
-Response includes:
-```json
-{
-  "jsonrpc": "2.0",
-  "result": {...},
-  "id": 1,
-  "correlation_id": "mcp-request-789"
-}
-```
-
-**Features**:
-- Optional field in JSON-RPC requests
-- Generated if not provided
-- Returned in responses
-- Available in all handler contexts
+**Note**: the legacy JSON-RPC envelope's top-level `correlation_id` field
+(described for REST/gRPC below) has no equivalent on this path today --
+`params_json` carries only the method's own params, and `InvokeMethod` does
+not thread a correlation ID through. Per-request tracing for MCP calls, if
+present, comes from the embedded qrdb node's own transport-level logging,
+not from the xkms `pkg/correlation` mechanism described in this document.
 
 ### QUIC (HTTP/3)
 
-**Middleware**: `pkg/api/quic/server.go`
+QUIC is HTTP/3 served on the unified REST listener's port (`rest_port`,
+default 8443) — there is no separate QUIC server package or port. It uses the
+same correlation middleware as REST API.
 
 **Header Handling**: Same as REST API
 - Extracts from `X-Correlation-ID` or `X-Request-ID` headers
@@ -138,7 +127,7 @@ Response includes:
 **Example**:
 ```bash
 # Using HTTP/3 client
-curl --http3 -H "X-Correlation-ID: quic-request-abc" https://localhost:8444/api/v1/keys
+curl --http3 -H "X-Correlation-ID: quic-request-abc" https://localhost:8443/api/v1/keys
 ```
 
 ## Header and Metadata Standards
@@ -151,8 +140,9 @@ curl --http3 -H "X-Correlation-ID: quic-request-abc" https://localhost:8444/api/
 - `x-correlation-id` (lowercase, primary)
 - `x-request-id` (lowercase, fallback)
 
-### JSON-RPC Field
-- `correlation_id` (snake_case)
+### MCP
+- No dedicated correlation field on the real MCP tool path today (see the
+  MCP section above)
 
 ## Log Format
 

@@ -1011,7 +1011,7 @@ func TestCLICompleteServerFlagFormats(t *testing.T) {
 		{"https", "https://localhost:8443"},
 		{"grpc", "grpc://localhost:9443"},
 		{"grpcs", "grpcs://localhost:9443"},
-		{"quic", "quic://localhost:8444"},
+		{"quic", "quic://localhost:8443"},
 	}
 
 	for _, f := range formats {

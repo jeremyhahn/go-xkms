@@ -1488,7 +1488,7 @@ func (t *Transport) IssueEKCertificate(ctx context.Context, req *transport.Issue
 		body["tenant_id"] = req.TenantID
 	}
 
-	data, err := t.doRawRequest(ctx, http.MethodPost, "/api/v1/tcg-ca/issue-ek-cert", body)
+	data, err := t.doRawRequest(ctx, http.MethodPost, "/api/v1/ca/tcg/ek", body)
 	if err != nil {
 		return nil, err
 	}
@@ -1514,7 +1514,7 @@ func (t *Transport) IssueAKCertificate(ctx context.Context, req *transport.Issue
 		body["tenant_id"] = req.TenantID
 	}
 
-	data, err := t.doRawRequest(ctx, http.MethodPost, "/api/v1/tcg-ca/issue-ak-cert", body)
+	data, err := t.doRawRequest(ctx, http.MethodPost, "/api/v1/ca/tcg/ak", body)
 	if err != nil {
 		return nil, err
 	}
@@ -1540,7 +1540,7 @@ func (t *Transport) SignTCGCSR(ctx context.Context, req *transport.SignTCGCSRReq
 		body["tenant_id"] = req.TenantID
 	}
 
-	data, err := t.doRawRequest(ctx, http.MethodPost, "/api/v1/tcg-ca/sign-tcg-csr", body)
+	data, err := t.doRawRequest(ctx, http.MethodPost, "/api/v1/ca/tcg/sign-csr", body)
 	if err != nil {
 		return nil, err
 	}
@@ -1566,7 +1566,7 @@ func (t *Transport) EnrollDevice(ctx context.Context, req *transport.EnrollDevic
 		body["tenant_id"] = req.TenantID
 	}
 
-	data, err := t.doRawRequest(ctx, http.MethodPost, "/api/v1/tcg-ca/enroll-device", body)
+	data, err := t.doRawRequest(ctx, http.MethodPost, "/api/v1/ca/tcg/enroll", body)
 	if err != nil {
 		return nil, err
 	}
@@ -1587,7 +1587,7 @@ func (t *Transport) ListPIVSlots(ctx context.Context, req *transport.ListPIVSlot
 		return nil, ErrNotConnected
 	}
 
-	path := fmt.Sprintf("/v1/piv/slots?backend=%s", url.QueryEscape(req.Backend))
+	path := fmt.Sprintf("/api/v1/piv/slots?backend=%s", url.QueryEscape(req.Backend))
 	data, err := t.doRawRequest(ctx, http.MethodGet, path, nil)
 	if err != nil {
 		return nil, err
@@ -1607,7 +1607,7 @@ func (t *Transport) GetPIVCertificate(ctx context.Context, req *transport.GetPIV
 		return nil, ErrNotConnected
 	}
 
-	path := fmt.Sprintf("/v1/piv/slots/%s/certificate?backend=%s&format=%s",
+	path := fmt.Sprintf("/api/v1/piv/slots/%s/certificate?backend=%s&format=%s",
 		url.PathEscape(req.Slot), url.QueryEscape(req.Backend), url.QueryEscape(req.Format))
 	data, err := t.doRawRequest(ctx, http.MethodGet, path, nil)
 	if err != nil {
@@ -1628,7 +1628,7 @@ func (t *Transport) StorePIVCertificate(ctx context.Context, req *transport.Stor
 		return ErrNotConnected
 	}
 
-	path := fmt.Sprintf("/v1/piv/slots/%s/certificate", url.PathEscape(req.Slot))
+	path := fmt.Sprintf("/api/v1/piv/slots/%s/certificate", url.PathEscape(req.Slot))
 	_, err := t.doRawRequest(ctx, http.MethodPost, path, req)
 	return err
 }
@@ -1639,7 +1639,7 @@ func (t *Transport) DeletePIVCertificate(ctx context.Context, req *transport.Del
 		return ErrNotConnected
 	}
 
-	path := fmt.Sprintf("/v1/piv/slots/%s/certificate?backend=%s",
+	path := fmt.Sprintf("/api/v1/piv/slots/%s/certificate?backend=%s",
 		url.PathEscape(req.Slot), url.QueryEscape(req.Backend))
 	_, err := t.doRawRequest(ctx, http.MethodDelete, path, nil)
 	return err
@@ -1651,7 +1651,7 @@ func (t *Transport) GeneratePIVKey(ctx context.Context, req *transport.GenerateP
 		return nil, ErrNotConnected
 	}
 
-	path := fmt.Sprintf("/v1/piv/slots/%s/generate", url.PathEscape(req.Slot))
+	path := fmt.Sprintf("/api/v1/piv/slots/%s/generate", url.PathEscape(req.Slot))
 	data, err := t.doRawRequest(ctx, http.MethodPost, path, req)
 	if err != nil {
 		return nil, err
@@ -1671,7 +1671,7 @@ func (t *Transport) ImportPIVCertificate(ctx context.Context, req *transport.Sto
 		return ErrNotConnected
 	}
 
-	path := fmt.Sprintf("/v1/piv/slots/%s/import", url.PathEscape(req.Slot))
+	path := fmt.Sprintf("/api/v1/piv/slots/%s/import", url.PathEscape(req.Slot))
 	_, err := t.doRawRequest(ctx, http.MethodPost, path, req)
 	return err
 }
@@ -1682,7 +1682,7 @@ func (t *Transport) ExportPIVCertificate(ctx context.Context, req *transport.Get
 		return nil, ErrNotConnected
 	}
 
-	path := fmt.Sprintf("/v1/piv/slots/%s/export?backend=%s&format=%s",
+	path := fmt.Sprintf("/api/v1/piv/slots/%s/export?backend=%s&format=%s",
 		url.PathEscape(req.Slot), url.QueryEscape(req.Backend), url.QueryEscape(req.Format))
 	data, err := t.doRawRequest(ctx, http.MethodGet, path, nil)
 	if err != nil {
@@ -1703,7 +1703,7 @@ func (t *Transport) GeneratePIVCSR(ctx context.Context, req *transport.GenerateP
 		return nil, ErrNotConnected
 	}
 
-	path := fmt.Sprintf("/v1/piv/slots/%s/csr", url.PathEscape(req.Slot))
+	path := fmt.Sprintf("/api/v1/piv/slots/%s/csr", url.PathEscape(req.Slot))
 	data, err := t.doRawRequest(ctx, http.MethodPost, path, req)
 	if err != nil {
 		return nil, err
@@ -1724,7 +1724,7 @@ func (t *Transport) BarrierInitialize(ctx context.Context, req *transport.Barrie
 	if !t.connected {
 		return ErrNotConnected
 	}
-	_, err := t.doRawRequest(ctx, http.MethodPost, "/v1/barrier/initialize", req)
+	_, err := t.doRawRequest(ctx, http.MethodPost, "/api/v1/barrier/initialize", req)
 	return err
 }
 
@@ -1733,7 +1733,7 @@ func (t *Transport) BarrierUnseal(ctx context.Context, req *transport.BarrierUns
 	if !t.connected {
 		return ErrNotConnected
 	}
-	_, err := t.doRawRequest(ctx, http.MethodPost, "/v1/barrier/unseal", req)
+	_, err := t.doRawRequest(ctx, http.MethodPost, "/api/v1/barrier/unseal", req)
 	return err
 }
 
@@ -1742,7 +1742,7 @@ func (t *Transport) BarrierSeal(ctx context.Context) error {
 	if !t.connected {
 		return ErrNotConnected
 	}
-	_, err := t.doRawRequest(ctx, http.MethodPost, "/v1/barrier/seal", nil)
+	_, err := t.doRawRequest(ctx, http.MethodPost, "/api/v1/barrier/seal", nil)
 	return err
 }
 
@@ -1752,7 +1752,7 @@ func (t *Transport) BarrierStatus(ctx context.Context) (*transport.BarrierStatus
 		return nil, ErrNotConnected
 	}
 
-	data, err := t.doRawRequest(ctx, http.MethodGet, "/v1/barrier/status", nil)
+	data, err := t.doRawRequest(ctx, http.MethodGet, "/api/v1/barrier/status", nil)
 	if err != nil {
 		return nil, err
 	}
@@ -1770,7 +1770,7 @@ func (t *Transport) BarrierInitializeShamir(ctx context.Context, req *transport.
 	if !t.connected {
 		return nil, ErrNotConnected
 	}
-	data, err := t.doRawRequest(ctx, http.MethodPost, "/v1/barrier/initialize-shamir", req)
+	data, err := t.doRawRequest(ctx, http.MethodPost, "/api/v1/barrier/shamir/initialize", req)
 	if err != nil {
 		return nil, err
 	}
@@ -1786,7 +1786,7 @@ func (t *Transport) BarrierUnsealWithShare(ctx context.Context, req *transport.B
 	if !t.connected {
 		return nil, ErrNotConnected
 	}
-	data, err := t.doRawRequest(ctx, http.MethodPost, "/v1/barrier/unseal-share", req)
+	data, err := t.doRawRequest(ctx, http.MethodPost, "/api/v1/barrier/shamir/unseal-share", req)
 	if err != nil {
 		return nil, err
 	}
@@ -1802,7 +1802,7 @@ func (t *Transport) BarrierUnsealWithShares(ctx context.Context, req *transport.
 	if !t.connected {
 		return ErrNotConnected
 	}
-	_, err := t.doRawRequest(ctx, http.MethodPost, "/v1/barrier/unseal-shares", req)
+	_, err := t.doRawRequest(ctx, http.MethodPost, "/api/v1/barrier/shamir/unseal-shares", req)
 	return err
 }
 
@@ -1811,7 +1811,7 @@ func (t *Transport) BarrierRekey(ctx context.Context, req *transport.BarrierReke
 	if !t.connected {
 		return nil, ErrNotConnected
 	}
-	data, err := t.doRawRequest(ctx, http.MethodPost, "/v1/barrier/rekey", req)
+	data, err := t.doRawRequest(ctx, http.MethodPost, "/api/v1/barrier/rekey", req)
 	if err != nil {
 		return nil, err
 	}
@@ -1827,7 +1827,7 @@ func (t *Transport) BarrierGenerateRecoveryKeys(ctx context.Context, req *transp
 	if !t.connected {
 		return nil, ErrNotConnected
 	}
-	data, err := t.doRawRequest(ctx, http.MethodPost, "/v1/barrier/recovery-keys/generate", req)
+	data, err := t.doRawRequest(ctx, http.MethodPost, "/api/v1/barrier/recovery/generate", req)
 	if err != nil {
 		return nil, err
 	}
@@ -1844,7 +1844,7 @@ func (t *Transport) BarrierEnableEncryption(ctx context.Context, req *transport.
 	if !t.connected {
 		return nil, ErrNotConnected
 	}
-	data, err := t.doRawRequest(ctx, http.MethodPost, "/v1/barrier/enable-encryption", req)
+	data, err := t.doRawRequest(ctx, http.MethodPost, "/api/v1/barrier/enable-encryption", req)
 	if err != nil {
 		return nil, err
 	}
@@ -1860,7 +1860,7 @@ func (t *Transport) BarrierRecoverWithKeys(ctx context.Context, req *transport.B
 	if !t.connected {
 		return ErrNotConnected
 	}
-	_, err := t.doRawRequest(ctx, http.MethodPost, "/v1/barrier/recovery-keys/recover", req)
+	_, err := t.doRawRequest(ctx, http.MethodPost, "/api/v1/barrier/recovery/recover", req)
 	return err
 }
 
@@ -1869,7 +1869,7 @@ func (t *Transport) BarrierDeleteRecoveryKeys(ctx context.Context) error {
 	if !t.connected {
 		return ErrNotConnected
 	}
-	_, err := t.doRawRequest(ctx, http.MethodDelete, "/v1/barrier/recovery-keys", nil)
+	_, err := t.doRawRequest(ctx, http.MethodDelete, "/api/v1/barrier/recovery/keys", nil)
 	return err
 }
 
@@ -1878,7 +1878,7 @@ func (t *Transport) BarrierHasRecoveryKeys(ctx context.Context) (*transport.Barr
 	if !t.connected {
 		return nil, ErrNotConnected
 	}
-	data, err := t.doRawRequest(ctx, http.MethodGet, "/v1/barrier/recovery-keys", nil)
+	data, err := t.doRawRequest(ctx, http.MethodGet, "/api/v1/barrier/recovery/keys", nil)
 	if err != nil {
 		return nil, err
 	}
@@ -1895,7 +1895,7 @@ func (t *Transport) BarrierGenerateRootToken(ctx context.Context, req *transport
 	if !t.connected {
 		return nil, ErrNotConnected
 	}
-	data, err := t.doRawRequest(ctx, http.MethodPost, "/v1/barrier/root-token", req)
+	data, err := t.doRawRequest(ctx, http.MethodPost, "/api/v1/barrier/recovery/root-token", req)
 	if err != nil {
 		return nil, err
 	}
@@ -1913,7 +1913,7 @@ func (t *Transport) SetSOPIN(ctx context.Context, req *transport.SetSOPINRequest
 	if !t.connected {
 		return ErrNotConnected
 	}
-	_, err := t.doRawRequest(ctx, http.MethodPost, "/v1/pin/so-pin", req)
+	_, err := t.doRawRequest(ctx, http.MethodPost, "/api/v1/pin/so/set", req)
 	return err
 }
 
@@ -1922,7 +1922,7 @@ func (t *Transport) SetUserPIN(ctx context.Context, req *transport.SetUserPINReq
 	if !t.connected {
 		return ErrNotConnected
 	}
-	_, err := t.doRawRequest(ctx, http.MethodPost, "/v1/pin/user-pin", req)
+	_, err := t.doRawRequest(ctx, http.MethodPost, "/api/v1/pin/user/set", req)
 	return err
 }
 
@@ -1931,7 +1931,7 @@ func (t *Transport) ChangeSOPIN(ctx context.Context, req *transport.ChangeSOPINR
 	if !t.connected {
 		return ErrNotConnected
 	}
-	_, err := t.doRawRequest(ctx, http.MethodPost, "/v1/pin/so-pin/change", req)
+	_, err := t.doRawRequest(ctx, http.MethodPost, "/api/v1/pin/so/change", req)
 	return err
 }
 
@@ -1940,7 +1940,7 @@ func (t *Transport) ChangeUserPIN(ctx context.Context, req *transport.ChangeUser
 	if !t.connected {
 		return ErrNotConnected
 	}
-	_, err := t.doRawRequest(ctx, http.MethodPost, "/v1/pin/user-pin/change", req)
+	_, err := t.doRawRequest(ctx, http.MethodPost, "/api/v1/pin/user/change", req)
 	return err
 }
 
@@ -1949,7 +1949,7 @@ func (t *Transport) VerifySOPIN(ctx context.Context, req *transport.VerifySOPINR
 	if !t.connected {
 		return ErrNotConnected
 	}
-	_, err := t.doRawRequest(ctx, http.MethodPost, "/v1/pin/so-pin/verify", req)
+	_, err := t.doRawRequest(ctx, http.MethodPost, "/api/v1/pin/so/verify", req)
 	return err
 }
 
@@ -1958,7 +1958,7 @@ func (t *Transport) VerifyUserPIN(ctx context.Context, req *transport.VerifyUser
 	if !t.connected {
 		return ErrNotConnected
 	}
-	_, err := t.doRawRequest(ctx, http.MethodPost, "/v1/pin/user-pin/verify", req)
+	_, err := t.doRawRequest(ctx, http.MethodPost, "/api/v1/pin/user/verify", req)
 	return err
 }
 
@@ -1968,7 +1968,7 @@ func (t *Transport) GetLockoutStatus(ctx context.Context) (*transport.LockoutSta
 		return nil, ErrNotConnected
 	}
 
-	data, err := t.doRawRequest(ctx, http.MethodGet, "/v1/pin/lockout", nil)
+	data, err := t.doRawRequest(ctx, http.MethodGet, "/api/v1/pin/lockout", nil)
 	if err != nil {
 		return nil, err
 	}
@@ -1986,7 +1986,7 @@ func (t *Transport) ResetLockout(ctx context.Context, req *transport.ResetLockou
 	if !t.connected {
 		return ErrNotConnected
 	}
-	_, err := t.doRawRequest(ctx, http.MethodPost, "/v1/pin/lockout/reset", req)
+	_, err := t.doRawRequest(ctx, http.MethodPost, "/api/v1/pin/lockout/reset", req)
 	return err
 }
 

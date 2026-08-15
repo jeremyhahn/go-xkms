@@ -41,21 +41,3 @@ func TestErrUnknownRole_Error(t *testing.T) {
 	err := &ErrUnknownRole{Role: "superadmin"}
 	assert.Equal(t, `keystore: unknown role "superadmin"`, err.Error())
 }
-
-func TestClusterStatusError_ErrorAndUnwrap(t *testing.T) {
-	inner := errors.New("shard leader lookup timed out")
-	err := &ClusterStatusError{ShardID: 7, Err: inner}
-
-	assert.Equal(t, "keystore: failed to read cluster status for shard 7: shard leader lookup timed out", err.Error())
-	assert.Same(t, inner, err.Unwrap())
-	assert.ErrorIs(t, err, inner)
-}
-
-func TestClusterMembersError_ErrorAndUnwrap(t *testing.T) {
-	inner := errors.New("membership snapshot unavailable")
-	err := &ClusterMembersError{ShardID: 3, Err: inner}
-
-	assert.Equal(t, "keystore: failed to read cluster members for shard 3: membership snapshot unavailable", err.Error())
-	assert.Same(t, inner, err.Unwrap())
-	assert.ErrorIs(t, err, inner)
-}

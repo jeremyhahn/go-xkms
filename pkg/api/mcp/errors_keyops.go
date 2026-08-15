@@ -20,7 +20,7 @@ import (
 )
 
 // KeyOpError carries a JSON-RPC error code alongside the underlying error
-// returned by the xkms service layer. handleRequest unwraps it via errors.As
+// returned by the xkms service layer. InvokeMethod unwraps it via errors.As
 // to select the wire-level code instead of collapsing every handler failure
 // to ErrCodeInternalError, so a capability boundary (a backend that cannot
 // attest, or cannot export) is distinguishable from an actual server fault.
@@ -62,7 +62,7 @@ var keyOpSentinelCodes = []struct {
 }
 
 // mapKeyOpError converts an error returned by the xkms service layer into a
-// *KeyOpError carrying the JSON-RPC error code handleRequest should report.
+// *KeyOpError carrying the JSON-RPC error code InvokeMethod should report.
 // Validation failures and unresolved participants (a named backend or key
 // that could not be found) become Invalid params, since JSON-RPC has no
 // dedicated NotFound code; a backend that lacks the requested hardware

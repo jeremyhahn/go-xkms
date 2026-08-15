@@ -63,9 +63,8 @@ func leaderAPIAddressFromError(err error) (string, bool) {
 }
 
 // notLeaderInterceptor implements the transparent leader redirect: it is
-// installed on every unary call this Transport makes (see Connect), so any
-// clustered write -- not just AddClusterReplica/RemoveClusterReplica -- gets
-// the same behavior for free. When an RPC fails with a NOT_LEADER
+// installed on every unary call this Transport makes (see Connect), so every
+// clustered write gets the same behavior for free. When an RPC fails with a NOT_LEADER
 // precondition carrying a resolvable leader_api_address, this dials that
 // address EXACTLY ONCE, using the identical transport credentials this
 // Transport was configured with (t.credsOpt -- the same TLS/mTLS material the

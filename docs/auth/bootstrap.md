@@ -288,11 +288,14 @@ REST (`pkg/api/rest/server.go:830`):
 | POST | `/api/v1/init/claim-cert/complete` |
 | POST | `/api/v1/init/claim-share` |
 
-QUIC (`pkg/api/quic/server.go:295`) mounts the same four plus
-`/api/v1/init/sign-csr`. MCP exposes them as JSON-RPC methods
-`init.getStatus`, `init.claimCertBegin`, `init.claimCertComplete`,
-`init.claimShare`, `init.signCSR` (`pkg/api/mcp/server.go:509`). gRPC does
-**not** implement the ceremony — its transport returns `ErrNotSupported`
+QUIC is HTTP/3 served on the same unified REST listener (there is no
+separate QUIC server package), so it automatically mounts the same four
+routes plus the permission-gated `/api/v1/init/sign-csr`
+(`pkg/api/rest/routes.go:312`). MCP exposes them as `xkms_init_*` tools
+backing the same JSON-RPC methods, `init.getStatus`, `init.claimCertBegin`,
+`init.claimCertComplete`, `init.claimShare`, `init.signCSR`
+(`pkg/api/mcp/server.go:509`). gRPC does **not** implement the ceremony —
+its transport returns `ErrNotSupported`
 (`pkg/api/transport/grpc/transport.go:2247`).
 
 Request/response shapes are the canonical types in
@@ -344,7 +347,9 @@ of its subcommands do not currently match the server contract:
   (`cmd/xkmsctl/init.go:343`), but the server verifies the signature against
   the public key in the officer's CSR, and it reads `cert_pem`, not the
   `certificate` field the CLI decodes.
-- `sign-csr` posts to `/api/v1/init/sign-csr`, which only QUIC and MCP mount.
+- `sign-csr` posts to `/api/v1/init/sign-csr`, which is permission-gated (not
+  in the anonymous ceremony allowlist), so it is reachable over REST/QUIC and
+  MCP but requires an authenticated, authorized caller.
 
 Drive the documented endpoints directly until the CLI is reconciled with the
 server contract.

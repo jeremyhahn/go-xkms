@@ -1,0 +1,181 @@
+// Copyright (c) 2025 Jeremy Hahn
+// Copyright (c) 2025 Automate The Things, LLC
+//
+// This file is part of go-xkms.
+//
+// go-xkms is dual-licensed:
+//
+// 1. GNU Affero General Public License v3.0 (AGPL-3.0)
+//    See LICENSE file or visit https://www.gnu.org/licenses/agpl-3.0.html
+//
+// 2. Commercial License
+//    Contact licensing@automatethethings.com for commercial licensing options.
+
+package apimodule
+
+import (
+	"net/http"
+	"sync/atomic"
+
+	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
+
+	"github.com/jeremyhahn/go-xkms/pkg/api/rest"
+)
+
+// identityGatedPermission is go-qrdb's identity-gated sentinel:
+// authentication is required but authorization is deferred to the handler.
+const identityGatedPermission = qrdbsdk.PermissionIdentityGated
+
+// RESTResolver returns the *rest.Server whose handler surface backs the
+// module's HTTP routes, or nil while the host is still composing it. It is
+// a resolver for the same construction-order reason as ServiceResolver:
+// RegisterHTTP fires during embedded-node construction, long before the
+// REST wiring exists.
+type RESTResolver func() *rest.Server
+
+// WithWebUI registers the embedded web UI on the unified server under
+// uiPrefix (a normalized mount prefix, e.g. "/ui"). The SPA is public by
+// design (a login page must render before authentication) and late-binds
+// through the REST resolver like every other route. redirectRoot also
+// registers GET / as a redirect to the prefix.
+func WithWebUI(uiPrefix string, redirectRoot bool) Option {
+	return func(m *Module) {
+		m.uiPrefix = uiPrefix
+		m.uiRedirectRoot = redirectRoot
+	}
+}
+
+// WithRESTServer wires the REST surface resolver consumed by RegisterHTTP.
+// Without it the module registers no HTTP routes.
+func WithRESTServer(resolve RESTResolver) Option {
+	return func(m *Module) {
+		m.resolveREST = resolve
+	}
+}
+
+// RegisterHTTP registers the full xkms REST surface (pkg/api/rest Routes(),
+// the same table the legacy router serves) onto the unified server's
+// permission-recording registrar:
+//
+//   - public routes register via HandlePublic;
+//   - authenticated-session routes register under the identity-gated
+//     sentinel (auth required, authorization deferred to the handler);
+//   - permission routes register under their resource:action permission,
+//     enforced by qrdb's authorization layer.
+//
+// Handlers late-bind through the resolver exactly like the gRPC surface:
+// until the REST wiring composes, every route answers 503. A route whose
+// backing subsystem is not configured on the resolved server answers 501.
+// Routes that appear more than once in the table (availability variants,
+// e.g. the CA bundle endpoint's full-CA and bootstrap-only forms) register
+// once, choosing the enabled variant at request time.
+func (m *Module) RegisterHTTP(r *qrdbsdk.ModuleHTTPRegistrar) {
+	if m.resolveREST == nil {
+		return
+	}
+
+	type routeKey struct{ method, pattern string }
+	variants := map[routeKey][]rest.RouteSpec{}
+	var order []routeKey
+	for _, spec := range rest.Routes() {
+		key := routeKey{spec.Method, spec.Pattern}
+		if _, seen := variants[key]; !seen {
+			order = append(order, key)
+		}
+		variants[key] = append(variants[key], spec)
+	}
+
+	for _, key := range order {
+		specs := variants[key]
+		lead := specs[0]
+		h := m.lazyHTTPHandler(specs)
+		switch lead.Auth {
+		case rest.RouteAuthPublic:
+			r.HandlePublic(lead.Method, lead.Pattern, h)
+		case rest.RouteAuthSession:
+			r.Handle(lead.Method, lead.Pattern, identityGatedPermission, h)
+		default:
+			r.Handle(lead.Method, lead.Pattern,
+				qrdbsdk.Permission(lead.Resource+":"+lead.Action), h)
+		}
+	}
+
+	// Embedded web UI: the SPA is public by design (the login page renders
+	// before authentication) and late-binds through the REST resolver.
+	if m.uiPrefix != "" {
+		ui := m.lazyUIHandler()
+		r.HandlePublic("GET", m.uiPrefix, ui)
+		r.HandlePublic("GET", m.uiPrefix+"/*", ui)
+		if m.uiRedirectRoot {
+			prefix := m.uiPrefix
+			r.HandlePublic("GET", "/", func(w http.ResponseWriter, req *http.Request) {
+				http.Redirect(w, req, prefix, http.StatusFound)
+			})
+		}
+	}
+}
+
+// lazyUIHandler resolves the REST server's embedded web UI handler on first
+// use, memoizing it once available. 503 while the host composes; 404 when
+// the resolved server has no UI configured.
+func (m *Module) lazyUIHandler() http.HandlerFunc {
+	var bound atomic.Pointer[http.Handler]
+	return func(w http.ResponseWriter, req *http.Request) {
+		if h := bound.Load(); h != nil {
+			(*h).ServeHTTP(w, req)
+			return
+		}
+		srv := m.resolveREST()
+		if srv == nil {
+			http.Error(w, "xkms web ui is not yet available (server still composing)",
+				http.StatusServiceUnavailable)
+			return
+		}
+		h, _, _, ok := srv.UIHandler()
+		if !ok {
+			http.NotFound(w, req)
+			return
+		}
+		if !bound.CompareAndSwap(nil, &h) {
+			h = *bound.Load()
+		}
+		h.ServeHTTP(w, req)
+	}
+}
+
+// lazyHTTPHandler returns a handler that resolves the REST surface on first
+// use, memoizing the bound handler chain (group middleware + handler) once
+// the enabled variant is known. Lock-free: concurrent first calls may both
+// bind, and the CompareAndSwap keeps exactly one.
+func (m *Module) lazyHTTPHandler(specs []rest.RouteSpec) http.HandlerFunc {
+	var bound atomic.Pointer[http.Handler]
+	return func(w http.ResponseWriter, req *http.Request) {
+		if h := bound.Load(); h != nil {
+			(*h).ServeHTTP(w, req)
+			return
+		}
+		srv := m.resolveREST()
+		if srv == nil {
+			http.Error(w, "xkms rest surface is not yet available (server still composing)",
+				http.StatusServiceUnavailable)
+			return
+		}
+		var chosen *rest.RouteSpec
+		for i := range specs {
+			if srv.RouteEnabled(specs[i]) {
+				chosen = &specs[i]
+				break
+			}
+		}
+		if chosen == nil {
+			http.Error(w, "xkms subsystem for this route is not configured on this server",
+				http.StatusNotImplemented)
+			return
+		}
+		h := srv.BindRoute(*chosen)
+		if !bound.CompareAndSwap(nil, &h) {
+			h = *bound.Load()
+		}
+		h.ServeHTTP(w, req)
+	}
+}

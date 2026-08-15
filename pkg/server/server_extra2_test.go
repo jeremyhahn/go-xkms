@@ -473,48 +473,6 @@ func TestServer_Start_WithUnixSocket(t *testing.T) {
 }
 
 // ============================================================================
-// Tests — startGRPC with an occupied port (listener bind error branch)
-// ============================================================================
-
-func TestServer_StartGRPC_BindError(t *testing.T) {
-	xkms.Reset()
-	defer xkms.Reset()
-
-	// Pre-occupy a port so gRPC listener fails.
-	ln, err := net.Listen("tcp", "127.0.0.1:0")
-	require.NoError(t, err)
-	defer ln.Close()
-	occupiedPort := ln.Addr().(*net.TCPAddr).Port
-
-	cfg := createMinimalConfig(t)
-	cfg.Server.GRPCPort = occupiedPort
-	cfg.Protocols.GRPC = false // don't start in Start(); call directly
-	cfg.Protocols.Unix = false
-	cfg.Protocols.REST = false
-	cfg.Protocols.QUIC = false
-	cfg.Protocols.MCP = false
-	cfg.Metrics.Enabled = false
-
-	server, err := New(cfg)
-	require.NoError(t, err)
-	defer func() { _ = server.Shutdown() }()
-
-	// startGRPC returns quickly because the bind fails.
-	server.wg.Add(1)
-	done := make(chan struct{})
-	go func() {
-		server.startGRPC()
-		close(done)
-	}()
-
-	select {
-	case <-done:
-	case <-time.After(2 * time.Second):
-		t.Fatal("startGRPC did not return on bind error")
-	}
-}
-
-// ============================================================================
 // Tests — Shutdown with audit logger / qrdb node closure paths
 // ============================================================================
 
@@ -708,43 +666,6 @@ func TestInitializeCA_NilConfig(t *testing.T) {
 	err := s.initializeCA()
 	require.NoError(t, err)
 	assert.Nil(t, s.ca)
-}
-
-// ============================================================================
-// Tests — startMCP early-return: no default keystore
-// ============================================================================
-
-func TestServer_StartMCP_NoKeystore(t *testing.T) {
-	xkms.Reset()
-	defer xkms.Reset()
-
-	cfg := createMinimalConfig(t)
-	cfg.Protocols.MCP = false
-	cfg.Protocols.Unix = false
-	cfg.Protocols.REST = false
-	cfg.Protocols.GRPC = false
-	cfg.Protocols.QUIC = false
-	cfg.Metrics.Enabled = false
-
-	server, err := New(cfg)
-	require.NoError(t, err)
-	defer func() { _ = server.Shutdown() }()
-
-	// Remove all backends so startMCP returns early.
-	server.backends = map[string]xkms.Backend{}
-
-	server.wg.Add(1)
-	done := make(chan struct{})
-	go func() {
-		server.startMCP()
-		close(done)
-	}()
-
-	select {
-	case <-done:
-	case <-time.After(2 * time.Second):
-		t.Fatal("startMCP did not return when no keystore available")
-	}
 }
 
 // ============================================================================
@@ -2084,43 +2005,6 @@ func TestServer_StartREST_TLSBuildError(t *testing.T) {
 }
 
 // ============================================================================
-// Tests — startQUIC no keystore path
-// ============================================================================
-
-func TestServer_StartQUIC_NoKeystore(t *testing.T) {
-	xkms.Reset()
-	defer xkms.Reset()
-
-	cfg := createMinimalConfig(t)
-	cfg.Protocols.Unix = false
-	cfg.Protocols.REST = false
-	cfg.Protocols.GRPC = false
-	cfg.Protocols.QUIC = false // call startQUIC directly
-	cfg.Protocols.MCP = false
-	cfg.Metrics.Enabled = false
-
-	server, err := New(cfg)
-	require.NoError(t, err)
-	defer func() { _ = server.Shutdown() }()
-
-	// Remove all backends so startQUIC returns early (no keystore available).
-	server.backends = map[string]xkms.Backend{}
-
-	server.wg.Add(1)
-	done := make(chan struct{})
-	go func() {
-		server.startQUIC()
-		close(done)
-	}()
-
-	select {
-	case <-done:
-	case <-time.After(2 * time.Second):
-		t.Fatal("startQUIC did not return when no keystore available")
-	}
-}
-
-// ============================================================================
 // Tests — setupLogger all log levels and formats
 // ============================================================================
 
@@ -2315,52 +2199,6 @@ func TestInitializePINManager_UnknownStrategy(t *testing.T) {
 	require.Error(t, err)
 	var unknownStrategy *ErrUnknownPINStrategy
 	assert.True(t, errors.As(err, &unknownStrategy))
-}
-
-// ============================================================================
-// Tests — startGRPC TLS build error path
-// ============================================================================
-
-// TestServer_StartGRPC_TLSBuildError exercises the branch where TLS is enabled
-// but no cert/key is configured, causing buildTLSConfig to fail.
-func TestServer_StartGRPC_TLSBuildError(t *testing.T) {
-	xkms.Reset()
-	defer xkms.Reset()
-
-	// Allocate a free port so net.Listen succeeds and the test reaches the TLS
-	// config build failure branch rather than the listen-error branch.
-	freeLn, err := net.Listen("tcp", "127.0.0.1:0")
-	require.NoError(t, err)
-	freePort := freeLn.Addr().(*net.TCPAddr).Port
-	freeLn.Close()
-
-	cfg := createMinimalConfig(t)
-	cfg.Server.GRPCPort = freePort
-	cfg.Protocols.Unix = false
-	cfg.Protocols.REST = false
-	cfg.Protocols.QUIC = false
-	cfg.Protocols.MCP = false
-	cfg.Protocols.GRPC = false // call startGRPC directly
-	cfg.Metrics.Enabled = false
-	cfg.TLS.Enabled = true
-	// No CertFile/KeyFile — buildTLSConfig returns ErrNoTLSCertAvailable
-
-	server, err := New(cfg)
-	require.NoError(t, err)
-	defer func() { _ = server.Shutdown() }()
-
-	server.wg.Add(1)
-	done := make(chan struct{})
-	go func() {
-		server.startGRPC()
-		close(done)
-	}()
-
-	select {
-	case <-done:
-	case <-time.After(2 * time.Second):
-		t.Fatal("startGRPC did not return on TLS build failure")
-	}
 }
 
 // ============================================================================
@@ -3487,53 +3325,6 @@ func TestServer_StartREST_NoBackends(t *testing.T) {
 }
 
 // ============================================================================
-// Tests — startGRPC with barrier and PIN set (blocks 132-133)
-// ============================================================================
-
-// TestServer_StartGRPC_WithBarrierAndPIN verifies that startGRPC wires the
-// barrier and PIN manager into grpcinternal when they are set.
-func TestServer_StartGRPC_WithBarrierAndPIN(t *testing.T) {
-	xkms.Reset()
-	defer xkms.Reset()
-
-	cfg := createMinimalConfig(t)
-	cfg.Protocols.GRPC = false // call startGRPC directly
-	cfg.Protocols.Unix = false
-	cfg.Protocols.REST = false
-	cfg.Protocols.QUIC = false
-	cfg.Protocols.MCP = false
-	cfg.Metrics.Enabled = false
-	cfg.Barrier.Enabled = true
-	cfg.Barrier.PreferenceOrder = []string{"software"}
-	cfg.PIN.Enabled = true
-	cfg.PIN.Strategy = "software"
-
-	server, err := New(cfg)
-	require.NoError(t, err)
-
-	// barrier and pinManager are set from New; startGRPC will wire them.
-	require.NotNil(t, server.barrier)
-	require.NotNil(t, server.pinManager)
-
-	server.wg.Add(1)
-	done := make(chan struct{})
-	go func() {
-		server.startGRPC()
-		close(done)
-	}()
-
-	// Give it a moment to start, then shut down.
-	time.Sleep(50 * time.Millisecond)
-	require.NoError(t, server.Shutdown())
-
-	select {
-	case <-done:
-	case <-time.After(3 * time.Second):
-		t.Fatal("startGRPC did not return after Shutdown")
-	}
-}
-
-// ============================================================================
 // Tests — initializeKeyStore with unsupported storage backend (xkms service init
 // path exercised by reaching xkms.Initialize with a populated backends map)
 // ============================================================================
@@ -4055,46 +3846,6 @@ func TestStartUnix_UnknownProtocol(t *testing.T) {
 }
 
 // ============================================================================
-// Tests — startMCP with nil xkmsService (lines 1965-1968)
-// ============================================================================
-
-// TestStartMCP_NilXKMSService verifies that startMCP logs an error and returns
-// when mcp.NewServer fails because xkmsService is nil.
-func TestStartMCP_NilXKMSService(t *testing.T) {
-	xkms.Reset()
-	defer xkms.Reset()
-
-	cfg := createMinimalConfig(t)
-	cfg.Protocols.MCP = false // call startMCP manually
-	cfg.Protocols.Unix = false
-	cfg.Protocols.REST = false
-	cfg.Protocols.GRPC = false
-	cfg.Protocols.QUIC = false
-	cfg.Metrics.Enabled = false
-
-	server, err := New(cfg)
-	require.NoError(t, err)
-	defer func() { _ = server.Shutdown() }()
-
-	// Nil out xkmsService so mcp.NewServer returns ErrXKMSServiceRequired.
-	server.xkmsService = nil
-
-	server.wg.Add(1)
-	done := make(chan struct{})
-	go func() {
-		server.startMCP()
-		close(done)
-	}()
-
-	select {
-	case <-done:
-		// Expected: returns immediately when NewServer fails.
-	case <-time.After(2 * time.Second):
-		t.Fatal("startMCP did not return when xkmsService is nil")
-	}
-}
-
-// ============================================================================
 // Tests — initializeCA backend not available (lines 1405-1408)
 // ============================================================================
 
@@ -4506,103 +4257,6 @@ func TestBuildTLSConfig_CipherSuites(t *testing.T) {
 }
 
 // ============================================================================
-// Tests — startQUIC TLS build error path (lines 2254-2257)
-// ============================================================================
-
-// ============================================================================
-// Tests — startGRPC barrier/pin/barrierRegistry wiring on a free port
-//         (lines 1850-1852, 1853-1855, 1864-1866, 1872-1874)
-// ============================================================================
-
-// TestStartGRPC_BarrierAndRegistryWiring verifies that startGRPC correctly
-// wires barrier, pinManager, barrierRegistry, and credentialService into
-// grpcinternal when they are all set.  The test binds on a kernel-assigned
-// port so there is no port-conflict with other tests.
-func TestStartGRPC_BarrierAndRegistryWiring(t *testing.T) {
-	xkms.Reset()
-	defer xkms.Reset()
-
-	// Grab a free port to avoid conflicts with the fixed-port tests.
-	freeLn, err := net.Listen("tcp", "127.0.0.1:0")
-	require.NoError(t, err)
-	freePort := freeLn.Addr().(*net.TCPAddr).Port
-	require.NoError(t, freeLn.Close())
-
-	cfg := createMinimalConfig(t)
-	cfg.Protocols.GRPC = false // start manually
-	cfg.Protocols.Unix = false
-	cfg.Protocols.REST = false
-	cfg.Protocols.QUIC = false
-	cfg.Protocols.MCP = false
-	cfg.Metrics.Enabled = false
-	cfg.Barrier.Enabled = true
-	cfg.Barrier.PreferenceOrder = []string{"software"}
-	cfg.PIN.Enabled = true
-	cfg.PIN.Strategy = "software"
-	cfg.Server.GRPCPort = freePort
-
-	server, err := New(cfg)
-	require.NoError(t, err)
-
-	require.NotNil(t, server.barrier, "barrier must be set")
-	require.NotNil(t, server.pinManager, "pinManager must be set")
-	require.NotNil(t, server.barrierRegistry, "barrierRegistry must be set")
-
-	server.wg.Add(1)
-	done := make(chan struct{})
-	go func() {
-		server.startGRPC()
-		close(done)
-	}()
-
-	time.Sleep(50 * time.Millisecond)
-	require.NoError(t, server.Shutdown())
-
-	select {
-	case <-done:
-	case <-time.After(5 * time.Second):
-		t.Fatal("startGRPC did not return after Shutdown")
-	}
-}
-
-// TestStartQUIC_TLSBuildError verifies that startQUIC logs an error and returns
-// immediately when buildTLSConfig fails (TLS.CertFile is missing).
-func TestStartQUIC_TLSBuildError(t *testing.T) {
-	xkms.Reset()
-	defer xkms.Reset()
-
-	cfg := createMinimalConfig(t)
-	cfg.Protocols.QUIC = false // call startQUIC manually
-	cfg.Protocols.Unix = false
-	cfg.Protocols.REST = false
-	cfg.Protocols.GRPC = false
-	cfg.Protocols.MCP = false
-	cfg.Metrics.Enabled = false
-	// TLS is enabled but no cert/key so buildTLSConfig returns ErrNoTLSCertAvailable.
-	cfg.TLS.Enabled = true
-	cfg.TLS.CertFile = ""
-	cfg.TLS.KeyFile = ""
-
-	server, err := New(cfg)
-	require.NoError(t, err)
-	defer func() { _ = server.Shutdown() }()
-
-	server.wg.Add(1)
-	done := make(chan struct{})
-	go func() {
-		server.startQUIC()
-		close(done)
-	}()
-
-	select {
-	case <-done:
-		// Expected: returns immediately when TLS build fails.
-	case <-time.After(3 * time.Second):
-		t.Fatal("startQUIC did not return when TLS config fails")
-	}
-}
-
-// ============================================================================
 // Tests — backend_phone.go RegisterPhoneBackend close-existing error (lines 67-69)
 // ============================================================================
 
@@ -4868,57 +4522,6 @@ func TestBuildTLSConfig_KeyAttrsFailFallbackToCertFile(t *testing.T) {
 }
 
 // ============================================================================
-// Tests — startGRPC with CA wired (lines 1880-1882)
-// ============================================================================
-
-// TestStartGRPC_WithCA verifies that startGRPC wires the CA into grpcinternal
-// when s.ca and s.xkmsService are both non-nil (lines 1880-1882).
-func TestStartGRPC_WithCA(t *testing.T) {
-	xkms.Reset()
-	defer xkms.Reset()
-
-	// Grab a free port.
-	freeLn, err := net.Listen("tcp", "127.0.0.1:0")
-	require.NoError(t, err)
-	freePort := freeLn.Addr().(*net.TCPAddr).Port
-	require.NoError(t, freeLn.Close())
-
-	cfg := createMinimalConfig(t)
-	cfg.Protocols.GRPC = false // manual
-	cfg.Protocols.Unix = false
-	cfg.Protocols.REST = false
-	cfg.Protocols.QUIC = false
-	cfg.Protocols.MCP = false
-	cfg.Metrics.Enabled = false
-	cfg.Server.GRPCPort = freePort
-
-	server, err := New(cfg)
-	require.NoError(t, err)
-
-	// Inject a mock CA and ensure xkmsService is non-nil (set by New()).
-	_, caCert := generateSelfSignedCert(t)
-	server.ca = &mockTrustedCA{initialized: true, caCert: caCert}
-	require.NotNil(t, server.xkmsService, "xkmsService must be set by New()")
-
-	server.wg.Add(1)
-	done := make(chan struct{})
-	go func() {
-		server.startGRPC()
-		close(done)
-	}()
-
-	time.Sleep(50 * time.Millisecond)
-	shutErr := server.Shutdown()
-	assert.NoError(t, shutErr)
-
-	select {
-	case <-done:
-	case <-time.After(5 * time.Second):
-		t.Fatal("startGRPC did not return after Shutdown")
-	}
-}
-
-// ============================================================================
 // Tests — startREST with CA wired (lines 1760-1762)
 // ============================================================================
 
@@ -5070,51 +4673,6 @@ func TestInitEmbeddedQRDBNode_AuditSinkError(t *testing.T) {
 	require.Error(t, err)
 	var storageErr *ErrStorageCreate
 	assert.True(t, errors.As(err, &storageErr), "expected ErrStorageCreate, got: %v", err)
-}
-
-// ============================================================================
-// Tests — startQUIC nil xkmsService path (lines 2272-2275)
-// ============================================================================
-
-// TestStartQUIC_NilXKMSService verifies that startQUIC logs an error and returns
-// immediately when XKMSService is nil (quic.NewServer requires a non-nil service).
-func TestStartQUIC_NilXKMSService(t *testing.T) {
-	xkms.Reset()
-	defer xkms.Reset()
-
-	certFile, keyFile, _ := createTestTLSFiles(t)
-
-	cfg := createMinimalConfig(t)
-	cfg.Protocols.QUIC = false // call startQUIC manually
-	cfg.Protocols.Unix = false
-	cfg.Protocols.REST = false
-	cfg.Protocols.GRPC = false
-	cfg.Protocols.MCP = false
-	cfg.Metrics.Enabled = false
-	cfg.TLS.Enabled = true
-	cfg.TLS.CertFile = certFile
-	cfg.TLS.KeyFile = keyFile
-
-	server, err := New(cfg)
-	require.NoError(t, err)
-	defer func() { _ = server.Shutdown() }()
-
-	// Force xkmsService to nil so quic.NewServer returns an error.
-	server.xkmsService = nil
-
-	server.wg.Add(1)
-	done := make(chan struct{})
-	go func() {
-		server.startQUIC()
-		close(done)
-	}()
-
-	select {
-	case <-done:
-		// Expected: startQUIC returns immediately when quic.NewServer fails.
-	case <-time.After(3 * time.Second):
-		t.Fatal("startQUIC did not return when XKMSService is nil")
-	}
 }
 
 // ============================================================================
@@ -5297,108 +4855,4 @@ func TestServer_StartREST_TLSBuildError_FreePort(t *testing.T) {
 	case <-time.After(2 * time.Second):
 		t.Fatal("startREST did not return on TLS build error")
 	}
-}
-
-// ============================================================================
-// Tests — startMCP authorization wiring
-// ============================================================================
-
-// TestStartMCP_RBACEnabledWithoutAuthorizer_FailsClosed proves the composition
-// root cannot start an MCP server that believes it enforces RBAC while no
-// authorizer exists. initializeAuthorization leaves rbacAuthorizer nil when
-// RBAC is enabled without a hosted qrdb identity plane; mcp.NewServer then
-// refuses, and startMCP returns without registering a server.
-func TestStartMCP_RBACEnabledWithoutAuthorizer_FailsClosed(t *testing.T) {
-	xkms.Reset()
-	defer xkms.Reset()
-
-	cfg := createMinimalConfig(t)
-	cfg.Protocols.MCP = false // call startMCP manually
-	cfg.Protocols.Unix = false
-	cfg.Protocols.REST = false
-	cfg.Protocols.GRPC = false
-	cfg.Protocols.QUIC = false
-	cfg.Metrics.Enabled = false
-	cfg.Auth.EnableRBAC = true
-
-	server, err := New(cfg)
-	require.NoError(t, err)
-	defer func() { _ = server.Shutdown() }()
-
-	// No qrdb identity plane: initializeAuthorization leaves this nil.
-	server.rbacAuthorizer = nil
-
-	server.wg.Add(1)
-	done := make(chan struct{})
-	go func() {
-		server.startMCP()
-		close(done)
-	}()
-
-	select {
-	case <-done:
-	case <-time.After(2 * time.Second):
-		t.Fatal("startMCP did not return when RBAC is enabled without an authorizer")
-	}
-
-	server.mu.Lock()
-	mcpSrv := server.mcpServer
-	server.mu.Unlock()
-	assert.Nil(t, mcpSrv, "no MCP server may be started when authorization cannot be enforced")
-}
-
-// ============================================================================
-// Tests — startQUIC authorization wiring
-// ============================================================================
-
-// TestStartQUIC_RBACEnabledWithoutAuthorizer_FailsClosed proves the composition
-// root cannot start a QUIC server that would silently run allow-all while the
-// operator's config claims RBAC. quic.Config carries no EnableRBAC flag (a
-// nil/disabled Authorizer means RBAC off by contract), so startQUIC asserts
-// the daemon-level intent before wiring the transport. TLS is configured with
-// valid material so the refusal observed here can only come from the RBAC
-// assert, not from the TLS early-return.
-func TestStartQUIC_RBACEnabledWithoutAuthorizer_FailsClosed(t *testing.T) {
-	xkms.Reset()
-	defer xkms.Reset()
-
-	certFile, keyFile, _ := createTestTLSFiles(t)
-
-	cfg := createMinimalConfig(t)
-	cfg.Protocols.MCP = false
-	cfg.Protocols.Unix = false
-	cfg.Protocols.REST = false
-	cfg.Protocols.GRPC = false
-	cfg.Protocols.QUIC = false // call startQUIC manually
-	cfg.Metrics.Enabled = false
-	cfg.TLS.Enabled = true
-	cfg.TLS.CertFile = certFile
-	cfg.TLS.KeyFile = keyFile
-	cfg.Server.QUICPort = 14343
-	cfg.Auth.EnableRBAC = true
-
-	server, err := New(cfg)
-	require.NoError(t, err)
-	defer func() { _ = server.Shutdown() }()
-
-	// No qrdb identity plane: initializeAuthorization leaves this nil.
-	server.rbacAuthorizer = nil
-
-	server.wg.Add(1)
-	done := make(chan struct{})
-	go func() {
-		server.startQUIC()
-		close(done)
-	}()
-
-	select {
-	case <-done:
-	case <-time.After(2 * time.Second):
-		t.Fatal("startQUIC did not return when RBAC is enabled without an authorizer")
-	}
-
-	server.mu.Lock()
-	quicSrv := server.quicServer
-	server.mu.Unlock()
-	assert.Nil(t, quicSrv, "no QUIC server may be started when authorization cannot be enforced")
 }

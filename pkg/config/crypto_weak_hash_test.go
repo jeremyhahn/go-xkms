@@ -34,8 +34,11 @@ logging:
   level: info
   format: json
 
+tls:
+  enabled: true
+
 storage:
-  backend: file
+  backend: qrdb
   path: /tmp/xkms-config-test
 
 default_backend: software

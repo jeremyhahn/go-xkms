@@ -43,7 +43,7 @@ health:
   path: /health
 
 storage:
-  backend: file
+  backend: qrdb  # network protocols require the embedded qrdb node (unified API server)
   path: /var/lib/xkms/metadata
 
 default_backend: pkcs8

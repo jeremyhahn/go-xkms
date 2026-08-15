@@ -114,7 +114,7 @@ func mockHandler() http.Handler {
 			respond(transport.CanSealResponse{CanSeal: true})
 		case strings.Contains(path, "/barrier/status"):
 			respond(transport.BarrierStatusResponse{Sealed: false, InitializedAt: "2024-01-01"})
-		case strings.Contains(path, "/barrier/initialize-shamir"):
+		case strings.Contains(path, "/barrier/shamir/initialize"):
 			respond(transport.BarrierInitializeShamirResponse{Threshold: 2, TotalShares: 3, ShareCount: 3})
 		case strings.Contains(path, "/barrier/rekey"):
 			respond(transport.BarrierRekeyResponse{Threshold: 2, TotalShares: 3, ShareCount: 3})

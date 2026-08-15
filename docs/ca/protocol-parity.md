@@ -39,13 +39,21 @@ CLI (xkmsctl)                      SDK Client
 
 All six transports converge at `XKMSService`. The service layer uses duck-typed interfaces (`caMethodBundle`, `caMethodSignCSRRaw`, etc.) to call into `ca.TrustedCA` without creating an import cycle.
 
+The diagram's QUIC box is logical, not a separate process or listener: QUIC
+is HTTP/3 served directly on the REST listener's port, advertised via
+`Alt-Svc`, and dispatches through the same REST handlers shown for `REST`
+above.
+
 ### Wiring Path
 
 1. `pkg/server/server.go` initializes the CA via `initCA()` and stores it as `s.ca`.
 2. During `New()`, the server calls `svc.SetCA(s.ca)` on the `XKMSService` singleton.
 3. For gRPC, the server additionally calls `grpcinternal.SetCA(s.ca)` for direct CA access.
 4. For REST, the `XKMSService` is passed as `restConfig.CA` and cast to `caServicer`.
-5. QUIC and MCP handlers call `xkms.Get()` to retrieve the `XKMSService` singleton.
+5. QUIC reaches the CA through the exact same REST handlers -- there is no
+   separate QUIC server package, since QUIC is HTTP/3 served on the REST
+   listener. MCP's `Server` takes the `XKMSService` as a constructor
+   dependency (`Config.XKMSService`), not a `xkms.Get()` singleton lookup.
 6. Embedded transport calls `XKMSService` methods directly.
 
 ## API Endpoints per Protocol
@@ -63,6 +71,12 @@ All six transports converge at `XKMSService`. The service layer uses duck-typed 
 | Is Revoked        | `GET /api/v1/ca/revoked/{serial}`| `IsRevoked`           | `GET /api/v1/ca/revoked/{serial}`| `xkms.ca.is-revoked` | via gRPC | `IsRevoked()`          |
 
 *gRPC `GetCABundle` is handled via the CA bundler (`grpcinternal.SetCABundler`), not a distinct RPC. The gRPC proto defines 6 CA RPCs (`GetCACertificate`, `SignCSR`, `IssueCertificate`, `RevokeCertificate`, `GenerateCRL`, `IsRevoked`) in the `KeystoreService`.
+
+The "MCP Method" column names the underlying JSON-RPC method dispatched
+through `InvokeMethod`; on the wire, each is exposed as an MCP tool named
+`xkms_<method with dots replaced by underscores>` (e.g. `xkms_ca_bundle`)
+taking a single `params_json` argument, per [MCP protocol
+docs](../architecture/api-specifications.md#mcp-model-context-protocol).
 
 ### TCG CA Operations
 
@@ -106,7 +120,7 @@ The CA-instance mode is preferred for production: the server manages its own PKI
 server:
   rest_port: 8443
   grpc_port: 9443
-  quic_port: 8444
+  quic_port: 8444  # vestigial -- QUIC is served as HTTP/3 on rest_port
 
 tls:
   enabled: true

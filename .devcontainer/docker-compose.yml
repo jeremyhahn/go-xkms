@@ -39,14 +39,6 @@ services:
         hard: -1
     volumes:
       - ..:/workspace:cached
-      # In-house module closure, resolved via /tmp/go.work (see ensure-gowork.sh).
-      # All six siblings are mounted so only public deps are ever fetched.
-      - ../../go-codec:/go-codec:cached
-      - ../../go-frost:/go-frost:cached
-      - ../../go-objstore:/go-objstore:cached
-      - ../../go-qrdb:/go-qrdb:cached
-      - ../../go-quicraft:/go-quicraft:cached
-      - ../../go-truststrap:/go-truststrap:cached
       - go-mod-cache:/go/pkg/mod
       - go-build-cache:/home/vscode/.cache/go-build
       - /var/run/docker.sock:/var/run/docker.sock
@@ -60,9 +52,13 @@ services:
       - xkms-data:/xkms-data:ro
     environment:
       - GOPATH=/go
-      # Workspace lives at /tmp/go.work (materialized by ensure-gowork.sh); set
-      # here so every `docker compose exec` inherits it without re-exporting.
-      - GOWORK=/tmp/go.work
+      # In-house modules resolve from Gitea tags (dependency-resolution.md §6).
+      # The read-only token comes from the gitignored .devcontainer/.env.
+      - GOWORK=off
+      - GOPRIVATE=github.com/jeremyhahn/*
+      - GIT_CONFIG_COUNT=1
+      - GIT_CONFIG_KEY_0=url.http://x:${GITEA_GO_TOKEN}@198.51.100.91:3001/jeremyhahn/.insteadOf
+      - GIT_CONFIG_VALUE_0=https://github.com/jeremyhahn/
       - CGO_ENABLED=1
       - TPM_USE_SIMULATOR=true
       - TPM_SIMULATOR_HOST=swtpm
@@ -164,16 +160,11 @@ services:
     build:
       context: ..
       dockerfile: Dockerfile
-      # The root Dockerfile COPYs all six in-house siblings so the build-time
-      # Go workspace resolves the complete module closure locally. Every one of
-      # them must be declared here or the build fails on the missing context.
-      additional_contexts:
-        go-codec: ../../go-codec
-        go-frost: ../../go-frost
-        go-objstore: ../../go-objstore
-        go-qrdb: ../../go-qrdb
-        go-quicraft: ../../go-quicraft
-        go-truststrap: ../../go-truststrap
+      # In-house modules resolve from Gitea tags at image build via the
+      # gomodauth BuildKit secret (dependency-resolution.md §6). Stage it with
+      # `make stage-gomodauth` before building this service.
+      secrets:
+        - gomodauth
     image: go-xkms-server:dev
     container_name: xkms-dev-server
     # Host ports are offset into a private block: this stack runs alongside
@@ -257,3 +248,10 @@ volumes:
 networks:
   xkms-dev:
     driver: bridge
+
+# Module-fetch credentials for image builds: sourceable `export` lines staged
+# 0600 by `make stage-gomodauth` (gitignored and dockerignored; empty when no
+# Gitea token is configured, so public-proxy builds work unchanged).
+secrets:
+  gomodauth:
+    file: ./gomodauth.env

@@ -7,18 +7,22 @@ This is the surface that manages that set.
 ## Who owns what
 
 Factor records belong to **go-qrdb**. xkms stores none of them and adds no
-rules of its own; it proxies the surface so an operator, the CLI, and the
-console reach identity through the same endpoint they already use for keys,
-instead of opening a second connection to the qrdb node.
-
-The chain is:
+rules of its own. There are two paths to the same qrdb service:
 
 ```
-xkmsctl auth factor …
+xkmsctl auth factor …                          (CLI)
+  └─ qrdb SDK client (unix / grpc transport)
+      └─ qrdb UserAuthFactorService            (registered by
+                                                pkg/server/qrdb_control_plane.go)
+
+web GUI / TS SDK
   └─ REST /api/v1/factors/*        (pkg/api/rest/handlers_authfactor.go)
       └─ XKMSService passthrough   (pkg/xkms/servicer_authfactor.go)
           └─ qrdb UserAuthFactorClient   (embedded node)
 ```
+
+The REST proxy exists for HTTP-only consumers (the web GUI via the TS
+SDK); the CLI drives qrdb's own service directly.
 
 ## Resolution is not authentication
 
@@ -69,11 +73,12 @@ xkmsctl auth factor remove --factor-id f-123 [--force]
 xkmsctl auth factor rotate --factor-id f-123 --type piv
 ```
 
-The CLI reaches these through `authFactorRESTClient`
-(`cmd/xkmsctl/auth_factor_rest_client.go`), which satisfies qrdb's
-`UserAuthFactorClient` interface over xkmsd's REST proxy. Implementing qrdb's
-own interface is deliberate: the command handlers were already written
-against that contract and needed no changes.
+The CLI does not use the REST proxy above. It derives a qrdb SDK
+transport (unix socket by default, `grpc://` / `grpcs://` per the
+standard `--server`/`--transport` conventions) and calls qrdb's
+`UserAuthFactorService` — hosted on xkmsd's gRPC server and unix socket
+by `pkg/server/qrdb_control_plane.go` — through the SDK's
+`UserAuthFactors()` surface (`cmd/xkmsctl/auth_factor_handlers.go`).
 
 ## Cross-References
 

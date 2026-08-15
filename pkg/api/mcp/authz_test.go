@@ -19,7 +19,6 @@ import (
 	"errors"
 	"io"
 	"log/slog"
-	"net"
 	"net/http"
 	"net/http/httptest"
 	"sort"
@@ -115,7 +114,7 @@ func newRBACServer(t *testing.T, svc *xkms.XKMSService, rbac *fakeRBAC) *Server 
 }
 
 // authedCtx returns a context carrying an authenticated identity, the shape
-// handleConnection installs after a successful mTLS handshake.
+// an mTLS-authenticated request carries on this transport.
 func authedCtx() context.Context {
 	return auth.WithIdentity(context.Background(), &auth.Identity{
 		Subject:  "operator@example.com",
@@ -124,14 +123,16 @@ func authedCtx() context.Context {
 	})
 }
 
-// call drives a JSON-RPC request through the full server pipeline.
+// call drives a JSON-RPC request through the full dispatch pipeline
+// (tenant scoping, authorization, and routing) via Server.InvokeMethod, the
+// package's single production entry point.
 func call(s *Server, ctx context.Context, method string) *JSONRPCResponse {
-	return s.handleRequest(ctx, &JSONRPCRequest{
+	return invokeRequest(s, ctx, &JSONRPCRequest{
 		JSONRPC: "2.0",
 		Method:  method,
 		Params:  json.RawMessage(`{}`),
 		ID:      1,
-	}, nil)
+	})
 }
 
 // TestNewServer_RBACEnabled_NilAuthorizerRejected proves the constructor fails
@@ -210,11 +211,10 @@ func TestNewServer_RBACDisabled_DefaultsToDisabledAuthorizer(t *testing.T) {
 func TestMethodPermissions_CoverEveryDispatchableMethod(t *testing.T) {
 	var unmapped []string
 
-	dispatchable := make([]string, 0, len(rpcMethodHandlers)+1)
+	dispatchable := make([]string, 0, len(rpcMethodHandlers))
 	for method := range rpcMethodHandlers {
 		dispatchable = append(dispatchable, method)
 	}
-	dispatchable = append(dispatchable, subscribeMethod)
 
 	for _, method := range dispatchable {
 		_, public := publicMethods[method]
@@ -316,12 +316,12 @@ func TestAuthorizeMethod_UnauthorizedCallerCannotGenerateKey(t *testing.T) {
 	server := newRBACServer(t, svc, rbac)
 	ctx := authedCtx()
 
-	resp := server.handleRequest(ctx, &JSONRPCRequest{
+	resp := invokeRequest(server, ctx, &JSONRPCRequest{
 		JSONRPC: "2.0",
 		Method:  "xkms.generateKey",
 		Params:  json.RawMessage(`{"key_id":"rbac-regression-key","backend":"software","key_type":"RSA","key_size":2048}`),
 		ID:      7,
-	}, nil)
+	})
 
 	require.NotNil(t, resp)
 	require.NotNil(t, resp.Error)
@@ -329,12 +329,12 @@ func TestAuthorizeMethod_UnauthorizedCallerCannotGenerateKey(t *testing.T) {
 	assert.Equal(t, "keys:create", rbac.lastCall())
 
 	// Prove the denial happened before dispatch: the key must not exist.
-	listResp := server.handleRequest(ctx, &JSONRPCRequest{
+	listResp := invokeRequest(server, ctx, &JSONRPCRequest{
 		JSONRPC: "2.0",
 		Method:  "xkms.listKeys",
 		Params:  json.RawMessage(`{"backend":"software"}`),
 		ID:      8,
-	}, nil)
+	})
 	require.NotNil(t, listResp)
 	require.Nil(t, listResp.Error, "keys:list holder must be able to list")
 
@@ -440,54 +440,21 @@ func TestAuthorizeMethod_HealthIsPublic(t *testing.T) {
 	assert.Zero(t, rbac.callCount())
 }
 
-// TestAuthorizeMethod_SubscribeIsGated proves the connection-bound
-// xkms.subscribe method — dispatched outside the rpcMethodHandlers table — is
-// gated too, and that a denied caller is never registered as a subscriber.
-func TestAuthorizeMethod_SubscribeIsGated(t *testing.T) {
-	svc := setupTestXKMS(t)
-	defer cleanupXKMS()
-
-	rbac := newFakeRBAC()
-	server := newRBACServer(t, svc, rbac)
-
-	clientConn, serverConn := net.Pipe()
-	defer func() {
-		_ = clientConn.Close()
-		_ = serverConn.Close()
-	}()
-
-	resp := server.handleRequest(authedCtx(), &JSONRPCRequest{
-		JSONRPC: "2.0",
-		Method:  subscribeMethod,
-		Params:  json.RawMessage(`{"events":["key.created"]}`),
-		ID:      3,
-	}, serverConn)
-
-	require.NotNil(t, resp)
-	require.NotNil(t, resp.Error)
-	assert.Equal(t, ErrCodeForbidden, resp.Error.Code)
-	assert.Equal(t, "keys:list", rbac.lastCall())
-
-	server.subMutex.RLock()
-	subscriberCount := len(server.subscribers)
-	server.subMutex.RUnlock()
-	assert.Zero(t, subscriberCount, "denied caller must not be registered as a subscriber")
-}
-
 // TestAuthorizeMethod_NotificationDenialIsReported proves a denied
-// notification (a request without an ID) still produces an error response.
-// Silently dropping it would leave the caller believing the operation ran.
+// notification-shaped request (no ID) still produces an error rather than
+// being silently dropped. Silently dropping it would leave the caller
+// believing the operation ran.
 func TestAuthorizeMethod_NotificationDenialIsReported(t *testing.T) {
 	svc := setupTestXKMS(t)
 	defer cleanupXKMS()
 
 	server := newRBACServer(t, svc, newFakeRBAC())
 
-	resp := server.handleRequest(authedCtx(), &JSONRPCRequest{
+	resp := invokeRequest(server, authedCtx(), &JSONRPCRequest{
 		JSONRPC: "2.0",
 		Method:  "xkms.deleteKey",
 		Params:  json.RawMessage(`{"key_id":"whatever"}`),
-	}, nil)
+	})
 
 	require.NotNil(t, resp)
 	require.NotNil(t, resp.Error)
@@ -580,10 +547,9 @@ func TestRBACDisabled_ParityWithRESTAndQUIC(t *testing.T) {
 		"MCP admits the request when authorization is disabled, exactly as REST and QUIC do")
 }
 
-// TestIsDispatchable classifies the three dispatch paths handleRequest uses.
+// TestIsDispatchable classifies the two dispatch paths InvokeMethod uses.
 func TestIsDispatchable(t *testing.T) {
 	assert.True(t, isDispatchable("xkms.sign"), "table-dispatched method")
-	assert.True(t, isDispatchable(subscribeMethod), "connection-bound method")
 	assert.True(t, isDispatchable("frost.signRound"), "build-tagged namespace")
 	assert.True(t, isDispatchable("frost.somethingNew"), "unknown method in a dispatched namespace")
 	assert.False(t, isDispatchable("totally.unknown"))
@@ -639,7 +605,6 @@ var goldenMethodPermissions = map[string]string{
 	"xkms.seal":                     "keys:encrypt",
 	"xkms.sign":                     "keys:sign",
 	"xkms.storePIVCertificate":      "piv:write",
-	"xkms.subscribe":                "keys:list",
 	"xkms.submitShare":              "barrier:unseal-share",
 	"xkms.unseal":                   "keys:decrypt",
 	"xkms.unwrapKey":                "keys:unwrap",

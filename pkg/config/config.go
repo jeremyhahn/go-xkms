@@ -203,6 +203,20 @@ type ServerConfig struct {
 	QUICPort  int    `yaml:"quic_port"`
 	MCPPort   int    `yaml:"mcp_port"`
 	NoisePort int    `yaml:"noise_port"`
+
+}
+
+// NetworkServing reports whether any network protocol is enabled. Network
+// serving runs exclusively on the unified API server: the embedded qrdb
+// node's multi-protocol server takes the ports above and serves the xkms
+// capability plane through the registered ServiceModule (pkg/apimodule).
+// It therefore requires storage.backend "qrdb" and explicit TLS material
+// (qrdb's transports are TLS-only and the xkms CA is not yet composed when
+// the node starts). QUIC is served as HTTP/3 on the REST port (advertised
+// via Alt-Svc); the Unix socket and the loopback desktop engine are local
+// IPC, not network serving.
+func (c *Config) NetworkServing() bool {
+	return c.Protocols.REST || c.Protocols.GRPC || c.Protocols.QUIC || c.Protocols.MCP
 }
 
 // ProtocolsConfig controls which protocols are enabled
@@ -1486,6 +1500,24 @@ func (c *Config) barrierLeavesKeysPlaintext() bool {
 // Validate checks if the configuration is valid
 func (c *Config) Validate() error {
 	// Validate server ports
+	// Network serving runs exclusively on the unified API server: the
+	// embedded qrdb node takes xkmsd's ports and serves the capability
+	// plane through the registered ServiceModule. The node is the single
+	// core, so network protocols require qrdb storage; and qrdb's
+	// transports are TLS-only while xkms's CA cannot auto-provision the
+	// node's certificate (the CA composes after — and stores into — the
+	// node), so explicit TLS material is required. Fail closed at
+	// validation rather than at node construction. Local IPC (the Unix
+	// socket and the loopback desktop engine) is exempt.
+	if c.NetworkServing() {
+		if c.Storage.Backend != "qrdb" {
+			return &errs.Message{Msg: fmt.Sprintf("network protocols require storage.backend \"qrdb\" (the embedded qrdb node is the unified API server); got %q — local-only deployments disable rest/grpc/quic/mcp and use the unix socket", c.Storage.Backend)}
+		}
+		if !c.TLS.Enabled {
+			return &errs.Message{Msg: "network protocols require tls.enabled: the unified API server's transports are TLS-only (explicit cert_file/key_file are optional — without them a bootstrap certificate serves until the CA issues the real one)"}
+		}
+	}
+
 	if c.Protocols.REST && (c.Server.RESTPort < 1 || c.Server.RESTPort > 65535) {
 		return &errs.Message{Msg: fmt.Sprintf("invalid REST port: %d", c.Server.RESTPort)}
 	}
@@ -1564,9 +1596,14 @@ func (c *Config) Validate() error {
 	}
 
 	// Validate TLS settings.
-	// When a CA is configured, TLS certificates are generated from the CA
-	// (hardware-backed crypto.Signer), so cert_file/key_file are not required.
-	if c.TLS.Enabled && c.CA == nil {
+	// cert_file/key_file are not required when a CA is configured (TLS
+	// certificates are generated from the CA, hardware-backed
+	// crypto.Signer) nor on the unified API server (a persisted bootstrap
+	// certificate serves until the CA issues the real one — see
+	// pkg/server/unified_tls.go). Only a TLS-enabled local-IPC deployment
+	// with neither a CA nor the unified server has no certificate source
+	// and must supply files.
+	if c.TLS.Enabled && c.CA == nil && !c.NetworkServing() {
 		if c.TLS.CertFile == "" {
 			return &errs.Message{Msg: "TLS cert_file is required when TLS is enabled without CA"}
 		}

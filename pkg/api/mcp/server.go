@@ -11,24 +11,35 @@
 // 2. Commercial License
 //    Contact licensing@automatethethings.com for commercial licensing options.
 
+// Package mcp implements the JSON-RPC 2.0 method surface backing xkms's
+// Model Context Protocol integration.
+//
+// The package owns the dispatch core -- the rpcMethodHandlers table, the
+// per-method handlers, tenant scoping (tenant.go), and authorization
+// (authz.go) -- consumed through Server.InvokeMethod (module_support.go),
+// which is the sole production entry point. It backs the unified-API-
+// server's real MCP tools (pkg/apimodule RegisterMCP registers one mcp-go
+// tool per ModuleMethods() entry, dispatching each call to InvokeMethod).
+//
+// There is no standalone network listener in this package. It previously
+// ran a hand-rolled, line-framed JSON-RPC 2.0 server over a raw net.Conn
+// (TCP or a Unix domain socket), including a connection-bound xkms.subscribe
+// event stream; that plane was retired once the unified server superseded
+// it, since every caller now reaches the dispatch core through the shared
+// server's transports instead of dialing this package directly. Live
+// subscription/watch notification parity is expected to arrive with a
+// real-MCP notifications design layered on top of the dispatch core, not by
+// resurrecting the old net.Conn fan-out.
 package mcp
 
 import (
-	"bufio"
 	"context"
-	"crypto/tls"
-	"encoding/json"
 	"errors"
-	"fmt"
 	"log/slog"
-	"net"
-	"sync"
 
 	"github.com/jeremyhahn/go-xkms/pkg/errs"
 
 	"github.com/jeremyhahn/go-xkms/pkg/auth"
-	"github.com/jeremyhahn/go-xkms/pkg/correlation"
-	"github.com/jeremyhahn/go-xkms/pkg/ratelimit"
 	"github.com/jeremyhahn/go-xkms/pkg/seal"
 	"github.com/jeremyhahn/go-xkms/pkg/staticpw"
 	"github.com/jeremyhahn/go-xkms/pkg/xkms"
@@ -81,7 +92,10 @@ var (
 	ErrAuthenticatorRequired = errors.New("mcp: authenticator is required")
 )
 
-// Server represents an MCP JSON-RPC 2.0 server
+// Server holds the xkms JSON-RPC 2.0 dispatch core: the method table, the
+// tenant and authorization gates, and the sub-system references (backends,
+// barrier, password store, SSH) each handler needs. It carries no network
+// state; InvokeMethod is the only entry point.
 type Server struct {
 	addr            string
 	keystore        xkms.Backend // Default keystore for backward compatibility
@@ -89,15 +103,7 @@ type Server struct {
 	barrier         *seal.Barrier
 	barrierRegistry *seal.BarrierRegistry
 	passwordManager *staticpw.TenantPasswordStoreManager
-	// mu guards listener across the Start goroutine and Stop (called from the
-	// embedding server's Shutdown on a different goroutine).
-	mu            sync.Mutex
-	listener      net.Listener
-	ctx           context.Context
-	cancel        context.CancelFunc
-	wg            sync.WaitGroup
-	tlsConfig     *tls.Config
-	authenticator auth.Authenticator
+	authenticator   auth.Authenticator
 	// authorizer is the qrdb-backed authorization seam shared with the REST,
 	// gRPC, and QUIC transports. It is never nil: when RBAC is disabled it is
 	// a disabled Authorizer (no RBAC client) that allows every request.
@@ -107,33 +113,23 @@ type Server struct {
 	// server's default (RBAC-client-less) authorizer.
 	rbacEnabled bool
 	logger      *slog.Logger
-	rateLimiter *ratelimit.Limiter
 
 	// sshClient is the optional SSH sub-system. When non-nil, SSH
 	// JSON-RPC methods (ssh.keys.*, ssh.knownHosts.*, etc.) are
 	// dispatched to it. When nil those methods return
 	// ErrSSHNotConfigured.
 	sshClient sdkssh.Client
-
-	// Event subscribers
-	subscribers map[net.Conn]*Subscriber
-	subMutex    sync.RWMutex
 }
 
-// Subscriber represents an event subscriber
-type Subscriber struct {
-	conn   net.Conn
-	events map[string]bool
-	mutex  sync.RWMutex
-}
-
-// Config holds the MCP server configuration
+// Config holds the MCP server configuration.
 type Config struct {
+	// Addr is retained for wiring compatibility with pkg/server's
+	// buildMCPConfig, which still assembles it from the daemon's configured
+	// host and MCP port. It is not read by this package: there is no
+	// listener left to bind it to.
 	Addr          string
-	TLSConfig     *tls.Config
 	Authenticator auth.Authenticator
 	Logger        *slog.Logger
-	RateLimiter   *ratelimit.Limiter
 	Barrier       *seal.Barrier
 	// BarrierRegistry gates per-request tenant access the same way REST,
 	// gRPC, and QUIC do (see pkg/api/tenantgate). Nil disables tenant
@@ -165,9 +161,10 @@ type Config struct {
 	EnableRBAC bool
 }
 
-// NewServer creates a new MCP JSON-RPC server. The XKMS service is injected
-// via Config.XKMSService by the composition root; the constructor rejects a
-// nil service so the server never starts without an initialized service.
+// NewServer creates a new MCP JSON-RPC dispatch core. The XKMS service is
+// injected via Config.XKMSService by the composition root; the constructor
+// rejects a nil service so the server never dispatches without an
+// initialized service.
 func NewServer(config *Config) (*Server, error) {
 	svc := config.XKMSService
 	if svc == nil {
@@ -207,29 +204,17 @@ func NewServer(config *Config) (*Server, error) {
 		log = slog.Default()
 	}
 
-	ctx, cancel := context.WithCancel(context.Background())
-
 	s := &Server{
 		addr:            config.Addr,
 		xkmsService:     svc,
 		barrier:         config.Barrier,
 		barrierRegistry: config.BarrierRegistry,
 		passwordManager: config.PasswordManager,
-		ctx:             ctx,
-		cancel:          cancel,
-		tlsConfig:       config.TLSConfig,
 		authenticator:   authenticator,
 		authorizer:      authorizer,
 		rbacEnabled:     config.EnableRBAC,
 		logger:          log,
-		rateLimiter:     config.RateLimiter,
-		subscribers:     make(map[net.Conn]*Subscriber),
 		sshClient:       config.SSHClient,
-	}
-
-	// Log if rate limiting is enabled
-	if config.RateLimiter != nil && config.RateLimiter.IsEnabled() {
-		log.Info("Rate limiting enabled for MCP")
 	}
 
 	if config.EnableRBAC {
@@ -243,7 +228,6 @@ func NewServer(config *Config) (*Server, error) {
 	// Set default keystore from the injected service for backward compatibility.
 	keystore, err := svc.LookupDefaultBackend()
 	if err != nil {
-		cancel()
 		return nil, &errs.Wrapped{Msg: "failed to get default keystore", Err: err}
 	}
 	s.keystore = keystore
@@ -268,173 +252,13 @@ func (s *Server) SetPasswordManager(pm *staticpw.TenantPasswordStoreManager) {
 	s.passwordManager = pm
 }
 
-// Start starts the MCP server
-func (s *Server) Start() error {
-	listener, err := net.Listen("tcp", s.addr)
-	if err != nil {
-		return &errs.Wrapped{Msg: fmt.Sprintf("failed to listen on %s", s.addr), Err: err}
-	}
-
-	// Wrap with TLS if configured
-	if s.tlsConfig != nil {
-		listener = tls.NewListener(listener, s.tlsConfig)
-		s.logger.Info("MCP server listening with TLS",
-			slog.String("addr", s.addr),
-			slog.String("auth", s.authenticator.Name()))
-	} else {
-		s.logger.Info("MCP server listening",
-			slog.String("addr", s.addr),
-			slog.String("auth", s.authenticator.Name()))
-	}
-
-	s.mu.Lock()
-	s.listener = listener
-	s.mu.Unlock()
-
-	s.wg.Add(1)
-	go s.acceptConnections(listener)
-
-	return nil
-}
-
-// acceptConnections accepts incoming TCP connections
-func (s *Server) acceptConnections(listener net.Listener) {
-	defer s.wg.Done()
-
-	for {
-		conn, err := listener.Accept()
-		if err != nil {
-			select {
-			case <-s.ctx.Done():
-				return
-			default:
-				s.logger.Error("Error accepting connection", slog.String("error", err.Error()))
-				continue
-			}
-		}
-
-		s.wg.Add(1)
-		go s.handleConnection(conn)
-	}
-}
-
-// handleConnection handles a single client connection
-func (s *Server) handleConnection(conn net.Conn) {
-	defer s.wg.Done()
-	defer func() { _ = conn.Close() }()
-
-	// Check rate limit at connection level
-	if s.rateLimiter != nil && !s.rateLimiter.AllowConn(conn) {
-		s.logger.Warn("Connection rejected due to rate limit",
-			slog.String("remote_addr", conn.RemoteAddr().String()))
-		return
-	}
-
-	// Authenticate the connection using TLS certificates if mTLS is configured
-	ctx := s.ctx
-	if s.tlsConfig != nil && s.tlsConfig.ClientAuth != tls.NoClientCert {
-		if tlsConn, ok := conn.(*tls.Conn); ok {
-			if err := tlsConn.Handshake(); err != nil {
-				s.logger.WarnContext(ctx, "TLS handshake failed", slog.String("error", err.Error()))
-				return
-			}
-
-			// Get client certificates from TLS connection
-			state := tlsConn.ConnectionState()
-			if len(state.PeerCertificates) > 0 {
-				cert := state.PeerCertificates[0]
-				identity := &auth.Identity{
-					Subject: cert.Subject.CommonName,
-					Metadata: map[string]string{
-						"auth_method": "mtls",
-						"subject_dn":  cert.Subject.String(),
-					},
-				}
-				ctx = auth.WithIdentity(ctx, identity)
-
-				// Carry the verified peer chain on the context so operations
-				// that bind to the caller's certificate -- the Security
-				// Officer share claim -- can derive the thumbprint from the
-				// real handshake rather than from anything the client sent.
-				connState := state
-				ctx = auth.WithTLSState(ctx, &connState)
-
-				s.logger.DebugContext(ctx, "Client authenticated via mTLS",
-					slog.String("subject", identity.Subject))
-			}
-		}
-	}
-
-	scanner := bufio.NewScanner(conn)
-	encoder := json.NewEncoder(conn)
-
-	for scanner.Scan() {
-		select {
-		case <-s.ctx.Done():
-			return
-		default:
-		}
-
-		data := scanner.Bytes()
-
-		// Handle batch requests (array of requests)
-		if len(data) > 0 && data[0] == '[' {
-			var batchRequests []JSONRPCRequest
-			if err := json.Unmarshal(data, &batchRequests); err != nil {
-				s.sendError(encoder, nil, ErrCodeParseError, "Parse error", err)
-				continue
-			}
-
-			batchResponses := make([]JSONRPCResponse, 0, len(batchRequests))
-			for _, req := range batchRequests {
-				response := s.handleRequest(ctx, &req, conn)
-				if response != nil {
-					batchResponses = append(batchResponses, *response)
-				}
-			}
-
-			if len(batchResponses) > 0 {
-				if err := encoder.Encode(batchResponses); err != nil {
-					s.logger.Error("Error encoding batch response", slog.String("error", err.Error()))
-				}
-			}
-			continue
-		}
-
-		// Handle single request
-		var request JSONRPCRequest
-		if err := json.Unmarshal(data, &request); err != nil {
-			s.sendError(encoder, nil, ErrCodeParseError, "Parse error", err)
-			continue
-		}
-
-		response := s.handleRequest(ctx, &request, conn)
-		if response != nil {
-			if err := encoder.Encode(response); err != nil {
-				s.logger.Error("Error encoding response", slog.String("error", err.Error()))
-			}
-		}
-	}
-
-	if err := scanner.Err(); err != nil {
-		s.logger.Error("Scanner error", slog.String("error", err.Error()))
-	}
-
-	// Clean up subscriber if exists
-	s.subMutex.Lock()
-	delete(s.subscribers, conn)
-	s.subMutex.Unlock()
-}
-
 // rpcHandler dispatches a single JSON-RPC method to its handler. The *Server
 // receiver is passed explicitly so the dispatch table can be populated from
 // method expressions, mirroring the qrdb kvMethodHandlers pattern.
 type rpcHandler func(s *Server, ctx context.Context, req *JSONRPCRequest) (interface{}, error)
 
 // rpcMethodHandlers maps every supported JSON-RPC method to its handler for
-// O(1) dispatch. It is built once at package initialization. The connection-
-// bound method xkms.subscribe is intentionally absent: it requires the live
-// net.Conn and is dispatched directly in handleRequest.
+// O(1) dispatch. It is built once at package initialization.
 var rpcMethodHandlers = map[string]rpcHandler{
 	// Health
 	"health": (*Server).handleHealth,
@@ -588,199 +412,11 @@ var rpcMethodHandlers = map[string]rpcHandler{
 	"ssh.authorizedKeys.verify": (*Server).handleSSHAuthorizedKeysVerify,
 }
 
-// handleRequest processes a JSON-RPC request and returns a response
-func (s *Server) handleRequest(ctx context.Context, req *JSONRPCRequest, conn net.Conn) *JSONRPCResponse {
-	if req.JSONRPC != "2.0" {
-		return s.makeErrorResponse(req.ID, "", ErrCodeInvalidRequest, "Invalid JSON-RPC version", nil)
-	}
-
-	// Extract or generate correlation ID
-	correlationID := req.CorrelationID
-	if correlationID == "" {
-		correlationID = correlation.NewID()
-	}
-	ctx = correlation.WithCorrelationID(ctx, correlationID)
-
-	// Log request with identity if available
-	identity := auth.GetIdentity(ctx)
-	subject := "anonymous"
-	if identity != nil {
-		subject = identity.Subject
-	}
-	s.logger.DebugContext(ctx, "RPC request",
-		slog.String("method", req.Method),
-		slog.String("subject", subject))
-
-	// Tenant scoping runs before authorization and independent of RBAC,
-	// mirroring the REST TenantMiddleware / gRPC tenant interceptor / QUIC
-	// tenantMiddleware placement: it uses only the authenticated identity and
-	// the barrier registry, never the RBAC authorizer.
-	var tenantErr error
-	ctx, tenantErr = s.tenantAccess(ctx, req.Method)
-	if tenantErr != nil {
-		code := ErrCodeForbidden
-		var keyOpErr *KeyOpError
-		if errors.As(tenantErr, &keyOpErr) {
-			code = keyOpErr.Code
-		}
-		return s.makeErrorResponse(req.ID, correlationID, code, tenantErr.Error(), nil)
-	}
-
-	// Authorize before dispatch. Every privileged method is gated here rather
-	// than inside each handler so no dispatch path — the rpcMethodHandlers
-	// table, the connection-bound xkms.subscribe, or the build-tagged FROST
-	// namespace — can reach the service layer unauthorized.
-	if authzErr := s.authorizeMethod(ctx, req.Method); authzErr != nil {
-		code := ErrCodeForbidden
-		var keyOpErr *KeyOpError
-		if errors.As(authzErr, &keyOpErr) {
-			code = keyOpErr.Code
-		}
-		s.logger.WarnContext(ctx, "RPC request denied",
-			slog.String("method", req.Method),
-			slog.String("subject", subject),
-			slog.String("error", authzErr.Error()))
-		return s.makeErrorResponse(req.ID, correlationID, code, authzErr.Error(), nil)
-	}
-
-	// Route to appropriate handler
-	var result interface{}
-	var err error
-
-	// Try FROST methods first
-	if frostResult, frostErr, handled := s.routeFrostMethods(ctx, req); handled {
-		result = frostResult
-		err = frostErr
-		if err != nil {
-			s.logger.WarnContext(ctx, "RPC request failed",
-				slog.String("method", req.Method),
-				slog.String("subject", subject),
-				slog.String("error", err.Error()))
-			return s.makeErrorResponse(req.ID, correlationID, ErrCodeInternalError, err.Error(), nil)
-		}
-
-		// Don't send response for notifications (no ID)
-		if req.ID == nil {
-			return nil
-		}
-
-		return &JSONRPCResponse{
-			JSONRPC:       "2.0",
-			Result:        result,
-			ID:            req.ID,
-			CorrelationID: correlationID,
-		}
-	}
-
-	// xkms.subscribe is the only method that needs the live connection (to
-	// register the event subscriber), so it is dispatched directly. Every
-	// other JSON-RPC method is routed through the rpcMethodHandlers table.
-	if handler, ok := rpcMethodHandlers[req.Method]; ok {
-		result, err = handler(s, ctx, req)
-	} else if req.Method == "xkms.subscribe" {
-		result, err = s.handleSubscribe(ctx, req, conn)
-	} else {
-		return s.makeErrorResponse(req.ID, correlationID, ErrCodeMethodNotFound, "Method not found", nil)
-	}
-
-	if err != nil {
-		s.logger.WarnContext(ctx, "RPC request failed",
-			slog.String("method", req.Method),
-			slog.String("subject", subject),
-			slog.String("error", err.Error()))
-
-		// A handler that delegated to the key-operations service layer
-		// (attestation, ECDH, wrap/unwrap by ID, key material export)
-		// carries its capability-boundary classification in a *KeyOpError;
-		// every other handler falls back to the generic internal-error code.
-		code := ErrCodeInternalError
-		var keyOpErr *KeyOpError
-		if errors.As(err, &keyOpErr) {
-			code = keyOpErr.Code
-		}
-		return s.makeErrorResponse(req.ID, correlationID, code, err.Error(), nil)
-	}
-
-	// Don't send response for notifications (no ID)
-	if req.ID == nil {
-		return nil
-	}
-
-	return &JSONRPCResponse{
-		JSONRPC:       "2.0",
-		Result:        result,
-		ID:            req.ID,
-		CorrelationID: correlationID,
-	}
-}
-
-// sendError sends an error response
-func (s *Server) sendError(encoder *json.Encoder, id interface{}, code int, message string, data interface{}) {
-	response := s.makeErrorResponse(id, "", code, message, data)
-	if err := encoder.Encode(response); err != nil {
-		s.logger.Error("Error encoding error response", slog.String("error", err.Error()))
-	}
-}
-
-// makeErrorResponse creates an error response
-func (s *Server) makeErrorResponse(id interface{}, correlationID string, code int, message string, data interface{}) *JSONRPCResponse {
-	return &JSONRPCResponse{
-		JSONRPC: "2.0",
-		Error: &JSONRPCError{
-			Code:    code,
-			Message: message,
-			Data:    data,
-		},
-		ID:            id,
-		CorrelationID: correlationID,
-	}
-}
-
-// NotifyEvent sends an event notification to all subscribers
-func (s *Server) NotifyEvent(event string, keyID string, data interface{}) {
-	s.subMutex.RLock()
-	defer s.subMutex.RUnlock()
-
-	notification := JSONRPCNotification{
-		JSONRPC: "2.0",
-		Method:  event,
-		Params: EventNotification{
-			Event: event,
-			KeyID: keyID,
-			Data:  data,
-		},
-	}
-
-	for conn, sub := range s.subscribers {
-		sub.mutex.RLock()
-		shouldNotify := sub.events[event]
-		sub.mutex.RUnlock()
-
-		if shouldNotify {
-			encoder := json.NewEncoder(conn)
-			if err := encoder.Encode(notification); err != nil {
-				s.logger.Error("Error sending notification", slog.String("error", err.Error()))
-			}
-		}
-	}
-}
-
-// Stop stops the MCP server
+// Stop releases whatever server-held resources remain. It is safe to call on
+// a server that was never used to serve a connection -- there is none left
+// to close -- and is kept only so pkg/server's Shutdown, which holds a
+// *mcp.Server reference from before the network plane was retired, can keep
+// calling it unconditionally.
 func (s *Server) Stop() error {
-	s.logger.Info("Stopping MCP server")
-	s.cancel()
-
-	s.mu.Lock()
-	ln := s.listener
-	s.mu.Unlock()
-	if ln != nil {
-		if err := ln.Close(); err != nil {
-			s.logger.Error("Failed to close listener", slog.String("error", err.Error()))
-			return err
-		}
-	}
-
-	s.wg.Wait()
-	s.logger.Info("MCP server stopped")
 	return nil
 }

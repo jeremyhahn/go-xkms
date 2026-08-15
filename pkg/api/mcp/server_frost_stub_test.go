@@ -67,7 +67,7 @@ func TestServer_HandleRequest_FrostMethodAsNotification(t *testing.T) {
 		// No ID = notification
 	}
 
-	resp := server.handleRequest(ctx, req, nil)
+	resp := invokeRequest(server, ctx, req)
 	// FROST methods that fail return an error response even for notifications
 	require.NotNil(t, resp)
 	assert.NotNil(t, resp.Error)

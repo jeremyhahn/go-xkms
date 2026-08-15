@@ -60,7 +60,7 @@ health:
   path: "/health"
 
 storage:
-  backend: "file"
+  backend: "qrdb"  # network protocols require the embedded qrdb node (unified API server)
   path: "/tmp/xkms-local/storage"
 
 rng:

@@ -165,19 +165,6 @@ export GONOSUMCHECK='*'
 export GONOSUMDB='*'
 export GOFLAGS='-buildvcs=false'
 
-# Generate a Go workspace covering the in-house module closure so that not only
-# `go build` but also the wails binding generator (golang.org/x/tools/go/packages)
-# resolves the nested in-house modules with full type information. Without this,
-# wails dev fails with: internal error: package "github.com/jeremyhahn/go-qrdb/sdk/go"
-# without types was imported from ".../xkey/pkg/pcr_policy". The siblings are
-# bind-mounted at /go-<name> by docker-compose.yml.
-# Generate the container Go workspace via the single canonical generator
-# (scripts/gen-gowork.sh) so the replace set never drifts from the other
-# container contexts. Siblings are bind-mounted at /go-<name>; repo root is
-# /workspace.
-bash /workspace/scripts/gen-gowork.sh /workspace /tmp/go.work
-export GOWORK=/tmp/go.work
-
 # The upstream google/go-sev-guest v0.14.0 module was re-tagged, causing
 # checksum mismatches between local builds and Docker builds. Remove the
 # conflicting entries so go mod download accepts the proxy's archive.
@@ -188,8 +175,8 @@ for f in /workspace/go.sum /workspace/xkey/go.sum /workspace/sdk/go/go.sum; do
 done
 
 # wails dev's binding generator (golang.org/x/tools/go/packages) does NOT honor
-# the /tmp/go.work workspace for in-house TRANSITIVE modules, so it tries to
-# fetch them (e.g. go-qrdb@v0.0.0) from GitHub and fails. xkey/go.mod already
+# the git-config-based Gitea redirect for in-house TRANSITIVE modules, so it
+# tries to fetch them (e.g. go-qrdb@v0.0.0) from GitHub and fails. xkey/go.mod already
 # carries committed replaces for go-xkms and go-xkms/sdk/go for this reason;
 # the rest became xkey transitive deps after the embedded-qrdb unification.
 # Inject the remaining local-path replaces directly into the main module's
@@ -209,8 +196,9 @@ for repl in \
 done
 echo "[entrypoint] Injected in-house module replaces into xkey/go.mod."
 
-# Populate /tmp/go.work.sum for the workspace build list (in-house modules are
-# local workspace members, so only public dependencies are fetched).
+# Populate go.sum for the full build list; the in-house modules above resolve
+# from their local-path replaces, so only the remaining public dependencies
+# are actually fetched.
 cd /workspace/xkey
 go mod download all
 echo "[entrypoint] Go modules downloaded."

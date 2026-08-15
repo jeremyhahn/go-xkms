@@ -584,19 +584,6 @@ var (
 	// ErrGetCertificateFailed is the sentinel error "failed to get certificate".
 	ErrGetCertificateFailed = errors.New("failed to get certificate")
 
-	// ErrGetClusterStatusFailed is the sentinel error "failed to get cluster status".
-	ErrGetClusterStatusFailed = errors.New("failed to get cluster status")
-
-	// ErrAddClusterReplicaFailed is the sentinel error "failed to add cluster replica".
-	ErrAddClusterReplicaFailed = errors.New("failed to add cluster replica")
-
-	// ErrRemoveClusterReplicaFailed is the sentinel error "failed to remove cluster replica".
-	ErrRemoveClusterReplicaFailed = errors.New("failed to remove cluster replica")
-
-	// ErrInvalidReplicaID is the sentinel error for a replica identifier that is
-	// not a positive integer. Zero is reserved by Raft to mean "no replica".
-	ErrInvalidReplicaID = errors.New("invalid replica id: must be a positive integer")
-
 	// ErrGetCustodianGroupFailed is the sentinel error "failed to get custodian group".
 	ErrGetCustodianGroupFailed = errors.New("failed to get custodian group")
 
@@ -725,9 +712,6 @@ var (
 
 	// ErrListCertificatesFailed is the sentinel error "failed to list certificates".
 	ErrListCertificatesFailed = errors.New("failed to list certificates")
-
-	// ErrListClusterMembersFailed is the sentinel error "failed to list cluster members".
-	ErrListClusterMembersFailed = errors.New("failed to list cluster members")
 
 	// ErrListCredentialsFailed is the sentinel error "failed to list credentials".
 	ErrListCredentialsFailed = errors.New("failed to list credentials")

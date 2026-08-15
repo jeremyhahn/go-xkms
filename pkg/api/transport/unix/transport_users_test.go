@@ -16,7 +16,6 @@ import (
 	"github.com/stretchr/testify/require"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
-	"google.golang.org/protobuf/types/known/emptypb"
 
 	pb "github.com/jeremyhahn/go-xkms/pkg/api/grpc/proto/xkmsv1"
 	"github.com/jeremyhahn/go-xkms/pkg/api/transport"
@@ -112,17 +111,6 @@ func (s *errServer) ListUserCredentials(context.Context, *pb.ListUserCredentials
 	return nil, status.Error(codes.Internal, "fail")
 }
 
-// --- errServer implementations for cluster methods ---
-
-func (s *errServer) GetClusterStatus(context.Context, *emptypb.Empty) (*pb.ClusterStatusResponse, error) {
-	return nil, status.Error(codes.Internal, "fail")
-}
-func (s *errServer) ListClusterMembers(context.Context, *emptypb.Empty) (*pb.ListClusterMembersResponse, error) {
-	return nil, status.Error(codes.Internal, "fail")
-}
-
-// --- User server-error paths ---
-
 func TestCreateUser_ServerErr(t *testing.T) {
 	tr, cleanup := newErrTransport(t)
 	defer cleanup()
@@ -178,24 +166,6 @@ func TestListUserCredentials_ServerErr(t *testing.T) {
 	_, err := tr.ListUserCredentials(context.Background(), "alice")
 	require.Error(t, err)
 }
-
-// --- Cluster server-error paths ---
-
-func TestClusterStatus_ServerErr(t *testing.T) {
-	tr, cleanup := newErrTransport(t)
-	defer cleanup()
-	_, err := tr.ClusterStatus(context.Background())
-	require.Error(t, err)
-}
-
-func TestClusterMembers_ServerErr(t *testing.T) {
-	tr, cleanup := newErrTransport(t)
-	defer cleanup()
-	_, err := tr.ClusterMembers(context.Background())
-	require.Error(t, err)
-}
-
-// --- mockKeystoreServer happy-path implementations for user methods ---
 
 func (s *mockKeystoreServer) CreateUser(_ context.Context, req *pb.CreateUserRequest) (*pb.UserResponse, error) {
 	return &pb.UserResponse{User: &pb.UserInfo{Username: req.Username, DisplayName: req.DisplayName, Role: req.Role, Enabled: true}}, nil

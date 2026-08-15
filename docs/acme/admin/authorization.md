@@ -48,7 +48,9 @@ Three properties hold on every surface:
 When the `Authorizer` has no RBAC client (RBAC disabled, or no qrdb identity
 plane is hosted), authorization is disabled and an authenticated caller is
 admitted. This matches the documented stack-wide "RBAC disabled => allow all"
-posture of `pkg/api/rest` and `pkg/api/quic`.
+posture of `pkg/api/rest` (QUIC is HTTP/3 served on the same REST listener,
+so it shares this posture; there is no separate `pkg/api/quic` server
+package).
 
 ## Roles
 

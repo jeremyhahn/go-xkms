@@ -154,27 +154,18 @@ COPY --chown=testuser:testuser sdk/go/go.mod sdk/go/go.sum ./sdk/go/
 # Copy the xkey module files before go mod download (required for replace directive)
 COPY --chown=testuser:testuser xkey/go.mod xkey/go.sum ./xkey/
 
-# Copy the full in-house module closure (provided via docker compose
-# additional_contexts). All six siblings are present so the build-time Go
-# workspace resolves every in-house module locally and only public deps download.
-COPY --from=go-codec --chown=testuser:testuser . /go-codec
-COPY --from=go-frost --chown=testuser:testuser . /go-frost
-COPY --from=go-objstore --chown=testuser:testuser . /go-objstore
-COPY --from=go-qrdb --chown=testuser:testuser . /go-qrdb
-COPY --from=go-quicraft --chown=testuser:testuser . /go-quicraft
-COPY --from=go-truststrap --chown=testuser:testuser . /go-truststrap
-
-# Materialize the build-time Go workspace via the single canonical generator
-# (scripts/gen-gowork.sh) so the module set + version-specific replaces live in
-# one place and cannot drift from the other container contexts. GOWORK is
-# exported for all subsequent go commands. The generator only needs the go.mod
-# files already copied above plus the bind-mounted siblings at /go-<name>.
-ENV GOWORK=/tmp/go.work
-COPY --chown=testuser:testuser scripts/gen-gowork.sh ./scripts/gen-gowork.sh
-RUN bash scripts/gen-gowork.sh /workspace /tmp/go.work
-
-# Download dependencies (cached if go.mod/go.sum unchanged)
-RUN go mod download
+# In-house modules resolve from Gitea tags (dependency-resolution.md §6) — no
+# build-time workspace and no sibling contexts. The fetch token arrives as a
+# BuildKit secret, NOT a build arg or an ENV: a build arg is recorded in image
+# metadata, while a secret is mounted on tmpfs for this RUN alone and never
+# becomes a layer. It is sourced rather than exported so the value never
+# appears in a command line either. The mount is optional by design: with no
+# secret supplied these modules resolve from the public proxy once tags are
+# mirrored (§7), so the same Dockerfile builds on both hosts.
+RUN --mount=type=secret,id=gomodauth,uid=1000 \
+    set -eu; \
+    if [ -f /run/secrets/gomodauth ]; then . /run/secrets/gomodauth; fi; \
+    go mod download
 
 # Copy the entire source code
 COPY --chown=testuser:testuser . .

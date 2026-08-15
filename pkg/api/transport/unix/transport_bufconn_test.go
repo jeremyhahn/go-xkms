@@ -65,33 +65,6 @@ func (s *mockKeystoreServer) GetBackendInfo(_ context.Context, req *pb.GetBacken
 	}, nil
 }
 
-func (s *mockKeystoreServer) GetClusterStatus(_ context.Context, _ *emptypb.Empty) (*pb.ClusterStatusResponse, error) {
-	return &pb.ClusterStatusResponse{
-		ShardId:   3,
-		LeaderId:  2,
-		HasLeader: true,
-		NodeId:    1,
-		Clustered: true,
-	}, nil
-}
-
-func (s *mockKeystoreServer) ListClusterMembers(_ context.Context, _ *emptypb.Empty) (*pb.ListClusterMembersResponse, error) {
-	return &pb.ListClusterMembersResponse{
-		Members: []*pb.ClusterMember{
-			{NodeId: 1, Address: "10.0.0.1:63001", IsLeader: false, ApiEndpoints: map[string]string{"grpc": "10.0.0.1:9090"}},
-			{NodeId: 2, Address: "10.0.0.2:63001", IsLeader: true},
-		},
-	}, nil
-}
-
-func (s *mockKeystoreServer) AddClusterReplica(_ context.Context, req *pb.AddClusterReplicaRequest) (*pb.ClusterReplicaResponse, error) {
-	return &pb.ClusterReplicaResponse{ShardId: 3, ReplicaId: req.GetReplicaId()}, nil
-}
-
-func (s *mockKeystoreServer) RemoveClusterReplica(_ context.Context, req *pb.RemoveClusterReplicaRequest) (*pb.ClusterReplicaResponse, error) {
-	return &pb.ClusterReplicaResponse{ShardId: 3, ReplicaId: req.GetReplicaId()}, nil
-}
-
 func (s *mockKeystoreServer) GenerateKey(_ context.Context, req *pb.GenerateKeyRequest) (*pb.GenerateKeyResponse, error) {
 	return &pb.GenerateKeyResponse{
 		KeyId:        req.KeyId,
@@ -1595,45 +1568,4 @@ func TestClose_Connected(t *testing.T) {
 	assert.True(t, tr.connected)
 	require.NoError(t, tr.Close())
 	assert.False(t, tr.connected)
-}
-
-func TestClusterStatus_Connected(t *testing.T) {
-	tr, cleanup := newBufconnTransport(t)
-	defer cleanup()
-
-	resp, err := tr.ClusterStatus(context.Background())
-	require.NoError(t, err)
-	assert.Equal(t, uint64(3), resp.Status.ShardID)
-	assert.Equal(t, uint64(2), resp.Status.LeaderID)
-	assert.True(t, resp.Status.HasLeader)
-	assert.Equal(t, uint64(1), resp.Status.NodeID)
-	assert.True(t, resp.Status.Clustered)
-}
-
-func TestClusterMembers_Connected(t *testing.T) {
-	tr, cleanup := newBufconnTransport(t)
-	defer cleanup()
-
-	resp, err := tr.ClusterMembers(context.Background())
-	require.NoError(t, err)
-	require.Len(t, resp.Members, 2)
-	assert.Equal(t, uint64(1), resp.Members[0].NodeID)
-	assert.Equal(t, "10.0.0.1:63001", resp.Members[0].Address)
-	assert.False(t, resp.Members[0].IsLeader)
-	assert.Equal(t, map[string]string{"grpc": "10.0.0.1:9090"}, resp.Members[0].APIEndpoints)
-	assert.Equal(t, uint64(2), resp.Members[1].NodeID)
-	assert.True(t, resp.Members[1].IsLeader)
-	assert.Empty(t, resp.Members[1].APIEndpoints, "a member advertising nothing carries an empty map")
-}
-
-func TestClusterStatus_NotConnected(t *testing.T) {
-	tr := &Transport{}
-	_, err := tr.ClusterStatus(context.Background())
-	assert.ErrorIs(t, err, ErrNotConnected)
-}
-
-func TestClusterMembers_NotConnected(t *testing.T) {
-	tr := &Transport{}
-	_, err := tr.ClusterMembers(context.Background())
-	assert.ErrorIs(t, err, ErrNotConnected)
 }

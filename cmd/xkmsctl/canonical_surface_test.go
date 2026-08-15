@@ -28,6 +28,26 @@ var canonicalRootSubcommands = []string{
 	"ca",
 	"bootstrap",
 	"credential",
+	"cluster",
+	"rebalance",
+}
+
+// canonicalClusterVerbs lists the locked "cluster" verb surface driving
+// go-qrdb's control plane hosted by xkmsd.
+var canonicalClusterVerbs = []string{
+	"status",
+	"members",
+	"add",
+	"remove",
+}
+
+// canonicalRebalanceVerbs lists the locked "rebalance" verb surface
+// mapping 1:1 onto qrdb's transport.RebalanceClient.
+var canonicalRebalanceVerbs = []string{
+	"stats",
+	"plan",
+	"execute",
+	"report",
 }
 
 // canonicalInitFlagNames lists the canonical init flag names.
@@ -82,6 +102,88 @@ func TestCanonicalSurface_InitFlagsExposed(t *testing.T) {
 	for _, name := range canonicalInitFlagNames {
 		if cmd.Flags().Lookup(name) == nil {
 			t.Errorf("canonical init flag --%s missing", name)
+		}
+	}
+}
+
+// TestCanonicalSurface_ClusterHasAllVerbs verifies the canonical cluster
+// verb surface is present.
+func TestCanonicalSurface_ClusterHasAllVerbs(t *testing.T) {
+	for _, verb := range canonicalClusterVerbs {
+		if _, _, err := rootCmd.Find([]string{"cluster", verb}); err != nil {
+			t.Errorf("canonical cluster verb %q missing: %v", verb, err)
+		}
+	}
+}
+
+// TestCanonicalSurface_ClusterVerbFlags verifies the canonical cluster
+// flag surface: --shard everywhere plus the add/remove replica flags.
+func TestCanonicalSurface_ClusterVerbFlags(t *testing.T) {
+	for _, verb := range canonicalClusterVerbs {
+		cmd, _, err := rootCmd.Find([]string{"cluster", verb})
+		if err != nil {
+			t.Fatalf("cluster %s not registered: %v", verb, err)
+		}
+		if cmd.Flags().Lookup("shard") == nil {
+			t.Errorf("cluster %s --shard flag missing (canonical)", verb)
+		}
+	}
+	addCmd, _, err := rootCmd.Find([]string{"cluster", "add"})
+	if err != nil {
+		t.Fatalf("cluster add not registered: %v", err)
+	}
+	for _, flag := range []string{"replica-id", "raft-address"} {
+		if addCmd.Flags().Lookup(flag) == nil {
+			t.Errorf("cluster add --%s flag missing (canonical)", flag)
+		}
+	}
+	removeCmd, _, err := rootCmd.Find([]string{"cluster", "remove"})
+	if err != nil {
+		t.Fatalf("cluster remove not registered: %v", err)
+	}
+	if removeCmd.Flags().Lookup("replica-id") == nil {
+		t.Errorf("cluster remove --replica-id flag missing (canonical)")
+	}
+}
+
+// TestCanonicalSurface_RebalanceHasAllVerbs verifies the canonical
+// rebalance verb surface is present.
+func TestCanonicalSurface_RebalanceHasAllVerbs(t *testing.T) {
+	for _, verb := range canonicalRebalanceVerbs {
+		if _, _, err := rootCmd.Find([]string{"rebalance", verb}); err != nil {
+			t.Errorf("canonical rebalance verb %q missing: %v", verb, err)
+		}
+	}
+}
+
+// TestCanonicalSurface_RebalanceVerbFlags verifies the canonical
+// rebalance flag surface per verb.
+func TestCanonicalSurface_RebalanceVerbFlags(t *testing.T) {
+	statsCmd, _, err := rootCmd.Find([]string{"rebalance", "stats"})
+	if err != nil {
+		t.Fatalf("rebalance stats not registered: %v", err)
+	}
+	if statsCmd.Flags().Lookup("shard") == nil {
+		t.Errorf("rebalance stats --shard flag missing (canonical)")
+	}
+
+	planCmd, _, err := rootCmd.Find([]string{"rebalance", "plan"})
+	if err != nil {
+		t.Fatalf("rebalance plan not registered: %v", err)
+	}
+	for _, flag := range []string{"max-moves", "dry-run", "target-balance", "out"} {
+		if planCmd.Flags().Lookup(flag) == nil {
+			t.Errorf("rebalance plan --%s flag missing (canonical)", flag)
+		}
+	}
+
+	execCmd, _, err := rootCmd.Find([]string{"rebalance", "execute"})
+	if err != nil {
+		t.Fatalf("rebalance execute not registered: %v", err)
+	}
+	for _, flag := range []string{"plan", "max-moves", "target-balance"} {
+		if execCmd.Flags().Lookup(flag) == nil {
+			t.Errorf("rebalance execute --%s flag missing (canonical)", flag)
 		}
 	}
 }

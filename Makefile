@@ -67,7 +67,7 @@ endif
 
 # All available build tags for release builds
 # CLI doesn't include pkcs11 (requires CGO) for easier distribution
-CLI_BUILD_TAGS := pkcs8 awskms gcpkms azurekv vault frost codec_cbor codec_json codec_msgpack
+CLI_BUILD_TAGS := pkcs8 awskms gcpkms azurekv vault frost codec_cbor codec_json codec_msgpack gms_pure_go
 # Server includes all tags including pkcs11 and the object-storage cloud backends
 SERVER_BUILD_TAGS := pkcs8 awskms gcpkms azurekv vault pkcs11 frost awss3 minio gcpstorage azureblob glacier azurearchive codec_cbor codec_json codec_msgpack
 # All tags for integration testing (includes all possible build tags)
@@ -163,22 +163,22 @@ DOCKER_CONTAINER := $(PROJECT_NAME)-container
 BUILDER_IMAGE := $(PROJECT_NAME)-builder:latest
 XKEY_BUILDER_IMAGE := $(PROJECT_NAME)-xkey-builder:latest
 
-# Sibling module mounts for Docker builds (mirrors ~/sources/go.work)
-PARENT_DIR := $(dir $(CURDIR))
-SIBLING_MOUNTS := -v $(PARENT_DIR)go-codec:/go-codec:cached \
-                  -v $(PARENT_DIR)go-frost:/go-frost:cached \
-                  -v $(PARENT_DIR)go-objstore:/go-objstore:cached \
-                  -v $(PARENT_DIR)go-qrdb:/go-qrdb:cached \
-                  -v $(PARENT_DIR)go-quicraft:/go-quicraft:cached \
-                  -v $(PARENT_DIR)go-truststrap:/go-truststrap:cached
-
-# go.work generation for Docker containers. All container contexts (Dockerfiles,
-# entrypoints, devcontainer ensure-gowork.sh, and the docker-run targets below)
-# delegate to the SINGLE canonical generator scripts/gen-gowork.sh so the module
-# set and the version-specific replace directives live in exactly one place and
-# can never drift per-context. Every docker-run user mounts the repo at
-# /workspace, so the generator is always reachable there.
-GOWORK_INIT := bash /workspace/scripts/gen-gowork.sh /workspace /tmp/go.work && export GOWORK=/tmp/go.work &&
+# Cross-repo first-party modules resolve from Gitea tags inside containers
+# (dependency-resolution.md §6) — no workspace, no sibling mounts. The
+# read-only fetch token comes from the gitignored .devcontainer/.env
+# (pattern: go-qrdb/.devcontainer/); the host module cache is mounted so a
+# warm host cache serves container builds without refetching the graph.
+GITEA_GO_TOKEN ?= $(shell sed -n 's/^GITEA_GO_TOKEN=//p' .devcontainer/.env 2>/dev/null)
+# Exported so docker compose invocations interpolate ${GITEA_GO_TOKEN} in
+# their environment blocks regardless of which directory compose runs from.
+export GITEA_GO_TOKEN
+GOMODCACHE_HOST := $(shell go env GOMODCACHE 2>/dev/null || echo $(HOME)/go/pkg/mod)
+GITEA_MODULE_ENV := -e GOWORK=off \
+                    -e GOPRIVATE='github.com/jeremyhahn/*' \
+                    -e GIT_CONFIG_COUNT=1 \
+                    -e GIT_CONFIG_KEY_0='url.http://x:$(GITEA_GO_TOKEN)@198.51.100.91:3001/jeremyhahn/.insteadOf' \
+                    -e GIT_CONFIG_VALUE_0='https://github.com/jeremyhahn/' \
+                    -v $(GOMODCACHE_HOST):/root/go/pkg/mod:cached
 
 # ==============================================================================
 # PKCS#11 Module Configuration
@@ -302,7 +302,7 @@ builder-image:
 build-cli:
 	@echo "$(CYAN)$(BOLD)→ Building xkmsctl CLI...$(RESET)"
 	@mkdir -p $(BIN_DIR)
-	@CGO_ENABLED=0 $(GOBUILD) -o $(BIN_DIR)/xkmsctl ./cmd/xkmsctl
+	@CGO_ENABLED=0 $(GOBUILD) -tags gms_pure_go -o $(BIN_DIR)/xkmsctl ./cmd/xkmsctl
 	@echo "$(GREEN)✓ CLI binary built: $(BIN_DIR)/xkmsctl$(RESET)"
 
 .PHONY: build-server
@@ -312,10 +312,10 @@ build-server: builder-image
 	@mkdir -p $(BIN_DIR)
 	@docker run --rm \
 		-v $(CURDIR):/workspace:cached \
-		$(SIBLING_MOUNTS) \
+		$(GITEA_MODULE_ENV) \
 		-w /workspace \
 		$(BUILDER_IMAGE) \
-		bash -c "$(GOWORK_INIT) CGO_ENABLED=1 go build -buildvcs=false -tags '$(BUILD_TAGS)' -ldflags '$(LDFLAGS)' -o $(BIN_DIR)/xkmsd ./cmd/xkmsd/"
+		bash -c "CGO_ENABLED=1 go build -buildvcs=false -tags '$(BUILD_TAGS)' -ldflags '$(LDFLAGS)' -o $(BIN_DIR)/xkmsd ./cmd/xkmsd/"
 	@echo "$(GREEN)✓ Unified server binary built: $(BIN_DIR)/xkmsd$(RESET)"
 
 .PHONY: build-servers
@@ -325,7 +325,7 @@ build-servers: build-server
 
 .PHONY: build-xkey
 ## build-xkey: Build the xkey binary with embedded GUI frontend (uses Docker)
-## Uses the xkey builder image with SIBLING_MOUNTS to resolve symlinked siblings.
+## Modules resolve from Gitea tags via GITEA_MODULE_ENV (dependency-resolution.md §6).
 ## The binary is output to $(BIN_DIR)/xkey alongside other project binaries.
 build-xkey:
 	@echo "$(CYAN)$(BOLD)→ Building xkey builder image...$(RESET)"
@@ -346,10 +346,10 @@ build-xkey:
 	@mkdir -p $(BIN_DIR)
 	@docker run --rm \
 		-v $(CURDIR):/workspace:cached \
-		$(SIBLING_MOUNTS) \
+		$(GITEA_MODULE_ENV) \
 		-w /workspace/xkey \
 		$(XKEY_BUILDER_IMAGE) \
-		bash -c "$(GOWORK_INIT) CGO_ENABLED=1 go build -tags 'ble,production,codec_json,pkcs11,webkit2_41' -buildvcs=false -ldflags '-X github.com/jeremyhahn/go-xkms/xkey/cmd/xkey/cmd.Version=$(VERSION) -X github.com/jeremyhahn/go-xkms/xkey/cmd/xkey/cmd.Commit=$(GIT_COMMIT) -X github.com/jeremyhahn/go-xkms/xkey/cmd/xkey/cmd.Date=$(BUILD_DATE)' -o /workspace/$(BIN_DIR)/xkey ./cmd/xkey && chown $(shell id -u):$(shell id -g) /workspace/$(BIN_DIR)/xkey"
+		bash -c "CGO_ENABLED=1 go build -tags 'ble,production,codec_json,pkcs11,webkit2_41' -buildvcs=false -ldflags '-X github.com/jeremyhahn/go-xkms/xkey/cmd/xkey/cmd.Version=$(VERSION) -X github.com/jeremyhahn/go-xkms/xkey/cmd/xkey/cmd.Commit=$(GIT_COMMIT) -X github.com/jeremyhahn/go-xkms/xkey/cmd/xkey/cmd.Date=$(BUILD_DATE)' -o /workspace/$(BIN_DIR)/xkey ./cmd/xkey && chown $(shell id -u):$(shell id -g) /workspace/$(BIN_DIR)/xkey"
 	@echo "$(GREEN)✓ xkey binary built: $(BIN_DIR)/xkey$(RESET)"
 	@echo "$(GREEN)  GUI mode:  ./$(BIN_DIR)/xkey$(RESET)"
 	@echo "$(GREEN)  CLI mode:  ./$(BIN_DIR)/xkey --no-gui$(RESET)"
@@ -747,10 +747,10 @@ lib: builder-image
 	@mkdir -p $(LIB_DIR)
 	@docker run --rm \
 		-v $(CURDIR):/workspace:cached \
-		$(SIBLING_MOUNTS) \
+		$(GITEA_MODULE_ENV) \
 		-w /workspace \
 		$(BUILDER_IMAGE) \
-		bash -c "$(GOWORK_INIT) CGO_ENABLED=1 go build -buildvcs=false -tags '$(BUILD_TAGS)' -ldflags '$(LDFLAGS)' -buildmode=c-shared -o $(SHARED_LIB) $(CGO_SOURCE)/main.go"
+		bash -c "CGO_ENABLED=1 go build -buildvcs=false -tags '$(BUILD_TAGS)' -ldflags '$(LDFLAGS)' -buildmode=c-shared -o $(SHARED_LIB) $(CGO_SOURCE)/main.go"
 	@echo "$(GREEN)✓ Shared library built: $(SHARED_LIB)$(RESET)"
 	@rm -f $(SHARED_LIB_LINK)
 	@cd $(LIB_DIR) && ln -s libxkms-$(VERSION).so libxkms.so
@@ -1909,11 +1909,10 @@ DOCKER_COMPOSE := docker compose -p $(COMPOSE_PROJECT) -f .devcontainer/docker-c
 # Helper to run command in devcontainer (auto-starts if needed)
 define run_in_devcontainer
 	@if [ -f "/.dockerenv" ] || [ -n "$$DEVCONTAINER" ]; then \
-		$(DEVCONTAINER_REPO)/.devcontainer/scripts/ensure-gowork.sh && $(1); \
+		$(1); \
 	else \
 		echo "$(CYAN)$(BOLD)→ Starting devcontainer...$(RESET)"; \
 		$(DOCKER_COMPOSE) up -d devcontainer --wait 2>/dev/null || $(DOCKER_COMPOSE) up -d devcontainer; \
-		$(DOCKER_COMPOSE) exec -T devcontainer bash -c "cd $(DEVCONTAINER_REPO) && bash .devcontainer/scripts/ensure-gowork.sh"; \
 		echo "$(CYAN)$(BOLD)→ Running in devcontainer: $(2)$(RESET)"; \
 		$(DOCKER_COMPOSE) exec -T devcontainer bash -c "cd $(DEVCONTAINER_REPO) && $(1)"; \
 	fi
@@ -1930,6 +1929,7 @@ endef
 XKMS_COMPOSE_SERVER ?= auto
 
 define compose_up_xkms_server
+	@$(MAKE) --no-print-directory stage-gomodauth
 	@case "$(XKMS_COMPOSE_SERVER)" in \
 		0|no|off) \
 			echo "$(YELLOW)xkms-server disabled (XKMS_COMPOSE_SERVER=0); the devcontainer serves the socket.$(RESET)" ;; \
@@ -1961,15 +1961,13 @@ define run_with_server
 	@if [ ! -f "/.dockerenv" ] && [ -z "$$DEVCONTAINER" ]; then \
 		echo "$(CYAN)$(BOLD)→ Starting devcontainer...$(RESET)"; \
 		{ $(DOCKER_COMPOSE) up -d devcontainer --wait 2>/dev/null || $(DOCKER_COMPOSE) up -d devcontainer; } && \
-		$(DOCKER_COMPOSE) exec -T devcontainer bash -c "cd $(DEVCONTAINER_REPO) && bash .devcontainer/scripts/ensure-gowork.sh" && \
 		echo "$(CYAN)$(BOLD)→ Building PKCS#11 shared library in devcontainer...$(RESET)" && \
-		$(DOCKER_COMPOSE) exec -T devcontainer bash -c "cd $(DEVCONTAINER_REPO) && mkdir -p build/lib && GOWORK=/tmp/go.work GOFIPS140=$(GOFIPS140) CGO_ENABLED=1 go build -buildvcs=false -buildmode=c-shared -o build/lib/libxkms_pkcs11.so ./cmd/pkcs11-module" && \
+		$(DOCKER_COMPOSE) exec -T devcontainer bash -c "cd $(DEVCONTAINER_REPO) && mkdir -p build/lib && GOFIPS140=$(GOFIPS140) CGO_ENABLED=1 go build -buildvcs=false -buildmode=c-shared -o build/lib/libxkms_pkcs11.so ./cmd/pkcs11-module" && \
 		echo "$(GREEN)✓ PKCS#11 module built in devcontainer$(RESET)" || \
 		{ echo "$(RED)✗ Could not build the PKCS#11 module; the suite would run against a stale .so$(RESET)"; exit 1; }; \
 	fi
 	$(call compose_up_xkms_server)
 	@if [ -f "/.dockerenv" ] || [ -n "$$DEVCONTAINER" ]; then \
-		$(DEVCONTAINER_REPO)/.devcontainer/scripts/ensure-gowork.sh; \
 		echo "$(CYAN)$(BOLD)→ Building PKCS#11 shared library...$(RESET)"; \
 		mkdir -p build/lib && GOFIPS140=$(GOFIPS140) CGO_ENABLED=1 go build -buildmode=c-shared -o build/lib/libxkms_pkcs11.so ./cmd/pkcs11-module || \
 			{ echo "$(RED)✗ Could not build the PKCS#11 module; the suite would run against a stale .so$(RESET)"; exit 1; }; \
@@ -1989,10 +1987,9 @@ endef
 
 .PHONY: devcontainer-up
 ## devcontainer-up: Build and start go-xkms's own devcontainer stack (devcontainer + swtpm + softhsm)
-devcontainer-up:
+devcontainer-up: stage-gomodauth
 	@echo "$(CYAN)$(BOLD)→ Bringing up the go-xkms devcontainer stack...$(RESET)"
 	$(DOCKER_COMPOSE) up -d --build devcontainer
-	$(DOCKER_COMPOSE) exec -T devcontainer bash -c "cd $(DEVCONTAINER_REPO) && bash .devcontainer/scripts/ensure-gowork.sh"
 	@echo "$(GREEN)✓ go-xkms-devcontainer is up (compose project $(COMPOSE_PROJECT))$(RESET)"
 
 .PHONY: devcontainer-down
@@ -2067,12 +2064,12 @@ devcontainer-server-wait:
 .PHONY: integration-test-fido2
 ## integration-test-fido2: Run all FIDO2 integration tests (runs in devcontainer)
 integration-test-fido2:
-	$(call run_in_devcontainer,mkdir -p build/bin && CGO_ENABLED=0 $(GO) build -buildvcs=false -o build/bin/xkmsctl ./cmd/xkmsctl && $(GO) test -v -tags='integration$(comma)fido2' ./test/integration/fido2/... -timeout 10m,integration-test-fido2)
+	$(call run_in_devcontainer,mkdir -p build/bin && CGO_ENABLED=0 $(GO) build -buildvcs=false -tags=gms_pure_go -o build/bin/xkmsctl ./cmd/xkmsctl && $(GO) test -v -tags='integration$(comma)fido2' ./test/integration/fido2/... -timeout 10m,integration-test-fido2)
 
 .PHONY: integration-test-fido2-cli
 ## integration-test-fido2-cli: Run FIDO2 CLI command tests (runs in devcontainer)
 integration-test-fido2-cli:
-	$(call run_in_devcontainer,mkdir -p build/bin && CGO_ENABLED=0 $(GO) build -buildvcs=false -o build/bin/xkmsctl ./cmd/xkmsctl && $(GO) test -v -tags='integration$(comma)fido2' ./test/integration/fido2/... -run 'CLI' -timeout 10m,integration-test-fido2-cli)
+	$(call run_in_devcontainer,mkdir -p build/bin && CGO_ENABLED=0 $(GO) build -buildvcs=false -tags=gms_pure_go -o build/bin/xkmsctl ./cmd/xkmsctl && $(GO) test -v -tags='integration$(comma)fido2' ./test/integration/fido2/... -run 'CLI' -timeout 10m,integration-test-fido2-cli)
 
 .PHONY: integration-test-fido2-hardware
 ## integration-test-fido2-hardware: Run FIDO2 ceremonies against a REAL attached authenticator (requires a physical YubiKey/CTAP2 key and a human to touch it)
@@ -2084,7 +2081,7 @@ integration-test-fido2-hardware:
 .PHONY: integration-test-fido2-webauthn
 ## integration-test-fido2-webauthn: Run FIDO2 WebAuthn server integration tests (runs in devcontainer)
 integration-test-fido2-webauthn:
-	$(call run_in_devcontainer,mkdir -p build/bin && CGO_ENABLED=0 $(GO) build -buildvcs=false -o build/bin/xkmsctl ./cmd/xkmsctl && $(GO) test -v -tags='integration$(comma)fido2$(comma)webauthn' ./test/integration/fido2/... -run 'WebAuthn' -timeout 10m,integration-test-fido2-webauthn)
+	$(call run_in_devcontainer,mkdir -p build/bin && CGO_ENABLED=0 $(GO) build -buildvcs=false -tags=gms_pure_go -o build/bin/xkmsctl ./cmd/xkmsctl && $(GO) test -v -tags='integration$(comma)fido2$(comma)webauthn' ./test/integration/fido2/... -run 'WebAuthn' -timeout 10m,integration-test-fido2-webauthn)
 
 .PHONY: integration-test-fido2-multiprotocol
 ## integration-test-fido2-multiprotocol: Run FIDO2 multi-protocol tests with virtual device (runs in devcontainer)
@@ -2660,15 +2657,36 @@ release: lib release-binaries
 # Docker Targets
 # ==============================================================================
 
+# Stage the Gitea module-fetch credentials as a BuildKit secret file
+# (dependency-resolution.md §6): sourceable `export` lines, written 0600 into
+# .devcontainer/ (gitignored AND dockerignored — the Dockerfile ends with
+# `COPY . .`, so the file must never be plain build context). Written empty
+# when no token is configured, so the same build resolves from the public
+# proxy on hosts without Gitea access.
+GOMODAUTH_FILE := .devcontainer/gomodauth.env
+.PHONY: stage-gomodauth
+stage-gomodauth:
+	@umask 077; : > $(GOMODAUTH_FILE); \
+	if [ -n "$(GITEA_GO_TOKEN)" ]; then \
+		{ \
+			printf 'export GOPRIVATE=%s\n' 'github.com/jeremyhahn/*'; \
+			printf 'export GIT_CONFIG_COUNT=1\n'; \
+			printf 'export GIT_CONFIG_KEY_0=%s\n' 'url.http://x:$(GITEA_GO_TOKEN)@198.51.100.91:3001/jeremyhahn/.insteadOf'; \
+			printf 'export GIT_CONFIG_VALUE_0=%s\n' 'https://github.com/jeremyhahn/'; \
+		} > $(GOMODAUTH_FILE); \
+	fi
+
 .PHONY: docker-build
 ## docker-build: Build Docker container for integration testing
-docker-build:
+docker-build: stage-gomodauth
 	@echo "$(CYAN)$(BOLD)→ Building Docker image...$(RESET)"
 	@if [ ! -f "Dockerfile" ]; then \
 		echo "$(YELLOW)⚠ Dockerfile not found. Creating default Dockerfile...$(RESET)"; \
 		$(MAKE) --no-print-directory create-dockerfile; \
 	fi
-	@docker buildx build --load -t $(DOCKER_INTEGRATION_IMAGE) -f Dockerfile .
+	@DOCKER_BUILDKIT=1 docker buildx build --load \
+		--secret id=gomodauth,src=$(GOMODAUTH_FILE) \
+		-t $(DOCKER_INTEGRATION_IMAGE) -f Dockerfile .
 	@echo "$(GREEN)✓ Docker image built: $(DOCKER_INTEGRATION_IMAGE)$(RESET)"
 
 .PHONY: docker-build-server
@@ -2760,7 +2778,7 @@ docker-run: docker-build
 	@echo "$(CYAN)$(BOLD)→ Starting Docker container...$(RESET)"
 	@docker run -it --rm \
 		-v $(PWD):/workspace \
-		$(SIBLING_MOUNTS) \
+		$(GITEA_MODULE_ENV) \
 		-w /workspace \
 		--name $(DOCKER_CONTAINER) \
 		$(DOCKER_INTEGRATION_IMAGE) \
@@ -2772,7 +2790,7 @@ docker-test: docker-build
 	@echo "$(CYAN)$(BOLD)→ Running tests in Docker container...$(RESET)"
 	@docker run --rm \
 		-v $(PWD):/workspace \
-		$(SIBLING_MOUNTS) \
+		$(GITEA_MODULE_ENV) \
 		-w /workspace \
 		--name $(PROJECT_NAME)-test \
 		$(DOCKER_INTEGRATION_IMAGE) \
@@ -3195,10 +3213,10 @@ docker-ci: docker-ci-build
 	@echo "$(CYAN)$(BOLD)→ Running CI pipeline in Docker container...$(RESET)"
 	@docker run --rm \
 		-v $(PWD):/workspace \
-		$(SIBLING_MOUNTS) \
+		$(GITEA_MODULE_ENV) \
 		-w /workspace \
 		$(CI_IMAGE_NAME):latest \
-		bash -c "$(GOWORK_INIT) make ci-local"
+		bash -c "make ci-local"
 	@echo "$(GREEN)$(BOLD)✓ CI pipeline complete!$(RESET)"
 
 .PHONY: ci-local
@@ -3303,6 +3321,13 @@ help:
 # Protocol Buffer Generation
 # ==============================================================================
 
+# PROTO_QRDB_DIR points at a go-qrdb checkout so xkms.proto can import
+# pkg/api/grpc/proto/qrdbv1/authz.proto (the qrdb.v1.permission method option
+# the unified server's reflection interceptor enforces). Defaults to the
+# sibling checkout, which holds on the host and in the devcontainer; override
+# with PROTO_QRDB_DIR=/path/to/go-qrdb when the layout differs.
+PROTO_QRDB_DIR ?= ../go-qrdb
+
 .PHONY: proto
 ## proto: Generate Go code from protocol buffer definitions
 proto:
@@ -3311,7 +3336,12 @@ proto:
 		echo "$(RED)✗ Proto file not found: pkg/api/grpc/proto/xkmsv1/xkms.proto$(RESET)"; \
 		exit 1; \
 	fi
-	@protoc -I/usr/include -I. --go_out=. --go_opt=paths=source_relative \
+	@if [ ! -f "$(PROTO_QRDB_DIR)/pkg/api/grpc/proto/qrdbv1/authz.proto" ]; then \
+		echo "$(RED)✗ qrdb authz.proto not found under PROTO_QRDB_DIR=$(PROTO_QRDB_DIR)$(RESET)"; \
+		exit 1; \
+	fi
+	@protoc -I/usr/include -I. -I$(PROTO_QRDB_DIR) \
+		--go_out=. --go_opt=paths=source_relative \
 		--go-grpc_out=. --go-grpc_opt=paths=source_relative \
 		pkg/api/grpc/proto/xkmsv1/xkms.proto
 	@echo "$(GREEN)✓ Protocol Buffer code generated$(RESET)"
@@ -3419,7 +3449,7 @@ integration-test-api-unix:
 	$(call kill_integration_containers)
 	@$(API_COMPOSE) build
 	@$(API_COMPOSE) run --rm --name xkms-test-unix integration-tests \
-		sh -c "mkdir -p /app/build/bin && CGO_ENABLED=0 go build -buildvcs=false -tags=frost -o /app/build/bin/xkmsctl ./cmd/xkmsctl && go test -v -tags='integration frost codec_cbor codec_json codec_msgpack' ./test/integration/api/unix/... -timeout 10m" ; \
+		sh -c "mkdir -p /app/build/bin && CGO_ENABLED=0 go build -buildvcs=false -tags='frost gms_pure_go' -o /app/build/bin/xkmsctl ./cmd/xkmsctl && go test -v -tags='integration frost codec_cbor codec_json codec_msgpack' ./test/integration/api/unix/... -timeout 10m" ; \
 		EXIT_CODE=$$? ; \
 		$(API_COMPOSE) down -v --remove-orphans ; \
 		exit $$EXIT_CODE
@@ -3432,7 +3462,7 @@ integration-test-api-rest:
 	$(call kill_integration_containers)
 	@$(API_COMPOSE) build
 	@$(API_COMPOSE) run --rm --name xkms-test-rest integration-tests \
-		sh -c "mkdir -p /app/build/bin && CGO_ENABLED=0 go build -buildvcs=false -tags=frost -o /app/build/bin/xkmsctl ./cmd/xkmsctl && go test -v -tags='integration frost codec_cbor codec_json codec_msgpack' ./test/integration/api/rest/... -timeout 10m" ; \
+		sh -c "mkdir -p /app/build/bin && CGO_ENABLED=0 go build -buildvcs=false -tags='frost gms_pure_go' -o /app/build/bin/xkmsctl ./cmd/xkmsctl && go test -v -tags='integration frost codec_cbor codec_json codec_msgpack' ./test/integration/api/rest/... -timeout 10m" ; \
 		EXIT_CODE=$$? ; \
 		$(API_COMPOSE) down -v --remove-orphans ; \
 		exit $$EXIT_CODE
@@ -3445,7 +3475,7 @@ integration-test-api-grpc:
 	$(call kill_integration_containers)
 	@$(API_COMPOSE) build
 	@$(API_COMPOSE) run --rm --name xkms-test-grpc integration-tests \
-		sh -c "mkdir -p /app/build/bin && CGO_ENABLED=0 go build -buildvcs=false -tags=frost -o /app/build/bin/xkmsctl ./cmd/xkmsctl && go test -v -tags='integration frost codec_cbor codec_json codec_msgpack' ./test/integration/api/grpc/... -timeout 10m" ; \
+		sh -c "mkdir -p /app/build/bin && CGO_ENABLED=0 go build -buildvcs=false -tags='frost gms_pure_go' -o /app/build/bin/xkmsctl ./cmd/xkmsctl && go test -v -tags='integration frost codec_cbor codec_json codec_msgpack' ./test/integration/api/grpc/... -timeout 10m" ; \
 		EXIT_CODE=$$? ; \
 		$(API_COMPOSE) down -v --remove-orphans ; \
 		exit $$EXIT_CODE
@@ -3458,7 +3488,7 @@ integration-test-api-quic:
 	$(call kill_integration_containers)
 	@$(API_COMPOSE) build
 	@$(API_COMPOSE) run --rm --name xkms-test-quic integration-tests \
-		sh -c "mkdir -p /app/build/bin && CGO_ENABLED=0 go build -buildvcs=false -tags=frost -o /app/build/bin/xkmsctl ./cmd/xkmsctl && go test -v -tags='integration frost codec_cbor codec_json codec_msgpack' ./test/integration/api/quic/... -timeout 10m" ; \
+		sh -c "mkdir -p /app/build/bin && CGO_ENABLED=0 go build -buildvcs=false -tags='frost gms_pure_go' -o /app/build/bin/xkmsctl ./cmd/xkmsctl && go test -v -tags='integration frost codec_cbor codec_json codec_msgpack' ./test/integration/api/quic/... -timeout 10m" ; \
 		EXIT_CODE=$$? ; \
 		$(API_COMPOSE) down -v --remove-orphans ; \
 		exit $$EXIT_CODE
@@ -3471,7 +3501,7 @@ integration-test-api-mcp:
 	$(call kill_integration_containers)
 	@$(API_COMPOSE) build
 	@$(API_COMPOSE) run --rm --name xkms-test-mcp integration-tests \
-		sh -c "mkdir -p /app/build/bin && CGO_ENABLED=0 go build -buildvcs=false -tags=frost -o /app/build/bin/xkmsctl ./cmd/xkmsctl && go test -v -tags='integration frost codec_cbor codec_json codec_msgpack' ./test/integration/api/... -run 'MCP|Mcp' -timeout 10m" ; \
+		sh -c "mkdir -p /app/build/bin && CGO_ENABLED=0 go build -buildvcs=false -tags='frost gms_pure_go' -o /app/build/bin/xkmsctl ./cmd/xkmsctl && go test -v -tags='integration frost codec_cbor codec_json codec_msgpack' ./test/integration/api/... -run 'MCP|Mcp' -timeout 10m" ; \
 		EXIT_CODE=$$? ; \
 		$(API_COMPOSE) down -v --remove-orphans ; \
 		exit $$EXIT_CODE
@@ -3484,7 +3514,7 @@ integration-test-api-ssh:
 	$(call kill_integration_containers)
 	@$(API_COMPOSE) build
 	@$(API_COMPOSE) run --rm --name xkms-test-ssh integration-tests \
-		sh -c "bash .devcontainer/scripts/ensure-gowork.sh && export GOWORK=/tmp/go.work && mkdir -p /app/build/bin && CGO_ENABLED=0 go build -buildvcs=false -tags=frost -o /app/build/bin/xkmsctl ./cmd/xkmsctl && (cd xkey && GOWORK=/tmp/go.work go build -tags='codec_cbor codec_json codec_msgpack' -o /app/build/bin/xkey ./cmd/xkey) && XKMS_SSH_TEST_BACKENDS=software,tpm2,pkcs11 XKEY_CLI_BIN=/app/build/bin/xkey go test -v -tags='integration frost codec_cbor codec_json codec_msgpack' ./test/integration/api/... -run 'XkeySSH' -timeout 10m" ; \
+		sh -c "mkdir -p /app/build/bin && CGO_ENABLED=0 go build -buildvcs=false -tags='frost gms_pure_go' -o /app/build/bin/xkmsctl ./cmd/xkmsctl && (cd xkey && go build -tags='codec_cbor codec_json codec_msgpack' -o /app/build/bin/xkey ./cmd/xkey) && XKMS_SSH_TEST_BACKENDS=software,tpm2,pkcs11 XKEY_CLI_BIN=/app/build/bin/xkey go test -v -tags='integration frost codec_cbor codec_json codec_msgpack' ./test/integration/api/... -run 'XkeySSH' -timeout 10m" ; \
 		EXIT_CODE=$$? ; \
 		$(API_COMPOSE) down -v --remove-orphans ; \
 		exit $$EXIT_CODE
@@ -3520,7 +3550,7 @@ ifeq ($(WITH_FROST),1)
 	$(call kill_integration_containers)
 	@$(API_COMPOSE) build
 	@$(API_COMPOSE) run --rm --name xkms-test-frost integration-tests \
-		sh -c "mkdir -p /app/build/bin && CGO_ENABLED=0 go build -buildvcs=false -tags=frost -o /app/build/bin/xkmsctl ./cmd/xkmsctl && go test -v -tags='integration frost codec_cbor codec_json codec_msgpack' ./test/integration/api/... -run 'FROST' -timeout 15m" ; \
+		sh -c "mkdir -p /app/build/bin && CGO_ENABLED=0 go build -buildvcs=false -tags='frost gms_pure_go' -o /app/build/bin/xkmsctl ./cmd/xkmsctl && go test -v -tags='integration frost codec_cbor codec_json codec_msgpack' ./test/integration/api/... -run 'FROST' -timeout 15m" ; \
 		EXIT_CODE=$$? ; \
 		$(API_COMPOSE) down -v --remove-orphans ; \
 		exit $$EXIT_CODE
@@ -3537,7 +3567,7 @@ integration-test-api-parity:
 	$(call kill_integration_containers)
 	@$(API_COMPOSE) build
 	@$(API_COMPOSE) run --rm --name xkms-test-parity integration-tests \
-		sh -c "mkdir -p /app/build/bin && CGO_ENABLED=0 go build -buildvcs=false -tags=frost -o /app/build/bin/xkmsctl ./cmd/xkmsctl && go test -v -tags='integration frost codec_cbor codec_json codec_msgpack' ./test/integration/api/... -run 'Parity|AllProtocols' -timeout 20m" ; \
+		sh -c "mkdir -p /app/build/bin && CGO_ENABLED=0 go build -buildvcs=false -tags='frost gms_pure_go' -o /app/build/bin/xkmsctl ./cmd/xkmsctl && go test -v -tags='integration frost codec_cbor codec_json codec_msgpack' ./test/integration/api/... -run 'Parity|AllProtocols' -timeout 20m" ; \
 		EXIT_CODE=$$? ; \
 		$(API_COMPOSE) down -v --remove-orphans ; \
 		exit $$EXIT_CODE

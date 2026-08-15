@@ -138,7 +138,6 @@ func Constants() map[string]string {
 		"ResourceACMEOrders":    auth.ResourceACMEOrders,
 		"ResourceACMEEAB":       auth.ResourceACMEEAB,
 		"ResourceCA":            auth.ResourceCA,
-		"ResourceClusterAdmin":  auth.ResourceClusterAdmin,
 
 		"ActionSign":               auth.ActionSign,
 		"ActionVerify":             auth.ActionVerify,
@@ -184,10 +183,6 @@ func Constants() map[string]string {
 		"ActionStrategy":           auth.ActionStrategy,
 		"ActionLock":               auth.ActionLock,
 		"ActionUnlock":             auth.ActionUnlock,
-		"ActionAddMember":          auth.ActionAddMember,
-		"ActionRemoveMember":       auth.ActionRemoveMember,
-		"ActionClusterStatus":      auth.ActionClusterStatus,
-		"ActionClusterPeers":       auth.ActionClusterPeers,
 	}
 }
 

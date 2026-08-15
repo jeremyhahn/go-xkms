@@ -74,3 +74,7 @@ playwright-report/
 /chacha20
 /encryption
 test/integration/acme-client/playwright/trusted-acme-client
+
+# Gitea module-fetch token (dependency-resolution.md §6) — never committed
+.devcontainer/.env
+.devcontainer/gomodauth.env

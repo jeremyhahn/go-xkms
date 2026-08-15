@@ -25,11 +25,8 @@ import (
 // authzSeams are the authorization gates this package exposes.
 //
 //   - (*Service).authorize(ctx, resource, action, resourceID)
-//   - (*Service).authorizeClusterMutation(ctx, action, resourceID), which pins
-//     the resource to the canonical qrdb membership resource.
 var authzSeams = []authzscan.Seam{
 	{Method: "authorize", Args: 4, ResourceArg: 1, ActionArg: 2},
-	{Method: "authorizeClusterMutation", Args: 3, ResourceArg: -1, ActionArg: 1, FixedResource: "ResourceClusterAdmin"},
 }
 
 // goldenRPCPermissions is the complete, literal resource:action pair every
@@ -41,7 +38,6 @@ var authzSeams = []authzscan.Seam{
 // repointed, or swapped for a different one. It is the gRPC counterpart of
 // pkg/api/mcp's goldenMethodPermissions and pins the same vocabulary.
 var goldenRPCPermissions = map[string]string{
-	"AddClusterReplica":           "admin:add_member",
 	"AddCustodianMember":          "ceremony:enroll_custodian",
 	"AttestKey":                   "keys:get",
 	"BarrierDeleteRecoveryKeys":   "seal:generate_recovery",
@@ -102,7 +98,6 @@ var goldenRPCPermissions = map[string]string{
 	"GetCACertificate":            "certs:read",
 	"GetCert":                     "certs:read",
 	"GetCertChain":                "certs:read",
-	"GetClusterStatus":            "admin:status",
 	"GetCustodianGroup":           "ceremony:status",
 	"GetImportParameters":         "keys:import",
 	"GetKey":                      "keys:get",
@@ -121,7 +116,6 @@ var goldenRPCPermissions = map[string]string{
 	"IssueEKCertificate":          "certs:generate",
 	"ListBackends":                "backends:list",
 	"ListCerts":                   "certs:list",
-	"ListClusterMembers":          "admin:peers",
 	"ListCustodianGroups":         "ceremony:status",
 	"ListKeys":                    "keys:list",
 	"ListPIVSlots":                "piv:read",
@@ -150,7 +144,6 @@ var goldenRPCPermissions = map[string]string{
 	// reading it carries its own permission rather than riding on keys:* or
 	// users:*. There is no emit gate because there is no emit RPC.
 	"QueryAudit":               "audit:read",
-	"RemoveClusterReplica":     "admin:remove_member",
 	"RemoveCustodianMember":    "ceremony:revoke_custodian",
 	"ResetLockout":             "pin:write",
 	"RevokeCertificate":        "certs:revoke",
