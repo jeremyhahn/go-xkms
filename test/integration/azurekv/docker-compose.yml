@@ -4,19 +4,17 @@ services:
       context: ../../..
       dockerfile: test/integration/azurekv/Dockerfile
     environment:
+      - GOWORK=off
+      - GOPRIVATE=github.com/jeremyhahn/*
+      - GIT_CONFIG_COUNT=1
+      - GIT_CONFIG_KEY_0=url.http://x:${GITEA_GO_TOKEN}@198.51.100.91:3001/jeremyhahn/.insteadOf
+      - GIT_CONFIG_VALUE_0=https://github.com/jeremyhahn/
       # No AZURE_KEYVAULT_ENDPOINT - use mock client
       - AZURE_TENANT_ID=test-tenant
       - AZURE_CLIENT_ID=test-client
       - AZURE_CLIENT_SECRET=test-secret
     volumes:
       - ../../..:/app
-      # Sibling module mounts (for go.mod replace directives)
-      - ../../../../go-qrdb:/go-qrdb:cached
-      - ../../../../go-quicraft:/go-quicraft:cached
-      - ../../../../go-objstore:/go-objstore:cached
-      - ../../../../go-truststrap:/go-truststrap:cached
-      - ../../../../go-codec:/go-codec:cached
-      - ../../../../go-frost:/go-frost:cached
     working_dir: /app
 
 networks:

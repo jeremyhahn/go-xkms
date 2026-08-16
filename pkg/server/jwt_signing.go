@@ -74,15 +74,29 @@ func (s *Server) initializeTokenIssuer() error {
 	// leaves the issuer nil: the login surfaces stay unmounted and the
 	// daemon still serves — loudly, so the operator knows browser and
 	// desktop logins cannot work on this deployment.
-	if _, err := backend.GetKey(s.ctx, attrs); err != nil {
-		if _, genErr := backend.GenerateECDSA(s.ctx, attrs); genErr != nil {
-			s.logger.Error("Token issuer disabled: JWT signing key provisioning failed; "+
-				"WebAuthn and PIV/mTLS logins will not work",
-				"cn", cn, "backend", s.defaultBackendName, "error", genErr)
-			return nil
+	// On a cluster this runs while the initial leader election may still be
+	// settling; a not-leader failure from the replicated key store is
+	// transient and retried (leader_retry.go). Any other failure keeps the
+	// lenient behavior: the issuer stays nil and the daemon serves without
+	// the login surfaces — loudly, so the operator knows.
+	provision := func() error {
+		if _, err := backend.GetKey(s.ctx, attrs); err != nil {
+			if isNotLeaderErr(err) {
+				return err
+			}
+			if _, genErr := backend.GenerateECDSA(s.ctx, attrs); genErr != nil {
+				return genErr
+			}
+			s.logger.Info("JWT signing key provisioned",
+				"cn", cn, "backend", s.defaultBackendName)
 		}
-		s.logger.Info("JWT signing key provisioned",
-			"cn", cn, "backend", s.defaultBackendName)
+		return nil
+	}
+	if err := retryNotLeader(s.ctx, s.logger, "jwt signing key", provision); err != nil {
+		s.logger.Error("Token issuer disabled: JWT signing key provisioning failed; "+
+			"WebAuthn and PIV/mTLS logins will not work",
+			"cn", cn, "backend", s.defaultBackendName, "error", err)
+		return nil
 	}
 
 	signer, err := backend.Signer(s.ctx, attrs)

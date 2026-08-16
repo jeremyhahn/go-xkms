@@ -17,4 +17,4 @@ RUN go mod download || true
 
 COPY . .
 
-CMD ["go", "test", "-v", "-tags=integration codec_cbor codec_json codec_msgpack", "./test/integration/certstore/..."]
+CMD ["go", "test", "-v", "-tags=integration codec_cbor codec_json codec_msgpack gms_pure_go", "./test/integration/certstore/..."]

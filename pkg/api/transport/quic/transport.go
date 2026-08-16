@@ -1259,31 +1259,75 @@ func (t *Transport) AttestKey(ctx context.Context, req *transport.AttestKeyReque
 }
 
 // BeginRegistration begins a WebAuthn registration flow.
-// Note: This is a stub implementation that returns ErrNotSupported.
-// Authentication flow will be implemented in a future version.
-func (t *Transport) BeginRegistration(_ context.Context, _ *transport.BeginRegistrationRequest) (*transport.BeginRegistrationResponse, error) {
-	return nil, ErrNotSupported
+// Requires the server to have WebAuthn enabled. It returns the JSON-marshaled
+// WebAuthn options together with an opaque session ID; the caller drives an
+// authenticator with the options and echoes the session ID back to
+// FinishRegistration. This is the lossless SDK ceremony that mirrors the
+// browser ceremony served by pkg/webauthn/http.
+func (t *Transport) BeginRegistration(ctx context.Context, req *transport.BeginRegistrationRequest) (*transport.BeginRegistrationResponse, error) {
+	data, err := t.doRawRequest(ctx, http.MethodPost, "/api/v1/webauthn/sdk/registration/begin", req)
+	if err != nil {
+		return nil, err
+	}
+
+	var resp transport.BeginRegistrationResponse
+	if err := json.Unmarshal(data, &resp); err != nil {
+		return nil, &errs.Wrapped{Msg: "failed to parse response", Err: err}
+	}
+	return &resp, nil
 }
 
 // FinishRegistration completes a WebAuthn registration flow.
-// Note: This is a stub implementation that returns ErrNotSupported.
-// Authentication flow will be implemented in a future version.
-func (t *Transport) FinishRegistration(_ context.Context, _ *transport.FinishRegistrationRequest) (*transport.FinishRegistrationResponse, error) {
-	return nil, ErrNotSupported
+// Requires the server to have WebAuthn enabled. The request carries the session
+// ID from BeginRegistration and the authenticator attestation as WebAuthn
+// PublicKeyCredential JSON.
+func (t *Transport) FinishRegistration(ctx context.Context, req *transport.FinishRegistrationRequest) (*transport.FinishRegistrationResponse, error) {
+	data, err := t.doRawRequest(ctx, http.MethodPost, "/api/v1/webauthn/sdk/registration/finish", req)
+	if err != nil {
+		return nil, err
+	}
+
+	var resp transport.FinishRegistrationResponse
+	if err := json.Unmarshal(data, &resp); err != nil {
+		return nil, &errs.Wrapped{Msg: "failed to parse response", Err: err}
+	}
+	return &resp, nil
 }
 
-// BeginAuthentication begins a WebAuthn authentication flow.
-// Note: This is a stub implementation that returns ErrNotSupported.
-// Authentication flow will be implemented in a future version.
-func (t *Transport) BeginAuthentication(_ context.Context, _ *transport.BeginAuthenticationRequest) (*transport.BeginAuthenticationResponse, error) {
-	return nil, ErrNotSupported
+// BeginAuthentication begins a WebAuthn authentication (login) flow.
+// Requires the server to have WebAuthn enabled. It returns the JSON-marshaled
+// WebAuthn assertion options together with an opaque session ID; the caller
+// drives an authenticator with the options and echoes the session ID back to
+// FinishAuthentication. This is the lossless SDK ceremony that mirrors the
+// browser ceremony served by pkg/webauthn/http, symmetric to BeginRegistration.
+func (t *Transport) BeginAuthentication(ctx context.Context, req *transport.BeginAuthenticationRequest) (*transport.BeginAuthenticationResponse, error) {
+	data, err := t.doRawRequest(ctx, http.MethodPost, "/api/v1/webauthn/sdk/authentication/begin", req)
+	if err != nil {
+		return nil, err
+	}
+
+	var resp transport.BeginAuthenticationResponse
+	if err := json.Unmarshal(data, &resp); err != nil {
+		return nil, &errs.Wrapped{Msg: "failed to parse response", Err: err}
+	}
+	return &resp, nil
 }
 
-// FinishAuthentication completes a WebAuthn authentication flow.
-// Note: This is a stub implementation that returns ErrNotSupported.
-// Authentication flow will be implemented in a future version.
-func (t *Transport) FinishAuthentication(_ context.Context, _ *transport.FinishAuthenticationRequest) (*transport.FinishAuthenticationResponse, error) {
-	return nil, ErrNotSupported
+// FinishAuthentication completes a WebAuthn authentication (login) flow.
+// Requires the server to have WebAuthn enabled. The request carries the session
+// ID from BeginAuthentication and the authenticator assertion as WebAuthn
+// PublicKeyCredential JSON.
+func (t *Transport) FinishAuthentication(ctx context.Context, req *transport.FinishAuthenticationRequest) (*transport.FinishAuthenticationResponse, error) {
+	data, err := t.doRawRequest(ctx, http.MethodPost, "/api/v1/webauthn/sdk/authentication/finish", req)
+	if err != nil {
+		return nil, err
+	}
+
+	var resp transport.FinishAuthenticationResponse
+	if err := json.Unmarshal(data, &resp); err != nil {
+		return nil, &errs.Wrapped{Msg: "failed to parse response", Err: err}
+	}
+	return &resp, nil
 }
 
 // CA Operations
@@ -2741,48 +2785,136 @@ func (t *Transport) GetCredentialStrategy(ctx context.Context) (*transport.Crede
 
 // ==================== User Operations ====================
 //
-// User management over QUIC is not yet wired; the CLI/webui reach xkms user
-// management via the REST transport. These stubs keep the Client interface
-// satisfied.
+// The QUIC transport reaches the xkms user API exposed under /api/v1/users,
+// matching the REST transport's endpoints byte-for-byte.
 
-// CreateUser is not supported over the QUIC transport.
-func (t *Transport) CreateUser(_ context.Context, _ *transport.CreateUserRequest) (*transport.GetUserResponse, error) {
-	return nil, ErrNotSupported
+// CreateUser creates a new xkms user.
+func (t *Transport) CreateUser(ctx context.Context, req *transport.CreateUserRequest) (*transport.GetUserResponse, error) {
+	body := map[string]string{
+		"username":     req.Username,
+		"display_name": req.DisplayName,
+		"role":         req.Role,
+		"tenant_id":    req.TenantID,
+	}
+
+	data, err := t.doRawRequest(ctx, http.MethodPost, "/api/v1/users/", body)
+	if err != nil {
+		return nil, err
+	}
+
+	var user transport.UserInfo
+	if err := json.Unmarshal(data, &user); err != nil {
+		return nil, &errs.Wrapped{Msg: "failed to parse response", Err: err}
+	}
+
+	return &transport.GetUserResponse{User: user}, nil
 }
 
-// ListUsers is not supported over the QUIC transport.
-func (t *Transport) ListUsers(_ context.Context, _ ...transport.ListOption) (*transport.ListUsersResponse, error) {
-	return nil, ErrNotSupported
+// ListUsers lists xkms users.
+func (t *Transport) ListUsers(ctx context.Context, _ ...transport.ListOption) (*transport.ListUsersResponse, error) {
+	data, err := t.doRawRequest(ctx, http.MethodGet, "/api/v1/users/", nil)
+	if err != nil {
+		return nil, err
+	}
+
+	var resp transport.ListUsersResponse
+	if err := json.Unmarshal(data, &resp); err != nil {
+		return nil, &errs.Wrapped{Msg: "failed to parse response", Err: err}
+	}
+
+	return &resp, nil
 }
 
-// GetUser is not supported over the QUIC transport.
-func (t *Transport) GetUser(_ context.Context, _ string) (*transport.GetUserResponse, error) {
-	return nil, ErrNotSupported
+// GetUser retrieves a single xkms user by username.
+func (t *Transport) GetUser(ctx context.Context, username string) (*transport.GetUserResponse, error) {
+	path := fmt.Sprintf("/api/v1/users/%s", url.PathEscape(username))
+	data, err := t.doRawRequest(ctx, http.MethodGet, path, nil)
+	if err != nil {
+		return nil, err
+	}
+
+	var user transport.UserInfo
+	if err := json.Unmarshal(data, &user); err != nil {
+		return nil, &errs.Wrapped{Msg: "failed to parse response", Err: err}
+	}
+
+	return &transport.GetUserResponse{User: user}, nil
 }
 
-// DeleteUser is not supported over the QUIC transport.
-func (t *Transport) DeleteUser(_ context.Context, _ string) error {
-	return ErrNotSupported
+// DeleteUser removes an xkms user by username.
+func (t *Transport) DeleteUser(ctx context.Context, username string) error {
+	path := fmt.Sprintf("/api/v1/users/%s", url.PathEscape(username))
+	if _, err := t.doRawRequest(ctx, http.MethodDelete, path, nil); err != nil {
+		return err
+	}
+
+	return nil
 }
 
-// EnableUser is not supported over the QUIC transport.
-func (t *Transport) EnableUser(_ context.Context, _ string) error {
-	return ErrNotSupported
+// EnableUser enables an xkms user by username.
+func (t *Transport) EnableUser(ctx context.Context, username string) error {
+	return t.setUserEnabled(ctx, username, true)
 }
 
-// DisableUser is not supported over the QUIC transport.
-func (t *Transport) DisableUser(_ context.Context, _ string) error {
-	return ErrNotSupported
+// DisableUser disables an xkms user by username.
+func (t *Transport) DisableUser(ctx context.Context, username string) error {
+	return t.setUserEnabled(ctx, username, false)
 }
 
-// BindUserCert is not supported over the QUIC transport.
-func (t *Transport) BindUserCert(_ context.Context, _, _ string, _ int64) error {
-	return ErrNotSupported
+// setUserEnabled toggles the enabled state of an xkms user.
+func (t *Transport) setUserEnabled(ctx context.Context, username string, enabled bool) error {
+	path := fmt.Sprintf("/api/v1/users/%s", url.PathEscape(username))
+	body := map[string]bool{"enabled": enabled}
+	if _, err := t.doRawRequest(ctx, http.MethodPut, path, body); err != nil {
+		return err
+	}
+
+	return nil
 }
 
-// ListUserCredentials is not supported over the QUIC transport.
-func (t *Transport) ListUserCredentials(_ context.Context, _ string) (*transport.ListUserCredentialsResponse, error) {
-	return nil, ErrNotSupported
+// BindUserCert binds an mTLS certificate SPKI thumbprint to an xkms user.
+func (t *Transport) BindUserCert(ctx context.Context, username, thumbprint string, notAfterUnix int64) error {
+	path := fmt.Sprintf("/api/v1/users/%s/cert-bindings", url.PathEscape(username))
+	body := map[string]any{
+		"thumbprint":     thumbprint,
+		"not_after_unix": notAfterUnix,
+	}
+	if _, err := t.doRawRequest(ctx, http.MethodPost, path, body); err != nil {
+		return err
+	}
+
+	return nil
+}
+
+// ListUserCredentials lists the credentials registered to an xkms user.
+func (t *Transport) ListUserCredentials(ctx context.Context, username string) (*transport.ListUserCredentialsResponse, error) {
+	path := fmt.Sprintf("/api/v1/users/%s/credentials", url.PathEscape(username))
+	data, err := t.doRawRequest(ctx, http.MethodGet, path, nil)
+	if err != nil {
+		return nil, err
+	}
+
+	var raw struct {
+		Credentials []struct {
+			ID   string `json:"id"`
+			Name string `json:"name"`
+		} `json:"credentials"`
+	}
+	if err := json.Unmarshal(data, &raw); err != nil {
+		return nil, &errs.Wrapped{Msg: "failed to parse response", Err: err}
+	}
+
+	resp := &transport.ListUserCredentialsResponse{
+		Credentials: make([]transport.CredentialInfo, 0, len(raw.Credentials)),
+	}
+	for _, c := range raw.Credentials {
+		resp.Credentials = append(resp.Credentials, transport.CredentialInfo{
+			ID:          c.ID,
+			DisplayName: c.Name,
+		})
+	}
+
+	return resp, nil
 }
 
 // Compile-time assertion that Transport implements transport.Client.

@@ -1109,21 +1109,44 @@ func (s *Server) buildAuthenticator() error {
 		// authenticator. A no-op required authenticator would therefore leave
 		// the API anonymous forever, so one must be derivable from the config.
 		if requiredAuth == nil {
-			// The WebAuthn browser/SDK ceremony issues a bearer token that the
-			// JWT authenticator validates, so JWT is the required authenticator
-			// for a WebAuthn deployment. The verification key is either the
-			// operator-supplied public key file or the built-in token issuer's
-			// signing key; without both there is nothing that can validate a
-			// post-login request.
+			// Two credential planes must both work post-provisioning:
+			//   - JWT: the WebAuthn browser/SDK ceremony issues a bearer token
+			//     the JWT authenticator validates. The verification key is the
+			//     operator-supplied public key file or the built-in token
+			//     issuer's signing key.
+			//   - mTLS: cert-based enrollment is the stack's bootstrap plane —
+			//     the first-boot administrator's ONLY credential is the
+			//     SPKI-bound certificate, so a JWT-only chain would lock the
+			//     bootstrap admin out the moment their own creation flipped
+			//     adaptive mode to enforced.
+			var chain []auth.Authenticator
 			hasKeyFile := s.config.Auth.JWT != nil && s.config.Auth.JWT.PublicKeyFile != ""
-			if !hasKeyFile && s.tokenIssuer == nil {
+			if hasKeyFile || s.tokenIssuer != nil {
+				jwtAuth, err := s.createJWTAuthenticator()
+				if err != nil {
+					return &ErrServiceInit{Service: "JWT authenticator for adaptive mode", Err: err}
+				}
+				chain = append(chain, jwtAuth)
+			}
+			if s.config.TLS.Enabled {
+				mtlsConfig := &auth.MTLSConfig{}
+				if us := s.mtlsUserStore(); us != nil {
+					mtlsConfig.UserStore = us
+				}
+				chain = append(chain, auth.NewMTLSAuthenticator(mtlsConfig))
+			}
+			switch len(chain) {
+			case 0:
 				return ErrAdaptiveRequiresAuthenticator
+			case 1:
+				requiredAuth = chain[0]
+			default:
+				compositeAuth, err := auth.NewCompositeAuthenticator(chain...)
+				if err != nil {
+					return &ErrServiceInit{Service: "composite authenticator for adaptive mode", Err: err}
+				}
+				requiredAuth = compositeAuth
 			}
-			jwtAuth, err := s.createJWTAuthenticator()
-			if err != nil {
-				return &ErrServiceInit{Service: "JWT authenticator for adaptive mode", Err: err}
-			}
-			requiredAuth = jwtAuth
 		}
 
 		adaptiveAuth, err := auth.NewAdaptiveAuthenticator(&auth.AdaptiveConfig{
@@ -2079,12 +2102,17 @@ func (s *Server) initializeCA() error {
 	// If TLS is enabled with a server_cn, auto-issue a TLS server certificate
 	// so that buildTLSConfig() can retrieve it for HTTPS/gRPC/QUIC.
 	if s.config.TLS.Enabled && s.config.TLS.ServerCN != "" {
-		if err := s.ensureTLSServerCert(trustedCA, keystoreType); err != nil {
+		// Boot-time issuance writes the key + certificate into the
+		// replicated store; on a cluster this races the initial leader
+		// election, so not-leader failures are retried (leader_retry.go).
+		if err := retryNotLeader(s.ctx, s.logger, "tls server certificate", func() error {
+			return s.ensureTLSServerCert(trustedCA, keystoreType)
+		}); err != nil {
 			return &ErrTLSCertOp{Operation: "ensure TLS server certificate", Err: err}
 		}
 		// Swap the CA-issued certificate into the unified API server's
 		// rotating provider; until now it served the bootstrap material.
-		if err := s.upgradeUnifiedTLSCert(); err != nil {
+		if err := s.upgradeUnifiedTLSCert(trustedCA); err != nil {
 			s.logger.Warn("unified API server keeps serving the bootstrap TLS certificate",
 				slog.Any("error", err))
 		}
@@ -2129,10 +2157,18 @@ func (s *Server) ensureTLSServerCert(xkmsCA tlsBootstrapCA, keystoreType types.S
 
 	s.logger.Info("Issuing TLS server certificate from CA", "cn", serverCN)
 
-	// Build SANs: include server CN, localhost, and common container names
+	// Build SANs: the server CN, localhost/loopback, the machine hostname,
+	// and the configured listen host, so remote clients that dial the node
+	// by name pass hostname verification.
+	dnsNames, ipAddrs := localCertSANs(serverCN, s.config.Server.Host, s.clusterPeerHosts()...)
+	sanIPs := make([]string, 0, len(ipAddrs)+1)
+	for _, ip := range ipAddrs {
+		sanIPs = append(sanIPs, ip.String())
+	}
+	sanIPs = append(sanIPs, "0.0.0.0")
 	sans := &ca.SubjectAlternativeNames{
-		DNS: []string{serverCN, "localhost"},
-		IPs: []string{"127.0.0.1", "::1", "0.0.0.0"},
+		DNS: dnsNames,
+		IPs: sanIPs,
 	}
 
 	// Issue the TLS server certificate
@@ -2258,9 +2294,9 @@ func (s *Server) Start() error {
 	// config.Validate guarantees qrdb storage + TLS material) and serves
 	// the xkms capability plane through the registered ServiceModule.
 	// QUIC is HTTP/3 on the REST port, advertised via Alt-Svc. Local IPC
-	// stays in-process: the Unix socket serves local clients when qrdb
-	// storage is absent (with qrdb storage the node's own UDS serves it),
-	// and the loopback desktop engine serves an injected listener.
+	// stays in-process: xkmsd's own plaintext Unix socket serves local
+	// clients in every storage mode, and the loopback desktop engine
+	// serves an injected listener.
 	if s.config.NetworkServing() {
 		s.logger.Info("unified API server: embedded qrdb node serves the network protocols via the xkms ServiceModule",
 			"rest_port", s.config.Server.RESTPort,
@@ -2269,10 +2305,13 @@ func (s *Server) Start() error {
 			"quic", "http3 on rest_port")
 	}
 
-	// Unix socket for local IPC when the embedded node does not serve one
-	// (non-qrdb storage; with qrdb storage buildXKMSQRDBConfig maps the
-	// socket onto the node).
-	if s.config.Protocols.Unix && !(s.config.NetworkServing() && s.config.Storage.Backend == "qrdb") {
+	// Unix socket for local IPC. xkmsd always serves its own socket: the
+	// local IPC contract is plaintext gRPC guarded by filesystem
+	// permissions, and the plaintext clients (pkcs11 module, CLI, SDK unix
+	// transport) depend on it in every storage mode. The embedded node's
+	// TLS-only UDS is deliberately not used for this plane
+	// (buildXKMSQRDBConfig leaves the node's Unix protocol off).
+	if s.config.Protocols.Unix {
 		s.wg.Add(1)
 		go s.startUnix()
 	}

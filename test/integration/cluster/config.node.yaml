@@ -20,6 +20,9 @@ logging:
 tls:
   enabled: true
   server_cn: "localhost"
+  # Request-and-verify client certificates when offered: the harness (and any
+  # enrolled operator) authenticates with the first-boot admin mTLS credential.
+  client_auth: "verify"
 
 # Adaptive authentication: anonymous until the first user is provisioned, then
 # enforced. Satisfies the secure-by-default gate (the daemon has no insecure

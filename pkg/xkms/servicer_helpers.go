@@ -23,6 +23,7 @@ import (
 	"encoding/pem"
 	"fmt"
 
+	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
 	"github.com/jeremyhahn/go-xkms/pkg/storage"
 	"github.com/jeremyhahn/go-xkms/pkg/types"
 	"strings"
@@ -51,11 +52,14 @@ func (s *XKMSService) resolveBackendWithName(backendName string) (Backend, strin
 	return b, backendName, nil
 }
 
-// resolveTenantBackend returns a Backend scoped to tenantID when tenantID is
-// non-empty. When tenantID is empty it falls back to the existing resolveBackend
-// behaviour, preserving full backward compatibility.
+// resolveTenantBackend returns a Backend scoped to tenantID when tenantID
+// names a real tenant. The system tenant is NOT a scope: qrdb's canonical
+// predicate treats "" and the system tenant as the same platform scope
+// (tenant-scope unification), so a system-scoped caller — the first-boot
+// administrator among them — operates on the unscoped backend, the same
+// view internal pipelines use.
 func (s *XKMSService) resolveTenantBackend(name, tenantID string) (Backend, error) {
-	if tenantID == "" {
+	if qrdbsdk.IsSystemTenant(tenantID) {
 		return s.resolveBackend(name)
 	}
 	if err := storage.ValidateTenantID(tenantID); err != nil {
@@ -68,10 +72,12 @@ func (s *XKMSService) resolveTenantBackend(name, tenantID string) (Backend, erro
 	return NewTenantScopedBackend(base, tenantID), nil
 }
 
-// resolveTenantBackendWithName returns the Backend, its resolved name, and an error.
-// When tenantID is non-empty the returned Backend is tenant-scoped.
+// resolveTenantBackendWithName returns the Backend, its resolved name, and an
+// error. When tenantID names a real tenant the returned Backend is
+// tenant-scoped; the system tenant resolves unscoped, exactly as in
+// resolveTenantBackend.
 func (s *XKMSService) resolveTenantBackendWithName(name, tenantID string) (Backend, string, error) {
-	if tenantID == "" {
+	if qrdbsdk.IsSystemTenant(tenantID) {
 		return s.resolveBackendWithName(name)
 	}
 	if err := storage.ValidateTenantID(tenantID); err != nil {

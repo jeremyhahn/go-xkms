@@ -74,6 +74,7 @@ import (
 	"crypto/x509"
 	"crypto/x509/pkix"
 	"encoding/pem"
+	"errors"
 	"fmt"
 	"io"
 	"math/big"
@@ -83,6 +84,7 @@ import (
 
 	"github.com/jeremyhahn/go-xkms/pkg/errs"
 
+	backendpkg "github.com/jeremyhahn/go-xkms/pkg/backend"
 	"github.com/jeremyhahn/go-xkms/pkg/certstore"
 	"github.com/jeremyhahn/go-xkms/pkg/spiffe"
 	"github.com/jeremyhahn/go-xkms/pkg/storage"
@@ -1091,6 +1093,15 @@ func (ca *CA) getOrGenerateCAKey(ctx context.Context, attrs *types.KeyAttributes
 		return nil, &errs.Detail{Err: ErrInvalidKeyAlgorithm, Detail: fmt.Sprintf("unsupported key algorithm: %v", attrs.KeyAlgorithm)}
 	}
 	if err != nil {
+		// Lost get-or-generate race: on a cluster, a sibling node generated
+		// this key between our not-found read and our write (or our read
+		// preceded the replicated write's visibility). The winner's key is
+		// the key — fetch it.
+		if errors.Is(err, backendpkg.ErrKeyAlreadyExists) {
+			if existing, getErr := backend.GetKey(ctx, attrs); getErr == nil {
+				return existing, nil
+			}
+		}
 		return nil, &errs.Wrapped{Msg: "failed to generate key", Err: err}
 	}
 

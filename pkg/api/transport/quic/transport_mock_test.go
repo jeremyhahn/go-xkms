@@ -500,22 +500,6 @@ func TestErrNotSupported_StubMethods(t *testing.T) {
 		name string
 		fn   func() error
 	}{
-		{"BeginRegistration", func() error {
-			_, err := tr.BeginRegistration(context.Background(), &transport.BeginRegistrationRequest{})
-			return err
-		}},
-		{"FinishRegistration", func() error {
-			_, err := tr.FinishRegistration(context.Background(), &transport.FinishRegistrationRequest{})
-			return err
-		}},
-		{"BeginAuthentication", func() error {
-			_, err := tr.BeginAuthentication(context.Background(), &transport.BeginAuthenticationRequest{})
-			return err
-		}},
-		{"FinishAuthentication", func() error {
-			_, err := tr.FinishAuthentication(context.Background(), &transport.FinishAuthenticationRequest{})
-			return err
-		}},
 		{"SealStorePut", func() error { return tr.SealStorePut(context.Background(), &transport.SealStorePutRequest{}) }},
 		{"SealStoreGet", func() error {
 			_, err := tr.SealStoreGet(context.Background(), &transport.SealStoreGetRequest{})

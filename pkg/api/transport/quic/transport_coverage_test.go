@@ -264,26 +264,27 @@ func TestGeneratePIVCSR_NotConnected(t *testing.T) {
 	assert.ErrorIs(t, err, ErrNotConnected)
 }
 
-// --- WebAuthn (not supported) ---
+// --- WebAuthn (now real HTTP calls; disconnected transports fail with
+// ErrNotConnected like every other method that goes through doRawRequest) ---
 
-func TestBeginRegistration_NotSupported(t *testing.T) {
+func TestBeginRegistration_NotConnected(t *testing.T) {
 	_, err := newDisconnected(t).BeginRegistration(context.Background(), &transport.BeginRegistrationRequest{})
-	assert.ErrorIs(t, err, ErrNotSupported)
+	assert.ErrorIs(t, err, ErrNotConnected)
 }
 
-func TestFinishRegistration_NotSupported(t *testing.T) {
+func TestFinishRegistration_NotConnected(t *testing.T) {
 	_, err := newDisconnected(t).FinishRegistration(context.Background(), &transport.FinishRegistrationRequest{})
-	assert.ErrorIs(t, err, ErrNotSupported)
+	assert.ErrorIs(t, err, ErrNotConnected)
 }
 
-func TestBeginAuthentication_NotSupported(t *testing.T) {
+func TestBeginAuthentication_NotConnected(t *testing.T) {
 	_, err := newDisconnected(t).BeginAuthentication(context.Background(), &transport.BeginAuthenticationRequest{})
-	assert.ErrorIs(t, err, ErrNotSupported)
+	assert.ErrorIs(t, err, ErrNotConnected)
 }
 
-func TestFinishAuthentication_NotSupported(t *testing.T) {
+func TestFinishAuthentication_NotConnected(t *testing.T) {
 	_, err := newDisconnected(t).FinishAuthentication(context.Background(), &transport.FinishAuthenticationRequest{})
-	assert.ErrorIs(t, err, ErrNotSupported)
+	assert.ErrorIs(t, err, ErrNotConnected)
 }
 
 // --- SealStore (not supported) ---

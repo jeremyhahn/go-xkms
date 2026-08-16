@@ -65,9 +65,9 @@ func leaderNodeIndex(t *testing.T, ctx context.Context, nodes [3]string) int {
 	var idx int
 	poll(t, 45*time.Second, 500*time.Millisecond, func() (bool, string) {
 		for _, u := range nodes {
-			st, err := fetchStatus(ctx, u)
-			if err == nil && st.Status.HasLeader && st.Status.LeaderID != 0 {
-				idx = int(st.Status.LeaderID)
+			lid, err := shardLeader(ctx, u)
+			if err == nil && lid != 0 {
+				idx = int(lid)
 				return true, ""
 			}
 		}
@@ -126,9 +126,9 @@ func TestCluster_LeaderFailover(t *testing.T) {
 			if i+1 == oldLeaderIdx {
 				continue // the killed node is unreachable
 			}
-			st, serr := fetchStatus(ctx, u)
-			if serr == nil && st.Status.HasLeader && st.Status.LeaderID != 0 && int(st.Status.LeaderID) != oldLeaderIdx {
-				newLeaderIdx = int(st.Status.LeaderID)
+			lid, serr := shardLeader(ctx, u)
+			if serr == nil && lid != 0 && int(lid) != oldLeaderIdx {
+				newLeaderIdx = int(lid)
 				return true, ""
 			}
 		}

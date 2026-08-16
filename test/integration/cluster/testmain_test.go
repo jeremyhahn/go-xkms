@@ -22,6 +22,7 @@ import (
 	"fmt"
 	"net/http"
 	"os"
+	"strings"
 	"testing"
 	"time"
 
@@ -32,7 +33,7 @@ import (
 // TestMain bootstraps TLS trust for the whole suite. Every node mints its
 // serving certificate from its own embedded CA at boot, so the harness obtains
 // each root the way any first-contact client does — through the trust bootstrap
-// pkg/trust owns, in TOFU mode over GET /api/v1/ca/bundle — and installs the
+// pkg/trust owns, in TOFU mode over GET /v1/ca/bootstrap — and installs the
 // union as the httpClient's RootCAs. No InsecureSkipVerify anywhere: after the
 // first-contact fetch, every request in the suite verifies against the fetched
 // roots exactly as a production client would.
@@ -50,14 +51,93 @@ func TestMain(m *testing.M) {
 			fmt.Fprintf(os.Stderr, "cluster harness trust bootstrap failed: %v\n", err)
 			os.Exit(1)
 		}
-		httpClient.Transport = &http.Transport{
-			TLSClientConfig: &tls.Config{
-				RootCAs:    pool,
-				MinVersion: tls.VersionTLS13,
-			},
+		if err := installAdminClients(pool); err != nil {
+			fmt.Fprintf(os.Stderr, "cluster harness admin credential setup failed: %v\n", err)
+			os.Exit(1)
 		}
 	}
 	os.Exit(m.Run())
+}
+
+// adminCredentialGroups maps candidate first-boot data directories to the node
+// base URLs whose requests authenticate with that group's admin credential.
+// First boot (qrdb pkg/firstboot, run at xkmsd startup) provisions the system
+// administrator once per deployment and writes the generate-and-distribute
+// admin certificate and key into the data directory of whichever node executed
+// it; the compose file mounts every data volume into the test container so the
+// suite can authenticate the way a freshly enrolled operator does — admin
+// mTLS, no invite tokens, no pre-seeded passwords.
+func adminCredentialGroups() map[string][]string {
+	groups := map[string][]string{}
+	clusterURLs := []string{}
+	for _, key := range []string{envNode1URL, envNode2URL, envNode3URL} {
+		if v := os.Getenv(key); v != "" {
+			clusterURLs = append(clusterURLs, v)
+		}
+	}
+	if len(clusterURLs) > 0 {
+		groups["/node1-data,/node2-data,/node3-data"] = clusterURLs
+	}
+	if v := os.Getenv("CLUSTER_STANDALONE_URL"); v != "" {
+		groups["/standalone-data"] = []string{v}
+	}
+	return groups
+}
+
+// loadAdminCredential polls the candidate directories until one of them holds
+// a loadable first-boot admin certificate and key.
+func loadAdminCredential(dirs []string) (tls.Certificate, error) {
+	deadline := time.Now().Add(90 * time.Second)
+	var lastErr error
+	for {
+		for _, dir := range dirs {
+			cert, err := tls.LoadX509KeyPair(dir+"/admin-cert.pem", dir+"/admin-key.pem")
+			if err == nil {
+				return cert, nil
+			}
+			lastErr = err
+		}
+		if time.Now().After(deadline) {
+			return tls.Certificate{}, fmt.Errorf("admin credential in %v: %w", dirs, lastErr)
+		}
+		time.Sleep(2 * time.Second)
+	}
+}
+
+// installAdminClients waits for each deployment's first-boot admin credential
+// and installs a per-base-URL HTTP client that presents it. The cluster shares
+// one admin (first boot runs once, replicated), so a single credential
+// authenticates against all three nodes; the standalone server has its own CA
+// and its own admin.
+func installAdminClients(pool *x509.CertPool) error {
+	for dirList, urls := range adminCredentialGroups() {
+		cert, err := loadAdminCredential(strings.Split(dirList, ","))
+		if err != nil {
+			return err
+		}
+		client := &http.Client{
+			Timeout: 2 * requestTimeout,
+			Transport: &http.Transport{
+				TLSClientConfig: &tls.Config{
+					RootCAs:      pool,
+					Certificates: []tls.Certificate{cert},
+					MinVersion:   tls.VersionTLS13,
+				},
+			},
+		}
+		for _, u := range urls {
+			clientsByBase[u] = client
+		}
+	}
+	// The default client (trust-verified, unauthenticated) covers public
+	// endpoints and any URL without an admin credential mapping.
+	httpClient.Transport = &http.Transport{
+		TLSClientConfig: &tls.Config{
+			RootCAs:    pool,
+			MinVersion: tls.VersionTLS13,
+		},
+	}
+	return nil
 }
 
 // trustBootstrapURLs returns the node base URLs the suite will dial, from the
@@ -86,7 +166,7 @@ func fetchClusterRoots(urls []string, pool *x509.CertPool) error {
 			bundle, err := bootstrap.Fetch(ctx, bootstrap.Config{
 				Mode:       bootstrap.ModeTOFU,
 				ServerURL:  u,
-				BundlePath: "/api/v1/ca/bundle",
+				BundlePath: "/v1/ca/bootstrap",
 				TOFU: &bootstrap.TOFUConfig{
 					PinStore: pins,
 					// First contact against a freshly provisioned throwaway

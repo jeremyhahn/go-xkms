@@ -113,8 +113,8 @@ type Config struct {
 	ServerURL string
 
 	// BundlePath overrides the default REST API path for the CA
-	// bundle endpoint. Leave empty for go-truststrap's default
-	// ("/api/v1/ca/bundle").
+	// bundle endpoint. Leave empty for the canonical unauthenticated
+	// trust-bootstrap route ("/v1/ca/bootstrap").
 	BundlePath string
 
 	// PerMethodTimeout caps each individual mode attempt. Used by

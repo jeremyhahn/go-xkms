@@ -33,6 +33,10 @@ services:
         - gomodauth
     image: go-xkms-cluster-node:latest
     container_name: cluster-node1
+    hostname: node1
+    # Boot-time cluster formation can outlast a single attempt when sibling
+    # nodes lag (image start stagger); retry like systemd would in production.
+    restart: on-failure
     volumes:
       - node1-data:/data
       - ./config.node.yaml:/etc/xkms/xkmsd.yaml:ro
@@ -74,6 +78,10 @@ services:
   node2:
     image: go-xkms-cluster-node:latest
     container_name: cluster-node2
+    hostname: node2
+    # Boot-time cluster formation can outlast a single attempt when sibling
+    # nodes lag (image start stagger); retry like systemd would in production.
+    restart: on-failure
     volumes:
       - node2-data:/data
       - ./config.node.yaml:/etc/xkms/xkmsd.yaml:ro
@@ -117,6 +125,10 @@ services:
   node3:
     image: go-xkms-cluster-node:latest
     container_name: cluster-node3
+    hostname: node3
+    # Boot-time cluster formation can outlast a single attempt when sibling
+    # nodes lag (image start stagger); retry like systemd would in production.
+    restart: on-failure
     volumes:
       - node3-data:/data
       - ./config.node.yaml:/etc/xkms/xkmsd.yaml:ro
@@ -162,6 +174,7 @@ services:
   standalone:
     image: go-xkms-cluster-node:latest
     container_name: cluster-standalone
+    hostname: standalone
     volumes:
       - standalone-data:/data
       - ./config.node.yaml:/etc/xkms/xkmsd.yaml:ro
@@ -199,6 +212,14 @@ services:
       - ../../..:/workspace
       # The resilience (chaos) tests drive docker directly to kill/restart nodes.
       - /var/run/docker.sock:/var/run/docker.sock
+      # First-boot admin credentials: the suite authenticates with admin mTLS,
+      # reading the generate-and-distribute certificate first boot wrote. The
+      # credential lands on whichever node executed first boot, so all three
+      # node volumes are visible.
+      - node1-data:/node1-data:ro
+      - node2-data:/node2-data:ro
+      - node3-data:/node3-data:ro
+      - standalone-data:/standalone-data:ro
       - go-cache:/root/go
       - go-build-cache:/root/.cache/go-build
     environment:

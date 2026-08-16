@@ -15,6 +15,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     build-essential \
     pkg-config \
     libusb-1.0-0-dev \
+    libicu-dev \
     ca-certificates \
     && rm -rf /var/lib/apt/lists/*
 
@@ -58,6 +59,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     ca-certificates \
     wget \
     libusb-1.0-0 \
+    libicu72 \
     && rm -rf /var/lib/apt/lists/*
 
 COPY --from=builder /out/xkmsd /app/xkmsd

@@ -89,7 +89,7 @@ func TestBuildUnifiedTLSConfig_BootstrapGeneratedAndPersisted(t *testing.T) {
 // safe when the unified server is not serving (local-only deployments).
 func TestUpgradeUnifiedTLSCert_NoProviderIsNoop(t *testing.T) {
 	s := newTLSTestServer(t, &config.Config{})
-	assert.NoError(t, s.upgradeUnifiedTLSCert())
+	assert.NoError(t, s.upgradeUnifiedTLSCert(nil))
 }
 
 // TestUnifiedTLSProvider_RotationServesNewCert proves a stored certificate

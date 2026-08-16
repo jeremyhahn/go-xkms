@@ -35,8 +35,46 @@ STATE_DIR="${XKMS_SERVER_STATE_DIR:-/xkms-data}"
 DEST="${XKMS_GRPC_TLS_CA:-/tmp/xkms/ca.crt}"
 CERT_DIR="${STATE_DIR}/storage/ca/certs"
 
+# publish_admin_credential copies the first-boot administrator credential
+# alongside the CA. First boot (qrdb pkg/firstboot) binds the admin's SPKI
+# thumbprint and writes the generate-and-distribute pair into the server's
+# storage directory; the network lanes of the PKCS#11 module suite present
+# it as the mTLS client credential, because the unified server enforces
+# authentication and the admin certificate is the only credential a fresh
+# deployment holds.
+publish_admin_credential() {
+ADMIN_CERT_SRC="${STATE_DIR}/storage/admin-cert.pem"
+ADMIN_KEY_SRC="${STATE_DIR}/storage/admin-key.pem"
+ADMIN_CERT_DEST="$(dirname "$DEST")/admin-cert.pem"
+ADMIN_KEY_DEST="$(dirname "$DEST")/admin-key.pem"
+if [ -f "$ADMIN_CERT_SRC" ] && [ -f "$ADMIN_KEY_SRC" ]; then
+	cp "$ADMIN_CERT_SRC" "$ADMIN_CERT_DEST"
+	cp "$ADMIN_KEY_SRC" "$ADMIN_KEY_DEST"
+	chmod 0600 "$ADMIN_KEY_DEST"
+	echo "ensure-server-ca: published admin credential to ${ADMIN_CERT_DEST}"
+else
+	echo "ensure-server-ca: no admin credential under ${STATE_DIR}/storage; network lanes will run unauthenticated" >&2
+fi
+}
+
+
+# With the qrdb storage backend the CA's certificates live inside the
+# qrdb-backed store, not as files, so the file harvest below finds nothing.
+# The canonical first-contact source is the public trust-bootstrap endpoint
+# the daemon serves for exactly this purpose. Container-local fetch without
+# verification is the TOFU ceremony for a throwaway test deployment.
 if [ ! -d "$CERT_DIR" ]; then
-	echo "ensure-server-ca: ${CERT_DIR} does not exist; the compose xkms-server has not initialized its CA" >&2
+	BOOTSTRAP_URL="${XKMS_SERVER_BOOTSTRAP_URL:-https://xkms-server:8443/v1/ca/bootstrap}"
+	mkdir -p "$(dirname "$DEST")"
+	for _ in $(seq 1 30); do
+		if curl -skf "$BOOTSTRAP_URL" -o "$DEST" && grep -q -- "-----BEGIN CERTIFICATE-----" "$DEST"; then
+			echo "ensure-server-ca: fetched CA bundle from ${BOOTSTRAP_URL} to ${DEST}"
+			publish_admin_credential
+			exit 0
+		fi
+		sleep 2
+	done
+	echo "ensure-server-ca: ${CERT_DIR} does not exist and ${BOOTSTRAP_URL} did not serve a bundle" >&2
 	exit 1
 fi
 
@@ -75,3 +113,6 @@ fi
 mkdir -p "$(dirname "$DEST")"
 printf '%s\n' "$found" > "$DEST"
 echo "ensure-server-ca: wrote $(printf '%s\n' "$found" | openssl x509 -noout -subject) to ${DEST}"
+
+
+publish_admin_credential

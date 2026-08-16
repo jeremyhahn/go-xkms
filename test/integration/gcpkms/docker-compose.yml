@@ -2,6 +2,11 @@ services:
   floci-gcp:
     image: floci/floci-gcp:latest
     environment:
+      - GOWORK=off
+      - GOPRIVATE=github.com/jeremyhahn/*
+      - GIT_CONFIG_COUNT=1
+      - GIT_CONFIG_KEY_0=url.http://x:${GITEA_GO_TOKEN}@198.51.100.91:3001/jeremyhahn/.insteadOf
+      - GIT_CONFIG_VALUE_0=https://github.com/jeremyhahn/
       - FLOCI_GCP_DEFAULT_PROJECT_ID=test-project
       - FLOCI_GCP_STORAGE_MODE=memory
     healthcheck:
@@ -20,17 +25,15 @@ services:
       floci-gcp:
         condition: service_healthy
     environment:
+      - GOWORK=off
+      - GOPRIVATE=github.com/jeremyhahn/*
+      - GIT_CONFIG_COUNT=1
+      - GIT_CONFIG_KEY_0=url.http://x:${GITEA_GO_TOKEN}@198.51.100.91:3001/jeremyhahn/.insteadOf
+      - GIT_CONFIG_VALUE_0=https://github.com/jeremyhahn/
       - GOOGLE_CLOUD_PROJECT=test-project
       - GCPKMS_EMULATOR_ENDPOINT=floci-gcp:4588
     volumes:
       - ../../..:/app
-      # Sibling module mounts (for go.mod replace directives)
-      - ../../../../go-qrdb:/go-qrdb:cached
-      - ../../../../go-quicraft:/go-quicraft:cached
-      - ../../../../go-objstore:/go-objstore:cached
-      - ../../../../go-truststrap:/go-truststrap:cached
-      - ../../../../go-codec:/go-codec:cached
-      - ../../../../go-frost:/go-frost:cached
     working_dir: /app
 
 networks:

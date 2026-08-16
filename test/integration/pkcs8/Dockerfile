@@ -6,4 +6,4 @@ ENV GOTOOLCHAIN=auto
 
 WORKDIR /app
 
-CMD ["go", "test", "-v", "-tags=integration pkcs8 codec_cbor codec_json codec_msgpack", "./test/integration/pkcs8/..."]
+CMD ["go", "test", "-v", "-tags=integration pkcs8 codec_cbor codec_json codec_msgpack gms_pure_go", "./test/integration/pkcs8/..."]

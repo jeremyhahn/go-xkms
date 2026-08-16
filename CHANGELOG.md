@@ -7,6 +7,67 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.5.0-alpha] - 2026-08-16
+
+### Changed
+- **Re-pinned go-qrdb to v0.5.1-alpha.** The embedded node now enforces
+  authentication and authorization on every unified-server route (qrdb
+  `pkg/auth/wiring`), and carries the sealed-store crash-durability fix
+  (a killed node previously lost its root key and orphaned all encrypted
+  data). Do not use qrdb v0.5.0-alpha (truncated SDK error surface).
+- **Adaptive authentication now composes JWT and mTLS.** A JWT-only chain
+  locked out the first-boot administrator the moment their own creation
+  flipped adaptive mode to enforced: cert-based enrollment is the
+  bootstrap plane, so the SPKI-bound admin certificate must authenticate.
+- **The system tenant is no longer a storage scope.** The tenant-scoped
+  backend resolvers treat the system tenant like the platform scope via
+  qrdb's canonical `IsSystemTenant` predicate; previously a system-scoped
+  caller's sign/encrypt could not see keys the unscoped create had stored.
+- **Local IPC stays plaintext and xkmsd-owned.** The Unix socket is no
+  longer mapped onto the embedded node (qrdb transports are TLS-only, and
+  the local plaintext clients — the PKCS#11 module, the CLI, the SDK unix
+  transport — depend on the filesystem-permission trust model). xkmsd
+  serves its own socket in every storage mode.
+- **Unified server TLS honors `tls.client_auth`** with a rotating
+  client-CA pool: operator files seed it and the embedded CA's bundle
+  replaces it after composition, so admin-mTLS clients verify without
+  operator-managed files.
+- **Server certificates cover the deployment's names.** Locally issued
+  serving certificates (bootstrap and CA-issued) now carry the machine
+  hostname, the configured listen host, and — because the CA-issued
+  certificate replicates cluster-wide keyed by CN — every cluster peer's
+  hostname.
+
+### Added
+- **Module role grants** (`pkg/apimodule/module_grants.go`): at module
+  construction xkms derives its full permission set (REST route table ∪
+  MCP method specs ∪ gRPC proto options), registers it into qrdb's global
+  permission registry, and grants it to the Admin and Owner built-in
+  roles. Without this every xkms operation would be denied on the
+  authenticated unified server, including to the first-boot admin.
+- **Boot-time leader retry** (`pkg/server/leader_retry.go`): first boot,
+  TLS certificate issuance, and JWT signing-key provisioning retry
+  not-leader failures while a cluster's initial election settles.
+
+### Fixed
+- **First-boot Path A now delivers the admin key.** `GenerateAdminCert`
+  generates the administrator's key pair locally and has the CA sign a
+  CSR — the credential never enters platform key custody, and the
+  generate-and-distribute pair is actually distributable (previously the
+  CA path never returned a private key and the credential was silently
+  dropped).
+- **Trust bootstrap defaults to the public first-contact route**
+  (`/v1/ca/bootstrap`); the authenticated `/api/v1/ca/bundle` default
+  only ever worked through the adaptive-auth anonymity window that
+  mandatory first boot now closes.
+- **CA root and CSR key generation tolerate lost creation races** in a
+  cluster: on `ErrKeyAlreadyExists` the winner's key is fetched instead
+  of failing boot.
+- The 3-node cluster integration harness authenticates as the first-boot
+  administrator over mTLS, probes the qrdb admin plane (`/peers`) for
+  leadership, and passes 17/17 including leader failover and killed-node
+  rejoin.
+
 ## [0.4.0-alpha] - 2026-08-14
 
 ### Changed — BREAKING: network serving is the unified API server; legacy transport stacks removed (Phase 4 complete)

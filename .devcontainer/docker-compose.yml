@@ -74,6 +74,11 @@ services:
       # it is NOT /etc/xkms/certs/ca.crt (the module's compiled-in default,
       # which nothing in this stack ever creates).
       - XKMS_GRPC_TLS_CA=/tmp/xkms/ca.crt
+      # First-boot admin mTLS credential (published by ensure-server-ca.sh):
+      # the unified server enforces authentication, and the admin certificate
+      # is the only credential a fresh deployment holds.
+      - XKMS_GRPC_TLS_CERT=/tmp/xkms/admin-cert.pem
+      - XKMS_GRPC_TLS_KEY=/tmp/xkms/admin-key.pem
       - XKMS_SERVER_STATE_DIR=/xkms-data
       # The same trust anchor again, under the names the PKCS#11 MODULE reads
       # (pkg/pkcs11/module/config.go). The XKMS_GRPC_TLS_* pair above is read by

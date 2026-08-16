@@ -15,6 +15,11 @@ package initialize
 
 import (
 	"context"
+	"crypto/ecdsa"
+	"crypto/elliptic"
+	"crypto/rand"
+	"crypto/x509"
+	"crypto/x509/pkix"
 	"encoding/pem"
 
 	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
@@ -35,34 +40,45 @@ var (
 )
 
 // GenerateAdminCert implements qrdb firstboot Path A (generate-and-distribute):
-// the CA generates the key pair, issues a client certificate, and returns both
-// PEM blobs for distribution to the admin. tenantID becomes the subject's
-// OrganizationalUnit per the seam contract; subject is the CommonName.
+// a fresh key pair is generated for the admin, the CA signs a CSR built from
+// it, and both PEM blobs are returned for distribution. The key is generated
+// HERE, outside the CA's keystore, deliberately: it is the administrator's
+// personal credential, not platform key material, so it must never enter the
+// platform's key custody — the CA only ever sees the CSR. tenantID becomes
+// the subject's OrganizationalUnit per the seam contract; subject is the
+// CommonName.
 //
 // When a SPIFFE trust domain is configured, the certificate carries
 // spiffe://<td>/tenant/<tenantID>/user/<subject> so login derives the admin's
 // tenant from the certificate. An empty tenantID falls back to the system
 // tenant, matching the ceremony SO certificates.
 func (a *CAAdapter) GenerateAdminCert(ctx context.Context, tenantID, subject string) ([]byte, []byte, error) {
-	profile := ca.NewClientProfile()
-	req := &ca.CertificateRequest{
-		Subject: ca.Subject{
+	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	if err != nil {
+		return nil, nil, &AdminKeyGenerationError{Err: err}
+	}
+	csrDER, err := x509.CreateCertificateRequest(rand.Reader, &x509.CertificateRequest{
+		Subject: pkix.Name{
 			CommonName:         subject,
-			OrganizationalUnit: tenantID,
+			OrganizationalUnit: []string{tenantID},
 		},
-		KeyUsage:    profile.KeyUsage(),
-		ExtKeyUsage: profile.ExtKeyUsage(),
+	}, key)
+	if err != nil {
+		return nil, nil, &AdminKeyGenerationError{Err: err}
 	}
+	csrPEM := pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE REQUEST", Bytes: csrDER})
 
-	if err := a.stampSPIFFE(req, tenantID, subject); err != nil {
-		return nil, nil, err
-	}
-
-	issued, err := a.ca.IssueCertificate(ctx, req)
+	certPEM, err := a.SignAdminCSR(ctx, tenantID, subject, csrPEM)
 	if err != nil {
 		return nil, nil, err
 	}
-	return issued.CertificatePEM, issued.PrivateKeyPEM, nil
+
+	keyDER, err := x509.MarshalPKCS8PrivateKey(key)
+	if err != nil {
+		return nil, nil, &AdminKeyGenerationError{Err: err}
+	}
+	keyPEM := pem.EncodeToMemory(&pem.Block{Type: "PRIVATE KEY", Bytes: keyDER})
+	return certPEM, keyPEM, nil
 }
 
 // SignAdminCSR implements qrdb firstboot Path B (CSR-sign): the admin supplies
