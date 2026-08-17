@@ -618,7 +618,7 @@ jobs:
       # API is GitHub-only, so both steps are guarded. Neither gates -- the
       # gate is the CLI step below, which runs on both servers.
       - name: Run Trivy vulnerability scanner (SARIF for code scanning)
-        uses: aquasecurity/trivy-action@0.33.1
+        uses: aquasecurity/trivy-action@master
         if: github.server_url == 'https://github.com'
         with:
           image-ref: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ github.sha }}
