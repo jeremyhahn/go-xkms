@@ -115,6 +115,8 @@ services:
     build:
       context: ../../..
       dockerfile: test/integration/bootstrap/Dockerfile.test
+      secrets:
+        - gomodauth
     container_name: bootstrap-integration-tests
     depends_on:
       xkms-server:
@@ -122,18 +124,10 @@ services:
       coredns:
         condition: service_started
     volumes:
-      - ../../..:/workspace
       - xkms-certs:/etc/xkms/certs:ro
-      - go-cache:/root/go
       - go-build-cache:/root/.cache/go-build
     environment:
       - CGO_ENABLED=1
-      - GOTOOLCHAIN=auto
-      - GOWORK=off
-      - GOPRIVATE=github.com/jeremyhahn/*
-      - GIT_CONFIG_COUNT=1
-      - GIT_CONFIG_KEY_0=url.http://x:${GITEA_GO_TOKEN}@198.51.100.91:3001/jeremyhahn/.insteadOf
-      - GIT_CONFIG_VALUE_0=https://github.com/jeremyhahn/
       - BOOTSTRAP_SERVER_URL=https://xkms-server:8443
       - BOOTSTRAP_NOISE_ADDR=xkms-server:8445
       - BOOTSTRAP_DNS_SERVER=coredns:1053
@@ -167,6 +161,8 @@ services:
     build:
       context: ../../..
       dockerfile: test/integration/bootstrap/Dockerfile.test
+      secrets:
+        - gomodauth
     container_name: bootstrap-xkey-truststrap-tests
     depends_on:
       xkms-server:
@@ -174,19 +170,11 @@ services:
       coredns:
         condition: service_started
     volumes:
-      - ../../..:/workspace
       - xkms-certs:/etc/xkms/certs:ro
-      - go-cache:/root/go
       - go-build-cache:/root/.cache/go-build
       - ./scripts:/scripts:ro
     environment:
       - CGO_ENABLED=1
-      - GOTOOLCHAIN=auto
-      - GOWORK=off
-      - GOPRIVATE=github.com/jeremyhahn/*
-      - GIT_CONFIG_COUNT=1
-      - GIT_CONFIG_KEY_0=url.http://x:${GITEA_GO_TOKEN}@198.51.100.91:3001/jeremyhahn/.insteadOf
-      - GIT_CONFIG_VALUE_0=https://github.com/jeremyhahn/
       - BOOTSTRAP_SERVER_URL=https://xkms-server:8443
       - BOOTSTRAP_NOISE_ADDR=xkms-server:8445
       - BOOTSTRAP_DNS_SERVER=coredns:1053
@@ -205,8 +193,6 @@ volumes:
   xkms-certs:
     driver: local
   zone-data:
-    driver: local
-  go-cache:
     driver: local
   go-build-cache:
     driver: local

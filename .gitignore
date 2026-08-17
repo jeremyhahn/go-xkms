@@ -78,3 +78,8 @@ test/integration/acme-client/playwright/trusted-acme-client
 # Gitea module-fetch token (dependency-resolution.md §6) — never committed
 .devcontainer/.env
 .devcontainer/gomodauth.env
+
+# *.test above matches Go test binaries; these are DOCKERFILES whose
+# names happen to end in .test — without this negation they are silently
+# unignorable and were never committed at all.
+!test/integration/**/Dockerfile.test

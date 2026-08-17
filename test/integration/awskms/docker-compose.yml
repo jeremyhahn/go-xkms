@@ -21,23 +21,26 @@ services:
     build:
       context: ../../..
       dockerfile: test/integration/awskms/Dockerfile
+      secrets:
+        - gomodauth
     depends_on:
       floci:
         condition: service_healthy
     environment:
-      - GOWORK=off
-      - GOPRIVATE=github.com/jeremyhahn/*
-      - GIT_CONFIG_COUNT=1
-      - GIT_CONFIG_KEY_0=url.http://x:${GITEA_GO_TOKEN}@198.51.100.91:3001/jeremyhahn/.insteadOf
-      - GIT_CONFIG_VALUE_0=https://github.com/jeremyhahn/
       - AWS_ENDPOINT_URL=http://floci:4566
       - AWS_ACCESS_KEY_ID=test
       - AWS_SECRET_ACCESS_KEY=test
       - AWS_REGION=us-east-1
-    volumes:
-      - ../../..:/app
     working_dir: /app
 
 networks:
   default:
     name: xkms-awskms-test
+
+# Staged by `make stage-gomodauth` (dependency-resolution.md §6) into the
+# gitignored .devcontainer/gomodauth.env; empty when no Gitea credentials are
+# available, in which case the Dockerfile's optional secret mount falls back
+# to public module resolution.
+secrets:
+  gomodauth:
+    file: ../../../.devcontainer/gomodauth.env

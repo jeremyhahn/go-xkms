@@ -198,6 +198,8 @@ services:
     build:
       context: ../../..
       dockerfile: test/integration/cluster/Dockerfile.test
+      secrets:
+        - gomodauth
     container_name: cluster-integration-tests
     depends_on:
       node1:
@@ -209,7 +211,6 @@ services:
       standalone:
         condition: service_healthy
     volumes:
-      - ../../..:/workspace
       # The resilience (chaos) tests drive docker directly to kill/restart nodes.
       - /var/run/docker.sock:/var/run/docker.sock
       # First-boot admin credentials: the suite authenticates with admin mTLS,
@@ -220,16 +221,9 @@ services:
       - node2-data:/node2-data:ro
       - node3-data:/node3-data:ro
       - standalone-data:/standalone-data:ro
-      - go-cache:/root/go
       - go-build-cache:/root/.cache/go-build
     environment:
       - CGO_ENABLED=0
-      - GOTOOLCHAIN=auto
-      - GOWORK=off
-      - GOPRIVATE=github.com/jeremyhahn/*
-      - GIT_CONFIG_COUNT=1
-      - GIT_CONFIG_KEY_0=url.http://x:${GITEA_GO_TOKEN}@198.51.100.91:3001/jeremyhahn/.insteadOf
-      - GIT_CONFIG_VALUE_0=https://github.com/jeremyhahn/
       # Node REST endpoints reachable inside cluster-net.
       - CLUSTER_NODE1_URL=https://node1:8443
       - CLUSTER_NODE2_URL=https://node2:8443
@@ -250,8 +244,6 @@ volumes:
   node3-data:
     driver: local
   standalone-data:
-    driver: local
-  go-cache:
     driver: local
   go-build-cache:
     driver: local
