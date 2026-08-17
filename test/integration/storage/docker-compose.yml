@@ -1,23 +1,21 @@
 services:
   # Integration test runner for storage packages
   test:
-    image: golang:bookworm
+    build:
+      context: ../../..
+      dockerfile: test/integration/storage/Dockerfile
+      args:
+        # libicu-dev/libusb-1.0-0-dev: unconditional cgo deps of the module
+        # graph itself (dolthub/go-icu-regex, google/gousb via go-qrdb), not
+        # gated by any tag here -- needed for any CGO_ENABLED=1 build.
+        EXTRA_APT_PACKAGES: "build-essential libicu-dev libusb-1.0-0-dev"
+      secrets:
+        - gomodauth
     working_dir: /app
-    volumes:
-      - ../../..:/app
     environment:
       - CGO_ENABLED=1
-      - GOTOOLCHAIN=auto
-      - GOWORK=off
-      - GOPRIVATE=github.com/jeremyhahn/*
-      - GIT_CONFIG_COUNT=1
-      - GIT_CONFIG_KEY_0=url.http://x:${GITEA_GO_TOKEN}@198.51.100.91:3001/jeremyhahn/.insteadOf
-      - GIT_CONFIG_VALUE_0=https://github.com/jeremyhahn/
-      - GOCACHE=/tmp/go-cache
-      - GOPATH=/tmp/go
     command: >
       sh -c "
-      apt-get update && apt-get install -y --no-install-recommends build-essential &&
       go test -v -tags='integration codec_cbor codec_json codec_msgpack' ./test/integration/storage/... -timeout 30m
       "
     networks:
@@ -25,23 +23,20 @@ services:
 
   # File storage tests (no special requirements, run standalone)
   test-file:
-    image: golang:bookworm
+    build:
+      context: ../../..
+      dockerfile: test/integration/storage/Dockerfile
+      secrets:
+        - gomodauth
     working_dir: /app
-    volumes:
-      - ../../..:/app
     environment:
       - CGO_ENABLED=0
-      - GOTOOLCHAIN=auto
-      - GOWORK=off
-      - GOPRIVATE=github.com/jeremyhahn/*
-      - GIT_CONFIG_COUNT=1
-      - GIT_CONFIG_KEY_0=url.http://x:${GITEA_GO_TOKEN}@198.51.100.91:3001/jeremyhahn/.insteadOf
-      - GIT_CONFIG_VALUE_0=https://github.com/jeremyhahn/
-      - GOCACHE=/tmp/go-cache
-      - GOPATH=/tmp/go
+    # gms_pure_go selects go-mysql-server's non-cgo regex engine; without it
+    # the cgo-only variant (github.com/dolthub/go-icu-regex) fails to build
+    # under CGO_ENABLED=0 with "build constraints exclude all Go files".
     command: >
       sh -c "
-      go test -v -tags='integration codec_cbor codec_json codec_msgpack' ./test/integration/storage/...
+      go test -v -tags='integration codec_cbor codec_json codec_msgpack gms_pure_go' ./test/integration/storage/...
       -run 'TestFileStorage' -timeout 15m
       "
     networks:
@@ -49,23 +44,18 @@ services:
 
   # Memory storage tests (no special requirements, run standalone)
   test-memory:
-    image: golang:bookworm
+    build:
+      context: ../../..
+      dockerfile: test/integration/storage/Dockerfile
+      secrets:
+        - gomodauth
     working_dir: /app
-    volumes:
-      - ../../..:/app
     environment:
       - CGO_ENABLED=0
-      - GOTOOLCHAIN=auto
-      - GOWORK=off
-      - GOPRIVATE=github.com/jeremyhahn/*
-      - GIT_CONFIG_COUNT=1
-      - GIT_CONFIG_KEY_0=url.http://x:${GITEA_GO_TOKEN}@198.51.100.91:3001/jeremyhahn/.insteadOf
-      - GIT_CONFIG_VALUE_0=https://github.com/jeremyhahn/
-      - GOCACHE=/tmp/go-cache
-      - GOPATH=/tmp/go
+    # gms_pure_go: see test-file's identical comment above.
     command: >
       sh -c "
-      go test -v -tags='integration codec_cbor codec_json codec_msgpack' ./test/integration/storage/...
+      go test -v -tags='integration codec_cbor codec_json codec_msgpack gms_pure_go' ./test/integration/storage/...
       -run 'TestMemoryStorage' -timeout 15m
       "
     networks:
@@ -73,21 +63,21 @@ services:
 
   # Hardware storage tests with PKCS#11 (SoftHSM)
   test-hardware-pkcs11:
-    image: golang:bookworm
+    build:
+      context: ../../..
+      dockerfile: test/integration/storage/Dockerfile
+      args:
+        # libicu-dev/libusb-1.0-0-dev: see the "test" service's comment --
+        # unconditional cgo deps of the module graph, needed for any
+        # CGO_ENABLED=1 build regardless of tags.
+        EXTRA_APT_PACKAGES: "build-essential softhsm2 libsofthsm2 libicu-dev libusb-1.0-0-dev"
+      secrets:
+        - gomodauth
     working_dir: /app
     volumes:
-      - ../../..:/app
       - softhsm-tokens:/var/lib/softhsm/tokens
     environment:
       - CGO_ENABLED=1
-      - GOTOOLCHAIN=auto
-      - GOWORK=off
-      - GOPRIVATE=github.com/jeremyhahn/*
-      - GIT_CONFIG_COUNT=1
-      - GIT_CONFIG_KEY_0=url.http://x:${GITEA_GO_TOKEN}@198.51.100.91:3001/jeremyhahn/.insteadOf
-      - GIT_CONFIG_VALUE_0=https://github.com/jeremyhahn/
-      - GOCACHE=/tmp/go-cache
-      - GOPATH=/tmp/go
       - SOFTHSM2_CONF=/app/test/integration/storage/softhsm2.conf
       - PKCS11_LIB=/usr/lib/softhsm/libsofthsm2.so
     depends_on:
@@ -95,7 +85,6 @@ services:
         condition: service_completed_successfully
     command: >
       sh -c "
-      apt-get update && apt-get install -y --no-install-recommends build-essential softhsm2 libsofthsm2 &&
       go test -v -tags='integration,pkcs11,codec_cbor,codec_json,codec_msgpack' ./test/integration/storage/...
       -run 'TestHardwareStorage' -timeout 30m
       "
@@ -104,20 +93,19 @@ services:
 
   # Hardware storage tests with TPM2
   test-hardware-tpm2:
-    image: golang:bookworm
+    build:
+      context: ../../..
+      dockerfile: test/integration/storage/Dockerfile
+      args:
+        # libicu-dev/libusb-1.0-0-dev: see the "test" service's comment --
+        # unconditional cgo deps of the module graph, needed for any
+        # CGO_ENABLED=1 build regardless of tags.
+        EXTRA_APT_PACKAGES: "build-essential libtss2-dev libicu-dev libusb-1.0-0-dev"
+      secrets:
+        - gomodauth
     working_dir: /app
-    volumes:
-      - ../../..:/app
     environment:
       - CGO_ENABLED=1
-      - GOTOOLCHAIN=auto
-      - GOWORK=off
-      - GOPRIVATE=github.com/jeremyhahn/*
-      - GIT_CONFIG_COUNT=1
-      - GIT_CONFIG_KEY_0=url.http://x:${GITEA_GO_TOKEN}@198.51.100.91:3001/jeremyhahn/.insteadOf
-      - GIT_CONFIG_VALUE_0=https://github.com/jeremyhahn/
-      - GOCACHE=/tmp/go-cache
-      - GOPATH=/tmp/go
       - TPM2_SIMULATOR_HOST=tpm-simulator
       - TPM2_SIMULATOR_PORT=2321
     depends_on:
@@ -125,7 +113,6 @@ services:
         condition: service_healthy
     command: >
       sh -c "
-      apt-get update && apt-get install -y --no-install-recommends build-essential libtss2-dev &&
       sleep 3 &&
       go test -v -tags='integration,tpm2,codec_cbor,codec_json,codec_msgpack' ./test/integration/storage/...
       -run 'TestHardwareStorage' -timeout 30m
@@ -133,19 +120,30 @@ services:
     networks:
       - storage-test-network
 
-  # SoftHSM initialization service
+  # SoftHSM initialization service. Runs no Go code and needs no module
+  # source at all -- just provisions a token via the softhsm2-util CLI --
+  # so it stays on the bare image rather than the shared Dockerfile. Its
+  # old `../../..:/app` mount was pure vestige (its command never read
+  # anything under /app); the config it does need (directories.tokendir)
+  # is written inline below instead of bind-mounting
+  # test/integration/storage/softhsm2.conf from the host, for the same
+  # reason every other relative bind mount in this file was removed: on the
+  # Gitea Actions runner that path resolves against the JOB CONTAINER's
+  # filesystem, not the true host's, so the mount would silently attach an
+  # unrelated (usually empty) directory instead of erroring.
   softhsm-init:
     image: golang:bookworm
     volumes:
       - softhsm-tokens:/var/lib/softhsm/tokens
-      - ../../..:/app
     environment:
-      - SOFTHSM2_CONF=/app/test/integration/storage/softhsm2.conf
-    # No Go workspace needed here — this init service only provisions the token.
+      - SOFTHSM2_CONF=/etc/softhsm/softhsm2.conf
     command: >
       sh -c "
       apt-get update && apt-get install -y --no-install-recommends softhsm2 &&
-      mkdir -p /var/lib/softhsm/tokens &&
+      mkdir -p /var/lib/softhsm/tokens /etc/softhsm &&
+      echo 'directories.tokendir = /var/lib/softhsm/tokens' > /etc/softhsm/softhsm2.conf &&
+      echo 'objectstore.backend = file' >> /etc/softhsm/softhsm2.conf &&
+      echo 'log.level = INFO' >> /etc/softhsm/softhsm2.conf &&
       softhsm2-util --init-token --slot 0 --label test-token --so-pin 1234 --pin 1234 &&
       echo 'SoftHSM initialized successfully'
       "
@@ -186,3 +184,11 @@ networks:
 
 volumes:
   softhsm-tokens:
+
+# Staged by `make stage-gomodauth` (dependency-resolution.md §6) into the
+# gitignored .devcontainer/gomodauth.env; empty when no Gitea credentials are
+# available, in which case the Dockerfile's optional secret mount falls back
+# to public module resolution.
+secrets:
+  gomodauth:
+    file: ../../../.devcontainer/gomodauth.env
