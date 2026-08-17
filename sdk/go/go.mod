@@ -141,7 +141,7 @@ require (
 	github.com/jeremyhahn/go-frost v0.1.7-alpha // indirect
 	github.com/jeremyhahn/go-qrdb v0.5.7-alpha // indirect
 	github.com/jeremyhahn/go-quicraft v0.4.2-alpha // indirect
-	github.com/jeremyhahn/go-xkms/xkey v0.4.0-alpha // indirect
+	github.com/jeremyhahn/go-xkms/xkey v0.7.1-alpha // indirect
 	github.com/jeroenrinzema/psql-wire v0.18.0 // indirect
 	github.com/jmespath/go-jmespath v0.4.0 // indirect
 	github.com/json-iterator/go v1.1.12 // indirect
@@ -240,7 +240,7 @@ require (
 	github.com/jeremyhahn/go-objstore v0.2.1-alpha
 	github.com/jeremyhahn/go-qrdb/sdk/go v0.5.7-alpha
 	github.com/jeremyhahn/go-truststrap v0.1.2-alpha
-	github.com/jeremyhahn/go-xkms v0.4.0-alpha
+	github.com/jeremyhahn/go-xkms v0.7.1-alpha
 	github.com/quic-go/qpack v0.6.0 // indirect
 	golang.org/x/net v0.57.0 // indirect
 	golang.org/x/sys v0.47.0 // indirect
