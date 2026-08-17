@@ -10,7 +10,7 @@ env:
   REGISTRY: ghcr.io
   IMAGE_NAME_SERVER: jeremyhahn/xkms-server
   IMAGE_NAME_CLI: jeremyhahn/xkms-cli
-  GOPROXY: direct
+  GOPROXY: https://proxy.golang.org,direct
   GOSUMDB: off
 
 permissions:

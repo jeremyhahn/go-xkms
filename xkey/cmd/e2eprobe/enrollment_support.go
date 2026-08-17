@@ -30,7 +30,7 @@ import (
 	"strconv"
 	"time"
 
-	android "github.com/jeremyhahn/go-xkms/pkg/attestation/android"
+	xkms "github.com/jeremyhahn/go-xkms/sdk/go"
 )
 
 func itoa(n int) string     { return strconv.Itoa(n) }
@@ -43,7 +43,7 @@ func bytesEqual(a, b []byte) bool {
 
 // parseChallenge reads the attestation challenge out of the leaf.
 func parseChallenge(leaf *x509.Certificate) ([]byte, error) {
-	desc, err := android.ParseKeyAttestation(leaf)
+	desc, err := xkms.ParseAndroidKeyAttestation(leaf)
 	if err != nil {
 		return nil, err
 	}

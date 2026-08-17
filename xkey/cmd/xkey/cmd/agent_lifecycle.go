@@ -25,7 +25,7 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/jeremyhahn/go-xkms/pkg/errs"
+	xkms "github.com/jeremyhahn/go-xkms/sdk/go"
 )
 
 // Agent server lifecycle errors.
@@ -157,7 +157,7 @@ func readAgentServerState() (*agentServerState, error) {
 		return nil, &SentinelCauseError{Sentinel: ErrAgentStateCorrupt, Cause: err}
 	}
 	if state.PID <= 0 {
-		return nil, &errs.Detail{Err: ErrAgentStateCorrupt, Detail: "no valid process ID recorded"}
+		return nil, &xkms.ErrsDetail{Err: ErrAgentStateCorrupt, Detail: "no valid process ID recorded"}
 	}
 	return &state, nil
 }
@@ -233,7 +233,7 @@ func claimAgentServerState(state *agentServerState) error {
 		existing, readErr := readAgentServerState()
 		switch {
 		case readErr == nil && agentServerAlive(existing):
-			return &errs.Detail{
+			return &xkms.ErrsDetail{
 				Err: ErrAgentServerAlreadyRunning,
 				Detail: fmt.Sprintf("PID %d is listening on %s (run 'xkey agent stop' first)",
 					existing.PID, existing.ListenAddr),
@@ -248,7 +248,7 @@ func claimAgentServerState(state *agentServerState) error {
 		}
 	}
 
-	return &errs.Detail{
+	return &xkms.ErrsDetail{
 		Err:    ErrAgentStateWrite,
 		Detail: "state file is being recreated by a concurrent process",
 	}
@@ -358,7 +358,7 @@ func stopAgentServer(grace, killGrace time.Duration) (*agentServerState, bool, e
 			return nil, false, &SentinelCauseError{Sentinel: ErrAgentStopFailed, Cause: err}
 		}
 		if !waitForAgentExit(state, killGrace) {
-			return nil, false, &errs.Detail{
+			return nil, false, &xkms.ErrsDetail{
 				Err:    ErrAgentStopTimeout,
 				Detail: fmt.Sprintf("PID %d is still alive after SIGKILL", state.PID),
 			}

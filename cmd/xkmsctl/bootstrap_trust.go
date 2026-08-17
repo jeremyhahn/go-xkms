@@ -14,8 +14,7 @@
 package main
 
 import (
-	"github.com/jeremyhahn/go-xkms/pkg/config"
-	trustresolver "github.com/jeremyhahn/go-xkms/pkg/trust/resolver"
+	trustresolver "github.com/jeremyhahn/go-xkms/sdk/go/trust/resolver"
 )
 
 // trustConfigFromFile loads the trust: section from the xkmsd config file
@@ -25,11 +24,11 @@ func trustConfigFromFile(path string) (*trustresolver.Config, error) {
 	if path == "" {
 		return nil, nil
 	}
-	cfg, err := config.Load(path)
+	trust, err := trustresolver.LoadTrustConfig(path)
 	if err != nil {
 		return nil, &ConfigLoadError{Path: path, Err: err}
 	}
-	return cfg.Trust, nil
+	return trust, nil
 }
 
 // autoParamsFromResolverScope merges a ScopeConfig into an

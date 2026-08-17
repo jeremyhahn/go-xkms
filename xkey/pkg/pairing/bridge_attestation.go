@@ -22,8 +22,7 @@ import (
 	"strings"
 
 	gotpm2 "github.com/google/go-tpm/tpm2"
-	"github.com/jeremyhahn/go-xkms/pkg/tpm2"
-	"github.com/jeremyhahn/go-xkms/pkg/types"
+	xkms "github.com/jeremyhahn/go-xkms/sdk/go"
 	"github.com/jeremyhahn/go-xkms/xkey/pkg/audit"
 )
 
@@ -47,7 +46,7 @@ const (
 // the attestation key's public area, and provisioning of the CA-issued
 // certificates.
 //
-// *github.com/jeremyhahn/go-xkms/pkg/tpm2.TPM2 satisfies this interface; the
+// *github.com/jeremyhahn/go-xkms/sdk/go.TPM2 satisfies this interface; the
 // interface exists so the bridge handlers stay testable without a TPM or a
 // simulator. It is deliberately not the full TrustedPlatformModule surface.
 type TPMEnroller interface {
@@ -57,17 +56,17 @@ type TPMEnroller interface {
 
 	// IAKAttributes returns the Initial Attestation Key attributes, including
 	// its TPM2B_PUBLIC public area and PCR hash algorithm.
-	IAKAttributes() (*types.KeyAttributes, error)
+	IAKAttributes() (*xkms.KeyAttributes, error)
 
 	// IDevIDAttributes returns the Initial Device Identity Key attributes.
-	IDevIDAttributes() (*types.KeyAttributes, error)
+	IDevIDAttributes() (*xkms.KeyAttributes, error)
 
 	// CreateTCG_CSR_IDEVID builds a TCG-CSR-IDEVID enrollment package binding
 	// the IDevID key to the IAK and the IAK to the EK.
 	CreateTCG_CSR_IDEVID(
 		ekCert *x509.Certificate,
-		akAttrs *types.KeyAttributes,
-		idevidAttrs *types.KeyAttributes) (tpm2.TCG_CSR_IDEVID, error)
+		akAttrs *xkms.KeyAttributes,
+		idevidAttrs *xkms.KeyAttributes) (xkms.TCG_CSR_IDEVID, error)
 
 	// ActivateCredential runs TPM2_ActivateCredential over a challenge the CA
 	// produced with TPM2_MakeCredential, returning the recovered secret.
@@ -75,11 +74,11 @@ type TPMEnroller interface {
 
 	// Quote produces a TPM2 quote over the named PCRs, bound to nonce and
 	// signed by the IAK.
-	Quote(pcrs []uint, nonce []byte) (tpm2.Quote, error)
+	Quote(pcrs []uint, nonce []byte) (xkms.Quote, error)
 
 	// FixedProperties returns the TPM's fixed capability properties, used here
 	// for the manufacturer identifier reported to the CA.
-	FixedProperties() (*tpm2.PropertiesFixed, error)
+	FixedProperties() (*xkms.PropertiesFixed, error)
 
 	// ProvisionIAKCert stores the CA-issued IAK certificate.
 	ProvisionIAKCert(cert *x509.Certificate) error
@@ -89,7 +88,7 @@ type TPMEnroller interface {
 }
 
 // Compile-time proof that the concrete TPM satisfies the narrow interface.
-var _ TPMEnroller = (*tpm2.TPM2)(nil)
+var _ TPMEnroller = (*xkms.TPM2)(nil)
 
 // enroller returns the configured TPM, or ErrTPMNotConfigured when this host
 // has no TPM wired into the bridge.
@@ -201,7 +200,7 @@ func buildTCGCSRIDevID(tpm TPMEnroller) (*RemoteGetTCGCSRIDevIDResult, error) {
 		return nil, tpmError(err)
 	}
 
-	packed, err := tpm2.PackIDevIDCSR(&csr)
+	packed, err := xkms.PackIDevIDCSR(&csr)
 	if err != nil {
 		return nil, tpmError(err)
 	}
@@ -232,7 +231,7 @@ func buildTCGCSRIDevID(tpm TPMEnroller) (*RemoteGetTCGCSRIDevIDResult, error) {
 
 // publicArea returns the key's TPM2B_PUBLIC bytes, matching the encoding the
 // TCG-CSR-IDEVID uses for AttestPub and SigningPub.
-func publicArea(attrs *types.KeyAttributes) ([]byte, error) {
+func publicArea(attrs *xkms.KeyAttributes) ([]byte, error) {
 	if attrs == nil || attrs.TPMAttributes == nil {
 		return nil, tpmError(ErrTPMKeyNotProvisioned)
 	}
@@ -481,7 +480,7 @@ func pcrBankName(alg gotpm2.TPMIAlgHash) (string, error) {
 // pcrValues decodes the gob-encoded PCR banks carried on a Quote and returns the
 // values of the named bank keyed by PCR index.
 func pcrValues(encoded []byte, bank string) (map[int][]byte, error) {
-	banks, err := tpm2.DecodePCRs(encoded)
+	banks, err := xkms.DecodePCRs(encoded)
 	if err != nil {
 		return nil, tpmError(err)
 	}

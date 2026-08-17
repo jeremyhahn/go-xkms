@@ -16,6 +16,8 @@ package xkms
 import (
 	"errors"
 	"fmt"
+
+	"github.com/jeremyhahn/go-xkms/pkg/errs"
 )
 
 // ErrorCode represents the type of error that occurred.
@@ -451,3 +453,10 @@ func (e *InvalidURLError) Error() string {
 func (e *InvalidURLError) Unwrap() error {
 	return e.Err
 }
+
+// ErrsDetail appends detail text to a wrapped (usually sentinel) error,
+// rendering as "<err>: <detail>". Re-exported from pkg/errs so client
+// binaries can build typed detail errors without importing pkg/errs
+// directly. The Errs prefix avoids colliding with the Detail field already
+// used on other error types in this package.
+type ErrsDetail = errs.Detail

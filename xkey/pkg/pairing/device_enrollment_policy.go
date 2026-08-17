@@ -21,7 +21,7 @@ import (
 	"strings"
 	"time"
 
-	android "github.com/jeremyhahn/go-xkms/pkg/attestation/android"
+	xkms "github.com/jeremyhahn/go-xkms/sdk/go"
 )
 
 // Enrollment policy failures. Each names a distinct reason so an operator can
@@ -192,11 +192,11 @@ func securityRank(level string) int {
 }
 
 // securityLevelName renders a parsed attestation level as its wire name.
-func securityLevelName(level android.SecurityLevel) string {
+func securityLevelName(level xkms.AndroidSecurityLevel) string {
 	switch level {
-	case android.SecurityLevelStrongBox:
+	case xkms.AndroidSecurityLevelStrongBox:
 		return SecurityLevelStrongBox
-	case android.SecurityLevelTrustedEnvironment:
+	case xkms.AndroidSecurityLevelTrustedEnvironment:
 		return SecurityLevelTEE
 	default:
 		return SecurityLevelSoftware
@@ -234,12 +234,12 @@ func (p *EnrollmentPolicy) Evaluate(
 		return nil, err
 	}
 
-	desc, err := android.VerifyKeyAttestation(chain, &android.VerifyOptions{
+	desc, err := xkms.VerifyAndroidKeyAttestation(chain, &xkms.AndroidVerifyOptions{
 		TrustedRoots:  p.TrustedRoots,
 		ExpectedNonce: expectedNonce,
 		// The security level and boot state are judged below so each refusal
 		// carries its own sentinel; the verifier collapses them into one error.
-		MinSecurityLevel: android.SecurityLevelSoftware,
+		MinSecurityLevel: xkms.AndroidSecurityLevelSoftware,
 		VerifyBootState:  false,
 	})
 	if err != nil {
@@ -280,7 +280,7 @@ func (p *EnrollmentPolicy) Evaluate(
 		if !rot.DeviceLocked {
 			return nil, fmt.Errorf("%w: the bootloader is unlocked", ErrEnrollmentBootState)
 		}
-		if rot.VerifiedBootState != android.VerifiedBootVerified {
+		if rot.VerifiedBootState != xkms.AndroidVerifiedBootVerified {
 			return nil, fmt.Errorf("%w: verified boot is %s",
 				ErrEnrollmentBootState, rot.VerifiedBootState)
 		}
@@ -310,7 +310,7 @@ func (p *EnrollmentPolicy) Evaluate(
 // matchApplication checks the attested application against the allow-list and
 // returns the package and digest that matched.
 func (p *EnrollmentPolicy) matchApplication(
-	appID *android.AttestationApplicationID,
+	appID *xkms.AndroidAttestationApplicationID,
 ) (string, string, error) {
 	if appID == nil || len(appID.Packages) == 0 {
 		return "", "", fmt.Errorf("%w: the attestation names no application",

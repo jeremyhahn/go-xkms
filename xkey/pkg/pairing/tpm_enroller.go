@@ -20,7 +20,7 @@ import (
 	"log/slog"
 	"os"
 
-	"github.com/jeremyhahn/go-xkms/pkg/tpm2"
+	xkms "github.com/jeremyhahn/go-xkms/sdk/go"
 )
 
 // TPM enrollment defaults.
@@ -120,7 +120,7 @@ func OpenTPMEnroller(config *TPMEnrollerConfig) (TPMEnrollerCloser, error) {
 	// a bare Config instead would zero PlatformPCRBank and every EK read would
 	// fail computing the platform policy digest. UseSimulator defaults to true
 	// and must be cleared for the device path to be taken at all.
-	tpmConfig := tpm2.DefaultConfig
+	tpmConfig := xkms.DefaultTPMConfig
 	tpmConfig.Device = device
 	tpmConfig.Hash = hash
 	tpmConfig.UseSimulator = false
@@ -128,7 +128,7 @@ func OpenTPMEnroller(config *TPMEnrollerConfig) (TPMEnrollerCloser, error) {
 		tpmConfig.PlatformPCRBank = config.PlatformPCRBank
 	}
 
-	tpm, err := tpm2.NewTPM2(&tpm2.Params{
+	tpm, err := xkms.NewTPM2(&xkms.TPMParams{
 		Config: &tpmConfig,
 		Logger: logger,
 	})
@@ -162,7 +162,7 @@ func unreachableTPM(logger *slog.Logger, device string, cause error) error {
 // the open is repeated purely to read the errno, and the handle is closed
 // immediately. Every other error is already specific and passes through.
 func deviceOpenCause(device string, err error) error {
-	if !errors.Is(err, tpm2.ErrOpeningDevice) {
+	if !errors.Is(err, xkms.ErrTPMOpeningDevice) {
 		return err
 	}
 	probe, probeErr := os.OpenFile(device, os.O_RDWR, 0)

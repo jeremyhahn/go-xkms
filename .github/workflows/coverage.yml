@@ -11,7 +11,7 @@ on:
 env:
   GO_VERSION: 'stable'
   COVERAGE_THRESHOLD: 90
-  GOPROXY: direct
+  GOPROXY: https://proxy.golang.org,direct
   GOSUMDB: off
 
 jobs:

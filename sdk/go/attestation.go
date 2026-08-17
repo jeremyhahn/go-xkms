@@ -37,9 +37,21 @@ type AndroidVerifiedBootState = android.VerifiedBootState
 // AndroidVerifyOptions configures Android key-attestation verification.
 type AndroidVerifyOptions = android.VerifyOptions
 
+// AndroidSecurityLevel indicates where an attested key is held (software,
+// TEE, or StrongBox).
+type AndroidSecurityLevel = android.SecurityLevel
+
+// AndroidAttestationApplicationID identifies the application (package name
+// and signing certificate digests) that requested an attested key.
+type AndroidAttestationApplicationID = android.AttestationApplicationID
+
 const (
+	// AndroidSecurityLevelSoftware indicates a software-protected key.
+	AndroidSecurityLevelSoftware = android.SecurityLevelSoftware
 	// AndroidSecurityLevelTrustedEnvironment indicates TEE-protected keys.
 	AndroidSecurityLevelTrustedEnvironment = android.SecurityLevelTrustedEnvironment
+	// AndroidSecurityLevelStrongBox indicates a StrongBox-protected key.
+	AndroidSecurityLevelStrongBox = android.SecurityLevelStrongBox
 	// AndroidVerifiedBootVerified means the boot chain is fully verified.
 	AndroidVerifiedBootVerified = android.VerifiedBootVerified
 	// AndroidVerifiedBootSelfSigned means the boot image is self-signed.
@@ -53,6 +65,10 @@ const (
 // VerifyAndroidKeyAttestation verifies an Android key-attestation certificate
 // chain against the given options.
 var VerifyAndroidKeyAttestation = android.VerifyKeyAttestation
+
+// ParseAndroidKeyAttestation parses the Android key-attestation extension
+// out of a leaf certificate without verifying the certificate chain.
+var ParseAndroidKeyAttestation = android.ParseKeyAttestation
 
 // GoogleHardwareAttestationRoots returns the Google hardware-attestation root
 // certificates.
