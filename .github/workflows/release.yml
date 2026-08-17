@@ -220,9 +220,14 @@ jobs:
           # Note: xkey is Linux-only due to UHID dependency
           if [ "$CGO_MODE" = "1" ]; then
             echo "Building xkey..."
-            CGO_ENABLED=1 go build -buildvcs=false -ldflags="${LDFLAGS}" ${BUILD_FLAGS} \
+            # xkey is a separate Go module (xkey/go.mod) with its own
+            # ./cmd/xkey package -- there is no ./cmd/xkey at the repo root
+            # (same pattern ci.yml's Build Binaries matrix step uses). Without
+            # the `cd xkey` this resolves to /src/cmd/xkey, which does not
+            # exist: "stat /src/cmd/xkey: directory not found" (task 3598).
+            (cd /src/xkey && CGO_ENABLED=1 go build -buildvcs=false -ldflags="${LDFLAGS}" ${BUILD_FLAGS} \
               -o /src/dist/xkey \
-              ./cmd/xkey
+              ./cmd/xkey)
           else
             echo "Skipping xkey for FIPS build (requires CGO)"
           fi
@@ -617,12 +622,17 @@ jobs:
           cache-to: type=gha,mode=max
 
       - name: Trivy image gate (fail on CRITICAL/HIGH)
+        # --ignore-unfixed matches ci.yml's Docker job gate (09abcaa): base-
+        # image CVEs with no available fix (e.g. zlib1g CVE-2023-45853,
+        # marked will_not_fix upstream) fail this scan every run otherwise
+        # (task 3604).
         run: |
           docker run --rm \
             -v /var/run/docker.sock:/var/run/docker.sock \
             aquasec/trivy:latest image \
               --format table \
               --severity CRITICAL,HIGH \
+              --ignore-unfixed \
               --exit-code 1 \
               --no-progress \
               "${REGISTRY}/${IMAGE_NAME_SERVER}:release-scan"
@@ -723,12 +733,15 @@ jobs:
           cache-to: type=gha,mode=max
 
       - name: Trivy image gate (fail on CRITICAL/HIGH)
+        # --ignore-unfixed matches ci.yml's Docker job gate (09abcaa) and the
+        # server image gate above (task 3605).
         run: |
           docker run --rm \
             -v /var/run/docker.sock:/var/run/docker.sock \
             aquasec/trivy:latest image \
               --format table \
               --severity CRITICAL,HIGH \
+              --ignore-unfixed \
               --exit-code 1 \
               --no-progress \
               "${REGISTRY}/${IMAGE_NAME_CLI}:release-scan"

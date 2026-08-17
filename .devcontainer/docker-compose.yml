@@ -186,7 +186,11 @@ services:
     volumes:
       - xkms-data:/data
       - xkms-socket:/var/run/xkms
-      - ../configs/xkmsd-integration.yaml:/etc/xkms/xkmsd.yaml:ro
+      # xkmsd.yaml is baked into the image (see Dockerfile) rather than bind
+      # mounted: a relative host path here resolves against the Gitea
+      # Actions job container's filesystem, not the actual docker daemon
+      # host, and fails outright when the daemon tries to auto-create the
+      # missing mount source (task 3771: "mkdir /workspace: file exists").
     environment:
       - XKMS_CONFIG=/etc/xkms/xkmsd.yaml
       - KEYSTORE_LOG_LEVEL=debug

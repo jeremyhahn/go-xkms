@@ -216,6 +216,18 @@ else\n\
   exec "$@"\n\
 fi\n' > /usr/local/bin/entrypoint.sh && chmod +x /usr/local/bin/entrypoint.sh
 
+# Bake the integration-test server config into the image so the compose
+# xkms-server service (.devcontainer/docker-compose.yml) does not depend on
+# a host bind mount for it. A relative bind-mount source
+# (../configs/xkmsd-integration.yaml) resolves against the Gitea Actions job
+# container's filesystem, not the actual docker daemon host backing that
+# job, and fails outright there once the service is actually started:
+# "Error response from daemon: error while creating mount source path
+# '/workspace/.../xkmsd-integration.yaml': mkdir /workspace: file exists"
+# (task 3771). The full source tree is already COPYed into /workspace above,
+# so this just relocates the one file the XKMS_CONFIG env var points at.
+RUN mkdir -p /etc/xkms && cp /workspace/configs/xkmsd-integration.yaml /etc/xkms/xkmsd.yaml
+
 # Switch back to non-root user for security
 USER testuser
 
