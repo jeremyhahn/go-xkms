@@ -197,7 +197,15 @@ jobs:
         run: make docker-build
 
       - name: Run integration tests
-        run: make integration-test
+        # XKMS_COMPOSE_SERVER=1 forces the compose xkms-server (grpc/quic/mcp
+        # network listeners) to build and start unconditionally. The default
+        # `auto` mode only starts it when a go-xkms-server:dev image already
+        # exists locally -- a local-dev convenience that never holds on a
+        # fresh runner, so `auto` silently degrades to the in-devcontainer
+        # unix-socket-only fallback (scripts/start-test-xkmsd.sh) and every
+        # grpc/quic/mcp subtest fails with "protocol grpc is not reachable at
+        # xkms-server:9443" (task 3129).
+        run: XKMS_COMPOSE_SERVER=1 make integration-test
         timeout-minutes: 60
 
       - name: Upload integration test results

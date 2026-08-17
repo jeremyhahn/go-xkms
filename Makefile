@@ -1974,8 +1974,8 @@ define compose_up_xkms_server
 			echo "$(YELLOW)xkms-server disabled (XKMS_COMPOSE_SERVER=0); the devcontainer serves the socket.$(RESET)" ;; \
 		1|yes|on) \
 			echo "$(CYAN)$(BOLD)→ Starting xkms-server (compose)...$(RESET)"; \
-			$(DOCKER_COMPOSE) up -d --build xkms-server || true; \
-			$(MAKE) --no-print-directory devcontainer-server-wait || true ;; \
+			$(DOCKER_COMPOSE) up -d --build xkms-server; \
+			$(MAKE) --no-print-directory devcontainer-server-wait ;; \
 		*) \
 			if docker image inspect go-xkms-server:dev >/dev/null 2>&1; then \
 				echo "$(CYAN)$(BOLD)→ Starting xkms-server (compose)...$(RESET)"; \

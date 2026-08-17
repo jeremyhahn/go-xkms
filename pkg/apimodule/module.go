@@ -227,6 +227,23 @@ func (m *Module) RegisterGRPC(reg grpc.ServiceRegistrar) {
 	reg.RegisterService(lazyServiceDesc(&pb.KeystoreService_ServiceDesc, m.keystore), nil)
 }
 
+// PublicGRPCMethods declares the KeystoreService RPCs that must be reachable
+// without authentication, admitting them into qrdb's unified-server gRPC
+// interceptor the same way HTTPRegistrar.HandlePublic admits the mirrored
+// REST routes (GET /health, GET /api/v1/algorithms — see routes.go). Health
+// and Algorithms are unannotated in xkms.proto (no (qrdb.v1.permission)
+// option), so without this declaration qrdb's reflection interceptor
+// DEFAULT-DENYs them before the handler ever runs (see the interceptor's
+// doc comment in go-qrdb/pkg/api/grpc/proto/qrdbv1/authz.proto) — the
+// Unix-socket transport never hit this because it grants local callers
+// WithLocalTrust() instead of going through the reflection interceptor.
+func (m *Module) PublicGRPCMethods() []string {
+	return []string{
+		"/xkms.v1.KeystoreService/Health",
+		"/xkms.v1.KeystoreService/Algorithms",
+	}
+}
+
 // keystore returns the memoized keystore Service, constructing it on first
 // use once the resolver yields the composed XKMSService.
 //
