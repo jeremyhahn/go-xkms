@@ -44,6 +44,13 @@ var subcommands = map[string]func([]string){
 }
 
 func main() {
+	// run reports the process exit code instead of calling os.Exit directly,
+	// so the deferred secure.Purge below always runs — an os.Exit inside a
+	// function that owns a pending defer skips it.
+	os.Exit(run())
+}
+
+func run() int {
 	// Wire the process signal handler so SIGINT/SIGTERM purge all
 	// mlocked memory before exit, and arrange for a graceful Purge on
 	// any orderly shutdown path. Mirrors the qrdbd pattern exactly.
@@ -59,7 +66,7 @@ func main() {
 	if len(os.Args) > 1 {
 		if handler, ok := subcommands[os.Args[1]]; ok {
 			handler(os.Args[2:])
-			return
+			return 0
 		}
 	}
 
@@ -81,13 +88,13 @@ func main() {
 		*daemonMode = true
 	}
 
-	// Show version if requested
+	// Show version if requested.
 	if *showVersion {
 		fmt.Printf("xkmsd - xKMS Daemon\n")
 		fmt.Printf("  Version:    %s\n", version)
 		fmt.Printf("  Git Commit: %s\n", commit)
 		fmt.Printf("  Built:      %s\n", date)
-		os.Exit(0)
+		return 0
 	}
 
 	// Check for config file override via environment
@@ -109,7 +116,7 @@ func main() {
 	cfg, err := config.Load(*configPath)
 	if err != nil {
 		logger.Error("Failed to load configuration", slog.Any("error", err))
-		os.Exit(1)
+		return 1
 	}
 
 	logger.Info("Configuration loaded successfully",
@@ -135,14 +142,14 @@ func main() {
 			"FedRAMP/PCI-DSS/HIPAA require encryption-at-rest, TLS, authentication, and a CA. "+
 			"Run `xkmsd init` to provision a secure deployment, or enable the reported settings.",
 			slog.Any("gaps", gaps))
-		os.Exit(1)
+		return 1
 	}
 
 	// Write PID file if specified
 	if *pidFile != "" {
 		if err := writePIDFile(*pidFile); err != nil {
 			logger.Error("Failed to write PID file", slog.Any("error", err))
-			os.Exit(1)
+			return 1
 		}
 		defer removePIDFile(*pidFile, logger)
 	}
@@ -151,7 +158,7 @@ func main() {
 	srv, err := server.New(cfg)
 	if err != nil {
 		logger.Error("Failed to create server", slog.Any("error", err))
-		os.Exit(1)
+		return 1
 	}
 
 	// Serve the embedded web UI when this binary was built with the "ui"
@@ -190,7 +197,7 @@ func main() {
 	// Start the server
 	if err := srv.Start(); err != nil {
 		logger.Error("Failed to start server", slog.Any("error", err))
-		os.Exit(1)
+		return 1
 	}
 
 	// Start the optional ACME server. When acme.enabled is false this is a
@@ -201,7 +208,7 @@ func main() {
 		if shutdownErr := srv.Shutdown(); shutdownErr != nil {
 			logger.Error("Error during shutdown after ACME failure", slog.Any("error", shutdownErr))
 		}
-		os.Exit(1)
+		return 1
 	}
 
 	// Wait for shutdown signal
@@ -220,10 +227,11 @@ func main() {
 	// Gracefully shutdown
 	if err := srv.Shutdown(); err != nil {
 		logger.Error("Error during shutdown", slog.Any("error", err))
-		os.Exit(1)
+		return 1
 	}
 
 	logger.Info("Server stopped successfully")
+	return 0
 }
 
 // setupSignalHandler sets up signal handling for graceful shutdown and config reload

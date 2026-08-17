@@ -16,7 +16,6 @@ package grpc
 import (
 	"context"
 	"errors"
-	"fmt"
 	"math/big"
 	"strings"
 	"sync"
@@ -326,7 +325,7 @@ func parseCASerialHex(s string) (*big.Int, error) {
 	serialStr = strings.TrimPrefix(serialStr, "0X")
 	serial := new(big.Int)
 	if _, ok := serial.SetString(serialStr, 16); !ok {
-		return nil, &errs.Detail{Err: ErrInvalidSerialNumber, Detail: fmt.Sprintf("%s", s)}
+		return nil, &errs.Detail{Err: ErrInvalidSerialNumber, Detail: s}
 	}
 	return serial, nil
 }

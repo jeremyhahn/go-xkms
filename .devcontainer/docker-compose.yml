@@ -234,6 +234,13 @@ services:
     build:
       context: ../../go-quicbaas
       dockerfile: Dockerfile
+      args:
+        # The default BUILD_TAGS is gms_pure_go only, which compiles
+        # quicbaas's module REST surface out entirely ("REST server not
+        # available (build with -tags rest to enable)") — the login matrix
+        # needs the real REST plane. gms_pure_go must stay in the list
+        # (CGO_ENABLED=0 builder).
+        BUILD_TAGS: "gms_pure_go rest"
       secrets:
         - gomodauth
     image: go-quicbaas-server:dev

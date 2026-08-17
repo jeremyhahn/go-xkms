@@ -135,7 +135,7 @@ func NewPinnedTLSConfig(spkiPin string) *tls.Config {
 		// during trust bootstrap (the CA cert is what we are trying to fetch).
 		// VerifyConnection provides the actual peer authentication via SPKI pin.
 		// This is the standard Go pattern for custom TLS verification.
-		InsecureSkipVerify: true, //nolint:gosec // CA chain skipped; VerifyConnection is sole verifier
+		InsecureSkipVerify: true, // #nosec G402 -- CA chain skipped; VerifyConnection is sole verifier
 		// SessionTicketsDisabled prevents TLS session resumption (tickets/PSK).
 		// On a resumed session the stack does NOT invoke VerifyConnection,
 		// which would silently bypass the SPKI pin. Disabling resumption forces

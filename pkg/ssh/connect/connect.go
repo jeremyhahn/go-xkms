@@ -151,14 +151,18 @@ func Start(ctx context.Context, req Request) (*Session, error) {
 		seed = append(seed, body...)
 	}
 	for _, f := range req.ExtraKnownHosts {
-		if data, rerr := os.ReadFile(f); rerr == nil {
+		// ExtraKnownHosts is local operator config (CLI flags / GUI settings,
+		// e.g. ~/.ssh/known_hosts), never remote/request-derived input.
+		if data, rerr := os.ReadFile(f); rerr == nil { // #nosec G703 -- operator-supplied local known_hosts path
 			seed = append(seed, data...)
 			if len(data) > 0 && data[len(data)-1] != '\n' {
 				seed = append(seed, '\n')
 			}
 		}
 	}
-	if werr := os.WriteFile(khFile, seed, 0o600); werr != nil {
+	// khFile is under workDir (req.WorkDir), which -- like ExtraKnownHosts
+	// above -- is local operator/library-caller config, not remote input.
+	if werr := os.WriteFile(khFile, seed, 0o600); werr != nil { // #nosec G703 -- operator-supplied WorkDir, not attacker-controlled
 		cancel()
 		cleanupDir(ownsWorkDir, workDir)
 		return nil, &LaunchError{Op: "write known_hosts", Err: werr}

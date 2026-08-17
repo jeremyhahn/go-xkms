@@ -154,7 +154,9 @@ func (h *Handler) OpenAPISpecHandler(w http.ResponseWriter, r *http.Request) {
 
 	w.Header().Set("Content-Type", "application/yaml")
 	w.Header().Set("Access-Control-Allow-Origin", "*")
-	_, _ = w.Write(content)
+	// content is a build-embedded OpenAPI spec file (embed.FS), not
+	// attacker-controlled, and served as application/yaml, never text/html.
+	_, _ = w.Write(content) // #nosec G705 -- embedded static YAML, non-HTML content-type
 }
 
 // swaggerUITemplate is the HTML template for Swagger UI.

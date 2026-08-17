@@ -117,10 +117,15 @@ func main() {
 
 	// Simple handler
 	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
+		// Explicit text/plain heads off Go's content-type sniffing: without
+		// it, a client-chosen TLS ServerName (SNI, echoed below) that looks
+		// like markup could otherwise be sniffed and rendered as HTML by a
+		// browser (CWE-79).
+		w.Header().Set("Content-Type", "text/plain; charset=utf-8")
 		_, _ = fmt.Fprintf(w, "Hello from TLS server!\n")
 		_, _ = fmt.Fprintf(w, "TLS Version: %s\n", tlsVersionString(r.TLS.Version))
-		_, _ = fmt.Fprintf(w, "Cipher Suite: %s\n", tls.CipherSuiteName(r.TLS.CipherSuite))
-		_, _ = fmt.Fprintf(w, "Server Name: %s\n", r.TLS.ServerName)
+		_, _ = fmt.Fprintf(w, "Cipher Suite: %s\n", tls.CipherSuiteName(r.TLS.CipherSuite)) // #nosec G705 -- bounded to the server's configured suite list above; text/plain response
+		_, _ = fmt.Fprintf(w, "Server Name: %s\n", r.TLS.ServerName)                        // #nosec G705 -- text/plain response set above; SNI cannot be sniffed as HTML
 	})
 
 	// Health check endpoint

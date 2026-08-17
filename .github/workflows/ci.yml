@@ -41,7 +41,11 @@ jobs:
       - name: Install and configure SoftHSM2
         run: |
           sudo apt-get update
-          sudo apt-get install -y libsofthsm2 softhsm2
+          # libicu-dev/libusb-1.0-0-dev: unconditional cgo deps of the module
+          # graph (dolthub/go-icu-regex, google/gousb via go-qrdb) -- needed
+          # even for the default (non-hardware) build tags, because
+          # CGO_ENABLED defaults to 1 whenever a C toolchain is present.
+          sudo apt-get install -y libsofthsm2 softhsm2 libicu-dev libusb-1.0-0-dev
           # Create token directory
           mkdir -p ${GITHUB_WORKSPACE}/softhsm2/tokens
           # Create SoftHSM2 config
@@ -208,6 +212,18 @@ jobs:
           go-version: ${{ env.GO_VERSION }}
           cache: true
 
+      # go vet (and golangci-lint below, which type-checks the same graph)
+      # need to compile every package reached by `./...`, including cgo
+      # packages pulled in unconditionally by the module graph
+      # (dolthub/go-icu-regex, google/gousb via go-qrdb) -- not gated by any
+      # build tag. CGO_ENABLED defaults to 1 whenever a C toolchain is
+      # present, so these headers are required regardless of which backend
+      # tags this job cares about.
+      - name: Install cgo dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libicu-dev libusb-1.0-0-dev
+
       - name: Run gofmt check
         run: |
           if [ -n "$(gofmt -l .)" ]; then
@@ -244,6 +260,11 @@ jobs:
         with:
           go-version: ${{ env.GO_VERSION }}
           cache: true
+
+      - name: Install cgo dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libicu-dev libusb-1.0-0-dev
 
       - name: Verify module integrity
         run: go mod verify
@@ -370,7 +391,14 @@ jobs:
       - name: Install build dependencies
         run: |
           sudo apt-get update
-          sudo apt-get install -y libsofthsm2 softhsm2 libtss2-dev
+          # libicu-dev: github.com/dolthub/go-icu-regex (pulled in transitively
+          # via go-qrdb's embedded go-mysql-server) needs unicode/uregex.h to
+          # compile under CGO. libusb-1.0-0-dev: github.com/google/gousb
+          # (transitively via go-qrdb) needs libusb.h the same way. Both are
+          # unconditional dependencies of the module graph, not gated by any
+          # of this job's build tags, so every CGO_ENABLED=1 build here needs
+          # them regardless of which backend tags are requested.
+          sudo apt-get install -y libsofthsm2 softhsm2 libtss2-dev libicu-dev libusb-1.0-0-dev
 
       - name: Build ${{ matrix.binary }} with all backends
         env:
@@ -379,7 +407,16 @@ jobs:
           # Build with ALL backend tags enabled to test full integration
           TAGS="pkcs8,tpm2,awskms,gcpkms,azurekv,pkcs11,vault,frost"
           mkdir -p build
-          go build -tags="${TAGS}" -o build/${{ matrix.output }} ./cmd/${{ matrix.binary }}
+          if [ "${{ matrix.binary }}" = "xkey" ]; then
+            # xkey is a separate Go module (xkey/go.mod) with its own
+            # ./cmd/xkey package -- there is no ./cmd/xkey at the repo root.
+            # Building without the production/dev/bindings tags selects
+            # xkey/cmd/xkey/gui_disabled.go (CLI-only), so no frontend/GUI
+            # toolchain is needed for this sanity build.
+            (cd xkey && go build -tags="${TAGS}" -o ../build/${{ matrix.output }} ./cmd/xkey)
+          else
+            go build -tags="${TAGS}" -o build/${{ matrix.output }} ./cmd/${{ matrix.binary }}
+          fi
 
       - name: Upload build artifacts
         if: github.server_url == 'https://github.com'
@@ -409,14 +446,29 @@ jobs:
           go-version: ${{ env.GO_VERSION }}
           cache: true
 
+      # See the "build" job's comment: dolthub/go-icu-regex and google/gousb
+      # are unconditional cgo deps of the module graph, not gated by any tag
+      # here, so they're needed even for this codec-only tag matrix whenever
+      # CGO_ENABLED defaults to 1.
+      - name: Install cgo dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libicu-dev libusb-1.0-0-dev
+
       - name: Build all packages (tags="${{ matrix.tags }}")
         run: go build -tags "${{ matrix.tags }}" ./...
 
       - name: Vet (tags="${{ matrix.tags }}")
         run: go vet -tags "${{ matrix.tags }}" ./pkg/server/... ./pkg/config/...
 
+      # pkg/cluster/ was removed as part of the clustering-into-pkg/xkms
+      # consolidation (git history: service_cluster.go, handlers_cluster.go,
+      # etc. were deleted in favor of pkg/xkms/servicer_cluster*.go); this
+      # command used to also cover ./pkg/cluster/... but that path no longer
+      # exists, so `go test` fails at the setup stage on every run regardless
+      # of tag set. pkg/xkms/... already covers the raft-gated test surface.
       - name: Test clustering packages (tags="${{ matrix.tags }}")
-        run: go test -tags "${{ matrix.tags }}" ./pkg/config/... ./pkg/cluster/... ./pkg/xkms/... -count=1
+        run: go test -tags "${{ matrix.tags }}" ./pkg/config/... ./pkg/xkms/... -count=1
 
   # Job 5c: Architecture gates — enforce the layering the campaign established.
   # xkmsctl and xkey must depend only on sdk/go (never go-xkms/pkg/* internals),
@@ -499,6 +551,26 @@ jobs:
             type=sha,prefix={{branch}}-
             type=raw,value=latest,enable={{is_default_branch}}
 
+      # docker build does NOT inherit the job environment
+      # (dependency-resolution.md §6), so the Gitea fetch credentials the
+      # runner injects into this job's shell (GOPRIVATE/GIT_CONFIG_*) have to
+      # be staged into a file and handed to buildx as a secret mount. Empty
+      # on GitHub Actions (those vars are unset there), which is fine: the
+      # Dockerfile's RUN --mount=type=secret is optional and falls back to
+      # public resolution.
+      - name: Stage Gitea module credentials
+        run: |
+          umask 077
+          : > gomodauth.env
+          if [ -n "${GIT_CONFIG_KEY_0:-}" ]; then
+            {
+              echo "export GOPRIVATE=${GOPRIVATE:-}"
+              echo "export GIT_CONFIG_COUNT=${GIT_CONFIG_COUNT:-1}"
+              echo "export GIT_CONFIG_KEY_0=${GIT_CONFIG_KEY_0:-}"
+              echo "export GIT_CONFIG_VALUE_0=${GIT_CONFIG_VALUE_0:-}"
+            } > gomodauth.env
+          fi
+
       - name: Build Docker image for scanning (amd64 only)
         uses: docker/build-push-action@v5
         with:
@@ -513,6 +585,8 @@ jobs:
             VERSION=dev
             COMMIT=${{ github.sha }}
             DATE=${{ github.event.repository.updated_at }}
+          secret-files: |
+            gomodauth=./gomodauth.env
           cache-from: type=gha
           cache-to: type=gha,mode=max
 
@@ -608,7 +682,11 @@ jobs:
       - name: Install dependencies for hardware backends
         run: |
           sudo apt-get update
-          sudo apt-get install -y libsofthsm2 softhsm2 libtss2-dev
+          # libicu-dev/libusb-1.0-0-dev: see the "build" job's comment --
+          # unconditional cgo deps of the module graph (dolthub/go-icu-regex,
+          # google/gousb via go-qrdb), needed for any CGO_ENABLED=1 build
+          # regardless of tags.
+          sudo apt-get install -y libsofthsm2 softhsm2 libtss2-dev libicu-dev libusb-1.0-0-dev
 
       - name: Configure SoftHSM2
         run: |

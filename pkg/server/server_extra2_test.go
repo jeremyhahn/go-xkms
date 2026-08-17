@@ -141,50 +141,6 @@ func selfSignedCert(t *testing.T) *x509.Certificate {
 }
 
 // ============================================================================
-// Tests — syncExistingTLSCert
-// ============================================================================
-
-// mockCertStoreTrustedCA embeds mockTrustedCA and returns a configured cert store.
-type mockCertStoreTrustedCA struct {
-	mockTrustedCA
-	getCertErr error
-	cert       *x509.Certificate
-}
-
-func (m *mockCertStoreTrustedCA) CertStore() interface {
-	GetCertificate(string) (*x509.Certificate, error)
-} {
-	return m
-}
-
-func (m *mockCertStoreTrustedCA) GetCertificate(_ string) (*x509.Certificate, error) {
-	return m.cert, m.getCertErr
-}
-
-// mockCertStoreCA is a CA that satisfies the certstore.CertStore interface via
-// a fake inner so syncExistingTLSCert can call CertStore().GetCertificate.
-// We use a CA mock that has a real CertStore method returning an error.
-type failCertStoreCA struct {
-	mockTrustedCA
-	getErr error
-}
-
-type failCertStore struct{ err error }
-
-func (f *failCertStore) GetCertificate(_ string) (*x509.Certificate, error) {
-	return nil, f.err
-}
-
-// Override CertStore so it returns our failing stub.
-// (ca.TrustedCA.CertStore returns certstore.CertStore; since mockTrustedCA
-// embeds the interface, the concrete method we define wins.)
-func (m *failCertStoreCA) CertStore() interface {
-	GetCertificate(string) (*x509.Certificate, error)
-} {
-	return &failCertStore{err: m.getErr}
-}
-
-// ============================================================================
 // Tests — initTPM2Backend
 // ============================================================================
 

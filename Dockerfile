@@ -49,7 +49,10 @@ LABEL description="Integration testing environment for go-xkms with PKCS#11 and 
 # Allow Go to automatically download the required toolchain version
 ENV GOTOOLCHAIN=auto
 
-# Install runtime dependencies
+# Install runtime dependencies. libusb-1.0-0-dev/libicu-dev are cgo build
+# deps of the module graph itself (google/gousb, dolthub/go-icu-regex via
+# go-qrdb), not gated by any backend tag -- this stage is also where the
+# module builds/tests below run.
 RUN apt-get update && apt-get install -y --no-install-recommends \
     libsofthsm2 \
     softhsm2 \
@@ -65,6 +68,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     libtasn1-6 \
     libssl3 \
     libusb-1.0-0-dev \
+    libicu-dev \
     && rm -rf /var/lib/apt/lists/*
 
 # Remove old libtpms installed by swtpm-libs package

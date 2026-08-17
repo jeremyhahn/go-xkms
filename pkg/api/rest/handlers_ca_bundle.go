@@ -117,8 +117,10 @@ func (h *HandlerContext) GetCABundleHandler(w http.ResponseWriter, r *http.Reque
 	w.Header().Set("Cache-Control", "no-store")
 	w.WriteHeader(http.StatusOK)
 
-	// Write the PEM-encoded bundle
-	_, _ = w.Write(bundlePEM)
+	// Write the PEM-encoded bundle. bundlePEM is server-generated certificate
+	// material (base64 text) served with Content-Type: <ContentTypePEMCertChain>,
+	// never text/html, so it cannot be sniffed/rendered as markup (CWE-79).
+	_, _ = w.Write(bundlePEM) // #nosec G705 -- non-HTML content-type; PEM cert bundle, not attacker-controlled markup
 }
 
 // filterCABundlePEM parses a PEM bundle, filters certificates, and re-encodes.

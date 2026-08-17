@@ -147,7 +147,9 @@ jobs:
           #!/bin/bash
           set -e
 
-          # Install build dependencies
+          # Install build dependencies. libicu-dev/libusb-1.0-0-dev are cgo
+          # build deps of the module graph itself (dolthub/go-icu-regex,
+          # google/gousb via go-qrdb), not gated by any backend tag.
           apt-get update
           apt-get install -y --no-install-recommends \
             build-essential \
@@ -156,6 +158,8 @@ jobs:
             libsofthsm2-dev \
             softhsm2 \
             libtss2-dev \
+            libicu-dev \
+            libusb-1.0-0-dev \
             ca-certificates \
             file \
             libssl-dev \
@@ -172,7 +176,14 @@ jobs:
             export GOFIPS140=v1.0.0
             # FIPS builds use CGO_ENABLED=0 for pure Go crypto
             CGO_MODE="0"
-            BUILD_FLAGS="-tags=pkcs8,awskms,gcpkms,azurekv,vault"
+            # gms_pure_go selects go-mysql-server's non-cgo regex engine
+            # (internal/regex/regex_pure.go); without it, the cgo-only
+            # variant (which needs github.com/dolthub/go-icu-regex) fails
+            # with "build constraints exclude all Go files" under
+            # CGO_ENABLED=0 -- this is a required tag whenever cgo is off,
+            # not merely an optional one (matches the Makefile's own
+            # CLI_BUILD_TAGS).
+            BUILD_FLAGS="-tags=pkcs8,awskms,gcpkms,azurekv,vault,gms_pure_go"
             echo "Building FIPS 140-3 compliant binary with GOFIPS140=v1.0.0"
             echo "Note: FIPS builds exclude TPM2/PKCS11 backends (require CGO)"
           else
@@ -233,6 +244,12 @@ jobs:
           chmod +x build.sh
 
           # Run build in native container for the target architecture
+          # docker run (unlike docker build) inherits -e-forwarded host
+          # variables, so the Gitea fetch credentials the runner injects into
+          # this job's shell (GOPRIVATE/GIT_CONFIG_*, dependency-resolution.md
+          # §6) reach the container's `go build` directly. Bare `-e NAME`
+          # passes the host value through when set and is silently omitted
+          # when unset (e.g. on GitHub Actions), so this is a no-op there.
           docker run --rm \
             --platform=${{ matrix.platform }} \
             -v $(pwd):/workspace \
@@ -242,6 +259,10 @@ jobs:
             -e DATE=$(date -u +%Y-%m-%dT%H:%M:%SZ) \
             -e GOARCH=${{ matrix.arch }} \
             -e WITH_FIPS=${{ matrix.fips }} \
+            -e GOPRIVATE \
+            -e GIT_CONFIG_COUNT \
+            -e GIT_CONFIG_KEY_0 \
+            -e GIT_CONFIG_VALUE_0 \
             golang:bookworm \
             bash /workspace/build.sh
 
@@ -326,8 +347,20 @@ jobs:
           CGO_ENABLED: 0
           VERSION: ${{ needs.create-release.outputs.version }}
         run: |
-          # Standard build without CGO (cross-compiled)
-          BUILD_FLAGS="-tags=pkcs8,awskms,gcpkms,azurekv,vault"
+          # Standard build without CGO (cross-compiled). gms_pure_go selects
+          # go-mysql-server's non-cgo regex engine -- without it the cgo-only
+          # variant (github.com/dolthub/go-icu-regex) fails to build under
+          # CGO_ENABLED=0. Required, not optional, whenever cgo is off
+          # (matches the Makefile's own CLI_BUILD_TAGS).
+          #
+          # KNOWN REMAINING BLOCKER even with this tag: go-qrdb's
+          # pkg/discovery/multicast.go references syscall.SOCK_CLOEXEC /
+          # syscall.SOCK_NONBLOCK unconditionally (no GOOS build constraint),
+          # which only exist on Linux. Cross-compiling to darwin therefore
+          # still fails inside go-qrdb itself; this is an upstream go-qrdb
+          # bug, not something fixable from this repo's build tags. See the
+          # CI audit report for details.
+          BUILD_FLAGS="-tags=pkcs8,awskms,gcpkms,azurekv,vault,gms_pure_go"
           echo "Building for darwin/${{ matrix.arch }} with CGO_ENABLED=0"
 
           LDFLAGS="-X main.version=${VERSION} -X main.commit=${{ github.sha }} -X main.date=$(date -u +%Y-%m-%dT%H:%M:%SZ) -s -w"
@@ -432,12 +465,16 @@ jobs:
 
           ENV GOTOOLCHAIN=auto
 
-          # Install build dependencies
+          # Install build dependencies. libicu-dev/libusb-1.0-0-dev are cgo
+          # build deps of the module graph itself (dolthub/go-icu-regex,
+          # google/gousb via go-qrdb), not gated by any backend tag.
           RUN apt-get update && apt-get install -y --no-install-recommends \
               build-essential \
               pkg-config \
               libsofthsm2 \
               libtss2-dev \
+              libicu-dev \
+              libusb-1.0-0-dev \
               ca-certificates \
               && rm -rf /var/lib/apt/lists/*
 
@@ -446,7 +483,23 @@ jobs:
           # Copy go mod files
           COPY go.mod go.sum ./
           COPY sdk/go/go.mod sdk/go/go.sum ./sdk/go/
-          RUN go mod download
+
+          # Copy the xkey module files before go mod download (required for
+          # the replace directive: go.mod replaces
+          # github.com/jeremyhahn/go-xkms/xkey with ./xkey, and go mod
+          # download reads that go.mod even though this image never builds
+          # xkey itself).
+          COPY xkey/go.mod xkey/go.sum ./xkey/
+
+          # In-house modules resolve from Gitea tags (dependency-resolution.md
+          # §6). The fetch token arrives as a BuildKit secret, never a build
+          # arg or ENV, so it never becomes a layer. The mount is optional by
+          # design: with no secret supplied these modules resolve from the
+          # public proxy once tags are mirrored (§7).
+          RUN --mount=type=secret,id=gomodauth \
+              set -eu; \
+              if [ -f /run/secrets/gomodauth ]; then . /run/secrets/gomodauth; fi; \
+              go mod download
 
           # Copy source code
           COPY . .
@@ -495,6 +548,26 @@ jobs:
           CMD ["-config", "/etc/xkms/config.yaml"]
           EOF
 
+      # docker build does NOT inherit the job environment
+      # (dependency-resolution.md §6), so the Gitea fetch credentials the
+      # runner injects into this job's shell (GOPRIVATE/GIT_CONFIG_*) have to
+      # be staged into a file and handed to buildx as a secret mount. Empty
+      # on GitHub Actions (those vars are unset there), which is fine: the
+      # Dockerfile's RUN --mount=type=secret is optional and falls back to
+      # public resolution.
+      - name: Stage Gitea module credentials
+        run: |
+          umask 077
+          : > gomodauth.env
+          if [ -n "${GIT_CONFIG_KEY_0:-}" ]; then
+            {
+              echo "export GOPRIVATE=${GOPRIVATE:-}"
+              echo "export GIT_CONFIG_COUNT=${GIT_CONFIG_COUNT:-1}"
+              echo "export GIT_CONFIG_KEY_0=${GIT_CONFIG_KEY_0:-}"
+              echo "export GIT_CONFIG_VALUE_0=${GIT_CONFIG_VALUE_0:-}"
+            } > gomodauth.env
+          fi
+
       # devops.md §8: no image reaches a registry unscanned. Built amd64-only
       # and loaded into the local daemon so Trivy can read it; the multi-arch
       # push below shares the same buildx cache, so this costs a load rather
@@ -512,6 +585,8 @@ jobs:
             VERSION=${{ needs.create-release.outputs.version }}
             COMMIT=${{ github.sha }}
             DATE=${{ github.event.repository.updated_at }}
+          secret-files: |
+            gomodauth=./gomodauth.env
           cache-from: type=gha
           cache-to: type=gha,mode=max
 
@@ -542,6 +617,8 @@ jobs:
             VERSION=${{ needs.create-release.outputs.version }}
             COMMIT=${{ github.sha }}
             DATE=${{ github.event.repository.updated_at }}
+          secret-files: |
+            gomodauth=./gomodauth.env
           cache-from: type=gha
           cache-to: type=gha,mode=max
 
@@ -577,6 +654,22 @@ jobs:
             type=semver,pattern={{major}}
             type=raw,value=latest,enable={{is_default_branch}}
 
+      # docker build does NOT inherit the job environment
+      # (dependency-resolution.md §6); see the server job for why this file
+      # is staged and handed to buildx as a secret.
+      - name: Stage Gitea module credentials
+        run: |
+          umask 077
+          : > gomodauth.env
+          if [ -n "${GIT_CONFIG_KEY_0:-}" ]; then
+            {
+              echo "export GOPRIVATE=${GOPRIVATE:-}"
+              echo "export GIT_CONFIG_COUNT=${GIT_CONFIG_COUNT:-1}"
+              echo "export GIT_CONFIG_KEY_0=${GIT_CONFIG_KEY_0:-}"
+              echo "export GIT_CONFIG_VALUE_0=${GIT_CONFIG_VALUE_0:-}"
+            } > gomodauth.env
+          fi
+
       # devops.md §8: no image reaches a registry unscanned. See the server job
       # for why this builds amd64-only and loads rather than pushing.
       - name: Build CLI image for scanning
@@ -592,6 +685,8 @@ jobs:
             VERSION=${{ needs.create-release.outputs.version }}
             COMMIT=${{ github.sha }}
             DATE=${{ github.event.repository.updated_at }}
+          secret-files: |
+            gomodauth=./gomodauth.env
           cache-from: type=gha
           cache-to: type=gha,mode=max
 
@@ -622,6 +717,8 @@ jobs:
             VERSION=${{ needs.create-release.outputs.version }}
             COMMIT=${{ github.sha }}
             DATE=${{ github.event.repository.updated_at }}
+          secret-files: |
+            gomodauth=./gomodauth.env
           cache-from: type=gha
           cache-to: type=gha,mode=max
 

@@ -21,7 +21,6 @@ import (
 	"strconv"
 
 	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
-	"github.com/jeremyhahn/go-xkms/pkg/api/transport"
 	"github.com/jeremyhahn/go-xkms/pkg/backend"
 	"github.com/jeremyhahn/go-xkms/pkg/storage"
 	"github.com/jeremyhahn/go-xkms/pkg/xkms"
@@ -152,45 +151,8 @@ func mapErrorToStatusCode(err error) int {
 // and writes the error response. A clustered not-leader condition is handled
 // specially: it is surfaced as 421 Misdirected Request with the leader's Raft
 // coordinates so the client can retry against the leader.
-//
-// This variant cannot enrich the redirect with the leader's dialable API
-// address: resolving that requires calling back into the servicer
-// (ClusterLeaderEndpoint), and most handleError call sites have no
-// *xkms.XKMSService in scope. Call sites that do use handleErrorWithCluster
-// instead.
 func handleError(w http.ResponseWriter, err error) {
 	if nl, ok := xkms.AsNotLeader(err); ok {
-		writeNotLeader(w, nl)
-		return
-	}
-	statusCode := mapErrorToStatusCode(err)
-	writeError(w, err, statusCode)
-}
-
-// handleErrorWithCluster is the not-leader-aware variant of handleError for
-// handlers that carry a *xkms.XKMSService reference. Where handleError can
-// only surface the leader's bare Raft coordinates, this variant resolves the
-// leader's dialable REST address via ClusterLeaderEndpoint (the servicer
-// knows shard topology; only the transport knows it speaks REST) and adds it
-// to the redirect, which is what lets a REST client retry transparently
-// instead of needing out-of-band knowledge of the leader's API endpoint.
-//
-// Resolution failure is non-fatal: the resolved address is advisory, so a
-// lookup error is logged and the response falls back to the pre-enrichment
-// behavior (Raft coordinates only) rather than failing the whole request.
-// Non-cluster errors fall back to the same mapping handleError uses, so a
-// handler can call this unconditionally without special-casing the cluster
-// case itself.
-func handleErrorWithCluster(w http.ResponseWriter, r *http.Request, err error, svc *xkms.XKMSService) {
-	if nl, ok := xkms.AsNotLeader(err); ok {
-		if svc != nil {
-			addr, resolveErr := svc.ClusterLeaderEndpoint(r.Context(), transport.APIProtocolREST)
-			if resolveErr != nil {
-				log.Printf("cluster: failed to resolve leader REST endpoint for shard %d: %v", nl.ShardID, resolveErr)
-			} else {
-				nl.LeaderAPIAddress = addr
-			}
-		}
 		writeNotLeader(w, nl)
 		return
 	}

@@ -31,6 +31,7 @@ WORKDIR /build
 # Note: SDK directory must be copied before go mod download due to replace directive
 COPY go.mod go.sum ./
 COPY sdk/go/go.mod sdk/go/go.sum ./sdk/go/
+COPY xkey/go.mod xkey/go.sum ./xkey/
 RUN go mod download || true
 
 # Copy source code
@@ -124,6 +125,7 @@ WORKDIR /app
 # Note: SDK directory must be copied before go mod download due to replace directive
 COPY go.mod go.sum ./
 COPY sdk/go/go.mod sdk/go/go.sum ./sdk/go/
+COPY xkey/go.mod xkey/go.sum ./xkey/
 RUN go mod download || true
 
 # Copy test files and source

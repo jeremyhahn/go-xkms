@@ -1550,7 +1550,7 @@ integration-test-logins-quicbaas:
 		sleep 2; \
 	done; [ -n "$$ok" ] || { echo "$(RED)✗ quicbaasd first boot never published /data/admin + /data/certs$(RESET)"; docker logs --tail 40 xkms-dev-quicbaas; exit 1; }
 	@chmod 0600 build/quicbaas-fixture/admin.key
-	$(call run_with_server,mkdir -p build/bin /tmp/quicbaas && cp $(DEVCONTAINER_REPO)/build/quicbaas-fixture/ca.crt /tmp/quicbaas/ca.crt && cp $(DEVCONTAINER_REPO)/build/quicbaas-fixture/admin.crt /tmp/quicbaas/admin.crt && cp $(DEVCONTAINER_REPO)/build/quicbaas-fixture/admin.key /tmp/quicbaas/admin.key && chmod 0600 /tmp/quicbaas/admin.key && cd xkey && /usr/local/go/bin/go build -buildvcs=false -tags='codec_json' -o ../build/bin/xkey ./cmd/xkey && cd .. && XKEY_CLI_BIN=$(DEVCONTAINER_REPO)/build/bin/xkey QUICBAAS_REST_URL=https://quicbaas-server:8443 sudo -E /usr/local/go/bin/go test -v -tags='integration$(comma)logins' ./test/integration/logins/... -timeout 15m,integration-test-logins-quicbaas)
+	$(call run_with_server,mkdir -p build/bin /tmp/quicbaas && cp $(DEVCONTAINER_REPO)/build/quicbaas-fixture/ca.crt /tmp/quicbaas/ca.crt && cp $(DEVCONTAINER_REPO)/build/quicbaas-fixture/admin.crt /tmp/quicbaas/admin.crt && cp $(DEVCONTAINER_REPO)/build/quicbaas-fixture/admin.key /tmp/quicbaas/admin.key && chmod 0600 /tmp/quicbaas/admin.key && bash .devcontainer/scripts/wait-quicbaas-login-planes.sh && cd xkey && /usr/local/go/bin/go build -buildvcs=false -tags='codec_json' -o ../build/bin/xkey ./cmd/xkey && cd .. && XKEY_CLI_BIN=$(DEVCONTAINER_REPO)/build/bin/xkey QUICBAAS_REST_URL=https://quicbaas-server:8443 sudo -E /usr/local/go/bin/go test -v -tags='integration$(comma)logins' ./test/integration/logins/... -timeout 15m,integration-test-logins-quicbaas)
 
 .PHONY: integration-test-pkcs11-conformance
 ## integration-test-pkcs11-conformance: Run the OASIS PKCS#11 v3.0 conformance suite (runs in devcontainer with xkms-server)
@@ -2702,11 +2702,28 @@ release: lib release-binaries
 # `COPY . .`, so the file must never be plain build context). Written empty
 # when no token is configured, so the same build resolves from the public
 # proxy on hosts without Gitea access.
+#
+# Two credential sources, checked in order:
+#   1. GIT_CONFIG_KEY_0/GOPRIVATE already in the environment -- this is how
+#      Gitea Actions supplies them (runner.envs injects the four variables
+#      directly into every job's process env; §6). There is no GITEA_GO_TOKEN
+#      on that runner, only the already-composed insteadOf rewrite, so this
+#      must be checked first or a CI job silently stages an empty/broken file.
+#   2. GITEA_GO_TOKEN, reconstructed into the same four variables -- this is
+#      the devcontainer/host path, sourced from the gitignored
+#      .devcontainer/.env.
 GOMODAUTH_FILE := .devcontainer/gomodauth.env
 .PHONY: stage-gomodauth
 stage-gomodauth:
 	@umask 077; : > $(GOMODAUTH_FILE); \
-	if [ -n "$(GITEA_GO_TOKEN)" ]; then \
+	if [ -n "$$GIT_CONFIG_KEY_0" ]; then \
+		{ \
+			printf 'export GOPRIVATE=%s\n' "$${GOPRIVATE:-github.com/jeremyhahn/*}"; \
+			printf 'export GIT_CONFIG_COUNT=%s\n' "$${GIT_CONFIG_COUNT:-1}"; \
+			printf 'export GIT_CONFIG_KEY_0=%s\n' "$$GIT_CONFIG_KEY_0"; \
+			printf 'export GIT_CONFIG_VALUE_0=%s\n' "$$GIT_CONFIG_VALUE_0"; \
+		} > $(GOMODAUTH_FILE); \
+	elif [ -n "$(GITEA_GO_TOKEN)" ]; then \
 		{ \
 			printf 'export GOPRIVATE=%s\n' 'github.com/jeremyhahn/*'; \
 			printf 'export GIT_CONFIG_COUNT=1\n'; \

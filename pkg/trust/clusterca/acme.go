@@ -361,7 +361,7 @@ func (p *Provisioner) persistStagedCACerts(ctx context.Context, issuer CAIssuer)
 		return err
 	}
 	// CA certificates are public — the private keys stay in the keystore.
-	return os.WriteFile(StagedCACertsPath(p.opts.DataDir), certsToPEM(certs...), 0o644)
+	return os.WriteFile(StagedCACertsPath(p.opts.DataDir), certsToPEM(certs...), 0o644) // #nosec G306 - CA certificates are public
 }
 
 // ---------------------------------------------------------------------------

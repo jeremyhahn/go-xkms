@@ -230,7 +230,7 @@ func (s *Server) persistAdminCredential(result *qrdbsdk.FirstBootResult) error {
 	if err := os.MkdirAll(dir, 0o700); err != nil {
 		return &AdminCredentialError{Path: dir, Err: err}
 	}
-	if err := os.WriteFile(certPath, result.AdminCertPEM, 0o644); err != nil { //nolint:gosec // a certificate is public
+	if err := os.WriteFile(certPath, result.AdminCertPEM, 0o644); err != nil { // #nosec G306 -- a certificate is public
 		return &AdminCredentialError{Path: certPath, Err: err}
 	}
 	// The private key is owner-read-only: it authenticates as the highest

@@ -321,7 +321,7 @@ func persistCABundle(dataDir string, result *initialize.InitResult) error {
 		return &WrappedError{Sentinel: ErrCABundleWriteFailed, Err: err}
 	}
 	path := filepath.Join(dataDir, "ca-bundle.pem")
-	if err := os.WriteFile(path, result.CACertPEM, 0o644); err != nil { //nolint:gosec // CA bundle is public material
+	if err := os.WriteFile(path, result.CACertPEM, 0o644); err != nil { // #nosec G306 -- CA bundle is public material
 		return &WrappedDetailError{Sentinel: ErrCABundleWriteFailed, Detail: path, Err: err}
 	}
 	return nil
@@ -340,7 +340,7 @@ func persistSPKIPin(dataDir string, result *initialize.InitResult) error {
 		return &WrappedError{Sentinel: ErrSPKIPinWriteFailed, Err: err}
 	}
 	path := filepath.Join(dataDir, "spki-pin.txt")
-	if err := os.WriteFile(path, []byte(result.SPKIPin+"\n"), 0o644); err != nil { //nolint:gosec // SPKI pin is public material
+	if err := os.WriteFile(path, []byte(result.SPKIPin+"\n"), 0o644); err != nil { // #nosec G306 -- SPKI pin is public material
 		return &WrappedDetailError{Sentinel: ErrSPKIPinWriteFailed, Detail: path, Err: err}
 	}
 	return nil
@@ -376,8 +376,7 @@ func printCeremonyOutcome(env *ceremonyEnv, result *initialize.InitResult) {
 	if len(result.CACertPEM) > 0 {
 		fmt.Fprintf(os.Stderr, "  CA Bundle:    %s\n", filepath.Join(env.dataDir, "ca-bundle.pem"))
 	}
-	switch result.State {
-	case initialize.StateEnrolling:
+	if result.State == initialize.StateEnrolling {
 		fmt.Fprintf(os.Stderr, "  Shares:       %d Shamir shares generated; run\n", result.ShareCount)
 		fmt.Fprintln(os.Stderr, "                `xkmsctl init claim-cert` then `xkmsctl init claim-share`")
 		fmt.Fprintln(os.Stderr, "                from each officer host to enroll.")

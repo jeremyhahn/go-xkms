@@ -203,7 +203,7 @@ func (s *BackendStore) Add(pw *StaticPassword) error {
 		return err
 	}
 
-	data, err := json.Marshal(pw)
+	data, err := json.Marshal(pw) // #nosec G117 -- staticpw IS the password store; Password is the stored secret, persisted to the encrypted backend
 	if err != nil {
 		return &errs.Detail{Err: ErrMarshalFailed, Detail: fmt.Sprintf("%v", err)}
 	}
@@ -309,7 +309,7 @@ func (s *BackendStore) Update(pw *StaticPassword) error {
 	}
 
 	newKey := s.storageKey(pw.ID)
-	data, err := json.Marshal(pw)
+	data, err := json.Marshal(pw) // #nosec G117 -- staticpw IS the password store; Password is the stored secret, persisted to the encrypted backend
 	if err != nil {
 		return &errs.Detail{Err: ErrMarshalFailed, Detail: fmt.Sprintf("%v", err)}
 	}
@@ -492,7 +492,7 @@ func (s *BackendStore) MoveToFolder(idOrName string, folderPath string) error {
 		return ErrPasswordExists
 	}
 
-	data, err := json.Marshal(pw)
+	data, err := json.Marshal(pw) // #nosec G117 -- staticpw IS the password store; Password is the stored secret, persisted to the encrypted backend
 	if err != nil {
 		return &errs.Detail{Err: ErrMarshalFailed, Detail: fmt.Sprintf("%v", err)}
 	}
