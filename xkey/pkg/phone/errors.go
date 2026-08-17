@@ -99,6 +99,11 @@ var (
 	// ErrBLEUnavailable indicates Bluetooth Low Energy is not available on this system.
 	ErrBLEUnavailable = errors.New("phone: bluetooth unavailable")
 
+	// ErrUSBUnavailable indicates this binary was built without USB phone
+	// transport support (the "usb" build tag): the gousb/libusb dependency
+	// is excluded from static and CGO_ENABLED=0 builds.
+	ErrUSBUnavailable = errors.New("phone: usb transport not built (build with -tags usb)")
+
 	// ErrAdapterDisabled indicates the Bluetooth adapter is disabled.
 	ErrAdapterDisabled = errors.New("phone: bluetooth adapter disabled")
 
