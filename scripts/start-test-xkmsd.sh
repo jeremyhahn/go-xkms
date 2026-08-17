@@ -69,7 +69,7 @@ tls:
 
 auth:
   enabled: true
-  type: adaptive
+  type: composite
 
 barrier:
   enabled: true
@@ -136,7 +136,7 @@ mkdir -p "${REPO_ROOT}/build/bin"
 ( cd "$REPO_ROOT" && CGO_ENABLED=1 go build -buildvcs=false -o "$BIN" ./cmd/xkmsd )
 
 # xkmsd has no insecure override; the config above is compliant (TLS from the
-# embedded CA, adaptive auth, auto-unsealing barrier). This instance serves a
+# embedded CA, composite jwt+mtls auth, auto-unsealing barrier). This instance serves a
 # private Unix socket inside the test container over a throwaway data directory.
 setsid nohup "$BIN" -config "$CONFIG" > "$LOG_FILE" 2>&1 < /dev/null &
 

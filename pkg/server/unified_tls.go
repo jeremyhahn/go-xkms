@@ -203,7 +203,8 @@ func (s *Server) ensureBootstrapCert() (*tls.Certificate, error) {
 	if cn == "" {
 		cn = "xkmsd-bootstrap"
 	}
-	dnsNames, ips := localCertSANs(cn, s.config.Server.Host, s.clusterPeerHosts()...)
+	dnsNames, ips := localCertSANs(cn, s.config.Server.Host,
+		append(s.clusterPeerHosts(), s.config.TLS.ExtraSANs...)...)
 
 	template := &x509.Certificate{
 		SerialNumber: serial,

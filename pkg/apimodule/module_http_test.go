@@ -14,6 +14,7 @@
 package apimodule
 
 import (
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"sync/atomic"
@@ -108,15 +109,64 @@ func TestRegisterHTTP_FullSurface(t *testing.T) {
 	}
 }
 
-// TestRegisterHTTP_NoResolver proves a module constructed without a REST
-// resolver registers no HTTP routes (BaseModule semantics preserved).
-func TestRegisterHTTP_NoResolver(t *testing.T) {
+// TestRegisterHTTP_NoResolverStillComposing proves a module constructed
+// without a REST resolver still registers the FULL route table (the
+// composition-bug fix: a host that never calls WithRESTServer must not get
+// a module whose HTTP surface silently does not exist), and that a route
+// answers 503 "still composing" while the XKMSService resolver has not yet
+// yielded a service.
+func TestRegisterHTTP_NoResolverStillComposing(t *testing.T) {
 	m, err := NewModule(func() *xkms.XKMSService { return nil })
 	require.NoError(t, err)
 
 	reg, recs := newCaptureRegistrar()
 	m.RegisterHTTP(reg)
-	assert.Empty(t, *recs)
+	assert.NotEmpty(t, *recs, "the full route table must register even with no resolver and no host inputs")
+
+	var health http.HandlerFunc
+	for _, rec := range *recs {
+		if rec.method == "GET" && rec.pattern == "/health" {
+			health = rec.handler
+		}
+	}
+	require.NotNil(t, health)
+
+	w := httptest.NewRecorder()
+	health(w, httptest.NewRequest("GET", "/health", nil))
+	assert.Equal(t, http.StatusServiceUnavailable, w.Code)
+	assert.Contains(t, w.Body.String(), "still composing")
+}
+
+// TestRegisterHTTP_NoHostInputs_LoudFailure proves that once the
+// XKMSService resolves but the host gave the module nothing it could build
+// a working REST surface from (no backend, no qrdb client), routes answer a
+// loud 503 carrying the construction failure — never a silent 404/401 as if
+// the surface had never been registered — and AuthenticateHTTP fails closed
+// on the same error.
+func TestRegisterHTTP_NoHostInputs_LoudFailure(t *testing.T) {
+	m, err := NewModule(func() *xkms.XKMSService { return &xkms.XKMSService{} })
+	require.NoError(t, err)
+
+	reg, recs := newCaptureRegistrar()
+	m.RegisterHTTP(reg)
+
+	var health http.HandlerFunc
+	for _, rec := range *recs {
+		if rec.method == "GET" && rec.pattern == "/health" {
+			health = rec.handler
+		}
+	}
+	require.NotNil(t, health)
+
+	w := httptest.NewRecorder()
+	health(w, httptest.NewRequest("GET", "/health", nil))
+	assert.Equal(t, http.StatusServiceUnavailable, w.Code)
+	assert.Contains(t, w.Body.String(), "host provided no usable REST inputs")
+
+	_, authErr := m.AuthenticateHTTP(httptest.NewRequest("GET", "/api/v1/auth/me", nil))
+	require.Error(t, authErr)
+	var buildErr *HostBuildError
+	assert.True(t, errors.As(authErr, &buildErr), "AuthenticateHTTP must fail closed with *HostBuildError, got %T", authErr)
 }
 
 // TestRegisterHTTP_LazyBinding proves module routes answer 503 while the

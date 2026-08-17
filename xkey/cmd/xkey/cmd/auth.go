@@ -222,27 +222,46 @@ Examples:
 var authLoginCmd = &cobra.Command{
 	Use:   "login",
 	Short: "Authenticate to a registered server",
-	Long: `Authenticate to a registered server using WebAuthn.
+	Long: `Authenticate to a registered server using WebAuthn, or a PIV slot
+certificate over mTLS with --piv.
 
-This command loads the server entry from the registry, establishes a
+WebAuthn (default): loads the server entry from the registry, establishes a
 connection, and runs the WebAuthn assertion ceremony against the local FIDO2
 authenticator. On success the issued JWT is stored in the token store for
-subsequent API calls and printed by "xkey auth token".
+subsequent API calls and printed by "xkey auth token". The ceremony requires
+an attached CTAP2 authenticator - a security key, or the xKey virtual
+authenticator started with "xkey fido2". Login fails if no authenticator can
+be opened or the server rejects the assertion.
 
-The ceremony requires an attached CTAP2 authenticator - a security key, or
-the xKey virtual authenticator started with "xkey fido2". Login fails if no
-authenticator can be opened or the server rejects the assertion.
+PIV (--piv): presents the certificate stored in the given PIV slot as the
+TLS client certificate and signs the handshake with the slot's private key -
+possession of the key IS the credential, so no username or authenticator
+ceremony is involved. The server resolves the certificate's SPKI thumbprint
+to an enrolled user and returns an access/refresh token pair, stored under
+the same server entry "xkey auth token" reads. Only slots whose private key
+this xkey process can reach work: keys generated with --backend software
+exist only for the process that generated them (see "xkey piv generate");
+--backend pkcs11 reaches a real, persistent hardware token.
 
 Flags:
   --server    Server URL (required)
   --username  Account name to authenticate (default: current OS user)
+  --piv       Authenticate with a PIV slot certificate over mTLS
+  --slot      PIV slot to authenticate with (default: 9a, used with --piv)
+  --backend   PIV key backend: software or pkcs11 (default: software, used with --piv)
 
 Examples:
   # Login to a registered server
   xkey auth login --server https://xkms.example.com:8443
 
   # Login as a specific account
-  xkey auth login --server https://xkms.example.com:8443 --username alice`,
+  xkey auth login --server https://xkms.example.com:8443 --username alice
+
+  # Login with the PIV authentication slot (9a) certificate over mTLS
+  xkey auth login --server https://xkms.example.com:8443 --piv
+
+  # Login with a PKCS#11-backed PIV slot
+  xkey auth login --server https://xkms.example.com:8443 --piv --slot 9c --backend pkcs11`,
 	RunE: runAuthLogin,
 }
 
@@ -310,6 +329,9 @@ func init() {
 	// Login command flags
 	authLoginCmd.Flags().String("server", "", "Server URL (required)")
 	authLoginCmd.Flags().String("username", "", "Account name to authenticate (default: current OS user)")
+	authLoginCmd.Flags().Bool("piv", false, "Authenticate with a PIV slot certificate over mTLS instead of WebAuthn")
+	authLoginCmd.Flags().String("slot", string(PIVSlotAuthentication), "PIV slot to authenticate with (used with --piv)")
+	authLoginCmd.Flags().String("backend", defaultPIVBackend, "PIV key backend: software or pkcs11 (used with --piv)")
 
 	// Status command flags
 	authStatusCmd.Flags().String("server", "", "Filter to a specific server URL")
@@ -368,10 +390,15 @@ func runAuthRegister(cmd *cobra.Command, args []string) error {
 
 	// Record the server entry. An already-registered server is not an error:
 	// the operator asked to enroll a credential, so the ceremony still runs.
+	// The SPKI pin persists as the entry's trust anchor so later sessions
+	// (auth login / refresh / PIV) reach a server whose CA is not in the
+	// system trust store — trust-on-first-use ends at registration, not at
+	// every command.
 	entry := &serverregistry.ServerEntry{
-		URL:      serverURL,
-		Name:     serverURL,
-		Protocol: serverregistry.ProtocolREST,
+		URL:           serverURL,
+		Name:          serverURL,
+		CAFingerprint: spkiPin,
+		Protocol:      serverregistry.ProtocolREST,
 	}
 
 	out := cmd.OutOrStdout()
@@ -440,12 +467,18 @@ func runAuthRegister(cmd *cobra.Command, args []string) error {
 
 // runAuthLogin executes the auth login command: it performs the WebAuthn
 // assertion ceremony against a registered server and stores the issued JWT.
+// With --piv it instead authenticates over mTLS using a PIV slot
+// certificate, via runAuthLoginPIV.
 func runAuthLogin(cmd *cobra.Command, args []string) error {
 	logger := slog.Default()
 
 	serverURL, _ := cmd.Flags().GetString("server")
 	if serverURL == "" {
 		return ErrAuthServerRequired
+	}
+
+	if piv, _ := cmd.Flags().GetBool("piv"); piv {
+		return runAuthLoginPIV(cmd, logger, serverURL)
 	}
 
 	username, err := resolveAuthUsername(cmd)
@@ -468,7 +501,10 @@ func runAuthLogin(cmd *cobra.Command, args []string) error {
 		return errors.Join(ErrAuthServerLookupFailed, err)
 	}
 
-	client, err := authClientFactory(serverEntry.URL, "", "")
+	// Reuse the trust anchor recorded at registration: without the stored
+	// SPKI pin a server whose CA is outside the system trust store would
+	// fail verification on every login after a successful TOFU registration.
+	client, err := authClientFactory(serverEntry.URL, serverEntry.CAFingerprint, "")
 	if err != nil {
 		return err
 	}
@@ -677,6 +713,13 @@ func runAuthStatus(cmd *cobra.Command, args []string) error {
 			remaining := time.Until(token.ExpiresAt)
 			fmt.Fprintf(out, "  Token:          valid (%s, expires in %s)\n",
 				token.Source, remaining.Truncate(time.Second))
+		}
+		if tokenErr == nil {
+			if token.HasRefreshToken() {
+				fmt.Fprintf(out, "  Refreshable:    yes (xkey auth refresh --server %s)\n", server.URL)
+			} else {
+				fmt.Fprintf(out, "  Refreshable:    no (re-run xkey auth login when it expires)\n")
+			}
 		}
 
 		if server.CAFingerprint != "" {

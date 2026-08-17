@@ -64,8 +64,15 @@ type LoginClientConfig struct {
 	// verbs it is optional.
 	ClientCertificate *tls.Certificate
 
-	// RootCAs verifies the server. Nil uses the system pool.
+	// RootCAs verifies the server. Nil uses the system pool. Ignored when
+	// SPKIPin is set.
 	RootCAs *x509.CertPool
+
+	// SPKIPin, when set, verifies the server by its SPKI SHA-256 pin
+	// (trust-on-first-use) instead of a CA chain, using the same
+	// verification NewSPKIPinnedTLSConfig performs. It takes precedence
+	// over RootCAs.
+	SPKIPin string
 
 	// Timeout bounds each request. Zero selects 30s.
 	Timeout time.Duration
@@ -86,9 +93,14 @@ func NewLoginClient(cfg LoginClientConfig) (*LoginClient, error) {
 	if timeout == 0 {
 		timeout = 30 * time.Second
 	}
-	tlsCfg := &tls.Config{
-		RootCAs:    cfg.RootCAs,
-		MinVersion: tls.VersionTLS13,
+	var tlsCfg *tls.Config
+	if cfg.SPKIPin != "" {
+		tlsCfg = NewSPKIPinnedTLSConfig(cfg.SPKIPin)
+	} else {
+		tlsCfg = &tls.Config{
+			RootCAs:    cfg.RootCAs,
+			MinVersion: tls.VersionTLS13,
+		}
 	}
 	if cfg.ClientCertificate != nil {
 		tlsCfg.Certificates = []tls.Certificate{*cfg.ClientCertificate}
@@ -161,7 +173,11 @@ func (c *LoginClient) tokenRequest(ctx context.Context, method, path string, bod
 	if err != nil {
 		return nil, &LoginClientError{Op: path, Reason: "read response", Err: err}
 	}
-	if resp.StatusCode != http.StatusOK {
+	// Logout answers 204 No Content (nothing to decode); the other three
+	// verbs answer 200 with a token pair or a validation body. Any other
+	// 2xx is treated the same way 200 is: success, decode if there is a
+	// body to decode.
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
 		return nil, &LoginClientError{Op: path, Status: resp.StatusCode, Reason: string(payload)}
 	}
 	var pair TokenPair

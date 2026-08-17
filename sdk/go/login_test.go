@@ -32,6 +32,8 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+
+	"github.com/jeremyhahn/go-xkms/pkg/crypto/spki"
 )
 
 // newLoginTestServer serves the session-plane routes over TLS, asserting a
@@ -66,7 +68,9 @@ func newLoginTestServer(t *testing.T) (*httptest.Server, *x509.CertPool) {
 			w.WriteHeader(http.StatusUnauthorized)
 			return
 		}
-		w.WriteHeader(http.StatusOK)
+		// The real xkmsd handler answers 204 No Content on logout
+		// (pkg/api/rest/handlers_auth.go handleAuthLogout), never 200.
+		w.WriteHeader(http.StatusNoContent)
 	})
 	mux.HandleFunc("GET /api/v1/auth/validate", func(w http.ResponseWriter, r *http.Request) {
 		if r.Header.Get("Authorization") != "Bearer at" {
@@ -170,4 +174,27 @@ func TestNewLoginClient_RequiresBaseURL(t *testing.T) {
 	var lce *LoginClientError
 	require.True(t, errors.As(err, &lce))
 	assert.Equal(t, "configure", lce.Op)
+}
+
+// TestLoginClient_SPKIPin proves a LoginClient configured with an SPKI pin
+// (the TOFU trust path xkey's server registry records) authenticates the
+// server by its SPKI hash instead of a CA chain, without requiring RootCAs
+// at all.
+func TestLoginClient_SPKIPin(t *testing.T) {
+	srv, pool := newLoginTestServer(t)
+	_ = pool // the SPKI-pinned config never consults a CA pool
+
+	leaf := srv.Certificate()
+	pin, err := spki.ComputePin(leaf)
+	require.NoError(t, err)
+
+	c, err := NewLoginClient(LoginClientConfig{BaseURL: srv.URL, SPKIPin: pin})
+	require.NoError(t, err)
+	require.NoError(t, c.Validate(context.Background(), "at"))
+
+	// A wrong pin must fail the handshake, not silently trust the server.
+	wrong, err := NewLoginClient(LoginClientConfig{BaseURL: srv.URL, SPKIPin: "wrong-pin"})
+	require.NoError(t, err)
+	err = wrong.Validate(context.Background(), "at")
+	require.Error(t, err)
 }

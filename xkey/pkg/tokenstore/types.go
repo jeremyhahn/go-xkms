@@ -28,6 +28,7 @@ const (
 	SourceOIDC      = "oidc"
 	SourceFIDO2     = "fido2"
 	SourceBootstrap = "bootstrap"
+	SourcePIV       = "piv"
 )
 
 // Token types.
@@ -38,14 +39,25 @@ const (
 
 // TokenEntry stores a JWT with its metadata.
 type TokenEntry struct {
-	ServerURL string    `json:"server_url"`
-	TokenType string    `json:"token_type"` // "bearer", "refresh"
-	Source    string    `json:"source"`     // "oidc", "fido2", "bootstrap"
-	Token     string    `json:"token"`      // The JWT
-	ExpiresAt time.Time `json:"expires_at"`
-	IssuedAt  time.Time `json:"issued_at"`
-	Issuer    string    `json:"issuer"`  // JWT iss claim
-	Subject   string    `json:"subject"` // JWT sub claim
+	ServerURL string `json:"server_url"`
+	TokenType string `json:"token_type"` // "bearer", "refresh"
+	Source    string `json:"source"`     // "oidc", "fido2", "bootstrap", "piv"
+	Token     string `json:"token"`      // The JWT (bearer/access token)
+	// RefreshToken rotates the pair at xkmsd's session login-plane
+	// (POST /api/v1/auth/refresh). Empty when the issuing ceremony did not
+	// mint a refresh token (e.g. the WebAuthn Servicer-plane ceremony).
+	RefreshToken string    `json:"refresh_token,omitempty"`
+	ExpiresAt    time.Time `json:"expires_at"`
+	IssuedAt     time.Time `json:"issued_at"`
+	Issuer       string    `json:"issuer"`  // JWT iss claim
+	Subject      string    `json:"subject"` // JWT sub claim
+}
+
+// HasRefreshToken reports whether the entry carries a refresh token, i.e.
+// whether it was issued by the session login-plane (PIV login, refresh)
+// rather than the Servicer-plane WebAuthn ceremony.
+func (e *TokenEntry) HasRefreshToken() bool {
+	return e.RefreshToken != ""
 }
 
 // IsExpired reports whether the token has expired.

@@ -1513,6 +1513,45 @@ integration-test-pkcs11-backend:
 integration-test-pkcs11-module:
 	$(call run_with_server,PKCS11_MODULE=$(PKCS11_MODULE_CONTAINER) PKCS11_TOKEN_LABEL=$(PKCS11_TOKEN_LABEL) PKCS11_PIN=$(PKCS11_PIN) PKCS11_SO_PIN=$(PKCS11_SO_PIN) XKMS_PKCS11_AUTO_INIT_TOKEN=true XKMS_PKCS11_SO_PIN=$(PKCS11_SO_PIN) XKMS_PKCS11_USER_PIN=$(PKCS11_PIN) XKMS_PKCS11_TOKEN_LABEL=$(PKCS11_TOKEN_LABEL) XKMS_PKCS11_STORAGE_TYPE=file XKMS_PKCS11_STORAGE_PATH=/tmp/pkcs11-storage XKMS_PKCS11_ALLOW_WEAK_HASH_SIGNING=true XKMS_UNIX_SOCKET=$(XKMS_UNIX_SOCKET) XKMS_GRPC_ADDR=$(XKMS_GRPC_ADDR_CONTAINER) $(GO) test -v -tags='integration' ./test/integration/pkcs11/module/... -timeout $(PKCS11_TEST_TIMEOUT),integration-test-pkcs11-module)
 
+.PHONY: integration-test-logins
+## integration-test-logins: Run the login-plane verification matrix (mTLS, PIV, FIDO2) against a real xkmsd (runs in devcontainer with xkms-server)
+# Mirrors integration-test-pkcs11-module's use of run_with_server: it starts
+# the compose xkms-server and publishes its CA + first-boot admin mTLS
+# credential to /tmp/xkms via .devcontainer/scripts/ensure-server-ca.sh,
+# which testutil.go in test/integration/logins reads. The xkey CLI is built
+# fresh (plain codec_json tag - no GUI/hardware tags needed for this suite)
+# and exported as XKEY_CLI_BIN for the fido2 leg, which drives it as a real
+# subprocess ("xkey auth register" / "xkey auth login") against a headless
+# "xkey fido2 --require-touch=false --auto-uv" virtual authenticator. That
+# authenticator opens a uhid device, so the suite runs under sudo, the same
+# requirement integration-test-xkey-ctap has for the same reason.
+integration-test-logins:
+	$(call run_with_server,mkdir -p build/bin && cd xkey && /usr/local/go/bin/go build -buildvcs=false -tags='codec_json' -o ../build/bin/xkey ./cmd/xkey && cd .. && XKEY_CLI_BIN=$(DEVCONTAINER_REPO)/build/bin/xkey sudo -E /usr/local/go/bin/go test -v -tags='integration$(comma)logins' ./test/integration/logins/... -timeout 10m,integration-test-logins)
+
+.PHONY: integration-test-logins-quicbaas
+## integration-test-logins-quicbaas: Login matrix including the quicbaasd leg (host-invoked; starts the compose quicbaas-server)
+# Starts the quicbaas-server fixture (compose profile "quicbaas", built from
+# the sibling go-quicbaas working tree with the gomodauth secret), publishes
+# its first-boot admin mTLS credential into build/quicbaas-fixture (the
+# fixture's /data volume is not mounted into the devcontainer, so the host
+# copies it through the workspace), fetches the fixture's CA over its public
+# /v1/ca/bootstrap route, and runs the same suite as integration-test-logins
+# with QUICBAAS_REST_URL set so targets() adds the quicbaasd rows.
+integration-test-logins-quicbaas:
+	@echo "$(CYAN)$(BOLD)→ Starting quicbaas-server fixture...$(RESET)"
+	@$(MAKE) --no-print-directory stage-gomodauth
+	$(DOCKER_COMPOSE) --profile quicbaas up -d --build --wait quicbaas-server
+	@echo "$(CYAN)$(BOLD)→ Publishing quicbaasd admin credential to build/quicbaas-fixture...$(RESET)"
+	@mkdir -p build/quicbaas-fixture
+	@ok=""; for i in $$(seq 1 30); do \
+		if docker cp xkms-dev-quicbaas:/data/admin/admin.crt build/quicbaas-fixture/admin.crt 2>/dev/null && \
+		   docker cp xkms-dev-quicbaas:/data/admin/admin.key build/quicbaas-fixture/admin.key 2>/dev/null && \
+		   docker cp xkms-dev-quicbaas:/data/certs/ca-chain.crt build/quicbaas-fixture/ca.crt 2>/dev/null; then ok=1; break; fi; \
+		sleep 2; \
+	done; [ -n "$$ok" ] || { echo "$(RED)✗ quicbaasd first boot never published /data/admin + /data/certs$(RESET)"; docker logs --tail 40 xkms-dev-quicbaas; exit 1; }
+	@chmod 0600 build/quicbaas-fixture/admin.key
+	$(call run_with_server,mkdir -p build/bin /tmp/quicbaas && cp $(DEVCONTAINER_REPO)/build/quicbaas-fixture/ca.crt /tmp/quicbaas/ca.crt && cp $(DEVCONTAINER_REPO)/build/quicbaas-fixture/admin.crt /tmp/quicbaas/admin.crt && cp $(DEVCONTAINER_REPO)/build/quicbaas-fixture/admin.key /tmp/quicbaas/admin.key && chmod 0600 /tmp/quicbaas/admin.key && cd xkey && /usr/local/go/bin/go build -buildvcs=false -tags='codec_json' -o ../build/bin/xkey ./cmd/xkey && cd .. && XKEY_CLI_BIN=$(DEVCONTAINER_REPO)/build/bin/xkey QUICBAAS_REST_URL=https://quicbaas-server:8443 sudo -E /usr/local/go/bin/go test -v -tags='integration$(comma)logins' ./test/integration/logins/... -timeout 15m,integration-test-logins-quicbaas)
+
 .PHONY: integration-test-pkcs11-conformance
 ## integration-test-pkcs11-conformance: Run the OASIS PKCS#11 v3.0 conformance suite (runs in devcontainer with xkms-server)
 # The suite lives in test/integration/pkcs11/module/conformance and is guarded

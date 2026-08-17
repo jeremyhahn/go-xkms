@@ -207,16 +207,59 @@ services:
       retries: 10
       start_period: 10s
     networks:
-      - xkms-dev
+      xkms-dev:
+        # The dotted alias exists for the WebAuthn login matrix: a WebAuthn
+        # RPID must be "localhost" or contain a dot, so the fido2 leg dials
+        # this alias and the integration config's rp_id matches it. xkey
+        # trusts the connection by SPKI pin, so no certificate SAN is needed.
+        aliases:
+          - xkms-server.test
     # xkmsd has no insecure override: it refuses to start whenever
     # ComplianceGaps() is non-empty. The integration config therefore ships a
-    # compliant posture — TLS from the embedded CA, adaptive auth (anonymous
-    # only until the first user exists), and a barrier with a development
-    # passphrase that auto-unseals — so the suites need no unseal ceremony and
-    # no pre-seeded credentials. This instance is reachable only from the
-    # private xkms-dev network and the xkms-socket volume, over a throwaway
-    # data volume.
+    # compliant posture — TLS from the embedded CA, composite jwt+mtls auth
+    # (the first-boot admin authenticates with the generated mTLS
+    # credential), and a barrier with a development passphrase that
+    # auto-unseals — so the suites need no unseal ceremony and no pre-seeded
+    # credentials. This instance is reachable only from the private xkms-dev
+    # network and the xkms-socket volume, over a throwaway data volume.
     command: ["/app/xkmsd", "-config", "/etc/xkms/xkmsd.yaml"]
+
+  # quicbaasd fixture for the login verification matrix
+  # (make integration-test-logins-quicbaas). Built from the sibling
+  # go-quicbaas working tree with the SAME gomodauth BuildKit secret the
+  # xkms-server build uses (its go.mod pins first-party modules from the
+  # internal Gitea). Started only by the quicbaas logins lane — it is NOT
+  # part of the default stack.
+  quicbaas-server:
+    build:
+      context: ../../go-quicbaas
+      dockerfile: Dockerfile
+      secrets:
+        - gomodauth
+    image: go-quicbaas-server:dev
+    container_name: xkms-dev-quicbaas
+    profiles:
+      - quicbaas
+    volumes:
+      - quicbaas-data:/data
+      - ../configs/quicbaasd-integration.yaml:/etc/quicbaas/quicbaas.yaml:ro
+    # "start" = single-node local PebbleDB backend (no Raft) — the right
+    # shape for a login-matrix fixture.
+    command: ["start", "--config", "/etc/quicbaas/quicbaas.yaml", "--data-dir", "/data"]
+    healthcheck:
+      # The REST port answers TLS only; a TCP connect proves liveness
+      # without needing credentials inside the container.
+      test: ["CMD", "sh", "-c", "nc -z 127.0.0.1 8443 || exit 1"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+      start_period: 15s
+    networks:
+      xkms-dev:
+        # Dotted alias for the WebAuthn RPID, mirroring xkms-server.test:
+        # a WebAuthn RPID must be "localhost" or contain a dot.
+        aliases:
+          - quicbaas-server.test
 
   # Virtual FIDO2 Authenticator Service (for WebAuthn testing without hardware)
   # Uses software CTAP2 implementation with socket-based interface
@@ -247,6 +290,7 @@ volumes:
   softhsm-tokens:
   xkms-data:
   xkms-socket:
+  quicbaas-data:
   softfido-state:
   softfido-run:
 

@@ -85,6 +85,36 @@ func TestBuildUnifiedTLSConfig_BootstrapGeneratedAndPersisted(t *testing.T) {
 		"persisted bootstrap certificate must be reused across restarts")
 }
 
+// TestBuildUnifiedTLSConfig_ExtraSANs proves configured extra SANs (DNS
+// names and IP addresses) land in the auto-issued bootstrap certificate, so
+// clients dialing a deployment alias pass hostname verification.
+func TestBuildUnifiedTLSConfig_ExtraSANs(t *testing.T) {
+	s := newTLSTestServer(t, &config.Config{
+		Server: config.ServerConfig{Host: "127.0.0.1"},
+		TLS: config.TLSConfig{
+			Enabled:   true,
+			ServerCN:  "unit.example",
+			ExtraSANs: []string{"alias.example.test", "192.0.2.7"},
+		},
+		Storage: config.StorageConfig{Path: t.TempDir()},
+	})
+
+	cfg, err := s.buildUnifiedTLSConfig()
+	require.NoError(t, err)
+	cert, err := cfg.GetCertificate(&tls.ClientHelloInfo{})
+	require.NoError(t, err)
+	leaf, err := x509.ParseCertificate(cert.Certificate[0])
+	require.NoError(t, err)
+	assert.Contains(t, leaf.DNSNames, "alias.example.test")
+	ipFound := false
+	for _, ip := range leaf.IPAddresses {
+		if ip.String() == "192.0.2.7" {
+			ipFound = true
+		}
+	}
+	assert.True(t, ipFound, "extra IP SAN must be present: %v", leaf.IPAddresses)
+}
+
 // TestUpgradeUnifiedTLSCert_NoProviderIsNoop proves the upgrade hook is
 // safe when the unified server is not serving (local-only deployments).
 func TestUpgradeUnifiedTLSCert_NoProviderIsNoop(t *testing.T) {

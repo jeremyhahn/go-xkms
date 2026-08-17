@@ -28,10 +28,51 @@ logging:
 tls:
   enabled: true
   server_cn: "xkms-server"
+  # "verify" so the composite jwt+mtls auth chain below can actually resolve
+  # an mTLS identity: without it the TLS layer never sends a
+  # CertificateRequest, so no client (including the first-boot admin
+  # credential) can ever present one, and every mTLS/PIV login path silently
+  # 401s with "no client certificate provided" regardless of the auth.type
+  # below. "verify" (rather than "request") also verifies a presented
+  # certificate against the server's client-CA pool, which auth.piv_login
+  # requires; it still keeps anonymous connections working for every other
+  # suite that shares this fixture, since no certificate is required.
+  client_auth: "verify"
+  # The WebAuthn login matrix dials the compose service by its dotted
+  # network alias (see the webauthn block below), so the auto-issued
+  # server certificate must cover that name for CA-verified clients.
+  extra_sans:
+    - "xkms-server.test"
 
 auth:
   enabled: true
   type: "composite"
+  # Enables POST /api/v1/auth/login/piv: any client certificate the TLS
+  # layer verified (PIV slot cert or mTLS identity) whose SPKI thumbprint
+  # binds to an enrolled user may exchange it for a session token pair.
+  piv_login:
+    enabled: true
+
+# WebAuthn/FIDO2 login ceremonies for the login verification matrix
+# (integration-test-logins): xkey drives "auth register" / "auth login"
+# against these public ceremony routes with a headless virtual
+# authenticator. A WebAuthn RPID must be "localhost" or contain a dot
+# (go-webauthn validates it as a domain string), so the compose service
+# carries the dotted network alias "xkms-server.test" and the fido2 leg
+# dials that alias; rp_id must equal the effective domain of the origin
+# the client reports, or every ceremony fails origin validation.
+# Registration stays open (the default) so the suite can self-enroll its
+# throwaway test user.
+webauthn:
+  enabled: true
+  rp_id: "xkms-server.test"
+  rp_origins:
+    - "https://xkms-server.test:8443"
+  rp_display_name: "xKMS Integration"
+  attestation_preference: "none"
+  authenticator_attachment: ""
+  resident_key: "preferred"
+  user_verification: "preferred"
 
 # Encryption at rest. xkmsd refuses to start without this: cmd/xkmsd has no
 # --insecure override, so a config that leaves the barrier off cannot serve the

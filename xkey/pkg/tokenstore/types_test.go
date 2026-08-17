@@ -74,8 +74,9 @@ func TestTokenEntry_Constants(t *testing.T) {
 		SourceOIDC:      true,
 		SourceFIDO2:     true,
 		SourceBootstrap: true,
+		SourcePIV:       true,
 	}
-	assert.Len(t, sources, 3)
+	assert.Len(t, sources, 4)
 
 	// Verify type constants are distinct.
 	types := map[string]bool{
@@ -83,4 +84,14 @@ func TestTokenEntry_Constants(t *testing.T) {
 		TypeRefresh: true,
 	}
 	assert.Len(t, types, 2)
+}
+
+func TestTokenEntry_HasRefreshToken_True(t *testing.T) {
+	entry := &TokenEntry{RefreshToken: "rt"}
+	assert.True(t, entry.HasRefreshToken())
+}
+
+func TestTokenEntry_HasRefreshToken_False(t *testing.T) {
+	entry := &TokenEntry{}
+	assert.False(t, entry.HasRefreshToken())
 }

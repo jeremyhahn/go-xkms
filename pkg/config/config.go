@@ -260,6 +260,12 @@ type TLSConfig struct {
 	// Used with CA-backed TLS to identify which certificate to load.
 	ServerCN string `yaml:"server_cn" json:"server_cn"`
 
+	// ExtraSANs are additional subject alternative names (DNS names or IP
+	// addresses) included in the auto-issued TLS server certificate, for
+	// deployments where clients reach the server by names beyond the CN
+	// and machine hostname (load-balancer aliases, split-horizon DNS).
+	ExtraSANs []string `yaml:"extra_sans" json:"extra_sans"`
+
 	// Client certificate verification (mTLS)
 	ClientAuth string   `yaml:"client_auth"` // none, request, require, verify, require_and_verify
 	ClientCAs  []string `yaml:"client_cas"`  // Additional client CA certificates

@@ -373,7 +373,23 @@ func (h *FIDO2Handler) selectDevice() (HIDDevice, error) {
 		return nil, ErrNoDeviceFound
 	}
 
-	return selectedDevice, nil
+	// Enumerate returns metadata-only handles — the Linux enumerator scans
+	// sysfs without opening the hidraw file — so the selected device must be
+	// re-opened through the enumerator before any CTAP traffic, or the first
+	// HID write fails with "device not open". Enumerators that hand back
+	// live devices (in-process/test authenticators) return the same instance
+	// from Open, which is used as-is.
+	opened, err := h.enumerator.Open(selectedDevice.Path())
+	if err != nil {
+		return nil, &errs.Wrapped{Msg: fmt.Sprintf("failed to open selected device %s", selectedDevice.Path()), Err: err}
+	}
+	if opened != selectedDevice {
+		if err := selectedDevice.Close(); err != nil {
+			log.Printf("failed to close enumeration handle %s: %v", selectedDevice.Path(), err)
+		}
+	}
+
+	return opened, nil
 }
 
 // isFIDO2Device checks if a HID device is a FIDO2 authenticator

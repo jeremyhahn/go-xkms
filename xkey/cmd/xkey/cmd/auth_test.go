@@ -122,7 +122,9 @@ func TestAuthCmd_Subcommands(t *testing.T) {
 	assert.True(t, names["login"], "auth should have login subcommand")
 	assert.True(t, names["status"], "auth should have status subcommand")
 	assert.True(t, names["token"], "auth should have token subcommand")
-	assert.Len(t, subcommands, 4, "auth should have exactly 4 subcommands")
+	assert.True(t, names["refresh"], "auth should have refresh subcommand")
+	assert.True(t, names["logout"], "auth should have logout subcommand")
+	assert.Len(t, subcommands, 6, "auth should have exactly 6 subcommands")
 }
 
 func TestAuthCmd_RegisteredOnRoot(t *testing.T) {
@@ -190,6 +192,20 @@ func TestAuthLoginCmd_Flags(t *testing.T) {
 	flag := authLoginCmd.Flags().Lookup("server")
 	assert.NotNil(t, flag, "login command should have --server flag")
 	assert.Equal(t, "", flag.DefValue)
+}
+
+func TestAuthLoginCmd_PIVFlags(t *testing.T) {
+	pivFlag := authLoginCmd.Flags().Lookup("piv")
+	require.NotNil(t, pivFlag, "login command should have --piv flag")
+	assert.Equal(t, "false", pivFlag.DefValue)
+
+	slotFlag := authLoginCmd.Flags().Lookup("slot")
+	require.NotNil(t, slotFlag, "login command should have --slot flag")
+	assert.Equal(t, "9a", slotFlag.DefValue)
+
+	backendFlag := authLoginCmd.Flags().Lookup("backend")
+	require.NotNil(t, backendFlag, "login command should have --backend flag")
+	assert.Equal(t, "software", backendFlag.DefValue)
 }
 
 // --- Status command structure ---

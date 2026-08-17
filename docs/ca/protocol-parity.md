@@ -127,6 +127,13 @@ tls:
   server_cn: "xkms-server.example.com"
   # No cert_file, key_file, or ca_file needed.
   # The CA auto-issues a TLS certificate at startup.
+  # SANs cover the CN, localhost/loopback, the machine hostname, the
+  # configured listen host, and any cluster peer names. Deployments where
+  # clients dial additional names (load-balancer aliases, split-horizon
+  # DNS) list them here; DNS names and IP addresses are both accepted.
+  extra_sans:
+    - "kms.example.com"
+    - "10.0.0.12"
 
 ca:
   identity:

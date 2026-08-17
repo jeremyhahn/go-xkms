@@ -474,6 +474,23 @@ func init() {
 		"Don't prompt for confirmation")
 }
 
+// defaultPIVStorageTypeForBackend returns the certificate storage type that
+// matches backend when no explicit override is given: software backends
+// store certificates in a file, tpm2/pkcs11 backends store them in the
+// hardware they came from.
+func defaultPIVStorageTypeForBackend(backend PIVBackendType) PIVStorageType {
+	switch backend {
+	case PIVBackendTPM2:
+		return PIVStorageTypeTPM2
+	case PIVBackendPKCS11:
+		return PIVStorageTypePKCS11
+	case PIVBackendSoftware:
+		return PIVStorageTypeFile
+	default:
+		return PIVStorageTypeFile
+	}
+}
+
 // buildPIVConfig creates a PIVConfig from Viper configuration.
 func buildPIVConfig() *PIVConfig {
 	backend := PIVBackendType(viper.GetString(viperKeyPIVBackend))
@@ -481,16 +498,7 @@ func buildPIVConfig() *PIVConfig {
 
 	// If no storage override, default to match backend
 	if storageType == "" {
-		switch backend {
-		case PIVBackendSoftware:
-			storageType = PIVStorageTypeFile
-		case PIVBackendTPM2:
-			storageType = PIVStorageTypeTPM2
-		case PIVBackendPKCS11:
-			storageType = PIVStorageTypePKCS11
-		default:
-			storageType = PIVStorageTypeFile
-		}
+		storageType = defaultPIVStorageTypeForBackend(backend)
 	}
 
 	return &PIVConfig{

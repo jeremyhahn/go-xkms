@@ -367,6 +367,8 @@ github.com/jeremyhahn/go-qrdb v0.5.4-alpha h1:GSKJeNANVCMhkhfLKBBd7L2x8R/UAf0RtH
 github.com/jeremyhahn/go-qrdb v0.5.4-alpha/go.mod h1:Fn2SfnjYtpTJ6MEOf6sHNexlXEwdGS18MYja1oF1gm8=
 github.com/jeremyhahn/go-qrdb v0.5.5-alpha h1:FbVoAJMk4U8lhI5issBBPkVBtyjC/v0JX6N9SB8hChs=
 github.com/jeremyhahn/go-qrdb v0.5.5-alpha/go.mod h1:Fn2SfnjYtpTJ6MEOf6sHNexlXEwdGS18MYja1oF1gm8=
+github.com/jeremyhahn/go-qrdb v0.5.7-alpha h1:MwxKMXIGoo2RP3QcHZyiDFrN93iVvnmX47e5WsQjh6I=
+github.com/jeremyhahn/go-qrdb v0.5.7-alpha/go.mod h1:Fn2SfnjYtpTJ6MEOf6sHNexlXEwdGS18MYja1oF1gm8=
 github.com/jeremyhahn/go-qrdb/sdk/go v0.3.0-alpha h1:fCCEG0YI1gR3fO42qrOW2yq0QPGd1ifbHqQqhD9nGdY=
 github.com/jeremyhahn/go-qrdb/sdk/go v0.3.0-alpha/go.mod h1:I7YOo28uFfLRZ3WOdO3qIK9rrgKxQfrxnwKwGtiNZB0=
 github.com/jeremyhahn/go-qrdb/sdk/go v0.4.0-alpha h1:Upk4SMoroEjlRwe6Ny9IfGmwvGoad4UdUCr+tCLWZso=
@@ -383,6 +385,8 @@ github.com/jeremyhahn/go-qrdb/sdk/go v0.5.4-alpha h1:eTlUzhcwgB/+kXo4vupif91czWB
 github.com/jeremyhahn/go-qrdb/sdk/go v0.5.4-alpha/go.mod h1:ZyOe+jXR4F5PI1QbboIng9PWl/6rO3wOAZZZLXVrjSM=
 github.com/jeremyhahn/go-qrdb/sdk/go v0.5.5-alpha h1:RY0emJm9NqrhRttu8hLG10sE4z+agwiJ5FzvOxV1yuQ=
 github.com/jeremyhahn/go-qrdb/sdk/go v0.5.5-alpha/go.mod h1:ZyOe+jXR4F5PI1QbboIng9PWl/6rO3wOAZZZLXVrjSM=
+github.com/jeremyhahn/go-qrdb/sdk/go v0.5.7-alpha h1:NVQTCjfY5EPE/NOhvbl73JtOvfEzM0uqZyNWEsfQkik=
+github.com/jeremyhahn/go-qrdb/sdk/go v0.5.7-alpha/go.mod h1:ZyOe+jXR4F5PI1QbboIng9PWl/6rO3wOAZZZLXVrjSM=
 github.com/jeremyhahn/go-quicraft v0.3.1-alpha h1:XmTAWRB2UlyYCfCxY0PBKsdSX06/eYAOnHmAFQ0GX6s=
 github.com/jeremyhahn/go-quicraft v0.3.1-alpha/go.mod h1:aUBfpx8zrNsaydnfRIUmVMaEwsOwAsrvxxQfz3XRdsk=
 github.com/jeremyhahn/go-quicraft v0.4.2-alpha h1:clal9zNcy3A5jPWAani66JfkMWXT0L7BL/76c5n8p0Y=

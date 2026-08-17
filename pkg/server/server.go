@@ -1002,35 +1002,18 @@ func (s *Server) publishAuthenticator() {
 func (s *Server) buildAuthenticator() error {
 	s.logger.Info("Initializing authentication...")
 
-	// Build WebAuthn config if enabled (do this first as WebAuthn can work independently
-	// of the general auth system - it IS a form of authentication)
+	// Build WebAuthn config if enabled (do this first as WebAuthn can work
+	// independently of the general auth system - it IS a form of
+	// authentication). rest.WebAuthnConfigFromXKMS is the conversion path
+	// shared with a host's self-built WebAuthn surface (pkg/apimodule
+	// WithWebAuthnConfig), so xkmsd and a host apply the identical defaults
+	// (display name falls back to the RP identifier; a single HTTPS origin
+	// is derived from the RP identifier when neither is configured).
 	if s.config.WebAuthn != nil && s.config.WebAuthn.Enabled {
-		s.webauthnConfig = &webauthn.Config{
-			RPID:                    s.config.WebAuthn.RPID,
-			RPOrigins:               s.config.WebAuthn.RPOrigins,
-			RPDisplayName:           s.config.WebAuthn.RPDisplayName,
-			AttestationPreference:   s.config.WebAuthn.AttestationPreference,
-			AuthenticatorAttachment: s.config.WebAuthn.AuthenticatorAttachment,
-			ResidentKeyRequirement:  s.config.WebAuthn.ResidentKey,
-			UserVerification:        s.config.WebAuthn.UserVerification,
-			AllowPublicRegistration: s.config.WebAuthn.AllowPublicRegistration,
-		}
-
-		// Set defaults for any unset values. The relying-party display name and
-		// at least one origin are required by the WebAuthn service; default the
-		// display name to the RP identifier and derive an HTTPS origin from the
-		// RP identifier when the operator did not configure them.
-		if s.webauthnConfig.RPDisplayName == "" {
-			s.webauthnConfig.RPDisplayName = s.webauthnConfig.RPID
-		}
-		if len(s.webauthnConfig.RPOrigins) == 0 && s.webauthnConfig.RPID != "" {
-			s.webauthnConfig.RPOrigins = []string{"https://" + s.webauthnConfig.RPID}
-		}
-		s.webauthnConfig.SetDefaults()
-
+		s.webauthnConfig = rest.WebAuthnConfigFromXKMS(s.config.WebAuthn)
 		s.logger.Info("WebAuthn configured",
 			"rp_id", s.config.WebAuthn.RPID,
-			"rp_display_name", s.config.WebAuthn.RPDisplayName)
+			"rp_display_name", s.webauthnConfig.RPDisplayName)
 	}
 
 	// If auth is disabled, use NoOp authenticator. This is an explicit opt-in
@@ -1225,11 +1208,16 @@ func (s *Server) deriveCompositeAuthenticator() (auth.Authenticator, error) {
 // shared between the REST browser ceremony and the SDK ceremony. It is a no-op
 // when WebAuthn is not enabled (webauthnConfig is nil).
 //
-// When xkms hosts or dials the qrdb engine, users and credentials are persisted
-// on the qrdb node — the single source of identity. Otherwise they are persisted
-// in the configured datastore (BackendUserStore / BackendCredentialStore) so
-// registrations survive restarts in every storage mode. Sessions are always
-// ephemeral and live in memory.
+// When xkms hosts or dials the qrdb engine, users and credentials are
+// persisted on the qrdb node — the single source of identity — via
+// rest.BuildWebAuthnService, the construction path shared with a host's
+// self-built WebAuthn surface (pkg/api/rest NewHostServer / pkg/apimodule),
+// so xkmsd and a host configure WebAuthn identically. Otherwise (no qrdb
+// identity plane) they are persisted in the configured datastore
+// (BackendUserStore / BackendCredentialStore) so registrations survive
+// restarts in every storage mode — a construction path a host has no
+// equivalent for, since composing the module implies embedding qrdb.
+// Sessions are always ephemeral and live in memory.
 func (s *Server) initializeWebAuthnService() error {
 	if s.webauthnConfig == nil {
 		return nil
@@ -1237,43 +1225,36 @@ func (s *Server) initializeWebAuthnService() error {
 
 	s.logger.Info("Initializing WebAuthn service...")
 
-	var (
-		userStore webauthn.UserStore
-		credStore webauthn.CredentialStore
-	)
-	sessionStore := webauthn.NewMemorySessionStore()
-
 	if s.qrdbClient != nil {
-		qrdbUsers, qrdbCreds, err := webauthn.NewQRDBUserStoreAdapter(webauthn.QRDBUserStoreOptions{
-			Users:    s.qrdbClient.Users(),
-			KV:       s.qrdbClient.KV(),
-			TenantID: webAuthnSystemTenant,
+		svc, err := rest.BuildWebAuthnService(rest.WebAuthnServiceParams{
+			Config:      s.webauthnConfig,
+			QRDBClient:  s.qrdbClient,
+			TenantID:    webAuthnSystemTenant,
+			TokenIssuer: s.tokenIssuer,
+			Logger:      s.logger,
 		})
 		if err != nil {
-			return &ErrServiceInit{Service: "webauthn qrdb stores", Err: err}
+			return &ErrServiceInit{Service: "webauthn service", Err: err}
 		}
-		userStore = qrdbUsers
-		credStore = qrdbCreds
-		s.logger.Info("WebAuthn using qrdb stores for persistence")
-	} else {
-		// No qrdb identity plane (non-qrdb storage mode): persist WebAuthn
-		// users and credentials in the configured datastore so registrations
-		// survive restarts. Sessions remain in-memory (short-lived challenge
-		// state); a cluster-safe session store is a clustering concern.
-		waStore, err := s.createStorage("webauthn")
-		if err != nil {
-			return &ErrServiceInit{Service: "webauthn store", Err: err}
-		}
-		userStore = webauthn.NewBackendUserStore(waStore)
-		credStore = webauthn.NewBackendCredentialStore(waStore)
-		s.logger.Info("WebAuthn using datastore-backed stores for persistence")
+		s.webauthnService = svc
+		s.logger.Info("WebAuthn service initialized", "rp_id", s.webauthnConfig.RPID, "store", "qrdb")
+		return nil
+	}
+
+	// No qrdb identity plane (non-qrdb storage mode): persist WebAuthn
+	// users and credentials in the configured datastore so registrations
+	// survive restarts. Sessions remain in-memory (short-lived challenge
+	// state); a cluster-safe session store is a clustering concern.
+	waStore, err := s.createStorage("webauthn")
+	if err != nil {
+		return &ErrServiceInit{Service: "webauthn store", Err: err}
 	}
 
 	params := webauthn.ServiceParams{
 		Config:          s.webauthnConfig,
-		UserStore:       userStore,
-		SessionStore:    sessionStore,
-		CredentialStore: credStore,
+		UserStore:       webauthn.NewBackendUserStore(waStore),
+		SessionStore:    webauthn.NewMemorySessionStore(),
+		CredentialStore: webauthn.NewBackendCredentialStore(waStore),
 		Logger:          s.logger,
 	}
 
@@ -1282,7 +1263,7 @@ func (s *Server) initializeWebAuthnService() error {
 	// base64 user ID, which no authenticator accepts — a login flow that
 	// cannot actually log anyone in.
 	if s.tokenIssuer != nil {
-		params.JWTGenerator = &webAuthnTokenAdapter{issuer: s.tokenIssuer}
+		params.JWTGenerator = rest.NewWebAuthnTokenAdapter(s.tokenIssuer, webAuthnSystemTenant)
 	} else {
 		s.logger.Warn("WebAuthn service has no token issuer: ceremony tokens will not authenticate API requests")
 	}
@@ -1293,7 +1274,7 @@ func (s *Server) initializeWebAuthnService() error {
 	}
 
 	s.webauthnService = svc
-	s.logger.Info("WebAuthn service initialized", "rp_id", s.webauthnConfig.RPID)
+	s.logger.Info("WebAuthn service initialized", "rp_id", s.webauthnConfig.RPID, "store", "datastore")
 	return nil
 }
 
@@ -2143,9 +2124,10 @@ func (s *Server) ensureTLSServerCert(xkmsCA tlsBootstrapCA, keystoreType types.S
 	s.logger.Info("Issuing TLS server certificate from CA", "cn", serverCN)
 
 	// Build SANs: the server CN, localhost/loopback, the machine hostname,
-	// and the configured listen host, so remote clients that dial the node
-	// by name pass hostname verification.
-	dnsNames, ipAddrs := localCertSANs(serverCN, s.config.Server.Host, s.clusterPeerHosts()...)
+	// the configured listen host, and any configured extra SANs, so remote
+	// clients that dial the node by name pass hostname verification.
+	dnsNames, ipAddrs := localCertSANs(serverCN, s.config.Server.Host,
+		append(s.clusterPeerHosts(), s.config.TLS.ExtraSANs...)...)
 	sanIPs := make([]string, 0, len(ipAddrs)+1)
 	for _, ip := range ipAddrs {
 		sanIPs = append(sanIPs, ip.String())

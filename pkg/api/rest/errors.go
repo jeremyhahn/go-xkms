@@ -57,6 +57,24 @@ var (
 	// is a wiring bug, not a permissive deployment mode. Deployments that
 	// really want an open gate leave EnableRBAC false.
 	ErrAuthorizerRequired = errors.New("rest: authorizer is required when rbac is enabled")
+
+	// ErrTokenIssuerBackendRequired is returned by BuildTokenIssuer when
+	// TokenIssuerParams carries a nil signing Backend.
+	ErrTokenIssuerBackendRequired = errors.New("rest: token issuer requires a non-nil signing backend")
+
+	// ErrWebAuthnConfigRequired is returned by BuildWebAuthnService when
+	// WebAuthnServiceParams carries a nil Config.
+	ErrWebAuthnConfigRequired = errors.New("rest: webauthn service requires a non-nil config")
+
+	// ErrWebAuthnQRDBClientRequired is returned by BuildWebAuthnService when
+	// WebAuthnServiceParams carries a nil QRDBClient: the qrdb identity plane
+	// is the only store BuildWebAuthnService knows how to wire.
+	ErrWebAuthnQRDBClientRequired = errors.New("rest: webauthn service requires a non-nil qrdb client")
+
+	// ErrAuthenticatorChainEmpty is returned by BuildAuthenticator when
+	// neither a token issuer nor a qrdb client was supplied: there is no
+	// session vehicle a caller could authenticate with.
+	ErrAuthenticatorChainEmpty = errors.New("rest: no session-vehicle input available (need a token issuer or a qrdb client)")
 )
 
 // writeError writes an error response to the client.

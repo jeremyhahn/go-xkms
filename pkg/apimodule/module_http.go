@@ -63,17 +63,20 @@ func WithRESTServer(resolve RESTResolver) Option {
 //   - permission routes register under their resource:action permission,
 //     enforced by qrdb's authorization layer.
 //
-// Handlers late-bind through the resolver exactly like the gRPC surface:
-// until the REST wiring composes, every route answers 503. A route whose
-// backing subsystem is not configured on the resolved server answers 501.
-// Routes that appear more than once in the table (availability variants,
-// e.g. the CA bundle endpoint's full-CA and bootstrap-only forms) register
-// once, choosing the enabled variant at request time.
+// The full route table registers unconditionally — with a host-supplied
+// resolver (WithRESTServer), with the module's self-built surface
+// (WithQRDBClient / WithWebAuthnConfig / WithSessionOptions / WithPIVLogin,
+// or none of those, restServer's rest.NewHostServer fallback), or with
+// neither. Handlers late-bind through restServer exactly like the gRPC
+// surface: until the REST wiring composes, every route answers 503; if the
+// host gave the module nothing it could build a working REST surface from,
+// every route answers 503 with that construction failure's message instead
+// of silently not existing. A route whose backing subsystem is not
+// configured on the resolved server answers 501. Routes that appear more
+// than once in the table (availability variants, e.g. the CA bundle
+// endpoint's full-CA and bootstrap-only forms) register once, choosing the
+// enabled variant at request time.
 func (m *Module) RegisterHTTP(r *qrdbsdk.ModuleHTTPRegistrar) {
-	if m.resolveREST == nil {
-		return
-	}
-
 	type routeKey struct{ method, pattern string }
 	variants := map[routeKey][]rest.RouteSpec{}
 	var order []routeKey
@@ -125,7 +128,11 @@ func (m *Module) lazyUIHandler() http.HandlerFunc {
 			(*h).ServeHTTP(w, req)
 			return
 		}
-		srv := m.resolveREST()
+		srv, err := m.restServer()
+		if err != nil {
+			http.Error(w, "xkms web ui: "+err.Error(), http.StatusServiceUnavailable)
+			return
+		}
 		if srv == nil {
 			http.Error(w, "xkms web ui is not yet available (server still composing)",
 				http.StatusServiceUnavailable)
@@ -154,7 +161,11 @@ func (m *Module) lazyHTTPHandler(specs []rest.RouteSpec) http.HandlerFunc {
 			(*h).ServeHTTP(w, req)
 			return
 		}
-		srv := m.resolveREST()
+		srv, err := m.restServer()
+		if err != nil {
+			http.Error(w, "xkms rest surface: "+err.Error(), http.StatusServiceUnavailable)
+			return
+		}
 		if srv == nil {
 			http.Error(w, "xkms rest surface is not yet available (server still composing)",
 				http.StatusServiceUnavailable)
@@ -192,10 +203,10 @@ var _ qrdbsdk.ModuleAuthFallback = (*Module)(nil)
 // qrdb's single enrichment + authorizer path. While the REST engine is
 // still composing, authentication fails closed.
 func (m *Module) AuthenticateHTTP(r *http.Request) (*qrdbsdk.Identity, error) {
-	if m.resolveREST == nil {
-		return nil, &SurfaceComposingError{Surface: "authentication"}
+	srv, err := m.restServer()
+	if err != nil {
+		return nil, err
 	}
-	srv := m.resolveREST()
 	if srv == nil {
 		return nil, &SurfaceComposingError{Surface: "authentication"}
 	}
