@@ -49,7 +49,7 @@ auth:
   enabled: false
 
 storage:
-  backend: "filesystem"
+  backend: "qrdb"
   path: "/data/xkms"
 
 default_backend: "pkcs8"

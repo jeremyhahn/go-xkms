@@ -181,9 +181,18 @@ jobs:
       - name: Install dependencies
         run: go mod download
 
-      - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@v3
-
+      # docker/setup-buildx-action@v3 spins up a NEW docker-container-driver
+      # buildkitd (pull moby/buildkit:buildx-stable-1 + boot a container) on
+      # every run -- needed for the multi-platform builds the release/docker
+      # jobs do, but this job's builds are all single-arch --load (make
+      # docker-build and everything make integration-test's docker
+      # compose/buildx sub-targets do), which the runner's already-running
+      # built-in BuildKit (the default `docker` buildx driver) handles
+      # without bootstrapping anything. Runner-log-proven (task 2975): under
+      # load, that bootstrap took 83.9s and then failed outright --
+      # "failed to list workers ... buildkitd.sock: no such file or
+      # directory" -- before make docker-build ever ran. Skipping the setup
+      # step removes that failure mode entirely rather than just retrying it.
       - name: Build Docker image
         run: make docker-build
 
