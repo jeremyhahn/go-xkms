@@ -44,11 +44,11 @@ func clusterBaseConfig() Config {
 		Server:    ServerConfig{RESTPort: 8443},
 		// Network serving requires TLS (unified API server contract); the
 		// bootstrap-certificate path makes explicit files optional.
-		TLS:     TLSConfig{Enabled: true},
-		Logging: LoggingConfig{Level: "info", Format: "json"},
-		Storage: StorageConfig{Backend: "qrdb", Path: "/data"},
-		Default:   "pkcs8",
-		Backends:  BackendsConfig{PKCS8: &PKCS8Config{Enabled: true, Path: "/data/pkcs8"}},
+		TLS:      TLSConfig{Enabled: true},
+		Logging:  LoggingConfig{Level: "info", Format: "json"},
+		Storage:  StorageConfig{Backend: "qrdb", Path: "/data"},
+		Default:  "pkcs8",
+		Backends: BackendsConfig{PKCS8: &PKCS8Config{Enabled: true, Path: "/data/pkcs8"}},
 		Cluster: ClusterConfig{
 			Enabled:     true,
 			NodeID:      1,

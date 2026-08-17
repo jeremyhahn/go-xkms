@@ -179,3 +179,37 @@ func (m *Module) lazyHTTPHandler(specs []rest.RouteSpec) http.HandlerFunc {
 		h.ServeHTTP(w, req)
 	}
 }
+
+// Compile-time proof the module implements qrdb's authentication fallback:
+// the unified server consults it when its own authenticators produce no
+// identity for a request on an xkms route.
+var _ qrdbsdk.ModuleAuthFallback = (*Module)(nil)
+
+// AuthenticateHTTP authenticates a request with xkms's session-vehicle
+// chain (the JWT pairs the FIDO2/PIV login ceremonies mint, plus mTLS).
+// go-qrdb's REST middleware invokes it only after its own authenticators
+// found no identity; the returned identity is finalized and authorized by
+// qrdb's single enrichment + authorizer path. While the REST engine is
+// still composing, authentication fails closed.
+func (m *Module) AuthenticateHTTP(r *http.Request) (*qrdbsdk.Identity, error) {
+	if m.resolveREST == nil {
+		return nil, &SurfaceComposingError{Surface: "authentication"}
+	}
+	srv := m.resolveREST()
+	if srv == nil {
+		return nil, &SurfaceComposingError{Surface: "authentication"}
+	}
+	return srv.AuthenticateHTTP(r)
+}
+
+// SurfaceComposingError reports a module surface consulted before the
+// backing engine finished composing. Authentication fails closed on it.
+type SurfaceComposingError struct {
+	// Surface names the consulted surface.
+	Surface string
+}
+
+// Error describes the composing state.
+func (e *SurfaceComposingError) Error() string {
+	return "xkms module: " + e.Surface + " is not yet available (server still composing)"
+}

@@ -22,7 +22,6 @@ import (
 )
 
 // CreateAuthenticator creates an authenticator from the configuration.
-// Note: For adaptive authentication (which auto-switches based on user existence),
 // use the server's initializeAuthentication method instead.
 func (cfg *AuthConfig) CreateAuthenticator() (auth.Authenticator, error) {
 	if !cfg.Enabled {
@@ -42,8 +41,8 @@ func (cfg *AuthConfig) CreateAuthenticator() (auth.Authenticator, error) {
 		return nil, &errs.Message{Msg: "JWT authenticator requires server-level configuration with public key"}
 
 	case "adaptive":
-		// Adaptive authentication requires user store and is set up in server initialization
-		return nil, &errs.Message{Msg: "adaptive authenticator requires server-level configuration"}
+		// Removed mode: fail with the replacement spelled out.
+		return nil, &errs.Message{Msg: "auth.type \"adaptive\" was removed: use \"composite\" (derives the jwt+mtls session-vehicle chain)"}
 
 	default:
 		return nil, &errs.Message{Msg: fmt.Sprintf("unknown auth type: %s", cfg.Type)}

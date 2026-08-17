@@ -37,7 +37,7 @@ tls:
 # verified against the daemon's own signing key, so no key file is needed.
 auth:
   enabled: true
-  type: "adaptive"
+  type: "composite"
 
 # Encryption-at-rest. The passphrase is a development convenience so the
 # barrier auto-unseals at boot; a real deployment provisions this through

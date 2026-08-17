@@ -29,7 +29,7 @@ tls:
 # override) without pre-seeding credentials into the cluster fixtures.
 auth:
   enabled: true
-  type: "adaptive"
+  type: "composite"
 
 # Encryption-at-rest, auto-unsealed at node start so a 4-node cluster can form
 # without an unseal ceremony per node.

@@ -50,6 +50,19 @@ import (
 func (s *Server) buildXKMSQRDBConfig() *qrdbsdk.DaemonConfig {
 	qcfg := &qrdbsdk.DaemonConfig{}
 
+	// Authentication and authorization on the embedded node follow xkmsd's
+	// own auth posture: the node's middleware guards every qrdb-native
+	// plane (admin, users, credentials, barrier) and provides the upstream
+	// identity for module routes. Stated EXPLICITLY even though the qrdb
+	// zero value is now fail-safe (nil ⇒ enabled): the embedder's posture
+	// should be legible here, not inherited silently. A SPIFFE trust
+	// domain is pinned only when the operator configured one — the
+	// first-boot default domain stays on the CN/OU identity path.
+	qcfg.Auth.Enabled = qrdbsdk.BoolPtr(s.config.Auth.Enabled)
+	if td := s.config.Cluster.RaftEnrollment.TrustDomain; td != "" {
+		qcfg.Auth.SPIFFETrustDomain = td
+	}
+
 	// Data directory: the qrdb node reads Raft.DataDir for the Pebble root,
 	// both for standalone and single-node clusters.
 	qcfg.Raft.DataDir = s.config.Storage.Path

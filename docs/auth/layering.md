@@ -220,9 +220,12 @@ binary) wires them together.
 After the refactor, `pkg/auth` owns:
 
 - The `Authenticator` interface (transport-aware: HTTP and gRPC).
-- The mTLS, JWT, OIDC, NoOp, Composite, and Adaptive authenticator
-  implementations (`mtls.go`, `jwt.go`, `oidc.go`, `noop.go`, `composite.go`,
-  `adaptive.go`), plus the PKCS#11 client TLS helper (`pkcs11_tls.go`).
+- The mTLS, JWT, OIDC, NoOp, and Composite authenticator implementations
+  (`mtls.go`, `jwt.go`, `oidc.go`, `noop.go`, `composite.go`), plus the
+  PKCS#11 client TLS helper (`pkcs11_tls.go`). The removed "adaptive" mode
+  (anonymous until the first user) is a validation error: first boot
+  provisions the administrator and their mTLS credential at startup, so
+  there is no pre-credential window to bridge.
 - `QRDBUserStore` (`qrdb_userstore.go`), which resolves users from the qrdb
   identity plane by certificate SPKI thumbprint for the mTLS authenticator.
 - The `Authorizer` seam (`authorize.go`) and the resource / action identifiers

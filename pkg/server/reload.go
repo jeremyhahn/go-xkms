@@ -168,7 +168,6 @@ func authConfigChanged(old, updated *config.AuthConfig) bool {
 	if old.Enabled != updated.Enabled ||
 		old.Type != updated.Type ||
 		old.MTLS != updated.MTLS ||
-		old.Adaptive != updated.Adaptive ||
 		old.EnableRBAC != updated.EnableRBAC {
 		return true
 	}

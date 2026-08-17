@@ -626,7 +626,7 @@ quic:
 # Authentication
 auth:
   enabled: true
-  type: adaptive  # jwt, mtls, oidc, adaptive, composite
+  type: composite  # jwt, mtls, oidc, composite (composite with no methods derives jwt+mtls)
   # Adaptive escalates to JWT once the first user exists, so a JWT
   # verification key is required; startup fails without it.
   jwt:

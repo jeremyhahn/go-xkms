@@ -124,7 +124,6 @@ require (
 	github.com/gorilla/websocket v1.5.4-0.20250319132907-e064f32e3674 // indirect
 	github.com/grpc-ecosystem/grpc-gateway/v2 v2.28.0 // indirect
 	github.com/gtank/ristretto255 v0.2.0 // indirect
-	github.com/hamba/avro/v2 v2.31.0 // indirect
 	github.com/hashicorp/errwrap v1.1.0 // indirect
 	github.com/hashicorp/go-cleanhttp v0.5.2 // indirect
 	github.com/hashicorp/go-multierror v1.1.1 // indirect
@@ -140,7 +139,7 @@ require (
 	github.com/jackc/pgx/v5 v5.10.0 // indirect
 	github.com/jeremyhahn/go-codec v1.4.0 // indirect
 	github.com/jeremyhahn/go-frost v0.1.7-alpha // indirect
-	github.com/jeremyhahn/go-qrdb v0.4.0-alpha // indirect
+	github.com/jeremyhahn/go-qrdb v0.5.2-alpha // indirect
 	github.com/jeremyhahn/go-quicraft v0.4.2-alpha // indirect
 	github.com/jeremyhahn/go-xkms/xkey v0.4.0-alpha // indirect
 	github.com/jeroenrinzema/psql-wire v0.18.0 // indirect
@@ -239,7 +238,7 @@ require (
 
 require (
 	github.com/jeremyhahn/go-objstore v0.2.1-alpha
-	github.com/jeremyhahn/go-qrdb/sdk/go v0.4.0-alpha
+	github.com/jeremyhahn/go-qrdb/sdk/go v0.5.2-alpha
 	github.com/jeremyhahn/go-truststrap v0.1.2-alpha
 	github.com/jeremyhahn/go-xkms v0.4.0-alpha
 	github.com/quic-go/qpack v0.6.0 // indirect

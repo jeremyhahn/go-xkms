@@ -6,7 +6,6 @@
 package server
 
 import (
-	"context"
 	"errors"
 	"os"
 	"path/filepath"
@@ -424,24 +423,6 @@ func TestBuildHardwareSealStrategies_DuplicateEntriesDeduped(t *testing.T) {
 	defer func() { _ = server.Shutdown() }()
 
 	assert.NotNil(t, server.Barrier())
-}
-
-// ============================================================================
-// Tests — staticUserChecker
-// ============================================================================
-
-func TestStaticUserChecker_HasAnyUsers_True(t *testing.T) {
-	checker := staticUserChecker{hasUsers: true}
-	has, err := checker.HasAnyUsers(context.Background())
-	require.NoError(t, err)
-	assert.True(t, has)
-}
-
-func TestStaticUserChecker_HasAnyUsers_False(t *testing.T) {
-	checker := staticUserChecker{hasUsers: false}
-	has, err := checker.HasAnyUsers(context.Background())
-	require.NoError(t, err)
-	assert.False(t, has)
 }
 
 // ============================================================================

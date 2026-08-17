@@ -958,16 +958,13 @@ func (s *Server) initializeKeyStore() error {
 }
 
 // initializeAuthentication sets up the authentication subsystem.
-// It configures adaptive authentication that automatically switches between:
-// - NoOp mode (when no users exist) - allows all requests for bootstrap
-// - Required auth mode (when users exist) - requires JWT or mTLS authentication
 //
 // Authenticator selection is fail-closed. The no-op authenticator is reachable
 // only through an explicit, unambiguous opt-in — auth.enabled=false or
 // auth.type "none"/"noop"/"" — which config.ComplianceGaps() reports, so the
 // daemon refuses to start on it at all and offers no override. Every
 // other outcome that cannot produce a real authenticator (an unrecognized
-// auth.type, a broken JWT key, adaptive mode with nothing to escalate to) is a
+// auth.type, a broken JWT key, a composite chain with nothing to derive) is a
 // fatal startup error rather than a silently unauthenticated server.
 func (s *Server) initializeAuthentication() error {
 	if err := s.buildAuthenticator(); err != nil {
@@ -1092,8 +1089,12 @@ func (s *Server) buildAuthenticator() error {
 		requiredAuth = compositeAuth
 
 	case "adaptive":
-		// Adaptive mode will be configured below
-		s.logger.Info("Adaptive authentication mode enabled")
+		// Adaptive mode (anonymous until the first user exists) was removed:
+		// first boot provisions the administrator and their mTLS credential
+		// at startup, so there is no pre-credential window for it to bridge
+		// and no reason to ever serve anonymously. Fail with the replacement
+		// spelled out rather than silently mapping to a different behavior.
+		return &ErrAdaptiveRemoved{}
 
 	default:
 		// Fail closed: an unrecognized auth.type is almost always a typo, and
@@ -1102,70 +1103,7 @@ func (s *Server) buildAuthenticator() error {
 		return &ErrUnknownAuthType{Type: s.config.Auth.Type}
 	}
 
-	// If adaptive mode is enabled or explicitly configured, wrap the authenticator
-	if s.config.Auth.Adaptive || strings.EqualFold(strings.TrimSpace(s.config.Auth.Type), "adaptive") {
-		// Adaptive mode relaxes authentication only while no users exist; once a
-		// user is provisioned every request is delegated to the required
-		// authenticator. A no-op required authenticator would therefore leave
-		// the API anonymous forever, so one must be derivable from the config.
-		if requiredAuth == nil {
-			// Two credential planes must both work post-provisioning:
-			//   - JWT: the WebAuthn browser/SDK ceremony issues a bearer token
-			//     the JWT authenticator validates. The verification key is the
-			//     operator-supplied public key file or the built-in token
-			//     issuer's signing key.
-			//   - mTLS: cert-based enrollment is the stack's bootstrap plane —
-			//     the first-boot administrator's ONLY credential is the
-			//     SPKI-bound certificate, so a JWT-only chain would lock the
-			//     bootstrap admin out the moment their own creation flipped
-			//     adaptive mode to enforced.
-			var chain []auth.Authenticator
-			hasKeyFile := s.config.Auth.JWT != nil && s.config.Auth.JWT.PublicKeyFile != ""
-			if hasKeyFile || s.tokenIssuer != nil {
-				jwtAuth, err := s.createJWTAuthenticator()
-				if err != nil {
-					return &ErrServiceInit{Service: "JWT authenticator for adaptive mode", Err: err}
-				}
-				chain = append(chain, jwtAuth)
-			}
-			if s.config.TLS.Enabled {
-				mtlsConfig := &auth.MTLSConfig{}
-				if us := s.mtlsUserStore(); us != nil {
-					mtlsConfig.UserStore = us
-				}
-				chain = append(chain, auth.NewMTLSAuthenticator(mtlsConfig))
-			}
-			switch len(chain) {
-			case 0:
-				return ErrAdaptiveRequiresAuthenticator
-			case 1:
-				requiredAuth = chain[0]
-			default:
-				compositeAuth, err := auth.NewCompositeAuthenticator(chain...)
-				if err != nil {
-					return &ErrServiceInit{Service: "composite authenticator for adaptive mode", Err: err}
-				}
-				requiredAuth = compositeAuth
-			}
-		}
-
-		adaptiveAuth, err := auth.NewAdaptiveAuthenticator(&auth.AdaptiveConfig{
-			UserChecker:           s.userChecker(),
-			RequiredAuthenticator: requiredAuth,
-			CacheExpiry:           30 * time.Second,
-			Logger:                s.logger.With("component", "auth"),
-		})
-		if err != nil {
-			return &ErrServiceInit{Service: "adaptive authenticator", Err: err}
-		}
-
-		s.authenticator = adaptiveAuth
-		s.logger.Info("Adaptive authentication initialized",
-			"required_auth", requiredAuth.Name())
-		return nil
-	}
-
-	// Every non-adaptive branch above either assigns requiredAuth or returns an
+	// Every branch above either assigns requiredAuth or returns an
 	// error, so a nil authenticator here would be a programming error rather
 	// than a configuration one. Fail closed instead of admitting all requests.
 	if requiredAuth == nil {
@@ -1178,9 +1116,23 @@ func (s *Server) buildAuthenticator() error {
 
 // createCompositeAuthenticator builds a CompositeAuthenticator from the
 // configured composite authentication methods.
-func (s *Server) createCompositeAuthenticator() (*auth.CompositeAuthenticator, error) {
+//
+// When no methods are configured, the chain is DERIVED from the deployment's
+// session vehicles — the exact set every login ceremony resolves to:
+//
+//   - jwt: the JWT pairs the WebAuthn (FIDO2) and PIV login ceremonies mint;
+//     included when a verification key exists (operator public-key file or
+//     the built-in token issuer's signing key).
+//   - mtls: cert-based enrollment is the stack's bootstrap plane — the
+//     first-boot administrator's ONLY credential is the SPKI-bound
+//     certificate; included whenever TLS is enabled.
+//
+// An empty derivation (no TLS, no JWT key) fails closed: there is nothing a
+// caller could authenticate with, and unauthenticated access must be an
+// explicit opt-in, never a fallback.
+func (s *Server) createCompositeAuthenticator() (auth.Authenticator, error) {
 	if s.config.Auth.Composite == nil || len(s.config.Auth.Composite.Methods) == 0 {
-		return nil, ErrCompositeMethodsRequired
+		return s.deriveCompositeAuthenticator()
 	}
 
 	authenticators := make([]auth.Authenticator, 0, len(s.config.Auth.Composite.Methods))
@@ -1224,6 +1176,48 @@ func (s *Server) createCompositeAuthenticator() (*auth.CompositeAuthenticator, e
 	}
 
 	s.logger.Info("Composite authentication configured", "methods", s.config.Auth.Composite.Methods)
+	return compositeAuth, nil
+}
+
+// deriveCompositeAuthenticator builds the session-vehicle chain (jwt + mtls)
+// from what the deployment actually provides. See
+// createCompositeAuthenticator for the derivation contract.
+func (s *Server) deriveCompositeAuthenticator() (auth.Authenticator, error) {
+	var chain []auth.Authenticator
+	derived := make([]string, 0, 2)
+
+	hasKeyFile := s.config.Auth.JWT != nil && s.config.Auth.JWT.PublicKeyFile != ""
+	if hasKeyFile || s.tokenIssuer != nil {
+		jwtAuth, err := s.createJWTAuthenticator()
+		if err != nil {
+			return nil, &ErrServiceInit{Service: "JWT authenticator for composite chain", Err: err}
+		}
+		chain = append(chain, jwtAuth)
+		derived = append(derived, "jwt")
+	}
+	if s.config.TLS.Enabled {
+		mtlsConfig := &auth.MTLSConfig{}
+		if us := s.mtlsUserStore(); us != nil {
+			mtlsConfig.UserStore = us
+		}
+		chain = append(chain, auth.NewMTLSAuthenticator(mtlsConfig))
+		derived = append(derived, "mtls")
+	}
+	if len(chain) == 0 {
+		return nil, ErrCompositeMethodsRequired
+	}
+	if len(chain) == 1 {
+		// A single-vehicle deployment keeps the concrete authenticator (and
+		// its informative Name) rather than a one-element composite wrapper.
+		s.logger.Info("Composite authentication configured", "methods", derived, "derived", true)
+		return chain[0], nil
+	}
+
+	compositeAuth, err := auth.NewCompositeAuthenticator(chain...)
+	if err != nil {
+		return nil, &ErrServiceInit{Service: "composite authenticator", Err: err}
+	}
+	s.logger.Info("Composite authentication configured", "methods", derived, "derived", true)
 	return compositeAuth, nil
 }
 
@@ -1346,11 +1340,25 @@ func (s *Server) initializeAuditLogger() error {
 
 	if s.qrdbClient != nil {
 		s.auditLogger = audit.NewQRDBLogger(s.qrdbClient.Audit())
-		s.logger.Info("Audit logging routed to qrdb HMAC-chained subsystem")
-	} else {
-		s.auditLogger = &audit.NoOpLogger{}
-		s.logger.Info("No qrdb client; audit logging using NoOp logger")
+		s.logger.Info("Audit logging routed to qrdb chained subsystem")
+		return nil
 	}
+
+	// No qrdb client (non-qrdb storage backend): audit still lands on a
+	// tamper-evident chain — a local chained file with the identical record
+	// shape — never a silent no-op. A deployment with no storage path at
+	// all has nowhere durable to write; that is a configuration with no
+	// audit story and the file sink is rooted in the CWD as a last resort.
+	auditPath := "audit-events.ndjson"
+	if s.config.Storage.Path != "" {
+		auditPath = filepath.Join(s.config.Storage.Path, "audit-events.ndjson")
+	}
+	chained, err := audit.NewChainedFileLogger(auditPath)
+	if err != nil {
+		return &ErrServiceInit{Service: "chained file audit logger", Err: err}
+	}
+	s.auditLogger = chained
+	s.logger.Info("Audit logging routed to local chained file", "path", auditPath)
 
 	return nil
 }
@@ -1379,29 +1387,6 @@ func (s *Server) qrdbUserStore() *auth.QRDBUserStore {
 		return nil
 	}
 	return auth.NewQRDBUserStore(s.qrdbClient.Users(), s.qrdbClient.Roles())
-}
-
-// userChecker returns the UserChecker the adaptive authenticator uses to gate
-// first-boot enrollment. When xkms hosts the qrdb identity plane it is the
-// qrdb-backed store. Absent a qrdb client (e.g. a non-qrdb storage backend),
-// it fails closed: a static checker reports that users exist so the adaptive
-// authenticator always requires strong auth rather than offering open
-// first-boot enrollment.
-func (s *Server) userChecker() auth.UserChecker {
-	if qs := s.qrdbUserStore(); qs != nil {
-		return qs
-	}
-	return staticUserChecker{hasUsers: true}
-}
-
-// staticUserChecker is a fail-closed UserChecker fallback used when no qrdb
-// identity plane is available. It reports a fixed user-existence value so the
-// adaptive authenticator can still be constructed.
-type staticUserChecker struct{ hasUsers bool }
-
-// HasAnyUsers reports the static user-existence value.
-func (c staticUserChecker) HasAnyUsers(context.Context) (bool, error) {
-	return c.hasUsers, nil
 }
 
 // initializeBarrier creates and configures the barrier (seal/unseal) subsystem.

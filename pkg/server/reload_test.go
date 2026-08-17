@@ -246,7 +246,6 @@ func TestAuthConfigChanged(t *testing.T) {
 		{"enabled", func(c *config.AuthConfig) { c.Enabled = false }, true},
 		{"type", func(c *config.AuthConfig) { c.Type = "mtls" }, true},
 		{"mtls", func(c *config.AuthConfig) { c.MTLS = true }, true},
-		{"adaptive", func(c *config.AuthConfig) { c.Adaptive = true }, true},
 		{"rbac", func(c *config.AuthConfig) { c.EnableRBAC = true }, true},
 		{"jwt key", func(c *config.AuthConfig) { c.JWT.PublicKeyFile = "/other.pem" }, true},
 		{"jwt issuer", func(c *config.AuthConfig) { c.JWT.Issuer = "other" }, true},

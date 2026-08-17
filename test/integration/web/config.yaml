@@ -33,7 +33,7 @@ tls:
 # ceremony can create the first operator), required auth afterwards.
 auth:
   enabled: true
-  type: "adaptive"
+  type: "composite"
 
 # Passphrase auto-unseal — a real deployment provisions this via `xkmsctl
 # init`; this tier only needs the barrier UNSEALED so BarrierView and the

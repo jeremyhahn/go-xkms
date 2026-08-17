@@ -7,6 +7,38 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.6.0-alpha] - 2026-08-17
+
+### Changed — BREAKING: login plane unified (mTLS + FIDO2 + PIV)
+
+- **`auth.type: "adaptive"` is removed** and fails startup with a typed
+  error naming the replacement. First boot provisions the administrator
+  and their mTLS credential at startup, so there is no pre-credential
+  window to bridge. All shipped configs use `type: "composite"`.
+- **Composite derives the session-vehicle chain** when no methods are
+  configured: jwt (the pairs the FIDO2/PIV login ceremonies mint; present
+  when a verification key or the built-in issuer exists) + mtls (when TLS
+  is enabled). Single-vehicle chains keep the concrete authenticator.
+- **Authentication on the unified server is qrdb's, single-pass**: the
+  module implements `qrdbsdk.ModuleAuthFallback` — qrdb's mTLS chain runs
+  first, xkms's session-vehicle chain second, and qrdb's ONE authorizer
+  (store-resolved roles) decides. `BindRoute` no longer applies inline
+  authentication, ending the double-auth pass.
+- **Embedded node auth is explicit**: `buildXKMSQRDBConfig` mirrors
+  xkmsd's `auth.enabled` onto the node (qrdb ≥0.5.2 is fail-safe anyway),
+  with SPIFFE pinning when configured. Requires go-qrdb v0.5.5-alpha.
+
+### Added
+
+- **SDK login plane** (`sdk/go/login.go`): `NewLoginClient` with
+  `PIVLogin` (PIV slot certificate as the TLS client credential),
+  `Refresh`, `Logout`, `Validate`. The WebAuthn (FIDO2) ceremony remains
+  the six-transport Servicer surface; `WithXKMSFactorVerifiers` remains
+  the canonical verifier export for embedders.
+- **Chained-file audit fallback** (`pkg/audit.ChainedFileLogger`):
+  deployments without a qrdb client audit to a local tamper-evident
+  chained file with the identical record shape — never a silent NoOp.
+
 ## [0.5.0-alpha] - 2026-08-16
 
 ### Changed

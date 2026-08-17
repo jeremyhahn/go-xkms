@@ -15,6 +15,8 @@ package server
 
 import (
 	"errors"
+	"io"
+	"log/slog"
 	"path/filepath"
 	"testing"
 
@@ -105,7 +107,11 @@ func TestServer_PolicyManager_NilByDefault(t *testing.T) {
 // Tests — createCompositeAuthenticator
 // ============================================================================
 
-func TestServer_CreateCompositeAuthenticator_NilConfig(t *testing.T) {
+// An absent composite section DERIVES the session-vehicle chain: with the
+// built-in token issuer provisioned (and TLS off in the minimal config), the
+// chain resolves to the JWT authenticator. This is the shipped default
+// configuration shape.
+func TestServer_CreateCompositeAuthenticator_NilConfigDerives(t *testing.T) {
 	xkms.Reset()
 	defer xkms.Reset()
 
@@ -114,12 +120,14 @@ func TestServer_CreateCompositeAuthenticator_NilConfig(t *testing.T) {
 	cfg.Auth.Type = "composite"
 	cfg.Auth.Composite = nil
 
-	_, err := New(cfg)
-	assert.Error(t, err)
-	assert.True(t, errors.Is(err, ErrCompositeMethodsRequired))
+	server, err := New(cfg)
+	require.NoError(t, err)
+	defer func() { _ = server.Shutdown() }()
+	assert.Equal(t, "jwt", server.authenticator.Name())
 }
 
-func TestServer_CreateCompositeAuthenticator_EmptyMethods(t *testing.T) {
+// Empty methods behave identically to an absent section: derive.
+func TestServer_CreateCompositeAuthenticator_EmptyMethodsDerives(t *testing.T) {
 	xkms.Reset()
 	defer xkms.Reset()
 
@@ -130,8 +138,20 @@ func TestServer_CreateCompositeAuthenticator_EmptyMethods(t *testing.T) {
 		Methods: []string{},
 	}
 
-	_, err := New(cfg)
-	assert.Error(t, err)
+	server, err := New(cfg)
+	require.NoError(t, err)
+	defer func() { _ = server.Shutdown() }()
+	assert.Equal(t, "jwt", server.authenticator.Name())
+}
+
+// The fail-closed branch: nothing derivable (no issuer, no JWT key, no TLS)
+// must refuse rather than serve unauthenticated.
+func TestServer_DeriveCompositeAuthenticator_NothingToDerive(t *testing.T) {
+	s := &Server{
+		config: &config.Config{},
+		logger: slog.New(slog.NewTextHandler(io.Discard, nil)),
+	}
+	_, err := s.deriveCompositeAuthenticator()
 	assert.True(t, errors.Is(err, ErrCompositeMethodsRequired))
 }
 
@@ -209,12 +229,11 @@ func TestServer_CreateCompositeAuthenticator_MTLSSuccess(t *testing.T) {
 // Tests — initializeAuditLogger
 // ============================================================================
 
-// TestServer_InitializeAuditLogger_NoQRDBClientUsesNoOp verifies that without a
-// hosted qrdb node (file storage backend => qrdbClient nil) the server selects
-// the NoOp audit logger. xkms owns no audit storage; production emits route to
-// the qrdb HMAC-chained subsystem via QRDBLogger (covered by the audit package
-// round-trip test).
-func TestServer_InitializeAuditLogger_NoQRDBClientUsesNoOp(t *testing.T) {
+// TestServer_InitializeAuditLogger_NoQRDBClientUsesChainedFile verifies that
+// without a hosted qrdb node (file storage backend => qrdbClient nil) the
+// server routes audit to the LOCAL tamper-evident chained file — the same
+// record shape as the qrdb-hosted chain — never a silent NoOp.
+func TestServer_InitializeAuditLogger_NoQRDBClientUsesChainedFile(t *testing.T) {
 	xkms.Reset()
 	defer xkms.Reset()
 
@@ -230,8 +249,8 @@ func TestServer_InitializeAuditLogger_NoQRDBClientUsesNoOp(t *testing.T) {
 	defer func() { _ = server.Shutdown() }()
 
 	require.NotNil(t, server.auditLogger)
-	_, ok := server.auditLogger.(*audit.NoOpLogger)
-	assert.True(t, ok, "expected NoOpLogger without a qrdb client")
+	_, ok := server.auditLogger.(*audit.ChainedFileLogger)
+	assert.True(t, ok, "non-qrdb deployments must audit to the local chained file")
 }
 
 // TestServer_InitializeAuditLogger_EnabledMissingPathNoLongerErrors verifies

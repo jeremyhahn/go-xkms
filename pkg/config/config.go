@@ -203,7 +203,6 @@ type ServerConfig struct {
 	QUICPort  int    `yaml:"quic_port"`
 	MCPPort   int    `yaml:"mcp_port"`
 	NoisePort int    `yaml:"noise_port"`
-
 }
 
 // NetworkServing reports whether any network protocol is enabled. Network
@@ -285,11 +284,6 @@ type AuthConfig struct {
 
 	// mTLS authentication
 	MTLS bool `yaml:"mtls"` // Use mTLS from client certificates
-
-	// Adaptive authentication (auto-switches between noop and required auth)
-	// When no users exist: allow all requests (bootstrap mode)
-	// When users exist: require authentication
-	Adaptive bool `yaml:"adaptive"`
 
 	// RBAC enables role-based access control
 	EnableRBAC bool `yaml:"enable_rbac"`

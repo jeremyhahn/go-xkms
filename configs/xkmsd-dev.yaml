@@ -35,7 +35,7 @@ tls:
 
 auth:
   enabled: true
-  type: "adaptive"
+  type: "composite"
 
 # Encryption at rest. Unlike configs/xkmsd.yaml this names a literal passphrase,
 # because the point of this file is to start a throwaway local daemon with no

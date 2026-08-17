@@ -32,30 +32,24 @@ import (
 // (pkg/apimodule), and a second in-handler RBAC pass would double-authorize
 // every call against a different decision point.
 //
-// Authentication is single-pass: the identity plane is shared by
-// construction (xkms auth.Identity is qrdb's Identity, read from qrdb's
-// context key), so when qrdb's middleware has already authenticated the
-// request the identity is visible to every xkms handler and the xkms
-// authenticator is skipped; the xkms authenticator runs only for requests
-// qrdb admitted without an identity (e.g. auth disabled), preserving the
-// legacy contract.
+// Authentication is qrdb's: its middleware authenticates every non-public
+// route (mTLS chain first, then the module's AuthenticateHTTP fallback for
+// xkms session tokens) and binds the identity into the request context
+// before the handler chain runs — the identity plane is shared by
+// construction (xkms auth.Identity IS qrdb's Identity).
 func (s *Server) BindRoute(spec RouteSpec) http.Handler {
 	var h http.Handler = spec.Handler(s)
 
+	// Authentication is NOT applied here: on the unified server go-qrdb's
+	// middleware authenticates every non-public route — its own mTLS chain
+	// first, then the module's fallback (Server.AuthenticateHTTP, the
+	// composite jwt+mtls session vehicles) — and the ONE qrdb authorizer
+	// renders the decision before the handler runs. Only xkms-specific
+	// per-group concerns remain on the route chain.
 	switch spec.Group {
 	case GroupAPIv1, GroupSSH:
 		h = s.TenantMiddleware()(h)
-		h = s.upstreamOrLocalAuth(h)
-	case GroupUsers:
-		h = s.upstreamOrLocalAuth(h)
-	case GroupAuthSession:
-		if spec.Auth == RouteAuthSession {
-			h = s.upstreamOrLocalAuth(h)
-		}
-		if s.authRateLimiter != nil && s.authRateLimiter.IsEnabled() {
-			h = ratelimit.Middleware(s.authRateLimiter)(h)
-		}
-	case GroupWebAuthn:
+	case GroupAuthSession, GroupWebAuthn:
 		if s.authRateLimiter != nil && s.authRateLimiter.IsEnabled() {
 			h = ratelimit.Middleware(s.authRateLimiter)(h)
 		}
@@ -64,20 +58,18 @@ func (s *Server) BindRoute(spec RouteSpec) http.Handler {
 	return h
 }
 
-// upstreamOrLocalAuth admits a request that already carries an
-// authenticated identity (placed in the context by go-qrdb's middleware on
-// the unified server) and otherwise runs xkms's own authentication
-// middleware. The identity type and context key are shared with qrdb, so
-// handlers observe the identical contract on both paths.
-func (s *Server) upstreamOrLocalAuth(next http.Handler) http.Handler {
-	local := s.AuthenticationMiddleware()(next)
-	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if auth.GetIdentity(r.Context()) != nil {
-			next.ServeHTTP(w, r)
-			return
-		}
-		local.ServeHTTP(w, r)
-	})
+// AuthenticateHTTP authenticates a request with xkms's configured
+// authenticator chain (the composite jwt+mtls session vehicles). It backs
+// the module's qrdb ModuleAuthFallback: on the unified server, go-qrdb's
+// middleware runs its own authenticators first and consults this method
+// only when they produce no identity — the returned identity then flows
+// through qrdb's store-resolved role enrichment and the ONE authorizer,
+// exactly like an mTLS identity. Fails closed on any authentication error.
+func (s *Server) AuthenticateHTTP(r *http.Request) (*auth.Identity, error) {
+	if s.authenticator == nil {
+		return nil, ErrAuthenticatorRequired
+	}
+	return s.authenticator.AuthenticateHTTP(r)
 }
 
 // RouteEnabled reports whether the route's backing subsystem is configured

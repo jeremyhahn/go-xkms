@@ -35,7 +35,7 @@ tls:
 
 auth:
   enabled: true
-  type: "adaptive"
+  type: "composite"
 
 # Encryption at rest. The passphrase is deliberately absent from this file --
 # supply it out of band via XKMS_SEAL_PASSPHRASE, a credential:// reference, or
