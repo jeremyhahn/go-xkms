@@ -684,6 +684,14 @@ func NewHostServer(ctx context.Context, hc *HostConfig) (*Server, error) {
 				cfg.WebAuthnUsers = hc.QRDBClient.Users()
 				cfg.WebAuthnKV = hc.QRDBClient.KV()
 				cfg.WebAuthnTenantID = tenantID
+				// Share the relying-party service into the XKMSService so
+				// the SDK ceremony lane (/api/v1/webauthn/sdk/* ->
+				// XKMSService.BeginRegistration et al.) resolves the SAME
+				// instance as the browser handlers — the one-RP invariant
+				// xkmsd establishes with the same SetWebAuthn call.
+				// Without this the SDK lane fails ErrNotConfigured on a
+				// host while the browser lane works.
+				hc.XKMSService.SetWebAuthn(svc)
 			}
 		}
 	}
