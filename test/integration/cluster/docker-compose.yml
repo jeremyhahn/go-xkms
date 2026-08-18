@@ -75,7 +75,7 @@ services:
   # node2: cluster joiner
   # ---------------------------------------------------------------------------
   node2:
-    image: go-xkms-cluster-node:latest
+    image: go-xkms-cluster-node:${XKMS_IMAGE_TAG:-latest}
     hostname: node2
     # Boot-time cluster formation can outlast a single attempt when sibling
     # nodes lag (image start stagger); retry like systemd would in production.
@@ -121,7 +121,7 @@ services:
   # node3: cluster joiner
   # ---------------------------------------------------------------------------
   node3:
-    image: go-xkms-cluster-node:latest
+    image: go-xkms-cluster-node:${XKMS_IMAGE_TAG:-latest}
     hostname: node3
     # Boot-time cluster formation can outlast a single attempt when sibling
     # nodes lag (image start stagger); retry like systemd would in production.
@@ -169,7 +169,7 @@ services:
   # XKMS_CLUSTER_* env, so xkmsd hosts an embedded standalone qrdb node.
   # ---------------------------------------------------------------------------
   standalone:
-    image: go-xkms-cluster-node:latest
+    image: go-xkms-cluster-node:${XKMS_IMAGE_TAG:-latest}
     hostname: standalone
     volumes:
       - standalone-data:/data

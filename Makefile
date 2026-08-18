@@ -157,11 +157,20 @@ SHARED_LIB_LINK := $(LIB_DIR)/libxkms.so
 CGO_SOURCE := ./cmd/cgo
 
 # Docker configuration
-DOCKER_IMAGE := $(PROJECT_NAME):latest
-DOCKER_INTEGRATION_IMAGE := $(PROJECT_NAME)-integration:latest
+#
+# Tagged with $(IMAGE_TAG), not a literal `latest`, for the same reason the
+# compose files are: an image tag is daemon-global. `builder-image` and
+# `docker-build` each build a tag and then immediately run or consume it, so
+# a second job retagging in that window makes the first build or test against
+# the wrong image. IMAGE_TAG is `latest` off CI, so local names do not change.
+#
+# Recursive (=), not simple (:=): IMAGE_TAG is defined further down with the
+# rest of the namespacing, and := would expand it here as empty.
+DOCKER_IMAGE = $(PROJECT_NAME):$(IMAGE_TAG)
+DOCKER_INTEGRATION_IMAGE = $(PROJECT_NAME)-integration:$(IMAGE_TAG)
 DOCKER_CONTAINER := $(PROJECT_NAME)-container
-BUILDER_IMAGE := $(PROJECT_NAME)-builder:latest
-XKEY_BUILDER_IMAGE := $(PROJECT_NAME)-xkey-builder:latest
+BUILDER_IMAGE = $(PROJECT_NAME)-builder:$(IMAGE_TAG)
+XKEY_BUILDER_IMAGE = $(PROJECT_NAME)-xkey-builder:$(IMAGE_TAG)
 
 # Cross-repo first-party modules resolve from Gitea tags inside containers
 # (dependency-resolution.md §6) — no workspace, no sibling mounts. The
@@ -234,9 +243,13 @@ XKMS_IMAGE_TAG ?= $(COMPOSE_RUN_ID)
 endif
 export XKMS_IMAGE_TAG
 
+# The effective tag for images this Makefile builds directly (as opposed to
+# through compose, where each file spells its own default inline).
+IMAGE_TAG = $(if $(XKMS_IMAGE_TAG),$(XKMS_IMAGE_TAG),latest)
+
 # The tag the devcontainer stack's xkms-server image carries, mirroring that
 # compose file's `${XKMS_IMAGE_TAG:-dev}` so lookups find what compose built.
-XKMS_SERVER_IMAGE := go-xkms-server:$(if $(XKMS_IMAGE_TAG),$(XKMS_IMAGE_TAG),dev)
+XKMS_SERVER_IMAGE = go-xkms-server:$(if $(XKMS_IMAGE_TAG),$(XKMS_IMAGE_TAG),dev)
 GOMODCACHE_HOST := $(shell go env GOMODCACHE 2>/dev/null || echo $(HOME)/go/pkg/mod)
 GITEA_MODULE_ENV := -e GOWORK=off \
                     -e GOPRIVATE='github.com/jeremyhahn/*' \
