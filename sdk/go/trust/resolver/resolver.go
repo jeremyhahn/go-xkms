@@ -20,6 +20,7 @@ package resolver
 
 import (
 	"github.com/jeremyhahn/go-truststrap/pkg/truststrap"
+	pkgconfig "github.com/jeremyhahn/go-xkms/pkg/config"
 	pkgresolver "github.com/jeremyhahn/go-xkms/pkg/trust/resolver"
 )
 
@@ -128,3 +129,15 @@ var (
 	// certificate path, creating parent directories as needed.
 	InstallToSystemTrust = pkgresolver.InstallToSystemTrust
 )
+
+// LoadTrustConfig loads the xkmsd/xkmsctl config file at path and returns
+// its trust: section. Client binaries use this instead of importing
+// pkg/config directly to reach the trust-resolver Config embedded in the
+// daemon config file.
+func LoadTrustConfig(path string) (*Config, error) {
+	cfg, err := pkgconfig.Load(path)
+	if err != nil {
+		return nil, err
+	}
+	return cfg.Trust, nil
+}

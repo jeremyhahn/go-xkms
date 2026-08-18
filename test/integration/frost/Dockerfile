@@ -25,4 +25,4 @@ RUN go mod download || true
 
 # Build the frost-enabled CLI at runtime (after the workspace is resolved), then
 # run the integration tests. The CLI is required by the multi-protocol CLI tests.
-CMD ["sh", "-c", "go build -tags=frost -o /usr/local/bin/xkmsctl ./cmd/xkmsctl && go test -v -tags='integration frost codec_cbor codec_json codec_msgpack' -timeout 30m ./test/integration/frost/..."]
+CMD ["sh", "-c", "go build -tags=frost -o /usr/local/bin/xkmsctl ./cmd/xkmsctl && go test -v -tags='integration frost codec_cbor codec_json codec_msgpack gms_pure_go' -timeout 30m ./test/integration/frost/..."]

@@ -42,7 +42,7 @@ tls:
 # (the daemon has no insecure override).
 auth:
   enabled: true
-  type: "adaptive"
+  type: "composite"
 
 # WebAuthn/FIDO2 authentication enabled for integration tests
 webauthn:

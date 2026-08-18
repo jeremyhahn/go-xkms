@@ -446,7 +446,6 @@ func runInit(args []string) {
 			os.Exit(1)
 		}
 		env.fido2Handler = handler
-		defer func() { _ = handler.Close() }()
 	}
 
 	// Refuse before the ceremony changes any state when a planned factor
@@ -454,13 +453,16 @@ func runInit(args []string) {
 	// midway leaves an initialized barrier with a half-enrolled administrator.
 	if pfErr := preflightAdminFactors(context.Background(), env); pfErr != nil {
 		logger.Error("admin factor preflight failed", slog.Any("error", pfErr))
+		closeFIDO2Handler(env)
 		os.Exit(1)
 	}
 	result, err := executeCeremony(context.Background(), cs, env)
 	if err != nil {
 		logger.Error("ceremony execution failed", slog.Any("error", err))
+		closeFIDO2Handler(env)
 		os.Exit(1)
 	}
+	closeFIDO2Handler(env)
 
 	printCeremonyOutcome(env, result)
 
@@ -468,6 +470,15 @@ func runInit(args []string) {
 		slog.String("state", string(result.State)),
 		slog.String("spki_pin", result.SPKIPin),
 		slog.Int("shares_generated", result.ShareCount))
+}
+
+// closeFIDO2Handler closes the ceremony's FIDO2 handler, if one was opened.
+// Called explicitly at every runInit exit point (including os.Exit paths,
+// where a deferred close would never run) rather than via defer.
+func closeFIDO2Handler(env *ceremonyEnv) {
+	if env.fido2Handler != nil {
+		_ = env.fido2Handler.Close()
+	}
 }
 
 // parseInitFlags creates and parses the init subcommand FlagSet.
@@ -618,10 +629,8 @@ func validateInitFlags(flags *initFlags) error {
 		if flags.threshold < 2 || flags.threshold > flags.shares {
 			return ErrShamirThresholdRequired
 		}
-	} else {
-		if flags.shares != 0 || flags.threshold != 0 {
-			return ErrSharesRequiresShamir
-		}
+	} else if flags.shares != 0 || flags.threshold != 0 {
+		return ErrSharesRequiresShamir
 	}
 
 	// Backwards-compat: the legacy --so officer / --threshold pair

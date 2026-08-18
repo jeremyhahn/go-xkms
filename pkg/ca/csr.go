@@ -79,10 +79,12 @@ import (
 	"crypto/x509/pkix"
 	"encoding/asn1"
 	"encoding/pem"
+	"errors"
 	"fmt"
 	"net"
 	"net/url"
 
+	backendpkg "github.com/jeremyhahn/go-xkms/pkg/backend"
 	"github.com/jeremyhahn/go-xkms/pkg/errs"
 
 	"github.com/jeremyhahn/go-xkms/pkg/types"
@@ -227,6 +229,14 @@ func (ca *CA) getOrGenerateKey(ctx context.Context, request *CertificateRequest)
 	}
 
 	if err != nil {
+		// Lost get-or-generate race: on a cluster, a sibling node generated
+		// this key between our not-found read and our write. The winner's
+		// key is the key — fetch its signer.
+		if errors.Is(err, backendpkg.ErrKeyAlreadyExists) {
+			if racedSigner, sigErr := ca.keyStore.Signer(ctx, attrs); sigErr == nil {
+				return racedSigner, nil
+			}
+		}
 		return nil, &errs.Wrapped{Msg: "key generation failed", Err: err}
 	}
 

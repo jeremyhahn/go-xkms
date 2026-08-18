@@ -23,4 +23,4 @@ COPY go.mod go.sum ./
 RUN go mod download || true
 
 # Default command runs tests
-CMD ["go", "test", "-v", "-tags=integration codec_cbor codec_json codec_msgpack", "-timeout", "30m", "./test/integration/quantum/..."]
+CMD ["go", "test", "-v", "-tags=integration codec_cbor codec_json codec_msgpack gms_pure_go", "-timeout", "30m", "./test/integration/quantum/..."]

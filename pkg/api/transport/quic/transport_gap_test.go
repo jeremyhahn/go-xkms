@@ -609,47 +609,6 @@ func TestClose_WithNonHTTP3Transport(t *testing.T) {
 }
 
 // ============================================================
-// User operations (ErrNotSupported stubs)
-// ============================================================
-
-func TestUserOps_NotSupported(t *testing.T) {
-	tr, cleanup := newGapMockTransport(t)
-	defer cleanup()
-
-	tests := []struct {
-		name string
-		fn   func() error
-	}{
-		{"CreateUser", func() error {
-			_, err := tr.CreateUser(context.Background(), &transport.CreateUserRequest{})
-			return err
-		}},
-		{"ListUsers", func() error {
-			_, err := tr.ListUsers(context.Background())
-			return err
-		}},
-		{"GetUser", func() error {
-			_, err := tr.GetUser(context.Background(), "u1")
-			return err
-		}},
-		{"DeleteUser", func() error { return tr.DeleteUser(context.Background(), "u1") }},
-		{"EnableUser", func() error { return tr.EnableUser(context.Background(), "u1") }},
-		{"DisableUser", func() error { return tr.DisableUser(context.Background(), "u1") }},
-		{"BindUserCert", func() error { return tr.BindUserCert(context.Background(), "u1", "cert", 1) }},
-		{"ListUserCredentials", func() error {
-			_, err := tr.ListUserCredentials(context.Background(), "u1")
-			return err
-		}},
-	}
-
-	for _, tc := range tests {
-		t.Run(tc.name, func(t *testing.T) {
-			assert.ErrorIs(t, tc.fn(), ErrNotSupported)
-		})
-	}
-}
-
-// ============================================================
 // Barrier — basic connected paths not covered by extra_test
 // ============================================================
 

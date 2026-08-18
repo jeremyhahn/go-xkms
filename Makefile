@@ -349,7 +349,7 @@ build-xkey:
 		$(GITEA_MODULE_ENV) \
 		-w /workspace/xkey \
 		$(XKEY_BUILDER_IMAGE) \
-		bash -c "CGO_ENABLED=1 go build -tags 'ble,production,codec_json,pkcs11,webkit2_41' -buildvcs=false -ldflags '-X github.com/jeremyhahn/go-xkms/xkey/cmd/xkey/cmd.Version=$(VERSION) -X github.com/jeremyhahn/go-xkms/xkey/cmd/xkey/cmd.Commit=$(GIT_COMMIT) -X github.com/jeremyhahn/go-xkms/xkey/cmd/xkey/cmd.Date=$(BUILD_DATE)' -o /workspace/$(BIN_DIR)/xkey ./cmd/xkey && chown $(shell id -u):$(shell id -g) /workspace/$(BIN_DIR)/xkey"
+		bash -c "CGO_ENABLED=1 go build -tags 'ble,usb,production,codec_json,pkcs11,webkit2_41' -buildvcs=false -ldflags '-X github.com/jeremyhahn/go-xkms/xkey/cmd/xkey/cmd.Version=$(VERSION) -X github.com/jeremyhahn/go-xkms/xkey/cmd/xkey/cmd.Commit=$(GIT_COMMIT) -X github.com/jeremyhahn/go-xkms/xkey/cmd/xkey/cmd.Date=$(BUILD_DATE)' -o /workspace/$(BIN_DIR)/xkey ./cmd/xkey && chown $(shell id -u):$(shell id -g) /workspace/$(BIN_DIR)/xkey"
 	@echo "$(GREEN)✓ xkey binary built: $(BIN_DIR)/xkey$(RESET)"
 	@echo "$(GREEN)  GUI mode:  ./$(BIN_DIR)/xkey$(RESET)"
 	@echo "$(GREEN)  CLI mode:  ./$(BIN_DIR)/xkey --no-gui$(RESET)"
@@ -1511,7 +1511,46 @@ integration-test-pkcs11-backend:
 .PHONY: integration-test-pkcs11-module
 ## integration-test-pkcs11-module: Run PKCS#11 module multi-protocol integration tests (runs in devcontainer with xkms-server)
 integration-test-pkcs11-module:
-	$(call run_with_server,PKCS11_MODULE=$(PKCS11_MODULE_CONTAINER) PKCS11_TOKEN_LABEL=$(PKCS11_TOKEN_LABEL) PKCS11_PIN=$(PKCS11_PIN) PKCS11_SO_PIN=$(PKCS11_SO_PIN) XKMS_PKCS11_AUTO_INIT_TOKEN=true XKMS_PKCS11_SO_PIN=$(PKCS11_SO_PIN) XKMS_PKCS11_USER_PIN=$(PKCS11_PIN) XKMS_PKCS11_TOKEN_LABEL=$(PKCS11_TOKEN_LABEL) XKMS_PKCS11_STORAGE_TYPE=file XKMS_PKCS11_STORAGE_PATH=/tmp/pkcs11-storage XKMS_UNIX_SOCKET=$(XKMS_UNIX_SOCKET) XKMS_GRPC_ADDR=$(XKMS_GRPC_ADDR_CONTAINER) $(GO) test -v -tags='integration' ./test/integration/pkcs11/module/... -timeout $(PKCS11_TEST_TIMEOUT),integration-test-pkcs11-module)
+	$(call run_with_server,PKCS11_MODULE=$(PKCS11_MODULE_CONTAINER) PKCS11_TOKEN_LABEL=$(PKCS11_TOKEN_LABEL) PKCS11_PIN=$(PKCS11_PIN) PKCS11_SO_PIN=$(PKCS11_SO_PIN) XKMS_PKCS11_AUTO_INIT_TOKEN=true XKMS_PKCS11_SO_PIN=$(PKCS11_SO_PIN) XKMS_PKCS11_USER_PIN=$(PKCS11_PIN) XKMS_PKCS11_TOKEN_LABEL=$(PKCS11_TOKEN_LABEL) XKMS_PKCS11_STORAGE_TYPE=file XKMS_PKCS11_STORAGE_PATH=/tmp/pkcs11-storage XKMS_PKCS11_ALLOW_WEAK_HASH_SIGNING=true XKMS_UNIX_SOCKET=$(XKMS_UNIX_SOCKET) XKMS_GRPC_ADDR=$(XKMS_GRPC_ADDR_CONTAINER) $(GO) test -v -tags='integration' ./test/integration/pkcs11/module/... -timeout $(PKCS11_TEST_TIMEOUT),integration-test-pkcs11-module)
+
+.PHONY: integration-test-logins
+## integration-test-logins: Run the login-plane verification matrix (mTLS, PIV, FIDO2) against a real xkmsd (runs in devcontainer with xkms-server)
+# Mirrors integration-test-pkcs11-module's use of run_with_server: it starts
+# the compose xkms-server and publishes its CA + first-boot admin mTLS
+# credential to /tmp/xkms via .devcontainer/scripts/ensure-server-ca.sh,
+# which testutil.go in test/integration/logins reads. The xkey CLI is built
+# fresh (plain codec_json tag - no GUI/hardware tags needed for this suite)
+# and exported as XKEY_CLI_BIN for the fido2 leg, which drives it as a real
+# subprocess ("xkey auth register" / "xkey auth login") against a headless
+# "xkey fido2 --require-touch=false --auto-uv" virtual authenticator. That
+# authenticator opens a uhid device, so the suite runs under sudo, the same
+# requirement integration-test-xkey-ctap has for the same reason.
+integration-test-logins:
+	$(call run_with_server,mkdir -p build/bin && cd xkey && /usr/local/go/bin/go build -buildvcs=false -tags='codec_json' -o ../build/bin/xkey ./cmd/xkey && cd .. && XKEY_CLI_BIN=$(DEVCONTAINER_REPO)/build/bin/xkey sudo -E /usr/local/go/bin/go test -v -tags='integration$(comma)logins' ./test/integration/logins/... -timeout 10m,integration-test-logins)
+
+.PHONY: integration-test-logins-quicbaas
+## integration-test-logins-quicbaas: Login matrix including the quicbaasd leg (host-invoked; starts the compose quicbaas-server)
+# Starts the quicbaas-server fixture (compose profile "quicbaas", built from
+# the sibling go-quicbaas working tree with the gomodauth secret), publishes
+# its first-boot admin mTLS credential into build/quicbaas-fixture (the
+# fixture's /data volume is not mounted into the devcontainer, so the host
+# copies it through the workspace), fetches the fixture's CA over its public
+# /v1/ca/bootstrap route, and runs the same suite as integration-test-logins
+# with QUICBAAS_REST_URL set so targets() adds the quicbaasd rows.
+integration-test-logins-quicbaas:
+	@echo "$(CYAN)$(BOLD)→ Starting quicbaas-server fixture...$(RESET)"
+	@$(MAKE) --no-print-directory stage-gomodauth
+	$(DOCKER_COMPOSE) --profile quicbaas up -d --build --wait quicbaas-server
+	@echo "$(CYAN)$(BOLD)→ Publishing quicbaasd admin credential to build/quicbaas-fixture...$(RESET)"
+	@mkdir -p build/quicbaas-fixture
+	@ok=""; for i in $$(seq 1 30); do \
+		if docker cp xkms-dev-quicbaas:/data/admin/admin.crt build/quicbaas-fixture/admin.crt 2>/dev/null && \
+		   docker cp xkms-dev-quicbaas:/data/admin/admin.key build/quicbaas-fixture/admin.key 2>/dev/null && \
+		   docker cp xkms-dev-quicbaas:/data/certs/ca-chain.crt build/quicbaas-fixture/ca.crt 2>/dev/null; then ok=1; break; fi; \
+		sleep 2; \
+	done; [ -n "$$ok" ] || { echo "$(RED)✗ quicbaasd first boot never published /data/admin + /data/certs$(RESET)"; docker logs --tail 40 xkms-dev-quicbaas; exit 1; }
+	@chmod 0600 build/quicbaas-fixture/admin.key
+	$(call run_with_server,mkdir -p build/bin /tmp/quicbaas && cp $(DEVCONTAINER_REPO)/build/quicbaas-fixture/ca.crt /tmp/quicbaas/ca.crt && cp $(DEVCONTAINER_REPO)/build/quicbaas-fixture/admin.crt /tmp/quicbaas/admin.crt && cp $(DEVCONTAINER_REPO)/build/quicbaas-fixture/admin.key /tmp/quicbaas/admin.key && chmod 0600 /tmp/quicbaas/admin.key && bash .devcontainer/scripts/wait-quicbaas-login-planes.sh && cd xkey && /usr/local/go/bin/go build -buildvcs=false -tags='codec_json' -o ../build/bin/xkey ./cmd/xkey && cd .. && XKEY_CLI_BIN=$(DEVCONTAINER_REPO)/build/bin/xkey QUICBAAS_REST_URL=https://quicbaas-server:8443 sudo -E /usr/local/go/bin/go test -v -tags='integration$(comma)logins' ./test/integration/logins/... -timeout 15m,integration-test-logins-quicbaas)
 
 .PHONY: integration-test-pkcs11-conformance
 ## integration-test-pkcs11-conformance: Run the OASIS PKCS#11 v3.0 conformance suite (runs in devcontainer with xkms-server)
@@ -1550,7 +1589,7 @@ integration-test-pkcs11-cabi:
 .PHONY: integration-test-pkcs11-module-external
 ## integration-test-pkcs11-module-external: Run the external-view PKCS#11 module checks (shared-library shape, ldd deps, server reachability) via the pkcs11_external tag
 integration-test-pkcs11-module-external:
-	$(call run_with_server,PKCS11_MODULE=$(PKCS11_MODULE_CONTAINER) PKCS11_TOKEN_LABEL=$(PKCS11_TOKEN_LABEL) PKCS11_PIN=$(PKCS11_PIN) PKCS11_SO_PIN=$(PKCS11_SO_PIN) XKMS_UNIX_SOCKET=$(XKMS_UNIX_SOCKET) XKMS_GRPC_ADDR=$(XKMS_GRPC_ADDR_CONTAINER) $(GO) test -v -tags='integration$(comma)pkcs11$(comma)pkcs11_external' ./test/integration/pkcs11/module/... -timeout $(PKCS11_TEST_TIMEOUT),integration-test-pkcs11-module-external)
+	$(call run_with_server,PKCS11_MODULE=$(PKCS11_MODULE_CONTAINER) PKCS11_TOKEN_LABEL=$(PKCS11_TOKEN_LABEL) PKCS11_PIN=$(PKCS11_PIN) PKCS11_SO_PIN=$(PKCS11_SO_PIN) XKMS_PKCS11_ALLOW_WEAK_HASH_SIGNING=true XKMS_UNIX_SOCKET=$(XKMS_UNIX_SOCKET) XKMS_GRPC_ADDR=$(XKMS_GRPC_ADDR_CONTAINER) $(GO) test -v -tags='integration$(comma)pkcs11$(comma)pkcs11_external' ./test/integration/pkcs11/module/... -timeout $(PKCS11_TEST_TIMEOUT),integration-test-pkcs11-module-external)
 
 .PHONY: integration-test-pkcs11-module-unix
 ## integration-test-pkcs11-module-unix: Run PKCS#11 multi-protocol tests with Unix socket target (runs in devcontainer with xkms-server)
@@ -1935,8 +1974,8 @@ define compose_up_xkms_server
 			echo "$(YELLOW)xkms-server disabled (XKMS_COMPOSE_SERVER=0); the devcontainer serves the socket.$(RESET)" ;; \
 		1|yes|on) \
 			echo "$(CYAN)$(BOLD)→ Starting xkms-server (compose)...$(RESET)"; \
-			$(DOCKER_COMPOSE) up -d --build xkms-server || true; \
-			$(MAKE) --no-print-directory devcontainer-server-wait || true ;; \
+			$(DOCKER_COMPOSE) up -d --build xkms-server; \
+			$(MAKE) --no-print-directory devcontainer-server-wait ;; \
 		*) \
 			if docker image inspect go-xkms-server:dev >/dev/null 2>&1; then \
 				echo "$(CYAN)$(BOLD)→ Starting xkms-server (compose)...$(RESET)"; \
@@ -2663,11 +2702,28 @@ release: lib release-binaries
 # `COPY . .`, so the file must never be plain build context). Written empty
 # when no token is configured, so the same build resolves from the public
 # proxy on hosts without Gitea access.
+#
+# Two credential sources, checked in order:
+#   1. GIT_CONFIG_KEY_0/GOPRIVATE already in the environment -- this is how
+#      Gitea Actions supplies them (runner.envs injects the four variables
+#      directly into every job's process env; §6). There is no GITEA_GO_TOKEN
+#      on that runner, only the already-composed insteadOf rewrite, so this
+#      must be checked first or a CI job silently stages an empty/broken file.
+#   2. GITEA_GO_TOKEN, reconstructed into the same four variables -- this is
+#      the devcontainer/host path, sourced from the gitignored
+#      .devcontainer/.env.
 GOMODAUTH_FILE := .devcontainer/gomodauth.env
 .PHONY: stage-gomodauth
 stage-gomodauth:
 	@umask 077; : > $(GOMODAUTH_FILE); \
-	if [ -n "$(GITEA_GO_TOKEN)" ]; then \
+	if [ -n "$$GIT_CONFIG_KEY_0" ]; then \
+		{ \
+			printf 'export GOPRIVATE=%s\n' "$${GOPRIVATE:-github.com/jeremyhahn/*}"; \
+			printf 'export GIT_CONFIG_COUNT=%s\n' "$${GIT_CONFIG_COUNT:-1}"; \
+			printf 'export GIT_CONFIG_KEY_0=%s\n' "$$GIT_CONFIG_KEY_0"; \
+			printf 'export GIT_CONFIG_VALUE_0=%s\n' "$$GIT_CONFIG_VALUE_0"; \
+		} > $(GOMODAUTH_FILE); \
+	elif [ -n "$(GITEA_GO_TOKEN)" ]; then \
 		{ \
 			printf 'export GOPRIVATE=%s\n' 'github.com/jeremyhahn/*'; \
 			printf 'export GIT_CONFIG_COUNT=1\n'; \

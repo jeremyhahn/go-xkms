@@ -223,7 +223,12 @@ func TestFileBackupAdapter_ImportBackup_MetadataFileWriteError(t *testing.T) {
 	require.NoError(t, err)
 
 	ctx := context.Background()
-	const backupID = "predictable-import-id"
+	// Must be a well-formed UUID: ImportBackup now validates the imported
+	// metadata's ID (uuid.Validate) before using it to build a filesystem
+	// path, generating a fresh one otherwise (CWE-22 path-traversal fix) --
+	// a non-UUID "predictable" string would silently be replaced, breaking
+	// this test's premise of pre-blocking the exact target path.
+	const backupID = "11111111-1111-1111-1111-111111111111"
 
 	metadataPath := adapter.getMetadataPath(backupID)
 	require.NoError(t, os.Mkdir(metadataPath, 0700))

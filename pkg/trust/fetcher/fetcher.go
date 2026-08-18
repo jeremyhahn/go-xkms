@@ -40,9 +40,15 @@ import (
 // DefaultTimeout is the HTTP timeout applied when Options.Timeout is zero.
 const DefaultTimeout = 30 * time.Second
 
-// DefaultBundlePath is the canonical REST endpoint for the platform CA
-// bundle on a go-trusted-platform node.
-const DefaultBundlePath = "/api/v1/ca/bundle"
+// DefaultBundlePath is the canonical UNAUTHENTICATED trust-bootstrap
+// endpoint (raw PEM), shared with go-truststrap's default. First-contact
+// clients have no credentials by definition, so the default must never
+// point at an authenticated route: the previous /api/v1/ca/bundle default
+// only worked while adaptive authentication served it anonymously, and the
+// canonical first-boot closes that window by creating the administrator at
+// startup. Callers fetching the richer authenticated bundle set BundlePath
+// explicitly.
+const DefaultBundlePath = "/v1/ca/bootstrap"
 
 // pemMediaType is the IANA media type for PEM-encoded certificate data.
 const pemMediaType = "application/x-pem-file"

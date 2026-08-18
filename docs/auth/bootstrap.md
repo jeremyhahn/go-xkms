@@ -68,7 +68,7 @@ transports through `initialize.NewCeremonyAdapter`
  1. QRDB storage      (embedded node: identity plane + KV)
  2. Backends          (software, PKCS#11, TPM2, cloud KMS, ...)
  3. KeyStore
- 4. Authentication    (mTLS, JWT, OIDC, adaptive)
+ 4. Authentication    (mTLS, JWT, OIDC, composite)
  5. WebAuthn service  (FIDO2 relying party)
  6. Authorization     (auth.Authorizer -> qrdb RBAC)
  7. AuditLogger

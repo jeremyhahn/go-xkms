@@ -6,7 +6,9 @@ FROM golang:1.26.6-bookworm AS builder
 
 ENV GOTOOLCHAIN=auto
 
-# Install build dependencies
+# Install build dependencies. libicu-dev/libusb-1.0-0-dev are cgo build deps
+# of the module graph itself (dolthub/go-icu-regex, google/gousb via
+# go-qrdb), not gated by any of this image's backend tags.
 RUN apt-get update && apt-get install -y --no-install-recommends \
     build-essential \
     pkg-config \
@@ -14,6 +16,8 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     libsofthsm2-dev \
     softhsm2 \
     libtss2-dev \
+    libicu-dev \
+    libusb-1.0-0-dev \
     ca-certificates \
     file \
     && rm -rf /var/lib/apt/lists/*
@@ -25,8 +29,24 @@ WORKDIR /build
 COPY go.mod go.sum ./
 COPY sdk/go/go.mod sdk/go/go.sum ./sdk/go/
 
-# Download dependencies
-RUN go mod download
+# Copy the xkey module files before go mod download (required for the
+# replace directive: go.mod replaces github.com/jeremyhahn/go-xkms/xkey with
+# ./xkey, and go mod download reads that go.mod even though this image
+# never builds xkey itself).
+COPY xkey/go.mod xkey/go.sum ./xkey/
+
+# In-house modules resolve from Gitea tags (dependency-resolution.md §6). The
+# fetch token arrives as a BuildKit secret, never a build arg or ENV: a build
+# arg is recorded in image metadata, while a secret is mounted on tmpfs for
+# this RUN alone and never becomes a layer. It is sourced rather than
+# exported so the value never appears in a command line either. The mount is
+# optional by design: with no secret supplied these modules resolve from the
+# public proxy once tags are mirrored (§7), so the same Dockerfile builds on
+# both hosts.
+RUN --mount=type=secret,id=gomodauth \
+    set -eu; \
+    if [ -f /run/secrets/gomodauth ]; then . /run/secrets/gomodauth; fi; \
+    go mod download
 
 # Copy source code
 COPY . .

@@ -1,0 +1,45 @@
+# Dockerfile.test — Go test runner for the 3-node cluster integration harness.
+#
+# This image is responsible only for running the Go test binary; it does not
+# host any xkmsd instance. The source is baked in at build time (COPY below)
+# rather than relying on a runtime bind mount: on the Gitea Actions runner, a
+# relative compose `volumes: - ../../..:/workspace` mount resolves against
+# the JOB CONTAINER's filesystem, which the HOST docker daemon doesn't share
+# -- it silently succeeds against an unrelated (often empty) host directory
+# instead of erroring, leaving /workspace without a go.mod (same failure
+# class runner-log-proven for test/integration/pkcs8, task 3001).
+
+FROM golang:1.26.1-bookworm
+
+ENV GOTOOLCHAIN=auto
+ENV GOWORK=off
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    ca-certificates \
+    wget \
+    && rm -rf /var/lib/apt/lists/*
+
+# docker CLI (client only) so the resilience/chaos tests can kill and restart
+# cluster nodes through the mounted /var/run/docker.sock. No daemon is bundled.
+RUN wget -qO /tmp/docker.tgz https://download.docker.com/linux/static/stable/x86_64/docker-27.3.1.tgz \
+    && tar -xzf /tmp/docker.tgz -C /usr/local/bin --strip-components=1 docker/docker \
+    && rm /tmp/docker.tgz \
+    && docker --version
+
+WORKDIR /workspace
+
+COPY go.mod go.sum ./
+COPY sdk/go/go.mod sdk/go/go.sum ./sdk/go/
+COPY xkey/go.mod xkey/go.sum ./xkey/
+
+RUN --mount=type=secret,id=gomodauth \
+    set -eu; \
+    if [ -f /run/secrets/gomodauth ]; then . /run/secrets/gomodauth; fi; \
+    go mod download
+
+COPY . .
+
+CMD ["sh", "-c", \
+    "echo 'Running cluster + standalone integration tests...' && \
+     go test -v -tags='integration codec_cbor codec_json codec_msgpack gms_pure_go' \
+         ./test/integration/cluster/... -timeout 15m"]

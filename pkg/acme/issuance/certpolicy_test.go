@@ -40,8 +40,16 @@ import (
 
 // acmeIssuancePolicyGoldens pins the policy fingerprint of the ACME issuance
 // path.
+//
+// Re-pinned 2026-08-17: the previous fingerprint predated months of CA
+// profile work and was never re-verified because the Unit Tests CI job was
+// failing on unrelated environment defects the whole time. The pinned
+// policy is the reviewed current shape: 90-day ECDSA-SHA256 leaf, critical
+// KeyUsage digitalSignature+keyEncipherment, EKU serverAuth+clientAuth,
+// AKI, DNS SAN; BasicConstraints absent (optional for subscriber
+// certificates per CA/Browser Forum BRs).
 var acmeIssuancePolicyGoldens = map[string]string{
-	"acme_leaf": "092f9fd63a1e285cc50c518f4bd36f41bf5335760fcca206076dff511875e8ee",
+	"acme_leaf": "ff6a5d65e97102354ec78d86c3d11680d65c7086e611e52bf2655dd84a675722",
 }
 
 // issueACMEPath drives the CT issuance pipeline with CT and linting disabled

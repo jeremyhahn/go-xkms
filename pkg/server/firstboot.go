@@ -133,7 +133,14 @@ func (s *Server) runFirstBoot(ctx context.Context) error {
 		deps.Signer = adapter
 	}
 
-	result, err := qrdbsdk.FirstBootInitialize(ctx, deps)
+	// On a cluster, first-boot runs on every node concurrently while the
+	// initial leader election is still settling. The service layer answers
+	// "not leader" until a leader is known (and forwards afterwards), so a
+	// not-leader failure here is transient by construction: retry with
+	// backoff until the election settles or the deadline expires. Once the
+	// leader's first-boot replicates, the idempotent initialize becomes a
+	// no-op on every follower.
+	result, err := s.firstBootWithLeaderRetry(ctx, deps)
 	if err != nil {
 		return &FirstBootError{Op: "initialize", Cause: err}
 	}
@@ -148,6 +155,25 @@ func (s *Server) runFirstBoot(ctx context.Context) error {
 	}
 
 	return nil
+}
+
+// firstBootInitialize indirects qrdbsdk.FirstBootInitialize so the retry
+// loop is unit-testable; production always uses the SDK function.
+var firstBootInitialize = qrdbsdk.FirstBootInitialize
+
+// firstBootWithLeaderRetry runs FirstBootInitialize under the boot-time
+// leader retry (leader_retry.go).
+func (s *Server) firstBootWithLeaderRetry(ctx context.Context, deps qrdbsdk.FirstBootDependencies) (*qrdbsdk.FirstBootResult, error) {
+	var result *qrdbsdk.FirstBootResult
+	err := retryNotLeader(ctx, s.logger, "first-boot", func() error {
+		var innerErr error
+		result, innerErr = firstBootInitialize(ctx, deps)
+		return innerErr
+	})
+	if err != nil {
+		return nil, err
+	}
+	return result, nil
 }
 
 // Admin credential filenames, matching the names qrdbd writes so an operator
@@ -171,8 +197,15 @@ const (
 // has already taken delivery of.
 func (s *Server) persistAdminCredential(result *qrdbsdk.FirstBootResult) error {
 	if result == nil || len(result.AdminCertPEM) == 0 || len(result.AdminKeyPEM) == 0 {
-		// No credential was issued — first-boot ran without a CA, or the admin
-		// already existed on an earlier boot. Nothing to write.
+		// No credential was issued — first-boot ran without a CA, the admin
+		// already existed on an earlier boot, or Path B left the key with the
+		// admin. A newly created admin with a cert but no key is the one
+		// combination that must not pass silently: generate-and-distribute
+		// exists to deliver the key, and losing it here strands the operator.
+		if result != nil && result.AdminCreated && len(result.AdminCertPEM) > 0 && len(result.AdminKeyPEM) == 0 {
+			s.logger.Warn("first-boot: admin certificate issued without a distributable key; no credential persisted",
+				slog.String("thumbprint", result.AdminCertThumbprint))
+		}
 		return nil
 	}
 
@@ -197,7 +230,7 @@ func (s *Server) persistAdminCredential(result *qrdbsdk.FirstBootResult) error {
 	if err := os.MkdirAll(dir, 0o700); err != nil {
 		return &AdminCredentialError{Path: dir, Err: err}
 	}
-	if err := os.WriteFile(certPath, result.AdminCertPEM, 0o644); err != nil { //nolint:gosec // a certificate is public
+	if err := os.WriteFile(certPath, result.AdminCertPEM, 0o644); err != nil { // #nosec G306 -- a certificate is public
 		return &AdminCredentialError{Path: certPath, Err: err}
 	}
 	// The private key is owner-read-only: it authenticates as the highest

@@ -3,19 +3,13 @@ services:
     build:
       context: ../../..
       dockerfile: test/integration/pkcs11/Dockerfile
+      secrets:
+        - gomodauth
     environment:
       - PKCS11_MODULE=/usr/lib/softhsm/libsofthsm2.so
       - PKCS11_TOKEN_LABEL=test-token
       - PKCS11_PIN=1234
     volumes:
-      - ../../..:/app
-      # Sibling module mounts (for go.mod replace directives)
-      - ../../../../go-qrdb:/go-qrdb:cached
-      - ../../../../go-quicraft:/go-quicraft:cached
-      - ../../../../go-objstore:/go-objstore:cached
-      - ../../../../go-truststrap:/go-truststrap:cached
-      - ../../../../go-codec:/go-codec:cached
-      - ../../../../go-frost:/go-frost:cached
       - softhsm-data:/var/lib/softhsm
     working_dir: /app
 
@@ -25,3 +19,11 @@ volumes:
 networks:
   default:
     name: xkms-pkcs11-test
+
+# Staged by `make stage-gomodauth` (dependency-resolution.md §6) into the
+# gitignored .devcontainer/gomodauth.env; empty when no Gitea credentials are
+# available, in which case the Dockerfile's optional secret mount falls back
+# to public module resolution.
+secrets:
+  gomodauth:
+    file: ../../../.devcontainer/gomodauth.env

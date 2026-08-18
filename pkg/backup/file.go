@@ -628,8 +628,11 @@ func (f *FileBackupAdapter) ExportBackup(ctx context.Context, backupID string, d
 		return "", &errs.Wrapped{Msg: "failed to create destination directory", Err: err}
 	}
 
-	// Write to destination
-	if err := os.WriteFile(destination, backupBytes, 0600); err != nil {
+	// Write to destination. destination is an operator-supplied path passed
+	// directly to this exported API call (the CLI/admin caller names where
+	// to export the backup), the same trust model as a `cp` destination
+	// argument -- it is not derived from untrusted request content.
+	if err := os.WriteFile(destination, backupBytes, 0600); err != nil { // #nosec G703 -- operator-supplied export destination
 		return "", &errs.Wrapped{Msg: "failed to write backup to destination", Err: err}
 	}
 
@@ -657,9 +660,14 @@ func (f *FileBackupAdapter) ImportBackup(ctx context.Context, source string) (*B
 		return nil, errors.New("backup metadata is missing")
 	}
 
-	// Generate new ID if needed
+	// Generate a new ID if one wasn't supplied, and reject anything that
+	// isn't a well-formed UUID. backupID feeds getBackupPath/getMetadataPath
+	// via filepath.Join, and it comes from the imported file's own
+	// (untrusted) metadata -- an attacker-crafted ID such as
+	// "../../etc/cron.d/evil" would otherwise let ImportBackup write outside
+	// f.basePath (CWE-22 path traversal).
 	backupID := data.Metadata.ID
-	if backupID == "" {
+	if backupID == "" || uuid.Validate(backupID) != nil {
 		backupID = uuid.New().String()
 		data.Metadata.ID = backupID
 	}
@@ -671,9 +679,11 @@ func (f *FileBackupAdapter) ImportBackup(ctx context.Context, source string) (*B
 		data.Metadata.ID = backupID
 	}
 
-	// Write backup file
+	// Write backup file. backupID is validated as a well-formed UUID above
+	// (or freshly generated), so it cannot carry a "../" path-traversal
+	// segment into getBackupPath's filepath.Join.
 	backupPath := f.getBackupPath(backupID)
-	if err := os.WriteFile(backupPath, backupBytes, 0600); err != nil {
+	if err := os.WriteFile(backupPath, backupBytes, 0600); err != nil { // #nosec G703 -- backupID validated as a UUID above
 		return nil, &errs.Wrapped{Msg: "failed to write backup file", Err: err}
 	}
 

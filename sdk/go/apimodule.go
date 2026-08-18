@@ -13,7 +13,11 @@
 
 package xkms
 
-import "github.com/jeremyhahn/go-xkms/pkg/apimodule"
+import (
+	"github.com/jeremyhahn/go-xkms/pkg/api/rest"
+	"github.com/jeremyhahn/go-xkms/pkg/apimodule"
+	"github.com/jeremyhahn/go-xkms/pkg/config"
+)
 
 // go-xkms's qrdb ServiceModule surface, re-exported so downstream hosts
 // (go-quicbaas, go-trusted-platform) that embed a qrdb node can register the
@@ -47,3 +51,62 @@ var NewServiceModule = apimodule.NewModule
 // WithServiceModuleSSHClient wires the SSH SDK client resolver used by the
 // module's SSH RPC handlers.
 var WithServiceModuleSSHClient = apimodule.WithSSHClient
+
+// ---------------------------------------------------------------------------
+// Host self-build surface
+//
+// A host that composes the module via NewServiceModule with only a
+// ServiceModuleResolver (no WithServiceModuleRESTServer -- there is no SDK
+// re-export for that hook, and none is needed) gets NO REST/HTTP surface
+// registered for free: the module used to return immediately from
+// RegisterHTTP with nothing wired. The module now self-builds a
+// non-listening REST surface (pkg/api/rest NewHostServer) around the
+// resolved XKMSService whenever no WithServiceModuleRESTServer resolver is
+// configured. These options feed that self-build path; absent all of them
+// the module still registers its full route table (so a host's routes are
+// never silently missing), just with the login-plane route families
+// disabled exactly as when a resolver-supplied server has no qrdb client.
+// ---------------------------------------------------------------------------
+
+// ServiceModuleQRDBClientResolver returns the host's embedded/dialed qrdb
+// node client, or nil while it is not yet available. It backs the module's
+// self-built REST surface: WebAuthn user/credential persistence,
+// refresh-token storage, and the mTLS/PIV login identity plane all resolve
+// through it.
+type ServiceModuleQRDBClientResolver = apimodule.QRDBClientResolver
+
+// WithServiceModuleQRDBClient wires the host's qrdb client resolver.
+// Absent one, the module's self-built REST surface still serves the
+// crypto-operation surface (keys, certs, seal, ...) from the resolved
+// XKMSService, but the WebAuthn and mTLS/PIV login route families stay
+// disabled.
+var WithServiceModuleQRDBClient = apimodule.WithQRDBClient
+
+// ServiceModuleWebAuthnConfig is the operator-facing WebAuthn configuration
+// shape (rp_id, rp_origins, rp_display_name, ...) -- the same section
+// xkmsd's own config file uses. Distinct from WebAuthnConfig (this SDK's
+// alias for the lower-level pkg/webauthn relying-party Config), which is
+// what this type converts into internally.
+type ServiceModuleWebAuthnConfig = config.WebAuthnConfig
+
+// WithServiceModuleWebAuthn enables the module's self-built WebAuthn
+// relying-party surface. Requires WithServiceModuleQRDBClient; without one
+// the WebAuthn routes stay unmounted.
+var WithServiceModuleWebAuthn = apimodule.WithWebAuthnConfig
+
+// ServiceModuleSessionOptions tunes the module's self-built JWT signing
+// key, token claims/TTLs, and login rate limiting. The zero value uses the
+// same defaults xkmsd itself derives.
+type ServiceModuleSessionOptions = rest.SessionOptions
+
+// WithServiceModuleSession configures the module's self-built session/JWT
+// plane.
+var WithServiceModuleSession = apimodule.WithSessionOptions
+
+// ServiceModulePIVLoginOptions configures the module's self-built
+// TLS-client-certificate login exchange at POST /api/v1/auth/login/piv.
+type ServiceModulePIVLoginOptions = rest.PIVLoginOptions
+
+// WithServiceModulePIVLogin enables the module's self-built PIV/mTLS login
+// exchange.
+var WithServiceModulePIVLogin = apimodule.WithPIVLogin

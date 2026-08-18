@@ -49,7 +49,10 @@ LABEL description="Integration testing environment for go-xkms with PKCS#11 and 
 # Allow Go to automatically download the required toolchain version
 ENV GOTOOLCHAIN=auto
 
-# Install runtime dependencies
+# Install runtime dependencies. libusb-1.0-0-dev/libicu-dev are cgo build
+# deps of the module graph itself (google/gousb, dolthub/go-icu-regex via
+# go-qrdb), not gated by any backend tag -- this stage is also where the
+# module builds/tests below run.
 RUN apt-get update && apt-get install -y --no-install-recommends \
     libsofthsm2 \
     softhsm2 \
@@ -65,6 +68,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     libtasn1-6 \
     libssl3 \
     libusb-1.0-0-dev \
+    libicu-dev \
     && rm -rf /var/lib/apt/lists/*
 
 # Remove old libtpms installed by swtpm-libs package
@@ -212,19 +216,31 @@ else\n\
   exec "$@"\n\
 fi\n' > /usr/local/bin/entrypoint.sh && chmod +x /usr/local/bin/entrypoint.sh
 
+# Bake the integration-test server config into the image so the compose
+# xkms-server service (.devcontainer/docker-compose.yml) does not depend on
+# a host bind mount for it. A relative bind-mount source
+# (../configs/xkmsd-integration.yaml) resolves against the Gitea Actions job
+# container's filesystem, not the actual docker daemon host backing that
+# job, and fails outright there once the service is actually started:
+# "Error response from daemon: error while creating mount source path
+# '/workspace/.../xkmsd-integration.yaml': mkdir /workspace: file exists"
+# (task 3771). The full source tree is already COPYed into /workspace above,
+# so this just relocates the one file the XKMS_CONFIG env var points at.
+RUN mkdir -p /etc/xkms && cp /workspace/configs/xkmsd-integration.yaml /etc/xkms/xkmsd.yaml
+
 # Switch back to non-root user for security
 USER testuser
 
 # Build the server binary with all backends enabled
 RUN mkdir -p /app && \
-    CGO_ENABLED=1 go build -buildvcs=false -tags "pkcs8,tpm2,awskms,gcpkms,azurekv,pkcs11,frost" \
+    CGO_ENABLED=1 go build -buildvcs=false -tags "pkcs8,tpm2,awskms,gcpkms,azurekv,pkcs11,frost,gms_pure_go" \
     -o /app/xkmsd ./cmd/xkmsd/
 
 # Validate that the server binary exists
 RUN test -f /app/xkmsd || (echo "ERROR: Server binary not built" && exit 1)
 
 # Build the application with all backends enabled
-RUN go build -buildvcs=false -tags "pkcs8,tpm2,awskms,gcpkms,azurekv,pkcs11,frost" -v ./... 2>&1 | grep -v "build constraints exclude all Go files" || true
+RUN go build -buildvcs=false -tags "pkcs8,tpm2,awskms,gcpkms,azurekv,pkcs11,frost,gms_pure_go" -v ./... 2>&1 | grep -v "build constraints exclude all Go files" || true
 
 # Health check to verify SoftHSM is accessible
 HEALTHCHECK --interval=30s --timeout=3s --start-period=5s --retries=3 \

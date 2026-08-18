@@ -851,14 +851,16 @@ func TestServer_InitializeAuthentication_JWT_Success(t *testing.T) {
 	assert.Equal(t, "jwt", server.authenticator.Name())
 }
 
-func TestServer_InitializeAuthentication_Adaptive(t *testing.T) {
+// TestServer_InitializeAuthentication_CompositeDerived proves the derived
+// composite chain: with a JWT key configured and TLS off, the chain resolves
+// to the JWT authenticator alone — a real authenticator, never a no-op.
+func TestServer_InitializeAuthentication_CompositeDerived(t *testing.T) {
 	xkms.Reset()
 	defer xkms.Reset()
 
 	cfg := createMinimalConfig(t)
 	cfg.Auth.Enabled = true
-	cfg.Auth.Type = "adaptive"
-	cfg.Auth.Adaptive = true
+	cfg.Auth.Type = "composite"
 	cfg.Auth.JWT = &config.JWTConfig{
 		PublicKeyFile: writeTestJWTPublicKey(t),
 		Issuer:        "test-issuer",
@@ -870,11 +872,6 @@ func TestServer_InitializeAuthentication_Adaptive(t *testing.T) {
 	defer func() { _ = server.Shutdown() }()
 
 	assert.NotNil(t, server.authenticator)
-	// Adaptive authenticator name includes the required auth type suffix
-	assert.True(t, strings.HasPrefix(server.authenticator.Name(), "adaptive"),
-		"Expected authenticator name to start with 'adaptive', got: %s", server.authenticator.Name())
-	// The required authenticator adaptive escalates to must be the real JWT
-	// authenticator, never a no-op that would keep the API anonymous.
 	assert.NotContains(t, server.authenticator.Name(), "noop")
 }
 
@@ -1302,7 +1299,7 @@ func TestServer_InitializeAuthentication_MTLS_Success(t *testing.T) {
 
 // Test adaptive auth with JWT config
 
-func TestServer_InitializeAuthentication_AdaptiveWithJWT(t *testing.T) {
+func TestServer_InitializeAuthentication_CompositeWithJWTKeyFile(t *testing.T) {
 	xkms.Reset()
 	defer xkms.Reset()
 
@@ -1321,8 +1318,7 @@ func TestServer_InitializeAuthentication_AdaptiveWithJWT(t *testing.T) {
 
 	cfg := createMinimalConfig(t)
 	cfg.Auth.Enabled = true
-	cfg.Auth.Type = "adaptive" // Must set Type to "adaptive" for it to be recognized
-	cfg.Auth.Adaptive = true
+	cfg.Auth.Type = "composite"
 	cfg.Auth.JWT = &config.JWTConfig{
 		PublicKeyFile: pubKeyFile,
 		Issuer:        "test-issuer",
@@ -1338,24 +1334,22 @@ func TestServer_InitializeAuthentication_AdaptiveWithJWT(t *testing.T) {
 	defer func() { _ = server.Shutdown() }()
 
 	assert.NotNil(t, server.authenticator)
-	// Adaptive authenticator name includes the required auth type suffix
-	assert.True(t, strings.HasPrefix(server.authenticator.Name(), "adaptive"),
-		"Expected authenticator name to start with 'adaptive', got: %s", server.authenticator.Name())
+	assert.Equal(t, "jwt", server.authenticator.Name(),
+		"TLS is off, so the derived chain is jwt alone")
 }
 
 // Test adaptive auth without a JWT key file succeeds via the built-in issuer
 
-func TestServer_InitializeAuthentication_AdaptiveWithoutJWT(t *testing.T) {
+func TestServer_InitializeAuthentication_CompositeWithoutJWTConfig(t *testing.T) {
 	xkms.Reset()
 	defer xkms.Reset()
 
 	cfg := createMinimalConfig(t)
 	cfg.Auth.Enabled = true
-	cfg.Auth.Type = "adaptive"
-	cfg.Auth.Adaptive = true
+	cfg.Auth.Type = "composite"
 	// No JWT config: the built-in token issuer provisions its own signing
-	// key, so adaptive mode escalates to a JWT authenticator over that key
-	// once a user exists. Startup succeeds without any operator key file.
+	// key, so the derived chain includes a JWT authenticator over that key.
+	// Startup succeeds without any operator key file.
 
 	server, err := New(cfg)
 	require.NoError(t, err)
@@ -1363,13 +1357,13 @@ func TestServer_InitializeAuthentication_AdaptiveWithoutJWT(t *testing.T) {
 	defer func() { _ = server.Shutdown() }()
 
 	require.NotNil(t, server.tokenIssuer)
-	assert.True(t, strings.HasPrefix(server.authenticator.Name(), "adaptive"),
-		"Expected authenticator name to start with 'adaptive', got: %s", server.authenticator.Name())
+	assert.Equal(t, "jwt", server.authenticator.Name())
 }
 
-// Test adaptive auth layered on a real authenticator (auth.adaptive with a
-// non-adaptive auth.type) still resolves to that authenticator.
-func TestServer_InitializeAuthentication_AdaptiveOverMTLS(t *testing.T) {
+// TestServer_InitializeAuthentication_CompositeDerivesBothVehicles proves
+// the full derived chain: TLS on + built-in issuer available yields the
+// composite of jwt and mtls — both session vehicles enforced.
+func TestServer_InitializeAuthentication_CompositeDerivesBothVehicles(t *testing.T) {
 	xkms.Reset()
 	defer xkms.Reset()
 
@@ -1377,8 +1371,7 @@ func TestServer_InitializeAuthentication_AdaptiveOverMTLS(t *testing.T) {
 
 	cfg := createMinimalConfig(t)
 	cfg.Auth.Enabled = true
-	cfg.Auth.Type = "mtls"
-	cfg.Auth.Adaptive = true
+	cfg.Auth.Type = "composite"
 	cfg.TLS.Enabled = true
 	cfg.TLS.CertFile = certFile
 	cfg.TLS.KeyFile = keyFile
@@ -1389,21 +1382,19 @@ func TestServer_InitializeAuthentication_AdaptiveOverMTLS(t *testing.T) {
 	defer func() { _ = server.Shutdown() }()
 
 	require.NotNil(t, server.authenticator)
-	assert.True(t, strings.HasPrefix(server.authenticator.Name(), "adaptive"),
-		"Expected authenticator name to start with 'adaptive', got: %s", server.authenticator.Name())
+	assert.Equal(t, "composite", server.authenticator.Name())
 	assert.NotContains(t, server.authenticator.Name(), "noop")
 }
 
 // Test adaptive auth with WebAuthn and no JWT file succeeds via the built-in issuer
 
-func TestServer_InitializeAuthentication_AdaptiveWebAuthnNoJWTFile(t *testing.T) {
+func TestServer_InitializeAuthentication_CompositeWebAuthnNoJWTFile(t *testing.T) {
 	xkms.Reset()
 	defer xkms.Reset()
 
 	cfg := createMinimalConfig(t)
 	cfg.Auth.Enabled = true
-	cfg.Auth.Type = "adaptive"
-	cfg.Auth.Adaptive = true
+	cfg.Auth.Type = "composite"
 	cfg.WebAuthn = &config.WebAuthnConfig{
 		Enabled: true,
 		RPID:    "localhost",
@@ -1422,13 +1413,12 @@ func TestServer_InitializeAuthentication_AdaptiveWebAuthnNoJWTFile(t *testing.T)
 	defer func() { _ = server.Shutdown() }()
 
 	require.NotNil(t, server.tokenIssuer)
-	assert.True(t, strings.HasPrefix(server.authenticator.Name(), "adaptive"),
-		"Expected authenticator name to start with 'adaptive', got: %s", server.authenticator.Name())
+	assert.Equal(t, "jwt", server.authenticator.Name())
 }
 
-// Test adaptive auth with an unparsable JWT public key fails closed
+// Test composite auth with an unparsable JWT public key fails closed
 
-func TestServer_InitializeAuthentication_AdaptiveInvalidJWTKey(t *testing.T) {
+func TestServer_InitializeAuthentication_CompositeInvalidJWTKey(t *testing.T) {
 	xkms.Reset()
 	defer xkms.Reset()
 
@@ -1439,8 +1429,7 @@ func TestServer_InitializeAuthentication_AdaptiveInvalidJWTKey(t *testing.T) {
 
 	cfg := createMinimalConfig(t)
 	cfg.Auth.Enabled = true
-	cfg.Auth.Type = "adaptive"
-	cfg.Auth.Adaptive = true
+	cfg.Auth.Type = "composite"
 	cfg.WebAuthn = &config.WebAuthnConfig{
 		Enabled: true,
 		RPID:    "localhost",
@@ -1460,12 +1449,12 @@ func TestServer_InitializeAuthentication_AdaptiveInvalidJWTKey(t *testing.T) {
 	// chain plus the message that names the failing component.
 	var initErr *ErrServiceInit
 	require.ErrorAs(t, err, &initErr)
-	assert.Contains(t, err.Error(), "JWT authenticator for adaptive mode")
+	assert.Contains(t, err.Error(), "JWT authenticator for composite chain")
 }
 
-// Test JWT auth that uses required auth directly (not adaptive mode)
+// Test JWT auth that uses required auth directly
 
-func TestServer_InitializeAuthentication_JWTNotAdaptive(t *testing.T) {
+func TestServer_InitializeAuthentication_JWTDirect(t *testing.T) {
 	xkms.Reset()
 	defer xkms.Reset()
 
@@ -1485,7 +1474,6 @@ func TestServer_InitializeAuthentication_JWTNotAdaptive(t *testing.T) {
 	cfg := createMinimalConfig(t)
 	cfg.Auth.Enabled = true
 	cfg.Auth.Type = "jwt"
-	cfg.Auth.Adaptive = false // Explicitly NOT adaptive
 	cfg.Auth.JWT = &config.JWTConfig{
 		PublicKeyFile: pubKeyFile,
 		Issuer:        "test-issuer",
@@ -1727,12 +1715,11 @@ func TestServer_Reload_AuthChange(t *testing.T) {
 	require.NotNil(t, server)
 	defer func() { _ = server.Shutdown() }()
 
-	// Create new config with auth enabled. Adaptive mode escalates to the
-	// required authenticator once a user exists, so it needs a JWT
-	// verification key exactly as it does at startup.
+	// Create new config with auth enabled: composite derives the
+	// session-vehicle chain from the JWT verification key.
 	newCfg := createMinimalConfig(t)
 	newCfg.Auth.Enabled = true
-	newCfg.Auth.Type = "adaptive"
+	newCfg.Auth.Type = "composite"
 	newCfg.Auth.JWT = &config.JWTConfig{
 		PublicKeyFile: writeTestJWTPublicKey(t),
 		Issuer:        "test-issuer",
@@ -1742,8 +1729,8 @@ func TestServer_Reload_AuthChange(t *testing.T) {
 	err = server.Reload(newCfg)
 	require.NoError(t, err)
 	require.NotNil(t, server.authenticator)
-	assert.True(t, strings.HasPrefix(server.authenticator.Name(), "adaptive"),
-		"expected the rebuilt authenticator to be adaptive, got: %s", server.authenticator.Name())
+	assert.Equal(t, "jwt", server.authenticator.Name(),
+		"the rebuilt chain derives jwt alone (TLS off in the minimal config)")
 }
 
 // Test BuildTLSConfig with TLS 1.3 only
@@ -2231,27 +2218,23 @@ func TestServer_InitializeAuthentication_WebAuthnFullConfig(t *testing.T) {
 	assert.Equal(t, "required", server.webauthnConfig.UserVerification)
 }
 
-// Test adaptive authentication with mTLS as required auth
-
-func TestServer_InitializeAuthentication_AdaptiveWithMTLS(t *testing.T) {
+// TestServer_InitializeAuthentication_AdaptiveRemoved pins the removal: the
+// retired "adaptive" auth.type fails startup with the typed error naming the
+// composite replacement, never silently mapping to another behavior.
+func TestServer_InitializeAuthentication_AdaptiveRemoved(t *testing.T) {
 	xkms.Reset()
 	defer xkms.Reset()
 
 	cfg := createMinimalConfig(t)
 	cfg.Auth.Enabled = true
-	cfg.Auth.Type = "mtls"
-	cfg.Auth.Adaptive = true
-	cfg.TLS.Enabled = true
+	cfg.Auth.Type = "adaptive"
 
 	server, err := New(cfg)
-	require.NoError(t, err)
-	require.NotNil(t, server)
-	defer func() { _ = server.Shutdown() }()
-
-	assert.NotNil(t, server.authenticator)
-	// When adaptive=true but type=mtls, it uses mtls directly with adaptive wrapper
-	assert.True(t, strings.HasPrefix(server.authenticator.Name(), "adaptive"),
-		"Expected authenticator name to start with 'adaptive', got: %s", server.authenticator.Name())
+	require.Error(t, err)
+	assert.Nil(t, server)
+	var removed *ErrAdaptiveRemoved
+	require.ErrorAs(t, err, &removed)
+	assert.Contains(t, err.Error(), "composite")
 }
 
 // Test getBuildVersion returns consistent values

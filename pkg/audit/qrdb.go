@@ -51,7 +51,17 @@ func (l *QRDBLogger) Log(ctx context.Context, event *Event) error {
 	if event == nil {
 		return ErrNilEvent
 	}
+	return l.client.EmitAudit(ctx, toTransportEvent(ctx, event))
+}
 
+// toTransportEvent maps an xkms audit Event onto the canonical qrdb audit
+// record: actor/action/resource/outcome map directly, ResourceID and every
+// Details entry ride Attributes so no detail is lost in the chain, the
+// remote address and role lift into their dedicated fields, and the tenant
+// resolves from the authenticated identity on the context. Shared by every
+// sink so the record shape cannot drift between the qrdb-hosted chain and
+// the local chained file.
+func toTransportEvent(ctx context.Context, event *Event) qrdbtransport.AuditEvent {
 	attributes := make(map[string]any, len(event.Details)+1)
 	for k, v := range event.Details {
 		attributes[k] = v
@@ -73,8 +83,7 @@ func (l *QRDBLogger) Log(ctx context.Context, event *Event) error {
 	if id := auth.GetIdentity(ctx); id != nil {
 		ev.TenantID = id.TenantID
 	}
-
-	return l.client.EmitAudit(ctx, ev)
+	return ev
 }
 
 // Close is a no-op: QRDBLogger does not own the AuditClient lifecycle. The

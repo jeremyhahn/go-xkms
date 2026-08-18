@@ -55,7 +55,7 @@ func GetEnvOrFile(envVar string) (string, error) {
 	// This is a standard pattern for reading secrets from mounted files
 	fileEnvVar := envVar + "_FILE"
 	if filePath := os.Getenv(fileEnvVar); filePath != "" {
-		// #nosec G304 - file path is administrator-controlled via environment variable
+		// #nosec G304,G703 - file path is administrator-controlled via environment variable
 		data, err := os.ReadFile(filePath)
 		if err != nil {
 			return "", &EnvFileNotFoundError{

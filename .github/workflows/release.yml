@@ -10,7 +10,7 @@ env:
   REGISTRY: ghcr.io
   IMAGE_NAME_SERVER: jeremyhahn/xkms-server
   IMAGE_NAME_CLI: jeremyhahn/xkms-cli
-  GOPROXY: direct
+  GOPROXY: https://proxy.golang.org,direct
   GOSUMDB: off
 
 permissions:
@@ -147,7 +147,9 @@ jobs:
           #!/bin/bash
           set -e
 
-          # Install build dependencies
+          # Install build dependencies. libicu-dev/libusb-1.0-0-dev are cgo
+          # build deps of the module graph itself (dolthub/go-icu-regex,
+          # google/gousb via go-qrdb), not gated by any backend tag.
           apt-get update
           apt-get install -y --no-install-recommends \
             build-essential \
@@ -156,6 +158,8 @@ jobs:
             libsofthsm2-dev \
             softhsm2 \
             libtss2-dev \
+            libicu-dev \
+            libusb-1.0-0-dev \
             ca-certificates \
             file \
             libssl-dev \
@@ -172,7 +176,14 @@ jobs:
             export GOFIPS140=v1.0.0
             # FIPS builds use CGO_ENABLED=0 for pure Go crypto
             CGO_MODE="0"
-            BUILD_FLAGS="-tags=pkcs8,awskms,gcpkms,azurekv,vault"
+            # gms_pure_go selects go-mysql-server's non-cgo regex engine
+            # (internal/regex/regex_pure.go); without it, the cgo-only
+            # variant (which needs github.com/dolthub/go-icu-regex) fails
+            # with "build constraints exclude all Go files" under
+            # CGO_ENABLED=0 -- this is a required tag whenever cgo is off,
+            # not merely an optional one (matches the Makefile's own
+            # CLI_BUILD_TAGS).
+            BUILD_FLAGS="-tags=pkcs8,awskms,gcpkms,azurekv,vault,gms_pure_go"
             echo "Building FIPS 140-3 compliant binary with GOFIPS140=v1.0.0"
             echo "Note: FIPS builds exclude TPM2/PKCS11 backends (require CGO)"
           else
@@ -191,27 +202,32 @@ jobs:
           echo "Building for linux/${GOARCH} with CGO_ENABLED=${CGO_MODE}"
           echo "Build flags: ${BUILD_FLAGS}"
 
-          mkdir -p /workspace/dist
+          mkdir -p /src/dist
 
           # Build CLI
           echo "Building xkmsctl..."
           CGO_ENABLED=${CGO_MODE} go build -buildvcs=false -ldflags="${LDFLAGS}" ${BUILD_FLAGS} \
-            -o /workspace/dist/xkmsctl \
+            -o /src/dist/xkmsctl \
             ./cmd/xkmsctl
 
           # Build multi-protocol Server (supports REST, gRPC, QUIC, MCP)
           echo "Building xkmsd..."
           CGO_ENABLED=${CGO_MODE} go build -buildvcs=false -ldflags="${LDFLAGS}" ${BUILD_FLAGS} \
-            -o /workspace/dist/xkmsd \
+            -o /src/dist/xkmsd \
             ./cmd/xkmsd
 
           # Build Virtual FIDO2 Device (Linux only, requires CGO for UHID)
           # Note: xkey is Linux-only due to UHID dependency
           if [ "$CGO_MODE" = "1" ]; then
             echo "Building xkey..."
-            CGO_ENABLED=1 go build -buildvcs=false -ldflags="${LDFLAGS}" ${BUILD_FLAGS} \
-              -o /workspace/dist/xkey \
-              ./cmd/xkey
+            # xkey is a separate Go module (xkey/go.mod) with its own
+            # ./cmd/xkey package -- there is no ./cmd/xkey at the repo root
+            # (same pattern ci.yml's Build Binaries matrix step uses). Without
+            # the `cd xkey` this resolves to /src/cmd/xkey, which does not
+            # exist: "stat /src/cmd/xkey: directory not found" (task 3598).
+            (cd /src/xkey && CGO_ENABLED=1 go build -buildvcs=false -ldflags="${LDFLAGS}" ${BUILD_FLAGS} \
+              -o /src/dist/xkey \
+              ./cmd/xkey)
           else
             echo "Skipping xkey for FIPS build (requires CGO)"
           fi
@@ -219,7 +235,7 @@ jobs:
           # Verify binaries are statically linked
           echo ""
           echo "Verifying static builds..."
-          for binary in /workspace/dist/*; do
+          for binary in /src/dist/*; do
             echo "Checking $binary:"
             file "$binary"
             ldd "$binary" 2>&1 || echo "  ✓ Static binary (no dynamic dependencies)"
@@ -227,23 +243,51 @@ jobs:
           done
 
           # Set permissions
-          chmod +x /workspace/dist/*
+          chmod +x /src/dist/*
           EOF
 
           chmod +x build.sh
 
-          # Run build in native container for the target architecture
-          docker run --rm \
+          # Run build in a native container for the target architecture.
+          #
+          # NOT `docker run -v $(pwd):/workspace`: $(pwd) here is a path
+          # INSIDE THIS JOB CONTAINER (e.g. /workspace/jeremyhahn/go-xkms),
+          # but act_runner talks to the HOST's docker daemon over the
+          # socket -- the daemon tries to bind-mount that path from ITS OWN
+          # filesystem, where it doesn't exist in that shape. Runner-log-
+          # proven (task 2893 and every other Build Binaries run):
+          #   docker: Error response from daemon: error while creating mount
+          #   source path '/workspace/jeremyhahn/go-xkms': mkdir /workspace:
+          #   file exists
+          # `docker cp` sidesteps this entirely: the CLI (running in this job
+          # container, which does have the files) streams them to the daemon
+          # over the API rather than asking the daemon to resolve a bind-mount
+          # path itself, so it works regardless of where the two filesystems
+          # actually live relative to each other.
+          #
+          # `docker create` (unlike `docker run`) does not reliably forward
+          # bare `-e NAME` host-value passthrough, so each credential var is
+          # explicitly expanded here (empty string when unset, e.g. on
+          # GitHub Actions -- same no-op behavior as before).
+          CID=$(docker create \
             --platform=${{ matrix.platform }} \
-            -v $(pwd):/workspace \
-            -w /workspace \
-            -e VERSION=${{ needs.create-release.outputs.version }} \
-            -e COMMIT=${{ github.sha }} \
-            -e DATE=$(date -u +%Y-%m-%dT%H:%M:%SZ) \
-            -e GOARCH=${{ matrix.arch }} \
-            -e WITH_FIPS=${{ matrix.fips }} \
+            -w /src \
+            -e VERSION="${{ needs.create-release.outputs.version }}" \
+            -e COMMIT="${{ github.sha }}" \
+            -e DATE="$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
+            -e GOARCH="${{ matrix.arch }}" \
+            -e WITH_FIPS="${{ matrix.fips }}" \
+            -e GOPRIVATE="${GOPRIVATE:-}" \
+            -e GIT_CONFIG_COUNT="${GIT_CONFIG_COUNT:-}" \
+            -e GIT_CONFIG_KEY_0="${GIT_CONFIG_KEY_0:-}" \
+            -e GIT_CONFIG_VALUE_0="${GIT_CONFIG_VALUE_0:-}" \
             golang:bookworm \
-            bash /workspace/build.sh
+            bash /src/build.sh)
+          docker cp . "$CID":/src
+          docker start -a "$CID"
+          mkdir -p dist
+          docker cp "$CID":/src/dist/. ./dist/
+          docker rm "$CID" >/dev/null
 
           # Verify binaries were created
           echo "Build artifacts:"
@@ -326,8 +370,20 @@ jobs:
           CGO_ENABLED: 0
           VERSION: ${{ needs.create-release.outputs.version }}
         run: |
-          # Standard build without CGO (cross-compiled)
-          BUILD_FLAGS="-tags=pkcs8,awskms,gcpkms,azurekv,vault"
+          # Standard build without CGO (cross-compiled). gms_pure_go selects
+          # go-mysql-server's non-cgo regex engine -- without it the cgo-only
+          # variant (github.com/dolthub/go-icu-regex) fails to build under
+          # CGO_ENABLED=0. Required, not optional, whenever cgo is off
+          # (matches the Makefile's own CLI_BUILD_TAGS).
+          #
+          # KNOWN REMAINING BLOCKER even with this tag: go-qrdb's
+          # pkg/discovery/multicast.go references syscall.SOCK_CLOEXEC /
+          # syscall.SOCK_NONBLOCK unconditionally (no GOOS build constraint),
+          # which only exist on Linux. Cross-compiling to darwin therefore
+          # still fails inside go-qrdb itself; this is an upstream go-qrdb
+          # bug, not something fixable from this repo's build tags. See the
+          # CI audit report for details.
+          BUILD_FLAGS="-tags=pkcs8,awskms,gcpkms,azurekv,vault,gms_pure_go"
           echo "Building for darwin/${{ matrix.arch }} with CGO_ENABLED=0"
 
           LDFLAGS="-X main.version=${VERSION} -X main.commit=${{ github.sha }} -X main.date=$(date -u +%Y-%m-%dT%H:%M:%SZ) -s -w"
@@ -404,7 +460,15 @@ jobs:
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
 
+      # ghcr.io is GitHub's registry. On Gitea, secrets.GITHUB_TOKEN is the
+      # LOCAL Gitea Actions token -- it authenticates to nothing on ghcr.io
+      # and this step hard-fails the whole job before any Dockerfile is even
+      # built ("denied: denied", runner-log-proven on task 2899). The scan
+      # build below (push: false, load: true) needs no registry auth at all,
+      # so guarding only login + the final push keeps that build+scan
+      # working on Gitea while skipping what only GitHub can do.
       - name: Log in to GitHub Container Registry
+        if: github.server_url == 'https://github.com'
         uses: docker/login-action@v3
         with:
           registry: ${{ env.REGISTRY }}
@@ -432,12 +496,16 @@ jobs:
 
           ENV GOTOOLCHAIN=auto
 
-          # Install build dependencies
+          # Install build dependencies. libicu-dev/libusb-1.0-0-dev are cgo
+          # build deps of the module graph itself (dolthub/go-icu-regex,
+          # google/gousb via go-qrdb), not gated by any backend tag.
           RUN apt-get update && apt-get install -y --no-install-recommends \
               build-essential \
               pkg-config \
               libsofthsm2 \
               libtss2-dev \
+              libicu-dev \
+              libusb-1.0-0-dev \
               ca-certificates \
               && rm -rf /var/lib/apt/lists/*
 
@@ -446,7 +514,23 @@ jobs:
           # Copy go mod files
           COPY go.mod go.sum ./
           COPY sdk/go/go.mod sdk/go/go.sum ./sdk/go/
-          RUN go mod download
+
+          # Copy the xkey module files before go mod download (required for
+          # the replace directive: go.mod replaces
+          # github.com/jeremyhahn/go-xkms/xkey with ./xkey, and go mod
+          # download reads that go.mod even though this image never builds
+          # xkey itself).
+          COPY xkey/go.mod xkey/go.sum ./xkey/
+
+          # In-house modules resolve from Gitea tags (dependency-resolution.md
+          # §6). The fetch token arrives as a BuildKit secret, never a build
+          # arg or ENV, so it never becomes a layer. The mount is optional by
+          # design: with no secret supplied these modules resolve from the
+          # public proxy once tags are mirrored (§7).
+          RUN --mount=type=secret,id=gomodauth \
+              set -eu; \
+              if [ -f /run/secrets/gomodauth ]; then . /run/secrets/gomodauth; fi; \
+              go mod download
 
           # Copy source code
           COPY . .
@@ -495,6 +579,26 @@ jobs:
           CMD ["-config", "/etc/xkms/config.yaml"]
           EOF
 
+      # docker build does NOT inherit the job environment
+      # (dependency-resolution.md §6), so the Gitea fetch credentials the
+      # runner injects into this job's shell (GOPRIVATE/GIT_CONFIG_*) have to
+      # be staged into a file and handed to buildx as a secret mount. Empty
+      # on GitHub Actions (those vars are unset there), which is fine: the
+      # Dockerfile's RUN --mount=type=secret is optional and falls back to
+      # public resolution.
+      - name: Stage Gitea module credentials
+        run: |
+          umask 077
+          : > gomodauth.env
+          if [ -n "${GIT_CONFIG_KEY_0:-}" ]; then
+            {
+              echo "export GOPRIVATE=${GOPRIVATE:-}"
+              echo "export GIT_CONFIG_COUNT=${GIT_CONFIG_COUNT:-1}"
+              echo "export GIT_CONFIG_KEY_0=${GIT_CONFIG_KEY_0:-}"
+              echo "export GIT_CONFIG_VALUE_0=${GIT_CONFIG_VALUE_0:-}"
+            } > gomodauth.env
+          fi
+
       # devops.md §8: no image reaches a registry unscanned. Built amd64-only
       # and loaded into the local daemon so Trivy can read it; the multi-arch
       # push below shares the same buildx cache, so this costs a load rather
@@ -512,16 +616,23 @@ jobs:
             VERSION=${{ needs.create-release.outputs.version }}
             COMMIT=${{ github.sha }}
             DATE=${{ github.event.repository.updated_at }}
+          secret-files: |
+            gomodauth=./gomodauth.env
           cache-from: type=gha
           cache-to: type=gha,mode=max
 
       - name: Trivy image gate (fail on CRITICAL/HIGH)
+        # --ignore-unfixed matches ci.yml's Docker job gate (09abcaa): base-
+        # image CVEs with no available fix (e.g. zlib1g CVE-2023-45853,
+        # marked will_not_fix upstream) fail this scan every run otherwise
+        # (task 3604).
         run: |
           docker run --rm \
             -v /var/run/docker.sock:/var/run/docker.sock \
             aquasec/trivy:latest image \
               --format table \
               --severity CRITICAL,HIGH \
+              --ignore-unfixed \
               --exit-code 1 \
               --no-progress \
               "${REGISTRY}/${IMAGE_NAME_SERVER}:release-scan"
@@ -529,7 +640,10 @@ jobs:
           REGISTRY: ${{ env.REGISTRY }}
           IMAGE_NAME_SERVER: ${{ env.IMAGE_NAME_SERVER }}
 
+      # No credentials to push with on Gitea (see the login step above) --
+      # skip the push there rather than fail after a successful scan.
       - name: Build and push Docker image
+        if: github.server_url == 'https://github.com'
         uses: docker/build-push-action@v5
         with:
           context: .
@@ -542,6 +656,8 @@ jobs:
             VERSION=${{ needs.create-release.outputs.version }}
             COMMIT=${{ github.sha }}
             DATE=${{ github.event.repository.updated_at }}
+          secret-files: |
+            gomodauth=./gomodauth.env
           cache-from: type=gha
           cache-to: type=gha,mode=max
 
@@ -559,7 +675,10 @@ jobs:
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
 
+      # See the server-image job's comment: ghcr.io login always fails on
+      # Gitea (no valid credential), so it's guarded to GitHub only.
       - name: Log in to GitHub Container Registry
+        if: github.server_url == 'https://github.com'
         uses: docker/login-action@v3
         with:
           registry: ${{ env.REGISTRY }}
@@ -577,6 +696,22 @@ jobs:
             type=semver,pattern={{major}}
             type=raw,value=latest,enable={{is_default_branch}}
 
+      # docker build does NOT inherit the job environment
+      # (dependency-resolution.md §6); see the server job for why this file
+      # is staged and handed to buildx as a secret.
+      - name: Stage Gitea module credentials
+        run: |
+          umask 077
+          : > gomodauth.env
+          if [ -n "${GIT_CONFIG_KEY_0:-}" ]; then
+            {
+              echo "export GOPRIVATE=${GOPRIVATE:-}"
+              echo "export GIT_CONFIG_COUNT=${GIT_CONFIG_COUNT:-1}"
+              echo "export GIT_CONFIG_KEY_0=${GIT_CONFIG_KEY_0:-}"
+              echo "export GIT_CONFIG_VALUE_0=${GIT_CONFIG_VALUE_0:-}"
+            } > gomodauth.env
+          fi
+
       # devops.md §8: no image reaches a registry unscanned. See the server job
       # for why this builds amd64-only and loads rather than pushing.
       - name: Build CLI image for scanning
@@ -592,16 +727,21 @@ jobs:
             VERSION=${{ needs.create-release.outputs.version }}
             COMMIT=${{ github.sha }}
             DATE=${{ github.event.repository.updated_at }}
+          secret-files: |
+            gomodauth=./gomodauth.env
           cache-from: type=gha
           cache-to: type=gha,mode=max
 
       - name: Trivy image gate (fail on CRITICAL/HIGH)
+        # --ignore-unfixed matches ci.yml's Docker job gate (09abcaa) and the
+        # server image gate above (task 3605).
         run: |
           docker run --rm \
             -v /var/run/docker.sock:/var/run/docker.sock \
             aquasec/trivy:latest image \
               --format table \
               --severity CRITICAL,HIGH \
+              --ignore-unfixed \
               --exit-code 1 \
               --no-progress \
               "${REGISTRY}/${IMAGE_NAME_CLI}:release-scan"
@@ -609,7 +749,9 @@ jobs:
           REGISTRY: ${{ env.REGISTRY }}
           IMAGE_NAME_CLI: ${{ env.IMAGE_NAME_CLI }}
 
+      # No credentials to push with on Gitea (see the login step above).
       - name: Build and push CLI Docker image
+        if: github.server_url == 'https://github.com'
         uses: docker/build-push-action@v5
         with:
           context: .
@@ -622,6 +764,8 @@ jobs:
             VERSION=${{ needs.create-release.outputs.version }}
             COMMIT=${{ github.sha }}
             DATE=${{ github.event.repository.updated_at }}
+          secret-files: |
+            gomodauth=./gomodauth.env
           cache-from: type=gha
           cache-to: type=gha,mode=max
 

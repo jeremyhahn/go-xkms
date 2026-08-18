@@ -47,6 +47,10 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     libtss2-tcti-device0 \
     libtss2-tcti-swtpm0 \
     libusb-1.0-0-dev \
+    # dolthub/go-icu-regex (transitively via go-qrdb's embedded
+    # go-mysql-server) needs this cgo header unconditionally, not gated by
+    # any backend tag
+    libicu-dev \
     flex \
     bison \
     curl \
@@ -322,6 +326,10 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     libtss2-tcti-swtpm0 \
     tpm2-tools \
     libusb-1.0-0-dev \
+    # dolthub/go-icu-regex (transitively via go-qrdb) needs this cgo header
+    # unconditionally -- this stage is where interactive `go build`/`go test`
+    # actually run in the devcontainer
+    libicu-dev \
     # FIDO2/WebAuthn runtime dependencies (library built from source in builder stage)
     libcbor0.8 \
     # Wails v2 GUI dependencies (GTK3, WebKit2GTK, libsoup3)

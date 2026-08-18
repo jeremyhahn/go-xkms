@@ -141,50 +141,6 @@ func selfSignedCert(t *testing.T) *x509.Certificate {
 }
 
 // ============================================================================
-// Tests — syncExistingTLSCert
-// ============================================================================
-
-// mockCertStoreTrustedCA embeds mockTrustedCA and returns a configured cert store.
-type mockCertStoreTrustedCA struct {
-	mockTrustedCA
-	getCertErr error
-	cert       *x509.Certificate
-}
-
-func (m *mockCertStoreTrustedCA) CertStore() interface {
-	GetCertificate(string) (*x509.Certificate, error)
-} {
-	return m
-}
-
-func (m *mockCertStoreTrustedCA) GetCertificate(_ string) (*x509.Certificate, error) {
-	return m.cert, m.getCertErr
-}
-
-// mockCertStoreCA is a CA that satisfies the certstore.CertStore interface via
-// a fake inner so syncExistingTLSCert can call CertStore().GetCertificate.
-// We use a CA mock that has a real CertStore method returning an error.
-type failCertStoreCA struct {
-	mockTrustedCA
-	getErr error
-}
-
-type failCertStore struct{ err error }
-
-func (f *failCertStore) GetCertificate(_ string) (*x509.Certificate, error) {
-	return nil, f.err
-}
-
-// Override CertStore so it returns our failing stub.
-// (ca.TrustedCA.CertStore returns certstore.CertStore; since mockTrustedCA
-// embeds the interface, the concrete method we define wins.)
-func (m *failCertStoreCA) CertStore() interface {
-	GetCertificate(string) (*x509.Certificate, error)
-} {
-	return &failCertStore{err: m.getErr}
-}
-
-// ============================================================================
 // Tests — initTPM2Backend
 // ============================================================================
 
@@ -523,7 +479,7 @@ func TestInitializeWebAuthnService_FileBacked(t *testing.T) {
 }
 
 // ============================================================================
-// Tests — qrdbUserStore / mtlsUserStore / userChecker (nil qrdbClient branch)
+// Tests — qrdbUserStore / mtlsUserStore (nil qrdbClient branch)
 // ============================================================================
 
 func TestServer_QRDBUserStore_NilClient(t *testing.T) {
@@ -537,36 +493,25 @@ func TestServer_MTLSUserStore_NilClient(t *testing.T) {
 	assert.Nil(t, s.mtlsUserStore())
 }
 
-func TestServer_UserChecker_NilClient(t *testing.T) {
-	s := newMinimalServer(t, &config.Config{})
-	checker := s.userChecker()
-	require.NotNil(t, checker)
-	// Fail-closed: reports users exist.
-	has, err := checker.HasAnyUsers(context.Background())
-	require.NoError(t, err)
-	assert.True(t, has)
-}
-
 // ============================================================================
-// Tests — initializeAuthentication adaptive with WebAuthn + empty JWT file
+// Tests — initializeAuthentication composite with WebAuthn + empty JWT file
 // ============================================================================
 
-// TestInitializeAuthentication_AdaptiveWebAuthnNoJWT_NoFile exercises the
-// branch: adaptive mode + WebAuthn enabled + JWT config has an empty
-// PublicKeyFile. The built-in token issuer provisions its own signing key in
-// the default backend, so the WebAuthn ceremony's bearer tokens are
-// verifiable without any operator-supplied key file — startup succeeds and
-// the required authenticator is the JWT authenticator over the issuer's key.
-// (The fail-closed branch — no key file AND no issuer — is covered by
-// TestServer_CreateJWTAuthenticator_NilConfig.)
-func TestInitializeAuthentication_AdaptiveWebAuthnNoJWT_NoFile(t *testing.T) {
+// TestInitializeAuthentication_CompositeWebAuthnNoJWT_NoFile exercises the
+// derived-composite branch: composite mode + WebAuthn enabled + JWT config
+// with an empty PublicKeyFile. The built-in token issuer provisions its own
+// signing key in the default backend, so the WebAuthn ceremony's bearer
+// tokens are verifiable without any operator-supplied key file — startup
+// succeeds and the derived chain includes the JWT authenticator over the
+// issuer's key. (The fail-closed branch — no key file AND no issuer AND no
+// TLS — is covered by TestServer_InitializeAuthentication_CompositeNothingToDerive.)
+func TestInitializeAuthentication_CompositeWebAuthnNoJWT_NoFile(t *testing.T) {
 	xkms.Reset()
 	defer xkms.Reset()
 
 	cfg := createMinimalConfig(t)
 	cfg.Auth.Enabled = true
-	cfg.Auth.Type = "adaptive"
-	cfg.Auth.Adaptive = true
+	cfg.Auth.Type = "composite"
 	cfg.WebAuthn = &config.WebAuthnConfig{
 		Enabled: true,
 		RPID:    "localhost",
@@ -580,8 +525,9 @@ func TestInitializeAuthentication_AdaptiveWebAuthnNoJWT_NoFile(t *testing.T) {
 	require.NotNil(t, server)
 	defer func() { _ = server.Shutdown() }()
 
-	require.NotNil(t, server.tokenIssuer, "built-in token issuer must back the adaptive JWT authenticator")
-	assert.Equal(t, "adaptive:jwt", server.authenticator.Name())
+	require.NotNil(t, server.tokenIssuer, "built-in token issuer must back the derived JWT authenticator")
+	assert.Equal(t, "jwt", server.authenticator.Name(),
+		"TLS is off in the minimal config, so the derived chain is jwt alone")
 }
 
 // ============================================================================
@@ -1500,7 +1446,7 @@ func TestErrUnknownAuthType_Error(t *testing.T) {
 	msg := (&ErrUnknownAuthType{Type: "jwtt"}).Error()
 
 	assert.Contains(t, msg, `"jwtt"`)
-	for _, valid := range []string{"jwt", "mtls", "composite", "adaptive", "none", "noop"} {
+	for _, valid := range []string{"jwt", "mtls", "composite", "none", "noop"} {
 		assert.Contains(t, msg, valid)
 	}
 }
@@ -2729,9 +2675,9 @@ func TestInitializePasswordStore_EmptyPath(t *testing.T) {
 // Tests — New() with composite auth (no methods → error)
 // ============================================================================
 
-// TestNew_CompositeAuthNoMethodsFails verifies New() fails when composite auth
-// has no methods configured.
-func TestNew_CompositeAuthNoMethodsFails(t *testing.T) {
+// TestNew_CompositeAuthNoMethodsDerives verifies New() derives the
+// session-vehicle chain when composite auth has no methods configured.
+func TestNew_CompositeAuthNoMethodsDerives(t *testing.T) {
 	xkms.Reset()
 	defer xkms.Reset()
 
@@ -2742,8 +2688,10 @@ func TestNew_CompositeAuthNoMethodsFails(t *testing.T) {
 		Methods: []string{},
 	}
 
-	_, err := New(cfg)
-	require.Error(t, err)
+	server, err := New(cfg)
+	require.NoError(t, err)
+	defer func() { _ = server.Shutdown() }()
+	require.NotNil(t, server.authenticator)
 }
 
 // ============================================================================

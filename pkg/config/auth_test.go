@@ -159,9 +159,8 @@ func TestCreateAuthenticator_TypeJWT(t *testing.T) {
 
 func TestCreateAuthenticator_TypeAdaptive(t *testing.T) {
 	cfg := &AuthConfig{
-		Enabled:  true,
-		Type:     "adaptive",
-		Adaptive: true,
+		Enabled: true,
+		Type:    "adaptive",
 	}
 
 	authenticator, err := cfg.CreateAuthenticator()

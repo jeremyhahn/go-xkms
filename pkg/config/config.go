@@ -203,7 +203,6 @@ type ServerConfig struct {
 	QUICPort  int    `yaml:"quic_port"`
 	MCPPort   int    `yaml:"mcp_port"`
 	NoisePort int    `yaml:"noise_port"`
-
 }
 
 // NetworkServing reports whether any network protocol is enabled. Network
@@ -261,6 +260,12 @@ type TLSConfig struct {
 	// Used with CA-backed TLS to identify which certificate to load.
 	ServerCN string `yaml:"server_cn" json:"server_cn"`
 
+	// ExtraSANs are additional subject alternative names (DNS names or IP
+	// addresses) included in the auto-issued TLS server certificate, for
+	// deployments where clients reach the server by names beyond the CN
+	// and machine hostname (load-balancer aliases, split-horizon DNS).
+	ExtraSANs []string `yaml:"extra_sans" json:"extra_sans"`
+
 	// Client certificate verification (mTLS)
 	ClientAuth string   `yaml:"client_auth"` // none, request, require, verify, require_and_verify
 	ClientCAs  []string `yaml:"client_cas"`  // Additional client CA certificates
@@ -285,11 +290,6 @@ type AuthConfig struct {
 
 	// mTLS authentication
 	MTLS bool `yaml:"mtls"` // Use mTLS from client certificates
-
-	// Adaptive authentication (auto-switches between noop and required auth)
-	// When no users exist: allow all requests (bootstrap mode)
-	// When users exist: require authentication
-	Adaptive bool `yaml:"adaptive"`
 
 	// RBAC enables role-based access control
 	EnableRBAC bool `yaml:"enable_rbac"`

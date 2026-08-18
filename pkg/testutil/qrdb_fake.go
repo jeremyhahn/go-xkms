@@ -1,0 +1,445 @@
+// Copyright (c) 2026 Jeremy Hahn
+// Copyright (c) 2026 Automate The Things, LLC
+//
+// This file is part of go-xkms.
+//
+// go-xkms is dual-licensed:
+//
+// 1. GNU Affero General Public License v3.0 (AGPL-3.0)
+//    See LICENSE file or visit https://www.gnu.org/licenses/agpl-3.0.html
+//
+// 2. Commercial License
+//    Contact licensing@automatethethings.com for commercial licensing options.
+
+package testutil
+
+import (
+	"context"
+	"encoding/json"
+	"sort"
+	"strings"
+	"sync"
+
+	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
+	qrdbtransport "github.com/jeremyhahn/go-qrdb/sdk/go/transport"
+)
+
+// QRDBFakeTransport is a minimal, correct, in-memory implementation of the
+// qrdb SDK's Transport + KVClient + UserClient + RoleClient contract. It
+// backs a real *qrdbsdk.Client (via qrdbsdk.NewClient) for tests that need
+// a working qrdb identity plane without standing up an embedded node --
+// e.g. go-xkms's host-composition path (pkg/api/rest NewHostServer,
+// pkg/apimodule's self-built REST surface) and anything else that consumes
+// a *qrdbsdk.Client's Users/KV/Roles clients.
+//
+// Every method has real (if simple) semantics rather than an unexercised
+// stub return, so a test failure means the code under test actually broke.
+type QRDBFakeTransport struct {
+	mu sync.Mutex
+
+	kv map[string][]byte
+
+	users       map[uint64]*qrdbtransport.User
+	usersByName map[string]uint64
+	usersByCert map[string]uint64
+	nextUserID  uint64
+
+	roles       map[string]*qrdbtransport.Role
+	rolesByName map[string]string
+	nextRoleID  int
+}
+
+// NewQRDBFakeTransport constructs an empty in-memory fake transport.
+func NewQRDBFakeTransport() *QRDBFakeTransport {
+	return &QRDBFakeTransport{
+		kv:          make(map[string][]byte),
+		users:       make(map[uint64]*qrdbtransport.User),
+		usersByName: make(map[string]uint64),
+		usersByCert: make(map[string]uint64),
+		roles:       make(map[string]*qrdbtransport.Role),
+		rolesByName: make(map[string]string),
+	}
+}
+
+// NewQRDBFakeClient builds a real *qrdbsdk.Client wrapping a fresh
+// QRDBFakeTransport, and returns the transport too so callers can inspect
+// or pre-seed its state.
+func NewQRDBFakeClient() (*qrdbsdk.Client, *QRDBFakeTransport, error) {
+	ft := NewQRDBFakeTransport()
+	client, err := qrdbsdk.NewClient(ft)
+	if err != nil {
+		return nil, nil, err
+	}
+	return client, ft, nil
+}
+
+// --- transport.Transport ---
+
+// Connect implements transport.Transport; the fake needs no handshake.
+func (f *QRDBFakeTransport) Connect(ctx context.Context) error { return nil }
+
+// Close implements transport.Transport.
+func (f *QRDBFakeTransport) Close() error { return nil }
+
+// Healthy implements transport.Transport.
+func (f *QRDBFakeTransport) Healthy(ctx context.Context) bool { return true }
+
+// Request implements transport.Transport's generic RPC escape hatch, unused
+// by the KV/User/Role clients the fake serves.
+func (f *QRDBFakeTransport) Request(ctx context.Context, method string, req, resp any) error {
+	return nil
+}
+
+// --- transport.KVClient ---
+
+// Put implements transport.KVClient.
+func (f *QRDBFakeTransport) Put(ctx context.Context, key string, value []byte, opts ...qrdbtransport.WriteOption) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	cp := make([]byte, len(value))
+	copy(cp, value)
+	f.kv[key] = cp
+	return nil
+}
+
+// Get implements transport.KVClient.
+func (f *QRDBFakeTransport) Get(ctx context.Context, key string, opts ...qrdbtransport.ReadOption) ([]byte, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	v, ok := f.kv[key]
+	if !ok {
+		return nil, &qrdbtransport.KeyNotFoundError{Key: key}
+	}
+	cp := make([]byte, len(v))
+	copy(cp, v)
+	return cp, nil
+}
+
+// Delete implements transport.KVClient.
+func (f *QRDBFakeTransport) Delete(ctx context.Context, key string, opts ...qrdbtransport.WriteOption) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	delete(f.kv, key)
+	return nil
+}
+
+// List implements transport.KVClient.
+func (f *QRDBFakeTransport) List(ctx context.Context, prefix string, opts ...qrdbtransport.ReadOption) ([]string, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	var keys []string
+	for k := range f.kv {
+		if strings.HasPrefix(k, prefix) {
+			keys = append(keys, k)
+		}
+	}
+	sort.Strings(keys)
+	return keys, nil
+}
+
+// Scan implements transport.KVClient.
+func (f *QRDBFakeTransport) Scan(ctx context.Context, prefix string, opts ...qrdbtransport.ReadOption) (map[string][]byte, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	out := make(map[string][]byte)
+	for k, v := range f.kv {
+		if strings.HasPrefix(k, prefix) {
+			cp := make([]byte, len(v))
+			copy(cp, v)
+			out[k] = cp
+		}
+	}
+	return out, nil
+}
+
+// Exists implements transport.KVClient.
+func (f *QRDBFakeTransport) Exists(ctx context.Context, key string, opts ...qrdbtransport.ReadOption) (bool, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	_, ok := f.kv[key]
+	return ok, nil
+}
+
+// --- transport.UserClient ---
+
+// CreateUser implements transport.UserClient.
+func (f *QRDBFakeTransport) CreateUser(ctx context.Context, req *qrdbtransport.CreateUserRequest) (*qrdbtransport.User, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	nameKey := req.TenantID + "/" + req.Username
+	if _, exists := f.usersByName[nameKey]; exists {
+		return nil, &qrdbtransport.UserExistsError{Username: req.Username}
+	}
+	f.nextUserID++
+	u := &qrdbtransport.User{
+		ID:       f.nextUserID,
+		Username: req.Username,
+		TenantID: req.TenantID,
+		RoleIDs:  append([]string{}, req.RoleIDs...),
+		Enabled:  true,
+	}
+	f.users[u.ID] = u
+	f.usersByName[nameKey] = u.ID
+	return u, nil
+}
+
+// GetUser implements transport.UserClient.
+func (f *QRDBFakeTransport) GetUser(ctx context.Context, id uint64) (*qrdbtransport.User, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	u, ok := f.users[id]
+	if !ok {
+		return nil, &qrdbtransport.UserNotFoundError{ID: idString(id)}
+	}
+	return u, nil
+}
+
+// GetUserByUsername implements transport.UserClient.
+func (f *QRDBFakeTransport) GetUserByUsername(ctx context.Context, tenantID, username string) (*qrdbtransport.User, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	id, ok := f.usersByName[tenantID+"/"+username]
+	if !ok {
+		return nil, &qrdbtransport.UserNotFoundError{ID: username}
+	}
+	return f.users[id], nil
+}
+
+// GetUserByCertThumbprint implements transport.UserClient.
+func (f *QRDBFakeTransport) GetUserByCertThumbprint(ctx context.Context, thumbprint string) (*qrdbtransport.User, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	id, ok := f.usersByCert[thumbprint]
+	if !ok {
+		return nil, &qrdbtransport.UserNotFoundError{ID: thumbprint}
+	}
+	return f.users[id], nil
+}
+
+// AddCertBinding implements transport.UserClient.
+func (f *QRDBFakeTransport) AddCertBinding(ctx context.Context, userID uint64, thumbprint string, notAfterUnix int64) (*qrdbtransport.User, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	u, ok := f.users[userID]
+	if !ok {
+		return nil, &qrdbtransport.UserNotFoundError{ID: idString(userID)}
+	}
+	f.usersByCert[thumbprint] = userID
+	return u, nil
+}
+
+// UpdateUser implements transport.UserClient.
+func (f *QRDBFakeTransport) UpdateUser(ctx context.Context, req *qrdbtransport.UpdateUserRequest) (*qrdbtransport.User, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	u, ok := f.users[req.ID]
+	if !ok {
+		return nil, &qrdbtransport.UserNotFoundError{ID: idString(req.ID)}
+	}
+	if req.Username != "" {
+		delete(f.usersByName, u.TenantID+"/"+u.Username)
+		u.Username = req.Username
+		f.usersByName[u.TenantID+"/"+u.Username] = u.ID
+	}
+	if req.RoleIDs != nil {
+		u.RoleIDs = req.RoleIDs
+	}
+	return u, nil
+}
+
+// DeleteUser implements transport.UserClient.
+func (f *QRDBFakeTransport) DeleteUser(ctx context.Context, id uint64) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	u, ok := f.users[id]
+	if !ok {
+		return &qrdbtransport.UserNotFoundError{ID: idString(id)}
+	}
+	delete(f.usersByName, u.TenantID+"/"+u.Username)
+	delete(f.users, id)
+	return nil
+}
+
+// ListUsers implements transport.UserClient.
+func (f *QRDBFakeTransport) ListUsers(ctx context.Context, req *qrdbtransport.ListUsersRequest) (*qrdbtransport.ListUsersResponse, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	var out []*qrdbtransport.User
+	for _, u := range f.users {
+		if req == nil || req.TenantID == "" || u.TenantID == req.TenantID {
+			out = append(out, u)
+		}
+	}
+	return &qrdbtransport.ListUsersResponse{Users: out, Total: len(out)}, nil
+}
+
+// EnableUser implements transport.UserClient.
+func (f *QRDBFakeTransport) EnableUser(ctx context.Context, id uint64) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	u, ok := f.users[id]
+	if !ok {
+		return &qrdbtransport.UserNotFoundError{ID: idString(id)}
+	}
+	u.Enabled = true
+	return nil
+}
+
+// DisableUser implements transport.UserClient.
+func (f *QRDBFakeTransport) DisableUser(ctx context.Context, id uint64) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	u, ok := f.users[id]
+	if !ok {
+		return &qrdbtransport.UserNotFoundError{ID: idString(id)}
+	}
+	u.Enabled = false
+	return nil
+}
+
+// --- transport.RoleClient ---
+
+// CreateRole implements transport.RoleClient.
+func (f *QRDBFakeTransport) CreateRole(ctx context.Context, req *qrdbtransport.CreateRoleRequest) (*qrdbtransport.Role, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	id := req.ID
+	if id == "" {
+		f.nextRoleID++
+		id = "role-" + idString(uint64(f.nextRoleID))
+	}
+	r := &qrdbtransport.Role{
+		ID:          id,
+		Name:        req.Name,
+		TenantID:    req.TenantID,
+		Permissions: req.Permissions,
+	}
+	f.roles[id] = r
+	f.rolesByName[req.TenantID+"/"+req.Name] = id
+	return r, nil
+}
+
+// GetRole implements transport.RoleClient.
+func (f *QRDBFakeTransport) GetRole(ctx context.Context, id string) (*qrdbtransport.Role, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	r, ok := f.roles[id]
+	if !ok {
+		return nil, &qrdbtransport.RoleNotFoundError{ID: id}
+	}
+	return r, nil
+}
+
+// GetRoleByName implements transport.RoleClient.
+func (f *QRDBFakeTransport) GetRoleByName(ctx context.Context, req *qrdbtransport.GetRoleByNameRequest) (*qrdbtransport.Role, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	id, ok := f.rolesByName[req.TenantID+"/"+req.Name]
+	if !ok {
+		return nil, &qrdbtransport.RoleNotFoundError{ID: req.Name}
+	}
+	return f.roles[id], nil
+}
+
+// UpdateRole implements transport.RoleClient.
+func (f *QRDBFakeTransport) UpdateRole(ctx context.Context, req *qrdbtransport.UpdateRoleRequest) (*qrdbtransport.Role, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	r, ok := f.roles[req.ID]
+	if !ok {
+		return nil, &qrdbtransport.RoleNotFoundError{ID: req.ID}
+	}
+	if req.Name != "" {
+		r.Name = req.Name
+	}
+	if req.Permissions != nil {
+		r.Permissions = req.Permissions
+	}
+	return r, nil
+}
+
+// DeleteRole implements transport.RoleClient.
+func (f *QRDBFakeTransport) DeleteRole(ctx context.Context, id string) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	r, ok := f.roles[id]
+	if !ok {
+		return &qrdbtransport.RoleNotFoundError{ID: id}
+	}
+	delete(f.rolesByName, r.TenantID+"/"+r.Name)
+	delete(f.roles, id)
+	return nil
+}
+
+// ListRoles implements transport.RoleClient.
+func (f *QRDBFakeTransport) ListRoles(ctx context.Context, req *qrdbtransport.ListRolesRequest) (*qrdbtransport.ListRolesResponse, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	var out []*qrdbtransport.Role
+	for _, r := range f.roles {
+		out = append(out, r)
+	}
+	return &qrdbtransport.ListRolesResponse{Roles: out, Total: len(out)}, nil
+}
+
+// AssignRole implements transport.RoleClient.
+func (f *QRDBFakeTransport) AssignRole(ctx context.Context, userID uint64, roleID string) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	u, ok := f.users[userID]
+	if !ok {
+		return &qrdbtransport.UserNotFoundError{ID: idString(userID)}
+	}
+	u.RoleIDs = append(u.RoleIDs, roleID)
+	return nil
+}
+
+// UnassignRole implements transport.RoleClient.
+func (f *QRDBFakeTransport) UnassignRole(ctx context.Context, userID uint64, roleID string) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	u, ok := f.users[userID]
+	if !ok {
+		return &qrdbtransport.UserNotFoundError{ID: idString(userID)}
+	}
+	kept := u.RoleIDs[:0]
+	for _, id := range u.RoleIDs {
+		if id != roleID {
+			kept = append(kept, id)
+		}
+	}
+	u.RoleIDs = kept
+	return nil
+}
+
+// ListPermissions implements transport.RoleClient.
+func (f *QRDBFakeTransport) ListPermissions(ctx context.Context) (*qrdbtransport.ListPermissionsResponse, error) {
+	return &qrdbtransport.ListPermissionsResponse{}, nil
+}
+
+// ResolvePermissions implements transport.RoleClient.
+func (f *QRDBFakeTransport) ResolvePermissions(ctx context.Context, req *qrdbtransport.ResolvePermissionsRequest) (*qrdbtransport.ResolvePermissionsResponse, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	seen := map[string]bool{}
+	var perms []string
+	for _, id := range req.RoleIDs {
+		r, ok := f.roles[id]
+		if !ok {
+			continue
+		}
+		for _, p := range r.Permissions {
+			if !seen[p] {
+				seen[p] = true
+				perms = append(perms, p)
+			}
+		}
+	}
+	sort.Strings(perms)
+	return &qrdbtransport.ResolvePermissionsResponse{Permissions: perms}, nil
+}
+
+func idString(v uint64) string {
+	b, _ := json.Marshal(v)
+	return string(b)
+}

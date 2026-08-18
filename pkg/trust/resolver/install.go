@@ -34,7 +34,7 @@ func InstallToSystemTrust(bundlePEM []byte, certPath string) error {
 		return &ErrWriteFailed{Path: dir, Err: err}
 	}
 
-	if err := os.WriteFile(certPath, bundlePEM, 0644); err != nil {
+	if err := os.WriteFile(certPath, bundlePEM, 0644); err != nil { // #nosec G306 - system trust anchors must be world-readable
 		return &ErrWriteFailed{Path: certPath, Err: err}
 	}
 

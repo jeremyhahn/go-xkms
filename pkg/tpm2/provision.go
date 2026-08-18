@@ -49,7 +49,7 @@ func (tpm *TPM2) ForceClear() error {
 	}
 	ppiPath := fmt.Sprintf("/sys/class/tpm/%s/ppi/request", deviceName)
 
-	if err := os.WriteFile(ppiPath, []byte("5"), 0644); err != nil {
+	if err := os.WriteFile(ppiPath, []byte("5"), 0644); err != nil { // #nosec G306 - existing sysfs node, not a created file
 		return &errs.Detail{Err: ErrForceClear, Detail: fmt.Sprintf("%v", err)}
 	}
 
@@ -989,7 +989,7 @@ func hardResetViaSysRq(logger *slog.Logger) {
 	time.Sleep(100 * time.Millisecond)
 
 	// Ensure SysRq mask allows reboot + crash (1 = all enabled).
-	_ = os.WriteFile("/proc/sys/kernel/sysrq", []byte("1"), 0o644)
+	_ = os.WriteFile("/proc/sys/kernel/sysrq", []byte("1"), 0o644) // #nosec G306 - existing kernel sysctl node, not a created file
 
 	// SysRq 'b' — immediate CPU reset, skips init/ACPI entirely.
 	if err := os.WriteFile("/proc/sysrq-trigger", []byte("b"), 0o200); err != nil {

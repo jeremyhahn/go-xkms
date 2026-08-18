@@ -28,23 +28,24 @@ services:
     build:
       context: ../../..
       dockerfile: test/integration/tpm2/Dockerfile
+      secrets:
+        - gomodauth
     depends_on:
       tpm-simulator:
         condition: service_healthy
     environment:
       - TPM2_SIMULATOR_HOST=tpm-simulator
       - TPM2_SIMULATOR_PORT=2421
-    volumes:
-      - ../../..:/app
-      # Sibling module mounts (for go.mod replace directives)
-      - ../../../../go-qrdb:/go-qrdb:cached
-      - ../../../../go-quicraft:/go-quicraft:cached
-      - ../../../../go-objstore:/go-objstore:cached
-      - ../../../../go-truststrap:/go-truststrap:cached
-      - ../../../../go-codec:/go-codec:cached
-      - ../../../../go-frost:/go-frost:cached
     working_dir: /app
 
 networks:
   default:
     name: xkms-tpm2-test
+
+# Staged by `make stage-gomodauth` (dependency-resolution.md §6) into the
+# gitignored .devcontainer/gomodauth.env; empty when no Gitea credentials are
+# available, in which case the Dockerfile's optional secret mount falls back
+# to public module resolution.
+secrets:
+  gomodauth:
+    file: ../../../.devcontainer/gomodauth.env

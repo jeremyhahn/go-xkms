@@ -219,3 +219,24 @@ func (e *RandomSourceError) Unwrap() error { return e.Err }
 
 // Is reports RandomSourceError as ErrRandomSource for errors.Is.
 func (e *RandomSourceError) Is(target error) bool { return target == ErrRandomSource }
+
+// ErrAdminKeyGeneration indicates the administrator's key pair or CSR could
+// not be produced during first-boot Path A (generate-and-distribute).
+var ErrAdminKeyGeneration = errors.New("init: administrator key generation failed")
+
+// AdminKeyGenerationError wraps a failure generating the administrator's
+// key pair, building its CSR, or encoding the key during first-boot Path A.
+type AdminKeyGenerationError struct {
+	Err error
+}
+
+// Error describes the key-generation failure.
+func (e *AdminKeyGenerationError) Error() string {
+	return ErrAdminKeyGeneration.Error() + ": " + e.Err.Error()
+}
+
+// Unwrap returns the underlying error.
+func (e *AdminKeyGenerationError) Unwrap() error { return e.Err }
+
+// Is reports AdminKeyGenerationError as ErrAdminKeyGeneration for errors.Is.
+func (e *AdminKeyGenerationError) Is(target error) bool { return target == ErrAdminKeyGeneration }

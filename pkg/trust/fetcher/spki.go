@@ -99,7 +99,7 @@ func BuildTLSConfig(pin string) (*tls.Config, error) {
 	}
 	return &tls.Config{
 		MinVersion:         tls.VersionTLS13,
-		InsecureSkipVerify: true, //nolint:gosec // gated by PinVerifier; see file header.
+		InsecureSkipVerify: true, // #nosec G402 -- gated by PinVerifier; see file header.
 		// SessionTicketsDisabled prevents TLS session resumption (tickets/PSK).
 		// On a resumed session the stack does NOT invoke VerifyPeerCertificate,
 		// which would silently bypass the SPKI pin below. Disabling resumption

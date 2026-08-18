@@ -21,6 +21,7 @@ import (
 	"sync/atomic"
 	"testing"
 
+	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"google.golang.org/grpc"
@@ -210,4 +211,35 @@ func TestModule_SSHClientResolver_BoundAtServiceBind(t *testing.T) {
 	_, err = client.Health(ctx, &pb.HealthRequest{})
 	require.NoError(t, err)
 	assert.Equal(t, int32(1), sshResolved.Load())
+}
+
+// TestNewModule_RegistersRoleGrants proves module construction contributes
+// the full derived xkms permission set into qrdb's role-grant registry for
+// the Admin and Owner roles — the grants the first-boot administrator's
+// authorization depends on once qrdb's authorizer enforces module routes on
+// the unified server. Representative permissions cover each declaration
+// surface: the gRPC proto options, the REST route table, and the MCP method
+// specs.
+func TestNewModule_RegistersRoleGrants(t *testing.T) {
+	_, err := NewModule(func() *xkms.XKMSService { return nil })
+	require.NoError(t, err)
+
+	for _, perm := range []qrdbsdk.Permission{
+		"backends:list", // gRPC proto option surface
+		"keys:sign",     // REST route table surface
+		"keys:create",   // shared crypto surface
+	} {
+		assert.True(t, qrdbsdk.HasPermissionRoleGrant(qrdbsdk.PermissionRoleAdmin, perm),
+			"admin must hold %s", perm)
+		assert.True(t, qrdbsdk.HasPermissionRoleGrant(qrdbsdk.RoleNameOwner, perm),
+			"owner must hold %s", perm)
+	}
+
+	// Role creation validates grants against the global permission
+	// registry, so the contributed permissions must be registered too —
+	// an unregistered grant fails first boot.
+	assert.True(t, qrdbsdk.IsPermissionRegistered("keys:sign"))
+
+	// The SoD invariant: the Security Officer role receives nothing from xkms.
+	assert.False(t, qrdbsdk.HasPermissionRoleGrant("so", "keys:sign"))
 }

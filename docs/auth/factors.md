@@ -80,6 +80,33 @@ standard `--server`/`--transport` conventions) and calls qrdb's
 by `pkg/server/qrdb_control_plane.go` — through the SDK's
 `UserAuthFactors()` surface (`cmd/xkmsctl/auth_factor_handlers.go`).
 
+## SDK Login Plane
+
+Higher-level projects consume the complete login plane through `sdk/go`
+without importing `pkg/*`:
+
+- **FIDO2 / WebAuthn login** — the six-transport `Servicer` ceremony
+  (`BeginRegistration` / `FinishRegistration`, `BeginAuthentication` /
+  `FinishAuthentication`); a successful assertion returns the session
+  token. Available on every transport (embedded, rest, grpc, quic, mcp,
+  unix).
+- **PIV login and session verbs** — `xkms.NewLoginClient`
+  (`sdk/go/login.go`): `PIVLogin` presents the PIV slot certificate as
+  the TLS client certificate (possession of the card key IS the
+  credential, so this client speaks raw mTLS HTTPS — the same convention
+  as the credential and init-officer clients), plus `Refresh`, `Logout`,
+  and `Validate` for the access/refresh pair lifecycle.
+- **mTLS login** — no ceremony: the SPKI-bound client certificate
+  authenticates every request directly.
+- **Factor verifiers for embedders** — `xkms.WithXKMSFactorVerifiers`
+  (`sdk/go/auth.go`) returns the WebAuthn / PIV / PKCS#11 verifiers
+  behind go-qrdb's `FactorVerifier` seam, so any project embedding a
+  qrdb node wires hardware factor verification with
+  `node.WithLoginFactorVerifier(...)` instead of hand-rolling adapters.
+- **Factor management** — `xkms.Auth(client).Factors()` (the qrdb SDK
+  factors lane): enroll, list, and remove mtls / fido2 / piv / pkcs11
+  factors.
+
 ## Cross-References
 
 - [Auth bootstrap](bootstrap.md) — how an identity is established in the first place

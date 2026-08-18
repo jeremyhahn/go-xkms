@@ -74,6 +74,11 @@ services:
       # it is NOT /etc/xkms/certs/ca.crt (the module's compiled-in default,
       # which nothing in this stack ever creates).
       - XKMS_GRPC_TLS_CA=/tmp/xkms/ca.crt
+      # First-boot admin mTLS credential (published by ensure-server-ca.sh):
+      # the unified server enforces authentication, and the admin certificate
+      # is the only credential a fresh deployment holds.
+      - XKMS_GRPC_TLS_CERT=/tmp/xkms/admin-cert.pem
+      - XKMS_GRPC_TLS_KEY=/tmp/xkms/admin-key.pem
       - XKMS_SERVER_STATE_DIR=/xkms-data
       # The same trust anchor again, under the names the PKCS#11 MODULE reads
       # (pkg/pkcs11/module/config.go). The XKMS_GRPC_TLS_* pair above is read by
@@ -181,7 +186,11 @@ services:
     volumes:
       - xkms-data:/data
       - xkms-socket:/var/run/xkms
-      - ../configs/xkmsd-integration.yaml:/etc/xkms/xkmsd.yaml:ro
+      # xkmsd.yaml is baked into the image (see Dockerfile) rather than bind
+      # mounted: a relative host path here resolves against the Gitea
+      # Actions job container's filesystem, not the actual docker daemon
+      # host, and fails outright when the daemon tries to auto-create the
+      # missing mount source (task 3771: "mkdir /workspace: file exists").
     environment:
       - XKMS_CONFIG=/etc/xkms/xkmsd.yaml
       - KEYSTORE_LOG_LEVEL=debug
@@ -202,16 +211,66 @@ services:
       retries: 10
       start_period: 10s
     networks:
-      - xkms-dev
+      xkms-dev:
+        # The dotted alias exists for the WebAuthn login matrix: a WebAuthn
+        # RPID must be "localhost" or contain a dot, so the fido2 leg dials
+        # this alias and the integration config's rp_id matches it. xkey
+        # trusts the connection by SPKI pin, so no certificate SAN is needed.
+        aliases:
+          - xkms-server.test
     # xkmsd has no insecure override: it refuses to start whenever
     # ComplianceGaps() is non-empty. The integration config therefore ships a
-    # compliant posture — TLS from the embedded CA, adaptive auth (anonymous
-    # only until the first user exists), and a barrier with a development
-    # passphrase that auto-unseals — so the suites need no unseal ceremony and
-    # no pre-seeded credentials. This instance is reachable only from the
-    # private xkms-dev network and the xkms-socket volume, over a throwaway
-    # data volume.
+    # compliant posture — TLS from the embedded CA, composite jwt+mtls auth
+    # (the first-boot admin authenticates with the generated mTLS
+    # credential), and a barrier with a development passphrase that
+    # auto-unseals — so the suites need no unseal ceremony and no pre-seeded
+    # credentials. This instance is reachable only from the private xkms-dev
+    # network and the xkms-socket volume, over a throwaway data volume.
     command: ["/app/xkmsd", "-config", "/etc/xkms/xkmsd.yaml"]
+
+  # quicbaasd fixture for the login verification matrix
+  # (make integration-test-logins-quicbaas). Built from the sibling
+  # go-quicbaas working tree with the SAME gomodauth BuildKit secret the
+  # xkms-server build uses (its go.mod pins first-party modules from the
+  # internal Gitea). Started only by the quicbaas logins lane — it is NOT
+  # part of the default stack.
+  quicbaas-server:
+    build:
+      context: ../../go-quicbaas
+      dockerfile: Dockerfile
+      args:
+        # The default BUILD_TAGS is gms_pure_go only, which compiles
+        # quicbaas's module REST surface out entirely ("REST server not
+        # available (build with -tags rest to enable)") — the login matrix
+        # needs the real REST plane. gms_pure_go must stay in the list
+        # (CGO_ENABLED=0 builder).
+        BUILD_TAGS: "gms_pure_go rest"
+      secrets:
+        - gomodauth
+    image: go-quicbaas-server:dev
+    container_name: xkms-dev-quicbaas
+    profiles:
+      - quicbaas
+    volumes:
+      - quicbaas-data:/data
+      - ../configs/quicbaasd-integration.yaml:/etc/quicbaas/quicbaas.yaml:ro
+    # "start" = single-node local PebbleDB backend (no Raft) — the right
+    # shape for a login-matrix fixture.
+    command: ["start", "--config", "/etc/quicbaas/quicbaas.yaml", "--data-dir", "/data"]
+    healthcheck:
+      # The REST port answers TLS only; a TCP connect proves liveness
+      # without needing credentials inside the container.
+      test: ["CMD", "sh", "-c", "nc -z 127.0.0.1 8443 || exit 1"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+      start_period: 15s
+    networks:
+      xkms-dev:
+        # Dotted alias for the WebAuthn RPID, mirroring xkms-server.test:
+        # a WebAuthn RPID must be "localhost" or contain a dot.
+        aliases:
+          - quicbaas-server.test
 
   # Virtual FIDO2 Authenticator Service (for WebAuthn testing without hardware)
   # Uses software CTAP2 implementation with socket-based interface
@@ -242,6 +301,7 @@ volumes:
   softhsm-tokens:
   xkms-data:
   xkms-socket:
+  quicbaas-data:
   softfido-state:
   softfido-run:
 

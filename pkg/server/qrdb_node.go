@@ -50,6 +50,19 @@ import (
 func (s *Server) buildXKMSQRDBConfig() *qrdbsdk.DaemonConfig {
 	qcfg := &qrdbsdk.DaemonConfig{}
 
+	// Authentication and authorization on the embedded node follow xkmsd's
+	// own auth posture: the node's middleware guards every qrdb-native
+	// plane (admin, users, credentials, barrier) and provides the upstream
+	// identity for module routes. Stated EXPLICITLY even though the qrdb
+	// zero value is now fail-safe (nil ⇒ enabled): the embedder's posture
+	// should be legible here, not inherited silently. A SPIFFE trust
+	// domain is pinned only when the operator configured one — the
+	// first-boot default domain stays on the CN/OU identity path.
+	qcfg.Auth.Enabled = qrdbsdk.BoolPtr(s.config.Auth.Enabled)
+	if td := s.config.Cluster.RaftEnrollment.TrustDomain; td != "" {
+		qcfg.Auth.SPIFFETrustDomain = td
+	}
+
 	// Data directory: the qrdb node reads Raft.DataDir for the Pebble root,
 	// both for standalone and single-node clusters.
 	qcfg.Raft.DataDir = s.config.Storage.Path
@@ -112,11 +125,12 @@ func (s *Server) buildXKMSQRDBConfig() *qrdbsdk.DaemonConfig {
 		qcfg.Server.GRPCPort = s.config.Server.GRPCPort
 		qcfg.Protocols.REST = s.config.Protocols.REST
 		qcfg.Protocols.GRPC = s.config.Protocols.GRPC
-		qcfg.Protocols.Unix = s.config.Protocols.Unix
 		qcfg.Protocols.MCP = s.config.Protocols.MCP
-		if s.config.Protocols.Unix {
-			qcfg.Unix.SocketPath = s.config.Unix.SocketPath
-		}
+		// The Unix socket is deliberately NOT mapped onto the node: qrdb's
+		// transports are TLS-only, and the local IPC contract for xkmsd's
+		// socket is plaintext gRPC guarded by filesystem permissions (the
+		// pkcs11 module, the CLI, and the SDK unix transport all speak it).
+		// xkmsd keeps serving its own socket (startUnix) in every mode.
 		if s.config.Protocols.MCP {
 			qcfg.MCP.Port = s.config.Server.MCPPort
 		}

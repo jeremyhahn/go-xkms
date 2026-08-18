@@ -36,15 +36,16 @@ func TestTokenEntity_ZeroValue(t *testing.T) {
 func TestTokenEntity_ToTokenEntry(t *testing.T) {
 	now := time.Now().UTC().Truncate(time.Second)
 	e := &TokenEntity{
-		ID:        1,
-		ServerURL: "https://example.com",
-		TokenType: TypeBearer,
-		Source:    SourceOIDC,
-		Token:     "jwt-token",
-		ExpiresAt: now.Add(time.Hour),
-		IssuedAt:  now,
-		Issuer:    "https://idp.example.com",
-		Subject:   "user@example.com",
+		ID:           1,
+		ServerURL:    "https://example.com",
+		TokenType:    TypeBearer,
+		Source:       SourceOIDC,
+		Token:        "jwt-token",
+		RefreshToken: "refresh-token",
+		ExpiresAt:    now.Add(time.Hour),
+		IssuedAt:     now,
+		Issuer:       "https://idp.example.com",
+		Subject:      "user@example.com",
 	}
 
 	entry := e.ToTokenEntry()
@@ -60,6 +61,9 @@ func TestTokenEntity_ToTokenEntry(t *testing.T) {
 	}
 	if entry.Token != e.Token {
 		t.Errorf("Token = %q, want %q", entry.Token, e.Token)
+	}
+	if entry.RefreshToken != e.RefreshToken {
+		t.Errorf("RefreshToken = %q, want %q", entry.RefreshToken, e.RefreshToken)
 	}
 	if !entry.ExpiresAt.Equal(e.ExpiresAt) {
 		t.Errorf("ExpiresAt = %v, want %v", entry.ExpiresAt, e.ExpiresAt)
@@ -78,14 +82,15 @@ func TestTokenEntity_ToTokenEntry(t *testing.T) {
 func TestTokenEntityFromEntry(t *testing.T) {
 	now := time.Now().UTC().Truncate(time.Second)
 	entry := &TokenEntry{
-		ServerURL: "https://example.com",
-		TokenType: TypeBearer,
-		Source:    SourceFIDO2,
-		Token:     "fido2-jwt",
-		ExpiresAt: now.Add(2 * time.Hour),
-		IssuedAt:  now,
-		Issuer:    "https://idp.example.com",
-		Subject:   "device-001",
+		ServerURL:    "https://example.com",
+		TokenType:    TypeBearer,
+		Source:       SourceFIDO2,
+		Token:        "fido2-jwt",
+		RefreshToken: "fido2-refresh",
+		ExpiresAt:    now.Add(2 * time.Hour),
+		IssuedAt:     now,
+		Issuer:       "https://idp.example.com",
+		Subject:      "device-001",
 	}
 
 	e := TokenEntityFromEntry(entry)
@@ -98,5 +103,8 @@ func TestTokenEntityFromEntry(t *testing.T) {
 	}
 	if e.Token != entry.Token {
 		t.Errorf("Token = %q, want %q", e.Token, entry.Token)
+	}
+	if e.RefreshToken != entry.RefreshToken {
+		t.Errorf("RefreshToken = %q, want %q", e.RefreshToken, entry.RefreshToken)
 	}
 }

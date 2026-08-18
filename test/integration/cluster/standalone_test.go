@@ -52,10 +52,15 @@ func TestStandalone_Ready(t *testing.T) {
 			t.Fatalf("standalone %s: status=%d err=%v", path, code, err)
 		}
 	}
-	// A standalone node reports itself unclustered.
-	st, err := fetchStatus(ctx, url)
-	if err == nil && st.Status.Clustered {
-		t.Fatalf("standalone node unexpectedly reports clustered=true")
+	// A standalone node is a single-replica deployment: when the qrdb admin
+	// plane serves peers, no shard may enumerate more than one replica.
+	if p, err := fetchPeers(ctx, url); err == nil {
+		for _, shard := range p.Shards {
+			if len(shard.Peers) > 1 {
+				t.Fatalf("standalone node unexpectedly reports %d replicas in shard %d",
+					len(shard.Peers), shard.ShardID)
+			}
+		}
 	}
 }
 

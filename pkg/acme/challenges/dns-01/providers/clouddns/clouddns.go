@@ -220,7 +220,7 @@ func NewFromEnv(ctx context.Context) (*Provider, error) {
 	}
 
 	if saFile != "" {
-		// #nosec G304 - service account file path is administrator-controlled config/env
+		// #nosec G304,G703 - service account file path is administrator-controlled config/env
 		data, err := os.ReadFile(saFile)
 		if err != nil {
 			return nil, providers.NewConfigError(providerName, "service_account_file", "failed to read file: "+err.Error())

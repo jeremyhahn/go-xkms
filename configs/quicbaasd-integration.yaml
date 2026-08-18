@@ -1,0 +1,89 @@
+# quicbaasd fixture for the login verification matrix
+# (make integration-test-logins-quicbaas). A SECURE posture on purpose —
+# the matrix proves the login planes work under enforced authentication,
+# exactly like the xkmsd leg:
+#   - require_authz stays at its secure default (true): the embedded qrdb
+#     node's unified server enforces authentication on every plane.
+#   - first boot runs qrdb's canonical ceremony and writes the
+#     generate-and-distribute admin mTLS credential to /data/admin/, which
+#     the Makefile lane publishes for the suite.
+#   - network serving runs exclusively on the embedded node's unified
+#     multi-protocol server; the composed xkms ServiceModule provides the
+#     canonical /api/v1/auth/* and /api/v1/webauthn/* login planes.
+
+logging:
+  level: debug
+  format: json
+
+server:
+  host: "0.0.0.0"
+  # The matrix legs dial the compose service name and its dotted WebAuthn
+  # alias; both must appear in the auto-generated TLS certificate SANs for
+  # CA-verified clients.
+  additional_san_dns:
+    - "quicbaas-server"
+    - "quicbaas-server.test"
+  grpc:
+    enabled: true
+    port: 9443
+  rest:
+    enabled: true
+    port: 8443
+  mcp:
+    enabled: false
+  unix:
+    enabled: true
+    socket: /var/run/quicbaas/quicbaas.sock
+
+auth:
+  enabled: true
+  token_ttl: 1h
+  refresh_token_ttl: 24h
+  bootstrap_admin: true
+  # Protocol probing from the matrix legs must not lock the admin account.
+  max_login_attempts: 0
+
+storage:
+  backend: "file"
+  data_dir: "/data"
+
+object_storage:
+  backends:
+    primary:
+      type: "local"
+      description: "Local filesystem object storage"
+      config:
+        path: "/data/objects"
+
+security:
+  tls_enabled: true
+  fips_mode: false
+  authorization:
+    provider: "rbac"
+    rbac:
+      enabled: true
+      allow_anonymous: false
+
+kms:
+  enabled: true
+  backend: software
+  auto_generate_key: true
+
+secrets:
+  enabled: true
+
+iam:
+  # First boot refuses to issue the admin certificate without a SPIFFE
+  # trust domain for its URI SAN.
+  spiffe_trust_domain: "quicbaas.integration.test"
+  # PIV smartcard / mTLS client-cert login: the matrix's piv leg exchanges
+  # the first-boot admin credential for an OIDC platform session.
+  piv_login:
+    enabled: true
+  # Relying-party settings for the WebAuthn ceremony layer. The RPID must
+  # be "localhost" or contain a dot, so the compose service's dotted
+  # network alias is the identity the fido2 leg dials.
+  webauthn:
+    rp_id: "quicbaas-server.test"
+    rp_origins:
+      - "https://quicbaas-server.test:8443"

@@ -66,6 +66,11 @@ type encryptAsymRespDTO struct {
 type decryptReqDTO struct {
 	Backend    string `json:"backend,omitempty"`
 	Ciphertext []byte `json:"ciphertext"`
+	// Padding names the scheme the ciphertext was produced under. The
+	// service's decrypt default is PKCS#1 v1.5 (documented in
+	// asymDecrypterOpts), while encrypt-asym always produces OAEP, so the
+	// round trip must state OAEP explicitly.
+	Padding string `json:"padding,omitempty"`
 }
 
 type decryptRespDTO struct {
@@ -93,7 +98,7 @@ func encryptAsym(ctx context.Context, baseURL, keyID string, plaintext []byte) (
 
 // decryptData decrypts ciphertext with keyID's private key on baseURL.
 func decryptData(ctx context.Context, baseURL, keyID string, ciphertext []byte) ([]byte, int, error) {
-	body, _ := json.Marshal(decryptReqDTO{Backend: backendName, Ciphertext: ciphertext})
+	body, _ := json.Marshal(decryptReqDTO{Backend: backendName, Ciphertext: ciphertext, Padding: "oaep"})
 	code, raw, err := post(ctx, fmt.Sprintf("%s/api/v1/keys/%s/decrypt?backend=%s", baseURL, keyID, backendName), string(body))
 	if err != nil || code != http.StatusOK {
 		return nil, code, err
@@ -199,12 +204,12 @@ func publicKeyPEM(ctx context.Context, baseURL, keyID string) (string, int, erro
 func deleteKey(ctx context.Context, baseURL, keyID string) (int, []byte, error) {
 	rctx, cancel := context.WithTimeout(ctx, requestTimeout)
 	defer cancel()
-	req, err := http.NewRequestWithContext(rctx, http.MethodDelete,
-		fmt.Sprintf("%s/api/v1/keys/%s?backend=%s", baseURL, keyID, backendName), nil)
+	url := fmt.Sprintf("%s/api/v1/keys/%s?backend=%s", baseURL, keyID, backendName)
+	req, err := http.NewRequestWithContext(rctx, http.MethodDelete, url, nil)
 	if err != nil {
 		return 0, nil, err
 	}
-	resp, err := httpClient.Do(req)
+	resp, err := clientFor(url).Do(req)
 	if err != nil {
 		return 0, nil, err
 	}

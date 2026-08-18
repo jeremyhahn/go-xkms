@@ -9,7 +9,7 @@ on:
   #   branches: [ main, develop ]
 
 env:
-  GOPROXY: direct
+  GOPROXY: https://proxy.golang.org,direct
   GOSUMDB: off
 
 jobs:

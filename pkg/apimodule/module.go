@@ -49,6 +49,8 @@ import (
 
 	grpcapi "github.com/jeremyhahn/go-xkms/pkg/api/grpc"
 	pb "github.com/jeremyhahn/go-xkms/pkg/api/grpc/proto/xkmsv1"
+	"github.com/jeremyhahn/go-xkms/pkg/api/rest"
+	"github.com/jeremyhahn/go-xkms/pkg/config"
 	"github.com/jeremyhahn/go-xkms/pkg/xkms"
 	sdkssh "github.com/jeremyhahn/go-xkms/sdk/go/client/ssh"
 )
@@ -98,11 +100,63 @@ func WithSSHClient(resolve SSHClientResolver) Option {
 	}
 }
 
+// QRDBClientResolver returns the host's embedded/dialed qrdb node client, or
+// nil while it is not yet available. It backs the module's self-built REST
+// surface (rest.NewHostServer) when the host does not supply its own
+// *rest.Server via WithRESTServer: WebAuthn user/credential persistence,
+// refresh-token storage, and the mTLS/PIV login identity plane all resolve
+// through it, exactly as xkmsd's own composition (pkg/server) resolves them
+// through its own qrdb client.
+type QRDBClientResolver func() *qrdbsdk.Client
+
+// WithQRDBClient wires the host's qrdb client resolver. Absent one, the
+// module's self-built REST surface still serves the crypto-operation
+// surface (keys, certs, seal, ...) from the resolved XKMSService, but the
+// WebAuthn and mTLS/PIV login route families stay disabled — the same
+// RouteEnabled gating a resolver-supplied server with no qrdb client would
+// produce.
+func WithQRDBClient(resolve QRDBClientResolver) Option {
+	return func(m *Module) {
+		m.resolveQRDBClient = resolve
+	}
+}
+
+// WithWebAuthnConfig enables the module's self-built WebAuthn relying-party
+// surface, using the same operator-facing configuration shape xkmsd's own
+// config file section uses (pkg/config WebAuthnConfig: rp_id, rp_origins,
+// rp_display_name, ...). Requires WithQRDBClient; without one the WebAuthn
+// routes stay unmounted (BuildWebAuthnService requires a qrdb client).
+func WithWebAuthnConfig(cfg *config.WebAuthnConfig) Option {
+	return func(m *Module) {
+		m.webauthnConfig = cfg
+	}
+}
+
+// WithSessionOptions tunes the module's self-built JWT signing key, token
+// claims/TTLs, and login rate limiting. Nil (the default) uses the same
+// defaults xkmsd itself derives.
+func WithSessionOptions(opts *rest.SessionOptions) Option {
+	return func(m *Module) {
+		m.sessionOptions = opts
+	}
+}
+
+// WithPIVLogin enables the module's self-built TLS-client-certificate login
+// exchange at POST /api/v1/auth/login/piv.
+func WithPIVLogin(opts *rest.PIVLoginOptions) Option {
+	return func(m *Module) {
+		m.pivLogin = opts
+	}
+}
+
 // Module is go-xkms's hardware crypto + identity plane as a qrdb
 // ServiceModule. It registers the full KeystoreService gRPC surface into the
-// unified server's
-// gRPC-wire transports (gRPC and unix). REST and MCP hooks stay at the
-// BaseModule no-ops for now; they land with the per-capability Phase 3 waves.
+// unified server's gRPC-wire transports (gRPC and unix), the full REST route
+// table (module_http.go), and the full MCP tool surface (module_mcp.go).
+// The REST surface binds to a host-supplied *rest.Server (WithRESTServer) or,
+// absent one, self-builds a working REST surface from the resolved
+// XKMSService and whatever host inputs were configured (WithQRDBClient,
+// WithWebAuthnConfig, WithSessionOptions, WithPIVLogin) — see module_host.go.
 //
 // Start and Stop are inherited BaseModule no-ops by design: the XKMSService
 // lifecycle (backends, CA, barrier, TPM/PKCS#11 handles) is owned by
@@ -111,18 +165,34 @@ func WithSSHClient(resolve SSHClientResolver) Option {
 type Module struct {
 	qrdbsdk.BaseModule
 
-	resolve     ServiceResolver
-	resolveSSH  SSHClientResolver
-	resolveREST RESTResolver
-	resolveMCP  MCPResolver
+	resolve           ServiceResolver
+	resolveSSH        SSHClientResolver
+	resolveREST       RESTResolver
+	resolveMCP        MCPResolver
+	resolveQRDBClient QRDBClientResolver
 
 	uiPrefix       string
 	uiRedirectRoot bool
+
+	// webauthnConfig, sessionOptions, and pivLogin configure the module's
+	// self-built REST surface (rest.NewHostServer, module_host.go) when the
+	// host supplies no WithRESTServer resolver. Nil leaves the
+	// corresponding surface at rest.NewHostServer's own defaults / disabled
+	// state.
+	webauthnConfig *config.WebAuthnConfig
+	sessionOptions *rest.SessionOptions
+	pivLogin       *rest.PIVLoginOptions
 
 	// service memoizes the lazily-constructed keystore Service. Lock-free:
 	// concurrent first calls may both construct, and CompareAndSwap keeps
 	// exactly one (construction is cheap and side-effect free).
 	service atomic.Pointer[grpcapi.Service]
+
+	// selfREST memoizes the module's self-built REST surface
+	// (rest.NewHostServer), built the first time restServer() is called
+	// with no WithRESTServer resolver configured. Lock-free: concurrent
+	// first calls may both construct, and CompareAndSwap keeps exactly one.
+	selfREST atomic.Pointer[rest.Server]
 }
 
 // Compile-time interface check.
@@ -138,6 +208,9 @@ func NewModule(resolve ServiceResolver, opts ...Option) (*Module, error) {
 	for _, opt := range opts {
 		opt(m)
 	}
+	// Contribute the module's permission set into qrdb's role-grant
+	// registry before the embedded node seeds roles (module_grants.go).
+	registerRoleGrants()
 	return m, nil
 }
 
@@ -152,6 +225,23 @@ func (m *Module) Name() string { return ModuleName }
 // never a nil dereference.
 func (m *Module) RegisterGRPC(reg grpc.ServiceRegistrar) {
 	reg.RegisterService(lazyServiceDesc(&pb.KeystoreService_ServiceDesc, m.keystore), nil)
+}
+
+// PublicGRPCMethods declares the KeystoreService RPCs that must be reachable
+// without authentication, admitting them into qrdb's unified-server gRPC
+// interceptor the same way HTTPRegistrar.HandlePublic admits the mirrored
+// REST routes (GET /health, GET /api/v1/algorithms — see routes.go). Health
+// and Algorithms are unannotated in xkms.proto (no (qrdb.v1.permission)
+// option), so without this declaration qrdb's reflection interceptor
+// DEFAULT-DENYs them before the handler ever runs (see the interceptor's
+// doc comment in go-qrdb/pkg/api/grpc/proto/qrdbv1/authz.proto) — the
+// Unix-socket transport never hit this because it grants local callers
+// WithLocalTrust() instead of going through the reflection interceptor.
+func (m *Module) PublicGRPCMethods() []string {
+	return []string{
+		"/xkms.v1.KeystoreService/Health",
+		"/xkms.v1.KeystoreService/Algorithms",
+	}
 }
 
 // keystore returns the memoized keystore Service, constructing it on first

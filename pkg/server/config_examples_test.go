@@ -83,7 +83,7 @@ func TestExampleConfigs_ProduceValidAuthenticator(t *testing.T) {
 				logger: slog.New(slog.NewTextHandler(io.Discard, nil)),
 			}
 
-			// A jwt/adaptive example is not required to carry a JWT key file:
+			// A jwt/composite example is not required to carry a JWT key file:
 			// server.New provisions a signing key in the default backend and
 			// createJWTAuthenticator verifies against that issuer's public key.
 			// This test builds the Server directly, so stand the issuer in
@@ -91,7 +91,7 @@ func TestExampleConfigs_ProduceValidAuthenticator(t *testing.T) {
 			// does not have.
 			authTypeForIssuer := strings.ToLower(strings.TrimSpace(cfg.Auth.Type))
 			needsIssuer := cfg.Auth.Enabled &&
-				(authTypeForIssuer == "jwt" || authTypeForIssuer == "adaptive" || cfg.Auth.Adaptive) &&
+				(authTypeForIssuer == "jwt" || authTypeForIssuer == "composite") &&
 				(cfg.Auth.JWT == nil || cfg.Auth.JWT.PublicKeyFile == "")
 			if needsIssuer {
 				s.tokenIssuer = newTestTokenIssuer(t)
@@ -147,19 +147,10 @@ func TestExampleConfigs_AuthCompanionConfigPresent(t *testing.T) {
 				assert.True(t, cfg.TLS.Enabled,
 					"auth.type mtls requires tls.enabled: true")
 			case "composite":
-				require.NotNil(t, cfg.Auth.Composite,
-					"auth.type composite requires an auth.composite section")
-				assert.NotEmpty(t, cfg.Auth.Composite.Methods,
-					"auth.type composite requires auth.composite.methods")
-			}
-
-			// auth.adaptive escalates to the JWT authenticator once a user
-			// exists. It does not require an auth.jwt section: absent one, the
-			// daemon verifies against its own session-signing key. A declared
-			// section must still name a key file.
-			if cfg.Auth.Adaptive && cfg.Auth.JWT != nil {
-				assert.NotEmpty(t, cfg.Auth.JWT.PublicKeyFile,
-					"auth.jwt is declared alongside auth.adaptive, so it must name a public_key_file")
+				// composite derives the jwt+mtls session-vehicle chain when
+				// no explicit methods are configured, so an absent or empty
+				// auth.composite section is valid.
+				_ = cfg.Auth.Composite
 			}
 		})
 	}

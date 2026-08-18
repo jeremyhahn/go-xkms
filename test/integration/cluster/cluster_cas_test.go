@@ -327,18 +327,18 @@ func assertClusterControlPlaneHealthy(t *testing.T, ctx context.Context, nodes [
 	var leaderID uint64
 	for i, u := range nodes {
 		nodeIdx := i + 1
-		st, err := fetchStatus(ctx, u)
+		lid, err := shardLeader(ctx, u)
 		if err != nil {
 			t.Fatalf("degradation not graceful: node%d (%s) control-plane unavailable: %v", nodeIdx, u, err)
 		}
-		if !st.Status.HasLeader || st.Status.LeaderID == 0 {
+		if lid == 0 {
 			t.Fatalf("degradation not graceful: node%d (%s) reports no leader", nodeIdx, u)
 		}
 		if leaderID == 0 {
-			leaderID = st.Status.LeaderID
-		} else if st.Status.LeaderID != leaderID {
+			leaderID = lid
+		} else if lid != leaderID {
 			t.Fatalf("nodes disagree on leader: node%d says %d, earlier node said %d",
-				nodeIdx, st.Status.LeaderID, leaderID)
+				nodeIdx, lid, leaderID)
 		}
 	}
 	t.Logf("cluster degraded gracefully: all nodes responsive, single leader %d", leaderID)

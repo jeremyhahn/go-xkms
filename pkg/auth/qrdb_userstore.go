@@ -64,14 +64,3 @@ func (s *QRDBUserStore) GetByCertFingerprint(ctx context.Context, fingerprint st
 		Enabled:  u.Enabled,
 	}, nil
 }
-
-// HasAnyUsers reports whether the qrdb user store holds at least one user. It
-// satisfies the adaptive authenticator's UserChecker seam, which gates
-// first-boot enrollment on whether any identity exists yet.
-func (s *QRDBUserStore) HasAnyUsers(ctx context.Context) (bool, error) {
-	resp, err := s.users.ListUsers(ctx, &qrdbtransport.ListUsersRequest{Page: 1, PageSize: 1})
-	if err != nil {
-		return false, err
-	}
-	return resp.Total > 0 || len(resp.Users) > 0, nil
-}

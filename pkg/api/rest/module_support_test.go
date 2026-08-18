@@ -50,31 +50,40 @@ func findRoute(t *testing.T, method, pattern string) RouteSpec {
 	return RouteSpec{}
 }
 
-// TestBindRoute_UpstreamIdentitySkipsLocalAuthentication proves the
-// single-pass authentication contract of the unified server: a request
-// already carrying an identity (authenticated upstream by qrdb's
-// middleware) is admitted without consulting xkms's authenticator, while an
-// anonymous request still faces it.
-func TestBindRoute_UpstreamIdentitySkipsLocalAuthentication(t *testing.T) {
+// TestBindRoute_AuthenticationIsUpstream proves the P1 contract: BindRoute
+// itself applies NO authentication — go-qrdb's middleware owns it on the
+// unified server (its mTLS chain first, then the module's AuthenticateHTTP
+// fallback), so the bound handler serves a request whose identity was bound
+// upstream and never consults the local authenticator inline.
+func TestBindRoute_AuthenticationIsUpstream(t *testing.T) {
 	s := newBindRouteServer(t)
 	h := s.BindRoute(findRoute(t, "GET", "/api/v1/keys"))
 
-	// Anonymous: the rejecting authenticator denies.
-	w := httptest.NewRecorder()
-	h.ServeHTTP(w, httptest.NewRequest("GET", "/api/v1/keys", nil))
-	assert.Equal(t, http.StatusUnauthorized, w.Code,
-		"anonymous request must face the local authenticator")
-
-	// Upstream-authenticated: admitted without the local authenticator.
+	// Upstream-authenticated: served with the identity from the context.
 	req := httptest.NewRequest("GET", "/api/v1/keys", nil)
 	req = req.WithContext(auth.WithIdentity(req.Context(), &auth.Identity{
 		Subject:  "upstream-user",
 		TenantID: "system",
 	}))
-	w = httptest.NewRecorder()
+	w := httptest.NewRecorder()
 	h.ServeHTTP(w, req)
 	assert.NotEqual(t, http.StatusUnauthorized, w.Code,
-		"upstream-authenticated request must bypass the local authenticator")
+		"upstream-authenticated request must be served")
+}
+
+// TestServer_AuthenticateHTTP_FallbackContract proves the module fallback
+// seam: the rejecting authenticator fails closed (no identity, an error),
+// and a nil authenticator is a typed error rather than an open door.
+func TestServer_AuthenticateHTTP_FallbackContract(t *testing.T) {
+	s := newBindRouteServer(t)
+	id, err := s.AuthenticateHTTP(httptest.NewRequest("GET", "/api/v1/keys", nil))
+	assert.Error(t, err, "the rejecting authenticator must fail closed")
+	assert.Nil(t, id)
+
+	s.authenticator = nil
+	id, err = s.AuthenticateHTTP(httptest.NewRequest("GET", "/api/v1/keys", nil))
+	assert.ErrorIs(t, err, ErrAuthenticatorRequired)
+	assert.Nil(t, id)
 }
 
 // TestBindRoute_PublicRouteSkipsAuthentication proves public routes bind

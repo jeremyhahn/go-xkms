@@ -2,6 +2,11 @@ services:
   floci:
     image: floci/floci:latest
     environment:
+      - GOWORK=off
+      - GOPRIVATE=github.com/jeremyhahn/*
+      - GIT_CONFIG_COUNT=1
+      - GIT_CONFIG_KEY_0=url.http://x:${GITEA_GO_TOKEN}@198.51.100.91:3001/jeremyhahn/.insteadOf
+      - GIT_CONFIG_VALUE_0=https://github.com/jeremyhahn/
       - FLOCI_DEFAULT_REGION=us-east-1
       - FLOCI_STORAGE_MODE=memory
     healthcheck:
@@ -16,6 +21,8 @@ services:
     build:
       context: ../../..
       dockerfile: test/integration/awskms/Dockerfile
+      secrets:
+        - gomodauth
     depends_on:
       floci:
         condition: service_healthy
@@ -24,17 +31,16 @@ services:
       - AWS_ACCESS_KEY_ID=test
       - AWS_SECRET_ACCESS_KEY=test
       - AWS_REGION=us-east-1
-    volumes:
-      - ../../..:/app
-      # Sibling module mounts (for go.mod replace directives)
-      - ../../../../go-qrdb:/go-qrdb:cached
-      - ../../../../go-quicraft:/go-quicraft:cached
-      - ../../../../go-objstore:/go-objstore:cached
-      - ../../../../go-truststrap:/go-truststrap:cached
-      - ../../../../go-codec:/go-codec:cached
-      - ../../../../go-frost:/go-frost:cached
     working_dir: /app
 
 networks:
   default:
     name: xkms-awskms-test
+
+# Staged by `make stage-gomodauth` (dependency-resolution.md §6) into the
+# gitignored .devcontainer/gomodauth.env; empty when no Gitea credentials are
+# available, in which case the Dockerfile's optional secret mount falls back
+# to public module resolution.
+secrets:
+  gomodauth:
+    file: ../../../.devcontainer/gomodauth.env

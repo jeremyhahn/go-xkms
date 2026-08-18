@@ -79,10 +79,12 @@ func adminCSR(t *testing.T, cn string) []byte {
 }
 
 // TestGenerateAdminCert_PathA proves the generate-and-distribute seam: both
-// PEM blobs come back, the subject encodes tenant (OU) and admin (CN) per the
-// qrdb contract, the certificate shape is read from the canonical client
-// profile rather than restated, and the SPIFFE SAN carries the admin's own
-// tenant — not the system tenant the ceremony path pins.
+// PEM blobs come back, the key is generated OUTSIDE the CA (the CA sees only
+// a CSR — the admin's credential never enters platform key custody), the
+// CSR's subject encodes tenant (OU) and admin (CN) per the qrdb contract,
+// the requested certificate shape comes from the canonical client profile,
+// and the SPIFFE identity carries the admin's own tenant — not the system
+// tenant the ceremony path pins.
 func TestGenerateAdminCert_PathA(t *testing.T) {
 	rec := newRecordingCA(t)
 	adapter := NewCAAdapter(rec, "example.org")
@@ -92,22 +94,39 @@ func TestGenerateAdminCert_PathA(t *testing.T) {
 	assert.NotEmpty(t, certPEM, "Path A must return the certificate PEM")
 	assert.NotEmpty(t, keyPEM, "Path A must return the private key PEM (generate-and-distribute)")
 
-	req := rec.lastIssueReq
-	require.NotNil(t, req)
-	assert.Equal(t, "admin", req.Subject.CommonName)
-	assert.Equal(t, "tenant-42", req.Subject.OrganizationalUnit,
+	// The key must be a parseable PKCS#8 private key whose public half matches
+	// the issued certificate — the pair the admin actually authenticates with.
+	keyBlock, _ := pem.Decode(keyPEM)
+	require.NotNil(t, keyBlock, "the admin key must be PEM")
+	require.Equal(t, "PRIVATE KEY", keyBlock.Type)
+	key, err := x509.ParsePKCS8PrivateKey(keyBlock.Bytes)
+	require.NoError(t, err)
+	ecKey, ok := key.(*ecdsa.PrivateKey)
+	require.True(t, ok, "the admin key is ECDSA")
+
+	certBlock, _ := pem.Decode(certPEM)
+	require.NotNil(t, certBlock)
+	cert, err := x509.ParseCertificate(certBlock.Bytes)
+	require.NoError(t, err)
+	assert.True(t, ecKey.PublicKey.Equal(cert.PublicKey),
+		"the certificate must certify the key that was generated for the admin")
+	assert.Equal(t, "admin", cert.Subject.CommonName)
+	require.Len(t, cert.Subject.OrganizationalUnit, 1)
+	assert.Equal(t, "tenant-42", cert.Subject.OrganizationalUnit[0],
 		"the seam contract says tenantID identifies the OU")
 
-	// The shape must be the canonical client profile's, read live so a profile
-	// change propagates here instead of stranding admin certs on an old shape.
+	// The CA must have been asked to SIGN, never to generate or hold the key,
+	// with the canonical client profile's shape and the admin's own tenant.
+	assert.Nil(t, rec.lastIssueReq, "Path A must not route through IssueCertificate")
+	opts := rec.lastSignOpts
+	require.NotNil(t, opts, "Path A signs a locally built CSR")
 	profile := ca.NewClientProfile()
-	assert.Equal(t, profile.KeyUsage(), req.KeyUsage)
-	assert.Equal(t, profile.ExtKeyUsage(), req.ExtKeyUsage)
-
-	require.NotNil(t, req.SANS)
-	require.Len(t, req.SANS.URIs, 1)
-	assert.Equal(t, "spiffe://example.org/tenant/tenant-42/user/admin", req.SANS.URIs[0],
+	assert.Equal(t, profile.KeyUsage(), opts.KeyUsage)
+	assert.Equal(t, profile.ExtKeyUsage(), opts.ExtKeyUsage)
+	assert.Equal(t, "example.org", opts.SPIFFETrustDomain)
+	assert.Equal(t, "tenant-42", opts.TenantID,
 		"the admin cert must carry the admin's tenant, not the system tenant")
+	assert.Equal(t, "admin", opts.SPIFFEName)
 }
 
 // TestGenerateAdminCert_EmptyTenantFallsBackToSystem pins the fallback: an
@@ -120,22 +139,21 @@ func TestGenerateAdminCert_EmptyTenantFallsBackToSystem(t *testing.T) {
 	_, _, err := adapter.GenerateAdminCert(context.Background(), "", "admin")
 	require.NoError(t, err)
 
-	require.NotNil(t, rec.lastIssueReq.SANS)
-	require.Len(t, rec.lastIssueReq.SANS.URIs, 1)
-	assert.Equal(t, "spiffe://example.org/tenant/system/user/admin", rec.lastIssueReq.SANS.URIs[0])
+	require.NotNil(t, rec.lastSignOpts)
+	assert.Equal(t, "system", rec.lastSignOpts.TenantID)
 }
 
-// TestGenerateAdminCert_PropagatesIssueError proves a CA failure surfaces
+// TestGenerateAdminCert_PropagatesSignError proves a CA failure surfaces
 // instead of returning empty blobs as success.
-func TestGenerateAdminCert_PropagatesIssueError(t *testing.T) {
+func TestGenerateAdminCert_PropagatesSignError(t *testing.T) {
 	rec := newRecordingCA(t)
-	rec.issueErr = errors.New("keystore sealed")
+	rec.signErr = errors.New("keystore sealed")
 	adapter := NewCAAdapter(rec, "")
 
 	certPEM, keyPEM, err := adapter.GenerateAdminCert(context.Background(), "t", "admin")
 
 	require.Error(t, err)
-	assert.True(t, errors.Is(err, rec.issueErr))
+	assert.True(t, errors.Is(err, rec.signErr))
 	assert.Nil(t, certPEM)
 	assert.Nil(t, keyPEM)
 }

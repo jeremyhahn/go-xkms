@@ -23,10 +23,10 @@
 //     JSON. A node only reports ready once its replicated state backend serves
 //     reads, so a healthy node proves its Raft state machine is live and its
 //     local read path (follower-read consistency) works on any replica.
-//  2. Leader election: GET /api/v1/cluster/status reports a single elected
-//     leader, and all three nodes agree on the same leader_id.
-//  3. Membership: GET /api/v1/cluster/members enumerates all three replicas on
-//     every node, with exactly one marked is_leader.
+//  2. Leader election: the embedded qrdb admin plane (GET /peers) reports a
+//     single elected leader, and all three nodes agree on the same leader_id.
+//  3. Membership: GET /peers enumerates all three replicas on every node,
+//     with exactly one marked is_leader.
 //  4. Read replication: a key existence read issued against every node resolves
 //     locally via follower-read consistency without contacting the leader,
 //     proving each replica serves reads independently — the property that keeps
@@ -53,6 +53,7 @@ import (
 	"io"
 	"net/http"
 	"os"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -114,8 +115,23 @@ func requiredEnv(t *testing.T, key string) string {
 // InsecureSkipVerify allowlist that `make check-insecure-tls` enforces: each
 // node mints its serving certificate at boot, so the harness must obtain the
 // root the way any first-contact client does — through the SPKI trust
-// bootstrap over /v1/ca/bundle that pkg/trust owns — and install it as RootCAs.
+// bootstrap over /v1/ca/bootstrap that pkg/trust owns — and install it as RootCAs.
 var httpClient = &http.Client{Timeout: 2 * requestTimeout}
+
+// clientsByBase maps a node base URL to the HTTP client that authenticates
+// against it (admin mTLS, installed by TestMain). URLs without an entry fall
+// back to the unauthenticated trust-verified httpClient.
+var clientsByBase = map[string]*http.Client{}
+
+// clientFor selects the HTTP client for url by longest matching base URL.
+func clientFor(url string) *http.Client {
+	for base, c := range clientsByBase {
+		if strings.HasPrefix(url, base) {
+			return c
+		}
+	}
+	return httpClient
+}
 
 // get performs a GET against url with a bounded context and returns the
 // response body bytes.
@@ -126,7 +142,7 @@ func get(ctx context.Context, url string) (int, []byte, error) {
 	if err != nil {
 		return 0, nil, err
 	}
-	resp, err := httpClient.Do(req)
+	resp, err := clientFor(url).Do(req)
 	if err != nil {
 		return 0, nil, err
 	}
@@ -145,7 +161,7 @@ func post(ctx context.Context, url, body string) (int, []byte, error) {
 		return 0, nil, err
 	}
 	req.Header.Set("Content-Type", "application/json")
-	resp, err := httpClient.Do(req)
+	resp, err := clientFor(url).Do(req)
 	if err != nil {
 		return 0, nil, err
 	}
@@ -181,24 +197,19 @@ func poll(t *testing.T, timeout, interval time.Duration, cond func() (bool, stri
 // Cluster-state probing
 // ──────────────────────────────────────────────────────────────────────────────
 
-// clusterStatus mirrors the GET /api/v1/cluster/status response envelope.
-type clusterStatus struct {
-	Status struct {
-		ShardID   uint64 `json:"shard_id"`
-		LeaderID  uint64 `json:"leader_id"`
-		HasLeader bool   `json:"has_leader"`
-		NodeID    uint64 `json:"node_id"`
-		Clustered bool   `json:"clustered"`
-	} `json:"status"`
-}
-
-// clusterMembers mirrors the GET /api/v1/cluster/members response envelope.
-type clusterMembers struct {
-	Members []struct {
-		NodeID   uint64 `json:"node_id"`
-		Address  string `json:"address"`
-		IsLeader bool   `json:"is_leader"`
-	} `json:"members"`
+// clusterPeers mirrors the GET /peers response served by the embedded qrdb
+// node's admin plane (the replacement for the retired
+// /api/v1/cluster/members endpoint).
+type clusterPeers struct {
+	Shards []struct {
+		ShardID  uint64 `json:"shard_id"`
+		LeaderID uint64 `json:"leader_id"`
+		Peers    []struct {
+			ReplicaID uint64 `json:"replica_id"`
+			Address   string `json:"address"`
+			IsLeader  bool   `json:"is_leader"`
+		} `json:"peers"`
+	} `json:"shards"`
 }
 
 // isReady returns true when the node at baseURL responds 200 to /health/ready.
@@ -207,33 +218,66 @@ func isReady(ctx context.Context, baseURL string) bool {
 	return err == nil && code == http.StatusOK
 }
 
-// fetchStatus reads the cluster status from baseURL.
-func fetchStatus(ctx context.Context, baseURL string) (clusterStatus, error) {
-	var st clusterStatus
-	code, body, err := get(ctx, baseURL+"/api/v1/cluster/status")
+// fetchPeers reads the qrdb admin-plane peer list from baseURL.
+func fetchPeers(ctx context.Context, baseURL string) (clusterPeers, error) {
+	var p clusterPeers
+	code, body, err := get(ctx, baseURL+"/peers")
 	if err != nil {
-		return st, err
+		return p, err
 	}
 	if code != http.StatusOK {
-		return st, &errs.Message{Msg: fmt.Sprintf("status %d: %s", code, body)}
+		return p, &errs.Message{Msg: fmt.Sprintf("status %d: %s", code, body)}
 	}
-	if err := json.Unmarshal(body, &st); err != nil {
-		return st, &errs.Affix{Prefix: "decode status: ", Err: err, Suffix: fmt.Sprintf(" (%s)", body)}
+	if err := json.Unmarshal(body, &p); err != nil {
+		return p, &errs.Affix{Prefix: "decode peers: ", Err: err, Suffix: fmt.Sprintf(" (%s)", body)}
 	}
-	return st, nil
+	return p, nil
 }
 
-// leaderURL queries each node's cluster status and returns the REST base URL of
-// the elected leader. The leader_id reported by the status endpoint maps onto a
-// node URL via the static node_id→index layout (node_id N is nodes[N-1]).
-// Returns "" when no leader is yet known on any reachable node.
+// dataShardID returns the Raft shard the harness targets, from
+// CLUSTER_SHARD_ID (the same value the compose file injects into the nodes).
+func dataShardID() uint64 {
+	if v := os.Getenv("CLUSTER_SHARD_ID"); v != "" {
+		if id, err := strconv.ParseUint(v, 10, 64); err == nil {
+			return id
+		}
+	}
+	return 1
+}
+
+// shardLeader reports the data shard's leader replica ID as known by the
+// node at baseURL, via the qrdb admin plane's peer listing. Returns 0 when
+// the node does not yet see a leader. The per-node /status endpoint is
+// deliberately NOT used here: its leader_id is only populated on the node
+// that IS the leader, so followers always report zero there.
+func shardLeader(ctx context.Context, baseURL string) (uint64, error) {
+	p, err := fetchPeers(ctx, baseURL)
+	if err != nil {
+		return 0, err
+	}
+	want := dataShardID()
+	for _, shard := range p.Shards {
+		if shard.ShardID == want {
+			return shard.LeaderID, nil
+		}
+	}
+	if len(p.Shards) > 0 {
+		return p.Shards[0].LeaderID, nil
+	}
+	return 0, nil
+}
+
+// leaderURL queries each node's peer view and returns the REST base URL of
+// the elected leader. The leader replica ID maps onto a node URL via the
+// static replica→index layout (replica N is nodes[N-1]). Returns "" when no
+// leader is yet known on any reachable node.
 func leaderURL(ctx context.Context, nodes [3]string) string {
 	for _, u := range nodes {
-		st, err := fetchStatus(ctx, u)
-		if err != nil || !st.Status.HasLeader || st.Status.LeaderID == 0 {
+		lid, err := shardLeader(ctx, u)
+		if err != nil || lid == 0 {
 			continue
 		}
-		idx := int(st.Status.LeaderID) - 1
+		idx := int(lid) - 1
 		if idx >= 0 && idx < len(nodes) {
 			return nodes[idx]
 		}
@@ -311,22 +355,19 @@ func TestCluster_LeaderElected(t *testing.T) {
 	poll(t, 60*time.Second, 2*time.Second, func() (bool, string) {
 		leaderID = 0
 		for i, u := range nodes {
-			st, err := fetchStatus(ctx, u)
+			lid, err := shardLeader(ctx, u)
 			if err != nil {
-				return false, fmt.Sprintf("node%d status: %v", i+1, err)
+				return false, fmt.Sprintf("node%d peers: %v", i+1, err)
 			}
-			if !st.Status.Clustered {
-				return false, fmt.Sprintf("node%d reports non-clustered", i+1)
-			}
-			if !st.Status.HasLeader || st.Status.LeaderID == 0 {
+			if lid == 0 {
 				return false, fmt.Sprintf("node%d sees no leader", i+1)
 			}
 			if leaderID == 0 {
-				leaderID = st.Status.LeaderID
-			} else if st.Status.LeaderID != leaderID {
+				leaderID = lid
+			} else if lid != leaderID {
 				return false, fmt.Sprintf(
 					"nodes disagree on leader: %d vs node%d=%d",
-					leaderID, i+1, st.Status.LeaderID)
+					leaderID, i+1, lid)
 			}
 		}
 		return true, ""
@@ -344,23 +385,20 @@ func TestCluster_Membership(t *testing.T) {
 
 	poll(t, 60*time.Second, 2*time.Second, func() (bool, string) {
 		for i, u := range nodes {
-			code, body, err := get(ctx, u+"/api/v1/cluster/members")
+			p, err := fetchPeers(ctx, u)
 			if err != nil {
-				return false, fmt.Sprintf("node%d members: %v", i+1, err)
+				return false, fmt.Sprintf("node%d peers: %v", i+1, err)
 			}
-			if code != http.StatusOK {
-				return false, fmt.Sprintf("node%d members: status %d: %s", i+1, code, body)
+			if len(p.Shards) == 0 {
+				return false, fmt.Sprintf("node%d reports no shards", i+1)
 			}
-			var m clusterMembers
-			if err := json.Unmarshal(body, &m); err != nil {
-				return false, fmt.Sprintf("node%d members decode: %v", i+1, err)
-			}
-			if len(m.Members) != 3 {
-				return false, fmt.Sprintf("node%d sees %d members, want 3", i+1, len(m.Members))
+			shard := p.Shards[0]
+			if len(shard.Peers) != 3 {
+				return false, fmt.Sprintf("node%d sees %d replicas, want 3", i+1, len(shard.Peers))
 			}
 			leaders := 0
-			for _, mem := range m.Members {
-				if mem.IsLeader {
+			for _, peer := range shard.Peers {
+				if peer.IsLeader {
 					leaders++
 				}
 			}
@@ -512,20 +550,20 @@ func TestCluster_WriteReplication(t *testing.T) {
 	var leaderID uint64
 	for i, u := range nodes {
 		nodeIdx := i + 1
-		st, serr := fetchStatus(ctx, u)
+		lid, serr := shardLeader(ctx, u)
 		if serr != nil {
 			t.Fatalf("degradation not graceful: node%d (%s) control-plane unavailable "+
 				"after a stalled write: %v", nodeIdx, u, serr)
 		}
-		if !st.Status.HasLeader || st.Status.LeaderID == 0 {
+		if lid == 0 {
 			t.Fatalf("degradation not graceful: node%d (%s) lost its leader after a "+
 				"stalled write", nodeIdx, u)
 		}
 		if leaderID == 0 {
-			leaderID = st.Status.LeaderID
-		} else if st.Status.LeaderID != leaderID {
+			leaderID = lid
+		} else if lid != leaderID {
 			t.Fatalf("degradation not graceful: nodes disagree on leader after a "+
-				"stalled write: %d vs node%d=%d", leaderID, nodeIdx, st.Status.LeaderID)
+				"stalled write: %d vs node%d=%d", leaderID, nodeIdx, lid)
 		}
 
 		code, body, merr := get(ctx, u+"/api/v1/cluster/members")

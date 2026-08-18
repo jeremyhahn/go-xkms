@@ -132,7 +132,7 @@ func MigrateToScopedLayout(backend storage.Backend, tenantID string) (int, error
 		}
 		pw.Shared = true
 
-		newData, marshalErr := json.Marshal(&pw)
+		newData, marshalErr := json.Marshal(&pw) // #nosec G117 -- staticpw IS the password store; Password is the stored secret, persisted to the encrypted backend
 		if marshalErr != nil {
 			continue
 		}

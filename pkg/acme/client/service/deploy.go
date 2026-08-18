@@ -83,7 +83,7 @@ func (d *Deployer) Deploy(ctx context.Context, certPEM []byte, keyPEM []byte, cf
 	}
 
 	// Write certificate PEM (public data, world-readable)
-	if err := os.WriteFile(cfg.CertPath, certPEM, 0644); err != nil {
+	if err := os.WriteFile(cfg.CertPath, certPEM, 0644); err != nil { // #nosec G306 - certificate PEM is public data, world-readable
 		return ErrDeployFailed{CertName: cfg.CertPath, Err: err}
 	}
 	d.logger.Info("certificate deployed", slog.String("path", cfg.CertPath))
