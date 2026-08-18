@@ -1,0 +1,96 @@
+# PIV Smartcard — User Guide
+
+> **Status: NORMATIVE** · Feature: `piv-smartcard` · Repo: `go-xkms` · Last verified: 2026-08-19
+
+## What PIV gives you
+
+A card — or a TPM, or a token, or a directory pretending to be one — with
+numbered slots. Each slot has a job. That structure is the whole point: other
+tools that read PIV credentials expect the standard slots to hold the standard
+things.
+
+| Slot | What belongs there |
+|---|---|
+| `9a` | authentication — logging in as you |
+| `9c` | digital signature — signing documents, non-repudiation |
+| `9d` | key management — encrypting and decrypting |
+| `9e` | card authentication — used **without** asking you for anything |
+| `f9` | the card's own attestation certificate |
+| `82`–`95` | retired key-management slots, and the right home for anything else |
+
+**If you just need "a key on the card", use a retired slot.** Taking `9a` for a
+general-purpose key breaks authentication for everything else reading the card.
+
+## Prerequisites
+
+- A card and a reader, a TPM, or a PKCS#11 token — whichever your server is
+  configured for. The commands are the same in all three cases.
+- The card or token PIN. See [`../pin-management/user.md`](../pin-management/user.md).
+
+## See what is there
+
+```
+xkmsctl piv list -o json
+```
+
+This is the only reliable way to know what a slot holds. Start here.
+
+## Enrolling a credential
+
+The standard sequence — the private key is created in the slot and never leaves
+it:
+
+```
+xkmsctl piv generate 9a --algorithm ecdsap256 --subject "CN=alice,O=Example"
+xkmsctl piv csr 9a --subject "CN=alice,O=Example" > alice.csr
+xkmsctl ca sign-csr --csr alice.csr --profile client --output alice.crt
+xkmsctl piv store 9a --cert-file alice.crt
+xkmsctl piv get 9a --format pem
+```
+
+## Reading and clearing
+
+```
+xkmsctl piv get    9a --format pem
+xkmsctl piv export 9a --format der > auth.der
+xkmsctl piv delete 9a
+```
+
+`get` and `export` return the **certificate**. There is no command that exports
+a PIV private key, deliberately — if there were, the card would be a filing
+cabinet rather than a credential.
+
+## Where the slots actually live
+
+Your server is configured for one of three backings, and you may not be able to
+tell from the client:
+
+- **`file`** — a directory. The slot model is real; the hardware guarantee is
+  not. Fine for development.
+- **`tpm2`** — TPM non-volatile storage. Real hardware protection, and finite:
+  NV space can run out.
+- **`pkcs11`** — objects on a token. Real hardware protection, and subject to
+  the token's PIN and lockout rules.
+
+If a deployment claims hardware-backed PIV, confirm which one — the commands
+look identical and the guarantee does not.
+
+## Troubleshooting
+
+| What you see | What it means | What to do |
+|---|---|---|
+| "invalid slot" | not one of the defined PIV slots | use `9a`, `9c`, `9d`, `9e`, `f9`, or `82`–`95` |
+| slot empty | nothing stored there | `xkmsctl piv list` shows what is occupied |
+| slot already occupied on generate | there is already a key there | delete it deliberately, or pick a retired slot |
+| PIN required | the card or token is locked | see the PIN guide — and check lockout before retrying |
+| device unavailable | no reader, no card, or the server cannot see the token | server-side hardware |
+| NV space exhausted | the TPM has no room for another certificate | free a slot, or reconsider the NV base index |
+| other PIV tools stopped recognising the card | something took a standard slot | move it to a retired slot |
+| the attestation certificate in `f9` "proves" nothing | it was never chain-verified | verify it against the manufacturer chain |
+
+## Where to go next
+
+- PINs and lockouts: [`../pin-management/user.md`](../pin-management/user.md)
+- Getting the CSR signed: [`../certificate-authority/user.md`](../certificate-authority/user.md)
+- Using the card to log in: [`../auth-factors/user.md`](../auth-factors/user.md)
+- The desktop companion's PIV surface: [`../../xkey/docs/`](../../xkey/docs/README.md)
