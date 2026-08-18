@@ -79,17 +79,17 @@ func TestStoragePinStore_Get_NotFound(t *testing.T) {
 
 	_, err := store.Get(context.Background(), "kms.example.com", 8443)
 	if err == nil {
-		t.Fatal("expected ErrPinNotFound, got nil")
+		t.Fatal("expected PinNotFoundError, got nil")
 	}
-	var notFound truststrap.ErrPinNotFound
+	var notFound truststrap.PinNotFoundError
 	if !errors.As(err, &notFound) {
-		t.Fatalf("expected ErrPinNotFound, got %T: %v", err, err)
+		t.Fatalf("expected PinNotFoundError, got %T: %v", err, err)
 	}
 	if notFound.Host != "kms.example.com" {
-		t.Fatalf("ErrPinNotFound.Host = %q, want %q", notFound.Host, "kms.example.com")
+		t.Fatalf("PinNotFoundError.Host = %q, want %q", notFound.Host, "kms.example.com")
 	}
 	if notFound.Port != 8443 {
-		t.Fatalf("ErrPinNotFound.Port = %d, want %d", notFound.Port, 8443)
+		t.Fatalf("PinNotFoundError.Port = %d, want %d", notFound.Port, 8443)
 	}
 }
 
@@ -137,9 +137,9 @@ func TestStoragePinStore_Put_NilPin(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected error for nil pin, got nil")
 	}
-	var nilPin truststrap.ErrNilPin
+	var nilPin truststrap.NilPinError
 	if !errors.As(err, &nilPin) {
-		t.Fatalf("expected ErrNilPin, got %T: %v", err, err)
+		t.Fatalf("expected NilPinError, got %T: %v", err, err)
 	}
 }
 
@@ -191,9 +191,9 @@ func TestStoragePinStore_Delete_RemovesPin(t *testing.T) {
 		t.Fatalf("Delete: %v", err)
 	}
 	_, err := store.Get(ctx, "kms.example.com", 8443)
-	var notFound truststrap.ErrPinNotFound
+	var notFound truststrap.PinNotFoundError
 	if !errors.As(err, &notFound) {
-		t.Fatalf("expected ErrPinNotFound after delete, got %v", err)
+		t.Fatalf("expected PinNotFoundError after delete, got %v", err)
 	}
 }
 

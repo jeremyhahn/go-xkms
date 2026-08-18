@@ -28,7 +28,7 @@ require (
 	github.com/jeremyhahn/go-codec v1.4.0
 	github.com/jeremyhahn/go-frost v0.1.8-alpha
 	github.com/jeremyhahn/go-qrdb v0.5.9-alpha
-	github.com/jeremyhahn/go-qrdb/sdk/go v0.5.8-alpha
+	github.com/jeremyhahn/go-qrdb/sdk/go v0.5.9-alpha
 	github.com/jeremyhahn/go-quicraft v0.6.2-alpha
 	github.com/jeremyhahn/go-truststrap v0.1.3-alpha
 	github.com/jeremyhahn/go-xkms/sdk/go v0.7.1-alpha

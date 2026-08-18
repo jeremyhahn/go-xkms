@@ -7,6 +7,31 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- **Cross-repo dependencies bumped to their latest tags** (root, `sdk/go`,
+  `xkey`): go-frost v0.1.7→v0.1.8-alpha, go-objstore v0.2.1→v0.2.2-alpha,
+  go-qrdb v0.5.7→v0.5.9-alpha (and `go-qrdb/sdk/go` v0.5.7→v0.5.9-alpha),
+  go-quicraft v0.4.2→v0.6.2-alpha, go-truststrap v0.1.2→v0.1.3-alpha.
+  go-codec (v1.4.0) and go-luks2 (v0.1.6-alpha) were already current.
+- **go-truststrap typed errors renamed at the source**: `ErrPinNotFound` →
+  `PinNotFoundError` and `ErrNilPin` → `NilPinError`. Call sites in
+  `pkg/trust/bootstrap` follow; the field shapes are unchanged. This repo's
+  own `resolver.ErrPinNotFound` is a different type and keeps its name.
+- **SPKI pin bootstrap verifies through `VerifyConnection`**, not
+  `VerifyPeerCertificate`. go-truststrap made the switch because
+  `VerifyPeerCertificate` is skipped on a resumed session, which would let a
+  resumed connection bypass the pin; it also disables session tickets.
+  `NewSPKIPinTLSConfig` is a passthrough, so this repo inherits the fix.
+
+### Removed — BREAKING (Go SDK)
+
+- **`sdk.QRDBCachedDiskBackend` and `sdk.QRDBNewCachedDiskBackend`** are gone.
+  They were pass-through aliases for `qrdb.CachedDiskBackend` /
+  `qrdb.NewCachedDiskBackend`, which go-qrdb removed in v0.5.9-alpha with no
+  replacement. Nothing in this repo consumed either alias. Callers needing a
+  read-through cache in front of a disk backend must supply their own.
+
 ## [0.6.0-alpha] - 2026-08-17
 
 ### Changed — BREAKING: login plane unified (mTLS + FIDO2 + PIV)

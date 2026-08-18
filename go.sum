@@ -363,6 +363,8 @@ github.com/jeremyhahn/go-qrdb/sdk/go v0.5.7-alpha h1:NVQTCjfY5EPE/NOhvbl73JtOvfE
 github.com/jeremyhahn/go-qrdb/sdk/go v0.5.7-alpha/go.mod h1:ZyOe+jXR4F5PI1QbboIng9PWl/6rO3wOAZZZLXVrjSM=
 github.com/jeremyhahn/go-qrdb/sdk/go v0.5.8-alpha h1:RAVaK0NRLxmEStVE902AXaPq/8OZxuMJ8hQaEofJEK4=
 github.com/jeremyhahn/go-qrdb/sdk/go v0.5.8-alpha/go.mod h1:ZyOe+jXR4F5PI1QbboIng9PWl/6rO3wOAZZZLXVrjSM=
+github.com/jeremyhahn/go-qrdb/sdk/go v0.5.9-alpha h1:1RBGo0lMu9rs9HyuA9PkbII9S66kkT5GuFKxva/mtOQ=
+github.com/jeremyhahn/go-qrdb/sdk/go v0.5.9-alpha/go.mod h1:WHVHznBMidHZmwgan02LfhvtxJfy95heY3NoVIs3bis=
 github.com/jeremyhahn/go-quicraft v0.4.2-alpha h1:clal9zNcy3A5jPWAani66JfkMWXT0L7BL/76c5n8p0Y=
 github.com/jeremyhahn/go-quicraft v0.4.2-alpha/go.mod h1:0Z/9RFjYvzrfod+fIPzXjqPjMa92x6le2Ta3OWIRBxk=
 github.com/jeremyhahn/go-quicraft v0.5.1-alpha h1:tL/xtcEQSbHn63BluewlII+2RnOACkE3BsYKmF/a4IQ=
