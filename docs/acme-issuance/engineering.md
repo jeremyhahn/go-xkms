@@ -1,0 +1,174 @@
+# ACME Issuance — Engineering Contract
+
+> **Status: NORMATIVE** · Feature: `acme-issuance` · Repo: `go-xkms` · Last verified: 2026-08-19
+
+## Exported surface
+
+### Server
+
+`pkg/acme` is the server. Entry points that matter to an implementer:
+
+- `pkg/acme/server/handlers` — one file per protocol object: `directory.go`,
+  `account.go`, `authorization.go`, `challenge.go`, `certificate.go`,
+  `ca_bundle.go`, `endorse_eab.go`, `audit.go`, `compliance_attestation.go`,
+  `service.go`.
+- `pkg/acme/entities` — the protocol objects themselves.
+- `pkg/acme/nonce` — nonce issue and consume.
+- `pkg/acme/issuance` — the bridge to `pkg/ca`.
+- `pkg/acme/storage`, `pkg/acme/qrdb` — persistence, through `go-qrdb/sdk/go`.
+- `pkg/acme/policy`, `pkg/acme/server/caa.go` — issuance policy and CAA.
+- `pkg/acme/ratelimits`, `pkg/acme/server/rate_limiter.go`,
+  `tenant_rate_limiter.go`, `circuit_breaker.go`, `server/degradation` — the
+  protective layer.
+- `pkg/acme/admin` — the administrative plane (`auth.go`, `authz.go`,
+  `barrier_handlers.go`, `barrier_service.go`, `ca_adapter.go`).
+- `pkg/acme/api/adapter.go` plus `api/{rest,grpc,quic,mcp}` — the transport
+  adapters, and `api/swagger` for the OpenAPI surface.
+- `pkg/acme/ct` — Certificate Transparency types.
+
+### Client
+
+- `pkg/acme/client` — the Go client.
+- `sdk/go/acme` — the SDK surface, including `sdk/go/acme/trustedca.go` and
+  `sdk/go/acme/transport/quic`.
+- `cmd/acme-client` — the `trusted-acme-client` binary
+  (`account`, `cert`, `device`, `service`, `serve`, `version` groups).
+
+### Directory document
+
+`pkg/acme/server/handlers/directory.go` builds the directory from
+`s.baseRESTURI`:
+
+```go
+NewNonce:   baseRESTURI + "/acme/new-nonce"
+NewAccount: baseRESTURI + "/acme/new-account"
+NewOrder:   baseRESTURI + "/acme/new-order"
+RevokeCert: baseRESTURI + "/acme/revoke-cert"
+KeyChange:  baseRESTURI + "/acme/key-change"
+```
+
+`baseRESTURI` is configured, not derived from the request, and
+`service.go:581` documents the trap it prevents: a mis-set base produces
+doubled prefixes such as `https://host/api/v1/api/v1/acme/new-account`. Set it
+once, to the externally visible base.
+
+## Invariants
+
+- **Every POST carries a fresh nonce, and a nonce is consumed exactly once.**
+  Replaying a nonce is rejected, not tolerated.
+- **Every POST is JWS-signed by the account key** (or, for `new-account`, by the
+  key being registered). The signature, not a session, is the authorization.
+- **An order's state machine is one-way**: `pending → ready → processing →
+  valid`, or `invalid`. There is no path back from `invalid`.
+- **Challenge validation is server-initiated.** The client says "ready"; the
+  server does the fetching, resolving or credential activation. Nothing the
+  client sends about its own state is trusted.
+- **`enroll-01` succeeds only if the TPM can activate the credential.** The
+  server never accepts a secret it did not itself protect with
+  `TPM2_MakeCredential` against the verified EK.
+- **CAA is checked before issuance**, not after.
+- **Rate limits are per account and per tenant.** Exceeding either refuses the
+  order; it does not queue it.
+- **Under pressure the circuit breaker refuses new orders.** Degradation never
+  means "issue without validating".
+
+## Error semantics
+
+ACME errors are RFC 8555 problem documents with URN types (`urn:ietf:params:acme:error:*`).
+Internal typed errors are `pkg/acme/errors` and
+`pkg/acme/server/handlers/errors.go`; the CA-layer errors are
+`pkg/ca/errors.go`.
+
+The mapping an implementer needs:
+
+| Internal condition | ACME problem type | HTTP |
+|---|---|---|
+| bad or replayed nonce | `badNonce` | 400 |
+| JWS signature invalid | `malformed` / `unauthorized` | 400 / 401 |
+| account does not exist | `accountDoesNotExist` | 400 |
+| identifier not allowed by policy | `rejectedIdentifier` | 403 |
+| CAA forbids issuance | `caa` | 403 |
+| challenge validation failed | `incorrectResponse` / `connection` / `dns` | 403 |
+| rate limit exceeded | `rateLimited` | 429 |
+| order not ready to finalize | `orderNotReady` | 403 |
+| CSR does not match the order | `badCSR` | 400 |
+
+**Fail closed:** unvalidated authorization, failed CAA, failed attestation,
+exceeded rate limit, open circuit breaker. Every one of them refuses to issue.
+
+## Configuration
+
+ACME configuration lives in the server config (`pkg/config`). The
+cluster-enrollment block is the one with non-obvious semantics —
+`RaftACMEEnrollmentConfig` (`pkg/config/config.go:703`):
+
+```yaml
+cluster:
+  raft_enrollment:
+    key_backend: tpm2
+    acme:
+      enabled: true
+      directory_url: "https://node1.example.com:8443/api/v1/acme/directory"
+      challenge_port: "8080"
+```
+
+- `enabled` switches Raft node certificate provisioning to attested mode.
+- `directory_url` is **required on joining nodes and ignored on the first
+  node**, which issues in-process from the local `TrustedCA`.
+- `challenge_port` is the local HTTP port the joining node serves the
+  `enroll-01` credential-activation exchange on; the ACME server dials back to
+  it. Defaults to `"8080"`.
+- `Validate(keyBackend)` currently accepts any backend. The doc comment states
+  why: in-process issuance on the first node stamps a key-provenance OID for any
+  backend, and a joining node's challenge is selected by backend at runtime
+  (`tpm2` → `enroll-01`; other backends → CSR enrollment). A software-only
+  cluster is therefore valid configuration, and an unimplemented joiner path
+  surfaces a precise runtime error rather than a config-time one.
+
+`RaftACMEConfigError` (`Field`, `Reason`) renders as
+`cluster: raft_enrollment.acme.<field>: <reason>`.
+
+Port note: `pkg/acme/api/server/server.go:49` sets `DefaultQUICPort = 9444`,
+which collides with the SDK's `DefaultMCPAddress` of `localhost:9444`. See
+[`../key-management/api.md`](../key-management/api.md) §Port conflicts.
+
+## Persistence
+
+Accounts, orders, authorizations, challenges, nonces and issued certificates
+persist through `pkg/acme/storage` over `go-qrdb/sdk/go` (`pkg/acme/qrdb`).
+Certificate blobs land in the certificate store like any other certificate.
+
+Nonces are short-lived and single-use; their store is deliberately separate so
+expiry is cheap.
+
+Migration: the ACME object model is RFC-defined on the wire and internal in
+storage. Changing the storage layout requires a `pkg/migration` step.
+
+## Test strategy
+
+- **Unit** — `pkg/acme/**` is heavily covered; the handler package carries an
+  explicit 90%+ coverage push (`coverage_90_*_test.go`) plus per-object suites
+  (`account_test.go`, `authorization_test.go`, `challenge_test.go`,
+  `certificate_test.go`, `directory_test.go`, `caa_test.go`,
+  `rate_limiter_test.go`, `circuit_breaker_test.go`).
+- **RFC conformance** — `test/integration/rfc8555`.
+- **Integration** — `test/integration/acme-server`, `acme-client`,
+  `acme-admin`, `acme-multiprotocol`, `acme-tpm`, `acmeclient`, `acmeserver`,
+  `challenges`. Compose file: `test/integration/acme-docker-compose.integration.yml`.
+- **TCG / attestation** — `test/integration/acme-tpm` plus
+  `pkg/acme/server/handlers/audit_tcg_test.go`,
+  `compliance_attestation_test.go`.
+- **Cross-repo** — `pkg/acme/server/handlers/cluster_issuer_test.go` covers the
+  Raft enrollment path.
+
+## Observability
+
+`pkg/acme/server/metrics` exposes issuance, challenge and rate-limit metrics;
+`pkg/acme/audit` and `pkg/acme/server/handlers/audit.go` write audit records for
+account, order and issuance events. Correlation IDs propagate from the
+transport middleware.
+
+**Known gap:** Prometheus exporters, per-tenant rate-limit dashboards, OCSP
+stapling, CRL distribution-point automation, CT log submission automation and
+cross-signing automation are roadmap items, not implemented. They are tracked in
+`docs/acme/ROADMAP.md` and deliberately not documented here as if they existed.

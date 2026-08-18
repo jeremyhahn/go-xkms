@@ -1,0 +1,124 @@
+# Auth Factors — Engineering Contract
+
+> **Status: NORMATIVE** · Feature: `auth-factors` · Repo: `go-xkms` · Last verified: 2026-08-19
+
+## Exported surface — `pkg/factor`
+
+```go
+// Config configures the default factor registry. The zero value is valid.
+type Config struct {
+	PIVGenerator        xkms.PIVKeyGenerator // nil → software-only generator
+	PKCS11Mechanism     string               // empty → CKM_ECDSA_SHA256
+	FIDO2RPID           string               // empty → package default
+	ChallengeTTLSeconds int                  // zero → each factor's default (5 minutes)
+}
+
+func DefaultFactors(cfg Config) []qrdbsdk.AuthFactorPlugin
+func NewDefaultRegistry(cfg Config) (*qrdbsdk.AuthFactorRegistry, error)
+```
+
+`DefaultFactors` returns, in order: `piv.New`, `pkcs11.New`, `fido2.New`,
+`mtls.New`. It is the **single authoritative definition** of the four factors —
+`NewDefaultRegistry` and every downstream composer call it rather than building
+their own slice.
+
+Per-factor constructors and configs:
+
+| Factor | Package | Config fields |
+|---|---|---|
+| `piv` | `pkg/factor/piv` | `Generator xkms.PIVKeyGenerator`, `ChallengeTTLSeconds int` |
+| `pkcs11` | `pkg/factor/pkcs11` | `DefaultMechanism string`, `ChallengeTTLSeconds int` |
+| `fido2` | `pkg/factor/fido2` | `RPID string`, `ChallengeTTLSeconds int` |
+| `mtls` | `pkg/factor/mtls` | `ChallengeTTLSeconds int` |
+
+Enrollment and verification helpers used by the API layer are `pkg/auth_factors`
+(`piv.go`, `pkcs11.go`, `webauthn.go`).
+
+The interfaces implemented — `qrdbsdk.AuthFactorPlugin`,
+`qrdbsdk.AuthFactorRegistry`, `qrdbsdk.NewFactorRegistry` — belong to go-qrdb
+and are reached through `go-qrdb/sdk/go` only. Never `go-qrdb/pkg/*`.
+
+## Invariants
+
+- **`DefaultFactors` is the only place the factor set is enumerated.** Adding a
+  fifth factor means editing that function; a composer that maintains its own
+  list is a defect.
+- **The zero `Config` is valid** and yields software-backed PIV plus
+  DER/COSE-verifying PKCS#11, FIDO2 and mTLS. Construction never fails for lack
+  of hardware.
+- **`NewDefaultRegistry` errors only on registration failure**, which cannot
+  happen for distinct non-empty factor names. The error is returned for
+  completeness; do not treat a nil error as meaningful validation.
+- **A factor verifies; it does not authenticate.** The return value answers
+  "was this response valid for this challenge under this enrollment?" — nothing
+  more. qrdb composes the decision.
+- **Enrollment parameters are fixed at enrollment.** The PKCS#11 mechanism, the
+  FIDO2 RP id and the PIV slot are recorded when the factor is enrolled and are
+  not renegotiable at verification. This is what prevents downgrade.
+- **`ChallengeTTLSeconds` applies to all four factors uniformly** when set on
+  `factor.Config`. There is no per-factor override at that level.
+- **Concurrency.** Factors are safe for concurrent verification; they hold no
+  per-request state.
+
+## Error semantics
+
+Factor errors surface through go-qrdb's authentication path, not through a
+go-xkms transport. Within go-xkms the hardware layers return their own typed
+errors — `pkg/pivcert`, `pkg/pkcs11`, `pkg/fido2` — and the factor adapters wrap
+them.
+
+**Fail closed, in every case:**
+
+| Condition | Result |
+|---|---|
+| challenge expired | verification fails; no partial credit |
+| signature does not verify against the enrollment | fails |
+| hardware absent or unreadable | fails — never falls back to a software check |
+| PKCS#11 mechanism differs from the enrolled one | fails |
+| FIDO2 RP id mismatch | fails |
+| enrollment record missing | fails |
+
+There is no "degraded" verification result. A factor either verified or it did
+not.
+
+## Configuration
+
+Injected in-process at composition time, not by config file — this is a tier-2
+capability. The four knobs are `factor.Config` above. What to set in practice:
+
+- **`PIVGenerator`** — inject a PKCS#11- or TPM2-backed generator for hardware
+  PIV. Leaving it nil in production means the "PIV factor" proves possession of
+  a software key.
+- **`FIDO2RPID`** — set it to your actual relying-party id. It is recorded on
+  every enrollment, so changing it later invalidates them.
+- **`PKCS11Mechanism`** — override only with reason; the default
+  `CKM_ECDSA_SHA256` is the safe choice.
+- **`ChallengeTTLSeconds`** — shorter is safer. The five-minute default is
+  already generous for interactive use.
+
+## Persistence
+
+Enrollment records live in go-qrdb's user store, through `go-qrdb/sdk/go`.
+go-xkms persists nothing for this feature — there is no local user model and no
+local cert-binding scheme, by ownership rule.
+
+## Test strategy
+
+- **Unit** — `pkg/factor/registry_test.go` and `registry_wiring_test.go`. The
+  wiring test is the one that matters: it asserts that the registry actually
+  contains the four factors `DefaultFactors` names, which is what catches a
+  composer that stopped calling it.
+- **Per factor** — suites under `pkg/factor/{piv,pkcs11,fido2,mtls}`.
+- **Helpers** — `pkg/auth_factors/{piv,pkcs11,webauthn}_test.go`,
+  `auth_factors_extra_test.go`.
+- **Integration** — `test/integration/fido2`, `test/integration/pkcs11`,
+  `test/integration/webauthn-browser`, `test/integration/logins`.
+- **Fault injection** — expired challenges and mechanism mismatches are covered
+  in the per-factor suites; both must fail closed.
+
+## Observability
+
+Factor verification outcomes are audited by go-qrdb's authentication path, not
+here. go-xkms logs hardware-level failures (device absent, PIN required, session
+error) with the correlation ID, which is the layer where a "login failed" is
+actually diagnosable.

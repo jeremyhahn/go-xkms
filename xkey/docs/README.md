@@ -2,6 +2,46 @@
 
 xKey is a unified security key interface that provides FIDO2/WebAuthn, OATH TOTP/HOTP, PIV certificates, SSH agent, OIDC authentication, and static password functionality. Unlike traditional hardware-only security keys, xKey works with **any go-xkms backend** -- from software storage to hardware HSMs to cloud KMS services.
 
+## Feature documentation
+
+Each feature below has a folder holding five documents — `architecture.md`,
+`engineering.md`, `cli.md`, `api.md`, `user.md`. Together they are the
+feature's requirements: read the folder before reading the code, and change
+the folder in the same commit that changes the behavior.
+
+**Add the row in the same commit that creates the folder.** An index updated in
+a later sweep is wrong in between, and the reader who hits it in between cannot
+tell.
+
+| Feature | What it covers | Legacy path superseded |
+|---------|----------------|------------------------|
+| [agent-automation](agent-automation/) | PIN and touch automation for headless agents and CI | `agent/` |
+| [headless-webauthn](headless-webauthn/) | Programmatic WebAuthn ceremonies without a browser or a human | `fido2/` (with `virtual-authenticator`) |
+| [phone-hsm](phone-hsm/) | The phone-as-HSM backend and its pairing protocol | `phone/` |
+| [platform-trust](platform-trust/) | Trust bootstrap, the classified truststore, platform CA import | `architecture/server-registry.md` (trust half) |
+| [share-custody](share-custody/) | The Shamir share custody client | — |
+| [virtual-authenticator](virtual-authenticator/) | The virtual FIDO2/CTAP2 authenticator over Linux UHID | `fido2/` (with `headless-webauthn`) |
+
+The core capabilities these build on live in the root module — the
+[password vault](../../docs/password-vault/), the
+[WebAuthn relying party](../../docs/webauthn/), the
+[FIDO2/CTAP2 client](../../docs/fido2-ctap2/), [PIV](../../docs/piv-smartcard/)
+and [trust bootstrap](../../docs/trust-bootstrap/). That split follows the rule
+between the two modules: reusable logic lives in `go-xkms/pkg/*` and xkey
+consumes it through `go-xkms/sdk/go`, so these folders document a product
+surface rather than a second implementation.
+
+Everything below this section predates the feature-folder convention. It is
+**unconverted debt, not a precedent** — a new feature gets a five-file folder
+regardless of what the rest of this tree looks like. While conversion is in
+progress a feature folder is NORMATIVE for its feature and a superseded legacy
+path is not; where they disagree, the feature folder wins.
+
+Still owed a folder: `autofill/`, `ble/`, `device/`, `gui/`, `luks/`, `oath/`,
+`oidc/`, `password/`, `piv/`, `pkcs11/`, `seal/`, `ssh/`, `usb/`,
+`xkeysigner/`. Not features and staying as they are: `architecture/`,
+`configuration/`, `roadmap/`, `testing/`, `usage/`.
+
 ## Documentation Structure
 
 | Directory | Description |
