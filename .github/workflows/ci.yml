@@ -229,9 +229,10 @@ jobs:
       # later run on that host failed to start with a name conflict.
       #
       # Safe to run concurrently with another job's: every stack is namespaced
-      # by GITHUB_RUN_ID (Makefile: COMPOSE_NS / XKMS_IMAGE_TAG), so these
-      # targets can only ever name this run's own containers, networks,
-      # volumes and image tags.
+      # by repository AND run id (Makefile: COMPOSE_NS / XKMS_IMAGE_TAG), and
+      # image removal is additionally bounded to the image names this harness
+      # builds, so these targets can only ever name this run's own containers,
+      # networks, volumes and image tags.
       - name: Tear down integration test stacks
         if: always()
         run: |

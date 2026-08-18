@@ -235,13 +235,26 @@ compose = COMPOSE_PROJECT_NAME=$(COMPOSE_NS)-$(1) docker compose -p $(COMPOSE_NS
 # other run's image and silently tests the wrong commit. Tagging per run
 # removes the shared name.
 #
+# The tag carries the repository name, not the bare run id. A run id is unique
+# within a repository, not on a Docker host: two repositories building on the
+# same runner can both be at run 143, and the fixture images this repo builds
+# from a sibling working tree (go-quicbaas-server) carry a name that sibling
+# builds too. `go-xkms-<run id>` is unambiguous on the host, which is what
+# makes tag-matched cleanup below safe.
+#
 # Empty off CI, where each compose file's own default applies
 # (`${XKMS_IMAGE_TAG:-latest}`, `:-dev`, `:-sdk-test`) -- so a developer's
 # image names and layer cache are exactly what they were.
 ifneq ($(COMPOSE_RUN_ID),local)
-XKMS_IMAGE_TAG ?= $(COMPOSE_RUN_ID)
+XKMS_IMAGE_TAG ?= $(COMPOSE_NS)
 endif
 export XKMS_IMAGE_TAG
+
+# The image repositories this harness builds, as `docker images --filter
+# reference=` patterns. clean-run-images removes a reference only when its
+# repository is on this list: a tag is something any build on the host may
+# carry, so it is not on its own proof of ownership.
+XKMS_IMAGE_REPOS := 'go-xkms-*' 'go-xkms/*' 'go-quicbaas-server'
 
 # The effective tag for images this Makefile builds directly (as opposed to
 # through compose, where each file spells its own default inline).
@@ -1380,9 +1393,12 @@ integration-test: clean-test-containers integration-test-software integration-te
 ## clean-run-images: Remove the images this CI run tagged (no-op for local builds)
 # `docker image prune -f` only reaps UNTAGGED images, so the per-run tags
 # (XKMS_IMAGE_TAG) would otherwise pile up a full set of images on the runner
-# host every single run. The match is anchored on this run's tag, which is
-# unique to this job, so it cannot remove another job's images -- unlike the
-# host-wide `docker image prune -a` this replaces.
+# host every single run. Unlike the host-wide `docker image prune -a` this
+# replaces, the selection is bounded twice: the repository must be one this
+# harness builds (XKMS_IMAGE_REPOS) and the tag must be this run's. Either
+# bound alone is not ownership -- an unrelated repository on the host can hold
+# any tag, including a numeric run id that matches ours, and can build an
+# image name that matches one of ours under a different tag.
 #
 # Off CI, XKMS_IMAGE_TAG is empty and the images carry the shared local tags
 # (:latest, :dev). Removing those would throw away a developer's build cache,
@@ -1391,9 +1407,12 @@ clean-run-images:
 	@if [ -z "$(XKMS_IMAGE_TAG)" ]; then \
 		echo "$(CYAN)→ Local image tags; nothing to remove$(RESET)"; \
 	else \
-		refs=$$(docker images --format '{{.Repository}}:{{.Tag}}' 2>/dev/null | grep -E ':$(XKMS_IMAGE_TAG)$$' || true); \
-		if [ -n "$$refs" ]; then docker rmi -f $$refs >/dev/null 2>&1 || true; fi; \
-		echo "$(GREEN)✓ Removed images tagged :$(XKMS_IMAGE_TAG)$(RESET)"; \
+		refs=""; \
+		for repo in $(XKMS_IMAGE_REPOS); do \
+			refs="$$refs $$(docker images --filter=reference="$$repo:$(XKMS_IMAGE_TAG)" --format '{{.Repository}}:{{.Tag}}' 2>/dev/null || true)"; \
+		done; \
+		if [ -n "$$(echo $$refs)" ]; then docker rmi -f $$refs >/dev/null 2>&1 || true; fi; \
+		echo "$(GREEN)✓ Removed this run's images tagged :$(XKMS_IMAGE_TAG)$(RESET)"; \
 	fi
 
 .PHONY: clean-test-containers
