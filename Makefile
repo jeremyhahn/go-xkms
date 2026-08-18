@@ -762,9 +762,21 @@ lib: builder-image
 ## the web suites even under `make -j`; make aborts on the first failure, so a
 ## red web suite still fails the target.
 test:
+	@$(MAKE) --no-print-directory test-scripts
 	@$(MAKE) --no-print-directory test-go
 	@$(MAKE) --no-print-directory test-web
-	@echo "$(GREEN)$(BOLD)✓ All unit tests passed (Go + web)!$(RESET)"
+	@echo "$(GREEN)$(BOLD)✓ All unit tests passed (shell + Go + web)!$(RESET)"
+
+.PHONY: test-scripts
+## test-scripts: Run the shell-level tests for test/scripts helpers
+# These need no Docker daemon: they drive the scripts against a fake `docker`
+# on PATH. clean-test-containers.sh decides which Docker resources a CI run may
+# destroy on a SHARED Actions host, so its scope boundary is gated here
+# (go-xkms#2) rather than discovered by another repository's job dying.
+test-scripts:
+	@echo "$(CYAN)$(BOLD)→ Running shell script tests...$(RESET)"
+	@bash test/scripts/clean-test-containers.test.sh
+	@echo "$(GREEN)✓ Shell script tests passed$(RESET)"
 
 .PHONY: test-go
 ## test-go: Run the Go unit tests with coverage
@@ -1300,10 +1312,21 @@ integration-test: clean-test-containers integration-test-software integration-te
 
 .PHONY: clean-test-containers
 ## clean-test-containers: Clean up Docker containers from previous test runs
+# Failures are NOT swallowed (go-xkms#2): the script exits non-zero when a
+# compose project it owns could not be torn down, which on a shared CI host
+# means this repo's containers and volumes are still there. Its chatter goes
+# to the log file; anything it wrote to stderr, plus that log, is printed
+# when it fails.
 clean-test-containers:
 	@echo "$(CYAN)→ Cleaning up test containers...$(RESET)"
-	@bash test/scripts/clean-test-containers.sh >/dev/null 2>&1 || true
-	@echo "$(GREEN)✓ Test containers cleaned$(RESET)"
+	@mkdir -p $(BUILD_DIR)
+	@if bash test/scripts/clean-test-containers.sh >$(BUILD_DIR)/clean-test-containers.log 2>&1; then \
+		echo "$(GREEN)✓ Test containers cleaned$(RESET)"; \
+	else \
+		echo "$(RED)✗ Test container cleanup failed:$(RESET)"; \
+		cat $(BUILD_DIR)/clean-test-containers.log; \
+		exit 1; \
+	fi
 
 # ==============================================================================
 # Storage Integration Tests

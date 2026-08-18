@@ -55,6 +55,10 @@ CLAUDE.md
 softhsm2.conf
 softhsm2/
 
+# Audit sink written by the server's default audit path when tests or a
+# local run start it from the repo (zero-byte artifact, never a source file)
+audit-events.ndjson
+
 # Node.js / Playwright
 node_modules/
 test-results/

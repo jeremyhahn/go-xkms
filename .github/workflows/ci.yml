@@ -156,6 +156,17 @@ jobs:
     needs: test
 
     steps:
+      # DELIBERATE divergence from ci-template v1: the template's
+      # `sudo docker system prune -af --volumes` is gone and must not come
+      # back. Our Actions hosts are SHARED between repositories, and that
+      # prune is host-global -- it deletes every image no running container
+      # holds plus every unused named volume, i.e. other repos' images, not
+      # just ours. On 2026-08-17 it repeatedly destroyed the codex-review
+      # job image on two shared hosts and failed 16 review runs
+      # portfolio-wide (go-xkms#2). Docker cleanup is scoped to this
+      # repository's own resources and happens in the suite's pre-run
+      # `clean-test-containers` step -- see the note at the end of this job
+      # for why there is no end-of-job teardown.
       - name: Free up disk space
         run: |
           echo "=== Disk space before cleanup ==="
@@ -165,7 +176,6 @@ jobs:
           sudo rm -rf /usr/local/lib/android
           sudo rm -rf /opt/ghc
           sudo rm -rf /opt/hostedtoolcache/CodeQL
-          sudo docker system prune -af --volumes
           echo "=== Disk space after cleanup ==="
           df -h
 
@@ -218,6 +228,29 @@ jobs:
             *.log
             build/test-results/
           retention-days: 7
+
+      # NO end-of-job Docker teardown here, deliberately. Cleanup of this
+      # repository's containers/networks/volumes/images happens at the START
+      # of the suite instead: `make integration-test` depends on
+      # `clean-test-containers`, which under CI runs in `project` scope --
+      # this repo's own compose projects and `go-xkms-*` containers only, no
+      # port sweep, no substring sweep, no prune of any kind.
+      #
+      # An `if: always()` teardown at the end of the job would be
+      # repository-scoped but not RUN-scoped: compose project names,
+      # container names and image tags are fixed, so it could tear down a
+      # second, concurrent run of this repository that was mid-suite (a push
+      # to an open PR triggers both `push` and `pull_request` runs, and
+      # Gitea 1.27.1 cancels any job carrying a `concurrency:` group even
+      # when the group is unoccupied -- d7f60eb4 -- so there is no working
+      # serialization to lean on). Per-run isolation (run-id-derived project
+      # names, tags and ports) plus the job-scoped teardown it would make
+      # safe are tracked in #15 for the owner to approve.
+      #
+      # What this job leaves behind is therefore bounded by the next run's
+      # pre-suite cleanup rather than reclaimed immediately -- an acceptable
+      # trade against deleting a sibling run's or another repository's
+      # resources. Daemon-level image/build-cache GC stays a host concern.
 
   # Job 3: Lint
   lint:
