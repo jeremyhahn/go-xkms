@@ -9,16 +9,29 @@ Each feature below has a folder holding five documents — `architecture.md`,
 feature's requirements: read the folder before reading the code, and change
 the folder in the same commit that changes the behavior.
 
-| Feature | What it covers |
-|---------|----------------|
-| [agent-automation](agent-automation/) | PIN and touch automation for headless agents and CI |
-| [headless-webauthn](headless-webauthn/) | Programmatic WebAuthn ceremonies without a browser or a human |
-| [virtual-authenticator](virtual-authenticator/) | The virtual FIDO2/CTAP2 authenticator over Linux UHID |
+**Add the row in the same commit that creates the folder.** An index updated in
+a later sweep is wrong in between, and the reader who hits it in between cannot
+tell.
+
+| Feature | What it covers | Legacy path superseded |
+|---------|----------------|------------------------|
+| [agent-automation](agent-automation/) | PIN and touch automation for headless agents and CI | `agent/` |
+| [headless-webauthn](headless-webauthn/) | Programmatic WebAuthn ceremonies without a browser or a human | `fido2/` (with `virtual-authenticator`) |
+| [phone-hsm](phone-hsm/) | The phone-as-HSM backend and its pairing protocol | `phone/` |
+| [platform-trust](platform-trust/) | Importing the platform CA bundle over SPKI-pinned TLS | `platform-trust/` |
+| [share-custody](share-custody/) | The Shamir share custody client | — |
+| [virtual-authenticator](virtual-authenticator/) | The virtual FIDO2/CTAP2 authenticator over Linux UHID | `fido2/` (with `headless-webauthn`) |
 
 Everything below this section predates the feature-folder convention. It is
 **unconverted debt, not a precedent** — a new feature gets a five-file folder
-regardless of what the rest of this tree looks like. The migration state is
-recorded in the repository's `CLAUDE.md`.
+regardless of what the rest of this tree looks like. While conversion is in
+progress a feature folder is NORMATIVE for its feature and a superseded legacy
+path is not; where they disagree, the feature folder wins.
+
+Still owed a folder: `autofill/`, `ble/`, `device/`, `gui/`, `luks/`, `oath/`,
+`oidc/`, `password/`, `piv/`, `pkcs11/`, `seal/`, `ssh/`, `usb/`,
+`xkeysigner/`. Not features and staying as they are: `architecture/`,
+`configuration/`, `roadmap/`, `testing/`, `usage/`.
 
 ## Documentation Structure
 
