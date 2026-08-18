@@ -5,11 +5,22 @@
 
 name: CI
 
+# ci-template v1.5: trunk-only triggers. main is the sole trunk since develop
+# was folded into it (2aa8ab1, 2026-08-17); develop is a frozen archive and
+# master has never existed in this repo. Listing a branch that can also be a PR
+# head made every commit on it run CI twice — one push run and one
+# pull_request run for the same sha — and this Gitea has no working
+# supersession, so the duplicate ran to completion (issue #6).
+#
+# Do NOT add a workflow- or job-level `concurrency:` block here to dedupe runs:
+# on Gitea 1.27.1 a job carrying a concurrency group is cancelled even when the
+# group is unoccupied (measured 42/42, ruling in task #88). The group key is
+# not the problem, so no expression fixes it.
 on:
   push:
-    branches: [ master, main, develop ]
+    branches: [ main ]
   pull_request:
-    branches: [ master, main, develop ]
+    branches: [ main ]
 
 env:
   GO_VERSION: 'stable'

@@ -7,6 +7,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- **CI no longer runs every commit twice**: `.github/workflows/ci.yml` scopes
+  its `push` and `pull_request` triggers to `main` (ci-template v1.5), the sole
+  trunk since `develop` was folded into it. A branch that was both
+  push-triggered and a PR head produced two full runs of the same commit — one
+  `push`, one `pull_request` — and this Gitea has no working supersession, so
+  the duplicate ran to completion. `master` and `develop` no longer exist as
+  branches, so nothing loses coverage. A `concurrency:` block is deliberately
+  **not** used: on Gitea 1.27.1 a job carrying a concurrency group is cancelled
+  even when the group is unoccupied.
+
 ## [0.6.0-alpha] - 2026-08-17
 
 ### Changed — BREAKING: login plane unified (mTLS + FIDO2 + PIV)
