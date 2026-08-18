@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"crypto"
+	"crypto/mlkem"
 	"errors"
 	"testing"
 
@@ -409,9 +410,10 @@ func TestMLDSAPrivateKey_Clean(t *testing.T) {
 	mldsaKey.Clean()
 	assert.Nil(t, mldsaKey.sk)
 	assert.Nil(t, mldsaKey.pk)
-	for _, b := range mldsaKey.seed {
-		assert.Equal(t, byte(0), b)
-	}
+	// The seed lives in an enclave, so "zeroed" is observable as the enclave
+	// being destroyed and the key no longer able to produce it.
+	assert.Nil(t, mldsaKey.seed)
+	assert.Nil(t, mldsaKey.ExportSecretKey())
 }
 
 func TestMLDSAPrivateKey_ExportSecretKey(t *testing.T) {
@@ -426,11 +428,11 @@ func TestMLDSAPrivateKey_ExportSecretKey(t *testing.T) {
 	exported := mldsaKey.ExportSecretKey()
 	require.NotNil(t, exported)
 	assert.Len(t, exported, mldsaSeedSize)
-	assert.Equal(t, mldsaKey.seed, exported)
+	assert.Equal(t, exported, mldsaKey.ExportSecretKey(), "export should be stable")
 
-	// Returned slice should be a copy
+	// Returned slice should be a copy: mutating it must not reach the enclave.
 	exported[0] ^= 0xFF
-	assert.NotEqual(t, mldsaKey.seed[0], exported[0])
+	assert.NotEqual(t, exported, mldsaKey.ExportSecretKey())
 }
 
 func TestMLDSAPrivateKey_ExportSecretKey_NilSeed(t *testing.T) {
@@ -470,9 +472,10 @@ func TestMLKEMPrivateKey_Clean(t *testing.T) {
 
 	mlkemKey.Clean()
 	assert.Nil(t, mlkemKey.dk)
-	for _, b := range mlkemKey.seed {
-		assert.Equal(t, byte(0), b)
-	}
+	// The seed lives in an enclave, so "zeroed" is observable as the enclave
+	// being destroyed and the key no longer able to produce it.
+	assert.Nil(t, mlkemKey.seed)
+	assert.Nil(t, mlkemKey.ExportSecretKey())
 }
 
 func TestMLKEMPrivateKey_ExportSecretKey(t *testing.T) {
@@ -486,11 +489,12 @@ func TestMLKEMPrivateKey_ExportSecretKey(t *testing.T) {
 	mlkemKey := privKey.(*MLKEMPrivateKey)
 	exported := mlkemKey.ExportSecretKey()
 	require.NotNil(t, exported)
-	assert.Equal(t, len(mlkemKey.seed), len(exported))
+	assert.Len(t, exported, mlkem.SeedSize)
+	assert.Equal(t, exported, mlkemKey.ExportSecretKey(), "export should be stable")
 
-	// Returned slice should be a copy
+	// Returned slice should be a copy: mutating it must not reach the enclave.
 	exported[0] ^= 0xFF
-	assert.NotEqual(t, mlkemKey.seed[0], exported[0])
+	assert.NotEqual(t, exported, mlkemKey.ExportSecretKey())
 }
 
 func TestMLKEMPrivateKey_ExportSecretKey_NilSeed(t *testing.T) {

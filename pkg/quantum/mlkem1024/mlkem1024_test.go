@@ -27,7 +27,7 @@ func TestNew(t *testing.T) {
 	defer k.Clean()
 	assert.NotNil(t, k.dk)
 	assert.NotNil(t, k.seed)
-	assert.Len(t, k.seed, SeedSize)
+	assert.Len(t, k.ExportSecretKey(), SeedSize)
 }
 
 func TestGenerateKeyPair(t *testing.T) {
@@ -216,6 +216,29 @@ func TestExportSecretKey_ReturnsCopy(t *testing.T) {
 	// Modifying one should not affect the other
 	seed1[0] ^= 0xFF
 	assert.NotEqual(t, seed1, seed2)
+}
+
+// TestCreateDoesNotConsumeCallerSeed guards the enclave conversion: sealing
+// wipes the buffer it is handed, so Create must seal a copy and leave the
+// caller's slice usable. Losing this would silently zero a seed the caller
+// still needs.
+func TestCreateDoesNotConsumeCallerSeed(t *testing.T) {
+	origin, err := New()
+	require.NoError(t, err)
+	seed := origin.ExportSecretKey()
+	origin.Clean()
+	require.Len(t, seed, SeedSize)
+
+	before := make([]byte, len(seed))
+	copy(before, seed)
+
+	k, err := Create(seed)
+	require.NoError(t, err)
+	defer k.Clean()
+
+	assert.Equal(t, before, seed, "Create must not wipe the caller's seed")
+	assert.Equal(t, before, k.ExportSecretKey(),
+		"the enclaved seed must round-trip the one Create was given")
 }
 
 func TestClean(t *testing.T) {

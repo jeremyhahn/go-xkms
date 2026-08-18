@@ -23,6 +23,8 @@ import (
 	"strings"
 
 	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
+
+	"github.com/jeremyhahn/go-xkms/pkg/crypto/fips"
 )
 
 var (
@@ -50,6 +52,9 @@ var (
 	// validAlgorithms provides O(1) lookup for valid algorithm names.
 	// This list must stay in sync with the authoritative algorithm list
 	// in pkg/xkms/keyid.go validateAlgorithm.
+	//
+	// It is the full, build-independent list. FIPS mode narrows it at the
+	// point of use — see isValidAlgorithm and fips.ApprovedAlgorithm.
 	validAlgorithms = map[string]struct{}{
 		// Asymmetric algorithms
 		"rsa":        {},
@@ -222,9 +227,16 @@ func isValidKeyType(keyType string) bool {
 }
 
 // isValidAlgorithm checks if the algorithm is valid using O(1) map lookup.
+//
+// In FIPS 140-3 mode the list is additionally filtered to the approved
+// algorithms: validAlgorithms admits ChaCha20, X25519/X448 and the FROST
+// ciphersuites, none of which a FIPS deployment may use. Outside FIPS mode the
+// list is unfiltered, so no capability is withdrawn from a normal build.
 func isValidAlgorithm(algo string) bool {
-	_, ok := validAlgorithms[strings.ToLower(algo)]
-	return ok
+	if _, ok := validAlgorithms[strings.ToLower(algo)]; !ok {
+		return false
+	}
+	return fips.AlgorithmPermitted(algo)
 }
 
 // ValidateBackendName validates a backend name.

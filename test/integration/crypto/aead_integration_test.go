@@ -22,9 +22,18 @@ import (
 	"testing"
 
 	"github.com/jeremyhahn/go-xkms/pkg/crypto/aead"
+	"github.com/jeremyhahn/go-xkms/pkg/crypto/fips"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
+
+// softwareSelectsChaCha reports whether a software key is expected to select
+// ChaCha20-Poly1305 on this host and in this build configuration. FIPS mode
+// forbids the non-approved AEAD regardless of CPU capability, so it is part of
+// the expectation and not just AES-NI.
+func softwareSelectsChaCha() bool {
+	return !aead.HasAESNI() && !fips.Compiled() && !fips.Enabled()
+}
 
 func TestAEAD_AutoSelection(t *testing.T) {
 	tests := []struct {
@@ -42,8 +51,8 @@ func TestAEAD_AutoSelection(t *testing.T) {
 		{
 			name:             "Software key selection depends on CPU",
 			isHardwareBacked: false,
-			expectAES:        aead.HasAESNI(),
-			expectChaCha:     !aead.HasAESNI(),
+			expectAES:        !softwareSelectsChaCha(),
+			expectChaCha:     softwareSelectsChaCha(),
 		},
 	}
 
@@ -81,10 +90,10 @@ func TestAEAD_BackendSelection(t *testing.T) {
 			name:             "Software key with AES-NI selects aes256-gcm",
 			isHardwareBacked: false,
 			expected: func() string {
-				if aead.HasAESNI() {
-					return aead.BackendAES256GCM
+				if softwareSelectsChaCha() {
+					return aead.BackendChaCha20Poly1305
 				}
-				return aead.BackendChaCha20Poly1305
+				return aead.BackendAES256GCM
 			}(),
 		},
 	}

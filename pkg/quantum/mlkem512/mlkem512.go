@@ -37,6 +37,8 @@ import (
 	"io"
 
 	"github.com/cloudflare/circl/kem/mlkem/mlkem512"
+
+	"github.com/jeremyhahn/go-xkms/sdk/go/secure"
 )
 
 const (
@@ -91,9 +93,14 @@ type KEMDetails struct {
 
 // MLKEM512 wraps the ML-KEM-512 key encapsulation mechanism.
 type MLKEM512 struct {
-	sk   *mlkem512.PrivateKey
-	pk   *mlkem512.PublicKey
-	seed []byte // 64 bytes: d || z
+	sk *mlkem512.PrivateKey
+	pk *mlkem512.PublicKey
+	// seed is the 64-byte d || z decapsulation-key seed, sealed in an enclave
+	// rather than held as a plaintext []byte on the Go heap: it reconstructs
+	// the whole private key, so it is the most sensitive value this type owns.
+	// Open it only for the moment it is needed and destroy the working Buffer
+	// after.
+	seed *secure.Secret
 }
 
 // New creates an MLKEM512 instance holding a freshly generated key pair.
@@ -109,7 +116,13 @@ func New() (*MLKEM512, error) {
 	}
 
 	pk, sk := mlkem512.NewKeyFromSeed(seed)
-	return &MLKEM512{sk: sk, pk: pk, seed: seed}, nil
+
+	// NewSecret wipes seed, so the plaintext copy does not outlive this call.
+	sealed, sealErr := secure.NewSecret(seed)
+	if sealErr != nil {
+		return nil, sealErr
+	}
+	return &MLKEM512{sk: sk, pk: pk, seed: sealed}, nil
 }
 
 // Create initializes MLKEM512 from an existing 64-byte seed.
@@ -122,18 +135,20 @@ func Create(seed []byte) (*MLKEM512, error) {
 	copy(ownedSeed, seed)
 
 	pk, sk := mlkem512.NewKeyFromSeed(ownedSeed)
-	return &MLKEM512{sk: sk, pk: pk, seed: ownedSeed}, nil
+
+	// NewSecret wipes ownedSeed; the caller's own slice is untouched.
+	sealed, sealErr := secure.NewSecret(ownedSeed)
+	if sealErr != nil {
+		return nil, sealErr
+	}
+	return &MLKEM512{sk: sk, pk: pk, seed: sealed}, nil
 }
 
-// Clean zeroes the internal seed and releases the key material. It should
+// Clean destroys the enclaved seed and releases the key material. It should
 // always be called when the instance is no longer needed.
 func (k *MLKEM512) Clean() {
-	if k.seed != nil {
-		for i := range k.seed {
-			k.seed[i] = 0
-		}
-		k.seed = nil
-	}
+	k.seed.Destroy()
+	k.seed = nil
 	k.sk = nil
 	k.pk = nil
 }
@@ -151,13 +166,22 @@ func (k *MLKEM512) GenerateKeyPair() ([]byte, error) {
 }
 
 // ExportSecretKey returns a copy of the 64-byte decapsulation key seed.
+// The caller receives a plaintext copy on the Go heap and owns wiping it; the
+// enclaved original is untouched. Returns nil if the seed cannot be opened,
+// which for a live instance means it has already been destroyed.
 func (k *MLKEM512) ExportSecretKey() []byte {
 	if k.sk == nil || k.seed == nil {
 		return nil
 	}
 
-	result := make([]byte, len(k.seed))
-	copy(result, k.seed)
+	buf, err := k.seed.Open()
+	if err != nil {
+		return nil
+	}
+	defer buf.Destroy()
+
+	result := make([]byte, buf.Size())
+	copy(result, buf.Bytes())
 	return result
 }
 

@@ -19,6 +19,8 @@ package kyber768
 import (
 	"crypto/mlkem"
 	"errors"
+
+	"github.com/jeremyhahn/go-xkms/sdk/go/secure"
 )
 
 const (
@@ -65,8 +67,12 @@ type KEMDetails struct {
 
 // Kyber768 wraps the Go standard library ML-KEM-768 key encapsulation mechanism
 type Kyber768 struct {
-	dk   *mlkem.DecapsulationKey768
-	seed []byte // 64 bytes
+	dk *mlkem.DecapsulationKey768
+	// seed is the 64-byte decapsulation-key seed, sealed in an enclave rather
+	// than held as a plaintext []byte on the Go heap: it reconstructs the whole
+	// private key, so it is the most sensitive value this type owns. Open it
+	// only for the moment it is needed and destroy the working Buffer after.
+	seed *secure.Secret
 }
 
 // New creates a new uninitialized Kyber768 instance with a freshly generated key
@@ -78,9 +84,14 @@ func New() (*Kyber768, error) {
 	seed := dk.Bytes()
 	ownedSeed := make([]byte, len(seed))
 	copy(ownedSeed, seed)
+	// NewSecret wipes ownedSeed, so the plaintext copy does not outlive this call.
+	sealed, err := secure.NewSecret(ownedSeed)
+	if err != nil {
+		return nil, err
+	}
 	return &Kyber768{
 		dk:   dk,
-		seed: ownedSeed,
+		seed: sealed,
 	}, nil
 }
 
@@ -95,21 +106,22 @@ func Create(seed []byte) (*Kyber768, error) {
 	}
 	ownedSeed := make([]byte, SeedSize)
 	copy(ownedSeed, seed)
+	// NewSecret wipes ownedSeed; the caller's own slice is untouched.
+	sealed, sealErr := secure.NewSecret(ownedSeed)
+	if sealErr != nil {
+		return nil, sealErr
+	}
 	return &Kyber768{
 		dk:   dk,
-		seed: ownedSeed,
+		seed: sealed,
 	}, nil
 }
 
-// Clean zeroes internal seed bytes and releases resources
-// This should always be called when done using the instance
+// Clean destroys the enclaved seed and releases resources.
+// This should always be called when done using the instance.
 func (k *Kyber768) Clean() {
-	if k.seed != nil {
-		for i := range k.seed {
-			k.seed[i] = 0
-		}
-		k.seed = nil
-	}
+	k.seed.Destroy()
+	k.seed = nil
 	k.dk = nil
 }
 
@@ -127,13 +139,20 @@ func (k *Kyber768) GenerateKeyPair() ([]byte, error) {
 }
 
 // ExportSecretKey returns the 64-byte seed for the decapsulation key.
-// The caller receives a copy of the seed.
+// The caller receives a plaintext copy on the Go heap and owns wiping it;
+// the enclaved original is untouched. Returns nil if the seed cannot be
+// opened, which for a live instance means it has already been destroyed.
 func (k *Kyber768) ExportSecretKey() []byte {
 	if k.dk == nil || k.seed == nil {
 		return nil
 	}
-	result := make([]byte, len(k.seed))
-	copy(result, k.seed)
+	buf, err := k.seed.Open()
+	if err != nil {
+		return nil
+	}
+	defer buf.Destroy()
+	result := make([]byte, buf.Size())
+	copy(result, buf.Bytes())
 	return result
 }
 
