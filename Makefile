@@ -3152,7 +3152,7 @@ trivy-image: docker-build-all
 		rc=0; \
 		for img in $(TRIVY_IMAGES); do \
 			echo "$(CYAN)  Scanning $$img...$(RESET)"; \
-			trivy image --severity CRITICAL,HIGH --exit-code 1 --no-progress "$$img" || rc=1; \
+			trivy image --severity CRITICAL,HIGH --ignore-unfixed --exit-code 1 --no-progress "$$img" || rc=1; \
 		done; \
 		if [ $$rc -ne 0 ]; then \
 			echo "$(RED)✗ Trivy found CRITICAL/HIGH findings$(RESET)"; \

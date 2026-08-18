@@ -7,6 +7,32 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- **Race Detector no longer dies on a busy runner**: the job passes
+  `-timeout 30m` instead of relying on `go test`'s 10-minute per-package
+  default. `pkg/pkcs11/module` is the only package the `pkcs11` build tag
+  exercises, and its ~1400 tests each pay a production-cost Argon2id PIN
+  derivation, so under contention the package alone exceeds ten minutes.
+  The same commit passed on a quiet runner and failed on a loaded one,
+  alternating across consecutive runs — starvation, not a hang.
+- **Docker Build & Scan no longer fails on the BuildKit cache**: `type=gha`
+  is now requested only on github.com. On Gitea the Actions cache server is
+  advertised on an address buildx cannot route to (buildkit runs in its own
+  container on the default bridge), and the build died on
+  `connect: connection refused` before any layer was built.
+
+### Changed
+
+- **`GOPROXY` / `GOSUMDB` removed from the CI environment** (ci-template v1.1
+  prohibition). The runners inject `GOPRIVATE`, which already exempts
+  first-party modules from the proxy and the checksum database; the blanket
+  `GOSUMDB: off` had disabled checksum verification for every third-party
+  dependency as well.
+- **`make trivy-image` matches the CI image gate** by passing
+  `--ignore-unfixed` (devops.md §8), so the local target reproduces the gate
+  it claims to mirror instead of failing on unfixable base-image advisories.
+
 ## [0.6.0-alpha] - 2026-08-17
 
 ### Changed — BREAKING: login plane unified (mTLS + FIDO2 + PIV)

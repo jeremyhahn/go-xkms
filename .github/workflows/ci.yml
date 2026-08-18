@@ -21,8 +21,12 @@ env:
   COVERAGE_THRESHOLD: 89
   REGISTRY: ghcr.io
   IMAGE_NAME: jeremyhahn/xkms-cli
-  GOPROXY: https://proxy.golang.org,direct
-  GOSUMDB: off
+  # NO GOPROXY / GOSUMDB overrides here (ci-template v1.1 prohibition). The
+  # runners inject GOPRIVATE, which already exempts first-party modules from
+  # the proxy and the checksum database; a blanket `GOSUMDB: off` instead
+  # turned off checksum verification for every THIRD-party dependency, and a
+  # pinned GOPROXY breaks the build whenever an upstream re-points a tag
+  # (go-tpm-tools v0.4.8, 2026-08-14).
 
 jobs:
   # Job 1: Unit Tests with Coverage Enforcement
@@ -627,8 +631,15 @@ jobs:
             DATE=${{ github.event.repository.updated_at }}
           secret-files: |
             gomodauth=./gomodauth.env
-          cache-from: type=gha
-          cache-to: type=gha,mode=max
+          # type=gha talks to the Actions cache server over HTTP. On Gitea,
+          # act_runner advertises that server on an address buildx cannot
+          # reach: the job container is on the host network, but buildkit runs
+          # in its OWN container on the default bridge, so the build dies on
+          # "connect: connection refused" before a single layer is built
+          # (runner-log-proven, task 10151/#85). Cache only where the endpoint
+          # exists; on Gitea the build runs uncached rather than not at all.
+          cache-from: ${{ github.server_url == 'https://github.com' && 'type=gha' || '' }}
+          cache-to: ${{ github.server_url == 'https://github.com' && 'type=gha,mode=max' || '' }}
 
       # SARIF pass, for the Security tab only. trivy-action's setup cannot
       # authenticate to github.com from a Gitea runner, and the code scanning
@@ -701,8 +712,8 @@ jobs:
             VERSION=dev
             COMMIT=${{ github.sha }}
             DATE=${{ github.event.repository.updated_at }}
-          cache-from: type=gha
-          cache-to: type=gha,mode=max
+          cache-from: ${{ github.server_url == 'https://github.com' && 'type=gha' || '' }}
+          cache-to: ${{ github.server_url == 'https://github.com' && 'type=gha,mode=max' || '' }}
 
   # Job 7: Race Detector
   race:
@@ -746,11 +757,25 @@ jobs:
         env:
           SOFTHSM2_CONF: ${{ github.workspace }}/softhsm2.conf
 
+      # -timeout 30m, not the 10m default. The default is a PER-PACKAGE limit,
+      # and pkg/pkcs11/module exceeds it on a busy runner: the `pkcs11` tag
+      # here (and nowhere else in this file) enables the soft-token suite —
+      # ~1400 tests, each login paying an Argon2id derivation at 64 MiB — so
+      # the package alone accounts for most of the job. MEASURED, not
+      # assumed: on a quiet runner it reports ok at 345s / 355s / 367s
+      # (tasks 9158, 9946, 9235) — already 58-61% of the 600s default — and
+      # on a loaded one it is killed at exactly 600s (task 10152). This is
+      # STARVATION, not a hang or a regression: the runs alternate
+      # pass/fail across consecutive commits (successes finish the whole job
+      # in 9-15 min, failures burn 22-29 min), and the panic's own goroutine
+      # dump shows argon2 mid-computation, not a deadlock. 30m keeps a real
+      # hang bounded while leaving 5x headroom over the healthy cost.
+      # The durable fix is to stop paying production Argon2 cost in tests.
       - name: Run tests with race detector (all backends)
         env:
           CGO_ENABLED: 1
           SOFTHSM2_CONF: ${{ github.workspace }}/softhsm2.conf
-        run: go test -race -short -tags="pkcs8,awskms,gcpkms,azurekv,pkcs11,vault,codec_cbor,codec_json,codec_msgpack" ./...
+        run: go test -race -short -timeout 30m -tags="pkcs8,awskms,gcpkms,azurekv,pkcs11,vault,codec_cbor,codec_json,codec_msgpack" ./...
 
   # The single required check (devops.md §1). Every job above appears in BOTH
   # the needs list and the results check -- a gate that can pass vacuously is
