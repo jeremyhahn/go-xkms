@@ -220,13 +220,7 @@ func (d *transitDouble) encrypt(w http.ResponseWriter, r *http.Request, name str
 		return
 	}
 
-	nonce := make([]byte, gcm.NonceSize())
-	if _, err := rand.Read(nonce); err != nil {
-		writeVaultError(w, http.StatusInternalServerError, err.Error())
-		return
-	}
-
-	blob := gcm.Seal(nonce, nonce, plaintext, aad)
+	blob := gcm.Seal(nil, nil, plaintext, aad)
 	writeVaultData(w, map[string]interface{}{
 		"ciphertext":  vaultCiphertextPrefix(version) + base64.StdEncoding.EncodeToString(blob),
 		"key_version": version,
@@ -260,7 +254,7 @@ func (d *transitDouble) decrypt(w http.ResponseWriter, r *http.Request, name str
 		writeVaultError(w, http.StatusBadRequest, "invalid ciphertext encoding")
 		return
 	}
-	if len(blob) < gcm.NonceSize() {
+	if len(blob) < gcm.Overhead() {
 		writeVaultError(w, http.StatusBadRequest, "ciphertext too short")
 		return
 	}
@@ -271,7 +265,7 @@ func (d *transitDouble) decrypt(w http.ResponseWriter, r *http.Request, name str
 		return
 	}
 
-	plaintext, err := gcm.Open(nil, blob[:gcm.NonceSize()], blob[gcm.NonceSize():], aad)
+	plaintext, err := gcm.Open(nil, nil, blob, aad)
 	if err != nil {
 		// Vault reports an authentication failure the same way for a wrong
 		// context and a tampered ciphertext.
@@ -298,7 +292,12 @@ func (d *transitDouble) aead(name string) (cipher.AEAD, int, error) {
 	if err != nil {
 		return nil, 0, err
 	}
-	gcm, err := cipher.NewGCM(block)
+	// NewGCMWithRandomNonce, not NewGCM: this double runs in-process, so
+	// GODEBUG=fips140=only applies to it and refuses an externally supplied
+	// IV. The layout it emulates is unaffected -- Vault Transit's
+	// aes256-gcm96 envelope is nonce || ciphertext || tag, which is exactly
+	// what Seal prepends and Open strips.
+	gcm, err := cipher.NewGCMWithRandomNonce(block)
 	if err != nil {
 		return nil, 0, err
 	}
