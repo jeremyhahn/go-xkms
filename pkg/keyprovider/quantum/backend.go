@@ -349,7 +349,20 @@ func (b *QuantumBackend) generateMLKEMKey(algorithm, keyID string) (*MLKEMPrivat
 }
 
 // storeKey stores key metadata using the storage backend.
+//
+// It consumes metadata.Seed: the seed reconstructs the whole private key, and
+// the storage format is JSON, so a plaintext slice has to exist for the moment
+// encoding/json reads it. Wiping it here — on the error paths too — bounds that
+// exposure to this call rather than the lifetime of the process. Anything the
+// key still needs afterwards lives in the enclave the private key holds.
+//
+// The marshalled document is deliberately not wiped. It is handed to
+// storage.Backend.Put, whose contract does not say whether an implementation
+// copies the slice or retains it, so zeroing it could zero what was stored.
+// Protecting the serialized form is the storage layer's problem, not this one's.
 func (b *QuantumBackend) storeKey(ctx context.Context, keyID string, metadata *keyMetadata) error {
+	defer secure.Wipe(metadata.Seed)
+
 	data, err := json.Marshal(metadata)
 	if err != nil {
 		return &errs.Wrapped{Msg: "failed to serialize key metadata", Err: err}
@@ -388,6 +401,12 @@ func (b *QuantumBackend) GetKey(ctx context.Context, attrs *types.KeyAttributes)
 	if err := json.Unmarshal(keyData, &metadata); err != nil {
 		return nil, &errs.Wrapped{Msg: "failed to deserialize key metadata", Err: err}
 	}
+	// The decoded seed is plaintext key material this function owns —
+	// encoding/json allocates it fresh. The loaders seal their own copy, so it
+	// is wiped on return rather than left for the GC. keyData is left alone: it
+	// came from storage.Backend.Get, which does not say whether the slice is a
+	// copy or the stored record itself.
+	defer secure.Wipe(metadata.Seed)
 
 	switch {
 	case strings.HasPrefix(metadata.Algorithm, "ML-DSA"):
@@ -597,14 +616,28 @@ func (b *QuantumBackend) RotateKey(ctx context.Context, attrs *types.KeyAttribut
 	if err := json.Unmarshal(keyData, &metadata); err != nil {
 		return &errs.Wrapped{Msg: "failed to deserialize key metadata", Err: err}
 	}
+	// The seed being rotated away from is still key material until it is
+	// overwritten in storage; wipe this decoded copy on the way out.
+	defer secure.Wipe(metadata.Seed)
 
 	var newMetadata *keyMetadata
 
+	// Rotation only needs the new metadata, but generating it also produces a
+	// private key holding an enclave. Clean it rather than leaving mlocked
+	// memory to the garbage collector.
 	switch {
 	case strings.HasPrefix(metadata.Algorithm, "ML-DSA"):
-		_, newMetadata, err = b.generateMLDSAKey(metadata.Algorithm)
+		var rotated *MLDSAPrivateKey
+		rotated, newMetadata, err = b.generateMLDSAKey(metadata.Algorithm)
+		if rotated != nil {
+			defer rotated.Clean()
+		}
 	case strings.HasPrefix(metadata.Algorithm, "ML-KEM"):
-		_, newMetadata, err = b.generateMLKEMKey(metadata.Algorithm, keyID)
+		var rotated *MLKEMPrivateKey
+		rotated, newMetadata, err = b.generateMLKEMKey(metadata.Algorithm, keyID)
+		if rotated != nil {
+			defer rotated.Clean()
+		}
 	default:
 		return &errs.Detail{Err: ErrUnsupportedAlgorithm, Detail: metadata.Algorithm}
 	}

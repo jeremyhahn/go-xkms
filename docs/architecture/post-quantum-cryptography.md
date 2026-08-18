@@ -377,9 +377,14 @@ rest on the Go heap as a plaintext slice. It is sealed in a `*secure.Secret`
 - Sealing consumes the buffer it is given, so a seed with more than one consumer
   — the in-memory key and the metadata serialized to storage — is copied per
   consumer and the original wiped once both are served
-- The persisted `seed` field in stored key metadata is necessarily plaintext at
-  rest in the storage record; confidentiality there is the storage backend's
-  concern, not this layer's
+- The persisted `seed` field in stored key metadata is necessarily plaintext for
+  the moment `encoding/json` reads it. `storeKey` wipes it on return (error paths
+  included), and the load path wipes the seed `json.Unmarshal` decodes, so the
+  exposure is the call rather than the process lifetime. The serialized document
+  itself is left alone: it belongs to `storage.Backend`, whose contract does not
+  say whether `Put`/`Get` copy the slice or hand back the stored record, so
+  zeroing it could destroy what was written. Confidentiality of the record at
+  rest is the storage backend's concern, not this layer's
 
 **Shared Secrets (ML-KEM):**
 - Zeroed after use with explicit memory wiping

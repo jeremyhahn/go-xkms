@@ -142,3 +142,41 @@ func exportSeed(t *testing.T, key any) []byte {
 		return nil
 	}
 }
+
+// TestStoreKeyWipesTheSeed pins the persistence window: the plaintext seed that
+// has to exist for encoding/json must not outlive the store call.
+func TestStoreKeyWipesTheSeed(t *testing.T) {
+	qb, _ := newTestBackend(t)
+	defer func() { _ = qb.Close() }()
+
+	_, metadata, err := qb.generateMLKEMKey("ML-KEM-768", "wipe-kem")
+	require.NoError(t, err)
+	require.NotEmpty(t, metadata.Seed)
+
+	seed := metadata.Seed
+	require.NoError(t, qb.storeKey(context.Background(), "wipe-kem", metadata))
+
+	assert.Equal(t, make([]byte, len(seed)), seed,
+		"storeKey must wipe the plaintext seed it serialized")
+}
+
+// TestStoredKeyStillLoadsAfterWipe is the other half: wiping the in-memory seed
+// must not damage what was written, or every generated key would be lost on
+// restart.
+func TestStoredKeyStillLoadsAfterWipe(t *testing.T) {
+	qb, _ := newTestBackend(t)
+	defer func() { _ = qb.Close() }()
+
+	attrs := mlkemAttrs("roundtrip-kem", types.QuantumAlgorithmMLKEM768)
+	generated, err := qb.GenerateKey(context.Background(), attrs)
+	require.NoError(t, err)
+
+	loaded, err := qb.GetKey(context.Background(), attrs)
+	require.NoError(t, err)
+
+	want := generated.(*MLKEMPrivateKey).ExportSecretKey()
+	got := loaded.(*MLKEMPrivateKey).ExportSecretKey()
+	require.NotEmpty(t, want)
+	assert.Equal(t, want, got,
+		"the stored seed must survive the wipe and reconstruct the same key")
+}

@@ -81,13 +81,14 @@ func New() (*Kyber768, error) {
 	if err != nil {
 		return nil, err
 	}
+	// dk.Bytes() returns a fresh copy of the seed rather than a view into the
+	// key, so it is sealed directly: NewSecret consumes and wipes what it is
+	// given, which leaves no plaintext copy behind for the GC to hold onto.
 	seed := dk.Bytes()
-	ownedSeed := make([]byte, len(seed))
-	copy(ownedSeed, seed)
-	// NewSecret wipes ownedSeed, so the plaintext copy does not outlive this call.
-	sealed, err := secure.NewSecret(ownedSeed)
-	if err != nil {
-		return nil, err
+	sealed, sealErr := secure.NewSecret(seed)
+	if sealErr != nil {
+		secure.Wipe(seed)
+		return nil, sealErr
 	}
 	return &Kyber768{
 		dk:   dk,
