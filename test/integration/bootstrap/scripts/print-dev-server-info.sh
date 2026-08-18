@@ -7,10 +7,16 @@
 # backend. Pulls cert material directly out of the xkms-certs volume.
 set -eu
 
-CONTAINER="${CONTAINER:-bootstrap-xkms-server}"
+# The container is addressed by ID, resolved from the compose SERVICE name --
+# never by a fixed container_name. The compose project is namespaced per run
+# (Makefile: COMPOSE_NS), so a constant name would be both wrong and, on a
+# shared runner host, ambiguous between concurrent jobs. `make dev-server-*`
+# passes CONTAINER in already; the fallback covers running this script by hand.
+COMPOSE_DIR="$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)"
+CONTAINER="${CONTAINER:-$(docker compose -f "${COMPOSE_DIR}/docker-compose.yml" ps -q xkms-server 2>/dev/null | head -1)}"
 
-if ! docker inspect "${CONTAINER}" >/dev/null 2>&1; then
-    echo "ERROR: container ${CONTAINER} not running."
+if [ -z "${CONTAINER}" ] || ! docker inspect "${CONTAINER}" >/dev/null 2>&1; then
+    echo "ERROR: the bootstrap xkms-server container is not running."
     echo "Run 'make dev-server-up' first."
     exit 1
 fi

@@ -27,10 +27,9 @@ services:
       args:
         - VERSION=${VERSION:-0.0.1-dev}
     image: go-xkms-pkcs11-server:latest
-    container_name: xkms-pkcs11-server
     ports:
-      - "9443:9443"       # gRPC
-      - "8443:8443"       # REST (health checks)
+      - "0:9443"       # gRPC
+      - "0:8443"       # REST (health checks)
     volumes:
       - xkms-data:/data
       - xkms-socket:/var/run/xkms
@@ -77,7 +76,6 @@ services:
       context: ../../../..
       dockerfile: test/integration/pkcs11/module/Dockerfile
     image: go-xkms-pkcs11-test:latest
-    container_name: xkms-pkcs11-test
     depends_on:
       xkms-server:
         condition: service_healthy
@@ -161,7 +159,6 @@ services:
       context: ../../../..
       dockerfile: test/integration/pkcs11/module/Dockerfile
     image: go-xkms-pkcs11-test:latest
-    container_name: xkms-pkcs11-compat
     profiles:
       - compat
     depends_on:
@@ -218,4 +215,3 @@ volumes:
 networks:
   xkms-pkcs11:
     driver: bridge
-    name: xkms-pkcs11-network

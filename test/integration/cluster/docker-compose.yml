@@ -32,7 +32,6 @@ services:
       secrets:
         - gomodauth
     image: go-xkms-cluster-node:latest
-    container_name: cluster-node1
     hostname: node1
     # Boot-time cluster formation can outlast a single attempt when sibling
     # nodes lag (image start stagger); retry like systemd would in production.
@@ -77,7 +76,6 @@ services:
   # ---------------------------------------------------------------------------
   node2:
     image: go-xkms-cluster-node:latest
-    container_name: cluster-node2
     hostname: node2
     # Boot-time cluster formation can outlast a single attempt when sibling
     # nodes lag (image start stagger); retry like systemd would in production.
@@ -124,7 +122,6 @@ services:
   # ---------------------------------------------------------------------------
   node3:
     image: go-xkms-cluster-node:latest
-    container_name: cluster-node3
     hostname: node3
     # Boot-time cluster formation can outlast a single attempt when sibling
     # nodes lag (image start stagger); retry like systemd would in production.
@@ -173,7 +170,6 @@ services:
   # ---------------------------------------------------------------------------
   standalone:
     image: go-xkms-cluster-node:latest
-    container_name: cluster-standalone
     hostname: standalone
     volumes:
       - standalone-data:/data
@@ -200,7 +196,6 @@ services:
       dockerfile: test/integration/cluster/Dockerfile.test
       secrets:
         - gomodauth
-    container_name: cluster-integration-tests
     depends_on:
       node1:
         condition: service_healthy

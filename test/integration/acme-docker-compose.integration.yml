@@ -11,17 +11,16 @@ services:
       additional_contexts:
         go-quicraft: /home/jhahn/sources/go-quicraft
         go-qrdb: /home/jhahn/sources/go-qrdb
-    container_name: acme-integration-server
     networks:
       - integration-network
     environment:
       ACME_LOG_LEVEL: debug
     ports:
-      - "18443:8443"      # ACME (HTTPS) - use alternate port to avoid conflicts
-      - "19443:9443"      # Admin REST
-      - "19444:9444"      # Admin gRPC
-      - "19445:9445"      # Admin QUIC
-      - "19446:9446"      # Admin MCP
+      - "0:8443"      # ACME (HTTPS)
+      - "0:9443"      # Admin REST
+      - "0:9444"      # Admin gRPC
+      - "0:9445"      # Admin QUIC
+      - "0:9446"      # Admin MCP
     healthcheck:
       test: ["CMD", "curl", "-sf", "-k", "https://localhost:8443/health"]
       interval: 3s
@@ -37,7 +36,6 @@ services:
     build:
       context: ../../..
       dockerfile: go-trusted-ca/.devcontainer/Dockerfile
-    container_name: acme-integration-tests
     networks:
       - integration-network
     depends_on:

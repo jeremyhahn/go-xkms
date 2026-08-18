@@ -165,7 +165,14 @@ jobs:
           sudo rm -rf /usr/local/lib/android
           sudo rm -rf /opt/ghc
           sudo rm -rf /opt/hostedtoolcache/CodeQL
-          sudo docker system prune -af --volumes
+          # Reclaim ONLY what no job can be using: dangling (untagged) images
+          # and the shared build cache. This used to be
+          # `docker system prune -af --volumes`, which on a shared runner host
+          # deleted the tagged images, stopped containers and volumes of every
+          # OTHER job running at the same time -- destroying their runs to free
+          # disk for this one. Never widen this back to -a or --volumes.
+          docker image prune -f || true
+          docker builder prune -af || true
           echo "=== Disk space after cleanup ==="
           df -h
 
@@ -207,6 +214,21 @@ jobs:
         # xkms-server:9443" (task 3129).
         run: XKMS_COMPOSE_SERVER=1 make integration-test
         timeout-minutes: 60
+
+      # Unconditional: the compose stacks are torn down whether the suite
+      # passed, failed, timed out or the job was cancelled. Cleanup used to
+      # exist only on the success path inside the make recipes, so a crashed
+      # or cancelled run left its containers on the host forever and every
+      # later run on that host failed to start with a name conflict.
+      #
+      # Safe to run concurrently with another job's: every stack is namespaced
+      # by GITHUB_RUN_ID (Makefile: COMPOSE_NS), so these targets can only ever
+      # name this run's own containers, networks and volumes.
+      - name: Tear down integration test stacks
+        if: always()
+        run: |
+          make clean-test-containers || true
+          make devcontainer-clean || true
 
       - name: Upload integration test results
         if: always() && github.server_url == 'https://github.com'

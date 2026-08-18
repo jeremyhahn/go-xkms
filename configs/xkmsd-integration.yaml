@@ -163,7 +163,7 @@ backends:
   # unhealthy for as long as the daemon runs. Every integration target gates on
   # "swtpm: condition: service_healthy", so leaving this on takes out the whole
   # suite, not just the TPM lane — observed here as "dependency failed to start:
-  # container xkms-dev-swtpm is unhealthy" on targets that never touch the TPM.
+  # container <project>-swtpm-1 is unhealthy" on targets that never touch the TPM.
   # Fixing the healthcheck to probe something that does not open a second client
   # session is what makes this safe to enable by default.
   tpm2:

@@ -7,6 +7,17 @@
 # from go-xkms attaches to go-trusted-platform's container, `up -d xkms-server`
 # silently matches nothing, and the volumes collide. Naming the project pins
 # every container, image, volume and network to go-xkms.
+#
+# This is only the floor, for someone invoking `docker compose -f` by hand. A
+# project name is host-global, so a constant one still lets two CI jobs on the
+# same runner host collide with each other. The Makefile therefore overrides
+# it per run with `go-xkms-$GITHUB_RUN_ID-devcontainer` (see COMPOSE_NS), and
+# that override is what CI always uses.
+#
+# For the same reason no service below may declare `container_name:`, a fixed
+# `networks: name:` or a fixed host port: each of those is absolute and
+# silently defeats the project prefix. Services address each other by compose
+# service name, which resolves inside the project network regardless.
 name: go-xkms
 
 services:
@@ -14,10 +25,7 @@ services:
     build:
       context: .
       dockerfile: Dockerfile
-    # Explicit image + container name so this container can never be confused
-    # with another project's devcontainer.
     image: go-xkms-dev:latest
-    container_name: go-xkms-devcontainer
     # Privileged mode required for QEMU with KVM acceleration
     privileged: true
     # Capabilities for QEMU/KVM and hardware testing
@@ -129,7 +137,6 @@ services:
       context: ../test/docker/swtpm
       dockerfile: Dockerfile
     image: go-xkms-swtpm:dev
-    container_name: xkms-dev-swtpm
     volumes:
       - swtpm-state:/var/lib/swtpm/tpmstate
     healthcheck:
@@ -146,7 +153,6 @@ services:
       context: ../test/docker/softhsm
       dockerfile: Dockerfile
     image: go-xkms-softhsm:dev
-    container_name: xkms-dev-softhsm
     volumes:
       - softhsm-tokens:/tokens
     environment:
@@ -171,18 +177,22 @@ services:
       secrets:
         - gomodauth
     image: go-xkms-server:dev
-    container_name: xkms-dev-server
-    # Host ports are offset into a private block: this stack runs alongside
-    # other project stacks (go-trusted-platform publishes 8443/9445/10443/3000)
-    # and must not fight them for a host port. Nothing in the test path uses
-    # these — tests reach the server over the shared xkms-socket volume or by
-    # service DNS on the xkms-dev network — they exist for host-side debugging.
+    # Published on an EPHEMERAL host port (host side 0), not a fixed one. A
+    # published host port is a host-global resource: a fixed number means this
+    # stack fights other project stacks (go-trusted-platform publishes
+    # 8443/9445/10443/3000) and, worse, fights the *same* stack belonging to
+    # another CI job on the same runner host. Nothing in the test path needs a
+    # predictable number — tests reach the server over the shared xkms-socket
+    # volume or by service DNS on the xkms-dev network — so these exist purely
+    # for host-side debugging. Ask docker which port it picked:
+    #   docker compose -p <project> port xkms-server 8443
+    # Set XKMS_HOST_*_PORT to pin one when you want a stable local endpoint.
     ports:
-      - "${XKMS_HOST_REST_PORT:-28443}:8443"    # REST API
-      - "${XKMS_HOST_GRPC_PORT:-29443}:9443"    # gRPC
-      - "${XKMS_HOST_QUIC_PORT:-28444}:8444"    # QUIC
-      - "${XKMS_HOST_MCP_PORT:-28445}:8445"     # MCP
-      - "${XKMS_HOST_METRICS_PORT:-29090}:9090" # Metrics
+      - "${XKMS_HOST_REST_PORT:-0}:8443"    # REST API
+      - "${XKMS_HOST_GRPC_PORT:-0}:9443"    # gRPC
+      - "${XKMS_HOST_QUIC_PORT:-0}:8444"    # QUIC
+      - "${XKMS_HOST_MCP_PORT:-0}:8445"     # MCP
+      - "${XKMS_HOST_METRICS_PORT:-0}:9090" # Metrics
     volumes:
       - xkms-data:/data
       - xkms-socket:/var/run/xkms
@@ -248,7 +258,6 @@ services:
       secrets:
         - gomodauth
     image: go-quicbaas-server:dev
-    container_name: xkms-dev-quicbaas
     profiles:
       - quicbaas
     volumes:
@@ -279,7 +288,6 @@ services:
       context: .
       dockerfile: Dockerfile.softfido
     image: go-xkms-softfido:dev
-    container_name: xkms-dev-softfido
     volumes:
       - softfido-state:/var/lib/softfido
       - softfido-run:/var/run/softfido

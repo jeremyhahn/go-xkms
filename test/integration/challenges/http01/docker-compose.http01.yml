@@ -11,7 +11,6 @@ services:
     build:
       context: ../../../..
       dockerfile: go-trusted-ca/test/Dockerfile.server
-    container_name: http01-acme-server
     networks:
       http01-network:
         aliases:
@@ -21,7 +20,7 @@ services:
       ACME_EXTERNAL_URL: "http://acme-server:8080"
       GO_ENV: "test"
     ports:
-      - "8480:8080"  # Map to 8480 on host to avoid conflicts
+      - "0:8080"
     healthcheck:
       test: ["CMD", "wget", "--quiet", "--tries=1", "--spider", "http://localhost:8080/acme/directory"]
       interval: 3s
@@ -37,14 +36,13 @@ services:
     build:
       context: .
       dockerfile: Dockerfile.challenge-responder
-    container_name: http01-challenge-responder
     networks:
       http01-network:
         aliases:
           - test.example.com
           - www.test.example.com
     ports:
-      - "80:80"
+      - "0:80"
     environment:
       LISTEN_PORT: "80"
     volumes:
@@ -59,13 +57,12 @@ services:
   # Nginx - receives the issued certificate
   nginx:
     image: nginx:alpine
-    container_name: http01-nginx
     networks:
       http01-network:
         aliases:
           - secure.test.example.com
     ports:
-      - "443:443"
+      - "0:443"
     volumes:
       - nginx-certs:/etc/nginx/certs
       - ./nginx.conf:/etc/nginx/nginx.conf:ro
@@ -80,7 +77,6 @@ services:
     build:
       context: ../../../..
       dockerfile: go-trusted-ca/test/integration/http01/Dockerfile.http01-tests
-    container_name: http01-e2e-tests
     networks:
       - http01-network
     depends_on:
@@ -102,12 +98,8 @@ services:
 networks:
   http01-network:
     driver: bridge
-    name: http01-network
 
 volumes:
   acme-data:
-    name: http01-acme-data
   challenge-tokens:
-    name: http01-challenge-tokens
   nginx-certs:
-    name: http01-nginx-certs

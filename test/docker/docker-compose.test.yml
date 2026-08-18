@@ -47,7 +47,6 @@ services:
       context: ..
       dockerfile: Dockerfile
     image: go-xkms-test:latest
-    container_name: go-xkms-test-runner
     depends_on:
       swtpm:
         condition: service_healthy
