@@ -19,7 +19,6 @@ import (
 	"context"
 	"crypto/aes"
 	"crypto/cipher"
-	"crypto/rand"
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
@@ -891,20 +890,18 @@ func (f *FileBackupAdapter) encryptData(data []byte, key []byte) ([]byte, error)
 		return nil, &errs.Wrapped{Msg: "failed to create cipher", Err: err}
 	}
 
-	gcm, err := cipher.NewGCM(block)
+	// NewGCMWithRandomNonce, not NewGCM: FIPS 140-3 (SP 800-38D, CMVP IG C.H)
+	// requires the GCM IV be generated inside the module boundary, and
+	// GODEBUG=fips140=only rejects an externally supplied one. Seal prepends
+	// the same 96-bit nonce this code prepended by hand and Open strips it, so
+	// the stored layout is byte-for-byte what it was.
+	gcm, err := cipher.NewGCMWithRandomNonce(block)
 	if err != nil {
 		return nil, &errs.Wrapped{Msg: "failed to create GCM", Err: err}
 	}
 
-	// Generate nonce
-	nonce := make([]byte, gcm.NonceSize())
-	if _, err := io.ReadFull(rand.Reader, nonce); err != nil {
-		return nil, &errs.Wrapped{Msg: "failed to generate nonce", Err: err}
-	}
-
-	// Encrypt and prepend nonce
-	ciphertext := gcm.Seal(nonce, nonce, data, nil)
-	return ciphertext, nil
+	// Seal generates and prepends the nonce itself.
+	return gcm.Seal(nil, nil, data, nil), nil
 }
 
 func (f *FileBackupAdapter) decryptData(data []byte, key []byte) ([]byte, error) {
@@ -918,21 +915,24 @@ func (f *FileBackupAdapter) decryptData(data []byte, key []byte) ([]byte, error)
 		return nil, &errs.Wrapped{Msg: "failed to create cipher", Err: err}
 	}
 
-	gcm, err := cipher.NewGCM(block)
+	// NewGCMWithRandomNonce, not NewGCM: FIPS 140-3 (SP 800-38D, CMVP IG C.H)
+	// requires the GCM IV be generated inside the module boundary, and
+	// GODEBUG=fips140=only rejects an externally supplied one. Seal prepends
+	// the same 96-bit nonce this code prepended by hand and Open strips it, so
+	// the stored layout is byte-for-byte what it was.
+	gcm, err := cipher.NewGCMWithRandomNonce(block)
 	if err != nil {
 		return nil, &errs.Wrapped{Msg: "failed to create GCM", Err: err}
 	}
 
-	nonceSize := gcm.NonceSize()
-	if len(data) < nonceSize {
+	// Overhead covers the prepended nonce and the trailing tag; Open extracts
+	// the nonce itself.
+	if len(data) < gcm.Overhead() {
 		return nil, errors.New("ciphertext too short")
 	}
 
-	// Extract nonce and ciphertext
-	nonce, ciphertext := data[:nonceSize], data[nonceSize:]
-
 	// Decrypt
-	plaintext, err := gcm.Open(nil, nonce, ciphertext, nil)
+	plaintext, err := gcm.Open(nil, nil, data, nil)
 	if err != nil {
 		return nil, &errs.Wrapped{Msg: "decryption failed", Err: err}
 	}

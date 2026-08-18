@@ -77,8 +77,16 @@ var (
 	// newAESCipherFunc wraps aes.NewCipher for testability
 	newAESCipherFunc = aes.NewCipher
 
-	// newGCMFunc wraps cipher.NewGCM for testability
-	newGCMFunc = cipher.NewGCM
+	// newGCMFunc wraps cipher.NewGCMWithRandomNonce for testability.
+	//
+	// NewGCMWithRandomNonce, not NewGCM: FIPS 140-3 (SP 800-38D, CMVP IG C.H)
+	// requires the GCM IV be generated inside the module boundary, and
+	// GODEBUG=fips140=only rejects an externally supplied one. Seal prepends
+	// the nonce and Open strips it; splitting that output back into the nonce,
+	// ciphertext and tag reproduces this package's existing
+	// ephemeral_pub || nonce || tag || ciphertext wire format byte for byte, so
+	// blobs written by earlier builds still decrypt.
+	newGCMFunc = cipher.NewGCMWithRandomNonce
 )
 
 // Encrypt encrypts plaintext using ECIES with the recipient's public key.
@@ -91,7 +99,10 @@ var (
 //  5. Return: ephemeral_public_key || nonce || tag || ciphertext
 //
 // Parameters:
-//   - random: Cryptographically secure random source (typically crypto/rand.Reader)
+//   - random: retained for API compatibility and rejected when nil. Go 1.26's
+//     ecdsa.GenerateKey draws the ephemeral key from crypto/rand regardless,
+//     and the GCM nonce is generated inside the FIPS module boundary, so this
+//     reader is not read from.
 //   - publicKey: Recipient's ECDSA public key (P-256, P-384, or P-521)
 //   - plaintext: Data to encrypt
 //   - aad: Optional additional authenticated data (not encrypted, but authenticated)
@@ -138,20 +149,18 @@ func Encrypt(random io.Reader, publicKey *ecdsa.PublicKey, plaintext, aad []byte
 		return nil, &errs.Wrapped{Msg: "failed to create GCM", Err: err}
 	}
 
-	// Generate random nonce
-	nonce := make([]byte, nonceSize)
-	if _, err := io.ReadFull(random, nonce); err != nil {
-		return nil, &errs.Wrapped{Msg: "failed to generate nonce", Err: err}
-	}
+	// Encrypt plaintext. Seal emits nonce || ciphertext || tag; the nonce comes
+	// from inside the module rather than from the caller-supplied random
+	// source, which is still used for the ephemeral key above.
+	sealed := gcm.Seal(nil, nil, plaintext, aad)
 
-	// Encrypt plaintext (GCM appends tag to ciphertext)
-	ciphertextWithTag := gcm.Seal(nil, nonce, plaintext, aad)
-
-	// Extract tag from end
-	// Note: GCM.Seal always returns at least tagSize bytes (the authentication tag)
-	// so this operation is always safe
-	ciphertext := ciphertextWithTag[:len(ciphertextWithTag)-tagSize]
-	tag := ciphertextWithTag[len(ciphertextWithTag)-tagSize:]
+	// Split into the three pieces the wire format keeps in separate positions.
+	// Note: Seal always returns at least nonceSize+tagSize bytes, so these
+	// slices are always safe.
+	nonce := sealed[:nonceSize]
+	body := sealed[nonceSize:]
+	ciphertext := body[:len(body)-tagSize]
+	tag := body[len(body)-tagSize:]
 
 	// Serialize ephemeral public key using modern crypto/ecdh (Go 1.20+)
 	ecdhPub, err := ephemeralPriv.PublicKey.ECDH()
@@ -243,11 +252,11 @@ func Decrypt(privateKey *ecdsa.PrivateKey, ciphertext, aad []byte) ([]byte, erro
 		return nil, &errs.Wrapped{Msg: "failed to create GCM", Err: err}
 	}
 
-	// Reconstruct ciphertext with tag for GCM
-	fullCiphertext := slices.Concat(encryptedData, tag)
+	// Reconstruct the nonce || ciphertext || tag layout Open expects.
+	fullCiphertext := slices.Concat(nonce, encryptedData, tag)
 
 	// Decrypt and verify
-	plaintext, err := gcm.Open(nil, nonce, fullCiphertext, aad)
+	plaintext, err := gcm.Open(nil, nil, fullCiphertext, aad)
 	if err != nil {
 		return nil, &errs.Wrapped{Msg: "decryption failed (authentication error)", Err: err}
 	}

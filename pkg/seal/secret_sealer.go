@@ -17,7 +17,6 @@ import (
 	"context"
 	"crypto/aes"
 	"crypto/cipher"
-	"crypto/rand"
 	"crypto/sha256"
 	"errors"
 	"fmt"
@@ -82,15 +81,15 @@ func (s *SecretSealer) Seal(_ context.Context, data []byte, _ *types.SealOptions
 	if err != nil {
 		return nil, err
 	}
-	nonce := make([]byte, gcm.NonceSize())
-	if _, err := rand.Read(nonce); err != nil {
-		return nil, err
-	}
-	ciphertext := gcm.Seal(nil, nonce, data, nil)
+	// Seal generates the nonce inside the module and prepends it. Split it back
+	// out so SealedData keeps its existing shape: the Nonce and Ciphertext
+	// fields hold exactly what they held before, so blobs sealed by earlier
+	// builds still unseal and blobs sealed now are readable by them.
+	sealed := gcm.Seal(nil, nil, data, nil)
 	return &types.SealedData{
 		Backend:    types.BackendTypeSoftware,
-		Ciphertext: ciphertext,
-		Nonce:      nonce,
+		Ciphertext: sealed[gcmNonceSize:],
+		Nonce:      sealed[:gcmNonceSize],
 	}, nil
 }
 
@@ -106,16 +105,24 @@ func (s *SecretSealer) Unseal(_ context.Context, sealed *types.SealedData, _ *ty
 	if err != nil {
 		return nil, err
 	}
-	// crypto/cipher panics rather than returning an error when the nonce is
-	// not exactly NonceSize bytes. The nonce arrives from stored/caller data,
-	// so without this check a corrupted or malicious sealed blob takes the
-	// whole process down.
-	if len(sealed.Nonce) != gcm.NonceSize() {
+	// The nonce arrives from stored/caller data. The random-nonce AEAD expects
+	// it prepended to the ciphertext rather than passed separately, and rejects
+	// a short input, but checking here keeps the specific error message a
+	// corrupted or malicious sealed blob used to get.
+	if len(sealed.Nonce) != gcmNonceSize {
 		return nil, &errs.Message{Msg: fmt.Sprintf(
-			"seal: nonce is %d bytes, want %d", len(sealed.Nonce), gcm.NonceSize())}
+			"seal: nonce is %d bytes, want %d", len(sealed.Nonce), gcmNonceSize)}
 	}
-	return gcm.Open(nil, sealed.Nonce, sealed.Ciphertext, nil)
+	blob := make([]byte, 0, len(sealed.Nonce)+len(sealed.Ciphertext))
+	blob = append(blob, sealed.Nonce...)
+	blob = append(blob, sealed.Ciphertext...)
+	return gcm.Open(nil, nil, blob, nil)
 }
+
+// gcmNonceSize is the 96-bit GCM nonce length. cipher.NewGCMWithRandomNonce
+// reports a NonceSize of zero because it manages the nonce itself, so the
+// length has to be named here to keep splitting it out of the sealed blob.
+const gcmNonceSize = 12
 
 // gcm builds the AES-256-GCM AEAD over the derived data key.
 func (s *SecretSealer) gcm() (cipher.AEAD, error) {
@@ -123,7 +130,12 @@ func (s *SecretSealer) gcm() (cipher.AEAD, error) {
 	if err != nil {
 		return nil, err
 	}
-	return cipher.NewGCM(block)
+	// NewGCMWithRandomNonce, not NewGCM: FIPS 140-3 (SP 800-38D, CMVP IG C.H)
+	// requires the GCM IV be generated inside the module boundary, and
+	// GODEBUG=fips140=only rejects an externally supplied one. The AEAD
+	// prepends the same 96-bit nonce to the ciphertext, so the stored layout is
+	// unchanged once Seal splits it back into SealedData.Nonce.
+	return cipher.NewGCMWithRandomNonce(block)
 }
 
 // Compile-time check.
