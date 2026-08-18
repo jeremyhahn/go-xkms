@@ -80,6 +80,13 @@ test/integration/acme-client/playwright/trusted-acme-client
 # Gitea module-fetch token (dependency-resolution.md §6) — never committed
 .devcontainer/.env
 .devcontainer/gomodauth.env
+# The repo root copy too: ci.yml's docker job stages the same credentials as
+# ./gomodauth.env (`make stage-gomodauth` writes only the .devcontainer path),
+# so reproducing that job locally left a token file untracked but NOT ignored
+# — one `git add -A` from history, which under version-control.md means
+# rotating the token rather than rewriting the commit. .dockerignore already
+# covered `gomodauth*`; this closes the git side.
+gomodauth.env
 
 # *.test above matches Go test binaries; these are DOCKERFILES whose
 # names happen to end in .test — without this negation they are silently
