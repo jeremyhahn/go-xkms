@@ -753,19 +753,36 @@ jobs:
   # has to do. Do not weaken this to `on`, do not add a skip tag, and do not
   # narrow the package set to get green: a failure here is the finding.
   #
-  # The codec tags are the repo's mandatory build configuration, not a
-  # narrowing: go-qrdb's DAO layer refuses to construct a codec that was not
-  # linked in ("codec \"json\" is not supported in this build"), so a bare
-  # `go test ./...` fails in packages that never touch cryptography at all.
-  # Makefile BUILD_TAGS carries the same three unconditionally.
+  # The tag set is Makefile SERVER_BUILD_TAGS -- the configuration the shipped
+  # server is released with. Testing a narrower set would gate less than we
+  # ship: files behind pkcs8, pkcs11, the cloud KMS backends, vault and the
+  # object-storage backends would be absent from the job, so non-approved
+  # cryptography on a real production path could merge while this required
+  # check reported success. The "race" job compiles most of these tags but does
+  # not run under GODEBUG=fips140=only, so it cannot substitute.
+  #
+  # CLI_BUILD_TAGS is covered by the same run. It is SERVER_BUILD_TAGS minus
+  # the pkcs11 and object-storage backends, plus gms_pure_go -- and gms_pure_go
+  # only swaps dolthub/go-mysql-server's regex engine from cgo to pure Go, which
+  # touches no cryptography. The CLI configuration is still compiled below so a
+  # CGO_ENABLED=0 break is caught here rather than at release time.
+  #
+  # The codec tags in that set are mandatory rather than incidental: go-qrdb's
+  # DAO layer refuses to construct a codec that was not linked in ("codec
+  # \"json\" is not supported in this build"), so a bare `go test ./...` fails
+  # in packages that never touch cryptography at all.
   fips:
     name: FIPS
     runs-on: ubuntu-latest
     needs: [build]
-    timeout-minutes: 30
+    timeout-minutes: 45
     env:
       GOFIPS140: latest
       GODEBUG: fips140=only
+      # Makefile SERVER_BUILD_TAGS.
+      FIPS_TAGS: "pkcs8 awskms gcpkms azurekv vault pkcs11 frost awss3 minio gcpstorage azureblob glacier azurearchive codec_cbor codec_json codec_msgpack"
+      # Makefile CLI_BUILD_TAGS.
+      FIPS_CLI_TAGS: "pkcs8 awskms gcpkms azurekv vault frost codec_cbor codec_json codec_msgpack gms_pure_go"
 
     steps:
       - name: Checkout code
@@ -801,13 +818,19 @@ jobs:
         env:
           SOFTHSM2_CONF: ${{ github.workspace }}/softhsm2.conf
 
-      - name: Build all packages (FIPS mode)
-        run: go build -tags "codec_cbor codec_json codec_msgpack" ./...
+      - name: Build all packages, server configuration (FIPS mode)
+        run: go build -tags "${FIPS_TAGS}" ./...
+
+      # GODEBUG is a runtime setting and cannot fail a compile, so this step
+      # exists to prove the CGO_ENABLED=0 CLI configuration still builds under
+      # the FIPS toolchain selector, not to enforce algorithm policy.
+      - name: Build xkmsctl, CLI configuration (FIPS mode)
+        run: CGO_ENABLED=0 go build -tags "${FIPS_CLI_TAGS}" -o /dev/null ./cmd/xkmsctl
 
       - name: Unit tests (FIPS mode)
         env:
           SOFTHSM2_CONF: ${{ github.workspace }}/softhsm2.conf
-        run: go test -count=1 -timeout=900s -tags "codec_cbor codec_json codec_msgpack" ./...
+        run: go test -count=1 -timeout=1800s -tags "${FIPS_TAGS}" ./...
 
   # The single required check (devops.md §1). Every job above appears in BOTH
   # the needs list and the results check -- a gate that can pass vacuously is
