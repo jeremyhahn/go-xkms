@@ -15,6 +15,18 @@
 # against each compose file with this run's project name removes exactly the
 # containers, networks and volumes this run created and provably cannot touch
 # another job's. Nothing here may search the host by name, port or image.
+#
+# The per-lane suites only. Three projects are deliberately NOT touched here:
+#
+#   devcontainer  `make integration-test` runs this script as its first
+#                 prerequisite, and a developer's devcontainer is a long-lived
+#                 shell that must survive that. CI tears it down separately
+#                 with `make devcontainer-clean` in its if:always() step.
+#   root          the docker-compose.yml dev stack -- `make compose-clean`.
+#   emulators     docker-compose.emulators.yml -- `make emulator-stop`.
+#
+# Each is owned by the target that starts it, and each CI job cleans up
+# exactly the projects it created.
 
 set -u
 
