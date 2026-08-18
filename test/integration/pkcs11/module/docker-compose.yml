@@ -26,7 +26,7 @@ services:
         go-quicraft: ../../../../../go-quicraft
       args:
         - VERSION=${VERSION:-0.0.1-dev}
-    image: go-xkms-pkcs11-server:latest
+    image: go-xkms-pkcs11-server:${XKMS_IMAGE_TAG:-latest}
     ports:
       - "0:9443"       # gRPC
       - "0:8443"       # REST (health checks)
@@ -75,7 +75,7 @@ services:
     build:
       context: ../../../..
       dockerfile: test/integration/pkcs11/module/Dockerfile
-    image: go-xkms-pkcs11-test:latest
+    image: go-xkms-pkcs11-test:${XKMS_IMAGE_TAG:-latest}
     depends_on:
       xkms-server:
         condition: service_healthy
@@ -158,7 +158,7 @@ services:
     build:
       context: ../../../..
       dockerfile: test/integration/pkcs11/module/Dockerfile
-    image: go-xkms-pkcs11-test:latest
+    image: go-xkms-pkcs11-test:${XKMS_IMAGE_TAG:-latest}
     profiles:
       - compat
     depends_on:

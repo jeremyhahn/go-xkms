@@ -46,7 +46,7 @@ services:
     build:
       context: ..
       dockerfile: Dockerfile
-    image: go-xkms-test:latest
+    image: go-xkms-test:${XKMS_IMAGE_TAG:-latest}
     depends_on:
       swtpm:
         condition: service_healthy

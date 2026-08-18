@@ -222,13 +222,15 @@ jobs:
       # later run on that host failed to start with a name conflict.
       #
       # Safe to run concurrently with another job's: every stack is namespaced
-      # by GITHUB_RUN_ID (Makefile: COMPOSE_NS), so these targets can only ever
-      # name this run's own containers, networks and volumes.
+      # by GITHUB_RUN_ID (Makefile: COMPOSE_NS / XKMS_IMAGE_TAG), so these
+      # targets can only ever name this run's own containers, networks,
+      # volumes and image tags.
       - name: Tear down integration test stacks
         if: always()
         run: |
           make clean-test-containers || true
           make devcontainer-clean || true
+          make clean-run-images || true
 
       - name: Upload integration test results
         if: always() && github.server_url == 'https://github.com'

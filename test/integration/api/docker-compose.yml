@@ -8,7 +8,7 @@ services:
         - VERSION=${VERSION:-0.0.1-alpha}
       secrets:
         - gomodauth
-    image: go-xkms-integration:latest
+    image: go-xkms-integration:${XKMS_IMAGE_TAG:-latest}
     # Ports are exposed but NOT published to the host. A published host port
     # is host-global, so publishing would make this stack collide with the
     # devcontainer's and with any other CI job running this same suite. Test
@@ -88,7 +88,7 @@ services:
     build:
       context: ../../../test/docker/swtpm
       dockerfile: Dockerfile
-    image: go-xkms-swtpm:latest
+    image: go-xkms-swtpm:${XKMS_IMAGE_TAG:-latest}
     expose:
       - "2321"  # TPM command port
       - "2322"  # TPM control port
@@ -107,7 +107,7 @@ services:
     build:
       context: ../../../test/docker/softhsm
       dockerfile: Dockerfile
-    image: go-xkms-softhsm:latest
+    image: go-xkms-softhsm:${XKMS_IMAGE_TAG:-latest}
     volumes:
       - softhsm-tokens:/tokens
     environment:
@@ -128,7 +128,7 @@ services:
       dockerfile: Dockerfile
       secrets:
         - gomodauth
-    image: go-xkms-integration:latest
+    image: go-xkms-integration:${XKMS_IMAGE_TAG:-latest}
     # Required for QUIC UDP buffer settings
     privileged: true
     user: root

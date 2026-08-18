@@ -31,7 +31,7 @@ services:
         - VERSION=${VERSION:-0.0.1-test}
       secrets:
         - gomodauth
-    image: go-xkms-cluster-node:latest
+    image: go-xkms-cluster-node:${XKMS_IMAGE_TAG:-latest}
     hostname: node1
     # Boot-time cluster formation can outlast a single attempt when sibling
     # nodes lag (image start stagger); retry like systemd would in production.

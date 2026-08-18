@@ -22,7 +22,7 @@ services:
         - VERSION=${VERSION:-0.0.1-dev}
       secrets:
         - gomodauth
-    image: go-xkms-sdk-test:latest
+    image: go-xkms-sdk-test:${XKMS_IMAGE_TAG:-latest}
     ports:
       - "0:8443"       # REST API (HTTPS)
       - "0:9443"       # gRPC
@@ -90,7 +90,7 @@ services:
     build:
       context: ../../../test/docker/swtpm
       dockerfile: Dockerfile
-    image: go-xkms-swtpm:sdk-test
+    image: go-xkms-swtpm:${XKMS_IMAGE_TAG:-sdk-test}
     ports:
       - "0:2321"  # TPM command port
       - "0:2322"  # TPM control port
@@ -109,7 +109,7 @@ services:
     build:
       context: ../../../test/docker/softhsm
       dockerfile: Dockerfile
-    image: go-xkms-softhsm:sdk-test
+    image: go-xkms-softhsm:${XKMS_IMAGE_TAG:-sdk-test}
     volumes:
       - softhsm-tokens:/tokens
     environment:
@@ -130,7 +130,7 @@ services:
       dockerfile: Dockerfile
       secrets:
         - gomodauth
-    image: go-xkms-sdk-test:latest
+    image: go-xkms-sdk-test:${XKMS_IMAGE_TAG:-latest}
     # Required for QUIC UDP buffer settings
     privileged: true
     user: root

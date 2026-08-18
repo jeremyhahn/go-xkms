@@ -25,7 +25,7 @@ services:
     build:
       context: .
       dockerfile: Dockerfile
-    image: go-xkms-dev:latest
+    image: go-xkms-dev:${XKMS_IMAGE_TAG:-latest}
     # Privileged mode required for QEMU with KVM acceleration
     privileged: true
     # Capabilities for QEMU/KVM and hardware testing
@@ -136,7 +136,7 @@ services:
     build:
       context: ../test/docker/swtpm
       dockerfile: Dockerfile
-    image: go-xkms-swtpm:dev
+    image: go-xkms-swtpm:${XKMS_IMAGE_TAG:-dev}
     volumes:
       - swtpm-state:/var/lib/swtpm/tpmstate
     healthcheck:
@@ -152,7 +152,7 @@ services:
     build:
       context: ../test/docker/softhsm
       dockerfile: Dockerfile
-    image: go-xkms-softhsm:dev
+    image: go-xkms-softhsm:${XKMS_IMAGE_TAG:-dev}
     volumes:
       - softhsm-tokens:/tokens
     environment:
@@ -176,7 +176,7 @@ services:
       # `make stage-gomodauth` before building this service.
       secrets:
         - gomodauth
-    image: go-xkms-server:dev
+    image: go-xkms-server:${XKMS_IMAGE_TAG:-dev}
     # Published on an EPHEMERAL host port (host side 0), not a fixed one. A
     # published host port is a host-global resource: a fixed number means this
     # stack fights other project stacks (go-trusted-platform publishes
@@ -257,7 +257,7 @@ services:
         BUILD_TAGS: "gms_pure_go rest"
       secrets:
         - gomodauth
-    image: go-quicbaas-server:dev
+    image: go-quicbaas-server:${XKMS_IMAGE_TAG:-dev}
     profiles:
       - quicbaas
     volumes:
@@ -287,7 +287,7 @@ services:
     build:
       context: .
       dockerfile: Dockerfile.softfido
-    image: go-xkms-softfido:dev
+    image: go-xkms-softfido:${XKMS_IMAGE_TAG:-dev}
     volumes:
       - softfido-state:/var/lib/softfido
       - softfido-run:/var/run/softfido

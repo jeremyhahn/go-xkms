@@ -159,4 +159,6 @@ jobs:
       # can only remove this run's own containers, networks and volumes.
       - name: Tear down compose stack
         if: always()
-        run: make compose-clean || true
+        run: |
+          make compose-clean || true
+          make clean-run-images || true

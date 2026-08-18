@@ -218,6 +218,25 @@ COMPOSE_NS := go-xkms-$(COMPOSE_RUN_ID)
 #                         shells out to lands in the same project instead of
 #                         silently falling back to its directory basename.
 compose = COMPOSE_PROJECT_NAME=$(COMPOSE_NS)-$(1) docker compose -p $(COMPOSE_NS)-$(1)
+
+# An image TAG is daemon-global -- the project namespace does not reach it.
+# `docker build -t go-xkms-integration:latest` on one job retags that name for
+# every job on the host, so two runs building different commits race between
+# `compose build` and `compose run`: the loser's container is created from the
+# other run's image and silently tests the wrong commit. Tagging per run
+# removes the shared name.
+#
+# Empty off CI, where each compose file's own default applies
+# (`${XKMS_IMAGE_TAG:-latest}`, `:-dev`, `:-sdk-test`) -- so a developer's
+# image names and layer cache are exactly what they were.
+ifneq ($(COMPOSE_RUN_ID),local)
+XKMS_IMAGE_TAG ?= $(COMPOSE_RUN_ID)
+endif
+export XKMS_IMAGE_TAG
+
+# The tag the devcontainer stack's xkms-server image carries, mirroring that
+# compose file's `${XKMS_IMAGE_TAG:-dev}` so lookups find what compose built.
+XKMS_SERVER_IMAGE := go-xkms-server:$(if $(XKMS_IMAGE_TAG),$(XKMS_IMAGE_TAG),dev)
 GOMODCACHE_HOST := $(shell go env GOMODCACHE 2>/dev/null || echo $(HOME)/go/pkg/mod)
 GITEA_MODULE_ENV := -e GOWORK=off \
                     -e GOPRIVATE='github.com/jeremyhahn/*' \
@@ -1344,6 +1363,26 @@ coverage-xkmsctl:
 integration-test: clean-test-containers integration-test-software integration-test-pkcs8 integration-test-pkcs11 integration-test-pkcs11-module-all integration-test-tpm2 integration-test-awskms integration-test-gcpkms integration-test-azurekv integration-test-vault integration-test-storage integration-test-utils integration-test-quantum integration-test-frost integration-test-webauthn integration-test-fido2 integration-test-cli integration-test-api-all integration-test-sdk-go integration-test-bootstrap
 	@echo "$(GREEN)$(BOLD)✓ All integration tests complete!$(RESET)"
 
+.PHONY: clean-run-images
+## clean-run-images: Remove the images this CI run tagged (no-op for local builds)
+# `docker image prune -f` only reaps UNTAGGED images, so the per-run tags
+# (XKMS_IMAGE_TAG) would otherwise pile up a full set of images on the runner
+# host every single run. The match is anchored on this run's tag, which is
+# unique to this job, so it cannot remove another job's images -- unlike the
+# host-wide `docker image prune -a` this replaces.
+#
+# Off CI, XKMS_IMAGE_TAG is empty and the images carry the shared local tags
+# (:latest, :dev). Removing those would throw away a developer's build cache,
+# so this deliberately does nothing.
+clean-run-images:
+	@if [ -z "$(XKMS_IMAGE_TAG)" ]; then \
+		echo "$(CYAN)→ Local image tags; nothing to remove$(RESET)"; \
+	else \
+		refs=$$(docker images --format '{{.Repository}}:{{.Tag}}' 2>/dev/null | grep -E ':$(XKMS_IMAGE_TAG)$$' || true); \
+		if [ -n "$$refs" ]; then docker rmi -f $$refs >/dev/null 2>&1 || true; fi; \
+		echo "$(GREEN)✓ Removed images tagged :$(XKMS_IMAGE_TAG)$(RESET)"; \
+	fi
+
 .PHONY: clean-test-containers
 ## clean-test-containers: Clean up Docker containers from previous test runs
 clean-test-containers:
@@ -2045,13 +2084,13 @@ define compose_up_xkms_server
 			$(DOCKER_COMPOSE) up -d --build xkms-server; \
 			$(MAKE) --no-print-directory devcontainer-server-wait ;; \
 		*) \
-			if docker image inspect go-xkms-server:dev >/dev/null 2>&1; then \
+			if docker image inspect $(XKMS_SERVER_IMAGE) >/dev/null 2>&1; then \
 				echo "$(CYAN)$(BOLD)→ Starting xkms-server (compose)...$(RESET)"; \
 				$(DOCKER_COMPOSE) up -d --build xkms-server || true; \
 				$(MAKE) --no-print-directory devcontainer-server-wait || \
 					$(DOCKER_COMPOSE) stop xkms-server >/dev/null 2>&1 || true; \
 			else \
-				echo "$(YELLOW)go-xkms-server:dev not built; the devcontainer serves the socket itself.$(RESET)"; \
+				echo "$(YELLOW)$(XKMS_SERVER_IMAGE) not built; the devcontainer serves the socket itself.$(RESET)"; \
 				echo "$(YELLOW)Build it once with: make devcontainer-server-build$(RESET)"; \
 			fi ;; \
 	esac
