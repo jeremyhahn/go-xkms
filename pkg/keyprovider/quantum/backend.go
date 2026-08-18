@@ -209,6 +209,16 @@ func (b *QuantumBackend) GenerateKey(ctx context.Context, attrs *types.KeyAttrib
 	var privateKey crypto.PrivateKey
 	var metadata *keyMetadata
 
+	// The generated key owns an mlocked enclave holding the reconstruction
+	// seed. Until it is handed to the caller, every error path has to destroy
+	// it rather than leave protected memory to the garbage collector.
+	handedOff := false
+	defer func() {
+		if !handedOff {
+			cleanPrivateKey(privateKey)
+		}
+	}()
+
 	algorithm := string(attrs.QuantumAttributes.Algorithm)
 
 	switch {
@@ -236,7 +246,20 @@ func (b *QuantumBackend) GenerateKey(ctx context.Context, attrs *types.KeyAttrib
 		}
 	}
 
+	handedOff = true
 	return privateKey, nil
+}
+
+// cleanPrivateKey destroys the enclave a generated quantum key holds. It exists
+// so error paths can release protected memory without repeating the type switch,
+// and it tolerates a nil or unrecognised key so a deferred call is always safe.
+func cleanPrivateKey(key crypto.PrivateKey) {
+	switch k := key.(type) {
+	case *MLDSAPrivateKey:
+		k.Clean()
+	case *MLKEMPrivateKey:
+		k.Clean()
+	}
 }
 
 // sealSeed seals a copy of src into an enclave and leaves src to the caller.
@@ -623,21 +646,20 @@ func (b *QuantumBackend) RotateKey(ctx context.Context, attrs *types.KeyAttribut
 	var newMetadata *keyMetadata
 
 	// Rotation only needs the new metadata, but generating it also produces a
-	// private key holding an enclave. Clean it rather than leaving mlocked
-	// memory to the garbage collector.
+	// private key holding an enclave. It is never handed anywhere, so it is
+	// destroyed unconditionally rather than left to the garbage collector.
+	var rotated crypto.PrivateKey
+	defer func() { cleanPrivateKey(rotated) }()
+
 	switch {
 	case strings.HasPrefix(metadata.Algorithm, "ML-DSA"):
-		var rotated *MLDSAPrivateKey
-		rotated, newMetadata, err = b.generateMLDSAKey(metadata.Algorithm)
-		if rotated != nil {
-			defer rotated.Clean()
-		}
+		var mldsaKey *MLDSAPrivateKey
+		mldsaKey, newMetadata, err = b.generateMLDSAKey(metadata.Algorithm)
+		rotated = mldsaKey
 	case strings.HasPrefix(metadata.Algorithm, "ML-KEM"):
-		var rotated *MLKEMPrivateKey
-		rotated, newMetadata, err = b.generateMLKEMKey(metadata.Algorithm, keyID)
-		if rotated != nil {
-			defer rotated.Clean()
-		}
+		var mlkemKey *MLKEMPrivateKey
+		mlkemKey, newMetadata, err = b.generateMLKEMKey(metadata.Algorithm, keyID)
+		rotated = mlkemKey
 	default:
 		return &errs.Detail{Err: ErrUnsupportedAlgorithm, Detail: metadata.Algorithm}
 	}

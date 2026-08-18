@@ -16,11 +16,13 @@ package quantum
 import (
 	"bytes"
 	"context"
+	"errors"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	"github.com/jeremyhahn/go-xkms/pkg/storage"
 	"github.com/jeremyhahn/go-xkms/pkg/types"
 )
 
@@ -179,4 +181,87 @@ func TestStoredKeyStillLoadsAfterWipe(t *testing.T) {
 	require.NotEmpty(t, want)
 	assert.Equal(t, want, got,
 		"the stored seed must survive the wipe and reconstruct the same key")
+}
+
+// failingPutBackend wraps a storage backend and fails every Put, so the
+// post-generation error path in GenerateKey can be exercised.
+type failingPutBackend struct {
+	storage.Backend
+	err error
+}
+
+func (f *failingPutBackend) Put(context.Context, string, []byte) error { return f.err }
+
+func (f *failingPutBackend) PutIfAbsent(context.Context, string, []byte) (bool, error) {
+	return false, f.err
+}
+
+// TestGenerateKeyReleasesEnclaveWhenStorageFails covers the path Codex flagged:
+// a key is generated, storage refuses it, and the enclave the key holds must be
+// destroyed rather than left mlocked until process teardown.
+func TestGenerateKeyReleasesEnclaveWhenStorageFails(t *testing.T) {
+	tests := []struct {
+		name  string
+		attrs *types.KeyAttributes
+	}{
+		{"ML-DSA", mldsaAttrs("store-fail-dsa", types.QuantumAlgorithmMLDSA65)},
+		{"ML-KEM", mlkemAttrs("store-fail-kem", types.QuantumAlgorithmMLKEM768)},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			inner, err := storage.NewMemoryBackend()
+			require.NoError(t, err)
+			failing := &failingPutBackend{Backend: inner, err: errors.New("storage refused the write")}
+
+			qb, err := New(failing)
+			require.NoError(t, err)
+			defer func() { _ = qb.Close() }()
+
+			key, err := qb.GenerateKey(context.Background(), tt.attrs)
+			require.Error(t, err, "the failing backend must surface an error")
+			assert.Nil(t, key)
+
+			// Nothing was persisted, so the generated key is unreachable from
+			// here on: whatever it held has to have been released by the
+			// deferred cleanup, not handed anywhere.
+			exists, existsErr := storage.KeyExists(context.Background(), inner, tt.attrs.ID())
+			require.NoError(t, existsErr)
+			assert.False(t, exists, "a refused write must not leave a key behind")
+		})
+	}
+}
+
+// TestCleanPrivateKeyToleratesNilAndUnknown pins that the deferred release is
+// safe for every value that can reach it, including the typed-nil pointer a
+// generator returns alongside an error.
+func TestCleanPrivateKeyToleratesNilAndUnknown(t *testing.T) {
+	cleanPrivateKey(nil)
+	cleanPrivateKey((*MLDSAPrivateKey)(nil))
+	cleanPrivateKey((*MLKEMPrivateKey)(nil))
+	cleanPrivateKey("not a key")
+
+	var zeroDSA MLDSAPrivateKey
+	zeroDSA.Clean()
+	var zeroKEM MLKEMPrivateKey
+	zeroKEM.Clean()
+
+	k, err := New(mustMemoryBackend(t))
+	require.NoError(t, err)
+	defer func() { _ = k.Close() }()
+
+	privKey, err := k.GenerateKey(context.Background(),
+		mldsaAttrs("double-clean", types.QuantumAlgorithmMLDSA44))
+	require.NoError(t, err)
+
+	cleanPrivateKey(privKey)
+	cleanPrivateKey(privKey)
+	assert.Nil(t, privKey.(*MLDSAPrivateKey).ExportSecretKey())
+}
+
+func mustMemoryBackend(t *testing.T) storage.Backend {
+	t.Helper()
+	store, err := storage.NewMemoryBackend()
+	require.NoError(t, err)
+	return store
 }

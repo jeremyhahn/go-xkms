@@ -119,8 +119,12 @@ func Create(seed []byte) (*Kyber768, error) {
 }
 
 // Clean destroys the enclaved seed and releases resources.
-// This should always be called when done using the instance.
+// This should always be called when done using the instance. It is safe to call
+// more than once, on a zero value, and on a nil receiver.
 func (k *Kyber768) Clean() {
+	if k == nil {
+		return
+	}
 	k.seed.Destroy()
 	k.seed = nil
 	k.dk = nil

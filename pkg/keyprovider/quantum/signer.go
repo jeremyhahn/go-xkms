@@ -112,7 +112,12 @@ func (k *MLDSAPrivateKey) Verify(message, signature []byte) (bool, error) {
 }
 
 // Clean destroys the enclaved seed to remove key material from memory.
+// It is safe to call more than once, on a zero value, and on a nil receiver, so
+// deferred cleanup on an error path never has to test the key first.
 func (k *MLDSAPrivateKey) Clean() {
+	if k == nil {
+		return
+	}
 	k.seed.Destroy()
 	k.seed = nil
 	k.sk = nil
@@ -238,7 +243,12 @@ func (k *MLKEMPrivateKey) Decapsulate(ciphertext []byte) (sharedSecret []byte, e
 }
 
 // Clean destroys the enclaved seed to remove key material from memory.
+// It is safe to call more than once, on a zero value, and on a nil receiver, so
+// deferred cleanup on an error path never has to test the key first.
 func (k *MLKEMPrivateKey) Clean() {
+	if k == nil {
+		return
+	}
 	k.seed.Destroy()
 	k.seed = nil
 	k.dk = nil

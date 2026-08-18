@@ -145,8 +145,12 @@ func Create(seed []byte) (*MLKEM512, error) {
 }
 
 // Clean destroys the enclaved seed and releases the key material. It should
-// always be called when the instance is no longer needed.
+// always be called when the instance is no longer needed. It is safe to call
+// more than once, on a zero value, and on a nil receiver.
 func (k *MLKEM512) Clean() {
+	if k == nil {
+		return
+	}
 	k.seed.Destroy()
 	k.seed = nil
 	k.sk = nil

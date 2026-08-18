@@ -313,3 +313,21 @@ func TestDetails(t *testing.T) {
 	assert.Equal(t, CiphertextSize, kem.CiphertextLength())
 	assert.Equal(t, SharedSecretSize, kem.SharedSecretLength())
 }
+
+// TestCleanIsIdempotentAndNilSafe pins the cleanup contract the deferred
+// error-path release depends on: Clean may run twice, on a zero value, and on a
+// nil receiver without panicking.
+func TestCleanIsIdempotentAndNilSafe(t *testing.T) {
+	k, err := New()
+	require.NoError(t, err)
+
+	k.Clean()
+	k.Clean()
+	assert.Nil(t, k.ExportSecretKey())
+
+	var zero MLKEM512
+	zero.Clean()
+
+	var nilKey *MLKEM512
+	nilKey.Clean()
+}

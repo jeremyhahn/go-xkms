@@ -371,7 +371,12 @@ rest on the Go heap as a plaintext slice. It is sealed in a `*secure.Secret`
 (`sdk/go/secure`, memguard-backed) by `pkg/keyprovider/quantum` and by the
 `pkg/quantum/{kyber768,mlkem512,mlkem1024}` wrappers.
 
-- `Clean()` calls `Destroy()` on the enclave rather than zeroing a slice
+- `Clean()` calls `Destroy()` on the enclave rather than zeroing a slice. It is
+  idempotent and safe on a zero value or a nil receiver, so a deferred release on
+  an error path never has to test the key first
+- Every path that generates a key but does not hand it to a caller — a failed
+  store, a rotation — destroys the enclave rather than leaving mlocked memory to
+  the garbage collector
 - `ExportSecretKey()` opens the enclave, copies out, and destroys the working
   buffer; the caller owns wiping the copy it receives
 - Sealing consumes the buffer it is given, so a seed with more than one consumer

@@ -297,3 +297,21 @@ func TestWrongKeyDecapsulation(t *testing.T) {
 	assert.NotEqual(t, senderSecret, bobSecret,
 		"Wrong key should produce different shared secret (implicit rejection)")
 }
+
+// TestCleanIsIdempotentAndNilSafe pins the cleanup contract the deferred
+// error-path release depends on: Clean may run twice, on a zero value, and on a
+// nil receiver without panicking.
+func TestCleanIsIdempotentAndNilSafe(t *testing.T) {
+	k, err := New()
+	require.NoError(t, err)
+
+	k.Clean()
+	k.Clean()
+	assert.Nil(t, k.ExportSecretKey())
+
+	var zero MLKEM1024
+	zero.Clean()
+
+	var nilKey *MLKEM1024
+	nilKey.Clean()
+}
