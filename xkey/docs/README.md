@@ -2,6 +2,24 @@
 
 xKey is a unified security key interface that provides FIDO2/WebAuthn, OATH TOTP/HOTP, PIV certificates, SSH agent, OIDC authentication, and static password functionality. Unlike traditional hardware-only security keys, xKey works with **any go-xkms backend** -- from software storage to hardware HSMs to cloud KMS services.
 
+## Feature documentation
+
+Each feature below has a folder holding five documents — `architecture.md`,
+`engineering.md`, `cli.md`, `api.md`, `user.md`. Together they are the
+feature's requirements: read the folder before reading the code, and change
+the folder in the same commit that changes the behavior.
+
+| Feature | What it covers |
+|---------|----------------|
+| [agent-automation](agent-automation/) | PIN and touch automation for headless agents and CI |
+| [headless-webauthn](headless-webauthn/) | Programmatic WebAuthn ceremonies without a browser or a human |
+| [virtual-authenticator](virtual-authenticator/) | The virtual FIDO2/CTAP2 authenticator over Linux UHID |
+
+Everything below this section predates the feature-folder convention. It is
+**unconverted debt, not a precedent** — a new feature gets a five-file folder
+regardless of what the rest of this tree looks like. The migration state is
+recorded in the repository's `CLAUDE.md`.
+
 ## Documentation Structure
 
 | Directory | Description |

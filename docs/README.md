@@ -6,6 +6,43 @@ Comprehensive documentation for the go-xkms cryptographic key management library
 
 go-xkms is a unified cryptographic key management library for Go that provides a consistent interface across multiple storage backends, from software-based file storage to hardware security modules and cloud key management services.
 
+## Feature documentation
+
+Each feature below has a folder holding five documents — `architecture.md`,
+`engineering.md`, `cli.md`, `api.md`, `user.md`. Together they are the
+feature's requirements: read the folder before reading the code, and change
+the folder in the same commit that changes the behavior.
+
+| Feature | What it covers |
+|---------|----------------|
+| [acme-issuance](acme-issuance/) | ACME RFC 8555 server and client, ARI, DNS-01/HTTP-01, TPM enrollment |
+| [audit-log](audit-log/) | Tamper-evident audit records and their signing chain |
+| [auth-factors](auth-factors/) | Factor composition, adapters, and the identity/key-domain split |
+| [certificate-authority](certificate-authority/) | `TrustedCA` — cross-signed root pool, AIA import, DANE TLSA publishing |
+| [crypto-backends](crypto-backends/) | The `Backend` contract and every software, hardware and cloud implementation |
+| [fido2-ctap2](fido2-ctap2/) | The canonical FIDO2 CTAP2 implementation |
+| [init-ceremony](init-ceremony/) | `xkmsd init` — the KMS+CA half and the delegated IAM half |
+| [key-management](key-management/) | Key lifecycle, key providers, symmetric and asymmetric operations |
+| [multi-tenancy](multi-tenancy/) | Per-tenant isolation, tenant barriers, tenant-scoped keys |
+| [password-vault](password-vault/) | Stored password credentials and their access modes |
+| [pin-management](pin-management/) | The PIN service and its TPM 2.0 backend |
+| [piv-smartcard](piv-smartcard/) | PIV slot operations as a factor and as a CLI/SDK verb |
+| [pkcs11-provider-module](pkcs11-provider-module/) | The `pkcs11-module` cgo provider and its slot/token lifecycle |
+| [platform-secrets](platform-secrets/) | Platform secret storage and resolution |
+| [sealing-and-barrier](sealing-and-barrier/) | Hardware and cloud seal strategies contributed to the qrdb barrier |
+| [share-custody](share-custody/) | Shamir share custody, custodians, escrow and the share store |
+| [tpm2](tpm2/) | EK/SRK lifecycle, IDevID/LDevID, PCR policy, attestation, sealed objects |
+| [trust-bootstrap](trust-bootstrap/) | The DANE / Noise / SPKI / Direct / Auto mode-dispatch library |
+| [webauthn](webauthn/) | The canonical WebAuthn relying party |
+
+xkey has its own feature folders under [xkey/docs/](../xkey/docs/).
+
+Everything below this section predates the feature-folder convention. It is
+**unconverted debt, not a precedent** — a new feature gets a five-file folder
+regardless of what the rest of this tree looks like. The migration state, and
+which legacy folders are superseded by which feature folder, is recorded in
+the repository's `CLAUDE.md`.
+
 ## Documentation Structure
 
 ### [Architecture](architecture/)
@@ -50,8 +87,9 @@ Authentication, authorization, and bootstrap:
 - [Layering](auth/layering.md) - Identity (qrdb) vs key-domain (xkms) split, Factor adapter composition
 
 ### [WebAuthn](webauthn/)
-- [WebAuthn / FIDO2 Relying Party](webauthn/README.md) - Canonical RP implementation consumed by every binary in the stack via the QuicBaaS SDK re-export
-- [Headless Client](webauthn/client.md) - Programmatic "browser" used by `xkmsctl` and tests
+Converted to the five-file feature layout — see [Feature documentation](#feature-documentation) below.
+- [Architecture](webauthn/architecture.md) - Canonical RP implementation consumed by every binary in the stack via the QuicBaaS SDK re-export
+- [Engineering](webauthn/engineering.md) - Exported surface, ceremony invariants, the headless client used by `xkmsctl` and tests
 
 ### [PIN](pin/)
 - [PIN Management](pin/README.md) - PIN service (qrdb) + TPM2 backend (xkms `pkg/pintpm2`) + composition via `WithPINBackend`

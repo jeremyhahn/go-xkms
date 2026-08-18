@@ -48,7 +48,9 @@ Thumbs.db
 /.azure-emulator/
 
 # Claude Code
-CLAUDE.md
+# CLAUDE.md is tracked (owner ruling 2026-08-18) — it is the repo's agent
+# contract and AGENTS.md symlinks to it. Keep it free of internal hosts,
+# addresses, workstation paths and agent principal names.
 .claude/
 
 # SoftHSM2 test files
