@@ -18,9 +18,18 @@ tell.
 | [agent-automation](agent-automation/) | PIN and touch automation for headless agents and CI | `agent/` |
 | [headless-webauthn](headless-webauthn/) | Programmatic WebAuthn ceremonies without a browser or a human | `fido2/` (with `virtual-authenticator`) |
 | [phone-hsm](phone-hsm/) | The phone-as-HSM backend and its pairing protocol | `phone/` |
-| [platform-trust](platform-trust/) | Importing the platform CA bundle over SPKI-pinned TLS | `platform-trust/` |
+| [platform-trust](platform-trust/) | Trust bootstrap, the classified truststore, platform CA import | `architecture/server-registry.md` (trust half) |
 | [share-custody](share-custody/) | The Shamir share custody client | — |
 | [virtual-authenticator](virtual-authenticator/) | The virtual FIDO2/CTAP2 authenticator over Linux UHID | `fido2/` (with `headless-webauthn`) |
+
+The core capabilities these build on live in the root module — the
+[password vault](../../docs/password-vault/), the
+[WebAuthn relying party](../../docs/webauthn/), the
+[FIDO2/CTAP2 client](../../docs/fido2-ctap2/), [PIV](../../docs/piv-smartcard/)
+and [trust bootstrap](../../docs/trust-bootstrap/). That split follows the rule
+between the two modules: reusable logic lives in `go-xkms/pkg/*` and xkey
+consumes it through `go-xkms/sdk/go`, so these folders document a product
+surface rather than a second implementation.
 
 Everything below this section predates the feature-folder convention. It is
 **unconverted debt, not a precedent** — a new feature gets a five-file folder

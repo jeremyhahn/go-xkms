@@ -52,10 +52,10 @@ Rejected alternatives:
 | Persistence of key blobs and metadata | go-qrdb, reached through `go-qrdb/sdk/go` | **go-qrdb** |
 | Object storage for large blobs | go-objstore | **go-objstore** |
 
-This feature is capability row **"Hardware / cloud KMS" (tier 1)** in
-[docs/00 §R](https://github.com/jeremyhahn/go-xkms). Tier 1 means the surface
-must exist on all six portfolio transports; see `api.md` for the per-transport
-matrix and the gaps recorded there.
+This feature is the capability row **"Hardware / cloud KMS", tier 1**, in the
+portfolio ownership register. Tier 1 means the surface must exist on all six
+portfolio transports; see `api.md` for the per-transport matrix and the gaps
+recorded there.
 
 **Consumed SDK edge:** all durable storage goes through `go-qrdb/sdk/go`.
 go-xkms never opens a database, never defines a KV layout of its own, and

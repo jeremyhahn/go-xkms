@@ -62,8 +62,8 @@ Rejected alternatives:
 | `enroll-01` ACME challenge | `pkg/acme/challenges/enroll-01` | go-xkms — [`../acme-issuance/`](../acme-issuance/architecture.md) |
 | LUKS TPM unlock | `pkg/luks` | go-xkms |
 
-TPM2 is not a single `docs/00 §R` row — it is the hardware underneath several
-of them. This folder documents the device layer; each consuming feature
+TPM2 is not a single row in the portfolio ownership register — it is the
+hardware underneath several of them. This folder documents the device layer; each consuming feature
 documents its own use.
 
 ## Data flow
