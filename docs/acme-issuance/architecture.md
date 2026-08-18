@@ -132,7 +132,9 @@ through ACME against an existing node's directory.
   front of it.
 - **It does not define identity.** Accounts are ACME accounts. Platform users,
   RBAC and tenancy are go-qrdb's.
-- **`cactl` is not part of this repo.** The integration compose file references
-  `CACTL_BINARY: .../go-trusted-ca/bin/cactl` — a binary from a different
-  repository. The legacy `docs/acme/cli/cactl.md` documents it as if it were
-  ours, which is a boundary defect; see this feature folder's `cli.md`.
+- **`cactl` is not part of this repo, and no longer part of anything.** It was
+  the CLI of a separate standalone CA project, which was decommissioned in
+  August 2026 when its CA work was folded into go-xkms as `TrustedCA` plus this
+  ACME implementation. The integration compose file still points
+  `CACTL_BINARY` at a checkout of that retired project. See this feature
+  folder's `cli.md`.

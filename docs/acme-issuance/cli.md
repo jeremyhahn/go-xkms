@@ -9,17 +9,19 @@ Binary: **`trusted-acme-client`** (`cmd/acme-client`). Command groups:
 `ca revoke`, `ca crl`) are [`../certificate-authority/cli.md`](../certificate-authority/cli.md);
 ACME is the automated client side.
 
-## `cactl` is a different repository
+## `cactl` is retired, not undocumented
 
-`docs/acme/cli/cactl.md` in the legacy tree documents a `cactl` binary. **There
-is no `cmd/cactl` in go-xkms.** The only reference in this repo is
-`test/integration/acme-docker-compose.integration.yml`, which sets
-`CACTL_BINARY` to a path inside a **`go-trusted-ca`** checkout. Documenting
-another repository's binary here breaches the rule that nobody documents someone
-else's code as if they owned it, so `cactl` is deliberately absent from this
-folder. Resolving it — is `go-trusted-ca` a live repo, is `cactl` supposed to
-move here, or is the integration test the thing that is wrong — is an owner
-decision.
+The legacy `docs/acme/cli/cactl.md` documents a `cactl` binary. **There is no
+`cmd/cactl` in go-xkms and there never was.** `cactl` belonged to a separate
+standalone CA project that was decommissioned in August 2026, its CA
+functionality having been folded into go-xkms as `TrustedCA` and the ACME
+implementation documented here. `trusted-acme-client` is the surviving client.
+
+One live consequence: `test/integration/acme-docker-compose.integration.yml`
+still sets `CACTL_BINARY` to a path inside a checkout of that retired project.
+That reference cannot resolve and should be removed — a code change, not a
+documentation one, so it is reported rather than made in this docs-only
+migration.
 
 ## Global flags
 
