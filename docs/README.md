@@ -65,9 +65,18 @@ Do not add a count here. Derive it:
 
 ```bash
 ls -d docs/*/ xkey/docs/*/ | while read d; do
-    [ -f "$d/architecture.md" ] && echo "$d"
+    ok=1
+    for f in architecture engineering cli api user; do
+        [ -f "$d$f.md" ] || ok=0
+    done
+    [ $ok -eq 1 ] && echo "$d"
 done
 ```
+
+Test for **all five files**, not just `architecture.md`. Several legacy folders
+— `docs/acme/`, `docs/ca/`, `docs/frost/`, `xkey/docs/ble/`, `xkey/docs/gui/` —
+already contain a file called `architecture.md`, so the shorter form overcounts
+by five and reports unconverted folders as converted.
 
 ### Legacy paths superseded by a feature folder
 
