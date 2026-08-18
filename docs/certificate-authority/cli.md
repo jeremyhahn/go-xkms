@@ -10,7 +10,7 @@ Global flags — including `--backend`, `--transport`, `--server`, `--token` and
 the TLS set — are documented in
 [`../key-management/cli.md`](../key-management/cli.md) §Global flags.
 
-ACME verbs are not here. See [`../acme/cli.md`](../acme/cli.md).
+ACME verbs are not here. See [`../acme-issuance/cli.md`](../acme-issuance/cli.md).
 
 ## `xkmsctl ca`
 

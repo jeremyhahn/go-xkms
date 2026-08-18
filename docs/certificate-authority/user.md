@@ -103,6 +103,6 @@ and the attestation semantics are in
 
 ## Where to go next
 
-- Automated issuance and renewal: [`../acme/user.md`](../acme/user.md)
+- Automated issuance and renewal: [`../acme-issuance/user.md`](../acme-issuance/user.md)
 - Trusting a server you have never met: [`../trust-bootstrap/user.md`](../trust-bootstrap/user.md)
 - Putting the CA key in a TPM or HSM: [`../crypto-backends/user.md`](../crypto-backends/user.md)
