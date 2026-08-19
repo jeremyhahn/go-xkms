@@ -957,9 +957,27 @@ jobs:
       - name: Fail closed on any non-success
         run: |
           check() { case "$2" in success) echo "OK   $1";; *) echo "FAIL $1 ($2)"; BAD=1;; esac; }
+          # advisory: reported, never fatal. Use it ONLY for a job whose red
+          # carries no information, and always with an issue that ends it.
+          advisory() { case "$2" in success) echo "OK   $1";; *) echo "ADVISORY $1 ($2) -- not gating";; esac; }
           BAD=0
           check test             "${{ needs.test.result }}"
-          check integration-test "${{ needs.integration-test.result }}"
+          # ADVISORY, not required (ruled 2026-08-18; go-quicbaas already does
+          # this). Integration Tests has passed once in 40 executions and never
+          # on main: `run_with_server` decides where the suite runs with
+          # `[ -f /.dockerenv ]`, which is true inside the Actions job container,
+          # so the devcontainer it then probes with `compose exec -T devcontainer`
+          # is never started (go-xkms #19). A required check that has never
+          # passed detects no regression and blocks every merge, which is the
+          # same reasoning that made COVERAGE_THRESHOLD a ratchet.
+          #
+          # This is a demotion, NOT a deletion: the job still runs on every
+          # commit and its result is still printed here. It returns to `check`
+          # the moment #19's image-bake harness rebuild lands (the rebuild
+          # go-qrdb #56 and go-signal #36 already did). Do not delete the job,
+          # do not add `continue-on-error` to it, and do not let this line
+          # outlive #19.
+          advisory integration-test "${{ needs.integration-test.result }}"
           check lint             "${{ needs.lint.result }}"
           check security         "${{ needs.security.result }}"
           check trivy            "${{ needs.trivy.result }}"

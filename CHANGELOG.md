@@ -7,6 +7,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Security
+
+- **Post-quantum seeds are wiped on every return, not only the happy path.**
+  `generateMLDSAKey` and `generateMLKEMKey` wiped their source seed only after
+  `sealSeed` succeeded, so a protected-memory or `mlock` failure returned with
+  32/64 bytes of live seed still on the stack or heap — precisely the path
+  where fail-closed cleanup matters. Both now `defer secure.Wipe(...)` as soon
+  as the seed exists. (Codex review of PR #16, blocking finding 1.)
+- **The FIPS allowlist now names its validated boundary exactly.** The comment
+  claimed only ML-DSA and Ed448 come from CIRCL; ML-KEM-512 does too, because
+  `crypto/mlkem` ships only 768 and 1024 and `pkg/quantum/mlkem512` wraps CIRCL
+  for the 512 parameter set. The permitted set is unchanged — whether FIPS mode
+  should reject CIRCL-backed algorithms outright is an owner ruling (#21).
+  (Codex review of PR #16, blocking finding 2: valid, escalated not silently
+  resolved.)
+
 ### Fixed
 
 - **Race Detector no longer dies on a busy runner**: the job passes
@@ -32,6 +48,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **`make trivy-image` matches the CI image gate** by passing
   `--ignore-unfixed` (devops.md §8), so the local target reproduces the gate
   it claims to mirror instead of failing on unfixable base-image advisories.
+- **Integration Tests is advisory, not required** (ruled 2026-08-18, the same
+  demotion go-quicbaas already carries). The job still runs on every commit and
+  its result is still printed by the CI Gate; it simply no longer blocks. It has
+  passed once in 40 executions and never on `main`, because `run_with_server`
+  uses `[ -f /.dockerenv ]` to mean "am I the devcontainer" and that is true
+  inside the Actions job container (#19). A required check that has never passed
+  detects no regression and blocks every merge. It returns to required when
+  #19's harness rebuild lands.
+- **`go-luks2` bumped to v0.1.7-alpha.** `go-truststrap` is deliberately HELD at
+  v0.1.3-alpha: v0.1.4-alpha reshapes `pkg/noiseproto` (`StaticKey` replaces
+  `*noise.DHKey`, `EncodeStaticKey` takes a destination buffer), and
+  `go-qrdb v0.5.9-alpha` consumes that package and has not caught up, so the
+  bump breaks the build in a dependency this repo does not own.
+- **A zero-byte `pkg/server/audit-events.ndjson` is no longer tracked.** It is a
+  runtime artifact — `pkg/server/server.go` writes the audit sink to a relative
+  path when no storage path is configured — and `.gitignore` already listed it.
 - **CI no longer runs every commit twice**: `.github/workflows/ci.yml` scopes
   its `push` and `pull_request` triggers to `main` (ci-template v1.5), the sole
   trunk since `develop` was folded into it. A branch that was both

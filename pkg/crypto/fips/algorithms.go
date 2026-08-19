@@ -37,10 +37,22 @@ import "strings"
 //     of the scheme, not merely of the curve underneath it.
 //
 // Ed25519/Ed448 (FIPS 186-5), ML-DSA (FIPS 204) and ML-KEM (FIPS 203) are
-// approved algorithms. go-xkms reaches ML-DSA and Ed448 through
-// github.com/cloudflare/circl, so admitting them asserts an approved algorithm,
-// not a validated implementation; a deployment that must claim a validated
-// module has a narrower list than this one.
+// approved algorithms. Admitting them asserts an approved ALGORITHM, not a
+// validated IMPLEMENTATION, and the two are not the same claim. Which is which
+// here, exactly:
+//
+//   - Go Cryptographic Module (validated boundary): RSA, ECDSA P-256/384/521,
+//     Ed25519, AES-GCM, HMAC-SHA2, and ML-KEM-768/1024 via crypto/mlkem.
+//   - github.com/cloudflare/circl (NOT a validated module): Ed448, every ML-DSA
+//     level, and ML-KEM-512 — crypto/mlkem ships only 768 and 1024, so
+//     pkg/quantum/mlkem512 wraps CIRCL for the 512 parameter set.
+//
+// A deployment that must claim a validated module therefore has a narrower list
+// than this one. Whether AlgorithmPermitted should enforce the narrower list in
+// FIPS mode — disabling the CIRCL-backed post-quantum surface for regulated
+// deployments — is an owner ruling, tracked as go-xkms #21 (raised by the Codex
+// review of PR #16, task #82). Until it is ruled, this file admits the approved
+// algorithm and says plainly that it is not asserting a validated module.
 var approvedAlgorithms = map[string]struct{}{
 	// Asymmetric signature algorithms
 	"rsa":        {},

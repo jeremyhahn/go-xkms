@@ -291,6 +291,11 @@ func (b *QuantumBackend) generateMLDSAKey(algorithm string) (*MLDSAPrivateKey, *
 	if _, err := io.ReadFull(rand.Reader, seed[:]); err != nil {
 		return nil, nil, &errs.Wrapped{Msg: "failed to generate seed", Err: err}
 	}
+	// Deferred, not wiped inline at the end: sealSeed can fail (protected-memory
+	// allocation, mlock), and the error path is exactly where leaving 32 bytes
+	// of live seed on the stack matters most. Every return from here on wipes.
+	// Both consumers below copy what they need before this runs.
+	defer secure.Wipe(seed[:])
 
 	pkBytes, sk, pk := gen(&seed)
 
@@ -305,7 +310,6 @@ func (b *QuantumBackend) generateMLDSAKey(algorithm string) (*MLDSAPrivateKey, *
 
 	metadataSeed := make([]byte, mldsaSeedSize)
 	copy(metadataSeed, seed[:])
-	secure.Wipe(seed[:])
 
 	privateKey := &MLDSAPrivateKey{
 		Algorithm: algorithm,
@@ -338,6 +342,9 @@ func (b *QuantumBackend) generateMLKEMKey(algorithm, keyID string) (*MLKEMPrivat
 	if err != nil {
 		return nil, nil, &errs.Wrapped{Msg: "failed to generate ML-KEM key pair", Err: err}
 	}
+	// Deferred for the same reason as generateMLDSAKey's seed: a sealSeed
+	// failure must not return with the generator's seed still live on the heap.
+	defer secure.Wipe(seedBytes)
 
 	// As in generateMLDSAKey: the enclaved key and the serialized metadata each
 	// take their own copy, and seedBytes is wiped once both are served.
@@ -348,7 +355,6 @@ func (b *QuantumBackend) generateMLKEMKey(algorithm, keyID string) (*MLKEMPrivat
 
 	metadataSeed := make([]byte, len(seedBytes))
 	copy(metadataSeed, seedBytes)
-	secure.Wipe(seedBytes)
 
 	privateKey := &MLKEMPrivateKey{
 		Algorithm: algorithm,
