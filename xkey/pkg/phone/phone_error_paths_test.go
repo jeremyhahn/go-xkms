@@ -120,19 +120,6 @@ func TestNewPhoneKeyBackendWithTransport_ExpectedRemoteStaticIsTrusted(t *testin
 		"the pinned peer key must be reported before the handshake runs")
 }
 
-func TestNewPhoneKeyBackend_WithoutBLESupport(t *testing.T) {
-	t.Parallel()
-
-	// The nil-config path must still fail closed on a build without BLE.
-	backend, err := NewPhoneKeyBackend(nil)
-	assert.ErrorIs(t, err, ErrBLEUnavailable)
-	assert.Nil(t, backend)
-
-	backend, err = NewPhoneKeyBackend(&PhoneKeyBackendConfig{TrustNewDevices: true})
-	assert.ErrorIs(t, err, ErrBLEUnavailable)
-	assert.Nil(t, backend)
-}
-
 // ---------------------------------------------------------------------------
 // Static descriptors
 // ---------------------------------------------------------------------------

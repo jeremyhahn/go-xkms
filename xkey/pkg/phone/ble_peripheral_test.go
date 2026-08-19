@@ -131,7 +131,7 @@ func TestBLEPeripheral_ProcessRequestNotifiesResponse(t *testing.T) {
 		t.Fatalf("processRequest failed: %v", err)
 	}
 
-	if len(writer.fragments) == 0 {
+	if writer.count() == 0 {
 		t.Fatal("processRequest transmitted nothing: the notify path is dead")
 	}
 
@@ -163,8 +163,8 @@ func TestBLEPeripheral_ProcessRequestLargeResponseFragments(t *testing.T) {
 		t.Fatalf("processRequest failed: %v", err)
 	}
 
-	if len(writer.fragments) < 2 {
-		t.Fatalf("expected a fragmented response, got %d fragment(s)", len(writer.fragments))
+	if writer.count() < 2 {
+		t.Fatalf("expected a fragmented response, got %d fragment(s)", writer.count())
 	}
 
 	plaintext, err := initiator.Decrypt(writer.reassemble(t))
@@ -229,8 +229,8 @@ func TestBLEPeripheral_ProcessRequestRejectsUndecryptableData(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected a decrypt failure")
 	}
-	if len(writer.fragments) != 0 {
-		t.Fatalf("expected nothing to be transmitted, got %d fragments", len(writer.fragments))
+	if writer.count() != 0 {
+		t.Fatalf("expected nothing to be transmitted, got %d fragments", writer.count())
 	}
 }
 
@@ -362,16 +362,11 @@ func TestBLEPeripheral_HandleRequestsReassemblesFragments(t *testing.T) {
 		p.incomingData <- frag
 	}
 
-	// The response is complete once the writer stops receiving fragments.
-	deadline := time.Now().Add(5 * time.Second)
-	for len(writer.fragments) == 0 && time.Now().Before(deadline) {
-		time.Sleep(10 * time.Millisecond)
-	}
-	if len(writer.fragments) == 0 {
-		t.Fatal("no response was notified for a fragmented request")
-	}
-	// Give the remaining fragments a moment to land before reassembling.
-	time.Sleep(100 * time.Millisecond)
+	// Wait for the whole response: the last fragment carries the end-of-message
+	// flag, so there is no need to guess at how long the handler needs.
+	waitCtx, cancelWait := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancelWait()
+	writer.waitForCompleteMessage(waitCtx, t)
 
 	plaintext, err := initiator.Decrypt(writer.reassemble(t))
 	if err != nil {

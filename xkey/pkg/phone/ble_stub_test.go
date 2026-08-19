@@ -113,3 +113,27 @@ func TestScanResult_DisplayName(t *testing.T) {
 		})
 	}
 }
+
+// TestNewPhoneKeyBackend_FailsClosedWithoutBLE asserts that the backend
+// constructor refuses to hand back a usable backend on a build without the
+// "ble" tag, for both the default configuration and the nil-config path.
+func TestNewPhoneKeyBackend_FailsClosedWithoutBLE(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name string
+		cfg  *PhoneKeyBackendConfig
+	}{
+		{"default config", DefaultPhoneKeyBackendConfig()},
+		{"nil config", nil},
+		{"trust new devices", &PhoneKeyBackendConfig{TrustNewDevices: true}},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			backend, err := NewPhoneKeyBackend(tt.cfg)
+			assert.ErrorIs(t, err, ErrBLEUnavailable)
+			assert.Nil(t, backend)
+		})
+	}
+}

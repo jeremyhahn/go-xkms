@@ -86,17 +86,6 @@ func TestPhoneKeyHandle_DifferentAlgorithms(t *testing.T) {
 	}
 }
 
-func TestNewPhoneKeyBackend_NoBLE(t *testing.T) {
-	cfg := DefaultPhoneKeyBackendConfig()
-
-	backend, err := NewPhoneKeyBackend(cfg)
-
-	// Without BLE build tag, should return ErrBLEUnavailable
-	assert.Error(t, err)
-	assert.Nil(t, backend)
-	assert.ErrorIs(t, err, ErrBLEUnavailable)
-}
-
 func TestCapabilities(t *testing.T) {
 	caps := keybackend.FIDO2KeyCapabilities{
 		SupportedAlgorithms: []int{COSEAlgES256, COSEAlgES384, COSEAlgES512},

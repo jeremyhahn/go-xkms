@@ -17,6 +17,7 @@ import (
 	"context"
 	"errors"
 	"io"
+	"sync"
 	"testing"
 )
 
@@ -26,8 +27,16 @@ var errNotifyWrite = errors.New("test: notify write failed")
 // captureWriter is an in-memory FragmentWriter. It records every fragment it
 // accepts and can be configured to fail or truncate a specific write, which is
 // how the notify path is exercised without Bluetooth hardware.
+// The handler goroutine writes while the test goroutine inspects what was
+// captured, so every access to fragments is guarded by mu.
 type captureWriter struct {
+	mu        sync.Mutex
 	fragments [][]byte
+
+	// complete is closed as soon as a fragment carrying FlagLastFragment has
+	// been captured, so a test can wait for a whole message instead of
+	// sleeping for one.
+	complete chan struct{}
 
 	// failAt is the index of the write that returns errNotifyWrite.
 	// Negative disables the failure.
@@ -42,10 +51,40 @@ type captureWriter struct {
 }
 
 func newCaptureWriter() *captureWriter {
-	return &captureWriter{failAt: -1, shortAt: -1}
+	return &captureWriter{failAt: -1, shortAt: -1, complete: make(chan struct{})}
+}
+
+// signalComplete closes the complete channel the first time a message has been
+// fully captured. The caller must hold w.mu.
+func (w *captureWriter) signalComplete(fragment []byte) {
+	if len(fragment) < FragmentHeaderSize || fragment[0]&FlagLastFragment == 0 {
+		return
+	}
+	select {
+	case <-w.complete:
+	default:
+		close(w.complete)
+	}
+}
+
+// waitForCompleteMessage blocks until a whole message has been captured or ctx
+// is done, in which case the test fails rather than reassembling a partial
+// message.
+func (w *captureWriter) waitForCompleteMessage(ctx context.Context, t *testing.T) {
+	t.Helper()
+
+	select {
+	case <-w.complete:
+	case <-ctx.Done():
+		t.Fatalf("no complete message was notified: %v (captured %d fragment(s))",
+			ctx.Err(), w.count())
+	}
 }
 
 func (w *captureWriter) Write(p []byte) (int, error) {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+
 	index := len(w.fragments)
 	if w.failAt >= 0 && index == w.failAt {
 		return 0, errNotifyWrite
@@ -55,10 +94,39 @@ func (w *captureWriter) Write(p []byte) (int, error) {
 	copy(cp, p)
 	w.fragments = append(w.fragments, cp)
 
+	w.signalComplete(cp)
+
 	if w.shortAt >= 0 && index == w.shortAt {
 		return len(p) - w.shortBy, nil
 	}
 	return len(p), nil
+}
+
+// snapshot returns a copy of the fragment slice header, so callers can iterate
+// it without holding the lock while the handler goroutine keeps writing.
+func (w *captureWriter) snapshot() [][]byte {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+
+	out := make([][]byte, len(w.fragments))
+	copy(out, w.fragments)
+	return out
+}
+
+// count reports how many fragments have been captured so far.
+func (w *captureWriter) count() int {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+
+	return len(w.fragments)
+}
+
+// fragment returns the fragment recorded at index i.
+func (w *captureWriter) fragment(i int) []byte {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+
+	return w.fragments[i]
 }
 
 // reassemble decodes and reassembles everything the writer captured, exactly
@@ -66,8 +134,10 @@ func (w *captureWriter) Write(p []byte) (int, error) {
 func (w *captureWriter) reassemble(t *testing.T) []byte {
 	t.Helper()
 
+	fragments := w.snapshot()
+
 	r := NewReassembler()
-	for i, raw := range w.fragments {
+	for i, raw := range fragments {
 		frag, err := DecodeFragment(raw)
 		if err != nil {
 			t.Fatalf("fragment %d failed to decode: %v", i, err)
@@ -76,8 +146,8 @@ func (w *captureWriter) reassemble(t *testing.T) []byte {
 		if err != nil {
 			t.Fatalf("fragment %d failed to reassemble: %v", i, err)
 		}
-		if complete && i != len(w.fragments)-1 {
-			t.Fatalf("message completed early at fragment %d of %d", i, len(w.fragments))
+		if complete && i != len(fragments)-1 {
+			t.Fatalf("message completed early at fragment %d of %d", i, len(fragments))
 		}
 	}
 	if !r.IsComplete() {
@@ -109,8 +179,8 @@ func TestFragmentSender_SendSingleFragment(t *testing.T) {
 		t.Fatalf("send failed: %v", err)
 	}
 
-	if len(writer.fragments) != 1 {
-		t.Fatalf("expected 1 fragment, got %d", len(writer.fragments))
+	if writer.count() != 1 {
+		t.Fatalf("expected 1 fragment, got %d", writer.count())
 	}
 	got := writer.reassemble(t)
 	if string(got) != string(message) {
@@ -140,10 +210,10 @@ func TestFragmentSender_SendMultiFragment(t *testing.T) {
 				t.Fatalf("send failed: %v", err)
 			}
 
-			if len(writer.fragments) != tt.wantFragment {
-				t.Fatalf("expected %d fragments, got %d", tt.wantFragment, len(writer.fragments))
+			if writer.count() != tt.wantFragment {
+				t.Fatalf("expected %d fragments, got %d", tt.wantFragment, writer.count())
 			}
-			for i, frag := range writer.fragments {
+			for i, frag := range writer.snapshot() {
 				if len(frag) > tt.mtu {
 					t.Fatalf("fragment %d is %d bytes, exceeds MTU %d", i, len(frag), tt.mtu)
 				}
@@ -167,11 +237,11 @@ func TestFragmentSender_SendEmptyPayload(t *testing.T) {
 
 	// An empty message is still a message: the peer must see one header-only
 	// fragment so it can complete the reassembly.
-	if len(writer.fragments) != 1 {
-		t.Fatalf("expected 1 fragment for empty payload, got %d", len(writer.fragments))
+	if writer.count() != 1 {
+		t.Fatalf("expected 1 fragment for empty payload, got %d", writer.count())
 	}
-	if len(writer.fragments[0]) != FragmentHeaderSize {
-		t.Fatalf("expected header-only fragment, got %d bytes", len(writer.fragments[0]))
+	if len(writer.fragment(0)) != FragmentHeaderSize {
+		t.Fatalf("expected header-only fragment, got %d bytes", len(writer.fragment(0)))
 	}
 	if got := writer.reassemble(t); len(got) != 0 {
 		t.Fatalf("expected empty message, got %d bytes", len(got))
@@ -203,8 +273,8 @@ func TestFragmentSender_ShortWriteAborts(t *testing.T) {
 		t.Fatalf("expected errors.Is(err, io.ErrShortWrite), got %v", err)
 	}
 	// The send must stop at the truncated fragment, not push the rest.
-	if len(writer.fragments) != 2 {
-		t.Fatalf("expected the send to abort after 2 writes, got %d", len(writer.fragments))
+	if writer.count() != 2 {
+		t.Fatalf("expected the send to abort after 2 writes, got %d", writer.count())
 	}
 	if shortErr.Error() == "" {
 		t.Fatal("expected a non-empty error message")
@@ -235,8 +305,8 @@ func TestFragmentSender_WriteErrorMidStreamAborts(t *testing.T) {
 		t.Fatalf("expected the transport error to be preserved, got %v", err)
 	}
 	// Fragments 0 and 1 were accepted; nothing after the failure is sent.
-	if len(writer.fragments) != 2 {
-		t.Fatalf("expected the send to abort after 2 writes, got %d", len(writer.fragments))
+	if writer.count() != 2 {
+		t.Fatalf("expected the send to abort after 2 writes, got %d", writer.count())
 	}
 	if writeErr.Error() == "" {
 		t.Fatal("expected a non-empty error message")
@@ -252,8 +322,8 @@ func TestFragmentSender_FirstWriteErrorAborts(t *testing.T) {
 	if !errors.Is(err, errNotifyWrite) {
 		t.Fatalf("expected the transport error, got %v", err)
 	}
-	if len(writer.fragments) != 0 {
-		t.Fatalf("expected no fragments to be recorded, got %d", len(writer.fragments))
+	if writer.count() != 0 {
+		t.Fatalf("expected no fragments to be recorded, got %d", writer.count())
 	}
 }
 
@@ -271,8 +341,8 @@ func TestFragmentSender_OversizedPayload(t *testing.T) {
 	if !errors.Is(err, ErrFragmentationError) {
 		t.Fatalf("expected ErrFragmentationError, got %v", err)
 	}
-	if len(writer.fragments) != 0 {
-		t.Fatalf("expected nothing to be transmitted, got %d fragments", len(writer.fragments))
+	if writer.count() != 0 {
+		t.Fatalf("expected nothing to be transmitted, got %d fragments", writer.count())
 	}
 }
 
@@ -314,8 +384,8 @@ func TestFragmentSender_ContextCancelled(t *testing.T) {
 	if writeErr.Index != 0 {
 		t.Fatalf("expected the send to abort before the first fragment, got index %d", writeErr.Index)
 	}
-	if len(writer.fragments) != 0 {
-		t.Fatalf("expected nothing to be transmitted, got %d fragments", len(writer.fragments))
+	if writer.count() != 0 {
+		t.Fatalf("expected nothing to be transmitted, got %d fragments", writer.count())
 	}
 }
 
