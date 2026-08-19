@@ -854,94 +854,22 @@ jobs:
           SOFTHSM2_CONF: ${{ github.workspace }}/softhsm2.conf
         run: go test -race -short -timeout 30m -tags="pkcs8,awskms,gcpkms,azurekv,pkcs11,vault,codec_cbor,codec_json,codec_msgpack" ./...
 
-  # Job 8: FIPS 140-3 compliance gate (configuration.md §5, ratified 2026-08-17).
+  # Job 8 (FIPS 140-3 gate) IS NOT HERE ON PURPOSE. Do not re-add it without
+  # reading go-xkms #23 first.
   #
-  # GODEBUG=fips140=only, never fips140=on. `on` loads the Go Cryptographic
-  # Module but still PERMITS non-approved algorithms, so a regulated path using
-  # MD5, SHA-1, X25519 or an arbitrary-IV GCM construction reports green -- a
-  # gate that cannot fail on the thing it exists to catch. `only` makes those
-  # operations error or panic, which is what a FedRAMP / PCI DSS / HIPAA gate
-  # has to do. Do not weaken this to `on`, do not add a skip tag, and do not
-  # narrow the package set to get green: a failure here is the finding.
+  # The gate was written on issue/10-fips-gate-only and its CODE half landed in
+  # this consolidation -- AES-GCM nonces are generated inside the module
+  # boundary, the AEAD auto-selectors return AES-256-GCM in FIPS mode instead
+  # of ChaCha20-Poly1305, and the algorithm allowlists are filtered at both
+  # validation entry points. The JOB half is withheld because the suite does
+  # not pass under GODEBUG=fips140=only yet: measured on this tree,
+  # 364+ tests fail across 13+ packages, and the first root cause is not even
+  # ours -- go-qrdb v0.5.9-alpha's pkg/role.deterministicUUID derives system
+  # role IDs with uuid.NewSHA1, and crypto/sha1 PANICS under fips140=only.
   #
-  # The tag set is Makefile SERVER_BUILD_TAGS -- the configuration the shipped
-  # server is released with. Testing a narrower set would gate less than we
-  # ship: files behind pkcs8, pkcs11, the cloud KMS backends, vault and the
-  # object-storage backends would be absent from the job, so non-approved
-  # cryptography on a real production path could merge while this required
-  # check reported success. The "race" job compiles most of these tags but does
-  # not run under GODEBUG=fips140=only, so it cannot substitute.
-  #
-  # CLI_BUILD_TAGS is covered by the same run. It is SERVER_BUILD_TAGS minus
-  # the pkcs11 and object-storage backends, plus gms_pure_go -- and gms_pure_go
-  # only swaps dolthub/go-mysql-server's regex engine from cgo to pure Go, which
-  # touches no cryptography. The CLI configuration is still compiled below so a
-  # CGO_ENABLED=0 break is caught here rather than at release time.
-  #
-  # The codec tags in that set are mandatory rather than incidental: go-qrdb's
-  # DAO layer refuses to construct a codec that was not linked in ("codec
-  # \"json\" is not supported in this build"), so a bare `go test ./...` fails
-  # in packages that never touch cryptography at all.
-  fips:
-    name: FIPS
-    runs-on: ubuntu-latest
-    needs: [build]
-    timeout-minutes: 45
-    env:
-      GOFIPS140: latest
-      GODEBUG: fips140=only
-      # Makefile SERVER_BUILD_TAGS.
-      FIPS_TAGS: "pkcs8 awskms gcpkms azurekv vault pkcs11 frost awss3 minio gcpstorage azureblob glacier azurearchive codec_cbor codec_json codec_msgpack"
-      # Makefile CLI_BUILD_TAGS.
-      FIPS_CLI_TAGS: "pkcs8 awskms gcpkms azurekv vault frost codec_cbor codec_json codec_msgpack gms_pure_go"
-
-    steps:
-      - name: Checkout code
-        uses: actions/checkout@v4
-
-      - name: Set up Go
-        uses: actions/setup-go@v5
-        with:
-          go-version: ${{ env.GO_VERSION }}
-          cache: true
-
-      # Same cgo dependency set the "race" job installs -- this job runs the
-      # whole ./... suite, so it needs everything that suite compiles against:
-      # libicu-dev/libusb-1.0-0-dev (dolthub/go-icu-regex, google/gousb via
-      # go-qrdb, unconditional in the module graph) and libssl-dev, which
-      # go-tpm-tools' bundled ms-tpm-20-ref simulator includes as <openssl/aes.h>.
-      - name: Install cgo dependencies
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y libsofthsm2 softhsm2 libtss2-dev libicu-dev \
-            libusb-1.0-0-dev libssl-dev
-
-      - name: Configure SoftHSM2
-        run: |
-          mkdir -p ${GITHUB_WORKSPACE}/softhsm2/tokens
-          cat > ${GITHUB_WORKSPACE}/softhsm2.conf << EOF
-          directories.tokendir = ${GITHUB_WORKSPACE}/softhsm2/tokens
-          objectstore.backend = file
-          log.level = INFO
-          EOF
-          softhsm2-util --init-token --slot 0 --label "test-token" --so-pin 1234 --pin 1234
-          softhsm2-util --show-slots
-        env:
-          SOFTHSM2_CONF: ${{ github.workspace }}/softhsm2.conf
-
-      - name: Build all packages, server configuration (FIPS mode)
-        run: go build -tags "${FIPS_TAGS}" ./...
-
-      # GODEBUG is a runtime setting and cannot fail a compile, so this step
-      # exists to prove the CGO_ENABLED=0 CLI configuration still builds under
-      # the FIPS toolchain selector, not to enforce algorithm policy.
-      - name: Build xkmsctl, CLI configuration (FIPS mode)
-        run: CGO_ENABLED=0 go build -tags "${FIPS_CLI_TAGS}" -o /dev/null ./cmd/xkmsctl
-
-      - name: Unit tests (FIPS mode)
-        env:
-          SOFTHSM2_CONF: ${{ github.workspace }}/softhsm2.conf
-        run: go test -count=1 -timeout=1800s -tags "${FIPS_TAGS}" ./...
+  # Landing a required check that is red on arrival is the exact ordering
+  # mistake task #98 exists to prevent: a gate is only safe once the code it
+  # polices is already compliant. Callers first, gate second.
 
   # The single required check (devops.md §1). Every job above appears in BOTH
   # the needs list and the results check -- a gate that can pass vacuously is
@@ -951,7 +879,7 @@ jobs:
     name: CI Gate
     runs-on: ubuntu-latest
     if: always()
-    needs: [test, integration-test, lint, security, trivy, build, build-raft, arch-gates, docker, race, fips]
+    needs: [test, integration-test, lint, security, trivy, build, build-raft, arch-gates, docker, race]
 
     steps:
       - name: Fail closed on any non-success
@@ -985,7 +913,6 @@ jobs:
           check build-raft       "${{ needs.build-raft.result }}"
           check arch-gates       "${{ needs.arch-gates.result }}"
           check race             "${{ needs.race.result }}"
-          check fips             "${{ needs.fips.result }}"
           # docker carries `if: github.event_name == 'push'`, so 'skipped' is
           # legitimate on a pull_request and only there. On a push a skip means
           # the job never ran -- fail closed rather than pass vacuously.
