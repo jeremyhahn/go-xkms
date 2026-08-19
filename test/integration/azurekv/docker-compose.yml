@@ -12,10 +12,6 @@ services:
       - AZURE_CLIENT_SECRET=test-secret
     working_dir: /app
 
-networks:
-  default:
-    name: xkms-azurekv-test
-
 # Staged by `make stage-gomodauth` (dependency-resolution.md §6) into the
 # gitignored .devcontainer/gomodauth.env; empty when no Gitea credentials are
 # available, in which case the Dockerfile's optional secret mount falls back

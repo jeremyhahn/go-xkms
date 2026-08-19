@@ -64,11 +64,17 @@ func makeFetchCA(t *testing.T) (*x509.Certificate, []byte) {
 }
 
 // startFetchServer returns a TLS test server that exposes the platform CA
-// bundle endpoint at /api/v1/ca/bundle.
+// bundle endpoint at the fetcher's canonical bootstrap path.
 func startFetchServer(t *testing.T, bundlePEM []byte) *httptest.Server {
 	t.Helper()
 	mux := http.NewServeMux()
-	mux.HandleFunc("/api/v1/ca/bundle", func(w http.ResponseWriter, r *http.Request) {
+	// Registered from the constant the client actually requests, not a literal.
+	// These two drifted apart once already: the fetcher moved to the PUBLIC
+	// bootstrap route (/v1/ca/bootstrap, routes.go:100) while this fixture kept
+	// serving the session-authenticated /api/v1/ca/bundle, so import-platform
+	// got a 404 from its own test server. Binding the mux to the constant means
+	// the next move cannot silently break the fixture.
+	mux.HandleFunc(xkms.TrustFetcherDefaultBundlePath, func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/x-pem-file")
 		_ = r // keep linter happy
 		_, _ = w.Write(bundlePEM)
@@ -162,7 +168,7 @@ func TestTrustFetch_PinnedHappyPath(t *testing.T) {
 	fcmd.SetErr(errOut)
 	require.NoError(t, fcmd.Flags().Set("spki-pin", pin))
 
-	err := runTrustFetch(fcmd, []string{srv.URL + "/api/v1/ca/bundle"})
+	err := runTrustFetch(fcmd, []string{srv.URL + xkms.TrustFetcherDefaultBundlePath})
 	require.NoError(t, err, "stderr=%s", errOut.String())
 	assert.Contains(t, out.String(), "Bundle fetched from")
 
@@ -192,7 +198,7 @@ func TestTrustFetch_RequiresPin(t *testing.T) {
 	fcmd.SetErr(&bytes.Buffer{})
 
 	// Pin flag absent.
-	err := runTrustFetch(fcmd, []string{"https://example.test/api/v1/ca/bundle"})
+	err := runTrustFetch(fcmd, []string{"https://example.test" + xkms.TrustFetcherDefaultBundlePath})
 	require.Error(t, err)
 	assert.True(t, errors.Is(err, ErrTrustFetchInvalidArgs))
 }
@@ -205,7 +211,7 @@ func TestTrustFetch_RequiresPin_BlankIsRejected(t *testing.T) {
 	fcmd.SetErr(&bytes.Buffer{})
 	require.NoError(t, fcmd.Flags().Set("spki-pin", "   "))
 
-	err := runTrustFetch(fcmd, []string{"https://example.test/api/v1/ca/bundle"})
+	err := runTrustFetch(fcmd, []string{"https://example.test" + xkms.TrustFetcherDefaultBundlePath})
 	require.Error(t, err)
 	assert.True(t, errors.Is(err, ErrTrustFetchInvalidArgs))
 }
@@ -219,7 +225,7 @@ func TestTrustFetch_BadPurpose(t *testing.T) {
 	require.NoError(t, fcmd.Flags().Set("spki-pin", strings.Repeat("a", 64)))
 	require.NoError(t, fcmd.Flags().Set("purpose", "not-a-real-purpose"))
 
-	err := runTrustFetch(fcmd, []string{"https://example.test/api/v1/ca/bundle"})
+	err := runTrustFetch(fcmd, []string{"https://example.test" + xkms.TrustFetcherDefaultBundlePath})
 	require.Error(t, err)
 	assert.True(t, errors.Is(err, ErrTrustFetchInvalidArgs))
 }
@@ -297,7 +303,7 @@ func TestTrustFetch_ServerErrorWraps(t *testing.T) {
 	fcmd.SetErr(&bytes.Buffer{})
 	require.NoError(t, fcmd.Flags().Set("spki-pin", pin))
 
-	err = runTrustFetch(fcmd, []string{srv.URL + "/api/v1/ca/bundle"})
+	err = runTrustFetch(fcmd, []string{srv.URL + xkms.TrustFetcherDefaultBundlePath})
 	require.Error(t, err)
 	assert.True(t, errors.Is(err, ErrTrustFetchFailed))
 }
@@ -333,7 +339,7 @@ func TestMain_FetchSubcommands(t *testing.T) {
 	// and the constant is reachable.
 	ctx, cancel := context.WithTimeout(context.Background(), 50*time.Millisecond)
 	defer cancel()
-	_, err := xkms.TrustFetcherFetch(ctx, "https://example.invalid/api/v1/ca/bundle", xkms.TrustFetcherOptions{
+	_, err := xkms.TrustFetcherFetch(ctx, "https://example.invalid" + xkms.TrustFetcherDefaultBundlePath, xkms.TrustFetcherOptions{
 		SPKIPin: strings.Repeat("a", 64),
 		Timeout: 10 * time.Millisecond,
 	})

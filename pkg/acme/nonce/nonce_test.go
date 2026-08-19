@@ -457,14 +457,18 @@ func TestDerivePrefix(t *testing.T) {
 	t.Run("different keys give different prefixes", func(t *testing.T) {
 		addr := "localhost:8443"
 
-		p1 := DerivePrefix(addr, []byte("key1"))
-		p2 := DerivePrefix(addr, []byte("key2"))
+		// >= 112-bit HMAC keys: FIPS 140-3 (SP 800-131A Rev. 2) sets that floor
+		// and crypto/hmac enforces it under GODEBUG=fips140=only. The point of
+		// this case is that distinct keys give distinct prefixes, which a
+		// realistic key length demonstrates just as well as a 4-byte one.
+		p1 := DerivePrefix(addr, []byte("derive-prefix-key-1"))
+		p2 := DerivePrefix(addr, []byte("derive-prefix-key-2"))
 
 		assert.NotEqual(t, p1, p2)
 	})
 
 	t.Run("prefix is valid base64url", func(t *testing.T) {
-		prefix := DerivePrefix("test", []byte("key"))
+		prefix := DerivePrefix("test", []byte("derive-prefix-key-1"))
 
 		_, err := base64.RawURLEncoding.DecodeString(prefix)
 		assert.NoError(t, err)

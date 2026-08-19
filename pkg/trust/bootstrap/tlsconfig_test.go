@@ -242,17 +242,28 @@ func TestNewSPKIPinTLSConfig_Success(t *testing.T) {
 	if !cfg.InsecureSkipVerify {
 		t.Fatal("expected InsecureSkipVerify (custom-verifier pattern)")
 	}
-	if cfg.VerifyPeerCertificate == nil {
-		t.Fatal("expected VerifyPeerCertificate callback")
+	// truststrap pins through VerifyConnection, not VerifyPeerCertificate:
+	// the latter is skipped on a resumed session, which would let a resumed
+	// connection bypass the pin. Session tickets are disabled for the same
+	// reason, so every connection runs the verifier.
+	if cfg.VerifyConnection == nil {
+		t.Fatal("expected VerifyConnection callback")
+	}
+	if !cfg.SessionTicketsDisabled {
+		t.Fatal("expected SessionTicketsDisabled so the pin cannot be resumed past")
 	}
 
 	// The verifier must accept the pinned certificate...
-	if err := cfg.VerifyPeerCertificate([][]byte{cert.Raw}, nil); err != nil {
-		t.Fatalf("VerifyPeerCertificate rejected pinned cert: %v", err)
+	if err := cfg.VerifyConnection(tls.ConnectionState{
+		PeerCertificates: []*x509.Certificate{cert},
+	}); err != nil {
+		t.Fatalf("VerifyConnection rejected pinned cert: %v", err)
 	}
 	// ...and reject any other.
 	other := newTestCert(t, "kms.example.com")
-	if err := cfg.VerifyPeerCertificate([][]byte{other.Raw}, nil); err == nil {
+	if err := cfg.VerifyConnection(tls.ConnectionState{
+		PeerCertificates: []*x509.Certificate{other},
+	}); err == nil {
 		t.Fatal("expected pin mismatch error for unpinned cert")
 	}
 }

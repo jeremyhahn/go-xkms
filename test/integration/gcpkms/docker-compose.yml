@@ -15,7 +15,7 @@ services:
       timeout: 3s
       retries: 10
     ports:
-      - "4588:4588"
+      - "0:4588"
 
   test:
     build:
@@ -30,10 +30,6 @@ services:
       - GOOGLE_CLOUD_PROJECT=test-project
       - GCPKMS_EMULATOR_ENDPOINT=floci-gcp:4588
     working_dir: /app
-
-networks:
-  default:
-    name: xkms-gcpkms-test
 
 # Staged by `make stage-gomodauth` (dependency-resolution.md §6) into the
 # gitignored .devcontainer/gomodauth.env; empty when no Gitea credentials are

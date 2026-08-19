@@ -21,6 +21,7 @@ import (
 	"regexp"
 	"strings"
 
+	"github.com/jeremyhahn/go-xkms/pkg/crypto/fips"
 	"github.com/jeremyhahn/go-xkms/pkg/types"
 )
 
@@ -286,6 +287,9 @@ func validateKeyType(keyType string) error {
 // validateAlgorithm validates the algorithm component of a Key ID.
 // Valid algorithms include asymmetric (RSA, ECDSA, Ed25519, Ed448), symmetric (AES, ChaCha20),
 // post-quantum (ML-DSA, ML-KEM), key exchange (X25519, X448), HMAC, and FROST algorithms.
+//
+// In FIPS 140-3 mode the set is filtered to the FIPS-approved algorithms; see
+// fips.ApprovedAlgorithm for what is excluded and why.
 func validateAlgorithm(algo string) error {
 	validAlgos := []string{
 		// Asymmetric algorithms
@@ -323,6 +327,16 @@ func validateAlgorithm(algo string) error {
 	algo = strings.ToLower(algo)
 	for _, valid := range validAlgos {
 		if algo == valid {
+			// In FIPS 140-3 mode the list is narrowed to the approved
+			// algorithms; validAlgos admits ChaCha20, X25519/X448 and the FROST
+			// ciphersuites, which a FIPS deployment may not use. Outside FIPS
+			// mode nothing is withheld.
+			if !fips.AlgorithmPermitted(algo) {
+				return &ErrValidation{
+					Sentinel: ErrInvalidKeyIDFormat,
+					Detail:   "algorithm not approved in FIPS 140-3 mode: " + algo,
+				}
+			}
 			return nil
 		}
 	}

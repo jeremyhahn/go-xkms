@@ -42,8 +42,10 @@ const (
 	// PrefixLen is the length of a nonce prefix in characters.
 	PrefixLen = 8
 
-	// NonceLen is the length of a nonce body (excluding prefix) in bytes.
-	NonceLen = 32
+	// NonceLen is the length of a nonce body (excluding prefix) in bytes:
+	// the 12-byte GCM nonce, the 8-byte encrypted counter and the 16-byte
+	// authentication tag, in the layout cipher.NewGCMWithRandomNonce emits.
+	NonceLen = nonceSize + 8 + 16
 
 	// DefaultMaxUsed is the default maximum number of used nonces to track.
 	DefaultMaxUsed = 65536
@@ -129,7 +131,7 @@ func WithKey(key []byte) Option {
 		if err != nil {
 			return err
 		}
-		gcm, err := cipher.NewGCM(c)
+		gcm, err := cipher.NewGCMWithRandomNonce(c)
 		if err != nil {
 			return err
 		}
@@ -162,7 +164,7 @@ func NewService(opts ...Option) (*Service, error) {
 		if err != nil {
 			return nil, err
 		}
-		gcm, err := cipher.NewGCM(c)
+		gcm, err := cipher.NewGCMWithRandomNonce(c)
 		if err != nil {
 			return nil, err
 		}
@@ -257,31 +259,21 @@ func (s *Service) Valid(nonce string) error {
 }
 
 // encrypt encrypts a counter value to produce a nonce.
+//
+// The AEAD generates the 12-byte GCM nonce inside the FIPS module boundary and
+// prepends it, so the token carries the whole nonce rather than the 8 random
+// bytes of a 4-zero-byte-prefixed one that an earlier scheme transmitted. That
+// makes the token four bytes longer; ACME nonces are single-use and are minted
+// and redeemed within one session, so there is nothing stored to migrate.
 func (s *Service) encrypt(counter int64) (string, error) {
-	// Generate 12-byte nonce for AES-GCM:
-	// - bytes 0-3: zero (deterministic prefix, not included in output)
-	// - bytes 4-11: cryptographically random (8 bytes = 64 bits of randomness)
-	// This provides sufficient uniqueness for the nonce space while allowing
-	// the random portion to be included in the final nonce token.
-	nonce := make([]byte, nonceSize)
-	if _, err := rand.Read(nonce[4:]); err != nil {
-		return "", err
-	}
-
 	// Encode counter to 8-byte big-endian.
 	pt := make([]byte, 8)
 	ctr := big.NewInt(counter)
 	ctrBytes := ctr.Bytes()
 	copy(pt[8-len(ctrBytes):], ctrBytes)
 
-	// Encrypt with AES-GCM.
-	// #nosec G407 - nonce bytes 4-11 are random (line above), bytes 0-3 are zero by design
-	ct := s.gcm.Seal(nil, nonce, pt, nil)
-
-	// Combine: random_nonce_bytes[4:] || ciphertext
-	result := make([]byte, NonceLen)
-	copy(result, nonce[4:])
-	copy(result[8:], ct)
+	// Encrypt with AES-GCM: nonce || ciphertext || tag.
+	result := s.gcm.Seal(nil, nil, pt, nil)
 
 	return s.prefix + base64.RawURLEncoding.EncodeToString(result), nil
 }
@@ -310,12 +302,8 @@ func (s *Service) decrypt(nonce string) (int64, error) {
 		return 0, errors.ErrInvalidNonceLength
 	}
 
-	// Reconstruct AES-GCM nonce.
-	n := make([]byte, nonceSize)
-	copy(n[4:], decoded[:8])
-
-	// Decrypt.
-	pt, err := s.gcm.Open(nil, n, decoded[8:], nil)
+	// Decrypt. Open extracts the prepended nonce itself.
+	pt, err := s.gcm.Open(nil, nil, decoded, nil)
 	if err != nil {
 		return 0, err
 	}

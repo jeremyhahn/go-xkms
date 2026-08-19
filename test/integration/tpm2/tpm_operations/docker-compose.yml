@@ -15,8 +15,8 @@ services:
       - --log
       - level=20
     ports:
-      - "2421:2421"
-      - "2422:2422"
+      - "0:2421"
+      - "0:2422"
     networks:
       - tpm-ops-test-network
 

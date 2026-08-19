@@ -18,15 +18,59 @@ if fips.Enabled() {
 }
 ```
 
-Detection checks `os.Getenv("GOFIPS140")`. Any non-empty value activates FIPS mode.
+Detection checks `os.Getenv("GOFIPS140")`. The toolchain accepts `off`, `latest`,
+`inprocess`, `certified` and `v1.Y.Z`; only `off` (and unset) means disabled.
 
 ```bash
 # Enable FIPS mode
-export GOFIPS140=1
+export GOFIPS140=latest
 
 # Disable (default)
 unset GOFIPS140
 ```
+
+`fips.Enabled()` is the *runtime* signal. `fips.Compiled()` is the build-time one
+— `crypto/fips140.Enabled()`, true for a binary built with `GOFIPS140` — and it is
+the only signal available inside a FIPS-compiled shared library, whose loading
+process carries no `GOFIPS140`. Controls that must hold for the artifact itself
+test `Compiled() || Enabled()`.
+
+## Approved algorithm set
+
+`fips.ApprovedAlgorithm` is the repository's answer to "may a FIPS deployment use
+this key algorithm", and `fips.AlgorithmPermitted` pairs it with mode detection.
+The key-ID allowlists in `pkg/validation` and `pkg/xkms` filter through it, so in
+FIPS mode a key ID naming a non-approved algorithm is rejected rather than
+accepted and later failing somewhere less obvious.
+
+| Approved | Basis |
+|----------|-------|
+| RSA, ECDSA P-256/384/521 | FIPS 186-5 |
+| Ed25519, Ed448 | FIPS 186-5 |
+| AES-128/192/256-GCM | FIPS 197 + SP 800-38D |
+| ML-DSA-44/65/87 | FIPS 204 |
+| ML-KEM-512/768/1024 | FIPS 203 |
+| HMAC-SHA-256/384/512 | FIPS 198-1 |
+
+### Absent from FIPS mode
+
+These stay fully present and fully tested in a normal build. Only a FIPS-mode run
+refuses them:
+
+| Withheld | Why | Approved substitute |
+|----------|-----|---------------------|
+| `chacha20-poly1305`, `xchacha20-poly1305` | Not an approved AEAD | AES-256-GCM |
+| `x25519`, `x448` | SP 800-56A Rev. 3 approves only the NIST curves and finite field groups for key agreement. `crypto/ecdh` under `GODEBUG=fips140=only` refuses X25519 outright. | ECDH P-256/384/521 |
+| `frost-*` (all RFC 9591 ciphersuites, including `frost-p256`) | Threshold Schnorr is not an approved signature scheme; the approval is of the scheme, not the curve underneath it. | None — no approved threshold signature scheme exists |
+
+The allowlist in `pkg/crypto/fips` is an allowlist rather than a denylist so the
+control fails closed: an algorithm added to a caller's own list is refused in FIPS
+mode until it is added to the approved set deliberately.
+
+**Algorithm approval is not implementation validation.** ML-DSA and Ed448 are
+reached through `github.com/cloudflare/circl`, so admitting them asserts an
+approved *algorithm*, not a validated *module*. A deployment that must claim a
+validated implementation has a narrower list than this one.
 
 ## KDF Selection
 
@@ -125,6 +169,8 @@ The FIPS strategy is consumed by several subsystems:
 | PlatformStore | Password hashing for stored credentials |
 | User management | Account password hashing |
 | LUKS passphrase derivation | KDF for disk encryption keys |
+| AEAD auto-selection | Forces AES-256-GCM over ChaCha20-Poly1305 ([AEAD Auto-Selection](../configuration/aead-auto-selection.md)) |
+| Key-ID validation | Filters `pkg/validation` and `pkg/xkms` algorithm allowlists to the approved set |
 
 ## Error Handling
 

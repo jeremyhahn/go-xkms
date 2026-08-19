@@ -173,8 +173,8 @@ services:
       retries: 30
       start_period: 3s
     ports:
-      - "2321:2321"
-      - "2322:2322"
+      - "0:2321"
+      - "0:2322"
     networks:
       - storage-test-network
 

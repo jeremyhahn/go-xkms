@@ -270,8 +270,12 @@ func TestNewGCM_ValidKey(t *testing.T) {
 	gcm, err := newGCM(key)
 	require.NoError(t, err)
 	require.NotNil(t, gcm)
-	assert.Equal(t, NonceSize, gcm.NonceSize())
-	assert.Equal(t, TagSize, gcm.Overhead())
+	// The AEAD generates its own nonce inside the FIPS module boundary, so it
+	// advertises a zero NonceSize and folds the 12-byte nonce into Overhead.
+	// Overhead therefore equals this package's NonceSize+TagSize, which is the
+	// same [nonce:12][ciphertext+tag:16] wire format as before the migration.
+	assert.Equal(t, 0, gcm.NonceSize())
+	assert.Equal(t, Overhead, gcm.Overhead())
 }
 
 func TestNewGCM_InvalidKeySize(t *testing.T) {

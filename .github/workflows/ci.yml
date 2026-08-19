@@ -5,11 +5,22 @@
 
 name: CI
 
+# ci-template v1.5: trunk-only triggers. main is the sole trunk since develop
+# was folded into it (2aa8ab1, 2026-08-17); develop is a frozen archive and
+# master has never existed in this repo. Listing a branch that can also be a PR
+# head made every commit on it run CI twice — one push run and one
+# pull_request run for the same sha — and this Gitea has no working
+# supersession, so the duplicate ran to completion (issue #6).
+#
+# Do NOT add a workflow- or job-level `concurrency:` block here to dedupe runs:
+# on Gitea 1.27.1 a job carrying a concurrency group is cancelled even when the
+# group is unoccupied (measured 42/42, ruling in task #88). The group key is
+# not the problem, so no expression fixes it.
 on:
   push:
-    branches: [ master, main, develop ]
+    branches: [ main ]
   pull_request:
-    branches: [ master, main, develop ]
+    branches: [ main ]
 
 env:
   GO_VERSION: 'stable'
@@ -160,6 +171,17 @@ jobs:
     needs: test
 
     steps:
+      # DELIBERATE divergence from ci-template v1: the template's
+      # `sudo docker system prune -af --volumes` is gone and must not come
+      # back. Our Actions hosts are SHARED between repositories, and that
+      # prune is host-global -- it deletes every image no running container
+      # holds plus every unused named volume, i.e. other repos' images, not
+      # just ours. On 2026-08-17 it repeatedly destroyed the codex-review
+      # job image on two shared hosts and failed 16 review runs
+      # portfolio-wide (go-xkms#2). Docker cleanup is scoped to this
+      # repository's own resources and happens in the suite's pre-run
+      # `clean-test-containers` step -- see the note at the end of this job
+      # for why there is no end-of-job teardown.
       - name: Free up disk space
         run: |
           echo "=== Disk space before cleanup ==="
@@ -169,7 +191,21 @@ jobs:
           sudo rm -rf /usr/local/lib/android
           sudo rm -rf /opt/ghc
           sudo rm -rf /opt/hostedtoolcache/CodeQL
-          sudo docker system prune -af --volumes
+          # This used to be `docker system prune -af --volumes`, which on a
+          # shared runner host deleted the tagged images, stopped containers
+          # and volumes of every OTHER job running at the same time --
+          # breaking their runs to free disk for this one.
+          #
+          # `image prune -f` (no -a) removes only DANGLING images, so it can
+          # never take an image another job is about to run. Do not widen it
+          # to -a, and never add --volumes: both reach into live jobs.
+          #
+          # `builder prune -af` is aggressive on purpose. Build cache is a
+          # pure performance resource -- dropping it can slow a concurrent
+          # job's build but cannot change what that job produces or tests --
+          # and this step exists because the runner does run out of disk.
+          docker image prune -f || true
+          docker builder prune -af || true
           echo "=== Disk space after cleanup ==="
           df -h
 
@@ -212,6 +248,24 @@ jobs:
         run: XKMS_COMPOSE_SERVER=1 make integration-test
         timeout-minutes: 60
 
+      # Unconditional: the compose stacks are torn down whether the suite
+      # passed, failed, timed out or the job was cancelled. Cleanup used to
+      # exist only on the success path inside the make recipes, so a crashed
+      # or cancelled run left its containers on the host forever and every
+      # later run on that host failed to start with a name conflict.
+      #
+      # Safe to run concurrently with another job's: every stack is namespaced
+      # by repository AND run id (Makefile: COMPOSE_NS / XKMS_IMAGE_TAG), and
+      # image removal is additionally bounded to the image names this harness
+      # builds, so these targets can only ever name this run's own containers,
+      # networks, volumes and image tags.
+      - name: Tear down integration test stacks
+        if: always()
+        run: |
+          make clean-test-containers || true
+          make devcontainer-clean || true
+          make clean-run-images || true
+
       - name: Upload integration test results
         if: always() && github.server_url == 'https://github.com'
         uses: actions/upload-artifact@v6
@@ -222,6 +276,29 @@ jobs:
             *.log
             build/test-results/
           retention-days: 7
+
+      # NO end-of-job Docker teardown here, deliberately. Cleanup of this
+      # repository's containers/networks/volumes/images happens at the START
+      # of the suite instead: `make integration-test` depends on
+      # `clean-test-containers`, which under CI runs in `project` scope --
+      # this repo's own compose projects and `go-xkms-*` containers only, no
+      # port sweep, no substring sweep, no prune of any kind.
+      #
+      # An `if: always()` teardown at the end of the job would be
+      # repository-scoped but not RUN-scoped: compose project names,
+      # container names and image tags are fixed, so it could tear down a
+      # second, concurrent run of this repository that was mid-suite (a push
+      # to an open PR triggers both `push` and `pull_request` runs, and
+      # Gitea 1.27.1 cancels any job carrying a `concurrency:` group even
+      # when the group is unoccupied -- d7f60eb4 -- so there is no working
+      # serialization to lean on). Per-run isolation (run-id-derived project
+      # names, tags and ports) plus the job-scoped teardown it would make
+      # safe are tracked in #15 for the owner to approve.
+      #
+      # What this job leaves behind is therefore bounded by the next run's
+      # pre-suite cleanup rather than reclaimed immediately -- an acceptable
+      # trade against deleting a sibling run's or another repository's
+      # resources. Daemon-level image/build-cache GC stays a host concern.
 
   # Job 3: Lint
   lint:
@@ -777,6 +854,23 @@ jobs:
           SOFTHSM2_CONF: ${{ github.workspace }}/softhsm2.conf
         run: go test -race -short -timeout 30m -tags="pkcs8,awskms,gcpkms,azurekv,pkcs11,vault,codec_cbor,codec_json,codec_msgpack" ./...
 
+  # Job 8 (FIPS 140-3 gate) IS NOT HERE ON PURPOSE. Do not re-add it without
+  # reading go-xkms #23 first.
+  #
+  # The gate was written on issue/10-fips-gate-only and its CODE half landed in
+  # this consolidation -- AES-GCM nonces are generated inside the module
+  # boundary, the AEAD auto-selectors return AES-256-GCM in FIPS mode instead
+  # of ChaCha20-Poly1305, and the algorithm allowlists are filtered at both
+  # validation entry points. The JOB half is withheld because the suite does
+  # not pass under GODEBUG=fips140=only yet: measured on this tree,
+  # 364+ tests fail across 13+ packages, and the first root cause is not even
+  # ours -- go-qrdb v0.5.9-alpha's pkg/role.deterministicUUID derives system
+  # role IDs with uuid.NewSHA1, and crypto/sha1 PANICS under fips140=only.
+  #
+  # Landing a required check that is red on arrival is the exact ordering
+  # mistake task #98 exists to prevent: a gate is only safe once the code it
+  # polices is already compliant. Callers first, gate second.
+
   # The single required check (devops.md §1). Every job above appears in BOTH
   # the needs list and the results check -- a gate that can pass vacuously is
   # worse than no gate. join(needs.*.result) is deliberately not used: it
@@ -791,9 +885,27 @@ jobs:
       - name: Fail closed on any non-success
         run: |
           check() { case "$2" in success) echo "OK   $1";; *) echo "FAIL $1 ($2)"; BAD=1;; esac; }
+          # advisory: reported, never fatal. Use it ONLY for a job whose red
+          # carries no information, and always with an issue that ends it.
+          advisory() { case "$2" in success) echo "OK   $1";; *) echo "ADVISORY $1 ($2) -- not gating";; esac; }
           BAD=0
           check test             "${{ needs.test.result }}"
-          check integration-test "${{ needs.integration-test.result }}"
+          # ADVISORY, not required (ruled 2026-08-18; go-quicbaas already does
+          # this). Integration Tests has passed once in 40 executions and never
+          # on main: `run_with_server` decides where the suite runs with
+          # `[ -f /.dockerenv ]`, which is true inside the Actions job container,
+          # so the devcontainer it then probes with `compose exec -T devcontainer`
+          # is never started (go-xkms #19). A required check that has never
+          # passed detects no regression and blocks every merge, which is the
+          # same reasoning that made COVERAGE_THRESHOLD a ratchet.
+          #
+          # This is a demotion, NOT a deletion: the job still runs on every
+          # commit and its result is still printed here. It returns to `check`
+          # the moment #19's image-bake harness rebuild lands (the rebuild
+          # go-qrdb #56 and go-signal #36 already did). Do not delete the job,
+          # do not add `continue-on-error` to it, and do not let this line
+          # outlive #19.
+          advisory integration-test "${{ needs.integration-test.result }}"
           check lint             "${{ needs.lint.result }}"
           check security         "${{ needs.security.result }}"
           check trivy            "${{ needs.trivy.result }}"

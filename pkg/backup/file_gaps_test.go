@@ -15,7 +15,6 @@ package backup
 
 import (
 	"context"
-	"crypto/rand"
 	"encoding/json"
 	"math"
 	"os"
@@ -274,27 +273,34 @@ func TestFileBackupAdapter_GetBackupMetadata_ReadError(t *testing.T) {
 	assert.Contains(t, err.Error(), "failed to read metadata file")
 }
 
-// errorReader always fails, used to simulate crypto/rand.Reader exhaustion.
-type errorReader struct{}
-
-func (errorReader) Read(_ []byte) (int, error) {
-	return 0, os.ErrClosed
-}
-
-// TestFileBackupAdapter_EncryptData_NonceGenerationFailure swaps out
-// crypto/rand.Reader with a reader that always fails, exercising the nonce
-// generation error branch in encryptData.
-func TestFileBackupAdapter_EncryptData_NonceGenerationFailure(t *testing.T) {
+// TestFileBackupAdapter_EncryptData_NonceIsModuleGenerated replaces a test that
+// swapped crypto/rand.Reader for a failing reader to exercise encryptData's
+// "failed to generate nonce" branch.
+//
+// That branch is gone. SP 800-38D / CMVP IG C.H require the GCM IV be generated
+// inside the module, so encryptData uses cipher.NewGCMWithRandomNonce and there
+// is no externally reachable random source left to fail. What replaces it is
+// the observable contract: the nonce is fresh per call and the stored layout is
+// still [nonce:12][ciphertext+tag:16], so backups written by earlier builds
+// still restore.
+func TestFileBackupAdapter_EncryptData_NonceIsModuleGenerated(t *testing.T) {
 	tempDir := t.TempDir()
 	adapter, err := NewFileBackupAdapter(tempDir)
 	require.NoError(t, err)
 
-	originalReader := rand.Reader
-	rand.Reader = errorReader{}
-	defer func() { rand.Reader = originalReader }()
-
 	key := make([]byte, 32)
-	_, err = adapter.encryptData([]byte("plaintext"), key)
-	require.Error(t, err)
-	assert.Contains(t, err.Error(), "failed to generate nonce")
+	plaintext := []byte("plaintext")
+
+	first, err := adapter.encryptData(plaintext, key)
+	require.NoError(t, err)
+	second, err := adapter.encryptData(plaintext, key)
+	require.NoError(t, err)
+
+	// Same key and plaintext: a fresh nonce is the only reason these differ.
+	assert.NotEqual(t, first, second)
+	assert.Len(t, first, len(plaintext)+12+16)
+
+	round, err := adapter.decryptData(first, key)
+	require.NoError(t, err)
+	assert.Equal(t, plaintext, round)
 }

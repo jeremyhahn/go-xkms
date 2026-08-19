@@ -18,6 +18,8 @@ import (
 	"testing"
 
 	"golang.org/x/sys/cpu"
+
+	"github.com/jeremyhahn/go-xkms/pkg/crypto/fips"
 )
 
 func TestHasAESNI(t *testing.T) {
@@ -46,46 +48,151 @@ func TestHasAESNI(t *testing.T) {
 	t.Logf("CPU architecture: %s, AES-NI support: %v", runtime.GOARCH, hasAES)
 }
 
-func TestSelectOptimal(t *testing.T) {
+// withAESNI pins the CPU-capability input for the duration of a test so the
+// no-AES-NI path is exercised on machines that do have AES-NI.
+func withAESNI(t *testing.T, present bool) {
+	t.Helper()
+	original := hasAESNI
+	hasAESNI = func() bool { return present }
+	t.Cleanup(func() { hasAESNI = original })
+}
+
+// TestSelectAESGCM asserts the full decision table. Taking its inputs as
+// parameters lets this cover combinations the test machine cannot produce,
+// notably FIPS mode on a CPU without AES-NI.
+func TestSelectAESGCM(t *testing.T) {
 	tests := []struct {
-		name              string
-		isHardwareBacked  bool
-		expectedIfAESNI   string
-		expectedIfNoAESNI string
+		name             string
+		isHardwareBacked bool
+		aesni            bool
+		fipsMode         bool
+		want             bool
+	}{
+		{"software, no AES-NI, no FIPS uses ChaCha20", false, false, false, false},
+		{"software, AES-NI, no FIPS uses AES", false, true, false, true},
+		{"software, no AES-NI, FIPS uses AES", false, false, true, true},
+		{"software, AES-NI, FIPS uses AES", false, true, true, true},
+		{"hardware, no AES-NI, no FIPS uses AES", true, false, false, true},
+		{"hardware, AES-NI, no FIPS uses AES", true, true, false, true},
+		{"hardware, no AES-NI, FIPS uses AES", true, false, true, true},
+		{"hardware, AES-NI, FIPS uses AES", true, true, true, true},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := selectAESGCM(tt.isHardwareBacked, tt.aesni, tt.fipsMode)
+			if got != tt.want {
+				t.Errorf("selectAESGCM(hw=%v, aesni=%v, fips=%v) = %v, want %v",
+					tt.isHardwareBacked, tt.aesni, tt.fipsMode, got, tt.want)
+			}
+		})
+	}
+}
+
+// TestSelectAESGCM_FIPSNeverSelectsChaCha states the compliance property on its
+// own: whatever else is true, FIPS mode forces AES-GCM.
+func TestSelectAESGCM_FIPSNeverSelectsChaCha(t *testing.T) {
+	for _, hw := range []bool{false, true} {
+		for _, aesni := range []bool{false, true} {
+			if !selectAESGCM(hw, aesni, true) {
+				t.Errorf("selectAESGCM(hw=%v, aesni=%v, fips=true) = false, want true "+
+					"(ChaCha20-Poly1305 is not FIPS-approved)", hw, aesni)
+			}
+		}
+	}
+}
+
+// TestFIPSRequiresAES verifies the predicate honours the runtime GOFIPS140
+// setting, and that a FIPS-compiled binary reports true regardless of it.
+func TestFIPSRequiresAES(t *testing.T) {
+	t.Run("GOFIPS140 off", func(t *testing.T) {
+		t.Setenv(fips.EnvGOFIPS140, "off")
+		if got, want := fipsRequiresAES(), fips.Compiled(); got != want {
+			t.Errorf("fipsRequiresAES() = %v with GOFIPS140=off, want %v (fips.Compiled())", got, want)
+		}
+	})
+
+	t.Run("GOFIPS140 latest", func(t *testing.T) {
+		t.Setenv(fips.EnvGOFIPS140, "latest")
+		if !fipsRequiresAES() {
+			t.Error("fipsRequiresAES() = false with GOFIPS140=latest, want true")
+		}
+	})
+}
+
+// TestSelectOptimal_FIPSModeNoAESNI is the verification the audit asked for:
+// on a CPU without AES-NI — the one path that used to return ChaCha20 — a
+// FIPS-mode run selects AES-256-GCM instead.
+func TestSelectOptimal_FIPSModeNoAESNI(t *testing.T) {
+	t.Setenv(fips.EnvGOFIPS140, "latest")
+	withAESNI(t, false)
+
+	if got := SelectOptimal(false); got != AES256GCM {
+		t.Errorf("SelectOptimal(false) = %s in FIPS mode without AES-NI, want %s", got, AES256GCM)
+	}
+	if got := SelectOptimalBackend(false); got != BackendAES256GCM {
+		t.Errorf("SelectOptimalBackend(false) = %s in FIPS mode without AES-NI, want %s",
+			got, BackendAES256GCM)
+	}
+	if IsChaCha(SelectOptimal(false)) || IsChaCha(SelectOptimalBackend(false)) {
+		t.Error("FIPS-mode selection returned a ChaCha variant")
+	}
+}
+
+func TestSelectOptimal(t *testing.T) {
+	// A FIPS-compiled binary can never select ChaCha20, whatever GOFIPS140 says
+	// in the process, so the software/no-AES-NI expectation depends on how this
+	// test binary was built.
+	softwareNoAESNI := ChaCha20Poly1305
+	softwareNoAESNIBackend := BackendChaCha20Poly1305
+	if fips.Compiled() {
+		softwareNoAESNI = AES256GCM
+		softwareNoAESNIBackend = BackendAES256GCM
+	}
+
+	tests := []struct {
+		name             string
+		isHardwareBacked bool
+		aesni            bool
+		want             string
+		wantBackend      string
 	}{
 		{
-			name:              "Hardware-backed key always uses AES-256-GCM",
-			isHardwareBacked:  true,
-			expectedIfAESNI:   AES256GCM,
-			expectedIfNoAESNI: AES256GCM,
+			name:             "Hardware-backed key always uses AES-256-GCM",
+			isHardwareBacked: true,
+			aesni:            false,
+			want:             AES256GCM,
+			wantBackend:      BackendAES256GCM,
 		},
 		{
-			name:              "Software key with AES-NI uses AES-256-GCM",
-			isHardwareBacked:  false,
-			expectedIfAESNI:   AES256GCM,
-			expectedIfNoAESNI: ChaCha20Poly1305,
+			name:             "Software key with AES-NI uses AES-256-GCM",
+			isHardwareBacked: false,
+			aesni:            true,
+			want:             AES256GCM,
+			wantBackend:      BackendAES256GCM,
+		},
+		{
+			name:             "Software key without AES-NI uses ChaCha20-Poly1305 outside FIPS",
+			isHardwareBacked: false,
+			aesni:            false,
+			want:             softwareNoAESNI,
+			wantBackend:      softwareNoAESNIBackend,
 		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			result := SelectOptimal(tt.isHardwareBacked)
+			t.Setenv(fips.EnvGOFIPS140, "off")
+			withAESNI(t, tt.aesni)
 
-			// Verify the result based on actual CPU capabilities
-			var expected string
-			if HasAESNI() {
-				expected = tt.expectedIfAESNI
-			} else {
-				expected = tt.expectedIfNoAESNI
+			if got := SelectOptimal(tt.isHardwareBacked); got != tt.want {
+				t.Errorf("SelectOptimal(%v) = %v, want %v (AES-NI: %v)",
+					tt.isHardwareBacked, got, tt.want, tt.aesni)
 			}
-
-			if result != expected {
-				t.Errorf("SelectOptimal(%v) = %v, want %v (CPU has AES-NI: %v)",
-					tt.isHardwareBacked, result, expected, HasAESNI())
+			if got := SelectOptimalBackend(tt.isHardwareBacked); got != tt.wantBackend {
+				t.Errorf("SelectOptimalBackend(%v) = %v, want %v (AES-NI: %v)",
+					tt.isHardwareBacked, got, tt.wantBackend, tt.aesni)
 			}
-
-			t.Logf("SelectOptimal(isHardwareBacked=%v) = %s (CPU AES-NI: %v)",
-				tt.isHardwareBacked, result, HasAESNI())
 		})
 	}
 }
@@ -96,46 +203,6 @@ func TestSelectOptimal_HardwareBackedAlwaysAES(t *testing.T) {
 	if result != AES256GCM {
 		t.Errorf("SelectOptimal(true) = %s, want %s (hardware-backed should always use AES)",
 			result, AES256GCM)
-	}
-}
-
-func TestSelectOptimalBackend(t *testing.T) {
-	tests := []struct {
-		name              string
-		isHardwareBacked  bool
-		expectedIfAESNI   string
-		expectedIfNoAESNI string
-	}{
-		{
-			name:              "Hardware-backed backend key uses aes256-gcm",
-			isHardwareBacked:  true,
-			expectedIfAESNI:   BackendAES256GCM,
-			expectedIfNoAESNI: BackendAES256GCM,
-		},
-		{
-			name:              "Software backend key adapts to CPU",
-			isHardwareBacked:  false,
-			expectedIfAESNI:   BackendAES256GCM,
-			expectedIfNoAESNI: BackendChaCha20Poly1305,
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			result := SelectOptimalBackend(tt.isHardwareBacked)
-
-			var expected string
-			if HasAESNI() {
-				expected = tt.expectedIfAESNI
-			} else {
-				expected = tt.expectedIfNoAESNI
-			}
-
-			if result != expected {
-				t.Errorf("SelectOptimalBackend(%v) = %v, want %v (CPU has AES-NI: %v)",
-					tt.isHardwareBacked, result, expected, HasAESNI())
-			}
-		})
 	}
 }
 

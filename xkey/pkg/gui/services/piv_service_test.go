@@ -67,6 +67,18 @@ func (m *mockPIVClient) Close() error                    { return errMockNotImpl
 func (m *mockPIVClient) Health(_ context.Context) (*transport.HealthResponse, error) {
 	return nil, errMockNotImplemented
 }
+func (m *mockPIVClient) Algorithms(_ context.Context) (*transport.AlgorithmsResponse, error) {
+	return nil, errMockNotImplemented
+}
+func (m *mockPIVClient) GetShare(_ context.Context, _, _ string, _ int) (*transport.ShareInfo, error) {
+	return nil, errMockNotImplemented
+}
+func (m *mockPIVClient) DeleteShare(_ context.Context, _, _ string, _ int) error {
+	return errMockNotImplemented
+}
+func (m *mockPIVClient) QueryAudit(_ context.Context, _ *transport.AuditFilter) (*transport.AuditPage, error) {
+	return nil, errMockNotImplemented
+}
 func (m *mockPIVClient) ListBackends(_ context.Context, _ ...transport.ListOption) (*transport.ListBackendsResponse, error) {
 	return nil, errMockNotImplemented
 }

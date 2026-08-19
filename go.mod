@@ -26,11 +26,11 @@ require (
 	github.com/gorilla/websocket v1.5.4-0.20250319132907-e064f32e3674
 	github.com/hashicorp/vault/api v1.23.0
 	github.com/jeremyhahn/go-codec v1.4.0
-	github.com/jeremyhahn/go-frost v0.1.7-alpha
-	github.com/jeremyhahn/go-qrdb v0.5.7-alpha
-	github.com/jeremyhahn/go-qrdb/sdk/go v0.5.7-alpha
-	github.com/jeremyhahn/go-quicraft v0.4.2-alpha
-	github.com/jeremyhahn/go-truststrap v0.1.2-alpha
+	github.com/jeremyhahn/go-frost v0.1.8-alpha
+	github.com/jeremyhahn/go-qrdb v0.5.9-alpha
+	github.com/jeremyhahn/go-qrdb/sdk/go v0.5.9-alpha
+	github.com/jeremyhahn/go-quicraft v0.6.2-alpha
+	github.com/jeremyhahn/go-truststrap v0.1.3-alpha
 	github.com/jeremyhahn/go-xkms/sdk/go v0.7.1-alpha
 	github.com/jeremyhahn/go-xkms/xkey v0.7.1-alpha
 	github.com/kevinburke/ssh_config v1.6.0
@@ -116,6 +116,7 @@ require (
 	github.com/invopop/jsonschema v0.13.0 // indirect
 	github.com/jackc/pgx/v5 v5.10.0 // indirect
 	github.com/jchv/go-winloader v0.0.0-20250406163304-c1995be93bd1 // indirect
+	github.com/jeremyhahn/go-luks2 v0.1.7-alpha // indirect
 	github.com/jeroenrinzema/psql-wire v0.18.0 // indirect
 	github.com/jmespath/go-jmespath v0.4.0 // indirect
 	github.com/json-iterator/go v1.1.12 // indirect
@@ -227,7 +228,7 @@ require (
 	github.com/hashicorp/go-sockaddr v1.0.7 // indirect
 	github.com/hashicorp/hcl v1.0.1-vault-7 // indirect
 	github.com/inconshreveable/mousetrap v1.1.0 // indirect
-	github.com/jeremyhahn/go-objstore v0.2.1-alpha
+	github.com/jeremyhahn/go-objstore v0.2.2-alpha
 	github.com/kylelemons/godebug v1.1.0 // indirect
 	github.com/mitchellh/go-homedir v1.1.0 // indirect
 	github.com/mitchellh/mapstructure v1.5.1-0.20231216201459-8508981c8b6c // indirect

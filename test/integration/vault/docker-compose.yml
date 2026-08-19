@@ -20,7 +20,7 @@ services:
       retries: 10
       start_period: 5s
     ports:
-      - "8200:8200"
+      - "0:8200"
 
   test:
     build:
@@ -36,10 +36,6 @@ services:
       - VAULT_TOKEN=root
       - VAULT_SKIP_VERIFY=true
     working_dir: /app
-
-networks:
-  default:
-    name: xkms-vault-test
 
 # Staged by `make stage-gomodauth` (dependency-resolution.md §6) into the
 # gitignored .devcontainer/gomodauth.env; empty when no Gitea credentials are

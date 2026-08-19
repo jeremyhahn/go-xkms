@@ -8,11 +8,13 @@ services:
         - VERSION=${VERSION:-0.0.1-alpha}
       secrets:
         - gomodauth
-    image: go-xkms-integration:latest
-    container_name: xkms-integration-server
-    # Ports are exposed but NOT published to the host to avoid conflicts
-    # with the devcontainer. Test containers communicate via the Docker
-    # network using the container name (xkms-server:8443, etc.).
+    image: go-xkms-integration:${XKMS_IMAGE_TAG:-latest}
+    # Ports are exposed but NOT published to the host. A published host port
+    # is host-global, so publishing would make this stack collide with the
+    # devcontainer's and with any other CI job running this same suite. Test
+    # containers reach each other by compose SERVICE name over the project
+    # network (xkms-server:8443, etc.), which needs no host publication and is
+    # scoped to the project -- so two runs can serve :8443 side by side.
     expose:
       - "8443/tcp"   # REST API (HTTP/2 over TCP)
       - "8443/udp"   # QUIC/HTTP3 on the unified REST port (Alt-Svc h3)
@@ -86,8 +88,7 @@ services:
     build:
       context: ../../../test/docker/swtpm
       dockerfile: Dockerfile
-    image: go-xkms-swtpm:latest
-    container_name: xkms-integration-swtpm
+    image: go-xkms-swtpm:${XKMS_IMAGE_TAG:-latest}
     expose:
       - "2321"  # TPM command port
       - "2322"  # TPM control port
@@ -106,8 +107,7 @@ services:
     build:
       context: ../../../test/docker/softhsm
       dockerfile: Dockerfile
-    image: go-xkms-softhsm:latest
-    container_name: xkms-integration-softhsm
+    image: go-xkms-softhsm:${XKMS_IMAGE_TAG:-latest}
     volumes:
       - softhsm-tokens:/tokens
     environment:
@@ -128,8 +128,7 @@ services:
       dockerfile: Dockerfile
       secrets:
         - gomodauth
-    image: go-xkms-integration:latest
-    container_name: xkms-integration-tests
+    image: go-xkms-integration:${XKMS_IMAGE_TAG:-latest}
     # Required for QUIC UDP buffer settings
     privileged: true
     user: root

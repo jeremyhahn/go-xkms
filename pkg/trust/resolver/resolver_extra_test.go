@@ -178,13 +178,13 @@ func TestWithLogger_NonNil(t *testing.T) {
 // ---------------------------------------------------------------------------
 
 // fakeTOFUPinStore is a minimal truststrap.PinStore implementation for tests.
-// It satisfies the interface but stores nothing (always returns ErrPinNotFound).
+// It satisfies the interface but stores nothing (always returns truststrap.PinNotFoundError).
 type fakeTOFUPinStore struct{}
 
 var _ truststrap.PinStore = fakeTOFUPinStore{}
 
 func (fakeTOFUPinStore) Get(_ context.Context, _ string, _ int) (*truststrap.Pin, error) {
-	return nil, truststrap.ErrPinNotFound{}
+	return nil, truststrap.PinNotFoundError{}
 }
 func (fakeTOFUPinStore) Put(_ context.Context, _ *truststrap.Pin) error    { return nil }
 func (fakeTOFUPinStore) Delete(_ context.Context, _ string, _ int) error   { return nil }

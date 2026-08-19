@@ -1,8 +1,17 @@
+# Host-facing developer/coverage stack, NOT part of `make integration-test`.
+#
+# The host port bindings below are deliberately fixed: `make emulator-status`,
+# `make coverage-awskms` and friends run on the host and dial these numbers
+# directly. That does mean two concurrent copies of THIS stack would collide
+# on the ports -- acceptable only because no CI job starts it. Everything CI
+# runs publishes on an ephemeral host port instead (host side 0). If this
+# stack is ever added to CI, the ports must be made ephemeral too and the
+# callers taught to resolve them with `docker compose port`, the way
+# `integration-test-ssh-backends` already does.
 services:
   # Floci - AWS Emulator (KMS)
   floci:
     image: floci/floci:latest
-    container_name: go-xkms-floci
     ports:
       - "4566:4566"
     environment:
@@ -20,7 +29,6 @@ services:
   # Floci - GCP Emulator (Cloud KMS)
   floci-gcp:
     image: floci/floci-gcp:latest
-    container_name: go-xkms-floci-gcp
     ports:
       - "4588:4588"
     environment:
@@ -38,7 +46,6 @@ services:
   # Azure Key Vault Emulator
   azure-keyvault:
     image: jamesgoulddev/azure-keyvault-emulator:latest
-    container_name: go-xkms-azure-kv
     ports:
       - "4997:4997"
     environment:
@@ -62,7 +69,6 @@ services:
   # HashiCorp Vault
   vault:
     image: hashicorp/vault:latest
-    container_name: go-xkms-vault
     ports:
       - "8200:8200"
     environment:

@@ -265,10 +265,11 @@ func TestBadInput(t *testing.T) {
 	})
 }
 
-// TestCleanZeroesTheSeed checks that Clean actually erases the key material
+// TestCleanDestroysTheSeed checks that Clean actually erases the key material
 // rather than only dropping the reference, since the caller may still hold the
-// slice it was built from.
-func TestCleanZeroesTheSeed(t *testing.T) {
+// slice it was built from. The seed lives in an enclave, so "erased" is
+// observable as the instance no longer being able to produce it.
+func TestCleanDestroysTheSeed(t *testing.T) {
 	seed := make([]byte, SeedSize)
 	_, err := io.ReadFull(rand.Reader, seed)
 	require.NoError(t, err)
@@ -276,14 +277,18 @@ func TestCleanZeroesTheSeed(t *testing.T) {
 	kem, err := Create(seed)
 	require.NoError(t, err)
 
-	internal := kem.seed
-	require.False(t, bytes.Equal(internal, make([]byte, SeedSize)),
+	held := kem.ExportSecretKey()
+	require.Equal(t, seed, held,
+		"the instance must hold the seed it was created from")
+	require.False(t, bytes.Equal(held, make([]byte, SeedSize)),
 		"the fixture seed must not be all zeroes, or this test proves nothing")
 
 	kem.Clean()
 
-	assert.Equal(t, make([]byte, SeedSize), internal,
-		"Clean must zero the seed bytes, not merely drop the reference")
+	assert.Nil(t, kem.seed,
+		"Clean must destroy the enclave holding the seed")
+	assert.Nil(t, kem.ExportSecretKey(),
+		"a cleaned instance must not be able to produce the seed again")
 	assert.NotEqual(t, make([]byte, SeedSize), seed,
 		"Clean must not reach back into the caller's own slice")
 }
@@ -307,4 +312,22 @@ func TestDetails(t *testing.T) {
 	assert.Equal(t, SeedSize, kem.SecretKeyLength())
 	assert.Equal(t, CiphertextSize, kem.CiphertextLength())
 	assert.Equal(t, SharedSecretSize, kem.SharedSecretLength())
+}
+
+// TestCleanIsIdempotentAndNilSafe pins the cleanup contract the deferred
+// error-path release depends on: Clean may run twice, on a zero value, and on a
+// nil receiver without panicking.
+func TestCleanIsIdempotentAndNilSafe(t *testing.T) {
+	k, err := New()
+	require.NoError(t, err)
+
+	k.Clean()
+	k.Clean()
+	assert.Nil(t, k.ExportSecretKey())
+
+	var zero MLKEM512
+	zero.Clean()
+
+	var nilKey *MLKEM512
+	nilKey.Clean()
 }

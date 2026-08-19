@@ -116,15 +116,22 @@ fi
 log_info "Waiting for services to be healthy..."
 sleep 5
 
+# Tests 9-12 address the containers by ID, resolved from the compose SERVICE
+# name. The services declare no container_name -- a container name is a
+# host-global identifier, so a fixed one collides with any other job running
+# this stack on the same host. `compose ps -q` always names this project's.
+SWTPM_CID=$(docker compose ps -q swtpm)
+SOFTHSM_CID=$(docker compose ps -q softhsm)
+
 # Test 9: Check SWTPM container is running
-run_test "SWTPM container is running" "docker ps | grep -q go-xkms-swtpm"
+run_test "SWTPM container is running" "[ -n \"$SWTPM_CID\" ]"
 
 # Test 10: Check SoftHSM container is running
-run_test "SoftHSM container is running" "docker ps | grep -q go-xkms-softhsm"
+run_test "SoftHSM container is running" "[ -n \"$SOFTHSM_CID\" ]"
 
 # Test 11: Check SWTPM health
 log_info "Checking SWTPM health..."
-SWTPM_HEALTH=$(docker inspect go-xkms-swtpm --format='{{.State.Health.Status}}' 2>/dev/null || echo "unhealthy")
+SWTPM_HEALTH=$(docker inspect "$SWTPM_CID" --format='{{.State.Health.Status}}' 2>/dev/null || echo "unhealthy")
 if [ "$SWTPM_HEALTH" = "healthy" ]; then
     log_success "SWTPM is healthy"
     ((TESTS_PASSED++))
@@ -136,7 +143,7 @@ fi
 
 # Test 12: Check SoftHSM health
 log_info "Checking SoftHSM health..."
-SOFTHSM_HEALTH=$(docker inspect go-xkms-softhsm --format='{{.State.Health.Status}}' 2>/dev/null || echo "unhealthy")
+SOFTHSM_HEALTH=$(docker inspect "$SOFTHSM_CID" --format='{{.State.Health.Status}}' 2>/dev/null || echo "unhealthy")
 if [ "$SOFTHSM_HEALTH" = "healthy" ]; then
     log_success "SoftHSM is healthy"
     ((TESTS_PASSED++))
@@ -148,7 +155,7 @@ fi
 
 # Test 13: Test SWTPM port is accessible
 log_info "Testing SWTPM connectivity..."
-if nc -z localhost 2321 2>/dev/null || docker compose exec -T swtpm nc -z localhost 2321 2>/dev/null; then
+if docker compose exec -T swtpm nc -z localhost 2321 2>/dev/null; then
     log_success "SWTPM port 2321 is accessible"
     ((TESTS_PASSED++))
 else
@@ -172,8 +179,12 @@ fi
 run_test "SWTPM volume exists" "docker volume ls | grep -q swtpm-data"
 run_test "SoftHSM volume exists" "docker volume ls | grep -q softhsm-tokens"
 
-# Test 16: Check network is created
-run_test "Docker network exists" "docker network ls | grep -q xkms-test"
+# Test 16: Check network is created. The network is `<project>_xkms-test`,
+# not a bare `xkms-test` -- compose prefixes it with the project name, which
+# is what keeps two runs on one host off each other's network. Read it off the
+# running container rather than guessing the prefix.
+run_test "Docker network exists" \
+    "docker inspect \"$SWTPM_CID\" --format '{{range \$k, \$v := .NetworkSettings.Networks}}{{\$k}} {{end}}' | grep -q xkms-test"
 
 # Test 17: Test SWTPM logs
 log_info "Checking SWTPM logs..."

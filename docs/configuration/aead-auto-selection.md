@@ -31,6 +31,25 @@ For software-based encryption, the algorithm is selected based on CPU capabiliti
 - Better performance than software AES
 - Resistant to timing attacks
 
+### FIPS 140-3 mode
+
+ChaCha20-Poly1305 is not a FIPS-approved AEAD, so in FIPS mode the selectors
+return **AES-256-GCM** regardless of CPU capability. Nothing is withdrawn: AES-GCM
+is the approved primitive with the same security property, so the capability
+exists in both builds and only the choice between them changes.
+
+FIPS mode here means `fips.Compiled() || fips.Enabled()` — a binary compiled with
+`GOFIPS140`, *or* a process running under it. Both are needed: a FIPS-compiled
+shared library carries no `GOFIPS140` in the process that `dlopen()`s it, so the
+environment alone would not see it.
+
+This is a runtime check rather than a `//go:build` exclusion because `pkg/crypto/aead`
+selects an algorithm *name* and imports no cipher implementation — there is no
+non-approved code for a build tag to leave out. `GODEBUG=fips140=only` does not
+close the gap either: it constrains the Go Cryptographic Module, and
+`golang.org/x/crypto/chacha20poly1305` does not go through it, so a FIPS-mode run
+would happily encrypt with ChaCha20 if this selector handed the name out.
+
 ## CPU Detection
 
 The library automatically detects CPU capabilities:
@@ -47,7 +66,7 @@ if aead.HasAESNI() {
 Supported architectures:
 - **amd64**: Checks for AES-NI via `cpu.X86.HasAES`
 - **arm64**: Checks for AES instructions via `cpu.ARM64.HasAES`
-- **Other**: Returns false (uses ChaCha20-Poly1305 for software keys)
+- **Other**: Returns false (uses ChaCha20-Poly1305 for software keys, or AES-256-GCM in FIPS mode)
 
 ## Usage Examples
 

@@ -110,7 +110,7 @@ Go-xkms implements ML-DSA at levels 2, 3, and 5, and ML-KEM at levels 3 and 5 (M
 type MLDSAPrivateKey struct {
     Algorithm string              // ML-DSA-44, ML-DSA-65, ML-DSA-87
     PublicKey *MLDSAPublicKey
-    seed      [32]byte            // 32-byte seed for deterministic key recovery
+    seed      *secure.Secret      // 32-byte seed, enclaved (see Memory Management)
 }
 
 // Implements crypto.Signer interface
@@ -123,7 +123,7 @@ func (k *MLDSAPrivateKey) Verify(message, signature []byte) (bool, error)
 type MLKEMPrivateKey struct {
     Algorithm string              // ML-KEM-768, ML-KEM-1024
     PublicKey *MLKEMPublicKey
-    seed      [64]byte            // 64-byte seed for deterministic key recovery
+    seed      *secure.Secret      // 64-byte seed, enclaved (see Memory Management)
     tracker   types.AEADSafetyTracker
     keyID     string
 }
@@ -365,9 +365,31 @@ This provides:
 ### Memory Management
 
 **Key Material:**
-- Secret keys stored as Go-managed byte slices and seed arrays
-- Explicit zeroing of key material on cleanup
-- Deferred cleanup in backend methods
+
+The reconstruction seed is the whole private key in 32 or 64 bytes, so it does not
+rest on the Go heap as a plaintext slice. It is sealed in a `*secure.Secret`
+(`sdk/go/secure`, memguard-backed) by `pkg/keyprovider/quantum` and by the
+`pkg/quantum/{kyber768,mlkem512,mlkem1024}` wrappers.
+
+- `Clean()` calls `Destroy()` on the enclave rather than zeroing a slice. It is
+  idempotent and safe on a zero value or a nil receiver, so a deferred release on
+  an error path never has to test the key first
+- Every path that generates a key but does not hand it to a caller — a failed
+  store, a rotation — destroys the enclave rather than leaving mlocked memory to
+  the garbage collector
+- `ExportSecretKey()` opens the enclave, copies out, and destroys the working
+  buffer; the caller owns wiping the copy it receives
+- Sealing consumes the buffer it is given, so a seed with more than one consumer
+  — the in-memory key and the metadata serialized to storage — is copied per
+  consumer and the original wiped once both are served
+- The persisted `seed` field in stored key metadata is necessarily plaintext for
+  the moment `encoding/json` reads it. `storeKey` wipes it on return (error paths
+  included), and the load path wipes the seed `json.Unmarshal` decodes, so the
+  exposure is the call rather than the process lifetime. The serialized document
+  itself is left alone: it belongs to `storage.Backend`, whose contract does not
+  say whether `Put`/`Get` copy the slice or hand back the stored record, so
+  zeroing it could destroy what was written. Confidentiality of the record at
+  rest is the storage backend's concern, not this layer's
 
 **Shared Secrets (ML-KEM):**
 - Zeroed after use with explicit memory wiping

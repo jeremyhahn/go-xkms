@@ -27,7 +27,7 @@ func TestNew(t *testing.T) {
 	defer k.Clean()
 	assert.NotNil(t, k.dk)
 	assert.NotNil(t, k.seed)
-	assert.Len(t, k.seed, SeedSize)
+	assert.Len(t, k.ExportSecretKey(), SeedSize)
 }
 
 func TestGenerateKeyPair(t *testing.T) {
@@ -218,6 +218,29 @@ func TestExportSecretKey_ReturnsCopy(t *testing.T) {
 	assert.NotEqual(t, seed1, seed2)
 }
 
+// TestCreateDoesNotConsumeCallerSeed guards the enclave conversion: sealing
+// wipes the buffer it is handed, so Create must seal a copy and leave the
+// caller's slice usable. Losing this would silently zero a seed the caller
+// still needs.
+func TestCreateDoesNotConsumeCallerSeed(t *testing.T) {
+	origin, err := New()
+	require.NoError(t, err)
+	seed := origin.ExportSecretKey()
+	origin.Clean()
+	require.Len(t, seed, SeedSize)
+
+	before := make([]byte, len(seed))
+	copy(before, seed)
+
+	k, err := Create(seed)
+	require.NoError(t, err)
+	defer k.Clean()
+
+	assert.Equal(t, before, seed, "Create must not wipe the caller's seed")
+	assert.Equal(t, before, k.ExportSecretKey(),
+		"the enclaved seed must round-trip the one Create was given")
+}
+
 func TestClean(t *testing.T) {
 	k, err := New()
 	require.NoError(t, err)
@@ -273,4 +296,22 @@ func TestWrongKeyDecapsulation(t *testing.T) {
 	require.NoError(t, err)
 	assert.NotEqual(t, senderSecret, bobSecret,
 		"Wrong key should produce different shared secret (implicit rejection)")
+}
+
+// TestCleanIsIdempotentAndNilSafe pins the cleanup contract the deferred
+// error-path release depends on: Clean may run twice, on a zero value, and on a
+// nil receiver without panicking.
+func TestCleanIsIdempotentAndNilSafe(t *testing.T) {
+	k, err := New()
+	require.NoError(t, err)
+
+	k.Clean()
+	k.Clean()
+	assert.Nil(t, k.ExportSecretKey())
+
+	var zero Kyber768
+	zero.Clean()
+
+	var nilKey *Kyber768
+	nilKey.Clean()
 }

@@ -27,6 +27,12 @@
 // The selection logic ensures optimal performance across different architectures
 // (amd64, arm64, etc.) and deployment scenarios (hardware-backed vs software keys).
 //
+// # FIPS 140-3
+//
+// ChaCha20-Poly1305 is not a FIPS-approved AEAD, so in FIPS mode the selectors
+// return AES-256-GCM regardless of CPU capability. See fipsRequiresAES for why
+// this has to be a runtime predicate rather than a build-tag exclusion.
+//
 // Example usage:
 //
 //	// Auto-select based on CPU and key type
@@ -47,6 +53,8 @@ import (
 	"runtime"
 
 	"golang.org/x/sys/cpu"
+
+	"github.com/jeremyhahn/go-xkms/pkg/crypto/fips"
 )
 
 // Algorithm names for AEAD ciphers
@@ -87,6 +95,51 @@ const (
 	BackendXChaCha20Poly1305 = "xchacha20-poly1305"
 )
 
+// selectAESGCM reports whether AES-GCM must be chosen over ChaCha20-Poly1305.
+//
+// The decision is factored out of the exported selectors, and takes its three
+// inputs as parameters rather than reading them, so the full table can be
+// asserted deterministically — including the combinations a given test machine
+// cannot produce, such as FIPS mode on a CPU without AES-NI.
+func selectAESGCM(isHardwareBacked, aesni, fipsMode bool) bool {
+	switch {
+	case isHardwareBacked:
+		// Hardware-backed keys (HSM, TPM, cloud KMS): those systems are
+		// optimized for AES operations.
+		return true
+	case fipsMode:
+		// ChaCha20-Poly1305 is not a FIPS-approved AEAD, so performance does
+		// not get a vote. AES-256-GCM is the approved primitive with the same
+		// security property, so the capability survives the gate rather than
+		// being withdrawn from FIPS deployments.
+		return true
+	default:
+		// Software key, no policy constraint: CPU capability decides.
+		return aesni
+	}
+}
+
+// fipsRequiresAES reports whether FIPS 140-3 policy forbids selecting a
+// non-approved AEAD, in which case the selectors must return AES-256-GCM.
+//
+// It ORs the build-time and runtime predicates for the same reason
+// pkg/pkcs11/module/mechanism.go does: a FIPS-compiled shared library carries
+// no GOFIPS140 in the process that dlopen()s it, so Compiled is the only signal
+// there, while a normally-built binary run under GOFIPS140 only sets Enabled.
+// Either alone leaves a FIPS deployment able to select ChaCha20-Poly1305.
+//
+// Why this is a runtime predicate and not a //go:build exclusion: this package
+// selects an algorithm *name*. It imports no cipher implementation, so there is
+// no non-approved code for a build tag to leave out — under
+// GOFIPS140=latest GODEBUG=fips140=only the toolchain still permits
+// golang.org/x/crypto/chacha20poly1305 (it is not routed through the Go
+// Cryptographic Module), and the compiler therefore guarantees nothing about
+// what this function returns. Splitting auto.go across two build tags would
+// only duplicate the same branch while making one copy untestable per build.
+func fipsRequiresAES() bool {
+	return fips.Compiled() || fips.Enabled()
+}
+
 // HasAESNI returns true if the CPU has AES-NI (AES New Instructions) support.
 // AES-NI provides hardware acceleration for AES encryption/decryption operations.
 //
@@ -111,13 +164,19 @@ func HasAESNI() bool {
 	}
 }
 
+// hasAESNI is the indirection the selectors call so tests can exercise the
+// no-AES-NI path on a machine that has AES-NI. Production always sees HasAESNI.
+var hasAESNI = HasAESNI
+
 // SelectOptimal selects the optimal AEAD algorithm based on hardware capabilities.
 //
 // Selection logic:
 //  1. If isHardwareBacked is true (HSM, TPM, KMS), always use AES-256-GCM
 //     Hardware security modules are optimized for AES operations
-//  2. If CPU has AES-NI, use AES-256-GCM for best performance
-//  3. Otherwise, use ChaCha20-Poly1305 for better software-only performance
+//  2. If FIPS 140-3 mode is active, always use AES-256-GCM — ChaCha20-Poly1305
+//     is not an approved AEAD
+//  3. If CPU has AES-NI, use AES-256-GCM for best performance
+//  4. Otherwise, use ChaCha20-Poly1305 for better software-only performance
 //
 // Parameters:
 //   - isHardwareBacked: True if the key is stored in hardware (HSM, TPM, cloud KMS)
@@ -133,21 +192,13 @@ func HasAESNI() bool {
 //	// For a TPM/HSM key
 //	algo := aead.SelectOptimal(true)
 func SelectOptimal(isHardwareBacked bool) string {
-	// Hardware-backed keys (HSM, TPM, cloud KMS) - always use AES-256-GCM
-	// These systems are optimized for AES operations
-	if isHardwareBacked {
+	if selectAESGCM(isHardwareBacked, hasAESNI(), fipsRequiresAES()) {
 		return AES256GCM
 	}
 
-	// Software keys - check CPU capabilities
-	if HasAESNI() {
-		// CPU has hardware AES acceleration - use AES-256-GCM
-		return AES256GCM
-	}
-
-	// No hardware acceleration - use ChaCha20-Poly1305
-	// ChaCha20 performs better than AES without hardware support
-	// and provides constant-time operations
+	// No hardware acceleration and no policy constraint - use ChaCha20-Poly1305.
+	// ChaCha20 performs better than AES without hardware support and provides
+	// constant-time operations.
 	return ChaCha20Poly1305
 }
 
@@ -169,17 +220,11 @@ func SelectOptimal(isHardwareBacked bool) string {
 //	    SymmetricAlgorithm: types.SymmetricAlgorithm(aead.SelectOptimalBackend(false)),
 //	}
 func SelectOptimalBackend(isHardwareBacked bool) string {
-	// Hardware-backed keys - always use AES-256-GCM
-	if isHardwareBacked {
+	if selectAESGCM(isHardwareBacked, hasAESNI(), fipsRequiresAES()) {
 		return BackendAES256GCM
 	}
 
-	// Software keys - check CPU capabilities
-	if HasAESNI() {
-		return BackendAES256GCM
-	}
-
-	// No hardware acceleration - use ChaCha20-Poly1305
+	// No hardware acceleration and no policy constraint - use ChaCha20-Poly1305.
 	return BackendChaCha20Poly1305
 }
 

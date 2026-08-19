@@ -15,11 +15,10 @@ services:
         - VERSION=${VERSION:-0.0.1-alpha}
       secrets:
         - gomodauth
-    image: go-xkms-bootstrap:latest
-    container_name: bootstrap-xkms-server
+    image: go-xkms-bootstrap:${XKMS_IMAGE_TAG:-latest}
     ports:
-      - "${XKMS_HOST_REST_PORT:-8443}:8443"
-      - "${XKMS_HOST_NOISE_PORT:-8445}:8445"
+      - "${XKMS_HOST_REST_PORT:-0}:8443"
+      - "${XKMS_HOST_NOISE_PORT:-0}:8445"
     volumes:
       - xkms-data:/data
       - xkms-certs:/etc/xkms/certs
@@ -72,8 +71,7 @@ services:
       dockerfile: Dockerfile
       secrets:
         - gomodauth
-    image: go-xkms-bootstrap:latest
-    container_name: bootstrap-zone-generator
+    image: go-xkms-bootstrap:${XKMS_IMAGE_TAG:-latest}
     user: root
     volumes:
       - xkms-certs:/etc/xkms/certs:ro
@@ -99,7 +97,6 @@ services:
   # the zone file exists before CoreDNS starts.
   coredns:
     image: coredns/coredns:latest
-    container_name: bootstrap-coredns
     volumes:
       - ./coredns/Corefile:/etc/coredns/Corefile:ro
       - zone-data:/etc/coredns/zones:ro
@@ -117,7 +114,6 @@ services:
       dockerfile: test/integration/bootstrap/Dockerfile.test
       secrets:
         - gomodauth
-    container_name: bootstrap-integration-tests
     depends_on:
       xkms-server:
         condition: service_healthy
@@ -163,7 +159,6 @@ services:
       dockerfile: test/integration/bootstrap/Dockerfile.test
       secrets:
         - gomodauth
-    container_name: bootstrap-xkey-truststrap-tests
     depends_on:
       xkms-server:
         condition: service_healthy

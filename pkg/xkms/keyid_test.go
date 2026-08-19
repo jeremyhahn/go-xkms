@@ -34,6 +34,9 @@ func TestParseKeyID_Valid(t *testing.T) {
 		expectedKeyType string
 		expectedAlgo    string
 		expectedKeyname string
+		// nonApprovedInFIPS marks a row whose algorithm is outside the FIPS
+		// 140-3 approved set, so a FIPS run must reject it instead of parsing it.
+		nonApprovedInFIPS bool
 	}{
 		{
 			name:            "software RSA signing key",
@@ -148,20 +151,22 @@ func TestParseKeyID_Valid(t *testing.T) {
 			expectedKeyname: "pq-key",
 		},
 		{
-			name:            "threshold backend",
-			keyID:           "threshold:signing:frost-ed25519:threshold-key",
-			expectedBackend: "threshold",
-			expectedKeyType: "signing",
-			expectedAlgo:    "frost-ed25519",
-			expectedKeyname: "threshold-key",
+			name:              "threshold backend",
+			keyID:             "threshold:signing:frost-ed25519:threshold-key",
+			expectedBackend:   "threshold",
+			expectedKeyType:   "signing",
+			expectedAlgo:      "frost-ed25519",
+			expectedKeyname:   "threshold-key",
+			nonApprovedInFIPS: true,
 		},
 		{
-			name:            "frost backend",
-			keyID:           "frost:signing:frost-ristretto255:frost-key",
-			expectedBackend: "frost",
-			expectedKeyType: "signing",
-			expectedAlgo:    "frost-ristretto255",
-			expectedKeyname: "frost-key",
+			name:              "frost backend",
+			keyID:             "frost:signing:frost-ristretto255:frost-key",
+			expectedBackend:   "frost",
+			expectedKeyType:   "signing",
+			expectedAlgo:      "frost-ristretto255",
+			expectedKeyname:   "frost-key",
+			nonApprovedInFIPS: true,
 		},
 		{
 			name:            "case insensitive backend",
@@ -192,6 +197,10 @@ func TestParseKeyID_Valid(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			backend, keyType, algo, keyname, err := ParseKeyID(tt.keyID)
+			if tt.nonApprovedInFIPS && fipsFiltersNonApproved() {
+				require.Error(t, err, "FIPS mode must reject %s", tt.keyID)
+				return
+			}
 			require.NoError(t, err)
 			assert.Equal(t, tt.expectedBackend, backend)
 			assert.Equal(t, tt.expectedKeyType, keyType)
@@ -727,15 +736,27 @@ func TestValidateKeyType_Invalid(t *testing.T) {
 // --- validateAlgorithm tests ---
 
 func TestValidateAlgorithm_Valid(t *testing.T) {
-	validAlgos := []string{
+	approved := []string{
 		"rsa", "ecdsa-p256", "ed25519", "aes256-gcm",
-		"chacha20-poly1305", "xchacha20-poly1305",
 		"ml-dsa-65", "ml-kem-768", "hmac-sha256",
-		"frost-ed25519", "x25519",
 	}
-	for _, algo := range validAlgos {
+	for _, algo := range approved {
 		err := validateAlgorithm(algo)
 		assert.NoError(t, err, "algorithm %s should be valid", algo)
+	}
+
+	// These are in the grammar but outside the FIPS 140-3 approved set, so
+	// whether they validate depends on the mode this test runs in.
+	nonApproved := []string{
+		"chacha20-poly1305", "xchacha20-poly1305", "frost-ed25519", "x25519",
+	}
+	for _, algo := range nonApproved {
+		err := validateAlgorithm(algo)
+		if fipsFiltersNonApproved() {
+			assert.Error(t, err, "algorithm %s must be rejected in FIPS mode", algo)
+			continue
+		}
+		assert.NoError(t, err, "algorithm %s should be valid outside FIPS mode", algo)
 	}
 }
 
@@ -776,12 +797,20 @@ func TestNewKeyID_ParseKeyID_RoundTrip(t *testing.T) {
 
 func TestParseKeyIDToAttributes_ChaCha20(t *testing.T) {
 	attrs, err := ParseKeyIDToAttributes("software:encryption:chacha20-poly1305:stream-key")
+	if fipsFiltersNonApproved() {
+		require.Error(t, err, "FIPS mode must reject ChaCha20-Poly1305")
+		return
+	}
 	require.NoError(t, err)
 	assert.Equal(t, types.SymmetricChaCha20Poly1305, attrs.SymmetricAlgorithm)
 }
 
 func TestParseKeyIDToAttributes_XChaCha20(t *testing.T) {
 	attrs, err := ParseKeyIDToAttributes("software:encryption:xchacha20-poly1305:xstream-key")
+	if fipsFiltersNonApproved() {
+		require.Error(t, err, "FIPS mode must reject XChaCha20-Poly1305")
+		return
+	}
 	require.NoError(t, err)
 	assert.Equal(t, types.SymmetricXChaCha20Poly1305, attrs.SymmetricAlgorithm)
 }

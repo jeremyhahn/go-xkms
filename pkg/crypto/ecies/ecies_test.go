@@ -41,7 +41,6 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"strings"
 	"testing"
 
 	"github.com/jeremyhahn/go-xkms/pkg/crypto/ecdh"
@@ -510,26 +509,33 @@ func TestDecrypt_AllErrorPaths(t *testing.T) {
 	assert.Error(t, err)
 }
 
-// TestEncrypt_FailingRandomReaderEarly tests encryption with an immediately failing random reader.
-// In Go 1.26+, ecdsa.GenerateKey uses crypto/rand internally and ignores the provided
-// io.Reader. The custom reader is only consumed by the nonce generation (io.ReadFull).
-// This test verifies that a completely broken reader causes Encrypt to fail with
-// a nonce generation error.
-func TestEncrypt_FailingRandomReaderEarly(t *testing.T) {
+// TestEncrypt_FailingRandomReaderNoLongerFatal pins the consequence of moving
+// nonce generation inside the FIPS module boundary.
+//
+// The caller-supplied reader used to be the nonce source, so a broken one made
+// Encrypt fail with "failed to generate nonce". SP 800-38D / CMVP IG C.H
+// require the GCM IV come from inside the module, so the nonce now comes from
+// cipher.NewGCMWithRandomNonce and this reader is no longer consumed at all:
+// Go 1.26's ecdsa.GenerateKey ignores it too, using crypto/rand internally.
+//
+// A broken reader is therefore no longer an error path, and the ciphertext it
+// produces is still sound. Asserting that here keeps the change visible rather
+// than letting a silently-unused parameter go unnoticed.
+func TestEncrypt_FailingRandomReaderNoLongerFatal(t *testing.T) {
 	priv, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
 	require.NoError(t, err)
 
 	plaintext := []byte("test")
 
-	// Create a reader that fails immediately
+	// A reader that fails on every call.
 	failingReader := &failingRandomReader{}
 
-	_, err = Encrypt(failingReader, &priv.PublicKey, plaintext, nil)
-	assert.Error(t, err)
-	// In Go 1.26+, ecdsa.GenerateKey ignores the provided reader and uses crypto/rand
-	// internally, so ephemeral key generation succeeds. The failure occurs when the
-	// broken reader is used for nonce generation via io.ReadFull.
-	assert.Contains(t, err.Error(), "failed to generate nonce")
+	ciphertext, err := Encrypt(failingReader, &priv.PublicKey, plaintext, nil)
+	require.NoError(t, err, "the caller's reader is no longer a nonce source")
+
+	round, err := Decrypt(priv, ciphertext, nil)
+	require.NoError(t, err)
+	assert.Equal(t, plaintext, round)
 }
 
 // failingRandomReader is a custom io.Reader that always fails
@@ -1188,73 +1194,38 @@ func (r *byteCountingRandomReader) Read(p []byte) (n int, err error) {
 	return n, err
 }
 
-// TestEncrypt_NonceGenerationFailureTargeted specifically triggers the nonce error path.
-// In Go 1.26+, ecdsa.GenerateKey uses crypto/rand internally and ignores the provided
-// io.Reader, so the custom reader is only consumed by the 12-byte nonce generation.
-// Providing fewer than 12 bytes triggers the nonce failure.
-func TestEncrypt_NonceGenerationFailureTargeted(t *testing.T) {
+// TestEncrypt_CallerReaderIsNotConsumed replaces four tests that walked a
+// byte-budget-limited io.Reader looking for "failed to generate nonce".
+//
+// That error path is gone. SP 800-38D / CMVP IG C.H require the GCM IV be
+// generated inside the module, so the nonce comes from
+// cipher.NewGCMWithRandomNonce, and Go 1.26's ecdsa.GenerateKey draws the
+// ephemeral key from crypto/rand regardless of what it is handed. Nothing in
+// Encrypt reads the caller's reader any more.
+//
+// The old tests asserted that a starved reader fails and a fed one succeeds.
+// The contract that replaced it is stronger and is what this asserts: the
+// byte budget is irrelevant, every budget succeeds, and every ciphertext
+// round-trips.
+func TestEncrypt_CallerReaderIsNotConsumed(t *testing.T) {
 	priv, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
 	require.NoError(t, err)
 
 	plaintext := []byte("test")
 
-	// In Go 1.26+, ecdsa.GenerateKey ignores the provided reader and uses crypto/rand
-	// internally. The custom reader is only consumed by io.ReadFull for the 12-byte
-	// nonce. Providing 0 bytes triggers the nonce failure immediately.
-	nonceErrorFound := false
-	for bytesAllowed := 0; bytesAllowed <= 11; bytesAllowed++ {
-		reader := &byteCountingRandomReader{bytesBeforeFail: bytesAllowed}
-		_, err := Encrypt(reader, &priv.PublicKey, plaintext, nil)
+	for _, budget := range []int{0, 1, 11, 12, 100} {
+		for name, reader := range map[string]io.Reader{
+			"byteCounting": &byteCountingRandomReader{bytesBeforeFail: budget},
+			"limitedBytes": &limitedBytesReader{bytesRemaining: budget},
+		} {
+			ciphertext, err := Encrypt(reader, &priv.PublicKey, plaintext, nil)
+			require.NoErrorf(t, err, "%s reader with a %d-byte budget", name, budget)
 
-		if err != nil && strings.Contains(err.Error(), "failed to generate nonce") {
-			nonceErrorFound = true
-			t.Logf("Triggered nonce error at %d bytes", bytesAllowed)
-			break
+			round, err := Decrypt(priv, ciphertext, nil)
+			require.NoErrorf(t, err, "%s reader with a %d-byte budget", name, budget)
+			assert.Equal(t, plaintext, round)
 		}
 	}
-
-	// We should have triggered the nonce error at some point
-	assert.True(t, nonceErrorFound, "Expected to trigger 'failed to generate nonce' error")
-}
-
-// TestEncrypt_ExhaustiveByteFailures tests random reader failures at various byte counts.
-// In Go 1.26+, ecdsa.GenerateKey uses crypto/rand internally and ignores the provided
-// io.Reader. The custom reader is only consumed by the 12-byte nonce generation.
-// Limits 0-11 trigger nonce errors, limits >= 12 succeed.
-func TestEncrypt_ExhaustiveByteFailures(t *testing.T) {
-	priv, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
-	require.NoError(t, err)
-
-	plaintext := []byte("test")
-
-	nonceErrors := 0
-	otherErrors := 0
-	successes := 0
-
-	// Test from 0 to 100 bytes
-	for bytesAllowed := 0; bytesAllowed <= 100; bytesAllowed++ {
-		reader := &byteCountingRandomReader{bytesBeforeFail: bytesAllowed}
-		_, err := Encrypt(reader, &priv.PublicKey, plaintext, nil)
-
-		if err == nil {
-			successes++
-		} else {
-			errMsg := err.Error()
-			if strings.Contains(errMsg, "failed to generate nonce") {
-				nonceErrors++
-			} else {
-				otherErrors++
-			}
-		}
-	}
-
-	t.Logf("Nonce errors: %d, Other errors: %d, Successes: %d",
-		nonceErrors, otherErrors, successes)
-
-	// The nonce error should be triggered for byte limits 0-11
-	assert.Greater(t, nonceErrors, 0, "Expected at least one nonce generation error")
-	// Byte limits >= 12 should succeed (nonce needs exactly 12 bytes)
-	assert.Greater(t, successes, 0, "Expected at least one success for byte limits >= 12")
 }
 
 // TestDecrypt_P224RecipientKeyConversionFailure tests the recipient key ECDH conversion failure path
@@ -1678,74 +1649,6 @@ func (r *limitedBytesReader) Read(p []byte) (n int, err error) {
 	n, err = rand.Read(p)
 	r.bytesRemaining -= n
 	return n, err
-}
-
-// TestEncrypt_NonceGenerationFailureDirect directly tests the nonce failure path.
-// In Go 1.26+, ecdsa.GenerateKey uses crypto/rand internally and ignores the provided
-// io.Reader. The custom reader is only consumed by the 12-byte nonce generation.
-// Providing fewer than 12 bytes triggers the nonce failure.
-func TestEncrypt_NonceGenerationFailureDirect(t *testing.T) {
-	priv, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
-	require.NoError(t, err)
-
-	plaintext := []byte("test")
-
-	// In Go 1.26+, ecdsa.GenerateKey ignores the provided reader and uses crypto/rand
-	// internally. The custom reader is only consumed by io.ReadFull for the 12-byte
-	// nonce. Providing 0 bytes triggers the nonce failure immediately.
-	foundNonceError := false
-
-	for limit := 0; limit <= 11; limit++ {
-		reader := &limitedBytesReader{bytesRemaining: limit}
-		_, err := Encrypt(reader, &priv.PublicKey, plaintext, nil)
-
-		if err != nil && strings.Contains(err.Error(), "failed to generate nonce") {
-			foundNonceError = true
-			t.Logf("Found nonce error at byte limit %d", limit)
-			break
-		}
-	}
-
-	assert.True(t, foundNonceError, "Expected to find nonce generation failure")
-}
-
-// TestEncrypt_ManyByteCountScenarios tests encryption with various random reader byte limits.
-// In Go 1.26+, ecdsa.GenerateKey uses crypto/rand internally and ignores the provided
-// io.Reader. The custom reader is only consumed by the 12-byte nonce generation.
-// Limits 0-11 trigger nonce errors, limits >= 12 succeed.
-func TestEncrypt_ManyByteCountScenarios(t *testing.T) {
-	priv, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
-	require.NoError(t, err)
-
-	plaintext := []byte("test message")
-
-	nonceErrors := 0
-	otherErrors := 0
-	successes := 0
-
-	for limit := 0; limit <= 150; limit++ {
-		reader := &limitedBytesReader{bytesRemaining: limit}
-		_, err := Encrypt(reader, &priv.PublicKey, plaintext, nil)
-
-		if err == nil {
-			successes++
-		} else {
-			errStr := err.Error()
-			if strings.Contains(errStr, "failed to generate nonce") {
-				nonceErrors++
-			} else {
-				otherErrors++
-			}
-		}
-	}
-
-	t.Logf("Results: nonce=%d, other=%d, success=%d",
-		nonceErrors, otherErrors, successes)
-
-	// Limits 0-11 should trigger nonce errors (nonce needs 12 bytes via io.ReadFull)
-	assert.Greater(t, nonceErrors, 0, "Expected nonce generation errors for byte limits < 12")
-	// Limits >= 12 should succeed
-	assert.Greater(t, successes, 0, "Expected successes for byte limits >= 12")
 }
 
 // TestDecrypt_CurveSizeMismatch tests decryption with wrong curve sizes
@@ -2194,7 +2097,7 @@ func TestInjectableFunctions_ResetAfterTest(t *testing.T) {
 	// Verify they point to the real implementations
 	assert.Equal(t, fmt.Sprintf("%p", ecdh.DeriveKey), fmt.Sprintf("%p", originalDeriveKey))
 	assert.Equal(t, fmt.Sprintf("%p", aes.NewCipher), fmt.Sprintf("%p", originalNewCipher))
-	assert.Equal(t, fmt.Sprintf("%p", cipher.NewGCM), fmt.Sprintf("%p", originalNewGCM))
+	assert.Equal(t, fmt.Sprintf("%p", cipher.NewGCMWithRandomNonce), fmt.Sprintf("%p", originalNewGCM))
 
 	// Temporarily replace them
 	deriveKeyFunc = func(sharedSecret, salt, info []byte, keyLength int) ([]byte, error) {

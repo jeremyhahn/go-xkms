@@ -15,7 +15,6 @@ package aesgcm
 
 import (
 	"crypto/rand"
-	"errors"
 	"io"
 	"testing"
 
@@ -23,40 +22,36 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// TestEncryptWithAAD_RandReaderFailure tests that EncryptWithAAD returns an
-// error when the random number generator fails.
-func TestEncryptWithAAD_RandReaderFailure(t *testing.T) {
+// TestEncryptWithAAD_NonceIsModuleGenerated verifies that the nonce comes from
+// inside the FIPS module boundary rather than from a caller-visible source.
+//
+// This replaces a pair of tests that swapped crypto/rand.Reader for a failing
+// reader to exercise the "nonce generation failed" branch. That branch no
+// longer exists: SP 800-38D / CMVP IG C.H require the GCM IV be generated
+// inside the module, so EncryptWithAAD uses cipher.NewGCMWithRandomNonce and
+// there is no externally reachable random source left to fail. What is still
+// worth asserting is the observable consequence -- the nonce is fresh per
+// call, and the wire format did not change.
+func TestEncryptWithAAD_NonceIsModuleGenerated(t *testing.T) {
 	key := make([]byte, KeySize)
 	_, err := io.ReadFull(rand.Reader, key)
 	require.NoError(t, err)
 
-	// Replace rand.Reader with a failing reader
-	origReader := rand.Reader
-	rand.Reader = &failingReader{}
-	defer func() { rand.Reader = origReader }()
-
-	_, err = EncryptWithAAD(key, []byte("test"), nil)
-	assert.Error(t, err, "EncryptWithAAD should fail when random source fails")
-}
-
-// TestEncryptWithAAD_RandReaderFailure_WithAAD verifies the error path when
-// AAD is provided and the random source fails.
-func TestEncryptWithAAD_RandReaderFailure_WithAAD(t *testing.T) {
-	key := make([]byte, KeySize)
-	_, err := io.ReadFull(rand.Reader, key)
+	plaintext := []byte("payload")
+	first, err := EncryptWithAAD(key, plaintext, []byte("aad"))
+	require.NoError(t, err)
+	second, err := EncryptWithAAD(key, plaintext, []byte("aad"))
 	require.NoError(t, err)
 
-	origReader := rand.Reader
-	rand.Reader = &failingReader{}
-	defer func() { rand.Reader = origReader }()
+	// Same key, same plaintext, same AAD: a fresh nonce is the only reason
+	// these differ, and they must differ.
+	assert.NotEqual(t, first, second, "nonce must be fresh on every call")
+	assert.NotEqual(t, first[:NonceSize], second[:NonceSize], "prepended nonce must differ")
 
-	_, err = EncryptWithAAD(key, []byte("payload"), []byte("aad"))
-	assert.Error(t, err, "EncryptWithAAD with AAD should fail when random source fails")
-}
+	// [nonce:12][ciphertext][tag:16] -- unchanged from the hand-rolled layout.
+	assert.Len(t, first, len(plaintext)+Overhead)
 
-// failingReader is a reader that always returns an error.
-type failingReader struct{}
-
-func (f *failingReader) Read(p []byte) (int, error) {
-	return 0, errors.New("rand: simulated failure")
+	round, err := DecryptWithAAD(key, first, []byte("aad"))
+	require.NoError(t, err)
+	assert.Equal(t, plaintext, round)
 }

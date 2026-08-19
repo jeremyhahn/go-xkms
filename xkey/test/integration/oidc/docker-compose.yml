@@ -1,10 +1,9 @@
 services:
   hydra:
     image: oryd/hydra:v2.2.0
-    container_name: xkey-oidc-hydra
     ports:
-      - "4444:4444"  # Public API
-      - "4445:4445"  # Admin API
+      - "0:4444"  # Public API
+      - "0:4445"  # Admin API
     environment:
       - SECRETS_SYSTEM=xkey-test-secret-change-in-prod
       - DSN=memory
@@ -34,7 +33,6 @@ services:
         go-codec: ../../../../../go-codec
         go-frost: ../../../../../go-frost
         go-objstore: ../../../../../go-objstore
-    container_name: xkey-oidc-test
     depends_on:
       hydra:
         condition: service_healthy

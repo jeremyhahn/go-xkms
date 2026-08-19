@@ -266,9 +266,16 @@ docker compose cp softhsm:/tokens ./tokens-backup
 # View network details
 docker network inspect go-xkms_xkms-test
 
-# Prune unused Docker resources
-docker system prune -a --volumes
+# Release this project's Docker resources (containers, networks, volumes,
+# and the images compose built for it)
+docker compose down -v --remove-orphans --rmi local
+make clean-test-containers
 ```
+
+> Do **not** reach for `docker system prune -a --volumes` here. It is
+> host-global: it deletes every image and unused volume on the machine,
+> including ones belonging to other projects and to CI jobs sharing the
+> host. Use the project-scoped commands above instead.
 
 ## Support
 
