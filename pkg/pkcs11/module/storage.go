@@ -17,6 +17,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"runtime"
 	"strconv"
 	"sync"
 	"time"
@@ -179,11 +180,25 @@ func (s *ModuleStorage) SaveTokenState(slotID SlotID, token *Token, failedUserPI
 	return nil
 }
 
-// maxAttemptCASRetries bounds the compare-and-swap retry loop for a failed-
-// attempt counter. It is far above any realistic number of clients contending on
-// one token's counter, so it only backstops a pathological live-lock rather than
-// capping normal concurrency.
-const maxAttemptCASRetries = 16
+// attemptCASRetryBudget bounds the compare-and-swap retry loop for a failed-
+// attempt counter. It backstops a pathological live-lock; it does NOT bound
+// normal concurrency, because a losing writer's retry count is not a function of
+// how many clients are contending. A writer that loses the race is descheduled
+// while the winner keeps incrementing, so one competitor can beat it an
+// unbounded number of times in a row.
+//
+// MEASURED, not assumed: at the previous bound of 16 this loop exhausted its
+// budget under `go test -race` at GOMAXPROCS=2 with only TWO writers — the race
+// detector's instrumentation widens every window enough for one goroutine to
+// starve the other. That is what turned CI's Race Detector job red on
+// TestModuleStorage_FailedAttemptCounter_ConcurrentAccumulates: exhaustion
+// returned an error, the caller stopped incrementing, and the total came in low.
+// Exhausting the budget is a real security fault and not merely a test failure —
+// the caller (module.go SetAttemptPersistence) reports persisted=false, so a
+// failed PIN attempt does not advance the DURABLE lockout budget shared by every
+// client on that token, and contention is exactly what an attacker hammering
+// PINs from several clients produces.
+const attemptCASRetryBudget = 1024
 
 // ErrCorruptAttemptCounter is returned when a persisted failed-attempt counter
 // does not parse as a uint32. Like the object-handle counter, a counter that
@@ -255,38 +270,47 @@ func (s *ModuleStorage) IncrementFailedAttempt(slotID SlotID, userType UserType)
 }
 
 // incrementViaCAS performs the compare-and-swap retry loop for a counter key.
+//
+// Only the FIRST attempt reads the counter with a separate Get. Every retry
+// recomputes against the value the failed CompareAndSwap itself observed, which
+// the CompareAndSwapper contract returns for exactly this purpose ("when swapped
+// is false, current holds the value that was actually present ... so a caller
+// doing a read-modify-write can recompute against it and retry"). Re-reading out
+// of band instead, as this loop used to, put an unsynchronized Get between the
+// observation and the swap and so lost far more races than the CAS alone does.
 func (s *ModuleStorage) incrementViaCAS(cas storage.CompareAndSwapper, key string) (uint32, error) {
-	for attempt := 0; attempt < maxAttemptCASRetries; attempt++ {
-		ctx, cancel := s.opContext()
-		current, getErr := s.backend.Get(ctx, key)
-		var expected []byte
-		switch {
-		case getErr == nil:
-			expected = current
-		case errors.Is(getErr, storage.ErrNotFound):
-			expected = nil // require-absent
-		default:
-			cancel()
-			return 0, &errs.Wrapped{Msg: "failed to read lockout counter", Err: getErr}
-		}
+	ctx, cancel := s.opContext()
+	defer cancel()
 
+	expected, getErr := s.backend.Get(ctx, key)
+	switch {
+	case getErr == nil:
+	case errors.Is(getErr, storage.ErrNotFound):
+		expected = nil // require-absent
+	default:
+		return 0, &errs.Wrapped{Msg: "failed to read lockout counter", Err: getErr}
+	}
+
+	for attempt := 0; attempt < attemptCASRetryBudget; attempt++ {
 		curVal, parseErr := parseAttemptCounter(expected)
 		if parseErr != nil {
-			cancel()
 			return 0, parseErr
 		}
 		next := curVal + 1
 		nextBytes := []byte(strconv.FormatUint(uint64(next), 10))
 
-		swapped, _, casErr := cas.CompareAndSwap(ctx, key, expected, nextBytes)
-		cancel()
+		swapped, current, casErr := cas.CompareAndSwap(ctx, key, expected, nextBytes)
 		if casErr != nil {
 			return 0, &errs.Wrapped{Msg: "failed to update lockout counter", Err: casErr}
 		}
 		if swapped {
 			return next, nil
 		}
-		// A concurrent writer moved the counter; re-read and retry.
+		// A concurrent writer moved the counter. Recompute against what that
+		// writer left behind (nil means the key is absent again, i.e. reset) and
+		// yield so the winner is not simply re-elected by the runtime.
+		expected = current
+		runtime.Gosched()
 	}
 	return 0, &errs.Wrapped{Msg: "lockout counter contention", Err: ErrCorruptAttemptCounter}
 }

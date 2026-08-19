@@ -339,7 +339,7 @@ func TestMain_FetchSubcommands(t *testing.T) {
 	// and the constant is reachable.
 	ctx, cancel := context.WithTimeout(context.Background(), 50*time.Millisecond)
 	defer cancel()
-	_, err := xkms.TrustFetcherFetch(ctx, "https://example.invalid" + xkms.TrustFetcherDefaultBundlePath, xkms.TrustFetcherOptions{
+	_, err := xkms.TrustFetcherFetch(ctx, "https://example.invalid"+xkms.TrustFetcherDefaultBundlePath, xkms.TrustFetcherOptions{
 		SPKIPin: strings.Repeat("a", 64),
 		Timeout: 10 * time.Millisecond,
 	})
