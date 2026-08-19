@@ -51,7 +51,7 @@ var trustFetchCmd = &cobra.Command{
 returned certificates to the xKey trust store.
 
 The endpoint is expected to honor the canonical platform contract:
-  GET https://<host>:<port>/api/v1/ca/bundle
+  GET https://<host>:<port>/v1/ca/bootstrap
 with Accept: application/x-pem-file (raw PEM) or application/json (the
 platform CABundleResponse JSON shape with a base64-encoded "bundle" field).
 
@@ -75,7 +75,7 @@ the supported alternatives for first-time bootstrap are:
                                 (USB stick, signed email, etc.).
 
 Example:
-  xkey trust fetch https://cp.example.internal:9443/api/v1/ca/bundle \
+  xkey trust fetch https://cp.example.internal:9443/v1/ca/bootstrap \
       --spki-pin 3a7b...e1 \
       --install-system`,
 	Args: cobra.ExactArgs(1),
@@ -83,7 +83,7 @@ Example:
 }
 
 // trustImportPlatformCmd is a convenience wrapper that builds the canonical
-// /api/v1/ca/bundle URL from a host:port argument and runs the same logic
+// /v1/ca/bootstrap URL from a host:port argument and runs the same logic
 // as trust fetch.
 var trustImportPlatformCmd = &cobra.Command{
 	Use:   "import-platform <host:port>",
@@ -91,7 +91,7 @@ var trustImportPlatformCmd = &cobra.Command{
 	Long: `Import the CA bundle from a go-trusted-platform node by host:port.
 
 This is a thin convenience wrapper around 'xkey trust fetch'. It builds the
-canonical URL https://<host:port>/api/v1/ca/bundle and applies the same
+canonical URL https://<host:port>/v1/ca/bootstrap and applies the same
 SPKI verification flag (--spki-pin is required).
 
 Use this when scripting bootstrap of newly deployed nodes; use 'fetch' when
