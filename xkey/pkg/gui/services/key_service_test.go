@@ -57,6 +57,22 @@ func (m *mockClient) Health(context.Context) (*transport.HealthResponse, error) 
 	panic("not implemented")
 }
 
+func (m *mockClient) Algorithms(context.Context) (*transport.AlgorithmsResponse, error) {
+	panic("not implemented")
+}
+
+func (m *mockClient) GetShare(context.Context, string, string, int) (*transport.ShareInfo, error) {
+	panic("not implemented")
+}
+
+func (m *mockClient) DeleteShare(context.Context, string, string, int) error {
+	panic("not implemented")
+}
+
+func (m *mockClient) QueryAudit(context.Context, *transport.AuditFilter) (*transport.AuditPage, error) {
+	panic("not implemented")
+}
+
 func (m *mockClient) ListBackends(ctx context.Context, _ ...transport.ListOption) (*transport.ListBackendsResponse, error) {
 	return m.listBackendsFn(ctx)
 }

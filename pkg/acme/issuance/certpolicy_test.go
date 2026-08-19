@@ -74,7 +74,14 @@ func issueACMEPath(t *testing.T) *x509.Certificate {
 	csr, err := x509.ParseCertificateRequest(csrDER)
 	require.NoError(t, err)
 
-	now := time.Now()
+	// UTC, not local: PolicyFingerprint hashes NotAfter.Sub(NotBefore), and
+	// AddDate walks CALENDAR days. In a zone with a DST transition inside the
+	// window the delta is 2161h or 2159h instead of 2160h, so the pinned
+	// fingerprint below would only reproduce in zones that happen not to shift
+	// -- it passed in CI (UTC) and failed on any America/* workstation between
+	// roughly August and November. The certificate's own validity is unchanged;
+	// only the arithmetic is made zone-independent.
+	now := time.Now().UTC()
 	result, err := iss.Issue(context.Background(), &Request{
 		CSR:       csr,
 		NotBefore: now,
@@ -129,7 +136,14 @@ func TestCertificatePolicy_IssuerIdentityReachesACMEPath(t *testing.T) {
 	csr, err := x509.ParseCertificateRequest(csrDER)
 	require.NoError(t, err)
 
-	now := time.Now()
+	// UTC, not local: PolicyFingerprint hashes NotAfter.Sub(NotBefore), and
+	// AddDate walks CALENDAR days. In a zone with a DST transition inside the
+	// window the delta is 2161h or 2159h instead of 2160h, so the pinned
+	// fingerprint below would only reproduce in zones that happen not to shift
+	// -- it passed in CI (UTC) and failed on any America/* workstation between
+	// roughly August and November. The certificate's own validity is unchanged;
+	// only the arithmetic is made zone-independent.
+	now := time.Now().UTC()
 	result, err := iss.Issue(context.Background(), &Request{
 		CSR:       csr,
 		NotBefore: now,
@@ -164,7 +178,14 @@ func TestCertificatePolicy_CertificateProfileReachesACMEPath(t *testing.T) {
 	csr, err := x509.ParseCertificateRequest(csrDER)
 	require.NoError(t, err)
 
-	now := time.Now()
+	// UTC, not local: PolicyFingerprint hashes NotAfter.Sub(NotBefore), and
+	// AddDate walks CALENDAR days. In a zone with a DST transition inside the
+	// window the delta is 2161h or 2159h instead of 2160h, so the pinned
+	// fingerprint below would only reproduce in zones that happen not to shift
+	// -- it passed in CI (UTC) and failed on any America/* workstation between
+	// roughly August and November. The certificate's own validity is unchanged;
+	// only the arithmetic is made zone-independent.
+	now := time.Now().UTC()
 	result, err := iss.Issue(context.Background(), &Request{
 		CSR:       csr,
 		NotBefore: now,

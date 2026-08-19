@@ -59,6 +59,16 @@ func (m *mockCAClient) Close() error                    { return nil }
 func (m *mockCAClient) Health(_ context.Context) (*transport.HealthResponse, error) {
 	return nil, nil
 }
+func (m *mockCAClient) Algorithms(_ context.Context) (*transport.AlgorithmsResponse, error) {
+	return nil, nil
+}
+func (m *mockCAClient) GetShare(_ context.Context, _, _ string, _ int) (*transport.ShareInfo, error) {
+	return nil, nil
+}
+func (m *mockCAClient) DeleteShare(_ context.Context, _, _ string, _ int) error { return nil }
+func (m *mockCAClient) QueryAudit(_ context.Context, _ *transport.AuditFilter) (*transport.AuditPage, error) {
+	return nil, nil
+}
 func (m *mockCAClient) ListBackends(_ context.Context, _ ...transport.ListOption) (*transport.ListBackendsResponse, error) {
 	return nil, nil
 }

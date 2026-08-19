@@ -338,3 +338,25 @@ func (m *mockTransportClient) SubmitCredential(_ context.Context, _ *transport.C
 func (m *mockTransportClient) GetCredentialStrategy(_ context.Context) (*transport.CredentialStrategyResponse, error) {
 	return nil, errNotImplemented
 }
+
+// Algorithm discovery
+
+func (m *mockTransportClient) Algorithms(_ context.Context) (*transport.AlgorithmsResponse, error) {
+	return nil, errNotImplemented
+}
+
+// Share custody read/delete
+
+func (m *mockTransportClient) GetShare(_ context.Context, _, _ string, _ int) (*transport.ShareInfo, error) {
+	return nil, errNotImplemented
+}
+
+func (m *mockTransportClient) DeleteShare(_ context.Context, _, _ string, _ int) error {
+	return errNotImplemented
+}
+
+// Audit
+
+func (m *mockTransportClient) QueryAudit(_ context.Context, _ *transport.AuditFilter) (*transport.AuditPage, error) {
+	return nil, errNotImplemented
+}
