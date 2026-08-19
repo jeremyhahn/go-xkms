@@ -18,7 +18,6 @@ import (
 	"crypto/aes"
 	"crypto/cipher"
 	"crypto/mlkem"
-	"crypto/rand"
 	"fmt"
 	"io"
 
@@ -373,27 +372,26 @@ func (k *MLKEMPrivateKey) DecryptWithAAD(kemCiphertext, encryptedData, aad []byt
 //   - Tracks bytes encrypted to enforce NIST SP 800-38D limits
 //
 // Format: [nonce (12 bytes)][ciphertext][auth tag (16 bytes)]
+//
+// gcmNonceSize names the 96-bit GCM nonce length. The random-nonce AEAD
+// reports a NonceSize of zero because it manages the nonce itself, so the
+// length has to be named here to slice the nonce back out for the tracker.
+const gcmNonceSize = 12
+
 func encryptWithAESGCM(plaintext, key, aad []byte, tracker types.AEADSafetyTracker, keyID string) ([]byte, error) {
 	block, err := aes.NewCipher(key)
 	if err != nil {
 		return nil, &errs.Wrapped{Msg: "failed to create AES cipher", Err: err}
 	}
 
-	gcm, err := cipher.NewGCM(block)
+	// NewGCMWithRandomNonce, not NewGCM: FIPS 140-3 (SP 800-38D, CMVP IG C.H)
+	// requires the GCM IV be generated inside the module boundary, and
+	// GODEBUG=fips140=only rejects an externally supplied one. Seal prepends
+	// the same 96-bit nonce this code prepended by hand and Open strips it, so
+	// the stored layout is byte-for-byte what it was.
+	gcm, err := cipher.NewGCMWithRandomNonce(block)
 	if err != nil {
 		return nil, &errs.Wrapped{Msg: "failed to create GCM", Err: err}
-	}
-
-	nonce := make([]byte, gcm.NonceSize())
-	if _, err := io.ReadFull(rand.Reader, nonce); err != nil {
-		return nil, &errs.Wrapped{Msg: "failed to generate nonce", Err: err}
-	}
-
-	// AEAD Safety: Check nonce hasn't been used (if tracker available)
-	if tracker != nil && keyID != "" {
-		if err := tracker.CheckNonce(keyID, nonce); err != nil {
-			return nil, &errs.Affix{Prefix: "nonce reuse detected: ", Err: err, Suffix: " (CRITICAL SECURITY VIOLATION)"}
-		}
 	}
 
 	// AEAD Safety: Check bytes limit (if tracker available)
@@ -403,12 +401,21 @@ func encryptWithAESGCM(plaintext, key, aad []byte, tracker types.AEADSafetyTrack
 		}
 	}
 
-	// Encrypt and authenticate
-	// Format: nonce || gcm.Seal(plaintext)
-	ciphertext := gcm.Seal(nonce, nonce, plaintext, aad)
+	// Encrypt and authenticate. Format is unchanged -- nonce || ciphertext+tag
+	// -- but the nonce is now generated inside the module rather than here.
+	ciphertext := gcm.Seal(nil, nil, plaintext, aad)
 
-	// AEAD Safety: Record nonce after successful encryption (if tracker available)
+	// AEAD Safety: the nonce is only observable after Seal, so the collision
+	// check moved from before encryption to after it. The tracker still sees
+	// every nonce this key has used and still refuses a repeat; what changed is
+	// that a repeat is detected on the ciphertext that caused it rather than
+	// one call earlier. Returning an error here discards that ciphertext, so a
+	// reused nonce is still never handed to a caller.
 	if tracker != nil && keyID != "" {
+		nonce := ciphertext[:gcmNonceSize]
+		if err := tracker.CheckNonce(keyID, nonce); err != nil {
+			return nil, &errs.Affix{Prefix: "nonce reuse detected: ", Err: err, Suffix: " (CRITICAL SECURITY VIOLATION)"}
+		}
 		if err := tracker.RecordNonce(keyID, nonce); err != nil {
 			fmt.Printf("Warning: failed to record nonce for key %s: %v\n", keyID, err)
 		}
@@ -425,20 +432,23 @@ func decryptWithAESGCM(ciphertext, key, aad []byte) ([]byte, error) {
 		return nil, &errs.Wrapped{Msg: "failed to create AES cipher", Err: err}
 	}
 
-	gcm, err := cipher.NewGCM(block)
+	// NewGCMWithRandomNonce, not NewGCM: FIPS 140-3 (SP 800-38D, CMVP IG C.H)
+	// requires the GCM IV be generated inside the module boundary, and
+	// GODEBUG=fips140=only rejects an externally supplied one. Seal prepends
+	// the same 96-bit nonce this code prepended by hand and Open strips it, so
+	// the stored layout is byte-for-byte what it was.
+	gcm, err := cipher.NewGCMWithRandomNonce(block)
 	if err != nil {
 		return nil, &errs.Wrapped{Msg: "failed to create GCM", Err: err}
 	}
 
-	nonceSize := gcm.NonceSize()
-	if len(ciphertext) < nonceSize {
+	// Overhead covers the prepended nonce and the trailing tag; Open extracts
+	// the nonce itself.
+	if len(ciphertext) < gcm.Overhead() {
 		return nil, &errs.Message{Msg: "ciphertext too short"}
 	}
 
-	nonce := ciphertext[:nonceSize]
-	actualCiphertext := ciphertext[nonceSize:]
-
-	plaintext, err := gcm.Open(nil, nonce, actualCiphertext, aad)
+	plaintext, err := gcm.Open(nil, nil, ciphertext, aad)
 	if err != nil {
 		return nil, &errs.Wrapped{Msg: "decryption failed", Err: err}
 	}

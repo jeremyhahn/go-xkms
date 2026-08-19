@@ -20,7 +20,6 @@ import (
 	"crypto/cipher"
 	"crypto/ecdsa"
 	"crypto/ed25519"
-	"crypto/rand"
 	"crypto/rsa"
 	"crypto/sha256"
 	"encoding/json"
@@ -32,6 +31,16 @@ import (
 	"github.com/jeremyhahn/go-xkms/pkg/crypto/mem"
 	"github.com/jeremyhahn/go-xkms/pkg/types"
 	"golang.org/x/crypto/hkdf"
+)
+
+// gcmNonceSize and gcmTagSize name the 96-bit GCM nonce and 128-bit
+// authentication tag lengths. cipher.NewGCMWithRandomNonce reports a NonceSize
+// of zero and folds both into Overhead because it manages the nonce itself, so
+// the lengths have to be named here to split a sealed blob back into the
+// SealedData Nonce/Ciphertext/Tag fields.
+const (
+	gcmNonceSize = 12
+	gcmTagSize   = 16
 )
 
 // Ensure PKCS8Backend implements types.Sealer interface
@@ -98,15 +107,15 @@ func (b *PKCS8Backend) Seal(ctx context.Context, data []byte, opts *types.SealOp
 		return nil, &errs.Wrapped{Msg: "failed to create AES cipher", Err: err}
 	}
 
-	gcm, err := cipher.NewGCM(block)
+	// NewGCMWithRandomNonce, not NewGCM: FIPS 140-3 (SP 800-38D, CMVP IG C.H)
+	// requires the GCM IV be generated inside the module boundary, and
+	// GODEBUG=fips140=only rejects an externally supplied one. Seal prepends
+	// the same 96-bit nonce and Open strips it, so once the sealed blob is
+	// split back into the Nonce/Ciphertext/Tag fields below the stored shape is
+	// unchanged and data sealed by earlier builds still unseals.
+	gcm, err := cipher.NewGCMWithRandomNonce(block)
 	if err != nil {
 		return nil, &errs.Wrapped{Msg: "failed to create GCM", Err: err}
-	}
-
-	// Generate random nonce
-	nonce := make([]byte, gcm.NonceSize())
-	if _, err := io.ReadFull(rand.Reader, nonce); err != nil {
-		return nil, &errs.Wrapped{Msg: "failed to generate nonce", Err: err}
 	}
 
 	// Encrypt with AAD if provided
@@ -115,12 +124,13 @@ func (b *PKCS8Backend) Seal(ctx context.Context, data []byte, opts *types.SealOp
 		aad = opts.AAD
 	}
 
-	// gcm.Seal appends the authentication tag to the ciphertext
-	// We need to separate them for consistent API response
-	sealed := gcm.Seal(nil, nonce, data, aad)
-	tagSize := gcm.Overhead()
-	ciphertext := sealed[:len(sealed)-tagSize]
-	tag := sealed[len(sealed)-tagSize:]
+	// Seal emits nonce || ciphertext || tag. Split all three apart for the
+	// SealedData fields the API has always returned.
+	sealed := gcm.Seal(nil, nil, data, aad)
+	nonce := sealed[:gcmNonceSize]
+	body := sealed[gcmNonceSize:]
+	ciphertext := body[:len(body)-gcmTagSize]
+	tag := body[len(body)-gcmTagSize:]
 
 	// Build the sealed data result
 	result := &types.SealedData{
@@ -200,14 +210,22 @@ func (b *PKCS8Backend) Unseal(ctx context.Context, sealed *types.SealedData, opt
 		return nil, &errs.Wrapped{Msg: "failed to create AES cipher", Err: err}
 	}
 
-	gcm, err := cipher.NewGCM(block)
+	// NewGCMWithRandomNonce, not NewGCM: FIPS 140-3 (SP 800-38D, CMVP IG C.H)
+	// requires the GCM IV be generated inside the module boundary, and
+	// GODEBUG=fips140=only rejects an externally supplied one. Seal prepends
+	// the same 96-bit nonce and Open strips it, so once the sealed blob is
+	// split back into the Nonce/Ciphertext/Tag fields below the stored shape is
+	// unchanged and data sealed by earlier builds still unseals.
+	gcm, err := cipher.NewGCMWithRandomNonce(block)
 	if err != nil {
 		return nil, &errs.Wrapped{Msg: "failed to create GCM", Err: err}
 	}
 
-	// Verify nonce size
-	if len(sealed.Nonce) != gcm.NonceSize() {
-		return nil, &errs.Message{Msg: fmt.Sprintf("invalid nonce size: expected %d, got %d", gcm.NonceSize(), len(sealed.Nonce))}
+	// Verify nonce size. The random-nonce AEAD reports a NonceSize of zero
+	// because it manages the nonce itself, so the stored nonce is checked
+	// against the constant rather than against the AEAD.
+	if len(sealed.Nonce) != gcmNonceSize {
+		return nil, &errs.Message{Msg: fmt.Sprintf("invalid nonce size: expected %d, got %d", gcmNonceSize, len(sealed.Nonce))}
 	}
 
 	// Decrypt with AAD if provided
@@ -216,13 +234,14 @@ func (b *PKCS8Backend) Unseal(ctx context.Context, sealed *types.SealedData, opt
 		aad = opts.AAD
 	}
 
-	// gcm.Open expects ciphertext with tag appended
-	// Combine ciphertext and tag for decryption
-	ciphertextWithTag := make([]byte, len(sealed.Ciphertext)+len(sealed.Tag))
-	copy(ciphertextWithTag, sealed.Ciphertext)
-	copy(ciphertextWithTag[len(sealed.Ciphertext):], sealed.Tag)
+	// gcm.Open expects the nonce prepended and the tag appended, which is the
+	// layout Seal produced before it was split into fields.
+	blob := make([]byte, 0, len(sealed.Nonce)+len(sealed.Ciphertext)+len(sealed.Tag))
+	blob = append(blob, sealed.Nonce...)
+	blob = append(blob, sealed.Ciphertext...)
+	blob = append(blob, sealed.Tag...)
 
-	plaintext, err := gcm.Open(nil, sealed.Nonce, ciphertextWithTag, aad)
+	plaintext, err := gcm.Open(nil, nil, blob, aad)
 	if err != nil {
 		return nil, &errs.Wrapped{Msg: "failed to decrypt (check password/key and AAD)", Err: err}
 	}

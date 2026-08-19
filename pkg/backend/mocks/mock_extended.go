@@ -30,6 +30,14 @@ import (
 	"github.com/jeremyhahn/go-xkms/pkg/types"
 )
 
+// gcmNonceSize and gcmTagSize name the 96-bit GCM nonce and 128-bit
+// authentication tag lengths. cipher.NewGCMWithRandomNonce reports a NonceSize
+// of zero and folds both into Overhead because it manages the nonce itself.
+const (
+	gcmNonceSize = 12
+	gcmTagSize   = 16
+)
+
 // ExtendedMockBackend extends MockBackend with SymmetricBackend and ImportExportBackend interfaces.
 type ExtendedMockBackend struct {
 	*MockBackend
@@ -371,14 +379,15 @@ func (e *MockSymmetricEncrypter) Encrypt(plaintext []byte, opts *types.EncryptOp
 		return nil, &errs.Wrapped{Msg: "failed to create cipher", Err: err}
 	}
 
-	gcm, err := cipher.NewGCM(block)
+	// NewGCMWithRandomNonce, not NewGCM: FIPS 140-3 (SP 800-38D, CMVP IG C.H)
+	// requires the GCM IV be generated inside the module boundary, and
+	// GODEBUG=fips140=only rejects an externally supplied one. Seal prepends
+	// the nonce and Open strips it, so splitting it back into the
+	// EncryptedData fields keeps this mock's shape identical to the real
+	// symmetric backends it stands in for.
+	gcm, err := cipher.NewGCMWithRandomNonce(block)
 	if err != nil {
 		return nil, &errs.Wrapped{Msg: "failed to create GCM", Err: err}
-	}
-
-	nonce := make([]byte, gcm.NonceSize())
-	if _, err := rand.Read(nonce); err != nil {
-		return nil, &errs.Wrapped{Msg: "failed to generate nonce", Err: err}
 	}
 
 	var aad []byte
@@ -386,12 +395,13 @@ func (e *MockSymmetricEncrypter) Encrypt(plaintext []byte, opts *types.EncryptOp
 		aad = opts.AdditionalData
 	}
 
-	ciphertext := gcm.Seal(nil, nonce, plaintext, aad)
-
-	// Split ciphertext and tag
-	tagSize := gcm.Overhead()
-	tag := ciphertext[len(ciphertext)-tagSize:]
-	actualCiphertext := ciphertext[:len(ciphertext)-tagSize]
+	// Seal emits nonce || ciphertext || tag; split all three apart for the
+	// EncryptedData fields.
+	sealed := gcm.Seal(nil, nil, plaintext, aad)
+	nonce := sealed[:gcmNonceSize]
+	body := sealed[gcmNonceSize:]
+	tag := body[len(body)-gcmTagSize:]
+	actualCiphertext := body[:len(body)-gcmTagSize]
 
 	return &types.EncryptedData{
 		Ciphertext: actualCiphertext,
@@ -416,17 +426,24 @@ func (e *MockSymmetricEncrypter) Decrypt(encrypted *types.EncryptedData, opts *t
 		return nil, &errs.Wrapped{Msg: "failed to create cipher", Err: err}
 	}
 
-	gcm, err := cipher.NewGCM(block)
+	// NewGCMWithRandomNonce, not NewGCM: FIPS 140-3 (SP 800-38D, CMVP IG C.H)
+	// requires the GCM IV be generated inside the module boundary, and
+	// GODEBUG=fips140=only rejects an externally supplied one. Seal prepends
+	// the nonce and Open strips it, so splitting it back into the
+	// EncryptedData fields keeps this mock's shape identical to the real
+	// symmetric backends it stands in for.
+	gcm, err := cipher.NewGCMWithRandomNonce(block)
 	if err != nil {
 		return nil, &errs.Wrapped{Msg: "failed to create GCM", Err: err}
 	}
 
-	// crypto/cipher panics rather than returning an error when the nonce is
-	// not exactly NonceSize bytes. Validate before calling Open so a
-	// misbehaving caller under test gets an error instead of a panic.
-	if len(encrypted.Nonce) != gcm.NonceSize() {
+	// The random-nonce AEAD reports a NonceSize of zero because it manages the
+	// nonce itself, so the stored nonce is checked against the constant. Keeping
+	// the check means a misbehaving caller under test still gets an error rather
+	// than a confusing authentication failure.
+	if len(encrypted.Nonce) != gcmNonceSize {
 		return nil, &errs.Message{Msg: fmt.Sprintf(
-			"mocks: nonce is %d bytes, want %d", len(encrypted.Nonce), gcm.NonceSize())}
+			"mocks: nonce is %d bytes, want %d", len(encrypted.Nonce), gcmNonceSize)}
 	}
 
 	var aad []byte
@@ -434,10 +451,10 @@ func (e *MockSymmetricEncrypter) Decrypt(encrypted *types.EncryptedData, opts *t
 		aad = opts.AdditionalData
 	}
 
-	// Combine ciphertext and tag for GCM.Open
-	ciphertextWithTag := slices.Concat(encrypted.Ciphertext, encrypted.Tag)
+	// Open expects the nonce prepended and the tag appended.
+	blob := slices.Concat(encrypted.Nonce, encrypted.Ciphertext, encrypted.Tag)
 
-	plaintext, err := gcm.Open(nil, encrypted.Nonce, ciphertextWithTag, aad)
+	plaintext, err := gcm.Open(nil, nil, blob, aad)
 	if err != nil {
 		return nil, &errs.Wrapped{Msg: "failed to decrypt", Err: err}
 	}

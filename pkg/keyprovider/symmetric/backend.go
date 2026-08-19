@@ -1185,25 +1185,25 @@ func encryptWithPassword(keyData, password []byte) ([]byte, error) {
 		return nil, &errs.Wrapped{Msg: "failed to create cipher", Err: err}
 	}
 
-	gcm, err := cipher.NewGCM(block)
+	// NewGCMWithRandomNonce, not NewGCM: FIPS 140-3 (SP 800-38D, CMVP IG C.H)
+	// requires the GCM IV be generated inside the module boundary, and
+	// GODEBUG=fips140=only rejects an externally supplied one. Seal prepends
+	// the same 96-bit nonce this code prepended by hand and Open strips it, so
+	// the stored [salt][nonce][ciphertext+tag] layout is byte-for-byte what it
+	// was and blobs written by earlier builds still decrypt.
+	gcm, err := cipher.NewGCMWithRandomNonce(block)
 	if err != nil {
 		return nil, &errs.Wrapped{Msg: "failed to create GCM", Err: err}
 	}
 
-	// Generate nonce
-	nonce := make([]byte, gcm.NonceSize())
-	if _, err := rand.Read(nonce); err != nil {
-		return nil, &errs.Wrapped{Msg: "failed to generate nonce", Err: err}
-	}
+	// Encrypt with salt as additional authenticated data. Seal emits
+	// nonce || ciphertext+tag, so prefixing the salt reproduces the existing
+	// [salt][nonce][ciphertext+tag] format exactly.
+	sealed := gcm.Seal(nil, nil, keyData, salt)
 
-	// Encrypt with salt as additional authenticated data
-	ciphertext := gcm.Seal(nil, nonce, keyData, salt)
-
-	// Format: [salt][nonce][ciphertext+tag]
-	result := make([]byte, 0, len(salt)+len(nonce)+len(ciphertext))
+	result := make([]byte, 0, len(salt)+len(sealed))
 	result = append(result, salt...)
-	result = append(result, nonce...)
-	result = append(result, ciphertext...)
+	result = append(result, sealed...)
 
 	return result, nil
 }
@@ -1216,10 +1216,11 @@ func decryptWithPassword(encryptedData, password []byte) ([]byte, error) {
 		return nil, &errs.Message{Msg: fmt.Sprintf("encrypted data too short: %d bytes (minimum 60)", len(encryptedData))}
 	}
 
-	// Extract components
+	// Extract components. The nonce stays where it always was, at offset 32;
+	// Open reads it from the front of the blob handed to it rather than from a
+	// separate argument.
 	salt := encryptedData[0:32]
-	nonce := encryptedData[32:44]
-	ciphertext := encryptedData[44:]
+	nonceAndCiphertext := encryptedData[32:]
 
 	// Derive encryption key using same parameters as encryption
 	derivedKey := argon2.IDKey(password, salt, 1, 64*1024, 4, 32)
@@ -1230,13 +1231,19 @@ func decryptWithPassword(encryptedData, password []byte) ([]byte, error) {
 		return nil, &errs.Wrapped{Msg: "failed to create cipher", Err: err}
 	}
 
-	gcm, err := cipher.NewGCM(block)
+	// NewGCMWithRandomNonce, not NewGCM: FIPS 140-3 (SP 800-38D, CMVP IG C.H)
+	// requires the GCM IV be generated inside the module boundary, and
+	// GODEBUG=fips140=only rejects an externally supplied one. Seal prepends
+	// the same 96-bit nonce this code prepended by hand and Open strips it, so
+	// the stored [salt][nonce][ciphertext+tag] layout is byte-for-byte what it
+	// was and blobs written by earlier builds still decrypt.
+	gcm, err := cipher.NewGCMWithRandomNonce(block)
 	if err != nil {
 		return nil, &errs.Wrapped{Msg: "failed to create GCM", Err: err}
 	}
 
 	// Decrypt with salt as additional authenticated data
-	plaintext, err := gcm.Open(nil, nonce, ciphertext, salt)
+	plaintext, err := gcm.Open(nil, nil, nonceAndCiphertext, salt)
 	if err != nil {
 		return nil, ErrInvalidPassword
 	}

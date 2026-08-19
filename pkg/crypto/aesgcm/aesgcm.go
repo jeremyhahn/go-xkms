@@ -27,8 +27,6 @@ package aesgcm
 import (
 	"crypto/aes"
 	"crypto/cipher"
-	"crypto/rand"
-	"io"
 )
 
 const (
@@ -67,7 +65,13 @@ func newGCM(key []byte) (cipher.AEAD, error) {
 		// Should never happen after key length validation.
 		return nil, ErrInvalidKeySize
 	}
-	gcm, err := cipher.NewGCM(block)
+	// NewGCMWithRandomNonce, not NewGCM: FIPS 140-3 (SP 800-38D, CMVP IG C.H)
+	// requires the GCM IV be generated inside the module boundary, and
+	// GODEBUG=fips140=only rejects an externally supplied one. The wire format
+	// is unchanged -- Seal prepends the same 96-bit nonce this package always
+	// prepended by hand, and Open strips it -- so ciphertexts written before
+	// this change still decrypt.
+	gcm, err := cipher.NewGCMWithRandomNonce(block)
 	if err != nil {
 		// Should never happen with standard AES block cipher.
 		return nil, ErrDecryptionFailed
@@ -88,18 +92,9 @@ func EncryptWithAAD(key, plaintext, aad []byte) ([]byte, error) {
 		return nil, err
 	}
 
-	nonce := make([]byte, NonceSize)
-	if _, err := io.ReadFull(rand.Reader, nonce); err != nil {
-		return nil, err
-	}
-
-	sealed := gcm.Seal(nil, nonce, plaintext, aad)
-
-	// output: nonce || ciphertext+tag
-	out := make([]byte, NonceSize+len(sealed))
-	copy(out[:NonceSize], nonce)
-	copy(out[NonceSize:], sealed)
-	return out, nil
+	// Seal generates the nonce itself and prepends it, so the output is
+	// nonce || ciphertext+tag exactly as before.
+	return gcm.Seal(nil, nil, plaintext, aad), nil
 }
 
 // DecryptWithAAD decrypts ciphertext produced by EncryptWithAAD with the
@@ -119,10 +114,8 @@ func DecryptWithAAD(key, ciphertext, aad []byte) ([]byte, error) {
 		return nil, err
 	}
 
-	nonce := ciphertext[:NonceSize]
-	sealed := ciphertext[NonceSize:]
-
-	plaintext, err := gcm.Open(nil, nonce, sealed, aad)
+	// Open extracts the prepended nonce itself; the AEAD's NonceSize is zero.
+	plaintext, err := gcm.Open(nil, nil, ciphertext, aad)
 	if err != nil {
 		return nil, ErrDecryptionFailed
 	}
