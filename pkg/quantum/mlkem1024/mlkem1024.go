@@ -19,6 +19,8 @@ package mlkem1024
 import (
 	"crypto/mlkem"
 	"errors"
+
+	"github.com/jeremyhahn/go-xkms/sdk/go/secure"
 )
 
 const (
@@ -65,8 +67,12 @@ type KEMDetails struct {
 
 // MLKEM1024 wraps the Go standard library ML-KEM-1024 key encapsulation mechanism
 type MLKEM1024 struct {
-	dk   *mlkem.DecapsulationKey1024
-	seed []byte // 64 bytes
+	dk *mlkem.DecapsulationKey1024
+	// seed is the 64-byte decapsulation-key seed, sealed in an enclave rather
+	// than held as a plaintext []byte on the Go heap: it reconstructs the whole
+	// private key, so it is the most sensitive value this type owns. Open it
+	// only for the moment it is needed and destroy the working Buffer after.
+	seed *secure.Secret
 }
 
 // New creates a new MLKEM1024 instance with a freshly generated key
@@ -75,12 +81,18 @@ func New() (*MLKEM1024, error) {
 	if err != nil {
 		return nil, err
 	}
+	// dk.Bytes() returns a fresh copy of the seed rather than a view into the
+	// key, so it is sealed directly: NewSecret consumes and wipes what it is
+	// given, which leaves no plaintext copy behind for the GC to hold onto.
 	seed := dk.Bytes()
-	ownedSeed := make([]byte, len(seed))
-	copy(ownedSeed, seed)
+	sealed, sealErr := secure.NewSecret(seed)
+	if sealErr != nil {
+		secure.Wipe(seed)
+		return nil, sealErr
+	}
 	return &MLKEM1024{
 		dk:   dk,
-		seed: ownedSeed,
+		seed: sealed,
 	}, nil
 }
 
@@ -95,21 +107,26 @@ func Create(seed []byte) (*MLKEM1024, error) {
 	}
 	ownedSeed := make([]byte, SeedSize)
 	copy(ownedSeed, seed)
+	// NewSecret wipes ownedSeed; the caller's own slice is untouched.
+	sealed, sealErr := secure.NewSecret(ownedSeed)
+	if sealErr != nil {
+		return nil, sealErr
+	}
 	return &MLKEM1024{
 		dk:   dk,
-		seed: ownedSeed,
+		seed: sealed,
 	}, nil
 }
 
-// Clean zeroes internal seed bytes and releases resources.
-// This should always be called when done using the instance.
+// Clean destroys the enclaved seed and releases resources.
+// This should always be called when done using the instance. It is safe to call
+// more than once, on a zero value, and on a nil receiver.
 func (k *MLKEM1024) Clean() {
-	if k.seed != nil {
-		for i := range k.seed {
-			k.seed[i] = 0
-		}
-		k.seed = nil
+	if k == nil {
+		return
 	}
+	k.seed.Destroy()
+	k.seed = nil
 	k.dk = nil
 }
 
@@ -127,13 +144,20 @@ func (k *MLKEM1024) GenerateKeyPair() ([]byte, error) {
 }
 
 // ExportSecretKey returns the 64-byte seed for the decapsulation key.
-// The caller receives a copy of the seed.
+// The caller receives a plaintext copy on the Go heap and owns wiping it;
+// the enclaved original is untouched. Returns nil if the seed cannot be
+// opened, which for a live instance means it has already been destroyed.
 func (k *MLKEM1024) ExportSecretKey() []byte {
 	if k.dk == nil || k.seed == nil {
 		return nil
 	}
-	result := make([]byte, len(k.seed))
-	copy(result, k.seed)
+	buf, err := k.seed.Open()
+	if err != nil {
+		return nil
+	}
+	defer buf.Destroy()
+	result := make([]byte, buf.Size())
+	copy(result, buf.Bytes())
 	return result
 }
 

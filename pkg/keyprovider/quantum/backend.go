@@ -36,6 +36,7 @@ import (
 	"github.com/jeremyhahn/go-xkms/pkg/backend"
 	"github.com/jeremyhahn/go-xkms/pkg/storage"
 	"github.com/jeremyhahn/go-xkms/pkg/types"
+	"github.com/jeremyhahn/go-xkms/sdk/go/secure"
 )
 
 // mldsaSeedSize is the seed size for all ML-DSA security levels (32 bytes).
@@ -208,6 +209,16 @@ func (b *QuantumBackend) GenerateKey(ctx context.Context, attrs *types.KeyAttrib
 	var privateKey crypto.PrivateKey
 	var metadata *keyMetadata
 
+	// The generated key owns an mlocked enclave holding the reconstruction
+	// seed. Until it is handed to the caller, every error path has to destroy
+	// it rather than leave protected memory to the garbage collector.
+	handedOff := false
+	defer func() {
+		if !handedOff {
+			cleanPrivateKey(privateKey)
+		}
+	}()
+
 	algorithm := string(attrs.QuantumAttributes.Algorithm)
 
 	switch {
@@ -235,7 +246,36 @@ func (b *QuantumBackend) GenerateKey(ctx context.Context, attrs *types.KeyAttrib
 		}
 	}
 
+	handedOff = true
 	return privateKey, nil
+}
+
+// cleanPrivateKey destroys the enclave a generated quantum key holds. It exists
+// so error paths can release protected memory without repeating the type switch,
+// and it tolerates a nil or unrecognised key so a deferred call is always safe.
+func cleanPrivateKey(key crypto.PrivateKey) {
+	switch k := key.(type) {
+	case *MLDSAPrivateKey:
+		k.Clean()
+	case *MLKEMPrivateKey:
+		k.Clean()
+	}
+}
+
+// sealSeed seals a copy of src into an enclave and leaves src to the caller.
+// It copies because secure.NewSecret consumes the slice it is handed, while
+// every call site here still needs src afterwards — either to build the
+// metadata that gets serialized to storage, or because src belongs to the
+// caller. Wiping src, where that is this package's to do, is the caller's job.
+func sealSeed(src []byte) (*secure.Secret, error) {
+	owned := make([]byte, len(src))
+	copy(owned, src)
+	sealed, err := secure.NewSecret(owned)
+	if err != nil {
+		secure.Wipe(owned)
+		return nil, &errs.Wrapped{Msg: "failed to seal key seed", Err: err}
+	}
+	return sealed, nil
 }
 
 // generateMLDSAKey generates a ML-DSA signing key using circl.
@@ -254,6 +294,19 @@ func (b *QuantumBackend) generateMLDSAKey(algorithm string) (*MLDSAPrivateKey, *
 
 	pkBytes, sk, pk := gen(&seed)
 
+	// The seed feeds two consumers with different lifetimes: the in-memory key,
+	// which holds it enclaved, and the metadata, which is serialized to
+	// storage. Both take their own copy so the stack array can be wiped as soon
+	// as they have it.
+	sealedSeed, sealErr := sealSeed(seed[:])
+	if sealErr != nil {
+		return nil, nil, sealErr
+	}
+
+	metadataSeed := make([]byte, mldsaSeedSize)
+	copy(metadataSeed, seed[:])
+	secure.Wipe(seed[:])
+
 	privateKey := &MLDSAPrivateKey{
 		Algorithm: algorithm,
 		PublicKey: &MLDSAPublicKey{
@@ -262,13 +315,13 @@ func (b *QuantumBackend) generateMLDSAKey(algorithm string) (*MLDSAPrivateKey, *
 		},
 		sk:   sk,
 		pk:   pk,
-		seed: seed[:],
+		seed: sealedSeed,
 	}
 
 	metadata := &keyMetadata{
 		Algorithm: algorithm,
 		PublicKey: pkBytes,
-		Seed:      seed[:],
+		Seed:      metadataSeed,
 	}
 
 	return privateKey, metadata, nil
@@ -286,6 +339,17 @@ func (b *QuantumBackend) generateMLKEMKey(algorithm, keyID string) (*MLKEMPrivat
 		return nil, nil, &errs.Wrapped{Msg: "failed to generate ML-KEM key pair", Err: err}
 	}
 
+	// As in generateMLDSAKey: the enclaved key and the serialized metadata each
+	// take their own copy, and seedBytes is wiped once both are served.
+	sealedSeed, sealErr := sealSeed(seedBytes)
+	if sealErr != nil {
+		return nil, nil, sealErr
+	}
+
+	metadataSeed := make([]byte, len(seedBytes))
+	copy(metadataSeed, seedBytes)
+	secure.Wipe(seedBytes)
+
 	privateKey := &MLKEMPrivateKey{
 		Algorithm: algorithm,
 		PublicKey: &MLKEMPublicKey{
@@ -293,7 +357,7 @@ func (b *QuantumBackend) generateMLKEMKey(algorithm, keyID string) (*MLKEMPrivat
 			Key:       pubKeyBytes,
 		},
 		dk:      dk,
-		seed:    seedBytes,
+		seed:    sealedSeed,
 		tracker: b.tracker,
 		keyID:   keyID,
 	}
@@ -301,14 +365,27 @@ func (b *QuantumBackend) generateMLKEMKey(algorithm, keyID string) (*MLKEMPrivat
 	metadata := &keyMetadata{
 		Algorithm: algorithm,
 		PublicKey: pubKeyBytes,
-		Seed:      seedBytes,
+		Seed:      metadataSeed,
 	}
 
 	return privateKey, metadata, nil
 }
 
 // storeKey stores key metadata using the storage backend.
+//
+// It consumes metadata.Seed: the seed reconstructs the whole private key, and
+// the storage format is JSON, so a plaintext slice has to exist for the moment
+// encoding/json reads it. Wiping it here — on the error paths too — bounds that
+// exposure to this call rather than the lifetime of the process. Anything the
+// key still needs afterwards lives in the enclave the private key holds.
+//
+// The marshalled document is deliberately not wiped. It is handed to
+// storage.Backend.Put, whose contract does not say whether an implementation
+// copies the slice or retains it, so zeroing it could zero what was stored.
+// Protecting the serialized form is the storage layer's problem, not this one's.
 func (b *QuantumBackend) storeKey(ctx context.Context, keyID string, metadata *keyMetadata) error {
+	defer secure.Wipe(metadata.Seed)
+
 	data, err := json.Marshal(metadata)
 	if err != nil {
 		return &errs.Wrapped{Msg: "failed to serialize key metadata", Err: err}
@@ -347,6 +424,12 @@ func (b *QuantumBackend) GetKey(ctx context.Context, attrs *types.KeyAttributes)
 	if err := json.Unmarshal(keyData, &metadata); err != nil {
 		return nil, &errs.Wrapped{Msg: "failed to deserialize key metadata", Err: err}
 	}
+	// The decoded seed is plaintext key material this function owns —
+	// encoding/json allocates it fresh. The loaders seal their own copy, so it
+	// is wiped on return rather than left for the GC. keyData is left alone: it
+	// came from storage.Backend.Get, which does not say whether the slice is a
+	// copy or the stored record itself.
+	defer secure.Wipe(metadata.Seed)
 
 	switch {
 	case strings.HasPrefix(metadata.Algorithm, "ML-DSA"):
@@ -374,6 +457,14 @@ func (b *QuantumBackend) loadMLDSAKey(metadata *keyMetadata) (*MLDSAPrivateKey, 
 
 	pkBytes, sk, pk := gen(&seed)
 
+	// seed is this function's own stack copy, so it is wiped once sealed;
+	// metadata.Seed belongs to the caller and is left intact.
+	sealedSeed, sealErr := sealSeed(seed[:])
+	if sealErr != nil {
+		return nil, sealErr
+	}
+	secure.Wipe(seed[:])
+
 	return &MLDSAPrivateKey{
 		Algorithm: metadata.Algorithm,
 		PublicKey: &MLDSAPublicKey{
@@ -382,7 +473,7 @@ func (b *QuantumBackend) loadMLDSAKey(metadata *keyMetadata) (*MLDSAPrivateKey, 
 		},
 		sk:   sk,
 		pk:   pk,
-		seed: seed[:],
+		seed: sealedSeed,
 	}, nil
 }
 
@@ -398,6 +489,13 @@ func (b *QuantumBackend) loadMLKEMKey(metadata *keyMetadata, keyID string) (*MLK
 		return nil, &errs.Wrapped{Msg: "failed to reconstruct ML-KEM key from seed", Err: err}
 	}
 
+	// metadata.Seed belongs to the caller and may still be needed, so it is
+	// sealed by copy and left in place.
+	sealedSeed, sealErr := sealSeed(metadata.Seed)
+	if sealErr != nil {
+		return nil, sealErr
+	}
+
 	return &MLKEMPrivateKey{
 		Algorithm: metadata.Algorithm,
 		PublicKey: &MLKEMPublicKey{
@@ -405,7 +503,7 @@ func (b *QuantumBackend) loadMLKEMKey(metadata *keyMetadata, keyID string) (*MLK
 			Key:       pubKeyBytes,
 		},
 		dk:      dk,
-		seed:    metadata.Seed,
+		seed:    sealedSeed,
 		tracker: b.tracker,
 		keyID:   keyID,
 	}, nil
@@ -541,14 +639,27 @@ func (b *QuantumBackend) RotateKey(ctx context.Context, attrs *types.KeyAttribut
 	if err := json.Unmarshal(keyData, &metadata); err != nil {
 		return &errs.Wrapped{Msg: "failed to deserialize key metadata", Err: err}
 	}
+	// The seed being rotated away from is still key material until it is
+	// overwritten in storage; wipe this decoded copy on the way out.
+	defer secure.Wipe(metadata.Seed)
 
 	var newMetadata *keyMetadata
 
+	// Rotation only needs the new metadata, but generating it also produces a
+	// private key holding an enclave. It is never handed anywhere, so it is
+	// destroyed unconditionally rather than left to the garbage collector.
+	var rotated crypto.PrivateKey
+	defer func() { cleanPrivateKey(rotated) }()
+
 	switch {
 	case strings.HasPrefix(metadata.Algorithm, "ML-DSA"):
-		_, newMetadata, err = b.generateMLDSAKey(metadata.Algorithm)
+		var mldsaKey *MLDSAPrivateKey
+		mldsaKey, newMetadata, err = b.generateMLDSAKey(metadata.Algorithm)
+		rotated = mldsaKey
 	case strings.HasPrefix(metadata.Algorithm, "ML-KEM"):
-		_, newMetadata, err = b.generateMLKEMKey(metadata.Algorithm, keyID)
+		var mlkemKey *MLKEMPrivateKey
+		mlkemKey, newMetadata, err = b.generateMLKEMKey(metadata.Algorithm, keyID)
+		rotated = mlkemKey
 	default:
 		return &errs.Detail{Err: ErrUnsupportedAlgorithm, Detail: metadata.Algorithm}
 	}
