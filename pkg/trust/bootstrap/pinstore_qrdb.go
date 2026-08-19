@@ -119,13 +119,13 @@ func pinStoreKey(host string, port int) string {
 }
 
 // Get retrieves the pin for the given host and port.
-// Returns truststrap.ErrPinNotFound when no pin has been recorded.
+// Returns truststrap.PinNotFoundError when no pin has been recorded.
 func (s *StoragePinStore) Get(ctx context.Context, host string, port int) (*truststrap.Pin, error) {
 	key := pinStoreKey(host, port)
 	data, err := s.backend.Get(ctx, key)
 	if err != nil {
 		if errors.Is(err, storage.ErrNotFound) {
-			return nil, truststrap.ErrPinNotFound{Host: host, Port: port}
+			return nil, truststrap.PinNotFoundError{Host: host, Port: port}
 		}
 		return nil, &PinStoreGetError{Key: key, Err: err}
 	}
@@ -136,11 +136,11 @@ func (s *StoragePinStore) Get(ctx context.Context, host string, port int) (*trus
 	return &pin, nil
 }
 
-// Put validates and persists a pin. Returns truststrap.ErrNilPin when pin is
+// Put validates and persists a pin. Returns truststrap.NilPinError when pin is
 // nil; validation errors from truststrap propagate unchanged.
 func (s *StoragePinStore) Put(ctx context.Context, pin *truststrap.Pin) error {
 	if pin == nil {
-		return truststrap.ErrNilPin{}
+		return truststrap.NilPinError{}
 	}
 	key := pinStoreKey(pin.Host, pin.Port)
 	data, err := json.Marshal(pin)

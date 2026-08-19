@@ -789,7 +789,6 @@ type (
 	QRDBConcurrentBackend = qrdb.ConcurrentBackend
 	QRDBStandardBackend   = qrdb.StandardBackend
 	QRDBDiskBackend       = qrdb.DiskBackend
-	QRDBCachedDiskBackend = qrdb.CachedDiskBackend
 	QRDBFastBackend       = qrdb.FastBackend
 	QRDBKVStateMachine    = qrdb.KVStateMachine
 )
@@ -872,7 +871,6 @@ var (
 	QRDBNewConcurrentBackend = qrdb.NewConcurrentBackend
 	QRDBNewStandardBackend   = qrdb.NewStandardBackend
 	QRDBNewDiskBackend       = qrdb.NewDiskBackend
-	QRDBNewCachedDiskBackend = qrdb.NewCachedDiskBackend
 	QRDBNewFastBackend       = qrdb.NewFastBackend
 	QRDBNewKVStateMachine    = qrdb.NewKVStateMachine
 )
