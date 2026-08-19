@@ -18,8 +18,113 @@ permissions:
   packages: write
 
 jobs:
+  # Fails a tag whose VERSION file or CHANGELOG heading does not match it
+  # (release-versioning.md P4 Option A; same job go-quicraft carries, kept in
+  # step with it deliberately). Everything else here depends on this, so a
+  # malformed tag fails in seconds rather than after the build matrix.
+  #
+  # This exists because the drift is real and repeated: go-qrdb's VERSION read
+  # 0.5.7-alpha across both v0.5.8-alpha and v0.5.9-alpha, go-quicraft's read
+  # 0.6.1-alpha at tag v0.6.2-alpha, and go-xkms itself published v0.7.0-alpha
+  # through v0.7.4-alpha with no CHANGELOG entry for any of them. Nothing
+  # reconciles VERSION against the tag (release-versioning.md §2 says so
+  # outright), so the only place the mismatch can be caught is here.
+  #
+  # A module tag cannot be retracted -- the proxy caches it and deleting the
+  # tag does not unpublish it -- so this runs before anything is created.
+  # Only the ROOT tag reaches this workflow: the trigger is 'v*', which does
+  # not match refs/tags/sdk/go/v* or refs/tags/xkey/v*.
+  validate:
+    name: Validate tag
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      # fetch-depth: 0 -- the cross-pin step reads the tag namespace to decide
+      # which nested modules are released, and a shallow clone has no tags.
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Validate tag against VERSION and CHANGELOG
+        run: |
+          set -euo pipefail
+          VERSION="${GITHUB_REF#refs/tags/v}"
+          if ! echo "$VERSION" | grep -qE '^[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?$'; then
+            echo "FAIL: tag v$VERSION is not a semantic version"
+            exit 1
+          fi
+          FILE_VERSION="$(tr -d '[:space:]' < VERSION)"
+          if [ "$FILE_VERSION" != "$VERSION" ]; then
+            echo "FAIL: VERSION file says '$FILE_VERSION' but the tag says '$VERSION'"
+            exit 1
+          fi
+          if ! grep -qE "^## \[$VERSION\]" CHANGELOG.md; then
+            echo "FAIL: CHANGELOG.md has no '## [$VERSION]' section"
+            exit 1
+          fi
+          echo "OK: tag v$VERSION matches VERSION and CHANGELOG"
+
+      # The reciprocal cross-module pins are the other thing no in-repo check can
+      # see. In a repo with nested modules, each go.mod requires its siblings BY
+      # VERSION while a local-path `replace` resolves them through the working
+      # tree -- so every in-repo build, and all of CI, uses the right code while
+      # the recorded requirement rots. It survives `go list`, zip inspection and
+      # every local check. go-xkms shipped v0.7.1-alpha pins inside the
+      # v0.7.4-alpha tag exactly this way, and a consumer of
+      # sdk/go@v0.7.4-alpha was handed go-xkms v0.7.1-alpha. A `replace` cannot
+      # hide a grep, so compare the recorded strings.
+      #
+      # PORTFOLIO-PORTABLE: nothing below names this repository. The root module
+      # path comes from `go list -m`, the nested modules are discovered on disk,
+      # and which of them are RELEASED is read from the tag namespace (a
+      # submodule at dir/ is released iff dir/v* tags exist). Copy this step into
+      # any repo with nested modules unchanged; a repo with none passes it
+      # trivially. Requires fetch-depth: 0 so the tags are present.
+      #
+      # Only RELEASED submodules are enforced. An unreleased one is checked out
+      # by path and never resolved by version, so demanding it carry the release
+      # version would be inventing a pin for something nobody can `go get`. It
+      # is still reported, because a v0.0.0-000101... placeholder there is the
+      # go-qrdb defect in miniature: harmless while the local `replace` applies,
+      # fatal the day the module is published or consumed from outside.
+      - name: Validate reciprocal cross-module pins
+        run: |
+          set -uo pipefail
+          VERSION="${GITHUB_REF#refs/tags/v}"
+          # GOWORK=off: inside a workspace `go list -m` prints every module in
+          # it and the root path below would be the wrong string.
+          ROOT="$(GOWORK=off go list -m)"
+          rc=0
+          while IFS= read -r modfile; do
+            dir="${modfile#./}"; dir="${dir%go.mod}"; dir="${dir%/}"
+            if [ -n "$dir" ] && [ -z "$(git tag --list "$dir/v*")" ]; then
+              scope="advisory"   # never released under this tag namespace
+            else
+              scope="required"
+            fi
+            # Requirements on the root module or any of its submodules.
+            # `require (` blocks are indented; `=>` lines are replaces.
+            while read -r path ver; do
+              [ -n "$path" ] || continue
+              if [ "$ver" = "v$VERSION" ]; then
+                echo "OK:       $modfile pins $path at $ver"
+              elif [ "$scope" = "advisory" ]; then
+                echo "ADVISORY: $modfile (unreleased module) pins $path at '$ver'"
+              else
+                echo "FAIL:     $modfile pins $path at '$ver', expected 'v$VERSION'"
+                rc=1
+              fi
+            done < <(grep -E "^[[:space:]]+($ROOT|$ROOT/[^[:space:]]+) v" "$modfile" \
+                     | grep -v '=>' | awk '{print $1, $2}')
+          done < <(find . -name go.mod -not -path './vendor/*' -not -path '*/testdata/*' | sort)
+          if [ "$rc" -eq 0 ]; then echo "OK: every released cross-pin equals v$VERSION"; fi
+          exit $rc
+          exit $rc
+
   create-release:
     name: Create Release
+    needs: validate
     runs-on: ubuntu-latest
     outputs:
       version: ${{ steps.get_version.outputs.version }}

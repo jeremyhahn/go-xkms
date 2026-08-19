@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.7.5-alpha] - 2026-08-19
+
 ### Security
 
 - **Post-quantum seeds are wiped on every return, not only the happy path.**
@@ -22,9 +24,52 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   should reject CIRCL-backed algorithms outright is an owner ruling (#21).
   (Codex review of PR #16, blocking finding 2: valid, escalated not silently
   resolved.)
+- **PIN lockout could stop counting under contention, and an attacker
+  controlled the contention.** This is a security fix, not a test fix.
+
+  The PKCS#11 failed-attempt counter is server-authoritative precisely so that
+  several remote-mode clients sharing one token count their failures against
+  one durable budget. `IncrementFailedAttempt`'s compare-and-swap loop gave up
+  after 16 lost races and returned an error; the caller
+  (`SetAttemptPersistence` in `module.go`) reports `persisted=false` on error,
+  so **that failed PIN attempt never advanced the durable budget** and fell
+  back to a per-process in-memory counter. Concurrent PIN attempts from several
+  clients are exactly what produces the contention, so the condition that
+  disables the lockout is the condition an online guessing attack creates.
+  A caller that keeps losing can therefore keep guessing.
+
+  Two defects made the loop lose races it should have won. It discarded the
+  current value that a failed `CompareAndSwap` returns — the
+  `CompareAndSwapper` contract supplies it so a caller can recompute and retry —
+  and re-read through a separate, unsynchronized `Get`, reopening the window
+  between observing the counter and swapping it. And the 16-attempt budget was
+  mismeasured: a losing writer's retry count is not a function of how many
+  clients contend, because the loser is descheduled while the winner keeps
+  incrementing, so one competitor can beat it an unbounded number of times in a
+  row. Reproduced with only TWO writers under `-race` at `GOMAXPROCS=2`.
+
+  Retries now recompute against the value the failed swap itself observed, the
+  budget is 1024 with a yield on each loss, and a single `opContext` deadline
+  bounds the whole loop instead of a fresh 10s timeout per attempt. Verified at
+  5000 iterations with zero failures where 3000 iterations previously failed
+  repeatedly.
 
 ### Fixed
 
+- **`gofmt` compliance in `xkey/cmd/xkey/cmd/trust_fetch_test.go`.** `gofmt`
+  does not respect module boundaries, so the root Lint job format-checks
+  `xkey/` even though every other job treats it as the separate module it is.
+  One unformatted file there failed CI's Lint job at its first step while
+  passing every root-module-only local check.
+- **Reciprocal cross-module pins refreshed to the released version.** `xkey`
+  and `sdk/go` recorded `go-xkms` and each other at `v0.7.1-alpha` while the
+  repo had released `v0.7.4-alpha`. The local-path `replace` directives resolve
+  every in-repo build — and CI's own builds — through the working tree, so the
+  stale requirement was invisible to `go list`, to zip inspection and to every
+  local check, while a consumer resolving `sdk/go` or `xkey` at the new tag
+  would have been handed `go-xkms v0.7.1-alpha`. This is the defect
+  go-qrdb `v0.2.0-alpha` shipped; release-versioning.md §2 names go-xkms as
+  carrying the same exposure.
 - **Race Detector no longer dies on a busy runner**: the job passes
   `-timeout 30m` instead of relying on `go test`'s 10-minute per-package
   default. `pkg/pkcs11/module` is the only package the `pkcs11` build tag

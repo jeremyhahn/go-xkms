@@ -31,8 +31,8 @@ require (
 	github.com/jeremyhahn/go-qrdb/sdk/go v0.5.9-alpha
 	github.com/jeremyhahn/go-quicraft v0.6.2-alpha
 	github.com/jeremyhahn/go-truststrap v0.1.3-alpha
-	github.com/jeremyhahn/go-xkms/sdk/go v0.7.1-alpha
-	github.com/jeremyhahn/go-xkms/xkey v0.7.1-alpha
+	github.com/jeremyhahn/go-xkms/sdk/go v0.7.5-alpha
+	github.com/jeremyhahn/go-xkms/xkey v0.7.5-alpha
 	github.com/kevinburke/ssh_config v1.6.0
 	github.com/mark3labs/mcp-go v0.45.0
 	github.com/miekg/dns v1.1.72
