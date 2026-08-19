@@ -11,7 +11,6 @@ services:
     build:
       context: ../../../..
       dockerfile: go-trusted-ca/test/Dockerfile.server
-    container_name: dns01-acme-server
     networks:
       dns01-network:
         aliases:
@@ -23,7 +22,7 @@ services:
       # Configure ACME server to use our mock DNS server
       DNS_RESOLVER: "dns-server:53"
     ports:
-      - "8580:8080"  # Map to 8580 on host to avoid conflicts
+      - "0:8080"
     healthcheck:
       test: ["CMD", "wget", "--quiet", "--tries=1", "--spider", "http://localhost:8080/acme/directory"]
       interval: 3s
@@ -41,15 +40,14 @@ services:
     build:
       context: .
       dockerfile: Dockerfile.dns-responder
-    container_name: dns01-dns-server
     networks:
       dns01-network:
         aliases:
           - dns-server
           - ns1.example.com
     ports:
-      - "53:53/udp"
-      - "8053:8053"
+      - "0:53/udp"
+      - "0:8053"
     environment:
       DNS_PORT: "53"
       HTTP_PORT: "8053"
@@ -65,7 +63,6 @@ services:
     build:
       context: ../../../..
       dockerfile: go-trusted-ca/test/integration/dns01/Dockerfile.dns01-tests
-    container_name: dns01-e2e-tests
     networks:
       - dns01-network
     depends_on:
@@ -83,8 +80,6 @@ services:
 networks:
   dns01-network:
     driver: bridge
-    name: dns01-network
 
 volumes:
   acme-data:
-    name: dns01-acme-data

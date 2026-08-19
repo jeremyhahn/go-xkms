@@ -7,8 +7,8 @@ services:
     devices:
       - /dev/kvm
     ports:
-      - "6080:6080"   # noVNC web interface
-      - "5555:5555"   # ADB
+      - "0:6080"   # noVNC web interface
+      - "0:5555"   # ADB
     environment:
       EMULATOR_DEVICE: pixel_7
       WEB_VNC: "true"
@@ -31,7 +31,7 @@ services:
              go build -o /tmp/xkey ./cmd/xkey &&
              /tmp/xkey device relay --listen :8444"
     ports:
-      - "8444:8444"
+      - "0:8444"
     depends_on:
       android-emulator:
         condition: service_healthy

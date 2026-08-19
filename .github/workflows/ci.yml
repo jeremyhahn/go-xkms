@@ -191,6 +191,21 @@ jobs:
           sudo rm -rf /usr/local/lib/android
           sudo rm -rf /opt/ghc
           sudo rm -rf /opt/hostedtoolcache/CodeQL
+          # This used to be `docker system prune -af --volumes`, which on a
+          # shared runner host deleted the tagged images, stopped containers
+          # and volumes of every OTHER job running at the same time --
+          # breaking their runs to free disk for this one.
+          #
+          # `image prune -f` (no -a) removes only DANGLING images, so it can
+          # never take an image another job is about to run. Do not widen it
+          # to -a, and never add --volumes: both reach into live jobs.
+          #
+          # `builder prune -af` is aggressive on purpose. Build cache is a
+          # pure performance resource -- dropping it can slow a concurrent
+          # job's build but cannot change what that job produces or tests --
+          # and this step exists because the runner does run out of disk.
+          docker image prune -f || true
+          docker builder prune -af || true
           echo "=== Disk space after cleanup ==="
           df -h
 
@@ -232,6 +247,24 @@ jobs:
         # xkms-server:9443" (task 3129).
         run: XKMS_COMPOSE_SERVER=1 make integration-test
         timeout-minutes: 60
+
+      # Unconditional: the compose stacks are torn down whether the suite
+      # passed, failed, timed out or the job was cancelled. Cleanup used to
+      # exist only on the success path inside the make recipes, so a crashed
+      # or cancelled run left its containers on the host forever and every
+      # later run on that host failed to start with a name conflict.
+      #
+      # Safe to run concurrently with another job's: every stack is namespaced
+      # by repository AND run id (Makefile: COMPOSE_NS / XKMS_IMAGE_TAG), and
+      # image removal is additionally bounded to the image names this harness
+      # builds, so these targets can only ever name this run's own containers,
+      # networks, volumes and image tags.
+      - name: Tear down integration test stacks
+        if: always()
+        run: |
+          make clean-test-containers || true
+          make devcontainer-clean || true
+          make clean-run-images || true
 
       - name: Upload integration test results
         if: always() && github.server_url == 'https://github.com'

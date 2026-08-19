@@ -1,17 +1,24 @@
 #!/bin/bash
 # Shell-level tests for test/scripts/clean-test-containers.sh.
 #
-# The script under test is the thing that decides WHICH Docker resources a CI
-# run may destroy, on Actions hosts whose daemon is shared with every other
-# repository (go-xkms#2). These tests pin the safety boundary: under CI it may
-# only touch this repository's own compose projects and `go-xkms-*` containers,
-# never a fixed host port, a loose name substring, a `*test*` network, the
-# devcontainer, or any prune.
+# The script under test decides WHICH Docker resources a CI run may destroy, on
+# Actions hosts whose daemon is SHARED with every other repository (go-xkms#2,
+# the 2026-08-17 shared-runner incident). These tests pin that safety boundary.
+#
+# History worth keeping, because it explains what the assertions are guarding
+# against. Two branches fixed the same incident differently: issue #2 kept the
+# host-global machinery (name-substring sweeps, fixed-port sweeps, prunes) and
+# gated it behind XKMS_CLEAN_SCOPE=project under CI; issue #8 deleted the
+# machinery outright and namespaced every compose project per run instead. The
+# consolidation took issue #8's script, because a capability that is merely
+# switched off can be switched back on by anyone who does not know why it was
+# off — and rewrote these tests, which were issue #2's, to pin issue #8's
+# boundary. The point of the file is unchanged: prove the script cannot reach
+# outside this run.
 #
 # No Docker daemon is involved: a fake `docker` on PATH records every
-# invocation (with its working directory) and answers queries. DOCKER_HOST is
-# also pointed at a closed port so that a PATH mistake fails loudly instead of
-# reaching a real daemon.
+# invocation and answers queries. DOCKER_HOST also points at a closed port, so
+# a PATH mistake fails loudly instead of reaching a real daemon.
 
 set -uo pipefail
 
@@ -27,345 +34,189 @@ mkdir -p "$FAKE_BIN"
 
 cat > "$FAKE_BIN/docker" <<'FAKE'
 #!/bin/bash
-# Fake docker: log "<cwd-basename>|<args>" and answer the queries the script
-# makes. Failure injection:
-#   FAKE_DOCKER_FAIL_PROJECT   `compose down` fails for that project directory
-#   FAKE_DOCKER_FAIL_RM        `docker rm` fails when it names that container
-#   FAKE_DOCKER_FAIL_STOP      `docker stop` fails when it names that container
-echo "$(basename "$PWD")|$*" >> "$FAKE_DOCKER_LOG"
-
-case "$1 $2" in
-    "ps -q")
-        # publish=<port> lookup during the broad-scope port sweep
-        echo "cid-port"
-        ;;
-    "ps -aq")
-        # name=<filter> lookup. The anchored project-owned sweep returns a
-        # devcontainer plus an ordinary container; the loose broad-scope
-        # sweeps return a container this repo does not own.
-        case "$4" in
-            "name=^go-xkms-(swtpm|softhsm|integration|unit|test-runner|vault|floci|floci-gcp|azure-kv)$")
-                # Include the two development containers the daemon would
-                # never actually return for this filter, so the exclusion
-                # logic is exercised even if the filter regresses.
-                echo "cid-devcontainer"
-                echo "cid-dev"
-                echo "cid-normal"
-                ;;
-            "name=^xkms-integration-(server|swtpm|softhsm|tests)$")
-                echo "cid-integration"
-                ;;
-            "name=^xkms-test-(unix|rest|grpc|quic|mcp|frost|parity)$")
-                echo "cid-protocol"
-                ;;
-            *)
-                echo "cid-loose"
-                ;;
-        esac
-        ;;
-    "inspect --format")
-        case "$4" in
-            cid-devcontainer) echo "/go-xkms-devcontainer" ;;
-            cid-dev)          echo "/go-xkms-dev" ;;
-            cid-port)         echo "/foreign-repo-server" ;;
-            cid-loose)        echo "/some-vault" ;;
-            cid-integration)  echo "/xkms-integration-server" ;;
-            cid-protocol)     echo "/xkms-test-rest" ;;
-            *)                echo "/go-xkms-swtpm" ;;
-        esac
-        ;;
-    "stop cid-normal"|"stop cid-loose"|"stop cid-integration"|"stop cid-protocol"|"stop cid-port")
-        if [ -n "${FAKE_DOCKER_FAIL_STOP:-}" ] && [ "$2" = "$FAKE_DOCKER_FAIL_STOP" ]; then
-            echo "fake failure: cannot stop $2" >&2
-            exit 1
-        fi
-        ;;
-    "rm -f")
-        if [ -n "${FAKE_DOCKER_FAIL_RM:-}" ] && [ "$3" = "$FAKE_DOCKER_FAIL_RM" ]; then
-            echo "fake failure: cannot remove $3" >&2
-            exit 1
-        fi
-        ;;
-    "network ls")
-        echo "foreign-integration-net"
-        echo "devcontainer_xkms-dev"
-        ;;
-    "compose -f")
-        # `compose -f <path> down ...`; FAKE_DOCKER_FAIL_PROJECT names the
-        # directory (= Compose v2 project) whose teardown should fail.
-        if [ -n "${FAKE_DOCKER_FAIL_PROJECT:-}" ] && \
-           [ "$(basename "$(dirname "$3")")" = "$FAKE_DOCKER_FAIL_PROJECT" ]; then
-            echo "fake failure: project ${FAKE_DOCKER_FAIL_PROJECT} refused to stop" >&2
-            exit 1
-        fi
-        ;;
-esac
+# Fake docker: record the full argument vector, one invocation per line, and
+# succeed. The script under test only ever needs `compose ... down` and the two
+# prunes, so nothing here needs to answer a query.
+echo "$*" >> "$FAKE_DOCKER_LOG"
 exit 0
 FAKE
 chmod +x "$FAKE_BIN/docker"
 
 FAILURES=0
-CURRENT_CASE=""
 
-start_case() {
-    CURRENT_CASE="$1"
-    echo "--- $CURRENT_CASE"
-}
+start_case() { echo "--- $1"; }
+fail() { echo "    FAIL: $1" >&2; FAILURES=$((FAILURES + 1)); }
+pass() { echo "    ok: $1"; }
 
-fail() {
-    echo "    FAIL: $1" >&2
-    FAILURES=$((FAILURES + 1))
-}
-
-pass() {
-    echo "    ok: $1"
-}
-
-# run_script <expected-exit> [VAR=VALUE ...] -- runs the script under test from
-# the repo root with the fake docker first on PATH. Output lands in
-# $WORK_DIR/stdout; docker invocations in $CALL_LOG (truncated per run).
+# run_script <expected-exit> [VAR=VALUE ...]
 run_script() {
     local expected_exit="$1"; shift
     : > "$CALL_LOG"
     (
         cd "$REPO_ROOT" || exit 99
-        env -u CI -u GITHUB_ACTIONS -u XKMS_CLEAN_SCOPE -u FAKE_DOCKER_FAIL_PROJECT \
-            -u FAKE_DOCKER_FAIL_RM -u FAKE_DOCKER_FAIL_STOP \
+        env -u CI -u GITHUB_ACTIONS -u COMPOSE_RUN_ID -u GITHUB_RUN_ID \
             PATH="$FAKE_BIN:$PATH" \
             DOCKER_HOST="tcp://127.0.0.1:1" \
             FAKE_DOCKER_LOG="$CALL_LOG" \
-            "$@" bash "$SCRIPT_UNDER_TEST"
-    ) > "$WORK_DIR/stdout" 2> "$WORK_DIR/stderr"
-    local actual_exit=$?
-    if [ "$actual_exit" -ne "$expected_exit" ]; then
-        fail "expected exit $expected_exit, got $actual_exit (stderr: $(tr '\n' ' ' < "$WORK_DIR/stderr"))"
+            "$@" \
+            bash "$SCRIPT_UNDER_TEST" >"$WORK_DIR/stdout" 2>"$WORK_DIR/stderr"
+    )
+    local actual=$?
+    if [ "$actual" -ne "$expected_exit" ]; then
+        fail "expected exit $expected_exit, got $actual"
+        sed 's/^/      /' "$WORK_DIR/stderr" >&2
     fi
 }
 
-# calls_matching <extended-regex> -> count of docker invocations matching it
-calls_matching() {
-    grep -cE "$1" "$CALL_LOG"
-}
-
-assert_calls() {
-    local pattern="$1" expected="$2" what="$3"
-    local actual
-    actual="$(calls_matching "$pattern")"
-    if [ "$actual" = "$expected" ]; then
-        pass "$what ($actual)"
-    else
-        fail "$what: expected $expected docker call(s) matching /$pattern/, got $actual"
-    fi
-}
-
-assert_literal_calls() {
-    local literal="$1" expected="$2" what="$3"
-    local actual
-    actual="$(grep -cF "$literal" "$CALL_LOG")"
-    if [ "$actual" = "$expected" ]; then
-        pass "$what ($actual)"
-    else
-        fail "$what: expected $expected docker call(s) containing '$literal', got $actual"
-    fi
-}
-
-assert_no_calls() {
-    local pattern="$1" what="$2"
-    local actual
-    actual="$(calls_matching "$pattern")"
-    if [ "$actual" = "0" ]; then
-        pass "$what"
-    else
-        fail "$what: expected none, got $actual: $(grep -E "$pattern" "$CALL_LOG" | head -3 | tr '\n' ' ')"
-    fi
-}
-
-# Every compose project this repository owns. Populated with a plain
-# `while read` loop rather than `mapfile`/`readarray`, which macOS's system
-# bash (3.2) does not have -- `make test` runs this, so it has to work
-# wherever the Go suite does.
-COMPOSE_PATHS=()
-while IFS= read -r compose_path; do
-    [ -n "$compose_path" ] || continue
-    COMPOSE_PATHS[${#COMPOSE_PATHS[@]}]="$compose_path"
-done <<EOF
-$(cd "$REPO_ROOT" && ls -d test/integration/*/ test/integration/*/*/ 2>/dev/null |
-    while read -r d; do [ -f "$d/docker-compose.yml" ] && echo "${d}docker-compose.yml"; done | sort)
-EOF
-COMPOSE_PROJECT_COUNT=${#COMPOSE_PATHS[@]}
-
-if [ "$COMPOSE_PROJECT_COUNT" -eq 0 ]; then
-    echo "FAIL: found no test/integration compose projects to exercise" >&2
-    exit 1
+# --------------------------------------------------------------------------
+start_case "every teardown is scoped to this run's project name"
+run_script 0 COMPOSE_RUN_ID=run42
+if [ ! -s "$CALL_LOG" ]; then
+    fail "the script issued no docker calls at all"
+fi
+# Every compose invocation must carry -p go-xkms-run42-<lane>.
+bad=0
+while read -r line; do
+    case "$line" in
+        compose\ *)
+            case "$line" in
+                *"-p go-xkms-run42-"*) ;;
+                *) echo "      unscoped: $line" >&2; bad=1 ;;
+            esac
+            ;;
+    esac
+done < "$CALL_LOG"
+if [ "$bad" -eq 0 ]; then
+    pass "all compose teardowns carry -p go-xkms-<run-id>-<lane>"
+else
+    fail "a compose teardown ran without this run's project name"
 fi
 
-echo "Testing $SCRIPT_UNDER_TEST against $COMPOSE_PROJECT_COUNT compose project(s)"
+# --------------------------------------------------------------------------
+start_case "the run id actually reaches the project name"
+if grep -q -- "-p go-xkms-run42-" "$CALL_LOG"; then
+    pass "COMPOSE_RUN_ID is interpolated into the project name"
+else
+    fail "COMPOSE_RUN_ID did not reach any project name"
+fi
+run_script 0
+if grep -q -- "-p go-xkms-local-" "$CALL_LOG"; then
+    pass "falls back to the 'local' run id off CI"
+else
+    fail "no fallback run id when COMPOSE_RUN_ID and GITHUB_RUN_ID are unset"
+fi
 
-# ---------------------------------------------------------------------------
-start_case "project scope: no host-global sweeps"
-run_script 0 XKMS_CLEAN_SCOPE=project
-assert_no_calls '\|ps -q --filter publish=' "no port sweep"
-assert_no_calls '\|network rm ' "no network removal by name substring"
-assert_no_calls '\|ps -aq --filter name=(swtpm|tpm-simulator|softhsm|vault|floci|azure|gcp)$' \
-    "no loose substring container sweeps"
-assert_literal_calls "|ps -aq --filter name=^go-xkms-(swtpm|softhsm|integration|unit|test-runner|vault|floci|floci-gcp|azure-kv)$" 1 "test containers selected by an exact-name allowlist"
-assert_no_calls '\|ps -aq --filter name=\^go-xkms-\$?[^(]' "no bare go-xkms- prefix sweep"
-
-# ---------------------------------------------------------------------------
-start_case "no scope ever prunes"
-assert_no_calls 'prune' "no prune of any kind in project scope"
-
-# ---------------------------------------------------------------------------
-start_case "compose teardown addresses each project by its own compose file"
-assert_calls '\|compose -f test/integration/.*/docker-compose.yml down -v --remove-orphans$' \
-    "$COMPOSE_PROJECT_COUNT" "one compose down per project, no extra flags"
-for path in "${COMPOSE_PATHS[@]}"; do
-    if ! grep -qF "|compose -f ${path} down -v --remove-orphans" "$CALL_LOG"; then
-        fail "no compose down addressed $path"
+# --------------------------------------------------------------------------
+start_case "no host-global search of any kind"
+# These are the exact capabilities that destroyed other repositories' jobs.
+# The script must never regain them. `docker ps` in any form is a search of
+# the whole daemon; stop/rm act on whatever such a search returned.
+run_script 0 COMPOSE_RUN_ID=run42 CI=true
+for forbidden in "ps " "stop " "rm " "network ls" "network rm" "volume ls" "volume rm" "kill "; do
+    if grep -q "^${forbidden}" "$CALL_LOG"; then
+        fail "script ran a host-global 'docker ${forbidden}'"
+    else
+        pass "never runs 'docker ${forbidden}'"
     fi
 done
-pass "every compose project addressed by its own file"
-assert_no_calls '\|compose .*--rmi' "compose teardown never widens to image removal"
-
-# ---------------------------------------------------------------------------
-start_case "project scope preserves development containers"
-assert_no_calls '\|(stop|rm|kill) .*cid-devcontainer' "go-xkms-devcontainer never stopped or removed"
-assert_no_calls '\|(stop|rm|kill) .*cid-dev( |$)' "go-xkms-dev (repo-root dev service) never stopped or removed"
-assert_calls '\|stop .*cid-normal' 1 "an actual test container is stopped"
-
-# ---------------------------------------------------------------------------
-start_case "CI defaults to project scope"
-run_script 0 CI=true
-if grep -q "scope: project" "$WORK_DIR/stdout"; then
-    pass "CI=true selects project scope"
+if grep -q -- "--filter" "$CALL_LOG"; then
+    fail "script filtered the daemon's own object list"
 else
-    fail "CI=true did not select project scope: $(head -1 "$WORK_DIR/stdout")"
+    pass "never filters the daemon's object list"
 fi
-assert_no_calls '\|ps -q --filter publish=' "no port sweep under CI"
-assert_no_calls '\|compose .*--rmi' "CI teardown does not remove images either"
-
-run_script 0 GITHUB_ACTIONS=true
-if grep -q "scope: project" "$WORK_DIR/stdout"; then
-    pass "GITHUB_ACTIONS=true selects project scope"
+if grep -q -- "publish=" "$CALL_LOG"; then
+    fail "script searched by published host port"
 else
-    fail "GITHUB_ACTIONS=true did not select project scope"
+    pass "never searches by published host port"
 fi
 
-# ---------------------------------------------------------------------------
-start_case "local default is broad scope"
-run_script 0
-if grep -q "scope: broad" "$WORK_DIR/stdout"; then
-    pass "no CI markers selects broad scope"
+# --------------------------------------------------------------------------
+start_case "prunes stay within what is provably unowned"
+# Dangling images and build cache cannot orphan a running stack. `image prune
+# -a` and `--volumes` can, and reach into other jobs.
+if grep -qE "^image prune( -f)?$" "$CALL_LOG"; then
+    pass "image prune is dangling-only"
 else
-    fail "expected broad scope locally: $(head -1 "$WORK_DIR/stdout")"
+    fail "expected a dangling-only 'image prune -f' under CI"
 fi
-assert_calls '\|compose -f .* down -v --remove-orphans$' "$COMPOSE_PROJECT_COUNT" \
-    "compose down keeps built images locally too"
-assert_calls '\|ps -q --filter publish=' 7 "port sweep runs in broad scope"
-assert_calls '\|network rm foreign-integration-net' 1 "test-named network removed in broad scope"
-assert_no_calls '\|network rm devcontainer_' "devcontainer network preserved in broad scope"
-assert_no_calls '\|(stop|rm|kill) .*cid-devcontainer' "devcontainer preserved in broad scope"
-assert_no_calls 'prune' "no prune of any kind in broad scope"
-
-# ---------------------------------------------------------------------------
-start_case "explicit scope overrides the CI default"
-run_script 0 CI=true XKMS_CLEAN_SCOPE=broad
-if grep -q "scope: broad" "$WORK_DIR/stdout"; then
-    pass "XKMS_CLEAN_SCOPE=broad overrides CI=true"
+if grep -qE "^image prune.*(-a|--all)" "$CALL_LOG"; then
+    fail "image prune -a removes images other jobs are about to run"
 else
-    fail "XKMS_CLEAN_SCOPE did not override the CI default"
+    pass "never runs 'image prune -a'"
+fi
+if grep -q -- "--volumes" "$CALL_LOG"; then
+    fail "a prune reached volumes, which other jobs may still hold"
+else
+    pass "never prunes volumes"
 fi
 
-# ---------------------------------------------------------------------------
-start_case "unknown scope is rejected rather than guessed"
-run_script 2 XKMS_CLEAN_SCOPE=sideways
-if grep -q "Unknown XKMS_CLEAN_SCOPE" "$WORK_DIR/stderr"; then
-    pass "unknown scope reported on stderr"
+start_case "prunes do not run off CI"
+run_script 0 COMPOSE_RUN_ID=run42
+if grep -q "^image prune" "$CALL_LOG" || grep -q "^builder prune" "$CALL_LOG"; then
+    fail "pruned a developer's daemon, which this script does not own"
 else
-    fail "unknown scope was not reported: $(cat "$WORK_DIR/stderr")"
-fi
-assert_no_calls '\|compose ' "nothing torn down under an unknown scope"
-
-# ---------------------------------------------------------------------------
-start_case "a failed teardown is reported, not swallowed"
-run_script 1 CI=true FAKE_DOCKER_FAIL_PROJECT="storage"
-if grep -q "compose down FAILED for test/integration/storage/docker-compose.yml" "$WORK_DIR/stderr"; then
-    pass "failing project named on stderr"
-else
-    fail "failing project not named: $(tr '\n' ' ' < "$WORK_DIR/stderr")"
-fi
-if grep -q "refused to stop" "$WORK_DIR/stderr"; then
-    pass "docker's own error text is surfaced"
-else
-    fail "docker error text was swallowed"
-fi
-assert_calls '\|compose -f ' "$COMPOSE_PROJECT_COUNT" "remaining projects are still torn down after a failure"
-
-# ---------------------------------------------------------------------------
-start_case "a container this repo owns that refuses removal fails the cleanup"
-run_script 1 CI=true FAKE_DOCKER_FAIL_RM=cid-normal
-if grep -q "docker rm -f FAILED for containers matching /\^go-xkms-" "$WORK_DIR/stderr"; then
-    pass "the surviving project-owned container is reported"
-else
-    fail "surviving project-owned container not reported: $(tr '\n' ' ' < "$WORK_DIR/stderr")"
-fi
-if grep -q "cannot remove cid-normal" "$WORK_DIR/stderr"; then
-    pass "docker's own error text is surfaced"
-else
-    fail "docker error text was swallowed"
+    pass "no prune outside CI"
 fi
 
-# ---------------------------------------------------------------------------
-start_case "a failed stop that rm -f recovers is reported but not fatal"
-run_script 0 CI=true FAKE_DOCKER_FAIL_STOP=cid-normal
-if grep -q "docker stop failed for containers matching /\^go-xkms-" "$WORK_DIR/stderr"; then
-    pass "the failed stop is reported"
+# --------------------------------------------------------------------------
+start_case "the three deliberately-untouched projects stay untouched"
+# devcontainer, the root dev stack and the emulators stack are owned by the
+# targets that start them (make devcontainer-clean / compose-clean /
+# emulator-stop). `make integration-test` runs this script first, so tearing
+# the devcontainer down here would kill a developer's shell mid-suite.
+run_script 0 COMPOSE_RUN_ID=run42
+for owned_elsewhere in ".devcontainer/docker-compose.yml" "docker-compose.emulators.yml"; do
+    if grep -q -- "$owned_elsewhere" "$CALL_LOG"; then
+        fail "tore down $owned_elsewhere, which another target owns"
+    else
+        pass "leaves $owned_elsewhere alone"
+    fi
+done
+# Stated positively, which is the only form that cannot pass vacuously: every
+# compose file the script touches must live under one of the two integration
+# trees. That covers the root dev stack (docker-compose.yml at the repo root)
+# without having to enumerate what to exclude.
+stray=0
+while read -r line; do
+    case "$line" in compose\ *) ;; *) continue ;; esac
+    # shellcheck disable=SC2086
+    set -- $line
+    while [ $# -gt 0 ]; do
+        if [ "$1" = "-f" ]; then
+            case "$2" in
+                */test/integration/*|*/xkey/test/integration/*) ;;
+                *) echo "      outside the integration trees: $2" >&2; stray=1 ;;
+            esac
+        fi
+        shift
+    done
+done < "$CALL_LOG"
+if [ "$stray" -eq 0 ]; then
+    pass "every compose file touched is under an integration tree"
 else
-    fail "failed stop was not reported: $(tr '\n' ' ' < "$WORK_DIR/stderr")"
+    fail "tore down a compose stack outside the integration trees"
 fi
 
-# ---------------------------------------------------------------------------
-start_case "fixed-name containers this repo owns also fail closed"
-run_script 1 CI=true FAKE_DOCKER_FAIL_RM=cid-integration
-if grep -q "docker rm -f FAILED for containers matching /\^xkms-integration-" "$WORK_DIR/stderr"; then
-    pass "surviving xkms-integration-* container fails the cleanup"
-else
-    fail "xkms-integration-* removal failure not reported: $(tr '\n' ' ' < "$WORK_DIR/stderr")"
-fi
+# --------------------------------------------------------------------------
+start_case "lane naming matches the Makefile's \$(call compose,<lane>)"
+# A lane torn down under the wrong project name is simply not torn down, and
+# the leak is silent. These three shapes are the ones that can drift.
+run_script 0 COMPOSE_RUN_ID=run42
+check_lane() {
+    if grep -q -- "-p go-xkms-run42-$1 " "$CALL_LOG"; then
+        pass "lane '$1'"
+    else
+        fail "lane '$1' was not torn down under its expected project name"
+    fi
+}
+check_lane "vault"              # flat lane
+check_lane "tpm2-idevid"        # nested lane, segments joined with '-'
+check_lane "xkey-oidc"          # xkey module lane, prefixed
 
-run_script 1 CI=true FAKE_DOCKER_FAIL_RM=cid-protocol
-if grep -q "docker rm -f FAILED for containers matching /\^xkms-test-" "$WORK_DIR/stderr"; then
-    pass "surviving xkms-test-* container fails the cleanup"
-else
-    fail "xkms-test-* removal failure not reported: $(tr '\n' ' ' < "$WORK_DIR/stderr")"
-fi
-
-# ---------------------------------------------------------------------------
-start_case "fixed-name groups are matched exactly, not by substring"
-run_script 0 CI=true
-assert_calls '\|ps -aq --filter name=\^xkms-integration-\(server\|swtpm\|softhsm\|tests\)\$' 1 \
-    "xkms-integration-* selected by an anchored exact-name filter"
-assert_calls '\|ps -aq --filter name=\^xkms-test-\(unix\|rest\|grpc\|quic\|mcp\|frost\|parity\)\$' 1 \
-    "xkms-test-* selected by an anchored exact-name filter"
-assert_no_calls '\|kill ' "no blind docker kill over names that may not exist"
-
-# ---------------------------------------------------------------------------
-start_case "the broad-scope port sweep stays best-effort"
-run_script 0 XKMS_CLEAN_SCOPE=broad FAKE_DOCKER_FAIL_RM=cid-port
-assert_calls '\|rm -f cid-port' 7 "port sweep still attempted"
-pass "a foreign container surviving the port sweep is not fatal"
-
-# ---------------------------------------------------------------------------
-start_case "loose broad-scope sweeps stay best-effort"
-run_script 0 XKMS_CLEAN_SCOPE=broad FAKE_DOCKER_FAIL_RM=cid-loose
-assert_calls '\|rm -f cid-loose' 7 "loose sweeps still attempted"
-pass "a container this repo does not own surviving removal is not fatal"
-
-# ---------------------------------------------------------------------------
+# --------------------------------------------------------------------------
 if [ "$FAILURES" -eq 0 ]; then
-    echo "clean-test-containers.sh: all checks passed"
+    echo "PASS: clean-test-containers.sh stays inside its run"
     exit 0
 fi
-
-echo "clean-test-containers.sh: $FAILURES check(s) failed" >&2
+echo "FAILED: $FAILURES assertion(s)" >&2
 exit 1

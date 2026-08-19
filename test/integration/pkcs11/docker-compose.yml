@@ -16,10 +16,6 @@ services:
 volumes:
   softhsm-data:
 
-networks:
-  default:
-    name: xkms-pkcs11-test
-
 # Staged by `make stage-gomodauth` (dependency-resolution.md §6) into the
 # gitignored .devcontainer/gomodauth.env; empty when no Gitea credentials are
 # available, in which case the Dockerfile's optional secret mount falls back

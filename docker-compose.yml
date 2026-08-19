@@ -4,11 +4,10 @@ services:
     build:
       context: test/docker/swtpm
       dockerfile: Dockerfile
-    image: go-xkms-swtpm:latest
-    container_name: go-xkms-swtpm
+    image: go-xkms-swtpm:${XKMS_IMAGE_TAG:-latest}
     ports:
-      - "2321:2321"  # TPM command port
-      - "2322:2322"  # TPM control port
+      - "0:2321"  # TPM command port
+      - "0:2322"  # TPM control port
     volumes:
       - swtpm-data:/var/lib/swtpm/tpmstate
     healthcheck:
@@ -24,8 +23,7 @@ services:
     build:
       context: test/docker/softhsm
       dockerfile: Dockerfile
-    image: go-xkms-softhsm:latest
-    container_name: go-xkms-softhsm
+    image: go-xkms-softhsm:${XKMS_IMAGE_TAG:-latest}
     volumes:
       - softhsm-tokens:/tokens
     environment:
@@ -44,8 +42,7 @@ services:
     build:
       context: .
       dockerfile: Dockerfile
-    image: go-xkms-test:latest
-    container_name: go-xkms-integration
+    image: go-xkms-test:${XKMS_IMAGE_TAG:-latest}
     depends_on:
       swtpm:
         condition: service_healthy
@@ -79,8 +76,7 @@ services:
     build:
       context: .
       dockerfile: Dockerfile
-    image: go-xkms-test:latest
-    container_name: go-xkms-unit
+    image: go-xkms-test:${XKMS_IMAGE_TAG:-latest}
     volumes:
       - .:/workspace:cached
     environment:
@@ -94,8 +90,7 @@ services:
     build:
       context: .
       dockerfile: Dockerfile
-    image: go-xkms-test:latest
-    container_name: go-xkms-dev
+    image: go-xkms-test:${XKMS_IMAGE_TAG:-latest}
     depends_on:
       swtpm:
         condition: service_healthy

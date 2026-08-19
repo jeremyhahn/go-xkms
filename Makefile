@@ -157,11 +157,20 @@ SHARED_LIB_LINK := $(LIB_DIR)/libxkms.so
 CGO_SOURCE := ./cmd/cgo
 
 # Docker configuration
-DOCKER_IMAGE := $(PROJECT_NAME):latest
-DOCKER_INTEGRATION_IMAGE := $(PROJECT_NAME)-integration:latest
+#
+# Tagged with $(IMAGE_TAG), not a literal `latest`, for the same reason the
+# compose files are: an image tag is daemon-global. `builder-image` and
+# `docker-build` each build a tag and then immediately run or consume it, so
+# a second job retagging in that window makes the first build or test against
+# the wrong image. IMAGE_TAG is `latest` off CI, so local names do not change.
+#
+# Recursive (=), not simple (:=): IMAGE_TAG is defined further down with the
+# rest of the namespacing, and := would expand it here as empty.
+DOCKER_IMAGE = $(PROJECT_NAME):$(IMAGE_TAG)
+DOCKER_INTEGRATION_IMAGE = $(PROJECT_NAME)-integration:$(IMAGE_TAG)
 DOCKER_CONTAINER := $(PROJECT_NAME)-container
-BUILDER_IMAGE := $(PROJECT_NAME)-builder:latest
-XKEY_BUILDER_IMAGE := $(PROJECT_NAME)-xkey-builder:latest
+BUILDER_IMAGE = $(PROJECT_NAME)-builder:$(IMAGE_TAG)
+XKEY_BUILDER_IMAGE = $(PROJECT_NAME)-xkey-builder:$(IMAGE_TAG)
 
 # Cross-repo first-party modules resolve from Gitea tags inside containers
 # (dependency-resolution.md §6) — no workspace, no sibling mounts. The
@@ -172,6 +181,88 @@ GITEA_GO_TOKEN ?= $(shell sed -n 's/^GITEA_GO_TOKEN=//p' .devcontainer/.env 2>/d
 # Exported so docker compose invocations interpolate ${GITEA_GO_TOKEN} in
 # their environment blocks regardless of which directory compose runs from.
 export GITEA_GO_TOKEN
+
+# ==============================================================================
+# Compose project namespacing
+# ==============================================================================
+#
+# A docker compose project name is HOST-GLOBAL: it is the prefix for every
+# container, network and volume the stack creates. Every stack in this repo
+# used to take that name from a constant -- `go-xkms` for the devcontainer,
+# the directory basename (`storage`, `tpm2`, ...) for the per-lane suites --
+# so two CI jobs on the same runner host competed for the identical set of
+# names and the loser died before a single test ran:
+#
+#   Container xkms-dev-swtpm  Error response from daemon: Conflict. The
+#   container name "/xkms-dev-swtpm" is already in use by container "70d3..."
+#
+# A crashed or cancelled job made it permanent: its stack was never torn down,
+# so the orphans blocked every later run on that host until someone cleared
+# them by hand.
+#
+# COMPOSE_NS namespaces the project per job. GITHUB_RUN_ID is unique per CI
+# run and is set by Gitea Actions as well as GitHub Actions; it falls back to
+# `local` off CI so a developer's stack (and its build/module caches) stays
+# stable across invocations instead of leaking a new project every time.
+#
+# $(call compose,<lane>) is the ONLY way this Makefile may invoke compose. The
+# lane suffix reproduces the per-suite isolation the directory basename used
+# to provide -- concurrent lanes must not share a project, or `down` in one
+# tears the network out from under another.
+#
+# Namespacing the project is necessary but not sufficient: an explicit
+# `container_name:`, `networks: name:` or a fixed host port binding in a
+# compose file is absolute and overrides the project prefix entirely. The
+# harness compose files therefore declare none of those -- see
+# .devcontainer/docker-compose.yml.
+COMPOSE_RUN_ID ?= $(shell echo "$${GITHUB_RUN_ID:-local}")
+COMPOSE_NS := go-xkms-$(COMPOSE_RUN_ID)
+
+# Both -p and COMPOSE_PROJECT_NAME, deliberately:
+#   -p                    outranks a compose file's top-level `name:` in every
+#                         compose version -- .devcontainer/docker-compose.yml
+#                         pins `name: go-xkms`, and the flag is the only way to
+#                         be certain the per-run namespace wins over it.
+#   COMPOSE_PROJECT_NAME  is inherited by child processes, so a script a recipe
+#                         shells out to lands in the same project instead of
+#                         silently falling back to its directory basename.
+compose = COMPOSE_PROJECT_NAME=$(COMPOSE_NS)-$(1) docker compose -p $(COMPOSE_NS)-$(1)
+
+# An image TAG is daemon-global -- the project namespace does not reach it.
+# `docker build -t go-xkms-integration:latest` on one job retags that name for
+# every job on the host, so two runs building different commits race between
+# `compose build` and `compose run`: the loser's container is created from the
+# other run's image and silently tests the wrong commit. Tagging per run
+# removes the shared name.
+#
+# The tag carries the repository name, not the bare run id. A run id is unique
+# within a repository, not on a Docker host: two repositories building on the
+# same runner can both be at run 143, and the fixture images this repo builds
+# from a sibling working tree (go-quicbaas-server) carry a name that sibling
+# builds too. `go-xkms-<run id>` is unambiguous on the host, which is what
+# makes tag-matched cleanup below safe.
+#
+# Empty off CI, where each compose file's own default applies
+# (`${XKMS_IMAGE_TAG:-latest}`, `:-dev`, `:-sdk-test`) -- so a developer's
+# image names and layer cache are exactly what they were.
+ifneq ($(COMPOSE_RUN_ID),local)
+XKMS_IMAGE_TAG ?= $(COMPOSE_NS)
+endif
+export XKMS_IMAGE_TAG
+
+# The image repositories this harness builds, as `docker images --filter
+# reference=` patterns. clean-run-images removes a reference only when its
+# repository is on this list: a tag is something any build on the host may
+# carry, so it is not on its own proof of ownership.
+XKMS_IMAGE_REPOS := 'go-xkms-*' 'go-xkms/*' 'go-quicbaas-server'
+
+# The effective tag for images this Makefile builds directly (as opposed to
+# through compose, where each file spells its own default inline).
+IMAGE_TAG = $(if $(XKMS_IMAGE_TAG),$(XKMS_IMAGE_TAG),latest)
+
+# The tag the devcontainer stack's xkms-server image carries, mirroring that
+# compose file's `${XKMS_IMAGE_TAG:-dev}` so lookups find what compose built.
+XKMS_SERVER_IMAGE = go-xkms-server:$(if $(XKMS_IMAGE_TAG),$(XKMS_IMAGE_TAG),dev)
 GOMODCACHE_HOST := $(shell go env GOMODCACHE 2>/dev/null || echo $(HOME)/go/pkg/mod)
 GITEA_MODULE_ENV := -e GOWORK=off \
                     -e GOPRIVATE='github.com/jeremyhahn/*' \
@@ -197,10 +288,10 @@ PKCS11_SO_PIN ?= 12345678
 # Unix socket (gRPC over UDS)
 XKMS_UNIX_SOCKET ?= /var/run/xkms/xkms.sock
 # Path to this repo inside go-xkms's OWN devcontainer (.devcontainer/, compose
-# project "go-xkms", container go-xkms-devcontainer), which bind-mounts the repo
-# at /workspace. Every in-container path below is derived from this variable, so
-# pointing it elsewhere is all that is needed to drive a container that mounts
-# go-xkms somewhere other than /workspace.
+# project $(COMPOSE_NS)-devcontainer, service `devcontainer`), which bind-mounts
+# the repo at /workspace. Every in-container path below is derived from this
+# variable, so pointing it elsewhere is all that is needed to drive a container
+# that mounts go-xkms somewhere other than /workspace.
 DEVCONTAINER_REPO ?= /workspace
 # TCP (gRPC over TCP)
 XKMS_GRPC_ADDR ?= localhost:9443
@@ -1310,6 +1401,32 @@ coverage-xkmsctl:
 integration-test: clean-test-containers integration-test-software integration-test-pkcs8 integration-test-pkcs11 integration-test-pkcs11-module-all integration-test-tpm2 integration-test-awskms integration-test-gcpkms integration-test-azurekv integration-test-vault integration-test-storage integration-test-utils integration-test-quantum integration-test-frost integration-test-webauthn integration-test-fido2 integration-test-cli integration-test-api-all integration-test-sdk-go integration-test-bootstrap
 	@echo "$(GREEN)$(BOLD)✓ All integration tests complete!$(RESET)"
 
+.PHONY: clean-run-images
+## clean-run-images: Remove the images this CI run tagged (no-op for local builds)
+# `docker image prune -f` only reaps UNTAGGED images, so the per-run tags
+# (XKMS_IMAGE_TAG) would otherwise pile up a full set of images on the runner
+# host every single run. Unlike the host-wide `docker image prune -a` this
+# replaces, the selection is bounded twice: the repository must be one this
+# harness builds (XKMS_IMAGE_REPOS) and the tag must be this run's. Either
+# bound alone is not ownership -- an unrelated repository on the host can hold
+# any tag, including a numeric run id that matches ours, and can build an
+# image name that matches one of ours under a different tag.
+#
+# Off CI, XKMS_IMAGE_TAG is empty and the images carry the shared local tags
+# (:latest, :dev). Removing those would throw away a developer's build cache,
+# so this deliberately does nothing.
+clean-run-images:
+	@if [ -z "$(XKMS_IMAGE_TAG)" ]; then \
+		echo "$(CYAN)→ Local image tags; nothing to remove$(RESET)"; \
+	else \
+		refs=""; \
+		for repo in $(XKMS_IMAGE_REPOS); do \
+			refs="$$refs $$(docker images --filter=reference="$$repo:$(XKMS_IMAGE_TAG)" --format '{{.Repository}}:{{.Tag}}' 2>/dev/null || true)"; \
+		done; \
+		if [ -n "$$(echo $$refs)" ]; then docker rmi -f $$refs >/dev/null 2>&1 || true; fi; \
+		echo "$(GREEN)✓ Removed this run's images tagged :$(XKMS_IMAGE_TAG)$(RESET)"; \
+	fi
+
 .PHONY: clean-test-containers
 ## clean-test-containers: Clean up Docker containers from previous test runs
 # Failures are NOT swallowed (go-xkms#2): the script exits non-zero when a
@@ -1319,8 +1436,15 @@ integration-test: clean-test-containers integration-test-software integration-te
 # when it fails.
 clean-test-containers:
 	@echo "$(CYAN)→ Cleaning up test containers...$(RESET)"
+	@# COMPOSE_RUN_ID is passed explicitly so the script cannot compute a
+	@# different project name than the Makefile did and silently clean nothing.
+	@#
+	@# Output goes to a log and a failure FAILS this target (issue #2's shape,
+	@# kept over issue #8's `>/dev/null 2>&1 || true`). Cleanup runs BEFORE the
+	@# suite, so swallowing its exit code means the suite then runs against
+	@# whatever the previous run left behind and reports that as a test result.
 	@mkdir -p $(BUILD_DIR)
-	@if bash test/scripts/clean-test-containers.sh >$(BUILD_DIR)/clean-test-containers.log 2>&1; then \
+	@if COMPOSE_RUN_ID=$(COMPOSE_RUN_ID) bash test/scripts/clean-test-containers.sh >$(BUILD_DIR)/clean-test-containers.log 2>&1; then \
 		echo "$(GREEN)✓ Test containers cleaned$(RESET)"; \
 	else \
 		echo "$(RED)✗ Test container cleanup failed:$(RESET)"; \
@@ -1341,16 +1465,18 @@ integration-test-storage: integration-test-storage-file integration-test-storage
 ## integration-test-storage-file: Run file storage integration tests
 integration-test-storage-file:
 	@echo "$(CYAN)$(BOLD)→ Running file storage integration tests...$(RESET)"
-	@cd test/integration/storage && docker compose down -v >/dev/null 2>&1 || true
-	@cd test/integration/storage && (docker compose run --rm test-file; EXIT_CODE=$$?; docker compose down -v; exit $$EXIT_CODE)
+	@cd test/integration/storage && $(call compose,storage) down -v >/dev/null 2>&1 || true
+	@cd test/integration/storage && trap '$(call compose,storage) down -v --remove-orphans >/dev/null 2>&1' EXIT INT TERM && \
+		$(call compose,storage) run --rm test-file
 	@echo "$(GREEN)✓ File storage integration tests complete$(RESET)"
 
 .PHONY: integration-test-storage-memory
 ## integration-test-storage-memory: Run memory storage integration tests
 integration-test-storage-memory:
 	@echo "$(CYAN)$(BOLD)→ Running memory storage integration tests...$(RESET)"
-	@cd test/integration/storage && docker compose down -v >/dev/null 2>&1 || true
-	@cd test/integration/storage && (docker compose run --rm test-memory; EXIT_CODE=$$?; docker compose down -v; exit $$EXIT_CODE)
+	@cd test/integration/storage && $(call compose,storage) down -v >/dev/null 2>&1 || true
+	@cd test/integration/storage && trap '$(call compose,storage) down -v --remove-orphans >/dev/null 2>&1' EXIT INT TERM && \
+		$(call compose,storage) run --rm test-memory
 	@echo "$(GREEN)✓ Memory storage integration tests complete$(RESET)"
 
 .PHONY: integration-test-storage-hardware
@@ -1368,20 +1494,22 @@ integration-test-yubikey:
 ## integration-test-storage-hardware-pkcs11: Run PKCS#11 hardware storage tests
 integration-test-storage-hardware-pkcs11:
 	@echo "$(CYAN)$(BOLD)→ Running PKCS#11 hardware storage tests...$(RESET)"
-	@cd test/integration/storage && docker compose down -v >/dev/null 2>&1 || true
-	@cd test/integration/storage && docker compose up -d softhsm-init
+	@cd test/integration/storage && $(call compose,storage) down -v >/dev/null 2>&1 || true
+	@cd test/integration/storage && $(call compose,storage) up -d softhsm-init
 	@sleep 2
-	@cd test/integration/storage && (docker compose run --rm test-hardware-pkcs11; EXIT_CODE=$$?; docker compose down -v; exit $$EXIT_CODE)
+	@cd test/integration/storage && trap '$(call compose,storage) down -v --remove-orphans >/dev/null 2>&1' EXIT INT TERM && \
+		$(call compose,storage) run --rm test-hardware-pkcs11
 	@echo "$(GREEN)✓ PKCS#11 hardware storage tests complete$(RESET)"
 
 .PHONY: integration-test-storage-hardware-tpm2
 ## integration-test-storage-hardware-tpm2: Run TPM2 hardware storage tests
 integration-test-storage-hardware-tpm2:
 	@echo "$(CYAN)$(BOLD)→ Running TPM2 hardware storage tests...$(RESET)"
-	@cd test/integration/storage && docker compose down -v >/dev/null 2>&1 || true
-	@cd test/integration/storage && docker compose up -d tpm-simulator
+	@cd test/integration/storage && $(call compose,storage) down -v >/dev/null 2>&1 || true
+	@cd test/integration/storage && $(call compose,storage) up -d tpm-simulator
 	@sleep 3
-	@cd test/integration/storage && (docker compose run --rm test-hardware-tpm2; EXIT_CODE=$$?; docker compose down -v; exit $$EXIT_CODE)
+	@cd test/integration/storage && trap '$(call compose,storage) down -v --remove-orphans >/dev/null 2>&1' EXIT INT TERM && \
+		$(call compose,storage) run --rm test-hardware-tpm2
 	@echo "$(GREEN)✓ TPM2 hardware storage tests complete$(RESET)"
 
 # ==============================================================================
@@ -1447,7 +1575,7 @@ coverage-hardware-storage:
 # Cloud Service Emulator Management
 # ==============================================================================
 
-EMULATOR_COMPOSE := docker compose -f docker-compose.emulators.yml
+EMULATOR_COMPOSE := $(call compose,emulators) -f docker-compose.emulators.yml
 
 .PHONY: emulator-start
 ## emulator-start: Start cloud service emulators
@@ -1458,19 +1586,16 @@ emulator-start:
 
 .PHONY: emulator-stop
 ## emulator-stop: Stop and remove emulator containers
+# `compose down` on the two projects this target owns, and nothing more.
+#
+# This used to follow up with `docker stop/rm $(docker ps -q --filter name=X)`
+# for floci/xkms/azure/gcp/vault. A --filter name= is a SUBSTRING match across
+# every container on the host, so "name=xkms" matched -- and killed -- every
+# container of every other job on a shared runner, this suite's included.
+# `down` scoped to this run's project removes exactly what this run created.
 emulator-stop:
-	@$(EMULATOR_COMPOSE) down -v 2>/dev/null || true
-	@cd $(API_TEST_DIR) && docker compose down -v 2>/dev/null || true
-	@docker stop $$(docker ps -q --filter "name=floci") 2>/dev/null || true
-	@docker stop $$(docker ps -q --filter "name=xkms") 2>/dev/null || true
-	@docker stop $$(docker ps -q --filter "name=azure") 2>/dev/null || true
-	@docker stop $$(docker ps -q --filter "name=gcp") 2>/dev/null || true
-	@docker stop $$(docker ps -q --filter "name=vault") 2>/dev/null || true
-	@docker rm $$(docker ps -aq --filter "name=floci") 2>/dev/null || true
-	@docker rm $$(docker ps -aq --filter "name=xkms") 2>/dev/null || true
-	@docker rm $$(docker ps -aq --filter "name=azure") 2>/dev/null || true
-	@docker rm $$(docker ps -aq --filter "name=gcp") 2>/dev/null || true
-	@docker rm $$(docker ps -aq --filter "name=vault") 2>/dev/null || true
+	@$(EMULATOR_COMPOSE) down -v --remove-orphans 2>/dev/null || true
+	@cd $(API_TEST_DIR) && $(call compose,api) down -v --remove-orphans 2>/dev/null || true
 
 .PHONY: emulator-restart
 ## emulator-restart: Restart emulators
@@ -1513,8 +1638,9 @@ integration-test-symmetric:
 ## integration-test-pkcs8: Run PKCS8 asymmetric backend integration tests
 integration-test-pkcs8:
 	@echo "$(CYAN)$(BOLD)→ Running PKCS8 integration tests...$(RESET)"
-	@cd test/integration/pkcs8 && docker compose down -v >/dev/null 2>&1 || true
-	@cd test/integration/pkcs8 && (docker compose run --build --rm test; EXIT_CODE=$$?; docker compose down -v; exit $$EXIT_CODE)
+	@cd test/integration/pkcs8 && $(call compose,pkcs8) down -v >/dev/null 2>&1 || true
+	@cd test/integration/pkcs8 && trap '$(call compose,pkcs8) down -v --remove-orphans >/dev/null 2>&1' EXIT INT TERM && \
+		$(call compose,pkcs8) run --build --rm test
 	@echo "$(GREEN)✓ PKCS8 integration tests complete$(RESET)"
 
 .PHONY: integration-test-pkcs11-backend integration-test-pkcs11
@@ -1527,8 +1653,9 @@ integration-test-pkcs8:
 integration-test-pkcs11: integration-test-pkcs11-backend
 integration-test-pkcs11-backend:
 	@echo "$(CYAN)$(BOLD)→ Running PKCS11/SoftHSM integration tests...$(RESET)"
-	@cd test/integration/pkcs11 && docker compose down -v >/dev/null 2>&1 || true
-	@cd test/integration/pkcs11 && (docker compose run --build --rm test; EXIT_CODE=$$?; docker compose down -v; exit $$EXIT_CODE)
+	@cd test/integration/pkcs11 && $(call compose,pkcs11) down -v >/dev/null 2>&1 || true
+	@cd test/integration/pkcs11 && trap '$(call compose,pkcs11) down -v --remove-orphans >/dev/null 2>&1' EXIT INT TERM && \
+		$(call compose,pkcs11) run --build --rm test
 	@echo "$(GREEN)✓ PKCS11 integration tests complete$(RESET)"
 
 .PHONY: integration-test-pkcs11-module
@@ -1566,12 +1693,17 @@ integration-test-logins-quicbaas:
 	$(DOCKER_COMPOSE) --profile quicbaas up -d --build --wait quicbaas-server
 	@echo "$(CYAN)$(BOLD)→ Publishing quicbaasd admin credential to build/quicbaas-fixture...$(RESET)"
 	@mkdir -p build/quicbaas-fixture
-	@ok=""; for i in $$(seq 1 30); do \
-		if docker cp xkms-dev-quicbaas:/data/admin/admin.crt build/quicbaas-fixture/admin.crt 2>/dev/null && \
-		   docker cp xkms-dev-quicbaas:/data/admin/admin.key build/quicbaas-fixture/admin.key 2>/dev/null && \
-		   docker cp xkms-dev-quicbaas:/data/certs/ca-chain.crt build/quicbaas-fixture/ca.crt 2>/dev/null; then ok=1; break; fi; \
+	@# Resolve the container by compose SERVICE name, never by a fixed
+	@# container_name: the project is namespaced per run, so this container is
+	@# `<project>-quicbaas-server-1` and no two jobs can address each other's.
+	@cid=$$($(DOCKER_COMPOSE) --profile quicbaas ps -q quicbaas-server); \
+	[ -n "$$cid" ] || { echo "$(RED)✗ quicbaas-server is not running$(RESET)"; exit 1; }; \
+	ok=""; for i in $$(seq 1 30); do \
+		if docker cp $$cid:/data/admin/admin.crt build/quicbaas-fixture/admin.crt 2>/dev/null && \
+		   docker cp $$cid:/data/admin/admin.key build/quicbaas-fixture/admin.key 2>/dev/null && \
+		   docker cp $$cid:/data/certs/ca-chain.crt build/quicbaas-fixture/ca.crt 2>/dev/null; then ok=1; break; fi; \
 		sleep 2; \
-	done; [ -n "$$ok" ] || { echo "$(RED)✗ quicbaasd first boot never published /data/admin + /data/certs$(RESET)"; docker logs --tail 40 xkms-dev-quicbaas; exit 1; }
+	done; [ -n "$$ok" ] || { echo "$(RED)✗ quicbaasd first boot never published /data/admin + /data/certs$(RESET)"; docker logs --tail 40 $$cid; exit 1; }
 	@chmod 0600 build/quicbaas-fixture/admin.key
 	$(call run_with_server,mkdir -p build/bin /tmp/quicbaas && cp $(DEVCONTAINER_REPO)/build/quicbaas-fixture/ca.crt /tmp/quicbaas/ca.crt && cp $(DEVCONTAINER_REPO)/build/quicbaas-fixture/admin.crt /tmp/quicbaas/admin.crt && cp $(DEVCONTAINER_REPO)/build/quicbaas-fixture/admin.key /tmp/quicbaas/admin.key && chmod 0600 /tmp/quicbaas/admin.key && bash .devcontainer/scripts/wait-quicbaas-login-planes.sh && cd xkey && /usr/local/go/bin/go build -buildvcs=false -tags='codec_json' -o ../build/bin/xkey ./cmd/xkey && cd .. && XKEY_CLI_BIN=$(DEVCONTAINER_REPO)/build/bin/xkey QUICBAAS_REST_URL=https://quicbaas-server:8443 sudo -E /usr/local/go/bin/go test -v -tags='integration$(comma)logins' ./test/integration/logins/... -timeout 15m,integration-test-logins-quicbaas)
 
@@ -1826,22 +1958,24 @@ integration-test-pkcs11-fips-enforcement:
 ## integration-test-tpm2: Run TPM2 simulator integration tests
 integration-test-tpm2:
 	@echo "$(CYAN)$(BOLD)→ Running TPM2 simulator integration tests...$(RESET)"
-	@cd test/integration/tpm2 && docker compose down -v >/dev/null 2>&1 || true
-	@cd test/integration/tpm2 && docker compose up -d tpm-simulator
+	@cd test/integration/tpm2 && $(call compose,tpm2) down -v >/dev/null 2>&1 || true
+	@cd test/integration/tpm2 && $(call compose,tpm2) up -d tpm-simulator
 	@echo "$(CYAN)  Waiting for TPM simulator to be ready...$(RESET)"
 	@sleep 3
-	@cd test/integration/tpm2 && (docker compose run --build --rm -e TPM2_SIMULATOR_HOST=tpm-simulator -e TPM2_SIMULATOR_PORT=2421 test; EXIT_CODE=$$?; docker compose down -v; exit $$EXIT_CODE)
+	@cd test/integration/tpm2 && trap '$(call compose,tpm2) down -v --remove-orphans >/dev/null 2>&1' EXIT INT TERM && \
+		$(call compose,tpm2) run --build --rm -e TPM2_SIMULATOR_HOST=tpm-simulator -e TPM2_SIMULATOR_PORT=2421 test
 	@echo "$(GREEN)✓ TPM2 integration tests complete$(RESET)"
 
 .PHONY: test-tpm2-encryption
 ## test-tpm2-encryption: Run TPM2 session encryption verification tests with packet capture
 test-tpm2-encryption:
 	@echo "$(CYAN)$(BOLD)→ Running TPM2 session encryption verification tests...$(RESET)"
-	@cd test/integration/tpm2 && docker compose down -v >/dev/null 2>&1 || true
-	@cd test/integration/tpm2 && docker compose up -d tpm-simulator
+	@cd test/integration/tpm2 && $(call compose,tpm2) down -v >/dev/null 2>&1 || true
+	@cd test/integration/tpm2 && $(call compose,tpm2) up -d tpm-simulator
 	@echo "$(CYAN)  Waiting for TPM simulator to be ready...$(RESET)"
 	@sleep 3
-	@cd test/integration/tpm2 && (docker compose run --rm -e TPM2_SIMULATOR_HOST=tpm-simulator -e TPM2_SIMULATOR_PORT=2421 test sh /app/test/integration/tpm2/run_capture_tests.sh; EXIT_CODE=$$?; docker compose down -v; exit $$EXIT_CODE)
+	@cd test/integration/tpm2 && trap '$(call compose,tpm2) down -v --remove-orphans >/dev/null 2>&1' EXIT INT TERM && \
+		$(call compose,tpm2) run --rm -e TPM2_SIMULATOR_HOST=tpm-simulator -e TPM2_SIMULATOR_PORT=2421 test sh /app/test/integration/tpm2/run_capture_tests.sh
 	@echo "$(GREEN)✓ TPM2 encryption verification tests complete$(RESET)"
 
 .PHONY: test-tpm2-encryption-local
@@ -1862,35 +1996,39 @@ test-tpm2-encryption-local:
 ## integration-test-awskms: Run AWS KMS/Floci integration tests
 integration-test-awskms:
 	@echo "$(CYAN)$(BOLD)→ Running AWS KMS/Floci integration tests...$(RESET)"
-	@cd test/integration/awskms && docker compose down -v >/dev/null 2>&1 || true
-	@cd test/integration/awskms && docker compose up -d floci
-	@cd test/integration/awskms && (docker compose run --build --rm test; EXIT_CODE=$$?; docker compose down -v; exit $$EXIT_CODE)
+	@cd test/integration/awskms && $(call compose,awskms) down -v >/dev/null 2>&1 || true
+	@cd test/integration/awskms && $(call compose,awskms) up -d floci
+	@cd test/integration/awskms && trap '$(call compose,awskms) down -v --remove-orphans >/dev/null 2>&1' EXIT INT TERM && \
+		$(call compose,awskms) run --build --rm test
 	@echo "$(GREEN)✓ AWS KMS integration tests complete$(RESET)"
 
 .PHONY: integration-test-gcpkms
 ## integration-test-gcpkms: Run GCP KMS integration tests (Floci emulator + mock client)
 integration-test-gcpkms:
 	@echo "$(CYAN)$(BOLD)→ Running GCP KMS integration tests (Floci emulator + mock client)...$(RESET)"
-	@cd test/integration/gcpkms && docker compose down -v >/dev/null 2>&1 || true
-	@cd test/integration/gcpkms && (docker compose run --build --rm test; EXIT_CODE=$$?; docker compose down -v; exit $$EXIT_CODE)
+	@cd test/integration/gcpkms && $(call compose,gcpkms) down -v >/dev/null 2>&1 || true
+	@cd test/integration/gcpkms && trap '$(call compose,gcpkms) down -v --remove-orphans >/dev/null 2>&1' EXIT INT TERM && \
+		$(call compose,gcpkms) run --build --rm test
 	@echo "$(GREEN)✓ GCP KMS integration tests complete$(RESET)"
 
 .PHONY: integration-test-azurekv
 ## integration-test-azurekv: Run Azure Key Vault integration tests with mock client
 integration-test-azurekv:
 	@echo "$(CYAN)$(BOLD)→ Running Azure Key Vault integration tests...$(RESET)"
-	@cd test/integration/azurekv && docker compose down -v >/dev/null 2>&1 || true
-	@cd test/integration/azurekv && (docker compose run --build --rm test; EXIT_CODE=$$?; docker compose down -v; exit $$EXIT_CODE)
+	@cd test/integration/azurekv && $(call compose,azurekv) down -v >/dev/null 2>&1 || true
+	@cd test/integration/azurekv && trap '$(call compose,azurekv) down -v --remove-orphans >/dev/null 2>&1' EXIT INT TERM && \
+		$(call compose,azurekv) run --build --rm test
 	@echo "$(GREEN)✓ Azure Key Vault integration tests complete$(RESET)"
 
 .PHONY: integration-test-vault
 ## integration-test-vault: Run HashiCorp Vault integration tests
 integration-test-vault:
 	@echo "$(CYAN)$(BOLD)→ Running HashiCorp Vault integration tests...$(RESET)"
-	@cd test/integration/vault && docker compose down -v >/dev/null 2>&1 || true
-	@cd test/integration/vault && docker compose up -d vault
-	@cd test/integration/vault && docker compose build test
-	@cd test/integration/vault && (docker compose run --build --rm test; EXIT_CODE=$$?; docker compose down -v; exit $$EXIT_CODE)
+	@cd test/integration/vault && $(call compose,vault) down -v >/dev/null 2>&1 || true
+	@cd test/integration/vault && $(call compose,vault) up -d vault
+	@cd test/integration/vault && $(call compose,vault) build test
+	@cd test/integration/vault && trap '$(call compose,vault) down -v --remove-orphans >/dev/null 2>&1' EXIT INT TERM && \
+		$(call compose,vault) run --build --rm test
 	@echo "$(GREEN)✓ Vault integration tests complete$(RESET)"
 
 .PHONY: integration-test-quantum
@@ -1898,9 +2036,10 @@ integration-test-vault:
 integration-test-quantum:
 	@echo "$(CYAN)$(BOLD)→ Running quantum-safe cryptography integration tests...$(RESET)"
 	@echo "$(YELLOW)Note: Testing ML-DSA signatures and ML-KEM key encapsulation$(RESET)"
-	@cd test/integration/quantum && docker compose down -v >/dev/null 2>&1 || true
-	@cd test/integration/quantum && docker compose build --no-cache quantum-test
-	@cd test/integration/quantum && (docker compose run --rm quantum-test; EXIT_CODE=$$?; docker compose down -v; exit $$EXIT_CODE)
+	@cd test/integration/quantum && $(call compose,quantum) down -v >/dev/null 2>&1 || true
+	@cd test/integration/quantum && $(call compose,quantum) build --no-cache quantum-test
+	@cd test/integration/quantum && trap '$(call compose,quantum) down -v --remove-orphans >/dev/null 2>&1' EXIT INT TERM && \
+		$(call compose,quantum) run --rm quantum-test
 	@echo "$(GREEN)✓ Quantum-safe integration tests complete$(RESET)"
 
 .PHONY: test-frost
@@ -1921,9 +2060,10 @@ integration-test-frost:
 ifeq ($(WITH_FROST),1)
 	@echo "$(CYAN)$(BOLD)→ Running FROST threshold signature integration tests...$(RESET)"
 	@echo "$(YELLOW)Note: Testing FROST key generation, signing rounds, and CLI commands$(RESET)"
-	@cd test/integration/frost && docker compose down -v >/dev/null 2>&1 || true
-	@cd test/integration/frost && docker compose build frost-test
-	@cd test/integration/frost && (docker compose run --rm frost-test; EXIT_CODE=$$?; docker compose down -v; exit $$EXIT_CODE)
+	@cd test/integration/frost && $(call compose,frost) down -v >/dev/null 2>&1 || true
+	@cd test/integration/frost && $(call compose,frost) build frost-test
+	@cd test/integration/frost && trap '$(call compose,frost) down -v --remove-orphans >/dev/null 2>&1' EXIT INT TERM && \
+		$(call compose,frost) run --rm frost-test
 	@echo "$(GREEN)✓ FROST integration tests complete$(RESET)"
 else
 	@echo "$(YELLOW)⚠ Skipping FROST integration tests (WITH_FROST=0)$(RESET)"
@@ -1959,14 +2099,18 @@ comma := ,
 
 # Docker compose command for devcontainer.
 #
-# The compose file pins `name: go-xkms`; without it compose derives the project
-# name from the file's directory (".devcontainer" -> "devcontainer"), which is
-# the same name go-trusted-platform's stack uses. Sharing that namespace made
+# The project name must always be set explicitly. Left to compose it derives
+# from the file's directory (".devcontainer" -> "devcontainer"), which is the
+# same name go-trusted-platform's stack uses: sharing that namespace made
 # `exec devcontainer` attach to the OTHER project's container and made
-# `up -d xkms-server` match nothing at all. Pass the project name explicitly
-# here too so the intent survives even if the file is invoked another way.
-COMPOSE_PROJECT := go-xkms
-DOCKER_COMPOSE := docker compose -p $(COMPOSE_PROJECT) -f .devcontainer/docker-compose.yml
+# `up -d xkms-server` match nothing at all. $(COMPOSE_NS) keeps that
+# separation and adds the per-run namespace on top, so two CI jobs on one
+# runner host no longer share this stack either.
+#
+# COMPOSE_PROJECT is only the name to report to the user; $(call compose,...)
+# is what actually sets it on the command line.
+COMPOSE_PROJECT := $(COMPOSE_NS)-devcontainer
+DOCKER_COMPOSE := $(call compose,devcontainer) -f .devcontainer/docker-compose.yml
 
 # Helper to run command in devcontainer (auto-starts if needed)
 define run_in_devcontainer
@@ -2000,13 +2144,13 @@ define compose_up_xkms_server
 			$(DOCKER_COMPOSE) up -d --build xkms-server; \
 			$(MAKE) --no-print-directory devcontainer-server-wait ;; \
 		*) \
-			if docker image inspect go-xkms-server:dev >/dev/null 2>&1; then \
+			if docker image inspect $(XKMS_SERVER_IMAGE) >/dev/null 2>&1; then \
 				echo "$(CYAN)$(BOLD)→ Starting xkms-server (compose)...$(RESET)"; \
 				$(DOCKER_COMPOSE) up -d --build xkms-server || true; \
 				$(MAKE) --no-print-directory devcontainer-server-wait || \
 					$(DOCKER_COMPOSE) stop xkms-server >/dev/null 2>&1 || true; \
 			else \
-				echo "$(YELLOW)go-xkms-server:dev not built; the devcontainer serves the socket itself.$(RESET)"; \
+				echo "$(YELLOW)$(XKMS_SERVER_IMAGE) not built; the devcontainer serves the socket itself.$(RESET)"; \
 				echo "$(YELLOW)Build it once with: make devcontainer-server-build$(RESET)"; \
 			fi ;; \
 	esac
@@ -2052,12 +2196,21 @@ endef
 devcontainer-up: stage-gomodauth
 	@echo "$(CYAN)$(BOLD)→ Bringing up the go-xkms devcontainer stack...$(RESET)"
 	$(DOCKER_COMPOSE) up -d --build devcontainer
-	@echo "$(GREEN)✓ go-xkms-devcontainer is up (compose project $(COMPOSE_PROJECT))$(RESET)"
+	@echo "$(GREEN)✓ devcontainer is up (compose project $(COMPOSE_PROJECT))$(RESET)"
 
 .PHONY: devcontainer-down
 ## devcontainer-down: Stop go-xkms's devcontainer stack (leaves volumes intact)
 devcontainer-down:
-	$(DOCKER_COMPOSE) down
+	$(DOCKER_COMPOSE) down --remove-orphans
+
+.PHONY: devcontainer-clean
+## devcontainer-clean: Tear down go-xkms's devcontainer stack INCLUDING its volumes
+# What CI runs on the way out. devcontainer-down deliberately keeps the volumes
+# (they hold the go module and build caches a developer wants across restarts),
+# but in CI the project name is unique per run, so those volumes are never
+# reused -- keeping them just leaks a fresh set onto the runner host every run.
+devcontainer-clean:
+	$(DOCKER_COMPOSE) --profile quicbaas down -v --remove-orphans
 
 .PHONY: devcontainer-shell
 ## devcontainer-shell: Open an interactive shell in go-xkms's devcontainer
@@ -2108,10 +2261,15 @@ devcontainer-server-up:
 # AND the socket must accept a connection. Testing only for the socket FILE is
 # not enough - the shared volume keeps the inode after a previous fallback
 # xkmsd exits, so `test -S` reports success against a dead socket.
+#
+# The container is resolved with `compose ps -q`, never by a fixed name: the
+# compose project is namespaced per run, so this lookup can only ever find
+# THIS job's server even when another job's is running beside it.
 devcontainer-server-wait:
 	@echo "$(CYAN)$(BOLD)→ Waiting for xkms-server on $(XKMS_UNIX_SOCKET)...$(RESET)"
 	@for i in $$(seq 1 15); do \
-		if [ "$$(docker inspect -f '{{.State.Running}}' xkms-dev-server 2>/dev/null)" != "true" ]; then \
+		cid=$$($(DOCKER_COMPOSE) ps -q xkms-server 2>/dev/null); \
+		if [ -z "$$cid" ] || [ "$$(docker inspect -f '{{.State.Running}}' $$cid 2>/dev/null)" != "true" ]; then \
 			break; \
 		fi; \
 		if $(DOCKER_COMPOSE) exec -T devcontainer nc -U -z $(XKMS_UNIX_SOCKET) 2>/dev/null; then \
@@ -2167,8 +2325,9 @@ integration-test-xkey-fido2:
 ## Tests use Chrome CDP virtual authenticator to validate full WebAuthn registration + authentication flow
 integration-test-xkey-webauthn:
 	@echo "$(CYAN)$(BOLD)→ Running xkey Playwright WebAuthn integration tests...$(RESET)"
-	@cd xkey/test/integration/webauthn && docker compose down -v >/dev/null 2>&1 || true
-	@cd xkey/test/integration/webauthn && (docker compose run --rm webauthn-test; EXIT_CODE=$$?; docker compose down -v; exit $$EXIT_CODE)
+	@cd xkey/test/integration/webauthn && $(call compose,xkey-webauthn) down -v >/dev/null 2>&1 || true
+	@cd xkey/test/integration/webauthn && trap '$(call compose,xkey-webauthn) down -v --remove-orphans >/dev/null 2>&1' EXIT INT TERM && \
+		$(call compose,xkey-webauthn) run --rm webauthn-test
 	@echo "$(GREEN)✓ xkey Playwright WebAuthn integration tests complete$(RESET)"
 
 .PHONY: integration-test-xkey-backends
@@ -2181,8 +2340,9 @@ integration-test-xkey-backends:
 ## Tests use a real ORY Hydra OIDC server to validate provider discovery, PKCE, and token flows
 integration-test-xkey-oidc:
 	@echo "$(CYAN)$(BOLD)→ Running xkey OIDC integration tests...$(RESET)"
-	@cd xkey/test/integration/oidc && docker compose down -v >/dev/null 2>&1 || true
-	@cd xkey/test/integration/oidc && (docker compose run --rm test-runner; EXIT_CODE=$$?; docker compose down -v; exit $$EXIT_CODE)
+	@cd xkey/test/integration/oidc && $(call compose,xkey-oidc) down -v >/dev/null 2>&1 || true
+	@cd xkey/test/integration/oidc && trap '$(call compose,xkey-oidc) down -v --remove-orphans >/dev/null 2>&1' EXIT INT TERM && \
+		$(call compose,xkey-oidc) run --rm test-runner
 	@echo "$(GREEN)✓ xkey OIDC integration tests complete$(RESET)"
 
 .PHONY: integration-test-xkey-piv
@@ -2292,9 +2452,10 @@ integration-test-cli:
 	@echo "$(CYAN)  Stopping devcontainer to free port 8443...$(RESET)"
 	@$(DOCKER_COMPOSE) down >/dev/null 2>&1 || true
 	@test -d $(API_TEST_DIR) || (echo "$(RED)ERROR: API test directory not found: $(API_TEST_DIR)$(RESET)" && exit 1)
-	@cd $(API_TEST_DIR) && docker compose down -v >/dev/null 2>&1 || true
-	@cd $(API_TEST_DIR) && docker compose build
-	@cd $(API_TEST_DIR) && (docker compose run --rm integration-tests; EXIT_CODE=$$?; docker compose down -v; exit $$EXIT_CODE)
+	@cd $(API_TEST_DIR) && $(call compose,api) down -v >/dev/null 2>&1 || true
+	@cd $(API_TEST_DIR) && $(call compose,api) build
+	@cd $(API_TEST_DIR) && trap '$(call compose,api) down -v --remove-orphans >/dev/null 2>&1' EXIT INT TERM && \
+		$(call compose,api) run --rm integration-tests
 	@echo "$(GREEN)✓ CLI integration tests complete$(RESET)"
 
 .PHONY: integration-test-cli-local
@@ -2932,88 +3093,94 @@ create-dockerfile:
 ## compose-up: Start all services with docker-compose
 compose-up:
 	@echo "$(CYAN)$(BOLD)→ Starting services with docker-compose...$(RESET)"
-	@docker compose up -d
+	@$(call compose,root) up -d
 	@echo "$(GREEN)✓ Services started$(RESET)"
 
 .PHONY: compose-down
 ## compose-down: Stop all services with docker-compose
 compose-down:
 	@echo "$(CYAN)→ Stopping services with docker-compose...$(RESET)"
-	@docker compose down -v
+	@$(call compose,root) down -v
 	@echo "$(GREEN)✓ Services stopped$(RESET)"
 
 .PHONY: compose-test
 ## compose-test: Run unit tests using docker-compose
 compose-test:
 	@echo "$(CYAN)$(BOLD)→ Running unit tests with docker-compose...$(RESET)"
-	@docker compose run --rm unit-test
+	@$(call compose,root) run --rm unit-test
 	@echo "$(GREEN)$(BOLD)✓ Tests complete!$(RESET)"
 
 .PHONY: compose-integration
 ## compose-integration: Run integration tests using docker-compose
 compose-integration:
 	@echo "$(CYAN)$(BOLD)→ Running integration tests with docker-compose...$(RESET)"
-	@docker compose run --rm integration-test
+	@$(call compose,root) run --rm integration-test
 	@echo "$(GREEN)$(BOLD)✓ Integration tests complete!$(RESET)"
 
 .PHONY: compose-dev
 ## compose-dev: Start interactive development shell with docker-compose
 compose-dev:
-	@docker compose run --rm dev
+	@$(call compose,root) run --rm dev
 
 .PHONY: compose-build
 ## compose-build: Build docker-compose images
 compose-build:
 	@echo "$(CYAN)$(BOLD)→ Building docker-compose images...$(RESET)"
-	@docker compose build
+	@$(call compose,root) build
 	@echo "$(GREEN)✓ Images built$(RESET)"
 
 .PHONY: compose-build-swtpm
 ## compose-build-swtpm: Build SWTPM Docker image only
 compose-build-swtpm:
 	@echo "$(CYAN)$(BOLD)→ Building SWTPM image...$(RESET)"
-	@docker compose build swtpm
+	@$(call compose,root) build swtpm
 	@echo "$(GREEN)✓ SWTPM image built$(RESET)"
 
 .PHONY: compose-build-softhsm
 ## compose-build-softhsm: Build SoftHSM Docker image only
 compose-build-softhsm:
 	@echo "$(CYAN)$(BOLD)→ Building SoftHSM image...$(RESET)"
-	@docker compose build softhsm
+	@$(call compose,root) build softhsm
 	@echo "$(GREEN)✓ SoftHSM image built$(RESET)"
 
 .PHONY: compose-test-integration
 ## compose-test-integration: Run integration tests with test-specific config
 compose-test-integration:
 	@echo "$(CYAN)$(BOLD)→ Running integration tests with test configuration...$(RESET)"
-	@docker compose -f docker-compose.yml -f test/docker/docker-compose.test.yml up --abort-on-container-exit
+	@$(call compose,root) -f docker-compose.yml -f test/docker/docker-compose.test.yml up --abort-on-container-exit
 	@echo "$(GREEN)$(BOLD)✓ Integration tests complete!$(RESET)"
 
 .PHONY: compose-logs
 ## compose-logs: View logs from all services
 compose-logs:
-	@docker compose logs -f
+	@$(call compose,root) logs -f
 
 .PHONY: compose-logs-swtpm
 ## compose-logs-swtpm: View SWTPM logs
 compose-logs-swtpm:
-	@docker compose logs -f swtpm
+	@$(call compose,root) logs -f swtpm
 
 .PHONY: compose-logs-softhsm
 ## compose-logs-softhsm: View SoftHSM logs
 compose-logs-softhsm:
-	@docker compose logs -f softhsm
+	@$(call compose,root) logs -f softhsm
 
 .PHONY: compose-ps
 ## compose-ps: Show status of all services
 compose-ps:
-	@docker compose ps
+	@$(call compose,root) ps
 
 .PHONY: compose-clean
-## compose-clean: Clean docker-compose resources
+## compose-clean: Tear down this run's root compose stack (containers, networks, volumes)
+# Deliberately NOT `--rmi all`. Container, network and volume names are
+# namespaced per run, so removing them touches nothing outside this run --
+# but the IMAGE TAGS (go-xkms-swtpm:latest, go-xkms-test:latest, ...) are
+# shared by every run on the host by design, and deleting them forces a full
+# rebuild on any job that was about to use them. Disk is reclaimed by pruning
+# dangling images and build cache instead (test/scripts/clean-test-containers.sh).
 compose-clean:
 	@echo "$(CYAN)→ Cleaning docker-compose resources...$(RESET)"
-	@docker compose down -v --rmi all --remove-orphans
+	@$(call compose,root) down -v --remove-orphans
 	@echo "$(GREEN)✓ Compose resources cleaned$(RESET)"
 
 # ==============================================================================
@@ -3447,10 +3614,8 @@ integration-test-api:
 	@echo "$(CYAN)  Cleaning up any existing containers...$(RESET)"
 	$(call kill_integration_containers)
 	@$(API_COMPOSE) down -v --remove-orphans 2>/dev/null || true
-	@$(API_COMPOSE) up --build --abort-on-container-exit --exit-code-from integration-tests ; \
-		EXIT_CODE=$$? ; \
-		$(API_COMPOSE) down -v --remove-orphans ; \
-		exit $$EXIT_CODE
+	@trap '$(API_COMPOSE) down -v --remove-orphans >/dev/null 2>&1' EXIT INT TERM ; \
+		$(API_COMPOSE) up --build --abort-on-container-exit --exit-code-from integration-tests
 	@echo "$(GREEN)$(BOLD)✓ API integration tests complete!$(RESET)"
 
 .PHONY: integration-test-api-up
@@ -3496,15 +3661,18 @@ integration-test-local-api:
 # Docker configuration for protocol integration tests
 DEVCONTAINER_IMAGE := go-xkms-devcontainer:latest
 API_TEST_NETWORK := xkms-api-test
-API_COMPOSE := cd $(API_TEST_DIR) && docker compose
+API_COMPOSE := cd $(API_TEST_DIR) && $(call compose,api)
 
-# Force kill and remove all xkms integration containers
+# Tear down THIS run's API stack, and nothing else.
+#
+# This used to `docker kill` a hardcoded list of container names. Those names
+# were host-global, so a job cleaning up "its" containers also killed the
+# identically named containers of every other job on the runner -- the same
+# class of bug as the fixed compose project name, in the cleanup path. A
+# `compose down` scoped to this run's project is both sufficient (the project
+# owns exactly what this run created) and safe (it cannot name another's).
 define kill_integration_containers
-	@echo "$(CYAN)  Cleaning up any existing containers...$(RESET)"
-	@docker kill xkms-integration-server xkms-integration-swtpm xkms-integration-softhsm xkms-integration-tests 2>/dev/null || true
-	@docker rm -f xkms-integration-server xkms-integration-swtpm xkms-integration-softhsm xkms-integration-tests 2>/dev/null || true
-	@docker kill xkms-test-unix xkms-test-rest xkms-test-grpc xkms-test-quic xkms-test-mcp xkms-test-frost xkms-test-parity 2>/dev/null || true
-	@docker rm -f xkms-test-unix xkms-test-rest xkms-test-grpc xkms-test-quic xkms-test-mcp xkms-test-frost xkms-test-parity 2>/dev/null || true
+	@echo "$(CYAN)  Cleaning up this run's API test stack...$(RESET)"
 	@if [ -d $(API_TEST_DIR) ]; then $(API_COMPOSE) down -v --remove-orphans 2>/dev/null || true; fi
 endef
 
@@ -3527,11 +3695,9 @@ integration-test-api-unix:
 	@echo "$(CYAN)$(BOLD)→ Running Unix socket protocol integration tests...$(RESET)"
 	$(call kill_integration_containers)
 	@$(API_COMPOSE) build
-	@$(API_COMPOSE) run --rm --name xkms-test-unix integration-tests \
-		sh -c "mkdir -p /app/build/bin && CGO_ENABLED=0 go build -buildvcs=false -tags='frost gms_pure_go' -o /app/build/bin/xkmsctl ./cmd/xkmsctl && go test -v -tags='integration frost codec_cbor codec_json codec_msgpack' ./test/integration/api/unix/... -timeout 10m" ; \
-		EXIT_CODE=$$? ; \
-		$(API_COMPOSE) down -v --remove-orphans ; \
-		exit $$EXIT_CODE
+	@trap '$(API_COMPOSE) down -v --remove-orphans >/dev/null 2>&1' EXIT INT TERM ; \
+		$(API_COMPOSE) run --rm integration-tests \
+		sh -c "mkdir -p /app/build/bin && CGO_ENABLED=0 go build -buildvcs=false -tags='frost gms_pure_go' -o /app/build/bin/xkmsctl ./cmd/xkmsctl && go test -v -tags='integration frost codec_cbor codec_json codec_msgpack' ./test/integration/api/unix/... -timeout 10m"
 	@echo "$(GREEN)✓ Unix socket protocol integration tests complete$(RESET)"
 
 .PHONY: integration-test-api-rest
@@ -3540,11 +3706,9 @@ integration-test-api-rest:
 	@echo "$(CYAN)$(BOLD)→ Running REST API protocol integration tests...$(RESET)"
 	$(call kill_integration_containers)
 	@$(API_COMPOSE) build
-	@$(API_COMPOSE) run --rm --name xkms-test-rest integration-tests \
-		sh -c "mkdir -p /app/build/bin && CGO_ENABLED=0 go build -buildvcs=false -tags='frost gms_pure_go' -o /app/build/bin/xkmsctl ./cmd/xkmsctl && go test -v -tags='integration frost codec_cbor codec_json codec_msgpack' ./test/integration/api/rest/... -timeout 10m" ; \
-		EXIT_CODE=$$? ; \
-		$(API_COMPOSE) down -v --remove-orphans ; \
-		exit $$EXIT_CODE
+	@trap '$(API_COMPOSE) down -v --remove-orphans >/dev/null 2>&1' EXIT INT TERM ; \
+		$(API_COMPOSE) run --rm integration-tests \
+		sh -c "mkdir -p /app/build/bin && CGO_ENABLED=0 go build -buildvcs=false -tags='frost gms_pure_go' -o /app/build/bin/xkmsctl ./cmd/xkmsctl && go test -v -tags='integration frost codec_cbor codec_json codec_msgpack' ./test/integration/api/rest/... -timeout 10m"
 	@echo "$(GREEN)✓ REST API protocol integration tests complete$(RESET)"
 
 .PHONY: integration-test-api-grpc
@@ -3553,11 +3717,9 @@ integration-test-api-grpc:
 	@echo "$(CYAN)$(BOLD)→ Running gRPC protocol integration tests...$(RESET)"
 	$(call kill_integration_containers)
 	@$(API_COMPOSE) build
-	@$(API_COMPOSE) run --rm --name xkms-test-grpc integration-tests \
-		sh -c "mkdir -p /app/build/bin && CGO_ENABLED=0 go build -buildvcs=false -tags='frost gms_pure_go' -o /app/build/bin/xkmsctl ./cmd/xkmsctl && go test -v -tags='integration frost codec_cbor codec_json codec_msgpack' ./test/integration/api/grpc/... -timeout 10m" ; \
-		EXIT_CODE=$$? ; \
-		$(API_COMPOSE) down -v --remove-orphans ; \
-		exit $$EXIT_CODE
+	@trap '$(API_COMPOSE) down -v --remove-orphans >/dev/null 2>&1' EXIT INT TERM ; \
+		$(API_COMPOSE) run --rm integration-tests \
+		sh -c "mkdir -p /app/build/bin && CGO_ENABLED=0 go build -buildvcs=false -tags='frost gms_pure_go' -o /app/build/bin/xkmsctl ./cmd/xkmsctl && go test -v -tags='integration frost codec_cbor codec_json codec_msgpack' ./test/integration/api/grpc/... -timeout 10m"
 	@echo "$(GREEN)✓ gRPC protocol integration tests complete$(RESET)"
 
 .PHONY: integration-test-api-quic
@@ -3566,11 +3728,9 @@ integration-test-api-quic:
 	@echo "$(CYAN)$(BOLD)→ Running QUIC/HTTP3 protocol integration tests...$(RESET)"
 	$(call kill_integration_containers)
 	@$(API_COMPOSE) build
-	@$(API_COMPOSE) run --rm --name xkms-test-quic integration-tests \
-		sh -c "mkdir -p /app/build/bin && CGO_ENABLED=0 go build -buildvcs=false -tags='frost gms_pure_go' -o /app/build/bin/xkmsctl ./cmd/xkmsctl && go test -v -tags='integration frost codec_cbor codec_json codec_msgpack' ./test/integration/api/quic/... -timeout 10m" ; \
-		EXIT_CODE=$$? ; \
-		$(API_COMPOSE) down -v --remove-orphans ; \
-		exit $$EXIT_CODE
+	@trap '$(API_COMPOSE) down -v --remove-orphans >/dev/null 2>&1' EXIT INT TERM ; \
+		$(API_COMPOSE) run --rm integration-tests \
+		sh -c "mkdir -p /app/build/bin && CGO_ENABLED=0 go build -buildvcs=false -tags='frost gms_pure_go' -o /app/build/bin/xkmsctl ./cmd/xkmsctl && go test -v -tags='integration frost codec_cbor codec_json codec_msgpack' ./test/integration/api/quic/... -timeout 10m"
 	@echo "$(GREEN)✓ QUIC/HTTP3 protocol integration tests complete$(RESET)"
 
 .PHONY: integration-test-api-mcp
@@ -3579,11 +3739,9 @@ integration-test-api-mcp:
 	@echo "$(CYAN)$(BOLD)→ Running MCP protocol integration tests...$(RESET)"
 	$(call kill_integration_containers)
 	@$(API_COMPOSE) build
-	@$(API_COMPOSE) run --rm --name xkms-test-mcp integration-tests \
-		sh -c "mkdir -p /app/build/bin && CGO_ENABLED=0 go build -buildvcs=false -tags='frost gms_pure_go' -o /app/build/bin/xkmsctl ./cmd/xkmsctl && go test -v -tags='integration frost codec_cbor codec_json codec_msgpack' ./test/integration/api/... -run 'MCP|Mcp' -timeout 10m" ; \
-		EXIT_CODE=$$? ; \
-		$(API_COMPOSE) down -v --remove-orphans ; \
-		exit $$EXIT_CODE
+	@trap '$(API_COMPOSE) down -v --remove-orphans >/dev/null 2>&1' EXIT INT TERM ; \
+		$(API_COMPOSE) run --rm integration-tests \
+		sh -c "mkdir -p /app/build/bin && CGO_ENABLED=0 go build -buildvcs=false -tags='frost gms_pure_go' -o /app/build/bin/xkmsctl ./cmd/xkmsctl && go test -v -tags='integration frost codec_cbor codec_json codec_msgpack' ./test/integration/api/... -run 'MCP|Mcp' -timeout 10m"
 	@echo "$(GREEN)✓ MCP protocol integration tests complete$(RESET)"
 
 .PHONY: integration-test-api-ssh
@@ -3592,25 +3750,29 @@ integration-test-api-ssh:
 	@echo "$(CYAN)$(BOLD)→ Running SSH multi-protocol integration tests (xkey CLI vs xkmsd)...$(RESET)"
 	$(call kill_integration_containers)
 	@$(API_COMPOSE) build
-	@$(API_COMPOSE) run --rm --name xkms-test-ssh integration-tests \
-		sh -c "mkdir -p /app/build/bin && CGO_ENABLED=0 go build -buildvcs=false -tags='frost gms_pure_go' -o /app/build/bin/xkmsctl ./cmd/xkmsctl && (cd xkey && go build -tags='codec_cbor codec_json codec_msgpack' -o /app/build/bin/xkey ./cmd/xkey) && XKMS_SSH_TEST_BACKENDS=software,tpm2,pkcs11 XKEY_CLI_BIN=/app/build/bin/xkey go test -v -tags='integration frost codec_cbor codec_json codec_msgpack' ./test/integration/api/... -run 'XkeySSH' -timeout 10m" ; \
-		EXIT_CODE=$$? ; \
-		$(API_COMPOSE) down -v --remove-orphans ; \
-		exit $$EXIT_CODE
+	@trap '$(API_COMPOSE) down -v --remove-orphans >/dev/null 2>&1' EXIT INT TERM ; \
+		$(API_COMPOSE) run --rm integration-tests \
+		sh -c "mkdir -p /app/build/bin && CGO_ENABLED=0 go build -buildvcs=false -tags='frost gms_pure_go' -o /app/build/bin/xkmsctl ./cmd/xkmsctl && (cd xkey && go build -tags='codec_cbor codec_json codec_msgpack' -o /app/build/bin/xkey ./cmd/xkey) && XKMS_SSH_TEST_BACKENDS=software,tpm2,pkcs11 XKEY_CLI_BIN=/app/build/bin/xkey go test -v -tags='integration frost codec_cbor codec_json codec_msgpack' ./test/integration/api/... -run 'XkeySSH' -timeout 10m"
 	@echo "$(GREEN)✓ SSH multi-protocol integration tests complete$(RESET)"
 
 .PHONY: integration-test-ssh-backends
 ## integration-test-ssh-backends: Confirm SSH key gen+sign+verify on EVERY backend (software/tpm2-sim/pkcs11-SoftHSM2/cloud); AWS via Floci, GCP+Azure via self-consistent mocks
 integration-test-ssh-backends:
 	@echo "$(CYAN)$(BOLD)→ Running per-backend SSH key generate/sign/verify suite...$(RESET)"
-	@cd test/integration/awskms && docker compose down -v >/dev/null 2>&1 || true
-	@cd test/integration/awskms && docker compose up -d --wait floci
-	@AWS_ENDPOINT_URL=http://localhost:4566 AWS_ACCESS_KEY_ID=test AWS_SECRET_ACCESS_KEY=test AWS_REGION=us-east-1 \
+	@$(AWSKMS_COMPOSE) down -v --remove-orphans >/dev/null 2>&1 || true
+	@# This suite runs on the HOST, so unlike the other lanes it needs floci's
+	@# PUBLISHED port. That port is ephemeral (see the compose file) precisely
+	@# so two jobs on one runner host can each have one, so ask docker which
+	@# one it got rather than assuming 4566. Teardown is a trap, not a
+	@# trailing command: a cancelled job is killed by signal and would
+	@# otherwise leak the stack onto the host forever.
+	@trap '$(AWSKMS_COMPOSE) down -v --remove-orphans >/dev/null 2>&1' EXIT INT TERM ; \
+		$(AWSKMS_COMPOSE) up -d --wait floci ; \
+		FLOCI_ENDPOINT=$$($(AWSKMS_COMPOSE) port floci 4566 | sed 's/^0\.0\.0\.0:/127.0.0.1:/') ; \
+		[ -n "$$FLOCI_ENDPOINT" ] || { echo "$(RED)✗ floci published no host port for 4566$(RESET)"; exit 1; } ; \
+		AWS_ENDPOINT_URL=http://$$FLOCI_ENDPOINT AWS_ACCESS_KEY_ID=test AWS_SECRET_ACCESS_KEY=test AWS_REGION=us-east-1 \
 		CGO_ENABLED=1 $(GO) test -v -tags 'integration tpm_simulator pkcs11 awskms gcpkms azurekv' \
-		./test/integration/sshbackend/... -timeout 15m ; \
-		EXIT_CODE=$$? ; \
-		cd test/integration/awskms && docker compose down -v >/dev/null 2>&1 ; \
-		exit $$EXIT_CODE
+		./test/integration/sshbackend/... -timeout 15m
 	@echo "$(GREEN)✓ Per-backend SSH suite complete$(RESET)"
 
 .PHONY: integration-test-ssh-backends-cloud-real
@@ -3628,11 +3790,9 @@ ifeq ($(WITH_FROST),1)
 	@echo "$(CYAN)$(BOLD)→ Running FROST API integration tests...$(RESET)"
 	$(call kill_integration_containers)
 	@$(API_COMPOSE) build
-	@$(API_COMPOSE) run --rm --name xkms-test-frost integration-tests \
-		sh -c "mkdir -p /app/build/bin && CGO_ENABLED=0 go build -buildvcs=false -tags='frost gms_pure_go' -o /app/build/bin/xkmsctl ./cmd/xkmsctl && go test -v -tags='integration frost codec_cbor codec_json codec_msgpack' ./test/integration/api/... -run 'FROST' -timeout 15m" ; \
-		EXIT_CODE=$$? ; \
-		$(API_COMPOSE) down -v --remove-orphans ; \
-		exit $$EXIT_CODE
+	@trap '$(API_COMPOSE) down -v --remove-orphans >/dev/null 2>&1' EXIT INT TERM ; \
+		$(API_COMPOSE) run --rm integration-tests \
+		sh -c "mkdir -p /app/build/bin && CGO_ENABLED=0 go build -buildvcs=false -tags='frost gms_pure_go' -o /app/build/bin/xkmsctl ./cmd/xkmsctl && go test -v -tags='integration frost codec_cbor codec_json codec_msgpack' ./test/integration/api/... -run 'FROST' -timeout 15m"
 	@echo "$(GREEN)✓ FROST API integration tests complete$(RESET)"
 else
 	@echo "$(YELLOW)⚠ Skipping FROST API tests (WITH_FROST=0)$(RESET)"
@@ -3645,11 +3805,9 @@ integration-test-api-parity:
 	@echo "$(CYAN)$(BOLD)→ Running API protocol parity tests...$(RESET)"
 	$(call kill_integration_containers)
 	@$(API_COMPOSE) build
-	@$(API_COMPOSE) run --rm --name xkms-test-parity integration-tests \
-		sh -c "mkdir -p /app/build/bin && CGO_ENABLED=0 go build -buildvcs=false -tags='frost gms_pure_go' -o /app/build/bin/xkmsctl ./cmd/xkmsctl && go test -v -tags='integration frost codec_cbor codec_json codec_msgpack' ./test/integration/api/... -run 'Parity|AllProtocols' -timeout 20m" ; \
-		EXIT_CODE=$$? ; \
-		$(API_COMPOSE) down -v --remove-orphans ; \
-		exit $$EXIT_CODE
+	@trap '$(API_COMPOSE) down -v --remove-orphans >/dev/null 2>&1' EXIT INT TERM ; \
+		$(API_COMPOSE) run --rm integration-tests \
+		sh -c "mkdir -p /app/build/bin && CGO_ENABLED=0 go build -buildvcs=false -tags='frost gms_pure_go' -o /app/build/bin/xkmsctl ./cmd/xkmsctl && go test -v -tags='integration frost codec_cbor codec_json codec_msgpack' ./test/integration/api/... -run 'Parity|AllProtocols' -timeout 20m"
 	@echo "$(GREEN)✓ API protocol parity tests complete$(RESET)"
 
 .PHONY: integration-test-sdk-go
@@ -3665,25 +3823,28 @@ integration-test-sdk-go-remote:
 	@echo "$(CYAN)$(BOLD)→ Running Go SDK remote integration tests...$(RESET)"
 	$(call kill_integration_containers)
 	@$(API_COMPOSE) build
-	@$(API_COMPOSE) run --rm --name xkms-test-sdk-go integration-tests \
-		sh -c "go test -v -tags='integration codec_cbor codec_json codec_msgpack' ./test/integration/sdk/go/... -run 'TestSDKMultiProtocolRemote' -timeout 20m" ; \
-		EXIT_CODE=$$? ; \
-		$(API_COMPOSE) down -v --remove-orphans ; \
-		exit $$EXIT_CODE
+	@trap '$(API_COMPOSE) down -v --remove-orphans >/dev/null 2>&1' EXIT INT TERM ; \
+		$(API_COMPOSE) run --rm integration-tests \
+		sh -c "go test -v -tags='integration codec_cbor codec_json codec_msgpack' ./test/integration/sdk/go/... -run 'TestSDKMultiProtocolRemote' -timeout 20m"
 	@echo "$(GREEN)✓ Go SDK remote integration tests complete$(RESET)"
 
 # ==============================================================================
 # Bootstrap Integration Tests
 # ==============================================================================
 
-BOOTSTRAP_COMPOSE := docker compose -f test/integration/bootstrap/docker-compose.yml
+BOOTSTRAP_COMPOSE := $(call compose,bootstrap) -f test/integration/bootstrap/docker-compose.yml
+
+# Absolute -f path: the ssh-backend lane tears its stack down from a trap,
+# which can fire with the shell in any directory.
+AWSKMS_COMPOSE := $(call compose,awskms) -f $(CURDIR)/test/integration/awskms/docker-compose.yml
 
 .PHONY: integration-test-bootstrap
 ## integration-test-bootstrap: Run bootstrap integration tests (DANE/TLSA, Noise, SPKI, Direct, Auto)
 integration-test-bootstrap:
 	@echo "$(CYAN)$(BOLD)→ Running bootstrap integration tests...$(RESET)"
-	@cd test/integration/bootstrap && docker compose down -v >/dev/null 2>&1 || true
-	@cd test/integration/bootstrap && (docker compose run --build --rm test; EXIT_CODE=$$?; docker compose down -v; exit $$EXIT_CODE)
+	@cd test/integration/bootstrap && $(call compose,bootstrap) down -v >/dev/null 2>&1 || true
+	@cd test/integration/bootstrap && trap '$(call compose,bootstrap) down -v --remove-orphans >/dev/null 2>&1' EXIT INT TERM && \
+		$(call compose,bootstrap) run --build --rm test
 	@echo "$(GREEN)✓ Bootstrap integration tests complete$(RESET)"
 
 .PHONY: integration-test-cluster
@@ -3691,17 +3852,19 @@ integration-test-bootstrap:
 integration-test-cluster:
 	@echo "$(CYAN)$(BOLD)→ Running 3-node Raft cluster + standalone-server integration tests...$(RESET)"
 	@cd test/integration/cluster && bash gen-certs.sh
-	@cd test/integration/cluster && docker compose down -v >/dev/null 2>&1 || true
-	@cd test/integration/cluster && (docker compose run --build --rm test; EXIT_CODE=$$?; docker compose down -v; exit $$EXIT_CODE)
+	@cd test/integration/cluster && $(call compose,cluster) down -v >/dev/null 2>&1 || true
+	@cd test/integration/cluster && trap '$(call compose,cluster) down -v --remove-orphans >/dev/null 2>&1' EXIT INT TERM && \
+		$(call compose,cluster) run --build --rm test
 	@echo "$(GREEN)✓ Cluster integration tests complete$(RESET)"
 
 .PHONY: integration-test-truststrap
 ## integration-test-truststrap: Run xkey TrustService truststrap integration tests (Direct, SPKI, Noise)
 integration-test-truststrap:
 	@echo "$(CYAN)$(BOLD)→ Running xkey TrustService truststrap integration tests...$(RESET)"
-	@cd test/integration/bootstrap && docker compose --profile xkey down -v >/dev/null 2>&1 || true
-	@cd test/integration/bootstrap && docker compose --profile xkey build xkey-truststrap-test
-	@cd test/integration/bootstrap && (docker compose --profile xkey run --rm xkey-truststrap-test; EXIT_CODE=$$?; docker compose --profile xkey down -v; exit $$EXIT_CODE)
+	@cd test/integration/bootstrap && $(call compose,bootstrap) --profile xkey down -v >/dev/null 2>&1 || true
+	@cd test/integration/bootstrap && $(call compose,bootstrap) --profile xkey build xkey-truststrap-test
+	@cd test/integration/bootstrap && trap '$(call compose,bootstrap) --profile xkey down -v --remove-orphans >/dev/null 2>&1' EXIT INT TERM && \
+		$(call compose,bootstrap) --profile xkey run --rm xkey-truststrap-test
 	@echo "$(GREEN)✓ xkey TrustService truststrap integration tests complete$(RESET)"
 
 # ------------------------------------------------------------------
@@ -3712,39 +3875,42 @@ integration-test-truststrap:
 ## dev-server-up: Start a live xkms-server on localhost:8443 for interactive GUI testing
 dev-server-up:
 	@echo "$(CYAN)$(BOLD)→ Starting xkms-server dev instance...$(RESET)"
-	@cd test/integration/bootstrap && docker compose up -d xkms-server
+	@$(BOOTSTRAP_COMPOSE) up -d xkms-server
 	@echo "$(CYAN)→ Waiting for health check...$(RESET)"
-	@for i in $$(seq 1 30); do \
-		if docker inspect --format='{{.State.Health.Status}}' bootstrap-xkms-server 2>/dev/null | grep -q healthy; then \
+	@cid=$$($(BOOTSTRAP_COMPOSE) ps -q xkms-server); \
+	for i in $$(seq 1 30); do \
+		if docker inspect --format='{{.State.Health.Status}}' $$cid 2>/dev/null | grep -q healthy; then \
 			break; \
 		fi; \
 		sleep 1; \
 	done
-	@bash test/integration/bootstrap/scripts/print-dev-server-info.sh
+	@CONTAINER=$$($(BOOTSTRAP_COMPOSE) ps -q xkms-server) \
+		bash test/integration/bootstrap/scripts/print-dev-server-info.sh
 
 .PHONY: dev-server-down
 ## dev-server-down: Stop the dev xkms-server
 dev-server-down:
 	@echo "$(CYAN)$(BOLD)→ Stopping xkms-server dev instance...$(RESET)"
-	@cd test/integration/bootstrap && docker compose down -v
+	@$(BOOTSTRAP_COMPOSE) down -v --remove-orphans
 	@rm -f /tmp/xkms-dev-ca.crt
 	@echo "$(GREEN)✓ Dev server stopped$(RESET)"
 
 .PHONY: dev-server-info
 ## dev-server-info: Print connection info + credentials for the running dev xkms-server
 dev-server-info:
-	@bash test/integration/bootstrap/scripts/print-dev-server-info.sh
+	@CONTAINER=$$($(BOOTSTRAP_COMPOSE) ps -q xkms-server) \
+		bash test/integration/bootstrap/scripts/print-dev-server-info.sh
 
 .PHONY: dev-server-logs
 ## dev-server-logs: Tail logs from the running dev xkms-server
 dev-server-logs:
-	@docker logs -f bootstrap-xkms-server
+	@docker logs -f $$($(BOOTSTRAP_COMPOSE) ps -q xkms-server)
 
 .PHONY: test-e2e-live
 ## test-e2e-live: Run live-backend Playwright tests (requires dev-server-up + xkey dev-browser)
 test-e2e-live:
 	@echo "$(CYAN)$(BOLD)→ Running live-backend Playwright tests...$(RESET)"
-	@if ! docker inspect bootstrap-xkms-server >/dev/null 2>&1; then \
+	@if [ -z "$$($(BOOTSTRAP_COMPOSE) ps -q xkms-server)" ]; then \
 		echo "$(RED)ERROR: xkms-server not running. Run 'make dev-server-up' first.$(RESET)"; \
 		exit 1; \
 	fi
@@ -3753,14 +3919,15 @@ test-e2e-live:
 		echo "  Run 'cd xkey && make dev-browser' in a separate terminal, then rerun."; \
 		exit 1; \
 	fi
-	@HOST_REST_PORT=$$(docker port bootstrap-xkms-server 8443/tcp | head -1 | awk -F: '{print $$NF}'); \
-	HOST_NOISE_PORT=$$(docker port bootstrap-xkms-server 8445/tcp | head -1 | awk -F: '{print $$NF}'); \
+	@cid=$$($(BOOTSTRAP_COMPOSE) ps -q xkms-server); \
+	HOST_REST_PORT=$$(docker port $$cid 8443/tcp | head -1 | awk -F: '{print $$NF}'); \
+	HOST_NOISE_PORT=$$(docker port $$cid 8445/tcp | head -1 | awk -F: '{print $$NF}'); \
 	export LIVE_XKMS_REST_URL=https://localhost:$${HOST_REST_PORT}; \
 	export LIVE_XKMS_NOISE_ADDR=localhost:$${HOST_NOISE_PORT}; \
-	export LIVE_XKMS_SPKI_PIN=$$(docker exec bootstrap-xkms-server cat /etc/xkms/certs/spki.pin); \
-	export LIVE_XKMS_NOISE_KEY=$$(docker exec bootstrap-xkms-server cat /etc/xkms/certs/noise.pub.hex); \
+	export LIVE_XKMS_SPKI_PIN=$$(docker exec $$cid cat /etc/xkms/certs/spki.pin); \
+	export LIVE_XKMS_NOISE_KEY=$$(docker exec $$cid cat /etc/xkms/certs/noise.pub.hex); \
 	export LIVE_XKMS_CA_PEM=/tmp/xkms-dev-ca.crt; \
-	docker exec bootstrap-xkms-server cat /etc/xkms/certs/ca.crt > $${LIVE_XKMS_CA_PEM}; \
+	docker exec $$cid cat /etc/xkms/certs/ca.crt > $${LIVE_XKMS_CA_PEM}; \
 	cd xkey/frontend && BASE_URL=http://localhost:34115 npx playwright test tests/e2e/live/ --reporter=list
 
 .PHONY: show-backends
