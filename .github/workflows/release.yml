@@ -36,6 +36,18 @@ env:
   # workflow: an unpinned toolchain would let a green PR produce a broken
   # release from the same tree.
   #
+  # THIS ALSO PINS THE BUILD CONTAINER (go-xkms#50). The binary and docker
+  # jobs compile inside `golang:${GO_VERSION}-bookworm`. They previously used
+  # the FLOATING `golang:bookworm`, which now resolves to 1.27.0 and hits the
+  # same swiss incompatibility -- a third surface for it, after ci.yml and
+  # this workflow's own toolchain. Interpolating GO_VERSION rather than
+  # hardcoding a second literal means the container and the toolchain cannot
+  # drift apart: there is one pin, and unpinning is one edit.
+  #
+  # The image tag must therefore stay a real published tag. go.mod declares
+  # `go 1.26.6`, which this image satisfies, so the GOTOOLCHAIN=auto in the
+  # generated Dockerfile does not fetch anything -- the pin holds.
+  #
   # Unpin with ci.yml in the Go 1.27.0 wave (company task #121).
   GO_VERSION: '1.26.7'
   REGISTRY: ghcr.io
@@ -445,7 +457,7 @@ jobs:
             -e GIT_CONFIG_COUNT="${GIT_CONFIG_COUNT:-}" \
             -e GIT_CONFIG_KEY_0="${GIT_CONFIG_KEY_0:-}" \
             -e GIT_CONFIG_VALUE_0="${GIT_CONFIG_VALUE_0:-}" \
-            golang:bookworm \
+            golang:${{ env.GO_VERSION }}-bookworm \
             bash /src/build.sh)
           docker cp . "$CID":/src
           docker start -a "$CID"
@@ -663,7 +675,7 @@ jobs:
           cat > Dockerfile.release << 'EOF'
           # Multi-stage Dockerfile for xkms production deployment
           # Stage 1: Builder
-          FROM golang:bookworm AS builder
+          FROM golang:${{ env.GO_VERSION }}-bookworm AS builder
 
           ENV GOTOOLCHAIN=auto
 
