@@ -235,8 +235,8 @@ jobs:
           Download platform-specific binaries directly - ready to use immediately!
 
           **Available Binaries**:
-          - \`xkmsctl-${{ steps.get_version.outputs.version }}-{linux,darwin}-{amd64,arm64}\` - Standard CLI
-          - \`xkmsd-${{ steps.get_version.outputs.version }}-{linux,darwin}-{amd64,arm64}\` - Standard Server
+          - \`xkmsctl-${{ steps.get_version.outputs.version }}-linux-{amd64,arm64}\` - Standard CLI
+          - \`xkmsd-${{ steps.get_version.outputs.version }}-linux-{amd64,arm64}\` - Standard Server
           - \`xkey-${{ steps.get_version.outputs.version }}-linux-{amd64,arm64}\` - Virtual FIDO2 Device
           - \`xkmsctl-${{ steps.get_version.outputs.version }}-linux-{amd64,arm64}-fips\` - FIPS 140-3 compliant CLI
           - \`xkmsd-${{ steps.get_version.outputs.version }}-linux-{amd64,arm64}-fips\` - FIPS 140-3 compliant Server
@@ -521,112 +521,6 @@ jobs:
             xkey-${{ needs.create-release.outputs.version }}-linux-${{ matrix.arch }}
             xkey-${{ needs.create-release.outputs.version }}-linux-${{ matrix.arch }}.sha256
 
-  build-darwin-binaries:
-    name: Build Darwin Binaries (${{ matrix.arch }})
-    needs: create-release
-    runs-on: ubuntu-latest
-    strategy:
-      matrix:
-        include:
-          # Standard builds (cross-compiled from Linux)
-          - arch: amd64
-          - arch: arm64
-    steps:
-      - name: Checkout code
-        uses: actions/checkout@v4
-        with:
-          ref: ${{ env.RELEASE_TAG }}
-
-      - name: Set up Go
-        uses: actions/setup-go@v5
-        with:
-          go-version: ${{ env.GO_VERSION }}
-          cache: true
-
-      - name: Build darwin binaries
-        env:
-          GOOS: darwin
-          GOARCH: ${{ matrix.arch }}
-          CGO_ENABLED: 0
-          VERSION: ${{ needs.create-release.outputs.version }}
-        run: |
-          # Standard build without CGO (cross-compiled). gms_pure_go selects
-          # go-mysql-server's non-cgo regex engine -- without it the cgo-only
-          # variant (github.com/dolthub/go-icu-regex) fails to build under
-          # CGO_ENABLED=0. Required, not optional, whenever cgo is off
-          # (matches the Makefile's own CLI_BUILD_TAGS).
-          #
-          # KNOWN REMAINING BLOCKER even with this tag: go-qrdb's
-          # pkg/discovery/multicast.go references syscall.SOCK_CLOEXEC /
-          # syscall.SOCK_NONBLOCK unconditionally (no GOOS build constraint),
-          # which only exist on Linux. Cross-compiling to darwin therefore
-          # still fails inside go-qrdb itself; this is an upstream go-qrdb
-          # bug, not something fixable from this repo's build tags. See the
-          # CI audit report for details.
-          BUILD_FLAGS="-tags=pkcs8,awskms,gcpkms,azurekv,vault,gms_pure_go"
-          echo "Building for darwin/${{ matrix.arch }} with CGO_ENABLED=0"
-
-          LDFLAGS="-X main.version=${VERSION} -X main.commit=${{ needs.create-release.outputs.commit }} -X main.date=$(date -u +%Y-%m-%dT%H:%M:%SZ) -s -w"
-
-          mkdir -p dist
-
-          echo "Build flags: ${BUILD_FLAGS}"
-
-          # Build CLI
-          echo "Building xkmsctl..."
-          go build -buildvcs=false -ldflags="${LDFLAGS}" ${BUILD_FLAGS} \
-            -o dist/xkmsctl \
-            ./cmd/xkmsctl
-
-          # Build Server
-          echo "Building xkmsd..."
-          go build -buildvcs=false -ldflags="${LDFLAGS}" ${BUILD_FLAGS} \
-            -o dist/xkmsd \
-            ./cmd/xkmsd
-
-          # Note: xkey is Linux-only (requires UHID)
-
-          # Verify binaries
-          echo "Build artifacts:"
-          ls -lh dist/
-          file dist/*
-
-      - name: Prepare release assets
-        run: |
-          VERSION="${{ needs.create-release.outputs.version }}"
-          ARCH="${{ matrix.arch }}"
-
-          # Create renamed binaries with platform/arch info
-          cd dist
-
-          for binary in xkmsctl xkmsd; do
-            if [ -f "$binary" ]; then
-              # Create binary with full name including platform/arch
-              NEW_NAME="${binary}-${VERSION}-darwin-${ARCH}"
-              cp "$binary" "../${NEW_NAME}"
-
-              # Generate SHA256 for individual binary
-              cd ..
-              sha256sum "${NEW_NAME}" > "${NEW_NAME}.sha256"
-              cd dist
-            fi
-          done
-
-          cd ..
-
-          echo "Created release assets:"
-          ls -lh xkmsctl-* xkmsd-*
-
-      - name: Upload release assets
-        uses: softprops/action-gh-release@v2
-        with:
-          tag_name: ${{ env.RELEASE_TAG }}
-          files: |
-            xkmsctl-${{ needs.create-release.outputs.version }}-darwin-${{ matrix.arch }}
-            xkmsctl-${{ needs.create-release.outputs.version }}-darwin-${{ matrix.arch }}.sha256
-            xkmsd-${{ needs.create-release.outputs.version }}-darwin-${{ matrix.arch }}
-            xkmsd-${{ needs.create-release.outputs.version }}-darwin-${{ matrix.arch }}.sha256
-
   build-docker:
     name: Build Docker Server Image
     needs: create-release
@@ -801,8 +695,8 @@ jobs:
             DATE=${{ github.event.repository.updated_at }}
           secret-files: |
             gomodauth=./gomodauth.env
-          cache-from: type=gha
-          cache-to: type=gha,mode=max
+          cache-from: ${{ github.server_url == 'https://github.com' && 'type=gha' || '' }}
+          cache-to: ${{ github.server_url == 'https://github.com' && 'type=gha,mode=max' || '' }}
 
       - name: Trivy image gate (fail on CRITICAL/HIGH)
         # --ignore-unfixed matches ci.yml's Docker job gate (09abcaa): base-
@@ -841,8 +735,8 @@ jobs:
             DATE=${{ github.event.repository.updated_at }}
           secret-files: |
             gomodauth=./gomodauth.env
-          cache-from: type=gha
-          cache-to: type=gha,mode=max
+          cache-from: ${{ github.server_url == 'https://github.com' && 'type=gha' || '' }}
+          cache-to: ${{ github.server_url == 'https://github.com' && 'type=gha,mode=max' || '' }}
 
   build-docker-cli:
     name: Build Docker CLI Image
@@ -914,8 +808,8 @@ jobs:
             DATE=${{ github.event.repository.updated_at }}
           secret-files: |
             gomodauth=./gomodauth.env
-          cache-from: type=gha
-          cache-to: type=gha,mode=max
+          cache-from: ${{ github.server_url == 'https://github.com' && 'type=gha' || '' }}
+          cache-to: ${{ github.server_url == 'https://github.com' && 'type=gha,mode=max' || '' }}
 
       - name: Trivy image gate (fail on CRITICAL/HIGH)
         # --ignore-unfixed matches ci.yml's Docker job gate (09abcaa) and the
@@ -951,12 +845,12 @@ jobs:
             DATE=${{ github.event.repository.updated_at }}
           secret-files: |
             gomodauth=./gomodauth.env
-          cache-from: type=gha
-          cache-to: type=gha,mode=max
+          cache-from: ${{ github.server_url == 'https://github.com' && 'type=gha' || '' }}
+          cache-to: ${{ github.server_url == 'https://github.com' && 'type=gha,mode=max' || '' }}
 
   create-checksums:
     name: Create Master Checksums
-    needs: [create-release, build-binaries, build-darwin-binaries]
+    needs: [create-release, build-binaries]
     runs-on: ubuntu-latest
     steps:
       - name: Checkout code
@@ -995,7 +889,7 @@ jobs:
 
   announce-release:
     name: Announce Release
-    needs: [create-release, build-binaries, build-darwin-binaries, build-docker, build-docker-cli]
+    needs: [create-release, build-binaries, build-docker, build-docker-cli]
     runs-on: ubuntu-latest
     if: success()
     steps:
@@ -1037,9 +931,6 @@ jobs:
           echo "#### Linux Binaries" >> $GITHUB_STEP_SUMMARY
           echo "- **Standard** (amd64, arm64) - xkmsctl, xkmsd, xkey" >> $GITHUB_STEP_SUMMARY
           echo "- **FIPS 140-3** (amd64, arm64) - xkmsctl, xkmsd (GOFIPS140=v1.0.0)" >> $GITHUB_STEP_SUMMARY
-          echo "" >> $GITHUB_STEP_SUMMARY
-          echo "#### macOS/Darwin Binaries" >> $GITHUB_STEP_SUMMARY
-          echo "- **Standard** (amd64, arm64) - xkmsctl, xkmsd" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
           echo "#### Docker Images" >> $GITHUB_STEP_SUMMARY
           echo "- Multi-arch (amd64, arm64)" >> $GITHUB_STEP_SUMMARY
