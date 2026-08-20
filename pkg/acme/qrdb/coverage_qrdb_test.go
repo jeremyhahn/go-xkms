@@ -54,7 +54,12 @@ func TestKVStoreAdapter_RegisterEntityIndexes_ReturnsError(t *testing.T) {
 	err := adapter.RegisterEntityIndexes("account", nil)
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "account")
-	assert.Contains(t, err.Error(), "remote transport does not support index registration")
+	assert.Contains(t, err.Error(), "remote transport does not support")
+	// The wording is incidental; THIS is the contract. go-qrdb's DAO reads the
+	// refusal as a capability negotiation and only plans full scans when it
+	// matches the sentinel, so an error that merely reads correctly but does
+	// not match makes every DAO on this path fail to construct.
+	assert.ErrorIs(t, err, qrdbsdk.ErrKVIndexUnsupported)
 }
 
 func TestKVStoreAdapter_QueryIndex_ReturnsError(t *testing.T) {

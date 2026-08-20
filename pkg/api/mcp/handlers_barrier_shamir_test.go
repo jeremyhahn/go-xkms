@@ -42,14 +42,14 @@ type testCaptureDistributor struct {
 // SealAndDistribute splits secret into total shares with the given threshold,
 // records them, and returns the count.
 func (c *testCaptureDistributor) SealAndDistribute(_ context.Context, secret []byte, threshold, total int) (int, error) {
-	raw, err := quicraftShamir.Split(secret, threshold, total)
+	raw, err := quicraftShamir.Split(secret, threshold, total) //nolint:staticcheck // go-xkms#46: quicraft v0.8.0 deprecates the string-share Split in favour of SplitProtected; migrating share custody is out of scope for a pin bump. Removing this directive is how #46 gets closed.
 	if err != nil {
 		return 0, &errs.Wrapped{Msg: "shamir split failed", Err: err}
 	}
 	c.mu.Lock()
 	c.shares = make([]string, len(raw))
 	for i, s := range raw {
-		c.shares[i] = s.Value
+		c.shares[i] = s.Value //nolint:staticcheck // go-xkms#46: Share.Value is the deprecated un-wipeable string field; ProtectedShare replaces it. Test-helper fixture only, no production path. Removing this directive is how #46 gets closed.
 	}
 	c.mu.Unlock()
 	return len(raw), nil

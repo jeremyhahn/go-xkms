@@ -13,7 +13,11 @@
 
 package kvadapter
 
-import "errors"
+import (
+	"errors"
+
+	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
+)
 
 // NilBackendError is returned when a nil storage.Backend is provided
 // to the adapter constructor.
@@ -163,4 +167,28 @@ func (e *IndexingNotSupportedError) Error() string {
 // Unwrap returns ErrIndexingNotSupported so errors.Is identifies the class.
 func (e *IndexingNotSupportedError) Unwrap() error {
 	return ErrIndexingNotSupported
+}
+
+// Is additionally matches go-qrdb's ErrKVIndexUnsupported, the sentinel that
+// go-qrdb's DAO uses to negotiate index capability.
+//
+// This is a protocol obligation, not a convenience. Since go-qrdb
+// v0.8.0-alpha, pkg/dao asks an adapter to register indexes at construction
+// and reads the reply to decide how to answer queries: an error matching
+// kvstore.ErrIndexUnsupported means "this store has no index subsystem, plan
+// full scans", and ANY OTHER error is a genuine construction failure. Before
+// v0.8.0 the refusal was ignored, which is what the comment on
+// RegisterEntityIndexes used to describe.
+//
+// This adapter genuinely cannot index -- it bridges an opaque byte-oriented
+// storage.Backend and never decodes entity payloads -- so the honest answer
+// is the capability sentinel. Reporting only the local sentinel made the DAO
+// read a capability signal as a hard failure and refuse to construct at all:
+// 28 tests across pkg/api/rest went red on the v0.9.0-alpha bump, every one
+// of them "failed to create DAO".
+//
+// ErrIndexingNotSupported is kept as the local sentinel so existing callers
+// that test for it keep working; both now match.
+func (e *IndexingNotSupportedError) Is(target error) bool {
+	return target == ErrIndexingNotSupported || target == qrdbsdk.ErrKVIndexUnsupported
 }

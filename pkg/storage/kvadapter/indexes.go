@@ -37,8 +37,13 @@ import (
 
 // RegisterEntityIndexes reports ErrIndexingNotSupported. Registration is
 // refused rather than silently accepted so a caller cannot be left holding
-// a store it believes maintains indexes. The go-qrdb DAO factory ignores
-// this error and simply performs unindexed scans.
+// a store it believes maintains indexes.
+//
+// Since go-qrdb v0.8.0-alpha the DAO does not ignore this error: it matches
+// it against kvstore.ErrIndexUnsupported to decide whether to plan full
+// scans, and treats any non-matching error as a construction failure. The
+// error returned here satisfies that match via IndexingNotSupportedError.Is
+// -- see the note on that method before changing either sentinel.
 func (a *KVStoreAdapter) RegisterEntityIndexes(entityType string, _ []qrdbsdk.EntityIndex) error {
 	return &IndexingNotSupportedError{Op: "RegisterEntityIndexes", Name: entityType}
 }

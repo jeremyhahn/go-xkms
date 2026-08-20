@@ -63,6 +63,15 @@ var NewKVStoreAdapter = kvadapter.New
 //
 // It is re-exported here because consumers outside this module reach xkms only
 // through the SDK and must be able to recognize the sentinel.
+//
+// The same refusal ALSO matches go-qrdb's index-capability sentinel
+// (kvstore.ErrIndexUnsupported, re-exported by the go-qrdb SDK as
+// ErrKVIndexUnsupported). That is what allows a go-qrdb DAO to be constructed
+// over a KVStoreAdapter at all: since go-qrdb v0.8.0-alpha, pkg/dao registers
+// indexes at construction and reads the reply as a capability negotiation --
+// a match means "no index subsystem, plan full scans", anything else aborts
+// construction. So a consumer may test for either sentinel, and neither may be
+// dropped from the match. See kvadapter.IndexingNotSupportedError.Is.
 var ErrIndexingNotSupported = kvadapter.ErrIndexingNotSupported
 
 // NewPINStoreAdapter adapts a storage.Backend to the PIN-store interface.

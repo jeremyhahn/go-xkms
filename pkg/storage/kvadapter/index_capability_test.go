@@ -1,0 +1,90 @@
+// Copyright (c) 2025 Jeremy Hahn
+// Copyright (c) 2025 Automate The Things, LLC
+//
+// This file is part of go-xkms.
+//
+// go-xkms is dual-licensed:
+//
+// 1. GNU Affero General Public License v3.0 (AGPL-3.0)
+//    See LICENSE file or visit https://www.gnu.org/licenses/agpl-3.0.html
+//
+// 2. Commercial License
+//    Contact licensing@automatethethings.com for commercial licensing options.
+
+package kvadapter
+
+import (
+	"context"
+	"errors"
+	"testing"
+
+	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
+)
+
+// TestIndexRefusalMatchesQRDBCapabilitySentinel pins the contract that lets a
+// go-qrdb DAO be built over this adapter at all.
+//
+// Since go-qrdb v0.8.0-alpha, pkg/dao calls RegisterEntityIndexes at
+// construction and branches on the reply: an error matching
+// ErrKVIndexUnsupported means "no index subsystem, plan full scans", and any
+// other error aborts construction. This adapter cannot index -- it bridges an
+// opaque byte-oriented storage.Backend -- so its refusal MUST match that
+// sentinel or every DAO over it fails to construct.
+//
+// That is not hypothetical. On the v0.6.0 -> v0.9.0 bump this adapter reported
+// only its local sentinel, and 28 tests across pkg/api/rest failed with
+// "failed to create DAO: kvadapter: RegisterEntityIndexes teams: secondary
+// indexing is not supported" -- a capability signal being read as a failure.
+//
+// Both sentinels are asserted deliberately: dropping the local one breaks
+// in-repo callers that test for it, and dropping the go-qrdb one breaks DAO
+// construction. Neither may be removed without replacing this test.
+func TestIndexRefusalMatchesQRDBCapabilitySentinel(t *testing.T) {
+	err := &IndexingNotSupportedError{Op: "RegisterEntityIndexes", Name: "teams"}
+
+	if !errors.Is(err, ErrIndexingNotSupported) {
+		t.Errorf("errors.Is(err, ErrIndexingNotSupported) = false; want true — "+
+			"in-repo callers detect the local sentinel to fall back to Scan/List. err=%v", err)
+	}
+	if !errors.Is(err, qrdbsdk.ErrKVIndexUnsupported) {
+		t.Errorf("errors.Is(err, qrdbsdk.ErrKVIndexUnsupported) = false; want true — "+
+			"go-qrdb pkg/dao reads this sentinel as the index-capability signal; without it "+
+			"every DAO built over this adapter fails to construct. err=%v", err)
+	}
+}
+
+// TestEveryIndexMethodRefusesWithTheCapabilitySentinel checks the whole index
+// surface, not just registration. pkg/dao consults the sentinel on query paths
+// as well (it decides there whether to fall back to a full scan), so a method
+// that refused with an unmatched error would turn a planned scan into a hard
+// query failure.
+func TestEveryIndexMethodRefusesWithTheCapabilitySentinel(t *testing.T) {
+	a := &KVStoreAdapter{}
+	ctx := context.Background()
+
+	_, queryErr := a.QueryIndex(ctx, "by_name", []byte("x"))
+	_, scanErr := a.ScanIndex(ctx, "by_name", []byte("a"), []byte("z"))
+	_, compoundErr := a.QueryCompoundIndex(ctx, "by_tenant_name", [][]byte{[]byte("t")})
+	_, scanCompoundErr := a.ScanCompoundIndex(ctx, "by_tenant_name", [][]byte{[]byte("t")}, []byte("a"), []byte("z"))
+
+	for _, tc := range []struct {
+		method string
+		err    error
+	}{
+		{"RegisterEntityIndexes", a.RegisterEntityIndexes("teams", nil)},
+		{"QueryIndex", queryErr},
+		{"ScanIndex", scanErr},
+		{"QueryCompoundIndex", compoundErr},
+		{"ScanCompoundIndex", scanCompoundErr},
+	} {
+		if tc.err == nil {
+			t.Errorf("%s returned nil; want a refusal — silently succeeding would let a "+
+				"caller believe this store maintains indexes", tc.method)
+			continue
+		}
+		if !errors.Is(tc.err, qrdbsdk.ErrKVIndexUnsupported) {
+			t.Errorf("%s error does not match qrdbsdk.ErrKVIndexUnsupported; "+
+				"go-qrdb would treat this capability gap as a hard failure. err=%v", tc.method, tc.err)
+		}
+	}
+}

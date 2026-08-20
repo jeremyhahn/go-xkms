@@ -7,6 +7,74 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.7.7-alpha] - 2026-08-20
+
+A dependency release: **go-qrdb v0.6.0-alpha → v0.9.0-alpha**, with
+go-quicraft v0.6.2-alpha → v0.8.0-alpha and go-objstore v0.2.2-alpha →
+v0.3.0-alpha arriving through minimal version selection. Root, `sdk/go` and
+`xkey` all move together.
+
+### What this release does and does not change
+
+**No behaviour of go-xkms itself changes** except where the adopted version
+required it, described below. No API is added, removed or migrated, and no
+custody path is altered.
+
+**The exception is an adaptation you should understand, because it looks
+like a one-line error change and is actually a protocol fix.** Since go-qrdb
+v0.8.0-alpha, `pkg/dao` *negotiates* index capability: it calls
+`RegisterEntityIndexes` when a DAO is constructed and reads the reply. An
+error matching go-qrdb's `ErrKVIndexUnsupported` means "this store has no
+index subsystem, plan full scans"; **any other error means construction
+failed**. Previously the refusal was ignored.
+
+`pkg/storage/kvadapter` cannot maintain secondary indexes — it bridges an
+opaque byte-oriented `storage.Backend` and never decodes entity payloads —
+and it refuses index operations for that reason. But it reported only its
+own sentinel, which go-qrdb does not recognise, so a *capability signal* was
+read as a *hard failure* and every DAO built over the adapter refused to
+construct. `IndexingNotSupportedError` now matches both sentinels: the local
+one, so existing callers keep working, and go-qrdb's, so the DAO plans scans.
+The same value is re-exported as `xkms.ErrIndexingNotSupported`, and
+consumers may test for either.
+
+### Known gaps, stated plainly
+
+**The deprecated Shamir share API is suppressed, not migrated.** quicraft
+v0.8.0-alpha deprecates `Split` and `Share.Value` in favour of
+`SplitProtected`/`ProtectedShare`, because a Go string cannot be wiped and a
+ceremony holding all N shares is the widest exposure in the scheme. Eight
+call sites — all in test helpers, no production path — carry per-line
+`//nolint:staticcheck` directives rather than being migrated, because
+changing key custody inside a dependency bump would be the wrong place to do
+it. Tracked separately; closing that work means deleting every directive.
+
+### Fixed
+
+- `kvadapter.IndexingNotSupportedError` now satisfies `errors.Is` against
+  go-qrdb's index-capability sentinel as well as its own, restoring DAO
+  construction over `KVStoreAdapter` under go-qrdb ≥ v0.8.0-alpha.
+- The ACME remote-transport adapter (`pkg/acme/qrdb`) had the same defect on
+  all five of its index methods, and it was **not** latent: `NewProvider(svc,
+  nil)` — the documented default — installs that adapter, so the default
+  remote ACME path could not construct a DAO at all under v0.9.0-alpha. All
+  five now refuse with an error the go-qrdb DAO recognises, and a regression
+  test asserts this **through `NewProvider(svc, nil)`** rather than only
+  through a hand-built adapter.
+- `release.yml` installs Go in its `Validate tag` job. Without it the job
+  died at `go: command not found` and **no release after v0.7.4-alpha
+  produced a release object, binaries or checksums**.
+- `release.yml` gained a `workflow_dispatch` tag input so an already-published
+  tag can be rebuilt without moving it, and now stamps binaries with the
+  released commit rather than the branch HEAD a dispatch ran from.
+
+### Changed
+
+- go-qrdb v0.6.0-alpha → v0.9.0-alpha (root, `sdk/go`, `xkey`)
+- go-qrdb/sdk/go v0.6.0-alpha → v0.9.0-alpha
+- go-quicraft v0.6.2-alpha → v0.8.0-alpha (via MVS)
+- go-objstore v0.2.2-alpha → v0.3.0-alpha (via MVS)
+
 ## [0.7.6-alpha] - 2026-08-19
 
 ### What this release does and does not guarantee

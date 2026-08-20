@@ -28,9 +28,9 @@ require (
 	github.com/hashicorp/vault/api v1.23.0
 	github.com/jeremyhahn/go-codec v1.4.0
 	github.com/jeremyhahn/go-frost v0.1.8-alpha
-	github.com/jeremyhahn/go-qrdb v0.6.0-alpha
-	github.com/jeremyhahn/go-qrdb/sdk/go v0.6.0-alpha
-	github.com/jeremyhahn/go-quicraft v0.6.2-alpha
+	github.com/jeremyhahn/go-qrdb v0.9.0-alpha
+	github.com/jeremyhahn/go-qrdb/sdk/go v0.9.0-alpha
+	github.com/jeremyhahn/go-quicraft v0.8.0-alpha
 	github.com/jeremyhahn/go-truststrap v0.2.0-alpha
 	github.com/jeremyhahn/go-xkms/sdk/go v0.7.6-alpha
 	github.com/jeremyhahn/go-xkms/xkey v0.7.6-alpha
@@ -172,7 +172,7 @@ require (
 	go.opentelemetry.io/otel/sdk/metric v1.45.0 // indirect
 	go.yaml.in/yaml/v3 v3.0.5 // indirect
 	golang.org/x/arch v0.30.0 // indirect
-	golang.org/x/telemetry v0.0.0-20260708182218-49f421fb7959 // indirect
+	golang.org/x/telemetry v0.0.0-20260811182544-a038080d80e5 // indirect
 	gopkg.in/src-d/go-errors.v1 v1.0.0 // indirect
 	software.sslmate.com/src/go-pkcs12 v0.7.0 // indirect
 )
@@ -228,7 +228,7 @@ require (
 	github.com/hashicorp/go-sockaddr v1.0.7 // indirect
 	github.com/hashicorp/hcl v1.0.1-vault-7 // indirect
 	github.com/inconshreveable/mousetrap v1.1.0 // indirect
-	github.com/jeremyhahn/go-objstore v0.2.2-alpha
+	github.com/jeremyhahn/go-objstore v0.3.0-alpha
 	github.com/kylelemons/godebug v1.1.0 // indirect
 	github.com/mitchellh/go-homedir v1.1.0 // indirect
 	github.com/mitchellh/mapstructure v1.5.1-0.20231216201459-8508981c8b6c // indirect
@@ -260,13 +260,13 @@ require (
 	go.opentelemetry.io/otel/metric v1.45.0 // indirect
 	go.opentelemetry.io/otel/trace v1.45.0 // indirect
 	golang.org/x/exp v0.0.0-20260529124908-c761662dc8c9 // indirect
-	golang.org/x/mod v0.39.0 // indirect
-	golang.org/x/net v0.57.0
+	golang.org/x/mod v0.40.0 // indirect
+	golang.org/x/net v0.58.0
 	golang.org/x/oauth2 v0.36.0
 	golang.org/x/sync v0.22.0 // indirect
 	golang.org/x/term v0.45.0
 	golang.org/x/text v0.41.0
-	golang.org/x/tools v0.48.0 // indirect
+	golang.org/x/tools v0.49.0 // indirect
 	google.golang.org/genproto v0.0.0-20260810153831-ec0a7760b754 // indirect
 	google.golang.org/genproto/googleapis/api v0.0.0-20260810153831-ec0a7760b754 // indirect
 	google.golang.org/genproto/googleapis/rpc v0.0.0-20260810153831-ec0a7760b754
