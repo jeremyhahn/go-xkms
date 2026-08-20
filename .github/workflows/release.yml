@@ -174,6 +174,12 @@ jobs:
     runs-on: ubuntu-latest
     outputs:
       version: ${{ steps.get_version.outputs.version }}
+      # The commit actually being released. NOT github.sha: on a recovery
+      # dispatch github.sha is the HEAD of the branch we were dispatched from
+      # (main), not the tag's commit, so stamping it would brand every binary
+      # with a commit that is not the one it was built from. Resolved from the
+      # checked-out RELEASE_TAG instead, and consumed by every build job.
+      commit: ${{ steps.get_version.outputs.commit }}
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
@@ -186,7 +192,10 @@ jobs:
         run: |
           VERSION=${RELEASE_TAG#v}
           echo "version=${VERSION}" >> $GITHUB_OUTPUT
-          echo "Version: ${VERSION}"
+          # The tag is checked out, so HEAD is the released commit -- true on
+          # both trigger paths, unlike github.sha.
+          echo "commit=$(git rev-parse HEAD)" >> $GITHUB_OUTPUT
+          echo "Version: ${VERSION} at $(git rev-parse HEAD)"
 
       - name: Generate changelog
         id: changelog
@@ -428,7 +437,7 @@ jobs:
             --platform=${{ matrix.platform }} \
             -w /src \
             -e VERSION="${{ needs.create-release.outputs.version }}" \
-            -e COMMIT="${{ github.sha }}" \
+            -e COMMIT="${{ needs.create-release.outputs.commit }}" \
             -e DATE="$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
             -e GOARCH="${{ matrix.arch }}" \
             -e WITH_FIPS="${{ matrix.fips }}" \
@@ -545,7 +554,7 @@ jobs:
           BUILD_FLAGS="-tags=pkcs8,awskms,gcpkms,azurekv,vault,gms_pure_go"
           echo "Building for darwin/${{ matrix.arch }} with CGO_ENABLED=0"
 
-          LDFLAGS="-X main.version=${VERSION} -X main.commit=${{ github.sha }} -X main.date=$(date -u +%Y-%m-%dT%H:%M:%SZ) -s -w"
+          LDFLAGS="-X main.version=${VERSION} -X main.commit=${{ needs.create-release.outputs.commit }} -X main.date=$(date -u +%Y-%m-%dT%H:%M:%SZ) -s -w"
 
           mkdir -p dist
 
@@ -776,7 +785,7 @@ jobs:
           tags: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME_SERVER }}:release-scan
           build-args: |
             VERSION=${{ needs.create-release.outputs.version }}
-            COMMIT=${{ github.sha }}
+            COMMIT=${{ needs.create-release.outputs.commit }}
             DATE=${{ github.event.repository.updated_at }}
           secret-files: |
             gomodauth=./gomodauth.env
@@ -816,7 +825,7 @@ jobs:
           labels: ${{ steps.meta.outputs.labels }}
           build-args: |
             VERSION=${{ needs.create-release.outputs.version }}
-            COMMIT=${{ github.sha }}
+            COMMIT=${{ needs.create-release.outputs.commit }}
             DATE=${{ github.event.repository.updated_at }}
           secret-files: |
             gomodauth=./gomodauth.env
@@ -889,7 +898,7 @@ jobs:
           tags: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME_CLI }}:release-scan
           build-args: |
             VERSION=${{ needs.create-release.outputs.version }}
-            COMMIT=${{ github.sha }}
+            COMMIT=${{ needs.create-release.outputs.commit }}
             DATE=${{ github.event.repository.updated_at }}
           secret-files: |
             gomodauth=./gomodauth.env
@@ -926,7 +935,7 @@ jobs:
           labels: ${{ steps.meta.outputs.labels }}
           build-args: |
             VERSION=${{ needs.create-release.outputs.version }}
-            COMMIT=${{ github.sha }}
+            COMMIT=${{ needs.create-release.outputs.commit }}
             DATE=${{ github.event.repository.updated_at }}
           secret-files: |
             gomodauth=./gomodauth.env
