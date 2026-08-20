@@ -23,13 +23,11 @@ package connect
 
 import (
 	"context"
-	"fmt"
 	"os"
 	"path/filepath"
 	"strconv"
+	"sync"
 	"time"
-
-	"github.com/jeremyhahn/go-xkms/pkg/errs"
 
 	"golang.org/x/crypto/ssh"
 
@@ -93,16 +91,36 @@ type Session struct {
 	// spawned process environment.
 	Env []string
 
-	store          known_hosts.Store
-	sc             scope.Scope
-	owner          string
+	store       known_hosts.Store
+	sc          scope.Scope
+	owner       string
+	extraFiles  []string
+	skipStore   bool
+	workDir     string
+	ownsWorkDir bool
+
+	// mu guards the teardown state below. The GUI polls Sync on one goroutine
+	// while the session can be stopped from another (the spawned ssh exiting,
+	// or the window closing), so the live/stopped transition is genuinely
+	// concurrent and must not be read while it is being made.
+	//
+	// mu is never held across the import inside Sync. That import runs against
+	// a caller-supplied store over a context this session does not control, so
+	// holding the lock through it would let a stalled backend block Stop --
+	// and Stop's real job, killing the signing agent, has nothing to do with
+	// known_hosts. inFlight tracks running imports instead, so Stop can stop
+	// the agent at once and merely bound how long it waits before removing the
+	// file underneath one.
+	mu             sync.Mutex
 	knownHostsFile string
-	extraFiles     []string
-	skipStore      bool
-	workDir        string
-	ownsWorkDir    bool
-	cancel         context.CancelFunc
+	agent          *sshagent.Session
+	inFlight       sync.WaitGroup
 }
+
+// syncDrainTimeout bounds how long Stop waits for a running Sync before
+// removing the work directory anyway. Generous for a healthy store, finite for
+// one that has stopped answering.
+const syncDrainTimeout = 5 * time.Second
 
 // Start launches the agent, seeds the known_hosts file, and returns the ssh
 // argv/env. The agent runs until SyncAndStop (or ctx) cancels it.
@@ -126,15 +144,43 @@ func Start(ctx context.Context, req Request) (*Session, error) {
 		}
 		workDir = dir
 		ownsWorkDir = true
+	} else if err := os.MkdirAll(workDir, 0o700); err != nil {
+		// Request.WorkDir names where this session's scratch area goes, so
+		// creating it is this package's job. The agent deliberately will not:
+		// it refuses to conjure a directory it would not own and therefore
+		// would leave behind. Here the connection owns the layout -- the
+		// socket and the temp known_hosts live side by side in it.
+		return nil, &LaunchError{Op: "workdir", Err: err}
 	}
 
-	agentCtx, cancel := context.WithCancel(ctx)
-	sock := filepath.Join(workDir, "agent.sock")
-	go func() { _ = sshagent.Serve(agentCtx, sock, sshagent.New(req.Signer)) }()
-	if err := waitForSocket(sock, 3*time.Second); err != nil {
-		cancel()
+	// Every path derived from workDir leaves this process: the socket becomes
+	// the child's SSH_AUTH_SOCK and known_hosts becomes its
+	// -o UserKnownHostsFile. The child is spawned with its own working
+	// directory (a terminal window for the GUI), so a relative spelling would
+	// resolve somewhere else -- and a known_hosts the client cannot find is not
+	// a missing file to it, it is a host it has never seen, which turns pinned
+	// verification into first contact.
+	abs, err := filepath.Abs(workDir)
+	if err != nil {
 		cleanupDir(ownsWorkDir, workDir)
-		return nil, err
+		return nil, &LaunchError{Op: "workdir", Err: err}
+	}
+	workDir = abs
+
+	// The agent half of a connection is exactly an agent-only session: serve
+	// the signer, hand SSH_AUTH_SOCK to the child. Everything below this line
+	// is the host semantics an agent-only session deliberately has none of.
+	agentSess, err := sshagent.StartSession(ctx, sshagent.Request{
+		Signers: []ssh.Signer{req.Signer},
+		WorkDir: workDir,
+	})
+	if err != nil {
+		cleanupDir(ownsWorkDir, workDir)
+		// Every setup failure in this package is a *LaunchError; a caller
+		// matching that type must not start missing agent failures just
+		// because the agent moved into its own package. The cause stays
+		// reachable through Unwrap.
+		return nil, &LaunchError{Op: "agent session", Err: err}
 	}
 
 	// Seed the known_hosts the native client will verify against: pins from the
@@ -144,7 +190,7 @@ func Start(ctx context.Context, req Request) (*Session, error) {
 	if !req.SkipStore {
 		body, err := known_hosts.EmitAll(ctx, req.KnownHostsStore, req.Scope, req.Owner)
 		if err != nil {
-			cancel()
+			agentSess.Stop()
 			cleanupDir(ownsWorkDir, workDir)
 			return nil, &LaunchError{Op: "emit known_hosts", Err: err}
 		}
@@ -153,7 +199,7 @@ func Start(ctx context.Context, req Request) (*Session, error) {
 	for _, f := range req.ExtraKnownHosts {
 		// ExtraKnownHosts is local operator config (CLI flags / GUI settings,
 		// e.g. ~/.ssh/known_hosts), never remote/request-derived input.
-		if data, rerr := os.ReadFile(f); rerr == nil { // #nosec G703 -- operator-supplied local known_hosts path
+		if data, rerr := os.ReadFile(f); rerr == nil { // #nosec G304 G703 -- operator-supplied local known_hosts path
 			seed = append(seed, data...)
 			if len(data) > 0 && data[len(data)-1] != '\n' {
 				seed = append(seed, '\n')
@@ -162,8 +208,8 @@ func Start(ctx context.Context, req Request) (*Session, error) {
 	}
 	// khFile is under workDir (req.WorkDir), which -- like ExtraKnownHosts
 	// above -- is local operator/library-caller config, not remote input.
-	if werr := os.WriteFile(khFile, seed, 0o600); werr != nil { // #nosec G703 -- operator-supplied WorkDir, not attacker-controlled
-		cancel()
+	if werr := os.WriteFile(khFile, seed, 0o600); werr != nil { // #nosec G304 G703 -- operator-supplied WorkDir, not attacker-controlled
+		agentSess.Stop()
 		cleanupDir(ownsWorkDir, workDir)
 		return nil, &LaunchError{Op: "write known_hosts", Err: werr}
 	}
@@ -187,7 +233,7 @@ func Start(ctx context.Context, req Request) (*Session, error) {
 
 	return &Session{
 		Args:           args,
-		Env:            []string{"SSH_AUTH_SOCK=" + sock},
+		Env:            agentSess.Env,
 		store:          req.KnownHostsStore,
 		sc:             req.Scope,
 		owner:          req.Owner,
@@ -196,7 +242,7 @@ func Start(ctx context.Context, req Request) (*Session, error) {
 		skipStore:      req.SkipStore,
 		workDir:        workDir,
 		ownsWorkDir:    ownsWorkDir,
-		cancel:         cancel,
+		agent:          agentSess,
 	}, nil
 }
 
@@ -205,29 +251,66 @@ func Start(ctx context.Context, req Request) (*Session, error) {
 // session is live (the GUI polls it so first-contact hosts pin promptly).
 // Returns the number of newly-pinned hosts.
 func (s *Session) Sync() (int, error) {
-	if s.knownHostsFile == "" {
+	// Take a consistent snapshot and register as in-flight under the lock, then
+	// release it before doing any I/O. Stop waits on inFlight rather than on
+	// the mutex, so a store that has stopped answering delays the work-dir
+	// removal by at most syncDrainTimeout instead of wedging shutdown.
+	s.mu.Lock()
+	khFile := s.knownHostsFile
+	if khFile == "" {
+		s.mu.Unlock()
 		return 0, nil
 	}
+	s.inFlight.Add(1)
+	s.mu.Unlock()
+	defer s.inFlight.Done()
 	// Mirror newly-accepted host keys into external files (~/.ssh/known_hosts)
 	// for the "system" / "both" policies.
 	for _, f := range s.extraFiles {
-		_ = mirrorKnownHosts(s.knownHostsFile, f)
+		_ = mirrorKnownHosts(khFile, f)
 	}
 	if s.skipStore || s.store == nil {
 		return 0, nil
 	}
-	return known_hosts.ImportKnownHostsFile(context.Background(), s.store, s.sc, s.owner, s.knownHostsFile, known_hosts.SourceFirstContact)
+	return known_hosts.ImportKnownHostsFile(context.Background(), s.store, s.sc, s.owner, khFile, known_hosts.SourceFirstContact)
 }
 
 // Stop cancels the agent and removes temp artifacts. Idempotent. After Stop the
 // session can no longer Sync (the temp known_hosts is gone).
+//
+// Stopping the agent is unconditional and immediate -- it is the part that
+// matters, and it does not depend on known_hosts. Removing the work directory
+// then waits, briefly, for an in-flight Sync: tearing the file out from under a
+// running import would lose exactly the first-contact pins Sync exists to
+// capture. The wait is bounded, because the import runs against a caller's
+// store and a store that has stopped answering must not be able to keep a
+// signing agent alive.
 func (s *Session) Stop() {
-	if s.cancel != nil {
-		s.cancel()
-		s.cancel = nil
+	s.mu.Lock()
+	agent := s.agent
+	s.agent = nil
+	s.knownHostsFile = "" // no Sync started from here on
+	s.mu.Unlock()
+
+	if agent != nil {
+		agent.Stop()
 	}
+	drainWithin(&s.inFlight, syncDrainTimeout)
 	cleanupDir(s.ownsWorkDir, s.workDir)
-	s.knownHostsFile = ""
+}
+
+// drainWithin waits for wg, giving up after d. The watcher goroutine ends when
+// the last worker finishes, however long that takes.
+func drainWithin(wg *sync.WaitGroup, d time.Duration) {
+	drained := make(chan struct{})
+	go func() {
+		wg.Wait()
+		close(drained)
+	}()
+	select {
+	case <-drained:
+	case <-time.After(d):
+	}
 }
 
 // SyncAndStop imports accepted host keys, then stops the agent and removes temp
@@ -240,7 +323,11 @@ func (s *Session) SyncAndStop() (int, error) {
 
 // KnownHostsFile returns the path to the session's temp known_hosts file (empty
 // after Stop). Exposed so a caller can watch it for changes.
-func (s *Session) KnownHostsFile() string { return s.knownHostsFile }
+func (s *Session) KnownHostsFile() string {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.knownHostsFile
+}
 
 // target renders the "user@host" (or bare "host") connection argument.
 func target(user, host string) string {
@@ -248,18 +335,6 @@ func target(user, host string) string {
 		return host
 	}
 	return user + "@" + host
-}
-
-// waitForSocket polls until the agent unix socket exists or the deadline lapses.
-func waitForSocket(path string, timeout time.Duration) error {
-	deadline := time.Now().Add(timeout)
-	for time.Now().Before(deadline) {
-		if _, err := os.Stat(path); err == nil {
-			return nil
-		}
-		time.Sleep(10 * time.Millisecond)
-	}
-	return &LaunchError{Op: "agent socket", Err: &errs.Message{Msg: fmt.Sprintf("socket %s did not appear within %s", path, timeout)}}
 }
 
 // cleanupDir removes the work dir only when this package created it.
@@ -275,7 +350,9 @@ func cleanupDir(owns bool, dir string) {
 // The line-parsing/dedup logic lives in known_hosts.AppendMissing — this is a
 // thin call-through that reads src and delegates.
 func mirrorKnownHosts(src, dst string) error {
-	srcData, err := os.ReadFile(src)
+	// src is this session's own temp known_hosts, built above from operator
+	// config -- never a remote or request-derived path.
+	srcData, err := os.ReadFile(src) // #nosec G304 G703 -- session-owned temp path
 	if err != nil {
 		return err
 	}

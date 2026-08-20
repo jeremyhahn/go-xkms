@@ -38,6 +38,20 @@ func (faultScanBackend) Scan(context.Context, string, func(string, []byte) error
 }
 
 // TestTarget covers both the bare-host and user@host rendering branches.
+// privateDir returns a temp directory private to this user. t.TempDir gives
+// 0775, and the agent session refuses a group-writable work directory: a
+// socket's own mode does not protect its pathname, and the seeded known_hosts
+// lives in the same directory, where group-writability is a host-verification
+// hazard in its own right.
+func privateDir(t *testing.T) string {
+	t.Helper()
+	dir := t.TempDir()
+	if err := os.Chmod(dir, 0o700); err != nil {
+		t.Fatalf("chmod: %v", err)
+	}
+	return dir
+}
+
 func TestTarget(t *testing.T) {
 	if got := target("", "example.com"); got != "example.com" {
 		t.Fatalf("bare host: got %q", got)
@@ -113,7 +127,7 @@ func TestStart_WriteKnownHostsError(t *testing.T) {
 	ctx := context.Background()
 	store, _ := known_hosts.NewBackendStore(storage.New())
 
-	workDir := t.TempDir()
+	workDir := privateDir(t)
 	// Occupy the known_hosts path with a directory so WriteFile fails.
 	if err := os.Mkdir(filepath.Join(workDir, "known_hosts"), 0o700); err != nil {
 		t.Fatalf("mkdir: %v", err)

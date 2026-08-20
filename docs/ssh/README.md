@@ -213,6 +213,21 @@ identity). The flow (`pkg/ssh/connect`):
 The GUI launches a terminal window; the CLI runs `ssh` inline in the current
 terminal.
 
+### Agent-only sessions — signing with no host
+
+Step 1 above is useful on its own: plenty of tools speak the ssh-agent protocol
+without ever dialing a host (`git commit -S` under `gpg.format=ssh`,
+`ssh-keygen -Y sign`, `age`), and `xkmsssh.StartAgent` serves an xkms-held key
+over an ephemeral socket with no connection target. `pkg/ssh/connect` is a
+consumer of that session, adding the host semantics described above.
+
+**That capability is documented in [`../ssh-agent-sessions/`](../ssh-agent-sessions/),
+which is NORMATIVE for it — this file is not.** Start with
+[`user.md`](../ssh-agent-sessions/user.md) for the worked git-signing example,
+[`architecture.md`](../ssh-agent-sessions/architecture.md) for why it is
+hostless, and [`engineering.md`](../ssh-agent-sessions/engineering.md) for the
+lifetime contract and invariants.
+
 ### Console mode: system terminal vs embedded
 
 A connection opens either in the **system terminal** (the OS terminal, via the

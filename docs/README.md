@@ -31,6 +31,7 @@ the folder in the same commit that changes the behavior.
 | [platform-secrets](platform-secrets/) | Platform secret storage and resolution |
 | [sealing-and-barrier](sealing-and-barrier/) | Hardware and cloud seal strategies contributed to the qrdb barrier |
 | [share-custody](share-custody/) | Shamir share custody, custodian groups and share collection |
+| [ssh-agent-sessions](ssh-agent-sessions/) | Serving an xkms-held key over an ephemeral SSH agent socket with no connection target — git commit signing, `ssh-keygen -Y sign` |
 | [tpm2](tpm2/) | EK/SRK lifecycle, IDevID/LDevID, PCR policy, attestation, sealed objects |
 | [trust-bootstrap](trust-bootstrap/) | The DANE / Noise / SPKI / Direct / Auto mode-dispatch library |
 | [webauthn](webauthn/) | The canonical WebAuthn relying party |
@@ -101,6 +102,7 @@ by five and reports unconverted folders as converted.
 | [password-vault](password-vault/) | `staticpw/` |
 | [platform-secrets](platform-secrets/) | `platform-store/` |
 | [audit-log](audit-log/) | — |
+| [ssh-agent-sessions](ssh-agent-sessions/) | — (new surface; supersedes nothing) |
 
 Two of these need a note rather than a row:
 
@@ -121,7 +123,7 @@ Ordered "under active development first, then most often read":
 | Area | Legacy path | Note |
 |---|---|---|
 | FROST threshold signatures | [`frost/`](frost/) | 8 files; full CLI, REST, gRPC and MCP surface |
-| SSH key management | [`ssh/`](ssh/) | `/xkms/v1/ssh`; complete MCP coverage |
+| SSH key management | [`ssh/`](ssh/) | `/xkms/v1/ssh`; complete MCP coverage. **Agent-only sessions are already converted** — [`ssh-agent-sessions/`](ssh-agent-sessions/) is NORMATIVE for that capability; the rest of `ssh/` is still legacy |
 | PKCS#11 **backend** (consuming a token) | [`pkcs11/backend/`](pkcs11/backend/) | distinct from the provider module; includes a runbook |
 | Key escrow | [`escrow/`](escrow/) | `pkg/escrow` is implemented (KMIP + xkms federation) with **no SDK or CLI surface** |
 | Post-quantum | [`architecture/post-quantum-cryptography.md`](architecture/post-quantum-cryptography.md), [`backends/quantum.md`](backends/quantum.md) | |

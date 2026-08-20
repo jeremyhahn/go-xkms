@@ -19,7 +19,6 @@ import (
 	"crypto/rand"
 	"crypto/rsa"
 	"net"
-	"path/filepath"
 	"testing"
 	"time"
 
@@ -57,7 +56,7 @@ func newRSASigner(t *testing.T) ssh.Signer {
 // agent client plus a cleanup func.
 func serveTestAgent(t *testing.T, signers ...ssh.Signer) (sshagent.ExtendedAgent, func()) {
 	t.Helper()
-	sock := filepath.Join(t.TempDir(), "agent.sock")
+	sock := SocketPath(privateDir(t))
 	ctx, cancel := context.WithCancel(context.Background())
 	go func() { _ = Serve(ctx, sock, New(signers...)) }()
 

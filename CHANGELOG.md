@@ -7,6 +7,112 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **SSH SDK: agent-only sessions (`xkmsssh.StartAgent`)** (#52). Serves
+  xkms-held keys over an ephemeral in-process SSH agent socket with **no
+  connection target**, for tools that speak the ssh-agent protocol without
+  dialing a host — `git commit -S` under `gpg.format=ssh`, `ssh-keygen -Y
+  sign`, `age`. `Keys().Signer` returns an in-process `ssh.Signer`; those
+  tools need a socket. `StartConnect` had the agent machinery but demanded a
+  Host/Port/User and known_hosts seeding that a signature has no use for.
+  The socket is bound synchronously (connectable when `StartAgent` returns,
+  bind failures typed as `*AgentListenError`) and dies at the first of
+  `Stop()` or context cancellation, taking an owned work directory with it.
+  No host-key semantics are implied: `StartAgent` neither seeds nor consults
+  `known_hosts`. Only the public half ever reaches disk. Documented in the
+  new [`docs/ssh-agent-sessions/`](docs/ssh-agent-sessions/) feature folder,
+  which is normative for this capability; the rest of `docs/ssh/` remains
+  unconverted legacy.
+
+### Changed
+
+- `pkg/ssh/agent` gained an internal listen/serve split (`Serve` is unchanged
+  and now composes them) so the socket can be bound before serving begins. The
+  raw binder stays unexported: `net.Listen` binds before the mode is applied,
+  so for an arbitrary path there is a window in which the socket carries
+  whatever the umask left it, and only a 0700 containing directory closes it —
+  which `StartSession` can promise and a raw path cannot.
+  Shutdown closes every attached client and joins its handler, and unlinks the
+  socket exactly once — by closing the listener — so a successor session on the
+  same `WorkDir` cannot have its live socket deleted by a predecessor's late
+  cleanup. **`Listen` no longer clears a stale socket** — an
+  occupied path is refused with `ErrSocketInUse` (an agent answers there) or
+  `ErrPathOccupied` (anything else), re-exported by the SDK as
+  `ErrAgentSocketInUse` and `ErrAgentPathOccupied`. Clearing one needs
+  inspect-unlink-bind, and between those steps another process can bind its
+  own live agent at that path, which the unlink then destroys. A leftover from
+  a crashed run is now the directory owner's to remove. This is a behaviour
+  change to the pre-existing `Listen` / `Serve` path, which had no in-repo
+  callers.
+- `pkg/ssh/connect.Start` drives the new `agent.StartSession` instead of
+  carrying its own copy of the agent plumbing; its 3-second socket poll (and
+  the `time.Sleep` in it) and the `LaunchError{Op: "agent socket"}` it could
+  return are gone, because the bind is now synchronous. Its error contract is
+  unchanged: agent setup failures are still `*connect.LaunchError`
+  (`Op: "agent session"`), with the cause reachable through `Unwrap`. `WorkDir`
+  still means "create the scratch area here", so `connect` creates it — the
+  agent deliberately will not conjure a directory it would not own — and every
+  path derived from it is absolutised, because the socket and the seeded
+  `known_hosts` both leave this process for a child with its own working
+  directory.
+
+### Security
+
+- **RSA keys served over an agent socket never sign with SHA-1.** An unflagged
+  `SIGN_REQUEST` is an ssh-agent client's default rather than a deliberate
+  choice, and x/crypto's default for an RSA signer is the legacy `ssh-rsa`.
+  With `StartAgent` making the agent reachable by any ssh-agent client, that
+  would hand out a non-approved primitive on request under the project's FIPS
+  140-3 requirement. RSA requests now get `rsa-sha2-256` (or `-512` when
+  flagged), and an RSA signer that cannot select an algorithm is refused with
+  `*UnsupportedAlgorithmError`. **Behaviour change**: a server that accepts
+  only legacy `ssh-rsa` will no longer authenticate with an RSA key served
+  this way.
+- **`StartAgent` has no `WorkDir` option**; the session always creates its own
+  private directory. A socket's 0600 mode does not protect its *pathname* — the
+  containing directory governs who may replace it — and validating a
+  caller-supplied directory is inherently check-then-use, because an attacker
+  controlling any ancestor redirects the path between the check and the bind.
+  Closing that needs an anchored no-follow bind, which
+  `net.Listen("unix", path)` cannot express. The option is absent rather than
+  guarded by a check that looks like a guarantee and is not. `pkg/ssh/agent`
+  still accepts a directory for `pkg/ssh/connect`, which supplies one it
+  created itself, and validates it (`*InsecureWorkDirError`: symlink, foreign
+  owner, group/world-writable).
+- **Shutdown terminates even when a signer does not.** Closing the listener and
+  disconnecting every attached client are unconditional; joining the connection
+  handlers afterwards is bounded. A handler stuck inside an uninterruptible
+  `Signer.Sign` (a TPM awaiting touch, a stalled KMS) cannot be woken by
+  closing its connection — but it also cannot answer anyone, because that
+  connection is already closed. Waiting forever would hang `Stop()` and leave
+  the work directory unreaped to guard against an oracle with nobody to talk
+  to.
+- **Typed-nil signers are rejected.** A nil pointer boxed in an `ssh.Signer`
+  passes an interface nil check, and the first `PublicKey` call would panic in
+  the serving goroutine, taking the process down.
+- **`agent.Serve` validates the socket's parent directory** on the same terms
+  `StartSession` applies. It takes an arbitrary path, so without that a caller
+  could bind a signing socket in a shared directory — where the bind-to-chmod
+  window is reachable and the pathname can be replaced outright.
+- **Off Unix, a caller-supplied work directory is refused.** The isolation this
+  package relies on is expressed in Unix mode bits; Windows ACLs are inherited
+  rather than implied by a `Mkdir` mode, invisible to `fs.FileInfo`, and not
+  comparable against a uid. A check that cannot see the permissions it is
+  checking must not return "safe". Sessions that create their own directory are
+  unaffected — `os.MkdirTemp` lands under the platform's per-user temp
+  location, which is the OS's isolation rather than a claim made here.
+- **`connect.Session` teardown is synchronised, and cannot be held hostage.**
+  `Sync` and `Stop` touched `knownHostsFile` and the agent handle unguarded
+  while `Sync`'s own doc says the GUI polls it on a live session — a data race,
+  and one that could delete the known_hosts out from under a running import,
+  losing exactly the first-contact pins `Sync` exists to capture. `Stop` now
+  stops the agent first and independently: the import runs against a
+  caller-supplied store over a context this session does not control, so
+  holding a lock across it would let a stalled backend keep a signing agent
+  alive. Removing the work directory waits for an in-flight `Sync`, but only
+  briefly.
+
 ## [0.7.7-alpha] - 2026-08-20
 
 A dependency release: **go-qrdb v0.6.0-alpha → v0.9.0-alpha**, with

@@ -90,7 +90,7 @@ func TestAgent_SignWithFlags512(t *testing.T) {
 // TestAgent_ServeListenError exercises the Serve() error path: a socket whose
 // parent path is a regular file makes directory creation / listen fail.
 func TestAgent_ServeListenError(t *testing.T) {
-	tmp := t.TempDir()
+	tmp := privateDir(t)
 	fileAsParent := filepath.Join(tmp, "notadir")
 	require.NoError(t, os.WriteFile(fileAsParent, []byte("x"), 0o600))
 
@@ -105,7 +105,7 @@ func TestAgent_ServeListenError(t *testing.T) {
 // connects over the unix socket, lists the served keys, and the server shuts
 // down gracefully when the context is cancelled (returning nil).
 func TestAgent_ServeRoundTrip(t *testing.T) {
-	sock := filepath.Join(t.TempDir(), "agent.sock")
+	sock := SocketPath(privateDir(t))
 	ctx, cancel := context.WithCancel(context.Background())
 
 	srvErr := make(chan error, 1)
