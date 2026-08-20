@@ -129,6 +129,11 @@ type (
 	NoiseBundleProvider = pkgbootstrap.NoiseBundleProvider
 )
 
+// NoiseHexKeySize is the buffer length EncodeNoiseStaticKey requires. It is
+// re-exported because the encode direction writes into a caller-supplied
+// buffer, so a consumer cannot size that buffer without it.
+const NoiseHexKeySize = pkgbootstrap.NoiseHexKeySize
+
 // Re-exported Noise server constructors and key helpers.
 var (
 	// NewNoiseServer constructs a Noise_NK bootstrap server.
@@ -137,9 +142,27 @@ var (
 	// GenerateNoiseStaticKey generates a Curve25519 static key pair.
 	GenerateNoiseStaticKey = pkgbootstrap.GenerateNoiseStaticKey
 
-	// EncodeNoiseStaticKey encodes a Noise static key as a hex string.
+	// EncodeNoiseStaticKey hex-encodes a Noise static private key into the
+	// caller's buffer, which must be at least NoiseHexKeySize bytes and
+	// should itself be protected memory: the encoded form is as sensitive as
+	// the key. It does not return a string, because a Go string is immutable
+	// and therefore cannot be wiped.
 	EncodeNoiseStaticKey = pkgbootstrap.EncodeNoiseStaticKey
 
-	// DecodeNoiseStaticKey decodes a hex-encoded Noise static key.
+	// DecodeNoiseStaticKey decodes a hex-encoded Noise static key straight
+	// into protected memory. The caller's encoded bytes remain theirs to wipe.
 	DecodeNoiseStaticKey = pkgbootstrap.DecodeNoiseStaticKey
+
+	// NoiseServerStaticKey adapts a protected NoiseStaticKey to the key pair
+	// NoiseServerConfig.StaticKey takes. Without it an SDK-only consumer can
+	// generate a protected key and has no way to give it to the server —
+	// GenerateNoiseStaticKey and NoiseServerConfig were re-exported here
+	// while the adapter that joins them was not, so the two halves compiled
+	// individually and could not be used together.
+	NoiseServerStaticKey = pkgbootstrap.NoiseServerStaticKey
+
+	// WipeNoiseBytes zeroes a buffer that held Noise key material. Re-exported
+	// because EncodeNoiseStaticKey hands the caller the responsibility for the
+	// buffer it wrote into.
+	WipeNoiseBytes = pkgbootstrap.WipeNoiseBytes
 )

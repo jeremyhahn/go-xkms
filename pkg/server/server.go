@@ -34,7 +34,6 @@ import (
 	"syscall"
 	"time"
 
-	flynn_noise "github.com/flynn/noise"
 	"github.com/prometheus/client_golang/prometheus/promhttp"
 	"google.golang.org/grpc"
 
@@ -81,6 +80,33 @@ import (
 // tenant barrier subsystem, not through a separate relying party.
 const webAuthnSystemTenant = "system"
 
+// noiseBootstrapStopTimeout bounds how long Shutdown waits for the Noise
+// bootstrap server to drain. It also decides the fate of the server's
+// protected static key: draining inside this window is the only proof its
+// handshake workers have exited, and without that proof the key is retained
+// rather than freed.
+const noiseBootstrapStopTimeout = 10 * time.Second
+
+// noiseStopDrained reports whether stopping the Noise bootstrap server can be
+// read as a completed drain — the only state in which the protected pages
+// behind its static key are provably unreferenced.
+//
+// BOTH conditions are necessary, and each was got wrong on its own here.
+// noiseboot.Server.Stop returns nil whether its workers drained or its own
+// deadline expired — it logs the difference and swallows it — so an unexpired
+// context is what distinguishes the two. And Stop returns immediately, without
+// waiting for anything, when it does not consider itself started
+// (ErrServerNotStarted after an earlier externally timed-out stop, for
+// instance); that fast return also leaves the context unexpired, so only a nil
+// error means it took the drain path at all.
+//
+// One function rather than the condition written out at each site: the two
+// sites that stop this server reached different answers, which is exactly the
+// failure a shared decision prevents.
+func noiseStopDrained(stopErr error, stopCtx context.Context) bool {
+	return stopErr == nil && stopCtx.Err() == nil
+}
+
 // Server represents the unified xkms server that runs all protocols
 type Server struct {
 	config       *config.Config
@@ -111,6 +137,33 @@ type Server struct {
 	moduleMCPOnce        sync.Once
 	unifiedTLS           *unifiedTLSProvider
 	noiseBootstrapServer *noiseboot.Server
+
+	// noiseBootstrapKey is the protected static key the bootstrap server's
+	// handshakes read in place. It lives here, alongside the server it
+	// belongs to, because noiseboot.Server.Start does NOT block — it launches
+	// an accept loop and returns — so the goroutine that called Start cannot
+	// know when the last handshake has finished. Only Shutdown can, and only
+	// when Stop drains within its deadline.
+	noiseBootstrapKey *noiseproto.StaticKey
+
+	// retainedNoiseKeys holds static keys a shutdown could not prove
+	// unreferenced. They are never destroyed: the pages stay locked for the
+	// life of the process, which is the deliberate trade against freeing
+	// memory a live handshake is reading.
+	//
+	// They are kept REACHABLE rather than simply dropped. memguard already
+	// pins every live buffer in a package-level list, so an unreferenced
+	// StaticKey is not collectable and its pages cannot be reclaimed — but
+	// "we are retaining this" and "we dropped the only pointer to it" should
+	// not look identical in the source, and holding the owner is what would
+	// let a future reclamation path exist at all.
+	retainedNoiseKeys []*noiseproto.StaticKey
+
+	// shutdownOnce/shutdownErr latch the shutdown outcome: concurrent callers
+	// must not both close shutdownCh, and must not reach different
+	// conclusions about whether components drained.
+	shutdownOnce sync.Once
+	shutdownErr  error
 
 	// metricsServer is the Prometheus metrics HTTP server. It is stored here so
 	// Shutdown can stop it; otherwise its ListenAndServe blocks forever and the
@@ -2018,6 +2071,12 @@ func (s *Server) initializeCA() error {
 			if resolveErr != nil {
 				return &ErrCAInit{Operation: "resolve key password credential", Err: resolveErr}
 			}
+			// nolint:staticcheck // go-xkms#41: SecretValue.String copies the
+			// plaintext into an unwipeable heap string. The replacement
+			// (WithBytes, or a SecretValue-typed config field) is borrow-scoped
+			// and changes who owns this password for the life of the config, so
+			// it is a custody change rather than a call-site swap. Delete this
+			// directive when #41 lands.
 			id.Keys[j].Password = sv.String()
 			sv.Clear()
 		}
@@ -2026,6 +2085,10 @@ func (s *Server) initializeCA() error {
 			if resolveErr != nil {
 				return &ErrCAInit{Operation: "resolve software keystore password credential", Err: resolveErr}
 			}
+			// nolint:staticcheck // go-xkms#41: same custody change as above —
+			// String hands back an unwipeable heap copy, and the borrow-scoped
+			// replacement cannot outlive its callback the way this field does.
+			// Delete this directive when #41 lands.
 			id.Keystores.Software.Password = sv.String()
 			sv.Clear()
 		}
@@ -2762,16 +2825,42 @@ func (s *Server) startNoiseBootstrap() {
 		maxConns = 100
 	}
 
-	// Load static key from file or hex config
+	// Load static key from file or hex config. Ownership stays here until it
+	// is published to the Server below: every early return between the two
+	// points has to release the protected pages, and the pre-publication
+	// cancellation path is a normal shutdown race, not an exceptional one.
 	staticKey, err := s.loadNoiseStaticKey()
 	if err != nil {
 		s.logger.Error("Failed to load Noise static key", slog.Any("error", err))
 		return
 	}
+	// This goroutine owns the key ONLY until it publishes it below.
+	//
+	// It used to own it outright, on the stated premise that "Start blocks
+	// until the server has stopped". That premise is false:
+	// noiseboot.Server.Start binds the listener, launches its accept loop in
+	// a goroutine, and returns nil. Destroying on the way out of this
+	// function therefore freed the protected pages while the published server
+	// and every future handshake still aliased staticKey.DHKey — a
+	// use-after-free reachable by any client that connected afterwards.
+	//
+	// So ownership moves to the Server at publication, and Shutdown destroys
+	// the key once Stop has confirmed the workers exited. Every exit path
+	// BEFORE publication still has to release it, which is what published
+	// tracks.
+	published := false
+	defer func() {
+		if !published {
+			staticKey.Destroy()
+		}
+	}()
 
 	serverCfg := &noiseboot.ServerConfig{
-		ListenAddr:     addr,
-		StaticKey:      staticKey,
+		ListenAddr: addr,
+		// The embedded DHKey aliases the protected private scalar, so the
+		// bootstrap server reads it in place. It stays valid until Shutdown
+		// stops the server and destroys the key.
+		StaticKey:      &staticKey.DHKey,
 		CABundler:      bundler,
 		MaxConnections: maxConns,
 		ReadTimeout:    readTimeout,
@@ -2785,31 +2874,104 @@ func (s *Server) startNoiseBootstrap() {
 		return
 	}
 
-	// Store the server so Shutdown can stop it. If Shutdown already began (ctx
-	// cancelled) before we got here, do not start — return so this goroutine
-	// releases its wg slot instead of blocking in Start.
+	// Do not start at all if Shutdown has already begun.
 	s.mu.Lock()
-	if s.ctx.Err() != nil {
-		s.mu.Unlock()
+	cancelled := s.ctx.Err() != nil
+	s.mu.Unlock()
+	if cancelled {
 		return
 	}
-	s.noiseBootstrapServer = server
-	s.mu.Unlock()
 
 	s.logger.Info("Starting Noise bootstrap server", "address", addr)
 
 	if err := server.Start(); err != nil {
+		// No accept loop exists, so nothing can be reading the key. The defer
+		// releases it.
 		s.logger.Error("Noise bootstrap server error", slog.Any("error", err))
+		return
+	}
+
+	// Publish only AFTER Start succeeds, and re-check the shutdown context
+	// under the same lock.
+	//
+	// Publishing before Start left a window that made the key destruction
+	// unsafe again: Shutdown could snapshot a server that had not started,
+	// call Stop on it (which returns ErrServerNotStarted without waiting for
+	// anything), read that as a clean drain, and destroy the key — and only
+	// then would this goroutine reach Start and hand the accept loop a DHKey
+	// aliasing freed pages.
+	//
+	// Ordering it this way closes the window from both sides, because both
+	// sides move under s.mu. Either Shutdown observes a published, started
+	// server and stops it, or it does not observe one at all and this
+	// goroutine sees the cancelled context and stops the server itself.
+	s.mu.Lock()
+	cancelled = s.ctx.Err() != nil
+	if !cancelled {
+		s.noiseBootstrapServer = server
+		s.noiseBootstrapKey = staticKey
+		published = true
+	}
+	s.mu.Unlock()
+
+	if !cancelled {
+		return
+	}
+
+	// Shutdown began while we were starting, so it never saw this server and
+	// stopping it is ours to do — with the same rule about the key: destroy
+	// only on a confirmed drain.
+	s.logger.Info("Shutdown began during Noise bootstrap startup; stopping the server it did not see")
+
+	stopCtx, cancelStop := context.WithTimeout(context.Background(), noiseBootstrapStopTimeout)
+	stopErr := server.Stop(stopCtx)
+	if stopErr != nil {
+		s.logger.Error("Error stopping the Noise bootstrap server", slog.Any("error", stopErr))
+	}
+
+	// The same decision Shutdown makes, through the same function. This path
+	// read the context alone, which treats a Stop that never waited for
+	// anything as a completed drain and destroys a key whose handshake workers
+	// may still be running.
+	joined := noiseStopDrained(stopErr, stopCtx)
+	cancelStop()
+
+	if !joined {
+		// Retained rather than freed, and deliberately kept reachable: see
+		// the note on retention in Shutdown.
+		published = true
+		s.retainNoiseKey(staticKey)
+		s.logger.Warn("retaining the Noise bootstrap static key: the stop " +
+			"deadline expired during startup teardown")
 	}
 }
 
-// loadNoiseStaticKey loads the Noise static key from config.
-func (s *Server) loadNoiseStaticKey() (*flynn_noise.DHKey, error) {
+// retainNoiseKey parks a static key that a shutdown could not prove
+// unreferenced, keeping its owner reachable for the life of the Server.
+func (s *Server) retainNoiseKey(key *noiseproto.StaticKey) {
+	if key == nil {
+		return
+	}
+
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	s.retainedNoiseKeys = append(s.retainedNoiseKeys, key)
+}
+
+// loadNoiseStaticKey loads the Noise static key from config. The returned key
+// holds its private scalar in protected memory; the caller owns it and must
+// Destroy it once the bootstrap server that uses it has stopped.
+func (s *Server) loadNoiseStaticKey() (*noiseproto.StaticKey, error) {
 	noiseCfg := s.config.Bootstrap.Noise
 
 	// Try hex key first (inline config)
 	if noiseCfg.StaticKeyHex != "" {
-		return noiseproto.DecodeStaticKey(noiseCfg.StaticKeyHex)
+		// The configured string is immutable and cannot be wiped; the copy we
+		// make for decoding can be, so it does not outlive this call.
+		hexKey := []byte(noiseCfg.StaticKeyHex)
+		defer noiseproto.WipeBytes(hexKey)
+		return noiseproto.DecodeStaticKey(hexKey)
 	}
 
 	// Try key file
@@ -2819,8 +2981,9 @@ func (s *Server) loadNoiseStaticKey() (*flynn_noise.DHKey, error) {
 		if err != nil {
 			return nil, &ErrFileRead{Path: "noise key file", Err: err}
 		}
-		hexKey := strings.TrimSpace(string(data))
-		return noiseproto.DecodeStaticKey(hexKey)
+		// TrimSpace returns a subslice of data, so wiping data covers both.
+		defer noiseproto.WipeBytes(data)
+		return noiseproto.DecodeStaticKey(bytes.TrimSpace(data))
 	}
 
 	// Generate a new key (first-time setup)
@@ -2987,7 +3150,22 @@ func parseCipherSuites(names []string) []uint16 {
 
 // Shutdown gracefully shuts down all servers
 func (s *Server) Shutdown() error {
+	// Latched. Concurrent callers used to race into close(s.shutdownCh) and
+	// panic on close-of-closed; they also each independently stopped the
+	// bootstrap server and could destroy the same protected key twice. Now
+	// the first caller performs the shutdown and everyone receives its
+	// result.
+	s.shutdownOnce.Do(func() { s.shutdownErr = s.shutdown() })
+	return s.shutdownErr
+}
+
+func (s *Server) shutdown() error {
 	s.logger.Info("Shutting down server...")
+
+	// Components that could not be proven drained. Collected rather than
+	// logged-and-forgotten: a shutdown that returns nil over a timed-out
+	// drain tells a caller holding a borrowed key that freeing it is safe.
+	var incomplete []string
 
 	// Stop metrics collector if running
 	if s.metricsCollector != nil {
@@ -3005,13 +3183,21 @@ func (s *Server) Shutdown() error {
 	// Copy server references under lock to avoid races with startup goroutines
 	// We copy first, then release the lock before calling shutdown operations
 	// which could take a long time
-	s.mu.RLock()
+	// The Noise bootstrap server and its key are CLAIMED here, not merely
+	// read: taken and cleared in one critical section so a concurrent
+	// Shutdown cannot snapshot the same key, stop the same server
+	// independently, and destroy pages the other caller is still draining.
+	// A write lock rather than a read lock, for the same reason.
+	s.mu.Lock()
 	unixGRPC := s.unixGRPCServer
 	restSrv := s.restServer
 	noiseSrv := s.noiseBootstrapServer
+	noiseKey := s.noiseBootstrapKey
+	s.noiseBootstrapServer = nil
+	s.noiseBootstrapKey = nil
 	raftAdv := s.raftClusterAdvertiser
 	metricsSrv := s.metricsServer
-	s.mu.RUnlock()
+	s.mu.Unlock()
 
 	// Shutdown metrics server. Without this its ListenAndServe blocks forever,
 	// so the startMetrics goroutine never calls wg.Done and the wait below can
@@ -3042,8 +3228,29 @@ func (s *Server) Shutdown() error {
 	// Shutdown Noise bootstrap server
 	if noiseSrv != nil {
 		s.logger.Info("Shutting down Noise bootstrap server...")
-		if err := noiseSrv.Stop(shutdownCtx); err != nil {
-			s.logger.Error("Error shutting down Noise bootstrap server", slog.Any("error", err))
+
+		// Its own deadline, derived from the shutdown budget. Stop's outcome
+		// has to be attributable to THIS server: sharing shutdownCtx would
+		// let a slow earlier step exhaust the budget and make a bootstrap
+		// server that drained instantly look like one that hung.
+		noiseCtx, cancelNoise := context.WithTimeout(shutdownCtx, noiseBootstrapStopTimeout)
+		stopErr := noiseSrv.Stop(noiseCtx)
+		if stopErr != nil {
+			s.logger.Error("Error shutting down Noise bootstrap server", slog.Any("error", stopErr))
+		}
+
+		joined := noiseStopDrained(stopErr, noiseCtx)
+		cancelNoise()
+
+		if joined {
+			noiseKey.Destroy()
+		} else {
+			incomplete = append(incomplete, "noise bootstrap handshake workers")
+			if noiseKey != nil {
+				s.retainNoiseKey(noiseKey)
+				s.logger.Warn("retaining the Noise bootstrap static key: the stop " +
+					"deadline expired, so a handshake may still be reading it")
+			}
 		}
 	}
 
@@ -3065,6 +3272,7 @@ func (s *Server) Shutdown() error {
 		s.logger.Info("All servers stopped")
 	case <-shutdownCtx.Done():
 		s.logger.Warn("Shutdown timeout exceeded, forcing stop")
+		incomplete = append(incomplete, "server goroutines")
 	}
 
 	// Close audit logger
@@ -3085,9 +3293,29 @@ func (s *Server) Shutdown() error {
 	// Close all key providers
 	s.closeBackends()
 
-	close(s.shutdownCh)
-	s.logger.Info("Server shutdown complete")
+	// A key retained by startNoiseBootstrap's own teardown happens in a
+	// goroutine that cannot reach this function's incomplete list, so read
+	// the retention set instead. The retained key IS the observable record
+	// that some worker could not be confirmed finished; leaving that visible
+	// only in a log line was the last place an incomplete shutdown could
+	// still report success.
+	s.mu.RLock()
+	retained := len(s.retainedNoiseKeys)
+	s.mu.RUnlock()
+	if retained > 0 {
+		incomplete = append(incomplete,
+			fmt.Sprintf("%d retained noise static key(s)", retained))
+	}
 
+	close(s.shutdownCh)
+
+	if len(incomplete) > 0 {
+		s.logger.Warn("server shutdown complete, but some components could not "+
+			"be confirmed drained", "components", strings.Join(incomplete, ", "))
+		return fmt.Errorf("%w: %s", ErrShutdownIncomplete, strings.Join(incomplete, ", "))
+	}
+
+	s.logger.Info("Server shutdown complete")
 	return nil
 }
 

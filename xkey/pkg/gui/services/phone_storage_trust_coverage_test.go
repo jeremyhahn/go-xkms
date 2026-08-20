@@ -188,6 +188,7 @@ func TestPhoneService_Disconnect_WithEmptyTransport(t *testing.T) {
 	})
 
 	err := svc.Disconnect("TestDevice")
+	svc.awaitNoticesDelivered()
 	assert.NoError(t, err)
 	assert.False(t, svc.IsConnected())
 	assert.Empty(t, svc.ConnectedDeviceName())
@@ -400,6 +401,7 @@ func TestPhoneService_AutoAttest_PolicyDisabledButPresent(t *testing.T) {
 	// proceed to refresh attestation (LastAttestation != nil).
 	// performAttestation will fail (no transport) and emit a failure event.
 	svc.autoAttest(cfg, device, "Pixel 9")
+	svc.awaitNoticesDelivered()
 
 	// Should have emitted an attestation failure event.
 	foundAttestation := false

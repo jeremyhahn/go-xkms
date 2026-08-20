@@ -73,7 +73,24 @@ func (p *prober) requiredCall(name, method string, params interface{}) map[strin
 	return out
 }
 
+// probeShutdownTimeout bounds the wait for the message router's receive loop.
+// It parks in an uncancellable Receive and only observes shutdown between
+// messages, so this cannot be an unbounded join; see go-xkms#30.
+const probeShutdownTimeout = 5 * time.Second
+
+// probeExit carries a non-zero status out of the teardown defer. Registered
+// first below so it runs LAST, after teardown has had its say.
+var probeExit int
+
 func main() {
+	// Registered before anything else, so it is the final defer to run and
+	// can act on whatever teardown recorded.
+	defer func() {
+		if probeExit != 0 {
+			os.Exit(probeExit)
+		}
+	}()
+
 	addr := "localhost:8444"
 	if len(os.Args) > 1 {
 		addr = os.Args[1]
@@ -93,12 +110,43 @@ func main() {
 	fatalIf(err, "load static key")
 	fmt.Println("OK   static public key:", base64.StdEncoding.EncodeToString(staticKey.Public))
 
-	tr, err := pairing.NewTCPTransport(&pairing.TCPTransportConfig{
+	// Teardown is one ordered block rather than three defers, because defer
+	// LIFO gave Stop -> Close -> Destroy with no join in between: Stop does not
+	// wait for the receive loop, so the probe could free the key's protected
+	// pages while that loop was still decrypting through the session. The
+	// order that is actually correct is signal, unblock, join, release.
+	var (
+		tr     *pairing.TCPTransport
+		router *pairing.MessageRouter
+	)
+	defer func() {
+		if router != nil {
+			router.Stop()
+		}
+		if tr != nil {
+			_ = tr.Close()
+		}
+		if router != nil && !router.Join(probeShutdownTimeout) {
+			logger.Warn("message router did not exit within the shutdown window; " +
+				"retaining the static key rather than freeing pages it may still read")
+			// Surfaced, not just logged. A probe whose whole purpose is to
+			// verify the pairing path must not exit 0 over a shutdown it
+			// could not confirm — that is the same fail-open the components
+			// below it were fixed to stop reporting.
+			fmt.Fprintln(os.Stderr,
+				"FAIL message router did not exit within the shutdown window; "+
+					"the static key was retained")
+			probeExit = 1
+			return
+		}
+		staticKey.Destroy()
+	}()
+
+	tr, err = pairing.NewTCPTransport(&pairing.TCPTransportConfig{
 		Address: addr, ConnectTimeout: 10 * time.Second, OperationTimeout: 30 * time.Second,
 	})
 	fatalIf(err, "create transport")
 	fatalIf(tr.Connect(ctx), "tcp connect to "+addr)
-	defer func() { _ = tr.Close() }()
 	fmt.Println("OK   tcp connected:", addr)
 
 	session, err := pairing.NewNoiseSession(&pairing.NoiseSessionConfig{LocalStaticKey: staticKey, IsInitiator: true})
@@ -108,9 +156,8 @@ func main() {
 	}), "noise handshake")
 	fmt.Println("OK   noise handshake (identity exchange + XX)")
 
-	router := pairing.NewMessageRouter(tr, session, noopHandler{}, logger)
+	router = pairing.NewMessageRouter(tr, session, noopHandler{}, logger)
 	router.Start()
-	defer router.Stop()
 
 	p := &prober{}
 	p.call = func(method string, params interface{}) (map[string]json.RawMessage, error) {

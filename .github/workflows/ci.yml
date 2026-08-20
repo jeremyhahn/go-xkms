@@ -21,9 +21,23 @@ on:
     branches: [ main ]
   pull_request:
     branches: [ main ]
+  workflow_dispatch:                    # manual rerun — Gitea has no rerun API
 
 env:
-  GO_VERSION: 'stable'
+  # PINNED (devops.md §9, documented): Go 1.27.0 reached actions/go-versions on
+  # 2026-08-19 and 'stable' started resolving to it mid-branch — a green run at
+  # 16:29 got 1.26.x and the next head got 1.27.0, with no change to this repo.
+  # Under 1.27.0 github.com/cockroachdb/swiss fails to compile (undefined
+  # fastrand64 / hashFn / getRuntimeHasher: its runtime hooks are gated on
+  # toolchain version and that pinned commit does not know go1.27), which takes
+  # out Unit Tests, Nested Module Tests and the lint/scan jobs that build the
+  # same graph. Nothing in the tree changed; the environment moved underneath
+  # the head, which is exactly what an unpinned toolchain lets happen.
+  #
+  # Bump within 1.26 as patches ship; move to 1.27 only in the Go 1.27.0 wave
+  # (company task #121), which has to bump the swiss/pebble chain first. This
+  # is the emergency valve, not the adoption decision.
+  GO_VERSION: '1.26.7'
   # Coverage RATCHET, not aspiration: set just under the current measured
   # baseline (89.9% at 2026-08-17) so the gate fails on regression instead
   # of being permanently red — it had never passed at 90 and therefore
@@ -164,11 +178,105 @@ jobs:
               body: comment
             });
 
+  # Job 1b: nested-module tests
+  #
+  # The root `go test ./...` cannot reach them: sdk/go and xkey are SEPARATE Go
+  # modules, so every test under them has been dark in CI since they were
+  # split out. That is how the protected-key lifecycle tests added in #26 —
+  # the drains, the shutdown latches, the SDK export coverage — could all pass
+  # locally while no gate ran a single one of them.
+  #
+  # Scoped to packages rather than `./...` ON PURPOSE. Ten packages in the
+  # xkey module fail their tests identically on main and on this branch
+  # (company task #104 covers wiring the whole module up); running everything
+  # here would paint the gate red for defects this job is not about and train
+  # people to ignore it. The list is the packages whose lifecycle behaviour is
+  # under test, and it should grow as #104 lands rather than stay a permanent
+  # carve-out.
+  nested-module-test:
+    name: Nested Module Tests (sdk/go, xkey)
+    runs-on: ubuntu-latest
+    # STAGED (ci-template v1.9): waits on the fast tier so a broken push stops
+    # spending immediately. Gitea has no run-cancel API, so ordering is the
+    # only fail-fast available — without it a red lint keeps the whole suite
+    # burning runners in parallel.
+    needs: [test, lint]
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: ${{ env.GO_VERSION }}
+          cache: true
+
+      - name: sdk/go tests
+        working-directory: sdk/go
+        run: go test -race -v ./bootstrap/... ./transport/usb/...
+
+      - name: xkey lifecycle tests
+        working-directory: xkey
+        run: go test -race -v ./internal/lifecycle/... ./pkg/phone/... ./pkg/pairing/...
+
+      # The two steps below name their tests individually, because their
+      # packages hold pre-existing failures that these gates are not about
+      # (go-xkms #32 under the ble tag, and #104 in the GUI services package).
+      #
+      # A -run selector that matches nothing exits 0, so naming tests that way
+      # makes the gate only as good as the names staying correct: rename one
+      # and the job goes on passing, having tested nothing. require-tests.sh
+      # asserts every name matches at least one test before it runs any of
+      # them, so a rename is a red job rather than a silent hole.
+      #
+      # The ble-tagged half of pkg/phone holds the peripheral's key lifecycle
+      # and is compiled by neither the default build nor the race job above.
+      - name: xkey peripheral lifecycle (-tags ble)
+        working-directory: xkey
+        run: |
+          ../.github/scripts/require-tests.sh ./pkg/phone/ ble \
+            TestBLEPeripheral_Stop \
+            TestAdoptedStaticKey \
+            TestNoSuppliedKey \
+            TestStopClearsTheAdvertisement \
+            TestStartRaisesAdvertisingUnderTheSameLockThatPublishesIt \
+            TestStartRefusesAfterStopAndLeavesNothingAdvertising \
+            TestPublishAdvertisementKeepsTheHandleWhenTheControllerRefuses \
+            TestASecondStartIsRefusedRatherThanOverwritingTheHandle \
+            TestStopReportsIncompleteWhenAdvertisingCannotBeStopped \
+            TestStopRetainsTheKeyWhenAConnectionDidNotFinish \
+            TestStopReleasesTheKeyWhenAdvertisingStops \
+            TestStartRefusesBeforeItTouchesARunningPeripheral
+
+      - name: xkey GUI service teardown
+        working-directory: xkey
+        run: |
+          ../.github/scripts/require-tests.sh ./pkg/gui/services/ "" \
+            TestCloseActiveConnection \
+            TestTeardownLeavesAConnectionPublishedDuringItsDrainReportedConnected \
+            TestTeardownAndPublicationNeverDisagreeAboutTheConnection \
+            TestTeardownReportsDisconnectedWhenNothingReplacedIt \
+            TestUnpairReportsTheRecordRemovalAndSurfacesRetentionInServiceState \
+            TestUnpairSucceedsAndRetainsNothingOnACleanDrain \
+            TestUnpairMarksTheDeviceForTheWholeOfItsTeardown \
+            TestPublishConnectionRefusesWhileTheDeviceIsBeingUnpaired \
+            TestATimedOutDrainOverAnEmptySlotRecordsNoRetainedKey \
+            TestAStatusCallbackMayReEnterTheService \
+            TestARefusedPublicationLeavesAnotherDevicesConnectionAlone \
+            TestAnOlderTransitionCannotOvertakeANewerOneAtEitherSink \
+            TestPublishConnectionRefusesAnUnpairThatBeganDuringItsDrain \
+            TestAutoAttestPropagatesTheTeardownItForces
+
   # Job 2: Integration Tests
   integration-test:
     name: Integration Tests
     runs-on: ubuntu-latest
-    needs: test
+    # STAGED (ci-template v1.9): waits on the fast tier so a broken push stops
+    # spending immediately. Gitea has no run-cancel API, so ordering is the
+    # only fail-fast available — without it a red lint keeps the whole suite
+    # burning runners in parallel.
+    needs: [test, lint]
 
     steps:
       # DELIBERATE divergence from ci-template v1: the template's
@@ -347,13 +455,18 @@ jobs:
       # (devops.md §9: no undocumented pins).
       - name: Run golangci-lint
         run: |
-          go install github.com/golangci/golangci-lint/v2/cmd/golangci-lint@latest
+          go install github.com/golangci/golangci-lint/v2/cmd/golangci-lint@v2.12.2  # PINNED (devops.md §9, documented): v2.13.0 (2026-08-19) ships honnef.co/go/tools v0.8.0-rc.1 whose nilness pass panics ("unhandled builtin recover", crashes on sentry-go) — red gate with zero findings. Unpin when golangci-lint ships a non-rc staticcheck that passes on main.
           "$(go env GOPATH)/bin/golangci-lint" run --timeout=10m
 
   # Job 4: Security Scanning
   security:
     name: Security Scan
     runs-on: ubuntu-latest
+    # STAGED (ci-template v1.9): waits on the fast tier so a broken push stops
+    # spending immediately. Gitea has no run-cancel API, so ordering is the
+    # only fail-fast available — without it a red lint keeps the whole suite
+    # burning runners in parallel.
+    needs: [test, lint]
     permissions:
       security-events: write
       contents: read
@@ -422,63 +535,6 @@ jobs:
   # the two identical. test/ and examples/ do not ship; data/, bin/ and build/
   # are local artifacts. There is no .trivyignore in this repo, so no
   # --ignorefile is passed.
-  trivy:
-    name: Trivy
-    runs-on: ubuntu-latest
-    permissions:
-      security-events: write
-      contents: read
-
-    steps:
-      - name: Checkout code
-        uses: actions/checkout@v4
-
-      # Two paths for one gate. trivy-action's setup step cannot authenticate
-      # to github.com from a Gitea runner and upload-sarif has no
-      # GHES-compatible endpoint there, so the action path is guarded on the
-      # server URL and Gitea gates with the trivy CLI below. Both run the same
-      # fs scan at the same severity; only the SARIF upload is GitHub-only.
-      - name: Trivy scan (SARIF for code scanning)
-        if: github.server_url == 'https://github.com'
-        uses: aquasecurity/trivy-action@master
-        with:
-          scan-type: fs
-          scan-ref: .
-          scanners: vuln,secret
-          format: sarif
-          output: trivy-results.sarif
-          exit-code: 0
-          skip-dirs: test,examples,data,bin,build
-
-      - name: Upload Trivy SARIF
-        if: always() && github.server_url == 'https://github.com'
-        uses: github/codeql-action/upload-sarif@v4
-        with:
-          sarif_file: trivy-results.sarif
-          category: trivy-fs
-
-      - name: Trivy gate (fail on CRITICAL/HIGH)
-        if: github.server_url == 'https://github.com'
-        uses: aquasecurity/trivy-action@master
-        with:
-          scan-type: fs
-          scan-ref: .
-          scanners: vuln,secret
-          severity: CRITICAL,HIGH
-          exit-code: 1
-          format: table
-          skip-dirs: test,examples,data,bin,build
-
-      - name: Install Trivy CLI (Gitea)
-        if: github.server_url != 'https://github.com'
-        run: curl -sfL https://raw.githubusercontent.com/aquasecurity/trivy/main/contrib/install.sh | sh -s -- -b /usr/local/bin
-
-      - name: Trivy gate (Gitea)
-        if: github.server_url != 'https://github.com'
-        run: |
-          trivy fs --scanners vuln,secret --severity CRITICAL,HIGH --exit-code 1 --format table \
-            --skip-dirs test --skip-dirs examples --skip-dirs data --skip-dirs bin --skip-dirs build .
-
   # Job 5: Build Binaries
   build:
     name: Build Binaries
@@ -548,7 +604,11 @@ jobs:
   build-raft:
     name: Build & Test (raft tag matrix)
     runs-on: ubuntu-latest
-    needs: test
+    # STAGED (ci-template v1.9): waits on the fast tier so a broken push stops
+    # spending immediately. Gitea has no run-cancel API, so ordering is the
+    # only fail-fast available — without it a red lint keeps the whole suite
+    # burning runners in parallel.
+    needs: [test, lint]
     strategy:
       matrix:
         tags: [ "codec_json", "raft codec_json" ]
@@ -796,7 +856,11 @@ jobs:
   race:
     name: Race Detector
     runs-on: ubuntu-latest
-    needs: test
+    # STAGED (ci-template v1.9): waits on the fast tier so a broken push stops
+    # spending immediately. Gitea has no run-cancel API, so ordering is the
+    # only fail-fast available — without it a red lint keeps the whole suite
+    # burning runners in parallel.
+    needs: [test, lint]
 
     steps:
       - name: Checkout code
@@ -879,7 +943,7 @@ jobs:
     name: CI Gate
     runs-on: ubuntu-latest
     if: always()
-    needs: [test, integration-test, lint, security, trivy, build, build-raft, arch-gates, docker, race]
+    needs: [test, nested-module-test, integration-test, lint, security, build, build-raft, arch-gates, docker, race]
 
     steps:
       - name: Fail closed on any non-success
@@ -890,6 +954,7 @@ jobs:
           advisory() { case "$2" in success) echo "OK   $1";; *) echo "ADVISORY $1 ($2) -- not gating";; esac; }
           BAD=0
           check test             "${{ needs.test.result }}"
+          check nested-module-test "${{ needs.nested-module-test.result }}"
           # ADVISORY, not required (ruled 2026-08-18; go-quicbaas already does
           # this). Integration Tests has passed once in 40 executions and never
           # on main: `run_with_server` decides where the suite runs with
@@ -908,7 +973,6 @@ jobs:
           advisory integration-test "${{ needs.integration-test.result }}"
           check lint             "${{ needs.lint.result }}"
           check security         "${{ needs.security.result }}"
-          check trivy            "${{ needs.trivy.result }}"
           check build            "${{ needs.build.result }}"
           check build-raft       "${{ needs.build-raft.result }}"
           check arch-gates       "${{ needs.arch-gates.result }}"

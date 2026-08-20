@@ -40,9 +40,20 @@ The package uses Noise XX (`Noise_XX_25519_ChaChaPoly_SHA256`) for mutual authen
 4. Standard Noise XX 3-message handshake proceeds with prologue binding
 5. Post-handshake: encrypted bidirectional channel is established
 
-Key types: `NoiseSession`, `NoiseSessionConfig`, `HandshakeConfig`
+Key types: `NoiseSession`, `NoiseSessionConfig`, `HandshakeConfig`, `StaticKey`
 
 Key functions: `NewNoiseSession`, `PerformHandshake`, `GenerateStaticKey`, `LoadStaticKey`
+
+`StaticKey` holds its private scalar in protected memory — guard-paged, outside
+the Go heap, locked against swap, wiped on `Destroy`. Its owner must `Destroy`
+it once every session built from it has finished; the session reads those pages
+in place, so destroying a key that is still in use frees memory a handshake is
+reading. A key passed in through a config stays the caller's to destroy.
+
+`EncodeStaticKey(dst []byte, key *StaticKey) error` writes the hex encoding
+into a caller-supplied buffer of at least `NoiseHexKeySize` bytes. There is no
+encode-to-string form, because a Go string is immutable and cannot be wiped
+after use.
 
 ## Transport Layer
 
@@ -135,8 +146,9 @@ const (
 ## Usage Example
 
 ```go
-// Generate a static key for this device
+// Generate a static key for this device. The key must outlive the session.
 staticKey, _ := pairing.GenerateStaticKey()
+defer staticKey.Destroy()
 
 // Create a Noise session as initiator
 session, _ := pairing.NewNoiseSession(&pairing.NoiseSessionConfig{

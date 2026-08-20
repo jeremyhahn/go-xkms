@@ -204,6 +204,10 @@ func runDeviceShare(cmd *cobra.Command, args []string) error {
 	if err != nil {
 		return &WrappedError{Msg: "invalid local noise key", Err: err}
 	}
+	// Wiped here, at the decode, not at the LoadStaticKey below: a decode
+	// failure on any other field returns in between, and the raw scalar
+	// would be left sitting in garbage-collected memory.
+	defer phone.WipeBytes(localPrivateKey)
 	remotePublicKey, err := base64.StdEncoding.DecodeString(device.NoisePublicKey)
 	if err != nil {
 		return &WrappedError{Msg: "invalid phone noise key", Err: err}
@@ -213,11 +217,16 @@ func runDeviceShare(cmd *cobra.Command, args []string) error {
 	if err != nil {
 		return &WrappedError{Msg: "invalid local noise key", Err: err}
 	}
+	// Ownership transfers to the component below. It is the only thing that
+	// knows whether a reader is still live at shutdown: on an incomplete
+	// shutdown it retains the key for the process lifetime, where a
+	// caller-side destroy would free pages that reader is still using.
 
 	// Connect to phone
 	phoneBackend, err := phone.NewPhoneKeyBackend(&phone.PhoneKeyBackendConfig{
 		DeviceAddress:        device.Address,
 		LocalStaticKey:       localKey,
+		OwnsStaticKey:        true,
 		ExpectedRemoteStatic: remotePublicKey,
 		ScanTimeout:          30 * time.Second,
 		ConnectTimeout:       30 * time.Second,
@@ -394,6 +403,10 @@ func runDeviceImport(cmd *cobra.Command, args []string) error {
 	if err != nil {
 		return &WrappedError{Msg: "invalid local noise key", Err: err}
 	}
+	// Wiped here, at the decode, not at the LoadStaticKey below: a decode
+	// failure on any other field returns in between, and the raw scalar
+	// would be left sitting in garbage-collected memory.
+	defer phone.WipeBytes(localPrivateKey)
 	remotePublicKey, err := base64.StdEncoding.DecodeString(device.NoisePublicKey)
 	if err != nil {
 		return &WrappedError{Msg: "invalid phone noise key", Err: err}
@@ -403,11 +416,16 @@ func runDeviceImport(cmd *cobra.Command, args []string) error {
 	if err != nil {
 		return &WrappedError{Msg: "invalid local noise key", Err: err}
 	}
+	// Ownership transfers to the component below. It is the only thing that
+	// knows whether a reader is still live at shutdown: on an incomplete
+	// shutdown it retains the key for the process lifetime, where a
+	// caller-side destroy would free pages that reader is still using.
 
 	// Connect to phone
 	phoneBackend, err := phone.NewPhoneKeyBackend(&phone.PhoneKeyBackendConfig{
 		DeviceAddress:        device.Address,
 		LocalStaticKey:       localKey,
+		OwnsStaticKey:        true,
 		ExpectedRemoteStatic: remotePublicKey,
 		ScanTimeout:          30 * time.Second,
 		ConnectTimeout:       30 * time.Second,

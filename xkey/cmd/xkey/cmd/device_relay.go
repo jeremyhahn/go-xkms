@@ -76,11 +76,16 @@ func runDeviceRelay(cmd *cobra.Command, args []string) error {
 		logger.Error("failed to generate noise static key", slog.String("error", err.Error()))
 		return &SentinelCauseError{Sentinel: ErrDeviceRelayStartFailed, Cause: err}
 	}
+	// Ownership transfers to the component below. It is the only thing that
+	// knows whether a reader is still live at shutdown: on an incomplete
+	// shutdown it retains the key for the process lifetime, where a
+	// caller-side destroy would free pages that reader is still using.
 
 	// Create the TCP pairing server.
 	server, err := phone.NewTCPPairingServer(&phone.TCPPairingConfig{
 		ListenAddr:     listenAddr,
 		LocalStaticKey: localKey,
+		OwnsStaticKey:  true,
 		Logger:         logger,
 	})
 	if err != nil {
@@ -91,6 +96,10 @@ func runDeviceRelay(cmd *cobra.Command, args []string) error {
 	// Start the server (begins accepting connections in the background).
 	if err := server.Start(); err != nil {
 		logger.Error("failed to start TCP pairing server", slog.String("error", err.Error()))
+		// The server took ownership of the key at construction, so a failed
+		// bind still has to go through Stop — it is the only thing that
+		// releases those protected pages now.
+		_ = server.Stop()
 		return &SentinelCauseError{Sentinel: ErrDeviceRelayStartFailed, Cause: err}
 	}
 

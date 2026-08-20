@@ -33,8 +33,8 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/flynn/noise"
 	xkms "github.com/jeremyhahn/go-xkms/sdk/go"
+	"github.com/jeremyhahn/go-xkms/xkey/internal/lifecycle"
 	"github.com/jeremyhahn/go-xkms/xkey/pkg/audit"
 	"github.com/jeremyhahn/go-xkms/xkey/pkg/authenticator/keybackend"
 	"github.com/jeremyhahn/go-xkms/xkey/pkg/notify"
@@ -78,9 +78,19 @@ type PhoneKeyBackendConfig struct {
 	// If empty, will scan for xKey devices.
 	DeviceAddress string
 
-	// LocalStaticKey is the persistent local Noise static key.
-	// If nil, a new key will be generated.
-	LocalStaticKey *noise.DHKey
+	// LocalStaticKey is the persistent local Noise static key, held in
+	// protected memory. If nil, the constructor generates one and sets
+	// OwnsStaticKey, so the backend always holds a key it can release.
+	LocalStaticKey *StaticKey
+
+	// OwnsStaticKey transfers ownership of LocalStaticKey to the backend, so
+	// that Close destroys it. Set it when the key has no other owner — a
+	// helper that builds a backend and hands it to a caller has nowhere else
+	// to keep the key, and the protected pages would otherwise stay resident
+	// for the life of the process. Leave it false when the caller keeps the
+	// key: destroying a borrowed key frees pages another session may still be
+	// reading.
+	OwnsStaticKey bool
 
 	// ExpectedRemoteStatic is the expected phone's static public key.
 	// If set, connection will fail if the phone's key doesn't match.
@@ -158,9 +168,47 @@ type PhoneKeyBackend struct {
 	cfg *PhoneKeyBackendConfig
 	log *slog.Logger
 
-	mu          sync.RWMutex
-	transport   Transport
-	session     *NoiseSession
+	mu sync.RWMutex
+
+	// directMu serializes the direct request path's encrypt/send/decrypt
+	// sequence. A Noise CipherState advances a monotonic nonce per message and
+	// is not concurrent-safe — MessageRouter says so at its own sendMu and
+	// takes it for exactly this reason. The direct path admits concurrent
+	// leaseholders and had no equivalent, so two signing operations could
+	// interleave their nonce advancement and pair responses with the wrong
+	// request.
+	//
+	// It spans SendAndReceive deliberately: the response belongs to the
+	// request that produced the nonce, so releasing before the round trip
+	// would order the frames and still mismatch the answers. Close does NOT
+	// take it, so a stalled device cannot make this lock block shutdown.
+	directMu  sync.Mutex
+	transport Transport
+	session   *NoiseSession
+
+	// ownedKey is the static key this backend destroys on Close — either one
+	// the caller transferred by setting OwnsStaticKey, or one the constructor
+	// generated because none was supplied. Nil when the key is borrowed.
+	//
+	// Ownership lives here rather than being written back into the caller's
+	// config. A config is an input and callers reasonably reuse one across
+	// constructions; a cfg that silently gained a key after a successful
+	// construction would hand the next backend a key the previous one owns
+	// and will destroy.
+	ownedKey *StaticKey
+
+	// ops counts operations that took a reference to session and transport
+	// and are still using them outside mu — SendRequest encrypts, does a bus
+	// round trip, then decrypts, far too long to hold the lock. Close drains
+	// this before clearing the session or destroying an owned key, and the
+	// drain is bounded: an operation blocked in a Transport that Close did
+	// not manage to unblock must not hang shutdown forever.
+	ops lifecycle.Drain
+
+	// closeOnce/closeErr latch the shutdown outcome so concurrent and repeat
+	// callers see one result and only one of them releases the static key.
+	closeOnce   sync.Once
+	closeErr    error
 	handles     map[string]*phoneKeyHandle // hex(credentialID) -> handle
 	router      *MessageRouter             // nil = unidirectional mode
 	notifier    notify.Notifier
@@ -181,6 +229,15 @@ func NewPhoneKeyBackend(cfg *PhoneKeyBackendConfig) (*PhoneKeyBackend, error) {
 		cfg.Logger = slog.Default()
 	}
 
+	// Ownership has already transferred by the time we get here, so the BLE
+	// transport failing below must not strand the key.
+	var backend *PhoneKeyBackend
+	defer func() {
+		if backend == nil {
+			releaseOwnedKey(cfg)
+		}
+	}()
+
 	// Create BLE transport
 	transport, err := NewBLETransport(&BLETransportConfig{
 		DeviceAddress:    cfg.DeviceAddress,
@@ -194,7 +251,8 @@ func NewPhoneKeyBackend(cfg *PhoneKeyBackendConfig) (*PhoneKeyBackend, error) {
 		return nil, err
 	}
 
-	return newPhoneKeyBackend(cfg, transport)
+	backend, err = newPhoneKeyBackend(cfg, transport)
+	return backend, err
 }
 
 // NewPhoneKeyBackendWithTransport creates a new phone key backend with a
@@ -210,15 +268,83 @@ func NewPhoneKeyBackendWithTransport(cfg *PhoneKeyBackendConfig, transport Trans
 		cfg.Logger = slog.Default()
 	}
 	if transport == nil {
+		// Ownership transferred with the config, so rejecting it here still
+		// has to release the key.
+		releaseOwnedKey(cfg)
 		return nil, ErrNotConnected
 	}
 
 	return newPhoneKeyBackend(cfg, transport)
 }
 
+// releaseOwnedKey destroys cfg's static key when the caller transferred
+// ownership by setting OwnsStaticKey. It is idempotent — it clears the field —
+// so a nested constructor that already released is not freed twice, and it is
+// safe on a nil key.
+//
+// Every path that can fail after ownership transfers has to call this. Close is
+// unreachable when there is no backend, so the constructor is the only place
+// left that can release the pages.
+func releaseOwnedKey(cfg *PhoneKeyBackendConfig) {
+	if cfg == nil || !cfg.OwnsStaticKey {
+		return
+	}
+	cfg.LocalStaticKey.Destroy()
+	cfg.LocalStaticKey = nil
+}
+
 // newPhoneKeyBackend is the internal constructor shared by both public
 // constructors. It initializes the Noise session and assembles the backend.
 func newPhoneKeyBackend(cfg *PhoneKeyBackendConfig, transport Transport) (*PhoneKeyBackend, error) {
+	// Ownership transfers on entry, so construction failing must not strand
+	// the key: the caller set OwnsStaticKey precisely because it kept no
+	// reference of its own, and Close is unreachable when there is no backend.
+	// Resolve the key and settle who releases it, without writing either back
+	// into the caller's config.
+	//
+	// A nil key is generated here rather than inside NewNoiseSession, where it
+	// would not be reachable from the backend and nothing could ever destroy
+	// it — the config's documented "if nil, a new key will be generated" would
+	// quietly opt out of the whole protected-key lifecycle.
+	staticKey := cfg.LocalStaticKey
+	var ownedKey *StaticKey
+	switch {
+	case staticKey == nil:
+		generated, err := GenerateStaticKey()
+		if err != nil {
+			_ = transport.Close()
+			return nil, err
+		}
+		staticKey, ownedKey = generated, generated // we made it, we own it
+	case cfg.OwnsStaticKey:
+		// The caller transferred it, so CONSUME it. Leaving the pointer in
+		// the config gives the next construction from that same config a
+		// second owner for the same protected pages, and whichever backend
+		// closes first frees pages the other's Noise session is still
+		// reading. Callers do reuse configs — that is what a config is.
+		//
+		// This is the mirror of the write-back hazard, not a repeat of it:
+		// the earlier bug ADDED a generated key the caller never supplied,
+		// where this REMOVES one the caller explicitly gave away. The failure
+		// paths already clear the field through releaseOwnedKey, so the
+		// config was always consumable; the success path just was not doing
+		// it.
+		//
+		// OwnsStaticKey is deliberately left alone. With no key present it
+		// changes nothing: a nil key is generated and owned regardless.
+		ownedKey = staticKey
+		cfg.LocalStaticKey = nil
+	}
+
+	constructed := false
+	defer func() {
+		if !constructed {
+			// ownedKey is the only reference by this point — either we
+			// generated it, or the transfer above took it out of the config.
+			ownedKey.Destroy()
+		}
+	}()
+
 	// Validate trust settings: if no expected remote key and trust-new-devices is false,
 	// reject the connection to prevent connecting to unknown devices.
 	if len(cfg.ExpectedRemoteStatic) == 0 && !cfg.TrustNewDevices {
@@ -232,7 +358,7 @@ func newPhoneKeyBackend(cfg *PhoneKeyBackendConfig, transport Transport) (*Phone
 	// the device's attestation fingerprint. This enables trusted device binding
 	// for reconnections while allowing empty prologue for initial pairing.
 	session, err := NewNoiseSession(&NoiseSessionConfig{
-		LocalStaticKey:       cfg.LocalStaticKey,
+		LocalStaticKey:       staticKey,
 		ExpectedRemoteStatic: cfg.ExpectedRemoteStatic,
 		IsInitiator:          true,
 		Prologue:             nil, // Set during identity exchange
@@ -242,15 +368,44 @@ func newPhoneKeyBackend(cfg *PhoneKeyBackendConfig, transport Transport) (*Phone
 		return nil, err
 	}
 
-	return &PhoneKeyBackend{
+	constructed = true
+	backend := &PhoneKeyBackend{
 		cfg:         cfg,
+		ownedKey:    ownedKey,
 		log:         cfg.Logger.With("component", "phone_backend"),
 		transport:   transport,
 		session:     session,
 		handles:     make(map[string]*phoneKeyHandle),
 		notifier:    cfg.Notifier,
 		auditLogger: cfg.AuditLogger,
-	}, nil
+	}
+	return backend, nil
+}
+
+// acquireSession takes a reference to the live transport and session so they
+// can be used outside mu without Close tearing them down underneath. The
+// release function must be called exactly once; until it is, Close blocks
+// rather than clearing the session or destroying an owned key.
+//
+// It reports false once the backend is closed or disconnected.
+func (b *PhoneKeyBackend) acquireSession() (Transport, *NoiseSession, func(), bool) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+
+	if b.closed.Load() || b.transport == nil || b.session == nil {
+		return nil, nil, nil, false
+	}
+
+	b.ops.Add()
+	transport, session := b.transport, b.session
+
+	release := func() {
+		b.mu.Lock()
+		defer b.mu.Unlock()
+
+		b.ops.Done()
+	}
+	return transport, session, release, true
 }
 
 // Type returns the backend type.
@@ -290,6 +445,16 @@ func (b *PhoneKeyBackend) Connect(ctx context.Context) error {
 
 	b.mu.Lock()
 	defer b.mu.Unlock()
+
+	// Close clears transport and session under this same lock, so a Connect
+	// after a Close would fall through to performHandshake and dereference a
+	// nil session. Refuse rather than panic.
+	if b.closed.Load() {
+		return ErrBackendClosed
+	}
+	if b.transport == nil {
+		return ErrNotConnected
+	}
 
 	// Check if the transport supports BLE-specific operations.
 	bleTransport, isBLE := b.transport.(BLECapableTransport)
@@ -461,6 +626,11 @@ func (b *PhoneKeyBackend) scanForDevice(ctx context.Context, bleTransport BLECap
 // performHandshake executes the Noise XX handshake using the centralized implementation.
 // It includes a pre-handshake identity exchange to enable prologue binding for trusted
 // device verification.
+//
+// Must be called with b.mu held: it reads transport and session, which Close
+// clears while destroying an owned static key. Both call sites reach it from
+// Connect, which holds the write lock for the whole connection attempt — so do
+// not take the lock here, it would deadlock.
 func (b *PhoneKeyBackend) performHandshake(ctx context.Context) error {
 	cfg := &HandshakeConfig{
 		Transport:           b.transport,
@@ -476,16 +646,39 @@ func (b *PhoneKeyBackend) performHandshake(ctx context.Context) error {
 }
 
 // EnableBidirectional starts bidirectional JSON-RPC routing using the
-// provided request handler (typically a Bridge). This must be called
-// after Connect() completes successfully. When enabled, SendRequest
-// uses the MessageRouter instead of direct SendAndReceive.
-func (b *PhoneKeyBackend) EnableBidirectional(handler RequestHandler) {
+// provided request handler (typically a Bridge). It must be called after
+// Connect() completes successfully. When enabled, SendRequest uses the
+// MessageRouter instead of direct SendAndReceive.
+//
+// It is idempotent: enabling twice keeps the first router rather than starting
+// a second. Replacing the router unconditionally used to orphan the first
+// receive loop — Close then joined only the replacement and could destroy the
+// static key while the orphan was still decrypting through it. Calling after
+// Close, or before a session exists, is refused rather than starting a loop
+// over a nil transport.
+func (b *PhoneKeyBackend) EnableBidirectional(handler RequestHandler) error {
 	b.mu.Lock()
 	defer b.mu.Unlock()
+
+	if b.closed.Load() {
+		return ErrBackendClosed
+	}
+	// connected, not merely non-nil: the constructors populate transport and
+	// session before Connect runs the handshake, so a nil check alone lets a
+	// receive loop start pre-handshake and race Connect for the handshake
+	// frames.
+	if !b.connected.Load() || b.transport == nil || b.session == nil {
+		return ErrNotConnected
+	}
+	if b.router != nil {
+		b.log.Debug("bidirectional message routing already enabled")
+		return nil
+	}
 
 	b.router = NewMessageRouter(b.transport, b.session, handler, b.log)
 	b.router.Start()
 	b.log.Info("bidirectional message routing enabled")
+	return nil
 }
 
 // SendRequest sends an encrypted request and receives the decrypted response.
@@ -495,6 +688,16 @@ func (b *PhoneKeyBackend) SendRequest(ctx context.Context, req *Request) (*Respo
 		return nil, ErrNotConnected
 	}
 
+	// Lease first, and hold it across the routed path as well. The router
+	// encrypts through the same session, so a routed sender that skipped the
+	// lease could resume inside MessageRouter.SendRequest after Close had
+	// already freed the key's protected pages.
+	transport, session, release, ok := b.acquireSession()
+	if !ok {
+		return nil, ErrNotConnected
+	}
+	defer release()
+
 	// If a MessageRouter is active, delegate to it for bidirectional routing.
 	b.mu.RLock()
 	router := b.router
@@ -502,6 +705,9 @@ func (b *PhoneKeyBackend) SendRequest(ctx context.Context, req *Request) (*Respo
 	if router != nil {
 		return router.SendRequest(ctx, req)
 	}
+
+	b.directMu.Lock()
+	defer b.directMu.Unlock()
 
 	b.log.Debug("SendRequest starting",
 		"method", req.Method,
@@ -517,7 +723,7 @@ func (b *PhoneKeyBackend) SendRequest(ctx context.Context, req *Request) (*Respo
 	b.log.Debug("request encoded", "plaintext_len", len(plaintext))
 
 	// Encrypt
-	ciphertext, err := b.session.Encrypt(plaintext)
+	ciphertext, err := session.Encrypt(plaintext)
 	if err != nil {
 		b.log.Error("failed to encrypt request", "error", err)
 		return nil, err
@@ -526,7 +732,7 @@ func (b *PhoneKeyBackend) SendRequest(ctx context.Context, req *Request) (*Respo
 
 	// Send and receive
 	b.log.Debug("sending request to phone...")
-	responseCiphertext, err := b.transport.SendAndReceive(ctx, ciphertext)
+	responseCiphertext, err := transport.SendAndReceive(ctx, ciphertext)
 	if err != nil {
 		b.log.Error("SendAndReceive failed", "error", err)
 		return nil, err
@@ -534,7 +740,7 @@ func (b *PhoneKeyBackend) SendRequest(ctx context.Context, req *Request) (*Respo
 	b.log.Debug("received response from phone", "ciphertext_len", len(responseCiphertext))
 
 	// Decrypt
-	responsePlaintext, err := b.session.Decrypt(responseCiphertext)
+	responsePlaintext, err := session.Decrypt(responseCiphertext)
 	if err != nil {
 		b.log.Error("failed to decrypt response", "error", err)
 		return nil, err
@@ -827,10 +1033,40 @@ func (b *PhoneKeyBackend) ImportPrivateKey(credentialID []byte, algorithm int, p
 }
 
 // Close closes the backend and releases resources.
+//
+// It returns ErrShutdownIncomplete when it could not confirm that every
+// reader of the Noise session has finished — a receive loop still blocked in
+// an uncancellable read, or an operation still in a bus round trip when the
+// shutdown window expired. The backend IS closed either way and Close does
+// not need calling again; the error says only that protected pages could not
+// be freed safely.
+//
+// A caller that supplied the static key with OwnsStaticKey unset still owns
+// it, and MUST NOT destroy it after an ErrShutdownIncomplete: the whole point
+// of the error is that something may still be reading those pages. Retention
+// lasts for the life of the process.
 func (b *PhoneKeyBackend) Close() error {
-	if b.closed.Swap(true) {
-		return nil // Already closed
-	}
+	// Latched, so every caller observes the SAME outcome.
+	//
+	// The old shape returned nil to any caller after the first — including
+	// one arriving while the first Close was still draining, and including a
+	// second call after the first had reported ErrShutdownIncomplete. Both
+	// told the owner of a BORROWED key that destroying it was safe while a
+	// reader could still be using those pages, which is the exact fail-open
+	// this error exists to prevent. Third component with this shape; the TCP
+	// server and BLE peripheral latch for the same reason.
+	//
+	// MUST NOT be called from an operation this backend is draining: Close
+	// waits for leases, and the latch makes a re-entrant caller wait for
+	// Close. Bounded by the drain timeout rather than permanent, and the same
+	// property net/http.Server.Shutdown has.
+	b.closeOnce.Do(func() { b.closeErr = b.close() })
+	return b.closeErr
+}
+
+func (b *PhoneKeyBackend) close() error {
+	// Set before the drain so acquireSession admits no new leases.
+	b.closed.Store(true)
 
 	b.mu.Lock()
 	defer b.mu.Unlock()
@@ -848,20 +1084,89 @@ func (b *PhoneKeyBackend) Close() error {
 	b.connected.Store(false)
 	b.handles = nil
 
-	// Stop the message router if running.
-	if b.router != nil {
-		b.router.Stop()
-		b.router = nil
+	// Order matters, and getting it wrong makes the join useless. receiveLoop
+	// is blocked in an uncancellable Receive, so signalling alone never wakes
+	// an idle one — closing the transport is what does. Signal first so the
+	// loop does not start another iteration, then close the transport to
+	// unblock the read it is sitting in, and only then wait.
+	//
+	// Joining before the close meant an idle backend burned the full timeout,
+	// concluded the loop was still running, and kept the key forever.
+	router := b.router
+	b.router = nil
+	if router != nil {
+		router.Stop()
 	}
 
+	// Also unblocks any leaseholder's round trip rather than leaving it to
+	// wait out its own timeout.
 	if b.transport != nil {
 		_ = b.transport.Close()
 		b.transport = nil
 	}
 
+	// routerJoined false means the loop may still be running and the key has
+	// to stay resident.
+	routerJoined := true
+	if router != nil {
+		routerJoined = router.Join(routerShutdownTimeout)
+	}
+
+	// Then drain the leases. Wait releases b.mu, which is what lets the
+	// release funcs run.
+	//
+	// Bounded for exactly the reason the router join is. A leaseholder is in
+	// the middle of a bus round trip, and Transport.Close is not required by
+	// its contract to unblock a SendAndReceive already in flight — so an
+	// unbounded wait here is a Close that can never return, on a mutex every
+	// other method needs.
+	opsDrained := b.ops.Wait(&b.mu, opsShutdownTimeout)
+	if !opsDrained {
+		b.log.Warn("phone operations did not finish within the shutdown window",
+			"in_flight", b.ops.InFlight(), "timeout", opsShutdownTimeout)
+	}
+
+	b.session = nil
+
+	// Only now, and only if every reader is provably gone. Leaking protected
+	// memory is the safe failure here; freeing pages a live goroutine is
+	// decrypting through is not.
+	shutdownClean := routerJoined && opsDrained
+	if b.ownedKey != nil {
+		if shutdownClean {
+			b.ownedKey.Destroy()
+			b.ownedKey = nil
+		} else {
+			b.log.Warn("retaining the static key: shutdown could not confirm " +
+				"that every reader has finished, so its pages may still be in use")
+		}
+	}
+
 	b.log.Info("phone backend closed")
+
+	// Reported even when the key is borrowed rather than owned — especially
+	// then. A borrowed key is one this backend cannot retain on the owner's
+	// behalf, so the owner is the only one who can decide not to free it, and
+	// this return is the only way they learn there is still a reader.
+	if !shutdownClean {
+		return ErrShutdownIncomplete
+	}
 	return nil
 }
+
+// routerShutdownTimeout bounds how long Close waits for the message router's
+// receive loop to exit. It only observes shutdown between messages, so an idle
+// transport read will not notice; see MessageRouter.StopAndJoin.
+const routerShutdownTimeout = 5 * time.Second
+
+// opsShutdownTimeout bounds how long Close waits for in-flight operations to
+// release their session lease. It is longer than routerShutdownTimeout
+// because a leaseholder is doing a phone round trip — a user tapping approve
+// on a handset — where the router is only reading a socket.
+//
+// A var rather than a const so tests can exercise the timeout branch without
+// spending the production window on it. Nothing else writes it.
+var opsShutdownTimeout = 30 * time.Second
 
 // credIDLogPrefixLen is the number of hex characters of a credential ID
 // included in log records.
@@ -906,16 +1211,28 @@ func (b *PhoneKeyBackend) ConnectedAddress() string {
 	return ""
 }
 
-// LocalStaticPublicKey returns the local Noise static public key.
+// LocalStaticPublicKey returns the local Noise static public key, or nil once
+// the backend is closed.
+//
+// Read under b.mu because Close clears the session and destroys an owned key
+// while holding the write side; an unsynchronized reader could otherwise call
+// into a session whose protected pages are being freed.
 func (b *PhoneKeyBackend) LocalStaticPublicKey() []byte {
+	b.mu.RLock()
+	defer b.mu.RUnlock()
+
 	if b.session == nil {
 		return nil
 	}
 	return b.session.LocalStaticPublicKey()
 }
 
-// RemoteStaticPublicKey returns the phone's Noise static public key.
+// RemoteStaticPublicKey returns the phone's Noise static public key, or nil
+// once the backend is closed. See LocalStaticPublicKey for the locking.
 func (b *PhoneKeyBackend) RemoteStaticPublicKey() []byte {
+	b.mu.RLock()
+	defer b.mu.RUnlock()
+
 	if b.session == nil {
 		return nil
 	}

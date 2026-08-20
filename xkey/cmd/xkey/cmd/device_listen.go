@@ -135,7 +135,7 @@ func init() {
 }
 
 // runDeviceListen executes the phone listen command.
-func runDeviceListen(cmd *cobra.Command, args []string) error {
+func runDeviceListen(cmd *cobra.Command, args []string) (runErr error) {
 	logger := slog.Default()
 
 	deviceFilter, _ := cmd.Flags().GetString("device")
@@ -194,12 +194,30 @@ func runDeviceListen(cmd *cobra.Command, args []string) error {
 	if err != nil {
 		return &WrappedError{Msg: "failed to decode local private key", Err: err}
 	}
+	// Wiped here, at the decode, not at the LoadStaticKey below: a decode
+	// failure on any other field returns in between, and the raw scalar
+	// would be left sitting in garbage-collected memory.
+	defer phone.WipeBytes(localPrivateKey)
 
 	// Reconstruct the Noise static key from stored private key
 	localStaticKey, err := phone.LoadStaticKey(localPrivateKey)
 	if err != nil {
 		return &WrappedError{Msg: "failed to reconstruct local key", Err: err}
 	}
+	// Ownership transfers to the peripheral below. It is the only thing that
+	// knows whether a reader is still live at shutdown: on an incomplete
+	// shutdown it retains the key for the process lifetime, where a
+	// caller-side destroy would free pages that reader is still using.
+	//
+	// Until that transfer the key is still ours, and there is real work in
+	// between — TPM init, bridge and handler setup — every failure of which
+	// used to be covered by the defer this replaced.
+	transferred := false
+	defer func() {
+		if !transferred {
+			localStaticKey.Destroy()
+		}
+	}()
 
 	// Use hostname as default device name
 	if deviceName == "" {
@@ -263,11 +281,16 @@ func runDeviceListen(cmd *cobra.Command, args []string) error {
 	// Create the BLE peripheral
 	peripheral, err := phone.NewBLEPeripheral(&phone.BLEPeripheralConfig{
 		LocalStaticKey:       localStaticKey,
+		OwnsStaticKey:        true,
 		ExpectedRemoteStatic: expectedRemoteStatic,
 		DeviceName:           deviceName,
 		Logger:               logger,
 		RequestHandler:       handler,
 	})
+	if err == nil {
+		// The constructor consumed the key; the peripheral releases it now.
+		transferred = true
+	}
 	if err != nil {
 		if errors.Is(err, phone.ErrBLEUnavailable) {
 			return ErrDeviceBLEUnavailable
@@ -293,14 +316,37 @@ func runDeviceListen(cmd *cobra.Command, args []string) error {
 		<-sigChan
 		fmt.Println("\nStopping...")
 		cancel()
-		peripheral.Stop()
+		// Surfaced, not discarded: an incomplete stop means the peripheral
+		// could not confirm it finished — a handler still running, or an
+		// advertisement that would not come down. Only the first retains the
+		// static key; either is a shutdown this command must not report as
+		// clean.
+		if err := peripheral.Stop(); err != nil {
+			logger.Warn("peripheral stop did not complete cleanly", "error", err)
+		}
+	}()
+
+	// Registered BEFORE Start, not after: a Start that fails still leaves the
+	// peripheral holding the key whose ownership it just took, and returning
+	// past an uninstalled defer stranded those protected pages for the life
+	// of the process.
+	// The result is kept, not dropped. A command that exits 0 after a
+	// handler-drain timeout tells the operator the key was released when in
+	// fact it was retained, so the stop result becomes the command's result
+	// when nothing else already failed.
+	defer func() {
+		if err := peripheral.Stop(); err != nil {
+			logger.Warn("peripheral stop did not complete cleanly", "error", err)
+			if runErr == nil {
+				runErr = err
+			}
+		}
 	}()
 
 	// Start the peripheral
 	if err := peripheral.Start(ctx); err != nil {
 		return &SentinelCauseError{Sentinel: ErrDeviceListenFailed, Cause: err}
 	}
-	defer peripheral.Stop()
 
 	fmt.Printf("Listening for connections from \"%s\"...\n", targetDevice.Name)
 	fmt.Printf("Advertising as \"%s\"\n", deviceName)

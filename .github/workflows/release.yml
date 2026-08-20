@@ -6,7 +6,15 @@ on:
       - 'v*'
 
 env:
-  GO_VERSION: 'stable'
+  # PINNED (devops.md §9, documented): same reason as ci.yml — Go 1.27.0 broke
+  # github.com/cockroachdb/swiss (undefined fastrand64 / hashFn /
+  # getRuntimeHasher; toolchain-gated runtime hooks the pinned commit predates).
+  # Pinned HERE and not only in ci.yml because a release tag builds through this
+  # workflow: an unpinned toolchain would let a green PR produce a broken
+  # release from the same tree.
+  #
+  # Unpin with ci.yml in the Go 1.27.0 wave (company task #121).
+  GO_VERSION: '1.26.7'
   REGISTRY: ghcr.io
   IMAGE_NAME_SERVER: jeremyhahn/xkms-server
   IMAGE_NAME_CLI: jeremyhahn/xkms-cli

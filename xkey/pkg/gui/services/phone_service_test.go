@@ -151,6 +151,7 @@ func TestPhoneService_Pair_BLEUnavailable(t *testing.T) {
 func TestPhoneService_Unpair_EmptyName(t *testing.T) {
 	svc := NewPhoneService()
 	err := svc.Unpair("")
+	svc.awaitNoticesDelivered()
 	assert.Error(t, err)
 	assert.True(t, errors.Is(err, ErrPhoneDeviceNotFound))
 }
@@ -158,6 +159,7 @@ func TestPhoneService_Unpair_EmptyName(t *testing.T) {
 func TestPhoneService_Unpair_NotFound(t *testing.T) {
 	svc := NewPhoneService()
 	err := svc.Unpair("NonExistent Device")
+	svc.awaitNoticesDelivered()
 	assert.Error(t, err)
 	assert.True(t, errors.Is(err, ErrPhoneDeviceNotFound))
 }
@@ -360,12 +362,14 @@ func TestPhoneService_Connect_NoPolicySet_MissingKeys(t *testing.T) {
 func TestPhoneService_Disconnect(t *testing.T) {
 	svc := NewPhoneService()
 	err := svc.Disconnect("Pixel 8 Pro")
+	svc.awaitNoticesDelivered()
 	assert.NoError(t, err)
 }
 
 func TestPhoneService_Disconnect_EmptyName(t *testing.T) {
 	svc := NewPhoneService()
 	err := svc.Disconnect("")
+	svc.awaitNoticesDelivered()
 	assert.Error(t, err)
 	assert.True(t, errors.Is(err, ErrPhoneDeviceNotFound))
 }
@@ -1553,6 +1557,7 @@ func TestPhoneService_Disconnect_ClearsActiveState(t *testing.T) {
 	svc.connState.connected.Store(true)
 
 	err := svc.Disconnect("Pixel 8")
+	svc.awaitNoticesDelivered()
 	assert.NoError(t, err)
 	assert.False(t, svc.IsConnected())
 	assert.Empty(t, svc.ConnectedDeviceName())
@@ -1652,6 +1657,7 @@ func TestPhoneService_AutoAttest_NoPolicy_NoLastAttestation(t *testing.T) {
 
 	// Should not panic or do anything when there's no policy and no last attestation.
 	svc.autoAttest(cfg, device, "Pixel 8")
+	svc.awaitNoticesDelivered()
 }
 
 // ---------------------------------------------------------------------------
@@ -1765,6 +1771,7 @@ func TestPhoneService_AutoAttest_PolicyEnabled_NoTransport(t *testing.T) {
 	// autoAttest with active policy but no transport -> policy enforcement fails
 	// -> should disconnect.
 	svc.autoAttest(cfg, device, "Pixel 8")
+	svc.awaitNoticesDelivered()
 
 	// After policy failure, device should be disconnected.
 	assert.False(t, svc.IsConnected())
@@ -1815,6 +1822,7 @@ func TestPhoneService_AutoAttest_LastAttestation_NoPolicy_NoTransport(t *testing
 	// autoAttest with last attestation but no active transport -> fails but
 	// does NOT disconnect (only logs warning and emits attestation failure event).
 	svc.autoAttest(cfg, device, "Pixel 8")
+	svc.awaitNoticesDelivered()
 
 	// Should have emitted an attestation failure event.
 	foundAttestation := false

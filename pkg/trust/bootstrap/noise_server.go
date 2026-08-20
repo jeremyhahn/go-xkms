@@ -15,6 +15,7 @@ package bootstrap
 
 import (
 	"github.com/flynn/noise"
+
 	"github.com/jeremyhahn/go-truststrap/pkg/noiseproto"
 	noiseboot "github.com/jeremyhahn/go-truststrap/pkg/noiseproto/bootstrap"
 	"github.com/jeremyhahn/go-truststrap/pkg/truststrap"
@@ -32,7 +33,15 @@ import (
 type BundleProvider = truststrap.BundleProvider
 
 // NoiseStaticKey is a Curve25519 static key pair for the Noise_NK handshake.
-type NoiseStaticKey = noise.DHKey
+// Its private scalar lives in protected memory outside the Go heap; the owner
+// must Destroy it once every session built from it has finished.
+//
+// Pass it to a NoiseServerConfig with NoiseServerStaticKey.
+type NoiseStaticKey = noiseproto.StaticKey
+
+// NoiseHexKeySize is the required length of an EncodeNoiseStaticKey
+// destination buffer.
+const NoiseHexKeySize = noiseproto.HexKeySize
 
 // NoiseServer serves CA certificate bundles over Noise_NK encrypted TCP
 // connections for secure trust bootstrapping without TLS.
@@ -48,12 +57,45 @@ type NoiseBundleProvider = noiseboot.BundleProvider
 // NewNoiseServer constructs a Noise_NK bootstrap server.
 var NewNoiseServer = noiseboot.NewServer
 
+// NoiseServerStaticKey adapts a protected NoiseStaticKey to the key pair
+// NoiseServerConfig.StaticKey takes:
+//
+//	key, err := bootstrap.GenerateNoiseStaticKey()
+//	...
+//	cfg := &bootstrap.NoiseServerConfig{
+//		StaticKey: bootstrap.NoiseServerStaticKey(key),
+//		...
+//	}
+//
+// It exists because the two re-exports do not otherwise compose. NoiseStaticKey
+// holds its private scalar in protected memory, while the server config takes a
+// plain key pair, so assigning one to the other does not type-check and a
+// consumer would have to reach into the embedded field itself — which means
+// importing flynn/noise just to name a type this package already re-exports.
+//
+// The returned pair ALIASES key's protected pages. It stays valid exactly as
+// long as key does, and destroying key invalidates any server still holding it.
+func NoiseServerStaticKey(key *NoiseStaticKey) *noise.DHKey {
+	if key == nil {
+		return nil
+	}
+	return &key.DHKey
+}
+
 // GenerateNoiseStaticKey generates a Curve25519 static key pair for the
-// Noise_NK handshake.
+// Noise_NK handshake, with the private scalar drawn straight into protected
+// memory. The caller owns the key and must Destroy it.
 var GenerateNoiseStaticKey = noiseproto.GenerateStaticKey
 
-// EncodeNoiseStaticKey encodes a Noise static key as a hex string.
+// EncodeNoiseStaticKey hex-encodes a Noise static private key into the
+// caller's buffer, which must be at least NoiseHexKeySize bytes and should
+// itself be protected memory. There is deliberately no encode-to-string form:
+// a Go string is immutable and cannot be wiped after use.
 var EncodeNoiseStaticKey = noiseproto.EncodeStaticKey
 
-// DecodeNoiseStaticKey decodes a hex-encoded Noise static key.
+// DecodeNoiseStaticKey decodes a hex-encoded Noise static key into protected
+// memory. The encoded slice stays the caller's to wipe.
 var DecodeNoiseStaticKey = noiseproto.DecodeStaticKey
+
+// WipeNoiseBytes zeroes a buffer that held Noise key material.
+var WipeNoiseBytes = noiseproto.WipeBytes

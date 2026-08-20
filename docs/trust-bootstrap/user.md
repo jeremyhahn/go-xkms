@@ -96,8 +96,10 @@ xkmsctl bootstrap noise show-key --key-file noise.key
 ```
 
 Configure the private key on the server, publish the **public** key to clients.
-Keep the private key in a file, not on a command line — `--key-hex` exists but
-puts a private key into your shell history.
+`--output` is required: `generate-key` writes the private key to that file and
+prints only the public key, because a private key on stdout survives in
+scrollback, pipes and CI logs. Keep it in a file on the way back in too —
+`--key-hex` exists but puts a private key into your shell history.
 
 The Noise port defaults to 8445 in the library, which collides with the MCP
 port in the shipped configurations. `configs/xkmsd-local.yaml` moves it to 8447

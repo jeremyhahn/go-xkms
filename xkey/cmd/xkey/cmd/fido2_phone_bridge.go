@@ -214,7 +214,19 @@ func connectXKMSdBridge(backend *phone.PhoneKeyBackend, logger *slog.Logger) (*p
 	// This starts the MessageRouter background goroutine which:
 	// - Routes outbound local.* requests from laptop to phone
 	// - Dispatches inbound remote.* requests from phone to Bridge
-	backend.EnableBidirectional(bridge)
+	//
+	// EnableBidirectional gained an error return when it stopped silently
+	// starting a second router, which gave this function a failure path it
+	// never had — and the resources acquired above have no other owner until
+	// phoneBackendWithBridge is built below. Same cleanup as the NewBridge
+	// failure directly above.
+	if err := backend.EnableBidirectional(bridge); err != nil {
+		if enrollerCloser != nil {
+			_ = enrollerCloser.Close()
+		}
+		_ = client.Close()
+		return nil, errors.Join(ErrXKMSdBridgeCreationFailed, err)
+	}
 
 	logger.Info("xkmsd bridge enabled",
 		slog.Int("allowed_backends", len(cfg.AllowedBackends)),

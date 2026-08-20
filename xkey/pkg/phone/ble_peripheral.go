@@ -24,7 +24,7 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/flynn/noise"
+	"github.com/jeremyhahn/go-xkms/xkey/internal/lifecycle"
 	"tinygo.org/x/bluetooth"
 )
 
@@ -43,9 +43,19 @@ var (
 
 // BLEPeripheralConfig configures the BLE peripheral (server) mode.
 type BLEPeripheralConfig struct {
-	// LocalStaticKey is the persistent local Noise static key.
-	// If nil, a new key will be generated.
-	LocalStaticKey *noise.DHKey
+	// LocalStaticKey is the persistent local Noise static key, held in
+	// protected memory. If nil, a new key will be generated.
+	LocalStaticKey *StaticKey
+
+	// OwnsStaticKey transfers ownership of LocalStaticKey to the peripheral,
+	// so Stop releases it — and RETAINS it when a connection handler cannot
+	// be confirmed finished.
+	//
+	// Set it whenever the key has no other reader. A caller that keeps
+	// ownership has to interpret ErrShutdownIncomplete itself; every caller
+	// that forgot destroyed a borrowed key while a handler was still reading
+	// it. Transferring ownership puts that decision in one place.
+	OwnsStaticKey bool
 
 	// ExpectedRemoteStatic is the expected phone's static public key.
 	// If set, connection will fail if the phone's key doesn't match.
@@ -113,12 +123,107 @@ type BLEPeripheral struct {
 	// Channels for communication
 	incomingData chan []byte
 	stopChan     chan struct{}
+
+	// generatedStaticKey holds the ephemeral static key AcceptConnection
+	// generates when the config supplies none. The session reads its
+	// protected pages for as long as the connection lives, so it is released
+	// in Stop rather than when AcceptConnection returns. A key supplied
+	// through the config stays the caller's to destroy.
+	//
+	// lifeMu guards it, and connWG counts the AcceptConnection calls that may
+	// still be reading it. Stop must not free those pages while a handshake
+	// or a request loop is using them, so it closes stopChan first, waits for
+	// connWG, and only then destroys.
+	//
+	// lifeMu also pairs the closed check with connWG.Add. A WaitGroup Add that
+	// starts from zero must happen before its Wait, so testing closed and
+	// registering have to be one atomic step against Stop setting closed:
+	// otherwise a connection arriving exactly as Stop begins could Add after
+	// Wait had already returned.
+	lifeMu sync.Mutex
+	connWG sync.WaitGroup
+
+	// connJoiner bounds Stop's wait on connWG with a single waiter goroutine.
+	connJoiner lifecycle.Joiner
+
+	// stopOnce/stopErr latch the shutdown outcome so concurrent and repeat
+	// callers see one result and only one of them releases the static key.
+	stopOnce sync.Once
+	stopErr  error
+
+	// acceptMu serializes AcceptConnection. A BLE peripheral serves one
+	// central at a time, and the code already assumed that: each call
+	// overwrites session, fragmenter, reassembler and sender, and replaces
+	// the generated static key, destroying the previous one. Nothing enforced
+	// it, so a second caller could free protected pages the first call's
+	// session was still reading. This makes the assumption real.
+	acceptMu sync.Mutex
+
+	generatedStaticKey *StaticKey
+
+	// starting is held for the whole of Start, so a second caller is refused
+	// before it can reconfigure a peripheral the first is still bringing up.
+	starting bool
+
+	// adv is the advertisement Start brought up, retained so Stop can take it
+	// down. It used to be a local in Start, which meant Stop reported success
+	// while the peripheral carried on advertising a service whose key it had
+	// just destroyed.
+	adv advertiser
+
+	// adoptedStaticKey is a key the caller transferred with OwnsStaticKey.
+	// It is reused for every connection rather than regenerated, and Stop
+	// releases it on the same terms as a generated one: destroyed on a
+	// confirmed join, retained otherwise.
+	adoptedStaticKey *StaticKey
+
+	// localStaticPublic is a plain copy of the current connection's static
+	// public half, taken when the session is built. The public key is not
+	// secret and copying it decouples the accessor from both the session
+	// pointer and the protected private pages, so LocalStaticPublicKey cannot
+	// race AcceptConnection publishing a session or Stop destroying a key.
+	localStaticPublic []byte
 }
+
+// advertiser is the part of bluetooth.Advertisement the peripheral's lifecycle
+// depends on: raising the advertisement and taking it back down.
+//
+// It is an interface for one reason — whether the peripheral is still
+// discoverable decides whether Stop can report a COMPLETE shutdown, and that
+// decision was untestable while the field held a concrete
+// *bluetooth.Advertisement. Bringing a real advertisement up needs a Bluetooth
+// adapter, which CI does not have, so the branch that reports an incomplete
+// shutdown when advertising cannot be stopped had no way to fail.
+//
+// It does NOT decide the key's fate. Nothing reads the protected pages but
+// AcceptConnection and the session it builds, and `closed` is set under lifeMu
+// before the drain, so a central arriving at a still-advertising peripheral
+// cannot register. A confirmed join is what frees the key; see Stop.
+//
+// *bluetooth.Advertisement satisfies it; Configure is not part of it because
+// the lifecycle does not call it.
+type advertiser interface {
+	Start() error
+	Stop() error
+}
+
+// Compile-time check that the concrete advertisement still fits the two
+// methods the lifecycle uses.
+var _ advertiser = (*bluetooth.Advertisement)(nil)
 
 // NewBLEPeripheral creates a new BLE peripheral.
 func NewBLEPeripheral(cfg *BLEPeripheralConfig) (*BLEPeripheral, error) {
 	if cfg == nil {
 		cfg = &BLEPeripheralConfig{}
+	}
+
+	// A transferred key is adopted as the peripheral's own, and consumed from
+	// the config so a reused config cannot hand the next peripheral a second
+	// owner for the same protected pages.
+	var owned *StaticKey
+	if cfg.OwnsStaticKey && cfg.LocalStaticKey != nil {
+		owned = cfg.LocalStaticKey
+		cfg.LocalStaticKey = nil
 	}
 
 	logger := cfg.Logger
@@ -136,19 +241,32 @@ func NewBLEPeripheral(cfg *BLEPeripheralConfig) (*BLEPeripheral, error) {
 	}
 
 	return &BLEPeripheral{
-		cfg:          cfg,
-		log:          logger.With("component", "ble_peripheral"),
-		mtu:          mtu,
-		incomingData: make(chan []byte, 100),
-		stopChan:     make(chan struct{}),
+		cfg:              cfg,
+		adoptedStaticKey: owned,
+		log:              logger.With("component", "ble_peripheral"),
+		mtu:              mtu,
+		incomingData:     make(chan []byte, 100),
+		stopChan:         make(chan struct{}),
 	}, nil
 }
 
 // Start begins advertising and accepting connections.
+//
+// It is not safe to call twice, and it now says so before doing any damage
+// rather than after. Everything below re-enables the adapter, replaces the
+// GATT characteristic handles and re-registers the service — on a peripheral
+// that may be running — so discovering "already started" at the publication
+// step at the end was far too late: a repeated Start had already mutated the
+// live peripheral, and often failed with a start error rather than the
+// already-running one.
 func (p *BLEPeripheral) Start(ctx context.Context) error {
 	if p.closed.Load() {
 		return ErrBackendClosed
 	}
+	if err := p.reserveStart(); err != nil {
+		return err
+	}
+	defer p.releaseStart()
 
 	p.log.Info("starting BLE peripheral",
 		slog.String("device_name", p.cfg.DeviceName),
@@ -179,15 +297,114 @@ func (p *BLEPeripheral) Start(ctx context.Context) error {
 		return &SentinelCauseError{Sentinel: ErrPeripheralStartFailed, Cause: err}
 	}
 
-	if err := adv.Start(); err != nil {
-		p.log.Error("failed to start advertising", slog.String("error", err.Error()))
-		return &SentinelCauseError{Sentinel: ErrPeripheralStartFailed, Cause: err}
+	if err := p.publishAdvertisement(adv); err != nil {
+		return err
 	}
 
 	p.log.Info("BLE peripheral started, advertising",
 		slog.String("service_uuid", XKeyServiceUUID.String()),
 	)
 
+	return nil
+}
+
+// publishAdvertisement installs adv as the peripheral's advertisement and
+// raises it, without releasing lifeMu in between.
+//
+// Start was not serialized against Stop at all: a Stop running concurrently
+// could destroy the static key and return while Start carried on bringing
+// advertising up, leaving the peripheral advertising a service whose key had
+// been freed. Taking the lifecycle lock closed most of that, but not the part
+// that mattered — advertising was raised BEFORE the handle was published, so a
+// Stop landing in that window saw no advertisement to take down, destroyed the
+// key, and returned success while Start went on advertising a service backed
+// by freed pages until it noticed the closed flag.
+//
+// Publication and the side effect it describes are one step under lifeMu, so a
+// Stop either runs entirely before this — and nothing is ever advertised — or
+// entirely after, and finds the handle it has to take down.
+//
+// A SECOND START IS REFUSED rather than allowed to overwrite the handle. The
+// adapter hands out a cached advertisement object, so two Starts get the SAME
+// one: the second raise fails with an already-started error, and rolling the
+// handle back on that failure would drop the first call's live advertisement —
+// after which Stop finds nothing to take down and reports success while the
+// peripheral is still discoverable. One owner, one handle.
+//
+// AND A FAILED RAISE KEEPS ITS HANDLE. The error says the raise did not
+// complete, not that nothing was registered — on Linux the advertisement is
+// registered first and later steps can still fail. Assuming it is down is the
+// unsafe direction, so the handle stays for Stop to take down, and Stop reports
+// whether that succeeded.
+//
+// LIMIT, stated because it is a real one: adv.Start is called with lifeMu held,
+// so a controller call that hangs blocks Stop from even setting closed. Making
+// the raise happen outside the lock needs a starting/active/failed state with a
+// bounded join for Stop to wait on, which is wider than this change; it is
+// filed for v0.7.7. The lock is held here because the alternative available
+// today is the defect above — advertising a service whose key has been freed —
+// and a hung controller is the lesser failure.
+func (p *BLEPeripheral) publishAdvertisement(adv advertiser) error {
+	err := p.raiseAdvertisement(adv)
+	if err != nil && !errors.Is(err, ErrBackendClosed) {
+		p.log.Error("failed to start advertising", slog.String("error", err.Error()))
+	}
+	return err
+}
+
+// reserveStart claims the exclusive right to bring this peripheral up, and
+// reports ErrPeripheralAlreadyRunning to anyone who arrives while it is held or
+// while an advertisement is already published.
+//
+// A CHECK IS NOT ENOUGH HERE, which is what the first attempt got wrong. Two
+// concurrent Starts could both pass a check and then race each other through
+// assigning the adapter, replacing the characteristic handles and registering
+// the GATT service — with the authoritative check at the publication step
+// rejecting one of them only after all that damage was done. The reservation
+// spans the whole of Start, so the second caller never begins.
+//
+// releaseStart drops it. The publication step keeps its own check, which stays
+// the authoritative one for the advertisement handle itself.
+func (p *BLEPeripheral) reserveStart() error {
+	p.lifeMu.Lock()
+	defer p.lifeMu.Unlock()
+
+	if p.closed.Load() {
+		return ErrBackendClosed
+	}
+	if p.starting || p.adv != nil {
+		return ErrPeripheralAlreadyRunning
+	}
+	p.starting = true
+	return nil
+}
+
+// releaseStart drops the reservation taken by reserveStart.
+func (p *BLEPeripheral) releaseStart() {
+	p.lifeMu.Lock()
+	defer p.lifeMu.Unlock()
+
+	p.starting = false
+}
+
+// raiseAdvertisement is publishAdvertisement's critical section, split out so
+// the logger — which is caller-supplied and could re-enter — runs with lifeMu
+// released.
+func (p *BLEPeripheral) raiseAdvertisement(adv advertiser) error {
+	p.lifeMu.Lock()
+	defer p.lifeMu.Unlock()
+
+	if p.closed.Load() {
+		return ErrBackendClosed
+	}
+	if p.adv != nil {
+		return ErrPeripheralAlreadyRunning
+	}
+
+	p.adv = adv
+	if err := adv.Start(); err != nil {
+		return &SentinelCauseError{Sentinel: ErrPeripheralStartFailed, Cause: err}
+	}
 	return nil
 }
 
@@ -261,6 +478,24 @@ func (p *BLEPeripheral) handleWrite(data []byte) {
 // AcceptConnection waits for and handles a client connection.
 // This should be called in a loop to handle multiple connections.
 func (p *BLEPeripheral) AcceptConnection(ctx context.Context) error {
+	// One connection at a time; see acceptMu.
+	p.acceptMu.Lock()
+	defer p.acceptMu.Unlock()
+
+	// Register before doing anything, so Stop cannot decide the peripheral is
+	// idle and free the static key out from under this connection. The check
+	// and the registration are one step under lifeMu: a connection that gets
+	// the lock after Stop sees closed and never registers, and one that gets
+	// it before has registered by the time Stop reaches Wait.
+	p.lifeMu.Lock()
+	if p.closed.Load() {
+		p.lifeMu.Unlock()
+		return ErrBLEPeripheralStopped
+	}
+	p.connWG.Add(1)
+	p.lifeMu.Unlock()
+	defer p.connWG.Done()
+
 	p.log.Info("waiting for phone connection...")
 
 	// Initialize fragmentation helpers. Outbound fragments are sized to fit
@@ -269,27 +504,48 @@ func (p *BLEPeripheral) AcceptConnection(ctx context.Context) error {
 	p.reassembler = NewReassembler()
 	p.sender = newFragmentSender(p.notifier, p.fragmenter, p.log)
 
-	// Create Noise session as responder
-	var localStatic noise.DHKey
-	if p.cfg.LocalStaticKey != nil {
-		localStatic = *p.cfg.LocalStaticKey
-	} else {
+	// Create Noise session as responder.
+	//
+	// A key transferred with OwnsStaticKey lives in adoptedStaticKey, and is
+	// consulted here so a transferred key behaves exactly like a supplied
+	// borrowed one: reused for every connection, never regenerated.
+	//
+	// It is deliberately NOT generatedStaticKey. That field holds the
+	// per-connection key this peripheral makes when no key is supplied at
+	// all, and whether that should instead be one stable per-peripheral
+	// identity is an open owner decision — per-connection keys give
+	// unlinkability, a stable key gives the peer something to pin. Folding
+	// the two fields together would have silently decided it.
+	p.lifeMu.Lock()
+	localStatic := p.cfg.LocalStaticKey
+	if localStatic == nil {
+		localStatic = p.adoptedStaticKey
+	}
+	p.lifeMu.Unlock()
+
+	if localStatic == nil {
 		key, err := GenerateStaticKey()
 		if err != nil {
 			return &WrappedError{Msg: "failed to generate static key", Err: err}
 		}
-		localStatic = *key
+		// acceptMu guarantees the previous connection has returned, so the
+		// key it used has no remaining reader by the time this replaces it.
+		p.lifeMu.Lock()
+		p.generatedStaticKey.Destroy()
+		p.generatedStaticKey = key
+		p.lifeMu.Unlock()
+		localStatic = key
 	}
 
 	session, err := NewNoiseSession(&NoiseSessionConfig{
-		LocalStaticKey:       &localStatic,
+		LocalStaticKey:       localStatic,
 		ExpectedRemoteStatic: p.cfg.ExpectedRemoteStatic,
 		IsInitiator:          false, // We are the responder
 	})
 	if err != nil {
 		return &WrappedError{Msg: "failed to create noise session", Err: err}
 	}
-	p.session = session
+	p.publishSession(session)
 
 	// Wait for handshake messages
 	if err := p.performHandshake(ctx); err != nil {
@@ -476,27 +732,180 @@ func (p *BLEPeripheral) processRequest(ctx context.Context, encryptedData []byte
 	return p.sendMessage(ctx, encrypted)
 }
 
+// publishSession installs session as the peripheral's current one and takes
+// the public-key snapshot in the same step.
+//
+// The two must move together. LocalStaticPublicKey reads the snapshot rather
+// than the session precisely so it cannot touch pages Stop may have freed —
+// which only works if every path that publishes a session also fills the
+// snapshot. Assigning p.session directly is how that pair silently came
+// apart: the test helper kept doing it after the snapshot was introduced, and
+// LocalStaticPublicKey started returning nothing on a peripheral with a live
+// session. There is now one way to publish, so the pair cannot diverge again.
+func (p *BLEPeripheral) publishSession(session *NoiseSession) {
+	p.lifeMu.Lock()
+	defer p.lifeMu.Unlock()
+
+	p.session = session
+	p.localStaticPublic = append([]byte(nil), session.LocalStaticPublicKey()...)
+}
+
 // Stop stops advertising and closes connections.
+//
+// It returns ErrShutdownIncomplete when shutdown could not be confirmed
+// complete — an accepted connection that did not finish within
+// peripheralShutdownTimeout, or an advertisement that could not be taken down.
+// The peripheral is stopped regardless and accepts no further connections.
+//
+// THE ERROR DOES NOT BY ITSELF MEAN THE KEY WAS RETAINED, and reading it that
+// way makes a borrowed key's owner hold locked pages it could free. The two
+// answers have different conditions: the key is retained only when the
+// CONNECTION JOIN could not be confirmed, because nothing but AcceptConnection
+// and its session reads those pages. An advertisement that would not come down
+// leaves the peripheral possibly discoverable — so the shutdown is genuinely
+// incomplete and says so — but it cannot reach the key, which is freed on the
+// join alone.
+//
+// MUST NOT be called from a RequestHandler. Stop waits for handlers to
+// finish, and the latch makes a re-entrant caller wait for Stop — so a
+// handler that calls it guarantees the full shutdown window elapses and the
+// key is retained. This is the classic self-deadlock of any Shutdown that
+// drains its own callbacks (net/http.Server.Shutdown behaves the same way),
+// and it is bounded rather than permanent because the join has a timeout.
+// The alternative — answering a re-entrant caller early — is the defect the
+// latch exists to fix: two callers reaching different conclusions about
+// whether the protected key is safe to free.
 func (p *BLEPeripheral) Stop() error {
-	if p.closed.Swap(true) {
+	// Latched, so every caller observes the SAME outcome. A concurrent Stop
+	// used to return nil the instant the first set closed — telling the owner
+	// of a borrowed key that destroying it was safe while the first Stop was
+	// still waiting on a handler that reads it.
+	p.stopOnce.Do(func() { p.stopErr = p.stop() })
+	return p.stopErr
+}
+
+func (p *BLEPeripheral) stop() error {
+	// Set closed under lifeMu so that any AcceptConnection which passed its
+	// check has already registered on connWG before Wait runs below.
+	p.lifeMu.Lock()
+	alreadyClosed := p.closed.Swap(true)
+	p.lifeMu.Unlock()
+
+	if alreadyClosed {
 		return nil
 	}
 
 	close(p.stopChan)
 
-	p.log.Info("BLE peripheral stopped")
+	// Stop advertising before draining. A peripheral that is still
+	// discoverable can accept a new connection while Stop waits, and that
+	// connection would read the key Stop is about to release.
+	p.lifeMu.Lock()
+	adv := p.adv
+	p.adv = nil
+	p.lifeMu.Unlock()
+
+	// Whether the peripheral is provably no longer discoverable. A failure
+	// here used to be logged and dropped, so Stop reported success while the
+	// peripheral carried on advertising — a shutdown that had not finished,
+	// reported as one that had.
+	//
+	// It does NOT decide the key's fate. A central arriving at a peripheral
+	// that is still advertising cannot register, because closed was set under
+	// lifeMu before the drain, so it cannot reach the protected pages. The
+	// join decides the key; this decides whether the shutdown is complete.
+	quiet := true
+	if adv != nil {
+		if err := adv.Stop(); err != nil {
+			quiet = false
+			p.log.Error("failed to stop advertising; the peripheral may still be "+
+				"discoverable", slog.String("error", err.Error()))
+		}
+	}
+
+	// Unblock the request loop, then wait for every AcceptConnection to
+	// return before freeing the key it was reading.
+	//
+	// Bounded, because AcceptConnection can be sitting inside a
+	// caller-supplied RequestHandler.HandleRequest, on a context this
+	// peripheral neither owns nor cancels. An unbounded wait here makes a
+	// third party's slow handler into a Stop that never returns.
+	joined := p.connJoiner.Join(&p.connWG, peripheralShutdownTimeout)
+
+	// TWO DECISIONS, NOT ONE, and they do not share a condition.
+	//
+	// The key may be freed once `joined` holds. What reads these pages is
+	// AcceptConnection and the session it builds, and nothing else — the
+	// advertisement carries a service UUID and a device name, not key
+	// material. `joined` proves every accepted connection returned, and
+	// `closed` was set under lifeMu before the drain, so AcceptConnection
+	// refuses to register a new one. A central arriving at a peripheral that
+	// is still advertising therefore cannot reach the key.
+	//
+	// Coupling the two was over-conservative in a way that costs something
+	// real: it retained protected pages for the life of the process every time
+	// an advertisement failed to come down, which is neither necessary nor
+	// free.
+	//
+	// Shutdown SUCCESS still needs both. A peripheral that is still
+	// discoverable has not finished stopping, whatever the key's fate, and
+	// saying otherwise is the fail-open this release exists to remove.
+	p.lifeMu.Lock()
+	if joined {
+		p.generatedStaticKey.Destroy()
+		p.generatedStaticKey = nil
+		p.adoptedStaticKey.Destroy()
+		p.adoptedStaticKey = nil
+	} else {
+		// Retained, not freed: a handler still running may be encrypting
+		// through these pages. The peripheral is stopped either way.
+		//
+		// The reference stays on the peripheral rather than being cleared.
+		// Nothing can reach it — Stop is terminal — but "retained" and "we
+		// dropped the only pointer" should not look the same in the source,
+		// and keeping the owner is what would let a reclamation path exist.
+		p.log.Warn("retaining the peripheral static key: a connection did not "+
+			"finish within the shutdown window",
+			"timeout", peripheralShutdownTimeout)
+	}
+	p.localStaticPublic = nil
+	p.lifeMu.Unlock()
+
+	p.log.Info("BLE peripheral stopped",
+		"connections_joined", joined, "advertising_stopped", quiet)
+
+	if !joined || !quiet {
+		return ErrShutdownIncomplete
+	}
 	return nil
 }
+
+// peripheralShutdownTimeout bounds how long Stop waits for in-flight
+// connections to finish. A connection is running a caller-supplied request
+// handler that may be waiting on a user, so the window is generous; what it
+// must not be is absent.
+//
+// A var rather than a const so tests can exercise the timeout branch without
+// spending the production window on it. Nothing else writes it.
+var peripheralShutdownTimeout = 30 * time.Second
 
 // IsConnected returns true if a client is connected.
 func (p *BLEPeripheral) IsConnected() bool {
 	return p.connected.Load()
 }
 
-// LocalStaticPublicKey returns the local static public key.
+// LocalStaticPublicKey returns a copy of the current connection's static
+// public key, or nil before the first connection and after Stop.
+//
+// It reads a snapshot rather than the session, so it neither races
+// AcceptConnection publishing a new session nor touches the protected private
+// pages Stop destroys.
 func (p *BLEPeripheral) LocalStaticPublicKey() []byte {
-	if p.session == nil {
+	p.lifeMu.Lock()
+	defer p.lifeMu.Unlock()
+
+	if p.localStaticPublic == nil {
 		return nil
 	}
-	return p.session.LocalStaticPublicKey()
+	return append([]byte(nil), p.localStaticPublic...)
 }

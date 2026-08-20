@@ -24,10 +24,8 @@ import (
 	"log/slog"
 	"time"
 
-	"github.com/flynn/noise"
 	"github.com/jeremyhahn/go-xkms/xkey/pkg/authenticator/keybackend"
 	"github.com/jeremyhahn/go-xkms/xkey/pkg/phone"
-	"golang.org/x/crypto/curve25519"
 )
 
 // createFIDO2PhoneKeyBackend creates a phone-backed FIDO2 key backend.
@@ -92,6 +90,10 @@ func createFIDO2PhoneKeyBackend(cfg *FIDO2Config, logger *slog.Logger) (keybacke
 	if err != nil {
 		return nil, errors.Join(ErrFIDO2DeviceBackendCreationFailed, err)
 	}
+	// The decoded scalar is a plain heap slice. reconstructStaticKey copies it
+	// into protected memory but cannot wipe the caller's copy, so wipe it here
+	// rather than leave a private key sitting in garbage-collected memory.
+	defer phone.WipeBytes(localPrivateKey)
 
 	// Reconstruct the local static key from the stored private key
 	localStaticKey, err := reconstructStaticKey(localPrivateKey)
@@ -117,8 +119,11 @@ func createFIDO2PhoneKeyBackend(cfg *FIDO2Config, logger *slog.Logger) (keybacke
 	// Device identity is verified via the Noise protocol using ExpectedRemoteStatic,
 	// and the device fingerprint enables prologue binding for trusted device verification.
 	backendCfg := &phone.PhoneKeyBackendConfig{
-		DeviceAddress:             savedAddress,
+		DeviceAddress: savedAddress,
+		// This helper hands the backend to its caller and keeps nothing, so
+		// the backend has to own the key or it would never be released.
 		LocalStaticKey:            localStaticKey,
+		OwnsStaticKey:             true,
 		ExpectedRemoteStatic:      remotePublicKey,
 		ExpectedDeviceFingerprint: deviceFingerprint,
 		ScanTimeout:               30 * time.Second,
@@ -184,21 +189,21 @@ func createFIDO2PhoneKeyBackend(cfg *FIDO2Config, logger *slog.Logger) (keybacke
 	return backend, nil
 }
 
-// reconstructStaticKey reconstructs a noise.DHKey from the private key bytes.
-func reconstructStaticKey(privateKey []byte) (*noise.DHKey, error) {
-	if len(privateKey) != 32 {
-		return nil, &MessageError{Msg: fmt.Sprintf("invalid private key length: expected 32, got %d", len(privateKey))}
+// reconstructStaticKey rebuilds a Noise static key pair from the stored
+// private key bytes, in protected memory. It is a thin wrapper over
+// phone.LoadStaticKey, which owns the derivation; the length check stays here
+// only to keep the caller's error message specific.
+//
+// The returned key is the caller's, and the backend built from it reads its
+// protected pages for as long as that backend is open.
+func reconstructStaticKey(privateKey []byte) (*phone.StaticKey, error) {
+	if len(privateKey) != phone.NoiseKeySize {
+		return nil, &MessageError{Msg: fmt.Sprintf("invalid private key length: expected %d, got %d", phone.NoiseKeySize, len(privateKey))}
 	}
 
-	// Use X25519 to derive the public key from the private key
-	// curve25519.X25519 computes: public = scalar * basepoint
-	public, err := curve25519.X25519(privateKey, curve25519.Basepoint)
+	key, err := phone.LoadStaticKey(privateKey)
 	if err != nil {
 		return nil, &WrappedError{Msg: "failed to derive public key", Err: err}
 	}
-
-	return &noise.DHKey{
-		Private: privateKey,
-		Public:  public,
-	}, nil
+	return key, nil
 }

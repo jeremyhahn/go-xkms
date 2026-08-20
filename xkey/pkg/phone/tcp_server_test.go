@@ -872,3 +872,225 @@ func TestTCPReceive_ConnectionClosed(t *testing.T) {
 	}
 	server.Close()
 }
+
+// TestTCPPairingServer_StopKeepsSuppliedKey checks the ownership half of the
+// protected-memory contract: a key handed in through the config belongs to the
+// caller, so Stop must leave it usable. Destroying a borrowed key would free
+// pages another session is still reading.
+func TestTCPPairingServer_StopKeepsSuppliedKey(t *testing.T) {
+	key, err := GenerateStaticKey()
+	if err != nil {
+		t.Fatalf("GenerateStaticKey: %v", err)
+	}
+	defer key.Destroy()
+
+	srv, err := NewTCPPairingServer(&TCPPairingConfig{
+		ListenAddr:     "127.0.0.1:0",
+		LocalStaticKey: key,
+		RequestHandler: &mockRequestHandler{},
+	})
+	if err != nil {
+		t.Fatalf("NewTCPPairingServer: %v", err)
+	}
+	if err := srv.Start(); err != nil {
+		t.Fatalf("Start: %v", err)
+	}
+	if err := srv.Stop(); err != nil {
+		t.Fatalf("Stop: %v", err)
+	}
+
+	// Still intact: Destroy zeroes the key pair, so a live private half is
+	// what distinguishes "left alone" from "freed".
+	if len(key.Private) != NoiseKeySize {
+		t.Fatalf("supplied key was destroyed by Stop: private half is %d bytes, want %d",
+			len(key.Private), NoiseKeySize)
+	}
+	if _, err := NewNoiseSession(&NoiseSessionConfig{LocalStaticKey: key, IsInitiator: true}); err != nil {
+		t.Fatalf("supplied key unusable after Stop: %v", err)
+	}
+}
+
+// TestTCPPairingServer_StopReleasesGeneratedKey is the other half: a key the
+// server generated itself has no other owner, so Stop must release it rather
+// than leave a locked page resident.
+func TestTCPPairingServer_StopReleasesGeneratedKey(t *testing.T) {
+	srv, err := NewTCPPairingServer(&TCPPairingConfig{
+		ListenAddr:     "127.0.0.1:0",
+		RequestHandler: &mockRequestHandler{},
+	})
+	if err != nil {
+		t.Fatalf("NewTCPPairingServer: %v", err)
+	}
+	if !srv.ownsStaticKey {
+		t.Fatal("server generated its own key but did not claim ownership")
+	}
+	if err := srv.Start(); err != nil {
+		t.Fatalf("Start: %v", err)
+	}
+	if err := srv.Stop(); err != nil {
+		t.Fatalf("Stop: %v", err)
+	}
+	if srv.localStaticKey != nil {
+		t.Fatal("Stop left the generated key in place")
+	}
+	if got := srv.LocalStaticPublicKey(); got != nil {
+		t.Fatalf("public key still readable after Stop: %x", got)
+	}
+}
+
+// TestTCPPairingServer_StopReleasesKeyAfterFailedStart covers the gap between
+// construction and a successful bind. NewTCPPairingServer generates and owns
+// the key, so a Start that cannot bind would otherwise strand a locked page
+// with no cleanup path — Stop reported "not running" and returned early.
+func TestTCPPairingServer_StopReleasesKeyAfterFailedStart(t *testing.T) {
+	// Occupy an address so the server's bind is guaranteed to fail.
+	occupied, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("listen: %v", err)
+	}
+	defer func() { _ = occupied.Close() }()
+
+	srv, err := NewTCPPairingServer(&TCPPairingConfig{
+		ListenAddr:     occupied.Addr().String(),
+		RequestHandler: &mockRequestHandler{},
+	})
+	if err != nil {
+		t.Fatalf("NewTCPPairingServer: %v", err)
+	}
+	if !srv.ownsStaticKey {
+		t.Fatal("server generated its own key but did not claim ownership")
+	}
+
+	if err := srv.Start(); !errors.Is(err, ErrTCPServerStartFailed) {
+		t.Fatalf("Start on an occupied address: expected ErrTCPServerStartFailed, got %v", err)
+	}
+
+	// Stop still reports that nothing was listening, and still cleans up.
+	if err := srv.Stop(); !errors.Is(err, ErrTCPServerNotRunning) {
+		t.Fatalf("Stop after failed Start: expected ErrTCPServerNotRunning, got %v", err)
+	}
+	if srv.localStaticKey != nil {
+		t.Fatal("Stop left the generated key in place after a failed Start")
+	}
+
+	// Repeatable: a second Stop must not double-destroy or panic.
+	if err := srv.Stop(); !errors.Is(err, ErrTCPServerNotRunning) {
+		t.Fatalf("second Stop: expected ErrTCPServerNotRunning, got %v", err)
+	}
+}
+
+// hangingHandler ignores its context entirely, which is what a
+// caller-supplied handler is free to do and what closing the socket cannot
+// fix.
+type hangingHandler struct{ released chan struct{} }
+
+func (h *hangingHandler) HandleRequest(context.Context, []byte) ([]byte, error) {
+	<-h.released
+	return nil, nil
+}
+
+// TestStopBoundsTheHandlerJoin covers the last unbounded drain in this
+// package, and the deadlock hiding behind it.
+//
+// Stop waited on the connection WaitGroup without a bound, holding
+// lifecycleMu the whole time. Connection workers call a caller-supplied
+// RequestHandler synchronously, so a handler that ignores cancellation is not
+// interrupted by closing the socket — Stop simply never returns. Worse, any
+// handler that called LocalStaticPublicKey would take the read side of
+// lifecycleMu and deadlock against the Stop waiting for it.
+func TestStopBoundsTheHandlerJoin(t *testing.T) {
+	original := serverShutdownTimeout
+	serverShutdownTimeout = 150 * time.Millisecond
+	t.Cleanup(func() { serverShutdownTimeout = original })
+
+	handler := &hangingHandler{released: make(chan struct{})}
+	defer close(handler.released)
+
+	srv, err := NewTCPPairingServer(&TCPPairingConfig{
+		ListenAddr:     "127.0.0.1:0",
+		RequestHandler: handler,
+	})
+	if err != nil {
+		t.Fatalf("NewTCPPairingServer: %v", err)
+	}
+	if err := srv.Start(); err != nil {
+		t.Fatalf("Start: %v", err)
+	}
+
+	// Occupy a handler slot the way a stuck connection does.
+	srv.wg.Add(1)
+	go func() {
+		defer srv.wg.Done()
+		<-handler.released
+	}()
+
+	stopped := make(chan error, 1)
+	go func() { stopped <- srv.Stop() }()
+
+	select {
+	case err := <-stopped:
+		if !errors.Is(err, ErrShutdownIncomplete) {
+			t.Fatalf("Stop returned %v, want ErrShutdownIncomplete", err)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("Stop never returned: the handler join is still unbounded")
+	}
+
+	// The key must survive: a handler still running may be reading it.
+	if srv.ownsStaticKey && srv.localStaticKey == nil {
+		t.Fatal("Stop released the static key while a handler was still running")
+	}
+}
+
+// TestSecondStopDoesNotDestroyARetainedKey covers the way an incomplete
+// shutdown could be undone by a second caller.
+//
+// The first Stop times out, reports ErrShutdownIncomplete and deliberately
+// retains the static key because a handler may still be reading it. A second
+// Stop then found running already false, skipped the join entirely, kept its
+// local joined=true, and destroyed that key — reintroducing precisely the
+// use-after-free the bounded join exists to prevent. Both callers now observe
+// the same latched outcome.
+func TestSecondStopDoesNotDestroyARetainedKey(t *testing.T) {
+	original := serverShutdownTimeout
+	serverShutdownTimeout = 100 * time.Millisecond
+	t.Cleanup(func() { serverShutdownTimeout = original })
+
+	handler := &hangingHandler{released: make(chan struct{})}
+	defer close(handler.released)
+
+	srv, err := NewTCPPairingServer(&TCPPairingConfig{
+		ListenAddr:     "127.0.0.1:0",
+		RequestHandler: handler,
+	})
+	if err != nil {
+		t.Fatalf("NewTCPPairingServer: %v", err)
+	}
+	if err := srv.Start(); err != nil {
+		t.Fatalf("Start: %v", err)
+	}
+
+	srv.wg.Add(1)
+	go func() {
+		defer srv.wg.Done()
+		<-handler.released
+	}()
+
+	if err := srv.Stop(); !errors.Is(err, ErrShutdownIncomplete) {
+		t.Fatalf("first Stop returned %v, want ErrShutdownIncomplete", err)
+	}
+	if srv.localStaticKey == nil {
+		t.Fatal("the first Stop released the key it reported retaining")
+	}
+
+	// The second call must report the same thing and change nothing.
+	if err := srv.Stop(); !errors.Is(err, ErrShutdownIncomplete) {
+		t.Fatalf("second Stop returned %v, want the first outcome", err)
+	}
+	if srv.localStaticKey == nil {
+		t.Fatal("the second Stop destroyed a key the first had retained")
+	}
+	if len(srv.localStaticKey.Private) == 0 {
+		t.Fatal("the retained key's protected pages were wiped by the second Stop")
+	}
+}

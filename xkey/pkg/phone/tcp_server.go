@@ -24,7 +24,8 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/flynn/noise"
+	"github.com/jeremyhahn/go-xkms/xkey/internal/lifecycle"
+
 	"github.com/jeremyhahn/go-xkms/xkey/pkg/pairing"
 )
 
@@ -73,9 +74,20 @@ type TCPPairingConfig struct {
 	// ListenAddr is the TCP address to listen on (default ":8444").
 	ListenAddr string
 
-	// LocalStaticKey is the persistent Noise static key.
-	// If nil, a new key is generated on start.
-	LocalStaticKey *noise.DHKey
+	// LocalStaticKey is the persistent Noise static key, held in protected
+	// memory. If nil, a new key is generated on start.
+	LocalStaticKey *StaticKey
+
+	// OwnsStaticKey transfers ownership of LocalStaticKey to the server, so
+	// that Stop releases it — and, just as importantly, RETAINS it when a
+	// connection handler cannot be confirmed finished.
+	//
+	// Set it whenever the key has no other reader. A caller that keeps
+	// ownership has to interpret ErrShutdownIncomplete itself and hold the
+	// key for the life of the process, and every caller that forgot did the
+	// opposite: destroyed a borrowed key while a handler was still using it.
+	// Transferring ownership puts that decision in one place.
+	OwnsStaticKey bool
 
 	// RequestHandler processes incoming JSON-RPC requests.
 	RequestHandler PeripheralRequestHandler
@@ -117,7 +129,29 @@ type TCPPairingServer struct {
 	connMu sync.Mutex
 	conns  map[net.Conn]struct{}
 
-	localStaticKey *noise.DHKey
+	// lifecycleMu serializes Start against Stop. The atomics alone are not
+	// enough: Stop could flip running between Start's Swap and its wg.Add,
+	// then Wait on an empty group and destroy the static key while Start went
+	// on to launch an accept loop that uses it. Holding this for the whole of
+	// each transition means shutdown never overlaps startup.
+	lifecycleMu sync.RWMutex
+
+	// connJoiner bounds Stop's wait on the connection WaitGroup with a single
+	// waiter goroutine for the server's life.
+	connJoiner lifecycle.Joiner
+
+	// stopOnce/stopErr latch the shutdown outcome so concurrent and repeat
+	// callers see one result and only one of them releases the static key.
+	stopOnce sync.Once
+	stopErr  error
+
+	localStaticKey *StaticKey
+
+	// ownsStaticKey records whether the server generated localStaticKey
+	// itself. A key supplied by the caller stays the caller's to destroy;
+	// destroying a borrowed key would free protected pages another session
+	// is still reading from.
+	ownsStaticKey bool
 }
 
 // NewTCPPairingServer creates a new TCP pairing server with the given configuration.
@@ -147,21 +181,30 @@ func NewTCPPairingServer(cfg *TCPPairingConfig) (*TCPPairingServer, error) {
 	}
 
 	// Resolve the static key.
-	var localKey *noise.DHKey
-	if cfg.LocalStaticKey != nil {
-		localKey = cfg.LocalStaticKey
-	} else {
+	localKey := cfg.LocalStaticKey
+	owns := false
+	switch {
+	case localKey == nil:
 		generated, err := GenerateStaticKey()
 		if err != nil {
 			return nil, ErrTCPServerStartFailed
 		}
 		localKey = generated
+		owns = true
+	case cfg.OwnsStaticKey:
+		// Consumed from the config for the same reason the phone backend
+		// consumes it: a config is an input callers reuse, and one still
+		// holding a key this server now owns hands the next construction a
+		// second owner for the same protected pages.
+		owns = true
+		cfg.LocalStaticKey = nil
 	}
 
 	return &TCPPairingServer{
 		cfg:            cfg,
 		log:            cfg.Logger.With("component", "tcp_pairing_server"),
 		localStaticKey: localKey,
+		ownsStaticKey:  owns,
 		connSem:        make(chan struct{}, cfg.MaxConnections),
 		conns:          make(map[net.Conn]struct{}),
 	}, nil
@@ -170,6 +213,9 @@ func NewTCPPairingServer(cfg *TCPPairingConfig) (*TCPPairingServer, error) {
 // Start begins listening for TCP connections. Returns ErrTCPServerAlreadyRunning
 // if the server is already listening.
 func (s *TCPPairingServer) Start() error {
+	s.lifecycleMu.Lock()
+	defer s.lifecycleMu.Unlock()
+
 	if s.closed.Load() {
 		return ErrTCPServerNotRunning
 	}
@@ -194,26 +240,102 @@ func (s *TCPPairingServer) Start() error {
 	return nil
 }
 
-// Stop gracefully stops the server, closing the listener and draining
-// active connections. It is safe to call Stop multiple times.
+// Stop shuts the server down and releases everything it owns. It is safe to
+// call multiple times, and it is the cleanup path whether or not the listener
+// ever came up: a Start that failed to bind still leaves the server holding a
+// generated key, and Stop is the only operation callers have to release it.
+// ErrTCPServerNotRunning reports that there was nothing listening, not that
+// cleanup was skipped.
+//
+// Stop is terminal. A stopped server has no static key left, so Start refuses
+// afterwards rather than binding with a destroyed one.
+//
+// MUST NOT be called from a RequestHandler. Stop waits for handlers to
+// finish, and the latch makes a re-entrant caller wait for Stop — so a
+// handler that calls it guarantees the full shutdown window elapses and the
+// key is retained. This is the classic self-deadlock of any Shutdown that
+// drains its own callbacks (net/http.Server.Shutdown behaves the same way),
+// and it is bounded rather than permanent because the join has a timeout.
+// The alternative — answering a re-entrant caller early — is the defect the
+// latch exists to fix: two callers reaching different conclusions about
+// whether the protected key is safe to free.
 func (s *TCPPairingServer) Stop() error {
-	if !s.running.Swap(false) {
-		return ErrTCPServerNotRunning
-	}
+	// Latched, so every caller observes the SAME outcome.
+	//
+	// Without this a second Stop found running already false, skipped the
+	// join entirely, kept joined=true, and destroyed a key the FIRST Stop was
+	// still waiting on — reintroducing exactly the use-after-free the bounded
+	// join exists to prevent. sync.Once also blocks concurrent callers until
+	// the first completes, so nobody is told shutdown finished before it did.
+	s.stopOnce.Do(func() { s.stopErr = s.stop() })
+	return s.stopErr
+}
+
+func (s *TCPPairingServer) stop() error {
+	s.lifecycleMu.Lock()
+
+	wasRunning := s.running.Swap(false)
 	s.closed.Store(true)
 
-	if s.listener != nil {
-		_ = s.listener.Close()
+	joined := true
+	if wasRunning {
+		if s.listener != nil {
+			_ = s.listener.Close()
+		}
+
+		// Close active connections so handler goroutines blocked on a read
+		// return immediately instead of waiting out the idle timeout.
+		s.closeAllConns()
+
+		// Released for the wait, and re-taken after.
+		//
+		// Two reasons, and the second is the one that bites. A connection
+		// worker runs a caller-supplied RequestHandler synchronously, so
+		// closing the socket does not interrupt a handler that ignores its
+		// context — an unbounded wait here is a Stop that never returns. And
+		// holding lifecycleMu across the wait deadlocks a handler that calls
+		// LocalStaticPublicKey, which takes the read side: Stop waits for the
+		// handler and the handler waits for Stop.
+		s.lifecycleMu.Unlock()
+		joined = s.connJoiner.Join(&s.wg, serverShutdownTimeout)
+		s.lifecycleMu.Lock()
 	}
 
-	// Close active connections so handler goroutines blocked on a read
-	// return immediately instead of waiting out the idle timeout.
-	s.closeAllConns()
+	defer s.lifecycleMu.Unlock()
 
-	s.wg.Wait()
+	// Only once every handler has returned. A join that timed out is not
+	// proof of that, so the key is retained instead — reachable, not dropped,
+	// so that "retained" and "forgotten" do not look the same here.
+	if s.ownsStaticKey {
+		if joined {
+			s.localStaticKey.Destroy()
+			s.localStaticKey = nil
+		} else {
+			s.log.Warn("retaining the TCP pairing server static key: a "+
+				"connection handler did not finish within the shutdown window",
+				"timeout", serverShutdownTimeout)
+		}
+	}
+
+	if !wasRunning {
+		return ErrTCPServerNotRunning
+	}
+
 	s.log.Info("TCP pairing server stopped")
+
+	if !joined {
+		return ErrShutdownIncomplete
+	}
 	return nil
 }
+
+// serverShutdownTimeout bounds how long Stop waits for connection handlers to
+// finish. A handler is running caller-supplied code that may be waiting on a
+// user, so the window is generous; what it must not be is absent.
+//
+// A var rather than a const so tests can exercise the timeout branch without
+// spending the production window on it. Nothing else writes it.
+var serverShutdownTimeout = 30 * time.Second
 
 // Addr returns the listener address. This is useful when listening on ":0"
 // to discover the actual port assigned by the OS.
@@ -224,9 +346,17 @@ func (s *TCPPairingServer) Addr() string {
 	return s.listener.Addr().String()
 }
 
-// LocalStaticPublicKey returns a copy of the server's Noise static public key.
-// The returned slice is a defensive copy; callers cannot mutate the server's key.
+// LocalStaticPublicKey returns a copy of the server's Noise static public key,
+// or nil once Stop has released it. The returned slice is a defensive copy;
+// callers cannot mutate the server's key.
+//
+// The read is held under lifecycleMu because Stop destroys the key under the
+// write side: without it, a caller could pass the nil check and then copy out
+// of pages Stop was in the middle of freeing.
 func (s *TCPPairingServer) LocalStaticPublicKey() []byte {
+	s.lifecycleMu.RLock()
+	defer s.lifecycleMu.RUnlock()
+
 	if s.localStaticKey == nil {
 		return nil
 	}
@@ -264,11 +394,39 @@ func (s *TCPPairingServer) acceptLoop() {
 
 		s.log.Debug("accepted connection", "remote", remoteAddr)
 
-		s.trackConn(conn)
+		// Register against shutdown as ONE step, the same pairing Start and
+		// SendRequest use elsewhere. Accept can return just before Stop
+		// closes the listener; without this the WaitGroup could reach zero,
+		// Join could report a clean drain, Stop could destroy the static key
+		// — and only then would this loop add and launch a handler that
+		// reads it. It is also the WaitGroup rule: an Add from zero must
+		// happen before any Wait.
+		if !s.registerConn(conn) {
+			<-s.connSem
+			_ = conn.Close()
+			continue
+		}
 
-		s.wg.Add(1)
 		go s.handleConnection(conn)
 	}
+}
+
+// registerConn admits an accepted connection, reporting false once shutdown
+// has begun. The closed check, the WaitGroup registration and the tracking
+// that lets Stop close the socket all happen under lifecycleMu, so a
+// connection is either counted before Stop starts waiting or refused
+// outright.
+func (s *TCPPairingServer) registerConn(conn net.Conn) bool {
+	s.lifecycleMu.Lock()
+	defer s.lifecycleMu.Unlock()
+
+	if s.closed.Load() {
+		return false
+	}
+
+	s.wg.Add(1)
+	s.trackConn(conn)
+	return true
 }
 
 // trackConn registers an accepted connection so Stop can close it.

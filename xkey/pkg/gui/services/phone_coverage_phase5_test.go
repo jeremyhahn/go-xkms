@@ -375,6 +375,7 @@ func TestP5C_Disconnect_EmitsDisconnectEvent(t *testing.T) {
 	})
 
 	err := svc.Disconnect("MyPixel")
+	svc.awaitNoticesDelivered()
 	require.NoError(t, err)
 
 	assert.False(t, svc.IsConnected())
@@ -568,6 +569,7 @@ func TestP5C_Unpair_LastDeviceClearsDefault(t *testing.T) {
 
 	svc := NewPhoneService()
 	err := svc.Unpair("OnlyDevice")
+	svc.awaitNoticesDelivered()
 	require.NoError(t, err)
 
 	loaded, err := svc.loadConfig()
@@ -590,6 +592,7 @@ func TestP5C_Unpair_NonDefaultDevice(t *testing.T) {
 
 	svc := NewPhoneService()
 	err := svc.Unpair("Other Phone")
+	svc.awaitNoticesDelivered()
 	require.NoError(t, err)
 
 	loaded, err := svc.loadConfig()
@@ -613,6 +616,7 @@ func TestP5C_Unpair_DefaultDeviceFallsToNext(t *testing.T) {
 
 	svc := NewPhoneService()
 	err := svc.Unpair("Default Phone")
+	svc.awaitNoticesDelivered()
 	require.NoError(t, err)
 
 	loaded, err := svc.loadConfig()
@@ -647,6 +651,7 @@ func TestP5C_Unpair_ConnectedDeviceEmitsDisconnect(t *testing.T) {
 	})
 
 	err := svc.Unpair("Connected Phone")
+	svc.awaitNoticesDelivered()
 	require.NoError(t, err)
 
 	assert.False(t, svc.IsConnected())
@@ -764,6 +769,7 @@ func TestP5C_AutoAttest_PolicyEnabled_EmitsDisconnect(t *testing.T) {
 	device := &cfg.Devices[0]
 
 	svc.autoAttest(cfg, device, "Test Phone")
+	svc.awaitNoticesDelivered()
 
 	assert.False(t, svc.IsConnected())
 
@@ -805,6 +811,7 @@ func TestP5C_AutoAttest_NoPolicy_NoAttestation(t *testing.T) {
 	device := &cfg.Devices[0]
 
 	svc.autoAttest(cfg, device, "Plain Phone")
+	svc.awaitNoticesDelivered()
 
 	assert.False(t, emitted, "no events should be emitted when no policy or attestation data")
 }
@@ -835,6 +842,7 @@ func TestP5C_AutoAttest_LastAttestationRefresh(t *testing.T) {
 	device := &cfg.Devices[0]
 
 	svc.autoAttest(cfg, device, "Refresh Phone")
+	svc.awaitNoticesDelivered()
 
 	foundAttest := false
 	for _, evt := range emittedEvents {
@@ -879,6 +887,7 @@ func TestP5C_AutoAttest_PolicyDisabled_WithLastAttestation(t *testing.T) {
 	device := &cfg.Devices[0]
 
 	svc.autoAttest(cfg, device, "Half-Policy Phone")
+	svc.awaitNoticesDelivered()
 
 	foundAttest := false
 	foundViolation := false
@@ -1384,6 +1393,7 @@ func TestP5C_Unpair_ConfigLoadError(t *testing.T) {
 
 	svc := NewPhoneService()
 	err := svc.Unpair("Some Device")
+	svc.awaitNoticesDelivered()
 	require.Error(t, err)
 	assert.ErrorIs(t, err, ErrPhoneDeviceNotFound)
 }
@@ -1400,6 +1410,7 @@ func TestP5C_Unpair_DeviceNotInConfig(t *testing.T) {
 
 	svc := NewPhoneService()
 	err := svc.Unpair("Missing Phone")
+	svc.awaitNoticesDelivered()
 	require.Error(t, err)
 	assert.ErrorIs(t, err, ErrPhoneDeviceNotFound)
 }

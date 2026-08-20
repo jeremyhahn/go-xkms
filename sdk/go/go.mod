@@ -139,7 +139,7 @@ require (
 	github.com/jackc/pgx/v5 v5.10.0 // indirect
 	github.com/jeremyhahn/go-codec v1.4.0 // indirect
 	github.com/jeremyhahn/go-frost v0.1.8-alpha // indirect
-	github.com/jeremyhahn/go-qrdb v0.5.9-alpha // indirect
+	github.com/jeremyhahn/go-qrdb v0.6.0-alpha // indirect
 	github.com/jeremyhahn/go-quicraft v0.6.2-alpha // indirect
 	github.com/jeremyhahn/go-xkms/xkey v0.7.5-alpha // indirect
 	github.com/jeroenrinzema/psql-wire v0.18.0 // indirect
@@ -238,8 +238,8 @@ require (
 
 require (
 	github.com/jeremyhahn/go-objstore v0.2.2-alpha
-	github.com/jeremyhahn/go-qrdb/sdk/go v0.5.9-alpha
-	github.com/jeremyhahn/go-truststrap v0.1.3-alpha
+	github.com/jeremyhahn/go-qrdb/sdk/go v0.6.0-alpha
+	github.com/jeremyhahn/go-truststrap v0.2.0-alpha
 	github.com/jeremyhahn/go-xkms v0.7.5-alpha
 	github.com/quic-go/qpack v0.6.0 // indirect
 	golang.org/x/net v0.57.0 // indirect

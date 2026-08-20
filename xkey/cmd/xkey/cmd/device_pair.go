@@ -207,6 +207,9 @@ func runDevicePair(cmd *cobra.Command, args []string) error {
 	if err != nil {
 		return &WrappedError{Msg: "failed to generate local key", Err: err}
 	}
+	// The private half is base64ed into the stored device record before this
+	// returns, so the protected copy does not outlive the command.
+	defer localKey.Destroy()
 
 	// Create Noise session for handshake
 	session, err := phone.NewNoiseSession(&phone.NoiseSessionConfig{

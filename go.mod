@@ -8,6 +8,7 @@ require (
 	github.com/Azure/azure-sdk-for-go/sdk/azidentity v1.14.0
 	github.com/Azure/azure-sdk-for-go/sdk/security/keyvault/azkeys v1.5.0
 	github.com/Azure/azure-sdk-for-go/sdk/security/keyvault/azsecrets v1.5.0
+	github.com/awnumar/memguard v0.23.0
 	github.com/aws/aws-sdk-go-v2 v1.43.5
 	github.com/aws/aws-sdk-go-v2/config v1.32.36
 	github.com/aws/aws-sdk-go-v2/credentials v1.19.35
@@ -27,10 +28,10 @@ require (
 	github.com/hashicorp/vault/api v1.23.0
 	github.com/jeremyhahn/go-codec v1.4.0
 	github.com/jeremyhahn/go-frost v0.1.8-alpha
-	github.com/jeremyhahn/go-qrdb v0.5.9-alpha
-	github.com/jeremyhahn/go-qrdb/sdk/go v0.5.9-alpha
+	github.com/jeremyhahn/go-qrdb v0.6.0-alpha
+	github.com/jeremyhahn/go-qrdb/sdk/go v0.6.0-alpha
 	github.com/jeremyhahn/go-quicraft v0.6.2-alpha
-	github.com/jeremyhahn/go-truststrap v0.1.3-alpha
+	github.com/jeremyhahn/go-truststrap v0.2.0-alpha
 	github.com/jeremyhahn/go-xkms/sdk/go v0.7.5-alpha
 	github.com/jeremyhahn/go-xkms/xkey v0.7.5-alpha
 	github.com/kevinburke/ssh_config v1.6.0
@@ -70,7 +71,6 @@ require (
 	github.com/RaduBerinde/axisds v0.1.0 // indirect
 	github.com/RaduBerinde/btreemap v0.0.0-20260105202824-d3184786f603 // indirect
 	github.com/awnumar/memcall v0.5.0 // indirect
-	github.com/awnumar/memguard v0.23.0 // indirect
 	github.com/aws/aws-sdk-go v1.55.8 // indirect
 	github.com/aws/aws-sdk-go-v2/internal/v4a v1.4.37 // indirect
 	github.com/aws/aws-sdk-go-v2/service/glacier v1.35.5 // indirect

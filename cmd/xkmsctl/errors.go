@@ -701,6 +701,13 @@ var (
 	// ErrKeyInputRequired is the sentinel error "either --key-file or --key-hex is required".
 	ErrKeyInputRequired = errors.New("either --key-file or --key-hex is required")
 
+	// ErrOutputFileRequired is the sentinel error "--output is required: the
+	// private key is written to a file, never printed".
+	ErrOutputFileRequired = errors.New("--output is required: the private key is written to a file, never printed")
+
+	// ErrEncodeKeyFailed is the sentinel error "failed to encode key".
+	ErrEncodeKeyFailed = errors.New("failed to encode key")
+
 	// ErrLabelRequired is the sentinel error "--label is required".
 	ErrLabelRequired = errors.New("--label is required")
 

@@ -28,11 +28,13 @@ func TestSimulatedLiveHandshake(t *testing.T) {
 	// Generate Go's static key (like phone_pair.go does)
 	goStaticKey, err := GenerateStaticKey()
 	require.NoError(t, err)
+	defer goStaticKey.Destroy()
 	t.Logf("Go static pub: %x", goStaticKey.Public)
 
 	// Generate Android's static key (simulated)
 	androidStaticKey, err := GenerateStaticKey()
 	require.NoError(t, err)
+	defer androidStaticKey.Destroy()
 	t.Logf("Android static pub: %x", androidStaticKey.Public)
 
 	// Create Go's handshake state (initiator)
@@ -130,23 +132,25 @@ func TestSimulatedLiveHandshake(t *testing.T) {
 // TestAndroidLikeHandshake simulates Android's behavior more closely
 // by using separate handshake state initialization (like a real Kotlin app would)
 func TestAndroidLikeHandshake(t *testing.T) {
-	// Go initiator setup (exactly like NoiseSession does)
+	// Go initiator setup (exactly like NoiseSession does). LoadStaticKey
+	// derives the public half itself, so the fixture only names the scalar.
 	goStaticPriv, _ := hex.DecodeString("1000000000000000000000000000000000000000000000000000000000000001")
-	goStaticPub, _ := curve25519.X25519(goStaticPriv, curve25519.Basepoint)
-	t.Logf("Go static: pub=%x", goStaticPub)
+	goStaticKey, err := LoadStaticKey(goStaticPriv)
+	require.NoError(t, err)
+	defer goStaticKey.Destroy()
+	t.Logf("Go static: pub=%x", goStaticKey.Public)
 
 	// Android responder setup (simulated)
 	androidStaticPriv, _ := hex.DecodeString("2000000000000000000000000000000000000000000000000000000000000002")
-	androidStaticPub, _ := curve25519.X25519(androidStaticPriv, curve25519.Basepoint)
-	t.Logf("Android static: pub=%x", androidStaticPub)
+	androidStaticKey, err := LoadStaticKey(androidStaticPriv)
+	require.NoError(t, err)
+	defer androidStaticKey.Destroy()
+	t.Logf("Android static: pub=%x", androidStaticKey.Public)
 
 	// Use our NoiseSession wrapper (Go side)
 	goSession, err := NewNoiseSession(&NoiseSessionConfig{
-		LocalStaticKey: &noise.DHKey{
-			Private: goStaticPriv,
-			Public:  goStaticPub,
-		},
-		IsInitiator: true,
+		LocalStaticKey: goStaticKey,
+		IsInitiator:    true,
 	})
 	require.NoError(t, err)
 
@@ -155,11 +159,8 @@ func TestAndroidLikeHandshake(t *testing.T) {
 
 	// Use our NoiseSession wrapper (Android side - simulated)
 	androidSession, err := NewNoiseSession(&NoiseSessionConfig{
-		LocalStaticKey: &noise.DHKey{
-			Private: androidStaticPriv,
-			Public:  androidStaticPub,
-		},
-		IsInitiator: false,
+		LocalStaticKey: androidStaticKey,
+		IsInitiator:    false,
 	})
 	require.NoError(t, err)
 
@@ -199,8 +200,8 @@ func TestAndroidLikeHandshake(t *testing.T) {
 		require.True(t, done, "Android should be done after msg3")
 
 		// Verify keys exchanged correctly
-		require.Equal(t, goStaticPub, androidSession.RemoteStaticPublicKey())
-		require.Equal(t, androidStaticPub, goSession.RemoteStaticPublicKey())
+		require.Equal(t, goStaticKey.Public, androidSession.RemoteStaticPublicKey())
+		require.Equal(t, androidStaticKey.Public, goSession.RemoteStaticPublicKey())
 
 		t.Log("✓ NoiseSession handshake completed successfully!")
 

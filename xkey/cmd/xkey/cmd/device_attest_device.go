@@ -169,11 +169,18 @@ func runDeviceAttestDevice(cmd *cobra.Command, args []string) error {
 	if err != nil {
 		return &WrappedError{Msg: "failed to decode local noise key", Err: err}
 	}
+	// Wiped here, at the decode, not at the LoadStaticKey below: a decode
+	// failure on any other field returns in between, and the raw scalar
+	// would be left sitting in garbage-collected memory.
+	defer phone.WipeBytes(localPrivateKey)
 
 	localKey, err := phone.LoadStaticKey(localPrivateKey)
 	if err != nil {
 		return &WrappedError{Msg: "failed to load local noise key", Err: err}
 	}
+	// Registered before the transport's own defer, so LIFO releases the
+	// protected pages only after the transport that reads them is closed.
+	defer localKey.Destroy()
 
 	remotePublicKey, err := base64.StdEncoding.DecodeString(device.NoisePublicKey)
 	if err != nil {

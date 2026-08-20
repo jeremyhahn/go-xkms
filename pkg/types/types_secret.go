@@ -66,6 +66,11 @@ func resolveKeyConfigPasswords(
 		if err != nil {
 			return nil, err
 		}
+		// nolint:staticcheck // go-xkms#41: SecretValue.String copies the
+		// plaintext into an unwipeable heap string. local.Password is a plain
+		// string field that outlives this call, so the borrow-scoped
+		// replacement is a custody change, not a call swap. Delete this
+		// directive when #41 lands.
 		local.Password = sv.String()
 		sv.Clear()
 	}

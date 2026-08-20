@@ -687,7 +687,7 @@ func TestPhoneKeyBackend_EnableBidirectionalRoutesRequests(t *testing.T) {
 	backend, responder := setupNoiseSessionPair(t)
 	defer func() { _ = backend.Close() }()
 
-	backend.EnableBidirectional(nil)
+	_ = backend.EnableBidirectional(nil)
 
 	go responder.handleOne()
 

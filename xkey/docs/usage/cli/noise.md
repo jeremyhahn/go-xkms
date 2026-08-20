@@ -22,21 +22,25 @@ xkmsctl bootstrap noise show-spki-pin
 
 ## generate-key
 
-Generates a new Curve25519 static keypair. The private key is emitted hex
-encoded and should be stored securely; the public key is also displayed, for
+Generates a new Curve25519 static keypair. The private key is written, hex
+encoded, to the file named by `--output`; the public key is displayed, for
 distribution to clients.
 
-```bash
-# Print the keypair
-xkmsctl bootstrap noise generate-key
+The private key is never printed, and `--output` is therefore required rather
+than optional. Stdout is read by terminal scrollback, shell history, pipes and
+CI logs, none of which can be wiped after the fact. Inside the process the key
+is held in protected memory — guard-paged, locked against swap, wiped on
+release — so the hex encoding exists only for as long as it takes to reach the
+file.
 
+```bash
 # Write the private key to a file, created with 0600 permissions
 xkmsctl bootstrap noise generate-key --output /etc/xkms/noise.key
 ```
 
 | Flag | Default | Description |
 |------|---------|-------------|
-| `--output`, `-o` | (stdout) | Write the private key to a file, with 0600 permissions |
+| `--output`, `-o` | **required** | File to write the private key to, with 0600 permissions |
 
 ## show-key
 

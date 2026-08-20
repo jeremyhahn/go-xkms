@@ -112,7 +112,10 @@ func establishSession(t *testing.T, p *BLEPeripheral) *NoiseSession {
 		t.Fatal("initiator handshake incomplete")
 	}
 
-	p.session = responder
+	// Publish the same way AcceptConnection does, so the helper cannot drift
+	// from production again: setting p.session directly skipped the
+	// public-key snapshot and left LocalStaticPublicKey returning nothing.
+	p.publishSession(responder)
 	return initiator
 }
 

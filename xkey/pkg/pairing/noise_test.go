@@ -89,20 +89,47 @@ func TestLoadStaticKey_InvalidLength(t *testing.T) {
 func TestEncodeDecodeStaticKey(t *testing.T) {
 	key, err := GenerateStaticKey()
 	require.NoError(t, err)
+	defer key.Destroy()
 
-	encoded := EncodeStaticKey(key)
+	encoded := make([]byte, NoiseHexKeySize)
+	require.NoError(t, EncodeStaticKey(encoded, key))
 	assert.Len(t, encoded, NoiseKeySize*2)
 
 	decoded, err := DecodeStaticKey(encoded)
 	require.NoError(t, err)
+	defer decoded.Destroy()
 
 	assert.Equal(t, key.Private, decoded.Private)
 	assert.Equal(t, key.Public, decoded.Public)
 }
 
+// TestEncodeStaticKey_ShortBuffer covers the buffer-form contract: the caller
+// owns the destination, so a destination too small to hold the hex encoding
+// must be reported rather than silently truncated.
+func TestEncodeStaticKey_ShortBuffer(t *testing.T) {
+	key, err := GenerateStaticKey()
+	require.NoError(t, err)
+	defer key.Destroy()
+
+	err = EncodeStaticKey(make([]byte, NoiseHexKeySize-1), key)
+	assert.ErrorIs(t, err, ErrInvalidNoiseMessage)
+}
+
+func TestEncodeStaticKey_NilKey(t *testing.T) {
+	err := EncodeStaticKey(make([]byte, NoiseHexKeySize), nil)
+	assert.ErrorIs(t, err, ErrInvalidNoiseMessage)
+}
+
 func TestDecodeStaticKey_InvalidHex(t *testing.T) {
-	_, err := DecodeStaticKey("xyz123")
+	_, err := DecodeStaticKey([]byte("xyz123"))
 	assert.Error(t, err)
+}
+
+// TestDecodeStaticKey_WrongLength rejects an input that is valid hex but not
+// a 32-byte scalar.
+func TestDecodeStaticKey_WrongLength(t *testing.T) {
+	_, err := DecodeStaticKey([]byte("abcd"))
+	assert.ErrorIs(t, err, ErrInvalidNoiseMessage)
 }
 
 func TestNewNoiseSession(t *testing.T) {
@@ -113,7 +140,6 @@ func TestNewNoiseSession(t *testing.T) {
 	require.NotNil(t, session)
 
 	assert.NotEmpty(t, session.LocalStaticPublicKey())
-	assert.NotEmpty(t, session.LocalStaticPrivateKey())
 	assert.False(t, session.IsHandshakeComplete())
 }
 
@@ -127,8 +153,10 @@ func TestNewNoiseSession_WithProvidedKey(t *testing.T) {
 	})
 	require.NoError(t, err)
 
+	// The public half identifies the scalar the session is using: it is
+	// derived from it, so matching it proves the supplied key was adopted.
+	// There is deliberately no way to read the private half back out.
 	assert.Equal(t, key.Public, session.LocalStaticPublicKey())
-	assert.Equal(t, key.Private, session.LocalStaticPrivateKey())
 }
 
 func TestNoiseSession_InitHandshake(t *testing.T) {

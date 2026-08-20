@@ -32,7 +32,18 @@ const (
 
 	// NoiseMaxMessageSize is the maximum plaintext message size.
 	NoiseMaxMessageSize = noiseproto.MaxMessageSize
+
+	// NoiseHexKeySize is the length in bytes of a hex-encoded static private
+	// key. It is the minimum size of the destination buffer EncodeStaticKey
+	// writes into.
+	NoiseHexKeySize = noiseproto.HexKeySize
 )
+
+// StaticKey is a Curve25519 static identity key pair whose private scalar is
+// held in protected memory outside the Go heap. Callers own the key and must
+// Destroy it once every session built from it has finished; Destroy frees the
+// pages the session's key pair aliases.
+type StaticKey = noiseproto.StaticKey
 
 // NoiseSession manages an encrypted Noise protocol session for phone communication.
 // It wraps the shared noiseproto.Session with phone-domain error mapping and the
@@ -43,9 +54,11 @@ type NoiseSession struct {
 
 // NoiseSessionConfig configures a Noise session for phone communication.
 type NoiseSessionConfig struct {
-	// LocalStaticKey is the persistent local static key pair.
-	// If nil, a new ephemeral key will be generated.
-	LocalStaticKey *flynnNoise.DHKey
+	// LocalStaticKey is the persistent local static key pair, held in
+	// protected memory. If nil, a new ephemeral key will be generated.
+	// The key must outlive the session: destroying it frees the pages the
+	// session's handshake state reads from.
+	LocalStaticKey *StaticKey
 
 	// ExpectedRemoteStatic is the expected remote static public key.
 	// If set, the session will verify the remote key matches during handshake.
@@ -62,9 +75,16 @@ type NoiseSessionConfig struct {
 
 // NewNoiseSession creates a new Noise session configured for the XX handshake pattern.
 func NewNoiseSession(cfg *NoiseSessionConfig) (*NoiseSession, error) {
+	// The embedded DHKey aliases the protected private scalar, so the session
+	// reads the key in place rather than copying it onto the Go heap.
+	var localStatic *flynnNoise.DHKey
+	if cfg.LocalStaticKey != nil {
+		localStatic = &cfg.LocalStaticKey.DHKey
+	}
+
 	session, err := noiseproto.NewSession(&noiseproto.SessionConfig{
 		Pattern:        flynnNoise.HandshakeXX,
-		LocalStaticKey: cfg.LocalStaticKey,
+		LocalStaticKey: localStatic,
 		PeerStaticKey:  cfg.ExpectedRemoteStatic,
 		IsInitiator:    cfg.IsInitiator,
 		Prologue:       cfg.Prologue,
@@ -79,11 +99,6 @@ func NewNoiseSession(cfg *NoiseSessionConfig) (*NoiseSession, error) {
 // LocalStaticPublicKey returns the local static public key.
 func (s *NoiseSession) LocalStaticPublicKey() []byte {
 	return s.inner.LocalStaticPublicKey()
-}
-
-// LocalStaticPrivateKey returns the local static private key.
-func (s *NoiseSession) LocalStaticPrivateKey() []byte {
-	return s.inner.LocalStaticPrivateKey()
 }
 
 // RemoteStaticPublicKey returns the remote static public key after handshake.
@@ -140,13 +155,17 @@ func (s *NoiseSession) Decrypt(ciphertext []byte) ([]byte, error) {
 	return plaintext, nil
 }
 
-// GenerateStaticKey generates a new Curve25519 static key pair.
-func GenerateStaticKey() (*flynnNoise.DHKey, error) {
+// GenerateStaticKey generates a new Curve25519 static key pair. The private
+// scalar is drawn straight into protected memory and never reaches the Go
+// heap. The caller owns the key and must Destroy it.
+func GenerateStaticKey() (*StaticKey, error) {
 	return noiseproto.GenerateStaticKey()
 }
 
-// LoadStaticKey creates a DHKey from raw private key bytes.
-func LoadStaticKey(privateKey []byte) (*flynnNoise.DHKey, error) {
+// LoadStaticKey creates a static key pair from raw private key bytes by
+// copying them into protected memory. The caller's slice is left untouched
+// and remains the caller's to wipe.
+func LoadStaticKey(privateKey []byte) (*StaticKey, error) {
 	key, err := noiseproto.LoadStaticKey(privateKey)
 	if err != nil {
 		return nil, ErrInvalidNoiseMessage
@@ -154,13 +173,27 @@ func LoadStaticKey(privateKey []byte) (*flynnNoise.DHKey, error) {
 	return key, nil
 }
 
-// EncodeStaticKey encodes a static key to hex string for storage.
-func EncodeStaticKey(key *flynnNoise.DHKey) string {
-	return noiseproto.EncodeStaticKey(key)
+// EncodeStaticKey hex-encodes the private component of key into dst for
+// persistent storage. dst must be at least NoiseHexKeySize bytes long and
+// should itself be protected memory: the encoded form is as sensitive as the
+// key, and a Go string could not be wiped after use.
+func EncodeStaticKey(dst []byte, key *StaticKey) error {
+	if err := noiseproto.EncodeStaticKey(dst, key); err != nil {
+		return &SentinelCauseError{Sentinel: ErrInvalidNoiseMessage, Cause: err}
+	}
+	return nil
 }
 
-// DecodeStaticKey decodes a hex-encoded static key.
-func DecodeStaticKey(encoded string) (*flynnNoise.DHKey, error) {
+// WipeBytes zeroes a buffer that held key material. Decoding a stored key
+// leaves the raw scalar on the Go heap; LoadStaticKey copies it into protected
+// memory but cannot wipe the caller's slice, so the caller must.
+func WipeBytes(b []byte) {
+	noiseproto.WipeBytes(b)
+}
+
+// DecodeStaticKey decodes a hex-encoded static private key into protected
+// memory and derives the public component. encoded stays the caller's to wipe.
+func DecodeStaticKey(encoded []byte) (*StaticKey, error) {
 	key, err := noiseproto.DecodeStaticKey(encoded)
 	if err != nil {
 		return nil, &SentinelCauseError{Sentinel: ErrInvalidNoiseMessage, Cause: err}

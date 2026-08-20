@@ -99,6 +99,11 @@ var (
 	// ErrBLEUnavailable indicates Bluetooth Low Energy is not available on this system.
 	ErrBLEUnavailable = errors.New("phone: bluetooth unavailable")
 
+	// ErrBLEPeripheralStopped indicates the peripheral has been stopped and
+	// will accept no further connections. Once Stop has released the
+	// peripheral's static key there is nothing left for a session to use.
+	ErrBLEPeripheralStopped = errors.New("phone: ble peripheral stopped")
+
 	// ErrUSBUnavailable indicates this binary was built without USB phone
 	// transport support (the "usb" build tag): the gousb/libusb dependency
 	// is excluded from static and CGO_ENABLED=0 builds.
@@ -116,6 +121,26 @@ var (
 	// ErrDBusStaleObject indicates a BlueZ D-Bus stale object that was removed.
 	// The caller should re-scan and retry with a fresh address.
 	ErrDBusStaleObject = errors.New("phone: bluez dbus stale object removed")
+
+	// ErrShutdownIncomplete indicates a shutdown finished without being able to
+	// confirm that everything it was responsible for had stopped.
+	//
+	// The component IS shut down; it accepts no further work and needs no
+	// second call.
+	//
+	// IT DOES NOT BY ITSELF MEAN A KEY WAS RETAINED. It used to, and the
+	// promise outlived the code: BLEPeripheral.Stop also returns this when an
+	// advertisement could not be taken down, which leaves the peripheral
+	// possibly discoverable but cannot reach the protected pages — those are
+	// read by the accepted connections alone, and a confirmed join frees them
+	// whatever the advertisement did. A caller that reads this sentinel as
+	// "retained" therefore holds locked pages it could have freed.
+	//
+	// The safe rule for a caller that SUPPLIED a key: this error means the
+	// component could not prove it finished, so do not destroy the key on the
+	// strength of it. Each component documents which of its conditions retains
+	// the key; see BLEPeripheral.Stop.
+	ErrShutdownIncomplete = errors.New("phone: shutdown could not confirm everything finished")
 )
 
 // MessageError is a typed error that carries a preformatted message. It

@@ -393,6 +393,7 @@ func TestP3A_PhoneService_GetDeviceStatus_NonEmptyName(t *testing.T) {
 func TestP3A_PhoneService_Unpair_EmptyName(t *testing.T) {
 	svc := NewPhoneService()
 	err := svc.Unpair("")
+	svc.awaitNoticesDelivered()
 	assert.ErrorIs(t, err, ErrPhoneDeviceNotFound)
 }
 
@@ -412,6 +413,7 @@ func TestP3A_PhoneService_Connect_EmptyName(t *testing.T) {
 func TestP3A_PhoneService_Disconnect_EmptyName(t *testing.T) {
 	svc := NewPhoneService()
 	err := svc.Disconnect("")
+	svc.awaitNoticesDelivered()
 	assert.ErrorIs(t, err, ErrPhoneDeviceNotFound)
 }
 

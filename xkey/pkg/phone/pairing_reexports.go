@@ -26,6 +26,11 @@ import (
 type NoiseSession = pairing.NoiseSession
 type NoiseSessionConfig = pairing.NoiseSessionConfig
 
+// StaticKey is a Noise static key pair whose private scalar lives in
+// protected memory. Its owner must Destroy it once the sessions built from it
+// are finished.
+type StaticKey = pairing.StaticKey
+
 // Handshake types.
 type HandshakeConfig = pairing.HandshakeConfig
 
@@ -277,17 +282,27 @@ type AttestationPolicy = pairing.AttestationPolicy
 // NewNoiseSession creates a new Noise protocol session.
 var NewNoiseSession = pairing.NewNoiseSession
 
-// GenerateStaticKey generates a new Noise static key pair.
+// GenerateStaticKey generates a new Noise static key pair in protected memory.
 var GenerateStaticKey = pairing.GenerateStaticKey
 
 // LoadStaticKey loads a Noise static key from a private key.
 var LoadStaticKey = pairing.LoadStaticKey
 
-// EncodeStaticKey encodes a Noise static key.
+// EncodeStaticKey hex-encodes a Noise static private key into the caller's
+// buffer, which must be at least NoiseHexKeySize bytes. There is deliberately
+// no encode-to-string form: a Go string is immutable and cannot be wiped.
 var EncodeStaticKey = pairing.EncodeStaticKey
 
-// DecodeStaticKey decodes a Noise static key.
+// DecodeStaticKey decodes a hex-encoded Noise static key into protected memory.
 var DecodeStaticKey = pairing.DecodeStaticKey
+
+// WipeBytes zeroes a buffer that held key material. LoadStaticKey copies the
+// caller's slice into protected memory but cannot wipe it, so the caller must.
+var WipeBytes = pairing.WipeBytes
+
+// NoiseHexKeySize is the required length of an EncodeStaticKey destination
+// buffer.
+const NoiseHexKeySize = pairing.NoiseHexKeySize
 
 // PerformHandshake performs the Noise XX handshake.
 var PerformHandshake = pairing.PerformHandshake

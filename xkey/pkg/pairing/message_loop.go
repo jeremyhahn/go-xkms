@@ -19,7 +19,9 @@ import (
 	"log/slog"
 	"sync"
 	"sync/atomic"
+	"time"
 
+	"github.com/jeremyhahn/go-xkms/xkey/internal/lifecycle"
 	"github.com/jeremyhahn/go-xkms/xkey/pkg/notify"
 )
 
@@ -50,6 +52,22 @@ type MessageRouter struct {
 	done      chan struct{}
 	closeOnce sync.Once
 	closed    atomic.Bool
+
+	// started guards the receive loop's WaitGroup registration, under mu.
+	// See Start.
+	started bool
+
+	// wg counts everything that reads the session: the background receive loop
+	// and every in-flight SendRequest. Join waits on it, so a caller that
+	// destroys the session's protected key only does so once nothing is still
+	// decrypting or encrypting through it.
+	wg sync.WaitGroup
+
+	// joiner bounds Join's wait on wg with a single waiter goroutine for the
+	// router's whole life. Join is public and callers retry; a waiter per
+	// call would add a permanently blocked goroutine on every retry against a
+	// receive loop that is already stuck.
+	joiner lifecycle.Joiner
 }
 
 // NewMessageRouter creates a new bidirectional message router.
@@ -96,17 +114,45 @@ func (r *MessageRouter) SetBiometricHandler(handler *BiometricPendingHandler) {
 	r.biometricHandler = handler
 }
 
-// Start begins the background receive loop. Must be called after the
-// Noise handshake completes. Start must be called exactly once.
+// Start begins the background receive loop. Call it after the Noise handshake
+// completes.
+//
+// It is a no-op on a router that has already started or has been stopped.
+// Both matter for more than tidiness: this Add takes the WaitGroup from zero
+// to one, and an Add that starts from zero must happen before any Wait on
+// that group. Registering outside mu let a Join racing Start — or simply
+// running before it — observe an empty group, report the router drained, and
+// license the owner to destroy the session key the receive loop was about to
+// start reading.
+//
+// So the registration is paired with the closed check under mu, exactly as
+// SendRequest's is.
 func (r *MessageRouter) Start() {
+	r.mu.Lock()
+	if r.closed.Load() || r.started {
+		r.mu.Unlock()
+		return
+	}
+	r.started = true
+	r.wg.Add(1)
+	r.mu.Unlock()
+
 	go r.receiveLoop()
 }
 
 // Stop shuts down the receive loop and cancels all pending requests.
 // Stop is safe to call multiple times.
+// Stop signals the router to shut down and cancels pending requests. It does
+// NOT wait for the background loop to exit — see StopAndJoin for why it
+// cannot promise that.
 func (r *MessageRouter) Stop() {
 	r.closeOnce.Do(func() {
+		// Under mu so the check-and-register in SendRequest is atomic against
+		// it; see the note there.
+		r.mu.Lock()
 		r.closed.Store(true)
+		r.mu.Unlock()
+
 		close(r.done)
 
 		// Cancel all pending requests by closing their channels.
@@ -119,18 +165,86 @@ func (r *MessageRouter) Stop() {
 	})
 }
 
+// StopAndJoin stops the router and waits up to timeout for its background
+// goroutines to exit, reporting whether they did.
+//
+// Callers that can unblock the transport should prefer Stop, then close the
+// transport, then Join: receiveLoop sits in an uncancellable read, so this
+// combined form waits out the whole timeout whenever the transport is idle.
+//
+// Callers that destroy the session's protected static key after shutdown must
+// check the result: receiveLoop decrypts through the session, so freeing those
+// pages while it still runs is a use-after-free. A false result means keep the
+// key alive — leaking protected memory is the safe failure, freeing it is not.
+//
+// The join is bounded rather than unconditional because it cannot be
+// guaranteed. receiveLoop blocks in Transport.Receive with a background
+// context, so it only observes the done channel between messages; a transport
+// sitting idle on a read will not notice the shutdown at all. Making this a
+// hard join needs Receive to be cancellable across every Transport
+// implementation, which is an interface-wide change and not one to make
+// silently. Until then, an unbounded Wait here would hang shutdown, which is
+// worse than the goroutine it was meant to fix.
+func (r *MessageRouter) StopAndJoin(timeout time.Duration) bool {
+	r.Stop()
+	return r.Join(timeout)
+}
+
+// Join waits up to timeout for the background goroutines to exit, reporting
+// whether they did. Call Stop first; Join alone does not signal shutdown.
+//
+// Separated from Stop so a caller can close the transport in between, which
+// is the only thing that wakes a receiveLoop blocked in an idle read.
+func (r *MessageRouter) Join(timeout time.Duration) bool {
+	// Refuse to report a drain before Stop has run.
+	//
+	// The joiner latches: it starts one waiter, and whatever that waiter
+	// observes is the answer every later Join gets. Before Stop the group can
+	// still go from zero to one — Start may not have run yet, and SendRequest
+	// is still admitted — so a waiter created now could latch "drained" on an
+	// empty group and keep reporting success while the receive loop runs.
+	//
+	// After Stop neither can happen: Start returns early and SendRequest is
+	// refused, both under mu. Reporting false here is also the safe answer in
+	// its own right, since it makes the caller retain the key.
+	if !r.closed.Load() {
+		r.logger.Warn("Join called before Stop; refusing to report a drain " +
+			"because the router can still register new work")
+		return false
+	}
+
+	if r.joiner.Join(&r.wg, timeout) {
+		return true
+	}
+
+	r.logger.Warn("message router did not exit within the shutdown window; "+
+		"its session key must stay resident", "timeout", timeout)
+	return false
+}
+
 // SendRequest sends an encrypted outbound request and waits for the
 // matching response from the background receive loop.
 func (r *MessageRouter) SendRequest(ctx context.Context, req *Request) (*Response, error) {
+	// Register on the same WaitGroup Join waits for, and pair the closed check
+	// with the Add under mu: a sender either registers before Stop marks the
+	// router closed and is therefore counted, or sees closed and never
+	// registers at all. Without this a sender could be encrypting through the
+	// session after Join reported success and the owner freed the key — and
+	// this method is public, and its constructor is re-exported from
+	// xkey/pkg/phone, so a consumer can reach it without going through
+	// PhoneKeyBackend's lease.
+	respCh := make(chan *Response, 1)
+
+	r.mu.Lock()
 	if r.closed.Load() {
+		r.mu.Unlock()
 		return nil, ErrBackendClosed
 	}
-
-	// Create a buffered response channel and register it.
-	respCh := make(chan *Response, 1)
-	r.mu.Lock()
+	r.wg.Add(1)
 	r.pending[req.ID] = respCh
 	r.mu.Unlock()
+
+	defer r.wg.Done()
 
 	// Ensure cleanup on exit.
 	defer func() {
@@ -175,6 +289,8 @@ func (r *MessageRouter) SendRequest(ctx context.Context, req *Request) (*Respons
 // receiveLoop continuously reads from the transport, decrypts messages,
 // and dispatches them to the appropriate handler.
 func (r *MessageRouter) receiveLoop() {
+	defer r.wg.Done()
+
 	for {
 		select {
 		case <-r.done:
@@ -182,8 +298,15 @@ func (r *MessageRouter) receiveLoop() {
 		default:
 		}
 
-		// Use a background context for receive -- the loop manages its
-		// own lifecycle via the done channel.
+		// This read is NOT cancellable, and the loop's lifecycle is only as
+		// responsive as the traffic it carries: the done check above runs
+		// between messages, so a transport sitting idle here never observes
+		// shutdown at all. StopAndJoin bounds its wait for exactly this
+		// reason, and callers must not free session-backed key material on
+		// the strength of Stop alone.
+		//
+		// Making this cancellable means threading a context through every
+		// Transport implementation. Tracked as go-xkms#30.
 		ciphertext, err := r.transport.Receive(context.Background())
 		if err != nil {
 			if r.closed.Load() {
@@ -326,10 +449,18 @@ func (r *MessageRouter) routeResponse(plaintext []byte, id uint64) {
 		return
 	}
 
+	// Lookup AND delivery under r.mu, not just the lookup.
+	//
+	// Stop closes every pending channel while holding r.mu. Releasing the
+	// lock between finding the channel and sending on it left a window where
+	// Stop could close it first — and a send on a closed channel panics, so a
+	// peer response arriving during shutdown could crash the process. The
+	// send is non-blocking and the receiver never holds r.mu, so holding it
+	// here cannot deadlock.
 	r.mu.Lock()
-	ch, ok := r.pending[id]
-	r.mu.Unlock()
+	defer r.mu.Unlock()
 
+	ch, ok := r.pending[id]
 	if !ok {
 		r.logger.Warn("received response for unknown request", "id", id)
 		return

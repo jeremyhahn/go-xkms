@@ -53,8 +53,9 @@ type deviceSession struct {
 
 // openDeviceSession connects to device and completes the Noise handshake.
 //
-// The returned close function disconnects and releases the transport; it is
-// safe to call once and must be called even when a later step fails.
+// The returned close function disconnects the transport and destroys the
+// session's protected static key; it is safe to call once and must be called
+// even when a later step fails.
 func openDeviceSession(
 	ctx context.Context,
 	device *PairedDevice,
@@ -64,12 +65,17 @@ func openDeviceSession(
 	if err != nil {
 		return nil, nil, fmt.Errorf("%w: local key: %v", ErrSessionKeyDecode, err)
 	}
+	// Wiped here, at the decode, not at the LoadStaticKey below: a decode
+	// failure on any other field returns in between, and the raw scalar
+	// would be left sitting in garbage-collected memory.
+	defer phone.WipeBytes(localPrivateKey)
 	localKey, err := phone.LoadStaticKey(localPrivateKey)
 	if err != nil {
 		return nil, nil, fmt.Errorf("%w: local key: %v", ErrSessionKeyDecode, err)
 	}
 	remotePublicKey, err := base64.StdEncoding.DecodeString(device.NoisePublicKey)
 	if err != nil {
+		localKey.Destroy()
 		return nil, nil, fmt.Errorf("%w: remote key: %v", ErrSessionKeyDecode, err)
 	}
 
@@ -78,6 +84,7 @@ func openDeviceSession(
 		Logger:      logger,
 	})
 	if err != nil {
+		localKey.Destroy()
 		if errors.Is(err, phone.ErrBLEUnavailable) {
 			return nil, nil, ErrDeviceBLEUnavailable
 		}
@@ -92,6 +99,9 @@ func openDeviceSession(
 		closed = true
 		transport.Disconnect()
 		_ = transport.Close()
+		// The session reads the key's protected pages, so release them only
+		// after the transport is down and no handshake can still be running.
+		localKey.Destroy()
 	}
 
 	if err := transport.Connect(ctx, device.Address); err != nil {

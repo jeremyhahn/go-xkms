@@ -18,8 +18,6 @@ package phone
 import (
 	"context"
 	"log/slog"
-
-	"github.com/flynn/noise"
 )
 
 // BLE Peripheral errors - defined in ble_peripheral.go for BLE builds.
@@ -33,9 +31,15 @@ var (
 
 // BLEPeripheralConfig configures the BLE peripheral (server) mode.
 type BLEPeripheralConfig struct {
-	// LocalStaticKey is the persistent local Noise static key.
-	// If nil, a new key will be generated.
-	LocalStaticKey *noise.DHKey
+	// LocalStaticKey is the persistent local Noise static key, held in
+	// protected memory. If nil, a new key will be generated.
+	LocalStaticKey *StaticKey
+
+	// OwnsStaticKey transfers ownership of LocalStaticKey to the peripheral.
+	// Present here for API parity: a consumer writing against the documented
+	// configuration must compile on a build without the ble tag, even though
+	// this stub never starts a peripheral.
+	OwnsStaticKey bool
 
 	// ExpectedRemoteStatic is the expected phone's static public key.
 	// If set, connection will fail if the phone's key doesn't match.

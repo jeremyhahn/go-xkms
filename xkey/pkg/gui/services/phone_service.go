@@ -27,6 +27,7 @@ import (
 	"log/slog"
 	"os"
 	"path/filepath"
+	"runtime"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -35,6 +36,7 @@ import (
 
 	"gopkg.in/yaml.v3"
 
+	"github.com/jeremyhahn/go-xkms/xkey/internal/lifecycle"
 	xkeyAttestation "github.com/jeremyhahn/go-xkms/xkey/pkg/attestation"
 	"github.com/jeremyhahn/go-xkms/xkey/pkg/gui/events"
 	"github.com/jeremyhahn/go-xkms/xkey/pkg/phone"
@@ -52,11 +54,18 @@ var (
 	ErrPhoneBLEUnavailable       = errors.New("phone_service: bluetooth unavailable - ensure bluetooth is enabled")
 	ErrPhoneAlreadyPaired        = errors.New("phone_service: device already paired")
 	ErrPhoneAttestNotImplemented = errors.New("phone_service: attestation requires BLE connection to device")
-	ErrPhoneConnectFailed        = errors.New("phone_service: BLE connection failed")
-	ErrPhoneHandshakeFailed      = errors.New("phone_service: Noise handshake failed")
-	ErrPhoneMissingKeys          = errors.New("phone_service: device missing Noise keys - re-pair required")
-	ErrPhonePolicyViolation      = errors.New("phone_service: attestation policy violation")
-	ErrPhonePolicyNotSet         = errors.New("phone_service: no attestation policy set for device")
+	// ErrPhoneShutdownIncomplete reports that a teardown finished without
+	// confirming every in-flight operation had released the connection, so
+	// the protected static key was retained rather than destroyed. The
+	// connection IS torn down; what the error says is that something may
+	// still be reading those pages.
+	ErrPhoneShutdownIncomplete = errors.New("phone_service: teardown could not confirm every operation finished")
+
+	ErrPhoneConnectFailed   = errors.New("phone_service: BLE connection failed")
+	ErrPhoneHandshakeFailed = errors.New("phone_service: Noise handshake failed")
+	ErrPhoneMissingKeys     = errors.New("phone_service: device missing Noise keys - re-pair required")
+	ErrPhonePolicyViolation = errors.New("phone_service: attestation policy violation")
+	ErrPhonePolicyNotSet    = errors.New("phone_service: no attestation policy set for device")
 )
 
 // devicesConfigFileName is the config file shared with the CLI.
@@ -206,9 +215,63 @@ type PhoneService struct {
 	// Active BLE connection state (protected by connMu).
 	// A mutex is appropriate here because Connect and Disconnect are slow
 	// I/O operations that happen infrequently (user-initiated).
+	//
+	// connMu also guards the status the service reports. Publishing a
+	// connection and saying the service is connected are ONE transition, not
+	// two: while they were separate steps, a Connect that published into the
+	// slot during a teardown's drain was reported as disconnected by the
+	// teardown that followed it — a live session the UI showed as down.
 	connMu          sync.Mutex
 	activeTransport *phone.BLETransport // nil when disconnected
 	activeSession   *phone.NoiseSession // nil when disconnected
+
+	// activeDevice names the device the published connection belongs to. The
+	// slot alone cannot answer "whose connection is this?", and teardown has
+	// to know: a connection published during its drain is left standing only
+	// when it belongs to a different device.
+	activeDevice string
+
+	// activeStaticKey is the protected key backing activeSession. The session
+	// reads its pages in place, so it is released alongside the session in
+	// closeActiveConnectionLocked and never before.
+	activeStaticKey *phone.StaticKey
+
+	// unpairing counts the in-flight Unpair calls per device. Publication
+	// consults it under connMu, so a Connect cannot install a connection to a
+	// device whose pairing record is being removed — see Unpair.
+	unpairing map[string]int
+
+	// noticeSeq numbers status transitions in the order connMu decided them.
+	// Guarded by connMu; read outside it only through a delivered notice.
+	noticeSeq uint64
+
+	// pending holds transitions decided under connMu and not yet delivered,
+	// and delivering says whether a drainer goroutine is working through them.
+	// Both are guarded by connMu. See deliverPending for why delivery is one
+	// goroutine rather than the deciding one.
+	pending    []connNotice
+	delivering bool
+
+	// activeUsers counts operations that took a reference to activeSession
+	// and are still using it outside connMu — attestation runs BLE round
+	// trips and cannot hold the lock for their duration. Teardown drains this
+	// before destroying the key, so a disconnect racing an attestation cannot
+	// free pages the attestation is reading. The drain is bounded: a phone
+	// that never answers must not wedge the GUI's teardown.
+	activeUsers lifecycle.Drain
+
+	// retainedKeys holds static keys a teardown could not prove unreferenced.
+	// They are never destroyed; see closeActiveConnectionLocked.
+	retainedKeys []*phone.StaticKey
+}
+
+// connNotice is a connection-status transition decided under connMu and
+// delivered to the frontend once the lock is released.
+type connNotice struct {
+	seq        uint64
+	connected  bool
+	deviceName string
+	reason     string
 }
 
 // NewPhoneService creates a new PhoneService.
@@ -227,11 +290,17 @@ func (s *PhoneService) SetContext(ctx context.Context) {
 
 // SetEventEmitter sets the function used to emit phone events to the frontend.
 func (s *PhoneService) SetEventEmitter(fn PhoneEventEmitter) {
+	s.connMu.Lock()
+	defer s.connMu.Unlock()
+
 	s.eventEmitter = fn
 }
 
 // SetStatusChangeFunc sets the callback invoked when phone connection state changes.
 func (s *PhoneService) SetStatusChangeFunc(fn PhoneStatusChangeFunc) {
+	s.connMu.Lock()
+	defer s.connMu.Unlock()
+
 	s.statusChangeFn = fn
 }
 
@@ -359,12 +428,15 @@ func (s *PhoneService) Pair(address string) (*PairedDevice, error) {
 
 	s.log.Info("starting pairing", "address", address)
 
-	// Generate a local Noise static key for this pairing.
+	// Generate a local Noise static key for this pairing. It does not outlive
+	// this call: the session is built here, and the private half is base64ed
+	// into the stored device record before we return.
 	localKey, err := phone.GenerateStaticKey()
 	if err != nil {
 		s.log.Error("failed to generate local key", "error", err)
 		return nil, ErrPhonePairFailed
 	}
+	defer localKey.Destroy()
 
 	// Create a Noise session.
 	session, err := phone.NewNoiseSession(&phone.NoiseSessionConfig{
@@ -549,15 +621,68 @@ func (s *PhoneService) Unpair(name string) error {
 		}
 	}
 
-	// If the unpaired device is currently connected, close the BLE transport and disconnect.
+	// Refuse publication of a connection to this device for the rest of the
+	// call. Tearing the connection down is not enough on its own: the drain
+	// releases connMu, and a Connect that had already passed its own config
+	// load could publish into the slot while it is released — leaving a live
+	// connection to a device whose pairing record this call is deleting.
+	// Stopping it at the publication step means that when Unpair returns,
+	// nothing to this device is published and nothing can be.
+	//
+	// The window it does NOT cover: a Connect that loaded the config before
+	// the record was removed and publishes after Unpair returns. That is the
+	// config file's own read-modify-write race rather than this one, it needs
+	// Connect to revalidate against the write it raced, and it is filed for
+	// v0.7.7 rather than half-closed here.
+	s.beginUnpair(name)
+	defer s.endUnpair(name)
+
+	// If the unpaired device is currently connected, close the BLE transport
+	// and disconnect. An incomplete drain is reported through the service's
+	// own state — RetainedKeyCount, and the service no longer claiming to be
+	// connected — plus this log line, not through Unpair's return: what Unpair
+	// was asked to do is remove the pairing record.
 	if s.connState.connected.Load() && s.ConnectedDeviceName() == name {
-		s.connMu.Lock()
-		s.closeActiveConnectionLocked()
-		s.connMu.Unlock()
-		s.setDisconnected(name, "unpaired")
+		if closeErr := s.teardownActiveConnection(name, "unpaired"); closeErr != nil {
+			s.log.Warn("unpair tore down the connection but could not confirm "+
+				"it drained; its static key is retained for the life of the "+
+				"process", "device", name, "error", closeErr,
+				"retained_keys", s.RetainedKeyCount())
+		}
 	}
 
 	return s.saveConfig(cfg)
+}
+
+// beginUnpair marks name as having an Unpair in flight, which stops Connect
+// from publishing a connection to it. Counted, so concurrent Unpair calls for
+// the same device cannot unmark each other's window.
+func (s *PhoneService) beginUnpair(name string) {
+	s.connMu.Lock()
+	defer s.connMu.Unlock()
+
+	if s.unpairing == nil {
+		s.unpairing = make(map[string]int)
+	}
+	s.unpairing[name]++
+}
+
+// unpairingLocked reports whether an Unpair for name is in flight, and is the
+// predicate the publication step refuses on. connMu must be held.
+func (s *PhoneService) unpairingLocked(name string) bool {
+	return s.unpairing[name] > 0
+}
+
+// endUnpair releases the mark taken by beginUnpair.
+func (s *PhoneService) endUnpair(name string) {
+	s.connMu.Lock()
+	defer s.connMu.Unlock()
+
+	if s.unpairing[name] <= 1 {
+		delete(s.unpairing, name)
+		return
+	}
+	s.unpairing[name]--
 }
 
 // SetDeviceAsBackend marks or unmarks a paired device as a key backend.
@@ -655,18 +780,30 @@ func (s *PhoneService) Connect(name string) error {
 		s.log.Error("invalid local noise key", "device", name, "error", err)
 		return ErrPhoneMissingKeys
 	}
+	// Wiped here, at the decode, not at the LoadStaticKey below: a decode
+	// failure on any other field returns in between, and the raw scalar
+	// would be left sitting in garbage-collected memory.
+	defer phone.WipeBytes(localPrivateKey)
 	remotePublicKey, err := base64.StdEncoding.DecodeString(device.NoisePublicKey)
 	if err != nil {
 		s.log.Error("invalid phone noise key", "device", name, "error", err)
 		return ErrPhoneMissingKeys
 	}
 
-	// Reconstruct the local Noise DH key pair.
+	// Reconstruct the local Noise DH key pair. Ownership stays local until it
+	// is published onto the service below; every failure path in between has
+	// to release the protected pages.
 	localKey, err := phone.LoadStaticKey(localPrivateKey)
 	if err != nil {
 		s.log.Error("failed to load local static key", "device", name, "error", err)
 		return ErrPhoneMissingKeys
 	}
+	published := false
+	defer func() {
+		if !published {
+			localKey.Destroy()
+		}
+	}()
 
 	// Decode expected device fingerprint if available.
 	var expectedFingerprint []byte
@@ -732,22 +869,23 @@ func (s *PhoneService) Connect(name string) error {
 		return ErrPhoneHandshakeFailed
 	}
 
-	// Store transport + session on PhoneService fields.
-	s.connMu.Lock()
-	s.closeActiveConnectionLocked()
-	s.activeTransport = transport
-	s.activeSession = session
-	s.connMu.Unlock()
-
-	// Update connection state and emit events.
-	s.setConnected(name)
+	// Store transport + session on PhoneService fields. A refusal is ours to
+	// clean up: published stays false, so the deferred cleanup releases the
+	// key this call generated.
+	if err := s.publishConnection(name, transport, session, localKey); err != nil {
+		_ = transport.Disconnect()
+		_ = transport.Close()
+		return err
+	}
+	published = true
 
 	s.log.Info("connected to device", "device", name, "address", device.Address)
 
-	// Auto-attestation: enforce policy if enabled, or refresh if previously attested.
-	s.autoAttest(cfg, device, name)
-
-	return nil
+	// Auto-attestation: enforce policy if enabled, or refresh if previously
+	// attested. Its teardown result is the caller's to hear: a policy
+	// violation closes this connection, and an incomplete drain means the
+	// protected key it was using is still resident.
+	return s.autoAttest(cfg, device, name)
 }
 
 // Disconnect terminates the BLE connection to the named device.
@@ -756,13 +894,10 @@ func (s *PhoneService) Disconnect(name string) error {
 		return ErrPhoneDeviceNotFound
 	}
 
-	s.connMu.Lock()
-	s.closeActiveConnectionLocked()
-	s.connMu.Unlock()
-
-	s.setDisconnected(name, "user_requested")
-
-	return nil
+	// Propagated, not swallowed. Returning nil over a timed-out drain tells
+	// the caller the connection is fully released when its protected key is
+	// still resident and an operation may still be reading it.
+	return s.teardownActiveConnection(name, "user_requested")
 }
 
 // AttestDevice performs hardware attestation of the named device.
@@ -909,19 +1044,44 @@ func (s *PhoneService) emitPolicyViolationEvent(deviceName string, mismatches ma
 	}))
 }
 
+// acquireActiveConnection takes a reference to the live transport and session
+// so they can be used outside connMu without teardown freeing the static key
+// underneath. The release function must be called exactly once, and until it
+// is, closeActiveConnectionLocked will block rather than destroy.
+//
+// It reports false when nothing is connected.
+func (s *PhoneService) acquireActiveConnection() (*phone.BLETransport, *phone.NoiseSession, func(), bool) {
+	s.connMu.Lock()
+	defer s.connMu.Unlock()
+
+	if s.activeTransport == nil || s.activeSession == nil {
+		return nil, nil, nil, false
+	}
+
+	s.activeUsers.Add()
+	transport, session := s.activeTransport, s.activeSession
+
+	release := func() {
+		s.connMu.Lock()
+		defer s.connMu.Unlock()
+
+		s.activeUsers.Done()
+	}
+	return transport, session, release, true
+}
+
 // performAttestation runs the attestation flow using the active BLE connection.
 // It sends an attestation challenge over the existing encrypted Noise channel
 // and verifies the returned Android hardware certificate chain.
 func (s *PhoneService) performAttestation(device *phoneConfigDevice) (*AttestationResult, error) {
-	// Grab the active transport and session under lock.
-	s.connMu.Lock()
-	transport := s.activeTransport
-	session := s.activeSession
-	s.connMu.Unlock()
-
-	if transport == nil || session == nil {
+	// Lease the transport and session: attestation runs BLE round trips, far
+	// too long to hold connMu, but teardown must not destroy the session's
+	// static key while those round trips are in flight.
+	transport, session, release, ok := s.acquireActiveConnection()
+	if !ok {
 		return nil, ErrPhoneNotConnected
 	}
+	defer release()
 
 	// Generate 32-byte random nonce.
 	nonce := make([]byte, 32)
@@ -1186,33 +1346,265 @@ func (s *PhoneService) GetAttestationPolicy(deviceName string) (*attestationPoli
 	return nil, ErrPhoneDeviceNotFound
 }
 
+// publishConnection installs a completed connection as the active one, and
+// with it the status the service reports, in a single critical section.
+//
+// It refuses in two cases, and in both the caller owns what it built and must
+// tear it down:
+//
+//   - Another connection was published while the teardown of the previous one
+//     had connMu released. Overwriting it would drop a live transport on the
+//     floor and orphan its protected key, silently, with the service still
+//     reporting connected.
+//   - The device is being unpaired. A connection published here has no pairing
+//     record to stand on by the time it lands — this is how a device came back
+//     live behind the Unpair that had just removed it — and Unpair cannot fix
+//     it afterwards, because it releases connMu inside its own drain. The
+//     publication step is the only place that can see both facts at once.
+//
+// It is a method rather than inline code in Connect because those two refusals
+// are the contract; the only way to test them is to be able to attempt a
+// publication at the moment they apply.
+func (s *PhoneService) publishConnection(name string, transport *phone.BLETransport, session *phone.NoiseSession, key *phone.StaticKey) error {
+	s.connMu.Lock()
+
+	// REFUSE BEFORE TOUCHING THE PUBLISHED CONNECTION. Tearing down whatever is
+	// connected and only then discovering that this publication is not allowed
+	// takes an unrelated device down with it: a Connect(A) that went stale
+	// during Unpair(A) would arrive here with B connected, destroy or retain
+	// B's protected key and clear B's transport and session, and only then
+	// refuse — leaving the service reporting B connected with nothing behind
+	// it. The refusal has to come first precisely because the teardown below
+	// is destructive.
+	if s.unpairingLocked(name) {
+		s.connMu.Unlock()
+
+		s.log.Warn("the device is being unpaired; discarding this connection",
+			"device", name)
+		return ErrPhoneDeviceNotFound
+	}
+
+	// Whose connection the teardown below is about to end, kept because
+	// closeActiveConnectionLocked clears it and the refusal path underneath
+	// needs to name it.
+	previous := s.activeDevice
+
+	if closeErr := s.closeActiveConnectionLocked(); closeErr != nil {
+		s.log.Warn("replacing a connection whose teardown could not be "+
+			"confirmed drained", "device", name, "error", closeErr)
+	}
+
+	if s.activeTransport != nil || s.activeSession != nil || s.activeStaticKey != nil {
+		s.connMu.Unlock()
+
+		s.log.Warn("another connection was published during teardown; "+
+			"discarding this one rather than overwriting it", "device", name)
+		return ErrPhoneConnectFailed
+	}
+
+	// Both facts have to be re-established, because the drain released connMu:
+	// an Unpair for this device can have begun in that window. The previous
+	// generation is already gone by now, so unlike the refusal above this one
+	// must settle the status too — otherwise the service goes on reporting a
+	// connection that no longer exists, which is the divergence this whole
+	// contract is about.
+	if s.unpairingLocked(name) {
+		if previous != "" {
+			s.setDisconnectedLocked(previous, "unpaired")
+		}
+		s.connMu.Unlock()
+
+		s.log.Warn("an unpair for this device began while the previous "+
+			"connection was draining; discarding this connection",
+			"device", name, "replaced", previous)
+		return ErrPhoneDeviceNotFound
+	}
+
+	s.publishConnectionLocked(name, transport, session, key)
+	s.connMu.Unlock()
+
+	return nil
+}
+
+// publishConnectionLocked installs the connection and the status that
+// describes it. connMu must be held.
+//
+// The two are one transition, which is the whole contract: writing the status
+// after releasing the lock is what let a teardown running in between mark this
+// connection down while it was live. Split out from publishConnection because
+// publishConnection first drains the previous generation, and a caller that is
+// already inside that drain — a Connect racing a Disconnect over the same
+// lease counter — has to be able to publish without waiting on it a second
+// time.
+func (s *PhoneService) publishConnectionLocked(name string, transport *phone.BLETransport, session *phone.NoiseSession, key *phone.StaticKey) {
+	s.activeTransport = transport
+	s.activeSession = session
+	s.activeStaticKey = key
+	s.activeDevice = name
+	s.setConnectedLocked(name)
+}
+
+// teardownActiveConnection closes the published connection and settles the
+// service's reported status in the SAME critical section.
+//
+// That is the whole point of it. Teardown and the status write used to be
+// separate steps with connMu released in between, and the gap was reachable:
+// closeActiveConnectionLocked's drain releases the lock, a Connect publishes a
+// new transport, session and protected key into the empty slot, and the status
+// write that follows marks the service disconnected on top of a session that
+// is live. The connection was stranded — running, holding protected pages, and
+// shown as down everywhere the UI reads status.
+//
+// Status and publication now move together under connMu, so the two can no
+// longer disagree: either this call finds the slot empty and reports
+// disconnected, or it finds a replacement and leaves the status the
+// replacement published.
+//
+// A replacement for the SAME device is torn down rather than left standing.
+// Only Unpair produces that case, and it does so with the device marked
+// unpairing, which stops publication at the source — see Unpair.
+//
+// It returns closeActiveConnectionLocked's result: ErrPhoneShutdownIncomplete
+// when the drain timed out and the connection's static key was retained rather
+// than destroyed.
+func (s *PhoneService) teardownActiveConnection(name, reason string) error {
+	s.connMu.Lock()
+	closeErr := s.closeActiveConnectionLocked()
+
+	if s.activeTransport != nil || s.activeSession != nil {
+		replacement := s.activeDevice
+		s.connMu.Unlock()
+
+		s.log.Warn("a new connection was published while this one was being "+
+			"torn down; leaving the service marked connected",
+			"device", name, "published", replacement)
+		return closeErr
+	}
+
+	s.setDisconnectedLocked(name, reason)
+	s.connMu.Unlock()
+
+	return closeErr
+}
+
+// RetainedKeyCount reports how many connection static keys teardown could not
+// prove unreferenced and therefore retained rather than destroyed.
+//
+// It is the observable record of an incomplete drain. Unpair reports the
+// removal of the pairing record and nothing else, because that is what it was
+// asked to do and it either happened or it did not; the fact that a key
+// outlived the teardown belongs to the service's own state, which is where the
+// UI reads it, rather than to the return value of an unrelated operation.
+func (s *PhoneService) RetainedKeyCount() int {
+	s.connMu.Lock()
+	defer s.connMu.Unlock()
+
+	return len(s.retainedKeys)
+}
+
 // closeActiveConnectionLocked closes the active BLE transport and clears session state.
 // Must be called with connMu held.
-func (s *PhoneService) closeActiveConnectionLocked() {
-	if s.activeTransport != nil {
-		_ = s.activeTransport.Disconnect()
-		_ = s.activeTransport.Close()
-		s.activeTransport = nil
-	}
+// It reports ErrPhoneShutdownIncomplete when the drain timed out, so callers
+// can propagate the fact rather than reporting a clean disconnect over a
+// connection whose key is still live. A void return was the fail-open here:
+// the components below learned to say "incomplete" and this layer discarded
+// it.
+func (s *PhoneService) closeActiveConnectionLocked() error {
+	// Detach this connection generation into locals BEFORE anything can
+	// release connMu.
+	//
+	// The wait below releases the mutex — that is what lets leaseholders
+	// reach their release() — and a concurrent Connect can take it in that
+	// window and publish a new transport, session and protected key. Code
+	// after the wait that still read s.activeSession and s.activeStaticKey
+	// would then clear the NEW session and destroy the NEW key: a service
+	// left half-connected, with a live session reading freed pages.
+	//
+	// Clearing the fields first also closes the door behind us:
+	// acquireActiveConnection refuses once activeTransport or activeSession
+	// is nil, so no further lease can be taken against the generation being
+	// torn down.
+	transport := s.activeTransport
+	key := s.activeStaticKey
+	s.activeTransport = nil
 	s.activeSession = nil
+	s.activeStaticKey = nil
+	s.activeDevice = ""
+
+	// Disconnect first so any leaseholder's round trip fails fast rather than
+	// waiting out its own timeout.
+	if transport != nil {
+		_ = transport.Disconnect()
+		_ = transport.Close()
+	}
+
+	// Bounded: a leaseholder is mid BLE round trip with a handset that may
+	// never answer, and this runs on the GUI's teardown path. An unbounded
+	// wait here is an application that cannot close.
+	//
+	// The drain counts leases across generations, which is the conservative
+	// direction: a true result means no leaseholder exists at all, so the
+	// detached key is provably unreferenced.
+	drained := s.activeUsers.Wait(&s.connMu, connShutdownTimeout)
+
+	// Only once every leaseholder has returned: destroying earlier would free
+	// pages an in-flight operation is still reading.
+	if drained {
+		key.Destroy()
+		return nil
+	}
+
+	// Parked, not dropped. The local would otherwise go out of scope here,
+	// which reads as "we forgot" rather than "we decided". memguard pins
+	// every live buffer in a package-level list, so the pages survive either
+	// way — but holding the owner is what says so, and what a future
+	// reclamation path would need.
+	//
+	// Only when there was a key. The drain counts leases across generations,
+	// so it can time out on a slot that was already empty — a Connect landing
+	// behind a Disconnect that is still waiting for someone else's lease. The
+	// drain is genuinely incomplete and the error says so, but recording a nil
+	// as a retained key would make the count the UI reads report key material
+	// that never existed.
+	if key != nil {
+		s.retainedKeys = append(s.retainedKeys, key)
+		s.log.Warn("retaining the connection static key: an operation did not "+
+			"finish within the shutdown window",
+			"in_flight", s.activeUsers.InFlight(), "timeout", connShutdownTimeout)
+	}
+	return ErrPhoneShutdownIncomplete
 }
+
+// connShutdownTimeout bounds how long teardown waits for in-flight operations
+// to release the active connection. On timeout the protected key is retained
+// rather than destroyed, permanently, because an operation still reading
+// those pages is the only thing the wait was ever protecting against.
+//
+// A var rather than a const so tests can exercise the timeout branch without
+// spending the production window on it. Nothing else writes it.
+var connShutdownTimeout = 30 * time.Second
 
 // autoAttest performs automatic attestation after a successful connection.
 // If an attestation policy is enabled, it enforces the policy.
 // If the device has been previously attested (but no policy), it refreshes attestation.
-func (s *PhoneService) autoAttest(cfg *phoneConfig, device *phoneConfigDevice, name string) {
+//
+// It returns the result of the teardown a policy violation forces — the fourth
+// caller of closeActiveConnectionLocked, and the last one that discarded it.
+// A violation closes the connection this attestation was running over, so
+// whether that close drained is exactly as consequential here as on the
+// disconnect path: an ErrPhoneShutdownIncomplete means the connection's
+// protected key is still resident. Attestation failures that do not tear the
+// connection down are reported to the frontend as attestation events, which is
+// where they belong.
+func (s *PhoneService) autoAttest(cfg *phoneConfig, device *phoneConfigDevice, name string) error {
 	// Enforce attestation policy if enabled.
 	if device.AttestationPolicy != nil && device.AttestationPolicy.Enabled {
 		if err := s.enforceAttestationPolicy(name, device); err != nil {
 			s.log.Error("attestation policy enforcement failed on connect", "device", name, "error", err)
-			s.connMu.Lock()
-			s.closeActiveConnectionLocked()
-			s.connMu.Unlock()
-			s.setDisconnected(name, "policy_violation")
-			return
+			return s.teardownActiveConnection(name, "policy_violation")
 		}
 		s.log.Info("attestation policy enforced successfully", "device", name)
-		return
+		return nil
 	}
 
 	// If device was previously attested, perform a fresh attestation.
@@ -1222,50 +1614,172 @@ func (s *PhoneService) autoAttest(cfg *phoneConfig, device *phoneConfigDevice, n
 		if err != nil {
 			s.log.Warn("auto-attestation failed", "device", name, "error", err)
 			s.emitAttestationEvent(name, false, err.Error())
-			return
+			return nil
 		}
 		s.saveAttestationResult(cfg, device, result)
 		s.emitAttestationEvent(name, result.Verified, "")
 		s.log.Info("auto-attestation complete", "device", name, "verified", result.Verified)
 	}
+	return nil
+}
+
+// setConnectedLocked records a connected transition and queues its
+// notification. connMu must be held, so that the status the service reports
+// and the connection published in the slot move together.
+func (s *PhoneService) setConnectedLocked(deviceName string) {
+	s.connState.deviceName.Store(deviceName)
+	s.connState.connected.Store(true)
+
+	s.noticeSeq++
+	s.enqueueNoticeLocked(connNotice{
+		seq:        s.noticeSeq,
+		connected:  true,
+		deviceName: deviceName,
+	})
+}
+
+// setDisconnectedLocked records a disconnected transition and returns the
+// notice describing it. connMu must be held; see setConnectedLocked.
+func (s *PhoneService) setDisconnectedLocked(deviceName string, reason string) {
+	s.connState.connected.Store(false)
+	s.connState.deviceName.Store("")
+
+	s.noticeSeq++
+	s.enqueueNoticeLocked(connNotice{
+		seq:        s.noticeSeq,
+		deviceName: deviceName,
+		reason:     reason,
+	})
 }
 
 // setConnected updates the internal state to reflect a connected phone device.
 func (s *PhoneService) setConnected(deviceName string) {
-	s.connState.deviceName.Store(deviceName)
-	s.connState.connected.Store(true)
+	s.connMu.Lock()
+	s.setConnectedLocked(deviceName)
+	s.connMu.Unlock()
 
-	s.log.Info("phone connected", "device", deviceName)
-
-	if s.eventEmitter != nil {
-		s.eventEmitter(events.NewEvent(events.EventPhoneConnected, events.PhoneConnectedPayload{
-			DeviceName: deviceName,
-		}))
-	}
-
-	if s.statusChangeFn != nil {
-		s.statusChangeFn(true, deviceName)
-	}
+	s.awaitNoticesDelivered()
 }
 
 // setDisconnected updates the internal state to reflect a disconnected phone device.
 func (s *PhoneService) setDisconnected(deviceName string, reason string) {
-	s.connState.connected.Store(false)
-	s.connState.deviceName.Store("")
+	s.connMu.Lock()
+	s.setDisconnectedLocked(deviceName, reason)
+	s.connMu.Unlock()
 
-	s.log.Info("phone disconnected", "device", deviceName, "reason", reason)
+	s.awaitNoticesDelivered()
+}
 
-	if s.eventEmitter != nil {
-		s.eventEmitter(events.NewEvent(events.EventPhoneDisconnected, events.PhoneDisconnectedPayload{
-			DeviceName: deviceName,
-			Reason:     reason,
-		}))
+// deliverNotice logs a transition and hands it to the frontend.
+//
+// NO LOCK IS HELD HERE, AND THAT IS THE POINT. The emitter and the status
+// callback reach into the GUI — a systray update and a Wails event — and a
+// callback that re-enters the service (Connect, Disconnect, or anything that
+// changes status) would deadlock on any lock held across it. An earlier
+// version serialized delivery under a dedicated mutex to keep transitions in
+// order and had exactly that defect: re-entrancy hit a non-reentrant lock.
+//
+// ORDER NEEDS ONE DELIVERER, and two attempts to get it any other way both
+// failed in the same way. Sequence numbers claimed before each callback order
+// the CLAIMS, not the CALLS: whoever wins a claim can be preempted before
+// invoking the sink, a later transition can claim and invoke, and the first
+// then resumes and invokes stale state on top. Making the claim per-sink
+// narrowed that window without closing it, because the gap between reserving
+// and calling is still a gap. Nothing an atomic can do serializes a function
+// call it does not own.
+//
+// So delivery is a single drainer. Deciders append under connMu and return;
+// one goroutine takes notices off the front, in the order they were decided,
+// and invokes the sinks with no lock held. Ordering is structural — there is
+// only ever one caller — and re-entrancy is safe, because a callback that
+// re-enters the service appends and returns rather than waiting for a delivery
+// it is itself inside. The drainer exits when the queue empties and the next
+// decider starts a new one.
+func (s *PhoneService) enqueueNoticeLocked(notice connNotice) {
+	s.pending = append(s.pending, notice)
+	if s.delivering {
+		return
 	}
+	s.delivering = true
+	go s.deliverPending()
+}
 
-	if s.statusChangeFn != nil {
-		s.statusChangeFn(false, "")
+// deliverPending drains queued transitions to the frontend, one at a time,
+// with connMu released across every callback.
+func (s *PhoneService) deliverPending() {
+	for {
+		s.connMu.Lock()
+		if len(s.pending) == 0 {
+			s.delivering = false
+			s.connMu.Unlock()
+			return
+		}
+		notice := s.pending[0]
+		s.pending = s.pending[1:]
+		emit := s.eventEmitter
+		status := s.statusChangeFn
+		s.connMu.Unlock()
+
+		s.deliverNotice(notice, emit, status)
 	}
 }
+
+// deliverNotice logs a transition and hands it to the frontend sinks. Called
+// only from deliverPending, so the sinks see transitions in decision order.
+func (s *PhoneService) deliverNotice(notice connNotice, emit PhoneEventEmitter, status PhoneStatusChangeFunc) {
+	if notice.connected {
+		s.log.Info("phone connected", "device", notice.deviceName)
+	} else {
+		s.log.Info("phone disconnected", "device", notice.deviceName, "reason", notice.reason)
+	}
+
+	if emit != nil {
+		if notice.connected {
+			emit(events.NewEvent(events.EventPhoneConnected, events.PhoneConnectedPayload{
+				DeviceName: notice.deviceName,
+			}))
+		} else {
+			emit(events.NewEvent(events.EventPhoneDisconnected, events.PhoneDisconnectedPayload{
+				DeviceName: notice.deviceName,
+				Reason:     notice.reason,
+			}))
+		}
+	}
+
+	if status != nil {
+		if notice.connected {
+			status(true, notice.deviceName)
+		} else {
+			status(false, "")
+		}
+	}
+}
+
+// awaitNoticesDelivered blocks until every queued transition has been handed to
+// the frontend. Delivery is asynchronous, so a caller that needs to observe its
+// effect — a test, or a shutdown path that wants the last status out — has to
+// say so.
+func (s *PhoneService) awaitNoticesDelivered() bool {
+	deadline := time.Now().Add(noticeDeliveryTimeout)
+	for {
+		s.connMu.Lock()
+		idle := !s.delivering && len(s.pending) == 0
+		s.connMu.Unlock()
+		if idle {
+			return true
+		}
+		if time.Now().After(deadline) {
+			return false
+		}
+		runtime.Gosched()
+	}
+}
+
+// noticeDeliveryTimeout bounds awaitNoticesDelivered. A frontend callback is
+// caller-supplied and may not return; an unbounded wait here would turn a
+// wedged systray handler into a wedged service, which is the same
+// bound-the-wait reasoning as every drain on this branch.
+var noticeDeliveryTimeout = 30 * time.Second
 
 // loadConfig loads the phone config from the shared YAML file.
 func (s *PhoneService) loadConfig() (*phoneConfig, error) {

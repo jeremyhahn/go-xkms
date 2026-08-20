@@ -1,0 +1,87 @@
+# Nightly scans (ci-template v1.9).
+#
+# Trivy lives here rather than in ci.yml because it was RED ON EVERY PUSH and a
+# known-red job that burns runner-minutes on every push verifies nothing — it
+# only teaches people to ignore a red. The scan itself is not weakened: it runs
+# nightly and on demand, at the same severity, against the same tree.
+#
+# The specific failure is tracked as go-xkms#43 and company task #39: the
+# Gitea path installs
+# the CLI from raw.githubusercontent.com, whose version lookup is an
+# unauthenticated GitHub API call and rate-limits. That is an install defect,
+# not a finding, which is precisely why gating pushes on it bought nothing.
+#
+# The image-scan gate in ci.yml's docker job STAYS on every push (devops.md §8).
+# That one gates a publish, and a publish is where an unscanned image actually
+# costs something.
+
+name: Nightly
+
+on:
+  schedule:
+    # 03:17 UTC — off the hour, so it does not pile onto every other repo's
+    # nightly at 03:00 on the same two shared runners.
+    - cron: '17 3 * * *'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  security-events: write
+
+jobs:
+  trivy:
+    name: Trivy
+    runs-on: ubuntu-latest
+    permissions:
+      security-events: write
+      contents: read
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      # Two paths for one gate. trivy-action's setup step cannot authenticate
+      # to github.com from a Gitea runner and upload-sarif has no
+      # GHES-compatible endpoint there, so the action path is guarded on the
+      # server URL and Gitea gates with the trivy CLI below. Both run the same
+      # fs scan at the same severity; only the SARIF upload is GitHub-only.
+      - name: Trivy scan (SARIF for code scanning)
+        if: github.server_url == 'https://github.com'
+        uses: aquasecurity/trivy-action@master
+        with:
+          scan-type: fs
+          scan-ref: .
+          scanners: vuln,secret
+          format: sarif
+          output: trivy-results.sarif
+          exit-code: 0
+          skip-dirs: test,examples,data,bin,build
+
+      - name: Upload Trivy SARIF
+        if: always() && github.server_url == 'https://github.com'
+        uses: github/codeql-action/upload-sarif@v4
+        with:
+          sarif_file: trivy-results.sarif
+          category: trivy-fs
+
+      - name: Trivy gate (fail on CRITICAL/HIGH)
+        if: github.server_url == 'https://github.com'
+        uses: aquasecurity/trivy-action@master
+        with:
+          scan-type: fs
+          scan-ref: .
+          scanners: vuln,secret
+          severity: CRITICAL,HIGH
+          exit-code: 1
+          format: table
+          skip-dirs: test,examples,data,bin,build
+
+      - name: Install Trivy CLI (Gitea)
+        if: github.server_url != 'https://github.com'
+        run: curl -sfL https://raw.githubusercontent.com/aquasecurity/trivy/main/contrib/install.sh | sh -s -- -b /usr/local/bin
+
+      - name: Trivy gate (Gitea)
+        if: github.server_url != 'https://github.com'
+        run: |
+          trivy fs --scanners vuln,secret --severity CRITICAL,HIGH --exit-code 1 --format table \
+            --skip-dirs test --skip-dirs examples --skip-dirs data --skip-dirs bin --skip-dirs build .

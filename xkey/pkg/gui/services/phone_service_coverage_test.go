@@ -546,6 +546,7 @@ func TestPhoneService_Coverage_AutoAttest_PolicyDisabled(t *testing.T) {
 	// Policy is disabled but present, and no LastAttestation --
 	// should skip all attestation logic.
 	svc.autoAttest(cfg, device, "Pixel 9")
+	svc.awaitNoticesDelivered()
 
 	// No events should be emitted since nothing happened.
 	assert.Empty(t, emittedEvents)
@@ -578,6 +579,7 @@ func TestPhoneService_Coverage_AutoAttest_PolicyEnabled_NoTransport_EmitsDisconn
 	}
 
 	svc.autoAttest(cfg, device, "Pixel 9")
+	svc.awaitNoticesDelivered()
 
 	// Policy enforcement should fail (no transport), and disconnect should be emitted.
 	assert.False(t, svc.IsConnected(), "should be disconnected after policy violation")
@@ -616,6 +618,7 @@ func TestPhoneService_Coverage_AutoAttest_LastAttestation_NoTransport_EmitsFailu
 	}
 
 	svc.autoAttest(cfg, device, "Pixel 9")
+	svc.awaitNoticesDelivered()
 
 	// Should emit an attestation failure event since there's no transport.
 	hasFailure := false
@@ -653,6 +656,7 @@ func TestPhoneService_Coverage_Disconnect_WithActiveTransport(t *testing.T) {
 	svc.connState.deviceName.Store("Pixel 9")
 
 	err := svc.Disconnect("Pixel 9")
+	svc.awaitNoticesDelivered()
 	require.NoError(t, err)
 	assert.Nil(t, svc.activeTransport, "transport should be cleared")
 	assert.False(t, svc.IsConnected())
@@ -694,6 +698,7 @@ func TestPhoneService_Coverage_Unpair_WithActiveTransportDisconnects(t *testing.
 	svc.connState.deviceName.Store("Pixel 9")
 
 	err := svc.Unpair("Pixel 9")
+	svc.awaitNoticesDelivered()
 	require.NoError(t, err)
 
 	assert.Nil(t, svc.activeTransport, "transport should be cleared on unpair")

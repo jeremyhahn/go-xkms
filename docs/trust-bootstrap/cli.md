@@ -109,7 +109,7 @@ xkmsctl bootstrap dane show-tlsa --hostname kms.example.com --port 8443
 
 | Flag | Applies to | Type | Default |
 |---|---|---|---|
-| `--output`, `-o` | `generate-key` | string | `""` — writes the private key at mode 0600 |
+| `--output`, `-o` | `generate-key` | string | **required** — writes the private key at mode 0600 |
 | `--key-file` | `show-key` | string | `""` — hex-encoded private key file |
 | `--key-hex` | `show-key` | string | `""` — hex-encoded private key inline |
 | `--cert-file` | `show-spki-pin` | string | `""` — PEM certificate |
@@ -118,6 +118,14 @@ xkmsctl bootstrap dane show-tlsa --hostname kms.example.com --port 8443
 xkmsctl bootstrap noise generate-key --output noise.key
 xkmsctl bootstrap noise show-key --key-file noise.key
 ```
+
+`generate-key` writes the private key to the file named by `--output` and
+prints only the public key. Omitting `--output` is an error rather than a
+request to print the private key: stdout is read by terminal scrollback, shell
+history, pipes and CI logs, and none of those can be wiped afterwards. Inside
+the process the key lives in protected memory — guard-paged, locked against
+swap, and wiped on release — so the hex encoding exists only long enough to
+reach the file.
 
 The **public** key is what clients need; distribute that. `--key-hex` puts a
 private key on a command line, so it lands in shell history and process

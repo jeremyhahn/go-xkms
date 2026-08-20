@@ -21,6 +21,18 @@ import (
 // Sentinel errors for static conditions.
 var (
 	// ErrPhoneConfigNil indicates the phone backend configuration is nil.
+	// ErrShutdownIncomplete reports that Shutdown finished without being able
+	// to confirm every component had drained. The server IS shut down and
+	// needs no second call; what the error says is that some worker could not
+	// be proven finished, so anything it may still be reading — protected key
+	// pages above all — was retained rather than freed.
+	//
+	// It exists because the alternative was returning nil over a timed-out
+	// drain, which tells a caller holding a borrowed key that destroying it
+	// is safe. Every component in this shutdown path now reports incomplete
+	// the same way; this is the layer that had to start listening.
+	ErrShutdownIncomplete = errors.New("server: shutdown could not confirm every component drained")
+
 	ErrPhoneConfigNil = errors.New("server: phone backend configuration is not set")
 
 	// ErrPhoneBackendCreate indicates the phone backend could not be created.

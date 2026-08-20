@@ -14,14 +14,16 @@
 package main
 
 import (
+	"bytes"
 	"crypto/sha256"
 	"crypto/x509"
 	"encoding/hex"
 	"encoding/pem"
 	"fmt"
+	"io"
 	"os"
-	"strings"
 
+	"github.com/awnumar/memguard"
 	"github.com/spf13/cobra"
 
 	noiseproto "github.com/jeremyhahn/go-truststrap/pkg/noiseproto"
@@ -39,8 +41,12 @@ var noiseGenerateKeyCmd = &cobra.Command{
 	Use:   "generate-key",
 	Short: "Generate a new Noise static keypair",
 	Long: `Generate a new Curve25519 static keypair for the Noise protocol.
-The private key is output in hex encoding and should be stored securely.
-The public key is also displayed for distribution to clients.`,
+
+The private key is written, hex-encoded, to the file named by --output, which
+is created with 0600 permissions and must not already exist. It is never
+printed: stdout is read by terminal scrollback, shell history, pipes and CI
+logs, none of which can be wiped. The public key is displayed for distribution
+to clients.`,
 	Run: func(cmd *cobra.Command, args []string) {
 		outputFile, _ := cmd.Flags().GetString("output")
 		generateNoiseKey(outputFile)
@@ -74,32 +80,149 @@ server's certificate, use: openssl s_client -connect host:port </dev/null | open
 	},
 }
 
+// generateNoiseKey generates a Noise static keypair and writes the private
+// half to outputFile. The private key is never printed: a hex-encoded static
+// key on stdout survives in scrollback, shell history and CI logs, none of
+// which can be wiped, so the file is the only sink.
 func generateNoiseKey(outputFile string) {
+	if outputFile == "" {
+		handleError(ErrOutputFileRequired)
+		return
+	}
+
 	key, err := noiseproto.GenerateStaticKey()
 	if err != nil {
 		handleError(&WrappedError{Sentinel: ErrGenerateKeyFailed, Err: err})
 		return
 	}
+	defer key.Destroy()
 
-	privateHex := noiseproto.EncodeStaticKey(key)
+	// The hex encoding is as sensitive as the scalar it encodes, so it gets
+	// the same treatment: a guard-paged, swap-locked buffer outside the Go
+	// heap, destroyed on the way out. EncodeStaticKey's contract asks for a
+	// protected destination, and an ordinary make([]byte) cannot honour it —
+	// wiping afterwards does nothing about the copies the GC may already have
+	// made, or about the page reaching swap in between.
+	buf := memguard.NewBuffer(noiseproto.HexKeySize + 1)
+	defer buf.Destroy()
+	encoded := buf.Bytes()
+
+	if err := noiseproto.EncodeStaticKey(encoded, key); err != nil {
+		handleError(&WrappedError{Sentinel: ErrEncodeKeyFailed, Err: err})
+		return
+	}
+	encoded[noiseproto.HexKeySize] = '\n'
+
 	publicHex := hex.EncodeToString(key.Public)
 
-	if outputFile != "" {
-		// Write private key to file
-		if err := os.WriteFile(outputFile, []byte(privateHex+"\n"), 0600); err != nil {
-			handleError(&WrappedError{Sentinel: ErrWriteKeyFileFailed, Err: err})
-			return
-		}
-		fmt.Printf("Private key written to: %s\n", outputFile)
-		fmt.Printf("Public key:  %s\n", publicHex)
-	} else {
-		fmt.Printf("Private key: %s\n", privateHex)
-		fmt.Printf("Public key:  %s\n", publicHex)
+	if err := writeNoiseKeyFile(outputFile, encoded); err != nil {
+		handleError(&WrappedError{Sentinel: ErrWriteKeyFileFailed, Err: err})
+		return
 	}
+
+	fmt.Printf("Private key written to: %s\n", outputFile)
+	fmt.Printf("Public key:  %s\n", publicHex)
+}
+
+// noiseKeyFile is what writeNoiseKeyFile needs of the handle it writes
+// through: write it, close it, and identify it on disk. Stat is what makes
+// the failure cleanup safe, so it is part of the contract rather than a type
+// assertion at the point of use. *os.File satisfies it.
+type noiseKeyFile interface {
+	io.WriteCloser
+	Stat() (os.FileInfo, error)
+}
+
+// createNoiseKeyFile creates the private-key file, failing if it already
+// exists. It is a variable so tests can substitute a handle that fails
+// mid-write and assert the partial file is cleaned up.
+var createNoiseKeyFile = func(path string) (noiseKeyFile, error) {
+	// O_EXCL, not os.WriteFile: WriteFile applies its mode only when it
+	// creates the file, so writing over an existing 0644 path would leave the
+	// private key world-readable. Refusing an existing path also stops a
+	// second run from silently replacing a Noise identity that peers have
+	// already pinned.
+	return os.OpenFile(path, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0600)
+}
+
+// writeNoiseKeyFile writes the hex-encoded private key to path, creating it at
+// mode 0600 and refusing to overwrite.
+//
+// A write or close that fails removes the file it created. Leaving it behind
+// would strand a truncated private key on disk and, because the next attempt
+// refuses an existing path, would block the retry that replaces it.
+func writeNoiseKeyFile(path string, encoded []byte) error {
+	f, err := createNoiseKeyFile(path)
+	if err != nil {
+		return err
+	}
+
+	// The byte count matters, not just the error. A compliant io.Writer must
+	// error on a short write, but this one is injectable for tests and the
+	// cost of being wrong is a truncated private key reported as persisted.
+	n, err := f.Write(encoded)
+	if err == nil && n != len(encoded) {
+		err = io.ErrShortWrite
+	}
+
+	// Identify the file while the descriptor is still open. Stat on a closed
+	// handle fails, and this identity is the whole basis of removeIfSame. A
+	// stat that fails leaves created nil, which means "do not remove".
+	created, statErr := f.Stat()
+	if statErr != nil {
+		created = nil
+	}
+
+	if closeErr := f.Close(); err == nil {
+		err = closeErr
+	}
+	if err != nil {
+		removeIfSame(created, path)
+		return err
+	}
+	return nil
+}
+
+// removeIfSame unlinks path only while it still names the file described by
+// created.
+//
+// An unconditional os.Remove unlinks whatever holds the name NOW, not the
+// file the failure produced. Anything with write access to the parent
+// directory can rename our partial key away and drop an unrelated file at the
+// same path in between, and the cleanup would then delete that file instead —
+// destroying somebody else's data in the name of tidying up after ourselves.
+//
+// The trade when identity cannot be established: leave the file. A stranded
+// partial key file is reported to the caller and refused by the next run's
+// O_EXCL; a wrong unlink is silent and irreversible.
+//
+// KNOWN AND IRREDUCIBLE: the check and the unlink are not atomic, so a
+// substitution landing between them is still removed. This is narrowed, not
+// eliminated — the window went from the whole write-and-close to the gap
+// between an fstat and an unlink — and it cannot be closed with what the
+// platform offers. Linux has no unlink-by-inode; unlinkat resolves a name
+// like unlink does, so a directory file descriptor buys nothing here. The
+// alternative that WOULD close it is not removing the file at all, which
+// strands a partial private key that the next run's O_EXCL then refuses,
+// turning a rare race into a guaranteed failed retry. Reviewed and kept
+// deliberately.
+func removeIfSame(created os.FileInfo, path string) {
+	if created == nil {
+		return
+	}
+
+	// Lstat, so a symlink swapped in for our file is compared as the symlink
+	// it is and fails the identity check rather than being followed.
+	onDisk, err := os.Lstat(path)
+	if err != nil || !os.SameFile(created, onDisk) {
+		return
+	}
+
+	_ = os.Remove(path)
 }
 
 func showNoiseKey(keyFile, keyHex string) {
-	var hexKey string
+	var hexKey []byte
 
 	switch {
 	case keyFile != "":
@@ -108,9 +231,15 @@ func showNoiseKey(keyFile, keyHex string) {
 			handleError(&WrappedError{Sentinel: ErrReadKeyFileFailed, Err: err})
 			return
 		}
-		hexKey = strings.TrimSpace(string(data))
+		// The file bytes are ours to wipe once decoded; TrimSpace returns a
+		// subslice of the same backing array, so wiping data covers both.
+		defer noiseproto.WipeBytes(data)
+		hexKey = bytes.TrimSpace(data)
 	case keyHex != "":
-		hexKey = keyHex
+		// --key-hex came in on the command line and is already visible in the
+		// process table and shell history, so there is nothing left to
+		// protect in this copy.
+		hexKey = []byte(keyHex)
 	default:
 		handleError(ErrKeyInputRequired)
 		return
@@ -121,6 +250,7 @@ func showNoiseKey(keyFile, keyHex string) {
 		handleError(&WrappedError{Sentinel: ErrDecodeKeyFailed, Err: err})
 		return
 	}
+	defer key.Destroy()
 
 	fmt.Printf("Public key: %s\n", hex.EncodeToString(key.Public))
 }

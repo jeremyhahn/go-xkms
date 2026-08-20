@@ -222,7 +222,7 @@ func init() {
 	noiseCmd.AddCommand(noiseShowSPKIPinCmd)
 
 	// Flags for generate-key
-	noiseGenerateKeyCmd.Flags().StringP("output", "o", "", "write private key to file (with 0600 permissions)")
+	noiseGenerateKeyCmd.Flags().StringP("output", "o", "", "file to create the private key in, mode 0600 (required; must not exist; the key is never printed)")
 
 	// Flags for show-key
 	noiseShowKeyCmd.Flags().String("key-file", "", "path to hex-encoded private key file")

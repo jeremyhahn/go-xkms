@@ -28,6 +28,17 @@ var (
 	ErrStreamNotSupported = pkgusb.ErrStreamNotSupported
 	ErrNoiseNotConfigured = pkgusb.ErrNoiseNotConfigured
 	ErrRequestFailed      = pkgusb.ErrRequestFailed
+
+	// ErrDirtyState is returned by Connect when the transport still holds
+	// session state from a previous connection. It replaced the narrower
+	// already-connected check in v0.7.6-alpha, because Request clears the
+	// connected flag on a send failure while leaving the session and the
+	// protected local key live — so "not connected" was not the same as
+	// "safe to connect".
+	//
+	// SDK consumers matching on the reason Connect refused need this
+	// sentinel; without it they can see the error and not identify it.
+	ErrDirtyState = pkgusb.ErrDirtyState
 )
 
 // Transport is an alias for the canonical USB transport implementation.

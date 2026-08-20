@@ -7,6 +7,303 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.7.6-alpha] - 2026-08-19
+
+### What this release does and does not guarantee
+
+Read this before the entries below, because the headline is easy to
+over-read.
+
+**Closed: the lifetime axis.** A Noise static key held in protected memory is
+now owned by exactly one component, and nothing reads it while it is being
+destroyed. Every reader synchronises against the destroyer; every generated
+key has an owner that frees it; no path frees a key another goroutine is
+still decrypting through. That is what the ~35 fixes in this release are.
+
+**NOT closed: the escape axis.** The phone-pairing Noise private key is still
+persisted as a base64 string in YAML, and `LocalNoisePrivateKey string` is
+still an ordinary Go string for the whole life of a loaded config. Go strings
+are immutable, so that copy cannot be wiped, and the file is plaintext at
+mode 0600 — protected by filesystem permissions only, not by protected
+memory and not sealed at rest. This is pre-existing and unchanged by this
+release; it is not a regression, and it is not fixed either.
+
+So: **"Noise keys are held in protected memory" is true of their lifetime in
+process and false of their persisted form.** Closing the second half needs a
+config-format migration and a decision about whether that key should be
+sealed rather than plaintext-0600. That is an open owner decision, tracked
+separately. Anyone relying on this release for at-rest protection of the
+phone-pairing key does not have it.
+
+**Third thing, on the shutdown paths.** When a shutdown cannot confirm that
+every reader has stopped, it keeps the protected key rather than freeing it,
+and reports `ErrShutdownIncomplete`. **That retention is permanent for the
+life of the process, not deferred.** Nothing reclaims the key afterwards:
+the component is closed, its references are cleared, and there is no retry.
+memguard's only reclamation is `secure.Purge`, which destroys every locked
+buffer in the process at once — a shutdown operation, not a way to recover
+one leaked key while the program runs. `xkmsd` arms it; the `xkey` binaries
+do not arm it at all. So repeated shutdown timeouts accumulate locked pages
+against the process memlock limit for as long as the process lives. It is
+still the right trade against freeing pages a live goroutine is decrypting
+through, but it is a real cost and it is stated here rather than implied
+away.
+
+### Changed
+
+- **BREAKING — `go-truststrap` protected-memory Noise API adopted**
+  (`v0.1.3-alpha` -> `v0.2.0-alpha`). Static Noise keys are now
+  `*noise.StaticKey` values living in guard-paged, swap-locked memory rather
+  than `[]byte` and `string`. The wrapper layer in `xkey/pkg/pairing` follows
+  the same shape, so the encode direction writes into a caller-supplied
+  buffer instead of returning a string that can never be wiped:
+
+  ```go
+  // before
+  func EncodeStaticKey(key *DHKey) string
+  // after
+  func EncodeStaticKey(dst []byte, key *StaticKey) error
+  ```
+
+  `GenerateStaticKey`, `LoadStaticKey` and `DecodeStaticKey` now return
+  `*StaticKey`, and `NoiseSessionConfig.LocalStaticKey` is a `*StaticKey`.
+  Callers own what they generate and must `Destroy()` it.
+- **`go-qrdb` `v0.5.9-alpha` -> `v0.6.0-alpha`** across all three published
+  modules, in lockstep.
+- **`xkmsctl bootstrap noise-key` writes to a file and no longer prints the
+  private key to stdout.** `--output` is now required. The file is created
+  `O_EXCL` at mode 0600, a short write is treated as an error, and a partial
+  file is removed rather than left behind. The encoded key is staged in a
+  protected buffer that is destroyed on return. (Owner ruling: writing the
+  key to a file is acceptable; printing it to a terminal, scrollback and
+  shell history is not.)
+
+- **BREAKING — shutdown can now report that it did not finish cleanly.**
+  `(*phone.PhoneKeyBackend).Close` and `(*phone.BLEPeripheral).Stop` return
+  `phone.ErrShutdownIncomplete` when a reader could not be confirmed stopped
+  within the shutdown window. Both were previously `nil`-always on that path.
+  The component IS shut down either way and needs no second call. The error
+  says the component could not prove it finished — for `Close`, and for
+  `Stop` when a connection did not drain, that means the protected key was
+  retained; `Stop` also returns it when an advertisement could not be taken
+  down, which does not retain the key because nothing reachable through an
+  advertisement reads it. **A caller that supplied the key and kept ownership
+  must not destroy it after seeing this** — that is exactly the
+  use-after-free the retention avoids.
+
+### Added
+
+- **`sdk/go/transport/usb` re-exports `ErrDirtyState`**, the sentinel
+  `Connect` now returns when the transport still holds state from a previous
+  connection. It was added to the implementation in this release and left out
+  of the SDK, so an SDK consumer could see the refusal and not identify it.
+  A test pins every sentinel in that package as the same value the transport
+  returns, since a re-export that drifted into a separate `errors.New` would
+  compile and pass every in-repo test.
+- **`sdk/go/bootstrap` re-exports the whole Noise key surface**, not most of
+  it: `NoiseHexKeySize`, `NoiseServerStaticKey` and `WipeNoiseBytes` join the
+  generate/encode/decode helpers that were already there. Consumers are
+  required to use the SDK boundary rather than `pkg/trust/bootstrap`, and
+  without these three an SDK-only caller could generate a protected key,
+  could not size a buffer to encode it, could not hand it to
+  `NoiseServerConfig`, and could not wipe the buffer afterwards. The same
+  composition gap appeared one layer down earlier in this release; each half
+  compiled on its own, and nothing exercised the combination. There is now a
+  test that walks generate → adapt → encode → decode → wipe using only what
+  this package exports.
+
+### Removed
+
+- **BREAKING — `(*pairing.NoiseSession).LocalStaticPrivateKey()` is gone**,
+  and with it the same method on the `phone.NoiseSession` alias. It handed
+  the protected static scalar back to any caller as an ordinary `[]byte`,
+  which is precisely the guarantee the rest of this release implements —
+  a public accessor that copies protected material out of protection
+  contradicts holding it in protection at all. It had no non-test caller in
+  the tree. Removed under the pre-1.0 MINOR breakage allowance
+  (`release-versioning.md` §1) because leaving it costs more than removing
+  it. `LocalStaticPublicKey()` is unaffected: the public half is what callers
+  legitimately need, and it identifies the scalar in use without exposing it.
+
+### Security
+
+- **The Noise bootstrap server's static key is no longer freed while the
+  server is running.** `startNoiseBootstrap` destroyed it on the way out, on
+  the stated premise that `Start` blocks until shutdown. It does not:
+  `noiseboot.Server.Start` binds the listener, launches its accept loop in a
+  goroutine, and returns. The protected pages were therefore freed while the
+  published server and every subsequent handshake still aliased them, so any
+  client connecting afterwards read freed memory. The key now belongs to the
+  `Server` and is destroyed in `Shutdown`, and only when `Stop` both returns
+  nil AND its deadline has not expired. Neither alone is proof: upstream
+  `Stop` returns nil whether it drained or timed out, and it also returns
+  immediately without waiting for anything when it does not consider itself
+  started, which leaves the deadline unexpired. Without both the key is
+  retained.
+- **Shutdown results are propagated, not logged and dropped.** The components
+  learned to report an incomplete drain earlier in this release, and every
+  layer above them discarded it: `PhoneService.Disconnect` returned nil over a
+  timed-out teardown, `Server.Shutdown` swallowed both the Noise drain timeout
+  and its own global deadline, and `xkey device listen` exited 0 after a
+  handler-drain timeout. A contract that is correct and unread is the same
+  fail-open one layer up. `Server.Shutdown` and the CLI now return the
+  incomplete result; `PhoneService.closeActiveConnectionLocked` returns an
+  error its three callers act on.
+- **`Server.Shutdown` is latched.** Concurrent callers raced into
+  `close(s.shutdownCh)` and panicked on close-of-closed, and each independently
+  stopped the bootstrap server and could destroy the same protected key twice.
+- **The bootstrap server is published only after it starts.** Publishing
+  first left a window where `Shutdown` could snapshot a server that had not
+  started, call `Stop` on it — which returns immediately without waiting for
+  anything — read that as a clean drain, and destroy the key before the
+  accept loop ever ran. Publication and the shutdown check now happen under
+  one lock, so either `Shutdown` sees a started server or the startup path
+  sees the cancelled context and stops the server itself.
+- **`TCPPairingServer.Stop` bounds its wait and no longer holds the lifecycle
+  lock across it.** Connection workers call a caller-supplied handler
+  synchronously, so closing the socket does not interrupt one that ignores
+  cancellation — the wait could never return. Holding the lock across it also
+  deadlocked any handler that called `LocalStaticPublicKey`. `Stop` now
+  returns `ErrShutdownIncomplete` and retains the key when the join times out.
+- **Every retention path keeps the key reachable rather than clearing the
+  field.** The pages survive either way — memguard pins every live buffer in
+  a package-level list, and has no finalizer — but "we are retaining this"
+  and "we dropped the only pointer to it" should not look identical in the
+  source, and holding the owner is what a future reclamation path would need.
+  A test pins the upstream assumption so a change to it fails there rather
+  than in a shutdown path nobody runs.
+- **A supplied key whose ownership transfers is consumed from the config.**
+  `OwnsStaticKey` recorded the backend as owner but left the pointer in the
+  caller's config, so a second construction from the same config produced two
+  owners of the same protected pages and whichever closed first freed pages
+  the other's session was reading. This is the mirror of the write-back
+  hazard fixed earlier in this release: that one added a key the caller never
+  supplied, this one failed to remove one the caller gave away.
+- **Connection teardown detaches its generation before draining.** The
+  bounded drain releases the connection mutex — that is what lets in-flight
+  operations finish — and a concurrent `Connect` could publish a new
+  transport, session and key in that window. Teardown then cleared the new
+  session and destroyed the new key. It now snapshots what it is tearing down
+  before the wait and destroys only that.
+- **`MessageRouter.Start` registers under the router mutex, and `Join`
+  refuses to report a drain before `Stop`.** The single-waiter join latches
+  whatever it first observes, so a `Join` running before `Start` could latch
+  "drained" on an empty wait group and keep reporting success while the
+  receive loop was alive — telling the owner it was safe to destroy a key
+  being actively read. `Start` is now a no-op on a stopped or already-started
+  router, which is also what a `WaitGroup` requires: an `Add` from zero must
+  happen before any `Wait`.
+- **Every Noise static key now has exactly one owner.** Previously a
+  generated key could be destroyed by a component that had merely borrowed
+  it, or leaked because no component considered itself responsible. Ownership
+  is decided once, at construction: a backend destroys the key it generated,
+  or the one a caller explicitly transferred to it, and never one it
+  borrowed.
+- **The constructor no longer writes a generated key back into the caller's
+  config.** A reused config would otherwise hand the next backend a key the
+  first one owns and destroys, leaving the second reading freed protected
+  pages. Ownership is now tracked in an unexported field the caller cannot
+  observe or reuse.
+- **Readers are synchronised against destruction, everywhere.** The USB
+  transport serialises its whole `Connect`/`Close` lifecycle under one lock
+  rather than checking a flag and acting on it later; `Connect` re-checks the
+  closed state in-lock; the TCP pairing server and the BLE peripheral join
+  their connection goroutines before releasing key material; the phone
+  backend drains outstanding session leases before destroying anything.
+- **`Close` retains an owned key rather than freeing it under an unjoined
+  reader.** If the message-router join cannot be confirmed within its
+  timeout, the key is deliberately NOT destroyed. Leaking protected pages is
+  the safe failure mode; freeing pages a live goroutine is decrypting through
+  is not.
+- **`bootstrap.NoiseServerStaticKey` replaces an alias that no longer
+  composed.** `NoiseStaticKey` became a protected `StaticKey` while
+  `NoiseServerConfig.StaticKey` still took a `*noise.DHKey`, so the two
+  re-exports could not be used together by an outside caller even though
+  both compiled in isolation. The adapter returns a pair that aliases the
+  protected pages rather than copying them.
+- **Decoded key buffers are wiped on every path**, including the failure
+  paths that previously returned early with the buffer live.
+
+### Fixed
+
+- **Every shutdown drain is bounded, not just the router join.** Three waits
+  added by this release waited without a bound on work the package does not
+  control, so each was a shutdown that could hang forever:
+  `PhoneKeyBackend.Close` (waiting for session leases, while holding the
+  mutex every other method needs), `BLEPeripheral.Stop` (waiting on a
+  caller-supplied `RequestHandler` with a context it neither owns nor
+  cancels), and the GUI phone service's teardown (waiting on a BLE round trip
+  with a handset that may never answer).
+
+  The bounded-join lesson had been applied at exactly one site and not
+  carried to the shape. All four now go through one primitive, and all four
+  take the same branch on timeout: retain the protected key, report it, do
+  not free pages a reader may still be using.
+- **The USB transport drops its bus handle when it closes it.** `Close` shut
+  the underlying transport down but left it installed, and `Connect` only
+  builds a new one when the field is nil. The production USB transport treats
+  `Close` as terminal, so `ErrDirtyState`'s own advice — close, then
+  reconnect — could not be followed: the dirty check passed and every
+  reconnect handshaked over a dead bus. `Connect`'s own failure paths drop it
+  too. The lifecycle tests missed this because their fake is reusable; there
+  is now one whose `Close` is terminal.
+- **A failed bridge setup no longer leaks the xkmsd client and TPM
+  enroller.** `EnableBidirectional` gained an error return in this release,
+  which gave `newPhoneBackendWithBridge` a failure path it never had, and
+  the resources acquired above it have no other owner until the wrapper is
+  built. It now mirrors the cleanup the adjacent `NewBridge` failure already
+  did.
+- **`xkmsctl bootstrap noise-key` no longer deletes a file it did not
+  create.** The failure cleanup called `os.Remove(path)`, which unlinks
+  whatever holds the name at that moment rather than the file the failure
+  produced. Anything with write access to the parent directory could rename
+  the partial key away and drop an unrelated file at the same path in
+  between, and the cleanup would delete that instead. The removal is now
+  gated on `os.SameFile` against a stat taken while the descriptor is still
+  open; when identity cannot be established the file is left alone, because
+  a stranded partial key is reported and refused by the next run's `O_EXCL`
+  while a wrong unlink is silent and irreversible.
+- **`MessageRouter` shutdown is split into `Stop()` and `Join(timeout)`.**
+  `SendRequest` now registers on the wait group with a check-and-`Add` under
+  the router mutex, so a request in flight cannot race a shutdown that has
+  already observed an empty group. The previous unconditional wait could hang
+  indefinitely, because `receiveLoop` blocks in an uncancellable
+  `Transport.Receive` and only observes shutdown between messages. Making
+  `Receive` cancellable is tracked as go-xkms#30 and is NOT required for
+  memory safety — see the retention behaviour above.
+- **`EnableBidirectional` returns an error, requires a connected backend, and
+  is idempotent** instead of silently starting a second router.
+- **`e2eprobe` tears down in order** — signal, unblock, join, then release —
+  rather than relying on three LIFO defers whose order was wrong.
+- Corrected a comment in `message_loop.go` that claimed `receiveLoop` manages
+  its own lifecycle via the done channel. It does not; that claim is what
+  made the original unconditional join look safe.
+
+### Known limitations
+
+- The phone-pairing Noise private key is persisted as base64 in YAML and held
+  in an unwipeable Go string while loaded. See the guarantee note at the top
+  of this release.
+- `usb.NoiseConfig.LocalStaticPrivateKey` remains a public `[]byte`. It is
+  caller-supplied rather than produced by this package, so it is part of the
+  same storage-format question rather than a separable fix.
+- **Which parts of this release are backed by execution, and which are not.**
+  Worth knowing, because it is not uniform:
+  - `xkey/pkg/phone`, `xkey/pkg/pairing`, `xkey/internal/lifecycle` and
+    `pkg/trust/bootstrap` pass under `-race`, under the default tags and
+    under `-tags ble`, and every behavioural fix in them has a test that
+    fails against its own regression.
+  - `xkey/cmd/xkey/cmd` **cannot compile its test binary under `-tags ble`**
+    (go-xkms#31) — pre-existing on the v0.7.5-alpha tag, but it means that
+    package's ble-tagged tests have never run.
+  - `-tags usb` cannot be vetted or tested without libusb-1.0 headers, which
+    CI does not install. That surface is verified by build and review only.
+  - Ten packages in the `xkey` module and eight in the root module fail their
+    tests, identically on v0.7.5-alpha and on this release. Three of the root
+    ones need `-tags codec_json` and are red without it. The `xkey` module is
+    not wired into CI at all, which is why nobody noticed. Nothing here
+    regressed them and nothing here fixed them.
+
 ## [0.7.5-alpha] - 2026-08-19
 
 ### Security

@@ -413,6 +413,10 @@ func connectPairedDevice(device *PairedDevice, timeout time.Duration, sentinel e
 	if err != nil {
 		return nil, &WrappedError{Msg: "invalid local noise key", Err: err}
 	}
+	// Wiped here, at the decode, not at the LoadStaticKey below: a decode
+	// failure on any other field returns in between, and the raw scalar
+	// would be left sitting in garbage-collected memory.
+	defer phone.WipeBytes(localPrivateKey)
 	remotePublicKey, err := base64.StdEncoding.DecodeString(device.NoisePublicKey)
 	if err != nil {
 		return nil, &WrappedError{Msg: "invalid phone noise key", Err: err}
@@ -424,8 +428,11 @@ func connectPairedDevice(device *PairedDevice, timeout time.Duration, sentinel e
 	}
 
 	transport, err := dialPairedDevice(&phone.PhoneKeyBackendConfig{
-		DeviceAddress:        device.Address,
+		DeviceAddress: device.Address,
+		// This helper hands the transport to its caller and keeps nothing, so
+		// the backend has to own the key or it would never be released.
 		LocalStaticKey:       localKey,
+		OwnsStaticKey:        true,
 		ExpectedRemoteStatic: remotePublicKey,
 		ScanTimeout:          30 * time.Second,
 		ConnectTimeout:       30 * time.Second,

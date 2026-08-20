@@ -526,6 +526,7 @@ func TestTPMPhoneCoverageBoost_PhoneUnpair_DefaultDeviceReassigned(t *testing.T)
 	})
 
 	err := svc.Unpair("Phone-Remove")
+	svc.awaitNoticesDelivered()
 	require.NoError(t, err)
 
 	// Verify the config was updated: default device should be reassigned
@@ -550,6 +551,7 @@ func TestTPMPhoneCoverageBoost_PhoneUnpair_DefaultDeviceCleared(t *testing.T) {
 	})
 
 	err := svc.Unpair("OnlyPhone")
+	svc.awaitNoticesDelivered()
 	require.NoError(t, err)
 
 	cfg, cfgErr := svc.loadConfig()
@@ -572,6 +574,7 @@ func TestTPMPhoneCoverageBoost_PhoneUnpair_DeviceNotFound(t *testing.T) {
 	})
 
 	err := svc.Unpair("NonExistentPhone")
+	svc.awaitNoticesDelivered()
 	assert.ErrorIs(t, err, ErrPhoneDeviceNotFound)
 }
 
@@ -584,6 +587,7 @@ func TestTPMPhoneCoverageBoost_PhoneUnpair_EmptyName(t *testing.T) {
 	svc.SetContext(context.Background())
 
 	err := svc.Unpair("")
+	svc.awaitNoticesDelivered()
 	assert.ErrorIs(t, err, ErrPhoneDeviceNotFound)
 }
 
@@ -741,6 +745,7 @@ func TestTPMPhoneCoverageBoost_PhoneDisconnect_EmptyName(t *testing.T) {
 	svc.SetContext(context.Background())
 
 	err := svc.Disconnect("")
+	svc.awaitNoticesDelivered()
 	assert.ErrorIs(t, err, ErrPhoneDeviceNotFound)
 }
 

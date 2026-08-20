@@ -66,6 +66,10 @@ func TestBuildSecretRegistry_WithCredentialService(t *testing.T) {
 	// Full resolution round-trip.
 	sv, err := reg.Resolve(context.Background(), "credential://"+credName)
 	require.NoError(t, err)
+	// nolint:staticcheck // go-xkms#41: this asserts the round trip the
+	// production path still performs. It migrates WITH those sites, not before
+	// them — asserting on String is only wrong once production stops using it.
+	// Delete this directive when #41 lands.
 	assert.Equal(t, credValue, sv.String())
 	sv.Clear()
 }

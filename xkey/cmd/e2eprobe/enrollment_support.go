@@ -24,7 +24,7 @@ import (
 	"crypto/subtle"
 	"crypto/x509"
 	"crypto/x509/pkix"
-	flynnNoise "github.com/flynn/noise"
+	"github.com/jeremyhahn/go-truststrap/pkg/noiseproto"
 	pairing "github.com/jeremyhahn/go-xkms/xkey/pkg/pairing"
 	"math/big"
 	"strconv"
@@ -121,7 +121,8 @@ func issueProbeCredential(csrDER []byte) ([]byte, error) {
 // XKEY_PROBE_STATIC_KEY supplies a fixed base64 private key so the phone can be
 // told about this peer in advance; without it a fresh key is generated and the
 // phone will ask a human to approve the pairing.
-func probeStaticKey() (*flynnNoise.DHKey, error) {
+// The caller owns the returned key and must Destroy it.
+func probeStaticKey() (*pairing.StaticKey, error) {
 	encoded := strings.TrimSpace(os.Getenv("XKEY_PROBE_STATIC_KEY"))
 	if encoded == "" {
 		return pairing.GenerateStaticKey()
@@ -130,5 +131,8 @@ func probeStaticKey() (*flynnNoise.DHKey, error) {
 	if err != nil {
 		return nil, err
 	}
+	// LoadStaticKey copies the scalar into protected memory, so the decoded
+	// heap copy can go.
+	defer noiseproto.WipeBytes(raw)
 	return pairing.LoadStaticKey(raw)
 }
