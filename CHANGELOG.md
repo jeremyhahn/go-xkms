@@ -7,6 +7,27 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.7.8-alpha] - 2026-08-20
+
+**Agent-only SSH sessions**: an xkms-held key served over an ephemeral
+in-process SSH agent socket with no connection target, for tools that speak
+the ssh-agent protocol without dialing a host. The motivating consumer is git
+commit signing under `gpg.format=ssh`; `ssh-keygen -Y sign` and `age` use the
+same socket.
+
+This also hardens `pkg/ssh/agent` considerably, and most of that hardening is
+in code this release did not otherwise change. Nothing about that code moved —
+what moved is its exposure: it stopped being an internal detail of one call
+path and became a primitive any consumer can point at any key, which raises
+the security bar it has to meet. The Security section below is the cost of
+that promotion, paid here rather than inherited.
+
+Two behaviour changes worth reading before upgrading: an RSA key served over
+an agent socket **no longer signs with SHA-1**, so a server accepting only
+legacy `ssh-rsa` will not authenticate with one; and `agent.Listen` no longer
+clears a stale socket, so a leftover from a crashed run is the directory
+owner's to remove.
+
 ### Added
 
 - **SSH SDK: agent-only sessions (`xkmsssh.StartAgent`)** (#52). Serves
