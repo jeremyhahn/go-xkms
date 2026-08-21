@@ -248,9 +248,8 @@ jobs:
         working-directory: xkey
         run: go test -race -v ./internal/lifecycle/... ./pkg/phone/... ./pkg/pairing/...
 
-      # The two steps below name their tests individually, because their
-      # packages hold pre-existing failures that these gates are not about
-      # (go-xkms #32 under the ble tag, and #104 in the GUI services package).
+      # The GUI services step below names its tests individually, because that
+      # package holds pre-existing failures the gate is not about (#104).
       #
       # A -run selector that matches nothing exits 0, so naming tests that way
       # makes the gate only as good as the names staying correct: rename one
@@ -258,24 +257,44 @@ jobs:
       # asserts every name matches at least one test before it runs any of
       # them, so a rename is a red job rather than a silent hole.
       #
+      # The ble step used to be the other one. It no longer names tests -- see
+      # below.
+
       # The ble-tagged half of pkg/phone holds the peripheral's key lifecycle
       # and is compiled by neither the default build nor the race job above.
-      - name: xkey peripheral lifecycle (-tags ble)
+      #
+      # The WHOLE ble-tagged package, not a named list (#79).
+      #
+      # The list was correct when written: the full suite was red -- three
+      # failures and four data races (#27) -- so naming the passing tests was
+      # the only way to get signal without a permanently red job. That suite is
+      # green now, so every test not on the list was simply dark, and any test
+      # added to this package arrived dark.
+      #
+      # Under -race, which the named-list step was NOT. All four defects #27
+      # found were data races; a non-race run would have reported none of them,
+      # and the ble half of pkg/phone is precisely the concurrent code
+      # (advertisement lifecycle, connection drain, key release) where they
+      # live.
+      #
+      # This also removes the reason require-tests.sh guarded this step. That
+      # helper exists because naming tests makes a gate only as good as the
+      # names staying correct -- rename one and the job passes having tested
+      # nothing. Running the package removes that failure mode at the source: a
+      # renamed test still runs. The guard is not weakened here, it is made
+      # unnecessary.
+      #
+      # Scoped to ./pkg/phone/ deliberately, NOT -tags ble ./... : cmd/xkey/cmd
+      # carries environment-dependent auth/token-store tests and a 25s BLE-scan
+      # timeout, so widening this would trade a dark corner for a flaky job.
+      # Compile coverage for the rest of the tag set is go vet -tags ble ./...
+      # (#31), which type-checks those tests without running them.
+      #
+      # Measured at ~33s on a workstation; if it grows materially, split it
+      # rather than going back to naming tests.
+      - name: xkey peripheral lifecycle (-race -tags ble)
         working-directory: xkey
-        run: |
-          ../.github/scripts/require-tests.sh ./pkg/phone/ ble \
-            TestBLEPeripheral_Stop \
-            TestAdoptedStaticKey \
-            TestNoSuppliedKey \
-            TestStopClearsTheAdvertisement \
-            TestStartRaisesAdvertisingUnderTheSameLockThatPublishesIt \
-            TestStartRefusesAfterStopAndLeavesNothingAdvertising \
-            TestPublishAdvertisementKeepsTheHandleWhenTheControllerRefuses \
-            TestASecondStartIsRefusedRatherThanOverwritingTheHandle \
-            TestStopReportsIncompleteWhenAdvertisingCannotBeStopped \
-            TestStopRetainsTheKeyWhenAConnectionDidNotFinish \
-            TestStopReleasesTheKeyWhenAdvertisingStops \
-            TestStartRefusesBeforeItTouchesARunningPeripheral
+        run: go test -race -tags ble ./pkg/phone/ -count=1
 
       - name: xkey GUI service teardown
         working-directory: xkey
