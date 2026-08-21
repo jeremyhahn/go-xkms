@@ -113,3 +113,159 @@ jobs:
         run: |
           trivy fs --scanners vuln,secret --severity CRITICAL,HIGH --exit-code 1 --format table \
             --skip-dirs test --skip-dirs examples --skip-dirs data --skip-dirs bin --skip-dirs build .
+
+  # MOVED OFF THE PUSH PATH 2026-08-21 (go-xkms #19, #61).
+  #
+  # This job was already ADVISORY in ci-gate -- ruled 2026-08-18 because it had
+  # passed once in 40 executions and never on main. What changed is that its red
+  # is now fully explained and cannot clear from this repository: xkmsd dies
+  # during boot because a standalone embedded qrdb node exposes no
+  # TransactionServicer, so the CA's first PutIfAbsent fails (#61, blocked on
+  # go-qrdb#62). Until that ruling lands the job cannot pass no matter what is
+  # pushed here.
+  #
+  # That is exactly the ci-template v1.9 criterion that moved fips and trivy
+  # here: a known-red job burning runner-minutes on every push verifies
+  # nothing, and worse, it trains everyone to read red as noise. At 17m25s
+  # (measured, run 4384) across every push and every PR, this was the single
+  # largest non-gating cost in ci.yml.
+  #
+  # NOT a deletion, and #19's instruction against one still stands. The suite is
+  # unchanged, runs nightly, and is dispatchable on demand -- so the moment #61
+  # unblocks it can be exercised immediately with workflow_dispatch, and it
+  # returns to ci.yml (with its ci-gate entry restored to `check`, not
+  # `advisory`) once it has passed there.
+  # Job 2: Integration Tests
+  integration-test:
+    name: Integration Tests
+    runs-on: ubuntu-latest
+
+    steps:
+      # DELIBERATE divergence from ci-template v1: the template's
+      # `sudo docker system prune -af --volumes` is gone and must not come
+      # back. Our Actions hosts are SHARED between repositories, and that
+      # prune is host-global -- it deletes every image no running container
+      # holds plus every unused named volume, i.e. other repos' images, not
+      # just ours. On 2026-08-17 it repeatedly destroyed the codex-review
+      # job image on two shared hosts and failed 16 review runs
+      # portfolio-wide (go-xkms#2). Docker cleanup is scoped to this
+      # repository's own resources and happens in the suite's pre-run
+      # `clean-test-containers` step -- see the note at the end of this job
+      # for why there is no end-of-job teardown.
+      - name: Free up disk space
+        run: |
+          echo "=== Disk space before cleanup ==="
+          df -h
+          # Remove unnecessary tools and packages to free up disk space
+          sudo rm -rf /usr/share/dotnet
+          sudo rm -rf /usr/local/lib/android
+          sudo rm -rf /opt/ghc
+          sudo rm -rf /opt/hostedtoolcache/CodeQL
+          # This used to be `docker system prune -af --volumes`, which on a
+          # shared runner host deleted the tagged images, stopped containers
+          # and volumes of every OTHER job running at the same time --
+          # breaking their runs to free disk for this one.
+          #
+          # `image prune -f` (no -a) removes only DANGLING images, so it can
+          # never take an image another job is about to run. Do not widen it
+          # to -a, and never add --volumes: both reach into live jobs.
+          #
+          # `builder prune -af` is aggressive on purpose. Build cache is a
+          # pure performance resource -- dropping it can slow a concurrent
+          # job's build but cannot change what that job produces or tests --
+          # and this step exists because the runner does run out of disk.
+          docker image prune -f || true
+          docker builder prune -af || true
+          echo "=== Disk space after cleanup ==="
+          df -h
+
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: ${{ env.GO_VERSION }}
+          cache: true
+
+      - name: Install dependencies
+        run: go mod download
+
+      # docker/setup-buildx-action@v3 spins up a NEW docker-container-driver
+      # buildkitd (pull moby/buildkit:buildx-stable-1 + boot a container) on
+      # every run -- needed for the multi-platform builds the release/docker
+      # jobs do, but this job's builds are all single-arch --load (make
+      # docker-build and everything make integration-test's docker
+      # compose/buildx sub-targets do), which the runner's already-running
+      # built-in BuildKit (the default `docker` buildx driver) handles
+      # without bootstrapping anything. Runner-log-proven (task 2975): under
+      # load, that bootstrap took 83.9s and then failed outright --
+      # "failed to list workers ... buildkitd.sock: no such file or
+      # directory" -- before make docker-build ever ran. Skipping the setup
+      # step removes that failure mode entirely rather than just retrying it.
+      - name: Build Docker image
+        run: make docker-build
+
+      - name: Run integration tests
+        # XKMS_COMPOSE_SERVER=1 forces the compose xkms-server (grpc/quic/mcp
+        # network listeners) to build and start unconditionally. The default
+        # `auto` mode only starts it when a go-xkms-server:dev image already
+        # exists locally -- a local-dev convenience that never holds on a
+        # fresh runner, so `auto` silently degrades to the in-devcontainer
+        # unix-socket-only fallback (scripts/start-test-xkmsd.sh) and every
+        # grpc/quic/mcp subtest fails with "protocol grpc is not reachable at
+        # xkms-server:9443" (task 3129).
+        run: XKMS_COMPOSE_SERVER=1 make integration-test
+        timeout-minutes: 60
+
+      # Unconditional: the compose stacks are torn down whether the suite
+      # passed, failed, timed out or the job was cancelled. Cleanup used to
+      # exist only on the success path inside the make recipes, so a crashed
+      # or cancelled run left its containers on the host forever and every
+      # later run on that host failed to start with a name conflict.
+      #
+      # Safe to run concurrently with another job's: every stack is namespaced
+      # by repository AND run id (Makefile: COMPOSE_NS / XKMS_IMAGE_TAG), and
+      # image removal is additionally bounded to the image names this harness
+      # builds, so these targets can only ever name this run's own containers,
+      # networks, volumes and image tags.
+      - name: Tear down integration test stacks
+        if: always()
+        run: |
+          make clean-test-containers || true
+          make devcontainer-clean || true
+          make clean-run-images || true
+
+      - name: Upload integration test results
+        if: always() && github.server_url == 'https://github.com'
+        uses: actions/upload-artifact@v6
+        with:
+          name: integration-test-results
+          path: |
+            *.out
+            *.log
+            build/test-results/
+          retention-days: 7
+
+      # NO end-of-job Docker teardown here, deliberately. Cleanup of this
+      # repository's containers/networks/volumes/images happens at the START
+      # of the suite instead: `make integration-test` depends on
+      # `clean-test-containers`, which under CI runs in `project` scope --
+      # this repo's own compose projects and `go-xkms-*` containers only, no
+      # port sweep, no substring sweep, no prune of any kind.
+      #
+      # An `if: always()` teardown at the end of the job would be
+      # repository-scoped but not RUN-scoped: compose project names,
+      # container names and image tags are fixed, so it could tear down a
+      # second, concurrent run of this repository that was mid-suite (a push
+      # to an open PR triggers both `push` and `pull_request` runs, and
+      # Gitea 1.27.1 cancels any job carrying a `concurrency:` group even
+      # when the group is unoccupied -- d7f60eb4 -- so there is no working
+      # serialization to lean on). Per-run isolation (run-id-derived project
+      # names, tags and ports) plus the job-scoped teardown it would make
+      # safe are tracked in #15 for the owner to approve.
+      #
+      # What this job leaves behind is therefore bounded by the next run's
+      # pre-suite cleanup rather than reclaimed immediately -- an acceptable
+      # trade against deleting a sibling run's or another repository's
+      # resources. Daemon-level image/build-cache GC stays a host concern.
