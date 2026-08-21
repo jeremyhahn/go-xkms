@@ -7,6 +7,28 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.8.0-alpha] - 2026-08-20
+
+**MINOR, not PATCH**: this carries a breaking API change, and pre-1.0 that is
+what MINOR means ([release-versioning.md](https://198.51.100.91:3001) §1).
+`make release-alpha` only increments PATCH, so this was tagged by hand.
+
+**`agent.Session.Stop` now takes a context and returns a `ShutdownReport`.**
+v0.7.8-alpha bounded shutdown with a fixed internal constant and returned
+nothing — the silent bounded stop: it re-introduced, as an *undocumented*
+surprise, the thing the connection drain was built to prevent, with the bound
+chosen by the library rather than by whoever is shutting down.
+
+Upgrading from v0.7.8-alpha: `defer sess.Stop()` becomes
+`defer sess.Stop(context.Background())`, or pass a deadline and read the
+report. `connect.Session`'s `Stop`, `Sync` and `SyncAndStop` take one too.
+
+The hardening below is mostly in code v0.7.8-alpha did not change. What
+changed is that its errors and bounds became *meaningful*: making an error
+real is a change to every caller that ignores it, and bounding a call is not
+free, because every fail-open beneath it turns a timeout into a silent
+success.
+
 ### Changed
 
 - **BREAKING: `agent.Session.Stop` takes a context and returns a
