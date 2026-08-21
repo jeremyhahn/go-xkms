@@ -7,6 +7,34 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- **BREAKING: `agent.Session.Stop` takes a context and returns a
+  `ShutdownReport`** (#55, owner ruling on #52). v0.7.8-alpha bounded shutdown
+  with a fixed internal constant and returned nothing, which is the silent
+  bounded stop: it re-introduced, as an *undocumented* surprise, the very thing
+  the connection drain was built to prevent, with the bound chosen by the
+  library rather than the caller.
+
+  Neither pure horn is acceptable — an unbounded `Stop` hands control of a
+  worker's lifetime to a wedged TPM, and a silent bounded one hides a real
+  residual. So `Stop(ctx) ShutdownReport`: the listener closes and every
+  attached client is disconnected **unconditionally**, before any waiting, so
+  no new client can attach and no new signing operation can start; the
+  connection handlers are then joined within `ctx`, and the report names how
+  many were abandoned. Never a bare nil.
+
+  The residual, documented rather than discovered: an abandoned handler may
+  still deliver a signature to a client that attached *before* `Stop` began. No
+  new authorization occurs — that client was already served by an authorized
+  session. Re-exported as `AgentShutdownReport`.
+
+  Callers upgrading from v0.7.8-alpha change `defer sess.Stop()` to
+  `defer sess.Stop(context.Background())`, or pass a deadline and act on the
+  report. `connect.Session.Stop` takes a context and returns the same report
+  for the same reason — a layer that picks the bound on a caller's behalf is
+  choosing when to give up on their behalf too.
+
 ## [0.7.8-alpha] - 2026-08-20
 
 **Agent-only SSH sessions**: an xkms-held key served over an ephemeral

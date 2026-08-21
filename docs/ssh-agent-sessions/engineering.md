@@ -36,7 +36,13 @@ type Session struct {
 func StartSession(ctx context.Context, req Request) (*Session, error)
 func SocketPath(workDir string) string
 func (s *Session) Done() <-chan struct{}
-func (s *Session) Stop()
+
+type ShutdownReport struct {
+	Abandoned int // signature operations still EXECUTING when the bound elapsed
+}
+
+func (r ShutdownReport) Clean() bool
+func (s *Session) Stop(ctx context.Context) ShutdownReport
 
 func Serve(ctx context.Context, socketPath string, a sshagent.Agent) error // pre-existing
 
@@ -87,19 +93,22 @@ func Serve(ctx context.Context, socketPath string, a sshagent.Agent) error // pr
    an `SSH_AUTH_SOCK` that answers nothing.
 8. **Socket mode is 0600.** The socket is a signing oracle for whoever can
    connect to it.
-9. **The session ends once, on either path.** `Stop()` or ctx cancellation,
-   whichever comes first; both converge on one reaper. `Stop()` blocks until the
-   socket is gone and is idempotent, including on an already-cancelled session.
+9. **The session ends once, on either path.** `Stop` or ctx cancellation,
+   whichever comes first; both converge on one reaper. `Stop` is idempotent,
+   including on an already-cancelled session.
 10. **Shutdown disconnects live clients, and terminates.** Closing the listener
    is not enough: an already-attached client would keep signing through an
    ended session. Closing the listener and disconnecting every live connection
    are unconditional, and together they are what make the session unusable.
-   Joining the handlers afterwards is bounded (`handlerJoinTimeout`), because a
-   handler stuck inside an uninterruptible `Signer.Sign` — a TPM awaiting touch,
-   a stalled KMS — cannot be woken and does not need to be waited for: the
-   connection it would write its signature to is already closed, so it can
-   answer nobody. Waiting forever would hang `Stop()` and leave the work
-   directory unreaped to guard against an oracle with no one to talk to.
+   Joining the handlers afterwards happens **within the caller's context**,
+   because a handler stuck inside an uninterruptible `Signer.Sign` — a TPM
+   awaiting touch, a stalled KMS — cannot be woken and does not need to be
+   waited for: the connection it would write its signature to is already
+   closed, so it can answer nobody. `Stop` returns a `ShutdownReport` naming
+   any it abandoned; waiting without a bound hands the caller's shutdown to a
+   wedged device, and a bounded stop that reported nothing would be the same
+   surprise as no bound at all. The work directory is reaped by the session's
+   own reaper on the default bound, so it goes even when nobody calls `Stop`.
    The socket file is unlinked by closing the listener and **never again**:
    joining slow handlers takes long enough for a successor session on the same
    `WorkDir` to have bound the path, and a late removal would delete that live

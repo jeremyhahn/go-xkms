@@ -53,7 +53,7 @@ func commitSigned(ctx context.Context, client xkmsssh.Client, repo, msg string) 
 	if err != nil {
 		return err
 	}
-	defer sess.Stop()
+	defer sess.Stop(context.Background())
 
 	cmd := exec.CommandContext(ctx, "git",
 		"-c", "gpg.format=ssh",
@@ -113,10 +113,34 @@ sess, err := xkmsssh.StartAgent(ctx, xkmsssh.AgentOptions{
 
 ## Lifetime — the part to get right
 
-The session ends at the first of `Stop()` or cancellation of the context you
+The session ends at the first of `Stop` or cancellation of the context you
 passed in. Either way the socket file is removed.
 
-- `defer sess.Stop()` is the normal shape. It blocks until the socket is gone.
+`Stop` takes its own context, separate from the session's:
+
+```go
+// Wait as long as it takes for a clean shutdown.
+defer sess.Stop(context.Background())
+
+// Or bound it, and act on what could not be finished.
+ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+defer cancel()
+if r := sess.Stop(ctx); !r.Clean() {
+    log.Printf("%d signing operation(s) still running at shutdown", r.Abandoned)
+}
+```
+
+- The listener closes and every attached client is disconnected **before** `Stop`
+  waits for anything, whatever the context says. No new client can attach and no
+  new signing operation can start.
+- It then joins the connection handlers within your context. A handler stuck
+  inside a `Sign` your backend has not returned from — a TPM awaiting touch, a
+  KMS that stopped answering — cannot be woken, so the report tells you how many
+  were left rather than waiting forever or pretending it was clean.
+- A non-zero `Abandoned` is not a leak. Those handlers hold no connection. But
+  one of them may still complete a signature for a client that attached *before*
+  you called `Stop`. If that matters to you, tear the process down; if the
+  abandoned work is your own, carry on.
 - If you cancel the context instead, wait on `sess.Done()` before assuming the
   socket has been cleaned up.
 - Never hand `SockPath` to something that outlives the session — the path stops

@@ -90,7 +90,7 @@ func TestStartAgent_ServesTheKMSHeldKey(t *testing.T) {
 	if err != nil {
 		t.Fatalf("StartAgent: %v", err)
 	}
-	defer sess.Stop()
+	defer sess.Stop(context.Background())
 
 	// The socket is usable the moment StartAgent returns -- no polling.
 	client := dialAgent(t, sess)
@@ -138,7 +138,7 @@ func TestStartAgent_PrivateKeyNeverLeavesTheSession(t *testing.T) {
 	if err != nil {
 		t.Fatalf("StartAgent: %v", err)
 	}
-	defer sess.Stop()
+	defer sess.Stop(context.Background())
 
 	client := dialAgent(t, sess)
 
@@ -210,8 +210,11 @@ func TestStartAgent_StopEndsTheSession(t *testing.T) {
 		t.Fatalf("held connection must sign while the session is live: %v", serr)
 	}
 
-	sess.Stop()
-	sess.Stop()
+	report := sess.Stop(context.Background())
+	if !report.Clean() {
+		t.Fatalf("expected a clean shutdown, %d abandoned", report.Abandoned)
+	}
+	sess.Stop(context.Background()) // idempotent
 
 	if _, serr := os.Stat(sess.SockPath); !errors.Is(serr, os.ErrNotExist) {
 		t.Fatalf("socket must be gone once Stop returns: %v", serr)

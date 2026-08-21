@@ -217,7 +217,7 @@ func TestStart_ExtraFilesAndOptions(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Start: %v", err)
 	}
-	defer sess.Stop()
+	defer sess.Stop(context.Background())
 
 	if !contains(sess.Args, "ServerAliveInterval=30") {
 		t.Fatalf("ExtraOptions not appended: %v", sess.Args)
@@ -241,7 +241,7 @@ func TestStart_ExtraFilesAndOptions(t *testing.T) {
 	_, _ = f.WriteString(newLine + "\n")
 	_ = f.Close()
 
-	added, err := sess.Sync()
+	added, err := sess.Sync(context.Background())
 	if err != nil {
 		t.Fatalf("Sync: %v", err)
 	}
@@ -254,7 +254,7 @@ func TestStart_ExtraFilesAndOptions(t *testing.T) {
 	}
 
 	// After Stop the known_hosts file handle is cleared.
-	sess.Stop()
+	sess.Stop(context.Background())
 	if sess.KnownHostsFile() != "" {
 		t.Fatalf("KnownHostsFile should be empty after Stop")
 	}

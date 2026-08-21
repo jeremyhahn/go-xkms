@@ -15,10 +15,17 @@ package services
 
 import (
 	"context"
+	"crypto/ed25519"
+	"crypto/rand"
 	"errors"
+	"os"
 	"os/exec"
 	"strings"
+	"sync"
 	"testing"
+	"time"
+
+	"golang.org/x/crypto/ssh"
 
 	"github.com/jeremyhahn/go-xkms/pkg/storage"
 	sshclient "github.com/jeremyhahn/go-xkms/sdk/go/client/ssh"
@@ -241,7 +248,7 @@ func TestSSHConnect_LocalPassthrough_IdentityFile(t *testing.T) {
 		t.Fatalf("ConnectOneTime: %v", err)
 	}
 
-	var iAt int = -1
+	iAt := -1
 	for i, a := range cap.args {
 		if a == "-i" {
 			iAt = i
@@ -273,5 +280,124 @@ func TestSSHConnect_LocalPassthrough_AgentIdentityNoFlag(t *testing.T) {
 	}
 	if cap.args[len(cap.args)-1] != "deploy@server.example.com" {
 		t.Fatalf("missing target: %v", cap.args)
+	}
+}
+
+// testConnectSigner builds an ed25519 signer for a connect session.
+func testConnectSigner(t *testing.T) ssh.Signer {
+	t.Helper()
+	_, priv, err := ed25519.GenerateKey(rand.Reader)
+	if err != nil {
+		t.Fatalf("ed25519: %v", err)
+	}
+	sg, err := ssh.NewSignerFromKey(priv)
+	if err != nil {
+		t.Fatalf("NewSignerFromKey: %v", err)
+	}
+	return sg
+}
+
+// testKnownHostsLine renders a known_hosts entry the poll will try to import.
+func testKnownHostsLine(t *testing.T) string {
+	t.Helper()
+	pub, _, err := ed25519.GenerateKey(rand.Reader)
+	if err != nil {
+		t.Fatalf("ed25519: %v", err)
+	}
+	hostPub, err := ssh.NewPublicKey(pub)
+	if err != nil {
+		t.Fatalf("NewPublicKey: %v", err)
+	}
+	return "accepted.example.com " + string(ssh.MarshalAuthorizedKey(hostPub))
+}
+
+// wedgedStore ignores the context it is handed and blocks until released,
+// standing in for a barrier-backed store that has stopped answering.
+type wedgedStore struct {
+	storage.Backend
+	entered chan struct{}
+	once    sync.Once
+	release chan struct{}
+}
+
+func (w *wedgedStore) Get(ctx context.Context, key string) ([]byte, error) {
+	w.once.Do(func() { close(w.entered) })
+	<-w.release
+	return w.Backend.Get(ctx, key)
+}
+
+// TestSSHConnect_WatcherShutdownIsNotBlockedByAWedgedStore covers the failure
+// StopAll cannot recover from on its own. The watcher polls Sync; if that call
+// is synchronous, a store that ignores its context parks the loop inside it and
+// the ctx.Done branch is never reached — so cancelling has no effect and the
+// signing socket stays alive for as long as the backend stays wedged, through
+// application shutdown included.
+//
+// The poll interval is shortened rather than waited out, so the test is
+// deterministic and fast and needs no skip guard: every step either happens or
+// fails.
+func TestSSHConnect_WatcherShutdownIsNotBlockedByAWedgedStore(t *testing.T) {
+	sshSyncIntervalOverride.Store(int64(20 * time.Millisecond))
+	t.Cleanup(func() { sshSyncIntervalOverride.Store(0) })
+
+	wedged := &wedgedStore{
+		Backend: storage.New(),
+		entered: make(chan struct{}),
+		release: make(chan struct{}),
+	}
+	defer close(wedged.release)
+
+	hostKeys, err := sshclient.NewHostKeyStore(wedged)
+	if err != nil {
+		t.Fatalf("NewHostKeyStore: %v", err)
+	}
+	sess, err := sshclient.StartConnect(context.Background(), sshclient.ConnectOptions{
+		Host:     "host.example.com",
+		User:     "root",
+		Signer:   testConnectSigner(t),
+		HostKeys: hostKeys,
+		Scope:    "user",
+		Owner:    "alice",
+	})
+	if err != nil {
+		t.Fatalf("StartConnect: %v", err)
+	}
+	sockPath := strings.TrimPrefix(sess.Env[0], "SSH_AUTH_SOCK=")
+
+	// A host the poll will try to import, so the wedged Get is actually
+	// reached. Every step is checked: a silent setup failure here would leave
+	// the store never entered and the behaviour under test never exercised.
+	f, oerr := os.OpenFile(sess.KnownHostsFile(), os.O_APPEND|os.O_WRONLY, 0o600)
+	if oerr != nil {
+		t.Fatalf("open known_hosts: %v", oerr)
+	}
+	if _, werr := f.WriteString(testKnownHostsLine(t)); werr != nil {
+		t.Fatalf("write known_hosts: %v", werr)
+	}
+	if cerr := f.Close(); cerr != nil {
+		t.Fatalf("close known_hosts: %v", cerr)
+	}
+
+	svc := &SSHConnectService{sessions: map[string]*liveSession{"s1": {sess: sess}}}
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan struct{})
+	go func() { defer close(done); svc.watch(ctx, "s1", sess) }()
+
+	// Wait until the poll is genuinely stuck inside the store.
+	select {
+	case <-wedged.entered:
+	case <-time.After(10 * time.Second):
+		t.Fatal("the poll never reached the store; the behaviour under test was not exercised")
+	}
+
+	cancel()
+	select {
+	case <-done:
+	case <-time.After(20 * time.Second):
+		t.Fatal("the watcher never shut down; its poll is blocking the ctx.Done branch")
+	}
+
+	if _, serr := os.Stat(sockPath); !errors.Is(serr, os.ErrNotExist) {
+		t.Fatalf("the agent socket outlived shutdown: %v", serr)
 	}
 }

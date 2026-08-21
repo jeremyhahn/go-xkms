@@ -27,6 +27,14 @@ import (
 // it exits; Done reports when the socket is gone.
 type AgentSession = pkgagent.Session
 
+// AgentShutdownReport is what (*AgentSession).Stop returns: the number of
+// in-flight signing operations still running when the caller's bound elapsed.
+// A non-zero count is not a leak — those handlers hold no connection, because
+// Stop disconnects every client before it waits — but one of them may still
+// complete a signature for a client that attached before Stop began. See the
+// type's own documentation for the full residual.
+type AgentShutdownReport = pkgagent.ShutdownReport
+
 // AgentInputError reports a missing or invalid AgentOptions field.
 type AgentInputError = pkgagent.InputError
 
@@ -87,8 +95,12 @@ type AgentOptions struct {
 //
 // Lifetime: the session ends at the first of (*AgentSession).Stop or
 // cancellation of ctx. Either way the socket file is removed, along with the
-// work directory when the session created it. Stop blocks until that has
-// happened; a caller that cancels ctx instead waits on Done to observe it.
+// private work directory. Stop takes its own context: it disconnects every
+// attached client unconditionally, then joins the connection handlers within
+// that context and returns an AgentShutdownReport naming any it had to abandon
+// — a handler stuck inside an uninterruptible Sign cannot be woken, and waiting
+// on one without a bound would hand a caller's shutdown to a wedged device. A
+// caller that cancels ctx instead waits on Done to observe the end.
 //
 // No host-key semantics are implied and none are available. StartAgent neither
 // seeds nor consults known_hosts, because a signature has no host to verify. A

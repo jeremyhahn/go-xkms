@@ -18,8 +18,11 @@ import (
 	"crypto/ed25519"
 	"crypto/rand"
 	"errors"
+	"io"
+	"net"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -27,6 +30,7 @@ import (
 	"time"
 
 	"golang.org/x/crypto/ssh"
+	gosshagent "golang.org/x/crypto/ssh/agent"
 
 	sshagent "github.com/jeremyhahn/go-xkms/pkg/ssh/agent"
 	"github.com/jeremyhahn/go-xkms/pkg/ssh/known_hosts"
@@ -89,7 +93,7 @@ func TestStart_ArgsEnvAndSeed(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Start: %v", err)
 	}
-	defer sess.SyncAndStop()
+	defer sess.SyncAndStop(context.Background())
 
 	if !contains(sess.Args, "deploy@server.example.com") {
 		t.Fatalf("args missing target: %v", sess.Args)
@@ -146,7 +150,7 @@ func TestStart_SyncBackImportsNewHost(t *testing.T) {
 	_, _ = f.WriteString(line + "\n")
 	_ = f.Close()
 
-	added, err := sess.SyncAndStop()
+	added, _, err := sess.SyncAndStop(context.Background())
 	if err != nil {
 		t.Fatalf("SyncAndStop: %v", err)
 	}
@@ -231,7 +235,7 @@ func TestStart_CreatesASuppliedWorkDir(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Start with a fresh WorkDir: %v", err)
 	}
-	defer sess.Stop()
+	defer sess.Stop(context.Background())
 
 	info, serr := os.Stat(fresh)
 	if serr != nil || !info.IsDir() {
@@ -267,7 +271,7 @@ func TestStart_RelativeWorkDirYieldsAbsoluteArtifactPaths(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Start: %v", err)
 	}
-	defer sess.Stop()
+	defer sess.Stop(context.Background())
 
 	var khArg string
 	for _, a := range sess.Args {
@@ -322,12 +326,12 @@ func TestSession_SyncRacesStop(t *testing.T) {
 			go func() {
 				defer pollers.Done()
 				for k := 0; k < 20; k++ {
-					_, _ = sess.Sync()
+					_, _ = sess.Sync(context.Background())
 					_ = sess.KnownHostsFile()
 				}
 			}()
 		}
-		sess.Stop()
+		sess.Stop(context.Background())
 		pollers.Wait()
 	}
 }
@@ -338,6 +342,7 @@ func TestSession_SyncRacesStop(t *testing.T) {
 type blockingStore struct {
 	storage.Backend
 	armed   atomic.Bool
+	entries atomic.Int64 // how many imports actually reached the store
 	entered chan struct{}
 	release chan struct{}
 	once    sync.Once
@@ -345,6 +350,7 @@ type blockingStore struct {
 
 func (b *blockingStore) Get(ctx context.Context, key string) ([]byte, error) {
 	if b.armed.Load() {
+		b.entries.Add(1)
 		b.once.Do(func() { close(b.entered) })
 		<-b.release
 	}
@@ -395,7 +401,7 @@ func TestSession_StopIsNotHeldHostageByAStalledSync(t *testing.T) {
 	_ = f.Close()
 
 	blocked.armed.Store(true)
-	go func() { _, _ = sess.Sync() }()
+	go func() { _, _ = sess.Sync(context.Background()) }()
 	select {
 	case <-blocked.entered:
 	case <-time.After(5 * time.Second):
@@ -403,7 +409,13 @@ func TestSession_StopIsNotHeldHostageByAStalledSync(t *testing.T) {
 	}
 
 	stopped := make(chan struct{})
-	go func() { defer close(stopped); sess.Stop() }()
+	// A bounded context, because that is the honest call for a store that has
+	// stopped answering: context.Background() means "wait as long as it takes",
+	// and Stop is entitled to take it at its word. What must NOT depend on the
+	// bound is the agent, and the assertion below is that it died anyway.
+	stopCtx, cancelStop := context.WithTimeout(context.Background(), 250*time.Millisecond)
+	defer cancelStop()
+	go func() { defer close(stopped); sess.Stop(stopCtx) }()
 	select {
 	case <-stopped:
 	case <-time.After(syncDrainTimeout + 5*time.Second):
@@ -413,5 +425,591 @@ func TestSession_StopIsNotHeldHostageByAStalledSync(t *testing.T) {
 	// The agent is gone despite the stalled import.
 	if _, serr := os.Stat(sockPath); !errors.Is(serr, os.ErrNotExist) {
 		t.Fatalf("the agent socket must be gone once Stop returns: %v", serr)
+	}
+}
+
+// TestSession_SyncAndStopHonoursItsBound covers the teardown path xkey actually
+// takes — the CLI after ssh exits, the GUI on disconnect. An unbounded
+// convenience here would put the wedged-signer hang on the one path everyone
+// uses, which is worse than not offering the bound at all.
+func TestSession_SyncAndStopHonoursItsBound(t *testing.T) {
+	blocked := &blockingConnectSigner{
+		Signer:  testSigner(t),
+		entered: make(chan struct{}),
+		release: make(chan struct{}),
+	}
+	t.Cleanup(blocked.Release)
+
+	store, _ := known_hosts.NewBackendStore(storage.New())
+	sess, err := Start(context.Background(), Request{
+		Host:            "host.example.com",
+		User:            "root",
+		Signer:          blocked,
+		KnownHostsStore: store,
+		Scope:           scope.User,
+		Owner:           "alice",
+	})
+	if err != nil {
+		t.Fatalf("Start: %v", err)
+	}
+	sockPath := strings.TrimPrefix(sess.Env[0], "SSH_AUTH_SOCK=")
+
+	conn, derr := net.Dial("unix", sockPath)
+	if derr != nil {
+		t.Fatalf("dial: %v", derr)
+	}
+	defer func() { _ = conn.Close() }()
+	go func() { _, _ = gosshagent.NewClient(conn).Sign(blocked.PublicKey(), []byte("stalls")) }()
+	select {
+	case <-blocked.entered:
+	case <-time.After(5 * time.Second):
+		t.Fatal("the signer never entered Sign")
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 250*time.Millisecond)
+	defer cancel()
+
+	type result struct {
+		report sshagent.ShutdownReport
+		err    error
+	}
+	done := make(chan result, 1)
+	go func() {
+		_, report, serr := sess.SyncAndStop(ctx)
+		done <- result{report, serr}
+	}()
+
+	select {
+	case r := <-done:
+		if r.report.Clean() {
+			t.Fatal("a wedged signer must be reported, not hidden behind a clean teardown")
+		}
+	case <-time.After(10 * time.Second):
+		t.Fatal("SyncAndStop never returned with a signer stuck inside Sign")
+	}
+}
+
+// blockingConnectSigner stalls inside Sign until released.
+type blockingConnectSigner struct {
+	ssh.Signer
+	entered     chan struct{}
+	release     chan struct{}
+	once        sync.Once
+	releaseOnce sync.Once
+}
+
+func (b *blockingConnectSigner) Sign(rand io.Reader, data []byte) (*ssh.Signature, error) {
+	b.once.Do(func() { close(b.entered) })
+	<-b.release
+	return b.Signer.Sign(rand, data)
+}
+
+func (b *blockingConnectSigner) Release() { b.releaseOnce.Do(func() { close(b.release) }) }
+
+// TestSession_SyncAndStopStopsTheAgentDespiteAStalledStore covers the ordering
+// trap in SyncAndStop: it imports before it stops, so an unbounded import means
+// the agent is still serving signatures long after the caller asked for
+// teardown. The store is the caller's and may be barrier-backed — stopping the
+// agent must not be gated on it answering.
+func TestSession_SyncAndStopStopsTheAgentDespiteAStalledStore(t *testing.T) {
+	blocked := &blockingStore{
+		Backend: storage.New(),
+		entered: make(chan struct{}),
+		release: make(chan struct{}),
+	}
+	defer close(blocked.release)
+
+	store, err := known_hosts.NewBackendStore(blocked)
+	if err != nil {
+		t.Fatalf("NewBackendStore: %v", err)
+	}
+	sess, err := Start(context.Background(), Request{
+		Host:            "host.example.com",
+		User:            "root",
+		Signer:          testSigner(t),
+		KnownHostsStore: store,
+		Scope:           scope.User,
+		Owner:           "alice",
+	})
+	if err != nil {
+		t.Fatalf("Start: %v", err)
+	}
+	sockPath := strings.TrimPrefix(sess.Env[0], "SSH_AUTH_SOCK=")
+
+	// Give the import a host to look up, then wedge the store.
+	line, _ := known_hosts.Emit(known_hosts.PinFromPublicKey(
+		"accepted.example.com", scope.User, "alice", testHostPub(t), known_hosts.SourceFirstContact))
+	f, oerr := os.OpenFile(sess.KnownHostsFile(), os.O_APPEND|os.O_WRONLY, 0o600)
+	if oerr != nil {
+		t.Fatalf("open known_hosts: %v", oerr)
+	}
+	if _, werr := f.WriteString(line + "\n"); werr != nil {
+		t.Fatalf("write known_hosts: %v", werr)
+	}
+	_ = f.Close()
+	blocked.armed.Store(true)
+
+	ctx, cancel := context.WithTimeout(context.Background(), 250*time.Millisecond)
+	defer cancel()
+
+	done := make(chan struct{})
+	go func() { defer close(done); _, _, _ = sess.SyncAndStop(ctx) }()
+	select {
+	case <-done:
+	case <-time.After(10 * time.Second):
+		t.Fatal("SyncAndStop never returned with the store wedged inside the import")
+	}
+
+	if _, serr := os.Stat(sockPath); !errors.Is(serr, os.ErrNotExist) {
+		t.Fatalf("the agent must be stopped even though the store stalled: %v", serr)
+	}
+}
+
+// TestSession_SyncAndStopKillsTheAgentBeforeWaiting is the ordering assertion,
+// and it is stronger than "SyncAndStop returns in time". A stalled store used
+// to leave the SSH_AUTH_SOCK live for the whole shutdown bound — bounded, but
+// still signing for anyone already holding the path. The socket's lifetime has
+// to be independent of the import, not merely capped alongside it.
+func TestSession_SyncAndStopKillsTheAgentBeforeWaiting(t *testing.T) {
+	blocked := &blockingStore{
+		Backend: storage.New(),
+		entered: make(chan struct{}),
+		release: make(chan struct{}),
+	}
+	defer close(blocked.release)
+
+	store, err := known_hosts.NewBackendStore(blocked)
+	if err != nil {
+		t.Fatalf("NewBackendStore: %v", err)
+	}
+	sess, err := Start(context.Background(), Request{
+		Host:            "host.example.com",
+		User:            "root",
+		Signer:          testSigner(t),
+		KnownHostsStore: store,
+		Scope:           scope.User,
+		Owner:           "alice",
+	})
+	if err != nil {
+		t.Fatalf("Start: %v", err)
+	}
+	sockPath := strings.TrimPrefix(sess.Env[0], "SSH_AUTH_SOCK=")
+
+	line, _ := known_hosts.Emit(known_hosts.PinFromPublicKey(
+		"accepted.example.com", scope.User, "alice", testHostPub(t), known_hosts.SourceFirstContact))
+	f, oerr := os.OpenFile(sess.KnownHostsFile(), os.O_APPEND|os.O_WRONLY, 0o600)
+	if oerr != nil {
+		t.Fatalf("open known_hosts: %v", oerr)
+	}
+	if _, werr := f.WriteString(line + "\n"); werr != nil {
+		t.Fatalf("write known_hosts: %v", werr)
+	}
+	_ = f.Close()
+	blocked.armed.Store(true)
+
+	// A long bound: if the agent's death were gated on the import, the socket
+	// would still be answering for all of it.
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	go func() { _, _, _ = sess.SyncAndStop(ctx) }()
+
+	// The store is wedged, so the import is definitely still running.
+	select {
+	case <-blocked.entered:
+	case <-time.After(5 * time.Second):
+		t.Fatal("the store never entered the import")
+	}
+
+	// The agent must already be gone, well inside the shutdown bound.
+	deadline := time.Now().Add(3 * time.Second)
+	for {
+		if _, serr := os.Stat(sockPath); errors.Is(serr, os.ErrNotExist) {
+			return // agent died without waiting for the import
+		}
+		if time.Now().After(deadline) {
+			t.Fatal("the agent socket was still live while the import stalled; the stop is gated on the import")
+		}
+		select {
+		case <-time.After(20 * time.Millisecond):
+		case <-ctx.Done():
+			t.Fatal("shutdown context elapsed before the agent died")
+		}
+	}
+}
+
+// TestSession_SyncAndStopReturnsNearTheDeadline is the arithmetic assertion the
+// other bound tests miss. Each phase of teardown was individually bounded, and
+// the cleanup phase quietly used its own five-second constant instead of the
+// caller's remaining budget — so a 250ms shutdown took five seconds and every
+// test that only asserted "returned eventually" passed.
+//
+// A bounded shutdown that silently costs twenty times its bound is not bounded.
+func TestSession_SyncAndStopReturnsNearTheDeadline(t *testing.T) {
+	blocked := &blockingStore{
+		Backend: storage.New(),
+		entered: make(chan struct{}),
+		release: make(chan struct{}),
+	}
+	defer close(blocked.release)
+
+	store, err := known_hosts.NewBackendStore(blocked)
+	if err != nil {
+		t.Fatalf("NewBackendStore: %v", err)
+	}
+	sess, err := Start(context.Background(), Request{
+		Host:            "host.example.com",
+		User:            "root",
+		Signer:          testSigner(t),
+		KnownHostsStore: store,
+		Scope:           scope.User,
+		Owner:           "alice",
+	})
+	if err != nil {
+		t.Fatalf("Start: %v", err)
+	}
+
+	line, _ := known_hosts.Emit(known_hosts.PinFromPublicKey(
+		"accepted.example.com", scope.User, "alice", testHostPub(t), known_hosts.SourceFirstContact))
+	f, oerr := os.OpenFile(sess.KnownHostsFile(), os.O_APPEND|os.O_WRONLY, 0o600)
+	if oerr != nil {
+		t.Fatalf("open known_hosts: %v", oerr)
+	}
+	if _, werr := f.WriteString(line + "\n"); werr != nil {
+		t.Fatalf("write known_hosts: %v", werr)
+	}
+	_ = f.Close()
+	blocked.armed.Store(true) // and it ignores the context it is handed
+
+	const bound = 250 * time.Millisecond
+	ctx, cancel := context.WithTimeout(context.Background(), bound)
+	defer cancel()
+
+	start := time.Now()
+	_, _, _ = sess.SyncAndStop(ctx)
+	elapsed := time.Since(start)
+
+	// Generous headroom for a loaded CI box, but far below the background
+	// reaper's own five seconds — which is the number that used to leak in.
+	if elapsed > 2*time.Second {
+		t.Fatalf("SyncAndStop took %s against a %s bound; a cleanup phase is using its own timeout", elapsed, bound)
+	}
+}
+
+// TestSession_SyncAndStopPinsHostsDespiteAWedgedSigner is the data-loss case
+// the ShutdownReport assertions could not see. Sequencing the import after the
+// agent shutdown meant a signer wedged for the whole budget left Sync starting
+// on an already-expired context — so the first-contact host keys ssh had just
+// accepted were dropped, silently, while the report looked exactly as expected.
+// A signing hazard traded for a host-verification one.
+func TestSession_SyncAndStopPinsHostsDespiteAWedgedSigner(t *testing.T) {
+	blocked := &blockingConnectSigner{
+		Signer:  testSigner(t),
+		entered: make(chan struct{}),
+		release: make(chan struct{}),
+	}
+	t.Cleanup(blocked.Release)
+
+	backend := storage.New()
+	store, err := known_hosts.NewBackendStore(backend)
+	if err != nil {
+		t.Fatalf("NewBackendStore: %v", err)
+	}
+	sess, err := Start(context.Background(), Request{
+		Host:            "host.example.com",
+		User:            "root",
+		Signer:          blocked,
+		KnownHostsStore: store,
+		Scope:           scope.User,
+		Owner:           "alice",
+	})
+	if err != nil {
+		t.Fatalf("Start: %v", err)
+	}
+	sockPath := strings.TrimPrefix(sess.Env[0], "SSH_AUTH_SOCK=")
+
+	// ssh "accepts" a host on first contact.
+	line, _ := known_hosts.Emit(known_hosts.PinFromPublicKey(
+		"accepted.example.com", scope.User, "alice", testHostPub(t), known_hosts.SourceFirstContact))
+	f, oerr := os.OpenFile(sess.KnownHostsFile(), os.O_APPEND|os.O_WRONLY, 0o600)
+	if oerr != nil {
+		t.Fatalf("open known_hosts: %v", oerr)
+	}
+	if _, werr := f.WriteString(line + "\n"); werr != nil {
+		t.Fatalf("write known_hosts: %v", werr)
+	}
+	_ = f.Close()
+
+	// ...and a signing request is wedged when ssh dies.
+	conn, derr := net.Dial("unix", sockPath)
+	if derr != nil {
+		t.Fatalf("dial: %v", derr)
+	}
+	defer func() { _ = conn.Close() }()
+	go func() { _, _ = gosshagent.NewClient(conn).Sign(blocked.PublicKey(), []byte("stalls")) }()
+	select {
+	case <-blocked.entered:
+	case <-time.After(5 * time.Second):
+		t.Fatal("the signer never entered Sign")
+	}
+
+	// The whole budget will be spent waiting on that signer.
+	ctx, cancel := context.WithTimeout(context.Background(), 500*time.Millisecond)
+	defer cancel()
+	added, report, _ := sess.SyncAndStop(ctx)
+
+	if report.Clean() {
+		t.Fatal("precondition: the wedged signer should have been reported abandoned")
+	}
+	if added != 1 {
+		t.Fatalf("the accepted host key must be pinned despite the wedged signer, added=%d", added)
+	}
+	if _, gerr := store.Get(context.Background(), scope.User, "alice", "accepted.example.com"); gerr != nil {
+		t.Fatalf("the accepted host key was lost: %v", gerr)
+	}
+}
+
+// TestSession_RepeatedStopKeepsReportingTheAbandonment covers the sequential
+// half of the idempotency contract. Releasing the agent handle after the first
+// bounded stop made every later Stop take the nil branch and report clean —
+// so a GUI disconnect following a TTL expiry would be told the session was
+// tidy while a signing operation was still running inside it.
+func TestSession_RepeatedStopKeepsReportingTheAbandonment(t *testing.T) {
+	blocked := &blockingConnectSigner{
+		Signer:  testSigner(t),
+		entered: make(chan struct{}),
+		release: make(chan struct{}),
+	}
+	t.Cleanup(blocked.Release)
+
+	store, _ := known_hosts.NewBackendStore(storage.New())
+	sess, err := Start(context.Background(), Request{
+		Host:            "host.example.com",
+		User:            "root",
+		Signer:          blocked,
+		KnownHostsStore: store,
+		Scope:           scope.User,
+		Owner:           "alice",
+		SkipStore:       true,
+	})
+	if err != nil {
+		t.Fatalf("Start: %v", err)
+	}
+	sockPath := strings.TrimPrefix(sess.Env[0], "SSH_AUTH_SOCK=")
+
+	conn, derr := net.Dial("unix", sockPath)
+	if derr != nil {
+		t.Fatalf("dial: %v", derr)
+	}
+	defer func() { _ = conn.Close() }()
+	go func() { _, _ = gosshagent.NewClient(conn).Sign(blocked.PublicKey(), []byte("stalls")) }()
+	select {
+	case <-blocked.entered:
+	case <-time.After(5 * time.Second):
+		t.Fatal("the signer never entered Sign")
+	}
+
+	bounded := func() sshagent.ShutdownReport {
+		ctx, cancel := context.WithTimeout(context.Background(), 100*time.Millisecond)
+		defer cancel()
+		return sess.Stop(ctx)
+	}
+
+	if first := bounded(); first.Clean() {
+		t.Fatal("precondition: the wedged signer should be reported abandoned")
+	}
+	if second := bounded(); second.Clean() {
+		t.Fatal("a repeated stop reported clean while the signer was still wedged")
+	}
+
+	// Once the signer returns, a further stop is honestly clean.
+	blocked.Release()
+	deadline := time.Now().Add(5 * time.Second)
+	for {
+		if bounded().Clean() {
+			return
+		}
+		if time.Now().After(deadline) {
+			t.Fatal("stop never reported clean after the signer was released")
+		}
+	}
+}
+
+// TestSession_SyncFailsWhenTheSystemMirrorFails covers the system-only policy,
+// where the mirror is the ONLY persistence path. Discarding its error meant an
+// unwritable destination returned a successful Sync — and reap then deleted the
+// temp known_hosts, so the accepted key was gone and the next connection was
+// first contact again with nobody told.
+func TestSession_SyncFailsWhenTheSystemMirrorFails(t *testing.T) {
+	store, _ := known_hosts.NewBackendStore(storage.New())
+
+	// A mirror destination that cannot be written: a directory where a file
+	// must go.
+	extDir := privateDir(t)
+	unwritable := filepath.Join(extDir, "known_hosts")
+	if err := os.Mkdir(unwritable, 0o700); err != nil {
+		t.Fatalf("mkdir: %v", err)
+	}
+
+	sess, err := Start(context.Background(), Request{
+		Host:            "host.example.com",
+		User:            "root",
+		Signer:          testSigner(t),
+		KnownHostsStore: store,
+		Scope:           scope.User,
+		Owner:           "alice",
+		SkipStore:       true, // system-only: the mirror is all there is
+		ExtraKnownHosts: []string{unwritable},
+	})
+	if err != nil {
+		t.Fatalf("Start: %v", err)
+	}
+	defer sess.Stop(context.Background())
+
+	// ssh accepts a host on first contact.
+	line, _ := known_hosts.Emit(known_hosts.PinFromPublicKey(
+		"accepted.example.com", scope.User, "alice", testHostPub(t), known_hosts.SourceFirstContact))
+	f, oerr := os.OpenFile(sess.KnownHostsFile(), os.O_APPEND|os.O_WRONLY, 0o600)
+	if oerr != nil {
+		t.Fatalf("open known_hosts: %v", oerr)
+	}
+	if _, werr := f.WriteString(line + "\n"); werr != nil {
+		t.Fatalf("write known_hosts: %v", werr)
+	}
+	_ = f.Close()
+
+	added, serr := sess.Sync(context.Background())
+	if serr == nil {
+		t.Fatal("an unwritable system mirror must fail Sync, not report success")
+	}
+	if added != 0 {
+		t.Fatalf("nothing was persisted, got added=%d", added)
+	}
+	var le *LaunchError
+	if !errors.As(serr, &le) {
+		t.Fatalf("expected *LaunchError, got %T: %v", serr, serr)
+	}
+}
+
+// TestSession_RepeatedReapDoesNotLeakWaiters is the connect-side twin of the
+// agent's waiter leak: each teardown used to start its own drain waiter, and a
+// store that ignores cancellation meant none of them ever exited.
+func TestSession_RepeatedReapDoesNotLeakWaiters(t *testing.T) {
+	blocked := &blockingStore{
+		Backend: storage.New(),
+		entered: make(chan struct{}),
+		release: make(chan struct{}),
+	}
+	defer close(blocked.release)
+
+	store, err := known_hosts.NewBackendStore(blocked)
+	if err != nil {
+		t.Fatalf("NewBackendStore: %v", err)
+	}
+	sess, err := Start(context.Background(), Request{
+		Host:            "host.example.com",
+		User:            "root",
+		Signer:          testSigner(t),
+		KnownHostsStore: store,
+		Scope:           scope.User,
+		Owner:           "alice",
+	})
+	if err != nil {
+		t.Fatalf("Start: %v", err)
+	}
+
+	line, _ := known_hosts.Emit(known_hosts.PinFromPublicKey(
+		"accepted.example.com", scope.User, "alice", testHostPub(t), known_hosts.SourceFirstContact))
+	f, _ := os.OpenFile(sess.KnownHostsFile(), os.O_APPEND|os.O_WRONLY, 0o600)
+	_, _ = f.WriteString(line + "\n")
+	_ = f.Close()
+
+	// Wedge a Sync so the drain can never complete.
+	blocked.armed.Store(true)
+	go func() { _, _ = sess.Sync(context.Background()) }()
+	select {
+	case <-blocked.entered:
+	case <-time.After(5 * time.Second):
+		t.Fatal("the store never entered the import")
+	}
+
+	stop := func() {
+		ctx, cancel := context.WithTimeout(context.Background(), 20*time.Millisecond)
+		defer cancel()
+		sess.Stop(ctx)
+	}
+
+	stop()
+	runtime.Gosched()
+	before := runtime.NumGoroutine()
+	for i := 0; i < 50; i++ {
+		stop()
+	}
+	runtime.Gosched()
+	growth := runtime.NumGoroutine() - before
+
+	if growth > 5 {
+		t.Fatalf("50 bounded stops grew the goroutine count by %d; each is starting its own drain waiter", growth)
+	}
+}
+
+// TestSession_SyncIsSingleFlight covers what happens when teardown arrives
+// during a poll that is already wedged. Without single-flight, SyncAndStop
+// starts a SECOND import against the same store — and with a backend that
+// ignores cancellation both block forever, so each session leaks a pair of
+// permanently-parked backend calls. Some stores also assume serialized access.
+func TestSession_SyncIsSingleFlight(t *testing.T) {
+	blocked := &blockingStore{
+		Backend: storage.New(),
+		entered: make(chan struct{}),
+		release: make(chan struct{}),
+	}
+	defer close(blocked.release)
+
+	store, err := known_hosts.NewBackendStore(blocked)
+	if err != nil {
+		t.Fatalf("NewBackendStore: %v", err)
+	}
+	sess, err := Start(context.Background(), Request{
+		Host:            "host.example.com",
+		User:            "root",
+		Signer:          testSigner(t),
+		KnownHostsStore: store,
+		Scope:           scope.User,
+		Owner:           "alice",
+	})
+	if err != nil {
+		t.Fatalf("Start: %v", err)
+	}
+
+	line, _ := known_hosts.Emit(known_hosts.PinFromPublicKey(
+		"accepted.example.com", scope.User, "alice", testHostPub(t), known_hosts.SourceFirstContact))
+	f, oerr := os.OpenFile(sess.KnownHostsFile(), os.O_APPEND|os.O_WRONLY, 0o600)
+	if oerr != nil {
+		t.Fatalf("open known_hosts: %v", oerr)
+	}
+	if _, werr := f.WriteString(line + "\n"); werr != nil {
+		t.Fatalf("write known_hosts: %v", werr)
+	}
+	if cerr := f.Close(); cerr != nil {
+		t.Fatalf("close known_hosts: %v", cerr)
+	}
+	blocked.armed.Store(true)
+
+	// A poll wedges inside the store.
+	go func() { _, _ = sess.Sync(context.Background()) }()
+	select {
+	case <-blocked.entered:
+	case <-time.After(5 * time.Second):
+		t.Fatal("the poll never reached the store")
+	}
+
+	// Teardown arrives while it is still stuck. It must join that import, not
+	// launch another.
+	ctx, cancel := context.WithTimeout(context.Background(), 250*time.Millisecond)
+	defer cancel()
+	_, _, _ = sess.SyncAndStop(ctx)
+
+	if n := blocked.entries.Load(); n != 1 {
+		t.Fatalf("the store was entered %d times; a second import was stacked on the wedged one", n)
 	}
 }

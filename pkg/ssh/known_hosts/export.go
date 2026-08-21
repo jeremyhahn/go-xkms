@@ -16,6 +16,7 @@ package known_hosts
 import (
 	"bufio"
 	"context"
+	"errors"
 	"os"
 	"strings"
 	"time"
@@ -91,7 +92,9 @@ func EmitAll(ctx context.Context, store Store, sc scope.Scope, owner string) ([]
 // system ssh client accepted (first-contact) back into the store. Returns the
 // number of newly-added pins. Existing pins are left untouched (no rotation).
 func ImportKnownHostsFile(ctx context.Context, store Store, sc scope.Scope, owner, path, source string) (int, error) {
-	f, err := os.Open(path)
+	// path is this session's own temp known_hosts, or an operator-supplied
+	// known_hosts file from local config -- never remote or request-derived.
+	f, err := os.Open(path) // #nosec G304 G703 -- session-owned or operator-supplied path
 	if err != nil {
 		return 0, &StorageError{Op: "open known_hosts", Err: err}
 	}
@@ -116,19 +119,43 @@ func ImportKnownHostsFile(ctx context.Context, store Store, sc scope.Scope, owne
 			if host == "" {
 				continue
 			}
-			if _, gerr := store.Get(ctx, sc, owner, host); gerr == nil {
+			// Only "no pin yet" means proceed. Treating every Get error as a
+			// cache miss, and every Add error as nothing, made a store that had
+			// stopped answering -- or a context that had expired -- look like a
+			// clean import of zero hosts. These are first-contact host keys: an
+			// import that silently drops them leaves the next connection
+			// unpinned, which is the failure the pin store exists to prevent.
+			_, gerr := store.Get(ctx, sc, owner, host)
+			switch {
+			case gerr == nil:
 				continue // already pinned
+			case isNotFound(gerr):
+				// expected: this is the host we are here to add
+			default:
+				return added, &StorageError{Op: "look up host pin", Err: gerr}
 			}
 			pin := PinFromPublicKey(host, sc, owner, pub, source)
-			if aerr := store.Add(ctx, pin); aerr == nil {
-				added++
+			if aerr := store.Add(ctx, pin); aerr != nil {
+				return added, &StorageError{Op: "add host pin", Err: aerr}
 			}
+			added++
 		}
 	}
 	if serr := scanner.Err(); serr != nil {
 		return added, &StorageError{Op: "scan known_hosts", Err: serr}
 	}
 	return added, nil
+}
+
+// isNotFound reports whether an error means "no pin exists", the one Get
+// failure that is part of this loop's normal flow. A context error is never a
+// not-found, so cancellation propagates rather than reading as an empty store.
+func isNotFound(err error) bool {
+	if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
+		return false
+	}
+	var nf *NotFoundError
+	return errors.As(err, &nf)
 }
 
 // normalizeKnownHost strips the optional "[host]:port" decoration OpenSSH adds

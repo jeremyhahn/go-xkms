@@ -55,7 +55,7 @@ sess, err := xkmsssh.StartAgent(ctx, xkmsssh.AgentOptions{
 if err != nil {
 	return err
 }
-defer sess.Stop()
+defer sess.Stop(context.Background())
 
 cmd := exec.CommandContext(ctx, "git", "commit", "-S", "-m", msg)
 cmd.Env = append(os.Environ(), sess.Env...)
@@ -84,7 +84,19 @@ like a guarantee and is not is worse than no option.
 | `SockPath string` | The socket path — the value of `SSH_AUTH_SOCK`. Absolute, and connectable when `StartAgent` returns, so a child with its own `Cmd.Dir` reaches the same socket. |
 | `Env []string` | `{"SSH_AUTH_SOCK=<SockPath>"}`, ready to append to a child process's environment. |
 | `Done() <-chan struct{}` | Closed once the agent has stopped and the socket (and an owned work dir) is gone. |
-| `Stop()` | Ends the session and blocks until that has happened. Idempotent. |
+| `Stop(ctx) AgentShutdownReport` | Ends the session. Closes the listener and disconnects every attached client unconditionally, then joins the connection handlers within `ctx` and reports how many signing operations it had to abandon. Idempotent. |
+
+### `AgentShutdownReport`
+
+| Member | Meaning |
+|---|---|
+| `Abandoned int` | signature operations still **executing** when `Stop`'s context elapsed. Not connected clients and not parked handlers — an idle client holding the socket is not a signing operation, and reporting it as one would raise a security warning about work that never happened |
+| `Clean() bool` | true when every handler finished within the bound |
+
+A non-zero count is not an error and not a leak: those handlers hold no
+connection. One may still complete a signature for a client that attached
+*before* `Stop` began — no new authorization occurs, and no new client can
+attach. See [`architecture.md`](architecture.md) for the full residual.
 
 ### Errors
 

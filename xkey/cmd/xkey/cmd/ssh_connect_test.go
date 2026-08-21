@@ -191,3 +191,32 @@ func TestResolveSSHConnect_ManagedFlowUnaffected(t *testing.T) {
 		t.Fatalf("unexpected resolved target: %+v", r)
 	}
 }
+
+// TestSSHConnectResult pins the exit status after ssh exits. The case that
+// matters is the last one: a successful ssh with a failed host-key sync used to
+// exit zero, telling the user their trust decision was recorded when the store
+// had in fact rejected it — so the next connection would be first contact
+// again, silently.
+func TestSSHConnectResult(t *testing.T) {
+	runErr := errors.New("ssh exited 255")
+	syncErr := errors.New("pin store unavailable")
+
+	tests := []struct {
+		name string
+		run  error
+		sync error
+		want error
+	}{
+		{"both succeeded", nil, nil, nil},
+		{"ssh failed, sync fine", runErr, nil, runErr},
+		{"ssh failed and sync failed — ssh wins", runErr, syncErr, runErr},
+		{"ssh succeeded, sync failed", nil, syncErr, syncErr},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := sshConnectResult(tt.run, tt.sync); got != tt.want {
+				t.Fatalf("got %v, want %v", got, tt.want)
+			}
+		})
+	}
+}

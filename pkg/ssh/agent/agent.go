@@ -26,6 +26,7 @@ import (
 	"os"
 	"path/filepath"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"golang.org/x/crypto/ssh"
@@ -36,7 +37,17 @@ import (
 // Remove / Lock are unsupported — identities are provisioned at construction.
 type Agent struct {
 	signers []ssh.Signer
+
+	// signing counts signature operations currently executing. It is NOT the
+	// number of connected clients: an idle client holding a socket is not a
+	// signing operation, and reporting it as one at shutdown would raise a
+	// security warning about work that was never happening.
+	signing atomic.Int64
 }
+
+// InFlightSignatures reports how many signature operations are executing right
+// now. Shutdown uses it to say what it abandoned.
+func (a *Agent) InFlightSignatures() int { return int(a.signing.Load()) }
 
 // compile-time assertion that Agent satisfies the extended agent interface
 // (so SignWithFlags is used for rsa-sha2 requests).
@@ -87,6 +98,9 @@ func (a *Agent) SignWithFlags(key ssh.PublicKey, data []byte, flags sshagent.Sig
 	if signer == nil {
 		return nil, &UnknownKeyError{Format: key.Type()}
 	}
+	a.signing.Add(1)
+	defer a.signing.Add(-1)
+
 	as, canSelect := signer.(ssh.AlgorithmSigner)
 	if isRSA(signer.PublicKey()) {
 		if !canSelect {
@@ -145,24 +159,84 @@ func (a *Agent) signerFor(key ssh.PublicKey) ssh.Signer {
 	return nil
 }
 
-// handlerJoinTimeout bounds how long shutdown waits for connection handlers to
-// notice their closed connections. It is generous for the ordinary case (a
-// handler blocked on a read returns at once) and finite for the pathological
-// one (a handler blocked inside an uninterruptible Sign).
-const handlerJoinTimeout = 5 * time.Second
+// defaultJoinBound is the fallback used where no caller supplies one: Serve,
+// whose contract is a single blocking call, and the reaper that guarantees a
+// session's work directory is removed even when nobody calls Stop. Stop itself
+// takes the bound from its caller.
+//
+// Atomic rather than a plain var: the only behaviour distinguishing a
+// caller-honoured bound from a reaper-truncated one lives past this value, so a
+// unit test has to shorten it rather than spend five real seconds reaching it —
+// and a plain var races with the reapers of sessions still winding down from
+// earlier tests, which the race detector rightly rejects. Zero means "the
+// built-in default".
+var joinBoundOverride atomic.Int64
 
-// joinWithin waits for wg, giving up after d. The watcher goroutine ends when
-// the last handler finishes, however long that takes.
-func joinWithin(wg *sync.WaitGroup, d time.Duration) {
-	joined := make(chan struct{})
-	go func() {
-		wg.Wait()
-		close(joined)
-	}()
-	select {
-	case <-joined:
-	case <-time.After(d):
+// defaultJoinBound is the fallback bound in effect.
+func defaultJoinBound() time.Duration {
+	if n := joinBoundOverride.Load(); n > 0 {
+		return time.Duration(n)
 	}
+	return 5 * time.Second
+}
+
+// tracker counts the connection handlers a listener has running. The WaitGroup
+// joins them; the counter answers "how many are left", which a WaitGroup cannot
+// be asked and which Stop has to report.
+type tracker struct {
+	wg sync.WaitGroup
+
+	// complete is closed once every handler has finished, by exactly ONE
+	// waiter goroutine however many joins ask for it. Spawning a waiter per
+	// join leaked one permanently for each bounded shutdown whose signer never
+	// returned -- and Stop is idempotent and called repeatedly, so that grew
+	// without limit against a single wedged KMS.
+	waiterOnce sync.Once
+	complete   chan struct{}
+}
+
+func (t *tracker) begin() { t.wg.Add(1) }
+
+func (t *tracker) end() { t.wg.Done() }
+
+// completion returns the shared channel, starting its single waiter on first
+// use.
+//
+// Only safe once serving has stopped and no further begin can happen -- a
+// WaitGroup.Wait racing an Add is a misuse panic. Every caller satisfies that:
+// Stop and the reaper both wait for serveListener to return first, and Serve
+// calls this after it returns.
+func (t *tracker) completion() <-chan struct{} {
+	t.waiterOnce.Do(func() {
+		t.complete = make(chan struct{})
+		go func() {
+			t.wg.Wait()
+			close(t.complete)
+		}()
+	})
+	return t.complete
+}
+
+// joinWithin waits for the handlers, giving up when done is closed. It reports
+// whether every handler finished.
+func (t *tracker) joinWithin(done <-chan struct{}) bool {
+	select {
+	case <-t.completion():
+		return true
+	case <-done:
+		return false
+	}
+}
+
+// after returns a channel closed once d has elapsed, for callers that have a
+// duration rather than a context.
+func after(d time.Duration) <-chan struct{} {
+	done := make(chan struct{})
+	go func() {
+		<-time.After(d)
+		close(done)
+	}()
+	return done
 }
 
 // occupancyProbeTimeout bounds the dial that decides which error an occupied
@@ -224,10 +298,11 @@ func listen(socketPath string) (net.Listener, error) {
 }
 
 // serveListener serves a to every connection accepted on ln until ctx is
-// cancelled, then closes ln and disconnects every client still attached. It
-// blocks; run it in a goroutine and cancel ctx to stop. Graceful shutdown
-// returns nil. Unexported for the same reason as listen: the pair is only safe
-// together with a directory StartSession vouches for.
+// cancelled, then closes ln and disconnects every client still attached, and
+// returns. It does NOT join the connection handlers: how long to wait for those
+// is the caller's decision, so the caller joins t. Unexported for the same
+// reason as listen: the pair is only safe together with a directory
+// StartSession vouches for.
 //
 // Shutdown is complete when ServeListener returns: closing the listener alone
 // would leave already-accepted clients able to go on issuing sign requests
@@ -239,12 +314,11 @@ func listen(socketPath string) (net.Listener, error) {
 // removal of whatever holds the path *by then* -- and joining slow handlers
 // takes long enough for a successor session on the same WorkDir to have bound
 // it, whose live socket we would then delete.
-func serveListener(ctx context.Context, ln net.Listener, a sshagent.Agent) error {
+func serveListener(ctx context.Context, ln net.Listener, a sshagent.Agent, t *tracker) error {
 	var (
 		mu       sync.Mutex
 		live     = make(map[net.Conn]struct{})
 		draining bool
-		handlers sync.WaitGroup
 	)
 	// drain disconnects every attached client and refuses any further one.
 	drain := func() {
@@ -274,14 +348,12 @@ func serveListener(ctx context.Context, ln net.Listener, a sshagent.Agent) error
 		// and both are unconditional.
 		_ = ln.Close()
 		drain()
-		// Joining the handlers afterwards is hygiene, not security, so it is
-		// bounded. A handler stuck inside Signer.Sign -- a TPM awaiting touch,
-		// a stalled KMS -- cannot be interrupted by closing its connection, but
-		// it also cannot answer anyone: the connection it would write the
-		// signature to is already closed above. Waiting on it forever would
-		// hang Stop and leave the work directory unreaped to protect against an
-		// oracle that no longer has anybody to talk to.
-		joinWithin(&handlers, handlerJoinTimeout)
+		// The handlers are deliberately NOT joined here. A handler stuck inside
+		// Signer.Sign -- a TPM awaiting touch, a stalled KMS -- cannot be
+		// interrupted by closing its connection, and how long to wait for one
+		// is a policy question belonging to whoever is shutting the session
+		// down, not to this loop. It also cannot answer anyone: the connection
+		// it would write the signature to is already closed above.
 	}()
 
 	for {
@@ -302,15 +374,16 @@ func serveListener(ctx context.Context, ln net.Listener, a sshagent.Agent) error
 			continue
 		}
 		live[conn] = struct{}{}
-		// Add under the same lock drain takes. Outside it, shutdown could set
-		// draining, see an empty handler set and reach Wait between the unlock
-		// and the Add -- which is both a WaitGroup misuse panic and a session
-		// reporting itself stopped while this handler was still answering.
-		handlers.Add(1)
+		// Count under the same lock drain takes. Outside it, shutdown could set
+		// draining, see an empty handler set and reach the join between the
+		// unlock and the count -- which is both a WaitGroup misuse panic and a
+		// session reporting zero abandoned while this handler was still
+		// answering.
+		t.begin()
 		mu.Unlock()
 
 		go func(c net.Conn) {
-			defer handlers.Done()
+			defer t.end()
 			defer func() {
 				mu.Lock()
 				delete(live, c)
@@ -339,7 +412,12 @@ func Serve(ctx context.Context, socketPath string, a sshagent.Agent) error {
 	if err != nil {
 		return err
 	}
-	return serveListener(ctx, ln, a)
+	var t tracker
+	serr := serveListener(ctx, ln, a, &t)
+	// Serve is a single blocking call, so it joins on the caller's behalf --
+	// within the default bound, because it has no other one to use.
+	_ = t.joinWithin(after(defaultJoinBound()))
+	return serr
 }
 
 // bytesEqual reports whether two byte slices are equal.

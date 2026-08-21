@@ -21,11 +21,18 @@ import (
 	"os/exec"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/spf13/cobra"
 
 	sshsdk "github.com/jeremyhahn/go-xkms/sdk/go/client/ssh"
 )
+
+// sshShutdownBound caps teardown after the spawned ssh exits. A request can be
+// parked in Signer.Sign on a hardware key awaiting touch, which closing the
+// connection cannot interrupt; past this the session is torn down anyway and
+// the abandoned count is reported.
+const sshShutdownBound = 5 * time.Second
 
 // ErrSSHConnectTarget is returned when `ssh connect` gets no usable target.
 var ErrSSHConnectTarget = errors.New("ssh connect: a profile name or user@host target is required")
@@ -290,10 +297,38 @@ func runSSHConnect(cmd *cobra.Command, args []string) error {
 	sshCmd.Stdout = os.Stdout
 	sshCmd.Stderr = os.Stderr
 	runErr := sshCmd.Run()
-	if added, serr := session.SyncAndStop(); serr == nil && added > 0 {
+
+	// Bounded: ssh may have died with a request still parked in Signer.Sign on
+	// a hardware key awaiting touch, and closing its connection cannot
+	// interrupt that. Without a bound the command would simply never return.
+	stopCtx, cancelStop := context.WithTimeout(context.Background(), sshShutdownBound)
+	added, report, serr := session.SyncAndStop(stopCtx)
+	cancelStop()
+	if serr == nil && added > 0 {
 		fmt.Fprintf(os.Stderr, "xkey: pinned %d new host key(s)\n", added)
 	}
-	return runErr
+	if serr != nil {
+		fmt.Fprintf(os.Stderr, "xkey: host-key sync failed: %v\n", serr)
+	}
+	if !report.Clean() {
+		fmt.Fprintf(os.Stderr, "xkey: %d signing operation(s) still running at shutdown\n", report.Abandoned)
+	}
+	return sshConnectResult(runErr, serr)
+}
+
+// sshConnectResult decides the command's exit status once ssh has exited.
+//
+// ssh's own failure wins, because it is what the user was actually doing. But a
+// host-key sync failure must NOT be swallowed when ssh succeeded: the host key
+// ssh just accepted was not persisted, so the next connection is first contact
+// all over again — the fail-open the import's error handling exists to close.
+// Exiting zero there tells the user their trust decision was recorded when it
+// was not. Both failures are printed regardless; this only picks the status.
+func sshConnectResult(runErr, syncErr error) error {
+	if runErr != nil {
+		return runErr
+	}
+	return syncErr
 }
 
 // buildLocalSSHArgs computes the argv for a plain passthrough `ssh`

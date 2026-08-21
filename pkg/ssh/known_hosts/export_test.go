@@ -17,6 +17,7 @@ import (
 	"context"
 	"crypto/ed25519"
 	"crypto/rand"
+	"errors"
 	"os"
 	"path/filepath"
 	"strings"
@@ -124,5 +125,69 @@ func TestEmit_FingerprintOnlyPinErrors(t *testing.T) {
 	pin := &Pin{Host: "h", Fingerprint: "SHA256:abc", Scope: scope.User, Owner: "alice"}
 	if _, err := Emit(pin); err == nil {
 		t.Fatal("expected NoPublicKeyError for fingerprint-only pin")
+	}
+}
+
+// failingGetStore answers every pin lookup with a non-NotFound error, standing
+// in for a store that has stopped working rather than one that simply has no
+// pin yet.
+type failingGetStore struct {
+	Store
+	err error
+}
+
+func (f *failingGetStore) Get(context.Context, scope.Scope, string, string) (*Pin, error) {
+	return nil, f.err
+}
+
+// TestImportKnownHostsFile_FailsClosedOnStoreError covers the fail-open this
+// loop used to have: any Get error read as "not pinned yet", any Add error read
+// as "nothing to do". A broken store therefore reported a clean import of zero
+// hosts — and these are first-contact host keys, so silently dropping them
+// leaves the next connection unpinned, which is what the pin store exists to
+// prevent.
+func TestImportKnownHostsFile_FailsClosedOnStoreError(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "known_hosts")
+	line, _ := Emit(PinFromPublicKey("host.example.com", scope.User, "alice", testHostKey(t), SourceFirstContact))
+	if err := os.WriteFile(path, []byte(line+"\n"), 0o600); err != nil {
+		t.Fatalf("write: %v", err)
+	}
+
+	base, _ := NewBackendStore(storage.New())
+	broken := &failingGetStore{Store: base, err: errors.New("store is down")}
+
+	added, err := ImportKnownHostsFile(context.Background(), broken, scope.User, "alice", path, SourceFirstContact)
+	if err == nil {
+		t.Fatal("a broken store must fail the import, not report a clean zero")
+	}
+	if added != 0 {
+		t.Fatalf("nothing should have been pinned, got %d", added)
+	}
+}
+
+// TestImportKnownHostsFile_CancelledContextIsNotAnEmptyStore is the same
+// property for the case this branch made reachable: Sync now runs under a
+// deadline, and a context error must never read as "no pin exists".
+func TestImportKnownHostsFile_CancelledContextIsNotAnEmptyStore(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "known_hosts")
+	line, _ := Emit(PinFromPublicKey("host.example.com", scope.User, "alice", testHostKey(t), SourceFirstContact))
+	if err := os.WriteFile(path, []byte(line+"\n"), 0o600); err != nil {
+		t.Fatalf("write: %v", err)
+	}
+
+	base, _ := NewBackendStore(storage.New())
+	broken := &failingGetStore{Store: base, err: context.DeadlineExceeded}
+
+	added, err := ImportKnownHostsFile(context.Background(), broken, scope.User, "alice", path, SourceFirstContact)
+	if err == nil {
+		t.Fatal("an expired context must fail the import, not report a clean zero")
+	}
+	if !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatalf("the cause must stay reachable, got %v", err)
+	}
+	if added != 0 {
+		t.Fatalf("nothing should have been pinned, got %d", added)
 	}
 }

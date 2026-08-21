@@ -42,6 +42,16 @@ func waitDone(t *testing.T, s *Session) {
 	}
 }
 
+// stopClean stops a session and requires nothing was abandoned. Most tests have
+// no wedged signer, so a non-zero count would mean a handler leaked rather than
+// finished -- worth failing on rather than discarding.
+func stopClean(t *testing.T, s *Session) {
+	t.Helper()
+	if r := s.Stop(context.Background()); !r.Clean() {
+		t.Errorf("clean shutdown expected, %d handler(s) abandoned", r.Abandoned)
+	}
+}
+
 // stopBounded calls Stop with a deadline. Stop is deliberately unbounded in
 // production -- shutdown waits for connection handlers to finish -- so a test
 // that called it directly would hang the whole suite rather than report which
@@ -49,7 +59,7 @@ func waitDone(t *testing.T, s *Session) {
 func stopBounded(t *testing.T, s *Session) {
 	t.Helper()
 	stopped := make(chan struct{})
-	go func() { defer close(stopped); s.Stop() }()
+	go func() { defer close(stopped); s.Stop(context.Background()) }()
 	select {
 	case <-stopped:
 	case <-time.After(5 * time.Second):
@@ -76,7 +86,7 @@ func TestStartSession_SocketIsBoundBeforeReturn(t *testing.T) {
 	signer := newEd25519Signer(t)
 	sess, err := StartSession(context.Background(), Request{Signers: []ssh.Signer{signer}})
 	require.NoError(t, err)
-	defer sess.Stop()
+	defer stopClean(t, sess)
 
 	conn, err := net.Dial("unix", sess.SockPath)
 	require.NoError(t, err, "socket must be connectable on return, with no polling")
@@ -96,7 +106,7 @@ func TestStartSession_SignsOverTheSocket(t *testing.T) {
 	signer := newEd25519Signer(t)
 	sess, err := StartSession(context.Background(), Request{Signers: []ssh.Signer{signer}})
 	require.NoError(t, err)
-	defer sess.Stop()
+	defer stopClean(t, sess)
 
 	conn, err := net.Dial("unix", sess.SockPath)
 	require.NoError(t, err)
@@ -114,7 +124,7 @@ func TestStartSession_SignsOverTheSocket(t *testing.T) {
 func TestStartSession_EnvCarriesTheSocket(t *testing.T) {
 	sess, err := StartSession(context.Background(), Request{Signers: []ssh.Signer{newEd25519Signer(t)}})
 	require.NoError(t, err)
-	defer sess.Stop()
+	defer stopClean(t, sess)
 
 	require.Equal(t, []string{"SSH_AUTH_SOCK=" + sess.SockPath}, sess.Env)
 }
@@ -124,7 +134,7 @@ func TestStartSession_EnvCarriesTheSocket(t *testing.T) {
 func TestStartSession_SocketPermissions(t *testing.T) {
 	sess, err := StartSession(context.Background(), Request{Signers: []ssh.Signer{newEd25519Signer(t)}})
 	require.NoError(t, err)
-	defer sess.Stop()
+	defer stopClean(t, sess)
 
 	info, err := os.Stat(sess.SockPath)
 	require.NoError(t, err)
@@ -140,7 +150,7 @@ func TestStartSession_StopRemovesSocketAndOwnedWorkDir(t *testing.T) {
 	require.NoError(t, err)
 	workDir := filepath.Dir(sess.SockPath)
 
-	sess.Stop()
+	stopClean(t, sess)
 
 	_, err = os.Stat(sess.SockPath)
 	assert.True(t, errors.Is(err, os.ErrNotExist), "socket must be gone once Stop returns, got %v", err)
@@ -201,8 +211,8 @@ func TestStartSession_StopIsIdempotent(t *testing.T) {
 	sess, err := StartSession(context.Background(), Request{Signers: []ssh.Signer{newEd25519Signer(t)}})
 	require.NoError(t, err)
 
-	sess.Stop()
-	sess.Stop()
+	stopClean(t, sess)
+	stopClean(t, sess)
 }
 
 // TestStartSession_ContextCancelEndsSession is the lifetime contract stated on
@@ -235,7 +245,7 @@ func TestStartSession_StopAfterContextCancel(t *testing.T) {
 	waitDone(t, sess)
 
 	done := make(chan struct{})
-	go func() { defer close(done); sess.Stop() }()
+	go func() { defer close(done); sess.Stop(context.Background()) }()
 	select {
 	case <-done:
 	case <-time.After(5 * time.Second):
@@ -255,7 +265,7 @@ func TestStartSession_CallerWorkDirIsLeftInPlace(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, SocketPath(workDir), sess.SockPath)
 
-	sess.Stop()
+	stopClean(t, sess)
 
 	_, err = os.Stat(sess.SockPath)
 	assert.True(t, errors.Is(err, os.ErrNotExist), "socket must be gone, got %v", err)
@@ -299,7 +309,7 @@ func TestStartSession_LiveSocketIsNotClobbered(t *testing.T) {
 		WorkDir: workDir,
 	})
 	require.NoError(t, err)
-	defer held.Stop()
+	defer stopClean(t, held)
 
 	_, err = StartSession(context.Background(), Request{
 		Signers: []ssh.Signer{newEd25519Signer(t)},
@@ -366,7 +376,7 @@ func TestStartSession_RelativeWorkDirIsAbsolutised(t *testing.T) {
 		WorkDir: "sock",
 	})
 	require.NoError(t, err)
-	defer sess.Stop()
+	defer stopClean(t, sess)
 
 	assert.True(t, filepath.IsAbs(sess.SockPath), "SockPath must be absolute, got %q", sess.SockPath)
 	assert.Equal(t, "SSH_AUTH_SOCK="+sess.SockPath, sess.Env[0])
@@ -420,7 +430,7 @@ func TestStartSession_MultipleSigners(t *testing.T) {
 	ed, rsa := newEd25519Signer(t), newRSASigner(t)
 	sess, err := StartSession(context.Background(), Request{Signers: []ssh.Signer{ed, rsa}})
 	require.NoError(t, err)
-	defer sess.Stop()
+	defer stopClean(t, sess)
 
 	conn, err := net.Dial("unix", sess.SockPath)
 	require.NoError(t, err)
@@ -528,7 +538,7 @@ func TestStartSession_SignersAreFrozen(t *testing.T) {
 
 	sess, err := StartSession(context.Background(), Request{Signers: signers})
 	require.NoError(t, err)
-	defer sess.Stop()
+	defer stopClean(t, sess)
 
 	signers[0] = other // the caller reuses its slice
 
@@ -729,10 +739,15 @@ func TestAgent_Ed25519IgnoresRSAFlags(t *testing.T) {
 // awaiting touch or a KMS that has stopped answering.
 type blockingSigner struct {
 	ssh.Signer
-	entered chan struct{}
-	release chan struct{}
-	once    sync.Once
+	entered     chan struct{}
+	release     chan struct{}
+	once        sync.Once
+	releaseOnce sync.Once
 }
+
+// Release unblocks the stalled Sign. Idempotent, so a test can free the signer
+// at the point it wants and still register a cleanup for the failure paths.
+func (b *blockingSigner) Release() { b.releaseOnce.Do(func() { close(b.release) }) }
 
 func (b *blockingSigner) Sign(rand io.Reader, data []byte) (*ssh.Signature, error) {
 	b.once.Do(func() { close(b.entered) })
@@ -740,22 +755,19 @@ func (b *blockingSigner) Sign(rand io.Reader, data []byte) (*ssh.Signature, erro
 	return b.Signer.Sign(rand, data)
 }
 
-// TestStartSession_StopCompletesWithASignerStuckInSign is the shutdown
-// termination guarantee. A signer blocked inside Sign cannot be interrupted by
-// closing its connection, so waiting for its handler unconditionally would hang
-// Stop forever and leave the work directory unreaped.
-//
-// It does not need to be waited for. Shutdown closes every connection first, so
-// the stuck handler has nowhere to write a signature even when it finally
-// returns — it is not a usable oracle, just a goroutine. Termination is
-// therefore bounded, and the security property is unaffected.
-func TestStartSession_StopCompletesWithASignerStuckInSign(t *testing.T) {
+// TestStartSession_StopReportsAbandonedSigner is the ruled shutdown contract. A
+// signer blocked inside Sign cannot be interrupted by closing its connection, so
+// an unbounded Stop would hand control of the caller's shutdown to a wedged
+// device. Stop honours the caller's bound -- and, crucially, SAYS what it
+// abandoned. A bounded stop that reported nothing would be the same surprise as
+// no bound at all.
+func TestStartSession_StopReportsAbandonedSigner(t *testing.T) {
 	blocked := &blockingSigner{
 		Signer:  newEd25519Signer(t),
 		entered: make(chan struct{}),
 		release: make(chan struct{}),
 	}
-	defer close(blocked.release) // let the goroutine finish when the test ends
+	t.Cleanup(blocked.Release) // never leave the goroutine parked
 
 	sess, err := StartSession(context.Background(), Request{Signers: []ssh.Signer{blocked}})
 	require.NoError(t, err)
@@ -773,24 +785,192 @@ func TestStartSession_StopCompletesWithASignerStuckInSign(t *testing.T) {
 		t.Fatal("the signer never entered Sign")
 	}
 
-	stopped := make(chan struct{})
-	go func() { defer close(stopped); sess.Stop() }()
+	ctx, cancel := context.WithTimeout(context.Background(), 250*time.Millisecond)
+	defer cancel()
+
+	type outcome struct{ report ShutdownReport }
+	done := make(chan outcome, 1)
+	go func() { done <- outcome{sess.Stop(ctx)} }()
+
+	var got ShutdownReport
 	select {
-	case <-stopped:
-	case <-time.After(handlerJoinTimeout + 5*time.Second):
+	case o := <-done:
+		got = o.report
+	case <-time.After(10 * time.Second):
 		t.Fatal("Stop never returned with a signer stuck inside Sign")
 	}
 
-	// The session is gone despite the straggler.
+	// The report names the residual rather than hiding it.
+	assert.False(t, got.Clean(), "a stuck signer must not be reported as a clean shutdown")
+	assert.False(t, got.Joined, "the handler cannot have finished; its signer is still inside Sign")
+	assert.Equal(t, 1, got.Abandoned, "the abandoned signing operation must be counted")
+
+	// The security boundary held regardless of the bound: socket gone, client
+	// disconnected. Only the work dir waits on the reaper.
 	_, serr := os.Stat(sess.SockPath)
 	assert.True(t, errors.Is(serr, os.ErrNotExist), "socket must be gone, got %v", serr)
-	_, serr = os.Stat(workDir)
-	assert.True(t, errors.Is(serr, os.ErrNotExist), "work dir must be reaped, got %v", serr)
-
-	// ...and the straggler has nobody to answer: its connection is closed.
 	_, werr := conn.Write([]byte{0, 0, 0, 1, 11})
 	if werr == nil {
 		_, rerr := conn.Read(make([]byte, 1))
 		assert.Error(t, rerr, "a client held across shutdown must not still be served")
 	}
+
+	// Once the signer is released the reaper finishes and the dir goes.
+	blocked.Release()
+	waitDone(t, sess)
+	_, derr := os.Stat(workDir)
+	assert.True(t, errors.Is(derr, os.ErrNotExist), "work dir must be reaped, got %v", derr)
+}
+
+// TestStartSession_StopReportsCleanShutdown is the other half of the contract:
+// with nothing wedged, the report says so. Without this, a Stop that always
+// claimed an abandonment would pass the test above.
+func TestStartSession_StopReportsCleanShutdown(t *testing.T) {
+	sess, err := StartSession(context.Background(), Request{Signers: []ssh.Signer{newEd25519Signer(t)}})
+	require.NoError(t, err)
+
+	conn, err := net.Dial("unix", sess.SockPath)
+	require.NoError(t, err)
+	_, err = sshagent.NewClient(conn).List()
+	require.NoError(t, err)
+	_ = conn.Close()
+
+	report := sess.Stop(context.Background())
+	assert.True(t, report.Clean(), "expected a clean shutdown, got %d abandoned", report.Abandoned)
+	assert.True(t, report.Joined, "every handler should have finished")
+	assert.Zero(t, report.Abandoned)
+}
+
+// TestStartSession_StopHonoursABoundLongerThanTheReapers closes the hole a
+// caller-supplied bound is easy to fake: keying Stop off the session's reaper
+// works for any bound SHORTER than the reaper's own, and silently truncates
+// every longer one — reporting the handler the reaper gave up on as a clean
+// shutdown. That is the silent bounded stop wearing the new signature.
+//
+// The bound here has to exceed defaultJoinBound, which is the only region where
+// the two differ, so the test shortens that bound rather than spending the
+// production five seconds to reach it.
+func TestStartSession_StopHonoursABoundLongerThanTheReapers(t *testing.T) {
+	joinBoundOverride.Store(int64(150 * time.Millisecond))
+	t.Cleanup(func() { joinBoundOverride.Store(0) })
+
+	blocked := &blockingSigner{
+		Signer:  newEd25519Signer(t),
+		entered: make(chan struct{}),
+		release: make(chan struct{}),
+	}
+	t.Cleanup(blocked.Release)
+
+	sess, err := StartSession(context.Background(), Request{Signers: []ssh.Signer{blocked}})
+	require.NoError(t, err)
+
+	conn, err := net.Dial("unix", sess.SockPath)
+	require.NoError(t, err)
+	defer func() { _ = conn.Close() }()
+
+	go func() { _, _ = sshagent.NewClient(conn).Sign(blocked.PublicKey(), []byte("stalls")) }()
+	select {
+	case <-blocked.entered:
+	case <-time.After(5 * time.Second):
+		t.Fatal("the signer never entered Sign")
+	}
+
+	bound := defaultJoinBound() + 200*time.Millisecond
+	ctx, cancel := context.WithTimeout(context.Background(), bound)
+	defer cancel()
+
+	start := time.Now()
+	report := sess.Stop(ctx)
+	elapsed := time.Since(start)
+
+	assert.Equal(t, 1, report.Abandoned,
+		"the abandoned handler must be reported even past the reaper's own bound")
+	assert.GreaterOrEqual(t, elapsed, defaultJoinBound(),
+		"Stop returned at the reaper's bound (%s), so it ignored the caller's (%s)", elapsed, bound)
+}
+
+// TestStartSession_RepeatedBoundedStopDoesNotLeakWaiters covers the cost of
+// making Stop both idempotent and bounded: each call used to spawn its own
+// goroutine to wait on the handler WaitGroup, and against a signer that never
+// returns none of them ever exited. Repeated teardown — which the GUI does on
+// Disconnect after a TTL expiry, and which the documented idempotency invites —
+// therefore grew goroutines without limit against a single wedged KMS.
+func TestStartSession_RepeatedBoundedStopDoesNotLeakWaiters(t *testing.T) {
+	blocked := &blockingSigner{
+		Signer:  newEd25519Signer(t),
+		entered: make(chan struct{}),
+		release: make(chan struct{}),
+	}
+	t.Cleanup(blocked.Release)
+
+	sess, err := StartSession(context.Background(), Request{Signers: []ssh.Signer{blocked}})
+	require.NoError(t, err)
+
+	conn, err := net.Dial("unix", sess.SockPath)
+	require.NoError(t, err)
+	defer func() { _ = conn.Close() }()
+	go func() { _, _ = sshagent.NewClient(conn).Sign(blocked.PublicKey(), []byte("stalls")) }()
+	select {
+	case <-blocked.entered:
+	case <-time.After(5 * time.Second):
+		t.Fatal("the signer never entered Sign")
+	}
+
+	stop := func() {
+		ctx, cancel := context.WithTimeout(context.Background(), 20*time.Millisecond)
+		defer cancel()
+		require.False(t, sess.Stop(ctx).Clean(), "precondition: the signer is still wedged")
+	}
+
+	stop() // first call starts the one waiter that is allowed to exist
+	runtime.Gosched()
+	before := runtime.NumGoroutine()
+
+	for i := 0; i < 50; i++ {
+		stop()
+	}
+	runtime.Gosched()
+	growth := runtime.NumGoroutine() - before
+
+	// Some slack for the scheduler and the still-parked signing handler, but
+	// nothing like the fifty a per-call waiter would have added.
+	assert.LessOrEqual(t, growth, 5,
+		"50 bounded stops grew the goroutine count by %d; each is spawning its own waiter", growth)
+}
+
+// TestStartSession_IdleClientIsNotAnAbandonedSignature separates the two things
+// the report used to conflate. Counting accepted connections meant a client
+// that merely held the socket open — never asking for anything — was reported
+// as an abandoned signing operation, and the CLI and GUI turn that number into
+// a security warning. A warning about work that never happened is worse than
+// no warning: it teaches people to ignore the real one.
+func TestStartSession_IdleClientIsNotAnAbandonedSignature(t *testing.T) {
+	sess, err := StartSession(context.Background(), Request{Signers: []ssh.Signer{newEd25519Signer(t)}})
+	require.NoError(t, err)
+
+	// Connect and sit there. The handler is live; no signature is executing.
+	conn, err := net.Dial("unix", sess.SockPath)
+	require.NoError(t, err)
+	defer func() { _ = conn.Close() }()
+	_, err = sshagent.NewClient(conn).List()
+	require.NoError(t, err, "the connection is established and idle")
+
+	// An already-expired bound: the join cannot succeed, so this exercises the
+	// reporting branch rather than the clean one.
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+
+	// Abandoned is the deterministic property here, and the one the finding was
+	// about: whatever happens to the join, an idle client must never be counted
+	// as a signature.
+	//
+	// Joined is deliberately NOT asserted. An idle handler finishes as soon as
+	// the drain closes its connection, so it may or may not have joined by the
+	// time Stop looks -- asserting either way would be asserting a race. The
+	// Joined=false path is covered where it is actually deterministic, by
+	// TestStartSession_StopReportsAbandonedSigner, whose signer genuinely
+	// cannot finish.
+	report := sess.Stop(ctx)
+	assert.Zero(t, report.Abandoned,
+		"an idle connected client is not a signing operation")
 }

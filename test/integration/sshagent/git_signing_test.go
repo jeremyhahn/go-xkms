@@ -229,7 +229,7 @@ func TestStartAgent_GitCommitSigning(t *testing.T) {
 	if err != nil {
 		t.Fatalf("StartAgent: %v", err)
 	}
-	defer sess.Stop()
+	defer sess.Stop(context.Background())
 
 	// The consumer only ever writes the PUBLIC half to disk -- that is what
 	// user.signingkey points at.

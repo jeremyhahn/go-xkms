@@ -81,9 +81,9 @@ serves.
 
 ## Lifetime, and why it is stated rather than implied
 
-The session ends at the first of `Stop()` or cancellation of the context passed
+The session ends at the first of `Stop` or cancellation of the context passed
 to `StartSession`. Either way the socket file is removed, and a work directory
-the session created goes with it. `Stop()` blocks until that has happened;
+the session created goes with it. `Stop` reports what it had to abandon;
 `Done()` reports it for a caller that cancelled the context instead.
 
 An agent socket is a signing oracle for anyone who can connect to it. A socket
@@ -96,13 +96,29 @@ session ended holds a socket of its own, and unlinking the pathname does
 nothing to it — it would go on issuing sign requests through a session its
 owner believes is over, which is precisely the unwatched oracle above wearing
 a different hat. Shutdown therefore closes every attached connection and joins
-its handler before reporting completion. When `Stop()` returns, or `Done()`
+its handler before reporting completion. When `Stop` returns, or `Done()`
 closes, there is no usable signing path left: not a new one, and not an old
 one.
 
-That is why `Stop()` is unbounded rather than best-effort. A bounded stop that
-gave up on a stuck handler would return `true` while the oracle was still
-answering, which is the one answer it must never give.
+**And that is why the bound belongs to the caller, with the residual named.**
+A handler stuck inside an uninterruptible `Signer.Sign` — a TPM awaiting touch,
+a stalled KMS — cannot be woken by closing its connection. Waiting on it forever
+hands control of the caller's shutdown to a wedged device; giving up silently
+re-introduces, as an undocumented surprise, the very thing the drain was built
+to prevent. So `Stop` takes a context and returns a `ShutdownReport` counting
+what it abandoned.
+
+The residual, stated so a caller decides rather than discovers: an abandoned
+handler may still deliver a signature to the client that asked for it, **if that
+client attached before `Stop` began**. No new authorization occurs — that client
+was already being served by an authorized session, and no new one can attach,
+because the listener closed and every connection was dropped before any waiting
+started. A caller that cannot accept this tears down its process; one that can,
+because the abandoned work is its own, carries on.
+
+A context-aware signing seam would remove even that, and it is deliberately not
+built here: it reaches into how every backend constructs its `crypto.Signer`,
+hardware included, and the typed report is sufficient for this consumer class.
 
 ## Rejected alternatives
 

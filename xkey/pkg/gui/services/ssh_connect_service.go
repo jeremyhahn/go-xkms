@@ -25,6 +25,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	sshclient "github.com/jeremyhahn/go-xkms/sdk/go/client/ssh"
@@ -38,7 +39,18 @@ const (
 
 	// sshSyncInterval is how often a live session re-imports first-contact host
 	// keys the native client accepted.
-	sshSyncInterval = 3 * time.Second
+	sshSyncIntervalDefault = 3 * time.Second
+
+	// sshSyncBound caps one polled host-key import. The store may be
+	// barrier-backed, and a poll that outlives its own interval is a poll that
+	// stacks up behind itself.
+	sshSyncBound = 2 * time.Second
+
+	// sshShutdownBound caps teardown. A spawned ssh can have a request parked
+	// in Signer.Sign on a hardware key awaiting touch, which closing its
+	// connection cannot interrupt; past this the session is torn down anyway
+	// and the abandoned count is logged.
+	sshShutdownBound = 5 * time.Second
 
 	// sshSessionTTL bounds how long a launched agent stays alive (safety net;
 	// also torn down on app shutdown / Disconnect).
@@ -49,6 +61,19 @@ const (
 	// "managed" — the historical, still-default behavior.
 	sshKeySourceLocal = "local"
 )
+
+// sshSyncIntervalOverride lets a test drive the poll without waiting seconds
+// for a real tick. Atomic because watchers from other tests may be reading it
+// concurrently. Zero means the default.
+var sshSyncIntervalOverride atomic.Int64
+
+// sshSyncInterval is the poll interval in effect.
+func sshSyncInterval() time.Duration {
+	if n := sshSyncIntervalOverride.Load(); n > 0 {
+		return time.Duration(n)
+	}
+	return sshSyncIntervalDefault
+}
 
 var (
 	// ErrSSHConnectNotConfigured indicates the connect service is missing its
@@ -292,13 +317,13 @@ func (s *SSHConnectService) launch(params SSHConnectParams) error {
 
 	name, args, err := s.buildTerminal(sess.Args, sess.Env)
 	if err != nil {
-		sess.Stop()
+		sess.Stop(context.Background())
 		return err
 	}
 	cmd := s.execCommand(context.Background(), name, args...)
 	cmd.Env = append(os.Environ(), sess.Env...)
 	if startErr := cmd.Start(); startErr != nil {
-		sess.Stop()
+		sess.Stop(context.Background())
 		return &WrappedError{Msg: "ssh_connect_service: launch terminal", Err: startErr}
 	}
 
@@ -361,22 +386,58 @@ func (s *SSHConnectService) register(sess *sshclient.ConnectSession) {
 // watch periodically imports first-contact host keys until the TTL/ctx ends,
 // then performs a final sync, stops the agent, and deregisters the session.
 func (s *SSHConnectService) watch(ctx context.Context, id string, sess *sshclient.ConnectSession) {
-	ticker := time.NewTicker(sshSyncInterval)
+	ticker := time.NewTicker(sshSyncInterval())
 	defer ticker.Stop()
+
+	// polling is non-nil while a poll is in flight; its result arrives on the
+	// channel. The poll runs on its own goroutine because a store that ignores
+	// the context it was handed -- the failure mode this whole teardown design
+	// exists for -- would otherwise block this loop inside Sync, so shutdown
+	// could never reach the ctx.Done branch and the signing socket would stay
+	// alive for as long as the backend stayed wedged. StopAll only cancels
+	// ctx; it cannot interrupt a synchronous call.
+	var polling chan error
+
+	shutdown := func() {
+		// ctx is already cancelled here, so the teardown gets its own bound.
+		stopCtx, cancelStop := context.WithTimeout(context.Background(), sshShutdownBound)
+		_, report, err := sess.SyncAndStop(stopCtx)
+		cancelStop()
+		if err != nil && s.logger != nil {
+			s.logger.Warn("ssh connect: final host-key sync failed", "error", err)
+		}
+		if !report.Clean() && s.logger != nil {
+			s.logger.Warn("ssh connect: shutdown abandoned in-flight signing operations",
+				"session", id, "abandoned", report.Abandoned)
+		}
+		s.mu.Lock()
+		delete(s.sessions, id)
+		s.mu.Unlock()
+	}
+
 	for {
 		select {
 		case <-ctx.Done():
-			if _, err := sess.SyncAndStop(); err != nil && s.logger != nil {
-				s.logger.Warn("ssh connect: final host-key sync failed", "error", err)
-			}
-			s.mu.Lock()
-			delete(s.sessions, id)
-			s.mu.Unlock()
+			shutdown()
 			return
-		case <-ticker.C:
-			if _, err := sess.Sync(); err != nil && s.logger != nil {
+
+		case err := <-polling:
+			polling = nil
+			if err != nil && s.logger != nil {
 				s.logger.Debug("ssh connect: host-key sync", "error", err)
 			}
+
+		case <-ticker.C:
+			if polling != nil {
+				continue // a poll is still running; do not stack another on it
+			}
+			polling = make(chan error, 1)
+			go func(done chan<- error) {
+				syncCtx, cancelSync := context.WithTimeout(context.Background(), sshSyncBound)
+				_, err := sess.Sync(syncCtx)
+				cancelSync()
+				done <- err
+			}(polling)
 		}
 	}
 }

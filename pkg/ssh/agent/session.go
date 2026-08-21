@@ -66,8 +66,44 @@ type Session struct {
 	Env []string
 
 	cancel  context.CancelFunc
+	served  chan struct{}
 	stopped chan struct{}
+	track   *tracker
+	agent   *Agent
 }
+
+// ShutdownReport is what Stop returns. Abandoned counts the signature
+// operations still executing when the caller's bound elapsed -- not connected
+// clients, and not parked handlers.
+//
+// A non-zero count is not an error and not a leak: those handlers hold no
+// connection any more, because Stop disconnects every attached client before it
+// waits. They are goroutines finishing an uninterruptible Signer.Sign -- a TPM
+// awaiting touch, a stalled KMS -- and the signature each eventually produces
+// has nowhere to go.
+//
+// The one residual, stated so a caller can decide rather than discover: a
+// handler abandoned this way may still deliver a signature to the client that
+// asked for it, if that client attached BEFORE Stop began. No new authorization
+// happens -- that client was already being served by an authorized session --
+// but the operation completes after the owner considered the session closed. A
+// caller that cannot accept this tears down its process; a caller that can
+// (because the abandoned work is its own) carries on.
+type ShutdownReport struct {
+	// Abandoned counts signature operations still executing.
+	Abandoned int
+
+	// Joined reports whether every connection handler finished. It is separate
+	// from Abandoned because the two can disagree: a handler parked with no
+	// signature in flight -- an idle client holding the socket -- is zero
+	// abandoned signatures AND an unfinished join. Collapsing them let that
+	// case report a clean shutdown while the work directory was still on disk.
+	Joined bool
+}
+
+// Clean reports whether shutdown finished completely: every handler joined and
+// no signature left executing.
+func (r ShutdownReport) Clean() bool { return r.Joined && r.Abandoned == 0 }
 
 // socketName is the file name the agent socket is given inside its work
 // directory. Shared so pkg/ssh/connect names the same file.
@@ -146,23 +182,31 @@ func StartSession(ctx context.Context, req Request) (*Session, error) {
 	}
 
 	agentCtx, cancel := context.WithCancel(ctx)
+	track := &tracker{}
+	srv := New(signers...)
 	served := make(chan struct{})
 	go func() {
 		defer close(served)
-		_ = serveListener(agentCtx, ln, New(signers...))
+		_ = serveListener(agentCtx, ln, srv, track)
 	}()
 
 	sess := &Session{
 		SockPath: sock,
 		Env:      []string{"SSH_AUTH_SOCK=" + sock},
 		cancel:   cancel,
+		served:   served,
 		stopped:  make(chan struct{}),
+		track:    track,
+		agent:    srv,
 	}
-	// One reaper for both exit paths (Stop and ctx cancellation): it waits for
-	// ServeListener to remove the socket, then removes an owned work directory
-	// and marks the session stopped.
+	// One reaper for both exit paths (Stop and ctx cancellation). It waits for
+	// the listener to close and the clients to be disconnected, then joins the
+	// handlers within the default bound and removes an owned work directory.
+	// The bound is what guarantees the directory is reaped even when nobody
+	// calls Stop and a signer is wedged.
 	go func() {
 		<-served
+		_ = track.joinWithin(after(defaultJoinBound()))
 		if ownsWorkDir {
 			_ = os.RemoveAll(workDir)
 		}
@@ -176,11 +220,48 @@ func StartSession(ctx context.Context, req Request) (*Session, error) {
 // a session cancelled through its context.
 func (s *Session) Done() <-chan struct{} { return s.stopped }
 
-// Stop ends the session and blocks until the socket is gone. Idempotent, and
-// safe to call on a session whose context was already cancelled.
-func (s *Session) Stop() {
+// Stop ends the session and reports what it had to abandon.
+//
+// Two phases, and only the first is unconditional. The listener is closed and
+// every attached client disconnected before Stop waits for anything: no new
+// client can attach and no new signing operation can start, whatever ctx says.
+// That is the security boundary, and it is not subject to a deadline.
+//
+// Stop then joins the connection handlers within ctx. A handler stuck inside an
+// uninterruptible Signer.Sign cannot be woken by closing its connection, so
+// waiting on one without a bound would hand control of the caller's shutdown to
+// a wedged device. When ctx elapses first, the returned ShutdownReport says how
+// many handlers were still running -- see its documentation for exactly what
+// that does and does not mean. The count is never silently swallowed, because a
+// bounded stop that reported nothing would be the same surprise as no bound at
+// all.
+//
+// Pass a context with a deadline to choose the bound; pass context.Background()
+// to wait for a clean join however long it takes. Idempotent, and safe on a
+// session whose own context was already cancelled.
+func (s *Session) Stop(ctx context.Context) ShutdownReport {
 	s.cancel()
+	<-s.served // listener closed, clients disconnected, socket unlinked
+
+	// Join the handlers against the CALLER's bound, not the reaper's. Keying
+	// this off s.stopped would silently truncate any bound longer than
+	// defaultJoinBound -- and report the handler the reaper gave up on as a
+	// clean shutdown, which is the exact failure this signature exists to
+	// prevent.
+	if !s.track.joinWithin(ctx.Done()) {
+		// Two separate facts. Abandoned counts signature operations still
+		// executing -- not handlers still parked, because an idle client
+		// holding a socket is not a signing operation and calling it one raises
+		// a security warning about work that never happened. Joined is false
+		// regardless, because the handlers did NOT finish and the work
+		// directory is therefore still on disk.
+		return ShutdownReport{Abandoned: s.agent.InFlightSignatures()}
+	}
+	// Every handler finished, so the reaper's own join returns at once; waiting
+	// for it here is what makes the work directory gone by the time a clean
+	// Stop returns.
 	<-s.stopped
+	return ShutdownReport{Joined: true}
 }
 
 // usableSigner reports whether a signer can actually be served. A typed nil

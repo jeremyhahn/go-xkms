@@ -62,7 +62,10 @@ type ConnectOptions struct {
 // known_hosts file from the store, and returns the ssh argv/env. The caller
 // spawns the system ssh client (in a terminal window or inline) and calls
 // (*ConnectSession).SyncAndStop afterward to pin first-contact hosts and stop
-// the agent.
+// the agent. That call takes a context bounding the shutdown, and returns a
+// report naming any signing operation still running when it elapsed — a signer
+// wedged inside Sign cannot be interrupted, so the bound is what keeps teardown
+// from hanging on it.
 func StartConnect(ctx context.Context, opts ConnectOptions) (*ConnectSession, error) {
 	scopeVal := opts.Scope
 	if scopeVal == "" {
