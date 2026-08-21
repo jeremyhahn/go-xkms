@@ -25,6 +25,7 @@ import (
 	"os"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/jeremyhahn/go-xkms/pkg/api/transport"
 	android "github.com/jeremyhahn/go-xkms/pkg/attestation/android"
@@ -40,6 +41,14 @@ const (
 	realPackage       = "com.automatethethings.xkey.debug"
 	realSigningDigest = "471812d11ee2279da7a6957997c7b66a2d1fd8ccbba106f5fbf9c4c024a30aba"
 )
+
+// realChainVerificationTime sits inside the captured chain's validity window
+// (2026-08-05 00:55 UTC to 2026-08-21 00:43 UTC). Google's test attestation CA
+// mints short-lived intermediates, so the window closes about sixteen days
+// after any capture. Tests that need the chain to verify pin this instant
+// rather than depending on when they are run; re-capturing the fixture would
+// only reset the same countdown.
+var realChainVerificationTime = time.Date(2026, 8, 10, 0, 0, 0, 0, time.UTC)
 
 func loadRealAndroidChain(t *testing.T) [][]byte {
 	t.Helper()
@@ -318,6 +327,25 @@ func TestParseCSRAny_AcceptsPEMAndDER(t *testing.T) {
 func androidAnchoredService(t *testing.T) *XKMSService {
 	t.Helper()
 
+	svc := androidAnchoredServiceOnTheRealClock(t)
+
+	// The fixture is a genuine capture, so its certificates expire. Pinning the
+	// service clock keeps these tests about the gate they are testing instead of
+	// about the calendar. TestSignCSR_AndroidFixtureIsRefusedOnTheRealClock
+	// holds the other side: production still refuses this chain.
+	svc.mu.Lock()
+	svc.attestationClock = func() time.Time { return realChainVerificationTime }
+	svc.mu.Unlock()
+
+	return svc
+}
+
+// androidAnchoredServiceOnTheRealClock is androidAnchoredService without the
+// pinned verification time, so certificate lifetimes are judged against
+// time.Now() exactly as they are on a server.
+func androidAnchoredServiceOnTheRealClock(t *testing.T) *XKMSService {
+	t.Helper()
+
 	chain := loadRealAndroidChain(t)
 	root, err := x509.ParseCertificate(chain[len(chain)-1])
 	require.NoError(t, err)
@@ -392,6 +420,61 @@ func TestSignCSR_AndroidEnterpriseCA_RefusesACSRForADifferentKey(t *testing.T) {
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "attested key",
 		"the refusal must name the key binding")
+}
+
+// TestSignCSR_AttestationExpiryUsesTheRealClockByDefault is the counterweight
+// to pinning the verification time in the tests above.
+//
+// A pinned clock is how expired evidence is made to verify. That is correct in
+// a test and catastrophic in a server, so the injection is reachable only from
+// inside this package -- and this proves the default did not move with it.
+//
+// The evidence here is minted with a validity window that has already closed
+// relative to whatever time.Now() returns, rather than being a fixed date the
+// host clock has to be past. That is the whole point of the change: a test that
+// assumes something about the calendar is the defect this fixes, and it would
+// be no better inverted.
+func TestSignCSR_AttestationExpiryUsesTheRealClockByDefault(t *testing.T) {
+	const format = "yubikey-piv"
+
+	newExpiredCase := func(t *testing.T) (*XKMSService, *attestationChain) {
+		t.Helper()
+		svc := setupServiceWithCA(t, &mockCA{
+			signCSRCert: createSelfSignedCert(t),
+			cert:        createSelfSignedCert(t),
+		})
+		// Valid from two days ago until one day ago: expired now, and expired
+		// on any clock this ever runs on.
+		expired := newAttestationChain(t, "Vendor",
+			time.Now().Add(-48*time.Hour), time.Now().Add(-24*time.Hour))
+		anchorFormats(t, svc, map[string][]*x509.Certificate{format: {expired.root}})
+		return svc, expired
+	}
+
+	t.Run("expired evidence is refused when no clock is injected", func(t *testing.T) {
+		svc, expired := newExpiredCase(t)
+
+		_, err := signCSRWithAttestation(t, svc, format, expired.wire(), expired.leafKey)
+
+		require.Error(t, err)
+		assert.ErrorIs(t, err, ErrAttestationVerificationFailed)
+		assert.Contains(t, err.Error(), "expired",
+			"an uninjected service must judge lifetimes against time.Now()")
+	})
+
+	t.Run("the injected clock is the only thing that changes the verdict", func(t *testing.T) {
+		svc, expired := newExpiredCase(t)
+
+		// The same request, the same evidence, a clock inside the window.
+		svc.mu.Lock()
+		svc.attestationClock = func() time.Time { return time.Now().Add(-36 * time.Hour) }
+		svc.mu.Unlock()
+
+		resp, err := signCSRWithAttestation(t, svc, format, expired.wire(), expired.leafKey)
+
+		require.NoError(t, err)
+		require.NotNil(t, resp)
+	})
 }
 
 // TestSignCSR_NonAndroidFormatsAreUnaffected guards against the Android gate

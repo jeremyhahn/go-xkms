@@ -29,6 +29,7 @@ import (
 	"encoding/asn1"
 	"errors"
 	"fmt"
+	"time"
 
 	"github.com/jeremyhahn/go-xkms/pkg/errs"
 )
@@ -252,6 +253,13 @@ type VerifyOptions struct {
 
 	// VerifyBootState checks that the device boot state is verified.
 	VerifyBootState bool
+
+	// CurrentTime is the instant the certificate chain is validated against.
+	// The zero value defers to crypto/x509, which uses the current time, so
+	// leaving it unset keeps expiry enforcement on the real clock. Set it only
+	// to reason about a chain at a fixed instant — auditing evidence captured
+	// earlier, or testing against a chain whose validity window has passed.
+	CurrentTime time.Time
 }
 
 // keyDescriptionASN1 is the raw ASN.1 structure for parsing the top-level
@@ -525,7 +533,7 @@ func VerifyKeyAttestation(chain []*x509.Certificate, opts *VerifyOptions) (*KeyD
 
 	// Verify the certificate chain against trusted roots if provided
 	if opts.TrustedRoots != nil {
-		if err := verifyCertificateChain(chain, opts.TrustedRoots); err != nil {
+		if err := verifyCertificateChain(chain, opts.TrustedRoots, opts.CurrentTime); err != nil {
 			return nil, &errs.Detail{Err: ErrChainVerificationFailed, Detail: fmt.Sprintf("%v", err)}
 		}
 	}
@@ -563,8 +571,9 @@ func VerifyKeyAttestation(chain []*x509.Certificate, opts *VerifyOptions) (*KeyD
 }
 
 // verifyCertificateChain verifies the certificate chain against the provided
-// trusted root certificate pool.
-func verifyCertificateChain(chain []*x509.Certificate, roots *x509.CertPool) error {
+// trusted root certificate pool, as of now. A zero now is passed through to
+// crypto/x509, which substitutes the current time.
+func verifyCertificateChain(chain []*x509.Certificate, roots *x509.CertPool, now time.Time) error {
 	if len(chain) == 0 {
 		return ErrChainTooShort
 	}
@@ -581,6 +590,7 @@ func verifyCertificateChain(chain []*x509.Certificate, roots *x509.CertPool) err
 		Roots:         roots,
 		Intermediates: intermediates,
 		KeyUsages:     []x509.ExtKeyUsage{x509.ExtKeyUsageAny},
+		CurrentTime:   now,
 	}
 
 	if _, err := leaf.Verify(verifyOpts); err != nil {

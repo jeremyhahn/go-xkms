@@ -15,13 +15,20 @@ package android
 
 import (
 	"bufio"
+	"crypto/ecdsa"
+	"crypto/elliptic"
+	"crypto/rand"
 	"crypto/x509"
+	"crypto/x509/pkix"
 	"encoding/asn1"
 	"encoding/base64"
 	"encoding/hex"
+	"errors"
+	"math/big"
 	"os"
 	"strings"
 	"testing"
+	"time"
 )
 
 // loadRealChain reads the captured emulator attestation chain, leaf first.
@@ -59,6 +66,116 @@ func loadRealChain(t *testing.T) []*x509.Certificate {
 		t.Fatal("fixture contained no certificates")
 	}
 	return chain
+}
+
+// realChainVerificationTime sits inside the captured chain's validity window
+// (2026-08-05 00:55 UTC to 2026-08-21 00:43 UTC). Google's test attestation CA
+// mints short-lived intermediates, so the window closes about sixteen days
+// after any capture; re-capturing the fixture would only reset the countdown.
+var realChainVerificationTime = time.Date(2026, 8, 10, 0, 0, 0, 0, time.UTC)
+
+// TestVerifyKeyAttestation_HonoursTheVerificationTime covers both directions of
+// VerifyOptions.CurrentTime.
+//
+// The pinned direction uses the captured chain, because only real evidence can
+// show the option working on a window somebody else chose. The default
+// direction uses a certificate minted here with a window that has already
+// closed relative to whatever time.Now() returns -- not the captured chain,
+// whose expiry is a fixed date the host clock would have to be past. Assuming
+// something about the calendar is the defect this change removes, and it is no
+// better inverted.
+func TestVerifyKeyAttestation_HonoursTheVerificationTime(t *testing.T) {
+	t.Run("verifies the captured chain at a pinned time inside its window", func(t *testing.T) {
+		chain := loadRealChain(t)
+		roots := x509.NewCertPool()
+		roots.AddCert(chain[len(chain)-1])
+
+		_, err := VerifyKeyAttestation(chain, &VerifyOptions{
+			TrustedRoots:     roots,
+			MinSecurityLevel: SecurityLevelSoftware,
+			CurrentTime:      realChainVerificationTime,
+		})
+		if err != nil {
+			t.Fatalf("verify at %s: %v", realChainVerificationTime, err)
+		}
+	})
+
+	// Valid from two days ago until one day ago: expired now, and expired on
+	// any clock this ever runs on.
+	expired := makeExpiredAttestationCert(t,
+		time.Now().Add(-48*time.Hour), time.Now().Add(-24*time.Hour))
+	expiredRoots := x509.NewCertPool()
+	expiredRoots.AddCert(expired)
+
+	t.Run("refuses expired evidence when the time is unset", func(t *testing.T) {
+		_, err := VerifyKeyAttestation([]*x509.Certificate{expired}, &VerifyOptions{
+			TrustedRoots:     expiredRoots,
+			MinSecurityLevel: SecurityLevelSoftware,
+		})
+		if err == nil {
+			t.Fatal("an unset CurrentTime must verify against now, and this certificate has expired")
+		}
+		if !errors.Is(err, ErrChainVerificationFailed) {
+			t.Fatalf("error = %v, want ErrChainVerificationFailed", err)
+		}
+		if !strings.Contains(err.Error(), "expired") {
+			t.Errorf("error = %v, want it to name the expiry", err)
+		}
+	})
+
+	t.Run("accepts the same evidence at a time inside its window", func(t *testing.T) {
+		_, err := VerifyKeyAttestation([]*x509.Certificate{expired}, &VerifyOptions{
+			TrustedRoots:     expiredRoots,
+			MinSecurityLevel: SecurityLevelSoftware,
+			CurrentTime:      time.Now().Add(-36 * time.Hour),
+		})
+		if err != nil {
+			t.Fatalf("verify inside the window: %v", err)
+		}
+	})
+}
+
+// makeExpiredAttestationCert mints a self-signed certificate carrying a minimal
+// attestation extension, valid only between notBefore and notAfter. It is both
+// leaf and trust anchor, so a single-certificate chain exercises the temporal
+// check without anything else standing in the way.
+func makeExpiredAttestationCert(t *testing.T, notBefore, notAfter time.Time) *x509.Certificate {
+	t.Helper()
+
+	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	if err != nil {
+		t.Fatalf("generate key: %v", err)
+	}
+
+	ext, err := BuildMinimalAttestationExtension(
+		3, SecurityLevelSoftware, 4, SecurityLevelSoftware, []byte("expiry-fixture"), nil)
+	if err != nil {
+		t.Fatalf("build attestation extension: %v", err)
+	}
+
+	template := &x509.Certificate{
+		SerialNumber:          big.NewInt(4242),
+		Subject:               pkix.Name{CommonName: "Expired Attestation"},
+		NotBefore:             notBefore,
+		NotAfter:              notAfter,
+		KeyUsage:              x509.KeyUsageCertSign | x509.KeyUsageDigitalSignature,
+		BasicConstraintsValid: true,
+		IsCA:                  true,
+		ExtraExtensions: []pkix.Extension{{
+			Id:    AndroidKeyAttestationOID,
+			Value: ext,
+		}},
+	}
+
+	der, err := x509.CreateCertificate(rand.Reader, template, template, &key.PublicKey, key)
+	if err != nil {
+		t.Fatalf("create certificate: %v", err)
+	}
+	cert, err := x509.ParseCertificate(der)
+	if err != nil {
+		t.Fatalf("parse certificate: %v", err)
+	}
+	return cert
 }
 
 // TestParseKeyAttestation_RealEmulatorChain parses an attestation produced by a

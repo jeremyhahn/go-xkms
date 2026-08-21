@@ -906,8 +906,14 @@ func (c *attestationChain) wireWithRoot() [][]byte {
 
 // newAttestationChain builds a three-level attestation chain. leafNotBefore and
 // leafNotAfter control the validity window of the leaf so expiry can be tested.
+//
+// The root and intermediate are backdated well beyond any window a caller is
+// likely to ask for, so that a leaf placed in the past is judged on its own
+// dates rather than tripping over an anchor that had not been issued yet.
 func newAttestationChain(t *testing.T, name string, leafNotBefore, leafNotAfter time.Time) *attestationChain {
 	t.Helper()
+
+	const anchorBackdate = 30 * 24 * time.Hour
 
 	rootKey, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
 	require.NoError(t, err)
@@ -915,7 +921,7 @@ func newAttestationChain(t *testing.T, name string, leafNotBefore, leafNotAfter 
 		SerialNumber:          big.NewInt(1),
 		Subject:               pkix.Name{CommonName: name + " Attestation Root CA"},
 		IsCA:                  true,
-		NotBefore:             time.Now().Add(-time.Hour),
+		NotBefore:             time.Now().Add(-anchorBackdate),
 		NotAfter:              time.Now().Add(10 * 365 * 24 * time.Hour),
 		BasicConstraintsValid: true,
 		KeyUsage:              x509.KeyUsageCertSign,
@@ -931,7 +937,7 @@ func newAttestationChain(t *testing.T, name string, leafNotBefore, leafNotAfter 
 		SerialNumber:          big.NewInt(2),
 		Subject:               pkix.Name{CommonName: name + " Device Attestation CA"},
 		IsCA:                  true,
-		NotBefore:             time.Now().Add(-time.Hour),
+		NotBefore:             time.Now().Add(-anchorBackdate),
 		NotAfter:              time.Now().Add(5 * 365 * 24 * time.Hour),
 		BasicConstraintsValid: true,
 		KeyUsage:              x509.KeyUsageCertSign,

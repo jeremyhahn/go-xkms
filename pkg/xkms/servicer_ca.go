@@ -249,6 +249,22 @@ func (s *XKMSService) attestationVerifierFor(format string) (*attestation.Verifi
 	return verifier, ok
 }
 
+// attestationVerifyOptions builds the options for an attestation chain walk.
+// CurrentTime is left nil unless a clock has been injected, so a server always
+// validates certificate lifetimes against time.Now().
+func (s *XKMSService) attestationVerifyOptions() *attestation.VerifyOptions {
+	s.mu.RLock()
+	clock := s.attestationClock
+	s.mu.RUnlock()
+
+	opts := &attestation.VerifyOptions{}
+	if clock != nil {
+		at := clock().Unix()
+		opts.CurrentTime = &at
+	}
+	return opts
+}
+
 // normalizeAttestationFormat canonicalizes a wire-supplied attestation format
 // identifier so lookups are case- and whitespace-insensitive.
 func normalizeAttestationFormat(format string) string {
@@ -313,7 +329,7 @@ func (s *XKMSService) verifyCSRAttestation(req *transport.SignCSRRequest) error 
 	// signed by the next, none expired) and X.509 path validation terminating
 	// at a configured anchor. It returns ErrNoTrustAnchors rather than passing
 	// when the verifier holds no anchors.
-	if err := verifier.VerifyChainAnchored(stmt, &attestation.VerifyOptions{}); err != nil {
+	if err := verifier.VerifyChainAnchored(stmt, s.attestationVerifyOptions()); err != nil {
 		slog.Warn("attestation chain verification failed",
 			"format", stmt.Format,
 			"chain_length", len(certs),

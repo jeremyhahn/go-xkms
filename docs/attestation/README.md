@@ -220,6 +220,28 @@ Validate certificate timestamps:
 verifier.VerifyChain(stmt, opts)
 ```
 
+#### Choosing the verification time
+
+Both option types carry the instant lifetimes are judged against, and both
+default to the current time when it is left alone:
+
+| Option | Type | Unset means |
+|---|---|---|
+| `attestation.VerifyOptions.CurrentTime` | `*int64` (Unix seconds) | `nil` — use `time.Now()` |
+| `android.VerifyOptions.CurrentTime` | `time.Time` | zero value — `crypto/x509` uses the current time |
+
+Leave both unset in production. They exist for reasoning about a chain at a
+fixed instant: auditing evidence that was captured earlier, or testing against
+a chain whose validity window has passed. Hardware attestation chains do
+expire, and some expire quickly — Google's *test* attestation CA, the one an
+Android emulator's chain is rooted in, issues intermediates with a life of
+about sixteen days.
+
+Setting a verification time is how expired evidence is made to verify, so it
+must never be reachable from deployment configuration. `XKMSService` keeps its
+clock unexported for that reason: there is no config key, environment variable
+or API that pins a running CA's verification time.
+
 ## Attestation Formats
 
 ### TPM 2.0 Format

@@ -21,6 +21,7 @@ import (
 	"crypto/x509"
 	"log"
 	"sync"
+	"time"
 
 	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
 	qrdbtransport "github.com/jeremyhahn/go-qrdb/sdk/go/transport"
@@ -156,6 +157,14 @@ type XKMSService struct {
 	// operator config; attestation-gated CSR signing fails closed while it is
 	// nil or lacks an entry for the requested format.
 	attestationVerifiers map[string]*attestation.Verifier
+
+	// attestationClock supplies the instant attestation certificate chains are
+	// validated against. It is nil everywhere a server is built, which leaves
+	// the verifier on time.Now(); only tests set it, so that a captured chain's
+	// validity window does not put an expiry date on the suite. Keeping it
+	// unexported is what stops the injection reaching a deployment: no
+	// configuration path can pin a CA's clock and quietly accept dead evidence.
+	attestationClock func() time.Time
 
 	// androidEnrollmentPolicy gates CSRs presenting Android key attestation.
 	// Nil makes every such CSR fail closed: chain provenance alone does not
