@@ -79,6 +79,22 @@ func (b *baseSDKClient) ListBackends(ctx context.Context, _ ...transport.ListOpt
 	return nil, errNotImplemented
 }
 
+func (b *baseSDKClient) Algorithms(ctx context.Context) (*transport.AlgorithmsResponse, error) {
+	return nil, errNotImplemented
+}
+
+func (b *baseSDKClient) GetShare(ctx context.Context, serverURL, groupID string, shareIndex int) (*transport.ShareInfo, error) {
+	return nil, errNotImplemented
+}
+
+func (b *baseSDKClient) DeleteShare(ctx context.Context, serverURL, groupID string, shareIndex int) error {
+	return errNotImplemented
+}
+
+func (b *baseSDKClient) QueryAudit(ctx context.Context, filter *transport.AuditFilter) (*transport.AuditPage, error) {
+	return nil, errNotImplemented
+}
+
 func (b *baseSDKClient) GetBackend(ctx context.Context, backendID string) (*transport.BackendInfo, error) {
 	return nil, errNotImplemented
 }

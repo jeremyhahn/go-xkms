@@ -240,6 +240,24 @@ jobs:
           go-version: ${{ env.GO_VERSION }}
           cache: true
 
+      # Same cgo deps the Unit Tests job installs, for the same reason:
+      # libicu-dev (dolthub/go-icu-regex) and libusb-1.0-0-dev (google/gousb
+      # via go-qrdb) are unconditional deps of the module graph, and
+      # CGO_ENABLED defaults to 1 whenever a C toolchain is present.
+      #
+      # This job had none, and got away with it: the `go vet -tags ble ./...`
+      # step below traverses that graph and passed on our runners regardless
+      # (job 19970, zero cgo/header errors in 2.25 MB of log). But "passed"
+      # there rests on an undocumented property of the runner image, not on
+      # anything this workflow states -- so the same step on a stock
+      # ubuntu-latest could fail for an environment omission rather than a
+      # code defect. Installing them makes the job say what it needs instead
+      # of inheriting it.
+      - name: Install cgo dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libicu-dev libusb-1.0-0-dev
+
       - name: sdk/go tests
         working-directory: sdk/go
         run: go test -race -v ./bootstrap/... ./transport/usb/...
@@ -259,6 +277,24 @@ jobs:
       #
       # The ble step used to be the other one. It no longer names tests -- see
       # below.
+
+      # Compile-check EVERY ble-tagged package, tests included.
+      #
+      # The suite step below runs ./pkg/phone/ only, so without this nothing
+      # else under `ble` is compiled by CI at all: `cmd/xkey/cmd`'s ble-tagged
+      # test files drifted out of sync with the transport.Client interface and
+      # the breakage sat undetected on main (#31). A test file that does not
+      # compile is a test that cannot fail, and the compile-time interface
+      # assertions those files carry -- the very things meant to catch
+      # interface drift -- are inert while the package is unbuildable.
+      #
+      # `go vet` type-checks tests as well as sources, which is what a plain
+      # build misses, and it does not run them -- so it stays honest about what
+      # it covers. The two steps are complementary: this one catches drift
+      # everywhere under the tag, the next one runs the suite that has one.
+      - name: xkey ble tag set vets (build + tests)
+        working-directory: xkey
+        run: go vet -tags ble ./...
 
       # The ble-tagged half of pkg/phone holds the peripheral's key lifecycle
       # and is compiled by neither the default build nor the race job above.
