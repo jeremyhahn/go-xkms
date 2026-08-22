@@ -106,6 +106,33 @@ Noise session cannot be resumed mid-nonce-sequence.
 fingerprint does not match, a decrypt failure, or a JSON-RPC error from the
 phone. None degrade to an unencrypted or unauthenticated path.
 
+**A malformed stored fingerprint also fails closed.** `DecodeDeviceFingerprint`
+distinguishes three states, and the distinction is the point:
+
+| stored value | result |
+|---|---|
+| empty | `(nil, nil)` — no fingerprint policy configured, the legitimate unbound case |
+| valid hex, exactly `DeviceFingerprintSize` bytes | the decoded fingerprint |
+| anything else | `*InvalidDeviceFingerprintError`, and **no bytes** — never `(nil, nil)` |
+
+Returning `nil` for a malformed value would hand the handshake the same "no
+expected fingerprint" signal an unconfigured device gives it, downgrading an
+identity-bound handshake to an unbound one. Corrupted authorization material
+must never be less restrictive than the policy it corrupts.
+
+Length is checked **before** decoding: the device always presents exactly
+`DeviceFingerprintSize` bytes, so a wrong-length record can never match, and
+refusing it here reports the stored record as unusable instead of letting the
+handshake report a "mismatch" and accuse the device. It also bounds the work —
+a corrupted config carrying a megabyte of valid hex is refused without
+allocating half its size.
+
+`InvalidDeviceFingerprintError` retains only a bounded prefix of the offending
+value plus its true length, so holding the error does not hold the megabyte.
+Its `Error` and `Unwrap` are nil-safe: the type is exported, so a downstream
+package can construct one by hand, and an error that panics while being logged
+converts a handled failure into an outage.
+
 ## Configuration
 
 Pairing keys and the expected device fingerprint, from a completed pairing.

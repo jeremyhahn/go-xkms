@@ -332,6 +332,28 @@ jobs:
         working-directory: xkey
         run: go test -race -tags ble ./pkg/phone/ -count=1
 
+      # The CLI's fail-closed fingerprint tests, which were DARK.
+      #
+      # They live in cmd/xkey/cmd behind `//go:build ble`, and the only ble
+      # test step above is scoped to ./pkg/phone/ -- so they compiled under
+      # `go vet -tags ble ./...` and never ran. 116 lines asserting that a
+      # malformed persisted fingerprint cannot start a handshake, executing
+      # nowhere (#62). The tag is not droppable: createFIDO2PhoneKeyBackend
+      # itself is ble-only.
+      #
+      # Named rather than running the package, for the reason the scoping
+      # comment above gives: cmd/xkey/cmd carries environment-dependent
+      # auth/token-store tests and a 25s BLE-scan timeout, so widening this to
+      # the whole package would trade a dark corner for a flaky job. Naming is
+      # what require-tests.sh exists to make safe -- it asserts every name
+      # matches a real test before running any, so a rename is a red job rather
+      # than a silent hole.
+      - name: xkey CLI fail-closed fingerprint (-tags ble)
+        working-directory: xkey
+        run: |
+          ../.github/scripts/require-tests.sh ./cmd/xkey/cmd/ ble \
+            TestCreateFIDO2PhoneKeyBackend_BadFingerprintIsRefused
+
       - name: xkey GUI service teardown
         working-directory: xkey
         run: |

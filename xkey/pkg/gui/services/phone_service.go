@@ -66,6 +66,11 @@ var (
 	ErrPhoneMissingKeys     = errors.New("phone_service: device missing Noise keys - re-pair required")
 	ErrPhonePolicyViolation = errors.New("phone_service: attestation policy violation")
 	ErrPhonePolicyNotSet    = errors.New("phone_service: no attestation policy set for device")
+	// ErrPhoneInvalidFingerprint reports that the device's stored fingerprint
+	// is present but undecodable. The connection is refused: a fingerprint
+	// that cannot be read cannot be checked, and proceeding would bind the
+	// handshake to nothing. Re-pair the device to store a fresh one.
+	ErrPhoneInvalidFingerprint = errors.New("phone_service: stored device fingerprint is invalid - re-pair required")
 )
 
 // devicesConfigFileName is the config file shared with the CLI.
@@ -805,14 +810,14 @@ func (s *PhoneService) Connect(name string) error {
 		}
 	}()
 
-	// Decode expected device fingerprint if available.
-	var expectedFingerprint []byte
-	if device.DeviceFingerprint != "" {
-		expectedFingerprint, err = hex.DecodeString(device.DeviceFingerprint)
-		if err != nil {
-			s.log.Warn("invalid device fingerprint, skipping verification", "error", err)
-			expectedFingerprint = nil
-		}
+	// Decode the expected device fingerprint. A stored-but-malformed value is
+	// refused rather than treated as "no fingerprint configured" — see
+	// phone.DecodeDeviceFingerprint.
+	expectedFingerprint, err := phone.DecodeDeviceFingerprint(device.DeviceFingerprint)
+	if err != nil {
+		s.log.Error("stored device fingerprint is invalid; refusing to connect without identity binding",
+			"device", name, "error", err)
+		return errors.Join(ErrPhoneInvalidFingerprint, err)
 	}
 
 	// Create Noise session with expected remote static key.

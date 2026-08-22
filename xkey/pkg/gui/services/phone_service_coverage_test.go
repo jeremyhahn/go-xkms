@@ -732,7 +732,17 @@ func TestPhoneService_Coverage_Connect_ValidBase64KeysInvalidStaticKey(t *testin
 		"invalid static key length should return ErrPhoneMissingKeys")
 }
 
-func TestPhoneService_Coverage_Connect_ValidKeysDeviceFingerprint(t *testing.T) {
+// A stored fingerprint that cannot be decoded must abort the connection, not
+// downgrade it. Before the #38 fix this path logged a warning, set the
+// expected fingerprint to nil, and handshook with no identity binding at all —
+// so a single flipped character in the config file turned "only this device"
+// into "any device that completes the handshake".
+//
+// The assertion is deliberately that the error is ErrPhoneInvalidFingerprint
+// and NOT a BLE error: reaching BLE at all means the fingerprint was accepted
+// and the connection attempt proceeded unbound. Restoring the nil fallback
+// makes this test fail by name.
+func TestPhoneService_Connect_MalformedFingerprintIsRefused(t *testing.T) {
 	// Generate a valid 32-byte key pair for Noise.
 	localPrivate := make([]byte, 32)
 	_, err := rand.Read(localPrivate)
@@ -757,14 +767,14 @@ func TestPhoneService_Coverage_Connect_ValidKeysDeviceFingerprint(t *testing.T) 
 
 	svc := NewPhoneService()
 	err = svc.Connect("Pixel 9")
-	// Should proceed past fingerprint decoding (logs warning), then fail at
-	// BLE transport creation (ErrBLEUnavailable on non-BLE platform).
 	require.Error(t, err)
-	// On stub platform, NewBLETransport returns ErrBLEUnavailable, which maps
-	// to either ErrPhoneBLEUnavailable or ErrPhoneConnectFailed.
-	assert.True(t,
+	assert.True(t, errors.Is(err, ErrPhoneInvalidFingerprint),
+		"a malformed stored fingerprint must be refused, got %v", err)
+	assert.True(t, errors.Is(err, phone.ErrInvalidDeviceFingerprint),
+		"the decode cause should remain inspectable, got %v", err)
+	assert.False(t,
 		errors.Is(err, ErrPhoneBLEUnavailable) || errors.Is(err, ErrPhoneConnectFailed),
-		"should fail at BLE transport creation on stub platform")
+		"reaching BLE means the malformed fingerprint was accepted and the handshake would be unbound")
 }
 
 func TestPhoneService_Coverage_Connect_ValidFingerprint(t *testing.T) {
@@ -782,7 +792,7 @@ func TestPhoneService_Coverage_Connect_ValidFingerprint(t *testing.T) {
 				Address:              "AA:BB:CC:DD:EE:01",
 				NoisePublicKey:       base64.StdEncoding.EncodeToString(remotePublic),
 				LocalNoisePrivateKey: base64.StdEncoding.EncodeToString(localPrivate),
-				DeviceFingerprint:    "aabbccdd11223344", // valid hex
+				DeviceFingerprint:    "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", // valid hex, wire-contract length
 			},
 		},
 		DefaultDevice: "Pixel 9",

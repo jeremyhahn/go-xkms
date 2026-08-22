@@ -33,6 +33,7 @@ import (
 	"gopkg.in/yaml.v3"
 
 	"github.com/jeremyhahn/go-xkms/xkey/pkg/gui/events"
+	"github.com/jeremyhahn/go-xkms/xkey/pkg/phone"
 )
 
 // p5cSetupHomeWithConfig creates a temp HOME dir, writes a phone.yaml config,
@@ -182,9 +183,11 @@ func TestP5C_LoadConfig_InvalidYAMLReturnsError(t *testing.T) {
 // Connect: device fingerprint hex decode error path
 // ===========================================================================
 
-// TestP5C_Connect_InvalidDeviceFingerprint verifies that Connect handles an
-// invalid hex device fingerprint gracefully by clearing expectedFingerprint
-// to nil and proceeding (though it will fail at BLE transport creation).
+// TestP5C_Connect_InvalidDeviceFingerprint verifies that Connect REFUSES an
+// invalid hex device fingerprint. It previously asserted the opposite —
+// clearing expectedFingerprint to nil and proceeding — which is the fail-open
+// behaviour #38 removes: a nil expected fingerprint means "no identity
+// binding" to PerformHandshake.
 func TestP5C_Connect_InvalidDeviceFingerprint(t *testing.T) {
 	cfg := &phoneConfig{
 		Devices: []phoneConfigDevice{
@@ -202,16 +205,19 @@ func TestP5C_Connect_InvalidDeviceFingerprint(t *testing.T) {
 	p5cSetupHomeWithConfig(t, cfg)
 
 	svc := NewPhoneService()
-	// Connect will parse the invalid fingerprint (log warning, set nil),
-	// then fail at BLE transport creation since we have no hardware.
 	err := svc.Connect("Test Phone")
 	require.Error(t, err)
-	// It should get past the fingerprint check and fail at LoadStaticKey or BLE.
-	assert.True(t,
+	assert.True(t, errors.Is(err, ErrPhoneInvalidFingerprint),
+		"a malformed stored fingerprint must be refused, got: %v", err)
+	assert.True(t, errors.Is(err, phone.ErrInvalidDeviceFingerprint),
+		"the decode cause should remain inspectable, got: %v", err)
+	// Reaching any later stage would mean the malformed fingerprint was
+	// accepted and the handshake would proceed with no identity binding.
+	assert.False(t,
 		errors.Is(err, ErrPhoneMissingKeys) ||
 			errors.Is(err, ErrPhoneConnectFailed) ||
 			errors.Is(err, ErrPhoneBLEUnavailable),
-		"expected a connect-phase error, got: %v", err)
+		"connect must stop at the fingerprint, got: %v", err)
 }
 
 // ===========================================================================

@@ -93,8 +93,21 @@ func PerformHandshake(ctx context.Context, cfg *HandshakeConfig) error {
 		cfg.EnvelopeHeaderSize = 12 // Default Android header size
 	}
 
-	// Pre-handshake identity exchange for trusted device binding
-	if len(cfg.LocalStaticPublicKey) > 0 {
+	// Pre-handshake identity exchange for trusted device binding.
+	//
+	// EVERY fingerprint check lives inside performIdentityExchange, and this
+	// used to run it only when a local public key happened to be set. So
+	// whether a configured ExpectedDeviceFingerprint was enforced depended on
+	// an unrelated field being populated by the caller, not on whether a
+	// fingerprint was configured -- and an empty LocalStaticPublicKey skipped
+	// the binding in silence. Both current callers do set it, so this was not
+	// reachable through them, but a security control that fails OPEN on a
+	// caller's omission is one omission away from being absent.
+	//
+	// The condition is now the fingerprint itself: if one is configured, the
+	// exchange must run, and if it cannot, the handshake is refused.
+	switch {
+	case len(cfg.LocalStaticPublicKey) > 0:
 		prologue, err := performIdentityExchange(ctx, cfg, logger)
 		if err != nil {
 			return err
@@ -102,6 +115,13 @@ func PerformHandshake(ctx context.Context, cfg *HandshakeConfig) error {
 		if len(prologue) > 0 {
 			cfg.Session.SetPrologue(prologue)
 			logger.Debug("prologue set from identity exchange", "prologue_len", len(prologue))
+		}
+	case len(cfg.ExpectedDeviceFingerprint) > 0:
+		logger.Error("a device fingerprint is configured but no local static public key was supplied, " +
+			"so the identity exchange that enforces it cannot run")
+		return &DetailError{
+			Err:    ErrUntrustedDevice,
+			Detail: ": a device fingerprint is configured but the identity exchange cannot run without a local static public key; refusing rather than connecting unbound",
 		}
 	}
 
@@ -315,6 +335,34 @@ func performIdentityExchange(ctx context.Context, cfg *HandshakeConfig, logger *
 	// Parse acknowledgment
 	status := ack[0]
 	if status == IdentityAckUnknown {
+		// A device we have a fingerprint for CANNOT legitimately be unknown.
+		//
+		// This path returns success with an empty prologue, and it used to do
+		// so before the ExpectedDeviceFingerprint comparison further down --
+		// which made the whole fingerprint binding optional AT THE PEER'S
+		// CHOICE. Anyone able to complete the Noise handshake with the
+		// configured remote static key could send this one status byte and
+		// skip the check that binds the pairing record to a physical device.
+		//
+		// The fingerprint exists precisely to stop a peer holding the key
+		// material from presenting as a different device, so letting that peer
+		// select which check applies to it defeats the control entirely. Once
+		// a record carries a fingerprint, "unknown" is not a state the device
+		// can return to: it was paired.
+		//
+		// An empty ExpectedDeviceFingerprint is the legitimate first-pairing
+		// case and still proceeds -- refusing it would make pairing
+		// impossible.
+		if len(cfg.ExpectedDeviceFingerprint) > 0 {
+			logger.Error("device reported itself unknown while a device fingerprint is configured",
+				"expected", hex.EncodeToString(cfg.ExpectedDeviceFingerprint),
+			)
+			return nil, &DetailError{
+				Err:    ErrUntrustedDevice,
+				Detail: ": device reported itself unknown, but this pairing is bound to a device fingerprint; re-pair the device if its identity legitimately changed",
+			}
+		}
+
 		// New device - use empty prologue
 		logger.Info("new device detected, using empty prologue for pairing")
 		return nil, nil

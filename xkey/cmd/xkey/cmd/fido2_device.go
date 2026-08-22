@@ -18,7 +18,6 @@ package cmd
 import (
 	"context"
 	"encoding/base64"
-	"encoding/hex"
 	"errors"
 	"fmt"
 	"log/slog"
@@ -90,27 +89,37 @@ func createFIDO2PhoneKeyBackend(cfg *FIDO2Config, logger *slog.Logger) (keybacke
 	if err != nil {
 		return nil, errors.Join(ErrFIDO2DeviceBackendCreationFailed, err)
 	}
+
 	// The decoded scalar is a plain heap slice. reconstructStaticKey copies it
 	// into protected memory but cannot wipe the caller's copy, so wipe it here
 	// rather than leave a private key sitting in garbage-collected memory.
+	//
+	// Registered immediately after the decode, before any other validation:
+	// every return between the decode and this defer abandons the raw Noise
+	// private scalar on the ordinary heap.
 	defer phone.WipeBytes(localPrivateKey)
+
+	// Decode device fingerprint for prologue binding (trusted device
+	// verification). A stored-but-malformed value is refused rather than
+	// treated as "no fingerprint configured" — see
+	// phone.DecodeDeviceFingerprint.
+	//
+	// Validated HERE, before reconstructStaticKey, and not at its point of
+	// use below: this is pure config validation with nothing to release,
+	// whereas every return after reconstructStaticKey abandons protected
+	// pages that only PhoneKeyBackend's ownership transfer frees.
+	deviceFingerprint, err := phone.DecodeDeviceFingerprint(device.DeviceFingerprint)
+	if err != nil {
+		logger.Error("stored device fingerprint is invalid; refusing to build a backend without identity binding",
+			slog.String("error", err.Error()),
+		)
+		return nil, errors.Join(ErrFIDO2DeviceBackendCreationFailed, err)
+	}
 
 	// Reconstruct the local static key from the stored private key
 	localStaticKey, err := reconstructStaticKey(localPrivateKey)
 	if err != nil {
 		return nil, errors.Join(ErrFIDO2DeviceBackendCreationFailed, err)
-	}
-
-	// Decode device fingerprint for prologue binding (trusted device verification)
-	var deviceFingerprint []byte
-	if device.DeviceFingerprint != "" {
-		deviceFingerprint, err = hex.DecodeString(device.DeviceFingerprint)
-		if err != nil {
-			logger.Warn("failed to decode device fingerprint, identity exchange will use empty prologue",
-				slog.String("error", err.Error()),
-			)
-			deviceFingerprint = nil
-		}
 	}
 
 	// Create phone backend configuration

@@ -1872,7 +1872,7 @@ func TestPhoneService_Unpair_SetsNewDefault(t *testing.T) {
 }
 
 // ---------------------------------------------------------------------------
-// Connect with invalid device fingerprint (warning but continues)
+// Connect with invalid device fingerprint (refused, #38)
 // ---------------------------------------------------------------------------
 
 func TestPhoneService_Connect_InvalidFingerprint(t *testing.T) {
@@ -1902,14 +1902,17 @@ func TestPhoneService_Connect_InvalidFingerprint(t *testing.T) {
 
 	svc := NewPhoneService()
 	err = svc.Connect("Pixel 8")
-	// Will fail due to invalid key / BLE, but should not fail due to fingerprint
-	// (fingerprint decode error is a warning, not a hard error).
-	assert.Error(t, err)
-	assert.True(t,
+	// A malformed stored fingerprint is a hard error, not a warning: proceeding
+	// would hand PerformHandshake a nil expected fingerprint, which means no
+	// identity binding at all (#38).
+	require.Error(t, err)
+	assert.True(t, errors.Is(err, ErrPhoneInvalidFingerprint),
+		"a malformed stored fingerprint must be refused, got: %v", err)
+	assert.False(t,
 		errors.Is(err, ErrPhoneBLEUnavailable) ||
 			errors.Is(err, ErrPhoneConnectFailed) ||
 			errors.Is(err, ErrPhoneMissingKeys),
-		"expected BLE or key error, got: %v", err)
+		"connect must stop at the fingerprint, got: %v", err)
 }
 
 // ---------------------------------------------------------------------------

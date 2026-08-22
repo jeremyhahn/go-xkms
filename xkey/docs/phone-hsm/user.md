@@ -114,10 +114,27 @@ to change in the same release, so it is coordinated work rather than a setting.
 | attestation rejected | the Android hardware root is missing or misclassified | add it with purpose `android-hardware` |
 | `password` commands fail over the phone | the channel does not carry the vault | expected — use the desktop store |
 | the phone app disconnects when it sleeps | power management | keep it awake for long operations |
+| **stored device fingerprint is not valid hex** | the saved pairing record is corrupt or truncated | re-pair the device; the connection is refused until you do |
 
 The fingerprint mismatch is the row that is a security event rather than a
 nuisance. Re-pairing with `--force` will make the message go away and will not
 answer the question.
+
+### A corrupt stored fingerprint refuses the connection
+
+A stored fingerprint that is not valid hex, or is not the right length, now
+**refuses the connection** rather than continuing without identity binding.
+
+The refusal is deliberate and is not recoverable by retrying. A malformed value
+used to be treated the same as no fingerprint at all, which silently downgraded
+an identity-bound handshake to an unbound one: any device completing the
+handshake would have been accepted, where the record was supposed to authorize
+exactly one. Anyone able to edit the pairing file could have flipped a single
+character to turn "only this phone" into "any phone".
+
+Recovery is to **re-pair the device**, which writes a fresh record. The error
+names the offending value — truncated, with its true length — so you can tell
+which stored record is at fault without opening the file.
 
 ## Where to go next
 

@@ -14,6 +14,7 @@
 package pairing
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"log/slog"
@@ -642,4 +643,151 @@ func TestSafeSlice_FullSlice(t *testing.T) {
 	data := []byte{10, 20, 30}
 	result := safeSlice(data, 0, 3)
 	assert.Equal(t, data, result)
+}
+
+// ---------------------------------------------------------------------------
+// performIdentityExchange — the device-fingerprint binding (#82)
+// ---------------------------------------------------------------------------
+
+// answerIdentityWith reads the initiator's identity message and replies with a
+// caller-chosen acknowledgement, so a test can play a peer that answers however
+// it likes -- which is the whole point: the peer is not trusted.
+func answerIdentityWith(transport *mockPipeTransport, ack []byte) {
+	go func() {
+		<-transport.recvCh
+		transport.sendCh <- ack
+	}()
+}
+
+func testFingerprint(b byte) []byte {
+	return bytes.Repeat([]byte{b}, IdentityAckKnownSize-1)
+}
+
+func identityConfig(transport Transport, expected []byte) *HandshakeConfig {
+	return &HandshakeConfig{
+		Transport:                 transport,
+		LocalStaticPublicKey:      make([]byte, 32),
+		ExpectedDeviceFingerprint: expected,
+	}
+}
+
+// THE BYPASS (#82). performIdentityExchange returned success with an empty
+// prologue the moment a peer sent IdentityAckUnknown, twenty lines above the
+// ExpectedDeviceFingerprint comparison -- so the fingerprint binding was
+// optional AT THE PEER'S CHOICE.
+//
+// A peer able to complete Noise with the configured remote static key had only
+// to send this one status byte to skip the check that binds a pairing record
+// to a physical device. The fingerprint exists to stop exactly that peer from
+// presenting as a different device.
+func TestPerformIdentityExchange_UnknownAckRefusedWhenFingerprintConfigured(t *testing.T) {
+	t.Parallel()
+
+	initiator, responder := newPipeTransports()
+	answerIdentityWith(responder, []byte{IdentityAckUnknown})
+
+	prologue, err := performIdentityExchange(context.Background(),
+		identityConfig(initiator, testFingerprint(0xAB)), slog.Default())
+
+	require.Error(t, err, "a peer claiming to be unknown bypassed the configured device fingerprint")
+	assert.True(t, errors.Is(err, ErrUntrustedDevice),
+		"want ErrUntrustedDevice, got %v", err)
+	assert.Nil(t, prologue, "a refused exchange must not return a prologue")
+}
+
+// The mirror, and the reason this cannot simply refuse the status outright:
+// with no fingerprint configured, an unknown device is the legitimate
+// first-pairing case. Refusing it would make pairing impossible, which is the
+// failure mode a fail-closed change most easily causes.
+func TestPerformIdentityExchange_UnknownAckStillPairsWithoutAFingerprint(t *testing.T) {
+	t.Parallel()
+
+	initiator, responder := newPipeTransports()
+	answerIdentityWith(responder, []byte{IdentityAckUnknown})
+
+	prologue, err := performIdentityExchange(context.Background(),
+		identityConfig(initiator, nil), slog.Default())
+
+	require.NoError(t, err, "first pairing of a new device must still work")
+	assert.Nil(t, prologue, "a new device pairs with an empty prologue")
+}
+
+// A known device presenting the expected fingerprint still succeeds, and the
+// prologue it produces is what binds the session to that identity.
+func TestPerformIdentityExchange_KnownAckWithMatchingFingerprintSucceeds(t *testing.T) {
+	t.Parallel()
+
+	expected := testFingerprint(0xAB)
+	initiator, responder := newPipeTransports()
+	answerIdentityWith(responder, append([]byte{IdentityAckKnown}, expected...))
+
+	prologue, err := performIdentityExchange(context.Background(),
+		identityConfig(initiator, expected), slog.Default())
+
+	require.NoError(t, err)
+	assert.NotEmpty(t, prologue, "a known device must bind its fingerprint into the prologue")
+}
+
+// And a known device presenting the WRONG fingerprint is still refused -- the
+// check this bypass routed around must not have been weakened by fixing it.
+func TestPerformIdentityExchange_KnownAckWithWrongFingerprintRefused(t *testing.T) {
+	t.Parallel()
+
+	initiator, responder := newPipeTransports()
+	answerIdentityWith(responder, append([]byte{IdentityAckKnown}, testFingerprint(0xCD)...))
+
+	_, err := performIdentityExchange(context.Background(),
+		identityConfig(initiator, testFingerprint(0xAB)), slog.Default())
+
+	require.Error(t, err)
+	assert.True(t, errors.Is(err, ErrUntrustedDevice),
+		"want ErrUntrustedDevice, got %v", err)
+}
+
+// A configured fingerprint must be ENFORCED, not merely enforceable.
+//
+// Every fingerprint check lives inside performIdentityExchange, which
+// PerformHandshake ran only when a local static public key was set. Enforcement
+// therefore depended on an unrelated field being populated rather than on
+// whether a fingerprint was configured, and an empty LocalStaticPublicKey
+// skipped the binding silently (#62 round 1).
+func TestPerformHandshake_RefusesWhenAFingerprintCannotBeEnforced(t *testing.T) {
+	t.Parallel()
+
+	initiator, _ := newPipeTransports()
+
+	err := PerformHandshake(context.Background(), &HandshakeConfig{
+		Transport: initiator,
+		Session:   &NoiseSession{},
+		// No LocalStaticPublicKey: the identity exchange cannot run.
+		ExpectedDeviceFingerprint: testFingerprint(0xAB),
+	})
+
+	require.Error(t, err, "a configured fingerprint was silently ignored")
+	assert.True(t, errors.Is(err, ErrUntrustedDevice),
+		"want ErrUntrustedDevice, got %v", err)
+}
+
+// The mirror: with NO fingerprint configured there is nothing to enforce, so
+// the absent local key must not become a new failure. Refusing here would
+// break every unbound first-pairing caller.
+func TestPerformHandshake_NoFingerprintNeedsNoIdentityExchange(t *testing.T) {
+	t.Parallel()
+
+	initiator, responder := newPipeTransports()
+
+	initiatorSession, err := NewNoiseSession(&NoiseSessionConfig{IsInitiator: true})
+	require.NoError(t, err)
+
+	responderDone := make(chan *NoiseSession, 1)
+	go func() { responderDone <- runResponder(t, responder) }()
+
+	err = PerformHandshake(context.Background(), &HandshakeConfig{
+		Transport: initiator,
+		Session:   initiatorSession,
+		Logger:    slog.Default(),
+		// No LocalStaticPublicKey and no fingerprint: nothing to bind.
+	})
+	require.NoError(t, err, "an unbound handshake must still work")
+	<-responderDone
 }
