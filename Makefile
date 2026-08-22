@@ -2265,19 +2265,42 @@ devcontainer-server-up:
 # The container is resolved with `compose ps -q`, never by a fixed name: the
 # compose project is namespaced per run, so this lookup can only ever find
 # THIS job's server even when another job's is running beside it.
+# The probe runs INSIDE the devcontainer, so "the devcontainer is missing" and
+# "the server is not ready yet" fail identically unless they are told apart.
+# They were not: `exec -T devcontainer` wrote "no such service" to /dev/null
+# fifteen times over thirty seconds, and the target then blamed xkms-server.
+#
+# That is how #19 read as "server not ready" across 39 consecutive runs while
+# the server was serving perfectly well and no devcontainer had ever been
+# started -- on a Gitea runner the job is itself containerised, so the
+# `[ -f /.dockerenv ]` test upstream reads as "already inside the
+# devcontainer" and skips starting one. A probe that cannot say which of two
+# things failed sends everyone to the wrong component.
 devcontainer-server-wait:
 	@echo "$(CYAN)$(BOLD)→ Waiting for xkms-server on $(XKMS_UNIX_SOCKET)...$(RESET)"
-	@for i in $$(seq 1 15); do \
+	@if [ -z "$$($(DOCKER_COMPOSE) ps -q devcontainer 2>/dev/null)" ]; then \
+		echo "$(RED)$(BOLD)✗ cannot probe $(XKMS_UNIX_SOCKET): the devcontainer service is not running$(RESET)"; \
+		echo "$(YELLOW)  The probe runs inside the devcontainer, so this says nothing about$(RESET)"; \
+		echo "$(YELLOW)  xkms-server -- it may well be serving. See go-xkms#19.$(RESET)"; \
+		exit 1; \
+	fi; \
+	probe_err=""; \
+	for i in $$(seq 1 15); do \
 		cid=$$($(DOCKER_COMPOSE) ps -q xkms-server 2>/dev/null); \
 		if [ -z "$$cid" ] || [ "$$(docker inspect -f '{{.State.Running}}' $$cid 2>/dev/null)" != "true" ]; then \
+			echo "$(YELLOW)xkms-server is not running.$(RESET)"; \
 			break; \
 		fi; \
-		if $(DOCKER_COMPOSE) exec -T devcontainer nc -U -z $(XKMS_UNIX_SOCKET) 2>/dev/null; then \
+		if probe_err=$$($(DOCKER_COMPOSE) exec -T devcontainer nc -U -z $(XKMS_UNIX_SOCKET) 2>&1); then \
 			echo "$(GREEN)✓ xkms-server is serving $(XKMS_UNIX_SOCKET)$(RESET)"; exit 0; \
 		fi; \
 		sleep 2; \
 	done; \
-	echo "$(YELLOW)xkms-server is not serving $(XKMS_UNIX_SOCKET); last log lines:$(RESET)"; \
+	echo "$(YELLOW)xkms-server is not serving $(XKMS_UNIX_SOCKET).$(RESET)"; \
+	if [ -n "$$probe_err" ]; then \
+		echo "$(YELLOW)last probe error: $$probe_err$(RESET)"; \
+	fi; \
+	echo "$(YELLOW)last log lines:$(RESET)"; \
 	$(DOCKER_COMPOSE) logs --tail 15 xkms-server 2>&1 | sed 's/^/    /'; \
 	exit 1
 
