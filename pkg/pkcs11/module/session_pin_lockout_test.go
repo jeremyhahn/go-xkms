@@ -1,6 +1,7 @@
 package module
 
 import (
+	"sync"
 	"testing"
 	"time"
 
@@ -160,36 +161,73 @@ func TestLoginDoesNotHoldTheSessionLockDuringPINDerivation(t *testing.T) {
 	handle, err := m.OpenSession(CKF_SERIAL_SESSION | CKF_RW_SESSION)
 	require.NoError(t, err)
 
-	done := make(chan struct{})
+	// PARK the derivation rather than racing it.
+	//
+	// Earlier versions sampled the lock while a real Argon2 derivation ran and
+	// judged the result statistically, which made the test an assertion about
+	// the scheduler: on a constrained worker the derivation can finish in a
+	// handful of probes, and the threshold fails a Login that behaved
+	// perfectly. Holding the derivation still removes time from the question
+	// entirely -- while this hook is parked, the lock is either held or it is
+	// not, and one TryLock says which.
+	//
+	// It also removes the need for the production Argon2 cost: nothing here
+	// depends on a derivation being slow any more, only on it being stopped.
+	//
+	// Installed AFTER mustHashPin above, which derives too and would otherwise
+	// park the setup.
+	parked := make(chan struct{})
+	release := make(chan struct{})
+	var once sync.Once
+	originalHook := pinDerivationBegan
+	t.Cleanup(func() { pinDerivationBegan = originalHook })
+	pinDerivationBegan = func() {
+		once.Do(func() {
+			close(parked)
+			<-release
+		})
+	}
+	// Guarantees the parked goroutine is freed even if an assertion below
+	// fails, so a failure reports itself instead of hanging the package.
+	var releaseOnce sync.Once
+	freeTheDerivation := func() { releaseOnce.Do(func() { close(release) }) }
+	t.Cleanup(freeTheDerivation)
+
+	loginDone := make(chan error, 1)
 	go func() {
-		defer close(done)
 		// A wrong PIN costs the same derivation as a right one, which is what
 		// makes this reachable without any credential.
-		_ = m.Login(handle, CKU_USER, []byte("wrong-pin-9999"))
+		loginDone <- m.Login(handle, CKU_USER, []byte("wrong-pin-9999"))
 	}()
 
-	// Let the goroutine reach the derivation before sampling.
-	time.Sleep(2 * time.Millisecond)
+	select {
+	case <-parked:
+	case <-time.After(10 * time.Second):
+		t.Fatal("the login never reached the PIN derivation")
+	}
 
-	acquired := 0
-	for {
-		select {
-		case <-done:
-			// Sampling stops the moment the login returns, so nothing counted
-			// here comes from the idle period afterwards.
-			if acquired == 0 {
-				t.Fatal("the session lock was never free while a PIN derivation was in " +
-					"flight; Login still holds m.mu across verifyPin, so one wrong PIN " +
-					"stalls every other session operation on the token")
-			}
-			return
-		default:
-		}
+	// The whole test, in one question with a deterministic answer: with a
+	// derivation demonstrably in flight, is the session lock free?
+	if !m.mu.TryLock() {
+		freeTheDerivation()
+		t.Fatal("Login holds m.mu across the PIN derivation: one wrong PIN " +
+			"stalls every C_OpenSession, C_CloseSession and C_Login on the token " +
+			"for the duration, and an attacker needs no valid PIN to cause it")
+	}
+	m.mu.Unlock()
 
-		if m.mu.TryLock() {
-			acquired++
-			m.mu.Unlock()
-		}
-		time.Sleep(time.Millisecond)
+	freeTheDerivation()
+
+	// The shutdown has to complete, and with the RIGHT outcome. A wrong PIN
+	// must be reported as a wrong PIN; discarding this let the test pass on
+	// any error at all, including one that meant the derivation never ran.
+	select {
+	case err := <-loginDone:
+		var pkcsErr *PKCS11Error
+		require.ErrorAs(t, err, &pkcsErr, "Login should report a PKCS#11 error")
+		require.Equal(t, CKR_PIN_INCORRECT, pkcsErr.Code,
+			"a wrong PIN must be reported as CKR_PIN_INCORRECT, not %v", err)
+	case <-time.After(10 * time.Second):
+		t.Fatal("Login never returned after the derivation was released")
 	}
 }

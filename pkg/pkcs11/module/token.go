@@ -852,8 +852,40 @@ func derivePinKey(pin string, salt []byte) []byte {
 	pinHashSlots <- struct{}{}
 	defer func() { <-pinHashSlots }()
 
-	return argon2.IDKey([]byte(pin), salt, pinArgonTime, pinArgonMemory, pinArgonLanes, pinKeyLen)
+	pinDerivationBegan()
+	return argon2.IDKey([]byte(pin), salt, pinArgonTime, argonMemoryKiB, pinArgonLanes, pinKeyLen)
 }
+
+// pinDerivationBegan is called once a derivation has been admitted through the
+// gate and is about to start. It does nothing in a shipped binary.
+//
+// It exists because a test cannot otherwise know that a derivation is genuinely
+// IN FLIGHT. TestLoginDoesNotHoldTheSessionLockDuringPINDerivation samples the
+// session lock during one, and sleeping first and hoping made the assertion
+// vacuous in the direction that matters: if the probe ran before Login reached
+// this line, it found the lock free and recorded a pass even for a Login that
+// held the lock across the whole derivation. A signal from the derivation
+// itself is the only thing that orders the two.
+var pinDerivationBegan = func() {}
+
+// argonMemoryKiB is the Argon2id memory cost actually used, defaulting to the
+// production constant.
+//
+// It is a variable ONLY so the test binary can lower it. At the production
+// cost one derivation takes ~24 ms on a development workstation, the suite
+// performs roughly 1400 of them, and the race detector -- the only job that
+// compiles this package, because `pkcs11` appears in no other job's tag list
+// -- multiplies memory-heavy work several times over. That is what makes the
+// Race Detector the longest job in CI at 29m33s (measured, run 4384), and why
+// it needed `-timeout 30m` to stop going falsely red.
+//
+// Nothing outside a test may write it. The value is the security parameter
+// that makes a stolen PIN verifier expensive to attack, so lowering it in a
+// shipped binary would be a silent downgrade of exactly the control this
+// derivation exists to provide. TestPINHashCostIsProductionByDefault asserts
+// the constant, which no test overrides, so a change to the PRODUCTION cost
+// still has to be deliberate.
+var argonMemoryKiB uint32 = pinArgonMemory
 
 // hashPin derives a verifier for a PIN using Argon2id with a fresh random salt.
 //
