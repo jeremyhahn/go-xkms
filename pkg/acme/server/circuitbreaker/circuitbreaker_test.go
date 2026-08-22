@@ -258,17 +258,39 @@ func TestCircuitBreakerManualControl(t *testing.T) {
 	})
 }
 
+// TestCircuitBreakerConcurrency checks that concurrent Execute calls are
+// counted correctly -- none lost, none double-counted.
+//
+// MaxFailures must exceed the number of failures the workload generates, and
+// this is the whole reason the test is written this way. The threshold used to
+// be 100 against 500 failing calls, which made the 500/500 assertion a bet on
+// goroutine scheduling: recordFailure opens the circuit on maxFailures
+// CONSECUTIVE failures (recordSuccess resets the counter), so an interleaving
+// that lands 100 even-n calls in a row opens it, and from that point
+// beforeRequest rejects calls without ever running fn. Calls that would have
+// succeeded are then counted as errors and the split moves off 500/500 -- as
+// it did on a loaded CI runner (go-xkms#96: 460/540, the sum still 1000).
+//
+// With a threshold the workload cannot reach, the split is a property of the
+// counting rather than of the scheduler, which is what this test is for. The
+// rejection path it used to hit by accident is covered deliberately by
+// TestCircuitBreakerConcurrency_OpenCircuitRejectsWithoutRunning.
 func TestCircuitBreakerConcurrency(t *testing.T) {
+	const (
+		calls    = 1000
+		failures = calls / 2
+	)
+
 	cb := New(&Config{
 		Name:        "test-concurrent",
-		MaxFailures: 100,
+		MaxFailures: failures + 1,
 	})
 
 	var wg sync.WaitGroup
 	var successCount atomic.Int32
 	var errorCount atomic.Int32
 
-	for i := 0; i < 1000; i++ {
+	for i := 0; i < calls; i++ {
 		wg.Add(1)
 		go func(n int) {
 			defer wg.Done()
@@ -287,8 +309,67 @@ func TestCircuitBreakerConcurrency(t *testing.T) {
 	}
 
 	wg.Wait()
-	assert.Equal(t, int32(500), successCount.Load())
-	assert.Equal(t, int32(500), errorCount.Load())
+
+	// The circuit must still be closed; if it opened, the counts below are
+	// measuring the scheduler rather than the breaker and the failure needs to
+	// say so rather than looking like a lost count.
+	require.Equal(t, StateClosed, cb.State(),
+		"the circuit opened, so some calls were rejected without running: the "+
+			"failure threshold is no longer above the number of failures this "+
+			"workload generates")
+
+	assert.Equal(t, int32(failures), successCount.Load())
+	assert.Equal(t, int32(failures), errorCount.Load())
+	assert.Equal(t, int32(calls), successCount.Load()+errorCount.Load(),
+		"every call must be counted exactly once")
+}
+
+// TestCircuitBreakerConcurrency_OpenCircuitRejectsWithoutRunning covers what
+// the concurrency test above used to hit by accident: once the circuit is
+// open, concurrent calls are rejected without the wrapped function running at
+// all.
+//
+// The circuit is opened with Trip rather than by driving failures through it,
+// so the test does not depend on any interleaving. ResetTimeout is long on
+// purpose -- at the zero value, beforeRequest sees time.Since(lastFailure) >= 0
+// immediately, moves to half-open on the first call and rejects with
+// ErrTooManyRequests instead, which is a different path than the one under
+// test here.
+func TestCircuitBreakerConcurrency_OpenCircuitRejectsWithoutRunning(t *testing.T) {
+	const calls = 1000
+
+	cb := New(&Config{
+		Name:         "test-concurrent-open",
+		MaxFailures:  1,
+		ResetTimeout: time.Hour,
+	})
+	cb.Trip()
+	require.Equal(t, StateOpen, cb.State())
+
+	var wg sync.WaitGroup
+	var ran atomic.Int32
+	var rejected atomic.Int32
+
+	for i := 0; i < calls; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			err := cb.Execute(func() error {
+				ran.Add(1)
+				return nil
+			})
+			if errors.Is(err, ErrCircuitOpen) {
+				rejected.Add(1)
+			}
+		}()
+	}
+
+	wg.Wait()
+
+	assert.Equal(t, int32(0), ran.Load(),
+		"an open circuit must not run the wrapped function")
+	assert.Equal(t, int32(calls), rejected.Load(),
+		"every call against an open circuit must return ErrCircuitOpen")
 }
 
 func TestStateString(t *testing.T) {
