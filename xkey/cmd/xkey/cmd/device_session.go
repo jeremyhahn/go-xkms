@@ -97,7 +97,7 @@ func openDeviceSession(
 			return
 		}
 		closed = true
-		transport.Disconnect()
+		_ = transport.Disconnect()
 		_ = transport.Close()
 		// The session reads the key's protected pages, so release them only
 		// after the transport is down and no handshake can still be running.

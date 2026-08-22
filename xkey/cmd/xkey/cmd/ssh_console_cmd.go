@@ -164,7 +164,7 @@ func runSSHConsole(cmd *cobra.Command, args []string) error {
 // runConsoleSession bridges a live console session to the current terminal:
 // raw mode, SIGWINCH forwarding, and the stdin/stdout pumps. It owns Close.
 func runConsoleSession(cons sshsdk.ConsoleSession, fd int) error {
-	defer cons.Close()
+	defer func() { _ = cons.Close() }()
 
 	// Put the local terminal in raw mode so keystrokes pass through.
 	if term.IsTerminal(fd) {

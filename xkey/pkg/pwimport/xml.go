@@ -225,6 +225,11 @@ func (p *XMLParser) parseEntry(entry *keePassEntry, folderPath string, opts *Imp
 	parsed.UpdatedAt = p.parseKeePassTime(entry.Times.LastModificationTime)
 
 	// Parse expiry if enabled.
+	//nolint:gocritic // equalFold: strings.EqualFold is NOT equivalent here. It uses
+	// Unicode simple case folding, which disagrees with a ToLower comparison in BOTH
+	// directions (measured: "\u03c2"/"\u03c3" and "\u017f"/"s" match under EqualFold but not ToLower;
+	// "\u0130"/"i" matches under ToLower but not EqualFold). Swapping it would silently change
+	// which values compare equal, so the existing equivalence is kept deliberately.
 	if strings.ToLower(entry.Times.Expires) == "true" {
 		parsed.ExpiresAt = p.parseKeePassTime(entry.Times.ExpiryTime)
 	}

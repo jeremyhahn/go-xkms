@@ -39,7 +39,7 @@ func createFIDO2PhoneKeyBackend(cfg *FIDO2Config, logger *slog.Logger) (keybacke
 
 	// Find the device to use
 	var device *PairedDevice
-	var deviceIndex int = -1
+	deviceIndex := -1
 	if cfg.PhoneDevice != "" {
 		// Look for specific device by name or address
 		for i := range phoneCfg.Devices {

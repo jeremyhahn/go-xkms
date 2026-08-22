@@ -133,6 +133,11 @@ func (s *FileStore) Get(idOrName string) (*Credential, error) {
 	// Try case-insensitive name match
 	lower := strings.ToLower(idOrName)
 	for _, cred := range s.creds {
+		//nolint:gocritic // equalFold: strings.EqualFold is NOT equivalent here. It uses
+		// Unicode simple case folding, which disagrees with a ToLower comparison in BOTH
+		// directions (measured: "\u03c2"/"\u03c3" and "\u017f"/"s" match under EqualFold but not ToLower;
+		// "\u0130"/"i" matches under ToLower but not EqualFold). Swapping it would silently change
+		// which values compare equal, so the existing equivalence is kept deliberately.
 		if strings.ToLower(cred.ID) == lower || strings.ToLower(cred.Name) == lower {
 			return cred, nil
 		}
@@ -202,6 +207,11 @@ func (s *FileStore) Delete(idOrName string) error {
 	// Try case-insensitive name match
 	lower := strings.ToLower(idOrName)
 	for id, cred := range s.creds {
+		//nolint:gocritic // equalFold: strings.EqualFold is NOT equivalent here. It uses
+		// Unicode simple case folding, which disagrees with a ToLower comparison in BOTH
+		// directions (measured: "\u03c2"/"\u03c3" and "\u017f"/"s" match under EqualFold but not ToLower;
+		// "\u0130"/"i" matches under ToLower but not EqualFold). Swapping it would silently change
+		// which values compare equal, so the existing equivalence is kept deliberately.
 		if strings.ToLower(cred.ID) == lower || strings.ToLower(cred.Name) == lower {
 			delete(s.creds, id)
 			return s.save()
@@ -321,6 +331,11 @@ func (s *MemoryStore) Get(idOrName string) (*Credential, error) {
 
 	lower := strings.ToLower(idOrName)
 	for _, cred := range s.creds {
+		//nolint:gocritic // equalFold: strings.EqualFold is NOT equivalent here. It uses
+		// Unicode simple case folding, which disagrees with a ToLower comparison in BOTH
+		// directions (measured: "\u03c2"/"\u03c3" and "\u017f"/"s" match under EqualFold but not ToLower;
+		// "\u0130"/"i" matches under ToLower but not EqualFold). Swapping it would silently change
+		// which values compare equal, so the existing equivalence is kept deliberately.
 		if strings.ToLower(cred.ID) == lower || strings.ToLower(cred.Name) == lower {
 			return cred, nil
 		}
@@ -383,6 +398,11 @@ func (s *MemoryStore) Delete(idOrName string) error {
 
 	lower := strings.ToLower(idOrName)
 	for id, cred := range s.creds {
+		//nolint:gocritic // equalFold: strings.EqualFold is NOT equivalent here. It uses
+		// Unicode simple case folding, which disagrees with a ToLower comparison in BOTH
+		// directions (measured: "\u03c2"/"\u03c3" and "\u017f"/"s" match under EqualFold but not ToLower;
+		// "\u0130"/"i" matches under ToLower but not EqualFold). Swapping it would silently change
+		// which values compare equal, so the existing equivalence is kept deliberately.
 		if strings.ToLower(cred.ID) == lower || strings.ToLower(cred.Name) == lower {
 			delete(s.creds, id)
 			return nil

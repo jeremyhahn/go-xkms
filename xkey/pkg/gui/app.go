@@ -2427,9 +2427,7 @@ func NewApp(cfg *GUIConfig) *App {
 		return SaveGUIConfig(a.config)
 	})
 
-	appSvc.SetThemeValidator(func(theme string) error {
-		return ValidateTheme(theme)
-	})
+	appSvc.SetThemeValidator(ValidateTheme)
 
 	// Wire window hide function for minimize-to-tray.
 	appSvc.SetWindowHideFunc(func() {
@@ -2960,27 +2958,25 @@ func (a *App) startupReturningUser(ctx context.Context) {
 					unsealed = true
 				}
 			}
-		} else {
+		} else if a.config.BarrierAutoUnsealEnabled && a.config.BarrierAutoUnsealBlobID != "" {
 			// Software strategy: try auto-unseal via TPM-sealed barrier password.
-			if a.config.BarrierAutoUnsealEnabled && a.config.BarrierAutoUnsealBlobID != "" {
-				b64PW, unsealErr := a.sealService.UnsealData(a.config.BarrierAutoUnsealBlobID, "")
-				if unsealErr == nil {
-					pwBytes, decErr := base64.StdEncoding.DecodeString(b64PW)
-					if decErr == nil {
-						if err := a.barrierService.Unseal(string(pwBytes), a.config.BarrierStrategy); err != nil {
-							a.log.Warn("barrier auto-unseal with sealed password failed", "error", err)
-						} else {
-							a.log.Info("barrier auto-unsealed via sealed password")
-							a.EmitEvent(events.NewEvent(events.EventBarrierUnlocked, nil))
-							a.appLockService.AutoUnlock()
-							unsealed = true
-						}
+			b64PW, unsealErr := a.sealService.UnsealData(a.config.BarrierAutoUnsealBlobID, "")
+			if unsealErr == nil {
+				pwBytes, decErr := base64.StdEncoding.DecodeString(b64PW)
+				if decErr == nil {
+					if err := a.barrierService.Unseal(string(pwBytes), a.config.BarrierStrategy); err != nil {
+						a.log.Warn("barrier auto-unseal with sealed password failed", "error", err)
 					} else {
-						a.log.Warn("barrier auto-unseal: failed to decode password", "error", decErr)
+						a.log.Info("barrier auto-unsealed via sealed password")
+						a.EmitEvent(events.NewEvent(events.EventBarrierUnlocked, nil))
+						a.appLockService.AutoUnlock()
+						unsealed = true
 					}
 				} else {
-					a.log.Warn("barrier auto-unseal: failed to unseal password blob", "error", unsealErr)
+					a.log.Warn("barrier auto-unseal: failed to decode password", "error", decErr)
 				}
+			} else {
+				a.log.Warn("barrier auto-unseal: failed to unseal password blob", "error", unsealErr)
 			}
 		}
 
@@ -3087,13 +3083,14 @@ func (a *App) postDataDirStartup() {
 	}
 
 	// Start the virtual FIDO2 HID device if enabled and storage is available.
-	if a.config.FIDO2AuthenticatorEnabled && a.fido2Storage != nil {
+	switch {
+	case a.config.FIDO2AuthenticatorEnabled && a.fido2Storage != nil:
 		if err := a.fido2DeviceService.Start(a.fido2Storage, a.deviceNotifier); err != nil {
 			a.log.Warn("FIDO2 virtual device unavailable", "error", err)
 		}
-	} else if a.config.FIDO2AuthenticatorEnabled && a.fido2Storage == nil {
+	case a.config.FIDO2AuthenticatorEnabled && a.fido2Storage == nil:
 		a.fido2DeviceService.SetLastError("FIDO2 storage initialization failed")
-	} else if !a.config.FIDO2AuthenticatorEnabled {
+	case !a.config.FIDO2AuthenticatorEnabled:
 		a.fido2DeviceService.SetLastError("authenticator disabled in settings")
 	}
 

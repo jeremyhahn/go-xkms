@@ -15,6 +15,7 @@ package cmd
 
 import (
 	"bufio"
+	"bytes"
 	"fmt"
 	"io"
 	"os"
@@ -209,7 +210,7 @@ func readPassphraseFromTerminal(out io.Writer) (string, error) {
 		return "", &SealError{Operation: "read_passphrase", Err: err}
 	}
 
-	if string(passphrase1) != string(passphrase2) {
+	if !bytes.Equal(passphrase1, passphrase2) {
 		return "", luks.ErrPassphraseMismatch
 	}
 

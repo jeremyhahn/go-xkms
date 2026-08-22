@@ -71,11 +71,12 @@ func runDeviceInfo(cmd *cobra.Command, args []string) error {
 
 	// Determine which device to display
 	var deviceName string
-	if len(args) > 0 {
+	switch {
+	case len(args) > 0:
 		deviceName = args[0]
-	} else if cfg.DefaultDevice != "" {
+	case cfg.DefaultDevice != "":
 		deviceName = cfg.DefaultDevice
-	} else {
+	default:
 		deviceName = cfg.Devices[0].Name
 	}
 
@@ -183,11 +184,12 @@ func printDeviceInfo(device *PairedDevice, cfg *DevicesConfig, gracePeriod time.
 
 	fmt.Printf("  Grace Period:     %s\n", formatDeviceInfoDuration(gracePeriod))
 
-	if status == attestationStatusCurrent {
+	switch status {
+	case attestationStatusCurrent:
 		fmt.Printf("  Time Remaining:   %s\n", formatDeviceInfoDuration(timeRemaining))
-	} else if status == attestationStatusExpired {
+	case attestationStatusExpired:
 		fmt.Printf("  Time Remaining:   expired\n")
-	} else {
+	default:
 		fmt.Printf("  Time Remaining:   n/a\n")
 	}
 

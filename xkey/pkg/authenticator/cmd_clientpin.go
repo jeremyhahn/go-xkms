@@ -423,7 +423,15 @@ func (a *Authenticator) handleChangePIN(req *ClientPINRequest) ([]byte, error) {
 	}
 
 	// Verify the authentication parameter over newPinEnc || pinHashEnc.
-	authData := append(req.NewPinEnc, req.PinHashEnc...)
+	//
+	// Built into its own buffer rather than append(req.NewPinEnc, ...): that
+	// appends into NewPinEnc's backing array whenever it has spare capacity,
+	// and these fields are decoded from one CBOR message, so the write past
+	// its length can land on an adjacent decoded field -- PinHashEnc itself
+	// being the obvious candidate. NewPinEnc is read again below.
+	authData := make([]byte, 0, len(req.NewPinEnc)+len(req.PinHashEnc))
+	authData = append(authData, req.NewPinEnc...)
+	authData = append(authData, req.PinHashEnc...)
 	if !a.verifyPinAuth(authKey, req.PinUvAuthProtocol, authData, req.PinUvAuthParam) {
 		return nil, ErrPINAuthInvalid
 	}
@@ -1348,7 +1356,7 @@ func (a *Authenticator) generatePlatformKeyAgreementV2() (platformCOSE []byte, h
 func encryptNewPIN(sharedSecret []byte, pin string) ([]byte, []byte, error) {
 	// Pad PIN to 64 bytes.
 	paddedPIN := make([]byte, EncryptedPINMinLength)
-	copy(paddedPIN, []byte(pin))
+	copy(paddedPIN, pin)
 
 	// Encrypt with AES-256-CBC, zero IV.
 	block, err := aes.NewCipher(sharedSecret)
@@ -1375,7 +1383,7 @@ func encryptNewPIN(sharedSecret []byte, pin string) ([]byte, []byte, error) {
 func encryptNewPINV2(hmacKey, aesKey []byte, pin string) ([]byte, []byte, error) {
 	// Pad PIN to 64 bytes.
 	paddedPIN := make([]byte, EncryptedPINMinLength)
-	copy(paddedPIN, []byte(pin))
+	copy(paddedPIN, pin)
 
 	// Generate random IV.
 	iv := make([]byte, AESBlockSize)
@@ -1392,8 +1400,14 @@ func encryptNewPINV2(hmacKey, aesKey []byte, pin string) ([]byte, []byte, error)
 	ciphertext := make([]byte, len(paddedPIN))
 	mode.CryptBlocks(ciphertext, paddedPIN)
 
-	// Prepend IV to ciphertext.
-	encryptedPIN := append(iv, ciphertext...)
+	// Prepend IV to ciphertext. Explicit buffer rather than append(iv, ...):
+	// iv is currently make()d at exactly AESBlockSize so append would
+	// reallocate anyway, but that is a property of this function's allocation
+	// rather than of the operation, and it stops being true the moment iv is
+	// sliced from a larger buffer.
+	encryptedPIN := make([]byte, 0, len(iv)+len(ciphertext))
+	encryptedPIN = append(encryptedPIN, iv...)
+	encryptedPIN = append(encryptedPIN, ciphertext...)
 
 	// Full 32-byte HMAC.
 	mac := hmac.New(sha256.New, hmacKey)

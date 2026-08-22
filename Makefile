@@ -3250,27 +3250,40 @@ check-insecure-tls:
 # boundaries, so `./...` from the root reaches the root module ONLY -- this
 # repository has four go.mod files and CI was linting one of them (#81).
 #
-# xkey is NOT in this list yet, deliberately. It carries ~82 findings, and
-# switching it on before they are cleared would make Lint red, which now gates
-# every other job. It is added by the follow-up that clears them; until then it
-# is honestly absent rather than silently unlinted.
-#
 # gofmt is not listed here because it is path-based rather than module-based:
 # `gofmt -l .` from the root already reaches every file in every module.
-LINT_MODULES := . sdk/go web/desktop
+LINT_MODULES := . sdk/go xkey web/desktop
+
+# Build tags per module. A linter only analyses packages the tags select, so a
+# module linted without its tags reports a confident total having skipped the
+# code behind them -- xkey shows 69 findings untagged and 82 tagged.
+#
+# It matters in the other direction too: `unused` needs the tagged code
+# COMPILED to see the call sites, so linting xkey untagged reports helpers as
+# unused that are used perfectly well behind a tag.
+#
+# The list is therefore the widest set that compiles together, checked rather
+# than assumed: the transport/hardware tags plus every production backend --
+# tpm2 and the awskms/azurekv/gcpkms/vault implementations, which would
+# otherwise sit outside both vet and lint entirely. All ten build, vet and
+# lint together, so no tag matrix is needed here; if two ever become mutually
+# exclusive this has to become one.
+LINT_TAGS_xkey := ble,pkcs11,usb,codec_json,tpm_simulator,tpm2,awskms,azurekv,gcpkms,vault
 
 .PHONY: vet
-## vet: Run go vet across LINT_MODULES (see the note there: not yet all four)
+## vet: Run go vet across every module (LINT_MODULES)
 vet:
 	@echo "$(CYAN)$(BOLD)→ Running go vet...$(RESET)"
 	@for m in $(LINT_MODULES); do \
-		echo "$(CYAN)  → go vet ($$m)$(RESET)"; \
-		( cd "$$m" && $(GOVET) ./... ) || exit 1; \
+		tags="$(LINT_TAGS_xkey)"; \
+		if [ "$$m" != "xkey" ]; then tags=""; fi; \
+		echo "$(CYAN)  → go vet ($$m)$${tags:+ [tags: $$tags]}$(RESET)"; \
+		( cd "$$m" && $(GOVET) $${tags:+-tags "$$tags"} ./... ) || exit 1; \
 	done
 	@echo "$(GREEN)✓ Vet checks passed$(RESET)"
 
 .PHONY: lint
-## lint: Run golangci-lint across LINT_MODULES (see the note there: not yet all four)
+## lint: Run golangci-lint across every module (LINT_MODULES)
 lint:
 	@echo "$(CYAN)$(BOLD)→ Running linters...$(RESET)"
 	@GOLANGCI_LINT_BIN=$$(command -v golangci-lint 2>/dev/null || echo "$$HOME/go/bin/golangci-lint"); \
@@ -3280,8 +3293,10 @@ lint:
 		exit 1; \
 	fi; \
 	for m in $(LINT_MODULES); do \
-		echo "$(CYAN)  → golangci-lint ($$m)$(RESET)"; \
-		if ! ( cd "$$m" && $$GOLANGCI_LINT_BIN run --timeout=10m ); then \
+		tags="$(LINT_TAGS_xkey)"; \
+		if [ "$$m" != "xkey" ]; then tags=""; fi; \
+		echo "$(CYAN)  → golangci-lint ($$m)$${tags:+ [tags: $$tags]}$(RESET)"; \
+		if ! ( cd "$$m" && $$GOLANGCI_LINT_BIN run --timeout=10m $${tags:+--build-tags "$$tags"} ); then \
 			echo "$(RED)$(BOLD)✗ Linting failed in $$m$(RESET)"; \
 			exit 1; \
 		fi; \

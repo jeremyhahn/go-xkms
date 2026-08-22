@@ -513,7 +513,7 @@ func (s *Server) Close() error {
 	// entirely. This establishes the happens-before edge sync.WaitGroup
 	// requires between the last Add and Wait.
 	s.shutdownMu.Lock()
-	s.shutdownMu.Unlock() //nolint:staticcheck // SA2001: intentional empty critical section used as a happens-before barrier, see comment above
+	s.shutdownMu.Unlock() //nolint:staticcheck,gocritic // SA2001/badLock: intentional empty critical section used as a happens-before barrier, see comment above
 
 	s.wg.Wait()
 

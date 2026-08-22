@@ -14,6 +14,7 @@
 package main
 
 import (
+	"bytes"
 	"context"
 	"crypto/ecdh"
 	"crypto/ecdsa"
@@ -398,7 +399,7 @@ func symRoundtrip(p *prober, label, keyID string, exportable bool) {
 		dec, derr := p.call("local.symmetricDecrypt", map[string]interface{}{"keyId": keyID, "data": ctB64})
 		if derr == nil {
 			got := decodeB64(dec["data"])
-			if string(got) != string(plaintext) {
+			if !bytes.Equal(got, plaintext) {
 				derr = &MessageError{Msg: fmt.Sprintf("round-trip mismatch: got %q", string(got))}
 			}
 		}
@@ -492,7 +493,7 @@ func pivFamily(p *prober, runID string) {
 	p.record("local.pivImportCert", true, ierr, "")
 	if ierr == nil {
 		got, gerr := p.call("local.pivGetCert", map[string]interface{}{"slot": "9a"})
-		if gerr == nil && string(decodeB64(got["certificate_der"])) != string(certDER) {
+		if gerr == nil && !bytes.Equal(decodeB64(got["certificate_der"]), certDER) {
 			gerr = &MessageError{Msg: "certificate round-trip mismatch"}
 		}
 		p.record("local.pivGetCert (round-trip)", true, gerr, "")
@@ -561,7 +562,7 @@ func backupFamily(p *prober) {
 	var backupID string
 	_ = json.Unmarshal(created["backup_id"], &backupID)
 	restored, rerr := p.call("local.restoreBackup", map[string]interface{}{"backup_id": backupID})
-	if rerr == nil && string(decodeB64(restored["backup_data"])) != string(blob) {
+	if rerr == nil && !bytes.Equal(decodeB64(restored["backup_data"]), blob) {
 		rerr = &MessageError{Msg: "backup round-trip mismatch"}
 	}
 	p.record("local.restoreBackup (round-trip)", true, rerr, "")

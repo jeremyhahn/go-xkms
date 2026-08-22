@@ -316,13 +316,13 @@ func runCertRequest(cmd *cobra.Command, args []string) error {
 
 	// Print certificate summary
 	slotName := xkms.PIVSlotName(slot)
-	fmt.Fprintf(out, "Certificate issued and stored in slot %s (%s)\n\n", slot, slotName)
-	fmt.Fprintf(out, "  Subject:       %s\n", signedCert.Subject.String())
-	fmt.Fprintf(out, "  Issuer:        %s\n", signedCert.Issuer.String())
-	fmt.Fprintf(out, "  Serial Number: %s\n", signedCert.SerialNumber.String())
-	fmt.Fprintf(out, "  Not Before:    %s\n", signedCert.NotBefore.Format(time.RFC3339))
-	fmt.Fprintf(out, "  Not After:     %s\n", signedCert.NotAfter.Format(time.RFC3339))
-	fmt.Fprintf(out, "  Key Algorithm: %s\n", signedCert.PublicKeyAlgorithm.String())
+	_, _ = fmt.Fprintf(out, "Certificate issued and stored in slot %s (%s)\n\n", slot, slotName)
+	_, _ = fmt.Fprintf(out, "  Subject:       %s\n", signedCert.Subject.String())
+	_, _ = fmt.Fprintf(out, "  Issuer:        %s\n", signedCert.Issuer.String())
+	_, _ = fmt.Fprintf(out, "  Serial Number: %s\n", signedCert.SerialNumber.String())
+	_, _ = fmt.Fprintf(out, "  Not Before:    %s\n", signedCert.NotBefore.Format(time.RFC3339))
+	_, _ = fmt.Fprintf(out, "  Not After:     %s\n", signedCert.NotAfter.Format(time.RFC3339))
+	_, _ = fmt.Fprintf(out, "  Key Algorithm: %s\n", signedCert.PublicKeyAlgorithm.String())
 
 	return nil
 }
@@ -351,43 +351,43 @@ func runCertShow(cmd *cobra.Command, args []string) error {
 	}
 
 	slotName := xkms.PIVSlotName(slot)
-	fmt.Fprintf(out, "Client Certificate - Slot %s (%s)\n", slot, slotName)
-	fmt.Fprintf(out, "==========================================\n\n")
-	fmt.Fprintf(out, "Subject:       %s\n", cert.Subject.String())
-	fmt.Fprintf(out, "Issuer:        %s\n", cert.Issuer.String())
-	fmt.Fprintf(out, "Serial Number: %s\n", cert.SerialNumber.String())
-	fmt.Fprintf(out, "Not Before:    %s\n", cert.NotBefore.Format(time.RFC3339))
-	fmt.Fprintf(out, "Not After:     %s\n", cert.NotAfter.Format(time.RFC3339))
-	fmt.Fprintf(out, "Key Algorithm: %s\n", cert.PublicKeyAlgorithm.String())
-	fmt.Fprintf(out, "Signature:     %s\n", cert.SignatureAlgorithm.String())
+	_, _ = fmt.Fprintf(out, "Client Certificate - Slot %s (%s)\n", slot, slotName)
+	_, _ = fmt.Fprintf(out, "==========================================\n\n")
+	_, _ = fmt.Fprintf(out, "Subject:       %s\n", cert.Subject.String())
+	_, _ = fmt.Fprintf(out, "Issuer:        %s\n", cert.Issuer.String())
+	_, _ = fmt.Fprintf(out, "Serial Number: %s\n", cert.SerialNumber.String())
+	_, _ = fmt.Fprintf(out, "Not Before:    %s\n", cert.NotBefore.Format(time.RFC3339))
+	_, _ = fmt.Fprintf(out, "Not After:     %s\n", cert.NotAfter.Format(time.RFC3339))
+	_, _ = fmt.Fprintf(out, "Key Algorithm: %s\n", cert.PublicKeyAlgorithm.String())
+	_, _ = fmt.Fprintf(out, "Signature:     %s\n", cert.SignatureAlgorithm.String())
 
 	if len(cert.DNSNames) > 0 {
-		fmt.Fprintf(out, "DNS Names:     %s\n", strings.Join(cert.DNSNames, ", "))
+		_, _ = fmt.Fprintf(out, "DNS Names:     %s\n", strings.Join(cert.DNSNames, ", "))
 	}
 
 	if len(cert.EmailAddresses) > 0 {
-		fmt.Fprintf(out, "Email:         %s\n", strings.Join(cert.EmailAddresses, ", "))
+		_, _ = fmt.Fprintf(out, "Email:         %s\n", strings.Join(cert.EmailAddresses, ", "))
 	}
 
 	if cert.KeyUsage != 0 {
-		fmt.Fprintf(out, "Key Usage:     %s\n", formatKeyUsage(cert.KeyUsage))
+		_, _ = fmt.Fprintf(out, "Key Usage:     %s\n", formatKeyUsage(cert.KeyUsage))
 	}
 
 	if len(cert.ExtKeyUsage) > 0 {
-		fmt.Fprintf(out, "Ext Key Usage: %s\n", formatExtKeyUsage(cert.ExtKeyUsage))
+		_, _ = fmt.Fprintf(out, "Ext Key Usage: %s\n", formatExtKeyUsage(cert.ExtKeyUsage))
 	}
 
-	fmt.Fprintf(out, "Is CA:         %t\n", cert.IsCA)
+	_, _ = fmt.Fprintf(out, "Is CA:         %t\n", cert.IsCA)
 
 	// Show expiration status
 	now := time.Now()
 	if now.After(cert.NotAfter) {
-		fmt.Fprintf(out, "\nStatus:        EXPIRED (expired %s ago)\n",
+		_, _ = fmt.Fprintf(out, "\nStatus:        EXPIRED (expired %s ago)\n",
 			now.Sub(cert.NotAfter).Round(time.Hour))
 	} else {
 		remaining := cert.NotAfter.Sub(now)
 		days := int(remaining.Hours() / 24)
-		fmt.Fprintf(out, "\nStatus:        VALID (%d days remaining)\n", days)
+		_, _ = fmt.Fprintf(out, "\nStatus:        VALID (%d days remaining)\n", days)
 	}
 
 	return nil
@@ -432,10 +432,10 @@ func runCertExport(cmd *cobra.Command, args []string) error {
 	}
 
 	slotName := xkms.PIVSlotName(slot)
-	fmt.Fprintf(out, "Certificate exported from slot %s (%s) to %s\n", slot, slotName, filePath)
-	fmt.Fprintf(out, "  Subject: %s\n", cert.Subject.String())
-	fmt.Fprintf(out, "  Issuer:  %s\n", cert.Issuer.String())
-	fmt.Fprintf(out, "  Expires: %s\n", cert.NotAfter.Format(time.RFC3339))
+	_, _ = fmt.Fprintf(out, "Certificate exported from slot %s (%s) to %s\n", slot, slotName, filePath)
+	_, _ = fmt.Fprintf(out, "  Subject: %s\n", cert.Subject.String())
+	_, _ = fmt.Fprintf(out, "  Issuer:  %s\n", cert.Issuer.String())
+	_, _ = fmt.Fprintf(out, "  Expires: %s\n", cert.NotAfter.Format(time.RFC3339))
 
 	return nil
 }

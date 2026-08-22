@@ -159,7 +159,7 @@ func (s *ConnectionService) Connect(
 		return s.setErrorState(protocol, address, tlsEnabled, "connect", err), err
 	}
 
-	if err = client.Connect(s.ctx); err != nil {
+	if err := client.Connect(s.ctx); err != nil {
 		return s.setErrorState(protocol, address, tlsEnabled, "connect", err), err
 	}
 

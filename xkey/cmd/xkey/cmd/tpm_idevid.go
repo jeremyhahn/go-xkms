@@ -243,30 +243,30 @@ func runIDevIDShow(cmd *cobra.Command, args []string) error {
 }
 
 func outputIDevIDText(out io.Writer, info *IDevIDInfo) error {
-	fmt.Fprintln(out, "Initial Device Identity (IDevID) Information")
-	fmt.Fprintln(out, "=============================================")
-	fmt.Fprintln(out)
+	_, _ = fmt.Fprintln(out, "Initial Device Identity (IDevID) Information")
+	_, _ = fmt.Fprintln(out, "=============================================")
+	_, _ = fmt.Fprintln(out)
 
-	fmt.Fprintln(out, "Key Details:")
-	fmt.Fprintf(out, "  Handle:              %s\n", info.Handle)
-	fmt.Fprintf(out, "  Algorithm:           %s\n", info.Algorithm)
+	_, _ = fmt.Fprintln(out, "Key Details:")
+	_, _ = fmt.Fprintf(out, "  Handle:              %s\n", info.Handle)
+	_, _ = fmt.Fprintf(out, "  Algorithm:           %s\n", info.Algorithm)
 	if info.KeySize > 0 {
-		fmt.Fprintf(out, "  Key Size:            %d bits\n", info.KeySize)
+		_, _ = fmt.Fprintf(out, "  Key Size:            %d bits\n", info.KeySize)
 	}
 	if info.Curve != "" {
-		fmt.Fprintf(out, "  Curve:               %s\n", info.Curve)
+		_, _ = fmt.Fprintf(out, "  Curve:               %s\n", info.Curve)
 	}
-	fmt.Fprintf(out, "  Signature Algorithm: %s\n", info.SignatureAlgorithm)
-	fmt.Fprintln(out)
+	_, _ = fmt.Fprintf(out, "  Signature Algorithm: %s\n", info.SignatureAlgorithm)
+	_, _ = fmt.Fprintln(out)
 
 	if info.HasCert {
-		fmt.Fprintln(out, "Certificate Details:")
-		fmt.Fprintf(out, "  Subject:    %s\n", info.CertSubject)
-		fmt.Fprintf(out, "  Issuer:     %s\n", info.CertIssuer)
-		fmt.Fprintf(out, "  Serial:     %s\n", info.CertSerial)
-		fmt.Fprintf(out, "  Not After:  %s\n", info.CertNotAfter)
+		_, _ = fmt.Fprintln(out, "Certificate Details:")
+		_, _ = fmt.Fprintf(out, "  Subject:    %s\n", info.CertSubject)
+		_, _ = fmt.Fprintf(out, "  Issuer:     %s\n", info.CertIssuer)
+		_, _ = fmt.Fprintf(out, "  Serial:     %s\n", info.CertSerial)
+		_, _ = fmt.Fprintf(out, "  Not After:  %s\n", info.CertNotAfter)
 	} else {
-		fmt.Fprintln(out, "Certificate: Not available")
+		_, _ = fmt.Fprintln(out, "Certificate: Not available")
 	}
 
 	return nil
@@ -298,7 +298,7 @@ func runIDevIDCreate(cmd *cobra.Command, args []string) error {
 	// Get EK certificate for attestation
 	ekCert, err := tpm.EKCertificate()
 	if err != nil {
-		fmt.Fprintln(out, "Warning: EK certificate not available, IDevID will have limited attestation capability")
+		_, _ = fmt.Fprintln(out, "Warning: EK certificate not available, IDevID will have limited attestation capability")
 	}
 
 	// Get IAK attributes for signing IDevID
@@ -308,13 +308,13 @@ func runIDevIDCreate(cmd *cobra.Command, args []string) error {
 	}
 
 	// Create IDevID
-	fmt.Fprintf(out, "Creating IDevID for %s (serial: %s)...\n", idevidModel, idevidSerial)
+	_, _ = fmt.Fprintf(out, "Creating IDevID for %s (serial: %s)...\n", idevidModel, idevidSerial)
 	_, _, err = tpm.CreateIDevID(iakAttrs, ekCert, nil)
 	if err != nil {
 		return &WrappedError{Msg: "failed to create IDevID", Err: err}
 	}
 
-	fmt.Fprintln(out, "IDevID created successfully")
+	_, _ = fmt.Fprintln(out, "IDevID created successfully")
 	return nil
 }
 
@@ -341,7 +341,7 @@ func runIDevIDExport(cmd *cobra.Command, args []string) error {
 
 	// Output to file or stdout
 	if idevidExportOutput == "-" {
-		fmt.Fprint(out, string(pemData))
+		_, _ = fmt.Fprint(out, string(pemData))
 		return nil
 	}
 
@@ -349,7 +349,7 @@ func runIDevIDExport(cmd *cobra.Command, args []string) error {
 		return &SentinelCauseError{Sentinel: ErrExportFailed, Cause: err}
 	}
 
-	fmt.Fprintf(out, "IDevID certificate exported to: %s\n", idevidExportOutput)
+	_, _ = fmt.Fprintf(out, "IDevID certificate exported to: %s\n", idevidExportOutput)
 	return nil
 }
 
@@ -364,7 +364,7 @@ func runIDevIDCSR(cmd *cobra.Command, args []string) error {
 	// Get EK certificate
 	ekCert, err := tpm.EKCertificate()
 	if err != nil {
-		fmt.Fprintln(out, "Warning: EK certificate not available, CSR will have limited attestation capability")
+		_, _ = fmt.Fprintln(out, "Warning: EK certificate not available, CSR will have limited attestation capability")
 	}
 
 	// Get IAK attributes for signing
@@ -380,7 +380,7 @@ func runIDevIDCSR(cmd *cobra.Command, args []string) error {
 	}
 
 	// Create TCG-CSR-IDEVID for IDevID
-	fmt.Fprintln(out, "Generating IDevID CSR...")
+	_, _ = fmt.Fprintln(out, "Generating IDevID CSR...")
 	csr, err := tpm.CreateTCG_CSR_IDEVID(ekCert, iakAttrs, idevidAttrs)
 	if err != nil {
 		return &SentinelCauseError{Sentinel: ErrCSRGenerationFailed, Cause: err}
@@ -397,6 +397,6 @@ func runIDevIDCSR(cmd *cobra.Command, args []string) error {
 		return &SentinelCauseError{Sentinel: ErrExportFailed, Cause: err}
 	}
 
-	fmt.Fprintf(out, "IDevID CSR written to: %s\n", idevidCSROutput)
+	_, _ = fmt.Fprintf(out, "IDevID CSR written to: %s\n", idevidCSROutput)
 	return nil
 }

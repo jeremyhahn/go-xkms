@@ -15,6 +15,7 @@ package cmd
 
 import (
 	"bufio"
+	"bytes"
 	"fmt"
 	"io"
 	"log/slog"
@@ -398,7 +399,7 @@ func readBarrierPasswordFromTerminal(out io.Writer) (string, error) {
 		return "", &BarrierError{Operation: "read_password", Err: err}
 	}
 
-	if string(password1) != string(password2) {
+	if !bytes.Equal(password1, password2) {
 		return "", ErrBarrierPasswordConfirm
 	}
 

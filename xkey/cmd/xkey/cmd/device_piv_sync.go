@@ -195,19 +195,19 @@ func runPIVDeviceList(cmd *cobra.Command, args []string) error {
 		return ErrDeviceNotPaired
 	}
 
-	fmt.Fprintf(cmd.OutOrStdout(), "Listing PIV slots on device \"%s\"...\n\n", device.Name)
+	_, _ = fmt.Fprintf(cmd.OutOrStdout(), "Listing PIV slots on device \"%s\"...\n\n", device.Name)
 
 	// Connect to phone
 	phoneBackend, err := connectToPhone(device, timeout, logger)
 	if err != nil {
 		return &SentinelCauseError{Sentinel: ErrPIVDeviceListSlotsFailed, Cause: err}
 	}
-	defer phoneBackend.Close()
+	defer func() { _ = phoneBackend.Close() }()
 
 	ctx, cancel := context.WithTimeout(context.Background(), timeout)
 	defer cancel()
 
-	fmt.Fprintln(cmd.OutOrStdout(), "Connecting to phone...")
+	_, _ = fmt.Fprintln(cmd.OutOrStdout(), "Connecting to phone...")
 	if err := phoneBackend.Connect(ctx); err != nil {
 		return &SentinelCauseError{Sentinel: ErrPIVDeviceListSlotsFailed, Cause: err}
 	}
@@ -228,14 +228,14 @@ func runPIVDeviceList(cmd *cobra.Command, args []string) error {
 	}
 
 	if len(result.Slots) == 0 {
-		fmt.Fprintln(cmd.OutOrStdout(), "No PIV slots configured on phone.")
+		_, _ = fmt.Fprintln(cmd.OutOrStdout(), "No PIV slots configured on phone.")
 		return nil
 	}
 
-	fmt.Fprintf(cmd.OutOrStdout(), "Phone PIV Slots (%d):\n\n", len(result.Slots))
-	fmt.Fprintf(cmd.OutOrStdout(), "  %-6s %-24s %-12s %-5s %-5s %s\n",
+	_, _ = fmt.Fprintf(cmd.OutOrStdout(), "Phone PIV Slots (%d):\n\n", len(result.Slots))
+	_, _ = fmt.Fprintf(cmd.OutOrStdout(), "  %-6s %-24s %-12s %-5s %-5s %s\n",
 		"SLOT", "LABEL", "ALGORITHM", "KEY", "CERT", "SUBJECT")
-	fmt.Fprintf(cmd.OutOrStdout(), "  %s\n", strings.Repeat("-", 80))
+	_, _ = fmt.Fprintf(cmd.OutOrStdout(), "  %s\n", strings.Repeat("-", 80))
 
 	for _, slot := range result.Slots {
 		keyStr := "no"
@@ -251,7 +251,7 @@ func runPIVDeviceList(cmd *cobra.Command, args []string) error {
 			subject = "-"
 		}
 
-		fmt.Fprintf(cmd.OutOrStdout(), "  %-6s %-24s %-12s %-5s %-5s %s\n",
+		_, _ = fmt.Fprintf(cmd.OutOrStdout(), "  %-6s %-24s %-12s %-5s %-5s %s\n",
 			slot.Slot,
 			truncateSlotLabel(slot.Label),
 			slot.Algorithm,
@@ -261,7 +261,7 @@ func runPIVDeviceList(cmd *cobra.Command, args []string) error {
 		)
 	}
 
-	fmt.Fprintln(cmd.OutOrStdout())
+	_, _ = fmt.Fprintln(cmd.OutOrStdout())
 	return nil
 }
 
@@ -313,7 +313,7 @@ func runPIVDevicePushCert(cmd *cobra.Command, args []string) error {
 	}
 
 	slotName := xkms.PIVSlotName(slot)
-	fmt.Fprintf(cmd.OutOrStdout(), "Pushing certificate to slot %s (%s) on device \"%s\"...\n\n",
+	_, _ = fmt.Fprintf(cmd.OutOrStdout(), "Pushing certificate to slot %s (%s) on device \"%s\"...\n\n",
 		slot, slotName, device.Name)
 
 	// Connect to phone
@@ -321,18 +321,18 @@ func runPIVDevicePushCert(cmd *cobra.Command, args []string) error {
 	if err != nil {
 		return &SentinelCauseError{Sentinel: ErrPIVDevicePushCertFailed, Cause: err}
 	}
-	defer phoneBackend.Close()
+	defer func() { _ = phoneBackend.Close() }()
 
 	ctx, cancel := context.WithTimeout(context.Background(), timeout)
 	defer cancel()
 
-	fmt.Fprintln(cmd.OutOrStdout(), "Connecting to phone...")
+	_, _ = fmt.Fprintln(cmd.OutOrStdout(), "Connecting to phone...")
 	if err := phoneBackend.Connect(ctx); err != nil {
 		return &SentinelCauseError{Sentinel: ErrPIVDevicePushCertFailed, Cause: err}
 	}
 
 	// Send certificate to phone
-	fmt.Fprintln(cmd.OutOrStdout(), "Sending certificate...")
+	_, _ = fmt.Fprintln(cmd.OutOrStdout(), "Sending certificate...")
 	req := phone.NewRequest(phone.MethodLocalPIVImportCert, &phone.LocalPIVImportCertParams{
 		Slot:           string(slot),
 		CertificateDER: cert.Raw,
@@ -352,12 +352,12 @@ func runPIVDevicePushCert(cmd *cobra.Command, args []string) error {
 	}
 
 	if result.Success {
-		fmt.Fprintf(cmd.OutOrStdout(), "  Subject: %s\n", cert.Subject.CommonName)
-		fmt.Fprintf(cmd.OutOrStdout(), "  Expires: %s\n", cert.NotAfter.Format(time.RFC3339))
+		_, _ = fmt.Fprintf(cmd.OutOrStdout(), "  Subject: %s\n", cert.Subject.CommonName)
+		_, _ = fmt.Fprintf(cmd.OutOrStdout(), "  Expires: %s\n", cert.NotAfter.Format(time.RFC3339))
 	}
 
-	fmt.Fprintln(cmd.OutOrStdout())
-	fmt.Fprintln(cmd.OutOrStdout(), "Certificate pushed successfully.")
+	_, _ = fmt.Fprintln(cmd.OutOrStdout())
+	_, _ = fmt.Fprintln(cmd.OutOrStdout(), "Certificate pushed successfully.")
 
 	return nil
 }
@@ -399,7 +399,7 @@ func runPIVDevicePullCert(cmd *cobra.Command, args []string) error {
 	}
 
 	slotName := xkms.PIVSlotName(slot)
-	fmt.Fprintf(cmd.OutOrStdout(), "Pulling certificate from slot %s (%s) on device \"%s\"...\n\n",
+	_, _ = fmt.Fprintf(cmd.OutOrStdout(), "Pulling certificate from slot %s (%s) on device \"%s\"...\n\n",
 		slot, slotName, device.Name)
 
 	// Connect to phone
@@ -407,18 +407,18 @@ func runPIVDevicePullCert(cmd *cobra.Command, args []string) error {
 	if err != nil {
 		return &SentinelCauseError{Sentinel: ErrPIVDevicePullCertFailed, Cause: err}
 	}
-	defer phoneBackend.Close()
+	defer func() { _ = phoneBackend.Close() }()
 
 	ctx, cancel := context.WithTimeout(context.Background(), timeout)
 	defer cancel()
 
-	fmt.Fprintln(cmd.OutOrStdout(), "Connecting to phone...")
+	_, _ = fmt.Fprintln(cmd.OutOrStdout(), "Connecting to phone...")
 	if err := phoneBackend.Connect(ctx); err != nil {
 		return &SentinelCauseError{Sentinel: ErrPIVDevicePullCertFailed, Cause: err}
 	}
 
 	// Request certificate from phone
-	fmt.Fprintln(cmd.OutOrStdout(), "Retrieving certificate...")
+	_, _ = fmt.Fprintln(cmd.OutOrStdout(), "Retrieving certificate...")
 	req := phone.NewRequest(phone.MethodLocalPIVGetCert, &phone.LocalPIVGetCertParams{
 		Slot: string(slot),
 	})
@@ -456,14 +456,14 @@ func runPIVDevicePullCert(cmd *cobra.Command, args []string) error {
 		if writeErr := os.WriteFile(outputPath, pemData, 0600); writeErr != nil {
 			return &SentinelCauseError{Sentinel: ErrPIVDevicePullCertFailed, Cause: writeErr}
 		}
-		fmt.Fprintf(cmd.OutOrStdout(), "Certificate saved to: %s\n", outputPath)
+		_, _ = fmt.Fprintf(cmd.OutOrStdout(), "Certificate saved to: %s\n", outputPath)
 	} else {
-		fmt.Fprintln(cmd.OutOrStdout(), string(pemData))
+		_, _ = fmt.Fprintln(cmd.OutOrStdout(), string(pemData))
 	}
 
-	fmt.Fprintf(cmd.OutOrStdout(), "  Subject: %s\n", cert.Subject.CommonName)
-	fmt.Fprintf(cmd.OutOrStdout(), "  Issuer:  %s\n", cert.Issuer.CommonName)
-	fmt.Fprintf(cmd.OutOrStdout(), "  Expires: %s\n", cert.NotAfter.Format(time.RFC3339))
+	_, _ = fmt.Fprintf(cmd.OutOrStdout(), "  Subject: %s\n", cert.Subject.CommonName)
+	_, _ = fmt.Fprintf(cmd.OutOrStdout(), "  Issuer:  %s\n", cert.Issuer.CommonName)
+	_, _ = fmt.Fprintf(cmd.OutOrStdout(), "  Expires: %s\n", cert.NotAfter.Format(time.RFC3339))
 
 	return nil
 }
@@ -505,7 +505,7 @@ func runPIVDeviceGenerateKey(cmd *cobra.Command, args []string) error {
 	}
 
 	slotName := xkms.PIVSlotName(slot)
-	fmt.Fprintf(cmd.OutOrStdout(), "Generating key in slot %s (%s) on device \"%s\"...\n\n",
+	_, _ = fmt.Fprintf(cmd.OutOrStdout(), "Generating key in slot %s (%s) on device \"%s\"...\n\n",
 		slot, slotName, device.Name)
 
 	// Connect to phone
@@ -513,18 +513,18 @@ func runPIVDeviceGenerateKey(cmd *cobra.Command, args []string) error {
 	if err != nil {
 		return &SentinelCauseError{Sentinel: ErrPIVDeviceGenerateKeyFailed, Cause: err}
 	}
-	defer phoneBackend.Close()
+	defer func() { _ = phoneBackend.Close() }()
 
 	ctx, cancel := context.WithTimeout(context.Background(), timeout)
 	defer cancel()
 
-	fmt.Fprintln(cmd.OutOrStdout(), "Connecting to phone...")
+	_, _ = fmt.Fprintln(cmd.OutOrStdout(), "Connecting to phone...")
 	if err := phoneBackend.Connect(ctx); err != nil {
 		return &SentinelCauseError{Sentinel: ErrPIVDeviceGenerateKeyFailed, Cause: err}
 	}
 
 	// Request key generation on phone
-	fmt.Fprintf(cmd.OutOrStdout(), "Generating %s key (check phone for biometric prompt)...\n", algorithm)
+	_, _ = fmt.Fprintf(cmd.OutOrStdout(), "Generating %s key (check phone for biometric prompt)...\n", algorithm)
 	req := phone.NewRequest(phone.MethodLocalPIVGenerateKey, &phone.LocalPIVGenerateKeyParams{
 		Slot:      string(slot),
 		Algorithm: algorithm,
@@ -543,14 +543,14 @@ func runPIVDeviceGenerateKey(cmd *cobra.Command, args []string) error {
 		return &DetailError{Err: ErrPIVDeviceGenerateKeyFailed, Detail: fmt.Sprintf(": failed to decode result: %v", err)}
 	}
 
-	fmt.Fprintf(cmd.OutOrStdout(), "  Slot:      %s (%s)\n", result.Slot, slotName)
-	fmt.Fprintf(cmd.OutOrStdout(), "  Algorithm: %s\n", result.Algorithm)
+	_, _ = fmt.Fprintf(cmd.OutOrStdout(), "  Slot:      %s (%s)\n", result.Slot, slotName)
+	_, _ = fmt.Fprintf(cmd.OutOrStdout(), "  Algorithm: %s\n", result.Algorithm)
 	if len(result.PublicKeyDER) > 0 {
-		fmt.Fprintf(cmd.OutOrStdout(), "  Public Key: %d bytes (DER)\n", len(result.PublicKeyDER))
+		_, _ = fmt.Fprintf(cmd.OutOrStdout(), "  Public Key: %d bytes (DER)\n", len(result.PublicKeyDER))
 	}
 
-	fmt.Fprintln(cmd.OutOrStdout())
-	fmt.Fprintln(cmd.OutOrStdout(), "Key generated successfully.")
+	_, _ = fmt.Fprintln(cmd.OutOrStdout())
+	_, _ = fmt.Fprintln(cmd.OutOrStdout(), "Key generated successfully.")
 
 	return nil
 }

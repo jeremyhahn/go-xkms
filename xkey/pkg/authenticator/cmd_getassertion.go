@@ -787,13 +787,14 @@ func (a *Authenticator) generateAssertionResponseWithPolicy(
 	// 1. Platform provided a valid pinUvAuthParam, OR
 	// 2. Key backend handles user verification internally (e.g., phone biometric), OR
 	// 3. Trusted in-process caller provided a valid InternalPINHash
-	if len(request.PINUVAuthParam) > 0 && request.PINUVAuthProtocol > 0 {
+	switch {
+	case len(request.PINUVAuthParam) > 0 && request.PINUVAuthProtocol > 0:
 		flags |= FlagUV
 		debugLog("UV flag set (pinUvAuthParam provided), flags now: 0x%02x", byte(flags))
-	} else if a.keyBackend != nil && a.keyBackend.Capabilities().HandlesUserVerification {
+	case a.keyBackend != nil && a.keyBackend.Capabilities().HandlesUserVerification:
 		flags |= FlagUV
 		debugLog("UV flag set (key backend handles verification), flags now: 0x%02x", byte(flags))
-	} else if pinAuthValid && len(request.InternalPINHash) > 0 {
+	case pinAuthValid && len(request.InternalPINHash) > 0:
 		flags |= FlagUV
 		debugLog("UV flag set (internal PIN hash verified), flags now: 0x%02x", byte(flags))
 	}

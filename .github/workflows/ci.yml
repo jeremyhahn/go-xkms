@@ -279,6 +279,19 @@ jobs:
         working-directory: xkey
         run: go test -race -v ./internal/lifecycle/... ./pkg/phone/... ./pkg/pairing/...
 
+      # pkg/authenticator holds the FIDO2 ClientPIN command handling, including
+      # the ChangePIN buffer-aliasing regression test. `go vet -tags ble ./...`
+      # below COMPILES that test but never runs it, and a test that is only
+      # compiled cannot fail -- so the corruption it guards against could
+      # return with CI green.
+      #
+      # codec_json is required: without it the package's DAO-backed tests fail
+      # on "codec json is not supported in this build" rather than on anything
+      # about the code.
+      - name: xkey authenticator tests
+        working-directory: xkey
+        run: go test -race -v -tags codec_json ./pkg/authenticator/...
+
       # The GUI services step below names its tests individually, because that
       # package holds pre-existing failures the gate is not about (#104).
       #

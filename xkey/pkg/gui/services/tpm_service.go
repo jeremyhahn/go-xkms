@@ -4095,8 +4095,7 @@ func (s *TPMService) importJSONPolicy(data []byte) (string, error) {
 	var selections []PCRSelection
 	if sels, ok := raw["pcr_selections"].([]interface{}); ok {
 		for _, v := range sels {
-			switch n := v.(type) {
-			case float64:
+			if n, ok := v.(float64); ok {
 				selections = append(selections, PCRSelection{Index: int(n), Bank: pcrBank})
 			}
 		}

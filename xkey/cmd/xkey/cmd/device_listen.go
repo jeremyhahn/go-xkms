@@ -166,19 +166,20 @@ func runDeviceListen(cmd *cobra.Command, args []string) (runErr error) {
 
 	// Find the target device
 	var targetDevice *PairedDevice
-	if deviceFilter != "" {
+	switch {
+	case deviceFilter != "":
 		targetDevice = findDeviceByName(cfg, deviceFilter)
 		if targetDevice == nil {
 			return &DetailError{Err: ErrDeviceNotFound, Detail: fmt.Sprintf(": %s", deviceFilter)}
 		}
-	} else if cfg.DefaultDevice != "" {
+	case cfg.DefaultDevice != "":
 		targetDevice = findDeviceByName(cfg, cfg.DefaultDevice)
 		if targetDevice == nil {
 			return ErrDeviceNoDefaultDevice
 		}
-	} else if len(cfg.Devices) == 1 {
+	case len(cfg.Devices) == 1:
 		targetDevice = &cfg.Devices[0]
-	} else {
+	default:
 		fmt.Println("Multiple devices paired. Specify one with --device or set a default.")
 		return ErrDeviceNoDefaultDevice
 	}

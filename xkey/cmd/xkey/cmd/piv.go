@@ -568,24 +568,24 @@ func runPIVList(cmd *cobra.Command, args []string) error {
 	}
 
 	if len(slots) == 0 {
-		fmt.Fprintln(out, "No certificates found in PIV slots.")
+		_, _ = fmt.Fprintln(out, "No certificates found in PIV slots.")
 		return nil
 	}
 
-	fmt.Fprintf(out, "PIV Certificates (%d):\n\n", len(slots))
+	_, _ = fmt.Fprintf(out, "PIV Certificates (%d):\n\n", len(slots))
 
 	for _, slot := range slots {
 		slotName := xkms.PIVSlotName(slot.Slot)
-		fmt.Fprintf(out, "  Slot:        %s (%s)\n", slot.Slot, slotName)
-		fmt.Fprintf(out, "  Subject:     %s\n", slot.Subject)
-		fmt.Fprintf(out, "  Issuer:      %s\n", slot.Issuer)
-		fmt.Fprintf(out, "  Not Before:  %s\n", slot.NotBefore)
-		fmt.Fprintf(out, "  Not After:   %s\n", slot.NotAfter)
-		fmt.Fprintf(out, "  Algorithm:   %s\n", slot.Algorithm)
+		_, _ = fmt.Fprintf(out, "  Slot:        %s (%s)\n", slot.Slot, slotName)
+		_, _ = fmt.Fprintf(out, "  Subject:     %s\n", slot.Subject)
+		_, _ = fmt.Fprintf(out, "  Issuer:      %s\n", slot.Issuer)
+		_, _ = fmt.Fprintf(out, "  Not Before:  %s\n", slot.NotBefore)
+		_, _ = fmt.Fprintf(out, "  Not After:   %s\n", slot.NotAfter)
+		_, _ = fmt.Fprintf(out, "  Algorithm:   %s\n", slot.Algorithm)
 		if slot.Fingerprint != "" {
-			fmt.Fprintf(out, "  Fingerprint: %s\n", slot.Fingerprint)
+			_, _ = fmt.Fprintf(out, "  Fingerprint: %s\n", slot.Fingerprint)
 		}
-		fmt.Fprintln(out)
+		_, _ = fmt.Fprintln(out)
 	}
 
 	return nil
@@ -614,34 +614,34 @@ func runPIVShow(cmd *cobra.Command, args []string) error {
 	}
 
 	slotName := xkms.PIVSlotName(slot)
-	fmt.Fprintf(out, "PIV Certificate - Slot %s (%s)\n", slot, slotName)
-	fmt.Fprintf(out, "========================================\n\n")
+	_, _ = fmt.Fprintf(out, "PIV Certificate - Slot %s (%s)\n", slot, slotName)
+	_, _ = fmt.Fprintf(out, "========================================\n\n")
 
-	fmt.Fprintf(out, "Subject:       %s\n", cert.Subject.String())
-	fmt.Fprintf(out, "Issuer:        %s\n", cert.Issuer.String())
-	fmt.Fprintf(out, "Serial Number: %s\n", cert.SerialNumber.String())
-	fmt.Fprintf(out, "Not Before:    %s\n", cert.NotBefore.Format(time.RFC3339))
-	fmt.Fprintf(out, "Not After:     %s\n", cert.NotAfter.Format(time.RFC3339))
-	fmt.Fprintf(out, "Key Algorithm: %s\n", cert.PublicKeyAlgorithm.String())
-	fmt.Fprintf(out, "Signature:     %s\n", cert.SignatureAlgorithm.String())
+	_, _ = fmt.Fprintf(out, "Subject:       %s\n", cert.Subject.String())
+	_, _ = fmt.Fprintf(out, "Issuer:        %s\n", cert.Issuer.String())
+	_, _ = fmt.Fprintf(out, "Serial Number: %s\n", cert.SerialNumber.String())
+	_, _ = fmt.Fprintf(out, "Not Before:    %s\n", cert.NotBefore.Format(time.RFC3339))
+	_, _ = fmt.Fprintf(out, "Not After:     %s\n", cert.NotAfter.Format(time.RFC3339))
+	_, _ = fmt.Fprintf(out, "Key Algorithm: %s\n", cert.PublicKeyAlgorithm.String())
+	_, _ = fmt.Fprintf(out, "Signature:     %s\n", cert.SignatureAlgorithm.String())
 
 	if len(cert.DNSNames) > 0 {
-		fmt.Fprintf(out, "DNS Names:     %s\n", strings.Join(cert.DNSNames, ", "))
+		_, _ = fmt.Fprintf(out, "DNS Names:     %s\n", strings.Join(cert.DNSNames, ", "))
 	}
 
 	if len(cert.EmailAddresses) > 0 {
-		fmt.Fprintf(out, "Email:         %s\n", strings.Join(cert.EmailAddresses, ", "))
+		_, _ = fmt.Fprintf(out, "Email:         %s\n", strings.Join(cert.EmailAddresses, ", "))
 	}
 
 	if cert.KeyUsage != 0 {
-		fmt.Fprintf(out, "Key Usage:     %s\n", formatKeyUsage(cert.KeyUsage))
+		_, _ = fmt.Fprintf(out, "Key Usage:     %s\n", formatKeyUsage(cert.KeyUsage))
 	}
 
 	if len(cert.ExtKeyUsage) > 0 {
-		fmt.Fprintf(out, "Ext Key Usage: %s\n", formatExtKeyUsage(cert.ExtKeyUsage))
+		_, _ = fmt.Fprintf(out, "Ext Key Usage: %s\n", formatExtKeyUsage(cert.ExtKeyUsage))
 	}
 
-	fmt.Fprintf(out, "Is CA:         %t\n", cert.IsCA)
+	_, _ = fmt.Fprintf(out, "Is CA:         %t\n", cert.IsCA)
 
 	return nil
 }
@@ -682,10 +682,10 @@ func runPIVStore(cmd *cobra.Command, args []string) error {
 	}
 
 	slotName := xkms.PIVSlotName(slot)
-	fmt.Fprintf(out, "Certificate stored in slot %s (%s)\n", slot, slotName)
-	fmt.Fprintf(out, "  Subject:  %s\n", cert.Subject.CommonName)
-	fmt.Fprintf(out, "  Format:   %s\n", format)
-	fmt.Fprintf(out, "  Expires:  %s\n", cert.NotAfter.Format(time.RFC3339))
+	_, _ = fmt.Fprintf(out, "Certificate stored in slot %s (%s)\n", slot, slotName)
+	_, _ = fmt.Fprintf(out, "  Subject:  %s\n", cert.Subject.CommonName)
+	_, _ = fmt.Fprintf(out, "  Format:   %s\n", format)
+	_, _ = fmt.Fprintf(out, "  Expires:  %s\n", cert.NotAfter.Format(time.RFC3339))
 
 	return nil
 }
@@ -717,10 +717,10 @@ func runPIVDelete(cmd *cobra.Command, args []string) error {
 	slotName := xkms.PIVSlotName(slot)
 
 	if !force {
-		fmt.Fprintf(out, "Delete certificate from slot %s (%s)?\n", slot, slotName)
-		fmt.Fprintf(out, "  Subject: %s\n", cert.Subject.CommonName)
-		fmt.Fprintf(out, "  Expires: %s\n", cert.NotAfter.Format(time.RFC3339))
-		fmt.Fprint(out, "\nConfirm deletion [y/N]: ")
+		_, _ = fmt.Fprintf(out, "Delete certificate from slot %s (%s)?\n", slot, slotName)
+		_, _ = fmt.Fprintf(out, "  Subject: %s\n", cert.Subject.CommonName)
+		_, _ = fmt.Fprintf(out, "  Expires: %s\n", cert.NotAfter.Format(time.RFC3339))
+		_, _ = fmt.Fprint(out, "\nConfirm deletion [y/N]: ")
 
 		var confirm string
 		if _, err := fmt.Scanln(&confirm); err != nil {
@@ -728,7 +728,7 @@ func runPIVDelete(cmd *cobra.Command, args []string) error {
 		}
 		confirm = strings.TrimSpace(strings.ToLower(confirm))
 		if confirm != "y" && confirm != "yes" {
-			fmt.Fprintln(out, "Deletion cancelled.")
+			_, _ = fmt.Fprintln(out, "Deletion cancelled.")
 			return nil
 		}
 	}
@@ -737,7 +737,7 @@ func runPIVDelete(cmd *cobra.Command, args []string) error {
 		return errors.Join(ErrPIVDeleteFailed, err)
 	}
 
-	fmt.Fprintf(out, "Certificate deleted from slot %s (%s)\n", slot, slotName)
+	_, _ = fmt.Fprintf(out, "Certificate deleted from slot %s (%s)\n", slot, slotName)
 	return nil
 }
 
@@ -785,7 +785,7 @@ func runPIVExport(cmd *cobra.Command, args []string) error {
 			return errors.Join(ErrPIVExportFailed, err)
 		}
 		slotName := xkms.PIVSlotName(slot)
-		fmt.Fprintf(out, "Certificate exported from slot %s (%s) to %s\n", slot, slotName, outputPath)
+		_, _ = fmt.Fprintf(out, "Certificate exported from slot %s (%s) to %s\n", slot, slotName, outputPath)
 	} else {
 		// Write to stdout
 		if _, err := os.Stdout.Write(data); err != nil {
@@ -802,40 +802,40 @@ func runPIVStatus(cmd *cobra.Command, args []string) error {
 	logger := slog.Default()
 	cfg := buildPIVConfig()
 
-	fmt.Fprintln(out, "PIV Certificate Storage Status")
-	fmt.Fprintln(out, "==============================")
-	fmt.Fprintln(out)
+	_, _ = fmt.Fprintln(out, "PIV Certificate Storage Status")
+	_, _ = fmt.Fprintln(out, "==============================")
+	_, _ = fmt.Fprintln(out)
 
-	fmt.Fprintf(out, "Key Backend:       %s\n", cfg.Backend)
-	fmt.Fprintf(out, "Storage Type:      %s\n", cfg.StorageType)
+	_, _ = fmt.Fprintf(out, "Key Backend:       %s\n", cfg.Backend)
+	_, _ = fmt.Fprintf(out, "Storage Type:      %s\n", cfg.StorageType)
 
 	switch cfg.StorageType {
 	case PIVStorageTypeFile:
-		fmt.Fprintf(out, "Storage Path:      %s\n", cfg.StoragePath)
+		_, _ = fmt.Fprintf(out, "Storage Path:      %s\n", cfg.StoragePath)
 	case PIVStorageTypeTPM2:
-		fmt.Fprintf(out, "TPM Device:        %s\n", cfg.TPMDevice)
+		_, _ = fmt.Fprintf(out, "TPM Device:        %s\n", cfg.TPMDevice)
 	case PIVStorageTypePKCS11:
-		fmt.Fprintf(out, "PKCS#11 Library:   %s\n", cfg.PKCS11Library)
-		fmt.Fprintf(out, "PKCS#11 Token:     %s\n", cfg.PKCS11Token)
+		_, _ = fmt.Fprintf(out, "PKCS#11 Library:   %s\n", cfg.PKCS11Library)
+		_, _ = fmt.Fprintf(out, "PKCS#11 Token:     %s\n", cfg.PKCS11Token)
 	}
 
-	fmt.Fprintln(out)
+	_, _ = fmt.Fprintln(out)
 
 	storage, err := createPIVStorage(cfg, logger)
 	if err != nil {
-		fmt.Fprintf(out, "Storage Status:    Error - %v\n", err)
+		_, _ = fmt.Fprintf(out, "Storage Status:    Error - %v\n", err)
 		return nil // Don't fail, just report status
 	}
 	defer func() { _ = storage.Close() }()
 
 	slots, err := storage.List()
 	if err != nil {
-		fmt.Fprintf(out, "Storage Status:    Error listing certificates - %v\n", err)
+		_, _ = fmt.Fprintf(out, "Storage Status:    Error listing certificates - %v\n", err)
 		return nil
 	}
 
-	fmt.Fprintln(out, "Slot Status:")
-	fmt.Fprintln(out)
+	_, _ = fmt.Fprintln(out, "Slot Status:")
+	_, _ = fmt.Fprintln(out)
 
 	// Build map of occupied slots
 	occupied := make(map[xkms.PIVSlot]xkms.PIVSlotInfo)
@@ -849,15 +849,15 @@ func runPIVStatus(cmd *cobra.Command, args []string) error {
 	for _, slot := range allSlots {
 		slotName := xkms.PIVSlotName(slot)
 		if info, ok := occupied[slot]; ok {
-			fmt.Fprintf(out, "  [%s] %s\n", slot, slotName)
-			fmt.Fprintf(out, "        Subject:  %s\n", info.Subject)
-			fmt.Fprintf(out, "        Expires:  %s\n", info.NotAfter)
+			_, _ = fmt.Fprintf(out, "  [%s] %s\n", slot, slotName)
+			_, _ = fmt.Fprintf(out, "        Subject:  %s\n", info.Subject)
+			_, _ = fmt.Fprintf(out, "        Expires:  %s\n", info.NotAfter)
 		} else {
-			fmt.Fprintf(out, "  [%s] %s - Empty\n", slot, slotName)
+			_, _ = fmt.Fprintf(out, "  [%s] %s - Empty\n", slot, slotName)
 		}
 	}
 
-	fmt.Fprintf(out, "\nTotal Certificates: %d/4\n", len(slots))
+	_, _ = fmt.Fprintf(out, "\nTotal Certificates: %d/4\n", len(slots))
 
 	return nil
 }

@@ -422,14 +422,14 @@ func runCAInfo(cmd *cobra.Command, args []string) error {
 		return &SentinelCauseError{Sentinel: ErrCAInfoFailed, Cause: err}
 	}
 
-	fmt.Fprintf(out, "CA Certificate Information\n")
-	fmt.Fprintf(out, "==========================\n\n")
-	fmt.Fprintf(out, "Subject:       %s\n", resp.Subject)
-	fmt.Fprintf(out, "Issuer:        %s\n", resp.Issuer)
-	fmt.Fprintf(out, "Serial Number: %s\n", resp.SerialNumber)
-	fmt.Fprintf(out, "Not Before:    %s\n", resp.NotBefore)
-	fmt.Fprintf(out, "Not After:     %s\n", resp.NotAfter)
-	fmt.Fprintf(out, "Is CA:         %t\n", resp.IsCA)
+	_, _ = fmt.Fprintf(out, "CA Certificate Information\n")
+	_, _ = fmt.Fprintf(out, "==========================\n\n")
+	_, _ = fmt.Fprintf(out, "Subject:       %s\n", resp.Subject)
+	_, _ = fmt.Fprintf(out, "Issuer:        %s\n", resp.Issuer)
+	_, _ = fmt.Fprintf(out, "Serial Number: %s\n", resp.SerialNumber)
+	_, _ = fmt.Fprintf(out, "Not Before:    %s\n", resp.NotBefore)
+	_, _ = fmt.Fprintf(out, "Not After:     %s\n", resp.NotAfter)
+	_, _ = fmt.Fprintf(out, "Is CA:         %t\n", resp.IsCA)
 
 	return nil
 }
@@ -561,9 +561,9 @@ func runCARevoke(cmd *cobra.Command, args []string) error {
 	}
 
 	if resp.Success {
-		fmt.Fprintf(out, "Certificate %s revoked successfully\n", serial)
+		_, _ = fmt.Fprintf(out, "Certificate %s revoked successfully\n", serial)
 	} else {
-		fmt.Fprintf(out, "Certificate %s revocation: %s\n", serial, resp.Message)
+		_, _ = fmt.Fprintf(out, "Certificate %s revocation: %s\n", serial, resp.Message)
 	}
 
 	return nil
@@ -609,9 +609,9 @@ func runCACheckRevocation(cmd *cobra.Command, args []string) error {
 
 	if resp.Revoked {
 		reasonName := reasonCodeName(resp.Reason)
-		fmt.Fprintf(out, "Certificate %s: REVOKED (reason: %s, code: %d)\n", serial, reasonName, resp.Reason)
+		_, _ = fmt.Fprintf(out, "Certificate %s: REVOKED (reason: %s, code: %d)\n", serial, reasonName, resp.Reason)
 	} else {
-		fmt.Fprintf(out, "Certificate %s: VALID (not revoked)\n", serial)
+		_, _ = fmt.Fprintf(out, "Certificate %s: VALID (not revoked)\n", serial)
 	}
 
 	return nil

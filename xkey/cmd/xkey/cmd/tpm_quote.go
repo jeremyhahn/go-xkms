@@ -117,7 +117,7 @@ func runTPMQuote(cmd *cobra.Command, args []string) error {
 	}
 
 	// Generate quote
-	fmt.Fprintf(out, "Generating quote for PCRs: %v\n", pcrs)
+	_, _ = fmt.Fprintf(out, "Generating quote for PCRs: %v\n", pcrs)
 	quote, err := tpm.Quote(pcrs, nonce)
 	if err != nil {
 		return &DetailError{Err: ErrTPMOperationFailed, Detail: fmt.Sprintf(": failed to generate quote: %v", err)}
@@ -186,34 +186,34 @@ func parsePCRIndices(pcrString string) ([]uint, error) {
 }
 
 func outputQuoteText(out io.Writer, result *QuoteResult, pcrs []uint) error {
-	fmt.Fprintln(out)
-	fmt.Fprintln(out, "TPM Quote")
-	fmt.Fprintln(out, "=========")
-	fmt.Fprintln(out)
+	_, _ = fmt.Fprintln(out)
+	_, _ = fmt.Fprintln(out, "TPM Quote")
+	_, _ = fmt.Fprintln(out, "=========")
+	_, _ = fmt.Fprintln(out)
 
-	fmt.Fprintf(out, "PCRs:       %v\n", pcrs)
-	fmt.Fprintf(out, "Nonce:      %s\n", result.NonceHex)
-	fmt.Fprintln(out)
+	_, _ = fmt.Fprintf(out, "PCRs:       %v\n", pcrs)
+	_, _ = fmt.Fprintf(out, "Nonce:      %s\n", result.NonceHex)
+	_, _ = fmt.Fprintln(out)
 
-	fmt.Fprintln(out, "Quoted (TPMS_ATTEST):")
-	fmt.Fprintf(out, "  Hex:    %s\n", result.QuotedHex)
-	fmt.Fprintf(out, "  Base64: %s\n", result.Quoted)
-	fmt.Fprintln(out)
+	_, _ = fmt.Fprintln(out, "Quoted (TPMS_ATTEST):")
+	_, _ = fmt.Fprintf(out, "  Hex:    %s\n", result.QuotedHex)
+	_, _ = fmt.Fprintf(out, "  Base64: %s\n", result.Quoted)
+	_, _ = fmt.Fprintln(out)
 
-	fmt.Fprintln(out, "Signature:")
-	fmt.Fprintf(out, "  Hex:    %s\n", result.SignatureHex)
-	fmt.Fprintf(out, "  Base64: %s\n", result.Signature)
-	fmt.Fprintln(out)
+	_, _ = fmt.Fprintln(out, "Signature:")
+	_, _ = fmt.Fprintf(out, "  Hex:    %s\n", result.SignatureHex)
+	_, _ = fmt.Fprintf(out, "  Base64: %s\n", result.Signature)
+	_, _ = fmt.Fprintln(out)
 
-	fmt.Fprintln(out, "PCR Values:")
-	fmt.Fprintf(out, "  Hex:    %s\n", result.PCRsHex)
-	fmt.Fprintf(out, "  Base64: %s\n", result.PCRs)
-	fmt.Fprintln(out)
+	_, _ = fmt.Fprintln(out, "PCR Values:")
+	_, _ = fmt.Fprintf(out, "  Hex:    %s\n", result.PCRsHex)
+	_, _ = fmt.Fprintf(out, "  Base64: %s\n", result.PCRs)
+	_, _ = fmt.Fprintln(out)
 
 	if result.HasEventLog {
-		fmt.Fprintf(out, "Event Log: Available (%d bytes)\n", result.EventLogSize)
+		_, _ = fmt.Fprintf(out, "Event Log: Available (%d bytes)\n", result.EventLogSize)
 	} else {
-		fmt.Fprintln(out, "Event Log: Not available")
+		_, _ = fmt.Fprintln(out, "Event Log: Not available")
 	}
 
 	return nil
@@ -245,6 +245,6 @@ func writeQuoteToFile(out io.Writer, result *QuoteResult, eventLog []byte) error
 		return &SentinelCauseError{Sentinel: ErrExportFailed, Cause: err}
 	}
 
-	fmt.Fprintf(out, "Quote written to: %s\n", quoteOutputFile)
+	_, _ = fmt.Fprintf(out, "Quote written to: %s\n", quoteOutputFile)
 	return nil
 }

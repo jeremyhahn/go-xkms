@@ -113,7 +113,7 @@ func runUHIDSetup(cmd *cobra.Command, _ []string) error {
 	if err := os.WriteFile(uhidUdevRulePath, []byte(uhidUdevRuleContent), 0644); err != nil {
 		return &SentinelCauseError{Sentinel: ErrUHIDSetupUdevWriteFailed, Cause: err}
 	}
-	fmt.Fprintln(out, "Created udev rule:", uhidUdevRulePath)
+	_, _ = fmt.Fprintln(out, "Created udev rule:", uhidUdevRulePath)
 
 	// Step 2: Ensure uhid module loads at boot.
 	if err := os.MkdirAll(filepath.Dir(uhidModuleLoadPath), 0755); err != nil {
@@ -122,13 +122,13 @@ func runUHIDSetup(cmd *cobra.Command, _ []string) error {
 	if err := os.WriteFile(uhidModuleLoadPath, []byte(uhidModuleLoadContent), 0644); err != nil {
 		return &SentinelCauseError{Sentinel: ErrUHIDSetupModulesWriteFailed, Cause: err}
 	}
-	fmt.Fprintln(out, "Created module load config:", uhidModuleLoadPath)
+	_, _ = fmt.Fprintln(out, "Created module load config:", uhidModuleLoadPath)
 
 	// Step 3: Load uhid module now (may already be loaded).
 	if err := exec.Command("modprobe", "uhid").Run(); err != nil { // #nosec G204
-		fmt.Fprintf(out, "Warning: modprobe uhid failed (may already be loaded): %v\n", err)
+		_, _ = fmt.Fprintf(out, "Warning: modprobe uhid failed (may already be loaded): %v\n", err)
 	} else {
-		fmt.Fprintln(out, "Loaded uhid kernel module")
+		_, _ = fmt.Fprintln(out, "Loaded uhid kernel module")
 	}
 
 	// Step 4: Reload udev rules and trigger device rescan.
@@ -138,7 +138,7 @@ func runUHIDSetup(cmd *cobra.Command, _ []string) error {
 	if err := exec.Command("udevadm", "trigger", "--subsystem-match=misc").Run(); err != nil { // #nosec G204
 		return &SentinelCauseError{Sentinel: ErrUHIDSetupUdevTriggerFailed, Cause: err}
 	}
-	fmt.Fprintln(out, "Reloaded udev rules and triggered device rescan")
+	_, _ = fmt.Fprintln(out, "Reloaded udev rules and triggered device rescan")
 
 	// Step 5: Add the calling user to the "input" group so the udev rule
 	// takes effect. Detect the unprivileged caller from pkexec/sudo env vars.
@@ -148,9 +148,9 @@ func runUHIDSetup(cmd *cobra.Command, _ []string) error {
 			if err := exec.Command("usermod", "-aG", "input", callingUser).Run(); err != nil { // #nosec G204
 				return &DetailError{Err: ErrUHIDSetupUserAddFailed, Detail: fmt.Sprintf(": user %s: %v", callingUser, err)}
 			}
-			fmt.Fprintf(out, "Added user %q to input group (session restart required for group membership)\n", callingUser)
+			_, _ = fmt.Fprintf(out, "Added user %q to input group (session restart required for group membership)\n", callingUser)
 		} else {
-			fmt.Fprintf(out, "User %q is already in input group\n", callingUser)
+			_, _ = fmt.Fprintf(out, "User %q is already in input group\n", callingUser)
 		}
 	}
 

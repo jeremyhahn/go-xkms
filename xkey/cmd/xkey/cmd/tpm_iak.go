@@ -232,30 +232,30 @@ func runIAKShow(cmd *cobra.Command, args []string) error {
 }
 
 func outputIAKText(out io.Writer, info *IAKInfo) error {
-	fmt.Fprintln(out, "Initial Attestation Key (IAK) Information")
-	fmt.Fprintln(out, "==========================================")
-	fmt.Fprintln(out)
+	_, _ = fmt.Fprintln(out, "Initial Attestation Key (IAK) Information")
+	_, _ = fmt.Fprintln(out, "==========================================")
+	_, _ = fmt.Fprintln(out)
 
-	fmt.Fprintln(out, "Key Details:")
-	fmt.Fprintf(out, "  Handle:              %s\n", info.Handle)
-	fmt.Fprintf(out, "  Algorithm:           %s\n", info.Algorithm)
+	_, _ = fmt.Fprintln(out, "Key Details:")
+	_, _ = fmt.Fprintf(out, "  Handle:              %s\n", info.Handle)
+	_, _ = fmt.Fprintf(out, "  Algorithm:           %s\n", info.Algorithm)
 	if info.KeySize > 0 {
-		fmt.Fprintf(out, "  Key Size:            %d bits\n", info.KeySize)
+		_, _ = fmt.Fprintf(out, "  Key Size:            %d bits\n", info.KeySize)
 	}
 	if info.Curve != "" {
-		fmt.Fprintf(out, "  Curve:               %s\n", info.Curve)
+		_, _ = fmt.Fprintf(out, "  Curve:               %s\n", info.Curve)
 	}
-	fmt.Fprintf(out, "  Signature Algorithm: %s\n", info.SignatureAlgorithm)
-	fmt.Fprintln(out)
+	_, _ = fmt.Fprintf(out, "  Signature Algorithm: %s\n", info.SignatureAlgorithm)
+	_, _ = fmt.Fprintln(out)
 
 	if info.HasCert {
-		fmt.Fprintln(out, "Certificate Details:")
-		fmt.Fprintf(out, "  Subject:    %s\n", info.CertSubject)
-		fmt.Fprintf(out, "  Issuer:     %s\n", info.CertIssuer)
-		fmt.Fprintf(out, "  Serial:     %s\n", info.CertSerial)
-		fmt.Fprintf(out, "  Not After:  %s\n", info.CertNotAfter)
+		_, _ = fmt.Fprintln(out, "Certificate Details:")
+		_, _ = fmt.Fprintf(out, "  Subject:    %s\n", info.CertSubject)
+		_, _ = fmt.Fprintf(out, "  Issuer:     %s\n", info.CertIssuer)
+		_, _ = fmt.Fprintf(out, "  Serial:     %s\n", info.CertSerial)
+		_, _ = fmt.Fprintf(out, "  Not After:  %s\n", info.CertNotAfter)
 	} else {
-		fmt.Fprintln(out, "Certificate: Not available")
+		_, _ = fmt.Fprintln(out, "Certificate: Not available")
 	}
 
 	return nil
@@ -291,13 +291,13 @@ func runIAKCreate(cmd *cobra.Command, args []string) error {
 	}
 
 	// Create IAK
-	fmt.Fprintln(out, "Creating Initial Attestation Key...")
+	_, _ = fmt.Fprintln(out, "Creating Initial Attestation Key...")
 	_, err = tpm.CreateIAK(ekAttrs, nil)
 	if err != nil {
 		return &WrappedError{Msg: "failed to create IAK", Err: err}
 	}
 
-	fmt.Fprintln(out, "IAK created successfully")
+	_, _ = fmt.Fprintln(out, "IAK created successfully")
 	return nil
 }
 
@@ -324,7 +324,7 @@ func runIAKExport(cmd *cobra.Command, args []string) error {
 
 	// Output to file or stdout
 	if iakExportOutput == "-" {
-		fmt.Fprint(out, string(pemData))
+		_, _ = fmt.Fprint(out, string(pemData))
 		return nil
 	}
 
@@ -332,7 +332,7 @@ func runIAKExport(cmd *cobra.Command, args []string) error {
 		return &SentinelCauseError{Sentinel: ErrExportFailed, Cause: err}
 	}
 
-	fmt.Fprintf(out, "IAK certificate exported to: %s\n", iakExportOutput)
+	_, _ = fmt.Fprintf(out, "IAK certificate exported to: %s\n", iakExportOutput)
 	return nil
 }
 
@@ -347,7 +347,7 @@ func runIAKCSR(cmd *cobra.Command, args []string) error {
 	// Get EK certificate
 	ekCert, err := tpm.EKCertificate()
 	if err != nil {
-		fmt.Fprintln(out, "Warning: EK certificate not available, CSR will have limited attestation capability")
+		_, _ = fmt.Fprintln(out, "Warning: EK certificate not available, CSR will have limited attestation capability")
 	}
 
 	// Get IAK attributes
@@ -357,7 +357,7 @@ func runIAKCSR(cmd *cobra.Command, args []string) error {
 	}
 
 	// Create TCG-CSR-IDEVID for IAK
-	fmt.Fprintln(out, "Generating IAK CSR...")
+	_, _ = fmt.Fprintln(out, "Generating IAK CSR...")
 	csr, err := tpm.CreateTCG_CSR_IDEVID(ekCert, iakAttrs, nil)
 	if err != nil {
 		return &SentinelCauseError{Sentinel: ErrCSRGenerationFailed, Cause: err}
@@ -374,6 +374,6 @@ func runIAKCSR(cmd *cobra.Command, args []string) error {
 		return &SentinelCauseError{Sentinel: ErrExportFailed, Cause: err}
 	}
 
-	fmt.Fprintf(out, "IAK CSR written to: %s\n", iakCSROutput)
+	_, _ = fmt.Fprintf(out, "IAK CSR written to: %s\n", iakCSROutput)
 	return nil
 }

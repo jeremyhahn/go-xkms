@@ -130,18 +130,18 @@ func runConfigShow(cmd *cobra.Command, args []string) error {
 	}
 
 	if _, err := os.Stat(configPath); err == nil {
-		fmt.Fprintf(out, "# Configuration loaded from: %s\n", configPath)
+		_, _ = fmt.Fprintf(out, "# Configuration loaded from: %s\n", configPath)
 	} else {
-		fmt.Fprintln(out, "# No configuration file loaded (using defaults and environment)")
+		_, _ = fmt.Fprintln(out, "# No configuration file loaded (using defaults and environment)")
 	}
-	fmt.Fprintln(out)
+	_, _ = fmt.Fprintln(out)
 
 	yamlData, err := yaml.Marshal(cfg)
 	if err != nil {
 		return &ConfigShowError{Err: err}
 	}
 
-	fmt.Fprint(out, string(yamlData))
+	_, _ = fmt.Fprint(out, string(yamlData))
 	return nil
 }
 
@@ -160,11 +160,11 @@ func runConfigInit(cmd *cobra.Command, args []string) error {
 	// Check if file exists
 	if _, err := os.Stat(configPath); err == nil {
 		if !configInitForce {
-			fmt.Fprintf(out, "Configuration file already exists: %s\n", configPath)
-			fmt.Fprintln(out, "Use --force to overwrite.")
+			_, _ = fmt.Fprintf(out, "Configuration file already exists: %s\n", configPath)
+			_, _ = fmt.Fprintln(out, "Use --force to overwrite.")
 			return ErrConfigFileExists
 		}
-		fmt.Fprintf(out, "Overwriting existing configuration file: %s\n", configPath)
+		_, _ = fmt.Fprintf(out, "Overwriting existing configuration file: %s\n", configPath)
 	}
 
 	// Write the default config using the config package for consistency
@@ -177,7 +177,7 @@ func runConfigInit(cmd *cobra.Command, args []string) error {
 		}
 	}
 
-	fmt.Fprintf(out, "Created configuration file: %s\n", configPath)
+	_, _ = fmt.Fprintf(out, "Created configuration file: %s\n", configPath)
 	return nil
 }
 
@@ -192,33 +192,33 @@ func runConfigPath(cmd *cobra.Command, args []string) error {
 
 	// If a config file was specified via flag, show it first
 	if cfgFile != "" {
-		fmt.Fprintln(out, "Configuration search paths:")
-		fmt.Fprintln(out)
-		fmt.Fprintf(out, "  %s (from --config flag)\n", cfgFile)
+		_, _ = fmt.Fprintln(out, "Configuration search paths:")
+		_, _ = fmt.Fprintln(out)
+		_, _ = fmt.Fprintf(out, "  %s (from --config flag)\n", cfgFile)
 	} else {
-		fmt.Fprintln(out, "Configuration search paths:")
-		fmt.Fprintln(out)
+		_, _ = fmt.Fprintln(out, "Configuration search paths:")
+		_, _ = fmt.Fprintln(out)
 	}
 
 	// Show standard search paths
 	for _, path := range paths {
 		// Check if file exists
 		if _, err := os.Stat(path); err == nil {
-			fmt.Fprintf(out, "  %s (exists)\n", path)
+			_, _ = fmt.Fprintf(out, "  %s (exists)\n", path)
 		} else {
-			fmt.Fprintf(out, "  %s\n", path)
+			_, _ = fmt.Fprintf(out, "  %s\n", path)
 		}
 	}
 
-	fmt.Fprintln(out)
+	_, _ = fmt.Fprintln(out)
 	if cfgFile != "" {
-		fmt.Fprintf(out, "Currently using: %s\n", cfgFile)
+		_, _ = fmt.Fprintf(out, "Currently using: %s\n", cfgFile)
 	} else if _, err := os.Stat(xkeyconfig.ConfigPath()); err == nil {
-		fmt.Fprintf(out, "Currently using: %s\n", xkeyconfig.ConfigPath())
+		_, _ = fmt.Fprintf(out, "Currently using: %s\n", xkeyconfig.ConfigPath())
 	} else if _, err := os.Stat(xkeyconfig.SystemConfigPath()); err == nil {
-		fmt.Fprintf(out, "Currently using: %s\n", xkeyconfig.SystemConfigPath())
+		_, _ = fmt.Fprintf(out, "Currently using: %s\n", xkeyconfig.SystemConfigPath())
 	} else {
-		fmt.Fprintln(out, "No configuration file currently loaded.")
+		_, _ = fmt.Fprintln(out, "No configuration file currently loaded.")
 	}
 
 	return nil

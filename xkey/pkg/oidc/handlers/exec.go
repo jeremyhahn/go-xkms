@@ -146,12 +146,14 @@ func (h *ExecHandler) tokenEnvVars(data *TokenData) []string {
 
 	// AWS credentials (if present)
 	if data.AWSCredentials != nil {
-		env = append(env, "AWS_ACCESS_KEY_ID="+data.AWSCredentials.AccessKeyID)
-		env = append(env, "AWS_SECRET_ACCESS_KEY="+data.AWSCredentials.SecretAccessKey)
-		env = append(env, "AWS_SESSION_TOKEN="+data.AWSCredentials.SessionToken)
+		env = append(env,
+			"AWS_ACCESS_KEY_ID="+data.AWSCredentials.AccessKeyID,
+			"AWS_SECRET_ACCESS_KEY="+data.AWSCredentials.SecretAccessKey,
+			"AWS_SESSION_TOKEN="+data.AWSCredentials.SessionToken)
 		if data.AWSCredentials.Region != "" {
-			env = append(env, "AWS_REGION="+data.AWSCredentials.Region)
-			env = append(env, "AWS_DEFAULT_REGION="+data.AWSCredentials.Region)
+			env = append(env,
+				"AWS_REGION="+data.AWSCredentials.Region,
+				"AWS_DEFAULT_REGION="+data.AWSCredentials.Region)
 		}
 		if !data.AWSCredentials.Expiration.IsZero() {
 			env = append(env, "AWS_CREDENTIAL_EXPIRATION="+data.AWSCredentials.Expiration.Format("2006-01-02T15:04:05Z"))

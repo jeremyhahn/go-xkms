@@ -142,6 +142,6 @@ func runUnlock(cmd *cobra.Command, _ []string) error {
 		return &DetailError{Err: ErrUnlockFailed, Detail: fmt.Sprintf(": %s", resp.Error)}
 	}
 
-	fmt.Fprintln(out, "Unlocked")
+	_, _ = fmt.Fprintln(out, "Unlocked")
 	return nil
 }

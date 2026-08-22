@@ -14,6 +14,7 @@
 package cmd
 
 import (
+	"bytes"
 	"errors"
 	"fmt"
 	"os"
@@ -335,7 +336,7 @@ func readUSBPassphrase(cmd *cobra.Command) (string, error) {
 		return "", &USBCmdError{Operation: "read_passphrase", Err: err}
 	}
 
-	if string(pass1) != string(pass2) {
+	if !bytes.Equal(pass1, pass2) {
 		return "", &USBCmdError{
 			Operation: "confirm_passphrase",
 			Message:   "passphrases do not match",

@@ -159,19 +159,19 @@ func runOATHSync(cmd *cobra.Command, args []string) error {
 	}
 	defer func() { _ = store.Close() }()
 
-	fmt.Fprintf(cmd.OutOrStdout(), "Syncing OATH credentials with device \"%s\"...\n\n", device.Name)
+	_, _ = fmt.Fprintf(cmd.OutOrStdout(), "Syncing OATH credentials with device \"%s\"...\n\n", device.Name)
 
 	// Connect to phone
 	phoneBackend, err := connectToPhone(device, timeout, logger)
 	if err != nil {
 		return &SentinelCauseError{Sentinel: ErrOATHSyncFailed, Cause: err}
 	}
-	defer phoneBackend.Close()
+	defer func() { _ = phoneBackend.Close() }()
 
 	ctx, cancel := context.WithTimeout(context.Background(), timeout)
 	defer cancel()
 
-	fmt.Fprintln(cmd.OutOrStdout(), "Connecting to phone...")
+	_, _ = fmt.Fprintln(cmd.OutOrStdout(), "Connecting to phone...")
 	if err := phoneBackend.Connect(ctx); err != nil {
 		return &SentinelCauseError{Sentinel: ErrOATHSyncFailed, Cause: err}
 	}
@@ -183,7 +183,7 @@ func runOATHSync(cmd *cobra.Command, args []string) error {
 	}
 
 	// Get remote credentials from phone
-	fmt.Fprintln(cmd.OutOrStdout(), "Fetching phone credentials...")
+	_, _ = fmt.Fprintln(cmd.OutOrStdout(), "Fetching phone credentials...")
 	req := phone.NewRequest(phone.MethodLocalOATHList, &phone.LocalOATHListParams{})
 	resp, err := phoneBackend.SendRequest(ctx, req)
 	if err != nil {
@@ -213,17 +213,17 @@ func runOATHSync(cmd *cobra.Command, args []string) error {
 	pushed := 0
 	for _, cred := range localCreds {
 		if _, exists := remoteMap[strings.ToLower(cred.Name)]; !exists {
-			fmt.Fprintf(cmd.OutOrStdout(), "  Pushing: %s\n", cred.Name)
+			_, _ = fmt.Fprintf(cmd.OutOrStdout(), "  Pushing: %s\n", cred.Name)
 			pushReq := phone.NewRequest(phone.MethodLocalOATHAdd, &phone.LocalOATHAddParams{
 				Credential: credentialToPhoneInfo(cred),
 			})
 			pushResp, pushErr := phoneBackend.SendRequest(ctx, pushReq)
 			if pushErr != nil {
-				fmt.Fprintf(cmd.OutOrStdout(), "    Error: %v\n", pushErr)
+				_, _ = fmt.Fprintf(cmd.OutOrStdout(), "    Error: %v\n", pushErr)
 				continue
 			}
 			if pushResp.Error != nil {
-				fmt.Fprintf(cmd.OutOrStdout(), "    Error: %s\n", pushResp.Error.Message)
+				_, _ = fmt.Fprintf(cmd.OutOrStdout(), "    Error: %s\n", pushResp.Error.Message)
 				continue
 			}
 			pushed++
@@ -234,18 +234,18 @@ func runOATHSync(cmd *cobra.Command, args []string) error {
 	pulled := 0
 	for _, remoteCred := range result.Credentials {
 		if _, exists := localMap[strings.ToLower(remoteCred.Name)]; !exists {
-			fmt.Fprintf(cmd.OutOrStdout(), "  Pulling: %s\n", remoteCred.Name)
+			_, _ = fmt.Fprintf(cmd.OutOrStdout(), "  Pulling: %s\n", remoteCred.Name)
 			localCred := deviceInfoToCredential(remoteCred)
 			if addErr := store.Add(localCred); addErr != nil {
-				fmt.Fprintf(cmd.OutOrStdout(), "    Error: %v\n", addErr)
+				_, _ = fmt.Fprintf(cmd.OutOrStdout(), "    Error: %v\n", addErr)
 				continue
 			}
 			pulled++
 		}
 	}
 
-	fmt.Fprintln(cmd.OutOrStdout())
-	fmt.Fprintf(cmd.OutOrStdout(), "Sync complete: %d pushed, %d pulled\n", pushed, pulled)
+	_, _ = fmt.Fprintln(cmd.OutOrStdout())
+	_, _ = fmt.Fprintf(cmd.OutOrStdout(), "Sync complete: %d pushed, %d pulled\n", pushed, pulled)
 
 	return nil
 }
@@ -292,25 +292,25 @@ func runOATHPush(cmd *cobra.Command, args []string) error {
 		return &SentinelCauseError{Sentinel: ErrOATHCredentialNotFound, Cause: err}
 	}
 
-	fmt.Fprintf(cmd.OutOrStdout(), "Pushing \"%s\" to device \"%s\"...\n\n", cred.Name, device.Name)
+	_, _ = fmt.Fprintf(cmd.OutOrStdout(), "Pushing \"%s\" to device \"%s\"...\n\n", cred.Name, device.Name)
 
 	// Connect to phone
 	phoneBackend, err := connectToPhone(device, timeout, logger)
 	if err != nil {
 		return &SentinelCauseError{Sentinel: ErrOATHPushFailed, Cause: err}
 	}
-	defer phoneBackend.Close()
+	defer func() { _ = phoneBackend.Close() }()
 
 	ctx, cancel := context.WithTimeout(context.Background(), timeout)
 	defer cancel()
 
-	fmt.Fprintln(cmd.OutOrStdout(), "Connecting to phone...")
+	_, _ = fmt.Fprintln(cmd.OutOrStdout(), "Connecting to phone...")
 	if err := phoneBackend.Connect(ctx); err != nil {
 		return &SentinelCauseError{Sentinel: ErrOATHPushFailed, Cause: err}
 	}
 
 	// Push credential to phone
-	fmt.Fprintln(cmd.OutOrStdout(), "Sending credential...")
+	_, _ = fmt.Fprintln(cmd.OutOrStdout(), "Sending credential...")
 	req := phone.NewRequest(phone.MethodLocalOATHAdd, &phone.LocalOATHAddParams{
 		Credential: credentialToPhoneInfo(cred),
 	})
@@ -329,11 +329,11 @@ func runOATHPush(cmd *cobra.Command, args []string) error {
 	}
 
 	if pushResult.Success {
-		fmt.Fprintf(cmd.OutOrStdout(), "  Credential ID: %s\n", pushResult.CredentialID)
+		_, _ = fmt.Fprintf(cmd.OutOrStdout(), "  Credential ID: %s\n", pushResult.CredentialID)
 	}
 
-	fmt.Fprintln(cmd.OutOrStdout())
-	fmt.Fprintln(cmd.OutOrStdout(), "Credential pushed successfully.")
+	_, _ = fmt.Fprintln(cmd.OutOrStdout())
+	_, _ = fmt.Fprintln(cmd.OutOrStdout(), "Credential pushed successfully.")
 
 	return nil
 }
@@ -374,25 +374,25 @@ func runOATHPull(cmd *cobra.Command, args []string) error {
 	}
 	defer func() { _ = store.Close() }()
 
-	fmt.Fprintf(cmd.OutOrStdout(), "Pulling OATH credentials from device \"%s\"...\n\n", device.Name)
+	_, _ = fmt.Fprintf(cmd.OutOrStdout(), "Pulling OATH credentials from device \"%s\"...\n\n", device.Name)
 
 	// Connect to phone
 	phoneBackend, err := connectToPhone(device, timeout, logger)
 	if err != nil {
 		return &SentinelCauseError{Sentinel: ErrOATHPullFailed, Cause: err}
 	}
-	defer phoneBackend.Close()
+	defer func() { _ = phoneBackend.Close() }()
 
 	ctx, cancel := context.WithTimeout(context.Background(), timeout)
 	defer cancel()
 
-	fmt.Fprintln(cmd.OutOrStdout(), "Connecting to phone...")
+	_, _ = fmt.Fprintln(cmd.OutOrStdout(), "Connecting to phone...")
 	if err := phoneBackend.Connect(ctx); err != nil {
 		return &SentinelCauseError{Sentinel: ErrOATHPullFailed, Cause: err}
 	}
 
 	// Fetch credentials from phone
-	fmt.Fprintln(cmd.OutOrStdout(), "Fetching credentials...")
+	_, _ = fmt.Fprintln(cmd.OutOrStdout(), "Fetching credentials...")
 	req := phone.NewRequest(phone.MethodLocalOATHList, &phone.LocalOATHListParams{})
 	resp, err := phoneBackend.SendRequest(ctx, req)
 	if err != nil {
@@ -408,7 +408,7 @@ func runOATHPull(cmd *cobra.Command, args []string) error {
 	}
 
 	if len(result.Credentials) == 0 {
-		fmt.Fprintln(cmd.OutOrStdout(), "No credentials found on phone.")
+		_, _ = fmt.Fprintln(cmd.OutOrStdout(), "No credentials found on phone.")
 		return nil
 	}
 
@@ -422,15 +422,15 @@ func runOATHPull(cmd *cobra.Command, args []string) error {
 				skipped++
 				continue
 			}
-			fmt.Fprintf(cmd.OutOrStdout(), "  Error importing %s: %v\n", remoteCred.Name, err)
+			_, _ = fmt.Fprintf(cmd.OutOrStdout(), "  Error importing %s: %v\n", remoteCred.Name, err)
 			continue
 		}
-		fmt.Fprintf(cmd.OutOrStdout(), "  Imported: %s\n", remoteCred.Name)
+		_, _ = fmt.Fprintf(cmd.OutOrStdout(), "  Imported: %s\n", remoteCred.Name)
 		imported++
 	}
 
-	fmt.Fprintln(cmd.OutOrStdout())
-	fmt.Fprintf(cmd.OutOrStdout(), "Pull complete: %d imported, %d already present\n", imported, skipped)
+	_, _ = fmt.Fprintln(cmd.OutOrStdout())
+	_, _ = fmt.Fprintf(cmd.OutOrStdout(), "Pull complete: %d imported, %d already present\n", imported, skipped)
 
 	return nil
 }

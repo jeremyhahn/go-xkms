@@ -143,8 +143,8 @@ func runPivImport(cmd *cobra.Command, args []string) error {
 
 	// Print success message with certificate info
 	slotName := xkms.PIVSlotName(slot)
-	fmt.Fprintf(out, "Certificate imported into slot %s (%s)\n", slot, slotName)
-	fmt.Fprint(out, formatCertInfo(cert))
+	_, _ = fmt.Fprintf(out, "Certificate imported into slot %s (%s)\n", slot, slotName)
+	_, _ = fmt.Fprint(out, formatCertInfo(cert))
 
 	return nil
 }

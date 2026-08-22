@@ -110,11 +110,9 @@ type BLEPeripheral struct {
 	sender *fragmentSender
 
 	// Session state
-	mu         sync.Mutex
-	session    *NoiseSession
-	connected  atomic.Bool
-	clientAddr string
-	mtu        int
+	session   *NoiseSession
+	connected atomic.Bool
+	mtu       int
 
 	// Fragmentation
 	fragmenter  *Fragmenter

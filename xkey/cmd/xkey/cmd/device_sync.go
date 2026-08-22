@@ -307,18 +307,18 @@ func runDeviceSyncMode(cmd *cobra.Command, mode syncMode) error {
 		return reportSyncDryRun(out, device.Name, mode, scope, svc)
 	}
 
-	fmt.Fprintf(out, "%s with device \"%s\"...\n\n", mode.verb(), device.Name)
+	_, _ = fmt.Fprintf(out, "%s with device \"%s\"...\n\n", mode.verb(), device.Name)
 
 	phoneBackend, err := connectToPhone(device, timeout, slog.Default())
 	if err != nil {
 		return &SentinelCauseError{Sentinel: ErrDeviceSyncFailed, Cause: err}
 	}
-	defer phoneBackend.Close()
+	defer func() { _ = phoneBackend.Close() }()
 
 	ctx, cancel := context.WithTimeout(context.Background(), timeout)
 	defer cancel()
 
-	fmt.Fprintln(out, "Connecting to phone...")
+	_, _ = fmt.Fprintln(out, "Connecting to phone...")
 	if err := phoneBackend.Connect(ctx); err != nil {
 		return &SentinelCauseError{Sentinel: ErrDeviceSyncFailed, Cause: err}
 	}
@@ -327,17 +327,17 @@ func runDeviceSyncMode(cmd *cobra.Command, mode syncMode) error {
 	var failures []error
 
 	for _, store := range selectedSyncStores(scope) {
-		fmt.Fprintf(out, "%s %s...\n", mode.verb(), store.label)
+		_, _ = fmt.Fprintf(out, "%s %s...\n", mode.verb(), store.label)
 		result, err := store.exchange(ctx, phoneBackend, svc, mode)
 		if err != nil {
-			fmt.Fprintf(out, "  %s\n", err)
+			_, _ = fmt.Fprintf(out, "  %s\n", err)
 			failures = append(failures, err)
 			continue
 		}
 		summary.set(store.label, result)
 	}
 
-	fmt.Fprintln(out)
+	_, _ = fmt.Fprintln(out)
 	summary.write(out, scope, mode)
 
 	if len(failures) > 0 {
@@ -362,18 +362,18 @@ func runDeviceSyncStatus(cmd *cobra.Command, args []string) error {
 		return err
 	}
 
-	fmt.Fprintf(out, "Checking sync status with device \"%s\"...\n\n", device.Name)
+	_, _ = fmt.Fprintf(out, "Checking sync status with device \"%s\"...\n\n", device.Name)
 
 	phoneBackend, err := connectToPhone(device, timeout, slog.Default())
 	if err != nil {
 		return &SentinelCauseError{Sentinel: ErrDeviceSyncFailed, Cause: err}
 	}
-	defer phoneBackend.Close()
+	defer func() { _ = phoneBackend.Close() }()
 
 	ctx, cancel := context.WithTimeout(context.Background(), timeout)
 	defer cancel()
 
-	fmt.Fprintln(out, "Connecting to phone...")
+	_, _ = fmt.Fprintln(out, "Connecting to phone...")
 	if err := phoneBackend.Connect(ctx); err != nil {
 		return &SentinelCauseError{Sentinel: ErrDeviceSyncFailed, Cause: err}
 	}
@@ -384,20 +384,20 @@ func runDeviceSyncStatus(cmd *cobra.Command, args []string) error {
 		return err
 	}
 
-	fmt.Fprintf(out, "Device:    %s\n", device.Name)
-	fmt.Fprintf(out, "Address:   %s\n", device.Address)
-	fmt.Fprintf(out, "Paired:    %s\n", device.PairedAt.Format(time.RFC3339))
-	fmt.Fprintln(out)
-	fmt.Fprintln(out, "Phone:")
-	fmt.Fprintf(out, "  Device ID:  %s\n", status.DeviceID)
-	fmt.Fprintf(out, "  Last sync:  %s\n", orNever(status.LastSync))
+	_, _ = fmt.Fprintf(out, "Device:    %s\n", device.Name)
+	_, _ = fmt.Fprintf(out, "Address:   %s\n", device.Address)
+	_, _ = fmt.Fprintf(out, "Paired:    %s\n", device.PairedAt.Format(time.RFC3339))
+	_, _ = fmt.Fprintln(out)
+	_, _ = fmt.Fprintln(out, "Phone:")
+	_, _ = fmt.Fprintf(out, "  Device ID:  %s\n", status.DeviceID)
+	_, _ = fmt.Fprintf(out, "  Last sync:  %s\n", orNever(status.LastSync))
 	if len(status.StoreChecksums) == 0 {
-		fmt.Fprintln(out, "  Checksums:  (none reported)")
+		_, _ = fmt.Fprintln(out, "  Checksums:  (none reported)")
 	} else {
-		fmt.Fprintln(out, "  Checksums:")
+		_, _ = fmt.Fprintln(out, "  Checksums:")
 		for _, name := range []string{"trust_store", "oath", "passwords"} {
 			if sum, ok := status.StoreChecksums[name]; ok {
-				fmt.Fprintf(out, "    %-12s %s\n", name+":", sum)
+				_, _ = fmt.Fprintf(out, "    %-12s %s\n", name+":", sum)
 			}
 		}
 	}
@@ -414,12 +414,12 @@ func runDeviceSyncStatus(cmd *cobra.Command, args []string) error {
 		return &SentinelCauseError{Sentinel: ErrDeviceSyncFailed, Cause: err}
 	}
 
-	fmt.Fprintln(out)
-	fmt.Fprintln(out, "This device:")
+	_, _ = fmt.Fprintln(out)
+	_, _ = fmt.Fprintln(out, "This device:")
 	if state.LastSync.IsZero() {
-		fmt.Fprintln(out, "  Last sync:  never")
+		_, _ = fmt.Fprintln(out, "  Last sync:  never")
 	} else {
-		fmt.Fprintf(out, "  Last sync:  %s\n", state.LastSync.UTC().Format(time.RFC3339))
+		_, _ = fmt.Fprintf(out, "  Last sync:  %s\n", state.LastSync.UTC().Format(time.RFC3339))
 	}
 
 	return nil
@@ -807,8 +807,8 @@ func recordSyncState(svc *xkeysync.Service) error {
 
 // reportSyncDryRun prints what a real run would send without connecting.
 func reportSyncDryRun(out io.Writer, deviceName string, mode syncMode, scope syncScope, svc *xkeysync.Service) error {
-	fmt.Fprintf(out, "[dry-run] Would %s device \"%s\"\n", dryRunPreposition(mode), deviceName)
-	fmt.Fprintf(out, "[dry-run] Stores: %v\n", scope.scopeLabels())
+	_, _ = fmt.Fprintf(out, "[dry-run] Would %s device \"%s\"\n", dryRunPreposition(mode), deviceName)
+	_, _ = fmt.Fprintf(out, "[dry-run] Stores: %v\n", scope.scopeLabels())
 
 	if !mode.sends() {
 		return nil
@@ -819,21 +819,21 @@ func reportSyncDryRun(out io.Writer, deviceName string, mode syncMode, scope syn
 		if err != nil {
 			return &SentinelCauseError{Sentinel: ErrDeviceSyncFailed, Cause: err}
 		}
-		fmt.Fprintf(out, "[dry-run] trust-store: %d certificate(s) to send\n", len(wireCertificates(delta)))
+		_, _ = fmt.Fprintf(out, "[dry-run] trust-store: %d certificate(s) to send\n", len(wireCertificates(delta)))
 	}
 	if scope.OATH {
 		delta, err := svc.ComputeLocalOATHDelta()
 		if err != nil {
 			return &SentinelCauseError{Sentinel: ErrDeviceSyncFailed, Cause: err}
 		}
-		fmt.Fprintf(out, "[dry-run] oath: %d credential(s) to send\n", len(wireOATH(delta)))
+		_, _ = fmt.Fprintf(out, "[dry-run] oath: %d credential(s) to send\n", len(wireOATH(delta)))
 	}
 	if scope.Passwords {
 		delta, err := svc.ComputeLocalPasswordDelta()
 		if err != nil {
 			return &SentinelCauseError{Sentinel: ErrDeviceSyncFailed, Cause: err}
 		}
-		fmt.Fprintf(out, "[dry-run] passwords: %d entry(s) to send\n", len(wirePasswords(delta)))
+		_, _ = fmt.Fprintf(out, "[dry-run] passwords: %d entry(s) to send\n", len(wirePasswords(delta)))
 	}
 
 	return nil
@@ -872,7 +872,7 @@ func (s *syncSummary) set(label string, result syncResult) {
 
 // write prints a per-store summary covering only the halves the mode ran.
 func (s *syncSummary) write(out io.Writer, scope syncScope, mode syncMode) {
-	fmt.Fprintln(out, "Sync summary:")
+	_, _ = fmt.Fprintln(out, "Sync summary:")
 
 	results := map[string]syncResult{
 		"trust-store": s.TrustStore,
@@ -882,7 +882,7 @@ func (s *syncSummary) write(out io.Writer, scope syncScope, mode syncMode) {
 
 	for _, store := range selectedSyncStores(scope) {
 		result := results[store.label]
-		fmt.Fprintf(out, "  %-12s %s\n", store.label+":", formatSyncResult(result, mode))
+		_, _ = fmt.Fprintf(out, "  %-12s %s\n", store.label+":", formatSyncResult(result, mode))
 	}
 }
 

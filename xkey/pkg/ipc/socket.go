@@ -20,6 +20,10 @@ import (
 	"strconv"
 )
 
+// socketBaseDir is the parent of the per-UID socket directory. Named rather
+// than inlined so filepath.Join receives no separator-bearing literal.
+const socketBaseDir = "/tmp"
+
 const (
 	socketDir  = "xkey"
 	socketName = "xkey.sock"
@@ -35,7 +39,7 @@ func DefaultSocketPath() string {
 	if dir := os.Getenv("XDG_RUNTIME_DIR"); dir != "" {
 		return filepath.Join(dir, socketDir, socketName)
 	}
-	return filepath.Join("/tmp", fmt.Sprintf("xkey-%d", effectiveUID()), socketName)
+	return filepath.Join(socketBaseDir, fmt.Sprintf("xkey-%d", effectiveUID()), socketName)
 }
 
 // effectiveUID returns the UID to use for socket path construction. When

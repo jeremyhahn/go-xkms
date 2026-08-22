@@ -99,7 +99,7 @@ func (g *Generator) GenerateCounter(counter uint64) (string, error) {
 	code := binary.BigEndian.Uint32(sum[offset:offset+4]) & 0x7fffffff
 
 	// Step 3: Compute HOTP value
-	code = code % uint32(math.Pow10(g.cred.Digits))
+	code %= uint32(math.Pow10(g.cred.Digits))
 
 	// Format with leading zeros
 	return fmt.Sprintf("%0*d", g.cred.Digits, code), nil

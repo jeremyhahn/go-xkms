@@ -109,7 +109,14 @@ func TestBackendAdapter_CredentialLifecycle(t *testing.T) {
 			require.NoError(t, err)
 			ecKey, ok := parsed.(*ecdsa.PrivateKey)
 			require.True(t, ok)
-			assert.Equal(t, pub.X, ecKey.X, "the exported key must match the published public key")
+			// Compared as encoded keys rather than via the deprecated raw X
+			// coordinate, which also makes this a stronger assertion: X alone
+			// leaves Y and the curve unchecked.
+			wantPub, err := pub.Bytes()
+			require.NoError(t, err)
+			gotPub, err := ecKey.PublicKey.Bytes()
+			require.NoError(t, err)
+			assert.Equal(t, wantPub, gotPub, "the exported key must match the published public key")
 
 			require.NoError(t, adapter.DeleteKey(handle))
 

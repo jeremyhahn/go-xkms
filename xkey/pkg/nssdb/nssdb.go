@@ -477,7 +477,7 @@ func (w *Writer) buildCertAttrs(cert *x509.Certificate, label string, serialDER 
 		"a2":   encodeBool(false),            // CKA_PRIVATE
 		"a3":   []byte(label),                // CKA_LABEL
 		"a11":  cert.Raw,                     // CKA_VALUE
-		"a80":  encodeUint32(0),              // CKA_CERTIFICATE_TYPE = CKC_X_509
+		"a80":  encodeUint32(0),              // CKA_CERTIFICATE_TYPE, holding CKC_X_509
 		"a81":  cert.RawIssuer,               // CKA_ISSUER
 		"a82":  serialDER,                    // CKA_SERIAL_NUMBER
 		"a101": cert.RawSubject,              // CKA_SUBJECT

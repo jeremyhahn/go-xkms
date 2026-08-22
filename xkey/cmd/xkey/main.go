@@ -70,20 +70,20 @@ func run(argv []string, stderr io.Writer) int {
 		// Initialize logging from CLI flags before starting the GUI so
 		// that --log-level and --log-file take effect for all slog output.
 		if err := initGUILogging(args); err != nil {
-			fmt.Fprintf(stderr, "logging setup error: %v\n", err)
+			_, _ = fmt.Fprintf(stderr, "logging setup error: %v\n", err)
 			return 1
 		}
 
 		subFS, err := fs.Sub(frontend.Assets, "dist")
 		if err != nil {
-			fmt.Fprintf(stderr, "failed to load frontend assets: %v\n", err)
+			_, _ = fmt.Fprintf(stderr, "failed to load frontend assets: %v\n", err)
 			return 1
 		}
 		gui.Assets = subFS
 		gui.FirmwareVersion = gui.ParseFirmwareVersion(cmd.Version)
 
 		if err := guiRun(); err != nil {
-			fmt.Fprintf(stderr, "GUI error: %v\n", err)
+			_, _ = fmt.Fprintf(stderr, "GUI error: %v\n", err)
 			return 1
 		}
 		return 0
@@ -92,7 +92,7 @@ func run(argv []string, stderr io.Writer) int {
 	// Strip --no-gui and --gui flags before cobra processes args.
 	os.Args = stripFlags(os.Args, "--no-gui", "--gui")
 	if err := cliExecute(); err != nil {
-		fmt.Fprintf(stderr, "Error: %v\n", err)
+		_, _ = fmt.Fprintf(stderr, "Error: %v\n", err)
 		return 1
 	}
 	return 0
@@ -103,18 +103,18 @@ func run(argv []string, stderr io.Writer) int {
 // without the correct build tags.") is opaque, so this replaces it with
 // actionable guidance.
 func printGUIBuildHelp(w io.Writer) {
-	fmt.Fprintln(w, "xkey: this binary was built without GUI support.")
-	fmt.Fprintln(w, "")
-	fmt.Fprintln(w, "The Wails GUI requires one of the build tags 'production', 'dev', or 'bindings'.")
-	fmt.Fprintln(w, "")
-	fmt.Fprintln(w, "Rebuild with:")
-	fmt.Fprintln(w, "  make -C xkey build-local           # recommended; installs frontend + GUI")
-	fmt.Fprintln(w, "  make -C xkey build                 # builds inside the Docker builder image")
-	fmt.Fprintln(w, "")
-	fmt.Fprintln(w, "Or pass tags directly:")
-	fmt.Fprintln(w, "  cd xkey && go build -tags 'ble production codec_json' -o xkey ./cmd/xkey")
-	fmt.Fprintln(w, "")
-	fmt.Fprintln(w, "Or run the CLI explicitly with --no-gui.")
+	_, _ = fmt.Fprintln(w, "xkey: this binary was built without GUI support.")
+	_, _ = fmt.Fprintln(w, "")
+	_, _ = fmt.Fprintln(w, "The Wails GUI requires one of the build tags 'production', 'dev', or 'bindings'.")
+	_, _ = fmt.Fprintln(w, "")
+	_, _ = fmt.Fprintln(w, "Rebuild with:")
+	_, _ = fmt.Fprintln(w, "  make -C xkey build-local           # recommended; installs frontend + GUI")
+	_, _ = fmt.Fprintln(w, "  make -C xkey build                 # builds inside the Docker builder image")
+	_, _ = fmt.Fprintln(w, "")
+	_, _ = fmt.Fprintln(w, "Or pass tags directly:")
+	_, _ = fmt.Fprintln(w, "  cd xkey && go build -tags 'ble production codec_json' -o xkey ./cmd/xkey")
+	_, _ = fmt.Fprintln(w, "")
+	_, _ = fmt.Fprintln(w, "Or run the CLI explicitly with --no-gui.")
 }
 
 // initGUILogging configures the global slog logger for GUI mode by parsing

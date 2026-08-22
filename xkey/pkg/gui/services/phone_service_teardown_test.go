@@ -227,8 +227,10 @@ func TestTeardownAndPublicationNeverDisagreeAboutTheConnection(t *testing.T) {
 						return
 					default:
 					}
+					// Empty critical section on purpose: this goroutine exists to
+					// contend for connMu, not to do work under it.
 					svc.connMu.Lock()
-					svc.connMu.Unlock()
+					svc.connMu.Unlock() //nolint:staticcheck // SA2001: see above
 				}
 			}()
 		}

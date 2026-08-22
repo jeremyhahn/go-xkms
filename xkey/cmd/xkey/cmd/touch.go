@@ -99,13 +99,13 @@ func runTouch(cmd *cobra.Command, args []string) error {
 	// Print action result.
 	switch resp.Action {
 	case ipc.ActionApprovedUP:
-		fmt.Fprintln(out, "User presence approved")
+		_, _ = fmt.Fprintln(out, "User presence approved")
 	case ipc.ActionTypedPassword:
-		fmt.Fprintln(out, "Password typed")
+		_, _ = fmt.Fprintln(out, "Password typed")
 	case ipc.ActionNoPending:
-		fmt.Fprintln(out, "No pending request")
+		_, _ = fmt.Fprintln(out, "No pending request")
 	default:
-		fmt.Fprintf(out, "OK: %s\n", resp.Action)
+		_, _ = fmt.Fprintf(out, "OK: %s\n", resp.Action)
 	}
 
 	return nil

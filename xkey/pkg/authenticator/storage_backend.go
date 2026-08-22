@@ -81,7 +81,7 @@ func NewBackendStorage(backend xkms.StorageBackend, prefix string) (*BackendStor
 
 	// Ensure prefix ends with /
 	if !strings.HasSuffix(prefix, "/") {
-		prefix = prefix + "/"
+		prefix += "/"
 	}
 
 	bs := &BackendStorage{

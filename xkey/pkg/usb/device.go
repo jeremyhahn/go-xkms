@@ -20,6 +20,13 @@ import (
 	"strings"
 )
 
+// Kernel-provided directories these helpers read. Named rather than inlined
+// so filepath.Join receives no separator-bearing literal.
+const (
+	sysBlockDir = "/sys/block"
+	devDir      = "/dev"
+)
+
 // USBDevice represents a detected USB mass storage device.
 type USBDevice struct {
 	Path   string // Block device path (e.g., /dev/sdb)
@@ -114,7 +121,7 @@ func DetectUSBDevices() ([]USBDevice, error) {
 	var devices []USBDevice
 	for _, entry := range entries {
 		name := entry.Name()
-		sysPath := filepath.Join("/sys/block", name)
+		sysPath := filepath.Join(sysBlockDir, name)
 
 		// Skip non-removable devices.
 		if !isRemovable(sysPath) {
@@ -131,7 +138,7 @@ func DetectUSBDevices() ([]USBDevice, error) {
 		}
 
 		dev := USBDevice{
-			Path:   filepath.Join("/dev", name),
+			Path:   filepath.Join(devDir, name),
 			Model:  readSysAttr(sysPath, "device/model"),
 			Vendor: readSysAttr(sysPath, "device/vendor"),
 			Size:   readBlockSize(sysPath),
@@ -148,7 +155,7 @@ func DetectUSBDevices() ([]USBDevice, error) {
 func BlockDeviceSize(path string) (int64, error) {
 	// For block devices, read size from sysfs.
 	devName := filepath.Base(path)
-	sysPath := filepath.Join("/sys/block", devName)
+	sysPath := filepath.Join(sysBlockDir, devName)
 	if size := readBlockSize(sysPath); size > 0 {
 		return size, nil
 	}

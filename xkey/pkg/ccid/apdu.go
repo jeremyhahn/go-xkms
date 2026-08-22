@@ -374,8 +374,7 @@ func (c *CommandAPDU) Serialize() []byte {
 
 	if extended {
 		if hasData {
-			buf = append(buf, 0x00)
-			buf = append(buf, byte(len(c.Data)>>8), byte(len(c.Data)&0xFF))
+			buf = append(buf, 0x00, byte(len(c.Data)>>8), byte(len(c.Data)&0xFF))
 			buf = append(buf, c.Data...)
 		}
 		if hasLe {

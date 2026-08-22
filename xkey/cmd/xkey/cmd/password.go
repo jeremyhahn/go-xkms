@@ -398,9 +398,9 @@ func runPasswordAdd(cmd *cobra.Command, args []string) error {
 		return &SentinelCauseError{Sentinel: ErrPasswordAddFailed, Cause: err}
 	}
 
-	fmt.Fprintf(out, "Added password: %s\n", pw.Name)
+	_, _ = fmt.Fprintf(out, "Added password: %s\n", pw.Name)
 	if generate {
-		fmt.Fprintf(out, "Generated: %s\n", password)
+		_, _ = fmt.Fprintf(out, "Generated: %s\n", password)
 	}
 
 	return nil
@@ -415,7 +415,7 @@ func runPasswordList(cmd *cobra.Command, args []string) error {
 	store, err := openPasswordStore(storePath)
 	if err != nil {
 		if os.IsNotExist(err) {
-			fmt.Fprintln(out, "No passwords found.")
+			_, _ = fmt.Fprintln(out, "No passwords found.")
 			return nil
 		}
 		return err
@@ -428,34 +428,34 @@ func runPasswordList(cmd *cobra.Command, args []string) error {
 	}
 
 	if len(passwords) == 0 {
-		fmt.Fprintln(out, "No passwords found.")
+		_, _ = fmt.Fprintln(out, "No passwords found.")
 		return nil
 	}
 
-	fmt.Fprintf(out, "Static Passwords (%d):\n\n", len(passwords))
+	_, _ = fmt.Fprintf(out, "Static Passwords (%d):\n\n", len(passwords))
 
 	for _, pw := range passwords {
-		fmt.Fprintf(out, "  Name:       %s\n", pw.Name)
+		_, _ = fmt.Fprintf(out, "  Name:       %s\n", pw.Name)
 		if pw.Title != "" {
-			fmt.Fprintf(out, "  Title:      %s\n", pw.Title)
+			_, _ = fmt.Fprintf(out, "  Title:      %s\n", pw.Title)
 		}
 		if pw.Username != "" {
-			fmt.Fprintf(out, "  Username:   %s\n", pw.Username)
+			_, _ = fmt.Fprintf(out, "  Username:   %s\n", pw.Username)
 		}
 		if showPasswords {
-			fmt.Fprintf(out, "  Password:   %s\n", pw.Password)
+			_, _ = fmt.Fprintf(out, "  Password:   %s\n", pw.Password)
 		} else {
-			fmt.Fprintf(out, "  Password:   ********\n")
+			_, _ = fmt.Fprintf(out, "  Password:   ********\n")
 		}
 		if pw.URL != "" {
-			fmt.Fprintf(out, "  URL:        %s\n", pw.URL)
+			_, _ = fmt.Fprintf(out, "  URL:        %s\n", pw.URL)
 		}
 		if pw.Notes != "" {
-			fmt.Fprintf(out, "  Notes:      %s\n", pw.Notes)
+			_, _ = fmt.Fprintf(out, "  Notes:      %s\n", pw.Notes)
 		}
-		fmt.Fprintf(out, "  Created:    %s\n", pw.CreatedAt.Format("2006-01-02 15:04:05"))
-		fmt.Fprintf(out, "  Updated:    %s\n", pw.UpdatedAt.Format("2006-01-02 15:04:05"))
-		fmt.Fprintln(out)
+		_, _ = fmt.Fprintf(out, "  Created:    %s\n", pw.CreatedAt.Format("2006-01-02 15:04:05"))
+		_, _ = fmt.Fprintf(out, "  Updated:    %s\n", pw.UpdatedAt.Format("2006-01-02 15:04:05"))
+		_, _ = fmt.Fprintln(out)
 	}
 
 	return nil
@@ -481,7 +481,7 @@ func runPasswordGet(cmd *cobra.Command, args []string) error {
 		return &SentinelCauseError{Sentinel: ErrPasswordGetFailed, Cause: err}
 	}
 
-	fmt.Fprint(out, pw.Password)
+	_, _ = fmt.Fprint(out, pw.Password)
 	return nil
 }
 
@@ -511,7 +511,7 @@ func runPasswordRemove(cmd *cobra.Command, args []string) error {
 		}
 
 		if !force {
-			fmt.Fprintf(out, "Remove password '%s'? [y/N]: ", pw.Name)
+			_, _ = fmt.Fprintf(out, "Remove password '%s'? [y/N]: ", pw.Name)
 			confirm, readErr := reader.ReadString('\n')
 			if readErr != nil {
 				fmt.Fprintf(os.Stderr, "  %s: failed to read input\n", name)
@@ -519,7 +519,7 @@ func runPasswordRemove(cmd *cobra.Command, args []string) error {
 			}
 			confirm = strings.TrimSpace(strings.ToLower(confirm))
 			if confirm != "y" && confirm != "yes" {
-				fmt.Fprintf(out, "Skipped %s\n", pw.Name)
+				_, _ = fmt.Fprintf(out, "Skipped %s\n", pw.Name)
 				continue
 			}
 		}
@@ -529,7 +529,7 @@ func runPasswordRemove(cmd *cobra.Command, args []string) error {
 			continue
 		}
 
-		fmt.Fprintf(out, "Removed: %s\n", pw.Name)
+		_, _ = fmt.Fprintf(out, "Removed: %s\n", pw.Name)
 	}
 
 	return nil
@@ -564,7 +564,7 @@ func runPasswordType(cmd *cobra.Command, args []string) error {
 		return &DetailError{Err: ErrPasswordTypeFailed, Detail: fmt.Sprintf(": %s", resp.Error)}
 	}
 
-	fmt.Fprintf(out, "Typed password: %s\n", args[0])
+	_, _ = fmt.Fprintf(out, "Typed password: %s\n", args[0])
 	return nil
 }
 

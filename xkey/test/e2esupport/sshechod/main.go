@@ -71,12 +71,12 @@ func main() {
 }
 
 func handle(conn net.Conn, cfg *ssh.ServerConfig) {
-	defer conn.Close()
+	defer func() { _ = conn.Close() }()
 	sc, chans, reqs, err := ssh.NewServerConn(conn, cfg)
 	if err != nil {
 		return
 	}
-	defer sc.Close()
+	defer func() { _ = sc.Close() }()
 	go ssh.DiscardRequests(reqs)
 
 	for nc := range chans {

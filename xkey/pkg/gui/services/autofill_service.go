@@ -911,12 +911,22 @@ func (s *AutoFillService) auditPreconditionFailure(op audit.OperationType, detai
 func (s *AutoFillService) isEnterpriseDomainAllowed(ep *EnterpriseExtensionPolicy, domain string) bool {
 	domainLower := strings.ToLower(domain)
 	for _, blocked := range ep.BlockedDomains {
+		//nolint:gocritic // equalFold: strings.EqualFold is NOT equivalent here. It uses
+		// Unicode simple case folding, which disagrees with a ToLower comparison in BOTH
+		// directions (measured: "\u03c2"/"\u03c3" and "\u017f"/"s" match under EqualFold but not ToLower;
+		// "\u0130"/"i" matches under ToLower but not EqualFold). Swapping it would silently change
+		// which values compare equal, so the existing equivalence is kept deliberately.
 		if strings.ToLower(blocked) == domainLower {
 			return false
 		}
 	}
 	if len(ep.AllowedDomains) > 0 {
 		for _, allowed := range ep.AllowedDomains {
+			//nolint:gocritic // equalFold: strings.EqualFold is NOT equivalent here. It uses
+			// Unicode simple case folding, which disagrees with a ToLower comparison in BOTH
+			// directions (measured: "\u03c2"/"\u03c3" and "\u017f"/"s" match under EqualFold but not ToLower;
+			// "\u0130"/"i" matches under ToLower but not EqualFold). Swapping it would silently change
+			// which values compare equal, so the existing equivalence is kept deliberately.
 			if strings.ToLower(allowed) == domainLower {
 				return true
 			}

@@ -108,7 +108,7 @@ func runDevicePair(cmd *cobra.Command, args []string) error {
 		}
 		return &WrappedError{Msg: "failed to initialize Bluetooth", Err: err}
 	}
-	defer transport.Close()
+	defer func() { _ = transport.Close() }()
 
 	ctx, cancel := context.WithTimeout(context.Background(), scanTimeout)
 	defer cancel()
@@ -246,7 +246,7 @@ func runDevicePair(cmd *cobra.Command, args []string) error {
 		LocalStaticPublicKey: session.LocalStaticPublicKey(),
 	}
 	if err := phone.PerformHandshake(connectCtx, handshakeCfg); err != nil {
-		transport.Disconnect()
+		_ = transport.Disconnect()
 		return &WrappedError{Msg: "key exchange failed", Err: err}
 	}
 
@@ -258,40 +258,40 @@ func runDevicePair(cmd *cobra.Command, args []string) error {
 	})
 	pairingPlaintext, err := phone.EncodeRequest(pairingReq)
 	if err != nil {
-		transport.Disconnect()
+		_ = transport.Disconnect()
 		return &WrappedError{Msg: "failed to encode pairing request", Err: err}
 	}
 	pairingCiphertext, err := session.Encrypt(pairingPlaintext)
 	if err != nil {
-		transport.Disconnect()
+		_ = transport.Disconnect()
 		return &WrappedError{Msg: "failed to encrypt pairing request", Err: err}
 	}
 	pairingResponseCiphertext, err := transport.SendAndReceive(connectCtx, pairingCiphertext)
 	if err != nil {
-		transport.Disconnect()
+		_ = transport.Disconnect()
 		return &WrappedError{Msg: "pairing confirmation failed", Err: err}
 	}
 	pairingResponsePlaintext, err := session.Decrypt(pairingResponseCiphertext)
 	if err != nil {
-		transport.Disconnect()
+		_ = transport.Disconnect()
 		return &WrappedError{Msg: "failed to decrypt pairing response", Err: err}
 	}
 	pairingResp, err := phone.DecodeResponse(pairingResponsePlaintext)
 	if err != nil {
-		transport.Disconnect()
+		_ = transport.Disconnect()
 		return &WrappedError{Msg: "failed to decode pairing response", Err: err}
 	}
 	if pairingResp.Error != nil {
-		transport.Disconnect()
+		_ = transport.Disconnect()
 		return phone.MapRPCError(pairingResp.Error)
 	}
 	pairingResult, err := phone.DecodeResult[phone.PairingConfirmResult](pairingResp)
 	if err != nil {
-		transport.Disconnect()
+		_ = transport.Disconnect()
 		return &WrappedError{Msg: "failed to decode pairing result", Err: err}
 	}
 	if !pairingResult.Confirmed {
-		transport.Disconnect()
+		_ = transport.Disconnect()
 		return phone.ErrPairingRejected
 	}
 	fmt.Printf("Phone confirmed pairing as \"%s\"\n", pairingResult.DeviceName)
@@ -299,7 +299,7 @@ func runDevicePair(cmd *cobra.Command, args []string) error {
 	// Get the phone's public key
 	remotePublicKey := session.RemoteStaticPublicKey()
 	if len(remotePublicKey) == 0 {
-		transport.Disconnect()
+		_ = transport.Disconnect()
 		return &MessageError{Msg: "failed to obtain phone's public key"}
 	}
 
@@ -307,7 +307,7 @@ func runDevicePair(cmd *cobra.Command, args []string) error {
 	attestResult := performPairingAttestation(connectCtx, transport, session, logger)
 
 	// Disconnect after pairing (will reconnect when needed)
-	transport.Disconnect()
+	_ = transport.Disconnect()
 
 	// Create or update device record
 	pairedDevice := PairedDevice{
@@ -326,7 +326,8 @@ func runDevicePair(cmd *cobra.Command, args []string) error {
 	// Update or add to configuration.
 	// When force re-pairing, remove all old entries for the same device name
 	// since Android RPA rotation means the address changes across reinstalls.
-	if existingDevice != nil {
+	switch {
+	case existingDevice != nil:
 		// Update existing device matched by address
 		for i := range cfg.Devices {
 			if cfg.Devices[i].Address == selectedDevice.Address {
@@ -334,7 +335,7 @@ func runDevicePair(cmd *cobra.Command, args []string) error {
 				break
 			}
 		}
-	} else if force {
+	case force:
 		// Force mode: remove stale entries by name, then add fresh entry.
 		// This handles the case where the phone's BLE address changed
 		// (Android RPA rotation or app reinstall) but the name is the same.
@@ -344,8 +345,9 @@ func runDevicePair(cmd *cobra.Command, args []string) error {
 				filtered = append(filtered, d)
 			}
 		}
-		cfg.Devices = append(filtered, pairedDevice)
-	} else {
+		filtered = append(filtered, pairedDevice)
+		cfg.Devices = filtered
+	default:
 		// Add new device
 		cfg.Devices = append(cfg.Devices, pairedDevice)
 	}

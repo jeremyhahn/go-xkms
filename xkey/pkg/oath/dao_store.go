@@ -238,6 +238,11 @@ func (s *DAOStore) findEntityByName(ctx context.Context, name string) (*OATHCred
 	var found *OATHCredentialEntity
 	err := s.dao.ForEachPage(ctx, qrdbsdk.PageQuery{Page: 1, PageSize: 500}, func(result qrdbsdk.PageResult[*OATHCredentialEntity]) error {
 		for _, entity := range result.Entities {
+			//nolint:gocritic // equalFold: strings.EqualFold is NOT equivalent here. It uses
+			// Unicode simple case folding, which disagrees with a ToLower comparison in BOTH
+			// directions (measured: "\u03c2"/"\u03c3" and "\u017f"/"s" match under EqualFold but not ToLower;
+			// "\u0130"/"i" matches under ToLower but not EqualFold). Swapping it would silently change
+			// which values compare equal, so the existing equivalence is kept deliberately.
 			if strings.ToLower(entity.Name) == lower {
 				found = entity
 				return nil
@@ -273,12 +278,22 @@ func (s *DAOStore) findEntityByCredentialID(ctx context.Context, credID string) 
 	var found *OATHCredentialEntity
 	err := s.dao.ForEachPage(ctx, qrdbsdk.PageQuery{Page: 1, PageSize: 500}, func(result qrdbsdk.PageResult[*OATHCredentialEntity]) error {
 		for _, entity := range result.Entities {
+			//nolint:gocritic // equalFold: strings.EqualFold is NOT equivalent here. It uses
+			// Unicode simple case folding, which disagrees with a ToLower comparison in BOTH
+			// directions (measured: "\u03c2"/"\u03c3" and "\u017f"/"s" match under EqualFold but not ToLower;
+			// "\u0130"/"i" matches under ToLower but not EqualFold). Swapping it would silently change
+			// which values compare equal, so the existing equivalence is kept deliberately.
 			if strings.ToLower(entity.Name) == lower {
 				found = entity
 				return nil
 			}
 			// Reconstruct the string credential ID from entity fields.
 			reconstructedID := generateCredentialID(entity.Issuer, entity.AccountName)
+			//nolint:gocritic // equalFold: strings.EqualFold is NOT equivalent here. It uses
+			// Unicode simple case folding, which disagrees with a ToLower comparison in BOTH
+			// directions (measured: "\u03c2"/"\u03c3" and "\u017f"/"s" match under EqualFold but not ToLower;
+			// "\u0130"/"i" matches under ToLower but not EqualFold). Swapping it would silently change
+			// which values compare equal, so the existing equivalence is kept deliberately.
 			if strings.ToLower(reconstructedID) == lower {
 				found = entity
 				return nil

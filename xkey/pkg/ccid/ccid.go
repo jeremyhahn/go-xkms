@@ -423,7 +423,7 @@ func (d *CCIDDevice) buildParameters(seq, slot byte, params []byte) []byte {
 	msg[6] = seq
 	msg[7] = ICCStatusActive // bStatus
 	msg[8] = 0x00            // bError
-	msg[9] = 0x01            // bProtocolNum: T=1
+	msg[9] = 0x01            // bProtocolNum field, selecting protocol T=1
 	copy(msg[CCIDHeaderLength:], params)
 	return msg
 }

@@ -126,17 +126,18 @@ func runDeviceAttestDevice(cmd *cobra.Command, args []string) error {
 
 	// Find the target device
 	var device *PairedDevice
-	if deviceFilter != "" {
+	switch {
+	case deviceFilter != "":
 		device = findDeviceByName(cfg, deviceFilter)
 		if device == nil {
 			return &DetailError{Err: ErrDeviceNotFound, Detail: fmt.Sprintf(": %s", deviceFilter)}
 		}
-	} else if cfg.DefaultDevice != "" {
+	case cfg.DefaultDevice != "":
 		device = findDeviceByName(cfg, cfg.DefaultDevice)
 		if device == nil {
 			return &DetailError{Err: ErrDeviceNotFound, Detail: fmt.Sprintf(": default device %s not found", cfg.DefaultDevice)}
 		}
-	} else if len(cfg.Devices) > 0 {
+	case len(cfg.Devices) > 0:
 		device = &cfg.Devices[0]
 	}
 
@@ -198,7 +199,7 @@ func runDeviceAttestDevice(cmd *cobra.Command, args []string) error {
 		}
 		return &WrappedError{Msg: "failed to initialize Bluetooth", Err: err}
 	}
-	defer transport.Close()
+	defer func() { _ = transport.Close() }()
 
 	// Connect to the device
 	fmt.Println("Connecting...")
@@ -209,7 +210,7 @@ func runDeviceAttestDevice(cmd *cobra.Command, args []string) error {
 	if err := transport.Connect(connectCtx, device.Address); err != nil {
 		return &WrappedError{Msg: "connection failed", Err: err}
 	}
-	defer transport.Disconnect()
+	defer func() { _ = transport.Disconnect() }()
 
 	// Create Noise session with existing keys
 	session, err := phone.NewNoiseSession(&phone.NoiseSessionConfig{

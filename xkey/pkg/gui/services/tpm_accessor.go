@@ -77,6 +77,9 @@ func (a *TPMAccessor) Shutdown() {
 	a.closed.Store(true)
 	// Acquire and release the mutex to wait for any in-flight operation.
 	a.mu.Lock()
-	//nolint:staticcheck // SA2001: intentional empty critical section to drain in-flight ops
+	//nolint:staticcheck,gocritic // SA2001/badLock: the empty critical section IS the
+	// mechanism -- acquiring the mutex blocks until any in-flight TPM operation
+	// releases it, so this drains rather than guards. A deferred unlock would
+	// hold the lock for the rest of Shutdown and deadlock nothing useful.
 	a.mu.Unlock()
 }

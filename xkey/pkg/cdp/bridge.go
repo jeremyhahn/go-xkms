@@ -124,6 +124,11 @@ func (b *Bridge) persistCaptured(cred Credential) {
 		return
 	}
 
+	// Mapped field by field rather than converted. This is the boundary
+	// where a captured credential becomes a PERSISTED one, so what crosses
+	// it should be an explicit decision: a struct conversion would silently
+	// carry across any field later added to Credential.
+	//nolint:staticcheck // S1016: deliberate, see above
 	sc := StoredCredential{
 		CredentialID:         cred.CredentialID,
 		IsResidentCredential: cred.IsResidentCredential,

@@ -351,16 +351,17 @@ func (s *PIVService) GenerateKeyAdvanced(opts PIVGenerateOptions) (*PIVGenerateA
 	var resp *transport.GeneratePIVKeyResponse
 	var err error
 
-	if s.client != nil && opts.CASource == "remote" {
+	switch {
+	case s.client != nil && opts.CASource == "remote":
 		// Remote mode: send to server, server handles everything.
 		req.Backend = s.backend
 		resp, err = s.client.GeneratePIVKey(s.ctx, req)
-	} else if s.localEnabled {
+	case s.localEnabled:
 		// Local mode: use xkms in-process.
 		req.Backend = s.resolveXKMSBackendName(s.localBackend)
 		req.Algorithm = localAlg
 		resp, err = xkms.GeneratePIVKey(s.ctx, req)
-	} else {
+	default:
 		return nil, ErrPIVClientNotSet
 	}
 

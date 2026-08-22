@@ -236,7 +236,7 @@ func runIDevIDCSRExportPEM(cmd *cobra.Command, args []string) error {
 		SignatureAlgorithm: sigAlgo,
 	}
 
-	fmt.Fprintf(out, "Generating IDevID CSR for %s...\n", subject.CommonName)
+	_, _ = fmt.Fprintf(out, "Generating IDevID CSR for %s...\n", subject.CommonName)
 
 	// Create TPM signer wrapper
 	signer := &tpmSigner{
@@ -260,7 +260,7 @@ func runIDevIDCSRExportPEM(cmd *cobra.Command, args []string) error {
 
 	// Output to file or stdout
 	if idevidCSRExportOutput == "-" {
-		fmt.Fprint(out, string(pemData))
+		_, _ = fmt.Fprint(out, string(pemData))
 		return nil
 	}
 
@@ -268,7 +268,7 @@ func runIDevIDCSRExportPEM(cmd *cobra.Command, args []string) error {
 		return &SentinelCauseError{Sentinel: ErrIDevIDCSRExportFailed, Cause: err}
 	}
 
-	fmt.Fprintf(out, "IDevID CSR exported to: %s\n", idevidCSRExportOutput)
+	_, _ = fmt.Fprintf(out, "IDevID CSR exported to: %s\n", idevidCSRExportOutput)
 	return nil
 }
 
@@ -297,11 +297,11 @@ func runIDevIDCertImport(cmd *cobra.Command, args []string) error {
 		return &DetailError{Err: ErrIDevIDInvalidCertificate, Detail: ": self-signed certificates are not accepted - use a CA to issue IDevID certificates"}
 	}
 
-	fmt.Fprintln(out, "Certificate to import:")
-	fmt.Fprintf(out, "  Subject: %s\n", cert.Subject.String())
-	fmt.Fprintf(out, "  Issuer:  %s\n", cert.Issuer.String())
-	fmt.Fprintf(out, "  Serial:  %s\n", cert.SerialNumber.String())
-	fmt.Fprintln(out)
+	_, _ = fmt.Fprintln(out, "Certificate to import:")
+	_, _ = fmt.Fprintf(out, "  Subject: %s\n", cert.Subject.String())
+	_, _ = fmt.Fprintf(out, "  Issuer:  %s\n", cert.Issuer.String())
+	_, _ = fmt.Fprintf(out, "  Serial:  %s\n", cert.SerialNumber.String())
+	_, _ = fmt.Fprintln(out)
 
 	// Open TPM
 	tpm, err := openTPM()
@@ -324,9 +324,9 @@ func runIDevIDCertImport(cmd *cobra.Command, args []string) error {
 		if !publicKeysEqual(cert.PublicKey, idevidPubKey) {
 			return &DetailError{Err: ErrIDevIDPublicKeyMismatch, Detail: ": use --force to override"}
 		}
-		fmt.Fprintln(out, "Public key verification: PASSED")
+		_, _ = fmt.Fprintln(out, "Public key verification: PASSED")
 	} else {
-		fmt.Fprintln(out, "Public key verification: SKIPPED (--force)")
+		_, _ = fmt.Fprintln(out, "Public key verification: SKIPPED (--force)")
 	}
 
 	// Store the certificate
@@ -334,8 +334,8 @@ func runIDevIDCertImport(cmd *cobra.Command, args []string) error {
 		return &SentinelCauseError{Sentinel: ErrIDevIDCertImportFailed, Cause: err}
 	}
 
-	fmt.Fprintln(out)
-	fmt.Fprintln(out, "IDevID certificate imported successfully")
+	_, _ = fmt.Fprintln(out)
+	_, _ = fmt.Fprintln(out, "IDevID certificate imported successfully")
 	return nil
 }
 

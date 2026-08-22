@@ -92,11 +92,11 @@ func runSSHSessionsList(cmd *cobra.Command, _ []string) error {
 		return err
 	}
 	if len(all) == 0 {
-		fmt.Fprintln(out, "No persistent sessions found")
+		_, _ = fmt.Fprintln(out, "No persistent sessions found")
 		return nil
 	}
 	for _, s := range all {
-		fmt.Fprintf(out, "%s\t%s\t%s\tlast=%s\n",
+		_, _ = fmt.Fprintf(out, "%s\t%s\t%s\tlast=%s\n",
 			s.ID, s.Title, sessionOrigin(s), s.LastConnectedAt.Local().Format(time.RFC3339))
 	}
 	return nil
@@ -111,6 +111,6 @@ func runSSHSessionsRemove(cmd *cobra.Command, args []string) error {
 	if derr := store.Delete(args[0]); derr != nil {
 		return derr
 	}
-	fmt.Fprintf(out, "Deleted persistent session %q\n", args[0])
+	_, _ = fmt.Fprintf(out, "Deleted persistent session %q\n", args[0])
 	return nil
 }

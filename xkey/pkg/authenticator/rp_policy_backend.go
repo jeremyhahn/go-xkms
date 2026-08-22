@@ -51,7 +51,7 @@ func NewBackendRPPolicyStore(backend xkms.StorageBackend, prefix string) (*Backe
 
 	// Ensure prefix ends with /
 	if !strings.HasSuffix(prefix, "/") {
-		prefix = prefix + "/"
+		prefix += "/"
 	}
 
 	return &BackendRPPolicyStore{

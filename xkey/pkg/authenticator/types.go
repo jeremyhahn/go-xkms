@@ -232,7 +232,8 @@ type RelyingParty struct {
 	Name string
 
 	// Icon is an optional URL to the relying party's icon.
-	// Deprecated in WebAuthn Level 2 but maintained for compatibility.
+	// WebAuthn Level 2 dropped this field; it is kept for compatibility with
+	// Level 1 clients. (Not a Go deprecation: the field is still supported here.)
 	Icon string
 }
 
@@ -250,7 +251,8 @@ type User struct {
 	DisplayName string
 
 	// Icon is an optional URL to the user's avatar.
-	// Deprecated in WebAuthn Level 2 but maintained for compatibility.
+	// WebAuthn Level 2 dropped this field; it is kept for compatibility with
+	// Level 1 clients. (Not a Go deprecation: the field is still supported here.)
 	Icon string
 }
 

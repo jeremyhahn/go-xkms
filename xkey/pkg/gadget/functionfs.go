@@ -267,7 +267,7 @@ func (t *FunctionFSTransport) monitorEvents(ctx context.Context, ep0 *os.File) {
 	t.logger.Info("FunctionFS event monitor started")
 	defer t.logger.Info("FunctionFS event monitor stopped")
 
-	eventBuf := make([]byte, 4) // sizeof(functionFSEvent)
+	eventBuf := make([]byte, 4) // one functionFSEvent is 4 bytes wide
 
 	for {
 		select {

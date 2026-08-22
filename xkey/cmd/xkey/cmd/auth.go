@@ -636,10 +636,10 @@ func applyJWTClaims(entry *tokenstore.TokenEntry, token string) {
 	}
 
 	if expiry, err := parsed.Claims.GetExpirationTime(); err == nil && expiry != nil {
-		entry.ExpiresAt = expiry.Time.UTC()
+		entry.ExpiresAt = expiry.UTC()
 	}
 	if issuedAt, err := parsed.Claims.GetIssuedAt(); err == nil && issuedAt != nil {
-		entry.IssuedAt = issuedAt.Time.UTC()
+		entry.IssuedAt = issuedAt.UTC()
 	}
 	if issuer, err := parsed.Claims.GetIssuer(); err == nil {
 		entry.Issuer = issuer
@@ -679,12 +679,12 @@ func runAuthStatus(cmd *cobra.Command, args []string) error {
 	}
 
 	if len(servers) == 0 {
-		fmt.Fprintln(out, "No servers registered.")
-		fmt.Fprintln(out, "Use 'xkey auth register --server URL' to register a server.")
+		_, _ = fmt.Fprintln(out, "No servers registered.")
+		_, _ = fmt.Fprintln(out, "Use 'xkey auth register --server URL' to register a server.")
 		return nil
 	}
 
-	fmt.Fprintf(out, "Registered Servers (%d):\n\n", len(servers))
+	_, _ = fmt.Fprintf(out, "Registered Servers (%d):\n\n", len(servers))
 
 	for _, server := range servers {
 		// Apply filter if specified
@@ -692,41 +692,42 @@ func runAuthStatus(cmd *cobra.Command, args []string) error {
 			continue
 		}
 
-		fmt.Fprintf(out, "  Server:         %s\n", server.URL)
-		fmt.Fprintf(out, "  Protocol:       %s\n", server.Protocol)
-		fmt.Fprintf(out, "  Registered:     %s\n", server.RegisteredAt.Format(time.RFC3339))
+		_, _ = fmt.Fprintf(out, "  Server:         %s\n", server.URL)
+		_, _ = fmt.Fprintf(out, "  Protocol:       %s\n", server.Protocol)
+		_, _ = fmt.Fprintf(out, "  Registered:     %s\n", server.RegisteredAt.Format(time.RFC3339))
 
 		if !server.LastConnectedAt.IsZero() {
-			fmt.Fprintf(out, "  Last Connected: %s\n", server.LastConnectedAt.Format(time.RFC3339))
+			_, _ = fmt.Fprintf(out, "  Last Connected: %s\n", server.LastConnectedAt.Format(time.RFC3339))
 		} else {
-			fmt.Fprintf(out, "  Last Connected: never\n")
+			_, _ = fmt.Fprintf(out, "  Last Connected: never\n")
 		}
 
 		// Check token status
 		token, tokenErr := tokens.Load(ctx, server.URL)
-		if tokenErr != nil {
-			fmt.Fprintf(out, "  Token:          none\n")
-		} else if token.IsExpired() {
-			fmt.Fprintf(out, "  Token:          expired (was: %s, expired: %s)\n",
+		switch {
+		case tokenErr != nil:
+			_, _ = fmt.Fprintf(out, "  Token:          none\n")
+		case token.IsExpired():
+			_, _ = fmt.Fprintf(out, "  Token:          expired (was: %s, expired: %s)\n",
 				token.Source, token.ExpiresAt.Format(time.RFC3339))
-		} else {
+		default:
 			remaining := time.Until(token.ExpiresAt)
-			fmt.Fprintf(out, "  Token:          valid (%s, expires in %s)\n",
+			_, _ = fmt.Fprintf(out, "  Token:          valid (%s, expires in %s)\n",
 				token.Source, remaining.Truncate(time.Second))
 		}
 		if tokenErr == nil {
 			if token.HasRefreshToken() {
-				fmt.Fprintf(out, "  Refreshable:    yes (xkey auth refresh --server %s)\n", server.URL)
+				_, _ = fmt.Fprintf(out, "  Refreshable:    yes (xkey auth refresh --server %s)\n", server.URL)
 			} else {
-				fmt.Fprintf(out, "  Refreshable:    no (re-run xkey auth login when it expires)\n")
+				_, _ = fmt.Fprintf(out, "  Refreshable:    no (re-run xkey auth login when it expires)\n")
 			}
 		}
 
 		if server.CAFingerprint != "" {
-			fmt.Fprintf(out, "  CA Fingerprint: %s\n", server.CAFingerprint)
+			_, _ = fmt.Fprintf(out, "  CA Fingerprint: %s\n", server.CAFingerprint)
 		}
 
-		fmt.Fprintln(out)
+		_, _ = fmt.Fprintln(out)
 	}
 
 	return nil
@@ -762,7 +763,7 @@ func runAuthToken(cmd *cobra.Command, args []string) error {
 	}
 
 	// Print raw token to stdout for piping
-	fmt.Fprint(out, entry.Token)
+	_, _ = fmt.Fprint(out, entry.Token)
 
 	return nil
 }

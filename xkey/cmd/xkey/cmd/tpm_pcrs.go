@@ -226,13 +226,13 @@ func parsePCRIndicesForPCRs(pcrString string) ([]uint, error) {
 }
 
 func outputPCRsText(out io.Writer, output *PCRsOutput) error {
-	fmt.Fprintln(out, "Platform Configuration Registers (PCRs)")
-	fmt.Fprintln(out, "=======================================")
+	_, _ = fmt.Fprintln(out, "Platform Configuration Registers (PCRs)")
+	_, _ = fmt.Fprintln(out, "=======================================")
 
 	for _, bank := range output.Banks {
-		fmt.Fprintln(out)
-		fmt.Fprintf(out, "Bank: %s\n", bank.Algorithm)
-		fmt.Fprintln(out, strings.Repeat("-", 40+len(bank.Algorithm)))
+		_, _ = fmt.Fprintln(out)
+		_, _ = fmt.Fprintf(out, "Bank: %s\n", bank.Algorithm)
+		_, _ = fmt.Fprintln(out, strings.Repeat("-", 40+len(bank.Algorithm)))
 
 		for _, pcr := range bank.PCRs {
 			// Indicate special PCRs
@@ -272,7 +272,7 @@ func outputPCRsText(out io.Writer, output *PCRsOutput) error {
 				valueHex = valueHex[:64] + "..."
 			}
 
-			fmt.Fprintf(out, "  PCR[%2d]: %s%s\n", pcr.Index, valueHex, description)
+			_, _ = fmt.Fprintf(out, "  PCR[%2d]: %s%s\n", pcr.Index, valueHex, description)
 		}
 	}
 

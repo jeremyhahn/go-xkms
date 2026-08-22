@@ -163,7 +163,8 @@ func (s *AppLockService) Unlock(pin string) error {
 		"barrier_sealed", barrierSealed,
 		"pin_service_configured", s.pinSvc != nil)
 
-	if barrierConfigured && !barrierInitialized {
+	switch {
+	case barrierConfigured && !barrierInitialized:
 		// Barrier is configured but the root key is missing — typically
 		// because the wizard's barrier init failed (e.g. TPM provisioning
 		// error) while the PIN was still persisted to the software backend.
@@ -199,14 +200,14 @@ func (s *AppLockService) Unlock(pin string) error {
 			s.log.Info("app unlock: barrier initialized with verified PIN",
 				"strategy", s.barrierStrategy)
 		}
-	} else if barrierSealed {
+	case barrierSealed:
 		// Barrier is sealed: PIN is the barrier password.
 		s.log.Debug("app unlock: using barrier unseal path")
 		if err := s.barrierSvc.Unseal(pin, s.barrierStrategy); err != nil {
 			s.log.Warn("app unlock: barrier unseal failed", "error", err)
 			return ErrAppLockPINInvalid
 		}
-	} else {
+	default:
 		// Barrier already unsealed or not configured: verify via PINService.
 		s.log.Debug("app unlock: using PIN verification path")
 		if s.pinSvc == nil {

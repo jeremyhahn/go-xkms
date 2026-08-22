@@ -351,22 +351,22 @@ func runPivGenerate(cmd *cobra.Command, args []string) error {
 			fmt.Sprintf("CSR generated for slot %s (%s)", slot, slotName))
 
 	case "ca-signed":
-		fmt.Fprintf(out, "CA-signed certificate generated in slot %s (%s)\n", slot, slotName)
-		fmt.Fprintf(out, "Algorithm: %s\n", algorithm)
-		fmt.Fprintf(out, "Subject: %s\n", subjectCN)
+		_, _ = fmt.Fprintf(out, "CA-signed certificate generated in slot %s (%s)\n", slot, slotName)
+		_, _ = fmt.Fprintf(out, "Algorithm: %s\n", algorithm)
+		_, _ = fmt.Fprintf(out, "Subject: %s\n", subjectCN)
 		if len(resp.Certificate) > 0 {
-			fmt.Fprintf(out, "Certificate:\n%s", string(resp.Certificate))
+			_, _ = fmt.Fprintf(out, "Certificate:\n%s", string(resp.Certificate))
 		}
 		if len(resp.ChainPEM) > 0 {
-			fmt.Fprintf(out, "CA Chain:\n%s", string(resp.ChainPEM))
+			_, _ = fmt.Fprintf(out, "CA Chain:\n%s", string(resp.ChainPEM))
 		}
 
 	default: // self-signed
-		fmt.Fprintf(out, "Key generated in slot %s (%s)\n", slot, slotName)
-		fmt.Fprintf(out, "Algorithm: %s\n", algorithm)
-		fmt.Fprintf(out, "PIN Policy: %s\n", pinPolicy)
-		fmt.Fprintf(out, "Touch Policy: %s\n", touchPolicy)
-		fmt.Fprintf(out, "Public Key:\n%s", string(resp.PublicKey))
+		_, _ = fmt.Fprintf(out, "Key generated in slot %s (%s)\n", slot, slotName)
+		_, _ = fmt.Fprintf(out, "Algorithm: %s\n", algorithm)
+		_, _ = fmt.Fprintf(out, "PIN Policy: %s\n", pinPolicy)
+		_, _ = fmt.Fprintf(out, "Touch Policy: %s\n", touchPolicy)
+		_, _ = fmt.Fprintf(out, "Public Key:\n%s", string(resp.PublicKey))
 	}
 
 	return nil
@@ -378,7 +378,7 @@ func writePIVOutput(out io.Writer, outputFile string, data []byte, label, succes
 		if err := os.WriteFile(outputFile, data, 0600); err != nil {
 			return &WrappedError{Msg: fmt.Sprintf("piv: failed to write %s to %s", label, outputFile), Err: err}
 		}
-		fmt.Fprintf(out, "%s written to %s\n", successMsg, outputFile)
+		_, _ = fmt.Fprintf(out, "%s written to %s\n", successMsg, outputFile)
 		return nil
 	}
 	_, err := out.Write(data)

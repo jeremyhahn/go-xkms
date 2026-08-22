@@ -814,11 +814,8 @@ func (a *Authenticator) verifyConfigPinUvAuth(req *configRequest, subCmd uint8) 
 			msg = append(msg, 0xFF)
 		}
 
-		// Append command (0x0D for Config)
-		msg = append(msg, CmdConfig)
-
-		// Append subCommand
-		msg = append(msg, subCmd)
+		// Append command (0x0D for Config) and subCommand
+		msg = append(msg, CmdConfig, subCmd)
 
 		// Append subCommandParams if present
 		if req.subCommandParams != nil {

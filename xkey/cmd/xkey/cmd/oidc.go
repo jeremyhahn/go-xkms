@@ -586,20 +586,20 @@ func runOIDCLogin(cmd *cobra.Command, args []string) error {
 
 	// Open browser or print URL
 	if noBrowser {
-		fmt.Fprintln(out, "Open the following URL in your browser:")
-		fmt.Fprintln(out)
-		fmt.Fprintln(out, authURL)
-		fmt.Fprintln(out)
-		fmt.Fprintln(out, "Waiting for authorization callback...")
+		_, _ = fmt.Fprintln(out, "Open the following URL in your browser:")
+		_, _ = fmt.Fprintln(out)
+		_, _ = fmt.Fprintln(out, authURL)
+		_, _ = fmt.Fprintln(out)
+		_, _ = fmt.Fprintln(out, "Waiting for authorization callback...")
 	} else {
-		fmt.Fprintln(out, "Opening browser for authentication...")
+		_, _ = fmt.Fprintln(out, "Opening browser for authentication...")
 		if err := browser.OpenURL(authURL); err != nil {
-			fmt.Fprintf(out, "Failed to open browser: %v\n", err)
-			fmt.Fprintln(out, "Please open the following URL manually:")
-			fmt.Fprintln(out)
-			fmt.Fprintln(out, authURL)
+			_, _ = fmt.Fprintf(out, "Failed to open browser: %v\n", err)
+			_, _ = fmt.Fprintln(out, "Please open the following URL manually:")
+			_, _ = fmt.Fprintln(out)
+			_, _ = fmt.Fprintln(out, authURL)
 		}
-		fmt.Fprintln(out, "Waiting for authorization callback...")
+		_, _ = fmt.Fprintln(out, "Waiting for authorization callback...")
 	}
 
 	// Wait for callback
@@ -646,20 +646,20 @@ func runOIDCLogin(cmd *cobra.Command, args []string) error {
 		return &SentinelCauseError{Sentinel: ErrOIDCTokenStoreFailed, Cause: err}
 	}
 
-	fmt.Fprintln(out)
-	fmt.Fprintln(out, "Login successful!")
-	fmt.Fprintln(out)
-	fmt.Fprintf(out, "  Provider: %s\n", issuer)
+	_, _ = fmt.Fprintln(out)
+	_, _ = fmt.Fprintln(out, "Login successful!")
+	_, _ = fmt.Fprintln(out)
+	_, _ = fmt.Fprintf(out, "  Provider: %s\n", issuer)
 	if claims.Subject != "" {
-		fmt.Fprintf(out, "  Subject:  %s\n", claims.Subject)
+		_, _ = fmt.Fprintf(out, "  Subject:  %s\n", claims.Subject)
 	}
 	if claims.Email != "" {
-		fmt.Fprintf(out, "  Email:    %s\n", claims.Email)
+		_, _ = fmt.Fprintf(out, "  Email:    %s\n", claims.Email)
 	}
 	if claims.Name != "" {
-		fmt.Fprintf(out, "  Name:     %s\n", claims.Name)
+		_, _ = fmt.Fprintf(out, "  Name:     %s\n", claims.Name)
 	}
-	fmt.Fprintf(out, "  Expires:  %s\n", storedToken.ExpiresAt.Format(time.RFC3339))
+	_, _ = fmt.Fprintf(out, "  Expires:  %s\n", storedToken.ExpiresAt.Format(time.RFC3339))
 
 	// Execute custom script if specified
 	if execCmd != "" {
@@ -686,8 +686,8 @@ func runOIDCLogin(cmd *cobra.Command, args []string) error {
 	// Start auto-refresh loop if specified
 	if autoRefresh > 0 {
 		if tokens.RefreshToken == "" {
-			fmt.Fprintln(out, "\nWarning: No refresh token received. Auto-refresh will not work.")
-			fmt.Fprintln(out, "Tip: Request the 'offline_access' scope to get a refresh token.")
+			_, _ = fmt.Fprintln(out, "\nWarning: No refresh token received. Auto-refresh will not work.")
+			_, _ = fmt.Fprintln(out, "Tip: Request the 'offline_access' scope to get a refresh token.")
 			return nil
 		}
 
@@ -706,9 +706,9 @@ func runOIDCLogin(cmd *cobra.Command, args []string) error {
 			return startBackgroundRefresh(out, providerName, discovery.TokenEndpoint, clientID, tokenStore, execCmd, logFile, autoRefresh)
 		}
 
-		fmt.Fprintf(out, "\nAuto-refresh enabled: refreshing every %d seconds\n", autoRefresh)
-		fmt.Fprintln(out, "Press Ctrl+C to stop...")
-		fmt.Fprintln(out)
+		_, _ = fmt.Fprintf(out, "\nAuto-refresh enabled: refreshing every %d seconds\n", autoRefresh)
+		_, _ = fmt.Fprintln(out, "Press Ctrl+C to stop...")
+		_, _ = fmt.Fprintln(out)
 
 		return runAutoRefresh(discovery.TokenEndpoint, clientID, tokenStore, execCmd, providerName, time.Duration(autoRefresh)*time.Second, nil)
 	}
@@ -725,7 +725,7 @@ func runOIDCToken(cmd *cobra.Command, args []string) error {
 	token, err := loadToken(tokenStore)
 	if err != nil {
 		if errors.Is(err, ErrOIDCNoTokensFound) {
-			fmt.Fprintln(out, "No OIDC tokens found. Run 'xkey oidc login' to authenticate.")
+			_, _ = fmt.Fprintln(out, "No OIDC tokens found. Run 'xkey oidc login' to authenticate.")
 			return nil
 		}
 		return &SentinelCauseError{Sentinel: ErrOIDCTokenLoadFailed, Cause: err}
@@ -738,46 +738,46 @@ func runOIDCToken(cmd *cobra.Command, args []string) error {
 		claims = &OIDCIDTokenClaims{}
 	}
 
-	fmt.Fprintln(out, "OIDC Token Information")
-	fmt.Fprintln(out, "======================")
-	fmt.Fprintln(out)
-	fmt.Fprintf(out, "Provider:      %s\n", token.Issuer)
+	_, _ = fmt.Fprintln(out, "OIDC Token Information")
+	_, _ = fmt.Fprintln(out, "======================")
+	_, _ = fmt.Fprintln(out)
+	_, _ = fmt.Fprintf(out, "Provider:      %s\n", token.Issuer)
 	if claims.Subject != "" {
-		fmt.Fprintf(out, "Subject:       %s\n", claims.Subject)
+		_, _ = fmt.Fprintf(out, "Subject:       %s\n", claims.Subject)
 	}
 	if claims.Email != "" {
-		fmt.Fprintf(out, "Email:         %s\n", claims.Email)
+		_, _ = fmt.Fprintf(out, "Email:         %s\n", claims.Email)
 	}
 	if claims.Name != "" {
-		fmt.Fprintf(out, "Name:          %s\n", claims.Name)
+		_, _ = fmt.Fprintf(out, "Name:          %s\n", claims.Name)
 	}
 
 	// Format expiration
 	now := time.Now()
 	if token.ExpiresAt.After(now) {
 		remaining := token.ExpiresAt.Sub(now)
-		fmt.Fprintf(out, "Expires:       %s (in %s)\n", token.ExpiresAt.Format("2006-01-02 15:04:05 UTC"), formatDuration(remaining))
+		_, _ = fmt.Fprintf(out, "Expires:       %s (in %s)\n", token.ExpiresAt.Format("2006-01-02 15:04:05 UTC"), formatDuration(remaining))
 	} else {
-		fmt.Fprintf(out, "Expires:       %s (EXPIRED)\n", token.ExpiresAt.Format("2006-01-02 15:04:05 UTC"))
+		_, _ = fmt.Fprintf(out, "Expires:       %s (EXPIRED)\n", token.ExpiresAt.Format("2006-01-02 15:04:05 UTC"))
 	}
 
 	if len(token.Scopes) > 0 {
-		fmt.Fprintf(out, "Scopes:        %s\n", strings.Join(token.Scopes, " "))
+		_, _ = fmt.Fprintf(out, "Scopes:        %s\n", strings.Join(token.Scopes, " "))
 	}
 
-	fmt.Fprintln(out)
+	_, _ = fmt.Fprintln(out)
 	if showFull {
-		fmt.Fprintf(out, "Access Token:  %s\n", token.AccessToken)
+		_, _ = fmt.Fprintf(out, "Access Token:  %s\n", token.AccessToken)
 		if token.IDToken != "" {
-			fmt.Fprintf(out, "ID Token:      %s\n", token.IDToken)
+			_, _ = fmt.Fprintf(out, "ID Token:      %s\n", token.IDToken)
 		}
 		if token.RefreshToken != "" {
-			fmt.Fprintf(out, "Refresh Token: %s\n", token.RefreshToken)
+			_, _ = fmt.Fprintf(out, "Refresh Token: %s\n", token.RefreshToken)
 		}
 	} else {
-		fmt.Fprintf(out, "Access Token:  %s... (truncated)\n", truncateToken(token.AccessToken, 40))
+		_, _ = fmt.Fprintf(out, "Access Token:  %s... (truncated)\n", truncateToken(token.AccessToken, 40))
 		if token.IDToken != "" {
-			fmt.Fprintf(out, "ID Token:      %s... (truncated)\n", truncateToken(token.IDToken, 40))
+			_, _ = fmt.Fprintf(out, "ID Token:      %s... (truncated)\n", truncateToken(token.IDToken, 40))
 		}
 	}
 
@@ -792,7 +792,7 @@ func runOIDCRefresh(cmd *cobra.Command, args []string) error {
 	token, err := loadToken(tokenStore)
 	if err != nil {
 		if errors.Is(err, ErrOIDCNoTokensFound) {
-			fmt.Fprintln(out, "No OIDC tokens found. Run 'xkey oidc login' to authenticate.")
+			_, _ = fmt.Fprintln(out, "No OIDC tokens found. Run 'xkey oidc login' to authenticate.")
 			return nil
 		}
 		return &SentinelCauseError{Sentinel: ErrOIDCTokenLoadFailed, Cause: err}
@@ -828,8 +828,8 @@ func runOIDCRefresh(cmd *cobra.Command, args []string) error {
 		return &SentinelCauseError{Sentinel: ErrOIDCTokenStoreFailed, Cause: err}
 	}
 
-	fmt.Fprintln(out, "Token refreshed successfully!")
-	fmt.Fprintf(out, "  New expiration: %s\n", token.ExpiresAt.Format(time.RFC3339))
+	_, _ = fmt.Fprintln(out, "Token refreshed successfully!")
+	_, _ = fmt.Fprintf(out, "  New expiration: %s\n", token.ExpiresAt.Format(time.RFC3339))
 
 	return nil
 }
@@ -845,12 +845,12 @@ func runOIDCLogout(cmd *cobra.Command, args []string) error {
 	if all {
 		if err := os.Remove(storePath); err != nil {
 			if os.IsNotExist(err) {
-				fmt.Fprintln(out, "No tokens to clear.")
+				_, _ = fmt.Fprintln(out, "No tokens to clear.")
 				return nil
 			}
 			return &MessageError{Msg: fmt.Sprintf("failed to clear tokens: %v", err)}
 		}
-		fmt.Fprintln(out, "All tokens cleared.")
+		_, _ = fmt.Fprintln(out, "All tokens cleared.")
 		return nil
 	}
 
@@ -860,7 +860,7 @@ func runOIDCLogout(cmd *cobra.Command, args []string) error {
 		return &MessageError{Msg: fmt.Sprintf("failed to clear tokens: %v", err)}
 	}
 
-	fmt.Fprintln(out, "Tokens cleared.")
+	_, _ = fmt.Fprintln(out, "Tokens cleared.")
 	return nil
 }
 
@@ -873,76 +873,76 @@ func runOIDCProvidersList(cmd *cobra.Command, args []string) error {
 	config, err := loadOIDCConfig(configPath)
 	if err != nil {
 		if os.IsNotExist(err) {
-			fmt.Fprintln(out, "No OIDC providers configured.")
+			_, _ = fmt.Fprintln(out, "No OIDC providers configured.")
 			return nil
 		}
 		return &SentinelCauseError{Sentinel: ErrOIDCConfigLoadFailed, Cause: err}
 	}
 
 	if len(config.Providers) == 0 {
-		fmt.Fprintln(out, "No OIDC providers configured.")
+		_, _ = fmt.Fprintln(out, "No OIDC providers configured.")
 		return nil
 	}
 
-	fmt.Fprintf(out, "OIDC Providers (%d):\n\n", len(config.Providers))
+	_, _ = fmt.Fprintf(out, "OIDC Providers (%d):\n\n", len(config.Providers))
 
 	for _, provider := range config.Providers {
-		fmt.Fprintf(out, "  Name:         %s\n", provider.Name)
+		_, _ = fmt.Fprintf(out, "  Name:         %s\n", provider.Name)
 
 		// Display type
 		pType := provider.Type
 		if pType == "" {
 			pType = OIDCProviderTypeStandard
 		}
-		fmt.Fprintf(out, "  Type:         %s\n", pType)
+		_, _ = fmt.Fprintf(out, "  Type:         %s\n", pType)
 
 		if pType == OIDCProviderTypeAWS {
 			// AWS-specific display
-			fmt.Fprintf(out, "  Region:       %s\n", provider.AWSRegion)
+			_, _ = fmt.Fprintf(out, "  Region:       %s\n", provider.AWSRegion)
 			if provider.AWSProfile != "" {
-				fmt.Fprintf(out, "  Profile:      %s\n", provider.AWSProfile)
+				_, _ = fmt.Fprintf(out, "  Profile:      %s\n", provider.AWSProfile)
 			}
 			if provider.AWSCredentialsFile != "" {
-				fmt.Fprintf(out, "  Credentials:  %s\n", provider.AWSCredentialsFile)
+				_, _ = fmt.Fprintf(out, "  Credentials:  %s\n", provider.AWSCredentialsFile)
 			}
 			if provider.AWSOutput != "" {
-				fmt.Fprintf(out, "  Output:       %s\n", provider.AWSOutput)
+				_, _ = fmt.Fprintf(out, "  Output:       %s\n", provider.AWSOutput)
 			}
 			if provider.AWSCrossDevice {
-				fmt.Fprintf(out, "  Cross-Device: yes\n")
+				_, _ = fmt.Fprintf(out, "  Cross-Device: yes\n")
 			}
 			if provider.AWSSessionStore != "" {
-				fmt.Fprintf(out, "  Session Store: %s\n", provider.AWSSessionStore)
+				_, _ = fmt.Fprintf(out, "  Session Store: %s\n", provider.AWSSessionStore)
 			}
 		} else {
 			// Standard OIDC display
-			fmt.Fprintf(out, "  Issuer:       %s\n", provider.Issuer)
-			fmt.Fprintf(out, "  Client ID:    %s\n", provider.ClientID)
+			_, _ = fmt.Fprintf(out, "  Issuer:       %s\n", provider.Issuer)
+			_, _ = fmt.Fprintf(out, "  Client ID:    %s\n", provider.ClientID)
 			if provider.ClientSecret != "" {
-				fmt.Fprintf(out, "  Client Secret: ***\n")
+				_, _ = fmt.Fprintf(out, "  Client Secret: ***\n")
 			}
 			if provider.RedirectURL != "" {
-				fmt.Fprintf(out, "  Redirect URL: %s\n", provider.RedirectURL)
+				_, _ = fmt.Fprintf(out, "  Redirect URL: %s\n", provider.RedirectURL)
 			}
 			if len(provider.Scopes) > 0 {
-				fmt.Fprintf(out, "  Scopes:       %s\n", strings.Join(provider.Scopes, ", "))
+				_, _ = fmt.Fprintf(out, "  Scopes:       %s\n", strings.Join(provider.Scopes, ", "))
 			}
 		}
 
 		// Common fields
 		if provider.Exec != "" {
-			fmt.Fprintf(out, "  Exec:         %s\n", provider.Exec)
+			_, _ = fmt.Fprintf(out, "  Exec:         %s\n", provider.Exec)
 		}
 		if provider.AutoRefresh > 0 {
-			fmt.Fprintf(out, "  Auto-Refresh: %d seconds\n", provider.AutoRefresh)
+			_, _ = fmt.Fprintf(out, "  Auto-Refresh: %d seconds\n", provider.AutoRefresh)
 		}
 		if provider.Background {
-			fmt.Fprintf(out, "  Background:   yes\n")
+			_, _ = fmt.Fprintf(out, "  Background:   yes\n")
 		}
 		if provider.LogFile != "" {
-			fmt.Fprintf(out, "  Log File:     %s\n", provider.LogFile)
+			_, _ = fmt.Fprintf(out, "  Log File:     %s\n", provider.LogFile)
 		}
-		fmt.Fprintln(out)
+		_, _ = fmt.Fprintln(out)
 	}
 
 	return nil
@@ -1062,9 +1062,9 @@ func runOIDCProvidersAdd(cmd *cobra.Command, args []string) error {
 	}
 
 	if pType == OIDCProviderTypeAWS {
-		fmt.Fprintf(out, "Added AWS OIDC provider: %s (region: %s)\n", name, awsRegion)
+		_, _ = fmt.Fprintf(out, "Added AWS OIDC provider: %s (region: %s)\n", name, awsRegion)
 	} else {
-		fmt.Fprintf(out, "Added OIDC provider: %s\n", name)
+		_, _ = fmt.Fprintf(out, "Added OIDC provider: %s\n", name)
 	}
 	return nil
 }
@@ -1106,7 +1106,7 @@ func runOIDCProvidersRemove(cmd *cobra.Command, args []string) error {
 			// Log warning but don't fail the removal
 			fmt.Fprintf(os.Stderr, "Warning: failed to stop background refresh for '%s': %v\n", name, err)
 		} else {
-			fmt.Fprintf(out, "Stopped background refresh for '%s'\n", name)
+			_, _ = fmt.Fprintf(out, "Stopped background refresh for '%s'\n", name)
 		}
 	}
 
@@ -1116,7 +1116,7 @@ func runOIDCProvidersRemove(cmd *cobra.Command, args []string) error {
 		return &SentinelCauseError{Sentinel: ErrOIDCConfigSaveFailed, Cause: err}
 	}
 
-	fmt.Fprintf(out, "Removed OIDC provider: %s\n", name)
+	_, _ = fmt.Fprintf(out, "Removed OIDC provider: %s\n", name)
 	return nil
 }
 
@@ -1751,11 +1751,11 @@ func startBackgroundRefresh(out io.Writer, providerName, tokenEndpoint, clientID
 		_ = os.Remove(pidFile) // Clean up PID file when process exits
 	}()
 
-	fmt.Fprintf(out, "Background refresh started for '%s'\n", providerName)
-	fmt.Fprintf(out, "  PID:      %d\n", cmd.Process.Pid)
-	fmt.Fprintf(out, "  Log file: %s\n", logFile)
-	fmt.Fprintf(out, "\nUse 'xkey oidc status' to see running refreshes\n")
-	fmt.Fprintf(out, "Use 'xkey oidc stop %s' to stop\n", providerName)
+	_, _ = fmt.Fprintf(out, "Background refresh started for '%s'\n", providerName)
+	_, _ = fmt.Fprintf(out, "  PID:      %d\n", cmd.Process.Pid)
+	_, _ = fmt.Fprintf(out, "  Log file: %s\n", logFile)
+	_, _ = fmt.Fprintf(out, "\nUse 'xkey oidc status' to see running refreshes\n")
+	_, _ = fmt.Fprintf(out, "Use 'xkey oidc stop %s' to stop\n", providerName)
 
 	return nil
 }
@@ -1824,7 +1824,7 @@ func runOIDCStatus(cmd *cobra.Command, args []string) error {
 	entries, err := os.ReadDir(pidDir)
 	if err != nil {
 		if os.IsNotExist(err) {
-			fmt.Fprintln(out, "No background refresh processes running.")
+			_, _ = fmt.Fprintln(out, "No background refresh processes running.")
 			return nil
 		}
 		return &WrappedError{Msg: "failed to read PID directory", Err: err}
@@ -1878,16 +1878,16 @@ func runOIDCStatus(cmd *cobra.Command, args []string) error {
 	}
 
 	if len(running) == 0 {
-		fmt.Fprintln(out, "No background refresh processes running.")
+		_, _ = fmt.Fprintln(out, "No background refresh processes running.")
 		return nil
 	}
 
-	fmt.Fprintf(out, "Background Refresh Processes (%d):\n\n", len(running))
+	_, _ = fmt.Fprintf(out, "Background Refresh Processes (%d):\n\n", len(running))
 	for _, proc := range running {
-		fmt.Fprintf(out, "  Provider:     %s\n", proc.Provider)
-		fmt.Fprintf(out, "  PID:          %d\n", proc.PID)
+		_, _ = fmt.Fprintf(out, "  Provider:     %s\n", proc.Provider)
+		_, _ = fmt.Fprintf(out, "  PID:          %d\n", proc.PID)
 		if !proc.StartedAt.IsZero() {
-			fmt.Fprintf(out, "  Started:      %s (%s ago)\n", proc.StartedAt.Format("2006-01-02 15:04:05"), formatDuration(time.Since(proc.StartedAt)))
+			_, _ = fmt.Fprintf(out, "  Started:      %s (%s ago)\n", proc.StartedAt.Format("2006-01-02 15:04:05"), formatDuration(time.Since(proc.StartedAt)))
 		}
 		// Display refresh status if available
 		if proc.Status != nil {
@@ -1896,25 +1896,26 @@ func runOIDCStatus(cmd *cobra.Command, args []string) error {
 				statusIcon = "✗"
 			}
 			if !proc.Status.LastRefresh.IsZero() {
-				fmt.Fprintf(out, "  Last Refresh: %s (%s ago) %s\n",
+				_, _ = fmt.Fprintf(out, "  Last Refresh: %s (%s ago) %s\n",
 					proc.Status.LastRefresh.Format("2006-01-02 15:04:05"),
 					formatDuration(time.Since(proc.Status.LastRefresh)),
 					statusIcon)
 			}
 			if !proc.Status.NextRefresh.IsZero() && proc.Status.NextRefresh.After(time.Now()) {
-				fmt.Fprintf(out, "  Next Refresh: in %s\n", formatDuration(time.Until(proc.Status.NextRefresh)))
+				_, _ = fmt.Fprintf(out, "  Next Refresh: in %s\n", formatDuration(time.Until(proc.Status.NextRefresh)))
 			}
-			fmt.Fprintf(out, "  Refreshes:    %d", proc.Status.RefreshCount)
-			if proc.Status.LastStatus == "success" {
-				fmt.Fprintf(out, " successful\n")
-			} else if proc.Status.LastError != "" {
-				fmt.Fprintf(out, " (last error: %s)\n", proc.Status.LastError)
-			} else {
-				fmt.Fprintln(out)
+			_, _ = fmt.Fprintf(out, "  Refreshes:    %d", proc.Status.RefreshCount)
+			switch {
+			case proc.Status.LastStatus == "success":
+				_, _ = fmt.Fprintf(out, " successful\n")
+			case proc.Status.LastError != "":
+				_, _ = fmt.Fprintf(out, " (last error: %s)\n", proc.Status.LastError)
+			default:
+				_, _ = fmt.Fprintln(out)
 			}
 		}
-		fmt.Fprintf(out, "  Log file:     %s\n", proc.LogFile)
-		fmt.Fprintln(out)
+		_, _ = fmt.Fprintf(out, "  Log file:     %s\n", proc.LogFile)
+		_, _ = fmt.Fprintln(out)
 	}
 
 	return nil
@@ -1932,7 +1933,7 @@ func runOIDCStop(cmd *cobra.Command, args []string) error {
 		entries, err := os.ReadDir(pidDir)
 		if err != nil {
 			if os.IsNotExist(err) {
-				fmt.Fprintln(out, "No background refresh processes running.")
+				_, _ = fmt.Fprintln(out, "No background refresh processes running.")
 				return nil
 			}
 			return &WrappedError{Msg: "failed to read PID directory", Err: err}
@@ -1955,9 +1956,9 @@ func runOIDCStop(cmd *cobra.Command, args []string) error {
 		}
 
 		if stopped == 0 {
-			fmt.Fprintln(out, "No background refresh processes were running.")
+			_, _ = fmt.Fprintln(out, "No background refresh processes were running.")
 		} else {
-			fmt.Fprintf(out, "Stopped %d background refresh process(es).\n", stopped)
+			_, _ = fmt.Fprintf(out, "Stopped %d background refresh process(es).\n", stopped)
 		}
 		return nil
 	}
@@ -1995,7 +1996,7 @@ func stopProcess(out io.Writer, pidFile, providerName string) error {
 	// Remove PID file
 	_ = os.Remove(pidFile)
 
-	fmt.Fprintf(out, "Stopped background refresh for '%s' (PID %d)\n", providerName, pid)
+	_, _ = fmt.Fprintf(out, "Stopped background refresh for '%s' (PID %d)\n", providerName, pid)
 	return nil
 }
 

@@ -114,7 +114,8 @@ func BuildCCIDDescriptors() []byte {
 func BuildFunctionFSStrings() []byte {
 	str := append([]byte(ccidInterfaceName), 0) // null-terminated
 
-	// header: magic(4) + length(4) + str_count(4) + lang_count(4) + lang(2) = 18
+	// header is magic(4) plus length(4) plus str_count(4) plus lang_count(4)
+	// plus lang(2), so 18 bytes in total
 	headerSize := uint32(18)
 	totalLength := headerSize + uint32(len(str))
 

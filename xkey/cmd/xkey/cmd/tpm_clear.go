@@ -227,27 +227,27 @@ func runStandardTPMClear(cmd *cobra.Command) error {
 func confirmClear(out io.Writer, force bool) bool {
 	reader := bufio.NewReader(os.Stdin)
 
-	fmt.Fprintln(out, "")
-	fmt.Fprintln(out, "========================================")
-	fmt.Fprintln(out, "  WARNING: TPM CLEAR OPERATION")
-	fmt.Fprintln(out, "========================================")
-	fmt.Fprintln(out, "")
-	fmt.Fprintln(out, "This operation will:")
-	fmt.Fprintln(out, "  - Erase ALL TPM-protected keys and secrets")
-	fmt.Fprintln(out, "  - Reset ALL hierarchy authorizations to empty")
-	fmt.Fprintln(out, "  - Delete sealed data and NV indexes")
-	fmt.Fprintln(out, "")
+	_, _ = fmt.Fprintln(out, "")
+	_, _ = fmt.Fprintln(out, "========================================")
+	_, _ = fmt.Fprintln(out, "  WARNING: TPM CLEAR OPERATION")
+	_, _ = fmt.Fprintln(out, "========================================")
+	_, _ = fmt.Fprintln(out, "")
+	_, _ = fmt.Fprintln(out, "This operation will:")
+	_, _ = fmt.Fprintln(out, "  - Erase ALL TPM-protected keys and secrets")
+	_, _ = fmt.Fprintln(out, "  - Reset ALL hierarchy authorizations to empty")
+	_, _ = fmt.Fprintln(out, "  - Delete sealed data and NV indexes")
+	_, _ = fmt.Fprintln(out, "")
 
 	if force {
-		fmt.Fprintln(out, "Mode: FORCE (UEFI Physical Presence Interface)")
-		fmt.Fprintln(out, "  - System will REBOOT to complete the operation")
-		fmt.Fprintln(out, "  - You may need to confirm in UEFI/BIOS firmware")
-		fmt.Fprintln(out, "")
+		_, _ = fmt.Fprintln(out, "Mode: FORCE (UEFI Physical Presence Interface)")
+		_, _ = fmt.Fprintln(out, "  - System will REBOOT to complete the operation")
+		_, _ = fmt.Fprintln(out, "  - You may need to confirm in UEFI/BIOS firmware")
+		_, _ = fmt.Fprintln(out, "")
 	}
 
-	fmt.Fprintln(out, "This action CANNOT be undone!")
-	fmt.Fprintln(out, "")
-	fmt.Fprint(out, "Type 'yes' to proceed: ")
+	_, _ = fmt.Fprintln(out, "This action CANNOT be undone!")
+	_, _ = fmt.Fprintln(out, "")
+	_, _ = fmt.Fprint(out, "Type 'yes' to proceed: ")
 
 	input, err := reader.ReadString('\n')
 	if err != nil {

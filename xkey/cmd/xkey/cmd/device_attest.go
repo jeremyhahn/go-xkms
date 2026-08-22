@@ -203,7 +203,7 @@ func runDeviceAttest(cmd *cobra.Command, args []string) error {
 	if err != nil {
 		return &WrappedError{Msg: "failed to create phone backend", Err: err}
 	}
-	defer backend.Close()
+	defer func() { _ = backend.Close() }()
 
 	ctx, cancel := context.WithTimeout(context.Background(), timeout)
 	defer cancel()
@@ -535,11 +535,12 @@ func printAttestationCertificateChainWithTrustInfo(chain []*x509.Certificate, ma
 
 		// Public key info
 		algo, size, curve := publicKeyInfo(cert)
-		if curve != "" {
+		switch {
+		case curve != "":
 			fmt.Printf("  Public Key:          %s %s (%d bits)\n", algo, curve, size)
-		} else if size > 0 {
+		case size > 0:
 			fmt.Printf("  Public Key:          %s %d bits\n", algo, size)
-		} else {
+		default:
 			fmt.Printf("  Public Key:          %s\n", algo)
 		}
 

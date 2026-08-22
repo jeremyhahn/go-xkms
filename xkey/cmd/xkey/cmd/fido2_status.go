@@ -107,7 +107,7 @@ func runFIDO2Status(cmd *cobra.Command, _ []string) error {
 		return &DetailError{Err: ErrFIDO2StatusFailed, Detail: fmt.Sprintf(": %s", resp.Error)}
 	}
 
-	fmt.Fprintf(out, "FIDO2 daemon: running (%s)\n", resp.Action)
-	fmt.Fprintf(out, "Socket:       %s\n", socketPath)
+	_, _ = fmt.Fprintf(out, "FIDO2 daemon: running (%s)\n", resp.Action)
+	_, _ = fmt.Fprintf(out, "Socket:       %s\n", socketPath)
 	return nil
 }

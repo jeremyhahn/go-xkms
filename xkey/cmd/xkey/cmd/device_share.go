@@ -196,7 +196,7 @@ func runDeviceShare(cmd *cobra.Command, args []string) error {
 		return &DetailError{Err: ErrShareNoKeyMaterial, Detail: fmt.Sprintf(": %s/%s", backend, keyID)}
 	}
 
-	fmt.Fprintf(cmd.OutOrStdout(), "Sharing key \"%s\" (backend: %s) with device \"%s\"...\n\n",
+	_, _ = fmt.Fprintf(cmd.OutOrStdout(), "Sharing key \"%s\" (backend: %s) with device \"%s\"...\n\n",
 		keyID, backend, device.Name)
 
 	// Decode pairing keys
@@ -236,19 +236,19 @@ func runDeviceShare(cmd *cobra.Command, args []string) error {
 	if err != nil {
 		return &SentinelCauseError{Sentinel: ErrShareConnectFailed, Cause: err}
 	}
-	defer phoneBackend.Close()
+	defer func() { _ = phoneBackend.Close() }()
 
 	ctx, cancel := context.WithTimeout(context.Background(), timeout)
 	defer cancel()
 
-	fmt.Fprintln(cmd.OutOrStdout(), "Connecting to phone...")
+	_, _ = fmt.Fprintln(cmd.OutOrStdout(), "Connecting to phone...")
 	if err := phoneBackend.Connect(ctx); err != nil {
 		return &SentinelCauseError{Sentinel: ErrShareConnectFailed, Cause: err}
 	}
 
 	// Share public key if policy allows
 	if policy.SharePublic {
-		fmt.Fprintln(cmd.OutOrStdout(), "Sending public key to phone...")
+		_, _ = fmt.Fprintln(cmd.OutOrStdout(), "Sending public key to phone...")
 
 		req := phone.NewRequest(phone.MethodLocalSharePublicKey, &phone.LocalSharePublicKeyParams{
 			Backend:        backend,
@@ -273,15 +273,15 @@ func runDeviceShare(cmd *cobra.Command, args []string) error {
 		}
 
 		if result.Accepted {
-			fmt.Fprintf(cmd.OutOrStdout(), "  Public key accepted (import ID: %s)\n", result.ImportID)
+			_, _ = fmt.Fprintf(cmd.OutOrStdout(), "  Public key accepted (import ID: %s)\n", result.ImportID)
 		} else {
-			fmt.Fprintln(cmd.OutOrStdout(), "  Public key rejected by phone.")
+			_, _ = fmt.Fprintln(cmd.OutOrStdout(), "  Public key rejected by phone.")
 		}
 	}
 
 	// Share symmetric key material if policy allows
 	if policy.ShareSymmetric {
-		fmt.Fprintln(cmd.OutOrStdout(), "Sending symmetric key material to phone...")
+		_, _ = fmt.Fprintln(cmd.OutOrStdout(), "Sending symmetric key material to phone...")
 
 		req := phone.NewRequest(phone.MethodLocalShareSymmetric, &phone.LocalShareSymmetricParams{
 			Backend:    backend,
@@ -306,14 +306,14 @@ func runDeviceShare(cmd *cobra.Command, args []string) error {
 		}
 
 		if result.Accepted {
-			fmt.Fprintf(cmd.OutOrStdout(), "  Symmetric key accepted (import ID: %s)\n", result.ImportID)
+			_, _ = fmt.Fprintf(cmd.OutOrStdout(), "  Symmetric key accepted (import ID: %s)\n", result.ImportID)
 		} else {
-			fmt.Fprintln(cmd.OutOrStdout(), "  Symmetric key rejected by phone.")
+			_, _ = fmt.Fprintln(cmd.OutOrStdout(), "  Symmetric key rejected by phone.")
 		}
 	}
 
-	fmt.Fprintln(cmd.OutOrStdout())
-	fmt.Fprintln(cmd.OutOrStdout(), "Key sharing completed successfully.")
+	_, _ = fmt.Fprintln(cmd.OutOrStdout())
+	_, _ = fmt.Fprintln(cmd.OutOrStdout(), "Key sharing completed successfully.")
 
 	return nil
 }
@@ -396,7 +396,7 @@ func runDeviceImport(cmd *cobra.Command, args []string) error {
 		return ErrDeviceNotPaired
 	}
 
-	fmt.Fprintf(cmd.OutOrStdout(), "Importing key \"%s\" from device \"%s\"...\n\n", keyID, device.Name)
+	_, _ = fmt.Fprintf(cmd.OutOrStdout(), "Importing key \"%s\" from device \"%s\"...\n\n", keyID, device.Name)
 
 	// Decode pairing keys
 	localPrivateKey, err := base64.StdEncoding.DecodeString(device.LocalNoisePrivateKey)
@@ -435,19 +435,19 @@ func runDeviceImport(cmd *cobra.Command, args []string) error {
 	if err != nil {
 		return &SentinelCauseError{Sentinel: ErrShareConnectFailed, Cause: err}
 	}
-	defer phoneBackend.Close()
+	defer func() { _ = phoneBackend.Close() }()
 
 	ctx, cancel := context.WithTimeout(context.Background(), timeout)
 	defer cancel()
 
-	fmt.Fprintln(cmd.OutOrStdout(), "Connecting to phone...")
+	_, _ = fmt.Fprintln(cmd.OutOrStdout(), "Connecting to phone...")
 	if err := phoneBackend.Connect(ctx); err != nil {
 		return &SentinelCauseError{Sentinel: ErrShareConnectFailed, Cause: err}
 	}
 
 	// Request key import from phone
-	fmt.Fprintln(cmd.OutOrStdout(), "Requesting key from phone (check phone for biometric prompt)...")
-	fmt.Fprintln(cmd.OutOrStdout())
+	_, _ = fmt.Fprintln(cmd.OutOrStdout(), "Requesting key from phone (check phone for biometric prompt)...")
+	_, _ = fmt.Fprintln(cmd.OutOrStdout())
 
 	req := phone.NewRequest(phone.MethodLocalImportSharedKey, &phone.LocalImportSharedKeyParams{
 		KeyID: keyID,
@@ -467,27 +467,27 @@ func runDeviceImport(cmd *cobra.Command, args []string) error {
 	}
 
 	// Display imported key information
-	fmt.Fprintln(cmd.OutOrStdout(), "Import Result")
-	fmt.Fprintln(cmd.OutOrStdout(), strings.Repeat("=", 60))
-	fmt.Fprintf(cmd.OutOrStdout(), "  Key ID:          %s\n", keyID)
-	fmt.Fprintf(cmd.OutOrStdout(), "  Algorithm:       %s\n", result.Algorithm)
-	fmt.Fprintf(cmd.OutOrStdout(), "  Key Type:        %s\n", result.KeyType)
-	fmt.Fprintf(cmd.OutOrStdout(), "  Exportable:      %v\n", result.Exportable)
-	fmt.Fprintf(cmd.OutOrStdout(), "  Target Backend:  %s\n", targetBackend)
+	_, _ = fmt.Fprintln(cmd.OutOrStdout(), "Import Result")
+	_, _ = fmt.Fprintln(cmd.OutOrStdout(), strings.Repeat("=", 60))
+	_, _ = fmt.Fprintf(cmd.OutOrStdout(), "  Key ID:          %s\n", keyID)
+	_, _ = fmt.Fprintf(cmd.OutOrStdout(), "  Algorithm:       %s\n", result.Algorithm)
+	_, _ = fmt.Fprintf(cmd.OutOrStdout(), "  Key Type:        %s\n", result.KeyType)
+	_, _ = fmt.Fprintf(cmd.OutOrStdout(), "  Exportable:      %v\n", result.Exportable)
+	_, _ = fmt.Fprintf(cmd.OutOrStdout(), "  Target Backend:  %s\n", targetBackend)
 
 	if len(result.PublicKeyPEM) > 0 {
-		fmt.Fprintf(cmd.OutOrStdout(), "  Public Key:      %d bytes (PEM)\n", len(result.PublicKeyPEM))
+		_, _ = fmt.Fprintf(cmd.OutOrStdout(), "  Public Key:      %d bytes (PEM)\n", len(result.PublicKeyPEM))
 	}
 	if len(result.CertificatePEM) > 0 {
-		fmt.Fprintf(cmd.OutOrStdout(), "  Certificate:     %d bytes (PEM)\n", len(result.CertificatePEM))
+		_, _ = fmt.Fprintf(cmd.OutOrStdout(), "  Certificate:     %d bytes (PEM)\n", len(result.CertificatePEM))
 	}
 	if len(result.WrappedKey) > 0 {
-		fmt.Fprintf(cmd.OutOrStdout(), "  Wrapped Key:     %d bytes\n", len(result.WrappedKey))
-		fmt.Fprintf(cmd.OutOrStdout(), "  Key Size:        %d bits\n", result.KeySize)
+		_, _ = fmt.Fprintf(cmd.OutOrStdout(), "  Wrapped Key:     %d bytes\n", len(result.WrappedKey))
+		_, _ = fmt.Fprintf(cmd.OutOrStdout(), "  Key Size:        %d bits\n", result.KeySize)
 	}
 
-	fmt.Fprintln(cmd.OutOrStdout())
-	fmt.Fprintln(cmd.OutOrStdout(), "Key imported successfully.")
+	_, _ = fmt.Fprintln(cmd.OutOrStdout())
+	_, _ = fmt.Fprintln(cmd.OutOrStdout(), "Key imported successfully.")
 
 	return nil
 }

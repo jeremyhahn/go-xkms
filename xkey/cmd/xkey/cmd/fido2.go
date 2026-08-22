@@ -570,9 +570,7 @@ func generateFIDO2SerialNumber() string {
 }
 
 // cryptoRandRead is a variable to allow testing without crypto/rand.
-var cryptoRandRead = func(b []byte) (int, error) {
-	return cryptoRandReadImpl(b)
-}
+var cryptoRandRead = cryptoRandReadImpl
 
 // cryptoRandReadImpl reads random bytes from crypto/rand.
 func cryptoRandReadImpl(b []byte) (int, error) {
@@ -1279,9 +1277,10 @@ func (d *fido2Device) syncCredentialsToCDPVia(ctx context.Context, syncer creden
 		// generated them). Fall back to the key backend's exporter for
 		// credentials minted by xkey's own software backend.
 		var pkcs8Key []byte
-		if len(sc.PrivateKey) > 0 {
+		switch {
+		case len(sc.PrivateKey) > 0:
 			pkcs8Key = sc.PrivateKey
-		} else if d.keyBackend != nil {
+		case d.keyBackend != nil:
 			handle, loadKeyErr := d.keyBackend.LoadKey(sc.CredentialID, sc.Algorithm)
 			if loadKeyErr != nil {
 				d.logger.Debug("skipping credential for CDP (key load failed)",
@@ -1296,7 +1295,7 @@ func (d *fido2Device) syncCredentialsToCDPVia(ctx context.Context, syncer creden
 				continue
 			}
 			pkcs8Key = exported
-		} else {
+		default:
 			d.logger.Debug("skipping credential for CDP (no inline key and no key backend)",
 				slog.String("credId", fmt.Sprintf("%x", sc.CredentialID)))
 			continue

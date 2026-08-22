@@ -210,13 +210,13 @@ func runAgentStart(cmd *cobra.Command, args []string) error {
 		return err
 	}
 
-	fmt.Fprintf(out, "Agent server started\n")
-	fmt.Fprintf(out, "  PID:    %d\n", state.PID)
-	fmt.Fprintf(out, "  Listen: %s\n", server.Addr())
+	_, _ = fmt.Fprintf(out, "Agent server started\n")
+	_, _ = fmt.Fprintf(out, "  PID:    %d\n", state.PID)
+	_, _ = fmt.Fprintf(out, "  Listen: %s\n", server.Addr())
 	if tlsCert != "" {
-		fmt.Fprintf(out, "  TLS:    enabled (mTLS)\n")
+		_, _ = fmt.Fprintf(out, "  TLS:    enabled (mTLS)\n")
 	} else {
-		fmt.Fprintf(out, "  TLS:    disabled (development mode)\n")
+		_, _ = fmt.Fprintf(out, "  TLS:    disabled (development mode)\n")
 	}
 
 	// Wait for signal.
@@ -228,7 +228,7 @@ func runAgentStart(cmd *cobra.Command, args []string) error {
 
 	select {
 	case <-sigCh:
-		fmt.Fprintln(out, "\nShutting down agent server...")
+		_, _ = fmt.Fprintln(out, "\nShutting down agent server...")
 	case <-ctx.Done():
 	}
 
@@ -244,13 +244,13 @@ func runAgentStop(cmd *cobra.Command, args []string) error {
 		return err
 	}
 
-	fmt.Fprintln(out, "Agent server stopped")
-	fmt.Fprintf(out, "  PID:    %d\n", state.PID)
-	fmt.Fprintf(out, "  Listen: %s\n", state.ListenAddr)
+	_, _ = fmt.Fprintln(out, "Agent server stopped")
+	_, _ = fmt.Fprintf(out, "  PID:    %d\n", state.PID)
+	_, _ = fmt.Fprintf(out, "  Listen: %s\n", state.ListenAddr)
 	if forced {
-		fmt.Fprintf(out, "  Signal: SIGKILL (graceful shutdown exceeded %s)\n", agentStopGracePeriod)
+		_, _ = fmt.Fprintf(out, "  Signal: SIGKILL (graceful shutdown exceeded %s)\n", agentStopGracePeriod)
 	} else {
-		fmt.Fprintf(out, "  Signal: SIGTERM\n")
+		_, _ = fmt.Fprintf(out, "  Signal: SIGTERM\n")
 	}
 	return nil
 }
@@ -265,19 +265,19 @@ func runAgentStatus(cmd *cobra.Command, args []string) error {
 	}
 
 	if running {
-		fmt.Fprintln(out, "Agent server: running")
-		fmt.Fprintf(out, "  PID:     %d\n", state.PID)
-		fmt.Fprintf(out, "  Listen:  %s\n", state.ListenAddr)
+		_, _ = fmt.Fprintln(out, "Agent server: running")
+		_, _ = fmt.Fprintf(out, "  PID:     %d\n", state.PID)
+		_, _ = fmt.Fprintf(out, "  Listen:  %s\n", state.ListenAddr)
 		if state.TLS {
-			fmt.Fprintf(out, "  TLS:     enabled (mTLS)\n")
+			_, _ = fmt.Fprintf(out, "  TLS:     enabled (mTLS)\n")
 		} else {
-			fmt.Fprintf(out, "  TLS:     disabled (development mode)\n")
+			_, _ = fmt.Fprintf(out, "  TLS:     disabled (development mode)\n")
 		}
-		fmt.Fprintf(out, "  Started: %s\n", state.StartedAt.Format(time.RFC3339))
+		_, _ = fmt.Fprintf(out, "  Started: %s\n", state.StartedAt.Format(time.RFC3339))
 	} else {
-		fmt.Fprintln(out, "Agent server: not running")
+		_, _ = fmt.Fprintln(out, "Agent server: not running")
 	}
-	fmt.Fprintln(out)
+	_, _ = fmt.Fprintln(out)
 
 	storeDir := agentStoreDir()
 	logger := slog.Default()
@@ -293,21 +293,21 @@ func runAgentStatus(cmd *cobra.Command, args []string) error {
 	}
 
 	if len(agents) == 0 {
-		fmt.Fprintln(out, "No enrolled agents")
+		_, _ = fmt.Fprintln(out, "No enrolled agents")
 		return nil
 	}
 
-	fmt.Fprintf(out, "Enrolled Agents (%d):\n\n", len(agents))
+	_, _ = fmt.Fprintf(out, "Enrolled Agents (%d):\n\n", len(agents))
 	for _, a := range agents {
-		fmt.Fprintf(out, "  ID:          %s\n", a.ID)
-		fmt.Fprintf(out, "  Name:        %s\n", a.Name)
-		fmt.Fprintf(out, "  Status:      %s\n", a.Status)
-		fmt.Fprintf(out, "  Enrolled:    %s\n", a.EnrolledAt.Format(time.RFC3339))
-		fmt.Fprintf(out, "  Last Seen:   %s\n", a.LastSeen.Format(time.RFC3339))
+		_, _ = fmt.Fprintf(out, "  ID:          %s\n", a.ID)
+		_, _ = fmt.Fprintf(out, "  Name:        %s\n", a.Name)
+		_, _ = fmt.Fprintf(out, "  Status:      %s\n", a.Status)
+		_, _ = fmt.Fprintf(out, "  Enrolled:    %s\n", a.EnrolledAt.Format(time.RFC3339))
+		_, _ = fmt.Fprintf(out, "  Last Seen:   %s\n", a.LastSeen.Format(time.RFC3339))
 		if a.Address != "" {
-			fmt.Fprintf(out, "  Address:     %s\n", a.Address)
+			_, _ = fmt.Fprintf(out, "  Address:     %s\n", a.Address)
 		}
-		fmt.Fprintln(out)
+		_, _ = fmt.Fprintln(out)
 	}
 
 	return nil

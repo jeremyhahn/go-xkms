@@ -43,51 +43,33 @@ var execCommand = func(name string, args ...string) error {
 
 // getEUID returns the effective user ID. Tests replace this to
 // simulate root or non-root execution.
-var getEUID = func() int {
-	return os.Geteuid()
-}
+var getEUID = os.Geteuid
 
 // luksSetupLoopDevice sets up a loop device for an image file.
-var luksSetupLoopDevice = func(file string) (string, error) {
-	return luks2.SetupLoopDevice(file)
-}
+var luksSetupLoopDevice = luks2.SetupLoopDevice
 
 // luksDetachLoopDevice detaches a loop device.
-var luksDetachLoopDevice = func(device string) error {
-	return luks2.DetachLoopDevice(device)
-}
+var luksDetachLoopDevice = luks2.DetachLoopDevice
 
 // luksFormat formats a partition as LUKS2.
-var luksFormat = func(opts luks2.FormatOptions) error {
-	return luks2.Format(opts)
-}
+var luksFormat = luks2.Format
 
 // luksUnlock unlocks a LUKS2 partition.
-var luksUnlock = func(device string, passphrase []byte, name string) error {
-	return luks2.Unlock(device, passphrase, name)
-}
+var luksUnlock = luks2.Unlock
 
 // luksMakeFilesystem creates a filesystem on an unlocked LUKS device.
-var luksMakeFilesystem = func(device, fstype, label string) error {
-	return luks2.MakeFilesystem(device, fstype, label)
-}
+var luksMakeFilesystem = luks2.MakeFilesystem
 
 // luksLock locks a LUKS2 partition.
-var luksLock = func(name string) error {
-	return luks2.Lock(name)
-}
+var luksLock = luks2.Lock
 
 // luksIsUnlocked checks if a LUKS2 partition is unlocked.
-var luksIsUnlocked = func(name string) bool {
-	return luks2.IsUnlocked(name)
-}
+var luksIsUnlocked = luks2.IsUnlocked
 
 // statPath stats a filesystem path. Tests replace this to describe a
 // synthetic device node without depending on a real device existing on
 // the host.
-var statPath = func(path string) (os.FileInfo, error) {
-	return os.Stat(path)
-}
+var statPath = os.Stat
 
 // readMountsFile reads the mount information file. Tests replace
 // this to provide synthetic mount data without reading /proc/mounts.

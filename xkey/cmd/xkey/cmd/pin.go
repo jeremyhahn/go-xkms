@@ -15,6 +15,7 @@ package cmd
 
 import (
 	"bufio"
+	"bytes"
 	"fmt"
 	"io"
 	"log/slog"
@@ -251,7 +252,7 @@ func readPINFromTerminal(out io.Writer, prompt string) (string, error) {
 		return "", &PINCommandError{Operation: "read_pin", Err: err}
 	}
 
-	if string(pin1) != string(pin2) {
+	if !bytes.Equal(pin1, pin2) {
 		return "", ErrPINCmdMismatch
 	}
 

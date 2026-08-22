@@ -374,15 +374,15 @@ func runDeviceConnect(cmd *cobra.Command, args []string) error {
 		return &SentinelCauseError{Sentinel: ErrAgentConnectFailed, Cause: err}
 	}
 
-	fmt.Fprintf(out, "Connected to master at %s\n", masterAddr)
-	fmt.Fprintf(out, "  TLS Cert: %s\n", tlsCert)
+	_, _ = fmt.Fprintf(out, "Connected to master at %s\n", masterAddr)
+	_, _ = fmt.Fprintf(out, "  TLS Cert: %s\n", tlsCert)
 
 	// Wait for signal.
 	sigCh := make(chan os.Signal, 1)
 	signal.Notify(sigCh, syscall.SIGINT, syscall.SIGTERM)
 
 	<-sigCh
-	fmt.Fprintln(out, "\nDisconnecting...")
+	_, _ = fmt.Fprintln(out, "\nDisconnecting...")
 
 	return client.Disconnect()
 }

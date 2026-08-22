@@ -74,7 +74,7 @@ func runDeviceScan(cmd *cobra.Command, args []string) error {
 		}
 		return &WrappedError{Msg: "failed to initialize Bluetooth", Err: err}
 	}
-	defer transport.Close()
+	defer func() { _ = transport.Close() }()
 
 	fmt.Printf("Scanning for xKey devices (%s timeout)...\n", scanTimeout)
 	fmt.Println()

@@ -403,6 +403,7 @@ var localMethodNames = map[string]bool{
 }
 
 // phoneMethodNames contains all valid phone.* method names for validation.
+//
 // Deprecated: These methods implement the wrong attestation direction.
 // They are kept for backward compatibility only.
 var phoneMethodNames = map[string]bool{
@@ -416,7 +417,8 @@ func IsLocalMethod(method string) bool {
 }
 
 // IsPhoneMethod returns true if the method name is a valid phone.* method.
-// Deprecated: These methods are deprecated. Use remote.attestDevice instead.
+//
+// Deprecated: Use remote.attestDevice instead.
 func IsPhoneMethod(method string) bool {
 	return phoneMethodNames[method]
 }
