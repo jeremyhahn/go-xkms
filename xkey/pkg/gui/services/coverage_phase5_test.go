@@ -31,6 +31,7 @@ import (
 	xkms "github.com/jeremyhahn/go-xkms/sdk/go"
 
 	"github.com/jeremyhahn/go-xkms/xkey/pkg/audit"
+	"github.com/jeremyhahn/go-xkms/xkey/pkg/config"
 	"github.com/jeremyhahn/go-xkms/xkey/pkg/gui/events"
 	"github.com/jeremyhahn/go-xkms/xkey/pkg/oath"
 	"github.com/jeremyhahn/go-xkms/xkey/pkg/oidc"
@@ -878,7 +879,26 @@ func TestP5B_OIDCService_SaveProviders_ReadOnlyDataDir(t *testing.T) {
 // TestP5B_SetupWizard_ApplySOProvisioning_EmitProgressEvents verifies that
 // progress events are emitted during SO provisioning.
 func TestP5B_SetupWizard_ApplySOProvisioning_EmitProgressEvents(t *testing.T) {
+	// ApplySOProvisioning writes through TWO independent path resolvers, and
+	// redirecting one leaves the other pointing at the developer's home
+	// directory:
+	//
+	//   step 7  -> config.PolicyHMACPath(svc.configDir)   via SetupWizardService
+	//   step 6  -> config.Load / config.Save              via the config package
+	//
+	// SetConfigDir on the service covers only the first. Unset, its path is
+	// RELATIVE, so the HMAC landed in the package directory on top of a copy
+	// tracked in git (#65). Unset, the config package's path is absolute and
+	// lands in ~/.config/xkey/ -- so this test could read and overwrite the
+	// real user config.
+	//
+	// One directory, both overrides.
+	configDir := t.TempDir()
+	config.SetConfigDir(configDir)
+	t.Cleanup(config.ResetConfigDir)
+
 	svc := NewSetupWizardService()
+	svc.SetConfigDir(configDir)
 
 	var eventLog []int
 	svc.SetEventEmitter(func(e events.Event) {
@@ -899,6 +919,12 @@ func TestP5B_SetupWizard_ApplySOProvisioning_EmitProgressEvents(t *testing.T) {
 	require.NotNil(t, result)
 	// Should have emitted at least the step events.
 	assert.True(t, len(eventLog) > 0)
+
+	// And the artifact landed in the temp directory rather than anywhere else.
+	// Counting events says nothing about WHERE the run wrote, which is the
+	// property this test exists to keep honest.
+	assert.FileExists(t, config.PolicyHMACPath(configDir),
+		"the policy HMAC should have been written inside the temp config dir")
 }
 
 // TestP5B_SetupWizard_ApplySOProvisioning_PanicRecovery verifies panic

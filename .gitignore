@@ -96,3 +96,10 @@ gomodauth.env
 # names happen to end in .test — without this negation they are silently
 # unignorable and were never committed at all.
 !test/integration/**/Dockerfile.test
+
+# Runtime artifact written by the setup wizard into the config dir
+# (~/.config/xkey/). It was committed by accident: while tracked, a test
+# running with an unset configDir wrote to the package copy, and
+# config.IsEnterpriseMode("") stat-ed it and reported enterprise mode ON for
+# every test in that directory (#65).
+xkey_policy.hmac
