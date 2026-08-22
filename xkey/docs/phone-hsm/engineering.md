@@ -60,10 +60,12 @@ pairing keys are configured (`ErrNoiseNotConfigured`).
 
 ## Invariants
 
-- **Noise XX, both ends authenticated.** Not NK. The initiator verifies
-  `ExpectedRemoteStatic` and `ExpectedDeviceFingerprint`.
+- **Noise XX, both ends authenticated.** Not NK. The initiator *verifies*
+  `ExpectedRemoteStatic` cryptographically and *compares* the peer-supplied
+  `ExpectedDeviceFingerprint` for equality — two different strengths, see
+  "What the fingerprint proves" below.
 - **The identity exchange runs on every connection.** The phone's stream
-  responder always expects it, and it binds the attestation fingerprint into the
+  responder always expects it, and it binds the device fingerprint into the
   Noise prologue.
 - **Requests are serialised.** The transport holds a mutex across
   encrypt→send→receive→decrypt because a Noise cipherstate advances a monotonic
@@ -106,19 +108,87 @@ Noise session cannot be resumed mid-nonce-sequence.
 fingerprint does not match, a decrypt failure, or a JSON-RPC error from the
 phone. None degrade to an unencrypted or unauthenticated path.
 
+**What the fingerprint proves — and what it does not.** `DeviceFingerprint` is
+the SHA-256 of the attestation chain's **root** certificate. Three independent
+limits apply, and together they are narrower than the name suggests:
+
+1. **Not device-unique.** On a verified chain that root is a *configured*
+   Android-hardware trust anchor, shared by every handset issued under it.
+   "Configured" is broader than "embedded": `Verifier.buildTrustPool` merges the
+   local trust store's `PurposeAndroidHardware` certificates with
+   `truststore.LoadEmbeddedRoots`, so a chain can verify under a root an
+   operator installed with `xkey trust` and never appear in the embedded set at
+   all. `findMatchingTrustRoot` searches only the embedded roots and is a
+   display lookup — it can return `nil` for a chain that verified perfectly
+   well, so it does not establish provenance and is not evidence for this
+   point.
+2. **Not an attestation, at connect time.** The handshake compares the stored
+   value against bytes **the peer sends** in its identity ack:
+
+   ```go
+   receivedFingerprint := ack[1:]                       // peer-supplied
+   bytes.Equal(receivedFingerprint, cfg.ExpectedDeviceFingerprint)
+   ```
+
+   No chain is presented or verified there.
+
+3. **Not necessarily derived from a verified attestation either.**
+   `performPairingAttestation` (`cmd/xkey/cmd/device_pair.go`) sends a nonce,
+   takes the last certificate of whatever chain the phone returns, hashes it
+   and stores it. It does **not** call `VerifyAndroidKeyAttestation`, does not
+   check the nonce against the attestation extension, and does not verify the
+   chain against any trust anchor. Every failure on that path is a warning
+   that does not stop pairing.
+
+   So on the CLI pairing path the stored value is the hash of a certificate
+   **the phone chose**, not of a verified trust anchor. The chain is verified
+   only on flows that actually invoke `VerifyAndroidKeyAttestation` — the GUI
+   attestation flow does; pairing does not.
+
+The value is also the hash of a **public** certificate, so it is not a shared
+secret. Taken together, what the reconnect check establishes is: **the peer
+echoed the same value it supplied when pairing.** That is a continuity check on
+an attacker-suppliable value — it notices a peer that changed its answer, and
+nothing more. It is not device identity, not live attestation, and not proof
+that any attestation was ever verified.
+
+The check that is actually proven rather than echoed is `ExpectedRemoteStatic`,
+the peer's pinned Noise static public key: `noiseproto.Session` returns
+`ErrStaticKeyMismatch` when the key presented in the handshake is not the
+pinned one, so completing the handshake proves the peer holds the
+corresponding private key. Note the limit on that too, since overstating it
+would repeat the error this section corrects: it proves **possession of the
+key paired earlier**, not the identity of a handset. Nothing in this
+repository establishes that the key is hardware-bound or non-exportable, so a
+key copied off the phone is indistinguishable here. Whether the fingerprint
+check adds anything on top of that — and whether pairing should verify the
+chain before persisting anything — is tracked as go-xkms issue **#93**,
+*"DeviceFingerprint binds to the attestation ROOT CA, not the device"*.
+
+Everything below is correct regardless: it concerns whether the check is
+APPLIED, which is independent of what the check proves.
+
 **A malformed stored fingerprint also fails closed.** `DecodeDeviceFingerprint`
 distinguishes three states, and the distinction is the point:
 
 | stored value | result |
 |---|---|
-| empty | `(nil, nil)` — no fingerprint policy configured, the legitimate unbound case |
+| empty | `(nil, nil)` — no fingerprint policy configured, the legitimate first-pairing case |
 | valid hex, exactly `DeviceFingerprintSize` bytes | the decoded fingerprint |
 | anything else | `*InvalidDeviceFingerprintError`, and **no bytes** — never `(nil, nil)` |
 
 Returning `nil` for a malformed value would hand the handshake the same "no
-expected fingerprint" signal an unconfigured device gives it, downgrading an
-identity-bound handshake to an unbound one. Corrupted authorization material
-must never be less restrictive than the policy it corrupts.
+expected fingerprint" signal an unconfigured device gives it, silently omitting
+the comparison instead of failing it. Corrupted authorization material must
+never be less restrictive than the policy it corrupts.
+
+Be precise about the size of that downgrade. `ExpectedRemoteStatic` is enforced
+by Noise independently of the fingerprint, so dropping the fingerprint check
+does **not** open the handshake to any device: it removes one of two checks,
+leaving the pinned Noise key. The downgrade is from *pinned key plus matching
+peer-asserted continuity data* to *pinned key alone*. Silently dropping a
+configured check is worth refusing on its own terms — it does not need to be
+the larger thing to justify failing closed.
 
 Length is checked **before** decoding: the device always presents exactly
 `DeviceFingerprintSize` bytes, so a wrong-length record can never match, and

@@ -129,19 +129,44 @@ func (e *InvalidDeviceFingerprintError) Unwrap() []error {
 // DecodeDeviceFingerprint decodes a stored device fingerprint into the byte
 // form PerformHandshake compares against the value the device presents.
 //
-// The fingerprint binds a pairing record to the physical device it authorizes,
-// so decoding it FAILS CLOSED. An empty string is the legitimate "no
+// The fingerprint records the attestation ROOT the paired device attested
+// under, so decoding it FAILS CLOSED. An empty string is the legitimate "no
 // fingerprint policy configured" state and yields (nil, nil). A non-empty
 // string that does not decode yields an *InvalidDeviceFingerprintError and no
 // bytes — never (nil, nil).
 //
-// That distinction is the whole point of this function. Returning nil for a
-// malformed value would hand the handshake the same "no expected fingerprint"
-// signal an unconfigured device gives it, which silently downgrades an
-// identity-bound handshake into an unbound one. Corrupted authorization
-// material must never be less restrictive than the policy it corrupts: an
-// attacker able to write the config file could otherwise flip one character to
-// turn "only this device" into "any device that completes the handshake".
+// WHAT the stored value proves is much narrower than "device fingerprint"
+// reads. It is the SHA-256 of the attestation chain's ROOT -- on a verified
+// chain, a CONFIGURED Android-hardware trust anchor, embedded or locally
+// installed, shared by every handset under that anchor -- and the handshake
+// compares it against bytes the PEER sends, with no chain verified at that
+// moment. Nor is the stored value necessarily from a verified attestation:
+// CLI pairing hashes the last certificate of whatever chain the phone
+// returns, without calling VerifyAndroidKeyAttestation. Since the value is
+// the hash of a PUBLIC certificate it is not a secret either.
+//
+// So the check establishes that the peer echoed the value it supplied when
+// pairing: a continuity check on an attacker-suppliable value, not device
+// identity and not live attestation. Per-device binding is the open tracking
+// question.
+//
+// The fail-closed behaviour here is correct either way, and the reason does
+// not depend on what the value proves:
+//
+// Returning nil for a malformed value would hand the handshake the same "no
+// expected fingerprint" signal an unconfigured device gives it, silently
+// omitting the comparison rather than failing it. Corrupted authorization
+// material must never be less restrictive than the policy it corrupts.
+//
+// Be precise about the size of that downgrade, because overstating it is the
+// same error this comment exists to correct. Noise still enforces
+// ExpectedRemoteStatic independently -- a mismatch is ErrStaticKeyMismatch
+// whether or not a fingerprint is configured -- so an attacker who flips one
+// character in the config file does not open the handshake to "any device".
+// What they get is the removal of one of two checks: from the pinned Noise key
+// AND matching peer-asserted continuity data, down to the pinned Noise key
+// alone. Silently dropping a configured check is worth refusing on its own
+// terms; it does not need to be the larger thing to justify failing closed.
 func DecodeDeviceFingerprint(encoded string) ([]byte, error) {
 	if encoded == "" {
 		return nil, nil

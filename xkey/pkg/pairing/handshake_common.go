@@ -121,7 +121,7 @@ func PerformHandshake(ctx context.Context, cfg *HandshakeConfig) error {
 			"so the identity exchange that enforces it cannot run")
 		return &DetailError{
 			Err:    ErrUntrustedDevice,
-			Detail: ": a device fingerprint is configured but the identity exchange cannot run without a local static public key; refusing rather than connecting unbound",
+			Detail: ": a device fingerprint is configured but the identity exchange cannot run without a local static public key; refusing rather than connecting with that check silently skipped",
 		}
 	}
 
@@ -342,13 +342,37 @@ func performIdentityExchange(ctx context.Context, cfg *HandshakeConfig, logger *
 		// which made the whole fingerprint binding optional AT THE PEER'S
 		// CHOICE. Anyone able to complete the Noise handshake with the
 		// configured remote static key could send this one status byte and
-		// skip the check that binds the pairing record to a physical device.
+		// skip the attestation-root check the pairing record carries.
 		//
-		// The fingerprint exists precisely to stop a peer holding the key
-		// material from presenting as a different device, so letting that peer
-		// select which check applies to it defeats the control entirely. Once
-		// a record carries a fingerprint, "unknown" is not a state the device
+		// Letting a peer select which checks apply to it defeats the control
+		// whatever the control proves, so this refuses regardless. Once a
+		// record carries a fingerprint, "unknown" is not a state the device
 		// can return to: it was paired.
+		//
+		// WHAT the fingerprint proves is much narrower than it reads, in
+		// three independent ways:
+		//
+		//  1. The value is the SHA-256 of the attestation chain's ROOT, which
+		//     on a verified chain is a CONFIGURED Android-hardware trust
+		//     anchor -- embedded or locally installed via the trust store --
+		//     and is shared by every handset under that anchor, so it is not
+		//     device-unique.
+		//  2. The comparison below is against bytes THE PEER SENDS. No chain
+		//     is presented or verified here.
+		//  3. The stored value is not necessarily from a VERIFIED attestation:
+		//     CLI pairing hashes the last certificate of whatever chain the
+		//     phone returns, without calling VerifyAndroidKeyAttestation or
+		//     checking the nonce.
+		//
+		// So what this establishes is that the peer echoed the same value it
+		// supplied when pairing -- a continuity check on an attacker-suppliable
+		// value. It notices a peer that changed its answer, and nothing more.
+		// Per-device binding is the open question on the tracking issue. The
+		// Noise static key check (ExpectedRemoteStatic) is the part of this
+		// handshake that is cryptographically proven: it proves the peer holds
+		// the private key paired earlier. Whether that key is hardware-bound
+		// and non-exportable is an Android-side property this repository does
+		// not verify, so it is key possession, not handset identity.
 		//
 		// An empty ExpectedDeviceFingerprint is the legitimate first-pairing
 		// case and still proceeds -- refusing it would make pairing
