@@ -51,6 +51,13 @@ const (
 	// produces is not bound to the authenticator.
 	//
 	// Deprecated: migration only. Re-enroll the volume immediately.
+	//
+	//nolint:staticcheck // SA1019 is the point: the implementation symbol is
+	// deprecated and this re-export deliberately mirrors it. A consumer
+	// migrating an existing volume can only reach the legacy mode through the
+	// SDK, so dropping the re-export would strand them on the pkg/ import that
+	// docs/00 forbids. It carries the same Deprecated marker, so consumers
+	// still get the warning at their call site.
 	DerivationModeLegacyInsecure = pkgfido2.DerivationModeLegacyInsecure
 )
 

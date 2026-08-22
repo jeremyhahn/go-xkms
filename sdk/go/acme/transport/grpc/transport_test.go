@@ -26,6 +26,7 @@ import (
 	"github.com/jeremyhahn/go-xkms/sdk/go/acme/transport"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/connectivity"
 	"google.golang.org/grpc/credentials/insecure"
 	"google.golang.org/grpc/metadata"
 	"google.golang.org/grpc/status"
@@ -2201,7 +2202,46 @@ func TestPerformHealthCheck_WithInUseConnections(t *testing.T) {
 	// Manually trigger health check while connection is in use.
 	pool.performHealthCheck()
 
-	// The in-use connection should still be in the pool.
+	// The in-use connection must survive, and this has to be asserted rather
+	// than implied. The previous version of this test simply called Put and
+	// returned: had performHealthCheck evicted and closed the connection, Put
+	// would have put it back and the test would still have passed. It could
+	// not fail for the reason it exists.
+	//
+	// The connection is over its PoolMaxAge, so isConnectionHealthy says no.
+	// Keeping it anyway is the point: closing a leased connection would fail
+	// the request its holder is making.
+	//
+	// Scope: this covers a connection acquired EXCLUSIVELY, which is what
+	// inUse can express. A connection handed out by Get's saturated fallback
+	// carries no record of the extra borrower, so the first Put clears the
+	// flag for everyone and this protection lapses -- a pre-existing gap in
+	// the pool's lease accounting, tracked as go-xkms#104, and not something
+	// this test can honestly claim to cover.
+	pool.mu.Lock()
+	var found bool
+	for _, pc := range pool.connections {
+		if pc.conn == conn {
+			found = true
+			break
+		}
+	}
+	remaining := len(pool.connections)
+	pool.mu.Unlock()
+
+	if !found {
+		t.Fatalf("the in-use connection was evicted by the health check "+
+			"(%d connections remain); an unhealthy connection must be kept "+
+			"while it is in use", remaining)
+	}
+
+	// Kept means kept USABLE, not merely present in the slice: a closed
+	// ClientConn reports Shutdown and cannot carry the caller's request.
+	if state := conn.GetState(); state == connectivity.Shutdown {
+		t.Errorf("the in-use connection was closed by the health check (state %v); "+
+			"it must stay usable until released", state)
+	}
+
 	pool.Put(conn)
 }
 

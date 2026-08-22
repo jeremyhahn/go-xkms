@@ -258,9 +258,22 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y libicu-dev libusb-1.0-0-dev
 
+      # ./acme/transport/grpc/... is here because the connection pool's
+      # health check lives there and nothing else in CI compiles or runs it:
+      # the root coverage job cannot traverse a separate module, and this step
+      # used to select two package trees that do not include it.
       - name: sdk/go tests
         working-directory: sdk/go
-        run: go test -race -v ./bootstrap/... ./transport/usb/...
+        run: go test -race -v ./bootstrap/... ./transport/usb/... ./acme/transport/grpc/...
+
+      # web/desktop is its own module, so neither the root coverage job nor
+      # the steps above reach it. Without this step its tests could fail, or
+      # stop compiling, without turning CI red -- which is the same "the gate
+      # is honest about what it runs and silent about what it does not" gap
+      # this PR is fixing for lint.
+      - name: web/desktop tests
+        working-directory: web/desktop
+        run: go test -race -v ./...
 
       - name: xkey lifecycle tests
         working-directory: xkey
@@ -400,16 +413,19 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y libicu-dev libusb-1.0-0-dev
 
+      # These call the Make targets rather than reimplementing them in YAML,
+      # so what CI enforces and what a developer runs locally cannot drift.
+      #
+      # `make vet` and `make lint` iterate LINT_MODULES: Go tooling does not
+      # cross module boundaries, so the previous `go vet ./...` / bare
+      # golangci-lint run from the root covered the root module only, and this
+      # is a four-module repository (#81). gofmt needs no loop -- it is
+      # path-based and already reached every module.
       - name: Run gofmt check
-        run: |
-          if [ -n "$(gofmt -l .)" ]; then
-            echo "Code is not formatted:"
-            gofmt -l .
-            exit 1
-          fi
+        run: make fmt-check
 
       - name: Run go vet
-        run: go vet ./...
+        run: make vet
 
       # Installed via `go install` (Go module proxy) rather than
       # golangci/golangci-lint-action: the action resolves its "latest"
@@ -421,7 +437,12 @@ jobs:
       - name: Run golangci-lint
         run: |
           go install github.com/golangci/golangci-lint/v2/cmd/golangci-lint@v2.12.2  # PINNED (devops.md §9, documented): v2.13.0 (2026-08-19) ships honnef.co/go/tools v0.8.0-rc.1 whose nilness pass panics ("unhandled builtin recover", crashes on sentry-go) — red gate with zero findings. Unpin when golangci-lint ships a non-rc staticcheck that passes on main.
-          "$(go env GOPATH)/bin/golangci-lint" run --timeout=10m
+          # make lint resolves golangci-lint from PATH, so put the pinned
+          # binary there rather than letting it fall back to whatever else
+          # might be installed on the runner.
+          export PATH="$(go env GOPATH)/bin:$PATH"
+          golangci-lint version
+          make lint
 
   # Job 4: Security Scanning
   security:

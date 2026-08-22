@@ -38,17 +38,43 @@ import (
 func main() {
 	logger := slog.New(slog.NewTextHandler(os.Stderr, nil))
 
-	conn, cleanup, err := resolveConnection(context.Background(), logger)
+	// os.Exit does not run deferred functions, so the exit lives here and the
+	// work lives in run: the previous version called os.Exit(1) on the GUI
+	// error path with `defer cleanup()` already registered, which in
+	// standalone mode meant the in-process loopback engine was never stopped
+	// on the way out.
+	if err := run(logger); err != nil {
+		os.Exit(1)
+	}
+}
+
+// Seams for the lifecycle test. run's whole purpose is the ordering between
+// cleanup and the GUI's error return, and that ordering cannot be observed
+// through the real functions: runGUI is build-tag split and opens a window,
+// and resolveConnection may boot an in-process engine.
+var (
+	resolveConnectionFn = resolveConnection
+	runGUIFn            = runGUI
+)
+
+// run resolves a connection, hands it to the GUI, and cleans up on every exit
+// path. Errors are logged where the context is specific and returned so main
+// can set the exit status.
+func run(logger *slog.Logger) error {
+	conn, cleanup, err := resolveConnectionFn(context.Background(), logger)
 	if err != nil {
 		logger.Error("failed to establish connection", "error", err)
-		os.Exit(1)
+		return err
 	}
+	// Deferred rather than called on each path: the GUI error path below is
+	// exactly the one that used to skip it.
 	defer cleanup()
 
-	if err := runGUI(conn, logger); err != nil {
+	if err := runGUIFn(conn, logger); err != nil {
 		logger.Error("desktop GUI exited with error", "error", err)
-		os.Exit(1)
+		return err
 	}
+	return nil
 }
 
 // resolveConnection determines how the SPA should reach an engine and returns

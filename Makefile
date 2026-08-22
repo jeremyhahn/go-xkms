@@ -3223,31 +3223,47 @@ check-insecure-tls:
 	@echo "$(GREEN)✓ InsecureSkipVerify allowlist check passed$(RESET)"
 
 
+# Modules that `vet` and `lint` cover. Go tooling does not cross module
+# boundaries, so `./...` from the root reaches the root module ONLY -- this
+# repository has four go.mod files and CI was linting one of them (#81).
+#
+# xkey is NOT in this list yet, deliberately. It carries ~82 findings, and
+# switching it on before they are cleared would make Lint red, which now gates
+# every other job. It is added by the follow-up that clears them; until then it
+# is honestly absent rather than silently unlinted.
+#
+# gofmt is not listed here because it is path-based rather than module-based:
+# `gofmt -l .` from the root already reaches every file in every module.
+LINT_MODULES := . sdk/go web/desktop
+
 .PHONY: vet
-## vet: Run go vet on the codebase
+## vet: Run go vet across LINT_MODULES (see the note there: not yet all four)
 vet:
 	@echo "$(CYAN)$(BOLD)→ Running go vet...$(RESET)"
-	@$(GOVET) ./...
+	@for m in $(LINT_MODULES); do \
+		echo "$(CYAN)  → go vet ($$m)$(RESET)"; \
+		( cd "$$m" && $(GOVET) ./... ) || exit 1; \
+	done
 	@echo "$(GREEN)✓ Vet checks passed$(RESET)"
 
 .PHONY: lint
-## lint: Run linters (golangci-lint if available, otherwise go vet)
+## lint: Run golangci-lint across LINT_MODULES (see the note there: not yet all four)
 lint:
 	@echo "$(CYAN)$(BOLD)→ Running linters...$(RESET)"
 	@GOLANGCI_LINT_BIN=$$(command -v golangci-lint 2>/dev/null || echo "$$HOME/go/bin/golangci-lint"); \
-	if [ -x "$$GOLANGCI_LINT_BIN" ]; then \
-		if $$GOLANGCI_LINT_BIN run --timeout=5m ./...; then \
-			echo "$(GREEN)✓ Linting complete$(RESET)"; \
-		else \
-			echo "$(RED)$(BOLD)✗ Linting failed with errors$(RESET)"; \
-			exit 1; \
-		fi \
-	else \
+	if [ ! -x "$$GOLANGCI_LINT_BIN" ]; then \
 		echo "$(RED)✗ golangci-lint is required but not installed$(RESET)"; \
 		echo "$(YELLOW)  Install with: make install-tools$(RESET)"; \
-		echo "$(YELLOW)  Or run: go install github.com/golangci/golangci-lint/cmd/golangci-lint@latest$(RESET)"; \
 		exit 1; \
-	fi
+	fi; \
+	for m in $(LINT_MODULES); do \
+		echo "$(CYAN)  → golangci-lint ($$m)$(RESET)"; \
+		if ! ( cd "$$m" && $$GOLANGCI_LINT_BIN run --timeout=10m ); then \
+			echo "$(RED)$(BOLD)✗ Linting failed in $$m$(RESET)"; \
+			exit 1; \
+		fi; \
+	done; \
+	echo "$(GREEN)✓ Linting complete ($(LINT_MODULES))$(RESET)"
 
 # gosec exclusions (documented):
 #   G103: unsafe calls - required for HID ioctls and protobuf generated code

@@ -121,7 +121,7 @@ func (w *workflow) poll(ctx context.Context, condition pollCondition) error {
 		case <-deadline:
 			return errors.NewTimeout("workflow.poll", "poll timeout exceeded")
 		case <-ticker.C:
-			// continue polling
+			// Next tick: loop round and poll again.
 		}
 	}
 }

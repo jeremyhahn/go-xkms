@@ -18,7 +18,7 @@ import (
 	"go/ast"
 	"go/parser"
 	"go/token"
-	"io/fs"
+	"os"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -33,34 +33,47 @@ const implPackageDir = "../../../../pkg/api/transport/usb"
 
 // exportedErrorNames parses dir and returns every exported package-level
 // error sentinel it declares.
+//
+// Every non-test .go file is parsed regardless of build tags, which is the
+// point: a consumer of this SDK must be able to reach an error whatever tags
+// the implementation file carries, so an error hidden behind a tag still has
+// to be re-exported. parser.ParseDir would also ignore tags, but it is
+// deprecated for precisely that reason, so the behaviour is spelled out here
+// rather than inherited from a call that documents it as a defect.
 func exportedErrorNames(t *testing.T, dir string) []string {
 	t.Helper()
 
-	fset := token.NewFileSet()
-	pkgs, err := parser.ParseDir(fset, dir, func(fi fs.FileInfo) bool {
-		return !strings.HasSuffix(fi.Name(), "_test.go")
-	}, 0)
+	entries, err := os.ReadDir(dir)
 	if err != nil {
-		t.Fatalf("parsing %s: %v", dir, err)
+		t.Fatalf("reading %s: %v", dir, err)
 	}
 
+	fset := token.NewFileSet()
 	var names []string
-	for _, pkg := range pkgs {
-		for _, file := range pkg.Files {
-			for _, decl := range file.Decls {
-				gen, ok := decl.(*ast.GenDecl)
-				if !ok || gen.Tok != token.VAR {
+	for _, entry := range entries {
+		fileName := entry.Name()
+		if entry.IsDir() || !strings.HasSuffix(fileName, ".go") || strings.HasSuffix(fileName, "_test.go") {
+			continue
+		}
+
+		file, err := parser.ParseFile(fset, filepath.Join(dir, fileName), nil, 0)
+		if err != nil {
+			t.Fatalf("parsing %s: %v", fileName, err)
+		}
+
+		for _, decl := range file.Decls {
+			gen, ok := decl.(*ast.GenDecl)
+			if !ok || gen.Tok != token.VAR {
+				continue
+			}
+			for _, spec := range gen.Specs {
+				vs, ok := spec.(*ast.ValueSpec)
+				if !ok {
 					continue
 				}
-				for _, spec := range gen.Specs {
-					vs, ok := spec.(*ast.ValueSpec)
-					if !ok {
-						continue
-					}
-					for _, name := range vs.Names {
-						if strings.HasPrefix(name.Name, "Err") && ast.IsExported(name.Name) {
-							names = append(names, name.Name)
-						}
+				for _, name := range vs.Names {
+					if strings.HasPrefix(name.Name, "Err") && ast.IsExported(name.Name) {
+						names = append(names, name.Name)
 					}
 				}
 			}

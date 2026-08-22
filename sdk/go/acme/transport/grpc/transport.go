@@ -986,14 +986,29 @@ func (p *connectionPool) performHealthCheck() {
 	// Remove unhealthy or expired connections.
 	healthy := make([]*pooledConnection, 0, len(p.connections))
 	for _, pc := range p.connections {
-		if p.isConnectionHealthy(pc) && !pc.inUse.Load() {
+		switch {
+		case pc.inUse.Load():
+			// Kept even when unhealthy: closing a connection that is leased
+			// out would fail the request its holder is making.
+			//
+			// Be precise about the reach of that, because inUse is a bool and
+			// a bool cannot count borrowers. It protects a connection that was
+			// acquired EXCLUSIVELY -- the CompareAndSwap path in Get. It does
+			// NOT protect Get's saturated fallback, which hands back an
+			// already-leased connection without recording the extra borrower;
+			// the first Put then clears the flag for everyone, and this branch
+			// stops applying while a second caller is still mid-request. That
+			// is a pre-existing defect in the pool's lease accounting rather
+			// than of this switch, and is tracked separately as go-xkms#104.
+			// This code preserves the previous behaviour exactly; it does not
+			// widen or narrow it.
 			healthy = append(healthy, pc)
-		} else if !pc.inUse.Load() {
-			// Close unhealthy connection.
+		case p.isConnectionHealthy(pc):
+			healthy = append(healthy, pc)
+		default:
+			// Not leased and not healthy, and it will not recover: close it
+			// and let the pool refill below.
 			_ = pc.conn.Close()
-		} else {
-			// Keep in-use connections even if unhealthy.
-			healthy = append(healthy, pc)
 		}
 	}
 	p.connections = healthy
