@@ -17,6 +17,7 @@ import (
 	"context"
 	"crypto"
 	"crypto/aes"
+	"crypto/cipher"
 	"crypto/rand"
 	"crypto/rsa"
 	"errors"
@@ -236,10 +237,29 @@ func TestUnwrapAESCBCPad_FailureModesAreIndistinguishable(t *testing.T) {
 	store, attrs := newAESWrappingBackend(t)
 	ctx := context.Background()
 
-	badPadding := make([]byte, aesCBCIVSize+2*aes.BlockSize)
-	_, err := rand.Read(badPadding)
+	// A blob whose decryption is DETERMINISTICALLY badly padded.
+	//
+	// This used to be random bytes, which decrypt to random plaintext -- and
+	// random plaintext carries VALID PKCS#7 padding whenever its last byte n
+	// lands in 1..16 and the final n bytes all equal n. Measured over two
+	// million random blocks: 0.3896%, one in 257. So one run in 257 produced a
+	// blob that legitimately unwrapped and failed this test, which is a flake
+	// by construction rather than a defect in the code under test (#87).
+	//
+	// Encrypting a chosen plaintext removes the chance. All-zero plaintext
+	// decrypts to a last byte of 0x00, and 0 is outside the valid range 1..16,
+	// so the padding can never be accepted. The IV is fixed for the same
+	// reason the plaintext is: this blob exists only to be rejected, and a
+	// random one buys nothing but the flake.
+	kek, err := aes.NewCipher(rawKeyBytes(t, store, attrs))
 	require.NoError(t, err)
 
+	badPadding := make([]byte, aesCBCIVSize+2*aes.BlockSize)
+	cipher.NewCBCEncrypter(kek, badPadding[:aesCBCIVSize]).
+		CryptBlocks(badPadding[aesCBCIVSize:], make([]byte, 2*aes.BlockSize))
+
+	// The other two fail on LENGTH, before anything is decrypted, so their
+	// contents never mattered and random bytes are fine.
 	unaligned := make([]byte, aesCBCIVSize+aes.BlockSize+3)
 	_, err = rand.Read(unaligned)
 	require.NoError(t, err)
