@@ -129,6 +129,18 @@ type Transport struct {
 	// without mu — which is precisely what a request stalled in
 	// SendAndReceive is holding. Lock order where both are held: mu then
 	// busMu, and busMu is never held across bus I/O.
+	//
+	// EVERY access to phoneUSB goes through busMu — the publish in Connect and
+	// the reads in Healthy and Conn included. Publishing under mu while
+	// clearing under busMu left the field guarded by two different mutexes,
+	// which is to say guarded by neither: a Healthy or Conn call concurrent
+	// with Close was an unsynchronised read against an unsynchronised write,
+	// and could reach IsConnected on a bus being torn down underneath it.
+	//
+	// mu is not the answer for the readers either. Request holds mu across
+	// phoneUSB.SendAndReceive, so a reader taking mu would queue behind the
+	// whole I/O timeout of an unresponsive handset — the same hostage problem
+	// Close avoids by using busMu in the first place.
 	busMu sync.Mutex
 
 	// lifecycleMu serializes Connect against Close and against another
@@ -226,10 +238,10 @@ func (t *Transport) Connect(ctx context.Context) error {
 		if err != nil {
 			return &errs.Detail{Err: transport.ErrConnectionFailed, Detail: fmt.Sprintf("%v", err)}
 		}
-		// Published under mu because Healthy and Conn read it there.
-		t.mu.Lock()
+		// Published under busMu, the single lock guarding this field.
+		t.busMu.Lock()
 		t.phoneUSB = usb
-		t.mu.Unlock()
+		t.busMu.Unlock()
 	}
 
 	if err := t.phoneUSB.Connect(ctx); err != nil {
@@ -362,20 +374,37 @@ func (t *Transport) discardPhoneUSB() {
 	}
 }
 
+// phoneBus returns the current bus transport, or nil, under busMu. The pointer
+// is copied out and the lock released before the caller touches the bus, so
+// busMu is never held across bus I/O.
+func (t *Transport) phoneBus() phoneTransport {
+	t.busMu.Lock()
+	defer t.busMu.Unlock()
+
+	return t.phoneUSB
+}
+
 // Healthy checks if the USB connection is active.
+//
+// The two fields it reads live under different locks — connected under mu,
+// phoneUSB under busMu — so it takes them in the documented order and holds
+// neither across IsConnected, which talks to the device.
 func (t *Transport) Healthy(_ context.Context) bool {
 	t.mu.Lock()
-	defer t.mu.Unlock()
+	connected := t.connected
+	t.mu.Unlock()
 
-	return t.connected && t.phoneUSB != nil && t.phoneUSB.IsConnected()
+	if !connected {
+		return false
+	}
+
+	usb := t.phoneBus()
+	return usb != nil && usb.IsConnected()
 }
 
 // Conn returns the underlying phone USB transport.
 func (t *Transport) Conn() interface{} {
-	t.mu.Lock()
-	defer t.mu.Unlock()
-
-	return t.phoneUSB
+	return t.phoneBus()
 }
 
 // Request performs a unary request/response operation over the encrypted USB

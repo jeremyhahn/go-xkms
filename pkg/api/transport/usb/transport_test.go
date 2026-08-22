@@ -10,6 +10,7 @@ import (
 	"crypto/sha256"
 	"encoding/json"
 	"errors"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -24,9 +25,14 @@ import (
 // pre-handshake identity exchange, completes the Noise XX handshake as the
 // responder, and then serves JSON-RPC requests from handler.
 type fakePhone struct {
-	connectErr  error
-	closeErr    error
-	connected   bool
+	connectErr error
+	closeErr   error
+	// connected is atomic because the real phone.USBTransport is: it holds
+	// connected and closed as atomic.Bool, so Close and IsConnected are safe
+	// to call concurrently. A fixture that models the type with a plain bool
+	// reports a data race of its own making the moment a test exercises that
+	// concurrency, and hides whether the code under test is actually correct.
+	connected   atomic.Bool
 	fingerprint []byte // nil replies "unknown device" to the identity exchange
 	handler     func(*phone.Request) *phone.Response
 
@@ -36,20 +42,29 @@ type fakePhone struct {
 	sendErr   error
 }
 
+// newFakePhone builds a fake in the given connection state. A constructor is
+// required rather than a struct literal because connected is an atomic.Bool,
+// which cannot be set in one.
+func newFakePhone(connected bool, closeErr error) *fakePhone {
+	f := &fakePhone{closeErr: closeErr}
+	f.connected.Store(connected)
+	return f
+}
+
 func (f *fakePhone) Connect(_ context.Context) error {
 	if f.connectErr != nil {
 		return f.connectErr
 	}
-	f.connected = true
+	f.connected.Store(true)
 	return nil
 }
 
 func (f *fakePhone) Close() error {
-	f.connected = false
+	f.connected.Store(false)
 	return f.closeErr
 }
 
-func (f *fakePhone) IsConnected() bool { return f.connected }
+func (f *fakePhone) IsConnected() bool { return f.connected.Load() }
 
 func (f *fakePhone) Send(_ context.Context, message []byte) error {
 	if f.sendErr != nil {
@@ -213,7 +228,7 @@ func TestConnectWithoutNoiseConfig(t *testing.T) {
 	err = tr.Connect(context.Background())
 	require.ErrorIs(t, err, ErrNoiseNotConfigured)
 	assert.False(t, tr.connected)
-	assert.False(t, fake.connected, "the bus must not be opened without pairing keys")
+	assert.False(t, fake.connected.Load(), "the bus must not be opened without pairing keys")
 }
 
 func TestConnectWithInvalidPrivateKey(t *testing.T) {
@@ -310,7 +325,7 @@ func TestCloseClearsSession(t *testing.T) {
 func TestCloseWithPhoneUSBError(t *testing.T) {
 	tr, err := New()
 	require.NoError(t, err)
-	tr.phoneUSB = &fakePhone{connected: true, closeErr: errors.New("close failed")}
+	tr.phoneUSB = newFakePhone(true, errors.New("close failed"))
 	tr.connected = true
 	err = tr.Close()
 	require.Error(t, err)
@@ -333,7 +348,7 @@ func TestHealthyConnectedButNilPhoneUSB(t *testing.T) {
 func TestHealthyConnectedButPhoneUSBDisconnected(t *testing.T) {
 	tr, err := New()
 	require.NoError(t, err)
-	tr.phoneUSB = &fakePhone{connected: false}
+	tr.phoneUSB = newFakePhone(false, nil)
 	tr.connected = true
 	assert.False(t, tr.Healthy(context.Background()))
 }
@@ -347,7 +362,7 @@ func TestConnNotConnected(t *testing.T) {
 func TestConnWithPhoneUSB(t *testing.T) {
 	tr, err := New()
 	require.NoError(t, err)
-	fake := &fakePhone{connected: true}
+	fake := newFakePhone(true, nil)
 	tr.phoneUSB = fake
 	assert.Equal(t, fake, tr.Conn())
 }
@@ -364,7 +379,7 @@ func TestRequestNotConnected(t *testing.T) {
 func TestRequestWithoutSession(t *testing.T) {
 	tr, err := New()
 	require.NoError(t, err)
-	tr.phoneUSB = &fakePhone{connected: true}
+	tr.phoneUSB = newFakePhone(true, nil)
 	tr.connected = true
 	err = tr.Request(context.Background(), "test", nil, nil)
 	require.ErrorIs(t, err, ErrNotConnected)

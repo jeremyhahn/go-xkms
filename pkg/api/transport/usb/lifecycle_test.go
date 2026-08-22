@@ -266,7 +266,7 @@ type terminalPhone struct {
 
 func (p *terminalPhone) Close() error {
 	p.closed = true
-	p.connected = false
+	p.connected.Store(false)
 	return nil
 }
 
@@ -274,7 +274,7 @@ func (p *terminalPhone) Connect(context.Context) error {
 	if p.closed {
 		return errors.New("usb accessory closed; this instance cannot reconnect")
 	}
-	p.connected = true
+	p.connected.Store(true)
 	return nil
 }
 
@@ -356,7 +356,7 @@ func (p *stalledPhone) SendAndReceive(ctx context.Context, message []byte) ([]by
 func (p *stalledPhone) Close() error {
 	p.once.Do(func() { close(p.entered) })
 	close(p.release)
-	p.connected = false
+	p.connected.Store(false)
 	return nil
 }
 
