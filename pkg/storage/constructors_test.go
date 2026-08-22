@@ -118,3 +118,61 @@ func TestNewPebble_InvalidPath(t *testing.T) {
 	_, err := NewPebble("")
 	require.Error(t, err)
 }
+
+// The CAS gap measured at the PUBLIC layer, which is where the finding on
+// PR #74 says the contract is read -- and it is right that this is the layer
+// that matters. pkg/storage/qrdb has its own characterization tests; this one
+// exists because a caller reads Backend and these constructors, not the
+// package underneath them.
+//
+// It pins the deviation as DOCUMENTED behaviour rather than leaving the
+// interface comment as the only record. Making these constructors satisfy the
+// contract instead is go-xkms#61, blocked on go-qrdb#62 pending an owner
+// ruling on the standalone-mode transaction service; building a local
+// compare-and-swap here instead is explicitly out of scope.
+//
+// EXPECTED TO FAIL when #61 lands. That is the point: the failure is what
+// forces the contract note above to be removed rather than left to rot.
+func TestPublicConstructors_CASUnavailableUntilIssue61(t *testing.T) {
+	backends := []struct {
+		name string
+		open func(t *testing.T) (Backend, error)
+	}{
+		{"file", func(t *testing.T) (Backend, error) { return NewFile(t.TempDir()) }},
+		{"pebble", func(t *testing.T) (Backend, error) { return NewPebble(t.TempDir()) }},
+	}
+
+	for _, tc := range backends {
+		t.Run(tc.name, func(t *testing.T) {
+			b, err := tc.open(t)
+			if err != nil {
+				t.Fatalf("%s: %v", tc.name, err)
+			}
+			t.Cleanup(func() {
+				if err := b.Close(); err != nil {
+					t.Errorf("close: %v", err)
+				}
+			})
+
+			ctx := context.Background()
+
+			// Plain writes work, which is what makes the gap a trap rather
+			// than an outage: the store looks healthy.
+			if err := b.Put(ctx, "k", []byte("v")); err != nil {
+				t.Fatalf("Put: %v", err)
+			}
+
+			stored, err := b.PutIfAbsent(ctx, "cas-probe", []byte("v"))
+			if err == nil {
+				t.Fatalf("PutIfAbsent succeeded (stored=%t): the transaction service is "+
+					"wired now, so the limitation documented on these constructors and on "+
+					"the Backend contract must be removed -- see #61", stored)
+			}
+			// An error is NOT stored=false. A caller that conflated them would
+			// read "the key was already present" and skip its own write.
+			if stored {
+				t.Error("a failed PutIfAbsent reported stored=true")
+			}
+		})
+	}
+}

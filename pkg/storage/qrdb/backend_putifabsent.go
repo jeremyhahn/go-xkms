@@ -27,6 +27,17 @@ import (
 // caller injects a hand-rolled KVClient lacking that capability.
 var ErrTransactionsUnsupported = errors.New("qrdb: client does not support compare-and-swap transactions")
 
+// NOT AVAILABLE FROM THE EMBEDDED CONSTRUCTORS. This is a transaction, and the
+// embedded transport built by newEmbedded wires no transaction service, so it
+// fails for memory, file and pebble alike with "embedded: TransactionServicer
+// must not be nil" (#61, blocked on go-qrdb#62). Measured 2026-08-21 against
+// go-qrdb v0.9.0-alpha through the constructors themselves; see
+// factory_cas_characterization_test.go.
+//
+// A caller cannot ask a Backend whether the operation is available; that needs
+// a capability on the interface and is an owner decision (#29). Until then the
+// constructor doc in factory.go is the reference.
+//
 // PutIfAbsent atomically stores value at key only if key is absent, using a
 // QRDB compare-and-swap transaction applied through Raft consensus. The
 // precondition "key version == 0" holds exactly when the key has never been

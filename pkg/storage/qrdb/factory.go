@@ -23,9 +23,47 @@ import (
 	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
 )
 
+// COMPARE-AND-SWAP IS NOT AVAILABLE FROM ANY CONSTRUCTOR BELOW.
+//
+// Backend advertises PutIfAbsent and CompareAndSwap, but no embedded
+// constructor here supports them. Measured 2026-08-21 against go-qrdb
+// v0.9.0-alpha, through these exact constructors
+// (factory_cas_characterization_test.go):
+//
+//	memory  ->  embedded: TransactionServicer must not be nil
+//	file    ->  embedded: TransactionServicer must not be nil
+//	pebble  ->  embedded: TransactionServicer must not be nil
+//
+// The behaviour is UNIFORM, and that uniformity is the point: the request
+// never reaches a storage engine, so there is no per-backend capability
+// difference to route around. Plain Put/Get is unaffected on all three, which
+// is what makes this a trap -- a caller sees a working store and only
+// discovers the gap on the path that needs the operation.
+//
+// The cause is in newEmbedded below: it builds its transport with
+// embedded.New(kvSvc, adminSvc) and no transaction service. That is issue #61,
+// blocked on go-qrdb#62.
+//
+// What this note deliberately does NOT say is what happens after #61 is fixed.
+// An earlier revision published a file-vs-memory capability matrix derived
+// from qrdb's pkg/server/lifecycle.NewLocalEngine, which selects a KVEngine or
+// an MVCCEngine from the backend type. These constructors do not use that path
+// -- newEmbedded passes the storage straight to NewFastStateMachine -- so the
+// matrix described something else and would have had callers avoiding NewFile
+// for a reason that does not apply to it. Reading the current source, qrdb's
+// FastStateMachine.handleTransaction also requires an MVCC store supplied via
+// WithMVCCStore, and newEmbedded passes no options, so a transaction service
+// alone may not be sufficient either. Whatever the answer turns out to be, it
+// gets measured through these constructors before it is written down here.
+//
+// A caller cannot currently ask a Backend which operations it supports; that
+// needs a capability on the interface and is an owner decision (#29).
+
 // NewMemory creates an embedded in-memory backend. The entire QRDB stack
 // (storage, state machine, services, transport, and SDK client) is
 // initialized in-process. Close() tears down all resources.
+//
+// Does not support compare-and-swap; see the note above these constructors.
 func NewMemory() (*Backend, error) {
 	store := qrdbsdk.NewMemoryStorage()
 	return newEmbedded(store, "memory")
@@ -35,6 +73,10 @@ func NewMemory() (*Backend, error) {
 // key-value pair is stored as a separate file under the directory. The
 // entire QRDB stack is initialized in-process. Close() tears down all
 // resources.
+//
+// Does not support compare-and-swap; see the note above these constructors.
+// It is no worse off than NewMemory or NewPebble in this respect -- all three
+// fail identically.
 func NewFile(path string) (*Backend, error) {
 	store, err := qrdbsdk.NewFileStorage(path)
 	if err != nil {
@@ -47,6 +89,8 @@ func NewFile(path string) (*Backend, error) {
 // a test-optimized PebbleDB configuration suitable for lightweight embedded
 // usage. The entire QRDB stack is initialized in-process. Close() tears
 // down all resources.
+//
+// Does not support compare-and-swap; see the note above these constructors.
 func NewPebble(path string) (*Backend, error) {
 	cfg := qrdbsdk.TestPebbleConfig(path)
 	store, err := qrdbsdk.NewPebbleStorage(cfg)

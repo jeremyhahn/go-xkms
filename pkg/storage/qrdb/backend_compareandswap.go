@@ -19,6 +19,9 @@ import (
 	"github.com/jeremyhahn/go-qrdb/sdk/go/transport"
 )
 
+// NOT SUPPORTED BY EVERY BACKEND -- same two refusal layers as PutIfAbsent;
+// see the note there and the constructor doc in factory.go.
+//
 // CompareAndSwap atomically stores new at key only if the current value equals
 // expected (or, when expected is nil, only if the key is absent), using a QRDB
 // compare-and-swap transaction applied through Raft consensus. This is the same

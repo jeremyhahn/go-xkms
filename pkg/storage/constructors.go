@@ -21,10 +21,31 @@ func init() {
 	qrdb.SetNotFoundError(ErrNotFound)
 }
 
+// COMPARE-AND-SWAP IS NOT AVAILABLE FROM THE EMBEDDED CONSTRUCTORS BELOW.
+//
+// NewFile and NewPebble return a Backend, and the Backend contract says
+// PutIfAbsent atomically stores the value. These implementations do not
+// satisfy that today: the embedded QRDB transport is built without a
+// transaction service, so PutIfAbsent and CompareAndSwap fail with
+// "embedded: TransactionServicer must not be nil" -- uniformly, for memory,
+// file and pebble alike. Plain Get/Put/Delete are unaffected.
+//
+// This warning is repeated here rather than left on pkg/storage/qrdb because
+// THIS is the layer callers use: pkg/server/backend_factory.go selects a
+// backend through these constructors, and a caller reading the Backend
+// interface has no reason to look further down. Documenting only the internal
+// layer leaves the advertised contract misleading at the point of use.
+//
+// Tracked as #61, blocked on go-qrdb#62. Measured behaviour is pinned by
+// pkg/storage/qrdb/factory_cas_characterization_test.go, which fails when the
+// transaction service is finally wired so this note cannot outlive it.
+
 // NewFile creates a file-based storage backend at the given path.
 // Delegates to the go-qrdb embedded file engine. Each key-value pair is
 // stored as a separate file under the directory. The entire QRDB stack
 // is initialized in-process. Close() tears down all resources.
+//
+// Does not support compare-and-swap; see the note above.
 func NewFile(path string) (Backend, error) {
 	backend, err := qrdb.NewFile(path)
 	if err != nil {
