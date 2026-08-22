@@ -16,6 +16,7 @@ package phone
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"log/slog"
 	"net"
 	"sync"
@@ -268,6 +269,29 @@ func TestTCPPairingServer_RemoteKeyMismatchAbortsHandshake(t *testing.T) {
 // TestTCPPairingServer_MidStreamTransportFailure verifies a request issued
 // after the peer disappears surfaces a connection error instead of hanging or
 // returning a bogus response.
+//
+// It used to assert ErrNotConnected on the FIRST request after the peer went
+// away, which is not a property the test can rely on (#85). That error is
+// produced by classifyReadError, and only for io.EOF:
+//
+//	EOF / ErrUnexpectedEOF -> ErrNotConnected
+//	any other read error   -> ErrConnectionFailed
+//
+// Whether a closing peer produces a clean FIN (read returns EOF) or an RST
+// (read returns ECONNRESET) is decided by the kernel and the timing of the
+// teardown, not by anything this test controls -- so on a loaded runner the
+// first call could legitimately come back ErrConnectionFailed and fail an
+// assertion about a contract that was never broken.
+//
+// Both errors mean the same thing to a caller, and that IS the contract worth
+// asserting: the request failed, promptly, because the peer is gone.
+//
+// The specific ErrNotConnected contract is then asserted where it is
+// deterministic. classifyReadError and handleWriteError both clear the
+// transport's connected flag, so the first failure is itself the state
+// transition -- every request after it is refused by Send's own check before
+// any I/O. No polling and no sleep: the ordering is established by the
+// preceding call, not waited for.
 func TestTCPPairingServer_MidStreamTransportFailure(t *testing.T) {
 	t.Parallel()
 
@@ -280,9 +304,23 @@ func TestTCPPairingServer_MidStreamTransportFailure(t *testing.T) {
 
 	require.NoError(t, srv.Stop())
 
-	err := backend.Ping(ctx)
-	require.Error(t, err)
-	assert.ErrorIs(t, err, ErrNotConnected)
+	// A deadline short enough that a Ping which HANGS on a dead peer fails
+	// here, which is the "instead of hanging" half of what this test claims.
+	failFast, cancelFailFast := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancelFailFast()
+
+	err := backend.Ping(failFast)
+	require.Error(t, err, "a request after the peer disappeared must fail")
+	require.NotErrorIs(t, err, context.DeadlineExceeded,
+		"the request hung on a dead peer instead of failing")
+	require.True(t,
+		errors.Is(err, ErrNotConnected) || errors.Is(err, ErrConnectionFailed),
+		"want a connection-failure error (FIN gives ErrNotConnected, RST gives "+
+			"ErrConnectionFailed; the peer decides which), got %v", err)
+
+	// The call above cleared the transport's connected flag, so this one is
+	// refused before any I/O and cannot depend on how the socket died.
+	assert.ErrorIs(t, backend.Ping(failFast), ErrNotConnected)
 }
 
 // TestTCPPairingServer_PhoneErrorResponseIsMapped verifies a JSON-RPC error
