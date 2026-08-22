@@ -924,11 +924,36 @@ func TestTCPPairingServer_StopReleasesGeneratedKey(t *testing.T) {
 	if !srv.ownsStaticKey {
 		t.Fatal("server generated its own key but did not claim ownership")
 	}
+
+	// Hold a reference to the key itself, not just to the field. Asserting
+	// srv.localStaticKey == nil after Stop only proves the POINTER was
+	// cleared, which a Stop that dropped the reference without destroying the
+	// key would satisfy while leaking a locked page for the life of the
+	// process. The observable property is the wipe, and it is only observable
+	// through a reference taken beforehand.
+	generated := srv.localStaticKey
+	if generated == nil {
+		t.Fatal("server claimed ownership of a nil key")
+	}
+	if len(generated.Private) != NoiseKeySize {
+		t.Fatalf("generated key private half is %d bytes, want %d",
+			len(generated.Private), NoiseKeySize)
+	}
+
 	if err := srv.Start(); err != nil {
 		t.Fatalf("Start: %v", err)
 	}
 	if err := srv.Stop(); err != nil {
 		t.Fatalf("Stop: %v", err)
+	}
+
+	if len(generated.Private) != 0 {
+		t.Fatalf("Stop left the generated key resident: private half is %d bytes",
+			len(generated.Private))
+	}
+	if len(generated.Public) != 0 {
+		t.Fatalf("Stop left the generated key pair populated: public half is %d bytes",
+			len(generated.Public))
 	}
 	if srv.localStaticKey != nil {
 		t.Fatal("Stop left the generated key in place")

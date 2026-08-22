@@ -18,6 +18,9 @@ package phone
 import (
 	"context"
 	"errors"
+	"runtime"
+	"strings"
+	"sync"
 	"testing"
 	"time"
 )
@@ -35,17 +38,24 @@ func shrinkPeripheralTimeout(t *testing.T, d time.Duration) {
 // enterConnection registers on connWG the way AcceptConnection does — the
 // closed check and the Add paired under lifeMu — and returns the function
 // that retires it. Not retiring it is how this test holds Stop open.
+// enterConnection puts a connection into the drain set through the PRODUCTION
+// registration, and returns its matching Done.
+//
+// It delegates to registerConnection rather than repeating the lock/check/Add
+// sequence. The hand-rolled copy this replaces meant the drain tests were
+// exercising the copy, not the code: moving the production connWG.Add out
+// from under lifeMu would restore the Add-after-Wait hazard -- Stop freeing
+// the static key while a live connection still reads those pages -- and every
+// drain test would have kept passing (#40).
+//
+// AcceptConnection cannot be used directly here: it blocks waiting for a real
+// phone. registerConnection is the part of it under test.
 func enterConnection(t *testing.T, p *BLEPeripheral) func() {
 	t.Helper()
 
-	p.lifeMu.Lock()
-	if p.closed.Load() {
-		p.lifeMu.Unlock()
-		t.Fatal("peripheral already closed")
+	if err := p.registerConnection(); err != nil {
+		t.Fatalf("registerConnection: %v", err)
 	}
-	p.connWG.Add(1)
-	p.lifeMu.Unlock()
-
 	return func() { p.connWG.Done() }
 }
 
@@ -220,4 +230,129 @@ func TestStopClearsTheAdvertisement(t *testing.T) {
 	if err := p.Start(context.Background()); !errors.Is(err, ErrBackendClosed) {
 		t.Fatalf("Start after Stop returned %v, want ErrBackendClosed", err)
 	}
+}
+
+// The hazard #40 names: "moving the production connWG.Add out from under
+// lifeMu would restore the Add-after-Wait and key-release hazard while every
+// drain test kept passing."
+//
+// It kept passing because that move is a RACE WINDOW, not a deterministic
+// failure — no existing test schedules the interleaving that exposes it. This
+// one forces it: park a registration between the closed check and the Add,
+// then run Stop and require that it CANNOT complete while parked.
+//
+// With the check and the Add under one lock, Stop blocks on lifeMu and the
+// assertion holds. Move the Add out from under lifeMu and Stop sails past,
+// reaches Wait before the Add lands, and frees the static key while a
+// connection is still registering — which is precisely an Add after Wait.
+func TestRegistrationAndStopCannotInterleave(t *testing.T) {
+	shrinkPeripheralTimeout(t, 100*time.Millisecond)
+	p := newTestPeripheral(t, &echoHandler{}, newCaptureWriter())
+
+	parked := make(chan struct{})
+	release := make(chan struct{})
+
+	// Per-peripheral seam, set before anything can reach registerConnection.
+	var once sync.Once
+	p.registerGate = func() {
+		once.Do(func() {
+			close(parked)
+			<-release
+		})
+	}
+
+	registered := make(chan error, 1)
+	go func() { registered <- p.registerConnection() }()
+
+	select {
+	case <-parked:
+	case <-time.After(5 * time.Second):
+		t.Fatal("registration never reached the gate")
+	}
+
+	stopped := make(chan error, 1)
+	go func() { stopped <- p.Stop() }()
+
+	// Prove Stop is BLOCKED, rather than inferring it from a timeout. A
+	// deadline only says "it has not finished yet", which is equally true of a
+	// goroutine the scheduler has not run at all -- so a broken build with the
+	// Add outside lifeMu would pass by never being scheduled. stop() takes
+	// lifeMu as its first act, so a goroutine parked in the mutex acquire
+	// inside stop is positive evidence: it reached the contested step and
+	// cannot get past the registration holding the lock.
+	requireStopParkedOnLifeMu(t, stopped)
+
+	close(release)
+
+	if err := <-registered; err != nil {
+		t.Fatalf("registerConnection: %v", err)
+	}
+	p.connWG.Done()
+
+	// And the shutdown itself has to SUCCEED. Discarding this error let the
+	// test pass on an ErrShutdownIncomplete, which is a Stop that did not
+	// finish reported as one that did -- the exact class of bug this file
+	// exists to catch.
+	select {
+	case err := <-stopped:
+		if err != nil {
+			t.Fatalf("Stop: %v", err)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("Stop never returned after the connection drained")
+	}
+}
+
+// requireStopParkedOnLifeMu blocks until a goroutine is parked acquiring a
+// mutex inside BLEPeripheral.stop, and fails if Stop returns first or if it
+// never gets there.
+//
+// Reading goroutine stacks is unusual in a test and is the point: the property
+// under test is "this goroutine cannot proceed", and no channel the production
+// code does not already have can report a goroutine blocked on a mutex.
+func requireStopParkedOnLifeMu(t *testing.T, stopped <-chan error) {
+	t.Helper()
+
+	deadline := time.Now().Add(5 * time.Second)
+	for {
+		select {
+		case err := <-stopped:
+			t.Fatalf("Stop completed (err=%v) while a registration was between "+
+				"the closed check and the Add: the two are not under one lock, so "+
+				"Stop can Wait before the Add lands and free the key under a live "+
+				"connection", err)
+		default:
+		}
+
+		if goroutineParkedInStop() {
+			return
+		}
+		if time.Now().After(deadline) {
+			t.Fatal("Stop never reached the lifeMu acquisition in stop(); the test " +
+				"proved nothing about the lock")
+		}
+		runtime.Gosched()
+	}
+}
+
+// goroutineParkedInStop reports whether some goroutine is blocked acquiring a
+// mutex inside BLEPeripheral.stop.
+func goroutineParkedInStop() bool {
+	buf := make([]byte, 64*1024)
+	for {
+		n := runtime.Stack(buf, true)
+		if n < len(buf) {
+			buf = buf[:n]
+			break
+		}
+		buf = make([]byte, 2*len(buf))
+	}
+
+	for _, g := range strings.Split(string(buf), "\n\ngoroutine ") {
+		if strings.Contains(g, "(*BLEPeripheral).stop(") &&
+			strings.Contains(g, "sync.(*Mutex).Lock(") {
+			return true
+		}
+	}
+	return false
 }

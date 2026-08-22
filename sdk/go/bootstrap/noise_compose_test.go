@@ -15,7 +15,10 @@ package bootstrap
 
 import (
 	"bytes"
+	"context"
+	"net"
 	"testing"
+	"time"
 	"unsafe"
 )
 
@@ -90,4 +93,69 @@ func TestSDKNoiseSurfaceComposes(t *testing.T) {
 			t.Fatalf("WipeNoiseBytes left byte %d set to %#x", i, b)
 		}
 	}
+
+	// 5. RUN THE SERVER. Everything above composes the pieces; only this
+	//    proves the composed thing works. Constructing a config and stopping
+	//    there is the assertion that survives deleting the server lifecycle
+	//    from the SDK surface entirely (#40) -- NewNoiseServer, Start, Addr
+	//    and Stop are all re-exports, and a re-export that nobody calls is
+	//    exactly the half that goes missing without anything failing.
+	srv, err := NewNoiseServer(&NoiseServerConfig{
+		ListenAddr: "127.0.0.1:0",
+		StaticKey:  NoiseServerStaticKey(key),
+		CABundler:  staticBundler{bundle: []byte("test-ca-bundle")},
+	})
+	if err != nil {
+		t.Fatalf("NewNoiseServer: %v", err)
+	}
+	if err := srv.Start(); err != nil {
+		t.Fatalf("Start: %v", err)
+	}
+	// Registered IMMEDIATELY, before any assertion that can call t.Fatal.
+	// Every check between here and the explicit Stop below is a path that
+	// would otherwise leave a listener bound and its goroutines running, to
+	// be inherited by whatever test ran next. Stop reports ErrServerNotStarted
+	// on the second call rather than panicking, so this is safe alongside the
+	// explicit Stop that the test still asserts on.
+	t.Cleanup(func() {
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		_ = srv.Stop(ctx)
+	})
+
+	addr := srv.Addr()
+	if addr == nil {
+		t.Fatal("Start returned but the server is not listening")
+	}
+	// A bound port is the observable difference between "started" and
+	// "constructed"; a config alone has none.
+	if _, port, splitErr := net.SplitHostPort(addr.String()); splitErr != nil || port == "" || port == "0" {
+		t.Fatalf("server did not bind a real port: addr=%v err=%v", addr, splitErr)
+	}
+
+	// The listener has to actually accept, or "listening" is only a field.
+	conn, err := net.DialTimeout("tcp", addr.String(), 5*time.Second)
+	if err != nil {
+		t.Fatalf("the started server refused a connection: %v", err)
+	}
+	_ = conn.Close()
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	if err := srv.Stop(ctx); err != nil {
+		t.Fatalf("Stop: %v", err)
+	}
+
+	// And Stop has to release the port, or shutdown is cosmetic. On the
+	// unexpected success the connection is still closed: a test that proves a
+	// leak by leaking is not an improvement.
+	if leaked, err := net.DialTimeout("tcp", addr.String(), 250*time.Millisecond); err == nil {
+		_ = leaked.Close()
+		t.Fatal("the server still accepts connections after Stop")
+	}
 }
+
+// staticBundler is the smallest BundleProvider that satisfies the server.
+type staticBundler struct{ bundle []byte }
+
+func (b staticBundler) CABundle() ([]byte, error) { return b.bundle, nil }

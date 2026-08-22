@@ -143,6 +143,22 @@ type BLEPeripheral struct {
 	lifeMu sync.Mutex
 	connWG sync.WaitGroup
 
+	// registerGate is nil in production and never set outside a test.
+	//
+	// It exists so a test can stop time between the closed check and the Add
+	// and let a Stop race that window, which is the ONLY way to observe
+	// whether the two are genuinely one step: with lifeMu held across both, a
+	// Stop is parked acquiring it and cannot make progress. Moving the Add out
+	// from under lifeMu is otherwise a silent race that no drain test happens
+	// to schedule (#40).
+	//
+	// Per-peripheral rather than a package global so it affects only the
+	// peripheral a test owns, cannot be reassigned underneath a concurrent
+	// test, and cannot block every peripheral in the process. It is written
+	// once at construction time, before any goroutine can reach
+	// registerConnection, and only read afterwards.
+	registerGate func()
+
 	// connJoiner bounds Stop's wait on connWG with a single waiter goroutine.
 	connJoiner lifecycle.Joiner
 
@@ -475,6 +491,53 @@ func (p *BLEPeripheral) handleWrite(data []byte) {
 	}
 }
 
+// registerConnection admits a connection into the drain set, or refuses it
+// because the peripheral is stopping.
+//
+// The check and the registration are ONE STEP under lifeMu, and that is the
+// whole point: a connection that takes the lock after Stop sees closed and
+// never registers, and one that takes it before has registered by the time
+// Stop reaches Wait. Splitting them -- or moving the Add out from under
+// lifeMu -- restores an Add-after-Wait, and with it a Stop that frees the
+// static key while a live connection is still reading those pages.
+//
+// It exists as its own method so tests can enter the drain set through the
+// PRODUCTION path. A test that hand-rolls the same three lines keeps passing
+// when this sequence is broken, because it is no longer testing this
+// sequence; that is exactly what it was doing before (#40).
+//
+// The caller owns the matching connWG.Done.
+func (p *BLEPeripheral) registerConnection() error {
+	p.lifeMu.Lock()
+	defer p.lifeMu.Unlock()
+
+	if p.closed.Load() {
+		return ErrBLEPeripheralStopped
+	}
+	p.addPendingConnection()
+	return nil
+}
+
+// addPendingConnection registers one in-flight connection on connWG.
+//
+// It exists so the test seam fires at the ADD, inseparably from it, rather
+// than merely somewhere inside registerConnection. That distinction is the
+// whole value of the seam: an earlier version called the gate a few lines
+// above the Add, so a regression that released lifeMu BETWEEN them still
+// looked correct -- the gate observed the lock held, and the Add then ran
+// outside it. Verified: that mutant passed the race test three times out of
+// three, under -race.
+//
+// The caller must hold lifeMu. The Add and the closed check have to be one
+// atomic step against Stop (see lifeMu), and an Add that lands after Stop's
+// Wait is the key-release hazard this whole path exists to prevent.
+func (p *BLEPeripheral) addPendingConnection() {
+	if p.registerGate != nil {
+		p.registerGate()
+	}
+	p.connWG.Add(1)
+}
+
 // AcceptConnection waits for and handles a client connection.
 // This should be called in a loop to handle multiple connections.
 func (p *BLEPeripheral) AcceptConnection(ctx context.Context) error {
@@ -482,18 +545,9 @@ func (p *BLEPeripheral) AcceptConnection(ctx context.Context) error {
 	p.acceptMu.Lock()
 	defer p.acceptMu.Unlock()
 
-	// Register before doing anything, so Stop cannot decide the peripheral is
-	// idle and free the static key out from under this connection. The check
-	// and the registration are one step under lifeMu: a connection that gets
-	// the lock after Stop sees closed and never registers, and one that gets
-	// it before has registered by the time Stop reaches Wait.
-	p.lifeMu.Lock()
-	if p.closed.Load() {
-		p.lifeMu.Unlock()
-		return ErrBLEPeripheralStopped
+	if err := p.registerConnection(); err != nil {
+		return err
 	}
-	p.connWG.Add(1)
-	p.lifeMu.Unlock()
 	defer p.connWG.Done()
 
 	p.log.Info("waiting for phone connection...")
