@@ -590,6 +590,60 @@ jobs:
             go build -tags="${TAGS}" -o build/${{ matrix.output }} ./cmd/${{ matrix.binary }}
           fi
 
+      # The acme-client GUI is a product surface (Wails desktop,
+      # conventions/frontend.md), and NOTHING in this workflow compiled it: its
+      # two source files sit behind `//go:build gui`, and a build tag no job
+      # ever passes is a directory the toolchain never opens. Both files
+      # imported go-xkms/web/packages/client, a path that stopped existing when
+      # the frontends moved under pkg/acme/web, and the repo stayed green for
+      # months while `go mod tidy` on the ROOT module failed outright with
+      # "no matching versions for query latest" (#48).
+      #
+      # So this is not a build for its own sake, it is the gate that makes the
+      # tag stop rotting. It runs on one matrix leg because the `gui` tag is
+      # orthogonal to which backend binary is being built, and building it
+      # three times would buy nothing.
+      #
+      # `-tags gui` ALONE is not enough, and the first version of this step
+      # made that mistake. Wails picks internal/app/app_default_unix.go unless
+      # one of `production`, `dev` or `bindings` is set; that fallback's
+      # CreateApp just returns "Wails applications will not build without the
+      # correct build tags" and its Run is a no-op. The build succeeded, linked
+      # neither gtk nor webkit (measured with ldd), compiled no desktop
+      # frontend package at all -- and would have produced a binary whose GUI
+      # path fails at runtime. A gate that compiles the stub in place of the
+      # product is the same defect as a tag nobody passes, one level down.
+      #
+      # So this builds what ships: production tags, CGO on, the real backend.
+      # Verified locally -- `ldd` shows libwebkit2gtk-4.1 and libgtk-3, and
+      # `go list -deps` includes wails/v2/internal/frontend/desktop.
+      #
+      # webkit2_41 is required on Ubuntu 24.04: wails defaults to the
+      # webkit2gtk-4.0 pkg-config name, which that release does not ship.
+      - name: acme-client GUI toolchain
+        if: matrix.binary == 'xkmsctl'
+        run: |
+          sudo apt-get install -y libgtk-3-dev libwebkit2gtk-4.1-dev
+
+      - name: acme-client compiles with the production GUI tags
+        if: matrix.binary == 'xkmsctl'
+        env:
+          CGO_ENABLED: 1
+        run: |
+          go build -tags "gui production webkit2_41" -o /dev/null ./cmd/acme-client
+          # `go build` ignores *_test.go entirely, so the build above cannot
+          # notice the OTHER half of this defect: an untagged test file
+          # referencing a symbol that exists only in the !gui build, which
+          # breaks `go test -tags gui` for the whole package while every build
+          # stays green. That is what acme_client_test.go was doing, and moving
+          # those three tests to gui_nogui_test.go fixed an instance rather
+          # than the class.
+          #
+          # -run '^$' compiles the test binary and runs nothing: the test
+          # package has to typecheck under these tags, which is the guarantee,
+          # without needing a display or a webview at runtime.
+          go test -run '^$' -tags "gui production webkit2_41" ./cmd/acme-client
+
       - name: Upload build artifacts
         if: github.server_url == 'https://github.com'
         uses: actions/upload-artifact@v6

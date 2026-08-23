@@ -74,38 +74,6 @@ func TestErrConfigRead_Unwrap(t *testing.T) {
 	}
 }
 
-func TestErrGUINotAvailable_Error(t *testing.T) {
-	err := ErrGUINotAvailable{}
-	msg := err.Error()
-	if msg == "" {
-		t.Error("expected non-empty error message")
-	}
-	if !strings.Contains(msg, "GUI not available") {
-		t.Errorf("expected 'GUI not available' in message: %q", msg)
-	}
-}
-
-// =============================================================================
-// hasDisplay / runGUI (no-gui build)
-// =============================================================================
-
-func TestHasDisplay_ReturnsFalse(t *testing.T) {
-	if hasDisplay() {
-		t.Error("hasDisplay should return false in no-gui build")
-	}
-}
-
-func TestRunGUI_ReturnsError(t *testing.T) {
-	err := runGUI()
-	if err == nil {
-		t.Error("runGUI should return error in no-gui build")
-	}
-	var e ErrGUINotAvailable
-	if !errors.As(err, &e) {
-		t.Errorf("expected ErrGUINotAvailable, got %T: %v", err, err)
-	}
-}
-
 // =============================================================================
 // expandPath
 // =============================================================================

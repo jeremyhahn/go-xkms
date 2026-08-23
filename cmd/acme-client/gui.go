@@ -22,7 +22,7 @@ import (
 
 	"github.com/jeremyhahn/go-xkms/pkg/acme/client/service"
 	clientgui "github.com/jeremyhahn/go-xkms/pkg/acme/gui/client"
-	clientfe "github.com/jeremyhahn/go-xkms/web/packages/client"
+	"github.com/jeremyhahn/go-xkms/pkg/acme/gui/webui"
 )
 
 // hasDisplay reports whether a graphical display environment is available.
@@ -52,7 +52,7 @@ func runGUI() error {
 	guiCfg := clientgui.DefaultGUIConfig()
 	app := clientgui.NewApp(guiCfg, svc, nil, cfg, logger)
 
-	assets, err := fs.Sub(clientfe.Assets, "dist")
+	assets, err := fs.Sub(webui.ClientAssets, "dist")
 	if err != nil {
 		return err
 	}

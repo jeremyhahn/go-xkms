@@ -30,7 +30,6 @@ import (
 	"github.com/jeremyhahn/go-xkms/pkg/acme/client/service"
 	clientapi "github.com/jeremyhahn/go-xkms/pkg/acme/gui/client/api"
 	"github.com/jeremyhahn/go-xkms/pkg/acme/gui/webui"
-	clientfe "github.com/jeremyhahn/go-xkms/web/packages/client"
 )
 
 // ErrServeConfig indicates a missing or invalid serve command configuration.
@@ -117,7 +116,7 @@ func runServe(cmd *cobra.Command, args []string) error {
 	apiBaseURL := scheme + "://localhost" + addr + "/api/v1"
 
 	// Mount client SPA at /ui/client/ using the embedded frontend assets.
-	if err := webui.RegisterSPA(router, clientfe.Assets, "/ui/client/", logger, webui.WithAPIBaseURL(apiBaseURL)); err != nil {
+	if err := webui.RegisterSPA(router, webui.ClientAssets, "/ui/client/", logger, webui.WithAPIBaseURL(apiBaseURL)); err != nil {
 		return &ErrServeStart{Detail: "mounting client SPA: " + err.Error()}
 	}
 
