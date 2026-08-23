@@ -398,6 +398,16 @@ func TestP3A_PhoneService_Unpair_EmptyName(t *testing.T) {
 }
 
 func TestP3A_PhoneService_ListDevices_NoConfigFile(t *testing.T) {
+	// "No config file" has to be something this test establishes, not
+	// something it inherits. It read whatever ~/.xkey/devices.yaml the machine
+	// held, so on a workstation with paired devices it failed for a reason
+	// unrelated to its subject, and on a fresh runner it passed for one.
+	home := isolateHome(t)
+
+	path, err := phoneConfigPath()
+	require.NoError(t, err)
+	require.NoFileExists(t, path, "isolateHome must leave %s without a device config", home)
+
 	svc := NewPhoneService()
 	devices, err := svc.ListDevices()
 	require.NoError(t, err)

@@ -25,6 +25,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -265,7 +266,7 @@ func TestPhoneService_Pair_NonEmptyAddress_NoHardware(t *testing.T) {
 // that Unpair on a connected device calls closeActiveConnectionLocked
 // and clears the connection state.
 func TestPhoneService_Unpair_ConnectedDeviceDisconnectsAndClears(t *testing.T) {
-	tmpDir := t.TempDir()
+	tmpDir := isolateHome(t)
 	require.NoError(t, os.MkdirAll(filepath.Join(tmpDir, ".xkey"), 0700))
 
 	cfg := phoneConfig{
@@ -279,17 +280,20 @@ func TestPhoneService_Unpair_ConnectedDeviceDisconnectsAndClears(t *testing.T) {
 	require.NoError(t, err)
 	require.NoError(t, os.WriteFile(filepath.Join(tmpDir, ".xkey", "phone.yaml"), data, 0600))
 
-	origHome := os.Getenv("HOME")
-	defer os.Setenv("HOME", origHome)
-	os.Setenv("HOME", tmpDir)
-
 	svc := NewPhoneService()
 	// Simulate connected state for the device being unpaired.
 	svc.connState.deviceName.Store("Pixel 9 Pro")
 	svc.connState.connected.Store(true)
 
+	// The emitter runs on the service's delivery goroutine, not on this one,
+	// so the collector needs a lock: appending from there while the assertions
+	// below read is a data race, and it went unseen because CI runs this
+	// package by name and this test is not on the list.
+	var emittedMu sync.Mutex
 	var emittedEvents []events.Event
 	svc.SetEventEmitter(func(evt events.Event) {
+		emittedMu.Lock()
+		defer emittedMu.Unlock()
 		emittedEvents = append(emittedEvents, evt)
 	})
 
@@ -302,7 +306,18 @@ func TestPhoneService_Unpair_ConnectedDeviceDisconnectsAndClears(t *testing.T) {
 	assert.Nil(t, svc.activeTransport)
 	assert.Nil(t, svc.activeSession)
 
+	// Unpair's teardown records the transition and returns; delivery to the
+	// sinks happens on the drainer goroutine. Asserting straight after Unpair
+	// was a bet on the scheduler that this test lost outright when run on its
+	// own and won only under the load of a full sequential run. Delivery is
+	// asynchronous by design — deliverNotice holds no lock precisely so a
+	// re-entrant callback cannot deadlock — so a caller that needs to observe
+	// the effect has to say so, which is what awaitNoticesDelivered is for.
+	require.True(t, svc.awaitNoticesDelivered(), "notice delivery did not drain")
+
 	// Should have a disconnect event.
+	emittedMu.Lock()
+	defer emittedMu.Unlock()
 	foundDisconnect := false
 	for _, evt := range emittedEvents {
 		if evt.Type == events.EventPhoneDisconnected {

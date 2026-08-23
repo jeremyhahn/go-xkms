@@ -518,34 +518,54 @@ func TestSurgB_PhoneService_PubKeyFP_Valid(t *testing.T) {
 }
 
 func TestSurgB_PhoneService_SaveConfig_NoError(t *testing.T) {
-	// Targets saveConfig at L1217-1229.
-	// Save then clean up to avoid polluting other tests.
+	// Targets saveConfig.
+	//
+	// This wrote the developer's real ~/.xkey/devices.yaml. Its "restore
+	// state" branch only removed the file when it did NOT exist beforehand,
+	// so on a machine with paired devices it replaced the real device list
+	// with an empty one and left it there — and seeded whatever ran next,
+	// which is the ordering dependence #102 was filed for. Its own home
+	// removes both.
+	isolateHome(t)
+
 	svc := NewPhoneService()
 	cfg := &phoneConfig{
 		Devices:       []phoneConfigDevice{},
 		DefaultDevice: "",
 	}
+
+	require.NoError(t, svc.saveConfig(cfg))
+
+	// Assert the write landed where it was meant to. Without this the test
+	// only says saveConfig returned nil.
 	path, err := phoneConfigPath()
 	require.NoError(t, err)
-
-	// Check if file existed before so we can restore state.
-	_, existedBefore := os.ReadFile(path)
-	existed := existedBefore == nil
-
-	err = svc.saveConfig(cfg)
-	assert.NoError(t, err)
-
-	// Clean up: remove file if it didn't exist before.
-	if !existed {
-		os.Remove(path)
-	}
+	require.FileExists(t, path)
 }
 
 func TestSurgB_PhoneService_LoadConfig(t *testing.T) {
-	// Targets L1200-1213: loadConfig.
+	// Targets loadConfig.
+	//
+	// This discarded its only result with "file may or may not exist" — it
+	// could not fail, because whether the machine had a devices.yaml decided
+	// what the call did. With its own home both outcomes are pinned: absent
+	// is an error, present round-trips.
+	isolateHome(t)
+
 	svc := NewPhoneService()
+
 	_, err := svc.loadConfig()
-	_ = err // File may or may not exist.
+	require.Error(t, err, "loadConfig must report a missing config rather than an empty one")
+
+	require.NoError(t, svc.saveConfig(&phoneConfig{
+		Devices:       []phoneConfigDevice{{Name: "Pixel 9", Address: "AA:BB:CC:DD:EE:FF"}},
+		DefaultDevice: "Pixel 9",
+	}))
+
+	loaded, err := svc.loadConfig()
+	require.NoError(t, err)
+	require.Len(t, loaded.Devices, 1)
+	assert.Equal(t, "Pixel 9", loaded.DefaultDevice)
 }
 
 func TestSurgB_PhoneService_PhoneConfigPath(t *testing.T) {

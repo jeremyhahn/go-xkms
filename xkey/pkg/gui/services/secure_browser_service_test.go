@@ -406,6 +406,16 @@ func TestLaunchBrowserFirefox(t *testing.T) {
 
 // TestLaunchBrowserSharedMode verifies shared profile mode omits profile flags.
 func TestLaunchBrowserSharedMode(t *testing.T) {
+	// Shared profile mode writes the NSS database at $HOME/.pki/nssdb. The
+	// helper below isolates baseDir and the browser config, not HOME, so
+	// without this the test populated the developer's real NSS store.
+	//
+	// Claimed here rather than inside newTestSecureBrowserService: the
+	// mode-flip tests set HOME themselves before calling the helper and assert
+	// against that path, so isolating in the helper silently moved the
+	// directory out from under them (measured: two failures).
+	isolateHome(t)
+
 	cert := testSecureBrowserCA(t, "Shared Mode CA")
 	svc, _ := newTestSecureBrowserService(t, []*x509.Certificate{cert})
 	svc.SetContext(context.Background())

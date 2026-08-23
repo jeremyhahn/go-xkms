@@ -900,8 +900,12 @@ func TestSetupWizardService_ApplyUserOnboarding_Success(t *testing.T) {
 }
 
 func TestSetupWizardService_GetPolicy_LoadsFromConfig(t *testing.T) {
-	tmpDir := t.TempDir()
-	t.Setenv("XDG_CONFIG_HOME", tmpDir)
+	// XDG_CONFIG_HOME alone did not isolate this test: pkg/config resolves
+	// through its own override first, so config.Save/Load kept reaching the
+	// real ~/.config/xkey. isolateHome claims BOTH resolvers — the same pair
+	// PR #90 found — and svc.SetConfigDir below claims the wizard's separate
+	// enterprise/HMAC path.
+	isolateHome(t)
 
 	// Create a config with a policy.
 	cfg := config.DefaultConfig()
@@ -910,7 +914,7 @@ func TestSetupWizardService_GetPolicy_LoadsFromConfig(t *testing.T) {
 	require.NoError(t, config.Save(cfg))
 
 	svc := NewSetupWizardService()
-	svc.SetConfigDir(tmpDir)
+	svc.SetConfigDir(config.ConfigDir())
 
 	policyMap, err := svc.GetPolicy()
 	require.NoError(t, err)

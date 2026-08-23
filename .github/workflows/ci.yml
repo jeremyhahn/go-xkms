@@ -397,7 +397,9 @@ jobs:
             TestARefusedPublicationLeavesAnotherDevicesConnectionAlone \
             TestAnOlderTransitionCannotOvertakeANewerOneAtEitherSink \
             TestPublishConnectionRefusesAnUnpairThatBeganDuringItsDrain \
-            TestAutoAttestPropagatesTheTeardownItForces
+            TestAutoAttestPropagatesTheTeardownItForces \
+            TestProcessHomeLeaks_ReportsATraversalItCouldNotComplete \
+            TestProcessHomeLeaks_FindsWhatWasWrittenAndReportsNoError
 
   # Job 3: Lint
   lint:

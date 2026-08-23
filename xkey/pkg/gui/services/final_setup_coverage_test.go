@@ -657,12 +657,16 @@ func TestFSC_ApplySOProvisioning_EnterprisePolicyFields(t *testing.T) {
 	tw.svc.SetPINService(pinSvc)
 
 	// Create a valid config file for config.Load()/Save().
-	cfgPath := config.ConfigPath()
-	cfgDir := filepath.Dir(cfgPath)
-	require.NoError(t, os.MkdirAll(cfgDir, 0700))
+	// isolateHome first: config.Save writes to config.ConfigDir(), which
+	// without an override is the developer's real ~/.config/xkey. This block
+	// used to overwrite that file with defaults and then delete it — the
+	// cleanup removes it unconditionally, so a real config did not survive
+	// the run. Setting the wizard's own SetConfigDir (below, where present)
+	// does not help: it is the second of two resolvers and config.Load/Save
+	// do not go through it.
+	isolateHome(t)
 	defaultCfg := config.DefaultConfig()
 	require.NoError(t, config.Save(defaultCfg))
-	t.Cleanup(func() { os.Remove(cfgPath) })
 
 	tw.svc.SetConfigDir(tmpDir)
 
@@ -701,12 +705,16 @@ func TestFSC_ApplySOProvisioning_PolicyHMACWriteError(t *testing.T) {
 	// Set configDir to a non-existent non-writable path for HMAC failure.
 	tw.svc.SetConfigDir("/nonexistent/path/that/cannot/exist")
 
-	cfgPath := config.ConfigPath()
-	cfgDir := filepath.Dir(cfgPath)
-	require.NoError(t, os.MkdirAll(cfgDir, 0700))
+	// isolateHome first: config.Save writes to config.ConfigDir(), which
+	// without an override is the developer's real ~/.config/xkey. This block
+	// used to overwrite that file with defaults and then delete it — the
+	// cleanup removes it unconditionally, so a real config did not survive
+	// the run. Setting the wizard's own SetConfigDir (below, where present)
+	// does not help: it is the second of two resolvers and config.Load/Save
+	// do not go through it.
+	isolateHome(t)
 	defaultCfg := config.DefaultConfig()
 	require.NoError(t, config.Save(defaultCfg))
-	t.Cleanup(func() { os.Remove(cfgPath) })
 
 	result, err := tw.svc.ApplySOProvisioning(&SetupChoices{
 		Mode:  "standalone",
@@ -828,12 +836,16 @@ func TestFSC_ApplyUserOnboarding_BarrierUnsealSucceeds(t *testing.T) {
 	tw.svc.SetBarrierService(barrierSvc2)
 
 	// Set up unified config.
-	cfgPath := config.ConfigPath()
-	cfgDir := filepath.Dir(cfgPath)
-	require.NoError(t, os.MkdirAll(cfgDir, 0700))
+	// isolateHome first: config.Save writes to config.ConfigDir(), which
+	// without an override is the developer's real ~/.config/xkey. This block
+	// used to overwrite that file with defaults and then delete it — the
+	// cleanup removes it unconditionally, so a real config did not survive
+	// the run. Setting the wizard's own SetConfigDir (below, where present)
+	// does not help: it is the second of two resolvers and config.Load/Save
+	// do not go through it.
+	isolateHome(t)
 	defaultCfg := config.DefaultConfig()
 	require.NoError(t, config.Save(defaultCfg))
-	t.Cleanup(func() { os.Remove(cfgPath) })
 
 	result, err := tw.svc.ApplyUserOnboarding(&UserOnboardingChoices{
 		SOPIN:   testSOPin,
@@ -875,12 +887,16 @@ func TestFSC_ApplyUserOnboarding_BarrierUnsealFailsInitSucceeds(t *testing.T) {
 	tw.svc.SetBarrierService(barrierSvc)
 
 	// Set up unified config.
-	cfgPath := config.ConfigPath()
-	cfgDir := filepath.Dir(cfgPath)
-	require.NoError(t, os.MkdirAll(cfgDir, 0700))
+	// isolateHome first: config.Save writes to config.ConfigDir(), which
+	// without an override is the developer's real ~/.config/xkey. This block
+	// used to overwrite that file with defaults and then delete it — the
+	// cleanup removes it unconditionally, so a real config did not survive
+	// the run. Setting the wizard's own SetConfigDir (below, where present)
+	// does not help: it is the second of two resolvers and config.Load/Save
+	// do not go through it.
+	isolateHome(t)
 	defaultCfg := config.DefaultConfig()
 	require.NoError(t, config.Save(defaultCfg))
-	t.Cleanup(func() { os.Remove(cfgPath) })
 
 	result, err := tw.svc.ApplyUserOnboarding(&UserOnboardingChoices{
 		SOPIN:           testSOPin,
@@ -931,12 +947,16 @@ func TestFSC_ApplyUserOnboarding_BarrierBothUnsealAndInitFail(t *testing.T) {
 	tw.svc.SetBarrierService(barrierSvc2)
 
 	// Set up unified config.
-	cfgPath := config.ConfigPath()
-	cfgDir := filepath.Dir(cfgPath)
-	require.NoError(t, os.MkdirAll(cfgDir, 0700))
+	// isolateHome first: config.Save writes to config.ConfigDir(), which
+	// without an override is the developer's real ~/.config/xkey. This block
+	// used to overwrite that file with defaults and then delete it — the
+	// cleanup removes it unconditionally, so a real config did not survive
+	// the run. Setting the wizard's own SetConfigDir (below, where present)
+	// does not help: it is the second of two resolvers and config.Load/Save
+	// do not go through it.
+	isolateHome(t)
 	defaultCfg := config.DefaultConfig()
 	require.NoError(t, config.Save(defaultCfg))
-	t.Cleanup(func() { os.Remove(cfgPath) })
 
 	result, err := tw.svc.ApplyUserOnboarding(&UserOnboardingChoices{
 		SOPIN:           testSOPin,
@@ -985,12 +1005,16 @@ func TestFSC_ApplyUserOnboarding_GUIConfigSaveError(t *testing.T) {
 	svc.SetPINService(pinSvc)
 
 	// Set up unified config.
-	cfgPath := config.ConfigPath()
-	cfgDir := filepath.Dir(cfgPath)
-	require.NoError(t, os.MkdirAll(cfgDir, 0700))
+	// isolateHome first: config.Save writes to config.ConfigDir(), which
+	// without an override is the developer's real ~/.config/xkey. This block
+	// used to overwrite that file with defaults and then delete it — the
+	// cleanup removes it unconditionally, so a real config did not survive
+	// the run. Setting the wizard's own SetConfigDir (below, where present)
+	// does not help: it is the second of two resolvers and config.Load/Save
+	// do not go through it.
+	isolateHome(t)
 	defaultCfg := config.DefaultConfig()
 	require.NoError(t, config.Save(defaultCfg))
-	t.Cleanup(func() { os.Remove(cfgPath) })
 
 	result, err := svc.ApplyUserOnboarding(&UserOnboardingChoices{
 		SOPIN:   testSOPin,
@@ -1007,12 +1031,16 @@ func TestFSC_ApplyUserOnboarding_GUIConfigSaveError(t *testing.T) {
 // ---------------------------------------------------------------------------
 
 func TestFSC_GetPolicy_Success(t *testing.T) {
-	cfgPath := config.ConfigPath()
-	cfgDir := filepath.Dir(cfgPath)
-	require.NoError(t, os.MkdirAll(cfgDir, 0700))
+	// isolateHome first: config.Save writes to config.ConfigDir(), which
+	// without an override is the developer's real ~/.config/xkey. This block
+	// used to overwrite that file with defaults and then delete it — the
+	// cleanup removes it unconditionally, so a real config did not survive
+	// the run. Setting the wizard's own SetConfigDir (below, where present)
+	// does not help: it is the second of two resolvers and config.Load/Save
+	// do not go through it.
+	isolateHome(t)
 	defaultCfg := config.DefaultConfig()
 	require.NoError(t, config.Save(defaultCfg))
-	t.Cleanup(func() { os.Remove(cfgPath) })
 
 	svc := NewSetupWizardService()
 	svc.SetContext(context.Background())

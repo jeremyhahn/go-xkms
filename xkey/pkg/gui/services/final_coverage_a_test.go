@@ -768,8 +768,12 @@ func TestFA_OIDCService_LoadProviders_ReadError(t *testing.T) {
 func TestFA_AdminService_IsAdmin_ReturnsValue(t *testing.T) {
 	svc := NewAdminService()
 	result := svc.IsAdmin()
-	// We are not root in CI, so expect false.
-	assert.False(t, result)
+	// The expectation is DERIVED from the real condition rather than assumed.
+	// The comment here used to read "we are not root in CI, so expect false"
+	// — and CI runs this job as root, so the test failed the moment the gate
+	// ran it. A yardstick that restates an assumption about the environment
+	// cannot notice the environment contradicting it.
+	assert.Equal(t, os.Geteuid() == 0, result)
 }
 
 // TestFA_AdminService_GetBackendInfo_ListError covers L211-213: when

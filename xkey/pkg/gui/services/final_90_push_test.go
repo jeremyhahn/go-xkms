@@ -54,16 +54,14 @@ func TestFinal90Push_EnsureSoftHSM2Config_EnvVarEmpty_FallsThrough(t *testing.T)
 	// When SOFTHSM2_CONF is empty, the function falls through to system
 	// path checks and eventually creates a config. We verify it does not
 	// return an error (it either finds a system config or creates one).
-	orig := os.Getenv("SOFTHSM2_CONF")
-	t.Cleanup(func() {
-		if orig == "" {
-			os.Unsetenv("SOFTHSM2_CONF")
-		} else {
-			os.Setenv("SOFTHSM2_CONF", orig)
-		}
-	})
-
-	os.Unsetenv("SOFTHSM2_CONF")
+	//
+	// The created config goes under $HOME/.config/softhsm2, and the function
+	// exports SOFTHSM2_CONF as a side effect, so this needs its own home:
+	// without one it wrote the developer's real directory and left the
+	// variable pointing there for every test that ran afterwards.
+	// isolateHome claims both, and t.Setenv restores the variable whatever
+	// production did to it.
+	isolateHome(t)
 
 	svc := &PKCS11Service{
 		log: testLogger(),
