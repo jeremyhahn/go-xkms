@@ -25,6 +25,7 @@ import (
 	"sync"
 	"sync/atomic"
 	"testing"
+	"time"
 
 	"github.com/jeremyhahn/go-xkms/internal/softhsmtest"
 	"github.com/jeremyhahn/go-xkms/pkg/errs"
@@ -212,6 +213,98 @@ func TestSessionPool_WithSession_ReturnsSession(t *testing.T) {
 		return sentinel
 	}), sentinel, "WithSession must return the callback's error unchanged")
 	require.Len(t, pool.pool, 2, "the session must be returned even when the callback fails")
+}
+
+// TestSessionPool_WithSession_ReturnsSessionOnPanic pins that a panicking
+// callback does not cost the pool a session.
+//
+// The return used to be a plain statement after fn, so a panic skipped it: the
+// session was neither put back on the channel nor closed, just lost. Nothing
+// logged it and nothing failed at the time -- the pool was simply one smaller
+// from then on, and once enough sessions had gone that way WithSession would
+// block forever on a receive from an empty channel. A hang, arriving long
+// after and nowhere near the panic that caused it.
+//
+// fn is arbitrary caller code (certificate parsing, attribute decoding,
+// callbacks into storage), so a panic in it is an ordinary bug, not an exotic
+// one.
+func TestSessionPool_WithSession_ReturnsSessionOnPanic(t *testing.T) {
+	b := newProvisionedBackend(t, "pool-panic-return")
+	pool := newTestPool(t, b, 2)
+
+	panicked := false
+	func() {
+		defer func() {
+			panicked = recover() != nil
+		}()
+		_ = pool.WithSession(func(pkcs11.SessionHandle) error {
+			panic("callback exploded")
+		})
+	}()
+
+	require.True(t, panicked,
+		"the panic must still reach the caller; this is about not leaking the "+
+			"session on the way past, not about swallowing it")
+	require.Len(t, pool.pool, 2,
+		"the session must be returned even when the callback panics")
+
+	// Full size is necessary but not sufficient: the pool must still hand out
+	// a usable session afterwards.
+	require.NoError(t, pool.WithSession(func(session pkcs11.SessionHandle) error {
+		require.NotZero(t, session)
+		return nil
+	}))
+	require.Len(t, pool.pool, 2)
+}
+
+// TestSessionPool_WithSession_DiscardsSessionPoisonedByPanic pins the harder
+// half of the panic contract: the session that comes back must be CLEAN, not
+// merely present.
+//
+// A callback can start a PKCS#11 operation and panic before finishing it --
+// C_FindObjectsInit here, but C_SignInit or a multipart update behave the same
+// way. Returning that session to the pool hands the next borrower an operation
+// it did not start: CKR_OPERATION_ACTIVE at best, somebody else's partial
+// state at worst. Counting handles cannot see that, which is why this test
+// starts a real operation rather than panicking on a bare callback.
+//
+// The pool is sized 1 so the next checkout is necessarily the replacement.
+func TestSessionPool_WithSession_DiscardsSessionPoisonedByPanic(t *testing.T) {
+	b := newProvisionedBackend(t, "pool-panic-poison")
+	pool := newTestPool(t, b, 1)
+
+	certTemplate := []*pkcs11.Attribute{
+		pkcs11.NewAttribute(pkcs11.CKA_CLASS, pkcs11.CKO_CERTIFICATE),
+	}
+
+	var poisoned pkcs11.SessionHandle
+	panicked := false
+	func() {
+		defer func() {
+			panicked = recover() != nil
+		}()
+		_ = pool.WithSession(func(session pkcs11.SessionHandle) error {
+			poisoned = session
+			// Leave a find operation running, then die.
+			require.NoError(t, pool.ctx.FindObjectsInit(session, certTemplate))
+			panic("callback exploded mid-operation")
+		})
+	}()
+
+	require.True(t, panicked, "the panic must still reach the caller")
+	require.Len(t, pool.pool, 1, "the pool must keep its size")
+
+	require.NoError(t, pool.WithSession(func(session pkcs11.SessionHandle) error {
+		require.NotEqual(t, poisoned, session,
+			"the poisoned session must not be handed out again")
+
+		// The operation state is the point: on an inherited find this returns
+		// CKR_OPERATION_ACTIVE.
+		if err := pool.ctx.FindObjectsInit(session, certTemplate); err != nil {
+			return err
+		}
+		return pool.ctx.FindObjectsFinal(session)
+	}), "the next borrower inherited operation state from the panicking callback")
 }
 
 // TestSessionPool_Close_IsIdempotent verifies Close can be called repeatedly
@@ -599,4 +692,188 @@ func TestSessionPool_WithSOSession_UserLoginRestoreFails(t *testing.T) {
 	require.NoError(t, pool.WithSession(func(session pkcs11.SessionHandle) error {
 		return b.p11ctx.Login(session, pkcs11.CKU_USER, b.config.PIN)
 	}))
+}
+
+// mustNotBlock runs fn on its own goroutine and fails t if it has not returned
+// within the bound.
+//
+// The bound is on the WAIT, not asserted after the call returns. Every
+// regression these tests guard is a checkout that never returns, and a plain
+// call would hang the package until the go test timeout killed it -- reporting
+// "panic: test timed out" for the whole binary rather than naming the checkout
+// that blocked.
+func mustNotBlock(t *testing.T, what string, fn func() error) error {
+	t.Helper()
+
+	result := make(chan error, 1)
+	go func() { result <- fn() }()
+
+	select {
+	case err := <-result:
+		return err
+	case <-time.After(30 * time.Second):
+		t.Fatalf("%s blocked instead of returning: the pool can no longer serve "+
+			"a session and must say so rather than park the caller forever", what)
+		return nil
+	}
+}
+
+// TestSessionPool_ReplacementFailureFailsThePoolTerminally pins the owner
+// ruling of 2026-08-23 on #107: a pool that loses a session to a panicking
+// callback and cannot open a replacement enters a TERMINAL failed state, and
+// every checkout from then on returns ErrSessionPoolFailed.
+//
+// The version this replaces returned from discardAndReplace and left the pool
+// one session smaller, on the reasoning that "a short pool is slow, a poisoned
+// session is wrong". For the size-one pool below, one short IS zero: the next
+// WithSession passed the closed checks and then blocked forever on an empty
+// channel -- the exact hang the panic handling was added to prevent, reached by
+// a different route and reported nowhere. A larger pool decays one session per
+// panic until it arrives at the same place.
+//
+// The replacement is made to fail for a real reason rather than through a
+// double: the pool is pointed at a slot the module does not have, so
+// C_OpenSession answers CKR_SLOT_ID_INVALID. Nothing about the failure path is
+// simulated.
+func TestSessionPool_ReplacementFailureFailsThePoolTerminally(t *testing.T) {
+	b := newProvisionedBackend(t, "pool-replacement-fails")
+	pool := newTestPool(t, b, 1)
+
+	// From here the pool cannot open anything: the next OpenSession -- which is
+	// the replacement for the session the panic below poisons -- fails at the
+	// driver.
+	pool.slotID = 0xdead
+
+	panicked := false
+	func() {
+		defer func() { panicked = recover() != nil }()
+		_ = pool.WithSession(func(pkcs11.SessionHandle) error {
+			panic("callback exploded")
+		})
+	}()
+	require.True(t, panicked, "the panic must still reach the caller")
+
+	// The property that matters comes first, because it is the one the previous
+	// implementation got wrong: the next caller is TOLD, not parked. Asserting
+	// the failed flag before this would report a missing flag where the defect
+	// is a hang.
+	err := mustNotBlock(t, "WithSession on a failed pool", func() error {
+		return pool.WithSession(func(pkcs11.SessionHandle) error {
+			t.Error("the callback must not run on a failed pool")
+			return nil
+		})
+	})
+	require.ErrorIs(t, err, ErrSessionPoolFailed)
+
+	// WithSOSession shares the checkout, so it reports the same thing. It used
+	// to do a bare `<-p.pool`, which is the block-forever receive one function
+	// below the one that had already been fixed.
+	err = mustNotBlock(t, "WithSOSession on a failed pool", func() error {
+		return pool.WithSOSession("so", "user", func(pkcs11.SessionHandle) error {
+			t.Error("the callback must not run on a failed pool")
+			return nil
+		})
+	})
+	require.ErrorIs(t, err, ErrSessionPoolFailed)
+
+	// Terminal means terminal: nothing reopens it.
+	require.ErrorIs(t, pool.WithSession(func(pkcs11.SessionHandle) error { return nil }),
+		ErrSessionPoolFailed)
+
+	require.True(t, pool.failed.Load(),
+		"a pool that cannot replace the session it had to discard must fail, not shrink")
+	require.Empty(t, pool.pool,
+		"the failed transition must close the sessions still in the channel, not "+
+			"leave them open in a pool that will never hand them out")
+}
+
+// TestSessionPool_CloseWaitsForAReplacementInFlight pins that Close cannot
+// return while a replacement session is being opened for a panicked callback.
+//
+// Without the lifecycle mutex the interleaving is: discardAndReplace reads
+// closed (false), and is descheduled; Close sets closed, drains an empty
+// channel and returns; discardAndReplace's OpenSession completes and its
+// non-blocking send succeeds, because the drain left the buffer with room. The
+// replacement is then an open PKCS#11 session in a closed pool -- no checkout
+// will ever take it, Close is idempotent so no later call drains it, and the
+// caller is entitled to Finalize the context underneath it.
+//
+// The window is inside one call and cannot be reached by timing from outside,
+// so the test holds it open with testHookReplacementOpened and asserts twice:
+//
+//   - Close must NOT return while the hook holds the lifecycle mutex. This is a
+//     negative liveness claim, so it is checked over a window rather than at an
+//     instant -- there is no other way to observe "did not happen". The window
+//     is not a guess about scheduling: correct code CANNOT fire that channel
+//     during it, because Close is parked on a mutex this goroutine releases
+//     only afterwards, so the passing direction has no race to lose. A Close
+//     that skips the mutex does a CAS, a channel close and a drain of an empty
+//     channel -- microseconds against two seconds.
+//   - after both goroutines have finished, the pool channel must be empty. That
+//     is the leak itself, observed directly: Close drained the replacement, so
+//     Close was still running when it was published.
+//
+// An earlier version of this test asserted only an atomic flag read at Close's
+// return and PASSED against the mutant that removes the mutex, because nothing
+// ordered the flag against Close and nothing waited for the discarding
+// goroutine before looking at the channel.
+func TestSessionPool_CloseWaitsForAReplacementInFlight(t *testing.T) {
+	b := newProvisionedBackend(t, "pool-close-vs-replacement")
+	pool := newTestPool(t, b, 1)
+
+	var (
+		inFlight   = make(chan struct{})
+		mayPublish = make(chan struct{})
+		discarded  = make(chan struct{})
+		closeDone  = make(chan struct{})
+	)
+
+	testHookReplacementOpened = func() {
+		close(inFlight)
+		<-mayPublish
+	}
+	t.Cleanup(func() { testHookReplacementOpened = nil })
+
+	go func() {
+		defer close(discarded)
+		defer func() { _ = recover() }()
+		_ = pool.WithSession(func(pkcs11.SessionHandle) error {
+			panic("callback exploded")
+		})
+	}()
+
+	// The replacement is now open and unpublished, and discardAndReplace holds
+	// the lifecycle mutex. Anything Close does from here has to wait for it.
+	<-inFlight
+
+	go func() {
+		pool.Close()
+		close(closeDone)
+	}()
+
+	select {
+	case <-closeDone:
+		t.Fatal("Close returned while a replacement was still in flight: it did " +
+			"not take the lifecycle mutex, so the replacement published after it " +
+			"is an open session in a closed pool that nothing will ever drain")
+	case <-time.After(2 * time.Second):
+		// Correct: Close is parked on the mutex the hook is holding.
+	}
+
+	close(mayPublish)
+
+	select {
+	case <-discarded:
+	case <-time.After(30 * time.Second):
+		t.Fatal("the discarding goroutine never finished publishing its replacement")
+	}
+	select {
+	case <-closeDone:
+	case <-time.After(30 * time.Second):
+		t.Fatal("Close never returned after the replacement was published")
+	}
+
+	require.Empty(t, pool.pool,
+		"Close must drain the replacement it waited for; a handle left here is "+
+			"an open session in a closed pool that nothing will ever close")
 }

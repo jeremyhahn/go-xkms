@@ -86,6 +86,16 @@ var (
 	// ErrSessionPoolLogin is returned when the pool fails to log in.
 	ErrSessionPoolLogin = errors.New("pkcs11: session pool login failed")
 
+	// ErrSessionPoolFailed is returned by every checkout on a pool that has
+	// entered its terminal failed state: it lost a session to a panicking
+	// callback and could not open a replacement, so it can no longer guarantee
+	// the capacity its callers were sized against. A failed pool serves nothing
+	// and blocks nobody -- it reports the failure and the caller rebuilds it.
+	//
+	// This is the owner's ErrPoolFailed (ruling 2026-08-23 on #107), named to
+	// this package's existing ErrSessionPool* family.
+	ErrSessionPoolFailed = errors.New("pkcs11: session pool has failed and cannot serve sessions")
+
 	// ErrSOPINRequired is returned when an operation requires the Security
 	// Officer PIN (e.g., key generation or object deletion on YubiKey PIV)
 	// but no SO PIN was supplied. This surfaces the underlying PKCS#11
