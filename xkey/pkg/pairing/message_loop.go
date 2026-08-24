@@ -16,6 +16,7 @@ package pairing
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"log/slog"
 	"sync"
 	"sync/atomic"
@@ -47,6 +48,45 @@ type MessageRouter struct {
 	mu      sync.Mutex
 	pending map[uint64]chan *Response
 
+	// retired holds IDs whose request may have reached the peer but exited
+	// WITHOUT the caller consuming a response -- cancelled or timed out after
+	// transmission. The peer may still answer such a request, and deleting the
+	// pending entry alone would let a later request reuse the ID and receive
+	// that late answer as its own. On a signing backend that is the wrong
+	// signature returned to the wrong caller, which is the confusion the
+	// duplicate check exists to prevent, reached by way of a cancellation
+	// instead of a collision.
+	//
+	// A tombstone is added only when the request was actually SENT and went
+	// unanswered: an encode/encrypt failure transmitted nothing, so its ID
+	// stays reusable (retiring it would let a burst of locally-invalid requests
+	// exhaust the cap and wedge a healthy connection). A request whose response
+	// arrived is not retired even if a racing cancellation won the select --
+	// the cleanup drains respCh and treats it as answered.
+	//
+	// A tombstone is NEVER cleared for the life of the connection. "A request
+	// is answered once" is not enforced on the wire, so a faulty or malicious
+	// authenticated peer can send a SECOND valid response for an abandoned ID;
+	// if the first cleared the tombstone and the caller reused the number, that
+	// second response would cross-talk into the reuser. So an abandoned ID is
+	// permanently unusable on this connection.
+	//
+	// The map is bounded by maxRetiredIDs. At the cap the router refuses NEW
+	// requests rather than evicting: evicting the oldest tombstone would
+	// silently restore exactly the cross-talk this map prevents. Refusing is
+	// the fail-closed direction and tells the caller to reconnect -- the right
+	// answer for a connection that has abandoned that many requests.
+	//
+	// Residual: this protects abandoned IDs, not a normally-completed ID that
+	// the caller later reuses -- a duplicate response there could still
+	// cross-talk. Closing that needs a per-request generation/nonce validated
+	// in every response (a wire-protocol change coordinated with xkey-android),
+	// tracked as go-xkms#128.
+	//
+	// Peak size is therefore maxRetiredIDs plus the requests in flight when
+	// the cap is reached. Stop clears the map with the rest of the state.
+	retired map[uint64]struct{}
+
 	sendMu sync.Mutex // serializes encrypt+send (Noise CipherState is not concurrent-safe)
 
 	done      chan struct{}
@@ -70,6 +110,12 @@ type MessageRouter struct {
 	joiner lifecycle.Joiner
 }
 
+// maxRetiredIDs caps the tombstones held for requests abandoned without a
+// response. Reaching it means roughly four thousand requests on one connection
+// were sent and never answered, which is a broken connection rather than a
+// busy one -- so the router refuses new work and the caller reconnects.
+const maxRetiredIDs = 4096
+
 // NewMessageRouter creates a new bidirectional message router.
 // The transport and session must have completed the Noise handshake.
 // The handler processes inbound requests (can be nil to reject all
@@ -84,24 +130,20 @@ func NewMessageRouter(transport Transport, session *NoiseSession, handler Reques
 		logger:         logger.With("component", "message_router"),
 		requestHandler: handler,
 		pending:        make(map[uint64]chan *Response),
+		retired:        make(map[uint64]struct{}),
 		done:           make(chan struct{}),
 	}
 }
 
 // NewMessageRouterWithNotifier creates a new bidirectional message router
 // with a notifier for biometric pending notifications from the phone.
+// It delegates the construction rather than repeating it. The duplicated
+// literal is what let `retired` be added to one constructor and not the other,
+// and a router built here then panicked with "assignment to entry in nil map"
+// on any responseless exit -- cancellation, encode failure, send failure,
+// Stop. One initialization site cannot drift from itself.
 func NewMessageRouterWithNotifier(transport Transport, session *NoiseSession, handler RequestHandler, notifier notify.Notifier, logger *slog.Logger) *MessageRouter {
-	if logger == nil {
-		logger = slog.Default()
-	}
-	router := &MessageRouter{
-		transport:      transport,
-		session:        session,
-		logger:         logger.With("component", "message_router"),
-		requestHandler: handler,
-		pending:        make(map[uint64]chan *Response),
-		done:           make(chan struct{}),
-	}
+	router := NewMessageRouter(transport, session, handler, logger)
 	if notifier != nil {
 		router.biometricHandler = NewBiometricPendingHandler(notifier, logger)
 	}
@@ -161,6 +203,7 @@ func (r *MessageRouter) Stop() {
 			close(ch)
 			delete(r.pending, id)
 		}
+		clear(r.retired)
 		r.mu.Unlock()
 	})
 }
@@ -240,18 +283,47 @@ func (r *MessageRouter) SendRequest(ctx context.Context, req *Request) (*Respons
 		r.mu.Unlock()
 		return nil, ErrBackendClosed
 	}
+	// Refuse a collision rather than overwriting the route. pending maps an ID
+	// to the one channel awaiting that response, so a second registration
+	// under a live ID replaces the first: the response is delivered to
+	// whichever request registered last while the other waits out its
+	// cancellation, and then either deferred cleanup deletes the surviving
+	// route. On a signing backend that is the wrong signature returned to the
+	// wrong caller. The check shares the lock with the insert, so two senders
+	// racing on the same ID cannot both pass it.
+	if _, inFlight := r.pending[req.ID]; inFlight {
+		r.mu.Unlock()
+		return nil, &DetailError{Err: ErrDuplicateRequestID, Detail: fmt.Sprintf(": id %d", req.ID)}
+	}
+	// An ID whose request was abandoned is refused for the rest of the
+	// connection: the peer may still answer it, and that answer must not be
+	// delivered to whoever reuses the number. See the retired field.
+	if _, abandoned := r.retired[req.ID]; abandoned {
+		r.mu.Unlock()
+		return nil, &DetailError{Err: ErrDuplicateRequestID, Detail: fmt.Sprintf(": id %d was abandoned by an earlier request and cannot be reused on this connection", req.ID)}
+	}
+	// Fail closed at the cap. See the retired field: the alternative is
+	// evicting a tombstone, which hands the reused ID a stale answer.
+	if len(r.retired) >= maxRetiredIDs {
+		r.mu.Unlock()
+		return nil, &DetailError{
+			Err:    ErrTooManyAbandonedRequests,
+			Detail: fmt.Sprintf(": %d requests on this connection were abandoned without a response; reconnect", len(r.retired)),
+		}
+	}
 	r.wg.Add(1)
 	r.pending[req.ID] = respCh
 	r.mu.Unlock()
 
 	defer r.wg.Done()
 
-	// Ensure cleanup on exit.
-	defer func() {
-		r.mu.Lock()
-		delete(r.pending, req.ID)
-		r.mu.Unlock()
-	}()
+	// Ensure cleanup on exit. An abandoned request retires the ID rather than
+	// merely freeing it, because the peer may still answer -- but ONLY when the
+	// request may actually have reached the wire (sent), and only when it was
+	// not in fact answered.
+	answered := false
+	sent := false
+	defer func() { r.finalizeAbandon(req.ID, respCh, sent, answered) }()
 
 	// Encode and encrypt the request.
 	plaintext, err := EncodeRequest(req)
@@ -266,6 +338,10 @@ func (r *MessageRouter) SendRequest(ctx context.Context, req *Request) (*Respons
 		r.sendMu.Unlock()
 		return nil, err
 	}
+	// From here the bytes may reach the peer even if Send reports an error
+	// (a partial/framed write), so the ID counts as transmitted and a late
+	// response is possible: mark it sent before the call.
+	sent = true
 	sendErr := r.transport.Send(ctx, ciphertext)
 	r.sendMu.Unlock()
 	if sendErr != nil {
@@ -278,11 +354,49 @@ func (r *MessageRouter) SendRequest(ctx context.Context, req *Request) (*Respons
 		if !ok {
 			return nil, ErrBackendClosed
 		}
+		answered = true
 		return resp, nil
 	case <-ctx.Done():
 		return nil, ctx.Err()
 	case <-r.done:
 		return nil, ErrBackendClosed
+	}
+}
+
+// finalizeAbandon runs on every SendRequest exit: it frees the pending route
+// and decides whether the ID must be retired. It is a method (not an inline
+// defer) so the retirement decision -- the security-sensitive part -- can be
+// exercised directly, including the cancel-vs-delivery race that cannot be
+// forced deterministically through the select above.
+//
+//   - answered true: the caller consumed a response; nothing to retire.
+//   - answered false but a response is sitting in respCh: the peer answered
+//     while a racing ctx.Done/r.done won the select. Consume it and treat the
+//     ID as answered, so a delivered response never leaves a tombstone.
+//   - sent false: the request never reached the wire (encode/encrypt failed),
+//     so no late response is possible and the ID must stay reusable -- retiring
+//     it would let a burst of locally-invalid requests exhaust the cap.
+//   - sent and still unanswered: a genuine abandonment. Retire the ID for the
+//     connection lifetime (routeResponse never clears it) so a late -- or
+//     duplicate -- response cannot reach a later reuser of the number.
+func (r *MessageRouter) finalizeAbandon(id uint64, respCh <-chan *Response, sent, answered bool) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+
+	delete(r.pending, id)
+
+	// routeResponse delivers under r.mu, so holding it here means no delivery
+	// races this non-blocking drain.
+	if !answered {
+		select {
+		case <-respCh:
+			answered = true
+		default:
+		}
+	}
+
+	if sent && !answered {
+		r.retired[id] = struct{}{}
 	}
 }
 
@@ -462,6 +576,21 @@ func (r *MessageRouter) routeResponse(plaintext []byte, id uint64) {
 
 	ch, ok := r.pending[id]
 	if !ok {
+		// The late answer to an abandoned request. Discard it, but KEEP the
+		// tombstone for the connection lifetime: "a request is answered once"
+		// is not enforced on the wire, so a faulty or malicious authenticated
+		// peer can send a SECOND valid response for the same abandoned ID.
+		// Clearing the tombstone here would let the caller reuse the number,
+		// and that second response would then be delivered to the reuser --
+		// the wrong-result / wrong-signature cross-talk the tombstone exists to
+		// prevent. An abandoned ID is therefore never reusable on this
+		// connection; the cap forces a reconnect instead (see the retired
+		// field). Closing this for a reused-and-completed ID as well needs a
+		// per-request generation/nonce in the wire protocol -- go-xkms#128.
+		if _, abandoned := r.retired[id]; abandoned {
+			r.logger.Debug("discarded a late response to an abandoned request; id stays retired", "id", id)
+			return
+		}
 		r.logger.Warn("received response for unknown request", "id", id)
 		return
 	}

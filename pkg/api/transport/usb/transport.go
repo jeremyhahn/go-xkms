@@ -28,6 +28,7 @@
 package usb
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -105,8 +106,12 @@ type phoneTransport interface {
 // It wraps a phone-level USBTransport with Noise XX encrypted messaging
 // and exposes SDK-level Request/Response operations.
 type Transport struct {
-	config    *transport.Config
-	noise     *NoiseConfig
+	config *transport.Config
+
+	// noise is the transport's OWN copy of the pairing key material, with the
+	// private scalar in protected memory. Guarded by lifecycleMu.
+	noise *noiseMaterial
+
 	phoneUSB  phoneTransport
 	session   *phone.NoiseSession
 	connected bool
@@ -184,10 +189,91 @@ func NewWithConfig(cfg *transport.Config) (*Transport, error) {
 	}, nil
 }
 
+// noiseMaterial is the transport's own copy of the pairing key material.
+//
+// The private key is held as a *phone.StaticKey -- memguard-backed protected
+// memory -- and NOT as a []byte. The transport has to keep its own copy so a
+// caller cannot mutate the key under an in-flight handshake, but a copy taken
+// with bytes.Clone would be a second plaintext scalar on the ordinary Go heap:
+// abandoned unzeroized whenever the configuration is replaced, and outliving
+// any wipe the caller performs on its own slice. The company protected-memory
+// rule admits no plain []byte for key material, and a defensive copy is not an
+// exception to it.
+//
+// The public key and the fingerprint are not secret and stay ordinary slices.
+type noiseMaterial struct {
+	// localKey is protected and owned by the transport. Replacing or clearing
+	// the configuration destroys it.
+	localKey *phone.StaticKey
+
+	// loadErr records a private key that could not be loaded. WithNoiseConfig
+	// returns the transport so it can be chained onto a constructor and has no
+	// error to return, so the failure is carried here and reported by Connect
+	// rather than swallowed.
+	loadErr error
+
+	expectedRemoteStatic      []byte
+	expectedDeviceFingerprint []byte
+}
+
+// destroy releases the protected pages behind the private key. Safe on a nil
+// receiver and idempotent.
+func (m *noiseMaterial) destroy() {
+	if m == nil {
+		return
+	}
+	m.localKey.Destroy()
+	m.localKey = nil
+}
+
+// newNoiseMaterial copies cfg into the transport's own representation, moving
+// the private scalar into protected memory. A nil config yields nil, which
+// Connect reads as "no keys configured".
+func newNoiseMaterial(cfg *NoiseConfig) *noiseMaterial {
+	if cfg == nil {
+		return nil
+	}
+
+	m := &noiseMaterial{
+		expectedRemoteStatic:      bytes.Clone(cfg.ExpectedRemoteStatic),
+		expectedDeviceFingerprint: bytes.Clone(cfg.ExpectedDeviceFingerprint),
+	}
+
+	if len(cfg.LocalStaticPrivateKey) == 0 {
+		m.loadErr = ErrNoiseNotConfigured
+		return m
+	}
+
+	key, err := phone.LoadStaticKey(cfg.LocalStaticPrivateKey)
+	if err != nil {
+		m.loadErr = err
+		return m
+	}
+	m.localKey = key
+	return m
+}
+
 // WithNoiseConfig attaches the pairing key material used by Connect. It
 // returns the transport so it can be chained onto a constructor.
+//
+// The chaining ergonomics make this read as setup-only, but it is exported and
+// nothing stops a caller invoking it later — during a key rotation, say, while
+// a Connect is in flight. It therefore publishes under lifecycleMu, the same
+// lock Connect holds for the whole handshake, and stores a deep copy: retaining
+// the caller's pointer would let the key material change under a handshake that
+// had already begun, producing a session built from half the old key and half
+// the new.
 func (t *Transport) WithNoiseConfig(cfg *NoiseConfig) *Transport {
-	t.noise = cfg
+	t.lifecycleMu.Lock()
+	defer t.lifecycleMu.Unlock()
+
+	// Release the pages behind the key being displaced. Dropping the reference
+	// instead would strand a locked, unswappable page for the life of the
+	// process on every rotation.
+	previous := t.noise
+	t.noise = newNoiseMaterial(cfg)
+	previous.destroy()
+
 	return t
 }
 
@@ -210,11 +296,25 @@ func (t *Transport) Connect(ctx context.Context) error {
 		return ErrDirtyState
 	}
 
-	if t.noise == nil || len(t.noise.LocalStaticPrivateKey) == 0 {
+	// One snapshot for the whole handshake. lifecycleMu already excludes a
+	// concurrent WithNoiseConfig, and reading the pointer once means a future
+	// edit that releases the lock mid-connect still cannot splice two
+	// configurations into one session.
+	noise := t.noise
+	if noise == nil || noise.localKey == nil {
+		if noise != nil && noise.loadErr != nil && !errors.Is(noise.loadErr, ErrNoiseNotConfigured) {
+			return &errs.Detail{Err: ErrNoiseNotConfigured, Detail: fmt.Sprintf("%v", noise.loadErr)}
+		}
 		return ErrNoiseNotConfigured
 	}
 
-	localKey, err := phone.LoadStaticKey(t.noise.LocalStaticPrivateKey)
+	// Connect takes its OWN protected copy rather than handing the session the
+	// configured key. The configuration outlives any single connection --
+	// Close tears a connection down and the transport can connect again -- so
+	// the session must not destroy a key the configuration still owns. The
+	// source scalar goes from protected memory straight back into protected
+	// memory, never touching the Go heap in between.
+	localKey, err := phone.LoadStaticKey(noise.localKey.Private)
 	if err != nil {
 		return &errs.Detail{Err: ErrNoiseNotConfigured, Detail: fmt.Sprintf("%v", err)}
 	}
@@ -256,7 +356,7 @@ func (t *Transport) Connect(ctx context.Context) error {
 
 	session, err := phone.NewNoiseSession(&phone.NoiseSessionConfig{
 		LocalStaticKey:       localKey,
-		ExpectedRemoteStatic: t.noise.ExpectedRemoteStatic,
+		ExpectedRemoteStatic: noise.expectedRemoteStatic,
 		IsInitiator:          true,
 	})
 	if err != nil {
@@ -272,7 +372,7 @@ func (t *Transport) Connect(ctx context.Context) error {
 		Session:                   session,
 		Logger:                    t.log,
 		LocalStaticPublicKey:      session.LocalStaticPublicKey(),
-		ExpectedDeviceFingerprint: t.noise.ExpectedDeviceFingerprint,
+		ExpectedDeviceFingerprint: noise.expectedDeviceFingerprint,
 	}); err != nil {
 		t.discardPhoneUSB()
 		return &errs.Detail{Err: transport.ErrConnectionFailed, Detail: fmt.Sprintf("noise handshake: %v", err)}
