@@ -310,6 +310,31 @@ func TestWithPoolHealthInterval_Invalid(t *testing.T) {
 	}
 }
 
+func TestWithPoolAcquireTimeout_Valid(t *testing.T) {
+	opts := defaultOptions()
+	err := WithPoolAcquireTimeout(3 * time.Second)(opts)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if opts.poolAcquireTimeout != 3*time.Second {
+		t.Fatalf("expected poolAcquireTimeout 3s, got: %v", opts.poolAcquireTimeout)
+	}
+}
+
+func TestWithPoolAcquireTimeout_Zero(t *testing.T) {
+	opts := defaultOptions()
+	if err := WithPoolAcquireTimeout(0)(opts); err == nil {
+		t.Fatal("expected error for zero pool acquire timeout")
+	}
+}
+
+func TestWithPoolAcquireTimeout_Negative(t *testing.T) {
+	opts := defaultOptions()
+	if err := WithPoolAcquireTimeout(-1 * time.Second)(opts); err == nil {
+		t.Fatal("expected error for negative pool acquire timeout")
+	}
+}
+
 func TestWithREST(t *testing.T) {
 	opts := defaultOptions()
 	err := WithREST()(opts)

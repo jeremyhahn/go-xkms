@@ -18,6 +18,7 @@ import (
 	"crypto/tls"
 	"crypto/x509"
 	stderrors "errors"
+	"runtime"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -1041,21 +1042,21 @@ func TestConnectionPool_GetPut(t *testing.T) {
 	pool := grpcTransport.pool
 
 	// Get a connection.
-	conn1, err := pool.Get()
+	conn1, err := pool.Get(context.Background())
 	if err != nil {
-		t.Fatalf("pool.Get() error = %v", err)
+		t.Fatalf("pool.Get(context.Background()) error = %v", err)
 	}
 	if conn1 == nil {
-		t.Fatal("pool.Get() returned nil connection")
+		t.Fatal("pool.Get(context.Background()) returned nil connection")
 	}
 
 	// Get another connection.
-	conn2, err := pool.Get()
+	conn2, err := pool.Get(context.Background())
 	if err != nil {
-		t.Fatalf("pool.Get() second call error = %v", err)
+		t.Fatalf("pool.Get(context.Background()) second call error = %v", err)
 	}
 	if conn2 == nil {
-		t.Fatal("pool.Get() second call returned nil connection")
+		t.Fatal("pool.Get(context.Background()) second call returned nil connection")
 	}
 
 	// Put connections back.
@@ -1085,12 +1086,12 @@ func TestConnectionPool_Get_Closed(t *testing.T) {
 
 	tr.Close()
 
-	_, err = pool.Get()
+	_, err = pool.Get(context.Background())
 	if err == nil {
-		t.Fatal("pool.Get() on closed pool error = nil, want error")
+		t.Fatal("pool.Get(context.Background()) on closed pool error = nil, want error")
 	}
 	if !errors.IsUnavailable(err) {
-		t.Errorf("pool.Get() error code = %v, want Unavailable", errors.Code(err))
+		t.Errorf("pool.Get(context.Background()) error code = %v, want Unavailable", errors.Code(err))
 	}
 }
 
@@ -1380,18 +1381,18 @@ func TestPooledConnection_InUse(t *testing.T) {
 	pool := grpcTransport.pool
 
 	// Get connection - should mark as in use.
-	conn, err := pool.Get()
+	conn, err := pool.Get(context.Background())
 	if err != nil {
-		t.Fatalf("pool.Get() error = %v", err)
+		t.Fatalf("pool.Get(context.Background()) error = %v", err)
 	}
 
 	// Put back - should mark as not in use.
 	pool.Put(conn)
 
 	// Get again - should be available.
-	conn2, err := pool.Get()
+	conn2, err := pool.Get(context.Background())
 	if err != nil {
-		t.Fatalf("pool.Get() after Put error = %v", err)
+		t.Fatalf("pool.Get(context.Background()) after Put error = %v", err)
 	}
 	pool.Put(conn2)
 }
@@ -1499,7 +1500,7 @@ func TestGetConnection_WithPool(t *testing.T) {
 	defer tr.Close()
 
 	grpcTransport := tr.(*Transport)
-	conn, err := grpcTransport.getConnection()
+	conn, err := grpcTransport.getConnection(context.Background())
 	if err != nil {
 		t.Fatalf("getConnection() error = %v", err)
 	}
@@ -1525,7 +1526,7 @@ func TestGetConnection_NoPool(t *testing.T) {
 	defer tr.Close()
 
 	grpcTransport := tr.(*Transport)
-	conn, err := grpcTransport.getConnection()
+	conn, err := grpcTransport.getConnection(context.Background())
 	if err != nil {
 		t.Fatalf("getConnection() error = %v", err)
 	}
@@ -1543,7 +1544,7 @@ func TestGetConnection_NilConn(t *testing.T) {
 		cfg: &transport.Config{},
 	}
 
-	_, err := tr.getConnection()
+	_, err := tr.getConnection(context.Background())
 	if err == nil {
 		t.Fatal("getConnection() with nil conn error = nil, want error")
 	}
@@ -1596,9 +1597,9 @@ func TestReleaseConnection_WithPool(t *testing.T) {
 	grpcTransport := tr.(*Transport)
 
 	// Get connection from pool.
-	conn, err := grpcTransport.pool.Get()
+	conn, err := grpcTransport.pool.Get(context.Background())
 	if err != nil {
-		t.Fatalf("pool.Get() error = %v", err)
+		t.Fatalf("pool.Get(context.Background()) error = %v", err)
 	}
 
 	// Release back to pool.
@@ -1665,14 +1666,23 @@ func TestConnectionPool_IsConnectionHealthy_Expired(t *testing.T) {
 	time.Sleep(10 * time.Millisecond)
 
 	// Get should still return a connection (it creates new ones).
-	conn, err := pool.Get()
+	conn, err := pool.Get(context.Background())
 	if err != nil {
-		t.Fatalf("pool.Get() after expiry error = %v", err)
+		t.Fatalf("pool.Get(context.Background()) after expiry error = %v", err)
 	}
 	pool.Put(conn)
 }
 
 // TestConnectionPool_Get_AllInUse tests Get when all connections in use.
+// TestConnectionPool_Get_AllInUse covers a pool that grew to PoolMaxSize and
+// then ran out.
+//
+// It used to assert the opposite of what it now asserts. Its comment read
+// "Get another - should create new or share", and it failed the test if the
+// third Get returned an error -- so it pinned, as correct, the sharing that
+// handed one connection to two borrowers with no record of the second (#104).
+// The owner ruling of 2026-08-23 removed that behaviour, which makes the old
+// assertion a test for the defect.
 func TestConnectionPool_Get_AllInUse(t *testing.T) {
 	cfg := &transport.Config{
 		Address:            "localhost:9443",
@@ -1683,6 +1693,7 @@ func TestConnectionPool_Get_AllInUse(t *testing.T) {
 		PoolMaxSize:        2,
 		PoolMaxAge:         time.Hour,
 		PoolHealthInterval: time.Hour,
+		PoolAcquireTimeout: 50 * time.Millisecond,
 	}
 
 	tr, err := NewTransport(cfg)
@@ -1694,24 +1705,44 @@ func TestConnectionPool_Get_AllInUse(t *testing.T) {
 	grpcTransport := tr.(*Transport)
 	pool := grpcTransport.pool
 
-	// Get all connections.
-	conn1, _ := pool.Get()
-	conn2, _ := pool.Get()
-
-	// Get another - should create new or share.
-	conn3, err := pool.Get()
+	// Take both connections: the first is pre-opened, the second grows the pool
+	// to PoolMaxSize.
+	conn1, err := pool.Get(context.Background())
 	if err != nil {
-		t.Fatalf("pool.Get() when all in use error = %v", err)
+		t.Fatalf("first pool.Get(context.Background()) error = %v", err)
+	}
+	conn2, err := pool.Get(context.Background())
+	if err != nil {
+		t.Fatalf("second pool.Get(context.Background()) error = %v", err)
+	}
+	if conn1 == nil || conn2 == nil {
+		t.Fatal("pool.Get(context.Background()) returned nil connection")
+	}
+	if conn1 == conn2 {
+		t.Error("two exclusive leases returned the same connection")
 	}
 
-	// All should work.
-	if conn1 == nil || conn2 == nil || conn3 == nil {
-		t.Error("pool.Get() returned nil connection")
+	conn3, err := poolGetWithin(t, 10*time.Second, pool)
+	if conn3 != nil {
+		t.Error("pool.Get(context.Background()) lent out a third connection from a pool of two")
+	}
+	if !stderrors.Is(err, ErrPoolExhausted) {
+		t.Errorf("pool.Get(context.Background()) error = %v, want ErrPoolExhausted", err)
 	}
 
+	// Returning one makes the pool usable again, which is the difference
+	// between exhausted and broken.
 	pool.Put(conn1)
+	conn4, err := poolGetWithin(t, 10*time.Second, pool)
+	if err != nil {
+		t.Fatalf("pool.Get(context.Background()) after a release error = %v, want a connection", err)
+	}
+	if conn4 != conn1 {
+		t.Error("pool.Get(context.Background()) after a release returned a connection other than the released one")
+	}
+
 	pool.Put(conn2)
-	pool.Put(conn3)
+	pool.Put(conn4)
 }
 
 // TestConnectionPool_Healthy_NoHealthyConns tests Healthy with no healthy connections.
@@ -1769,9 +1800,9 @@ func TestConnectionPool_PerformHealthCheck(t *testing.T) {
 	time.Sleep(50 * time.Millisecond)
 
 	// Pool should still function.
-	conn, err := pool.Get()
+	conn, err := pool.Get(context.Background())
 	if err != nil {
-		t.Fatalf("pool.Get() after health check error = %v", err)
+		t.Fatalf("pool.Get(context.Background()) after health check error = %v", err)
 	}
 	pool.Put(conn)
 }
@@ -2159,12 +2190,12 @@ func TestConnectionPool_Get_EmptyPool(t *testing.T) {
 		healthDone:  make(chan struct{}),
 	}
 
-	_, err := pool.Get()
+	_, err := pool.Get(context.Background())
 	if err == nil {
-		t.Fatal("pool.Get() on empty pool error = nil, want error")
+		t.Fatal("pool.Get(context.Background()) on empty pool error = nil, want error")
 	}
 	if !errors.IsUnavailable(err) {
-		t.Errorf("pool.Get() error code = %v, want Unavailable", errors.Code(err))
+		t.Errorf("pool.Get(context.Background()) error code = %v, want Unavailable", errors.Code(err))
 	}
 }
 
@@ -2191,9 +2222,9 @@ func TestPerformHealthCheck_WithInUseConnections(t *testing.T) {
 	pool := grpcTransport.pool
 
 	// Get a connection and mark it as in use.
-	conn, err := pool.Get()
+	conn, err := pool.Get(context.Background())
 	if err != nil {
-		t.Fatalf("pool.Get() error = %v", err)
+		t.Fatalf("pool.Get(context.Background()) error = %v", err)
 	}
 
 	// Wait for connection to expire.
@@ -2429,9 +2460,9 @@ func TestPool_Get_RoundRobin(t *testing.T) {
 	// Get multiple connections.
 	conns := make([]*grpc.ClientConn, 0, 6)
 	for i := 0; i < 6; i++ {
-		conn, err := pool.Get()
+		conn, err := pool.Get(context.Background())
 		if err != nil {
-			t.Fatalf("pool.Get() iteration %d error = %v", i, err)
+			t.Fatalf("pool.Get(context.Background()) iteration %d error = %v", i, err)
 		}
 		conns = append(conns, conn)
 		pool.Put(conn)
@@ -2668,9 +2699,9 @@ func TestConnectionPool_GetAfterHealthCheck(t *testing.T) {
 	time.Sleep(20 * time.Millisecond)
 
 	// Get should still work.
-	conn, err := pool.Get()
+	conn, err := pool.Get(context.Background())
 	if err != nil {
-		t.Fatalf("pool.Get() after health check error = %v", err)
+		t.Fatalf("pool.Get(context.Background()) after health check error = %v", err)
 	}
 	pool.Put(conn)
 }
@@ -2707,6 +2738,7 @@ func TestConnectionPool_Get_MaxSizeReached(t *testing.T) {
 		PoolMaxSize:        2, // Same as min.
 		PoolMaxAge:         time.Hour,
 		PoolHealthInterval: time.Hour,
+		PoolAcquireTimeout: 50 * time.Millisecond,
 	}
 
 	tr, err := NewTransport(cfg)
@@ -2719,19 +2751,29 @@ func TestConnectionPool_Get_MaxSizeReached(t *testing.T) {
 	pool := grpcTransport.pool
 
 	// Get all connections and hold them.
-	conn1, _ := pool.Get()
-	conn2, _ := pool.Get()
-
-	// Get another - at max, should share existing.
-	conn3, err := pool.Get()
+	conn1, err := pool.Get(context.Background())
 	if err != nil {
-		t.Fatalf("pool.Get() at max size error = %v", err)
+		t.Fatalf("first pool.Get(context.Background()) error = %v", err)
+	}
+	conn2, err := pool.Get(context.Background())
+	if err != nil {
+		t.Fatalf("second pool.Get(context.Background()) error = %v", err)
+	}
+
+	// At PoolMaxSize with both leased, the pool waits and then reports itself
+	// exhausted. It used to "share existing" -- hand back conn1 or conn2 with
+	// no record of the extra borrower (#104).
+	conn3, err := poolGetWithin(t, 10*time.Second, pool)
+	if conn3 != nil {
+		t.Error("pool.Get(context.Background()) at max size lent out an already-leased connection")
+	}
+	if !stderrors.Is(err, ErrPoolExhausted) {
+		t.Errorf("pool.Get(context.Background()) at max size error = %v, want ErrPoolExhausted", err)
 	}
 
 	// Clean up.
 	pool.Put(conn1)
 	pool.Put(conn2)
-	pool.Put(conn3)
 }
 
 // TestTransport_Close_NilPoolAndConn tests Close with nil pool and conn.
@@ -2793,9 +2835,9 @@ func TestPool_IsConnectionHealthy_VariousStates(t *testing.T) {
 	pool := grpcTransport.pool
 
 	// Get a connection and check health.
-	conn, err := pool.Get()
+	conn, err := pool.Get(context.Background())
 	if err != nil {
-		t.Fatalf("pool.Get() error = %v", err)
+		t.Fatalf("pool.Get(context.Background()) error = %v", err)
 	}
 
 	pool.mu.Lock()
@@ -2989,4 +3031,620 @@ func TestPool_NextConnIndex(t *testing.T) {
 			t.Errorf("After %d adds, counter = %d, want %d", i, val, i)
 		}
 	}
+}
+
+// poolGetWithin runs pool.Get on its own goroutine and fails t if it has not
+// returned within the bound.
+//
+// The bound is on the WAIT rather than checked after the call returns. The
+// regression this guards is a Get that never comes back, and a plain call would
+// hang the package until go test's own timeout killed the binary — reporting
+// "panic: test timed out" for every test in the file instead of naming this one.
+func poolGetWithin(t *testing.T, bound time.Duration, pool *connectionPool) (*grpc.ClientConn, error) {
+	t.Helper()
+	return poolGetCtxWithin(t, bound, pool, context.Background())
+}
+
+// poolGetCtxWithin is poolGetWithin with the caller's context, for the tests
+// that are about what Get does when that context finishes first.
+func poolGetCtxWithin(t *testing.T, bound time.Duration, pool *connectionPool, ctx context.Context) (*grpc.ClientConn, error) {
+	t.Helper()
+
+	type outcome struct {
+		conn *grpc.ClientConn
+		err  error
+	}
+	done := make(chan outcome, 1)
+	go func() {
+		conn, err := pool.Get(ctx)
+		done <- outcome{conn, err}
+	}()
+
+	select {
+	case got := <-done:
+		return got.conn, got.err
+	case <-time.After(bound):
+		t.Fatalf("pool.Get(context.Background()) did not return within %s", bound)
+		return nil, nil
+	}
+}
+
+// newSaturablePool builds a transport whose pool holds exactly one connection
+// and cannot grow, so a second Get is necessarily a saturated Get.
+func newSaturablePool(t *testing.T, acquireTimeout time.Duration) *connectionPool {
+	t.Helper()
+
+	tr, err := NewTransport(&transport.Config{
+		Address:            "localhost:9443",
+		Insecure:           true,
+		TLSConfig:          insecureTestTLSConfig(),
+		PoolEnabled:        true,
+		PoolMinSize:        1,
+		PoolMaxSize:        1,
+		PoolMaxAge:         time.Hour,
+		PoolHealthInterval: time.Hour,
+		PoolAcquireTimeout: acquireTimeout,
+	})
+	if err != nil {
+		t.Fatalf("NewTransport() error = %v", err)
+	}
+	t.Cleanup(func() { _ = tr.Close() })
+
+	return tr.(*Transport).pool
+}
+
+// TestPoolGet_RefusesToLendTheSameConnectionTwice pins the owner ruling of
+// 2026-08-23 on #104: a saturated pool waits, then reports ErrPoolExhausted. It
+// never hands a connection to a second borrower.
+//
+// What it replaces returned the first connection anyway, recording no borrower,
+// because inUse is a bool and a bool cannot count. The first Put then cleared
+// the flag for both holders and performHealthCheck was free to Close a
+// ClientConn the second holder was still issuing requests on.
+//
+// The elapsed-time assertion is part of the claim, not decoration: the ruling
+// says the error comes AFTER the configured wait, and a Get that returned the
+// error immediately would satisfy every other assertion here while making a
+// pool that is busy for a millisecond indistinguishable from one that is busy
+// for a minute.
+func TestPoolGet_RefusesToLendTheSameConnectionTwice(t *testing.T) {
+	const acquireTimeout = 150 * time.Millisecond
+	pool := newSaturablePool(t, acquireTimeout)
+
+	first, err := poolGetWithin(t, 10*time.Second, pool)
+	if err != nil {
+		t.Fatalf("first pool.Get(context.Background()) error = %v, want nil", err)
+	}
+	if first == nil {
+		t.Fatal("first pool.Get(context.Background()) returned no connection")
+	}
+
+	started := time.Now()
+	second, err := poolGetWithin(t, 10*time.Second, pool)
+	elapsed := time.Since(started)
+
+	if second != nil {
+		t.Fatal("pool.Get(context.Background()) lent out a second connection while the pool was saturated; " +
+			"a connection must never have two borrowers")
+	}
+	if !stderrors.Is(err, ErrPoolExhausted) {
+		t.Errorf("pool.Get(context.Background()) error = %v, want it to wrap ErrPoolExhausted", err)
+	}
+	if !errors.IsUnavailable(err) {
+		t.Errorf("pool.Get(context.Background()) error code = %v, want Unavailable so existing callers "+
+			"that classify by code are unaffected", errors.Code(err))
+	}
+
+	// Allow a little slack for timer granularity, but not enough to pass if the
+	// wait were skipped entirely.
+	if min := acquireTimeout - 20*time.Millisecond; elapsed < min {
+		t.Errorf("pool.Get(context.Background()) gave up after %s, want at least %s: the error is "+
+			"supposed to come after the configured wait, not instead of it", elapsed, min)
+	}
+}
+
+// TestPoolGet_WaitsForAReleaseInsteadOfSharing is the other half: the wait is a
+// real wait on a real event, not a disguised sleep before an error.
+//
+// Without it, TestPoolGet_RefusesToLendTheSameConnectionTwice would pass
+// against a Get that ignored p.released entirely and always timed out.
+func TestPoolGet_WaitsForAReleaseInsteadOfSharing(t *testing.T) {
+	pool := newSaturablePool(t, 10*time.Second)
+
+	first, err := pool.Get(context.Background())
+	if err != nil {
+		t.Fatalf("first pool.Get(context.Background()) error = %v", err)
+	}
+
+	type outcome struct {
+		conn *grpc.ClientConn
+		err  error
+	}
+	waiting := make(chan outcome, 1)
+	scanned := pool.nextConnIndex.Load()
+	go func() {
+		conn, err := pool.Get(context.Background())
+		waiting <- outcome{conn, err}
+	}()
+
+	// Put must not run until the second Get has SCANNED the pool and come back
+	// empty-handed, because that is the only path reaching the wait this test
+	// is about. Releasing first lets the goroutine's very first tryGet succeed,
+	// and the test then passes without the wake-up ever being needed --
+	// measured: the mutant that removes Put's wake-up SURVIVED this test until
+	// this loop was added.
+	//
+	// nextConnIndex is incremented by every scan, so an advance past the value
+	// our own Get left proves the scan happened. A predicate on real state with
+	// a hard failure if it never becomes true, not a sleep.
+	deadline := time.Now().Add(10 * time.Second)
+	for pool.nextConnIndex.Load() == scanned {
+		if time.Now().After(deadline) {
+			t.Fatal("the second pool.Get(context.Background()) never scanned the pool")
+		}
+		runtime.Gosched()
+	}
+
+	pool.Put(first)
+
+	select {
+	case got := <-waiting:
+		if got.err != nil {
+			t.Fatalf("the waiting pool.Get(context.Background()) error = %v, want it to acquire the released connection", got.err)
+		}
+		if got.conn != first {
+			t.Errorf("the waiting pool.Get(context.Background()) returned a different connection; the pool " +
+				"holds exactly one, so it must be the released one")
+		}
+	case <-time.After(10 * time.Second):
+		t.Fatal("Put did not wake the waiting Get: the wait is not driven by releases")
+	}
+}
+
+// TestPerformHealthCheck_CannotCloseAConnectionAnotherCallerHolds is #104's
+// acceptance criterion, expressed for the design the ruling chose.
+//
+// The original scenario was: two borrowers of one connection, the first Puts,
+// the health check finds the connection aged and closes it, and the SECOND
+// borrower's in-flight request fails on a closed ClientConn. Option B removes
+// the scenario at its root — there is no second borrower to strand — so what
+// this asserts is that root: while one caller holds the connection, an aged
+// pool neither closes it nor lets anyone else have it.
+func TestPerformHealthCheck_CannotCloseAConnectionAnotherCallerHolds(t *testing.T) {
+	tr, err := NewTransport(&transport.Config{
+		Address:            "localhost:9443",
+		Insecure:           true,
+		TLSConfig:          insecureTestTLSConfig(),
+		PoolEnabled:        true,
+		PoolMinSize:        1,
+		PoolMaxSize:        1,
+		PoolMaxAge:         time.Hour, // until the connection is leased, below
+		PoolHealthInterval: time.Hour, // only this test runs the check
+		PoolAcquireTimeout: 100 * time.Millisecond,
+	})
+	if err != nil {
+		t.Fatalf("NewTransport() error = %v", err)
+	}
+	defer func() { _ = tr.Close() }()
+	grpcTransport := tr.(*Transport)
+	pool := grpcTransport.pool
+
+	held, err := pool.Get(context.Background())
+	if err != nil {
+		t.Fatalf("pool.Get(context.Background()) error = %v", err)
+	}
+
+	// Age every connection past its limit by moving the limit, not by sleeping
+	// past it: isConnectionHealthy reads PoolMaxAge from the config each time,
+	// so this is the same condition without betting on a clock. An aged
+	// connection cannot be ACQUIRED either, which is why the lease above comes
+	// first.
+	grpcTransport.cfg.PoolMaxAge = time.Nanosecond
+
+	second, err := poolGetWithin(t, 10*time.Second, pool)
+	if second != nil {
+		t.Fatal("a second caller was given the held connection; that is the sharing " +
+			"that let the first Put clear the flag for both")
+	}
+	if !stderrors.Is(err, ErrPoolExhausted) {
+		t.Errorf("second pool.Get(context.Background()) error = %v, want ErrPoolExhausted", err)
+	}
+
+	pool.performHealthCheck()
+
+	if state := held.GetState(); state == connectivity.Shutdown {
+		t.Fatal("the health check closed a connection that is still leased out")
+	}
+
+	pool.mu.Lock()
+	stillPooled := false
+	for _, pc := range pool.connections {
+		if pc.conn == held {
+			stillPooled = true
+		}
+	}
+	pool.mu.Unlock()
+	if !stillPooled {
+		t.Error("the held connection was dropped from the pool while its borrower still had it")
+	}
+}
+
+// TestPoolGet_HonoursTheCallersContext pins that a saturated acquisition ends
+// when the CALLER gives up, not when the pool's own timeout expires.
+//
+// PoolAcquireTimeout is the pool's patience, and it is longer than a request's
+// far more often than not: with the 5s default, a request whose context expires
+// after 100ms stayed blocked for another 4.9 seconds and could then acquire a
+// connection and start work for a caller that had already gone away.
+//
+// Both finishing modes are covered because they map to different errors and a
+// caller distinguishes them: a deadline is a timeout, an explicit cancel is a
+// cancellation. Both keep the standard-library cause, so errors.Is against
+// context.DeadlineExceeded / context.Canceled still answers.
+func TestPoolGet_HonoursTheCallersContext(t *testing.T) {
+	t.Run("deadline", func(t *testing.T) {
+		pool := newSaturablePool(t, time.Hour) // the pool would wait effectively forever
+
+		if _, err := pool.Get(context.Background()); err != nil {
+			t.Fatalf("first pool.Get() error = %v", err)
+		}
+
+		ctx, cancel := context.WithTimeout(context.Background(), 100*time.Millisecond)
+		defer cancel()
+
+		started := time.Now()
+		conn, err := poolGetCtxWithin(t, 30*time.Second, pool, ctx)
+		elapsed := time.Since(started)
+
+		if conn != nil {
+			t.Error("pool.Get() handed out a connection to a caller whose deadline had passed")
+		}
+		if !stderrors.Is(err, context.DeadlineExceeded) {
+			t.Errorf("pool.Get() error = %v, want it to wrap context.DeadlineExceeded", err)
+		}
+		if !errors.IsTimeout(err) {
+			t.Errorf("pool.Get() error code = %v, want Timeout", errors.Code(err))
+		}
+		// The pool's own patience is an hour. Returning anywhere near promptly
+		// is only possible by honouring the caller's context.
+		if elapsed > 10*time.Second {
+			t.Errorf("pool.Get() took %s to notice a 100ms deadline", elapsed)
+		}
+	})
+
+	t.Run("cancel", func(t *testing.T) {
+		pool := newSaturablePool(t, time.Hour)
+
+		if _, err := pool.Get(context.Background()); err != nil {
+			t.Fatalf("first pool.Get() error = %v", err)
+		}
+
+		ctx, cancel := context.WithCancel(context.Background())
+		scanned := pool.nextConnIndex.Load()
+
+		type outcome struct {
+			conn *grpc.ClientConn
+			err  error
+		}
+		done := make(chan outcome, 1)
+		go func() {
+			conn, err := pool.Get(ctx)
+			done <- outcome{conn, err}
+		}()
+
+		// Cancel only once the Get has scanned and parked, so this exercises
+		// the select rather than the fast path at the top of the loop.
+		deadline := time.Now().Add(10 * time.Second)
+		for pool.nextConnIndex.Load() == scanned {
+			if time.Now().After(deadline) {
+				cancel()
+				t.Fatal("the second pool.Get() never scanned the pool")
+			}
+			runtime.Gosched()
+		}
+		cancel()
+
+		select {
+		case got := <-done:
+			if got.conn != nil {
+				t.Error("pool.Get() handed out a connection to a cancelled caller")
+			}
+			if !stderrors.Is(got.err, context.Canceled) {
+				t.Errorf("pool.Get() error = %v, want it to wrap context.Canceled", got.err)
+			}
+			if !errors.IsCanceled(got.err) {
+				t.Errorf("pool.Get() error code = %v, want Canceled", errors.Code(got.err))
+			}
+		case <-time.After(30 * time.Second):
+			t.Fatal("cancelling the context did not release the waiting pool.Get()")
+		}
+	})
+}
+
+// TestTransportClose_ReleasesASaturatedAcquisition pins that shutdown is not
+// held hostage by a request waiting for a connection.
+//
+// getConnection used to hold t.mu.RLock across pool.Get. Transport.Close needs
+// t.mu for WRITING before it can reach pool.Close, and pool.Close is what
+// closes healthDone and wakes the waiter -- so the waiter's own wake-up signal
+// was behind the lock the waiter was holding. Close could not proceed until
+// PoolAcquireTimeout expired, which on a deployment that configured a large one
+// is a shutdown that appears to hang. The two operations involved are a request
+// in flight and a shutdown, which is the pairing most likely to overlap.
+//
+// PoolAcquireTimeout is an hour here so that a pass cannot come from the
+// timeout firing.
+func TestTransportClose_ReleasesASaturatedAcquisition(t *testing.T) {
+	tr, err := NewTransport(&transport.Config{
+		Address:            "localhost:9443",
+		Insecure:           true,
+		TLSConfig:          insecureTestTLSConfig(),
+		PoolEnabled:        true,
+		PoolMinSize:        1,
+		PoolMaxSize:        1,
+		PoolMaxAge:         time.Hour,
+		PoolHealthInterval: time.Hour,
+		PoolAcquireTimeout: time.Hour,
+	})
+	if err != nil {
+		t.Fatalf("NewTransport() error = %v", err)
+	}
+	grpcTransport := tr.(*Transport)
+	pool := grpcTransport.pool
+
+	if _, err := pool.Get(context.Background()); err != nil {
+		t.Fatalf("first pool.Get() error = %v", err)
+	}
+
+	scanned := pool.nextConnIndex.Load()
+	waiting := make(chan error, 1)
+	go func() {
+		_, err := grpcTransport.getConnection(context.Background())
+		waiting <- err
+	}()
+
+	deadline := time.Now().Add(10 * time.Second)
+	for pool.nextConnIndex.Load() == scanned {
+		if time.Now().After(deadline) {
+			t.Fatal("the waiting getConnection never scanned the pool")
+		}
+		runtime.Gosched()
+	}
+
+	closed := make(chan struct{})
+	go func() {
+		_ = tr.Close()
+		close(closed)
+	}()
+
+	select {
+	case <-closed:
+	case <-time.After(30 * time.Second):
+		t.Fatal("Transport.Close blocked behind a saturated acquisition: getConnection " +
+			"is holding the transport lock across pool.Get")
+	}
+
+	select {
+	case err := <-waiting:
+		if err == nil {
+			t.Error("the waiting acquisition returned a connection from a closed transport")
+		}
+	case <-time.After(30 * time.Second):
+		t.Fatal("Close returned but never released the waiting acquisition")
+	}
+}
+
+// TestPerformHealthCheck_WakesAWaiterWhenItAddsCapacity pins that the health
+// check signals availability, not only Put.
+//
+// With min=max=1 and the only connection expired and idle, tryGet finds nothing
+// healthy and Get parks. performHealthCheck then closes that connection and
+// opens a replacement -- capacity a waiter is entitled to, and capacity no Put
+// is ever coming for, because the connection it replaced was not leased. Before
+// this, the waiter slept out its whole timer and returned ErrPoolExhausted with
+// a free, healthy connection sitting in the channel.
+func TestPerformHealthCheck_WakesAWaiterWhenItAddsCapacity(t *testing.T) {
+	tr, err := NewTransport(&transport.Config{
+		Address:            "localhost:9443",
+		Insecure:           true,
+		TLSConfig:          insecureTestTLSConfig(),
+		PoolEnabled:        true,
+		PoolMinSize:        1,
+		PoolMaxSize:        1,
+		PoolMaxAge:         time.Hour,
+		PoolHealthInterval: time.Hour, // only this test runs the check
+		PoolAcquireTimeout: 30 * time.Second,
+	})
+	if err != nil {
+		t.Fatalf("NewTransport() error = %v", err)
+	}
+	defer func() { _ = tr.Close() }()
+	grpcTransport := tr.(*Transport)
+	pool := grpcTransport.pool
+
+	// Age the pool's only connection past PoolMaxAge by moving its createdAt
+	// back, not by shortening the limit.
+	//
+	// That distinction is what makes the test work at all: shortening
+	// PoolMaxAge expires the REPLACEMENT too, so the health check would swap an
+	// unusable connection for another unusable one and there would be no
+	// capacity to wake anyone about. Ageing the individual connection leaves
+	// the limit generous, so the replacement is young and healthy.
+	//
+	// The connection stays IDLE -- nobody leased it -- so nothing will ever Put
+	// it back, which is the whole point: the health check is the only thing
+	// that can wake this waiter.
+	pool.mu.Lock()
+	pool.connections[0].createdAt = time.Now().Add(-2 * time.Hour)
+	pool.mu.Unlock()
+
+	scanned := pool.nextConnIndex.Load()
+	type outcome struct {
+		conn *grpc.ClientConn
+		err  error
+	}
+	waiting := make(chan outcome, 1)
+	go func() {
+		conn, err := pool.Get(context.Background())
+		waiting <- outcome{conn, err}
+	}()
+
+	deadline := time.Now().Add(10 * time.Second)
+	for pool.nextConnIndex.Load() == scanned {
+		if time.Now().After(deadline) {
+			t.Fatal("the waiting pool.Get() never scanned the pool")
+		}
+		runtime.Gosched()
+	}
+
+	pool.performHealthCheck()
+
+	select {
+	case got := <-waiting:
+		if got.err != nil {
+			t.Fatalf("the waiting pool.Get() error = %v, want the replacement connection", got.err)
+		}
+		if got.conn == nil {
+			t.Fatal("the waiting pool.Get() returned no connection and no error")
+		}
+	case <-time.After(20 * time.Second):
+		t.Fatal("the health check added capacity without waking the waiter: it will " +
+			"sleep out PoolAcquireTimeout and report the pool exhausted while a " +
+			"healthy connection sits unused")
+	}
+}
+
+// TestPoolGet_OneAnnouncementReachesEveryWaiter is the regression for the
+// coalescing defect Codex found in the first version of this fix.
+//
+// The nudge was a 1-buffered channel with a non-blocking send, on the reasoning
+// that "one pending nudge is enough, because a woken Get re-examines the whole
+// pool". That is true for one waiter and false for two: each woken Get leases
+// ONE connection, so a single wake-up cannot stand in for N units of capacity.
+// The other waiter sleeps out PoolAcquireTimeout and reports the pool exhausted
+// while an idle connection sits in it.
+//
+// The fixture is the health check rather than two Puts, and that choice is the
+// whole test. Two Puts are two announcements, so whether they collapse depends
+// on whether a waiter happens to consume the first token before the second Put
+// runs -- a race the test cannot force, and the first version of this test
+// PASSED against the coalescing mutant for exactly that reason. performHealthCheck
+// makes ONE announcement for TWO new connections, so the two schemes give
+// different answers every time: a broadcast wakes both waiters, a single-slot
+// nudge wakes one and strands the other.
+//
+// PoolAcquireTimeout is an hour, so a pass cannot come from the timeout firing;
+// the only way both acquisitions succeed is if both waiters were woken.
+func TestPoolGet_OneAnnouncementReachesEveryWaiter(t *testing.T) {
+	tr, err := NewTransport(&transport.Config{
+		Address:            "localhost:9443",
+		Insecure:           true,
+		TLSConfig:          insecureTestTLSConfig(),
+		PoolEnabled:        true,
+		PoolMinSize:        2,
+		PoolMaxSize:        2,
+		PoolMaxAge:         time.Hour,
+		PoolHealthInterval: time.Hour, // only this test runs the check
+		PoolAcquireTimeout: time.Hour,
+	})
+	if err != nil {
+		t.Fatalf("NewTransport() error = %v", err)
+	}
+	defer func() { _ = tr.Close() }()
+	pool := tr.(*Transport).pool
+
+	// Age BOTH connections past the limit by moving their createdAt back, so
+	// tryGet finds nothing healthy and every caller parks. Nobody leased them,
+	// so no Put is ever coming: the health check is the only thing that can
+	// wake these waiters, and it will do it with one announcement.
+	pool.mu.Lock()
+	for _, pc := range pool.connections {
+		pc.createdAt = time.Now().Add(-2 * time.Hour)
+	}
+	pool.mu.Unlock()
+
+	type outcome struct {
+		conn *grpc.ClientConn
+		err  error
+	}
+	waiting := make(chan outcome, 2)
+	scanned := pool.nextConnIndex.Load()
+	for i := 0; i < 2; i++ {
+		go func() {
+			conn, err := pool.Get(context.Background())
+			waiting <- outcome{conn, err}
+		}()
+	}
+
+	// Both waiters parked: two scans past whatever the counter was at.
+	deadline := time.Now().Add(30 * time.Second)
+	for pool.nextConnIndex.Load() < scanned+2 {
+		if time.Now().After(deadline) {
+			t.Fatalf("only %d of 2 waiters scanned the pool", pool.nextConnIndex.Load()-scanned)
+		}
+		runtime.Gosched()
+	}
+
+	// One announcement, two replacement connections.
+	pool.performHealthCheck()
+
+	for i := 0; i < 2; i++ {
+		select {
+		case got := <-waiting:
+			if got.err != nil {
+				t.Fatalf("waiter %d error = %v; two connections were added, so both "+
+					"waiters must be able to acquire one", i, got.err)
+			}
+			if got.conn == nil {
+				t.Fatalf("waiter %d got no connection and no error", i)
+			}
+		case <-time.After(30 * time.Second):
+			t.Fatal("a waiter was never woken: one announcement reached fewer callers " +
+				"than the capacity it announced")
+		}
+	}
+}
+
+// TestGrpcStream_Close_ReturnsPoolLease is the regression test for go-xkms#104:
+// a pooled stream must return its exclusive connection lease on Close, or a
+// size-one pool is permanently exhausted after the first stream is opened and
+// closed. It opens and closes a stream, then proves the sole connection can be
+// acquired again. The short PoolAcquireTimeout keeps the pre-fix behaviour fast:
+// without the release the follow-up acquire waits out the timeout and returns
+// ErrPoolExhausted instead of succeeding, so the mutant fails in ~200ms.
+func TestGrpcStream_Close_ReturnsPoolLease(t *testing.T) {
+	cfg := &transport.Config{
+		Address:            "localhost:9443",
+		Insecure:           true,
+		TLSConfig:          insecureTestTLSConfig(),
+		PoolEnabled:        true,
+		PoolMinSize:        1,
+		PoolMaxSize:        1,
+		PoolHealthInterval: time.Hour,
+		PoolAcquireTimeout: 200 * time.Millisecond,
+	}
+
+	tr, err := NewTransport(cfg)
+	if err != nil {
+		t.Fatalf("NewTransport() error = %v", err)
+	}
+	defer tr.Close()
+
+	ctx := context.Background()
+
+	stream, err := tr.RequestStream(ctx, "admin", "stream", nil)
+	if err != nil {
+		t.Fatalf("first RequestStream() error = %v, want nil", err)
+	}
+	if err := stream.Close(); err != nil {
+		t.Fatalf("stream.Close() error = %v, want nil", err)
+	}
+
+	// The exclusive lease taken by RequestStream must be back in the pool.
+	grpcTransport := tr.(*Transport)
+	conn, err := grpcTransport.pool.Get(ctx)
+	if err != nil {
+		t.Fatalf("pool.Get after stream Close error = %v, want the lease returned", err)
+	}
+	grpcTransport.releaseConnection(conn)
 }

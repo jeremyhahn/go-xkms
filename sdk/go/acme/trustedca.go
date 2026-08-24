@@ -183,6 +183,7 @@ type clientOptions struct {
 	poolMaxSize        int
 	poolMaxAge         time.Duration
 	poolHealthInterval time.Duration
+	poolAcquireTimeout time.Duration
 	unixSocketPath     string
 	embeddedService    interface{}
 	logger             *slog.Logger
@@ -205,6 +206,7 @@ func defaultOptions() *clientOptions {
 		poolMaxSize:        50,
 		poolMaxAge:         time.Hour,
 		poolHealthInterval: 30 * time.Second,
+		poolAcquireTimeout: 5 * time.Second,
 	}
 }
 
@@ -320,6 +322,22 @@ func WithPoolMaxAge(d time.Duration) Option {
 			return errors.NewInvalidInput("WithPoolMaxAge", "max age must be positive")
 		}
 		o.poolMaxAge = d
+		return nil
+	}
+}
+
+// WithPoolAcquireTimeout sets how long a pooled Get waits for a connection to
+// be returned before reporting the pool exhausted.
+//
+// A saturated pool waits rather than lending one connection to two callers
+// (go-xkms#104), so this bounds that wait. It is not a request timeout: the
+// request has not started yet.
+func WithPoolAcquireTimeout(d time.Duration) Option {
+	return func(o *clientOptions) error {
+		if d <= 0 {
+			return errors.NewInvalidInput("WithPoolAcquireTimeout", "acquire timeout must be positive")
+		}
+		o.poolAcquireTimeout = d
 		return nil
 	}
 }
@@ -846,6 +864,7 @@ func buildTransportConfig(address string, opts *clientOptions) *transport.Config
 		PoolMaxSize:        opts.poolMaxSize,
 		PoolMaxAge:         opts.poolMaxAge,
 		PoolHealthInterval: opts.poolHealthInterval,
+		PoolAcquireTimeout: opts.poolAcquireTimeout,
 	}
 }
 

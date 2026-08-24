@@ -91,6 +91,14 @@ type Config struct {
 	PoolMaxSize        int
 	PoolMaxAge         time.Duration
 	PoolHealthInterval time.Duration
+
+	// PoolAcquireTimeout is how long Get waits for a leased connection to be
+	// returned before reporting the pool exhausted. Zero selects the
+	// transport's default.
+	//
+	// It exists because a saturated pool now WAITS rather than lending one
+	// connection to two callers (owner ruling 2026-08-23, go-xkms#104).
+	PoolAcquireTimeout time.Duration
 }
 
 // Factory creates transports of a specific type.

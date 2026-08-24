@@ -41,6 +41,7 @@ import (
 	"context"
 	"crypto/tls"
 	"encoding/json"
+	stderrors "errors"
 	"net"
 	"strings"
 	"sync"
@@ -116,7 +117,28 @@ const (
 	defaultPoolMaxSize      = 10
 	defaultPoolMaxAge       = 5 * time.Minute
 	defaultHealthInterval   = 30 * time.Second
+
+	// defaultPoolAcquireTimeout is how long Get waits for a borrower to return
+	// a connection before reporting the pool exhausted. It is not a request
+	// timeout: the request has not started yet, and the caller still has its
+	// own context deadline afterwards.
+	defaultPoolAcquireTimeout = 5 * time.Second
 )
+
+// ErrPoolExhausted reports that every pooled connection was leased out and the
+// pool was already at PoolMaxSize, for the whole of PoolAcquireTimeout.
+//
+// It is wrapped in a CAError with CodeUnavailable, so callers that classify by
+// code keep working unchanged and callers that need to tell exhaustion from
+// "the server is down" can use errors.Is. Retrying is the sensible response;
+// this says the CLIENT ran out of connections, not that the CA is unreachable.
+//
+// Before the owner ruling of 2026-08-23 on #104 there was no such error: a
+// saturated pool returned the first connection anyway, WITHOUT recording the
+// second borrower, and the first Put then cleared the in-use flag for both --
+// after which the health check was free to close a connection another caller
+// was still using. A connection is now never lent to two borrowers.
+var ErrPoolExhausted = stderrors.New("grpc: connection pool exhausted")
 
 // Transport implements transport.Transport using gRPC.
 type Transport struct {
@@ -250,6 +272,9 @@ func (t *Transport) applyDefaults() {
 		if t.cfg.PoolMaxAge == 0 {
 			t.cfg.PoolMaxAge = defaultPoolMaxAge
 		}
+		if t.cfg.PoolAcquireTimeout <= 0 {
+			t.cfg.PoolAcquireTimeout = defaultPoolAcquireTimeout
+		}
 		if t.cfg.PoolHealthInterval == 0 {
 			t.cfg.PoolHealthInterval = defaultHealthInterval
 		}
@@ -331,15 +356,17 @@ func (t *Transport) RequestStream(ctx context.Context, service, method string, r
 	}
 
 	// Admin API streaming is supported.
-	conn, err := t.getConnection()
+	conn, err := t.getConnection(ctx)
 	if err != nil {
 		return nil, err
 	}
 
-	// Create a generic stream wrapper.
+	// Create a generic stream wrapper. The connection came from getConnection,
+	// which takes an exclusive pool lease; Close returns it via this callback.
 	stream := &grpcStream{
-		ctx:  ctx,
-		conn: conn,
+		ctx:     ctx,
+		conn:    conn,
+		release: func() { t.releaseConnection(conn) },
 	}
 
 	return stream, nil
@@ -409,19 +436,35 @@ func (t *Transport) Healthy() bool {
 }
 
 // getConnection returns a gRPC connection, either from pool or single connection.
-func (t *Transport) getConnection() (*grpc.ClientConn, error) {
+// getConnection returns a connection for one request, honouring ctx.
+//
+// The transport lock is SNAPSHOTTED rather than held across the acquisition,
+// and that is load-bearing now that Get can block: Close takes t.mu for writing
+// before it can call pool.Close, so holding the read lock here would stop Close
+// from ever reaching the pool.Close that closes healthDone and wakes this
+// waiter. Shutdown would then stall for the whole PoolAcquireTimeout -- longer
+// on a deployment that configured a large one -- and the deadlock is between
+// the two operations most likely to overlap: a request in flight and a
+// shutdown.
+//
+// Reading the two fields under the lock and using them after it is released is
+// sound because neither is mutated in place: Close swaps them out and the pool
+// itself handles being closed underneath a borrower (Get returns
+// ErrSessionPool-style closed errors rather than panicking).
+func (t *Transport) getConnection(ctx context.Context) (*grpc.ClientConn, error) {
 	t.mu.RLock()
-	defer t.mu.RUnlock()
+	pool, conn := t.pool, t.conn
+	t.mu.RUnlock()
 
-	if t.pool != nil {
-		return t.pool.Get()
+	if pool != nil {
+		return pool.Get(ctx)
 	}
 
-	if t.conn == nil {
+	if conn == nil {
 		return nil, errors.NewUnavailable("grpc.Transport.getConnection", "no connection available")
 	}
 
-	return t.conn, nil
+	return conn, nil
 }
 
 // releaseConnection returns a connection to the pool if pooling is enabled.
@@ -446,7 +489,7 @@ func (t *Transport) isACMEService(service string) bool {
 
 // handleAdminRequest handles Admin API requests via gRPC.
 func (t *Transport) handleAdminRequest(ctx context.Context, tr *Transport, service, method string, req interface{}) (interface{}, error) {
-	conn, err := tr.getConnection()
+	conn, err := tr.getConnection(ctx)
 	if err != nil {
 		return nil, err
 	}
@@ -726,10 +769,11 @@ func grpcCodeToErrorCode(code codes.Code) errors.ErrorCode {
 
 // grpcStream implements transport.Stream for gRPC bidirectional streaming.
 type grpcStream struct {
-	ctx    context.Context
-	conn   *grpc.ClientConn
-	stream grpc.ClientStream
-	closed atomic.Bool
+	ctx     context.Context
+	conn    *grpc.ClientConn
+	stream  grpc.ClientStream
+	release func()
+	closed  atomic.Bool
 }
 
 // Send sends a message on the stream.
@@ -780,13 +824,21 @@ func (s *grpcStream) CloseSend() error {
 	return nil
 }
 
-// Close closes the stream entirely.
+// Close closes the stream entirely and returns its pooled connection lease.
 func (s *grpcStream) Close() error {
 	if !s.closed.CompareAndSwap(false, true) {
 		return nil
 	}
 
-	return s.CloseSend()
+	err := s.CloseSend()
+	// RequestStream took an exclusive pool lease for this stream; return it
+	// exactly once (the CompareAndSwap above guarantees single entry), and do so
+	// regardless of whether CloseSend reported an error -- otherwise the
+	// connection is never lent again and the pool exhausts (go-xkms#104).
+	if s.release != nil {
+		s.release()
+	}
+	return err
 }
 
 // connectionPool manages a pool of gRPC connections.
@@ -800,6 +852,28 @@ type connectionPool struct {
 	healthTicker  *time.Ticker
 	healthDone    chan struct{}
 	nextConnIndex atomic.Uint64
+
+	// available is a BROADCAST latch, not a queue of nudges. It is closed and
+	// replaced under mu whenever capacity appears, so every parked Get wakes
+	// and re-scans; those that find nothing park again on the new channel.
+	//
+	// It replaces a 1-buffered "one nudge" channel, which lost capacity as soon
+	// as more than one of anything was involved: with two connections leased
+	// and two callers waiting, two Puts landing before either waiter consumed
+	// the token made the second send take the default branch. One waiter woke
+	// and took one connection; the other slept out PoolAcquireTimeout and
+	// reported the pool exhausted with an idle connection sitting in it. The
+	// bug was structural -- coalescing N independent capacity events into one
+	// wake-up is only sound when at most one waiter can consume them.
+	//
+	// Closing cannot lose an event the way a buffered send can: a waiter
+	// snapshots this channel BEFORE it scans, so capacity appearing between its
+	// scan and its park closes the channel it is about to wait on, and the wait
+	// returns immediately.
+	//
+	// Waiting is why any of this exists. Get used to hand a leased connection
+	// to a second borrower rather than wait, which is what #104 is about.
+	available chan struct{}
 }
 
 // pooledConnection wraps a gRPC connection with metadata.
@@ -817,6 +891,7 @@ func newConnectionPool(t *Transport, target string, opts []grpc.DialOption) (*co
 		opts:        opts,
 		connections: make([]*pooledConnection, 0, t.cfg.PoolMaxSize),
 		healthDone:  make(chan struct{}),
+		available:   make(chan struct{}),
 	}
 
 	// Create minimum connections.
@@ -850,8 +925,102 @@ func (p *connectionPool) addConnection() error {
 	return nil
 }
 
-// Get retrieves a connection from the pool.
-func (p *connectionPool) Get() (*grpc.ClientConn, error) {
+// Get retrieves a connection from the pool, waiting up to PoolAcquireTimeout
+// for one to become free before reporting ErrPoolExhausted.
+//
+// Every connection it returns is leased EXCLUSIVELY to the caller, which is the
+// owner ruling of 2026-08-23 on #104. The version this replaces ended with:
+//
+//	// Return the first connection anyway (shared usage).
+//	idx := startIdx % numConns
+//	return p.connections[idx].conn, nil
+//
+// -- a hand-out that recorded no borrower, because inUse is a bool and a bool
+// cannot count. The first Put then cleared the flag for both holders, and
+// performHealthCheck was free to Close a ClientConn the second holder was still
+// issuing requests on. Saturation is exactly when that happens: it is when the
+// pool is under load, which is when the health check is most likely to find an
+// aged connection.
+//
+// Saturation is therefore now visible to the caller instead of absorbed. That
+// is a behaviour change and it is the point: absorbing it was not free, it was
+// paid for with an occasional request failing on a closed connection, at a
+// place in the code that gave no hint where the failure came from.
+func (p *connectionPool) Get(ctx context.Context) (*grpc.ClientConn, error) {
+	timeout := p.transport.cfg.PoolAcquireTimeout
+	if timeout <= 0 {
+		timeout = defaultPoolAcquireTimeout
+	}
+
+	// One timer for the whole wait, not one per iteration: a woken Get that
+	// loses the race for the released connection must keep the REMAINING
+	// budget, not start a fresh one, or a busy pool never times out.
+	timer := time.NewTimer(timeout)
+	defer timer.Stop()
+
+	// A nil ctx blocks forever in the select below, which would silently drop
+	// the timeout case's sibling; treat it as "no cancellation".
+	var done <-chan struct{}
+	if ctx != nil {
+		done = ctx.Done()
+	}
+
+	for {
+		// Snapshot the latch BEFORE scanning. Capacity that appears between the
+		// scan below and the park underneath closes THIS channel, so the wait
+		// returns immediately instead of missing the event. Taking it after the
+		// scan would reintroduce exactly that gap.
+		latch := p.availableLatch()
+
+		conn, err := p.tryGet()
+		if err != nil {
+			return nil, err
+		}
+		if conn != nil {
+			return conn, nil
+		}
+
+		select {
+		case <-latch:
+			// Capacity appeared -- a Put, or a health check that opened a
+			// replacement. Loop and try to take it: every waiter woke, and
+			// another may get there first, which is why this is a loop and not
+			// a hand-off.
+		case <-done:
+			// The CALLER's deadline, which is shorter than ours far more often
+			// than not. Waiting out PoolAcquireTimeout for a request whose
+			// context expired 4.9 seconds ago serves nobody, and acquiring a
+			// connection afterwards would start work for a cancelled request.
+			return nil, ctxError(ctx)
+		case <-p.healthDone:
+			return nil, errors.NewUnavailable("grpc.Pool.Get", "pool is closed")
+		case <-timer.C:
+			return nil, errors.NewUnavailable("grpc.Pool.Get",
+				"every connection is leased and the pool is at PoolMaxSize").
+				WithCause(ErrPoolExhausted)
+		}
+	}
+}
+
+// ctxError maps a finished context to the transport's error vocabulary,
+// preserving the cause so errors.Is(err, context.Canceled) still answers.
+func ctxError(ctx context.Context) error {
+	err := ctx.Err()
+	if stderrors.Is(err, context.DeadlineExceeded) {
+		return errors.NewTimeout("grpc.Pool.Get",
+			"the caller's deadline expired while waiting for a pooled connection").
+			WithCause(err)
+	}
+	return errors.NewCanceled("grpc.Pool.Get",
+		"the caller's context was cancelled while waiting for a pooled connection").
+		WithCause(err)
+}
+
+// tryGet makes one non-blocking attempt to lease a connection.
+//
+// It returns (nil, nil) for "nothing free right now, try again later" -- the
+// only case Get waits on. Everything else is decided here and returned.
+func (p *connectionPool) tryGet() (*grpc.ClientConn, error) {
 	if p.closed.Load() {
 		return nil, errors.NewUnavailable("grpc.Pool.Get", "pool is closed")
 	}
@@ -888,22 +1057,61 @@ func (p *connectionPool) Get() (*grpc.ClientConn, error) {
 		}
 	}
 
-	// Return the first connection anyway (shared usage).
-	idx := startIdx % numConns
-	return p.connections[idx].conn, nil
+	return nil, nil
 }
 
-// Put returns a connection to the pool.
+// Put returns a connection to the pool and wakes one waiter.
 func (p *connectionPool) Put(conn *grpc.ClientConn) {
 	p.mu.Lock()
-	defer p.mu.Unlock()
-
 	for _, pc := range p.connections {
 		if pc.conn == conn {
 			pc.inUse.Store(false)
-			return
+			// Announced under the SAME lock that released it, so a waiter
+			// cannot scan the pool between the two and then park on a latch
+			// that has already been swapped.
+			//
+			// A connection that is not ours -- most likely already dropped by
+			// a health check -- announces nothing: waking every waiter to
+			// re-scan a pool nothing changed in is pure churn.
+			p.signalAvailableLocked()
+			break
 		}
 	}
+	p.mu.Unlock()
+}
+
+// availableLatch returns the current broadcast latch.
+func (p *connectionPool) availableLatch() <-chan struct{} {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	return p.available
+}
+
+// signalAvailableLocked wakes EVERY parked Get to re-scan the pool. The caller
+// must hold mu.
+//
+// It closes the current latch and installs a fresh one. Closing rather than
+// sending is what makes it correct with more than one waiter: a buffered send
+// delivers to at most one of them and silently drops the rest, so N connections
+// becoming free at once woke one caller and left the others to time out beside
+// idle capacity.
+//
+// It is called from BOTH places capacity can appear, not only from Put. The
+// health check is the other one: with every idle connection expired and the
+// pool at PoolMaxSize, tryGet returns nothing and Get waits; performHealthCheck
+// then closes those connections and opens replacements that no Put will ever
+// announce, because nobody leased them.
+//
+// There is deliberately no unlocked wrapper. Both callers already hold mu, and
+// an unlocked form would be a deadlock waiting to be called from
+// performHealthCheck, which holds mu for its whole body.
+func (p *connectionPool) signalAvailableLocked() {
+	if p.available == nil {
+		// A zero-value pool has no waiters to wake.
+		return
+	}
+	close(p.available)
+	p.available = make(chan struct{})
 }
 
 // isConnectionHealthy checks if a pooled connection is healthy.
@@ -991,17 +1199,16 @@ func (p *connectionPool) performHealthCheck() {
 			// Kept even when unhealthy: closing a connection that is leased
 			// out would fail the request its holder is making.
 			//
-			// Be precise about the reach of that, because inUse is a bool and
-			// a bool cannot count borrowers. It protects a connection that was
-			// acquired EXCLUSIVELY -- the CompareAndSwap path in Get. It does
-			// NOT protect Get's saturated fallback, which hands back an
-			// already-leased connection without recording the extra borrower;
-			// the first Put then clears the flag for everyone, and this branch
-			// stops applying while a second caller is still mid-request. That
-			// is a pre-existing defect in the pool's lease accounting rather
-			// than of this switch, and is tracked separately as go-xkms#104.
-			// This code preserves the previous behaviour exactly; it does not
-			// widen or narrow it.
+			// This is now a guarantee rather than a hope, which it was not
+			// when this comment was first written. inUse is a bool and a bool
+			// cannot count borrowers -- so it is only sound while there can
+			// never be two. Get's saturated fallback used to hand out an
+			// already-leased connection without recording the extra borrower,
+			// the first Put cleared the flag for both, and this branch stopped
+			// applying while a second caller was still mid-request (#104).
+			// Get now waits and then returns ErrPoolExhausted instead, so
+			// exactly one caller holds a connection whose flag is set, and the
+			// caller this branch protects is that one.
 			healthy = append(healthy, pc)
 		case p.isConnectionHealthy(pc):
 			healthy = append(healthy, pc)
@@ -1014,10 +1221,23 @@ func (p *connectionPool) performHealthCheck() {
 	p.connections = healthy
 
 	// Ensure minimum pool size.
+	added := false
 	for len(p.connections) < p.transport.cfg.PoolMinSize {
 		if err := p.addConnection(); err != nil {
 			break
 		}
+		added = true
+	}
+
+	// Capacity that appears here is capacity a waiter is entitled to. Nothing
+	// else will wake it: the connections this loop replaced were unhealthy and
+	// idle, so no Put is coming for them.
+	//
+	// ...Locked, because this function holds mu for its whole body and
+	// sync.Mutex is not reentrant: the unlocked form would deadlock the health
+	// check against itself.
+	if added {
+		p.signalAvailableLocked()
 	}
 }
 

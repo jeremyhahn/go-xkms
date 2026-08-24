@@ -317,6 +317,9 @@ func TestBuildTransportConfig_PropagatesEveryOption(t *testing.T) {
 	if err := WithPoolHealthInterval(17 * time.Second)(opts); err != nil {
 		t.Fatalf("WithPoolHealthInterval: %v", err)
 	}
+	if err := WithPoolAcquireTimeout(18 * time.Second)(opts); err != nil {
+		t.Fatalf("WithPoolAcquireTimeout: %v", err)
+	}
 	if err := WithTLSConfig(tlsCfg)(opts); err != nil {
 		t.Fatalf("WithTLSConfig: %v", err)
 	}
@@ -343,6 +346,9 @@ func TestBuildTransportConfig_PropagatesEveryOption(t *testing.T) {
 	}
 	if cfg.PoolMaxAge != 16*time.Second || cfg.PoolHealthInterval != 17*time.Second {
 		t.Errorf("pool aging = %v / %v", cfg.PoolMaxAge, cfg.PoolHealthInterval)
+	}
+	if cfg.PoolAcquireTimeout != 18*time.Second {
+		t.Errorf("PoolAcquireTimeout = %v, want 18s", cfg.PoolAcquireTimeout)
 	}
 	if cfg.TLSConfig != tlsCfg {
 		t.Error("TLSConfig was not propagated to the transport config")
