@@ -31,6 +31,18 @@ type AndroidKeyDescription = android.KeyDescription
 // attestation.
 type AndroidAuthorizationList = android.AuthorizationList
 
+// AndroidRootOfTrust is the Android Verified Boot claim carried inside an
+// attestation extension: the boot key, whether the bootloader is locked, the
+// verified-boot state and the boot hash.
+//
+// It is exported because a caller cannot enforce a boot-state POLICY without
+// it. AndroidVerifyOptions.VerifyBootState is "if a RootOfTrust is present, it
+// must say verified", so an extension carrying none passes verification while
+// claiming nothing -- and deciding whether that is acceptable is the
+// consumer's call, made against this type. xkey's pairing path is the first
+// such consumer (go-xkms#95).
+type AndroidRootOfTrust = android.RootOfTrust
+
 // AndroidVerifiedBootState reports the device's verified-boot state.
 type AndroidVerifiedBootState = android.VerifiedBootState
 

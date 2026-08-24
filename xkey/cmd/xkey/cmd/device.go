@@ -116,6 +116,25 @@ type AttestationPolicy struct {
 
 	// AutoAttestOnConnect triggers attestation automatically on device connect.
 	AutoAttestOnConnect bool `yaml:"auto_attest_on_connect"`
+
+	// AllowUnattestableDevices decides what `xkey device pair` does when the
+	// phone's hardware attestation cannot be verified -- an emulator, a chain
+	// that reaches no configured Android attestation root, a handset whose
+	// firmware state we hold no root for, a replayed challenge.
+	//
+	// False (the zero value, and the default) refuses the pairing. True lets
+	// it complete, and the record then carries NO attestation claim at all:
+	// no security level, no boot state, no boot hash, no device fingerprint.
+	// That is the part which is not configurable, because it is what #95 was
+	// about -- a pairing record whose attestation half was never checked is
+	// what every later connection is judged against, so an unverified claim
+	// must never be written down, whatever this setting says about refusing.
+	//
+	// This is the user-facing half of the owner ruling of 2026-08-23 on #95.
+	// The enterprise/SO half is config.PolicySection: while its
+	// LockPairingAttestationPolicy is set, this field is ignored and
+	// PairingAllowUnattestableDevices governs instead.
+	AllowUnattestableDevices bool `yaml:"allow_unattestable_devices"`
 }
 
 // PairedDevice represents a paired device.

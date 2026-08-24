@@ -62,6 +62,26 @@ type PolicySection struct {
 	ExtensionMaxFillsPerMinute     int      `yaml:"extension_max_fills_per_minute" json:"extension_max_fills_per_minute" mapstructure:"extension_max_fills_per_minute"`
 	UserCanConfigureExtension      bool     `yaml:"user_can_configure_extension" json:"user_can_configure_extension" mapstructure:"user_can_configure_extension"`
 
+	// Phone-as-HSM pairing policy.
+	//
+	// PairingAllowUnattestableDevices is the enterprise/SO answer to "what
+	// should `xkey device pair` do when the phone's hardware attestation
+	// cannot be verified?". LockPairingAttestationPolicy decides whether it is
+	// the answer that counts: while it is false the user's own setting in
+	// devices.yaml governs, and while it is true this section does and the
+	// user's setting is ignored. Owner ruling 2026-08-23 on #95.
+	//
+	// Both zero values are the safe ones, and that is deliberate rather than
+	// incidental. This section's defaults do NOT survive a config file that
+	// carries a partial `policy:` block -- measured: a file setting only
+	// min_pin_length resolves require_user_pin, require_encrypted_storage and
+	// every user_can_* field to false, because viper does not merge a struct
+	// default key by key (filed as #114). A field whose secure state depended
+	// on DefaultPolicy() would therefore be insecure for exactly those
+	// deployments. Unset here means: not locked, and not allowed.
+	PairingAllowUnattestableDevices bool `yaml:"pairing_allow_unattestable_devices" json:"pairing_allow_unattestable_devices" mapstructure:"pairing_allow_unattestable_devices"`
+	LockPairingAttestationPolicy    bool `yaml:"lock_pairing_attestation_policy" json:"lock_pairing_attestation_policy" mapstructure:"lock_pairing_attestation_policy"`
+
 	OrganizationName string `yaml:"organization_name" json:"organization_name" mapstructure:"organization_name"`
 	PolicyVersion    int    `yaml:"policy_version" json:"policy_version" mapstructure:"policy_version"`
 }
@@ -100,6 +120,12 @@ func DefaultPolicy() *PolicySection {
 // PolicySection. Because encoding/json marshals struct fields in the
 // order they are declared, the output is stable and suitable for HMAC
 // computation without requiring sorted-key canonicalization.
+//
+// The corollary, which every change to the struct above inherits: adding,
+// removing or reordering a field changes this encoding, so an enterprise
+// deployment must RE-SEAL its policy (ComputePolicyHMAC) after upgrading to a
+// build with a different field set. An unsealed upgrade reads as tampered,
+// which is the correct direction to fail but is a migration step, not a bug.
 func PolicyCanonicalJSON(p *PolicySection) ([]byte, error) {
 	return json.Marshal(p)
 }

@@ -378,7 +378,21 @@ jobs:
         working-directory: xkey
         run: |
           ../.github/scripts/require-tests.sh ./cmd/xkey/cmd/ ble \
-            TestCreateFIDO2PhoneKeyBackend_BadFingerprintIsRefused
+            TestCreateFIDO2PhoneKeyBackend_BadFingerprintIsRefused \
+            TestPairingRefusesASelfSignedAttestationChain \
+            TestPairingRefusesALeafNotIssuedByTheAnchorItPresents \
+            TestPairingRefusesAReplayedAttestationChallenge \
+            TestPairingIgnoresACertificateAppendedAfterTheVerifiedAnchor \
+            TestPairingAcceptsAVerifiedChainAndRecordsTheAnchorItVerifiedUnder \
+            TestPairingRefusesASoftwareProtectedKey \
+            TestPairingAcceptsATrustedEnvironmentKey \
+            TestPairingVerifyOptionsRequestTheHardwareBar \
+            TestVerifyPairingAttestationRefusesMissingTrustMaterial \
+            TestAllowUnattestablePairing_ResolvesTheTwoPlanes \
+            TestAllowUnattestablePairing_DefaultsToRefuseOnAZeroPolicySection \
+            TestNewPairedDeviceRecord_WritesNoAttestationClaimWhenThereIsNone \
+            TestNewPairedDeviceRecord_RecordsAVerifiedAttestation \
+            TestPairingRefusesAnAttestationThatClaimsNothingAboutBoot
 
       - name: xkey GUI service teardown
         working-directory: xkey

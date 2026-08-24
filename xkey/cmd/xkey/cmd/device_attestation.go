@@ -16,8 +16,6 @@
 package cmd
 
 import (
-	"crypto/sha256"
-	"encoding/hex"
 	"fmt"
 	"time"
 )
@@ -94,28 +92,6 @@ func validateSecurityLevel(level string, policy *AttestationPolicy) error {
 		return &DetailError{Err: ErrSecurityLevelInsufficient, Detail: fmt.Sprintf(": got %s, require %s", level, policy.MinSecurityLevel)}
 	}
 	return nil
-}
-
-// calculateDeviceFingerprint computes a fingerprint from the attestation root certificate.
-func calculateDeviceFingerprint(rootCertDER []byte) string {
-	hash := sha256.Sum256(rootCertDER)
-	return hex.EncodeToString(hash[:])
-}
-
-// formatBootState returns a human-readable boot state description.
-func formatBootState(bootState int) string {
-	switch bootState {
-	case 0:
-		return "VERIFIED"
-	case 1:
-		return "SELF_SIGNED"
-	case 2:
-		return "UNVERIFIED"
-	case 3:
-		return "FAILED"
-	default:
-		return fmt.Sprintf("UNKNOWN(%d)", bootState)
-	}
 }
 
 // formatAttestationDuration returns a human-readable duration string for attestation display.

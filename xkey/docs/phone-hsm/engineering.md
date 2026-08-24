@@ -1,6 +1,6 @@
 # Phone as HSM — Engineering Contract
 
-> **Status: NORMATIVE** · Feature: `phone-hsm` · Module: `go-xkms/xkey` · Last verified: 2026-08-19
+> **Status: NORMATIVE** · Feature: `phone-hsm` · Module: `go-xkms/xkey` · Last verified: 2026-08-23
 
 ## Exported surface — `xkey/pkg/pairing`
 
@@ -118,10 +118,13 @@ limits apply, and together they are narrower than the name suggests:
    local trust store's `PurposeAndroidHardware` certificates with
    `truststore.LoadEmbeddedRoots`, so a chain can verify under a root an
    operator installed with `xkey trust` and never appear in the embedded set at
-   all. `findMatchingTrustRoot` searches only the embedded roots and is a
-   display lookup — it can return `nil` for a chain that verified perfectly
-   well, so it does not establish provenance and is not evidence for this
-   point.
+   all. `findMatchingTrustRoot` is called with whatever root list its
+   caller passes. The GUI passes the embedded roots alone, so there it is a
+   display lookup that can return `nil` for a chain that verified perfectly
+   well under an operator-installed root — it does not establish provenance
+   and is not evidence for this point. The CLI paths no longer use it for
+   anything load-bearing: since #95 they take the anchor from the chain x509
+   built, which is the pool's own answer and cannot disagree with it.
 2. **Not an attestation, at connect time.** The handshake compares the stored
    value against bytes **the peer sends** in its identity ack:
 
@@ -132,18 +135,137 @@ limits apply, and together they are narrower than the name suggests:
 
    No chain is presented or verified there.
 
-3. **Not necessarily derived from a verified attestation either.**
-   `performPairingAttestation` (`cmd/xkey/cmd/device_pair.go`) sends a nonce,
-   takes the last certificate of whatever chain the phone returns, hashes it
-   and stores it. It does **not** call `VerifyAndroidKeyAttestation`, does not
-   check the nonce against the attestation extension, and does not verify the
-   chain against any trust anchor. Every failure on that path is a warning
-   that does not stop pairing.
+3. **It is now derived from a verified attestation — on every path.** This
+   was the third limit until #95, and it was the largest: pairing sent a nonce,
+   took the last certificate of whatever chain the phone returned, hashed it
+   and stored it, without calling `VerifyAndroidKeyAttestation`, without
+   comparing the nonce to the attestation extension, and without checking the
+   chain against any anchor. Every failure was a warning that let pairing
+   complete, so the stored value was the hash of a certificate **the phone
+   chose**.
 
-   So on the CLI pairing path the stored value is the hash of a certificate
-   **the phone chose**, not of a verified trust anchor. The chain is verified
-   only on flows that actually invoke `VerifyAndroidKeyAttestation` — the GUI
-   attestation flow does; pairing does not.
+   `performPairingAttestation` (`cmd/xkey/cmd/device_pair.go`) now **fails
+   closed**. It builds the trust material before it asks for evidence, and
+   `verifyPairingAttestation` refuses unless the chain verifies against those
+   anchors AND carries this pairing's challenge in the leaf's signed
+   `attestationChallenge`.
+
+   **What happens on a refusal is policy; what is recorded is not.** By the
+   owner ruling of 2026-08-23 on #95, whether pairing *aborts* on an
+   unattestable device is a setting, defaulting to abort. Whether an
+   **unverified claim may be written down** is not a setting and never becomes
+   one: that was the #95 defect itself. When policy allows an unattestable
+   pairing to proceed, `newPairedDeviceRecord` writes the pairing half of the
+   record — name, address, Noise keys, timestamp — and **nothing** about the
+   device's hardware: no `SecurityLevel`, no `BootStateVerified`, no
+   `DeviceBootHashHex`, no `DeviceFingerprint`, and no
+   `LastDeviceAttestationTime`. Not zeroed versions of them; absent. The device
+   reads as never attested because it has not been, the CLI says so in as many
+   words, and the first `device attest-device` is what fills them in.
+
+   The setting resolves across two planes (`allowUnattestablePairing`):
+
+   | Plane | Where | Key |
+   |---|---|---|
+   | User | `devices.yaml` | `attestation_policy.allow_unattestable_devices` |
+   | Enterprise / SO | the `policy:` section | `pairing_allow_unattestable_devices`, gated by `lock_pairing_attestation_policy` |
+
+   **The enterprise plane is monotone: it may only make the answer stricter.**
+   That is a limitation of what the CLI can honestly enforce, not a design
+   preference. `config` has the integrity machinery (`VerifyPolicyHMAC` over
+   `PolicyCanonicalJSON`, keyed from the SO PIN), but **no CLI path calls it**,
+   and a pairing command has no SO PIN to call it with. Treating the section as
+   authoritative in both directions therefore meant that anyone who could edit
+   `xkey.yaml` could write
+
+   ```yaml
+   policy:
+     lock_pairing_attestation_policy: true
+     pairing_allow_unattestable_devices: true
+   ```
+
+   and pair an unattestable device over a `devices.yaml` that refuses — a
+   fail-open reached by editing an unauthenticated file, which is worse than
+   having no enterprise plane at all because it looks like enforcement.
+
+   So `lock_pairing_attestation_policy: true` with
+   `pairing_allow_unattestable_devices: false` **refuses**, whatever
+   `devices.yaml` says — the direction no attacker wants, and the same answer an
+   absent section already gives. The permissive direction is **ignored** until
+   the policy can be authenticated, which is **#118**.
+
+   **Every absent value means refuse**, and that is reached by the Go zero
+   value rather than by a defaults table. The reason is measured, not stylistic:
+   a config file carrying a *partial* `policy:` block resolves every key it
+   omits to false rather than to `config.DefaultPolicy()` (#114), so a design
+   whose secure state came from that table would be insecure for exactly the
+   deployments that write a minimal policy file.
+
+   One migration note that follows from `PolicyCanonicalJSON`: adding fields to
+   `PolicySection` changes the canonical encoding, so an enterprise deployment
+   must **re-seal** its policy after upgrading to a build with a different field
+   set. An unsealed upgrade reads as tampered — the correct direction to fail,
+   but a step someone has to take.
+
+   The stored fingerprint is the **anchor x509 actually verified under**, read
+   back out of the chain the verifier built (`verifiedTrustAnchor`), never
+   `chain[len-1]`. The distinction is not cosmetic: verification proves the
+   leaf chains to some certificate in the pool and says nothing about what the
+   peer appended after it, so a valid chain with a trailing certificate still
+   verifies while `chain[len-1]` is attacker-chosen. An appended certificate is
+   therefore what it is — an unused extra — and cannot become the record.
+
+   Reading the anchor back is also why there is no second list of roots. The
+   first version of this fix kept a flat root list beside the pool and matched
+   by fingerprint; the list was built from the store's certificates for **every
+   purpose** while the pool held the Android-hardware ones alone, so a peer
+   could append a certificate stored under an unrelated purpose and have it
+   named as the anchor. Two sets that must agree are two sets that can
+   disagree. There is one pool, and the anchor comes from the verification.
+
+   `device attest-device` was corrected the same way — it verifies the chain
+   properly but hashed `chain[len-1]`, and `recordDeviceAttestation` overwrites
+   the pairing record, so it could have rewritten the value one command later.
+
+   Pairing verifies at the same bar `device attest-device` enforces —
+   `MinSecurityLevel: TrustedEnvironment` and `VerifyBootState: true` — which
+   is alignment rather than new policy. Without it pairing ADMITTED a device
+   that its own first re-attestation would refuse, so the weaker of the two
+   gates was the one establishing the binding.
+
+   **`VerifyBootState` is not sufficient on its own**, and pairing no longer
+   relies on it alone. The SDK's contract is *"if a `RootOfTrust` is present, it
+   must say verified"*, so an extension carrying **none** passes it. A trusted,
+   nonce-matching, StrongBox chain with no `RootOfTrust` was therefore reported
+   as `Chain Status: VERIFIED`, got a security level and an attestation
+   timestamp written to the record, and paired — having claimed nothing
+   whatsoever about its boot chain. For a phone-as-HSM pairing that claim *is*
+   the product.
+
+   `requireAttestedBootState` enforces the missing half at the **point of
+   consumption**, and refuses unless the extension carries a `RootOfTrust`, the
+   bootloader is **locked**, and the state is **verified**. It lives in the CLI
+   rather than in `pkg/attestation/android` because absence-versus-refusal is
+   the consumer's policy: the SDK's "verify what is claimed" contract is
+   deliberate and other callers depend on it. `device attest-device` inherits
+   the SDK's looser reading and is **not** changed here — pairing being the
+   stricter of the two is the safe direction, since anything that pairs also
+   passes re-attestation.
+
+   A device that fails any of those is **unattestable**, which is a policy
+   question with the policy answer above — not a silent admission.
+
+   `SecurityLevel`, boot state and the boot hash now come from the parsed
+   extension of the **verified** leaf. They used to be copied from the RPC
+   result's sibling JSON fields, which nothing binds to the certificates — a
+   device reporting `bootState == 0` was recorded as having a verified boot
+   state on its own say-so. A verified chain carrying no `RootOfTrust` records
+   no boot claim rather than a favourable default.
+
+   The `Nonce` echoed in the RPC result is deliberately **not** checked: it is
+   an unsigned field the peer controls, so matching it would prove only that
+   the peer can copy. Freshness rests on `ExpectedNonce`, compared in constant
+   time against the challenge inside the signed extension.
 
 The value is also the hash of a **public** certificate, so it is not a shared
 secret. Taken together, what the reconnect check establishes is: **the peer
@@ -161,9 +283,11 @@ would repeat the error this section corrects: it proves **possession of the
 key paired earlier**, not the identity of a handset. Nothing in this
 repository establishes that the key is hardware-bound or non-exportable, so a
 key copied off the phone is indistinguishable here. Whether the fingerprint
-check adds anything on top of that — and whether pairing should verify the
-chain before persisting anything — is tracked as go-xkms issue **#93**,
+check adds anything on top of that is tracked as go-xkms issue **#93**,
 *"DeviceFingerprint binds to the attestation ROOT CA, not the device"*.
+Whether pairing verifies the chain before persisting anything is no longer
+open: it does (#95). #93 remains, because verifying a chain does not make a
+shared trust anchor device-unique — limits 1 and 2 above are untouched by it.
 
 Everything below is correct regardless: it concerns whether the check is
 APPLIED, which is independent of what the check proves.

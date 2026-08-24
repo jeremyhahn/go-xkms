@@ -33,7 +33,40 @@ attestation_policy:
   verify_boot_state: true
   auto_attest_on_connect: true
   default_grace_period: "5m"
+  # What `xkey device pair` does when the phone's hardware attestation cannot
+  # be verified -- an emulator, a chain reaching no configured Android
+  # attestation root, a replayed challenge. Default (and absent) is false:
+  # pairing is REFUSED.
+  #
+  # true lets pairing complete, and the record then carries NO attestation
+  # claim at all: no security_level, no boot_state_verified, no
+  # device_boot_hash_hex, no device_fingerprint, no
+  # last_device_attestation_time. That part is not configurable -- a record
+  # whose attestation half was never checked is what every later connection
+  # would be judged against (#95).
+  allow_unattestable_devices: false
 ```
+
+An enterprise/SO deployment can take this decision away from the user through
+the HMAC-sealed `policy:` section of `xkey.yaml`:
+
+```yaml
+policy:
+  lock_pairing_attestation_policy: true      # ignore devices.yaml's setting
+  pairing_allow_unattestable_devices: false  # and use this one instead
+```
+
+The enterprise plane may only make the answer **stricter**. Setting
+`lock_pairing_attestation_policy: true` with
+`pairing_allow_unattestable_devices: false` refuses whatever `devices.yaml`
+says. Locking it **open** is currently ignored: nothing on the CLI path verifies
+the policy HMAC (verification needs the SO PIN), so honouring that direction
+would let anyone who can edit `xkey.yaml` pair an unattestable device. Tracked
+as issue #118.
+
+Both settings default to false, so an unconfigured install refuses. Adding
+fields to the sealed policy changes its canonical encoding, so re-seal the
+policy after upgrading.
 
 The `PairedDevice` struct tracks: Name, Address, NoisePublicKey, LocalNoisePrivateKey, PairedAt, SecurityLevel, DeviceFingerprint, BootStateVerified, DeviceBootHashHex, AttestationGracePeriod, and LastDeviceAttestationTime.
 

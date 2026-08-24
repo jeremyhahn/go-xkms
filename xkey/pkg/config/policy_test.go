@@ -232,6 +232,8 @@ func TestPolicyCanonicalJSON_FieldOrder(t *testing.T) {
 		"extension_blocked_domains",
 		"extension_max_fills_per_minute",
 		"user_can_configure_extension",
+		"pairing_allow_unattestable_devices",
+		"lock_pairing_attestation_policy",
 		"organization_name",
 		"policy_version",
 	}

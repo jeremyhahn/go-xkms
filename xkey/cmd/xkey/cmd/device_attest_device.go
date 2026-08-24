@@ -361,12 +361,19 @@ func runDeviceAttestDevice(cmd *cobra.Command, args []string) error {
 		}
 	}
 
-	// Calculate device fingerprint from root cert
-	var deviceFingerprint string
-	if len(attestResult.CertificateChain) > 0 {
-		rootIdx := len(attestResult.CertificateChain) - 1
-		deviceFingerprint = calculateDeviceFingerprint(attestResult.CertificateChain[rootIdx])
+	// The fingerprint is the anchor the chain verified UNDER, read back out of
+	// the verification, not the last certificate the peer sent. That element
+	// is peer-chosen: x509 proves the leaf chains to some certificate in the
+	// pool and constrains nothing about what follows it, so a valid chain with
+	// anything appended still verifies and the appended hash used to land
+	// here. recordDeviceAttestation overwrites the pairing record's
+	// DeviceFingerprint, so this path could rewrite the value #95 fixed at
+	// pairing time — the same defect one command later.
+	matchedRoot, anchorErr := verifiedTrustAnchor(certChain, rootPool)
+	if anchorErr != nil {
+		return anchorErr
 	}
+	deviceFingerprint := certFingerprint(matchedRoot)
 
 	// Record attestation result
 	attestationResult := &DeviceAttestationResult{

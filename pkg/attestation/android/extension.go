@@ -603,6 +603,58 @@ func verifyCertificateChain(chain []*x509.Certificate, roots *x509.CertPool, now
 // buildMinimalAttestationExtension constructs a minimal ASN.1-encoded
 // Android Key Attestation extension for testing purposes. This is exported
 // so that test packages can create synthetic attestation certificates.
+// BuildAttestationExtension builds a KeyDescription extension whose teeEnforced
+// AuthorizationList carries a RootOfTrust.
+//
+// BuildMinimalAttestationExtension writes both authorization lists as empty
+// SEQUENCEs, so nothing it produces can exercise any RootOfTrust check --
+// VerifyKeyAttestation's boot-state branch, or a caller that requires the
+// device be locked. A consumer testing those had no fixture and could only
+// assert that it ASKED for them.
+//
+// rot may be nil, which reproduces the minimal builder's shape: a verified,
+// nonce-matching chain that says nothing at all about boot state. That case
+// exists to be REFUSED by a caller that requires the claim, so it needs to be
+// constructible on purpose.
+func BuildAttestationExtension(
+	version int,
+	attestSecLevel SecurityLevel,
+	kmVersion int,
+	kmSecLevel SecurityLevel,
+	challenge []byte,
+	uniqueID []byte,
+	rot *RootOfTrust,
+) ([]byte, error) {
+	teeEnforced := []byte(nil)
+	if rot != nil {
+		body, err := asn1.Marshal(rootOfTrustASN1{
+			VerifiedBootKey:   rot.VerifiedBootKey,
+			DeviceLocked:      rot.DeviceLocked,
+			VerifiedBootState: asn1.Enumerated(rot.VerifiedBootState),
+			VerifiedBootHash:  rot.VerifiedBootHash,
+		})
+		if err != nil {
+			return nil, &errs.Wrapped{Msg: "android: failed to marshal root of trust", Err: err}
+		}
+
+		// [704] EXPLICIT, matching findRootOfTrust: it takes the element's
+		// CONTENT and unmarshals that as the RootOfTrust SEQUENCE.
+		tagged, err := asn1.Marshal(asn1.RawValue{
+			Class:      asn1.ClassContextSpecific,
+			Tag:        tagRootOfTrust,
+			IsCompound: true,
+			Bytes:      body,
+		})
+		if err != nil {
+			return nil, &errs.Wrapped{Msg: "android: failed to marshal tagged root of trust", Err: err}
+		}
+		teeEnforced = tagged
+	}
+
+	return buildAttestationExtension(version, attestSecLevel, kmVersion, kmSecLevel,
+		challenge, uniqueID, teeEnforced)
+}
+
 func BuildMinimalAttestationExtension(
 	version int,
 	attestSecLevel SecurityLevel,
@@ -611,7 +663,23 @@ func BuildMinimalAttestationExtension(
 	challenge []byte,
 	uniqueID []byte,
 ) ([]byte, error) {
-	// Build empty AuthorizationList SEQUENCEs
+	return buildAttestationExtension(version, attestSecLevel, kmVersion, kmSecLevel,
+		challenge, uniqueID, nil)
+}
+
+// buildAttestationExtension is the shared encoder. teeEnforcedContent is the
+// DER of the teeEnforced AuthorizationList's ELEMENTS (nil for an empty list).
+func buildAttestationExtension(
+	version int,
+	attestSecLevel SecurityLevel,
+	kmVersion int,
+	kmSecLevel SecurityLevel,
+	challenge []byte,
+	uniqueID []byte,
+	teeEnforcedContent []byte,
+) ([]byte, error) {
+	// Build the AuthorizationList SEQUENCEs. softwareEnforced is always empty
+	// here; teeEnforced carries whatever the caller supplied.
 	emptySeq, err := asn1.Marshal(asn1.RawValue{
 		Class:      asn1.ClassUniversal,
 		Tag:        asn1.TagSequence,
@@ -620,6 +688,19 @@ func BuildMinimalAttestationExtension(
 	})
 	if err != nil {
 		return nil, &errs.Wrapped{Msg: "android: failed to marshal empty authorization list", Err: err}
+	}
+
+	teeSeq := emptySeq
+	if len(teeEnforcedContent) > 0 {
+		teeSeq, err = asn1.Marshal(asn1.RawValue{
+			Class:      asn1.ClassUniversal,
+			Tag:        asn1.TagSequence,
+			IsCompound: true,
+			Bytes:      teeEnforcedContent,
+		})
+		if err != nil {
+			return nil, &errs.Wrapped{Msg: "android: failed to marshal tee authorization list", Err: err}
+		}
 	}
 
 	// Workaround: build the KeyDescription manually since the encoding
@@ -663,8 +744,8 @@ func BuildMinimalAttestationExtension(
 	seqContent.Write(kmSecBytes)
 	seqContent.Write(challengeBytes)
 	seqContent.Write(uniqueIDBytes)
-	seqContent.Write(emptySeq)
-	seqContent.Write(emptySeq)
+	seqContent.Write(emptySeq) // softwareEnforced
+	seqContent.Write(teeSeq)   // teeEnforced
 
 	// Wrap in SEQUENCE
 	result, err := asn1.Marshal(asn1.RawValue{
