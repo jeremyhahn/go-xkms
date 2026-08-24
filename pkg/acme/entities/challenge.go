@@ -24,8 +24,8 @@ type ACMEChallenge struct {
 	Token           string `yaml:"token" json:"token"`
 	Validated       string `yaml:"validated" json:"validated,omitempty"`
 	Error           *Error `yaml:"error" json:"error,omitempty"`
-	AccountID       uint64 `yaml:"account-id" json:"account_id" index:"accountId"`
-	AuthorizationID uint64 `yaml:"authorization-id" json:"authorization_id" index:"authorizationId"`
+	AccountID       uint64 `yaml:"account-id" json:"account_id" index:"true"`
+	AuthorizationID uint64 `yaml:"authorization-id" json:"authorization_id" index:"true"`
 }
 
 // SetEntityID sets the unique identifier for the challenge.

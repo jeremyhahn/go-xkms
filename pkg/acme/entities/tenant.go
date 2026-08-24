@@ -23,14 +23,14 @@ type Tenant struct {
 	NumericID uint64 `json:"numericId" yaml:"numericId"`
 
 	// ID is the unique identifier for this tenant.
-	ID string `json:"id" yaml:"id" index:"tenantStringId"`
+	ID string `json:"id" yaml:"id" index:"true"`
 
 	// Name is the human-readable name of the tenant.
 	Name string `json:"name" yaml:"name"`
 
 	// Status indicates the current state of the tenant.
 	// Possible values: "active", "suspended", "deleted"
-	Status string `json:"status" yaml:"status" index:"status"`
+	Status string `json:"status" yaml:"status" index:"true"`
 
 	// DEKKeyID is the KMS key ID for this tenant's Data Encryption Key.
 	// All tenant data is encrypted with this key for cryptographic isolation.

@@ -48,6 +48,40 @@ func newQRDBTestServer(t *testing.T) *Server {
 	return s
 }
 
+// TestCreateStorage_QRDBEmbeddedPutIfAbsent is the #61 regression.
+//
+// On a fresh embedded qrdb node the CA's first root-key store is a PutIfAbsent,
+// and before go-qrdb v0.11 the standalone node wired no transaction service, so
+// it failed with "TransactionServicer must not be nil" and the daemon died
+// during boot ("failed to initialize CA ... put-if-absent ...: embedded:
+// TransactionServicer must not be nil"). go-qrdb v0.11 (#62/#109) wires the
+// standalone transaction service, so this exercises the exact path — a
+// linearizable compare-and-swap through the embedded node — and asserts
+// first-writer-wins. It runs against the CA-init key namespace deliberately.
+func TestCreateStorage_QRDBEmbeddedPutIfAbsent(t *testing.T) {
+	s := newQRDBTestServer(t)
+	t.Cleanup(func() { _ = s.closeQRDBStorage() })
+
+	ctx := context.Background()
+
+	ca, err := s.createStorage("keys")
+	require.NoError(t, err)
+
+	const rootKey = "software:ca:Integration Test Root CA:ecdsa.key"
+
+	stored, err := ca.PutIfAbsent(ctx, rootKey, []byte("key-material"))
+	require.NoError(t, err, "#61: the standalone qrdb node must serve PutIfAbsent at boot")
+	require.True(t, stored, "the first PutIfAbsent on an absent key must store it")
+
+	stored2, err := ca.PutIfAbsent(ctx, rootKey, []byte("other-material"))
+	require.NoError(t, err)
+	require.False(t, stored2, "a second PutIfAbsent must report the key already present")
+
+	got, err := ca.Get(ctx, rootKey)
+	require.NoError(t, err)
+	assert.Equal(t, []byte("key-material"), got, "the first writer's value must survive")
+}
+
 // TestCreateStorage_QRDBEmbeddedRoundTrip verifies that createStorage("qrdb")
 // returns a working prefixed view over the shared embedded qrdb backend and
 // that round-trip Put/Get succeeds.

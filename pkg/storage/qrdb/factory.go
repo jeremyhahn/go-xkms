@@ -41,8 +41,12 @@ import (
 // discovers the gap on the path that needs the operation.
 //
 // The cause is in newEmbedded below: it builds its transport with
-// embedded.New(kvSvc, adminSvc) and no transaction service. That is issue #61,
-// blocked on go-qrdb#62.
+// embedded.New(kvSvc, adminSvc) and no transaction service. This is tracked as
+// issue #125 — distinct from #61, which was the pkg/server `storage.backend:
+// qrdb` path and is fixed in go-qrdb v0.11.0-alpha (the sdk/go/node daemon node
+// now serves standalone CAS). These low-level constructors are a separate path;
+// the sanctioned fix is embedded.NewServer (memory/pebble gain CAS; the file KV
+// engine cannot — measured). See #125.
 //
 // What this note deliberately does NOT say is what happens after #61 is fixed.
 // An earlier revision published a file-vs-memory capability matrix derived

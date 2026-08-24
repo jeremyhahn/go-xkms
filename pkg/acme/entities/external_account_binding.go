@@ -29,7 +29,7 @@ type ExternalAccountBinding struct {
 
 	// ID is the unique identifier for this binding (key identifier per RFC 8555)
 	// This MUST be an ASCII string provided to the client out-of-band.
-	ID string `json:"kid" yaml:"kid" index:"kid"`
+	ID string `json:"kid" yaml:"kid" index:"true"`
 
 	// MACKey is the base64url-encoded MAC key used to sign the binding JWS.
 	// Per RFC 8555, this should be provided in base64url-encoded form.
@@ -41,7 +41,7 @@ type ExternalAccountBinding struct {
 
 	// AccountID is the ID of the ACME account that has been bound to this external account.
 	// This is set when the binding is consumed during account registration.
-	AccountID uint64 `json:"accountId,omitempty" yaml:"accountId,omitempty" index:"accountId"`
+	AccountID uint64 `json:"accountId,omitempty" yaml:"accountId,omitempty" index:"true"`
 
 	// ExternalAccountID is an optional reference to the external system's account ID.
 	// This allows the CA to correlate the ACME account with the enterprise customer database.
@@ -49,7 +49,7 @@ type ExternalAccountBinding struct {
 
 	// TenantID is the tenant this EAB belongs to in multi-tenant deployments.
 	// Required when multi-tenancy is enabled.
-	TenantID string `json:"tenantId,omitempty" yaml:"tenantId,omitempty" index:"tenantId"`
+	TenantID string `json:"tenantId,omitempty" yaml:"tenantId,omitempty" index:"true"`
 
 	// CreatedBy is the user ID or API key identifier that created this EAB.
 	// Used for audit trail purposes.
@@ -57,7 +57,7 @@ type ExternalAccountBinding struct {
 
 	// Purpose indicates the intended use of this EAB.
 	// Values: "account-binding" (default), "endorse-01", "enroll-01"
-	Purpose string `json:"purpose,omitempty" yaml:"purpose,omitempty" index:"purpose"`
+	Purpose string `json:"purpose,omitempty" yaml:"purpose,omitempty" index:"true"`
 
 	// DeviceInfo contains device-specific information for TPM-based challenges.
 	// Used with endorse-01 and enroll-01 challenges.
@@ -65,7 +65,7 @@ type ExternalAccountBinding struct {
 
 	// Status indicates the current state of the binding.
 	// Possible values: "active" (ready to use), "used" (already bound to an account), "revoked".
-	Status string `json:"status" yaml:"status" index:"status"`
+	Status string `json:"status" yaml:"status" index:"true"`
 
 	// Contact contains optional contact information for the external account holder.
 	Contact []string `json:"contact,omitempty" yaml:"contact,omitempty"`

@@ -27,12 +27,14 @@ import (
 // caller injects a hand-rolled KVClient lacking that capability.
 var ErrTransactionsUnsupported = errors.New("qrdb: client does not support compare-and-swap transactions")
 
-// NOT AVAILABLE FROM THE EMBEDDED CONSTRUCTORS. This is a transaction, and the
-// embedded transport built by newEmbedded wires no transaction service, so it
-// fails for memory, file and pebble alike with "embedded: TransactionServicer
-// must not be nil" (#61, blocked on go-qrdb#62). Measured 2026-08-21 against
-// go-qrdb v0.9.0-alpha through the constructors themselves; see
-// factory_cas_characterization_test.go.
+// NOT AVAILABLE FROM THE EMBEDDED CONSTRUCTORS in factory.go. This is a
+// transaction, and the embedded transport built by newEmbedded wires no
+// transaction service, so it fails for memory, file and pebble alike with
+// "embedded: TransactionServicer must not be nil" (#125). Measured 2026-08-21
+// against go-qrdb v0.9.0-alpha through the constructors themselves; see
+// factory_cas_characterization_test.go. This is distinct from #61 (the
+// pkg/server `storage.backend: qrdb` node path), which is fixed in go-qrdb
+// v0.11.0-alpha.
 //
 // A caller cannot ask a Backend whether the operation is available; that needs
 // a capability on the interface and is an owner decision (#29). Until then the

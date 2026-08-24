@@ -28,7 +28,7 @@ type ACMEOrder struct {
 	Certificate    string           `yaml:"certificate" json:"certificate,omitempty"`
 	CertificateURL string           `yaml:"certificate-url" json:"certificate_url,omitempty"`
 	XSignedOrder   *ACMEOrder       `yaml:"x-signed-order" json:"x-signed-order,omitempty"`
-	AccountID      uint64           `yaml:"account-id" json:"account_id" index:"accountId"`
+	AccountID      uint64           `yaml:"account-id" json:"account_id" index:"true"`
 	URL            string           `yaml:"url" json:"url"`
 }
 

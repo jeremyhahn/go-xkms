@@ -28,7 +28,7 @@ type ACMEAuthorization struct {
 	Expires    string          `yaml:"expires" json:"expires"`
 	Challenges []ACMEChallenge `yaml:"challenges" json:"challenges"`
 	Wildcard   bool            `yaml:"wildcard" json:"wildcard"`
-	AccountID  uint64          `yaml:"account-id" json:"account_id" index:"accountId"`
+	AccountID  uint64          `yaml:"account-id" json:"account_id" index:"true"`
 	OrderID    uint64
 	URL        string `yaml:"url" json:"url"`
 }
