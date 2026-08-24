@@ -28,6 +28,28 @@ import (
 	secure "github.com/jeremyhahn/go-xkms/sdk/go/secure"
 )
 
+// MaxPasswordFieldBytes bounds the decoded length of a password_b64
+// value. A password, passphrase, or PIN is human- or tool-scale, so
+// 8 KiB is far beyond any legitimate secret (a generated static
+// password caps at 128 bytes) while keeping a single mlocked
+// allocation small. The bound is enforced BEFORE any secure.Buffer is
+// allocated, so an oversized field is rejected rather than driving
+// protected-memory (RLIMIT_MEMLOCK) exhaustion — a purge-class
+// no-recover wrapper turns that exhaustion into a process-wide key
+// purge on the barrier endpoints (go-xkms#121).
+//
+// It is an immutable const on purpose: every request reads the same
+// limit with no synchronization, and it can never be tuned to a
+// fail-open (non-positive) value at runtime. A deployment that
+// genuinely needs a different limit changes it here, not at runtime.
+const MaxPasswordFieldBytes = 8192
+
+// ErrPasswordTooLarge is wrapped by *BadBodyError when a password_b64
+// field would decode to more than MaxPasswordFieldBytes bytes. It is
+// exported so a transport layer can map the rejection to HTTP 413
+// (errors.Is reaches it through the *BadBodyError wrapper).
+var ErrPasswordTooLarge = errors.New("secureio: password exceeds maximum permitted length")
+
 // BadBodyError is returned by PasswordField.UnmarshalJSON when the
 // JSON token is missing, not a string, or not valid base64.
 type BadBodyError struct {
@@ -105,6 +127,17 @@ func (f *PasswordField) Size() int {
 // empty string yields an empty (zero-length) field, and any other
 // malformed input returns *BadBodyError.
 func (f *PasswordField) UnmarshalJSON(data []byte) error {
+	// Duplicate JSON members first: JSON permits repeating "password_b64", and
+	// an earlier occurrence may already have allocated an mlocked buffer into
+	// f.buf. Destroy it before ANY early return, so a later duplicate that is
+	// null, empty, malformed, oversized, or simply a replacement value cannot
+	// strand the earlier allocation — repeated such bodies would otherwise leak
+	// one mlocked buffer each and exhaust RLIMIT_MEMLOCK, the exact exhaustion
+	// #121 closes (Codex review). This also gives JSON last-wins semantics: a
+	// duplicate null/empty clears the field rather than retaining the prior
+	// secret. Destroy is idempotent and a no-op on the common single-field case
+	// where f.buf is still nil.
+	f.Destroy()
 	if len(data) == 0 {
 		return nil
 	}
@@ -122,6 +155,22 @@ func (f *PasswordField) UnmarshalJSON(data []byte) error {
 	maxLen := base64.StdEncoding.DecodedLen(len(encoded))
 	if maxLen <= 0 {
 		return &BadBodyError{Err: errors.New("password_b64 empty after decode")}
+	}
+	// Reject an oversized field BEFORE allocating any protected memory.
+	// DecodedLen counts the bytes that trailing '=' padding will drop,
+	// so subtract the padding to get the EXACT decoded length: a secret
+	// at the cap is accepted while one past it is refused, and the
+	// RLIMIT_MEMLOCK purge threshold stays unreachable from a single
+	// request (go-xkms#121).
+	decodedLen := maxLen
+	if n := len(encoded); encoded[n-1] == '=' {
+		decodedLen--
+		if n > 1 && encoded[n-2] == '=' {
+			decodedLen--
+		}
+	}
+	if decodedLen > MaxPasswordFieldBytes {
+		return &BadBodyError{Err: ErrPasswordTooLarge}
 	}
 	raw, err := secure.NewBuffer(maxLen)
 	if err != nil {

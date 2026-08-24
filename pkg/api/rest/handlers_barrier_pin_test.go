@@ -885,3 +885,34 @@ func TestHandleBarrierError_AllCases(t *testing.T) {
 		})
 	}
 }
+
+// TestBarrierInitializeHandler_PasswordTooLarge verifies the endpoint
+// rejects an oversized password_b64 with 413 rather than allocating
+// protected memory proportional to attacker input (go-xkms#121). A
+// string of 20000 'A's is valid base64 decoding to 15000 bytes, which
+// exceeds the default 8192-byte cap.
+func TestBarrierInitializeHandler_PasswordTooLarge(t *testing.T) {
+	h, _ := newTestBarrierHandler(t)
+
+	body := `{"password_b64":"` + strings.Repeat("A", 20000) + `"}`
+	req := httptest.NewRequest(http.MethodPost, "/v1/barrier/initialize", strings.NewReader(body))
+	w := httptest.NewRecorder()
+
+	h.BarrierInitializeHandler(w, req)
+
+	assert.Equal(t, http.StatusRequestEntityTooLarge, w.Code)
+}
+
+// TestBarrierUnsealHandler_PasswordTooLarge is the unseal-side twin of
+// TestBarrierInitializeHandler_PasswordTooLarge (go-xkms#121).
+func TestBarrierUnsealHandler_PasswordTooLarge(t *testing.T) {
+	h, _ := newTestBarrierHandler(t)
+
+	body := `{"password_b64":"` + strings.Repeat("A", 20000) + `"}`
+	req := httptest.NewRequest(http.MethodPost, "/v1/barrier/unseal", strings.NewReader(body))
+	w := httptest.NewRecorder()
+
+	h.BarrierUnsealHandler(w, req)
+
+	assert.Equal(t, http.StatusRequestEntityTooLarge, w.Code)
+}

@@ -27,6 +27,7 @@ import (
 // Barrier/PIN handler typed errors.
 var (
 	ErrBarrierNotConfigured    = errors.New("rest: barrier not configured")
+	ErrPasswordTooLarge        = errors.New("rest: password exceeds maximum length")
 	ErrPINManagerNotConfigured = errors.New("rest: PIN manager not configured")
 	ErrMissingSecret           = errors.New("rest: missing secret")
 	ErrMissingPIN              = errors.New("rest: missing pin")
@@ -126,11 +127,19 @@ func (h *HandlerContext) BarrierInitializeHandler(w http.ResponseWriter, r *http
 	}
 
 	var req BarrierInitializeRequest
+	// Install cleanup BEFORE Decode: a duplicate-member body can allocate a
+	// protected buffer during UnmarshalJSON and then fail, and the decode-error
+	// return path would otherwise skip Destroy (defense in depth for #121;
+	// UnmarshalJSON already destroys prior buffers on every early return).
+	defer req.Password.Destroy()
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		if errors.Is(err, secureio.ErrPasswordTooLarge) {
+			writeError(w, ErrPasswordTooLarge, http.StatusRequestEntityTooLarge)
+			return
+		}
 		writeError(w, ErrInvalidRequest, http.StatusBadRequest)
 		return
 	}
-	defer req.Password.Destroy()
 
 	creds, ok := barrierCredentialsFromRequest(req.Password, req.Secret)
 	if !ok {
@@ -157,11 +166,19 @@ func (h *HandlerContext) BarrierUnsealHandler(w http.ResponseWriter, r *http.Req
 	}
 
 	var req BarrierUnsealRequest
+	// Install cleanup BEFORE Decode: a duplicate-member body can allocate a
+	// protected buffer during UnmarshalJSON and then fail, and the decode-error
+	// return path would otherwise skip Destroy (defense in depth for #121;
+	// UnmarshalJSON already destroys prior buffers on every early return).
+	defer req.Password.Destroy()
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		if errors.Is(err, secureio.ErrPasswordTooLarge) {
+			writeError(w, ErrPasswordTooLarge, http.StatusRequestEntityTooLarge)
+			return
+		}
 		writeError(w, ErrInvalidRequest, http.StatusBadRequest)
 		return
 	}
-	defer req.Password.Destroy()
 
 	creds, ok := barrierCredentialsFromRequest(req.Password, req.Secret)
 	if !ok {

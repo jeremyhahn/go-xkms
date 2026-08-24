@@ -223,3 +223,149 @@ func TestBadBodyError_FormatAndUnwrap(t *testing.T) {
 		})
 	}
 }
+
+// TestPasswordField_UnmarshalJSON_TooLarge verifies that a password_b64
+// field whose decoded length would exceed MaxPasswordFieldBytes is
+// rejected with *BadBodyError wrapping ErrPasswordTooLarge, and that NO
+// protected buffer is allocated for it (go-xkms#121). Without the cap
+// the field would allocate an mlocked buffer proportional to attacker
+// input, the memlock-exhaustion vector this bound closes.
+func TestPasswordField_UnmarshalJSON_TooLarge(t *testing.T) {
+	oversized := bytes.Repeat([]byte{0x5a}, 2*MaxPasswordFieldBytes)
+	encoded := base64.StdEncoding.EncodeToString(oversized)
+	body := `{"password_b64":"` + encoded + `"}`
+
+	var req struct {
+		Password PasswordField `json:"password_b64"`
+	}
+	err := json.NewDecoder(strings.NewReader(body)).Decode(&req)
+	defer req.Password.Destroy()
+	if err == nil {
+		t.Fatal("expected error for oversized password_b64, got nil")
+	}
+	if !errors.Is(err, ErrPasswordTooLarge) {
+		t.Fatalf("expected ErrPasswordTooLarge, got %T: %v", err, err)
+	}
+	var bad *BadBodyError
+	if !errors.As(err, &bad) {
+		t.Fatalf("expected *BadBodyError wrapper, got %T", err)
+	}
+	if req.Password.Buffer() != nil || req.Password.Size() != 0 {
+		t.Fatal("no buffer must be allocated when the cap rejects the field")
+	}
+}
+
+// TestPasswordField_UnmarshalJSON_CapBoundary drives both sides of the
+// real default cap: a secret of exactly MaxPasswordFieldBytes is
+// accepted and one byte over is rejected. The cap is compared against
+// the EXACT decoded length (padding subtracted), so this must hold for
+// lengths whose base64 DecodedLen upper bound overshoots the cap — the
+// exact case a decoded-length-upper-bound check would get wrong.
+func TestPasswordField_UnmarshalJSON_CapBoundary(t *testing.T) {
+	decode := func(plaintextLen int) (int, error) {
+		encoded := base64.StdEncoding.EncodeToString(bytes.Repeat([]byte{0x1}, plaintextLen))
+		var req struct {
+			Password PasswordField `json:"password_b64"`
+		}
+		err := json.NewDecoder(strings.NewReader(`{"password_b64":"` + encoded + `"}`)).Decode(&req)
+		size := req.Password.Size()
+		req.Password.Destroy()
+		return size, err
+	}
+
+	// Exactly at the cap: accepted, with the full secret preserved.
+	if size, err := decode(MaxPasswordFieldBytes); err != nil {
+		t.Fatalf("%d bytes (== cap) must be accepted, got: %v", MaxPasswordFieldBytes, err)
+	} else if size != MaxPasswordFieldBytes {
+		t.Fatalf("accepted secret size = %d, want %d", size, MaxPasswordFieldBytes)
+	}
+
+	// One byte over: rejected, no buffer allocated.
+	if size, err := decode(MaxPasswordFieldBytes + 1); !errors.Is(err, ErrPasswordTooLarge) {
+		t.Fatalf("%d bytes (> cap) must be rejected with ErrPasswordTooLarge, got: %v", MaxPasswordFieldBytes+1, err)
+	} else if size != 0 {
+		t.Fatalf("rejected field must allocate no buffer, size = %d", size)
+	}
+}
+
+// TestPasswordField_UnmarshalJSON_DuplicateOversizedDoesNotLeak is the #121
+// duplicate-member regression (Codex review of #123). JSON permits repeating
+// password_b64, so an accepted value followed by an oversized one must reject
+// AND leave no stranded mlocked buffer; otherwise repeated {valid, oversized}
+// bodies leak one buffer each and exhaust RLIMIT_MEMLOCK — the condition the
+// cap exists to close.
+func TestPasswordField_UnmarshalJSON_DuplicateOversizedDoesNotLeak(t *testing.T) {
+	valid := base64.StdEncoding.EncodeToString([]byte("a-real-password"))
+	oversized := base64.StdEncoding.EncodeToString(bytes.Repeat([]byte{0x5a}, 2*MaxPasswordFieldBytes))
+	body := `{"password_b64":"` + valid + `","password_b64":"` + oversized + `"}`
+
+	var req struct {
+		Password PasswordField `json:"password_b64"`
+	}
+	err := json.NewDecoder(strings.NewReader(body)).Decode(&req)
+	defer req.Password.Destroy()
+	if !errors.Is(err, ErrPasswordTooLarge) {
+		t.Fatalf("oversized duplicate must be rejected with ErrPasswordTooLarge, got: %v", err)
+	}
+	if req.Password.Buffer() != nil || req.Password.Size() != 0 {
+		t.Fatal("the earlier accepted buffer must be destroyed, not stranded, when a duplicate is rejected")
+	}
+}
+
+// TestPasswordField_UnmarshalJSON_DuplicateSuccessKeepsLast verifies a
+// duplicate SUCCESSFUL field leaves exactly the last value and does not strand
+// the first's buffer.
+func TestPasswordField_UnmarshalJSON_DuplicateSuccessKeepsLast(t *testing.T) {
+	first := base64.StdEncoding.EncodeToString([]byte("first"))
+	second := base64.StdEncoding.EncodeToString([]byte("second-value"))
+	body := `{"password_b64":"` + first + `","password_b64":"` + second + `"}`
+
+	var req struct {
+		Password PasswordField `json:"password_b64"`
+	}
+	if err := json.NewDecoder(strings.NewReader(body)).Decode(&req); err != nil {
+		t.Fatalf("duplicate successful fields must decode, got: %v", err)
+	}
+	defer req.Password.Destroy()
+	if got := req.Password.Size(); got != len("second-value") {
+		t.Fatalf("last value must win: size = %d, want %d", got, len("second-value"))
+	}
+}
+
+// TestPasswordField_UnmarshalJSON_DuplicateEarlyReturnPaths covers the round-3
+// finding (Codex #123): the prior mlocked buffer must be destroyed before EVERY
+// duplicate-member early return — malformed, null, and empty — not only the
+// oversized/replacement path. A valid value followed by any of these must leave
+// no stranded buffer, and null/empty must clear the field (JSON last-wins).
+func TestPasswordField_UnmarshalJSON_DuplicateEarlyReturnPaths(t *testing.T) {
+	valid := base64.StdEncoding.EncodeToString([]byte("a-real-password"))
+
+	cases := []struct {
+		name    string
+		second  string // raw JSON value for the duplicate member
+		wantErr bool
+	}{
+		{"valid then malformed object", `{}`, true},
+		{"valid then null", `null`, false},
+		{"valid then empty string", `""`, false},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			body := `{"password_b64":"` + valid + `","password_b64":` + tc.second + `}`
+			var req struct {
+				Password PasswordField `json:"password_b64"`
+			}
+			err := json.NewDecoder(strings.NewReader(body)).Decode(&req)
+			defer req.Password.Destroy()
+			if tc.wantErr && err == nil {
+				t.Fatal("expected a decode error for the malformed duplicate")
+			}
+			if !tc.wantErr && err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+			if req.Password.Buffer() != nil || req.Password.Size() != 0 {
+				t.Fatal("the earlier accepted buffer must be destroyed, not stranded, on any duplicate early return")
+			}
+		})
+	}
+}
