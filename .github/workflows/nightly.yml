@@ -28,6 +28,24 @@ permissions:
   contents: read
   security-events: write
 
+# The integration-test job below interpolates env.GO_VERSION into
+# actions/setup-go. This block did not exist, so that expression evaluated to
+# the empty string and the step failed on every run since the job moved here
+# (2026-08-21):
+#
+#   [warning]go-version input was not specified. The action will try to use
+#            pre-installed version.
+#   /bin/sh: 1: version: not found
+#   ::error::Command failed:  version
+#
+# The job died at step 3 and never reached the harness, so the red everyone
+# was reading as go-xkms#19's devcontainer misdetection was, since that move,
+# a missing variable. Kept identical to ci.yml's pin rather than defaulted to
+# `stable`: an unpinned toolchain is what moved a green head to red once
+# already, which is why ci.yml carries that pin and this comment.
+env:
+  GO_VERSION: '1.26.7'
+
 jobs:
   trivy:
     name: Trivy

@@ -8,11 +8,23 @@ on:
   # pull_request:
   #   branches: [ master, main, develop ]
 
+# Dormant (workflow_dispatch only), which is exactly where toolchain drift
+# hides: nothing exercises these values until someone dispatches the workflow
+# and gets a result from a different Go than the gate uses.
+#
+# `stable` is prohibited portfolio-wide (devops.md): an unpinned toolchain
+# moved a green head to red under ci.yml once already, which is why that
+# workflow pins 1.26.7. This now matches it.
+#
+# GOPROXY/GOSUMDB overrides removed, per the same ci-template v1.1 prohibition
+# ci.yml records: the runners inject GOPRIVATE, which already exempts
+# first-party modules from the proxy and the checksum database, while a blanket
+# `GOSUMDB: off` turned off checksum verification for every THIRD-party
+# dependency, and a pinned GOPROXY breaks the build whenever an upstream
+# re-points a tag.
 env:
-  GO_VERSION: 'stable'
+  GO_VERSION: '1.26.7'
   COVERAGE_THRESHOLD: 90
-  GOPROXY: https://proxy.golang.org,direct
-  GOSUMDB: off
 
 jobs:
   coverage:

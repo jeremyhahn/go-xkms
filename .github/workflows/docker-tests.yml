@@ -8,9 +8,13 @@ on:
   # pull_request:
   #   branches: [ main, develop ]
 
+# Dormant (workflow_dispatch only). Same reasoning as coverage.yml: the
+# toolchain and linter pins are brought to the values ci.yml gates on, and the
+# GOPROXY/GOSUMDB overrides are removed under the ci-template v1.1 prohibition
+# ci.yml records -- `GOSUMDB: off` disabled checksum verification for every
+# third-party dependency.
 env:
-  GOPROXY: https://proxy.golang.org,direct
-  GOSUMDB: off
+  GO_VERSION: '1.26.7'
 
 jobs:
   lint:
@@ -23,7 +27,7 @@ jobs:
       - name: Set up Go
         uses: actions/setup-go@v5
         with:
-          go-version: 'stable'
+          go-version: ${{ env.GO_VERSION }}
 
       - name: Run gofmt check
         run: |
@@ -39,7 +43,7 @@ jobs:
       - name: Run golangci-lint
         uses: golangci/golangci-lint-action@v7
         with:
-          version: v2.7.2
+          version: v2.12.2
           args: --timeout=5m
 
   unit-tests:
