@@ -17,7 +17,6 @@ package cmd
 
 import (
 	"context"
-	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
@@ -409,36 +408,12 @@ func resolvePairedDevice(deviceName string) (*PairedDevice, error) {
 // connectPairedDevice builds the Noise-protected transport for a paired
 // device. The sentinel names the operation the failure belongs to.
 func connectPairedDevice(device *PairedDevice, timeout time.Duration, sentinel error) (deviceBackupTransport, error) {
-	localPrivateKey, err := base64.StdEncoding.DecodeString(device.LocalNoisePrivateKey)
+	cfg, err := newPairedDeviceBackendConfig(device, timeout, slog.Default())
 	if err != nil {
-		return nil, &WrappedError{Msg: "invalid local noise key", Err: err}
-	}
-	// Wiped here, at the decode, not at the LoadStaticKey below: a decode
-	// failure on any other field returns in between, and the raw scalar
-	// would be left sitting in garbage-collected memory.
-	defer phone.WipeBytes(localPrivateKey)
-	remotePublicKey, err := base64.StdEncoding.DecodeString(device.NoisePublicKey)
-	if err != nil {
-		return nil, &WrappedError{Msg: "invalid phone noise key", Err: err}
+		return nil, err
 	}
 
-	localKey, err := phone.LoadStaticKey(localPrivateKey)
-	if err != nil {
-		return nil, &WrappedError{Msg: "invalid local noise key", Err: err}
-	}
-
-	transport, err := dialPairedDevice(&phone.PhoneKeyBackendConfig{
-		DeviceAddress: device.Address,
-		// This helper hands the transport to its caller and keeps nothing, so
-		// the backend has to own the key or it would never be released.
-		LocalStaticKey:       localKey,
-		OwnsStaticKey:        true,
-		ExpectedRemoteStatic: remotePublicKey,
-		ScanTimeout:          30 * time.Second,
-		ConnectTimeout:       30 * time.Second,
-		OperationTimeout:     timeout,
-		Logger:               slog.Default(),
-	})
+	transport, err := dialPairedDevice(cfg)
 	if err != nil {
 		return nil, &SentinelCauseError{Sentinel: sentinel, Cause: err}
 	}

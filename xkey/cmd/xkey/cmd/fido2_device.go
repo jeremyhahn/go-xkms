@@ -17,7 +17,6 @@ package cmd
 
 import (
 	"context"
-	"encoding/base64"
 	"errors"
 	"fmt"
 	"log/slog"
@@ -79,67 +78,23 @@ func createFIDO2PhoneKeyBackend(cfg *FIDO2Config, logger *slog.Logger) (keybacke
 		slog.String("saved_address", savedAddress),
 	)
 
-	// Decode the stored Noise keys
-	remotePublicKey, err := base64.StdEncoding.DecodeString(device.NoisePublicKey)
+	// Every identity check this record supports, assembled in one place:
+	// the pairing keys, the stored fingerprint that binds the prologue, and
+	// the #129 liveness requirement. Building the configuration here instead
+	// is how four other commands ended up without the fingerprint and, later,
+	// without the liveness proof (Codex, #124).
+	backendCfg, err := newPairedDeviceBackendConfig(device, 60*time.Second, logger)
 	if err != nil {
 		return nil, errors.Join(ErrFIDO2DeviceBackendCreationFailed, err)
 	}
 
-	localPrivateKey, err := base64.StdEncoding.DecodeString(device.LocalNoisePrivateKey)
-	if err != nil {
-		return nil, errors.Join(ErrFIDO2DeviceBackendCreationFailed, err)
-	}
-
-	// The decoded scalar is a plain heap slice. reconstructStaticKey copies it
-	// into protected memory but cannot wipe the caller's copy, so wipe it here
-	// rather than leave a private key sitting in garbage-collected memory.
-	//
-	// Registered immediately after the decode, before any other validation:
-	// every return between the decode and this defer abandons the raw Noise
-	// private scalar on the ordinary heap.
-	defer phone.WipeBytes(localPrivateKey)
-
-	// Decode device fingerprint for prologue binding (trusted device
-	// verification). A stored-but-malformed value is refused rather than
-	// treated as "no fingerprint configured" — see
-	// phone.DecodeDeviceFingerprint.
-	//
-	// Validated HERE, before reconstructStaticKey, and not at its point of
-	// use below: this is pure config validation with nothing to release,
-	// whereas every return after reconstructStaticKey abandons protected
-	// pages that only PhoneKeyBackend's ownership transfer frees.
-	deviceFingerprint, err := phone.DecodeDeviceFingerprint(device.DeviceFingerprint)
-	if err != nil {
-		logger.Error("stored device fingerprint is invalid; refusing to build a backend without identity binding",
-			slog.String("error", err.Error()),
-		)
-		return nil, errors.Join(ErrFIDO2DeviceBackendCreationFailed, err)
-	}
-
-	// Reconstruct the local static key from the stored private key
-	localStaticKey, err := reconstructStaticKey(localPrivateKey)
-	if err != nil {
-		return nil, errors.Join(ErrFIDO2DeviceBackendCreationFailed, err)
-	}
-
-	// Create phone backend configuration
-	// Note: DeviceAddress is the saved address, but the backend will scan for
-	// the current address since Android rotates its BLE address (RPA) for privacy.
-	// Device identity is verified via the Noise protocol using ExpectedRemoteStatic,
-	// and the device fingerprint enables prologue binding for trusted device verification.
-	backendCfg := &phone.PhoneKeyBackendConfig{
-		DeviceAddress: savedAddress,
-		// This helper hands the backend to its caller and keeps nothing, so
-		// the backend has to own the key or it would never be released.
-		LocalStaticKey:            localStaticKey,
-		OwnsStaticKey:             true,
-		ExpectedRemoteStatic:      remotePublicKey,
-		ExpectedDeviceFingerprint: deviceFingerprint,
-		ScanTimeout:               30 * time.Second,
-		ConnectTimeout:            10 * time.Second,
-		OperationTimeout:          60 * time.Second,
-		Logger:                    logger,
-	}
+	// FIDO2's own connection shape, layered on top rather than duplicated
+	// beside it. Android rotates its BLE address (RPA), so the saved address is
+	// a starting point and the backend rescans; the longer connect window is
+	// this surface's, because a FIDO2 assertion is waiting on a human.
+	backendCfg.DeviceAddress = savedAddress
+	backendCfg.ScanTimeout = 30 * time.Second
+	backendCfg.ConnectTimeout = 10 * time.Second
 
 	backend, err := phone.NewPhoneKeyBackend(backendCfg)
 	if err != nil {
@@ -196,23 +151,4 @@ func createFIDO2PhoneKeyBackend(cfg *FIDO2Config, logger *slog.Logger) (keybacke
 	}
 
 	return backend, nil
-}
-
-// reconstructStaticKey rebuilds a Noise static key pair from the stored
-// private key bytes, in protected memory. It is a thin wrapper over
-// phone.LoadStaticKey, which owns the derivation; the length check stays here
-// only to keep the caller's error message specific.
-//
-// The returned key is the caller's, and the backend built from it reads its
-// protected pages for as long as that backend is open.
-func reconstructStaticKey(privateKey []byte) (*phone.StaticKey, error) {
-	if len(privateKey) != phone.NoiseKeySize {
-		return nil, &MessageError{Msg: fmt.Sprintf("invalid private key length: expected %d, got %d", phone.NoiseKeySize, len(privateKey))}
-	}
-
-	key, err := phone.LoadStaticKey(privateKey)
-	if err != nil {
-		return nil, &WrappedError{Msg: "failed to derive public key", Err: err}
-	}
-	return key, nil
 }

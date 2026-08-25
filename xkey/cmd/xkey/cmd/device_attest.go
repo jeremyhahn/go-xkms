@@ -165,41 +165,19 @@ func runDeviceAttest(cmd *cobra.Command, args []string) error {
 
 	fmt.Printf("Attesting key \"%s\" on device \"%s\"...\n\n", keyID, device.Name)
 
-	// Decode the pairing keys
-	localPrivateKey, err := base64.StdEncoding.DecodeString(device.LocalNoisePrivateKey)
-	if err != nil {
-		return &WrappedError{Msg: "invalid local noise key", Err: err}
-	}
-	// Wiped here, at the decode, not at the LoadStaticKey below: a decode
-	// failure on any other field returns in between, and the raw scalar
-	// would be left sitting in garbage-collected memory.
-	defer phone.WipeBytes(localPrivateKey)
-	remotePublicKey, err := base64.StdEncoding.DecodeString(device.NoisePublicKey)
-	if err != nil {
-		return &WrappedError{Msg: "invalid phone noise key", Err: err}
-	}
-
-	// Reconstruct the Noise DH key pair from the stored private key
-	localKey, err := phone.LoadStaticKey(localPrivateKey)
-	if err != nil {
-		return &WrappedError{Msg: "invalid local noise key", Err: err}
-	}
-	// Ownership transfers to the component below. It is the only thing that
-	// knows whether a reader is still live at shutdown: on an incomplete
-	// shutdown it retains the key for the process lifetime, where a
-	// caller-side destroy would free pages that reader is still using.
+	// The pairing keys, the stored fingerprint and the #129 liveness
+	// requirement all come from newPairedDeviceBackendConfig, which is the one
+	// place that assembles them. Key ownership transfers to the backend: it is
+	// the only thing that knows whether a reader is still live at shutdown,
+	// where a caller-side destroy would free pages that reader is still using.
 
 	// Connect to phone
-	backend, err := phone.NewPhoneKeyBackend(&phone.PhoneKeyBackendConfig{
-		DeviceAddress:        device.Address,
-		LocalStaticKey:       localKey,
-		OwnsStaticKey:        true,
-		ExpectedRemoteStatic: remotePublicKey,
-		ScanTimeout:          30 * time.Second,
-		ConnectTimeout:       30 * time.Second,
-		OperationTimeout:     timeout,
-		Logger:               logger,
-	})
+	backendCfg, err := newPairedDeviceBackendConfig(device, timeout, logger)
+	if err != nil {
+		return err
+	}
+
+	backend, err := phone.NewPhoneKeyBackend(backendCfg)
 	if err != nil {
 		return &WrappedError{Msg: "failed to create phone backend", Err: err}
 	}

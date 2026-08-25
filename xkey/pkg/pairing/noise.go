@@ -50,6 +50,21 @@ type StaticKey = noiseproto.StaticKey
 // backward-compatible RemoteStaticPublicKey accessor.
 type NoiseSession struct {
 	inner *noiseproto.Session
+
+	// prologue mirrors what SetPrologue handed the inner session, which keeps
+	// it unexported and offers no accessor. The attestation channel binding
+	// (#129) needs it, and it is not a secret: both peers derive it from the
+	// identity exchange, which runs in the clear before the handshake.
+	prologue []byte
+
+	// isInitiator records the handshake role. The channel binding hashes the
+	// two static keys in initiator-then-responder order, which is the only
+	// ordering both peers can agree on without exchanging anything further —
+	// "mine then theirs" would give the two ends different values. This
+	// package builds sessions in both roles (ble_peripheral.go and
+	// tcp_server.go are responders), so the role has to be remembered rather
+	// than assumed.
+	isInitiator bool
 }
 
 // NoiseSessionConfig configures a Noise session for phone communication.
@@ -93,7 +108,11 @@ func NewNoiseSession(cfg *NoiseSessionConfig) (*NoiseSession, error) {
 		return nil, ErrNoiseHandshakeFailed
 	}
 
-	return &NoiseSession{inner: session}, nil
+	return &NoiseSession{
+		inner:       session,
+		prologue:    append([]byte(nil), cfg.Prologue...),
+		isInitiator: cfg.IsInitiator,
+	}, nil
 }
 
 // LocalStaticPublicKey returns the local static public key.
@@ -114,7 +133,35 @@ func (s *NoiseSession) IsHandshakeComplete() bool {
 // SetPrologue updates the prologue for the session.
 // Must be called before InitHandshake.
 func (s *NoiseSession) SetPrologue(prologue []byte) {
+	s.prologue = append([]byte(nil), prologue...)
 	s.inner.SetPrologue(prologue)
+}
+
+// Prologue returns the prologue bound into this session's handshake, or nil
+// when none was set. The copy is defensive: a caller that mutated the returned
+// slice would silently desynchronize the attestation channel binding from the
+// value the handshake actually ran under.
+func (s *NoiseSession) Prologue() []byte {
+	return append([]byte(nil), s.prologue...)
+}
+
+// AttestChannelBinding returns the value an attestation transcript on this
+// session must commit to (#129).
+//
+// It is available only after the handshake, for the reason the binding exists:
+// before the handshake completes there is no authenticated peer static key to
+// bind to, so a value computed early would bind to a key nobody has proved
+// they hold.
+func (s *NoiseSession) AttestChannelBinding() ([]byte, error) {
+	if !s.IsHandshakeComplete() {
+		return nil, &DetailError{Err: ErrNoiseHandshakeFailed, Detail: ": channel binding requested before the handshake completed"}
+	}
+
+	initiator, responder := s.LocalStaticPublicKey(), s.RemoteStaticPublicKey()
+	if !s.isInitiator {
+		initiator, responder = responder, initiator
+	}
+	return ComputeAttestChannelBinding(initiator, responder, s.prologue)
 }
 
 // InitHandshake initializes the handshake state.

@@ -21,6 +21,17 @@ import (
 	"github.com/jeremyhahn/go-xkms/xkey/pkg/pairing"
 )
 
+// ErrLiveAttestationUnavailable indicates a connection required the #129
+// challenge-response proof and no verifier was supplied to produce one.
+//
+// It is a refusal, deliberately. The alternative — treating a missing verifier
+// as "no check configured" — would make the control vanish on exactly the
+// mistake it is most likely to meet: a caller that sets
+// RequireLiveAttestation from a pairing record and forgets to wire LiveAttest.
+// Corrupt or absent authorization machinery must never be less restrictive
+// than the policy it implements.
+var ErrLiveAttestationUnavailable = errors.New("phone: this device requires a live attestation proof but no verifier was configured")
+
 // Errors delegated to pairing package. These are returned by pairing code
 // and must be the same values so errors.Is() works correctly.
 var (

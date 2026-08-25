@@ -129,26 +129,24 @@ func (e *InvalidDeviceFingerprintError) Unwrap() []error {
 // DecodeDeviceFingerprint decodes a stored device fingerprint into the byte
 // form PerformHandshake compares against the value the device presents.
 //
-// The fingerprint records the attestation ROOT the paired device attested
-// under, so decoding it FAILS CLOSED. An empty string is the legitimate "no
-// fingerprint policy configured" state and yields (nil, nil). A non-empty
-// string that does not decode yields an *InvalidDeviceFingerprintError and no
-// bytes — never (nil, nil).
+// The fingerprint records the per-device ATTESTED KEY the paired device
+// presented -- the SHA-256 of its leaf's SubjectPublicKeyInfo (#93) -- so
+// decoding it FAILS CLOSED. An empty string is the legitimate "no fingerprint
+// policy configured" state and yields (nil, nil). A non-empty string that does
+// not decode yields an *InvalidDeviceFingerprintError and no bytes — never
+// (nil, nil).
 //
-// WHAT the stored value proves is much narrower than "device fingerprint"
-// reads. It is the SHA-256 of the attestation chain's ROOT -- on a verified
-// chain, a CONFIGURED Android-hardware trust anchor, embedded or locally
-// installed, shared by every handset under that anchor -- and the handshake
-// compares it against bytes the PEER sends, with no chain verified at that
-// moment. Nor is the stored value necessarily from a verified attestation:
-// CLI pairing hashes the last certificate of whatever chain the phone
-// returns, without calling VerifyAndroidKeyAttestation. Since the value is
-// the hash of a PUBLIC certificate it is not a secret either.
+// WHAT the stored value proves, precisely. It identifies the key generated
+// inside that handset's TEE/StrongBox, taken from a chain pairing verified
+// (#95), so unlike the older SHA-256-of-the-anchor value it is device-unique.
+// But the handshake compares it against bytes the PEER sends, with no chain
+// verified at that moment, and the value is the hash of a PUBLIC key, so it is
+// not a secret. The comparison is therefore a CONTINUITY check plus the
+// prologue binding, not live attestation.
 //
-// So the check establishes that the peer echoed the value it supplied when
-// pairing: a continuity check on an attacker-suppliable value, not device
-// identity and not live attestation. Per-device binding is the open tracking
-// question.
+// The live proof is the #129 challenge-response re-attestation on the
+// established session, where the device signs a fresh nonce with the attested
+// key. Records predating #129 carry the older binding until re-paired.
 //
 // The fail-closed behaviour here is correct either way, and the reason does
 // not depend on what the value proves:

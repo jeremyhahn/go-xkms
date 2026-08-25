@@ -379,20 +379,25 @@ jobs:
         run: |
           ../.github/scripts/require-tests.sh ./cmd/xkey/cmd/ ble \
             TestCreateFIDO2PhoneKeyBackend_BadFingerprintIsRefused \
-            TestPairingRefusesASelfSignedAttestationChain \
-            TestPairingRefusesALeafNotIssuedByTheAnchorItPresents \
-            TestPairingRefusesAReplayedAttestationChallenge \
-            TestPairingIgnoresACertificateAppendedAfterTheVerifiedAnchor \
-            TestPairingAcceptsAVerifiedChainAndRecordsTheAnchorItVerifiedUnder \
-            TestPairingRefusesASoftwareProtectedKey \
-            TestPairingAcceptsATrustedEnvironmentKey \
-            TestPairingVerifyOptionsRequestTheHardwareBar \
-            TestVerifyPairingAttestationRefusesMissingTrustMaterial \
             TestAllowUnattestablePairing_ResolvesTheTwoPlanes \
             TestAllowUnattestablePairing_DefaultsToRefuseOnAZeroPolicySection \
             TestNewPairedDeviceRecord_WritesNoAttestationClaimWhenThereIsNone \
             TestNewPairedDeviceRecord_RecordsAVerifiedAttestation \
-            TestPairingRefusesAnAttestationThatClaimsNothingAboutBoot
+            TestPairThenReconnectThenReattest_Interop \
+            TestReconnectRefusesADeviceThatCannotProveLiveness \
+            TestReconnectEnforcesLivenessBeforeTheSessionIsUsable \
+            TestPairedDeviceBackendConfigCarriesEveryIdentityCheck
+
+      # The attestation DECISION's own suite. It used to live in cmd/xkey/cmd
+      # behind `//go:build ble`, reachable only through the named list above --
+      # so the GUI, which makes the same decision, was covered by none of it.
+      # The decision moved to pkg/attestation (#130) and its tests came with
+      # it, where they run in the ordinary suite for every consumer. Named
+      # here anyway because this package is where a silent deletion would be
+      # most expensive.
+      - name: xkey device attestation decision
+        working-directory: xkey
+        run: go test ./pkg/attestation/... -count=1
 
       - name: xkey GUI service teardown
         working-directory: xkey

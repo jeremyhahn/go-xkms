@@ -131,6 +131,29 @@ type PhoneKeyBackendConfig struct {
 
 	// DeviceName is the human-readable name of this device (for audit logging).
 	DeviceName string
+
+	// RequireLiveAttestation makes the #129 challenge-response proof mandatory
+	// on this connection: after the Noise handshake, the peer must present its
+	// attestation chain and sign a fresh challenge with the attested key, or
+	// the connection is refused.
+	//
+	// Set it from the pairing record's attestation protocol version. It is a
+	// separate field from LiveAttest, rather than "enforce if a verifier is
+	// set", so that FORGETTING to wire the verifier is a refusal instead of a
+	// silently skipped check. A security control that fails open on a caller's
+	// omission is one omission away from being absent — the same defect
+	// PerformHandshake's identity-exchange switch was fixed for.
+	RequireLiveAttestation bool
+
+	// LiveAttest performs the challenge-response exchange and judges the
+	// answer. It is injected because the decision needs trust material and a
+	// pairing record, neither of which this package knows about: pkg/phone
+	// carries the transport and the session, not policy.
+	//
+	// exchange runs one encrypted JSON-RPC round trip over the session just
+	// established; channelBinding is that session's attestation channel
+	// binding.
+	LiveAttest LiveAttestFunc
 }
 
 // DefaultPhoneKeyBackendConfig returns default configuration.
@@ -642,7 +665,61 @@ func (b *PhoneKeyBackend) performHandshake(ctx context.Context) error {
 		LocalStaticPublicKey:      b.session.LocalStaticPublicKey(),
 		ExpectedDeviceFingerprint: b.cfg.ExpectedDeviceFingerprint,
 	}
-	return PerformHandshake(ctx, cfg)
+	if err := PerformHandshake(ctx, cfg); err != nil {
+		return err
+	}
+
+	return b.proveLiveness(ctx)
+}
+
+// proveLiveness runs the #129 challenge-response proof, when the configuration
+// requires it, before the backend is usable for anything.
+//
+// It sits here rather than at each Connect branch because both reach
+// performHandshake: a check per branch is a check one branch can be missing
+// from. The handshake above proves the peer holds the Noise key paired
+// earlier; only this proves the peer holds the key that was ATTESTED, and that
+// it holds it now — which is what a copied Noise key cannot supply.
+//
+// Must be called with b.mu held, like its caller.
+func (b *PhoneKeyBackend) proveLiveness(ctx context.Context) error {
+	if !b.cfg.RequireLiveAttestation {
+		return nil
+	}
+	if b.cfg.LiveAttest == nil {
+		b.log.Error("live attestation is required for this device but no verifier was supplied")
+		return ErrLiveAttestationUnavailable
+	}
+
+	binding, err := b.session.AttestChannelBinding()
+	if err != nil {
+		return err
+	}
+
+	// The exchange goes straight through the transport and session rather than
+	// SendRequest, which gates on b.connected — and the whole point is that
+	// this runs BEFORE the backend is connected enough to serve anything.
+	exchange := func(ctx context.Context, req *Request) (*Response, error) {
+		plaintext, err := EncodeRequest(req)
+		if err != nil {
+			return nil, err
+		}
+		ciphertext, err := b.session.Encrypt(plaintext)
+		if err != nil {
+			return nil, err
+		}
+		responseCiphertext, err := b.transport.SendAndReceive(ctx, ciphertext)
+		if err != nil {
+			return nil, err
+		}
+		responsePlaintext, err := b.session.Decrypt(responseCiphertext)
+		if err != nil {
+			return nil, err
+		}
+		return DecodeResponse(responsePlaintext)
+	}
+
+	return b.cfg.LiveAttest(ctx, exchange, binding)
 }
 
 // EnableBidirectional starts bidirectional JSON-RPC routing using the

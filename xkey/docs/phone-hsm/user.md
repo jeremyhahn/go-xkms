@@ -109,7 +109,10 @@ to change in the same release, so it is coordinated work rather than a setting.
 | no devices found | the app is not running, or the transport is not available | open xkey-android; try `--timeout` |
 | pairing times out | scan window too short, or the phone is not discoverable | `--timeout 60s` |
 | **handshake failure (key mismatch)** | the phone did not prove it holds the key you paired with | **do not `--force`.** Find out why the key changed |
-| **device fingerprint mismatch** | the phone reported a different value than it did at pairing — which can also happen on the same handset if its attestation chain changed | **do not `--force`.** Investigate before re-pairing |
+| **device fingerprint mismatch** | the phone presented a different hardware identity than it did at pairing — honest after a factory reset or app reinstall, alarming otherwise | **do not `--force`.** Investigate before re-pairing |
+| **attested key changed since pairing** | `device attest-device` found a different hardware key; the existing binding was left untouched | if you deliberately reset the phone, re-pair with `--force`; if not, treat as suspicious |
+| **the peer did not prove possession of the attested key** | the phone could not sign this connection's challenge — an outdated app, or not the handset you paired with | update the phone app; if it is current, investigate |
+| **device answered with an unsupported attestation protocol version** | the phone app predates challenge-response attestation | update xkey-android |
 | "not connected" after an error | the session ended | reconnect; a Noise session cannot resume mid-stream |
 | commands are slow in parallel | the channel is serialised | run them in sequence |
 | attestation rejected | the Android hardware root is missing or misclassified | add it with purpose `android-hardware` |
@@ -138,29 +141,36 @@ applies. Losing the fingerprint check does not let just any phone connect. It
 drops one of two checks, leaving the paired key on its own. Turning off a check
 you asked for, without telling you, is reason enough to refuse.
 
-> **What this check does and does not tell you.** The stored fingerprint is a
-> value your phone **reported about itself** when you paired: a hash of the last
-> certificate in the chain the phone sent. On reconnect the phone simply sends
-> the same value back for comparison; nothing is re-checked with the
-> manufacturer at that moment.
+> **What this check does and does not tell you.** The stored fingerprint
+> identifies the **security key inside your phone** — one generated in the
+> handset's secure hardware when you first set the app up, and kept for as long
+> as the app is installed. Two phones cannot have the same one.
 >
-> That value identifies a hardware-attestation authority — one shared by many
-> handsets — **only if the chain it came from was checked against a trusted
-> root.** Pairing on the command line does not check it. So treat the stored
-> value as "what this phone told us about itself", not as a manufacturer's word.
+> On reconnect the phone sends that value back so the two sides agree on who is
+> connecting. That part is just a name being repeated, and on its own it would
+> prove nothing. What backs it up is the step immediately after: your computer
+> sends the phone a fresh random challenge, and the phone has to **sign it with
+> that same hardware key, then and there**. A recording of an earlier connection
+> will not do, and neither will a copy of the phone's certificates — those are
+> public.
 >
-> So a match confirms the phone is giving the same answer it gave when you
-> paired. It does **not** prove it is the same individual handset, and it is not
-> a password — the value is not secret.
+> So a successful connection now says three things: the key really is inside a
+> genuine, locked, verified-boot handset (the manufacturer's certificate chain
+> says so); it is the same key you paired with; and whoever is on the other end
+> holds it right now.
 >
-> The stronger check is the **paired key**: the encrypted handshake proves the
-> other end holds the key you paired with, and refuses the connection if it
-> does not. Read that as what it is — proof of the key, not proof of the
-> handset. If someone managed to copy that key onto another phone, this side
-> could not tell the difference.
+> The **paired key** check is still there and still separate: the encrypted
+> handshake proves the other end holds the key exchanged at pairing, and refuses
+> the connection otherwise.
 >
-> A fingerprint mismatch is still worth investigating, but treat it as a signal
-> rather than as proof of identity.
+> A fingerprint mismatch means the phone is presenting a different hardware
+> identity than the one you paired with. That happens honestly after a factory
+> reset or a reinstall — and dishonestly if it is not your phone. Investigate
+> before re-pairing.
+>
+> One caveat worth knowing: a device paired **before** this check existed keeps
+> the older, weaker binding until you re-pair it. `xkey device attest-device`
+> upgrades it.
 
 Recovery is to **re-pair the device**, which writes a fresh record. The error
 names the offending value — truncated, with its true length — so you can tell

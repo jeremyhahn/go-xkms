@@ -82,6 +82,26 @@ var VerifyAndroidKeyAttestation = android.VerifyKeyAttestation
 // out of a leaf certificate without verifying the certificate chain.
 var ParseAndroidKeyAttestation = android.ParseKeyAttestation
 
+// AndroidKeyAttestationOID is the object identifier of the Android
+// key-attestation certificate extension.
+var AndroidKeyAttestationOID = android.AndroidKeyAttestationOID
+
+// BuildAndroidAttestationExtension builds a KeyDescription extension whose
+// teeEnforced AuthorizationList carries a RootOfTrust.
+//
+// It exists to let consumers construct SYNTHETIC attestation certificates for
+// testing. That is why it is on the SDK surface at all: xkey re-implements the
+// attestation decision against this extension, and a consumer that cannot
+// build one can only test its verifier against fixtures it borrowed from
+// somewhere — or reach past sdk/go into pkg/attestation/android, which the
+// architecture gate rightly refuses.
+//
+// A nil rot reproduces the minimal builder's shape: a chain that verifies and
+// carries a challenge while claiming nothing about boot state. That case
+// exists to be REFUSED by a caller that requires the claim, so it has to be
+// constructible on purpose.
+var BuildAndroidAttestationExtension = android.BuildAttestationExtension
+
 // GoogleHardwareAttestationRoots returns the Google hardware-attestation root
 // certificates.
 var GoogleHardwareAttestationRoots = truststore.GoogleHardwareAttestationRoots

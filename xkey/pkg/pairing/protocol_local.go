@@ -267,17 +267,80 @@ type LocalAttestKeyResult struct {
 
 // LocalAttestDeviceParams contains parameters for local.attestDevice.
 // This method attests to the device itself, not a specific key.
+//
+// Under protocol version 2 (#129) it is a challenge: the verifier states the
+// nonce, the purpose and the channel it expects the answer to be bound to, and
+// the device answers with a live signature over all three. Under version 1 the
+// nonce was instead baked into a freshly generated key's attestation
+// certificate; see attest_challenge.go for why that could not coexist with a
+// stable device identity.
 type LocalAttestDeviceParams struct {
-	Nonce []byte `json:"nonce"` // 32-byte challenge nonce
+	// ProtocolVersion selects the attestation model. Absent or 1 is the
+	// legacy embedded-challenge request; 2 is challenge-response.
+	ProtocolVersion int `json:"protocolVersion,omitempty"`
+
+	// Nonce is the verifier's fresh 32-byte challenge.
+	Nonce []byte `json:"nonce"`
+
+	// Purpose is the version 2 transcript purpose: "pair" or "reattest". It
+	// keeps a signature obtained during pairing from satisfying a reconnect.
+	Purpose string `json:"purpose,omitempty"`
 }
+
+// NOTE — the version 2 request deliberately carries NO channel binding.
+//
+// The transcript commits to one (ComputeAttestChannelBinding: a SHA-256 over
+// the two Noise static public keys in initiator-then-responder order plus the
+// length-prefixed prologue), and each side derives it from its OWN session.
+//
+// It was briefly sent here as a diagnostic and removed, because a field whose
+// only safe handling is "never use it" is not a diagnostic — it is a footgun
+// with an undetectable failure mode. A prover that signs the supplied value and
+// a prover that derives its own are BYTE-INDISTINGUISHABLE to the verifier
+// under normal operation; they diverge only under exactly the relay attack the
+// binding exists to stop, at which point the relayed signature verifies. And a
+// request field named channelBinding carrying exactly 32 bytes reads as "sign
+// this", so every implementer would have to independently rediscover why the
+// obvious reading is the wrong one.
+//
+// Removing it makes the dangerous implementation unwritable rather than merely
+// forbidden. Each side logs its own derived value at debug level instead: an
+// operator diffing two logs learns which side is wrong, which the old
+// "they differ" warning could never say. (Ruled on #129.)
 
 // LocalAttestDeviceResult contains the result of local.attestDevice.
 // This provides Android hardware-backed device attestation.
+//
+// Only CertificateChain, Signature, SignatureAlgorithm and ProtocolVersion
+// carry weight. SecurityLevel, Nonce and the RootOfTrust fields are the
+// device's own unauthenticated JSON: the verifier reads every one of those
+// claims out of the SIGNED attestation extension in the leaf instead, and
+// keeps the JSON copies only for display and diagnostics (#95).
 type LocalAttestDeviceResult struct {
+	// ProtocolVersion is the model the device answered under. A version 2
+	// request refuses anything but a version 2 answer — see
+	// ErrAttestProtocolDowngrade.
+	ProtocolVersion int `json:"protocolVersion,omitempty"`
+
 	Format           string   `json:"format"`           // "android-keystore"
-	CertificateChain [][]byte `json:"certificateChain"` // X.509 cert chain
+	CertificateChain [][]byte `json:"certificateChain"` // X.509 cert chain: [leaf(DAK), intermediate..., root]
 	SecurityLevel    string   `json:"securityLevel"`    // "software", "tee", "strongbox"
 	Nonce            []byte   `json:"nonce"`            // Echoed challenge
+
+	// Purpose echoes the requested transcript purpose (version 2). It is
+	// advisory: the verifier rebuilds the transcript from what IT asked for,
+	// never from this field.
+	Purpose string `json:"purpose,omitempty"`
+
+	// Signature is the DAK's live signature over the attestation transcript
+	// (version 2), ASN.1 DER.
+	Signature []byte `json:"signature,omitempty"`
+
+	// SignatureAlgorithm names the signature scheme, "ES256". It is checked
+	// rather than inferred so a peer cannot pick a weaker verification path by
+	// mislabelling its signature.
+	SignatureAlgorithm string `json:"signatureAlgorithm,omitempty"`
+
 	// RootOfTrust fields from Android attestation extension
 	BootState        int    `json:"bootState"`        // 0=VERIFIED, 1=SELF_SIGNED, 2=UNVERIFIED, 3=FAILED
 	DeviceLocked     bool   `json:"deviceLocked"`     // True if bootloader is locked

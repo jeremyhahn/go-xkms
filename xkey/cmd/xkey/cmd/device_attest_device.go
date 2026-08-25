@@ -17,10 +17,7 @@ package cmd
 
 import (
 	"context"
-	"crypto/rand"
-	"crypto/x509"
 	"encoding/base64"
-	"encoding/hex"
 	"errors"
 	"fmt"
 	"log/slog"
@@ -30,27 +27,23 @@ import (
 	"github.com/spf13/cobra"
 	"github.com/spf13/viper"
 
-	xkms "github.com/jeremyhahn/go-xkms/sdk/go"
-	xkeyAttestation "github.com/jeremyhahn/go-xkms/xkey/pkg/attestation"
+	"github.com/jeremyhahn/go-xkms/xkey/pkg/attestation"
 	"github.com/jeremyhahn/go-xkms/xkey/pkg/phone"
-	xkeyTruststore "github.com/jeremyhahn/go-xkms/xkey/pkg/truststore"
 )
 
 // Device attestation errors.
+//
+// ErrAttestDeviceNonceGenFailed and ErrAttestDeviceCertParseFailed are gone
+// with the code that raised them: this command no longer draws its own nonce
+// or parses its own chain, both of which now happen once in attestOverSession
+// and report through the pairing path's sentinels (#129).
 var (
-	// ErrAttestDeviceNonceGenFailed indicates nonce generation failed.
-	ErrAttestDeviceNonceGenFailed = errors.New("device: failed to generate attestation nonce")
-
-	// ErrAttestDeviceCertParseFailed indicates certificate parsing failed.
-	ErrAttestDeviceCertParseFailed = errors.New("device: failed to parse attestation certificate")
-
 	// ErrAttestDeviceVerifyFailed indicates attestation verification failed.
 	ErrAttestDeviceVerifyFailed = errors.New("device: device attestation verification failed")
 )
 
 // Attestation constants.
 const (
-	attestationNonceSize        = 32
 	deviceConnectTimeoutSeconds = 60
 )
 
@@ -222,168 +215,122 @@ func runDeviceAttestDevice(cmd *cobra.Command, args []string) error {
 		return &WrappedError{Msg: "failed to create noise session", Err: err}
 	}
 
-	// Perform Noise handshake
+	// The stored identity, decoded the way every other connecting path decodes
+	// it. Fail-closed: a corrupt record yields an error and no bytes, never the
+	// "no fingerprint configured" signal, which would silently drop the check.
+	expectedFingerprint, fpErr := phone.DecodeDeviceFingerprint(device.DeviceFingerprint)
+	if fpErr != nil {
+		return &SentinelCauseError{Sentinel: ErrAttestDeviceVerifyFailed, Cause: fpErr}
+	}
+
+	// Perform Noise handshake.
+	//
+	// LocalStaticPublicKey and ExpectedDeviceFingerprint are what make the
+	// pre-handshake identity exchange run, and this command used to set
+	// neither — so it connected with an EMPTY prologue and no fingerprint
+	// comparison, while the reconnect path bound both. That mattered less when
+	// this command only refreshed a timestamp; since #129 it can also record
+	// the attestation PROTOCOL VERSION, so re-attesting over a session weaker
+	// than the one the binding is meant to be revalidated on would let the
+	// stronger claim be established from the weaker context. (Codex, #124.)
+	//
+	// An empty stored fingerprint decodes to nil, which is the legitimate
+	// never-attested case: the exchange still runs and the device may answer
+	// "unknown". A device that HAS a fingerprint cannot return to that state,
+	// and performIdentityExchange refuses if it claims to.
 	fmt.Println("Establishing secure channel...")
 	handshakeCfg := &phone.HandshakeConfig{
-		Transport:           transport,
-		Session:             session,
-		Logger:              logger,
-		StripEnvelopeHeader: false,
-		EnvelopeHeaderSize:  0,
+		Transport:                 transport,
+		Session:                   session,
+		Logger:                    logger,
+		StripEnvelopeHeader:       false,
+		EnvelopeHeaderSize:        0,
+		LocalStaticPublicKey:      session.LocalStaticPublicKey(),
+		ExpectedDeviceFingerprint: expectedFingerprint,
 	}
 	if err := phone.PerformHandshake(connectCtx, handshakeCfg); err != nil {
 		return &WrappedError{Msg: "handshake failed", Err: err}
 	}
 
-	// Generate attestation nonce
-	nonce := make([]byte, attestationNonceSize)
-	if _, err := rand.Read(nonce); err != nil {
-		return &SentinelCauseError{Sentinel: ErrAttestDeviceNonceGenFailed, Cause: err}
-	}
-
-	// Send local.attestDevice request
+	// The whole attestation exchange, shared with the pairing path (#129).
+	//
+	// This command used to re-implement the sequence — request, chain
+	// verification, boot state, fingerprint, signature — beside the one in
+	// device_pair.go. Both of Codex's blocking findings on #124 were instances
+	// of the same root cause: two copies of a security decision drift, and the
+	// weaker copy is the one that ends up establishing the binding. That is the
+	// shape of #95, one command later. There is now one implementation, so
+	// "attest-device applies a weaker policy than pairing" is not a state this
+	// code can reach.
+	//
+	// The trust material is loaded the same way too: loadPairingAttestationTrust
+	// builds its pool from the same store, verifier and PurposeAndroidHardware
+	// this command built inline.
 	fmt.Println("Requesting device attestation...")
-	attestReq := phone.NewRequest(phone.MethodLocalAttestDevice, &phone.LocalAttestDeviceParams{
-		Nonce: nonce,
-	})
 
-	attestPlaintext, err := phone.EncodeRequest(attestReq)
-	if err != nil {
-		return &WrappedError{Msg: "failed to encode attestation request", Err: err}
+	trust, trustErr := loadPairingAttestationTrust()
+	if trustErr != nil {
+		return trustErr
 	}
 
-	attestCiphertext, err := session.Encrypt(attestPlaintext)
-	if err != nil {
-		return &WrappedError{Msg: "failed to encrypt attestation request", Err: err}
-	}
-
-	attestResponseCiphertext, err := transport.SendAndReceive(connectCtx, attestCiphertext)
-	if err != nil {
-		return &WrappedError{Msg: "attestation request failed", Err: err}
-	}
-
-	attestResponsePlaintext, err := session.Decrypt(attestResponseCiphertext)
-	if err != nil {
-		return &WrappedError{Msg: "failed to decrypt attestation response", Err: err}
-	}
-
-	attestResp, err := phone.DecodeResponse(attestResponsePlaintext)
-	if err != nil {
-		return &WrappedError{Msg: "failed to decode attestation response", Err: err}
-	}
-
-	if attestResp.Error != nil {
-		return phone.MapRPCError(attestResp.Error)
-	}
-
-	attestResult, err := phone.DecodeResult[phone.LocalAttestDeviceResult](attestResp)
-	if err != nil {
-		return &WrappedError{Msg: "failed to decode attestation result", Err: err}
-	}
-
-	// Parse certificate chain
-	certChain := make([]*x509.Certificate, 0, len(attestResult.CertificateChain))
-	for i, certDER := range attestResult.CertificateChain {
-		cert, err := x509.ParseCertificate(certDER)
-		if err != nil {
-			return &DetailError{Err: ErrAttestDeviceCertParseFailed, Detail: fmt.Sprintf(": certificate %d: %v", i, err)}
-		}
-		certChain = append(certChain, cert)
-	}
-
-	if len(certChain) == 0 {
-		return &DetailError{Err: ErrAttestDeviceVerifyFailed, Detail: ": empty certificate chain"}
-	}
-
-	// Build trust pool using the auto-selecting attestation verifier
 	fmt.Println("Verifying attestation chain...")
 
-	xkeyStore, xkeyErr := openTrustStore()
-	if xkeyErr != nil {
-		return &WrappedError{Msg: "failed to open trust store", Err: xkeyErr}
-	}
-	defer func() { _ = xkeyStore.Close() }()
-
-	verifier, verifierErr := xkeyAttestation.NewVerifier(xkeyStore, xkeyTruststore.LoadEmbeddedRoots)
-	if verifierErr != nil {
-		return &WrappedError{Msg: "failed to create attestation verifier", Err: verifierErr}
-	}
-
-	rootPool, poolErr := verifier.BuildTrustPool(xkeyTruststore.PurposeAndroidHardware)
-	if poolErr != nil {
-		return &WrappedError{Msg: "failed to build trust pool", Err: poolErr}
-	}
-
-	// Verify attestation using the Android extension parser
-	verifyOpts := &xkms.AndroidVerifyOptions{
-		TrustedRoots:     rootPool,
-		ExpectedNonce:    nonce,
-		MinSecurityLevel: xkms.AndroidSecurityLevelTrustedEnvironment, // TEE minimum
-		VerifyBootState:  true,
-	}
-
-	keyDesc, err := xkms.VerifyAndroidKeyAttestation(certChain, verifyOpts)
+	verified, err := attestation.AttestOverSession(
+		connectCtx, transport, session, trust, phone.AttestPurposeReattest, logger)
 	if err != nil {
-		return &SentinelCauseError{Sentinel: ErrAttestDeviceVerifyFailed, Cause: err}
+		return err
 	}
 
-	// Extract boot hash from RootOfTrust
-	var bootHashHex string
-	var bootVerified bool
-	if keyDesc.TeeEnforced.RootOfTrust != nil {
-		rot := keyDesc.TeeEnforced.RootOfTrust
-		bootHashHex = hex.EncodeToString(rot.VerifiedBootHash)
-		bootVerified = rot.VerifiedBootState == xkms.AndroidVerifiedBootVerified
+	securityLevel := verified.Result.SecurityLevel
+	bootHashHex := verified.Result.BootHashHex
+	deviceFingerprint := verified.Result.DeviceFingerprint
 
-		// Validate boot hash hasn't changed if we have a previous value
-		if err := validateBootHashMatch(device, bootHashHex); err != nil {
-			fmt.Println()
-			fmt.Println("WARNING: Device boot hash has changed!")
-			fmt.Printf("  Previous: %s\n", truncateBootHash(device.DeviceBootHashHex))
-			fmt.Printf("  Current:  %s\n", truncateBootHash(bootHashHex))
-			fmt.Println()
-			fmt.Println("This may indicate:")
-			fmt.Println("  - Device was updated (OS/firmware)")
-			fmt.Println("  - Device was factory reset")
-			fmt.Println("  - Device may be compromised")
-			fmt.Println()
-			return err
-		}
-	}
-
-	// Determine security level string
-	securityLevel := keyDesc.AttestationSecurityLevel.String()
-
-	// Validate security level meets policy requirements
+	// Validate security level meets policy requirements. This is the one check
+	// that is genuinely this command's own: pairing enforces the portfolio
+	// minimum, and an operator may set a higher bar for re-attestation.
 	if cfg.AttestationPolicy != nil {
 		if err := validateSecurityLevel(securityLevel, cfg.AttestationPolicy); err != nil {
 			return err
 		}
 	}
 
-	// The fingerprint is the anchor the chain verified UNDER, read back out of
-	// the verification, not the last certificate the peer sent. That element
-	// is peer-chosen: x509 proves the leaf chains to some certificate in the
-	// pool and constrains nothing about what follows it, so a valid chain with
-	// anything appended still verifies and the appended hash used to land
-	// here. recordDeviceAttestation overwrites the pairing record's
-	// DeviceFingerprint, so this path could rewrite the value #95 fixed at
-	// pairing time — the same defect one command later.
-	matchedRoot, anchorErr := verifiedTrustAnchor(certChain, rootPool)
-	if anchorErr != nil {
-		return anchorErr
+	// Validate boot hash hasn't changed if we have a previous value.
+	if err := validateBootHashMatch(device, bootHashHex); err != nil {
+		fmt.Println()
+		fmt.Println("WARNING: Device boot hash has changed!")
+		fmt.Printf("  Previous: %s\n", truncateBootHash(device.DeviceBootHashHex))
+		fmt.Printf("  Current:  %s\n", truncateBootHash(bootHashHex))
+		fmt.Println()
+		fmt.Println("This may indicate:")
+		fmt.Println("  - Device was updated (OS/firmware)")
+		fmt.Println("  - Device was factory reset")
+		fmt.Println("  - Device may be compromised")
+		fmt.Println()
+		return err
 	}
-	deviceFingerprint := certFingerprint(matchedRoot)
 
-	// Record attestation result
-	attestationResult := &DeviceAttestationResult{
-		AttestationTime:   time.Now().UTC(),
-		SecurityLevel:     securityLevel,
-		BootStateVerified: bootVerified,
-		BootHashHex:       bootHashHex,
-		DeviceFingerprint: deviceFingerprint,
+	// Fail-closed identity continuity (#93). This command REVALIDATES an
+	// existing binding, so a changed attested key is refused here — never
+	// silently rewritten — mirroring validateBootHashMatch above. Otherwise a
+	// peer holding the paired Noise key plus a separately valid hardware
+	// attestation of its own device could turn the operator's revalidation
+	// into a rebind onto that device. Legitimate rotation is an explicit
+	// re-pair, which establishes a fresh binding on purpose.
+	if err := device.attestationBinding().ValidateAttestedKeyMatch(deviceFingerprint); err != nil {
+		fmt.Println()
+		fmt.Println("WARNING: the device's attested key has changed since pairing!")
+		fmt.Printf("  Previous: %s\n", truncateDeviceInfoHash(device.DeviceFingerprint))
+		fmt.Printf("  Current:  %s\n", truncateDeviceInfoHash(deviceFingerprint))
+		fmt.Println()
+		fmt.Println("This attestation is NOT applied and the existing binding is unchanged.")
+		fmt.Println("If you deliberately rotated the device's key (factory reset, key")
+		fmt.Println("regeneration), re-pair with `xkey device pair --force` to bind the")
+		fmt.Println("new key. If you did NOT, treat this as suspicious.")
+		fmt.Println()
+		return err
 	}
-	recordDeviceAttestation(device, attestationResult)
+
+	recordDeviceAttestation(device, verified.Result)
 
 	// Update grace period if specified
 	if setGracePeriod > 0 {
@@ -407,8 +354,10 @@ func runDeviceAttestDevice(cmd *cobra.Command, args []string) error {
 	fmt.Println()
 	fmt.Printf("Device \"%s\" attestation VERIFIED\n", device.Name)
 	fmt.Println("============================================================")
+	fmt.Printf("  Trust Anchor:     %s\n", verified.TrustAnchor)
+	fmt.Printf("  Attested Key:     %s\n", truncateDeviceInfoHash(deviceFingerprint))
 	fmt.Printf("  Security Level:   %s\n", securityLevel)
-	fmt.Printf("  Boot Verified:    %v\n", bootVerified)
+	fmt.Printf("  Boot State:       %s\n", verified.BootState)
 	if bootHashHex != "" {
 		fmt.Printf("  Boot Hash:        %s\n", truncateBootHash(bootHashHex))
 	}

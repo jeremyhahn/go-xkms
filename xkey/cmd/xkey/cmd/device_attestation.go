@@ -17,6 +17,7 @@ package cmd
 
 import (
 	"fmt"
+	"github.com/jeremyhahn/go-xkms/xkey/pkg/attestation"
 	"time"
 )
 
@@ -25,14 +26,10 @@ const (
 	defaultAttestationGracePeriod = 5 * time.Minute
 )
 
-// DeviceAttestationResult contains the result of device attestation verification.
-type DeviceAttestationResult struct {
-	AttestationTime   time.Time
-	SecurityLevel     string
-	BootStateVerified bool
-	BootHashHex       string
-	DeviceFingerprint string
-}
+// DeviceAttestationResult is the verified attestation a record is built from.
+// The type is owned by pkg/attestation, which makes the decision; this alias
+// keeps the CLI's call sites reading as they did.
+type DeviceAttestationResult = attestation.Result
 
 // isDeviceAttestationRequired returns true if device attestation is needed
 // based on the device's last attestation time and the configured grace period.
@@ -57,6 +54,14 @@ func recordDeviceAttestation(device *PairedDevice, result *DeviceAttestationResu
 	device.BootStateVerified = result.BootStateVerified
 	device.DeviceBootHashHex = result.BootHashHex
 	device.DeviceFingerprint = result.DeviceFingerprint
+
+	// The recorded protocol version only ever moves UP. A successful version 2
+	// attestation upgrades a legacy record; nothing here can walk a record
+	// back to the weaker model, because the version is the anti-downgrade
+	// term and a term an attacker could lower is not one (#129).
+	if result.ProtocolVersion > device.AttestationProtocolVersion {
+		device.AttestationProtocolVersion = result.ProtocolVersion
+	}
 }
 
 // validateBootHashMatch checks if boot hash changed (detects tampering).

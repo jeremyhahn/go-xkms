@@ -17,7 +17,6 @@ package cmd
 
 import (
 	"context"
-	"encoding/base64"
 	"errors"
 	"fmt"
 	"log/slog"
@@ -199,40 +198,23 @@ func runDeviceShare(cmd *cobra.Command, args []string) error {
 	_, _ = fmt.Fprintf(cmd.OutOrStdout(), "Sharing key \"%s\" (backend: %s) with device \"%s\"...\n\n",
 		keyID, backend, device.Name)
 
-	// Decode pairing keys
-	localPrivateKey, err := base64.StdEncoding.DecodeString(device.LocalNoisePrivateKey)
-	if err != nil {
-		return &WrappedError{Msg: "invalid local noise key", Err: err}
-	}
-	// Wiped here, at the decode, not at the LoadStaticKey below: a decode
-	// failure on any other field returns in between, and the raw scalar
-	// would be left sitting in garbage-collected memory.
-	defer phone.WipeBytes(localPrivateKey)
-	remotePublicKey, err := base64.StdEncoding.DecodeString(device.NoisePublicKey)
-	if err != nil {
-		return &WrappedError{Msg: "invalid phone noise key", Err: err}
-	}
-
-	localKey, err := phone.LoadStaticKey(localPrivateKey)
-	if err != nil {
-		return &WrappedError{Msg: "invalid local noise key", Err: err}
-	}
+	// The pairing keys, the stored fingerprint and the #129 liveness
+	// requirement all come from newPairedDeviceBackendConfig, which is the one
+	// place that assembles them. Key ownership transfers to the backend: it is
+	// the only thing that knows whether a reader is still live at shutdown,
+	// where a caller-side destroy would free pages that reader is still using.
 	// Ownership transfers to the component below. It is the only thing that
 	// knows whether a reader is still live at shutdown: on an incomplete
 	// shutdown it retains the key for the process lifetime, where a
 	// caller-side destroy would free pages that reader is still using.
 
 	// Connect to phone
-	phoneBackend, err := phone.NewPhoneKeyBackend(&phone.PhoneKeyBackendConfig{
-		DeviceAddress:        device.Address,
-		LocalStaticKey:       localKey,
-		OwnsStaticKey:        true,
-		ExpectedRemoteStatic: remotePublicKey,
-		ScanTimeout:          30 * time.Second,
-		ConnectTimeout:       30 * time.Second,
-		OperationTimeout:     timeout,
-		Logger:               logger,
-	})
+	backendCfg, err := newPairedDeviceBackendConfig(device, timeout, logger)
+	if err != nil {
+		return &SentinelCauseError{Sentinel: ErrShareConnectFailed, Cause: err}
+	}
+
+	phoneBackend, err := phone.NewPhoneKeyBackend(backendCfg)
 	if err != nil {
 		return &SentinelCauseError{Sentinel: ErrShareConnectFailed, Cause: err}
 	}
@@ -398,40 +380,23 @@ func runDeviceImport(cmd *cobra.Command, args []string) error {
 
 	_, _ = fmt.Fprintf(cmd.OutOrStdout(), "Importing key \"%s\" from device \"%s\"...\n\n", keyID, device.Name)
 
-	// Decode pairing keys
-	localPrivateKey, err := base64.StdEncoding.DecodeString(device.LocalNoisePrivateKey)
-	if err != nil {
-		return &WrappedError{Msg: "invalid local noise key", Err: err}
-	}
-	// Wiped here, at the decode, not at the LoadStaticKey below: a decode
-	// failure on any other field returns in between, and the raw scalar
-	// would be left sitting in garbage-collected memory.
-	defer phone.WipeBytes(localPrivateKey)
-	remotePublicKey, err := base64.StdEncoding.DecodeString(device.NoisePublicKey)
-	if err != nil {
-		return &WrappedError{Msg: "invalid phone noise key", Err: err}
-	}
-
-	localKey, err := phone.LoadStaticKey(localPrivateKey)
-	if err != nil {
-		return &WrappedError{Msg: "invalid local noise key", Err: err}
-	}
+	// The pairing keys, the stored fingerprint and the #129 liveness
+	// requirement all come from newPairedDeviceBackendConfig, which is the one
+	// place that assembles them. Key ownership transfers to the backend: it is
+	// the only thing that knows whether a reader is still live at shutdown,
+	// where a caller-side destroy would free pages that reader is still using.
 	// Ownership transfers to the component below. It is the only thing that
 	// knows whether a reader is still live at shutdown: on an incomplete
 	// shutdown it retains the key for the process lifetime, where a
 	// caller-side destroy would free pages that reader is still using.
 
 	// Connect to phone
-	phoneBackend, err := phone.NewPhoneKeyBackend(&phone.PhoneKeyBackendConfig{
-		DeviceAddress:        device.Address,
-		LocalStaticKey:       localKey,
-		OwnsStaticKey:        true,
-		ExpectedRemoteStatic: remotePublicKey,
-		ScanTimeout:          30 * time.Second,
-		ConnectTimeout:       30 * time.Second,
-		OperationTimeout:     timeout,
-		Logger:               logger,
-	})
+	backendCfg, err := newPairedDeviceBackendConfig(device, timeout, logger)
+	if err != nil {
+		return &SentinelCauseError{Sentinel: ErrShareConnectFailed, Cause: err}
+	}
+
+	phoneBackend, err := phone.NewPhoneKeyBackend(backendCfg)
 	if err != nil {
 		return &SentinelCauseError{Sentinel: ErrShareConnectFailed, Cause: err}
 	}

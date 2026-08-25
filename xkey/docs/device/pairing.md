@@ -100,6 +100,73 @@ The package supports bidirectional device attestation:
 
 The `LaptopAttestor` interface generates attestation for the desktop side. Remote devices (phones) provide Android Key Attestation via the `local.attestDevice` method.
 
+### Device attestation, protocol version 2 (#129)
+
+`local.attestDevice` is a **challenge-response** exchange. The device holds one
+persistent, hardware-backed **Device Attestation Key** (DAK), generated and
+attested once; its `SubjectPublicKeyInfo` hashes to the stable
+`DeviceFingerprint`. Freshness is a live signature over the verifier's nonce,
+not a nonce embedded in the attestation certificate — the two are mutually
+exclusive on Android, where Keystore fixes the attestation challenge at key
+generation.
+
+Request (`LocalAttestDeviceParams`) carries `protocolVersion: 2`, the 32-byte
+`nonce` and the `purpose` (`pair` | `reattest`). Response
+(`LocalAttestDeviceResult`) adds `certificateChain`, `signature` and
+`signatureAlgorithm: "ES256"`.
+
+**The request deliberately carries no channel binding.** The transcript commits
+to one, and each side derives it from its own session. Sending it would make a
+prover that signs the value it was handed byte-indistinguishable from one that
+derived its own — right up until the relay attack the binding exists to stop, at
+which point the relayed signature verifies. A field whose only safe handling is
+"never use it" is a footgun, not a diagnostic. Each side logs its own derived
+value at debug level instead.
+
+Signed transcript (`pairing.BuildAttestTranscript`):
+
+```
+"xkey-attest-transcript-v1" || len8(purpose) || purpose
+                            || nonce(32) || channelBinding(32) || fingerprint(32)
+```
+
+Channel binding (`pairing.ComputeAttestChannelBinding`):
+
+```
+SHA-256( "xkey-attest-channel-v1"
+       || 0x20 || initiatorStaticPub(32)
+       || 0x20 || responderStaticPub(32)
+       || len8(prologue) || prologue )
+```
+
+The DAK's genesis attestation challenge must begin with
+`xkey-device-attestation-v1`.
+
+**Downgrade is refused symmetrically.** A version 2 challenge answered with any
+other version is refused by the verifier (`ErrAttestProtocolDowngrade`); a
+request that does not ask under version 2 is refused by the prover with
+`ErrorCodeAttestProtocolDowngrade` (**-32037**). Either side accommodating the
+older model would let the party being checked choose which checks apply to it.
+go-xkms never sends -32037 — this repository is the verifier — but the code is
+reserved here so a future method family cannot claim it.
+
+### Interop vectors
+
+Published on go-xkms#129 and pinned in `xkey/pkg/pairing/attest_vectors_test.go`.
+A change to any of them is a wire break, not an edit.
+
+Note the **role-reversed** channel-binding vector (initiator `0x22`, responder
+`0x11`). It exists because the other two cannot catch a role-blind derivation on
+their own: in them the initiator (`0x11`) already sorts before the responder
+(`0x22`), so a derivation that sorted the keys — or hashed "mine then theirs" —
+reproduces them exactly. The real-path interop test does not catch it either,
+since both ends call the same derivation and a mutation moves the oracle with
+the subject. Measured. A vector set that cannot catch role-blindness is an
+incomplete contract for the next implementer.
+
+Full rationale and threat model:
+[../phone-hsm/engineering.md](../phone-hsm/engineering.md#challenge-response-attestation-129).
+
 TCG-CSR-IDEVID enrollment is supported through `remote.getTCGCSRIDevID`, `remote.activateCredential`, and `remote.getAttestationQuote` methods.
 
 ## Bridge

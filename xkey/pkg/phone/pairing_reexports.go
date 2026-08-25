@@ -638,3 +638,52 @@ const (
 	COSEAlgES384 = pairing.COSEAlgES384
 	COSEAlgES512 = pairing.COSEAlgES512
 )
+
+// Device attestation challenge-response re-exports (#129). The wire contract
+// lives in pkg/pairing; these let a consumer that already imports this package
+// build and verify a transcript without a second import path to the same
+// definitions.
+const (
+	AttestProtocolV1 = pairing.AttestProtocolV1
+	AttestProtocolV2 = pairing.AttestProtocolV2
+
+	AttestPurposePair     = pairing.AttestPurposePair
+	AttestPurposeReattest = pairing.AttestPurposeReattest
+
+	AttestSignatureES256 = pairing.AttestSignatureES256
+
+	AttestTranscriptDomain     = pairing.AttestTranscriptDomain
+	AttestChannelBindingDomain = pairing.AttestChannelBindingDomain
+	AttestGenesisChallenge     = pairing.AttestGenesisChallenge
+
+	AttestNonceSize          = pairing.AttestNonceSize
+	AttestChannelBindingSize = pairing.AttestChannelBindingSize
+	AttestFingerprintSize    = pairing.AttestFingerprintSize
+	AttestStaticKeySize      = pairing.AttestStaticKeySize
+)
+
+var (
+	ErrAttestProtocolDowngrade  = pairing.ErrAttestProtocolDowngrade
+	ErrAttestSignatureMissing   = pairing.ErrAttestSignatureMissing
+	ErrAttestSignatureAlgorithm = pairing.ErrAttestSignatureAlgorithm
+	ErrAttestSignatureInvalid   = pairing.ErrAttestSignatureInvalid
+	ErrAttestKeyNotECDSA        = pairing.ErrAttestKeyNotECDSA
+	ErrAttestGenesisChallenge   = pairing.ErrAttestGenesisChallenge
+	ErrAttestTranscriptField    = pairing.ErrAttestTranscriptField
+	ErrAttestPurpose            = pairing.ErrAttestPurpose
+)
+
+var (
+	BuildAttestTranscript          = pairing.BuildAttestTranscript
+	ComputeAttestChannelBinding    = pairing.ComputeAttestChannelBinding
+	AttestedKeyFingerprint         = pairing.AttestedKeyFingerprint
+	AttestedKeyFingerprintHex      = pairing.AttestedKeyFingerprintHex
+	VerifyGenesisChallenge         = pairing.VerifyGenesisChallenge
+	VerifyAttestChallengeSignature = pairing.VerifyAttestChallengeSignature
+)
+
+// Live-attestation hook types (#129). Defined in pkg/pairing so the package
+// that owns the attestation decision can produce one without importing this
+// package; aliased here because the backend config field lives here.
+type RPCExchange = pairing.RPCExchange
+type LiveAttestFunc = pairing.LiveAttestFunc

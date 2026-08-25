@@ -17,8 +17,6 @@ package cmd
 
 import (
 	"context"
-	"crypto/rand"
-	"crypto/x509"
 	"encoding/base64"
 	"encoding/hex"
 	"errors"
@@ -30,11 +28,10 @@ import (
 	"github.com/spf13/cobra"
 	"github.com/spf13/viper"
 
-	xkms "github.com/jeremyhahn/go-xkms/sdk/go"
-	xkeyAttestation "github.com/jeremyhahn/go-xkms/xkey/pkg/attestation"
+	"github.com/jeremyhahn/go-xkms/xkey/pkg/attestation"
 	xkeyconfig "github.com/jeremyhahn/go-xkms/xkey/pkg/config"
+	"github.com/jeremyhahn/go-xkms/xkey/pkg/pairing"
 	"github.com/jeremyhahn/go-xkms/xkey/pkg/phone"
-	xkeyTruststore "github.com/jeremyhahn/go-xkms/xkey/pkg/truststore"
 )
 
 // devicePairCmd handles pairing with a new phone device.
@@ -385,118 +382,24 @@ func runDevicePair(cmd *cobra.Command, args []string) error {
 	return nil
 }
 
-// pairingAttestationTrust is the trust material pairing verifies against.
-//
-// It is ONE pool and deliberately nothing else. An earlier version carried a
-// parallel flat list of roots so the matching anchor could be looked up by
-// fingerprint afterwards, and that list was built from the trust store's
-// certificates for EVERY purpose while the pool was built from the
-// Android-hardware ones alone. A peer could then append the public DER of a
-// certificate stored under an unrelated purpose: verification still succeeded
-// through the genuine Android root, and the lookup selected the appended
-// certificate as "the anchor". Two sets that must agree are two sets that can
-// disagree, so there is now only one, and the anchor is read back out of the
-// verification instead of being inferred — see verifiedTrustAnchor.
-type pairingAttestationTrust struct {
-	pool *x509.CertPool
-}
-
-// loadPairingAttestationTrust builds the Android hardware-attestation trust
-// material from the local trust store merged with the embedded roots — the
-// same construction device attest and the GUI's buildAttestationTrustPool use.
-//
-// It is loaded BEFORE the phone is asked for an attestation, and its failure
-// is fatal. Discovering that no anchor is available only after the challenge
-// has gone out leaves the caller holding evidence it has no way to judge, and
-// the only safe thing to do with unjudgeable evidence is refuse it — so refuse
-// earlier, where the message is about this machine's trust store rather than
-// about the phone.
-func loadPairingAttestationTrust() (*pairingAttestationTrust, error) {
-	store, err := openTrustStore()
-	if err != nil {
-		return nil, &SentinelCauseError{Sentinel: ErrDeviceAttestVerifyFailed, Cause: err}
-	}
-	defer func() { _ = store.Close() }()
-
-	verifier, err := xkeyAttestation.NewVerifier(store, xkeyTruststore.LoadEmbeddedRoots)
-	if err != nil {
-		return nil, &SentinelCauseError{Sentinel: ErrDeviceAttestVerifyFailed, Cause: err}
-	}
-
-	pool, err := verifier.BuildTrustPool(xkeyTruststore.PurposeAndroidHardware)
-	if err != nil {
-		return nil, &SentinelCauseError{Sentinel: ErrDeviceAttestVerifyFailed, Cause: err}
-	}
-
-	return &pairingAttestationTrust{pool: pool}, nil
-}
-
-// verifiedTrustAnchor returns the trust anchor x509 ACTUALLY used to verify
-// the chain, read out of the chain it built, rather than inferred from the
-// last certificate the peer sent.
-//
-// The distinction is the whole point. x509 verification proves the leaf chains
-// to some certificate in the pool; it constrains nothing about what follows
-// that anchor in the presented slice, so a valid chain with anything appended
-// still verifies. Asking the verifier which anchor it used cannot be fooled by
-// an appended certificate and cannot drift from the pool, because there is no
-// second list to keep in step with it.
-//
-// The options MUST mirror the ones android.VerifyKeyAttestation verifies with
-// — same roots, same intermediates, ExtKeyUsageAny — or this would report the
-// anchor of a different verification than the one that was accepted.
-func verifiedTrustAnchor(chain []*x509.Certificate, pool *x509.CertPool) (*x509.Certificate, error) {
-	if len(chain) == 0 {
-		return nil, &DetailError{Err: ErrDeviceAttestVerifyFailed, Detail: ": empty certificate chain"}
-	}
-
-	intermediates := x509.NewCertPool()
-	for _, cert := range chain[1:] {
-		intermediates.AddCert(cert)
-	}
-
-	built, err := chain[0].Verify(x509.VerifyOptions{
-		Roots:         pool,
-		Intermediates: intermediates,
-		KeyUsages:     []x509.ExtKeyUsage{x509.ExtKeyUsageAny},
-	})
-	if err != nil {
-		return nil, &SentinelCauseError{Sentinel: ErrDeviceAttestVerifyFailed, Cause: err}
-	}
-	if len(built) == 0 || len(built[0]) == 0 {
-		return nil, &DetailError{Err: ErrDeviceAttestVerifyFailed, Detail: ": verification returned no chain"}
-	}
-
-	verified := built[0]
-	return verified[len(verified)-1], nil
-}
-
 // performPairingAttestation attests the device during pairing and returns what
 // was VERIFIED about it.
 //
-// It fails closed. Every step — building the trust material, the RPC round
-// trip, chain verification, the freshness challenge, identifying the anchor —
+// It fails closed: every step — loading the trust material, the RPC round trip,
+// chain verification, the live challenge signature, identifying the anchor —
 // returns an error that aborts pairing, and no attestation claim is persisted
-// unless it came out of a chain that verified.
+// unless it came out of evidence that verified.
 //
-// The previous version requested an attestation and stored the answer without
-// checking any of it (#95): the nonce was generated, sent, and never looked at
-// again, so a replay of any earlier session's attestation was accepted; the
-// chain was never verified against any anchor; the fingerprint was the hash of
-// whatever certificate the peer put last; and SecurityLevel, BootState and
-// VerifiedBootHash were copied out of the peer's own JSON into a record that
-// downstream code reads as verified fact. Every failure was a warning that
-// let pairing complete, which made attestation advisory on this path.
-//
-// The claims now come from desc — the attestation extension parsed out of the
-// leaf of the verified chain — and not from the sibling JSON fields, which are
-// peer assertions that nothing binds to the certificates.
+// The decision itself is attestation.AttestOverSession, shared with
+// `device attest-device`, the reconnect path and the GUI. What stays here is
+// what is genuinely this command's: loading THIS machine's trust store, and
+// what the operator sees.
 func performPairingAttestation(
 	ctx context.Context,
 	transport phone.Transport,
 	session *phone.NoiseSession,
 	logger *slog.Logger,
-) (*DeviceAttestationResult, error) {
+) (*attestation.Result, error) {
 	fmt.Println("Verifying device security...")
 
 	trust, err := loadPairingAttestationTrust()
@@ -505,96 +408,44 @@ func performPairingAttestation(
 		return nil, err
 	}
 
-	// Generate 32-byte random nonce
-	nonce := make([]byte, 32)
-	if _, err := rand.Read(nonce); err != nil {
-		logger.Error("pairing refused: nonce generation failed", "error", err)
-		return nil, &SentinelCauseError{Sentinel: ErrDeviceAttestNonceFailed, Cause: err}
-	}
-
-	// Create and send local.attestDevice request
-	attestReq := phone.NewRequest(phone.MethodLocalAttestDevice, &phone.LocalAttestDeviceParams{
-		Nonce: nonce,
-	})
-
-	attestPlaintext, err := phone.EncodeRequest(attestReq)
-	if err != nil {
-		logger.Error("pairing refused: attestation request encoding failed", "error", err)
-		return nil, &SentinelCauseError{Sentinel: ErrDeviceAttestFailed, Cause: err}
-	}
-
-	attestCiphertext, err := session.Encrypt(attestPlaintext)
-	if err != nil {
-		logger.Error("pairing refused: attestation request encryption failed", "error", err)
-		return nil, &SentinelCauseError{Sentinel: ErrDeviceAttestFailed, Cause: err}
-	}
-
-	attestResponseCiphertext, err := transport.SendAndReceive(ctx, attestCiphertext)
-	if err != nil {
-		logger.Error("pairing refused: attestation transport error", "error", err)
-		return nil, &SentinelCauseError{Sentinel: ErrDeviceAttestFailed, Cause: err}
-	}
-
-	attestResponsePlaintext, err := session.Decrypt(attestResponseCiphertext)
-	if err != nil {
-		logger.Error("pairing refused: attestation response decryption failed", "error", err)
-		return nil, &SentinelCauseError{Sentinel: ErrDeviceAttestFailed, Cause: err}
-	}
-
-	attestResp, err := phone.DecodeResponse(attestResponsePlaintext)
-	if err != nil {
-		logger.Error("pairing refused: attestation response decode failed", "error", err)
-		return nil, &SentinelCauseError{Sentinel: ErrDeviceAttestFailed, Cause: err}
-	}
-
-	if attestResp.Error != nil {
-		logger.Error("pairing refused: attestation RPC error",
-			"code", attestResp.Error.Code, "message", attestResp.Error.Message)
-		return nil, &DetailError{
-			Err:    ErrDeviceAttestFailed,
-			Detail: fmt.Sprintf(": %s", attestResp.Error.Message),
-		}
-	}
-
-	attestResult, err := phone.DecodeResult[phone.LocalAttestDeviceResult](attestResp)
-	if err != nil {
-		logger.Error("pairing refused: attestation result decode failed", "error", err)
-		return nil, &SentinelCauseError{Sentinel: ErrDeviceAttestFailed, Cause: err}
-	}
-
-	verified, err := verifyPairingAttestation(attestResult.CertificateChain, nonce, trust)
+	verified, err := attestation.AttestOverSession(
+		ctx, transport, session, trust, pairing.AttestPurposePair, logger)
 	if err != nil {
 		logger.Error("pairing refused: attestation verification failed", "error", err)
 		fmt.Println("  Chain Status:   FAILED")
 		fmt.Println()
-		fmt.Println("The device's attestation chain could not be verified against the")
-		fmt.Println("trusted Android hardware attestation roots, or the attestation was")
-		fmt.Println("not freshly generated for this pairing. Pairing has been refused.")
+		fmt.Println("The device's attestation could not be verified. Either its chain")
+		fmt.Println("does not lead to a trusted Android hardware attestation root, or it")
+		fmt.Println("did not sign this pairing's challenge with the attested key, or it")
+		fmt.Println("is running an app too old to prove liveness. Pairing has been refused.")
 		return nil, err
 	}
 
 	fmt.Println("  Chain Status:   VERIFIED")
-	fmt.Printf("  Trust Anchor:   %s\n", verified.trustAnchor)
-	fmt.Printf("  Security Level: %s\n", verified.result.SecurityLevel)
-	fmt.Printf("  Boot State:     %s\n", verified.bootState)
-	if verified.result.BootHashHex != "" {
-		fmt.Printf("  Boot Hash:      %s\n", truncateBootHash(verified.result.BootHashHex))
+	fmt.Printf("  Trust Anchor:   %s\n", verified.TrustAnchor)
+	fmt.Printf("  Security Level: %s\n", verified.Result.SecurityLevel)
+	fmt.Printf("  Boot State:     %s\n", verified.BootState)
+	if verified.Result.BootHashHex != "" {
+		fmt.Printf("  Boot Hash:      %s\n", truncateBootHash(verified.Result.BootHashHex))
 	}
 
-	return verified.result, nil
+	return verified.Result, nil
 }
 
-// newPairedDeviceRecord builds the record written to devices.yaml.
+// loadPairingAttestationTrust builds this machine's Android hardware
+// attestation trust material.
 //
-// attest is nil exactly when the attestation failed AND policy allowed pairing
-// to continue anyway. The record then carries no attestation fields at all --
-// not a zeroed security level beside a fingerprint copied from the peer, which
-// is what #95 found, but nothing. A later `device attest-device` fills them in,
-// and until it does the device reads as never attested, because it has not
-// been.
-//
-// It is a function rather than a literal inside runDevicePair so that invariant
-// can be asserted without a BLE transport and a phone on the other end of it.
+// It is the CLI's half of a decision whose other half is shared: WHICH store
+// to open is per-surface, what to do with the pool is not.
+func loadPairingAttestationTrust() (*attestation.Trust, error) {
+	store, err := openTrustStore()
+	if err != nil {
+		return nil, &SentinelCauseError{Sentinel: attestation.ErrDeviceAttestVerifyFailed, Cause: err}
+	}
+	defer func() { _ = store.Close() }()
+
+	return attestation.LoadTrust(store)
+}
 func newPairedDeviceRecord(
 	name, address string,
 	remotePublicKey, localPrivateKey []byte,
@@ -688,172 +539,6 @@ func printUnattestablePairingWarning() {
 	fmt.Println("  This device is NOT known to be a hardware-backed security key.")
 	fmt.Println("  Run `xkey device attest-device` to attempt attestation again.")
 	fmt.Println()
-}
-
-// pairingVerifyOptions is the policy every pairing attestation is verified
-// under, in one place so it can be asserted directly.
-//
-// It exists as a function because two of these four fields are enforced inside
-// the SDK against material this package's fixtures cannot construct — no
-// exported builder produces an attestation extension carrying a RootOfTrust —
-// so a test here can pin WHICH policy is requested even where it cannot
-// exercise the refusal. The refusals themselves are covered by
-// pkg/attestation/android's own suite (ErrInsufficientSecurityLevel,
-// ErrUnverifiedBoot). Splitting it that way is the honest division: this
-// package proves the call site asks for the bar, that package proves the bar
-// is enforced.
-func pairingVerifyOptions(pool *x509.CertPool, nonce []byte) *xkms.AndroidVerifyOptions {
-	return &xkms.AndroidVerifyOptions{
-		TrustedRoots:  pool,
-		ExpectedNonce: nonce,
-
-		// The same bar `device attest-device` already enforces, and that
-		// alignment is the point rather than a new policy: without it pairing
-		// ADMITTED a device that its own first re-attestation would refuse, so
-		// the weaker gate was the one establishing the binding. A
-		// software-protected key is not a phone acting as an HSM, and
-		// reporting "Chain Status: VERIFIED" over one is the overstatement #94
-		// already had to correct once.
-		MinSecurityLevel: xkms.AndroidSecurityLevelTrustedEnvironment,
-
-		// Refuses an explicitly unverified boot state. Note what it does NOT
-		// do: a chain whose extension carries no RootOfTrust at all passes it,
-		// because the SDK's check is "if present, it must be verified". That
-		// is the SDK's documented contract and attest-device inherits it too,
-		// so it is not changed here — the requirement that the claim be
-		// PRESENT is enforced at the point of consumption instead, in
-		// requireAttestedBootState below.
-		VerifyBootState: true,
-	}
-}
-
-// verifiedPairingAttestation is what a verified attestation yields: the record
-// that may be persisted, plus the two display strings derived from the same
-// verified material so nothing printed comes from an unverified source.
-type verifiedPairingAttestation struct {
-	result      *DeviceAttestationResult
-	trustAnchor string
-	bootState   string
-}
-
-// verifyPairingAttestation is the security decision, separated from the RPC
-// that fetches the evidence so it can be exercised directly.
-//
-// It returns an error unless the chain verifies to a known Android hardware
-// attestation root AND carries this pairing's challenge. Everything in the
-// returned record is derived from that verified chain.
-func verifyPairingAttestation(
-	derChain [][]byte,
-	nonce []byte,
-	trust *pairingAttestationTrust,
-) (*verifiedPairingAttestation, error) {
-	if trust == nil || trust.pool == nil {
-		return nil, &DetailError{
-			Err:    ErrDeviceAttestVerifyFailed,
-			Detail: ": no attestation trust material",
-		}
-	}
-	if len(nonce) == 0 {
-		return nil, &DetailError{
-			Err:    ErrDeviceAttestVerifyFailed,
-			Detail: ": no challenge to verify freshness against",
-		}
-	}
-
-	chain, err := parseDERChain(derChain)
-	if err != nil {
-		return nil, &SentinelCauseError{Sentinel: ErrDeviceAttestVerifyFailed, Cause: err}
-	}
-
-	// Both options are non-nil, and that is load-bearing: VerifyKeyAttestation
-	// SKIPS chain verification when TrustedRoots is nil and SKIPS the challenge
-	// comparison when ExpectedNonce is nil, so a nil reaching here would
-	// restore exactly the defect this is fixing while still reporting success.
-	// The guards above are what stop that.
-	//
-	// ExpectedNonce is what establishes freshness: it is compared, in constant
-	// time, against the attestationChallenge inside the leaf certificate's
-	// SIGNED extension. The Nonce echoed back in the RPC result is not checked
-	// and must not be — it is an unsigned field the peer controls, so matching
-	// it proves only that the peer can copy.
-	desc, err := xkms.VerifyAndroidKeyAttestation(chain, pairingVerifyOptions(trust.pool, nonce))
-	if err != nil {
-		return nil, &SentinelCauseError{Sentinel: ErrDeviceAttestVerifyFailed, Cause: err}
-	}
-
-	// Which anchor the chain verified UNDER, taken from the verification
-	// itself. Never chain[len-1] — that is the value #95 found being
-	// persisted, and it is chosen by the peer.
-	matchedRoot, err := verifiedTrustAnchor(chain, trust.pool)
-	if err != nil {
-		return nil, err
-	}
-
-	rot, err := requireAttestedBootState(desc)
-	if err != nil {
-		return nil, err
-	}
-
-	// Claims taken from the verified extension, not from the peer's JSON.
-	verified := &verifiedPairingAttestation{
-		trustAnchor: formatTrustAnchor(matchedRoot),
-		bootState:   rot.VerifiedBootState.String(),
-		result: &DeviceAttestationResult{
-			AttestationTime:   time.Now().UTC(),
-			SecurityLevel:     desc.AttestationSecurityLevel.String(),
-			DeviceFingerprint: certFingerprint(matchedRoot),
-			BootStateVerified: true,
-			BootHashHex:       hex.EncodeToString(rot.VerifiedBootHash),
-		},
-	}
-
-	return verified, nil
-}
-
-// requireAttestedBootState refuses an attestation that does not actually make a
-// boot-state claim, or makes an unacceptable one.
-//
-// AndroidVerifyOptions.VerifyBootState is "if a RootOfTrust is present, it must
-// say verified". Absence therefore PASSES it, and the previous version of this
-// function turned that into a successful pairing: the CLI printed "Chain
-// Status: VERIFIED", the record stored a security level and an attestation
-// timestamp, and the device was admitted having claimed nothing whatsoever
-// about its boot chain. A phone-as-HSM pairing is exactly the case where that
-// claim is the product.
-//
-// The check lives HERE rather than in pkg/attestation/android because absence
-// versus refusal is the CONSUMER's policy: the SDK's contract is deliberately
-// "verify what is claimed", other callers depend on it, and widening it would
-// change every one of them. This is the point of consumption for pairing.
-//
-// DeviceLocked is required for the same reason. An unlocked bootloader can run
-// an arbitrary image, so "verified boot" from one is a statement about a chain
-// the owner can replace at will.
-//
-// A device that fails any of these is UNATTESTABLE, which is a policy question
-// with a policy answer -- see allowUnattestablePairing. It is not silently
-// admitted here.
-func requireAttestedBootState(desc *xkms.AndroidKeyDescription) (*xkms.AndroidRootOfTrust, error) {
-	rot := desc.TeeEnforced.RootOfTrust
-	if rot == nil {
-		return nil, &DetailError{
-			Err:    ErrDeviceAttestVerifyFailed,
-			Detail: ": the attestation carries no root of trust, so it makes no claim about the device's boot chain",
-		}
-	}
-	if !rot.DeviceLocked {
-		return nil, &DetailError{
-			Err:    ErrDeviceAttestVerifyFailed,
-			Detail: ": the device bootloader is unlocked, so a verified boot chain can be replaced at will",
-		}
-	}
-	if rot.VerifiedBootState != xkms.AndroidVerifiedBootVerified {
-		return nil, &DetailError{
-			Err:    ErrDeviceAttestVerifyFailed,
-			Detail: ": device boot state is " + rot.VerifiedBootState.String() + ", not verified",
-		}
-	}
-	return rot, nil
 }
 
 // hostname returns the local hostname, or "unknown" if it cannot be determined.

@@ -109,6 +109,21 @@ const (
 	// attestation failed to produce evidence; this says the question does not
 	// apply to this hardware.
 	ErrorCodeNotApplicable = -32036
+
+	// ErrorCodeAttestProtocolDowngrade means the peer refused a device
+	// attestation request that did not ask under protocol version 2 (#129).
+	//
+	// It is the PROVER's half of the downgrade refusal, and it exists so the
+	// two halves are symmetric: the verifier refuses a version 1 ANSWER
+	// (ErrAttestProtocolDowngrade), so the prover refuses a version 1 REQUEST.
+	// Either side accommodating the older model would let the party being
+	// checked choose which checks apply to it.
+	//
+	// Registered here rather than only on the phone so the code cannot be
+	// claimed twice. go-xkms never SENDS it — this repository is the verifier —
+	// but it receives it, and a reserved number is what stops a future method
+	// family from meaning something else by -32037.
+	ErrorCodeAttestProtocolDowngrade = -32037
 )
 
 // requestIDCounter provides unique request IDs.
@@ -260,6 +275,8 @@ func DecodeResult[T any](resp *Response) (*T, error) {
 
 // rpcErrorMap maps JSON-RPC error codes to package errors.
 var rpcErrorMap = map[int]error{
+	ErrorCodeAttestProtocolDowngrade: ErrAttestProtocolDowngrade,
+
 	ErrorCodeKeyNotFound:        ErrKeyNotFound,
 	ErrorCodeUserCancelled:      ErrUserCancelled,
 	ErrorCodeBiometricFailed:    ErrBiometricFailed,

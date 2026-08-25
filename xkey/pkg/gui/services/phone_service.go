@@ -71,6 +71,11 @@ var (
 	// that cannot be read cannot be checked, and proceeding would bind the
 	// handshake to nothing. Re-pair the device to store a fresh one.
 	ErrPhoneInvalidFingerprint = errors.New("phone_service: stored device fingerprint is invalid - re-pair required")
+
+	// ErrPhoneAttestationRequired indicates the device's record says it was
+	// bound under challenge-response attestation (#129) and the proof could
+	// not be obtained or did not verify. The session is not published.
+	ErrPhoneAttestationRequired = errors.New("phone_service: device did not prove possession of its attested key - refusing to connect")
 )
 
 // devicesConfigFileName is the config file shared with the CLI.
@@ -182,18 +187,44 @@ type attestationPolicy struct {
 
 // phoneConfigDevice mirrors the CLI PairedDevice YAML structure.
 type phoneConfigDevice struct {
-	Name                      string                `yaml:"name"`
-	Address                   string                `yaml:"address"`
-	NoisePublicKey            string                `yaml:"noise_public_key"`
-	LocalNoisePrivateKey      string                `yaml:"local_noise_private_key"`
-	PairedAt                  time.Time             `yaml:"paired_at"`
-	LastDeviceAttestationTime time.Time             `yaml:"last_device_attestation_time,omitempty"`
-	SecurityLevel             string                `yaml:"security_level,omitempty"`
-	BootStateVerified         bool                  `yaml:"boot_state_verified,omitempty"`
-	DeviceFingerprint         string                `yaml:"device_fingerprint,omitempty"`
-	LastAttestation           *savedAttestationData `yaml:"last_attestation,omitempty"`
-	AttestationPolicy         *attestationPolicy    `yaml:"attestation_policy,omitempty"`
-	IsBackend                 bool                  `yaml:"is_backend,omitempty"`
+	Name                      string    `yaml:"name"`
+	Address                   string    `yaml:"address"`
+	NoisePublicKey            string    `yaml:"noise_public_key"`
+	LocalNoisePrivateKey      string    `yaml:"local_noise_private_key"`
+	PairedAt                  time.Time `yaml:"paired_at"`
+	LastDeviceAttestationTime time.Time `yaml:"last_device_attestation_time,omitempty"`
+	SecurityLevel             string    `yaml:"security_level,omitempty"`
+	BootStateVerified         bool      `yaml:"boot_state_verified,omitempty"`
+	DeviceFingerprint         string    `yaml:"device_fingerprint,omitempty"`
+
+	// AttestationProtocolVersion mirrors the CLI record's field (#129). It is
+	// carried here because this struct is a hand-maintained mirror of the same
+	// devices.yaml the CLI writes: a field missing from the mirror is read as
+	// absent, and for this field absent means "not bound under
+	// challenge-response", which would silently drop the liveness requirement
+	// for a device the CLI paired under it.
+	//
+	// The GUI does not yet ENFORCE it — that needs the pairing verifier, which
+	// lives in cmd/xkey/cmd and this package cannot import. Tracked as #130;
+	// carrying the value now means the enforcement lands without a config
+	// migration, and means the mirror is not lying about what the record says.
+	AttestationProtocolVersion int                   `yaml:"attestation_protocol_version,omitempty"`
+	LastAttestation            *savedAttestationData `yaml:"last_attestation,omitempty"`
+	AttestationPolicy          *attestationPolicy    `yaml:"attestation_policy,omitempty"`
+	IsBackend                  bool                  `yaml:"is_backend,omitempty"`
+}
+
+// attestationBinding is what the shared verifier needs from this record.
+//
+// The GUI mirrors devices.yaml in its own struct, so this projection is what
+// keeps the two surfaces judging the SAME two fields even while the mirrors
+// themselves remain separate (#130 (b) is the open question of whether they
+// should be one type at all).
+func (d *phoneConfigDevice) attestationBinding() xkeyAttestation.DeviceBinding {
+	return xkeyAttestation.DeviceBinding{
+		Fingerprint:     d.DeviceFingerprint,
+		ProtocolVersion: d.AttestationProtocolVersion,
+	}
 }
 
 // phoneConfig mirrors the CLI PhoneConfig YAML structure.
@@ -874,6 +905,25 @@ func (s *PhoneService) Connect(name string) error {
 		return ErrPhoneHandshakeFailed
 	}
 
+	// The #129 liveness proof, BEFORE the session is published (#130).
+	//
+	// The handshake above proves the peer holds the Noise key paired earlier.
+	// Only this proves the peer holds the key that was ATTESTED, and that it
+	// holds it now — which is exactly what possession of a COPIED paired Noise
+	// key cannot supply. Publishing first and checking after would hand every
+	// caller of this service a usable session in the window between.
+	//
+	// It runs against the shared decision in pkg/attestation rather than a
+	// GUI-local copy. That this package could not reach the verifier at all is
+	// why the GUI went without the check while the CLI had it.
+	if err := s.proveDeviceLiveness(connectCtx, transport, session, device); err != nil {
+		_ = transport.Disconnect()
+		_ = transport.Close()
+		s.log.Error("device liveness attestation failed; refusing to publish the session",
+			"device", name, "error", err)
+		return errors.Join(ErrPhoneAttestationRequired, err)
+	}
+
 	// Store transport + session on PhoneService fields. A refusal is ours to
 	// clean up: published stays false, so the deferred cleanup releases the
 	// key this call generated.
@@ -891,6 +941,46 @@ func (s *PhoneService) Connect(name string) error {
 	// violation closes this connection, and an incomplete drain means the
 	// protected key it was using is still resident.
 	return s.autoAttest(cfg, device, name)
+}
+
+// proveDeviceLiveness runs the challenge-response attestation for a device
+// whose record says it was bound under it (#129/#130).
+//
+// A record predating #129 carries no protocol version and is left alone: those
+// devices have no attested key registered to prove possession of, so demanding
+// a proof would refuse every legacy pairing rather than protect it. The answer
+// comes from the RECORD, never from anything the peer says.
+//
+// The trust pool is built the same way the GUI's attestation display builds
+// it, and per connection rather than captured, so a root an operator installs
+// while the app is running takes effect.
+func (s *PhoneService) proveDeviceLiveness(
+	ctx context.Context,
+	transport phone.Transport,
+	session *phone.NoiseSession,
+	device *phoneConfigDevice,
+) error {
+	binding := device.attestationBinding()
+	if !binding.RequiresLiveAttestation() {
+		return nil
+	}
+
+	if s.trustStore == nil {
+		// A record that requires the proof, on a service with no trust store to
+		// judge it against, is refused rather than admitted unchecked. Absent
+		// authorization material must never be less restrictive than the policy
+		// it implements.
+		s.log.Error("device requires live attestation but no trust store is configured",
+			"device", device.Name)
+		return ErrPhoneAttestationRequired
+	}
+
+	trust, err := xkeyAttestation.LoadTrust(s.trustStore)
+	if err != nil {
+		return err
+	}
+
+	return xkeyAttestation.VerifyReattestation(ctx, transport, session, binding, trust, s.log)
 }
 
 // Disconnect terminates the BLE connection to the named device.

@@ -7,6 +7,79 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- **FLAG DAY: device attestation is now challenge-response (protocol version 2)**
+  (#129, #93, owner ruling 2026-08-24). Supersedes the embedded-challenge
+  freshness model.
+
+  A phone now holds ONE persistent hardware-attested key. Its
+  SubjectPublicKeyInfo hashes to the stable `DeviceFingerprint`, and freshness
+  is proved by a LIVE signature over the verifier's nonce rather than by a
+  nonce baked into the attestation certificate.
+
+  The old model could not work on Android and this is not a preference:
+  Keystore fixes the attestation challenge at key GENERATION and offers no
+  re-attest-existing-key API, so a per-pairing challenge forces a per-pairing
+  key. A stable device identity and embedded-challenge freshness are mutually
+  exclusive there, which made the per-device binding #93 required
+  unimplementable as specified. Version 2 separates the two properties the old
+  one conflated, and works unchanged on TPM devices, removing the asymmetry.
+
+  **Operator impact.** After upgrading, a *new* pairing requires an xkey-android
+  build that speaks version 2; an older app is refused rather than accommodated,
+  because a peer that could decline the check by claiming an older version would
+  choose its own security level. **Existing pairings keep working** under their
+  recorded binding until re-paired, and are not reported as though they had the
+  stronger one. `xkey device attest-device` upgrades a record in place.
+
+  Wire contract, including byte-exact interop vectors:
+  `xkey/docs/device/pairing.md` and go-xkms#129. A change to any published
+  vector is a wire break, not an edit.
+
+- **Device attestation is verified in one place** and consumed by every
+  surface — pairing, reconnect, `device attest-device`, the FIDO2 and
+  backend-based CLI commands, and the desktop GUI (#130 (a)).
+
+  It previously lived in `cmd/xkey/cmd`, which the GUI cannot import, so the
+  two surfaces established device trust by different rules. That is not a
+  hypothetical cost: pairing verified chains `attest-device` did not (#95), the
+  two derived the device identity differently (#93), the GUI performed no
+  pairing attestation at all, and the GUI's record mirror silently dropped the
+  attestation protocol version so a CLI-paired device read as unbound. The
+  decision now lives in `xkey/pkg/attestation`.
+
+  The GUI proves liveness **before** publishing a connection, and refuses a
+  version 2 record when no trust store is configured.
+
+### Added
+
+- **The version 2 `local.attestDevice` request carries no channel binding.**
+  Each side derives it from its own Noise session; the transcript still commits
+  to it. Sending it would make a prover that signs the supplied value
+  indistinguishable from one that derived its own until the exact relay attack
+  the binding prevents.
+
+- **Pairing protocol error code `-32037`
+  (`ErrorCodeAttestProtocolDowngrade`)**, reserved for a prover refusing a
+  device-attestation request that does not ask under protocol version 2. It is
+  the prover's half of the downgrade refusal: the verifier refuses a version 1
+  answer, so the prover refuses a version 1 request. go-xkms never sends it —
+  this repository is the verifier — but the number is reserved so a future
+  method family cannot claim it.
+
+- **`sdk/go`: `AndroidKeyAttestationOID` and `BuildAndroidAttestationExtension`.**
+
+  Consumers verify Android key attestation through `sdk/go`, but could not
+  BUILD an attestation extension through it — so a consumer testing its own
+  verifier had to reach past the SDK into `pkg/attestation/android`, which the
+  architecture boundary forbids and CI enforces. `BuildAndroidAttestationExtension`
+  is deliberately a test-support API on the SDK surface: `pkg/attestation/android`
+  already exported it for exactly that purpose, and it simply was not reachable
+  through the boundary. A nil `RootOfTrust` builds a chain that verifies while
+  claiming nothing about boot state — a case that exists to be REFUSED, so it
+  has to be constructible on purpose.
+
 ## [0.8.0-alpha] - 2026-08-20
 
 **MINOR, not PATCH**: this carries a breaking API change, and pre-1.0 that is

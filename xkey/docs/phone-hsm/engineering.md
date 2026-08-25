@@ -109,33 +109,52 @@ fingerprint does not match, a decrypt failure, or a JSON-RPC error from the
 phone. None degrade to an unencrypted or unauthenticated path.
 
 **What the fingerprint proves — and what it does not.** `DeviceFingerprint` is
-the SHA-256 of the attestation chain's **root** certificate. Three independent
-limits apply, and together they are narrower than the name suggests:
+the SHA-256 of the device's persistent **attested key**'s
+`SubjectPublicKeyInfo` (#93/#129). Two of the three limits that used to apply
+are closed; read this section as the history of how, because each was a real
+defect and the shape of the fix is what the current design is for.
 
-1. **Not device-unique.** On a verified chain that root is a *configured*
-   Android-hardware trust anchor, shared by every handset issued under it.
-   "Configured" is broader than "embedded": `Verifier.buildTrustPool` merges the
-   local trust store's `PurposeAndroidHardware` certificates with
-   `truststore.LoadEmbeddedRoots`, so a chain can verify under a root an
-   operator installed with `xkey trust` and never appear in the embedded set at
-   all. `findMatchingTrustRoot` is called with whatever root list its
-   caller passes. The GUI passes the embedded roots alone, so there it is a
-   display lookup that can return `nil` for a chain that verified perfectly
-   well under an operator-installed root — it does not establish provenance
-   and is not evidence for this point. The CLI paths no longer use it for
-   anything load-bearing: since #95 they take the anchor from the chain x509
-   built, which is the pool's own answer and cannot disagree with it.
-2. **Not an attestation, at connect time.** The handshake compares the stored
-   value against bytes **the peer sends** in its identity ack:
+1. **Device-unique (was: not device-unique).** The value used to be the hash of
+   the attestation chain's **root** — on a verified chain a *configured*
+   Android-hardware trust anchor, shared by every handset issued under it. It
+   identified a vendor, not a device, and two handsets of the same family
+   produced the same value. It is now the attested key itself, generated inside
+   **this** handset's TEE/StrongBox and certified by the chain.
+
+   Hashing the **SPKI** rather than the leaf DER is deliberate: re-attesting the
+   same key reissues the leaf with a fresh serial and validity window, so an
+   SPKI hash is stable across honest re-attestation and moves only on a genuine
+   key rotation — which is exactly the event a pairing must be re-established
+   for.
+
+   The anchor is still read back out of the chain x509 built
+   (`verifiedTrustAnchor`), but only for display. "Configured" is broader than
+   "embedded": `Verifier.buildTrustPool` merges the local trust store's
+   `PurposeAndroidHardware` certificates with `truststore.LoadEmbeddedRoots`, so
+   a chain can verify under a root an operator installed with `xkey trust` and
+   never appear in the embedded set at all. `findMatchingTrustRoot` is called
+   with whatever root list its caller passes; the GUI passes the embedded roots
+   alone, so there it is a display lookup that can return `nil` for a chain that
+   verified perfectly well under an operator-installed root.
+
+2. **Live attestation at connect time (was: not an attestation).** The identity
+   ack still compares the stored value against bytes **the peer sends**:
 
    ```go
    receivedFingerprint := ack[1:]                       // peer-supplied
    bytes.Equal(receivedFingerprint, cfg.ExpectedDeviceFingerprint)
    ```
 
-   No chain is presented or verified there.
+   That comparison is unchanged and still proves only continuity — it runs
+   before the handshake, so there is nothing else it *could* be. What changed is
+   that it is no longer the last word: since #129 a connection to a device bound
+   under protocol version 2 runs a **challenge-response re-attestation** once
+   the Noise session is up (`attestOverSession` with purpose `reattest`), and
+   the device must present its attestation chain **and** a fresh signature by
+   the attested key over this session's challenge. See *Challenge-response
+   attestation* below.
 
-3. **It is now derived from a verified attestation — on every path.** This
+3. **It is derived from a verified attestation — on every path.** This
    was the third limit until #95, and it was the largest: pairing sent a nonce,
    took the last certificate of whatever chain the phone returned, hashed it
    and stored it, without calling `VerifyAndroidKeyAttestation`, without
@@ -147,8 +166,8 @@ limits apply, and together they are narrower than the name suggests:
    `performPairingAttestation` (`cmd/xkey/cmd/device_pair.go`) now **fails
    closed**. It builds the trust material before it asks for evidence, and
    `verifyPairingAttestation` refuses unless the chain verifies against those
-   anchors AND carries this pairing's challenge in the leaf's signed
-   `attestationChallenge`.
+   anchors AND the device signs this pairing's challenge with the key that
+   chain certifies.
 
    **What happens on a refusal is policy; what is recorded is not.** By the
    owner ruling of 2026-08-23 on #95, whether pairing *aborts* on an
@@ -264,33 +283,103 @@ limits apply, and together they are narrower than the name suggests:
 
    The `Nonce` echoed in the RPC result is deliberately **not** checked: it is
    an unsigned field the peer controls, so matching it would prove only that
-   the peer can copy. Freshness rests on `ExpectedNonce`, compared in constant
-   time against the challenge inside the signed extension.
+   the peer can copy. Freshness rests on the challenge signature (below).
 
-The value is also the hash of a **public** certificate, so it is not a shared
-secret. Taken together, what the reconnect check establishes is: **the peer
-echoed the same value it supplied when pairing.** That is a continuity check on
-an attacker-suppliable value — it notices a peer that changed its answer, and
-nothing more. It is not device identity, not live attestation, and not proof
-that any attestation was ever verified.
+## Challenge-response attestation (#129)
 
-The check that is actually proven rather than echoed is `ExpectedRemoteStatic`,
+Under protocol version 2 a device proves two separate things, and neither is
+worth much without the other:
+
+| Claim | Evidence | What it would be alone |
+|---|---|---|
+| This key lives in that handset's secure hardware | the attestation chain, verified to a trusted Android hardware root at TEE-or-better on a locked, verified boot state | a public document; anyone who watched one pairing can replay it |
+| The party on **this** connection holds it, right now | a live ECDSA-P256 signature by the attested key over a transcript carrying this exchange's nonce | possession of a key nobody vouched for |
+
+The device's attestation key (the **DAK**) is **persistent**: generated once,
+attested once, and never regenerated for a pairing. That is what makes the
+fingerprint a stable identity, and it is why freshness cannot come from the
+certificate. Android Keystore fixes the attestation challenge at key
+*generation* (`setAttestationChallenge`) and offers no way to re-attest an
+existing key, so a per-pairing challenge forces a per-pairing key — a stable
+identity and an embedded-challenge freshness proof are mutually exclusive on
+that platform. Version 1 chose the embedded challenge and therefore could not
+have a stable identity; version 2 moves freshness to a live signature and keeps
+both.
+
+**The transcript** (`pairing.BuildAttestTranscript`), fixed-width except for the
+length-prefixed purpose:
+
+```
+"xkey-attest-transcript-v1" || len8(purpose) || purpose
+                            || nonce(32) || channelBinding(32) || fingerprint(32)
+```
+
+signed as `SHA256withECDSA`, ASN.1 DER, algorithm `ES256`. Each field earns its
+place: the **domain** separates this signature from any other use of the key;
+the **purpose** (`pair` / `reattest`) stops a signature gathered during pairing
+from satisfying a reconnect; the **nonce** is the verifier's fresh random
+challenge; the **channel binding** ties the answer to the connection it was
+produced on; the **fingerprint** makes the signature commit to the identity
+being claimed.
+
+**The channel binding** is the anti-relay term
+(`pairing.ComputeAttestChannelBinding`): `SHA-256` over the two Noise static
+public keys in **initiator-then-responder** order plus the length-prefixed
+prologue. Without it, an attacker completing its own Noise session with the
+desktop could forward the desktop's challenge to a genuine phone on a second
+session and pass that phone's answer off as its own; with it, the phone signs
+the binding of the session it is actually speaking on. The Noise **handshake
+hash** would be strictly stronger — it commits to the ephemerals too, making
+the value unique per session rather than per key pair — and is not used because
+`noiseproto.Session` keeps its `*noise.HandshakeState` unexported (filed
+upstream on go-truststrap) and because depending on a hand-written Kotlin Noise
+implementation agreeing byte-for-byte with flynn/noise at one point in the
+transcript is an interop hazard on a value that must match exactly. Both
+derivations rest on the same thing — key possession, proved by the XX
+handshake — so the residual gap is two concurrent sessions between the same
+pair of keys, where the fresh nonce is what keeps a signature from moving.
+
+**The genesis challenge.** The DAK's certificate carries the challenge it was
+*generated* under, which version 2 must never compare against a live nonce. It
+is still checked for what it can say: it must begin with
+`xkey-device-attestation-v1`, so a chain minted for an unrelated Android
+attestation cannot be presented to this protocol. Trailing bytes are reserved,
+so a prover may append install-unique material without a version bump.
+
+**Downgrade is a refusal, not a fallback.** A version 2 challenge answered with
+anything but a version 2 response is `ErrAttestProtocolDowngrade`. The pairing
+record carries `attestation_protocol_version`, which only ever moves up
+(`recordDeviceAttestation`), so a device bound under challenge-response cannot
+shed the liveness proof by claiming it cannot produce one — otherwise the
+protocol version would be chosen at connect time by the party being checked.
+Records established before #129 keep the weaker mode until the device is
+re-paired, and are not reported as though they had the stronger binding.
+
+**Rotation.** The fingerprint changes only when the device regenerates its DAK.
+`device attest-device` refuses fail-closed on a change
+(`validateAttestedKeyMatch` → `ErrDeviceIdentityChanged`) rather than silently
+rebinding: it *revalidates* an existing binding, and a peer holding the paired
+Noise key plus a valid attestation of its own device would otherwise turn the
+operator's revalidation into a rebind. Legitimate rotation is an explicit
+re-pair.
+
+The stored value is the hash of a **public** key, so it is not a shared secret,
+and the identity ack remains a continuity check. What has changed is that it is
+no longer the strongest thing the connection establishes.
+
+The other check that is proven rather than echoed is `ExpectedRemoteStatic`,
 the peer's pinned Noise static public key: `noiseproto.Session` returns
 `ErrStaticKeyMismatch` when the key presented in the handshake is not the
 pinned one, so completing the handshake proves the peer holds the
-corresponding private key. Note the limit on that too, since overstating it
-would repeat the error this section corrects: it proves **possession of the
-key paired earlier**, not the identity of a handset. Nothing in this
-repository establishes that the key is hardware-bound or non-exportable, so a
-key copied off the phone is indistinguishable here. Whether the fingerprint
-check adds anything on top of that is tracked as go-xkms issue **#93**,
-*"DeviceFingerprint binds to the attestation ROOT CA, not the device"*.
-Whether pairing verifies the chain before persisting anything is no longer
-open: it does (#95). #93 remains, because verifying a chain does not make a
-shared trust anchor device-unique — limits 1 and 2 above are untouched by it.
+corresponding private key. Note its limit, since overstating it would repeat
+the error this section exists to correct: it proves **possession of the key
+paired earlier**, not the identity of a handset — nothing about that key is
+established to be hardware-bound, so a key copied off the phone is
+indistinguishable there. The challenge-response step is what supplies the
+hardware-bound half, on a key the chain vouches for.
 
-Everything below is correct regardless: it concerns whether the check is
-APPLIED, which is independent of what the check proves.
+Everything below concerns whether the check is APPLIED, which is independent of
+what the check proves.
 
 **A malformed stored fingerprint also fails closed.** `DecodeDeviceFingerprint`
 distinguishes three states, and the distinction is the point:
