@@ -44,9 +44,91 @@ func (s tenantMetadataStore) Get(ctx context.Context, key string) ([]byte, error
 	return v, err
 }
 
-// Barrier is a type alias for qrdbsdk.StorageBarrier. Since go-xkms's
-// storage.Backend and go-qrdb's StorageBackend interfaces are now identical
-// (string keys, context-aware), no adapter layer is needed.
+// guardedStorageBackend adapts an xkms storage.Backend to go-qrdb's
+// StorageBackend, whose contract (go-quicraft's seal.StorageBackend) requires
+// CompareAndDelete as a MANDATORY method.
+//
+// xkms models the guarded delete as an OPTIONAL capability instead —
+// storage.CompareAndDeleter, alongside CompareAndSwapper — because several
+// backends cannot provide it correctly and a mandatory method would force them
+// to ship a stand-in. The two shapes meet here, and this is the right place for
+// them to meet: quicraft's own contract says a backend that cannot perform the
+// operation must report an error rather than approximate it, so the capability
+// assertion is exactly what that error is for.
+//
+// The assertion happens per call rather than at construction on purpose.
+// Refusing to build a barrier over a backend that cannot do ONE optional
+// operation would take away everything else the barrier does with it, and every
+// other method here is unaffected.
+type guardedStorageBackend struct {
+	storage.Backend
+}
+
+// guardStorage wraps base for go-qrdb while PRESERVING A NIL BASE.
+//
+// The nil is a sentinel upstream, not an absence of information, and wrapping
+// destroys it: guardedStorageBackend{nil} is a NON-NIL interface value holding a
+// nil Backend, so every `base == nil` test on the go-qrdb side silently stops
+// firing. Two behaviours depend on those tests --
+// BarrierRegistry.RegisterTenant reads nil as "allocate this tenant's storage
+// from the volume pool" (barrier_registry.go:273), and NewTenantBarrier refuses
+// a nil base with ErrNilStorageBackend (tenant_barrier.go:40).
+//
+// Wrapped unconditionally, the first skips the pooled allocation and the second
+// skips its guard, and BOTH then build a barrier over a wrapper whose embedded
+// Backend is nil -- a deferred nil dereference on the first storage access,
+// with nothing wrong at the call site. Returning an untyped nil keeps the
+// sentinel intact and lets upstream answer as it always did.
+func guardStorage(base storage.Backend) qrdbsdk.StorageBackend {
+	if base == nil {
+		return nil
+	}
+	return guardedStorageBackend{base}
+}
+
+// CompareAndDelete forwards to the wrapped backend's optional capability, and
+// reports ErrCompareAndDeleteUnsupported when it has none. It never degrades to
+// a read followed by an unguarded delete: that reintroduces precisely the race
+// the operation exists to close.
+func (g guardedStorageBackend) CompareAndDelete(ctx context.Context, key string, expected []byte) (bool, error) {
+	cad, ok := g.Backend.(storage.CompareAndDeleter)
+	if !ok {
+		return false, storage.ErrCompareAndDeleteUnsupported
+	}
+	return cad.CompareAndDelete(ctx, key, expected)
+}
+
+// CompareAndSwap forwards the OTHER optional capability, which this type would
+// otherwise hide.
+//
+// Embedding storage.Backend narrows the value to that interface's method set, so
+// a wrapped backend stops satisfying storage.CompareAndSwapper even when the
+// backend underneath implements it. Nothing in this repository asserts for it on
+// a wrapped value today, so this is not a live defect — but a wrapper that
+// silently drops a capability is precisely the hazard of a design where
+// capabilities are discovered by type assertion, and every other wrapper here
+// (PrefixBackend, FileStorage, luks.Backend) forwards rather than masks. This
+// one should not be the exception.
+//
+// It keeps xkms's THREE-value signature, which is deliberately not go-qrdb's.
+// go-qrdb's guardedSwapBackend wants CompareAndSwap(...) (bool, error); xkms's
+// CompareAndSwapper returns (swapped, current, err) so a read-modify-write
+// caller can recompute against the value it lost to. Those shapes have never
+// matched, so a barrier's own CompareAndSwap has always reported
+// ErrGuardedSwapUnsupported over an xkms backend, both before and after this
+// wrapper existed. Adapting between them would newly enable a path that has
+// never worked, which is a behaviour change and not this change's business.
+func (g guardedStorageBackend) CompareAndSwap(ctx context.Context, key string, expected, next []byte) (bool, []byte, error) {
+	cas, ok := g.Backend.(storage.CompareAndSwapper)
+	if !ok {
+		return false, nil, storage.ErrCompareAndSwapUnsupported
+	}
+	return cas.CompareAndSwap(ctx, key, expected, next)
+}
+
+// Barrier is a type alias for qrdbsdk.StorageBarrier. An xkms storage.Backend
+// reaches it through guardedStorageBackend, which supplies the one method
+// go-qrdb's StorageBackend requires that xkms models as a capability.
 type Barrier = qrdbsdk.StorageBarrier
 
 // TenantBarrier is a type alias for qrdbsdk.TenantBarrier.
@@ -100,7 +182,7 @@ func NewBarrier(
 		AuditLogger:     AuditLoggerFromXKMS(config.AuditLogger),
 		Shamir:          config.Shamir,
 	}
-	return qrdbsdk.NewStorageBarrier(logger, base, qrdbConfig, strategies...)
+	return qrdbsdk.NewStorageBarrier(logger, guardStorage(base), qrdbConfig, strategies...)
 }
 
 // NewTenantBarrier creates a new tenant-specific barrier with namespace
@@ -119,7 +201,7 @@ func NewTenantBarrier(
 		AuditLogger:     AuditLoggerFromXKMS(config.AuditLogger),
 		Shamir:          config.Shamir,
 	}
-	return qrdbsdk.NewTenantBarrier(tenantID, logger, base, qrdbConfig, strategies...)
+	return qrdbsdk.NewTenantBarrier(tenantID, logger, guardStorage(base), qrdbConfig, strategies...)
 }
 
 // NewBarrierRegistry creates a new BarrierRegistry with the given system
@@ -186,7 +268,7 @@ func (r *BarrierRegistry) RegisterTenantWithConfig(
 		AuditLogger:     AuditLoggerFromXKMS(config.AuditLogger),
 		Shamir:          config.Shamir,
 	}
-	return r.inner.RegisterTenant(context.Background(), tenantID, base, qrdbConfig, strategies...)
+	return r.inner.RegisterTenant(context.Background(), tenantID, guardStorage(base), qrdbConfig, strategies...)
 }
 
 // GetTenant looks up a registered tenant barrier by ID.

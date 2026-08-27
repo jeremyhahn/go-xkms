@@ -24,6 +24,17 @@ import "context"
 // This interface is designed to be a subset of go-qrdb's KVClient, enabling
 // any QRDB transport (embedded, REST, gRPC, QUIC, Unix, MCP) to natively
 // satisfy Backend with zero adapter code.
+//
+// GUARDED WRITES ARE OPTIONAL CAPABILITIES, not methods here: CompareAndSwapper
+// for the guarded edit and CompareAndDeleter for the guarded release. A caller
+// that needs one type-asserts for it. Keeping them off this interface is what
+// lets a backend that cannot provide the guarantee say so by not having the
+// method, rather than by shipping one that always errors — the absence is
+// visible at the assertion instead of on the first call in production.
+//
+// Three expansions of the guarded-delete capability are tracked: the hardware
+// certificate adapter (#143), the PKCS#11 module's remote state backend (#142),
+// and execution on qrdb's embedded constructors (go-qrdb #175).
 type Backend interface {
 	// Get retrieves the value for the given key.
 	// Returns ErrNotFound if the key does not exist.

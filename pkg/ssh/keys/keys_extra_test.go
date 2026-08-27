@@ -380,6 +380,12 @@ func (keysFailingBackend) Put(_ context.Context, _ string, _ []byte) error { ret
 func (keysFailingBackend) PutIfAbsent(_ context.Context, _ string, _ []byte) (bool, error) {
 	return false, errKeysFail
 }
+
+// CompareAndDelete mirrors keysFailingBackend.Delete: it always returns
+// errKeysFail.
+func (keysFailingBackend) CompareAndDelete(_ context.Context, _ string, _ []byte) (bool, error) {
+	return false, errKeysFail
+}
 func (keysFailingBackend) Delete(_ context.Context, _ string) error { return errKeysFail }
 func (keysFailingBackend) List(_ context.Context, _ string) ([]string, error) {
 	return nil, errKeysFail
@@ -417,6 +423,12 @@ func (b *keysPayloadBackend) Scan(_ context.Context, _ string, fn func(string, [
 }
 func (b *keysPayloadBackend) Put(_ context.Context, _ string, _ []byte) error { return nil }
 func (b *keysPayloadBackend) PutIfAbsent(_ context.Context, _ string, _ []byte) (bool, error) {
+	return true, nil
+}
+
+// CompareAndDelete mirrors keysPayloadBackend.Delete, which always succeeds:
+// it reports the key as removed.
+func (b *keysPayloadBackend) CompareAndDelete(_ context.Context, _ string, _ []byte) (bool, error) {
 	return true, nil
 }
 func (b *keysPayloadBackend) Delete(_ context.Context, _ string) error           { return nil }

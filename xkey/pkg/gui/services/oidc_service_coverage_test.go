@@ -14,6 +14,7 @@
 package services
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -71,6 +72,20 @@ func (m *mockStorageBackend) PutIfAbsent(_ context.Context, key string, value []
 		return false, nil
 	}
 	m.data[key] = value
+	return true, nil
+}
+
+// CompareAndDelete mirrors mockStorageBackend.Delete: it returns delErr when
+// set, otherwise removes key only when it still holds expected.
+func (m *mockStorageBackend) CompareAndDelete(_ context.Context, key string, expected []byte) (bool, error) {
+	if m.delErr != nil {
+		return false, m.delErr
+	}
+	current, ok := m.data[key]
+	if !ok || !bytes.Equal(current, expected) {
+		return false, nil
+	}
+	delete(m.data, key)
 	return true, nil
 }
 

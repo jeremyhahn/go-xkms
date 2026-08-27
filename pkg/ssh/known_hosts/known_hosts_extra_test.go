@@ -425,6 +425,11 @@ func (khFailingBackend) Put(_ context.Context, _ string, _ []byte) error { retur
 func (khFailingBackend) PutIfAbsent(_ context.Context, _ string, _ []byte) (bool, error) {
 	return false, errKHFail
 }
+
+// CompareAndDelete mirrors khFailingBackend.Delete: it always returns errKHFail.
+func (khFailingBackend) CompareAndDelete(_ context.Context, _ string, _ []byte) (bool, error) {
+	return false, errKHFail
+}
 func (khFailingBackend) Delete(_ context.Context, _ string) error { return errKHFail }
 func (khFailingBackend) List(_ context.Context, _ string) ([]string, error) {
 	return nil, errKHFail
@@ -470,6 +475,12 @@ func (b *khPayloadBackend) Scan(_ context.Context, _ string, fn func(string, []b
 }
 func (b *khPayloadBackend) Put(_ context.Context, _ string, _ []byte) error { return nil }
 func (b *khPayloadBackend) PutIfAbsent(_ context.Context, _ string, _ []byte) (bool, error) {
+	return true, nil
+}
+
+// CompareAndDelete mirrors khPayloadBackend.Delete, which always succeeds: it
+// reports the key as removed.
+func (b *khPayloadBackend) CompareAndDelete(_ context.Context, _ string, _ []byte) (bool, error) {
 	return true, nil
 }
 func (b *khPayloadBackend) Delete(_ context.Context, _ string) error           { return nil }

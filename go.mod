@@ -1,6 +1,6 @@
 module github.com/jeremyhahn/go-xkms
 
-go 1.26.6
+go 1.26.7
 
 require (
 	cloud.google.com/go/kms v1.31.0
@@ -27,10 +27,11 @@ require (
 	github.com/gorilla/websocket v1.5.4-0.20250319132907-e064f32e3674
 	github.com/hashicorp/vault/api v1.23.0
 	github.com/jeremyhahn/go-codec v1.4.0
+	github.com/jeremyhahn/go-enclave v0.4.0-alpha
 	github.com/jeremyhahn/go-frost v0.1.8-alpha
-	github.com/jeremyhahn/go-qrdb v0.11.0-alpha
-	github.com/jeremyhahn/go-qrdb/sdk/go v0.11.0-alpha
-	github.com/jeremyhahn/go-quicraft v0.8.0-alpha
+	github.com/jeremyhahn/go-qrdb v0.13.0-alpha
+	github.com/jeremyhahn/go-qrdb/sdk/go v0.13.0-alpha
+	github.com/jeremyhahn/go-quicraft v0.9.0-alpha
 	github.com/jeremyhahn/go-truststrap v0.2.0-alpha
 	github.com/jeremyhahn/go-xkms/sdk/go v0.8.0-alpha
 	github.com/jeremyhahn/go-xkms/xkey v0.8.0-alpha
@@ -123,7 +124,7 @@ require (
 	github.com/klauspost/cpuid/v2 v2.4.0 // indirect
 	github.com/kr/pretty v0.3.1 // indirect
 	github.com/kr/text v0.2.0 // indirect
-	github.com/labstack/echo/v4 v4.15.2 // indirect
+	github.com/labstack/echo/v4 v4.15.3 // indirect
 	github.com/labstack/gommon v0.5.0 // indirect
 	github.com/leaanthony/go-ansi-parser v1.6.1 // indirect
 	github.com/leaanthony/gosod v1.0.4 // indirect

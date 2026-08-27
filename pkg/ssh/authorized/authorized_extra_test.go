@@ -38,6 +38,11 @@ func (failingBackend) Put(_ context.Context, _ string, _ []byte) error { return 
 func (failingBackend) PutIfAbsent(_ context.Context, _ string, _ []byte) (bool, error) {
 	return false, errFail
 }
+
+// CompareAndDelete mirrors failingBackend.Delete: it always returns errFail.
+func (failingBackend) CompareAndDelete(_ context.Context, _ string, _ []byte) (bool, error) {
+	return false, errFail
+}
 func (failingBackend) Delete(_ context.Context, _ string) error { return errFail }
 func (failingBackend) List(_ context.Context, _ string) ([]string, error) {
 	return nil, errFail

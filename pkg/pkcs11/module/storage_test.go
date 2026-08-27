@@ -539,6 +539,13 @@ func (storageBlockingTestBackend) PutIfAbsent(ctx context.Context, key string, v
 	return false, ctx.Err()
 }
 
+// CompareAndDelete mirrors storageBlockingTestBackend.Delete: it blocks until
+// its context is canceled.
+func (storageBlockingTestBackend) CompareAndDelete(ctx context.Context, key string, expected []byte) (bool, error) {
+	<-ctx.Done()
+	return false, ctx.Err()
+}
+
 func (storageBlockingTestBackend) Delete(ctx context.Context, key string) error {
 	<-ctx.Done()
 	return ctx.Err()

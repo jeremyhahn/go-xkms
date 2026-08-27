@@ -27,6 +27,11 @@ var (
 	// CompareAndSwapper.
 	ErrCompareAndSwapUnsupported = errors.New("storage: backend does not support compare-and-swap")
 
+	// ErrCompareAndDeleteUnsupported is returned when a CompareAndDelete is
+	// requested of a backend (or a wrapper over one) that does not implement
+	// CompareAndDeleter.
+	ErrCompareAndDeleteUnsupported = errors.New("storage: backend does not support compare-and-delete")
+
 	// ErrAlreadyExists is returned when attempting to save a key or certificate that already exists.
 	ErrAlreadyExists = errors.New("storage: already exists")
 

@@ -1519,6 +1519,11 @@ func (e *errorBackend) Put(_ context.Context, _ string, _ []byte) error {
 func (e *errorBackend) PutIfAbsent(_ context.Context, _ string, _ []byte) (bool, error) {
 	return false, errors.New("put error")
 }
+
+// CompareAndDelete mirrors errorBackend.Delete: it always fails.
+func (e *errorBackend) CompareAndDelete(_ context.Context, _ string, _ []byte) (bool, error) {
+	return false, errors.New("delete error")
+}
 func (e *errorBackend) Delete(_ context.Context, _ string) error {
 	return errors.New("delete error")
 }

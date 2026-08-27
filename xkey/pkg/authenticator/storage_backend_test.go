@@ -1511,6 +1511,23 @@ func (m *mockBackend) PutIfAbsent(_ context.Context, key string, value []byte) (
 	return true, nil
 }
 
+// CompareAndDelete mirrors mockBackend.Delete under the same lock: it returns
+// deleteErr when set, otherwise removes key only when it still holds expected.
+func (m *mockBackend) CompareAndDelete(_ context.Context, key string, expected []byte) (bool, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	if m.deleteErr != nil {
+		return false, m.deleteErr
+	}
+	current, ok := m.data[key]
+	if !ok || !bytes.Equal(current, expected) {
+		return false, nil
+	}
+	delete(m.data, key)
+	return true, nil
+}
+
 func (m *mockBackend) Delete(_ context.Context, key string) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()

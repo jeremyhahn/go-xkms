@@ -68,16 +68,25 @@ func mapErr(op, key string, err error) error {
 type engineBackend struct {
 	eng qrdbsdk.Storage
 
-	// putIfAbsentMu serializes the check-then-write performed by PutIfAbsent.
-	// The underlying engine is a single-writer process-local store, so holding
-	// this mutex across Exists+Set makes PutIfAbsent genuinely atomic for this
-	// process; there is no other writer to race with.
-	putIfAbsentMu sync.Mutex
+	// writeMu serializes EVERY write this backend performs — the unconditional
+	// Put and Delete as well as the guarded PutIfAbsent, CompareAndSwap and
+	// CompareAndDelete. The underlying engine is a single-writer process-local
+	// store, so holding this mutex across a read-then-write makes the guarded
+	// verbs genuinely atomic for this process.
+	//
+	// It must cover the unconditional writers too, and that is the whole point
+	// rather than an over-cautious extra. A guard that only excluded the other
+	// guarded verbs would be defeated by a plain Put: CompareAndDelete could
+	// read value A, a concurrent Put could store B, and the delete would then
+	// remove B — a value the releaser never observed, which is exactly the race
+	// the guarded verbs exist to close.
+	writeMu sync.Mutex
 }
 
 // Compile-time assertion that engineBackend satisfies Backend.
 var _ Backend = (*engineBackend)(nil)
 var _ CompareAndSwapper = (*engineBackend)(nil)
+var _ CompareAndDeleter = (*engineBackend)(nil)
 
 // NewEngineBackend wraps a go-qrdb storage engine as an xkms Backend.
 func NewEngineBackend(eng qrdbsdk.Storage) Backend {
@@ -99,7 +108,14 @@ func (b *engineBackend) Get(_ context.Context, key string) ([]byte, error) {
 }
 
 // Put stores value under key, overwriting any existing value.
+//
+// It takes writeMu even though a single Set needs no critical section of its
+// own: the guarded verbs read and then write, and a Put that slipped between
+// those two steps would defeat their guard. See writeMu.
 func (b *engineBackend) Put(_ context.Context, key string, value []byte) error {
+	b.writeMu.Lock()
+	defer b.writeMu.Unlock()
+
 	if err := b.eng.Set([]byte(key), value); err != nil {
 		return mapErr("put", key, err)
 	}
@@ -109,14 +125,14 @@ func (b *engineBackend) Put(_ context.Context, key string, value []byte) error {
 // PutIfAbsent atomically stores value under key only if key is absent.
 //
 // Atomicity guarantee: the underlying go-qrdb engine is a single-writer,
-// process-local store. Holding putIfAbsentMu across the Exists check and the
+// process-local store. Holding writeMu across the Exists check and the
 // Set makes this check-then-write linearizable for this process — there is no
 // other writer to interleave with — so the guarantee is genuine, not a
 // best-effort fallback. (A clustered/replicated Backend must instead implement
 // this via a consensus compare-and-swap.)
 func (b *engineBackend) PutIfAbsent(_ context.Context, key string, value []byte) (bool, error) {
-	b.putIfAbsentMu.Lock()
-	defer b.putIfAbsentMu.Unlock()
+	b.writeMu.Lock()
+	defer b.writeMu.Unlock()
 
 	exists, err := b.eng.Exists([]byte(key))
 	if err != nil {
@@ -135,14 +151,14 @@ func (b *engineBackend) PutIfAbsent(_ context.Context, key string, value []byte)
 // equals expected (or, when expected is nil, only if the key is absent),
 // returning the current value when it does not swap.
 //
-// It shares putIfAbsentMu with PutIfAbsent so the get-compare-set is
+// It shares writeMu with PutIfAbsent so the get-compare-set is
 // linearizable for this single-writer, process-local engine — the same genuine
 // (not best-effort) guarantee PutIfAbsent gives. A clustered Backend implements
 // CompareAndSwap via a consensus compare-and-swap instead (see
 // pkg/storage/qrdb).
 func (b *engineBackend) CompareAndSwap(_ context.Context, key string, expected, newValue []byte) (bool, []byte, error) {
-	b.putIfAbsentMu.Lock()
-	defer b.putIfAbsentMu.Unlock()
+	b.writeMu.Lock()
+	defer b.writeMu.Unlock()
 
 	exists, err := b.eng.Exists([]byte(key))
 	if err != nil {
@@ -175,10 +191,64 @@ func (b *engineBackend) CompareAndSwap(_ context.Context, key string, expected, 
 	return true, nil, nil
 }
 
+// CompareAndDelete atomically removes key only when its stored value still
+// equals expected, reporting deleted=false (with a nil error) when the key was
+// absent or held a different value.
+//
+// It shares writeMu with PutIfAbsent and CompareAndSwap so the
+// get-compare-delete is linearizable for this single-writer, process-local
+// engine — the same genuine (not best-effort) guarantee those two give. Sharing
+// the one mutex is what makes the guarantee hold against them and not merely
+// against other CompareAndDelete callers: a release must not interleave with
+// the acquire it is racing.
+//
+// Unlike Delete, an absent key is NOT ErrNotFound here. The guarded delete
+// reports refusal through deleted=false, and a caller that lost the guard
+// cannot tell — and does not need to tell — "already released" from "never
+// present".
+func (b *engineBackend) CompareAndDelete(_ context.Context, key string, expected []byte) (bool, error) {
+	b.writeMu.Lock()
+	defer b.writeMu.Unlock()
+
+	// Exists before Get, as CompareAndSwap does: the engine reports both an
+	// absent key and a stored empty value as (nil, nil) from Get, and those are
+	// different answers here — an absent key refuses, a stored empty value
+	// matches a nil/empty expected.
+	exists, err := b.eng.Exists([]byte(key))
+	if err != nil {
+		// A failed guard READ must refuse rather than decide: treating a read
+		// fault as "the value differs" would silently skip a delete the caller
+		// is entitled to, so the outcome is reported as unknown instead.
+		return false, mapErr("compare-and-delete", key, err)
+	}
+	if !exists {
+		return false, nil
+	}
+	current, err := b.eng.Get([]byte(key))
+	if err != nil {
+		return false, mapErr("compare-and-delete", key, err)
+	}
+	if !bytes.Equal(current, expected) {
+		return false, nil
+	}
+	if err := b.eng.Delete([]byte(key)); err != nil {
+		return false, mapErr("compare-and-delete", key, err)
+	}
+	return true, nil
+}
+
 // Delete removes key. The go-qrdb engine deletes idempotently (no error on a
 // missing key), so Delete checks existence first to preserve the Backend
 // contract of returning ErrNotFound for an absent key.
+//
+// It takes writeMu for two reasons: its own Exists-then-Delete is a
+// read-then-write that would otherwise report ErrNotFound for a key a
+// concurrent Put had just created, and an unguarded delete slipping into a
+// guarded verb's read-then-write would defeat that verb's guard. See writeMu.
 func (b *engineBackend) Delete(_ context.Context, key string) error {
+	b.writeMu.Lock()
+	defer b.writeMu.Unlock()
+
 	exists, err := b.eng.Exists([]byte(key))
 	if err != nil {
 		return mapErr("delete", key, err)

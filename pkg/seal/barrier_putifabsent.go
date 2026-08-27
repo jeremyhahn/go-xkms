@@ -32,6 +32,16 @@ type BarrierBackend struct {
 // Compile-time assertion that BarrierBackend satisfies storage.Backend.
 var _ storage.Backend = (*BarrierBackend)(nil)
 
+// And the optional guarded-delete capability, which it inherits from the
+// embedded barrier rather than implementing here. Asserted because
+// storage.CompareAndDeleter's documentation names this type: if a future
+// go-qrdb dropped the method, the claim would otherwise go stale silently, and
+// a caller's type assertion would start failing at runtime instead of the build
+// failing here. The promoted implementation is overridden in
+// barrier_compareanddelete.go so the absent-key clause holds; this type is run
+// through the shared conformance suite like every other claimant.
+var _ storage.CompareAndDeleter = (*BarrierBackend)(nil)
+
 // NewBarrierBackend wraps a barrier so it satisfies storage.Backend. A nil
 // barrier yields a nil backend so callers can pass the result straight through.
 func NewBarrierBackend(b *Barrier) *BarrierBackend {

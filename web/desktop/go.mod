@@ -1,6 +1,6 @@
 module github.com/jeremyhahn/go-xkms/web/desktop
 
-go 1.26.6
+go 1.26.7
 
 // Intra-repo submodule resolution (valid in-workspace and standalone on GitHub).
 // Cross-repo deps resolve via the parent go.work `use` directives; no cross-repo
@@ -147,9 +147,9 @@ require (
 	github.com/jeremyhahn/go-codec v1.4.0 // indirect
 	github.com/jeremyhahn/go-frost v0.1.8-alpha // indirect
 	github.com/jeremyhahn/go-objstore v0.3.0-alpha // indirect
-	github.com/jeremyhahn/go-qrdb v0.11.0-alpha // indirect
-	github.com/jeremyhahn/go-qrdb/sdk/go v0.11.0-alpha // indirect
-	github.com/jeremyhahn/go-quicraft v0.8.0-alpha // indirect
+	github.com/jeremyhahn/go-qrdb v0.13.0-alpha // indirect
+	github.com/jeremyhahn/go-qrdb/sdk/go v0.13.0-alpha // indirect
+	github.com/jeremyhahn/go-quicraft v0.9.0-alpha // indirect
 	github.com/jeremyhahn/go-truststrap v0.2.0-alpha // indirect
 	github.com/jeremyhahn/go-xkms/sdk/go v0.8.0-alpha // indirect
 	github.com/jeremyhahn/go-xkms/xkey v0.8.0-alpha // indirect
@@ -162,7 +162,7 @@ require (
 	github.com/kr/pretty v0.3.1 // indirect
 	github.com/kr/text v0.2.0 // indirect
 	github.com/kylelemons/godebug v1.1.0 // indirect
-	github.com/labstack/echo/v4 v4.15.2 // indirect
+	github.com/labstack/echo/v4 v4.15.3 // indirect
 	github.com/labstack/gommon v0.5.0 // indirect
 	github.com/leaanthony/go-ansi-parser v1.6.1 // indirect
 	github.com/leaanthony/gosod v1.0.4 // indirect

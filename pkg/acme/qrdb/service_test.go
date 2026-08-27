@@ -154,7 +154,10 @@ func (m *mockTransport) IndexDrop(ctx context.Context, name string) error { retu
 func (m *mockTransport) IndexQuery(ctx context.Context, indexName, value string) (*db.IndexQueryResponse, error) {
 	return nil, nil
 }
-func (m *mockTransport) IndexScan(ctx context.Context, indexName, start, end string) (*db.IndexScanResponse, error) {
+
+// start and end are *string so an open-ended bound can be expressed as nil,
+// which is what go-qrdb's IndexClient changed them to in sdk v0.13.
+func (m *mockTransport) IndexScan(ctx context.Context, indexName string, start, end *string) (*db.IndexScanResponse, error) {
 	return nil, nil
 }
 func (m *mockTransport) IndexList(ctx context.Context) (*db.IndexListResponse, error) {

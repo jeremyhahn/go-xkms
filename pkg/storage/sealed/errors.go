@@ -30,4 +30,23 @@ var (
 
 	// ErrUnmarshalFailed indicates JSON unmarshaling of sealed data failed.
 	ErrUnmarshalFailed = errors.New("sealed: unmarshal failed")
+
+	// ErrGuardEnclaveFailed indicates the unsealed guard value could not be
+	// placed in locked memory, so the comparison was never performed. It is
+	// distinct from ErrUnsealFailed: the decryption succeeded, and what failed
+	// is the protection the comparison is required to happen under -- typically
+	// the kernel refusing to lock pages under RLIMIT_MEMLOCK.
+	ErrGuardEnclaveFailed = errors.New("sealed: could not protect unsealed guard value")
+
+	// ErrUnsealIntoUnsupported indicates the configured sealer cannot decrypt
+	// into caller-supplied memory (types.UnsealerInto), so the guarded delete
+	// cannot compare the unsealed value without first materializing it on the
+	// heap. There is deliberately no heap fallback.
+	ErrUnsealIntoUnsupported = errors.New("sealed: sealer cannot unseal into locked memory")
+
+	// ErrGuardEscapedEnclave indicates the decryption did not land in the locked
+	// region it was aimed at -- it reallocated onto the heap instead, which
+	// looks like success and is exactly the exposure the locked region exists to
+	// prevent.
+	ErrGuardEscapedEnclave = errors.New("sealed: unsealed guard value escaped locked memory")
 )
