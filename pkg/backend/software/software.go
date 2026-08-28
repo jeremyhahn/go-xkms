@@ -733,6 +733,20 @@ func (b *SoftwareBackend) ImportKey(ctx context.Context, attrs *types.KeyAttribu
 	if err != nil {
 		return &errs.Wrapped{Msg: "failed to unwrap key material", Err: err}
 	}
+	// The unwrapped private or symmetric key is a plain heap slice, and the
+	// garbage collector neither zeroes it nor promises to reuse the pages
+	// promptly. Wipe it on EVERY exit -- success as much as failure -- so its
+	// residency is bounded by this call rather than by the collector.
+	//
+	// Wiping after the import completes is safe because every reachable
+	// Backend.Put consumes the value before returning. That is a documented
+	// requirement of the interface, not an incidental property of today's
+	// backends: storage.Backend.Put states it, and carries the per-engine
+	// audit that shows each one satisfies it. A backend added later that
+	// retained the caller's slice by reference would make this wipe destroy
+	// the stored key, which is why the rule lives on the interface where an
+	// implementer will read it.
+	defer secure.Wipe(keyMaterial)
 
 	// Parse and store the key based on type
 	if attrs.IsSymmetric() {
@@ -890,12 +904,35 @@ func (b *SoftwareBackend) importSymmetricKey(ctx context.Context, attrs *types.K
 }
 
 // importAsymmetricKey imports an asymmetric key from PKCS8-encoded key material
+// parsePKCS8ForImport is the parse step of importAsymmetricKey, as a variable
+// so a test can hold a reference to the value it returns.
+//
+// It is a seam for reachability, not for convenience. The parsed key is a
+// local that never escapes importAsymmetricKey, which made the zeroization
+// below unobservable from outside the function -- and unobservable means
+// untested: deleting the `defer zeroizeParsedPrivateKey` line left the entire
+// suite green (measured 2026-08-27). Capturing the parsed value lets a test
+// assert the real property, that the scalar's storage is erased when the
+// function returns, rather than the weaker one that some function was called.
+//
+// Production always runs x509.ParsePKCS8PrivateKey; only an in-package test
+// replaces it, and it restores it on cleanup.
+var parsePKCS8ForImport = x509.ParsePKCS8PrivateKey
+
 func (b *SoftwareBackend) importAsymmetricKey(ctx context.Context, attrs *types.KeyAttributes, keyMaterial []byte) error {
 	// Parse the PKCS8 private key
-	privateKey, err := x509.ParsePKCS8PrivateKey(keyMaterial)
+	privateKey, err := parsePKCS8ForImport(keyMaterial)
 	if err != nil {
 		return &errs.Wrapped{Msg: "failed to parse PKCS8 private key", Err: err}
 	}
+	// Parsing materialises a SECOND copy of the secret -- freshly allocated
+	// big.Ints or key bytes, independent of the DER ImportKey wipes -- and this
+	// function only ever reads it, to check the key against its declared
+	// attributes. What is stored is the DER, never this value, so the parsed
+	// copy is discarded here and its residency is bounded rather than left to
+	// the collector. What the wipe cannot reach is named in
+	// zeroizeParsedPrivateKey's doc comment.
+	defer zeroizeParsedPrivateKey(privateKey)
 
 	// Validate the key type matches the attributes
 	if err := validateKeyType(privateKey, attrs); err != nil {

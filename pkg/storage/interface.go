@@ -42,6 +42,39 @@ type Backend interface {
 
 	// Put stores the value for the given key.
 	// If the key already exists, it will be overwritten.
+	//
+	// AN IMPLEMENTATION MUST NOT RETAIN value. It must copy or otherwise
+	// fully consume the slice before returning, and must not hold a reference
+	// to it for asynchronous persistence.
+	//
+	// This is a requirement rather than a convention because callers wipe
+	// secret material after a successful Put: this backend stores KEYS, and a
+	// plaintext private key left on the ordinary Go heap is unwipeable and
+	// outlives every guarantee the protected-memory types provide
+	// (pkg/backend/software.ImportKey is the caller that depends on it). An
+	// implementation that retained the slice would have its stored value
+	// zeroed underneath it -- so the rule protects the implementation as much
+	// as the caller.
+	//
+	// Every in-tree implementation satisfies this. Re-derived from the code
+	// on 2026-08-27 against go-qrdb v0.13.0-alpha / go-objstore v0.3.0-alpha,
+	// by enumerating the engines rather than the ones already known -- the
+	// first pass named four and the set is larger:
+	//
+	//   - memory: copies into its own buffer (memory/storage.go valCopy).
+	//   - file: writes to a temp file and renames.
+	//   - pebble: Set copies into the batch/memtable before returning.
+	//   - qrdb (raft): encodes the value into a command buffer (kv.EncodePut)
+	//     BEFORE proposing, so the state machine's detached apply goroutine
+	//     reads that buffer rather than this slice.
+	//   - objstore: does NOT copy -- it wraps the slice in a bytes.Reader
+	//     (objstore/objstore.go) and hands it to the go-objstore backend. Safe
+	//     only because every backend there (local, memory, s3, gcs, azure,
+	//     minio, glacier) drains the reader synchronously inside Put. This is
+	//     the implementation to re-check first when a backend is added, since
+	//     it is the one that aliases rather than copies.
+	//   - namespace / partition / prefix: pass the slice straight through to
+	//     one of the above, so they inherit its answer.
 	Put(ctx context.Context, key string, value []byte) error
 
 	// PutIfAbsent atomically stores value at key only if key does not already
