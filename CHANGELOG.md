@@ -80,6 +80,44 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   claiming nothing about boot state — a case that exists to be REFUSED, so it
   has to be constructible on purpose.
 
+## [0.9.1-alpha] - 2026-09-02
+
+### Fixed
+
+- **Release `v0.8.0-alpha` did not contain the fix it was cut for** (#195).
+  The tag pointed at `3b227eee`, which predates `efdf8d76` (#190,
+  "resolve logins by the canonical email key"), so every consumer
+  resolving a tag still got the broken email resolution. Nothing in the
+  repo could see this: the fix was on `main`, the tag looked current, and
+  only `git merge-base --is-ancestor <fix> <tag>` distinguishes them.
+  Downstream, go-quicbaas#359 stalled against it.
+
+  `v0.9.0-alpha` carried the fix but was rejected by `Release / Validate
+  tag` for having no CHANGELOG section; this release supersedes it. The
+  two are identical in code — the published `v0.9.0-alpha` module is
+  usable, it simply has no release pipeline behind it.
+
+### Changed
+
+- go-qrdb pinned to `v0.16.0-alpha` (from `v0.15.0-alpha`), which brings
+  go-quicraft `v0.9.0-alpha`. A zero-source-change bump here: all three
+  modules build and `pkg/auth`, `pkg/apimodule`, `pkg/storage`, `pkg/api`
+  and `pkg/webauthn` pass under the full tag set.
+
+  Pinned deliberately rather than left to drift. go-quicbaas requires
+  go-qrdb `v0.16.0-alpha`, so MVS hands it to go-xkms regardless of what
+  this module declares — better that the pin is tested here than
+  discovered at a consumer's integration. It also resolves the
+  `seal.StorageBackend` / `CompareAndDelete` break that `v0.8.0-alpha`
+  presented to consumers on qrdb v0.15.
+
+- Cross-module requires bumped to `v0.9.1-alpha` in all three `go.mod`
+  files. `make release-alpha` does **not** do this (Makefile:4342 tags the
+  submodules but never rewrites the requires), and the local `replace`
+  directives hide the omission because a `replace` inside a dependency
+  module is ignored by consumers. Releases are cut by hand until PR #73
+  lands.
+
 ## [0.8.0-alpha] - 2026-08-20
 
 **MINOR, not PATCH**: this carries a breaking API change, and pre-1.0 that is
