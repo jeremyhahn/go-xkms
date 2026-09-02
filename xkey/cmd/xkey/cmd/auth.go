@@ -18,8 +18,8 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"net/mail"
 	"os"
-	"os/user"
 	"path/filepath"
 	"strings"
 	"time"
@@ -73,9 +73,19 @@ var (
 	// ErrAuthTokenListFailed indicates listing tokens failed.
 	ErrAuthTokenListFailed = errors.New("auth: failed to list tokens")
 
-	// ErrAuthUsernameRequired indicates no username could be resolved for the
-	// WebAuthn ceremony.
-	ErrAuthUsernameRequired = errors.New("auth: --username is required (no account name could be derived from the environment)")
+	// ErrAuthEmailRequired indicates no login key was supplied for the WebAuthn
+	// ceremony. There is deliberately no environment-derived default: the
+	// server resolves the account by its canonical email key, and an OS account
+	// name is a different identifier that only looked equivalent while the two
+	// were stored as one value.
+	ErrAuthEmailRequired = errors.New("auth: --email is required: it is the canonical login key the server resolves the account by")
+
+	// ErrAuthLoginKeyNotEmail indicates a login key that is not an email
+	// address. The server resolves the account with GetUserByEmail, so a value
+	// like an OS account name cannot match any principal — and against a
+	// relying party with public registration enabled, that miss is a SIGN-UP
+	// rather than an error.
+	ErrAuthLoginKeyNotEmail = errors.New("auth: the login key must be an email address: the server resolves the account by its canonical email login key")
 
 	// ErrAuthBeginRegistrationFailed indicates the server refused to start the
 	// WebAuthn registration ceremony.
@@ -167,15 +177,24 @@ Subcommands:
   status    Show authentication status for all servers
   token     Print the current JWT token for a server
 
+The WebAuthn register and login ceremonies resolve the account by its canonical
+email login key, so they require --email. The PIV path does not: it authenticates
+with a certificate and is resolved by its SPKI thumbprint.
+
 Examples:
   # Register with a server using SPKI pin for trust-on-first-use
-  xkey auth register --server https://xkms.example.com:8443 --spki-pin abc123
+  xkey auth register --server https://xkms.example.com:8443 --spki-pin abc123 \
+      --email alice@example.com
 
   # Register with a setup token for pre-authorized enrollment
-  xkey auth register --server https://xkms.example.com:8443 --setup-token TOKEN
+  xkey auth register --server https://xkms.example.com:8443 --setup-token TOKEN \
+      --email alice@example.com
 
   # Authenticate to a registered server
-  xkey auth login --server https://xkms.example.com:8443
+  xkey auth login --server https://xkms.example.com:8443 --email alice@example.com
+
+  # Authenticate with a PIV certificate instead (no login key needed)
+  xkey auth login --server https://xkms.example.com:8443 --piv --slot 9a
 
   # Show authentication status for all servers
   xkey auth status
@@ -203,18 +222,20 @@ Flags:
   --server       Server URL (required)
   --spki-pin     SPKI SHA-256 pin for certificate pinning (trust-on-first-use)
   --setup-token  Pre-authorized enrollment token
-  --username     Account name to enroll (default: current OS user)
-  --display-name Human-readable account name (default: username)
+  --email        Canonical login key to enroll (required)
+  --display-name Human-readable account name (default: the login key)
 
 Examples:
   # Register with SPKI pin
-  xkey auth register --server https://xkms.example.com:8443 --spki-pin abc123
+  xkey auth register --server https://xkms.example.com:8443 --spki-pin abc123 \
+      --email alice@example.com
 
   # Register with setup token
-  xkey auth register --server https://xkms.example.com:8443 --setup-token TOKEN
+  xkey auth register --server https://xkms.example.com:8443 --setup-token TOKEN \
+      --email alice@example.com
 
-  # Enroll a specific account name
-  xkey auth register --server https://xkms.example.com:8443 --username alice`,
+  # Enroll a specific account
+  xkey auth register --server https://xkms.example.com:8443 --email alice@example.com`,
 	RunE: runAuthRegister,
 }
 
@@ -245,17 +266,14 @@ exist only for the process that generated them (see "xkey piv generate");
 
 Flags:
   --server    Server URL (required)
-  --username  Account name to authenticate (default: current OS user)
+  --email     Canonical login key to authenticate (required)
   --piv       Authenticate with a PIV slot certificate over mTLS
   --slot      PIV slot to authenticate with (default: 9a, used with --piv)
   --backend   PIV key backend: software or pkcs11 (default: software, used with --piv)
 
 Examples:
   # Login to a registered server
-  xkey auth login --server https://xkms.example.com:8443
-
-  # Login as a specific account
-  xkey auth login --server https://xkms.example.com:8443 --username alice
+  xkey auth login --server https://xkms.example.com:8443 --email alice@example.com
 
   # Login with the PIV authentication slot (9a) certificate over mTLS
   xkey auth login --server https://xkms.example.com:8443 --piv
@@ -323,12 +341,16 @@ func init() {
 	authRegisterCmd.Flags().String("server", "", "Server URL (required)")
 	authRegisterCmd.Flags().String("spki-pin", "", "SPKI SHA-256 pin for certificate pinning")
 	authRegisterCmd.Flags().String("setup-token", "", "Pre-authorized enrollment token")
-	authRegisterCmd.Flags().String("username", "", "Account name to enroll (default: current OS user)")
-	authRegisterCmd.Flags().String("display-name", "", "Human-readable account name (default: username)")
+	authRegisterCmd.Flags().String("email", "", "Canonical email login key to enroll (required)")
+	authRegisterCmd.Flags().String("username", "", "Deprecated spelling of --email")
+	authRegisterCmd.Flags().String("display-name", "", "Human-readable account name (default: the login key)")
+	markLoginKeyFlagDeprecated(authRegisterCmd)
 
 	// Login command flags
 	authLoginCmd.Flags().String("server", "", "Server URL (required)")
-	authLoginCmd.Flags().String("username", "", "Account name to authenticate (default: current OS user)")
+	authLoginCmd.Flags().String("email", "", "Canonical email login key to authenticate (required)")
+	authLoginCmd.Flags().String("username", "", "Deprecated spelling of --email")
+	markLoginKeyFlagDeprecated(authLoginCmd)
 	authLoginCmd.Flags().Bool("piv", false, "Authenticate with a PIV slot certificate over mTLS instead of WebAuthn")
 	authLoginCmd.Flags().String("slot", string(PIVSlotAuthentication), "PIV slot to authenticate with (used with --piv)")
 	authLoginCmd.Flags().String("backend", defaultPIVBackend, "PIV key backend: software or pkcs11 (used with --piv)")
@@ -354,13 +376,13 @@ func runAuthRegister(cmd *cobra.Command, args []string) error {
 	spkiPin, _ := cmd.Flags().GetString("spki-pin")
 	setupToken, _ := cmd.Flags().GetString("setup-token")
 
-	username, err := resolveAuthUsername(cmd)
+	email, err := resolveAuthLoginKey(cmd)
 	if err != nil {
 		return err
 	}
 	displayName, _ := cmd.Flags().GetString("display-name")
 	if displayName == "" {
-		displayName = username
+		displayName = email
 	}
 
 	client, err := authClientFactory(serverURL, spkiPin, setupToken)
@@ -413,8 +435,14 @@ func runAuthRegister(cmd *cobra.Command, args []string) error {
 	}
 
 	// WebAuthn registration ceremony.
+	//
+	// The EMAIL goes in the field named Username: the server forwards it to
+	// Service.BeginRegistration(ctx, email, displayName), which resolves with
+	// GetUserByEmail. The field name is the legacy wire spelling from when the
+	// two identifiers were one value; see BeginRegistrationRequest's own
+	// documentation in pkg/api/transport/types.go.
 	begin, err := client.BeginRegistration(ctx, &transport.BeginRegistrationRequest{
-		Username:    username,
+		Username:    email,
 		DisplayName: displayName,
 	})
 	if err != nil {
@@ -431,7 +459,7 @@ func runAuthRegister(cmd *cobra.Command, args []string) error {
 		}
 	}()
 
-	_, _ = fmt.Fprintf(out, "Registering credential for %q - touch your authenticator...\n", username)
+	_, _ = fmt.Fprintf(out, "Registering credential for %q - touch your authenticator...\n", email)
 
 	attestation, err := ceremony.Register(ctx, []byte(begin.OptionsJSON), webauthnOrigin(serverURL))
 	if err != nil {
@@ -461,7 +489,10 @@ func runAuthRegister(cmd *cobra.Command, args []string) error {
 		return nil
 	}
 
-	_, _ = fmt.Fprintln(out, "Use 'xkey auth login --server "+serverURL+"' to obtain a token.")
+	// The email is already in scope, so print a command that actually runs:
+	// login now requires the canonical login key, and guidance that omits it
+	// dead-ends the operator right after a SUCCESSFUL registration.
+	_, _ = fmt.Fprintln(out, "Use 'xkey auth login --server "+serverURL+" --email "+email+"' to obtain a token.")
 	return nil
 }
 
@@ -481,7 +512,7 @@ func runAuthLogin(cmd *cobra.Command, args []string) error {
 		return runAuthLoginPIV(cmd, logger, serverURL)
 	}
 
-	username, err := resolveAuthUsername(cmd)
+	email, err := resolveAuthLoginKey(cmd)
 	if err != nil {
 		return err
 	}
@@ -519,7 +550,9 @@ func runAuthLogin(cmd *cobra.Command, args []string) error {
 	logger.Info("connected to server", slog.String("url", serverEntry.URL))
 
 	// WebAuthn authentication ceremony.
-	begin, err := client.BeginAuthentication(ctx, &transport.BeginAuthenticationRequest{Username: username})
+	// As in registration, the EMAIL goes in the field named Username: the
+	// server forwards it to GetUserByEmail.
+	begin, err := client.BeginAuthentication(ctx, &transport.BeginAuthenticationRequest{Username: email})
 	if err != nil {
 		return errors.Join(ErrAuthBeginAuthenticationFailed, err)
 	}
@@ -535,7 +568,7 @@ func runAuthLogin(cmd *cobra.Command, args []string) error {
 	}()
 
 	out := cmd.OutOrStdout()
-	_, _ = fmt.Fprintf(out, "Authenticating as %q - touch your authenticator...\n", username)
+	_, _ = fmt.Fprintf(out, "Authenticating as %q - touch your authenticator...\n", email)
 
 	assertion, err := ceremony.Assert(ctx, []byte(begin.OptionsJSON), webauthnOrigin(serverEntry.URL))
 	if err != nil {
@@ -544,7 +577,7 @@ func runAuthLogin(cmd *cobra.Command, args []string) error {
 
 	finish, err := client.FinishAuthentication(ctx, &transport.FinishAuthenticationRequest{
 		SessionID:     begin.SessionID,
-		Username:      username,
+		Username:      email,
 		AssertionJSON: string(assertion),
 	})
 	if err != nil {
@@ -569,26 +602,80 @@ func runAuthLogin(cmd *cobra.Command, args []string) error {
 			slog.Any("error", updateErr))
 	}
 
-	_, _ = fmt.Fprintf(out, "Authenticated to %s as %q. Token stored.\n", serverEntry.URL, username)
+	_, _ = fmt.Fprintf(out, "Authenticated to %s as %q. Token stored.\n", serverEntry.URL, email)
 	return nil
 }
 
-// resolveAuthUsername returns the account name for a WebAuthn ceremony: the
-// --username flag when given, otherwise the current operating system user.
-func resolveAuthUsername(cmd *cobra.Command) (string, error) {
-	username, _ := cmd.Flags().GetString("username")
-	username = strings.TrimSpace(username)
-	if username != "" {
-		return username, nil
+// resolveAuthLoginKey returns the canonical login key the server resolves a
+// WebAuthn ceremony by: the --email flag, or the deprecated --username flag
+// still carrying that value.
+//
+// The server's ceremony takes an email — XKMSService.BeginRegistration and
+// BeginAuthentication forward this value to GetUserByEmail — so this is the
+// only identifier that can address a principal. The previous fallback to the
+// current operating system user is gone rather than deprecated: an OS account
+// name is never an email, so defaulting to it can only produce a lookup that
+// misses. On a relying party with public registration enabled that miss is not
+// even an error, it is a sign-up, and the credential is enrolled onto a second
+// principal nobody created.
+func resolveAuthLoginKey(cmd *cobra.Command) (string, error) {
+	email := strings.TrimSpace(cmdFlagString(cmd, "email"))
+	if email != "" {
+		return validateLoginKey(email)
 	}
 
-	if current, err := user.Current(); err == nil && current.Username != "" {
-		return current.Username, nil
+	// The deprecated spelling of the same flag. An operator already passing an
+	// email under it keeps working; cobra prints the deprecation notice.
+	if username := strings.TrimSpace(cmdFlagString(cmd, "username")); username != "" {
+		return validateLoginKey(username)
 	}
-	if envUser := strings.TrimSpace(os.Getenv("USER")); envUser != "" {
-		return envUser, nil
+
+	return "", ErrAuthEmailRequired
+}
+
+// validateLoginKey refuses a login key that is not an email address.
+//
+// The comment on resolveAuthLoginKey claimed the deprecated --username path was
+// safe because "an operator already passing an email keeps working" — but the
+// code accepted ANY non-empty string and forwarded it as an email login key. So
+// `--username alice` reproduced exactly the misrouting this change exists to
+// eliminate: a closed relying party fails to find the principal, and an open one
+// enrols the credential onto a second one keyed by "alice" (Codex, go-xkms #190).
+//
+// The check is deliberately minimal — an address must PARSE and must be the bare
+// address, not a display-name form, because the server stores this value
+// verbatim as an index key and "Alice <a@b.com>" would become the key. Full
+// RFC 5322 conformance is not the goal; distinguishing an email from an OS
+// account name is. Applied to --email as well, since a bad value is exactly as
+// dangerous whichever flag carries it.
+func validateLoginKey(value string) (string, error) {
+	addr, err := mail.ParseAddress(value)
+	if err != nil || addr.Address != value {
+		return "", ErrAuthLoginKeyNotEmail
 	}
-	return "", ErrAuthUsernameRequired
+	return value, nil
+}
+
+// cmdFlagString reads a string flag, tolerating a command that does not define
+// it. The auth commands are also constructed piecemeal by tests.
+func cmdFlagString(cmd *cobra.Command, name string) string {
+	value, _ := cmd.Flags().GetString(name)
+	return value
+}
+
+// markLoginKeyFlagDeprecated hides --username from help and makes cobra warn
+// when it is used. The flag is still honored: an operator already passing the
+// email under the old spelling keeps working.
+func markLoginKeyFlagDeprecated(cmd *cobra.Command) {
+	if err := cmd.Flags().MarkDeprecated(
+		"username",
+		"use --email: the WebAuthn ceremony resolves the account by its canonical email login key",
+	); err != nil {
+		// The flag is declared immediately above; a failure here means the
+		// declaration was removed and the deprecation notice would silently
+		// stop being shown.
+		panic(err)
+	}
 }
 
 // authServerDetail formats a server-supplied failure message as error detail.

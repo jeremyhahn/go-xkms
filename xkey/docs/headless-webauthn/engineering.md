@@ -23,15 +23,15 @@ xkey supplies the adapter (its own authenticator), the CLI
 | `--server` | — | **required** — server URL |
 | `--spki-pin` | `""` | SPKI SHA-256 pin for certificate pinning |
 | `--setup-token` | `""` | pre-authorized enrolment token |
-| `--username` | current OS user | account to enrol |
-| `--display-name` | username | human-readable name |
+| `--email` | — | **required** — the canonical login key to enrol |
+| `--display-name` | the login key | human-readable name |
 
 `xkey auth login`:
 
 | Flag | Default | Meaning |
 |---|---|---|
 | `--server` | — | **required** |
-| `--username` | current OS user | account to authenticate |
+| `--email` | — | **required** — the canonical login key to authenticate |
 | `--piv` | `false` | authenticate with a PIV slot certificate over mTLS instead of WebAuthn |
 | `--slot` | `9a` (`PIVSlotAuthentication`) | PIV slot, with `--piv` |
 | `--backend` | software | PIV key backend: `software` or `pkcs11`, with `--piv` |
@@ -50,8 +50,13 @@ xkey supplies the adapter (its own authenticator), the CLI
   creating a credential.
 - **`--piv` is a different authentication path, not a fallback.** It uses mTLS
   with a slot certificate; WebAuthn is not attempted.
-- **The default `--username` is the current OS user.** Convenient, and a trap
-  in a CI container where that is `root` or a random UID — pass it explicitly.
+- **The login key is an email, and it has no default.** The server resolves
+  both ceremonies with `GetUserByEmail`, so `--email` is the only identifier
+  that reaches a principal. The old `--username` default — the current OS user,
+  in a CI container `root` or a random UID — could only miss that lookup, and
+  on a relying party with public registration enabled a miss is a sign-up that
+  enrols the credential onto an account nobody created. `--username` remains as
+  a deprecated spelling of `--email`.
 - **Tokens are session credentials.** `xkey/pkg/tokenstore` holds them; treat
   the store's protection as the credential's protection.
 - **Concurrency.** One ceremony at a time per authenticator; the CTAP2 channel

@@ -62,8 +62,8 @@ xkey fido2 --storage file --storage-path "$XDG_DATA_HOME/xkey" \
 printf '%s' "$XKEY_PIN" | xkey unlock --pin-stdin
 
 xkey auth register --server "$XKMS" --spki-pin "$PIN" \
-                   --setup-token "$SETUP_TOKEN" --username agent-build
-xkey auth login --server "$XKMS" --username agent-build
+                   --setup-token "$SETUP_TOKEN" --email agent-build@example.com
+xkey auth login --server "$XKMS" --email agent-build@example.com
 
 export XKEY_IPC_SOCKET="$XDG_RUNTIME_DIR/xkey/xkey.sock"
 xkmsctl --server "$XKMS" --token "$(xkey auth token --server "$XKMS")" key list

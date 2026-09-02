@@ -83,9 +83,9 @@ local CTAP2 authenticator with no browser involved — a real security key, or
 `xkey fido2` running. They fail rather than fabricating a credential:
 
 ```bash
-xkey auth register --server https://xkms.example.com:8443 --spki-pin abc123
-xkey auth register --server https://xkms.example.com:8443 --setup-token TOKEN
-xkey auth login --server https://xkms.example.com:8443 --username alice
+xkey auth register --server https://xkms.example.com:8443 --email alice@example.com --spki-pin abc123
+xkey auth register --server https://xkms.example.com:8443 --email alice@example.com --setup-token TOKEN
+xkey auth login --server https://xkms.example.com:8443 --email alice@example.com
 xkey auth token --server https://xkms.example.com:8443
 ```
 

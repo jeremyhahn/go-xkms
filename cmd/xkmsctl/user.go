@@ -45,13 +45,18 @@ func webAuthnRegistration(
 	cl client.Client,
 	handler *fido2.FIDO2Handler,
 	printer *Printer,
-	username, displayName, role, origin string,
+	username, email, displayName, role, origin string,
 	requireUV bool,
 	timeout time.Duration,
 ) (*fido2.WebAuthnAttestation, error) {
 	// Create the xkms user in the embedded qrdb node behind the server.
 	if _, err := cl.CreateUser(ctx, &client.CreateUserRequest{
-		Username:    username,
+		Username: username,
+		// The canonical tenant-unique login key. WebAuthn enrollment resolves
+		// through it, so this ceremony cannot create a usable account without
+		// one; it is supplied explicitly rather than taken from the username,
+		// which is a separate identifier that merely often looks like an email.
+		Email:       email,
 		DisplayName: displayName,
 		Role:        role,
 	}); err != nil {
@@ -59,8 +64,17 @@ func webAuthnRegistration(
 	}
 
 	// Begin the server-side registration ceremony.
+	//
+	// The EMAIL goes in, despite the field being named Username: the service
+	// signature is BeginRegistration(ctx, email, displayName) and it resolves
+	// with GetByEmail. Passing the username worked only while the two were the
+	// same value — this command's own example used to be
+	// `user register admin@example.com`. Adding --email made them differ, and
+	// this call would then look up "admin" as an email: closed registration
+	// fails to find the account just created, and open registration enrols the
+	// credential against a SECOND, unintended principal (Codex, go-xkms #190).
 	beginResp, err := cl.BeginRegistration(ctx, &client.BeginRegistrationRequest{
-		Username:    username,
+		Username:    email,
 		DisplayName: displayName,
 	})
 	if err != nil {
@@ -156,19 +170,28 @@ During registration, you'll need to touch your FIDO2 security key
 to create a credential that will be used for authentication.
 
 Example:
-  xkmsctl user register admin@example.com --display-name "Admin User"
-  xkmsctl user register operator@example.com --role operator`,
+  xkmsctl user register admin --email admin@example.com --display-name "Admin User"
+  xkmsctl user register operator --email operator@example.com --role operator`,
 	Args: cobra.ExactArgs(1),
 	Run: func(cmd *cobra.Command, args []string) {
 		username := args[0]
 		cfg := getConfig()
 		printer := NewPrinter(cfg.OutputFormat, os.Stdout)
 
+		email, _ := cmd.Flags().GetString("email")
 		displayName, _ := cmd.Flags().GetString("display-name")
 		devicePath, _ := cmd.Flags().GetString("device")
 		timeout, _ := cmd.Flags().GetDuration("timeout")
 		requireUV, _ := cmd.Flags().GetBool("user-verification")
 		roleStr, _ := cmd.Flags().GetString("role")
+
+		if email == "" {
+			// handleError, not print-and-return: a bare return leaves Cobra's
+			// Run with nothing to report, so the process exits 0 and every
+			// script calling this sees a rejected registration as a success.
+			handleError(ErrEmailRequired)
+			return
+		}
 
 		if displayName == "" {
 			displayName = username
@@ -245,7 +268,7 @@ Example:
 			return
 		}
 
-		att, err := webAuthnRegistration(ctx, cl, handler, printer, username, displayName, role, "", requireUV, timeout)
+		att, err := webAuthnRegistration(ctx, cl, handler, printer, username, email, displayName, role, "", requireUV, timeout)
 		if err != nil {
 			handleError(err)
 			return
@@ -283,7 +306,12 @@ Example:
 
 // userLoginCmd authenticates using FIDO2 and gets a JWT token
 var userLoginCmd = &cobra.Command{
-	Use:   "login <username>",
+	// <email>, not <username>: the argument is passed straight to
+	// BeginAuthentication, which resolves the account with GetUserByEmail. The
+	// command's own example has always shown an email, but the signature said
+	// "username" and invited `user login alice` — which now cannot resolve,
+	// because the canonical login key and the username are separate values.
+	Use:   "login <email>",
 	Short: "Authenticate using FIDO2 and get a JWT token",
 	Long: `Authenticate to the xkms service using your FIDO2 security key.
 
@@ -302,7 +330,7 @@ Example:
   xkmsctl key list --token $XKMS_TOKEN`,
 	Args: cobra.ExactArgs(1),
 	Run: func(cmd *cobra.Command, args []string) {
-		username := args[0]
+		email := args[0]
 		cfg := getConfig()
 		printer := NewPrinter(cfg.OutputFormat, os.Stdout)
 
@@ -327,8 +355,10 @@ Example:
 
 		// Step 1: Begin the server-side authentication ceremony. The server
 		// returns the challenge and the allow-list of registered credentials.
+		// The field is named Username for wire compatibility but carries the
+		// canonical email login key; see BeginAuthenticationRequest.
 		beginResp, err := cl.BeginAuthentication(ctx, &client.BeginAuthenticationRequest{
-			Username: username,
+			Username: email,
 		})
 		if err != nil {
 			handleError(&WrappedError{Sentinel: ErrBeginAuthenticationFailed, Err: err})
@@ -385,9 +415,11 @@ Example:
 
 		// Step 4: Finish the ceremony. The server verifies the assertion
 		// signature and issues a JWT token on success.
+		// Same field-name caveat as BeginAuthentication: FinishAuthentication
+		// also resolves with GetUserByEmail (servicer_fido2.go).
 		finishResp, err := cl.FinishAuthentication(ctx, &client.FinishAuthenticationRequest{
 			SessionID:     beginResp.SessionID,
-			Username:      username,
+			Username:      email,
 			AssertionJSON: string(assertion.PublicKeyCredentialJSON),
 		})
 		if err != nil {
@@ -407,9 +439,9 @@ Example:
 
 		if cfg.OutputFormat == "json" {
 			result := map[string]interface{}{
-				"success":  true,
-				"username": username,
-				"token":    finishResp.Token,
+				"success": true,
+				"email":   email,
+				"token":   finishResp.Token,
 			}
 			if err := printer.PrintJSON(result); err != nil {
 				handleError(err)
@@ -418,7 +450,7 @@ Example:
 			if err := printer.PrintSuccess("FIDO2 authentication successful!"); err != nil {
 				handleError(err)
 			}
-			fmt.Printf("\nUsername: %s\n", username)
+			fmt.Printf("\nEmail: %s\n", email)
 			fmt.Printf("Token: %s\n", finishResp.Token)
 		}
 	},
@@ -455,7 +487,7 @@ var userListCmd = &cobra.Command{
 		users := resp.Users
 
 		if len(users) == 0 {
-			if err := printer.PrintMessage("No users configured. Run 'xkmsctl user register' to create the first user."); err != nil {
+			if err := printer.PrintMessage("No users configured. Run 'xkmsctl user register <username> --email <address>' to create the first user."); err != nil {
 				handleError(err)
 			}
 			return
@@ -466,7 +498,13 @@ var userListCmd = &cobra.Command{
 			userList := make([]map[string]interface{}, len(users))
 			for i, u := range users {
 				userList[i] = map[string]interface{}{
-					"username":     u.Username,
+					"username": u.Username,
+					// The canonical login key. JSON is built by hand here, so it
+					// does NOT inherit the struct tag — a claim I made in a
+					// commit message without checking, and it was false. Machine
+					// output was missing the one field WebAuthn login needs
+					// while the table showed it (Codex, go-xkms #190).
+					"email":        u.Email,
 					"display_name": u.DisplayName,
 					"role":         u.Role,
 					"enabled":      u.Enabled,
@@ -483,12 +521,16 @@ var userListCmd = &cobra.Command{
 				handleError(err)
 			}
 		} else {
-			fmt.Printf("%-24s %-24s %-12s %-8s\n", "USERNAME", "DISPLAY NAME", "ROLE", "ENABLED")
-			fmt.Println(repeatString("-", 70))
+			// EMAIL is the canonical login key everything resolves by, so it
+			// belongs in the operator's view of a user; JSON output already
+			// carries it through the struct tag.
+			fmt.Printf("%-20s %-28s %-20s %-12s %-8s\n", "USERNAME", "EMAIL", "DISPLAY NAME", "ROLE", "ENABLED")
+			fmt.Println(repeatString("-", 92))
 			for _, u := range users {
-				fmt.Printf("%-24s %-24s %-12s %-8t\n",
-					truncateString(u.Username, 24),
-					truncateString(u.DisplayName, 24),
+				fmt.Printf("%-20s %-28s %-20s %-12s %-8t\n",
+					truncateString(u.Username, 20),
+					truncateString(u.Email, 28),
+					truncateString(u.DisplayName, 20),
 					u.Role,
 					u.Enabled,
 				)
@@ -541,6 +583,7 @@ var userGetCmd = &cobra.Command{
 		if cfg.OutputFormat == "json" {
 			userInfo := map[string]interface{}{
 				"username":     u.Username,
+				"email":        u.Email,
 				"display_name": u.DisplayName,
 				"role":         u.Role,
 				"enabled":      u.Enabled,
@@ -766,7 +809,7 @@ var userStatusCmd = &cobra.Command{
 				"admin_count":    adminCount,
 			}
 			if !hasUsers {
-				status["message"] = "No users configured. Run 'xkmsctl user register' to create the first administrator."
+				status["message"] = "No users configured. Run 'xkmsctl user register <username> --email <address>' to create the first administrator."
 			} else {
 				status["message"] = "System is configured and ready."
 			}
@@ -777,7 +820,7 @@ var userStatusCmd = &cobra.Command{
 			if !hasUsers {
 				fmt.Println("Status: NOT CONFIGURED")
 				fmt.Println("\nNo users configured.")
-				fmt.Println("Run 'xkmsctl user register <username>' to create the first administrator.")
+				fmt.Println("Run 'xkmsctl user register <username> --email <address>' to create the first administrator.")
 			} else {
 				fmt.Println("Status: CONFIGURED")
 				fmt.Printf("User accounts: %d\n", count)
@@ -1057,6 +1100,7 @@ func init() {
 	userCmd.PersistentFlags().String("storage-path", "", "path to xkms storage (default: $XKMS_STORAGE_PATH or /var/lib/xkms)")
 
 	// register flags
+	userRegisterCmd.Flags().String("email", "", "canonical login key for the user (REQUIRED)")
 	userRegisterCmd.Flags().String("display-name", "", "user display name (defaults to username)")
 	userRegisterCmd.Flags().String("role", "", "user role (admin, operator, auditor, user, readonly, guest)")
 	userRegisterCmd.Flags().String("rp-id", "go-xkms", "relying party ID")

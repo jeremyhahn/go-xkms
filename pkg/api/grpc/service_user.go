@@ -15,6 +15,7 @@ package grpc
 
 import (
 	"context"
+	"errors"
 
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
@@ -22,6 +23,7 @@ import (
 	pb "github.com/jeremyhahn/go-xkms/pkg/api/grpc/proto/xkmsv1"
 	"github.com/jeremyhahn/go-xkms/pkg/api/transport"
 	"github.com/jeremyhahn/go-xkms/pkg/auth"
+	"github.com/jeremyhahn/go-xkms/pkg/xkms"
 )
 
 // userInfoToProto projects a transport.UserInfo onto its protobuf form.
@@ -29,6 +31,7 @@ func userInfoToProto(u transport.UserInfo) *pb.UserInfo {
 	return &pb.UserInfo{
 		Id:          u.ID,
 		Username:    u.Username,
+		Email:       u.Email,
 		DisplayName: u.DisplayName,
 		Role:        u.Role,
 		Enabled:     u.Enabled,
@@ -48,13 +51,15 @@ func (s *Service) CreateUser(ctx context.Context, req *pb.CreateUserRequest) (*p
 		return nil, status.Error(codes.Unavailable, "xkms service not initialized")
 	}
 	resp, cErr := svc.CreateUser(ctx, &transport.CreateUserRequest{
-		Username:    req.Username,
-		DisplayName: req.DisplayName,
-		Role:        req.Role,
-		TenantID:    req.TenantId,
+		Username:             req.Username,
+		Email:                req.Email,
+		WithoutEmailLoginKey: req.WithoutEmailLoginKey,
+		DisplayName:          req.DisplayName,
+		Role:                 req.Role,
+		TenantID:             req.TenantId,
 	})
 	if cErr != nil {
-		return nil, status.Error(codes.Internal, cErr.Error())
+		return nil, status.Error(createUserErrorCode(cErr), cErr.Error())
 	}
 	return &pb.UserResponse{User: userInfoToProto(resp.User)}, nil
 }
@@ -200,4 +205,18 @@ func (s *Service) ListUserCredentials(ctx context.Context, req *pb.ListUserCrede
 		creds[i] = &pb.UserCredential{Id: c.ID, Name: c.DisplayName}
 	}
 	return &pb.ListUserCredentialsResponse{Credentials: creds}, nil
+}
+
+// createUserErrorCode classifies a CreateUser failure.
+//
+// A missing login key is malformed CLIENT input: InvalidArgument tells the
+// caller to fix the request, where Internal tells it to retry something that
+// can never succeed and buries a fixable mistake in the server's error rate.
+// It is a named function rather than an inline branch so the classification can
+// be tested without standing up a full Service.
+func createUserErrorCode(err error) codes.Code {
+	if errors.Is(err, xkms.ErrEmailRequired) {
+		return codes.InvalidArgument
+	}
+	return codes.Internal
 }

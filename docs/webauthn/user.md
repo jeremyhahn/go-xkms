@@ -68,8 +68,8 @@ xkmsctl fido2 authenticate
 Headlessly, which is how agents and CI do it:
 
 ```
-xkey auth register --user alice
-xkey auth login --user alice
+xkey auth register --server https://kms.example.com:8443 --email alice@example.com
+xkey auth login --server https://kms.example.com:8443 --email alice@example.com
 ```
 
 Check who you are:

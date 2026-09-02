@@ -16,6 +16,7 @@ package xkms
 import (
 	"context"
 
+	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
 	qrdbtransport "github.com/jeremyhahn/go-qrdb/sdk/go/transport"
 
 	"github.com/jeremyhahn/go-xkms/pkg/api/transport"
@@ -34,8 +35,14 @@ func (s *XKMSService) userToTransport(ctx context.Context, u *qrdbtransport.User
 	return transport.UserInfo{
 		ID:       u.ID,
 		Username: u.Username,
-		Role:     role,
-		Enabled:  u.Enabled,
+		// Project the PERSISTED canonical key and display name. Neither was
+		// read back before: Email had no field on UserInfo at all, and Name was
+		// stored but never projected, so GetUser and ListUsers returned an
+		// empty display name for a user that had one (Codex, go-xkms #190).
+		Email:       u.Email,
+		DisplayName: u.Name,
+		Role:        role,
+		Enabled:     u.Enabled,
 	}
 }
 
@@ -62,6 +69,35 @@ func (s *XKMSService) CreateUser(ctx context.Context, req *transport.CreateUserR
 	if s.users == nil {
 		return nil, ErrNotConfigured
 	}
+	// FAIL CLOSED on a missing login key. qrdb makes Email the canonical
+	// tenant-unique key, and this path previously sent Username only — so every
+	// provisioned user landed with an empty email index. WebAuthn enrollment
+	// resolves by email, which meant a user created here could be enrolled by
+	// nobody (Codex, go-xkms #190), and against a current qrdb node the create
+	// is refused outright rather than merely producing an unreachable account.
+	//
+	// Refusing here, rather than defaulting Email from Username, is deliberate:
+	// deriving one from the other is the username/email conflation this change
+	// exists to remove, and it would silently produce a second class of user
+	// whose reachability depends on the shape of a string.
+	// NORMALIZE FIRST, then decide. Comparing the raw value against "" let a
+	// whitespace-only email through the guard; qrdb then trims it, finds it
+	// empty, and refuses — so malformed CLIENT input surfaced as a generic
+	// backend failure mapped to 500/Internal, which is the exact path this
+	// guard exists to close (Codex, go-xkms #190).
+	//
+	// The normalizer is qrdb's own exported one, not a local TrimSpace: it is
+	// documented there as THE single canonical normalization for the login key,
+	// so using it keeps this check and the server's agreeing by construction
+	// rather than by coincidence. The normalized value is what gets sent, so
+	// the address validated here is the address stored.
+	email := qrdbsdk.NormalizeEmail(req.Email)
+	if email == "" && !req.WithoutEmailLoginKey {
+		return nil, &ErrUserOperation{
+			Operation: "create user",
+			Err:       ErrEmailRequired,
+		}
+	}
 	roleID, err := s.roleNameToID(ctx, req.Role)
 	if err != nil {
 		return nil, err
@@ -72,15 +108,23 @@ func (s *XKMSService) CreateUser(ctx context.Context, req *transport.CreateUserR
 	}
 	u, err := s.users.CreateUser(ctx, &qrdbtransport.CreateUserRequest{
 		Username: req.Username,
-		TenantID: req.TenantID,
-		RoleIDs:  roleIDs,
+		Email:    email,
+		// DisplayName was previously set on the RESPONSE only and never
+		// persisted, so it was returned to the caller and lost. qrdb now has a
+		// Name field for it.
+		Name:                 req.DisplayName,
+		WithoutEmailLoginKey: req.WithoutEmailLoginKey,
+		TenantID:             req.TenantID,
+		RoleIDs:              roleIDs,
 	})
 	if err != nil {
 		return nil, &ErrUserOperation{Operation: "create user", Err: err}
 	}
-	info := s.userToTransport(ctx, u)
-	info.DisplayName = req.DisplayName
-	return &transport.GetUserResponse{User: info}, nil
+	// No DisplayName fix-up here: userToTransport projects the PERSISTED Name,
+	// so the response reflects what the store actually holds. Assigning the
+	// request value back masked the fact that Name was never read on the way
+	// out — create looked right while GetUser and ListUsers returned nothing.
+	return &transport.GetUserResponse{User: s.userToTransport(ctx, u)}, nil
 }
 
 // ListUsers returns all xkms users.

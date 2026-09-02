@@ -21,6 +21,7 @@ import (
 	"sync"
 	"testing"
 
+	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
 	qrdbtransport "github.com/jeremyhahn/go-qrdb/sdk/go/transport"
 )
 
@@ -30,6 +31,7 @@ type fakeUserClient struct {
 	mu      sync.Mutex
 	byID    map[uint64]*qrdbtransport.User
 	byUname map[string]*qrdbtransport.User // tenantID|username -> user
+	byEmail map[string]*qrdbtransport.User // tenantID|normalized-email -> user
 	nextID  uint64
 }
 
@@ -37,12 +39,21 @@ func newFakeUserClient() *fakeUserClient {
 	return &fakeUserClient{
 		byID:    make(map[uint64]*qrdbtransport.User),
 		byUname: make(map[string]*qrdbtransport.User),
+		byEmail: make(map[string]*qrdbtransport.User),
 		nextID:  1,
 	}
 }
 
 func (f *fakeUserClient) keyFor(tenantID, username string) string {
 	return tenantID + "|" + username
+}
+
+// emailKeyFor mirrors the store: tenant-scoped and normalized. It is a SEPARATE
+// index from byUname on purpose — resolving an email through the username map
+// would make this double answer lookups the real store cannot, which is exactly
+// the drift #185 exists to remove.
+func (f *fakeUserClient) emailKeyFor(tenantID, email string) string {
+	return tenantID + "|" + qrdbsdk.NormalizeEmail(email)
 }
 
 func (f *fakeUserClient) CreateUser(ctx context.Context, req *qrdbtransport.CreateUserRequest) (*qrdbtransport.User, error) {
@@ -52,15 +63,27 @@ func (f *fakeUserClient) CreateUser(ctx context.Context, req *qrdbtransport.Crea
 	if _, ok := f.byUname[k]; ok {
 		return nil, errors.New("already exists")
 	}
+	email := qrdbsdk.NormalizeEmail(req.Email)
+	ek := f.emailKeyFor(req.TenantID, email)
+	if email != "" {
+		if _, ok := f.byEmail[ek]; ok {
+			return nil, errors.New("already exists")
+		}
+	}
 	u := &qrdbtransport.User{
 		ID:       f.nextID,
 		Username: req.Username,
+		Email:    email,
+		Name:     req.Name,
 		TenantID: req.TenantID,
 		Enabled:  true,
 	}
 	f.nextID++
 	f.byID[u.ID] = u
 	f.byUname[k] = u
+	if email != "" {
+		f.byEmail[ek] = u
+	}
 	return u, nil
 }
 
@@ -84,12 +107,49 @@ func (f *fakeUserClient) GetUserByUsername(ctx context.Context, tenantID, userna
 	return u, nil
 }
 
+func (f *fakeUserClient) GetUserByEmail(ctx context.Context, tenantID, email string) (*qrdbtransport.User, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if qrdbsdk.NormalizeEmail(email) == "" {
+		return nil, errors.New("user not found")
+	}
+	u, ok := f.byEmail[f.emailKeyFor(tenantID, email)]
+	if !ok {
+		return nil, errors.New("user not found")
+	}
+	return u, nil
+}
+
 func (f *fakeUserClient) GetUserByCertThumbprint(ctx context.Context, thumbprint string) (*qrdbtransport.User, error) {
 	return nil, errors.New("user not found")
 }
 
+// UpdateUser models the real store: a non-empty field replaces, and a changed
+// email moves its index rather than merely rewriting the record. It was an
+// unimplemented stub until Save stopped writing a side key and started updating
+// the record (#185) — a stub here would have made Save's new path untestable.
 func (f *fakeUserClient) UpdateUser(ctx context.Context, req *qrdbtransport.UpdateUserRequest) (*qrdbtransport.User, error) {
-	return nil, errors.New("not implemented in stub")
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	u, ok := f.byID[req.ID]
+	if !ok {
+		return nil, errors.New("user not found")
+	}
+	if req.Name != "" {
+		u.Name = req.Name
+	}
+	if newEmail := qrdbsdk.NormalizeEmail(req.Email); newEmail != "" && newEmail != u.Email {
+		nk := f.emailKeyFor(u.TenantID, newEmail)
+		if _, taken := f.byEmail[nk]; taken {
+			return nil, errors.New("already exists")
+		}
+		if u.Email != "" {
+			delete(f.byEmail, f.emailKeyFor(u.TenantID, u.Email))
+		}
+		u.Email = newEmail
+		f.byEmail[nk] = u
+	}
+	return u, nil
 }
 
 func (f *fakeUserClient) DeleteUser(ctx context.Context, id uint64) error {

@@ -160,7 +160,10 @@ type UserInfo struct {
 	// id is the numeric identifier the embedded qrdb node assigns. The
 	// N-factor endpoints are keyed by it, so callers that manage factors need
 	// it alongside the username.
-	Id            uint64 `protobuf:"varint,5,opt,name=id,proto3" json:"id,omitempty"`
+	Id uint64 `protobuf:"varint,5,opt,name=id,proto3" json:"id,omitempty"`
+	// email is the canonical tenant-unique login key. Without it a client can
+	// create a user with a login key and never read it back.
+	Email         string `protobuf:"bytes,6,opt,name=email,proto3" json:"email,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -230,15 +233,30 @@ func (x *UserInfo) GetId() uint64 {
 	return 0
 }
 
+func (x *UserInfo) GetEmail() string {
+	if x != nil {
+		return x.Email
+	}
+	return ""
+}
+
 // CreateUserRequest creates a new xkms user.
 type CreateUserRequest struct {
-	state         protoimpl.MessageState `protogen:"open.v1"`
-	Username      string                 `protobuf:"bytes,1,opt,name=username,proto3" json:"username,omitempty"`
-	DisplayName   string                 `protobuf:"bytes,2,opt,name=display_name,json=displayName,proto3" json:"display_name,omitempty"`
-	Role          string                 `protobuf:"bytes,3,opt,name=role,proto3" json:"role,omitempty"`
-	TenantId      string                 `protobuf:"bytes,4,opt,name=tenant_id,json=tenantId,proto3" json:"tenant_id,omitempty"`
-	unknownFields protoimpl.UnknownFields
-	sizeCache     protoimpl.SizeCache
+	state       protoimpl.MessageState `protogen:"open.v1"`
+	Username    string                 `protobuf:"bytes,1,opt,name=username,proto3" json:"username,omitempty"`
+	DisplayName string                 `protobuf:"bytes,2,opt,name=display_name,json=displayName,proto3" json:"display_name,omitempty"`
+	Role        string                 `protobuf:"bytes,3,opt,name=role,proto3" json:"role,omitempty"`
+	TenantId    string                 `protobuf:"bytes,4,opt,name=tenant_id,json=tenantId,proto3" json:"tenant_id,omitempty"`
+	// email is the canonical tenant-unique login key (go-qrdb #190). It is
+	// REQUIRED: xkms resolves logins and WebAuthn enrollment by this key, so a
+	// user created without one is provisioned and unreachable.
+	Email string `protobuf:"bytes,5,opt,name=email,proto3" json:"email,omitempty"`
+	// without_email_login_key DECLARES that this user intentionally has no email
+	// login key -- the certificate-authenticated admin path. Absence must be
+	// stated, never defaulted, or a user silently becomes unreachable.
+	WithoutEmailLoginKey bool `protobuf:"varint,6,opt,name=without_email_login_key,json=withoutEmailLoginKey,proto3" json:"without_email_login_key,omitempty"`
+	unknownFields        protoimpl.UnknownFields
+	sizeCache            protoimpl.SizeCache
 }
 
 func (x *CreateUserRequest) Reset() {
@@ -297,6 +315,20 @@ func (x *CreateUserRequest) GetTenantId() string {
 		return x.TenantId
 	}
 	return ""
+}
+
+func (x *CreateUserRequest) GetEmail() string {
+	if x != nil {
+		return x.Email
+	}
+	return ""
+}
+
+func (x *CreateUserRequest) GetWithoutEmailLoginKey() bool {
+	if x != nil {
+		return x.WithoutEmailLoginKey
+	}
+	return false
 }
 
 // UserResponse returns a single xkms user.
@@ -19113,18 +19145,21 @@ var File_pkg_api_grpc_proto_xkmsv1_xkms_proto protoreflect.FileDescriptor
 
 const file_pkg_api_grpc_proto_xkmsv1_xkms_proto_rawDesc = "" +
 	"\n" +
-	"$pkg/api/grpc/proto/xkmsv1/xkms.proto\x12\axkms.v1\x1a\x1bgoogle/protobuf/empty.proto\x1a\x1cgoogle/protobuf/struct.proto\x1a\x1fgoogle/protobuf/timestamp.proto\x1a%pkg/api/grpc/proto/qrdbv1/authz.proto\"\x87\x01\n" +
+	"$pkg/api/grpc/proto/xkmsv1/xkms.proto\x12\axkms.v1\x1a\x1bgoogle/protobuf/empty.proto\x1a\x1cgoogle/protobuf/struct.proto\x1a\x1fgoogle/protobuf/timestamp.proto\x1a%pkg/api/grpc/proto/qrdbv1/authz.proto\"\x9d\x01\n" +
 	"\bUserInfo\x12\x1a\n" +
 	"\busername\x18\x01 \x01(\tR\busername\x12!\n" +
 	"\fdisplay_name\x18\x02 \x01(\tR\vdisplayName\x12\x12\n" +
 	"\x04role\x18\x03 \x01(\tR\x04role\x12\x18\n" +
 	"\aenabled\x18\x04 \x01(\bR\aenabled\x12\x0e\n" +
-	"\x02id\x18\x05 \x01(\x04R\x02id\"\x83\x01\n" +
+	"\x02id\x18\x05 \x01(\x04R\x02id\x12\x14\n" +
+	"\x05email\x18\x06 \x01(\tR\x05email\"\xd0\x01\n" +
 	"\x11CreateUserRequest\x12\x1a\n" +
 	"\busername\x18\x01 \x01(\tR\busername\x12!\n" +
 	"\fdisplay_name\x18\x02 \x01(\tR\vdisplayName\x12\x12\n" +
 	"\x04role\x18\x03 \x01(\tR\x04role\x12\x1b\n" +
-	"\ttenant_id\x18\x04 \x01(\tR\btenantId\"5\n" +
+	"\ttenant_id\x18\x04 \x01(\tR\btenantId\x12\x14\n" +
+	"\x05email\x18\x05 \x01(\tR\x05email\x125\n" +
+	"\x17without_email_login_key\x18\x06 \x01(\bR\x14withoutEmailLoginKey\"5\n" +
 	"\fUserResponse\x12%\n" +
 	"\x04user\x18\x01 \x01(\v2\x11.xkms.v1.UserInfoR\x04user\"\x12\n" +
 	"\x10ListUsersRequest\"<\n" +

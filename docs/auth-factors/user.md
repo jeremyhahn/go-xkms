@@ -59,7 +59,7 @@ xkmsctl fido2 authenticate
 Or, from the desktop companion, headlessly — which is what agents and CI use:
 
 ```
-xkey auth login --user alice
+xkey auth login --server https://kms.example.com:8443 --email alice@example.com
 ```
 
 ## Things worth knowing before you deploy

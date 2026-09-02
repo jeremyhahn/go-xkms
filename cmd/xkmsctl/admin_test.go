@@ -17,6 +17,7 @@ import (
 	"bytes"
 	"io"
 	"os"
+	"strings"
 	"testing"
 
 	"github.com/spf13/cobra"
@@ -364,4 +365,38 @@ func executeAdminCommand(t *testing.T, storagePath string, args ...string) (stri
 	})
 
 	return output, nil
+}
+
+// The binary's own bootstrap guidance must name the flags it now requires.
+//
+// FIDO2 admin enrollment began rejecting requests without --email, while the
+// command's help examples and the `admin status` remediation text still told
+// operators to run the old form. On a fresh system with no admins, following
+// the binary's own instructions dead-ended on the FIRST-RUN setup path (Codex,
+// go-xkms #190).
+//
+// Asserting on the strings is the point: nothing else fails when guidance goes
+// stale, which is exactly why it did.
+func TestBootstrapGuidance_NamesTheRequiredEmailFlag(t *testing.T) {
+	// The FIDO2 example must carry --email; the mTLS ones must NOT, because
+	// that admin is resolved by certificate thumbprint and has no login key.
+	long := adminCreateCmd.Long
+	fido2Line := ""
+	for _, line := range strings.Split(long, "\n") {
+		if strings.Contains(line, "admin create") && !strings.Contains(line, "--method mtls") {
+			fido2Line = line
+			break
+		}
+	}
+	if fido2Line == "" {
+		t.Fatal("no FIDO2 example found in `admin create` help")
+	}
+	if !strings.Contains(fido2Line, "--email") {
+		t.Errorf("the FIDO2 example omits the flag the command now requires: %q", fido2Line)
+	}
+	for _, line := range strings.Split(long, "\n") {
+		if strings.Contains(line, "--method mtls") && strings.Contains(line, "--email") {
+			t.Errorf("an mTLS example demands --email, which that path does not use: %q", line)
+		}
+	}
 }

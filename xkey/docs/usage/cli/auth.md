@@ -19,7 +19,7 @@ Register with a new xkms server. Establishes a connection, verifies the server i
 **Usage:**
 
 ```bash
-xkey auth register --server <url> [--spki-pin <pin>] [--setup-token <token>]
+xkey auth register --server <url> --email <login-key> [--spki-pin <pin>] [--setup-token <token>]
 ```
 
 The registration ceremony runs against a local CTAP2 authenticator -- a real
@@ -33,17 +33,27 @@ opened; no credential is ever fabricated locally.
 | `--server` | string | Server URL (required) |
 | `--spki-pin` | string | SPKI SHA-256 pin for certificate pinning |
 | `--setup-token` | string | Pre-authorized enrollment token from server first boot |
-| `--username` | string | Account name to enroll (default: current OS user) |
-| `--display-name` | string | Human-readable account name (default: the username) |
+| `--email` | string | Canonical email login key to enroll (required) |
+| `--display-name` | string | Human-readable account name (default: the login key) |
+
+The ceremony is addressed by the **email login key**: the server resolves the
+account with `GetUserByEmail`, so `--email` is the only identifier that can
+reach a principal. There is no default -- an OS account name is a different
+identifier, and on a relying party with public registration enabled a lookup
+that misses is a sign-up, enrolling the credential onto an account nobody
+created. `--username` is the deprecated spelling of the same flag and still
+carries the value.
 
 **Examples:**
 
 ```bash
 # Register with SPKI pin (trust-on-first-use)
-xkey auth register --server https://kms.example.com:8443 --spki-pin e5f6a7b8...
+xkey auth register --server https://kms.example.com:8443 --email alice@example.com \
+    --spki-pin e5f6a7b8...
 
 # Register with a setup token
-xkey auth register --server https://kms.example.com:8443 --setup-token eyJhbGciOi...
+xkey auth register --server https://kms.example.com:8443 --email alice@example.com \
+    --setup-token eyJhbGciOi...
 ```
 
 ## auth login
@@ -53,7 +63,7 @@ Authenticate to a registered server using WebAuthn. On success, the resulting JW
 **Usage:**
 
 ```bash
-xkey auth login --server <url> [--username <name>]
+xkey auth login --server <url> --email <login-key>
 ```
 
 **Flags:**
@@ -61,13 +71,12 @@ xkey auth login --server <url> [--username <name>]
 | Flag | Type | Description |
 |------|------|-------------|
 | `--server` | string | Server URL (required) |
-| `--username` | string | Account name to authenticate (default: current OS user) |
+| `--email` | string | Canonical email login key to authenticate (required) |
 
 **Example:**
 
 ```bash
-xkey auth login --server https://kms.example.com:8443
-xkey auth login --server https://kms.example.com:8443 --username alice
+xkey auth login --server https://kms.example.com:8443 --email alice@example.com
 ```
 
 ## auth status

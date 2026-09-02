@@ -45,6 +45,7 @@ var errRestMockUnused = errors.New("rest mock: method not used")
 type restMockUserClient struct {
 	createUser        func(ctx context.Context, req *qrdbtransport.CreateUserRequest) (*qrdbtransport.User, error)
 	getUserByUsername func(ctx context.Context, tenantID, username string) (*qrdbtransport.User, error)
+	getUserByEmail    func(ctx context.Context, tenantID, email string) (*qrdbtransport.User, error)
 	listUsers         func(ctx context.Context, req *qrdbtransport.ListUsersRequest) (*qrdbtransport.ListUsersResponse, error)
 	deleteUser        func(ctx context.Context, id uint64) error
 	enableUser        func(ctx context.Context, id uint64) error
@@ -64,6 +65,13 @@ func (m *restMockUserClient) GetUser(ctx context.Context, id uint64) (*qrdbtrans
 
 func (m *restMockUserClient) GetUserByUsername(ctx context.Context, tenantID, username string) (*qrdbtransport.User, error) {
 	return m.getUserByUsername(ctx, tenantID, username)
+}
+
+func (m *restMockUserClient) GetUserByEmail(ctx context.Context, tenantID, email string) (*qrdbtransport.User, error) {
+	if m.getUserByEmail != nil {
+		return m.getUserByEmail(ctx, tenantID, email)
+	}
+	return nil, &qrdbtransport.UserNotFoundError{ID: email}
 }
 
 func (m *restMockUserClient) GetUserByCertThumbprint(ctx context.Context, thumbprint string) (*qrdbtransport.User, error) {
@@ -415,12 +423,15 @@ func TestHandleUpdateUser_ServiceNotInitialized(t *testing.T) {
 func TestHandleCreateUser_Success(t *testing.T) {
 	users := &restMockUserClient{
 		createUser: func(_ context.Context, req *qrdbtransport.CreateUserRequest) (*qrdbtransport.User, error) {
-			return &qrdbtransport.User{ID: 1, Username: req.Username, Enabled: true}, nil
+			// Echo the persisted fields, as the real store does.
+			return &qrdbtransport.User{
+				ID: 1, Username: req.Username, Email: req.Email, Name: req.Name, Enabled: true,
+			}, nil
 		},
 	}
 	r := setupUserHandlerTest(t, users, &restMockRoleClient{})
 
-	body, _ := json.Marshal(createUserBody{Username: "carol", DisplayName: "Carol"})
+	body, _ := json.Marshal(createUserBody{Username: "carol", Email: "carol@example.com", DisplayName: "Carol"})
 	rr := httptest.NewRecorder()
 	r.ServeHTTP(rr, httptest.NewRequest(http.MethodPost, "/users/", bytes.NewReader(body)))
 
@@ -448,7 +459,10 @@ func TestHandleCreateUser_ServiceError(t *testing.T) {
 	}
 	r := setupUserHandlerTest(t, users, &restMockRoleClient{})
 
-	body, _ := json.Marshal(createUserBody{Username: "carol"})
+	// A valid request that the SERVICE rejects. Without the email it would stop
+	// at the client-input guard and return 400, so this test would no longer
+	// reach the 500 path it exists to cover.
+	body, _ := json.Marshal(createUserBody{Username: "carol", Email: "carol@example.com"})
 	rr := httptest.NewRecorder()
 	r.ServeHTTP(rr, httptest.NewRequest(http.MethodPost, "/users/", bytes.NewReader(body)))
 
@@ -561,4 +575,55 @@ func TestHandleBindUserCert_Error(t *testing.T) {
 	r.ServeHTTP(rr, httptest.NewRequest(http.MethodPost, "/users/ghost/cert-bindings", bytes.NewReader(body)))
 
 	assert.Equal(t, http.StatusInternalServerError, rr.Code)
+}
+
+// The REST surface must refuse a create with no canonical login key, and must
+// do so as a client error rather than a 500.
+//
+// Email is REQUIRED (go-qrdb #190): xkms resolves logins and WebAuthn
+// enrollment through it, so a user created without one is provisioned and
+// unreachable. Before this the field did not exist on the request at all.
+func TestHandleCreateUser_EmailRequired(t *testing.T) {
+	called := false
+	users := &restMockUserClient{
+		createUser: func(_ context.Context, req *qrdbtransport.CreateUserRequest) (*qrdbtransport.User, error) {
+			called = true
+			return &qrdbtransport.User{ID: 1, Username: req.Username}, nil
+		},
+	}
+	r := setupUserHandlerTest(t, users, &restMockRoleClient{})
+
+	body, _ := json.Marshal(createUserBody{Username: "carol", DisplayName: "Carol"})
+	rr := httptest.NewRecorder()
+	r.ServeHTTP(rr, httptest.NewRequest(http.MethodPost, "/users/", bytes.NewReader(body)))
+
+	// Assert the EXACT status, not merely "not created". The first version of
+	// this test checked only != 201 while its comment claimed a client error —
+	// so it passed against the 500 the handler was actually returning. A test
+	// that names a property must assert that property.
+	assert.Equal(t, http.StatusBadRequest, rr.Code,
+		"a missing login key is malformed client input, not a server fault")
+	assert.False(t, called, "the store must not be reached")
+}
+
+// The email supplied over HTTP must actually reach the store — asserting on the
+// response would pass even when the field is dropped in the handler.
+func TestHandleCreateUser_EmailReachesTheStore(t *testing.T) {
+	var got *qrdbtransport.CreateUserRequest
+	users := &restMockUserClient{
+		createUser: func(_ context.Context, req *qrdbtransport.CreateUserRequest) (*qrdbtransport.User, error) {
+			got = req
+			return &qrdbtransport.User{ID: 1, Username: req.Username, Email: req.Email, Name: req.Name, Enabled: true}, nil
+		},
+	}
+	r := setupUserHandlerTest(t, users, &restMockRoleClient{})
+
+	body, _ := json.Marshal(createUserBody{Username: "dan", Email: "dan@example.com", DisplayName: "Dan"})
+	rr := httptest.NewRecorder()
+	r.ServeHTTP(rr, httptest.NewRequest(http.MethodPost, "/users/", bytes.NewReader(body)))
+
+	require.Equal(t, http.StatusCreated, rr.Code)
+	require.NotNil(t, got)
+	assert.Equal(t, "dan@example.com", got.Email)
+	assert.Equal(t, "Dan", got.Name)
 }

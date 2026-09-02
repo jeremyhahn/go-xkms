@@ -78,6 +78,7 @@ func TestQRDBAdapter_RegisterThenLogin_SameProcess(t *testing.T) {
 	// must then resolve THIS user, not create a second one.
 	if _, err := users.CreateUser(ctx, &qrdbtransport.CreateUserRequest{
 		Username: email,
+		Email:    email,
 		TenantID: "system",
 	}); err != nil {
 		t.Fatalf("pre-create admin user: %v", err)

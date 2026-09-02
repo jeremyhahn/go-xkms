@@ -442,3 +442,41 @@ func TestListUserCredentials_ServerErr(t *testing.T) {
 	_, err := tr.ListUserCredentials(context.Background(), "bob")
 	require.Error(t, err)
 }
+
+// The no-email exemption must survive serialization over QUIC too.
+//
+// CreateUser built its body as map[string]string, which cannot carry a bool, so
+// WithoutEmailLoginKey never left the client and the certificate-authenticated
+// admin was rejected server-side as a missing login key (Codex, go-xkms #190).
+// This captures the body the server actually received rather than asserting on
+// the client's own request struct, which would pass either way.
+func TestCreateUser_CarriesWithoutEmailLoginKey(t *testing.T) {
+	var gotBody []byte
+	srv := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		body, err := io.ReadAll(r.Body)
+		require.NoError(t, err)
+		gotBody = body
+		writeJSONResponse(t, w, http.StatusOK, transport.UserInfo{ID: 1, Username: "root", Enabled: true})
+	}))
+	defer srv.Close()
+
+	tr := &Transport{
+		config:     transport.DefaultConfig(),
+		httpClient: srv.Client(),
+		baseURL:    srv.URL,
+		connected:  true,
+	}
+
+	_, err := tr.CreateUser(context.Background(), &transport.CreateUserRequest{
+		Username:             "root",
+		WithoutEmailLoginKey: true,
+	})
+	require.NoError(t, err)
+
+	var body map[string]any
+	require.NoError(t, json.Unmarshal(gotBody, &body))
+	got, ok := body["without_email_login_key"].(bool)
+	require.True(t, ok, "without_email_login_key missing from the wire body: %#v", body)
+	assert.True(t, got, "the no-email exemption was dropped in serialization")
+	assert.Equal(t, "", body["email"], "a cert-authenticated admin sends an empty email")
+}

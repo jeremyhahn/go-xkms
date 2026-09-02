@@ -53,14 +53,18 @@ var adminCreateCmd = &cobra.Command{
 
 All administrators have the admin role and full access to manage the xkms.
 
+The FIDO2 method requires --email: WebAuthn resolves the account by its
+canonical email login key. The mTLS method does not, because that admin is
+resolved by its certificate SPKI thumbprint and is created with no login key.
+
 Example (FIDO2):
-  xkmsctl admin create admin@example.com --display-name "Admin User"
+  xkmsctl admin create admin --email admin@example.com --display-name "Admin User"
 
 Example (mTLS with certificate file):
-  xkmsctl admin create admin@example.com --method mtls --cert-file /path/to/client.pem
+  xkmsctl admin create admin --method mtls --cert-file /path/to/client.pem
 
 Example (mTLS with PKCS#11 token):
-  xkmsctl admin create admin@example.com --method mtls --pkcs11-module /usr/lib/libxkey11.so`,
+  xkmsctl admin create admin --method mtls --pkcs11-module /usr/lib/libxkey11.so`,
 	Args: cobra.ExactArgs(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
 		username := args[0]
@@ -91,6 +95,7 @@ Example (mTLS with PKCS#11 token):
 // server-side WebAuthn registration ceremony through the SDK. The admin role is
 // always assigned.
 func enrollFIDO2Admin(cmd *cobra.Command, username string, cfg *Config, printer *Printer, storagePath string) error {
+	email, _ := cmd.Flags().GetString("email")
 	displayName, _ := cmd.Flags().GetString("display-name")
 	devicePath, _ := cmd.Flags().GetString("device")
 	timeout, _ := cmd.Flags().GetDuration("timeout")
@@ -137,7 +142,11 @@ func enrollFIDO2Admin(cmd *cobra.Command, username string, cfg *Config, printer 
 		return err
 	}
 
-	att, err := webAuthnRegistration(ctx, cl, handler, printer, username, displayName, string(RoleAdmin), "", requireUV, timeout)
+	if email == "" {
+		return ErrEmailRequired
+	}
+
+	att, err := webAuthnRegistration(ctx, cl, handler, printer, username, email, displayName, string(RoleAdmin), "", requireUV, timeout)
 	if err != nil {
 		return err
 	}
@@ -222,9 +231,14 @@ func enrollMTLSAdmin(cmd *cobra.Command, username string, cfg *Config, printer *
 	}
 
 	if _, err := cl.CreateUser(ctx, &client.CreateUserRequest{
-		Username:    username,
-		DisplayName: displayName,
-		Role:        string(RoleAdmin),
+		Username: username,
+		// This admin authenticates by CERTIFICATE — it is resolved by SPKI
+		// thumbprint, not by an email login key. The absence is declared rather
+		// than defaulted, so a user that genuinely cannot be reached by email is
+		// distinguishable from one that lost its key by accident.
+		WithoutEmailLoginKey: true,
+		DisplayName:          displayName,
+		Role:                 string(RoleAdmin),
 	}); err != nil {
 		return &WrappedError{Sentinel: ErrCreateAdminFailed, Err: err}
 	}
@@ -371,6 +385,7 @@ var adminListCmd = &cobra.Command{
 			for i, a := range admins {
 				adminList[i] = map[string]interface{}{
 					"username":     a.Username,
+					"email":        a.Email,
 					"display_name": a.DisplayName,
 					"role":         a.Role,
 					"enabled":      a.Enabled,
@@ -387,12 +402,16 @@ var adminListCmd = &cobra.Command{
 				handleError(err)
 			}
 		} else {
-			fmt.Printf("%-24s %-24s %-12s %-8s\n", "USERNAME", "DISPLAY NAME", "ROLE", "ENABLED")
-			fmt.Println(repeatString("-", 70))
+			// EMAIL is the canonical login key; a certificate-authenticated
+			// admin legitimately has none and renders blank, which is itself
+			// the useful signal.
+			fmt.Printf("%-20s %-28s %-20s %-12s %-8s\n", "USERNAME", "EMAIL", "DISPLAY NAME", "ROLE", "ENABLED")
+			fmt.Println(repeatString("-", 92))
 			for _, a := range admins {
-				fmt.Printf("%-24s %-24s %-12s %-8t\n",
-					truncateString(a.Username, 24),
-					truncateString(a.DisplayName, 24),
+				fmt.Printf("%-20s %-28s %-20s %-12s %-8t\n",
+					truncateString(a.Username, 20),
+					truncateString(a.Email, 28),
+					truncateString(a.DisplayName, 20),
 					a.Role,
 					a.Enabled,
 				)
@@ -444,7 +463,10 @@ var adminGetCmd = &cobra.Command{
 
 		if cfg.OutputFormat == "json" {
 			adminInfo := map[string]interface{}{
-				"username":     a.Username,
+				"username": a.Username,
+				// Empty for a certificate-authenticated admin, which is the
+				// distinction a script needs to make and could not.
+				"email":        a.Email,
 				"display_name": a.DisplayName,
 				"role":         a.Role,
 				"enabled":      a.Enabled,
@@ -669,7 +691,7 @@ var adminStatusCmd = &cobra.Command{
 				"user_count":     len(resp.Users),
 			}
 			if !hasAdmins {
-				status["message"] = "No administrators configured. Run 'xkmsctl admin create' to create an administrator."
+				status["message"] = "No administrators configured. Run 'xkmsctl admin create <username> --email <address>' to create an administrator."
 			} else {
 				status["message"] = "System is configured and ready."
 			}
@@ -680,7 +702,7 @@ var adminStatusCmd = &cobra.Command{
 			if !hasAdmins {
 				fmt.Println("Status: NOT CONFIGURED")
 				fmt.Println("\nNo administrators configured.")
-				fmt.Println("Run 'xkmsctl admin create <username>' to create an administrator.")
+				fmt.Println("Run 'xkmsctl admin create <username> --email <address>' to create an administrator.")
 			} else {
 				fmt.Println("Status: CONFIGURED")
 				fmt.Printf("Administrator accounts: %d\n", adminCount)
@@ -704,6 +726,7 @@ func init() {
 	adminCmd.PersistentFlags().String("storage-path", "", "path to xkms storage (default: $XKMS_STORAGE_PATH or /var/lib/xkms)")
 
 	// create flags
+	adminCreateCmd.Flags().String("email", "", "canonical login key for the admin (REQUIRED for the fido2 method)")
 	adminCreateCmd.Flags().String("display-name", "", "admin display name (defaults to username)")
 	adminCreateCmd.Flags().String("rp-id", "go-xkms", "relying party ID")
 	adminCreateCmd.Flags().String("rp-name", "Go xKMS", "relying party name")

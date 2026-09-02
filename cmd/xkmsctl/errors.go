@@ -325,6 +325,10 @@ var (
 
 	// ErrCreateAdminFailed is the sentinel error "failed to create admin".
 	ErrCreateAdminFailed = errors.New("failed to create admin")
+	// ErrEmailRequired is returned when a FIDO2 registration supplies no email.
+	// WebAuthn enrollment resolves by the canonical email login key, so a user
+	// registered without one cannot be enrolled by anybody.
+	ErrEmailRequired = errors.New("--email is required: it is the canonical login key WebAuthn resolves through")
 
 	// ErrCreateBackendFailed is the sentinel error "failed to create backend".
 	ErrCreateBackendFailed = errors.New("failed to create backend")

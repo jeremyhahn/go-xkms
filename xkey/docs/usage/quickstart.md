@@ -193,7 +193,7 @@ sudo xkey fido2 --backend tpm2 --pin --set-pin 123456
 **2. Register the admin FIDO2 credential:**
 
 ```bash
-xkmsctl admin create --auth fido2 --username admin
+xkmsctl admin create admin --method fido2 --email admin@example.com
 ```
 
 Follow the prompts to touch your security key or approve in the xkey terminal.

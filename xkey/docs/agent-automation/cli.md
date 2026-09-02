@@ -75,8 +75,8 @@ printf '%s' "$XKEY_PIN" | xkey unlock --pin-stdin
 
 # 3. enrol and sign in
 xkey auth register --server "$XKMS" --spki-pin "$PIN" \
-                   --setup-token "$SETUP_TOKEN" --username agent-build
-xkey auth login --server "$XKMS" --username agent-build
+                   --setup-token "$SETUP_TOKEN" --email agent-build@example.com
+xkey auth login --server "$XKMS" --email agent-build@example.com
 
 # 4. use it
 export XKEY_IPC_SOCKET="$XDG_RUNTIME_DIR/xkey/xkey.sock"

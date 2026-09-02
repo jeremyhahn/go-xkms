@@ -416,6 +416,9 @@ func TestAdminStatusCmd_JSONConfigured(t *testing.T) {
 func newAdminCreateCmdCopy() *cobra.Command {
 	cmd := &cobra.Command{Use: "create"}
 	cmd.Flags().String("storage-path", "", "")
+	// The fido2 method requires the canonical login key; these tests exercise
+	// the paths beyond that guard. TestEnrollFIDO2Admin_EmailRequired covers it.
+	cmd.Flags().String("email", "root@example.com", "")
 	cmd.Flags().String("display-name", "", "")
 	cmd.Flags().Duration("timeout", 30*time.Second, "")
 	cmd.Flags().String("device", "/nonexistent/fido2-device", "")
@@ -519,4 +522,29 @@ func TestEnrollFIDO2Admin_ReachesDevice(t *testing.T) {
 		}
 	})
 	_ = out
+}
+
+// FIDO2 admin enrollment must refuse to run without the canonical login key.
+//
+// WebAuthn resolves the account by email, so an admin enrolled without one is
+// created and cannot be authenticated by anybody. The mTLS method is exempt and
+// declares the absence explicitly instead — see enrollMTLSAdmin.
+func TestEnrollFIDO2Admin_EmailRequired(t *testing.T) {
+	mock := &mockAdminClient{}
+	cfg := &Config{
+		OutputFormat:  "text",
+		ClientFactory: func(*Config) (client.Client, error) { return mock, nil },
+	}
+	cmd := newAdminCreateCmdCopy()
+	if sErr := cmd.Flags().Set("email", ""); sErr != nil {
+		t.Fatalf("set email: %v", sErr)
+	}
+
+	err := enrollFIDO2Admin(cmd, "root", cfg, NewPrinter("text", io.Discard), "")
+	if err == nil {
+		t.Fatal("fido2 admin enrollment without an email must not succeed")
+	}
+	if !errors.Is(err, ErrEmailRequired) {
+		t.Fatalf("want ErrEmailRequired, got %v", err)
+	}
 }

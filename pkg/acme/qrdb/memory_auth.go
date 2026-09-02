@@ -21,6 +21,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
 	db "github.com/jeremyhahn/go-qrdb/sdk/go/transport"
 )
 
@@ -137,6 +138,8 @@ func (c *memoryUserClient) CreateUser(_ context.Context, req *db.CreateUserReque
 	user := &db.User{
 		ID:        id,
 		Username:  req.Username,
+		Email:     qrdbsdk.NormalizeEmail(req.Email),
+		Name:      req.Name,
 		TenantID:  req.TenantID,
 		RoleIDs:   req.RoleIDs,
 		Enabled:   true,
@@ -164,6 +167,29 @@ func (c *memoryUserClient) GetUserByUsername(_ context.Context, tenantID, userna
 	defer c.mu.RUnlock()
 	for _, user := range c.users {
 		if user.Username != username {
+			continue
+		}
+		if tenantID != "" && user.TenantID != tenantID {
+			continue
+		}
+		return user, nil
+	}
+	return nil, errUserNotFound
+}
+
+// GetUserByEmail resolves the canonical tenant-scoped login key. It mirrors
+// the real store: normalized comparison, and a tenant mismatch is a miss rather
+// than a match — a double that skipped either would accept lookups the store
+// refuses.
+func (c *memoryUserClient) GetUserByEmail(_ context.Context, tenantID, email string) (*db.User, error) {
+	normalized := qrdbsdk.NormalizeEmail(email)
+	if normalized == "" {
+		return nil, errUserNotFound
+	}
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+	for _, user := range c.users {
+		if user.Email != normalized {
 			continue
 		}
 		if tenantID != "" && user.TenantID != tenantID {

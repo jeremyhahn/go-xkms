@@ -842,6 +842,9 @@ message UserInfo {
   // N-factor endpoints are keyed by it, so callers that manage factors need
   // it alongside the username.
   uint64 id = 5;
+  // email is the canonical tenant-unique login key. Without it a client can
+  // create a user with a login key and never read it back.
+  string email = 6;
 }
 
 // CreateUserRequest creates a new xkms user.
@@ -850,6 +853,14 @@ message CreateUserRequest {
   string display_name = 2;
   string role = 3;
   string tenant_id = 4;
+  // email is the canonical tenant-unique login key (go-qrdb #190). It is
+  // REQUIRED: xkms resolves logins and WebAuthn enrollment by this key, so a
+  // user created without one is provisioned and unreachable.
+  string email = 5;
+  // without_email_login_key DECLARES that this user intentionally has no email
+  // login key -- the certificate-authenticated admin path. Absence must be
+  // stated, never defaulted, or a user silently becomes unreachable.
+  bool without_email_login_key = 6;
 }
 
 // UserResponse returns a single xkms user.

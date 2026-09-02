@@ -31,12 +31,17 @@ func TestProtoToUserInfo_Nil(t *testing.T) {
 func TestProtoToUserInfo_Populated(t *testing.T) {
 	u := &pb.UserInfo{
 		Username:    "alice",
+		Email:       "alice@example.com",
 		DisplayName: "Alice Smith",
 		Role:        "admin",
 		Enabled:     true,
 	}
 	result := protoToUserInfo(u)
 	assert.Equal(t, "alice", result.Username)
+	// The canonical login key must survive the proto -> transport projection.
+	// It was added to the server-side direction only, so a client read it back
+	// empty for a user that has one (Codex, go-xkms #190).
+	assert.Equal(t, "alice@example.com", result.Email)
 	assert.Equal(t, "Alice Smith", result.DisplayName)
 	assert.Equal(t, "admin", result.Role)
 	assert.True(t, result.Enabled)

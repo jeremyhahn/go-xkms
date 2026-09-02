@@ -16,6 +16,7 @@ package xkms
 import (
 	"context"
 	"errors"
+	"fmt"
 	"testing"
 
 	qrdbtransport "github.com/jeremyhahn/go-qrdb/sdk/go/transport"
@@ -37,6 +38,7 @@ import (
 type mockUserClient struct {
 	createUser        func(ctx context.Context, req *qrdbtransport.CreateUserRequest) (*qrdbtransport.User, error)
 	getUserByUsername func(ctx context.Context, tenantID, username string) (*qrdbtransport.User, error)
+	getUserByEmail    func(ctx context.Context, tenantID, email string) (*qrdbtransport.User, error)
 	listUsers         func(ctx context.Context, req *qrdbtransport.ListUsersRequest) (*qrdbtransport.ListUsersResponse, error)
 	deleteUser        func(ctx context.Context, id uint64) error
 	enableUser        func(ctx context.Context, id uint64) error
@@ -56,6 +58,13 @@ func (m *mockUserClient) GetUser(ctx context.Context, id uint64) (*qrdbtransport
 
 func (m *mockUserClient) GetUserByUsername(ctx context.Context, tenantID, username string) (*qrdbtransport.User, error) {
 	return m.getUserByUsername(ctx, tenantID, username)
+}
+
+func (m *mockUserClient) GetUserByEmail(ctx context.Context, tenantID, email string) (*qrdbtransport.User, error) {
+	if m.getUserByEmail != nil {
+		return m.getUserByEmail(ctx, tenantID, email)
+	}
+	return nil, &qrdbtransport.UserNotFoundError{ID: email}
 }
 
 func (m *mockUserClient) GetUserByCertThumbprint(ctx context.Context, thumbprint string) (*qrdbtransport.User, error) {
@@ -277,11 +286,17 @@ func TestCreateUser_Success(t *testing.T) {
 	users.createUser = func(_ context.Context, req *qrdbtransport.CreateUserRequest) (*qrdbtransport.User, error) {
 		assert.Equal(t, "dave", req.Username)
 		assert.Equal(t, []string{"id-admin"}, req.RoleIDs)
-		return &qrdbtransport.User{Username: "dave", Enabled: true, RoleIDs: []string{"id-admin"}}, nil
+		// Echo what a real store persists — dropping Name here would hide a
+		// projection bug in exactly the way this one hid.
+		return &qrdbtransport.User{
+			Username: "dave", Email: req.Email, Name: req.Name,
+			Enabled: true, RoleIDs: []string{"id-admin"},
+		}, nil
 	}
 
 	resp, err := svc.CreateUser(context.Background(), &transport.CreateUserRequest{
 		Username:    "dave",
+		Email:       "dave@example.com",
 		DisplayName: "Dave Doe",
 		Role:        "admin",
 	})
@@ -299,7 +314,7 @@ func TestCreateUser_NoRoleAssigned(t *testing.T) {
 		return &qrdbtransport.User{Username: "noroles"}, nil
 	}
 
-	resp, err := svc.CreateUser(context.Background(), &transport.CreateUserRequest{Username: "noroles"})
+	resp, err := svc.CreateUser(context.Background(), &transport.CreateUserRequest{Username: "noroles", Email: "noroles@example.com"})
 	require.NoError(t, err)
 	assert.Equal(t, "noroles", resp.User.Username)
 	assert.Empty(t, resp.User.Role)
@@ -312,7 +327,7 @@ func TestCreateUser_RoleResolutionError(t *testing.T) {
 		return &qrdbtransport.ListRolesResponse{}, nil
 	}
 
-	_, err := svc.CreateUser(context.Background(), &transport.CreateUserRequest{Username: "x", Role: "nope"})
+	_, err := svc.CreateUser(context.Background(), &transport.CreateUserRequest{Username: "x", Email: "x@example.com", Role: "nope"})
 	require.Error(t, err)
 }
 
@@ -323,7 +338,7 @@ func TestCreateUser_CreateError(t *testing.T) {
 		return nil, errors.New("duplicate username")
 	}
 
-	_, err := svc.CreateUser(context.Background(), &transport.CreateUserRequest{Username: "dupe"})
+	_, err := svc.CreateUser(context.Background(), &transport.CreateUserRequest{Username: "dupe", Email: "dupe@example.com"})
 	var opErr *ErrUserOperation
 	require.ErrorAs(t, err, &opErr)
 	assert.Equal(t, "create user", opErr.Operation)
@@ -686,4 +701,143 @@ func TestListUserCredentials_NotConfigured(t *testing.T) {
 	require.NoError(t, err)
 	_, err = svc.ListUserCredentials(context.Background(), "x")
 	assert.ErrorIs(t, err, ErrNotConfigured)
+}
+
+// A user provisioned without the canonical login key must be REFUSED, not
+// created.
+//
+// This path sent Username only, so every provisioned user landed with an empty
+// email index while WebAuthn enrollment resolves by email — the account existed
+// and could be enrolled by nobody (Codex, go-xkms #190). Against a current qrdb
+// node the create is refused outright, so the old behaviour was not merely
+// incomplete, it was broken.
+func TestCreateUser_EmailIsRequired(t *testing.T) {
+	svc, users, _ := setupServiceWithUserClients(t)
+
+	called := false
+	users.createUser = func(_ context.Context, _ *qrdbtransport.CreateUserRequest) (*qrdbtransport.User, error) {
+		called = true
+		return &qrdbtransport.User{Username: "nokey"}, nil
+	}
+
+	_, err := svc.CreateUser(context.Background(), &transport.CreateUserRequest{Username: "nokey"})
+	require.Error(t, err)
+	assert.ErrorIs(t, err, ErrEmailRequired)
+	assert.False(t, called, "the store must not be reached; the request is refused before any write")
+}
+
+// The canonical key and the display name must REACH the store.
+//
+// DisplayName was previously set on the response only and never persisted, so
+// it was echoed back to the caller and lost; Email was never sent at all.
+// Asserting on the response would pass in both worlds, so this asserts on what
+// the store actually received.
+func TestCreateUser_EmailAndNameReachTheStore(t *testing.T) {
+	svc, users, _ := setupServiceWithUserClients(t)
+
+	var got *qrdbtransport.CreateUserRequest
+	users.createUser = func(_ context.Context, req *qrdbtransport.CreateUserRequest) (*qrdbtransport.User, error) {
+		got = req
+		return &qrdbtransport.User{
+			Username: req.Username, Email: req.Email, Name: req.Name, Enabled: true,
+		}, nil
+	}
+
+	_, err := svc.CreateUser(context.Background(), &transport.CreateUserRequest{
+		Username:    "erin",
+		Email:       "Erin@Example.com",
+		DisplayName: "Erin Example",
+	})
+	require.NoError(t, err)
+	require.NotNil(t, got)
+	// Normalized, not raw: the service canonicalises before both validating and
+	// sending, so the address checked is the address stored. Asserting the raw
+	// form here would now be asserting a bug.
+	assert.Equal(t, "erin@example.com", got.Email, "the canonical login key must be sent to the store")
+	assert.Equal(t, "Erin Example", got.Name, "the display name must be persisted, not just echoed")
+	assert.False(t, got.WithoutEmailLoginKey, "a user with an email must not declare that it has none")
+}
+
+// A stored user's canonical key and display name must come back on READ.
+//
+// Create masked this: it assigned the request's DisplayName onto the response
+// after projection, so the create call looked correct while userToTransport
+// never read Name at all — and UserInfo had no Email field whatsoever. Every
+// later GetUser and ListUsers returned a user with no login key and no display
+// name (Codex, go-xkms #190).
+func TestUserReads_ProjectEmailAndDisplayName(t *testing.T) {
+	stored := &qrdbtransport.User{
+		ID: 7, Username: "frank", Email: "frank@example.com", Name: "Frank Example", Enabled: true,
+	}
+
+	t.Run("GetUser", func(t *testing.T) {
+		svc, users, _ := setupServiceWithUserClients(t)
+		users.getUserByUsername = func(_ context.Context, _, _ string) (*qrdbtransport.User, error) {
+			return stored, nil
+		}
+		resp, err := svc.GetUser(context.Background(), "frank")
+		require.NoError(t, err)
+		assert.Equal(t, "frank@example.com", resp.User.Email, "the canonical login key must be readable")
+		assert.Equal(t, "Frank Example", resp.User.DisplayName, "the persisted display name must be readable")
+	})
+
+	t.Run("ListUsers", func(t *testing.T) {
+		svc, users, _ := setupServiceWithUserClients(t)
+		users.listUsers = func(_ context.Context, _ *qrdbtransport.ListUsersRequest) (*qrdbtransport.ListUsersResponse, error) {
+			return &qrdbtransport.ListUsersResponse{Users: []*qrdbtransport.User{stored}}, nil
+		}
+		resp, err := svc.ListUsers(context.Background())
+		require.NoError(t, err)
+		require.Len(t, resp.Users, 1)
+		assert.Equal(t, "frank@example.com", resp.Users[0].Email)
+		assert.Equal(t, "Frank Example", resp.Users[0].DisplayName)
+	})
+}
+
+// A whitespace-only login key must be refused HERE, as client input.
+//
+// The guard compared the raw value against "", so "   " passed it, reached
+// qrdb, was trimmed to empty there and refused — surfacing as a generic backend
+// failure that the transports map to 500/Internal. Malformed client input
+// reported as a server fault is the exact path this guard exists to close
+// (Codex, go-xkms #190).
+func TestCreateUser_WhitespaceOnlyEmailIsClientInput(t *testing.T) {
+	for _, blank := range []string{" ", "   ", "\t", "\n  \t "} {
+		t.Run(fmt.Sprintf("%q", blank), func(t *testing.T) {
+			svc, users, _ := setupServiceWithUserClients(t)
+			called := false
+			users.createUser = func(_ context.Context, _ *qrdbtransport.CreateUserRequest) (*qrdbtransport.User, error) {
+				called = true
+				return &qrdbtransport.User{Username: "x"}, nil
+			}
+
+			_, err := svc.CreateUser(context.Background(), &transport.CreateUserRequest{
+				Username: "x", Email: blank,
+			})
+			require.Error(t, err)
+			assert.ErrorIs(t, err, ErrEmailRequired)
+			assert.False(t, called, "the store must not be reached for input the client can fix")
+		})
+	}
+}
+
+// The normalized value is what gets STORED, so the address validated is the
+// address persisted. Without this, a user could be created with a surrounding-
+// whitespace or mixed-case key whose index entry qrdb normalizes differently
+// from the value echoed back to the caller.
+func TestCreateUser_SendsTheNormalizedEmail(t *testing.T) {
+	svc, users, _ := setupServiceWithUserClients(t)
+	var got *qrdbtransport.CreateUserRequest
+	users.createUser = func(_ context.Context, req *qrdbtransport.CreateUserRequest) (*qrdbtransport.User, error) {
+		got = req
+		return &qrdbtransport.User{Username: req.Username, Email: req.Email}, nil
+	}
+
+	_, err := svc.CreateUser(context.Background(), &transport.CreateUserRequest{
+		Username: "grace", Email: "  Grace@Example.COM  ",
+	})
+	require.NoError(t, err)
+	require.NotNil(t, got)
+	assert.Equal(t, "grace@example.com", got.Email,
+		"the store must receive the canonical form, not the raw input")
 }

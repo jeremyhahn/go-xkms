@@ -15,6 +15,7 @@ package rest
 
 import (
 	"encoding/json"
+	"errors"
 	"net/http"
 
 	"github.com/go-chi/chi/v5"
@@ -29,10 +30,12 @@ import (
 
 // createUserBody is the request payload for creating a user.
 type createUserBody struct {
-	Username    string `json:"username"`
-	DisplayName string `json:"display_name"`
-	Role        string `json:"role"`
-	TenantID    string `json:"tenant_id"`
+	Username             string `json:"username"`
+	Email                string `json:"email"`
+	WithoutEmailLoginKey bool   `json:"without_email_login_key"`
+	DisplayName          string `json:"display_name"`
+	Role                 string `json:"role"`
+	TenantID             string `json:"tenant_id"`
 }
 
 // updateUserBody is the request payload for enabling/disabling a user.
@@ -53,12 +56,21 @@ func (s *Server) handleCreateUser(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	resp, err := svc.CreateUser(r.Context(), &transport.CreateUserRequest{
-		Username:    body.Username,
-		DisplayName: body.DisplayName,
-		Role:        body.Role,
-		TenantID:    body.TenantID,
+		Username:             body.Username,
+		Email:                body.Email,
+		WithoutEmailLoginKey: body.WithoutEmailLoginKey,
+		DisplayName:          body.DisplayName,
+		Role:                 body.Role,
+		TenantID:             body.TenantID,
 	})
 	if err != nil {
+		// A missing login key is malformed CLIENT input, not a server fault.
+		// Forwarding it as 500 tells the caller to retry something that can
+		// never succeed and buries a fixable mistake in the server's error rate.
+		if errors.Is(err, xkms.ErrEmailRequired) {
+			writeError(w, err, http.StatusBadRequest)
+			return
+		}
 		writeError(w, err, http.StatusInternalServerError)
 		return
 	}

@@ -13,35 +13,37 @@ Binary: `xkey`, group `auth` (`xkey/cmd/xkey/cmd/auth.go`). Needs a running
 | `--server` | string | — | **yes** |
 | `--spki-pin` | string | `""` | strongly recommended |
 | `--setup-token` | string | `""` | when the server requires pre-authorization |
-| `--username` | string | current OS user | no |
-| `--display-name` | string | username | no |
+| `--email` | string | — | **yes** |
+| `--display-name` | string | the login key | no |
 
 ```
 xkey auth register \
     --server https://kms.example.com:8443 \
     --spki-pin 9f86d081884c7d659a2feaa0c55ad015a3bf4f1b2b0b822cd15d6c15b0f00a08 \
     --setup-token "$SETUP_TOKEN" \
-    --username agent-build --display-name "Build agent"
+    --email agent-build@example.com --display-name "Build agent"
 ```
 
 **Pass `--spki-pin`.** At enrolment the client may not have the CA bundle yet,
 and this is what verifies the server before a credential is created for it.
 
-**Pass `--username` explicitly in CI.** The default is the current OS user,
-which in a container is usually `root` or a numeric UID.
+**Pass `--email`.** It is the canonical login key the server resolves the
+account by, and it has no default. The old `--username` default was the current
+OS user — in a container usually `root` or a numeric UID — which the ceremony
+then looked up as an email and missed.
 
 ## `xkey auth login`
 
 | Flag | Type | Default | Purpose |
 |---|---|---|---|
 | `--server` | string | — | **required** |
-| `--username` | string | current OS user | account |
+| `--email` | string | — | **required**, the canonical login key |
 | `--piv` | bool | `false` | authenticate with a PIV slot certificate over mTLS instead of WebAuthn |
 | `--slot` | string | `9a` | PIV slot, with `--piv` |
 | `--backend` | string | `software` | PIV backend: `software` or `pkcs11`, with `--piv` |
 
 ```
-xkey auth login --server https://kms.example.com:8443 --username agent-build
+xkey auth login --server https://kms.example.com:8443 --email agent-build@example.com
 xkey auth login --server https://kms.example.com:8443 --piv --slot 9a --backend pkcs11
 ```
 
@@ -74,8 +76,8 @@ xkey fido2 --storage file --storage-path "$XDG_DATA_HOME/xkey" \
            --backend tpm2 --auto-uv --notify none &
 
 xkey auth register --server "$XKMS" --spki-pin "$PIN" \
-                   --setup-token "$SETUP_TOKEN" --username agent-build
-xkey auth login --server "$XKMS" --username agent-build
+                   --setup-token "$SETUP_TOKEN" --email agent-build@example.com
+xkey auth login --server "$XKMS" --email agent-build@example.com
 xkmsctl --server "$XKMS" --token "$(xkey auth token --server "$XKMS")" key list
 ```
 

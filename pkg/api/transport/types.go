@@ -711,8 +711,12 @@ type UserInfo struct {
 	// marshalled as a string, matching qrdb's own User DTO: a uint64 exceeds
 	// the range JSON numbers represent exactly, so a JavaScript client would
 	// silently round large ids. The N-factor endpoints are keyed by this id.
-	ID          uint64     `json:"id,string"`
-	Username    string     `json:"username"`
+	ID       uint64 `json:"id,string"`
+	Username string `json:"username"`
+	// Email is the canonical tenant-unique login key. It is projected on every
+	// read: without it a caller can create a user with a login key and never
+	// see it again, which is how the display name went missing too.
+	Email       string     `json:"email,omitempty"`
 	DisplayName string     `json:"display_name,omitempty"`
 	Role        string     `json:"role,omitempty"`
 	Enabled     bool       `json:"enabled"`
@@ -770,10 +774,21 @@ type CredentialInfo struct {
 
 // CreateUserRequest contains parameters to create a new xkms user.
 type CreateUserRequest struct {
-	Username    string `json:"username"`
-	DisplayName string `json:"display_name,omitempty"`
-	Role        string `json:"role,omitempty"`
-	TenantID    string `json:"tenant_id,omitempty"`
+	Username string `json:"username"`
+	// Email is the canonical tenant-unique login key (go-qrdb #190) and is
+	// REQUIRED. xkms resolves logins and WebAuthn enrollment through it, so a
+	// user created without one exists and cannot authenticate. It is a distinct
+	// field rather than an email-shaped Username: inferring one from the other
+	// is what put usernames and emails in the same slot to begin with.
+	Email string `json:"email"`
+	// WithoutEmailLoginKey DECLARES that this user intentionally has no email
+	// login key — the certificate-authenticated admin path, which resolves by
+	// SPKI thumbprint rather than by email. Mirrors qrdb's field of the same
+	// name: the absence of a login key must be stated, never defaulted.
+	WithoutEmailLoginKey bool   `json:"without_email_login_key,omitempty"`
+	DisplayName          string `json:"display_name,omitempty"`
+	Role                 string `json:"role,omitempty"`
+	TenantID             string `json:"tenant_id,omitempty"`
 }
 
 // ListUsersRequest contains pagination parameters for listing users.
@@ -814,6 +829,12 @@ type ListUserCredentialsResponse struct {
 
 // BeginRegistrationRequest contains parameters to begin a WebAuthn registration.
 type BeginRegistrationRequest struct {
+	// Username carries the canonical EMAIL login key, not a username. The
+	// service signature is BeginRegistration(ctx, email, displayName) and it
+	// resolves the account with GetByEmail; this field name is the legacy wire
+	// spelling from when the two identifiers were one value. The mismatch has
+	// already produced one defect (go-xkms #190) — renaming it, on the wire and
+	// in the TypeScript SDK, is tracked separately.
 	Username    string `json:"username"`
 	DisplayName string `json:"display_name"`
 }

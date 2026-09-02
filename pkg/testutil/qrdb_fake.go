@@ -41,8 +41,12 @@ type QRDBFakeTransport struct {
 
 	users       map[uint64]*qrdbtransport.User
 	usersByName map[string]uint64
-	usersByCert map[string]uint64
-	nextUserID  uint64
+	// usersByEmail is a SEPARATE index from usersByName, mirroring the store:
+	// resolving an email through the name map would let this fake answer lookups
+	// the real store refuses (go-qrdb #190).
+	usersByEmail map[string]uint64
+	usersByCert  map[string]uint64
+	nextUserID   uint64
 
 	roles       map[string]*qrdbtransport.Role
 	rolesByName map[string]string
@@ -52,12 +56,13 @@ type QRDBFakeTransport struct {
 // NewQRDBFakeTransport constructs an empty in-memory fake transport.
 func NewQRDBFakeTransport() *QRDBFakeTransport {
 	return &QRDBFakeTransport{
-		kv:          make(map[string][]byte),
-		users:       make(map[uint64]*qrdbtransport.User),
-		usersByName: make(map[string]uint64),
-		usersByCert: make(map[string]uint64),
-		roles:       make(map[string]*qrdbtransport.Role),
-		rolesByName: make(map[string]string),
+		kv:           make(map[string][]byte),
+		users:        make(map[uint64]*qrdbtransport.User),
+		usersByName:  make(map[string]uint64),
+		usersByEmail: make(map[string]uint64),
+		usersByCert:  make(map[string]uint64),
+		roles:        make(map[string]*qrdbtransport.Role),
+		rolesByName:  make(map[string]string),
 	}
 }
 
@@ -166,21 +171,57 @@ func (f *QRDBFakeTransport) Exists(ctx context.Context, key string, opts ...qrdb
 func (f *QRDBFakeTransport) CreateUser(ctx context.Context, req *qrdbtransport.CreateUserRequest) (*qrdbtransport.User, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
+	// ENFORCE the real store's contract. qrdb refuses a user that declares
+	// neither an email login key nor WithoutEmailLoginKey; a fake that accepts
+	// one is not a cheaper store, it is a different one — and it hid exactly
+	// that: xkms provisioning sent no Email at all, every test passed, and
+	// against a real node CreateUser would have been rejected outright.
+	if qrdbsdk.NormalizeEmail(req.Email) == "" && !req.WithoutEmailLoginKey {
+		return nil, qrdbsdk.NewValidationError("email", qrdbsdk.ValidationConstraintEmpty,
+			"must not be empty; set WithoutEmailLoginKey to create a user with no email login key")
+	}
 	nameKey := req.TenantID + "/" + req.Username
 	if _, exists := f.usersByName[nameKey]; exists {
 		return nil, &qrdbtransport.UserExistsError{Username: req.Username}
+	}
+	email := qrdbsdk.NormalizeEmail(req.Email)
+	emailKey := req.TenantID + "/" + email
+	if email != "" {
+		if _, exists := f.usersByEmail[emailKey]; exists {
+			return nil, &qrdbtransport.UserExistsError{Username: req.Username}
+		}
 	}
 	f.nextUserID++
 	u := &qrdbtransport.User{
 		ID:       f.nextUserID,
 		Username: req.Username,
+		Email:    email,
+		Name:     req.Name,
 		TenantID: req.TenantID,
 		RoleIDs:  append([]string{}, req.RoleIDs...),
 		Enabled:  true,
 	}
 	f.users[u.ID] = u
 	f.usersByName[nameKey] = u.ID
+	if email != "" {
+		f.usersByEmail[emailKey] = u.ID
+	}
 	return u, nil
+}
+
+// GetUserByEmail resolves the canonical tenant-scoped login key.
+func (f *QRDBFakeTransport) GetUserByEmail(ctx context.Context, tenantID, email string) (*qrdbtransport.User, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	normalized := qrdbsdk.NormalizeEmail(email)
+	if normalized == "" {
+		return nil, &qrdbtransport.UserNotFoundError{ID: email}
+	}
+	id, ok := f.usersByEmail[tenantID+"/"+normalized]
+	if !ok {
+		return nil, &qrdbtransport.UserNotFoundError{ID: email}
+	}
+	return f.users[id], nil
 }
 
 // GetUser implements transport.UserClient.
@@ -241,6 +282,19 @@ func (f *QRDBFakeTransport) UpdateUser(ctx context.Context, req *qrdbtransport.U
 		u.Username = req.Username
 		f.usersByName[u.TenantID+"/"+u.Username] = u.ID
 	}
+	if newEmail := qrdbsdk.NormalizeEmail(req.Email); newEmail != "" && newEmail != u.Email {
+		if _, taken := f.usersByEmail[u.TenantID+"/"+newEmail]; taken {
+			return nil, &qrdbtransport.UserExistsError{Username: u.Username}
+		}
+		if u.Email != "" {
+			delete(f.usersByEmail, u.TenantID+"/"+u.Email)
+		}
+		u.Email = newEmail
+		f.usersByEmail[u.TenantID+"/"+u.Email] = u.ID
+	}
+	if req.Name != "" {
+		u.Name = req.Name
+	}
 	if req.RoleIDs != nil {
 		u.RoleIDs = req.RoleIDs
 	}
@@ -256,6 +310,9 @@ func (f *QRDBFakeTransport) DeleteUser(ctx context.Context, id uint64) error {
 		return &qrdbtransport.UserNotFoundError{ID: idString(id)}
 	}
 	delete(f.usersByName, u.TenantID+"/"+u.Username)
+	if u.Email != "" {
+		delete(f.usersByEmail, u.TenantID+"/"+u.Email)
+	}
 	delete(f.users, id)
 	return nil
 }

@@ -62,7 +62,7 @@ xkey auth register --server https://kms.example.com:8443 --spki-pin … --setup-
    → POST /api/v1/webauthn/registration/finish
    ← credential stored, token returned
 
-xkey auth login --server … --username …
+xkey auth login --server … --email …
    → POST /api/v1/webauthn/login/begin → GetAssertion → /login/finish
    ← session token, kept by the token store
 ```

@@ -29,7 +29,7 @@ require (
 	github.com/google/uuid v1.6.0
 	github.com/gorilla/websocket v1.5.4-0.20250319132907-e064f32e3674
 	github.com/jeremyhahn/go-luks2 v0.1.7-alpha
-	github.com/jeremyhahn/go-qrdb/sdk/go v0.13.0-alpha
+	github.com/jeremyhahn/go-qrdb/sdk/go v0.15.0-alpha
 	github.com/jeremyhahn/go-truststrap v0.2.0-alpha
 	github.com/jeremyhahn/go-xkms v0.8.0-alpha
 	github.com/jeremyhahn/go-xkms/sdk/go v0.8.0-alpha
@@ -116,7 +116,7 @@ require (
 	github.com/cockroachdb/logtags v0.0.0-20241215232642-bb51bb14a506 // indirect
 	github.com/cockroachdb/pebble/v2 v2.1.4 // indirect
 	github.com/cockroachdb/redact v1.1.8 // indirect
-	github.com/cockroachdb/swiss v0.0.0-20251224182025-b0f6560f979b // indirect
+	github.com/cockroachdb/swiss v0.0.0-20260820225851-333444432258 // indirect
 	github.com/cockroachdb/tokenbucket v0.0.0-20250429170803-42689b6311bb // indirect
 	github.com/davecgh/go-spew v1.1.2-0.20180830191138-d8f796af33cc // indirect
 	github.com/dolthub/flatbuffers/v23 v23.3.3-dh.2 // indirect
@@ -173,7 +173,7 @@ require (
 	github.com/jeremyhahn/go-codec v1.4.0 // indirect
 	github.com/jeremyhahn/go-frost v0.1.8-alpha // indirect
 	github.com/jeremyhahn/go-objstore v0.3.0-alpha // indirect
-	github.com/jeremyhahn/go-qrdb v0.13.0-alpha // indirect
+	github.com/jeremyhahn/go-qrdb v0.15.0-alpha // indirect
 	github.com/jeremyhahn/go-quicraft v0.9.0-alpha // indirect
 	github.com/jeroenrinzema/psql-wire v0.18.0 // indirect
 	github.com/jezek/xgb v1.1.1 // indirect

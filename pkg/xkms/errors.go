@@ -310,6 +310,11 @@ var (
 	// ErrNotSupported is returned when a requested operation is not supported
 	// by the current configuration (e.g., TCG operations on a non-TCG CA).
 	ErrNotSupported = errors.New("keystore: operation not supported")
+
+	// ErrEmailRequired is returned when a user is created without the canonical
+	// email login key. xkms resolves logins and WebAuthn enrollment through it,
+	// so a user without one is provisioned and unreachable.
+	ErrEmailRequired = errors.New("users: email is required; it is the canonical login key")
 )
 
 // Auto-initialization errors

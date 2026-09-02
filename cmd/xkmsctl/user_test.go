@@ -23,6 +23,7 @@ package main
 import (
 	"context"
 	"encoding/base64"
+	"encoding/json"
 	"errors"
 	"strings"
 	"testing"
@@ -43,6 +44,14 @@ type mockUserClient struct {
 
 	createUserResp *client.GetUserResponse
 	createUserErr  error
+
+	// Captured requests. The mocks used to discard them, so NO test could
+	// observe which identifier a ceremony was driven with — which is how
+	// BeginRegistration came to be called with the username while the service
+	// resolves by email (go-xkms #190). A double that throws the request away
+	// cannot fail for the reason that matters.
+	gotCreateUser *client.CreateUserRequest
+	gotBeginReg   *client.BeginRegistrationRequest
 
 	listUsersResp *transport.ListUsersResponse
 	listUsersErr  error
@@ -66,7 +75,8 @@ type mockUserClient struct {
 
 func (m *mockUserClient) Connect(context.Context) error { return m.connectErr }
 
-func (m *mockUserClient) CreateUser(context.Context, *client.CreateUserRequest) (*client.GetUserResponse, error) {
+func (m *mockUserClient) CreateUser(_ context.Context, req *client.CreateUserRequest) (*client.GetUserResponse, error) {
+	m.gotCreateUser = req
 	return m.createUserResp, m.createUserErr
 }
 
@@ -86,7 +96,8 @@ func (m *mockUserClient) ListUserCredentials(context.Context, string) (*transpor
 	return m.listCredsResp, m.listCredsErr
 }
 
-func (m *mockUserClient) BeginRegistration(context.Context, *client.BeginRegistrationRequest) (*client.BeginRegistrationResponse, error) {
+func (m *mockUserClient) BeginRegistration(_ context.Context, req *client.BeginRegistrationRequest) (*client.BeginRegistrationResponse, error) {
+	m.gotBeginReg = req
 	return m.beginRegResp, m.beginRegErr
 }
 
@@ -142,6 +153,10 @@ func validAuthenticationOptionsJSON() string {
 // real Run closure.
 func newUserRegisterCmd() *cobra.Command {
 	cmd := &cobra.Command{Use: "register"}
+	// The canonical login key is required; these tests exercise the paths BEYOND
+	// that guard, so they supply one. TestUserRegisterCmd_EmailRequired covers
+	// its absence.
+	cmd.Flags().String("email", "alice@example.com", "")
 	cmd.Flags().String("display-name", "", "")
 	cmd.Flags().String("role", "", "")
 	cmd.Flags().String("rp-id", "go-xkms", "")
@@ -726,5 +741,128 @@ func TestUserCmd_SubcommandsRegistered(t *testing.T) {
 		if !found[name] {
 			t.Errorf("expected user subcommand %q to be registered", name)
 		}
+	}
+}
+
+// Registration must refuse to run without the canonical login key rather than
+// creating an account nobody can enrol against.
+func TestUserRegisterCmd_EmailRequired(t *testing.T) {
+	mock := &mockUserClient{}
+	withGlobalConfig(t, newUserTestConfig("text", mock))
+
+	cmd := newUserRegisterCmd()
+	if err := cmd.Flags().Set("email", ""); err != nil {
+		t.Fatalf("set email: %v", err)
+	}
+	code := captureExit(t, func() {
+		userRegisterCmd.Run(cmd, []string{"alice"})
+	})
+	// Assert the EXACT code. captureExit returns -1 when the command never
+	// exits at all, so "code != 0" passed while the command was printing an
+	// error and returning normally — every script saw a rejected registration
+	// as success. This is the second time in this PR that asserting "not the
+	// good value" hid the actual behaviour (Codex, go-xkms #190).
+	if code != 1 {
+		t.Errorf("registration without --email must exit 1, got %d", code)
+	}
+}
+
+// The ceremony must be driven by the EMAIL, not the username, when they differ.
+//
+// Before --email existed the positional argument WAS the email, so passing the
+// username to BeginRegistration worked by coincidence. The service resolves
+// with GetByEmail (Service.BeginRegistration's own signature is
+// `(ctx, email, displayName)`), so once the two identifiers can differ, the old
+// call looked up "alice" as an email: with closed registration the account just
+// created is not found, and with public registration a SECOND principal is
+// created and the credential is bound to the wrong one (Codex, go-xkms #190).
+//
+// This asserts on the request the client actually received. The mock discarded
+// it until now, which is precisely why nothing caught the defect.
+func TestUserRegisterCmd_CeremonyUsesEmailNotUsername(t *testing.T) {
+	mock := &mockUserClient{
+		listUsersResp: &transport.ListUsersResponse{Users: nil},
+		beginRegResp: &client.BeginRegistrationResponse{
+			SessionID:   "sess-1",
+			OptionsJSON: validRegistrationOptionsJSON(),
+		},
+	}
+	withGlobalConfig(t, newUserTestConfig("text", mock))
+
+	cmd := newUserRegisterCmd()
+	if err := cmd.Flags().Set("email", "alice@example.com"); err != nil {
+		t.Fatalf("set email: %v", err)
+	}
+
+	// The nonexistent --device path fails deterministically inside the FIDO2
+	// handler, well after CreateUser and BeginRegistration have both run.
+	captureExit(t, func() {
+		userRegisterCmd.Run(cmd, []string{"alice"})
+	})
+
+	if mock.gotCreateUser == nil {
+		t.Fatal("CreateUser was never called")
+	}
+	if mock.gotCreateUser.Username != "alice" {
+		t.Errorf("CreateUser username = %q, want %q", mock.gotCreateUser.Username, "alice")
+	}
+	if mock.gotCreateUser.Email != "alice@example.com" {
+		t.Errorf("CreateUser email = %q, want %q", mock.gotCreateUser.Email, "alice@example.com")
+	}
+
+	if mock.gotBeginReg == nil {
+		t.Fatal("BeginRegistration was never called")
+	}
+	// The field is named Username for wire-compatibility, but the service
+	// resolves it with GetByEmail — so the EMAIL belongs here.
+	if mock.gotBeginReg.Username != "alice@example.com" {
+		t.Errorf("the ceremony resolved by %q; it must use the canonical email login key %q, "+
+			"or it enrols a credential against the wrong principal",
+			mock.gotBeginReg.Username, "alice@example.com")
+	}
+}
+
+// JSON output must carry the canonical login key.
+//
+// The CLI builds its JSON by hand rather than marshalling UserInfo, so it does
+// NOT inherit the struct tag — I claimed in a commit message that it did,
+// without checking, and it was false. Machine-readable output was therefore
+// missing the one field a scripted WebAuthn login needs, while the table beside
+// it showed the value (Codex, go-xkms #190).
+func TestUserListCmd_JSONCarriesEmail(t *testing.T) {
+	created := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
+	mock := &mockUserClient{listUsersResp: &transport.ListUsersResponse{
+		Users: []transport.UserInfo{
+			{Username: "alice", Email: "alice@example.com", DisplayName: "Alice", Role: "admin", Enabled: true, CreatedAt: created},
+			// A certificate-authenticated principal legitimately has none; a
+			// script must be able to tell the two apart.
+			{Username: "root", Email: "", DisplayName: "Root", Role: "admin", Enabled: true, CreatedAt: created},
+		},
+	}}
+	withGlobalConfig(t, newUserTestConfig("json", mock))
+
+	out := captureStdout(t, func() {
+		userListCmd.Run(&cobra.Command{}, nil)
+	})
+
+	var payload struct {
+		Users []map[string]any `json:"users"`
+	}
+	if err := json.Unmarshal([]byte(out), &payload); err != nil {
+		t.Fatalf("output is not valid JSON: %v\n%s", err, out)
+	}
+	if len(payload.Users) != 2 {
+		t.Fatalf("got %d users, want 2", len(payload.Users))
+	}
+	got, ok := payload.Users[0]["email"]
+	if !ok {
+		t.Fatalf("JSON output omits the canonical login key entirely: %v", payload.Users[0])
+	}
+	if got != "alice@example.com" {
+		t.Errorf("email = %v, want alice@example.com", got)
+	}
+	if _, ok := payload.Users[1]["email"]; !ok {
+		t.Error("the email key must be present even when empty, so a script can distinguish " +
+			"a cert-authenticated admin from a missing field")
 	}
 }

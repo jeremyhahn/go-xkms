@@ -334,6 +334,7 @@ func TestRunAuthLogin_WithServer_RegistryOpenSucceeds(t *testing.T) {
 
 	cmd := &cobra.Command{}
 	cmd.Flags().String("server", "", "")
+	cmd.Flags().String("email", "alice@example.com", "")
 
 	require.NoError(t, cmd.Flags().Set("server", "https://nonexistent.example.com:8443"))
 
@@ -371,6 +372,7 @@ func TestRunAuthToken_TokenNotFound(t *testing.T) {
 
 	cmd := &cobra.Command{}
 	cmd.Flags().String("server", "", "")
+	cmd.Flags().String("email", "alice@example.com", "")
 
 	require.NoError(t, cmd.Flags().Set("server", "https://nonexistent.example.com:8443"))
 
@@ -950,6 +952,7 @@ func TestRunAuthLogin_ServerNotRegistered(t *testing.T) {
 
 	cmd := &cobra.Command{}
 	cmd.Flags().String("server", "", "")
+	cmd.Flags().String("email", "alice@example.com", "")
 	require.NoError(t, cmd.Flags().Set("server", "https://unregistered.example.com:8443"))
 
 	err := runAuthLogin(cmd, nil)
@@ -1197,6 +1200,10 @@ func newAuthRegisterCmd(t *testing.T, out *bytes.Buffer) *cobra.Command {
 	cmd.Flags().String("server", "", "")
 	cmd.Flags().String("spki-pin", "", "")
 	cmd.Flags().String("setup-token", "", "")
+	// The canonical login key is required; tests exercising the paths beyond
+	// that guard supply one. TestRunAuthRegister_EmailRequired covers its
+	// absence.
+	cmd.Flags().String("email", "alice@example.com", "")
 	cmd.Flags().String("username", "", "")
 	cmd.Flags().String("display-name", "", "")
 	cmd.SetOut(out)
@@ -1210,9 +1217,80 @@ func newAuthLoginCmd(t *testing.T, out *bytes.Buffer) *cobra.Command {
 
 	cmd := &cobra.Command{}
 	cmd.Flags().String("server", "", "")
+	cmd.Flags().String("email", "alice@example.com", "")
 	cmd.Flags().String("username", "", "")
 	cmd.SetOut(out)
 	return cmd
+}
+
+// --- login key resolution (go-xkms #185) ---
+
+// The ceremony is addressed by the canonical email login key, so a command
+// that was given none must stop before it touches the network. It used to
+// default to the current OS account name, which the server then resolved with
+// GetUserByEmail: on a closed relying party that misses, and on an open one it
+// enrolls the credential onto a second principal nobody created.
+func TestRunAuthRegister_EmailRequired(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+
+	client := &fakeAuthClient{}
+	installAuthDoubles(t, client, &fakeCeremony{}, nil)
+
+	cmd := newAuthRegisterCmd(t, &bytes.Buffer{})
+	require.NoError(t, cmd.Flags().Set("server", "https://xkms.example.com:8443"))
+	require.NoError(t, cmd.Flags().Set("email", ""))
+
+	err := runAuthRegister(cmd, nil)
+	require.Error(t, err)
+	assert.ErrorIs(t, err, ErrAuthEmailRequired)
+	assert.Nil(t, client.beginRegistrationReq, "no ceremony may be begun without a login key")
+}
+
+// The same guard on the login side.
+func TestRunAuthLogin_EmailRequired(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+
+	const serverURL = "https://xkms.example.com:8443"
+	registerLoginServer(t, serverURL)
+
+	client := &fakeAuthClient{}
+	installAuthDoubles(t, client, &fakeCeremony{}, nil)
+
+	cmd := newAuthLoginCmd(t, &bytes.Buffer{})
+	require.NoError(t, cmd.Flags().Set("server", serverURL))
+	require.NoError(t, cmd.Flags().Set("email", ""))
+
+	err := runAuthLogin(cmd, nil)
+	require.Error(t, err)
+	assert.ErrorIs(t, err, ErrAuthEmailRequired)
+	assert.Nil(t, client.beginAuthenticationReq, "no ceremony may be begun without a login key")
+}
+
+// The deprecated --username spelling still carries the login key end to end,
+// so an operator already passing an email under it is not broken by the
+// rename.
+func TestRunAuthLogin_DeprecatedUsernameFlagStillCarriesTheLoginKey(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+
+	const serverURL = "https://xkms.example.com:8443"
+	registerLoginServer(t, serverURL)
+
+	client := &fakeAuthClient{
+		beginAuthenticationErr: errors.New("server said no"),
+	}
+	installAuthDoubles(t, client, &fakeCeremony{}, nil)
+
+	cmd := newAuthLoginCmd(t, &bytes.Buffer{})
+	require.NoError(t, cmd.Flags().Set("server", serverURL))
+	require.NoError(t, cmd.Flags().Set("email", ""))
+	require.NoError(t, cmd.Flags().Set("username", "alice@example.com"))
+
+	err := runAuthLogin(cmd, nil)
+	require.Error(t, err)
+	assert.ErrorIs(t, err, ErrAuthBeginAuthenticationFailed)
+
+	require.NotNil(t, client.beginAuthenticationReq)
+	assert.Equal(t, "alice@example.com", client.beginAuthenticationReq.Username)
 }
 
 // --- runAuthRegister WebAuthn ceremony tests ---
@@ -1240,14 +1318,14 @@ func TestRunAuthRegister_CompletesCeremony(t *testing.T) {
 	var out bytes.Buffer
 	cmd := newAuthRegisterCmd(t, &out)
 	require.NoError(t, cmd.Flags().Set("server", "https://xkms.example.com:8443"))
-	require.NoError(t, cmd.Flags().Set("username", "alice"))
+	require.NoError(t, cmd.Flags().Set("email", "alice@example.com"))
 	require.NoError(t, cmd.Flags().Set("display-name", "Alice Example"))
 
 	require.NoError(t, runAuthRegister(cmd, nil))
 
-	// The server was asked to begin the ceremony for the named account.
+	// The server was asked to begin the ceremony for the canonical login key.
 	require.NotNil(t, client.beginRegistrationReq)
-	assert.Equal(t, "alice", client.beginRegistrationReq.Username)
+	assert.Equal(t, "alice@example.com", client.beginRegistrationReq.Username)
 	assert.Equal(t, "Alice Example", client.beginRegistrationReq.DisplayName)
 
 	// The authenticator received the server's options and the server origin.
@@ -1466,18 +1544,18 @@ func TestRunAuthLogin_ObtainsAndStoresToken(t *testing.T) {
 	var out bytes.Buffer
 	cmd := newAuthLoginCmd(t, &out)
 	require.NoError(t, cmd.Flags().Set("server", serverURL))
-	require.NoError(t, cmd.Flags().Set("username", "alice"))
+	require.NoError(t, cmd.Flags().Set("email", "alice@example.com"))
 
 	require.NoError(t, runAuthLogin(cmd, nil))
 
 	require.NotNil(t, client.beginAuthenticationReq)
-	assert.Equal(t, "alice", client.beginAuthenticationReq.Username)
+	assert.Equal(t, "alice@example.com", client.beginAuthenticationReq.Username)
 	assert.Equal(t, client.beginAuthenticationResp.OptionsJSON, string(ceremony.assertOpts))
 	assert.Equal(t, serverURL, ceremony.origin)
 
 	require.NotNil(t, client.finishAuthenticationReq)
 	assert.Equal(t, "login-session", client.finishAuthenticationReq.SessionID)
-	assert.Equal(t, "alice", client.finishAuthenticationReq.Username)
+	assert.Equal(t, "alice@example.com", client.finishAuthenticationReq.Username)
 	assert.Equal(t, `{"id":"cred-123"}`, client.finishAuthenticationReq.AssertionJSON)
 
 	tokens, cleanup, err := openTokenStore(slog.Default())
@@ -1618,26 +1696,46 @@ func TestRunAuthLogin_ConnectFails(t *testing.T) {
 
 // --- username resolution and token metadata ---
 
-// TestResolveAuthUsername_FlagWins verifies the explicit flag takes
-// precedence over the environment-derived default.
-func TestResolveAuthUsername_FlagWins(t *testing.T) {
+// TestResolveAuthLoginKey_EmailWins verifies --email is the login key and is
+// preferred over the deprecated spelling.
+func TestResolveAuthLoginKey_EmailWins(t *testing.T) {
 	cmd := &cobra.Command{}
+	cmd.Flags().String("email", "", "")
 	cmd.Flags().String("username", "", "")
-	require.NoError(t, cmd.Flags().Set("username", "  bob  "))
+	require.NoError(t, cmd.Flags().Set("email", "  alice@example.com  "))
+	require.NoError(t, cmd.Flags().Set("username", "alice"))
 
-	username, err := resolveAuthUsername(cmd)
+	key, err := resolveAuthLoginKey(cmd)
 	require.NoError(t, err)
-	assert.Equal(t, "bob", username)
+	assert.Equal(t, "alice@example.com", key)
 }
 
-// TestResolveAuthUsername_DefaultsToOSUser verifies a command without the
-// flag still resolves an account name from the environment.
-func TestResolveAuthUsername_DefaultsToOSUser(t *testing.T) {
+// TestResolveAuthLoginKey_DeprecatedUsernameStillCarriesTheKey verifies an
+// operator already passing the email under the old flag keeps working.
+func TestResolveAuthLoginKey_DeprecatedUsernameStillCarriesTheKey(t *testing.T) {
 	cmd := &cobra.Command{}
+	cmd.Flags().String("email", "", "")
+	cmd.Flags().String("username", "", "")
+	require.NoError(t, cmd.Flags().Set("username", " alice@example.com "))
 
-	username, err := resolveAuthUsername(cmd)
+	key, err := resolveAuthLoginKey(cmd)
 	require.NoError(t, err)
-	assert.NotEmpty(t, username)
+	assert.Equal(t, "alice@example.com", key)
+}
+
+// TestResolveAuthLoginKey_NoOSUserFallback verifies the environment-derived
+// default is gone. An OS account name is not a login key: the server resolves
+// the ceremony with GetUserByEmail, so defaulting to one could only miss --
+// and on a relying party with public registration enabled a miss is a sign-up
+// that enrolls the credential onto a principal nobody created.
+func TestResolveAuthLoginKey_NoOSUserFallback(t *testing.T) {
+	cmd := &cobra.Command{}
+	cmd.Flags().String("email", "", "")
+	cmd.Flags().String("username", "", "")
+
+	_, err := resolveAuthLoginKey(cmd)
+	require.Error(t, err)
+	assert.ErrorIs(t, err, ErrAuthEmailRequired)
 }
 
 // TestApplyJWTClaims_PopulatesMetadata verifies registered claims are copied
@@ -1688,4 +1786,51 @@ func TestDefaultAuthClientFactory_RejectsEmptyAddress(t *testing.T) {
 	client, err := defaultAuthClientFactory("", "", "")
 	assert.Nil(t, client)
 	assert.ErrorIs(t, err, ErrAuthClientCreationFailed)
+}
+
+// A non-email login key must be REFUSED, on either flag.
+//
+// resolveAuthLoginKey returned any non-empty string unchanged, so
+// `xkey auth register --username alice` forwarded "alice" into the server's
+// email-based lookup. On a closed relying party that fails to find the intended
+// principal; on one with public registration enabled it silently enrols the
+// credential onto a SECOND principal keyed by "alice" — the exact fail-open
+// misrouting this change exists to eliminate. The doc comment claimed the
+// deprecated path was safe because an operator "already passing an email keeps
+// working"; the code did not check that (Codex, go-xkms #190).
+func TestResolveAuthLoginKey_RefusesANonEmailKey(t *testing.T) {
+	for _, tc := range []struct {
+		name, flag, value string
+	}{
+		{"deprecated username flag", "username", "alice"},
+		{"email flag", "email", "alice"},
+		// A display-name form is not a bare address, and the server stores this
+		// value verbatim as an index key.
+		{"display-name form", "email", "Alice <alice@example.com>"},
+		{"no domain", "email", "alice@"},
+		{"os account name", "username", "jhahn"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			cmd := &cobra.Command{}
+			cmd.Flags().String("email", "", "")
+			cmd.Flags().String("username", "", "")
+			require.NoError(t, cmd.Flags().Set(tc.flag, tc.value))
+
+			_, err := resolveAuthLoginKey(cmd)
+			require.Error(t, err, "a value that cannot address a principal must be refused")
+			assert.ErrorIs(t, err, ErrAuthLoginKeyNotEmail)
+		})
+	}
+}
+
+// The deprecation must keep WORKING for the operator it was written for.
+func TestResolveAuthLoginKey_DeprecatedFlagStillAcceptsARealEmail(t *testing.T) {
+	cmd := &cobra.Command{}
+	cmd.Flags().String("email", "", "")
+	cmd.Flags().String("username", "", "")
+	require.NoError(t, cmd.Flags().Set("username", " operator@example.com "))
+
+	key, err := resolveAuthLoginKey(cmd)
+	require.NoError(t, err)
+	assert.Equal(t, "operator@example.com", key)
 }

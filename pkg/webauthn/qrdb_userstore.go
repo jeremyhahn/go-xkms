@@ -133,44 +133,50 @@ func (s *qrdbUserStore) GetByID(ctx context.Context, userID []byte) (User, error
 	return s.b.materialize(ctx, u)
 }
 
-// GetByEmail looks up a user by username (xkms email == qrdb username).
+// GetByEmail looks up a user by the canonical tenant-scoped email login key.
+//
+// It used to resolve through the USERNAME index, on the assumption that the
+// xkms email and the qrdb username were the same string. They were not for any
+// user created through a path that set them independently, and the mismatch
+// surfaced as a WebAuthn login that verified correctly and then failed to
+// resolve a principal (go-xkms #185, go-quicbaas #359).
 func (s *qrdbUserStore) GetByEmail(ctx context.Context, email string) (User, error) {
 	if email == "" {
 		return nil, ErrUserNotFound
 	}
-	u, err := s.b.users.GetUserByUsername(ctx, s.b.tenantID, email)
+	u, err := s.b.users.GetUserByEmail(ctx, s.b.tenantID, email)
 	if err != nil {
 		return nil, mapNotFound(err)
 	}
 	return s.b.materialize(ctx, u)
 }
 
-// Create creates a new user in the configured tenant. The xkms display
-// name is stashed alongside the credential set under
-// __xkms:webauthn/users/<id>/displayName.
+// Create creates a new user in the configured tenant.
+//
+// The email and display name are fields OF the qrdb record. They used to be
+// kept beside it — the display name in an xkms-owned KV blob, because qrdb had
+// no Name field — which made this store a second source of truth for an
+// identity qrdb already owned. Both now live in the record itself.
 func (s *qrdbUserStore) Create(ctx context.Context, email, displayName string) (User, error) {
 	if email == "" {
 		return nil, &QRDBAdapterConfigError{Field: "email"}
 	}
 	u, err := s.b.users.CreateUser(ctx, &qrdbtransport.CreateUserRequest{
 		Username: email,
+		Email:    email,
+		Name:     displayName,
 		TenantID: s.b.tenantID,
 	})
 	if err != nil {
 		return nil, WrapError("qrdb create user", err)
 	}
-	if displayName != "" {
-		if pErr := s.b.kv.Put(ctx, displayNameKey(u.ID), []byte(displayName)); pErr != nil {
-			return nil, WrapError("persist display name", pErr)
-		}
-	}
 	return s.b.materialize(ctx, u)
 }
 
-// Save stores per-user state. xkms's User abstraction carries
-// in-memory session-data and credential lists; the credential store
-// owns persistence of credentials, so Save is a near no-op for the
-// user record. Display-name updates are written to KV.
+// Save stores per-user state. xkms's User abstraction carries in-memory
+// session-data and credential lists; the credential store owns persistence of
+// credentials, so Save is a near no-op for the user record. A display-name
+// change is an update to the qrdb record, not a write to a parallel key.
 func (s *qrdbUserStore) Save(ctx context.Context, user User) error {
 	if user == nil {
 		return &QRDBAdapterConfigError{Field: "user"}
@@ -183,7 +189,13 @@ func (s *qrdbUserStore) Save(ctx context.Context, user User) error {
 	if err != nil {
 		return err
 	}
-	return s.b.kv.Put(ctx, displayNameKey(id), []byte(dn))
+	if _, uErr := s.b.users.UpdateUser(ctx, &qrdbtransport.UpdateUserRequest{
+		ID:   id,
+		Name: dn,
+	}); uErr != nil {
+		return WrapError("qrdb update display name", uErr)
+	}
+	return nil
 }
 
 // Delete removes the user and the credential side-channel entries.
@@ -195,7 +207,6 @@ func (s *qrdbUserStore) Delete(ctx context.Context, userID []byte) error {
 	if dErr := s.b.users.DeleteUser(ctx, id); dErr != nil {
 		return WrapError("qrdb delete user", dErr)
 	}
-	_ = s.b.kv.Delete(ctx, displayNameKey(id))
 	credIDs, _ := s.b.listUserCredIDs(ctx, id)
 	for _, c := range credIDs {
 		_ = s.b.kv.Delete(ctx, credKey(c))
@@ -368,11 +379,11 @@ func (s *qrdbCredentialStore) DeleteByUserID(ctx context.Context, userID []byte)
 // materialize hydrates a qrdb User into the xkms DefaultUser shape, plus
 // fetching display-name and credentials from KV.
 func (b *qrdbBackend) materialize(ctx context.Context, u *qrdbtransport.User) (*DefaultUser, error) {
-	dn := ""
-	if blob, err := b.kv.Get(ctx, displayNameKey(u.ID)); err == nil && len(blob) > 0 {
-		dn = string(blob)
-	}
-	user := NewDefaultUser(HandleFromUserID(u.ID), u.Username, dn)
+	// The WebAuthn name is the canonical EMAIL login key, and the display name
+	// is the record's own Name. Both used to come from elsewhere — the name from
+	// u.Username, the display name from an xkms KV blob — which is what let the
+	// two drift.
+	user := NewDefaultUser(HandleFromUserID(u.ID), u.Email, u.Name)
 
 	// Load credentials via the cred-set index.
 	ids, err := b.listUserCredIDs(ctx, u.ID)
@@ -458,10 +469,6 @@ func userIDSegment(userID uint64) string {
 
 func userCredSetKey(userID uint64) string {
 	return "__xkms:webauthn/users/" + userIDSegment(userID) + "/credentials"
-}
-
-func displayNameKey(userID uint64) string {
-	return "__xkms:webauthn/users/" + userIDSegment(userID) + "/displayName"
 }
 
 // mapNotFound converts a qrdb not-found error into the xkms sentinel.

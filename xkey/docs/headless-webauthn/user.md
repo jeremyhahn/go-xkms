@@ -22,7 +22,7 @@ xkey auth register \
     --server https://kms.example.com:8443 \
     --spki-pin "$PIN" \
     --setup-token "$SETUP_TOKEN" \
-    --username agent-build --display-name "Build agent"
+    --email agent-build@example.com --display-name "Build agent"
 ```
 
 Two things people get wrong here:
@@ -30,13 +30,15 @@ Two things people get wrong here:
 **Pass `--spki-pin`.** At enrolment you may not have the CA bundle yet. Without
 the pin you are creating a credential for whatever answered.
 
-**Pass `--username`.** The default is the current OS user, which in a container
-is usually `root` or a bare number — and that becomes the account name.
+**Pass `--email`.** It is the canonical login key the server resolves the
+account by, and it has no default: an OS account name (in a container usually
+`root` or a bare number) is a different identifier, and the ceremony would look
+it up as an email and miss.
 
 ## Signing in
 
 ```
-xkey auth login --server https://kms.example.com:8443 --username agent-build
+xkey auth login --server https://kms.example.com:8443 --email agent-build@example.com
 xkey auth status -o json
 ```
 
@@ -67,8 +69,8 @@ xkey fido2 --storage file --storage-path "$XDG_DATA_HOME/xkey" \
            --backend tpm2 --auto-uv --notify none &
 
 xkey auth register --server "$XKMS" --spki-pin "$PIN" \
-                   --setup-token "$SETUP_TOKEN" --username agent-build
-xkey auth login --server "$XKMS" --username agent-build
+                   --setup-token "$SETUP_TOKEN" --email agent-build@example.com
+xkey auth login --server "$XKMS" --email agent-build@example.com
 
 xkmsctl --server "$XKMS" --token "$(xkey auth token --server "$XKMS")" key list
 ```
@@ -86,7 +88,7 @@ copied off the machine.
 |---|---|---|
 | SPKI pin mismatch | the server did not verify | **stop.** Confirm the pin out of band |
 | "authenticator not found" | no `xkey fido2` daemon running | start it first |
-| enrolment succeeded under the wrong account name | `--username` defaulted to the OS user | pass it explicitly |
+| enrolment created an account nobody asked for | `--username` defaulted to the OS user, which the server looked up as an email and missed | pass `--email`; the OS-user default is gone |
 | a bare 401 with no detail | intentional — the server does not say why | read the client's error, then the server log |
 | routes return 404 | the server has no token issuer configured | server-side |
 | it hangs at login | the authenticator is waiting for a touch | `--auto-uv`, and `--notify none` |

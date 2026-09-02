@@ -65,7 +65,9 @@ func writeJSON(t *testing.T, w http.ResponseWriter, status int, v any) {
 func TestTransport_CreateUser_Success(t *testing.T) {
 	tr := newUserTestTransport(t, func(r chi.Router) {
 		r.Post("/", func(w http.ResponseWriter, req *http.Request) {
-			var body map[string]string
+			// map[string]any: the body now carries a bool alongside the strings,
+			// and a string-valued map fails to decode it at all.
+			var body map[string]any
 			if err := json.NewDecoder(req.Body).Decode(&body); err != nil {
 				t.Errorf("failed to decode request body: %v", err)
 			}
@@ -524,5 +526,38 @@ func TestTransport_ListUserCredentials_NotConnected(t *testing.T) {
 	_, err = tr.ListUserCredentials(context.Background(), "alice")
 	if err != ErrNotConnected {
 		t.Fatalf("expected ErrNotConnected, got %v", err)
+	}
+}
+
+// The no-email exemption must survive serialization.
+//
+// CreateUser built its body as map[string]string, which cannot carry a bool, so
+// WithoutEmailLoginKey was silently dropped on the wire: the certificate-
+// authenticated admin path worked over gRPC/unix and was rejected over REST as
+// a missing login key (Codex, go-xkms #190). Asserting on the decoded body is
+// the point — a client-side round trip would pass while the field never left.
+func TestTransport_CreateUser_CarriesWithoutEmailLoginKey(t *testing.T) {
+	tr := newUserTestTransport(t, func(r chi.Router) {
+		r.Post("/", func(w http.ResponseWriter, req *http.Request) {
+			var body map[string]any
+			if err := json.NewDecoder(req.Body).Decode(&body); err != nil {
+				t.Errorf("failed to decode request body: %v", err)
+			}
+			if got, ok := body["without_email_login_key"].(bool); !ok || !got {
+				t.Errorf("without_email_login_key did not reach the server: %#v", body["without_email_login_key"])
+			}
+			if body["email"] != "" {
+				t.Errorf("expected an empty email for a cert-authenticated admin, got %v", body["email"])
+			}
+			writeJSON(t, w, http.StatusCreated, transport.UserInfo{Username: "root", Enabled: true})
+		})
+	})
+
+	_, err := tr.CreateUser(context.Background(), &transport.CreateUserRequest{
+		Username:             "root",
+		WithoutEmailLoginKey: true,
+	})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
 	}
 }

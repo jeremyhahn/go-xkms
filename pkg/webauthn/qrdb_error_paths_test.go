@@ -103,6 +103,10 @@ func (f *faultyUserClient) GetUserByUsername(ctx context.Context, tenantID, user
 	return f.inner.GetUserByUsername(ctx, tenantID, username)
 }
 
+func (f *faultyUserClient) GetUserByEmail(ctx context.Context, tenantID, email string) (*qrdbtransport.User, error) {
+	return f.inner.GetUserByEmail(ctx, tenantID, email)
+}
+
 func (f *faultyUserClient) GetUserByCertThumbprint(ctx context.Context, thumbprint string) (*qrdbtransport.User, error) {
 	return f.inner.GetUserByCertThumbprint(ctx, thumbprint)
 }
@@ -167,13 +171,33 @@ func TestQRDBAdapter_Create_UserClientError(t *testing.T) {
 	}
 }
 
-func TestQRDBAdapter_Create_DisplayNamePutError(t *testing.T) {
-	// User creation succeeds, but persisting the display name fails.
+// Create no longer writes the display name to a side key, so a KV put fault
+// cannot fail it. The name is a field of the qrdb record (#185): this asserts
+// it round-trips through Create, which is the property that replaced the
+// deleted put-error path.
+func TestQRDBAdapter_Create_StoresNameOnTheRecord(t *testing.T) {
+	inner := newFakeUserClient()
 	kv := &faultyKV{inner: newFakeKV(), putErr: errKVFault}
-	us, _ := newFaultyAdapter(t, newFakeUserClient(), kv)
-	_, err := us.Create(context.Background(), "b@example.com", "B")
-	if !errors.Is(err, errKVFault) {
-		t.Fatalf("expected display-name put error, got %v", err)
+	us, _ := newFaultyAdapter(t, inner, kv)
+
+	u, err := us.Create(context.Background(), "b@example.com", "B")
+	if err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+	if got := u.DisplayName(); got != "B" {
+		t.Fatalf("display name not carried: got %q, want %q", got, "B")
+	}
+	if got := u.WebAuthnName(); got != "b@example.com" {
+		t.Fatalf("webauthn name is not the email login key: got %q", got)
+	}
+
+	// And it is on the qrdb record, not beside it.
+	rec, err := inner.GetUserByEmail(context.Background(), "system", "b@example.com")
+	if err != nil {
+		t.Fatalf("record not resolvable by email: %v", err)
+	}
+	if rec.Name != "B" || rec.Email != "b@example.com" {
+		t.Fatalf("record fields wrong: name=%q email=%q", rec.Name, rec.Email)
 	}
 }
 
@@ -188,12 +212,33 @@ func TestQRDBAdapter_UserSave_EmptyDisplayName_NoOp(t *testing.T) {
 	}
 }
 
-func TestQRDBAdapter_UserSave_PutError(t *testing.T) {
+// Save writes the display name through UpdateUser now, so its failure mode is
+// an update error rather than a KV put error. A KV fault must NOT fail it —
+// that is the observable proof the side-table write is gone.
+func TestQRDBAdapter_UserSave_KVFaultDoesNotAffectIt(t *testing.T) {
+	ctx := context.Background()
+	inner := newFakeUserClient()
+	seeded, err := inner.CreateUser(ctx, &qrdbtransport.CreateUserRequest{
+		Username: "u@example.com", Email: "u@example.com", TenantID: "system",
+	})
+	if err != nil {
+		t.Fatalf("seed: %v", err)
+	}
+
 	kv := &faultyKV{inner: newFakeKV(), putErr: errKVFault}
-	us, _ := newFaultyAdapter(t, newFakeUserClient(), kv)
-	user := NewDefaultUser(HandleFromUserID(1), "u@example.com", "Display")
-	if err := us.Save(context.Background(), user); !errors.Is(err, errKVFault) {
-		t.Fatalf("expected put error, got %v", err)
+	us, _ := newFaultyAdapter(t, inner, kv)
+
+	user := NewDefaultUser(HandleFromUserID(seeded.ID), "u@example.com", "Display")
+	if err := us.Save(ctx, user); err != nil {
+		t.Fatalf("Save must not touch KV: %v", err)
+	}
+
+	rec, err := inner.GetUser(ctx, seeded.ID)
+	if err != nil {
+		t.Fatalf("GetUser: %v", err)
+	}
+	if rec.Name != "Display" {
+		t.Fatalf("Save did not update the record name: %q", rec.Name)
 	}
 }
 
@@ -551,7 +596,7 @@ func TestQRDBAdapter_CredDelete_RewritesIndex(t *testing.T) {
 func TestQRDBAdapter_GetByEmail_MaterializeError(t *testing.T) {
 	ctx := context.Background()
 	inner := newFakeUserClient()
-	u, err := inner.CreateUser(ctx, &qrdbtransport.CreateUserRequest{Username: "gbe@example.com", TenantID: "system"})
+	u, err := inner.CreateUser(ctx, &qrdbtransport.CreateUserRequest{Username: "gbe@example.com", Email: "gbe@example.com", TenantID: "system"})
 	if err != nil {
 		t.Fatalf("seed: %v", err)
 	}

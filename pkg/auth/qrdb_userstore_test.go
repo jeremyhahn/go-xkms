@@ -55,6 +55,10 @@ func (f *fakeQRDBUserClient) GetUserByUsername(ctx context.Context, tenantID, us
 	return nil, errors.New("not implemented in fake")
 }
 
+func (f *fakeQRDBUserClient) GetUserByEmail(ctx context.Context, tenantID, email string) (*qrdbtransport.User, error) {
+	return nil, errors.New("not implemented in fake")
+}
+
 func (f *fakeQRDBUserClient) GetUserByCertThumbprint(ctx context.Context, thumbprint string) (*qrdbtransport.User, error) {
 	if f.getErr != nil {
 		return nil, f.getErr

@@ -2487,8 +2487,14 @@ func protoToUserInfo(u *pb.UserInfo) transport.UserInfo {
 		return transport.UserInfo{}
 	}
 	return transport.UserInfo{
-		ID:          u.GetId(),
-		Username:    u.GetUsername(),
+		ID:       u.GetId(),
+		Username: u.GetUsername(),
+		// The canonical login key travels BOTH ways. The server-side projection
+		// was updated without this one, so gRPC and unix clients read an empty
+		// Email for a user that has one — the key this PR makes required was
+		// unreadable over exactly the transports that send it as a typed field
+		// (Codex, go-xkms #190).
+		Email:       u.GetEmail(),
 		DisplayName: u.GetDisplayName(),
 		Role:        u.GetRole(),
 		Enabled:     u.GetEnabled(),
@@ -2501,10 +2507,12 @@ func (t *Transport) CreateUser(ctx context.Context, req *transport.CreateUserReq
 		return nil, ErrNotConnected
 	}
 	resp, err := t.client.CreateUser(ctx, &pb.CreateUserRequest{
-		Username:    req.Username,
-		DisplayName: req.DisplayName,
-		Role:        req.Role,
-		TenantId:    req.TenantID,
+		Username:             req.Username,
+		Email:                req.Email,
+		WithoutEmailLoginKey: req.WithoutEmailLoginKey,
+		DisplayName:          req.DisplayName,
+		Role:                 req.Role,
+		TenantId:             req.TenantID,
 	})
 	if err != nil {
 		return nil, &errs.Wrapped{Msg: "create user failed", Err: err}

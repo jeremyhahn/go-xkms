@@ -2778,11 +2778,18 @@ func (t *Transport) CreateUser(ctx context.Context, req *transport.CreateUserReq
 		return nil, ErrNotConnected
 	}
 
-	body := map[string]string{
-		"username":     req.Username,
-		"display_name": req.DisplayName,
-		"role":         req.Role,
-		"tenant_id":    req.TenantID,
+	// map[string]any, NOT map[string]string: WithoutEmailLoginKey is a bool and
+	// a string-valued map cannot carry it, so the certificate-authenticated
+	// admin's exemption was dropped on the wire. The server then saw an empty
+	// email with no declaration and refused the request — a create that works
+	// over gRPC/unix and fails over this transport (Codex, go-xkms #190).
+	body := map[string]any{
+		"username":                req.Username,
+		"email":                   req.Email,
+		"without_email_login_key": req.WithoutEmailLoginKey,
+		"display_name":            req.DisplayName,
+		"role":                    req.Role,
+		"tenant_id":               req.TenantID,
 	}
 
 	data, err := t.DoRawRequest(ctx, http.MethodPost, "/api/v1/users/", body)

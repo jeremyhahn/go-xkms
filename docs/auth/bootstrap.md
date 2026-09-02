@@ -166,17 +166,22 @@ Once the server is operational, admins are added with `xkmsctl admin`
 `adminCreateHandlers` dispatches to exactly two handlers, `fido2` (default)
 and `mtls`.
 
+The positional argument is the **username**. The FIDO2 method additionally
+requires `--email`, the canonical tenant-unique login key WebAuthn resolves the
+account by. The mTLS method does not: that admin is resolved by its certificate
+SPKI thumbprint and is created with no login key at all.
+
 ```bash
-# mTLS from a PEM certificate
-xkmsctl admin create alice@example.com \
+# mTLS from a PEM certificate — no login key, resolved by thumbprint
+xkmsctl admin create alice \
   --method mtls --cert-file /path/to/alice.pem
 
 # mTLS from a PKCS#11 token (module/slot/PIN are root persistent flags)
-xkmsctl admin create alice@example.com \
+xkmsctl admin create alice \
   --method mtls --pkcs11-module /usr/lib/libxkey11.so
 
-# FIDO2 security key (default method)
-xkmsctl admin create alice@example.com --display-name "Alice"
+# FIDO2 security key (default method) — --email is REQUIRED
+xkmsctl admin create alice --email alice@example.com --display-name "Alice"
 ```
 
 The mTLS path reads the certificate, computes

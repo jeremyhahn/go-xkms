@@ -29,8 +29,8 @@ require (
 	github.com/jeremyhahn/go-codec v1.4.0
 	github.com/jeremyhahn/go-enclave v0.4.0-alpha
 	github.com/jeremyhahn/go-frost v0.1.8-alpha
-	github.com/jeremyhahn/go-qrdb v0.13.0-alpha
-	github.com/jeremyhahn/go-qrdb/sdk/go v0.13.0-alpha
+	github.com/jeremyhahn/go-qrdb v0.15.0-alpha
+	github.com/jeremyhahn/go-qrdb/sdk/go v0.15.0-alpha
 	github.com/jeremyhahn/go-quicraft v0.9.0-alpha
 	github.com/jeremyhahn/go-truststrap v0.2.0-alpha
 	github.com/jeremyhahn/go-xkms/sdk/go v0.8.0-alpha
@@ -90,7 +90,7 @@ require (
 	github.com/cockroachdb/logtags v0.0.0-20241215232642-bb51bb14a506 // indirect
 	github.com/cockroachdb/pebble/v2 v2.1.4 // indirect
 	github.com/cockroachdb/redact v1.1.8 // indirect
-	github.com/cockroachdb/swiss v0.0.0-20251224182025-b0f6560f979b // indirect
+	github.com/cockroachdb/swiss v0.0.0-20260820225851-333444432258 // indirect
 	github.com/cockroachdb/tokenbucket v0.0.0-20250429170803-42689b6311bb // indirect
 	github.com/dolthub/flatbuffers/v23 v23.3.3-dh.2 // indirect
 	github.com/dolthub/go-icu-regex v0.0.0-20260610153742-72563bc7ca83 // indirect
