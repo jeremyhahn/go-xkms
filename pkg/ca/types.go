@@ -356,6 +356,15 @@ type CertificateRequest struct {
 	// need to embed platform-specific data (e.g. the SDN network-zone
 	// extension OIDTPNetworkZone) supply it here. Runtime-only; not serialized.
 	ExtraExtensions []pkix.Extension `yaml:"-" json:"-"`
+
+	// CSRExtensions are the extensions the certificate signing request being
+	// signed asked for. The CA never copies them onto the issued certificate
+	// wholesale — a requester that could name its own basic constraints or key
+	// usage would be issuing to itself. They are carried here so that a profile
+	// which understands a specific extension can opt into copying that one; the
+	// FIDO2 attestation profile does exactly this with id-fido-gen-ce-aaguid.
+	// Populated by the CA on the CSR-signing path; runtime-only, not serialized.
+	CSRExtensions []pkix.Extension `yaml:"-" json:"-"`
 }
 
 // Validate checks that the CertificateRequest has valid required fields.

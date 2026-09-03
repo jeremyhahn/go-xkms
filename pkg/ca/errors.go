@@ -281,3 +281,29 @@ var (
 	// ErrTCGCSRUnmarshalFailed indicates the packed CSR could not be unmarshaled.
 	ErrTCGCSRUnmarshalFailed = errors.New("ca: failed to unmarshal tcg-csr-idevid")
 )
+
+// FIDO2 attestation errors indicate that a certificate signing request cannot
+// be issued as a WebAuthn Level 2 section 8.2.1 attestation certificate. Each
+// one refuses issuance: a relying party rejects an attestation certificate
+// that misses any of these fields, so issuing an incomplete one would only
+// move the failure to first registration, where nothing reports why
+// attestation stopped working.
+var (
+	// ErrFIDO2AttestationIssuerIncomplete indicates the issuing CA's own
+	// subject carries no country or no organization, so it cannot supply the
+	// Subject-C and Subject-O the attestation certificate must assert.
+	ErrFIDO2AttestationIssuerIncomplete = errors.New("ca: issuing ca subject cannot supply the fido2 attestation country and organization")
+
+	// ErrFIDO2AttestationSubjectCNRequired indicates the request carries no
+	// common name, which section 8.2.1 requires on the attestation certificate.
+	ErrFIDO2AttestationSubjectCNRequired = errors.New("ca: fido2 attestation certificate requires a subject common name")
+
+	// ErrFIDO2AttestationAAGUIDMissing indicates the request carries no
+	// id-fido-gen-ce-aaguid extension, so the certificate would vouch for no
+	// authenticator model.
+	ErrFIDO2AttestationAAGUIDMissing = errors.New("ca: request carries no id-fido-gen-ce-aaguid extension")
+
+	// ErrFIDO2AttestationAAGUIDInvalid indicates the id-fido-gen-ce-aaguid
+	// extension is not a non-critical DER octet string of exactly 16 bytes.
+	ErrFIDO2AttestationAAGUIDInvalid = errors.New("ca: id-fido-gen-ce-aaguid extension is not a 16-byte octet string")
+)

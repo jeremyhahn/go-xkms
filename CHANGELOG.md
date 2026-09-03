@@ -287,6 +287,36 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **`fido2-attestation` certificate profile** (#232). The CA can now issue a
+  FIDO2 authenticator attestation certificate that satisfies WebAuthn Level 2
+  §8.2.1: Subject-C and Subject-O stamped from the issuing CA's own subject (the
+  device cannot credibly assert its vendor's country or legal name), the literal
+  Subject-OU `Authenticator Attestation`, Basic Constraints CA:false, and the
+  `id-fido-gen-ce-aaguid` extension copied from the request. Select it with
+  `SignOptions.Profile` / `SignCSRRequest.Profile` = `fido2-attestation`, which
+  is what `xkey fido2 provision-attestation --profile` names.
+
+  Before this, `SignCSR` dropped every CSR extension and asserted only the
+  subject the CSR carried, so an attestation certificate had no Subject-C, no
+  Subject-O and no AAGUID extension — a relying party rejects that, and the
+  xkey provisioning command refuses it at install.
+
+  The profile **refuses** rather than issuing something short: a request with no
+  AAGUID, a malformed AAGUID, no common name, or an issuing CA whose subject
+  lacks a country or organisation is rejected.
+
+  **Trust assumption.** The AAGUID is copied verbatim; the CA does not check it
+  against a registry of operator-vouched authenticator models, because none
+  exists. The binding rests on the provisioning ceremony (device possession plus
+  the Security Officer PIN) and on the CA being the operator's own.
+
+- **`CertificateRequest.CSRExtensions`** carries the extensions a certificate
+  signing request asked for through to `Profile.Apply`. The CA still copies no
+  CSR extension by itself — a requester that could name its own basic
+  constraints or key usage would be issuing to itself — so a profile opts into
+  the specific extensions it understands. `fido2-attestation` is the only
+  profile that does.
+
 - **The version 2 `local.attestDevice` request carries no channel binding.**
   Each side derives it from its own Noise session; the transcript still commits
   to it. Sending it would make a prover that signs the supplied value

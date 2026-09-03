@@ -45,6 +45,7 @@ type defaultProfileRegistry struct {
 //   - ocsp-responder: OCSP response signing
 //   - timestamping: Timestamp authority
 //   - ca: Certificate Authority (subordinate CA)
+//   - fido2-attestation: FIDO2 authenticator attestation (WebAuthn L2 8.2.1)
 //
 // Thread-safe: Yes
 func NewDefaultProfileRegistry() ProfileRegistry {
@@ -73,6 +74,7 @@ func (r *defaultProfileRegistry) registerBuiltinProfiles() {
 		NewTCGAttestationKeyProfile(),
 		NewTCGInitialAttestationKeyProfile(),
 		NewTCGDeviceIdentityProfile(),
+		NewFIDO2AttestationProfile(),
 	}
 
 	for _, profile := range profiles {

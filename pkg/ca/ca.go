@@ -1668,10 +1668,23 @@ func (ca *CA) signCSR(ctx context.Context, csrPEM []byte, opts *SignOptions, req
 	// Profiles receive the issuance context so they can make context-sensitive
 	// decisions — a CA profile reads MaxPathLen, a tenant-aware profile reads
 	// TenantID.
-	spec.Request = request
-	if spec.Request == nil {
+	//
+	// A caller-supplied request is copied rather than used directly, because
+	// recording the CSR's requested extensions below must not mutate the value
+	// the caller still holds.
+	if request != nil {
+		requested := *request
+		spec.Request = &requested
+	} else {
 		spec.Request = certificateRequestFromSpec(spec, opts, validityDays, keyUsage, extKeyUsage)
 	}
+
+	// The extensions the CSR asked for travel with the issuance context so that
+	// a profile can copy the ones it understands. They are deliberately not
+	// applied to the certificate here: a requester that could name its own
+	// extensions would be issuing to itself. The FIDO2 attestation profile is
+	// the one profile that opts in, for id-fido-gen-ce-aaguid.
+	spec.Request.CSRExtensions = csr.Extensions
 
 	if opts != nil {
 		spec.ExtraExtensions = opts.ExtraExtensions

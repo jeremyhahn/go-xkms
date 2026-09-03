@@ -230,10 +230,52 @@ issuer.
 | `tcg-ek` | `IssueEKCertificate` | keyEncipherment | omitted |
 | `tcg-ak`, `tcg-iak` | `IssueAKCertificate`, `SignTCGCSRIDevID` | digitalSignature | omitted |
 | `tcg-idevid` | `SignTCGCSRIDevID` | digitalSignature, keyEncipherment | omitted |
+| `fido2-attestation` | `SignCSR` for a FIDO2 authenticator attestation key | digitalSignature | CA:false |
 
 A CSR-signing caller that names no profile is issued with an anonymous TLS leaf
 profile carrying whatever key usage and extended key usage its `SignOptions`
 asked for, so even that case goes through `Profile.Apply`.
+
+#### FIDO2 attestation
+
+`fido2-attestation` issues the certificate a FIDO2 authenticator presents with
+a `packed` attestation statement. WebAuthn Level 2 §8.2.1 states what such a
+certificate must carry, and a relying party checks all of it on every
+registration, so the profile enforces the same requirements at issuance:
+
+| §8.2.1 requirement | Where the value comes from |
+| --- | --- |
+| Subject-C (PrintableString) | the issuing CA's own subject |
+| Subject-O (UTF8String) | the issuing CA's own subject |
+| Subject-OU == `Authenticator Attestation` | the profile, literally |
+| Subject-CN (UTF8String) | the request |
+| `id-fido-gen-ce-aaguid`, non-critical, 16-byte OCTET STRING | copied from the request |
+| Basic Constraints CA:false | the profile |
+
+The country and organisation are the CA's because §8.2.1 wants the attestation
+*vendor's*, and a device cannot assert either credibly; the operator running the
+CA is the vendor of record for the authenticators it provisions.
+
+The profile refuses rather than issues something short. A request with no
+AAGUID extension, a malformed one, or an issuing CA whose subject has no country
+or organisation is rejected — an attestation certificate missing any §8.2.1
+field is rejected by the relying party that receives it, so issuing one would
+only move the failure to first registration, where nothing reports why
+attestation stopped working.
+
+Extensions are otherwise **not** copied from a certificate signing request. The
+request's extensions reach a profile through `CertificateRequest.CSRExtensions`
+so that a profile can opt into the ones it understands; `fido2-attestation` is
+the only profile that does, and only for `id-fido-gen-ce-aaguid`. A requester
+that could name its own basic constraints or key usage would be issuing to
+itself.
+
+**Trust assumption.** The AAGUID is copied verbatim: the CA does not check it
+against a registry of authenticator models the operator has vouched for,
+because no such registry exists. What stands behind the value is the
+provisioning ceremony — the requester had to hold the device and its Security
+Officer PIN — and the fact that the CA is the operator's own. A device that
+clears both bars can name any AAGUID and this CA will certify it.
 
 Registering a profile against a CA replaces it everywhere:
 
