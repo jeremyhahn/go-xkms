@@ -53,6 +53,12 @@ Thumbs.db
 # addresses, workstation paths and agent principal names.
 .claude/
 
+# Serena (semantic code-retrieval tooling): tool config plus AI-generated
+# analysis notes, rewritten on every review round. It was tracked until #170;
+# the notes carried workstation absolute paths, which this repo's public
+# mirror must not publish. Ignored, not deleted — the tool keeps using it.
+.serena/
+
 # SoftHSM2 test files
 softhsm2.conf
 softhsm2/
