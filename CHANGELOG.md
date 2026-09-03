@@ -8,6 +8,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Security
+- **Security**: bumped `google.golang.org/grpc` to v1.83.1 across all four
+  modules, closing CVE-2026-84304 (HIGH). Trivy flagged it in the published
+  `xkms-cli` image, failing the Docker gate on `main`. (#258)
 
 - **Key import no longer silently destroys an existing key** (#165).
   `SoftwareBackend.importAsymmetricKey` and `importSymmetricKey` wrote key
