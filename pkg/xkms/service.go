@@ -367,6 +367,21 @@ func (s *XKMSService) LookupBackend(name string) (Backend, error) {
 	return b, nil
 }
 
+// LookupTenantBackend returns the named backend viewed through tenantID, so
+// every key lookup made against it sees only that tenant's keys. It is the
+// tenant-aware form of LookupBackend, for transports that hold a backend name
+// and the caller's tenant and resolve keys by common name — a name that is
+// unique only within a tenant.
+//
+// The system tenant resolves to the unscoped backend; see ScopeBackendToTenant.
+func (s *XKMSService) LookupTenantBackend(name, tenantID string) (Backend, error) {
+	base, err := s.LookupBackend(name)
+	if err != nil {
+		return nil, err
+	}
+	return ScopeBackendToTenant(base, tenantID)
+}
+
 // DefaultBackendName returns the resolved default backend name, or the empty
 // string when none is configured.
 func (s *XKMSService) DefaultBackendName() string {

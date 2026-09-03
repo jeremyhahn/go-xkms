@@ -29,12 +29,29 @@ import (
 	"github.com/jeremyhahn/go-xkms/pkg/backend"
 	"github.com/jeremyhahn/go-xkms/pkg/encoding"
 	"github.com/jeremyhahn/go-xkms/pkg/types"
+	"github.com/jeremyhahn/go-xkms/pkg/xkms"
 )
 
-// findKeyByCN searches for a key by its common name and returns the full attributes.
-// It uses ListKeys to find all keys and matches by CN.
-func (s *Server) findKeyByCN(ctx context.Context, keyID string) (*types.KeyAttributes, error) {
-	keys, err := s.keystore.ListKeys(ctx)
+// tenantBackend returns the named backend viewed through the authenticated
+// caller's tenant, so a key resolved against it can only be one the caller
+// owns.
+//
+// Every lookup on this transport identifies a key by its common name, which is
+// unique only within a tenant. Against an unscoped backend such a lookup
+// matches whichever tenant's key is listed first: one tenant could export
+// another tenant's wrapped key material, unseal under its key, or delete it.
+// The system tenant is not a scope and still sees every key -- see
+// xkms.ScopeBackendToTenant.
+func (s *Server) tenantBackend(ctx context.Context, backendName string) (xkms.Backend, error) {
+	return s.xkmsService.LookupTenantBackend(backendName, callerTenantID(ctx))
+}
+
+// keyByCN returns the attributes of the key whose common name is keyID, out of
+// the keys ks lists. It is the one place a key ID is matched against a common
+// name, so the tenant scope carried by ks is the only thing that decides which
+// tenant's key a caller can name.
+func keyByCN(ctx context.Context, ks xkms.Backend, keyID string) (*types.KeyAttributes, error) {
+	keys, err := ks.ListKeys(ctx)
 	if err != nil {
 		return nil, &errs.Wrapped{Msg: "failed to list keys", Err: err}
 	}
@@ -48,25 +65,26 @@ func (s *Server) findKeyByCN(ctx context.Context, keyID string) (*types.KeyAttri
 	return nil, &errs.Message{Msg: fmt.Sprintf("key not found: %s", keyID)}
 }
 
-// findKeyInBackend searches for a key by CN in a specific backend
+// findKeyByCN searches the default keystore for a key by its common name,
+// within the caller's tenant, and returns the full attributes.
+func (s *Server) findKeyByCN(ctx context.Context, keyID string) (*types.KeyAttributes, error) {
+	ks, err := xkms.ScopeBackendToTenant(s.keystore, callerTenantID(ctx))
+	if err != nil {
+		return nil, &errs.Wrapped{Msg: "failed to scope keystore to the caller's tenant", Err: err}
+	}
+
+	return keyByCN(ctx, ks, keyID)
+}
+
+// findKeyInBackend searches a specific backend for a key by CN, within the
+// caller's tenant.
 func (s *Server) findKeyInBackend(ctx context.Context, keyID string, backendName string) (*types.KeyAttributes, error) {
-	ks, err := s.xkmsService.LookupBackend(backendName)
+	ks, err := s.tenantBackend(ctx, backendName)
 	if err != nil {
 		return nil, &errs.Wrapped{Msg: fmt.Sprintf("failed to get backend %s", backendName), Err: err}
 	}
 
-	keys, err := ks.ListKeys(ctx)
-	if err != nil {
-		return nil, &errs.Wrapped{Msg: "failed to list keys", Err: err}
-	}
-
-	for _, attr := range keys {
-		if attr.CN == keyID {
-			return attr, nil
-		}
-	}
-
-	return nil, &errs.Message{Msg: fmt.Sprintf("key not found: %s", keyID)}
+	return keyByCN(ctx, ks, keyID)
 }
 
 // requireKey confirms keyID names a key that exists, in the named backend when
@@ -277,7 +295,7 @@ func (s *Server) handleDeleteKey(ctx context.Context, req *JSONRPCRequest) (inte
 	// Get the correct keystore
 	ks := s.keystore
 	if backendName != "" {
-		ks, err = s.xkmsService.LookupBackend(backendName)
+		ks, err = s.tenantBackend(ctx, backendName)
 		if err != nil {
 			return nil, &errs.Wrapped{Msg: fmt.Sprintf("failed to get backend %s", backendName), Err: err}
 		}
@@ -343,7 +361,7 @@ func (s *Server) handleListKeys(ctx context.Context, req *JSONRPCRequest) (inter
 // listKeysFromBackend lists keys from a single backend, converting each
 // KeyAttributes into the rich KeyInfo format that matches the REST API.
 func (s *Server) listKeysFromBackend(ctx context.Context, backendName string) ([]KeyInfo, error) {
-	ks, err := s.xkmsService.LookupBackend(backendName)
+	ks, err := s.tenantBackend(ctx, backendName)
 	if err != nil {
 		return nil, &errs.Wrapped{Msg: fmt.Sprintf("failed to get backend %s", backendName), Err: err}
 	}
@@ -1165,7 +1183,7 @@ func (s *Server) handleExportKey(ctx context.Context, req *JSONRPCRequest) (inte
 	}
 
 	// Get the correct keystore
-	ks, err := s.xkmsService.LookupBackend(backendName)
+	ks, err := s.tenantBackend(ctx, backendName)
 	if err != nil {
 		return nil, &errs.Wrapped{Msg: fmt.Sprintf("failed to get backend %s", backendName), Err: err}
 	}
@@ -1548,28 +1566,15 @@ func (s *Server) handleSeal(ctx context.Context, req *JSONRPCRequest) (interface
 
 	// If KeyID is provided, look up the key to get its actual attributes
 	if params.KeyID != "" {
-		// Get the backend to look up the key
-		ks, err := s.xkmsService.LookupBackend(backendName)
+		// Get the backend, scoped to the caller's tenant, to look up the key
+		ks, err := s.tenantBackend(ctx, backendName)
 		if err != nil {
 			return nil, &errs.Wrapped{Msg: "backend not found", Err: err}
 		}
 
-		// Find the key by CN to get its full attributes
-		keyAttrs, err := ks.ListKeys(ctx)
+		targetAttr, err := keyByCN(ctx, ks, params.KeyID)
 		if err != nil {
-			return nil, &errs.Wrapped{Msg: "failed to list keys", Err: err}
-		}
-
-		var targetAttr *types.KeyAttributes
-		for _, attr := range keyAttrs {
-			if attr.CN == params.KeyID {
-				targetAttr = attr
-				break
-			}
-		}
-
-		if targetAttr == nil {
-			return nil, &errs.Message{Msg: fmt.Sprintf("key not found: %s", params.KeyID)}
+			return nil, err
 		}
 
 		opts.KeyAttributes = targetAttr
@@ -1615,8 +1620,9 @@ func (s *Server) handleUnseal(ctx context.Context, req *JSONRPCRequest) (interfa
 	// Use backend name if provided, otherwise use default
 	backendName := params.Backend
 
-	// Get backend to determine backend type for sealed data
-	ks, err := s.xkmsService.LookupBackend(backendName)
+	// Get the backend, scoped to the caller's tenant, to determine the backend
+	// type for the sealed data and to resolve the key below.
+	ks, err := s.tenantBackend(ctx, backendName)
 	if err != nil {
 		return nil, &errs.Wrapped{Msg: "backend not found", Err: err}
 	}
@@ -1636,22 +1642,9 @@ func (s *Server) handleUnseal(ctx context.Context, req *JSONRPCRequest) (interfa
 
 	// If KeyID is provided, look up the key to get its actual attributes
 	if params.KeyID != "" {
-		// Find the key by CN to get its full attributes
-		keyAttrs, err := ks.ListKeys(ctx)
+		targetAttr, err := keyByCN(ctx, ks, params.KeyID)
 		if err != nil {
-			return nil, &errs.Wrapped{Msg: "failed to list keys", Err: err}
-		}
-
-		var targetAttr *types.KeyAttributes
-		for _, attr := range keyAttrs {
-			if attr.CN == params.KeyID {
-				targetAttr = attr
-				break
-			}
-		}
-
-		if targetAttr == nil {
-			return nil, &errs.Message{Msg: fmt.Sprintf("key not found: %s", params.KeyID)}
+			return nil, err
 		}
 
 		opts.KeyAttributes = targetAttr

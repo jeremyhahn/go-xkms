@@ -98,6 +98,33 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   claiming nothing about boot state — a case that exists to be REFUSED, so it
   has to be constructible on purpose.
 
+### Security
+
+- **MCP resolves a key by common name within the caller's tenant** (#166).
+  `export_key` performed no tenant check: it resolved the key through an
+  unscoped backend and took the first common-name match. A common name is
+  unique only within a tenant, so one tenant could export another tenant's
+  wrapped key material by naming its key ID — a read of key material across the
+  tenant boundary.
+
+  Both shared lookups (`findKeyInBackend`, `findKeyByCN`) now resolve through a
+  backend scoped to the authenticated caller's tenant, which fixes every caller
+  of them — export, delete, decrypt, encrypt, sign, verify, and the asymmetric
+  and TLS-certificate paths — not just the export handler. `listKeys` is scoped
+  by the same view, so a listing can no longer show a key the lookup then
+  reports as missing, and `seal` / `unseal`, which each carried their own inline
+  copy of the same first-match-on-CN scan, now resolve through the one shared
+  lookup.
+
+  The system tenant remains unscoped and still sees every key, matching the
+  service layer's existing `resolveTenantBackend` predicate. A caller with no
+  identity is unaffected.
+
+  New on the service layer: `XKMSService.LookupTenantBackend` and
+  `xkms.ScopeBackendToTenant`, so a transport that holds a backend name (or a
+  backend) and a tenant gets the same scoped view the service's own request
+  paths use, rather than reimplementing the predicate.
+
 ## [0.9.1-alpha] - 2026-09-02
 
 ### Fixed

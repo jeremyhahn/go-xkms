@@ -1,6 +1,6 @@
 # Multi-Tenancy — Architecture
 
-> **Status: NORMATIVE** · Feature: `multi-tenancy` · Repo: `go-xkms` · Last verified: 2026-08-19
+> **Status: NORMATIVE** · Feature: `multi-tenancy` · Repo: `go-xkms` · Last verified: 2026-09-03
 
 ## The problem
 
@@ -88,8 +88,12 @@ plane works before any tenant barrier unseals
 
 ## Trust boundaries
 
-- **Tenant scoping is enforced by middleware, not by callers.** A key ID is only
-  resolvable inside its tenant.
+- **The middleware admits the request; the tenant-scoped backend narrows the
+  key namespace.** A key ID is only resolvable inside its tenant *because* the
+  handler resolves it through `xkms.TenantScopedBackend`. A key ID is a common
+  name, unique only within a tenant, so a lookup against an unscoped backend
+  matches whichever tenant's key is listed first — see
+  [`api.md`](api.md#what-actually-narrows-the-key-namespace).
 - **Isolation modes are not equally strong.** `prefix` separates namespaces
   within one barrier and one store; `barrier` separates root keys; `volume` and
   `raft` separate storage and consensus. Selling `prefix` as isolation to a

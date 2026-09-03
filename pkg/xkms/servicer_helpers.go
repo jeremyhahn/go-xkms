@@ -52,22 +52,60 @@ func (s *XKMSService) resolveBackendWithName(backendName string) (Backend, strin
 	return b, backendName, nil
 }
 
-// resolveTenantBackend returns a Backend scoped to tenantID when tenantID
-// names a real tenant. The system tenant is NOT a scope: qrdb's canonical
-// predicate treats "" and the system tenant as the same platform scope
-// (tenant-scope unification), so a system-scoped caller — the first-boot
-// administrator among them — operates on the unscoped backend, the same
-// view internal pipelines use.
-func (s *XKMSService) resolveTenantBackend(name, tenantID string) (Backend, error) {
+// tenantScopes reports whether tenantID names a real tenant, one whose keys a
+// backend view must be narrowed to, and validates it when it does.
+//
+// The system tenant is NOT a scope: qrdb's canonical predicate treats "" and
+// the system tenant as the same platform scope (tenant-scope unification), so
+// a system-scoped caller — the first-boot administrator among them — operates
+// on the unscoped backend, the same view internal pipelines use.
+//
+// This is the single place the predicate and its validation live, so every
+// caller that turns a tenant into a backend view agrees on what a tenant is.
+func tenantScopes(tenantID string) (bool, error) {
 	if qrdbsdk.IsSystemTenant(tenantID) {
-		return s.resolveBackend(name)
+		return false, nil
 	}
 	if err := storage.ValidateTenantID(tenantID); err != nil {
-		return nil, &ErrValidation{Sentinel: ErrTenantIDRequired, Detail: err.Error()}
+		return false, &ErrValidation{Sentinel: ErrTenantIDRequired, Detail: err.Error()}
+	}
+	return true, nil
+}
+
+// ScopeBackendToTenant returns base viewed through tenantID, so every key
+// lookup made against it — a listing, or a resolution by common name — sees
+// only that tenant's keys. A common name is unique only within a tenant, so an
+// unscoped lookup by common name resolves whichever tenant's key is listed
+// first.
+//
+// Callers that hold a Backend already, rather than a name to resolve, use this
+// instead of resolveTenantBackend. The system tenant returns base unchanged,
+// exactly as resolveTenantBackend does.
+func ScopeBackendToTenant(base Backend, tenantID string) (Backend, error) {
+	scoped, err := tenantScopes(tenantID)
+	if err != nil {
+		return nil, err
+	}
+	if !scoped {
+		return base, nil
+	}
+	return NewTenantScopedBackend(base, tenantID), nil
+}
+
+// resolveTenantBackend returns a Backend scoped to tenantID when tenantID
+// names a real tenant, and the unscoped backend for the system tenant. See
+// tenantScopes for why the system tenant is not a scope.
+func (s *XKMSService) resolveTenantBackend(name, tenantID string) (Backend, error) {
+	scoped, err := tenantScopes(tenantID)
+	if err != nil {
+		return nil, err
 	}
 	base, err := s.resolveBackend(name)
 	if err != nil {
 		return nil, err
+	}
+	if !scoped {
+		return base, nil
 	}
 	return NewTenantScopedBackend(base, tenantID), nil
 }
@@ -77,15 +115,16 @@ func (s *XKMSService) resolveTenantBackend(name, tenantID string) (Backend, erro
 // tenant-scoped; the system tenant resolves unscoped, exactly as in
 // resolveTenantBackend.
 func (s *XKMSService) resolveTenantBackendWithName(name, tenantID string) (Backend, string, error) {
-	if qrdbsdk.IsSystemTenant(tenantID) {
-		return s.resolveBackendWithName(name)
-	}
-	if err := storage.ValidateTenantID(tenantID); err != nil {
-		return nil, "", &ErrValidation{Sentinel: ErrTenantIDRequired, Detail: err.Error()}
+	scoped, err := tenantScopes(tenantID)
+	if err != nil {
+		return nil, "", err
 	}
 	base, resolvedName, err := s.resolveBackendWithName(name)
 	if err != nil {
 		return nil, "", err
+	}
+	if !scoped {
+		return base, resolvedName, nil
 	}
 	return NewTenantScopedBackend(base, tenantID), resolvedName, nil
 }

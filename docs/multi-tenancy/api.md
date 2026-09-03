@@ -1,6 +1,6 @@
 # Multi-Tenancy — API
 
-> **Status: NORMATIVE** · Feature: `multi-tenancy` · Repo: `go-xkms` · Last verified: 2026-08-19
+> **Status: NORMATIVE** · Feature: `multi-tenancy` · Repo: `go-xkms` · Last verified: 2026-09-03
 
 Transport shapes: [`../key-management/api.md`](../key-management/api.md)
 §"How the six transports are shaped".
@@ -32,8 +32,8 @@ capabilities present on four transports and absent on one, which is tracked debt
 The more important half of this feature has no capability rows: **every
 `/api/v1` route in `GroupAPIv1` runs behind tenant middleware**
 (`pkg/api/rest/middleware_tenant.go`, `middleware_tenant_dao.go`;
-`pkg/api/grpc/interceptor_tenant.go`; `pkg/api/tenantgate`). A key ID resolves
-only inside its tenant, on every transport, without each handler doing anything.
+`pkg/api/grpc/interceptor_tenant.go`; `pkg/api/tenantgate`). The gate admits or
+refuses the request; it does not narrow the key namespace.
 
 Two groups deliberately sit outside it:
 
@@ -47,6 +47,25 @@ certificate is always scoped to it so the control plane functions before any
 tenant barrier unseals ([`../init-ceremony/api.md`](../init-ceremony/api.md)),
 and when a SPIFFE trust domain is configured the SAN is
 `spiffe://<td>/tenant/system/user/<CN>`.
+
+## What actually narrows the key namespace
+
+**A tenant-scoped backend does, and a handler that resolves a key without one is
+unscoped.** `xkms.TenantScopedBackend` is what makes a key ID resolve only
+inside its tenant. A handler reaches it through
+`XKMSService.LookupTenantBackend` (by backend name) or
+`xkms.ScopeBackendToTenant` (from a backend it already holds), with the tenant
+taken from the authenticated identity and never from request params.
+
+This matters because a key ID on these transports is a **common name, which is
+unique only within a tenant**. Resolved against an unscoped backend it matches
+whichever tenant's key is listed first. MCP's `export_key` did exactly that and
+handed one tenant another tenant's wrapped key material (#166); the same
+first-match-on-CN scan was also duplicated inline in `seal` and `unseal`. All of
+them now resolve through the one shared, tenant-scoped lookup.
+
+The system tenant is not a scope: a system-scoped caller resolves against the
+unscoped backend and sees every key, which is what the control plane needs.
 
 ## Request and response schemas
 
