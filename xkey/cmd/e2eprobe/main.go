@@ -32,11 +32,13 @@ import (
 	"encoding/json"
 	"encoding/pem"
 	"fmt"
+	"hash"
 	"log/slog"
 	"math/big"
 	"os"
 	"time"
 
+	xkms "github.com/jeremyhahn/go-xkms/sdk/go"
 	"github.com/jeremyhahn/go-xkms/xkey/pkg/pairing"
 )
 
@@ -503,12 +505,18 @@ func pivFamily(p *prober, runID string) {
 // oathFamily adds a TOTP credential, cross-computes the expected code in Go,
 // and removes the credential.
 func oathFamily(p *prober, runID string) {
-	secret := "JBSWY3DPEHPK3PXP"
+	// 20 bytes, the RFC 4226 recommended length. The 16-character
+	// "JBSWY3DPEHPK3PXP" of every worked example decodes to 10 bytes, and
+	// crypto/hmac under GODEBUG=fips140=only refuses keys below 112 bits by
+	// panicking -- so the FIPS arm of this probe would have killed the process
+	// on a secret length, after the algorithm gate had already been satisfied.
+	secret := "GEZDGNBVGY3TQOJQGEZDGNBVGY3TQOJQ"
 	name := "e2e-oath-" + runID
+	algorithm, digest := oathProbeAlgorithm()
 	added := p.requiredCall("local.oathAdd", "local.oathAdd", map[string]interface{}{
 		"credential": map[string]interface{}{
 			"name": name, "issuer": "e2eprobe", "account_name": "probe@example.com",
-			"secret": secret, "type": "totp", "algorithm": "SHA1", "digits": 6, "period": 30,
+			"secret": secret, "type": "totp", "algorithm": algorithm, "digits": 6, "period": 30,
 		},
 	})
 	if added == nil {
@@ -538,8 +546,11 @@ func oathFamily(p *prober, runID string) {
 		_ = json.Unmarshal(genRes["code"], &code)
 		now := time.Now().Unix() / 30
 		var terr error
-		if code != totp(secret, now) && code != totp(secret, now-1) && code != totp(secret, now+1) {
-			terr = &MessageError{Msg: fmt.Sprintf("TOTP mismatch: phone=%s go=%s", code, totp(secret, now))}
+		if code != totp(secret, now, digest) &&
+			code != totp(secret, now-1, digest) &&
+			code != totp(secret, now+1, digest) {
+			terr = &MessageError{Msg: fmt.Sprintf("TOTP mismatch (%s): phone=%s go=%s",
+				algorithm, code, totp(secret, now, digest))}
 		}
 		p.record("TOTP cross-compute (Go side)", true, terr, "")
 	}
@@ -643,16 +654,42 @@ func selfSignedCert(cn string) ([]byte, error) {
 	return x509.CreateCertificate(rand.Reader, template, template, &priv.PublicKey, priv)
 }
 
-// totp computes an RFC 6238 TOTP (SHA1, 6 digits) for the given Base32 secret
+// totp computes an RFC 6238 TOTP (SHA1, 6 digits) for the given Base32 secret.
+//
+// CALLERS MUST CHECK xkms.FIPSMode() FIRST. crypto/hmac rejects SHA-1 under
+// GODEBUG=fips140=only by panicking, so this cannot be made to return an error
+// from inside; the guard has to be at the call site. See the one caller.
 // and time counter.
-func totp(secretB32 string, counter int64) string {
+// fipsMode reports whether this process is under FIPS 140 rules. Indirected
+// through a variable so a test can drive both sides of the branch below: the
+// alternative is running the suite twice under different environments, which
+// no CI job here does, and an ungated branch is one nobody ever executes.
+var fipsMode = xkms.FIPSMode
+
+// oathProbeAlgorithm picks the digest the probe enrolls and cross-computes.
+//
+// The probe used to enroll SHA-1 unconditionally, which RFC 6238 makes the
+// TOTP default. Under FIPS that is not merely disallowed: crypto/hmac PANICS
+// on SHA-1 with GODEBUG=fips140=only, so the Go-side cross-check would kill
+// the probe, and oathGenerate now refuses the credential outright — a required
+// step that can only fail. Enrolling SHA-256 instead keeps the cross-check
+// REAL under FIPS rather than skipping it, and exercises the generate path
+// that a FIPS deployment actually uses.
+func oathProbeAlgorithm() (string, func() hash.Hash) {
+	if fipsMode() {
+		return "SHA256", sha256.New
+	}
+	return "SHA1", sha1.New
+}
+
+func totp(secretB32 string, counter int64, digest func() hash.Hash) string {
 	key, err := base32.StdEncoding.WithPadding(base32.NoPadding).DecodeString(secretB32)
 	if err != nil {
 		return ""
 	}
 	var buf [8]byte
 	binary.BigEndian.PutUint64(buf[:], uint64(counter))
-	mac := hmac.New(sha1.New, key)
+	mac := hmac.New(digest, key)
 	mac.Write(buf[:])
 	sum := mac.Sum(nil)
 	offset := sum[len(sum)-1] & 0x0f

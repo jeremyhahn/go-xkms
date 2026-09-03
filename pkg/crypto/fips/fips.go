@@ -35,14 +35,21 @@ const (
 	KDFPBKDF2 = "pbkdf2"
 )
 
-// Compiled reports whether this binary was built as a FIPS 140-3 module — that
-// is, compiled with GOFIPS140 set to an enabling value. It is the build-time
-// truth, distinct from Enabled which also honours the runtime GOFIPS140
-// environment variable: a shared library built with GOFIPS140=latest carries no
-// such environment variable in the process that dlopen()s it, so only Compiled
-// can tell a FIPS build from a non-FIPS one after the fact. Use it for anything
-// that must describe the artifact itself — a token or library label a user
-// reads to know they hold a FIPS module — rather than a per-process policy.
+// Compiled reports whether the Go Cryptographic Module is ACTIVE in this
+// process. Building with GOFIPS140 set to an enabling value is what normally
+// turns it on, which is where the name comes from, and it is the signal that
+// survives into a process that dlopen()s a FIPS-built shared library carrying
+// no GOFIPS140 environment variable — the case Enabled cannot see.
+//
+// It is NOT build provenance, despite the name. crypto/fips140.Enabled reports
+// module state, and GODEBUG=fips140 can select that state in a binary built
+// without GOFIPS140. So a true result means "the module is in force here", not
+// "this artifact is a FIPS build". Nothing that labels an artifact — a token
+// model string, a library banner, a compliance manifest — may rest on it;
+// those need real build metadata, which the toolchain does not expose here.
+//
+// Pair it with Enabled (see FIPSMode in sdk/go) for a policy decision: either
+// signal alone is reason enough to refuse a non-approved algorithm.
 func Compiled() bool {
 	return fips140.Enabled()
 }

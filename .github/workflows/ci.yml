@@ -288,9 +288,17 @@ jobs:
       # codec_json is required: without it the package's DAO-backed tests fail
       # on "codec json is not supported in this build" rather than on anything
       # about the code.
-      - name: xkey authenticator tests
+      #
+      # pkg/oath is here for the same reason, added with the FIPS gate in #22.
+      # Its suite was in exactly the state the paragraph above describes: 464
+      # lines of gate tests that `go vet -tags ble ./...` compiled and no job
+      # ran. A FIPS refusal that CI never executes is a refusal nobody has
+      # checked -- and under GODEBUG=fips140=only the thing being refused is a
+      # standard-library PANIC, so the untested direction is a process kill on
+      # a user-driven path.
+      - name: xkey authenticator and oath tests
         working-directory: xkey
-        run: go test -race -v -tags codec_json ./pkg/authenticator/...
+        run: go test -race -v -tags codec_json ./pkg/authenticator/... ./pkg/oath/...
 
       # The GUI services step below names its tests individually, because that
       # package holds pre-existing failures the gate is not about (#104).

@@ -374,6 +374,15 @@ func (s *MemoryStore) Update(cred *Credential) error {
 		return ErrStoreClosed
 	}
 
+	// FileStore.Add, FileStore.Update and MemoryStore.Add all validate; this
+	// one did not, which made it the odd implementation out in the Store
+	// contract regardless of FIPS. It also falsified the invariant stated on
+	// Credential.Validate -- under FIPS a caller could add an approved SHA-256
+	// credential and then update the same ID to SHA-1, and it was stored.
+	if err := cred.Validate(); err != nil {
+		return err
+	}
+
 	if _, exists := s.creds[cred.ID]; !exists {
 		return ErrCredentialNotFound
 	}
