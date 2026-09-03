@@ -17,7 +17,7 @@ import (
 	"context"
 	"crypto/ecdsa"
 	"crypto/rsa"
-	"crypto/sha1"
+	"crypto/sha256"
 	"crypto/x509"
 	"crypto/x509/pkix"
 	"encoding/asn1"
@@ -763,7 +763,25 @@ func ToString(certificate *x509.Certificate) string {
 
 	sb.WriteString("\n┌─ Validity ────────────────────────────────────────────────────────────────────\n")
 	fmt.Fprintf(&sb, "│  Serial Number:      %s\n", certificate.SerialNumber.String())
-	fmt.Fprintf(&sb, "│  SHA-1 Fingerprint:  %x\n", sha1.Sum(certificate.Raw))
+	// SHA-1 is not printed at all. crypto/sha1.Sum PANICS rather than erroring
+	// under GODEBUG=fips140=only, so every FIPS-activated process that formatted a
+	// certificate for display died here (#197).
+	//
+	// It is REMOVED rather than conditioned on a FIPS predicate. A guard would
+	// have to ask "is this a FIPS artifact", and fips.Compiled() cannot answer
+	// that -- GODEBUG=fips140=off turns it false on a GOFIPS140-built binary
+	// (measured; #219). Any such guard therefore fails OPEN for exactly the
+	// artifacts the policy most cares about, and a guard that cannot fire in its
+	// advertised case is itself the defect: the next engineer reads it as working.
+	//
+	// Deleting the line means there is no predicate to get wrong. This thumbprint
+	// is human-readable output -- nothing on the wire depends on it and no caller
+	// parses it back -- and #197 named SHA-256 as the remedy.
+	//
+	// COMPATIBILITY: a consumer comparing this block against
+	// `openssl x509 -fingerprint` (SHA-1 by default) must switch to
+	// `-sha256`. That break is deliberate and is recorded in the CHANGELOG.
+	fmt.Fprintf(&sb, "│  SHA-256 Fingerprint: %x\n", sha256.Sum256(certificate.Raw))
 	fmt.Fprintf(&sb, "│  Not Before:         %s\n", certificate.NotBefore.Format(time.RFC3339))
 	fmt.Fprintf(&sb, "│  Not After:          %s\n", certificate.NotAfter.Format(time.RFC3339))
 	fmt.Fprintf(&sb, "│  Signature Algo:     %s\n", certificate.SignatureAlgorithm.String())

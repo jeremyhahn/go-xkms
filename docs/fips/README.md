@@ -192,6 +192,16 @@ purpose-scoped the way SP 800-131A Rev. 2 is:
   outside FIPS mode, applied by `server.New` and warned about on every start;
   under `GOFIPS140` / `GODEBUG=fips140` the setting is ignored. See
   [Weak hash policy](../crypto/weak-hashes.md).
+- **Certificate display thumbprints** -- `certstore.ToString` (exported through
+  the SDK as `CertToString`) prints a **SHA-256** fingerprint and no SHA-1 one.
+  `crypto/sha1.Sum` *panics* under `GODEBUG=fips140=only` rather than returning
+  an error, so any FIPS-activated process that formatted a certificate for
+  display used to die there. The line is removed rather than guarded: no
+  predicate here can answer "is this a FIPS artifact" (`GODEBUG=fips140=off`
+  turns `Compiled()` false on a `GOFIPS140`-built binary -- #219), so a guard
+  would fail open precisely for FIPS artifacts. `crypto/sha1` is no longer
+  imported by the package. Consumers comparing against
+  `openssl x509 -fingerprint` must pass `-sha256`.
 - **Key derivation** -- the approved set is per construction. The ANSI X9.63 /
   SP 800-56A concatenation KDFs accept SHA-1, SHA-224 and SHA3-224 in a fully
   compliant deployment, because SP 800-56A Rev. 3 approves them for KDF use and

@@ -90,6 +90,29 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   The GUI proves liveness **before** publishing a connection, and refuses a
   version 2 record when no trust store is configured.
 
+### Fixed
+
+- **BREAKING (display): `certstore.ToString` no longer prints a SHA-1
+  fingerprint** (#197). It prints a SHA-256 fingerprint instead.
+
+  `crypto/sha1.Sum` panics rather than erroring in FIPS 140-only mode, so every
+  FIPS-activated process that formatted a certificate for display through
+  `ToString` — exported by the SDK as `CertToString` — died on a human-readable
+  thumbprint.
+
+  The line is **removed, not conditioned on a FIPS check**. No predicate
+  available can answer "is this a FIPS artifact": `GODEBUG=fips140=off` turns
+  `fips.Compiled()` false even on a `GOFIPS140`-built binary (#219), so a guard
+  would fail open for exactly the artifacts the policy cares about. Deleting the
+  line leaves no predicate to get wrong, and `crypto/sha1` is no longer imported
+  by the package at all.
+
+  **Operator impact:** anything comparing this block against
+  `openssl x509 -fingerprint` must switch to `openssl x509 -fingerprint -sha256`.
+  Anything indexing the block by line offset must be updated. Nothing in this
+  repository parses the value — `SHA-1 Fingerprint` occurred exactly once, at the
+  print site — and both callers only print the result.
+
 ### Added
 
 - **The version 2 `local.attestDevice` request carries no channel binding.**
