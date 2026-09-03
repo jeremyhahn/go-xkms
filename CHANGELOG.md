@@ -9,6 +9,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Security
 
+
 - **`golang.org/x/crypto` v0.55.0 -> v0.56.0 across all four modules** (#201).
   Clears GO-2026-6355 and GO-2026-6354, both reachable from this repository —
   govulncheck names the trace as `pkg/ssh/session/dial.go:217:50`,
@@ -17,12 +18,31 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   simultaneously.
 
 ### Fixed
-
 - **`web/desktop` module pins are no longer stale** (#205). The release path
   enumerated three modules and this repository has four, so `web/desktop` was
   left on the pre-release tags by both v0.9.0-alpha and v0.9.1-alpha and `make
   vet` failed, taking `main` red on Lint. The durable fix for the release path
   itself is tracked separately.
+
+
+- **`cert_der` PIV factor metadata is decoded as base64** (#199 follow-up).
+  `pkg/auth_factors.decodeCertificate` named its variable `derB64` but passed
+  the value straight to `x509.ParseCertificate` with no decode. Because
+  `AuthFactor.Metadata` is a `map[string]string` that round-trips through
+  JSON, and raw DER is not valid UTF-8, `cert_der` was a form that could
+  either be stored faithfully or parsed — never both — while
+  `MissingChallengeFieldError{Field: "cert_pem|cert_der"}` advertised it as an
+  equal alternative to `cert_pem`. A caller who followed that message got a
+  PIV factor that resolved normally and failed verification at login. The
+  value is now standard base64 of the DER, and the doc comment says so.
+
+  Raw DER in `cert_der` is now **rejected** rather than accepted, deliberately:
+  accepting both forms would restore the ambiguity the defect is about, and a
+  raw-DER value that has crossed any encoded transport is already corrupted.
+  Nothing in the stack emits `cert_der` — go-xkms's own PIV factor records the
+  certificate as PEM in `Enrollment.PublicKey`, and go-quicbaas requires
+  `cert_pem` — so the accepted form is now unambiguous and that downstream
+  narrowing can be lifted.
 
 
 ### Changed

@@ -1,6 +1,6 @@
 # Auth Factors — Architecture
 
-> **Status: NORMATIVE** · Feature: `auth-factors` · Repo: `go-xkms` · Last verified: 2026-08-19
+> **Status: NORMATIVE** · Feature: `auth-factors` · Repo: `go-xkms` · Last verified: 2026-09-03
 
 ## The problem
 
@@ -113,10 +113,13 @@ and qrdb composes the answers into an authentication decision.
 - **`PKCS11Mechanism` is recorded on the enrollment**, not chosen at
   verification. Default `CKM_ECDSA_SHA256`. An attacker who could pick the
   mechanism at verification time could downgrade it.
-- **Software PIV is a development convenience.** With `PIVGenerator` nil the
-  factor is software-backed — it proves possession of a key, not possession of a
-  card. Inject a PKCS#11 or TPM2 generator for deployments where the distinction
-  matters.
+- **Software PIV is a development convenience, and must be asked for by name.**
+  With `PIVGenerator` nil the factor is software-backed — it proves possession of
+  a key, not possession of a card. That substitution is silent and the resulting
+  enrollment is indistinguishable from a hardware one, so any path where an
+  operator named PIV expecting a smartcard sets `RequirePIVGenerator` and gets a
+  refusal instead. Inject a PKCS#11 or TPM2 generator for deployments where the
+  distinction matters.
 - **mTLS proves certificate possession, not identity.** Binding a certificate to
   a user is qrdb's cert-binding scheme, not this package's.
 

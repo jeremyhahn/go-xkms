@@ -35,13 +35,24 @@ type GeneratorAvailability interface {
 
 // Available reports whether PIV enrollment can proceed right now.
 //
-// It delegates to the configured generator when that generator can answer,
-// and otherwise reports available: a software generator has no card to be
-// missing, and reporting it unavailable would block software-only deployments
-// from enrolling a PIV factor they can legitimately use.
+// It answers about the generator the deployment actually configured, in three
+// cases:
+//
+//   - No generator, and Config.RequireGenerator set: unavailable. The
+//     deployment asked for a card and none is attached, so refusing here is
+//     the whole point — the alternative is a software credential recorded as
+//     if it were the smartcard the operator presented.
+//   - A generator that implements GeneratorAvailability: its answer, which is
+//     how an attached-but-empty reader is caught before any state changes.
+//   - Anything else: available. A software generator has no card to be
+//     missing, and reporting it unavailable would block software-only
+//     deployments from enrolling a PIV factor they can legitimately use.
 func (f *Factor) Available(ctx context.Context) (bool, string) {
 	if f == nil {
 		return false, "PIV factor is not configured"
+	}
+	if f.cfg.Generator == nil {
+		return false, NoGeneratorReason
 	}
 	probe, ok := f.cfg.Generator.(GeneratorAvailability)
 	if !ok {

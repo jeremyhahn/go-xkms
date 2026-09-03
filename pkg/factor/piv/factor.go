@@ -26,6 +26,10 @@
 // For hardware-backed deployments (PKCS#11 / TPM2), construct a
 // PIVKeyGenerator that talks to the hardware backend and inject it via
 // piv.Config.Generator. The Factor itself is hardware-agnostic.
+//
+// A deployment that asked for hardware by name should also set
+// piv.Config.RequireGenerator, which turns a missing generator into a refusal
+// at preflight rather than a silently software-backed credential.
 package piv
 
 import (
@@ -62,8 +66,21 @@ const (
 // key generator is used by default with slot 9a and ecdsap256.
 type Config struct {
 	// Generator produces crypto.Signers for PIV slots. When nil, a
-	// software-only generator (xkms.NewSoftwarePIVKeyGenerator) is used.
+	// software-only generator (xkms.NewSoftwarePIVKeyGenerator) is used
+	// unless RequireGenerator is set.
 	Generator xkms.PIVKeyGenerator
+
+	// RequireGenerator suppresses the software substitution above. With no
+	// Generator attached the Factor then reports itself unavailable at
+	// preflight and refuses to enroll, instead of quietly producing a
+	// software credential that is recorded and used exactly like a hardware
+	// one.
+	//
+	// Set it wherever the deployment asked for a smartcard by name — the
+	// administrator-enrollment path does, from
+	// AdminEnrollmentConfig.AllowSoftwarePIV. Leave it clear for tests and
+	// software-only deployments, which legitimately want the substitution.
+	RequireGenerator bool
 
 	// DefaultSlot is the PIV slot used when params.MethodParams["slot"] is
 	// not supplied. Defaults to pivcert.PIVSlotAuthentication ("9a").
@@ -89,7 +106,7 @@ type Factor struct {
 // New constructs a PIV Factor. The cfg.Generator is the only injection
 // point; everything else is optional and falls back to canonical defaults.
 func New(cfg Config) *Factor {
-	if cfg.Generator == nil {
+	if cfg.Generator == nil && !cfg.RequireGenerator {
 		cfg.Generator = xkms.NewSoftwarePIVKeyGenerator()
 	}
 	if cfg.DefaultSlot == "" {
@@ -116,6 +133,11 @@ func (f *Factor) Name() string { return FactorName }
 func (f *Factor) Enroll(_ context.Context, params *qrdbsdk.AuthFactorEnrollParams) (*qrdbsdk.AuthFactorEnrollment, error) {
 	if params == nil {
 		return nil, &qrdbsdk.AuthFactorEnrollmentInvalidError{Reason: "params must not be nil"}
+	}
+	// Preflight is optional in the ceremony contract, so the refusal is
+	// repeated here rather than trusted to Available alone.
+	if f.cfg.Generator == nil {
+		return nil, &GeneratorUnattachedError{}
 	}
 
 	slot := f.cfg.DefaultSlot
@@ -221,6 +243,9 @@ func (f *Factor) Verify(_ context.Context, challenge *qrdbsdk.AuthFactorChalleng
 // PIVKeyGenerator. Exposed so test/custodian-side code can produce a
 // signature without re-implementing the signer lookup.
 func (f *Factor) SignNonce(_ context.Context, slot pivcert.PIVSlot, nonce []byte) ([]byte, error) {
+	if f.cfg.Generator == nil {
+		return nil, &GeneratorUnattachedError{}
+	}
 	cn := "PIV " + string(slot)
 	signer, err := f.cfg.Generator.GetPIVSigner(slot, cn)
 	if err != nil {

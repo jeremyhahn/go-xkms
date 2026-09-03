@@ -20,6 +20,7 @@ import (
 	"github.com/jeremyhahn/go-xkms/pkg/factor"
 	xkmsfido2 "github.com/jeremyhahn/go-xkms/pkg/factor/fido2"
 	pkgfido2 "github.com/jeremyhahn/go-xkms/pkg/fido2"
+	xkms "github.com/jeremyhahn/go-xkms/pkg/xkms"
 )
 
 // This file is the reusable administrator-enrollment orchestration for the
@@ -70,6 +71,23 @@ type AdminEnrollmentConfig struct {
 	// preflight rather than midway through the ceremony.
 	FIDO2Handler *pkgfido2.FIDO2Handler
 
+	// PIVGenerator produces keys in an attached smartcard's PIV slots. It is
+	// the PIV counterpart of FIDO2Handler: a console process that can reach a
+	// card reader attaches a hardware-backed generator (PKCS#11 / TPM2) here.
+	//
+	// Nil makes a planned piv factor fail at preflight, unless
+	// AllowSoftwarePIV opts the deployment into a software credential.
+	PIVGenerator xkms.PIVKeyGenerator
+
+	// AllowSoftwarePIV opts a software-only deployment into a software-backed
+	// administrator PIV credential when no PIVGenerator is attached.
+	//
+	// It is opt-IN by name because the omission case is the dangerous one: an
+	// operator who ran with --admin-factor piv holding a smartcard would
+	// otherwise receive a software key, enrolled and recorded identically to
+	// a hardware one, with nothing in the result to tell them apart.
+	AllowSoftwarePIV bool
+
 	// AdminCertPEM is the administrator's client certificate as issued by the
 	// ceremony. The mTLS factor binds to it, which is what makes that
 	// certificate an actual login credential rather than just a file on disk.
@@ -82,8 +100,13 @@ type AdminEnrollmentConfig struct {
 }
 
 // NewAdminFactorRegistry builds the canonical go-xkms factor registry with the
-// attached-authenticator driver wired in, returning the registry and the FIDO2
+// attached-hardware drivers wired in, returning the registry and the FIDO2
 // local ceremony that drives it.
+//
+// PIV is fail-closed here, unlike the library default: cfg.PIVGenerator is
+// passed through, and with none attached the registered piv factor refuses
+// rather than substituting a software generator. Software PIV remains
+// reachable, but only by naming AllowSoftwarePIV.
 //
 // The default fido2 factor is REPLACED rather than supplemented: Register
 // refuses a duplicate name, and a factor without the local ceremony would
@@ -94,7 +117,9 @@ func NewAdminFactorRegistry(cfg AdminEnrollmentConfig) (*qrdbsdk.AuthFactorRegis
 	local := xkmsfido2.NewLocalCeremony(cfg.FIDO2Handler, 0)
 
 	registry, err := factor.NewDefaultRegistry(factor.Config{
-		FIDO2RPID: cfg.RelyingPartyID,
+		PIVGenerator:        cfg.PIVGenerator,
+		RequirePIVGenerator: !cfg.AllowSoftwarePIV,
+		FIDO2RPID:           cfg.RelyingPartyID,
 	})
 	if err != nil {
 		return nil, nil, err

@@ -24,6 +24,7 @@ import (
 	"crypto/sha256"
 	"crypto/x509"
 	"crypto/x509/pkix"
+	"encoding/base64"
 	"encoding/pem"
 	"errors"
 	"math/big"
@@ -389,17 +390,17 @@ func TestPIVHardwareFactorVerifier_UnsupportedKeyType(t *testing.T) {
 // decodeCertificate: cert_der fallback path and bad DER
 // ---------------------------------------------------------------------------
 
+// TestDecodeCertificate_CertDER_Valid verifies cert_der is standard base64 of
+// the DER. Metadata round-trips through JSON as a string map, so the encoded
+// form is the only one that both stores faithfully and parses at login.
 func TestDecodeCertificate_CertDER_Valid(t *testing.T) {
 	fx := newPIVTestFixture(t)
-	// cert_der carries the raw DER bytes (not base64 — the code does
-	// x509.ParseCertificate([]byte(derB64)) so we pass the DER bytes directly
-	// as a string).
 	factor := &qrdbsdk.AuthFactor{
 		ID:     "f",
 		Type:   qrdbsdk.AuthFactorPIV,
 		UserID: 1,
 		Metadata: map[string]string{
-			"cert_der": string(fx.leafDER),
+			"cert_der": base64.StdEncoding.EncodeToString(fx.leafDER),
 		},
 	}
 	cert, err := decodeCertificate(factor)
@@ -411,13 +412,52 @@ func TestDecodeCertificate_CertDER_Valid(t *testing.T) {
 	}
 }
 
-func TestDecodeCertificate_CertDER_BadBytes(t *testing.T) {
+// TestDecodeCertificate_CertDER_RawDERRejected pins the corrected contract:
+// raw DER stuffed into the string map is not valid UTF-8 and cannot survive a
+// JSON round trip, so it is refused at decode rather than accepted here and
+// failing at login on the wire path.
+func TestDecodeCertificate_CertDER_RawDERRejected(t *testing.T) {
+	fx := newPIVTestFixture(t)
 	factor := &qrdbsdk.AuthFactor{
 		ID:     "f",
 		Type:   qrdbsdk.AuthFactorPIV,
 		UserID: 1,
 		Metadata: map[string]string{
-			"cert_der": "not-valid-der-bytes",
+			"cert_der": string(fx.leafDER),
+		},
+	}
+	_, err := decodeCertificate(factor)
+	var cde *CertDecodeError
+	if !errors.As(err, &cde) {
+		t.Fatalf("expected *CertDecodeError for raw DER, got %T (%v)", err, err)
+	}
+}
+
+func TestDecodeCertificate_CertDER_BadBase64(t *testing.T) {
+	factor := &qrdbsdk.AuthFactor{
+		ID:     "f",
+		Type:   qrdbsdk.AuthFactorPIV,
+		UserID: 1,
+		Metadata: map[string]string{
+			"cert_der": "not-valid-base64!!",
+		},
+	}
+	_, err := decodeCertificate(factor)
+	var cde *CertDecodeError
+	if !errors.As(err, &cde) {
+		t.Fatalf("expected *CertDecodeError for bad base64, got %T (%v)", err, err)
+	}
+}
+
+// TestDecodeCertificate_CertDER_WellFormedBase64BadDER verifies the second
+// failure stage: the value decodes as base64 but is not a certificate.
+func TestDecodeCertificate_CertDER_WellFormedBase64BadDER(t *testing.T) {
+	factor := &qrdbsdk.AuthFactor{
+		ID:     "f",
+		Type:   qrdbsdk.AuthFactorPIV,
+		UserID: 1,
+		Metadata: map[string]string{
+			"cert_der": base64.StdEncoding.EncodeToString([]byte("not-valid-der-bytes")),
 		},
 	}
 	_, err := decodeCertificate(factor)

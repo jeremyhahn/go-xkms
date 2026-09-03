@@ -21,6 +21,7 @@ import (
 	"crypto/rsa"
 	"crypto/sha256"
 	"crypto/x509"
+	"encoding/base64"
 	"encoding/pem"
 
 	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
@@ -37,9 +38,9 @@ import (
 // The adapter's Verify path:
 //
 //  1. Confirm factor is active (RevokedAt == nil).
-//  2. Decode the persisted certificate from factor.Metadata["cert_pem"]
-//     (or fall back to the credential blob if the persisted form is the
-//     DER-encoded cert).
+//  2. Decode the persisted certificate from factor.Metadata["cert_pem"],
+//     or from factor.Metadata["cert_der"] when the persisted form is
+//     base64-encoded DER.
 //  3. Confirm the challenge's certificate fingerprint matches the
 //     persisted lookup-key (factor.Credential is SHA-256(cert)).
 //  4. Verify the chain against the supplied root pool.
@@ -77,6 +78,9 @@ func (v *PIVHardwareFactorVerifier) Type() qrdbtransport.FactorType {
 //   - challenge.Signature: DER-encoded ECDSA or RSA signature over Nonce.
 //   - factor.Metadata["cert_pem"] or factor.Metadata["cert_der"]:
 //     the slot certificate that holds the verification public key.
+//     cert_pem is PEM; cert_der is standard base64 of the DER, because
+//     Metadata is a string map that round-trips through JSON and raw DER
+//     is not valid UTF-8. cert_pem wins when both are present.
 func (v *PIVHardwareFactorVerifier) Verify(ctx context.Context, factor *qrdbsdk.AuthFactor, challenge qrdbtransport.VerifyChallenge) error {
 	if v == nil || v.roots == nil {
 		return &NilTrustPoolError{}
@@ -131,7 +135,8 @@ func (v *PIVHardwareFactorVerifier) Verify(ctx context.Context, factor *qrdbsdk.
 	return nil
 }
 
-// decodeCertificate pulls an x509.Certificate from the factor's metadata.
+// decodeCertificate pulls an x509.Certificate from the factor's metadata,
+// accepting cert_pem (PEM) or cert_der (standard base64 of the DER).
 func decodeCertificate(factor *qrdbsdk.AuthFactor) (*x509.Certificate, error) {
 	if factor.Metadata != nil {
 		if pemBytes := factor.Metadata["cert_pem"]; pemBytes != "" {
@@ -146,7 +151,14 @@ func decodeCertificate(factor *qrdbsdk.AuthFactor) (*x509.Certificate, error) {
 			return cert, nil
 		}
 		if derB64 := factor.Metadata["cert_der"]; derB64 != "" {
-			cert, err := x509.ParseCertificate([]byte(derB64))
+			// Metadata is a map[string]string that round-trips through JSON,
+			// and raw DER is not valid UTF-8: it does not survive that trip
+			// intact. cert_der is therefore standard base64, which does.
+			der, err := base64.StdEncoding.DecodeString(derB64)
+			if err != nil {
+				return nil, &CertDecodeError{Reason: "DER base64 decode: " + err.Error()}
+			}
+			cert, err := x509.ParseCertificate(der)
 			if err != nil {
 				return nil, &CertDecodeError{Reason: "DER parse: " + err.Error()}
 			}

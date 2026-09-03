@@ -1,6 +1,6 @@
 # Init Ceremony — Engineering Contract
 
-> **Status: NORMATIVE** · Feature: `init-ceremony` · Repo: `go-xkms` · Last verified: 2026-08-19
+> **Status: NORMATIVE** · Feature: `init-ceremony` · Repo: `go-xkms` · Last verified: 2026-09-03
 
 ## Exported surface — `pkg/init`
 
@@ -57,6 +57,27 @@ func EnrollAdminFactors(…)
 
 `PreflightAdminFactors` runs first so a missing authenticator is discovered
 before the ceremony commits anything.
+
+**Hardware seams.** `AdminEnrollmentConfig` carries one field per hardware
+driver the console process can attach:
+
+| Field | Factor | Nil / unset behaviour |
+|---|---|---|
+| `FIDO2Handler *pkgfido2.FIDO2Handler` | `fido2` | Default fido2 factor stays registered; the browser path still works |
+| `PIVGenerator xkms.PIVKeyGenerator` | `piv` | Planned `piv` **fails preflight** and `Enroll` refuses |
+| `AllowSoftwarePIV bool` | `piv` | Opts a software-only deployment into a software-backed admin PIV credential |
+
+PIV is fail-closed here, unlike the `pkg/factor` library default. An operator
+who ran `--admin-factor piv` holding a smartcard and got a software key would
+have no way to tell: the enrollment succeeds, is recorded identically, and is
+usable. So with no generator attached the registered `piv` factor reports
+`piv.NoGeneratorReason` at preflight and returns
+`*piv.GeneratorUnattachedError` from `Enroll`. Software PIV stays reachable —
+by naming `AllowSoftwarePIV`, never by omission.
+
+`xkmsd init` attaches no PIV generator today, so `xkmsd init --admin-factor
+piv` refuses. That is the intended outcome until a card driver is wired: before
+this change it silently enrolled software.
 
 ### Aliased types — all go-qrdb's
 
@@ -131,7 +152,8 @@ supplied by `xkmsd init`. The go-xkms-side inputs:
 - **`spiffeTrustDomain`** — empty disables SPIFFE SAN stamping; non-empty stamps
   `spiffe://<td>/tenant/system/user/<CN>` on SO certificates.
 - **`AdminEnrollmentConfig`** — which factors to enroll, relying-party identity,
-  passkey device and PIN, FIDO2 handler.
+  passkey device and PIN, FIDO2 handler, PIV generator, and the explicit
+  `AllowSoftwarePIV` opt-in.
 - **Threshold** — `ThresholdOptions`, or `NoopThresholdInitializer` where
   threshold initialization does not apply.
 
@@ -147,6 +169,7 @@ certificate store. Admin factors are **not** persisted — see the gap above.
 ## Test strategy
 
 - **Unit** — `pkg/init/ceremony_test.go`, `admin_enrollment_test.go`,
+  `admin_enrollment_piv_test.go`,
   `admin_factors_test.go`, `firstboot_adapter_test.go`, `threshold_test.go`,
   `coverage_boost_test.go`.
 - **End to end** — `pkg/api/rest/init_ceremony_e2e_test.go`,

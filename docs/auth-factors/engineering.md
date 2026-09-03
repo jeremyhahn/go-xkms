@@ -1,6 +1,6 @@
 # Auth Factors — Engineering Contract
 
-> **Status: NORMATIVE** · Feature: `auth-factors` · Repo: `go-xkms` · Last verified: 2026-08-19
+> **Status: NORMATIVE** · Feature: `auth-factors` · Repo: `go-xkms` · Last verified: 2026-09-03
 
 ## Exported surface — `pkg/factor`
 
@@ -8,6 +8,7 @@
 // Config configures the default factor registry. The zero value is valid.
 type Config struct {
 	PIVGenerator        xkms.PIVKeyGenerator // nil → software-only generator
+	RequirePIVGenerator bool                 // true → nil PIVGenerator refuses instead
 	PKCS11Mechanism     string               // empty → CKM_ECDSA_SHA256
 	FIDO2RPID           string               // empty → package default
 	ChallengeTTLSeconds int                  // zero → each factor's default (5 minutes)
@@ -26,7 +27,7 @@ Per-factor constructors and configs:
 
 | Factor | Package | Config fields |
 |---|---|---|
-| `piv` | `pkg/factor/piv` | `Generator xkms.PIVKeyGenerator`, `ChallengeTTLSeconds int` |
+| `piv` | `pkg/factor/piv` | `Generator xkms.PIVKeyGenerator`, `RequireGenerator bool`, `ChallengeTTLSeconds int` |
 | `pkcs11` | `pkg/factor/pkcs11` | `DefaultMechanism string`, `ChallengeTTLSeconds int` |
 | `fido2` | `pkg/factor/fido2` | `RPID string`, `ChallengeTTLSeconds int` |
 | `mtls` | `pkg/factor/mtls` | `ChallengeTTLSeconds int` |
@@ -89,6 +90,12 @@ capability. The four knobs are `factor.Config` above. What to set in practice:
 - **`PIVGenerator`** — inject a PKCS#11- or TPM2-backed generator for hardware
   PIV. Leaving it nil in production means the "PIV factor" proves possession of
   a software key.
+- **`RequirePIVGenerator`** — set it wherever the deployment named PIV expecting
+  hardware. A nil `PIVGenerator` then yields a `piv` factor that reports itself
+  unavailable (`piv.NoGeneratorReason`) and whose `Enroll` returns
+  `*piv.GeneratorUnattachedError`, instead of substituting software. The
+  administrator-enrollment path sets it by default; see
+  [init-ceremony/engineering.md](../init-ceremony/engineering.md).
 - **`FIDO2RPID`** — set it to your actual relying-party id. It is recorded on
   every enrollment, so changing it later invalidates them.
 - **`PKCS11Mechanism`** — override only with reason; the default

@@ -33,9 +33,19 @@ import (
 // certificate-possession mTLS factors.
 type Config struct {
 	// PIVGenerator produces crypto.Signers for PIV slots. When nil, a
-	// software-only generator is used. Inject a hardware-backed generator
-	// (PKCS#11 / TPM2) for hardware PIV deployments.
+	// software-only generator is used unless RequirePIVGenerator is set.
+	// Inject a hardware-backed generator (PKCS#11 / TPM2) for hardware PIV
+	// deployments.
 	PIVGenerator xkms.PIVKeyGenerator
+
+	// RequirePIVGenerator suppresses the software substitution above, so a
+	// registry built with no PIVGenerator carries a piv factor that reports
+	// itself unavailable and refuses to enroll rather than producing a
+	// software credential indistinguishable from a smartcard one.
+	//
+	// Set it whenever the deployment named PIV expecting hardware. Leave it
+	// clear for tests and software-only deployments.
+	RequirePIVGenerator bool
 
 	// PKCS11Mechanism overrides the default PKCS#11 signing mechanism recorded
 	// on enrollments. Empty uses the package default (CKM_ECDSA_SHA256).
@@ -59,6 +69,7 @@ func DefaultFactors(cfg Config) []qrdbsdk.AuthFactorPlugin {
 	return []qrdbsdk.AuthFactorPlugin{
 		piv.New(piv.Config{
 			Generator:           cfg.PIVGenerator,
+			RequireGenerator:    cfg.RequirePIVGenerator,
 			ChallengeTTLSeconds: cfg.ChallengeTTLSeconds,
 		}),
 		pkcs11.New(pkcs11.Config{

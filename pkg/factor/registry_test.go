@@ -14,6 +14,7 @@
 package factor
 
 import (
+	"context"
 	"testing"
 
 	"github.com/jeremyhahn/go-xkms/pkg/factor/fido2"
@@ -155,5 +156,56 @@ func TestNewDefaultRegistry_DelegatesDefaultFactors(t *testing.T) {
 		if found.Name() != f.Name() {
 			t.Fatalf("registry.Lookup(%q).Name() = %q", f.Name(), found.Name())
 		}
+	}
+}
+
+// TestDefaultFactors_RequirePIVGeneratorReachesThePIVFactor verifies the
+// fail-closed setting is threaded from factor.Config into the piv factor.
+// Without the wiring the registry silently carries a software-backed piv
+// factor that reports itself available — issue #199.
+func TestDefaultFactors_RequirePIVGeneratorReachesThePIVFactor(t *testing.T) {
+	registry, err := NewDefaultRegistry(Config{RequirePIVGenerator: true})
+	if err != nil {
+		t.Fatalf("NewDefaultRegistry: %v", err)
+	}
+	plugin, err := registry.Lookup(piv.FactorName)
+	if err != nil {
+		t.Fatalf("registry is missing the piv factor: %v", err)
+	}
+	probe, ok := plugin.(interface {
+		Available(context.Context) (bool, string)
+	})
+	if !ok {
+		t.Fatal("the piv factor must report availability so preflight can refuse")
+	}
+	available, reason := probe.Available(context.Background())
+	if available {
+		t.Fatal("piv must report unavailable when a generator is required and none is attached")
+	}
+	if reason != piv.NoGeneratorReason {
+		t.Errorf("reason = %q, want %q", reason, piv.NoGeneratorReason)
+	}
+}
+
+// TestDefaultFactors_DefaultConfigKeepsSoftwarePIVAvailable pins the library
+// default the fail-closed setting deliberately does not change: a caller that
+// never asked for hardware still gets a usable software PIV factor.
+func TestDefaultFactors_DefaultConfigKeepsSoftwarePIVAvailable(t *testing.T) {
+	registry, err := NewDefaultRegistry(Config{})
+	if err != nil {
+		t.Fatalf("NewDefaultRegistry: %v", err)
+	}
+	plugin, err := registry.Lookup(piv.FactorName)
+	if err != nil {
+		t.Fatalf("registry is missing the piv factor: %v", err)
+	}
+	probe, ok := plugin.(interface {
+		Available(context.Context) (bool, string)
+	})
+	if !ok {
+		t.Fatal("the piv factor must report availability so preflight can refuse")
+	}
+	if available, reason := probe.Available(context.Background()); !available {
+		t.Fatalf("Available() = false (%q), want true for the software default", reason)
 	}
 }
