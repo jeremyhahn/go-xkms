@@ -867,6 +867,7 @@ test:
 test-scripts:
 	@echo "$(CYAN)$(BOLD)→ Running shell script tests...$(RESET)"
 	@bash test/scripts/clean-test-containers.test.sh
+	@bash test/scripts/release-alpha.test.sh
 	@echo "$(GREEN)✓ Shell script tests passed$(RESET)"
 
 .PHONY: test-go
@@ -4325,27 +4326,31 @@ coverage-%:
 
 
 
-SUBMODULE_TAGS := sdk/go xkey
 # Builds never resolve through a workspace: modules come from Gitea tags
 # (dependency-resolution.md §2). Immunizes against stray go.work files.
 export GOWORK=off
 
 # ---- dependency-resolution.md targets (2026-08-13 cutover) ----
-# SUBMODULE_TAGS lists nested modules tagged in lockstep with the root
-# (release-versioning.md P2). deps-latest runs before compiling in a
-# consumer repo; release-alpha publishes this repo's next -alpha tag to dev.
-# deps-latest picks the highest tag INCLUDING -alpha prereleases — bare
-# 'go get @latest' ignores prereleases and would downgrade to legacy v0.0.0.
+# deps-latest runs before compiling in a consumer repo; release-alpha publishes
+# a stated -alpha version of this repo to dev. deps-latest picks the highest
+# tag INCLUDING -alpha prereleases — bare 'go get @latest' ignores prereleases
+# and would downgrade to legacy v0.0.0.
+#
+# The lockstep tag namespaces and the reciprocal go.mod pin edges are declared
+# in scripts/release-alpha.sh, which owns them. There is no second copy here to
+# drift out of step with it.
 
 .PHONY: release-alpha deps-latest
 
+## release-alpha: Cut and publish an -alpha release. VERSION is REQUIRED.
+## Usage: make release-alpha VERSION=0.9.2-alpha [BUMP=minor] [DRY_RUN=1]
+## The version is stated, never guessed; BUMP, when given, declares what kind
+## of release this is and is refused unless it agrees with VERSION.
 release-alpha:
-	@V=$$(git describe --tags --abbrev=0 --match 'v*' 2>/dev/null || echo v0.0.0-alpha); \
-	NEXT=$$(echo $$V | awk -F'[.-]' '{printf "v%s.%s.%d-alpha", substr($$1,2), $$2, $$3+1}'); \
-	echo $${NEXT#v} > VERSION && git add VERSION && git commit -q -m "chore(release): $$NEXT" || true; \
-	git tag $$NEXT; \
-	for s in $(SUBMODULE_TAGS); do git tag "$$s/$$NEXT"; done; \
-	git push dev HEAD --tags && echo "Tagged $$NEXT"
+	@bash scripts/release-alpha.sh --version "$(VERSION)" \
+		$(if $(BUMP),--bump "$(BUMP)") \
+		$(if $(DRY_RUN),--dry-run) \
+		$(if $(RELEASE_REMOTE),--remote "$(RELEASE_REMOTE)")
 
 deps-latest:
 	@GOWORK=off sh -c ' \

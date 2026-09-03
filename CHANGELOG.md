@@ -70,6 +70,42 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **`make release-alpha` cuts a correct release, and takes the version as an
+  argument** (#58). The old seven-line recipe had four defects, every one of
+  them measured while releasing v0.7.8-alpha and v0.8.0-alpha by hand: it could
+  only ever bump PATCH, so a breaking pre-1.0 release was not expressible; it
+  wrote `VERSION` and nothing else, leaving all nine reciprocal `go.mod` pins
+  at the previous version, which no in-repo build can notice because they all
+  resolve through local `replace` directives; a bare `git tag` aborted under
+  the `tag.gpgsign=true` that `agent-git.sh` sets, so the target was unusable
+  by the only thing that releases these repos; and `git push --tags` published
+  every local tag rather than the three it created.
+
+  The target is now `scripts/release-alpha.sh`, and the version is **stated**:
+  `make release-alpha VERSION=0.9.2-alpha [BUMP=minor]`. Deriving it asks an
+  open question — what is the greatest version anywhere? — whose answer depends
+  on local tags, remote tags, reachability, malformed tags and three lockstep
+  namespaces. Validating a stated one asks a closed question against a fixed
+  checklist. `BUMP` is a declared intent, refused unless it agrees with
+  `VERSION`, and it is what makes a breaking release expressible.
+
+  The nine pin edges are **declared**, not counted. Comparing a count of pins
+  found at the current version with a count at the next fails open twice over:
+  a stale edge is in neither total and a deleted one is absent from both, so
+  the totals match and the release ships a module that no longer pins its
+  sibling. Each edge is checked by name at the current version before anything
+  is written and at the new version after. Tags are annotated, explicitly
+  signed with the signature confirmed on the object before any push, and
+  published with `--atomic` so a lockstep release cannot half-publish immutable
+  module tags.
+
+  Two bounds rather than guards: the script refuses to start on a dirty tree,
+  which deletes the "unrelated edits swept into the release commit" class
+  outright, and its CHANGELOG preflight is anchored to the line start exactly
+  as `release.yml` requires, so a heading the workflow would reject is caught
+  before the tags become permanent. Hardening the remaining seams between the
+  first read and the final push is #211, which needs an owner ruling.
+
 - **FLAG DAY: device attestation is now challenge-response (protocol version 2)**
   (#129, #93, owner ruling 2026-08-24). Supersedes the embedded-challenge
   freshness model.
