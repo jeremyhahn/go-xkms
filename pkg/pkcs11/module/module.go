@@ -7230,6 +7230,27 @@ func (m *Module) UnwrapKey(sessionHandle SessionHandle, mechanism *Mechanism, un
 		return ObjectHandle(InvalidHandle), rv
 	}
 
+	// The curve the template names, for an EC target. Without it the service
+	// substitutes P-256 for an empty curve (applyAsymmetricAlgorithm), so a
+	// P-384 or P-521 key reached the backend described as P-256 -- stored under
+	// attributes that misstate the key and reported as ECC_NIST_P256 by
+	// determineKeySpec. UnwrapKeyByIDRequest has always carried TargetCurve and
+	// CryptoManager has always mapped it onto the transport request; this call
+	// site simply never filled it in.
+	//
+	// Only for an ECDSA target: the service consumes a curve for ECDSA and for
+	// nothing else, and backendKeyTypeName maps every key type it does not name
+	// to "symmetric", so looking one up elsewhere would refuse a request over an
+	// attribute that cannot affect its result.
+	var targetCurve string
+	if targetType == "ecdsa" {
+		var curveRV CK_RV
+		targetCurve, curveRV = templateCurveName(template)
+		if curveRV != CKR_OK {
+			return ObjectHandle(InvalidHandle), curveRV
+		}
+	}
+
 	newKeyID, unwrapErr := m.cryptoManager.UnwrapKeyByID(ctx, &UnwrapKeyByIDRequest{
 		WrappedKey:           wrappedKey,
 		UnwrappingKeyID:      unwrapKeyObj.KeyID,
@@ -7240,6 +7261,7 @@ func (m *Module) UnwrapKey(sessionHandle SessionHandle, mechanism *Mechanism, un
 		TargetKeyBackend:     unwrapKeyObj.BackendName,
 		TargetKeyType:        targetType,
 		TargetKeySize:        templateValueLenBits(template),
+		TargetCurve:          targetCurve,
 		TargetExportable:     templateBoolIsTrue(template, CKA_EXTRACTABLE, true),
 	})
 	if unwrapErr != nil {
@@ -7965,6 +7987,33 @@ func templateBoolIsTrue(template []Attribute, attrType AttributeType, fallback b
 		return fallback
 	}
 	return value[0] != 0
+}
+
+// templateCurveName returns the canonical name of the curve the template's
+// CKA_EC_PARAMS names, and CKR_OK.
+//
+// A template naming no curve returns "" rather than an error. PKCS#11 v3.2
+// Table 13 footnote 6 says CKA_EC_PARAMS must NOT be specified when an EC
+// private key is unwrapped -- the wrapped PKCS#8 blob carries the curve -- so
+// the attribute is legitimately absent, and the service's own default stands
+// for those callers. Reading it when it IS present is what lets a caller that
+// names a curve have the key stored describing that curve.
+//
+// A curve the module does not recognise is REFUSED rather than reported as
+// absent. Returning "" there would let the service substitute P-256 for it,
+// which is the silent substitution this function exists to close, and it
+// matches what C_GenerateKeyPair already does with an unrecognised
+// CKA_EC_PARAMS.
+func templateCurveName(template []Attribute) (string, CK_RV) {
+	params, ok := templateAttribute(template, CKA_EC_PARAMS)
+	if !ok {
+		return "", CKR_OK
+	}
+	name, recognized := extractCurveFromParams(params)
+	if !recognized {
+		return "", CKR_CURVE_NOT_SUPPORTED
+	}
+	return name, CKR_OK
 }
 
 // templateValueLenBits reads CKA_VALUE_LEN, which PKCS#11 expresses in bytes,

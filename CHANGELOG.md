@@ -61,6 +61,55 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   simultaneously.
 
 ### Fixed
+- **Software backend: `validateKeyType` no longer blesses ECDSA/Ed25519
+  mismatches** (#53). The validator checked RSA only; ECDSA and Ed25519 fell
+  through a `default:` arm commented *"basic validation is sufficient"* — the
+  fail-open comment pattern — so an **Ed25519 private key declared as
+  ECDSA-P256 imported successfully**, exactly as a consumer measured. Those two
+  are the algorithms the signing policy uses (ed25519 by default, ECDSA-P256
+  under FIPS), so the unvalidated pair was the pair that mattered: everything
+  downstream reasons from the declaration rather than from the key — the
+  storage identifier, the reported key spec, the algorithm a later operation
+  selects — and a key stored under a false description poisons all of them.
+
+  Every supported key type now has an arm (RSA, ECDSA, Ed25519, X25519), public
+  keys of every algorithm are refused rather than only RSA ones, and a key type
+  no arm recognises is refused instead of admitted. The declared EC curve is
+  deliberately **not** compared against the key's own: `PKCS8Backend.ListKeys`
+  reconstructs attributes from an identifier that carries no curve and reports
+  P-256 for every ECDSA key, so copy, migrate and `C_UnwrapKey` all reach the
+  validator through attributes built that way and a curve comparison would
+  refuse working paths rather than catch wrong ones (#156 carries the caveat
+  and the `ListKeys` fix it needs).
+
+  Surveyed the other backends that import asymmetric material: `azurekv` is
+  already fail-closed by type assertion, `awskms` restricts asymmetric import to
+  RSA, and `tpm2`/`pkcs11`/`gcpkms`/`phone` do not parse caller-supplied PKCS#8
+  on this path. `software` was the outlier.
+
+- **MCP `xkms.importKey` can name the algorithm of the key it imports** (#53).
+  `ImportKeyParams` had no key-algorithm field — its `Algorithm` is the
+  *wrapping* algorithm — so the handler built attributes from the key ID alone
+  and imported through the process default backend. The key was stored under an
+  identifier ending in `unknown` that nothing else constructs, and the backend's
+  check of material against its declared type had nothing to check against. The
+  tool now takes `key_type` (required), `key_size` and `curve`, the same fields
+  and vocabulary the REST and gRPC imports already use, and routes through
+  `XKMSService.ImportKey` so all three transports build key attributes in one
+  place and the request's backend is the backend written to.
+
+- **PKCS#11 `C_UnwrapKey` carries the curve the template names** (#53). The
+  unwrap request never set `TargetCurve`, and the service substitutes P-256 for
+  an empty curve, so every EC key unwrapped through the module reached the
+  backend described as P-256 — stored under attributes that misstate the key
+  and reported as `ECC_NIST_P256` by `determineKeySpec`. `CKA_EC_PARAMS` is now
+  resolved through the same `extractCurveFromParams` that `C_GenerateKeyPair`
+  uses, and a value the module does not recognise is answered with
+  `CKR_CURVE_NOT_SUPPORTED` rather than silently defaulted. An absent
+  `CKA_EC_PARAMS` stays legal — v3.2 Table 13 footnote 6 says an EC private
+  key's must not be specified on unwrap — and leaves the previous behaviour
+  unchanged.
+
 - **`web/desktop` module pins are no longer stale** (#205). The release path
   enumerated three modules and this repository has four, so `web/desktop` was
   left on the pre-release tags by both v0.9.0-alpha and v0.9.1-alpha and `make

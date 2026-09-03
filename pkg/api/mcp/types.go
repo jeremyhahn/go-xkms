@@ -441,8 +441,24 @@ type UnwrapKeyResult struct {
 
 // ImportKeyParams represents parameters for importing key material
 type ImportKeyParams struct {
-	KeyID       string            `json:"key_id"`
-	Backend     string            `json:"backend"`
+	KeyID   string `json:"key_id"`
+	Backend string `json:"backend"`
+	// KeyType names the ALGORITHM of the key being imported -- "rsa", "ecdsa",
+	// "ed25519", "symmetric" or "aes" -- and is REQUIRED. It is the same field,
+	// with the same vocabulary, that the gRPC and REST imports take.
+	//
+	// Distinct from Algorithm below, which is the WRAPPING algorithm. The two
+	// were easy to confuse because this field did not exist, so the only
+	// algorithm a caller could name was the wrong one, and the attributes the
+	// import built described no algorithm at all.
+	KeyType string `json:"key_type"`
+	// KeySize is the modulus size in bits for RSA, or the key length in bits
+	// for symmetric material. Zero selects the transport-wide default
+	// (RSA-2048, AES-256).
+	KeySize int `json:"key_size,omitempty"`
+	// Curve names the EC curve for an "ecdsa" import ("P-256", "P-384",
+	// "P-521"). Empty selects P-256, as it does on every other transport.
+	Curve       string            `json:"curve,omitempty"`
 	WrappedKey  []byte            `json:"wrapped_key"`
 	Algorithm   string            `json:"algorithm"`
 	ImportToken []byte            `json:"import_token,omitempty"`

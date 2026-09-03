@@ -1,6 +1,6 @@
 # Key Management — API
 
-> **Status: NORMATIVE** · Feature: `key-management` · Repo: `go-xkms` · Last verified: 2026-08-19
+> **Status: NORMATIVE** · Feature: `key-management` · Repo: `go-xkms` · Last verified: 2026-09-03
 
 ## How the six transports are shaped
 
@@ -65,6 +65,28 @@ route exists on both paths with the same permission by construction.
 | Attest key | `POST /api/v1/attest` | `AttestKey` | same as REST | `xkms.attestKey` | `AttestKey` | `keys:get` |
 | Health | `GET /health`, `/health/live`, `/health/ready`, `/health/startup` | `Health` | same as REST | `xkms.health` | `Health` | public |
 | Capabilities | `GET /api/v1/capabilities` | **MISSING — docs/13** | same as REST | **MISSING — docs/13** | — | public |
+
+### Import names the key's algorithm, on every transport
+
+`ImportKey` takes the algorithm of the key being imported in a `key_type` field
+— `"rsa"`, `"ecdsa"`, `"ed25519"`, `"symmetric"`/`"aes"` — with `key_size` and
+`curve` as its parameters. It is **required**: the algorithm cannot be recovered
+from wrapped material at the service layer, and guessing one stores the key
+under an identifier that does not describe it.
+
+Do not confuse it with `algorithm`, which on every import request names the
+**wrapping** algorithm the material arrived under.
+
+| Transport | field |
+|---|---|
+| REST | `key_type` in `ImportKeyRequest`, with `key_size`, `curve`, `hash`, `aes_key_size` |
+| gRPC | `key_type` in `ImportKeyRequest`, with `key_size`, `curve` |
+| MCP | `key_type` in `xkms.importKey` params, with `key_size`, `curve` |
+
+The MCP tool carried no such field until go-xkms#53: it built attributes from
+the key ID alone, so the key was stored describing no algorithm and the
+backend's check of material against its declared type had nothing to check
+against.
 
 ### Key versioning — declared, unserved
 

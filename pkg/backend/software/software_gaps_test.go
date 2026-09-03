@@ -409,10 +409,13 @@ func TestImportKey_AsymmetricStorageError(t *testing.T) {
 	assert.Contains(t, err.Error(), "failed to store asymmetric key")
 }
 
-// TestValidateKeyType_ECDSADefaultCase verifies validateKeyType's default
-// arm (basic no-op validation for non-RSA key types) is reachable for an
-// ECDSA private key.
-func TestValidateKeyType_ECDSADefaultCase(t *testing.T) {
+// TestValidateKeyType_ECDSAMatchingAttrs verifies validateKeyType admits an
+// ECDSA private key whose attributes declare ECDSA.
+//
+// It used to be named for the no-op default arm it reached, which go-xkms#53
+// replaced with a dedicated ECDSA arm and a refusing default; the property
+// worth keeping is that a correct declaration is still admitted.
+func TestValidateKeyType_ECDSAMatchingAttrs(t *testing.T) {
 	ecdsaKey, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
 	require.NoError(t, err)
 

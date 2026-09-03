@@ -16,6 +16,9 @@ package software
 import (
 	"context"
 	"crypto"
+	"crypto/ecdh"
+	"crypto/ecdsa"
+	"crypto/ed25519"
 	"crypto/rand"
 	"crypto/rsa"
 	"crypto/x509"
@@ -1002,6 +1005,45 @@ func determineKeySpec(attrs *types.KeyAttributes) string {
 	}
 }
 
+// validateKeyType checks parsed key material against the attributes the caller
+// declared for it, and refuses the pair when they disagree.
+//
+// The import path is where a caller-supplied description meets real key
+// material, and everything downstream reasons from the description rather than
+// from the key: the storage identifier types.KeyAttributes.ID builds, the key
+// spec determineKeySpec reports, the algorithm a later operation selects. A key
+// stored under a false description poisons every one of them, so each supported
+// key type has an arm here and a type no arm recognises is refused.
+//
+// Until go-xkms#53 only RSA was checked. ECDSA and Ed25519 fell through a
+// default arm commented "basic validation is sufficient" -- which validated
+// nothing -- so an Ed25519 private key declared as ECDSA-P256 imported
+// successfully. Those two are the algorithms the signing policy uses (ed25519
+// by default, ECDSA-P256 under FIPS), so the unvalidated pair was the pair that
+// mattered.
+//
+// # The declared curve is NOT compared against the key's own
+//
+// go-xkms#53 asks for it and it is deliberately absent, because no legitimate
+// producer can satisfy the comparison today. PKCS8Backend.ListKeys reconstructs
+// attributes from the storage key identifier, which carries no curve, and
+// hardcodes P-256 for every ECDSA key. Both CopyKey paths, the migrator and the
+// PKCS#11 C_UnwrapKey path all reach this validator through attributes built
+// that way, so comparing curves refuses every copy, migrate and unwrap of a
+// non-P-256 EC key -- the export succeeds and the import refuses. A check a
+// legitimate producer structurally cannot satisfy rejects working paths rather
+// than catching wrong ones.
+//
+// What that leaves open, stated rather than implied: a P-384 key can be
+// imported while declaring P-256. That is inert today -- the curve is not part
+// of the identifier and Signer recovers it from the DER -- and stops being
+// inert the moment anything trusts attrs.ECCAttributes for a decision.
+// go-xkms#156 carries the caveat and the ListKeys fix the comparison needs.
+//
+// The RSA size comparison below is kept because it predates go-xkms#53:
+// removing it would delete a control the backend already has. Its nil guard is
+// load-bearing for the same reason the curve check is absent -- several
+// backends reconstruct KeyAlgorithm with the attribute block left nil.
 func validateKeyType(privateKey crypto.PrivateKey, attrs *types.KeyAttributes) error {
 	switch key := privateKey.(type) {
 	case *rsa.PrivateKey:
@@ -1011,11 +1053,34 @@ func validateKeyType(privateKey crypto.PrivateKey, attrs *types.KeyAttributes) e
 		if attrs.RSAAttributes != nil && key.N.BitLen() != attrs.RSAAttributes.KeySize {
 			return &errs.Detail{Err: backend.ErrInvalidAttributes, Detail: fmt.Sprintf("RSA key size mismatch key is %d bits but attributes specify %d", key.N.BitLen(), attrs.RSAAttributes.KeySize)}
 		}
-	case *rsa.PublicKey:
+	case *ecdsa.PrivateKey:
+		if attrs.KeyAlgorithm != x509.ECDSA {
+			return &errs.Detail{Err: backend.ErrInvalidKeyType, Detail: fmt.Sprintf("expected ECDSA key but attributes specify %s", attrs.KeyAlgorithm)}
+		}
+	case ed25519.PrivateKey:
+		if attrs.KeyAlgorithm != x509.Ed25519 {
+			return &errs.Detail{Err: backend.ErrInvalidKeyType, Detail: fmt.Sprintf("expected Ed25519 key but attributes specify %s", attrs.KeyAlgorithm)}
+		}
+	case *ecdh.PrivateKey:
+		// X25519 agreement keys are declared by X25519Attributes rather than by
+		// KeyAlgorithm, which has no x509 constant for them (see
+		// PKCS8Backend.GenerateKey), and x509.ParsePKCS8PrivateKey returns an
+		// *ecdh.PrivateKey for them. Without this arm the refusing default
+		// below would break a key type the backend supports.
+		if attrs.X25519Attributes == nil {
+			return &errs.Detail{Err: backend.ErrInvalidKeyType, Detail: fmt.Sprintf("expected an ECDH agreement key to declare X25519Attributes but attributes specify %s", attrs.KeyAlgorithm)}
+		}
+		if key.Curve() != ecdh.X25519() {
+			return &errs.Detail{Err: backend.ErrInvalidAttributes, Detail: "ECDH key is not on curve X25519"}
+		}
+	case *rsa.PublicKey, *ecdsa.PublicKey, ed25519.PublicKey, *ecdh.PublicKey:
 		return &errs.Detail{Err: backend.ErrInvalidKeyType, Detail: "expected private key but got public key"}
 	default:
-		// For other key types (ECDSA, Ed25519), basic validation is sufficient
-		// More detailed validation can be added if needed
+		// Refusing the unknown case is the point. This validation is the
+		// backstop against a key stored under a false algorithm description,
+		// and a description no arm above recognises cannot be checked against
+		// anything -- so it is rejected, not blessed.
+		return &errs.Detail{Err: backend.ErrInvalidKeyType, Detail: fmt.Sprintf("unsupported private key type %T", privateKey)}
 	}
 	return nil
 }

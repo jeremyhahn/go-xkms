@@ -1,6 +1,6 @@
 # Key Management — Engineering Contract
 
-> **Status: NORMATIVE** · Feature: `key-management` · Repo: `go-xkms` · Last verified: 2026-08-19
+> **Status: NORMATIVE** · Feature: `key-management` · Repo: `go-xkms` · Last verified: 2026-09-03
 
 This is the file an implementing agent works from. Every identifier below was
 grepped in this repository.
@@ -85,6 +85,29 @@ the algorithm vocabulary served by `GET /api/v1/algorithms`.
   requires it (a PKCS#11 session, a TPM context).
 - **Fail closed.** An unresolvable backend, an unknown algorithm, or a policy
   denial returns an error and performs no partial work.
+
+## Import validates material against its declared type
+
+Every backend that parses caller-supplied PKCS#8 on the import path checks the
+parsed key against the attributes the caller declared for it, and refuses the
+pair when they disagree. In the software backend this is
+`validateKeyType` (`pkg/backend/software/software.go`): RSA, ECDSA, Ed25519 and
+X25519 each have an arm, public keys are refused, and a key type no arm
+recognises is refused rather than admitted.
+
+The reason is that everything downstream reasons from the declaration rather
+than from the key — the storage identifier, the reported key spec, the
+algorithm a later operation selects — so a key stored under a false description
+poisons all of them.
+
+**The declared EC curve is not compared against the key's own.** `ListKeys`
+reconstructs attributes from the storage identifier, which carries no curve,
+and reports P-256 for every ECDSA key; copy, migrate and PKCS#11 `C_UnwrapKey`
+all reach the validator through attributes built that way, so comparing curves
+refuses working paths rather than catching wrong ones. A P-384 key can
+therefore be imported while declaring P-256. It is inert today — the curve is
+not part of the identifier and `Signer` recovers it from the DER — and go-xkms#156
+tracks both the caveat and the `ListKeys` fix the comparison needs.
 
 ## Error semantics
 

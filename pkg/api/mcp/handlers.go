@@ -1107,7 +1107,24 @@ func (s *Server) handleUnwrapKey(ctx context.Context, req *JSONRPCRequest) (inte
 	}, nil
 }
 
-// handleImportKeyMaterial handles importing externally generated key material
+// handleImportKeyMaterial handles importing externally generated key material.
+//
+// The import belongs to the service layer, which owns backend resolution and
+// the algorithm vocabulary and builds the key attributes for all three
+// transports from one place. This handler used to build the attributes itself
+// -- a common name, and a store type when the request named a backend -- and
+// call ImportKey on s.keystore, the process default backend. Those attributes
+// describe no algorithm, so the key was stored under an identifier ending in
+// "unknown" that nothing else constructs, and the backend's own check of the
+// material against its declared type had nothing to check it against.
+//
+// The algorithm now arrives in ImportKeyParams.KeyType and the service resolves
+// it, exactly as it does for the gRPC and REST imports.
+//
+// Tenant scoping is deliberately NOT passed through here: an imported
+// asymmetric key persists no metadata record, so a tenant-scoped import writes
+// a key its own tenant cannot then read back (go-xkms#162). This transport has
+// never scoped an import and does not start doing so while that holds.
 func (s *Server) handleImportKeyMaterial(ctx context.Context, req *JSONRPCRequest) (interface{}, error) {
 	var params ImportKeyParams
 	if err := json.Unmarshal(req.Params, &params); err != nil {
@@ -1118,35 +1135,25 @@ func (s *Server) handleImportKeyMaterial(ctx context.Context, req *JSONRPCReques
 		return nil, &errs.Message{Msg: "key_id is required"}
 	}
 
-	attrs := &types.KeyAttributes{
-		CN: params.KeyID,
+	// The backend name is validated here, against this transport's own
+	// vocabulary, before the service is asked to resolve it. Which mechanism
+	// should own that resolution is go-xkms#172 and is not settled here.
+	if params.Backend != "" && types.ParseStoreType(params.Backend) == types.StoreUnknown {
+		return nil, &errs.Message{Msg: fmt.Sprintf("invalid backend: %s", params.Backend)}
 	}
 
-	if params.Backend != "" {
-		storeType := types.ParseStoreType(params.Backend)
-		if storeType == types.StoreUnknown {
-			return nil, &errs.Message{Msg: fmt.Sprintf("invalid backend: %s", params.Backend)}
-		}
-		attrs.StoreType = storeType
-	}
-
-	// Check if backend supports import/export
-	importExportBackend, ok := s.keystore.KeyProvider().(backend.ImportExportBackend)
-	if !ok {
-		return nil, &errs.Message{Msg: "backend does not support import/export operations"}
-	}
-
-	// Build wrapped key material
-	wrapped := &backend.WrappedKeyMaterial{
-		WrappedKey:  params.WrappedKey,
-		Algorithm:   backend.WrappingAlgorithm(params.Algorithm),
-		ImportToken: params.ImportToken,
-		Metadata:    params.Metadata,
-	}
-
-	// Import the key
-	if err := importExportBackend.ImportKey(ctx, attrs, wrapped); err != nil {
-		return nil, &errs.Wrapped{Msg: "failed to import key", Err: err}
+	if _, err := s.xkmsService.ImportKey(ctx, &transport.ImportKeyRequest{
+		Backend:            params.Backend,
+		KeyID:              params.KeyID,
+		KeyType:            params.KeyType,
+		KeySize:            params.KeySize,
+		Curve:              params.Curve,
+		WrappedKeyMaterial: params.WrappedKey,
+		Algorithm:          params.Algorithm,
+		ImportToken:        params.ImportToken,
+		Metadata:           params.Metadata,
+	}); err != nil {
+		return nil, mapKeyOpError(err)
 	}
 
 	return map[string]interface{}{

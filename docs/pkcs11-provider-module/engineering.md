@@ -1,6 +1,6 @@
 # PKCS#11 Provider Module — Engineering Contract
 
-> **Status: NORMATIVE** · Feature: `pkcs11-provider-module` · Repo: `go-xkms` · Last verified: 2026-08-19
+> **Status: NORMATIVE** · Feature: `pkcs11-provider-module` · Repo: `go-xkms` · Last verified: 2026-09-03
 
 ## Build
 
@@ -95,6 +95,14 @@ naming a backend is this, not a configuration typo.
   not.
 - **Concurrency.** Cryptoki permits concurrent sessions; the module serialises
   where the backend requires it and relies on CAS for shared state.
+- **A named curve is never substituted.** Where a template carries
+  `CKA_EC_PARAMS`, `C_GenerateKeyPair` and `C_UnwrapKey` both resolve it through
+  `extractCurveFromParams` and both answer a value the module does not
+  recognise with `CKR_CURVE_NOT_SUPPORTED`. Producing a key on a different
+  curve than the caller named is a dropped parameter, not a default. An
+  **absent** `CKA_EC_PARAMS` is not an error on the unwrap path: v3.2 Table 13
+  footnote 6 says an EC private key's must not be specified there, so the
+  service's own default stands for a caller that sends none.
 
 ## Error semantics
 
