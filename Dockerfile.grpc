@@ -27,8 +27,21 @@ WORKDIR /build
 COPY go.mod go.sum ./
 COPY sdk/go/go.mod sdk/go/go.sum ./sdk/go/
 
-# Download dependencies
-RUN go mod download && go mod verify
+# Copy the xkey module files before go mod download (required for the replace
+# directive: go.mod replaces github.com/jeremyhahn/go-xkms/xkey with ./xkey,
+# and go mod download reads that go.mod even though this image never builds
+# xkey itself).
+COPY xkey/go.mod xkey/go.sum ./xkey/
+
+# Download dependencies. In-house modules resolve from Gitea tags
+# (dependency-resolution.md §6). The fetch token arrives as a BuildKit secret,
+# never a build arg or ENV, so it never becomes a layer. The mount is optional
+# by design: with no secret supplied these modules resolve from the public
+# proxy once tags are mirrored (§7).
+RUN --mount=type=secret,id=gomodauth \
+    set -eu; \
+    if [ -f /run/secrets/gomodauth ]; then . /run/secrets/gomodauth; fi; \
+    go mod download && go mod verify
 
 # Copy source code
 COPY . .
@@ -46,7 +59,13 @@ RUN CGO_ENABLED=1 GOOS=linux GOARCH=amd64 go build \
 RUN test -f /build/xkms-grpc-server || (echo "ERROR: gRPC server binary not built" && exit 1)
 
 # Stage 2: Runtime
-FROM alpine:latest
+# debian:bookworm-slim rather than alpine: the builder is golang:1.26.6-bookworm
+# with CGO_ENABLED=1 (required for PKCS#11), so the binary is glibc-linked and
+# cannot exec at all on musl. This is the runtime Dockerfile.cli and the image
+# release.yml builds and scans already use. The tag follows bookworm point
+# releases and the upgrade below takes advisories on every rebuild, so the base
+# is reproducible to a suite without freezing its CVEs in place.
+FROM debian:bookworm-slim
 
 LABEL maintainer="go-xkms"
 LABEL description="Production xkms server with gRPC support"
@@ -55,17 +74,19 @@ LABEL org.opencontainers.image.description="gRPC-only xkms server"
 LABEL org.opencontainers.image.vendor="go-xkms"
 
 # Install runtime dependencies
-RUN apk add --no-cache \
+RUN apt-get update && apt-get upgrade -y && \
+    apt-get install -y --no-install-recommends \
     ca-certificates \
     tzdata \
-    softhsm \
+    libsofthsm2 \
+    softhsm2 \
     opensc \
     net-tools \
-    && rm -rf /var/cache/apk/*
+    && rm -rf /var/lib/apt/lists/*
 
 # Create non-root user
-RUN addgroup -g 1000 appuser && \
-    adduser -D -u 1000 -G appuser appuser
+RUN groupadd -g 1000 appuser && \
+    useradd -m -u 1000 -g appuser appuser
 
 # Create required directories
 RUN mkdir -p /app /etc/xkms /var/lib/xkms /data && \

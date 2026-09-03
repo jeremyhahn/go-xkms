@@ -1,11 +1,17 @@
 # Multi-stage build for SoftHSM v2
-# Based on Alpine 3.22.1 for minimal image size
+# Based on Alpine for minimal image size
+# Pinned to the 3.24 minor series, bumped from 3.22.1 (two minors stale). The
+# series tag keeps the build reproducible while still receiving patches, and
+# the apk upgrade in each stage takes them on rebuild; a patch-level pin would
+# freeze the fixes. SoftHSM below is built from source at a pinned upstream tag
+# against the base toolchain, so a base bump moves that toolchain -- verify a
+# clean build of this image when bumping the series again.
 
 # Build stage
-FROM alpine:3.22.1 AS builder
+FROM alpine:3.24 AS builder
 
 # Install build dependencies
-RUN apk add --no-cache \
+RUN apk --no-cache upgrade && apk add --no-cache \
     git \
     build-base \
     automake \
@@ -31,10 +37,10 @@ RUN git clone https://github.com/opendnssec/SoftHSMv2.git && \
     make install DESTDIR=/build/softhsm-install
 
 # Runtime stage
-FROM alpine:3.22.1
+FROM alpine:3.24
 
 # Install runtime dependencies only
-RUN apk add --no-cache \
+RUN apk --no-cache upgrade && apk add --no-cache \
     openssl \
     sqlite-libs \
     p11-kit \

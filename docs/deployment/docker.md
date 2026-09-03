@@ -19,7 +19,12 @@ go-xkms provides six production-ready Docker images:
 All images follow security best practices:
 - Multi-stage builds for minimal image size
 - Non-root user (appuser, UID 1000)
-- Alpine Linux base for security
+- `debian:bookworm-slim` runtime base, matching the builder's libc. The
+  binaries are built with `CGO_ENABLED=1` (required for PKCS#11) under
+  `golang:1.26.6-bookworm`, so they are glibc-linked and cannot execute on a
+  musl base such as Alpine. Each runtime stage runs `apt-get upgrade` so a
+  rebuild picks up security advisories rather than freezing the base's
+  packages.
 - All backend support enabled (PKCS#8, TPM2, PKCS#11, AWS KMS, GCP KMS, Azure KV, Vault)
 
 ## Quick Start

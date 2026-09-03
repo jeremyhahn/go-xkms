@@ -2955,9 +2955,10 @@ docker-build: stage-gomodauth
 
 .PHONY: docker-build-server
 ## docker-build-server: Build Docker image for unified server
-docker-build-server:
+docker-build-server: stage-gomodauth
 	@echo "$(CYAN)$(BOLD)→ Building unified server Docker image...$(RESET)"
-	@docker buildx build --load \
+	@DOCKER_BUILDKIT=1 docker buildx build --load \
+		--secret id=gomodauth,src=$(GOMODAUTH_FILE) \
 		--build-arg VERSION=$(VERSION) \
 		--build-arg GIT_COMMIT=$(GIT_COMMIT) \
 		--build-arg BUILD_DATE=$(BUILD_DATE) \
@@ -2968,9 +2969,10 @@ docker-build-server:
 
 .PHONY: docker-build-rest
 ## docker-build-rest: Build Docker image for REST server
-docker-build-rest:
+docker-build-rest: stage-gomodauth
 	@echo "$(CYAN)$(BOLD)→ Building REST server Docker image...$(RESET)"
-	@docker buildx build --load \
+	@DOCKER_BUILDKIT=1 docker buildx build --load \
+		--secret id=gomodauth,src=$(GOMODAUTH_FILE) \
 		--build-arg VERSION=$(VERSION) \
 		--build-arg GIT_COMMIT=$(GIT_COMMIT) \
 		--build-arg BUILD_DATE=$(BUILD_DATE) \
@@ -2981,9 +2983,10 @@ docker-build-rest:
 
 .PHONY: docker-build-grpc
 ## docker-build-grpc: Build Docker image for gRPC server
-docker-build-grpc:
+docker-build-grpc: stage-gomodauth
 	@echo "$(CYAN)$(BOLD)→ Building gRPC server Docker image...$(RESET)"
-	@docker buildx build --load \
+	@DOCKER_BUILDKIT=1 docker buildx build --load \
+		--secret id=gomodauth,src=$(GOMODAUTH_FILE) \
 		--build-arg VERSION=$(VERSION) \
 		--build-arg GIT_COMMIT=$(GIT_COMMIT) \
 		--build-arg BUILD_DATE=$(BUILD_DATE) \
@@ -2994,9 +2997,10 @@ docker-build-grpc:
 
 .PHONY: docker-build-quic
 ## docker-build-quic: Build Docker image for QUIC server
-docker-build-quic:
+docker-build-quic: stage-gomodauth
 	@echo "$(CYAN)$(BOLD)→ Building QUIC server Docker image...$(RESET)"
-	@docker buildx build --load \
+	@DOCKER_BUILDKIT=1 docker buildx build --load \
+		--secret id=gomodauth,src=$(GOMODAUTH_FILE) \
 		--build-arg VERSION=$(VERSION) \
 		--build-arg GIT_COMMIT=$(GIT_COMMIT) \
 		--build-arg BUILD_DATE=$(BUILD_DATE) \
@@ -3007,9 +3011,10 @@ docker-build-quic:
 
 .PHONY: docker-build-mcp
 ## docker-build-mcp: Build Docker image for MCP server
-docker-build-mcp:
+docker-build-mcp: stage-gomodauth
 	@echo "$(CYAN)$(BOLD)→ Building MCP server Docker image...$(RESET)"
-	@docker buildx build --load \
+	@DOCKER_BUILDKIT=1 docker buildx build --load \
+		--secret id=gomodauth,src=$(GOMODAUTH_FILE) \
 		--build-arg VERSION=$(VERSION) \
 		--build-arg GIT_COMMIT=$(GIT_COMMIT) \
 		--build-arg BUILD_DATE=$(BUILD_DATE) \
@@ -3020,9 +3025,10 @@ docker-build-mcp:
 
 .PHONY: docker-build-cli
 ## docker-build-cli: Build Docker image for CLI
-docker-build-cli:
+docker-build-cli: stage-gomodauth
 	@echo "$(CYAN)$(BOLD)→ Building CLI Docker image...$(RESET)"
-	@docker buildx build --load \
+	@DOCKER_BUILDKIT=1 docker buildx build --load \
+		--secret id=gomodauth,src=$(GOMODAUTH_FILE) \
 		--build-arg VERSION=$(VERSION) \
 		--build-arg GIT_COMMIT=$(GIT_COMMIT) \
 		--build-arg BUILD_DATE=$(BUILD_DATE) \

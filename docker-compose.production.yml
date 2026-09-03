@@ -23,7 +23,10 @@ services:
     networks:
       - xkms-net
     healthcheck:
-      test: ["CMD", "wget", "--no-verbose", "--tries=1", "--spider", "https://localhost:8443/health"]
+      # curl -k, matching the image HEALTHCHECK: the listener presents the
+      # certificate the daemon mints from its own CA, which no trust store
+      # knows about, and the Debian runtime has no busybox wget.
+      test: ["CMD", "curl", "-fsSk", "https://localhost:8443/health"]
       interval: 30s
       timeout: 5s
       retries: 3
@@ -50,7 +53,10 @@ services:
     networks:
       - xkms-net
     healthcheck:
-      test: ["CMD", "wget", "--no-verbose", "--tries=1", "--spider", "https://localhost:8443/health"]
+      # curl -k, matching the image HEALTHCHECK: the listener presents the
+      # certificate the daemon mints from its own CA, which no trust store
+      # knows about, and the Debian runtime has no busybox wget.
+      test: ["CMD", "curl", "-fsSk", "https://localhost:8443/health"]
       interval: 30s
       timeout: 5s
       retries: 3
