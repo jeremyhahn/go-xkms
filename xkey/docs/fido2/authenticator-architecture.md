@@ -48,6 +48,9 @@ This document describes the detailed architecture of the native FIDO2 authentica
 
 ### MakeCredential Flow
 
+The excludeList is consulted only after the user presence gate, per CTAP 2.1
+§6.1.2, so a match cannot be read off a response that arrived without a gesture.
+
 ```
 Client                 Authenticator                Storage
   |                         |                          |
@@ -57,13 +60,18 @@ Client                 Authenticator                Storage
   |                         | validate request         |
   |                         |------------------------->|
   |                         |                          |
-  |                         | check excludeList        |
-  |                         |<-------------------------|
-  |                         |                          |
   |                         | select algorithm         |
   |                         |                          |
   |                         | check limits             |
   |                         |------------------------->|
+  |                         |                          |
+  |                         | authorize pinUvAuthToken |
+  |                         | (mc permission + RP ID)  |
+  |                         |                          |
+  |                         | user presence gate       |
+  |                         |                          |
+  |                         | answer excludeList       |
+  |                         |<-------------------------|
   |                         |                          |
   |                         | generate key pair        |
   |                         |                          |

@@ -69,8 +69,34 @@ const (
 // p256CoordLen is the length in bytes of a P-256 coordinate (32 bytes for a 256-bit field).
 const p256CoordLen = 32
 
+// VerifierOptions adjusts what an AssertionVerifier requires of an assertion.
+//
+// The zero value is the strict posture — user presence and user verification
+// both required — so a caller that does not think about these options gets the
+// safe behaviour. Each field names the check it *relaxes*, never the check it
+// enables, for the same reason.
+type VerifierOptions struct {
+	// AllowMissingUV accepts an assertion carrying user presence but not user
+	// verification.
+	//
+	// Set this only when the ceremony's UV flag could not have been a genuine
+	// signal in the first place. The one such caller today is xKey's in-process
+	// browser-extension autofill: the service asks the local authenticator for
+	// an assertion and then verifies it here, in the same process. That
+	// authenticator sets UV only for a real clientPIN ceremony or a key backend
+	// that performs biometrics, and neither happens on that path — it collects
+	// a user presence gesture instead. Requiring UV there could only ever be
+	// satisfied by a UV flag the same process fabricated, which is not a
+	// security control.
+	//
+	// Do NOT set it when verifying assertions from an authenticator outside
+	// this process. There UV is a genuine claim that a human verified
+	// themselves, and relaxing it silently weakens the verification.
+	AllowMissingUV bool
+}
+
 // AssertionVerifier verifies CTAP2 assertion responses for autofill operations.
-// It validates the authenticator data structure, checks user presence and
+// It validates the authenticator data structure, checks the user presence and
 // verification flags, enforces signature counter monotonicity for replay
 // detection, and verifies ECDSA signatures against a registered public key.
 //
@@ -79,6 +105,7 @@ type AssertionVerifier struct {
 	rpID          string
 	rpIDHash      [32]byte
 	publicKey     *ecdsa.PublicKey
+	opts          VerifierOptions
 	lastSignCount atomic.Uint32
 }
 
@@ -90,6 +117,17 @@ type AssertionVerifier struct {
 // publicKeyCOSE is nil, or ErrVerifierInvalidPublicKey if the key is
 // malformed or not a valid ES256 key.
 func NewAssertionVerifier(rpID string, publicKeyCOSE []byte) (*AssertionVerifier, error) {
+	return NewAssertionVerifierWithOptions(rpID, publicKeyCOSE, VerifierOptions{})
+}
+
+// NewAssertionVerifierWithOptions creates a verifier that relaxes the checks
+// named by opts. See VerifierOptions — the zero value matches
+// NewAssertionVerifier, and every field there loosens verification, so pass one
+// only for a ceremony you have reasoned about.
+//
+// Returns the same errors as NewAssertionVerifier.
+func NewAssertionVerifierWithOptions(
+	rpID string, publicKeyCOSE []byte, opts VerifierOptions) (*AssertionVerifier, error) {
 	if rpID == "" {
 		return nil, ErrVerifierEmptyRPID
 	}
@@ -106,6 +144,7 @@ func NewAssertionVerifier(rpID string, publicKeyCOSE []byte) (*AssertionVerifier
 		rpID:      rpID,
 		rpIDHash:  sha256.Sum256([]byte(rpID)),
 		publicKey: pubKey,
+		opts:      opts,
 	}
 	return v, nil
 }
@@ -116,7 +155,8 @@ func NewAssertionVerifier(rpID string, publicKeyCOSE []byte) (*AssertionVerifier
 //  2. Parse authenticator data (rpIdHash, flags, signCount)
 //  3. Verify rpIdHash matches SHA-256(rpID)
 //  4. Check UP (user presence) flag is set
-//  5. Check UV (user verification) flag is set
+//  5. Check UV (user verification) flag is set, unless
+//     VerifierOptions.AllowMissingUV was set
 //  6. Check signCount > lastSignCount (replay detection)
 //  7. Reconstruct signedData = authData || clientDataHash
 //  8. Verify ECDSA signature over SHA-256(signedData)
@@ -149,8 +189,9 @@ func (v *AssertionVerifier) Verify(authData, signature, clientDataHash []byte) e
 		return ErrVerifierMissingUP
 	}
 
-	// Check user verification flag.
-	if flags&flagUV == 0 {
+	// Check user verification flag, unless the caller opted out for a ceremony
+	// whose UV flag could not be genuine. See VerifierOptions.AllowMissingUV.
+	if flags&flagUV == 0 && !v.opts.AllowMissingUV {
 		return ErrVerifierMissingUV
 	}
 

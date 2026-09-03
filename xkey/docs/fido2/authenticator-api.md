@@ -182,10 +182,47 @@ func (a *Authenticator) GetPinUvAuthToken() []byte
 
 #### VerifyPinUvAuthToken
 
-Verifies PIN auth parameter.
+Verifies the PIN auth parameter against the current pinUvAuthToken and confirms
+the token is still within its CTAP 2.1 §6.5.2.1 usage timers. It says nothing
+about permissions or the permissions RP ID.
 
 ```go
 func (a *Authenticator) VerifyPinUvAuthToken(clientDataHash, authParam []byte) bool
+```
+
+#### AuthorizePinUvAuthToken
+
+Authorizes one makeCredential or getAssertion request. It checks the token's
+lifetime, the HMAC, the required permission bit, and the permissions RP ID,
+binding the request's RP ID to the token on first use. Every failure returns
+`ErrPINAuthInvalid` (`CTAP2_ERR_PIN_AUTH_INVALID`), so a caller cannot tell a
+wrong HMAC from a missing permission or an RP ID mismatch.
+
+Commands that require a permission must use this rather than
+`VerifyPinUvAuthToken`.
+
+```go
+func (a *Authenticator) AuthorizePinUvAuthToken(
+    clientDataHash, authParam []byte, permission uint8, rpID string) error
+```
+
+#### SetUserPresenceHandler
+
+Replaces the user presence handler and returns the handler it replaced, so a
+service that installs a handler for its own lifetime can restore the previous
+one instead of forcing a default on an authenticator it shares with other
+consumers. Safe to call while a command is in flight.
+
+```go
+func (a *Authenticator) SetUserPresenceHandler(handler UserPresenceHandler) UserPresenceHandler
+```
+
+#### UserPresenceHandler
+
+Returns the handler currently collecting user presence.
+
+```go
+func (a *Authenticator) UserPresenceHandler() UserPresenceHandler
 ```
 
 ---

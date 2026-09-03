@@ -628,30 +628,39 @@ func (a *Authenticator) generateAssertionResponseWithPolicy(
 	// Otherwise, explicitly request user presence.
 	pinAuthValid := false
 	if len(request.PINUVAuthParam) > 0 && request.PINUVAuthProtocol > 0 {
-		if !a.VerifyPinUvAuthToken(request.ClientDataHash, request.PINUVAuthParam) {
-			debugLog("pinUvAuthParam verification failed")
-			return nil, ErrPINAuthInvalid
+		// Per CTAP 2.1 §6.2.2 the token must carry the ga permission and, if it
+		// is already bound to a permissions RP ID, that RP ID must match this
+		// request. Verifying only the HMAC would let a token minted for one RP
+		// authorize assertions for every other.
+		if err := a.AuthorizePinUvAuthToken(request.ClientDataHash, request.PINUVAuthParam,
+			PINPermissionGetAssertion, request.RPID); err != nil {
+			debugLog("pinUvAuthParam rejected for RPID=%s: %v", request.RPID, err)
+			return nil, err
 		}
 		pinAuthValid = true
 		debugLog("pinUvAuthParam verified")
 	}
 
-	// Internal PIN verification for trusted in-process callers (e.g., autofill
-	// service). This bypasses the CTAP2 clientPin ECDH ceremony while still
-	// verifying the caller knows the correct PIN hash via constant-time compare.
-	// Only available through the Go API — never populated from CBOR/USB.
+	// An in-process caller may assert its trust to get past the "a PIN is set,
+	// so present a pinUvAuthParam" precondition without running the CTAP2
+	// clientPin ECDH ceremony. Only available through the Go API — never
+	// populated from CBOR/USB.
+	//
+	// It is NOT user verification: the caller runs inside this process and can
+	// read the expected value back from the authenticator, so the comparison
+	// proves nothing about a human. It therefore does not set pinAuthValid, and
+	// the user presence gate below still runs.
+	inProcessTrusted := false
 	if !pinAuthValid && len(request.InternalPINHash) > 0 {
 		a.mu.RLock()
 		pinSetAndMatches := a.isPINSetLocked() && a.verifyPINHashLocked(request.InternalPINHash)
 		a.mu.RUnlock()
-		if pinSetAndMatches {
-			pinAuthValid = true
-			a.state.ResetPINRetries()
-			debugLog("internal PIN hash verified for trusted caller")
-		} else {
-			debugLog("internal PIN hash verification failed")
+		if !pinSetAndMatches {
+			debugLog("internal PIN hash did not match")
 			return nil, ErrPINInvalid
 		}
+		inProcessTrusted = true
+		a.state.ResetPINRetries()
 	}
 
 	// Multi-authenticator support: when UV is required (uv=true or alwaysUV) but
@@ -720,7 +729,7 @@ func (a *Authenticator) generateAssertionResponseWithPolicy(
 				uvRequested = uv
 			}
 		}
-		if a.config.EnablePIN && a.IsPINSet() && (uvRequested || a.config.AlwaysUV) {
+		if !inProcessTrusted && a.config.EnablePIN && a.IsPINSet() && (uvRequested || a.config.AlwaysUV) {
 			if rpPolicy == nil || rpPolicy.UVOverride != "discouraged" {
 				return nil, ErrPINRequired
 			}
@@ -783,20 +792,23 @@ func (a *Authenticator) generateAssertionResponseWithPolicy(
 	}
 	debugLog("initial flags: 0x%02x (UP=%v)", byte(flags), upRequired)
 
-	// Set UV flag when actual user verification was performed in this transaction:
-	// 1. Platform provided a valid pinUvAuthParam, OR
-	// 2. Key backend handles user verification internally (e.g., phone biometric), OR
-	// 3. Trusted in-process caller provided a valid InternalPINHash
+	// Set the UV flag only when actual user verification was performed in this
+	// transaction:
+	//  1. the platform provided a valid pinUvAuthParam, or
+	//  2. the key backend performs user verification internally (e.g. a phone
+	//     biometric during Sign).
+	//
+	// InternalPINHash is deliberately absent. The UV flag tells the relying
+	// party that a human verified themselves, and downstream systems make
+	// authorization decisions on it; an in-process caller supplying a value it
+	// read back from this authenticator has verified no one.
 	switch {
-	case len(request.PINUVAuthParam) > 0 && request.PINUVAuthProtocol > 0:
+	case pinAuthValid:
 		flags |= FlagUV
-		debugLog("UV flag set (pinUvAuthParam provided), flags now: 0x%02x", byte(flags))
+		debugLog("UV flag set (pinUvAuthParam verified), flags now: 0x%02x", byte(flags))
 	case a.keyBackend != nil && a.keyBackend.Capabilities().HandlesUserVerification:
 		flags |= FlagUV
 		debugLog("UV flag set (key backend handles verification), flags now: 0x%02x", byte(flags))
-	case pinAuthValid && len(request.InternalPINHash) > 0:
-		flags |= FlagUV
-		debugLog("UV flag set (internal PIN hash verified), flags now: 0x%02x", byte(flags))
 	}
 
 	// Persist the authorized UP/UV flags and extension inputs so getNextAssertion

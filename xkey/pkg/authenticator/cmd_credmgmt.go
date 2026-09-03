@@ -18,6 +18,7 @@ import (
 	"crypto/hmac"
 	"crypto/sha256"
 	"errors"
+	"time"
 
 	"github.com/fxamacker/cbor/v2"
 )
@@ -420,8 +421,11 @@ func (a *Authenticator) verifyCredMgmtAuth(req *CredentialManagementRequest) err
 		return ErrPINAuthInvalid
 	}
 
-	// Verify the PIN token exists and has the correct permission.
-	if a.pinState.protocol == nil || a.pinState.protocol.pinUvAuthToken == nil {
+	// Verify a usable PIN token exists. The CTAP 2.1 §6.5.2.1 usage timers
+	// apply to every command a token authorizes, not only makeCredential and
+	// getAssertion, so an expired token must not authorize credential
+	// management either.
+	if !a.pinUvAuthTokenUsableLocked(time.Now()) {
 		return ErrPINAuthInvalid
 	}
 

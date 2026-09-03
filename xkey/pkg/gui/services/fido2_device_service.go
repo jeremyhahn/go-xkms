@@ -87,10 +87,15 @@ type FIDO2DeviceService struct {
 	auditLogger   audit.Logger
 	externalAuth  *authenticator.Authenticator
 	elevator      Elevator
-	running       atomic.Bool
-	lastError     atomic.Value // stores string
-	stopCh        chan struct{}
-	bridgeWg      sync.WaitGroup
+
+	// priorUPHandler is the user presence handler the shared authenticator had
+	// before Start installed the SocketHandler. Stop puts it back. Guarded by
+	// the same running/Start/Stop sequencing as the rest of the bridge state.
+	priorUPHandler authenticator.UserPresenceHandler
+	running        atomic.Bool
+	lastError      atomic.Value // stores string
+	stopCh         chan struct{}
+	bridgeWg       sync.WaitGroup
 }
 
 // NewFIDO2DeviceService creates a new FIDO2DeviceService.
@@ -209,7 +214,7 @@ func (s *FIDO2DeviceService) Start(storage authenticator.StatefulCredentialStora
 	// touch prompts are routed to the GUI dialog instead of being
 	// auto-approved by the default AutoGrantHandler.
 	if s.externalAuth != nil {
-		s.externalAuth.SetUserPresenceHandler(s.socketHandler)
+		s.priorUPHandler = s.externalAuth.SetUserPresenceHandler(s.socketHandler)
 		s.log.Info("wired SocketHandler to shared authenticator for user presence")
 	}
 
@@ -332,11 +337,18 @@ func (s *FIDO2DeviceService) Stop() error {
 
 	s.cleanup()
 
-	// Restore the auto-grant handler so the shared authenticator does not
-	// hang waiting for a SocketHandler that no longer has a UHID bridge.
-	if s.externalAuth != nil {
-		s.externalAuth.SetUserPresenceHandler(authenticator.NewAutoGrantHandler())
-		s.log.Info("restored AutoGrantHandler on shared authenticator")
+	// Put back the handler the shared authenticator had before Start, so the
+	// SocketHandler is not left waiting on a UHID bridge that no longer exists.
+	//
+	// Installing an AutoGrantHandler here instead would be a security change
+	// applied to every other consumer of this authenticator: the browser
+	// extension autofill path shares this instance, so toggling the virtual
+	// device off in the UI would silently leave that path auto-approving user
+	// presence for the rest of the session.
+	if s.externalAuth != nil && s.priorUPHandler != nil {
+		s.externalAuth.SetUserPresenceHandler(s.priorUPHandler)
+		s.priorUPHandler = nil
+		s.log.Info("restored the shared authenticator's previous user presence handler")
 	}
 
 	s.log.Info("FIDO2 virtual device stopped")

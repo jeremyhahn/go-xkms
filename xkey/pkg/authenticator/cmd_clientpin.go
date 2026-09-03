@@ -26,6 +26,7 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
+	"time"
 
 	"github.com/fxamacker/cbor/v2"
 	"golang.org/x/crypto/hkdf"
@@ -85,6 +86,19 @@ const (
 	PINTokenSize          = 32
 	AESBlockSize          = 16
 	EncryptedPINMinLength = 64
+)
+
+// pinUvAuthToken lifetime limits from CTAP 2.1 §6.5.2.1. A token is minted by
+// beginUsingPinUvAuthToken and stops being usable once either limit elapses,
+// so a single PIN entry cannot authorize commands indefinitely.
+const (
+	// pinUvAuthTokenInactivityLimit is the initial usage time limit: a token
+	// that has gone unused for this long is no longer accepted.
+	pinUvAuthTokenInactivityLimit = 30 * time.Second
+
+	// pinUvAuthTokenMaxUsagePeriod is the hard cap on a token's lifetime,
+	// measured from issuance regardless of how often it is used.
+	pinUvAuthTokenMaxUsagePeriod = 10 * time.Minute
 )
 
 // ClientPIN errors.
@@ -172,8 +186,20 @@ type pinProtocolState struct {
 	// tokenPermissions holds the permissions granted to the current token.
 	tokenPermissions uint8
 
-	// tokenRPID is the RP ID the token is scoped to (empty for unscoped).
+	// tokenRPID is the permissions RP ID the token is scoped to. It is empty
+	// until the token is first used with makeCredential or getAssertion, at
+	// which point that request's RP ID is bound to the token per CTAP 2.1
+	// §6.1.2 / §6.2.2.
 	tokenRPID string
+
+	// tokenIssuedAt is when the token was minted. It starts the usage timer
+	// for pinUvAuthTokenMaxUsagePeriod. A zero value means no token has been
+	// minted through beginUsingPinUvAuthTokenLocked and the token is unusable.
+	tokenIssuedAt time.Time
+
+	// tokenLastUsed is when the token last authorized a command. It starts the
+	// usage timer for pinUvAuthTokenInactivityLimit.
+	tokenLastUsed time.Time
 
 	// activeProtocol tracks which PIN protocol version is in use (1 or 2).
 	activeProtocol uint8
@@ -555,7 +581,12 @@ func (a *Authenticator) handleGetPINToken(req *ClientPINRequest) ([]byte, error)
 	if _, err := rand.Read(pinToken); err != nil {
 		return nil, ErrCryptoError
 	}
-	a.pinState.protocol.pinUvAuthToken = pinToken
+	// The superseded getPinToken subcommand carries no permissions parameter.
+	// CTAP 2.1 §6.5.5.7.1 grants the resulting token the mc and ga permissions
+	// and no permissions RP ID; the first makeCredential or getAssertion binds
+	// its RP ID. Granting them explicitly also clears any permissions left over
+	// from a previous token, which must not carry across a new PIN entry.
+	a.beginUsingPinUvAuthTokenLocked(pinToken, PINPermissionMakeCredential|PINPermissionGetAssertion, "")
 
 	// Encrypt the PIN token.
 	encryptedToken, err := a.encryptData(encKey, req.PinUvAuthProtocol, pinToken)
@@ -645,9 +676,7 @@ func (a *Authenticator) handleGetPinUvAuthTokenUsingUvWithPermissions(req *Clien
 	if _, err := rand.Read(pinToken); err != nil {
 		return nil, ErrCryptoError
 	}
-	a.pinState.protocol.pinUvAuthToken = pinToken
-	a.pinState.protocol.tokenPermissions = req.Permissions
-	a.pinState.protocol.tokenRPID = req.RPID
+	a.beginUsingPinUvAuthTokenLocked(pinToken, req.Permissions, req.RPID)
 
 	// Encrypt the token.
 	encryptedToken, err := a.encryptData(encKey, req.PinUvAuthProtocol, pinToken)
@@ -766,9 +795,7 @@ func (a *Authenticator) handleGetPinUvAuthTokenUsingPinWithPermissions(req *Clie
 	if _, err := rand.Read(pinToken); err != nil {
 		return nil, ErrCryptoError
 	}
-	a.pinState.protocol.pinUvAuthToken = pinToken
-	a.pinState.protocol.tokenPermissions = req.Permissions
-	a.pinState.protocol.tokenRPID = req.RPID
+	a.beginUsingPinUvAuthTokenLocked(pinToken, req.Permissions, req.RPID)
 
 	// Encrypt the PIN token.
 	encryptedToken, err := a.encryptData(encKey, req.PinUvAuthProtocol, pinToken)
@@ -1186,15 +1213,64 @@ func (a *Authenticator) GetPinUvAuthToken() []byte {
 	return a.pinState.protocol.pinUvAuthToken
 }
 
-// VerifyPinUvAuthToken verifies a PIN/UV auth token against stored token.
-func (a *Authenticator) VerifyPinUvAuthToken(clientDataHash, authParam []byte) bool {
-	a.mu.RLock()
-	defer a.mu.RUnlock()
+// beginUsingPinUvAuthTokenLocked records a freshly minted pinUvAuthToken and
+// the permissions granted to it, starting the CTAP 2.1 §6.5.2.1 usage timers.
+// It is the only way a token becomes usable: a token installed without going
+// through here has a zero tokenIssuedAt and is rejected as expired.
+//
+// rpID is the permissions RP ID requested by the platform. An empty rpID
+// leaves the token unbound until its first makeCredential or getAssertion,
+// which binds that request's RP ID.
+//
+// The caller must hold a.mu for writing.
+func (a *Authenticator) beginUsingPinUvAuthTokenLocked(token []byte, permissions uint8, rpID string) {
+	now := time.Now()
+	a.pinState.protocol.pinUvAuthToken = token
+	a.pinState.protocol.tokenPermissions = permissions
+	a.pinState.protocol.tokenRPID = rpID
+	a.pinState.protocol.tokenIssuedAt = now
+	a.pinState.protocol.tokenLastUsed = now
+}
 
-	if a.pinState.protocol == nil || a.pinState.protocol.pinUvAuthToken == nil {
+// stopUsingPinUvAuthTokenLocked discards the current pinUvAuthToken along with
+// the permissions and permissions RP ID granted to it, per CTAP 2.1 §6.5.2.1.
+//
+// The caller must hold a.mu for writing.
+func (a *Authenticator) stopUsingPinUvAuthTokenLocked() {
+	if a.pinState.protocol == nil {
+		return
+	}
+	a.pinState.protocol.pinUvAuthToken = nil
+	a.pinState.protocol.tokenPermissions = 0
+	a.pinState.protocol.tokenRPID = ""
+	a.pinState.protocol.tokenIssuedAt = time.Time{}
+	a.pinState.protocol.tokenLastUsed = time.Time{}
+}
+
+// pinUvAuthTokenUsableLocked reports whether a pinUvAuthToken has been minted
+// and both CTAP 2.1 §6.5.2.1 usage timers are still within their limits.
+//
+// The caller must hold a.mu for reading or writing.
+func (a *Authenticator) pinUvAuthTokenUsableLocked(now time.Time) bool {
+	p := a.pinState.protocol
+	if p == nil || p.pinUvAuthToken == nil {
 		return false
 	}
+	if p.tokenIssuedAt.IsZero() {
+		return false
+	}
+	if now.Sub(p.tokenIssuedAt) > pinUvAuthTokenMaxUsagePeriod {
+		return false
+	}
+	return now.Sub(p.tokenLastUsed) <= pinUvAuthTokenInactivityLimit
+}
 
+// verifyPinUvAuthTokenHMACLocked compares authParam against the HMAC of
+// clientDataHash under the current pinUvAuthToken, truncating to the width
+// required by the active PIN protocol version.
+//
+// The caller must hold a.mu for reading or writing.
+func (a *Authenticator) verifyPinUvAuthTokenHMACLocked(clientDataHash, authParam []byte) bool {
 	mac := hmac.New(sha256.New, a.pinState.protocol.pinUvAuthToken)
 	mac.Write(clientDataHash)
 	expected := mac.Sum(nil)
@@ -1206,6 +1282,81 @@ func (a *Authenticator) VerifyPinUvAuthToken(clientDataHash, authParam []byte) b
 
 	// V1: truncate to 16 bytes.
 	return hmac.Equal(expected[:PINAuthSizeV1], authParam)
+}
+
+// VerifyPinUvAuthToken verifies a PIN/UV auth token against the stored token
+// and confirms the token has not outlived its CTAP 2.1 §6.5.2.1 usage timers.
+//
+// It deliberately says nothing about permissions or the permissions RP ID.
+// Commands that a token must hold a permission for — makeCredential and
+// getAssertion — must call AuthorizePinUvAuthToken instead.
+func (a *Authenticator) VerifyPinUvAuthToken(clientDataHash, authParam []byte) bool {
+	a.mu.RLock()
+	defer a.mu.RUnlock()
+
+	if !a.pinUvAuthTokenUsableLocked(time.Now()) {
+		return false
+	}
+
+	return a.verifyPinUvAuthTokenHMACLocked(clientDataHash, authParam)
+}
+
+// AuthorizePinUvAuthToken authorizes one makeCredential or getAssertion
+// request against the current pinUvAuthToken. It enforces, in order, the
+// checks CTAP 2.1 §6.1.2 and §6.2.2 require:
+//
+//  1. a token exists and both usage timers are still within their limits,
+//  2. authParam is a valid HMAC of clientDataHash under that token,
+//  3. the token carries the permission the command needs (mc or ga),
+//  4. the token's permissions RP ID, if bound, matches rpID.
+//
+// On success the request's RP ID is bound to the token if it was still
+// unbound, and the inactivity timer is refreshed.
+//
+// Every failure returns ErrPINAuthInvalid — CTAP2_ERR_PIN_AUTH_INVALID — so a
+// caller cannot tell a wrong HMAC from a missing permission or an RP ID
+// mismatch. An expired token is discarded rather than left in place.
+func (a *Authenticator) AuthorizePinUvAuthToken(clientDataHash, authParam []byte, permission uint8, rpID string) error {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+
+	now := time.Now()
+	if !a.pinUvAuthTokenUsableLocked(now) {
+		a.stopUsingPinUvAuthTokenLocked()
+		return ErrPINAuthInvalid
+	}
+
+	if !a.verifyPinUvAuthTokenHMACLocked(clientDataHash, authParam) {
+		return ErrPINAuthInvalid
+	}
+
+	if a.pinState.protocol.tokenPermissions&permission == 0 {
+		if a.logger != nil {
+			a.logger.Warn("pinUvAuthToken lacks the permission this command requires",
+				slog.Int("required", int(permission)),
+				slog.Int("granted", int(a.pinState.protocol.tokenPermissions)),
+			)
+		}
+		return ErrPINAuthInvalid
+	}
+
+	if a.pinState.protocol.tokenRPID != "" && a.pinState.protocol.tokenRPID != rpID {
+		if a.logger != nil {
+			a.logger.Warn("pinUvAuthToken is bound to a different RP",
+				slog.String("token_rp", a.pinState.protocol.tokenRPID),
+				slog.String("request_rp", rpID),
+			)
+		}
+		return ErrPINAuthInvalid
+	}
+
+	// Bind the token to this RP on first use, per CTAP 2.1 §6.1.2 / §6.2.2.
+	if a.pinState.protocol.tokenRPID == "" {
+		a.pinState.protocol.tokenRPID = rpID
+	}
+	a.pinState.protocol.tokenLastUsed = now
+
+	return nil
 }
 
 // SetPINForTesting sets the PIN directly for testing purposes.

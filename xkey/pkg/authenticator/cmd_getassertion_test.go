@@ -1594,10 +1594,7 @@ func TestGetAssertion_PINAuthSkipsUserPresence(t *testing.T) {
 	for i := range pinToken {
 		pinToken[i] = byte(i + 42)
 	}
-	auth.pinState.protocol = &pinProtocolState{
-		pinUvAuthToken:   pinToken,
-		tokenPermissions: PINPermissionGetAssertion,
-	}
+	auth.pinState.protocol = livePinTokenGrant(pinToken, PINPermissionGetAssertion)
 
 	// Step 3: Switch to blocking UP handler. If GetAssertion requests UP,
 	// the test will hang indefinitely (and eventually time out).
@@ -2005,9 +2002,14 @@ func TestGetAssertionPublicAPI_SignatureCountIncrement(t *testing.T) {
 // --- InternalPINHash tests for GetAssertion ---
 
 // TestGetAssertion_InternalPINHash_Success verifies that a trusted in-process caller
-// can perform an assertion by providing the correct InternalPINHash, bypassing the
-// CTAP2 clientPin ECDH ceremony. The response must have the UV flag set and the
-// signature must verify against the registered public key.
+// can perform an assertion by providing the correct InternalPINHash, getting past
+// the "a PIN is set, so present a pinUvAuthParam" precondition without running the
+// CTAP2 clientPin ECDH ceremony, and that the signature verifies against the
+// registered public key.
+//
+// The response must NOT have the UV flag set: the caller runs inside this process
+// and reads the expected hash back from the authenticator, so it has verified no
+// one, and UV is a claim to the relying party that a human did.
 func TestGetAssertion_InternalPINHash_Success(t *testing.T) {
 	storage := NewMemoryStorage()
 	config := DefaultConfig()
@@ -2044,11 +2046,12 @@ func TestGetAssertion_InternalPINHash_Success(t *testing.T) {
 	require.NoError(t, err)
 	require.NotNil(t, resp)
 
-	// Verify the UV flag is set in the authData (byte 32, bit 0x04).
+	// Inspect the flags in the authData (byte 32).
 	require.GreaterOrEqual(t, len(resp.AuthData), 33, "authData must be at least 33 bytes")
 	flags := AuthDataFlags(resp.AuthData[32])
-	require.True(t, flags.Has(FlagUP), "UP flag should be set")
-	require.True(t, flags.Has(FlagUV), "UV flag should be set when InternalPINHash is valid")
+	require.True(t, flags.Has(FlagUP), "UP flag should be set: the presence gate ran")
+	require.False(t, flags.Has(FlagUV),
+		"UV must not be set for an in-process caller that verified no one")
 
 	// Verify the assertion signature using the credential's public key.
 	pubKey, _, err := DecodeCOSEPublicKey(cred.PublicKeyCOSE)

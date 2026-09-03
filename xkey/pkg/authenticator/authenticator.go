@@ -365,10 +365,16 @@ func (a *Authenticator) RPPolicyStore() RPPolicyStore {
 
 // requestUserPresence requests user presence confirmation via the configured handler.
 func (a *Authenticator) requestUserPresence(ctx context.Context, rpID, rpName, userName, operation string) error {
+	// Read the handler once, under the lock. SetUserPresenceHandler runs on the
+	// UI goroutine while a CTAP command may be in flight on the transport
+	// goroutine, and an interface value is two words — an unsynchronized read
+	// can tear.
+	handler := a.UserPresenceHandler()
+
 	if a.logger != nil {
 		a.logger.Info("requestUserPresence called",
 			slog.String("operation", operation),
-			slog.String("handler_type", fmt.Sprintf("%T", a.upHandler)),
+			slog.String("handler_type", fmt.Sprintf("%T", handler)),
 		)
 	}
 
@@ -383,7 +389,7 @@ func (a *Authenticator) requestUserPresence(ctx context.Context, rpID, rpName, u
 	if a.logger != nil {
 		a.logger.Info("calling upHandler.RequestUserPresence")
 	}
-	result, err := a.upHandler.RequestUserPresence(ctx, req)
+	result, err := handler.RequestUserPresence(ctx, req)
 	if a.logger != nil {
 		a.logger.Info("upHandler.RequestUserPresence returned",
 			slog.Bool("has_result", result != nil),
@@ -549,11 +555,26 @@ func (a *Authenticator) SetRequireUserPresence(required bool) {
 }
 
 // SetUserPresenceHandler replaces the user presence handler on the
-// authenticator. This is used to wire the SocketHandler after the
-// authenticator is created so that USB HID touch prompts are routed
-// to the GUI instead of being auto-approved.
-func (a *Authenticator) SetUserPresenceHandler(handler UserPresenceHandler) {
+// authenticator and returns the handler it replaced, so a caller that installs
+// a handler for the lifetime of a service can put the previous one back rather
+// than guessing what it should be.
+//
+// This is used to wire the SocketHandler after the authenticator is created so
+// that USB HID touch prompts are routed to the GUI instead of being
+// auto-approved.
+func (a *Authenticator) SetUserPresenceHandler(handler UserPresenceHandler) UserPresenceHandler {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	previous := a.upHandler
 	a.upHandler = handler
+	return previous
+}
+
+// UserPresenceHandler returns the handler currently collecting user presence.
+func (a *Authenticator) UserPresenceHandler() UserPresenceHandler {
+	a.mu.RLock()
+	defer a.mu.RUnlock()
+	return a.upHandler
 }
 
 // HasMatchingCredentials performs a read-only credential lookup against

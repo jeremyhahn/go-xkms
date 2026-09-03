@@ -574,10 +574,7 @@ func TestRPPolicyUVDiscouragedSkipsPIN(t *testing.T) {
 	for i := range pinToken {
 		pinToken[i] = byte(i)
 	}
-	auth.pinState.protocol = &pinProtocolState{
-		pinUvAuthToken:   pinToken,
-		tokenPermissions: PINPermissionMakeCredential | PINPermissionGetAssertion,
-	}
+	auth.pinState.protocol = livePinTokenGrant(pinToken, PINPermissionMakeCredential|PINPermissionGetAssertion)
 
 	mac := hmac.New(sha256.New, pinToken)
 	mac.Write(clientDataHash)
@@ -651,10 +648,7 @@ func TestRPPolicyUVDiscouragedSkipsPIN(t *testing.T) {
 		for i := range pinToken2 {
 			pinToken2[i] = byte(i + 10)
 		}
-		auth.pinState.protocol = &pinProtocolState{
-			pinUvAuthToken:   pinToken2,
-			tokenPermissions: PINPermissionMakeCredential | PINPermissionGetAssertion,
-		}
+		auth.pinState.protocol = livePinTokenGrant(pinToken2, PINPermissionMakeCredential|PINPermissionGetAssertion)
 
 		mac2 := hmac.New(sha256.New, pinToken2)
 		mac2.Write(clientDataHash)
@@ -847,10 +841,7 @@ func TestGetAssertionSkipsPINWhenUVNotRequested(t *testing.T) {
 	for i := range pinToken {
 		pinToken[i] = byte(i + 50)
 	}
-	auth.pinState.protocol = &pinProtocolState{
-		pinUvAuthToken:   pinToken,
-		tokenPermissions: PINPermissionMakeCredential | PINPermissionGetAssertion,
-	}
+	auth.pinState.protocol = livePinTokenGrant(pinToken, PINPermissionMakeCredential|PINPermissionGetAssertion)
 
 	mac := hmac.New(sha256.New, pinToken)
 	mac.Write(clientDataHash)

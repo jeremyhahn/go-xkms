@@ -124,6 +124,47 @@ Platform                    Authenticator
 | Auth Verification | HMAC-SHA-256 |
 | Brute Force Protection | Retry counter with lockout |
 
+### pinUvAuthToken Authorization
+
+A pinUvAuthToken is not a bearer credential for the whole authenticator. Every
+command that consumes one checks four things, in this order, and answers any
+failure with the same `CTAP2_ERR_PIN_AUTH_INVALID` so a caller cannot tell which
+check refused it:
+
+| Check | Rule |
+|-------|------|
+| Lifetime | The token was minted by a clientPIN ceremony and both usage timers are still within limits |
+| Authenticity | `pinUvAuthParam` is a valid HMAC of the client data hash under the token |
+| Permission | The token carries the permission the command needs — `mc` (0x01) for makeCredential, `ga` (0x02) for getAssertion, `cm` (0x04) for credential management, `acfg` (0x20) for authenticator config |
+| Permissions RP ID | If the token is bound to an RP ID, it matches the request's RP ID |
+
+A token minted without a permissions RP ID is bound to the RP ID of its first
+makeCredential or getAssertion, per CTAP 2.1 §6.1.2 and §6.2.2, and every later
+use must present that same RP. So a platform that obtains a token scoped to one
+site cannot replay it against another.
+
+The superseded `getPinToken` subcommand carries no permissions parameter; the
+token it produces is granted `mc` and `ga` with no RP binding, per CTAP 2.1
+§6.5.5.7.1. It never inherits the permissions or RP binding of the token it
+replaces.
+
+### pinUvAuthToken Lifetime
+
+Per CTAP 2.1 §6.5.2.1, a token stops being usable when either timer elapses:
+
+| Timer | Limit | Meaning |
+|-------|-------|---------|
+| Inactivity | 30 seconds | Time since the token last authorized a command |
+| Maximum usage period | 10 minutes | Time since the token was minted, however often it is used |
+
+These timers apply to every command a token authorizes — makeCredential,
+getAssertion, credential management and authenticator config alike.
+
+A token that has outlived either limit is discarded rather than left in place.
+Tokens are also cleared by `authenticatorReset`, and do not survive the process,
+so a power cycle invalidates them. One PIN entry therefore authorizes a bounded
+window of work, not the lifetime of the process.
+
 ### PIN Attack Mitigations
 
 **Brute Force:**
@@ -227,6 +268,46 @@ Per-credential protection levels:
 | 1 | userVerificationOptional | Always visible |
 | 2 | userVerificationOptionalWithList | Visible in allowList or with UV |
 | 3 | userVerificationRequired | Requires user verification |
+
+Level 3 also hides the credential from the makeCredential `excludeList`. Without
+user verification in the same transaction, the authenticator answers as though
+it does not hold the credential, so the exclude-list response cannot be used to
+confirm that a protected credential exists.
+
+### excludeList and the Credential Oracle
+
+The `excludeList` answer is withheld until after the user presence gate. A match
+costs the same gesture as an ordinary registration, and the operation ends in
+`CTAP2_ERR_CREDENTIAL_EXCLUDED` whether or not the user approves — the ordering
+CTAP 2.1 §6.1.2 requires.
+
+Answering earlier would make the authenticator a silent oracle: any process able
+to reach the CTAP interface could test `(credentialID, rpId)` pairs at machine
+speed, with no prompt, and learn which sites the user has registered with.
+
+### What the UP and UV Flags Assert
+
+The UV flag tells the relying party that a human verified themselves, and
+downstream systems make authorization decisions on it. The authenticator sets it
+only when that actually happened in the transaction:
+
+| Flag | Set when |
+|------|----------|
+| UP | A user presence test ran through the configured handler, the key backend collected presence itself, or the platform completed a PIN entry |
+| UV | The platform presented a valid `pinUvAuthParam`, or the key backend performs user verification internally (for example a phone biometric) |
+
+`InternalPINHash`, the Go-API field that lets an in-process caller skip the
+clientPIN ECDH ceremony, is not on either list. The caller runs inside the
+authenticator's process and can read the expected value back from it, so the
+comparison proves nothing about a human. It gets a caller past the "a PIN is
+set, so present a pinUvAuthParam" precondition and nothing more: the user
+presence gate still runs, and the assertion reports UV as absent.
+
+Consequently the in-process browser-extension autofill ceremony verifies its
+assertions with `autofill.VerifierOptions{AllowMissingUV: true}`, which relaxes
+the UV check and nothing else. That opt-out is scoped to that one ceremony:
+`autofill.NewAssertionVerifier`, which is what the SDK re-exports and what
+downstream consumers use against real authenticators, still requires UV.
 
 ### Recommendations
 
@@ -402,7 +483,8 @@ config := &authenticator.Config{
 
 1. **No hardware protection** - Keys exist in software (unless TPM2 key backend is used)
 2. **No side-channel protection** - Timing attacks possible
-3. **No physical presence** - UP flag is handled by software (AutoGrantHandler simulates it; InteractiveHandler prompts via terminal)
+3. **No physical presence** - UP flag is handled by software, and it is only as meaningful as the configured handler: `InteractiveHandler` prompts via terminal and `SocketHandler` routes to the GUI dialog, but `AutoGrantHandler` approves every request without asking anyone. Deployments that need the UP flag to mean something must not run `AutoGrantHandler`.
+6. **No in-process user verification** - There is no path that collects a real PIN entry from a caller inside the process. In-process ceremonies such as browser-extension autofill are gated on user presence, and their assertions report UV as absent.
 4. **Self-attestation only** - No hardware root of trust (unless TPM2 key backend with attestation is used)
 5. **Memory exposure** - Keys in process memory (software backend); TPM2 backend mitigates this
 

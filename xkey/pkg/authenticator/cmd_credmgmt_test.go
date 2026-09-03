@@ -85,10 +85,7 @@ func setupPINTokenForCredMgmt(t *testing.T, auth *Authenticator) []byte {
 	auth.state.PINHash = make([]byte, 32)
 
 	// Initialize PIN protocol state.
-	auth.pinState.protocol = &pinProtocolState{
-		pinUvAuthToken:   make([]byte, 32),
-		tokenPermissions: PINPermissionCredentialMgmt,
-	}
+	auth.pinState.protocol = livePinTokenGrant(make([]byte, 32), PINPermissionCredentialMgmt)
 
 	return auth.pinState.protocol.pinUvAuthToken
 }
@@ -671,10 +668,7 @@ func TestCredMgmtAuthenticationWithMissingPermission(t *testing.T) {
 	// Set up PIN token without credentialMgmt permission.
 	auth.state.PINSet = true
 	auth.state.PINHash = make([]byte, 32)
-	auth.pinState.protocol = &pinProtocolState{
-		pinUvAuthToken:   make([]byte, 32),
-		tokenPermissions: PINPermissionMakeCredential, // Wrong permission
-	}
+	auth.pinState.protocol = livePinTokenGrant(make([]byte, 32), PINPermissionMakeCredential) // Wrong permission
 
 	pinToken := auth.pinState.protocol.pinUvAuthToken
 	data := buildCredMgmtRequest(t, pinToken, CredMgmtEnumerateRPsBegin, nil)
@@ -683,6 +677,25 @@ func TestCredMgmtAuthenticationWithMissingPermission(t *testing.T) {
 	require.Error(t, err)
 	require.ErrorIs(t, err, ErrOperationDenied)
 	require.Equal(t, byte(StatusOperationDenied), resp[0])
+}
+
+// TestCredMgmtRefusesExpiredToken proves the CTAP 2.1 §6.5.2.1 usage timers
+// apply to credential management too. Enforcing them only on makeCredential and
+// getAssertion would leave a stale token able to enumerate and delete
+// credentials.
+func TestCredMgmtRefusesExpiredToken(t *testing.T) {
+	auth := createCredMgmtTestAuthenticator(t)
+	defer func() { _ = auth.Close() }()
+
+	pinToken := setupPINTokenForCredMgmt(t, auth)
+	auth.pinState.protocol.tokenLastUsed = time.Now().Add(-pinUvAuthTokenInactivityLimit - time.Second)
+
+	data := buildCredMgmtRequest(t, pinToken, CredMgmtEnumerateRPsBegin, nil)
+
+	resp, err := auth.ProcessCBOR(CmdCredentialManagement, data)
+	require.ErrorIs(t, err, ErrPINAuthInvalid,
+		"an expired token must not authorize credential management")
+	require.Equal(t, byte(StatusPINAuthInvalid), resp[0])
 }
 
 func TestCredMgmtInvalidSubcommand(t *testing.T) {
@@ -1099,11 +1112,8 @@ func setupPINTokenForCredMgmtV2(t *testing.T, auth *Authenticator) []byte {
 	auth.state.PINHash = make([]byte, 32)
 
 	// Initialize PIN protocol state with V2 active protocol.
-	auth.pinState.protocol = &pinProtocolState{
-		pinUvAuthToken:   make([]byte, 32),
-		tokenPermissions: PINPermissionCredentialMgmt,
-		activeProtocol:   PINProtocol2,
-	}
+	auth.pinState.protocol = livePinTokenGrant(make([]byte, 32), PINPermissionCredentialMgmt)
+	auth.pinState.protocol.activeProtocol = PINProtocol2
 
 	return auth.pinState.protocol.pinUvAuthToken
 }

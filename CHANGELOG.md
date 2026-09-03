@@ -35,6 +35,94 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   Both are pre-existing storage-layer defects, filed separately; `Get` is the
   one primitive that separates present from absent on every engine.
 
+- **CTAP2 request authorization: pinUvAuthToken permissions and lifetime are
+  enforced, the UP and UV flags no longer assert interactions that did not
+  happen, and the excludeList no longer answers before the user presence gate**
+  (#213, #214, #217). All paths `xkey/pkg/authenticator/` unless noted.
+
+  **pinUvAuthToken permissions (#213 A).** `handleGetPinUvAuthTokenUsingPinWithPermissions`
+  and its UV variant recorded `tokenPermissions` and `tokenRPID`, and nothing on
+  the makeCredential or getAssertion path ever read them — `tokenRPID` had no
+  non-test reader anywhere in the repository. Both commands verified the HMAC
+  alone, so a token minted with `permissions = ga` and `permissionsRPID =
+  "benign.example"` authorized registration and assertions at **any** RP after a
+  single PIN entry. Both now call the new
+  `Authenticator.AuthorizePinUvAuthToken`, which checks the required permission
+  bit (`mc` / `ga`) and the permissions RP ID and answers every failure with
+  `CTAP2_ERR_PIN_AUTH_INVALID`. A token minted without a permissions RP ID is
+  bound to the RP ID of its first use, per CTAP 2.1 §6.1.2 and §6.2.2. The
+  superseded `getPinToken` subcommand now explicitly grants `mc` and `ga` with
+  no RP binding (§6.5.5.7.1) instead of leaving the previous token's permissions
+  and RP binding in place.
+
+  **pinUvAuthToken lifetime (#213 B).** The token had no timers and was cleared
+  only by `authenticatorReset` or by being overwritten, so one PIN entry
+  authorized unlimited commands for the life of the process. It now carries the
+  CTAP 2.1 §6.5.2.1 usage timers — 30 seconds of inactivity and a 10-minute cap
+  from issuance — and is discarded once either elapses. A token installed
+  without going through the minting path is treated as expired rather than as
+  valid forever. The timers apply to every command a token authorizes, so
+  credential management (`cmd_credmgmt.go`) and authenticator config
+  (`cmd_config.go`) refuse an expired token too.
+
+  **Fabricated UV (#214 H).** The `InternalPINHash` path compared the stored PIN
+  hash against a value its only caller had read back out of the same
+  authenticator (`xkey/pkg/gui/services/autofill_service.go`), so the
+  constant-time comparison was `x == x`. It always succeeded and set the **UV
+  flag**, telling the relying party a human had verified themselves when no one
+  had. `InternalPINHash` is now what it always was — an in-process trust marker
+  that gets a caller past the "a PIN is set, so present a `pinUvAuthParam`"
+  precondition. It never sets UV and never satisfies the user presence gate,
+  which now runs for these callers as it does for any other.
+
+  **Go-API user presence (#214 G).** The Go API `MakeCredential` gated presence
+  on `!pinAuthValid` while the CBOR path gated on `(!pinAuthValid ||
+  RequireUserPresence)`, so with valid PIN auth the Go API skipped the gesture
+  even when `RequireUserPresence: true` — and then set `FlagUP` unconditionally.
+  Both paths now use the same condition, and `FlagUP` is set only when a
+  presence test actually ran, the key backend collected presence itself, or the
+  platform completed a PIN entry.
+
+  **Shared user presence handler (#214 J).** `FIDO2DeviceService.Stop` installed
+  an `AutoGrantHandler` on the **shared** authenticator, so toggling the virtual
+  FIDO2 device off in the UI left the browser-extension credential path
+  auto-approving every presence request for the rest of the session. `Start` now
+  records the handler it replaced and `Stop` restores it.
+  `Authenticator.SetUserPresenceHandler` takes the authenticator lock and
+  returns the previous handler, and `requestUserPresence` reads the handler
+  through it — the UI goroutine could previously mutate the interface value
+  while the transport goroutine was reading it.
+
+  **excludeList credential oracle (#217).** `checkExcludeList` ran before any
+  presence or PIN gating and returned `CTAP2_ERR_CREDENTIAL_EXCLUDED`
+  immediately, so any process that could reach the CTAP interface could test
+  `(credentialID, rpId)` pairs at machine speed, with no prompt and no log
+  entry, and enumerate which sites the user had registered with. The answer is
+  now withheld until after the user presence gate and returned regardless of
+  whether the user approved, per CTAP 2.1 §6.1.2, so a match costs the same
+  gesture and takes the same observable path as an ordinary registration. The
+  check also honours `credProtect`: a level-3 credential stays invisible without
+  user verification in the same transaction.
+
+  **Operational impact.** A platform that mints a scoped pinUvAuthToken and then
+  uses it for a command it did not request permission for, or at a different RP,
+  now gets `CTAP2_ERR_PIN_AUTH_INVALID` and must run the clientPIN ceremony
+  again; a token idle for more than 30 seconds is refused the same way. Browser
+  extension autofill assertions now report UV as absent, because that path
+  collects a user presence gesture and never user verification — there is no
+  in-process path that collects a real PIN entry, so a UV-carrying autofill
+  assertion would have to be fabricated to exist.
+
+  `pkg/autofill`'s `AssertionVerifier` therefore gains
+  `NewAssertionVerifierWithOptions` and `VerifierOptions{AllowMissingUV: true}`,
+  which xKey's in-process autofill service uses. **`NewAssertionVerifier` is
+  unchanged and still requires both UP and UV**, as does the zero
+  `VerifierOptions`: the type is re-exported through `sdk/go` and downstream
+  consumers verify assertions from real authenticators, where UV is a genuine
+  claim that a human verified themselves. Every field on `VerifierOptions` names
+  the check it relaxes, so a caller who does not think about the struct gets the
+  strict posture.
+
 - **TPM and JWK ECDSA public keys are now validated as points on the curve**
   (#226). `pkg/tpm2` reconstructed `ecdsa.PublicKey` values from TPM ECC public
   areas by assigning the raw `X` and `Y` coordinates straight into the struct,

@@ -25,6 +25,11 @@ type AutoFillPolicy = autofill.AutoFillPolicy
 // AssertionVerifier verifies WebAuthn assertions produced during autofill.
 type AssertionVerifier = autofill.AssertionVerifier
 
+// AutoFillVerifierOptions relaxes individual AssertionVerifier checks. Its zero
+// value is the strict posture; see autofill.VerifierOptions before setting any
+// field, because each one loosens verification.
+type AutoFillVerifierOptions = autofill.VerifierOptions
+
 // AutoFillRateLimiter throttles autofill requests per origin.
 type AutoFillRateLimiter = autofill.RateLimiter
 
@@ -45,8 +50,14 @@ var DefaultAutoFillPolicy = autofill.DefaultPolicy
 var AutoFillMatchesEntry = autofill.MatchesEntry
 
 // NewAssertionVerifier constructs a WebAuthn assertion verifier for the given
-// relying-party ID and COSE public key.
+// relying-party ID and COSE public key. It requires both user presence and
+// user verification.
 var NewAssertionVerifier = autofill.NewAssertionVerifier
+
+// NewAssertionVerifierWithOptions constructs a WebAuthn assertion verifier that
+// relaxes the checks named by the options. Only for a ceremony whose relaxed
+// flag could not have been a genuine signal — see AutoFillVerifierOptions.
+var NewAssertionVerifierWithOptions = autofill.NewAssertionVerifierWithOptions
 
 // NewAutoFillRateLimiter constructs an autofill rate limiter.
 var NewAutoFillRateLimiter = autofill.NewRateLimiter

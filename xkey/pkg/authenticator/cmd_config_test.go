@@ -17,6 +17,7 @@ import (
 	"crypto/hmac"
 	"crypto/sha256"
 	"testing"
+	"time"
 
 	"github.com/fxamacker/cbor/v2"
 	"github.com/stretchr/testify/require"
@@ -1102,6 +1103,27 @@ func TestVerifyConfigHMAC(t *testing.T) {
 
 		result := auth.verifyConfigHMAC(message, validMac)
 		require.True(t, result)
+	})
+
+	// The CTAP 2.1 §6.5.2.1 usage timers apply to every command a token
+	// authorizes. Enforcing them only on makeCredential and getAssertion would
+	// leave a stale token able to reconfigure the authenticator.
+	t.Run("expired token returns false even with a valid MAC", func(t *testing.T) {
+		auth := createTestConfigAuthenticatorWithPINToken(t)
+		defer func() { _ = auth.Close() }()
+
+		token := auth.GetPinUvAuthToken()
+		require.NotNil(t, token)
+
+		message := []byte("test message")
+		mac := hmac.New(sha256.New, token)
+		mac.Write(message)
+		validMac := mac.Sum(nil)[:16]
+
+		auth.pinState.protocol.tokenLastUsed = time.Now().Add(-pinUvAuthTokenInactivityLimit - time.Second)
+
+		require.False(t, auth.verifyConfigHMAC(message, validMac),
+			"an expired token must not authorize authenticatorConfig")
 	})
 }
 

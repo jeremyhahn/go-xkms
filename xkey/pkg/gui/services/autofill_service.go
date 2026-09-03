@@ -675,9 +675,14 @@ func (s *AutoFillService) authenticateWithCTAP2(challenge string) (*ipc.Autofill
 		{Type: "public-key", ID: s.credID},
 	}
 
-	// Use the authenticator's internal PIN hash to bypass the CTAP2 clientPin
-	// ECDH ceremony. This is safe because the autofill service is a trusted
-	// in-process caller — the PIN hash is never exposed over IPC or USB.
+	// Use the authenticator's internal PIN hash to get past the "a PIN is set,
+	// so present a pinUvAuthParam" precondition without running the CTAP2
+	// clientPin ECDH ceremony. The PIN hash is never exposed over IPC or USB.
+	//
+	// This is not user verification and uv is therefore not requested: the
+	// authenticator would have to read the expected hash back to itself to
+	// "verify" it. The ceremony's real signal is the user presence gesture
+	// collected below, which the assertion reports in its UP flag.
 	pinHash := s.auth.GetState().PINHash
 
 	resp, err := s.auth.GetAssertion(
@@ -685,7 +690,7 @@ func (s *AutoFillService) authenticateWithCTAP2(challenge string) (*ipc.Autofill
 		autofillRPID,
 		allowList,
 		&authenticator.GetAssertionOptions{
-			Options:         map[string]bool{"up": true, "uv": true},
+			Options:         map[string]bool{"up": true, "uv": false},
 			InternalPINHash: pinHash,
 		},
 	)
@@ -738,6 +743,25 @@ func (s *AutoFillService) ensureRegistered() error {
 	return s.registerCredential()
 }
 
+// newAutofillVerifier builds the assertion verifier for the in-process autofill
+// ceremony.
+//
+// It opts out of the user verification check. The service asks the local
+// authenticator for an assertion and then verifies it here, in the same
+// process. That authenticator sets UV only for a real clientPIN ceremony or a
+// key backend that performs biometrics, and neither happens on this path — it
+// collects a user presence gesture instead. Requiring UV here could only ever
+// be satisfied by a UV flag this same process fabricated, which is not a
+// security control.
+//
+// User presence, the genuine signal, is still required. The opt-out is scoped
+// to this constructor: an SDK consumer verifying an assertion from a real
+// authenticator outside this process still gets the strict default.
+func newAutofillVerifier(publicKeyCOSE []byte) (*xkms.AssertionVerifier, error) {
+	return xkms.NewAssertionVerifierWithOptions(autofillRPID, publicKeyCOSE,
+		xkms.AutoFillVerifierOptions{AllowMissingUV: true})
+}
+
 // registerCredential creates a new discoverable CTAP2 credential for the
 // autofill RP, extracts the credential ID and COSE public key from the
 // attested auth data, creates a verifier, and persists the registration.
@@ -748,9 +772,12 @@ func (s *AutoFillService) registerCredential() error {
 
 	clientDataHash := sha256.Sum256([]byte("xkey-autofill-registration"))
 
-	// Use the authenticator's internal PIN hash to bypass the CTAP2 clientPin
-	// ECDH ceremony. This is safe because the autofill service is a trusted
-	// in-process caller — the PIN hash is never exposed over IPC or USB.
+	// Use the authenticator's internal PIN hash to get past the "a PIN is set,
+	// so present a pinUvAuthParam" precondition without running the CTAP2
+	// clientPin ECDH ceremony. The PIN hash is never exposed over IPC or USB.
+	//
+	// As in authenticateWithCTAP2, this is not user verification and uv is not
+	// requested; registration is gated on the user presence gesture.
 	regPINHash := s.auth.GetState().PINHash
 
 	resp, err := s.auth.MakeCredential(
@@ -768,7 +795,7 @@ func (s *AutoFillService) registerCredential() error {
 			{Type: "public-key", Alg: authenticator.COSEAlgES256},
 		},
 		&authenticator.MakeCredentialOptions{
-			Options:         map[string]bool{"rk": true, "uv": true},
+			Options:         map[string]bool{"rk": true, "uv": false},
 			InternalPINHash: regPINHash,
 		},
 	)
@@ -788,7 +815,7 @@ func (s *AutoFillService) registerCredential() error {
 	s.credID = authData.CredentialID
 	pubKeyCOSE := authData.PublicKey
 
-	verifier, err := xkms.NewAssertionVerifier(autofillRPID, pubKeyCOSE)
+	verifier, err := newAutofillVerifier(pubKeyCOSE)
 	if err != nil {
 		return &SentinelCauseError{Sentinel: ErrAutoFillAuthFailed, Cause: err}
 	}
@@ -825,7 +852,7 @@ func (s *AutoFillService) loadRegistration() bool {
 		return false
 	}
 
-	verifier, err := xkms.NewAssertionVerifier(autofillRPID, reg.PublicKeyCOSE)
+	verifier, err := newAutofillVerifier(reg.PublicKeyCOSE)
 	if err != nil {
 		s.log.Warn("failed to create verifier from stored registration", "error", err)
 		return false

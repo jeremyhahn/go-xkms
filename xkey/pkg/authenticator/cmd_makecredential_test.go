@@ -149,10 +149,7 @@ func TestMakeCredential_Success(t *testing.T) {
 		for i := range pinToken {
 			pinToken[i] = byte(i)
 		}
-		auth.pinState.protocol = &pinProtocolState{
-			pinUvAuthToken:   pinToken,
-			tokenPermissions: PINPermissionMakeCredential,
-		}
+		auth.pinState.protocol = livePinTokenGrant(pinToken, PINPermissionMakeCredential)
 
 		// Compute valid pinUvAuthParam: HMAC-SHA-256(pinToken, clientDataHash)[:16]
 		mac := hmac.New(sha256.New, pinToken)
@@ -240,10 +237,7 @@ func TestMakeCredential_Errors(t *testing.T) {
 		for i := range pinToken {
 			pinToken[i] = byte(i)
 		}
-		auth.pinState.protocol = &pinProtocolState{
-			pinUvAuthToken:   pinToken,
-			tokenPermissions: PINPermissionMakeCredential,
-		}
+		auth.pinState.protocol = livePinTokenGrant(pinToken, PINPermissionMakeCredential)
 
 		// Use deliberately wrong pinUvAuthParam
 		opts := &MakeCredentialOptions{
@@ -2699,10 +2693,7 @@ func TestHandleMakeCredential_PINAuthWithRequireUserPresence(t *testing.T) {
 	for i := range pinToken {
 		pinToken[i] = byte(i)
 	}
-	auth.pinState.protocol = &pinProtocolState{
-		pinUvAuthToken:   pinToken,
-		tokenPermissions: PINPermissionMakeCredential,
-	}
+	auth.pinState.protocol = livePinTokenGrant(pinToken, PINPermissionMakeCredential)
 
 	clientDataHash := make([]byte, ClientDataHashSize)
 
@@ -2942,10 +2933,7 @@ func TestHandleMakeCredential_WithLoggerAndPINAuth(t *testing.T) {
 	for i := range pinToken {
 		pinToken[i] = byte(i)
 	}
-	auth.pinState.protocol = &pinProtocolState{
-		pinUvAuthToken:   pinToken,
-		tokenPermissions: PINPermissionMakeCredential,
-	}
+	auth.pinState.protocol = livePinTokenGrant(pinToken, PINPermissionMakeCredential)
 
 	clientDataHash := make([]byte, ClientDataHashSize)
 	mac := hmac.New(sha256.New, pinToken)
@@ -3012,10 +3000,7 @@ func TestHandleMakeCredential_WithLoggerInvalidPINAuth(t *testing.T) {
 	for i := range pinToken {
 		pinToken[i] = byte(i)
 	}
-	auth.pinState.protocol = &pinProtocolState{
-		pinUvAuthToken:   pinToken,
-		tokenPermissions: PINPermissionMakeCredential,
-	}
+	auth.pinState.protocol = livePinTokenGrant(pinToken, PINPermissionMakeCredential)
 
 	clientDataHash := make([]byte, ClientDataHashSize)
 	rp := RelyingParty{ID: "example.com"}
@@ -3124,10 +3109,7 @@ func TestHandleMakeCredential_WithLoggerPINAuthSkipsUP(t *testing.T) {
 	for i := range pinToken {
 		pinToken[i] = byte(i)
 	}
-	auth.pinState.protocol = &pinProtocolState{
-		pinUvAuthToken:   pinToken,
-		tokenPermissions: PINPermissionMakeCredential,
-	}
+	auth.pinState.protocol = livePinTokenGrant(pinToken, PINPermissionMakeCredential)
 
 	clientDataHash := make([]byte, ClientDataHashSize)
 	mac := hmac.New(sha256.New, pinToken)
@@ -3161,8 +3143,13 @@ func TestHandleMakeCredential_WithLoggerPINAuthSkipsUP(t *testing.T) {
 // --- InternalPINHash tests for MakeCredential ---
 
 // TestMakeCredential_InternalPINHash_Success verifies that a trusted in-process caller
-// can create a credential by providing the correct InternalPINHash, bypassing the
-// CTAP2 clientPin ECDH ceremony. The response must have the UV flag set.
+// can create a credential by providing the correct InternalPINHash, getting past the
+// "a PIN is set, so present a pinUvAuthParam" precondition without running the CTAP2
+// clientPin ECDH ceremony.
+//
+// The response must NOT have the UV flag set: the caller runs inside this process
+// and reads the expected hash back from the authenticator, so it has verified no
+// one, and UV is a claim to the relying party that a human did.
 func TestMakeCredential_InternalPINHash_Success(t *testing.T) {
 	storage := NewMemoryStorage()
 	config := DefaultConfig()
@@ -3201,11 +3188,12 @@ func TestMakeCredential_InternalPINHash_Success(t *testing.T) {
 	require.Equal(t, AttestationFormatNone, resp.Fmt)
 	require.NotEmpty(t, resp.AuthData)
 
-	// Parse authData and verify UV flag is set.
+	// Parse authData and check the flags.
 	parsedAuthData, err := ParseAuthData(resp.AuthData)
 	require.NoError(t, err)
-	require.True(t, parsedAuthData.UserPresent(), "UP flag should be set")
-	require.True(t, parsedAuthData.UserVerified(), "UV flag should be set when InternalPINHash is valid")
+	require.True(t, parsedAuthData.UserPresent(), "UP flag should be set: the presence gate ran")
+	require.False(t, parsedAuthData.UserVerified(),
+		"UV must not be set for an in-process caller that verified no one")
 	require.True(t, parsedAuthData.HasAttestedCredentialData(), "AT flag should be set")
 	require.NotEmpty(t, parsedAuthData.CredentialID)
 	require.NotEmpty(t, parsedAuthData.PublicKey)

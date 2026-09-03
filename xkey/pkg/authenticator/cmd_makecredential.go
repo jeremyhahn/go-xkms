@@ -158,10 +158,16 @@ type MakeCredentialOptions struct {
 	// PINUVAuthProtocol specifies which PIN/UV protocol is used.
 	PINUVAuthProtocol uint8
 
-	// InternalPINHash allows trusted in-process callers to bypass the CTAP2
-	// clientPin ECDH ceremony. When set, the authenticator verifies the hash
-	// directly against the stored PIN hash using constant-time comparison.
-	// This field is NOT accessible via CBOR/USB — only through the Go API.
+	// InternalPINHash lets a trusted in-process caller get past the "a PIN is
+	// set, so present a pinUvAuthParam" precondition without running the CTAP2
+	// clientPin ECDH ceremony. It is NOT accessible via CBOR/USB — only through
+	// the Go API.
+	//
+	// It is an in-process trust marker, NOT user verification. The caller runs
+	// inside the authenticator's process and can read the expected value back
+	// from it, so the comparison proves nothing about a human. This field
+	// therefore never sets the UV flag and never satisfies the user presence
+	// gate; both are collected as they would be for any other caller.
 	InternalPINHash []byte
 }
 
@@ -189,10 +195,10 @@ func (a *Authenticator) HandleMakeCredential(data []byte) ([]byte, error) {
 		return nil, err
 	}
 
-	// Check exclude list for existing credentials
-	if err := a.checkExcludeList(req.ExcludeList, req.RP.ID); err != nil {
-		return nil, err
-	}
+	// The excludeList is deliberately NOT consulted here. CTAP 2.1 §6.1.2
+	// requires the answer to come after the user presence gate below, so a
+	// match cannot be used as a silent probe for which credentials this
+	// authenticator holds.
 
 	// Select algorithm from pubKeyCredParams
 	selectedAlgorithm, err := a.selectAlgorithm(req.PubKeyCredParams)
@@ -240,11 +246,18 @@ func (a *Authenticator) HandleMakeCredential(data []byte) ([]byte, error) {
 
 	pinAuthValid := false
 	if len(req.PINUVAuthParam) > 0 && req.PINUVAuthProtocol > 0 {
-		if !a.VerifyPinUvAuthToken(req.ClientDataHash, req.PINUVAuthParam) {
+		// Per CTAP 2.1 §6.1.2 the token must carry the mc permission and, if
+		// it is already bound to a permissions RP ID, that RP ID must match
+		// this request. Verifying only the HMAC would let a token minted for
+		// one RP authorize registration at any other.
+		if err := a.AuthorizePinUvAuthToken(req.ClientDataHash, req.PINUVAuthParam,
+			PINPermissionMakeCredential, req.RP.ID); err != nil {
 			if a.logger != nil {
-				a.logger.Warn("MakeCredential pinUvAuthParam verification failed")
+				a.logger.Warn("MakeCredential pinUvAuthParam rejected",
+					slog.String("rp", req.RP.ID),
+					slog.String("error", err.Error()))
 			}
-			return nil, ErrPINAuthInvalid
+			return nil, err
 		}
 		pinAuthValid = true
 		if a.logger != nil {
@@ -320,6 +333,12 @@ func (a *Authenticator) HandleMakeCredential(data []byte) ([]byte, error) {
 	// This ensures the user approves the operation before the phone prompts for biometrics.
 	// For phone backends with HandlesUserPresence=false, this shows the desktop notification
 	// first, then the phone prompts for biometric after approval.
+	//
+	// The excludeList answer is decided here but withheld until after the gate,
+	// so a match cannot be read off a response that arrived without one.
+	excluded := a.excludeListMatches(req.ExcludeList, req.RP.ID, a.userVerificationSatisfied(req))
+
+	upPerformed := false
 	if (!pinAuthValid || a.config.RequireUserPresence) && !backendHandlesUP {
 		if a.logger != nil {
 			a.logger.Info("MakeCredential requesting user presence",
@@ -329,14 +348,22 @@ func (a *Authenticator) HandleMakeCredential(data []byte) ([]byte, error) {
 		}
 		ctx := a.commandContext()
 		if err := a.requestUserPresence(ctx, req.RP.ID, req.RP.Name, req.User.Name, "register"); err != nil {
+			if excluded {
+				return nil, a.reportCredentialExcluded(req, true, backendHandlesUP)
+			}
 			return nil, err
 		}
+		upPerformed = true
 	} else if a.logger != nil {
 		reason := "PIN verification"
 		if backendHandlesUP {
 			reason = "key backend (biometrics)"
 		}
 		a.logger.Info("MakeCredential UP implicitly satisfied", slog.String("by", reason))
+	}
+
+	if excluded {
+		return nil, a.reportCredentialExcluded(req, upPerformed, backendHandlesUP)
 	}
 
 	// Generate credential ID
@@ -367,8 +394,17 @@ func (a *Authenticator) HandleMakeCredential(data []byte) ([]byte, error) {
 		}
 	}
 
-	// Build authenticator data with AT flag (attested credential data)
-	flags := FlagUP | FlagAT // User present + Attested credential data
+	// Build authenticator data with AT flag (attested credential data).
+	//
+	// FlagUP asserts that a human was present. Set it only when a presence test
+	// actually ran in this transaction, when the key backend collected presence
+	// itself during key generation, or when the platform performed a PIN entry
+	// (itself a physical gesture) — never merely because an in-process caller
+	// asked.
+	flags := FlagAT
+	if upPerformed || backendHandlesUP || pinAuthValid {
+		flags |= FlagUP
+	}
 	if a.userVerificationSatisfied(req) {
 		flags |= FlagUV
 	}
@@ -719,16 +755,58 @@ func (a *Authenticator) validateMakeCredentialRequest(req *MakeCredentialRequest
 	return nil
 }
 
-// checkExcludeList checks if any credential in the exclude list exists.
-// Returns ErrCredentialExcluded if a matching credential is found.
-func (a *Authenticator) checkExcludeList(excludeList []CredentialDescriptor, rpID string) error {
+// excludeListMatches reports whether any descriptor in excludeList names a
+// credential this authenticator already holds for rpID.
+//
+// Credentials created with credProtect level 3 (userVerificationRequired) stay
+// invisible unless user verification was performed in this transaction. Their
+// whole purpose is to be undiscoverable without UV, and an exclude-list answer
+// that counted them would disclose their existence to a caller that is not
+// permitted to use them.
+func (a *Authenticator) excludeListMatches(excludeList []CredentialDescriptor, rpID string, uvPerformed bool) bool {
 	for _, desc := range excludeList {
 		cred, err := a.storage.Load(desc.ID)
-		if err == nil && cred != nil && cred.RPID == rpID {
-			return ErrCredentialExcluded
+		if err != nil || cred == nil || cred.RPID != rpID {
+			continue
+		}
+		if cred.CredProtect == CredProtectUserVerificationRequired && !uvPerformed {
+			continue
+		}
+		return true
+	}
+	return false
+}
+
+// reportCredentialExcluded ends a makeCredential whose excludeList named a
+// credential this authenticator already holds, returning ErrCredentialExcluded.
+//
+// It must be called only after the user presence gate. CTAP 2.1 §6.1.2 has the
+// authenticator wait for user presence and then return
+// CTAP2_ERR_CREDENTIAL_EXCLUDED regardless of the user's answer, so a match
+// costs the same gesture, and takes the same observable path, as an ordinary
+// registration. Answering earlier makes the authenticator a silent oracle: any
+// process that can reach the CTAP interface could test (credentialID, rpId)
+// pairs at machine speed and learn which sites the user has registered with.
+//
+// upPerformed says whether the gesture was already collected for this request —
+// including one the user declined, which still counts as collected. If it was
+// not, and the key backend does not collect presence internally, the gesture is
+// collected here purely for its cost; the user's answer does not change the
+// outcome.
+func (a *Authenticator) reportCredentialExcluded(req *MakeCredentialRequest, upPerformed, backendHandlesUP bool) error {
+	if !upPerformed && !backendHandlesUP {
+		ctx := a.commandContext()
+		if upErr := a.requestUserPresence(ctx, req.RP.ID, req.RP.Name, req.User.Name, "register"); upErr != nil {
+			debugLog("[MAKECRED] presence declined on excluded credential: %v", upErr)
 		}
 	}
-	return nil
+
+	if a.logger != nil {
+		a.logger.Info("MakeCredential rejected: credential already registered with this RP",
+			slog.String("rp", req.RP.ID))
+	}
+
+	return ErrCredentialExcluded
 }
 
 // selectAlgorithm selects the first supported algorithm from pubKeyCredParams.
@@ -814,8 +892,12 @@ func (a *Authenticator) shouldGenerateHMACSecret(extensions map[string]interface
 func (a *Authenticator) userVerificationSatisfied(req *MakeCredentialRequest) bool {
 	// UV is satisfied when:
 	// 1. The client provided a valid pinUvAuthParam (platform performed PIN/UV), OR
-	// 2. The key backend handles user verification internally (e.g., phone biometric), OR
-	// 3. A trusted in-process caller provided a valid InternalPINHash
+	// 2. The key backend handles user verification internally (e.g., phone biometric).
+	//
+	// InternalPINHash is deliberately NOT on this list. It is an in-process
+	// trust marker, not evidence that a human verified themselves — see the
+	// field's documentation — and the UV flag is a claim to the relying party
+	// that a human did.
 	if len(req.PINUVAuthParam) > 0 && req.PINUVAuthProtocol > 0 {
 		return true
 	}
@@ -825,16 +907,6 @@ func (a *Authenticator) userVerificationSatisfied(req *MakeCredentialRequest) bo
 	// that satisfies the UV requirement without needing platform-level PIN/UV.
 	if a.keyBackend != nil && a.keyBackend.Capabilities().HandlesUserVerification {
 		return true
-	}
-
-	// Internal PIN hash verified by trusted in-process caller.
-	if len(req.InternalPINHash) > 0 {
-		a.mu.RLock()
-		pinSetAndMatches := a.isPINSetLocked() && a.verifyPINHashLocked(req.InternalPINHash)
-		a.mu.RUnlock()
-		if pinSetAndMatches {
-			return true
-		}
 	}
 
 	return false
@@ -1305,10 +1377,8 @@ func (a *Authenticator) MakeCredential(
 		return nil, err
 	}
 
-	// Check exclude list for existing credentials
-	if err := a.checkExcludeList(req.ExcludeList, req.RP.ID); err != nil {
-		return nil, err
-	}
+	// The excludeList is answered after the user presence gate below, per
+	// CTAP 2.1 §6.1.2. See reportCredentialExcluded.
 
 	// Select algorithm from pubKeyCredParams
 	selectedAlgorithm, err := a.selectAlgorithm(req.PubKeyCredParams)
@@ -1326,25 +1396,27 @@ func (a *Authenticator) MakeCredential(
 	// Otherwise, explicitly request user presence.
 	pinAuthValid := false
 	if len(req.PINUVAuthParam) > 0 && req.PINUVAuthProtocol > 0 {
-		if !a.VerifyPinUvAuthToken(req.ClientDataHash, req.PINUVAuthParam) {
-			return nil, ErrPINAuthInvalid
+		if err := a.AuthorizePinUvAuthToken(req.ClientDataHash, req.PINUVAuthParam,
+			PINPermissionMakeCredential, req.RP.ID); err != nil {
+			return nil, err
 		}
 		pinAuthValid = true
 	}
 
-	// Internal PIN verification for trusted in-process callers (e.g., autofill).
+	// An in-process caller may assert its trust to get past the "a PIN is set,
+	// so present a pinUvAuthParam" precondition. It does NOT stand in for user
+	// verification or user presence — both gates below still run.
+	inProcessTrusted := false
 	if !pinAuthValid && len(req.InternalPINHash) > 0 {
 		a.mu.RLock()
 		pinSetAndMatches := a.isPINSetLocked() && a.verifyPINHashLocked(req.InternalPINHash)
 		a.mu.RUnlock()
-		if pinSetAndMatches {
-			pinAuthValid = true
-			a.state.ResetPINRetries()
-			debugLog("[MAKECRED] internal PIN hash verified for trusted caller")
-		} else {
-			debugLog("[MAKECRED] internal PIN hash verification failed")
+		if !pinSetAndMatches {
+			debugLog("[MAKECRED] internal PIN hash did not match")
 			return nil, ErrPINInvalid
 		}
+		inProcessTrusted = true
+		a.state.ResetPINRetries()
 	}
 
 	// Check if the key backend handles user presence internally (e.g., phone biometrics).
@@ -1352,17 +1424,36 @@ func (a *Authenticator) MakeCredential(
 
 	// Request user presence BEFORE key generation.
 	// This ensures the user approves the operation before the phone prompts for biometrics.
-	if !pinAuthValid && !backendHandlesUP {
+	//
+	// The condition matches HandleMakeCredential: RequireUserPresence means a
+	// gesture is collected even when the platform already performed PIN/UV.
+	// Diverging here would let the Go API skip the gesture and still set the UP
+	// flag below, asserting an interaction that never happened.
+	//
+	// The excludeList answer is decided here but withheld until after the gate,
+	// so a match cannot be read off a response that arrived without one.
+	excluded := a.excludeListMatches(req.ExcludeList, req.RP.ID, a.userVerificationSatisfied(req))
+
+	upPerformed := false
+	if (!pinAuthValid || a.config.RequireUserPresence) && !backendHandlesUP {
 		// When PIN is configured and set, the client MUST provide pinUvAuthParam.
 		// Falling through to interactive UP here would block indefinitely in
 		// non-terminal contexts (e.g., Chrome/UHID).
-		if a.config.EnablePIN && a.IsPINSet() {
+		if !pinAuthValid && !inProcessTrusted && a.config.EnablePIN && a.IsPINSet() {
 			return nil, ErrPINRequired
 		}
 		ctx := a.commandContext()
 		if err := a.requestUserPresence(ctx, req.RP.ID, req.RP.Name, req.User.Name, "register"); err != nil {
+			if excluded {
+				return nil, a.reportCredentialExcluded(req, true, backendHandlesUP)
+			}
 			return nil, err
 		}
+		upPerformed = true
+	}
+
+	if excluded {
+		return nil, a.reportCredentialExcluded(req, upPerformed, backendHandlesUP)
 	}
 
 	// Generate credential ID
@@ -1393,8 +1484,17 @@ func (a *Authenticator) MakeCredential(
 		}
 	}
 
-	// Build authenticator data with AT flag (attested credential data)
-	flags := FlagUP | FlagAT // User present + Attested credential data
+	// Build authenticator data with AT flag (attested credential data).
+	//
+	// FlagUP asserts that a human was present. Set it only when a presence test
+	// actually ran in this transaction, when the key backend collected presence
+	// itself during key generation, or when the platform performed a PIN entry
+	// (itself a physical gesture) — never merely because an in-process caller
+	// asked.
+	flags := FlagAT
+	if upPerformed || backendHandlesUP || pinAuthValid {
+		flags |= FlagUP
+	}
 	if a.userVerificationSatisfied(req) {
 		flags |= FlagUV
 	}

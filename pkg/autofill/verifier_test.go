@@ -150,6 +150,10 @@ func TestAssertionVerifier_MissingUP(t *testing.T) {
 	}
 }
 
+// TestAssertionVerifier_MissingUV proves the default constructor still refuses
+// an assertion without user verification. This is the posture every SDK
+// consumer gets, and it must not move: for an authenticator outside this
+// process, UV is a genuine claim that a human verified themselves.
 func TestAssertionVerifier_MissingUV(t *testing.T) {
 	privKey := generateTestKeypair(t)
 	coseKey := encodeCOSEPublicKey(&privKey.PublicKey)
@@ -167,6 +171,66 @@ func TestAssertionVerifier_MissingUV(t *testing.T) {
 	err = verifier.Verify(authData, sig, clientDataHash[:])
 	if !errors.Is(err, ErrVerifierMissingUV) {
 		t.Fatalf("expected ErrVerifierMissingUV, got: %v", err)
+	}
+}
+
+// TestAssertionVerifier_ZeroOptionsMatchesDefault pins the zero value of
+// VerifierOptions to the strict posture. A caller that builds the struct
+// without thinking about it must not silently get relaxed verification.
+//
+// This is NOT a duplicate of TestAssertionVerifier_MissingUV, though both
+// assert ErrVerifierMissingUV. That one covers the default constructor; this
+// one covers the options constructor reached with a zero struct, which is the
+// case that breaks the moment someone adds a field named for the check it
+// enables rather than the one it relaxes — `RequireUV bool` would make
+// VerifierOptions{} mean "UV not required" and this test is what would catch
+// it. Keep both.
+func TestAssertionVerifier_ZeroOptionsMatchesDefault(t *testing.T) {
+	privKey := generateTestKeypair(t)
+	coseKey := encodeCOSEPublicKey(&privKey.PublicKey)
+
+	verifier, err := NewAssertionVerifierWithOptions(testRPID, coseKey, VerifierOptions{})
+	if err != nil {
+		t.Fatalf("NewAssertionVerifierWithOptions failed: %v", err)
+	}
+
+	authData := buildTestAuthData(testRPID, flagUP, 1)
+	clientDataHash := sha256.Sum256([]byte("test client data"))
+	sig := signAssertion(t, privKey, authData, clientDataHash[:])
+
+	err = verifier.Verify(authData, sig, clientDataHash[:])
+	if !errors.Is(err, ErrVerifierMissingUV) {
+		t.Fatalf("zero VerifierOptions must require UV, got: %v", err)
+	}
+}
+
+// TestAssertionVerifier_AllowMissingUV proves the opt-out accepts an assertion
+// carrying user presence but not user verification — the in-process autofill
+// ceremony's shape — while still requiring user presence.
+func TestAssertionVerifier_AllowMissingUV(t *testing.T) {
+	privKey := generateTestKeypair(t)
+	coseKey := encodeCOSEPublicKey(&privKey.PublicKey)
+
+	verifier, err := NewAssertionVerifierWithOptions(testRPID, coseKey,
+		VerifierOptions{AllowMissingUV: true})
+	if err != nil {
+		t.Fatalf("NewAssertionVerifierWithOptions failed: %v", err)
+	}
+
+	clientDataHash := sha256.Sum256([]byte("test client data"))
+
+	// UP set, UV cleared — what the in-process ceremony now produces.
+	authData := buildTestAuthData(testRPID, flagUP, 1)
+	sig := signAssertion(t, privKey, authData, clientDataHash[:])
+	if err := verifier.Verify(authData, sig, clientDataHash[:]); err != nil {
+		t.Fatalf("AllowMissingUV must accept an assertion with UP but no UV, got: %v", err)
+	}
+
+	// The opt-out relaxes UV only. User presence is still required.
+	noFlags := buildTestAuthData(testRPID, 0, 2)
+	noFlagsSig := signAssertion(t, privKey, noFlags, clientDataHash[:])
+	if err := verifier.Verify(noFlags, noFlagsSig, clientDataHash[:]); !errors.Is(err, ErrVerifierMissingUP) {
+		t.Fatalf("AllowMissingUV must still require UP, got: %v", err)
 	}
 }
 

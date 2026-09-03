@@ -21,6 +21,7 @@ import (
 	"crypto/sha256"
 	"crypto/x509"
 	"errors"
+	"time"
 
 	"github.com/fxamacker/cbor/v2"
 )
@@ -847,7 +848,9 @@ func (a *Authenticator) verifyConfigHMAC(message, authParam []byte) bool {
 	a.mu.RLock()
 	defer a.mu.RUnlock()
 
-	if a.pinState.protocol == nil || a.pinState.protocol.pinUvAuthToken == nil {
+	// The CTAP 2.1 §6.5.2.1 usage timers apply to every command a token
+	// authorizes, so an expired token must not authorize authenticatorConfig.
+	if !a.pinUvAuthTokenUsableLocked(time.Now()) {
 		return false
 	}
 
