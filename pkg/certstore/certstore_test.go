@@ -765,7 +765,7 @@ func TestIsRevoked_Revoked(t *testing.T) {
 		Issuer:     caCert.Subject,
 		ThisUpdate: time.Now(),
 		NextUpdate: time.Now().Add(24 * time.Hour),
-		RevokedCertificates: []pkix.RevokedCertificate{
+		RevokedCertificateEntries: []x509.RevocationListEntry{
 			{
 				SerialNumber:   leafCert.SerialNumber,
 				RevocationTime: time.Now(),
@@ -831,7 +831,7 @@ func TestStoreCertificate_RevokedWithAllowRevoked(t *testing.T) {
 		Issuer:     caCert.Subject,
 		ThisUpdate: time.Now(),
 		NextUpdate: time.Now().Add(24 * time.Hour),
-		RevokedCertificates: []pkix.RevokedCertificate{
+		RevokedCertificateEntries: []x509.RevocationListEntry{
 			{
 				SerialNumber:   leafCert.SerialNumber,
 				RevocationTime: time.Now(),
@@ -871,7 +871,7 @@ func TestStoreCertificate_RevokedWithoutAllowRevoked(t *testing.T) {
 		Issuer:     caCert.Subject,
 		ThisUpdate: time.Now(),
 		NextUpdate: time.Now().Add(24 * time.Hour),
-		RevokedCertificates: []pkix.RevokedCertificate{
+		RevokedCertificateEntries: []x509.RevocationListEntry{
 			{
 				SerialNumber:   leafCert.SerialNumber,
 				RevocationTime: time.Now(),
@@ -1066,7 +1066,7 @@ func TestIsRevoked_ExpiredCRL(t *testing.T) {
 		Issuer:     caCert.Subject,
 		ThisUpdate: time.Now().Add(-48 * time.Hour),
 		NextUpdate: time.Now().Add(-24 * time.Hour),
-		RevokedCertificates: []pkix.RevokedCertificate{
+		RevokedCertificateEntries: []x509.RevocationListEntry{
 			{
 				SerialNumber:   leafCert.SerialNumber,
 				RevocationTime: time.Now().Add(-36 * time.Hour),

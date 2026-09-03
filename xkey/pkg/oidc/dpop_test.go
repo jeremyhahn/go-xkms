@@ -644,3 +644,84 @@ func TestDPoPKey_PublicKeyInterop(t *testing.T) {
 		t.Error("Expected P-256 curve")
 	}
 }
+
+// TestDPoPKeyFromCoordinates_ShortScalarIsAccepted pins the left-padding.
+//
+// A JWK carries base64url integers with no leading zeros, so a private scalar
+// whose high byte is zero arrives SHORTER than the P-256 field.
+// ecdsa.ParseRawPrivateKey requires exactly the field size, so passing the short
+// slice straight through rejects a perfectly valid key — at roughly 1 in 256.
+//
+// The fixture is CONSTRUCTED, not searched: 42 is a valid P-256 private scalar
+// and its minimal big-endian encoding is one byte, which is the most extreme
+// short form possible. TestDPoPKeyFromCoordinates above reconstructs a randomly
+// generated key and would miss this about 255 times out of 256.
+func TestDPoPKeyFromCoordinates_ShortScalarIsAccepted(t *testing.T) {
+	const size = 32 // P-256 field size
+
+	padded := make([]byte, size)
+	padded[size-1] = 42
+	ref, err := ecdsa.ParseRawPrivateKey(elliptic.P256(), padded)
+	if err != nil {
+		t.Fatalf("padded scalar must be a valid P-256 key: %v", err)
+	}
+	x, y := dpopCoordinates(&ref.PublicKey)
+
+	// The JWK form: one byte, no leading zeros.
+	short := []byte{42}
+
+	got, err := DPoPKeyFromCoordinates(x, y, short)
+	if err != nil {
+		t.Fatalf("a valid short scalar must be accepted, got %v", err)
+	}
+	if !got.PrivateKey.Equal(ref) {
+		t.Error("short and padded forms of the same scalar must yield the same key")
+	}
+}
+
+// TestDPoPKeyFromCoordinates_RejectsMismatchedCoordinates covers the other new
+// behaviour: a JWK whose public coordinates disagree with its private scalar is
+// malformed, and accepting it would let a caller sign with one key while
+// advertising another.
+func TestDPoPKeyFromCoordinates_RejectsMismatchedCoordinates(t *testing.T) {
+	a, err := GenerateDPoPKey()
+	if err != nil {
+		t.Fatalf("GenerateDPoPKey: %v", err)
+	}
+	b, err := GenerateDPoPKey()
+	if err != nil {
+		t.Fatalf("GenerateDPoPKey: %v", err)
+	}
+
+	d, err := a.PrivateKey.Bytes()
+	if err != nil {
+		t.Fatalf("Bytes: %v", err)
+	}
+	xb, yb := dpopCoordinates(&b.PrivateKey.PublicKey)
+
+	if _, err := DPoPKeyFromCoordinates(xb, yb, d); err == nil {
+		t.Fatal("coordinates from a different key must be refused")
+	}
+}
+
+// TestDPoPKeyFromCoordinates_RejectsInvalidScalar pins that a scalar outside the
+// curve order is refused rather than assigned. Previously D was written directly
+// into the key, so a malformed JWK produced a key that silently could not sign.
+func TestDPoPKeyFromCoordinates_RejectsInvalidScalar(t *testing.T) {
+	// All-0xFF exceeds the P-256 group order.
+	bad := make([]byte, 32)
+	for i := range bad {
+		bad[i] = 0xFF
+	}
+	if _, err := DPoPKeyFromCoordinates(nil, nil, bad); err == nil {
+		t.Fatal("a scalar outside the curve order must be refused")
+	}
+	// Zero is not a valid private key either.
+	if _, err := DPoPKeyFromCoordinates(nil, nil, make([]byte, 32)); err == nil {
+		t.Fatal("a zero scalar must be refused")
+	}
+	// Over-long input must be refused rather than silently truncated.
+	if _, err := DPoPKeyFromCoordinates(nil, nil, make([]byte, 33)); err == nil {
+		t.Fatal("an over-long scalar must be refused")
+	}
+}

@@ -514,8 +514,8 @@ func decodeCOSEKeyAgreementKey(data []byte) (*ecdsa.PublicKey, error) {
 
 	pubKey := &ecdsa.PublicKey{
 		Curve: elliptic.P256(),
-		X:     x,
-		Y:     y,
+		X:     x, //nolint:staticcheck // raw COSE coordinates; the point is validated on-curve immediately below, and no key is used before that check.
+		Y:     y, //nolint:staticcheck // raw COSE coordinates; the point is validated on-curve immediately below, and no key is used before that check.
 	}
 
 	// Verify point is on curve

@@ -406,8 +406,8 @@ func TestEncodeCOSEEC2Key_PadsCoordinates(t *testing.T) {
 	// the 32-byte P-256 field width.
 	key := &ecdsa.PublicKey{
 		Curve: elliptic.P256(),
-		X:     big.NewInt(1),
-		Y:     big.NewInt(2),
+		X:     big.NewInt(1), //nolint:staticcheck // the fixture DELIBERATELY builds coordinates shorter than the field width, which is the property under test; a validating constructor cannot express it.
+		Y:     big.NewInt(2), //nolint:staticcheck // the fixture DELIBERATELY builds coordinates shorter than the field width, which is the property under test; a validating constructor cannot express it.
 	}
 
 	encoded, err := encodeCOSEEC2Key(key, COSEAlgES256)
@@ -539,8 +539,8 @@ func decodeCOSEEC2(t *testing.T, coseKey []byte, curve elliptic.Curve) *ecdsa.Pu
 
 	return &ecdsa.PublicKey{
 		Curve: curve,
-		X:     new(big.Int).SetBytes(x),
-		Y:     new(big.Int).SetBytes(y),
+		X:     new(big.Int).SetBytes(x), //nolint:staticcheck // test helper decoding a COSE key; the raw form is what the wire carries and what the assertion is about.
+		Y:     new(big.Int).SetBytes(y), //nolint:staticcheck // test helper decoding a COSE key; the raw form is what the wire carries and what the assertion is about.
 	}
 }
 

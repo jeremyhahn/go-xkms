@@ -278,15 +278,19 @@ func TestChallengeResolver_SolveWithCleanup_SolverRemovedAfterSolveCoverageFinal
 // =============================================================================
 
 func TestEncodePrivateKeyPEM_ECDSAMarshalErrorCoverageFinal(t *testing.T) {
-	// Create an ECDSA key with invalid curve to trigger marshal error
-	// Use a minimal custom curve that will fail marshaling
+	// Create an ECDSA key with a nil curve to trigger the marshal error.
+	// The raw X/Y/D fields are assigned directly and SA1019 is suppressed
+	// deliberately: a key with NO curve cannot be produced by any supported
+	// constructor -- ecdsa.ParseRawPrivateKey and ParseUncompressedPublicKey
+	// both require a curve and validate against it -- and a key that fails to
+	// marshal is precisely the input this error path exists to handle.
 	invalidKey := &ecdsa.PrivateKey{
 		PublicKey: ecdsa.PublicKey{
-			Curve: nil, // Invalid curve
-			X:     big.NewInt(1),
-			Y:     big.NewInt(1),
+			Curve: nil,           // Invalid curve
+			X:     big.NewInt(1), //nolint:staticcheck // SA1019: see above
+			Y:     big.NewInt(1), //nolint:staticcheck // SA1019: see above
 		},
-		D: big.NewInt(1),
+		D: big.NewInt(1), //nolint:staticcheck // SA1019: see above
 	}
 
 	_, err := encodePrivateKeyPEM(invalidKey)

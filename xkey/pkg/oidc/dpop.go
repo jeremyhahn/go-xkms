@@ -22,7 +22,6 @@ import (
 	"encoding/base64"
 	"encoding/pem"
 	"hash"
-	"math/big"
 	"time"
 
 	"github.com/golang-jwt/jwt/v5"
@@ -238,21 +237,82 @@ func (m *dpopSigningMethod) Sign(signingString string, key interface{}) ([]byte,
 	return jwt.SigningMethodES256.Sign(signingString, key)
 }
 
-// DPoPKeyFromCoordinates creates a DPoP key from raw X and Y coordinates.
-// This is useful for reconstructing keys from JWK format.
+// ErrInvalidDPoPKey reports a JWK whose coordinates do not describe a valid
+// P-256 key, or whose x/y do not match the point the private scalar derives.
+type ErrInvalidDPoPKey struct {
+	Reason string
+	Err    error
+}
+
+func (e *ErrInvalidDPoPKey) Error() string {
+	if e.Err != nil {
+		return "oidc: invalid DPoP key: " + e.Reason + ": " + e.Err.Error()
+	}
+	return "oidc: invalid DPoP key: " + e.Reason
+}
+
+func (e *ErrInvalidDPoPKey) Unwrap() error { return e.Err }
+
+// DPoPKeyFromCoordinates creates a DPoP key from raw X, Y and D values, as
+// carried by a JWK.
+//
+// The scalar is parsed with ecdsa.ParseRawPrivateKey, which derives the public
+// key and rejects a value outside the curve order — the previous code assigned
+// D directly, so a malformed JWK produced a key that silently could not sign.
+//
+// The scalar is LEFT-PADDED to the curve size first. JWK base64url values carry
+// no leading zeros, so a d whose high byte is zero arrives short, and
+// ParseRawPrivateKey requires exactly the field size. Appending or passing the
+// short slice rejects perfectly valid keys at roughly 1 in 256 — the same trap
+// fixed in pkg/backend/pkcs11 (#191) and pkg/tpm2 (#226).
+//
+// x and y are then checked against the derived point rather than trusted: a JWK
+// whose public coordinates disagree with its private scalar is malformed, and
+// accepting it would let the caller sign with one key while advertising another.
 func DPoPKeyFromCoordinates(x, y []byte, d []byte) (*DPoPKey, error) {
 	curve := elliptic.P256()
+	size := (curve.Params().BitSize + 7) / 8
 
-	pubKey := &ecdsa.PublicKey{
-		Curve: curve,
-		X:     new(big.Int).SetBytes(x),
-		Y:     new(big.Int).SetBytes(y),
+	if len(d) > size {
+		return nil, &ErrInvalidDPoPKey{Reason: "private scalar is longer than the P-256 field"}
+	}
+	scalar := make([]byte, size)
+	copy(scalar[size-len(d):], d)
+
+	privateKey, err := ecdsa.ParseRawPrivateKey(curve, scalar)
+	if err != nil {
+		return nil, &ErrInvalidDPoPKey{Reason: "private scalar is not a valid P-256 key", Err: err}
 	}
 
-	privateKey := &ecdsa.PrivateKey{
-		PublicKey: *pubKey,
-		D:         new(big.Int).SetBytes(d),
+	if len(x) > size || len(y) > size {
+		return nil, &ErrInvalidDPoPKey{Reason: "public coordinates are longer than the P-256 field"}
+	}
+	if len(x) > 0 || len(y) > 0 {
+		gotX, gotY := privateKey.PublicKey.X.Bytes(), privateKey.PublicKey.Y.Bytes() //nolint:staticcheck // comparing the derived point against the supplied JWK coordinates; no key is constructed from these.
+		if !bytesEqualUnpadded(gotX, x) || !bytesEqualUnpadded(gotY, y) {
+			return nil, &ErrInvalidDPoPKey{Reason: "public coordinates do not match the private scalar"}
+		}
 	}
 
 	return &DPoPKey{PrivateKey: privateKey}, nil
+}
+
+// bytesEqualUnpadded compares two big-endian integers that may differ only in
+// leading zeros, which JWK encoding does not preserve.
+func bytesEqualUnpadded(a, b []byte) bool {
+	for len(a) > 0 && a[0] == 0 {
+		a = a[1:]
+	}
+	for len(b) > 0 && b[0] == 0 {
+		b = b[1:]
+	}
+	if len(a) != len(b) {
+		return false
+	}
+	for i := range a {
+		if a[i] != b[i] {
+			return false
+		}
+	}
+	return true
 }

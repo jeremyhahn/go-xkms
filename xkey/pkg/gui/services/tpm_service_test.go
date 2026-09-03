@@ -514,8 +514,8 @@ func testECCCert() *x509.Certificate {
 		PublicKeyAlgorithm: x509.ECDSA,
 		PublicKey: &ecdsa.PublicKey{
 			Curve: elliptic.P256(),
-			X:     big.NewInt(1),
-			Y:     big.NewInt(2),
+			X:     big.NewInt(1), //nolint:staticcheck // synthetic test fixture; a fixed non-curve point is the input under test and a validating constructor would refuse to build it.
+			Y:     big.NewInt(2), //nolint:staticcheck // synthetic test fixture; a fixed non-curve point is the input under test and a validating constructor would refuse to build it.
 		},
 	}
 }

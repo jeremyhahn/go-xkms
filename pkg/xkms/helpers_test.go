@@ -416,11 +416,15 @@ func TestCompareOpaqueKeyEquality_ECDSADifferentPoints(t *testing.T) {
 		t.Fatalf("Failed to generate ECDSA key 2: %v", err)
 	}
 
-	// Create public key with different X coordinate but same curve
+	// Create public key with different X coordinate but same curve.
+	// Raw X/Y with SA1019 suppressed deliberately: mixing one key's X with
+	// another's Y produces a point that is NOT on the curve, so no validating
+	// constructor will build it -- and a mismatched-coordinate key is exactly
+	// what CompareOpaqueKeyEquality is being asked to reject here.
 	differentPubKey := &ecdsa.PublicKey{
 		Curve: privKey1.Curve,
-		X:     privKey2.X, // Different X
-		Y:     privKey1.Y, // Same Y
+		X:     privKey2.X, //nolint:staticcheck // SA1019: see above
+		Y:     privKey1.Y, //nolint:staticcheck // SA1019: see above
 	}
 
 	opaqueKey := &mockOpaqueKey{pub: differentPubKey}
@@ -430,11 +434,13 @@ func TestCompareOpaqueKeyEquality_ECDSADifferentPoints(t *testing.T) {
 		t.Errorf("CompareOpaqueKeyEquality() with different ECDSA X coordinate = %v, want false", got)
 	}
 
-	// Test with different Y coordinate but same X
+	// Test with different Y coordinate but same X. Raw X/Y with SA1019
+	// suppressed for the same reason as above: the point is off the curve by
+	// construction, which is the input under test.
 	differentPubKey2 := &ecdsa.PublicKey{
 		Curve: privKey1.Curve,
-		X:     privKey1.X, // Same X
-		Y:     privKey2.Y, // Different Y
+		X:     privKey1.X, //nolint:staticcheck // SA1019: see above
+		Y:     privKey2.Y, //nolint:staticcheck // SA1019: see above
 	}
 
 	opaqueKey2 := &mockOpaqueKey{pub: differentPubKey2}

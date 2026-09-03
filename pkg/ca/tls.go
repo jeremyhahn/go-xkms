@@ -122,8 +122,13 @@ type TLSConfigOptions struct {
 
 	// PreferServerCipherSuites specifies that the server's cipher suite
 	// preferences should be used instead of the client's.
-	// Only applicable when IsServer is true.
-	// Note: In TLS 1.3, cipher suite order is not configurable.
+	//
+	// Deprecated: this knob has no effect. Go has ignored
+	// tls.Config.PreferServerCipherSuites since Go 1.18 — the server always
+	// chooses from its own preference order, informed by the client's — and
+	// in TLS 1.3 cipher suite order is not configurable at all. Setting this
+	// field changes nothing. It is retained only so that existing callers
+	// continue to compile; TLSConfig no longer reads it.
 	PreferServerCipherSuites bool
 
 	// CipherSuites specifies the cipher suites to use.
@@ -325,14 +330,16 @@ func (ca *CA) TLSConfigWithOptions(ctx context.Context, attrs *types.KeyAttribut
 	}
 
 	// Build the TLS config
+	// opts.PreferServerCipherSuites is deliberately not propagated: Go has
+	// ignored tls.Config.PreferServerCipherSuites since 1.18, so assigning it
+	// only claimed an effect it never had. See the field's doc comment.
 	config := &tls.Config{
-		Certificates:             []tls.Certificate{tlsCert},
-		MinVersion:               opts.MinVersion,
-		MaxVersion:               opts.MaxVersion,
-		CipherSuites:             cipherSuites,
-		PreferServerCipherSuites: opts.PreferServerCipherSuites,
-		SessionTicketsDisabled:   opts.SessionTicketsDisabled,
-		NextProtos:               opts.NextProtos,
+		Certificates:           []tls.Certificate{tlsCert},
+		MinVersion:             opts.MinVersion,
+		MaxVersion:             opts.MaxVersion,
+		CipherSuites:           cipherSuites,
+		SessionTicketsDisabled: opts.SessionTicketsDisabled,
+		NextProtos:             opts.NextProtos,
 	}
 
 	if opts.IsServer {

@@ -310,8 +310,8 @@ func decodeEC2Key(coseKey map[int]interface{}, alg int) (crypto.PublicKey, int, 
 
 	pubKey := &ecdsa.PublicKey{
 		Curve: curve,
-		X:     x,
-		Y:     y,
+		X:     x, //nolint:staticcheck // raw COSE coordinates; the point is validated on-curve immediately below, and no key is used before that check.
+		Y:     y, //nolint:staticcheck // raw COSE coordinates; the point is validated on-curve immediately below, and no key is used before that check.
 	}
 
 	if !curve.IsOnCurve(x, y) { //nolint:staticcheck // on-curve validation of decoded COSE EC point; crypto/ecdh migration is a separate, behavior-sensitive change.

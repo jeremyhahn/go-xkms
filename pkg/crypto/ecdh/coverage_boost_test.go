@@ -91,9 +91,15 @@ func TestDeriveSharedSecret_InvalidPrivateKeyD(t *testing.T) {
 	validKey, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
 	require.NoError(t, err)
 
+	// D is assigned raw, and staticcheck's SA1019 for that is suppressed here
+	// deliberately: the test needs a scalar of ZERO, which is outside [1, N-1]
+	// and therefore not a key any supported constructor will build --
+	// ecdsa.ParseRawPrivateKey rejects it, which is the whole point. The
+	// deprecated raw field is the only way to construct the invalid input this
+	// error path exists to handle.
 	invalidPriv := &ecdsa.PrivateKey{
 		PublicKey: validKey.PublicKey,
-		D:         big.NewInt(0),
+		D:         big.NewInt(0), //nolint:staticcheck // SA1019: see above
 	}
 
 	_, err = DeriveSharedSecret(invalidPriv, &validKey.PublicKey)
@@ -108,11 +114,15 @@ func TestDeriveSharedSecret_InvalidPublicKeyPoint(t *testing.T) {
 	validKey, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
 	require.NoError(t, err)
 
-	// Create a public key with an invalid point (not on the P-256 curve)
+	// Create a public key with an invalid point (not on the P-256 curve).
+	// X and Y are assigned raw and SA1019 is suppressed deliberately: (1, 1)
+	// is off the curve, so ecdsa.ParseUncompressedPublicKey rejects it -- an
+	// off-curve point is exactly what this error path is being handed, and the
+	// deprecated raw fields are the only way to build one.
 	invalidPub := &ecdsa.PublicKey{
 		Curve: elliptic.P256(),
-		X:     big.NewInt(1),
-		Y:     big.NewInt(1),
+		X:     big.NewInt(1), //nolint:staticcheck // SA1019: see above
+		Y:     big.NewInt(1), //nolint:staticcheck // SA1019: see above
 	}
 
 	_, err = DeriveSharedSecret(validKey, invalidPub)
@@ -123,10 +133,13 @@ func TestDeriveSharedSecret_InvalidPublicKeyPoint(t *testing.T) {
 // TestEcdsaPublicToECDH_InvalidPoint verifies that ecdsaPublicToECDH returns
 // an error for a public key with coordinates not on the curve.
 func TestEcdsaPublicToECDH_InvalidPoint(t *testing.T) {
+	// Raw X/Y with SA1019 suppressed, same reason as above: (1, 1) is not on
+	// P-256, so no validating constructor will produce this key, and an
+	// off-curve point is the input under test.
 	invalidPub := &ecdsa.PublicKey{
 		Curve: elliptic.P256(),
-		X:     big.NewInt(1),
-		Y:     big.NewInt(1),
+		X:     big.NewInt(1), //nolint:staticcheck // SA1019: see above
+		Y:     big.NewInt(1), //nolint:staticcheck // SA1019: see above
 	}
 
 	_, err := ecdsaPublicToECDH(invalidPub)

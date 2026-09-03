@@ -104,13 +104,12 @@ func TestIsRevoked_LegacyRevokedCertificates(t *testing.T) {
 	caCert, caKey := generateTestCert(t, "ca.example.com", true, nil, nil)
 	leafCert, _ := generateTestCert(t, "leaf.example.com", false, caCert, caKey)
 
-	// Create CRL using RevokedCertificates field (legacy Go stdlib API)
 	crlTemplate := &x509.RevocationList{
 		Number:     big.NewInt(1),
 		Issuer:     caCert.Subject,
 		ThisUpdate: time.Now(),
 		NextUpdate: time.Now().Add(24 * time.Hour),
-		RevokedCertificates: []pkix.RevokedCertificate{
+		RevokedCertificateEntries: []x509.RevocationListEntry{
 			{
 				SerialNumber:   leafCert.SerialNumber,
 				RevocationTime: time.Now(),

@@ -1836,8 +1836,8 @@ func TestFT_GetEKECCInfo_ECCSAKeyInCert(t *testing.T) {
 	cert := testECCCert()
 	cert.PublicKey = &ecdsa.PublicKey{
 		Curve: elliptic.P384(),
-		X:     big.NewInt(100),
-		Y:     big.NewInt(200),
+		X:     big.NewInt(100), //nolint:staticcheck // synthetic test fixture; a fixed non-curve point is the input under test and a validating constructor would refuse to build it.
+		Y:     big.NewInt(200), //nolint:staticcheck // synthetic test fixture; a fixed non-curve point is the input under test and a validating constructor would refuse to build it.
 	}
 	mock.ekCertEC = cert
 	mock.ekCertECErr = nil

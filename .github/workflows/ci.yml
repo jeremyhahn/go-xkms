@@ -29,6 +29,12 @@
 # trivy already lives in nightly.yml (#43) and this repo has no fips job (its
 # gate is withheld pending #23), so the template's nightly migration is a
 # no-op here rather than skipped.
+#
+# DEVIATION from the template, deliberate (#189): the analysis tools are taken
+# from the runner image rather than installed at job time. The template still
+# runs `go install ...@pin` behind a retry loop; that install OVERWRITES the
+# baked binary with a different version, which is the whole defect. See the
+# Lint and Security Scan jobs and .github/scripts/require-tool.sh.
 
 name: CI
 
@@ -65,6 +71,35 @@ env:
   # (company task #121), which has to bump the swiss/pebble chain first. This
   # is the emergency valve, not the adoption decision.
   GO_VERSION: '1.26.7'
+  # ANALYSIS TOOL PINS (#189). These are the versions BAKED INTO the
+  # self-hosted runner image; .github/scripts/require-tool.sh asserts the
+  # binary on PATH self-reports exactly this and fails the job otherwise.
+  # Nothing here installs them -- see that script for why.
+  #
+  # These are two copies of one number (this file and the image's Dockerfile
+  # ARGs) with nothing linking them, which is exactly how the previous
+  # arrangement drifted. The assertion is what turns that drift into a red job
+  # naming both versions instead of a silent scan by something else. Bumping a
+  # pin here is a deliberate change made in the same breath as the image.
+  #
+  # golangci-lint moved v2.12.2 -> v2.13.2 HERE, on measurement, not on the
+  # version number. The old pin exists because @latest had moved to v2.13.0,
+  # which panics under Go 1.26 ("nilness: internal error: unhandled builtin
+  # recover" in honnef.co/go/tools v0.8.0-rc.1). v2.13.2 was installed and run
+  # against this tree under Go 1.26.7: it does not panic, and it reports the
+  # SAME seven enabled linters as v2.12.2 (errcheck, gocritic, govet,
+  # ineffassign, misspell, staticcheck, unused) -- the check that matters most,
+  # because the quiet way a linter bump goes wrong is dropping a linter while
+  # still exiting 0. The binary measured self-reports mod sum
+  # h1:bCyq3E4vo9qwzifjpzJqYndEt7Ncva80qkk8G2B4TXU=, identical to the one the
+  # runner reports, so it is the same artifact and not merely the same version
+  # string. v2.13.2 is also what can lint a Go 1.27 module; v2.12.2 cannot, so
+  # the old install was blocking the 1.27 wave from the runner it was already
+  # fixed on. This does NOT bump GO_VERSION -- that is the wave's decision
+  # (company task #121), and it is now unblocked rather than made.
+  GOLANGCI_LINT_VERSION: 'v2.13.2'
+  GOSEC_VERSION: 'v2.29.0'
+  GOVULNCHECK_VERSION: 'v1.7.0'
   # Coverage RATCHET, not aspiration: set just under the current measured
   # baseline (89.9% at 2026-08-17) so the gate fails on regression instead
   # of being permanently red — it had never passed at 90 and therefore
@@ -469,22 +504,41 @@ jobs:
       - name: Run go vet
         run: make vet
 
-      # Installed via `go install` (Go module proxy) rather than
-      # golangci/golangci-lint-action: the action resolves its "latest"
-      # version through api.github.com with the runner-supplied
-      # GITHUB_TOKEN, which on a Gitea runner is a Gitea token — the
-      # lookup fails and the job dies before linting starts. The proxy
-      # path needs no GitHub credentials and still tracks latest
-      # (devops.md §9: no undocumented pins).
-      - name: Run golangci-lint
+      # The version gate has its own tests, and they run HERE rather than only
+      # on a developer's machine — a guard nothing executes is a guard that can
+      # rot into agreement with whatever the code does. They exist because the
+      # comparison they cover is easy to write FAILING OPEN: a substring test
+      # accepts v11.7.0 for a v1.7.0 pin. Fakes printing the real output
+      # formats; no network, no host mutation, under a second.
+      - name: Test the pinned-version gate
+        run: .github/scripts/require-tool-test.sh
+
+      # NO NETWORK INSTALL (#189). golangci-lint is baked into the self-hosted
+      # runner image at GOLANGCI_LINT_VERSION, in /usr/local/bin. The step this
+      # replaces ran `go install ...@v2.12.2` unconditionally, which did not
+      # add a tool — it OVERWROTE the image's v2.13.2 with v2.12.2 on every
+      # run. Measured on the CI Lint leg: the log printed "golangci-lint has
+      # version 2.12.2" on a runner carrying v2.13.2.
+      #
+      # The install was a network dependency as well as a substitution: every
+      # host in this fleet resolves an AAAA record for sum.golang.org and none
+      # has a default IPv6 route, and job containers use host networking, so a
+      # module fetch intermittently dies with ENETUNREACH when Go's v6->v4
+      # fallback does not complete.
+      #
+      # This does NOT fall back to installing when the tool is missing or the
+      # version is wrong. A fallback would reinstate the substitution at exactly
+      # the moment the image is wrong, and report success while doing it.
+      - name: Require golangci-lint at the pinned version
         run: |
-          go install github.com/golangci/golangci-lint/v2/cmd/golangci-lint@v2.12.2  # PINNED (devops.md §9, documented): v2.13.0 (2026-08-19) ships honnef.co/go/tools v0.8.0-rc.1 whose nilness pass panics ("unhandled builtin recover", crashes on sentry-go) — red gate with zero findings. Unpin when golangci-lint ships a non-rc staticcheck that passes on main.
-          # make lint resolves golangci-lint from PATH, so put the pinned
-          # binary there rather than letting it fall back to whatever else
-          # might be installed on the runner.
-          export PATH="$(go env GOPATH)/bin:$PATH"
-          golangci-lint version
-          make lint
+          .github/scripts/require-tool.sh \
+            golangci-lint "$GOLANGCI_LINT_VERSION" \
+            github.com/golangci/golangci-lint/v2/cmd/golangci-lint
+
+      # `make lint` resolves golangci-lint with `command -v`, so it picks up
+      # the baked binary the step above just verified.
+      - name: Run golangci-lint
+        run: make lint
 
   # Job 4: Security Scanning
   security:
@@ -526,8 +580,26 @@ jobs:
       - name: Verify module integrity
         run: go mod verify
 
-      - name: Install gosec
-        run: go install github.com/securego/gosec/v2/cmd/gosec@latest
+      # NO NETWORK INSTALL (#189), same reason as the lint job: both tools are
+      # baked into the runner image at the pinned versions above, and the
+      # `go install ...@latest` steps this replaces had two further problems of
+      # their own. A failed install skipped the analyser entirely and left a
+      # red check carrying NO VERDICT on the code, and `@latest` made the gate
+      # non-reproducible: the same commit got scanned by different analyser
+      # versions on different days.
+      #
+      # For gosec the assertion is the deliverable rather than the pin. gosec
+      # takes its version from ldflags, not the module path, so
+      # `go install ...@v2.29.0` still self-reports `dev` — meaning the job log
+      # could not say which scanner produced the result, and `dev` in a log
+      # must not be read as "unpinned". The image builds it with -X; the
+      # github.com fallback in require-tool.sh does the same.
+      - name: Require gosec at the pinned version
+        run: |
+          .github/scripts/require-tool.sh \
+            gosec "$GOSEC_VERSION" \
+            github.com/securego/gosec/v2/cmd/gosec \
+            -ldflags "-X main.Version=${GOSEC_VERSION}"
 
       - name: Run gosec security scanner
         # Exclusions (documented in Makefile):
@@ -553,10 +625,14 @@ jobs:
           sarif_file: gosec-results.sarif
           category: gosec
 
-      - name: Run govulncheck
+      - name: Require govulncheck at the pinned version
         run: |
-          go install golang.org/x/vuln/cmd/govulncheck@latest
-          govulncheck ./...
+          .github/scripts/require-tool.sh \
+            govulncheck "$GOVULNCHECK_VERSION" \
+            golang.org/x/vuln/cmd/govulncheck
+
+      - name: Run govulncheck
+        run: govulncheck ./...
 
   # Job 4b: trivy fs -- dependency CVEs and leaked secrets in the tree
   # (devops.md §8). Scoping mirrors the `trivy` target in the Makefile; keep

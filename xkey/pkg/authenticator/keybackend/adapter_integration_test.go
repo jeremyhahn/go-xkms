@@ -151,8 +151,8 @@ func decodeCOSEEC2Key(t *testing.T, raw map[int]interface{}) *ecdsa.PublicKey {
 
 	return &ecdsa.PublicKey{
 		Curve: curve,
-		X:     x,
-		Y:     y,
+		X:     x, //nolint:staticcheck // test helper decoding a COSE key; the raw form is what the wire carries and what the assertion is about.
+		Y:     y, //nolint:staticcheck // test helper decoding a COSE key; the raw form is what the wire carries and what the assertion is about.
 	}
 }
 

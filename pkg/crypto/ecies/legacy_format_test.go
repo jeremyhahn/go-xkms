@@ -14,12 +14,10 @@
 package ecies
 
 import (
-	"crypto/ecdh"
 	"crypto/ecdsa"
 	"crypto/elliptic"
 	"crypto/rand"
 	"encoding/hex"
-	"math/big"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -40,34 +38,23 @@ const (
 )
 
 // legacyECIESRecipientKey rebuilds the ECDSA private key the golden blob was
-// encrypted to. A crypto/ecdh P-256 private key is the big-endian scalar, which
-// is the same value as an ECDSA key's D, so deriving the ecdh public key and
-// splitting its uncompressed encoding gives the same point.
+// encrypted to. A P-256 private key is the big-endian scalar, so the fixture
+// stores that and the public point is derived from it.
 //
-// Derived through crypto/ecdh rather than elliptic.Curve.ScalarBaseMult, which
-// is deprecated (staticcheck SA1019) and is the low-level unsafe API. The point
-// is identical either way; ecdh additionally rejects a scalar outside [1, N-1]
-// instead of returning a garbage point, so a corrupted fixture fails loudly.
+// Built with ecdsa.ParseRawPrivateKey rather than by assigning D, X and Y
+// directly: those raw fields are deprecated (staticcheck SA1019), and the
+// constructor derives the point itself and rejects a scalar outside [1, N-1],
+// so a corrupted fixture fails loudly here instead of producing a key that is
+// silently wrong.
 func legacyECIESRecipientKey(t *testing.T) *ecdsa.PrivateKey {
 	t.Helper()
 	d, err := hex.DecodeString(legacyECIESRecipientDHex)
 	require.NoError(t, err)
 
-	ecdhPriv, err := ecdh.P256().NewPrivateKey(d)
+	priv, err := ecdsa.ParseRawPrivateKey(elliptic.P256(), d)
 	require.NoError(t, err)
 
-	// Uncompressed SEC 1 encoding: 0x04 || X (32 bytes) || Y (32 bytes).
-	pub := ecdhPriv.PublicKey().Bytes()
-	require.Len(t, pub, 65)
-
-	return &ecdsa.PrivateKey{
-		PublicKey: ecdsa.PublicKey{
-			Curve: elliptic.P256(),
-			X:     new(big.Int).SetBytes(pub[1:33]),
-			Y:     new(big.Int).SetBytes(pub[33:65]),
-		},
-		D: new(big.Int).SetBytes(d),
-	}
+	return priv
 }
 
 // TestDecrypt_ReadsLegacyCiphertext asserts an ECIES blob written before
