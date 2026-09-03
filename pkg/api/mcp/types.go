@@ -458,11 +458,29 @@ type ImportKeyParams struct {
 	KeySize int `json:"key_size,omitempty"`
 	// Curve names the EC curve for an "ecdsa" import ("P-256", "P-384",
 	// "P-521"). Empty selects P-256, as it does on every other transport.
-	Curve       string            `json:"curve,omitempty"`
+	Curve string `json:"curve,omitempty"`
+	// WrappedKey carries the wrapped key material. The name is "wrapped_key",
+	// which is the vocabulary every other params struct on this transport uses
+	// (CopyKeyParams, UnwrapKeyParams, ExportKeyResult); it is deliberately NOT
+	// renamed to the transport struct's "wrapped_key_material", because that
+	// would leave import as the one MCP call spelling it differently.
+	// pkg/api/transport/mcp builds this struct by name instead, so the two
+	// sides are linked at compile time -- see go-xkms#159, where they were not
+	// and every import over that transport arrived with no key material.
 	WrappedKey  []byte            `json:"wrapped_key"`
 	Algorithm   string            `json:"algorithm"`
 	ImportToken []byte            `json:"import_token,omitempty"`
 	Metadata    map[string]string `json:"metadata,omitempty"`
+	// AESKeySize is the symmetric size fallback pkg/xkms.buildImportKeyAttributes
+	// documents, so the same call behaves the same over gRPC, REST and MCP. The
+	// sibling CopyKeyParams has always carried it; this struct dropped it, and
+	// a symmetric import over this transport failed on a zero key size.
+	AESKeySize int `json:"aes_key_size,omitempty"`
+	// Hash names the digest recorded on the imported key.
+	Hash string `json:"hash,omitempty"`
+	// Partition names the sub-namespace the imported key is stored in, as it
+	// does for the generate and gRPC/REST import paths.
+	Partition string `json:"partition,omitempty"`
 }
 
 // ExportKeyParams represents parameters for exporting a key

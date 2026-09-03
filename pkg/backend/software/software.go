@@ -22,6 +22,7 @@ import (
 	"crypto/rand"
 	"crypto/rsa"
 	"crypto/x509"
+	"errors"
 	"fmt"
 	"sync"
 	"time"
@@ -886,8 +887,18 @@ func (b *SoftwareBackend) importSymmetricKey(ctx context.Context, attrs *types.K
 		return &errs.Detail{Err: backend.ErrInvalidAttributes, Detail: fmt.Sprintf("invalid key material size expected %d bytes, got %d", expectedSize, len(keyMaterial))}
 	}
 
-	// Store the raw key material directly (symmetric backend stores raw bytes)
 	keyID := attrs.ID()
+
+	// Refuse rather than overwrite, for the reason importAsymmetricKey gives
+	// (go-xkms#165). The symmetric key provider's own ImportKey already
+	// refuses this collision with backend.ErrKeyAlreadyExists; this path stores
+	// the bytes itself rather than delegating to it, so it has to refuse the
+	// collision itself too.
+	if err := b.refuseIfKeyExists(ctx, keyID); err != nil {
+		return err
+	}
+
+	// Store the raw key material directly (symmetric backend stores raw bytes)
 	if err := storage.SaveKey(ctx, b.storage, keyID, keyMaterial); err != nil {
 		return &errs.Wrapped{Msg: "failed to store symmetric key", Err: err}
 	}
@@ -942,12 +953,64 @@ func (b *SoftwareBackend) importAsymmetricKey(ctx context.Context, attrs *types.
 		return &errs.Wrapped{Msg: "key type validation failed", Err: err}
 	}
 
-	// Store the PKCS8-encoded key material directly
 	keyID := attrs.ID()
+
+	// An import must never destroy a key that is already there. Generation has
+	// always refused this collision; import silently overwrote instead, and for
+	// an asymmetric key that loss is unrecoverable -- every certificate issued
+	// against the old public key is orphaned and anything the key protected
+	// becomes undecryptable (go-xkms#165). Replacing a key is an explicit
+	// delete followed by an import, never a side effect of importing.
+	if err := b.refuseIfKeyExists(ctx, keyID); err != nil {
+		return err
+	}
+
+	// Store the PKCS8-encoded key material directly
 	if err := storage.SaveKey(ctx, b.storage, keyID, keyMaterial); err != nil {
 		return &errs.Wrapped{Msg: "failed to store asymmetric key", Err: err}
 	}
 
+	return nil
+}
+
+// refuseIfKeyExists returns backend.ErrKeyAlreadyExists when keyID already
+// holds key material, and nil when the identifier is free.
+//
+// Presence is decided by reading the key rather than by storage.KeyExists or
+// storage.SaveKeyIfAbsent, because neither is usable across the storage
+// engines this backend runs on. Measured on all four:
+//
+//   - Exists returns true for a key that was never written on the file, pebble
+//     and qrdb engines -- every one that reaches the embedded qrdb client --
+//     so a KeyExists check refuses every import on them. Only the in-memory
+//     engine answers it correctly.
+//   - PutIfAbsent fails outright on those same engines with "embedded:
+//     TransactionServicer must not be nil", which is also why GenerateKey
+//     cannot run against them as constructed.
+//
+// Get is the one primitive that separates the two states everywhere, though
+// not by the same signal: the in-memory engine reports storage.ErrNotFound for
+// an absent key, while the qrdb-backed engines report no error and no bytes.
+// Treating "no error AND non-empty" as present is therefore the portable test,
+// and it is the whole reason this is a read rather than the obvious
+// PutIfAbsent. The Exists behaviour is a defect in its own right and is filed
+// separately; this function must not wait on it.
+//
+// ImportKey holds b.mu for the whole call, so the window between this check
+// and the write that follows is closed against every other caller of this
+// backend. It is not closed against a second process sharing the same storage
+// -- the same exposure the symmetric key provider's own ImportKey accepts.
+func (b *SoftwareBackend) refuseIfKeyExists(ctx context.Context, keyID string) error {
+	existing, err := storage.GetKey(ctx, b.storage, keyID)
+	if err != nil {
+		if errors.Is(err, storage.ErrNotFound) {
+			return nil
+		}
+		return &errs.Wrapped{Msg: "failed to check for an existing key", Err: err}
+	}
+	if len(existing) > 0 {
+		return &errs.Detail{Err: backend.ErrKeyAlreadyExists, Detail: keyID}
+	}
 	return nil
 }
 

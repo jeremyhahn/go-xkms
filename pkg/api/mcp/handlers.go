@@ -1152,6 +1152,12 @@ func (s *Server) handleImportKeyMaterial(ctx context.Context, req *JSONRPCReques
 		Algorithm:          params.Algorithm,
 		ImportToken:        params.ImportToken,
 		Metadata:           params.Metadata,
+		// Forwarded since go-xkms#159. The params struct could not represent
+		// these three, so a symmetric import over MCP failed on a zero key
+		// size and any requested digest or partition was silently discarded.
+		AESKeySize: params.AESKeySize,
+		Hash:       params.Hash,
+		Partition:  params.Partition,
 	}); err != nil {
 		return nil, mapKeyOpError(err)
 	}

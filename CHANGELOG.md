@@ -9,6 +9,29 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Security
 
+- **Key import no longer silently destroys an existing key** (#165).
+  `SoftwareBackend.importAsymmetricKey` and `importSymmetricKey` wrote key
+  material with `storage.SaveKey`, a plain Put, so importing under the
+  attributes of a key that already existed replaced it and reported success.
+  Generation had always refused the same collision. For an asymmetric key the
+  loss was unrecoverable: every certificate issued against the old public key
+  is orphaned and anything the key protected becomes undecryptable.
+
+  Both import paths now refuse the collision with `backend.ErrKeyAlreadyExists`,
+  matching what the symmetric key provider's own `ImportKey` already did.
+  Replacing a key is an explicit delete followed by an import.
+
+  **Operational impact.** An import that previously overwrote now fails. Any
+  workflow that relied on import-as-replace must delete the key first.
+
+  The presence check reads the key rather than calling `storage.KeyExists` or
+  `storage.SaveKeyIfAbsent`, because neither is usable across the storage
+  engines this backend runs on: `Exists` returns true for a key that was never
+  written on the file, pebble and qrdb engines, and `PutIfAbsent` fails on
+  those same engines with `embedded: TransactionServicer must not be nil`.
+  Both are pre-existing storage-layer defects, filed separately; `Get` is the
+  one primitive that separates present from absent on every engine.
+
 - **TPM and JWK ECDSA public keys are now validated as points on the curve**
   (#226). `pkg/tpm2` reconstructed `ecdsa.PublicKey` values from TPM ECC public
   areas by assigning the raw `X` and `Y` coordinates straight into the struct,
@@ -61,6 +84,30 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   simultaneously.
 
 ### Fixed
+
+- **MCP key import now receives the key material** (#159).
+  `pkg/api/transport/mcp.Transport.ImportKey` marshalled a
+  `transport.ImportKeyRequest` straight onto the wire, but the handler decodes
+  `pkg/api/mcp.ImportKeyParams`, and the two disagreed on the field carrying
+  the key: `wrapped_key_material` against `wrapped_key`. `WrappedKey` was
+  therefore `nil` on every import over that transport, which has never
+  functioned. `aes_key_size`, `hash` and `partition` were dropped with it, so a
+  symmetric import failed on a zero key size and any requested digest or
+  partition was discarded.
+
+  The transport now builds `ImportKeyParams` field by field, which links the
+  two structs at compile time, and the params struct gained the three missing
+  fields. The wire name stays `wrapped_key`, the vocabulary every other params
+  struct on this transport uses. A contract test asserts the two structs still
+  describe the same field names, with `tenant_id` recorded as the one
+  deliberate exception -- this transport's handlers take the tenant from the
+  authenticated caller rather than from the wire.
+
+  An audit of the sibling methods, which #159 asked for, found the same class
+  of mismatch in `WrapKey` (`wrapping_public_key` against
+  `wrapping_public_key_pem`, plus `backend` and `key_spec` dropped) and
+  `UnwrapKey` (`wrapped_key_material` against `wrapped_key`, plus `backend` and
+  `key_spec`). Both are filed separately rather than fixed here.
 - **Software backend: `validateKeyType` no longer blesses ECDSA/Ed25519
   mismatches** (#53). The validator checked RSA only; ECDSA and Ed25519 fell
   through a `default:` arm commented *"basic validation is sufficient"* — the

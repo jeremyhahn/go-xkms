@@ -126,6 +126,22 @@ Typed errors only — `fmt.Errorf` is not used. The keystore vocabulary is
 | `ErrNotInitialized`, `ErrAlreadyInitialized` | lifecycle |
 | `ErrSOPinRequired`, `ErrUserPinRequired`, `ErrPasswordRequired` | a hardware backend needs credentials first |
 
+`ImportKey` returning `ErrKeyAlreadyExists` on an occupied ID was the documented
+contract before it was the implemented one: until go-xkms#165 the software
+backend's import wrote with a plain Put and replaced the existing key, reporting
+success. Replacing a key is an explicit delete followed by an import.
+
+The software backend decides presence by **reading** the key, not by
+`storage.KeyExists` or `storage.SaveKeyIfAbsent`. Neither is usable across the
+storage engines it runs on: `Exists` returns true for a key that was never
+written on the file, pebble and qrdb engines, and `PutIfAbsent` fails on those
+same engines with `embedded: TransactionServicer must not be nil` — which is
+also why `GenerateKey` cannot run against them as constructed. `Get` is the one
+primitive that separates present from absent everywhere, though not by the same
+signal: the in-memory engine reports `storage.ErrNotFound`, while the
+qrdb-backed engines report no error and no bytes. Both `Exists` and
+`PutIfAbsent` behaviours are storage-layer defects filed separately.
+
 Transport mapping is centralised so a given condition renders the same way on
 every wire: `pkg/api/rest/errors_keyops.go`, `pkg/api/grpc/errors_keyops.go`,
 `pkg/api/mcp/errors_keyops.go`, `pkg/xkms/errors_keyops.go`. Wrapping across

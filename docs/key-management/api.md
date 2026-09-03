@@ -81,12 +81,27 @@ Do not confuse it with `algorithm`, which on every import request names the
 |---|---|
 | REST | `key_type` in `ImportKeyRequest`, with `key_size`, `curve`, `hash`, `aes_key_size` |
 | gRPC | `key_type` in `ImportKeyRequest`, with `key_size`, `curve` |
-| MCP | `key_type` in `xkms.importKey` params, with `key_size`, `curve` |
+| MCP | `key_type` in `xkms.importKey` params, with `key_size`, `curve`, `hash`, `aes_key_size`, `partition` |
 
 The MCP tool carried no such field until go-xkms#53: it built attributes from
 the key ID alone, so the key was stored describing no algorithm and the
 backend's check of material against its declared type had nothing to check
 against.
+
+`hash`, `aes_key_size` and `partition` reached the MCP params only in
+go-xkms#159; before that the params struct could not represent them, so a
+symmetric import over MCP failed on a zero key size and any requested digest or
+partition was discarded.
+
+**The MCP field carrying the key material is `wrapped_key`**, not the
+`wrapped_key_material` the REST and embedded `ImportKeyRequest` use. The name
+is the one every params struct on that transport uses for wrapped material.
+`pkg/api/transport/mcp` builds the params struct by name so the two cannot
+drift apart silently again — which they had, and every import over that
+transport arrived with no key material at all until go-xkms#159.
+
+`tenant_id` is deliberately **not** an MCP import field: the MCP handlers take
+the tenant from the authenticated caller and reject a wire-supplied one.
 
 ### Key versioning — declared, unserved
 

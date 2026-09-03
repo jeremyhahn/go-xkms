@@ -928,9 +928,43 @@ func (t *Transport) CertificateExists(ctx context.Context, backend, keyID string
 }
 
 // ImportKey imports a key.
+// ImportKey sends the import to the MCP server.
+//
+// The params value is built field by field into the handler's own
+// xkmsmcp.ImportKeyParams rather than marshalling req directly. Marshalling req
+// looked equivalent and was not: the two structs name the key material
+// differently ("wrapped_key_material" here, "wrapped_key" there), so every
+// import over this transport arrived with no key at all, and aes_key_size,
+// hash and partition were dropped with it (go-xkms#159). Naming the struct
+// makes a rename on either side a compile error instead of a silent runtime
+// break, which is the property the old code lacked.
+//
+// TenantID is deliberately not forwarded: this transport's handlers take the
+// tenant from the authenticated caller (see tenantForRequest in pkg/api/mcp)
+// and reject a wire-supplied one. Stamping it on the imported key is go-xkms
+// #163/#222 and is not settled here.
 func (t *Transport) ImportKey(ctx context.Context, req *transport.ImportKeyRequest) (*transport.ImportKeyResponse, error) {
+	if req == nil {
+		return nil, transport.ErrInvalidRequest
+	}
+
+	params := &xkmsmcp.ImportKeyParams{
+		KeyID:       req.KeyID,
+		Backend:     req.Backend,
+		KeyType:     req.KeyType,
+		KeySize:     req.KeySize,
+		Curve:       req.Curve,
+		WrappedKey:  req.WrappedKeyMaterial,
+		Algorithm:   req.Algorithm,
+		ImportToken: req.ImportToken,
+		Metadata:    req.Metadata,
+		AESKeySize:  req.AESKeySize,
+		Hash:        req.Hash,
+		Partition:   req.Partition,
+	}
+
 	var result transport.ImportKeyResponse
-	if err := t.rpcCall(ctx, "xkms.importKey", req, &result); err != nil {
+	if err := t.rpcCall(ctx, "xkms.importKey", params, &result); err != nil {
 		return nil, err
 	}
 	return &result, nil
