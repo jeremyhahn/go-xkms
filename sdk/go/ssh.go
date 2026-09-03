@@ -51,6 +51,18 @@ var SSHPinFromPublicKey = sshknownhosts.PinFromPublicKey
 // SSHKnownHostsStore under the given scope/owner, returning the count added.
 var SSHImportKnownHostsFile = sshknownhosts.ImportKnownHostsFile
 
+// SSHValidateFingerprint returns nil if the argument is a well-formed
+// OpenSSH SHA256 host-key fingerprint, as `ssh-keygen -lf` prints it:
+// a "SHA256:" prefix followed by the unpadded standard-base64 encoding
+// of a 32-byte digest. It returns *SSHInvalidFingerprintError otherwise.
+// Composers validate an operator-supplied fingerprint through this before
+// building or looking up an SSHKnownHostsPin.
+var SSHValidateFingerprint = sshknownhosts.ValidateFingerprint
+
+// SSHInvalidFingerprintError reports a fingerprint string that does not
+// match the OpenSSH "SHA256:<base64>" form.
+type SSHInvalidFingerprintError = sshknownhosts.InvalidFingerprintError
+
 // SSHScope identifies the ownership scope of an SSH asset.
 type SSHScope = sshscope.Scope
 

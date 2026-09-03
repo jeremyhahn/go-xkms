@@ -21,6 +21,7 @@ import (
 	"crypto/rand"
 	"errors"
 	"net"
+	"strings"
 	"testing"
 	"time"
 
@@ -208,21 +209,60 @@ func TestValidateFingerprint(t *testing.T) {
 		wantErr bool
 	}{
 		{"valid", keys.Fingerprint(newEd25519PublicKey(t)), false},
+		{"valid ssh-keygen form", "SHA256:47DEQpj8HBSa+/TImW+5JCeuQeRkm5NMpJWZG3hSuFU", false},
 		{"empty", "", true},
 		{"no prefix", "abcdef", true},
 		{"prefix only", "SHA256:", true},
 		{"not base64", "SHA256:***not-base64***", true},
+		// A body that decodes cleanly but to something other than a
+		// 32-byte digest cannot be a SHA-256 host-key fingerprint.
+		{"three-byte digest", "SHA256:AAAA", true},
+		{"one-byte digest", "SHA256:AA", true},
+		{"31-byte digest", "SHA256:" + strings.Repeat("A", 41) + "Q", true},
+		{"33-byte digest", "SHA256:" + strings.Repeat("A", 44), true},
+		{"41-byte digest", "SHA256:" + strings.Repeat("A", 55), true},
+		// OpenSSH strips padding and uses the standard alphabet; a
+		// padded or URL-safe body is not the form it prints.
+		{"padded body", "SHA256:" + strings.Repeat("A", 42) + "E=", true},
+		{"url-safe alphabet", "SHA256:" + strings.Repeat("-", 42) + "E", true},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			err := known_hosts.ValidateFingerprint(tc.input)
-			if tc.wantErr && err == nil {
+			if !tc.wantErr {
+				if err != nil {
+					t.Fatalf("unexpected error: %v", err)
+				}
+				return
+			}
+			if err == nil {
 				t.Fatal("expected error")
 			}
-			if !tc.wantErr && err != nil {
-				t.Fatalf("unexpected error: %v", err)
+			var inv *known_hosts.InvalidFingerprintError
+			if !errors.As(err, &inv) {
+				t.Fatalf("expected InvalidFingerprintError for %q, got %T: %v", tc.input, err, err)
 			}
 		})
+	}
+}
+
+// TestStoreAdd_RejectsShortFingerprint proves the store refuses a
+// hand-built pin whose fingerprint decodes to fewer than 32 bytes.
+func TestStoreAdd_RejectsShortFingerprint(t *testing.T) {
+	store := newStore(t)
+	err := store.Add(context.Background(), &known_hosts.Pin{
+		Host:        "bastion.example.com",
+		Fingerprint: "SHA256:AAAA",
+		Algorithm:   "ssh-ed25519",
+		Scope:       scope.Tenant,
+		Owner:       "tenant-1",
+	})
+	if err == nil {
+		t.Fatal("expected Add to reject a 3-byte digest fingerprint")
+	}
+	var inv *known_hosts.InvalidFingerprintError
+	if !errors.As(err, &inv) {
+		t.Fatalf("expected InvalidFingerprintError, got %T: %v", err, err)
 	}
 }
 

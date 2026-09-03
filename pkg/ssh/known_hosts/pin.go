@@ -14,6 +14,7 @@
 package known_hosts
 
 import (
+	"crypto/sha256"
 	"encoding/base64"
 	"strings"
 	"time"
@@ -118,6 +119,11 @@ func ValidateHost(host string) error {
 // fingerprint: "SHA256:" prefix followed by a non-empty base64 body
 // (std-alphabet, no padding, 43 chars for a SHA-256 digest). Returns
 // *InvalidFingerprintError otherwise.
+//
+// The digest length is enforced, not merely documented: a body that
+// decodes to anything other than 32 bytes cannot have been produced by
+// SHA-256, so accepting it would let an operator typo reach a pin
+// comparison that can never match.
 func ValidateFingerprint(fp string) error {
 	if fp == "" {
 		return &InvalidFingerprintError{Value: fp, Reason: "empty"}
@@ -132,8 +138,12 @@ func ValidateFingerprint(fp string) error {
 	}
 	// OpenSSH strips trailing '=' padding; the raw body is 43 chars for
 	// a 32-byte digest encoded in standard base64 alphabet.
-	if _, err := base64.RawStdEncoding.DecodeString(body); err != nil {
+	digest, err := base64.RawStdEncoding.DecodeString(body)
+	if err != nil {
 		return &InvalidFingerprintError{Value: fp, Reason: "body is not base64 (no padding)"}
+	}
+	if len(digest) != sha256.Size {
+		return &InvalidFingerprintError{Value: fp, Reason: "body is not a 32-byte SHA-256 digest"}
 	}
 	return nil
 }

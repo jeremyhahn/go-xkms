@@ -247,7 +247,7 @@ func TestSSHKnownHosts_AddListVerifyRemove(t *testing.T) {
 	added, err := server.handleSSHKnownHostsAdd(ctx, sshRequest(t, "ssh.knownHosts.add",
 		sdkssh.AddKnownHostRequest{
 			Scope: "user", Owner: "alice",
-			Host: "git.example.com", Fingerprint: "SHA256:abc", Algorithm: "ssh-ed25519",
+			Host: "git.example.com", Fingerprint: "SHA256:ungWv48Bz+pBQUDeXa4iI7ADYaOWF3qctBD/YfIAFa0", Algorithm: "ssh-ed25519",
 		}))
 	require.NoError(t, err)
 	assert.Equal(t, SSHSuccessResult{Success: true}, added)
@@ -258,19 +258,19 @@ func TestSSHKnownHosts_AddListVerifyRemove(t *testing.T) {
 	require.Len(t, listed.(SSHPinListResult).Items, 1)
 
 	ok, err := server.handleSSHKnownHostsVerify(ctx, sshRequest(t, "ssh.knownHosts.verify",
-		SSHKnownHostsVerifyParams{Scope: "user", Owner: "alice", Host: "git.example.com", Fingerprint: "SHA256:abc"}))
+		SSHKnownHostsVerifyParams{Scope: "user", Owner: "alice", Host: "git.example.com", Fingerprint: "SHA256:ungWv48Bz+pBQUDeXa4iI7ADYaOWF3qctBD/YfIAFa0"}))
 	require.NoError(t, err)
 	assert.Equal(t, SSHSuccessResult{Success: true}, ok)
 
 	_, err = server.handleSSHKnownHostsVerify(ctx, sshRequest(t, "ssh.knownHosts.verify",
-		SSHKnownHostsVerifyParams{Scope: "user", Owner: "alice", Host: "git.example.com", Fingerprint: "SHA256:zzz"}))
+		SSHKnownHostsVerifyParams{Scope: "user", Owner: "alice", Host: "git.example.com", Fingerprint: "SHA256:F/Fl1aW6aV8nwCOoOqKzRj4jgQ42C3UXEn6QFh7rq9o"}))
 	var mismatch *SSHMismatchError
 	require.ErrorAs(t, err, &mismatch, "a changed host key must be reported as a mismatch, not a generic failure")
-	assert.Equal(t, "SHA256:abc", mismatch.Expected)
-	assert.Equal(t, "SHA256:zzz", mismatch.Received)
+	assert.Equal(t, "SHA256:ungWv48Bz+pBQUDeXa4iI7ADYaOWF3qctBD/YfIAFa0", mismatch.Expected)
+	assert.Equal(t, "SHA256:F/Fl1aW6aV8nwCOoOqKzRj4jgQ42C3UXEn6QFh7rq9o", mismatch.Received)
 
 	_, err = server.handleSSHKnownHostsVerify(ctx, sshRequest(t, "ssh.knownHosts.verify",
-		SSHKnownHostsVerifyParams{Scope: "user", Owner: "alice", Host: "other.example.com", Fingerprint: "SHA256:abc"}))
+		SSHKnownHostsVerifyParams{Scope: "user", Owner: "alice", Host: "other.example.com", Fingerprint: "SHA256:ungWv48Bz+pBQUDeXa4iI7ADYaOWF3qctBD/YfIAFa0"}))
 	var notFound *SSHNotFoundError
 	require.ErrorAs(t, err, &notFound)
 	assert.Equal(t, "known_host", notFound.Resource)
@@ -291,7 +291,7 @@ func TestSSHKnownHosts_VerifyRequiredFields(t *testing.T) {
 	server := newSSHServer(t)
 
 	_, err := server.handleSSHKnownHostsVerify(context.Background(), sshRequest(t, "ssh.knownHosts.verify",
-		SSHKnownHostsVerifyParams{Fingerprint: "SHA256:abc"}))
+		SSHKnownHostsVerifyParams{Fingerprint: "SHA256:ungWv48Bz+pBQUDeXa4iI7ADYaOWF3qctBD/YfIAFa0"}))
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "host is required")
 
@@ -338,7 +338,7 @@ func TestSSHAuthorizedKeys_Lifecycle(t *testing.T) {
 	assert.Contains(t, verified.(*sdkssh.AuthorizedEntry).Line, key.PublicKey)
 
 	_, err = server.handleSSHAuthorizedKeysVerify(ctx, sshRequest(t, "ssh.authorizedKeys.verify",
-		SSHAuthorizedKeysVerifyParams{Scope: "user", Owner: "alice", Fingerprint: "SHA256:unknown"}))
+		SSHAuthorizedKeysVerifyParams{Scope: "user", Owner: "alice", Fingerprint: "SHA256:sjpqhDnA3eVRWJPnyQweMjO4YW5jRHDyDcSSi882Cbw"}))
 	var notFound *SSHNotFoundError
 	require.ErrorAs(t, err, &notFound)
 	assert.Equal(t, "authorized_key", notFound.Resource)
@@ -383,7 +383,7 @@ func TestSSHAuthorizedKeys_VerifyNoEntries(t *testing.T) {
 	server := newSSHServer(t)
 
 	_, err := server.handleSSHAuthorizedKeysVerify(context.Background(), sshRequest(t, "ssh.authorizedKeys.verify",
-		SSHAuthorizedKeysVerifyParams{Scope: "user", Owner: "alice", Fingerprint: "SHA256:whatever"}))
+		SSHAuthorizedKeysVerifyParams{Scope: "user", Owner: "alice", Fingerprint: "SHA256:hXOPj5p/GwS1MpxZDry55CWSXG0JhAicQ6Ai3k8ZwoE"}))
 
 	var notFound *SSHNotFoundError
 	require.ErrorAs(t, err, &notFound)

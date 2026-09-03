@@ -296,7 +296,7 @@ func TestHandlers_KnownHosts_MismatchFlow(t *testing.T) {
 	defer cleanup()
 
 	// Add a pin.
-	addBody := `{"scope":"user","owner":"alice","host":"bastion","fingerprint":"SHA256:aaaaaa","algorithm":"ssh-ed25519"}`
+	addBody := `{"scope":"user","owner":"alice","host":"bastion","fingerprint":"SHA256:7QJFe1xB2WTb0vKmCdY/4bt1KNvlXhq/W1LCSc1zV5c","algorithm":"ssh-ed25519"}`
 	resp, err := http.Post(srv.URL+"/xkms/v1/ssh/known-hosts", "application/json", bytes.NewBufferString(addBody))
 	if err != nil {
 		t.Fatalf("add: %v", err)
@@ -304,7 +304,7 @@ func TestHandlers_KnownHosts_MismatchFlow(t *testing.T) {
 	resp.Body.Close()
 
 	// Verify a different fingerprint → 409 with expected + received.
-	verifyBody := `{"scope":"user","owner":"alice","fingerprint":"SHA256:bbbbbb","algorithm":"ssh-ed25519"}`
+	verifyBody := `{"scope":"user","owner":"alice","fingerprint":"SHA256:RiX9Y7Dpb8DWVq5zgWBeSNSg9joxn8dDrfImiGE4g8c","algorithm":"ssh-ed25519"}`
 	resp, err = http.Post(srv.URL+"/xkms/v1/ssh/known-hosts/bastion/verify", "application/json", bytes.NewBufferString(verifyBody))
 	if err != nil {
 		t.Fatalf("verify: %v", err)
@@ -322,7 +322,7 @@ func TestHandlers_KnownHosts_MismatchFlow(t *testing.T) {
 	if err := json.NewDecoder(resp.Body).Decode(&env); err != nil {
 		t.Fatalf("decode: %v", err)
 	}
-	if env.Expected != "SHA256:aaaaaa" || env.Received != "SHA256:bbbbbb" {
+	if env.Expected != "SHA256:7QJFe1xB2WTb0vKmCdY/4bt1KNvlXhq/W1LCSc1zV5c" || env.Received != "SHA256:RiX9Y7Dpb8DWVq5zgWBeSNSg9joxn8dDrfImiGE4g8c" {
 		t.Fatalf("unexpected mismatch body: %+v", env)
 	}
 	if env.Host != "bastion" {

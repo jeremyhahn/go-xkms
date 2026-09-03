@@ -434,7 +434,7 @@ func TestSSHKnownHosts(t *testing.T) {
 	t.Run("add success", func(t *testing.T) {
 		srv := newSSHTestServer(t, newMockSSHClient())
 		resp, err := http.Post(srv.URL+"/xkms/v1/ssh/known-hosts", "application/json",
-			strings.NewReader(`{"scope":"user","owner":"a","host":"h","fingerprint":"SHA256:x"}`))
+			strings.NewReader(`{"scope":"user","owner":"a","host":"h","fingerprint":"SHA256:LXEWQrcmsEQBYnyp+6wy9chTD7GQPMTbAiWHF5IaSIE"}`))
 		require.NoError(t, err)
 		defer resp.Body.Close()
 		assert.Equal(t, http.StatusCreated, resp.StatusCode)
@@ -519,7 +519,7 @@ func TestSSHVerifyKnownHost(t *testing.T) {
 		mc.kh.listErr = errors.New("boom")
 		srv := newSSHTestServer(t, mc)
 		resp, err := http.Post(srv.URL+"/xkms/v1/ssh/known-hosts/h/verify", "application/json",
-			strings.NewReader(`{"scope":"user","owner":"a","fingerprint":"SHA256:x"}`))
+			strings.NewReader(`{"scope":"user","owner":"a","fingerprint":"SHA256:LXEWQrcmsEQBYnyp+6wy9chTD7GQPMTbAiWHF5IaSIE"}`))
 		require.NoError(t, err)
 		defer resp.Body.Close()
 		assert.Equal(t, http.StatusInternalServerError, resp.StatusCode)
@@ -527,10 +527,10 @@ func TestSSHVerifyKnownHost(t *testing.T) {
 
 	t.Run("pin not found", func(t *testing.T) {
 		mc := newMockSSHClient()
-		mc.kh.listResp = []*sdkssh.Pin{{Host: "other", Fingerprint: "SHA256:y"}}
+		mc.kh.listResp = []*sdkssh.Pin{{Host: "other", Fingerprint: "SHA256:ofzkNjhU/4iM/0uOeHXWAMJoI5BBKoz3mzfQsRFIsPo"}}
 		srv := newSSHTestServer(t, mc)
 		resp, err := http.Post(srv.URL+"/xkms/v1/ssh/known-hosts/h/verify", "application/json",
-			strings.NewReader(`{"scope":"user","owner":"a","fingerprint":"SHA256:x"}`))
+			strings.NewReader(`{"scope":"user","owner":"a","fingerprint":"SHA256:LXEWQrcmsEQBYnyp+6wy9chTD7GQPMTbAiWHF5IaSIE"}`))
 		require.NoError(t, err)
 		defer resp.Body.Close()
 		assert.Equal(t, http.StatusNotFound, resp.StatusCode)
@@ -538,25 +538,25 @@ func TestSSHVerifyKnownHost(t *testing.T) {
 
 	t.Run("fingerprint mismatch", func(t *testing.T) {
 		mc := newMockSSHClient()
-		mc.kh.listResp = []*sdkssh.Pin{{Host: "h", Fingerprint: "SHA256:expected"}}
+		mc.kh.listResp = []*sdkssh.Pin{{Host: "h", Fingerprint: "SHA256:zqI91Lh+iwDRn7nMqu+T6XNTxzU+IHDzuvBa6zmV3/Q"}}
 		srv := newSSHTestServer(t, mc)
 		resp, err := http.Post(srv.URL+"/xkms/v1/ssh/known-hosts/h/verify", "application/json",
-			strings.NewReader(`{"scope":"user","owner":"a","fingerprint":"SHA256:received"}`))
+			strings.NewReader(`{"scope":"user","owner":"a","fingerprint":"SHA256:MYxa1R6bNv9ZJK4yPdWQMSRUE6Pg8qo+A8xCkC6eesw"}`))
 		require.NoError(t, err)
 		defer resp.Body.Close()
 		require.Equal(t, http.StatusConflict, resp.StatusCode)
 		var env sshErrorEnvelope
 		require.NoError(t, json.NewDecoder(resp.Body).Decode(&env))
-		assert.Equal(t, "SHA256:expected", env.Expected)
-		assert.Equal(t, "SHA256:received", env.Received)
+		assert.Equal(t, "SHA256:zqI91Lh+iwDRn7nMqu+T6XNTxzU+IHDzuvBa6zmV3/Q", env.Expected)
+		assert.Equal(t, "SHA256:MYxa1R6bNv9ZJK4yPdWQMSRUE6Pg8qo+A8xCkC6eesw", env.Received)
 	})
 
 	t.Run("match", func(t *testing.T) {
 		mc := newMockSSHClient()
-		mc.kh.listResp = []*sdkssh.Pin{{Host: "h", Fingerprint: "SHA256:match"}}
+		mc.kh.listResp = []*sdkssh.Pin{{Host: "h", Fingerprint: "SHA256:SUWnD6f5wT/hkxozcqxXmBQNQuunTQ3YBaSiFu06gUI"}}
 		srv := newSSHTestServer(t, mc)
 		resp, err := http.Post(srv.URL+"/xkms/v1/ssh/known-hosts/h/verify", "application/json",
-			strings.NewReader(`{"scope":"user","owner":"a","fingerprint":"SHA256:match"}`))
+			strings.NewReader(`{"scope":"user","owner":"a","fingerprint":"SHA256:SUWnD6f5wT/hkxozcqxXmBQNQuunTQ3YBaSiFu06gUI"}`))
 		require.NoError(t, err)
 		defer resp.Body.Close()
 		assert.Equal(t, http.StatusNoContent, resp.StatusCode)

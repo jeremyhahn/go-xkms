@@ -215,6 +215,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   repository parses the value — `SHA-1 Fingerprint` occurred exactly once, at the
   print site — and both callers only print the result.
 
+
 ### Added
 
 - **The version 2 `local.attestDevice` request carries no channel binding.**
@@ -269,6 +270,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `xkms.ScopeBackendToTenant`, so a transport that holds a backend name (or a
   backend) and a tenant gets the same scoped view the service's own request
   paths use, rather than reimplementing the predicate.
+
 
 ## [0.9.1-alpha] - 2026-09-02
 
