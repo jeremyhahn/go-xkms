@@ -73,6 +73,9 @@ webauthn:
   authenticator_attachment: ""
   resident_key: "preferred"
   user_verification: "preferred"
+  # Registration is closed by default (go-xkms#184); the suite creates its
+  # users through open sign-up, so opt in explicitly.
+  allow_public_registration: true
 
 # Encryption at rest. xkmsd refuses to start without this: cmd/xkmsd has no
 # --insecure override, so a config that leaves the barrier off cannot serve the

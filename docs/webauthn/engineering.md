@@ -59,7 +59,7 @@ tests.
 | `AttestationPreference` | `attestation` | `none`, `indirect`, `direct`. |
 | `ResidentKeyRequirement` | `resident_key` | Discoverable-credential policy. |
 | `AuthenticatorAttachment` | `authenticator_attachment` | `platform`, `cross-platform`. |
-| `AllowPublicRegistration` | `allow_public_registration` | `*bool` — nil is distinguishable from false. |
+| `AllowPublicRegistration` | `allow_public_registration` | `*bool` — nil means disabled; nil is still distinguishable from an explicit false. |
 | `Debug` | `debug` | Verbose ceremony logging. Never in production. |
 
 `RPID` and `RPOrigins` are the two that are load-bearing for security. A
@@ -76,8 +76,14 @@ invalidates every existing credential.
   unlisted origin fails.
 - **Signature counters move forward.** A counter that does not increase is
   treated as a cloning signal, not as a retry.
-- **`AllowPublicRegistration` nil ≠ false.** Code that reads it must handle
-  three states.
+- **`AllowPublicRegistration` defaults closed, and nil ≠ false.** An unset
+  flag means registration is disabled (go-xkms#184: the stack registration
+  model is invite-only by default, and a setting that can silently produce an
+  open surface is a defect). Code that reads it must still handle three
+  states: nil records "never decided", which compliance profiling and the
+  composed-host projection both depend on. When xkms runs as a ServiceModule,
+  the host-projected value (quicbaas `WithServiceModuleWebAuthn` →
+  `WebAuthnConfigFromXKMS`) passes through verbatim and is authoritative.
 - **Nothing here decides authorization.** A successful ceremony yields a token;
   what that token may do is go-qrdb's RBAC.
 - **Concurrency.** `Service` is safe for concurrent ceremonies; sessions are

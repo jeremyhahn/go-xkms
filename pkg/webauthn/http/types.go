@@ -78,11 +78,12 @@ type ErrorResponse struct {
 
 // Error codes returned in ErrorResponse.
 const (
-	ErrorCodeInvalidRequest     = "invalid_request"
-	ErrorCodeInvalidSession     = "invalid_session"
-	ErrorCodeSessionExpired     = "session_expired"
-	ErrorCodeUserNotFound       = "user_not_found"
-	ErrorCodeNoCredentials      = "no_credentials"
-	ErrorCodeVerificationFailed = "verification_failed"
-	ErrorCodeInternalError      = "internal_error"
+	ErrorCodeInvalidRequest       = "invalid_request"
+	ErrorCodeInvalidSession       = "invalid_session"
+	ErrorCodeSessionExpired       = "session_expired"
+	ErrorCodeUserNotFound         = "user_not_found"
+	ErrorCodeNoCredentials        = "no_credentials"
+	ErrorCodeVerificationFailed   = "verification_failed"
+	ErrorCodeRegistrationDisabled = "registration_disabled"
+	ErrorCodeInternalError        = "internal_error"
 )

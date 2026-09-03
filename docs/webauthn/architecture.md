@@ -125,9 +125,12 @@ authenticator drive those.
   `AuthenticatorAttachment` are policy**, applied at ceremony construction. They
   determine whether a PIN/biometric is required, whether attestation is checked,
   and whether the credential is discoverable.
-- **`AllowPublicRegistration` is a `*bool` on purpose** — unset is
-  distinguishable from explicitly false, so a composer's default and an
-  operator's decision do not collide silently.
+- **`AllowPublicRegistration` is a `*bool` on purpose, and defaults closed** —
+  unset means registration is disabled, matching the stack registration model
+  (invite-only unless explicitly opened), while staying distinguishable from
+  explicitly false so a composer's default and an operator's decision do not
+  collide silently. Under a composed host the host-projected value is
+  authoritative.
 - **Signature counters are checked and updated.** A counter that goes backwards
   is a cloned-authenticator signal.
 

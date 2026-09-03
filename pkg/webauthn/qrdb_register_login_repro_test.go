@@ -45,9 +45,10 @@ func TestQRDBAdapter_RegisterThenLogin_SameProcess(t *testing.T) {
 	ctx := context.Background()
 
 	cfg := &Config{
-		RPID:          "localhost",
-		RPDisplayName: "QuicBaaS",
-		RPOrigins:     []string{"https://localhost"},
+		RPID:                    "localhost",
+		RPDisplayName:           "QuicBaaS",
+		RPOrigins:               []string{"https://localhost"},
+		AllowPublicRegistration: openRegistration(),
 	}
 
 	users := newFakeUserClient()

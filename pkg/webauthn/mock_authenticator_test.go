@@ -257,9 +257,10 @@ func TestMockAuthenticator_FullRegistrationFlow(t *testing.T) {
 
 	// Create WebAuthn service with memory stores
 	cfg := &Config{
-		RPID:          rpID,
-		RPDisplayName: "Test RP",
-		RPOrigins:     []string{origin},
+		RPID:                    rpID,
+		RPDisplayName:           "Test RP",
+		RPOrigins:               []string{origin},
+		AllowPublicRegistration: openRegistration(),
 	}
 
 	users := NewMemoryUserStore()
@@ -351,9 +352,10 @@ func TestMockAuthenticator_FullLoginFlow(t *testing.T) {
 
 	// Create WebAuthn service with memory stores
 	cfg := &Config{
-		RPID:          rpID,
-		RPDisplayName: "Test RP",
-		RPOrigins:     []string{origin},
+		RPID:                    rpID,
+		RPDisplayName:           "Test RP",
+		RPOrigins:               []string{origin},
+		AllowPublicRegistration: openRegistration(),
 	}
 
 	users := NewMemoryUserStore()
@@ -454,9 +456,10 @@ func TestMockAuthenticator_CloneDetection(t *testing.T) {
 
 	// Create WebAuthn service with memory stores
 	cfg := &Config{
-		RPID:          rpID,
-		RPDisplayName: "Test RP",
-		RPOrigins:     []string{origin},
+		RPID:                    rpID,
+		RPDisplayName:           "Test RP",
+		RPOrigins:               []string{origin},
+		AllowPublicRegistration: openRegistration(),
 	}
 
 	users := NewMemoryUserStore()
@@ -577,9 +580,10 @@ func TestMockAuthenticator_DiscoverableCredentials(t *testing.T) {
 
 	// Create WebAuthn service with memory stores
 	cfg := &Config{
-		RPID:          rpID,
-		RPDisplayName: "Test RP",
-		RPOrigins:     []string{origin},
+		RPID:                    rpID,
+		RPDisplayName:           "Test RP",
+		RPOrigins:               []string{origin},
+		AllowPublicRegistration: openRegistration(),
 	}
 
 	users := NewMemoryUserStore()
@@ -657,9 +661,10 @@ func TestMockAuthenticator_MultipleCredentials(t *testing.T) {
 
 	// Create WebAuthn service with memory stores
 	cfg := &Config{
-		RPID:          rpID,
-		RPDisplayName: "Test RP",
-		RPOrigins:     []string{origin},
+		RPID:                    rpID,
+		RPDisplayName:           "Test RP",
+		RPOrigins:               []string{origin},
+		AllowPublicRegistration: openRegistration(),
 	}
 
 	users := NewMemoryUserStore()

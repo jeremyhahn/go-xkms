@@ -98,8 +98,9 @@ webauthn:
   authenticator_attachment: ""
   resident_key: "preferred"
   user_verification: "preferred"
-  # allow_public_registration is unset -> defaults to true, which the SPA's
-  # own /register screen needs to create its first (and only) operator.
+  # Registration is closed by default (go-xkms#184). The SPA's own /register
+  # screen creates the suite's first (and only) operator, so opt in explicitly.
+  allow_public_registration: true
 
 # Embedded web UI, served at the default /ui/ prefix. Requires the daemon to
 # be built with `-tags ui` AND web/dist to be staged BEFORE that build (see

@@ -375,12 +375,16 @@ type WebAuthnConfig struct {
 
 	// AllowPublicRegistration controls whether an unknown email may create an
 	// account through the WebAuthn registration ceremony (open self-service
-	// sign-up). Unset means true: the platform is intended to be publicly
-	// reachable, so omitting the key leaves registration open.
+	// sign-up). Unset means false: registration is invite-only unless the
+	// operator explicitly opens it, per the stack-wide registration model
+	// (canonical flag iam.self_service_registration.enabled, default off) and
+	// the company secure-by-default convention (go-xkms#184).
 	//
-	// A *bool, not a bool: with a plain bool the zero value is false, so every
-	// config written before this field existed would silently switch to closed
-	// registration on upgrade.
+	// A *bool, not a bool: nil records that the operator never considered the
+	// setting, which a compliance profile needs in order to flag an explicit
+	// open, and which lets a composed host (go-quicbaas ServiceModule
+	// projection) write its own registration decision through this field
+	// authoritatively.
 	//
 	// Turning it off still lets accounts provisioned through the authorized
 	// user-creation path enroll their first passkey; only implicit account

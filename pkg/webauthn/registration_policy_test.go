@@ -42,29 +42,76 @@ func newServiceWithPublicRegistration(t *testing.T, allow bool) (*Service, UserS
 	return svc, users
 }
 
-// TestPublicRegistrationDefaultsToAllowed pins the upgrade-safety property of
-// the *bool.
-//
-// A plain bool would default to false, so every config written before this
-// field existed -- and every config that simply omits the key -- would switch
-// to closed registration on upgrade. That is a silent behavior regression and
-// the opposite of the intended default, so the nil case is asserted directly
-// rather than inferred from the struct definition.
-func TestPublicRegistrationDefaultsToAllowed(t *testing.T) {
+// TestPublicRegistrationDefaultsToDisabled pins the secure default ruled in
+// go-xkms#184: an unset allow_public_registration means registration is
+// CLOSED, consistent with the stack-wide registration model
+// (iam.self_service_registration.enabled defaults off). The nil case is
+// asserted directly rather than inferred from the struct definition because
+// this default silently opening would be exactly the defect the ruling
+// designs away.
+func TestPublicRegistrationDefaultsToDisabled(t *testing.T) {
 	cfg := validTestConfig()
 	require.Nil(t, cfg.AllowPublicRegistration, "the test config must not set the field")
 
-	assert.True(t, cfg.PublicRegistrationAllowed(),
-		"an unset allow_public_registration must mean open registration")
+	assert.False(t, cfg.PublicRegistrationAllowed(),
+		"an unset allow_public_registration must mean closed registration")
 
-	// SetDefaults must not fill the field in, or nil would stop meaning "open".
+	// SetDefaults must not fill the field in: nil records "the operator never
+	// considered this", which compliance profiles and the composed-host
+	// projection both rely on.
 	cfg.SetDefaults()
 	assert.Nil(t, cfg.AllowPublicRegistration, "SetDefaults must leave the field unset")
-	assert.True(t, cfg.PublicRegistrationAllowed(), "SetDefaults must not close registration")
+	assert.False(t, cfg.PublicRegistrationAllowed(), "SetDefaults must not open registration")
 
-	// A nil Config must not panic and must read as open.
+	// A nil Config must not panic and must fail closed.
 	var nilCfg *Config
-	assert.True(t, nilCfg.PublicRegistrationAllowed(), "a nil Config must read as open")
+	assert.False(t, nilCfg.PublicRegistrationAllowed(), "a nil Config must read as closed")
+}
+
+// TestPublicRegistrationExplicitValues pins the two explicit states: the
+// operator's (or the composing host's) decision is applied verbatim in both
+// directions.
+func TestPublicRegistrationExplicitValues(t *testing.T) {
+	open, closed := true, false
+
+	cfg := validTestConfig()
+	cfg.AllowPublicRegistration = &open
+	assert.True(t, cfg.PublicRegistrationAllowed(), "explicit true must open registration")
+
+	cfg.AllowPublicRegistration = &closed
+	assert.False(t, cfg.PublicRegistrationAllowed(), "explicit false must close registration")
+}
+
+// TestPublicRegistrationDefault_RefusesUnknownUser proves the default is
+// enforced at the BeginRegistration entry point, not only in the config
+// accessor: a service built from a config that never mentions the field
+// refuses an unknown email with the typed error and writes nothing.
+func TestPublicRegistrationDefault_RefusesUnknownUser(t *testing.T) {
+	ctx := context.Background()
+
+	cfg := validTestConfig()
+	require.Nil(t, cfg.AllowPublicRegistration, "the test config must not set the field")
+
+	users := NewMemoryUserStore()
+	svc, err := NewService(ServiceParams{
+		Config:          cfg,
+		UserStore:       users,
+		SessionStore:    NewMemorySessionStore(),
+		CredentialStore: NewMemoryCredentialStore(),
+	})
+	require.NoError(t, err)
+
+	options, sessionID, err := svc.BeginRegistration(ctx, "stranger@example.com", "Stranger")
+
+	require.Error(t, err, "the default policy must refuse an unknown email")
+	assert.True(t, errors.Is(err, ErrPublicRegistrationDisabled),
+		"want ErrPublicRegistrationDisabled, got %v", err)
+	assert.Nil(t, options)
+	assert.Empty(t, sessionID)
+
+	_, err = users.GetByEmail(ctx, "stranger@example.com")
+	assert.True(t, IsUserNotFound(err),
+		"a refused registration must not leave an account behind")
 }
 
 // TestPublicRegistrationAllowed_CreatesUnknownUser is the open case: an email

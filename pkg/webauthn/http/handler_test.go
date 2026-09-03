@@ -33,12 +33,21 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+// openRegistration opts the test relying party into public sign-up. Since
+// go-xkms#184 the default is closed, so ceremony tests that exercise implicit
+// account creation must ask for it explicitly, exactly like a deployment.
+func openRegistration() *bool {
+	b := true
+	return &b
+}
+
 func newTestHandler(t *testing.T) *Handler {
 	svc, err := pkgwebauthn.NewService(pkgwebauthn.ServiceParams{
 		Config: &pkgwebauthn.Config{
-			RPID:          "example.com",
-			RPDisplayName: "Example",
-			RPOrigins:     []string{"https://example.com"},
+			RPID:                    "example.com",
+			RPDisplayName:           "Example",
+			RPOrigins:               []string{"https://example.com"},
+			AllowPublicRegistration: openRegistration(),
 		},
 		UserStore:       pkgwebauthn.NewMemoryUserStore(),
 		SessionStore:    pkgwebauthn.NewMemorySessionStore(),

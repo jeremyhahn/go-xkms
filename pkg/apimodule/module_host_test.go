@@ -113,3 +113,55 @@ func TestModule_SelfBuiltSurfaceAuthenticatesJWT(t *testing.T) {
 	assert.NotContains(t, authErr.Error(), "still composing",
 		"the self-built surface must have resolved by now, not report itself as composing")
 }
+
+// TestModule_SelfBuiltSurfaceFailsClosedOnDefaultRegistration pins go-xkms#184
+// end to end through the composed-module path: a host that projects a WebAuthn
+// config WITHOUT deciding allow_public_registration gets the stack default —
+// registration closed — and an unknown email is refused with the documented
+// 403/registration_disabled contract rather than an account or a 500.
+func TestModule_SelfBuiltSurfaceFailsClosedOnDefaultRegistration(t *testing.T) {
+	xkms.Reset()
+	t.Cleanup(xkms.Reset)
+	require.NoError(t, xkms.Initialize(&xkms.ServiceConfig{
+		Backends:       map[string]xkms.Backend{"test": xkmsmocks.NewMockKeyStore()},
+		DefaultBackend: "test",
+	}))
+	svc, err := xkms.Get()
+	require.NoError(t, err)
+
+	client, _, err := testutil.NewQRDBFakeClient()
+	require.NoError(t, err)
+
+	m, err := NewModule(func() *xkms.XKMSService { return svc },
+		WithQRDBClient(func() *qrdbsdk.Client { return client }),
+		WithWebAuthnConfig(&config.WebAuthnConfig{
+			RPID: "example.com",
+			// AllowPublicRegistration deliberately unset: the host never
+			// decided, so the secure default must apply.
+		}))
+	require.NoError(t, err)
+
+	reg, recs := newCaptureRegistrar()
+	m.RegisterHTTP(reg)
+
+	var begin http.HandlerFunc
+	for _, rec := range *recs {
+		if rec.method == "POST" && rec.pattern == "/api/v1/webauthn/registration/begin" {
+			begin = rec.handler
+		}
+	}
+	require.NotNil(t, begin, "webauthn registration/begin must be registered")
+
+	body, _ := json.Marshal(map[string]string{"email": "stranger@example.com", "display_name": "Stranger"})
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/webauthn/registration/begin", bytes.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+	begin(w, req)
+
+	require.Equal(t, http.StatusForbidden, w.Code, "body: %s", w.Body.String())
+
+	var resp map[string]any
+	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &resp))
+	assert.Equal(t, "registration_disabled", resp["error"],
+		"the refusal must carry the documented error code")
+}

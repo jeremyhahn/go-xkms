@@ -62,9 +62,10 @@ func TestIntegration_FullRegistrationFlow(t *testing.T) {
 
 	// Set up the WebAuthn service
 	cfg := &Config{
-		RPID:          "example.com",
-		RPDisplayName: "Example Corp",
-		RPOrigins:     []string{"https://example.com"},
+		RPID:                    "example.com",
+		RPDisplayName:           "Example Corp",
+		RPOrigins:               []string{"https://example.com"},
+		AllowPublicRegistration: openRegistration(),
 	}
 
 	svc, err := NewService(ServiceParams{
@@ -141,9 +142,10 @@ func TestIntegration_FullLoginFlow(t *testing.T) {
 
 	// Set up the WebAuthn service
 	cfg := &Config{
-		RPID:          "example.com",
-		RPDisplayName: "Example Corp",
-		RPOrigins:     []string{"https://example.com"},
+		RPID:                    "example.com",
+		RPDisplayName:           "Example Corp",
+		RPOrigins:               []string{"https://example.com"},
+		AllowPublicRegistration: openRegistration(),
 	}
 
 	svc, err := NewService(ServiceParams{
@@ -230,10 +232,11 @@ func TestIntegration_DiscoverableCredentialFlow(t *testing.T) {
 
 	// Set up the WebAuthn service with resident key requirement
 	cfg := &Config{
-		RPID:                   "example.com",
-		RPDisplayName:          "Example Corp",
-		RPOrigins:              []string{"https://example.com"},
-		ResidentKeyRequirement: "preferred",
+		RPID:                    "example.com",
+		RPDisplayName:           "Example Corp",
+		RPOrigins:               []string{"https://example.com"},
+		AllowPublicRegistration: openRegistration(),
+		ResidentKeyRequirement:  "preferred",
 	}
 
 	svc, err := NewService(ServiceParams{
@@ -304,9 +307,10 @@ func TestIntegration_MultipleCredentials(t *testing.T) {
 	ctx := context.Background()
 
 	cfg := &Config{
-		RPID:          "example.com",
-		RPDisplayName: "Example Corp",
-		RPOrigins:     []string{"https://example.com"},
+		RPID:                    "example.com",
+		RPDisplayName:           "Example Corp",
+		RPOrigins:               []string{"https://example.com"},
+		AllowPublicRegistration: openRegistration(),
 	}
 
 	svc, err := NewService(ServiceParams{
@@ -397,9 +401,10 @@ func TestIntegration_SignCountValidation(t *testing.T) {
 	ctx := context.Background()
 
 	cfg := &Config{
-		RPID:          "example.com",
-		RPDisplayName: "Example Corp",
-		RPOrigins:     []string{"https://example.com"},
+		RPID:                    "example.com",
+		RPDisplayName:           "Example Corp",
+		RPOrigins:               []string{"https://example.com"},
+		AllowPublicRegistration: openRegistration(),
 	}
 
 	svc, err := NewService(ServiceParams{
@@ -462,9 +467,10 @@ func TestIntegration_WithJWTGenerator(t *testing.T) {
 	ctx := context.Background()
 
 	cfg := &Config{
-		RPID:          "example.com",
-		RPDisplayName: "Example Corp",
-		RPOrigins:     []string{"https://example.com"},
+		RPID:                    "example.com",
+		RPDisplayName:           "Example Corp",
+		RPOrigins:               []string{"https://example.com"},
+		AllowPublicRegistration: openRegistration(),
 	}
 
 	// Custom JWT generator
@@ -537,9 +543,10 @@ func TestIntegration_UserIdentifiedLogin_PopulatesAllowCredentials(t *testing.T)
 	ctx := context.Background()
 
 	cfg := &Config{
-		RPID:          "example.com",
-		RPDisplayName: "Example Corp",
-		RPOrigins:     []string{"https://example.com"},
+		RPID:                    "example.com",
+		RPDisplayName:           "Example Corp",
+		RPOrigins:               []string{"https://example.com"},
+		AllowPublicRegistration: openRegistration(),
 	}
 	svc, err := NewService(ServiceParams{
 		Config:          cfg,

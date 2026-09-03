@@ -15,9 +15,12 @@ package rest
 
 import (
 	"encoding/json"
+	"errors"
 	"net/http"
 
 	"github.com/jeremyhahn/go-xkms/pkg/api/transport"
+	"github.com/jeremyhahn/go-xkms/pkg/webauthn"
+	webauthnhttp "github.com/jeremyhahn/go-xkms/pkg/webauthn/http"
 	"github.com/jeremyhahn/go-xkms/pkg/xkms"
 )
 
@@ -45,6 +48,17 @@ func (s *Server) handleSDKBeginRegistration(w http.ResponseWriter, r *http.Reque
 
 	resp, err := svc.BeginRegistration(r.Context(), &req)
 	if err != nil {
+		if errors.Is(err, webauthn.ErrPublicRegistrationDisabled) {
+			// Same machine-readable contract as the browser ceremony route
+			// (pkg/webauthn/http ErrorCodeRegistrationDisabled), so SDK
+			// clients branch on the documented code, not on message text.
+			writeJSON(w, ErrorResponse{
+				Error:   webauthnhttp.ErrorCodeRegistrationDisabled,
+				Message: "public registration is disabled",
+				Code:    http.StatusForbidden,
+			}, http.StatusForbidden)
+			return
+		}
 		writeError(w, err, http.StatusInternalServerError)
 		return
 	}

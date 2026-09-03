@@ -628,15 +628,17 @@ func TestWebAuthnStores_IntegrationWithServer(t *testing.T) {
 func TestWebAuthnRoutes_BeginRegistration(t *testing.T) {
 	ks := newMockKeyStore()
 
+	allowRegistration := true
 	cfg := &Config{
 		Authenticator: auth.NewNoOpAuthenticator(),
 		Backends: map[string]xkms.Backend{
 			"test": ks,
 		},
 		WebAuthnConfig: &webauthn.Config{
-			RPID:          "localhost",
-			RPDisplayName: "Test App",
-			RPOrigins:     []string{"https://localhost"},
+			RPID:                    "localhost",
+			RPDisplayName:           "Test App",
+			RPOrigins:               []string{"https://localhost"},
+			AllowPublicRegistration: &allowRegistration,
 		},
 		Logger: testLogger(),
 	}

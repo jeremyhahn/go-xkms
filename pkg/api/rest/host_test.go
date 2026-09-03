@@ -298,3 +298,44 @@ func TestNewHostServer_AuthenticateHTTP(t *testing.T) {
 	_, authErr := srv.AuthenticateHTTP(req)
 	require.Error(t, authErr, "a request with no credentials must fail authentication")
 }
+
+// TestWebAuthnConfigFromXKMS_RegistrationPolicyPassThrough pins the
+// subordination contract from go-xkms#184: the projection a composing host
+// (go-quicbaas's WithServiceModuleWebAuthn) feeds through this function
+// carries the host's registration decision verbatim — explicit values in
+// both directions, and nil untouched so the secure default (closed) applies.
+// Two flags disagreeing about whether an anonymous user may register is the
+// failure mode this pass-through designs away.
+func TestWebAuthnConfigFromXKMS_RegistrationPolicyPassThrough(t *testing.T) {
+	open, closed := true, false
+
+	tests := []struct {
+		name      string
+		in        *bool
+		wantNil   bool
+		wantAllow bool
+	}{
+		{"unset stays unset and reads closed", nil, true, false},
+		{"explicit true stays true", &open, false, true},
+		{"explicit false stays false", &closed, false, false},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := WebAuthnConfigFromXKMS(&config.WebAuthnConfig{
+				RPID:                    "example.com",
+				AllowPublicRegistration: tt.in,
+			})
+			require.NotNil(t, got)
+			if tt.wantNil {
+				assert.Nil(t, got.AllowPublicRegistration,
+					"projection must not invent a value the host never set")
+			} else {
+				require.NotNil(t, got.AllowPublicRegistration)
+				assert.Equal(t, *tt.in, *got.AllowPublicRegistration,
+					"projection must carry the host's decision verbatim")
+			}
+			assert.Equal(t, tt.wantAllow, got.PublicRegistrationAllowed())
+		})
+	}
+}

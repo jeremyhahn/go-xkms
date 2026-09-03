@@ -29,6 +29,14 @@ func validTestConfig() *Config {
 	}
 }
 
+// openRegistration opts a test relying party into public sign-up. Since
+// go-xkms#184 the default is closed, so ceremony tests that exercise implicit
+// account creation must ask for it explicitly, exactly like a deployment.
+func openRegistration() *bool {
+	b := true
+	return &b
+}
+
 func TestNewService(t *testing.T) {
 	tests := []struct {
 		name    string
@@ -129,8 +137,12 @@ func (m *mockJWTGenerator) GenerateToken(ctx context.Context, user User) (string
 }
 
 func newTestService(t *testing.T) *Service {
+	// The ceremony tests seed accounts through open sign-up, which since
+	// go-xkms#184 must be requested explicitly.
+	cfg := validTestConfig()
+	cfg.AllowPublicRegistration = openRegistration()
 	svc, err := NewService(ServiceParams{
-		Config:          validTestConfig(),
+		Config:          cfg,
 		UserStore:       NewMemoryUserStore(),
 		SessionStore:    NewMemorySessionStore(),
 		CredentialStore: NewMemoryCredentialStore(),
@@ -341,8 +353,10 @@ func TestService_WithJWTGenerator(t *testing.T) {
 	ctx := context.Background()
 
 	jwtGen := &mockJWTGenerator{token: "custom-jwt-token"}
+	cfg := validTestConfig()
+	cfg.AllowPublicRegistration = openRegistration()
 	svc, err := NewService(ServiceParams{
-		Config:          validTestConfig(),
+		Config:          cfg,
 		UserStore:       NewMemoryUserStore(),
 		SessionStore:    NewMemorySessionStore(),
 		CredentialStore: NewMemoryCredentialStore(),

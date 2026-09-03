@@ -51,7 +51,20 @@ The rest are policy:
 - `authenticator_attachment: platform` restricts to built-in authenticators,
   `cross-platform` to removable keys.
 - `allow_public_registration` decides whether anyone can enrol themselves.
-  Leaving it unset is different from setting it false; be explicit.
+  **Unset means no**: registration is invite-only by default, matching the
+  stack-wide registration model (`iam.self_service_registration.enabled`,
+  default off). To open self-service sign-up, set it to `true` explicitly.
+  Accounts provisioned by an administrator still enrol their first passkey
+  through the same endpoint either way — only implicit account creation for
+  unknown emails is withheld, answered with `403 registration_disabled`.
+
+  When xkms runs embedded as a ServiceModule under go-quicbaas, the host's
+  registration flag is authoritative: the host projects its decision into
+  this field, and a value set only in the xkms config is not consulted.
+
+  **Migration (v0.9.x and earlier → v0.10.0):** the default used to be open. A deployment
+  that relied on omitting the key now refuses unknown emails; add
+  `allow_public_registration: true` to restore the old behaviour.
 
 Leave `debug: false`. It logs ceremony detail that is useful to an attacker.
 

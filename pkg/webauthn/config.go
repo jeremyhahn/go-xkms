@@ -68,16 +68,22 @@ type Config struct {
 	// account for an email it has never seen — that is, whether the relying
 	// party accepts open self-service sign-up.
 	//
-	// Default: true (nil means true). The platform is intended to be publicly
-	// reachable, so omitting the key leaves registration open.
+	// Default: false (nil means false). Registration is invite-only unless the
+	// operator explicitly opens it, matching the stack-wide registration model
+	// (canonical flag iam.self_service_registration.enabled, default off) and
+	// the company secure-by-default convention: a setting that can silently
+	// produce an open surface is a defect (go-xkms#184, owner ruling
+	// 2026-09-01).
 	//
-	// It is a *bool rather than a bool on purpose. A plain bool has the zero
-	// value false, so every deployment whose config predates this field — and
-	// every config that simply omits it — would silently switch to closed
-	// registration, which is both a behavior regression and the opposite of
-	// the intended default. nil also distinguishes "the operator never
-	// considered this" from "the operator explicitly chose open", which is
-	// what a compliance profile needs in order to flag the latter.
+	// It remains a *bool rather than a bool so that nil distinguishes "the
+	// operator never considered this" from "the operator explicitly chose a
+	// policy" — which is what a compliance profile needs in order to flag an
+	// explicit open, and what lets a composing host project its own
+	// registration flag through without a second default fighting it. When
+	// xkms runs as a ServiceModule under a composed host (go-quicbaas), the
+	// host-projected value is authoritative: the host writes its
+	// iam.self_service_registration decision into this field and the module
+	// applies it verbatim.
 	//
 	// Turning it off does NOT disable enrollment for accounts that already
 	// exist: a user provisioned through the authorized CreateUser path still
@@ -91,10 +97,12 @@ type Config struct {
 }
 
 // PublicRegistrationAllowed reports whether BeginRegistration may create an
-// account for an unknown email. An unset AllowPublicRegistration means yes,
-// so a config that never mentions the field keeps open registration.
+// account for an unknown email. An unset AllowPublicRegistration means no:
+// registration is closed unless the operator (or the composing host, when
+// xkms runs as a ServiceModule) explicitly opens it. A nil Config fails
+// closed the same way.
 func (c *Config) PublicRegistrationAllowed() bool {
-	return c == nil || c.AllowPublicRegistration == nil || *c.AllowPublicRegistration
+	return c != nil && c.AllowPublicRegistration != nil && *c.AllowPublicRegistration
 }
 
 // Validate validates the configuration and returns an error if invalid.

@@ -28,9 +28,10 @@ import (
 func newTestService(t *testing.T) *webauthn.Service {
 	svc, err := webauthn.NewService(webauthn.ServiceParams{
 		Config: &webauthn.Config{
-			RPID:          "example.com",
-			RPDisplayName: "Example",
-			RPOrigins:     []string{"https://example.com"},
+			RPID:                    "example.com",
+			RPDisplayName:           "Example",
+			RPOrigins:               []string{"https://example.com"},
+			AllowPublicRegistration: openRegistration(),
 		},
 		UserStore:       webauthn.NewMemoryUserStore(),
 		SessionStore:    webauthn.NewMemorySessionStore(),

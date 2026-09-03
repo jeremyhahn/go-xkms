@@ -198,6 +198,26 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   before the tags become permanent. Hardening the remaining seams between the
   first read and the final push is #211, which needs an owner ruling.
 
+- **BREAKING: `webauthn.allow_public_registration` now defaults to disabled**
+  (#184, owner ruling 2026-09-01). An unset flag used to mean open self-service
+  sign-up; it now means invite-only, aligning go-xkms with the stack-wide
+  registration model (canonical flag `iam.self_service_registration.enabled`,
+  default off) and the company secure-by-default convention: a setting that can
+  silently produce an open surface is a defect.
+
+  **Operator impact.** A deployment that relied on omitting the key now refuses
+  WebAuthn registration for unknown emails; add
+  `allow_public_registration: true` to restore open sign-up. Accounts
+  provisioned through the authorized user-creation path still enrol their first
+  passkey through the same endpoint — only implicit account creation is
+  withheld, and the refusal now carries its documented wire contract
+  (REST `403 registration_disabled`, gRPC/Unix `PermissionDenied`) instead of
+  falling through to a 500/`Internal`.
+
+  When xkms runs as a ServiceModule under go-quicbaas, the host-projected
+  registration decision passes through verbatim and is authoritative; the
+  secure default applies only when the host never decided.
+
 - **FLAG DAY: device attestation is now challenge-response (protocol version 2)**
   (#129, #93, owner ruling 2026-08-24). Supersedes the embedded-challenge
   freshness model.

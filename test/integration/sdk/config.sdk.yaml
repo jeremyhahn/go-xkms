@@ -52,6 +52,9 @@ webauthn:
   authenticator_attachment: ""
   resident_key: "preferred"
   user_verification: "preferred"
+  # Registration is closed by default (go-xkms#184); the suite creates its
+  # users through open sign-up, so opt in explicitly.
+  allow_public_registration: true
 
 ratelimit:
   enabled: false

@@ -26,9 +26,10 @@ import (
 // conformanceTestConfig returns a Config suitable for Chrome WebAuthn conformance testing.
 func conformanceTestConfig() *Config {
 	return &Config{
-		RPID:          "localhost",
-		RPDisplayName: "Test",
-		RPOrigins:     []string{"https://localhost:8443"},
+		RPID:                    "localhost",
+		RPDisplayName:           "Test",
+		RPOrigins:               []string{"https://localhost:8443"},
+		AllowPublicRegistration: openRegistration(),
 	}
 }
 

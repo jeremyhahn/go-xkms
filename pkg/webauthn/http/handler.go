@@ -310,6 +310,8 @@ func (h *Handler) handleServiceError(w http.ResponseWriter, err error) {
 		h.writeError(w, http.StatusBadRequest, ErrorCodeInvalidRequest, err.Error())
 	case errors.Is(err, webauthn.ErrInvalidResponse):
 		h.writeError(w, http.StatusBadRequest, ErrorCodeInvalidRequest, "invalid authenticator response")
+	case errors.Is(err, webauthn.ErrPublicRegistrationDisabled):
+		h.writeError(w, http.StatusForbidden, ErrorCodeRegistrationDisabled, "public registration is disabled")
 	default:
 		h.writeError(w, http.StatusInternalServerError, ErrorCodeInternalError, "internal server error")
 	}

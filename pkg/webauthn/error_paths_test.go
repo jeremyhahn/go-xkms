@@ -152,11 +152,15 @@ func (s *faultySessionStore) Delete(ctx context.Context, sessionID string) error
 }
 
 // newServiceWith builds a Service backed by the given (possibly faulty)
-// stores using the same valid config as the rest of the suite.
+// stores using the same valid config as the rest of the suite. Registration
+// is opened explicitly so the store-fault branches past the policy gate stay
+// reachable.
 func newServiceWith(t *testing.T, us UserStore, ss SessionStore, cs CredentialStore) *Service {
 	t.Helper()
+	cfg := validTestConfig()
+	cfg.AllowPublicRegistration = openRegistration()
 	svc, err := NewService(ServiceParams{
-		Config:          validTestConfig(),
+		Config:          cfg,
 		UserStore:       us,
 		SessionStore:    ss,
 		CredentialStore: cs,

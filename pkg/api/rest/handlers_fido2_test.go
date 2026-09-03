@@ -36,11 +36,13 @@ import (
 // a browser.
 func newTestWebAuthnService(t *testing.T) *pkgwebauthn.Service {
 	t.Helper()
+	allowRegistration := true
 	svc, err := pkgwebauthn.NewService(pkgwebauthn.ServiceParams{
 		Config: &pkgwebauthn.Config{
-			RPID:          "localhost",
-			RPDisplayName: "xkms test",
-			RPOrigins:     []string{"https://localhost"},
+			RPID:                    "localhost",
+			RPDisplayName:           "xkms test",
+			RPOrigins:               []string{"https://localhost"},
+			AllowPublicRegistration: &allowRegistration,
 		},
 		UserStore:       pkgwebauthn.NewMemoryUserStore(),
 		SessionStore:    pkgwebauthn.NewMemorySessionStore(),
@@ -94,6 +96,38 @@ func TestHandleSDKBeginRegistration_Success(t *testing.T) {
 	require.NoError(t, json.Unmarshal(rr.Body.Bytes(), &resp))
 	assert.NotEmpty(t, resp.SessionID)
 	assert.Contains(t, resp.OptionsJSON, "publicKey")
+}
+
+// TestHandleSDKBeginRegistration_RegistrationClosed pins the SDK route's wire
+// contract for the go-xkms#184 default: a relying party that never decided
+// allow_public_registration refuses an unknown email with the documented 403,
+// not a fall-through 500, matching the browser route and docs/webauthn/api.md.
+func TestHandleSDKBeginRegistration_RegistrationClosed(t *testing.T) {
+	closedRP, err := pkgwebauthn.NewService(pkgwebauthn.ServiceParams{
+		Config: &pkgwebauthn.Config{
+			RPID:          "localhost",
+			RPDisplayName: "xkms test",
+			RPOrigins:     []string{"https://localhost"},
+			// AllowPublicRegistration deliberately unset: the default is closed.
+		},
+		UserStore:       pkgwebauthn.NewMemoryUserStore(),
+		SessionStore:    pkgwebauthn.NewMemorySessionStore(),
+		CredentialStore: pkgwebauthn.NewMemoryCredentialStore(),
+	})
+	require.NoError(t, err)
+
+	r := setupFIDO2HandlerTest(t, closedRP)
+
+	body, _ := json.Marshal(transport.BeginRegistrationRequest{Username: "stranger@example.com", DisplayName: "Stranger"})
+	rr := httptest.NewRecorder()
+	r.ServeHTTP(rr, httptest.NewRequest(http.MethodPost, "/webauthn/sdk/registration/begin", bytes.NewReader(body)))
+
+	require.Equal(t, http.StatusForbidden, rr.Code, "body: %s", rr.Body.String())
+	var errResp ErrorResponse
+	require.NoError(t, json.Unmarshal(rr.Body.Bytes(), &errResp))
+	assert.Equal(t, "registration_disabled", errResp.Error,
+		"the machine-readable code must match the browser route's documented contract")
+	assert.Equal(t, "public registration is disabled", errResp.Message)
 }
 
 func TestHandleSDKBeginRegistration_BadJSON(t *testing.T) {

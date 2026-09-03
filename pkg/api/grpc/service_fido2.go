@@ -15,9 +15,11 @@ package grpc
 
 import (
 	"context"
+	"errors"
 
 	pb "github.com/jeremyhahn/go-xkms/pkg/api/grpc/proto/xkmsv1"
 	"github.com/jeremyhahn/go-xkms/pkg/api/transport"
+	"github.com/jeremyhahn/go-xkms/pkg/webauthn"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 )
@@ -47,6 +49,9 @@ func (s *Service) BeginRegistration(ctx context.Context, req *pb.BeginRegistrati
 		DisplayName: req.DisplayName,
 	})
 	if cErr != nil {
+		if errors.Is(cErr, webauthn.ErrPublicRegistrationDisabled) {
+			return nil, status.Error(codes.PermissionDenied, "public registration is disabled")
+		}
 		return nil, status.Error(codes.Internal, cErr.Error())
 	}
 	return &pb.BeginRegistrationResponse{

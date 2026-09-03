@@ -20,10 +20,12 @@ import (
 func newConfiguredWebAuthnService(t *testing.T) *webauthn.Service {
 	t.Helper()
 
+	allowRegistration := true
 	cfg := &webauthn.Config{
-		RPID:          "example.com",
-		RPDisplayName: "Example Corp",
-		RPOrigins:     []string{"https://example.com"},
+		RPID:                    "example.com",
+		RPDisplayName:           "Example Corp",
+		RPOrigins:               []string{"https://example.com"},
+		AllowPublicRegistration: &allowRegistration,
 	}
 
 	svc, err := webauthn.NewService(webauthn.ServiceParams{
