@@ -981,14 +981,18 @@ func (s *Server) initializeKeyStore() error {
 		return ErrNoKeystoresInitialized
 	}
 
-	// Determine default backend
-	defaultBackend := string(s.config.Default)
-	if _, ok := s.backends[defaultBackend]; !ok {
-		// Fall back to first available backend
-		for name := range s.backends {
-			defaultBackend = name
-			break
-		}
+	// Determine the default backend by the one shared rule, so the same
+	// configuration resolves to the same store on every start. Ranging
+	// s.backends to take "the first" entry read Go's randomized map iteration
+	// order, so a config with no default_backend — or one naming a backend
+	// that is not compiled into this build — selected a different store on
+	// each start, and nothing said so (#171).
+	configuredDefault := string(s.config.Default)
+	defaultBackend := xkms.ResolveDefaultBackend(configuredDefault, s.backends)
+	if configuredDefault != "" && defaultBackend != configuredDefault {
+		s.logger.Warn("configured default backend is not loaded, using resolved default",
+			"configured", configuredDefault,
+			"resolved", defaultBackend)
 	}
 	s.defaultBackendName = defaultBackend
 

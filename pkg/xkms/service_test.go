@@ -383,6 +383,95 @@ func TestInitialize_DefaultToFirstBackend(t *testing.T) {
 	assert.NotNil(t, defaultKS)
 }
 
+// TestInitialize_DefaultBackendPrefersSoftware pins the fallback rule applied
+// when no default is configured: the software backend, chosen the same way on
+// every construction. Ranging the backend map to take "the first" entry read
+// Go's randomized iteration order, so the same configuration resolved to a
+// different store on each start.
+func TestInitialize_DefaultBackendPrefersSoftware(t *testing.T) {
+	t.Cleanup(func() { Reset() })
+
+	const restarts = 200
+	names := []string{"aws-kms", "pkcs11", "software", "tpm2"}
+
+	for i := 0; i < restarts; i++ {
+		Reset()
+
+		backends := make(map[string]Backend, len(names))
+		for _, name := range names {
+			backends[name] = newMockKeyStore(name)
+		}
+
+		require.NoError(t, Initialize(&ServiceConfig{Backends: backends}))
+		require.Equal(t, "software", service.DefaultBackendName(),
+			"restart %d resolved a different default backend", i)
+	}
+}
+
+// TestInitialize_DefaultBackendFallsBackToFirstNameSorted covers the same
+// fallback with no software backend present: the alphabetically first name,
+// and the same one on every construction.
+func TestInitialize_DefaultBackendFallsBackToFirstNameSorted(t *testing.T) {
+	t.Cleanup(func() { Reset() })
+
+	const restarts = 200
+	names := []string{"tpm2", "pkcs11", "azure-keyvault", "aws-kms"}
+
+	for i := 0; i < restarts; i++ {
+		Reset()
+
+		backends := make(map[string]Backend, len(names))
+		for _, name := range names {
+			backends[name] = newMockKeyStore(name)
+		}
+
+		require.NoError(t, Initialize(&ServiceConfig{Backends: backends}))
+		require.Equal(t, "aws-kms", service.DefaultBackendName(),
+			"restart %d resolved a different default backend", i)
+	}
+}
+
+// TestInitialize_ConfiguredDefaultBackendWins ensures the fallback rule never
+// overrides a default the caller named, even when the preferred software
+// backend is also loaded.
+func TestInitialize_ConfiguredDefaultBackendWins(t *testing.T) {
+	t.Cleanup(func() { Reset() })
+	Reset()
+
+	config := &ServiceConfig{
+		Backends: map[string]Backend{
+			"aws-kms":  newMockKeyStore("aws-kms"),
+			"software": newMockKeyStore("software"),
+			"tpm2":     newMockKeyStore("tpm2"),
+		},
+		DefaultBackend: "tpm2",
+	}
+
+	require.NoError(t, Initialize(config))
+	assert.Equal(t, "tpm2", service.DefaultBackendName())
+}
+
+// TestInitialize_MissingConfiguredDefaultFailsClosed ensures a named default
+// that was not loaded is reported rather than silently replaced by another
+// store, even when other backends are available to fall back to.
+func TestInitialize_MissingConfiguredDefaultFailsClosed(t *testing.T) {
+	t.Cleanup(func() { Reset() })
+	Reset()
+
+	config := &ServiceConfig{
+		Backends: map[string]Backend{
+			"aws-kms":  newMockKeyStore("aws-kms"),
+			"software": newMockKeyStore("software"),
+		},
+		DefaultBackend: "tpm2",
+	}
+
+	err := Initialize(config)
+	require.Error(t, err)
+	assert.True(t, errors.Is(err, ErrDefaultBackendNotFound))
+	assert.Contains(t, err.Error(), "tpm2")
+}
+
 func TestInitialize_OnlyOnce(t *testing.T) {
 	Reset()
 

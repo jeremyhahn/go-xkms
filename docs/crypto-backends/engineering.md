@@ -1,6 +1,6 @@
 # Crypto Backends — Engineering Contract
 
-> **Status: NORMATIVE** · Feature: `crypto-backends` · Repo: `go-xkms` · Last verified: 2026-08-19
+> **Status: NORMATIVE** · Feature: `crypto-backends` · Repo: `go-xkms` · Last verified: 2026-09-03
 
 ## Exported surface
 
@@ -78,6 +78,20 @@ can be stricter than the backend's ceiling.
 - **Concurrency.** The composite is concurrency-safe. Individual backends
   serialise where the device requires it; do not assume parallel throughput from
   a single token.
+- **The default backend is a function of the backend names alone**, so the same
+  configuration resolves to the same store on every start. The rule is
+  `xkms.ResolveDefaultBackend` (`pkg/xkms/auto.go`), applied in order: the
+  requested backend when it is loaded, then the software backend, then the
+  alphabetically first name. It decides where keys generated without an
+  explicit backend are stored, so a choice that moved between restarts would
+  move them with it (#171).
+
+  Callers reach it differently on purpose. `xkms.Initialize` fails closed when
+  `DefaultBackend` names a backend that is not loaded
+  (`ErrDefaultBackendNotFound`) and consults the rule only when none was
+  configured. The server (`initializeKeyStore`) resolves through the rule in
+  both cases so a `default_backend` naming a backend absent from the build is
+  not fatal, and logs a warning naming the configured and resolved backends.
 
 ## Error semantics
 

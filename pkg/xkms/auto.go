@@ -117,7 +117,7 @@ func AutoInitialize(config *AutoConfig) error {
 	}
 
 	// Resolve default backend name
-	defaultBackend := resolveDefaultBackend(config.DefaultBackend, backends)
+	defaultBackend := ResolveDefaultBackend(config.DefaultBackend, backends)
 
 	return Initialize(&ServiceConfig{
 		Backends:       backends,
@@ -168,16 +168,33 @@ func resolveBackendConfig(config *AutoConfig, bt BackendType) map[string]interfa
 	return backendConfig
 }
 
-// resolveDefaultBackend determines which backend should be the default.
-// If the requested default is available, it is used. Otherwise, the first
-// available backend is selected deterministically by iterating sorted keys.
-func resolveDefaultBackend(requested string, backends map[string]Backend) string {
-	if requested == "" {
-		requested = string(BackendSoftware)
+// ResolveDefaultBackend is the rule for choosing a default backend, applied in
+// order: the requested backend when it is loaded, then the software backend
+// when it is, then the alphabetically first name. Every step is a function of the
+// backend names alone, so the same set of backends resolves to the same default
+// on every run — the default decides where keys generated without an explicit
+// backend are stored, and a choice that moves between restarts moves them with
+// it. An empty map has no default to name, so the result is the empty string;
+// callers reject that case before reaching here with their own typed error.
+//
+// Callers that must reject an unloaded default rather than replace it, such as
+// Initialize, check the requested name themselves and only consult this rule
+// when none was configured.
+func ResolveDefaultBackend(requested string, backends map[string]Backend) string {
+	if len(backends) == 0 {
+		return ""
 	}
 
 	if _, ok := backends[requested]; ok {
 		return requested
+	}
+
+	// The software backend is preferred over any other fallback, and for a
+	// requested name that is not loaded as much as for no request at all: a
+	// typo or a backend left out of the build should not silently promote a
+	// cloud KMS to hold every key generated without an explicit backend.
+	if _, ok := backends[string(BackendSoftware)]; ok {
+		return string(BackendSoftware)
 	}
 
 	// Fall back to the first available backend (sorted for determinism)

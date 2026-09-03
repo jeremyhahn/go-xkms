@@ -481,13 +481,19 @@ func Initialize(config *ServiceConfig) error {
 			return
 		}
 
-		// If no default specified, use first backend
+		// Resolve the default backend deterministically. A name the caller
+		// configured is authoritative and must be present — substituting some
+		// other store for a default that was named but not loaded hides an
+		// operator error and changes where keys land. Only when no default is
+		// configured does the package fallback rule apply.
+		//
+		// Ranging config.Backends to take "the first" entry read Go's
+		// randomized map iteration order, so an embedder that supplied several
+		// backends and no default got a different one on each start, and keys
+		// written before a restart were looked for in another store after it.
 		defaultBackend := config.DefaultBackend
 		if defaultBackend == "" {
-			for name := range config.Backends {
-				defaultBackend = name
-				break
-			}
+			defaultBackend = ResolveDefaultBackend("", config.Backends)
 		}
 
 		// Verify default backend exists

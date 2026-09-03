@@ -195,6 +195,34 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **The default backend was chosen by Go's randomized map iteration** (#171).
+  Both `xkms.Initialize` — exported to embedders as
+  `xkmssdk.ServiceInitialize` — and the daemon's `initializeKeyStore` took
+  "the first" entry of the backend map when they had no usable configured
+  default. Go randomizes that order by design, so the same binary on the same
+  configuration resolved a different default on each start: 500 constructions
+  over four backends selected all four (318/63/62/57).
+
+  The default is not cosmetic. It decides where keys generated or imported
+  without an explicit backend are stored, and therefore their `StoreType`
+  segment in `KeyAttributes.ID()`, so a key written before a restart could be
+  looked for in a different store after one, with nothing logged to explain it.
+
+  Resolution is now one rule, `xkms.ResolveDefaultBackend`, already applied on
+  the auto-configuration path and now shared by all three: the requested
+  backend when it is loaded, then the software backend, then the alphabetically
+  first name — every step a function of the backend names alone.
+
+  Reached differently by each caller, deliberately. `xkms.Initialize` still
+  fails closed on a default that was configured but not loaded
+  (`ErrDefaultBackendNotFound`) and consults the rule only when none was
+  configured. The daemon keeps starting in that case — a `default_backend`
+  naming a backend absent from the build is not fatal — but now logs a warning
+  naming the configured and resolved backends instead of substituting one
+  silently. Embedders who relied on an arbitrary default with several backends
+  loaded and none named will see a stable choice, which may differ from the one
+  a given run happened to make.
+
 - **Release `v0.8.0-alpha` did not contain the fix it was cut for** (#195).
   The tag pointed at `3b227eee`, which predates `efdf8d76` (#190,
   "resolve logins by the canonical email key"), so every consumer

@@ -2624,8 +2624,13 @@ func TestInitializeKeyStore_DefaultBackendFallback(t *testing.T) {
 	server, err := New(cfg)
 	require.NoError(t, err)
 	defer func() { _ = server.Shutdown() }()
-	// Default was resolved to the software backend.
+	// Default was resolved to the software backend. The assertion is the
+	// resolved name, not merely that some backend loaded: the minimal config
+	// carries one backend, so this pins the empty-default path, and
+	// TestInitializeKeyStore_DefaultBackendIsDeterministic covers the case
+	// where several backends make the choice observable.
 	assert.NotEmpty(t, server.backends)
+	assert.Equal(t, "software", server.defaultBackendName)
 }
 
 // ============================================================================
@@ -3938,6 +3943,88 @@ func TestInitializeKeyStore_EmptyBackends(t *testing.T) {
 	err := s.initializeKeyStore()
 	require.Error(t, err)
 	assert.ErrorIs(t, err, ErrNoKeystoresInitialized)
+}
+
+// ============================================================================
+// Tests — initializeKeyStore default backend resolution (#171)
+// ============================================================================
+
+// TestInitializeKeyStore_DefaultBackendIsDeterministic pins the default a
+// config with no default_backend resolves to: the software backend, chosen the
+// same way on every start. Ranging s.backends to take "the first" entry read
+// Go's randomized map iteration order, so the store that received keys
+// generated without an explicit backend changed between restarts.
+func TestInitializeKeyStore_DefaultBackendIsDeterministic(t *testing.T) {
+	t.Cleanup(func() { xkms.Reset() })
+
+	const restarts = 100
+	names := []string{"aws-kms", "pkcs11", "software", "tpm2"}
+
+	for i := 0; i < restarts; i++ {
+		xkms.Reset()
+
+		s := newMinimalServer(t, &config.Config{
+			Storage: config.StorageConfig{Backend: "memory"},
+		})
+		s.keyProviders = make(map[string]types.KeyProvider, len(names))
+		for _, name := range names {
+			s.keyProviders[name] = &nonSealerProvider{}
+		}
+		s.backends = map[string]xkms.Backend{}
+
+		require.NoError(t, s.initializeKeyStore())
+		require.Equal(t, "software", s.defaultBackendName,
+			"restart %d resolved a different default backend", i)
+	}
+}
+
+// TestInitializeKeyStore_UnloadedConfiguredDefaultResolvesDeterministically
+// covers a default_backend naming a backend this build does not carry: the
+// daemon still starts, but on the same substitute every time rather than an
+// arbitrary one.
+func TestInitializeKeyStore_UnloadedConfiguredDefaultResolvesDeterministically(t *testing.T) {
+	t.Cleanup(func() { xkms.Reset() })
+
+	const restarts = 100
+	names := []string{"aws-kms", "azure-keyvault", "pkcs11", "tpm2"}
+
+	for i := 0; i < restarts; i++ {
+		xkms.Reset()
+
+		s := newMinimalServer(t, &config.Config{
+			Storage: config.StorageConfig{Backend: "memory"},
+			Default: "not-compiled-in",
+		})
+		s.keyProviders = make(map[string]types.KeyProvider, len(names))
+		for _, name := range names {
+			s.keyProviders[name] = &nonSealerProvider{}
+		}
+		s.backends = map[string]xkms.Backend{}
+
+		require.NoError(t, s.initializeKeyStore())
+		require.Equal(t, "aws-kms", s.defaultBackendName,
+			"restart %d resolved a different default backend", i)
+	}
+}
+
+// TestInitializeKeyStore_ConfiguredDefaultBackendIsHonoured ensures the
+// resolution rule never displaces a loaded backend the operator named.
+func TestInitializeKeyStore_ConfiguredDefaultBackendIsHonoured(t *testing.T) {
+	xkms.Reset()
+	defer xkms.Reset()
+
+	s := newMinimalServer(t, &config.Config{
+		Storage: config.StorageConfig{Backend: "memory"},
+		Default: "tpm2",
+	})
+	s.keyProviders = map[string]types.KeyProvider{
+		"software": &nonSealerProvider{},
+		"tpm2":     &nonSealerProvider{},
+	}
+	s.backends = map[string]xkms.Backend{}
+
+	require.NoError(t, s.initializeKeyStore())
+	assert.Equal(t, "tpm2", s.defaultBackendName)
 }
 
 // ============================================================================

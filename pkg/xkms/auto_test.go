@@ -206,7 +206,7 @@ func TestResolveDefaultBackend_PrefersSoftware(t *testing.T) {
 		string(BackendSymmetric): newMockKeyStore(string(BackendSymmetric)),
 	}
 
-	result := resolveDefaultBackend("", backends)
+	result := ResolveDefaultBackend("", backends)
 	assert.Equal(t, string(BackendSoftware), result)
 }
 
@@ -216,9 +216,25 @@ func TestResolveDefaultBackend_FallsBackWhenRequestedMissing(t *testing.T) {
 		string(BackendSymmetric): newMockKeyStore(string(BackendSymmetric)),
 	}
 
-	result := resolveDefaultBackend("nonexistent", backends)
+	result := ResolveDefaultBackend("nonexistent", backends)
 	// Should fall back to first sorted: pkcs8 < symmetric
 	assert.Equal(t, string(BackendPKCS8), result)
+}
+
+// TestResolveDefaultBackend_PrefersSoftwareWhenRequestedMissing covers the
+// step between "requested" and the sorted name: a configured default that is
+// not loaded falls to the software backend, not to whichever loaded backend
+// happens to sort first. Without it a typo, or a backend left out of the
+// build, would promote an alphabetically earlier cloud KMS to hold every key
+// generated without an explicit backend.
+func TestResolveDefaultBackend_PrefersSoftwareWhenRequestedMissing(t *testing.T) {
+	backends := map[string]Backend{
+		"awskms":                newMockKeyStore("awskms"),
+		"azurekv":               newMockKeyStore("azurekv"),
+		string(BackendSoftware): newMockKeyStore(string(BackendSoftware)),
+	}
+
+	assert.Equal(t, string(BackendSoftware), ResolveDefaultBackend("not-loaded", backends))
 }
 
 func TestResolveDefaultBackend_UsesRequestedWhenAvailable(t *testing.T) {
@@ -227,8 +243,17 @@ func TestResolveDefaultBackend_UsesRequestedWhenAvailable(t *testing.T) {
 		string(BackendPKCS8):    newMockKeyStore(string(BackendPKCS8)),
 	}
 
-	result := resolveDefaultBackend(string(BackendPKCS8), backends)
+	result := ResolveDefaultBackend(string(BackendPKCS8), backends)
 	assert.Equal(t, string(BackendPKCS8), result)
+}
+
+// TestResolveDefaultBackend_EmptyBackends covers the out-of-contract input:
+// there is no backend to name, so the rule returns the empty string rather
+// than indexing an empty sorted slice. Callers reject this case first with
+// their own typed error.
+func TestResolveDefaultBackend_EmptyBackends(t *testing.T) {
+	assert.Equal(t, "", ResolveDefaultBackend("", map[string]Backend{}))
+	assert.Equal(t, "", ResolveDefaultBackend(string(BackendSoftware), nil))
 }
 
 func TestResolveBackendConfig_EmptyDefaults(t *testing.T) {
