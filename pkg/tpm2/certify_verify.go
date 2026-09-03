@@ -23,6 +23,8 @@ import (
 	"math/big"
 
 	"github.com/google/go-tpm/tpm2"
+
+	"github.com/jeremyhahn/go-xkms/pkg/errs"
 )
 
 // TPM2_Certify verification failures.
@@ -435,21 +437,9 @@ func rsaPublicFromArea(pub *tpm2.TPMTPublic) (*rsa.PublicKey, error) {
 
 // ecdsaPublicFromArea recovers an ECDSA public key from a TPMT_PUBLIC.
 func ecdsaPublicFromArea(pub *tpm2.TPMTPublic) (*ecdsa.PublicKey, error) {
-	detail, err := pub.Parameters.ECCDetail()
+	key, err := eccPublicKey(pub)
 	if err != nil {
-		return nil, fmt.Errorf("%w: %v", ErrCertifyMalformed, err)
+		return nil, &errs.Joined{Lead: ErrCertifyMalformed, Cause: err}
 	}
-	curve, err := detail.CurveID.Curve()
-	if err != nil {
-		return nil, fmt.Errorf("%w: %v", ErrCertifyMalformed, err)
-	}
-	unique, err := pub.Unique.ECC()
-	if err != nil {
-		return nil, fmt.Errorf("%w: %v", ErrCertifyMalformed, err)
-	}
-	return &ecdsa.PublicKey{
-		Curve: curve,
-		X:     new(big.Int).SetBytes(unique.X.Buffer),
-		Y:     new(big.Int).SetBytes(unique.Y.Buffer),
-	}, nil
+	return key, nil
 }

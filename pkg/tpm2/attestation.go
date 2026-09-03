@@ -2,7 +2,6 @@ package tpm2
 
 import (
 	"crypto"
-	"crypto/ecdsa"
 	"crypto/x509"
 	"encoding/asn1"
 	"fmt"
@@ -278,23 +277,7 @@ func (tpm *TPM2) extractPublicKey(pub *tpm2.TPMTPublic) (crypto.PublicKey, error
 		return rsaPub, nil
 
 	} else if pub.Type == tpm2.TPMAlgECC {
-		eccDetail, err := pub.Parameters.ECCDetail()
-		if err != nil {
-			return nil, err
-		}
-		curve, err := eccDetail.CurveID.Curve()
-		if err != nil {
-			return nil, err
-		}
-		eccUnique, err := pub.Unique.ECC()
-		if err != nil {
-			return nil, err
-		}
-		return &ecdsa.PublicKey{
-			Curve: curve,
-			X:     big.NewInt(0).SetBytes(eccUnique.X.Buffer),
-			Y:     big.NewInt(0).SetBytes(eccUnique.Y.Buffer),
-		}, nil
+		return eccPublicKey(pub)
 	}
 
 	return nil, &errs.Detail{Err: store.ErrUnsupportedKeyAlgorithm, Detail: fmt.Sprintf("unsupported key type: %v", pub.Type)}

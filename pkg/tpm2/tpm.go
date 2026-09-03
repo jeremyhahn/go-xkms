@@ -620,28 +620,7 @@ func (tpm *TPM2) ParsePublicKey(tpm2BPublic []byte) (crypto.PublicKey, error) {
 
 	} else if pub.Type == tpm2.TPMAlgECC {
 
-		eccDetail, err := pub.Parameters.ECCDetail()
-		if err != nil {
-			return nil, err
-		}
-
-		eccUnique, err := pub.Unique.ECC()
-		if err != nil {
-			return nil, err
-		}
-
-		curve, err := eccDetail.CurveID.Curve()
-		if err != nil {
-			return nil, err
-		}
-
-		eccPub := &ecdsa.PublicKey{
-			Curve: curve,
-			X:     big.NewInt(0).SetBytes(eccUnique.X.Buffer),
-			Y:     big.NewInt(0).SetBytes(eccUnique.Y.Buffer),
-		}
-
-		return eccPub, nil
+		return eccPublicKey(pub)
 	}
 
 	return nil, store.ErrInvalidKeyAlgorithm

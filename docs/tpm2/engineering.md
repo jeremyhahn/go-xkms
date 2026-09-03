@@ -1,6 +1,6 @@
 # TPM 2.0 — Engineering Contract
 
-> **Status: NORMATIVE** · Feature: `tpm2` · Repo: `go-xkms` · Last verified: 2026-08-19
+> **Status: NORMATIVE** · Feature: `tpm2` · Repo: `go-xkms` · Last verified: 2026-09-03
 
 ## Exported surface — `pkg/tpm2`
 
@@ -53,6 +53,13 @@ whole package. `pkg/tpm2/store` holds the key-backend types (`KeyBackend` in
   around with retries.
 - **Concurrency.** TPM access is serialised — the device has a single command
   channel. Do not expect parallel throughput.
+- **An ECC public area is only ever accepted as a point on its curve.** Every
+  reconstruction of an `ecdsa.PublicKey` from a `TPMT_PUBLIC` goes through the
+  one unexported helper `eccPublicKey` (`eccpub.go`), which delegates to
+  `pkg/crypto/ecpoint`. Assigning the raw `X` and `Y` coordinates into the
+  struct performs no validation at all, so an off-curve point supplied by a
+  broken, emulated or hostile TPM would be accepted and then used as an
+  attestation identity. Never reconstruct one by hand.
 
 ## Error semantics
 
@@ -69,6 +76,7 @@ vocabulary. The categories that need distinguishing:
 | EK chain does not verify | the manufacturer root is not trusted |
 | AK certification invalid | the AK is not bound to that EK |
 | quote signature or nonce invalid | the evidence is not fresh or not from that AK |
+| `ErrECCPublicArea` | the ECC public area does not yield a valid public key: bad parameters, an unknown curve, or a point that is not on the curve. On the `TPM2_Certify` path it is wrapped as `ErrCertifyMalformed`; the underlying `ecpoint.ErrInvalidPoint` stays reachable through `errors.Is` |
 
 **Fail closed:** every one of these refuses. Nothing degrades to a software key
 or an unverified acceptance.

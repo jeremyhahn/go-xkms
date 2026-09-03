@@ -4,7 +4,6 @@ import (
 	"crypto/ecdsa"
 	"crypto/x509"
 	"log/slog"
-	"math/big"
 
 	"github.com/google/go-tpm/tpm2"
 	"github.com/jeremyhahn/go-xkms/pkg/tpm2/store"
@@ -227,25 +226,10 @@ func (tpm *TPM2) CreateECDSA(
 		tpm.logger.Error("failed to get public contents", slog.String("error", err.Error()))
 		return nil, err
 	}
-	ecDetail, err := outPub.Parameters.ECCDetail()
+	eccPub, err := eccPublicKey(outPub)
 	if err != nil {
-		tpm.logger.Error("failed to get ECC detail", slog.String("error", err.Error()))
+		tpm.logger.Error("failed to reconstruct ECC public key", slog.String("error", err.Error()))
 		return nil, err
-	}
-	curve, err := ecDetail.CurveID.Curve()
-	if err != nil {
-		tpm.logger.Error("failed to get curve", slog.String("error", err.Error()))
-		return nil, err
-	}
-	eccUnique, err := outPub.Unique.ECC()
-	if err != nil {
-		tpm.logger.Error("failed to get ECC unique", slog.String("error", err.Error()))
-		return nil, err
-	}
-	eccPub := &ecdsa.PublicKey{
-		Curve: curve,
-		X:     big.NewInt(0).SetBytes(eccUnique.X.Buffer),
-		Y:     big.NewInt(0).SetBytes(eccUnique.Y.Buffer),
 	}
 
 	return eccPub, nil

@@ -25,6 +25,7 @@ import (
 	"fmt"
 	"math/big"
 
+	"github.com/jeremyhahn/go-xkms/pkg/crypto/ecpoint"
 	"github.com/jeremyhahn/go-xkms/pkg/errs"
 )
 
@@ -399,11 +400,15 @@ func (jwk *JWK) toECDSAPublicKey() (*ecdsa.PublicKey, error) {
 		return nil, &errs.Wrapped{Msg: "failed to decode EC Y coordinate", Err: err}
 	}
 
-	return &ecdsa.PublicKey{
-		Curve: curve,
-		X:     new(big.Int).SetBytes(xBytes),
-		Y:     new(big.Int).SetBytes(yBytes),
-	}, nil
+	// ecpoint left-pads the coordinates and validates that the point lies on
+	// the curve. RFC 7518 Section 6.2.1.2 requires x and y to be the full
+	// field size, but encoders that route the value through a big integer
+	// drop leading zero bytes; a short member must still decode.
+	pubKey, err := ecpoint.PublicKey(curve, xBytes, yBytes)
+	if err != nil {
+		return nil, &errs.Wrapped{Msg: "failed to decode EC public key", Err: err}
+	}
+	return pubKey, nil
 }
 
 func (jwk *JWK) toECDSAPrivateKey() (*ecdsa.PrivateKey, error) {
@@ -417,10 +422,19 @@ func (jwk *JWK) toECDSAPrivateKey() (*ecdsa.PrivateKey, error) {
 		return nil, &errs.Wrapped{Msg: "failed to decode EC private key", Err: err}
 	}
 
-	return &ecdsa.PrivateKey{
-		PublicKey: *pubKey,
-		D:         new(big.Int).SetBytes(dBytes),
-	}, nil
+	privKey, err := ecpoint.PrivateKey(pubKey.Curve, dBytes)
+	if err != nil {
+		return nil, &errs.Wrapped{Msg: "invalid EC private key scalar", Err: err}
+	}
+
+	// The public key derived from d is authoritative. Refuse a JWK whose x/y
+	// members describe a different point than its d member, rather than
+	// returning a private key whose PublicKey field contradicts its scalar.
+	if !privKey.PublicKey.Equal(pubKey) {
+		return nil, &errs.Message{Msg: "EC JWK private key does not match its x and y coordinates"}
+	}
+
+	return privKey, nil
 }
 
 // Helper functions for Ed25519 keys

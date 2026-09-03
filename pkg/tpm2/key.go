@@ -80,25 +80,10 @@ func (tpm *TPM2) EKECC() (*ecdsa.PublicKey, error) {
 		if err != nil {
 			return nil, &errs.Detail{Err: ErrEKECCParse, Detail: fmt.Sprintf("%v", err)}
 		}
-		ecDetail, err := ekPub.Parameters.ECCDetail()
+		eccPub, err := eccPublicKey(&ekPub)
 		if err != nil {
-			tpm.logger.Error("failed to get ECC detail", slog.String("error", err.Error()))
+			tpm.logger.Error("failed to reconstruct EK ECC public key", slog.String("error", err.Error()))
 			return nil, &errs.Detail{Err: ErrEKECCParse, Detail: fmt.Sprintf("%v", err)}
-		}
-		curve, err := ecDetail.CurveID.Curve()
-		if err != nil {
-			tpm.logger.Error("failed to get curve", slog.String("error", err.Error()))
-			return nil, &errs.Detail{Err: ErrEKECCParse, Detail: fmt.Sprintf("%v", err)}
-		}
-		eccUnique, err := ekPub.Unique.ECC()
-		if err != nil {
-			tpm.logger.Error("failed to get ECC unique", slog.String("error", err.Error()))
-			return nil, &errs.Detail{Err: ErrEKECCParse, Detail: fmt.Sprintf("%v", err)}
-		}
-		eccPub := &ecdsa.PublicKey{
-			Curve: curve,
-			X:     big.NewInt(0).SetBytes(eccUnique.X.Buffer),
-			Y:     big.NewInt(0).SetBytes(eccUnique.Y.Buffer),
 		}
 		tpm.ekECCPubKey = eccPub
 	}
@@ -1132,25 +1117,10 @@ func (tpm *TPM2) CreateIAK(
 			return nil, err
 		}
 
-		ecDetail, err := iakPub.Parameters.ECCDetail()
+		akPublic, err = eccPublicKey(iakPub)
 		if err != nil {
-			tpm.logger.Error("failed to get ECC detail", slog.String("error", err.Error()))
+			tpm.logger.Error("failed to reconstruct IAK ECC public key", slog.String("error", err.Error()))
 			return nil, err
-		}
-		curve, err := ecDetail.CurveID.Curve()
-		if err != nil {
-			tpm.logger.Error("failed to get curve", slog.String("error", err.Error()))
-			return nil, err
-		}
-		eccUnique, err := iakPub.Unique.ECC()
-		if err != nil {
-			tpm.logger.Error("failed to get ECC unique", slog.String("error", err.Error()))
-			return nil, err
-		}
-		akPublic = &ecdsa.PublicKey{
-			Curve: curve,
-			X:     big.NewInt(0).SetBytes(eccUnique.X.Buffer),
-			Y:     big.NewInt(0).SetBytes(eccUnique.Y.Buffer),
 		}
 
 		r := big.NewInt(0).SetBytes(sig.SignatureR.Buffer)
@@ -1427,25 +1397,10 @@ func (tpm *TPM2) CreateIDevID(
 			return nil, nil, err
 		}
 
-		ecDetail, err := idevidPub.Parameters.ECCDetail()
+		eccPub, err := eccPublicKey(idevidPub)
 		if err != nil {
-			tpm.logger.Error("failed to get ECC detail", slog.String("error", err.Error()))
+			tpm.logger.Error("failed to reconstruct IDevID ECC public key", slog.String("error", err.Error()))
 			return nil, nil, err
-		}
-		curve, err := ecDetail.CurveID.Curve()
-		if err != nil {
-			tpm.logger.Error("failed to get curve", slog.String("error", err.Error()))
-			return nil, nil, err
-		}
-		eccUnique, err := idevidPub.Unique.ECC()
-		if err != nil {
-			tpm.logger.Error("failed to get ECC unique", slog.String("error", err.Error()))
-			return nil, nil, err
-		}
-		eccPub := &ecdsa.PublicKey{
-			Curve: curve,
-			X:     big.NewInt(0).SetBytes(eccUnique.X.Buffer),
-			Y:     big.NewInt(0).SetBytes(eccUnique.Y.Buffer),
 		}
 
 		eccDER, err := store.EncodePubKey(eccPub)

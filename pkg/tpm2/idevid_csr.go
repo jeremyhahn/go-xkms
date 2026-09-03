@@ -10,7 +10,6 @@ import (
 	"errors"
 	"io"
 	"log/slog"
-	"math/big"
 	"os"
 
 	"github.com/jeremyhahn/go-xkms/pkg/errs"
@@ -1281,25 +1280,9 @@ func (tpm *TPM2) verifyTCGCSRSignature(
 
 	} else if pub.Type == tpm2.TPMAlgECC {
 
-		ecDetail, err := pub.Parameters.ECCDetail()
+		ecdsaPub, err := eccPublicKey(&pub)
 		if err != nil {
 			return err
-		}
-
-		crv, err := ecDetail.CurveID.Curve()
-		if err != nil {
-			return err
-		}
-
-		eccUnique, err := pub.Unique.ECC()
-		if err != nil {
-			return err
-		}
-
-		ecdsaPub := &ecdsa.PublicKey{
-			Curve: crv,
-			X:     big.NewInt(0).SetBytes(eccUnique.X.Buffer),
-			Y:     big.NewInt(0).SetBytes(eccUnique.Y.Buffer),
 		}
 
 		if !ecdsa.VerifyASN1(ecdsaPub, digest, csr.Signature) {

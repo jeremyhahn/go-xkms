@@ -1029,6 +1029,18 @@ test-ecdh:
 	@echo "$(CYAN)→ Testing ECDH package...$(RESET)"
 	@$(GOTEST) $(TEST_FLAGS) ./pkg/crypto/ecdh/...
 
+.PHONY: test-ecpoint
+## test-ecpoint: Run EC point reconstruction package unit tests
+test-ecpoint:
+	@echo "$(CYAN)→ Testing EC point package...$(RESET)"
+	@$(GOTEST) $(TEST_FLAGS) ./pkg/crypto/ecpoint/...
+
+.PHONY: bench-ecpoint
+## bench-ecpoint: Run EC point reconstruction benchmarks
+bench-ecpoint:
+	@echo "$(CYAN)→ Running EC point benchmarks...$(RESET)"
+	@$(GOTEST) -bench=. -benchmem ./pkg/crypto/ecpoint/...
+
 .PHONY: test-ecies
 ## test-ecies: Run ECIES (Elliptic Curve Integrated Encryption Scheme) package unit tests
 test-ecies:
@@ -2686,6 +2698,16 @@ coverage-ecdh:
 	@$(GO) tool cover -html=$(COVERAGE_DIR)/ecdh.out -o $(COVERAGE_DIR)/ecdh.html
 	@echo "$(GREEN)✓ ECDH coverage report generated$(RESET)"
 	@$(GO) tool cover -func=$(COVERAGE_DIR)/ecdh.out | grep total
+
+.PHONY: coverage-ecpoint
+## coverage-ecpoint: Generate EC point package coverage report
+coverage-ecpoint:
+	@mkdir -p $(COVERAGE_DIR)
+	@echo "$(CYAN)→ Generating EC point coverage report...$(RESET)"
+	@$(GO) test -v -coverprofile=$(COVERAGE_DIR)/ecpoint.out -covermode=atomic ./pkg/crypto/ecpoint/...
+	@$(GO) tool cover -html=$(COVERAGE_DIR)/ecpoint.out -o $(COVERAGE_DIR)/ecpoint.html
+	@echo "$(GREEN)✓ EC point coverage report generated$(RESET)"
+	@$(GO) tool cover -func=$(COVERAGE_DIR)/ecpoint.out | grep total
 
 .PHONY: coverage-ecies
 ## coverage-ecies: Generate ECIES package coverage report

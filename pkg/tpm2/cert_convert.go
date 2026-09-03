@@ -7,7 +7,6 @@ import (
 	"crypto/x509"
 	"encoding/pem"
 	"fmt"
-	"math/big"
 
 	"github.com/jeremyhahn/go-xkms/pkg/errs"
 
@@ -208,22 +207,9 @@ func validateCertPublicKey(cert *x509.Certificate, keyAttrs *types.KeyAttributes
 		}
 
 	case tpm2.TPMAlgECC:
-		ecDetail, err := pub.Parameters.ECCDetail()
+		ecPub, err := eccPublicKey(&pub)
 		if err != nil {
 			return err
-		}
-		crv, err := ecDetail.CurveID.Curve()
-		if err != nil {
-			return err
-		}
-		eccUnique, err := pub.Unique.ECC()
-		if err != nil {
-			return err
-		}
-		ecPub := &ecdsa.PublicKey{
-			Curve: crv,
-			X:     big.NewInt(0).SetBytes(eccUnique.X.Buffer),
-			Y:     big.NewInt(0).SetBytes(eccUnique.Y.Buffer),
 		}
 		reconstructedPubDER, err = x509.MarshalPKIXPublicKey(ecPub)
 		if err != nil {

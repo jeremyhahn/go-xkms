@@ -7,7 +7,6 @@ import (
 	"crypto/x509"
 	"fmt"
 	"math"
-	"math/big"
 
 	"github.com/jeremyhahn/go-xkms/pkg/errs"
 
@@ -276,25 +275,9 @@ func verifyECDSASignatureStateless(
 	pub *tpm2.TPMTPublic,
 	digest, signature []byte) (*ecdsa.PublicKey, error) {
 
-	ecDetail, err := pub.Parameters.ECCDetail()
+	ecdsaPub, err := eccPublicKey(pub)
 	if err != nil {
 		return nil, err
-	}
-
-	crv, err := ecDetail.CurveID.Curve()
-	if err != nil {
-		return nil, err
-	}
-
-	eccUnique, err := pub.Unique.ECC()
-	if err != nil {
-		return nil, err
-	}
-
-	ecdsaPub := &ecdsa.PublicKey{
-		Curve: crv,
-		X:     big.NewInt(0).SetBytes(eccUnique.X.Buffer),
-		Y:     big.NewInt(0).SetBytes(eccUnique.Y.Buffer),
 	}
 
 	if !ecdsa.VerifyASN1(ecdsaPub, digest, signature) {
@@ -324,26 +307,7 @@ func ExtractPublicKeyFromTPMPublic(pubBytes []byte) (crypto.PublicKey, error) {
 
 		return tpm2.RSAPub(rsaDetail, rsaUnique)
 	} else if pub.Type == tpm2.TPMAlgECC {
-		ecDetail, err := pub.Parameters.ECCDetail()
-		if err != nil {
-			return nil, err
-		}
-
-		crv, err := ecDetail.CurveID.Curve()
-		if err != nil {
-			return nil, err
-		}
-
-		eccUnique, err := pub.Unique.ECC()
-		if err != nil {
-			return nil, err
-		}
-
-		return &ecdsa.PublicKey{
-			Curve: crv,
-			X:     big.NewInt(0).SetBytes(eccUnique.X.Buffer),
-			Y:     big.NewInt(0).SetBytes(eccUnique.Y.Buffer),
-		}, nil
+		return eccPublicKey(pub)
 	}
 
 	return nil, ErrInvalidAKAttributes

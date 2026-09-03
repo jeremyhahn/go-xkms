@@ -9,6 +9,49 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Security
 
+- **TPM and JWK ECDSA public keys are now validated as points on the curve**
+  (#226). `pkg/tpm2` reconstructed `ecdsa.PublicKey` values from TPM ECC public
+  areas by assigning the raw `X` and `Y` coordinates straight into the struct,
+  across 11 sites in 8 production files; `pkg/encoding/jwk` did the same for
+  the `x`, `y` and `d` members of an EC JWK. Assigning raw coordinates performs
+  **no validation at all**: a point that is not on the curve, or the point at
+  infinity, was accepted silently and then used as an EK, SRK, IDevID, IAK or
+  attested-key identity. A broken, emulated or hostile TPM could therefore have
+  an off-curve point accepted as an attestation identity.
+
+  All of them now route through the new `pkg/crypto/ecpoint` helper, which
+  assembles the SEC 1 uncompressed encoding and parses it with
+  `ecdsa.ParseUncompressedPublicKey` / `ecdsa.ParseRawPrivateKey`. Those
+  parsers reject an off-curve point and the point at infinity. Failures surface
+  as `tpm2.ErrECCPublicArea` (wrapped as `ErrCertifyMalformed` on the certify
+  path) and as `ecpoint.ErrInvalidPoint` / `ErrInvalidScalar` / `ErrCoordinateTooLong`,
+  which remain reachable through `errors.Is` at every caller.
+
+  **Operational impact.** This is a behaviour change on a security-critical
+  path: a reconstruction that previously "worked" can now return an error.
+  Anything that reports an invalid point was already producing a key that could
+  not verify a signature, so an operator who sees `tpm2: ECC public area does
+  not yield a valid public key` is looking at a device or emulator fault, not a
+  new restriction — the EK / SRK read, IDevID and IAK issuance, TCG-CSR
+  verification, `TPM2_Certify` verification and the attestation profile now fail
+  loudly at the point of reconstruction instead of downstream at signature
+  verification, or not at all.
+
+  `pkg/crypto/ecpoint` **left-pads each coordinate to the curve's field size**
+  before parsing. `TPM2B_ECC_PARAMETER` buffers and JWK members are not
+  required to carry leading zero bytes, so a coordinate whose high byte is zero
+  arrives short — roughly one in 256. Assembling `0x04 || X || Y` from those
+  buffers without padding rejects perfectly valid keys, intermittently; this is
+  the same failure mode fixed for the PKCS#11 EC point in #191. P-256, P-384
+  and P-521 each have an explicit short-buffer regression test built from a
+  deterministic fixture rather than a random key, because a round-trip test
+  using only random keys passes ~99.2% of the time and hides it.
+
+  One further hardening on the JWK path: `ToPrivateKey` now derives the public
+  key from the `d` member and refuses a JWK whose `x`/`y` describe a different
+  point, instead of returning an `ecdsa.PrivateKey` whose `PublicKey` field
+  contradicts its own scalar.
+
 
 - **`golang.org/x/crypto` v0.55.0 -> v0.56.0 across all four modules** (#201).
   Clears GO-2026-6355 and GO-2026-6354, both reachable from this repository —

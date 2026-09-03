@@ -219,6 +219,25 @@ if jwk.IsSymmetric() {
 }
 ```
 
+## EC key validation
+
+EC keys decode through `pkg/crypto/ecpoint`, which enforces two things the
+raw-coordinate assignment it replaced did not:
+
+- **The point must lie on the curve.** An off-curve `x`/`y` pair, or the point
+  at infinity, is refused with `ecpoint.ErrInvalidPoint` instead of producing an
+  `ecdsa.PublicKey` that can never verify anything. `d` is checked the same way
+  and fails with `ecpoint.ErrInvalidScalar`.
+- **`d` must agree with `x` and `y`.** `ToPrivateKey` derives the public key
+  from `d` and refuses a JWK whose coordinates describe a different point,
+  rather than returning a private key whose `PublicKey` field contradicts its
+  own scalar.
+
+RFC 7518 Section 6.2.1.2 requires `x`, `y` and `d` to be the full field size,
+but encoders that route the value through a big integer drop leading zero
+bytes. Members that arrive short — roughly one in 256 — are left-padded and
+decode normally.
+
 ## Thumbprint Algorithm
 
 The JWK thumbprint is computed according to RFC 7638:
