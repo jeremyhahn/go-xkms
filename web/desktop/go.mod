@@ -8,10 +8,11 @@ go 1.26.7
 replace (
 	github.com/jeremyhahn/go-xkms => ../../
 	github.com/jeremyhahn/go-xkms/sdk/go => ../../sdk/go
+	github.com/jeremyhahn/go-xkms/xkey => ../../xkey
 )
 
 require (
-	github.com/jeremyhahn/go-xkms v0.8.0-alpha
+	github.com/jeremyhahn/go-xkms v0.9.1-alpha
 	github.com/wailsapp/wails/v2 v2.12.0
 )
 
@@ -147,12 +148,12 @@ require (
 	github.com/jeremyhahn/go-codec v1.4.0 // indirect
 	github.com/jeremyhahn/go-frost v0.1.8-alpha // indirect
 	github.com/jeremyhahn/go-objstore v0.3.0-alpha // indirect
-	github.com/jeremyhahn/go-qrdb v0.15.0-alpha // indirect
-	github.com/jeremyhahn/go-qrdb/sdk/go v0.15.0-alpha // indirect
+	github.com/jeremyhahn/go-qrdb v0.16.0-alpha // indirect
+	github.com/jeremyhahn/go-qrdb/sdk/go v0.16.0-alpha // indirect
 	github.com/jeremyhahn/go-quicraft v0.9.0-alpha // indirect
 	github.com/jeremyhahn/go-truststrap v0.2.0-alpha // indirect
-	github.com/jeremyhahn/go-xkms/sdk/go v0.8.0-alpha // indirect
-	github.com/jeremyhahn/go-xkms/xkey v0.8.0-alpha // indirect
+	github.com/jeremyhahn/go-xkms/sdk/go v0.9.1-alpha // indirect
+	github.com/jeremyhahn/go-xkms/xkey v0.9.1-alpha // indirect
 	github.com/jeroenrinzema/psql-wire v0.18.0 // indirect
 	github.com/jmespath/go-jmespath v0.4.0 // indirect
 	github.com/json-iterator/go v1.1.12 // indirect
@@ -245,7 +246,7 @@ require (
 	go.opentelemetry.io/otel/trace v1.45.0 // indirect
 	go.yaml.in/yaml/v3 v3.0.5 // indirect
 	golang.org/x/arch v0.30.0 // indirect
-	golang.org/x/crypto v0.55.0 // indirect
+	golang.org/x/crypto v0.56.0 // indirect
 	golang.org/x/exp v0.0.0-20260529124908-c761662dc8c9 // indirect
 	golang.org/x/mod v0.40.0 // indirect
 	golang.org/x/net v0.58.0 // indirect

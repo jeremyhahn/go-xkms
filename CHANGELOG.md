@@ -7,6 +7,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Security
+
+- **`golang.org/x/crypto` v0.55.0 -> v0.56.0 across all four modules** (#201).
+  Clears GO-2026-6355 and GO-2026-6354, both reachable from this repository —
+  govulncheck names the trace as `pkg/ssh/session/dial.go:217:50`,
+  `session.DialClient` calling `ssh.NewClientConn`. The failure was
+  deterministic, so it turned Security Scan red on `main` and on every open PR
+  simultaneously.
+
+### Fixed
+
+- **`web/desktop` module pins are no longer stale** (#205). The release path
+  enumerated three modules and this repository has four, so `web/desktop` was
+  left on the pre-release tags by both v0.9.0-alpha and v0.9.1-alpha and `make
+  vet` failed, taking `main` red on Lint. The durable fix for the release path
+  itself is tracked separately.
+
+
 ### Changed
 
 - **FLAG DAY: device attestation is now challenge-response (protocol version 2)**
