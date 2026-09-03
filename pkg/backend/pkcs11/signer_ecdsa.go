@@ -116,6 +116,59 @@ func (s *pkcs11ECDSASigner) Sign(_ io.Reader, digest []byte, _ crypto.SignerOpts
 	return asn1.Marshal(ecdsaSignature{R: r, S: s2})
 }
 
+// uncompressedPointLen returns the encoded length of a bare X9.62 uncompressed
+// point on curve: the 0x04 marker followed by the two affine coordinates, each
+// left-padded to the curve's field size.
+func uncompressedPointLen(curve elliptic.Curve) int {
+	return 1 + 2*((curve.Params().BitSize+7)/8)
+}
+
+// decodeECPoint returns the bare uncompressed point carried by a CKA_EC_POINT
+// attribute value, unwrapping the DER OCTET STRING that PKCS#11 v3.2 §6.3.3
+// Table 64 prescribes when the token supplied one.
+//
+// Tokens disagree about the wrapper — some store the DER OCTET STRING the
+// standard names, others store the bare point — and the two forms cannot be
+// told apart by their leading byte, because 0x04 is both the OCTET STRING tag
+// and the uncompressed-point marker. The length is the discriminator, and it is
+// exact rather than a heuristic: for a curve over a byteLen-byte field the bare
+// point is always 1+2*byteLen bytes, while any DER OCTET STRING wrapping it
+// carries at least a tag and a length octet on top of those bytes and is
+// therefore strictly longer. No content byte of a point can move it from one
+// case to the other, so the curve read from CKA_EC_PARAMS is all the
+// information this decision needs.
+//
+// An attribute value that is neither form is reported rather than guessed at: a
+// public key assembled from misread bytes verifies nothing.
+func decodeECPoint(curve elliptic.Curve, ecPoint []byte) ([]byte, error) {
+	want := uncompressedPointLen(curve)
+	if len(ecPoint) == want {
+		return ecPoint, nil
+	}
+
+	var wrapped []byte
+	rest, err := asn1.Unmarshal(ecPoint, &wrapped)
+	if err != nil {
+		return nil, &errs.Detail{
+			Err:    ErrInvalidKeyAttributes,
+			Detail: fmt.Sprintf("CKA_EC_POINT holds %d bytes: neither a %d-byte uncompressed point on %s nor a DER OCTET STRING", len(ecPoint), want, curve.Params().Name),
+		}
+	}
+	if len(rest) > 0 {
+		return nil, &errs.Detail{
+			Err:    ErrInvalidKeyAttributes,
+			Detail: fmt.Sprintf("CKA_EC_POINT has %d trailing bytes after its DER OCTET STRING", len(rest)),
+		}
+	}
+	if len(wrapped) != want {
+		return nil, &errs.Detail{
+			Err:    ErrInvalidKeyAttributes,
+			Detail: fmt.Sprintf("CKA_EC_POINT wraps %d bytes, want a %d-byte uncompressed point on %s", len(wrapped), want, curve.Params().Name),
+		}
+	}
+	return wrapped, nil
+}
+
 // exportECDSAPublicKey extracts the ECDSA public key from a PKCS#11 public key object.
 // It reads CKA_EC_PARAMS (curve OID) and CKA_EC_POINT (uncompressed point) attributes.
 func exportECDSAPublicKey(pool *SessionPool, pubHandle pkcs11.ObjectHandle) (*ecdsa.PublicKey, error) {
@@ -139,31 +192,20 @@ func exportECDSAPublicKey(pool *SessionPool, pubHandle pkcs11.ObjectHandle) (*ec
 			return &errs.Detail{Err: ErrUnsupportedKeyAlgorithm, Detail: "unknown EC curve OID"}
 		}
 
-		// Parse EC point
-		// CKA_EC_POINT is a DER-encoded OCTET STRING containing the uncompressed point (0x04 || X || Y)
-		ecPoint := attrs[1].Value
-
-		// Unwrap DER OCTET STRING if present
-		var pointBytes []byte
-		if len(ecPoint) > 2 && ecPoint[0] == 0x04 && int(ecPoint[1]) == len(ecPoint)-2 {
-			// DER-encoded OCTET STRING: 0x04 <length> <data>
-			pointBytes = ecPoint[2:]
-		} else {
-			// Try ASN.1 decode
-			var rawPoint []byte
-			rest, err := asn1.Unmarshal(ecPoint, &rawPoint)
-			if err != nil || len(rest) > 0 {
-				// Not ASN.1 encoded — use raw bytes
-				pointBytes = ecPoint
-			} else {
-				pointBytes = rawPoint
-			}
+		pointBytes, err := decodeECPoint(curve, attrs[1].Value)
+		if err != nil {
+			return err
 		}
 
-		// Parse uncompressed point: 0x04 || X || Y
+		// The length is already known to be right, so Unmarshal is now only
+		// deciding whether the coordinates name a point that is actually on the
+		// curve.
 		x, y := elliptic.Unmarshal(curve, pointBytes)
 		if x == nil {
-			return &errs.Detail{Err: ErrInvalidKeyAttributes, Detail: "invalid EC point encoding"}
+			return &errs.Detail{
+				Err:    ErrInvalidKeyAttributes,
+				Detail: fmt.Sprintf("CKA_EC_POINT is not an uncompressed point on %s", curve.Params().Name),
+			}
 		}
 
 		pub = &ecdsa.PublicKey{

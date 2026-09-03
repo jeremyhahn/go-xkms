@@ -180,6 +180,28 @@ Import uses the same identifier and verifies it afterwards
 destroying the object if it cannot — an unaddressable key object is orphaned
 key material.
 
+## CKA_EC_POINT encodings
+
+PKCS#11 v3.2 §6.3.3 Table 64 defines a short-Weierstrass `CKA_EC_POINT` as the
+DER encoding of an OCTET STRING wrapping the X9.62 uncompressed point, but
+tokens in the field disagree: some store the wrapper, others store the bare
+point. `exportECDSAPublicKey` accepts both.
+
+The two forms cannot be told apart by their leading byte — `0x04` is both the
+OCTET STRING tag and the uncompressed-point marker — so `decodeECPoint`
+discriminates on length, which is exact rather than probabilistic. For a curve
+over a `byteLen`-byte field the bare point is always `1 + 2*byteLen` bytes (65
+on P-256, 97 on P-384, 133 on P-521), and any DER OCTET STRING wrapping it adds
+at least a tag and a length octet, so the wrapped form is strictly longer. The
+curve comes from `CKA_EC_PARAMS`, which is all the information the decision
+needs.
+
+An attribute value that is neither form — the wrong size, trailing bytes after
+the OCTET STRING, or an OCTET STRING wrapping the wrong number of bytes — is
+reported as `ErrInvalidKeyAttributes` rather than guessed at. A public key
+assembled from misread bytes would verify nothing, and the failure would
+surface far from its cause.
+
 ## YubiKey PIV specialisation
 
 `Config.IsYubiKeyPIV()` (library path contains `ykcs11`) switches several paths:

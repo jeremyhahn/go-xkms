@@ -573,23 +573,46 @@ func TestExportECDSAPublicKey_UnknownCurve(t *testing.T) {
 // that are not a valid uncompressed point on the named curve are rejected. A
 // silently accepted bad point would yield an *ecdsa.PublicKey with nil
 // coordinates, which panics the first time crypto/ecdsa touches it.
+//
+// The two cases fail at different checks. A wrapped point of the wrong size is
+// caught on length, before any curve arithmetic; a correctly sized pair of
+// coordinates that does not satisfy the curve equation is caught by Unmarshal.
+// Both must surface as ErrInvalidKeyAttributes.
 func TestExportECDSAPublicKey_InvalidPoint(t *testing.T) {
 	b := newProvisionedBackend(t, "ecdsa-export-bad-point")
 
 	params, err := asn1.Marshal(oidP256)
 	require.NoError(t, err)
-	badPoint, err := asn1.Marshal([]byte{0x04, 0xaa, 0xbb})
+
+	wrongLength, err := asn1.Marshal([]byte{0x04, 0xaa, 0xbb})
 	require.NoError(t, err)
 
-	handle := createECPublicKeyObject(t, b, []byte("bad-point"), params, badPoint)
+	// 0x04 || X=1 || Y=1: the right size for P-256, but not on the curve.
+	offCurve := make([]byte, uncompressedPointLen(elliptic.P256()))
+	offCurve[0] = 0x04
+	offCurve[32] = 0x01
+	offCurve[64] = 0x01
 
-	pub, err := exportECDSAPublicKey(b.pool, handle)
-	require.Nil(t, pub)
-	require.ErrorIs(t, err, ErrInvalidKeyAttributes)
+	for _, tc := range []struct {
+		name   string
+		point  []byte
+		detail string
+	}{
+		{"wrapped point of the wrong size", wrongLength, "CKA_EC_POINT wraps 3 bytes, want a 65-byte uncompressed point on P-256"},
+		{"correct size but off the curve", offCurve, "CKA_EC_POINT is not an uncompressed point on P-256"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			handle := createECPublicKeyObject(t, b, []byte("bad-point-"+tc.name), params, tc.point)
 
-	var detail *errs.Detail
-	require.True(t, errors.As(err, &detail))
-	require.Equal(t, "invalid EC point encoding", detail.Detail)
+			pub, err := exportECDSAPublicKey(b.pool, handle)
+			require.Nil(t, pub)
+			require.ErrorIs(t, err, ErrInvalidKeyAttributes)
+
+			var detail *errs.Detail
+			require.True(t, errors.As(err, &detail))
+			require.Equal(t, tc.detail, detail.Detail)
+		})
+	}
 }
 
 // TestFindECDSASigner_PrivateKeyWithoutPublicKey documents the lookup contract
@@ -656,6 +679,34 @@ func TestExportECDSAPublicKey_RawPointEncoding(t *testing.T) {
 	require.Equal(t, 0, hostKey.PublicKey.X.Cmp(exported.X))
 	require.Equal(t, 0, hostKey.PublicKey.Y.Cmp(exported.Y))
 	require.Equal(t, elliptic.P256().Params().Name, exported.Curve.Params().Name)
+}
+
+// TestExportECDSAPublicKey_RawPointWithHeaderLikePrefix drives the point that
+// the old DER-unwrap heuristic misread all the way through a token, so the
+// regression is covered at the export boundary and not only in decodeECPoint.
+//
+// The stored point is a real P-256 key whose X begins with 0x3f, which is
+// exactly len(point)-2. The old code read those first two bytes as an OCTET
+// STRING header, handed 63 bytes to Unmarshal, and failed the export. One key
+// in 256 has that shape, which is why the failure looked intermittent.
+func TestExportECDSAPublicKey_RawPointWithHeaderLikePrefix(t *testing.T) {
+	b := newProvisionedBackend(t, "ecdsa-export-headerlike-point")
+
+	rawPoint := decodeHex(t, p256TriggerPoint)
+	require.Equal(t, byte(len(rawPoint)-2), rawPoint[1], "this vector must reproduce the collision")
+
+	wantX, wantY := elliptic.Unmarshal(elliptic.P256(), rawPoint)
+	require.NotNil(t, wantX, "the test vector must be a valid P-256 point")
+
+	params, err := asn1.Marshal(oidP256)
+	require.NoError(t, err)
+
+	handle := createECPublicKeyObject(t, b, []byte("raw-point-header-like"), params, rawPoint)
+
+	exported, err := exportECDSAPublicKey(b.pool, handle)
+	require.NoError(t, err, "a bare point whose X starts with len-2 must still export")
+	require.Equal(t, 0, wantX.Cmp(exported.X))
+	require.Equal(t, 0, wantY.Cmp(exported.Y))
 }
 
 // TestFindECDSASigner_DeadSession verifies that a session the module no longer

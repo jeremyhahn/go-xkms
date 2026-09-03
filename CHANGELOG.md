@@ -24,6 +24,29 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   vet` failed, taking `main` red on Lint. The durable fix for the release path
   itself is tracked separately.
 
+- **PKCS#11: exporting an ECDSA public key no longer fails for 1 key in 256**
+  (#191). `exportECDSAPublicKey` decided whether `CKA_EC_POINT` held a bare
+  X9.62 uncompressed point or a DER OCTET STRING wrapping one by testing
+  `ecPoint[0] == 0x04 && ecPoint[1] == len(ecPoint)-2`. `0x04` is both the
+  OCTET STRING tag and the uncompressed-point marker, so the first half of that
+  test is true of every bare point and the whole thing reduced to "does the
+  first byte of X happen to equal len-2?" — 0x3f on P-256, 0x5f on P-384, which
+  is 1 key in 256 on each. When it hit, two bytes of X were discarded as a
+  phantom DER header and the export failed with `invalid EC point encoding`;
+  which keys were affected depended only on the key, so the failure looked
+  intermittent. (P-521 was never affected: its len-2 is 0x83 and the first byte
+  of a 66-byte P-521 X never exceeds 0x01.)
+
+  The encoding is now decided by length, which is exact rather than
+  probabilistic: a bare point on a curve over a `byteLen`-byte field is always
+  `1 + 2*byteLen` bytes, and any DER wrapper is strictly longer, so no content
+  byte of a point can move it from one case to the other. The curve is already
+  known from `CKA_EC_PARAMS`. An attribute value that is neither form now
+  returns a typed `ErrInvalidKeyAttributes` naming what it found instead of
+  falling through to a best guess.
+
+  Affects any PKCS#11 module that stores `CKA_EC_POINT` unwrapped. No
+  configuration change; the wrapped encoding is decoded exactly as before.
 
 - **`cert_der` PIV factor metadata is decoded as base64** (#199 follow-up).
   `pkg/auth_factors.decodeCertificate` named its variable `derB64` but passed
