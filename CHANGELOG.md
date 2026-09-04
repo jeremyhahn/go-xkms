@@ -9,6 +9,32 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Security
 
+- **Both published container images now patch their base at build time**
+  (closes #135). `Dockerfile.cli`, `.github/workflows/release.yml`.
+
+  `apt-get upgrade -y` was present in five of the seven runtime stages in the
+  repository. The two that lacked it were exactly the two that **publish**:
+  `Dockerfile.cli`, which builds `xkms-cli`, and the `Dockerfile.release`
+  generated inside `release.yml`, which builds `xkms-server`. Both now carry
+  it, matching `Dockerfile.server` and the three protocol images.
+
+  A pinned base is a reproducible base, not a patched one. `debian:bookworm-slim`
+  is rebuilt only periodically, so between rebuilds an image inherits whatever
+  its base snapshot carried — which is the same window that shipped a HIGH in
+  a sibling repo's published image.
+
+  **Measured, and reported as measured:** on today's base this changes no CVE
+  count. Building the CLI runtime stage with and without the upgrade produces
+  images that Trivy scores identically — 259 findings each, all of them
+  unfixed, so the release gate's `--ignore-unfixed CRITICAL,HIGH` reports 0
+  for both. The upgrade is not idle (it moves `libpcre2-8-0`), but no
+  outstanding **fixable** CRITICAL/HIGH exists in this base right now. This is
+  a preventive control that closes the gap on the day Debian publishes a fix
+  ahead of a base rebuild — not a fix for a live vulnerability.
+
+  The first `alpine:latest` half of #135 was already resolved in `a0adcc0a`
+  (PR #246); no `alpine:latest` remains anywhere in the repository.
+
 - **`xkey fido2 status` now names the credential store and says whether
   passkeys are encrypted at rest** (refs #181).
   `xkey/cmd/xkey/cmd/fido2_status.go`, `xkey/pkg/ipc/protocol.go`.

@@ -76,8 +76,15 @@ LABEL org.opencontainers.image.source="https://github.com/jeremyhahn/go-xkms"
 LABEL org.opencontainers.image.description="CLI tool for xkms operations"
 LABEL org.opencontainers.image.vendor="go-xkms"
 
-# Install runtime dependencies
-RUN apt-get update && apt-get install -y --no-install-recommends \
+# Install runtime dependencies.
+#
+# `apt-get upgrade -y` before the install, matching Dockerfile.server and the
+# three protocol images (go-xkms#135): a pinned base is a REPRODUCIBLE base,
+# not a patched one -- debian:bookworm-slim is rebuilt only periodically, so
+# without this the image ships whatever CVEs the base snapshot carried. This
+# is the image published as xkms-cli, so the gap reached a release artifact.
+RUN apt-get update && apt-get upgrade -y && \
+    apt-get install -y --no-install-recommends \
     ca-certificates \
     libsofthsm2 \
     softhsm2 \

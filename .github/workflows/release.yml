@@ -627,8 +627,27 @@ jobs:
           # Stage 2: Runtime
           FROM debian:bookworm-slim
 
-          # Install runtime dependencies
-          RUN apt-get update && apt-get install -y --no-install-recommends \
+          # Install runtime dependencies.
+          #
+          # `apt-get upgrade -y` before the install (go-xkms#135). This
+          # generated Dockerfile is what builds the PUBLISHED xkms-server
+          # image, and it was one of the two runtime stages still missing the
+          # upgrade -- Dockerfile.server and the three protocol images already
+          # carried it, and Dockerfile.cli, which builds the published
+          # xkms-cli image, gains it in this same change. So the two stages
+          # that were missing it were exactly the two that PUBLISH.
+          #
+          # A pinned base is a reproducible base, not a patched one:
+          # debian:bookworm-slim is rebuilt only periodically, so without this
+          # the published image ships whatever CVEs its base snapshot carried.
+          #
+          # This also keeps the Trivy gate below meaningful in the right
+          # direction. That gate runs with --ignore-unfixed, so a FIXABLE
+          # CRITICAL/HIGH in a base package fails the release outright. With
+          # the upgrade, such a CVE is patched at build time instead of
+          # blocking a release on something the build could have fixed itself.
+          RUN apt-get update && apt-get upgrade -y && \
+              apt-get install -y --no-install-recommends \
               ca-certificates \
               libsofthsm2 \
               softhsm2 \
