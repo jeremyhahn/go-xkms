@@ -16,6 +16,7 @@ package metrics
 import (
 	"context"
 	"errors"
+	"sync"
 	"testing"
 	"time"
 )
@@ -488,25 +489,138 @@ func TestWithTimer(t *testing.T) {
 	}
 }
 
-func TestWithTimer_MeasuresDuration(t *testing.T) {
-	ctx := context.Background()
-	expectedDuration := 100 * time.Millisecond
+// recordingMetrics is a MetricsAdapter that captures the timers recorded
+// through it, so a test can assert on the duration WithTimer actually reported
+// rather than on its own wall clock. It is mutex-guarded because the race
+// detector job exercises this package.
+type recordingMetrics struct {
+	mu     sync.Mutex
+	timers []recordedTimer
+}
 
-	start := time.Now()
-	err := WithTimer(ctx, "test.timer", nil, func() error {
-		time.Sleep(expectedDuration)
+// recordedTimer is one captured RecordTimer call.
+type recordedTimer struct {
+	name     string
+	duration time.Duration
+	tags     map[string]string
+}
+
+func (m *recordingMetrics) RecordCounter(context.Context, string, map[string]string) error {
+	return nil
+}
+
+func (m *recordingMetrics) RecordCounterWithValue(context.Context, string, int64, map[string]string) error {
+	return nil
+}
+
+func (m *recordingMetrics) RecordGauge(context.Context, string, float64, map[string]string) error {
+	return nil
+}
+
+func (m *recordingMetrics) RecordHistogram(context.Context, string, float64, map[string]string) error {
+	return nil
+}
+
+func (m *recordingMetrics) RecordTimer(_ context.Context, name string, duration time.Duration, tags map[string]string) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.timers = append(m.timers, recordedTimer{name: name, duration: duration, tags: tags})
+	return nil
+}
+
+func (m *recordingMetrics) Name() string { return "recording" }
+
+// recorded returns a copy of the captured timers.
+func (m *recordingMetrics) recorded() []recordedTimer {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	out := make([]recordedTimer, len(m.timers))
+	copy(out, m.timers)
+	return out
+}
+
+// TestWithTimer_MeasuresDuration asserts that the duration WithTimer reports
+// covers the work it wrapped.
+//
+// It asserts a LOWER BOUND ONLY, and it reads the recorded duration rather
+// than the caller's wall clock. The previous version did neither: it installed
+// no adapter, so nothing was recorded and the assertion was really about
+// time.Sleep; and it required the elapsed time to land within 20ms on BOTH
+// sides of 100ms. time.Sleep guarantees a minimum, never a maximum, so the
+// upper bound asserted something Go does not provide — it failed in CI at
+// 120.167ms, missing by 0.167ms, purely because the runner was busy (#243).
+//
+// The lower bound is the whole property WithTimer can guarantee, and it holds
+// deterministically: WithTimer brackets fn() with time.Now()/time.Since, so
+// the recorded duration cannot be shorter than a sleep that ran inside it.
+func TestWithTimer_MeasuresDuration(t *testing.T) {
+	const (
+		workDuration = 100 * time.Millisecond
+
+		// A hang detector, not a timing assertion. It is three orders of
+		// magnitude above the work so scheduling noise can never reach it;
+		// only a WithTimer that never returned or ran fn twice would.
+		runawayCeiling = 30 * time.Second
+	)
+
+	adapter := &recordingMetrics{}
+	ctx := WithMetrics(context.Background(), adapter)
+
+	err := WithTimer(ctx, "test.timer", map[string]string{"op": "measure"}, func() error {
+		time.Sleep(workDuration)
 		return nil
 	})
-	elapsed := time.Since(start)
-
 	if err != nil {
-		t.Errorf("WithTimer() returned error: %v", err)
+		t.Fatalf("WithTimer() returned error: %v", err)
 	}
 
-	// Allow some tolerance for timing variations (20ms buffer)
-	tolerance := 20 * time.Millisecond
-	if elapsed < expectedDuration-tolerance || elapsed > expectedDuration+tolerance {
-		t.Errorf("WithTimer() measured %v, expected approximately %v", elapsed, expectedDuration)
+	recorded := adapter.recorded()
+	if len(recorded) != 1 {
+		t.Fatalf("WithTimer() recorded %d timers, want exactly 1", len(recorded))
+	}
+
+	timer := recorded[0]
+	if timer.name != "test.timer" {
+		t.Errorf("WithTimer() recorded name %q, want %q", timer.name, "test.timer")
+	}
+	if got := timer.tags["op"]; got != "measure" {
+		t.Errorf("WithTimer() recorded tag op=%q, want %q", got, "measure")
+	}
+	if timer.duration < workDuration {
+		t.Errorf("WithTimer() recorded %v, want at least the %v the work took",
+			timer.duration, workDuration)
+	}
+	if timer.duration > runawayCeiling {
+		t.Errorf("WithTimer() recorded %v, beyond the %v runaway ceiling",
+			timer.duration, runawayCeiling)
+	}
+}
+
+// TestWithTimer_RecordsDurationOnError verifies the timer is recorded even when
+// the wrapped work fails: a failed operation's latency is exactly the latency
+// an operator needs. Lower bound only, for the same reason as above.
+func TestWithTimer_RecordsDurationOnError(t *testing.T) {
+	const workDuration = 20 * time.Millisecond
+
+	adapter := &recordingMetrics{}
+	ctx := WithMetrics(context.Background(), adapter)
+	wantErr := errors.New("operation failed")
+
+	err := WithTimer(ctx, "test.timer.error", nil, func() error {
+		time.Sleep(workDuration)
+		return wantErr
+	})
+	if !errors.Is(err, wantErr) {
+		t.Fatalf("WithTimer() error = %v, want %v", err, wantErr)
+	}
+
+	recorded := adapter.recorded()
+	if len(recorded) != 1 {
+		t.Fatalf("WithTimer() recorded %d timers, want exactly 1", len(recorded))
+	}
+	if recorded[0].duration < workDuration {
+		t.Errorf("WithTimer() recorded %v, want at least the %v the work took",
+			recorded[0].duration, workDuration)
 	}
 }
 

@@ -824,6 +824,29 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `cert_pem` — so the accepted form is now unambiguous and that downstream
   narrowing can be lifted.
 
+- **`TestWithTimer_MeasuresDuration` no longer asserts a maximum on
+  `time.Sleep`** (#243). The test required its measured elapsed time to land
+  within 20ms on **both** sides of a 100ms sleep. `time.Sleep` guarantees a
+  minimum and never a maximum, so the upper bound asserted a property Go does
+  not provide: on a shared CI runner under `-race` it failed at 120.167ms,
+  missing by 0.167ms, with nothing wrong in the code under test.
+
+  It now asserts a lower bound only, which is the whole property `WithTimer`
+  can guarantee — it brackets `fn()` with `time.Now()` / `time.Since`, so the
+  recorded duration cannot be shorter than the work. A 30s ceiling remains
+  purely as a runaway/hang detector, three orders of magnitude above the work
+  so scheduling noise can never reach it.
+
+  The test also now installs a recording adapter and asserts on the duration
+  `WithTimer` actually **recorded**, with its name and tags. Previously it
+  passed a bare context with no adapter, so nothing was recorded and a test
+  named "MeasuresDuration" was really asserting that `time.Sleep` sleeps. A
+  companion case covers the error path, where a failed operation's latency is
+  exactly the latency an operator needs.
+
+  #243 tracks this pattern in several packages; `pkg/acme` still owes the same
+  treatment, so the issue stays open.
+
 
 ### Added
 
