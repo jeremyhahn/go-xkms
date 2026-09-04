@@ -25,7 +25,15 @@ import (
 	// concatenation KDFs are defined over it and PKCS#11 v3.0 names it
 	// (CKD_SHA1_KDF); see concatKDFHashes. Deliberately absent: MD4, MD5 and
 	// RIPEMD-160, which no key-derivation standard approves.
-	_ "crypto/sha1" //nolint:gosec // G505: SHA-1 is an approved KDF hash per SP 800-56A Rev.3 and SP 800-131A Rev.2
+	// SP 800-56A Rev. 3 and SP 800-131A Rev. 2 approve SHA-1 for key
+	// derivation, which is why it is linked -- but the STANDARD approving it
+	// and the RUNTIME permitting it are different claims, and this comment
+	// used to assert only the first. Under GODEBUG=fips140=only Go refuses
+	// crypto/sha1 outright, whatever the use, and panics on the first Write.
+	// concatKDFHashes still lists SHA-1; kdfAlgorithmBridge.hash filters it
+	// out through HashUsable when the process will not compute it
+	// (go-xkms#292).
+	_ "crypto/sha1" //nolint:gosec // G505: linked for the X9.63/SP 800-56A concatenation KDFs; refused at lookup when the runtime will not compute it
 	_ "crypto/sha256"
 	_ "crypto/sha3"
 	_ "crypto/sha512"
@@ -183,6 +191,14 @@ var prfKDFHashes = map[string]crypto.Hash{
 // digest, not its collision resistance, so the SHA-1 collision attacks that
 // bar it from signing do not apply. Signing with SHA-1 remains refused; see
 // AvailableHashes and ParseHash.
+//
+// That reasoning is about the STANDARDS, and it is unchanged. It does not
+// bind the runtime: under GODEBUG=fips140=only Go refuses crypto/sha1 for
+// every use, approved or not. The set below is therefore the set this
+// construction accepts IN PRINCIPLE; kdfAlgorithmBridge.hash narrows it to
+// what the running process can actually compute, so a caller naming SHA-1 in
+// such a process gets an unsupported-hash error instead of a panic
+// (go-xkms#292).
 var concatKDFHashes = func() map[string]crypto.Hash {
 	hashes := map[string]crypto.Hash{
 		"SHA-1":    crypto.SHA1,
@@ -258,7 +274,13 @@ func (b kdfAlgorithmBridge) hash(name string) (crypto.Hash, bool) {
 	if !ok {
 		return 0, false
 	}
-	return h, h.Available()
+	// HashUsable rather than h.Available: Available reports LINKAGE, and under
+	// GODEBUG=fips140=only a refused digest stays linked and panics on the
+	// first Write instead. This lookup is the only place the KDF hash sets are
+	// reported to a caller, so narrowing here is what makes them a truthful
+	// capability report rather than a list of names that can kill the process
+	// (go-xkms#292).
+	return h, HashUsable(h)
 }
 
 // Derive runs the shared secret through the KDF these parameters select and

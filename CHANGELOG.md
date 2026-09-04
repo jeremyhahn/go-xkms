@@ -455,6 +455,60 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   external importer can reach it — the same reasoning #174 itself makes, that
   "no in-repo caller" answers whether the daemon does it and never whether a
   consumer can. Whether to delete it instead is #173's call, not this change's.
+- **The KDF hash sets now report what the process can actually compute** (#292).
+  `kdfAlgorithmBridge.hash` admitted a hash on `crypto.Hash.Available()`, which
+  reports **linkage**. Under `GODEBUG=fips140=only` Go keeps a refused digest
+  linked and lets `New()` succeed, then **panics on the first Write** — so
+  deriving with X9.63/SHA-1 killed the process instead of returning an error.
+
+  Lookups now go through the new `types.HashUsable`, and a hash the runtime
+  will not compute is refused with the existing `ErrUnsupportedKDFHash`.
+
+  **Neither `Available()` nor a FIPS predicate is correct here**, which is why
+  this probes instead. Measured on go1.26.7:
+
+  | mode | `fips140.Enabled()` | `SHA1.Available()` | SHA-1 Write+Sum |
+  |---|---|---|---|
+  | (none) | false | true | ok |
+  | `fips140=on` | **true** | true | **ok** |
+  | `fips140=only` | true | true | **panic** |
+
+  `Available()` is true in every mode, so it cannot see the refusal.
+  `fips140.Enabled()` is true under **both** `on` and `only`, but SHA-1 works
+  under `on` — gating on it would withdraw a digest the process can compute.
+  There is no exported predicate for `fips140=only`, so `HashUsable` hashes one
+  byte behind a `recover`, once per digest, and caches it. The probe is the same
+  operation the caller is about to perform, so it cannot disagree with it, and
+  it keeps working if the standard library later refuses a different digest.
+
+  This narrowing is deliberately **mode-dependent**, which is the opposite of
+  the JWK thumbprint decision in the same issue — and the difference is what
+  each one is. A thumbprint becomes a stored artifact, so a mode-dependent
+  answer would let one process mint what another cannot recompute; a hash set
+  is a *capability report*, and capabilities genuinely do differ by mode. Nothing
+  is lost by narrowing it: under `fips140=only` a SHA-1 derivation could never
+  have succeeded, so this converts a process-killing panic into a typed refusal
+  rather than removing a working option. Nothing in this repository persists a
+  KDF hash choice — the persisted key metadata records no hash at all — so there
+  is no stored record to invalidate.
+
+  **The `kdf.go` doc claim is corrected** in the same change. It asserted
+  "SHA-1 is an approved KDF hash per SP 800-56A Rev.3 and SP 800-131A Rev.2",
+  which is true of the **standards** and false of what the **runtime** permits.
+  Both statements now appear, distinguished.
+
+  Two tests that encoded the old contract are updated:
+  `TestKDFBridges_EveryAdvertisedHashDerives` now means "every hash the bridge
+  *reports*", and `TestKDFHashSets_AreIndependentOfWeakHashPolicy` asserts the
+  property it is named for — the same answer for both policy values — rather
+  than "SHA-1 always derives", which was only ever true of a non-FIPS process.
+
+  **`pkg/types` still fails under `GODEBUG=fips140=only`, for reasons that are
+  not this defect**, and that is worth stating so a red package is not read as
+  unfinished: four weak-hash and legacy-key-wrap policy tests fail, each of them
+  independently confirmed to fail the same way on unmodified code. Panics are
+  down from one to **zero** — which is why one of the four is newly *visible*:
+  the panic used to abort the binary before it ran.
 
 - **The `pkg/acme/client` DNS tests no longer query the public internet**
   (#243). Ten call sites across four files resolved real domains — `google.com`,

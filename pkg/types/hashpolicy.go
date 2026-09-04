@@ -17,6 +17,7 @@ import (
 	"crypto"
 	"crypto/fips140"
 	"sort"
+	"sync"
 	"sync/atomic"
 )
 
@@ -151,4 +152,72 @@ func hashPermitted(h crypto.Hash) bool {
 		return false
 	}
 	return !IsWeakHash(h) || allowWeakHashes.Load()
+}
+
+// hashUsability caches, per crypto.Hash, whether this process can actually
+// compute a digest with it.
+var hashUsability sync.Map // crypto.Hash -> bool
+
+// HashUsable reports whether h can compute a digest in THIS process, as
+// opposed to merely being linked into the binary.
+//
+// # Why crypto.Hash.Available is not enough
+//
+// Available reports linkage. Under GODEBUG=fips140=only the Go standard
+// library keeps a refused digest linked and lets New() succeed, then PANICS on
+// the first Write. Measured on go1.26.7:
+//
+//	mode            fips140.Enabled()  SHA1.Available()  SHA-1 Write+Sum
+//	(none)          false              true              ok
+//	fips140=on      true               true              ok
+//	fips140=only    true               true              PANIC
+//
+// So a caller that checks Available and then hashes still dies, which is how
+// the KDF bridge took the process down for a caller who named SHA-1
+// (go-xkms#292).
+//
+// # Why it is not a FIPS predicate either
+//
+// The table above is also why this cannot be `if fips140.Enabled()`. Enabled
+// is true under BOTH fips140=on and fips140=only, but SHA-1 works under `on`.
+// Gating on it would withdraw a digest that the process can perfectly well
+// compute -- failing closed rather than open, but still reporting a capability
+// the runtime does not have. And the fail-OPEN direction is worse and already
+// recorded: GODEBUG=fips140=off turns Enabled false on a GOFIPS140-built
+// binary (#219).
+//
+// There is no exported predicate for "fips140=only", so the only answer that
+// is right in all three modes is to ask the runtime directly.
+//
+// # How
+//
+// It hashes one byte behind a recover, once per crypto.Hash, and caches the
+// answer. The probe is the same operation the caller is about to perform, so
+// it cannot disagree with it -- and it keeps working if the standard library
+// later refuses a different digest, where a hardcoded list would go stale.
+func HashUsable(h crypto.Hash) bool {
+	if !h.Available() {
+		return false
+	}
+	if cached, ok := hashUsability.Load(h); ok {
+		return cached.(bool)
+	}
+	usable := probeHash(h)
+	hashUsability.Store(h, usable)
+	return usable
+}
+
+// probeHash reports whether h survives a real digest computation.
+func probeHash(h crypto.Hash) (usable bool) {
+	defer func() {
+		if recover() != nil {
+			usable = false
+		}
+	}()
+
+	digest := h.New()
+	// The panic is on Write, not New, so the probe has to do both.
+	digest.Write([]byte{0})
+	_ = digest.Sum(nil)
+	return true
 }

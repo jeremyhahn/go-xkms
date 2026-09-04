@@ -58,6 +58,19 @@ func TestKDFBridges_EveryAdvertisedHashDerives(t *testing.T) {
 		}
 		for name, want := range bridge.hashes {
 			t.Run(algorithm.String()+"/"+name, func(t *testing.T) {
+				// A hash the bridge advertises but this process cannot compute
+				// is REPORTED as unavailable rather than derived with, so the
+				// contract under test is "every hash the bridge REPORTS
+				// derives". Before go-xkms#292 the two were the same thing and
+				// this loop panicked under GODEBUG=fips140=only when it reached
+				// X9.63/SHA-1.
+				if _, ok := bridge.hash(name); !ok {
+					if HashUsable(want) {
+						t.Fatalf("bridge refuses %v, but this process can compute it", want)
+					}
+					t.Skipf("%v is not computable in this process; the bridge correctly refuses it", want)
+				}
+
 				params := paramsForBridge(algorithm, name, 48)
 
 				// Validate is the request-admission path; Derive is the
@@ -239,13 +252,30 @@ func TestPRFKDFHashes_ExcludeWeakDigests(t *testing.T) {
 // turning it off must not break CKD_SHA1_KDF — SP 800-131A Rev. 2 permits
 // SHA-1 for key derivation in a deployment where it is disallowed for signing.
 func TestKDFHashSets_AreIndependentOfWeakHashPolicy(t *testing.T) {
+	// The subject is the WEAK-HASH POLICY: whether allow_weak_hashes is set
+	// must not change the KDF hash sets, because SP 800-131A Rev. 2 keeps
+	// SHA-1 acceptable for non-signature uses and the policy governs signing.
+	//
+	// Runtime usability is a separate axis and does bind: under
+	// GODEBUG=fips140=only Go refuses crypto/sha1 for every use, so SHA-1 is
+	// refused there with ErrUnsupportedKDFHash whatever the policy says
+	// (go-xkms#292). The assertion below is therefore "the same answer for
+	// both policy values", which is the property this test is named for,
+	// rather than "SHA-1 always derives", which was only ever true of a
+	// non-FIPS process.
+	sha1Derives := HashUsable(crypto.SHA1)
+
 	for _, allow := range []bool{false, true} {
 		withWeakHashes(t, allow, func() {
-			if _, err := paramsForBridge(KDFAlgorithmX963, "SHA-1", 32).Derive(kdfConformanceSecret); err != nil {
-				t.Errorf("allow_weak=%v: X9.63/SHA-1 must derive: %v", allow, err)
-			}
-			if _, err := paramsForBridge(KDFAlgorithmSP80056A, "SHA-1", 32).Derive(kdfConformanceSecret); err != nil {
-				t.Errorf("allow_weak=%v: SP800-56A/SHA-1 must derive: %v", allow, err)
+			for _, algorithm := range []KDFAlgorithm{KDFAlgorithmX963, KDFAlgorithmSP80056A} {
+				_, err := paramsForBridge(algorithm, "SHA-1", 32).Derive(kdfConformanceSecret)
+				switch {
+				case sha1Derives && err != nil:
+					t.Errorf("allow_weak=%v: %v/SHA-1 must derive: %v", allow, algorithm, err)
+				case !sha1Derives && !errors.Is(err, ErrUnsupportedKDFHash):
+					t.Errorf("allow_weak=%v: %v/SHA-1 must be refused with ErrUnsupportedKDFHash, got %v",
+						allow, algorithm, err)
+				}
 			}
 			for _, name := range []string{"MD5", "MD4", "RIPEMD-160"} {
 				_, err := paramsForBridge(KDFAlgorithmX963, name, 32).Derive(kdfConformanceSecret)
