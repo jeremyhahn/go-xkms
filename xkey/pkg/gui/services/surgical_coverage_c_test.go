@@ -120,6 +120,7 @@ func (m *scMockTrustStore) SetSource(_ string, _ string) error                  
 func (m *scMockTrustStore) SetSystemInstalled(_ string, _ bool) error           { return nil }
 func (m *scMockTrustStore) SetTags(_ string, _ []string) error                  { return nil }
 func (m *scMockTrustStore) Close() error                                        { return nil }
+func (m *scMockTrustStore) Reload() error                                       { return nil }
 
 // scMockFIDO2Storage implements StatefulCredentialStorage + ListableStorage.
 type scMockFIDO2Storage struct {

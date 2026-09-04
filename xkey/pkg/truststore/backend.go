@@ -456,6 +456,35 @@ func (bs *BackendStore) Close() error {
 
 // loadFromBackend loads existing certificates and metadata from the storage
 // backend into the in-memory cache.
+// Reload discards the in-memory cache and re-reads it from the storage
+// backend, picking up certificates another process added or removed.
+//
+// The cache is replaced rather than merged: a certificate removed elsewhere
+// must stop being trusted here, not merely stop being listed.
+func (bs *BackendStore) Reload() error {
+	bs.mu.Lock()
+	defer bs.mu.Unlock()
+
+	if bs.closed {
+		return ErrStoreClosed
+	}
+
+	// Build into fresh maps and swap only on success, so a failed read leaves
+	// the previous view intact rather than emptying the store.
+	prevCerts, prevMeta := bs.certs, bs.meta
+	bs.certs = make(map[string]*x509.Certificate)
+	bs.meta = make(map[string]*CertMetadata)
+
+	if err := bs.loadFromBackend(); err != nil {
+		bs.certs, bs.meta = prevCerts, prevMeta
+		return err
+	}
+
+	bs.pool = nil
+	bs.dirty = true
+	return nil
+}
+
 func (bs *BackendStore) loadFromBackend() error {
 	// Load metadata entries first.
 	metaPrefix := bs.prefix + metadataKeyPrefix

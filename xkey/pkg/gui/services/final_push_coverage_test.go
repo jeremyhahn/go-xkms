@@ -50,6 +50,7 @@ func (m *fpMockTrustStore) SetSource(_ string, _ string) error                  
 func (m *fpMockTrustStore) SetSystemInstalled(_ string, _ bool) error           { return nil }
 func (m *fpMockTrustStore) SetTags(_ string, _ []string) error                  { return nil }
 func (m *fpMockTrustStore) Close() error                                        { return nil }
+func (m *fpMockTrustStore) Reload() error                                       { return nil }
 
 // fpMockStaticPWStore implements staticpw.Store (libpw.Store) with configurable
 // List() behavior to exercise barrier-sealed detection.

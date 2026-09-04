@@ -2674,7 +2674,8 @@ func (m *mockTrustStore) SetSystemInstalled(_ string, _ bool) error {
 func (m *mockTrustStore) SetTags(_ string, _ []string) error {
 	panic("mockTrustStore: SetTags not expected")
 }
-func (m *mockTrustStore) Close() error { return nil }
+func (m *mockTrustStore) Close() error  { return nil }
+func (m *mockTrustStore) Reload() error { return nil }
 
 // compile-time check
 var _ truststore.TrustStore = (*mockTrustStore)(nil)

@@ -168,6 +168,7 @@ func (m *p6bMockTrustStore) SetSystemInstalled(_ string, _ bool) error {
 }
 func (m *p6bMockTrustStore) SetTags(_ string, _ []string) error { return m.setTagsErr }
 func (m *p6bMockTrustStore) Close() error                       { return nil }
+func (m *p6bMockTrustStore) Reload() error                      { return nil }
 
 // p6bMockStaticPWStore implements staticpw.Store for password protection testing.
 type p6bMockStaticPWStore struct {

@@ -196,6 +196,7 @@ func (m *p5aMockTrustStore) SetSource(_ string, _ string) error                 
 func (m *p5aMockTrustStore) SetSystemInstalled(_ string, _ bool) error           { return nil }
 func (m *p5aMockTrustStore) SetTags(_ string, _ []string) error                  { return nil }
 func (m *p5aMockTrustStore) Close() error                                        { return nil }
+func (m *p5aMockTrustStore) Reload() error                                       { return nil }
 
 // ---------------------------------------------------------------------------
 // PIN Service tests — covering specific uncovered branches

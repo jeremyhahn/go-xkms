@@ -77,8 +77,30 @@ type TrustStore interface {
 	SetTags(fingerprint string, tags []string) error
 
 	// Close releases any resources held by the trust store.
+	// Reload discards the in-memory cache and re-reads it from the backing
+	// store, so certificates added or removed by another process become
+	// visible.
+	//
+	// The cache is REPLACED, not merged. A certificate another process removed
+	// must disappear here too: merging would leave the store trusting an anchor
+	// the operator revoked, which is a worse failure than not seeing a new one.
+	//
+	// Returns ErrStoreClosed if the store has been closed.
+	Reload() error
+
 	Close() error
 }
+
+// Compile-time assertions that both stores satisfy TrustStore.
+//
+// Asserted because the interface is small enough that an implementer can drift
+// out of it silently: a method added here is otherwise only caught where a
+// concrete store is assigned to the interface, which may be in another package
+// or in no non-test code at all.
+var (
+	_ TrustStore = (*BackendStore)(nil)
+	_ TrustStore = (*FileStore)(nil)
+)
 
 // Fingerprint computes the SHA-256 fingerprint of a certificate, returned
 // as a lowercase hex-encoded string.

@@ -151,9 +151,21 @@ func (s *TrustService) SetElevator(e Elevator) {
 }
 
 // ListCertificates returns all trusted certificates as JSON-friendly structs.
+//
+// The store is reloaded first. Its cache is populated once at construction, so
+// without this the GUI would never see a certificate the CLI added — or one it
+// removed — until the application restarted, and a freshly imported CA is
+// exactly what a user adds and then expects to work.
+//
+// A failed reload is returned rather than swallowed. Serving the cache anyway
+// would answer with a list that may no longer be true while looking exactly
+// like one that is.
 func (s *TrustService) ListCertificates() ([]TrustCertInfo, error) {
 	if s.store == nil {
 		return nil, nil
+	}
+	if err := s.store.Reload(); err != nil {
+		return nil, err
 	}
 	certs, err := s.store.Certificates()
 	if err != nil {
@@ -192,6 +204,12 @@ func (s *TrustService) ListCertificates() ([]TrustCertInfo, error) {
 func (s *TrustService) ListCertificatesByPurpose(purpose string) ([]TrustCertInfo, error) {
 	if s.store == nil {
 		return nil, nil
+	}
+	// Reloaded for the same reason as ListCertificates: the cache is populated
+	// once at construction and would otherwise never see another process's
+	// changes.
+	if err := s.store.Reload(); err != nil {
+		return nil, err
 	}
 
 	certs, err := s.store.CertificatesByPurpose(truststore.CertPurpose(purpose))
@@ -251,9 +269,15 @@ func (s *TrustService) RemoveCertificate(fingerprint string) error {
 }
 
 // CertificateCount returns the number of trusted certificates.
+//
+// Reloaded like the list calls — a count taken from a stale cache disagrees
+// with the list the user is looking at.
 func (s *TrustService) CertificateCount() (int, error) {
 	if s.store == nil {
 		return 0, nil
+	}
+	if err := s.store.Reload(); err != nil {
+		return 0, err
 	}
 	return s.store.Count()
 }

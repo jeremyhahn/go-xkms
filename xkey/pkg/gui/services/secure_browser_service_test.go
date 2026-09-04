@@ -134,6 +134,7 @@ func (m *mockSecureBrowserTrustStore) SetSource(_ string, _ string) error       
 func (m *mockSecureBrowserTrustStore) SetSystemInstalled(_ string, _ bool) error { return nil }
 func (m *mockSecureBrowserTrustStore) SetTags(_ string, _ []string) error        { return nil }
 func (m *mockSecureBrowserTrustStore) Close() error                              { return nil }
+func (m *mockSecureBrowserTrustStore) Reload() error                             { return nil }
 
 // newTestSecureBrowserService creates a SecureBrowserService with a mock
 // exec command for testing.

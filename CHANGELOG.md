@@ -146,6 +146,34 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `qrdbsdk.ErrNotFound` is an `ErrorCode` constant rather than a sentinel
   error, so `errors.Is` cannot match it and `IsDAONotFound` is the only typed
   probe the SDK offers.
+- **The GUI trust store now sees certificates added or removed by another
+  process** (#182). `xkey/pkg/truststore/`, `xkey/pkg/gui/services/trust_service.go`.
+
+  `BackendStore` and `FileStore` populate their in-memory caches once, at
+  construction, and the `TrustStore` interface offered no way to refresh them.
+  A certificate imported by the CLI while the GUI was running stayed invisible
+  until the application restarted — and with TLS anchors now scoped by purpose
+  (#250), a freshly imported CA is exactly what a user adds and then expects to
+  work.
+
+  `TrustStore` gains `Reload()`, implemented by both stores. The cache is
+  **replaced, not merged**: a certificate another process removed must stop
+  being trusted, not merely stop being listed. The cached `x509.CertPool` is
+  invalidated with it, so the listing and the trust decision cannot disagree.
+  A failed reload restores the previous view rather than leaving the store
+  empty.
+
+  The GUI reloads before listing and counting, and returns a reload failure
+  rather than serving the cache — an answer that may no longer be true looks
+  exactly like one that is.
+
+  Only two types implement `TrustStore`, so widening it was cheaper than a
+  narrower seam; compile-time assertions now pin that, because the interface is
+  small enough for an implementer to drift out of it silently.
+
+  fsnotify-driven invalidation is not included: reload-on-view addresses the
+  reported symptom, and a watcher is a separate change with its own failure
+  modes.
 
 - **The keys that unwrap the authenticator's key hierarchy now live in
   protected memory** (#285). `xkey/pkg/authenticator/key_manager.go`.

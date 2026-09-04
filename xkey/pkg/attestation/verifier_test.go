@@ -103,7 +103,8 @@ func (m *mockTrustStore) SetSystemInstalled(_ string, _ bool) error { return nil
 
 func (m *mockTrustStore) SetTags(_ string, _ []string) error { return nil }
 
-func (m *mockTrustStore) Close() error { return nil }
+func (m *mockTrustStore) Close() error  { return nil }
+func (m *mockTrustStore) Reload() error { return nil }
 
 // --- Test certificate helpers ---
 

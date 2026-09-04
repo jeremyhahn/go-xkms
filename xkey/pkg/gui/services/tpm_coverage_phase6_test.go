@@ -138,6 +138,7 @@ func (m *p6aMockTrustStore) SetSource(_ string, _ string) error                 
 func (m *p6aMockTrustStore) SetSystemInstalled(_ string, _ bool) error           { return nil }
 func (m *p6aMockTrustStore) SetTags(_ string, _ []string) error                  { return nil }
 func (m *p6aMockTrustStore) Close() error                                        { return nil }
+func (m *p6aMockTrustStore) Reload() error                                       { return nil }
 
 // ---------------------------------------------------------------------------
 // ViewKey tests -- covering uncovered error branches (lines 2161-2217)

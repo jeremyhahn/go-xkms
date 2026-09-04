@@ -489,6 +489,35 @@ func (fs *FileStore) Close() error {
 // loadFromDisk loads existing certificates and metadata from the filesystem.
 // It first attempts to load from the metadata index, then validates against
 // PEM files on disk. If no metadata file exists, it rebuilds from PEM files.
+// Reload discards the in-memory cache and re-reads it from disk, picking up
+// certificates another process added or removed.
+//
+// The cache is replaced rather than merged: a certificate removed elsewhere
+// must stop being trusted here, not merely stop being listed.
+func (fs *FileStore) Reload() error {
+	fs.mu.Lock()
+	defer fs.mu.Unlock()
+
+	if fs.closed {
+		return ErrStoreClosed
+	}
+
+	// Build into fresh maps and swap only on success, so a failed read leaves
+	// the previous view intact rather than emptying the store.
+	prevCerts, prevMeta := fs.certs, fs.metadata
+	fs.certs = make(map[string]*x509.Certificate)
+	fs.metadata = make(map[string]*CertMetadata)
+
+	if err := fs.loadFromDisk(); err != nil {
+		fs.certs, fs.metadata = prevCerts, prevMeta
+		return err
+	}
+
+	fs.pool = nil
+	fs.poolDirty = true
+	return nil
+}
+
 func (fs *FileStore) loadFromDisk() error {
 	metaPath := filepath.Join(fs.config.BaseDir, metadataFile)
 
