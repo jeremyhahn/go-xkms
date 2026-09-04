@@ -275,14 +275,24 @@ func (km *KeyManager) UnlockWithSOPIN(pin string) error {
 		return ErrKeyManagerNoSOPIN
 	}
 
-	// Verify SO PIN and get SMK
-	smk, err := km.state.SOPINManager.Verify(pin)
+	manager := km.state.SOPINManager
+
+	// The retry is spent here, before the PIN is known to be right.
+	smk, err := manager.BeginVerify(pin)
 	if err != nil {
 		return err
 	}
 
 	km.mu.Lock()
 	defer km.mu.Unlock()
+
+	// The wrapped Admin Key is the only thing that can prove the SMK, and
+	// therefore the SO PIN, is correct. Without it there is nothing to verify
+	// against, so any PIN would appear to succeed: refuse instead.
+	if len(km.state.WrappedAK) == 0 {
+		clearBytes(smk)
+		return ErrKeyManagerNoAK
+	}
 
 	// Store SMK. adoptKeyMaterial wipes smk, so every later use reads the
 	// protected copy through withKeyBytes rather than the heap slice.
@@ -292,49 +302,53 @@ func (km *KeyManager) UnlockWithSOPIN(pin string) error {
 	}
 
 	// Unwrap AK using SMK
-	if len(km.state.WrappedAK) > 0 {
-		var ak []byte
-		unwrapErr := withKeyBytes(km.smk, func(smkBytes []byte) error {
-			akWrapper, wErr := NewAESGCMKeyWrapper(smkBytes)
+	var ak []byte
+	unwrapErr := withKeyBytes(km.smk, func(smkBytes []byte) error {
+		akWrapper, wErr := NewAESGCMKeyWrapper(smkBytes)
+		if wErr != nil {
+			return wErr
+		}
+		var uErr error
+		ak, uErr = akWrapper.Unwrap(km.state.WrappedAK)
+		return uErr
+	})
+	if unwrapErr != nil {
+		// AES-GCM authenticated unwrap failure means the SMK (and thus SO PIN)
+		// is incorrect. Map the raw crypto error to a meaningful PIN error.
+		km.clearKeyMaterial()
+		return manager.RecordFailure()
+	}
+	if err := adoptKeyMaterial(&km.adminKey, ak); err != nil {
+		km.clearKeyMaterial()
+		return err
+	}
+
+	// The Admin Key unwrapped, so the SO PIN is proven. Restore the budget here
+	// rather than after the CMK unwrap below: a corrupt CMK is a state problem,
+	// not a failed authentication, and charging it to the retry counter would
+	// lock the token out over something the Security Officer got right.
+	manager.ConfirmVerified()
+
+	// Unwrap CMK using AK (SO copy). adoptKeyMaterial wiped ak, so the wrapper
+	// is built from the protected copy.
+	if len(km.state.WrappedCMKSO) > 0 {
+		var cmk []byte
+		cmkErr := withKeyBytes(km.adminKey, func(akBytes []byte) error {
+			cmkWrapper, wErr := NewAESGCMKeyWrapper(akBytes)
 			if wErr != nil {
 				return wErr
 			}
 			var uErr error
-			ak, uErr = akWrapper.Unwrap(km.state.WrappedAK)
+			cmk, uErr = cmkWrapper.Unwrap(km.state.WrappedCMKSO)
 			return uErr
 		})
-		if unwrapErr != nil {
-			// AES-GCM authenticated unwrap failure means the SMK (and thus SO PIN)
-			// is incorrect. Map the raw crypto error to a meaningful PIN error.
-			km.state.SOPINManager.DecrementRetries()
+		if cmkErr != nil {
 			km.clearKeyMaterial()
-			return ErrSOPINInvalid
+			return cmkErr
 		}
-		if err := adoptKeyMaterial(&km.adminKey, ak); err != nil {
+		if err := adoptKeyMaterial(&km.cmk, cmk); err != nil {
 			km.clearKeyMaterial()
 			return err
-		}
-
-		// Unwrap CMK using AK (SO copy)
-		if len(km.state.WrappedCMKSO) > 0 {
-			var cmk []byte
-			cmkErr := withKeyBytes(km.adminKey, func(akBytes []byte) error {
-				cmkWrapper, wErr := NewAESGCMKeyWrapper(akBytes)
-				if wErr != nil {
-					return wErr
-				}
-				var uErr error
-				cmk, uErr = cmkWrapper.Unwrap(km.state.WrappedCMKSO)
-				return uErr
-			})
-			if cmkErr != nil {
-				km.clearKeyMaterial()
-				return cmkErr
-			}
-			if err := adoptKeyMaterial(&km.cmk, cmk); err != nil {
-				km.clearKeyMaterial()
-				return err
-			}
 		}
 	}
 
@@ -841,43 +855,45 @@ func (km *KeyManager) GetAttestationKey() (*ecdsa.PrivateKey, error) {
 // ChangeSOPIN changes the SO PIN from the current PIN to a new PIN.
 // This re-wraps AK with the new SMK derived from the new SO PIN.
 //
-// The currentSMK must be a valid SMK from the current SO PIN.
+// currentSMK must come from SOPINManager.BeginVerify: this method completes
+// that exchange, calling ConfirmVerified on success (via Rekey) or
+// RecordFailure when the Admin Key does not unwrap.
 //
 // Returns ErrKeyManagerNoSOPIN if SO PIN is not configured.
-// Returns an error if PIN verification or key re-wrapping fails.
+// Returns ErrKeyManagerNoAK if there is no wrapped Admin Key to authenticate
+// against, ErrSOPINInvalid / ErrSOPINAuthBlocked / ErrSOPINBlocked when
+// currentSMK is wrong, and ErrSOPINPolicyViolation for a malformed new PIN.
 func (km *KeyManager) ChangeSOPIN(currentSMK []byte, newPIN string) error {
 	if !km.IsSOPINConfigured() {
 		return ErrKeyManagerNoSOPIN
 	}
 
-	// Change SO PIN in the manager (validates current SMK)
-	newSMK, err := km.state.SOPINManager.Change(currentSMK, newPIN)
-	if err != nil {
-		return err
-	}
-
 	km.mu.Lock()
 	defer km.mu.Unlock()
 
-	// Unwrap AK using old SMK
 	if len(km.state.WrappedAK) == 0 {
-		clearBytes(newSMK)
 		return ErrKeyManagerNoAK
 	}
 
+	// Authenticate as Security Officer FIRST. Authenticated decryption of the
+	// wrapped Admin Key is what proves currentSMK, and therefore the current SO
+	// PIN, is correct. Nothing may be mutated before this succeeds: rotating
+	// the salt on an unproven PIN would destroy the only key that can derive
+	// the real SMK and brick the token.
 	oldWrapper, err := NewAESGCMKeyWrapper(currentSMK)
 	if err != nil {
-		clearBytes(newSMK)
 		return err
 	}
 
 	ak, err := oldWrapper.Unwrap(km.state.WrappedAK)
 	if err != nil {
-		clearBytes(newSMK)
-		// AES-GCM authenticated unwrap failure means the SMK (and thus SO PIN)
-		// is incorrect. Map the raw crypto error to a meaningful PIN error.
-		km.state.SOPINManager.DecrementRetries()
-		return ErrSOPINInvalid
+		return km.state.SOPINManager.RecordFailure()
+	}
+
+	newSMK, err := km.state.SOPINManager.Rekey(newPIN)
+	if err != nil {
+		clearBytes(ak)
+		return err
 	}
 
 	// Re-wrap AK with new SMK

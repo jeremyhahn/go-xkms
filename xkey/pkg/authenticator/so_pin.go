@@ -38,8 +38,17 @@ const (
 	// SOPINDerivedKeySize is the size of the derived Storage Master Key (32 bytes for AES-256).
 	SOPINDerivedKeySize = 32
 
-	// DefaultSOPINMaxRetries is the maximum number of SO PIN retry attempts before blocking.
+	// DefaultSOPINMaxRetries is the total number of SO PIN attempts allowed
+	// before the token locks out. CTAP 2.1 §6.5.5.7 sets the same budget of 8
+	// for the user PIN; the Security Officer credential uses it too.
 	DefaultSOPINMaxRetries = 8
+
+	// SOPINMaxConsecutiveFailures is the number of consecutive failed SO PIN
+	// attempts allowed within a single power cycle. CTAP 2.1 §6.5.5.7 requires
+	// the authenticator to refuse further attempts after three consecutive
+	// mismatches until it is power-cycled, which bounds an online brute force
+	// far below the total retry budget.
+	SOPINMaxConsecutiveFailures = 3
 
 	// sopinMinLength is the minimum SO PIN length in UTF-8 bytes.
 	sopinMinLength = 6
@@ -56,8 +65,14 @@ var (
 	// ErrSOPINInvalid indicates the provided SO PIN is incorrect.
 	ErrSOPINInvalid = errors.New("authenticator: SO PIN invalid")
 
-	// ErrSOPINBlocked indicates the SO PIN has been blocked due to too many failed attempts.
+	// ErrSOPINBlocked indicates the SO PIN retry budget is exhausted. This is
+	// terminal: only authenticatorReset clears it.
 	ErrSOPINBlocked = errors.New("authenticator: SO PIN blocked")
+
+	// ErrSOPINAuthBlocked indicates too many consecutive failures within one
+	// power cycle. Attempts resume after the authenticator is power-cycled.
+	// CTAP 2.1 §6.5.5.7 (CTAP2_ERR_PIN_AUTH_BLOCKED).
+	ErrSOPINAuthBlocked = errors.New("authenticator: SO PIN attempts blocked until power cycle")
 
 	// ErrSOPINNotSet indicates SO PIN operations were attempted but no SO PIN is configured.
 	ErrSOPINNotSet = errors.New("authenticator: SO PIN not set")
@@ -91,8 +106,15 @@ type SOPINManager struct {
 	// Parallelism is the Argon2id parallelism parameter.
 	Parallelism uint8
 
-	// retries stores the remaining SO PIN attempts atomically.
+	// retries stores the remaining SO PIN attempts atomically. It is
+	// persisted, so the budget survives a restart.
 	retries atomic.Int32
+
+	// consecutiveFailures counts failed attempts since the last success or
+	// power-up. It is deliberately NOT persisted: "power cycle to continue" is
+	// only meaningful if a power cycle clears it, and for this authenticator a
+	// power cycle is a process restart.
+	consecutiveFailures atomic.Int32
 
 	// IsSet indicates whether an SO PIN has been configured.
 	IsSet bool
@@ -148,7 +170,7 @@ func (m *SOPINManager) Initialize(pin string) ([]byte, error) {
 		return nil, ErrSOPINAlreadySet
 	}
 
-	if err := m.validatePINPolicy(pin); err != nil {
+	if err := validateSOPINPolicy(pin); err != nil {
 		return nil, err
 	}
 
@@ -160,7 +182,7 @@ func (m *SOPINManager) Initialize(pin string) ([]byte, error) {
 
 	m.Salt = salt
 	m.IsSet = true
-	m.retries.Store(int32(DefaultSOPINMaxRetries))
+	m.ConfirmVerified()
 
 	// Derive the Storage Master Key
 	smk := m.DeriveKey(pin)
@@ -168,15 +190,24 @@ func (m *SOPINManager) Initialize(pin string) ([]byte, error) {
 	return smk, nil
 }
 
-// Verify verifies the provided SO PIN and returns the derived SMK if correct.
+// BeginVerify starts an SO PIN verification. It spends one attempt from the
+// retry budget and returns the candidate Storage Master Key derived from pin.
 //
-// The caller is responsible for validating the SMK by attempting to unwrap
-// protected materials. If unwrapping fails, the caller should call DecrementRetries.
+// The retry is spent *before* the answer is known, so a caller that crashes,
+// is killed, or simply never reports back cannot get a free attempt. The
+// caller must finish the exchange:
 //
-// Returns ErrSOPINBlocked if the retry counter has reached zero.
-// Returns ErrSOPINNotSet if no SO PIN has been configured.
-// Returns ErrSOPINInvalid if the PIN verification fails.
-func (m *SOPINManager) Verify(pin string) ([]byte, error) {
+//	smk, err := m.BeginVerify(pin)
+//	if err != nil { return err }
+//	if unwrapOK(smk) { m.ConfirmVerified() } else { return m.RecordFailure() }
+//
+// Verification itself is the caller's AES-GCM authenticated unwrap of material
+// wrapped under the SMK, which is a stronger check than comparing a hash.
+//
+// Returns ErrSOPINNotSet if the token is uninitialized, ErrSOPINBlocked if the
+// retry budget is exhausted, and ErrSOPINAuthBlocked if too many consecutive
+// attempts have failed since the last power cycle.
+func (m *SOPINManager) BeginVerify(pin string) ([]byte, error) {
 	if !m.IsSet {
 		return nil, ErrSOPINNotSet
 	}
@@ -185,45 +216,64 @@ func (m *SOPINManager) Verify(pin string) ([]byte, error) {
 		return nil, ErrSOPINBlocked
 	}
 
-	// Derive key from provided PIN
+	if m.IsAuthBlocked() {
+		return nil, ErrSOPINAuthBlocked
+	}
+
 	smk := m.DeriveKey(pin)
 	if smk == nil {
 		return nil, ErrSOPINNotSet
 	}
 
-	// Reset retries on successful derivation.
-	// The caller validates the SMK via AES-GCM authenticated unwrap
-	// which is cryptographically stronger than a separate hash check.
-	m.ResetRetries()
+	m.retries.Add(-1)
 
 	return smk, nil
 }
 
-// Change changes the SO PIN from the current PIN to a new PIN.
-// The currentSMK parameter must be a valid SMK derived from the current PIN.
+// ConfirmVerified records that the caller cryptographically confirmed the SMK
+// returned by BeginVerify. It restores the full retry budget and clears the
+// consecutive-failure counter.
+func (m *SOPINManager) ConfirmVerified() {
+	m.retries.Store(int32(DefaultSOPINMaxRetries))
+	m.consecutiveFailures.Store(0)
+}
+
+// RecordFailure records that the SMK returned by BeginVerify did not decrypt
+// the wrapped material, and returns the error the caller should propagate.
 //
-// Returns the new SMK derived from the new PIN on success.
-// The caller must re-wrap protected materials with the new SMK.
+// The retry was already spent by BeginVerify; this adds the consecutive-failure
+// accounting CTAP 2.1 §6.5.5.7 requires and reports which of the three refusals
+// now applies.
+func (m *SOPINManager) RecordFailure() error {
+	m.consecutiveFailures.Add(1)
+
+	switch {
+	case m.IsBlocked():
+		return ErrSOPINBlocked
+	case m.IsAuthBlocked():
+		return ErrSOPINAuthBlocked
+	default:
+		return ErrSOPINInvalid
+	}
+}
+
+// Rekey rotates the SO PIN to newPIN and returns the new Storage Master Key.
 //
-// Returns ErrSOPINNotSet if no SO PIN has been configured.
-// Returns ErrSOPINBlocked if the retry counter has reached zero.
-// Returns ErrSOPINPolicyViolation if the new PIN does not meet length requirements.
-// Returns ErrSOPINInvalid if the current SMK verification fails.
-func (m *SOPINManager) Change(currentSMK []byte, newPIN string) ([]byte, error) {
+// It does not authenticate anything: the caller MUST have already proven the
+// current SO PIN, because Rekey replaces the salt and the previous SMK becomes
+// underivable the moment it does. Only KeyManager.ChangeSOPIN calls it, and
+// only after unwrapping the Admin Key with the current SMK.
+//
+// Returns ErrSOPINNotSet if the token is uninitialized and
+// ErrSOPINPolicyViolation if newPIN does not meet the length policy.
+func (m *SOPINManager) Rekey(newPIN string) ([]byte, error) {
 	if !m.IsSet {
 		return nil, ErrSOPINNotSet
 	}
 
-	if m.IsBlocked() {
-		return nil, ErrSOPINBlocked
-	}
-
-	if err := m.validatePINPolicy(newPIN); err != nil {
+	if err := validateSOPINPolicy(newPIN); err != nil {
 		return nil, err
 	}
-
-	// The caller (KeyManager.ChangeSOPIN) validates currentSMK by unwrapping
-	// the AK first. AES-GCM authenticated decryption proves the SMK is correct.
 
 	// Generate new salt for the new PIN
 	newSalt := make([]byte, SOPINSaltSize)
@@ -232,12 +282,9 @@ func (m *SOPINManager) Change(currentSMK []byte, newPIN string) ([]byte, error) 
 	}
 
 	m.Salt = newSalt
-	m.retries.Store(int32(DefaultSOPINMaxRetries))
+	m.ConfirmVerified()
 
-	// Derive the new Storage Master Key
-	newSMK := m.DeriveKey(newPIN)
-
-	return newSMK, nil
+	return m.DeriveKey(newPIN), nil
 }
 
 // Retries returns the current number of remaining SO PIN attempts.
@@ -245,29 +292,35 @@ func (m *SOPINManager) Retries() int {
 	return int(m.retries.Load())
 }
 
-// SetRetries sets the number of remaining SO PIN attempts.
+// SetRetries sets the number of remaining SO PIN attempts. It exists so that
+// persisted state can be restored on load; it is not part of the verification
+// contract, which is BeginVerify / ConfirmVerified / RecordFailure.
 func (m *SOPINManager) SetRetries(n int) {
 	m.retries.Store(int32(n))
 }
 
-// DecrementRetries decrements the SO PIN retry counter and returns the new value.
-// The caller should call this method when PIN verification fails.
-func (m *SOPINManager) DecrementRetries() int {
-	return int(m.retries.Add(-1))
+// ConsecutiveFailures returns the number of failed attempts since the last
+// success or power cycle.
+func (m *SOPINManager) ConsecutiveFailures() int {
+	return int(m.consecutiveFailures.Load())
 }
 
-// ResetRetries resets the SO PIN retry counter to the default maximum value.
-func (m *SOPINManager) ResetRetries() {
-	m.retries.Store(int32(DefaultSOPINMaxRetries))
-}
-
-// IsBlocked returns true if the SO PIN has been blocked due to too many failed attempts.
+// IsBlocked reports whether the SO PIN retry budget is exhausted. This state is
+// terminal until authenticatorReset.
 func (m *SOPINManager) IsBlocked() bool {
 	return m.retries.Load() <= 0
 }
 
-// validatePINPolicy validates that the PIN meets the policy requirements.
-func (m *SOPINManager) validatePINPolicy(pin string) error {
+// IsAuthBlocked reports whether too many consecutive attempts have failed since
+// the last power cycle. CTAP 2.1 §6.5.5.7.
+func (m *SOPINManager) IsAuthBlocked() bool {
+	return m.consecutiveFailures.Load() >= int32(SOPINMaxConsecutiveFailures)
+}
+
+// validateSOPINPolicy validates that the SO PIN meets the length policy.
+// It is a package function rather than a method because the token layer must
+// apply the same policy before an attempt is charged against the retry budget.
+func validateSOPINPolicy(pin string) error {
 	pinBytes := []byte(pin)
 	if len(pinBytes) < sopinMinLength {
 		return ErrSOPINPolicyViolation

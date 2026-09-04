@@ -104,8 +104,10 @@ type SerializableState struct {
 	// SOPINParallelism is the Argon2id parallelism parameter for SO PIN.
 	SOPINParallelism uint8 `json:"so_pin_parallelism,omitempty"`
 
-	// SOPINRetries is the current SO PIN retry count.
-	SOPINRetries int `json:"so_pin_retries,omitempty"`
+	// SOPINRetries is the current SO PIN retry count. It is written
+	// unconditionally: omitempty would drop exactly the value that matters
+	// most, a lockout at zero.
+	SOPINRetries int `json:"so_pin_retries"`
 
 	// --- Wrapped Keys ---
 

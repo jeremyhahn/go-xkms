@@ -407,6 +407,166 @@ extensions := map[string]interface{}{
 }
 ```
 
+## Security Officer Role and Token Initialization
+
+### Two specifications, two halves
+
+xKey's Security Officer / User split is the **PKCS#11** role model. CTAP 2.1
+defines a single user PIN and has **no** Security Officer, so no single
+specification governs this surface:
+
+| Concern | Governing spec |
+|---|---|
+| When the SO credential is established, and how it changes | PKCS#11 v3.0 §5.6 -- `C_InitToken`, `C_InitPIN`, `C_SetPIN` |
+| The trust-on-first-use window on that first establishment | CTAP 2.1 §6.9 -- `authenticatorReset` |
+| Retry budget, power-cycle threshold, lockout | CTAP 2.1 §6.5.5.7 -- `authenticatorClientPIN` |
+| Role separation and initialization as a distinct act | FIPS 140-3 / ISO-IEC 19790 -- Crypto Officer |
+
+### The token lifecycle
+
+A token is **uninitialized** until it is given an SO PIN. There is exactly one
+source of truth for that -- `state.SOPINManager.IsSet` -- because initialization
+*is* establishing the SO PIN, and a second flag would only be a second thing to
+disagree.
+
+```
+uninitialized  --InitializeToken (window + user presence)-->  initialized
+initialized    --ChangeSOPIN (current SO PIN)-------------->  initialized
+initialized    --authenticatorReset (SO + user presence)--->  uninitialized
+```
+
+**An uninitialized token refuses SO-gated operations.** It does not waive them.
+`ResetUserPIN`, `ReplaceAttestKey`, `SetRPPolicy`, `DeleteRPPolicy` and
+`SetProfile` all return `ErrTokenUninitialized`, which is deliberately distinct
+from `ErrKeyManagerLocked`: "there is no Security Officer" and "the Security
+Officer has not authenticated" demand different responses, and reporting the
+second for the first is how "no SO PIN set" comes to be read as "no SO
+required". The two are distinct on the wire as well: `ErrTokenUninitialized`
+maps to `CTAP2_ERR_NOT_ALLOWED` (0x30), `ErrKeyManagerLocked` to
+`CTAP2_ERR_PIN_REQUIRED` (0x36).
+
+`authenticatorGetInfo` advertises the reachable vendor subcommands in
+`vendorPrototypeConfigCommands` (0x15), which CTAP 2.1 §6.4 requires whenever
+the `vendorPrototype` subcommand is supported. Without it a client has no way to
+discover that initialization exists.
+
+### The trust-on-first-use window
+
+The first SO PIN cannot be authenticated against anything, because nothing
+exists yet to authenticate against. That window is real and it is not closed by
+omission. CTAP 2.1 §6.9 bounds the equivalent risk on `authenticatorReset` with
+two requirements, and first initialization applies both:
+
+1. **A short window after power-up.** `Config.TokenInitWindow`, default 10
+   seconds, matching the common hardware implementation. Outside it,
+   `ErrTokenInitWindowClosed`.
+2. **User presence.** The presence handler must approve, or
+   `ErrUserPresenceRequired`.
+
+Together these mean a caller cannot claim the Security Officer role on a device
+it did not just power on and physically confirm. That is the spec-sanctioned
+answer; xKey does not invent an enrolment token or an out-of-band pairing step
+alongside it, because a second mechanism is a second thing to get wrong.
+
+**Refusals are ordered so a doomed request never prompts.** An already-closed
+window, a malformed PIN, or an already-initialized token are all rejected before
+the user is asked to touch anything.
+
+**Honest limitation.** For a *hardware* token, "power-up" is a physical act an
+attacker must be present for. For this **software** authenticator a power cycle
+is a **process restart**, which anyone who can start the daemon can perform. The
+window therefore raises the bar to "can restart the process and satisfy the
+presence handler at that moment" rather than to "is holding the device". Deploy
+accordingly: the daemon's ability to be restarted is part of this control's
+threat model, and a presence handler that auto-grants (`NewAutoGrantHandler`,
+the default) removes the second bound entirely.
+
+Widening `TokenInitWindow` widens exactly this window. It cannot be disabled: a
+zero or negative value selects the default rather than meaning "always open".
+
+### Changing the SO PIN
+
+After initialization the SO PIN changes **only** through `ChangeSOPIN`, which
+proves the current PIN by AES-GCM authenticated decryption of the wrapped Admin
+Key -- possession of the key, not comparison of a hash.
+
+Nothing is mutated before that proof succeeds. Rotating the Argon2id salt on an
+unproven PIN would make the real SO PIN underivable and brick the token, so the
+unwrap happens first and `SOPINManager.Rekey` is called only after it.
+
+A malformed *new* PIN is rejected before any retry is charged: an operator's
+typo in the value they are setting is not a failed authentication attempt.
+
+### Retry budget, power cycle, lockout
+
+Per CTAP 2.1 §6.5.5.7, applied to the SO credential:
+
+| Control | Value | Behaviour |
+|---|---|---|
+| Total retry budget | 8 (`DefaultSOPINMaxRetries`) | Exhausted -> `ErrSOPINBlocked`, terminal until `authenticatorReset` |
+| Consecutive failures per power cycle | 3 (`SOPINMaxConsecutiveFailures`) | Reached -> `ErrSOPINAuthBlocked`; attempts resume only after a restart |
+| Persistence | Budget persisted; consecutive counter not | A restart clears the power-cycle block and **never** refunds the budget |
+
+The verification contract is deliberately three calls, not one:
+
+```go
+smk, err := manager.BeginVerify(pin)   // spends one retry, up front
+if err != nil { return err }
+if unwrapOK(smk) { manager.ConfirmVerified() } else { return manager.RecordFailure() }
+```
+
+The retry is spent **before** the answer is known, so a caller that crashes, is
+killed, or simply never reports back cannot obtain a free attempt. Every spend
+is persisted by the token layer -- on failure as well as success -- so a restart
+mid-attack cannot reset the counter.
+
+The state is surfaced as the PKCS#11 `CK_TOKEN_INFO` flags a PKCS#11
+application would expect, over the `GetTokenInfo` vendor subcommand and through
+`Authenticator.TokenFlags()`:
+
+| Flag | PKCS#11 | Meaning |
+|---|---|---|
+| `TokenFlagInitialized` | `CKF_TOKEN_INITIALIZED` | The token has an SO PIN |
+| `TokenFlagSOPINCountLow` | `CKF_SO_PIN_COUNT_LOW` | At least one failure since the last success |
+| `TokenFlagSOPINFinalTry` | `CKF_SO_PIN_FINAL_TRY` | One more failure locks the token |
+| `TokenFlagSOPINLocked` | `CKF_SO_PIN_LOCKED` | Budget exhausted |
+
+`GetTokenInfo` never fails on an uninitialized token -- it reports flags of
+zero, which renders as `uninitialized`. A caller that cannot read the state
+cannot recover from it either, and an error saying "SO PIN not set" is precisely
+the message that gets read as "no SO PIN needed".
+
+### Reset
+
+`authenticatorReset` is the only path back to uninitialized, and it is
+destructive by design.
+
+- On an **initialized** token it requires an authenticated Security Officer
+  *and* user presence.
+- On an **uninitialized** token user presence alone gates it. That is not a
+  waiver: PKCS#11 `C_InitToken` likewise needs no prior authentication on an
+  uninitialized token, and demanding a credential that cannot exist would make
+  such a token permanently unresettable.
+
+A completed reset **re-arms** the initialization window. The caller has just
+proven user presence, and on an initialized token also SO possession, so this
+grants nothing they had not already demonstrated -- while without it a reset
+would leave the token uninitialized but un-initializable until the next restart.
+
+**Known gap.** CTAP 2.1 §6.9 also requires `authenticatorReset` itself to arrive
+within a short time of power-up. That bound is **not** enforced here, because
+factory reset is driven from the UI long after startup. This is recorded rather
+than implied: reset is gated by SO authentication and user presence, not by
+timing.
+
+### What is not covered
+
+No CLI verb reaches these commands yet. `authenticatorConfig` `0x0D` with
+`subCommand >= 0x80` is the only transport, and building a host-side CTAP client
+for it is tracked separately. Note that `xkey pin set-so` drives an unrelated
+subject -- the qrdb PIN service -- and has never touched
+`AuthenticatorState.SOPINManager`.
+
 ## SO Policy Controls
 
 ### Attestation Override
@@ -627,6 +787,9 @@ config := &authenticator.Config{
 6. **No in-process user verification** - There is no path that collects a real PIN entry from a caller inside the process. In-process ceremonies such as browser-extension autofill are gated on user presence, and their assertions report UV as absent.
 4. **Self-attestation only** - No hardware root of trust (unless TPM2 key backend with attestation is used)
 5. **Memory exposure** - Keys in process memory (software backend); TPM2 backend mitigates this
+7. **Software power cycle** - The trust-on-first-use window for the Security Officer PIN is bounded by time since power-up (CTAP 2.1 §6.9), but a "power cycle" here is a process restart. Anyone who can restart the daemon can reopen the window. See [Security Officer Role and Token Initialization](#security-officer-role-and-token-initialization).
+8. **Reset is not window-bounded** - CTAP 2.1 §6.9 requires `authenticatorReset` to arrive shortly after power-up; that bound is not enforced. Reset is gated by Security Officer authentication and user presence instead.
+9. **No CLI path to token initialization** - The SO PIN commands are reachable only over CTAP `authenticatorConfig` (`0x0D`, `subCommand >= 0x80`). `xkey pin set-so` drives an unrelated subject and does not initialize the virtual authenticator.
 
 ## Security Checklist
 
@@ -634,6 +797,9 @@ config := &authenticator.Config{
 - [ ] File permissions restricted (0600/0700)
 - [ ] PIN minimum length >= 6
 - [ ] PIN retry limit <= 5
+- [ ] Token initialized (SO PIN established) before the authenticator is exposed on a transport
+- [ ] `TokenInitWindow` left at its default, or narrowed -- never widened without cause
+- [ ] User presence handler is not `AutoGrantHandler` where the initialization window matters
 - [ ] AAGUID set appropriately
 - [ ] Authenticator closed when done
 - [ ] Error handling doesn't leak info

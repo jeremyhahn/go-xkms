@@ -481,7 +481,7 @@ func TestVendorRPPolicyRequiresSOUnlock(t *testing.T) {
 		setData := buildVendorConfigRequest(t, setParams)
 		_, err := auth.handleConfig(setData)
 		require.Error(t, err)
-		require.ErrorIs(t, err, ErrKeyManagerLocked)
+		require.ErrorIs(t, err, ErrTokenUninitialized)
 	})
 
 	t.Run("GetRPPolicy succeeds without SO unlock", func(t *testing.T) {
@@ -748,7 +748,7 @@ func TestVendorSetProfileRequiresSOUnlock(t *testing.T) {
 		profileData := buildVendorConfigRequest(t, profileParams)
 		_, err := auth.handleConfig(profileData)
 		require.Error(t, err)
-		require.ErrorIs(t, err, ErrKeyManagerLocked)
+		require.ErrorIs(t, err, ErrTokenUninitialized)
 	})
 }
 

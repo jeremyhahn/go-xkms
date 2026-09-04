@@ -440,19 +440,19 @@ func TestHandleConfigVendorPrototype(t *testing.T) {
 		auth := createTestConfigAuthenticator(t)
 		defer func() { _ = auth.Close() }()
 
-		// Use VendorCmdGetSOPINRetries since it doesn't require auth
-		// Should fail with ErrSOPINNotSet since SO PIN not configured
+		// Use VendorCmdGetTokenInfo since it doesn't require auth. On an
+		// uninitialized token it succeeds and reports the uninitialized state.
 		data, err := cbor.Marshal(map[int]interface{}{
 			configKeySubCommand: AuthConfigCmdVendorPrototype,
 			configKeySubCommandParams: map[interface{}]interface{}{
-				vendorParamKeyVendorCmd: uint8(VendorCmdGetSOPINRetries),
+				vendorParamKeyVendorCmd: uint8(VendorCmdGetTokenInfo),
 			},
 		})
 		require.NoError(t, err)
 
-		_, err = auth.handleConfig(data)
-		require.Error(t, err)
-		require.ErrorIs(t, err, ErrSOPINNotSet)
+		resp, err := auth.handleConfig(data)
+		require.NoError(t, err)
+		require.Equal(t, uint8(StatusOK), resp[0])
 	})
 }
 
@@ -592,7 +592,7 @@ func TestHandleVendorChangeSOPIN(t *testing.T) {
 
 		_, err := handleVendorChangeSOPIN(auth, params)
 		require.Error(t, err)
-		require.ErrorIs(t, err, ErrSOPINNotSet)
+		require.ErrorIs(t, err, ErrTokenUninitialized)
 	})
 
 	t.Run("wrong current PIN returns error", func(t *testing.T) {
@@ -624,9 +624,11 @@ func TestHandleVendorChangeSOPIN(t *testing.T) {
 		require.NoError(t, err)
 		require.Equal(t, uint8(StatusOK), resp[0])
 
-		// Verify new PIN works
-		_, err = auth.state.SOPINManager.Verify("newsecurepin")
-		require.NoError(t, err)
+		// Verify the new PIN works. Unlocking is the real check: it proves the
+		// Admin Key was re-wrapped under the new SO PIN, not merely that a key
+		// can be derived from it.
+		auth.keyManager.Lock()
+		require.NoError(t, auth.keyManager.UnlockWithSOPIN("newsecurepin"))
 	})
 }
 
@@ -710,7 +712,7 @@ func TestHandleVendorResetUserPIN(t *testing.T) {
 
 		_, err := handleVendorResetUserPIN(auth, params)
 		require.Error(t, err)
-		require.ErrorIs(t, err, ErrKeyManagerNoSOPIN)
+		require.ErrorIs(t, err, ErrTokenUninitialized)
 	})
 
 	t.Run("not SO unlocked returns error", func(t *testing.T) {
@@ -807,7 +809,7 @@ func TestHandleVendorReplaceAttestKey(t *testing.T) {
 
 		_, err := handleVendorReplaceAttestKey(auth, params)
 		require.Error(t, err)
-		require.ErrorIs(t, err, ErrKeyManagerNoSOPIN)
+		require.ErrorIs(t, err, ErrTokenUninitialized)
 	})
 
 	t.Run("not SO unlocked returns error", func(t *testing.T) {
@@ -855,59 +857,102 @@ func TestHandleVendorReplaceAttestKey(t *testing.T) {
 	})
 }
 
-// TestHandleVendorGetSOPINRetries tests the SO PIN retry count subcommand.
-func TestHandleVendorGetSOPINRetries(t *testing.T) {
-	t.Run("SO PIN not set returns error", func(t *testing.T) {
+// TestHandleVendorGetTokenInfo tests the token lifecycle reporting subcommand.
+func TestHandleVendorGetTokenInfo(t *testing.T) {
+	t.Run("uninitialized token reports uninitialized rather than failing", func(t *testing.T) {
 		auth := createTestConfigAuthenticator(t)
 		defer func() { _ = auth.Close() }()
 
 		params := map[interface{}]interface{}{
-			vendorParamKeyVendorCmd: uint8(VendorCmdGetSOPINRetries),
+			vendorParamKeyVendorCmd: uint8(VendorCmdGetTokenInfo),
 		}
 
-		_, err := handleVendorGetSOPINRetries(auth, params)
-		require.Error(t, err)
-		require.ErrorIs(t, err, ErrSOPINNotSet)
+		resp, err := handleVendorGetTokenInfo(auth, params)
+		require.NoError(t, err)
+		require.Equal(t, uint8(StatusOK), resp[0])
+
+		respMap := decodeTokenInfo(t, resp)
+
+		flags, ok := respMap[configResponseKeyTokenFlags]
+		require.True(t, ok, "token flags must always be reported")
+		require.Equal(t, uint64(0), flags)
+		require.Equal(t, "uninitialized", TokenFlags(0).String())
+
+		// A retry count on a token with no Security Officer would read as
+		// "there are attempts left", so it is absent.
+		_, ok = respMap[configResponseKeyRetries]
+		require.False(t, ok, "an uninitialized token must not report SO retries")
 	})
 
-	t.Run("SOPINManager nil returns error", func(t *testing.T) {
+	t.Run("SOPINManager nil reports uninitialized", func(t *testing.T) {
 		auth := createTestConfigAuthenticator(t)
 		defer func() { _ = auth.Close() }()
 		auth.state.SOPINManager = nil
 
 		params := map[interface{}]interface{}{
-			vendorParamKeyVendorCmd: uint8(VendorCmdGetSOPINRetries),
+			vendorParamKeyVendorCmd: uint8(VendorCmdGetTokenInfo),
 		}
 
-		_, err := handleVendorGetSOPINRetries(auth, params)
-		require.Error(t, err)
-		require.ErrorIs(t, err, ErrSOPINNotSet)
+		resp, err := handleVendorGetTokenInfo(auth, params)
+		require.NoError(t, err)
+
+		respMap := decodeTokenInfo(t, resp)
+		require.Equal(t, uint64(0), respMap[configResponseKeyTokenFlags])
 	})
 
-	t.Run("success returns retry count", func(t *testing.T) {
+	t.Run("initialized token reports flags, retries and power cycle state", func(t *testing.T) {
 		auth := createTestConfigAuthenticatorWithSOPIN(t)
 		defer func() { _ = auth.Close() }()
 
 		params := map[interface{}]interface{}{
-			vendorParamKeyVendorCmd: uint8(VendorCmdGetSOPINRetries),
+			vendorParamKeyVendorCmd: uint8(VendorCmdGetTokenInfo),
 		}
 
-		resp, err := handleVendorGetSOPINRetries(auth, params)
+		resp, err := handleVendorGetTokenInfo(auth, params)
 		require.NoError(t, err)
 		require.Equal(t, uint8(StatusOK), resp[0])
 
-		// Decode response
-		var respMap map[int]interface{}
-		err = cbor.Unmarshal(resp[1:], &respMap)
-		require.NoError(t, err)
+		respMap := decodeTokenInfo(t, resp)
 
-		retriesRaw, ok := respMap[configResponseKeyRetries]
-		require.True(t, ok)
+		require.Equal(t, uint64(TokenFlagInitialized), respMap[configResponseKeyTokenFlags])
 
-		retries, err := toUint8(retriesRaw)
+		retries, err := toUint8(respMap[configResponseKeyRetries])
 		require.NoError(t, err)
 		require.Equal(t, uint8(DefaultSOPINMaxRetries), retries)
+
+		require.Equal(t, false, respMap[configResponseKeyPowerCycleState])
 	})
+
+	t.Run("failures surface as PKCS#11 count-low and power cycle state", func(t *testing.T) {
+		auth := createTestConfigAuthenticatorWithSOPIN(t)
+		defer func() { _ = auth.Close() }()
+
+		for i := 0; i < SOPINMaxConsecutiveFailures; i++ {
+			auth.keyManager.Lock()
+			require.Error(t, auth.keyManager.UnlockWithSOPIN("wrongpin999"))
+		}
+
+		params := map[interface{}]interface{}{
+			vendorParamKeyVendorCmd: uint8(VendorCmdGetTokenInfo),
+		}
+		resp, err := handleVendorGetTokenInfo(auth, params)
+		require.NoError(t, err)
+
+		respMap := decodeTokenInfo(t, resp)
+		flags := TokenFlags(respMap[configResponseKeyTokenFlags].(uint64))
+		require.NotZero(t, flags&TokenFlagInitialized)
+		require.NotZero(t, flags&TokenFlagSOPINCountLow, "flags: %s", flags)
+		require.Equal(t, true, respMap[configResponseKeyPowerCycleState])
+	})
+}
+
+// decodeTokenInfo decodes a token-info response body.
+func decodeTokenInfo(t *testing.T, resp []byte) map[int]interface{} {
+	t.Helper()
+
+	var respMap map[int]interface{}
+	require.NoError(t, cbor.Unmarshal(resp[1:], &respMap))
+	return respMap
 }
 
 // TestVerifyConfigPinUvAuth tests the PIN auth verification for config operations.

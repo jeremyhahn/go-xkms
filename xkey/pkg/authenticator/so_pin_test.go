@@ -236,13 +236,13 @@ func TestSOPINManager_DeriveKey(t *testing.T) {
 	})
 }
 
-func TestSOPINManager_Verify(t *testing.T) {
+func TestSOPINManager_BeginVerify(t *testing.T) {
 	t.Run("correct PIN returns SMK", func(t *testing.T) {
 		mgr := NewSOPINManager()
 		expectedSMK, err := mgr.Initialize(testValidPIN)
 		require.NoError(t, err)
 
-		smk, err := mgr.Verify(testValidPIN)
+		smk, err := mgr.BeginVerify(testValidPIN)
 
 		require.NoError(t, err)
 		require.NotNil(t, smk)
@@ -254,10 +254,10 @@ func TestSOPINManager_Verify(t *testing.T) {
 		expectedSMK, err := mgr.Initialize(testValidPIN)
 		require.NoError(t, err)
 
-		// With StoredKeyHash removed, Verify no longer rejects wrong PINs directly.
-		// It returns a different SMK; the caller (KeyManager.UnlockWithSOPIN)
-		// detects the wrong PIN when AES-GCM authenticated unwrap fails.
-		wrongSMK, err := mgr.Verify("wrongpin")
+		// BeginVerify cannot itself reject a wrong PIN: it returns a different
+		// SMK, and the caller detects the mismatch when AES-GCM authenticated
+		// unwrap fails.
+		wrongSMK, err := mgr.BeginVerify("wrongpin")
 
 		require.NoError(t, err)
 		require.NotNil(t, wrongSMK)
@@ -267,7 +267,7 @@ func TestSOPINManager_Verify(t *testing.T) {
 	t.Run("uninitialized manager returns ErrSOPINNotSet", func(t *testing.T) {
 		mgr := NewSOPINManager()
 
-		smk, err := mgr.Verify(testValidPIN)
+		smk, err := mgr.BeginVerify(testValidPIN)
 
 		require.ErrorIs(t, err, ErrSOPINNotSet)
 		require.Nil(t, smk)
@@ -277,54 +277,143 @@ func TestSOPINManager_Verify(t *testing.T) {
 		mgr := NewSOPINManager()
 		_, err := mgr.Initialize(testValidPIN)
 		require.NoError(t, err)
-		mgr.SetRetries(0) // Block the PIN
+		mgr.SetRetries(0) // Exhaust the budget
 
-		smk, err := mgr.Verify(testValidPIN)
+		smk, err := mgr.BeginVerify(testValidPIN)
 
 		require.ErrorIs(t, err, ErrSOPINBlocked)
 		require.Nil(t, smk)
 	})
 
-	t.Run("successful verify resets retry counter", func(t *testing.T) {
+	t.Run("spends a retry before the answer is known", func(t *testing.T) {
 		mgr := NewSOPINManager()
 		_, err := mgr.Initialize(testValidPIN)
 		require.NoError(t, err)
-		mgr.SetRetries(3) // Simulate some failed attempts
 
-		_, err = mgr.Verify(testValidPIN)
-
+		// Even the CORRECT PIN spends a retry up front. A caller that never
+		// reports back must not get a free attempt.
+		_, err = mgr.BeginVerify(testValidPIN)
 		require.NoError(t, err)
-		require.Equal(t, DefaultSOPINMaxRetries, mgr.Retries())
+		require.Equal(t, DefaultSOPINMaxRetries-1, mgr.Retries())
 	})
 
-	t.Run("verify derives SMK deterministically", func(t *testing.T) {
+	t.Run("ConfirmVerified restores the budget", func(t *testing.T) {
+		mgr := NewSOPINManager()
+		_, err := mgr.Initialize(testValidPIN)
+		require.NoError(t, err)
+		mgr.SetRetries(3)
+
+		_, err = mgr.BeginVerify(testValidPIN)
+		require.NoError(t, err)
+		require.Equal(t, 2, mgr.Retries())
+
+		mgr.ConfirmVerified()
+		require.Equal(t, DefaultSOPINMaxRetries, mgr.Retries())
+		require.Equal(t, 0, mgr.ConsecutiveFailures())
+	})
+
+	t.Run("derives SMK deterministically", func(t *testing.T) {
 		mgr := NewSOPINManager()
 		expectedSMK, err := mgr.Initialize(testValidPIN)
 		require.NoError(t, err)
 
-		// Verify returns the same SMK for the same PIN (deterministic derivation)
-		smk1, err := mgr.Verify(testValidPIN)
+		smk1, err := mgr.BeginVerify(testValidPIN)
 		require.NoError(t, err)
+		mgr.ConfirmVerified()
 		require.Equal(t, expectedSMK, smk1)
 
-		smk2, err := mgr.Verify(testValidPIN)
+		smk2, err := mgr.BeginVerify(testValidPIN)
 		require.NoError(t, err)
+		mgr.ConfirmVerified()
 		require.Equal(t, expectedSMK, smk2)
 	})
 }
 
-func TestSOPINManager_Change(t *testing.T) {
-	t.Run("valid change updates salt", func(t *testing.T) {
+// TestSOPINManager_RetryBudgetIsSpent pins the property whose absence made the
+// lockout ornamental: repeated failures must actually exhaust the budget.
+func TestSOPINManager_RetryBudgetIsSpent(t *testing.T) {
+	t.Run("failures exhaust the budget and lock out", func(t *testing.T) {
 		mgr := NewSOPINManager()
-		originalSMK, err := mgr.Initialize(testValidPIN)
+		_, err := mgr.Initialize(testValidPIN)
+		require.NoError(t, err)
+
+		var last error
+		for i := 0; i < DefaultSOPINMaxRetries; i++ {
+			// A power cycle between attempts clears only the consecutive
+			// counter, never the budget.
+			mgr.consecutiveFailures.Store(0)
+
+			_, err := mgr.BeginVerify("wrongpin999")
+			require.NoError(t, err, "attempt %d must be admitted", i)
+			last = mgr.RecordFailure()
+		}
+
+		require.ErrorIs(t, last, ErrSOPINBlocked)
+		require.True(t, mgr.IsBlocked())
+		require.Equal(t, 0, mgr.Retries())
+
+		// Even the correct PIN is refused once the budget is gone.
+		_, err = mgr.BeginVerify(testValidPIN)
+		require.ErrorIs(t, err, ErrSOPINBlocked)
+	})
+
+	t.Run("power cycle threshold blocks before the budget is gone", func(t *testing.T) {
+		mgr := NewSOPINManager()
+		_, err := mgr.Initialize(testValidPIN)
+		require.NoError(t, err)
+
+		var last error
+		for i := 0; i < SOPINMaxConsecutiveFailures; i++ {
+			_, err := mgr.BeginVerify("wrongpin999")
+			require.NoError(t, err)
+			last = mgr.RecordFailure()
+		}
+
+		require.ErrorIs(t, last, ErrSOPINAuthBlocked)
+		require.True(t, mgr.IsAuthBlocked())
+		require.False(t, mgr.IsBlocked(), "the total budget must not be exhausted yet")
+
+		// Further attempts are refused until a power cycle, even with the
+		// correct PIN, and they do NOT consume more of the budget.
+		before := mgr.Retries()
+		_, err = mgr.BeginVerify(testValidPIN)
+		require.ErrorIs(t, err, ErrSOPINAuthBlocked)
+		require.Equal(t, before, mgr.Retries())
+	})
+
+	t.Run("a success between failures clears the consecutive counter", func(t *testing.T) {
+		mgr := NewSOPINManager()
+		_, err := mgr.Initialize(testValidPIN)
+		require.NoError(t, err)
+
+		for i := 0; i < SOPINMaxConsecutiveFailures-1; i++ {
+			_, err := mgr.BeginVerify("wrongpin999")
+			require.NoError(t, err)
+			require.ErrorIs(t, mgr.RecordFailure(), ErrSOPINInvalid)
+		}
+
+		_, err = mgr.BeginVerify(testValidPIN)
+		require.NoError(t, err)
+		mgr.ConfirmVerified()
+
+		require.Equal(t, 0, mgr.ConsecutiveFailures())
+		require.Equal(t, DefaultSOPINMaxRetries, mgr.Retries())
+	})
+}
+
+func TestSOPINManager_Rekey(t *testing.T) {
+	t.Run("valid rekey updates salt", func(t *testing.T) {
+		mgr := NewSOPINManager()
+		_, err := mgr.Initialize(testValidPIN)
 		require.NoError(t, err)
 		originalSalt := make([]byte, len(mgr.Salt))
 		copy(originalSalt, mgr.Salt)
 
-		_, err = mgr.Change(originalSMK, testValidPIN2)
+		_, err = mgr.Rekey(testValidPIN2)
 
 		require.NoError(t, err)
 		require.NotEqual(t, originalSalt, mgr.Salt)
+		require.Len(t, mgr.Salt, SOPINSaltSize)
 	})
 
 	t.Run("returns new SMK", func(t *testing.T) {
@@ -332,7 +421,7 @@ func TestSOPINManager_Change(t *testing.T) {
 		originalSMK, err := mgr.Initialize(testValidPIN)
 		require.NoError(t, err)
 
-		newSMK, err := mgr.Change(originalSMK, testValidPIN2)
+		newSMK, err := mgr.Rekey(testValidPIN2)
 
 		require.NoError(t, err)
 		require.NotNil(t, newSMK)
@@ -340,129 +429,72 @@ func TestSOPINManager_Change(t *testing.T) {
 		require.NotEqual(t, originalSMK, newSMK)
 	})
 
-	t.Run("old PIN produces different SMK after change", func(t *testing.T) {
-		mgr := NewSOPINManager()
-		originalSMK, err := mgr.Initialize(testValidPIN)
-		require.NoError(t, err)
-
-		newSMK, err := mgr.Change(originalSMK, testValidPIN2)
-		require.NoError(t, err)
-
-		// Old PIN now produces a different key (salt changed)
-		oldPINDerived := mgr.DeriveKey(testValidPIN)
-		require.NotEqual(t, newSMK, oldPINDerived)
-	})
-
-	t.Run("new PIN works after change", func(t *testing.T) {
-		mgr := NewSOPINManager()
-		originalSMK, err := mgr.Initialize(testValidPIN)
-		require.NoError(t, err)
-
-		newSMK, err := mgr.Change(originalSMK, testValidPIN2)
-		require.NoError(t, err)
-
-		// Verify with new PIN should succeed
-		verifiedSMK, err := mgr.Verify(testValidPIN2)
-
-		require.NoError(t, err)
-		require.Equal(t, newSMK, verifiedSMK)
-	})
-
-	t.Run("old PIN produces different SMK after change (detected by AES-GCM)", func(t *testing.T) {
-		mgr := NewSOPINManager()
-		originalSMK, err := mgr.Initialize(testValidPIN)
-		require.NoError(t, err)
-
-		newSMK, err := mgr.Change(originalSMK, testValidPIN2)
-		require.NoError(t, err)
-
-		// Verify with old PIN returns a different SMK (salt changed).
-		// KeyManager.UnlockWithSOPIN will detect this via AES-GCM unwrap failure.
-		oldSMK, err := mgr.Verify(testValidPIN)
-		require.NoError(t, err)
-		require.NotEqual(t, newSMK, oldSMK)
-	})
-
-	t.Run("Change accepts any currentSMK (caller validates via AES-GCM)", func(t *testing.T) {
+	t.Run("old PIN produces different SMK after rekey", func(t *testing.T) {
 		mgr := NewSOPINManager()
 		_, err := mgr.Initialize(testValidPIN)
 		require.NoError(t, err)
 
-		// Change() no longer validates currentSMK locally.
-		// The caller (KeyManager.ChangeSOPIN) validates by unwrapping AK
-		// with the SMK first, which is authenticated encryption.
-		invalidSMK := make([]byte, SOPINDerivedKeySize)
-		newSMK, err := mgr.Change(invalidSMK, testValidPIN2)
-
+		newSMK, err := mgr.Rekey(testValidPIN2)
 		require.NoError(t, err)
-		require.NotNil(t, newSMK)
-		require.Len(t, newSMK, SOPINDerivedKeySize)
+
+		// Old PIN now produces a different key (salt changed)
+		require.NotEqual(t, newSMK, mgr.DeriveKey(testValidPIN))
 	})
 
-	t.Run("invalid new PIN returns ErrSOPINPolicyViolation", func(t *testing.T) {
+	t.Run("new PIN derives the returned SMK", func(t *testing.T) {
 		mgr := NewSOPINManager()
-		originalSMK, err := mgr.Initialize(testValidPIN)
+		_, err := mgr.Initialize(testValidPIN)
 		require.NoError(t, err)
 
-		_, err = mgr.Change(originalSMK, testShortPIN)
+		newSMK, err := mgr.Rekey(testValidPIN2)
+		require.NoError(t, err)
+
+		verifiedSMK, err := mgr.BeginVerify(testValidPIN2)
+		require.NoError(t, err)
+		require.Equal(t, newSMK, verifiedSMK)
+	})
+
+	t.Run("too short new PIN returns ErrSOPINPolicyViolation and does not rotate", func(t *testing.T) {
+		mgr := NewSOPINManager()
+		_, err := mgr.Initialize(testValidPIN)
+		require.NoError(t, err)
+		originalSalt := make([]byte, len(mgr.Salt))
+		copy(originalSalt, mgr.Salt)
+
+		_, err = mgr.Rekey(testShortPIN)
 
 		require.ErrorIs(t, err, ErrSOPINPolicyViolation)
+		require.Equal(t, originalSalt, mgr.Salt, "a rejected rekey must not rotate the salt")
 	})
 
 	t.Run("too long new PIN returns ErrSOPINPolicyViolation", func(t *testing.T) {
 		mgr := NewSOPINManager()
-		originalSMK, err := mgr.Initialize(testValidPIN)
+		_, err := mgr.Initialize(testValidPIN)
 		require.NoError(t, err)
 
-		_, err = mgr.Change(originalSMK, testLongPIN())
+		_, err = mgr.Rekey(testLongPIN())
 
 		require.ErrorIs(t, err, ErrSOPINPolicyViolation)
 	})
 
 	t.Run("uninitialized manager returns ErrSOPINNotSet", func(t *testing.T) {
 		mgr := NewSOPINManager()
-		fakeSMK := make([]byte, SOPINDerivedKeySize)
 
-		_, err := mgr.Change(fakeSMK, testValidPIN2)
+		_, err := mgr.Rekey(testValidPIN2)
 
 		require.ErrorIs(t, err, ErrSOPINNotSet)
 	})
 
-	t.Run("blocked manager returns ErrSOPINBlocked", func(t *testing.T) {
+	t.Run("rekey restores the retry budget", func(t *testing.T) {
 		mgr := NewSOPINManager()
-		originalSMK, err := mgr.Initialize(testValidPIN)
+		_, err := mgr.Initialize(testValidPIN)
 		require.NoError(t, err)
-		mgr.SetRetries(0)
+		mgr.SetRetries(3)
 
-		_, err = mgr.Change(originalSMK, testValidPIN2)
-
-		require.ErrorIs(t, err, ErrSOPINBlocked)
-	})
-
-	t.Run("change resets retry counter", func(t *testing.T) {
-		mgr := NewSOPINManager()
-		originalSMK, err := mgr.Initialize(testValidPIN)
-		require.NoError(t, err)
-		mgr.SetRetries(3) // Simulate some failed attempts
-
-		_, err = mgr.Change(originalSMK, testValidPIN2)
+		_, err = mgr.Rekey(testValidPIN2)
 
 		require.NoError(t, err)
 		require.Equal(t, DefaultSOPINMaxRetries, mgr.Retries())
-	})
-
-	t.Run("change generates new salt", func(t *testing.T) {
-		mgr := NewSOPINManager()
-		originalSMK, err := mgr.Initialize(testValidPIN)
-		require.NoError(t, err)
-		originalSalt := make([]byte, len(mgr.Salt))
-		copy(originalSalt, mgr.Salt)
-
-		_, err = mgr.Change(originalSMK, testValidPIN2)
-
-		require.NoError(t, err)
-		require.NotEqual(t, originalSalt, mgr.Salt)
-		require.Len(t, mgr.Salt, SOPINSaltSize)
 	})
 }
 
@@ -490,55 +522,68 @@ func TestSOPINManager_Retries(t *testing.T) {
 		require.True(t, mgr.IsBlocked())
 	})
 
-	t.Run("DecrementRetries decrements atomically", func(t *testing.T) {
+	t.Run("BeginVerify decrements atomically", func(t *testing.T) {
 		mgr := NewSOPINManager()
+		_, err := mgr.Initialize(testValidPIN)
+		require.NoError(t, err)
 		require.Equal(t, DefaultSOPINMaxRetries, mgr.Retries())
 
-		newValue := mgr.DecrementRetries()
+		_, err = mgr.BeginVerify(testValidPIN)
 
-		require.Equal(t, DefaultSOPINMaxRetries-1, newValue)
+		require.NoError(t, err)
 		require.Equal(t, DefaultSOPINMaxRetries-1, mgr.Retries())
 	})
 
-	t.Run("DecrementRetries multiple times", func(t *testing.T) {
+	t.Run("repeated attempts walk the budget down to a lockout", func(t *testing.T) {
 		mgr := NewSOPINManager()
+		_, err := mgr.Initialize(testValidPIN)
+		require.NoError(t, err)
 		mgr.SetRetries(5)
 
 		for i := 4; i >= 0; i-- {
-			newValue := mgr.DecrementRetries()
-			require.Equal(t, i, newValue)
+			mgr.consecutiveFailures.Store(0)
+			_, err := mgr.BeginVerify("wrongpin999")
+			require.NoError(t, err)
+			require.Equal(t, i, mgr.Retries())
+			require.ErrorIs(t, mgr.RecordFailure(), map[bool]error{true: ErrSOPINBlocked, false: ErrSOPINInvalid}[i == 0])
 		}
 
 		require.Equal(t, 0, mgr.Retries())
 		require.True(t, mgr.IsBlocked())
 	})
 
-	t.Run("DecrementRetries can go negative", func(t *testing.T) {
+	t.Run("a blocked manager admits no further attempts", func(t *testing.T) {
 		mgr := NewSOPINManager()
+		_, err := mgr.Initialize(testValidPIN)
+		require.NoError(t, err)
 		mgr.SetRetries(1)
 
-		mgr.DecrementRetries()             // Now 0
-		newValue := mgr.DecrementRetries() // Now -1
+		_, err = mgr.BeginVerify("wrongpin999")
+		require.NoError(t, err)
+		require.ErrorIs(t, mgr.RecordFailure(), ErrSOPINBlocked)
 
-		require.Equal(t, -1, newValue)
-		require.True(t, mgr.IsBlocked())
+		// The budget cannot be driven negative by further attempts, because
+		// there are no further attempts.
+		_, err = mgr.BeginVerify("wrongpin999")
+		require.ErrorIs(t, err, ErrSOPINBlocked)
+		require.Equal(t, 0, mgr.Retries())
 	})
 
-	t.Run("ResetRetries sets to default", func(t *testing.T) {
+	t.Run("ConfirmVerified sets to default", func(t *testing.T) {
 		mgr := NewSOPINManager()
 		mgr.SetRetries(2)
 
-		mgr.ResetRetries()
+		mgr.ConfirmVerified()
 
 		require.Equal(t, DefaultSOPINMaxRetries, mgr.Retries())
 	})
 
-	t.Run("ResetRetries from zero", func(t *testing.T) {
+	t.Run("ConfirmVerified from zero", func(t *testing.T) {
 		mgr := NewSOPINManager()
 		mgr.SetRetries(0)
 		require.True(t, mgr.IsBlocked())
 
-		mgr.ResetRetries()
+		mgr.ConfirmVerified()
 
 		require.Equal(t, DefaultSOPINMaxRetries, mgr.Retries())
 		require.False(t, mgr.IsBlocked())
@@ -565,8 +610,24 @@ func TestSOPINManager_Retries(t *testing.T) {
 		require.False(t, mgr.IsBlocked())
 	})
 
-	t.Run("concurrent retries operations are thread-safe", func(t *testing.T) {
+	t.Run("concurrent attempts each cost exactly one retry", func(t *testing.T) {
 		mgr := NewSOPINManager()
+		_, err := mgr.Initialize(testValidPIN)
+		require.NoError(t, err)
+
+		// Argon2id at the production parameters is memory-hard by design: 64
+		// MiB of scratch per derivation. This subtest deliberately runs 100
+		// derivations at once, so at the defaults it holds ~6.4 GiB live --
+		// and under -race, which is how CI runs this package, it peaked at
+		// 41.7 GB and the runner's OOM killer took the process ("signal:
+		// killed", job 44178). The assertion here is about the atomic budget
+		// accounting, not about the KDF's cost, so the manager is dialled down
+		// to Argon2's floor (memory >= 8*parallelism). Every other subtest in
+		// this file exercises the derivation at the shipped parameters.
+		mgr.Iterations = 1
+		mgr.Memory = 8
+		mgr.Parallelism = 1
+
 		mgr.SetRetries(1000)
 
 		var wg sync.WaitGroup
@@ -575,13 +636,18 @@ func TestSOPINManager_Retries(t *testing.T) {
 			go func() {
 				defer wg.Done()
 				for j := 0; j < 10; j++ {
-					mgr.DecrementRetries()
+					// consecutiveFailures is left alone: this exercises the
+					// budget accounting, which must not lose or double-count a
+					// decrement under contention.
+					if _, err := mgr.BeginVerify(testValidPIN); err != nil {
+						return
+					}
 				}
 			}()
 		}
 		wg.Wait()
 
-		// 100 goroutines * 10 decrements = 1000 total decrements
+		// 100 goroutines * 10 attempts = 1000 retries spent
 		require.Equal(t, 0, mgr.Retries())
 	})
 }
@@ -656,26 +722,27 @@ func TestSOPINManager_EdgeCases(t *testing.T) {
 		require.Nil(t, key)
 	})
 
-	t.Run("multiple verifications with correct PIN succeed", func(t *testing.T) {
+	t.Run("multiple confirmed verifications with correct PIN succeed", func(t *testing.T) {
 		mgr := NewSOPINManager()
 		expectedSMK, err := mgr.Initialize(testValidPIN)
 		require.NoError(t, err)
 
 		for i := 0; i < 10; i++ {
-			smk, err := mgr.Verify(testValidPIN)
+			smk, err := mgr.BeginVerify(testValidPIN)
 			require.NoError(t, err)
 			require.True(t, bytes.Equal(expectedSMK, smk))
+			mgr.ConfirmVerified()
 		}
 	})
 
-	t.Run("verify does not modify salt", func(t *testing.T) {
+	t.Run("verification does not modify salt", func(t *testing.T) {
 		mgr := NewSOPINManager()
 		_, err := mgr.Initialize(testValidPIN)
 		require.NoError(t, err)
 		originalSalt := make([]byte, len(mgr.Salt))
 		copy(originalSalt, mgr.Salt)
 
-		_, err = mgr.Verify(testValidPIN)
+		_, err = mgr.BeginVerify(testValidPIN)
 		require.NoError(t, err)
 
 		require.Equal(t, originalSalt, mgr.Salt)

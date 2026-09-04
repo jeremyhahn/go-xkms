@@ -78,9 +78,16 @@ guessing.
 | `--set-pin` | (none) | Set the initial PIN (requires `--pin`) |
 | `--unified-pin` | `true` | Synchronize the PIN across FIDO2, PKCS#11, and file PIN systems |
 
-The Security Officer PIN is not set here — it belongs to the `xkey pin` command
-group (`xkey pin set-so`, `xkey pin change-so`, `xkey pin status`,
-`xkey pin reset-lockout`).
+The Security Officer PIN is not set here, and — despite the name — **not** by
+`xkey pin set-so` either. That command group drives the qrdb PIN service, a
+different subject that never touches the virtual authenticator's
+`AuthenticatorState.SOPINManager`.
+
+The authenticator's SO PIN is established by initializing the token, which is
+reachable only over CTAP `authenticatorConfig` (`0x0D`) with
+`subCommand >= 0x80`. There is no CLI verb for it yet. See
+[Authenticator Security](authenticator-security.md#security-officer-role-and-token-initialization)
+for the lifecycle, the trust-on-first-use window and the lockout semantics.
 
 ## User presence
 

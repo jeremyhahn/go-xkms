@@ -383,6 +383,30 @@ func (m *MemoryStorage) copyState(state *AuthenticatorState) *AuthenticatorState
 		copy(copied.AttestationCert, state.AttestationCert)
 	}
 
+	// Copy the Security Officer credential and the key hierarchy it protects.
+	// These were previously dropped, which silently discarded the SO PIN, its
+	// retry counter and every wrapped key across a save/load cycle.
+	if state.SOPINManager != nil {
+		manager := NewSOPINManager()
+		manager.IsSet = state.SOPINManager.IsSet
+		manager.Salt = copyBytes(state.SOPINManager.Salt)
+		manager.Iterations = state.SOPINManager.Iterations
+		manager.Memory = state.SOPINManager.Memory
+		manager.Parallelism = state.SOPINManager.Parallelism
+		manager.SetRetries(state.SOPINManager.Retries())
+		// consecutiveFailures is deliberately not carried: it is per-power-cycle
+		// state, and loading state is what a power cycle looks like here.
+		copied.SOPINManager = manager
+	}
+
+	copied.WrappedAK = copyBytes(state.WrappedAK)
+	copied.WrappedCMKUser = copyBytes(state.WrappedCMKUser)
+	copied.WrappedCMKSO = copyBytes(state.WrappedCMKSO)
+	copied.WrappedAttestUser = copyBytes(state.WrappedAttestUser)
+	copied.WrappedAttestSO = copyBytes(state.WrappedAttestSO)
+	copied.AttestedConfigHash = copyBytes(state.AttestedConfigHash)
+	copied.PINSyncPending = state.PINSyncPending
+
 	// Copy policy HMAC integrity fields
 	copied.PolicyHMACTag = copyBytes(state.PolicyHMACTag)
 	if state.SignedPolicyFields != nil {

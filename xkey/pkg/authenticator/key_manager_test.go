@@ -171,8 +171,8 @@ func TestKeyManager_InitializeSOPIN(t *testing.T) {
 		require.NoError(t, err)
 
 		// Get the SMK by verifying the PIN
-		smk, err := state.SOPINManager.Verify(testSOPIN)
-		require.NoError(t, err)
+		smk := state.SOPINManager.DeriveKey(testSOPIN)
+		require.NotNil(t, smk)
 
 		// Unwrap AK
 		akWrapper, err := NewAESGCMKeyWrapper(smk)
@@ -267,18 +267,25 @@ func TestKeyManager_UnlockWithSOPIN(t *testing.T) {
 		require.True(t, bytes.Equal(cmkBefore, cmkAfter), "CMK should be the same after unlock")
 	})
 
-	t.Run("unlock without wrapped AK succeeds but has no AK", func(t *testing.T) {
+	t.Run("unlock without wrapped AK is refused", func(t *testing.T) {
 		state, config := createTestKeyManagerState()
 		km := NewKeyManager(state, config)
 
-		// Manually set up SO PIN without wrapped keys
+		// SO PIN set, but no wrapped Admin Key: a state InitializeSOPIN never
+		// produces. There is nothing the derived SMK can be checked against, so
+		// any PIN at all would "unlock" it. Refuse instead.
 		state.SOPINManager = NewSOPINManager()
 		_, err := state.SOPINManager.Initialize(testSOPIN)
 		require.NoError(t, err)
 
 		err = km.UnlockWithSOPIN(testSOPIN)
-		require.NoError(t, err)
-		require.True(t, km.IsSOUnlocked())
+		require.ErrorIs(t, err, ErrKeyManagerNoAK)
+		require.False(t, km.IsSOUnlocked())
+
+		// And emphatically not with a PIN that is simply wrong.
+		err = km.UnlockWithSOPIN("completely-different-pin")
+		require.ErrorIs(t, err, ErrKeyManagerNoAK)
+		require.False(t, km.IsSOUnlocked())
 	})
 
 	t.Run("unlock with corrupted wrapped AK fails and decrements retries", func(t *testing.T) {
@@ -673,22 +680,21 @@ func TestKeyManager_GetAttestationKey(t *testing.T) {
 		require.Equal(t, attestKey1, attestKey2)
 	})
 
-	t.Run("SO unlock without AK returns ErrKeyManagerNoAK", func(t *testing.T) {
+	t.Run("SO-unlocked manager without an Admin Key returns ErrKeyManagerNoAK", func(t *testing.T) {
 		state, config := createTestKeyManagerState()
 		km := NewKeyManager(state, config)
+		require.NoError(t, km.InitializeSOPIN(testSOPIN))
+		require.NoError(t, km.UnlockWithSOPIN(testSOPIN))
 
-		// Manually set up SO PIN without any wrapped keys
-		state.SOPINManager = NewSOPINManager()
-		_, err := state.SOPINManager.Initialize(testSOPIN)
-		require.NoError(t, err)
-
-		// Clear the attestation key from state to force unwrap path
+		// Drop the cached Admin Key to reach the no-AK branch. The unlock path
+		// itself now refuses a state that has no wrapped AK, so this is the
+		// only way the branch is reachable.
+		km.mu.Lock()
+		km.adminKey = nil
+		km.mu.Unlock()
 		state.AttestationKey = nil
 
-		err = km.UnlockWithSOPIN(testSOPIN)
-		require.NoError(t, err)
-
-		_, err = km.GetAttestationKey()
+		_, err := km.GetAttestationKey()
 		require.ErrorIs(t, err, ErrKeyManagerNoAK)
 	})
 
@@ -931,8 +937,8 @@ func TestKeyManager_ChangeSOPIN(t *testing.T) {
 		require.NoError(t, err)
 
 		// Get current SMK
-		currentSMK, err := state.SOPINManager.Verify(testSOPIN)
-		require.NoError(t, err)
+		currentSMK := state.SOPINManager.DeriveKey(testSOPIN)
+		require.NotNil(t, currentSMK)
 
 		err = km.ChangeSOPIN(currentSMK, testSOPIN2)
 
@@ -945,8 +951,8 @@ func TestKeyManager_ChangeSOPIN(t *testing.T) {
 		err := km.InitializeSOPIN(testSOPIN)
 		require.NoError(t, err)
 
-		currentSMK, err := state.SOPINManager.Verify(testSOPIN)
-		require.NoError(t, err)
+		currentSMK := state.SOPINManager.DeriveKey(testSOPIN)
+		require.NotNil(t, currentSMK)
 
 		err = km.ChangeSOPIN(currentSMK, testSOPIN2)
 		require.NoError(t, err)
@@ -964,8 +970,8 @@ func TestKeyManager_ChangeSOPIN(t *testing.T) {
 		err := km.InitializeSOPIN(testSOPIN)
 		require.NoError(t, err)
 
-		currentSMK, err := state.SOPINManager.Verify(testSOPIN)
-		require.NoError(t, err)
+		currentSMK := state.SOPINManager.DeriveKey(testSOPIN)
+		require.NotNil(t, currentSMK)
 
 		err = km.ChangeSOPIN(currentSMK, testSOPIN2)
 		require.NoError(t, err)
@@ -988,8 +994,8 @@ func TestKeyManager_ChangeSOPIN(t *testing.T) {
 		cmkBefore, err := km.GetCMK()
 		require.NoError(t, err)
 
-		currentSMK, err := state.SOPINManager.Verify(testSOPIN)
-		require.NoError(t, err)
+		currentSMK := state.SOPINManager.DeriveKey(testSOPIN)
+		require.NotNil(t, currentSMK)
 
 		err = km.ChangeSOPIN(currentSMK, testSOPIN2)
 		require.NoError(t, err)
@@ -1050,8 +1056,8 @@ func TestKeyManager_ChangeSOPIN(t *testing.T) {
 		err := km.InitializeSOPIN(testSOPIN)
 		require.NoError(t, err)
 
-		currentSMK, err := state.SOPINManager.Verify(testSOPIN)
-		require.NoError(t, err)
+		currentSMK := state.SOPINManager.DeriveKey(testSOPIN)
+		require.NotNil(t, currentSMK)
 
 		// Corrupt wrapped AK
 		state.WrappedAK[len(state.WrappedAK)-1] ^= 0xFF
@@ -1067,8 +1073,8 @@ func TestKeyManager_ChangeSOPIN(t *testing.T) {
 		err := km.InitializeSOPIN(testSOPIN)
 		require.NoError(t, err)
 
-		currentSMK, err := state.SOPINManager.Verify(testSOPIN)
-		require.NoError(t, err)
+		currentSMK := state.SOPINManager.DeriveKey(testSOPIN)
+		require.NotNil(t, currentSMK)
 
 		err = km.ChangeSOPIN(currentSMK, testSOPINShort)
 
@@ -1696,14 +1702,14 @@ func TestKeyManager_WrapAttestationKey(t *testing.T) {
 	t.Run("requires AK to be available", func(t *testing.T) {
 		state, config := createTestKeyManagerState()
 		km := NewKeyManager(state, config)
+		require.NoError(t, km.InitializeSOPIN(testSOPIN))
+		require.NoError(t, km.UnlockWithSOPIN(testSOPIN))
 
-		// Manually set up SO unlock without AK
-		state.SOPINManager = NewSOPINManager()
-		_, err := state.SOPINManager.Initialize(testSOPIN)
-		require.NoError(t, err)
-
-		err = km.UnlockWithSOPIN(testSOPIN)
-		require.NoError(t, err)
+		// Drop the cached Admin Key: unlocking can no longer produce an
+		// SO-unlocked manager that never had one.
+		km.mu.Lock()
+		km.adminKey = nil
+		km.mu.Unlock()
 
 		newKey, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
 		require.NoError(t, err)
@@ -2069,8 +2075,8 @@ func TestKeyManager_InitializeSOPIN_Comprehensive(t *testing.T) {
 		originalKey := state.AttestationKey
 
 		// Verify SO-wrapped attestation key can be unwrapped
-		smk, err := state.SOPINManager.Verify(testSOPIN)
-		require.NoError(t, err)
+		smk := state.SOPINManager.DeriveKey(testSOPIN)
+		require.NotNil(t, smk)
 
 		akWrapper, err := NewAESGCMKeyWrapper(smk)
 		require.NoError(t, err)
@@ -2213,12 +2219,12 @@ func TestKeyManager_InitializeSOPIN_Comprehensive(t *testing.T) {
 		require.NoError(t, err)
 
 		// Get SMK by verifying
-		smk1, err := state.SOPINManager.Verify(testSOPIN)
-		require.NoError(t, err)
+		smk1 := state.SOPINManager.DeriveKey(testSOPIN)
+		require.NotNil(t, smk1)
 
 		// SMK should be consistent
-		smk2, err := state.SOPINManager.Verify(testSOPIN)
-		require.NoError(t, err)
+		smk2 := state.SOPINManager.DeriveKey(testSOPIN)
+		require.NotNil(t, smk2)
 
 		require.True(t, bytes.Equal(smk1, smk2), "SMK should be deterministic for same PIN and salt")
 	})

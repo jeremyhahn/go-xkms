@@ -24,24 +24,32 @@ import "context"
 //   - Clears all wrapped keys if SO PIN is configured
 //   - Optionally generates a new attestation key
 //
-// Per CTAP2 specification, reset requires:
-//   - User presence confirmation
-//   - Must be performed within a short time after power-up (implementation-defined)
+// Per CTAP 2.1 §6.9 reset requires user presence, which is enforced here.
 //
-// When SO PIN is configured, reset also requires:
-//   - SO PIN verification (via KeyManager)
+// On an initialized token reset additionally requires an authenticated Security
+// Officer, because reset is the only path back to the uninitialized state and
+// therefore the only way to reopen the trust-on-first-use window.
 //
-// For a virtual/software authenticator, user presence is simulated as always approved,
-// and the power-up timing requirement is relaxed.
+// On an uninitialized token there is no Security Officer to authenticate as, so
+// user presence alone gates it. That is not a waiver: PKCS#11 v3.0 C_InitToken
+// on an uninitialized token likewise requires no prior authentication, and
+// demanding a credential that cannot exist would make an uninitialized token
+// permanently unresettable.
+//
+// §6.9 also requires reset to arrive within a short time of power-up. That bound
+// is NOT enforced here — a factory reset is driven from the UI long after
+// startup — and the security doc records the gap rather than implying otherwise.
 //
 // Returns:
 //   - Success response with StatusOK on successful reset
 //   - Error response if storage operations fail or SO PIN is invalid
 func (a *Authenticator) handleReset() ([]byte, error) {
-	// When SO PIN is configured, require SO PIN authorization
-	// The SO PIN must be verified before reset is allowed
-	if a.keyManager != nil && a.keyManager.IsSOPINConfigured() {
-		if !a.keyManager.IsSOUnlocked() {
+	// When the token is initialized, reset is a Security Officer operation.
+	// The gate can only report "not authenticated" here — the uninitialized
+	// case is excluded by the branch — so it is reported as ErrSOPINRequired,
+	// which names the credential the caller has to present.
+	if a.IsTokenInitialized() {
+		if err := a.requireSOUnlocked(); err != nil {
 			return nil, ErrSOPINRequired
 		}
 	}
@@ -89,6 +97,12 @@ func (a *Authenticator) handleReset() ([]byte, error) {
 	if err := a.storage.SaveState(a.state); err != nil {
 		return nil, err
 	}
+
+	// The token is uninitialized again, so the initialization window reopens.
+	// The caller has just proven user presence, and on an initialized token
+	// also Security Officer possession, so this grants nothing new — but
+	// without it the token could not be re-initialized until the next restart.
+	a.rearmTokenInitWindow()
 
 	// Return success with no additional data
 	return a.successResponse(nil), nil

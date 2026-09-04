@@ -131,6 +131,14 @@ func (a *Authenticator) handleGetInfo() ([]byte, error) {
 		response[getInfoKeyRemainingDiscoverableCredentials] = uint(remaining)
 	}
 
+	// 0x15: vendorPrototypeConfigCommands - vendor subcommand IDs reachable
+	// through authenticatorConfig's vendorPrototype subcommand. CTAP 2.1 §6.4
+	// requires this to be present when that subcommand is supported; without it
+	// a client has no way to discover that token initialization exists.
+	// handleConfig dispatches the vendorPrototype range unconditionally, so the
+	// list is unconditional too.
+	response[getInfoKeyVendorPrototypeConfigCommands] = vendorPrototypeConfigCommands()
+
 	// Encode response to CBOR
 	data, err := encodeCBOR(response)
 	if err != nil {

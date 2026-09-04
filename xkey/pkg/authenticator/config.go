@@ -217,6 +217,16 @@ type Config struct {
 	// Default: nil (auto-grant)
 	UserPresenceHandler UserPresenceHandler `yaml:"-" json:"-" mapstructure:"-"`
 
+	// TokenInitWindow bounds the trust-on-first-use window for establishing the
+	// Security Officer PIN: first initialization is refused once this much time
+	// has passed since power-up. CTAP 2.1 §6.9 applies the same bound to
+	// authenticatorReset, and 10 seconds is the common implementation.
+	//
+	// Widening this widens the window in which an unauthenticated caller with
+	// user presence can claim the Security Officer role. Zero selects
+	// DefaultTokenInitWindow; it cannot be disabled.
+	TokenInitWindow time.Duration `yaml:"token-init-window" json:"token_init_window" mapstructure:"token-init-window"`
+
 	// UserPresenceTimeout is the timeout for user presence/verification requests.
 	// Only used if UserPresenceHandler is set to an interactive handler.
 	// Default: 30 seconds
@@ -329,6 +339,7 @@ func DefaultConfig() *Config {
 		EnableResidentKey:          true,
 		EnableCredentialManagement: true,
 		EnableHMACSecret:           true,
+		TokenInitWindow:            DefaultTokenInitWindow,
 		UserPresenceTimeout:        30 * time.Second,
 		AttestationFormat:          "none",
 		Storage:                    nil,
@@ -361,6 +372,12 @@ func (c *Config) SetDefaults() {
 
 	if c.PINMaxRetries <= 0 {
 		c.PINMaxRetries = DefaultPINMaxRetries
+	}
+
+	// A zero or negative window would either disable initialization entirely or
+	// leave it permanently open. Neither is a policy anyone means to express.
+	if c.TokenInitWindow <= 0 {
+		c.TokenInitWindow = DefaultTokenInitWindow
 	}
 
 	if c.UserPresenceTimeout == 0 {

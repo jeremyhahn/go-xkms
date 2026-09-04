@@ -81,6 +81,86 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `socketHandler` becomes an `atomic.Pointer`: it is created on the startup
   goroutine, replaced by `Start` on a Wails-dispatched goroutine, and read by
   `HandleTouch` and `GetStatus` on others.
+- **An authenticator's Security Officer PIN can now be established, and
+  "no SO PIN set" no longer reads as "no SO required"** (#233).
+
+  `InitializeSOPIN` and `VendorCmdSetSOPIN` had no reachable caller, so no
+  device could be given an SO PIN and every SO-gated capability was
+  unreachable. Building a path to them without also closing the
+  trust-on-first-use window would have shipped the window, so both land here.
+
+  **The model.** xKey's SO/User split is PKCS#11's, not FIDO2's — CTAP 2.1 has
+  no Security Officer — so two specifications govern two halves. PKCS#11 v3.0
+  §5.6 (`C_InitToken`) governs the lifecycle: a token is *uninitialized* until
+  it is given an SO PIN, refuses SO-gated operations before that, and
+  afterwards the SO PIN changes only by authenticating as SO.
+  `Authenticator.InitializeToken` / `ChangeSOPIN` / `UnlockSO` are that
+  lifecycle; `authenticatorReset` is the only way back.
+
+  **The window.** The first SO PIN cannot be authenticated against anything, so
+  CTAP 2.1 §6.9's own two bounds on `authenticatorReset` are applied to it:
+  accepted only within `Config.TokenInitWindow` (default 10s) of power-up, and
+  requires user presence. No bespoke enrolment token was invented alongside
+  them. A successful reset re-arms the window, since the caller has just proven
+  both. **For a software authenticator a power cycle is a process restart** —
+  the security doc states this rather than implying a hardware guarantee.
+
+  **The lockout was ornamental and is now enforced.** `SOPINManager.Verify`
+  called `ResetRetries()` on *every* call, before the caller had validated
+  anything, so the subsequent failure decrement netted out and the counter
+  never reached zero: 20 consecutive wrong SO PINs left 7 of 8 retries. It is
+  replaced by an explicit three-call contract —
+  `BeginVerify` / `ConfirmVerified` / `RecordFailure` — that spends the retry
+  **before** the answer is known, so a caller that crashes or never reports
+  back gets no free attempt. CTAP 2.1 §6.5.5.7's power-cycle threshold (3
+  consecutive failures → `ErrSOPINAuthBlocked`) is added, and the token layer
+  persists every spend, on failure as well as success, so a restart cannot
+  refund one.
+
+  **Three further fail-opens found while wiring this, each with a test that
+  fails without the fix:**
+
+  - `SOPINManager.Change` rotated the Argon2id salt and reset the retry counter
+    **before** the caller validated the current SMK. A single wrong-PIN change
+    attempt therefore made the real SO PIN underivable — a bricked token — and,
+    because the counter was reset on each attempt, made the change path an
+    unbounded online brute force. `KeyManager.ChangeSOPIN` now unwraps the Admin
+    Key first and only then calls the renamed `Rekey`, which mutates nothing it
+    has not been told is authorised.
+  - `UnlockWithSOPIN` succeeded when `WrappedAK` was empty. With nothing to
+    authenticate the derived SMK against, *any* PIN unlocked the SO role. It now
+    returns `ErrKeyManagerNoAK`.
+  - `MemoryStorage.copyState` silently dropped `SOPINManager` and every wrapped
+    key, so SO state did not survive a save/load cycle at all.
+
+  `SerializableState.SOPINRetries` also lost its `omitempty`. That one was
+  *not* live — a dropped zero decodes back to zero and the restore is
+  unconditional — but a tag that omits a lockout is a landmine under the next
+  person who makes the restore conditional, so it is written unconditionally
+  and the reason is in the field comment.
+
+  **Reporting.** SO-gated operations on an uninitialized token returned
+  `ErrKeyManagerLocked`, indistinguishable from "the SO has not authenticated".
+  They now return `ErrTokenUninitialized`, and `Authenticator.TokenFlags()`
+  surfaces the PKCS#11 `CK_TOKEN_INFO` flags (`CKF_TOKEN_INITIALIZED`,
+  `CKF_SO_PIN_COUNT_LOW`, `CKF_SO_PIN_FINAL_TRY`, `CKF_SO_PIN_LOCKED`), which
+  render an uninitialized token as `uninitialized` rather than as an empty flag
+  set. The `GetSOPINRetries` vendor subcommand becomes `GetTokenInfo` (same
+  wire ID `0x06`) and no longer *fails* on an uninitialized token — an error
+  reading "SO PIN not set" is precisely what gets mistaken for "no SO PIN
+  needed". Every SO error now maps to a real CTAP status code instead of
+  collapsing to `CTAP2_ERR_OTHER` (0x7F).
+
+  `authenticatorGetInfo` now advertises `vendorPrototypeConfigCommands` (0x15),
+  which CTAP 2.1 §6.4 requires whenever the `vendorPrototype` subcommand is
+  supported; its absence left the whole vendor surface undiscoverable.
+
+  **Not fixed here, and recorded rather than implied:** there is still no CLI
+  verb reaching these commands — `authenticatorConfig` `0x0D` is the only
+  transport — and `xkey pin set-so` drives an unrelated subject (the qrdb PIN
+  service), which `docs/fido2/daemon-configuration.md` previously stated the
+  opposite of. CTAP 2.1 §6.9's power-up bound on `authenticatorReset` itself is
+  also still not enforced.
 
 - **The unscoped common-name key lookup is fixed on gRPC and REST** (#221).
   #166 fixed it for MCP; the same first-match-on-CN scan existed on the other

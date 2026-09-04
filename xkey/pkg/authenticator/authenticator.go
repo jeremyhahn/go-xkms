@@ -21,6 +21,7 @@ import (
 	"log/slog"
 	"sync"
 	"sync/atomic"
+	"time"
 
 	"github.com/fxamacker/cbor/v2"
 	"github.com/jeremyhahn/go-xkms/xkey/pkg/authenticator/keybackend"
@@ -181,6 +182,12 @@ type Authenticator struct {
 	// (e.g., requestUserPresence) use commandContext() to obtain it.
 	cmdCtx atomic.Pointer[cmdCtxHolder]
 
+	// poweredUpAt is when this authenticator instance came up. It bounds the
+	// trust-on-first-use window for token initialization (CTAP 2.1 §6.9); for a
+	// software authenticator a power cycle is a process restart.
+	// Guarded by mu.
+	poweredUpAt time.Time
+
 	// mu protects state modifications.
 	mu sync.RWMutex
 
@@ -243,6 +250,7 @@ func NewAuthenticator(config *Config) (*Authenticator, error) {
 		config:               config,
 		storage:              storage,
 		state:                state,
+		poweredUpAt:          time.Now(),
 		keyBackend:           config.KeyBackend,
 		onCredentialCreated:  config.OnCredentialCreated,
 		onAssertionCompleted: config.OnAssertionCompleted,
@@ -811,6 +819,37 @@ func errorToStatus(err error) byte {
 		return StatusPINNotSet
 	case errors.Is(err, ErrPINPolicyViolation):
 		return StatusPINPolicyViolation
+	// Security Officer credential states. Without these every SO refusal
+	// collapsed to CTAP2_ERR_OTHER (0x7F), which tells a client nothing about
+	// whether to retry, to prompt, or to stop.
+	case errors.Is(err, ErrSOPINRequired):
+		return StatusPINRequired
+	case errors.Is(err, ErrSOPINInvalid):
+		return StatusPINInvalid
+	case errors.Is(err, ErrSOPINBlocked):
+		return StatusPINBlocked
+	case errors.Is(err, ErrSOPINAuthBlocked):
+		return StatusPINAuthBlocked
+	case errors.Is(err, ErrSOPINNotSet):
+		return StatusPINNotSet
+	case errors.Is(err, ErrSOPINPolicyViolation):
+		return StatusPINPolicyViolation
+	case errors.Is(err, ErrSOPINAlreadySet):
+		return StatusNotAllowed
+	case errors.Is(err, ErrKeyManagerAlreadyInitialized):
+		return StatusNotAllowed
+	// PKCS#11 CKR_TOKEN_NOT_INITIALIZED has no CTAP equivalent; CTAP 2.1 uses
+	// CTAP2_ERR_NOT_ALLOWED for an operation the authenticator's current state
+	// forbids, which is also what §6.9 returns outside the power-up window.
+	case errors.Is(err, ErrTokenUninitialized):
+		return StatusNotAllowed
+	case errors.Is(err, ErrTokenInitWindowClosed):
+		return StatusNotAllowed
+	// A Security Officer exists but has not authenticated. Distinct on the wire
+	// from ErrTokenUninitialized above, where there is no credential to
+	// present, because the two demand different responses from a client.
+	case errors.Is(err, ErrKeyManagerLocked):
+		return StatusPINRequired
 	case errors.Is(err, ErrInvalidSubcommand):
 		return StatusInvalidSubcommand
 	case errors.Is(err, ErrUnsupportedPINProtocol):

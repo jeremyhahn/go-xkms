@@ -21,6 +21,7 @@ import (
 	"crypto/sha256"
 	"crypto/x509"
 	"errors"
+	"slices"
 	"time"
 
 	"github.com/fxamacker/cbor/v2"
@@ -59,8 +60,9 @@ const (
 	// VendorCmdReplaceAttestKey replaces the attestation key (requires SO unlock).
 	VendorCmdReplaceAttestKey = 0x05
 
-	// VendorCmdGetSOPINRetries returns the SO PIN retry count.
-	VendorCmdGetSOPINRetries = 0x06
+	// VendorCmdGetTokenInfo returns the token's PKCS#11-equivalent lifecycle
+	// state: the initialization flags plus the SO PIN retry accounting.
+	VendorCmdGetTokenInfo = 0x06
 
 	// VendorCmdSetRPPolicy sets a per-RP policy (requires SO unlock).
 	VendorCmdSetRPPolicy = 0x07
@@ -105,9 +107,11 @@ const (
 
 // authenticatorConfig response keys.
 const (
-	configResponseKeyRetries  = 0x01
-	configResponseKeyPolicy   = 0x02
-	configResponseKeyPolicies = 0x03
+	configResponseKeyRetries         = 0x01
+	configResponseKeyPolicy          = 0x02
+	configResponseKeyPolicies        = 0x03
+	configResponseKeyTokenFlags      = 0x04
+	configResponseKeyPowerCycleState = 0x05
 )
 
 // Config command errors.
@@ -152,12 +156,25 @@ var vendorSOPINHandlers = map[uint8]vendorSOPINHandlerFunc{
 	VendorCmdUnlockWithSOPIN:  handleVendorUnlockWithSOPIN,
 	VendorCmdResetUserPIN:     handleVendorResetUserPIN,
 	VendorCmdReplaceAttestKey: handleVendorReplaceAttestKey,
-	VendorCmdGetSOPINRetries:  handleVendorGetSOPINRetries,
+	VendorCmdGetTokenInfo:     handleVendorGetTokenInfo,
 	VendorCmdSetRPPolicy:      handleVendorSetRPPolicy,
 	VendorCmdGetRPPolicy:      handleVendorGetRPPolicy,
 	VendorCmdDeleteRPPolicy:   handleVendorDeleteRPPolicy,
 	VendorCmdListRPPolicies:   handleVendorListRPPolicies,
 	VendorCmdSetProfile:       handleVendorSetProfile,
+}
+
+// vendorPrototypeConfigCommands returns the vendor subcommand IDs this
+// authenticator supports, in ascending order so the GetInfo response is stable
+// across runs. It is derived from the dispatch map, so a handler cannot be
+// added without becoming discoverable.
+func vendorPrototypeConfigCommands() []uint {
+	ids := make([]uint, 0, len(vendorSOPINHandlers))
+	for id := range vendorSOPINHandlers {
+		ids = append(ids, uint(id))
+	}
+	slices.Sort(ids)
+	return ids
 }
 
 // handleConfig implements the CTAP2.1 authenticatorConfig command (0x0D).
@@ -354,99 +371,56 @@ func (a *Authenticator) handleConfigVendorPrototype(req *configRequest) ([]byte,
 	return handler(a, req.subCommandParams)
 }
 
-// handleVendorSetSOPIN initializes the SO PIN for the first time.
-// This operation does not require pinUvAuthParam since it's the initial setup.
+// handleVendorSetSOPIN initializes the token, establishing its Security
+// Officer PIN. This is the CTAP transport onto Authenticator.InitializeToken.
+//
+// It carries no pinUvAuthParam because there is nothing yet to authenticate
+// against — the token has no SO. That trust-on-first-use window is not left
+// open: InitializeToken bounds it with CTAP 2.1 §6.9's own two requirements,
+// a short post-power-up window and user presence.
 func handleVendorSetSOPIN(a *Authenticator, params map[interface{}]interface{}) ([]byte, error) {
-	// Extract SO PIN from params
 	pin, err := extractStringParam(params, vendorParamKeyPin)
 	if err != nil {
 		return nil, ErrConfigMissingPin
 	}
 
-	// Verify key manager is available
-	if a.keyManager == nil {
-		return nil, ErrKeyManagerNoSOPIN
-	}
-
-	// Initialize SO PIN
-	if err := a.keyManager.InitializeSOPIN(pin); err != nil {
+	if err := a.InitializeToken(a.commandContext(), pin); err != nil {
 		return nil, err
-	}
-
-	// Persist state
-	a.mu.Lock()
-	defer a.mu.Unlock()
-
-	if err := a.storage.SaveState(a.state); err != nil {
-		return nil, ErrStorageError
 	}
 
 	return a.successResponse(nil), nil
 }
 
-// handleVendorChangeSOPIN changes the existing SO PIN.
-// This operation requires the current SO PIN for verification.
+// handleVendorChangeSOPIN changes the existing SO PIN. The current SO PIN
+// authenticates the change; there is no other path to a new SO PIN short of
+// authenticatorReset.
 func handleVendorChangeSOPIN(a *Authenticator, params map[interface{}]interface{}) ([]byte, error) {
-	// Extract current SO PIN
 	currentPin, err := extractStringParam(params, vendorParamKeyPin)
 	if err != nil {
 		return nil, ErrConfigMissingPin
 	}
 
-	// Extract new SO PIN
 	newPin, err := extractStringParam(params, vendorParamKeyNewPin)
 	if err != nil {
 		return nil, ErrConfigMissingNewPin
 	}
 
-	// Verify key manager is available
-	if a.keyManager == nil {
-		return nil, ErrKeyManagerNoSOPIN
-	}
-
-	// Verify current SO PIN and get SMK
-	if a.state.SOPINManager == nil {
-		return nil, ErrSOPINNotSet
-	}
-
-	currentSMK, err := a.state.SOPINManager.Verify(currentPin)
-	if err != nil {
+	if err := a.ChangeSOPIN(a.commandContext(), currentPin, newPin); err != nil {
 		return nil, err
-	}
-	defer clearBytes(currentSMK)
-
-	// Change SO PIN
-	if err := a.keyManager.ChangeSOPIN(currentSMK, newPin); err != nil {
-		return nil, err
-	}
-
-	// Persist state
-	a.mu.Lock()
-	defer a.mu.Unlock()
-
-	if err := a.storage.SaveState(a.state); err != nil {
-		return nil, ErrStorageError
 	}
 
 	return a.successResponse(nil), nil
 }
 
-// handleVendorUnlockWithSOPIN unlocks the KeyManager with SO PIN.
-// This makes key material available for subsequent operations.
+// handleVendorUnlockWithSOPIN authenticates as Security Officer, making key
+// material available for subsequent SO-gated operations.
 func handleVendorUnlockWithSOPIN(a *Authenticator, params map[interface{}]interface{}) ([]byte, error) {
-	// Extract SO PIN
 	pin, err := extractStringParam(params, vendorParamKeyPin)
 	if err != nil {
 		return nil, ErrConfigMissingPin
 	}
 
-	// Verify key manager is available
-	if a.keyManager == nil {
-		return nil, ErrKeyManagerNoSOPIN
-	}
-
-	// Unlock with SO PIN
-	if err := a.keyManager.UnlockWithSOPIN(pin); err != nil {
+	if err := a.UnlockSO(a.commandContext(), pin); err != nil {
 		return nil, err
 	}
 
@@ -456,13 +430,8 @@ func handleVendorUnlockWithSOPIN(a *Authenticator, params map[interface{}]interf
 // handleVendorResetUserPIN resets the user PIN when SO is unlocked.
 // This operation requires the KeyManager to be SO-unlocked.
 func handleVendorResetUserPIN(a *Authenticator, params map[interface{}]interface{}) ([]byte, error) {
-	// Verify key manager is SO-unlocked
-	if a.keyManager == nil {
-		return nil, ErrKeyManagerNoSOPIN
-	}
-
-	if !a.keyManager.IsSOUnlocked() {
-		return nil, ErrKeyManagerLocked
+	if err := a.requireSOUnlocked(); err != nil {
+		return nil, err
 	}
 
 	// Extract new PIN hash
@@ -501,13 +470,8 @@ func handleVendorResetUserPIN(a *Authenticator, params map[interface{}]interface
 // handleVendorReplaceAttestKey replaces the attestation key.
 // This operation requires the KeyManager to be SO-unlocked.
 func handleVendorReplaceAttestKey(a *Authenticator, params map[interface{}]interface{}) ([]byte, error) {
-	// Verify key manager is SO-unlocked
-	if a.keyManager == nil {
-		return nil, ErrKeyManagerNoSOPIN
-	}
-
-	if !a.keyManager.IsSOUnlocked() {
-		return nil, ErrKeyManagerLocked
+	if err := a.requireSOUnlocked(); err != nil {
+		return nil, err
 	}
 
 	// Generate new attestation key
@@ -548,20 +512,32 @@ func handleVendorReplaceAttestKey(a *Authenticator, params map[interface{}]inter
 	return a.successResponse(nil), nil
 }
 
-// handleVendorGetSOPINRetries returns the current SO PIN retry count.
-// This operation does not require authentication.
-func handleVendorGetSOPINRetries(a *Authenticator, params map[interface{}]interface{}) ([]byte, error) {
-	// Check if SO PIN is configured
-	if a.state.SOPINManager == nil || !a.state.SOPINManager.IsSet {
-		return nil, ErrSOPINNotSet
+// handleVendorGetTokenInfo reports the token's lifecycle state.
+//
+// It never fails on an uninitialized token. That is the point: the caller must
+// be able to tell "this token has no Security Officer, so SO-gated operations
+// are refused" from "no Security Officer is required here", and an error that
+// merely says the SO PIN is not set has been read as the latter.
+//
+// The response carries the PKCS#11-equivalent CK_TOKEN_INFO flags, the SO PIN
+// retry count (omitted when there is no SO credential to have retries for), and
+// CTAP 2.1 §6.5.5.2's powerCycleState.
+//
+// No authentication is required: none of this is secret, and a caller that
+// cannot read the state cannot recover from it either.
+func handleVendorGetTokenInfo(a *Authenticator, params map[interface{}]interface{}) ([]byte, error) {
+	a.mu.RLock()
+	flags := tokenFlags(a.state)
+	manager := a.state.SOPINManager
+	a.mu.RUnlock()
+
+	response := map[int]interface{}{
+		configResponseKeyTokenFlags: uint(flags),
 	}
 
-	// Get retry count
-	retries := a.state.SOPINManager.Retries()
-
-	// Build response
-	response := map[int]interface{}{
-		configResponseKeyRetries: uint8(retries),
+	if flags&TokenFlagInitialized != 0 {
+		response[configResponseKeyRetries] = uint(manager.Retries())
+		response[configResponseKeyPowerCycleState] = manager.IsAuthBlocked()
 	}
 
 	responseData, err := encodeCBOR(response)
@@ -574,9 +550,8 @@ func handleVendorGetSOPINRetries(a *Authenticator, params map[interface{}]interf
 
 // handleVendorSetRPPolicy sets a per-RP policy (requires SO unlock).
 func handleVendorSetRPPolicy(a *Authenticator, params map[interface{}]interface{}) ([]byte, error) {
-	// Verify SO is unlocked
-	if a.keyManager == nil || !a.keyManager.IsSOUnlocked() {
-		return nil, ErrKeyManagerLocked
+	if err := a.requireSOUnlocked(); err != nil {
+		return nil, err
 	}
 
 	// Verify RP policy store is configured
@@ -672,9 +647,8 @@ func handleVendorGetRPPolicy(a *Authenticator, params map[interface{}]interface{
 
 // handleVendorDeleteRPPolicy deletes a per-RP policy (requires SO unlock).
 func handleVendorDeleteRPPolicy(a *Authenticator, params map[interface{}]interface{}) ([]byte, error) {
-	// Verify SO is unlocked
-	if a.keyManager == nil || !a.keyManager.IsSOUnlocked() {
-		return nil, ErrKeyManagerLocked
+	if err := a.requireSOUnlocked(); err != nil {
+		return nil, err
 	}
 
 	if a.rpPolicyStore == nil {
@@ -741,9 +715,8 @@ func handleVendorListRPPolicies(a *Authenticator, params map[interface{}]interfa
 
 // handleVendorSetProfile sets authenticator profile configuration (requires SO unlock).
 func handleVendorSetProfile(a *Authenticator, params map[interface{}]interface{}) ([]byte, error) {
-	// Verify SO is unlocked
-	if a.keyManager == nil || !a.keyManager.IsSOUnlocked() {
-		return nil, ErrKeyManagerLocked
+	if err := a.requireSOUnlocked(); err != nil {
+		return nil, err
 	}
 
 	a.mu.Lock()
