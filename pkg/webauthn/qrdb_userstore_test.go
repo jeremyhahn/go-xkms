@@ -211,7 +211,11 @@ func (f *fakeKV) Get(ctx context.Context, key string, opts ...qrdbtransport.Read
 	defer f.mu.Unlock()
 	v, ok := f.m[key]
 	if !ok {
-		return nil, errors.New("key not found")
+		// The real KV transports report a missing key as
+		// *transport.KeyNotFoundError, and the adapter classifies on that type
+		// rather than on message text. A stub returning a plain error would
+		// exercise a path the production transports never produce.
+		return nil, &qrdbtransport.KeyNotFoundError{Key: key}
 	}
 	cp := make([]byte, len(v))
 	copy(cp, v)

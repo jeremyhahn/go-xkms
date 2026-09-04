@@ -400,7 +400,10 @@ func TestQRDBAdapter_ListUserCredIDs_CorruptIndex(t *testing.T) {
 
 // ----- helper predicate coverage -----
 
-func TestIsQRDBNotFound(t *testing.T) {
+// TestIsUserNotFound covers the user-record classifier, which still matches on
+// message text and therefore still fails open. See isUserNotFound and
+// go-qrdb#286 — the fallback stays until the UserClient contract is confirmed.
+func TestIsUserNotFound(t *testing.T) {
 	cases := []struct {
 		err  error
 		want bool
@@ -412,8 +415,8 @@ func TestIsQRDBNotFound(t *testing.T) {
 		{errors.New("transport unavailable"), false},
 	}
 	for _, c := range cases {
-		if got := isQRDBNotFound(c.err); got != c.want {
-			t.Fatalf("isQRDBNotFound(%v) = %v want %v", c.err, got, c.want)
+		if got := isUserNotFound(c.err); got != c.want {
+			t.Fatalf("isUserNotFound(%v) = %v want %v", c.err, got, c.want)
 		}
 	}
 }

@@ -57,6 +57,38 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   deliberately left distinct and are now named constants with a comment saying
   why unifying them would relocate data. The underlying plaintext-at-rest
   exposure and the layout collision it enables remain open on #181.
+- **A qrdb transport failure is no longer read as "this credential does not
+  exist"** (refs #183). `pkg/webauthn/qrdb_userstore.go`.
+
+  Not-found was decided by substring match — `"not found"`, `"ErrCodeNotFound"`,
+  `"no rows"` — against the error text, with a comment calling the check
+  "deliberately permissive". Any failure whose message happened to contain one
+  of those strings was classified as an absent record, and every caller treats
+  absence as benign. In the authentication path that is a fail-open.
+
+  Two of the three key-value sites are worse than an error-classification nit:
+
+  - hydrating a user's credentials, a failed lookup hit `continue`, so a login
+    proceeded against **silently fewer credentials than the user has** and could
+    judge a valid passkey unknown;
+  - reading the credential index, a failed lookup read as **"this user has no
+    credentials at all"**.
+
+  The KV classifier is now typed and fails closed: it matches
+  `*transport.KeyNotFoundError` with `errors.As` — the contract the qrdb SDK
+  itself uses in its kvstore adapter, coordination and guarded-swap paths — and
+  anything it does not positively recognise is returned as an error.
+
+  **The user-record path is deliberately unchanged** and still matches on text.
+  `UserClient.GetUser` and `GetUserByEmail` document no not-found error, their
+  implementations live outside this repository, and this package's tests use
+  hand-written fakes, so what a real missing user produces cannot be observed
+  here. Inverting that default without the answer would turn every genuine
+  not-found into an error and break registration. Asked upstream as
+  `go-qrdb#286`; the comment at `isUserNotFound` names it. Noted there too:
+  `qrdbsdk.ErrNotFound` is an `ErrorCode` constant rather than a sentinel
+  error, so `errors.Is` cannot match it and `IsDAONotFound` is the only typed
+  probe the SDK offers.
 
 - **The keys that unwrap the authenticator's key hierarchy now live in
   protected memory** (#285). `xkey/pkg/authenticator/key_manager.go`.

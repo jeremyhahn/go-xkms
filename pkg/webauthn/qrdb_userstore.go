@@ -22,6 +22,7 @@ import (
 	"strconv"
 	"sync"
 
+	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
 	qrdbtransport "github.com/jeremyhahn/go-qrdb/sdk/go/transport"
 )
 
@@ -394,7 +395,12 @@ func (b *qrdbBackend) materialize(ctx context.Context, u *qrdbtransport.User) (*
 	for _, id := range ids {
 		blob, err := b.kv.Get(ctx, credKey(id))
 		if err != nil {
-			if isQRDBNotFound(err) {
+			// Only a genuinely absent credential is skipped. Anything else is
+			// returned: a transport failure swallowed here would hand the
+			// caller a user with silently FEWER credentials than they have,
+			// and the authentication that follows would judge a valid passkey
+			// unknown.
+			if isKVNotFound(err) {
 				continue
 			}
 			return nil, WrapError("read credential", err)
@@ -414,7 +420,9 @@ func (b *qrdbBackend) materialize(ctx context.Context, u *qrdbtransport.User) (*
 func (b *qrdbBackend) listUserCredIDs(ctx context.Context, userID uint64) ([]string, error) {
 	blob, err := b.kv.Get(ctx, userCredSetKey(userID))
 	if err != nil {
-		if isQRDBNotFound(err) {
+		// An absent index means the user has no credentials yet. A transport
+		// failure does not, and must not read as "this user has none".
+		if isKVNotFound(err) {
 			return nil, nil
 		}
 		return nil, WrapError("read cred index", err)
@@ -473,28 +481,68 @@ func userCredSetKey(userID uint64) string {
 
 // mapNotFound converts a qrdb not-found error into the xkms sentinel.
 func mapNotFound(err error) error {
-	if isQRDBNotFound(err) {
+	if isUserNotFound(err) {
 		return ErrUserNotFound
 	}
 	return WrapError("qrdb user lookup", err)
 }
 
-// mapNotFoundCred converts a qrdb not-found error into the xkms
+// mapNotFoundCred converts a qrdb key-not-found error into the xkms
 // credential-not-found sentinel.
 func mapNotFoundCred(err error) error {
-	if isQRDBNotFound(err) {
+	if isKVNotFound(err) {
 		return ErrCredentialNotFound
 	}
 	return WrapError("qrdb credential lookup", err)
 }
 
-// isQRDBNotFound reports whether the given error is a qrdb not-found.
-// We detect by error string match because qrdb's typed errors live in
-// the SDK and cross-cutting probes against the embedded transport
-// surface a wrapped variant. The check is deliberately permissive.
-func isQRDBNotFound(err error) bool {
+// isKVNotFound reports whether err is the key-value store's not-found.
+//
+// Classification is TYPED and the default is closed: anything this does not
+// positively recognise is an error, not an absent key. That ordering matters
+// because every caller treats "not found" as a benign, expected outcome — a
+// transport failure classified as not-found silently becomes "this credential
+// does not exist", in the authentication path.
+//
+// The KV transports report a missing key as *transport.KeyNotFoundError; the
+// qrdb SDK matches it with errors.As in its own kvstore adapter, coordination
+// and guarded-swap paths, so this is the contract rather than an inference from
+// message text.
+func isKVNotFound(err error) bool {
 	if err == nil {
 		return false
+	}
+	var keyNotFound *qrdbtransport.KeyNotFoundError
+	return errors.As(err, &keyNotFound)
+}
+
+// isUserNotFound reports whether err means the user record is absent.
+//
+// Unlike isKVNotFound this still falls back to matching the message text, and
+// therefore still fails OPEN: an unrecognised transport failure is reported as
+// "no such user".
+//
+// It is left that way deliberately. The typed check below is the contract we
+// want, but UserClient.GetUser and GetUserByEmail — the two methods this
+// classifies — document no not-found error at all, while the neighbouring
+// GetUserByUsername documents ErrNotFound. Their implementations live outside
+// this repository and this package's tests use hand-written fakes, so what a
+// real missing user produces cannot be observed from here. Inverting the
+// default without that answer would turn every genuine not-found into an
+// error and break registration, which is worse than what is here now.
+//
+// Note also that qrdbsdk.ErrNotFound is an ErrorCode constant, not a sentinel
+// error — errors.Is cannot match it, so IsDAONotFound is the only typed probe
+// the SDK offers here. That is recorded on go-qrdb#286 too.
+//
+// Tracked upstream as go-qrdb#286. When that confirms the contract, delete the
+// text fallback and leave the typed check.
+func isUserNotFound(err error) bool {
+	if err == nil {
+		return false
+	}
+	if qrdbsdk.IsDAONotFound(err) {
+		return true
 	}
 	msg := err.Error()
 	for _, needle := range []string{"not found", "ErrCodeNotFound", "no rows"} {
