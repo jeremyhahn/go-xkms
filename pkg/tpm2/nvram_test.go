@@ -8,6 +8,7 @@ import (
 	"crypto/rsa"
 	"crypto/x509"
 	"crypto/x509/pkix"
+	"encoding/asn1"
 	"math"
 	"math/big"
 	"testing"
@@ -910,19 +911,77 @@ func TestCertificateNVRAMOperations(t *testing.T) {
 	tpmImpl, ok := tpm.(*TPM2)
 	require.True(t, ok)
 
-	t.Run("writeCertToNVRAM with valid cert", func(t *testing.T) {
+	// The round trip is the assertion that was missing when the NV index was
+	// defined as TPM_NT_COUNTER: a counter index is fixed at 8 octets, so
+	// NVDefineSpace at certificate size is rejected with TPM_RC_SIZE and the
+	// certificate was never stored. The subtest this replaced called
+	// writeCertToNVRAM, discarded the error, and passed regardless.
+	t.Run("writeCertToNVRAM round trips a certificate through readCertFromNVRAM", func(t *testing.T) {
 		cert := nvramTestCert(t)
-		certDER := cert.Raw
-
 		nvIndex := tpm2.TPMHandle(0x01C90100)
 
-		// Try to write - will define space then write
-		err := tpmImpl.writeCertToNVRAM(nvIndex, certDER)
-		if err == nil {
-			// Clean up - undefine the NV index
-			_ = tpmImpl.deleteCertFromNVRAM(nvIndex)
-		}
-		// May succeed or fail depending on NV state, but exercises the code
+		require.NoError(t, tpmImpl.writeCertToNVRAM(nvIndex, cert.Raw))
+		defer func() { _ = tpmImpl.deleteCertFromNVRAM(nvIndex) }()
+
+		got, err := tpmImpl.readCertFromNVRAM(nvIndex)
+		require.NoError(t, err)
+		require.Equal(t, cert.Raw, got, "NVRAM must return the certificate DER verbatim")
+
+		parsed, err := x509.ParseCertificate(got)
+		require.NoError(t, err, "the bytes read back must still be a certificate")
+		require.Equal(t, cert.Subject.CommonName, parsed.Subject.CommonName)
+	})
+
+	// Pins the index type itself, so a regression to a counter, bit field or
+	// extend index is caught at the definition rather than only at the write.
+	t.Run("writeCertToNVRAM defines an ordinary index", func(t *testing.T) {
+		cert := nvramTestCert(t)
+		nvIndex := tpm2.TPMHandle(0x01C90101)
+
+		require.NoError(t, tpmImpl.writeCertToNVRAM(nvIndex, cert.Raw))
+		defer func() { _ = tpmImpl.deleteCertFromNVRAM(nvIndex) }()
+
+		rsp, err := tpm2.NVReadPublic{NVIndex: nvIndex}.Execute(tpmImpl.transport)
+		require.NoError(t, err)
+		pub, err := rsp.NVPublic.Contents()
+		require.NoError(t, err)
+
+		assert.Equal(t, tpm2.TPMNTOrdinary, pub.Attributes.NT,
+			"certificate storage requires TPM_NT_ORDINARY, not a counter")
+		assert.Equal(t, uint16(len(cert.Raw)), pub.DataSize)
+	})
+
+	// Chunking is bounded by TPM_PT_NV_BUFFER_MAX, which is a different limit
+	// from the per-index maximum. A certificate that spans more than one
+	// NV_Write keeps both loops honest.
+	t.Run("writeCertToNVRAM round trips a certificate larger than TPM_PT_NV_BUFFER_MAX", func(t *testing.T) {
+		bufMax := nvBufferMaxUint16(tpmImpl.transport)
+		cert := nvramTestCertLargerThan(t, int(bufMax))
+		require.Greater(t, len(cert.Raw), int(bufMax),
+			"the test certificate must span more than one NV_Write")
+
+		nvIndex := tpm2.TPMHandle(0x01C90102)
+		require.NoError(t, tpmImpl.writeCertToNVRAM(nvIndex, cert.Raw))
+		defer func() { _ = tpmImpl.deleteCertFromNVRAM(nvIndex) }()
+
+		got, err := tpmImpl.readCertFromNVRAM(nvIndex)
+		require.NoError(t, err)
+		require.Equal(t, cert.Raw, got)
+	})
+
+	t.Run("writeCertToNVRAM rejects a certificate larger than TPM_PT_NV_INDEX_MAX", func(t *testing.T) {
+		indexMax, err := nvIndexMaxSize(tpmImpl.transport)
+		require.NoError(t, err)
+
+		oversized := make([]byte, int(indexMax)+1)
+		err = tpmImpl.writeCertToNVRAM(tpm2.TPMHandle(0x01C90103), oversized)
+		require.ErrorIs(t, err, ErrNVCertTooLarge,
+			"the size limit must be reported as a typed error, not a bare TPM_RC_SIZE")
+	})
+
+	t.Run("writeCertToNVRAM rejects empty certificate DER", func(t *testing.T) {
+		err := tpmImpl.writeCertToNVRAM(tpm2.TPMHandle(0x01C90104), nil)
+		require.ErrorIs(t, err, ErrNVCertEmpty)
 	})
 
 	t.Run("readCertFromNVRAM returns error for undefined index", func(t *testing.T) {
@@ -1321,6 +1380,51 @@ func TestNVReadWriteChunked(t *testing.T) {
 		err = tpm.NVUndefine(keyAttrs2)
 		assert.NoError(t, err)
 	})
+}
+
+// nvramTestCertLargerThan creates a self-signed certificate whose DER encoding
+// exceeds minSize bytes, by padding it with an opaque extension. Real IDevID
+// certificates reach this size through TCG subject-alternative-name and
+// hardware-module extensions; the padding stands in for that bulk without
+// depending on a particular profile.
+func nvramTestCertLargerThan(t *testing.T, minSize int) *x509.Certificate {
+	t.Helper()
+
+	privateKey, err := rsa.GenerateKey(rand.Reader, 2048)
+	require.NoError(t, err)
+
+	// The base certificate is ~725 bytes; pad past minSize with room to spare
+	// for the DER framing the extension itself adds.
+	padding := make([]byte, minSize)
+	_, err = rand.Read(padding)
+	require.NoError(t, err)
+
+	template := &x509.Certificate{
+		SerialNumber: big.NewInt(2),
+		Subject: pkix.Name{
+			CommonName: "Large Test Certificate",
+		},
+		NotBefore:             time.Now(),
+		NotAfter:              time.Now().Add(time.Hour * 24),
+		KeyUsage:              x509.KeyUsageDigitalSignature,
+		BasicConstraintsValid: true,
+		ExtraExtensions: []pkix.Extension{
+			{
+				// Private enterprise arc; the value is opaque filler.
+				Id:    asn1.ObjectIdentifier{1, 3, 6, 1, 4, 1, 57264, 138},
+				Value: padding,
+			},
+		},
+	}
+
+	certDER, err := x509.CreateCertificate(rand.Reader, template, template, &privateKey.PublicKey, privateKey)
+	require.NoError(t, err)
+	require.Greater(t, len(certDER), minSize)
+
+	cert, err := x509.ParseCertificate(certDER)
+	require.NoError(t, err)
+
+	return cert
 }
 
 // nvramTestCert creates a self-signed test certificate for NVRAM tests

@@ -1758,23 +1758,58 @@ func TestDeleteKeyWithBackend(t *testing.T) {
 	})
 }
 
-// TestProvisionEKCertNVRAM tests ProvisionEKCert with NVRAM path
+// TestProvisionEKCertNVRAM tests ProvisionEKCert with NVRAM path.
+//
+// The subtest this replaced asserted only that ProvisionEKCert returned an
+// error, on the stated rationale that "the NV index isn't defined" — but
+// ProvisionEKCert defines the index itself. The error it was really pinning
+// was the TPM_RC_SIZE from defining the EK certificate index as
+// TPM_NT_COUNTER, the same defect as issue #138. Asserting the failure kept
+// the defect in place; the round trip asserts the behaviour instead.
 func TestProvisionEKCertNVRAM(t *testing.T) {
 	_, tpm := createSim(false, false)
 	defer func() { _ = tpm.Close() }()
 
-	t.Run("attempts NV write with valid cert", func(t *testing.T) {
-		tpmImpl, ok := tpm.(*TPM2)
-		require.True(t, ok)
+	tpmImpl, ok := tpm.(*TPM2)
+	require.True(t, ok)
 
-		// Set cert handle to non-zero to trigger NVRAM path
-		tpmImpl.config.EK.CertHandle = 0x01C00099
+	t.Run("round trips the EK certificate through NV RAM", func(t *testing.T) {
+		// A non-zero cert handle selects the NV RAM path over the store.
+		tpmImpl.config.EK.CertHandle = ekCertIndexRSA2048
 
 		certDER := createTestCertDER(t)
+		require.NoError(t, tpmImpl.ProvisionEKCert(nil, certDER))
 
-		// This will fail because NV index isn't defined, but tests the path
-		err := tpmImpl.ProvisionEKCert(nil, certDER)
-		assert.Error(t, err)
+		stored, err := tpmImpl.EKCertificate()
+		require.NoError(t, err, "the EK certificate must be readable back out of NV RAM")
+		require.NotNil(t, stored)
+		assert.Equal(t, certDER, stored.Raw, "NV RAM must return the certificate verbatim")
+
+		rsp, err := tpm2.NVReadPublic{NVIndex: tpm2.TPMHandle(ekCertIndexRSA2048)}.Execute(tpmImpl.transport)
+		require.NoError(t, err)
+		pub, err := rsp.NVPublic.Contents()
+		require.NoError(t, err)
+		assert.Equal(t, tpm2.TPMNTOrdinary, pub.Attributes.NT,
+			"certificate storage requires TPM_NT_ORDINARY, not a counter")
+
+		require.NoError(t, tpmImpl.deleteCertFromNVRAM(tpm2.TPMHandle(ekCertIndexRSA2048)))
+	})
+
+	t.Run("rejects a certificate larger than TPM_PT_NV_INDEX_MAX", func(t *testing.T) {
+		tpmImpl.config.EK.CertHandle = ekCertIndexRSA2048
+
+		indexMax, err := nvIndexMaxSize(tpmImpl.transport)
+		require.NoError(t, err)
+
+		err = tpmImpl.ProvisionEKCert(nil, make([]byte, int(indexMax)+1))
+		assert.ErrorIs(t, err, ErrNVCertTooLarge)
+	})
+
+	t.Run("rejects empty certificate DER", func(t *testing.T) {
+		tpmImpl.config.EK.CertHandle = ekCertIndexRSA2048
+
+		err := tpmImpl.ProvisionEKCert(nil, nil)
+		assert.ErrorIs(t, err, ErrNVCertEmpty)
 	})
 }
 

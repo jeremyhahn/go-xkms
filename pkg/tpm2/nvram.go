@@ -991,6 +991,31 @@ func nvBufferMaxUint16(t transport.TPM) uint16 {
 	return uint16(v) // #nosec G115 -- clamped to MaxUint16 above
 }
 
+// nvIndexMaxSize returns the largest data area a single NV index may be
+// defined with, as reported by TPM_PT_NV_INDEX_MAX ("the maximum size of an
+// NV Index data area", TCG Part 2 §6.13).  It is distinct from
+// TPM_PT_NV_BUFFER_MAX, which bounds a single NV_Read or NV_Write transfer
+// and is what the chunking loops use.  The result is clamped to uint16
+// because TPMS_NV_PUBLIC.dataSize is a UINT16.
+//
+// A TPM that cannot answer the query, or answers zero, leaves the caller with
+// no way to distinguish an oversized certificate from a malformed index
+// definition (the TPM reports both as a bare TPM_RC_SIZE on publicInfo), so
+// the condition is reported rather than assumed away.
+func nvIndexMaxSize(t transport.TPM) (uint16, error) {
+	v, err := nvIndexesMax(t)
+	if err != nil {
+		return 0, err
+	}
+	if v == 0 {
+		return 0, ErrNVIndexMaxUnavailable
+	}
+	if v > math.MaxUint16 {
+		return math.MaxUint16, nil
+	}
+	return uint16(v), nil // #nosec G115 -- clamped to MaxUint16 above
+}
+
 // hashAlgDigestSize returns the digest size for a given TPM hash algorithm.
 func hashAlgDigestSize(hashAlg tpm2.TPMIAlgHash) (uint16, error) {
 	switch hashAlg {
@@ -1008,13 +1033,41 @@ func hashAlgDigestSize(hashAlg tpm2.TPMIAlgHash) (uint16, error) {
 }
 
 // writeCertToNVRAM writes a DER-encoded certificate to TPM NVRAM.
+//
+// The index is defined as TPM_NT_ORDINARY (TCG Part 2 §13.4): opaque data
+// that TPM2_NV_Write stores verbatim.  Every other index type is unusable
+// for certificate storage — TPM_NT_COUNTER, TPM_NT_BITS and TPM_NT_PIN_*
+// indices are fixed at 8 octets and are modified only by NV_Increment,
+// NV_SetBits or an authorization, so defining one at certificate size is
+// rejected with TPM_RC_SIZE on publicInfo, and writing to one at its legal
+// size is rejected with TPM_RC_ATTRIBUTES.
+//
 // The write is issued in chunks of at most TPM_PT_NV_BUFFER_MAX bytes so
 // that certificates larger than the TPM's NV buffer maximum are handled
-// correctly (TCG Part 3 §31.4.1).
+// correctly (TCG Part 3 §31.4.1).  The whole certificate must still fit in
+// one index, which TPM_PT_NV_INDEX_MAX bounds; that is checked up front so
+// the caller gets ErrNVCertTooLarge instead of a bare TPM_RC_SIZE.
 func (tpm *TPM2) writeCertToNVRAM(nvIndex tpm2.TPMHandle, certDER []byte) error {
 	tpm.logger.Debug("writing certificate to NV index",
 		slog.String("nv_index", fmt.Sprintf("0x%08X", nvIndex)),
 		slog.Int("size_bytes", len(certDER)))
+
+	if len(certDER) == 0 {
+		return ErrNVCertEmpty
+	}
+
+	indexMax, err := nvIndexMaxSize(tpm.transport)
+	if err != nil {
+		tpm.logger.Error("failed to query maximum NV index data size",
+			slog.String("error", err.Error()))
+		return err
+	}
+	if len(certDER) > int(indexMax) {
+		tpm.logger.Error("certificate exceeds the maximum NV index data size",
+			slog.Int("size_bytes", len(certDER)),
+			slog.Int("nv_index_max", int(indexMax)))
+		return ErrNVCertTooLarge
+	}
 
 	// Define NV space
 	defs := tpm2.NVDefineSpace{
@@ -1032,13 +1085,13 @@ func (tpm *TPM2) writeCertToNVRAM(nvIndex tpm2.TPMHandle, certDER []byte) error 
 					OwnerRead:  true,
 					AuthRead:   true,
 					NoDA:       true,
-					NT:         tpm2.TPMNT(0x01),
+					NT:         tpm2.TPMNTOrdinary,
 				},
-				DataSize: uint16(len(certDER)),
+				DataSize: uint16(len(certDER)), // #nosec G115 -- bounded by indexMax (uint16) above
 			}),
 	}
 
-	_, err := defs.Execute(tpm.transport)
+	_, err = defs.Execute(tpm.transport)
 	if err != nil {
 		tpm.logger.Error("failed to define NV space", slog.String("error", err.Error()))
 		return err
@@ -1151,17 +1204,38 @@ func (tpm *TPM2) readCertFromNVRAM(nvIndex tpm2.TPMHandle) ([]byte, error) {
 }
 
 // deleteCertFromNVRAM undefines an NV index from TPM NVRAM.
+//
+// TPM2_NV_UndefineSpace authorizes over the Name of the index, which is
+// computed from its public area rather than from the handle alone, so the
+// public area is read back first.  Supplying the bare handle fails in the
+// client with "missing Name for 'NVIndex' parameter" before any command
+// reaches the TPM, which is indistinguishable from a genuinely undefined
+// index unless the caller inspects the message.
 func (tpm *TPM2) deleteCertFromNVRAM(nvIndex tpm2.TPMHandle) error {
 	tpm.logger.Debug("deleting certificate from NV index",
 		slog.String("nv_index", fmt.Sprintf("0x%08X", nvIndex)))
 
-	_, err := tpm2.NVUndefineSpace{
+	nvPubRsp, err := tpm2.NVReadPublic{
+		NVIndex: nvIndex,
+	}.Execute(tpm.transport)
+	if err != nil {
+		tpm.logger.Error("failed to read NV public area", slog.String("error", err.Error()))
+		return err
+	}
+
+	_, err = tpm2.NVUndefineSpace{
 		AuthHandle: tpm2.AuthHandle{
 			Handle: tpm2.TPMRHOwner,
 			Auth:   tpm2.PasswordAuth(nil),
 		},
-		NVIndex: nvIndex,
+		NVIndex: tpm2.NamedHandle{
+			Handle: nvIndex,
+			Name:   nvPubRsp.NVName,
+		},
 	}.Execute(tpm.transport)
+	if err != nil {
+		tpm.logger.Error("failed to undefine NV space", slog.String("error", err.Error()))
+	}
 
 	return err
 }

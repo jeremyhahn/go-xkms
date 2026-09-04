@@ -650,6 +650,23 @@ func (tpm *TPM2) ProvisionEKCert(hierarchyAuth, ekCertDER []byte) error {
 	tpm.logger.Debug("NVDefineSpace: EK Certificate",
 		slog.Int("size", len(ekCertDER)))
 
+	if len(ekCertDER) == 0 {
+		return ErrNVCertEmpty
+	}
+
+	indexMax, err := nvIndexMaxSize(tpm.transport)
+	if err != nil {
+		tpm.logger.Error("failed to query maximum NV index data size",
+			slog.String("error", err.Error()))
+		return err
+	}
+	if len(ekCertDER) > int(indexMax) {
+		tpm.logger.Error("EK certificate exceeds the maximum NV index data size",
+			slog.Int("size_bytes", len(ekCertDER)),
+			slog.Int("nv_index_max", int(indexMax)))
+		return ErrNVCertTooLarge
+	}
+
 	defs := tpm2.NVDefineSpace{
 		AuthHandle: tpm2.AuthHandle{
 			Handle: ekAttrs.TPMAttributes.Hierarchy,
@@ -665,9 +682,12 @@ func (tpm *TPM2) ProvisionEKCert(hierarchyAuth, ekCertDER []byte) error {
 					OwnerRead:  true,
 					AuthRead:   true,
 					NoDA:       true,
-					NT:         tpm2.TPMNT(0x01),
+					// TPM_NT_ORDINARY: opaque data written by TPM2_NV_Write.
+					// A counter, bits or PIN index is fixed at 8 octets and
+					// cannot hold a certificate (TCG Part 2 §13.4).
+					NT: tpm2.TPMNTOrdinary,
 				},
-				DataSize: uint16(len(ekCertDER)),
+				DataSize: uint16(len(ekCertDER)), // #nosec G115 -- bounded by indexMax (uint16) above
 			}),
 	}
 	_, err = defs.Execute(tpm.transport)
@@ -675,8 +695,6 @@ func (tpm *TPM2) ProvisionEKCert(hierarchyAuth, ekCertDER []byte) error {
 		tpm.logger.Error("NVDefineSpace failed", slog.String("error", err.Error()))
 		return err
 	}
-
-	//  NV index type 4 = TPM_NT_ORDINARY
 
 	pub, err := defs.PublicInfo.Contents()
 	if err != nil {

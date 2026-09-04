@@ -1028,3 +1028,126 @@ func createTestCertWithKey(t *testing.T, pubKey interface{}) *x509.Certificate {
 
 	return cert
 }
+
+// newNVRAMCertTPM returns a simulator-backed TPM provisioned with an IDevID
+// key and configured to store both identity certificates in TPM NV RAM rather
+// than in the certificate store.
+//
+// This is the configuration deployed nodes actually run — the consumer config
+// sets idevid.cert-handle — and the one no test covered: every existing
+// certificate lifecycle test leaves CertHandle at zero and exercises the
+// store. The NV path was therefore never executed end to end, which is how an
+// index defined as TPM_NT_COUNTER shipped.
+//
+// The handles are the ones a deployed node uses, in the TCG-reserved range for
+// platform-defined NV indices, so the sizes and attributes under test match
+// production rather than an arbitrary scratch index.
+func newNVRAMCertTPM(t *testing.T) *TPM2 {
+	t.Helper()
+
+	const (
+		idevidCertHandle = 0x01C90000
+		iakCertHandle    = 0x01C90010
+	)
+
+	h := newSimHarness(t, func(c *Config) {
+		c.IDevID = &IDevIDConfig{
+			CertHandle:         idevidCertHandle,
+			CN:                 "idevid-device-001",
+			Hash:               crypto.SHA256.String(),
+			Handle:             0x81020000,
+			KeyAlgorithm:       x509.RSA.String(),
+			Manufacturer:       "ATT",
+			Model:              "xkms-test-device",
+			Pad:                false,
+			RSAConfig:          &store.RSAConfig{KeySize: 2048},
+			Serial:             "SN-0000-0001",
+			SignatureAlgorithm: x509.SHA256WithRSAPSS.String(),
+		}
+		c.IAK.CertHandle = iakCertHandle
+	})
+
+	// No certificate store is wired: in NV RAM mode the store must never be
+	// consulted, so a nil store proves the NV path carried the whole flow.
+	h.TPM.certStore = nil
+
+	ekPub, err := h.TPM.EKRSA()
+	require.NoError(t, err)
+	ekCert := selfSignedCertForKey(t, ekPub)
+
+	iakAttrs, err := h.TPM.IAKAttributes()
+	require.NoError(t, err)
+
+	_, _, err = h.TPM.CreateIDevID(iakAttrs, ekCert, nil)
+	require.NoError(t, err, "the simulator must be able to create an IDevID key")
+
+	_, err = h.TPM.IDevIDAttributes()
+	require.NoError(t, err, "the IDevID key must be present at the configured handle")
+
+	return h.TPM
+}
+
+// TestProvisionIDevIDCert_NVRAMRoundTrip is the end-to-end form of the defect
+// in issue #138: with a cert handle configured, ProvisionIDevIDCert writes the
+// certificate into an NV index and IDevIDCertificate must read the same
+// certificate back.
+//
+// Before the fix the NV index was defined as TPM_NT_COUNTER, so
+// TPM2_NV_DefineSpace rejected a certificate-sized data area with
+// TPM_RC_SIZE and this call never got as far as writing anything.
+func TestProvisionIDevIDCert_NVRAMRoundTrip(t *testing.T) {
+	tpm := newNVRAMCertTPM(t)
+
+	idevidAttrs, err := tpm.IDevIDAttributes()
+	require.NoError(t, err)
+	cert := certForTPMKey(t, idevidAttrs, "idevid-device-001")
+
+	require.NoError(t, tpm.ProvisionIDevIDCert(cert))
+
+	stored, err := tpm.IDevIDCertificate()
+	require.NoError(t, err, "the certificate must be readable back out of NV RAM")
+	require.NotNil(t, stored)
+	assert.Equal(t, cert.Raw, stored.Raw, "NV RAM must return the certificate verbatim")
+
+	require.NoError(t, tpm.DeleteIDevIDCertificate())
+
+	_, err = tpm.IDevIDCertificate()
+	assert.Error(t, err, "reading an undefined NV index must fail")
+}
+
+// TestProvisionIAKCert_NVRAMRoundTrip covers the second caller of
+// writeCertToNVRAM. No consumer configures iak.cert-handle today, so this path
+// carried the same defect latently; the round trip keeps it honest.
+func TestProvisionIAKCert_NVRAMRoundTrip(t *testing.T) {
+	tpm := newNVRAMCertTPM(t)
+
+	iakAttrs, err := tpm.IAKAttributes()
+	require.NoError(t, err)
+	cert := certForTPMKey(t, iakAttrs, "device-id-001")
+
+	require.NoError(t, tpm.ProvisionIAKCert(cert))
+
+	stored, err := tpm.IAKCertificate()
+	require.NoError(t, err, "the certificate must be readable back out of NV RAM")
+	require.NotNil(t, stored)
+	assert.Equal(t, cert.Raw, stored.Raw)
+
+	require.NoError(t, tpm.DeleteIAKCertificate())
+
+	_, err = tpm.IAKCertificate()
+	assert.Error(t, err)
+}
+
+// TestProvisionIDevIDCert_NVRAMOversized pins the one case in which a
+// certificate write really is a size problem, and that it is reported as a
+// typed error rather than the bare TPM_RC_SIZE a wrong index type also
+// produced — the two were previously indistinguishable to a caller.
+func TestProvisionIDevIDCert_NVRAMOversized(t *testing.T) {
+	tpm := newNVRAMCertTPM(t)
+
+	indexMax, err := nvIndexMaxSize(tpm.transport)
+	require.NoError(t, err)
+
+	err = tpm.writeCertToNVRAM(tpm2.TPMHandle(tpm.config.IDevID.CertHandle), make([]byte, int(indexMax)+1))
+	assert.ErrorIs(t, err, ErrNVCertTooLarge)
+}
