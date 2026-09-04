@@ -36,6 +36,15 @@ var (
 	// ErrNoBackendsConfigured indicates no backends were provided in the configuration.
 	ErrNoBackendsConfigured = errors.New("keystore: at least one backend must be configured")
 
+	// ErrInvalidBackendName is returned when a configured backend or key
+	// provider is registered under a name the canonical validator refuses.
+	//
+	// RegisterServiceBackend has always validated the name it is given.
+	// Initialize took its maps verbatim, so the single-registration path was
+	// guarded and the bulk entry point — which is exported to embedders as
+	// ServiceInitialize — was not.
+	ErrInvalidBackendName = errors.New("keystore: invalid backend name in configuration")
+
 	// ErrNoDefaultBackend is returned when no default backend is set.
 	ErrNoDefaultBackend = errors.New("keystore: no default backend configured")
 

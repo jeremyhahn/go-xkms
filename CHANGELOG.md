@@ -379,6 +379,60 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **`xkms.Initialize` validates the backend names it is configured with**
+  (#174). `Initialize` assigned `config.Backends` and `config.KeyProviders`
+  verbatim and never checked their keys, while `RegisterServiceBackend`
+  validated every name it was handed and `LookupBackend` validates on every
+  lookup. So the single-registration path was guarded and the bulk entry point
+  — exported to embedders as `ServiceInitialize` — was the one way to install a
+  name no other path would have admitted.
+
+  Both maps are now validated against `validation.ValidateBackendName` before
+  anything is registered, with a typed `ErrInvalidBackendName`. A key provider
+  is addressed by name exactly as a backend is, so validating only the one map
+  would have left the gap half open.
+
+  Because the canonical charset is lowercase, this makes the fold-collision
+  #174 is named for **unconstructible** rather than merely unlikely: two names
+  differing only by case cannot both be valid. Downstream code that compares
+  backend names case-insensitively — `pkg/api/mcp`'s import guard does — can no
+  longer be pointed at the wrong backend by registering `hsm-a` and `HSM-A`
+  together.
+
+  **This is a behaviour change on SDK surface.** `sdk/go/embedded.go` passes a
+  caller's `BackendName` straight into `Initialize`, so an embedder using an
+  uppercase, underscored or whitespace-padded name now receives a typed error
+  where it previously succeeded. That is the gap this fix closes, and the name
+  it refuses is one every other entry point already refused, but it will be
+  visible to a consumer that had been relying on the unguarded path.
+
+  A backend name is a **registry key, not a store-type keyword**: `token-a` and
+  `hsm-a` are legal names that `types.ParseStoreType` maps to `StoreUnknown`,
+  and a test pins that they stay registrable and resolvable. Conflating the two
+  is a separate defect, filed as #297.
+
+- **`pkg/server`'s backend factory resolves its default deterministically**
+  (#174, #173). `backend_factory.Initialize` computed the default by ranging
+  the backend map and taking the first entry, which reads Go's randomized
+  iteration order. It also computed a **non-empty** default before calling
+  `xkms.Initialize`, so the deterministic rule added there never ran for this
+  caller, and it silently substituted a backend when the configured default was
+  absent — pre-empting `ErrDefaultBackendNotFound` and turning a configuration
+  typo into a randomly chosen store rather than a startup error.
+
+  It now calls `xkms.ResolveDefaultBackend`, matching `server.go`'s own service
+  construction: the requested name when loaded, then software, then the first
+  name in sorted order.
+
+  **`server.Initialize` has no in-repo caller** — every reference outside its
+  own definition is a `_test.go` file, which is what #173 reports and proposes
+  deleting the function over. So this repairs a path the daemon does not take:
+  the live construction is `server.go`, which already resolved deterministically.
+  It is fixed rather than left because the function is **exported**, so an
+  external importer can reach it — the same reasoning #174 itself makes, that
+  "no in-repo caller" answers whether the daemon does it and never whether a
+  consumer can. Whether to delete it instead is #173's call, not this change's.
+
 - **The `pkg/acme/client` DNS tests no longer query the public internet**
   (#243). Ten call sites across four files resolved real domains — `google.com`,
   `example.com` — or queried `8.8.8.8` through the global resolver, inside the

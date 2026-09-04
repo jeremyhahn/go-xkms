@@ -100,15 +100,21 @@ func Initialize(config *BackendFactoryConfig) error {
 		return ErrNoBackendsAvailable
 	}
 
-	// Determine default backend
-	defaultBackend := config.DefaultBackend
-	if _, ok := backends[defaultBackend]; !ok {
-		// Fall back to first available backend
-		for name := range backends {
-			defaultBackend = name
-			break
-		}
-	}
+	// Resolve the default backend deterministically.
+	//
+	// Ranging the map to take "the first" entry read Go's randomized
+	// iteration order, so a deployment whose configured default was absent —
+	// a typo, or a backend left out of the build — got a different one on each
+	// start, and keys written before a restart were looked for in another
+	// store after it. ResolveDefaultBackend applies one rule: the requested
+	// name when it is loaded, then software, then the first name in sorted
+	// order.
+	//
+	// xkms.Initialize resolves the same way, but only when no default is
+	// configured; computing one here unconditionally meant its rule never ran
+	// for this caller. This is the third site of that fix — the other two are
+	// Initialize itself and server.go's own service construction.
+	defaultBackend := xkms.ResolveDefaultBackend(config.DefaultBackend, backends)
 
 	// Initialize the service
 	serviceConfig := &xkms.ServiceConfig{

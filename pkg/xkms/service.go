@@ -464,6 +464,32 @@ func validateTenantAccess(attrs *types.KeyAttributes) error {
 	return storage.ValidateTenantID(attrs.TenantID)
 }
 
+// validateConfiguredBackendNames checks every name in a service configuration
+// against the canonical backend-name validator.
+//
+// Both maps are checked: a key provider is addressed by name exactly as a
+// backend is, and validating only one would leave the gap half open. The name
+// is reported through SanitizeForLog because it came from a caller.
+func validateConfiguredBackendNames(config *ServiceConfig) error {
+	for _, named := range []struct {
+		kind string
+		set  map[string]Backend
+	}{
+		{"backend", config.Backends},
+		{"key provider", config.KeyProviders},
+	} {
+		for name := range named.set {
+			if err := validation.ValidateBackendName(name); err != nil {
+				return &ErrBackendLookup{
+					Sentinel: ErrInvalidBackendName,
+					Name:     named.kind + " " + validation.SanitizeForLog(name),
+				}
+			}
+		}
+	}
+	return nil
+}
+
 // Initialize sets up the xkms service.
 // This should be called once at application startup.
 // Subsequent calls are no-ops due to sync.Once semantics.
@@ -478,6 +504,25 @@ func Initialize(config *ServiceConfig) error {
 
 		if len(config.Backends) == 0 {
 			initErr = ErrNoBackendsConfigured
+			return
+		}
+
+		// Validate every configured name before anything is registered.
+		//
+		// RegisterServiceBackend validates the single name it is handed, and
+		// LookupBackend validates on every lookup, so a name that reaches the
+		// service through those paths has been checked. Initialize assigned
+		// its maps verbatim, which left the bulk entry point — exported to
+		// embedders as ServiceInitialize — as the one way to install a name no
+		// other path would have admitted.
+		//
+		// The canonical charset is lowercase, so this also makes a
+		// fold-collision unconstructible rather than merely unlikely: two
+		// names differing only by case cannot both be valid, and downstream
+		// code that compares names case-insensitively (pkg/api/mcp's import
+		// guard does) can no longer be pointed at the wrong backend by
+		// registering both.
+		if initErr = validateConfiguredBackendNames(config); initErr != nil {
 			return
 		}
 
