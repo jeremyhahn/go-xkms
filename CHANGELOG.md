@@ -9,6 +9,26 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Security
 
+- **The GUI never runs on the auto-grant presence handler** (#214 follow-up).
+  #214 stopped `FIDO2DeviceService.Stop` from inventing an `AutoGrantHandler`
+  and had it restore the handler `Start` displaced — but `pkg/gui/app.go`
+  configures no `UserPresenceHandler` at all, so the handler being restored
+  *was* the library's auto-grant default. Toggling the FIDO2 device off in the
+  UI therefore still left the browser-extension and autofill paths approving
+  user presence with no user involved, and the same hole was open before the
+  device ever started, when it was disabled in settings, and when `/dev/uhid`
+  was unavailable.
+
+  The GUI touch prompt is now installed at authenticator initialization and
+  held for the session (`FIDO2DeviceService.AttachPresenceHandler`); `Start`
+  captures that same handler and `Stop` puts it back, so the restore is a
+  no-op and there is no window in which presence auto-approves. The prompt does
+  not need the UHID bridge — it notifies the frontend and waits for approve,
+  deny or timeout — so stopping the device narrows nothing but USB.
+  `socketHandler` becomes an `atomic.Pointer`: it is created on the startup
+  goroutine, replaced by `Start` on a Wails-dispatched goroutine, and read by
+  `HandleTouch` and `GetStatus` on others.
+
 - **The unscoped common-name key lookup is fixed on gRPC and REST** (#221).
   #166 fixed it for MCP; the same first-match-on-CN scan existed on the other
   two transports and was not covered. A key ID on these transports is a common

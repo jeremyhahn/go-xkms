@@ -82,7 +82,7 @@ type FIDO2DeviceService struct {
 	log           *slog.Logger
 	device        *virtualdevice.NativeVirtualDevice
 	uhidDev       *uhid.Device
-	socketHandler *authenticator.SocketHandler
+	socketHandler atomic.Pointer[authenticator.SocketHandler]
 	emitFunc      func(eventType string, data any)
 	auditLogger   audit.Logger
 	externalAuth  *authenticator.Authenticator
@@ -183,6 +183,69 @@ func (s *FIDO2DeviceService) SetUserIntentCheck(enabled bool) {
 	}
 }
 
+// AttachPresenceHandler installs the GUI touch prompt as the shared
+// authenticator's user presence handler for the lifetime of the session, rather
+// than the lifetime of the virtual device.
+//
+// Without this the GUI never configures a handler at all, so the authenticator
+// runs on the library default — AutoGrantHandler — until Start swaps in the
+// SocketHandler, and Stop faithfully restores that default afterwards. The
+// browser-extension and autofill paths share this authenticator, so in both
+// windows their user presence is approved with no user involved. Installing the
+// prompt once, up front, removes the windows and makes Stop's restore a no-op.
+//
+// The handler is created once so that ApproveTouchRequest and DenyTouchRequest
+// keep addressing the request that is actually pending.
+func (s *FIDO2DeviceService) AttachPresenceHandler(notifier notify.Notifier) {
+	handler := s.ensurePresenceHandler(notifier)
+
+	if s.externalAuth == nil {
+		return
+	}
+	if s.externalAuth.UserPresenceHandler() == authenticator.UserPresenceHandler(handler) {
+		return
+	}
+
+	// The displaced handler is deliberately not kept for restoration: this
+	// prompt is the session's presence channel, and what it replaces is the
+	// auto-grant default there is no reason to go back to.
+	s.externalAuth.SetUserPresenceHandler(handler)
+	s.log.Info("wired SocketHandler to shared authenticator for user presence")
+}
+
+// ensurePresenceHandler returns the service's SocketHandler, creating it on
+// first use. Start and AttachPresenceHandler can run on different goroutines —
+// Wails dispatches bound method calls — so creation is a compare-and-swap and
+// every caller ends up with the same instance.
+func (s *FIDO2DeviceService) ensurePresenceHandler(notifier notify.Notifier) *authenticator.SocketHandler {
+	if handler := s.socketHandler.Load(); handler != nil {
+		return handler
+	}
+
+	candidate := authenticator.NewSocketHandler(notifier, s.log)
+
+	// Emit fido2:touch_resolved on every resolution (approve, deny, timeout)
+	// so the frontend clears the pending TouchButton state. Without this,
+	// a timeout leaves the button pulsing indefinitely.
+	candidate.SetOnResolved(func(approved bool) {
+		s.emit("fido2:touch_resolved", map[string]bool{"approved": approved})
+		// Do NOT hide the window after touch approval. The user may be on
+		// multiple monitors and wants xkey to remain visible. The browser
+		// will regain focus naturally once the FIDO2 ceremony completes.
+	})
+
+	if !s.socketHandler.CompareAndSwap(nil, candidate) {
+		return s.socketHandler.Load()
+	}
+	return candidate
+}
+
+// presenceHandler returns the GUI touch prompt, or nil when none has been
+// created yet.
+func (s *FIDO2DeviceService) presenceHandler() *authenticator.SocketHandler {
+	return s.socketHandler.Load()
+}
+
 // Start creates the SocketHandler, NativeVirtualDevice, and UHID device, then
 // starts the bridge loop that routes HID packets between the host and the
 // authenticator. The storage parameter provides credential persistence and
@@ -197,24 +260,17 @@ func (s *FIDO2DeviceService) Start(storage authenticator.StatefulCredentialStora
 		return ErrFIDO2StorageRequired
 	}
 
-	// Create the socket handler for user presence delegation.
-	s.socketHandler = authenticator.NewSocketHandler(notifier, s.log)
-
-	// Emit fido2:touch_resolved on every resolution (approve, deny, timeout)
-	// so the frontend clears the pending TouchButton state. Without this,
-	// a timeout leaves the button pulsing indefinitely.
-	s.socketHandler.SetOnResolved(func(approved bool) {
-		s.emit("fido2:touch_resolved", map[string]bool{"approved": approved})
-		// Do NOT hide the window after touch approval. The user may be on
-		// multiple monitors and wants xkey to remain visible. The browser
-		// will regain focus naturally once the FIDO2 ceremony completes.
-	})
+	// Reuse the session's touch prompt when AttachPresenceHandler already
+	// created it, so approvals keep reaching the request that is pending.
+	socketHandler := s.ensurePresenceHandler(notifier)
 
 	// Wire the SocketHandler to the shared authenticator so that USB HID
 	// touch prompts are routed to the GUI dialog instead of being
-	// auto-approved by the default AutoGrantHandler.
+	// auto-approved by the default AutoGrantHandler. When the prompt was
+	// already attached for the session, this captures that same handler and
+	// Stop's restore below is a no-op.
 	if s.externalAuth != nil {
-		s.priorUPHandler = s.externalAuth.SetUserPresenceHandler(s.socketHandler)
+		s.priorUPHandler = s.externalAuth.SetUserPresenceHandler(socketHandler)
 		s.log.Info("wired SocketHandler to shared authenticator for user presence")
 	}
 
@@ -230,7 +286,7 @@ func (s *FIDO2DeviceService) Start(storage authenticator.StatefulCredentialStora
 		Manufacturer:               "xKey",
 		Product:                    uhid.AuthenticatorDeviceName,
 		SerialNumber:               "XKEY001",
-		UserPresenceHandler:        s.socketHandler,
+		UserPresenceHandler:        socketHandler,
 		Logger:                     s.log,
 	}
 
@@ -392,8 +448,8 @@ func (s *FIDO2DeviceService) GetStatus() *FIDO2DeviceStatus {
 		status.DeviceName = uhid.AuthenticatorDeviceName
 		status.VendorID = fmt.Sprintf("0x%04X", virtualdevice.NativeVirtualDeviceVendorID)
 		status.ProductID = fmt.Sprintf("0x%04X", virtualdevice.NativeVirtualDeviceProductID)
-		if s.socketHandler != nil {
-			status.HasPending = s.socketHandler.HasPending()
+		if handler := s.presenceHandler(); handler != nil {
+			status.HasPending = handler.HasPending()
 		}
 	} else if v := s.lastError.Load(); v != nil {
 		if reason, ok := v.(string); ok && reason != "" {
@@ -438,16 +494,17 @@ func (s *FIDO2DeviceService) FixUHIDPermissions() error {
 // onResolved callback on the SocketHandler emits fido2:touch_resolved and
 // hides the window --- no manual emit here.
 func (s *FIDO2DeviceService) ApproveTouchRequest() bool {
-	if s.socketHandler == nil {
-		s.log.Debug("ApproveTouchRequest: socketHandler is nil")
+	handler := s.presenceHandler()
+	if handler == nil {
+		s.log.Debug("ApproveTouchRequest: no presence handler attached")
 		return false
 	}
 
-	hasPending := s.socketHandler.HasPending()
+	hasPending := handler.HasPending()
 	s.log.Debug("ApproveTouchRequest: attempting approval",
 		slog.Bool("has_pending", hasPending))
 
-	approved := s.socketHandler.Approve()
+	approved := handler.Approve()
 	s.log.Debug("ApproveTouchRequest: result",
 		slog.Bool("approved", approved))
 
@@ -458,19 +515,21 @@ func (s *FIDO2DeviceService) ApproveTouchRequest() bool {
 // pending request was claimed and denied, false otherwise. The onResolved
 // callback on the SocketHandler emits fido2:touch_resolved.
 func (s *FIDO2DeviceService) DenyTouchRequest() bool {
-	if s.socketHandler == nil {
+	handler := s.presenceHandler()
+	if handler == nil {
 		return false
 	}
-	return s.socketHandler.Deny()
+	return handler.Deny()
 }
 
 // HasPendingTouch reports whether a user presence request is currently
 // awaiting approval or denial.
 func (s *FIDO2DeviceService) HasPendingTouch() bool {
-	if s.socketHandler == nil {
+	handler := s.presenceHandler()
+	if handler == nil {
 		return false
 	}
-	return s.socketHandler.HasPending()
+	return handler.HasPending()
 }
 
 // bridgeLoop runs two goroutines that shuttle HID packets between the UHID

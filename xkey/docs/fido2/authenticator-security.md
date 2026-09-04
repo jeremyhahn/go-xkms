@@ -336,6 +336,32 @@ the UV check and nothing else. That opt-out is scoped to that one ceremony:
 `autofill.NewAssertionVerifier`, which is what the SDK re-exports and what
 downstream consumers use against real authenticators, still requires UV.
 
+### Who Answers for the User
+
+A UP flag is only as truthful as the handler that produced it, and the handler
+is a deployment choice:
+
+| Handler | Presence source |
+|---------|-----------------|
+| `SocketHandler` | GUI touch prompt — the user clicks approve or deny |
+| `InteractiveHandler` | terminal prompt |
+| `AutoGrantHandler` | approves everything — automation and tests only |
+
+`AutoGrantHandler` is what `NewAuthenticator` installs when the configuration
+names no handler, so an embedder that forgets one gets a UP flag for every
+request without asking anybody.
+
+One authenticator instance is shared by the USB HID bridge, the browser
+extension and autofill, so its handler is a property of the whole session, not
+of any one transport. The GUI therefore installs its touch prompt at
+authenticator initialization (`FIDO2DeviceService.AttachPresenceHandler`) rather
+than when the virtual device starts. Starting the device captures that same
+handler and stopping it puts that same handler back, so there is no window —
+device disabled in settings, `/dev/uhid` unavailable, or the user toggling the
+device off — in which the other consumers fall back to auto-approval. The prompt
+does not depend on the UHID bridge: it notifies the frontend and waits for
+approve, deny or timeout, all of which keep working with the device stopped.
+
 ### Recommendations
 
 1. **Use level 3** for high-value credentials

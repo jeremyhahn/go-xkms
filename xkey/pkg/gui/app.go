@@ -1269,6 +1269,13 @@ func (a *App) initializeAuthenticator() {
 	// Wire to FIDO2 device service so USB HID uses the same authenticator.
 	a.fido2DeviceService.SetAuthenticator(auth)
 
+	// Install the GUI touch prompt now, for the session. This authenticator is
+	// shared with the browser extension and autofill, and without a handler of
+	// its own it runs on the library's auto-grant default — approving user
+	// presence with no user involved whenever the virtual FIDO2 device is not
+	// running (disabled in settings, UHID unavailable, or toggled off).
+	a.fido2DeviceService.AttachPresenceHandler(a.deviceNotifier)
+
 	// Wire to autofill service for CTAP2 challenge-response authentication.
 	a.autofillService.SetAuthenticator(auth)
 

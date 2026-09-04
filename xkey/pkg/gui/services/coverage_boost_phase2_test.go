@@ -226,7 +226,7 @@ func TestCoverageBoostPhase2_FIDO2DeviceService_Cleanup_NilBoth(t *testing.T) {
 func TestCoverageBoostPhase2_FIDO2DeviceService_GetStatus_Running_NilSocketHandler(t *testing.T) {
 	svc := NewFIDO2DeviceService(slog.Default())
 	svc.running.Store(true)
-	svc.socketHandler = nil
+	require.Nil(t, svc.presenceHandler())
 
 	status := svc.GetStatus()
 	assert.True(t, status.Running)
