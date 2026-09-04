@@ -28,6 +28,8 @@ import (
 	"net/http/httptest"
 	"os"
 	"strings"
+	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -43,10 +45,39 @@ type preAuthMockServer struct {
 	t               *testing.T
 	nonce           string
 	supportsPreAuth bool
+
+	// mu guards the four failure-injection fields below. They are written by
+	// a test goroutine, or by a wrapper handler, while handleNewAuthz reads
+	// them from httptest.Server's per-connection goroutines -- and
+	// PreAuthorizeMany issues its requests concurrently, so the read and the
+	// write genuinely overlap. Do not touch these directly; use failAuthz and
+	// authzFailure.
+	//
+	// The four move together: a caller that read them one at a time could pair
+	// a newly-set status with a stale detail, so authzFailure returns them as
+	// a single snapshot.
+	mu              sync.Mutex
 	authzShouldFail bool
 	authzFailStatus int
 	authzFailType   string
 	authzFailDetail string
+}
+
+// failAuthz makes every subsequent new-authz response an ACME error.
+func (m *preAuthMockServer) failAuthz(status int, errType, detail string) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.authzShouldFail = true
+	m.authzFailStatus = status
+	m.authzFailType = errType
+	m.authzFailDetail = detail
+}
+
+// authzFailure returns the configured failure as one consistent snapshot.
+func (m *preAuthMockServer) authzFailure() (failing bool, status int, errType, detail string) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	return m.authzShouldFail, m.authzFailStatus, m.authzFailType, m.authzFailDetail
 }
 
 // newPreAuthMockServer creates a new mock server with pre-auth support
@@ -134,8 +165,8 @@ func (m *preAuthMockServer) handleNewAuthz(w http.ResponseWriter, r *http.Reques
 	w.Header().Set("Replay-Nonce", m.nonce)
 	w.Header().Set("Content-Type", "application/json")
 
-	if m.authzShouldFail {
-		m.writeACMEError(w, m.authzFailStatus, m.authzFailType, m.authzFailDetail)
+	if failing, status, errType, detail := m.authzFailure(); failing {
+		m.writeACMEError(w, status, errType, detail)
 		return
 	}
 
@@ -463,10 +494,9 @@ func TestPreAuthorize_ServerError(t *testing.T) {
 	require.NoError(t, err)
 
 	// Configure server to fail
-	server.authzShouldFail = true
-	server.authzFailStatus = http.StatusForbidden
-	server.authzFailType = "urn:ietf:params:acme:error:rejectedIdentifier"
-	server.authzFailDetail = "The identifier is not allowed"
+	server.failAuthz(http.StatusForbidden,
+		"urn:ietf:params:acme:error:rejectedIdentifier",
+		"The identifier is not allowed")
 
 	identifier := Identifier{
 		Type:  "dns",
@@ -602,17 +632,21 @@ func TestPreAuthorizeMany_PartialFailure(t *testing.T) {
 	_, err := client.RegisterAccount()
 	require.NoError(t, err)
 
-	// After first request, configure server to fail
+	// After the first request, configure the server to fail.
+	//
+	// This handler runs on httptest.Server's per-connection goroutines, and
+	// PreAuthorizeMany issues its requests concurrently, so both the counter
+	// and the failure fields are touched from several goroutines at once. The
+	// concurrency is what the test exercises and is deliberately left alone;
+	// only the shared state is synchronised.
 	originalHandler := server.Config.Handler
-	requestCount := 0
+	var requestCount atomic.Int64
 	server.Config.Handler = http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path == "/acme/new-authz" {
-			requestCount++
-			if requestCount > 1 {
-				server.authzShouldFail = true
-				server.authzFailStatus = http.StatusForbidden
-				server.authzFailType = "urn:ietf:params:acme:error:rejectedIdentifier"
-				server.authzFailDetail = "Second identifier rejected"
+			if requestCount.Add(1) > 1 {
+				server.failAuthz(http.StatusForbidden,
+					"urn:ietf:params:acme:error:rejectedIdentifier",
+					"Second identifier rejected")
 			}
 		}
 		originalHandler.ServeHTTP(w, r)

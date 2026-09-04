@@ -482,6 +482,51 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **Two pre-existing test defects that reddened the `Race Detector` job at
+  random** (#339, #340). `pkg/server/unified_api_e2e_test.go`,
+  `pkg/acme/client/preauth_test.go`.
+
+  Both are test-only, and neither belonged to the PR each was blocking. #311
+  was investigated as a suspected race in its own reload path before the job
+  log showed zero `DATA RACE` reports and a port-bind failure in a package
+  that PR does not touch — `git diff origin/main <branch> -- pkg/server/`
+  is empty.
+
+  **#339 — the port helper reserved nothing.** `freeLoopbackPort` bound an
+  ephemeral port, read the number and closed the listener before returning,
+  under a comment calling the result "the small reuse race is acceptable
+  in-process". Measured, it is not: 24 concurrent allocators with a 2 ms gap
+  between allocation and bind produced 12 collisions in 4800 attempts on an
+  idle host, each the `bind: address already in use` that failed CI — and on
+  a loaded runner the gap is the whole of TLS material generation and qrdb
+  node composition, not 2 ms. The helper is replaced by a reservation that
+  holds all four listeners until the statement before `New` composes the
+  server. The same measurement against the replacement is 0/4800.
+
+  Handing the server a `net.Listener` would close the window rather than
+  shrink it, and is the better fix where it exists. It does not exist here:
+  only the legacy REST path has that seam, while the gRPC, QUIC and MCP ports
+  reach the embedded qrdb node as port numbers in its configuration — and MCP
+  is the port that actually collided. A retry loop around the bind was
+  rejected as hiding the window rather than shrinking it.
+
+  **#340 — a genuine data race in an ACME test.** `PreAuthorizeMany` processes
+  identifiers concurrently, one goroutine each, so the mock server's handler
+  runs on several `httptest.Server` connection goroutines at once. The test
+  wrapped that handler in a closure incrementing a plain `int` and writing
+  four `authzFail*` fields, while `handleNewAuthz` read them — unsynchronised
+  on both sides. The counter becomes an `atomic.Int64`; the four fields move
+  behind a mutex and are read as one snapshot, so a caller cannot pair a new
+  status with a stale detail. **The concurrency itself is untouched** — it is
+  what the test exercises.
+
+  **What this does not establish.** The #340 race did not reproduce on the
+  development host in 420 runs under `-race`, including 400 at `-cpu=16`. The
+  evidence that it is real is CI's own race report, naming both goroutine
+  stacks inside the wrapper handler, plus the source: concurrent writers and
+  an unsynchronised reader. The repeated green runs after the fix therefore
+  confirm nothing was broken; they are not the proof that the race is gone.
+
 - **`xkms.Initialize` validates the backend names it is configured with**
   (#174). `Initialize` assigned `config.Backends` and `config.KeyProviders`
   verbatim and never checked their keys, while `RegisterServiceBackend`

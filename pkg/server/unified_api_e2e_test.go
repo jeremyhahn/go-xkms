@@ -42,16 +42,72 @@ import (
 	"google.golang.org/grpc/status"
 )
 
-// freeLoopbackPort reserves an ephemeral loopback TCP port and returns it.
-// The listener is closed before returning; the small reuse race is
-// acceptable in-process.
-func freeLoopbackPort(t *testing.T) int {
+// loopbackPortReservation holds open listeners on ephemeral loopback ports, so
+// that nothing else on the host can take them between the moment the test
+// learns the port numbers and the moment the server binds them. Release closes
+// them immediately before that bind.
+//
+// It replaces a helper that closed each listener as soon as it had read the
+// port number, whose comment described the result as "the small reuse race is
+// acceptable in-process". Measured, it is not. With a 2 ms gap between
+// allocation and bind, 24 concurrent allocators produced 5 collisions in 4800
+// attempts on an idle host, each failing with the "address already in use"
+// that turned the Race Detector job red on #339 — and on a loaded CI runner
+// the gap is not 2 ms but the whole of TLS material generation and qrdb node
+// composition.
+//
+// Handing the server a net.Listener would close the window rather than shrink
+// it, and is the better fix where it is available. It is not available here:
+// only the legacy REST path has such a seam (Server.SetRESTListener), while
+// the gRPC, QUIC and MCP ports reach the embedded qrdb node as port numbers in
+// its configuration (see qrdb_node.go), so there is nothing to hand a listener
+// to. MCP is the port that actually collided.
+//
+// Holding the reservation until the last possible statement is therefore the
+// strongest fix available from the test side. The window is not zero, but it
+// is now a few statements rather than the whole of test setup. Deliberately
+// not a retry loop around the bind: that would hide the window instead of
+// shrinking it, and leave the same trap for the next test to use.
+type loopbackPortReservation struct {
+	listeners []net.Listener
+	ports     []int
+}
+
+// reserveLoopbackPorts binds n ephemeral loopback ports and keeps them held.
+// The reservation is released on cleanup if the test never calls Release, so a
+// failure path cannot leak listeners into the rest of the package's run.
+func reserveLoopbackPorts(t *testing.T, n int) *loopbackPortReservation {
 	t.Helper()
-	l, err := net.Listen("tcp", "127.0.0.1:0")
-	require.NoError(t, err)
-	port := l.Addr().(*net.TCPAddr).Port
-	require.NoError(t, l.Close())
-	return port
+
+	r := &loopbackPortReservation{
+		listeners: make([]net.Listener, 0, n),
+		ports:     make([]int, 0, n),
+	}
+	for i := 0; i < n; i++ {
+		l, err := net.Listen("tcp", "127.0.0.1:0")
+		require.NoError(t, err)
+		r.listeners = append(r.listeners, l)
+		r.ports = append(r.ports, l.Addr().(*net.TCPAddr).Port)
+	}
+	t.Cleanup(r.release)
+	return r
+}
+
+// port returns the i-th reserved port. The port stays held until Release.
+func (r *loopbackPortReservation) port(i int) int { return r.ports[i] }
+
+// Release drops every reservation. Call it immediately before the code that
+// binds the ports, and nothing in between.
+func (r *loopbackPortReservation) Release(t *testing.T) {
+	t.Helper()
+	r.release()
+}
+
+func (r *loopbackPortReservation) release() {
+	for _, l := range r.listeners {
+		_ = l.Close()
+	}
+	r.listeners = nil
 }
 
 // TestUnifiedAPIServer_E2E_RESTThroughEmbeddedNode is the end-to-end proof
@@ -63,7 +119,12 @@ func freeLoopbackPort(t *testing.T) int {
 // answering).
 func TestUnifiedAPIServer_E2E_RESTThroughEmbeddedNode(t *testing.T) {
 	tempDir := t.TempDir()
-	restPort := freeLoopbackPort(t)
+
+	// Held, not merely sampled: the ports stay bound by this test until the
+	// Release immediately before New composes the server. Generating the TLS
+	// material below is the expensive step that used to sit inside the window.
+	ports := reserveLoopbackPorts(t, 4)
+	restPort := ports.port(0)
 
 	// qrdb's transports are TLS-only; the cutover requires explicit TLS
 	// material (see config.Validate). The test CA-signed server cert
@@ -74,9 +135,9 @@ func TestUnifiedAPIServer_E2E_RESTThroughEmbeddedNode(t *testing.T) {
 		Server: config.ServerConfig{
 			Host:     "127.0.0.1",
 			RESTPort: restPort,
-			GRPCPort: freeLoopbackPort(t),
-			QUICPort: freeLoopbackPort(t),
-			MCPPort:  freeLoopbackPort(t),
+			GRPCPort: ports.port(1),
+			QUICPort: ports.port(2),
+			MCPPort:  ports.port(3),
 		},
 		Protocols: config.ProtocolsConfig{
 			REST: true,
@@ -104,6 +165,10 @@ func TestUnifiedAPIServer_E2E_RESTThroughEmbeddedNode(t *testing.T) {
 			},
 		},
 	}
+
+	// Hand the ports over. Nothing may run between here and New: every
+	// statement in between is window in which another process can take one.
+	ports.Release(t)
 
 	server, err := New(cfg)
 	require.NoError(t, err)
