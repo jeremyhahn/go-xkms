@@ -3335,12 +3335,12 @@ func (h *guiIPCHandler) HandleAutofillFocus() (*ipc.AutofillResult, error) {
 
 // HandleUnlock implements ipc.UnlockHandler by delegating to AppLockService.
 // This allows the browser extension to unlock the app via IPC using the user PIN.
+//
+// The service verifies the resulting state and names what it released; this
+// bridge adds no interpretation of its own, so the GUI and the headless
+// daemon cannot drift into reporting the same unlock differently.
 func (h *guiIPCHandler) HandleUnlock(pin string) (*ipc.UnlockResult, error) {
-	if err := h.app.appLockService.Unlock(pin); err != nil {
-		return &ipc.UnlockResult{Success: false, Error: err.Error()}, nil
-	}
-	h.app.log.Info("app unlocked via IPC (browser extension)")
-	return &ipc.UnlockResult{Success: true}, nil
+	return h.app.appLockService.HandleUnlock(pin), nil
 }
 
 // HandlePairingNotifyCode receives a pairing code from the native messaging

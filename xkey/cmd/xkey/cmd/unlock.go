@@ -18,6 +18,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"sort"
 	"strings"
 
 	"github.com/spf13/cobra"
@@ -49,6 +50,16 @@ var (
 	// automated flow built on it proceeds on a false premise, and the failure
 	// surfaces later in an unrelated subsystem.
 	ErrUnlockStillLocked = errors.New("unlock: the daemon is still locked")
+
+	// ErrUnlockIncomplete indicates the unlock released some subsystems and
+	// left others locked.
+	//
+	// The daemon's status action reports the APP LOCK only, so it cannot
+	// express this: a PIN that releases the app lock without unsealing the
+	// barrier leaves the daemon reporting itself unlocked while the barrier
+	// is still sealed — the exact state the reported ceremony ran in. The
+	// per-subsystem report in the unlock result is what catches it.
+	ErrUnlockIncomplete = errors.New("unlock: incomplete")
 )
 
 // unlockCmd unlocks a running xKey instance over IPC.
@@ -61,6 +72,13 @@ A locked instance refuses CTAP2 operations, which surfaces to a caller as
 "operation denied" rather than anything mentioning the lock — so unlocking is
 usually what is needed when an enrollment is denied by a daemon that is
 otherwise running.
+
+On success the command names the subsystems it released, for example
+"Unlocked: app lock, barrier", and confirms that state against the daemon's own
+view of its lock. It exits non-zero when the daemon rejected the PIN, when a
+subsystem it governs is still locked, or when the daemon still reports itself
+locked — an unlock that reported success while the barrier was still sealed
+would make every automated flow proceed on a false premise.
 
 The PIN may be supplied three ways, in precedence order:
 
@@ -162,18 +180,47 @@ func runUnlock(cmd *cobra.Command, _ []string) error {
 		return &DetailError{Err: ErrUnlockFailed, Detail: fmt.Sprintf(": %s", resp.Unlock.Error)}
 	}
 
+	// A subsystem the PIN governs that stayed locked is a failure even though
+	// the daemon granted the unlock, and it is finer-grained than the status
+	// action below can report. Name what did open alongside it: an operator
+	// told only "still locked" cannot tell which half worked.
+	if len(resp.Unlock.StillLocked) > 0 {
+		detail := ": still locked: " + joinSubsystems(resp.Unlock.StillLocked)
+		if len(resp.Unlock.Unlocked) > 0 {
+			detail += " (unlocked: " + joinSubsystems(resp.Unlock.Unlocked) + ")"
+		}
+		return &DetailError{Err: ErrUnlockIncomplete, Detail: detail}
+	}
+
 	confirmed, err := confirmUnlocked(client)
 	if err != nil {
 		return err
 	}
 
-	_, _ = fmt.Fprintln(out, "Unlocked")
+	// Name the subsystems that were released. A blanket "Unlocked" tells an
+	// operator nothing about which of the app lock and the barrier the PIN
+	// actually opened; a daemon that does not report them still gets the
+	// bare line.
+	if len(resp.Unlock.Unlocked) > 0 {
+		_, _ = fmt.Fprintf(out, "Unlocked: %s\n", joinSubsystems(resp.Unlock.Unlocked))
+	} else {
+		_, _ = fmt.Fprintln(out, "Unlocked")
+	}
 	if !confirmed {
 		// The daemon owns no app lock, so there is no state to confirm. Say
 		// so rather than letting the bare success line imply one was checked.
 		_, _ = fmt.Fprintln(out, "Lock state could not be confirmed: this daemon does not report one")
 	}
 	return nil
+}
+
+// joinSubsystems renders subsystem names in a stable order so the output is
+// diffable and scriptable.
+func joinSubsystems(names []string) string {
+	ordered := make([]string, len(names))
+	copy(ordered, names)
+	sort.Strings(ordered)
+	return strings.Join(ordered, ", ")
 }
 
 // confirmUnlocked queries the daemon for its lock state after an unlock it

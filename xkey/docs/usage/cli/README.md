@@ -64,6 +64,14 @@ xkey touch --password DatabaseProd
 sudo xkey fido2 --require-touch=false --auto-uv
 ```
 
+`unlock` reports what it released, for example `Unlocked: app lock, barrier`,
+confirms that state against the daemon's own view of its lock, and exits
+non-zero when the daemon rejected the PIN, when a subsystem it governs is
+still locked, or when the daemon still reports itself locked. A script may
+gate on its exit status: an unlock that reported success while the barrier
+stayed sealed would surface much later as an unrelated `operation denied`
+from the authenticator, which reads as a declined touch.
+
 Both `unlock` and `touch` accept `--socket` to override IPC socket
 auto-detection.
 
@@ -80,9 +88,15 @@ auto-detection.
 
 `xkey auth register` and `xkey auth login` run the WebAuthn ceremony against a
 local CTAP2 authenticator with no browser involved — a real security key, or
-`xkey fido2` running. They fail rather than fabricating a credential:
+`xkey fido2` running. They fail rather than fabricating a credential.
+
+The server is verified against the system roots, the xKey trust store, and any
+`--tls-ca` bundle; `--spki-pin` pins the key directly for a server whose CA is
+nowhere on this host and is recorded on the server entry for reuse. See
+[auth.md](auth.md#server-trust).
 
 ```bash
+xkey auth register --server https://xkms.example.com:8443 --email alice@example.com
 xkey auth register --server https://xkms.example.com:8443 --email alice@example.com --spki-pin abc123
 xkey auth register --server https://xkms.example.com:8443 --email alice@example.com --setup-token TOKEN
 xkey auth login --server https://xkms.example.com:8443 --email alice@example.com

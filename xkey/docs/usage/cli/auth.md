@@ -19,7 +19,7 @@ Register with a new xkms server. Establishes a connection, verifies the server i
 **Usage:**
 
 ```bash
-xkey auth register --server <url> --email <login-key> [--spki-pin <pin>] [--setup-token <token>]
+xkey auth register --server <url> --email <login-key> [--tls-ca <bundle>] [--spki-pin <pin>] [--setup-token <token>]
 ```
 
 The registration ceremony runs against a local CTAP2 authenticator -- a real
@@ -32,6 +32,7 @@ opened; no credential is ever fabricated locally.
 |------|------|-------------|
 | `--server` | string | Server URL (required) |
 | `--spki-pin` | string | SPKI SHA-256 pin for certificate pinning |
+| `--tls-ca` | string | PEM CA bundle to verify the server against |
 | `--setup-token` | string | Pre-authorized enrollment token from server first boot |
 | `--email` | string | Canonical email login key to enroll (required) |
 | `--display-name` | string | Human-readable account name (default: the login key) |
@@ -44,9 +45,38 @@ that misses is a sign-up, enrolling the credential onto an account nobody
 created. `--username` is the deprecated spelling of the same flag and still
 carries the value.
 
+### Server trust
+
+The server is verified against, in combination:
+
+1. the system root certificates,
+2. every CA in the xKey trust store -- anything added with `xkey trust add`
+   whose purpose is `user-ca`, `bootstrap-ca`, or `general`,
+3. the `--tls-ca` bundle, when given.
+
+Each of those is an **addition** to verification, never a bypass. The
+attestation purposes (`tpm-manufacturer`, `android-hardware`,
+`idevid-issuer`) are deliberately not TLS anchors: they anchor device
+attestation chains, and a session to a server is not one.
+
+`--spki-pin` is different in kind. It pins the server's public key directly
+(trust-on-first-use) and is the route to a server whose CA is nowhere on this
+host. The pin is recorded on the server entry, so it only has to be passed
+once: later `auth register` and `auth login` runs against the same server
+reuse it. Passing `--spki-pin` together with `--tls-ca` verifies both -- the
+chain against the bundle *and* the pin against the leaf.
+
 **Examples:**
 
 ```bash
+# Register against a server whose CA is already in the trust store
+xkey trust add ca-chain.crt --purpose user-ca --source "file:ca-chain.crt"
+xkey auth register --server https://kms.example.com:8443 --email alice@example.com
+
+# Register against a CA bundle that is not in the trust store
+xkey auth register --server https://kms.example.com:8443 --email alice@example.com \
+    --tls-ca ca-chain.crt
+
 # Register with SPKI pin (trust-on-first-use)
 xkey auth register --server https://kms.example.com:8443 --email alice@example.com \
     --spki-pin e5f6a7b8...
@@ -63,7 +93,7 @@ Authenticate to a registered server using WebAuthn. On success, the resulting JW
 **Usage:**
 
 ```bash
-xkey auth login --server <url> --email <login-key>
+xkey auth login --server <url> --email <login-key> [--tls-ca <bundle>]
 ```
 
 **Flags:**
@@ -72,6 +102,10 @@ xkey auth login --server <url> --email <login-key>
 |------|------|-------------|
 | `--server` | string | Server URL (required) |
 | `--email` | string | Canonical email login key to authenticate (required) |
+| `--tls-ca` | string | PEM CA bundle to verify the server against |
+
+Login verifies the server the same way `auth register` does, plus the SPKI pin
+recorded on the server entry when there is one.
 
 **Example:**
 

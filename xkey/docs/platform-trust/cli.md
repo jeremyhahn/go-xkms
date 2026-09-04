@@ -45,6 +45,12 @@ xkey trust list -o json
 xkey trust show 3fa1…  -o json
 ```
 
+`add` reports both numbers -- `Certificates added: N` and, when the file held
+certificates the store already had,
+`Certificates skipped (already present): N`. A file holding no parseable
+certificate is an error rather than a zero count, so "added: 0" always means
+"already trusted" and never "nothing was read".
+
 `--source` records where the certificate came from (`manual`, `url:…`,
 `file:…`). It is the only provenance you will have later.
 
@@ -82,6 +88,11 @@ Everything after `add` is keyed by **fingerprint**, not by name.
 ```
 xkey trust classify 3fa1… --purpose tpm-manufacturer
 ```
+
+`general`, `user-ca`, and `bootstrap-ca` are the purposes that anchor a TLS
+server chain, so `xkey auth register` and `xkey auth login` reach a server
+issued by any of them with no pin and no `--tls-ca`. The three attestation
+purposes are deliberately not TLS anchors.
 
 **Purpose is enforcement.** A `general` certificate will not anchor a TPM
 attestation. Reclassifying something broadly to make a verification pass removes

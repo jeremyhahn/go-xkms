@@ -205,30 +205,24 @@ func (fs *FileStore) AddCertificateWithOptions(cert *x509.Certificate, opts *Add
 
 // AddPEM parses and adds all certificates from PEM-encoded data. It returns
 // the number of certificates successfully added. Certificates that already
-// exist in the store are silently skipped.
+// exist in the store are silently skipped; ImportPEM reports those too.
 func (fs *FileStore) AddPEM(pemData []byte) (int, error) {
-	if len(pemData) == 0 {
-		return 0, ErrInvalidCertificate
-	}
+	result, err := fs.ImportPEM(pemData, nil)
+	return result.Added, err
+}
 
-	certs, err := parsePEMCertificates(pemData)
-	if err != nil {
-		return 0, err
-	}
+// ImportPEM parses and adds all certificates from PEM-encoded data, applying
+// opts as metadata (nil auto-classifies the purpose). It reports both the
+// certificates written and the certificates already present.
+func (fs *FileStore) ImportPEM(pemData []byte, opts *AddCertificateOptions) (ImportResult, error) {
+	return importPEM(fs, pemData, opts)
+}
 
-	added := 0
-	for _, cert := range certs {
-		err := fs.AddCertificate(cert)
-		if err == ErrCertificateExists {
-			continue
-		}
-		if err != nil {
-			return added, err
-		}
-		added++
-	}
-
-	return added, nil
+// TLSRoots returns the certificates in the store that may anchor a TLS server
+// chain: the operator-added CAs. See tlsAnchorPurposes for what is excluded
+// and why.
+func (fs *FileStore) TLSRoots() ([]*x509.Certificate, error) {
+	return tlsRoots(fs)
 }
 
 // RemoveCertificate removes a certificate by its SHA-256 fingerprint.

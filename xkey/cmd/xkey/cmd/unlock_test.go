@@ -21,7 +21,6 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
-	"time"
 
 	"github.com/spf13/cobra"
 	"github.com/stretchr/testify/assert"
@@ -64,15 +63,20 @@ func serveUnlockDaemon(t *testing.T, handler ipc.Handler) string {
 	srv, err := ipc.NewServer(sockPath, handler, slog.New(slog.NewTextHandler(io.Discard, nil)))
 	require.NoError(t, err)
 
+	// NewServer has already bound the listener, so a connection made before
+	// Serve reaches Accept simply waits in the backlog. There is nothing to
+	// wait for, and a timed sleep here would be both slower and racy.
 	ctx, cancel := context.WithCancel(context.Background())
-	go srv.Serve(ctx)
-
-	// Allow the server to start accepting.
-	time.Sleep(50 * time.Millisecond)
+	served := make(chan struct{})
+	go func() {
+		defer close(served)
+		_ = srv.Serve(ctx)
+	}()
 
 	t.Cleanup(func() {
 		cancel()
 		_ = srv.Close()
+		<-served
 	})
 	return sockPath
 }
@@ -189,4 +193,71 @@ func TestRunUnlock_MissingPIN(t *testing.T) {
 
 	require.Error(t, err)
 	assert.ErrorIs(t, err, ErrUnlockMissingPIN)
+}
+
+// --- per-subsystem reporting ---
+//
+// The daemon's status action reports the APP LOCK and nothing else, so it
+// cannot express a PIN that released the app lock without unsealing the
+// barrier: status answers "unlocked" and the confirmation above passes. That
+// is the state the reported ceremony ran in. The unlock result carries the
+// per-subsystem outcome so the CLI can catch it and say which half worked.
+
+// A subsystem left locked is a failure even though the daemon granted the
+// unlock and reports itself unlocked.
+func TestRunUnlock_PartialUnlockIsAFailure(t *testing.T) {
+	sock := serveUnlockDaemon(t, &unlockTestHandler{
+		unlockResult: &ipc.UnlockResult{
+			Success:     true,
+			Unlocked:    []string{"app lock"},
+			StillLocked: []string{"barrier"},
+		},
+		statusAction: ipc.ActionUnlocked,
+	})
+
+	cmd, out := newUnlockTestCmd(sock, "123456")
+	err := runUnlock(cmd, nil)
+
+	require.Error(t, err, "a sealed barrier must fail the unlock even when the app lock opened")
+	assert.ErrorIs(t, err, ErrUnlockIncomplete)
+	assert.Contains(t, err.Error(), "still locked: barrier")
+	assert.Contains(t, err.Error(), "unlocked: app lock")
+	assert.NotContains(t, out.String(), "Unlocked:")
+}
+
+// A full unlock names every subsystem it released rather than printing a
+// blanket "Unlocked", which tells an operator nothing about what opened.
+func TestRunUnlock_NamesTheSubsystemsItReleased(t *testing.T) {
+	sock := serveUnlockDaemon(t, &unlockTestHandler{
+		unlockResult: &ipc.UnlockResult{
+			Success:  true,
+			Unlocked: []string{"barrier", "app lock"},
+		},
+		statusAction: ipc.ActionUnlocked,
+	})
+
+	cmd, out := newUnlockTestCmd(sock, "123456")
+	require.NoError(t, runUnlock(cmd, nil))
+
+	// Rendered in a stable order so the line is diffable and scriptable.
+	assert.Contains(t, out.String(), "Unlocked: app lock, barrier")
+}
+
+// A daemon that does not report subsystems still gets the bare success line:
+// the richer report is additive, not a new requirement on the daemon.
+func TestRunUnlock_UnnamedSubsystemsStillReportSuccess(t *testing.T) {
+	sock := serveUnlockDaemon(t, &unlockTestHandler{
+		unlockResult: &ipc.UnlockResult{Success: true},
+		statusAction: ipc.ActionUnlocked,
+	})
+
+	cmd, out := newUnlockTestCmd(sock, "123456")
+	require.NoError(t, runUnlock(cmd, nil))
+	assert.Contains(t, out.String(), "Unlocked")
+}
+
+// joinSubsystems orders names so the output does not vary between runs.
+func TestJoinSubsystems(t *testing.T) {
+	assert.Equal(t, "app lock, barrier", joinSubsystems([]string{"barrier", "app lock"}))
+	assert.Equal(t, "", joinSubsystems(nil))
 }

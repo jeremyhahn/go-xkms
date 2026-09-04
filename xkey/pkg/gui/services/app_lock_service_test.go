@@ -1072,3 +1072,124 @@ func TestAppLockStatus_Fields(t *testing.T) {
 	assert.Equal(t, 10, status.AutoLockMinutes)
 	assert.False(t, status.LockOnScreenLock)
 }
+
+// ---------------------------------------------------------------------------
+// UnlockVerified / HandleUnlock (go-xkms #250 defect 2)
+// ---------------------------------------------------------------------------
+
+// newBarrierBackedAppLockService builds a locked service wired to a barrier
+// double, the shape the headless daemon and the GUI both run in.
+func newBarrierBackedAppLockService(t *testing.T, barrier *mockBarrierService, verifyErr error) *AppLockService {
+	t.Helper()
+
+	pinSvc := NewPINService()
+	pinSvc.SetContext(context.Background())
+
+	backend := &mockPINBackend{
+		strategy:      qrdbsdk.PINStrategySoftware,
+		soPINSet:      true,
+		userPINSet:    true,
+		initialized:   true,
+		verifyUserErr: verifyErr,
+		lockoutStatus: &qrdbsdk.PINLockoutStatus{MaxAttempts: 5},
+	}
+	pinSvc.SetPINService(qrdbsdk.NewPINService(backend, slog.Default()))
+
+	svc := NewAppLockService(pinSvc, barrier)
+	svc.SetContext(context.Background())
+	svc.LockForStartup()
+	return svc
+}
+
+// A PIN that cannot unseal the barrier must be reported as a barrier that is
+// still locked, not as a successful unlock. This is the state the reported
+// defect ran in: the ceremony proceeded against a sealed barrier and failed
+// much later as "operation denied".
+func TestAppLockService_UnlockVerified_SealedBarrierStaysLocked(t *testing.T) {
+	barrier := &mockBarrierService{initialized: true, sealed: true, unsealErr: errors.New("wrong password")}
+	svc := newBarrierBackedAppLockService(t, barrier, nil)
+
+	outcome, err := svc.UnlockVerified("123456")
+	require.Error(t, err)
+	require.NotNil(t, outcome)
+	assert.Empty(t, outcome.Unlocked, "nothing was unlocked")
+	assert.Contains(t, outcome.StillLocked, SubsystemAppLock)
+	assert.Contains(t, outcome.StillLocked, SubsystemBarrier)
+	assert.True(t, svc.IsLocked())
+}
+
+// A successful unseal releases both the app lock and the barrier, and both
+// are named.
+func TestAppLockService_UnlockVerified_NamesEverythingItReleased(t *testing.T) {
+	barrier := &mockBarrierService{initialized: true, sealed: true}
+	svc := newBarrierBackedAppLockService(t, barrier, nil)
+
+	outcome, err := svc.UnlockVerified("123456")
+	require.NoError(t, err)
+	assert.Equal(t, []string{SubsystemAppLock, SubsystemBarrier}, outcome.Unlocked)
+	assert.Empty(t, outcome.StillLocked)
+	assert.False(t, svc.IsLocked())
+}
+
+// With no barrier configured the app lock is the only subsystem in play, and
+// it is the only one reported — an absent barrier is not a locked barrier.
+func TestAppLockService_UnlockVerified_NoBarrierReportsAppLockOnly(t *testing.T) {
+	svc := newLockedTestAppLockService(t, nil)
+
+	outcome, err := svc.UnlockVerified("123456")
+	require.NoError(t, err)
+	assert.Equal(t, []string{SubsystemAppLock}, outcome.Unlocked)
+	assert.Empty(t, outcome.StillLocked)
+}
+
+// HandleUnlock renders the outcome for the IPC callers. A rejected unlock is
+// never Success, and the daemon's reason is carried through.
+func TestAppLockService_HandleUnlock_RejectedIsNotSuccess(t *testing.T) {
+	barrier := &mockBarrierService{initialized: true, sealed: true, unsealErr: errors.New("wrong password")}
+	svc := newBarrierBackedAppLockService(t, barrier, nil)
+
+	result := svc.HandleUnlock("123456")
+	require.NotNil(t, result)
+	assert.False(t, result.Success)
+	assert.NotEmpty(t, result.Error)
+	assert.Contains(t, result.StillLocked, SubsystemBarrier)
+	assert.Empty(t, result.Unlocked)
+}
+
+// An unlock against a service that was never locked unlocks nothing, so it is
+// not a success either — this is the shape the headless daemon reports when
+// no PIN was ever initialised.
+func TestAppLockService_HandleUnlock_AlreadyUnlockedIsNotSuccess(t *testing.T) {
+	svc := newTestAppLockService(t, nil)
+
+	result := svc.HandleUnlock("123456")
+	require.NotNil(t, result)
+	assert.False(t, result.Success)
+	assert.Empty(t, result.Unlocked)
+	assert.Contains(t, result.Error, "already unlocked")
+}
+
+// A genuine unlock is a success that names what it released.
+func TestAppLockService_HandleUnlock_SuccessNamesSubsystems(t *testing.T) {
+	barrier := &mockBarrierService{initialized: true, sealed: true}
+	svc := newBarrierBackedAppLockService(t, barrier, nil)
+
+	result := svc.HandleUnlock("123456")
+	require.NotNil(t, result)
+	assert.True(t, result.Success)
+	assert.Empty(t, result.Error)
+	assert.Equal(t, []string{SubsystemAppLock, SubsystemBarrier}, result.Unlocked)
+	assert.Empty(t, result.StillLocked)
+}
+
+// An empty PIN never reaches the barrier and is not a success.
+func TestAppLockService_HandleUnlock_EmptyPIN(t *testing.T) {
+	barrier := &mockBarrierService{initialized: true, sealed: true}
+	svc := newBarrierBackedAppLockService(t, barrier, nil)
+
+	result := svc.HandleUnlock("")
+	require.NotNil(t, result)
+	assert.False(t, result.Success)
+	assert.Contains(t, result.Error, "PIN required")
+	assert.False(t, barrier.unsealCalled)
+}

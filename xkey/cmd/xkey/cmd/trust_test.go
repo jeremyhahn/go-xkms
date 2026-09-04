@@ -559,9 +559,14 @@ func TestRunTrustAdd_WithPurposeMultipleCerts(t *testing.T) {
 	}
 }
 
-// --- addPEMWithOptions tests ---
+// --- FileStore.ImportPEM, the import path `trust add` drives ---
+//
+// These covered addPEMWithOptions, a CLI-local copy of the store's own import
+// loop. The copy is gone: FileStore and BackendStore share one implementation
+// so the skip counting cannot diverge between them. The intent of each case is
+// preserved against ImportPEM.
 
-func TestAddPEMWithOptions_ValidPEM(t *testing.T) {
+func TestImportPEM_ValidPEM(t *testing.T) {
 	dir := t.TempDir()
 	store, err := truststore.NewFileStore(&truststore.FileStoreConfig{BaseDir: dir})
 	require.NoError(t, err)
@@ -573,13 +578,13 @@ func TestAddPEMWithOptions_ValidPEM(t *testing.T) {
 		Source:  "test",
 	}
 
-	added, skipped, err := addPEMWithOptions(store, pemData, opts)
+	result, err := store.ImportPEM(pemData, opts)
 	require.NoError(t, err)
-	assert.Equal(t, 1, added)
-	assert.Equal(t, 0, skipped)
+	assert.Equal(t, 1, result.Added)
+	assert.Equal(t, 0, result.Skipped)
 }
 
-func TestAddPEMWithOptions_DuplicateSkipped(t *testing.T) {
+func TestImportPEM_DuplicateSkipped(t *testing.T) {
 	dir := t.TempDir()
 	store, err := truststore.NewFileStore(&truststore.FileStoreConfig{BaseDir: dir})
 	require.NoError(t, err)
@@ -591,20 +596,20 @@ func TestAddPEMWithOptions_DuplicateSkipped(t *testing.T) {
 	}
 
 	// Add once.
-	added, skipped, err := addPEMWithOptions(store, pemData, opts)
+	result, err := store.ImportPEM(pemData, opts)
 	require.NoError(t, err)
-	assert.Equal(t, 1, added)
-	assert.Equal(t, 0, skipped)
+	assert.Equal(t, 1, result.Added)
+	assert.Equal(t, 0, result.Skipped)
 
 	// Add again - should be skipped, and the skip must be counted so the
 	// caller can tell "already present" from "nothing was parsed".
-	added, skipped, err = addPEMWithOptions(store, pemData, opts)
+	result, err = store.ImportPEM(pemData, opts)
 	require.NoError(t, err)
-	assert.Equal(t, 0, added)
-	assert.Equal(t, 1, skipped)
+	assert.Equal(t, 0, result.Added)
+	assert.Equal(t, 1, result.Skipped)
 }
 
-func TestAddPEMWithOptions_NoPEMBlocks(t *testing.T) {
+func TestImportPEM_NoPEMBlocks(t *testing.T) {
 	dir := t.TempDir()
 	store, err := truststore.NewFileStore(&truststore.FileStoreConfig{BaseDir: dir})
 	require.NoError(t, err)
@@ -614,13 +619,16 @@ func TestAddPEMWithOptions_NoPEMBlocks(t *testing.T) {
 		Purpose: truststore.PurposeGeneral,
 	}
 
-	added, skipped, err := addPEMWithOptions(store, []byte("not pem data"), opts)
-	require.NoError(t, err)
-	assert.Equal(t, 0, added)
-	assert.Equal(t, 0, skipped)
+	// Nothing to import is reported, not returned as an empty success. The
+	// CLI turns this into ErrTrustNoCertificates.
+	result, err := store.ImportPEM([]byte("not pem data"), opts)
+	require.Error(t, err)
+	assert.True(t, errors.Is(err, truststore.ErrInvalidCertificate))
+	assert.Equal(t, 0, result.Added)
+	assert.Equal(t, 0, result.Skipped)
 }
 
-func TestAddPEMWithOptions_InvalidCertData(t *testing.T) {
+func TestImportPEM_InvalidCertData(t *testing.T) {
 	dir := t.TempDir()
 	store, err := truststore.NewFileStore(&truststore.FileStoreConfig{BaseDir: dir})
 	require.NoError(t, err)
@@ -632,12 +640,12 @@ func TestAddPEMWithOptions_InvalidCertData(t *testing.T) {
 		Purpose: truststore.PurposeGeneral,
 	}
 
-	_, _, err = addPEMWithOptions(store, badPEM, opts)
-	assert.Error(t, err)
-	assert.True(t, errors.Is(err, ErrTrustAddFailed))
+	_, err = store.ImportPEM(badPEM, opts)
+	require.Error(t, err)
+	assert.True(t, errors.Is(err, truststore.ErrInvalidCertificate))
 }
 
-func TestAddPEMWithOptions_SkipsNonCertBlocks(t *testing.T) {
+func TestImportPEM_SkipsNonCertBlocks(t *testing.T) {
 	dir := t.TempDir()
 	store, err := truststore.NewFileStore(&truststore.FileStoreConfig{BaseDir: dir})
 	require.NoError(t, err)
@@ -652,10 +660,10 @@ func TestAddPEMWithOptions_SkipsNonCertBlocks(t *testing.T) {
 		Purpose: truststore.PurposeIDevIDIssuer,
 	}
 
-	added, skipped, err := addPEMWithOptions(store, combined, opts)
+	result, err := store.ImportPEM(combined, opts)
 	require.NoError(t, err)
-	assert.Equal(t, 1, added)
-	assert.Equal(t, 0, skipped)
+	assert.Equal(t, 1, result.Added)
+	assert.Equal(t, 0, result.Skipped)
 }
 
 // --- runTrustRemove tests ---

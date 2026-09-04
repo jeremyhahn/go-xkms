@@ -451,6 +451,47 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   command prints both, and a file that yields no certificate at all is
   `ErrTrustNoCertificates` rather than a silent zero.
 
+- **xkey CLI: `auth register` reuses the SPKI pin it recorded** (#250,
+  measured after the issue was filed). `auth login` reused the pin on the
+  server entry; `auth register` did not, because it built its client before it
+  ever opened the registry. A second registration against a server whose CA is
+  outside the system trust store therefore failed the handshake with the same
+  `x509: certificate signed by unknown authority` unless `--spki-pin` was
+  passed again — while `auth status` displayed the fingerprint on the entry.
+  Register now looks the entry up first and falls back to its recorded pin. An
+  explicit `--spki-pin` still overrides it, and a stale recorded pin still
+  refuses the connection rather than accepting whatever the server presents.
+
+- **xkey CLI: only TLS-eligible trust-store purposes anchor a TLS chain**
+  (#250). The auth path trusted every certificate in the xKey trust store.
+  The store also holds TPM manufacturer roots, Android hardware attestation
+  roots and IDevID issuers, which anchor DEVICE ATTESTATION chains; a TLS
+  session to a server is not one, and trusting them here let a TPM vendor root
+  authenticate an xkms server — a wider grant than the operator made when they
+  imported it for attestation. The pool is now built from the new
+  `truststore.TLSRoots`, which selects `user-ca`, `bootstrap-ca` and `general`.
+
+- **xkey CLI: `unlock` names the subsystems it released** (#250). The daemon's
+  status action reports the app lock and nothing else, so it cannot express a
+  PIN that releases the app lock without unsealing the barrier: status answers
+  `unlocked` and the post-unlock confirmation passes. That is the state the
+  reported ceremony ran in. `AppLockService.UnlockVerified` now observes every
+  subsystem the lock governs before and after the attempt and reports the
+  transition, so `ipc.UnlockResult` carries `unlocked` and `still_locked`.
+  `unlock` prints `Unlocked: app lock, barrier` and fails with
+  `ErrUnlockIncomplete` when a subsystem stayed locked, naming both halves. A
+  daemon that does not report subsystems still gets the bare success line, so
+  the richer report is additive. Both IPC bridges answer through the one
+  service method and cannot drift.
+
+- **xkey: one PEM import implementation** (#250). `addPEMWithOptions` was a
+  CLI-local copy of the store's own import loop, which is how the two came to
+  disagree about skip counting in the first place. `FileStore` and
+  `BackendStore` now share `truststore.ImportPEM`; the copy is deleted, and
+  `trust bootstrap` reports skips the way `trust add` does — re-running a
+  bootstrap against an already-trusted CA is the common case, and
+  `imported: 0` on its own reads as a failure.
+
 - **MCP `wrap_key` and `unwrap_key` now reach the handler with the key they
   were given** (#255). `pkg/api/transport/mcp` marshalled a
   `transport.WrapKeyRequest` / `UnwrapKeyRequest` straight onto the wire, but

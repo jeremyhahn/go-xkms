@@ -19,9 +19,24 @@ type UnlockPayload struct {
 }
 
 // UnlockResult carries unlock-specific response data.
+//
+// Success alone is not a report an automated caller can act on: an unlock
+// that released nothing used to answer with a well-formed message whose
+// only signal was Success=false, and callers that looked no further than the
+// envelope status reported "Unlocked" for it. Unlocked and StillLocked name
+// the subsystems the daemon observed after the attempt, so the result says
+// what actually happened rather than only whether a call was made.
 type UnlockResult struct {
-	Success bool   `json:"success"`         // true if unlock succeeded
+	Success bool   `json:"success"`         // true only if something was unlocked and nothing it governs stayed locked
 	Error   string `json:"error,omitempty"` // error message on failure
+
+	// Unlocked names the subsystems this unlock released, e.g.
+	// "app lock", "barrier". Empty means nothing was unlocked.
+	Unlocked []string `json:"unlocked,omitempty"`
+
+	// StillLocked names the subsystems that remained locked afterwards.
+	// A non-empty value is a failure regardless of Success.
+	StillLocked []string `json:"still_locked,omitempty"`
 }
 
 // Validate checks the UnlockPayload for correctness.

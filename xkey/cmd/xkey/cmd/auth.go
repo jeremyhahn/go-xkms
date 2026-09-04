@@ -281,8 +281,16 @@ func authRootPool(caFile string) (*x509.CertPool, error) {
 	return pool, nil
 }
 
-// authTrustStoreCertificates returns the certificates in the xKey trust store.
-// A store that has never been created is not an error — it is simply empty.
+// authTrustStoreCertificates returns the certificates in the xKey trust store
+// that may anchor a TLS server chain. A store that has never been created is
+// not an error — it is simply empty.
+//
+// It asks for TLSRoots rather than every certificate in the store. The store
+// also holds TPM manufacturer roots, Android hardware attestation roots and
+// IDevID issuers; those anchor DEVICE ATTESTATION chains, and a TLS session to
+// a server is not one. Promoting them here would let a TPM vendor root
+// authenticate an xkms server, which is a wider grant than the operator made
+// when they imported it for attestation.
 func authTrustStoreCertificates() ([]*x509.Certificate, error) {
 	store, err := openTrustStore()
 	if err != nil {
@@ -290,7 +298,7 @@ func authTrustStoreCertificates() ([]*x509.Certificate, error) {
 	}
 	defer func() { _ = store.Close() }()
 
-	certs, err := store.Certificates()
+	certs, err := store.TLSRoots()
 	if err != nil {
 		return nil, &SentinelCauseError{Sentinel: ErrAuthTrustStoreRead, Cause: err}
 	}
@@ -478,7 +486,7 @@ func init() {
 
 	// Register command flags
 	authRegisterCmd.Flags().String("server", "", "Server URL (required)")
-	authRegisterCmd.Flags().String("spki-pin", "", "SPKI SHA-256 pin for certificate pinning")
+	authRegisterCmd.Flags().String("spki-pin", "", "SPKI SHA-256 pin for certificate pinning (recorded on the server entry and reused by later runs)")
 	authRegisterCmd.Flags().String("tls-ca", "", "PEM bundle of CA certificates to trust, in addition to the xKey trust store")
 	authRegisterCmd.Flags().String("setup-token", "", "Pre-authorized enrollment token")
 	authRegisterCmd.Flags().String("email", "", "Canonical email login key to enroll (required)")
@@ -528,6 +536,30 @@ func runAuthRegister(cmd *cobra.Command, args []string) error {
 
 	tlsCAFile, _ := cmd.Flags().GetString("tls-ca")
 
+	ctx, cancel := context.WithTimeout(context.Background(), defaultAuthTimeout)
+	defer cancel()
+
+	// Open the registry BEFORE connecting. A server that is already
+	// registered carries the trust anchor recorded at its first registration,
+	// and re-registering has to reuse it: `auth login` did, `auth register`
+	// did not, so a second registration against a server whose CA is outside
+	// the system trust store failed the handshake with the same x509 error
+	// unless --spki-pin was passed again — even though `auth status` showed
+	// the fingerprint on the entry (#250).
+	registry, cleanup, err := openServerRegistry(logger)
+	if err != nil {
+		return err
+	}
+	defer cleanup()
+
+	existing, lookupErr := registry.Lookup(ctx, serverURL)
+	if lookupErr != nil && !errors.Is(lookupErr, serverregistry.ErrServerNotFound) {
+		return errors.Join(ErrAuthServerLookupFailed, lookupErr)
+	}
+	if spkiPin == "" && existing != nil {
+		spkiPin = existing.CAFingerprint
+	}
+
 	client, err := authClientFactory(authClientConfig{
 		ServerURL:  serverURL,
 		SPKIPin:    spkiPin,
@@ -539,10 +571,6 @@ func runAuthRegister(cmd *cobra.Command, args []string) error {
 	}
 	defer func() { _ = client.Close() }()
 
-	// Verify connection to the server.
-	ctx, cancel := context.WithTimeout(context.Background(), defaultAuthTimeout)
-	defer cancel()
-
 	logger.Info("connecting to server", slog.String("url", serverURL))
 
 	if err := client.Connect(ctx); err != nil {
@@ -550,13 +578,6 @@ func runAuthRegister(cmd *cobra.Command, args []string) error {
 	}
 
 	logger.Info("connected to server", slog.String("url", serverURL))
-
-	// Open storage and create server registry.
-	registry, cleanup, err := openServerRegistry(logger)
-	if err != nil {
-		return err
-	}
-	defer cleanup()
 
 	// Record the server entry. An already-registered server is not an error:
 	// the operator asked to enroll a credential, so the ceremony still runs.

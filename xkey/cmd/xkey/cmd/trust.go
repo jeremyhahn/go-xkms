@@ -20,7 +20,6 @@ import (
 	"crypto/elliptic"
 	"crypto/rsa"
 	"crypto/x509"
-	"encoding/pem"
 	"errors"
 	"fmt"
 	"os"
@@ -456,61 +455,24 @@ func runTrustAdd(cmd *cobra.Command, args []string) error {
 		}
 	}
 
-	added, skipped, err := addPEMWithOptions(store, pemData, opts)
+	result, err := store.ImportPEM(pemData, opts)
 	if err != nil {
 		return &SentinelCauseError{Sentinel: ErrTrustAddFailed, Cause: err}
 	}
-	if added == 0 && skipped == 0 {
+	if result.Added == 0 && result.Skipped == 0 {
 		return &SentinelCauseError{Sentinel: ErrTrustAddFailed, Cause: ErrTrustNoCertificates}
 	}
 
 	fmt.Fprintf(os.Stderr, "Importing certificates from %s\n", pemFile)
-	_, _ = fmt.Fprintf(out, "Certificates added: %d\n", added)
+	_, _ = fmt.Fprintf(out, "Certificates added: %d\n", result.Added)
 	// A bare "added: 0" is indistinguishable from a parse failure, an empty
 	// file, or a permissions problem. Reporting the skips tells the operator
 	// the certificates were already there, as trust add --help promises.
-	if skipped > 0 {
-		_, _ = fmt.Fprintf(out, "Certificates skipped (already present): %d\n", skipped)
+	if result.Skipped > 0 {
+		_, _ = fmt.Fprintf(out, "Certificates skipped (already present): %d\n", result.Skipped)
 	}
 
 	return nil
-}
-
-// addPEMWithOptions parses PEM-encoded certificate data and adds each
-// certificate to the store with the specified metadata options, which may be
-// nil to take the store's own classification. It returns the number of
-// certificates added and the number skipped because they were already present.
-// The two counts are reported separately because a zero added count on its own
-// says nothing about why.
-func addPEMWithOptions(store *truststore.FileStore, pemData []byte, opts *truststore.AddCertificateOptions) (added, skipped int, err error) {
-	rest := pemData
-
-	for {
-		var block *pem.Block
-		block, rest = pem.Decode(rest)
-		if block == nil {
-			break
-		}
-		if block.Type != "CERTIFICATE" {
-			continue
-		}
-
-		cert, parseErr := x509.ParseCertificate(block.Bytes)
-		if parseErr != nil {
-			return added, skipped, &SentinelCauseError{Sentinel: ErrTrustAddFailed, Cause: parseErr}
-		}
-
-		if addErr := store.AddCertificateWithOptions(cert, opts); addErr != nil {
-			if errors.Is(addErr, truststore.ErrCertificateExists) {
-				skipped++
-				continue
-			}
-			return added, skipped, addErr
-		}
-		added++
-	}
-
-	return added, skipped, nil
 }
 
 // runTrustRemove executes the trust remove command.
@@ -779,12 +741,18 @@ func runTrustBootstrap(cmd *cobra.Command, args []string) error {
 	}
 	defer func() { _ = store.Close() }()
 
-	added, err := store.AddPEM(resp.BundlePEM)
+	// Report skips for the same reason `trust add` does: re-running a
+	// bootstrap against an already-trusted CA is the common case, and
+	// "imported: 0" on its own reads as a failure.
+	result, err := store.ImportPEM(resp.BundlePEM, nil)
 	if err != nil {
 		return &SentinelCauseError{Sentinel: ErrTrustAddFailed, Cause: err}
 	}
 
-	_, _ = fmt.Fprintf(out, "Certificates imported: %d\n", added)
+	_, _ = fmt.Fprintf(out, "Certificates imported: %d\n", result.Added)
+	if result.Skipped > 0 {
+		_, _ = fmt.Fprintf(out, "Certificates skipped (already present): %d\n", result.Skipped)
+	}
 	return nil
 }
 

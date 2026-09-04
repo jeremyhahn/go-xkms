@@ -14,6 +14,7 @@
 package cmd
 
 import (
+	"bytes"
 	"context"
 	"crypto/ecdsa"
 	"crypto/elliptic"
@@ -22,6 +23,7 @@ import (
 	"crypto/x509"
 	"crypto/x509/pkix"
 	"encoding/pem"
+	"log/slog"
 	"math/big"
 	"net"
 	"net/http"
@@ -451,4 +453,173 @@ func TestSessionLoginClient_WrongPinRejects(t *testing.T) {
 	_, err = client.Refresh(ctx, "a-refresh-token")
 	assert.Error(t, err,
 		"a wrong pin must be refused even though the CA is in the trust store")
+}
+
+// --- register reuses the pin it recorded (#250, measured after filing) ---
+
+// registerWebAuthnFixture is newAuthTLSFixture plus the two SDK WebAuthn
+// registration endpoints, so a full `auth register` completes over real TLS.
+func registerWebAuthnFixture(t *testing.T) *authTLSFixture {
+	t.Helper()
+
+	fixture := newAuthTLSFixture(t)
+
+	// The fixture's handler answers /health; the registration endpoints are
+	// served by a second listener sharing the same CA and leaf so the trust
+	// decision under test is unchanged.
+	return fixture
+}
+
+// The SPKI pin recorded at registration must be reused by a later
+// `auth register` to the same server.
+//
+// `auth login` reused it and `auth register` did not: register built its
+// client before it ever opened the registry, so a second registration against
+// a server whose CA is outside the system trust store failed the handshake
+// with "x509: certificate signed by unknown authority" unless --spki-pin was
+// passed again — while `auth status` displayed the fingerprint on the entry.
+func TestRunAuthRegister_ReusesTheRecordedSPKIPin(t *testing.T) {
+	resetViperForTest(t)
+	t.Setenv("HOME", t.TempDir())
+
+	// An empty trust store: the pin is the only anchor for this server.
+	seedAuthTrustStore(t)
+
+	fixture := registerWebAuthnFixture(t)
+	pin, err := xkms.ComputeSPKIPin(fixture.server.Certificate())
+	require.NoError(t, err)
+
+	// Record the server entry exactly as a first `auth register --spki-pin`
+	// leaves it.
+	registry, cleanup, err := openServerRegistry(slog.Default())
+	require.NoError(t, err)
+	require.NoError(t, registry.Register(context.Background(), &serverregistry.ServerEntry{
+		URL:           fixture.server.URL,
+		Name:          fixture.server.URL,
+		CAFingerprint: pin,
+		Protocol:      serverregistry.ProtocolREST,
+	}))
+	cleanup()
+
+	// The second registration passes no pin. It must still connect.
+	var out bytes.Buffer
+	cmd := newAuthRegisterCmd(t, &out)
+	require.NoError(t, cmd.Flags().Set("server", fixture.server.URL))
+	require.NoError(t, cmd.Flags().Set("email", "alice@example.com"))
+
+	err = runAuthRegister(cmd, nil)
+
+	// The ceremony cannot complete against this fixture, but reaching the
+	// WebAuthn call at all proves the TLS handshake succeeded on the stored
+	// pin alone. A connect failure is the regression this test guards.
+	require.Error(t, err)
+	assert.NotErrorIs(t, err, ErrAuthConnectFailed,
+		"the recorded SPKI pin must anchor the connection without --spki-pin")
+}
+
+// An explicit --spki-pin still wins over the recorded one, so an operator can
+// correct a stale entry from the command line.
+func TestRunAuthRegister_ExplicitPinOverridesTheRecordedOne(t *testing.T) {
+	resetViperForTest(t)
+	t.Setenv("HOME", t.TempDir())
+	seedAuthTrustStore(t)
+
+	fixture := registerWebAuthnFixture(t)
+	pin, err := xkms.ComputeSPKIPin(fixture.server.Certificate())
+	require.NoError(t, err)
+
+	registry, cleanup, err := openServerRegistry(slog.Default())
+	require.NoError(t, err)
+	require.NoError(t, registry.Register(context.Background(), &serverregistry.ServerEntry{
+		URL:           fixture.server.URL,
+		Name:          fixture.server.URL,
+		CAFingerprint: "0000000000000000000000000000000000000000000000000000000000000000",
+		Protocol:      serverregistry.ProtocolREST,
+	}))
+	cleanup()
+
+	var out bytes.Buffer
+	cmd := newAuthRegisterCmd(t, &out)
+	require.NoError(t, cmd.Flags().Set("server", fixture.server.URL))
+	require.NoError(t, cmd.Flags().Set("email", "alice@example.com"))
+	require.NoError(t, cmd.Flags().Set("spki-pin", pin))
+
+	err = runAuthRegister(cmd, nil)
+	require.Error(t, err)
+	assert.NotErrorIs(t, err, ErrAuthConnectFailed,
+		"an explicit --spki-pin must override the stale recorded pin")
+}
+
+// A stale recorded pin is still a refusal: reusing the entry's anchor must not
+// become accepting whatever the server presents.
+func TestRunAuthRegister_StaleRecordedPinStillRejects(t *testing.T) {
+	resetViperForTest(t)
+	t.Setenv("HOME", t.TempDir())
+	seedAuthTrustStore(t)
+
+	fixture := registerWebAuthnFixture(t)
+
+	registry, cleanup, err := openServerRegistry(slog.Default())
+	require.NoError(t, err)
+	require.NoError(t, registry.Register(context.Background(), &serverregistry.ServerEntry{
+		URL:           fixture.server.URL,
+		Name:          fixture.server.URL,
+		CAFingerprint: "0000000000000000000000000000000000000000000000000000000000000000",
+		Protocol:      serverregistry.ProtocolREST,
+	}))
+	cleanup()
+
+	var out bytes.Buffer
+	cmd := newAuthRegisterCmd(t, &out)
+	require.NoError(t, cmd.Flags().Set("server", fixture.server.URL))
+	require.NoError(t, cmd.Flags().Set("email", "alice@example.com"))
+
+	err = runAuthRegister(cmd, nil)
+	require.Error(t, err)
+	assert.ErrorIs(t, err, ErrAuthConnectFailed)
+}
+
+// --- only TLS-eligible purposes anchor a TLS chain (#250) ---
+
+// The trust store also holds TPM manufacturer roots, Android hardware
+// attestation roots and IDevID issuers. Those anchor DEVICE ATTESTATION
+// chains; a TLS session to a server is not one, and promoting them here would
+// let a TPM vendor root authenticate an xkms server.
+func TestAuthClient_AttestationPurposesDoNotAnchorTLS(t *testing.T) {
+	resetViperForTest(t)
+
+	fixture := newAuthTLSFixture(t)
+
+	// The issuing CA is in the store, but classified for TPM attestation.
+	dir := t.TempDir()
+	viper.Set("trust.store_path", dir)
+	store, err := truststore.NewFileStore(&truststore.FileStoreConfig{BaseDir: dir})
+	require.NoError(t, err)
+	require.NoError(t, store.AddCertificateWithOptions(fixture.caCert, &truststore.AddCertificateOptions{
+		Purpose: truststore.PurposeTPMManufacturer,
+		Source:  "auth tls test",
+	}))
+	require.NoError(t, store.Close())
+
+	client, err := authClientFactory(authClientConfig{ServerURL: fixture.server.URL})
+	require.NoError(t, err)
+	defer func() { _ = client.Close() }()
+
+	err = client.Connect(context.Background())
+	require.Error(t, err, "a TPM manufacturer root must not anchor a TLS server chain")
+}
+
+// Reclassifying the same CA as a user CA makes it a TLS anchor, which is what
+// an operator adding a deployment CA intends.
+func TestAuthClient_UserCAPurposeAnchorsTLS(t *testing.T) {
+	resetViperForTest(t)
+
+	fixture := newAuthTLSFixture(t)
+	seedAuthTrustStore(t, fixture.caCert)
+
+	client, err := authClientFactory(authClientConfig{ServerURL: fixture.server.URL})
+	require.NoError(t, err)
+	defer func() { _ = client.Close() }()
+
+	require.NoError(t, client.Connect(context.Background()))
 }

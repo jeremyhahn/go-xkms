@@ -696,16 +696,13 @@ func (h *headlessHandler) HandlePairingCompleted(origin string) error {
 	return nil
 }
 
-// HandleUnlock implements ipc.UnlockHandler by delegating to AppLockService.
+// HandleUnlock implements ipc.UnlockHandler by delegating to AppLockService,
+// which verifies the resulting state and names what the PIN released.
 func (h *headlessHandler) HandleUnlock(pin string) (*ipc.UnlockResult, error) {
 	if h.appLockSvc == nil {
 		return &ipc.UnlockResult{Success: false, Error: "app lock service not configured"}, nil
 	}
-	if err := h.appLockSvc.Unlock(pin); err != nil {
-		return &ipc.UnlockResult{Success: false, Error: err.Error()}, nil
-	}
-	slog.Info("app unlocked via IPC")
-	return &ipc.UnlockResult{Success: true}, nil
+	return h.appLockSvc.HandleUnlock(pin), nil
 }
 
 // readBarrierStrategy reads the sealed root key blob from disk and returns

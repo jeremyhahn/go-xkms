@@ -16,10 +16,48 @@ package services
 import (
 	"context"
 	"log/slog"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
+
+	"github.com/jeremyhahn/go-xkms/xkey/pkg/ipc"
 )
+
+// Subsystem names reported by UnlockVerified. They are the vocabulary an
+// operator sees, so they read as prose rather than as identifiers.
+const (
+	// SubsystemAppLock is the global app-level lock this service owns.
+	SubsystemAppLock = "app lock"
+
+	// SubsystemBarrier is the storage barrier the unlock may unseal.
+	SubsystemBarrier = "barrier"
+)
+
+// UnlockOutcome describes the effect of an unlock attempt: the subsystems it
+// released, and the subsystems still locked afterwards.
+//
+// It exists because "the unlock call returned" and "something was unlocked"
+// are different facts, and reporting the first as the second is a fail-open:
+// an automated flow proceeds on a false premise and fails much later in an
+// unrelated subsystem. A caller must treat a non-empty StillLocked, or an
+// empty Unlocked, as a failure.
+type UnlockOutcome struct {
+	// Unlocked names the subsystems this attempt released.
+	Unlocked []string
+
+	// StillLocked names the subsystems locked after the attempt.
+	StillLocked []string
+}
+
+// lockSnapshot records the state of every subsystem the app lock governs at
+// one instant, so an unlock can be reported as a transition rather than as a
+// return code.
+type lockSnapshot struct {
+	appLocked      bool
+	barrierPresent bool
+	barrierSealed  bool
+}
 
 // AppLockStatus is the frontend-facing representation of the global
 // app-level lock state.
@@ -233,6 +271,76 @@ func (s *AppLockService) Unlock(pin string) error {
 	s.log.Info("app unlocked")
 
 	return nil
+}
+
+// snapshot observes the current state of every subsystem the app lock
+// governs. A barrier that was never initialized is not "locked": it does not
+// exist yet, so it is reported as absent rather than as a lock the PIN failed
+// to open.
+func (s *AppLockService) snapshot() lockSnapshot {
+	snap := lockSnapshot{appLocked: s.locked.Load()}
+	if s.barrierSvc != nil && s.barrierSvc.IsInitialized() {
+		snap.barrierPresent = true
+		snap.barrierSealed = !s.barrierSvc.IsUnsealed()
+	}
+	return snap
+}
+
+// UnlockVerified performs Unlock and then verifies the resulting state,
+// reporting exactly which subsystems it released and which remained locked.
+//
+// Unlock's error return is not sufficient on its own: the PIN may be valid
+// for one subsystem and not open another, in which case the honest report is
+// the name of what it did unlock, not a blanket success.
+func (s *AppLockService) UnlockVerified(pin string) (*UnlockOutcome, error) {
+	before := s.snapshot()
+	err := s.Unlock(pin)
+	after := s.snapshot()
+
+	outcome := &UnlockOutcome{}
+	if before.appLocked && !after.appLocked {
+		outcome.Unlocked = append(outcome.Unlocked, SubsystemAppLock)
+	}
+	if after.appLocked {
+		outcome.StillLocked = append(outcome.StillLocked, SubsystemAppLock)
+	}
+	if before.barrierSealed && after.barrierPresent && !after.barrierSealed {
+		outcome.Unlocked = append(outcome.Unlocked, SubsystemBarrier)
+	}
+	if after.barrierPresent && after.barrierSealed {
+		outcome.StillLocked = append(outcome.StillLocked, SubsystemBarrier)
+	}
+
+	return outcome, err
+}
+
+// HandleUnlock implements the unlock IPC verb for every front end that
+// exposes it (the GUI bridge, the headless daemon, the browser extension
+// native host). Rendering the outcome here keeps one truthful report rather
+// than one per transport.
+//
+// Success is reported only when the attempt released something and left
+// nothing it governs locked.
+func (s *AppLockService) HandleUnlock(pin string) *ipc.UnlockResult {
+	outcome, err := s.UnlockVerified(pin)
+	result := &ipc.UnlockResult{
+		Unlocked:    outcome.Unlocked,
+		StillLocked: outcome.StillLocked,
+	}
+
+	switch {
+	case err != nil:
+		result.Error = err.Error()
+	case len(outcome.StillLocked) > 0:
+		result.Error = "still locked: " + strings.Join(outcome.StillLocked, ", ")
+	case len(outcome.Unlocked) == 0:
+		result.Error = "nothing was unlocked"
+	default:
+		result.Success = true
+		s.log.Info("app unlocked via IPC", "unlocked", strings.Join(outcome.Unlocked, ", "))
+	}
+
+	return result
 }
 
 // AutoUnlock transitions the app to the unlocked state without PIN
