@@ -111,6 +111,7 @@ var (
 	ErrInvalidPlatformSRKConfiguration = errors.New("tpm: invalid platform SRK configuration")
 	ErrInvalidHashFunction             = errors.New("tpm: invalid hash function")
 	ErrInvalidSessionAuthorization     = errors.New("tpm: invalid session authorization")
+	ErrUnsupportedCertifyScheme        = errors.New("tpm: attestation key signing scheme is not supported for certification")
 	ErrMissingMeasurementLog           = errors.New("tpm: binary measurement log not found")
 	ErrRSAPSSNotSupported              = errors.New("tpm: RSA-PSS / FIPS 140-2 not supported by this TPM")
 

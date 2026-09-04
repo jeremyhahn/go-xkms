@@ -397,3 +397,94 @@ func TestSSRK_ReturnsConfiguredStorageRootKeyConfig(t *testing.T) {
 	t.Cleanup(func() { h.TPM.config = saved })
 	assert.Nil(t, h.TPM.SSRK(), "a TPM with no configuration must report no SRK config")
 }
+
+// TestIAKAttributes_ColdCacheKeepsConfiguredCN covers the path a restart takes:
+// CreateIAK caches tpm.iakAttrs in-process, so IAKAttributes only rebuilds the
+// attributes from configuration when the cache is cold -- which is every fresh
+// process attaching to an already-provisioned TPM.
+//
+// That rebuild used to assign the CN only in the empty-CN branch, so a
+// configured CN was dropped and consumers that key certificate storage on the
+// CN failed on every boot. KeyAttributes(handle) carries no CN of its own, so
+// nothing else could supply it.
+func TestIAKAttributes_ColdCacheKeepsConfiguredCN(t *testing.T) {
+	const configuredCN = "host-iak"
+
+	h := newSimHarness(t, func(c *Config) { c.IAK.CN = configuredCN })
+
+	// Provisioning caches attributes built by IAKAttributesFromConfig, which
+	// has always carried the CN. Assert that first, so a failure below is
+	// unambiguously the rebuild and not the provisioning path.
+	warm, err := h.TPM.IAKAttributes()
+	require.NoError(t, err)
+	require.Equal(t, configuredCN, warm.CN,
+		"provisioning must record the configured CN")
+
+	h.TPM.iakAttrs = nil // the cold cache a restarted process sees
+
+	cold, err := h.TPM.IAKAttributes()
+	require.NoError(t, err)
+	assert.Equal(t, configuredCN, cold.CN,
+		"a rebuild from configuration must keep the configured CN")
+	assert.Equal(t, types.KeyTypeAttestation, cold.KeyType)
+}
+
+// TestIAKAttributes_ColdCacheEmptyCNFallsBack pins the default that applies
+// when no CN is configured, so fixing the configured-CN case does not quietly
+// remove it.
+//
+// Note the asymmetry this documents rather than changes: IAKAttributesFromConfig
+// -- the path provisioning uses -- assigns config.CN verbatim and applies no
+// fallback, so an unconfigured CN is recorded as "" at provisioning time and as
+// "default-device-id" after a restart. Only the configured-CN case is in scope
+// here; the empty case is reported upstream instead of being changed under a
+// bug fix.
+func TestIAKAttributes_ColdCacheEmptyCNFallsBack(t *testing.T) {
+	h := newSimHarness(t, func(c *Config) { c.IAK.CN = "" })
+
+	h.TPM.iakAttrs = nil
+
+	cold, err := h.TPM.IAKAttributes()
+	require.NoError(t, err)
+	assert.Equal(t, "default-device-id", cold.CN,
+		"an unconfigured CN must still fall back to the documented default")
+}
+
+// TestIAKAndIDevIDAttributes_CNSymmetry pins the two identity attribute
+// builders against each other. They drifted once: IDevIDAttributes assigned the
+// configured CN unconditionally and IAKAttributes did not, and nothing compared
+// them.
+func TestIAKAndIDevIDAttributes_CNSymmetry(t *testing.T) {
+	const (
+		iakCN    = "symmetry-iak"
+		idevidCN = "symmetry-idevid"
+	)
+
+	h := newSimHarness(t, func(c *Config) {
+		c.IdentityProvisioningStrategy = string(EnrollmentStrategyIAK_IDEVID_SINGLE_PASS)
+		c.IAK.CN = iakCN
+		// Match the harness IAK's padding so this test turns on the CN alone;
+		// a mixed pair is covered separately by
+		// TestCreateIDevID_CertificationSignatureIsTheAKs.
+		c.IDevID = idevidTestConfig(idevidCN, c.IAK.SignatureAlgorithm)
+	})
+
+	iakAttrs, err := h.TPM.IAKAttributes()
+	require.NoError(t, err)
+	ekPub, err := h.TPM.EKRSA()
+	require.NoError(t, err)
+	_, _, err = h.TPM.CreateIDevID(iakAttrs, selfSignedCertForKey(t, ekPub), nil)
+	require.NoError(t, err)
+
+	// Both cold, so both go through the configuration rebuild.
+	h.TPM.iakAttrs = nil
+	h.TPM.idevidAttrs = nil
+
+	coldIAK, err := h.TPM.IAKAttributes()
+	require.NoError(t, err)
+	coldIDevID, err := h.TPM.IDevIDAttributes()
+	require.NoError(t, err)
+
+	assert.Equal(t, iakCN, coldIAK.CN, "the IAK must keep its configured CN")
+	assert.Equal(t, idevidCN, coldIDevID.CN, "the IDevID must keep its configured CN")
+}

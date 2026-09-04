@@ -118,8 +118,15 @@ func (tpm *TPM2) IAKAttributes() (*types.KeyAttributes, error) {
 		if err != nil {
 			return nil, err
 		}
+		// KeyAttributes(handle) describes the key the TPM holds and does not
+		// carry a CN, so the CN has to come from configuration -- as the
+		// IDevID sibling below does unconditionally. Assigning it only in the
+		// empty-CN branch dropped every configured CN, which is the one case
+		// that matters: consumers key certificate storage on it.
 		if tpm.config.IAK.CN == "" {
 			iakAttrs.CN = "default-device-id"
+		} else {
+			iakAttrs.CN = tpm.config.IAK.CN
 		}
 		iakAttrs.KeyType = types.KeyTypeAttestation
 		iakAttrs.StoreType = types.StoreTPM2
@@ -1174,7 +1181,6 @@ func (tpm *TPM2) CreateIDevID(
 	//   - IDevID Key      (un-restricted)
 
 	var hierarchyAuth, akAuth, idevidAuth, signature []byte
-	var isRSAPSS bool
 
 	if akAttrs == nil {
 		return nil, nil, ErrInvalidAKAttributes
@@ -1215,7 +1221,6 @@ func (tpm *TPM2) CreateIDevID(
 	if ekAttrs.KeyAlgorithm == x509.RSA {
 		if types.IsRSAPSS(idevidAttrs.SignatureAlgorithm) {
 			idevidTemplate = RSAPSSIDevIDTemplate
-			isRSAPSS = true
 		} else {
 			idevidTemplate = RSASSAIDevIDTemplate
 		}
@@ -1350,11 +1355,12 @@ func (tpm *TPM2) CreateIDevID(
 		return nil, nil, err
 	}
 
+	// The public key recorded on the attributes is the IDevID's, so it is
+	// read from the IDevID's own public area.
 	var pubKeyBytes []byte
+	switch idevidPub.Type {
 
-	// Sign the attestation structure
-	if akPub.Type == tpm2.TPMAlgRSA { //nolint:staticcheck // QF1003: if-else preferred over switch
-
+	case tpm2.TPMAlgRSA:
 		rsaDetail, err := idevidPub.Parameters.RSADetail()
 		if err != nil {
 			return nil, nil, err
@@ -1363,12 +1369,10 @@ func (tpm *TPM2) CreateIDevID(
 		if err != nil {
 			return nil, nil, err
 		}
-
 		rsaPub, err := tpm2.RSAPub(rsaDetail, rsaUnique)
 		if err != nil {
 			return nil, nil, err
 		}
-
 		rsaDER, err := store.EncodePubKey(rsaPub)
 		if err != nil {
 			tpm.logger.Error("failed to encode RSA public key", slog.String("error", err.Error()))
@@ -1376,33 +1380,12 @@ func (tpm *TPM2) CreateIDevID(
 		}
 		pubKeyBytes = rsaDER
 
-		var rsaSig *tpm2.TPMSSignatureRSA
-		if isRSAPSS {
-			rsaSig, err = rspCert.Signature.Signature.RSAPSS()
-			if err != nil {
-				return nil, nil, err
-			}
-		} else {
-			rsaSig, err = rspCert.Signature.Signature.RSASSA()
-			if err != nil {
-				return nil, nil, err
-			}
-		}
-		signature = rsaSig.Sig.Buffer
-
-	} else if akPub.Type == tpm2.TPMAlgECC {
-
-		sig, err := rspCert.Signature.Signature.ECDSA()
-		if err != nil {
-			return nil, nil, err
-		}
-
+	case tpm2.TPMAlgECC:
 		eccPub, err := eccPublicKey(idevidPub)
 		if err != nil {
 			tpm.logger.Error("failed to reconstruct IDevID ECC public key", slog.String("error", err.Error()))
 			return nil, nil, err
 		}
-
 		eccDER, err := store.EncodePubKey(eccPub)
 		if err != nil {
 			tpm.logger.Error("failed to encode ECC public key", slog.String("error", err.Error()))
@@ -1410,6 +1393,46 @@ func (tpm *TPM2) CreateIDevID(
 		}
 		pubKeyBytes = eccDER
 
+	default:
+		return nil, nil, types.ErrInvalidKeyAlgorithm
+	}
+
+	// The certification was signed by the AK with InScheme = TPM_ALG_NULL, so
+	// the TPM signed it under the AK's own scheme (TCG Part 3 §18.2). Both the
+	// algorithm and the RSA padding of rspCert.Signature are therefore the
+	// AK's, and are read from akPub. Deriving the padding from the IDevID's
+	// configured signature algorithm instead made a device with a PSS AK and an
+	// SSA IDevID -- or the reverse -- fail to enroll at all, and was invisible
+	// wherever the two happened to be configured alike.
+	switch akPub.Type {
+
+	case tpm2.TPMAlgRSA:
+		akDetail, err := akPub.Parameters.RSADetail()
+		if err != nil {
+			return nil, nil, err
+		}
+
+		var rsaSig *tpm2.TPMSSignatureRSA
+		switch akDetail.Scheme.Scheme {
+		case tpm2.TPMAlgRSAPSS:
+			rsaSig, err = rspCert.Signature.Signature.RSAPSS()
+		case tpm2.TPMAlgRSASSA:
+			rsaSig, err = rspCert.Signature.Signature.RSASSA()
+		default:
+			// A NULL or non-signing scheme leaves nothing to unpack: the
+			// certification could not have been produced under it.
+			return nil, nil, ErrUnsupportedCertifyScheme
+		}
+		if err != nil {
+			return nil, nil, err
+		}
+		signature = rsaSig.Sig.Buffer
+
+	case tpm2.TPMAlgECC:
+		sig, err := rspCert.Signature.Signature.ECDSA()
+		if err != nil {
+			return nil, nil, err
+		}
 		r := big.NewInt(0).SetBytes(sig.SignatureR.Buffer)
 		s := big.NewInt(0).SetBytes(sig.SignatureS.Buffer)
 		asn1Struct := struct{ R, S *big.Int }{r, s}
@@ -1419,6 +1442,9 @@ func (tpm *TPM2) CreateIDevID(
 			return nil, nil, err
 		}
 		signature = asn1Sig
+
+	default:
+		return nil, nil, ErrUnsupportedCertifyScheme
 	}
 
 	tpm.logger.Debug("tpm: IDevID Key Hierarchy: Endorsement")
