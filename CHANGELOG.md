@@ -214,6 +214,40 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **The `pkg/acme/client` DNS tests no longer query the public internet**
+  (#243). Ten call sites across four files resolved real domains — `google.com`,
+  `example.com` — or queried `8.8.8.8` through the global resolver, inside the
+  `Unit Tests` gate. That made a gate depend on DNS reachability from the
+  runner: it fails on any hiccup, on an air-gapped runner, and on any host with
+  egress filtering, and it always looks like a defect in whatever PR happens to
+  be running.
+
+  Every assertion is preserved — an unmatched value is still
+  `ErrDNSRecordNotPresent`, a failed nameserver lookup is still wrapped with
+  "failed to get authoritative nameservers" — but the dependency and the
+  multi-second network timeouts are gone. The four tests that asserted
+  "`google.com` has nameservers" now assert what the code actually does with a
+  supplied resolver, which is strictly more coverage than measuring a third
+  party's DNS.
+
+  Verified by building the test binary and running it inside a network
+  namespace with only loopback (`unshare -rn`): every converted test passes
+  with no network at all.
+
+  **Two classes are NOT fixed here**, both recorded on #243 with the same
+  measurement:
+
+  - **`route53` zone discovery** (six tests) is not reachable from this seam.
+    It goes through `providers.FindZoneByFQDN`, a different package with its
+    own query path and a package-global zone cache; closing it needs a seam in
+    `providers` affecting every DNS provider.
+  - **Six tests in `cross_sign_test.go` call Let's Encrypt production.** Each
+    builds an `httptest` server and passes its URL, so the intent is local, but
+    the `acme.Client` carries no `DirectoryURL` and `golang.org/x/crypto/acme`
+    then defaults to `acme-v02.api.letsencrypt.org`. That is an outbound HTTPS
+    call to a third party's production service from the unit gate. It needs no
+    API change to fix and is the cheapest of the three.
+
 - **MCP key import now receives the key material** (#159).
   `pkg/api/transport/mcp.Transport.ImportKey` marshalled a
   `transport.ImportKeyRequest` straight onto the wire, but the handler decodes
@@ -716,6 +750,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 
 ### Added
+
+- **The ACME DNS pre-checks take an injectable resolver** (#243).
+  `CheckDNSFromAuthoritative`, `CheckDNSFromPublic` and
+  `CheckDNSFromNameservers` gain variadic `DNSCheckOption`s —
+  `WithNameserverLookup` (a `NameserverLookup`) and `WithPropagationQuery` (a
+  `PropagationQuery`).
+
+  **Production behaviour is unchanged**: with no options the defaults are
+  `getAuthoritativeNameservers` (the system resolver) and
+  `providers.CheckDNSPropagation` (a real query), exactly as before. The
+  options are variadic, so every existing call site still compiles, and a nil
+  option is ignored rather than installing a nil dependency.
+
+  `getAuthoritativeNameservers` also gained an internal seam:
+  `authoritativeNameservers(fqdn, nsLookup)` carries the logic — stripping the
+  `_acme-challenge` label and trailing dot, appending `:53`, refusing an empty
+  answer — so that logic is testable without asking the internet.
 
 - **`fido2-attestation` certificate profile** (#232). The CA can now issue a
   FIDO2 authenticator attestation certificate that satisfies WebAuthn Level 2

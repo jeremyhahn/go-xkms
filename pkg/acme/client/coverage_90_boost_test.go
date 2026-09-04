@@ -20,8 +20,10 @@ import (
 	"crypto/rand"
 	"crypto/x509"
 	"crypto/x509/pkix"
+	"errors"
 	"log/slog"
 	"math/big"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"testing"
@@ -320,15 +322,18 @@ func TestCheckOCSP_ServerError(t *testing.T) {
 // =============================================================================
 
 func TestCheckDNSFromAuthoritative_Success(t *testing.T) {
-	// Use a real domain that has NS records
-	checkFunc := CheckDNSFromAuthoritative()
+	// The nameserver lookup succeeds and the value is not published, which is
+	// what this test is about. Both are injected: resolving a real domain here
+	// made the Unit Tests gate depend on the public internet (go-xkms#243).
+	checkFunc := CheckDNSFromAuthoritative(
+		WithNameserverLookup(staticNameservers("ns1.example-authoritative.test:53")),
+		WithPropagationQuery(propagationResult(false)),
+	)
 
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 
-	// Query for a domain that exists - we expect the authoritative lookup to succeed
-	// but the value check to fail (since we're using a fake value)
-	err := checkFunc(ctx, "_acme-challenge.google.com.", "fake-value-that-wont-exist")
+	err := checkFunc(ctx, "_acme-challenge.example.test.", "fake-value-that-wont-exist")
 
 	// We expect an error because the value won't match
 	require.Error(t, err)
@@ -337,12 +342,12 @@ func TestCheckDNSFromAuthoritative_Success(t *testing.T) {
 }
 
 func TestCheckDNSFromAuthoritative_InvalidDomain(t *testing.T) {
-	checkFunc := CheckDNSFromAuthoritative()
+	checkFunc := CheckDNSFromAuthoritative(WithNameserverLookup(failingNameservers()))
 
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 
-	// Use a domain that definitely won't have NS records
+	// A domain with no authoritative nameservers.
 	err := checkFunc(ctx, "_acme-challenge.this-domain-definitely-does-not-exist-xyz-abc-123.", "test-value")
 
 	// Should fail to get authoritative nameservers
@@ -351,48 +356,55 @@ func TestCheckDNSFromAuthoritative_InvalidDomain(t *testing.T) {
 }
 
 func TestCheckDNSFromPublic_NotPresent(t *testing.T) {
-	checkFunc := CheckDNSFromPublic()
+	checkFunc := CheckDNSFromPublic(WithPropagationQuery(propagationResult(false)))
 
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 
-	// Use a real domain with a value that won't exist
-	err := checkFunc(ctx, "_acme-challenge.example.com.", "unique-test-value-xyz-12345")
+	err := checkFunc(ctx, "_acme-challenge.example.test.", "unique-test-value-xyz-12345")
 
 	require.Error(t, err)
 	assert.ErrorIs(t, err, ErrDNSRecordNotPresent)
 }
 
 func TestCheckDNSFromNameservers_NotPresent(t *testing.T) {
-	checkFunc := CheckDNSFromNameservers([]string{"8.8.8.8:53", "1.1.1.1:53"})
+	checkFunc := CheckDNSFromNameservers(
+		[]string{"8.8.8.8:53", "1.1.1.1:53"},
+		WithPropagationQuery(propagationResult(false)),
+	)
 
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 
-	// Use a real domain with a value that won't exist
-	err := checkFunc(ctx, "_acme-challenge.example.com.", "unique-test-value-xyz-67890")
+	err := checkFunc(ctx, "_acme-challenge.example.test.", "unique-test-value-xyz-67890")
 
 	require.Error(t, err)
 	assert.ErrorIs(t, err, ErrDNSRecordNotPresent)
 }
 
 func TestCheckDNSFromNameservers_EmptyList(t *testing.T) {
-	checkFunc := CheckDNSFromNameservers([]string{})
+	// An empty nameserver list makes the real query fall back to the package
+	// defaults, i.e. the public internet, so the query is supplied here. What
+	// is under test is that the pre-check surfaces a failure either way.
+	checkFunc := CheckDNSFromNameservers([]string{},
+		WithPropagationQuery(propagationResult(false)))
 
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 
-	// With empty nameservers, the propagation check should fail
-	err := checkFunc(ctx, "_acme-challenge.example.com.", "test-value")
+	err := checkFunc(ctx, "_acme-challenge.example.test.", "test-value")
 
-	// Behavior depends on the providers.CheckDNSPropagation implementation
-	// but it should either error or return not present
 	require.Error(t, err)
+	assert.ErrorIs(t, err, ErrDNSRecordNotPresent)
 }
 
 func TestGetAuthoritativeNameservers_Success(t *testing.T) {
-	// Test with a well-known domain
-	servers, err := getAuthoritativeNameservers("_acme-challenge.google.com.")
+	// Resolver supplied: this asserts the port suffix this function appends,
+	// not that a third party's domain resolves from the runner (go-xkms#243).
+	servers, err := authoritativeNameservers("_acme-challenge.example.test.",
+		func(string) ([]*net.NS, error) {
+			return []*net.NS{{Host: "ns1.example.test."}}, nil
+		})
 	require.NoError(t, err)
 	assert.NotEmpty(t, servers)
 
@@ -403,7 +415,8 @@ func TestGetAuthoritativeNameservers_Success(t *testing.T) {
 }
 
 func TestGetAuthoritativeNameservers_NonExistentDomain(t *testing.T) {
-	_, err := getAuthoritativeNameservers("_acme-challenge.this-domain-definitely-does-not-exist-abc-123.")
+	_, err := authoritativeNameservers("_acme-challenge.this-domain-definitely-does-not-exist-abc-123.",
+		func(string) ([]*net.NS, error) { return nil, errors.New("no such host") })
 	require.Error(t, err)
 }
 

@@ -407,18 +407,85 @@ func (s *PreCheckDNSSolver) ActiveRecordCount() int {
 	return s.solver.ActiveRecordCount()
 }
 
+// NameserverLookup returns the authoritative nameservers for fqdn.
+//
+// It is the seam that keeps a DNS pre-check testable. The default reaches the
+// system resolver, so a test using it queries the public internet -- which is
+// how the Unit Tests gate came to depend on DNS reachability from the runner
+// (go-xkms#243), failing on any hiccup, on an air-gapped runner, and on any
+// host with egress filtering, always looking like a defect in whatever PR
+// happened to be running.
+type NameserverLookup func(fqdn string) ([]string, error)
+
+// PropagationQuery reports whether value is published at fqdn by the given
+// nameservers. The default queries them over the network; see NameserverLookup
+// for why that is injectable.
+type PropagationQuery func(ctx context.Context, fqdn, value string, nameservers []string) (bool, error)
+
+// dnsCheckConfig holds the resolved dependencies of a DNS pre-check.
+type dnsCheckConfig struct {
+	lookupNameservers NameserverLookup
+	queryPropagation  PropagationQuery
+}
+
+// DNSCheckOption configures a DNS pre-check function.
+//
+// Every option is optional and the zero configuration is the production one:
+// the system resolver and a real propagation query. Passing none leaves
+// behaviour exactly as it was before the seam existed.
+type DNSCheckOption func(*dnsCheckConfig)
+
+// WithNameserverLookup replaces how a pre-check finds a domain's authoritative
+// nameservers. Only CheckDNSFromAuthoritative consults it.
+func WithNameserverLookup(lookup NameserverLookup) DNSCheckOption {
+	return func(c *dnsCheckConfig) {
+		if lookup != nil {
+			c.lookupNameservers = lookup
+		}
+	}
+}
+
+// WithPropagationQuery replaces how a pre-check queries nameservers for the
+// expected TXT value.
+func WithPropagationQuery(query PropagationQuery) DNSCheckOption {
+	return func(c *dnsCheckConfig) {
+		if query != nil {
+			c.queryPropagation = query
+		}
+	}
+}
+
+// newDNSCheckConfig applies opts over the production defaults.
+func newDNSCheckConfig(opts ...DNSCheckOption) dnsCheckConfig {
+	cfg := dnsCheckConfig{
+		lookupNameservers: getAuthoritativeNameservers,
+		queryPropagation:  providers.CheckDNSPropagation,
+	}
+	for _, opt := range opts {
+		if opt != nil {
+			opt(&cfg)
+		}
+	}
+	return cfg
+}
+
 // CheckDNSFromAuthoritative creates a pre-check function that verifies
 // DNS propagation by querying the authoritative nameservers for the domain.
-func CheckDNSFromAuthoritative() PreCheckFunc {
+//
+// With no options it behaves exactly as before: the system resolver finds the
+// nameservers and they are queried over the network.
+func CheckDNSFromAuthoritative(opts ...DNSCheckOption) PreCheckFunc {
+	cfg := newDNSCheckConfig(opts...)
+
 	return func(ctx context.Context, fqdn, value string) error {
 		// Get authoritative nameservers for the domain
-		ns, err := getAuthoritativeNameservers(fqdn)
+		ns, err := cfg.lookupNameservers(fqdn)
 		if err != nil {
 			return caerrors.DNSError("failed to get authoritative nameservers: %v", err)
 		}
 
 		// Check propagation from authoritative servers
-		ok, err := providers.CheckDNSPropagation(ctx, fqdn, value, ns)
+		ok, err := cfg.queryPropagation(ctx, fqdn, value, ns)
 		if err != nil {
 			return err
 		}
@@ -431,7 +498,9 @@ func CheckDNSFromAuthoritative() PreCheckFunc {
 
 // CheckDNSFromPublic creates a pre-check function that verifies
 // DNS propagation by querying public DNS resolvers (Google, Cloudflare).
-func CheckDNSFromPublic() PreCheckFunc {
+func CheckDNSFromPublic(opts ...DNSCheckOption) PreCheckFunc {
+	cfg := newDNSCheckConfig(opts...)
+
 	publicDNS := []string{
 		"8.8.8.8:53",        // Google
 		"8.8.4.4:53",        // Google
@@ -441,7 +510,7 @@ func CheckDNSFromPublic() PreCheckFunc {
 	}
 
 	return func(ctx context.Context, fqdn, value string) error {
-		ok, err := providers.CheckDNSPropagation(ctx, fqdn, value, publicDNS)
+		ok, err := cfg.queryPropagation(ctx, fqdn, value, publicDNS)
 		if err != nil {
 			return err
 		}
@@ -454,9 +523,11 @@ func CheckDNSFromPublic() PreCheckFunc {
 
 // CheckDNSFromNameservers creates a pre-check function that verifies
 // DNS propagation from the specified nameservers.
-func CheckDNSFromNameservers(nameservers []string) PreCheckFunc {
+func CheckDNSFromNameservers(nameservers []string, opts ...DNSCheckOption) PreCheckFunc {
+	cfg := newDNSCheckConfig(opts...)
+
 	return func(ctx context.Context, fqdn, value string) error {
-		ok, err := providers.CheckDNSPropagation(ctx, fqdn, value, nameservers)
+		ok, err := cfg.queryPropagation(ctx, fqdn, value, nameservers)
 		if err != nil {
 			return err
 		}
@@ -470,14 +541,30 @@ func CheckDNSFromNameservers(nameservers []string) PreCheckFunc {
 // getAuthoritativeNameservers queries for the authoritative nameservers
 // for a domain. This is a simplified implementation.
 func getAuthoritativeNameservers(fqdn string) ([]string, error) {
+	return authoritativeNameservers(fqdn, net.LookupNS)
+}
+
+// nsLookup has the signature of net.LookupNS.
+//
+// It is the innermost DNS seam, and it exists so the interesting part of
+// authoritativeNameservers -- stripping the _acme-challenge label and the
+// trailing dot, appending the port, refusing an empty answer -- can be tested
+// without asking the internet. A test that asserts "google.com has
+// nameservers" measures Google's DNS, not this code, and it is how the Unit
+// Tests gate came to need egress (go-xkms#243).
+type nsLookup func(name string) ([]*net.NS, error)
+
+// authoritativeNameservers is getAuthoritativeNameservers with its resolver
+// supplied, so callers in tests can provide one that does not use the network.
+func authoritativeNameservers(fqdn string, lookupNS nsLookup) ([]string, error) {
 	// Extract the base domain from the FQDN
 	// _acme-challenge.example.com. -> example.com.
 	domain := strings.TrimPrefix(fqdn, "_acme-challenge.")
 
-	// Use default resolver to find NS records
+	// Use the supplied resolver to find NS records
 	// In a production implementation, you might want to walk up
 	// the DNS hierarchy to find the actual zone
-	ns, err := net.LookupNS(strings.TrimSuffix(domain, "."))
+	ns, err := lookupNS(strings.TrimSuffix(domain, "."))
 	if err != nil {
 		return nil, err
 	}

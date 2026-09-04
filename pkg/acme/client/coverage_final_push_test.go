@@ -333,7 +333,7 @@ func TestEncodePrivateKeyPEM_Ed25519SuccessCoverageFinal(t *testing.T) {
 // =============================================================================
 
 func TestCheckDNSFromAuthoritative_PropagationCheckErrorCoverageFinal(t *testing.T) {
-	checkFunc := CheckDNSFromAuthoritative()
+	checkFunc := CheckDNSFromAuthoritative(WithNameserverLookup(failingNameservers()))
 
 	// Use a completely invalid domain that will fail NS lookup
 	ctx, cancel := context.WithTimeout(context.Background(), 500*time.Millisecond)
@@ -346,7 +346,7 @@ func TestCheckDNSFromAuthoritative_PropagationCheckErrorCoverageFinal(t *testing
 }
 
 func TestCheckDNSFromPublic_PropagationCheckErrorCoverageFinal(t *testing.T) {
-	checkFunc := CheckDNSFromPublic()
+	checkFunc := CheckDNSFromPublic(WithPropagationQuery(propagationResult(false)))
 
 	// Use a domain that definitely doesn't have the TXT record
 	ctx, cancel := context.WithTimeout(context.Background(), 500*time.Millisecond)
@@ -366,7 +366,7 @@ func TestCheckDNSFromPublic_PropagationCheckErrorCoverageFinal(t *testing.T) {
 func TestCheckDNSFromNameservers_NotPresentCoverageFinal(t *testing.T) {
 	// Test with a domain that won't have our expected TXT record
 	nameservers := []string{"8.8.8.8:53"}
-	checkFunc := CheckDNSFromNameservers(nameservers)
+	checkFunc := CheckDNSFromNameservers(nameservers, WithPropagationQuery(propagationResult(false)))
 
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 	defer cancel()
@@ -381,7 +381,7 @@ func TestCheckDNSFromNameservers_NotPresentCoverageFinal(t *testing.T) {
 func TestCheckDNSFromNameservers_ErrorCoverageFinal(t *testing.T) {
 	// Test with invalid nameserver that will cause an error
 	nameservers := []string{"192.0.2.1:53"} // TEST-NET-1, won't respond
-	checkFunc := CheckDNSFromNameservers(nameservers)
+	checkFunc := CheckDNSFromNameservers(nameservers, WithPropagationQuery(propagationFailure()))
 
 	ctx, cancel := context.WithTimeout(context.Background(), 500*time.Millisecond)
 	defer cancel()
