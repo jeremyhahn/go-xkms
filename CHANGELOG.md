@@ -1031,6 +1031,41 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **The Lint gate reports every finding instead of the first few** (#225).
+  `.golangci.yml` set none of golangci-lint's three output filters, so the
+  defaults applied and the gate reported a **floor rather than a count**:
+
+  | filter | default | effect |
+  |---|---|---|
+  | `max-same-issues` | 3 | per identical message text |
+  | `max-issues-per-linter` | 50 | |
+  | `uniq-by-line` | true | only the first finding on a given line |
+
+  All three are now set explicitly to report everything, with the rationale in
+  the file so the next reader does not need to know golangci-lint's defaults to
+  know what the gate measures.
+
+  **This never produced a false green** — `exit-code` is 1 while any issue
+  survives filtering, and a filter can only reduce a printed count, never take
+  one from ≥1 to 0. What it distorted is the reported *extent*, which cost time
+  twice: a family sharing one message printed three at a time, so fixing what
+  was printed and pushing yielded three more — indistinguishable from a
+  regression — at a full CI cycle per round on the runner that has been the
+  binding constraint. And work was sized against the printed number: the
+  v2.12.2 → v2.13.2 bump (#189) was scoped against 14 SA1019 findings that were
+  themselves capped.
+
+  Unlimited rather than a larger bound, because any bound reintroduces that
+  failure the moment a family exceeds it, and a number that is sometimes a
+  count and sometimes a floor cannot be reasoned about.
+
+  **Measured before changing anything**, with the runner's v2.13.2: uncapping
+  reveals **no hidden findings**. Root, `sdk/go` and `web/desktop` each report
+  `0 issues.` capped and uncapped, and `xkey`'s non-usb subtrees likewise, so
+  this cannot turn the gate red. The change was then shown to do what it claims
+  by injecting a six-instance finding family: **3 printed under the old cap,
+  all 6 under the new configuration**.
+
 - **`make release-alpha` cuts a correct release, and takes the version as an
   argument** (#58). The old seven-line recipe had four defects, every one of
   them measured while releasing v0.7.8-alpha and v0.8.0-alpha by hand: it could

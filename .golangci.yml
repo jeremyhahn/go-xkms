@@ -16,6 +16,48 @@
 #   - gocritic is not enforced in examples/ or in tests. examples/ is
 #     documentation that happens to compile: it is written for readability, and
 #     rewriting it to satisfy performance checks makes it worse at its job.
+
+# Issue output caps: UNLIMITED, decided rather than inherited (#225).
+#
+# golangci-lint applies three output filters by default, and this file used to
+# set none of them, so the gate reported a FLOOR rather than a count:
+#
+#   max-same-issues        3   -- per identical message text
+#   max-issues-per-linter  50
+#   uniq-by-line           true -- only the first finding on a given line
+#
+# The caps never produced a false green: exit-code is 1 while any issue
+# survives filtering, and a filter can only reduce a printed count, never take
+# one from >=1 to 0. What they distort is the reported EXTENT, and that costs
+# real time twice over. A family sharing one message prints three at a time, so
+# fixing what was printed and pushing yields three more -- indistinguishable
+# from a regression to whoever is watching, at a full CI cycle per round on a
+# runner that is the binding constraint. And work gets sized against the
+# printed number: the v2.12.2 -> v2.13.2 bump (#189) was scoped against 14
+# SA1019 findings that were themselves capped.
+#
+# Unlimited rather than a larger bound, because any bound reintroduces exactly
+# that failure the moment a family exceeds it, and a number that is sometimes a
+# count and sometimes a floor cannot be reasoned about. Readability is not the
+# constraint worth optimising here: the gate is green, so the everyday output
+# is empty, and the run that prints hundreds is the run that most needs to show
+# them all.
+#
+# uniq-by-line is included for the same reason. It is a different filter --
+# deduplication by location rather than a count -- but it hides a second,
+# DIFFERENT finding on a line that already has one, which is the same defect in
+# a different costume.
+#
+# Measured with the runner's golangci-lint v2.13.2 before changing anything:
+# uncapping reveals no hidden findings. Root, sdk/go and web/desktop each
+# report "0 issues." capped and uncapped; xkey's non-usb subtrees likewise.
+# So this change cannot turn the gate red -- it only makes the next backlog
+# report its true size the first time rather than the third.
+issues:
+  max-same-issues: 0
+  max-issues-per-linter: 0
+  uniq-by-line: false
+
 version: "2"
 
 linters:
