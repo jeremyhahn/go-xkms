@@ -46,6 +46,106 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `getFrostBackend()` resolves to the concrete key provider and unwraps any
   scoping — the same structural problem as #163, and reported rather than
   guessed at.
+- **credProtect is now enforced, and an SO attestation override can no longer
+  fall open to `none`** (#215, #216). All paths `xkey/pkg/authenticator/`.
+
+  **credProtect enforcement (#215).** `getInfo` advertised `credProtect`,
+  `makeCredential` validated the level, echoed it to the relying party in the
+  authenticator-data extension map and persisted it — and nothing ever applied
+  it. `checkAssertionCredentialProtection` was a `return nil` stub, and the
+  stored `StoredCredential.CredProtect` had **no** enforcement reader on the
+  assertion path at all. A level-3 (`userVerificationRequired`) credential
+  produced an assertion with the UV bit clear and no PIN demanded, and a level-2
+  credential was disclosed — credential ID, user id, name and display name — by
+  an empty-allowList enumeration without user verification. The RP was told a
+  protection level was in force and made decisions on that echo.
+
+  The CTAP 2.1 §12.1 rules now decide which credentials a request may see, in
+  one predicate (`credentialProtectionSatisfied`) applied by the credential
+  filter: level 3 requires user verification however the credential was named,
+  level 2 requires either an allowList naming it or user verification, level 1
+  and unset are unrestricted. A credential that fails is treated as **absent**
+  — the request ends in `CTAP2_ERR_NO_CREDENTIALS`, indistinguishable from the
+  authenticator not holding it, so the protection level does not itself become
+  an oracle.
+
+  This required knowing whether the request is user-verified *before* selecting
+  credentials, which is also CTAP 2.1 §6.2.2's order. The pinUvAuthToken checks
+  are now shared by two entry points: the existing, committing
+  `AuthorizePinUvAuthToken`, and a new read-only `CanAuthorizePinUvAuthToken`
+  that binds no permissions RP ID, refreshes no timer and discards no expired
+  token — asking the question must not spend the use the authoritative call
+  later commits.
+
+  The transport's no-credentials deferral heuristic keeps its existing
+  behaviour through a separate unfiltered `lookupCredentialsForAssertion`: it
+  asks only whether the authenticator holds anything for the RP, and the
+  `CredentialIndexer` fast path answers from an in-memory index that cannot
+  filter without loading credentials. A heuristic that changed answer with the
+  storage backend would be worse than one that consistently ignores protection
+  levels, and getAssertion enforces §12.1 regardless.
+
+  **Attestation override (#216 D).** `RPPolicy.AttestationOverride` holds a
+  WebAuthn attestation *conveyance preference* (`none` / `indirect` / `direct` /
+  `enterprise`); `buildMakeCredentialAttestation` wrote it straight into the
+  attestation *statement format* slot, where `direct`, `indirect` and
+  `enterprise` matched no case and returned `none`. An SO who mandated
+  attestation got a credential telling the RP none was available, with no error
+  — the only value that "worked" was `none`, i.e. the existing behaviour.
+
+  The two vocabularies are now separate. `resolveAttestationOverride` maps a
+  conveyance preference onto a statement format and returns
+  `ErrAttestationOverrideUnsupported` (`CTAP2_ERR_UNSUPPORTED_OPTION`) when the
+  preference cannot be honoured; a backend that cannot produce the mandated
+  statement yields `ErrAttestationUnavailable` rather than a silent downgrade.
+  There were three fall-open paths to `none`, not the one reported.
+
+  **Data race, found while fixing the above and not previously filed.**
+  `buildMakeCredentialAttestation` set `a.config.AttestationFormat`, called the
+  builder and restored it — mutating shared authenticator state with no lock, on
+  both the enterprise and SO-override branches. Two concurrent registrations
+  under different RP policies could observe each other's format and attest under
+  it. The format is now a parameter and no shared state is written;
+  `TestBuildMakeCredentialAttestationIsRaceFree` reproduces the race under
+  `-race` against the old code.
+
+  **SO policy on the Go API path (#216, unfiled).** `MakeCredential`'s Go API
+  never consulted `rpPolicyStore` at all, so an SO's RP block and attestation
+  override did not fire for in-process callers even though the CBOR path
+  honoured both — `GetAssertion`'s Go API already applied policy, so the two
+  diverged. Both controls now apply on that path. `UVOverride` deliberately does
+  not: this path's PIN precondition differs, so what "required" means for an
+  in-process caller is a question rather than a transcription, and it is tracked
+  separately.
+
+  **Policy HMAC coverage (#216 E2).** `PolicyFields` omitted
+  `RequireUserPresence`, `EnableUserIntentCheck`, `AttestationFormat`,
+  `EnablePIN`, `EnableResidentKey`, `EnableHMACSecret`, `SupportedAlgorithms`
+  and `AAGUID`, so an attacker with exactly the filesystem write access the HMAC
+  exists to detect could flip `RequireUserPresence` to false and still verify.
+  All eight are now covered and named individually in the mismatch report.
+
+  **The canonical form now carries a schema version** (`"v"`), and a policy
+  signed under a different field set reports the new `ErrPolicySchemaChanged` —
+  never `ErrPolicyTampered`. The two demand opposite responses from an operator:
+  one means "re-sign your policy", the other means "someone modified your
+  device". Without that distinction this very change would have reported
+  tampering on every signed device at once, because `Canonical()` is a
+  `json.Marshal` of the struct and seven of the eight added fields serialize
+  unconditionally.
+
+  A schema change does not raise `TamperDetected` and does not prevent startup;
+  it logs that integrity is unverified until the SO re-signs. Field diagnostics
+  are suppressed for it, because a snapshot from another field set deserializes
+  with zero values for fields it never carried and would name settings nobody
+  touched.
+
+  No migration path is implemented, because there is nothing to migrate:
+  `Config.PolicyIntegrityProvider` is constructed nowhere outside tests, so
+  `PolicyManager` is nil in every shipped configuration and no device holds a
+  `PolicyHMACTag`. The version is added while that is still true.
+  `PolicyFieldsSchemaVersion` is bumped whenever the field set changes shape —
+  #216's E3 and F will both change it.
 - **Security**: bumped `google.golang.org/grpc` to v1.83.1 across all four
   modules, closing CVE-2026-84304 (HIGH). Trivy flagged it in the published
   `xkms-cli` image, failing the Docker gate on `main`. (#258)

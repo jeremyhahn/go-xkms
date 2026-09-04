@@ -21,6 +21,16 @@ import (
 // CTAP2 error codes as defined in the FIDO2 specification.
 // These errors map to standard CTAP2 status codes.
 
+// ErrAttestationOverrideUnsupported indicates an RP policy demands an
+// attestation conveyance this authenticator cannot honour, either because the
+// preference is not recognised or because the authenticator is configured to
+// produce no attestation statement.
+var ErrAttestationOverrideUnsupported = errors.New("authenticator: attestation override cannot be honoured")
+
+// ErrAttestationUnavailable indicates the key backend could not produce the
+// attestation statement a policy required.
+var ErrAttestationUnavailable = errors.New("authenticator: attestation statement unavailable")
+
 // ErrInvalidCommand indicates an invalid or unsupported CTAP command was received.
 var ErrInvalidCommand = errors.New("authenticator: invalid command")
 
@@ -83,6 +93,16 @@ var ErrCredentialExcluded = errors.New("authenticator: credential excluded")
 // ErrPolicyTampered is returned when policy HMAC verification fails,
 // indicating the policy fields were modified outside SO operations.
 var ErrPolicyTampered = errors.New("authenticator: policy integrity check failed - tamper detected")
+
+// ErrPolicySchemaChanged indicates the stored policy was signed over a
+// different field set than this build uses, so its HMAC cannot be checked
+// against the current canonical form.
+//
+// This is deliberately distinct from ErrPolicyTampered. A schema change means
+// the policy must be re-signed; tampering means someone modified the device.
+// Reporting the first as the second would make a routine upgrade look like an
+// attack on every device at once.
+var ErrPolicySchemaChanged = errors.New("authenticator: policy was signed under a different field-set schema and must be re-signed")
 
 // ErrPolicyHMACMissing is returned when no HMAC tag exists in state.
 // This occurs on first run or when policy has not been signed by SO.

@@ -1321,8 +1321,46 @@ func (a *Authenticator) AuthorizePinUvAuthToken(clientDataHash, authParam []byte
 	defer a.mu.Unlock()
 
 	now := time.Now()
+	if err := a.checkPinUvAuthTokenLocked(clientDataHash, authParam, permission, rpID, now); err != nil {
+		// An expired token is discarded rather than left in place. Only this
+		// committing path may do so — CanAuthorizePinUvAuthToken must not have
+		// side effects.
+		if !a.pinUvAuthTokenUsableLocked(now) {
+			a.stopUsingPinUvAuthTokenLocked()
+		}
+		return err
+	}
+
+	// Bind the token to this RP on first use, per CTAP 2.1 §6.1.2 / §6.2.2.
+	if a.pinState.protocol.tokenRPID == "" {
+		a.pinState.protocol.tokenRPID = rpID
+	}
+	a.pinState.protocol.tokenLastUsed = now
+
+	return nil
+}
+
+// CanAuthorizePinUvAuthToken reports whether AuthorizePinUvAuthToken would
+// succeed for this request, without consuming the token: it binds no
+// permissions RP ID, refreshes no timer and discards no expired token.
+//
+// getAssertion needs to know whether the request counts as user-verified
+// *before* it selects credentials, because CTAP 2.1 §12.1 credProtect
+// filtering depends on it and §6.2.2 verifies pinUvAuthParam ahead of locating
+// credentials. Asking this question must not spend the single use that the
+// authoritative call later commits.
+func (a *Authenticator) CanAuthorizePinUvAuthToken(clientDataHash, authParam []byte, permission uint8, rpID string) error {
+	a.mu.RLock()
+	defer a.mu.RUnlock()
+
+	return a.checkPinUvAuthTokenLocked(clientDataHash, authParam, permission, rpID, time.Now())
+}
+
+// checkPinUvAuthTokenLocked runs the four CTAP 2.1 checks without mutating any
+// state. The caller must hold a.mu for reading or writing.
+func (a *Authenticator) checkPinUvAuthTokenLocked(
+	clientDataHash, authParam []byte, permission uint8, rpID string, now time.Time) error {
 	if !a.pinUvAuthTokenUsableLocked(now) {
-		a.stopUsingPinUvAuthTokenLocked()
 		return ErrPINAuthInvalid
 	}
 
@@ -1349,12 +1387,6 @@ func (a *Authenticator) AuthorizePinUvAuthToken(clientDataHash, authParam []byte
 		}
 		return ErrPINAuthInvalid
 	}
-
-	// Bind the token to this RP on first use, per CTAP 2.1 §6.1.2 / §6.2.2.
-	if a.pinState.protocol.tokenRPID == "" {
-		a.pinState.protocol.tokenRPID = rpID
-	}
-	a.pinState.protocol.tokenLastUsed = now
 
 	return nil
 }

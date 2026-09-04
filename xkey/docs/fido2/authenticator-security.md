@@ -269,10 +269,37 @@ Per-credential protection levels:
 | 2 | userVerificationOptionalWithList | Visible in allowList or with UV |
 | 3 | userVerificationRequired | Requires user verification |
 
+These levels are enforced on the assertion path, per CTAP 2.1 §12.1:
+
+| Level | Usable when |
+|-------|-------------|
+| 1 / unset | Always |
+| 2 | The platform named the credential in an allowList, **or** user verification was performed |
+| 3 | User verification was performed, however the credential was named |
+
+A credential the request may not use is treated as **absent**: the operation
+ends in `CTAP2_ERR_NO_CREDENTIALS`, which is indistinguishable from the
+authenticator not holding it. Reporting "exists but protected" would turn the
+protection level into the oracle it exists to prevent.
+
 Level 3 also hides the credential from the makeCredential `excludeList`. Without
 user verification in the same transaction, the authenticator answers as though
 it does not hold the credential, so the exclude-list response cannot be used to
 confirm that a protected credential exists.
+
+Because §12.1 filtering depends on whether the request is user-verified, the
+pinUvAuthToken is checked before credentials are located — the order CTAP 2.1
+§6.2.2 specifies. That check is read-only
+(`CanAuthorizePinUvAuthToken`): it binds no permissions RP ID, refreshes no
+timer and discards no expired token, so asking the question does not spend the
+use the authoritative `AuthorizePinUvAuthToken` later commits.
+
+The transport's no-credentials deferral heuristic deliberately does **not**
+apply this filtering. It asks only whether the authenticator holds anything for
+an RP, and its fast path answers from an in-memory index that cannot filter
+without loading credentials; an answer that changed with the storage backend
+would be worse than one that consistently ignores protection levels. Assertions
+are filtered regardless, so a protected credential still yields none.
 
 ### excludeList and the Credential Oracle
 
@@ -320,6 +347,60 @@ extensions := map[string]interface{}{
     "credProtect": uint8(3), // Maximum protection
 }
 ```
+
+## SO Policy Controls
+
+### Attestation Override
+
+`RPPolicy.AttestationOverride` holds a WebAuthn attestation **conveyance
+preference** — `""`, `none`, `indirect`, `direct` or `enterprise`. That is a
+different vocabulary from the attestation **statement format** the authenticator
+produces (`none`, `packed`, `tpm`), and the two must not be assigned to one
+another.
+
+A preference asking for attestation resolves to the authenticator's configured
+statement format. If the authenticator is configured to produce no attestation,
+or the key backend cannot produce the statement, the registration is **refused**
+— `ErrAttestationOverrideUnsupported` (`CTAP2_ERR_UNSUPPORTED_OPTION`) or
+`ErrAttestationUnavailable`. It is never downgraded to `fmt: none`: an SO who
+mandates attestation must get attestation or an error, never a credential
+telling the relying party that none was available.
+
+### Policy Integrity HMAC
+
+The SO-signed policy HMAC covers every setting that changes the authenticator's
+security posture, so that an attacker with the filesystem write access the HMAC
+exists to detect cannot flip one and still verify:
+
+`minPINLength`, `maxPINRetries`, `soPINMaxRetries`, `alwaysUV`,
+`maxCredentials`, `maxResidentCredentials`, `enableCredentialManagement`,
+`enableEnterpriseAttestation`, `transports`, `requireUserPresence`,
+`enableUserIntentCheck`, `attestationFormat`, `enablePIN`, `enableResidentKey`,
+`enableHMACSecret`, `supportedAlgorithms` and `aaguid`.
+
+A mismatch report names the field that moved, not merely that something did.
+
+#### Schema version
+
+The canonical form carries a schema version as its first member (`"v"`), and
+`PolicyFieldsSchemaVersion` is bumped whenever the field set changes shape.
+
+A policy signed under a different version reports **`ErrPolicySchemaChanged`**,
+never `ErrPolicyTampered`. These are different events demanding opposite
+responses — one means the policy must be re-signed, the other means someone
+modified the device — and conflating them would make a routine upgrade look
+like an attack on every device at once.
+
+A schema change does not raise the tamper flag and does not prevent startup. It
+logs that policy integrity is unverified until the Security Officer re-signs.
+Field-level diagnostics are suppressed for it: a snapshot stored under another
+field set deserializes with zero values for fields it never carried, so a
+mismatch list would name settings nobody touched.
+
+`soPINMaxRetries` is a compile-time constant — `Config` carries no field for it
+— so it is identical on both sides of every comparison and cannot detect
+tampering. It is retained because removing it would change the signed bytes for
+the same reason adding a field does.
 
 ## Attestation Security
 

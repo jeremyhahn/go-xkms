@@ -1887,7 +1887,7 @@ func TestBuildAttestationStatement(t *testing.T) {
 		authData := []byte("mock-auth-data")
 		clientDataHash := make([]byte, 32)
 
-		fmt, attStmt := auth.buildAttestationStatement(authData, clientDataHash)
+		fmt, attStmt := auth.buildAttestationStatement(auth.config.AttestationFormat, authData, clientDataHash)
 		require.Equal(t, AttestationFormatNone, fmt)
 		require.Empty(t, attStmt)
 	})
@@ -1911,7 +1911,7 @@ func TestBuildAttestationStatement(t *testing.T) {
 		authData := []byte("mock-auth-data")
 		clientDataHash := make([]byte, 32)
 
-		fmt, attStmt := auth.buildAttestationStatement(authData, clientDataHash)
+		fmt, attStmt := auth.buildAttestationStatement(auth.config.AttestationFormat, authData, clientDataHash)
 		require.Equal(t, AttestationFormatNone, fmt)
 		require.Empty(t, attStmt)
 	})
@@ -1948,7 +1948,7 @@ func TestBuildAttestationStatement(t *testing.T) {
 		authData := []byte("mock-auth-data")
 		clientDataHash := make([]byte, 32)
 
-		fmt, attStmt := auth.buildAttestationStatement(authData, clientDataHash)
+		fmt, attStmt := auth.buildAttestationStatement(auth.config.AttestationFormat, authData, clientDataHash)
 		require.Equal(t, AttestationFormatPacked, fmt)
 		require.Equal(t, COSEAlgES256, attStmt["alg"])
 		require.Equal(t, []byte("test-signature"), attStmt["sig"])
@@ -1989,7 +1989,7 @@ func TestBuildAttestationStatement(t *testing.T) {
 		authData := []byte("mock-auth-data")
 		clientDataHash := make([]byte, 32)
 
-		fmt, attStmt := auth.buildAttestationStatement(authData, clientDataHash)
+		fmt, attStmt := auth.buildAttestationStatement(auth.config.AttestationFormat, authData, clientDataHash)
 		require.Equal(t, AttestationFormatPacked, fmt)
 		require.Equal(t, COSEAlgES256, attStmt["alg"])
 		require.Equal(t, []byte("self-attestation-sig"), attStmt["sig"])
@@ -2031,7 +2031,7 @@ func TestBuildAttestationStatement(t *testing.T) {
 		authData := []byte("mock-auth-data")
 		clientDataHash := make([]byte, 32)
 
-		fmt, attStmt := auth.buildAttestationStatement(authData, clientDataHash)
+		fmt, attStmt := auth.buildAttestationStatement(auth.config.AttestationFormat, authData, clientDataHash)
 		require.Equal(t, AttestationFormatTPM, fmt)
 		require.Equal(t, COSEAlgES256, attStmt["alg"])
 		require.Equal(t, []byte("tpm-signature"), attStmt["sig"])
@@ -2065,7 +2065,7 @@ func TestBuildAttestationStatement(t *testing.T) {
 		authData := []byte("mock-auth-data")
 		clientDataHash := make([]byte, 32)
 
-		fmt, attStmt := auth.buildAttestationStatement(authData, clientDataHash)
+		fmt, attStmt := auth.buildAttestationStatement(auth.config.AttestationFormat, authData, clientDataHash)
 		require.Equal(t, AttestationFormatNone, fmt)
 		require.Empty(t, attStmt)
 	})
@@ -2094,7 +2094,7 @@ func TestBuildAttestationStatement(t *testing.T) {
 		authData := []byte("mock-auth-data")
 		clientDataHash := make([]byte, 32)
 
-		fmt, attStmt := auth.buildAttestationStatement(authData, clientDataHash)
+		fmt, attStmt := auth.buildAttestationStatement(auth.config.AttestationFormat, authData, clientDataHash)
 		require.Equal(t, AttestationFormatNone, fmt)
 		require.Empty(t, attStmt)
 	})
@@ -2127,7 +2127,7 @@ func TestBuildAttestationStatement(t *testing.T) {
 		authData := []byte("mock-auth-data")
 		clientDataHash := make([]byte, 32)
 
-		fmt, attStmt := auth.buildAttestationStatement(authData, clientDataHash)
+		fmt, attStmt := auth.buildAttestationStatement(auth.config.AttestationFormat, authData, clientDataHash)
 		require.Equal(t, AttestationFormatNone, fmt)
 		require.Empty(t, attStmt)
 	})
@@ -2153,7 +2153,7 @@ func TestBuildAttestationStatement(t *testing.T) {
 		authData := []byte("mock-auth-data")
 		clientDataHash := make([]byte, 32)
 
-		fmt, attStmt := auth.buildAttestationStatement(authData, clientDataHash)
+		fmt, attStmt := auth.buildAttestationStatement(auth.config.AttestationFormat, authData, clientDataHash)
 		require.Equal(t, AttestationFormatNone, fmt)
 		require.Empty(t, attStmt)
 	})

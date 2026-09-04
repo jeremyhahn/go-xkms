@@ -265,7 +265,8 @@ func NewAuthenticator(config *Config) (*Authenticator, error) {
 		if len(state.PolicyHMACTag) > 0 {
 			diag, verifyErr := a.policyManager.Verify(state)
 			if verifyErr != nil {
-				if errors.Is(verifyErr, ErrPolicyTampered) {
+				switch {
+				case errors.Is(verifyErr, ErrPolicyTampered):
 					a.TamperDetected.Store(true)
 					if a.logger != nil {
 						a.logger.Error("policy integrity check failed - tamper detected",
@@ -273,7 +274,19 @@ func NewAuthenticator(config *Config) (*Authenticator, error) {
 							slog.Any("diagnostics", diag),
 						)
 					}
-				} else {
+				case errors.Is(verifyErr, ErrPolicySchemaChanged):
+					// Not tampering, and not a reason to refuse to start: the
+					// policy was signed over an older field set. Integrity is
+					// unverified until the SO re-signs, which is what the
+					// operator needs told — TamperDetected stays false so a
+					// routine upgrade is never reported as an attack.
+					if a.logger != nil {
+						a.logger.Warn("policy was signed under a different field-set schema - integrity unverified until the SO re-signs",
+							slog.Bool("tamper_detected", false),
+							slog.Any("diagnostics", diag),
+						)
+					}
+				default:
 					return nil, verifyErr
 				}
 			}
@@ -625,8 +638,16 @@ func (a *Authenticator) HasMatchingCredentials(data []byte) (hasMatch bool, pars
 		return indexer.HasDiscoverableForRP(request.RPID), true, pinAuth, request.RPID
 	}
 
-	// Fallback: full scan for non-indexed storage or index not yet ready
-	creds, err := a.findMatchingCredentialsForAssertion(request)
+	// Fallback: full scan for non-indexed storage or index not yet ready.
+	//
+	// This asks only whether the authenticator holds anything for the RP, so it
+	// deliberately does NOT apply credProtect filtering: the CredentialIndexer
+	// fast path above answers from an in-memory index with zero storage I/O and
+	// could not filter without loading credentials, and a deferral heuristic
+	// that changed answer with the storage backend would be worse than one that
+	// consistently ignores protection levels. getAssertion enforces §12.1
+	// regardless, so a protected credential still yields no assertion.
+	creds, err := a.lookupCredentialsForAssertion(request)
 	if err != nil {
 		return false, false, false, ""
 	}
@@ -770,6 +791,13 @@ func errorToStatus(err error) byte {
 	case errors.Is(err, ErrOperationDenied):
 		return StatusOperationDenied
 	case errors.Is(err, ErrRPBlocked):
+		return StatusOperationDenied
+	// An SO policy demanded attestation the authenticator cannot produce. The
+	// registration is refused rather than completed with fmt=none, so the RP
+	// never receives a credential asserting that no attestation was available.
+	case errors.Is(err, ErrAttestationOverrideUnsupported):
+		return StatusUnsupportedOption
+	case errors.Is(err, ErrAttestationUnavailable):
 		return StatusOperationDenied
 	case errors.Is(err, ErrPINRequired):
 		return StatusPINRequired

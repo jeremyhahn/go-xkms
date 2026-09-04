@@ -53,6 +53,16 @@ const (
 	AttestationFormatTPM    = "tpm"
 )
 
+// WebAuthn attestation conveyance preferences. These say how much attestation
+// the caller wants; they are NOT statement formats and must never be assigned
+// to Config.AttestationFormat. See resolveAttestationOverride.
+const (
+	AttestationConveyanceNone       = "none"
+	AttestationConveyanceIndirect   = "indirect"
+	AttestationConveyanceDirect     = "direct"
+	AttestationConveyanceEnterprise = "enterprise"
+)
+
 // ClientDataHash size constant
 const ClientDataHashSize = 32
 
@@ -476,7 +486,10 @@ func (a *Authenticator) HandleMakeCredential(data []byte) ([]byte, error) {
 
 	// Build attestation statement based on configured format.
 	// Check enterprise attestation: only honor if RP is in enterprise allowlist.
-	attestationFmt, attStmt := a.buildMakeCredentialAttestation(authData, req.ClientDataHash, req, rpPolicy)
+	attestationFmt, attStmt, err := a.buildMakeCredentialAttestation(authData, req.ClientDataHash, req, rpPolicy)
+	if err != nil {
+		return nil, err
+	}
 
 	// Create response
 	response := &MakeCredentialResponse{
@@ -514,9 +527,8 @@ func (a *Authenticator) HandleMakeCredential(data []byte) ([]byte, error) {
 // Returns:
 //   - attestationFmt: The attestation format string used
 //   - attStmt: The attestation statement map (empty for "none" format)
-func (a *Authenticator) buildAttestationStatement(authData, clientDataHash []byte) (string, map[string]interface{}) {
-	requestedFormat := a.config.AttestationFormat
-
+func (a *Authenticator) buildAttestationStatement(
+	requestedFormat string, authData, clientDataHash []byte) (string, map[string]interface{}) {
 	// If "none" format is requested, return empty statement
 	if requestedFormat == AttestationFormatNone || requestedFormat == "" {
 		return AttestationFormatNone, make(map[string]interface{})
@@ -1275,30 +1287,78 @@ func (a *Authenticator) buildMakeCredentialAttestation(
 	authData, clientDataHash []byte,
 	req *MakeCredentialRequest,
 	rpPolicy *RPPolicy,
-) (string, map[string]interface{}) {
+) (string, map[string]interface{}, error) {
 	// Check enterprise attestation request
 	if req.EnterpriseAttestation > 0 && a.config.EnableEnterpriseAttestation {
 		// Only honor enterprise attestation if RP is in allowlist
 		if rpPolicy != nil && rpPolicy.Enterprise {
-			// Override attestation format to packed with full cert chain
-			originalFormat := a.config.AttestationFormat
-			a.config.AttestationFormat = AttestationFormatPacked
-			attestationFmt, attStmt := a.buildAttestationStatement(authData, clientDataHash)
-			a.config.AttestationFormat = originalFormat
-			return attestationFmt, attStmt
+			// Enterprise attestation is carried by a packed statement with the
+			// full certificate chain.
+			fmtName, attStmt := a.buildAttestationStatement(AttestationFormatPacked, authData, clientDataHash)
+			if fmtName == AttestationFormatNone {
+				return "", nil, ErrAttestationUnavailable
+			}
+			return fmtName, attStmt, nil
 		}
 	}
 
-	// Check SO attestation override for this RP
+	// Check SO attestation override for this RP.
 	if rpPolicy != nil && rpPolicy.AttestationOverride != "" {
-		originalFormat := a.config.AttestationFormat
-		a.config.AttestationFormat = rpPolicy.AttestationOverride
-		attestationFmt, attStmt := a.buildAttestationStatement(authData, clientDataHash)
-		a.config.AttestationFormat = originalFormat
-		return attestationFmt, attStmt
+		format, err := a.resolveAttestationOverride(rpPolicy.AttestationOverride)
+		if err != nil {
+			if a.logger != nil {
+				a.logger.Warn("MakeCredential refused: RP policy demands attestation this authenticator cannot produce",
+					slog.String("rp", req.RP.ID),
+					slog.String("attestation_override", rpPolicy.AttestationOverride),
+					slog.String("configured_format", a.config.AttestationFormat),
+					slog.String("error", err.Error()))
+			}
+			return "", nil, err
+		}
+		fmtName, attStmt := a.buildAttestationStatement(format, authData, clientDataHash)
+		if format != AttestationFormatNone && fmtName == AttestationFormatNone {
+			// The backend could not produce the statement the SO demanded.
+			// Returning fmt=none here would tell the RP that no attestation was
+			// available, which is exactly the claim the policy exists to deny.
+			if a.logger != nil {
+				a.logger.Warn("MakeCredential refused: attestation statement unavailable for SO-mandated format",
+					slog.String("rp", req.RP.ID),
+					slog.String("format", format))
+			}
+			return "", nil, ErrAttestationUnavailable
+		}
+		return fmtName, attStmt, nil
 	}
 
-	return a.buildAttestationStatement(authData, clientDataHash)
+	fmtName, attStmt := a.buildAttestationStatement(a.config.AttestationFormat, authData, clientDataHash)
+	return fmtName, attStmt, nil
+}
+
+// resolveAttestationOverride maps an RPPolicy.AttestationOverride — a WebAuthn
+// attestation *conveyance preference* — onto the attestation *statement format*
+// that buildAttestationStatement produces. The two are different vocabularies:
+// "direct" is a preference, "packed" is a format, and writing the former into
+// the latter's slot silently yields no attestation at all.
+//
+// A preference that asks for attestation resolves to the authenticator's
+// configured statement format. If the authenticator is configured to produce no
+// attestation, the preference cannot be honoured and this returns
+// ErrAttestationOverrideUnsupported rather than degrading to "none" — an SO who
+// mandates attestation must get attestation or an error, never a credential
+// that tells the RP none was available.
+func (a *Authenticator) resolveAttestationOverride(preference string) (string, error) {
+	switch preference {
+	case AttestationConveyanceNone:
+		return AttestationFormatNone, nil
+	case AttestationConveyanceIndirect, AttestationConveyanceDirect, AttestationConveyanceEnterprise:
+		format := a.config.AttestationFormat
+		if format == "" || format == AttestationFormatNone {
+			return "", ErrAttestationOverrideUnsupported
+		}
+		return format, nil
+	default:
+		return "", ErrAttestationOverrideUnsupported
+	}
 }
 
 // makeCredentialToInt converts various integer types to int.
@@ -1379,6 +1439,30 @@ func (a *Authenticator) MakeCredential(
 
 	// The excludeList is answered after the user presence gate below, per
 	// CTAP 2.1 §6.1.2. See reportCredentialExcluded.
+
+	// Apply the per-RP SO policy. This path previously consulted no policy at
+	// all, so an SO's RP block and attestation override did not fire for
+	// in-process callers even though HandleMakeCredential honoured both.
+	//
+	// UVOverride is deliberately NOT applied here: this path's PIN precondition
+	// differs (see inProcessTrusted below), so what "required" should mean for
+	// an in-process caller is a question, not a transcription. It is tracked
+	// separately.
+	var rpPolicy *RPPolicy
+	if a.rpPolicyStore != nil {
+		policy, policyErr := a.rpPolicyStore.GetPolicy(req.RP.ID)
+		if policyErr == nil {
+			rpPolicy = policy
+		}
+		// ErrRPPolicyNotFound is expected when no policy exists.
+	}
+	if rpPolicy != nil && rpPolicy.Blocked {
+		if a.logger != nil {
+			a.logger.Warn("MakeCredential blocked by RP policy",
+				slog.String("rp", req.RP.ID))
+		}
+		return nil, ErrRPBlocked
+	}
 
 	// Select algorithm from pubKeyCredParams
 	selectedAlgorithm, err := a.selectAlgorithm(req.PubKeyCredParams)
@@ -1552,7 +1636,10 @@ func (a *Authenticator) MakeCredential(
 	}
 
 	// Build attestation statement based on configured format
-	attestationFmt, attStmt := a.buildAttestationStatement(authData, req.ClientDataHash)
+	attestationFmt, attStmt, err := a.buildMakeCredentialAttestation(authData, req.ClientDataHash, req, rpPolicy)
+	if err != nil {
+		return nil, err
+	}
 
 	return &MakeCredentialResponse{
 		Fmt:      attestationFmt,

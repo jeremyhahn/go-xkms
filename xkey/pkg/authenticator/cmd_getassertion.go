@@ -510,8 +510,15 @@ func toUint8Value(v interface{}) (uint8, error) {
 func (a *Authenticator) executeGetAssertion(request *GetAssertionRequest) (*GetAssertionResponse, error) {
 	debugLog("executeGetAssertion: finding matching credentials for RPID=%s", request.RPID)
 
+	// Establish whether this request counts as user-verified BEFORE selecting
+	// credentials. CTAP 2.1 §6.2.2 verifies pinUvAuthParam ahead of locating
+	// credentials precisely because §12.1 credProtect filtering depends on the
+	// answer. This asks without consuming the token; the authoritative,
+	// committing call happens in generateAssertionResponseWithPolicy.
+	uvPerformed := a.assertionUserVerified(request)
+
 	// Find matching credentials
-	matchingCreds, err := a.findMatchingCredentialsForAssertion(request)
+	matchingCreds, err := a.findMatchingCredentialsForAssertion(request, uvPerformed)
 	if err != nil {
 		debugLog("findMatchingCredentialsForAssertion failed: %v", err)
 		return nil, err
@@ -550,18 +557,42 @@ func (a *Authenticator) executeGetAssertion(request *GetAssertionRequest) (*GetA
 		return nil, ErrRPBlocked
 	}
 
-	// Check credential protection level
-	if err := a.checkAssertionCredentialProtection(credential, request); err != nil {
-		debugLog("checkAssertionCredentialProtection failed: %v", err)
-		return nil, err
-	}
-
 	// Generate the assertion for the selected credential
 	return a.generateAssertionResponseWithPolicy(credential, request, len(matchingCreds), rpPolicy)
 }
 
 // findMatchingCredentialsForAssertion finds credentials that match the request criteria.
-func (a *Authenticator) findMatchingCredentialsForAssertion(request *GetAssertionRequest) ([]*StoredCredential, error) {
+func (a *Authenticator) findMatchingCredentialsForAssertion(
+	request *GetAssertionRequest, uvPerformed bool) ([]*StoredCredential, error) {
+	candidates, err := a.lookupCredentialsForAssertion(request)
+	if err != nil {
+		return nil, err
+	}
+
+	allowListProvided := len(request.AllowList) > 0
+
+	// Apply the CTAP 2.1 §12.1 credProtect rules. A credential the request may
+	// not use is dropped here, so the caller reports CTAP2_ERR_NO_CREDENTIALS
+	// and never reveals that a protected credential exists.
+	matchingCreds := make([]*StoredCredential, 0, len(candidates))
+	for _, cred := range candidates {
+		if credentialProtectionSatisfied(cred, allowListProvided, uvPerformed) {
+			matchingCreds = append(matchingCreds, cred)
+		}
+	}
+
+	return matchingCreds, nil
+}
+
+// lookupCredentialsForAssertion returns every stored credential matching the
+// request's allowList (or every discoverable credential for the RP when no
+// allowList was given), WITHOUT applying credProtect filtering.
+//
+// Callers that hand credentials to a relying party must use
+// findMatchingCredentialsForAssertion instead. This exists for the transport's
+// deferral heuristic, which asks only whether this authenticator holds anything
+// for the RP.
+func (a *Authenticator) lookupCredentialsForAssertion(request *GetAssertionRequest) ([]*StoredCredential, error) {
 	var matchingCreds []*StoredCredential
 
 	if len(request.AllowList) > 0 {
@@ -602,11 +633,49 @@ func (a *Authenticator) findMatchingCredentialsForAssertion(request *GetAssertio
 	return matchingCreds, nil
 }
 
-// checkAssertionCredentialProtection verifies the credential meets protection requirements.
-func (a *Authenticator) checkAssertionCredentialProtection(cred *StoredCredential, request *GetAssertionRequest) error {
-	// For now, this is a simplified check.
-	// Full implementation would involve PIN verification based on credProtect level.
-	return nil
+// credentialProtectionSatisfied reports whether cred may be used for a request
+// with the given allowList and user-verification state, per the CTAP 2.1 §12.1
+// credProtect rules:
+//
+//   - level 1 (userVerificationOptional): no restriction.
+//   - level 2 (userVerificationOptionalWithCredentialIDList): usable when the
+//     platform named the credential in an allowList, or when user verification
+//     was performed. Without both, an empty-allowList enumeration would
+//     disclose the credential ID and the user's id, name and display name.
+//   - level 3 (userVerificationRequired): usable only with user verification,
+//     however the credential was named.
+//
+// A credential that fails this test is treated as absent rather than reported
+// as protected: the caller returns CTAP2_ERR_NO_CREDENTIALS, which is
+// indistinguishable from the authenticator simply not holding it. Reporting the
+// difference would turn the protection level itself into an oracle.
+func credentialProtectionSatisfied(cred *StoredCredential, allowListProvided, uvPerformed bool) bool {
+	switch cred.CredProtect {
+	case CredProtectUserVerificationRequired:
+		return uvPerformed
+	case CredProtectUserVerificationOptionalWithList:
+		return allowListProvided || uvPerformed
+	default:
+		// Level 1 and unset (0) carry no restriction.
+		return true
+	}
+}
+
+// assertionUserVerified reports whether this getAssertion request will be
+// treated as user-verified, without consuming the pinUvAuthToken.
+//
+// It deliberately mirrors only the pinUvAuthParam branch of
+// generateAssertionResponseWithPolicy. InternalPINHash is not user
+// verification (see GetAssertionRequest.InternalPINHash), and a key backend
+// that performs its own verification does so during Sign — after credentials
+// have already been selected — so neither can unlock a credProtect-restricted
+// credential at selection time.
+func (a *Authenticator) assertionUserVerified(request *GetAssertionRequest) bool {
+	if len(request.PINUVAuthParam) == 0 || request.PINUVAuthProtocol == 0 {
+		return false
+	}
+	return a.CanAuthorizePinUvAuthToken(request.ClientDataHash, request.PINUVAuthParam,
+		PINPermissionGetAssertion, request.RPID) == nil
 }
 
 // generateAssertionResponseWithPolicy creates the assertion response with SO policy overrides.

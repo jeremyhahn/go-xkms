@@ -16,6 +16,7 @@ package authenticator
 import (
 	"crypto/hmac"
 	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 )
@@ -27,6 +28,16 @@ import (
 // Fields are serialized to JSON with deterministic key ordering (Go's
 // encoding/json produces sorted struct fields) for canonical HMAC input.
 type PolicyFields struct {
+	// SchemaVersion identifies which field set these bytes cover. It is part
+	// of the canonical form, so a policy signed under one schema is
+	// recognisably distinct from one signed under another rather than merely
+	// failing to verify.
+	//
+	// Bump PolicyFieldsSchemaVersion whenever a field is added, removed or
+	// renamed here. A snapshot written before this field existed reads back as
+	// zero, which is not the current version, so it reports a schema change.
+	SchemaVersion int `json:"v"`
+
 	// MinPINLength is the minimum PIN length in characters.
 	MinPINLength int `json:"minPINLength"`
 
@@ -53,14 +64,73 @@ type PolicyFields struct {
 
 	// Transports is the configured transport list for GetInfo.
 	Transports []string `json:"transports,omitempty"`
+
+	// RequireUserPresence indicates whether a user presence gesture is
+	// collected even when the platform already performed PIN/UV.
+	RequireUserPresence bool `json:"requireUserPresence"`
+
+	// EnableUserIntentCheck indicates whether a user intent dialog is shown
+	// before returning PINRequired.
+	EnableUserIntentCheck bool `json:"enableUserIntentCheck"`
+
+	// AttestationFormat is the attestation statement format the authenticator
+	// produces.
+	AttestationFormat string `json:"attestationFormat"`
+
+	// EnablePIN indicates whether the clientPIN command is available.
+	EnablePIN bool `json:"enablePIN"`
+
+	// EnableResidentKey indicates whether discoverable credentials may be created.
+	EnableResidentKey bool `json:"enableResidentKey"`
+
+	// EnableHMACSecret indicates whether the hmac-secret extension is offered.
+	EnableHMACSecret bool `json:"enableHMACSecret"`
+
+	// SupportedAlgorithms is the COSE algorithm allowlist.
+	SupportedAlgorithms []int `json:"supportedAlgorithms,omitempty"`
+
+	// AAGUID identifies the authenticator model to relying parties.
+	AAGUID string `json:"aaguid"`
+}
+
+// PolicyFieldsSchemaVersion is the field set this build signs and verifies.
+// Bump it whenever the PolicyFields struct changes shape — a field added,
+// removed or renamed. #216's E3 and F both change it.
+//
+// There is deliberately no migration path from an older version to this one,
+// because there is nothing to migrate: Config.PolicyIntegrityProvider is
+// constructed nowhere outside tests, so no device holds a PolicyHMACTag. This
+// version exists so that when one does, the change is *detectable* — a policy
+// signed under a different field set reports ErrPolicySchemaChanged rather than
+// failing to verify for a reason indistinguishable from tampering.
+//
+// Whoever bumps this to 2 against real signed policies is the one who will know
+// what that transition needs; the seam is here, the flow is not.
+const PolicyFieldsSchemaVersion = 1
+
+// signedSchemaVersion reports the schema version of a stored snapshot,
+// treating a missing snapshot as the current version: without a snapshot there
+// is nothing to compare, so verification falls through to the HMAC and a
+// failure is reported as tampering exactly as before.
+func signedSchemaVersion(signed *PolicyFields) int {
+	if signed == nil {
+		return PolicyFieldsSchemaVersion
+	}
+	return signed.SchemaVersion
 }
 
 // ExtractPolicyFields extracts the HMAC-covered policy fields from the
 // authenticator configuration. These are the SO-controlled parameters
 // that affect the authenticator's security posture.
 func ExtractPolicyFields(cfg *Config) *PolicyFields {
+	// SOPINMaxRetries is a compile-time constant: Config carries no field for
+	// it, so it is the same on both sides of every comparison and cannot
+	// detect tampering. It is retained only so the signed bytes of existing
+	// policies stay stable. See the SO PIN retry limit note in the package
+	// documentation.
 	soPINMaxRetries := DefaultSOPINMaxRetries
 	return &PolicyFields{
+		SchemaVersion:               PolicyFieldsSchemaVersion,
 		MinPINLength:                cfg.PINMinLength,
 		MaxPINRetries:               cfg.PINMaxRetries,
 		SOPINMaxRetries:             soPINMaxRetries,
@@ -70,6 +140,14 @@ func ExtractPolicyFields(cfg *Config) *PolicyFields {
 		EnableCredentialManagement:  cfg.EnableCredentialManagement,
 		EnableEnterpriseAttestation: cfg.EnableEnterpriseAttestation,
 		Transports:                  cfg.Transports,
+		RequireUserPresence:         cfg.RequireUserPresence,
+		EnableUserIntentCheck:       cfg.EnableUserIntentCheck,
+		AttestationFormat:           cfg.AttestationFormat,
+		EnablePIN:                   cfg.EnablePIN,
+		EnableResidentKey:           cfg.EnableResidentKey,
+		EnableHMACSecret:            cfg.EnableHMACSecret,
+		SupportedAlgorithms:         cfg.SupportedAlgorithms,
+		AAGUID:                      hex.EncodeToString(cfg.AAGUID[:]),
 	}
 }
 
@@ -174,8 +252,23 @@ type PolicyDiagnostics struct {
 	Valid bool `json:"valid"`
 
 	// Mismatches lists fields that differ between the signed snapshot
-	// and the current configuration. Empty when Valid is true.
+	// and the current configuration. Empty when Valid is true, and empty when
+	// SchemaChanged is true — a snapshot from a different field set would
+	// deserialize with zero values for fields it never carried, naming as
+	// changed a set of settings nobody touched.
 	Mismatches []PolicyMismatch `json:"mismatches,omitempty"`
+
+	// SchemaChanged indicates the stored policy was signed over a different
+	// field set than this build uses. This is NOT tampering: it means the
+	// policy must be re-signed, not that someone modified it.
+	SchemaChanged bool `json:"schemaChanged,omitempty"`
+
+	// SignedSchemaVersion is the field-set version the stored policy was
+	// signed under. Meaningful when SchemaChanged is true.
+	SignedSchemaVersion int `json:"signedSchemaVersion,omitempty"`
+
+	// CurrentSchemaVersion is the field-set version this build uses.
+	CurrentSchemaVersion int `json:"currentSchemaVersion,omitempty"`
 }
 
 // PolicyManager handles policy integrity verification and signing.
@@ -205,6 +298,21 @@ func NewPolicyManager(config *Config, provider PolicyIntegrityProvider) *PolicyM
 func (pm *PolicyManager) Verify(state *AuthenticatorState) (*PolicyDiagnostics, error) {
 	if len(state.PolicyHMACTag) == 0 {
 		return nil, ErrPolicyHMACMissing
+	}
+
+	// A policy signed over a different field set cannot be checked against the
+	// current canonical form: the bytes differ for a reason that is not
+	// tampering, and the two conditions demand opposite responses from an
+	// operator — one is "re-sign your policy", the other is "someone modified
+	// your device". Reporting a schema change as tampering would make every
+	// upgrade look like an attack.
+	if signed := signedSchemaVersion(state.SignedPolicyFields); signed != PolicyFieldsSchemaVersion {
+		return &PolicyDiagnostics{
+			Valid:                false,
+			SchemaChanged:        true,
+			SignedSchemaVersion:  signed,
+			CurrentSchemaVersion: PolicyFieldsSchemaVersion,
+		}, ErrPolicySchemaChanged
 	}
 
 	current := ExtractPolicyFields(pm.config)
@@ -321,8 +429,78 @@ func computeMismatches(current, signed *PolicyFields) []PolicyMismatch {
 			Actual:   current.Transports,
 		})
 	}
+	if current.RequireUserPresence != signed.RequireUserPresence {
+		mismatches = append(mismatches, PolicyMismatch{
+			Field:    "requireUserPresence",
+			Expected: signed.RequireUserPresence,
+			Actual:   current.RequireUserPresence,
+		})
+	}
+	if current.EnableUserIntentCheck != signed.EnableUserIntentCheck {
+		mismatches = append(mismatches, PolicyMismatch{
+			Field:    "enableUserIntentCheck",
+			Expected: signed.EnableUserIntentCheck,
+			Actual:   current.EnableUserIntentCheck,
+		})
+	}
+	if current.AttestationFormat != signed.AttestationFormat {
+		mismatches = append(mismatches, PolicyMismatch{
+			Field:    "attestationFormat",
+			Expected: signed.AttestationFormat,
+			Actual:   current.AttestationFormat,
+		})
+	}
+	if current.EnablePIN != signed.EnablePIN {
+		mismatches = append(mismatches, PolicyMismatch{
+			Field:    "enablePIN",
+			Expected: signed.EnablePIN,
+			Actual:   current.EnablePIN,
+		})
+	}
+	if current.EnableResidentKey != signed.EnableResidentKey {
+		mismatches = append(mismatches, PolicyMismatch{
+			Field:    "enableResidentKey",
+			Expected: signed.EnableResidentKey,
+			Actual:   current.EnableResidentKey,
+		})
+	}
+	if current.EnableHMACSecret != signed.EnableHMACSecret {
+		mismatches = append(mismatches, PolicyMismatch{
+			Field:    "enableHMACSecret",
+			Expected: signed.EnableHMACSecret,
+			Actual:   current.EnableHMACSecret,
+		})
+	}
+	if !intSlicesEqual(current.SupportedAlgorithms, signed.SupportedAlgorithms) {
+		mismatches = append(mismatches, PolicyMismatch{
+			Field:    "supportedAlgorithms",
+			Expected: signed.SupportedAlgorithms,
+			Actual:   current.SupportedAlgorithms,
+		})
+	}
+	if current.AAGUID != signed.AAGUID {
+		mismatches = append(mismatches, PolicyMismatch{
+			Field:    "aaguid",
+			Expected: signed.AAGUID,
+			Actual:   current.AAGUID,
+		})
+	}
 
 	return mismatches
+}
+
+// intSlicesEqual reports whether two int slices have the same contents in the
+// same order.
+func intSlicesEqual(a, b []int) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	for i := range a {
+		if a[i] != b[i] {
+			return false
+		}
+	}
+	return true
 }
 
 // slicesEqual compares two string slices for equality.
