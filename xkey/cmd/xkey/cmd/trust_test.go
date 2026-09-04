@@ -14,6 +14,7 @@
 package cmd
 
 import (
+	"bytes"
 	"crypto/ecdsa"
 	"crypto/ed25519"
 	"crypto/elliptic"
@@ -572,9 +573,10 @@ func TestAddPEMWithOptions_ValidPEM(t *testing.T) {
 		Source:  "test",
 	}
 
-	added, err := addPEMWithOptions(store, pemData, opts)
+	added, skipped, err := addPEMWithOptions(store, pemData, opts)
 	require.NoError(t, err)
 	assert.Equal(t, 1, added)
+	assert.Equal(t, 0, skipped)
 }
 
 func TestAddPEMWithOptions_DuplicateSkipped(t *testing.T) {
@@ -589,14 +591,17 @@ func TestAddPEMWithOptions_DuplicateSkipped(t *testing.T) {
 	}
 
 	// Add once.
-	added, err := addPEMWithOptions(store, pemData, opts)
+	added, skipped, err := addPEMWithOptions(store, pemData, opts)
 	require.NoError(t, err)
 	assert.Equal(t, 1, added)
+	assert.Equal(t, 0, skipped)
 
-	// Add again - should be skipped.
-	added, err = addPEMWithOptions(store, pemData, opts)
+	// Add again - should be skipped, and the skip must be counted so the
+	// caller can tell "already present" from "nothing was parsed".
+	added, skipped, err = addPEMWithOptions(store, pemData, opts)
 	require.NoError(t, err)
 	assert.Equal(t, 0, added)
+	assert.Equal(t, 1, skipped)
 }
 
 func TestAddPEMWithOptions_NoPEMBlocks(t *testing.T) {
@@ -609,9 +614,10 @@ func TestAddPEMWithOptions_NoPEMBlocks(t *testing.T) {
 		Purpose: truststore.PurposeGeneral,
 	}
 
-	added, err := addPEMWithOptions(store, []byte("not pem data"), opts)
+	added, skipped, err := addPEMWithOptions(store, []byte("not pem data"), opts)
 	require.NoError(t, err)
 	assert.Equal(t, 0, added)
+	assert.Equal(t, 0, skipped)
 }
 
 func TestAddPEMWithOptions_InvalidCertData(t *testing.T) {
@@ -626,7 +632,7 @@ func TestAddPEMWithOptions_InvalidCertData(t *testing.T) {
 		Purpose: truststore.PurposeGeneral,
 	}
 
-	_, err = addPEMWithOptions(store, badPEM, opts)
+	_, _, err = addPEMWithOptions(store, badPEM, opts)
 	assert.Error(t, err)
 	assert.True(t, errors.Is(err, ErrTrustAddFailed))
 }
@@ -646,9 +652,10 @@ func TestAddPEMWithOptions_SkipsNonCertBlocks(t *testing.T) {
 		Purpose: truststore.PurposeIDevIDIssuer,
 	}
 
-	added, err := addPEMWithOptions(store, combined, opts)
+	added, skipped, err := addPEMWithOptions(store, combined, opts)
 	require.NoError(t, err)
 	assert.Equal(t, 1, added)
+	assert.Equal(t, 0, skipped)
 }
 
 // --- runTrustRemove tests ---
@@ -1673,4 +1680,97 @@ func TestCurveNames_Completeness(t *testing.T) {
 		_, ok := curveNames[curve]
 		assert.True(t, ok, "curveNames map missing curve %v", curve.Params().Name)
 	}
+}
+
+// TestRunTrustAdd_ReportsSkippedCertificates covers #250 defect 3. `trust add
+// --help` promises that certificates already in the store are "silently
+// skipped and reported separately", but nothing was reported: on a file whose
+// certificates were all already present the command printed only
+// "Certificates added: 0", which is indistinguishable from a parse failure, an
+// empty file, or a permissions problem.
+func TestRunTrustAdd_ReportsSkippedCertificates(t *testing.T) {
+	resetViperForTest(t)
+
+	dir := t.TempDir()
+	viper.Set("trust.store_path", dir)
+
+	pemData, _ := generateTrustTestCertPEM(t)
+	pemFile := filepath.Join(t.TempDir(), "ca.pem")
+	require.NoError(t, os.WriteFile(pemFile, pemData, 0o600))
+
+	// First import adds the certificate and skips nothing.
+	first := newTrustAddCmd(t)
+	firstOut := &bytes.Buffer{}
+	first.SetOut(firstOut)
+	require.NoError(t, runTrustAdd(first, []string{pemFile}))
+	assert.Contains(t, firstOut.String(), "Certificates added: 1")
+	assert.NotContains(t, firstOut.String(), "skipped",
+		"nothing was skipped on the first import")
+
+	// Second import of the same file adds nothing and must say why.
+	second := newTrustAddCmd(t)
+	secondOut := &bytes.Buffer{}
+	second.SetOut(secondOut)
+	require.NoError(t, runTrustAdd(second, []string{pemFile}))
+
+	assert.Contains(t, secondOut.String(), "Certificates added: 0")
+	assert.Contains(t, secondOut.String(), "Certificates skipped (already present): 1",
+		"an already-present certificate must be reported as skipped, not left as a bare zero")
+}
+
+// TestRunTrustAdd_ReportsSkippedWithPurposeFlag covers the same reporting on
+// the metadata path, which is a separate branch through runTrustAdd.
+func TestRunTrustAdd_ReportsSkippedWithPurposeFlag(t *testing.T) {
+	resetViperForTest(t)
+
+	dir := t.TempDir()
+	viper.Set("trust.store_path", dir)
+
+	pemData, _ := generateTrustTestCertPEM(t)
+	pemFile := filepath.Join(t.TempDir(), "ca.pem")
+	require.NoError(t, os.WriteFile(pemFile, pemData, 0o600))
+
+	first := newTrustAddCmd(t)
+	require.NoError(t, first.Flags().Set("purpose", "user-ca"))
+	first.SetOut(&bytes.Buffer{})
+	require.NoError(t, runTrustAdd(first, []string{pemFile}))
+
+	second := newTrustAddCmd(t)
+	require.NoError(t, second.Flags().Set("purpose", "user-ca"))
+	secondOut := &bytes.Buffer{}
+	second.SetOut(secondOut)
+	require.NoError(t, runTrustAdd(second, []string{pemFile}))
+
+	assert.Contains(t, secondOut.String(), "Certificates added: 0")
+	assert.Contains(t, secondOut.String(), "Certificates skipped (already present): 1")
+}
+
+// TestRunTrustAdd_ReportsMixedAddedAndSkipped covers a file that is partly new:
+// both counts must be reported so the operator can tell what happened.
+func TestRunTrustAdd_ReportsMixedAddedAndSkipped(t *testing.T) {
+	resetViperForTest(t)
+
+	dir := t.TempDir()
+	viper.Set("trust.store_path", dir)
+
+	pem1, _ := generateTrustTestCertPEM(t)
+	pem2, _ := generateTrustTestCertPEM(t)
+
+	firstFile := filepath.Join(t.TempDir(), "one.pem")
+	require.NoError(t, os.WriteFile(firstFile, pem1, 0o600))
+
+	first := newTrustAddCmd(t)
+	first.SetOut(&bytes.Buffer{})
+	require.NoError(t, runTrustAdd(first, []string{firstFile}))
+
+	bothFile := filepath.Join(t.TempDir(), "both.pem")
+	require.NoError(t, os.WriteFile(bothFile, append(append([]byte{}, pem1...), pem2...), 0o600))
+
+	second := newTrustAddCmd(t)
+	secondOut := &bytes.Buffer{}
+	second.SetOut(secondOut)
+	require.NoError(t, runTrustAdd(second, []string{bothFile}))
+
+	assert.Contains(t, secondOut.String(), "Certificates added: 1")
+	assert.Contains(t, secondOut.String(), "Certificates skipped (already present): 1")
 }

@@ -3277,10 +3277,9 @@ func (h *guiIPCHandler) HandleTypePassword(name string) (*ipc.Response, error) {
 }
 
 func (h *guiIPCHandler) HandleStatus() (*ipc.Response, error) {
-	locked := h.app.appLockService.IsLocked()
-	status := "unlocked"
-	if locked {
-		status = "locked"
+	status := ipc.ActionUnlocked
+	if h.app.appLockService.IsLocked() {
+		status = ipc.ActionLocked
 	}
 	return ipc.OKResponse(status), nil
 }

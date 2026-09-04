@@ -199,6 +199,63 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `wrapping_public_key_pem`, plus `backend` and `key_spec` dropped) and
   `UnwrapKey` (`wrapped_key_material` against `wrapped_key`, plus `backend` and
   `key_spec`). Both are filed separately rather than fixed here.
+- **xkey CLI: `auth` now reads the xKey trust store, and gained `--tls-ca`**
+  (#250). `xkey trust add` populated a store the `auth` HTTP client never
+  opened: `defaultAuthClientFactory` built its TLS configuration from the SPKI
+  pin alone, so an operator whose CA was sitting in `xkey trust list` — with an
+  independently valid chain — still could not connect, and the error named
+  certificate trust rather than the fact that the store was never consulted.
+  `--spki-pin` was the only route to such a server, which is pinning, not CA
+  trust.
+
+  `auth register` and `auth login` now build the client's `*tls.Config` from
+  the system roots, the xKey trust store, and a new `--tls-ca` PEM bundle.
+  A bare `--spki-pin` is unchanged and still trust-on-first-use: with no
+  `--tls-ca` on the same command line the pin remains the sole trust anchor and
+  no chain is built, so an unrelated certificate in the store cannot break a
+  working pinned invocation. Named together with `--tls-ca` the pin is additive
+  on top of chain validation — via the new `xkms.VerifySPKIPinnedConnection`
+  SDK re-export — rather than silently discarded, which is what passing a
+  caller-built `*tls.Config` to the REST transport would otherwise do.
+
+  The session login plane had the same gap and is fixed with it:
+  `auth login --piv`, `auth refresh` and `auth logout` built their
+  `xkms.LoginClient` with the recorded pin and a nil `RootCAs`, so an unpinned
+  server fell back to the system store alone. They now supply the same pool
+  when the registry entry carries no pin; a pinned entry is unchanged, since
+  `LoginClientConfig` ignores `RootCAs` whenever `SPKIPin` is set.
+
+- **xkey CLI: `unlock` no longer reports success while the daemon is still
+  locked** (#250). Two fail-opens stacked. The IPC dispatcher stamped
+  `StatusOK` on every unlock whose handler returned a nil Go error, but the GUI
+  and headless handlers report a refusal *in band* as
+  `UnlockResult{Success: false}` with a nil error — so a refused unlock reached
+  the client indistinguishable from a granted one. `runUnlock` then read only
+  the transport status, never `UnlockResult.Success`, and printed `Unlocked`.
+
+  The dispatcher now maps the result onto the status (`ErrUnlockRefused`,
+  `ErrUnlockNoResult`), and `unlock` takes success from the result rather than
+  the transport, then **confirms it**: it queries the daemon's status and exits
+  non-zero with `ErrUnlockStillLocked` when the daemon reports itself locked
+  after granting the unlock. A daemon that owns no app lock confirms nothing,
+  and the command says so instead of implying it checked. `headlessHandler`
+  and `guiIPCHandler` now report the real lock state as the new
+  `ipc.ActionLocked` / `ipc.ActionUnlocked` actions, so `xkey unlock` and
+  `xkey fido2 status` agree.
+
+  This mattered well beyond the wrong exit code: an automated ceremony built on
+  the false success failed much later with the authenticator's
+  `MakeCredential: operation denied`, which reads as a user declining a touch.
+  The real cause was a lock the whole time.
+
+- **xkey CLI: `trust add` reports skipped certificates** (#250). `trust add
+  --help` promised that already-present certificates are "silently skipped and
+  reported separately"; nothing was reported, so `Certificates added: 0` was
+  indistinguishable from a parse failure, an empty file, or a permissions
+  problem. `addPEMWithOptions` now returns an added and a skipped count and the
+  command prints both, and a file that yields no certificate at all is
+  `ErrTrustNoCertificates` rather than a silent zero.
+
 - **Software backend: `validateKeyType` no longer blesses ECDSA/Ed25519
   mismatches** (#53). The validator checked RSA only; ECDSA and Ed25519 fell
   through a `default:` arm commented *"basic validation is sufficient"* — the

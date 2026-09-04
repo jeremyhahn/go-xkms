@@ -24,6 +24,19 @@ import (
 // without importing pkg/crypto/spki directly.
 var NewSPKIPinnedTLSConfig = spki.NewPinnedTLSConfig
 
+// VerifySPKIPinnedConnection returns a tls.Config VerifyConnection callback
+// that checks the server's leaf certificate against an SPKI pin. Unlike
+// NewSPKIPinnedTLSConfig it does not replace CA chain validation — it layers
+// the pin on top of it, which is what a client that has both a root pool and a
+// pin needs. Without this a caller who supplies its own *tls.Config has to
+// choose between CA trust and pinning.
+var VerifySPKIPinnedConnection = spki.VerifyConnection
+
+// ComputeSPKIPin returns the hex-encoded SHA-256 hash of a certificate's
+// SubjectPublicKeyInfo — the pin format WithSPKIPin and
+// VerifySPKIPinnedConnection accept.
+var ComputeSPKIPin = spki.ComputePin
+
 // PKCS11TLSConfig configures a PKCS#11-backed mTLS client certificate (the
 // private key stays in the HSM/token).
 type PKCS11TLSConfig = auth.PKCS11TLSConfig

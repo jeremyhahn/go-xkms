@@ -1,6 +1,6 @@
 # Platform Trust — CLI
 
-> **Status: NORMATIVE** · Feature: `platform-trust` · Module: `go-xkms/xkey` · Last verified: 2026-08-19
+> **Status: NORMATIVE** · Feature: `platform-trust` · Module: `go-xkms/xkey` · Last verified: 2026-09-03
 
 Binary: `xkey`, group `trust` (`xkey/cmd/xkey/cmd/trust.go`).
 
@@ -47,6 +47,22 @@ xkey trust show 3fa1…  -o json
 
 `--source` records where the certificate came from (`manual`, `url:…`,
 `file:…`). It is the only provenance you will have later.
+
+`trust add` reports both counts, so a zero is never ambiguous:
+
+```
+$ xkey trust add ca-chain.crt --purpose user-ca --source "file:ca-chain.crt"
+Certificates added: 0
+Certificates skipped (already present): 1
+```
+
+A file that yields no certificate at all — unparseable, empty, or holding only
+non-certificate PEM blocks — is an error rather than a silent `added: 0`.
+
+The store `trust add` writes is the same one `xkey auth` builds its TLS
+configuration from, so adding a server's CA here is enough to let
+`auth register` and `auth login` reach it. See
+[`../headless-webauthn/cli.md`](../headless-webauthn/cli.md).
 
 Everything after `add` is keyed by **fingerprint**, not by name.
 

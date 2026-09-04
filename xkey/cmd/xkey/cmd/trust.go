@@ -55,6 +55,11 @@ var (
 	// ErrTrustPEMReadFailed indicates the PEM file could not be read.
 	ErrTrustPEMReadFailed = errors.New("trust: failed to read PEM file")
 
+	// ErrTrustNoCertificates indicates a PEM file yielded no certificates at
+	// all. It separates a parse failure or an empty file from an import whose
+	// certificates were simply already present.
+	ErrTrustNoCertificates = errors.New("trust: no certificates found in the PEM file")
+
 	// ErrTrustFingerprintRequired indicates a fingerprint argument is required.
 	ErrTrustFingerprintRequired = errors.New("trust: fingerprint argument is required")
 
@@ -143,7 +148,9 @@ var trustAddCmd = &cobra.Command{
 	Long: `Add one or more CA certificates from a PEM-encoded file to the trust store.
 
 The file may contain multiple PEM-encoded certificates. Certificates that
-already exist in the store are silently skipped and reported separately.
+already exist in the store are skipped and reported as a separate count, so a
+zero added count is never confused with a parse failure or an empty file. A
+file that yields no certificates at all is an error.
 
 Use --purpose to assign a specific purpose classification to all certificates
 in the file. Use --source to record where the certificates came from.
@@ -431,7 +438,7 @@ func runTrustAdd(cmd *cobra.Command, args []string) error {
 	purposeStr, _ := cmd.Flags().GetString("purpose")
 	sourceStr, _ := cmd.Flags().GetString("source")
 
-	var added int
+	var opts *truststore.AddCertificateOptions
 
 	if purposeStr != "" || sourceStr != "" {
 		var purpose truststore.CertPurpose
@@ -443,31 +450,39 @@ func runTrustAdd(cmd *cobra.Command, args []string) error {
 			}
 		}
 
-		opts := &truststore.AddCertificateOptions{
+		opts = &truststore.AddCertificateOptions{
 			Purpose: purpose,
 			Source:  sourceStr,
 		}
-
-		added, err = addPEMWithOptions(store, pemData, opts)
-	} else {
-		added, err = store.AddPEM(pemData)
 	}
 
+	added, skipped, err := addPEMWithOptions(store, pemData, opts)
 	if err != nil {
 		return &SentinelCauseError{Sentinel: ErrTrustAddFailed, Cause: err}
+	}
+	if added == 0 && skipped == 0 {
+		return &SentinelCauseError{Sentinel: ErrTrustAddFailed, Cause: ErrTrustNoCertificates}
 	}
 
 	fmt.Fprintf(os.Stderr, "Importing certificates from %s\n", pemFile)
 	_, _ = fmt.Fprintf(out, "Certificates added: %d\n", added)
+	// A bare "added: 0" is indistinguishable from a parse failure, an empty
+	// file, or a permissions problem. Reporting the skips tells the operator
+	// the certificates were already there, as trust add --help promises.
+	if skipped > 0 {
+		_, _ = fmt.Fprintf(out, "Certificates skipped (already present): %d\n", skipped)
+	}
 
 	return nil
 }
 
 // addPEMWithOptions parses PEM-encoded certificate data and adds each
-// certificate to the store with the specified metadata options. Certificates
-// that already exist are silently skipped.
-func addPEMWithOptions(store *truststore.FileStore, pemData []byte, opts *truststore.AddCertificateOptions) (int, error) {
-	var added int
+// certificate to the store with the specified metadata options, which may be
+// nil to take the store's own classification. It returns the number of
+// certificates added and the number skipped because they were already present.
+// The two counts are reported separately because a zero added count on its own
+// says nothing about why.
+func addPEMWithOptions(store *truststore.FileStore, pemData []byte, opts *truststore.AddCertificateOptions) (added, skipped int, err error) {
 	rest := pemData
 
 	for {
@@ -480,22 +495,22 @@ func addPEMWithOptions(store *truststore.FileStore, pemData []byte, opts *trusts
 			continue
 		}
 
-		cert, err := x509.ParseCertificate(block.Bytes)
-		if err != nil {
-			return added, &SentinelCauseError{Sentinel: ErrTrustAddFailed, Cause: err}
+		cert, parseErr := x509.ParseCertificate(block.Bytes)
+		if parseErr != nil {
+			return added, skipped, &SentinelCauseError{Sentinel: ErrTrustAddFailed, Cause: parseErr}
 		}
 
-		err = store.AddCertificateWithOptions(cert, opts)
-		if err != nil {
-			if errors.Is(err, truststore.ErrCertificateExists) {
+		if addErr := store.AddCertificateWithOptions(cert, opts); addErr != nil {
+			if errors.Is(addErr, truststore.ErrCertificateExists) {
+				skipped++
 				continue
 			}
-			return added, err
+			return added, skipped, addErr
 		}
 		added++
 	}
 
-	return added, nil
+	return added, skipped, nil
 }
 
 // runTrustRemove executes the trust remove command.

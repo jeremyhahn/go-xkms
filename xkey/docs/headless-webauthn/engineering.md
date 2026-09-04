@@ -1,6 +1,6 @@
 # Headless WebAuthn — Engineering Contract
 
-> **Status: NORMATIVE** · Feature: `headless-webauthn` · Module: `go-xkms/xkey` · Last verified: 2026-08-19
+> **Status: NORMATIVE** · Feature: `headless-webauthn` · Module: `go-xkms/xkey` · Last verified: 2026-09-03
 
 ## Exported surface
 
@@ -22,6 +22,7 @@ xkey supplies the adapter (its own authenticator), the CLI
 |---|---|---|
 | `--server` | — | **required** — server URL |
 | `--spki-pin` | `""` | SPKI SHA-256 pin for certificate pinning |
+| `--tls-ca` | `""` | extra PEM CA bundle, on top of the xKey trust store |
 | `--setup-token` | `""` | pre-authorized enrolment token |
 | `--email` | — | **required** — the canonical login key to enrol |
 | `--display-name` | the login key | human-readable name |
@@ -32,6 +33,7 @@ xkey supplies the adapter (its own authenticator), the CLI
 |---|---|---|
 | `--server` | — | **required** |
 | `--email` | — | **required** — the canonical login key to authenticate |
+| `--tls-ca` | `""` | extra PEM CA bundle, on top of the xKey trust store |
 | `--piv` | `false` | authenticate with a PIV slot certificate over mTLS instead of WebAuthn |
 | `--slot` | `9a` (`PIVSlotAuthentication`) | PIV slot, with `--piv` |
 | `--backend` | software | PIV key backend: `software` or `pkcs11`, with `--piv` |
@@ -46,6 +48,18 @@ xkey supplies the adapter (its own authenticator), the CLI
   no server-side relaxation.
 - **`--spki-pin` is verified before any credential is created.** Enrolling
   against an unverified server is the failure this flag exists to prevent.
+- **The xKey trust store is a first-class CA source for `auth`.**
+  `defaultAuthClientFactory` (`xkey/cmd/xkey/cmd/auth.go`) builds the client's
+  `*tls.Config` from the system roots, the trust store `xkey trust add`
+  populates, and `--tls-ca`. A CA the operator has added is therefore sufficient
+  on its own; pinning is not the only route. It previously read none of them,
+  so a correctly-added CA still failed with "certificate signed by unknown
+  authority" (#250).
+- **A bare `--spki-pin` remains trust-on-first-use.** With no `--tls-ca` on the
+  same command line the pin is the trust anchor and no chain is built, so an
+  unrelated certificate in the trust store cannot break a working pinned
+  invocation. Named together with `--tls-ca`, the pin is additive on top of
+  chain validation (`xkms.VerifySPKIPinnedConnection`) rather than discarded.
 - **A setup token is single-purpose and should be short-lived.** It authorizes
   creating a credential.
 - **`--piv` is a different authentication path, not a fallback.** It uses mTLS

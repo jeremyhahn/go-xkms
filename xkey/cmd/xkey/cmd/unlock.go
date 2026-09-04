@@ -43,6 +43,12 @@ var (
 
 	// ErrUnlockFailed indicates the daemon rejected the unlock.
 	ErrUnlockFailed = errors.New("unlock: failed")
+
+	// ErrUnlockStillLocked indicates the daemon granted the unlock but still
+	// reports itself locked. Reporting that as success is a fail-open: every
+	// automated flow built on it proceeds on a false premise, and the failure
+	// surfaces later in an unrelated subsystem.
+	ErrUnlockStillLocked = errors.New("unlock: the daemon is still locked")
 )
 
 // unlockCmd unlocks a running xKey instance over IPC.
@@ -112,7 +118,13 @@ func resolveUnlockPIN(cmd *cobra.Command) (string, error) {
 	return "", ErrUnlockMissingPIN
 }
 
-// runUnlock sends the unlock over IPC.
+// runUnlock sends the unlock over IPC and confirms the resulting state.
+//
+// Success is taken from the unlock result, not from the transport status, and
+// is then checked against the daemon's own view of its lock state. An unlock
+// that reports success on a daemon that is still locked is worse than a
+// failure: the ceremony that follows fails somewhere unrelated ("operation
+// denied" from the authenticator) and names the wrong subsystem.
 func runUnlock(cmd *cobra.Command, _ []string) error {
 	out := cmd.OutOrStdout()
 
@@ -141,7 +153,48 @@ func runUnlock(cmd *cobra.Command, _ []string) error {
 		// daemon that cannot unlock at all are different problems.
 		return &DetailError{Err: ErrUnlockFailed, Detail: fmt.Sprintf(": %s", resp.Error)}
 	}
+	// A client must not infer success from the transport status alone. The
+	// unlock result is the daemon's actual answer.
+	if resp.Unlock == nil {
+		return &DetailError{Err: ErrUnlockFailed, Detail: ": the daemon returned no unlock result"}
+	}
+	if !resp.Unlock.Success {
+		return &DetailError{Err: ErrUnlockFailed, Detail: fmt.Sprintf(": %s", resp.Unlock.Error)}
+	}
+
+	confirmed, err := confirmUnlocked(client)
+	if err != nil {
+		return err
+	}
 
 	_, _ = fmt.Fprintln(out, "Unlocked")
+	if !confirmed {
+		// The daemon owns no app lock, so there is no state to confirm. Say
+		// so rather than letting the bare success line imply one was checked.
+		_, _ = fmt.Fprintln(out, "Lock state could not be confirmed: this daemon does not report one")
+	}
 	return nil
+}
+
+// confirmUnlocked queries the daemon for its lock state after an unlock it
+// reported as successful. It returns whether the state was confirmed unlocked;
+// a daemon that owns no app lock reports no lock state and confirms nothing,
+// which is not an error. A daemon that reports itself still locked is.
+func confirmUnlocked(client *ipc.Client) (bool, error) {
+	resp, err := client.Status()
+	if err != nil {
+		return false, &SentinelCauseError{Sentinel: ErrUnlockFailed, Cause: err}
+	}
+	if resp.Status == ipc.StatusError {
+		return false, &DetailError{Err: ErrUnlockFailed, Detail: fmt.Sprintf(": status query failed: %s", resp.Error)}
+	}
+
+	switch resp.Action {
+	case ipc.ActionUnlocked:
+		return true, nil
+	case ipc.ActionLocked:
+		return false, ErrUnlockStillLocked
+	default:
+		return false, nil
+	}
 }

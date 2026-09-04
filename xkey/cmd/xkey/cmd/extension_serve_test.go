@@ -399,8 +399,11 @@ socketReady:
 	if resp.Status != ipc.StatusOK {
 		t.Fatalf("expected status %q, got %q", ipc.StatusOK, resp.Status)
 	}
-	if resp.Action != ipc.ActionDaemonReady {
-		t.Fatalf("expected action %q, got %q", ipc.ActionDaemonReady, resp.Action)
+	// The headless daemon owns an app lock here, so status reports the lock
+	// state rather than a bare daemon_ready. That is what lets `xkey unlock`
+	// confirm the state it reports (#250).
+	if resp.Action != ipc.ActionUnlocked {
+		t.Fatalf("expected action %q, got %q", ipc.ActionUnlocked, resp.Action)
 	}
 
 	// Verify autofill status is reachable.
@@ -858,8 +861,11 @@ socketReady:
 	if resp.Status != ipc.StatusOK {
 		t.Fatalf("expected status %q, got %q", ipc.StatusOK, resp.Status)
 	}
-	if resp.Action != ipc.ActionDaemonReady {
-		t.Fatalf("expected action %q, got %q", ipc.ActionDaemonReady, resp.Action)
+	// The headless daemon owns an app lock here, so status reports the lock
+	// state rather than a bare daemon_ready. That is what lets `xkey unlock`
+	// confirm the state it reports (#250).
+	if resp.Action != ipc.ActionUnlocked {
+		t.Fatalf("expected action %q, got %q", ipc.ActionUnlocked, resp.Action)
 	}
 
 	// Verify autofill status works with --no-auth.

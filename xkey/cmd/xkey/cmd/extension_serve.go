@@ -605,12 +605,21 @@ func (h *headlessHandler) HandleTypePassword(_ string) (*ipc.Response, error) {
 	return nil, ErrServeTypePasswordUnsupported
 }
 
-// HandleStatus returns the IPC server status including the headless mode
-// indicator.
+// HandleStatus returns the IPC server status. When an app lock service is
+// wired, the action carries the real lock state so a client can verify that
+// the state an unlock reported is the state the daemon is actually in. Without
+// one there is no lock to report and the daemon is simply ready.
 func (h *headlessHandler) HandleStatus() (*ipc.Response, error) {
+	action := ipc.ActionDaemonReady
+	if h.appLockSvc != nil {
+		action = ipc.ActionUnlocked
+		if h.appLockSvc.IsLocked() {
+			action = ipc.ActionLocked
+		}
+	}
 	return &ipc.Response{
 		Status: ipc.StatusOK,
-		Action: ipc.ActionDaemonReady,
+		Action: action,
 	}, nil
 }
 

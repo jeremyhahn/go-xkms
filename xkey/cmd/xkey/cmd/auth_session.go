@@ -15,6 +15,7 @@ package cmd
 
 import (
 	"context"
+	"crypto/x509"
 	"errors"
 	"fmt"
 	"log/slog"
@@ -115,13 +116,26 @@ func init() {
 }
 
 // newSessionLoginClient builds a session login-plane client for entry,
-// reusing the server's TOFU-pinned CA fingerprint when the registry
-// recorded one and falling back to the system trust store otherwise — the
-// same trust path "auth login" and "auth login --piv" use.
+// reusing the server's TOFU-pinned CA fingerprint when the registry recorded
+// one — the same trust path "auth login" and "auth login --piv" use. Without a
+// pin the roots come from the xKey trust store and the system pool, so a CA
+// added with "xkey trust add" reaches these verbs too (#250).
 func newSessionLoginClient(entry *serverregistry.ServerEntry) (*xkms.LoginClient, error) {
+	var roots *x509.CertPool
+	if entry.CAFingerprint == "" {
+		// LoginClientConfig ignores RootCAs when SPKIPin is set, so only build
+		// the pool when there is no pin to be the trust anchor.
+		pool, err := authRootPool("")
+		if err != nil {
+			return nil, err
+		}
+		roots = pool
+	}
+
 	client, err := xkms.NewLoginClient(xkms.LoginClientConfig{
 		BaseURL: entry.URL,
 		SPKIPin: entry.CAFingerprint,
+		RootCAs: roots,
 		Timeout: defaultAuthTimeout,
 	})
 	if err != nil {

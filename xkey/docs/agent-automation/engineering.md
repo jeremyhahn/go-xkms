@@ -1,6 +1,6 @@
 # Agent Automation — Engineering Contract
 
-> **Status: NORMATIVE** · Feature: `agent-automation` · Module: `go-xkms/xkey` · Last verified: 2026-08-19
+> **Status: NORMATIVE** · Feature: `agent-automation` · Module: `go-xkms/xkey` · Last verified: 2026-09-03
 
 ## Exported surface
 
@@ -28,6 +28,10 @@ Automation is configuration and IPC rather than a Go API.
 | `--pin-stdin` | `false` | read the PIN from standard input |
 | `--socket` | auto-detect | IPC socket path |
 
+Errors: `ErrUnlockDaemonNotRunning`, `ErrUnlockMissingPIN`, `ErrUnlockFailed`,
+`ErrUnlockStillLocked`. The last is what a script gates on when the daemon
+grants the unlock but does not end up unlocked.
+
 ### `xkey touch` (`xkey/cmd/xkey/cmd/touch.go`)
 
 | Flag | Default | Notes |
@@ -51,6 +55,17 @@ xkey instead of a key file.
   ceremony it sees is ordinary.
 - **`--pin` is documented as unsafe in its own help text.** Keep it that way,
   and keep `--pin-stdin` working.
+- **`unlock` reports only a state it has confirmed.** Success is taken from
+  `ipc.UnlockResult.Success`, never from the transport status, and is then
+  checked against the daemon's own `HandleStatus`. A daemon that reports
+  `ipc.ActionLocked` after granting an unlock makes the command exit non-zero
+  with `ErrUnlockStillLocked`; a daemon that owns no app lock reports neither
+  state and the command says so rather than implying it checked. Reporting an
+  unconfirmed unlock is a fail-open: the ceremony that follows fails with the
+  authenticator's `operation denied`, naming the wrong subsystem (#250).
+- **A daemon that owns an app lock reports its lock state from `HandleStatus`.**
+  `guiIPCHandler` and `headlessHandler` both do; `fido2Device`, which owns no
+  lock, reports `ipc.ActionDaemonReady`. `unlock`'s confirmation depends on it.
 - **IPC access control is filesystem permissions.** The socket has no
   authentication of its own; anything that can open it can use the unlocked
   authenticator.
@@ -65,7 +80,9 @@ xkey instead of a key file.
 
 | Condition | Result |
 |---|---|
-| unlock with a wrong PIN | refused; retries counted like real hardware |
+| unlock with a wrong PIN | refused; retries counted like real hardware; `unlock` exits non-zero carrying the daemon's reason |
+| unlock granted but the daemon is still locked | `ErrUnlockStillLocked`, non-zero; no success line is printed |
+| unlock against a daemon with no app lock | success, plus an explicit note that the state could not be confirmed |
 | socket not found | `xkey fido2` is not running, or `--socket` disagrees |
 | ceremony times out with `--auto-uv` unset | presence was required and nobody supplied it |
 | SDK cannot reach the socket | `ErrXKeyAuthFailed` |

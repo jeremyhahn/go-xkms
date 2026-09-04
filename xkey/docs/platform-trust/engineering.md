@@ -1,6 +1,6 @@
 # Platform Trust — Engineering Contract
 
-> **Status: NORMATIVE** · Feature: `platform-trust` · Module: `go-xkms/xkey` · Last verified: 2026-08-19
+> **Status: NORMATIVE** · Feature: `platform-trust` · Module: `go-xkms/xkey` · Last verified: 2026-09-03
 
 ## Exported surface
 
@@ -61,6 +61,15 @@ three cannot drift
   reversible: `uninstall` is not optional.
 - **`--timeout` bounds the whole bootstrap**, across method fallbacks, not each
   attempt.
+- **`trust add` reports added and skipped separately.** `addPEMWithOptions`
+  returns both counts, and a certificate already in the store is a skip, not a
+  silent nothing. A bare `added: 0` cannot distinguish "already present" from a
+  parse failure, an empty file, or a permissions problem, so a file that yields
+  no certificate at all is `ErrTrustNoCertificates` rather than a zero count.
+- **The trust store is the CA source `xkey auth` uses for TLS.** A certificate
+  added here is trusted by `auth register` and `auth login`; see
+  [`../headless-webauthn/engineering.md`](../headless-webauthn/engineering.md).
+  The store is read, not merely written — that was the defect in #250.
 - **Concurrency.** Truststore operations serialise; `install`/`uninstall` touch
   shared system state and must not run concurrently with each other.
 
@@ -69,6 +78,10 @@ three cannot drift
 Bootstrap failures come back from the dispatch library as `*FetchError`
 carrying the attempted `Mode` and the truststrap cause — `errors.Is(err,
 ErrFetch)` for any fetch failure. Local failures are `xkey/pkg/truststore`'s.
+
+`trust add` fails with `ErrTrustPEMReadFailed` (unreadable file),
+`ErrTrustAddFailed` wrapping `ErrTrustNoCertificates` (the file held no
+certificate), or `ErrTrustAddFailed` wrapping the store's own error.
 
 The distinction that matters under `--method a,b,c`: a mode that was **not
 configured** is skipped silently, while a mode that was tried and **failed** is

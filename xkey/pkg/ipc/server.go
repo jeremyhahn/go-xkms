@@ -155,6 +155,27 @@ var handlers = map[string]dispatchFunc{
 		if err != nil {
 			return nil, err
 		}
+		// Handlers report a refused unlock in band — UnlockResult.Success
+		// false with a nil Go error — so the transport status has to follow
+		// the result. Stamping StatusOK on every nil-error return made a
+		// refused unlock indistinguishable from a granted one on the wire.
+		if result == nil {
+			return &Response{
+				Status: StatusError,
+				Error:  ErrUnlockNoResult.Error(),
+			}, nil
+		}
+		if !result.Success {
+			reason := result.Error
+			if reason == "" {
+				reason = ErrUnlockRefused.Error()
+			}
+			return &Response{
+				Status: StatusError,
+				Error:  reason,
+				Unlock: result,
+			}, nil
+		}
 		return &Response{
 			Status: StatusOK,
 			Unlock: result,

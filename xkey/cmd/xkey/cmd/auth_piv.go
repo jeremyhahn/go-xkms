@@ -16,6 +16,7 @@ package cmd
 import (
 	"context"
 	"crypto/tls"
+	"crypto/x509"
 	"errors"
 	"fmt"
 	"log/slog"
@@ -120,10 +121,25 @@ func runAuthLoginPIV(cmd *cobra.Command, logger *slog.Logger, serverURL string) 
 		return errors.Join(ErrAuthServerLookupFailed, err)
 	}
 
+	// Without a recorded pin the roots come from the xKey trust store, the
+	// system pool and --tls-ca, so `auth login --piv` reaches a server by the
+	// CA an operator added just as the WebAuthn path does (#250).
+	// LoginClientConfig ignores RootCAs when SPKIPin is set.
+	var roots *x509.CertPool
+	if serverEntry.CAFingerprint == "" {
+		tlsCAFile, _ := cmd.Flags().GetString("tls-ca")
+		pool, poolErr := authRootPool(tlsCAFile)
+		if poolErr != nil {
+			return poolErr
+		}
+		roots = pool
+	}
+
 	loginClient, err := xkms.NewLoginClient(xkms.LoginClientConfig{
 		BaseURL:           serverEntry.URL,
 		ClientCertificate: &clientCert,
 		SPKIPin:           serverEntry.CAFingerprint,
+		RootCAs:           roots,
 		Timeout:           defaultAuthTimeout,
 	})
 	if err != nil {

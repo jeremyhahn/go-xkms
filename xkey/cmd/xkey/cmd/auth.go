@@ -15,6 +15,8 @@ package cmd
 
 import (
 	"context"
+	"crypto/tls"
+	"crypto/x509"
 	"errors"
 	"fmt"
 	"log/slog"
@@ -54,6 +56,16 @@ var (
 
 	// ErrAuthClientCreationFailed indicates the SDK client could not be created.
 	ErrAuthClientCreationFailed = errors.New("auth: failed to create SDK client")
+
+	// ErrAuthTLSCARead indicates the --tls-ca file could not be read.
+	ErrAuthTLSCARead = errors.New("auth: failed to read the --tls-ca file")
+
+	// ErrAuthTLSCAParse indicates the --tls-ca file held no PEM certificate.
+	ErrAuthTLSCAParse = errors.New("auth: the --tls-ca file contains no PEM certificate")
+
+	// ErrAuthTrustStoreRead indicates the xKey trust store could not be read
+	// for TLS roots.
+	ErrAuthTrustStoreRead = errors.New("auth: failed to read the trust store for TLS roots")
 
 	// ErrAuthConnectFailed indicates the connection to the server failed.
 	ErrAuthConnectFailed = errors.New("auth: failed to connect to server")
@@ -135,20 +147,47 @@ type AuthClientService interface {
 // It is a package-level variable so tests can inject a server double.
 var authClientFactory = defaultAuthClientFactory
 
+// authClientConfig carries everything the auth commands need to reach a
+// server. It is a struct rather than a parameter list because the trust inputs
+// (store, --tls-ca, --spki-pin) combine rather than exclude one another.
+type authClientConfig struct {
+	// ServerURL is the xkms server to connect to.
+	ServerURL string
+
+	// SPKIPin, when set, verifies the server's leaf key by its SPKI SHA-256
+	// hash. With CA trust available it is additive; without any it is the
+	// trust anchor (trust-on-first-use).
+	SPKIPin string
+
+	// SetupToken authorizes a pre-approved enrollment.
+	SetupToken string
+
+	// TLSCAFile is an extra PEM bundle to trust, for a CA the operator has
+	// not added to the xKey trust store.
+	TLSCAFile string
+}
+
 // defaultAuthClientFactory builds the REST SDK client an xkms server serves
-// its WebAuthn ceremony endpoints on. The SPKI pin implements
-// trust-on-first-use certificate pinning; the setup token authorizes a
-// pre-approved enrollment.
-func defaultAuthClientFactory(serverURL, spkiPin, setupToken string) (AuthClientService, error) {
+// its WebAuthn ceremony endpoints on.
+func defaultAuthClientFactory(cfg authClientConfig) (AuthClientService, error) {
+	tlsCfg, err := buildAuthTLSConfig(cfg)
+	if err != nil {
+		return nil, err
+	}
+
 	clientOpts := []xkms.Option{
 		xkms.WithProtocol(xkms.ProtocolREST),
-		xkms.WithAddress(serverURL),
+		xkms.WithAddress(cfg.ServerURL),
 	}
-	if spkiPin != "" {
-		clientOpts = append(clientOpts, xkms.WithSPKIPin(spkiPin))
+	if tlsCfg != nil {
+		clientOpts = append(clientOpts, xkms.WithTLS(tlsCfg))
+	} else if cfg.SPKIPin != "" {
+		// No CA trust anywhere: the pin is the trust anchor, and the transport
+		// builds the pinned config itself.
+		clientOpts = append(clientOpts, xkms.WithSPKIPin(cfg.SPKIPin))
 	}
-	if setupToken != "" {
-		clientOpts = append(clientOpts, xkms.WithJWTToken(setupToken))
+	if cfg.SetupToken != "" {
+		clientOpts = append(clientOpts, xkms.WithJWTToken(cfg.SetupToken))
 	}
 
 	client, err := xkms.NewWithOptions(clientOpts...)
@@ -156,6 +195,106 @@ func defaultAuthClientFactory(serverURL, spkiPin, setupToken string) (AuthClient
 		return nil, errors.Join(ErrAuthClientCreationFailed, err)
 	}
 	return client, nil
+}
+
+// buildAuthTLSConfig assembles the TLS configuration from the CA sources the
+// operator has: the host's own roots, the xKey trust store that `xkey trust
+// add` populates, and an explicit --tls-ca bundle. It returns nil to leave the
+// connection on the SPKI-pin path.
+//
+// The trust store used to be ignored here entirely: `auth` built its config
+// from the SPKI pin alone, so an operator who had correctly run `trust add`
+// still could not connect, and the error named certificate trust rather than
+// the fact that the store was never read (#250).
+//
+// A bare --spki-pin still means what it has always meant: the operator is
+// bootstrapping trust for a server whose CA they do not have, and the pin is
+// the trust anchor. Validating a chain against the ambient trust store as well
+// would break every working trust-on-first-use invocation whose CA is not in
+// it. A --tls-ca named on the same command line is different — the operator
+// supplied that CA for this connection, so the chain is validated and the pin
+// is checked on top of it.
+func buildAuthTLSConfig(cfg authClientConfig) (*tls.Config, error) {
+	if cfg.SPKIPin != "" && cfg.TLSCAFile == "" {
+		return nil, nil
+	}
+
+	pool, err := authRootPool(cfg.TLSCAFile)
+	if err != nil {
+		return nil, err
+	}
+	if pool == nil {
+		return nil, nil
+	}
+
+	tlsCfg := &tls.Config{
+		MinVersion: tls.VersionTLS13,
+		RootCAs:    pool,
+	}
+	if cfg.SPKIPin != "" {
+		// Additive: the chain is validated against the pool first and the pin
+		// is checked on top. A caller who named both must not silently lose
+		// the pin because CA trust became available.
+		tlsCfg.VerifyConnection = xkms.VerifySPKIPinnedConnection(cfg.SPKIPin)
+	}
+	return tlsCfg, nil
+}
+
+// authRootPool builds the root pool from the system roots, the xKey trust
+// store and an optional PEM bundle. It returns nil when none of those
+// contributed a certificate.
+func authRootPool(caFile string) (*x509.CertPool, error) {
+	var contributed bool
+
+	pool, err := x509.SystemCertPool()
+	if err != nil {
+		// A host without a readable system store is not an error here: the
+		// trust store and --tls-ca can still supply the anchors.
+		pool = x509.NewCertPool()
+	} else {
+		contributed = true
+	}
+
+	storeCerts, err := authTrustStoreCertificates()
+	if err != nil {
+		return nil, err
+	}
+	for _, cert := range storeCerts {
+		pool.AddCert(cert)
+		contributed = true
+	}
+
+	if caFile != "" {
+		pemData, readErr := os.ReadFile(caFile)
+		if readErr != nil {
+			return nil, &SentinelCauseError{Sentinel: ErrAuthTLSCARead, Cause: readErr}
+		}
+		if !pool.AppendCertsFromPEM(pemData) {
+			return nil, ErrAuthTLSCAParse
+		}
+		contributed = true
+	}
+
+	if !contributed {
+		return nil, nil
+	}
+	return pool, nil
+}
+
+// authTrustStoreCertificates returns the certificates in the xKey trust store.
+// A store that has never been created is not an error — it is simply empty.
+func authTrustStoreCertificates() ([]*x509.Certificate, error) {
+	store, err := openTrustStore()
+	if err != nil {
+		return nil, &SentinelCauseError{Sentinel: ErrAuthTrustStoreRead, Cause: err}
+	}
+	defer func() { _ = store.Close() }()
+
+	certs, err := store.Certificates()
+	if err != nil {
+		return nil, &SentinelCauseError{Sentinel: ErrAuthTrustStoreRead, Cause: err}
+	}
+	return certs, nil
 }
 
 // authCmd is the parent command for server authentication management.
@@ -340,6 +479,7 @@ func init() {
 	// Register command flags
 	authRegisterCmd.Flags().String("server", "", "Server URL (required)")
 	authRegisterCmd.Flags().String("spki-pin", "", "SPKI SHA-256 pin for certificate pinning")
+	authRegisterCmd.Flags().String("tls-ca", "", "PEM bundle of CA certificates to trust, in addition to the xKey trust store")
 	authRegisterCmd.Flags().String("setup-token", "", "Pre-authorized enrollment token")
 	authRegisterCmd.Flags().String("email", "", "Canonical email login key to enroll (required)")
 	authRegisterCmd.Flags().String("username", "", "Deprecated spelling of --email")
@@ -352,6 +492,7 @@ func init() {
 	authLoginCmd.Flags().String("username", "", "Deprecated spelling of --email")
 	markLoginKeyFlagDeprecated(authLoginCmd)
 	authLoginCmd.Flags().Bool("piv", false, "Authenticate with a PIV slot certificate over mTLS instead of WebAuthn")
+	authLoginCmd.Flags().String("tls-ca", "", "PEM bundle of CA certificates to trust, in addition to the xKey trust store")
 	authLoginCmd.Flags().String("slot", string(PIVSlotAuthentication), "PIV slot to authenticate with (used with --piv)")
 	authLoginCmd.Flags().String("backend", defaultPIVBackend, "PIV key backend: software or pkcs11 (used with --piv)")
 
@@ -385,7 +526,14 @@ func runAuthRegister(cmd *cobra.Command, args []string) error {
 		displayName = email
 	}
 
-	client, err := authClientFactory(serverURL, spkiPin, setupToken)
+	tlsCAFile, _ := cmd.Flags().GetString("tls-ca")
+
+	client, err := authClientFactory(authClientConfig{
+		ServerURL:  serverURL,
+		SPKIPin:    spkiPin,
+		SetupToken: setupToken,
+		TLSCAFile:  tlsCAFile,
+	})
 	if err != nil {
 		return err
 	}
@@ -535,7 +683,15 @@ func runAuthLogin(cmd *cobra.Command, args []string) error {
 	// Reuse the trust anchor recorded at registration: without the stored
 	// SPKI pin a server whose CA is outside the system trust store would
 	// fail verification on every login after a successful TOFU registration.
-	client, err := authClientFactory(serverEntry.URL, serverEntry.CAFingerprint, "")
+	// The trust store and --tls-ca apply here too, so a server registered by
+	// pin can later be reached by CA trust and vice versa.
+	tlsCAFile, _ := cmd.Flags().GetString("tls-ca")
+
+	client, err := authClientFactory(authClientConfig{
+		ServerURL: serverEntry.URL,
+		SPKIPin:   serverEntry.CAFingerprint,
+		TLSCAFile: tlsCAFile,
+	})
 	if err != nil {
 		return err
 	}

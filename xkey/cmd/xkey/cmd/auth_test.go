@@ -1177,7 +1177,7 @@ func installAuthDoubles(t *testing.T, client AuthClientService, ceremony WebAuth
 	originalClient := authClientFactory
 	originalCeremony := webauthnCeremonyFactory
 
-	authClientFactory = func(_, _, _ string) (AuthClientService, error) { return client, nil }
+	authClientFactory = func(authClientConfig) (AuthClientService, error) { return client, nil }
 	webauthnCeremonyFactory = func() (WebAuthnCeremony, error) {
 		if ceremonyErr != nil {
 			return nil, ceremonyErr
@@ -1200,6 +1200,7 @@ func newAuthRegisterCmd(t *testing.T, out *bytes.Buffer) *cobra.Command {
 	cmd.Flags().String("server", "", "")
 	cmd.Flags().String("spki-pin", "", "")
 	cmd.Flags().String("setup-token", "", "")
+	cmd.Flags().String("tls-ca", "", "")
 	// The canonical login key is required; tests exercising the paths beyond
 	// that guard supply one. TestRunAuthRegister_EmailRequired covers its
 	// absence.
@@ -1219,6 +1220,7 @@ func newAuthLoginCmd(t *testing.T, out *bytes.Buffer) *cobra.Command {
 	cmd.Flags().String("server", "", "")
 	cmd.Flags().String("email", "alice@example.com", "")
 	cmd.Flags().String("username", "", "")
+	cmd.Flags().String("tls-ca", "", "")
 	cmd.SetOut(out)
 	return cmd
 }
@@ -1774,7 +1776,7 @@ func TestAuthServerDetail(t *testing.T) {
 // TestDefaultAuthClientFactory_BuildsClient verifies the production factory
 // returns a usable, unconnected SDK client.
 func TestDefaultAuthClientFactory_BuildsClient(t *testing.T) {
-	client, err := defaultAuthClientFactory("https://xkms.example.com:8443", "", "")
+	client, err := defaultAuthClientFactory(authClientConfig{ServerURL: "https://xkms.example.com:8443"})
 	require.NoError(t, err)
 	require.NotNil(t, client)
 	assert.NoError(t, client.Close())
@@ -1783,7 +1785,7 @@ func TestDefaultAuthClientFactory_BuildsClient(t *testing.T) {
 // TestDefaultAuthClientFactory_RejectsEmptyAddress verifies an unusable
 // configuration is refused rather than producing a half-built client.
 func TestDefaultAuthClientFactory_RejectsEmptyAddress(t *testing.T) {
-	client, err := defaultAuthClientFactory("", "", "")
+	client, err := defaultAuthClientFactory(authClientConfig{})
 	assert.Nil(t, client)
 	assert.ErrorIs(t, err, ErrAuthClientCreationFailed)
 }

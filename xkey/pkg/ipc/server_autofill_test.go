@@ -437,11 +437,13 @@ func TestServer_UnlockDispatch(t *testing.T) {
 	assert.Equal(t, "123456", handler.unlockPIN)
 	handler.mu.Unlock()
 
-	// A wrong PIN is a handler-level failure, not a transport error: the
-	// response must still be well-formed with Success=false.
+	// A wrong PIN is a handler-level refusal, not a transport error: the
+	// response must still be well-formed with Success=false, and the status
+	// must follow the result. Reporting StatusOK here let the CLI read a
+	// refused unlock as a granted one (#250).
 	resp, err = client.Unlock("000000")
 	require.NoError(t, err)
-	require.Equal(t, StatusOK, resp.Status)
+	require.Equal(t, StatusError, resp.Status)
 	require.NotNil(t, resp.Unlock)
 	assert.False(t, resp.Unlock.Success)
 }

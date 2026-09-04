@@ -49,6 +49,14 @@ var (
 	// ErrTimeout is returned when an IPC operation exceeds its deadline.
 	ErrTimeout = errors.New("ipc: operation timed out")
 
+	// ErrUnlockRefused is returned when an unlock handler refuses the unlock
+	// without naming a reason.
+	ErrUnlockRefused = errors.New("ipc: unlock refused")
+
+	// ErrUnlockNoResult is returned when an unlock handler produces neither a
+	// result nor an error. Absence of a result is not success.
+	ErrUnlockNoResult = errors.New("ipc: unlock handler returned no result")
+
 	// ErrBarrierSealed is returned when a PKCS#11 operation is attempted
 	// while the barrier is sealed.
 	ErrBarrierSealed = errors.New("ipc: barrier is sealed")

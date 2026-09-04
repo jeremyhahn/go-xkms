@@ -38,6 +38,12 @@ const (
 	ActionTypedPassword = "typed_password"
 	ActionNoPending     = "no_pending"
 	ActionDaemonReady   = "daemon_ready"
+
+	// ActionLocked and ActionUnlocked are the lock states a daemon that owns
+	// an app lock reports from HandleStatus. They let a client verify that the
+	// state an unlock reported is the state the daemon is actually in.
+	ActionLocked   = "locked"
+	ActionUnlocked = "unlocked"
 )
 
 // PKCS#11 action constants identify the specific operation within a PKCS#11

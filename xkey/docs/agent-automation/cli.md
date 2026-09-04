@@ -1,6 +1,6 @@
 # Agent Automation — CLI
 
-> **Status: NORMATIVE** · Feature: `agent-automation` · Module: `go-xkms/xkey` · Last verified: 2026-08-19
+> **Status: NORMATIVE** · Feature: `agent-automation` · Module: `go-xkms/xkey` · Last verified: 2026-09-03
 
 Binary: `xkey`. This feature is a set of flags and two verbs rather than a
 command group of its own.
@@ -38,6 +38,32 @@ printf '%s' "$XKEY_PIN" | xkey unlock --pin-stdin
 Use `--pin-stdin`. The `--pin` flag exists and its own help text warns that the
 value shows up in `ps`.
 
+### `unlock` confirms the state it reports
+
+`unlock` prints `Unlocked` and exits zero only when the daemon confirms it is
+unlocked afterwards. Specifically:
+
+| Daemon outcome | Exit | Output |
+|---|---|---|
+| unlock granted, daemon reports unlocked | `0` | `Unlocked` |
+| unlock granted, daemon still reports locked | non-zero | `unlock: the daemon is still locked` |
+| unlock refused | non-zero | `unlock: failed: <the daemon's reason>` |
+| daemon owns no app lock (e.g. `xkey fido2`) | `0` | `Unlocked` plus `Lock state could not be confirmed: this daemon does not report one` |
+
+So a script may gate on the exit code:
+
+```
+if ! printf '%s' "$XKEY_PIN" | xkey unlock --pin-stdin; then
+    echo "still locked - do not start the ceremony" >&2
+    exit 1
+fi
+```
+
+`xkey fido2 status` reports the same state, and the two agree. A locked
+authenticator refuses CTAP2 operations with `operation denied`, which reads as
+a declined touch rather than a lock — which is why `unlock` must not report a
+success it has not confirmed.
+
 ## `xkey touch`
 
 | Flag | Type | Default | Purpose |
@@ -70,11 +96,12 @@ xkey agent --help
 xkey fido2 --storage file --storage-path "$XDG_DATA_HOME/xkey" \
            --backend tpm2 --auto-uv --notify none &
 
-# 2. unlock without a terminal
+# 2. unlock without a terminal, and stop if it did not take
 printf '%s' "$XKEY_PIN" | xkey unlock --pin-stdin
 
-# 3. enrol and sign in
-xkey auth register --server "$XKMS" --spki-pin "$PIN" \
+# 3. trust the server's CA once, then enrol and sign in
+xkey trust add ca-chain.crt --purpose user-ca --source "file:ca-chain.crt"
+xkey auth register --server "$XKMS" \
                    --setup-token "$SETUP_TOKEN" --email agent-build@example.com
 xkey auth login --server "$XKMS" --email agent-build@example.com
 
@@ -83,8 +110,12 @@ export XKEY_IPC_SOCKET="$XDG_RUNTIME_DIR/xkey/xkey.sock"
 xkmsctl --server "$XKMS" --token "$(xkey auth token --server "$XKMS")" key list
 ```
 
-Step 1's flags are the automation. Step 4's environment variable is how the SDK
-finds the running xkey instead of wanting a key file.
+Step 1's flags are the automation. Step 2 exits non-zero if the daemon is still
+locked, so the ceremony never starts on a false premise. Step 3's `trust add` is
+what lets `auth` verify the server by its CA; pass `--spki-pin` instead when you
+have no CA bundle, or `--tls-ca ca-chain.crt` to trust the file without adding
+it to the store. Step 4's environment variable is how the SDK finds the running
+xkey instead of wanting a key file.
 
 ## What you are trading
 
