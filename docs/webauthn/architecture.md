@@ -1,6 +1,6 @@
 # WebAuthn Relying Party — Architecture
 
-> **Status: NORMATIVE** · Feature: `webauthn` · Repo: `go-xkms` · Last verified: 2026-08-19
+> **Status: NORMATIVE** · Feature: `webauthn` · Repo: `go-xkms` · Last verified: 2026-09-04
 
 ## The problem
 
@@ -77,6 +77,7 @@ Rejected alternatives:
 | Headless client ("browser") | `pkg/webauthn/client` | go-xkms |
 | Mock authenticator | `pkg/webauthn/mock_authenticator.go` | go-xkms |
 | Stores (production) | `qrdb_userstore.go`, `backend_stores.go` over `go-qrdb/sdk/go` | store is **go-qrdb's** |
+| Credential-store decoration (composed host) | `rest.WebAuthnServiceParams.CredentialStoreDecorator` → `apimodule.WithWebAuthnCredentialStoreDecorator` | the **composing host** supplies it |
 | The user identity itself | go-qrdb | **go-qrdb** |
 | CTAP2 client talking to real hardware | `pkg/fido2` — [`../fido2-ctap2/`](../fido2-ctap2/architecture.md) | go-xkms |
 | The FIDO2 auth *factor* | `pkg/factor/fido2` — [`../auth-factors/`](../auth-factors/architecture.md) | go-xkms |
@@ -110,7 +111,11 @@ login:
 
 The `/sdk/...` route variants exist for programmatic clients that are not a
 browser — the headless client in `pkg/webauthn/client` and the xkey virtual
-authenticator drive those.
+authenticator drive those. Both lanes resolve the SAME `Service`, so the
+`CredentialStore.Save` above is the one place a composing host can observe
+every registration this relying party accepts, whichever lane served it —
+that is what the credential-store decorator hooks
+([engineering.md](engineering.md) §"Credential-store decoration").
 
 ## Trust boundaries
 

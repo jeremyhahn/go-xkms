@@ -94,6 +94,21 @@ type ServiceModuleWebAuthnConfig = config.WebAuthnConfig
 // the WebAuthn routes stay unmounted.
 var WithServiceModuleWebAuthn = apimodule.WithWebAuthnConfig
 
+// ServiceModuleWebAuthnCredentialStoreDecorator wraps the qrdb-backed
+// WebAuthn credential store the module's self-built relying party persists
+// passkeys through. A composer uses it to attach its own registration side
+// effects — an identity-plane auth factor, an audit record — to credentials
+// enrolled through the module's own ceremony routes, so that surface agrees
+// with the composer's own. The returned store must honour the wrapped
+// store's persistence semantics and must not be nil.
+type ServiceModuleWebAuthnCredentialStoreDecorator = rest.WebAuthnCredentialStoreDecorator
+
+// WithServiceModuleWebAuthnCredentialStoreDecorator wraps the module's
+// self-built WebAuthn credential store. Requires
+// WithServiceModuleWebAuthn and WithServiceModuleQRDBClient; unset leaves
+// the qrdb-backed store xkms builds in place unchanged.
+var WithServiceModuleWebAuthnCredentialStoreDecorator = apimodule.WithWebAuthnCredentialStoreDecorator
+
 // ServiceModuleSessionOptions tunes the module's self-built JWT signing
 // key, token claims/TTLs, and login rate limiting. The zero value uses the
 // same defaults xkmsd itself derives.

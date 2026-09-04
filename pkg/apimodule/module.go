@@ -132,6 +132,29 @@ func WithWebAuthnConfig(cfg *config.WebAuthnConfig) Option {
 	}
 }
 
+// WithWebAuthnCredentialStoreDecorator wraps the qrdb-backed credential
+// store the module's self-built WebAuthn relying party persists passkeys
+// through, so a composing host can attach its own registration side effects
+// — an identity-plane auth factor, an audit record — to credentials enrolled
+// through the module's own ceremony routes instead of building a second
+// relying party over the same store.
+//
+// Requires WithWebAuthnConfig and WithQRDBClient (the decorator only applies
+// to the store those two build). Nil, or an unset option, leaves the qrdb
+// store in place unchanged.
+//
+// A decorator that returns nil fails WebAuthn construction with
+// rest.ErrWebAuthnCredentialStoreDecoratorNil rather than yielding a relying
+// party that cannot persist a passkey; as with every other WebAuthn
+// construction failure on the self-built surface, the error is logged and
+// the WebAuthn route family stays unmounted while the rest of the surface
+// (keys, certs, seal) serves on.
+func WithWebAuthnCredentialStoreDecorator(decorate rest.WebAuthnCredentialStoreDecorator) Option {
+	return func(m *Module) {
+		m.webauthnCredentialStoreDecorator = decorate
+	}
+}
+
 // WithSessionOptions tunes the module's self-built JWT signing key, token
 // claims/TTLs, and login rate limiting. Nil (the default) uses the same
 // defaults xkmsd itself derives.
@@ -182,6 +205,12 @@ type Module struct {
 	webauthnConfig *config.WebAuthnConfig
 	sessionOptions *rest.SessionOptions
 	pivLogin       *rest.PIVLoginOptions
+
+	// webauthnCredentialStoreDecorator wraps the credential store the
+	// self-built WebAuthn relying party persists through
+	// (WithWebAuthnCredentialStoreDecorator). Nil leaves the qrdb-backed
+	// store xkms builds in place.
+	webauthnCredentialStoreDecorator rest.WebAuthnCredentialStoreDecorator
 
 	// service memoizes the lazily-constructed keystore Service. Lock-free:
 	// concurrent first calls may both construct, and CompareAndSwap keeps

@@ -47,7 +47,8 @@ func (e *HostBuildError) Unwrap() error { return e.Err }
 // ModuleRESTServer). Absent one, the module lazily self-builds a
 // non-listening *rest.Server around the resolved XKMSService
 // (rest.NewHostServer) using whatever host inputs were configured
-// (WithQRDBClient, WithWebAuthnConfig, WithSessionOptions, WithPIVLogin),
+// (WithQRDBClient, WithWebAuthnConfig,
+// WithWebAuthnCredentialStoreDecorator, WithSessionOptions, WithPIVLogin),
 // so a host that merely composes the module via NewServiceModule still gets
 // a working REST surface instead of the module's HTTP surface silently not
 // existing.
@@ -80,6 +81,7 @@ func (m *Module) restServer() (*rest.Server, error) {
 	}
 	if m.webauthnConfig != nil {
 		hc.WebAuthn = rest.WebAuthnConfigFromXKMS(m.webauthnConfig)
+		hc.WebAuthnCredentialStoreDecorator = m.webauthnCredentialStoreDecorator
 	}
 
 	srv, err := rest.NewHostServer(context.Background(), hc)

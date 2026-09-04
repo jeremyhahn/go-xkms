@@ -70,6 +70,14 @@ var (
 	// is the only store BuildWebAuthnService knows how to wire.
 	ErrWebAuthnQRDBClientRequired = errors.New("rest: webauthn service requires a non-nil qrdb client")
 
+	// ErrWebAuthnCredentialStoreDecoratorNil is returned by
+	// BuildWebAuthnService when a configured
+	// WebAuthnServiceParams.CredentialStoreDecorator returns nil. A nil
+	// credential store would leave the relying party unable to persist or
+	// read back a passkey, so construction fails closed rather than
+	// producing a service whose registrations silently vanish.
+	ErrWebAuthnCredentialStoreDecoratorNil = errors.New("rest: webauthn credential store decorator returned a nil store")
+
 	// ErrAuthenticatorChainEmpty is returned by BuildAuthenticator when
 	// neither a token issuer nor a qrdb client was supplied: there is no
 	// session vehicle a caller could authenticate with.

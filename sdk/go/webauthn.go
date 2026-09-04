@@ -42,6 +42,16 @@ var NewWebAuthnService = webauthn.NewService
 // store with the default TTL.
 var NewWebAuthnMemorySessionStore = webauthn.NewMemorySessionStore
 
+// WebAuthnCredentialStore is the persistence contract the relying party
+// saves and reads passkey credentials through. A composer implements or
+// wraps it to attach its own persistence side effects — see
+// WithServiceModuleWebAuthnCredentialStoreDecorator.
+type WebAuthnCredentialStore = webauthn.CredentialStore
+
+// WebAuthnCredential is the stored passkey record: credential id, user
+// handle, public key, sign counter, and transports.
+type WebAuthnCredential = webauthn.Credential
+
 // WebAuthnQRDBUserStoreOptions configures the qrdb-backed WebAuthn user and
 // credential store adapter.
 type WebAuthnQRDBUserStoreOptions = webauthn.QRDBUserStoreOptions

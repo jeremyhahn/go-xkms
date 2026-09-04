@@ -1,6 +1,6 @@
 # WebAuthn Relying Party — Engineering Contract
 
-> **Status: NORMATIVE** · Feature: `webauthn` · Repo: `go-xkms` · Last verified: 2026-08-19
+> **Status: NORMATIVE** · Feature: `webauthn` · Repo: `go-xkms` · Last verified: 2026-09-04
 
 ## Exported surface — `pkg/webauthn`
 
@@ -114,6 +114,48 @@ are short-lived and deleted on finish.
 
 go-xkms defines no user model of its own — `User` is an interface satisfied by
 qrdb's identity.
+
+### Credential-store decoration — the composed-host seam
+
+`rest.BuildWebAuthnService` derives the qrdb-backed credential store itself.
+A composing host that needs its own side effect on every registration served
+by xkms's relying party supplies a decorator rather than a second relying
+party over the same store:
+
+```go
+type WebAuthnCredentialStoreDecorator func(webauthn.CredentialStore) webauthn.CredentialStore
+```
+
+| Level | Seam |
+|---|---|
+| builder | `rest.WebAuthnServiceParams.CredentialStoreDecorator` |
+| self-built host surface | `rest.HostConfig.WebAuthnCredentialStoreDecorator` |
+| ServiceModule | `apimodule.WithWebAuthnCredentialStoreDecorator` |
+| SDK re-export | `xkms.WithServiceModuleWebAuthnCredentialStoreDecorator` |
+
+Contract:
+
+- The decorator runs **once, at construction**, and receives the qrdb-backed
+  store. The store it returns backs both ceremony lanes — the browser routes
+  and the `/sdk/...` routes — because both resolve the same `Service`.
+- The returned store MUST preserve the wrapped store's persistence
+  semantics. Returning nil — including a typed nil such as `(*T)(nil)`,
+  which would otherwise panic on the first `Save` — fails construction with
+  `rest.ErrWebAuthnCredentialStoreDecoratorNil`; on the self-built host
+  surface that failure is logged and leaves the WebAuthn route family
+  unmounted, as every other WebAuthn construction failure does.
+- It is a **persistence** seam, not an authorization one. The relying party
+  has already verified attestation, origin, RP ID, challenge and user handle
+  before it calls `Save`, so a decorator can neither reach nor relax a
+  ceremony check.
+- Unset, the qrdb-backed store is used directly — the default composition is
+  byte-for-byte what it was.
+
+The motivating case (go-xkms#350): a composed node whose unified login
+ceremony resolves a qrdb **auth factor**, not the credential record. Without
+the seam, a passkey enrolled through xkms's own registration routes created
+no factor, and login failed with "factor not found" while the credential sat
+in the shared store.
 
 ### Session expiry takes an injectable clock
 

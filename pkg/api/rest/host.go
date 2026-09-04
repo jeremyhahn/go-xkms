@@ -28,6 +28,7 @@ import (
 	"crypto/x509"
 	"encoding/base64"
 	"log/slog"
+	"reflect"
 	"time"
 
 	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
@@ -292,6 +293,26 @@ func (a *WebAuthnTokenAdapter) GenerateTokenPair(ctx context.Context, user webau
 	return pair.AccessToken, pair.RefreshToken, nil
 }
 
+// WebAuthnCredentialStoreDecorator wraps the qrdb-backed WebAuthn
+// credential store BuildWebAuthnService constructs, so a composer can attach
+// its own persistence side effects to the relying party xkms builds instead
+// of standing up a second one over the same store.
+//
+// The motivating case is a composed node (go-quicbaas) whose unified login
+// ceremony resolves a qrdb auth factor rather than the credential record:
+// a credential enrolled through the xkms module's own registration routes
+// has to create that factor too, or the two registration surfaces disagree
+// about what a registered passkey is.
+//
+// Contract: the returned store MUST persist and read back credentials with
+// the same semantics as the store it wraps, and MUST NOT be nil (a nil
+// return fails construction with ErrWebAuthnCredentialStoreDecoratorNil).
+// It is a persistence seam, not an authorization one: the relying party has
+// already verified attestation, origin, RP ID, challenge, and user handle
+// before it calls Save, and a decorator cannot reach or relax any of those
+// checks.
+type WebAuthnCredentialStoreDecorator func(webauthn.CredentialStore) webauthn.CredentialStore
+
 // WebAuthnServiceParams configures BuildWebAuthnService.
 type WebAuthnServiceParams struct {
 	// Config is the relying-party configuration. Required.
@@ -312,6 +333,11 @@ type WebAuthnServiceParams struct {
 	// Nil leaves ceremony completion unable to authenticate future requests
 	// (logged, not fatal).
 	TokenIssuer *token.Issuer
+
+	// CredentialStoreDecorator optionally wraps the qrdb-backed credential
+	// store this builder constructs. Nil leaves the qrdb store in place
+	// unchanged -- the default composition is unaffected.
+	CredentialStoreDecorator WebAuthnCredentialStoreDecorator
 
 	// Logger receives construction diagnostics. Nil selects slog.Default().
 	Logger *slog.Logger
@@ -364,11 +390,21 @@ func BuildWebAuthnService(p WebAuthnServiceParams) (*webauthn.Service, error) {
 		return nil, &WebAuthnServiceBuildError{Err: err}
 	}
 
+	credentialStore := credStore
+	if p.CredentialStoreDecorator != nil {
+		decorated := p.CredentialStoreDecorator(credentialStore)
+		if isNilCredentialStore(decorated) {
+			return nil, &WebAuthnServiceBuildError{Err: ErrWebAuthnCredentialStoreDecoratorNil}
+		}
+		credentialStore = decorated
+		logger.Info("WebAuthn credential store decorated by the composing host")
+	}
+
 	params := webauthn.ServiceParams{
 		Config:          p.Config,
 		UserStore:       userStore,
 		SessionStore:    webauthn.NewMemorySessionStore(),
-		CredentialStore: credStore,
+		CredentialStore: credentialStore,
 		Logger:          logger,
 	}
 	if p.TokenIssuer != nil {
@@ -382,6 +418,23 @@ func BuildWebAuthnService(p WebAuthnServiceParams) (*webauthn.Service, error) {
 		return nil, &WebAuthnServiceBuildError{Err: err}
 	}
 	return svc, nil
+}
+
+// isNilCredentialStore reports whether cs carries no usable store. It
+// catches both an untyped nil and a TYPED nil -- a (*T)(nil) a decorator
+// returned by mistake compares != nil as an interface and would panic on the
+// first Save, i.e. mid-ceremony, long after the wiring error was made.
+func isNilCredentialStore(cs webauthn.CredentialStore) bool {
+	if cs == nil {
+		return true
+	}
+	v := reflect.ValueOf(cs)
+	switch v.Kind() {
+	case reflect.Chan, reflect.Func, reflect.Map, reflect.Pointer, reflect.Slice, reflect.UnsafePointer:
+		return v.IsNil()
+	default:
+		return false
+	}
 }
 
 // WebAuthnConfigFromXKMS converts the operator-facing WebAuthn configuration
@@ -548,6 +601,13 @@ type HostConfig struct {
 	// lookup. Empty selects DefaultWebAuthnTenant.
 	WebAuthnTenantID string
 
+	// WebAuthnCredentialStoreDecorator wraps the qrdb-backed credential
+	// store the WebAuthn relying party persists passkeys through, letting
+	// the composing host add its own side effects (an identity-plane auth
+	// factor, an audit record) to registrations served by the module's own
+	// ceremony routes. Nil leaves the qrdb store in place unchanged.
+	WebAuthnCredentialStoreDecorator WebAuthnCredentialStoreDecorator
+
 	// Session tunes the JWT signing key and token TTLs. Nil uses the zero
 	// value (SessionOptions' own defaults).
 	Session *SessionOptions
@@ -670,11 +730,12 @@ func NewHostServer(ctx context.Context, hc *HostConfig) (*Server, error) {
 				tenantID = DefaultWebAuthnTenant
 			}
 			svc, waErr := BuildWebAuthnService(WebAuthnServiceParams{
-				Config:      hc.WebAuthn,
-				QRDBClient:  hc.QRDBClient,
-				TenantID:    tenantID,
-				TokenIssuer: cfg.TokenIssuer,
-				Logger:      logger,
+				Config:                   hc.WebAuthn,
+				QRDBClient:               hc.QRDBClient,
+				TenantID:                 tenantID,
+				TokenIssuer:              cfg.TokenIssuer,
+				CredentialStoreDecorator: hc.WebAuthnCredentialStoreDecorator,
+				Logger:                   logger,
 			})
 			if waErr != nil {
 				logger.Error("host REST surface: WebAuthn service construction failed; webauthn routes stay unmounted", "error", waErr)
