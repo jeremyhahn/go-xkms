@@ -1639,6 +1639,43 @@ away.
 
 ### Removed
 
+- **SHA-1 is no longer an option for a JWK thumbprint** (#292).
+  `jwk.Thumbprint` offered `crypto.SHA1` and `ThumbprintSHA1` wrapped it.
+  `crypto/sha1` **panics** rather than erroring under `GODEBUG=fips140=only`,
+  so any FIPS-activated process reaching that path died — the same defect
+  class as the certstore thumbprint (#197/#212), in a package that audit
+  never reached.
+
+  **Removed rather than conditioned on a FIPS predicate**, following #212. A
+  guard would have to ask "is this artifact FIPS-constrained", and
+  `crypto/fips140.Enabled()` cannot answer it: `GODEBUG=fips140=off` turns it
+  false on a `GOFIPS140`-built binary (#219), so the guard fails **open** for
+  exactly the artifacts the policy most cares about. Removing the option leaves
+  no predicate to get wrong, and — more importantly — no mode-dependent output:
+  a non-FIPS process can no longer mint a thumbprint a FIPS process cannot
+  recompute.
+
+  `Thumbprint` now accepts SHA-256, SHA-384 and SHA-512, and refuses anything
+  else through the typed error it already had. RFC 7638 §3.4 defines the
+  thumbprint over SHA-256, so nothing approved is lost.
+
+  **Nothing to migrate — audited rather than assumed.** No persisted index,
+  cache key, comparison or wire field carried the SHA-1 form. `ThumbprintSHA1`
+  was already marked deprecated and "must NOT be called from new code"; it had
+  no caller anywhere outside this package's own tests, no SDK re-export, and
+  the only two non-test importers of `pkg/encoding/jwk` never compute a
+  thumbprint at all.
+
+  **API break:** `ThumbprintSHA1` is deleted, and `Thumbprint(key,
+  crypto.SHA1)` now returns an error instead of a digest.
+
+  Verified under the activating environment rather than by reading:
+  `GODEBUG=fips140=only go test ./pkg/encoding/jwk/` panicked before and now
+  reports **zero panics of any kind**. Its three remaining failures are
+  `TestX25519*`, which fail on a clean *error* — `crypto/ecdh: use of X25519 is
+  not allowed` — because X25519 is genuinely unapproved. That is the policy
+  working as intended, not the defect class this fixes.
+
 - **BREAKING — `(*pairing.NoiseSession).LocalStaticPrivateKey()` is gone**,
   and with it the same method on the `phone.NoiseSession` alias. It handed
   the protected static scalar back to any caller as an ordinary `[]byte`,

@@ -130,12 +130,8 @@ func TestThumbprintDifferentKeys(t *testing.T) {
 func TestThumbprintHashFunctions(t *testing.T) {
 	rsaKey, _ := rsa.GenerateKey(rand.Reader, 2048)
 
-	// Test different hash functions
-	tpSHA1, err := ThumbprintSHA1(&rsaKey.PublicKey)
-	if err != nil {
-		t.Errorf("ThumbprintSHA1 failed: %v", err)
-	}
-
+	// Test different hash functions. SHA-1 is deliberately absent: it is not an
+	// offered option (go-xkms#292), and TestThumbprint_RefusesSHA1 pins that.
 	tpSHA256, err := ThumbprintSHA256(&rsaKey.PublicKey)
 	if err != nil {
 		t.Errorf("ThumbprintSHA256 failed: %v", err)
@@ -147,15 +143,12 @@ func TestThumbprintHashFunctions(t *testing.T) {
 	}
 
 	// Verify different hash functions produce different results
-	if tpSHA1 == tpSHA256 || tpSHA256 == tpSHA512 || tpSHA1 == tpSHA512 {
+	if tpSHA256 == tpSHA512 {
 		t.Error("Different hash functions should produce different thumbprints")
 	}
 
 	// Verify lengths (after base64url encoding)
-	// SHA-1: 20 bytes -> 27 chars, SHA-256: 32 bytes -> 43 chars, SHA-512: 64 bytes -> 86 chars
-	if len(tpSHA1) != 27 {
-		t.Errorf("SHA-1 thumbprint should be 27 chars, got %d", len(tpSHA1))
-	}
+	// SHA-256: 32 bytes -> 43 chars, SHA-512: 64 bytes -> 86 chars
 	if len(tpSHA256) != 43 {
 		t.Errorf("SHA-256 thumbprint should be 43 chars, got %d", len(tpSHA256))
 	}
@@ -452,19 +445,45 @@ func TestThumbprintUnsupportedHashFunction(t *testing.T) {
 	}
 }
 
-func TestThumbprintSHA1(t *testing.T) {
+// TestThumbprint_RefusesSHA1 is the regression for go-xkms#292.
+//
+// crypto/sha1 PANICS rather than erroring under GODEBUG=fips140=only, so this
+// path took down any FIPS-activated process that reached it. SHA-1 is removed
+// rather than guarded, so the refusal is a plain typed error in EVERY build --
+// which is the property worth pinning. A mode-dependent refusal would mean a
+// non-FIPS process could still mint a thumbprint no FIPS process could
+// recompute.
+func TestThumbprint_RefusesSHA1(t *testing.T) {
 	key, err := rsa.GenerateKey(rand.Reader, 2048)
 	if err != nil {
 		t.Fatalf("Failed to generate RSA key: %v", err)
 	}
 
-	thumbprint, err := ThumbprintSHA1(&key.PublicKey)
+	if _, err := Thumbprint(&key.PublicKey, crypto.SHA1); err == nil {
+		t.Fatal("SHA-1 must be refused, not computed")
+	}
+}
+
+// The refusal must not have taken the approved hashes with it.
+func TestThumbprint_ApprovedHashesStillWork(t *testing.T) {
+	key, err := rsa.GenerateKey(rand.Reader, 2048)
 	if err != nil {
-		t.Fatalf("ThumbprintSHA1 failed: %v", err)
+		t.Fatalf("Failed to generate RSA key: %v", err)
 	}
 
-	if len(thumbprint) == 0 {
-		t.Error("Thumbprint should not be empty")
+	for name, h := range map[string]crypto.Hash{
+		"SHA-256": crypto.SHA256,
+		"SHA-384": crypto.SHA384,
+		"SHA-512": crypto.SHA512,
+	} {
+		tp, err := Thumbprint(&key.PublicKey, h)
+		if err != nil {
+			t.Errorf("%s: %v", name, err)
+			continue
+		}
+		if tp == "" {
+			t.Errorf("%s: empty thumbprint", name)
+		}
 	}
 }
 

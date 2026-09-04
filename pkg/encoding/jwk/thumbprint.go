@@ -15,7 +15,6 @@ package jwk
 
 import (
 	"crypto"
-	"crypto/sha1" // #nosec G505 -- SHA-1 thumbprint for JWK RFC 7638 compatibility
 
 	"github.com/jeremyhahn/go-xkms/pkg/errs"
 	// #nosec G505 -- SHA-1 thumbprint support required for JWK RFC 7638 compatibility
@@ -42,24 +41,31 @@ func ThumbprintSHA256(key crypto.PublicKey) (string, error) {
 	return Thumbprint(key, crypto.SHA256)
 }
 
-// ThumbprintSHA1 computes the SHA-1 JWK thumbprint.
-//
-// Deprecated: SHA-1 thumbprints are not used by any production path in this
-// codebase.  No persisted key index or ACME account key is keyed by SHA-1
-// thumbprint — all production paths use ThumbprintSHA256 (RFC 7638) or the
-// inline SHA-256 computation in pkg/acme/server.  This function is retained
-// only as a legacy compatibility shim and must NOT be called from new code.
-func ThumbprintSHA1(key crypto.PublicKey) (string, error) {
-	return Thumbprint(key, crypto.SHA1)
-}
-
 // ThumbprintSHA512 computes the SHA-512 JWK thumbprint.
 func ThumbprintSHA512(key crypto.PublicKey) (string, error) {
 	return Thumbprint(key, crypto.SHA512)
 }
 
 // Thumbprint computes a JWK thumbprint using the specified hash function.
-// The hash parameter should be one of crypto.SHA1, crypto.SHA256, or crypto.SHA512.
+//
+// The hash parameter must be crypto.SHA256, crypto.SHA384 or crypto.SHA512.
+// Anything else, crypto.SHA1 included, is refused with a typed error.
+//
+// SHA-1 IS NOT OFFERED, and is removed rather than conditioned on a FIPS
+// predicate. crypto/sha1 PANICS rather than erroring under
+// GODEBUG=fips140=only, so every FIPS-activated process that computed a SHA-1
+// thumbprint died here (go-xkms#292) — and a predicate guard would be worse
+// than useless, because GODEBUG=fips140=off turns crypto/fips140.Enabled()
+// false on a GOFIPS140-built binary (#219): it would fail OPEN for exactly the
+// artifacts the policy most cares about.
+//
+// Removing the option means there is no predicate to get wrong and no
+// mode-dependent output. RFC 7638 §3.4 defines the thumbprint over SHA-256;
+// nothing in this repository ever keyed anything by the SHA-1 form — no
+// persisted index, cache key, comparison or wire field — so there is nothing
+// to migrate. The ThumbprintSHA1 helper that existed for it was already marked
+// deprecated and "must NOT be called from new code", and had no caller outside
+// this package's own tests.
 //
 // The thumbprint is computed according to RFC 7638:
 // 1. Construct a JSON object containing only the required members for the key type
@@ -93,9 +99,6 @@ func (jwk *JWK) Thumbprint(hashFunc crypto.Hash) (string, error) {
 	// Hash the JSON
 	var h hash.Hash
 	switch hashFunc {
-	case crypto.SHA1:
-		// #nosec G401 -- SHA-1 thumbprint support for legacy JWK systems, use SHA-256 for new systems
-		h = sha1.New()
 	case crypto.SHA256:
 		h = sha256.New()
 	case crypto.SHA384:
