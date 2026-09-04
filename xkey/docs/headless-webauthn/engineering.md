@@ -1,6 +1,6 @@
 # Headless WebAuthn — Engineering Contract
 
-> **Status: NORMATIVE** · Feature: `headless-webauthn` · Module: `go-xkms/xkey` · Last verified: 2026-09-03
+> **Status: NORMATIVE** · Feature: `headless-webauthn` · Module: `go-xkms/xkey` · Last verified: 2026-09-04
 
 ## Exported surface
 
@@ -26,6 +26,8 @@ xkey supplies the adapter (its own authenticator), the CLI
 | `--setup-token` | `""` | pre-authorized enrolment token |
 | `--email` | — | **required** — the canonical login key to enrol |
 | `--display-name` | the login key | human-readable name |
+| `--pin-stdin` | `false` | read the authenticator's CTAP2 PIN from standard input |
+| `--pin` | `""` | the same PIN as a flag value; visible in the process list |
 
 `xkey auth login`:
 
@@ -37,6 +39,54 @@ xkey supplies the adapter (its own authenticator), the CLI
 | `--piv` | `false` | authenticate with a PIV slot certificate over mTLS instead of WebAuthn |
 | `--slot` | `9a` (`PIVSlotAuthentication`) | PIV slot, with `--piv` |
 | `--backend` | software | PIV key backend: `software` or `pkcs11`, with `--piv` |
+| `--pin-stdin` | `false` | read the authenticator's CTAP2 PIN from standard input (WebAuthn path only) |
+| `--pin` | `""` | the same PIN as a flag value; visible in the process list |
+
+## CTAP2 PIN input
+
+Both PIN flags, on every command that takes a PIN, are declared by one helper
+and read by one resolver — `addPINFlags` and `resolvePINInput` in
+`xkey/cmd/xkey/cmd/pin_input.go`. `xkey unlock` uses the same pair, so the
+precedence (`--pin-stdin` -> `XKEY_PIN` -> `--pin`) cannot drift between verbs.
+
+Invariants:
+
+- **An empty resolved PIN is a legitimate value**, not an error: an
+  authenticator with no PIN configured needs none. Commands that require one —
+  `unlock` — apply that policy themselves.
+- **`--pin-stdin` with nothing on standard input is an error**
+  (`ErrPINInputStdinEmpty`). Defaulting silently to an empty PIN is what makes
+  the subsequent CTAP failure illegible.
+- **A command that resolves a PIN without declaring the flags is a wiring
+  defect** and is reported (`ErrPINInputFlagsMissing`) rather than silently
+  resolving no PIN.
+- **The PIN is never logged, printed, or placed in a documented command line.**
+  Examples use `--pin-stdin`.
+
+The PIN reaches the authenticator through `CeremonyRequest{OptionsJSON, Origin,
+PIN}` (`webauthn_ceremony.go`), which carries it by name: `Origin` and `PIN` are
+both strings, and a positional signature holding the two adjacent would let a
+transposition send the PIN to the relying party as an origin.
+
+Registration sets `fido2.WebAuthnRegistrationOptions.PIN`; assertion sets
+`fido2.WebAuthnAssertionRequest.PIN`. Both authorize through the one
+`Authenticator.AuthorizeWithPIN` path — there is no second authorization route.
+
+## PIN failure reporting
+
+`ceremonyFailure` classifies an authenticator refusal before it reaches the
+operator:
+
+| Condition | Result |
+|---|---|
+| `CTAP2_ERR_PIN_REQUIRED` and no PIN supplied | `ErrWebAuthnPINRequired`, naming the flags that supply one |
+| `CTAP2_ERR_PIN_REQUIRED` and a PIN WAS supplied | the ceremony sentinel, verbatim — the authorization was attempted and rejected |
+| anything else | the ceremony sentinel, with the cause preserved |
+
+A wrong PIN arrives as `fido2.PINAttemptsError`, which wraps `ErrInvalidPIN`
+with the authenticator's own remaining-attempts counter
+(`Authenticator.PINRetries`, CTAP 2.1 6.5.5.2), so a key approaching lockout
+says so. `errors.Is(err, fido2.ErrInvalidPIN)` still matches.
 
 `xkey auth status --server <url>`, `xkey auth token --server <url>`,
 `xkey auth refresh`, `xkey auth logout`.

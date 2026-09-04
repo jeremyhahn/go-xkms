@@ -37,6 +37,18 @@ type WebAuthnAuthenticationOptions struct {
 	AllowCredentialIDs      [][]byte
 	RequireUserVerification bool
 	Timeout                 time.Duration
+
+	// PIN is the authenticator's CTAP2 PIN. An authenticator configured with
+	// alwaysUv, or a relying party that demands user verification, refuses
+	// GetAssertion (CTAP2_ERR_PIN_REQUIRED) unless the request carries a
+	// pinUvAuthParam, so this is what makes a login ceremony possible against
+	// a PIN-protected key with no browser to prompt for it. It is the
+	// assertion-side counterpart of WebAuthnRegistrationOptions.PIN and is
+	// consumed through the same Authenticator.AuthorizeWithPIN path.
+	//
+	// Empty leaves the request unauthorized, which is correct for a key with
+	// no PIN configured.
+	PIN string
 }
 
 // WebAuthnAssertion is the result of a WebAuthn authentication ceremony. The
@@ -229,6 +241,23 @@ func (h *FIDO2Handler) AuthenticateWebAuthn(opts WebAuthnAuthenticationOptions) 
 		},
 	}
 
+	if opts.PIN != "" {
+		param, pinProtocol, perr := auth.AuthorizeWithPIN(opts.PIN, clientDataHash[:])
+		if perr != nil {
+			return nil, perr
+		}
+		req.PinUVAuthParam = param
+		req.PinUVAuthProtocol = pinProtocol
+
+		// A pinUvAuthToken IS the user verification, and it supersedes the
+		// "uv" option: CTAP 2.1 6.2.2 reserves "uv" for an authenticator's
+		// BUILT-IN verification method, so a PIN-only key answers uv:true with
+		// CTAP2_ERR_INVALID_OPTION even as it verifies the user by PIN. This
+		// mirrors RegisterWebAuthn, which applies the same rule to
+		// MakeCredential.
+		req.Options.UV = false
+	}
+
 	h.logger.Printf("Please touch your security key to authenticate...")
 	resp, err := auth.GetAssertion(req)
 	if err != nil {
@@ -329,23 +358,68 @@ func parseRequestOptions(optionsJSON []byte, origin string) (WebAuthnAuthenticat
 //
 // The context bounds device acquisition; the CTAP user-presence timeout is taken
 // from the options' timeout (falling back to the handler config when zero).
+//
+// A PIN-protected authenticator needs Assert, which carries one.
 func (h *FIDO2Handler) AssertWithOptions(ctx context.Context, optionsJSON []byte) ([]byte, error) {
-	return h.AssertWithOptionsAndOrigin(ctx, optionsJSON, "")
+	return h.Assert(ctx, WebAuthnAssertionRequest{OptionsJSON: optionsJSON})
 }
 
 // AssertWithOptionsAndOrigin is AssertWithOptions with an explicit WebAuthn
 // origin. The origin must match one of the relying party's configured RPOrigins
 // or the server will reject the assertion. When origin is empty, the
 // WebAuthn-standard same-origin default "https://<rpId>" is used.
+//
+// A PIN-protected authenticator needs Assert, which carries one.
 func (h *FIDO2Handler) AssertWithOptionsAndOrigin(ctx context.Context, optionsJSON []byte, origin string) ([]byte, error) {
+	return h.Assert(ctx, WebAuthnAssertionRequest{OptionsJSON: optionsJSON, Origin: origin})
+}
+
+// WebAuthnAssertionRequest is the input to Assert: a relying party's
+// server-issued assertion options plus the two things those options cannot
+// carry — the WebAuthn origin, which a browser takes from its security
+// context, and the authenticator's CTAP2 PIN, which a browser prompts for.
+//
+// It is the assertion-side counterpart of WebAuthnRegistrationOptions, and
+// exists so the PIN is passed by NAME: origin and PIN are both strings, and a
+// positional signature carrying the two adjacent would let a transposition
+// send the PIN to the relying party as an origin.
+type WebAuthnAssertionRequest struct {
+	// OptionsJSON is the relying party's BeginLogin output, in either the
+	// wrapped browser shape ({"publicKey": {...}}) or the bare
+	// PublicKeyCredentialRequestOptions shape.
+	OptionsJSON []byte
+
+	// Origin is the WebAuthn origin the clientDataJSON is built over. Empty
+	// selects the WebAuthn-standard same-origin default "https://<rpId>".
+	Origin string
+
+	// PIN is the authenticator's CTAP2 PIN. Empty leaves the GetAssertion
+	// request unauthorized, which is correct for a key with no PIN set; see
+	// WebAuthnAuthenticationOptions.PIN.
+	PIN string
+}
+
+// Assert drives a connected CTAP2 authenticator through a WebAuthn assertion
+// ceremony whose options were issued by a relying party server, and returns the
+// WebAuthn assertion JSON for the server to verify.
+//
+// It is the one assertion entry point: AssertWithOptions and
+// AssertWithOptionsAndOrigin are the PIN-less shorthands over it, so every
+// caller reaches the same parse, the same AuthorizeWithPIN authorization, and
+// the same document assembly.
+//
+// The returned bytes are exactly the body the server consumes via
+// protocol.ParseCredentialRequestResponseBody in FinishLogin.
+func (h *FIDO2Handler) Assert(ctx context.Context, req WebAuthnAssertionRequest) ([]byte, error) {
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
 
-	opts, err := parseRequestOptions(optionsJSON, origin)
+	opts, err := parseRequestOptions(req.OptionsJSON, req.Origin)
 	if err != nil {
 		return nil, err
 	}
+	opts.PIN = req.PIN
 
 	assertion, err := h.AuthenticateWebAuthn(opts)
 	if err != nil {

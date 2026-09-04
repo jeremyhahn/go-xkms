@@ -292,9 +292,11 @@ func TestEncodeAttestationObjectRoundTrip(t *testing.T) {
 	}
 }
 
-// newPINRegistrationHandler builds a handler over a single mock authenticator
-// whose simulator enforces pin, mirroring a security key with a PIN set.
-func newPINRegistrationHandler(t *testing.T, pin string) *FIDO2Handler {
+// newPINProtectedHandler builds a handler over a single mock authenticator
+// whose simulator enforces pin, mirroring a security key with a PIN set. Both
+// ceremonies use it: the simulator enforces the PIN on MakeCredential and on
+// GetAssertion alike, exactly as a real key does.
+func newPINProtectedHandler(t *testing.T, pin string) *FIDO2Handler {
 	t.Helper()
 
 	mockDev := NewMockHIDDevice("/dev/hidraw0")
@@ -331,7 +333,7 @@ func pinRegistrationOptions(pin string) WebAuthnRegistrationOptions {
 }
 
 func TestRegisterWebAuthnWithPIN(t *testing.T) {
-	handler := newPINRegistrationHandler(t, "123456")
+	handler := newPINProtectedHandler(t, "123456")
 
 	attestation, err := handler.RegisterWebAuthn(pinRegistrationOptions("123456"))
 	if err != nil {
@@ -351,7 +353,7 @@ func TestRegisterWebAuthnWithPIN(t *testing.T) {
 
 func TestRegisterWebAuthnPINErrors(t *testing.T) {
 	t.Run("PIN-protected key refuses an unauthorized request", func(t *testing.T) {
-		handler := newPINRegistrationHandler(t, "123456")
+		handler := newPINProtectedHandler(t, "123456")
 
 		// No PIN supplied: this is the failure the init ceremony hit before the
 		// PIN was threaded through, and it must stay legible. The "uv" option
@@ -371,7 +373,7 @@ func TestRegisterWebAuthnPINErrors(t *testing.T) {
 	})
 
 	t.Run("wrong PIN is not reported as a refusal", func(t *testing.T) {
-		handler := newPINRegistrationHandler(t, "123456")
+		handler := newPINProtectedHandler(t, "123456")
 
 		attestation, err := handler.RegisterWebAuthn(pinRegistrationOptions("999999"))
 		if attestation != nil {
@@ -383,7 +385,7 @@ func TestRegisterWebAuthnPINErrors(t *testing.T) {
 	})
 
 	t.Run("a key with no PIN ignores a supplied one", func(t *testing.T) {
-		handler := newPINRegistrationHandler(t, "")
+		handler := newPINProtectedHandler(t, "")
 
 		// GetPINToken against a key with no PIN set is an error rather than a
 		// silent success, so the operator learns the PIN was pointless instead

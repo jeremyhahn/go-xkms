@@ -15,6 +15,7 @@ package fido2
 
 import (
 	"errors"
+	"strconv"
 	"time"
 )
 
@@ -37,6 +38,7 @@ var (
 	ErrPINNotSet             = errors.New("fido2: no PIN is set on this authenticator")
 	ErrPINAuthInvalid        = errors.New("fido2: pinUvAuthParam verification failed")
 	ErrPINAuthBlocked        = errors.New("fido2: pinUvAuthParam blocked; power-cycle the authenticator")
+	ErrPINRetriesUnavailable = errors.New("fido2: the authenticator did not report its remaining PIN attempts")
 	ErrUVRequired            = errors.New("fido2: user verification required")
 	ErrInvalidRelyingParty   = errors.New("fido2: invalid relying party")
 	ErrInvalidClientDataHash = errors.New("fido2: invalid client data hash")
@@ -77,6 +79,31 @@ var (
 	ErrHMACSecretOutputInvalid = errors.New("fido2: malformed hmac-secret extension output")
 	ErrAuthenticationConfigNil = errors.New("fido2: authentication configuration required")
 )
+
+// PINAttemptsError reports a PIN failure together with the number of attempts
+// the authenticator will still accept before it locks out.
+//
+// A wrong PIN that reports only "invalid PIN" tells an operator nothing about
+// how close they are to a lockout, and a lockout discovered by hitting it is a
+// key that needs a reset. The count comes from the authenticator's own
+// getPINRetries counter, so it is what the device will actually enforce.
+type PINAttemptsError struct {
+	// Err is the underlying PIN failure, normally ErrInvalidPIN.
+	Err error
+
+	// Retries is the number of attempts remaining. Zero means the
+	// authenticator is now blocked.
+	Retries uint64
+}
+
+// Error implements the error interface.
+func (e *PINAttemptsError) Error() string {
+	return e.Err.Error() + " (" + strconv.FormatUint(e.Retries, 10) + " attempts remaining before lockout)"
+}
+
+// Unwrap returns the underlying PIN failure, so errors.Is still matches
+// ErrInvalidPIN.
+func (e *PINAttemptsError) Unwrap() error { return e.Err }
 
 // CTAP2 Command codes
 const (

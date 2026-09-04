@@ -358,6 +358,14 @@ func (m *MockHIDDevice) generateGetAssertionResponse(cid uint32, reqData []byte)
 		return
 	}
 
+	// A simulator with a PIN set enforces it exactly as a real key does, so
+	// the platform's PIN/UV auth path is exercised on the assertion ceremony
+	// rather than assumed — the same treatment MakeCredential already gets.
+	if status := m.sim.authorizeGetAssertion(reqData); status != StatusOK {
+		m.writeCBORError(cid, status)
+		return
+	}
+
 	encoded, err := m.sim.getAssertion(reqData)
 	if err != nil {
 		m.writeCBORError(cid, StatusInvalidParameter)

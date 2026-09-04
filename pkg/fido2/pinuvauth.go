@@ -21,6 +21,7 @@ import (
 	"crypto/hmac"
 	"crypto/rand"
 	"crypto/sha256"
+	"errors"
 	"fmt"
 
 	"github.com/fxamacker/cbor/v2"
@@ -75,6 +76,7 @@ const (
 	// pinUvAuthProtocol in a request.
 	clientPINRespKeyAgreement = 0x01
 	clientPINRespPINToken     = 0x02
+	clientPINRespPINRetries   = 0x03
 )
 
 // COSE_Key labels and values used by the PIN/UV auth key agreement
@@ -674,8 +676,70 @@ func (a *Authenticator) AuthorizeWithPIN(pin string, message []byte) (param []by
 
 	token, err := a.GetPINToken(session, pin)
 	if err != nil {
-		return nil, 0, err
+		return nil, 0, a.annotatePINFailure(err)
 	}
 
 	return session.AuthenticateWithToken(token, message), session.Version(), nil
+}
+
+// annotatePINFailure attaches the authenticator's remaining PIN attempts to a
+// wrong-PIN failure, so an operator who mistyped learns how many tries are left
+// before the key locks out rather than discovering the lockout by hitting it.
+//
+// Only a wrong PIN is annotated: every other failure — a key with no PIN set,
+// an already-blocked key, a transport fault — carries no attempt count to
+// report. When the authenticator will not answer the query the original error
+// is returned unchanged; an unavailable counter must never displace the
+// failure the caller actually needs to see.
+func (a *Authenticator) annotatePINFailure(err error) error {
+	if !errors.Is(err, ErrInvalidPIN) {
+		return err
+	}
+
+	retries, retriesErr := a.PINRetries()
+	if retriesErr != nil {
+		return err
+	}
+	return &PINAttemptsError{Err: err, Retries: retries}
+}
+
+// PINRetries reports how many PIN attempts the authenticator will still accept
+// before it locks out (CTAP 2.1 6.5.5.2, authenticatorClientPIN subcommand
+// getPINRetries). Zero means the key is blocked and needs a power cycle or a
+// reset, depending on which of the two counters it exhausted.
+//
+// The subcommand requires neither a PIN nor user presence, so asking is safe
+// on a failure path: it consumes no attempt of its own.
+func (a *Authenticator) PINRetries() (uint64, error) {
+	reqMap := map[int]interface{}{
+		clientPINFieldPinUVAuthProtocol: a.PINUVAuthProtocolVersion(),
+		clientPINFieldSubCommand:        ClientPINSubCmdGetPINRetries,
+	}
+
+	resp, err := a.device.SendCBOR(CmdClientPIN, reqMap)
+	if err != nil {
+		return 0, &errs.Joined{Lead: ErrPINRetriesUnavailable, Cause: err}
+	}
+
+	var respMap map[int]interface{}
+	if err := cbor.Unmarshal(resp, &respMap); err != nil {
+		return 0, &errs.Joined{Lead: ErrPINRetriesUnavailable, Cause: err}
+	}
+
+	retries, ok := respMap[clientPINRespPINRetries]
+	if !ok {
+		return 0, &errs.Detail{Err: ErrPINRetriesUnavailable, Detail: "response carried no retry counter"}
+	}
+
+	switch value := retries.(type) {
+	case uint64:
+		return value, nil
+	case int64:
+		if value < 0 {
+			return 0, &errs.Detail{Err: ErrPINRetriesUnavailable, Detail: "response carried a negative retry counter"}
+		}
+		return uint64(value), nil
+	default:
+		return 0, &errs.Detail{Err: ErrPINRetriesUnavailable, Detail: "response carried a non-integer retry counter"}
+	}
 }

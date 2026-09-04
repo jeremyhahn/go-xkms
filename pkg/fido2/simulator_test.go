@@ -105,6 +105,40 @@ type authenticatorSim struct {
 	// under. pinProtocol records which protocol issued it.
 	pinToken    []byte
 	pinProtocol uint64
+
+	// pinRetries is the attempts-remaining counter getPINRetries reports and
+	// a wrong PIN decrements, as a real authenticator's does. It starts at
+	// the CTAP 2.1 default of eight the first time it is read or decremented,
+	// so a simulator built before PIN support still behaves like a key.
+	pinRetries    uint64
+	pinRetriesSet bool
+
+	// failPINRetries makes the simulator refuse getPINRetries, modelling an
+	// authenticator that will not report the counter.
+	failPINRetries bool
+}
+
+// defaultSimPINRetries is the CTAP 2.1 initial PIN retry budget.
+const defaultSimPINRetries = 8
+
+// remainingPINRetries reports the counter, seeding it on first use.
+func (s *authenticatorSim) remainingPINRetries() uint64 {
+	if !s.pinRetriesSet {
+		s.pinRetries = defaultSimPINRetries
+		s.pinRetriesSet = true
+	}
+	return s.pinRetries
+}
+
+// consumePINRetry decrements the counter for a wrong PIN, as CTAP 2.1 6.5.5.7
+// requires, and reports what remains.
+func (s *authenticatorSim) consumePINRetry() uint64 {
+	remaining := s.remainingPINRetries()
+	if remaining > 0 {
+		remaining--
+		s.pinRetries = remaining
+	}
+	return remaining
 }
 
 // newAuthenticatorSim builds a simulator with random secrets and
@@ -176,6 +210,12 @@ func (s *authenticatorSim) clientPIN(request []byte) ([]byte, error) {
 	case ClientPINSubCmdGetPINToken:
 		return s.getPINToken(req)
 
+	case ClientPINSubCmdGetPINRetries:
+		if s.failPINRetries {
+			return nil, errSimUnsupportedSubcommand
+		}
+		return cbor.Marshal(map[int]interface{}{clientPINRespPINRetries: s.remainingPINRetries()})
+
 	default:
 		return nil, errSimUnsupportedSubcommand
 	}
@@ -220,8 +260,18 @@ func (s *authenticatorSim) getPINToken(req map[int]interface{}) ([]byte, error) 
 
 	expected := sha256.Sum256([]byte(s.pin))
 	if !hmac.Equal(pinHash, expected[:16]) {
+		// A wrong PIN costs an attempt on a real key, so it does here too:
+		// otherwise a test could not tell a counter that is reported from one
+		// that is merely constant.
+		if s.consumePINRetry() == 0 {
+			return nil, &simStatusError{status: StatusPINBlocked, reason: "simulator: PIN retries exhausted"}
+		}
 		return nil, &simStatusError{status: StatusPINInvalid, reason: "simulator: PIN hash mismatch"}
 	}
+
+	// A correct PIN restores the budget, as CTAP 2.1 6.5.5.7 requires.
+	s.pinRetries = defaultSimPINRetries
+	s.pinRetriesSet = true
 
 	token := make([]byte, sha256.Size)
 	if _, err := rand.Read(token); err != nil {
@@ -272,6 +322,59 @@ func (s *authenticatorSim) authorizeMakeCredential(request []byte) byte {
 	}
 
 	clientDataHash, err := simBytes(req[0x01])
+	if err != nil {
+		return StatusMissingParameter
+	}
+
+	if s.pinToken == nil || protocol != s.pinProtocol {
+		return StatusPINAuthInvalid
+	}
+	if !hmac.Equal(pinUVAuthenticate(protocol, s.pinToken, clientDataHash), param) {
+		return StatusPINAuthInvalid
+	}
+	return StatusOK
+}
+
+// authorizeGetAssertion applies the PIN half of CTAP 2.1 6.2.2 to a
+// GetAssertion request, reporting the CTAP status the authenticator would
+// answer with. StatusOK means the request is authorized to proceed.
+//
+// It is the assertion counterpart of authorizeMakeCredential and reads the
+// GetAssertion parameter numbering: clientDataHash is 0x02, options 0x05,
+// pinUvAuthParam 0x06 and pinUvAuthProtocol 0x07 — all different from the
+// MakeCredential numbering, which is why the two cannot share one decoder.
+//
+// A simulator with no PIN set authorizes everything, which is what every test
+// that predates PIN support relies on.
+func (s *authenticatorSim) authorizeGetAssertion(request []byte) byte {
+	if s.pin == "" {
+		return StatusOK
+	}
+
+	req, err := simDecodeRequest(request)
+	if err != nil {
+		return StatusInvalidCBOR
+	}
+
+	// A PIN-only authenticator has no built-in user verification method, so
+	// CTAP 2.1 6.2.2 makes the "uv" option an invalid option rather than a
+	// second way to ask for the same thing pinUvAuthParam already proves.
+	if options, ok := req[0x05].(map[interface{}]interface{}); ok {
+		if uv, ok := options["uv"].(bool); ok && uv {
+			return StatusInvalidOption
+		}
+	}
+
+	param, err := simBytes(req[0x06])
+	if err != nil {
+		return StatusPINRequired
+	}
+	protocol, err := simUint(req[0x07])
+	if err != nil {
+		return StatusMissingParameter
+	}
+
+	clientDataHash, err := simBytes(req[0x02])
 	if err != nil {
 		return StatusMissingParameter
 	}
@@ -454,6 +557,9 @@ func (s *authenticatorSim) respond(payload []byte) []byte {
 	case CmdClientPIN:
 		encoded, err = s.clientPIN(payload[1:])
 	case CmdGetAssertion:
+		if status := s.authorizeGetAssertion(payload[1:]); status != StatusOK {
+			return []byte{status}
+		}
 		encoded, err = s.getAssertion(payload[1:])
 	default:
 		return []byte{StatusInvalidCommand}

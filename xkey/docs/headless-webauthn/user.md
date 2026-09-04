@@ -1,6 +1,6 @@
 # Headless WebAuthn — User Guide
 
-> **Status: NORMATIVE** · Feature: `headless-webauthn` · Module: `go-xkms/xkey` · Last verified: 2026-08-19
+> **Status: NORMATIVE** · Feature: `headless-webauthn` · Module: `go-xkms/xkey` · Last verified: 2026-09-04
 
 ## What this is for
 
@@ -14,6 +14,8 @@ a file.
   [`../virtual-authenticator/user.md`](../virtual-authenticator/user.md).
 - The server's URL and its **SPKI pin**.
 - A setup token, if the server requires pre-authorization to enrol.
+- The authenticator's **CTAP2 PIN**, if it has one. The quick-setup wizard sets
+  one, so on a default install you need it.
 
 ## Enrolling
 
@@ -35,12 +37,37 @@ account by, and it has no default: an OS account name (in a container usually
 `root` or a bare number) is a different identifier, and the ceremony would look
 it up as an email and miss.
 
+## When your key has a PIN
+
+There is no browser here to prompt you, so a key with a PIN set refuses the
+ceremony until you supply it. Pipe it in — that keeps it out of the process list
+and your shell history:
+
+```
+printf '%s' "$CTAP_PIN" | xkey auth register --pin-stdin \
+    --server https://kms.example.com:8443 \
+    --spki-pin "$SPKI_PIN" --email agent-build@example.com
+```
+
+`XKEY_PIN` works too, and `--pin` exists for local development only — anyone on
+the machine can read it out of `ps`.
+
+If you leave the PIN out, the command tells you so by name rather than reporting
+a CTAP error. If you get it wrong, it tells you how many attempts remain. **Do
+not keep guessing**: a key that runs out locks itself, and getting it back means
+a power cycle or a factory reset that destroys the credentials on it.
+
+A key with no PIN configured needs none of this and works as before.
+
 ## Signing in
 
 ```
-xkey auth login --server https://kms.example.com:8443 --email agent-build@example.com
+printf '%s' "$CTAP_PIN" | xkey auth login --pin-stdin \
+    --server https://kms.example.com:8443 --email agent-build@example.com
 xkey auth status -o json
 ```
+
+Drop the `--pin-stdin` pipe if your authenticator has no PIN.
 
 Then use the session anywhere:
 

@@ -365,12 +365,22 @@ The ceremony requires an attached CTAP2 authenticator - a security key, or
 the xKey virtual authenticator started with "xkey fido2". Registration fails
 if no authenticator can be opened; no credential is ever fabricated locally.
 
+An authenticator with a CTAP2 PIN set - which is what the xKey setup wizard
+produces - refuses the ceremony outright unless the request carries the PIN, so
+supply it the way a browser would prompt for it. An authenticator with no PIN
+configured needs none.
+
+Note that --pin is the AUTHENTICATOR's PIN. It is unrelated to --spki-pin,
+which is the server's public-key pin.
+
 Flags:
   --server       Server URL (required)
   --spki-pin     SPKI SHA-256 pin for certificate pinning (trust-on-first-use)
   --setup-token  Pre-authorized enrollment token
   --email        Canonical login key to enroll (required)
   --display-name Human-readable account name (default: the login key)
+
+` + pinUsage + `
 
 Examples:
   # Register with SPKI pin
@@ -380,6 +390,10 @@ Examples:
   # Register with setup token
   xkey auth register --server https://xkms.example.com:8443 --setup-token TOKEN \
       --email alice@example.com
+
+  # Enroll against a PIN-protected authenticator, with no PIN in the process list
+  printf '%s' "$PIN" | xkey auth register --pin-stdin \
+      --server https://xkms.example.com:8443 --email alice@example.com
 
   # Enroll a specific account
   xkey auth register --server https://xkms.example.com:8443 --email alice@example.com`,
@@ -411,6 +425,10 @@ this xkey process can reach work: keys generated with --backend software
 exist only for the process that generated them (see "xkey piv generate");
 --backend pkcs11 reaches a real, persistent hardware token.
 
+An authenticator with a CTAP2 PIN set refuses the assertion unless the request
+carries the PIN, so the WebAuthn path takes the same PIN flags as "xkey unlock".
+The PIV path takes none: possession of the slot key is the credential.
+
 Flags:
   --server    Server URL (required)
   --email     Canonical login key to authenticate (required)
@@ -418,9 +436,15 @@ Flags:
   --slot      PIV slot to authenticate with (default: 9a, used with --piv)
   --backend   PIV key backend: software or pkcs11 (default: software, used with --piv)
 
+` + pinUsage + `
+
 Examples:
   # Login to a registered server
   xkey auth login --server https://xkms.example.com:8443 --email alice@example.com
+
+  # Login against a PIN-protected authenticator, with no PIN in the process list
+  printf '%s' "$PIN" | xkey auth login --pin-stdin \
+      --server https://xkms.example.com:8443 --email alice@example.com
 
   # Login with the PIV authentication slot (9a) certificate over mTLS
   xkey auth login --server https://xkms.example.com:8443 --piv
@@ -492,6 +516,7 @@ func init() {
 	authRegisterCmd.Flags().String("email", "", "Canonical email login key to enroll (required)")
 	authRegisterCmd.Flags().String("username", "", "Deprecated spelling of --email")
 	authRegisterCmd.Flags().String("display-name", "", "Human-readable account name (default: the login key)")
+	addPINFlags(authRegisterCmd)
 	markLoginKeyFlagDeprecated(authRegisterCmd)
 
 	// Login command flags
@@ -503,6 +528,7 @@ func init() {
 	authLoginCmd.Flags().String("tls-ca", "", "PEM bundle of CA certificates to trust, in addition to the xKey trust store")
 	authLoginCmd.Flags().String("slot", string(PIVSlotAuthentication), "PIV slot to authenticate with (used with --piv)")
 	authLoginCmd.Flags().String("backend", defaultPIVBackend, "PIV key backend: software or pkcs11 (used with --piv)")
+	addPINFlags(authLoginCmd)
 
 	// Status command flags
 	authStatusCmd.Flags().String("server", "", "Filter to a specific server URL")
@@ -532,6 +558,16 @@ func runAuthRegister(cmd *cobra.Command, args []string) error {
 	displayName, _ := cmd.Flags().GetString("display-name")
 	if displayName == "" {
 		displayName = email
+	}
+
+	// Resolve the PIN before anything reaches the network: a --pin-stdin with
+	// nothing on standard input is operator input to correct, and correcting
+	// it should not first cost a server round trip or a half-finished
+	// registration. An empty PIN is legitimate here — it is what an
+	// authenticator with no PIN configured needs.
+	pin, err := resolvePINInput(cmd)
+	if err != nil {
+		return err
 	}
 
 	tlsCAFile, _ := cmd.Flags().GetString("tls-ca")
@@ -630,7 +666,11 @@ func runAuthRegister(cmd *cobra.Command, args []string) error {
 
 	_, _ = fmt.Fprintf(out, "Registering credential for %q - touch your authenticator...\n", email)
 
-	attestation, err := ceremony.Register(ctx, []byte(begin.OptionsJSON), webauthnOrigin(serverURL))
+	attestation, err := ceremony.Register(ctx, CeremonyRequest{
+		OptionsJSON: []byte(begin.OptionsJSON),
+		Origin:      webauthnOrigin(serverURL),
+		PIN:         pin,
+	})
 	if err != nil {
 		return err
 	}
@@ -677,11 +717,19 @@ func runAuthLogin(cmd *cobra.Command, args []string) error {
 		return ErrAuthServerRequired
 	}
 
+	// The PIV path presents a slot certificate over mTLS: possession of the
+	// key is the credential, so it involves no authenticator ceremony and
+	// takes no CTAP2 PIN. Branch before resolving one.
 	if piv, _ := cmd.Flags().GetBool("piv"); piv {
 		return runAuthLoginPIV(cmd, logger, serverURL)
 	}
 
 	email, err := resolveAuthLoginKey(cmd)
+	if err != nil {
+		return err
+	}
+
+	pin, err := resolvePINInput(cmd)
 	if err != nil {
 		return err
 	}
@@ -747,7 +795,11 @@ func runAuthLogin(cmd *cobra.Command, args []string) error {
 	out := cmd.OutOrStdout()
 	_, _ = fmt.Fprintf(out, "Authenticating as %q - touch your authenticator...\n", email)
 
-	assertion, err := ceremony.Assert(ctx, []byte(begin.OptionsJSON), webauthnOrigin(serverEntry.URL))
+	assertion, err := ceremony.Assert(ctx, CeremonyRequest{
+		OptionsJSON: []byte(begin.OptionsJSON),
+		Origin:      webauthnOrigin(serverEntry.URL),
+		PIN:         pin,
+	})
 	if err != nil {
 		return err
 	}

@@ -332,10 +332,10 @@ func TestRunAuthLogin_WithServer_RegistryOpenSucceeds(t *testing.T) {
 	tmpDir := t.TempDir()
 	t.Setenv("HOME", tmpDir)
 
-	cmd := &cobra.Command{}
-	cmd.Flags().String("server", "", "")
-	cmd.Flags().String("email", "alice@example.com", "")
-
+	// Built through the shared helper so the double carries every flag the
+	// real command declares; a hand-rolled flag set silently goes stale the
+	// next time one is added.
+	cmd := newAuthLoginCmd(t, &bytes.Buffer{})
 	require.NoError(t, cmd.Flags().Set("server", "https://nonexistent.example.com:8443"))
 
 	err := runAuthLogin(cmd, nil)
@@ -950,9 +950,7 @@ func TestRunAuthLogin_ServerNotRegistered(t *testing.T) {
 	tmpDir := t.TempDir()
 	t.Setenv("HOME", tmpDir)
 
-	cmd := &cobra.Command{}
-	cmd.Flags().String("server", "", "")
-	cmd.Flags().String("email", "alice@example.com", "")
+	cmd := newAuthLoginCmd(t, &bytes.Buffer{})
 	require.NoError(t, cmd.Flags().Set("server", "https://unregistered.example.com:8443"))
 
 	err := runAuthLogin(cmd, nil)
@@ -1149,18 +1147,23 @@ type fakeCeremony struct {
 	assertOpts []byte
 
 	origin string
+	// pin records what the command passed to the authenticator, which is the
+	// only way to prove the PIN survived the flag plumbing.
+	pin    string
 	closed bool
 }
 
-func (f *fakeCeremony) Register(_ context.Context, optionsJSON []byte, origin string) ([]byte, error) {
-	f.registerOpts = optionsJSON
-	f.origin = origin
+func (f *fakeCeremony) Register(_ context.Context, req CeremonyRequest) ([]byte, error) {
+	f.registerOpts = req.OptionsJSON
+	f.origin = req.Origin
+	f.pin = req.PIN
 	return f.registerJSON, f.registerErr
 }
 
-func (f *fakeCeremony) Assert(_ context.Context, optionsJSON []byte, origin string) ([]byte, error) {
-	f.assertOpts = optionsJSON
-	f.origin = origin
+func (f *fakeCeremony) Assert(_ context.Context, req CeremonyRequest) ([]byte, error) {
+	f.assertOpts = req.OptionsJSON
+	f.origin = req.Origin
+	f.pin = req.PIN
 	return f.assertJSON, f.assertErr
 }
 
@@ -1207,6 +1210,9 @@ func newAuthRegisterCmd(t *testing.T, out *bytes.Buffer) *cobra.Command {
 	cmd.Flags().String("email", "alice@example.com", "")
 	cmd.Flags().String("username", "", "")
 	cmd.Flags().String("display-name", "", "")
+	// Declared through the same helper the real command uses, so the double
+	// cannot drift from the flags resolvePINInput reads.
+	addPINFlags(cmd)
 	cmd.SetOut(out)
 	return cmd
 }
@@ -1221,6 +1227,7 @@ func newAuthLoginCmd(t *testing.T, out *bytes.Buffer) *cobra.Command {
 	cmd.Flags().String("email", "alice@example.com", "")
 	cmd.Flags().String("username", "", "")
 	cmd.Flags().String("tls-ca", "", "")
+	addPINFlags(cmd)
 	cmd.SetOut(out)
 	return cmd
 }

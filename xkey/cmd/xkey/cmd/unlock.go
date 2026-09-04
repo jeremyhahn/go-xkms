@@ -16,8 +16,6 @@ package cmd
 import (
 	"errors"
 	"fmt"
-	"io"
-	"os"
 	"sort"
 	"strings"
 
@@ -80,12 +78,7 @@ subsystem it governs is still locked, or when the daemon still reports itself
 locked — an unlock that reported success while the barrier was still sealed
 would make every automated flow proceed on a false premise.
 
-The PIN may be supplied three ways, in precedence order:
-
-  --pin-stdin      read the PIN from standard input (preferred: it keeps the
-                   PIN out of the process list and the shell history)
-  XKEY_PIN         environment variable
-  --pin            flag value (visible in 'ps'; use for local development only)
+` + pinUsage + `
 
 Examples:
   # Preferred
@@ -103,37 +96,23 @@ Examples:
 func init() {
 	RootCmd.AddCommand(unlockCmd)
 
-	unlockCmd.Flags().String("pin", "", "User PIN (visible in the process list; prefer --pin-stdin)")
-	unlockCmd.Flags().Bool("pin-stdin", false, "Read the user PIN from standard input")
+	addPINFlags(unlockCmd)
 	unlockCmd.Flags().String("socket", "", "IPC socket path (default: auto-detect)")
 }
 
-// readAllStdin reads the whole of standard input.
-func readAllStdin() ([]byte, error) {
-	return io.ReadAll(os.Stdin)
-}
-
-// resolveUnlockPIN returns the PIN from the highest-precedence source
-// supplied. Reading from stdin is preferred because a PIN passed as a flag is
-// visible to every process on the host via /proc.
+// resolveUnlockPIN resolves the PIN through the shared CLI resolver and
+// applies unlock's own policy: unlocking without a PIN is meaningless, so an
+// absent PIN is an error here even though the resolver treats it as a
+// legitimate state for callers whose authenticator may have none.
 func resolveUnlockPIN(cmd *cobra.Command) (string, error) {
-	if fromStdin, _ := cmd.Flags().GetBool("pin-stdin"); fromStdin {
-		data, err := readAllStdin()
-		if err != nil {
-			return "", &SentinelCauseError{Sentinel: ErrUnlockFailed, Cause: err}
-		}
-		if pin := strings.TrimRight(string(data), "\r\n"); pin != "" {
-			return pin, nil
-		}
+	pin, err := resolvePINInput(cmd)
+	if err != nil {
+		return "", err
+	}
+	if pin == "" {
 		return "", ErrUnlockMissingPIN
 	}
-	if pin := os.Getenv("XKEY_PIN"); pin != "" {
-		return pin, nil
-	}
-	if pin, _ := cmd.Flags().GetString("pin"); pin != "" {
-		return pin, nil
-	}
-	return "", ErrUnlockMissingPIN
+	return pin, nil
 }
 
 // runUnlock sends the unlock over IPC and confirms the resulting state.

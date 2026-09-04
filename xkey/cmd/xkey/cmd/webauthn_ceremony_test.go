@@ -122,7 +122,10 @@ func TestParseCreationOptions_Errors(t *testing.T) {
 func TestFIDO2Ceremony_RegisterRejectsBadOptions(t *testing.T) {
 	ceremony := &fido2Ceremony{}
 
-	_, err := ceremony.Register(context.Background(), []byte("{not json"), "https://rp.example")
+	_, err := ceremony.Register(context.Background(), CeremonyRequest{
+		OptionsJSON: []byte("{not json"),
+		Origin:      "https://rp.example",
+	})
 	require.Error(t, err)
 	assert.ErrorIs(t, err, ErrWebAuthnOptionsInvalid)
 }
@@ -134,7 +137,10 @@ func TestFIDO2Ceremony_RegisterHonorsContext(t *testing.T) {
 	cancel()
 
 	ceremony := &fido2Ceremony{}
-	_, err := ceremony.Register(ctx, []byte(`{"publicKey":{}}`), "https://rp.example")
+	_, err := ceremony.Register(ctx, CeremonyRequest{
+		OptionsJSON: []byte(`{"publicKey":{}}`),
+		Origin:      "https://rp.example",
+	})
 	assert.ErrorIs(t, err, context.Canceled)
 }
 

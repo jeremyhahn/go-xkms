@@ -63,7 +63,44 @@ var (
 	// ErrWebAuthnAssertionFailed indicates the authenticator refused or
 	// failed the authentication (GetAssertion) ceremony.
 	ErrWebAuthnAssertionFailed = errors.New("webauthn: the authenticator failed the authentication ceremony")
+
+	// ErrWebAuthnPINRequired indicates the authenticator refused the ceremony
+	// because it has a PIN set and none was supplied.
+	//
+	// It replaces the raw CTAP2_ERR_PIN_REQUIRED, which names neither the PIN
+	// nor the way to supply it: a security key configured by the xKey setup
+	// wizard has a PIN by default, so this is the FIRST thing an operator
+	// meets on a default install, and "fido2: PIN required" reads as a device
+	// fault rather than as missing input.
+	// The flag names are composed from the same constants addPINFlags
+	// declares, so a rename cannot leave this message naming a flag that no
+	// longer exists.
+	ErrWebAuthnPINRequired = errors.New("webauthn: this authenticator requires a PIN; supply it with --" +
+		pinFlagStdin + " (preferred), the " + pinEnvVar + " environment variable, or --" + pinFlagValue)
 )
+
+// CeremonyRequest carries one ceremony's inputs: the relying party's
+// server-issued options plus the two things a browser would supply from
+// outside them — the origin, which it takes from its security context, and the
+// authenticator's CTAP2 PIN, which it prompts the user for.
+//
+// The fields are named rather than positional because Origin and PIN are both
+// strings: a positional signature carrying the two adjacent would let a
+// transposition send the PIN to the relying party as an origin.
+type CeremonyRequest struct {
+	// OptionsJSON is the relying party's BeginRegistration or
+	// BeginAuthentication output.
+	OptionsJSON []byte
+
+	// Origin is the WebAuthn origin to bind into clientDataJSON. Empty
+	// selects the WebAuthn same-origin default "https://<rpId>".
+	Origin string
+
+	// PIN is the authenticator's CTAP2 PIN, resolved by resolvePINInput.
+	// Empty is correct for an authenticator with no PIN configured; against
+	// one that has a PIN set the ceremony fails with ErrWebAuthnPINRequired.
+	PIN string
+}
 
 // WebAuthnCeremony is the local authenticator half of a WebAuthn ceremony.
 // Register turns a relying party's creation options into a
@@ -73,11 +110,11 @@ var (
 type WebAuthnCeremony interface {
 	// Register performs the registration (navigator.credentials.create)
 	// ceremony and returns the attestation JSON.
-	Register(ctx context.Context, optionsJSON []byte, origin string) ([]byte, error)
+	Register(ctx context.Context, req CeremonyRequest) ([]byte, error)
 
 	// Assert performs the authentication (navigator.credentials.get)
 	// ceremony and returns the assertion JSON.
-	Assert(ctx context.Context, optionsJSON []byte, origin string) ([]byte, error)
+	Assert(ctx context.Context, req CeremonyRequest) ([]byte, error)
 
 	// Close releases the authenticator.
 	Close() error
@@ -130,31 +167,53 @@ func newFIDO2Ceremony() (WebAuthnCeremony, error) {
 
 // Register drives the authenticator through authenticatorMakeCredential and
 // assembles the PublicKeyCredential attestation document.
-func (c *fido2Ceremony) Register(ctx context.Context, optionsJSON []byte, origin string) ([]byte, error) {
+func (c *fido2Ceremony) Register(ctx context.Context, req CeremonyRequest) ([]byte, error) {
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
 
-	opts, err := parseCreationOptions(optionsJSON, origin)
+	opts, err := parseCreationOptions(req.OptionsJSON, req.Origin)
 	if err != nil {
 		return nil, err
 	}
+	opts.PIN = req.PIN
 
 	attestation, err := c.handler.RegisterWebAuthn(opts)
 	if err != nil {
-		return nil, &SentinelCauseError{Sentinel: ErrWebAuthnRegistrationFailed, Cause: err}
+		return nil, ceremonyFailure(ErrWebAuthnRegistrationFailed, req.PIN, err)
 	}
 	return attestation.PublicKeyCredentialJSON, nil
 }
 
 // Assert drives the authenticator through authenticatorGetAssertion and
 // assembles the PublicKeyCredential assertion document.
-func (c *fido2Ceremony) Assert(ctx context.Context, optionsJSON []byte, origin string) ([]byte, error) {
-	assertion, err := c.handler.AssertWithOptionsAndOrigin(ctx, optionsJSON, origin)
+func (c *fido2Ceremony) Assert(ctx context.Context, req CeremonyRequest) ([]byte, error) {
+	assertion, err := c.handler.Assert(ctx, fido2.WebAuthnAssertionRequest{
+		OptionsJSON: req.OptionsJSON,
+		Origin:      req.Origin,
+		PIN:         req.PIN,
+	})
 	if err != nil {
-		return nil, &SentinelCauseError{Sentinel: ErrWebAuthnAssertionFailed, Cause: err}
+		return nil, ceremonyFailure(ErrWebAuthnAssertionFailed, req.PIN, err)
 	}
 	return assertion, nil
+}
+
+// ceremonyFailure classifies an authenticator failure before it reaches the
+// operator. An authenticator that answers CTAP2_ERR_PIN_REQUIRED when no PIN
+// was supplied is reporting missing INPUT, so it is named as such and the
+// flags that supply it are printed; the raw CTAP error is kept as the cause so
+// nothing is lost.
+//
+// The same status when a PIN WAS supplied is not a missing-input problem — it
+// means the authenticator rejected an authorization that was attempted — and
+// is reported verbatim rather than sending the operator to re-enter a PIN they
+// already gave.
+func ceremonyFailure(sentinel error, pin string, cause error) error {
+	if pin == "" && errors.Is(cause, fido2.ErrPINRequired) {
+		return &SentinelCauseError{Sentinel: ErrWebAuthnPINRequired, Cause: cause}
+	}
+	return &SentinelCauseError{Sentinel: sentinel, Cause: cause}
 }
 
 // Close releases the authenticator handler.

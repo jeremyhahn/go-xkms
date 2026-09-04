@@ -31,6 +31,7 @@ type (
 	HIDDeviceEnumerator           = pkgfido2.HIDDeviceEnumerator
 	RelyingParty                  = pkgfido2.RelyingParty
 	User                          = pkgfido2.User
+	WebAuthnAssertionRequest      = pkgfido2.WebAuthnAssertionRequest
 	WebAuthnAttestation           = pkgfido2.WebAuthnAttestation
 	WebAuthnAuthenticationOptions = pkgfido2.WebAuthnAuthenticationOptions
 	WebAuthnRegistrationOptions   = pkgfido2.WebAuthnRegistrationOptions
@@ -60,6 +61,26 @@ const (
 	// still get the warning at their call site.
 	DerivationModeLegacyInsecure = pkgfido2.DerivationModeLegacyInsecure
 )
+
+// Re-exported PIN error sentinels and the retry-annotated PIN failure.
+//
+// A caller driving a ceremony has to tell "this key needs a PIN and none was
+// given" from "the PIN was wrong" from "this key has no PIN set" in order to
+// say anything useful to an operator, and docs/00 forbids reaching into pkg/
+// for them.
+var (
+	ErrPINRequired           = pkgfido2.ErrPINRequired
+	ErrInvalidPIN            = pkgfido2.ErrInvalidPIN
+	ErrPINBlocked            = pkgfido2.ErrPINBlocked
+	ErrPINNotSet             = pkgfido2.ErrPINNotSet
+	ErrPINAuthInvalid        = pkgfido2.ErrPINAuthInvalid
+	ErrPINAuthBlocked        = pkgfido2.ErrPINAuthBlocked
+	ErrPINRetriesUnavailable = pkgfido2.ErrPINRetriesUnavailable
+)
+
+// PINAttemptsError is the retry-annotated PIN failure: a wrong PIN carrying
+// the attempts the authenticator will still accept before it locks out.
+type PINAttemptsError = pkgfido2.PINAttemptsError
 
 // Re-exported constructors, defaults, and helpers.
 var (

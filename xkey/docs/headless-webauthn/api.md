@@ -1,6 +1,6 @@
 # Headless WebAuthn — API
 
-> **Status: NORMATIVE** · Feature: `headless-webauthn` · Module: `go-xkms/xkey` · Last verified: 2026-08-19
+> **Status: NORMATIVE** · Feature: `headless-webauthn` · Module: `go-xkms/xkey` · Last verified: 2026-09-04
 
 Transport shapes:
 [`../../../docs/key-management/api.md`](../../../docs/key-management/api.md).
@@ -25,6 +25,13 @@ the surface a human does.
 
 The `/sdk/...` variants are the ones a non-browser client uses, and are what the
 headless client drives.
+
+**The CTAP2 PIN is not part of any of this.** It is consumed locally, by the
+authenticator, to authorize `authenticatorMakeCredential` and
+`authenticatorGetAssertion`; no request or response above carries it, and no
+server ever sees it. `--pin-stdin` therefore changes what happens on the wire
+between xkey and the security key, and nothing about what happens on the
+network.
 
 All of these are `RouteAuthPublic` in their groups — **they are the
 authentication** — and sit behind the login rate limiter. The `auth/*` routes are
