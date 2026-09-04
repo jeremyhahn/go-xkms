@@ -911,6 +911,19 @@ func (b *SoftwareBackend) importSymmetricKey(ctx context.Context, attrs *types.K
 	// itself too; omitting it made every key imported through C_UnwrapKey read
 	// back as non-exportable regardless of what the caller requested.
 	if err := b.symmetricBackend.SaveKeyMetadata(ctx, keyID, attrs); err != nil {
+		// Roll the key blob back, the way importAsymmetricKey does. Returning
+		// an error while the bytes stay committed leaves a key that exists
+		// under defaults the caller never asked for -- loadKeyMetadata reads a
+		// missing record as Exportable=false, Sensitive=true -- and, because
+		// the collision check above refuses a second attempt, the orphan
+		// blocks its own recovery under the same ID.
+		if delErr := storage.DeleteKey(ctx, b.storage, keyID); delErr != nil {
+			return &errs.Affix{
+				Prefix: "failed to store symmetric key metadata: ",
+				Err:    err,
+				Suffix: fmt.Sprintf(" (rollback of key %s also failed: %v)", keyID, delErr),
+			}
+		}
 		return &errs.Wrapped{Msg: "failed to store symmetric key metadata", Err: err}
 	}
 

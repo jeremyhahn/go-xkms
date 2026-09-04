@@ -40,6 +40,7 @@ import (
 	"github.com/jeremyhahn/go-xkms/pkg/crypto/wrapping"
 	"github.com/jeremyhahn/go-xkms/pkg/storage"
 	"github.com/jeremyhahn/go-xkms/pkg/types"
+	secure "github.com/jeremyhahn/go-xkms/sdk/go/secure"
 )
 
 // Backend implements symmetric encryption operations for both AES-GCM and ChaCha20-Poly1305.
@@ -454,7 +455,7 @@ func (b *Backend) GenerateSymmetricKey(ctx context.Context, attrs *types.KeyAttr
 	// Exportable was honoured at creation but never survived a reload: it
 	// must be saved before returning so a caller that immediately lists or
 	// exports the key sees the same value it just requested.
-	if err := b.saveKeyMetadata(ctx, keyID, attrs); err != nil {
+	if err := b.saveKeyMetadataOrRollback(ctx, keyID, attrs); err != nil {
 		return nil, err
 	}
 
@@ -1465,11 +1466,21 @@ func (b *Backend) ImportKey(ctx context.Context, attrs *types.KeyAttributes, wra
 		Algorithm:   wrapped.Algorithm,
 	}
 
-	// Unwrap the key material
+	// Unwrap the key material.
+	//
+	// The deferred wipe is what covers the failure paths below -- the size
+	// check, the store and the metadata write all return without reaching the
+	// end of the function, and each would otherwise leave the plaintext on the
+	// heap for the garbage collector to release unzeroed. It is safe to wipe on
+	// return because storage.Backend implementations are required not to retain
+	// the value they are given (see pkg/storage/interface.go), so storeSymmetricKey
+	// has already copied the bytes by the time this runs. This mirrors
+	// software.ImportKey, which wipes the same UnwrapKey result the same way.
 	keyData, err := b.UnwrapKey(ctx, wrapped, params)
 	if err != nil {
 		return &errs.Wrapped{Msg: "failed to unwrap key material", Err: err}
 	}
+	defer secure.Wipe(keyData)
 
 	// Validate key size matches attributes
 	expectedSize := attrs.SymmetricAlgorithm.KeySize() / 8
@@ -1485,7 +1496,7 @@ func (b *Backend) ImportKey(ctx context.Context, attrs *types.KeyAttributes, wra
 	// Imported keys go through the same defect as generated ones: the
 	// caller's Exportable attribute has nowhere to live besides this
 	// metadata record, so it must be persisted here too.
-	if err := b.saveKeyMetadata(ctx, keyID, attrs); err != nil {
+	if err := b.saveKeyMetadataOrRollback(ctx, keyID, attrs); err != nil {
 		return err
 	}
 

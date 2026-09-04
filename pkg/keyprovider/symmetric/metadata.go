@@ -16,6 +16,7 @@ package symmetric
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 
 	"github.com/jeremyhahn/go-xkms/pkg/errs"
 	"github.com/jeremyhahn/go-xkms/pkg/storage"
@@ -93,6 +94,38 @@ func (b *Backend) saveKeyMetadata(ctx context.Context, keyID string, attrs *type
 		return &errs.Wrapped{Msg: "failed to store key metadata", Err: err}
 	}
 	return nil
+}
+
+// saveKeyMetadataOrRollback persists the metadata record and, if that fails,
+// removes the key blob the caller has just committed.
+//
+// Key material and its metadata are two separate storage keys -- keys/<id>.key
+// and meta/<id>.json -- and storage.Backend offers no multi-key transaction, so
+// the pair cannot be committed atomically. Without the compensating delete a
+// failed write returns an error while the bytes stay durably stored, and the
+// key that results is worse than no key at all: loadKeyMetadata reads a missing
+// record as Exportable=false, Sensitive=true, so the key exists under a policy
+// the caller never asked for and cannot be exported or released. Because both
+// callers refuse to overwrite an existing ID, the orphan then blocks its own
+// recovery -- a retry gets backend.ErrKeyAlreadyExists.
+//
+// Both callers check for an existing key before writing, so the blob deleted
+// here is always the one this operation wrote. This must not be used on a path
+// that can overwrite: there the delete would destroy the previous key rather
+// than restore it.
+func (b *Backend) saveKeyMetadataOrRollback(ctx context.Context, keyID string, attrs *types.KeyAttributes) error {
+	err := b.saveKeyMetadata(ctx, keyID, attrs)
+	if err == nil {
+		return nil
+	}
+	if delErr := storage.DeleteKey(ctx, b.storage, keyID); delErr != nil {
+		return &errs.Affix{
+			Prefix: "failed to store key metadata: ",
+			Err:    err,
+			Suffix: fmt.Sprintf(" (rollback of key %s also failed: %v)", keyID, delErr),
+		}
+	}
+	return err
 }
 
 // SaveKeyMetadata persists the attributes that a key's identifier cannot carry.
