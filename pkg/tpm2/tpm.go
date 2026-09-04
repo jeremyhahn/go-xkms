@@ -1346,14 +1346,63 @@ func (tpm *TPM2) Sign(
 
 	var handle tpm2.TPMHandle
 
+	// signAuth is the authorization the TPM2_Sign command runs under. Each
+	// branch below answers it for the key shape it handles; a branch that
+	// leaves it nil gets the key session created for a stored key pair.
+	var signAuth tpm2.Session
+
 	validation := tpm2.TPMTTKHashCheck{
 		Tag: tpm2.TPMSTHashCheck,
 	}
 
-	if keyAttrs.KeyType == types.KeyTypeAttestation ||
-		keyAttrs.KeyType == types.KeyTypeIDevID {
+	// Only an attestation key takes the ticketed path.
+	//
+	// A restricted signing key may sign nothing but a digest the TPM itself
+	// produced, so signing external data with one means hashing it inside the
+	// TPM first and presenting the TPMT_TK_HASHCHECK that TPM2_Hash returns
+	// (TCG TPM 2.0 Library Part 3, section 12.1). That is correct for the IAK,
+	// the AK and the LAK, which TCG "TPM 2.0 Keys for Device Identity and
+	// Attestation" v1.10 r9 defines as Restricted.
+	//
+	// The IDevID key is the deliberate opposite: the same document creates it
+	// Unrestricted precisely so a device can sign arbitrary data -- a TLS
+	// CertificateVerify above all -- with its device identity, and marks the
+	// two classes differently in their certificates (tcg-cap-verifiedTPMFixed
+	// versus tcg-cap-verifiedTPMRestricted) "to prevent the possibility of
+	// spoofing." This package agrees everywhere else: the IDevID templates in
+	// types.go leave Restricted CLEAR, and VerifyTCG_CSR_IDevID rejects an
+	// enrolling IDevID whose public area says otherwise.
+	//
+	// Routing the IDevID through the restricted case hashed the caller's digest
+	// a second time, so the signature was over H(digest) and could not be
+	// verified by anyone computing over digest. The IDevID case signs the
+	// caller's digest directly, like any other unrestricted key.
+	switch keyAttrs.KeyType {
 
-		digest, validationDigest, _ := tpm.Hash(keyAttrs, digest)
+	case types.KeyTypeAttestation:
+
+		digest, validationDigest, err := tpm.Hash(keyAttrs, digest)
+		if err != nil {
+			tpm.logger.Error("failed to hash data for restricted signing key",
+				slog.String("error", err.Error()),
+				slog.String("cn", keyAttrs.CN))
+			return nil, err
+		}
+
+		// TPM2_Hash answers with a NULL ticket -- an empty digest under the
+		// NULL hierarchy -- when the data it hashed begins with
+		// TPM_GENERATED_VALUE, which is how the TPM refuses to certify data
+		// shaped like its own attestation structures as safe for a restricted
+		// key (TCG TPM 2.0 Library Part 3, section 16.1). Sending that on as
+		// though it were an endorsement-hierarchy ticket asks the TPM to
+		// validate a ticket it never issued, and it answers TPM_RC_TICKET
+		// naming a command parameter. Refuse here instead, saying what the TPM
+		// declined to do.
+		if len(validationDigest) == 0 {
+			tpm.logger.Error("TPM refused to certify the data as safe for a restricted signing key",
+				slog.String("cn", keyAttrs.CN))
+			return nil, ErrRestrictedSignRefused
+		}
 
 		// TPMT_TK_HASHCHECK -- This ticket is used to indicate that
 		// a digest of external data is safe to sign using a restricted
@@ -1456,7 +1505,35 @@ func (tpm *TPM2) Sign(
 		}
 		return rsaSig.Sig.Buffer, nil
 
-	} else {
+	case types.KeyTypeIDevID:
+
+		// An IDevID (or LDevID) is a primary key made persistent by
+		// CreateIDevID, so there is no key pair to load: it is addressed by the
+		// persistent handle its configuration names. Everything after this
+		// point -- the scheme resolution, the NULL hash-check ticket already in
+		// validation, the signature unpacking -- is the ordinary unrestricted
+		// signing path, which is exactly what an unrestricted key needs.
+		if keyAttrs.TPMAttributes == nil {
+			return nil, ErrInvalidKeyAttributes
+		}
+		handle = keyAttrs.TPMAttributes.Handle
+
+		// The IDevID templates set UserWithAuth and carry no authPolicy (see
+		// CreateIDevID, which sets AdminWithPolicy but never an AuthPolicy
+		// digest), so the user role authorizes with the key's auth value. An
+		// empty auth value is passed as nil for the reason CreateSession
+		// documents: an empty TPM2B_AUTH is not the same as no auth value, and
+		// sending one answers TPM_RC_BAD_AUTH.
+		var keyAuth []byte
+		if keyAttrs.Password != nil {
+			keyAuth = keyAttrs.Password.Bytes()
+		}
+		if len(keyAuth) == 0 {
+			keyAuth = nil
+		}
+		signAuth = tpm2.PasswordAuth(keyAuth)
+
+	default:
 
 		// Load the keyed hash from saved context file and priv, pub keys
 		key, err := tpm.LoadKeyPair(keyAttrs, &session, backend)
@@ -1490,20 +1567,24 @@ func (tpm *TPM2) Sign(
 	// honoured at all. See eccSchemeHash and rsaSchemeHash.
 	requestedHash := requestedSignHash(opts)
 
-	// Create key session to sign with. The backend is threaded through so the
-	// key's platform policy pin is read from the same store its blobs came
-	// from, which is what lets a PIN-carrying signing key still sign after the
-	// platform measurements change.
-	session2, closer2, err2 := tpm.createKeySession(keyAttrs, backend)
-	if err2 != nil {
-		tpm.logger.Error("failed to create key session", slog.String("error", err2.Error()))
-		return nil, err2
-	}
-	defer func() {
-		if err := closer2(); err != nil {
-			tpm.logger.Error("failed to close session", slog.String("error", err.Error()))
+	// Create key session to sign with, unless the branch above already answered
+	// the authorization. The backend is threaded through so the key's platform
+	// policy pin is read from the same store its blobs came from, which is what
+	// lets a PIN-carrying signing key still sign after the platform
+	// measurements change.
+	if signAuth == nil {
+		session2, closer2, err2 := tpm.createKeySession(keyAttrs, backend)
+		if err2 != nil {
+			tpm.logger.Error("failed to create key session", slog.String("error", err2.Error()))
+			return nil, err2
 		}
-	}()
+		defer func() {
+			if err := closer2(); err != nil {
+				tpm.logger.Error("failed to close session", slog.String("error", err.Error()))
+			}
+		}()
+		signAuth = session2
+	}
 
 	if outPub.Type == tpm2.TPMAlgRSA { //nolint:staticcheck // QF1003: if-else preferred over switch
 
@@ -1539,7 +1620,7 @@ func (tpm *TPM2) Sign(
 			KeyHandle: tpm2.AuthHandle{
 				Handle: handle,
 				Name:   pub.Name,
-				Auth:   session2,
+				Auth:   signAuth,
 			},
 			Digest: tpm2.TPM2BDigest{
 				Buffer: digest,
@@ -1632,7 +1713,7 @@ func (tpm *TPM2) Sign(
 			KeyHandle: tpm2.AuthHandle{
 				Handle: handle,
 				Name:   pub.Name,
-				Auth:   session2,
+				Auth:   signAuth,
 			},
 			Digest: tpm2.TPM2BDigest{
 				Buffer: digest,

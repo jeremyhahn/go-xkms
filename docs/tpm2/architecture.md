@@ -96,6 +96,21 @@ TPM. It is the mechanism behind the ACME `enroll-01` challenge.
 
 - **The EK chains to the manufacturer.** Attestation is only as good as the
   manufacturer root you accept — `pkg/attestation/truststore`.
+- **Restricted and unrestricted signing keys are not interchangeable, and the
+  device identity keys are one of each.** TCG "TPM 2.0 Keys for Device Identity
+  and Attestation" v1.10 r9 makes the IAK/AK/LAK *Restricted* — they may sign
+  nothing but a digest the TPM produced, which is what makes an attestation
+  unforgeable — and the IDevID/LDevID *Unrestricted*, precisely so a device can
+  sign arbitrary data such as a TLS `CertificateVerify` with its own identity.
+  `Sign` therefore routes them differently: an attestation key hashes its input
+  inside the TPM and signs the digest under the `TPMT_TK_HASHCHECK` ticket
+  `TPM2_Hash` returns, while a device identity key signs the caller's digest
+  verbatim under a NULL ticket. Signing an already-computed digest through the
+  ticketed path produces a signature over `H(digest)`, which no peer can verify.
+  The TPM withholds that ticket for data beginning with `TPM_GENERATED_VALUE`,
+  which is how a restricted key is kept from signing a forged attestation;
+  `ErrRestrictedSignRefused` reports that refusal rather than passing on a
+  ticket the TPM never issued.
 - **A quote proves state at a moment**, bound to a nonce. A quote without a
   fresh nonce proves nothing about now.
 - **PCR selection is the security policy.** Sealing to firmware PCRs survives

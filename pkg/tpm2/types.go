@@ -203,6 +203,20 @@ var (
 	// verifier relies on (TCG TPM 2.0 Library Part 1, section 25.2.3).
 	ErrRestrictedSchemeRequired = errors.New("tpm: a restricted signing key must name a signature scheme; TPM_ALG_NULL is not permitted")
 
+	// ErrRestrictedSignRefused reports that the TPM declined to certify the
+	// data handed to a restricted signing key as safe to sign.
+	//
+	// A restricted signing key may only sign a digest the TPM produced, so
+	// signing external data with one requires the TPMT_TK_HASHCHECK that
+	// TPM2_Hash returns. TPM2_Hash withholds that ticket -- answering with a
+	// NULL ticket -- when the data begins with TPM_GENERATED_VALUE, which is
+	// how the TPM refuses to lend a restricted key to forging something shaped
+	// like its own attestation output (TCG TPM 2.0 Library Part 3, section
+	// 16.1). Passing that NULL ticket on as an endorsement-hierarchy ticket
+	// would earn a bare TPM_RC_TICKET naming a parameter number; this reports
+	// the refusal itself.
+	ErrRestrictedSignRefused = errors.New("tpm: the TPM refused to certify this data as safe to sign with a restricted key; data shaped like TPM-generated attestation output cannot be signed by an attestation key")
+
 	ErrInvalidEnrollmentStrategy      = errors.New("tpm: invalid enrollment strategy")
 	ErrInvalidCryptoHashAlgID         = errors.New("tpm: crypto.Hash doesn't map to a supported TPMAlgID")
 	ErrCurveNotSupported              = errors.New("tpm: ECC curve not supported by TPM")

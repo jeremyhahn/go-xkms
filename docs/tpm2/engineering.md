@@ -118,8 +118,10 @@ The suite is unusually large and deliberately structured:
 - **Unit** — one `_test.go` per file.
 - **Simulator suites** (`*_simulator_test.go`) — the whole device surface
   against `tpm_simulator.go`: crypto ops, key lifecycle, algorithm agility,
-  attestation certify, IDevID CSR round-trip and sizing, seal-with-PCR-policy,
-  SSRK platform policy, capabilities, PIN enrollment.
+  attestation certify, IDevID CSR round-trip and sizing, device identity
+  signing (`idevid_sign_simulator_test.go` — which bytes each of the two
+  identity keys actually signs), seal-with-PCR-policy, SSRK platform policy,
+  capabilities, PIN enrollment.
 - **Leak suites** — object contexts, auth sessions, auth sessions under
   transport fault, general resources. These are the regression guard for the
   package's hardest rule.
