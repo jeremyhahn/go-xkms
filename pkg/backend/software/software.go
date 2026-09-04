@@ -283,6 +283,13 @@ func (b *SoftwareBackend) DeleteKey(ctx context.Context, attrs *types.KeyAttribu
 		return ErrStorageClosed
 	}
 
+	// The routing below reads a different field from the one that decides the
+	// key's identity, so contradictory attributes operate on a key they do not
+	// name. See requireSingleAlgorithmFamily (go-xkms#158).
+	if err := requireSingleAlgorithmFamily(attrs); err != nil {
+		return err
+	}
+
 	if attrs.QuantumAttributes != nil {
 		return b.quantumBackend.DeleteKey(ctx, attrs)
 	}
@@ -367,6 +374,13 @@ func (b *SoftwareBackend) RotateKey(ctx context.Context, attrs *types.KeyAttribu
 
 	if b.closed {
 		return ErrStorageClosed
+	}
+
+	// The routing below reads a different field from the one that decides the
+	// key's identity, so contradictory attributes operate on a key they do not
+	// name. See requireSingleAlgorithmFamily (go-xkms#158).
+	if err := requireSingleAlgorithmFamily(attrs); err != nil {
+		return err
 	}
 
 	if attrs.QuantumAttributes != nil {
@@ -693,6 +707,13 @@ func (b *SoftwareBackend) ImportKey(ctx context.Context, attrs *types.KeyAttribu
 		return &errs.Detail{Err: backend.ErrInvalidAttributes, Detail: "wrapped key material cannot be nil"}
 	}
 
+	// Import routes on the family and stores under the identifier a different
+	// resolution of it builds, so contradictory attributes write material under
+	// an identifier that does not describe it (go-xkms#158).
+	if err := requireSingleAlgorithmFamily(attrs); err != nil {
+		return err
+	}
+
 	b.mu.Lock()
 	defer b.mu.Unlock()
 
@@ -766,6 +787,13 @@ func (b *SoftwareBackend) ImportKey(ctx context.Context, attrs *types.KeyAttribu
 func (b *SoftwareBackend) ExportKey(ctx context.Context, attrs *types.KeyAttributes, algorithm backend.WrappingAlgorithm) (*backend.WrappedKeyMaterial, error) {
 	if attrs == nil {
 		return nil, backend.ErrInvalidAttributes
+	}
+
+	// Refused before the sub-backend is chosen: the export below reads the key
+	// through the family's store while ID() addresses it through another, so a
+	// contradictory descriptor exports a key it does not name (go-xkms#158).
+	if err := requireSingleAlgorithmFamily(attrs); err != nil {
+		return nil, err
 	}
 
 	// Check if backend supports export
@@ -844,6 +872,16 @@ func (b *SoftwareBackend) ExportKey(ctx context.Context, attrs *types.KeyAttribu
 func (b *SoftwareBackend) ExportKeyMaterial(ctx context.Context, attrs *types.KeyAttributes) ([]byte, error) {
 	if attrs == nil {
 		return nil, backend.ErrInvalidAttributes
+	}
+
+	// The asymmetric refusal below consults IsSymmetric, which a descriptor
+	// naming BOTH families satisfies -- so it walks through that guard and
+	// reaches the symmetric store holding an identifier ID() resolved from the
+	// asymmetric half (go-xkms#158). Placed first for uniformity with the other
+	// four routing sites and because it is the more specific diagnosis; either
+	// order refuses, because a contradictory descriptor passes the guard.
+	if err := requireSingleAlgorithmFamily(attrs); err != nil {
+		return nil, err
 	}
 
 	// Security check: Reject asymmetric keys

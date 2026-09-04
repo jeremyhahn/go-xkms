@@ -38,3 +38,11 @@ var (
 	// by this backend. Software backend only supports EXPORT mode.
 	ErrDerivationModeNotSupported = errors.New("derivation mode not supported")
 )
+
+// ErrContradictoryAlgorithmFamilies indicates that a types.KeyAttributes
+// declares more than one algorithm family -- for example an asymmetric
+// KeyAlgorithm alongside a SymmetricAlgorithm. The backend routes on the
+// family and addresses the key by a different resolution of it, so such
+// attributes name one key and operate on another. Errors carrying it also
+// satisfy errors.Is for backend.ErrInvalidAttributes.
+var ErrContradictoryAlgorithmFamilies = errors.New("software: attributes declare more than one algorithm family")

@@ -1,6 +1,6 @@
 # Key Management — Engineering Contract
 
-> **Status: NORMATIVE** · Feature: `key-management` · Repo: `go-xkms` · Last verified: 2026-09-03
+> **Status: NORMATIVE** · Feature: `key-management` · Repo: `go-xkms` · Last verified: 2026-09-04
 
 This is the file an implementing agent works from. Every identifier below was
 grepped in this repository.
@@ -85,6 +85,10 @@ the algorithm vocabulary served by `GET /api/v1/algorithms`.
   requires it (a PKCS#11 session, a TPM context).
 - **Fail closed.** An unresolvable backend, an unknown algorithm, or a policy
   denial returns an error and performs no partial work.
+- **Attributes name exactly one algorithm family.** A descriptor declaring two
+  — an asymmetric `KeyAlgorithm` alongside a `SymmetricAlgorithm`, say — is
+  refused by the software backend rather than resolved by precedence. See
+  *Contradictory algorithm families are refused* below.
 
 ## Import validates material against its declared type
 
@@ -108,6 +112,41 @@ refuses working paths rather than catching wrong ones. A P-384 key can
 therefore be imported while declaring P-256. It is inert today — the curve is
 not part of the identifier and `Signer` recovers it from the DER — and go-xkms#156
 tracks both the caveat and the `ListKeys` fix the comparison needs.
+
+## Contradictory algorithm families are refused
+
+`SoftwareBackend` is the only backend that **routes** on a key's algorithm
+family: `DeleteKey`, `RotateKey`, `ImportKey`, `ExportKey` and
+`ExportKeyMaterial` each choose a sub-backend by asking `attrs.IsSymmetric()`
+(or inspecting `QuantumAttributes`), and its PKCS#8, symmetric and quantum
+sub-backends share one flat storage namespace (`keys/{id}.key`, no per-store
+prefix). Every other backend uses `IsSymmetric` only as a fail-closed guard on
+a symmetric-only method, never as a fan-out.
+
+That routing reads a different field from the one that decides the key's
+identity. `IsSymmetric` consults `SymmetricAlgorithm` alone, while
+`KeyAttributes.ID` resolves `X25519Attributes`, then `QuantumAttributes`, then
+`KeyAlgorithm`, then `SymmetricAlgorithm`. `KeyAttributes.Validate` walks the
+same precedence as `ID` and stops at the first family it finds, so it does not
+object. Attributes naming two families were therefore **processed as one kind
+of key and addressed as another**.
+
+`requireSingleAlgorithmFamily` (`pkg/backend/software/family_gate.go`) refuses
+them at all five sites, returning `ErrContradictoryAlgorithmFamilies`, which
+also satisfies `errors.Is` for `backend.ErrInvalidAttributes`.
+
+The two destructive cases, measured before the gate existed and pinned by
+`family_gate_regression_test.go`: attributes carrying `KeyAlgorithm=RSA` with
+valid `RSAAttributes` **and** `SymmetricAlgorithm=aes256-gcm` routed to the
+symmetric backend, which deleted — or through `RotateKey` overwrote — the RSA
+private key at the identifier `ID()` built from `KeyAlgorithm`. Both reported
+success. The two export paths already failed closed, but only incidentally:
+the symmetric store rejected the stored PKCS#8 DER on its AES key-size check.
+
+**Zero families is permitted.** The gate refuses only the plural case.
+Attributes naming no family resolve to the `unknown` identifier, which
+addresses no key any producer writes, and refusing them breaks callers that
+legitimately describe a key by little more than its common name.
 
 ## Error semantics
 

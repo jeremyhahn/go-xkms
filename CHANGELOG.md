@@ -113,6 +113,47 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   separate lock acquisitions with the user-presence prompt between them, so two
   concurrent commands can both spend one token (#323, blocked on a design
   ruling).
+- **The software backend refuses key attributes that declare more than one
+  algorithm family** (#158). `pkg/backend/software/family_gate.go`,
+  `pkg/backend/software/software.go`.
+
+  `SoftwareBackend` is the only backend that ROUTES on the algorithm family:
+  `DeleteKey`, `RotateKey`, `ImportKey`, `ExportKey` and `ExportKeyMaterial`
+  each pick a sub-backend from `attrs.IsSymmetric()`, and its PKCS#8, symmetric
+  and quantum sub-backends share one flat `keys/{id}.key` namespace. But
+  `IsSymmetric` reads `SymmetricAlgorithm` alone while `KeyAttributes.ID`
+  resolves `X25519Attributes` → `QuantumAttributes` → `KeyAlgorithm` →
+  `SymmetricAlgorithm`. `Validate` walks ID's precedence and stops at the first
+  family, so it raised no objection. **Attributes naming two families were
+  processed as one kind of key and addressed as another.**
+
+  Measured, not inferred: attributes carrying `KeyAlgorithm=RSA` with valid
+  `RSAAttributes` **and** `SymmetricAlgorithm=aes256-gcm` routed to the
+  symmetric backend, which **deleted the RSA private key** at
+  `software:tls:<cn>:rsa` and returned `nil` — and through `RotateKey`
+  **overwrote it** with AES bytes, after which `GetKey` could no longer parse
+  the PKCS#8. Silent and unrecoverable in both cases.
+
+  `RotateKey` is a fifth site not listed on #158; it was found by enumerating
+  the dispatch table rather than working from the issue.
+
+  The two export paths did already fail closed, but only by accident downstream
+  — the symmetric store rejected the stored DER with `invalid AES key size:
+  9736 bits`. That is a size check doing a job nobody assigned it, and it stops
+  protecting anything the moment a stored blob is 16, 24 or 32 bytes. All five
+  sites now refuse at the boundary with `ErrContradictoryAlgorithmFamilies`,
+  which also satisfies `errors.Is` for `backend.ErrInvalidAttributes`.
+
+  **Zero families stays permitted.** The earlier attempt at this check (PR #63,
+  closed unmerged in favour of #247) refused zero families as well, which made
+  the MCP import tool unsatisfiable by any request shape. A check no legitimate
+  producer can satisfy rejects working paths instead of catching wrong ones —
+  the same reason `validateKeyType` does not compare the declared curve.
+  `TestRequireSingleAlgorithmFamily_ZeroFamiliesIsPermitted` and
+  `..._AdmitsEveryListKeysDescriptor` pin both halves of that.
+
+  No interface changed: the gate is a package-private helper in
+  `pkg/backend/software`, so no other backend and no SDK type is affected.
 
 - **`xkey fido2 status` now names the credential store and says whether
   passkeys are encrypted at rest** (refs #181).
