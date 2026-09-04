@@ -44,6 +44,10 @@ func passwordTestCmd(t *testing.T) (*cobra.Command, *bytes.Buffer, string) {
 	fs.String("store", store, "")
 	fs.Bool("show-passwords", false, "")
 	fs.Bool("force", false, "")
+	// These cases exercise the on-disk store, so they name it explicitly
+	// rather than depending on whether a daemon happens to be running.
+	fs.String("socket", "", "")
+	fs.String("source", sourceDisk, "")
 
 	var buf bytes.Buffer
 	cmd.SetOut(&buf)

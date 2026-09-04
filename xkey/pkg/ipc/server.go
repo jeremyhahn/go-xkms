@@ -81,6 +81,21 @@ type PairingHandler interface {
 	HandlePairingCompleted(origin string) error
 }
 
+// StateHandler answers read-only questions about the daemon's live device
+// state: PIN configuration, barrier seal state, and the static password
+// store. A daemon that owns the unsealed state implements this so the CLI
+// can report what is true right now instead of what the sealed on-disk data
+// directory happens to say.
+//
+// Implementations must not return PINs, password values, or key material:
+// see state_types.go for why.
+type StateHandler interface {
+	HandleStatePIN() (*PINStateResult, error)
+	HandleStateBarrier() (*BarrierStatusResult, error)
+	HandleStatePasswordStore() (*PasswordStoreStateResult, error)
+	HandleStatePasswordList() (*PasswordListResult, error)
+}
+
 // UnlockHandler processes app unlock IPC requests. Implementations
 // verify the user PIN and transition the app to the unlocked state.
 type UnlockHandler interface {
@@ -140,6 +155,26 @@ var handlers = map[string]dispatchFunc{
 		}
 		return dispatchPairing(pairingHandler, m.Pairing)
 	},
+	MessageTypeState: func(h Handler, m *Message) (*Response, error) {
+		stateHandler, ok := h.(StateHandler)
+		if !ok {
+			// Not an error the caller should abort on: the daemon is alive,
+			// it just does not own this state. Answer structurally so the
+			// client can fall back to disk and label the fallback.
+			return &Response{
+				Status: StatusError,
+				Action: ActionUnsupported,
+				Error:  ErrStateUnsupported.Error(),
+			}, nil
+		}
+		if m.State == nil {
+			return nil, &DetailError{Err: ErrInvalidMessage, Detail: ": state payload is required"}
+		}
+		if err := m.State.Validate(); err != nil {
+			return nil, err
+		}
+		return dispatchState(stateHandler, m.State)
+	},
 	MessageTypeUnlock: func(h Handler, m *Message) (*Response, error) {
 		unlockHandler, ok := h.(UnlockHandler)
 		if !ok {
@@ -181,6 +216,59 @@ var handlers = map[string]dispatchFunc{
 			Unlock: result,
 		}, nil
 	},
+}
+
+// stateDispatchFunc is the function signature for state action dispatch handlers.
+type stateDispatchFunc func(StateHandler) (*Response, error)
+
+// stateHandlers maps state actions to their dispatch functions for O(1) lookup.
+var stateHandlers = map[string]stateDispatchFunc{
+	ActionStatePIN: func(h StateHandler) (*Response, error) {
+		result, err := h.HandleStatePIN()
+		if err != nil {
+			return nil, err
+		}
+		return stateOKResponse(&StateResult{PIN: result}), nil
+	},
+	ActionStateBarrier: func(h StateHandler) (*Response, error) {
+		result, err := h.HandleStateBarrier()
+		if err != nil {
+			return nil, err
+		}
+		return stateOKResponse(&StateResult{Barrier: result}), nil
+	},
+	ActionStatePasswordStore: func(h StateHandler) (*Response, error) {
+		result, err := h.HandleStatePasswordStore()
+		if err != nil {
+			return nil, err
+		}
+		return stateOKResponse(&StateResult{PasswordStore: result}), nil
+	},
+	ActionStatePasswordList: func(h StateHandler) (*Response, error) {
+		result, err := h.HandleStatePasswordList()
+		if err != nil {
+			return nil, err
+		}
+		return stateOKResponse(&StateResult{PasswordList: result}), nil
+	},
+}
+
+// dispatchState routes a state payload to the appropriate handler using
+// map-based O(1) dispatch.
+func dispatchState(h StateHandler, p *StatePayload) (*Response, error) {
+	fn, ok := stateHandlers[p.Action]
+	if !ok {
+		return nil, &DetailError{Err: ErrInvalidMessage, Detail: fmt.Sprintf(": unknown state action %q", p.Action)}
+	}
+	return fn(h)
+}
+
+// stateOKResponse creates a success response with the given state result.
+func stateOKResponse(result *StateResult) *Response {
+	return &Response{
+		Status: StatusOK,
+		State:  result,
+	}
 }
 
 // pkcs11DispatchFunc is the function signature for PKCS#11 action dispatch handlers.

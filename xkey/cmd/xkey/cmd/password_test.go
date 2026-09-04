@@ -771,7 +771,7 @@ func TestPasswordCmd_Status(t *testing.T) {
 	buf := new(bytes.Buffer)
 	RootCmd.SetOut(buf)
 	RootCmd.SetErr(buf)
-	RootCmd.SetArgs([]string{"password", "status"})
+	RootCmd.SetArgs([]string{"password", "status", "--source", sourceXKMSd})
 
 	err := RootCmd.Execute()
 	if err != nil {
@@ -789,10 +789,10 @@ func TestPasswordCmd_Status(t *testing.T) {
 	if !strings.Contains(output, "Access Mode:     session_based") {
 		t.Errorf("status output missing Access Mode, got: %q", output)
 	}
-	if !strings.Contains(output, "Locked:          false") {
+	if !strings.Contains(output, "Locked:          No") {
 		t.Errorf("status output missing Locked, got: %q", output)
 	}
-	if !strings.Contains(output, "Auto-Unsealed:   true") {
+	if !strings.Contains(output, "Auto-Unsealed:   Yes") {
 		t.Errorf("status output missing Auto-Unsealed, got: %q", output)
 	}
 	if !strings.Contains(output, "Password Count:  12") {
@@ -812,7 +812,7 @@ func TestPasswordCmd_StatusLocked(t *testing.T) {
 	buf := new(bytes.Buffer)
 	RootCmd.SetOut(buf)
 	RootCmd.SetErr(buf)
-	RootCmd.SetArgs([]string{"password", "status"})
+	RootCmd.SetArgs([]string{"password", "status", "--source", sourceXKMSd})
 
 	err := RootCmd.Execute()
 	if err != nil {
@@ -823,10 +823,10 @@ func TestPasswordCmd_StatusLocked(t *testing.T) {
 	if !strings.Contains(output, "Access Mode:     pin_per_operation") {
 		t.Errorf("status output missing Access Mode, got: %q", output)
 	}
-	if !strings.Contains(output, "Locked:          true") {
+	if !strings.Contains(output, "Locked:          Yes") {
 		t.Errorf("status output missing Locked, got: %q", output)
 	}
-	if !strings.Contains(output, "Auto-Unsealed:   false") {
+	if !strings.Contains(output, "Auto-Unsealed:   No") {
 		t.Errorf("status output missing Auto-Unsealed, got: %q", output)
 	}
 	if !strings.Contains(output, "Password Count:  0") {
@@ -843,7 +843,7 @@ func TestPasswordCmd_StatusServerError(t *testing.T) {
 	buf := new(bytes.Buffer)
 	RootCmd.SetOut(buf)
 	RootCmd.SetErr(buf)
-	RootCmd.SetArgs([]string{"password", "status"})
+	RootCmd.SetArgs([]string{"password", "status", "--source", sourceXKMSd})
 
 	err := RootCmd.Execute()
 	if err == nil {
@@ -861,7 +861,7 @@ func TestPasswordCmd_StatusConnectError(t *testing.T) {
 	buf := new(bytes.Buffer)
 	RootCmd.SetOut(buf)
 	RootCmd.SetErr(buf)
-	RootCmd.SetArgs([]string{"password", "status"})
+	RootCmd.SetArgs([]string{"password", "status", "--source", sourceXKMSd})
 
 	err := RootCmd.Execute()
 	if err == nil {
@@ -1213,7 +1213,7 @@ func TestPasswordCmd_AccessModeThenStatus(t *testing.T) {
 	buf.Reset()
 	RootCmd.SetOut(buf)
 	RootCmd.SetErr(buf)
-	RootCmd.SetArgs([]string{"password", "status"})
+	RootCmd.SetArgs([]string{"password", "status", "--source", sourceXKMSd})
 
 	err = RootCmd.Execute()
 	if err != nil {

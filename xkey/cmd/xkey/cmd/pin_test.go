@@ -36,6 +36,7 @@ func isolatePIN(t *testing.T) string {
 	t.Helper()
 
 	dir := t.TempDir()
+	isolateDaemonSocket(t)
 
 	previousFlag := pinDataDir
 	previousViper := viper.Get("data_dir")

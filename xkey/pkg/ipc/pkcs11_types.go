@@ -71,8 +71,11 @@ type PIVSlotsResult struct {
 	Slots []PIVSlotInfo `json:"slots"`
 }
 
-// BarrierStatusResult contains barrier seal status.
+// BarrierStatusResult contains barrier seal status. It is shared by the
+// PKCS#11 barrier_status action and the state/barrier action so both report
+// the barrier through one type.
 type BarrierStatusResult struct {
+	Initialized    bool   `json:"initialized"`        // whether the barrier has been initialized
 	Sealed         bool   `json:"sealed"`             // whether the barrier is sealed
 	Strategy       string `json:"strategy,omitempty"` // sealing strategy
 	HardwareBacked bool   `json:"hardware_backed"`    // whether hardware-backed

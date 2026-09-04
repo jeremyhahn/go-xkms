@@ -24,6 +24,7 @@ const (
 	MessageTypeAutofill     = "autofill"
 	MessageTypePairing      = "pairing"
 	MessageTypeUnlock       = "unlock"
+	MessageTypeState        = "state"
 )
 
 // Response statuses indicate success or failure.
@@ -44,6 +45,12 @@ const (
 	// state an unlock reported is the state the daemon is actually in.
 	ActionLocked   = "locked"
 	ActionUnlocked = "unlocked"
+	// ActionUnsupported marks an error response the client can act on
+	// structurally rather than by matching an error string: the daemon is
+	// alive but does not serve this question. Callers use it to fall back
+	// to a different source and say so, instead of reporting a false
+	// negative or a hard failure.
+	ActionUnsupported = "unsupported"
 )
 
 // PKCS#11 action constants identify the specific operation within a PKCS#11
@@ -64,27 +71,30 @@ var validMessageTypes = map[string]bool{
 	MessageTypeAutofill:     true,
 	MessageTypePairing:      true,
 	MessageTypeUnlock:       true,
+	MessageTypeState:        true,
 }
 
 // Message is sent from the client to the server over the Unix domain socket.
 type Message struct {
-	Type     string           `json:"type"`               // "touch", "type_password", "status", "pkcs11", "autofill", "pairing", "unlock"
+	Type     string           `json:"type"`               // "touch", "type_password", "status", "pkcs11", "autofill", "pairing", "unlock", "state"
 	Name     string           `json:"name,omitempty"`     // password name (for type_password)
 	PKCS11   *PKCS11Payload   `json:"pkcs11,omitempty"`   // PKCS#11 payload (for pkcs11)
 	Autofill *AutofillPayload `json:"autofill,omitempty"` // autofill payload (for autofill)
 	Pairing  *PairingPayload  `json:"pairing,omitempty"`  // pairing payload (for pairing)
 	Unlock   *UnlockPayload   `json:"unlock,omitempty"`   // unlock payload (for unlock)
+	State    *StatePayload    `json:"state,omitempty"`    // live-state payload (for state)
 }
 
 // Response is sent from the server to the client over the Unix domain socket.
 type Response struct {
 	Status   string          `json:"status"`             // "ok" or "error"
-	Action   string          `json:"action,omitempty"`   // "approved_up", "typed_password", "no_pending", "daemon_ready"
+	Action   string          `json:"action,omitempty"`   // "approved_up", "typed_password", "no_pending", "daemon_ready", "unsupported"
 	Error    string          `json:"error,omitempty"`    // error message when status is "error"
 	PKCS11   *PKCS11Result   `json:"pkcs11,omitempty"`   // PKCS#11 result (for pkcs11 responses)
 	Autofill *AutofillResult `json:"autofill,omitempty"` // autofill result (for autofill responses)
 	Pairing  *PairingResult  `json:"pairing,omitempty"`  // pairing result (for pairing responses)
 	Unlock   *UnlockResult   `json:"unlock,omitempty"`   // unlock result (for unlock responses)
+	State    *StateResult    `json:"state,omitempty"`    // live-state result (for state responses)
 }
 
 // Validate checks that the message is well-formed. It returns ErrInvalidMessage
@@ -122,6 +132,12 @@ func (m *Message) Validate() error {
 			return &DetailError{Err: ErrInvalidMessage, Detail: ": unlock payload is required"}
 		}
 		return m.Unlock.Validate()
+	}
+	if m.Type == MessageTypeState {
+		if m.State == nil {
+			return &DetailError{Err: ErrInvalidMessage, Detail: ": state payload is required"}
+		}
+		return m.State.Validate()
 	}
 	return nil
 }

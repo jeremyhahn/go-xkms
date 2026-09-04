@@ -81,6 +81,10 @@ var (
 	// ErrXKMSdConnectFailed indicates the connection handshake to the server
 	// failed.
 	ErrXKMSdConnectFailed = errors.New("xkmsd: failed to connect to server")
+
+	// ErrCommandFlagInvalid indicates a declared flag could not be read as
+	// the requested type.
+	ErrCommandFlagInvalid = errors.New("cmd: invalid flag value")
 )
 
 // XKMSdEndpoint is a resolved xkmsd connection target: the scheme-qualified
@@ -216,6 +220,27 @@ func commandFlagString(cmd *cobra.Command, name string) string {
 		}
 	}
 	return ""
+}
+
+// commandFlagBool reads a boolean flag when the command declares one,
+// returning false otherwise. It is the bool companion to commandFlagString
+// and exists so callers never discard a flag-parse error with the blank
+// identifier. cmd may be nil.
+func commandFlagBool(cmd *cobra.Command, name string) (bool, error) {
+	if cmd == nil {
+		return false, nil
+	}
+	for _, flags := range []*pflag.FlagSet{cmd.Flags(), cmd.PersistentFlags()} {
+		if flags.Lookup(name) == nil {
+			continue
+		}
+		value, err := flags.GetBool(name)
+		if err != nil {
+			return false, &DetailError{Err: ErrCommandFlagInvalid, Detail: ": " + name + ": " + err.Error()}
+		}
+		return value, nil
+	}
+	return false, nil
 }
 
 // Client constructs an SDK transport client for the endpoint. The URL scheme

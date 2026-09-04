@@ -70,6 +70,16 @@ var (
 	// ErrAutofillDisabled is returned when autofill is requested but the
 	// browser extension feature is disabled.
 	ErrAutofillDisabled = errors.New("ipc: browser extension is disabled")
+
+	// ErrStateUnsupported is returned when a daemon is running and reachable
+	// but does not serve live-state queries. Callers distinguish it from
+	// ErrDaemonNotRunning so they can fall back to on-disk state and name
+	// the reason, rather than presenting a stale answer as the live one.
+	ErrStateUnsupported = errors.New("ipc: daemon does not report live state")
+
+	// ErrStateOperation is returned when a live-state query fails inside the
+	// daemon.
+	ErrStateOperation = errors.New("ipc: state query failed")
 )
 
 // DetailError appends detail text directly after a wrapped error while

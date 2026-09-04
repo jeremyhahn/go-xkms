@@ -18,6 +18,8 @@ import (
 	"time"
 
 	"github.com/spf13/cobra"
+
+	"github.com/jeremyhahn/go-xkms/xkey/pkg/ipc"
 )
 
 var (
@@ -25,7 +27,9 @@ var (
 	pinStatusJSON bool
 )
 
-// pinStatusInfo is the CLI-facing PIN status representation.
+// pinStatusInfo is the CLI-facing PIN status representation. The embedded
+// stateSourceInfo names which authority answered, so a JSON consumer can
+// tell a live daemon reading from a cold data directory apart.
 type pinStatusInfo struct {
 	Initialized     bool   `json:"initialized"`
 	SOPINSet        bool   `json:"so_pin_set"`
@@ -35,6 +39,8 @@ type pinStatusInfo struct {
 	MaxAttempts     int    `json:"max_attempts"`
 	IsLocked        bool   `json:"is_locked"`
 	RecoverySeconds int    `json:"recovery_seconds"`
+
+	stateSourceInfo
 }
 
 // pinStatusCmd shows the current PIN and lockout status.
@@ -46,9 +52,24 @@ var pinStatusCmd = &cobra.Command{
 Displays whether SO and User PINs are set, the active strategy,
 and lockout status including failed attempt count and recovery time.
 
+When a daemon is running it holds the live PIN state, so the status is read
+from it over the IPC socket. With no daemon running the on-disk data
+directory is read instead. The reported source names which one answered:
+"Initialized: No" from a cold data directory and from a live daemon are
+different facts.
+
 Examples:
-  # Show PIN status
+  # Show PIN status (daemon when running, data directory otherwise)
   xkey pin status
+
+  # Require the running daemon
+  xkey pin status --source daemon
+
+  # Read the on-disk data directory even while a daemon runs
+  xkey pin status --source disk
+
+  # Name the daemon socket explicitly
+  xkey pin status --socket /run/user/1000/xkey/xkey.sock
 
   # Show status as JSON
   xkey pin status --json`,
@@ -58,6 +79,7 @@ Examples:
 func init() {
 	pinStatusCmd.Flags().BoolVar(&pinStatusJSON, "json", false,
 		"output status as JSON")
+	addStateSourceFlags(pinStatusCmd, stateSelectorsLocal)
 
 	pinCmd.AddCommand(pinStatusCmd)
 }
@@ -65,33 +87,16 @@ func init() {
 func runPINStatus(cmd *cobra.Command, args []string) error {
 	out := cmd.OutOrStdout()
 
-	// Resolve data directory.
-	dataDir, err := resolvePINDataDir()
+	selection, err := stateSourceSelection(cmd, stateSelectorsLocal)
 	if err != nil {
 		return err
 	}
 
-	// Create PIN service.
-	svc, err := createPINService(dataDir)
+	info, src, err := resolvePINStatus(cmd, selection)
 	if err != nil {
 		return err
 	}
-
-	lockout := svc.GetLockoutStatus()
-
-	info := pinStatusInfo{
-		Initialized: svc.IsInitialized(),
-		SOPINSet:    svc.SOPINSet(),
-		UserPINSet:  svc.UserPINSet(),
-		Strategy:    string(svc.Strategy()),
-	}
-
-	if lockout != nil {
-		info.FailedAttempts = lockout.FailedAttempts
-		info.MaxAttempts = lockout.MaxAttempts
-		info.IsLocked = lockout.IsLocked
-		info.RecoverySeconds = lockout.RecoverySeconds
-	}
+	info.stateSourceInfo = src.info()
 
 	if pinStatusJSON {
 		return writeJSON(out, info)
@@ -112,7 +117,71 @@ func runPINStatus(cmd *cobra.Command, args []string) error {
 		_, _ = fmt.Fprintf(out, "  Recovery in:      %s\n", duration.String())
 	}
 
+	_, _ = fmt.Fprintln(out)
+	writeSource(out, src)
+
 	return nil
+}
+
+// resolvePINStatus asks the running daemon first and reads the on-disk data
+// directory only when no daemon can answer, returning the labelled source
+// alongside the status.
+func resolvePINStatus(cmd *cobra.Command, selection string) (pinStatusInfo, stateSource, error) {
+	state, socketPath, answered, reason, err := askDaemon(cmd, selection,
+		func(client *ipc.Client) (*ipc.PINStateResult, error) {
+			return client.StatePIN()
+		})
+	if err != nil {
+		return pinStatusInfo{}, stateSource{}, err
+	}
+	if answered {
+		return pinStatusInfo{
+			Initialized:     state.Initialized,
+			SOPINSet:        state.SOPINSet,
+			UserPINSet:      state.UserPINSet,
+			Strategy:        state.Strategy,
+			FailedAttempts:  state.FailedAttempts,
+			MaxAttempts:     state.MaxAttempts,
+			IsLocked:        state.IsLocked,
+			RecoverySeconds: state.RecoverySeconds,
+		}, daemonSource(socketPath), nil
+	}
+
+	info, dataDir, err := readPINStatusFromDisk()
+	if err != nil {
+		return pinStatusInfo{}, stateSource{}, err
+	}
+	return info, diskSource(dataDir, reason), nil
+}
+
+// readPINStatusFromDisk reports the PIN state recorded in the on-disk data
+// directory. It remains the correct answer when no daemon holds the device.
+func readPINStatusFromDisk() (pinStatusInfo, string, error) {
+	dataDir, err := resolvePINDataDir()
+	if err != nil {
+		return pinStatusInfo{}, "", err
+	}
+
+	svc, err := createPINService(dataDir)
+	if err != nil {
+		return pinStatusInfo{}, dataDir, err
+	}
+
+	info := pinStatusInfo{
+		Initialized: svc.IsInitialized(),
+		SOPINSet:    svc.SOPINSet(),
+		UserPINSet:  svc.UserPINSet(),
+		Strategy:    string(svc.Strategy()),
+	}
+
+	if lockout := svc.GetLockoutStatus(); lockout != nil {
+		info.FailedAttempts = lockout.FailedAttempts
+		info.MaxAttempts = lockout.MaxAttempts
+		info.IsLocked = lockout.IsLocked
+		info.RecoverySeconds = lockout.RecoverySeconds
+	}
+
+	return info, dataDir, nil
 }
 
 // boolToYesNo converts a bool to "Yes" or "No".

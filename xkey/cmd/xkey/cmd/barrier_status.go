@@ -22,6 +22,8 @@ import (
 
 	xkms "github.com/jeremyhahn/go-xkms/sdk/go"
 	"github.com/spf13/cobra"
+
+	"github.com/jeremyhahn/go-xkms/xkey/pkg/ipc"
 )
 
 var (
@@ -29,14 +31,19 @@ var (
 	barrierStatusJSON bool
 )
 
-// barrierStatusInfo is the CLI-facing barrier status representation.
+// barrierStatusInfo is the CLI-facing barrier status representation. The
+// embedded stateSourceInfo names which authority answered: a live daemon
+// reporting "Sealed" and a cold data directory reporting "Sealed" are
+// different facts and must not render identically.
 type barrierStatusInfo struct {
 	Initialized    bool   `json:"initialized"`
 	Sealed         bool   `json:"sealed"`
 	Strategy       string `json:"strategy"`
 	HardwareBacked bool   `json:"hardware_backed"`
-	DataDir        string `json:"data_dir"`
-	RootKeyPath    string `json:"root_key_path"`
+	DataDir        string `json:"data_dir,omitempty"`
+	RootKeyPath    string `json:"root_key_path,omitempty"`
+
+	stateSourceInfo
 }
 
 // barrierStatusCmd shows the current barrier status.
@@ -48,9 +55,20 @@ var barrierStatusCmd = &cobra.Command{
 Displays whether the barrier is initialized, sealed/unsealed, which
 sealing strategy is in use, and whether it is hardware-backed.
 
+The running daemon owns the barrier, so its seal state is read from the
+daemon over the IPC socket when one is running. With no daemon running the
+on-disk data directory is read instead, which can only ever report a sealed
+barrier. The reported source names which one answered.
+
 Examples:
-  # Show barrier status
+  # Show barrier status (daemon when running, data directory otherwise)
   xkey barrier status
+
+  # Require the running daemon
+  xkey barrier status --source daemon
+
+  # Inspect the on-disk data directory even while a daemon runs
+  xkey barrier status --source disk
 
   # Show status as JSON
   xkey barrier status --json`,
@@ -60,6 +78,7 @@ Examples:
 func init() {
 	barrierStatusCmd.Flags().BoolVar(&barrierStatusJSON, "json", false,
 		"output status as JSON")
+	addStateSourceFlags(barrierStatusCmd, stateSelectorsLocal)
 
 	barrierCmd.AddCommand(barrierStatusCmd)
 }
@@ -67,10 +86,88 @@ func init() {
 func runBarrierStatus(cmd *cobra.Command, args []string) error {
 	out := cmd.OutOrStdout()
 
-	// Resolve data directory.
-	dataDir, err := resolveBarrierDataDir()
+	selection, err := stateSourceSelection(cmd, stateSelectorsLocal)
 	if err != nil {
 		return err
+	}
+
+	info, src, err := resolveBarrierStatus(cmd, selection)
+	if err != nil {
+		return err
+	}
+	info.stateSourceInfo = src.info()
+
+	if barrierStatusJSON {
+		return writeJSON(out, info)
+	}
+
+	if !info.Initialized {
+		_, _ = fmt.Fprintln(out, "Barrier Status: Not Initialized")
+		if info.DataDir != "" {
+			_, _ = fmt.Fprintf(out, "  Data directory:  %s\n", info.DataDir)
+		}
+		_, _ = fmt.Fprintln(out, "\nRun 'xkey barrier init' to initialize the barrier.")
+		_, _ = fmt.Fprintln(out)
+		writeSource(out, src)
+		return nil
+	}
+
+	_, _ = fmt.Fprintln(out, "Barrier Status:")
+	_, _ = fmt.Fprintf(out, "  Initialized:      Yes\n")
+	_, _ = fmt.Fprintf(out, "  State:            %s\n", sealedDisplay(info.Sealed))
+	_, _ = fmt.Fprintf(out, "  Strategy:         %s\n", info.Strategy)
+	_, _ = fmt.Fprintf(out, "  Hardware-backed:  %s\n", boolToYesNo(info.HardwareBacked))
+	if info.DataDir != "" {
+		_, _ = fmt.Fprintf(out, "  Data directory:   %s\n", info.DataDir)
+	}
+	_, _ = fmt.Fprintln(out)
+	writeSource(out, src)
+
+	return nil
+}
+
+// sealedDisplay renders the seal state.
+func sealedDisplay(sealed bool) string {
+	if sealed {
+		return "Sealed"
+	}
+	return "Unsealed"
+}
+
+// resolveBarrierStatus asks the running daemon — which owns the barrier —
+// and falls back to the on-disk data directory only when none can answer.
+func resolveBarrierStatus(cmd *cobra.Command, selection string) (barrierStatusInfo, stateSource, error) {
+	state, socketPath, answered, reason, err := askDaemon(cmd, selection,
+		func(client *ipc.Client) (*ipc.BarrierStatusResult, error) {
+			return client.StateBarrier()
+		})
+	if err != nil {
+		return barrierStatusInfo{}, stateSource{}, err
+	}
+	if answered {
+		return barrierStatusInfo{
+			Initialized:    state.Initialized,
+			Sealed:         state.Sealed,
+			Strategy:       strategyDisplayName(xkms.StrategyID(state.Strategy)),
+			HardwareBacked: state.HardwareBacked,
+		}, daemonSource(socketPath), nil
+	}
+
+	info, dataDir, err := readBarrierStatusFromDisk()
+	if err != nil {
+		return barrierStatusInfo{}, stateSource{}, err
+	}
+	return info, diskSource(dataDir, reason), nil
+}
+
+// readBarrierStatusFromDisk reports what the on-disk data directory records.
+// A barrier read this way is always sealed: nothing in this process has
+// unsealed it. That is a true statement about the directory and a false one
+// about a running device, which is why the source is always reported.
+func readBarrierStatusFromDisk() (barrierStatusInfo, string, error) {
+	dataDir, err := resolveBarrierDataDir()
+	if err != nil {
+		return barrierStatusInfo{}, "", err
 	}
 
 	info := barrierStatusInfo{
@@ -78,26 +175,16 @@ func runBarrierStatus(cmd *cobra.Command, args []string) error {
 		RootKeyPath: filepath.Join(dataDir, defaultBarrierRootKeyPath),
 	}
 
-	// Check if initialized by looking for the root key file.
 	if !barrierRootKeyExists(dataDir) {
-		info.Initialized = false
 		info.Sealed = true
-
-		if barrierStatusJSON {
-			return writeJSON(out, info)
-		}
-
-		_, _ = fmt.Fprintln(out, "Barrier Status: Not Initialized")
-		_, _ = fmt.Fprintf(out, "  Data directory:  %s\n", dataDir)
-		_, _ = fmt.Fprintln(out, "\nRun 'xkey barrier init' to initialize the barrier.")
-		return nil
+		return info, dataDir, nil
 	}
 
 	info.Initialized = true
+	info.Sealed = true
 
-	// Try to read the sealed root key to determine strategy.
-	rootKeyPath := filepath.Join(dataDir, defaultBarrierRootKeyPath)
-	data, readErr := os.ReadFile(rootKeyPath)
+	// The sealed root key blob records which strategy protects it.
+	data, readErr := os.ReadFile(info.RootKeyPath)
 	if readErr == nil {
 		var sealed xkms.SealedRootKey
 		if jsonErr := json.Unmarshal(data, &sealed); jsonErr == nil {
@@ -105,42 +192,20 @@ func runBarrierStatus(cmd *cobra.Command, args []string) error {
 		}
 	}
 
-	// Barrier starts in sealed state when freshly loaded.
-	info.Sealed = true
+	info.HardwareBacked = hardwareBackedStrategies[info.Strategy]
 
-	// Check if strategy is hardware-backed.
-	hwBacked := map[string]bool{
-		"tpm2":    true,
-		"pkcs11":  true,
-		"awskms":  true,
-		"gcpkms":  true,
-		"azurekv": true,
-		"vault":   true,
-	}
-	info.HardwareBacked = hwBacked[info.Strategy]
+	return info, dataDir, nil
+}
 
-	if barrierStatusJSON {
-		return writeJSON(out, info)
-	}
-
-	sealedStr := "Sealed"
-	if !info.Sealed {
-		sealedStr = "Unsealed"
-	}
-
-	hwStr := "No"
-	if info.HardwareBacked {
-		hwStr = "Yes"
-	}
-
-	_, _ = fmt.Fprintln(out, "Barrier Status:")
-	_, _ = fmt.Fprintf(out, "  Initialized:      Yes\n")
-	_, _ = fmt.Fprintf(out, "  State:            %s\n", sealedStr)
-	_, _ = fmt.Fprintf(out, "  Strategy:         %s\n", info.Strategy)
-	_, _ = fmt.Fprintf(out, "  Hardware-backed:  %s\n", hwStr)
-	_, _ = fmt.Fprintf(out, "  Data directory:   %s\n", dataDir)
-
-	return nil
+// hardwareBackedStrategies names the strategies that bind the root key to
+// dedicated cryptographic hardware or an external key-management service.
+var hardwareBackedStrategies = map[string]bool{
+	"tpm2":    true,
+	"pkcs11":  true,
+	"awskms":  true,
+	"gcpkms":  true,
+	"azurekv": true,
+	"vault":   true,
 }
 
 // writeJSON marshals the value as indented JSON and writes it to the writer.

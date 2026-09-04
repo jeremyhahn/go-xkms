@@ -131,6 +131,80 @@ func (c *Client) Unlock(pin string) (*Response, error) {
 	})
 }
 
+// StatePIN asks the daemon for its live PIN configuration and lockout state.
+func (c *Client) StatePIN() (*PINStateResult, error) {
+	result, err := c.state(ActionStatePIN)
+	if err != nil {
+		return nil, err
+	}
+	if result.PIN == nil {
+		return nil, &DetailError{Err: ErrProtocolError, Detail: ": state response carried no pin result"}
+	}
+	return result.PIN, nil
+}
+
+// StateBarrier asks the daemon for its live barrier seal state.
+func (c *Client) StateBarrier() (*BarrierStatusResult, error) {
+	result, err := c.state(ActionStateBarrier)
+	if err != nil {
+		return nil, err
+	}
+	if result.Barrier == nil {
+		return nil, &DetailError{Err: ErrProtocolError, Detail: ": state response carried no barrier result"}
+	}
+	return result.Barrier, nil
+}
+
+// StatePasswordStore asks the daemon for the state of its static password
+// store: availability, lock state, backend, and entry count.
+func (c *Client) StatePasswordStore() (*PasswordStoreStateResult, error) {
+	result, err := c.state(ActionStatePasswordStore)
+	if err != nil {
+		return nil, err
+	}
+	if result.PasswordStore == nil {
+		return nil, &DetailError{Err: ErrProtocolError, Detail: ": state response carried no password_store result"}
+	}
+	return result.PasswordStore, nil
+}
+
+// StatePasswordList asks the daemon for the metadata of every stored
+// password. Password values are never returned over IPC.
+func (c *Client) StatePasswordList() (*PasswordListResult, error) {
+	result, err := c.state(ActionStatePasswordList)
+	if err != nil {
+		return nil, err
+	}
+	if result.PasswordList == nil {
+		return nil, &DetailError{Err: ErrProtocolError, Detail: ": state response carried no password_list result"}
+	}
+	return result.PasswordList, nil
+}
+
+// state sends one live-state query and unpacks the result. It maps a daemon
+// that is alive but does not serve live state onto ErrStateUnsupported, so
+// callers can tell "nobody is home" (ErrDaemonNotRunning) from "this daemon
+// does not know" and label their fallback accordingly.
+func (c *Client) state(action string) (*StateResult, error) {
+	resp, err := c.send(&Message{
+		Type:  MessageTypeState,
+		State: &StatePayload{Action: action},
+	})
+	if err != nil {
+		return nil, err
+	}
+	if resp.Action == ActionUnsupported {
+		return nil, ErrStateUnsupported
+	}
+	if resp.Status == StatusError {
+		return nil, &DetailError{Err: ErrStateOperation, Detail: ": " + resp.Error}
+	}
+	if resp.State == nil {
+		return nil, &DetailError{Err: ErrProtocolError, Detail: ": state response carried no result"}
+	}
+	return resp.State, nil
+}
+
 // Close marks the client as closed. Subsequent calls to any method will return
 // ErrClientClosed.
 func (c *Client) Close() error {

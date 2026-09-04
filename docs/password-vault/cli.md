@@ -2,9 +2,14 @@
 
 > **Status: NORMATIVE** · Feature: `password-vault` · Repo: `go-xkms` · Last verified: 2026-08-19
 
-Binary: `xkmsctl`, group `password` (`cmd/xkmsctl/password.go`). The desktop
-equivalent is `xkey password …`, over the same store. Global flags:
+Binary: `xkmsctl`, group `password` (`cmd/xkmsctl/password.go`). Global flags:
 [`../key-management/cli.md`](../key-management/cli.md).
+
+The desktop equivalent is `xkey password …`. It reaches the store differently:
+`xkmsctl` always talks to a server, while `xkey` asks the running desktop
+daemon over its IPC socket and falls back to the on-disk store, naming which
+answered. See
+[`xkey/docs/usage/live-state.md`](../../xkey/docs/usage/live-state.md).
 
 ## Unlocking
 

@@ -5,6 +5,7 @@ This directory contains guides and tutorials for using go-xkms in your applicati
 ## Getting Started
 
 - [Quick Start](quickstart.md) - First-time setup, unsealing, and initial admin connection
+- [Live device state vs on-disk state](live-state.md) - How `pin status`, `barrier status` and the password commands choose between the running daemon and the data directory, and how they label the answer
 - [Getting Started](getting-started.md) - Backend selection and Go API guide
 - [Initialization](initialization.md) - Barrier, PIN, and backend setup procedures
 - [API Parity](api-parity.md) - API compatibility across different backends

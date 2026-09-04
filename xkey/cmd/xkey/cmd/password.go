@@ -60,6 +60,15 @@ var (
 	ErrPasswordMissingMode       = errors.New("password: --mode is required")
 	ErrPasswordMissingPIN        = errors.New("password: user PIN is required")
 	ErrPasswordConnectFailed     = errors.New("password: failed to connect to xkmsd")
+
+	// ErrPasswordValuesNotOverIPC indicates --show-passwords was requested
+	// against a running daemon. Password values are never returned over the
+	// IPC socket: its only authentication is filesystem permission, so a
+	// verb that hands out secrets there is reachable by every process
+	// running as the same user.
+	ErrPasswordValuesNotOverIPC = errors.New(
+		"password: password values are never returned over the daemon IPC socket; " +
+			"re-run with --source disk to read the on-disk store directly")
 )
 
 // PasswordStoreClientService defines the subset of the transport.PasswordService
@@ -101,6 +110,14 @@ var PasswordCmd = &cobra.Command{
 Store, retrieve, and generate static passwords in a secure file-backed store.
 This provides YubiKey-style static password storage for credentials that cannot
 use one-time passwords or certificate-based authentication.
+
+The store belongs to whoever holds the barrier: the running daemon when one is
+running, the on-disk store directory otherwise. 'list' and 'status' consult
+both in that order and report which answered.
+
+A remote xkmsd server owns the session verbs — 'unlock', 'lock' and
+'access-mode' — and the access mode they configure; those require
+--xkmsd-url. It is not where the local store lives.
 
 Examples:
   # Add a password manually
@@ -188,17 +205,22 @@ var passwordListCmd = &cobra.Command{
 	Short:   "List all passwords",
 	Long: `List all static passwords in the store.
 
-By default, password values are masked. Use --show-passwords to reveal them.
+The store lives with whoever holds the barrier: the running daemon when one
+is running, the on-disk store directory otherwise. Both are consulted in that
+order and the reported source names which answered.
+
+Password values are masked. --show-passwords reveals them, and requires
+--source disk: values are never returned over the daemon IPC socket.
 
 Examples:
-  # List all passwords
+  # List all passwords (daemon when running, store directory otherwise)
   xkey password list
 
-  # Show password values
-  xkey password list --show-passwords
+  # Show password values from the on-disk store
+  xkey password list --source disk --show-passwords
 
   # Use a custom store path
-  xkey password list --store /tmp/passwords`,
+  xkey password list --source disk --store /tmp/passwords`,
 	RunE: runPasswordList,
 }
 
@@ -282,6 +304,8 @@ The store remains unlocked until explicitly locked or the session expires.
 In pin_per_operation mode, this command has no effect since each
 operation requires its own PIN.
 
+This acts on an xkmsd server's session and requires --xkmsd-url.
+
 Examples:
   # Unlock with PIN flag
   xkey password unlock --pin "1234"
@@ -300,6 +324,8 @@ var passwordLockCmd = &cobra.Command{
 In session_based access mode, locking the store requires the PIN
 to be provided again for subsequent password operations.
 
+This acts on an xkmsd server's session and requires --xkmsd-url.
+
 Examples:
   # Lock the password store
   xkey password lock`,
@@ -312,12 +338,21 @@ var passwordStatusCmd = &cobra.Command{
 	Short: "Show password store status",
 	Long: `Show the current status of the password store.
 
-Displays the access mode, lock state, auto-unseal status, and
-the number of stored passwords.
+Displays where the store lives, whether it is readable, and how many entries
+it holds. The same source order as 'xkey password list' applies: the running
+daemon first, the on-disk store directory otherwise. Neither requires an
+xkmsd server.
+
+Access mode and auto-unseal are properties of an xkmsd session server, which
+also owns 'password unlock', 'password lock' and 'password access-mode'.
+Pass --source xkmsd to read them from a configured server.
 
 Examples:
   # Show password store status
-  xkey password status`,
+  xkey password status
+
+  # Read the status from a configured xkmsd server
+  xkey password status --source xkmsd --xkmsd-url https://xkms.example.com`,
 	RunE: runPasswordStatus,
 }
 
@@ -333,6 +368,8 @@ Two modes are supported:
   session_based      A single unlock provides access until the store is
                      explicitly locked. More convenient for batch operations.
 
+This acts on an xkmsd server's session and requires --xkmsd-url.
+
 Examples:
   # Switch to session-based mode
   xkey password access-mode --mode session_based
@@ -347,14 +384,17 @@ func runPasswordAdd(cmd *cobra.Command, args []string) error {
 	out := cmd.OutOrStdout()
 	name, _ := cmd.Flags().GetString("name")
 	password, _ := cmd.Flags().GetString("password")
-	generate, _ := cmd.Flags().GetBool("generate")
+	generate, err := commandFlagBool(cmd, "generate")
+	if err != nil {
+		return err
+	}
 	length, _ := cmd.Flags().GetInt("length")
 	charset, _ := cmd.Flags().GetString("charset")
 	notes, _ := cmd.Flags().GetString("notes")
 	title, _ := cmd.Flags().GetString("title")
 	username, _ := cmd.Flags().GetString("username")
 	url, _ := cmd.Flags().GetString("url")
-	storePath, _ := cmd.Flags().GetString("store")
+	storePath := passwordStorePath(cmd)
 
 	if name == "" {
 		return ErrPasswordMissingName
@@ -406,65 +446,170 @@ func runPasswordAdd(cmd *cobra.Command, args []string) error {
 	return nil
 }
 
-// runPasswordList executes the password list command.
+// runPasswordList executes the password list command. It asks the running
+// daemon first: the daemon holds the barrier, so it is the only authority
+// that can see a barrier-backed store. Reading the store directory in this
+// process reports it empty, which is what made `password list` claim "No
+// passwords found" on a device whose store held entries.
 func runPasswordList(cmd *cobra.Command, args []string) error {
 	out := cmd.OutOrStdout()
-	storePath, _ := cmd.Flags().GetString("store")
-	showPasswords, _ := cmd.Flags().GetBool("show-passwords")
+	showPasswords, err := commandFlagBool(cmd, "show-passwords")
+	if err != nil {
+		return err
+	}
+
+	selection, err := stateSourceSelection(cmd, stateSelectorsLocal)
+	if err != nil {
+		return err
+	}
+
+	entries, src, err := resolvePasswordList(cmd, selection, showPasswords)
+	if err != nil {
+		return err
+	}
+
+	if len(entries) == 0 {
+		_, _ = fmt.Fprintln(out, "No passwords found.")
+		_, _ = fmt.Fprintln(out)
+		writeSource(out, src)
+		return nil
+	}
+
+	_, _ = fmt.Fprintf(out, "Static Passwords (%d):\n\n", len(entries))
+
+	for _, entry := range entries {
+		_, _ = fmt.Fprintf(out, "  Name:       %s\n", entry.Name)
+		if entry.Title != "" {
+			_, _ = fmt.Fprintf(out, "  Title:      %s\n", entry.Title)
+		}
+		if entry.Username != "" {
+			_, _ = fmt.Fprintf(out, "  Username:   %s\n", entry.Username)
+		}
+		if showPasswords {
+			_, _ = fmt.Fprintf(out, "  Password:   %s\n", entry.Password)
+		} else {
+			_, _ = fmt.Fprintf(out, "  Password:   ********\n")
+		}
+		if entry.URL != "" {
+			_, _ = fmt.Fprintf(out, "  URL:        %s\n", entry.URL)
+		}
+		if entry.Notes != "" {
+			_, _ = fmt.Fprintf(out, "  Notes:      %s\n", entry.Notes)
+		}
+		if entry.CreatedAt != "" {
+			_, _ = fmt.Fprintf(out, "  Created:    %s\n", entry.CreatedAt)
+		}
+		if entry.UpdatedAt != "" {
+			_, _ = fmt.Fprintf(out, "  Updated:    %s\n", entry.UpdatedAt)
+		}
+		_, _ = fmt.Fprintln(out)
+	}
+
+	writeSource(out, src)
+
+	return nil
+}
+
+// passwordListEntry is the CLI-facing view of one stored password. Password
+// is populated only on the on-disk path; the daemon never sends values.
+type passwordListEntry struct {
+	Name      string
+	Title     string
+	Username  string
+	Password  string
+	URL       string
+	Notes     string
+	CreatedAt string
+	UpdatedAt string
+}
+
+// resolvePasswordList asks the daemon first and reads the on-disk store only
+// when no daemon can answer, returning the labelled source alongside the
+// entries.
+func resolvePasswordList(cmd *cobra.Command, selection string, showPasswords bool) ([]passwordListEntry, stateSource, error) {
+	list, socketPath, answered, reason, err := askDaemon(cmd, selection,
+		func(client *ipc.Client) (*ipc.PasswordListResult, error) {
+			return client.StatePasswordList()
+		})
+	if err != nil {
+		return nil, stateSource{}, err
+	}
+	if answered {
+		if showPasswords {
+			return nil, stateSource{}, ErrPasswordValuesNotOverIPC
+		}
+		entries := make([]passwordListEntry, 0, len(list.Entries))
+		for _, info := range list.Entries {
+			entries = append(entries, passwordListEntry{
+				Name:      info.Name,
+				Title:     info.Title,
+				Username:  info.Username,
+				URL:       info.URL,
+				CreatedAt: info.CreatedAt,
+				UpdatedAt: info.UpdatedAt,
+			})
+		}
+		return entries, daemonSource(socketPath), nil
+	}
+
+	entries, storePath, err := readPasswordListFromDisk(cmd)
+	if err != nil {
+		return nil, stateSource{}, err
+	}
+	return entries, diskSource(storePath, reason), nil
+}
+
+// readPasswordListFromDisk reads the on-disk static password store. It is
+// the correct authority when no daemon holds the barrier, and the only path
+// that can reveal password values.
+func readPasswordListFromDisk(cmd *cobra.Command) ([]passwordListEntry, string, error) {
+	storePath := passwordStorePath(cmd)
 
 	store, err := openPasswordStore(storePath)
 	if err != nil {
 		if os.IsNotExist(err) {
-			_, _ = fmt.Fprintln(out, "No passwords found.")
-			return nil
+			return nil, storePath, nil
 		}
-		return err
+		return nil, storePath, err
 	}
 	defer func() { _ = store.Close() }()
 
 	passwords, err := store.List()
 	if err != nil {
-		return &SentinelCauseError{Sentinel: ErrPasswordListFailed, Cause: err}
+		return nil, storePath, &SentinelCauseError{Sentinel: ErrPasswordListFailed, Cause: err}
 	}
 
-	if len(passwords) == 0 {
-		_, _ = fmt.Fprintln(out, "No passwords found.")
-		return nil
-	}
-
-	_, _ = fmt.Fprintf(out, "Static Passwords (%d):\n\n", len(passwords))
-
+	entries := make([]passwordListEntry, 0, len(passwords))
 	for _, pw := range passwords {
-		_, _ = fmt.Fprintf(out, "  Name:       %s\n", pw.Name)
-		if pw.Title != "" {
-			_, _ = fmt.Fprintf(out, "  Title:      %s\n", pw.Title)
-		}
-		if pw.Username != "" {
-			_, _ = fmt.Fprintf(out, "  Username:   %s\n", pw.Username)
-		}
-		if showPasswords {
-			_, _ = fmt.Fprintf(out, "  Password:   %s\n", pw.Password)
-		} else {
-			_, _ = fmt.Fprintf(out, "  Password:   ********\n")
-		}
-		if pw.URL != "" {
-			_, _ = fmt.Fprintf(out, "  URL:        %s\n", pw.URL)
-		}
-		if pw.Notes != "" {
-			_, _ = fmt.Fprintf(out, "  Notes:      %s\n", pw.Notes)
-		}
-		_, _ = fmt.Fprintf(out, "  Created:    %s\n", pw.CreatedAt.Format("2006-01-02 15:04:05"))
-		_, _ = fmt.Fprintf(out, "  Updated:    %s\n", pw.UpdatedAt.Format("2006-01-02 15:04:05"))
-		_, _ = fmt.Fprintln(out)
+		entries = append(entries, passwordListEntry{
+			Name:      pw.Name,
+			Title:     pw.Title,
+			Username:  pw.Username,
+			Password:  pw.Password,
+			URL:       pw.URL,
+			Notes:     pw.Notes,
+			CreatedAt: pw.CreatedAt.Format(passwordTimeLayout),
+			UpdatedAt: pw.UpdatedAt.Format(passwordTimeLayout),
+		})
 	}
+	return entries, storePath, nil
+}
 
-	return nil
+// passwordTimeLayout is the timestamp format used in password listings.
+const passwordTimeLayout = "2006-01-02 15:04:05"
+
+// passwordStorePath returns the on-disk store path a command should use.
+func passwordStorePath(cmd *cobra.Command) string {
+	if path := strings.TrimSpace(commandFlagString(cmd, "store")); path != "" {
+		return path
+	}
+	return defaultPasswordStorePath
 }
 
 // runPasswordGet executes the password get command.
 func runPasswordGet(cmd *cobra.Command, args []string) error {
 	out := cmd.OutOrStdout()
-	storePath, _ := cmd.Flags().GetString("store")
+	storePath := passwordStorePath(cmd)
 
 	if len(args) == 0 {
 		return ErrPasswordMissingGetArg
@@ -488,8 +633,11 @@ func runPasswordGet(cmd *cobra.Command, args []string) error {
 // runPasswordRemove executes the password remove command.
 func runPasswordRemove(cmd *cobra.Command, args []string) error {
 	out := cmd.OutOrStdout()
-	storePath, _ := cmd.Flags().GetString("store")
-	force, _ := cmd.Flags().GetBool("force")
+	storePath := passwordStorePath(cmd)
+	force, err := commandFlagBool(cmd, "force")
+	if err != nil {
+		return err
+	}
 
 	if len(args) == 0 {
 		return ErrPasswordMissingRemoveArg
@@ -613,30 +761,121 @@ func runPasswordLock(cmd *cobra.Command, args []string) error {
 	return nil
 }
 
+// passwordStatusInfo is the CLI-facing password store status.
+type passwordStatusInfo struct {
+	Available     bool
+	Locked        bool
+	Backend       string
+	AccessMode    string
+	AutoUnsealed  bool
+	PasswordCount int
+}
+
 // runPasswordStatus executes the password status command.
+//
+// It used to demand --xkmsd-url while `password list` needed none and
+// silently returned empty, so the two disagreed about where the store even
+// lives. Both now follow one rule: the store belongs to whoever holds the
+// barrier — the running daemon first, the on-disk store directory otherwise.
+// A remote xkmsd server, which owns the session verbs (unlock, lock,
+// access-mode), is consulted only when asked for with --source xkmsd.
 func runPasswordStatus(cmd *cobra.Command, args []string) error {
-	client, err := connectPasswordStore()
+	out := cmd.OutOrStdout()
+
+	selection, err := stateSourceSelection(cmd, stateSelectorsWithXKMSd)
 	if err != nil {
 		return err
 	}
-	defer func() { _ = client.Close() }()
 
-	ctx := context.Background()
-	resp, err := client.PasswordStoreStatus(ctx)
+	info, src, err := resolvePasswordStatus(cmd, selection)
 	if err != nil {
-		return &SentinelCauseError{Sentinel: ErrPasswordStatusFailed, Cause: err}
+		return err
 	}
-
-	out := cmd.OutOrStdout()
 
 	_, _ = fmt.Fprintln(out, "Password Store Status:")
 	_, _ = fmt.Fprintln(out)
-	_, _ = fmt.Fprintf(out, "  Access Mode:     %s\n", resp.AccessMode)
-	_, _ = fmt.Fprintf(out, "  Locked:          %v\n", resp.IsLocked)
-	_, _ = fmt.Fprintf(out, "  Auto-Unsealed:   %v\n", resp.AutoUnsealed)
-	_, _ = fmt.Fprintf(out, "  Password Count:  %d\n", resp.PasswordCount)
+	_, _ = fmt.Fprintf(out, "  Available:       %s\n", boolToYesNo(info.Available))
+	_, _ = fmt.Fprintf(out, "  Locked:          %s\n", boolToYesNo(info.Locked))
+	if info.Backend != "" {
+		_, _ = fmt.Fprintf(out, "  Backend:         %s\n", info.Backend)
+	}
+	_, _ = fmt.Fprintf(out, "  Access Mode:     %s\n", passwordAccessModeDisplay(info.AccessMode))
+	_, _ = fmt.Fprintf(out, "  Auto-Unsealed:   %s\n", boolToYesNo(info.AutoUnsealed))
+	_, _ = fmt.Fprintf(out, "  Password Count:  %d\n", info.PasswordCount)
+	_, _ = fmt.Fprintln(out)
+	writeSource(out, src)
 
 	return nil
+}
+
+// passwordAccessModeDisplay renders the access mode, naming why it is
+// unknown rather than printing a blank that reads as a real value.
+func passwordAccessModeDisplay(mode string) string {
+	if mode == "" {
+		return "n/a (no xkmsd session server)"
+	}
+	return mode
+}
+
+// resolvePasswordStatus applies the store-location rule and returns the
+// status alongside the labelled source that produced it.
+func resolvePasswordStatus(cmd *cobra.Command, selection string) (passwordStatusInfo, stateSource, error) {
+	if selection == sourceXKMSd {
+		return readPasswordStatusFromXKMSd(cmd)
+	}
+
+	state, socketPath, answered, reason, err := askDaemon(cmd, selection,
+		func(client *ipc.Client) (*ipc.PasswordStoreStateResult, error) {
+			return client.StatePasswordStore()
+		})
+	if err != nil {
+		return passwordStatusInfo{}, stateSource{}, err
+	}
+	if answered {
+		return passwordStatusInfo{
+			Available:     state.Available,
+			Locked:        state.Locked,
+			Backend:       state.Backend,
+			AccessMode:    state.AccessMode,
+			PasswordCount: state.Count,
+		}, daemonSource(socketPath), nil
+	}
+
+	entries, storePath, err := readPasswordListFromDisk(cmd)
+	if err != nil {
+		return passwordStatusInfo{}, stateSource{}, err
+	}
+	return passwordStatusInfo{
+		Available:     true,
+		Backend:       passwordBackendFile,
+		PasswordCount: len(entries),
+	}, diskSource(storePath, reason), nil
+}
+
+// passwordBackendFile names the on-disk store backend.
+const passwordBackendFile = "file"
+
+// readPasswordStatusFromXKMSd reads the session status from a configured
+// xkmsd server. This is the only source that knows the access mode.
+func readPasswordStatusFromXKMSd(cmd *cobra.Command) (passwordStatusInfo, stateSource, error) {
+	client, err := connectPasswordStore()
+	if err != nil {
+		return passwordStatusInfo{}, stateSource{}, err
+	}
+	defer func() { _ = client.Close() }()
+
+	resp, err := client.PasswordStoreStatus(context.Background())
+	if err != nil {
+		return passwordStatusInfo{}, stateSource{}, &SentinelCauseError{Sentinel: ErrPasswordStatusFailed, Cause: err}
+	}
+
+	return passwordStatusInfo{
+		Available:     true,
+		Locked:        resp.IsLocked,
+		AccessMode:    resp.AccessMode,
+		AutoUnsealed:  resp.AutoUnsealed,
+		PasswordCount: resp.PasswordCount,
+	}, xkmsdSource(resolveXKMSdURL()), nil
 }
 
 // runPasswordAccessMode executes the password access-mode command.
@@ -750,7 +989,12 @@ func init() {
 
 	// password list flags.
 	passwordListCmd.Flags().String("store", defaultPasswordStorePath, "Path to password store")
-	passwordListCmd.Flags().Bool("show-passwords", false, "Show password values")
+	passwordListCmd.Flags().Bool("show-passwords", false, "Show password values (requires --source disk)")
+	addStateSourceFlags(passwordListCmd, stateSelectorsLocal)
+
+	// password status flags.
+	passwordStatusCmd.Flags().String("store", defaultPasswordStorePath, "Path to password store")
+	addStateSourceFlags(passwordStatusCmd, stateSelectorsWithXKMSd)
 
 	// password get flags.
 	passwordGetCmd.Flags().String("store", defaultPasswordStorePath, "Path to password store")

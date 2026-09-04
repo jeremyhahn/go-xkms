@@ -166,9 +166,15 @@ type App struct {
 	oathStore     oath.Store
 	fido2Storage  authenticator.StatefulCredentialStorage
 	staticpwStore staticpw.Store
-	trustStore    truststore.TrustStore
-	pivFileStore  xkmssdk.PIVCertificateStorage
-	pivStorageBE  xkmssdk.StorageBackend // underlying storage for creating namespaced PIV stores
+
+	// staticpwBackendKind records which storage backend the static password
+	// store was opened on ("barrier" or "file"), so the live-state IPC
+	// surface can name where the store actually lives instead of leaving
+	// the caller to guess.
+	staticpwBackendKind string
+	trustStore          truststore.TrustStore
+	pivFileStore        xkmssdk.PIVCertificateStorage
+	pivStorageBE        xkmssdk.StorageBackend // underlying storage for creating namespaced PIV stores
 
 	// TPM instance (lazy-initialized, closed on shutdown).
 	tpmMu             sync.Mutex
@@ -792,6 +798,7 @@ func (a *App) initializeDataDir() error {
 	if barrierBackend != nil {
 		spwStore := staticpw.NewStore(barrierBackend)
 		a.staticpwStore = spwStore
+		a.staticpwBackendKind = staticPWBackendBarrier
 		a.staticPWService.SetStore(spwStore)
 		a.log.Info("static password store using barrier backend")
 	} else {
@@ -801,6 +808,7 @@ func (a *App) initializeDataDir() error {
 		} else {
 			spwStore := staticpw.NewStore(spwBackend)
 			a.staticpwStore = spwStore
+			a.staticpwBackendKind = staticPWBackendFile
 			a.staticPWService.SetStore(spwStore)
 			a.log.Info("static password store using file backend (no barrier)")
 		}

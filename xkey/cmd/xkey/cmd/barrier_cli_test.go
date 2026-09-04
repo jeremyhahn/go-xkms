@@ -36,6 +36,7 @@ func isolateBarrier(t *testing.T) string {
 	t.Helper()
 
 	dir := t.TempDir()
+	isolateDaemonSocket(t)
 
 	previousDataDir := barrierDataDir
 	previousStrategy := barrierStrategy
