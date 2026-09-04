@@ -62,12 +62,15 @@ const (
 	DerivationModeLegacyInsecure = pkgfido2.DerivationModeLegacyInsecure
 )
 
-// Re-exported PIN error sentinels and the retry-annotated PIN failure.
+// Re-exported request-authorization error sentinels and the retry-annotated
+// PIN failure.
 //
 // A caller driving a ceremony has to tell "this key needs a PIN and none was
 // given" from "the PIN was wrong" from "this key has no PIN set" in order to
 // say anything useful to an operator, and docs/00 forbids reaching into pkg/
-// for them.
+// for them. ErrInvalidOption joins them because it reports a defect in the
+// request the caller itself built — most often asking for the uv option on a
+// key that verifies by PIN — rather than anything the operator did.
 var (
 	ErrPINRequired           = pkgfido2.ErrPINRequired
 	ErrInvalidPIN            = pkgfido2.ErrInvalidPIN
@@ -76,6 +79,7 @@ var (
 	ErrPINAuthInvalid        = pkgfido2.ErrPINAuthInvalid
 	ErrPINAuthBlocked        = pkgfido2.ErrPINAuthBlocked
 	ErrPINRetriesUnavailable = pkgfido2.ErrPINRetriesUnavailable
+	ErrInvalidOption         = pkgfido2.ErrInvalidOption
 )
 
 // PINAttemptsError is the retry-annotated PIN failure: a wrong PIN carrying

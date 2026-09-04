@@ -344,56 +344,83 @@ func (d *CTAPHIDDevice) SendCBOR(cmd byte, request interface{}) ([]byte, error) 
 	return resp[1:], nil
 }
 
-// handleCTAPError converts CTAP status codes to errors
+// ctapStatusErrors maps every CTAP2 status code defined in types.go to the
+// error this package surfaces for it. A status that is absent here falls
+// through to the hex rendering in handleCTAPError, which is reserved for codes
+// the specification does not define.
+//
+// Four constants in types.go are deliberately absent:
+//
+//   - StatusOK, which never reaches handleCTAPError: sendCBOR only calls it
+//     once it has established that the status is not StatusOK.
+//   - StatusSpecLast, StatusExtensionFirst, StatusExtensionLast,
+//     StatusVendorFirst and StatusVendorLast, which are range boundaries
+//     rather than statuses. Codes inside the extension and vendor ranges are
+//     authenticator-defined, so the hex rendering is the only honest answer
+//     and the fallthrough is the intended behaviour for them.
+//
+// Statuses that already carry a named sentinel keep it, so errors.Is matching
+// in the ceremony paths is unchanged.
+var ctapStatusErrors = map[byte]error{
+	StatusInvalidCommand:       &errs.Message{Msg: "invalid CTAP command"},
+	StatusInvalidParameter:     &errs.Message{Msg: "invalid parameter"},
+	StatusInvalidLength:        &errs.Message{Msg: "invalid length"},
+	StatusInvalidSeq:           &errs.Message{Msg: "invalid sequence"},
+	StatusTimeout:              ErrOperationTimeout,
+	StatusChannelBusy:          &errs.Message{Msg: "channel busy"},
+	StatusLockRequired:         &errs.Message{Msg: "command requires a channel lock"},
+	StatusInvalidChannel:       &errs.Message{Msg: "invalid channel"},
+	StatusCBORUnexpectedType:   &errs.Message{Msg: "CBOR element of unexpected type"},
+	StatusInvalidCBOR:          ErrInvalidCBOR,
+	StatusMissingParameter:     &errs.Message{Msg: "missing required parameter"},
+	StatusLimitExceeded:        &errs.Message{Msg: "limit on the number of items exceeded"},
+	StatusUnsupportedExtension: ErrUnsupportedExtension,
+	StatusCredentialExcluded:   &errs.Message{Msg: "credential excluded"},
+	StatusProcessing:           &errs.Message{Msg: "authenticator is still processing the request"},
+	StatusInvalidCredential:    &errs.Message{Msg: "credential not valid for this authenticator"},
+	StatusUserActionPending:    ErrUserPresenceRequired,
+	StatusOperationPending:     &errs.Message{Msg: "an operation is already pending"},
+	StatusNoOperations:         &errs.Message{Msg: "no request is pending"},
+	StatusUnsupportedAlgorithm: &errs.Message{Msg: "unsupported algorithm"},
+	StatusOperationDenied:      &errs.Message{Msg: "operation denied"},
+	StatusKeyStoreFull:         &errs.Message{Msg: "credential storage is full"},
+	StatusNotBusy:              &errs.Message{Msg: "authenticator is not busy"},
+	StatusNoOperationPending:   &errs.Message{Msg: "no operation is pending"},
+	StatusUnsupportedOption:    &errs.Message{Msg: "the authenticator does not support an option in the request"},
+	StatusInvalidOption:        ErrInvalidOption,
+	StatusKeepaliveCancel:      &errs.Message{Msg: "operation cancelled"},
+	StatusNoCredentials:        ErrCredentialNotFound,
+	StatusUserActionTimeout:    ErrOperationTimeout,
+	StatusNotAllowed:           &errs.Message{Msg: "operation not allowed"},
+	StatusPINInvalid:           ErrInvalidPIN,
+	StatusPINBlocked:           ErrPINBlocked,
+	StatusPINAuthInvalid:       ErrPINAuthInvalid,
+	StatusPINAuthBlocked:       ErrPINAuthBlocked,
+	StatusPINNotSet:            ErrPINNotSet,
+	StatusPINRequired:          ErrPINRequired,
+	StatusPINPolicyViolation:   &errs.Message{Msg: "the PIN does not satisfy the authenticator's policy"},
+	StatusPINTokenExpired:      &errs.Message{Msg: "the pinUvAuthToken has expired"},
+	StatusRequestTooLarge:      &errs.Message{Msg: "request too large for the authenticator"},
+	StatusActionTimeout:        ErrOperationTimeout,
+	StatusUPRequired:           ErrUserPresenceRequired,
+	StatusUVBlocked:            &errs.Message{Msg: "user verification blocked"},
+	StatusIntegrityFailure:     &errs.Message{Msg: "integrity check failed"},
+	StatusInvalidSubcommand:    &errs.Message{Msg: "invalid subcommand"},
+	StatusUVInvalid:            &errs.Message{Msg: "user verification failed"},
+	StatusUnauthorizedPermission: &errs.Message{
+		Msg: "the pinUvAuthToken lacks the permission this command requires"},
+	StatusOtherError: &errs.Message{Msg: "the authenticator reported an unspecified error"},
+}
+
+// handleCTAPError converts a CTAP2 status code to the error this package
+// surfaces for it. Codes the specification does not define — the extension and
+// vendor ranges especially — render as hex, because no name exists to give
+// them.
 func (d *CTAPHIDDevice) handleCTAPError(status byte) error {
-	switch status {
-	case StatusInvalidCommand:
-		return &errs.Message{Msg: "invalid CTAP command"}
-	case StatusInvalidParameter:
-		return &errs.Message{Msg: "invalid parameter"}
-	case StatusInvalidLength:
-		return &errs.Message{Msg: "invalid length"}
-	case StatusInvalidSeq:
-		return &errs.Message{Msg: "invalid sequence"}
-	case StatusTimeout:
-		return ErrOperationTimeout
-	case StatusChannelBusy:
-		return &errs.Message{Msg: "channel busy"}
-	case StatusInvalidCBOR:
-		return ErrInvalidCBOR
-	case StatusUnsupportedExtension:
-		return ErrUnsupportedExtension
-	case StatusCredentialExcluded:
-		return &errs.Message{Msg: "credential excluded"}
-	case StatusUserActionPending:
-		return ErrUserPresenceRequired
-	case StatusOperationDenied:
-		return &errs.Message{Msg: "operation denied"}
-	case StatusNoCredentials:
-		return ErrCredentialNotFound
-	case StatusUserActionTimeout:
-		return ErrOperationTimeout
-	case StatusNotAllowed:
-		return &errs.Message{Msg: "operation not allowed"}
-	case StatusPINInvalid:
-		return ErrInvalidPIN
-	case StatusPINBlocked:
-		return ErrPINBlocked
-	case StatusPINAuthInvalid:
-		return ErrPINAuthInvalid
-	case StatusPINAuthBlocked:
-		return ErrPINAuthBlocked
-	case StatusPINNotSet:
-		return ErrPINNotSet
-	case StatusPINRequired:
-		return ErrPINRequired
-	case StatusUPRequired:
-		return ErrUserPresenceRequired
-	case StatusUVBlocked:
-		return &errs.Message{Msg: "user verification blocked"}
-	default:
-		return &errs.Message{Msg: fmt.Sprintf("CTAP error: 0x%02X", status)}
+	if err, ok := ctapStatusErrors[status]; ok {
+		return err
 	}
+	return &errs.Message{Msg: fmt.Sprintf("CTAP error: 0x%02X", status)}
 }
 
 // Ping sends a CTAPHID_PING command

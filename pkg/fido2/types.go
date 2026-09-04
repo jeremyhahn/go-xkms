@@ -28,6 +28,7 @@ var (
 	ErrOperationTimeout      = errors.New("fido2: operation timeout")
 	ErrInvalidCBOR           = errors.New("fido2: invalid CBOR encoding")
 	ErrUnsupportedExtension  = errors.New("fido2: extension not supported")
+	ErrInvalidOption         = errors.New("fido2: the authenticator rejected an option in the request")
 	ErrInvalidHMACSecret     = errors.New("fido2: invalid HMAC-secret")
 	ErrDeviceError           = errors.New("fido2: device error")
 	ErrInvalidAssertion      = errors.New("fido2: invalid assertion")
