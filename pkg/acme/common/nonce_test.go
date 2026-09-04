@@ -236,13 +236,13 @@ func TestNonceStore(t *testing.T) {
 
 func TestNonceStore_Expiration(t *testing.T) {
 	ttl := 100 * time.Millisecond
-	store := NewNonceStore(ttl)
+	store, clock := newTestNonceStore(ttl)
 
 	nonce, _ := GenerateNonce(32)
 	store.Add(nonce)
 
-	// Wait for expiration
-	time.Sleep(150 * time.Millisecond)
+	// Past the TTL, exactly and without waiting for it.
+	clock.Advance(ttl + time.Millisecond)
 
 	// Nonce should be expired
 	if store.Exists(nonce) {
@@ -262,7 +262,7 @@ func TestNonceStore_NonExistent(t *testing.T) {
 func TestNonceStore_Sweep(t *testing.T) {
 	// Use a short TTL for faster testing
 	ttl := 100 * time.Millisecond
-	store := NewNonceStore(ttl)
+	store, clock := newTestNonceStore(ttl)
 
 	// Add multiple nonces
 	nonces := make([]string, 5)
@@ -281,8 +281,8 @@ func TestNonceStore_Sweep(t *testing.T) {
 		t.Errorf("Expected 5 nonces in store, got %d", initialCount)
 	}
 
-	// Wait for nonces to expire
-	time.Sleep(150 * time.Millisecond)
+	// Past the TTL for every nonce added above.
+	clock.Advance(ttl + time.Millisecond)
 
 	// Manually trigger sweep
 	store.sweep()
@@ -299,7 +299,7 @@ func TestNonceStore_Sweep(t *testing.T) {
 
 func TestNonceStore_SweepPartial(t *testing.T) {
 	ttl := 200 * time.Millisecond
-	store := NewNonceStore(ttl)
+	store, clock := newTestNonceStore(ttl)
 
 	// Add first batch of nonces
 	for i := 0; i < 3; i++ {
@@ -307,8 +307,8 @@ func TestNonceStore_SweepPartial(t *testing.T) {
 		store.Add(nonce)
 	}
 
-	// Wait for half the TTL
-	time.Sleep(100 * time.Millisecond)
+	// Half the TTL
+	clock.Advance(100 * time.Millisecond)
 
 	// Add second batch of nonces
 	for i := 0; i < 3; i++ {
@@ -316,8 +316,9 @@ func TestNonceStore_SweepPartial(t *testing.T) {
 		store.Add(nonce)
 	}
 
-	// Wait for first batch to expire but not second
-	time.Sleep(150 * time.Millisecond)
+	// Now the first batch is 250ms old (expired) and the second 150ms (not).
+	// Both facts are exact, so the sweep below has exactly one correct answer.
+	clock.Advance(150 * time.Millisecond)
 
 	// Trigger sweep
 	store.sweep()
@@ -363,7 +364,7 @@ func TestNonceStore_ConcurrentAccess(t *testing.T) {
 
 func TestNonceStore_ExpirationPrecision(t *testing.T) {
 	ttl := 100 * time.Millisecond
-	store := NewNonceStore(ttl)
+	store, clock := newTestNonceStore(ttl)
 
 	nonce := "test-nonce-expiration"
 	store.Add(nonce)
@@ -374,8 +375,11 @@ func TestNonceStore_ExpirationPrecision(t *testing.T) {
 	store.mu.Unlock()
 	assert.True(t, exists, "Nonce should exist immediately after Add")
 
-	// Wait just under TTL
-	time.Sleep(80 * time.Millisecond)
+	// Just under the TTL. This is the assertion that used to fail: an 80ms
+	// sleep only guarantees AT LEAST 80ms, so under load it overran the 100ms
+	// TTL and the nonce was legitimately expired when the test demanded it be
+	// valid. Advancing the clock makes "just under" mean exactly that.
+	clock.Advance(ttl - time.Millisecond)
 
 	// Should still be valid
 	assert.True(t, store.Exists(nonce), "Nonce should be valid before TTL")
@@ -383,8 +387,8 @@ func TestNonceStore_ExpirationPrecision(t *testing.T) {
 	// Add again for next test
 	store.Add(nonce)
 
-	// Wait past TTL
-	time.Sleep(120 * time.Millisecond)
+	// Past the TTL
+	clock.Advance(ttl + time.Millisecond)
 
 	// Should be expired now
 	assert.False(t, store.Exists(nonce), "Nonce should be expired after TTL")
@@ -392,7 +396,7 @@ func TestNonceStore_ExpirationPrecision(t *testing.T) {
 
 func TestNonceStore_SweepTiming(t *testing.T) {
 	ttl := 200 * time.Millisecond
-	store := NewNonceStore(ttl)
+	store, clock := newTestNonceStore(ttl)
 
 	// Add first batch
 	batch1 := []string{"old1", "old2", "old3"}
@@ -400,8 +404,8 @@ func TestNonceStore_SweepTiming(t *testing.T) {
 		store.Add(n)
 	}
 
-	// Wait 150ms
-	time.Sleep(150 * time.Millisecond)
+	// 150ms later
+	clock.Advance(150 * time.Millisecond)
 
 	// Add second batch
 	batch2 := []string{"new1", "new2", "new3"}
@@ -414,8 +418,8 @@ func TestNonceStore_SweepTiming(t *testing.T) {
 	assert.Equal(t, 6, len(store.nonces))
 	store.mu.Unlock()
 
-	// Wait 100ms more (batch1 now 250ms old, batch2 is 100ms old)
-	time.Sleep(100 * time.Millisecond)
+	// 100ms more: batch1 is now 250ms old (expired), batch2 100ms old (not).
+	clock.Advance(100 * time.Millisecond)
 
 	// Sweep should remove batch1
 	store.sweep()
@@ -590,7 +594,7 @@ func TestNonceStore_ConcurrentSweepAndAdd(t *testing.T) {
 
 func TestNonceStore_ExpiredNonceNotExists(t *testing.T) {
 	ttl := 50 * time.Millisecond
-	store := NewNonceStore(ttl)
+	store, clock := newTestNonceStore(ttl)
 
 	nonce, _ := GenerateNonce(32)
 	store.Add(nonce)
@@ -601,8 +605,8 @@ func TestNonceStore_ExpiredNonceNotExists(t *testing.T) {
 	// Re-add it (since it was consumed)
 	store.Add(nonce)
 
-	// Wait for expiration
-	time.Sleep(100 * time.Millisecond)
+	// Past the TTL
+	clock.Advance(ttl + time.Millisecond)
 
 	// Now it should not exist
 	require.False(t, store.Exists(nonce))

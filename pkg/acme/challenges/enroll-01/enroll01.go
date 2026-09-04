@@ -219,17 +219,29 @@ func Verify(
 		return err
 	}
 
-	resp, err = client.Post(secretEndpoint, "application/json", bytes.NewBuffer(jsonData))
+	// The activation response gets its OWN variable rather than reusing resp.
+	//
+	// Reusing it was a latent panic: the GET above registered
+	// `defer func() { _ = resp.Body.Close() }()`, which closes over the
+	// VARIABLE. A failed Post assigns nil to that same variable and returns,
+	// and the deferred close then dereferenced the nil response instead of the
+	// GET's — so every transport failure on this request crashed the goroutine
+	// rather than returning the error four lines above. Verify runs against a
+	// host named by the challenge, so the peer chooses when to drop the
+	// connection. Found by making TestVerify_PostError deterministic
+	// (go-xkms#243): the timing race meant the test usually failed the GET and
+	// returned early, never reaching this line.
+	activationResp, err := client.Post(secretEndpoint, "application/json", bytes.NewBuffer(jsonData))
 	if err != nil {
 		return err
 	}
-	defer func() { _ = resp.Body.Close() }()
+	defer func() { _ = activationResp.Body.Close() }()
 
-	if resp.StatusCode != http.StatusOK {
-		return caerrors.ConnectionFailureError("enroll-01: activation failed with status code: %d", resp.StatusCode)
+	if activationResp.StatusCode != http.StatusOK {
+		return caerrors.ConnectionFailureError("enroll-01: activation failed with status code: %d", activationResp.StatusCode)
 	}
 
-	body, err = io.ReadAll(resp.Body)
+	body, err = io.ReadAll(activationResp.Body)
 	if err != nil {
 		return err
 	}

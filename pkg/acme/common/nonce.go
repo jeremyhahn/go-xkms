@@ -20,6 +20,31 @@ import (
 	"time"
 )
 
+// Clock reports the current time. It is the seam that lets a test advance time
+// instead of sleeping for it.
+//
+// Every expiry decision in this file goes through one, because the alternative
+// -- sleeping and hoping -- is not a test of the TTL, it is a test of the
+// scheduler. time.Sleep guarantees a MINIMUM duration and no maximum, so a test
+// that sleeps 80ms expecting to stay inside a 100ms TTL asserts that the
+// machine was not busy. Under -race on a shared runner it regularly is, and
+// go-xkms#243 is the bill for that: these tests failed on three PRs that did
+// not touch this package.
+type Clock func() time.Time
+
+// NonceStoreOption configures a NonceStore.
+type NonceStoreOption func(*NonceStore)
+
+// WithClock replaces the store's time source. Production never calls it; it
+// exists so tests can make expiry deterministic rather than probabilistic.
+func WithClock(now Clock) NonceStoreOption {
+	return func(s *NonceStore) {
+		if now != nil {
+			s.now = now
+		}
+	}
+}
+
 // NonceStore is a thread-safe store for nonces.
 // It provides replay protection for ACME protocol by ensuring each nonce
 // can only be used once and expires after a configurable TTL.
@@ -27,14 +52,23 @@ type NonceStore struct {
 	nonces map[string]time.Time
 	mu     sync.Mutex
 	ttl    time.Duration
+	// now is the store's time source. Never nil: the constructor defaults it
+	// to time.Now, so a NonceStore built by any path has a working clock.
+	now Clock
 }
 
 // NewNonceStore initializes a new NonceStore with a specified TTL (Time-To-Live).
 // It starts a background goroutine to periodically clean up expired nonces.
-func NewNonceStore(ttl time.Duration) *NonceStore {
+//
+// The options are a test seam and are empty in production; see WithClock.
+func NewNonceStore(ttl time.Duration, opts ...NonceStoreOption) *NonceStore {
 	store := &NonceStore{
 		nonces: make(map[string]time.Time),
 		ttl:    ttl,
+		now:    time.Now,
+	}
+	for _, opt := range opts {
+		opt(store)
 	}
 
 	// Start a background goroutine to clean up expired nonces periodically
@@ -54,7 +88,7 @@ func NewNonceStore(ttl time.Duration) *NonceStore {
 func (s *NonceStore) Add(nonce string) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	s.nonces[nonce] = time.Now()
+	s.nonces[nonce] = s.now()
 }
 
 // Exists checks if a nonce exists and is still valid (not expired).
@@ -68,7 +102,7 @@ func (s *NonceStore) Exists(nonce string) bool {
 	if !exists {
 		return false
 	}
-	if time.Since(ts) > s.ttl {
+	if s.now().Sub(ts) > s.ttl {
 		delete(s.nonces, nonce)
 		return false
 	}
@@ -81,7 +115,7 @@ func (s *NonceStore) Exists(nonce string) bool {
 func (s *NonceStore) sweep() {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	now := time.Now()
+	now := s.now()
 	for nonce, ts := range s.nonces {
 		if now.Sub(ts) > s.ttl {
 			delete(s.nonces, nonce)

@@ -40,6 +40,25 @@ type NonceStoreInterface interface {
 type PersistentNonceStore struct {
 	dao qrdbsdk.GenericDAO[*entities.ACMENonce]
 	ttl time.Duration
+	// now is this store's time source. It is the same seam Clock documents on
+	// the in-memory store, for the same reason: the expiry tests here waited
+	// out five real seconds to observe a TTL, which is slow and -- in the
+	// "still valid" direction -- only true if the machine did not stall
+	// (go-xkms#243). A nil value means time.Now, so a PersistentNonceStore
+	// built as a bare struct literal still works.
+	now Clock
+}
+
+// clock returns the store's time source, defaulting to time.Now.
+//
+// PersistentNonceStore is constructed as a bare literal in several places,
+// including this package's own tests, so the zero value has to be usable
+// rather than merely documented.
+func (s *PersistentNonceStore) clock() time.Time {
+	if s.now == nil {
+		return time.Now()
+	}
+	return s.now()
 }
 
 // NewPersistentNonceStore creates a new PersistentNonceStore backed by a NonceDAO.
@@ -66,7 +85,7 @@ func NewPersistentNonceStore(dao qrdbsdk.GenericDAO[*entities.ACMENonce], ttl ti
 // Add inserts a new nonce into the persistent store with expiration time.
 func (s *PersistentNonceStore) Add(nonce string) {
 	id := s.hashNonce(nonce)
-	expiresAt := time.Now().Add(s.ttl).Unix()
+	expiresAt := s.clock().Add(s.ttl).Unix()
 
 	acmeNonce := &entities.ACMENonce{
 		ID:        id,
@@ -98,7 +117,7 @@ func (s *PersistentNonceStore) Exists(nonce string) bool {
 	}
 
 	// Check if expired
-	if time.Unix(acmeNonce.ExpiresAt, 0).Before(time.Now()) {
+	if time.Unix(acmeNonce.ExpiresAt, 0).Before(s.clock()) {
 		// Delete expired nonce
 		_ = s.dao.Delete(ctx, acmeNonce)
 		return false
@@ -138,7 +157,7 @@ func (s *PersistentNonceStore) sweep() {
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 
-	now := time.Now()
+	now := s.clock()
 	_ = s.dao.ForEachPage(ctx, qrdbsdk.PageQuery{PageSize: 1000}, func(page qrdbsdk.PageResult[*entities.ACMENonce]) error {
 		for _, nonce := range page.Entities {
 			if time.Unix(nonce.ExpiresAt, 0).Before(now) {

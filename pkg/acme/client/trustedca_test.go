@@ -42,6 +42,47 @@ import (
 )
 
 // getAvailablePort finds an available TCP port by letting the OS assign one.
+
+// waitFor polls cond until it reports true, failing the test if it never does.
+//
+// It replaces the "sleep N milliseconds and hope the server came up" pattern
+// that made these tests fail on three PRs which do not touch this package
+// (go-xkms#243). A fixed sleep asserts that the machine was fast enough; polling
+// asserts the EVENT, and the deadline is deliberately generous so that it is a
+// hang detector rather than a second coin flip. Under -race on a loaded runner
+// the difference is the whole defect.
+func waitFor(t *testing.T, what string, cond func() bool) {
+	t.Helper()
+
+	const (
+		deadline = 30 * time.Second
+		interval = 2 * time.Millisecond
+	)
+
+	start := time.Now()
+	for time.Since(start) < deadline {
+		if cond() {
+			return
+		}
+		time.Sleep(interval)
+	}
+	t.Fatalf("timed out after %s waiting for %s", deadline, what)
+}
+
+// waitForListener blocks until addr accepts a TCP connection.
+func waitForListener(t *testing.T, addr string) {
+	t.Helper()
+
+	waitFor(t, "a listener on "+addr, func() bool {
+		conn, err := net.DialTimeout("tcp", addr, time.Second)
+		if err != nil {
+			return false
+		}
+		_ = conn.Close()
+		return true
+	})
+}
+
 func getAvailablePort(t *testing.T) int {
 	t.Helper()
 	listener, err := net.Listen("tcp", "127.0.0.1:0")
@@ -994,7 +1035,7 @@ func TestTrustedCA_Serve_HealthEndpoints(t *testing.T) {
 		done <- tca.Serve(ctx)
 	}()
 
-	time.Sleep(150 * time.Millisecond)
+	waitForListener(t, fmt.Sprintf("127.0.0.1:%d", acmePort))
 
 	// Build cert pool from the mock CA certificate for proper TLS verification
 	caConfig, err := tca.CA().TLSConfig(context.Background(), nil)
@@ -1073,7 +1114,11 @@ func TestTrustedCA_Shutdown_WithRunningServers(t *testing.T) {
 		done <- tca.Serve(ctx)
 	}()
 
-	time.Sleep(150 * time.Millisecond)
+	waitFor(t, "Serve to install both servers", func() bool {
+		tca.mu.RLock()
+		defer tca.mu.RUnlock()
+		return tca.acmeServer != nil && tca.adminServer != nil
+	})
 
 	tca.mu.RLock()
 	acmeServerSet := tca.acmeServer != nil

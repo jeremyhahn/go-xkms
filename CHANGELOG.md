@@ -166,6 +166,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `PolicyHMACTag`. The version is added while that is still true.
   `PolicyFieldsSchemaVersion` is bumped whenever the field set changes shape —
   #216's E3 and F will both change it.
+- **`enroll-01` no longer panics when the activation POST fails** (#243).
+  `Verify` reused one `resp` variable for both HTTP requests. The GET registered
+  `defer func() { _ = resp.Body.Close() }()`, which closes over the **variable**;
+  a failed `client.Post` then assigned `nil` to that same variable and returned,
+  so the deferred close dereferenced the nil POST result instead of the GET's.
+  Every transport failure on the activation request crashed the goroutine rather
+  than returning the error four lines above it.
+
+  `Verify` connects to a host named by the challenge, so the peer chooses when
+  to drop the connection. The activation response now has its own variable.
+
+  It was found by making `TestVerify_PostError` deterministic: the test raced a
+  50ms sleeper against `Verify`'s two requests, so it usually failed the GET and
+  returned early, never reaching the line that panics. The flaky test was hiding
+  the defect it was named for.
 - **Security**: bumped `google.golang.org/grpc` to v1.83.1 across all four
   modules, closing CVE-2026-84304 (HIGH). Trivy flagged it in the published
   `xkms-cli` image, failing the Docker gate on `main`. (#258)
@@ -390,6 +405,36 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   decisive check, they also pass with **every `ClearZoneCache()` call removed**,
   which is what proves the cache bypass is structural rather than a convention
   the next test author has to remember.
+- **The timing-sensitive `pkg/acme` tests are deterministic** (#243). They
+  asserted on wall-clock behaviour the runtime does not guarantee — `time.Sleep`
+  promises a minimum and never a maximum — so under `-race` on a shared runner
+  they measured the machine. They reddened three PRs that do not touch
+  `pkg/acme`, which trains people to re-run red until it goes green.
+
+  - **`NonceStore` and `PersistentNonceStore` take a clock** (`WithClock`, and a
+    `now` field respectively; both default to `time.Now`, so production is
+    unchanged and a bare struct literal still works). Eight expiry tests now
+    advance a fake clock instead of sleeping. `TestNonceStore_ExpirationPrecision`
+    is the clearest case: it slept 80ms and asserted a 100ms TTL had not
+    elapsed, which is an assertion that the machine stayed idle.
+  - **`TestVerify_PostError`** serves the GET and then hijacks and closes the
+    POST's connection, so the transport error it is about happens on the request
+    it is about, every time — instead of racing a sleeping goroutine.
+  - **`waitFor` / `waitForListener`** replace "sleep and hope the server came up"
+    in `pkg/acme/client`. The deadline is deliberately generous (30s), which
+    makes it a hang detector rather than a second coin flip.
+
+  `pkg/acme/common` drops from 6.9s to 1.6s, because five seconds of it were
+  literal sleeping. Verified by running the affected tests 30x (nonce) and 15x
+  (enroll-01, client) under `-race` with all 24 cores saturated.
+
+  Not addressed here, and a different defect: several tests resolve **real
+  public domains** through the global resolver — `TestCheckDNSFromAuthoritative_Success`
+  and its two neighbours in `pkg/acme/client`, plus the `route53` zone-discovery
+  tests. That makes a gate depend on the public internet. Fixing it needs a
+  resolver seam through `getAuthoritativeNameservers`, `CheckDNSFromAuthoritative`,
+  `CheckDNSFromPublic` and `providers.CheckDNSPropagation` — a cross-package
+  change to exported API, so it is reported rather than guessed at.
 
 - **MCP key import now receives the key material** (#159).
   `pkg/api/transport/mcp.Transport.ImportKey` marshalled a

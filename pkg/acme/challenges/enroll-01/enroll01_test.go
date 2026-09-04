@@ -460,14 +460,32 @@ func TestVerify_InvalidDomain(t *testing.T) {
 func TestVerify_PostError(t *testing.T) {
 	packedCSR := []byte("packed-csr-data")
 
-	// Create server that closes immediately after first request
+	// Serve the GET, then tear down the connection for the POST that follows.
+	//
+	// This used to race a goroutine that slept 50ms and closed the server
+	// against Verify's two requests, which made the outcome a property of how
+	// busy the machine was rather than of the code (go-xkms#243). Hijacking and
+	// closing the POST's connection produces the transport error the test is
+	// about, on the request the test is about, every time.
 	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if strings.HasPrefix(r.URL.Path, challengePath) {
+		if r.Method == http.MethodGet && strings.HasPrefix(r.URL.Path, challengePath) {
 			encodedCSR := base64.RawURLEncoding.EncodeToString(packedCSR)
 			w.WriteHeader(http.StatusOK)
 			_, _ = fmt.Fprint(w, encodedCSR)
+			return
 		}
-		// Don't respond to second request - server will be closed
+
+		hijacker, ok := w.(http.Hijacker)
+		if !ok {
+			t.Errorf("test server does not support hijacking; cannot fail the POST deterministically")
+			return
+		}
+		conn, _, err := hijacker.Hijack()
+		if err != nil {
+			t.Errorf("hijack: %v", err)
+			return
+		}
+		_ = conn.Close()
 	}))
 
 	host, port, _ := net.SplitHostPort(strings.TrimPrefix(ts.URL, "http://"))
@@ -478,12 +496,6 @@ func TestVerify_PostError(t *testing.T) {
 		plainSecret:     []byte("secret"),
 		defaultSigAlg:   x509.SHA256WithRSA,
 	}
-
-	// Close the server before the POST request
-	go func() {
-		time.Sleep(50 * time.Millisecond)
-		ts.Close()
-	}()
 
 	err := Verify(net.DefaultResolver, ca, host, port, "token", "keyauth")
 	if err == nil {

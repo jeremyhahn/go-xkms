@@ -180,10 +180,13 @@ func TestPersistentNonceStore_AddAndExists(t *testing.T) {
 
 func TestPersistentNonceStore_Expiration(t *testing.T) {
 	dao := newMockNonceDAO()
-	// Use 2-second TTL since Unix timestamps have second precision
+	clock := newFakeClock()
+	// A 2-second TTL because the persisted expiry is a Unix timestamp and so
+	// has second precision; the clock is advanced rather than waited out.
 	store := &PersistentNonceStore{
 		dao: dao,
 		ttl: 2 * time.Second,
+		now: clock.Now,
 	}
 
 	nonce := "expiring-nonce"
@@ -195,7 +198,7 @@ func TestPersistentNonceStore_Expiration(t *testing.T) {
 	// Add new nonce and wait for expiration
 	nonce2 := "expiring-nonce-2"
 	store.Add(nonce2)
-	time.Sleep(3 * time.Second)
+	clock.Advance(3 * time.Second)
 
 	// Should be expired now
 	assert.False(t, store.Exists(nonce2))
@@ -248,10 +251,12 @@ func TestPersistentNonceStore_ConcurrentAccess(t *testing.T) {
 
 func TestPersistentNonceStore_Sweep(t *testing.T) {
 	dao := newMockNonceDAO()
-	// Use 1-second TTL since Unix timestamps have second precision
+	clock := newFakeClock()
+	// A 1-second TTL for the Unix-timestamp precision reason above.
 	store := &PersistentNonceStore{
 		dao: dao,
 		ttl: 1 * time.Second,
+		now: clock.Now,
 	}
 
 	// Add multiple nonces
@@ -264,8 +269,8 @@ func TestPersistentNonceStore_Sweep(t *testing.T) {
 	nonces, _ := dao.List(context.Background(), "")
 	assert.Equal(t, 5, len(nonces))
 
-	// Wait for expiration
-	time.Sleep(2 * time.Second)
+	// Past the TTL for every nonce added above.
+	clock.Advance(2 * time.Second)
 
 	// Run sweep
 	store.sweep()
