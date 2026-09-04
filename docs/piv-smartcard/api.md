@@ -1,6 +1,6 @@
 # PIV Smartcard — API
 
-> **Status: NORMATIVE** · Feature: `piv-smartcard` · Repo: `go-xkms` · Last verified: 2026-08-19
+> **Status: NORMATIVE** · Feature: `piv-smartcard` · Repo: `go-xkms` · Last verified: 2026-09-03
 
 Transport shapes: [`../key-management/api.md`](../key-management/api.md)
 §"How the six transports are shaped".
@@ -20,6 +20,7 @@ authenticated identity, no specific RBAC permission.
 | Import certificate | `POST /api/v1/piv/slots/{slot}/import` | `ImportPIVCertificate` | same as REST | `xkms.importPIVCertificate` | `ImportPIVCertificate` | session |
 | Export certificate | `GET /api/v1/piv/slots/{slot}/export` | `ExportPIVCertificate` | same as REST | `xkms.exportPIVCertificate` | `ExportPIVCertificate` | session |
 | Generate CSR | `POST /api/v1/piv/slots/{slot}/csr` | `GeneratePIVCSR` | same as REST | `xkms.generatePIVCSR` | `GeneratePIVCSR` | session |
+| Import **private key** | — | — | — | — | — (SDK only: `xkms.ImportPIVKey`) | session |
 | PIV login | `POST /api/v1/auth/login/piv` | **MISSING — docs/13** | same as REST | **MISSING — docs/13** | — | **public** |
 
 **PIV is the best-covered hardware feature on MCP** — all eight slot operations
@@ -55,8 +56,31 @@ Note the interface shape: `ImportPIVCertificate` takes a
 `*GetPIVCertificateRequest` — import/store and export/get share request types
 because they differ in storage semantics, not in payload.
 
+`ImportPIVKeyRequest`/`Response` (`types_piv_ops.go`) carry the private-key
+import verb. It is **SDK-only and deliberately not on any network transport**:
+its request field holds private key material, and the only transport-shaped
+thing that could carry it is a wrap ceremony the caller would have to run
+anyway. `ImportPIVKey` runs that ceremony internally — `GetImportParameters`,
+`WrapKey`, `ImportKey` against the target backend — so key material is wrapped
+to a backend-issued key before it crosses into the backend, rather than being
+handed over in the clear.
+
+Do not confuse it with `ImportPIVCertificate`, which imports a **certificate**
+and shares `StorePIVCertificateRequest`. Passing a private key to that verb was
+the defect that motivated adding this one: the key landed in a field named
+`Certificate`.
+
 Certificates are carried as PEM or DER per the request's format field.
-**No response in this feature ever carries a private key.**
+**No response in this feature ever carries a private key** — `ImportPIVKeyResponse`
+returns only the public half, so a caller can confirm what the slot holds.
+
+**`AttestPIVSlot` refuses a slot whose key arrived by import**, with
+`ErrPIVKeyImportedNotAttestable`, and returns no material. Nothing on the wire
+could carry the residency-not-exclusivity distinction, so the attestation is
+withheld rather than issued and misread. This matches YubiKey PIV, where
+attestation is likewise available only for slot-generated keys. A key whose
+origin was never recorded reads as unknown and still attests — see
+[`architecture.md`](architecture.md).
 
 `ListPIVSlots` returns `SlotOccupancyInfo` per slot — metadata plus whether the
 slot is occupied. That is the only reliable occupancy source; the three storage

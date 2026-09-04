@@ -1,6 +1,6 @@
 # PIV Smartcard — Engineering Contract
 
-> **Status: NORMATIVE** · Feature: `piv-smartcard` · Repo: `go-xkms` · Last verified: 2026-08-19
+> **Status: NORMATIVE** · Feature: `piv-smartcard` · Repo: `go-xkms` · Last verified: 2026-09-03
 
 ## Exported surface — `pkg/pivcert`
 
@@ -90,6 +90,75 @@ storage failure diagnosable — "put failed" without the slot is useless.
 - **Export returns certificates, never private keys.**
 - **The `f9` attestation certificate is evidence, not proof.** Run
   `VerifyChain` before believing it.
+- **An attestation over an imported key asserts residency, not exclusivity.**
+  `ImportPIVKey` admits a second class of key into a slot: one that may exist
+  elsewhere. A slot-generated key cannot have existed before it existed in the
+  slot; an imported one can, and no property of the slot afterwards separates
+  the two. `VerifyChain` does not recover the difference — it anchors the
+  attestation to a manufacturer, which establishes that the card is genuine,
+  not that the key was born on it. Code that treats "attested" as "unique" is
+  a defect. See [`architecture.md`](architecture.md).
+- **An imported key is not attestable.** `AttestPIVSlot` refuses a slot whose
+  key origin is `types.KeyOriginImported`, with
+  `ErrPIVKeyImportedNotAttestable`, before producing any material. The slot
+  usually *has* a certificate, so attestation is mechanically possible — that
+  is exactly why the refusal must be explicit. A test that only checks the
+  happy path passes against a build that attests imported keys happily.
+- **Provenance is recorded by the system, never accepted from a caller.**
+  `types.KeyOrigin` is stamped by the code path that ran; `stampKeyOrigin`
+  strips and recomputes whatever a caller supplied, exactly as PKCS#11 strips
+  token-computed attributes from a template. A provenance field a caller can
+  set is worse than no field, because a verifier reads it as authoritative.
+- **Attestation fails closed on the origin.** `refuseUnattestableKey` refuses
+  anything that is not `types.KeyOriginGenerated`, not merely `imported`. A
+  check that refuses only the known-bad values starts attesting silently the
+  day a write path forgets to record an origin.
+- **The legacy inference lives at the metadata boundary, once.**
+  `pkcs8.resolveKeyOrigin` resolves a record with no origin field — schema < 2,
+  or no record at all — to `generated`, because such a key predates every PIV
+  import path. A schema-2 record with **no** origin is a defect rather than a
+  legacy key and stays unknown, so it is refused. Do not move this inference
+  into the attestation check; that is what makes it a fallback instead of a
+  bounded resolution.
+- **"Not held here" is not "unknown origin".** `PIVKeyOrigin` returns a found
+  flag. A generator holding no key for the slot reports not-found, and
+  attestation of the stored certificate proceeds — refusing there would make
+  every software-PIV slot unattestable after a restart, and there is no
+  provenance to judge.
+- **Provenance must survive persistence, and the import verifies that it did.**
+  `keyMetadata` schema 2 carries it (`pkg/keyprovider/pkcs8`), and the import
+  path writes that record too — it previously wrote none, so tenant,
+  exportability, digest and origin were all lost for imported keys (#162).
+  `ImportPIVKey` then **reads the origin back** and rolls the import back with
+  `ErrPIVImportProvenanceNotRecorded` if the backend did not record it. A
+  backend that does not persist the origin therefore cannot hold an imported
+  key at all — the guarantee is structural rather than a warning in this file.
+
+  **What that guarantee stands on, for whoever adds the next import path.**
+  "No recorded origin implies not imported" holds because `ImportPIVKey` is the
+  only way a key is placed into a slot from outside, and `PIVKeyImporter` the
+  only capability that does it — so every import passes through the readback
+  above. An import path added elsewhere that writes key material without
+  reading the provenance back would break that implication **silently**: keys
+  it placed would report no origin, and attestation would treat them as
+  generated. If you add one, it must perform the same readback, or the
+  attestation rule has to stop trusting an unrecorded origin — and that second
+  option costs every hardware-backed slot its attestation, which is why the
+  readback is the cheaper half of the bargain.
+- **An unrecorded origin attests; an unrecognised one does not.** Only the
+  pkcs8 provider persists an origin today, so every hardware backend reports
+  none. Refusing on that would make every hardware-backed slot unattestable,
+  including keys generated in the slot — the case attestation exists for. It is
+  safe because the import gate above means an unrecorded origin provably is not
+  an import. A non-empty origin this build does not recognise is still refused.
+- **Import refusal is reported, never silent.** A backend that cannot accept an
+  imported key yields `ErrPIVImportNotSupported`. A real applet may refuse
+  particular slots or algorithms, and a caller has to be able to tell that from
+  success.
+- **A declared algorithm is checked, never authoritative.** `ImportPIVKeyRequest.Algorithm`
+  is validated against the supplied key (`ErrPIVAlgorithmMismatch`); the key
+  itself decides. A caller that believes it is importing one algorithm must not
+  silently end up with another.
 - **TPM2 NV indices are derived, not assigned.** `GetNVIndex(slot, baseIndex)`
   is deterministic from the configured base; two deployments sharing a TPM must
   not share a base.

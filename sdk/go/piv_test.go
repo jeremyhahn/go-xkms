@@ -236,3 +236,87 @@ func TestSDK_ResetPIV_Unconfirmed(t *testing.T) {
 	require.NoError(t, listErr)
 	assert.Len(t, infos, 1, "store must be untouched")
 }
+
+// sdkPIVImportGen is a PIVKeyGenerator that also accepts imported keys,
+// standing in for a backend whose applet permits import.
+type sdkPIVImportGen struct {
+	sdkPIVKeyGen
+	imported crypto.Signer
+}
+
+func (s *sdkPIVImportGen) ImportPIVKey(_ context.Context, _ pivcert.PIVSlot, _ string, _ string, key crypto.PrivateKey) (crypto.Signer, error) {
+	signer, ok := key.(crypto.Signer)
+	if !ok {
+		return nil, ErrPIVKeyMaterialInvalid
+	}
+	s.imported = signer
+	return signer, nil
+}
+
+// TestSDK_ImportPIVKey verifies the SDK re-export imports a key and hands back
+// that key's own public half, so a caller can confirm what the slot holds.
+func TestSDK_ImportPIVKey(t *testing.T) {
+	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	require.NoError(t, err)
+
+	pivbackend.ResetPIV()
+	t.Cleanup(pivbackend.ResetPIV)
+	require.NoError(t, pivbackend.InitializePIV(&pivbackend.PIVManagerConfig{
+		Stores: map[string]pivcert.PIVCertificateStorage{"software": newSDKPIVStore()},
+	}))
+	gen := &sdkPIVImportGen{}
+	require.NoError(t, pivbackend.SetPIVBackendResolver(
+		func(_ string) (pivbackend.PIVKeyGenerator, error) { return gen, nil }))
+
+	der, err := x509.MarshalPKCS8PrivateKey(key)
+	require.NoError(t, err)
+
+	resp, err := ImportPIVKey(context.Background(), &ImportPIVKeyRequest{
+		Backend:    "software",
+		Slot:       "9a",
+		PrivateKey: pem.EncodeToMemory(&pem.Block{Type: "PRIVATE KEY", Bytes: der}),
+	})
+	require.NoError(t, err)
+	require.NotNil(t, resp)
+	assert.Equal(t, "9a", resp.Slot)
+	assert.Equal(t, "ecdsap256", resp.Algorithm)
+
+	block, _ := pem.Decode(resp.PublicKey)
+	require.NotNil(t, block)
+	pub, err := x509.ParsePKIXPublicKey(block.Bytes)
+	require.NoError(t, err)
+	assert.True(t, key.PublicKey.Equal(pub))
+}
+
+// TestSDK_ImportPIVKey_Unsupported verifies the SDK surfaces the refusal when
+// the backend cannot accept an imported key, rather than reporting success.
+func TestSDK_ImportPIVKey_Unsupported(t *testing.T) {
+	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	require.NoError(t, err)
+	_ = setupSDKPIV(t, key)
+
+	der, err := x509.MarshalPKCS8PrivateKey(key)
+	require.NoError(t, err)
+
+	resp, err := ImportPIVKey(context.Background(), &ImportPIVKeyRequest{
+		Backend:    "software",
+		Slot:       "9a",
+		PrivateKey: pem.EncodeToMemory(&pem.Block{Type: "PRIVATE KEY", Bytes: der}),
+	})
+	require.Error(t, err)
+	assert.Nil(t, resp)
+	assert.ErrorIs(t, err, ErrPIVImportNotSupported)
+}
+
+// TestSDK_ImportPIVKey_NoMaterial covers the SDK's input-validation re-export.
+func TestSDK_ImportPIVKey_NoMaterial(t *testing.T) {
+	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	require.NoError(t, err)
+	_ = setupSDKPIV(t, key)
+
+	_, err = ImportPIVKey(context.Background(), &ImportPIVKeyRequest{
+		Backend: "software",
+		Slot:    "9a",
+	})
+	assert.ErrorIs(t, err, ErrPIVKeyMaterialRequired)
+}

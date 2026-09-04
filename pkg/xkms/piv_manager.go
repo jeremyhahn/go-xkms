@@ -94,6 +94,55 @@ type PIVParentProvider interface {
 	PIVParentAttributes() (*types.KeyAttributes, error)
 }
 
+// PIVKeyOriginReporter is an optional capability a PIVKeyGenerator may
+// implement to report how a slot's key arrived: generated in place, or
+// imported.
+//
+// AttestPIVSlot needs the answer because an attestation over an imported key
+// asserts residency but not exclusivity, and it must refuse rather than issue
+// a statement a verifier would read as stronger than it is. A generator that
+// cannot answer reports types.KeyOriginUnknown, which is the absence of a
+// claim; see AttestPIVSlot for what is done with that.
+type PIVKeyOriginReporter interface {
+	// PIVKeyOrigin returns the origin of the key in the given slot.
+	//
+	// The bool reports whether a key record was found at all, and it is not
+	// the same question as the origin. A generator that holds no key for the
+	// slot returns false: the slot's certificate may well predate this
+	// process, and there is no key here whose provenance could be judged. A
+	// generator that DOES hold the key returns true, and the origin it returns
+	// is then authoritative — including KeyOriginUnknown, which at that point
+	// means a record was written without an origin and is a defect rather than
+	// a legacy key.
+	//
+	// Keeping the two apart is what lets a caller fail closed on an
+	// unrecognised origin without also refusing every slot whose key simply
+	// is not held here.
+	PIVKeyOrigin(slot pivcert.PIVSlot, cn string) (origin types.KeyOrigin, found bool, err error)
+}
+
+// PIVKeyImporter is an optional capability a PIVKeyGenerator may implement to
+// accept an externally held private key into a slot.
+//
+// It is a separate interface rather than a method on PIVKeyGenerator because
+// not every generator can honour it: a hardware PIV applet may refuse import
+// for some slots or algorithms, and that refusal must be reportable rather
+// than silent. A generator that does not implement this interface causes
+// ImportPIVKey to return ErrPIVImportNotSupported.
+//
+// Importing establishes a different trust class from generating. A
+// slot-generated key cannot have existed anywhere before it existed in the
+// slot; an imported one can, and the slot cannot afterwards tell a key that
+// was only ever there from a copy. Attestation over an imported key therefore
+// asserts residency but not exclusivity.
+type PIVKeyImporter interface {
+	// ImportPIVKey installs an externally held private key in the given slot
+	// and returns a crypto.Signer backed by it. The algorithm is the PIV
+	// algorithm name the key was resolved to, and cn is the slot's common
+	// name, matching the convention GeneratePIVKey uses.
+	ImportPIVKey(ctx context.Context, slot pivcert.PIVSlot, algorithm string, cn string, key crypto.PrivateKey) (crypto.Signer, error)
+}
+
 // pivSlotCNMap provides O(1) lookup from PIV slot to common name identifier.
 var pivSlotCNMap = map[string]string{
 	"9a": "piv-9a",

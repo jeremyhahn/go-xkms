@@ -14,6 +14,7 @@
 package xkms
 
 import (
+	"context"
 	"crypto"
 	"crypto/ecdsa"
 	"crypto/ed25519"
@@ -23,6 +24,7 @@ import (
 	"sync"
 
 	"github.com/jeremyhahn/go-xkms/pkg/pivcert"
+	"github.com/jeremyhahn/go-xkms/pkg/types"
 )
 
 // softwareKeyGenFunc generates a crypto.Signer for a given algorithm.
@@ -55,6 +57,13 @@ var softwareKeyGenDispatch = map[string]softwareKeyGenFunc{
 // It maintains an in-memory map of generated signers keyed by CN for later CSR generation.
 type softwarePIVKeyGenerator struct {
 	signers map[string]crypto.Signer
+	// origins records how each signer arrived, keyed by CN alongside signers.
+	// This generator holds no types.KeyAttributes to carry the fact, and it is
+	// the fallback the PIV manager uses when no backend resolver is installed,
+	// so without this the default configuration could not tell a generated key
+	// from an imported one. It is in-memory like the signers themselves: both
+	// are lost on restart together, so they cannot disagree.
+	origins map[string]types.KeyOrigin
 	mu      sync.RWMutex
 }
 
@@ -62,6 +71,7 @@ type softwarePIVKeyGenerator struct {
 func NewSoftwarePIVKeyGenerator() *softwarePIVKeyGenerator {
 	return &softwarePIVKeyGenerator{
 		signers: make(map[string]crypto.Signer),
+		origins: make(map[string]types.KeyOrigin),
 	}
 }
 
@@ -82,9 +92,11 @@ func (g *softwarePIVKeyGenerator) GeneratePIVKey(slot pivcert.PIVSlot, algorithm
 		return nil, err
 	}
 
-	// Store the signer for later CSR generation
+	// Store the signer for later CSR generation. The origin is a consequence
+	// of this code path being the generate path, not an input.
 	g.mu.Lock()
 	g.signers[cn] = signer
+	g.origins[cn] = types.KeyOriginGenerated
 	g.mu.Unlock()
 
 	return signer, nil
@@ -104,3 +116,51 @@ func (g *softwarePIVKeyGenerator) GetPIVSigner(_ pivcert.PIVSlot, cn string) (cr
 
 // Verify interface compliance at compile time.
 var _ PIVKeyGenerator = (*softwarePIVKeyGenerator)(nil)
+
+// ImportPIVKey installs an externally held private key for the given slot.
+//
+// The software generator holds signers in memory keyed by CN, so importing is
+// the same act as generating with the key supplied rather than created. The
+// algorithm has already been resolved from the key itself by the caller; it is
+// checked here against the generator's own vocabulary so that a key this
+// generator could never have produced is refused rather than stored.
+func (g *softwarePIVKeyGenerator) ImportPIVKey(_ context.Context, _ pivcert.PIVSlot, algorithm string, cn string, key crypto.PrivateKey) (crypto.Signer, error) {
+	if _, ok := softwareKeyGenDispatch[algorithm]; !ok {
+		return nil, ErrPIVInvalidAlgorithm
+	}
+
+	signer, ok := key.(crypto.Signer)
+	if !ok {
+		return nil, ErrPIVKeyMaterialInvalid
+	}
+
+	g.mu.Lock()
+	g.signers[cn] = signer
+	g.origins[cn] = types.KeyOriginImported
+	g.mu.Unlock()
+
+	return signer, nil
+}
+
+// PIVKeyOrigin reports how the slot's key arrived.
+//
+// This generator's keys live only in memory, so a CN it has never seen means
+// no key was created through it in this process — reported as not found rather
+// than as an unknown origin. Every key it does hold was placed by its own
+// generate or import path, so a found key always carries a definite origin.
+func (g *softwarePIVKeyGenerator) PIVKeyOrigin(_ pivcert.PIVSlot, cn string) (types.KeyOrigin, bool, error) {
+	g.mu.RLock()
+	defer g.mu.RUnlock()
+
+	origin, ok := g.origins[cn]
+	if !ok {
+		return types.KeyOriginUnknown, false, nil
+	}
+	return origin, true, nil
+}
+
+// Verify import capability compliance at compile time.
+var _ PIVKeyImporter = (*softwarePIVKeyGenerator)(nil)
+
+// Verify origin-reporting compliance at compile time.
+var _ PIVKeyOriginReporter = (*softwarePIVKeyGenerator)(nil)

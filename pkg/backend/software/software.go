@@ -970,6 +970,26 @@ func (b *SoftwareBackend) importAsymmetricKey(ctx context.Context, attrs *types.
 		return &errs.Wrapped{Msg: "failed to store asymmetric key", Err: err}
 	}
 
+	// Write the metadata record alongside it, the way generation does.
+	// Without this an imported key has no record at all, and ListKeys — which
+	// reads the record for the attributes the identifier cannot express —
+	// reports neither the tenant, the exportability, nor the origin of any key
+	// that arrived by import. The origin matters most: a consumer that refuses
+	// to attest an imported key reads it, and a missing record would answer
+	// "unknown" for a key that is definitely imported.
+	if err := pkcs8.WriteKeyMetadata(ctx, b.storage, keyID, attrs); err != nil {
+		// Roll the key blob back rather than leaving material whose
+		// provenance cannot be established.
+		if delErr := storage.DeleteKey(ctx, b.storage, keyID); delErr != nil {
+			return &errs.Affix{
+				Prefix: "failed to store key metadata: ",
+				Err:    err,
+				Suffix: fmt.Sprintf(" (rollback of key %s also failed: %v)", keyID, delErr),
+			}
+		}
+		return err
+	}
+
 	return nil
 }
 

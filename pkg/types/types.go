@@ -140,6 +140,44 @@ var Partitions = []Partition{
 // Store Type
 // =============================================================================
 
+// KeyOrigin records how a key arrived where it lives: generated in place, or
+// imported from outside. It is a sibling axis to StoreType (where the key
+// lives) and to any future attestation level; the combinations are
+// independent, and the one that matters most is a hardware-resident key that
+// was imported, which is trusted-looking on every other axis while being
+// exactly the case that lacks exclusivity.
+//
+// The distinction is the same one PKCS#11 draws with CKA_LOCAL, and it is
+// recorded the same way: by the code path that produced the key, never from
+// caller input.
+type KeyOrigin string
+
+const (
+	// KeyOriginUnknown is the zero value. It is what a key record written
+	// before this field existed reads back as. Such a record predates any
+	// import path, so the key cannot have been imported — but unknown is the
+	// absence of a claim, not a claim of generation.
+	KeyOriginUnknown KeyOrigin = ""
+
+	// KeyOriginGenerated marks a key the backend produced in place. Such a key
+	// cannot have existed anywhere before it existed here, so it is unique to
+	// this backend by construction.
+	KeyOriginGenerated KeyOrigin = "generated"
+
+	// KeyOriginImported marks a key that arrived from outside. It may have
+	// existed elsewhere first, and nothing observable afterwards distinguishes
+	// a key that was only ever here from a copy whose original was retained.
+	// Residency can still be attested; exclusivity cannot.
+	KeyOriginImported KeyOrigin = "imported"
+)
+
+// String returns the origin as a string.
+func (o KeyOrigin) String() string { return string(o) }
+
+// IsImported reports whether the key is known to have arrived by import.
+// Unknown is not imported: a record with no origin predates the import path.
+func (o KeyOrigin) IsImported() bool { return o == KeyOriginImported }
+
 // StoreType identifies the backend storage mechanism for cryptographic keys.
 type StoreType string
 
@@ -1027,6 +1065,27 @@ type KeyAttributes struct {
 	// derivation. This field is only meaningful for PKCS#11 backends that
 	// implement pivcert.SlotModel.
 	PIVSlot string `json:"piv_slot,omitempty" yaml:"piv_slot,omitempty"`
+
+	// KeyOrigin records how the key came to be where it is: generated in
+	// place, or imported from outside. It is the fact a relying party needs
+	// that no other field carries — StoreType says where the key lives, which
+	// is a different axis, and the two are independent (a hardware-resident
+	// key may still have been imported).
+	//
+	// This is recorded by the system, never accepted from a caller, exactly as
+	// PKCS#11 records CKA_LOCAL: the value is a consequence of which code path
+	// ran, not an input. pkg/pkcs11/module strips token-computed attributes
+	// from a caller's template "so a caller cannot forge provenance"; the
+	// generate and import paths here strip and recompute this field for the
+	// same reason. A provenance field a caller can set is worse than no field,
+	// because it looks authoritative and is not.
+	//
+	// The zero value is KeyOriginUnknown, which is what a key record written
+	// before this field existed reads back as. Such a key predates any import
+	// path, so it cannot be an imported key; consumers may treat unknown as
+	// not-imported, but must not treat it as a positive assertion of
+	// generation.
+	KeyOrigin KeyOrigin `json:"key_origin,omitempty" yaml:"key_origin,omitempty"`
 
 	// WrapAttributes specifies key wrapping configuration
 	WrapAttributes *KeyAttributes

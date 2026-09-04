@@ -18,9 +18,12 @@ import (
 	"crypto"
 	"crypto/elliptic"
 	"crypto/x509"
+	"errors"
 
+	"github.com/jeremyhahn/go-xkms/pkg/backend"
 	"github.com/jeremyhahn/go-xkms/pkg/pivcert"
 	"github.com/jeremyhahn/go-xkms/pkg/types"
+	secure "github.com/jeremyhahn/go-xkms/sdk/go/secure"
 )
 
 // pivAlgorithmAttrs maps PIV algorithm strings to KeyAttributes builders.
@@ -109,6 +112,9 @@ func (g *backendPIVKeyGenerator) GeneratePIVKey(slot pivcert.PIVSlot, algorithm 
 	attrs := builder(cn)
 	attrs.StoreType = g.storeType
 	attrs.PIVSlot = string(slot)
+	// Provenance is a consequence of this code path, not an input: this is the
+	// generate path, so the key is generated. See types.KeyOrigin.
+	attrs.KeyOrigin = types.KeyOriginGenerated
 
 	// If the backend implements PIVParentProvider, set the parent key attributes.
 	// This is used by TPM2 to set PlatformSRK as the parent for PIV keys.
@@ -182,3 +188,136 @@ func (g *backendPIVKeyGenerator) GetPIVSigner(slot pivcert.PIVSlot, cn string) (
 
 // Verify interface compliance at compile time.
 var _ PIVKeyGenerator = (*backendPIVKeyGenerator)(nil)
+
+// ImportPIVKey installs an externally held private key in the slot by routing
+// it through the backend's own import ceremony.
+//
+// The key material is not handed to the backend in the clear. xkms has exactly
+// one import path — GetImportParameters, WrapKey, ImportKey — and this reuses
+// it rather than adding a second, plaintext one: the key is marshalled to
+// PKCS#8, wrapped to a wrapping key the backend issues for this single import
+// token, and unwrapped inside the backend. The hybrid RSA+AES algorithm is
+// chosen because a PKCS#8-encoded RSA-4096 key exceeds what plain RSA-OAEP can
+// carry.
+//
+// A backend that does not implement ImportExportBackend, or that refuses the
+// operation, produces ErrPIVImportNotSupported so the refusal is reportable
+// rather than mistaken for success.
+func (g *backendPIVKeyGenerator) ImportPIVKey(ctx context.Context, slot pivcert.PIVSlot, algorithm string, cn string, key crypto.PrivateKey) (crypto.Signer, error) {
+	builder, ok := pivAlgorithmDispatch[algorithm]
+	if !ok {
+		return nil, ErrPIVInvalidAlgorithm
+	}
+
+	// The import ceremony lives on the key provider, not on Backend: this is
+	// the same assertion xkms.ImportKey makes (service.go), so PIV import and
+	// generic key import reach a backend the one way rather than two.
+	importer, ok := g.backend.KeyProvider().(backend.ImportExportBackend)
+	if !ok {
+		return nil, ErrPIVImportNotSupported
+	}
+
+	attrs := builder(cn)
+	attrs.StoreType = g.storeType
+	attrs.PIVSlot = string(slot)
+	// This is the import path, so the key is imported. The attributes are
+	// built here from the algorithm and the slot rather than taken from a
+	// caller, which is what makes the value unforgeable at this seam.
+	attrs.KeyOrigin = types.KeyOriginImported
+
+	if provider, ok := g.backend.(PIVParentProvider); ok {
+		parentAttrs, err := provider.PIVParentAttributes()
+		if err != nil {
+			return nil, err
+		}
+		if parentAttrs != nil {
+			attrs.Parent = parentAttrs
+		}
+	}
+
+	// The PKCS#8 encoding is plaintext key material on the heap. Wipe it on
+	// every exit path, success as much as failure, so its residency is
+	// bounded by this call rather than by the garbage collector.
+	der, err := x509.MarshalPKCS8PrivateKey(key)
+	if err != nil {
+		return nil, ErrPIVKeyMaterialInvalid
+	}
+	defer secure.Wipe(der)
+
+	params, err := importer.GetImportParameters(ctx, attrs, backend.WrappingAlgorithmRSA_AES_KEY_WRAP_SHA_256)
+	if err != nil {
+		return nil, errors.Join(ErrPIVImportNotSupported, err)
+	}
+
+	wrapped, err := importer.WrapKey(ctx, der, params)
+	if err != nil {
+		return nil, errors.Join(ErrPIVImportNotSupported, err)
+	}
+
+	if err := importer.ImportKey(ctx, attrs, wrapped); err != nil {
+		return nil, errors.Join(ErrPIVImportNotSupported, err)
+	}
+
+	// Confirm the backend actually recorded the provenance, by reading it back
+	// the same way an attestation later will.
+	//
+	// This is what makes "an imported key is never unattributable" structural
+	// rather than documentary. A backend that does not persist the origin — or
+	// a write path that forgets to stamp it — fails HERE, at import, where an
+	// operator is present and the key can be rolled back. The alternative is
+	// discovering it at attestation time, where the only remaining options are
+	// to refuse a key that may be perfectly legitimate or to attest one that
+	// may not be.
+	//
+	// It also means a slot key whose origin reads back unknown provably did
+	// not arrive by import, which is what lets attestation treat unknown as
+	// legacy instead of refusing every backend that has no provenance
+	// plumbing yet.
+	recorded, found, originErr := g.PIVKeyOrigin(slot, cn)
+	if originErr != nil {
+		return nil, errors.Join(ErrPIVImportProvenanceNotRecorded, originErr)
+	}
+	if !found || recorded != types.KeyOriginImported {
+		// Roll the key back: a key whose provenance cannot be established must
+		// not be left sitting in a slot looking like a generated one.
+		if delErr := g.backend.DeleteKey(ctx, attrs); delErr != nil {
+			return nil, errors.Join(ErrPIVImportProvenanceNotRecorded, delErr)
+		}
+		return nil, ErrPIVImportProvenanceNotRecorded
+	}
+
+	return g.backend.Signer(ctx, attrs)
+}
+
+// Verify import capability compliance at compile time.
+var _ PIVKeyImporter = (*backendPIVKeyGenerator)(nil)
+
+// PIVKeyOrigin reports how the slot's key arrived, by reading the origin the
+// backend persisted on the key's own record.
+//
+// The record is the authority rather than anything the caller holds: the
+// generate and import paths stamp it from the code path that ran, so a value
+// read back here was written by the system. A key the backend does not
+// enumerate reports KeyOriginUnknown with a nil error — the caller's question
+// is whether the key was imported, and an absent key is not a yes.
+func (g *backendPIVKeyGenerator) PIVKeyOrigin(_ pivcert.PIVSlot, cn string) (types.KeyOrigin, bool, error) {
+	ctx := context.Background()
+
+	stored, err := g.backend.ListKeys(ctx)
+	if err != nil {
+		return types.KeyOriginUnknown, false, err
+	}
+	for _, ka := range stored {
+		if ka != nil && ka.CN == cn {
+			// The origin the backend read back is authoritative: the legacy
+			// inference for records that predate the field is applied once,
+			// where the record is read, so anything still unknown here was
+			// written without an origin by a build that had one.
+			return ka.KeyOrigin, true, nil
+		}
+	}
+	return types.KeyOriginUnknown, false, nil
+}
+
+// Verify origin-reporting compliance at compile time.
+var _ PIVKeyOriginReporter = (*backendPIVKeyGenerator)(nil)

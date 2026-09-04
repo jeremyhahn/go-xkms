@@ -26,7 +26,8 @@ import (
 	"crypto/rsa"
 	"crypto/sha256"
 	"crypto/sha512"
-
+	"crypto/x509"
+	"encoding/pem"
 	"errors"
 	"hash"
 	"log/slog"
@@ -34,6 +35,7 @@ import (
 
 	"github.com/jeremyhahn/go-xkms/pkg/api/transport"
 	"github.com/jeremyhahn/go-xkms/pkg/pivcert"
+	"github.com/jeremyhahn/go-xkms/pkg/types"
 )
 
 var (
@@ -55,6 +57,57 @@ var (
 	// hardware attestation path, so the slot cert itself is used as the
 	// attestation statement.
 	ErrPIVNoAttestationMaterial = errors.New("piv: no attestation material available for slot")
+
+	// ErrPIVKeyMaterialRequired is returned when ImportPIVKey is invoked
+	// without key material.
+	ErrPIVKeyMaterialRequired = errors.New("piv: private key material is required")
+
+	// ErrPIVKeyMaterialInvalid is returned when the supplied bytes are not a
+	// private key in any encoding ImportPIVKey accepts. A public key reaches
+	// this error too: it is not a private key, and storing it would leave a
+	// slot that cannot sign.
+	ErrPIVKeyMaterialInvalid = errors.New("piv: key material is not a supported private key")
+
+	// ErrPIVImportNotSupported is returned when the resolved backend cannot
+	// accept an imported key. A hardware PIV applet may refuse import for
+	// some slots or algorithms; that refusal is reported rather than being
+	// mistaken for success.
+	ErrPIVImportNotSupported = errors.New("piv: backend does not support importing a private key")
+
+	// ErrPIVAlgorithmMismatch is returned when a caller declares an
+	// algorithm that disagrees with the supplied key.
+	ErrPIVAlgorithmMismatch = errors.New("piv: declared algorithm does not match the supplied key")
+
+	// ErrPIVKeyImportedNotAttestable is returned when attestation is requested
+	// for a slot whose key arrived by import.
+	//
+	// An attestation over an imported key would assert residency while a
+	// verifier reads it as exclusivity, and nothing on the wire carries the
+	// difference. Refusing is what keeps an xkms PIV attestation worth the
+	// same as the hardware's: YubiKey PIV attestation is likewise available
+	// only for slot-generated keys.
+	ErrPIVKeyImportedNotAttestable = errors.New("piv: an imported key cannot be attested: attestation would assert residency but not exclusivity")
+
+	// ErrPIVKeyOriginUnknown is returned when attestation is requested for a
+	// slot whose key is present but carries no recorded origin.
+	//
+	// This is not the legacy case: a record written before the origin field
+	// existed resolves to generated where it is read, because such a key
+	// predates every import path. Reaching this error means a key record was
+	// written by a build that had the field and did not set it, which is a
+	// defect in that write path. Attestation fails closed rather than
+	// inheriting the trust of a genuinely old key.
+	ErrPIVKeyOriginUnknown = errors.New("piv: the key's origin was not recorded, so it cannot be attested")
+
+	// ErrPIVImportProvenanceNotRecorded is returned when a backend accepted an
+	// imported key but did not record that it was imported.
+	//
+	// The import is rolled back rather than completed. A backend with no
+	// provenance plumbing must not hold an imported key, because nothing
+	// afterwards could distinguish it from a generated one — and refusing at
+	// import, where an operator is present, is better than refusing every
+	// attestation from that backend later.
+	ErrPIVImportProvenanceNotRecorded = errors.New("piv: the backend did not record that the key was imported, so the import was rolled back")
 )
 
 // pivHashDispatch maps hash-algorithm names to constructor funcs. Used by
@@ -192,6 +245,72 @@ func SignPIVSlot(_ context.Context, req *transport.PIVSignRequest) (*transport.P
 	}, nil
 }
 
+// refuseUnattestableKey returns an error unless the slot's key is known to
+// have been generated in place.
+//
+// The rule is derived from provenance, not from configuration. A configuration
+// switch would be mutable state — it can be flipped after the key lands, and
+// it creates an ordering hazard where configuring for attestation and then
+// importing forces one of the two to lose. "This key was generated here" is
+// decided once, by the code path that placed it, and can never become false.
+//
+// It fails CLOSED on the origin: anything that is not KeyOriginGenerated is
+// refused, rather than refusing only the values known to be bad. A check that
+// refuses only "imported" would silently start attesting the day a new write
+// path forgot to record an origin, and nothing would fail or warn. The
+// inference that covers keys written before the field existed is applied once,
+// where the record is read (pkg/keyprovider/pkcs8.resolveKeyOrigin), so it is
+// a documented resolution with a version guard rather than a permanent
+// fallback inside this security check.
+//
+// Whether a key is HELD here is a separate question from its origin. A slot
+// may carry a certificate whose key this process does not have — the key lives
+// in another backend, or the generator is a fresh in-memory one after a
+// restart. There is no provenance to judge in that case and no claim is being
+// strengthened, so attestation of the stored certificate proceeds as it always
+// has.
+func refuseUnattestableKey(backendName string, slot pivcert.PIVSlot) error {
+	generator, err := pivBackend(backendName)
+	if err != nil {
+		return nil
+	}
+
+	reporter, ok := generator.(PIVKeyOriginReporter)
+	if !ok {
+		return nil
+	}
+
+	origin, found, err := reporter.PIVKeyOrigin(slot, PivSlotCN(slot))
+	if err != nil || !found {
+		return nil
+	}
+
+	switch origin {
+	case types.KeyOriginImported:
+		return ErrPIVKeyImportedNotAttestable
+	case types.KeyOriginGenerated:
+		return nil
+	case types.KeyOriginUnknown:
+		// No origin was recorded. That provably does not mean "imported":
+		// ImportPIVKey reads the provenance back after writing it and rolls
+		// the import back if the backend did not record it
+		// (ErrPIVImportProvenanceNotRecorded), so a backend with no provenance
+		// plumbing cannot be holding an imported key at all. Combined with the
+		// legacy resolution applied where the record is read, an unrecorded
+		// origin is a key that predates the field or a backend that does not
+		// yet persist it — neither of which is an import.
+		//
+		// Refusing here instead would make every slot on such a backend
+		// unattestable, including keys generated in the slot, which is the
+		// case PIV attestation exists for.
+		return nil
+	default:
+		// A non-empty origin this build does not recognise — a vocabulary from
+		// a later version, or a defect. Refused rather than guessed at.
+		return ErrPIVKeyOriginUnknown
+	}
+}
+
 // AttestPIVSlot returns the attestation statement for a PIV slot.
 //
 // The slot's own certificate is returned as the attestation statement; the
@@ -213,6 +332,13 @@ func AttestPIVSlot(_ context.Context, req *transport.PIVAttestRequest) (*transpo
 	slot, err := pivcert.ParseSlot(req.Slot)
 	if err != nil {
 		return nil, ErrPIVInvalidSlot
+	}
+
+	// Refuse before producing anything. An imported key is attestable in the
+	// mechanical sense — the certificate is right there — which is exactly why
+	// the refusal has to be explicit.
+	if err := refuseUnattestableKey(req.Backend, slot); err != nil {
+		return nil, err
 	}
 
 	slotCertPEM, err := store.Export(slot, pivcert.FormatPEM)
@@ -281,4 +407,138 @@ func ResetPIVDevice(_ context.Context, req *transport.PIVResetDeviceRequest) err
 		"backend", req.Backend, "cleared", len(entries))
 
 	return firstErr
+}
+
+// pivAlgorithmForKey resolves a private key to the PIV algorithm name that
+// describes it. An unrecognised key type or curve returns
+// ErrPIVInvalidAlgorithm rather than being imported under a wrong label.
+func pivAlgorithmForKey(key crypto.PrivateKey) (string, error) {
+	switch k := key.(type) {
+	case *rsa.PrivateKey:
+		switch k.N.BitLen() {
+		case 2048:
+			return "rsa2048", nil
+		case 4096:
+			return "rsa4096", nil
+		default:
+			return "", ErrPIVInvalidAlgorithm
+		}
+	case *ecdsa.PrivateKey:
+		switch k.Curve.Params().BitSize {
+		case 256:
+			return "ecdsap256", nil
+		case 384:
+			return "ecdsap384", nil
+		default:
+			return "", ErrPIVInvalidAlgorithm
+		}
+	case ed25519.PrivateKey:
+		return "ed25519", nil
+	default:
+		return "", ErrPIVInvalidAlgorithm
+	}
+}
+
+// parsePIVPrivateKey decodes private key material in any encoding the import
+// verb accepts: a PEM block or raw DER, holding PKCS#8, SEC 1 (EC) or PKCS#1
+// (RSA). The encoding is detected rather than declared so a caller forwarding
+// a key it already holds does not have to re-encode it first.
+func parsePIVPrivateKey(material []byte) (crypto.PrivateKey, error) {
+	der := material
+	if block, _ := pem.Decode(material); block != nil {
+		der = block.Bytes
+	}
+
+	if key, err := x509.ParsePKCS8PrivateKey(der); err == nil {
+		return key, nil
+	}
+	if key, err := x509.ParseECPrivateKey(der); err == nil {
+		return key, nil
+	}
+	if key, err := x509.ParsePKCS1PrivateKey(der); err == nil {
+		return key, nil
+	}
+	return nil, ErrPIVKeyMaterialInvalid
+}
+
+// ImportPIVKey installs an externally held private key in a PIV slot.
+//
+// The key material may be PEM or DER, in PKCS#8, SEC 1 or PKCS#1 encoding.
+// The resolved backend must implement PIVKeyImporter; one that does not —
+// or one whose applet refuses the slot or algorithm — yields
+// ErrPIVImportNotSupported rather than a silent success.
+//
+// Import is a different trust class from generation, and callers reading a
+// later attestation need to know which they have. A slot-generated key cannot
+// have existed anywhere before it existed in the slot. An imported one can,
+// and no property of the slot afterwards distinguishes a key that was only
+// ever there from a copy that was retained elsewhere. An attestation over an
+// imported key therefore asserts residency but NOT exclusivity, and a verifier
+// that reads "attested" as "generated in-slot" is drawing a conclusion the
+// evidence no longer supports. See docs/piv-smartcard/architecture.md.
+func ImportPIVKey(ctx context.Context, req *transport.ImportPIVKeyRequest) (*transport.ImportPIVKeyResponse, error) {
+	if req == nil || len(req.PrivateKey) == 0 {
+		return nil, ErrPIVKeyMaterialRequired
+	}
+
+	slot, err := pivcert.ParseSlot(req.Slot)
+	if err != nil {
+		return nil, ErrPIVInvalidSlot
+	}
+
+	key, err := parsePIVPrivateKey(req.PrivateKey)
+	if err != nil {
+		return nil, err
+	}
+
+	algorithm, err := pivAlgorithmForKey(key)
+	if err != nil {
+		return nil, err
+	}
+	// A declared algorithm is checked, never used to override the key: a
+	// caller that believes it is importing one algorithm must not silently
+	// end up with another.
+	if req.Algorithm != "" && req.Algorithm != algorithm {
+		return nil, ErrPIVAlgorithmMismatch
+	}
+
+	generator, err := pivBackend(req.Backend)
+	if err != nil {
+		return nil, err
+	}
+	importer, ok := generator.(PIVKeyImporter)
+	if !ok {
+		return nil, ErrPIVImportNotSupported
+	}
+
+	cn := PivSlotCN(slot)
+	signer, err := importer.ImportPIVKey(ctx, slot, algorithm, cn, key)
+	if err != nil {
+		slog.Error("PIV import key failed",
+			"slot", req.Slot, "algorithm", algorithm, "backend", req.Backend, "error", err)
+		return nil, err
+	}
+	if signer == nil {
+		return nil, ErrPIVImportNotSupported
+	}
+
+	pubDER, err := x509.MarshalPKIXPublicKey(signer.Public())
+	if err != nil {
+		return nil, err
+	}
+
+	// The audit record names the provenance explicitly. An imported key and a
+	// generated one are not interchangeable in a later trust decision, and the
+	// audit trail is the one place the difference is recoverable after the
+	// fact regardless of what the slot itself can attest.
+	slog.Info("audit", "component", "audit", "operation", "piv_key_imported", "success", true,
+		"timestamp", time.Now().Format(time.RFC3339),
+		"slot", req.Slot, "algorithm", algorithm, "backend", req.Backend,
+		"key_provenance", "imported")
+
+	return &transport.ImportPIVKeyResponse{
+		Slot:      req.Slot,
+		PublicKey: pem.EncodeToMemory(&pem.Block{Type: "PUBLIC KEY", Bytes: pubDER}),
+		Algorithm: algorithm,
+	}, nil
 }

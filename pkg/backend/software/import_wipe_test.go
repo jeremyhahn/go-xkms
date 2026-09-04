@@ -27,6 +27,8 @@ import (
 
 	"github.com/jeremyhahn/go-xkms/pkg/backend"
 	"github.com/jeremyhahn/go-xkms/pkg/errs"
+	"strings"
+
 	"github.com/jeremyhahn/go-xkms/pkg/storage"
 	"github.com/jeremyhahn/go-xkms/pkg/storage/qrdb"
 	"github.com/jeremyhahn/go-xkms/pkg/types"
@@ -47,8 +49,19 @@ type capturingStorage struct {
 	failPut  bool
 }
 
+// metadataKeyPrefix is the path prefix pkg/keyprovider/pkcs8 writes key
+// metadata records under. An import writes the key material and then that
+// record, so a capture that simply kept the most recent Put would hold the
+// JSON record rather than the key and the wipe assertions would be vacuous.
+const metadataKeyPrefix = "meta/"
+
 func (s *capturingStorage) Put(ctx context.Context, key string, value []byte) error {
-	s.captured = value
+	// Capture only the key material, never the metadata record that
+	// accompanies it. Selecting by path rather than by call order keeps this
+	// correct however many records an import writes alongside the key.
+	if !strings.HasPrefix(key, metadataKeyPrefix) {
+		s.captured = value
+	}
 	if s.failPut {
 		return &errs.Message{Msg: "injected put failure"}
 	}

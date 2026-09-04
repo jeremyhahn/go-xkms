@@ -759,12 +759,33 @@ func getBackendForKID(kid string) (Backend, *types.KeyAttributes, error) {
 
 // Simplified API - applications use these functions directly
 
+// stampKeyOrigin sets the key's provenance from the code path that is running,
+// discarding whatever the caller supplied.
+//
+// This is the same rule PKCS#11 applies to CKA_LOCAL: provenance is recorded
+// by the system, never accepted as input, and a caller's template has the
+// token-computed attributes stripped "so a caller cannot forge provenance"
+// (pkg/pkcs11/module/object.go). A provenance field a caller can set is worse
+// than no field at all, because a verifier would read it as authoritative when
+// it is merely asserted.
+//
+// It mutates attrs in place: every caller here owns the value it passes for
+// the duration of the operation, and the stamped value is what reaches the
+// backend's persisted record.
+func stampKeyOrigin(attrs *types.KeyAttributes, origin types.KeyOrigin) {
+	if attrs == nil {
+		return
+	}
+	attrs.KeyOrigin = origin
+}
+
 // GenerateKey generates a new key with the given attributes.
 // Uses BackendFor(attrs) to resolve the correct backend based on StoreType.
 func GenerateKey(ctx context.Context, attrs *types.KeyAttributes) (crypto.PrivateKey, error) {
 	if err := validateTenantAccess(attrs); err != nil {
 		return nil, err
 	}
+	stampKeyOrigin(attrs, types.KeyOriginGenerated)
 
 	b, err := BackendFor(attrs)
 	if err != nil {
@@ -1351,6 +1372,7 @@ func GenerateKeyWithBackend(ctx context.Context, backendName string, attrs *type
 	if err := validateTenantAccess(attrs); err != nil {
 		return nil, err
 	}
+	stampKeyOrigin(attrs, types.KeyOriginGenerated)
 
 	if err := validation.ValidateBackendName(backendName); err != nil {
 		return nil, &ErrBackendNameValidation{Err: err}
@@ -1694,6 +1716,8 @@ func ImportKey(ctx context.Context, backendName string, attrs *types.KeyAttribut
 	if err := validateTenantAccess(attrs); err != nil {
 		return err
 	}
+	// Whatever the caller claimed, this is the import path.
+	stampKeyOrigin(attrs, types.KeyOriginImported)
 
 	if err := validation.ValidateBackendName(backendName); err != nil {
 		return &ErrBackendNameValidation{Err: err}

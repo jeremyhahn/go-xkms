@@ -97,3 +97,46 @@ type PIVResetDeviceRequest struct {
 	// TenantID optionally scopes this operation to a specific tenant.
 	TenantID string `json:"tenant_id,omitempty"`
 }
+
+// ImportPIVKeyRequest contains parameters for importing an externally held
+// private key into a PIV slot.
+//
+// Import is a distinct trust class from generation. A slot-generated key
+// cannot have existed anywhere before it existed in the slot; an imported one
+// can, and nothing the slot can say afterwards distinguishes a key that was
+// only ever there from a copy. An attestation over an imported key therefore
+// asserts residency but not exclusivity. Callers deciding what an attestation
+// is worth must account for that — see docs/piv-smartcard/architecture.md.
+type ImportPIVKeyRequest struct {
+	// Backend identifies the xkms backend (e.g., "software", "pkcs11://...").
+	Backend string `json:"backend"`
+	// Slot is the PIV slot identifier (e.g., "9a", "9c").
+	Slot string `json:"slot"`
+	// PrivateKey is the key material to import: a PEM block or raw DER, in
+	// PKCS#8, SEC 1 (EC) or PKCS#1 (RSA) encoding. The encoding is detected
+	// rather than declared, because a caller forwarding a key it already
+	// holds should not have to re-encode it.
+	PrivateKey []byte `json:"private_key"`
+	// Algorithm optionally declares the expected PIV algorithm ("rsa2048",
+	// "rsa4096", "ecdsap256", "ecdsap384", "ed25519"). When set it is
+	// checked against the supplied key and a disagreement is an error: a
+	// caller that believes it is importing one algorithm must not silently
+	// end up with another. When empty the algorithm is derived from the key.
+	Algorithm string `json:"algorithm,omitempty"`
+	// PIN optionally carries a user PIN for backends that require one
+	// (pkcs11, hardware tokens). Ignored by software backends.
+	PIN string `json:"pin,omitempty"`
+	// TenantID optionally scopes this operation to a specific tenant.
+	TenantID string `json:"tenant_id,omitempty"`
+}
+
+// ImportPIVKeyResponse reports the result of importing a key into a slot.
+type ImportPIVKeyResponse struct {
+	// Slot echoes the slot the key was imported into.
+	Slot string `json:"slot"`
+	// PublicKey is the PEM-encoded public half of the imported key, so a
+	// caller can confirm the slot holds the key it supplied.
+	PublicKey []byte `json:"public_key"`
+	// Algorithm reports the PIV algorithm the key was imported as.
+	Algorithm string `json:"algorithm"`
+}

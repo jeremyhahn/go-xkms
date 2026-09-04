@@ -437,6 +437,159 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   narrowing can be lifted.
 
 
+### Added
+
+- **PIV private-key import: `xkms.ImportPIVKey`** (#207). A PIV slot could be
+  generated into or given a certificate, but an externally held private key
+  could not be loaded into one. The SDK's only PIV write paths were
+  `GeneratePIVKey` (key never leaves) and `StorePIVCertificate` (certificate
+  only), so a consumer with an existing key had nowhere to put it — and the
+  motivating downstream had been passing a **private key into the field named
+  `Certificate`**.
+
+  `ImportPIVKey` accepts PEM or DER in PKCS#8, SEC 1 or PKCS#1 encoding,
+  detecting the encoding rather than requiring the caller to re-encode a key it
+  already holds, and returns only the public half so the caller can confirm what
+  the slot holds. A declared `Algorithm` is checked against the supplied key
+  (`ErrPIVAlgorithmMismatch`) rather than trusted over it. A public key supplied
+  where a private one belongs is refused (`ErrPIVKeyMaterialInvalid`) rather
+  than stored into a slot that could never sign.
+
+  Key material is **not handed to a backend in the clear**. xkms has exactly one
+  import path — `GetImportParameters` / `WrapKey` / `ImportKey` — and the PIV
+  verb reuses it rather than adding a second, plaintext one: the key is wrapped
+  to a backend-issued wrapping key under a single-use import token and unwrapped
+  inside the backend. The PKCS#8 encoding is wiped on every exit path. Import is
+  reached through the same `KeyProvider().(backend.ImportExportBackend)`
+  assertion that `xkms.ImportKey` already makes, so PIV import and generic key
+  import reach a backend the one way rather than two.
+
+  Capability is expressed by a new optional `PIVKeyImporter` interface,
+  implemented completely by **both** production generators (software and
+  backend-backed) in this change. It is deliberately *not* a method on
+  `PIVKeyGenerator`: a real PIV applet may refuse import for particular slots or
+  algorithms, and a generator that cannot honour it yields
+  `ErrPIVImportNotSupported` so the refusal is reportable rather than mistaken
+  for success.
+
+  **Import establishes a different trust class from generation, and callers must
+  account for it.** A slot-generated key cannot have existed anywhere before it
+  existed in the slot; an imported one can, and no property of the slot
+  afterwards distinguishes a key that was only ever there from a copy retained
+  elsewhere. **An attestation over an imported key therefore asserts residency
+  but not exclusivity**, and `VerifyChain` does not recover the difference — it
+  anchors the attestation to a manufacturer, which establishes that the card is
+  genuine, not that the key was born on it. Nothing in a PIV attestation carries
+  the distinction today, so a relying party cannot ask for it: a deployment that
+  needs exclusivity must generate in-slot rather than infer it from a verified
+  chain. This is documented where a caller actually decides what to trust —
+  `docs/piv-smartcard/{architecture,engineering,api,cli,user}.md` and
+  `docs/ca/configuration.md`'s attestation-gate semantics.
+
+  The verb is SDK-only and is on no network transport, because its input is
+  private key material.
+
+- **PIV key provenance, and an imported key is not attestable** (#207).
+  `types.KeyOrigin` (`generated` / `imported`) records how a key arrived where
+  it lives, and **`AttestPIV` now refuses a slot whose key was imported**
+  (`ErrPIVKeyImportedNotAttestable`), returning no material.
+
+  The refusal matches the hardware: YubiKey PIV attestation is already
+  available only for slot-generated keys. Without it an xkms PIV attestation
+  would assert something weaker than a YubiKey one **while looking identical to
+  a verifier** — an invisible difference at the moment it matters. It is
+  derived from provenance rather than a configuration switch deliberately: a
+  switch is mutable state that can be flipped after the key lands, and creates
+  an ordering hazard where configuring for attestation and then importing
+  forces one of the two to lose. "This key was imported" is decided once and
+  can never become false.
+
+  **Provenance is recorded by the system and never accepted from a caller**,
+  the same rule PKCS#11 applies to `CKA_LOCAL`: the generate and import paths
+  stamp it from the code path that ran, and `stampKeyOrigin` strips and
+  recomputes whatever a caller supplied. A provenance field a caller can set is
+  worse than no field, because a verifier reads it as authoritative when it is
+  merely asserted.
+
+  `KeyOrigin` is a **sibling axis** to where a key lives, not the same one — a
+  hardware-resident key may still have been imported, and that combination is
+  the dangerous one. It is named to sit beside a future attestation level
+  (#220) rather than collide with it.
+
+  Making the fact durable exposed a pre-existing gap worth naming on its own:
+  **the software backend's import path wrote no metadata record at all**, so
+  the tenant, the exportability and now the origin of every imported key were
+  lost — `ListKeys` reads that record for exactly the attributes the key
+  identifier cannot express, and a tenant-scoped view filters on the tenant it
+  could not see. Import now writes the record generation always wrote, via a
+  new `pkcs8.WriteKeyMetadata`, and rolls the key back if it cannot. The record
+  gains schema version 2 for the origin, overlaid the way the tenant and
+  partition already are.
+
+  **Attestation fails closed on the origin**: anything that is not `generated`
+  is refused, not merely `imported`. A check that refuses only the known-bad
+  values would start attesting silently the day a write path forgot to record
+  an origin, with nothing failing and nothing warning.
+
+  Keys written before the field existed still attest, but that reasoning is
+  applied **once, where the record is read** rather than as a permanent
+  exception inside the security check. `pkcs8.resolveKeyOrigin` resolves a
+  record with no origin — schema below 2, or no record at all — to `generated`,
+  because such a key predates every PIV import path and cannot have been
+  imported. A **schema-2 record carrying no origin is a defect rather than a
+  legacy key**: it was written by a build that had the field and did not set
+  it, so it stays unknown and is refused. That distinction is the reason the
+  inference sits at the boundary.
+
+  A slot whose key this process does not hold at all — it lives in another
+  backend, or an in-memory generator was restarted — is a separate case with no
+  provenance to judge, and attestation of the stored certificate proceeds as
+  before.
+
+  **The guarantee is closed at import rather than at attestation.**
+  `ImportPIVKey` reads the origin back after writing it and rolls the import
+  back with `ErrPIVImportProvenanceNotRecorded` if the backend did not record
+  it. A backend with no provenance plumbing therefore cannot hold an imported
+  key at all, which is what makes it safe for an unrecorded origin to attest.
+  Refusing on an unrecorded origin instead would have made **every
+  hardware-backed PIV slot unattestable** — only the pkcs8 provider persists an
+  origin today, so PKCS#11, TPM2 and the cloud KMSes report none for every key
+  they hold, generated ones included. That is the case PIV attestation exists
+  for. A non-empty origin this build does not recognise is still refused.
+
+- **`importAsymmetricKey` writes the key metadata record it always owed**
+  (#162). Its symmetric sibling and every generation path wrote one; asymmetric
+  import wrote the PKCS#8 bytes and nothing else, bypassing the component that
+  owns the record. `ListKeys` treats that record as authoritative, so an
+  imported key came back describing a different key than the one imported: the
+  tenant was lost, and `parseStorageKeyID` then reinterpreted a five-segment
+  identifier's leading tenant as a **partition**. `TenantScopedBackend.ListKeys`
+  filters on the tenant, so neither of two keys imported by different tenants
+  was visible to the tenant that imported it — import reported success and
+  signing reported key-not-found.
+
+  The record is now written on the import path through a new
+  `pkcs8.WriteKeyMetadata`, the explicit metadata-write seam of the two options
+  #162 set out, and the key blob is rolled back if the record cannot be
+  written. Schema version 2 additionally carries the **digest**, which
+  `keyMetadata` had no field for at all — so a hash set on import was inert
+  rather than merely unpersisted, exactly as #162 describes.
+
+  **Only the software backend's asymmetric import is fixed.** The other
+  backends implementing `ImportExportBackend` — PKCS#11, TPM2, AWS KMS, GCP
+  KMS, Azure Key Vault — each own their persistence and are unaudited for the
+  same shape. That is now fail-closed rather than silent: `ImportPIVKey` reads
+  the origin back and refuses the import if a backend did not record it, so PIV
+  key import works where provenance persists and is refused, visibly, where it
+  does not.
+
+  Recording the provenance on the enrollment record or in an attestation
+  extension remains deliberately **out of scope**: the enrollment record is
+  qrdb's model and raises the cross-repo vocabulary question still blocking
+  #220, and for real hardware xkms cannot stamp the card-minted `f9`
+  certificate at all. #206 owns the verifier that would consume either.
+
+
 ### Changed
 
 - **`make release-alpha` cuts a correct release, and takes the version as an

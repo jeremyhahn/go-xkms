@@ -1,6 +1,6 @@
 # PIV Smartcard — User Guide
 
-> **Status: NORMATIVE** · Feature: `piv-smartcard` · Repo: `go-xkms` · Last verified: 2026-08-19
+> **Status: NORMATIVE** · Feature: `piv-smartcard` · Repo: `go-xkms` · Last verified: 2026-09-03
 
 ## What PIV gives you
 
@@ -87,6 +87,8 @@ look identical and the guarantee does not.
 | NV space exhausted | the TPM has no room for another certificate | free a slot, or reconsider the NV base index |
 | other PIV tools stopped recognising the card | something took a standard slot | move it to a retired slot |
 | the attestation certificate in `f9` "proves" nothing | it was never chain-verified | verify it against the manufacturer chain |
+| attestation fails on a slot that clearly holds a certificate | the key was **imported**, and an imported key cannot be attested | expected — generate the key in the slot if you need attestation |
+| an attestation does not prove the key is unique to this card | it predates provenance recording | keys written by older builds could not be imported; generate in-slot when you need exclusivity guaranteed |
 
 ## Where to go next
 

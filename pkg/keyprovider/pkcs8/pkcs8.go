@@ -89,6 +89,21 @@ func (b *PKCS8Backend) Capabilities() types.Capabilities {
 // exactly how they were read before this field existed.
 const keyMetadataSchemaVersion1 = 1
 
+// keyMetadataSchemaVersion2 adds the key's origin — whether it was generated
+// in place or imported — and its digest.
+//
+// The version matters for the same reason version 1 did: a record written
+// before this field existed decodes with an empty origin, and that is the
+// absence of a claim rather than a claim of generation. Guarding the overlay
+// on the version keeps the two apart, so a consumer can tell "this key is
+// known to have been generated" from "nothing was recorded". Keys written by
+// an earlier build predate any import path and therefore cannot be imported,
+// but that is a fact about history, not something the record asserts.
+const keyMetadataSchemaVersion2 = 2
+
+// keyMetadataSchemaVersionCurrent is the version newly written records carry.
+const keyMetadataSchemaVersionCurrent = keyMetadataSchemaVersion2
+
 // keyMetadata is the record persisted alongside a key's PKCS#8 bytes to carry
 // the attributes the key identifier cannot express.
 //
@@ -126,12 +141,26 @@ type keyMetadata struct {
 	// Exportable mirrors types.KeyAttributes.Exportable as supplied by the
 	// caller at key creation time.
 	Exportable bool `json:"exportable"`
+
+	// Hash is the digest the key is configured to use, as crypto.Hash's
+	// numeric value. The identifier cannot express it, and before this record
+	// carried it a digest set at import was simply discarded — the field was
+	// inert rather than merely unpersisted (#162). Present from schema
+	// version 2.
+	Hash uint `json:"hash,omitempty"`
+
+	// KeyOrigin records whether the key was generated in place or imported.
+	// Unlike every other field here it is never supplied by a caller: the
+	// service layer stamps it from the code path that ran, so that a relying
+	// party reading it is reading a fact rather than an assertion. Present
+	// from schema version 2.
+	KeyOrigin string `json:"key_origin,omitempty"`
 }
 
 // newKeyMetadata builds the current-schema record for attrs.
 func newKeyMetadata(attrs *types.KeyAttributes) *keyMetadata {
 	return &keyMetadata{
-		SchemaVersion: keyMetadataSchemaVersion1,
+		SchemaVersion: keyMetadataSchemaVersionCurrent,
 		CN:            attrs.CN,
 		KeyType:       attrs.KeyType.String(),
 		StoreType:     string(attrs.StoreType),
@@ -139,6 +168,8 @@ func newKeyMetadata(attrs *types.KeyAttributes) *keyMetadata {
 		TenantID:      attrs.TenantID,
 		Partition:     string(attrs.Partition),
 		Exportable:    attrs.Exportable,
+		Hash:          uint(attrs.Hash),
+		KeyOrigin:     string(attrs.KeyOrigin),
 	}
 }
 
@@ -498,13 +529,20 @@ func (b *PKCS8Backend) ListKeys(ctx context.Context) ([]*types.KeyAttributes, er
 		// the partition from the schema version that records them onwards; an
 		// older record says nothing about either, so the identifier's own
 		// reading stands for those keys.
-		if metadata := b.loadKeyMetadata(ctx, id); metadata != nil {
+		metadata := b.loadKeyMetadata(ctx, id)
+		if metadata != nil {
 			attr.Exportable = metadata.Exportable
 			if metadata.SchemaVersion >= keyMetadataSchemaVersion1 {
 				attr.TenantID = metadata.TenantID
 				attr.Partition = types.Partition(metadata.Partition)
 			}
+			// An older record carries no digest, and the identifier cannot
+			// express one, so those keys keep whatever the reconstruction gave.
+			if metadata.SchemaVersion >= keyMetadataSchemaVersion2 && metadata.Hash != 0 {
+				attr.Hash = crypto.Hash(metadata.Hash)
+			}
 		}
+		attr.KeyOrigin = resolveKeyOrigin(metadata)
 
 		attrs = append(attrs, attr)
 	}
@@ -823,3 +861,54 @@ func deriveECDHSharedSecret(privateKey *ecdsa.PrivateKey, publicKey *ecdsa.Publi
 // Verify interface compliance at compile time.
 var _ types.KeyProvider = (*PKCS8Backend)(nil)
 var _ types.KeyAgreement = (*PKCS8Backend)(nil)
+
+// resolveKeyOrigin returns the key's origin from its persisted record, and is
+// the single place the legacy inference is applied.
+//
+// A record written before schema version 2 — or no record at all, from before
+// this package persisted one — carries no origin, because the field did not
+// exist when it was written. Such a key predates every PIV import path, so it
+// cannot have arrived by import, and it resolves to KeyOriginGenerated here.
+// That inference is temporal and it is made exactly once, at the boundary
+// where the record is read, rather than being carried as a permanent
+// special case in whatever security check consumes the value.
+//
+// A record at schema version 2 that carries no origin is a different thing
+// entirely: it was written by a build that HAD the field and did not set it.
+// That is a bug, not a legacy record, and it deliberately resolves to
+// KeyOriginUnknown so that a consumer which fails closed will refuse it. A
+// future write path that forgets to stamp the origin is caught here rather
+// than silently inheriting the trust of a genuinely old key.
+func resolveKeyOrigin(metadata *keyMetadata) types.KeyOrigin {
+	if metadata == nil || metadata.SchemaVersion < keyMetadataSchemaVersion2 {
+		return types.KeyOriginGenerated
+	}
+	return types.KeyOrigin(metadata.KeyOrigin)
+}
+
+// WriteKeyMetadata persists attrs' metadata record for keyID into store.
+//
+// It exists because key material does not always arrive through this package.
+// SoftwareBackend.ImportKey writes the PKCS#8 bytes to the same storage under
+// the same identifier but bypasses PKCS8Backend entirely, so an imported key
+// had no metadata record at all — and ListKeys, which reads the record, could
+// therefore report neither the tenant, the exportability, nor the origin of
+// any key that arrived by import. Those are exactly the attributes the
+// identifier cannot express, which is why the record exists.
+//
+// The record's shape and path are this package's, so the writer lives here
+// rather than being reimplemented by each caller against a format it would
+// have to keep in step.
+func WriteKeyMetadata(ctx context.Context, store storage.Backend, keyID string, attrs *types.KeyAttributes) error {
+	if attrs == nil {
+		return nil
+	}
+	data, err := json.Marshal(newKeyMetadata(attrs))
+	if err != nil {
+		return &errs.Wrapped{Msg: "failed to marshal key metadata", Err: err}
+	}
+	if err := store.Put(ctx, metadataPath(keyID), data); err != nil {
+		return &errs.Wrapped{Msg: "failed to store key metadata", Err: err}
+	}
+	return nil
+}

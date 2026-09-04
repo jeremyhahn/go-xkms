@@ -586,6 +586,32 @@ Verification semantics:
   its own root in the chain, but that root is treated as an intermediate and can
   never anchor the path.
 
+**What a verified `yubikey-piv` chain does and does not establish.** A chain
+that anchors successfully establishes that the attesting card is genuine and
+that the key is resident in the named slot. It does **not** establish that the
+key is exclusive to that slot.
+
+A PIV key may be generated in-slot or imported (`xkms.ImportPIVKey`). A
+slot-generated key cannot have existed anywhere before it existed in the slot;
+an imported one can, and the attestation is identical in both cases. Nothing in
+a PIV attestation today carries the distinction, so this gate cannot enforce it
+and a relying party cannot ask for it.
+
+For attestations xkms itself issues, this is closed at the source:
+`AttestPIVSlot` **refuses** a slot whose key arrived by import, so an xkms PIV
+attestation is only ever produced over a slot-generated key and is worth what a
+YubiKey one is. A key whose record predates provenance recording resolves to
+generated where the record is read, and still attests — it was written by a
+build with no import path, so it cannot be imported. A key recorded by a build
+that had the field and left it unset is refused instead.
+
+That refusal governs what xkms *issues*, not what this gate *accepts*. A chain
+presented by a client is still only anchored, not interrogated for origin, and
+no PIV attestation format carries the distinction. So a policy that treats a
+verified `yubikey-piv` attestation from an arbitrary client as proof of a
+one-of-a-kind key is still assuming a property the format does not carry. See
+[`../piv-smartcard/architecture.md`](../piv-smartcard/architecture.md).
+
 The gate fails closed:
 
 - No `attestation` section configured, and a CSR carries an attestation →

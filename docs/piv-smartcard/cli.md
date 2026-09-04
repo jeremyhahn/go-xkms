@@ -1,6 +1,6 @@
 # PIV Smartcard — CLI
 
-> **Status: NORMATIVE** · Feature: `piv-smartcard` · Repo: `go-xkms` · Last verified: 2026-08-19
+> **Status: NORMATIVE** · Feature: `piv-smartcard` · Repo: `go-xkms` · Last verified: 2026-09-03
 
 Binary: `xkmsctl`, group `piv` (`cmd/xkmsctl/piv.go`). Global flags —
 `--backend`, `--pkcs11-module`, `--pkcs11-slot`, `--pkcs11-pin`, `--transport`,
@@ -53,6 +53,16 @@ key, on any storage type.
 ```
 xkmsctl piv store 9a --cert-file auth.crt --format pem
 ```
+
+**`piv import` imports a certificate, not a private key.** It is an alias for
+`store` and shares its request type. Passing a private key to it puts the key
+in a field named `Certificate` — the defect that motivated adding a real
+private-key import path.
+
+Importing a private key has **no CLI verb**: it is reachable only through the
+SDK (`xkms.ImportPIVKey`), because its input is private key material and this
+feature keeps key material off the transports. See
+[`api.md`](api.md) and [`architecture.md`](architecture.md).
 
 ## `piv generate <slot>`
 
