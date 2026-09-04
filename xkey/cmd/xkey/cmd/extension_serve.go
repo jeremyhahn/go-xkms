@@ -455,9 +455,22 @@ func initHeadlessAuthenticator(backend xkms.StorageBackend, pinSvc *services.PIN
 		return nil, &SentinelCauseError{Sentinel: ErrServeAuthenticatorInitFailed, Cause: err}
 	}
 
+	// The attestation format lives in the unified xkey config
+	// (`fido2.attestation`), the same place the GUI and the CLI read it from.
+	attestationFormat := authenticator.AttestationFormatNone
+	if ucfg, cfgErr := config.Load(); cfgErr == nil && ucfg.FIDO2.Attestation != "" {
+		attestationFormat = ucfg.FIDO2.Attestation
+	}
+
 	auth, err := authenticator.NewAuthenticator(&authenticator.Config{
-		Storage:                    store,
-		AAGUID:                     [16]byte{0x78, 0x6B, 0x65, 0x79}, // "xkey"
+		Storage: store,
+		// One product, one AAGUID: authenticator.DefaultAAGUID is the single
+		// definition every xkey entry point reports. A relying party allowlists
+		// this value and, once attestation carries an x5c, the attestation
+		// certificate vouches for it, so a per-entry-point value would make one
+		// of them unallowlistable.
+		AAGUID:                     authenticator.DefaultAAGUID,
+		AttestationFormat:          attestationFormat,
 		EnablePIN:                  true,
 		EnableResidentKey:          true,
 		EnableCredentialManagement: true,

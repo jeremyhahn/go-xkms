@@ -27,7 +27,8 @@ func TestNewAuthenticatorState(t *testing.T) {
 	require.Equal(t, DefaultUVRetries, state.UVRetries())
 	require.False(t, state.PINSet)
 	require.Nil(t, state.PINHash)
-	require.Nil(t, state.AttestationKey)
+	require.Nil(t, state.WrappedAttestSO)
+	require.Nil(t, state.WrappedAttestUser)
 	require.Nil(t, state.AttestationCert)
 }
 

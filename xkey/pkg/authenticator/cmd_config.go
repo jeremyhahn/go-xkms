@@ -14,12 +14,8 @@
 package authenticator
 
 import (
-	"crypto/ecdsa"
-	"crypto/elliptic"
 	"crypto/hmac"
-	"crypto/rand"
 	"crypto/sha256"
-	"crypto/x509"
 	"errors"
 	"slices"
 	"time"
@@ -78,6 +74,10 @@ const (
 
 	// VendorCmdSetProfile sets authenticator profile configuration (requires SO unlock).
 	VendorCmdSetProfile = 0x0B
+
+	// VendorCmdSetAttestCert installs the certificate chain an operator's
+	// attestation CA issued for the device attestation key (requires SO unlock).
+	VendorCmdSetAttestCert = 0x0C
 )
 
 // authenticatorConfig CBOR request parameter keys.
@@ -94,6 +94,7 @@ const (
 	vendorParamKeyNewPin         = "newPin"
 	vendorParamKeyNewPinHash     = "newPinHash"
 	vendorParamKeyAttestCert     = "attestCert"
+	vendorParamKeyAttestChain    = "attestCertChain"
 	vendorParamKeyVendorCmd      = "vendorCmd"
 	vendorParamKeyRPID           = "rpId"
 	vendorParamKeyUVOverride     = "uvOverride"
@@ -112,6 +113,19 @@ const (
 	configResponseKeyPolicies        = 0x03
 	configResponseKeyTokenFlags      = 0x04
 	configResponseKeyPowerCycleState = 0x05
+
+	// configResponseKeyAttestCSR carries the DER-encoded PKCS#10 certificate
+	// signing request a device emits for a freshly generated attestation key.
+	//
+	// 0x06, not 0x04: #306 took 0x04 for configResponseKeyTokenFlags and 0x05
+	// for configResponseKeyPowerCycleState, and merged first (0c06fa02). The keys
+	// never share a response map today -- this one is only ever emitted by
+	// handleVendorReplaceAttestKey and those two only by
+	// handleVendorGetTokenInfo -- so the collision would compile and pass every
+	// test, and would first be visible as a client decoding the wrong field
+	// after some later change put them in one map. This block is one wire
+	// namespace; a value is spent once.
+	configResponseKeyAttestCSR = 0x06
 )
 
 // Config command errors.
@@ -162,6 +176,7 @@ var vendorSOPINHandlers = map[uint8]vendorSOPINHandlerFunc{
 	VendorCmdDeleteRPPolicy:   handleVendorDeleteRPPolicy,
 	VendorCmdListRPPolicies:   handleVendorListRPPolicies,
 	VendorCmdSetProfile:       handleVendorSetProfile,
+	VendorCmdSetAttestCert:    handleVendorSetAttestCert,
 }
 
 // vendorPrototypeConfigCommands returns the vendor subcommand IDs this
@@ -467,49 +482,116 @@ func handleVendorResetUserPIN(a *Authenticator, params map[interface{}]interface
 	return a.successResponse(nil), nil
 }
 
-// handleVendorReplaceAttestKey replaces the attestation key.
+// handleVendorReplaceAttestKey generates a new device attestation key and
+// returns a PKCS#10 certificate signing request for it.
+//
+// The private key never leaves the device. The Security Officer submits the
+// request to the operator's attestation CA and installs the issued chain with
+// VendorCmdSetAttestCert; until then the device registers credentials with the
+// "none" attestation format. This two-step shape is what makes the key and the
+// certificate agree — a certificate can only be issued for a public key the
+// device has already generated.
+//
 // This operation requires the KeyManager to be SO-unlocked.
 func handleVendorReplaceAttestKey(a *Authenticator, params map[interface{}]interface{}) ([]byte, error) {
 	if err := a.requireSOUnlocked(); err != nil {
 		return nil, err
 	}
 
-	// Generate new attestation key
-	attestKey, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
-	if err != nil {
-		return nil, ErrKeyGenerationFailed
-	}
+	a.mu.Lock()
+	defer a.mu.Unlock()
 
-	// Marshal attestation key to PKCS#8
-	attestKeyPKCS8, err := x509.MarshalPKCS8PrivateKey(attestKey)
-	if err != nil {
-		return nil, ErrCryptoError
-	}
-	defer clearBytes(attestKeyPKCS8)
-
-	// Wrap the new attestation key
-	if err := a.keyManager.WrapAttestationKey(attestKeyPKCS8); err != nil {
+	if _, err := a.attestation.GenerateAttestationKey(); err != nil {
 		return nil, err
 	}
 
-	// Optionally extract and store attestation certificate
-	if attestCert, err := extractBytesParam(params, vendorParamKeyAttestCert); err == nil && len(attestCert) > 0 {
-		// Validate that it's a valid DER-encoded certificate
-		if _, err := x509.ParseCertificate(attestCert); err != nil {
-			return nil, ErrInvalidParameter
-		}
-		a.state.AttestationCert = attestCert
+	csr, err := a.AttestationCSR()
+	if err != nil {
+		return nil, err
 	}
 
-	// Persist state
+	if err := a.storage.SaveState(a.state); err != nil {
+		return nil, ErrStorageError
+	}
+
+	responseData, err := encodeCBOR(map[int]interface{}{
+		configResponseKeyAttestCSR: csr,
+	})
+	if err != nil {
+		return nil, ErrCBOREncodingFailed
+	}
+
+	return a.successResponse(responseData), nil
+}
+
+// handleVendorSetAttestCert installs the attestation certificate chain issued
+// for this device's attestation key: the leaf under "attestCert" and any
+// intermediates, leaf-to-root and excluding the root, under "attestCertChain".
+//
+// The chain is validated against the WebAuthn Level 2 §8.2.1 certificate
+// requirements and against the resident attestation key before it is stored, so
+// a chain a relying party would reject is rejected here instead of silently
+// disabling attestation at the next registration.
+//
+// This operation requires the KeyManager to be SO-unlocked.
+func handleVendorSetAttestCert(a *Authenticator, params map[interface{}]interface{}) ([]byte, error) {
+	if err := a.requireSOUnlocked(); err != nil {
+		return nil, err
+	}
+
+	leafDER, err := extractBytesParam(params, vendorParamKeyAttestCert)
+	if err != nil {
+		return nil, ErrInvalidParameter
+	}
+
+	intermediates, err := extractCertChainParam(params, vendorParamKeyAttestChain)
+	if err != nil {
+		return nil, err
+	}
+
 	a.mu.Lock()
 	defer a.mu.Unlock()
+
+	if err := a.InstallAttestationCertificate(leafDER, intermediates); err != nil {
+		return nil, err
+	}
 
 	if err := a.storage.SaveState(a.state); err != nil {
 		return nil, ErrStorageError
 	}
 
 	return a.successResponse(nil), nil
+}
+
+// extractCertChainParam reads an optional CBOR array of DER certificates from
+// the vendor subcommand parameters. An absent parameter yields no
+// intermediates, which is the common case: most operators issue attestation
+// certificates directly from the root a relying party is configured to trust.
+func extractCertChainParam(params map[interface{}]interface{}, key string) ([][]byte, error) {
+	if params == nil {
+		return nil, nil
+	}
+
+	raw, ok := params[key]
+	if !ok {
+		return nil, nil
+	}
+
+	items, ok := raw.([]interface{})
+	if !ok {
+		return nil, ErrInvalidParameter
+	}
+
+	chain := make([][]byte, 0, len(items))
+	for _, item := range items {
+		der, ok := item.([]byte)
+		if !ok {
+			return nil, ErrInvalidParameter
+		}
+		chain = append(chain, der)
+	}
+
+	return chain, nil
 }
 
 // handleVendorGetTokenInfo reports the token's lifecycle state.

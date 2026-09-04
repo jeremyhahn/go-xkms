@@ -18,7 +18,6 @@ import (
 	"crypto/ecdsa"
 	"crypto/elliptic"
 	"crypto/rand"
-	"crypto/rsa"
 	"crypto/x509"
 	"testing"
 	"time"
@@ -696,12 +695,8 @@ func TestMemoryStorage_LoadState(t *testing.T) {
 		if err != nil {
 			t.Fatalf("LoadState failed: %v", err)
 		}
-		if loaded.AttestationKey == nil {
-			t.Error("attestation key should be preserved")
-		}
-		// Verify it's a valid key by using it
-		if loaded.AttestationKey.X == nil {
-			t.Error("attestation key should have valid public key")
+		if !bytes.Equal(loaded.WrappedAttestSO, state.WrappedAttestSO) {
+			t.Error("wrapped attestation key should be preserved")
 		}
 	})
 }
@@ -915,21 +910,14 @@ func TestCopyState(t *testing.T) {
 		}
 	})
 
-	t.Run("copies attestation key", func(t *testing.T) {
+	t.Run("copies the wrapped attestation key", func(t *testing.T) {
 		storage := NewMemoryStorage()
 		original := createTestState(t)
 
 		copied := storage.copyState(original)
 
-		if copied.AttestationKey == nil {
-			t.Error("AttestationKey should be copied")
-		}
-		// Verify it's a valid copy by checking the public key coordinates
-		if copied.AttestationKey.X.Cmp(original.AttestationKey.X) != 0 {
-			t.Error("AttestationKey X coordinate mismatch")
-		}
-		if copied.AttestationKey.Y.Cmp(original.AttestationKey.Y) != 0 {
-			t.Error("AttestationKey Y coordinate mismatch")
+		if !bytes.Equal(copied.WrappedAttestSO, original.WrappedAttestSO) {
+			t.Error("WrappedAttestSO should be copied")
 		}
 	})
 
@@ -940,8 +928,8 @@ func TestCopyState(t *testing.T) {
 
 		copied := storage.copyState(original)
 
-		if copied.AttestationKey != nil {
-			t.Error("AttestationKey should be nil when original has no key")
+		if copied.WrappedAttestSO != nil {
+			t.Error("WrappedAttestSO should be nil when original has no key")
 		}
 		if !copied.PINSet {
 			t.Error("PINSet should be copied")
@@ -993,8 +981,8 @@ func TestStateToSerializable(t *testing.T) {
 		if serializable.UVRetries != 2 {
 			t.Error("UVRetries mismatch")
 		}
-		if len(serializable.AttestationKeyPKCS8) == 0 {
-			t.Error("AttestationKeyPKCS8 should be populated")
+		if !bytes.Equal(serializable.WrappedAttestSO, state.WrappedAttestSO) {
+			t.Error("WrappedAttestSO mismatch")
 		}
 		if !bytes.Equal(serializable.AttestationCert, state.AttestationCert) {
 			t.Error("AttestationCert mismatch")
@@ -1016,8 +1004,8 @@ func TestStateToSerializable(t *testing.T) {
 			t.Fatalf("stateToSerializable failed: %v", err)
 		}
 
-		if serializable.AttestationKeyPKCS8 != nil {
-			t.Error("AttestationKeyPKCS8 should be nil for state without key")
+		if serializable.WrappedAttestSO != nil {
+			t.Error("WrappedAttestSO should be nil for state without key")
 		}
 	})
 
@@ -1090,21 +1078,23 @@ func TestStateToSerializable(t *testing.T) {
 		}
 	})
 
-	t.Run("skips attestation key serialization when WrappedAttestSO is set", func(t *testing.T) {
+	// The wrapped copies are the only representation of the attestation key
+	// that is ever serialized.
+	t.Run("serializes only the wrapped attestation copies", func(t *testing.T) {
 		state := createTestState(t)
 		state.WrappedAttestSO = []byte{1, 2, 3, 4, 5, 6, 7, 8}
+		state.WrappedAttestUser = []byte{9, 10, 11, 12}
 
 		serializable, err := stateToSerializable(state)
 		if err != nil {
 			t.Fatalf("stateToSerializable failed: %v", err)
 		}
 
-		// AttestationKeyPKCS8 should be empty when WrappedAttestSO is set
-		if len(serializable.AttestationKeyPKCS8) != 0 {
-			t.Error("AttestationKeyPKCS8 should be empty when WrappedAttestSO is set")
-		}
 		if !bytes.Equal(serializable.WrappedAttestSO, state.WrappedAttestSO) {
 			t.Error("WrappedAttestSO should be copied")
+		}
+		if !bytes.Equal(serializable.WrappedAttestUser, state.WrappedAttestUser) {
+			t.Error("WrappedAttestUser should be copied")
 		}
 	})
 
@@ -1186,8 +1176,8 @@ func TestSerializableToState(t *testing.T) {
 		if state.UVRetries() != 2 {
 			t.Error("UVRetries mismatch")
 		}
-		if state.AttestationKey == nil {
-			t.Error("AttestationKey should be restored")
+		if !bytes.Equal(state.WrappedAttestSO, original.WrappedAttestSO) {
+			t.Error("WrappedAttestSO should be restored")
 		}
 		if !bytes.Equal(state.AttestationCert, original.AttestationCert) {
 			t.Error("AttestationCert mismatch")
@@ -1198,38 +1188,6 @@ func TestSerializableToState(t *testing.T) {
 		_, err := serializableToState(nil)
 		if err != ErrInvalidParameter {
 			t.Errorf("expected ErrInvalidParameter, got %v", err)
-		}
-	})
-
-	t.Run("returns error for invalid PKCS8 key", func(t *testing.T) {
-		serializable := &SerializableState{
-			AttestationKeyPKCS8: []byte{1, 2, 3, 4}, // Invalid PKCS8 data
-		}
-
-		_, err := serializableToState(serializable)
-		if err != ErrDeserializationFailed {
-			t.Errorf("expected ErrDeserializationFailed, got %v", err)
-		}
-	})
-
-	t.Run("returns error for non-ECDSA key", func(t *testing.T) {
-		// Generate an RSA key and serialize it as PKCS8
-		rsaKey, err := rsa.GenerateKey(rand.Reader, 2048)
-		if err != nil {
-			t.Fatalf("failed to generate RSA key: %v", err)
-		}
-		pkcs8Bytes, err := x509.MarshalPKCS8PrivateKey(rsaKey)
-		if err != nil {
-			t.Fatalf("failed to marshal RSA key: %v", err)
-		}
-
-		serializable := &SerializableState{
-			AttestationKeyPKCS8: pkcs8Bytes,
-		}
-
-		_, err = serializableToState(serializable)
-		if err != ErrDeserializationFailed {
-			t.Errorf("expected ErrDeserializationFailed for non-ECDSA key, got %v", err)
 		}
 	})
 
@@ -1322,20 +1280,10 @@ func TestSerializableToState(t *testing.T) {
 		}
 	})
 
-	t.Run("skips attestation key deserialization when WrappedAttestSO is set", func(t *testing.T) {
-		// Create a valid ECDSA key in PKCS8 format
-		key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
-		if err != nil {
-			t.Fatalf("failed to generate key: %v", err)
-		}
-		pkcs8Bytes, err := x509.MarshalPKCS8PrivateKey(key)
-		if err != nil {
-			t.Fatalf("failed to marshal key: %v", err)
-		}
-
+	t.Run("loads both wrapped attestation copies", func(t *testing.T) {
 		serializable := &SerializableState{
-			AttestationKeyPKCS8: pkcs8Bytes,
-			WrappedAttestSO:     []byte{1, 2, 3, 4, 5, 6, 7, 8},
+			WrappedAttestSO:   []byte{1, 2, 3, 4, 5, 6, 7, 8},
+			WrappedAttestUser: []byte{9, 10, 11, 12},
 		}
 
 		state, err := serializableToState(serializable)
@@ -1343,12 +1291,11 @@ func TestSerializableToState(t *testing.T) {
 			t.Fatalf("serializableToState failed: %v", err)
 		}
 
-		// AttestationKey should be nil because WrappedAttestSO is set
-		if state.AttestationKey != nil {
-			t.Error("AttestationKey should be nil when WrappedAttestSO is set")
-		}
 		if !bytes.Equal(state.WrappedAttestSO, serializable.WrappedAttestSO) {
 			t.Error("WrappedAttestSO should be copied")
+		}
+		if !bytes.Equal(state.WrappedAttestUser, serializable.WrappedAttestUser) {
+			t.Error("WrappedAttestUser should be copied")
 		}
 	})
 
@@ -1497,16 +1444,9 @@ func TestSerializationRoundTrip(t *testing.T) {
 			t.Error("SOPINManager.Salt round trip failed")
 		}
 
-		// Verify attestation key
-		if restored.AttestationKey == nil {
-			t.Error("AttestationKey round trip failed - nil")
-		} else {
-			if restored.AttestationKey.X.Cmp(original.AttestationKey.X) != 0 {
-				t.Error("AttestationKey.X round trip failed")
-			}
-			if restored.AttestationKey.Y.Cmp(original.AttestationKey.Y) != 0 {
-				t.Error("AttestationKey.Y round trip failed")
-			}
+		// Verify the wrapped attestation key
+		if !bytes.Equal(restored.WrappedAttestSO, original.WrappedAttestSO) {
+			t.Error("WrappedAttestSO round trip failed")
 		}
 	})
 
@@ -1587,10 +1527,17 @@ func createTestState(t *testing.T) *AuthenticatorState {
 	if err != nil {
 		t.Fatalf("failed to generate attestation key: %v", err)
 	}
+	pkcs8, err := x509.MarshalPKCS8PrivateKey(key)
+	if err != nil {
+		t.Fatalf("failed to marshal attestation key: %v", err)
+	}
 
+	// The attestation key lives only as its AES-GCM wrapped copies. Wrapped
+	// bytes are opaque to the state layer, so a stand-in blob of the right
+	// shape exercises the same persistence path.
 	state := NewAuthenticatorState()
 	state.AAGUID = DefaultAAGUID
-	state.AttestationKey = key
+	state.WrappedAttestSO = pkcs8
 
 	return state
 }

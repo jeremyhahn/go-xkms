@@ -15,7 +15,6 @@ package authenticator
 
 import (
 	"crypto"
-	"crypto/ecdsa"
 	"sync/atomic"
 	"time"
 )
@@ -111,14 +110,24 @@ type AuthenticatorState struct {
 	// uvRetries stores the remaining user verification attempts atomically.
 	uvRetries atomic.Int32
 
-	// AttestationKey is the self-attestation signing key.
-	// Used to sign attestation statements during credential creation.
-	// When SO PIN is enabled, this key is protected via key wrapping.
-	AttestationKey *ecdsa.PrivateKey
+	// The device attestation signing key is deliberately absent from this
+	// struct. It is held only as the AES-GCM wrapped WrappedAttestSO and
+	// WrappedAttestUser copies below: an *ecdsa.PrivateKey cannot be mlocked
+	// or reliably wiped, so a retained unwrapped copy would be plaintext key
+	// material on the Go heap for the process lifetime. KeyManager.
+	// AttestationSigner unwraps it into protected memory for the duration of
+	// each signature instead.
 
-	// AttestationCert is the DER-encoded attestation certificate.
-	// This is included in attestation statements.
+	// AttestationCert is the DER-encoded attestation certificate that the
+	// operator's attestation CA issued for AttestationKey. It is the leaf of
+	// the x5c chain in a packed attestation statement.
 	AttestationCert []byte
+
+	// AttestationCertChain holds the DER-encoded intermediate CA certificates
+	// between AttestationCert and the root, in leaf-to-root order. The root is
+	// excluded: a relying party is configured to trust it out of band, so
+	// sending it would only grow the registration response.
+	AttestationCertChain [][]byte
 
 	// --- SO PIN fields ---
 

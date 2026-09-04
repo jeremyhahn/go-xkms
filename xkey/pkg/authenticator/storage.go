@@ -80,12 +80,20 @@ type SerializableState struct {
 	// UVRetries is the current user verification retry count.
 	UVRetries int `json:"uv_retries"`
 
-	// AttestationKeyPKCS8 is the DER-encoded PKCS#8 attestation private key.
-	// Only used when SO PIN is not enabled.
-	AttestationKeyPKCS8 []byte `json:"attestation_key_pkcs8,omitempty"`
+	// The attestation private key is deliberately absent from the serialized
+	// state. It is persisted only as the AES-GCM wrapped WrappedAttestSO and
+	// WrappedAttestUser copies below, so neither a stolen state file nor a
+	// compromised storage barrier yields a usable attestation identity. The
+	// FIDO2 credential storage backend is barrier-encrypted only when a
+	// barrier is active; it falls back to a plain file store otherwise, so
+	// storage encryption is not something this state can rely on.
 
 	// AttestationCert is the DER-encoded attestation certificate.
 	AttestationCert []byte `json:"attestation_cert,omitempty"`
+
+	// AttestationCertChain holds the DER-encoded intermediate CA certificates
+	// between AttestationCert and the root, in leaf-to-root order.
+	AttestationCertChain [][]byte `json:"attestation_cert_chain,omitempty"`
 
 	// --- SO PIN Serializable Fields ---
 

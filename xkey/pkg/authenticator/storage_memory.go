@@ -14,8 +14,6 @@
 package authenticator
 
 import (
-	"crypto/ecdsa"
-	"crypto/x509"
 	"encoding/hex"
 	"sync"
 )
@@ -361,31 +359,21 @@ func (m *MemoryStorage) copyState(state *AuthenticatorState) *AuthenticatorState
 		copy(copied.PINHash, state.PINHash)
 	}
 
-	// Copy attestation key (ECDSA private keys are immutable, but we copy for safety)
-	if state.AttestationKey != nil {
-		// Deep copy the ECDSA key by serializing and deserializing
-		keyBytes, err := x509.MarshalECPrivateKey(state.AttestationKey)
-		if err == nil {
-			key, err := x509.ParseECPrivateKey(keyBytes)
-			if err == nil {
-				copied.AttestationKey = key
-			}
-		}
-		// If copy fails, reference the original (better than nil)
-		if copied.AttestationKey == nil {
-			copied.AttestationKey = state.AttestationKey
-		}
-	}
-
-	// Copy attestation certificate
+	// Copy attestation certificate chain
 	if len(state.AttestationCert) > 0 {
 		copied.AttestationCert = make([]byte, len(state.AttestationCert))
 		copy(copied.AttestationCert, state.AttestationCert)
 	}
+	copied.AttestationCertChain = copyByteSlices(state.AttestationCertChain)
 
 	// Copy the Security Officer credential and the key hierarchy it protects.
 	// These were previously dropped, which silently discarded the SO PIN, its
 	// retry counter and every wrapped key across a save/load cycle.
+	//
+	// That loss used to be masked, because an unwrapped attestation key was
+	// copied alongside them. With the key held only in wrapped form the
+	// WrappedAttest* pair IS the attestation identity, so dropping them costs
+	// the device its ability to attest at all.
 	if state.SOPINManager != nil {
 		manager := NewSOPINManager()
 		manager.IsSet = state.SOPINManager.IsSet
@@ -451,20 +439,12 @@ func stateToSerializable(state *AuthenticatorState) (*SerializableState, error) 
 		copy(s.PINHash, state.PINHash)
 	}
 
-	// Serialize attestation key to PKCS#8 (only if not using wrapped keys)
-	if state.AttestationKey != nil && len(state.WrappedAttestSO) == 0 {
-		keyBytes, err := x509.MarshalPKCS8PrivateKey(state.AttestationKey)
-		if err != nil {
-			return nil, ErrSerializationFailed
-		}
-		s.AttestationKeyPKCS8 = keyBytes
-	}
-
-	// Copy attestation certificate
+	// Copy attestation certificate chain
 	if len(state.AttestationCert) > 0 {
 		s.AttestationCert = make([]byte, len(state.AttestationCert))
 		copy(s.AttestationCert, state.AttestationCert)
 	}
+	s.AttestationCertChain = copyByteSlices(state.AttestationCertChain)
 
 	// Serialize SO PIN manager state
 	if state.SOPINManager != nil {
@@ -500,6 +480,20 @@ func stateToSerializable(state *AuthenticatorState) (*SerializableState, error) 
 	return s, nil
 }
 
+// copyByteSlices deep-copies a slice of byte slices, returning nil for empty
+// input so an absent certificate chain stays absent rather than becoming an
+// empty JSON array.
+func copyByteSlices(src [][]byte) [][]byte {
+	if len(src) == 0 {
+		return nil
+	}
+	dst := make([][]byte, len(src))
+	for i, b := range src {
+		dst[i] = copyBytes(b)
+	}
+	return dst
+}
+
 // copyBytes creates a copy of a byte slice, returning nil for nil/empty input.
 func copyBytes(src []byte) []byte {
 	if len(src) == 0 {
@@ -528,24 +522,12 @@ func serializableToState(s *SerializableState) (*AuthenticatorState, error) {
 		copy(state.PINHash, s.PINHash)
 	}
 
-	// Deserialize attestation key from PKCS#8 (only if not using wrapped keys)
-	if len(s.AttestationKeyPKCS8) > 0 && len(s.WrappedAttestSO) == 0 {
-		key, err := x509.ParsePKCS8PrivateKey(s.AttestationKeyPKCS8)
-		if err != nil {
-			return nil, ErrDeserializationFailed
-		}
-		ecKey, ok := key.(*ecdsa.PrivateKey)
-		if !ok {
-			return nil, ErrDeserializationFailed
-		}
-		state.AttestationKey = ecKey
-	}
-
-	// Copy attestation certificate
+	// Copy attestation certificate chain
 	if len(s.AttestationCert) > 0 {
 		state.AttestationCert = make([]byte, len(s.AttestationCert))
 		copy(state.AttestationCert, s.AttestationCert)
 	}
+	state.AttestationCertChain = copyByteSlices(s.AttestationCertChain)
 
 	// Deserialize SO PIN manager state
 	if s.SOPINSet || len(s.SOPINSalt) > 0 {

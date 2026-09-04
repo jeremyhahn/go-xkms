@@ -520,9 +520,16 @@ func (a *Authenticator) HandleMakeCredential(data []byte) ([]byte, error) {
 	return a.successResponse(respBytes), nil
 }
 
-// buildAttestationStatement creates an attestation statement based on the configured format.
-// It checks if the key backend implements FIDO2AttestingKeyBackend and uses it for
-// attestation if available. Falls back to "none" format if attestation is not supported.
+// buildAttestationStatement creates an attestation statement based on the
+// configured format.
+//
+// It falls back to the "none" format whenever a verifiable statement cannot be
+// produced — no attestation key provisioned, no certificate chain, a backend
+// that cannot attest, or a signing failure. That fallback is deliberate: a
+// device the Security Officer has not provisioned must still be able to
+// register, unattested, and a relying party is entitled to read "none" as "this
+// device conveys no provenance" rather than being handed something that looks
+// like provenance and is not.
 //
 // Returns:
 //   - attestationFmt: The attestation format string used
@@ -534,19 +541,25 @@ func (a *Authenticator) buildAttestationStatement(
 		return AttestationFormatNone, make(map[string]interface{})
 	}
 
-	// Check if backend supports attestation
-	attestingBackend, canAttest := a.keyBackend.(keybackend.FIDO2AttestingKeyBackend)
-	if !canAttest {
+	// A key backend that holds its own attestation key in hardware answers for
+	// itself; otherwise the device attestation identity signs. The second case
+	// also covers the legacy path, where no key backend is configured at all.
+	var source keybackend.AttestationStatementProvider
+	if attestingBackend, canAttest := a.keyBackend.(keybackend.FIDO2AttestingKeyBackend); canAttest {
+		source = attestingBackend
+	} else if a.attestation != nil {
+		source = a.attestation
+	}
+	if source == nil {
 		if a.logger != nil {
-			a.logger.Warn("Attestation requested but backend does not support it, falling back to none",
+			a.logger.Warn("Attestation requested but no attestation source is available, falling back to none",
 				slog.String("requested_format", requestedFormat),
 			)
 		}
 		return AttestationFormatNone, make(map[string]interface{})
 	}
 
-	// Get attestation statement from backend
-	attStmtData, err := attestingBackend.GetAttestationStatement(requestedFormat, authData, clientDataHash)
+	attStmtData, err := source.GetAttestationStatement(requestedFormat, authData, clientDataHash)
 	if err != nil {
 		if a.logger != nil {
 			a.logger.Warn("Failed to get attestation statement, falling back to none",
@@ -562,17 +575,29 @@ func (a *Authenticator) buildAttestationStatement(
 
 	switch requestedFormat {
 	case AttestationFormatPacked:
+		// A packed statement with no x5c is self attestation, and WebAuthn L2
+		// §8.2 defines that as a signature by the *credential* private key over
+		// a zeroed AAGUID. The signature here is made by the device attestation
+		// key, so emitting it without a chain would present a statement no
+		// relying party can verify. Degrade to "none" instead: an unattested
+		// registration is honest, an unverifiable one is not.
+		if len(attStmtData.CertificateChain) == 0 {
+			if a.logger != nil {
+				a.logger.Warn("Packed attestation produced no certificate chain, falling back to none",
+					slog.String("requested_format", requestedFormat),
+				)
+			}
+			return AttestationFormatNone, make(map[string]interface{})
+		}
+
 		attStmt["alg"] = attStmtData.Algorithm
 		attStmt["sig"] = attStmtData.Signature
 
-		// Add certificate chain if available (x5c)
-		if len(attStmtData.CertificateChain) > 0 {
-			x5c := make([][]byte, len(attStmtData.CertificateChain))
-			for i, cert := range attStmtData.CertificateChain {
-				x5c[i] = cert.Raw
-			}
-			attStmt["x5c"] = x5c
+		x5c := make([][]byte, len(attStmtData.CertificateChain))
+		for i, cert := range attStmtData.CertificateChain {
+			x5c[i] = cert.Raw
 		}
+		attStmt["x5c"] = x5c
 
 	case AttestationFormatTPM:
 		attStmt["alg"] = attStmtData.Algorithm

@@ -139,6 +139,11 @@ type Authenticator struct {
 	// credMgmtState holds enumeration state for CredentialManagement operations.
 	credMgmtState *credMgmtEnumerationState
 
+	// attestation is the device attestation identity: the Security
+	// Officer-provisioned key and certificate chain that sign packed
+	// attestation statements.
+	attestation *deviceAttestationSource
+
 	// keyManager handles key wrapping/unwrapping for SO PIN protection.
 	// May be nil if SO PIN is not configured.
 	keyManager *KeyManager
@@ -264,6 +269,19 @@ func NewAuthenticator(config *Config) (*Authenticator, error) {
 
 	// Initialize KeyManager for SO PIN protection
 	a.keyManager = NewKeyManager(state, config)
+
+	// Give the key backend the device attestation identity. Attestation is a
+	// property of the device, not of whichever backend holds a given credential
+	// key, so a single decorator in front of the configured backend keeps one
+	// provenance for software, TPM2, PKCS#11 and cloud KMS credentials alike.
+	// A backend that already attests — one holding its own attestation key in
+	// hardware — is left alone so it keeps precedence.
+	a.attestation = &deviceAttestationSource{auth: a}
+	if a.keyBackend != nil {
+		if _, alreadyAttests := a.keyBackend.(keybackend.FIDO2AttestingKeyBackend); !alreadyAttests {
+			a.keyBackend = keybackend.NewAttestingBackend(a.keyBackend, a.attestation)
+		}
+	}
 
 	// Initialize PolicyManager if a provider is configured
 	if config.PolicyIntegrityProvider != nil {

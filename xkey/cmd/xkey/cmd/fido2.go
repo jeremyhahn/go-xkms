@@ -516,6 +516,15 @@ func runFIDO2(cmd *cobra.Command, args []string) error {
 
 // buildFIDO2Config creates a FIDO2Config from Viper configuration.
 func buildFIDO2Config() *FIDO2Config {
+	// The unified xkey config file is read by its own viper instance, so a
+	// value set there never reached this command's viper and `fido2.attestation`
+	// had no effect at all. Installing it as the viper default gives the file
+	// its intended precedence: an explicit --attestation flag still wins,
+	// because viper only falls back to defaults for flags the user did not set.
+	if xcfg, err := xkeyconfig.Load(); err == nil && xcfg.FIDO2.Attestation != "" {
+		viper.SetDefault("fido2.attestation", xcfg.FIDO2.Attestation)
+	}
+
 	cfg := &FIDO2Config{
 		StorageType:         FIDO2StorageType(viper.GetString("fido2.storage")),
 		StoragePath:         viper.GetString("fido2.storage_path"),
@@ -684,14 +693,10 @@ func newFIDO2Device(cfg *FIDO2Config, logger *slog.Logger) (*fido2Device, error)
 	// (YubiKey requires touch even after PIN verification). This ensures the
 	// SocketHandler is invoked for every operation, triggering D-Bus notifications
 	// and allowing approval via `xkey touch`. Can be disabled with --require-touch=false.
-	// AAGUID: UUIDv5(DNS, "xkey.automatethethings.com") = 5150e208-1ab8-5162-bc67-f5e4f24adefa
-	xkeyAAGUID := [16]byte{
-		0x51, 0x50, 0xE2, 0x08, 0x1A, 0xB8, 0x51, 0x62,
-		0xBC, 0x67, 0xF5, 0xE4, 0xF2, 0x4A, 0xDE, 0xFA,
-	}
-
 	authConfig := &authenticator.Config{
-		AAGUID:                     xkeyAAGUID,
+		// One product, one AAGUID: authenticator.DefaultAAGUID is the single
+		// definition every xkey entry point reports.
+		AAGUID:                     authenticator.DefaultAAGUID,
 		EnablePIN:                  cfg.EnablePIN,
 		EnableResidentKey:          true,
 		EnableCredentialManagement: true,

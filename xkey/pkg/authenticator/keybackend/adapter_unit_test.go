@@ -166,6 +166,10 @@ func TestBackendAdapter_TypeAndCapabilities(t *testing.T) {
 
 	caps := adapter.Capabilities()
 	assert.Equal(t, []int{COSEAlgES256, COSEAlgES384, COSEAlgES512, COSEAlgEdDSA}, caps.SupportedAlgorithms)
+	// Attestation is a device identity provisioned by a Security Officer, not a
+	// property of the key provider, so the adapter itself never claims it.
+	// AttestingBackend is what carries the claim; see
+	// TestAttestingBackend/claims_attestation_support.
 	assert.False(t, caps.SupportsAttestation, "the adapter never claims attestation support")
 	assert.False(t, caps.HardwareBacked, "the software provider is not hardware backed")
 }

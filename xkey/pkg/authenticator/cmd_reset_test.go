@@ -232,13 +232,12 @@ func TestHandleReset_ClearsAttestationKey(t *testing.T) {
 	auth, _ := createTestAuthenticatorWithStorageForReset(t)
 	defer func() { _ = auth.Close() }()
 
-	// Generate and set an attestation key
-	privateKey, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
-	if err != nil {
-		t.Fatalf("failed to generate attestation key: %v", err)
-	}
-	auth.state.AttestationKey = privateKey
+	// Install a device attestation identity. The key exists only as its wrapped
+	// copies, so that is what a reset has to clear.
+	auth.state.WrappedAttestSO = []byte{0x01, 0x02, 0x03, 0x04}
+	auth.state.WrappedAttestUser = []byte{0x05, 0x06, 0x07, 0x08}
 	auth.state.AttestationCert = []byte{0x30, 0x82, 0x01, 0x00} // Dummy DER cert
+	auth.state.AttestationCertChain = [][]byte{{0x30, 0x82, 0x01, 0x01}}
 
 	// Execute reset command
 	response, err := auth.ProcessCBOR(CmdReset, nil)
@@ -249,12 +248,18 @@ func TestHandleReset_ClearsAttestationKey(t *testing.T) {
 		t.Fatalf("expected StatusOK, got %d", response[0])
 	}
 
-	// Verify attestation key was cleared
-	if auth.state.AttestationKey != nil {
-		t.Error("expected AttestationKey to be nil after reset")
+	// Verify the whole attestation identity was cleared
+	if auth.state.WrappedAttestSO != nil {
+		t.Error("expected WrappedAttestSO to be nil after reset")
+	}
+	if auth.state.WrappedAttestUser != nil {
+		t.Error("expected WrappedAttestUser to be nil after reset")
 	}
 	if auth.state.AttestationCert != nil {
 		t.Error("expected AttestationCert to be nil after reset")
+	}
+	if auth.state.AttestationCertChain != nil {
+		t.Error("expected AttestationCertChain to be nil after reset")
 	}
 }
 

@@ -152,10 +152,12 @@ func (a *Authenticator) resetState(aaguid [16]byte) {
 	newState.SetPINRetries(a.config.PINMaxRetries)
 	newState.SetUVRetries(DefaultUVRetries)
 
-	// Clear attestation key and certificate
-	// The authenticator will generate a new one on next credential creation if needed
-	newState.AttestationKey = nil
+	// Clear the device attestation identity. A reset returns the device to its
+	// unprovisioned state, where it registers credentials with the "none"
+	// attestation format until a Security Officer provisions a new key and has
+	// it certified.
 	newState.AttestationCert = nil
+	newState.AttestationCertChain = nil
 
 	// Clear all wrapped keys and SO PIN state
 	// After reset, SO PIN must be re-initialized

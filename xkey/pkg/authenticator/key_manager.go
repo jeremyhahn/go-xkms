@@ -14,11 +14,13 @@
 package authenticator
 
 import (
+	"crypto"
 	"crypto/ecdsa"
 	"crypto/elliptic"
 	"crypto/rand"
 	"crypto/x509"
 	"errors"
+	"io"
 	"sync"
 
 	"golang.org/x/crypto/argon2"
@@ -582,7 +584,6 @@ func (km *KeyManager) InitializeSOPIN(soPin string) error {
 	km.state.WrappedCMKSO = wrappedCMKSO
 	km.state.WrappedAttestSO = wrappedAttestSO
 	km.state.WrappedAttestUser = wrappedAttestUser
-	km.state.AttestationKey = attestKey
 
 	// Cache unwrapped keys in protected memory. adoptKeyMaterial wipes each
 	// source slice, so the heap copies produced above do not outlive this.
@@ -757,99 +758,181 @@ func (km *KeyManager) WrapAttestationKey(attestKeyPKCS8 []byte) error {
 		}
 	}
 
-	// Store wrapped keys
-	km.state.WrappedAttestSO = wrappedAttestSO
-	km.state.WrappedAttestUser = wrappedAttestUser
-
-	// Parse and cache the attestation key
+	// Reject material that is not a usable attestation key before committing
+	// the wrapped copies, so a device cannot end up holding a wrapped blob it
+	// can never sign with.
 	key, err := x509.ParsePKCS8PrivateKey(attestKeyPKCS8)
 	if err != nil {
 		return ErrKeyManagerInvalidKey
 	}
-
-	ecKey, ok := key.(*ecdsa.PrivateKey)
-	if !ok {
+	if _, ok := key.(*ecdsa.PrivateKey); !ok {
 		return ErrKeyManagerInvalidKey
 	}
 
-	km.state.AttestationKey = ecKey
+	// Only the wrapped copies are retained. The unwrapped key is never cached
+	// on the Go heap: an *ecdsa.PrivateKey cannot be mlocked or reliably wiped,
+	// so every use unwraps into protected memory and destroys it again.
+	km.state.WrappedAttestSO = wrappedAttestSO
+	km.state.WrappedAttestUser = wrappedAttestUser
 
 	return nil
 }
 
-// GetAttestationKey returns the unwrapped attestation key.
-// The key is unwrapped from the appropriate wrapped copy based on
-// how the manager was unlocked.
+// AttestationSigner returns a crypto.Signer over the device attestation key.
+//
+// The key is never held unwrapped between operations. Each call to Sign unwraps
+// the copy that matches how the manager was unlocked into protected memory,
+// signs, and destroys the plaintext before returning. Only the AES-GCM wrapped
+// copies are persisted, so neither the storage barrier nor the serialized state
+// ever contains usable attestation key material.
+//
+// The manager must be unlocked. That makes attestation follow the SO/user key
+// hierarchy rather than sitting outside it; a device that has not been unlocked
+// since boot conveys no provenance and registers with the "none" format.
 //
 // Returns ErrKeyManagerLocked if the manager is not unlocked.
-// Returns ErrKeyManagerNoAttestKey if the attestation key is not available.
-func (km *KeyManager) GetAttestationKey() (*ecdsa.PrivateKey, error) {
-	km.mu.RLock()
-	defer km.mu.RUnlock()
-
-	if km.unlockSource == unlockSourceNone {
-		return nil, ErrKeyManagerLocked
-	}
-
-	// If already cached in state, return it
-	if km.state.AttestationKey != nil {
-		return km.state.AttestationKey, nil
-	}
-
-	var wrapped []byte
-	var unwrapKey *secure.Buffer
-
-	switch km.unlockSource {
-	case unlockSourceSOPIN:
-		// Use AK to unwrap SO copy
-		if km.adminKey == nil {
-			return nil, ErrKeyManagerNoAK
-		}
-		if len(km.state.WrappedAttestSO) == 0 {
-			return nil, ErrKeyManagerNoAttestKey
-		}
-		wrapped = km.state.WrappedAttestSO
-		unwrapKey = km.adminKey
-
-	case unlockSourceUserPIN:
-		// Use CMK to unwrap User copy
-		if km.cmk == nil {
-			return nil, ErrKeyManagerNoCMK
-		}
-		if len(km.state.WrappedAttestUser) == 0 {
-			return nil, ErrKeyManagerNoAttestKey
-		}
-		wrapped = km.state.WrappedAttestUser
-		unwrapKey = km.cmk
-
-	default:
-		return nil, ErrKeyManagerLocked
-	}
-
-	// Unwrap the attestation key
-	var attestKeyPKCS8 []byte
-	err := withKeyWrapper(unwrapKey, func(w KeyWrapper) error {
-		var uErr error
-		attestKeyPKCS8, uErr = w.Unwrap(wrapped)
-		return uErr
+// Returns ErrKeyManagerNoAttestKey if no attestation key is provisioned.
+func (km *KeyManager) AttestationSigner() (crypto.Signer, error) {
+	// Resolving the public key proves the wrapped copy is present, unwrappable
+	// and an ECDSA key, so callers see a provisioning failure here rather than
+	// at signing time. The plaintext is destroyed before this returns.
+	var publicKey *ecdsa.PublicKey
+	err := km.withAttestationKey(func(key *ecdsa.PrivateKey) error {
+		publicKey = key.Public().(*ecdsa.PublicKey)
+		return nil
 	})
 	if err != nil {
 		return nil, err
 	}
-	defer clearBytes(attestKeyPKCS8)
 
-	// Parse PKCS#8
-	key, err := x509.ParsePKCS8PrivateKey(attestKeyPKCS8)
+	return &attestationSigner{keyManager: km, publicKey: publicKey}, nil
+}
+
+// attestationSigner signs with the device attestation key, unwrapping it for
+// the duration of each signature and never retaining the private half.
+type attestationSigner struct {
+	keyManager *KeyManager
+
+	// publicKey is the only part of the identity kept between operations; a
+	// public key is not secret.
+	publicKey *ecdsa.PublicKey
+}
+
+// Public returns the attestation public key.
+func (s *attestationSigner) Public() crypto.PublicKey {
+	return s.publicKey
+}
+
+// Sign unwraps the attestation key into protected memory, signs digest, and
+// destroys the plaintext before returning.
+// The parameter is named randReader rather than rand so the crypto/rand package
+// stays reachable for the nil fallback below.
+func (s *attestationSigner) Sign(randReader io.Reader, digest []byte, opts crypto.SignerOpts) ([]byte, error) {
+	// crypto.Signer callers may pass a nil reader; ECDSA needs one for its
+	// hedged nonce, so fall back to the process CSPRNG rather than depending on
+	// what the standard library does with nil.
+	if randReader == nil {
+		randReader = rand.Reader
+	}
+
+	var signature []byte
+	err := s.keyManager.withAttestationKey(func(key *ecdsa.PrivateKey) error {
+		sig, signErr := key.Sign(randReader, digest, opts)
+		if signErr != nil {
+			return signErr
+		}
+		signature = sig
+		return nil
+	})
 	if err != nil {
-		return nil, ErrKeyManagerInvalidKey
+		return nil, err
 	}
 
-	ecKey, ok := key.(*ecdsa.PrivateKey)
-	if !ok {
-		return nil, ErrKeyManagerInvalidKey
+	return signature, nil
+}
+
+// withAttestationKey unwraps the attestation key into an mlocked buffer, parses
+// it, invokes fn, and destroys the buffer. The parsed *ecdsa.PrivateKey is
+// transient — crypto/ecdsa cannot operate on protected memory directly — and is
+// not retained beyond fn.
+func (km *KeyManager) withAttestationKey(fn func(*ecdsa.PrivateKey) error) error {
+	km.mu.RLock()
+	defer km.mu.RUnlock()
+
+	wrapped, unwrapKey, err := km.attestationUnwrapper()
+	if err != nil {
+		return err
 	}
 
-	return ecKey, nil
+	// The unwrap happens under the borrow on unwrapKey; the plaintext is then
+	// hoisted OUT of it before being adopted into protected memory. That order
+	// is not cosmetic: NewBufferFromBytes is purge-class and takes the same
+	// purgeMu that WithBytes holds as a reader, so adopting from inside the
+	// borrow self-deadlocks (go-qrdb pkg/secure/buffer.go: "fn MUST NOT call
+	// back into this package"). It is also the shape every unlock path here
+	// already uses.
+	var attestKeyPKCS8 []byte
+	if err := withKeyWrapper(unwrapKey, func(wrapper KeyWrapper) error {
+		var unwrapErr error
+		attestKeyPKCS8, unwrapErr = wrapper.Unwrap(wrapped)
+		return unwrapErr
+	}); err != nil {
+		return err
+	}
+
+	// adoptKeyMaterial copies into mlocked memory and wipes the source slice,
+	// so the unwrapped plaintext exists on the Go heap only until here.
+	var buf *secure.Buffer
+	if err := adoptKeyMaterial(&buf, attestKeyPKCS8); err != nil {
+		return err
+	}
+	defer buf.Destroy()
+
+	return buf.WithBytes(func(pkcs8 []byte) error {
+		key, parseErr := x509.ParsePKCS8PrivateKey(pkcs8)
+		if parseErr != nil {
+			return ErrKeyManagerInvalidKey
+		}
+
+		ecKey, ok := key.(*ecdsa.PrivateKey)
+		if !ok {
+			return ErrKeyManagerInvalidKey
+		}
+
+		return fn(ecKey)
+	})
+}
+
+// attestationUnwrapper selects the wrapped attestation copy and the protected
+// key that unwraps it, matching how the manager was unlocked. The key is
+// returned as the *secure.Buffer it is held in rather than as plaintext, so the
+// borrow is taken by the caller for exactly the length of the unwrap.
+// Must be called with km.mu held.
+func (km *KeyManager) attestationUnwrapper() ([]byte, *secure.Buffer, error) {
+	switch km.unlockSource {
+	case unlockSourceSOPIN:
+		// Use AK to unwrap SO copy
+		if km.adminKey == nil {
+			return nil, nil, ErrKeyManagerNoAK
+		}
+		if len(km.state.WrappedAttestSO) == 0 {
+			return nil, nil, ErrKeyManagerNoAttestKey
+		}
+		return km.state.WrappedAttestSO, km.adminKey, nil
+
+	case unlockSourceUserPIN:
+		// Use CMK to unwrap User copy
+		if km.cmk == nil {
+			return nil, nil, ErrKeyManagerNoCMK
+		}
+		if len(km.state.WrappedAttestUser) == 0 {
+			return nil, nil, ErrKeyManagerNoAttestKey
+		}
+		return km.state.WrappedAttestUser, km.cmk, nil
+
+	default:
+		return nil, nil, ErrKeyManagerLocked
+	}
 }
 
 // ChangeSOPIN changes the SO PIN from the current PIN to a new PIN.

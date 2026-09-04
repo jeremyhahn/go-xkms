@@ -14,8 +14,10 @@
 package authenticator
 
 import (
+	"crypto/ecdsa"
 	"crypto/hmac"
 	"crypto/sha256"
+	"crypto/x509"
 	"testing"
 	"time"
 
@@ -828,7 +830,11 @@ func TestHandleVendorReplaceAttestKey(t *testing.T) {
 		require.ErrorIs(t, err, ErrKeyManagerLocked)
 	})
 
-	t.Run("success replaces attestation key", func(t *testing.T) {
+	// The command returns a certificate signing request rather than accepting a
+	// certificate inline: a certificate can only be issued for a public key the
+	// device has already generated, so an inline certificate could never
+	// certify the key this command creates.
+	t.Run("success replaces attestation key and returns a CSR", func(t *testing.T) {
 		auth := createTestConfigAuthenticatorWithSOPIN(t)
 		defer func() { _ = auth.Close() }()
 
@@ -840,20 +846,151 @@ func TestHandleVendorReplaceAttestKey(t *testing.T) {
 		require.NoError(t, err)
 		require.Equal(t, uint8(StatusOK), resp[0])
 		require.NotEmpty(t, auth.state.WrappedAttestSO)
+
+		var decoded map[int]interface{}
+		require.NoError(t, decodeCBOR(resp[1:], &decoded))
+
+		csrDER, ok := decoded[configResponseKeyAttestCSR].([]byte)
+		require.True(t, ok, "response must carry the attestation CSR")
+
+		csr, err := x509.ParseCertificateRequest(csrDER)
+		require.NoError(t, err)
+		require.NoError(t, csr.CheckSignature())
+		signer, err := auth.keyManager.AttestationSigner()
+		require.NoError(t, err)
+		require.True(t, csr.PublicKey.(*ecdsa.PublicKey).Equal(signer.Public()))
+	})
+}
+
+// TestConfigResponseKeysAreDistinct pins the authenticatorConfig response-key
+// wire values and proves no two of them collide.
+//
+// This exists because the collision it guards against is invisible without it.
+// Every other test in this file decodes by CONSTANT — `decoded[configResponseKeyAttestCSR]`
+// — so two constants sharing a value compile, pass, and stay wrong until a
+// client decodes the wrong field. That is exactly what happened between this
+// branch and #306, which claims 0x04 and 0x05: each side was correct alone and
+// each side's tests passed.
+//
+// Add a key here when you add one to the block. The map is written out by hand
+// rather than derived, so the assertion is against an intended contract rather
+// than against whatever the code currently says.
+func TestConfigResponseKeysAreDistinct(t *testing.T) {
+	wire := map[string]int{
+		"configResponseKeyRetries":   configResponseKeyRetries,
+		"configResponseKeyPolicy":    configResponseKeyPolicy,
+		"configResponseKeyPolicies":  configResponseKeyPolicies,
+		"configResponseKeyAttestCSR": configResponseKeyAttestCSR,
+	}
+
+	// The pinned values. A change here is a wire-contract change and has to be
+	// a deliberate edit to this test, not a silent consequence of a rebase.
+	require.Equal(t, 0x01, wire["configResponseKeyRetries"])
+	require.Equal(t, 0x02, wire["configResponseKeyPolicy"])
+	require.Equal(t, 0x03, wire["configResponseKeyPolicies"])
+	require.Equal(t, 0x06, wire["configResponseKeyAttestCSR"],
+		"0x04 and 0x05 belong to #306's tokenFlags and powerCycleState")
+
+	seen := make(map[int]string, len(wire))
+	for name, value := range wire {
+		if other, collides := seen[value]; collides {
+			t.Fatalf("response keys %s and %s both use wire value %#x", name, other, value)
+		}
+		seen[value] = name
+	}
+}
+
+// TestHandleVendorSetAttestCert tests installing the certificate chain an
+// operator's attestation CA issued for the device attestation key.
+func TestHandleVendorSetAttestCert(t *testing.T) {
+	// ErrTokenUninitialized, not ErrKeyManagerNoSOPIN: this gate is
+	// requireSOUnlocked, the same one every other SO-gated vendor command uses.
+	// An uninitialized token and an absent key manager are the same condition
+	// to a caller, and it must be distinguishable from "SO unlock expired".
+	t.Run("uninitialized token returns error", func(t *testing.T) {
+		auth := createTestConfigAuthenticator(t)
+		defer func() { _ = auth.Close() }()
+		auth.keyManager = nil
+
+		_, err := handleVendorSetAttestCert(auth, map[interface{}]interface{}{
+			vendorParamKeyVendorCmd: uint8(VendorCmdSetAttestCert),
+		})
+
+		require.ErrorIs(t, err, ErrTokenUninitialized)
 	})
 
-	t.Run("invalid attestation cert returns error", func(t *testing.T) {
+	t.Run("not SO unlocked returns error", func(t *testing.T) {
+		auth := createTestConfigAuthenticatorWithSOPIN(t)
+		defer func() { _ = auth.Close() }()
+		auth.keyManager.Lock()
+
+		_, err := handleVendorSetAttestCert(auth, map[interface{}]interface{}{
+			vendorParamKeyVendorCmd: uint8(VendorCmdSetAttestCert),
+		})
+
+		require.ErrorIs(t, err, ErrKeyManagerLocked)
+	})
+
+	t.Run("missing certificate returns error", func(t *testing.T) {
 		auth := createTestConfigAuthenticatorWithSOPIN(t)
 		defer func() { _ = auth.Close() }()
 
-		params := map[interface{}]interface{}{
-			vendorParamKeyVendorCmd:  uint8(VendorCmdReplaceAttestKey),
-			vendorParamKeyAttestCert: []byte{0x01, 0x02, 0x03}, // invalid DER
+		_, err := handleVendorSetAttestCert(auth, map[interface{}]interface{}{
+			vendorParamKeyVendorCmd: uint8(VendorCmdSetAttestCert),
+		})
+
+		require.ErrorIs(t, err, ErrInvalidParameter)
+	})
+
+	t.Run("non-array chain parameter returns error", func(t *testing.T) {
+		auth := createTestConfigAuthenticatorWithSOPIN(t)
+		defer func() { _ = auth.Close() }()
+
+		_, err := handleVendorSetAttestCert(auth, map[interface{}]interface{}{
+			vendorParamKeyVendorCmd:   uint8(VendorCmdSetAttestCert),
+			vendorParamKeyAttestCert:  []byte{0x30, 0x00},
+			vendorParamKeyAttestChain: "not-an-array",
+		})
+
+		require.ErrorIs(t, err, ErrInvalidParameter)
+	})
+
+	t.Run("invalid certificate returns error", func(t *testing.T) {
+		auth := createTestConfigAuthenticatorWithSOPIN(t)
+		defer func() { _ = auth.Close() }()
+
+		_, err := handleVendorSetAttestCert(auth, map[interface{}]interface{}{
+			vendorParamKeyVendorCmd:  uint8(VendorCmdSetAttestCert),
+			vendorParamKeyAttestCert: []byte{0x01, 0x02, 0x03},
+		})
+
+		require.ErrorIs(t, err, ErrAttestationChainInvalid)
+	})
+
+	t.Run("installs a chain issued through an intermediate", func(t *testing.T) {
+		auth := createTestConfigAuthenticatorWithSOPIN(t)
+		defer func() { _ = auth.Close() }()
+
+		ca := newTestAttestationCA(t, true)
+		signer, err := auth.attestation.GenerateAttestationKey()
+		require.NoError(t, err)
+		leafDER := ca.issueAttestationCert(t, signer.Public(), auth.state.AAGUID[:])
+
+		intermediates := make([]interface{}, 0, 1)
+		for _, der := range ca.intermediates() {
+			intermediates = append(intermediates, der)
 		}
 
-		_, err := handleVendorReplaceAttestKey(auth, params)
-		require.Error(t, err)
-		require.ErrorIs(t, err, ErrInvalidParameter)
+		resp, err := handleVendorSetAttestCert(auth, map[interface{}]interface{}{
+			vendorParamKeyVendorCmd:   uint8(VendorCmdSetAttestCert),
+			vendorParamKeyAttestCert:  leafDER,
+			vendorParamKeyAttestChain: intermediates,
+		})
+
+		require.NoError(t, err)
+		require.Equal(t, uint8(StatusOK), resp[0])
+		require.Equal(t, leafDER, auth.state.AttestationCert)
+		require.Len(t, auth.state.AttestationCertChain, 1)
 	})
 }
 

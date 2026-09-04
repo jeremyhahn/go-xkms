@@ -1960,7 +1960,12 @@ func TestBuildAttestationStatement(t *testing.T) {
 		require.Equal(t, []byte("cert-der-2"), x5c[1])
 	})
 
-	t.Run("packed format without certificate chain (self-attestation)", func(t *testing.T) {
+	// WebAuthn L2 §8.2 defines packed-without-x5c as self attestation: signed
+	// by the *credential* private key over a zeroed AAGUID. A statement signed
+	// by the attestation key with no chain matches neither self nor Basic
+	// attestation, so it is unverifiable and must degrade to "none" rather than
+	// be presented as provenance.
+	t.Run("packed format without certificate chain falls back to none", func(t *testing.T) {
 		storage := NewMemoryStorage()
 		mockBackend := &mockAttestingKeyBackend{
 			attestationStmt: &keybackend.FIDO2AttestationStatement{
@@ -1990,12 +1995,8 @@ func TestBuildAttestationStatement(t *testing.T) {
 		clientDataHash := make([]byte, 32)
 
 		fmt, attStmt := auth.buildAttestationStatement(auth.config.AttestationFormat, authData, clientDataHash)
-		require.Equal(t, AttestationFormatPacked, fmt)
-		require.Equal(t, COSEAlgES256, attStmt["alg"])
-		require.Equal(t, []byte("self-attestation-sig"), attStmt["sig"])
-
-		_, hasX5c := attStmt["x5c"]
-		require.False(t, hasX5c)
+		require.Equal(t, AttestationFormatNone, fmt)
+		require.Empty(t, attStmt)
 	})
 
 	t.Run("tpm format with attesting backend", func(t *testing.T) {

@@ -634,15 +634,17 @@ Common paths:
 
 ### Attestation Format
 
-The `--attestation` flag selects the attestation statement format.
+The `--attestation` flag, or `fido2.attestation` in the xkey config file,
+selects the attestation statement format. The flag overrides the config file.
 
 | Value | Description | Requirements |
 |-------|-------------|--------------|
 | `none` | No attestation | Any backend |
-| `packed` | Self-signed attestation | Any backend |
-| `tpm` | TPM attestation | Requires `--backend tpm2` |
+| `packed` | Basic attestation, WebAuthn L2 §8.2 | A Security Officer-provisioned attestation key and certificate |
+| `tpm` | TPM attestation | Not implemented; falls back to `none` |
 
 **None** (Default):
+
 ```bash
 sudo xkey fido2 --attestation none
 ```
@@ -650,18 +652,72 @@ sudo xkey fido2 --attestation none
 Provides maximum privacy. Relying parties cannot verify authenticator identity.
 
 **Packed**:
+
 ```bash
 sudo xkey fido2 --attestation packed
 ```
 
-Self-signed attestation with x5c certificate chain. Suitable for testing attestation verification flows.
+Produces a WebAuthn Level 2 §8.2 packed statement carrying `alg`, a `sig` over
+`authData ‖ clientDataHash`, and an `x5c` chain — that is, **Basic attestation**.
+Self attestation (packed with no `x5c`) is not produced: §8.2 defines it as a
+signature by the *credential* key over a zeroed AAGUID, and it conveys no device
+provenance.
+
+This requires provisioning, because the chain must come from an attestation CA
+the relying party trusts. There is no built-in root:
+
+1. Set an SO PIN and unlock with it.
+2. Run the `replaceAttestKey` vendor command. The device generates a P-256
+   attestation key — the private key never leaves it — and returns a PKCS#10
+   certificate signing request carrying Subject-OU
+   `Authenticator Attestation` and the `id-fido-gen-ce-aaguid` extension.
+3. Have your attestation CA issue a certificate for that request. It must meet
+   the §8.2.1 requirements: X.509 v3, Subject-C and Subject-O naming the vendor,
+   Subject-OU exactly `Authenticator Attestation`, Basic Constraints CA:false,
+   and a non-critical `id-fido-gen-ce-aaguid` extension holding this
+   authenticator's AAGUID.
+4. Install the chain with the `setAttestCert` vendor command: the leaf under
+   `attestCert`, any intermediates (leaf-to-root, excluding the root) under
+   `attestCertChain`. The device re-runs every check a relying party would, and
+   rejects a chain that would fail on arrival.
+5. Configure the relying party to trust your root.
+
+Until a certificate is installed the device registers credentials with `none`.
+Provisioning is not a prerequisite for registration; it is a prerequisite for
+conveying provenance.
+
+#### Where the attestation key lives
+
+The attestation private key is held **only** as two AES-GCM wrapped copies —
+one under the Admin Key (SO access) and one under the Credential Master Key
+(user access). It is never written to storage in plaintext and never retained
+unwrapped in process memory: each signature unwraps it into an mlocked buffer,
+signs, and destroys the plaintext. The FIDO2 credential store is
+barrier-encrypted only when a barrier is active and falls back to a plain file
+otherwise, so storage encryption is not something the attestation identity is
+allowed to depend on.
+
+The consequence is that **attestation follows the key hierarchy**: the device
+must be unlocked for the wrapped copy to be readable. A device that has not
+been unlocked since boot registers with `none` and says so in its logs, rather
+than signing with a key it cannot reach. Making attestation available on the
+first registration after a reboot is deliberately not solved by keeping a
+plaintext copy anywhere; see go-xkms#233.
 
 **TPM**:
-```bash
-sudo xkey fido2 --backend tpm2 --attestation tpm
-```
 
-Hardware attestation with TPM-generated signature. Provides cryptographic proof of hardware protection.
+The `tpm` format is not implemented. No key backend produces TPM attestation
+data, so requesting it falls back to `none`. Use `packed` with a TPM2 credential
+backend if you want hardware-held credential keys attested by the device's
+provisioned attestation identity.
+
+### AAGUID
+
+xkey reports a single AAGUID across the GUI, the CLI and the headless extension
+server: `5150e208-1ab8-5162-bc67-f5e4f24adefa`, which is
+UUIDv5(DNS, `xkey.automatethethings.com`). Once attestation carries an `x5c`,
+the attestation certificate's `id-fido-gen-ce-aaguid` extension must hold this
+value, and it is the value a relying party allowlists.
 
 ## Logging Configuration
 

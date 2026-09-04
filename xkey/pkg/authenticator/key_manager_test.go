@@ -15,6 +15,7 @@ package authenticator
 
 import (
 	"bytes"
+	"crypto"
 	"crypto/ecdsa"
 	"crypto/ed25519"
 	"crypto/elliptic"
@@ -22,6 +23,7 @@ import (
 	"crypto/rsa"
 	"crypto/sha256"
 	"crypto/x509"
+	"reflect"
 	"sync"
 	"testing"
 
@@ -127,7 +129,7 @@ func TestKeyManager_InitializeSOPIN(t *testing.T) {
 		require.NotEmpty(t, state.WrappedCMKSO, "WrappedCMKSO should be set")
 		require.NotEmpty(t, state.WrappedAttestSO, "WrappedAttestSO should be set")
 		require.NotEmpty(t, state.WrappedAttestUser, "WrappedAttestUser should be set")
-		require.NotNil(t, state.AttestationKey, "AttestationKey should be cached")
+		require.Nil(t, state.AttestationCert, "no certificate is installed until the CA issues one")
 	})
 
 	t.Run("second initialization returns ErrKeyManagerAlreadyInitialized", func(t *testing.T) {
@@ -608,18 +610,18 @@ func TestKeyManager_WrapUnwrapCredentialKey(t *testing.T) {
 	})
 }
 
-func TestKeyManager_GetAttestationKey(t *testing.T) {
+func TestKeyManager_AttestationSigner(t *testing.T) {
 	t.Run("returns attestation key when SO-unlocked", func(t *testing.T) {
 		state, config := createTestKeyManagerState()
 		km := NewKeyManager(state, config)
 		err := km.InitializeSOPIN(testSOPIN)
 		require.NoError(t, err)
 
-		attestKey, err := km.GetAttestationKey()
+		attestKey, err := km.AttestationSigner()
 
 		require.NoError(t, err)
 		require.NotNil(t, attestKey)
-		require.Equal(t, elliptic.P256(), attestKey.Curve)
+		require.Equal(t, elliptic.P256(), attestKey.Public().(*ecdsa.PublicKey).Curve)
 	})
 
 	t.Run("returns attestation key when User-unlocked with CMK available", func(t *testing.T) {
@@ -644,7 +646,7 @@ func TestKeyManager_GetAttestationKey(t *testing.T) {
 		require.NoError(t, err)
 		require.True(t, km.IsUserUnlocked())
 
-		attestKey, err := km.GetAttestationKey()
+		attestKey, err := km.AttestationSigner()
 
 		require.NoError(t, err)
 		require.NotNil(t, attestKey)
@@ -658,26 +660,60 @@ func TestKeyManager_GetAttestationKey(t *testing.T) {
 
 		km.Lock()
 
-		_, err = km.GetAttestationKey()
+		_, err = km.AttestationSigner()
 
 		require.ErrorIs(t, err, ErrKeyManagerLocked)
 	})
 
-	t.Run("returns cached attestation key from state", func(t *testing.T) {
+	// The attestation key exists only as its wrapped copies. Nothing retains an
+	// unwrapped *ecdsa.PrivateKey between operations, because such a key cannot
+	// be mlocked or reliably wiped. This is asserted structurally rather than by
+	// inspecting named fields, so re-introducing a retained key anywhere in the
+	// signer or in the persisted state fails here.
+	t.Run("retains no unwrapped private key between signatures", func(t *testing.T) {
+		state, config := createTestKeyManagerState()
+		km := NewKeyManager(state, config)
+		require.NoError(t, km.InitializeSOPIN(testSOPIN))
+
+		signer, err := km.AttestationSigner()
+		require.NoError(t, err)
+
+		require.Empty(t, reachablePrivateKeyFields(reflect.TypeOf(signer)),
+			"the attestation signer must not retain a private key")
+		require.Empty(t, reachablePrivateKeyFields(reflect.TypeOf(state)),
+			"the authenticator state must not retain a private key")
+
+		// Not a vacuous pass: the identity really is installed, in wrapped form.
+		require.NotEmpty(t, state.WrappedAttestSO)
+		require.NotEmpty(t, state.WrappedAttestUser)
+
+		signer2, err := km.AttestationSigner()
+		require.NoError(t, err)
+		require.True(t, signer2.Public().(*ecdsa.PublicKey).Equal(signer.Public()),
+			"each signer must resolve the same identity from the wrapped copy")
+	})
+
+	t.Run("signs repeatedly with the same identity", func(t *testing.T) {
 		state, config := createTestKeyManagerState()
 		km := NewKeyManager(state, config)
 		err := km.InitializeSOPIN(testSOPIN)
 		require.NoError(t, err)
 
-		// First call - may unwrap
-		attestKey1, err := km.GetAttestationKey()
+		signer, err := km.AttestationSigner()
 		require.NoError(t, err)
 
-		// Second call - should return cached
-		attestKey2, err := km.GetAttestationKey()
-		require.NoError(t, err)
+		digest := sha256.Sum256([]byte("attestation-test"))
+		publicKey, ok := signer.Public().(*ecdsa.PublicKey)
+		require.True(t, ok)
 
-		require.Equal(t, attestKey1, attestKey2)
+		for i := 0; i < 3; i++ {
+			sig, signErr := signer.Sign(rand.Reader, digest[:], crypto.SHA256)
+			require.NoError(t, signErr)
+			require.True(t, ecdsa.VerifyASN1(publicKey, digest[:], sig),
+				"each unwrap-sign-destroy cycle must use the same key")
+		}
+
+		_ = state
 	})
 
 	t.Run("SO-unlocked manager without an Admin Key returns ErrKeyManagerNoAK", func(t *testing.T) {
@@ -690,11 +726,11 @@ func TestKeyManager_GetAttestationKey(t *testing.T) {
 		// itself now refuses a state that has no wrapped AK, so this is the
 		// only way the branch is reachable.
 		km.mu.Lock()
+		km.adminKey.Destroy()
 		km.adminKey = nil
 		km.mu.Unlock()
-		state.AttestationKey = nil
 
-		_, err := km.GetAttestationKey()
+		_, err := km.AttestationSigner()
 		require.ErrorIs(t, err, ErrKeyManagerNoAK)
 	})
 
@@ -717,12 +753,11 @@ func TestKeyManager_GetAttestationKey(t *testing.T) {
 		state.WrappedAK, err = akWrapper.Wrap(ak)
 		require.NoError(t, err)
 		// Don't set WrappedAttestSO
-		state.AttestationKey = nil
 
 		err = km.UnlockWithSOPIN(testSOPIN)
 		require.NoError(t, err)
 
-		_, err = km.GetAttestationKey()
+		_, err = km.AttestationSigner()
 		require.ErrorIs(t, err, ErrKeyManagerNoAttestKey)
 	})
 
@@ -741,7 +776,6 @@ func TestKeyManager_GetAttestationKey(t *testing.T) {
 		km.Lock()
 
 		state.PINSet = true
-		state.AttestationKey = nil
 
 		// Clear the wrapped CMK user to simulate corruption/missing
 		state.WrappedCMKUser = nil
@@ -750,7 +784,7 @@ func TestKeyManager_GetAttestationKey(t *testing.T) {
 		err = km.UnlockWithUserPIN(pinHash)
 		require.NoError(t, err) // unlock succeeds but CMK is nil
 
-		_, err = km.GetAttestationKey()
+		_, err = km.AttestationSigner()
 		require.ErrorIs(t, err, ErrKeyManagerNoCMK)
 	})
 
@@ -768,7 +802,6 @@ func TestKeyManager_GetAttestationKey(t *testing.T) {
 
 		// Clear wrapped attest user
 		state.WrappedAttestUser = nil
-		state.AttestationKey = nil
 
 		km.Lock()
 
@@ -777,7 +810,7 @@ func TestKeyManager_GetAttestationKey(t *testing.T) {
 		err = km.UnlockWithUserPIN(pinHash)
 		require.NoError(t, err)
 
-		_, err = km.GetAttestationKey()
+		_, err = km.AttestationSigner()
 		require.ErrorIs(t, err, ErrKeyManagerNoAttestKey)
 	})
 
@@ -805,12 +838,11 @@ func TestKeyManager_GetAttestationKey(t *testing.T) {
 		require.NoError(t, err)
 		state.WrappedAttestSO, err = akWrapperForAttest.Wrap([]byte("not valid pkcs8"))
 		require.NoError(t, err)
-		state.AttestationKey = nil
 
 		err = km.UnlockWithSOPIN(testSOPIN)
 		require.NoError(t, err)
 
-		_, err = km.GetAttestationKey()
+		_, err = km.AttestationSigner()
 		require.ErrorIs(t, err, ErrKeyManagerInvalidKey)
 	})
 
@@ -843,12 +875,11 @@ func TestKeyManager_GetAttestationKey(t *testing.T) {
 		require.NoError(t, err)
 		state.WrappedAttestSO, err = akWrapperForAttest.Wrap(rsaPKCS8)
 		require.NoError(t, err)
-		state.AttestationKey = nil
 
 		err = km.UnlockWithSOPIN(testSOPIN)
 		require.NoError(t, err)
 
-		_, err = km.GetAttestationKey()
+		_, err = km.AttestationSigner()
 		require.ErrorIs(t, err, ErrKeyManagerInvalidKey)
 	})
 
@@ -864,11 +895,10 @@ func TestKeyManager_GetAttestationKey(t *testing.T) {
 		err = km.InitializeUserPIN(pinHash)
 		require.NoError(t, err)
 
-		// Save the original attestation key for comparison
-		originalKey := state.AttestationKey
-
-		// Clear cached key to force unwrap
-		state.AttestationKey = nil
+		// The SO copy and the user copy must unwrap to the same identity.
+		soSigner, err := km.AttestationSigner()
+		require.NoError(t, err)
+		soPublic := soSigner.Public()
 
 		km.Lock()
 		state.PINSet = true
@@ -876,12 +906,12 @@ func TestKeyManager_GetAttestationKey(t *testing.T) {
 		err = km.UnlockWithUserPIN(pinHash)
 		require.NoError(t, err)
 
-		attestKey, err := km.GetAttestationKey()
+		userSigner, err := km.AttestationSigner()
 		require.NoError(t, err)
-		require.NotNil(t, attestKey)
+		require.NotNil(t, userSigner)
 
-		// Keys should have same values
-		require.Equal(t, originalKey.D.Bytes(), attestKey.D.Bytes()) //nolint:staticcheck // CTAP2/COSE/ECDH protocol uses crypto/elliptic raw EC coords + ScalarMult; ecdsa big.Int access is deprecated but functional. Migrating to crypto/ecdh is a separate behavior-sensitive change.
+		require.True(t, userSigner.Public().(*ecdsa.PublicKey).Equal(soPublic),
+			"the user-wrapped copy must be the same attestation identity as the SO copy")
 	})
 
 	t.Run("corrupted wrapped attest SO returns error", func(t *testing.T) {
@@ -893,13 +923,12 @@ func TestKeyManager_GetAttestationKey(t *testing.T) {
 
 		// Corrupt wrapped attestation key
 		state.WrappedAttestSO[len(state.WrappedAttestSO)-1] ^= 0xFF
-		state.AttestationKey = nil
 
 		km.Lock()
 		err = km.UnlockWithSOPIN(testSOPIN)
 		require.NoError(t, err)
 
-		_, err = km.GetAttestationKey()
+		_, err = km.AttestationSigner()
 		require.Error(t, err)
 	})
 
@@ -916,7 +945,6 @@ func TestKeyManager_GetAttestationKey(t *testing.T) {
 
 		// Corrupt wrapped attestation key for user
 		state.WrappedAttestUser[len(state.WrappedAttestUser)-1] ^= 0xFF
-		state.AttestationKey = nil
 
 		km.Lock()
 		state.PINSet = true
@@ -924,7 +952,7 @@ func TestKeyManager_GetAttestationKey(t *testing.T) {
 		err = km.UnlockWithUserPIN(pinHash)
 		require.NoError(t, err)
 
-		_, err = km.GetAttestationKey()
+		_, err = km.AttestationSigner()
 		require.Error(t, err)
 	})
 }
@@ -1667,7 +1695,10 @@ func TestKeyManager_WrapAttestationKey(t *testing.T) {
 		require.ErrorIs(t, err, ErrKeyManagerLocked)
 	})
 
-	t.Run("caches attestation key in state", func(t *testing.T) {
+	// The wrapped copies are the only place the key is kept; nothing caches an
+	// unwrapped copy in state. The identity is verified by unwrapping it back
+	// out through the signer.
+	t.Run("installs the key as wrapped copies only", func(t *testing.T) {
 		state, config := createTestKeyManagerState()
 		km := NewKeyManager(state, config)
 		err := km.InitializeSOPIN(testSOPIN)
@@ -1682,10 +1713,12 @@ func TestKeyManager_WrapAttestationKey(t *testing.T) {
 		err = km.WrapAttestationKey(keyPKCS8)
 		require.NoError(t, err)
 
-		// Verify the cached key matches
-		require.Equal(t, newKey.D, state.AttestationKey.D) //nolint:staticcheck // CTAP2/COSE/ECDH protocol uses crypto/elliptic raw EC coords + ScalarMult; ecdsa big.Int access is deprecated but functional. Migrating to crypto/ecdh is a separate behavior-sensitive change.
-		require.Equal(t, newKey.X, state.AttestationKey.X)
-		require.Equal(t, newKey.Y, state.AttestationKey.Y)
+		require.NotEmpty(t, state.WrappedAttestSO)
+		require.NotEmpty(t, state.WrappedAttestUser)
+
+		signer, err := km.AttestationSigner()
+		require.NoError(t, err)
+		require.True(t, signer.Public().(*ecdsa.PublicKey).Equal(newKey.Public()))
 	})
 
 	t.Run("rejects invalid key data", func(t *testing.T) {
@@ -2046,21 +2079,19 @@ func TestKeyManager_InitializeSOPIN_Comprehensive(t *testing.T) {
 		err := km.InitializeSOPIN(testSOPIN)
 		require.NoError(t, err)
 
-		attestKey, err := km.GetAttestationKey()
+		attestKey, err := km.AttestationSigner()
 		require.NoError(t, err)
 		require.NotNil(t, attestKey)
-		require.Equal(t, elliptic.P256(), attestKey.Curve)
+
+		publicKey, ok := attestKey.Public().(*ecdsa.PublicKey)
+		require.True(t, ok)
+		require.Equal(t, elliptic.P256(), publicKey.Curve)
 
 		// Verify key is valid by checking it can sign
 		hash := sha256.Sum256([]byte("test data"))
-		r, s, err := ecdsa.Sign(rand.Reader, attestKey, hash[:])
+		sig, err := attestKey.Sign(rand.Reader, hash[:], crypto.SHA256)
 		require.NoError(t, err)
-		require.NotNil(t, r)
-		require.NotNil(t, s)
-
-		// Verify signature
-		valid := ecdsa.Verify(&attestKey.PublicKey, hash[:], r, s)
-		require.True(t, valid)
+		require.True(t, ecdsa.VerifyASN1(publicKey, hash[:], sig))
 	})
 
 	t.Run("wrapped attestation keys can be unwrapped", func(t *testing.T) {
@@ -2071,8 +2102,11 @@ func TestKeyManager_InitializeSOPIN_Comprehensive(t *testing.T) {
 		err := km.InitializeSOPIN(testSOPIN)
 		require.NoError(t, err)
 
-		// Get original attestation key
-		originalKey := state.AttestationKey
+		// The signer's public half is the only exposed part of the identity;
+		// the unwrap below must reproduce exactly that key.
+		signer, err := km.AttestationSigner()
+		require.NoError(t, err)
+		originalPublic := signer.Public()
 
 		// Verify SO-wrapped attestation key can be unwrapped
 		smk := state.SOPINManager.DeriveKey(testSOPIN)
@@ -2095,7 +2129,7 @@ func TestKeyManager_InitializeSOPIN_Comprehensive(t *testing.T) {
 
 		ecKey, ok := key.(*ecdsa.PrivateKey)
 		require.True(t, ok)
-		require.Equal(t, originalKey.D, ecKey.D) //nolint:staticcheck // CTAP2/COSE/ECDH protocol uses crypto/elliptic raw EC coords + ScalarMult; ecdsa big.Int access is deprecated but functional. Migrating to crypto/ecdh is a separate behavior-sensitive change.
+		require.True(t, ecKey.Public().(*ecdsa.PublicKey).Equal(originalPublic))
 	})
 
 	t.Run("wrapped keys have correct sizes", func(t *testing.T) {
@@ -2127,7 +2161,7 @@ func TestKeyManager_InitializeSOPIN_Comprehensive(t *testing.T) {
 		require.NoError(t, err)
 		require.Len(t, cmk, AESGCMKeySize)
 
-		attestKey, err := km.GetAttestationKey()
+		attestKey, err := km.AttestationSigner()
 		require.NoError(t, err)
 		require.NotNil(t, attestKey)
 
@@ -2246,7 +2280,6 @@ func TestKeyManager_InitializeSOPIN_Comprehensive(t *testing.T) {
 		require.Empty(t, state.WrappedCMKSO)
 		require.Empty(t, state.WrappedAttestSO)
 		require.Empty(t, state.WrappedAttestUser)
-		require.Nil(t, state.AttestationKey)
 	})
 
 	t.Run("SOPINManager created with correct default parameters", func(t *testing.T) {
@@ -2289,7 +2322,7 @@ func TestKeyManager_InitializeSOPIN_Comprehensive(t *testing.T) {
 		cmkBefore, err := km.GetCMK()
 		require.NoError(t, err)
 
-		attestBefore, err := km.GetAttestationKey()
+		attestBefore, err := km.AttestationSigner()
 		require.NoError(t, err)
 
 		// Lock and unlock
@@ -2303,12 +2336,12 @@ func TestKeyManager_InitializeSOPIN_Comprehensive(t *testing.T) {
 		cmkAfter, err := km.GetCMK()
 		require.NoError(t, err)
 
-		attestAfter, err := km.GetAttestationKey()
+		attestAfter, err := km.AttestationSigner()
 		require.NoError(t, err)
 
 		// Verify keys match
 		require.True(t, bytes.Equal(cmkBefore, cmkAfter))
-		require.Equal(t, attestBefore.D, attestAfter.D) //nolint:staticcheck // CTAP2/COSE/ECDH protocol uses crypto/elliptic raw EC coords + ScalarMult; ecdsa big.Int access is deprecated but functional. Migrating to crypto/ecdh is a separate behavior-sensitive change.
+		require.True(t, attestAfter.Public().(*ecdsa.PublicKey).Equal(attestBefore.Public()))
 	})
 
 	t.Run("wrapped user attestation key can be unwrapped with CMK", func(t *testing.T) {
@@ -2336,6 +2369,54 @@ func TestKeyManager_InitializeSOPIN_Comprehensive(t *testing.T) {
 
 		ecKey, ok := key.(*ecdsa.PrivateKey)
 		require.True(t, ok)
-		require.Equal(t, state.AttestationKey.D, ecKey.D) //nolint:staticcheck // CTAP2/COSE/ECDH protocol uses crypto/elliptic raw EC coords + ScalarMult; ecdsa big.Int access is deprecated but functional. Migrating to crypto/ecdh is a separate behavior-sensitive change.
+
+		signer, err := km.AttestationSigner()
+		require.NoError(t, err)
+		require.True(t, ecKey.Public().(*ecdsa.PublicKey).Equal(signer.Public()),
+			"the user-wrapped copy must be the same identity the signer exposes")
 	})
+}
+
+// reachablePrivateKeyFields walks a type graph and reports the paths of any
+// field that is, or transitively contains, a private key. Private key material
+// must reach the attestation subsystem only as transient, protected-memory
+// plaintext — never as a field something holds on to.
+func reachablePrivateKeyFields(t reflect.Type) []string {
+	privateKeyTypes := map[reflect.Type]bool{
+		reflect.TypeOf(&ecdsa.PrivateKey{}):  true,
+		reflect.TypeOf(ecdsa.PrivateKey{}):   true,
+		reflect.TypeOf(&rsa.PrivateKey{}):    true,
+		reflect.TypeOf(ed25519.PrivateKey{}): true,
+	}
+
+	var found []string
+	seen := map[reflect.Type]bool{}
+
+	var walk func(reflect.Type, string, int)
+	walk = func(typ reflect.Type, path string, depth int) {
+		// The state graph is finite but self-referential through the key
+		// manager; bound the walk so a cycle cannot hang the test.
+		if typ == nil || depth > 6 || seen[typ] {
+			return
+		}
+		if privateKeyTypes[typ] {
+			found = append(found, path)
+			return
+		}
+		seen[typ] = true
+
+		switch typ.Kind() {
+		case reflect.Pointer, reflect.Slice, reflect.Array:
+			walk(typ.Elem(), path+"[]", depth+1)
+		case reflect.Struct:
+			for i := 0; i < typ.NumField(); i++ {
+				field := typ.Field(i)
+				walk(field.Type, path+"."+field.Name, depth+1)
+			}
+		}
+	}
+
+	walk(t, t.String(), 0)
+
+	return found
 }

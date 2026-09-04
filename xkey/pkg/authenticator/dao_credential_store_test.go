@@ -377,7 +377,11 @@ func TestDAOCredentialStore_SaveState_LoadState_RoundTrip(t *testing.T) {
 	original.PINHash = []byte("fake-pin-hash-16")
 	original.SetPINRetries(5)
 	original.SetUVRetries(2)
-	original.AttestationKey = privKey
+	// The attestation key round-trips as its AES-GCM wrapped copies. There is
+	// no plaintext key field in the serialized state to round-trip.
+	wrappedSO, err := x509.MarshalPKCS8PrivateKey(privKey)
+	require.NoError(t, err)
+	original.WrappedAttestSO = wrappedSO
 	original.AttestationCert = attestCert
 
 	// Save state.
@@ -395,14 +399,8 @@ func TestDAOCredentialStore_SaveState_LoadState_RoundTrip(t *testing.T) {
 	assert.Equal(t, 2, loaded.UVRetries())
 	assert.True(t, bytes.Equal(original.AttestationCert, loaded.AttestationCert))
 
-	// Verify attestation key survived round-trip.
-	require.NotNil(t, loaded.AttestationKey)
-
-	originalDER, err := x509.MarshalPKCS8PrivateKey(original.AttestationKey)
-	require.NoError(t, err)
-	loadedDER, err := x509.MarshalPKCS8PrivateKey(loaded.AttestationKey)
-	require.NoError(t, err)
-	assert.True(t, bytes.Equal(originalDER, loadedDER))
+	// Verify the wrapped attestation copy survived the round-trip.
+	assert.True(t, bytes.Equal(original.WrappedAttestSO, loaded.WrappedAttestSO))
 }
 
 func TestDAOCredentialStore_SaveState_NilState(t *testing.T) {

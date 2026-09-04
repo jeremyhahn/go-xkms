@@ -19,6 +19,7 @@ import (
 	"crypto/ecdsa"
 	"crypto/elliptic"
 	"crypto/rand"
+	"crypto/x509"
 	"encoding/binary"
 	"encoding/json"
 	"errors"
@@ -748,7 +749,7 @@ func TestBackendStorage_LoadState(t *testing.T) {
 		}
 	})
 
-	t.Run("preserves attestation key", func(t *testing.T) {
+	t.Run("preserves the wrapped attestation key", func(t *testing.T) {
 		t.Parallel()
 		s := createBackendStorage(t)
 		defer func() { _ = s.Close() }()
@@ -760,12 +761,8 @@ func TestBackendStorage_LoadState(t *testing.T) {
 		if err != nil {
 			t.Fatalf("LoadState failed: %v", err)
 		}
-		if loaded.AttestationKey == nil {
-			t.Error("attestation key should be preserved")
-		}
-		// Verify it's a valid key
-		if loaded.AttestationKey.X == nil {
-			t.Error("attestation key should have valid public key")
+		if !bytes.Equal(loaded.WrappedAttestSO, state.WrappedAttestSO) {
+			t.Error("wrapped attestation key should be preserved")
 		}
 	})
 
@@ -1605,10 +1602,16 @@ func createTestStateForBackend(t *testing.T) *AuthenticatorState {
 	if err != nil {
 		t.Fatalf("failed to generate attestation key: %v", err)
 	}
+	pkcs8, err := x509.MarshalPKCS8PrivateKey(key)
+	if err != nil {
+		t.Fatalf("failed to marshal attestation key: %v", err)
+	}
 
+	// The attestation key is persisted only as its wrapped copies. Wrapped
+	// bytes are opaque to storage, so a stand-in blob exercises the same path.
 	state := NewAuthenticatorState()
 	state.AAGUID = DefaultAAGUID
-	state.AttestationKey = key
+	state.WrappedAttestSO = pkcs8
 
 	return state
 }

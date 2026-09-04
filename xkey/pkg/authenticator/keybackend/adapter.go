@@ -101,6 +101,10 @@ func (a *BackendAdapter) Capabilities() FIDO2KeyCapabilities {
 		SupportedAlgorithms: algorithms,
 		SupportsExport:      caps.Export && !caps.HardwareBacked,
 		SupportsImport:      caps.Import,
+		// Attestation is a device identity a Security Officer provisions, not a
+		// property of the key provider: one attestation key vouches for every
+		// credential this device creates, whichever backend holds the
+		// credential key. NewAttestingBackend adds it in front of this adapter.
 		SupportsAttestation: false,
 		HardwareBacked:      caps.HardwareBacked,
 	}

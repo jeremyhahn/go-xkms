@@ -1236,16 +1236,22 @@ func (a *App) initializeAuthenticator() {
 		"default", xkmssdk.BackendTypeSoftware,
 		"backends", composite.Backends())
 
-	// AAGUID: UUIDv5(DNS, "xkey.automatethethings.com") = 5150e208-1ab8-5162-bc67-f5e4f24adefa
-	xkeyAAGUID := [16]byte{
-		0x51, 0x50, 0xE2, 0x08, 0x1A, 0xB8, 0x51, 0x62,
-		0xBC, 0x67, 0xF5, 0xE4, 0xF2, 0x4A, 0xDE, 0xFA,
+	// The attestation format lives in the unified xkey config
+	// (`fido2.attestation`). Reading it here is what makes the setting take
+	// effect in the GUI; omitting it silently pinned every GUI registration to
+	// "none" regardless of configuration.
+	attestationFormat := authenticator.AttestationFormatNone
+	if ucfg, cfgErr := config.Load(); cfgErr == nil && ucfg.FIDO2.Attestation != "" {
+		attestationFormat = ucfg.FIDO2.Attestation
 	}
 
 	auth, err := authenticator.NewAuthenticator(&authenticator.Config{
-		Storage:                    a.fido2Storage,
-		KeyBackend:                 composite,
-		AAGUID:                     xkeyAAGUID,
+		Storage:    a.fido2Storage,
+		KeyBackend: composite,
+		// One product, one AAGUID: authenticator.DefaultAAGUID is the single
+		// definition every xkey entry point reports.
+		AAGUID:                     authenticator.DefaultAAGUID,
+		AttestationFormat:          attestationFormat,
 		EnablePIN:                  true,
 		EnableResidentKey:          true,
 		EnableCredentialManagement: true,

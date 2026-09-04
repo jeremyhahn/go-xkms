@@ -115,6 +115,9 @@ type FIDO2KeyBackend interface {
 }
 
 // FIDO2AttestingKeyBackend extends FIDO2KeyBackend with attestation support.
+// AttestingBackend implements it for the device attestation identity a Security
+// Officer provisions; a backend that holds its own attestation key in hardware
+// (TPM2, PKCS#11) implements it directly and takes precedence.
 type FIDO2AttestingKeyBackend interface {
 	FIDO2KeyBackend
 

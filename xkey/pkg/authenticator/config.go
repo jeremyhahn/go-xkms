@@ -26,11 +26,20 @@ import (
 	"github.com/jeremyhahn/go-xkms/xkey/pkg/authenticator/keybackend"
 )
 
-// Default AAGUID for go-xkms authenticator.
-// ASCII "go-xkms" (11 bytes) + null padding + version byte.
+// DefaultAAGUID is the Authenticator Attestation GUID of the xkey
+// authenticator: UUIDv5(DNS, "xkey.automatethethings.com") =
+// 5150e208-1ab8-5162-bc67-f5e4f24adefa.
+//
+// One product reports one AAGUID. It is the value a relying party allowlists
+// and, once attestation carries an x5c, the value the attestation certificate's
+// id-fido-gen-ce-aaguid extension must vouch for, so the GUI, the CLI, the
+// headless extension server and the library all take it from here rather than
+// declaring their own. A name-based UUIDv5 was chosen over an ASCII-packed
+// value because it is reproducible by anyone from the published namespace and
+// name, and it is a well-formed RFC 4122 UUID.
 var DefaultAAGUID = [16]byte{
-	0x67, 0x6f, 0x2d, 0x6b, 0x65, 0x79, 0x63, 0x68, // "go-keych"
-	0x61, 0x69, 0x6e, 0x00, 0x00, 0x00, 0x00, 0x01, // "ain" + padding + v1
+	0x51, 0x50, 0xE2, 0x08, 0x1A, 0xB8, 0x51, 0x62,
+	0xBC, 0x67, 0xF5, 0xE4, 0xF2, 0x4A, 0xDE, 0xFA,
 }
 
 // Default configuration values
@@ -260,7 +269,12 @@ type Config struct {
 	KeyBackend keybackend.FIDO2KeyBackend `yaml:"-" json:"-" mapstructure:"-"`
 
 	// AttestationFormat specifies the attestation statement format.
-	// Supported values: "none", "packed", "tpm"
+	// Supported values: "none", "packed", "tpm".
+	//
+	// "packed" produces Basic attestation — an x5c chain from the device
+	// attestation key a Security Officer provisioned. A device with no
+	// attestation key, or one whose key has not been certified, falls back to
+	// "none" and registers unattested.
 	// Default: "none"
 	AttestationFormat string `yaml:"attestation-format" json:"attestation_format" mapstructure:"attestation-format"`
 
