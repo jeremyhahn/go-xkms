@@ -9,6 +9,36 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Security
 
+- **The keys that unwrap the authenticator's key hierarchy now live in
+  protected memory** (#285). `xkey/pkg/authenticator/key_manager.go`.
+
+  `KeyManager.adminKey`, `.cmk`, `.smk` and `.umk` were plaintext `[]byte` on
+  the ordinary Go heap for the whole time the manager was unlocked — swappable
+  to disk, dumpable, and wiped only by convention on `Lock()`. These are the
+  keys that unwrap everything below them, including the attestation key that
+  #218/#223 moved into a `secure.Buffer`: an attacker reading the heap did not
+  need the protected key, only the one that unwraps it.
+
+  All four are now memguard-backed `*secure.Buffer` — mlocked so they cannot
+  reach the swap file, canary-guarded, and destroyed deterministically. Every
+  consumer borrows through `WithBytes` rather than `Bytes`, because only
+  `WithBytes` holds the borrow across the read; a memguard failure anywhere in
+  the process unmaps every live enclave, and an accessor that has already
+  returned cannot protect the caller reading the slice.
+
+  Scope was measured rather than assumed: **four fields, and all 33 references
+  in one file.** The issue described two fields; `smk` and `umk` have the same
+  shape.
+
+  **What this does not close.** `KeyWrapper.Unwrap` returns plaintext on the
+  ordinary heap, so every unwrap still transits ordinary memory before the copy
+  into protected memory — brief, because `secure.NewBufferFromBytes` wipes its
+  source, but present. This change closes the **long-lived** exposure, material
+  held for an entire unlocked session; it does not close the transit. Filed as
+  #291, which is gated on a design question rather than on size: `GetCMK`
+  returns a heap copy *because callers mutate it*, so the fix has to decide how
+  a caller mutates key material that lives in protected memory. `GetCMK` is
+  commented as the shape #291 removes rather than as something it protects.
 - **The GUI never runs on the auto-grant presence handler** (#214 follow-up).
   #214 stopped `FIDO2DeviceService.Stop` from inventing an `AutoGrantHandler`
   and had it restore the handler `Start` displaced — but `pkg/gui/app.go`
