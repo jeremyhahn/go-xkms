@@ -2122,8 +2122,20 @@ func TestDecryptSaltsInvalidPadding(t *testing.T) {
 		ciphertext := make([]byte, len(padded))
 		mode.CryptBlocks(ciphertext, padded)
 
-		// Corrupt the last byte of ciphertext (affects padding after decryption)
-		ciphertext[len(ciphertext)-1] ^= 0xFF
+		// Flip the top bit of the LAST byte of the second-to-last ciphertext
+		// block. In CBC, P_n = D(C_n) XOR C_{n-1}, so this flips that exact bit
+		// in the final plaintext byte -- the PKCS#7 pad length -- turning 0x10
+		// into 0x90 (144), which exceeds the block size and can never unpad.
+		//
+		// Corrupting the LAST block instead (the previous form of this test)
+		// randomises the whole final plaintext block, so the pad byte is
+		// uniformly random and is a VALID pad roughly 1 time in 256. When that
+		// happened, pkcs7Unpad succeeded, the 47-byte result failed the salt
+		// length check instead, and the test failed against
+		// ErrHMACSecretInvalidSaltEnc -- reddening Nested Module Tests for
+		// whichever PR was in the queue (go-xkms#343). Measured over 200,000
+		// trials: 751 accepted with the old form, 0 with this one.
+		ciphertext[len(ciphertext)-aes.BlockSize-1] ^= 0x80
 
 		// Decryption should fail due to invalid padding
 		_, err = decryptSalts(sharedSecret, PINProtocolVersion1, ciphertext)

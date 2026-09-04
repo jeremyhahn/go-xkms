@@ -7,6 +7,28 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- **Two padding tests asserted a probabilistic outcome as if it were
+  deterministic, reddening shared CI jobs at random** (#343, #346). Both
+  corrupted the LAST ciphertext block and then required a specific unpadding
+  failure. In CBC that randomises the whole final plaintext block, so the PKCS#7
+  pad byte was uniformly random and happened to be *valid* roughly 1 time in 256
+  — at which point unpadding succeeded and the assertion failed against a
+  different, equally correct error. Neither defect belonged to any pull request;
+  they failed for whichever PR was in the queue.
+
+  Both now flip one bit in the **second-to-last** ciphertext block. In CBC,
+  `P_n = D(C_n) XOR C_{n-1}`, so that flips the same bit in the final plaintext
+  byte — the pad length — turning `0x10` into `0x90` and `0x0D` into `0x8D`.
+  Neither can ever unpad, so the refusal the tests assert is now certain rather
+  than likely.
+
+  Measured on the two tests over 1,000 iterations each: both failure modes
+  reproduce on unmodified `main` with the exact CI error strings, and neither
+  occurs after the change. The assertions are unweakened — with `pkcs7Unpad`
+  mutated to accept any input, both tests fail; reverted, both pass.
+
 ### Security
 
 - **Both published container images now patch their base at build time**

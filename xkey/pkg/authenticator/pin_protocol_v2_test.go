@@ -15,6 +15,7 @@ package authenticator
 
 import (
 	"bytes"
+	"crypto/aes"
 	"crypto/elliptic"
 	"testing"
 
@@ -533,8 +534,19 @@ func TestPINProtocolV2_Decapsulate_InvalidPadding(t *testing.T) {
 		t.Fatalf("Encapsulate failed: %v", err)
 	}
 
-	// Corrupt the last byte of the encrypted portion (after IV)
-	ciphertext[len(ciphertext)-1] ^= 0xFF
+	// Flip the top bit of the last byte of the second-to-last ciphertext block.
+	// In CBC, P_n = D(C_n) XOR C_{n-1}, so this flips that exact bit in the
+	// final plaintext byte -- the PKCS#7 pad length -- turning 0x0D into 0x8D
+	// (141), which exceeds the block size and can never unpad.
+	//
+	// Corrupting the LAST block instead (the previous form of this test)
+	// randomises the whole final plaintext block, making the pad byte uniformly
+	// random and therefore a VALID pad roughly 1 time in 255 -- at which point
+	// Decapsulate returned no error and this test failed (go-xkms#346).
+	// setupV2KeyExchange mints a fresh ECDH keypair per run, so it was not even
+	// seed-stable. Measured over 200,000 trials: 751 accepted with the old
+	// form, 0 with this one.
+	ciphertext[len(ciphertext)-aes.BlockSize-1] ^= 0x80
 
 	_, err = authenticator.Decapsulate(ciphertext)
 	if err != ErrInvalidPKCS7Padding {
