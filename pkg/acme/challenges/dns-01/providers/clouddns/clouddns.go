@@ -107,6 +107,12 @@ type Config struct {
 	// Ambient enables ambient credential discovery (ADC, workload identity).
 	Ambient bool
 
+	// ZoneFinder resolves the zone apex for an FQDN during zone discovery.
+	// Optional - nil selects providers.FindZoneByFQDN, the cached lookup that
+	// queries DNS. Supplying one bypasses that cache; see providers.ZoneFinder
+	// for why.
+	ZoneFinder providers.ZoneFinder
+
 	// Nameservers is a list of DNS nameservers for zone lookup.
 	// Optional - defaults to system nameservers.
 	Nameservers []string
@@ -134,6 +140,7 @@ type Provider struct {
 	hostedZoneName     string
 	client             CloudDNSAPI
 	nameservers        []string
+	zoneFinder         providers.ZoneFinder
 	propagationTimeout time.Duration
 	pollingInterval    time.Duration
 	ttl                int64
@@ -172,6 +179,7 @@ func New(ctx context.Context, cfg Config) (*Provider, error) {
 		hostedZoneName:     cfg.HostedZoneName,
 		client:             client,
 		nameservers:        cfg.Nameservers,
+		zoneFinder:         cfg.ZoneFinder,
 		propagationTimeout: cfg.PropagationTimeout,
 		pollingInterval:    cfg.PollingInterval,
 		ttl:                cfg.TTL,
@@ -258,10 +266,21 @@ func NewWithClientAndConfig(client CloudDNSAPI, cfg Config) *Provider {
 		hostedZoneName:     cfg.HostedZoneName,
 		client:             client,
 		nameservers:        cfg.Nameservers,
+		zoneFinder:         cfg.ZoneFinder,
 		propagationTimeout: cfg.PropagationTimeout,
 		pollingInterval:    cfg.PollingInterval,
 		ttl:                cfg.TTL,
 	}
+}
+
+// findZone resolves the zone apex, defaulting to providers.FindZoneByFQDN when
+// no ZoneFinder was configured. The nil check keeps a Provider built by a bare
+// struct literal usable, which the package's own tests rely on.
+func (p *Provider) findZone(ctx context.Context, fqdn string, nameservers []string) (string, error) {
+	if p.zoneFinder != nil {
+		return p.zoneFinder(ctx, fqdn, nameservers)
+	}
+	return providers.FindZoneByFQDN(ctx, fqdn, nameservers)
 }
 
 // Timeout returns the propagation timeout and polling interval for this provider.
@@ -374,7 +393,7 @@ func (p *Provider) getHostedZone(ctx context.Context, domain string) (string, er
 	}
 
 	// Find the authoritative zone
-	authZone, err := providers.FindZoneByFQDN(ctx, providers.ToFQDN(domain), p.nameservers)
+	authZone, err := p.findZone(ctx, providers.ToFQDN(domain), p.nameservers)
 	if err != nil {
 		return "", err
 	}
@@ -525,6 +544,9 @@ func applyConfigDefaults(cfg Config) Config {
 	}
 	if cfg.HTTPTimeout <= 0 {
 		cfg.HTTPTimeout = defaultHTTPTimeout
+	}
+	if cfg.ZoneFinder == nil {
+		cfg.ZoneFinder = providers.FindZoneByFQDN
 	}
 	return cfg
 }

@@ -125,6 +125,12 @@ type Config struct {
 	// Set to true to use EC2 instance profiles, ECS task roles, or IRSA.
 	Ambient bool
 
+	// ZoneFinder resolves the zone apex for an FQDN during zone discovery.
+	// Optional - nil selects providers.FindZoneByFQDN, the cached lookup that
+	// queries DNS. Supplying one bypasses that cache; see providers.ZoneFinder
+	// for why.
+	ZoneFinder providers.ZoneFinder
+
 	// Nameservers is a list of DNS nameservers for zone lookup.
 	// Optional - defaults to system nameservers.
 	Nameservers []string
@@ -151,6 +157,7 @@ type Provider struct {
 	client             Route53API
 	hostedZoneID       string
 	nameservers        []string
+	zoneFinder         providers.ZoneFinder
 	propagationTimeout time.Duration
 	pollingInterval    time.Duration
 	ttl                int
@@ -190,6 +197,7 @@ func New(ctx context.Context, cfg Config) (*Provider, error) {
 		client:             client,
 		hostedZoneID:       cfg.HostedZoneID,
 		nameservers:        cfg.Nameservers,
+		zoneFinder:         cfg.ZoneFinder,
 		propagationTimeout: cfg.PropagationTimeout,
 		pollingInterval:    cfg.PollingInterval,
 		ttl:                cfg.TTL,
@@ -272,6 +280,7 @@ func NewWithClientAndConfig(client Route53API, cfg Config) *Provider {
 		client:             client,
 		hostedZoneID:       cfg.HostedZoneID,
 		nameservers:        cfg.Nameservers,
+		zoneFinder:         cfg.ZoneFinder,
 		propagationTimeout: cfg.PropagationTimeout,
 		pollingInterval:    cfg.PollingInterval,
 		ttl:                cfg.TTL,
@@ -355,6 +364,16 @@ func (p *Provider) waitForChange(ctx context.Context, changeID *string) error {
 	})
 }
 
+// findZone resolves the zone apex, defaulting to providers.FindZoneByFQDN when
+// no ZoneFinder was configured. The nil check keeps a Provider built by a bare
+// struct literal usable, which the package's own tests rely on.
+func (p *Provider) findZone(ctx context.Context, fqdn string, nameservers []string) (string, error) {
+	if p.zoneFinder != nil {
+		return p.zoneFinder(ctx, fqdn, nameservers)
+	}
+	return providers.FindZoneByFQDN(ctx, fqdn, nameservers)
+}
+
 // getHostedZoneID returns the hosted zone ID for the given FQDN.
 func (p *Provider) getHostedZoneID(ctx context.Context, fqdn string) (string, error) {
 	if p.hostedZoneID != "" {
@@ -362,7 +381,7 @@ func (p *Provider) getHostedZoneID(ctx context.Context, fqdn string) (string, er
 	}
 
 	// Find the zone apex
-	authZone, err := providers.FindZoneByFQDN(ctx, fqdn, p.nameservers)
+	authZone, err := p.findZone(ctx, fqdn, p.nameservers)
 	if err != nil {
 		return "", err
 	}
@@ -458,6 +477,9 @@ func applyDefaults(cfg Config) Config {
 	}
 	if cfg.HTTPTimeout <= 0 {
 		cfg.HTTPTimeout = defaultHTTPTimeout
+	}
+	if cfg.ZoneFinder == nil {
+		cfg.ZoneFinder = providers.FindZoneByFQDN
 	}
 	return cfg
 }

@@ -347,6 +347,29 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     then defaults to `acme-v02.api.letsencrypt.org`. That is an outbound HTTPS
     call to a third party's production service from the unit gate. It needs no
     API change to fix and is the cheapest of the three.
+- **The DNS-01 provider zone-discovery tests no longer query the public
+  internet** (#243). Eleven tests — six in `route53`, five in `clouddns` —
+  climbed the real DNS tree for a SOA record on `google.com`, inside the
+  `Unit Tests` gate.
+
+  Unlike the other classes on this issue, this one was **deliberate**: the tests
+  say so, "using real DNS lookups for well-known domains". So this is a design
+  change, not a repair of an oversight, and the seam above is the design.
+
+  The fixtures are unchanged — the mocks still describe `google.com` zones and
+  the assertions still expect them — so each test proves exactly what it proved
+  before. Only the resolution step is local.
+
+  `azure` calls `FindZoneByFQDN` too but its tests never reach that path, so it
+  needed no change; the seam is available if that changes.
+
+  Verified with `unshare -rn`: `route53`, `clouddns`, `azure` and `providers`
+  all pass with no network. Ordering was verified rather than assumed, since the
+  package-global zone cache made it a live variable: each affected test passes
+  alone, under `-test.shuffle` across five seeds, and under `-count=5`. As the
+  decisive check, they also pass with **every `ClearZoneCache()` call removed**,
+  which is what proves the cache bypass is structural rather than a convention
+  the next test author has to remember.
 
 - **MCP key import now receives the key material** (#159).
   `pkg/api/transport/mcp.Transport.ImportKey` marshalled a
@@ -908,6 +931,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `authoritativeNameservers(fqdn, nsLookup)` carries the logic — stripping the
   `_acme-challenge` label and trailing dot, appending `:53`, refusing an empty
   answer — so that logic is testable without asking the internet.
+- **`providers.ZoneFinder`** (#243) — the seam a DNS-01 provider uses to resolve
+  a zone apex. It has `FindZoneByFQDN`'s exact signature, and that function is
+  the default wherever a provider takes one, so supplying nothing changes
+  nothing and no existing signature moved.
+
+  `route53.Config` and `clouddns.Config` gain an optional `ZoneFinder` field.
+  A `Provider` built without one — including by a bare struct literal or by
+  `NewWithClient` — falls back to `providers.FindZoneByFQDN`.
+
+  **Supplying one bypasses the zone cache, deliberately.** The cache is an
+  optimisation over *real DNS*; a caller supplying its own resolution is making
+  no round trips, so it has either no need of a cache or a cache of its own, and
+  should not share a process-global map with production lookups. A seam that
+  injected only the DNS *query* while leaving the cache in place would write
+  fabricated SOA answers into the real map, where the next lookup of the same
+  FQDN would inherit another caller's fiction. Replacing the whole cached lookup
+  removes that structurally rather than requiring every caller to remember
+  `ClearZoneCache`, which remains for the default, cached path.
 
 - **`fido2-attestation` certificate profile** (#232). The CA can now issue a
   FIDO2 authenticator attestation certificate that satisfies WebAuthn Level 2

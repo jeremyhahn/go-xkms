@@ -45,7 +45,7 @@ func TestGetHostedZoneIDDiscoveryPaths(t *testing.T) {
 		}
 
 		// Use default nameservers for real DNS lookups
-		provider := NewWithClient(mock, "", nil)
+		provider := newDiscoveryProvider(mock, "")
 
 		// Use a real domain that will succeed in DNS lookup
 		_, err := provider.getHostedZoneID(ctx, "_acme-challenge.google.com.")
@@ -76,7 +76,7 @@ func TestGetHostedZoneIDDiscoveryPaths(t *testing.T) {
 			},
 		}
 
-		provider := NewWithClient(mock, "", nil)
+		provider := newDiscoveryProvider(mock, "")
 
 		// Use a real domain for DNS lookup
 		_, err := provider.getHostedZoneID(ctx, "_acme-challenge.google.com.")
@@ -113,7 +113,7 @@ func TestGetHostedZoneIDDiscoveryPaths(t *testing.T) {
 			},
 		}
 
-		provider := NewWithClient(mock, "", nil)
+		provider := newDiscoveryProvider(mock, "")
 
 		zoneID, err := provider.getHostedZoneID(ctx, "_acme-challenge.google.com.")
 
@@ -141,7 +141,7 @@ func TestGetHostedZoneIDDiscoveryPaths(t *testing.T) {
 			},
 		}
 
-		provider := NewWithClient(mock, "", nil)
+		provider := newDiscoveryProvider(mock, "")
 
 		zoneID, err := provider.getHostedZoneID(ctx, "_acme-challenge.google.com.")
 
@@ -176,7 +176,7 @@ func TestGetHostedZoneIDDiscoveryPaths(t *testing.T) {
 			},
 		}
 
-		provider := NewWithClient(mock, "", nil)
+		provider := newDiscoveryProvider(mock, "")
 
 		zoneID, err := provider.getHostedZoneID(ctx, "_acme-challenge.google.com.")
 
@@ -212,7 +212,7 @@ func TestGetHostedZoneIDDiscoveryPaths(t *testing.T) {
 			},
 		}
 
-		provider := NewWithClient(mock, "", nil)
+		provider := newDiscoveryProvider(mock, "")
 
 		_, err := provider.getHostedZoneID(ctx, "_acme-challenge.google.com.")
 
@@ -244,7 +244,7 @@ func TestZoneDiscoveryWithSubdomainRoute53(t *testing.T) {
 			},
 		}
 
-		provider := NewWithClient(mock, "", nil)
+		provider := newDiscoveryProvider(mock, "")
 
 		// Use a subdomain - DNS lookup will find google.com as the zone
 		zoneID, err := provider.getHostedZoneID(ctx, "_acme-challenge.www.google.com.")
@@ -288,7 +288,7 @@ func TestPresentWithZoneDiscoveryRoute53(t *testing.T) {
 		}
 
 		// Provider without configured zone - will use discovery
-		provider := NewWithClient(mock, "", nil)
+		provider := newDiscoveryProvider(mock, "")
 
 		err := provider.Present(ctx, "google.com", "_acme-challenge.google.com.", "token-value")
 		require.NoError(t, err)
@@ -330,7 +330,7 @@ func TestCleanUpWithZoneDiscoveryRoute53(t *testing.T) {
 		}
 
 		// Provider without configured zone - will use discovery
-		provider := NewWithClient(mock, "", nil)
+		provider := newDiscoveryProvider(mock, "")
 
 		err := provider.CleanUp(ctx, "google.com", "_acme-challenge.google.com.", "token-value")
 		require.NoError(t, err)
@@ -361,7 +361,7 @@ func TestZoneDiscoveryWithTimeoutRoute53(t *testing.T) {
 			},
 		}
 
-		provider := NewWithClient(mock, "", nil)
+		provider := newDiscoveryProvider(mock, "")
 
 		// Create a context with short timeout
 		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Millisecond)
@@ -403,7 +403,7 @@ func TestZoneSelectionWithLongerMatch(t *testing.T) {
 			},
 		}
 
-		provider := NewWithClient(mock, "", nil)
+		provider := newDiscoveryProvider(mock, "")
 
 		zoneID, err := provider.getHostedZoneID(ctx, "_acme-challenge.google.com.")
 
@@ -428,7 +428,7 @@ func TestEmptyHostedZonesResponse(t *testing.T) {
 			},
 		}
 
-		provider := NewWithClient(mock, "", nil)
+		provider := newDiscoveryProvider(mock, "")
 
 		_, err := provider.getHostedZoneID(ctx, "_acme-challenge.google.com.")
 

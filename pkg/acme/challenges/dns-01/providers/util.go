@@ -39,6 +39,31 @@ var DefaultNameservers = []string{
 	"8.8.4.4:53",
 }
 
+// ZoneFinder resolves the zone apex for an FQDN.
+//
+// It has FindZoneByFQDN's exact signature, and FindZoneByFQDN is the default
+// wherever a provider takes one, so supplying nothing changes nothing.
+//
+// # Supplying one bypasses the zone cache, deliberately
+//
+// The cache below is an optimisation over REAL DNS: it exists so climbing the
+// label tree for a SOA record does not repeat network round trips. A caller
+// that supplies its own ZoneFinder is not making those round trips, so it has
+// either no need of a cache or a cache of its own, and it should not share a
+// process-global map with production lookups.
+//
+// That is not merely tidy. A ZoneFinder is usually a test double, and a seam
+// that injected only the DNS QUERY while leaving the cache in place would write
+// fabricated SOA answers into the real map — where the next test to look up the
+// same FQDN would inherit another test's fiction, whether or not it wanted a
+// double at all. That failure is cross-test and invisible at the call site,
+// which makes it worse than the network dependency being removed. Replacing the
+// whole cached lookup removes the hazard structurally instead of requiring
+// every test to remember ClearZoneCache.
+//
+// ClearZoneCache remains for callers on the default, cached path.
+type ZoneFinder func(ctx context.Context, fqdn string, nameservers []string) (string, error)
+
 // zoneCacheEntry represents a cached zone lookup result
 type zoneCacheEntry struct {
 	zone       string
