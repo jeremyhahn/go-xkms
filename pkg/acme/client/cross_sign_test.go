@@ -1680,6 +1680,22 @@ func TestProcessAuthorization_AlreadyValid(t *testing.T) {
 		w.Header().Set("Content-Type", "application/json")
 
 		switch r.URL.Path {
+		case "/directory":
+			// Served locally so golang.org/x/crypto/acme never falls back to
+			// its default directory, which is Let's Encrypt PRODUCTION. Every
+			// one of these tests builds this server and passes its URL, so the
+			// intent was always local; the acme.Client simply carried no
+			// DirectoryURL, and the unit gate made an outbound HTTPS call to a
+			// third party on every run (go-xkms#243).
+			_ = json.NewEncoder(w).Encode(map[string]interface{}{
+				"newNonce":   serverURL + "/new-nonce",
+				"newAccount": serverURL + "/new-account",
+				"newOrder":   serverURL + "/new-order",
+				"revokeCert": serverURL + "/revoke",
+				"keyChange":  serverURL + "/key-change",
+			})
+		case "/new-nonce":
+			w.WriteHeader(http.StatusOK)
 		case "/acme/authz/1":
 			authz := map[string]interface{}{
 				"status": "valid", // Already valid
@@ -1711,7 +1727,8 @@ func TestProcessAuthorization_AlreadyValid(t *testing.T) {
 		logger:        logger,
 		storage:       mockStore,
 		client: &acme.Client{
-			Key: privateKey,
+			Key:          privateKey,
+			DirectoryURL: serverURL + "/directory",
 		},
 	}
 
@@ -1733,6 +1750,22 @@ func TestProcessAuthorization_NoSuitableChallenge(t *testing.T) {
 		w.Header().Set("Content-Type", "application/json")
 
 		switch r.URL.Path {
+		case "/directory":
+			// Served locally so golang.org/x/crypto/acme never falls back to
+			// its default directory, which is Let's Encrypt PRODUCTION. Every
+			// one of these tests builds this server and passes its URL, so the
+			// intent was always local; the acme.Client simply carried no
+			// DirectoryURL, and the unit gate made an outbound HTTPS call to a
+			// third party on every run (go-xkms#243).
+			_ = json.NewEncoder(w).Encode(map[string]interface{}{
+				"newNonce":   serverURL + "/new-nonce",
+				"newAccount": serverURL + "/new-account",
+				"newOrder":   serverURL + "/new-order",
+				"revokeCert": serverURL + "/revoke",
+				"keyChange":  serverURL + "/key-change",
+			})
+		case "/new-nonce":
+			w.WriteHeader(http.StatusOK)
 		case "/acme/authz/1":
 			authz := map[string]interface{}{
 				"status": "pending",
@@ -1764,7 +1797,8 @@ func TestProcessAuthorization_NoSuitableChallenge(t *testing.T) {
 		logger:        logger,
 		storage:       mockStore,
 		client: &acme.Client{
-			Key: privateKey,
+			Key:          privateKey,
+			DirectoryURL: serverURL + "/directory",
 		},
 	}
 
@@ -1780,16 +1814,39 @@ func TestProcessAuthorization_GetAuthorizationError(t *testing.T) {
 	privateKey, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
 	require.NoError(t, err)
 
+	var serverURL string
+
+	// The directory and nonce endpoints answer normally and ONLY the
+	// authorization 404s, so this test fails for the reason it is named for.
+	// Previously it 404'd every path including the directory -- and, with no
+	// DirectoryURL set, x/crypto/acme was reaching for Let's Encrypt
+	// production anyway, so the assertion below passed on a DNS failure rather
+	// than on a rejected authorization (go-xkms#243).
 	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Replay-Nonce", "test-nonce")
 		w.Header().Set("Content-Type", "application/json")
-		w.WriteHeader(http.StatusNotFound)
-		_ = json.NewEncoder(w).Encode(map[string]interface{}{
-			"type":   "urn:ietf:params:acme:error:malformed",
-			"detail": "authorization not found",
-		})
+
+		switch r.URL.Path {
+		case "/directory":
+			_ = json.NewEncoder(w).Encode(map[string]interface{}{
+				"newNonce":   serverURL + "/new-nonce",
+				"newAccount": serverURL + "/new-account",
+				"newOrder":   serverURL + "/new-order",
+				"revokeCert": serverURL + "/revoke",
+				"keyChange":  serverURL + "/key-change",
+			})
+		case "/new-nonce":
+			w.WriteHeader(http.StatusOK)
+		default:
+			w.WriteHeader(http.StatusNotFound)
+			_ = json.NewEncoder(w).Encode(map[string]interface{}{
+				"type":   "urn:ietf:params:acme:error:malformed",
+				"detail": "authorization not found",
+			})
+		}
 	}))
 	defer ts.Close()
+	serverURL = ts.URL
 
 	mockStore := newMockStorage()
 	client := &Client{
@@ -1799,7 +1856,8 @@ func TestProcessAuthorization_GetAuthorizationError(t *testing.T) {
 		logger:        logger,
 		storage:       mockStore,
 		client: &acme.Client{
-			Key: privateKey,
+			Key:          privateKey,
+			DirectoryURL: serverURL + "/directory",
 		},
 	}
 
@@ -1823,6 +1881,22 @@ func TestProcessAuthorization_SelectsDNS01Challenge(t *testing.T) {
 		w.Header().Set("Content-Type", "application/json")
 
 		switch r.URL.Path {
+		case "/directory":
+			// Served locally so golang.org/x/crypto/acme never falls back to
+			// its default directory, which is Let's Encrypt PRODUCTION. Every
+			// one of these tests builds this server and passes its URL, so the
+			// intent was always local; the acme.Client simply carried no
+			// DirectoryURL, and the unit gate made an outbound HTTPS call to a
+			// third party on every run (go-xkms#243).
+			_ = json.NewEncoder(w).Encode(map[string]interface{}{
+				"newNonce":   serverURL + "/new-nonce",
+				"newAccount": serverURL + "/new-account",
+				"newOrder":   serverURL + "/new-order",
+				"revokeCert": serverURL + "/revoke",
+				"keyChange":  serverURL + "/key-change",
+			})
+		case "/new-nonce":
+			w.WriteHeader(http.StatusOK)
 		case "/acme/authz/1":
 			status := "pending"
 			if selectedChallengeType != "" {
@@ -1868,7 +1942,8 @@ func TestProcessAuthorization_SelectsDNS01Challenge(t *testing.T) {
 		logger:        logger,
 		storage:       mockStore,
 		client: &acme.Client{
-			Key: privateKey,
+			Key:          privateKey,
+			DirectoryURL: serverURL + "/directory",
 		},
 	}
 
@@ -1892,6 +1967,22 @@ func TestProcessAuthorization_SelectsTLSALPN01Challenge(t *testing.T) {
 		w.Header().Set("Content-Type", "application/json")
 
 		switch r.URL.Path {
+		case "/directory":
+			// Served locally so golang.org/x/crypto/acme never falls back to
+			// its default directory, which is Let's Encrypt PRODUCTION. Every
+			// one of these tests builds this server and passes its URL, so the
+			// intent was always local; the acme.Client simply carried no
+			// DirectoryURL, and the unit gate made an outbound HTTPS call to a
+			// third party on every run (go-xkms#243).
+			_ = json.NewEncoder(w).Encode(map[string]interface{}{
+				"newNonce":   serverURL + "/new-nonce",
+				"newAccount": serverURL + "/new-account",
+				"newOrder":   serverURL + "/new-order",
+				"revokeCert": serverURL + "/revoke",
+				"keyChange":  serverURL + "/key-change",
+			})
+		case "/new-nonce":
+			w.WriteHeader(http.StatusOK)
 		case "/acme/authz/1":
 			status := "pending"
 			if selectedChallengeType != "" {
@@ -1937,7 +2028,8 @@ func TestProcessAuthorization_SelectsTLSALPN01Challenge(t *testing.T) {
 		logger:        logger,
 		storage:       mockStore,
 		client: &acme.Client{
-			Key: privateKey,
+			Key:          privateKey,
+			DirectoryURL: serverURL + "/directory",
 		},
 	}
 
@@ -1961,6 +2053,22 @@ func TestProcessAuthorization_AcceptChallengeError(t *testing.T) {
 		w.Header().Set("Content-Type", "application/json")
 
 		switch r.URL.Path {
+		case "/directory":
+			// Served locally so golang.org/x/crypto/acme never falls back to
+			// its default directory, which is Let's Encrypt PRODUCTION. Every
+			// one of these tests builds this server and passes its URL, so the
+			// intent was always local; the acme.Client simply carried no
+			// DirectoryURL, and the unit gate made an outbound HTTPS call to a
+			// third party on every run (go-xkms#243).
+			_ = json.NewEncoder(w).Encode(map[string]interface{}{
+				"newNonce":   serverURL + "/new-nonce",
+				"newAccount": serverURL + "/new-account",
+				"newOrder":   serverURL + "/new-order",
+				"revokeCert": serverURL + "/revoke",
+				"keyChange":  serverURL + "/key-change",
+			})
+		case "/new-nonce":
+			w.WriteHeader(http.StatusOK)
 		case "/acme/authz/1":
 			authz := map[string]interface{}{
 				"status": "pending",
@@ -2001,7 +2109,8 @@ func TestProcessAuthorization_AcceptChallengeError(t *testing.T) {
 		logger:        logger,
 		storage:       mockStore,
 		client: &acme.Client{
-			Key: privateKey,
+			Key:          privateKey,
+			DirectoryURL: serverURL + "/directory",
 		},
 	}
 
@@ -2025,6 +2134,22 @@ func TestProcessAuthorization_WaitAuthorizationError(t *testing.T) {
 		w.Header().Set("Content-Type", "application/json")
 
 		switch r.URL.Path {
+		case "/directory":
+			// Served locally so golang.org/x/crypto/acme never falls back to
+			// its default directory, which is Let's Encrypt PRODUCTION. Every
+			// one of these tests builds this server and passes its URL, so the
+			// intent was always local; the acme.Client simply carried no
+			// DirectoryURL, and the unit gate made an outbound HTTPS call to a
+			// third party on every run (go-xkms#243).
+			_ = json.NewEncoder(w).Encode(map[string]interface{}{
+				"newNonce":   serverURL + "/new-nonce",
+				"newAccount": serverURL + "/new-account",
+				"newOrder":   serverURL + "/new-order",
+				"revokeCert": serverURL + "/revoke",
+				"keyChange":  serverURL + "/key-change",
+			})
+		case "/new-nonce":
+			w.WriteHeader(http.StatusOK)
 		case "/acme/authz/1":
 			status := "pending"
 			if challengeAccepted {
@@ -2070,7 +2195,8 @@ func TestProcessAuthorization_WaitAuthorizationError(t *testing.T) {
 		logger:        logger,
 		storage:       mockStore,
 		client: &acme.Client{
-			Key: privateKey,
+			Key:          privateKey,
+			DirectoryURL: serverURL + "/directory",
 		},
 	}
 

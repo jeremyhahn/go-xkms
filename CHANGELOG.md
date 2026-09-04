@@ -519,6 +519,38 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   resolver seam through `getAuthoritativeNameservers`, `CheckDNSFromAuthoritative`,
   `CheckDNSFromPublic` and `providers.CheckDNSPropagation` — a cross-package
   change to exported API, so it is reported rather than guessed at.
+- **The ACME cross-sign tests no longer call Let's Encrypt production** (#243).
+  Seven tests in `pkg/acme/client/cross_sign_test.go` made an outbound HTTPS
+  request to `acme-v02.api.letsencrypt.org` on every unit run, from every
+  branch.
+
+  Nobody chose this. Each test already builds an `httptest` server and passes
+  its URL, so the intent was plainly local — but the `acme.Client` was
+  constructed with only a `Key`, and `golang.org/x/crypto/acme` falls back to
+  Let's Encrypt when `DirectoryURL` is empty. It was a missing field, not a
+  design, and the correct pattern already existed four times in the same file.
+
+  Each test's handler now serves `/directory` and `/new-nonce`, and its client
+  sets `DirectoryURL`. No production code changed and no API changed.
+
+  **`TestProcessAuthorization_GetAuthorizationError` was passing for the wrong
+  reason**, which is why it did not show up as a failure: it asserts an error,
+  and the error it received was the DNS lookup for Let's Encrypt failing, not
+  the rejected authorization it is named for. Its handler 404'd every path
+  including the directory; it now answers the directory and nonce normally and
+  404s only the authorization, so it fails for the reason it claims.
+
+  This mattered in three directions: it could fail for reasons unrelated to
+  this repository, with a remote party controlling the outcome; it put
+  unsolicited CI load on a third party's production API, which is how an
+  organisation's egress address gets blocked and real issuance breaks; and
+  `CLAUDE.md` requires third-party API calls to be mocked.
+
+  Verified by building the test binary and running it inside a network
+  namespace with only loopback (`unshare -rn`): all seven pass with no network.
+  That check is the only one that answers the question — reading the code does
+  not, since the dependency is a library default rather than anything visible
+  at the call site.
 
 - **MCP key import now receives the key material** (#159).
   `pkg/api/transport/mcp.Transport.ImportKey` marshalled a
