@@ -34,6 +34,11 @@ type WebAuthnStoresConfig struct {
 	// SessionTTL is the duration after which sessions expire.
 	// Default: 5 minutes
 	SessionTTL time.Duration
+
+	// Clock is the time source session expiry is measured against.
+	// Optional - nil selects time.Now. It exists so a test can advance time
+	// rather than sleep for it; production leaves it unset (go-xkms#287).
+	Clock webauthn.Clock
 }
 
 // NewWebAuthnStores creates new WebAuthn stores for the REST server.
@@ -51,7 +56,7 @@ func NewWebAuthnStores(cfg *WebAuthnStoresConfig) *WebAuthnStores {
 
 	return &WebAuthnStores{
 		users:       webauthn.NewMemoryUserStore(),
-		sessions:    webauthn.NewMemorySessionStoreWithTTL(cfg.SessionTTL),
+		sessions:    webauthn.NewMemorySessionStoreWithTTL(cfg.SessionTTL, webauthn.WithClock(cfg.Clock)),
 		credentials: webauthn.NewMemoryCredentialStore(),
 	}
 }

@@ -115,6 +115,29 @@ are short-lived and deleted on finish.
 go-xkms defines no user model of its own — `User` is an interface satisfied by
 qrdb's identity.
 
+### Session expiry takes an injectable clock
+
+`MemorySessionStore` measures a session's TTL against a `Clock` — a
+`func() time.Time` supplied by `WithClock` on `NewMemorySessionStore` /
+`NewMemorySessionStoreWithTTL`. It is optional and variadic: nil, or no option
+at all, selects `time.Now`, so production behaviour and every existing call
+site are unchanged. `rest.WebAuthnStoresConfig` carries the same seam through
+as its `Clock` field.
+
+It exists for tests. Expiry is a comparison against the wall clock, so a test
+that establishes it by sleeping is asserting the machine was not busy —
+`time.Sleep` guarantees a minimum and never a maximum. "Save a session with a
+100ms TTL, then read it back and require success" fails whenever those two
+statements land more than 100ms apart, which under `-race` on a shared runner
+they can (#287).
+
+**The cleanup routine is the deliberate exception.** `StartCleanupRoutine`
+ticks on a real `time.Ticker`, so a test for it keeps real time and a short TTL
+and waits on the *event* — `MemorySessionStore.Count()` reaching zero — rather
+than on a duration. Handing that test a fake clock would stop the session ever
+expiring by the routine's reckoning, and it would wait for an event that cannot
+happen.
+
 ## Test strategy
 
 - **Unit** — `service_test.go`, `config_test.go`, `types_test.go`,

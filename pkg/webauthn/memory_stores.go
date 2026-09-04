@@ -138,12 +138,48 @@ func (s *MemoryUserStore) Clear() {
 	s.idToMail = make(map[string]string)
 }
 
+// Clock reports the current time. It is the seam that lets a test advance time
+// instead of sleeping for it.
+//
+// Session expiry is a comparison against the wall clock, and a test that
+// establishes it by sleeping is asserting that the machine was not busy.
+// time.Sleep guarantees a MINIMUM duration and no maximum, so "save a session
+// with a 100ms TTL, then read it back and require success" fails whenever the
+// two statements are more than 100ms apart -- which under -race on a shared
+// runner they can be. That is go-xkms#287, and it is the same defect the nonce
+// store carried in go-xkms#243.
+type Clock func() time.Time
+
+// MemorySessionStoreOption configures a MemorySessionStore.
+type MemorySessionStoreOption func(*MemorySessionStore)
+
+// WithClock replaces the store's time source. Production never calls it; it
+// exists so tests can make expiry deterministic rather than probabilistic.
+func WithClock(now Clock) MemorySessionStoreOption {
+	return func(s *MemorySessionStore) {
+		if now != nil {
+			s.now = now
+		}
+	}
+}
+
 // MemorySessionStore is an in-memory implementation of SessionStore.
 // This is intended for development and testing only.
 type MemorySessionStore struct {
 	mu       sync.RWMutex
 	sessions map[string]*sessionEntry
 	ttl      time.Duration
+	// now is the store's time source. Never nil once built by a constructor;
+	// the accessor below keeps a bare struct literal usable too.
+	now Clock
+}
+
+// clock returns the store's time source, defaulting to time.Now.
+func (s *MemorySessionStore) clock() time.Time {
+	if s.now == nil {
+		return time.Now()
+	}
+	return s.now()
 }
 
 type sessionEntry struct {
@@ -152,19 +188,24 @@ type sessionEntry struct {
 }
 
 // NewMemorySessionStore creates a new in-memory session store.
-func NewMemorySessionStore() *MemorySessionStore {
-	return &MemorySessionStore{
-		sessions: make(map[string]*sessionEntry),
-		ttl:      2 * time.Minute,
-	}
+func NewMemorySessionStore(opts ...MemorySessionStoreOption) *MemorySessionStore {
+	return NewMemorySessionStoreWithTTL(2*time.Minute, opts...)
 }
 
 // NewMemorySessionStoreWithTTL creates a new in-memory session store with custom TTL.
-func NewMemorySessionStoreWithTTL(ttl time.Duration) *MemorySessionStore {
-	return &MemorySessionStore{
+// The options are a test seam and are empty in production; see WithClock.
+func NewMemorySessionStoreWithTTL(ttl time.Duration, opts ...MemorySessionStoreOption) *MemorySessionStore {
+	store := &MemorySessionStore{
 		sessions: make(map[string]*sessionEntry),
 		ttl:      ttl,
+		now:      time.Now,
 	}
+	for _, opt := range opts {
+		if opt != nil {
+			opt(store)
+		}
+	}
+	return store
 }
 
 // Save stores session data and returns a session ID.
@@ -181,7 +222,7 @@ func (s *MemorySessionStore) Save(ctx context.Context, data *webauthn.SessionDat
 
 	s.sessions[sessionID] = &sessionEntry{
 		data:      data,
-		createdAt: time.Now(),
+		createdAt: s.clock(),
 	}
 
 	return sessionID, nil
@@ -198,7 +239,7 @@ func (s *MemorySessionStore) Get(ctx context.Context, sessionID string) (*webaut
 	}
 
 	// Check expiration
-	if time.Since(entry.createdAt) > s.ttl {
+	if s.clock().Sub(entry.createdAt) > s.ttl {
 		return nil, ErrSessionExpired
 	}
 
@@ -233,7 +274,7 @@ func (s *MemorySessionStore) Cleanup() int {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
-	now := time.Now()
+	now := s.clock()
 	removed := 0
 	for id, entry := range s.sessions {
 		if now.Sub(entry.createdAt) > s.ttl {

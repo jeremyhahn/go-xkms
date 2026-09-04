@@ -69,8 +69,14 @@ func TestWebAuthnStores_UserStore(t *testing.T) {
 }
 
 func TestWebAuthnStores_SessionStore(t *testing.T) {
+	// The TTL is measured against an injected clock, so "still valid" and
+	// "expired" are exact rather than probable. The Get below used to require
+	// success within 100ms of the Save two statements earlier -- an assertion
+	// about how busy the machine was, not about the store (go-xkms#287).
+	clock := newFakeClock()
 	stores := NewWebAuthnStores(&WebAuthnStoresConfig{
 		SessionTTL: 100 * time.Millisecond,
+		Clock:      clock.Now,
 	})
 	ctx := context.Background()
 
@@ -88,8 +94,8 @@ func TestWebAuthnStores_SessionStore(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, sessionData.Challenge, retrieved.Challenge)
 
-	// Wait for expiration
-	time.Sleep(150 * time.Millisecond)
+	// Past the TTL, exactly and without waiting for it.
+	clock.Advance(101 * time.Millisecond)
 
 	// Session should be expired
 	_, err = stores.SessionStore().Get(ctx, sessionID)
@@ -124,8 +130,10 @@ func TestWebAuthnStores_CredentialStore(t *testing.T) {
 }
 
 func TestWebAuthnStores_CleanupSessions(t *testing.T) {
+	clock := newFakeClock()
 	stores := NewWebAuthnStores(&WebAuthnStoresConfig{
 		SessionTTL: 50 * time.Millisecond,
+		Clock:      clock.Now,
 	})
 	ctx := context.Background()
 
@@ -134,8 +142,8 @@ func TestWebAuthnStores_CleanupSessions(t *testing.T) {
 	_, _ = stores.SessionStore().Save(ctx, &webauthn.SessionData{Challenge: "2"})
 	_, _ = stores.SessionStore().Save(ctx, &webauthn.SessionData{Challenge: "3"})
 
-	// Wait for expiration
-	time.Sleep(100 * time.Millisecond)
+	// Past the TTL for all three.
+	clock.Advance(51 * time.Millisecond)
 
 	// Cleanup should remove all expired sessions
 	removed := stores.CleanupSessions()
@@ -143,25 +151,41 @@ func TestWebAuthnStores_CleanupSessions(t *testing.T) {
 }
 
 func TestWebAuthnStores_StartCleanupRoutine(t *testing.T) {
-	stores := NewWebAuthnStores(&WebAuthnStoresConfig{
-		SessionTTL: 50 * time.Millisecond,
-	})
+	// This one deliberately keeps REAL time. The cleanup goroutine ticks on a
+	// real time.Ticker, so a fake store clock would mean the session never
+	// expires by the routine's reckoning and the routine would never remove it
+	// -- the test would wait forever for an event that cannot happen. What was
+	// wrong here was not the clock but the synchronisation: it slept 150ms and
+	// assumed a goroutine on a 60ms tick had fired, which Go does not promise.
+	//
+	// So the TTL and interval stay short and real, and the test waits on the
+	// EVENT -- the store becoming empty -- through the already-exported Count().
+	// The old assertion could not observe the event at all, which its own
+	// comment admitted: "We can't directly check the count, but the cleanup ran".
+	store := pkgwebauthn.NewMemorySessionStoreWithTTL(20 * time.Millisecond)
+	stores := &WebAuthnStores{
+		users:       pkgwebauthn.NewMemoryUserStore(),
+		sessions:    store,
+		credentials: pkgwebauthn.NewMemoryCredentialStore(),
+	}
 	ctx := context.Background()
 
 	// Save a session
-	_, _ = stores.SessionStore().Save(ctx, &webauthn.SessionData{Challenge: "test"})
+	_, err := stores.SessionStore().Save(ctx, &webauthn.SessionData{Challenge: "test"})
+	require.NoError(t, err)
+	require.Equal(t, 1, store.Count(), "the session should be present before the routine runs")
 
 	// Start cleanup routine with short interval
-	cancel := stores.StartCleanupRoutine(ctx, 60*time.Millisecond)
+	cancel := stores.StartCleanupRoutine(ctx, 5*time.Millisecond)
 	defer cancel()
 
-	// Wait for session to expire and cleanup to run
-	time.Sleep(150 * time.Millisecond)
+	// Wait for the routine to have removed the expired session.
+	waitFor(t, "the cleanup routine to remove the expired session", func() bool {
+		return store.Count() == 0
+	})
 
-	// Session should have been cleaned up automatically
-	// (We can't directly check the count, but the cleanup ran)
-	removed := stores.CleanupSessions()
-	assert.Equal(t, 0, removed) // Already cleaned up
+	// And a manual pass now finds nothing left to remove.
+	assert.Equal(t, 0, stores.CleanupSessions())
 }
 
 func TestWebAuthnStores_Clear(t *testing.T) {

@@ -660,6 +660,40 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   independently confirmed to fail the same way on unmodified code. Panics are
   down from one to **zero** — which is why one of the four is newly *visible*:
   the panic used to abort the binary before it ran.
+- **`pkg/api/rest`'s WebAuthn session tests no longer assert on wall-clock
+  timing** (#287). `TestWebAuthnStores_StartCleanupRoutine` slept 150ms and
+  required that a goroutine on a 60ms tick had fired *and* that a 50ms TTL had
+  elapsed. Go promises neither. It failed `CI / Unit Tests` on PR #267, whose
+  diff touches no file in `pkg/api/rest` — the fourth unrelated PR felled by
+  this class.
+
+  Its own comment stated the assumption it could not establish: *"We can't
+  directly check the count, but the cleanup ran"*. It now waits on the **event**
+  — `MemorySessionStore.Count()` reaching zero, through a `waitFor` helper with
+  a generous 30s deadline — so it asserts the cleanup having run rather than a
+  duration during which it probably ran.
+
+  **The cleanup test deliberately keeps real time.** The routine ticks on a real
+  `time.Ticker`, so a fake clock would stop the session ever expiring by the
+  routine's reckoning and the test would wait for an event that cannot happen.
+  What was wrong there was the synchronisation, not the clock.
+
+  Two neighbours did need the clock, and one of them was **unsafe in the
+  direction a wider bound cannot fix**: `TestWebAuthnStores_SessionStore` saved
+  a session with a 100ms TTL and required a `Get` two statements later to
+  succeed. That fails whenever the machine stalls between them, and widening the
+  TTL only pushes out the sleep the same test needs for its expiry half. Both it
+  and `TestWebAuthnStores_CleanupSessions` now advance an injected clock.
+
+  The package's fourth sleep, in `auth_tls_test.go`, was audited and left alone:
+  it is inside a poll-with-deadline helper, which is already the correct shape.
+
+  Each fix was checked for discrimination rather than assumed: stubbing the
+  cleanup routine to do nothing makes the routine test fail (after its deadline,
+  with the reason named), and disabling expiry makes the other two fail. Verified
+  under `-race` with `-count=5` and `-shuffle` across four seeds on a machine
+  with all 24 cores saturated. The three tests drop from ~400ms of sleeping to
+  0.05s.
 
 - **The `pkg/acme/client` DNS tests no longer query the public internet**
   (#243). Ten call sites across four files resolved real domains — `google.com`,
@@ -1160,6 +1194,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   is satisfied: a trusted chain may carry no readable claim, as a
   software-backed slot's self-signed certificate does. Callers must read the
   decoded field.
+- **`webauthn.WithClock`** (#287) — an optional time source for
+  `MemorySessionStore`, supplied to `NewMemorySessionStore` /
+  `NewMemorySessionStoreWithTTL`. Variadic, defaulting to `time.Now`, with a
+  usable zero value, so production behaviour and every existing call site are
+  unchanged. `rest.WebAuthnStoresConfig` carries it through as `Clock`.
 
 - **PIV private-key import: `xkms.ImportPIVKey`** (#207). A PIV slot could be
   generated into or given a certificate, but an externally held private key
