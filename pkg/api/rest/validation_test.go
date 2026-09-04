@@ -37,7 +37,13 @@ func TestValidateKeyID(t *testing.T) {
 		{"special chars", "key<>id", true},
 		{"space", "key id", true},
 		{"backslash", "key\\id", true},
-		{"colon", "key:id", false}, // Colons are valid for extended key ID format (backend:type:algo:keyname)
+		// A colon is REFUSED: it is the separator KeyAttributes.ID() joins
+		// with, so a key ID carrying one is written under a shifted identifier
+		// and read back under a different CN — stored, listed, unreachable
+		// (#168, #169). The extended "backend:type:algo:keyname" form is a key
+		// REFERENCE, validated by validation.ValidateKeyReference, which
+		// splits on colons before delegating here.
+		{"colon", "key:id", true},
 		{"semicolon", "key;id", true},
 		{"quote", "key\"id", true},
 		{"single quote", "key'id", true},

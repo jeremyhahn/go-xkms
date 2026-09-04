@@ -31,8 +31,23 @@ var (
 	// backendPattern matches safe backend names (lowercase alphanumeric + hyphens)
 	backendPattern = regexp.MustCompile(`^[a-z0-9\-]+$`)
 
-	// simpleKeyIDPattern for key IDs - supports both simple names and extended format (backend:type:algo:keyname)
-	simpleKeyIDPattern = regexp.MustCompile(`^[a-zA-Z0-9_\-\.:]+$`)
+	// simpleKeyIDPattern matches a SIMPLE key ID: a name, with no structure.
+	//
+	// The colon is excluded deliberately. KeyAttributes.ID() joins its fields
+	// with ':' and parseStorageKeyID disambiguates purely by segment count, so
+	// a colon inside a key ID shifts every field after it — "b:c" is written
+	// as "software:signing:b:c:rsa" and read back with CN == "c", leaving a
+	// key that is stored and listed under a name the caller never asked for
+	// and unreachable by the name it was created with (#168, #169).
+	//
+	// The extended "backend:type:algo:keyname" form is NOT a key ID; it is a
+	// key REFERENCE, and ValidateKeyReference handles it. That function splits
+	// on colons before delegating here, so the extended form never reaches
+	// this pattern with a separator still attached — excluding the colon does
+	// not cost the feature, and it additionally refuses a separator buried in
+	// a reference's keyname component, which would shift the identifier the
+	// same way.
+	simpleKeyIDPattern = regexp.MustCompile(`^[a-zA-Z0-9_\-\.]+$`)
 
 	// validKeyTypes provides O(1) lookup for valid key types.
 	validKeyTypes = map[string]struct{}{
@@ -129,9 +144,10 @@ func ValidateKeyID(keyID string) error {
 		}
 	}
 
-	// Only allow safe characters (supports extended key ID format with colons)
+	// Only allow safe characters. A colon is refused here even though a key
+	// REFERENCE may contain one: see simpleKeyIDPattern.
 	if !simpleKeyIDPattern.MatchString(keyID) {
-		return newErrKeyID(ConstraintInvalidChars, "allowed: a-z, A-Z, 0-9, -, _, ., :")
+		return newErrKeyID(ConstraintInvalidChars, "allowed: a-z, A-Z, 0-9, -, _, .")
 	}
 
 	return nil

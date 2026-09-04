@@ -1137,6 +1137,29 @@ func resolveKeyHash(hash string) (crypto.Hash, error) {
 	return h, nil
 }
 
+// guardKeyID refuses a key ID that the storage identifier cannot round trip.
+//
+// It sits here, where the caller's key ID first becomes a CN and therefore an
+// identifier segment, because that is a boundary EVERY method crosses. The
+// transport validators cover the transports that call them — REST does; MCP's
+// handleGenerateKey checks only that key_id is non-empty — so a guard in each
+// handler leaves the next handler to be discovered the same way (#169). The
+// per-handler refusal added for MCP import in #63 was deliberately narrow and
+// this is what generalises it.
+//
+// KeyAttributes.ID() joins its fields with ':' and parseStorageKeyID
+// disambiguates by segment count, so a separator inside the CN shifts every
+// field after it: "a:b" is stored as "software:tls:a:b:rsa" and read back with
+// CN == "b". The operation reports success, list_keys shows a key the caller
+// did not ask for, and get_key and sign cannot reach it under the name it was
+// created with.
+func guardKeyID(keyID string) error {
+	if err := validation.ValidateKeyID(keyID); err != nil {
+		return &ErrKeyIDValidation{Err: err}
+	}
+	return nil
+}
+
 // buildKeyAttributes constructs a types.KeyAttributes from a GenerateKeyRequest.
 //
 // The key's purpose is read with types.ParseKeyType, the vocabulary the
@@ -1147,6 +1170,10 @@ func resolveKeyHash(hash string) (crypto.Hash, error) {
 // built its own attributes. The purpose is part of types.KeyAttributes.ID(), so
 // the two paths stored the same request's key in two different places.
 func buildKeyAttributes(req *transport.GenerateKeyRequest, backendName string) (*types.KeyAttributes, error) {
+	if err := guardKeyID(req.KeyID); err != nil {
+		return nil, err
+	}
+
 	attrs := &types.KeyAttributes{
 		CN:        req.KeyID,
 		StoreType: types.ParseStoreType(backendName),
@@ -1259,6 +1286,10 @@ func buildImportKeyAttributes(req *transport.ImportKeyRequest, backendName strin
 		// the wrapped material at this layer, and guessing one stores the key
 		// under an identifier that does not describe it.
 		return nil, requiredField("key_type")
+	}
+
+	if err := guardKeyID(req.KeyID); err != nil {
+		return nil, err
 	}
 
 	attrs := &types.KeyAttributes{

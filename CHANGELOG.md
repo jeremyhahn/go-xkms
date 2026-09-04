@@ -726,6 +726,49 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   under `-race` with `-count=5` and `-shuffle` across four seeds on a machine
   with all 24 cores saturated. The three tests drop from ~400ms of sleeping to
   0.05s.
+- **A key ID may no longer contain the identifier separator, and there is one
+  validator for what a key ID is** (#168, #169). `KeyAttributes.ID()` joins its
+  fields with `':'` and the storage parser disambiguates purely by segment
+  count, so a colon inside a key ID shifted every field after it: `"a:b"` was
+  written as `software:tls:a:b:rsa` and read back with `CN == "b"`. The key was
+  stored, listed under a name the caller never asked for, and unreachable by
+  `get_key` or `sign` — the operation reported success and wrote something
+  nothing could find.
+
+  Three exported `ValidateKeyID` functions disagreed about what a key ID is.
+  `pkg/validation` and `pkg/api/rest` carried byte-identical patterns
+  maintained separately — agreeing by coincidence rather than construction, and
+  the REST copy's doc comment had already drifted, describing "alphanumeric,
+  dash, underscore, dot" while its pattern also permitted the colon. REST now
+  delegates to `pkg/validation`, which is the single definition; its doc
+  comment is corrected.
+
+  **The extended format is unaffected, because it was never a key ID.**
+  `backend:type:algo:keyname` is a key REFERENCE, and
+  `validation.ValidateKeyReference` splits on colons *before* delegating to
+  `ValidateKeyID` — so the extended form never reached the simple validator
+  with a separator still attached. Excluding the colon costs the feature
+  nothing and additionally refuses a separator buried inside a reference's
+  keyname component, which would shift the identifier the same way.
+
+  **The refusal is at the service layer, not only the transports.** Tightening
+  the transport validators fixes REST, which calls them. It does not fix MCP:
+  `handleGenerateKey` checks only that `key_id` is non-empty, and
+  `XKMSService.GenerateKey` does the same before handing the value to
+  `buildKeyAttributes`, which assigned `CN` verbatim — neither `pkg/api/mcp`
+  nor `pkg/xkms` called a key-ID validator at all. So the path #169 measured,
+  and the one callers use most, crossed no validator. The guard now sits where
+  the CN first becomes an identifier segment, which every method crosses,
+  rather than in each handler that would otherwise have to remember. It applies
+  to the import builder too. Failures are `ErrKeyIDValidation`, unwrapping to
+  both `ErrInvalidKeyID` and the validator's own constraint.
+
+  **Compatibility.** A key ID containing `':'` produced a key that was stored,
+  listed under the wrong name and unreachable, so no caller can have depended
+  on the behaviour — it did not work. Nothing in the tree creates a key under
+  such a name, and the full `pkg/xkms`, `pkg/api/rest`, `pkg/api/mcp` and
+  `pkg/validation` suites pass unchanged. One existing REST test asserted the
+  colon was accepted; it encoded the defect and now asserts the refusal.
 
 - **The `pkg/acme/client` DNS tests no longer query the public internet**
   (#243). Ten call sites across four files resolved real domains — `google.com`,

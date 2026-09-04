@@ -15,58 +15,28 @@ package rest
 
 import (
 	"fmt"
-	"path/filepath"
 	"regexp"
 	"strings"
 
 	"github.com/jeremyhahn/go-xkms/pkg/errs"
+	"github.com/jeremyhahn/go-xkms/pkg/validation"
 )
 
-var (
-	// keyIDPattern matches safe key identifiers (alphanumeric, dash, underscore, dot, colon)
-	// This prevents path traversal and other injection attacks while supporting extended key ID format
-	keyIDPattern = regexp.MustCompile(`^[a-zA-Z0-9_\-\.:]+$`)
-)
-
-// ValidateKeyID checks if a key ID is safe to use.
-// Prevents path traversal, injection, and other attacks by:
-// - Rejecting empty strings
-// - Rejecting null bytes
-// - Rejecting absolute paths
-// - Rejecting parent directory references (..)
-// - Allowing only safe characters (alphanumeric, dash, underscore, dot)
+// ValidateKeyID checks that a key ID is safe to use.
+//
+// It delegates to pkg/validation, which is the single definition of what a key
+// ID may contain. This function previously carried its own copy of the pattern
+// — byte-identical to pkg/validation's, separately maintained, and so agreeing
+// only by coincidence (#168). Two validators for one concept drift; the second
+// one's doc comment had already drifted, describing "alphanumeric, dash,
+// underscore, dot" while its pattern also permitted the colon.
+//
+// A key ID is a simple name and may NOT contain ':'. The extended
+// "backend:type:algo:keyname" form is a key REFERENCE, validated by
+// validation.ValidateKeyReference, which splits on colons before delegating
+// here.
 func ValidateKeyID(keyID string) error {
-	if keyID == "" {
-		return &errs.Message{Msg: "key ID cannot be empty"}
-	}
-
-	// Check for null bytes
-	if strings.Contains(keyID, "\x00") {
-		return &errs.Message{Msg: "key ID contains invalid characters"}
-	}
-
-	// Check for absolute paths
-	if filepath.IsAbs(keyID) {
-		return &errs.Message{Msg: "key ID cannot be an absolute path"}
-	}
-
-	// Check for path traversal attempts
-	cleaned := filepath.Clean(keyID)
-	if strings.HasPrefix(cleaned, "..") || strings.Contains(cleaned, string(filepath.Separator)+"..") {
-		return &errs.Message{Msg: "key ID contains invalid path components"}
-	}
-
-	// Only allow safe characters (alphanumeric, dash, underscore, dot, colon for extended format)
-	if !keyIDPattern.MatchString(keyID) {
-		return &errs.Message{Msg: "key ID contains invalid characters (allowed: a-z, A-Z, 0-9, -, _, ., :)"}
-	}
-
-	// Additional length check (prevent DoS via extremely long names)
-	if len(keyID) > 255 {
-		return &errs.Message{Msg: "key ID too long (max 255 characters)"}
-	}
-
-	return nil
+	return validation.ValidateKeyID(keyID)
 }
 
 // ValidateBackendName checks if a backend name is valid.

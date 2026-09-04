@@ -512,6 +512,23 @@ func (e *ErrBackendNameValidation) Error() string {
 // Unwrap returns the underlying error.
 func (e *ErrBackendNameValidation) Unwrap() error { return e.Err }
 
+// ErrKeyIDValidation reports a key ID the storage identifier cannot round
+// trip. It wraps the validator's own constraint error and unwraps to
+// ErrInvalidKeyID so a caller can match either the specific reason or the
+// general sentinel.
+type ErrKeyIDValidation struct {
+	Err error
+}
+
+// Error returns the error message.
+func (e *ErrKeyIDValidation) Error() string {
+	return fmt.Sprintf("invalid key ID: %v", e.Err)
+}
+
+// Unwrap returns the sentinel and the underlying constraint so errors.Is
+// matches both.
+func (e *ErrKeyIDValidation) Unwrap() []error { return []error{ErrInvalidKeyID, e.Err} }
+
 // ErrKeyProviderNameValidation represents a key provider name validation error.
 type ErrKeyProviderNameValidation struct {
 	Err error
