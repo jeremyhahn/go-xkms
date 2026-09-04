@@ -472,6 +472,47 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `transport.CopyKeyRequest` cannot express, so no caller of this transport can
   populate them. That is #155 and needs a decision about whether the request
   struct gains them on every transport.
+- **The absent-key storage contract is now executable, and the note describing
+  it is no longer wrong** (#252). `storage.Backend` documents `Get` and
+  `Delete` as returning `ErrNotFound` for a key that does not exist, and
+  `Exists` as reporting whether a key exists. Four implementations disagreed,
+  and nothing pinned the disagreement.
+
+  `pkg/storage/storagetest` gains `RunAbsentKeyContract`, covering `Exists`,
+  `Get`, `Delete` and `PutIfAbsent` on a never-written key, wired to
+  `NewMemory`, `NewPrefixBackend`, `NewFile`, `NewPebble`, and the `file`,
+  `luks`, `sealed` and `mocks` backends.
+
+  It is a **characterization** suite, not a conformance snapshot. Pinning
+  today's behaviour would have encoded the defect as the contract — "`Exists`
+  returns true for a key that was never written" would become the blessed
+  answer and fixing the engines would read as a regression. So the assertions
+  state the correct semantics, and a backend that does not satisfy them yet
+  declares it with `Config.AbsentKeyDivergence` (#252) or
+  `Config.PutIfAbsentUnavailable` (#61). Those branches assert the wrong answer
+  deliberately **and fail the moment it becomes right**, telling the reader to
+  delete the flag — the same self-destructing design as
+  `pkg/storage/qrdb/factory_cas_characterization_test.go`.
+
+  **The `mocks.MockCertStorage` divergence the suite found on its first run is
+  fixed here**, because it is this repository's own code and needs no upstream
+  ruling: `Get` and `Delete` returned a bare `key not found: <key>` message
+  rather than wrapping `storage.ErrNotFound`, so `errors.Is(err,
+  storage.ErrNotFound)` was false against the mock. Any test that swapped a
+  real backend for it took the wrong branch.
+
+  **The note on `pkg/storage/constructors.go` was wrong about the blast
+  radius** and is corrected. It said the transaction-service gap hit
+  "uniformly, for memory, file and pebble alike". It does not: `NewMemory` —
+  this package's `engineBackend` — conforms on all four verbs. The divergence
+  travels with the **embedded QRDB client, not with the storage medium**, so
+  `qrdb.NewMemory` diverges exactly like the two on disk while `NewMemory` does
+  not. The comment now carries the measured table and both divergences, since
+  it is the note a caller reads before choosing an engine.
+
+  Not decided here, deliberately: which answer is correct is already settled by
+  the interface documentation, but whether to fix the engines upstream or adapt
+  in `engineBackend` is a go-qrdb call and stays open on #252.
 - **Software backend: `validateKeyType` no longer blesses ECDSA/Ed25519
   mismatches** (#53). The validator checked RSA only; ECDSA and Ed25519 fell
   through a `default:` arm commented *"basic validation is sufficient"* — the

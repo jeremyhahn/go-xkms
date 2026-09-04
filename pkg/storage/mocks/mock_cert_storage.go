@@ -325,7 +325,12 @@ func (m *MockCertStorage) Get(_ context.Context, key string) ([]byte, error) {
 
 	value, exists := m.data[key]
 	if !exists {
-		return nil, &errs.Message{Msg: fmt.Sprintf("key not found: %s", key)}
+		// storage.ErrNotFound, not a bare message: storage.Backend documents Get
+		// as returning it for an absent key, and callers reach for
+		// errors.Is(err, storage.ErrNotFound). A mock that reported the same
+		// condition with an unmatchable error sent every such caller down the
+		// wrong branch the moment a real backend was swapped for this one.
+		return nil, &errs.Detail{Err: storage.ErrNotFound, Detail: key}
 	}
 
 	// Return a defensive copy
@@ -395,7 +400,9 @@ func (m *MockCertStorage) Delete(_ context.Context, key string) error {
 	}
 
 	if _, exists := m.data[key]; !exists {
-		return &errs.Message{Msg: fmt.Sprintf("key not found: %s", key)}
+		// storage.ErrNotFound for the reason Get gives above: Delete documents
+		// the same sentinel for an absent key.
+		return &errs.Detail{Err: storage.ErrNotFound, Detail: key}
 	}
 
 	delete(m.data, key)
