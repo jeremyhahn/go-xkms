@@ -1,6 +1,6 @@
 # PIV Smartcard — API
 
-> **Status: NORMATIVE** · Feature: `piv-smartcard` · Repo: `go-xkms` · Last verified: 2026-09-03
+> **Status: NORMATIVE** · Feature: `piv-smartcard` · Repo: `go-xkms` · Last verified: 2026-09-04
 
 Transport shapes: [`../key-management/api.md`](../key-management/api.md)
 §"How the six transports are shaped".
@@ -21,6 +21,7 @@ authenticated identity, no specific RBAC permission.
 | Export certificate | `GET /api/v1/piv/slots/{slot}/export` | `ExportPIVCertificate` | same as REST | `xkms.exportPIVCertificate` | `ExportPIVCertificate` | session |
 | Generate CSR | `POST /api/v1/piv/slots/{slot}/csr` | `GeneratePIVCSR` | same as REST | `xkms.generatePIVCSR` | `GeneratePIVCSR` | session |
 | Import **private key** | — | — | — | — | — (SDK only: `xkms.ImportPIVKey`) | session |
+| **Verify** an attestation | — | — | — | — | — (SDK only: `xkms.VerifyPIVAttestation` / `ParsePIVAttestation`) | n/a |
 | PIV login | `POST /api/v1/auth/login/piv` | **MISSING — docs/13** | same as REST | **MISSING — docs/13** | — | **public** |
 
 **PIV is the best-covered hardware feature on MCP** — all eight slot operations
@@ -73,6 +74,12 @@ the defect that motivated adding this one: the key landed in a field named
 Certificates are carried as PEM or DER per the request's format field.
 **No response in this feature ever carries a private key** — `ImportPIVKeyResponse`
 returns only the public half, so a caller can confirm what the slot holds.
+
+`VerifyPIVAttestation` and `ParsePIVAttestation` read that material back —
+firmware, serial, PIN and touch policy, form factor. They are SDK-only and take
+their trust anchors from the caller; no vendor root ships with the SDK. A nil
+error from the verifier means the **chain** verified, not that any policy is
+satisfied.
 
 **`AttestPIVSlot` refuses a slot whose key arrived by import**, with
 `ErrPIVKeyImportedNotAttestable`, and returns no material. Nothing on the wire

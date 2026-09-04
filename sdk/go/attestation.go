@@ -16,6 +16,7 @@ package xkms
 import (
 	"github.com/jeremyhahn/go-xkms/pkg/attestation/android"
 	"github.com/jeremyhahn/go-xkms/pkg/attestation/truststore"
+	"github.com/jeremyhahn/go-xkms/pkg/pivcert"
 )
 
 // Hardware key-attestation surface re-exported so the xkey GUI/CLI verify
@@ -105,3 +106,108 @@ var BuildAndroidAttestationExtension = android.BuildAttestationExtension
 // GoogleHardwareAttestationRoots returns the Google hardware-attestation root
 // certificates.
 var GoogleHardwareAttestationRoots = truststore.GoogleHardwareAttestationRoots
+
+// PIV slot-attestation surface. A PIV attestation certificate carries vendor
+// extensions describing the device a key lives on and the policy governing its
+// use; xkms produced that material (AttestPIV) without being able to read it
+// back, so a consumer could establish only that a chain anchored — never that
+// touch was required, or which device it came from.
+//
+// PIV identifiers carry a PIV prefix where the bare name would collide in the
+// flat SDK namespace.
+
+// PIVAttestation is what a PIV slot-attestation certificate says about the
+// device and the key's policy.
+//
+// Every field is a pointer and nil means NOT USABLE, which is two situations a
+// policy has to tell apart: the extension was absent, or it was present and
+// did not decode. PIVAttestation.Unparseable lists the second group.
+type PIVAttestation = pivcert.Attestation
+
+// PIVFirmwareVersion is a device firmware version, with AtLeast for a caller
+// enforcing a firmware floor.
+type PIVFirmwareVersion = pivcert.FirmwareVersion
+
+// PIVPINPolicy is how often the PIN must be presented to use a slot key.
+type PIVPINPolicy = pivcert.PINPolicy
+
+// PIVTouchPolicy is whether the device requires a physical touch to use a
+// slot key — the claim a "touch must be required" policy is written against.
+type PIVTouchPolicy = pivcert.TouchPolicy
+
+// PIVFormFactor is the device's physical shape, with FIPS reporting the
+// FIPS-model flag.
+type PIVFormFactor = pivcert.FormFactor
+
+// PIVAttestationVerifyOptions configures VerifyPIVAttestation. TrustedRoots is
+// supplied by the caller: which vendor root a deployment trusts is its
+// decision, and this SDK ships none.
+type PIVAttestationVerifyOptions = pivcert.AttestationVerifyOptions
+
+// PIV PIN policy values.
+const (
+	PIVPINPolicyNever  = pivcert.PINPolicyNever
+	PIVPINPolicyOnce   = pivcert.PINPolicyOnce
+	PIVPINPolicyAlways = pivcert.PINPolicyAlways
+)
+
+// PIV touch policy values.
+const (
+	PIVTouchPolicyNever  = pivcert.TouchPolicyNever
+	PIVTouchPolicyAlways = pivcert.TouchPolicyAlways
+	PIVTouchPolicyCached = pivcert.TouchPolicyCached
+)
+
+// PIV form factor values, without the FIPS bit. Compare against
+// PIVFormFactor.Base and read PIVFormFactor.FIPS for the flag.
+const (
+	PIVFormFactorUSBAKeychain = pivcert.FormFactorUSBAKeychain
+	PIVFormFactorUSBANano     = pivcert.FormFactorUSBANano
+	PIVFormFactorUSBCKeychain = pivcert.FormFactorUSBCKeychain
+	PIVFormFactorUSBCNano     = pivcert.FormFactorUSBCNano
+	PIVFormFactorLightning    = pivcert.FormFactorLightning
+)
+
+// ParsePIVAttestation reads the attestation extensions from a PIV slot
+// attestation certificate WITHOUT verifying its chain.
+//
+// Parsing and trusting are separate so a caller can inspect evidence it has
+// not decided to trust. A deployment with no vendor root configured can use
+// this — and PIVAttestation.HasAttestationExtensions — as the presence check
+// it already performs, rather than being forced to choose between a full
+// verdict and none.
+var ParsePIVAttestation = pivcert.ParseAttestation
+
+// VerifyPIVAttestation checks that a PIV slot attestation chains to a root the
+// caller trusts, and returns what the leaf says about the device.
+//
+// The chain is leaf-first: the slot attestation certificate, then the device
+// attestation certificate (slot f9). A nil error means the CHAIN verified, not
+// that any policy is satisfied — a trusted chain may carry no readable claim
+// at all, and the returned PIVAttestation is what says so.
+var VerifyPIVAttestation = pivcert.VerifyAttestation
+
+// BuildPIVAttestationExtensions builds the extensions ParsePIVAttestation
+// reads, so a consumer can construct SYNTHETIC attestation certificates for
+// testing without reaching past sdk/go into pkg/pivcert.
+//
+// It is an encoder for the same documented layout the parser implements, so
+// the two agreeing proves they are consistent — never that either matches a
+// physical device. See the scope note on pkg/pivcert's attestation parsing.
+var BuildPIVAttestationExtensions = pivcert.BuildAttestationExtensions
+
+// PIV attestation extension object identifiers, under Yubico's
+// 1.3.6.1.4.1.41482.3 arc.
+var (
+	// OIDPIVFirmwareVersion carries the device firmware version.
+	OIDPIVFirmwareVersion = pivcert.OIDFirmwareVersion
+
+	// OIDPIVSerialNumber carries the device serial number.
+	OIDPIVSerialNumber = pivcert.OIDSerialNumber
+
+	// OIDPIVPINTouchPolicy carries the PIN policy and the touch policy.
+	OIDPIVPINTouchPolicy = pivcert.OIDPINTouchPolicy
+
+	// OIDPIVFormFactor carries the device form factor.
+	OIDPIVFormFactor = pivcert.OIDFormFactor
+)

@@ -1,6 +1,6 @@
 # PIV Smartcard — Architecture
 
-> **Status: NORMATIVE** · Feature: `piv-smartcard` · Repo: `go-xkms` · Last verified: 2026-09-03
+> **Status: NORMATIVE** · Feature: `piv-smartcard` · Repo: `go-xkms` · Last verified: 2026-09-04
 
 ## The problem
 
@@ -107,8 +107,12 @@ its PIV data lives.
   authority.
 - **The private key never leaves.** `piv export` exports the *certificate*.
 - **`f9` attestation is only as good as its chain.** An attestation certificate
-  is evidence about key origin; verify it (`VerifyChain`) rather than trusting
-  its presence.
+  is evidence about key origin; verify it (`VerifyAttestation`) rather than
+  trusting its presence.
+- **A verified chain is not a satisfied policy.** Verification establishes that
+  the attestation anchors to a root the caller trusts. It says nothing about
+  what the certificate claims — a trusted chain may carry no readable evidence
+  at all. Read the decoded claim, do not infer it from a nil error.
 - **Attestation over an imported key asserts residency, not exclusivity.**
   This is the sharpest limit on what a PIV attestation is worth, and it is not
   visible in the attestation itself. See below.
@@ -160,6 +164,33 @@ than by assertion. Import exists for keys whose provenance is already
 established elsewhere — migrating an existing identity onto a card, or loading
 a key a CA issued — where the caller has already decided that residency is the
 property they need.
+
+## Reading an attestation back
+
+xkms emitted attestation material that nothing in the stack could decode: a
+consumer could establish that a chain anchored, and nothing about the device or
+the policy governing the key. `pkg/pivcert` now parses the vendor extensions —
+firmware version, serial number, PIN and touch policy, form factor — so a
+deployment can enforce *"touch must be required"* or *"this serial is on the
+allowlist"* rather than only *"something attested"*.
+
+Three properties shape it:
+
+- **Parsing and trusting are separate.** `ParseAttestation` evaluates no trust;
+  `VerifyAttestation` anchors a chain against roots the **caller** supplies.
+  This package ships no vendor root, because which root a deployment trusts is
+  its decision. A deployment with none configured keeps the presence check it
+  already has instead of choosing between a full verdict and none.
+- **Absent and unparseable are different answers.** A device that does not
+  report a touch policy is not the same as one whose touch policy could not be
+  decoded; the first may be acceptable, the second means the evidence is not
+  understood. They are reported distinctly, and a value that decodes but is
+  unknown to this build is a third thing again.
+- **Unreadable beats wrongly read.** The layout is Yubico's documented one and
+  has not been checked against a physical device, so decoding is strict and a
+  mismatch is reported rather than coerced. A caller can handle "I could not
+  read this"; it cannot handle a confidently wrong touch policy. See
+  [`engineering.md`](engineering.md) for the scope of that limitation.
 
 ## An imported key is not attestable
 

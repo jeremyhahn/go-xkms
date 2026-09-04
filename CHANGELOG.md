@@ -743,6 +743,57 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **PIV slot-attestation verifier: `xkms.VerifyPIVAttestation` /
+  `ParsePIVAttestation`** (#206). xkms produced attestation material that
+  nothing in the stack could decode — `AttestPIVSlot` emitted the slot and `f9`
+  certificates, and the only consumer-side check possible was that a chain
+  anchored. Yubico's `1.3.6.1.4.1.41482.3` arc was not known to the repository
+  at all.
+
+  `pkg/pivcert` now parses the vendor extensions and returns their **values**:
+  firmware version (`.3`), serial number (`.7`), PIN and touch policy (`.8`),
+  and form factor (`.9`, high bit marking FIPS). A deployment can enforce
+  *"touch must be required"*, *"this serial is on the allowlist"* or *"firmware
+  at or above X"* — policies presence alone cannot express. Re-exported through
+  `sdk/go` with a `PIV` prefix, alongside a builder so a consumer can construct
+  synthetic attestation certificates for its own tests without reaching past
+  the SDK.
+
+  **Absent, unparseable and unrecognised are three distinct answers.** An
+  extension that is not present leaves a nil field; one that is present and
+  does not decode leaves a nil field *and* an entry in `Unparseable`; a value
+  that decodes but is unknown to this build is returned with `Known()` false.
+  Collapsing the first two would let "this device does not report touch policy"
+  and "this device reports something I cannot read" reach the same verdict,
+  when they warrant opposite responses.
+
+  **Trust anchors are the caller's.** `AttestationVerifyOptions.TrustedRoots`
+  is supplied by the caller and **no vendor root ships** — which root a
+  deployment trusts is its decision, mirroring `pkg/attestation/android` where
+  the embedded Google root is an opt-in offered separately rather than baked
+  into verification. A nil or empty pool is an error, not a pass. Parsing
+  performs no trust evaluation at all, so a deployment with no vendor root
+  configured keeps its existing presence check rather than choosing between a
+  full verdict and none.
+
+  **Scope of validation, stated because a green test suite here does not
+  establish it.** The layout is Yubico's documented one and has **not** been
+  validated against a physical device; every fixture is built by this package's
+  own encoder, which proves the parser and builder agree and nothing about real
+  hardware. Decoding is therefore strict — exact lengths, exact ASN.1 types —
+  and a mismatch is reported as unparseable rather than coerced, so a device
+  that disagrees surfaces as "I could not read this" instead of a confidently
+  wrong touch policy. A test builds the most likely alternative framing (each
+  value inside an inner `OCTET STRING` rather than raw in `extnValue`) and
+  asserts it yields unparseable rather than a plausible value; that test is what
+  makes the limitation safe rather than merely disclosed. The limitation is
+  recorded in `docs/piv-smartcard/engineering.md`, not only here.
+
+  A nil error from the verifier means the **chain** verified, not that a policy
+  is satisfied: a trusted chain may carry no readable claim, as a
+  software-backed slot's self-signed certificate does. Callers must read the
+  decoded field.
+
 - **PIV private-key import: `xkms.ImportPIVKey`** (#207). A PIV slot could be
   generated into or given a certificate, but an externally held private key
   could not be loaded into one. The SDK's only PIV write paths were

@@ -1,6 +1,6 @@
 # PIV Smartcard — Engineering Contract
 
-> **Status: NORMATIVE** · Feature: `piv-smartcard` · Repo: `go-xkms` · Last verified: 2026-09-03
+> **Status: NORMATIVE** · Feature: `piv-smartcard` · Repo: `go-xkms` · Last verified: 2026-09-04
 
 ## Exported surface — `pkg/pivcert`
 
@@ -78,6 +78,85 @@ storage failure diagnosable — "put failed" without the slot is useless.
 `piv_keygen_software.go` (software fallback). The generator seam is
 `xkms.PIVKeyGenerator`, which is also what
 [`../auth-factors/`](../auth-factors/engineering.md) injects.
+
+## Slot attestation: reading the evidence back
+
+`pkg/pivcert` parses the vendor extensions a PIV slot-attestation certificate
+carries, so a consumer can enforce a policy rather than only observe that a
+chain anchored.
+
+```go
+func ParseAttestation(cert *x509.Certificate) (*Attestation, error)
+func VerifyAttestation(chain []*x509.Certificate, opts *AttestationVerifyOptions) (*Attestation, error)
+func BuildAttestationExtensions(att *Attestation) ([]pkix.Extension, error)
+```
+
+Extensions read, from Yubico's `1.3.6.1.4.1.41482.3` arc: firmware version
+(`.3`), serial number (`.7`), PIN and touch policy (`.8`), form factor (`.9`,
+high bit marks FIPS). Re-exported through `sdk/go` with a `PIV` prefix.
+
+### Scope of validation — read this before trusting a decoded value
+
+**The layout is Yubico's documented one and has NOT been validated against a
+physical device.** No YubiKey was available, so there is no captured
+certificate to test against, and every fixture in the package's tests is built
+by the package's own encoder. That is a closed loop: it proves the parser and
+the builder agree, never that either matches real hardware.
+
+The design answers that rather than hiding it:
+
+- Every field is decoded **strictly** — exact lengths, exact ASN.1 types.
+  Nothing is coerced.
+- A value that does not match is reported **unparseable**, and the field stays
+  nil. A device whose framing differs surfaces as "I could not read this",
+  which a caller can act on, instead of a confidently wrong touch policy,
+  which it cannot.
+- `TestParseAttestation_WrongFramingIsUnparseableNotAWrongValue` builds the
+  most likely alternative framing — each value wrapped in an inner
+  `OCTET STRING` rather than raw in `extnValue` — and asserts it yields
+  unparseable rather than a plausible value. **That test is what makes the
+  limitation safe rather than merely disclosed**; do not relax the length
+  checks it guards.
+
+If a real attestation certificate becomes available, add it as a fixture the
+way `pkg/attestation/android/testdata/android_emulator_chain.txt` is used, and
+this section can be narrowed to what the fixture does not cover.
+
+### Absent, unparseable, and unrecognised are three different answers
+
+| Situation | Field | `Unparseable` | Meaning |
+|---|---|---|---|
+| extension not present | nil | no | the device does not report it |
+| present, did not decode | nil | **yes** | the evidence is not being understood |
+| decoded, value unknown to this build | set, `Known()` false | no | newer firmware, or a value we do not model |
+
+Collapsing the first two would let "this device does not report touch policy"
+and "this device reports something I cannot read" produce the same verdict,
+and they warrant opposite responses. The third is not a failure at all: the
+extension decoded, and a caller comparing against a known constant simply will
+not match.
+
+### Trust anchors are the caller's
+
+`AttestationVerifyOptions.TrustedRoots` is supplied by the caller and **this
+package ships no vendor root**. Which root a deployment trusts is its decision,
+not a library's — the same shape `pkg/attestation/android` uses, where the
+embedded Google root is offered separately as an opt-in rather than baked into
+verification. A nil or empty pool is an error, not a pass: an unanchored
+attestation is evidence of nothing.
+
+`ParseAttestation` deliberately performs no trust evaluation, so a deployment
+with no vendor root configured keeps the presence check it already has
+(`Attestation.HasAttestationExtensions`) instead of choosing between a full
+verdict and none.
+
+### A verified chain is not a satisfied policy
+
+`VerifyAttestation` returning a nil error means the **chain** verified. The
+certificate may carry no readable claim at all — a software-backed slot's
+certificate is one xkms self-signed, and it carries none. Callers enforcing a
+policy must check the field they care about; `HasAttestationExtensions` reports
+whether there is any evidence to check.
 
 ## Invariants
 
