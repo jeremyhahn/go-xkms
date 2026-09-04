@@ -28,6 +28,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   reproduce on unmodified `main` with the exact CI error strings, and neither
   occurs after the change. The assertions are unweakened — with `pkcs7Unpad`
   mutated to accept any input, both tests fail; reverted, both pass.
+- **A padding-mismatch test asserted a probabilistic refusal as if it were
+  certain** (#345). `TestDecryptAsym_RSA_OAEPMismatch` encrypted with OAEP and
+  relied on the PKCS#1 v1.5 unpadding of the resulting block failing. That is
+  only *probable*: RSA-decrypting an OAEP ciphertext under v1.5 yields an
+  essentially random block, and a random block satisfies v1.5's leading
+  `0x00 0x02` roughly 1 time in 65,536 — at which point no error was returned
+  and the test failed with *"An error is expected but got nil"*. A fresh key and
+  fresh OAEP padding per run made it unreproducible on demand.
+
+  The test now encrypts a chosen block raw (`c = m^e mod n`) whose second byte
+  is `0x01`, which RFC 8017 §7.2.2 forbids in an encryption block, so the
+  refusal is certain. A counterweight decrypts a correctly v1.5-padded
+  ciphertext, so the refusal cannot pass by rejecting everything. Both
+  directions are mutation-verified.
 
 ### Security
 

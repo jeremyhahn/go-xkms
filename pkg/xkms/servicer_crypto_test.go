@@ -16,6 +16,7 @@ import (
 	"crypto/x509"
 	"errors"
 	"io"
+	"math/big"
 	"testing"
 
 	"github.com/jeremyhahn/go-xkms/pkg/api/transport"
@@ -1549,25 +1550,81 @@ func TestDecryptAsym_RSA_OAEPMismatch(t *testing.T) {
 	})
 	require.NoError(t, err)
 
-	// Encrypt with OAEP padding via EncryptAsym
-	encResp, err := svc.EncryptAsym(ctx, &transport.EncryptAsymRequest{
-		Backend:   "software",
-		KeyID:     "decrypt-oaep-mismatch",
-		Plaintext: []byte("secret message"),
-	})
+	// Decrypt passes nil opts, so the backend uses PKCS#1 v1.5. Feed it a
+	// ciphertext whose plaintext block cannot be valid v1.5, and the refusal is
+	// certain.
+	//
+	// This test used to encrypt with OAEP and rely on the v1.5 unpadding of the
+	// resulting block failing. That is only PROBABLE, not certain: RSA-decrypting
+	// an OAEP ciphertext under v1.5 yields an essentially random block, and a
+	// random block satisfies v1.5's leading 0x00 0x02 roughly 1 time in 65,536.
+	// When it did, no error was returned and the test failed with "An error is
+	// expected but got nil", reddening CI for whichever PR was in the queue
+	// (go-xkms#345). A fresh key and fresh OAEP padding per run made it
+	// unreproducible on demand.
+	//
+	// The second byte is the whole game: RFC 8017 §7.2.2 requires an encryption
+	// block to begin 0x00 0x02, so 0x01 here can never unpad. Encrypting the
+	// block raw (c = m^e mod n) is what makes the plaintext the decrypter sees
+	// exactly the block chosen here rather than something random.
+	privKey, err := software.GetKey(ctx, &types.KeyAttributes{CN: "decrypt-oaep-mismatch"})
 	require.NoError(t, err)
-	assert.NotEmpty(t, encResp.Ciphertext)
+	rsaKey, ok := privKey.(*rsa.PrivateKey)
+	require.True(t, ok, "the mock keystore returns the generated key")
 
-	// Decrypt through Decrypt(context.Background()) passes nil opts (PKCS1v15 by default)
-	// which is incompatible with OAEP-encrypted data, exercising the
-	// asymmetric decrypt error path
+	modulusLen := rsaKey.Size()
+	block := make([]byte, modulusLen)
+	block[0] = 0x00
+	block[1] = 0x01 // v1.5 demands 0x02 for an encryption block
+	for i := 2; i < modulusLen; i++ {
+		block[i] = 0xAB
+	}
+	// rawEncrypt applies the public operation directly, so the plaintext the
+	// decrypter sees is the block chosen here rather than something random.
+	// m < n holds in both uses below because each block's leading byte is zero.
+	rawEncrypt := func(block []byte) []byte {
+		c := new(big.Int).Exp(
+			new(big.Int).SetBytes(block),
+			big.NewInt(int64(rsaKey.E)),
+			rsaKey.N,
+		)
+		return c.FillBytes(make([]byte, modulusLen))
+	}
+
 	_, err = svc.Decrypt(ctx, &transport.DecryptRequest{
 		Backend:    "software",
 		KeyID:      "decrypt-oaep-mismatch",
-		Ciphertext: encResp.Ciphertext,
+		Ciphertext: rawEncrypt(block),
 	})
 	require.Error(t, err)
 	assert.True(t, errors.Is(err, ErrDecryptionFailed))
+
+	// The counterweight: a correctly v1.5-padded block must still decrypt.
+	// Without it the refusal above could pass by rejecting everything, which is
+	// exactly how a decrypt path that always errored would slip through.
+	//
+	// The block is assembled here rather than via rsa.EncryptPKCS1v15, which is
+	// deprecated: 0x00 0x02, then non-zero padding, then a 0x00 separator, then
+	// the message (RFC 8017 §7.2.1). Building it keeps both halves of this test
+	// on the same raw-encrypt path, so the only difference between the refused
+	// block and the accepted one is the byte under test.
+	message := []byte("secret message")
+	valid := make([]byte, modulusLen)
+	valid[0] = 0x00
+	valid[1] = 0x02
+	for i := 2; i < modulusLen-len(message)-1; i++ {
+		valid[i] = 0xFF // padding must be non-zero
+	}
+	valid[modulusLen-len(message)-1] = 0x00
+	copy(valid[modulusLen-len(message):], message)
+
+	decResp, err := svc.Decrypt(ctx, &transport.DecryptRequest{
+		Backend:    "software",
+		KeyID:      "decrypt-oaep-mismatch",
+		Ciphertext: rawEncrypt(valid),
+	})
+	require.NoError(t, err)
+	assert.Equal(t, message, decResp.Plaintext)
 }
 
 // --- Backend capability refusal classification (ErrOperationNotSupported) ---
