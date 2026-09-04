@@ -8,6 +8,44 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Security
+
+- **The unscoped common-name key lookup is fixed on gRPC and REST** (#221).
+  #166 fixed it for MCP; the same first-match-on-CN scan existed on the other
+  two transports and was not covered. A key ID on these transports is a common
+  name, which is unique only **within** a tenant, so a scan over an unscoped
+  backend matches whichever tenant's key is listed first.
+
+  Both transports now resolve through a `lookupTenantBackend(ctx, name)` helper
+  that supplies `callerTenantID(ctx)` to `XKMSService.LookupTenantBackend` —
+  the same shared helper MCP uses, so all three agree on what a tenant is.
+
+  **The two were not equally exposed**, and the difference was measured rather
+  than assumed:
+
+  - **gRPC acted on the unscoped result.** `DeleteKey`, `RotateKey`,
+    `ExportKey`, `CopyKey`, `EncryptAsym` and `GetTLSCertificate` resolved the
+    CN unscoped and then operated on what came back. Reproduced end to end
+    through the real RPC: a caller belonging to a tenant that held **no key of
+    that name at all** deleted another tenant's key, and a tenant deleting
+    "its own" key destroyed a different tenant's instead. This is a
+    cross-tenant **write**, not only the read the issue describes.
+  - **REST only pre-checked with it.** `DecryptHandler` and
+    `EncryptAsymHandler` used the resolved attributes for this transport's 404
+    and for the symmetric branch, then delegated the operation to the service
+    layer with `TenantID` set, and the service re-resolves scoped. The exposure
+    was therefore an existence oracle plus a possible wrong branch, not
+    cross-tenant key use. Scoping the pre-check closes the oracle and removes
+    the reliance on a second layer catching it.
+
+  The system tenant is deliberately still unscoped — `tenantScopes`' rule, not
+  a special case added here — and a test pins it so a later tightening cannot
+  silently break system-level administration.
+
+  Not fixed here: the FROST paths (`pkg/api/grpc/service_frost.go`, build tag
+  `frost`) carry the same inline scan but cannot use this helper, because
+  `getFrostBackend()` resolves to the concrete key provider and unwraps any
+  scoping — the same structural problem as #163, and reported rather than
+  guessed at.
 - **Security**: bumped `google.golang.org/grpc` to v1.83.1 across all four
   modules, closing CVE-2026-84304 (HIGH). Trivy flagged it in the published
   `xkms-cli` image, failing the Docker gate on `main`. (#258)

@@ -720,7 +720,7 @@ func (s *Service) DeleteKey(ctx context.Context, req *pb.DeleteKeyRequest) (*pb.
 		return nil, err
 	}
 
-	ks, err := s.lookupBackend(req.Backend)
+	ks, err := s.lookupTenantBackend(ctx, req.Backend)
 	if err != nil {
 		return nil, status.Errorf(codes.NotFound, "backend not found: %v", err)
 	}
@@ -756,7 +756,7 @@ func (s *Service) RotateKey(ctx context.Context, req *pb.RotateKeyRequest) (*pb.
 		return nil, err
 	}
 
-	ks, err := s.lookupBackend(req.Backend)
+	ks, err := s.lookupTenantBackend(ctx, req.Backend)
 	if err != nil {
 		return nil, status.Errorf(codes.NotFound, "backend not found: %v", err)
 	}
@@ -1137,7 +1137,7 @@ func (s *Service) GetTLSCertificate(ctx context.Context, req *pb.GetTLSCertifica
 		return nil, err
 	}
 
-	ks, err := s.lookupBackend(req.Backend)
+	ks, err := s.lookupTenantBackend(ctx, req.Backend)
 	if err != nil {
 		return nil, status.Errorf(codes.NotFound, "backend not found: %v", err)
 	}
@@ -1593,7 +1593,7 @@ func (s *Service) ExportKey(ctx context.Context, req *pb.ExportKeyRequest) (*pb.
 		return nil, err
 	}
 
-	ks, err := s.lookupBackend(req.Backend)
+	ks, err := s.lookupTenantBackend(ctx, req.Backend)
 	if err != nil {
 		return nil, status.Errorf(codes.NotFound, "backend not found: %v", err)
 	}
@@ -1779,7 +1779,7 @@ func (s *Service) CopyKey(ctx context.Context, req *pb.CopyKeyRequest) (*pb.Copy
 	}
 
 	// Get source keystore
-	sourceKs, err := s.lookupBackend(req.SourceBackend)
+	sourceKs, err := s.lookupTenantBackend(ctx, req.SourceBackend)
 	if err != nil {
 		return nil, status.Errorf(codes.NotFound, "source backend not found: %v", err)
 	}
@@ -1873,7 +1873,7 @@ func (s *Service) EncryptAsym(ctx context.Context, req *pb.EncryptAsymRequest) (
 	// legal, non-error answer meaning "no digest" -- and crypto.Hash(0).New()
 	// panics, so a request naming that hash crashed the serving goroutine
 	// rather than being refused. The service has always rejected it.
-	ks, err := s.lookupBackend(req.Backend)
+	ks, err := s.lookupTenantBackend(ctx, req.Backend)
 	if err != nil {
 		return nil, status.Errorf(codes.NotFound, "backend not found: %v", err)
 	}
@@ -2323,6 +2323,29 @@ func (s *Service) lookupBackend(name string) (xkms.Backend, error) {
 		return nil, xkms.ErrNotInitialized
 	}
 	return s.xkmsService.LookupBackend(name)
+}
+
+// lookupTenantBackend returns the named backend viewed through the tenant of
+// the authenticated caller. It is what every path that resolves a key by
+// COMMON NAME must use, because a common name is unique only within a tenant:
+// findKeyAttributes scans whatever backend it is handed, so handing it an
+// unscoped one lets the scan match another tenant's key.
+//
+// That was not hypothetical. Before go-xkms#221 the key-by-CN paths on this
+// transport called lookupBackend, and a caller holding no key of that name at
+// all resolved -- and then deleted, rotated, exported or decrypted with -- the
+// first key any tenant happened to have stored under it.
+//
+// It delegates to XKMSService.LookupTenantBackend, the same helper the MCP
+// transport uses, so all three transports agree on what a tenant is rather
+// than each deciding for itself. The system tenant and unauthenticated
+// system-level calls resolve to the unscoped backend, which is
+// tenantScopes' rule and not a special case invented here.
+func (s *Service) lookupTenantBackend(ctx context.Context, name string) (xkms.Backend, error) {
+	if s.xkmsService == nil {
+		return nil, xkms.ErrNotInitialized
+	}
+	return s.xkmsService.LookupTenantBackend(name, callerTenantID(ctx))
 }
 
 // backendNames returns the list of all configured backend names. Returns nil

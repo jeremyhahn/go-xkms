@@ -61,8 +61,38 @@ This matters because a key ID on these transports is a **common name, which is
 unique only within a tenant**. Resolved against an unscoped backend it matches
 whichever tenant's key is listed first. MCP's `export_key` did exactly that and
 handed one tenant another tenant's wrapped key material (#166); the same
-first-match-on-CN scan was also duplicated inline in `seal` and `unseal`. All of
-them now resolve through the one shared, tenant-scoped lookup.
+first-match-on-CN scan was also duplicated inline in `seal` and `unseal`.
+
+The same scan existed on **gRPC and REST** and was fixed in #221. All three
+transports now reach the shared lookup through a per-transport
+`lookupTenantBackend(ctx, name)` that supplies `callerTenantID(ctx)`; each
+transport keeps its own one-line helper because each gets the identity from its
+own context, but the scoping decision itself is made in exactly one place.
+
+The two transports were **not** equally exposed, and the difference is worth
+knowing before reading the fix:
+
+- **gRPC acted on the unscoped result.** `DeleteKey`, `RotateKey`, `ExportKey`,
+  `CopyKey`, `EncryptAsym` and `GetTLSCertificate` resolved the CN against an
+  unscoped backend and then operated on the attributes they got back. A caller
+  holding no key of that name could delete, rotate or export another tenant's
+  key. This was reproduced end to end before the fix.
+- **REST only pre-checked with it.** `DecryptHandler` and `EncryptAsymHandler`
+  used the resolved attributes for this transport's 404 and for the
+  symmetric/asymmetric branch, then delegated the operation to the service layer
+  with `TenantID` set — and the service re-resolves scoped. So the exposure was
+  an existence oracle (whether *any* tenant holds that CN) and a possible wrong
+  branch, not cross-tenant key use. Scoping the pre-check closes the oracle and
+  removes the reliance on a second layer catching it.
+
+The system tenant is not a scope: a system-scoped caller resolves against the
+unscoped backend and sees every key, which is what the control plane needs.
+
+Still outstanding: the FROST paths (`pkg/api/grpc/service_frost.go`, build tag
+`frost`) carry the same inline CN scan. They cannot use this helper as written,
+because `getFrostBackend()` resolves to the concrete key **provider** and so
+unwraps any tenant scoping — the same structural problem as #163. Tracked
+separately rather than guessed at here.
 
 The system tenant is not a scope: a system-scoped caller resolves against the
 unscoped backend and sees every key, which is what the control plane needs.

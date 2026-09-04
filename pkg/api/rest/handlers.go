@@ -96,6 +96,26 @@ func (h *HandlerContext) lookupBackend(name string) (xkms.Backend, error) {
 	return h.xkmsService.LookupBackend(name)
 }
 
+// lookupTenantBackend returns the named backend viewed through the tenant of
+// the authenticated caller. It is what every path that resolves a key by
+// COMMON NAME must use, because a common name is unique only within a tenant:
+// findKeyAttributes scans whatever backend it is handed, so handing it an
+// unscoped one lets the scan match another tenant's key.
+//
+// Before go-xkms#221 the key-by-CN handlers here called lookupBackend, and a
+// caller holding no key of that name at all resolved -- and then decrypted or
+// encrypted with -- the first key any tenant happened to have stored under it.
+//
+// It delegates to XKMSService.LookupTenantBackend, the same helper the gRPC and
+// MCP transports use, so all three agree on what a tenant is rather than each
+// deciding for itself.
+func (h *HandlerContext) lookupTenantBackend(ctx context.Context, name string) (xkms.Backend, error) {
+	if h.xkmsService == nil {
+		return nil, xkms.ErrNotInitialized
+	}
+	return h.xkmsService.LookupTenantBackend(name, callerTenantID(ctx))
+}
+
 // findKeyAttributes resolves a key's attributes by common name within a single
 // backend. It exists so the handlers that must keep this transport's 404 for a
 // missing key resolve it one way, rather than each repeating the list-and-scan
@@ -820,7 +840,7 @@ func (h *HandlerContext) DecryptHandler(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 
-	ks, err := h.lookupBackend(backendID)
+	ks, err := h.lookupTenantBackend(r.Context(), backendID)
 	if err != nil {
 		writeError(w, ErrBackendNotFound, http.StatusNotFound)
 		return
@@ -908,7 +928,7 @@ func (h *HandlerContext) EncryptAsymHandler(w http.ResponseWriter, r *http.Reque
 	// legal, non-error answer meaning "no digest" -- and crypto.Hash(0).New()
 	// panics, so a request naming that hash crashed the handler goroutine
 	// rather than being refused. The service has always rejected it.
-	ks, err := h.lookupBackend(backendID)
+	ks, err := h.lookupTenantBackend(r.Context(), backendID)
 	if err != nil {
 		writeError(w, ErrBackendNotFound, http.StatusNotFound)
 		return
