@@ -411,10 +411,23 @@ type GetImportParametersResult struct {
 
 // WrapKeyParams represents parameters for wrapping key material
 type WrapKeyParams struct {
-	KeyMaterial          []byte `json:"key_material"`
+	KeyMaterial []byte `json:"key_material"`
+	// WrappingPublicKeyPEM is the wrapping public key as PEM text. The
+	// corresponding transport.WrapKeyRequest field carries DER bytes, so
+	// pkg/api/transport/mcp encodes on the way out; the handler decodes it with
+	// pem.Decode and x509.ParsePKIXPublicKey. Assigning the DER straight across
+	// yields base64, which is non-empty and fails pem.Decode -- see go-xkms#255.
 	WrappingPublicKeyPEM string `json:"wrapping_public_key_pem"`
 	ImportToken          []byte `json:"import_token,omitempty"`
 	Algorithm            string `json:"algorithm"`
+	// Backend names the backend that performs the wrap. Empty selects the
+	// caller's default. It was absent until go-xkms#255, so every wrap ran
+	// against the process default whatever the caller asked for.
+	Backend string `json:"backend,omitempty"`
+	// KeySpec is the key spec from GetImportParameters. Backends whose import
+	// ceremony is key-spec aware -- AWS KMS most visibly -- need it back to
+	// wrap for the right target key kind.
+	KeySpec string `json:"key_spec,omitempty"`
 }
 
 // WrapKeyResult represents the wrapped key response
@@ -427,11 +440,25 @@ type WrapKeyResult struct {
 
 // UnwrapKeyParams represents parameters for unwrapping key material
 type UnwrapKeyParams struct {
-	WrappedKey        []byte            `json:"wrapped_key"`
-	Algorithm         string            `json:"algorithm"`
-	ImportToken       []byte            `json:"import_token,omitempty"`
+	// WrappedKey carries the wrapped material. The name is "wrapped_key", the
+	// vocabulary every params struct on this transport uses; the corresponding
+	// transport.UnwrapKeyRequest field is "wrapped_key_material".
+	// pkg/api/transport/mcp maps between them by name, so the two cannot drift
+	// silently again -- they had, and this field arrived nil on every call
+	// (go-xkms#255, the same defect as go-xkms#159 on the import path).
+	WrappedKey  []byte `json:"wrapped_key"`
+	Algorithm   string `json:"algorithm"`
+	ImportToken []byte `json:"import_token,omitempty"`
+	// WrappingPublicKey is the wrapping public key as PEM text; the request
+	// field of the same name carries DER bytes. See WrapKeyParams.
 	WrappingPublicKey string            `json:"wrapping_public_key"` // PEM format
 	Metadata          map[string]string `json:"metadata,omitempty"`
+	// Backend names the backend that performs the unwrap. Empty selects the
+	// caller's default. Absent until go-xkms#255.
+	Backend string `json:"backend,omitempty"`
+	// KeySpec is the key spec the material was wrapped for, as returned by
+	// GetImportParameters.
+	KeySpec string `json:"key_spec,omitempty"`
 }
 
 // UnwrapKeyResult represents the unwrapped key response

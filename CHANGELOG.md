@@ -294,6 +294,50 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   command prints both, and a file that yields no certificate at all is
   `ErrTrustNoCertificates` rather than a silent zero.
 
+- **MCP `wrap_key` and `unwrap_key` now reach the handler with the key they
+  were given** (#255). `pkg/api/transport/mcp` marshalled a
+  `transport.WrapKeyRequest` / `UnwrapKeyRequest` straight onto the wire, but
+  the handlers decode `pkg/api/mcp.WrapKeyParams` / `UnwrapKeyParams`, and the
+  structs disagreed:
+
+  - **UnwrapKey** named the material `wrapped_key_material` on the request and
+    `wrapped_key` in the params, so `WrappedKey` was `nil` on every call and the
+    handler refused with `wrapped_key is required`. This is the #159 defect
+    repeated character for character on the unwrap path.
+  - **WrapKey** named the wrapping key `wrapping_public_key` (DER `[]byte`) on
+    the request and `wrapping_public_key_pem` (PEM `string`) in the params, so
+    the field was always empty and the handler refused with `invalid wrapping
+    public key PEM`. This is not a rename: the two ends use different
+    **encodings**, and assigning the DER across yields base64, which is
+    non-empty and still fails `pem.Decode`. The transport now PEM-encodes.
+  - Both dropped `backend` and `key_spec`. `key_spec` is load-bearing for
+    key-spec aware backends such as AWS KMS.
+
+  These were reachable from shipping code: `xkmsctl key wrap` / `unwrap`, and
+  any SDK consumer selecting `ProtocolMCP`.
+
+  All five import/export ops (`ImportKey`, `ExportKey`, `WrapKey`, `UnwrapKey`,
+  `CopyKey`) now build the handler's params struct **by name** rather than
+  marshalling the request, so a rename on either side is a compile error rather
+  than a silent runtime drop. `ExportKey` already agreed and is converted for
+  the same protection rather than to fix anything.
+
+  **`backend` is now honoured, not merely carried.** Both handlers previously
+  ran against the process-default keystore whatever the caller named. They now
+  resolve a named backend through the tenant-scoped lookup, falling back to the
+  configured keystore when none is named. A params field that arrives and is
+  then ignored is the failure mode #160 warns about, so the tests assert on the
+  wrap and unwrap **results**, which differ per backend, rather than on the
+  field being set.
+
+  `tenant_id` is deliberately still absent from these params: `tenantForRequest`
+  returns `ErrTenantIDNotAccepted` for any supplied tenant, because the tenant
+  comes from the authenticated identity.
+
+  Not fixed here: `CopyKeyParams` carries `hash` and `aes_key_size` that
+  `transport.CopyKeyRequest` cannot express, so no caller of this transport can
+  populate them. That is #155 and needs a decision about whether the request
+  struct gains them on every transport.
 - **Software backend: `validateKeyType` no longer blesses ECDSA/Ed25519
   mismatches** (#53). The validator checked RSA only; ECDSA and Ed25519 fell
   through a `default:` arm commented *"basic validation is sufficient"* — the

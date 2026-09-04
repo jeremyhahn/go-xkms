@@ -66,6 +66,38 @@ route exists on both paths with the same permission by construction.
 | Health | `GET /health`, `/health/live`, `/health/ready`, `/health/startup` | `Health` | same as REST | `xkms.health` | `Health` | public |
 | Capabilities | `GET /api/v1/capabilities` | **MISSING — docs/13** | same as REST | **MISSING — docs/13** | — | public |
 
+### MCP names some import/export fields differently from the request struct
+
+The MCP params structs and the `transport.*Request` structs are two views of
+the same call, and three fields are spelled differently on purpose. The MCP
+vocabulary is the one every params struct on that transport shares.
+
+| Call | `transport.*Request` | MCP params | Note |
+|---|---|---|---|
+| Import | `wrapped_key_material` (bytes) | `wrapped_key` (bytes) | name only |
+| Unwrap | `wrapped_key_material` (bytes) | `wrapped_key` (bytes) | name only |
+| Wrap | `wrapping_public_key` (**DER** bytes) | `wrapping_public_key_pem` (**PEM** text) | name *and* encoding |
+| Unwrap | `wrapping_public_key` (**DER** bytes) | `wrapping_public_key` (**PEM** text) | encoding only |
+
+`pkg/api/transport/mcp` builds each params struct by name and PEM-encodes the
+wrapping key on the way out, so the two sides are linked at compile time. Before
+#159 and #255 it marshalled the request struct directly, and every import,
+wrap and unwrap over that transport arrived unusable — the material or the
+wrapping key simply absent.
+
+Watch the encoding, not just the name: a DER `[]byte` assigned into the PEM
+`string` field marshals as base64, which is non-empty and looks correct right up
+until the handler calls `pem.Decode` and gets `nil`.
+
+`backend` and `key_spec` reach the MCP wrap and unwrap params as of #255; before
+that both ran against the process-default keystore whatever the caller named.
+`tenant_id` is **not** an MCP field on any of these calls — the tenant comes
+from the authenticated identity, and supplying one on the wire is an error.
+
+Still outstanding: `CopyKeyParams` carries `hash` and `aes_key_size` that
+`transport.CopyKeyRequest` cannot express, so no caller of this transport can
+set them (#155).
+
 ### Import names the key's algorithm, on every transport
 
 `ImportKey` takes the algorithm of the key being imported in a `key_type` field

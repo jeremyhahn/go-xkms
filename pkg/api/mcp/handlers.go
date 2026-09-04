@@ -46,6 +46,37 @@ func (s *Server) tenantBackend(ctx context.Context, backendName string) (xkms.Ba
 	return s.xkmsService.LookupTenantBackend(backendName, callerTenantID(ctx))
 }
 
+// importExportBackend resolves the backend a wrap or unwrap runs against and
+// asserts it supports the import/export ceremony.
+//
+// A named backend is resolved through the tenant-scoped lookup, so a caller
+// naming one gets that backend viewed through its own tenant. An unnamed one
+// falls back to the server's configured keystore, which is what these handlers
+// have always used.
+//
+// The named case exists because the MCP wrap and unwrap params gained a
+// "backend" field in go-xkms#255: the transport request had always carried one
+// and the params struct could not represent it, so every wrap and unwrap ran
+// against the process default whatever the caller asked for. Resolving it here
+// is what makes that field a control rather than a decoration.
+func (s *Server) importExportBackend(ctx context.Context, backendName string) (backend.ImportExportBackend, error) {
+	provider := s.keystore.KeyProvider()
+
+	if backendName != "" {
+		ks, err := s.tenantBackend(ctx, backendName)
+		if err != nil {
+			return nil, &errs.Wrapped{Msg: fmt.Sprintf("failed to get backend %s", backendName), Err: err}
+		}
+		provider = ks.KeyProvider()
+	}
+
+	importExport, ok := provider.(backend.ImportExportBackend)
+	if !ok {
+		return nil, &errs.Message{Msg: "backend does not support import/export operations"}
+	}
+	return importExport, nil
+}
+
 // keyByCN returns the attributes of the key whose common name is keyID, out of
 // the keys ks lists. It is the one place a key ID is matched against a common
 // name, so the tenant scope carried by ks is the only thing that decides which
@@ -1011,9 +1042,9 @@ func (s *Server) handleWrapKey(ctx context.Context, req *JSONRPCRequest) (interf
 	}
 
 	// Check if backend supports import/export
-	importExportBackend, ok := s.keystore.KeyProvider().(backend.ImportExportBackend)
-	if !ok {
-		return nil, &errs.Message{Msg: "backend does not support import/export operations"}
+	importExportBackend, err := s.importExportBackend(ctx, params.Backend)
+	if err != nil {
+		return nil, err
 	}
 
 	// Parse wrapping public key from PEM
@@ -1032,6 +1063,7 @@ func (s *Server) handleWrapKey(ctx context.Context, req *JSONRPCRequest) (interf
 		WrappingPublicKey: pubKey,
 		ImportToken:       params.ImportToken,
 		Algorithm:         backend.WrappingAlgorithm(params.Algorithm),
+		KeySpec:           params.KeySpec,
 	}
 
 	// Wrap the key material
@@ -1066,9 +1098,9 @@ func (s *Server) handleUnwrapKey(ctx context.Context, req *JSONRPCRequest) (inte
 	}
 
 	// Check if backend supports import/export
-	importExportBackend, ok := s.keystore.KeyProvider().(backend.ImportExportBackend)
-	if !ok {
-		return nil, &errs.Message{Msg: "backend does not support import/export operations"}
+	importExportBackend, err := s.importExportBackend(ctx, params.Backend)
+	if err != nil {
+		return nil, err
 	}
 
 	// Parse wrapping public key from PEM
@@ -1095,6 +1127,7 @@ func (s *Server) handleUnwrapKey(ctx context.Context, req *JSONRPCRequest) (inte
 		WrappingPublicKey: wrappingPubKey,
 		Algorithm:         backend.WrappingAlgorithm(params.Algorithm),
 		ImportToken:       params.ImportToken,
+		KeySpec:           params.KeySpec,
 	}
 
 	keyMaterial, err := importExportBackend.UnwrapKey(ctx, wrapped, importParams)

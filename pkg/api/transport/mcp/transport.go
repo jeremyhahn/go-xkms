@@ -29,6 +29,7 @@ import (
 	"crypto/tls"
 	"crypto/x509"
 	"encoding/json"
+	"encoding/pem"
 	"errors"
 	"fmt"
 	"net/http"
@@ -971,9 +972,25 @@ func (t *Transport) ImportKey(ctx context.Context, req *transport.ImportKeyReque
 }
 
 // ExportKey exports a key.
+// ExportKey exports a key in wrapped form.
+//
+// The audit in go-xkms#255 found this pair already agreeing, so building the
+// params by name changes nothing that travels. It is done anyway so that a
+// later rename on either side is a compile error rather than a silent drop,
+// which is the failure mode the other four ops were in.
 func (t *Transport) ExportKey(ctx context.Context, req *transport.ExportKeyRequest) (*transport.ExportKeyResponse, error) {
+	if req == nil {
+		return nil, transport.ErrInvalidRequest
+	}
+
+	params := &xkmsmcp.ExportKeyParams{
+		KeyID:     req.KeyID,
+		Backend:   req.Backend,
+		Algorithm: req.Algorithm,
+	}
+
 	var result transport.ExportKeyResponse
-	if err := t.rpcCall(ctx, "xkms.exportKey", req, &result); err != nil {
+	if err := t.rpcCall(ctx, "xkms.exportKey", params, &result); err != nil {
 		return nil, err
 	}
 	return &result, nil
@@ -997,19 +1014,75 @@ func (t *Transport) GetImportParameters(ctx context.Context, req *transport.GetI
 	return &result, nil
 }
 
+// pemEncodePKIXPublicKey renders a DER-encoded PKIX public key as the PEM text
+// the MCP handlers expect, and returns "" for no key at all.
+//
+// The wrapping public key crosses this boundary in two different encodings:
+// transport.WrapKeyRequest and UnwrapKeyRequest carry DER bytes, while the MCP
+// params carry PEM text that the handler feeds to pem.Decode and
+// x509.ParsePKIXPublicKey. Assigning the DER into the string field marshals it
+// as base64 — non-empty, plausible-looking, and rejected by pem.Decode with a
+// bare "invalid wrapping public key PEM" (go-xkms#255).
+//
+// An empty input yields an empty string rather than an empty PEM block, so an
+// omitted optional key stays omitted instead of becoming a value the handler
+// would try to parse.
+func pemEncodePKIXPublicKey(der []byte) string {
+	if len(der) == 0 {
+		return ""
+	}
+	return string(pem.EncodeToMemory(&pem.Block{Type: "PUBLIC KEY", Bytes: der}))
+}
+
 // WrapKey wraps key material for secure transport.
+//
+// Params are built by name into the handler's own struct rather than
+// marshalled from req: the two disagree on the wrapping key's field name AND
+// its encoding, so marshalling req sent nothing the handler could read, and
+// dropped backend and key_spec besides. See pemEncodePKIXPublicKey.
 func (t *Transport) WrapKey(ctx context.Context, req *transport.WrapKeyRequest) (*transport.WrapKeyResponse, error) {
+	if req == nil {
+		return nil, transport.ErrInvalidRequest
+	}
+
+	params := &xkmsmcp.WrapKeyParams{
+		KeyMaterial:          req.KeyMaterial,
+		WrappingPublicKeyPEM: pemEncodePKIXPublicKey(req.WrappingPublicKey),
+		ImportToken:          req.ImportToken,
+		Algorithm:            req.Algorithm,
+		Backend:              req.Backend,
+		KeySpec:              req.KeySpec,
+	}
+
 	var result transport.WrapKeyResponse
-	if err := t.rpcCall(ctx, "xkms.wrapKey", req, &result); err != nil {
+	if err := t.rpcCall(ctx, "xkms.wrapKey", params, &result); err != nil {
 		return nil, err
 	}
 	return &result, nil
 }
 
 // UnwrapKey unwraps key material.
+//
+// Params are built by name for the reason WrapKey gives. The material itself is
+// "wrapped_key_material" on the request and "wrapped_key" in the params, which
+// is the go-xkms#159 defect repeated verbatim on this path.
 func (t *Transport) UnwrapKey(ctx context.Context, req *transport.UnwrapKeyRequest) (*transport.UnwrapKeyResponse, error) {
+	if req == nil {
+		return nil, transport.ErrInvalidRequest
+	}
+
+	params := &xkmsmcp.UnwrapKeyParams{
+		WrappedKey:        req.WrappedKeyMaterial,
+		Algorithm:         req.Algorithm,
+		ImportToken:       req.ImportToken,
+		WrappingPublicKey: pemEncodePKIXPublicKey(req.WrappingPublicKey),
+		Metadata:          req.Metadata,
+		Backend:           req.Backend,
+		KeySpec:           req.KeySpec,
+	}
+
 	var result transport.UnwrapKeyResponse
-	if err := t.rpcCall(ctx, "xkms.unwrapKey", req, &result); err != nil {
+	if err := t.rpcCall(ctx, "xkms.unwrapKey", params, &result); err != nil {
 		return nil, err
 	}
 	return &result, nil
@@ -1043,9 +1116,33 @@ func (t *Transport) ExportKeyMaterial(ctx context.Context, req *transport.Export
 }
 
 // CopyKey copies a key from one backend to another.
+// CopyKey copies a key from one backend to another.
+//
+// Params are built by name so the pair cannot drift. Note what this does NOT
+// fix: xkmsmcp.CopyKeyParams carries hash and aes_key_size, and
+// transport.CopyKeyRequest has no field for either, so no caller of this
+// transport can populate them. That gap is go-xkms#155 and closing it means
+// deciding whether the request struct gains the fields on every transport --
+// the gRPC CopyKeyRequest message would need them too. Left alone deliberately
+// rather than papered over here.
 func (t *Transport) CopyKey(ctx context.Context, req *transport.CopyKeyRequest) (*transport.CopyKeyResponse, error) {
+	if req == nil {
+		return nil, transport.ErrInvalidRequest
+	}
+
+	params := &xkmsmcp.CopyKeyParams{
+		SourceBackend: req.SourceBackend,
+		SourceKeyID:   req.SourceKeyID,
+		DestBackend:   req.DestBackend,
+		DestKeyID:     req.DestKeyID,
+		KeyType:       req.KeyType,
+		Algorithm:     req.Algorithm,
+		KeySize:       req.KeySize,
+		Curve:         req.Curve,
+	}
+
 	var result transport.CopyKeyResponse
-	if err := t.rpcCall(ctx, "xkms.copyKey", req, &result); err != nil {
+	if err := t.rpcCall(ctx, "xkms.copyKey", params, &result); err != nil {
 		return nil, err
 	}
 	return &result, nil
