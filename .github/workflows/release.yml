@@ -53,8 +53,46 @@ env:
   REGISTRY: ghcr.io
   IMAGE_NAME_SERVER: jeremyhahn/xkms-server
   IMAGE_NAME_CLI: jeremyhahn/xkms-cli
-  GOPROXY: https://proxy.golang.org,direct
-  GOSUMDB: off
+  # NO GOPROXY / GOSUMDB OVERRIDES HERE (ci-template v1.1 prohibition, go-xkms#112).
+  # ci.yml carries the same prohibition; it lands harder on THIS workflow,
+  # because this is the one that publishes. A release is the one artifact a
+  # consumer cannot re-verify after the fact, so it is the last place to be
+  # resolving modules with the checksum database switched off.
+  #
+  # `GOSUMDB: off` disabled checksum verification for every THIRD-PARTY
+  # dependency in a published build. The exemption it was reaching for is
+  # narrower than that: only `github.com/jeremyhahn/*` is unpublishable to
+  # sum.golang.org, and the runners already inject
+  # `GOPRIVATE=github.com/jeremyhahn/*` (infra runner-config.yaml) alongside
+  # the GIT_CONFIG_* insteadOf rewrite. GOPRIVATE derives GONOPROXY and
+  # GONOSUMDB from that one glob, so first-party modules are exempt from both
+  # the proxy and the checksum database while sum.golang.org stays ACTIVE for
+  # everything else. Verified with `go env`:
+  #
+  #   GOPRIVATE=github.com/jeremyhahn/*  ->  GONOPROXY=github.com/jeremyhahn/*
+  #                                          GONOSUMDB=github.com/jeremyhahn/*
+  #                                          GOSUMDB=sum.golang.org
+  #
+  # That covers every first-party requirement across all four modules:
+  # go-codec, go-enclave, go-frost, go-luks2, go-objstore, go-qrdb (+sdk/go),
+  # go-quicraft, go-truststrap, and this repo's own sdk/go, xkey and
+  # web/desktop. Every other requirement is a public module in the sum db.
+  #
+  # This is not a change of resolution behavior for the compiled artifacts.
+  # The binaries and images are built INSIDE containers that never received
+  # these two variables in the first place -- `docker create` at build-binaries
+  # forwards GOPRIVATE and GIT_CONFIG_* and nothing else, and `docker build`
+  # inherits no job environment at all (the credentials reach it as the
+  # gomodauth secret mount). So the module resolution the release actually
+  # depends on has always run with the checksum database ON. Removing these
+  # two lines makes the job shell agree with the containers it drives.
+  #
+  # A PINNED GOPROXY is the second half of the prohibition: it is the default
+  # value today, so it buys nothing, and it breaks the build whenever an
+  # upstream re-points a tag (go-tpm-tools v0.4.8, 2026-08-14).
+  #
+  # If some future dependency genuinely needs an exemption, scope it to that
+  # module path and record the reason HERE. A blanket `off` is not a scope.
 
 permissions:
   contents: write

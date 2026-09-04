@@ -168,6 +168,44 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
   No interface changed: the gate is a package-private helper in
   `pkg/backend/software`, so no other backend and no SDK type is affected.
+- **The release workflow no longer publishes artifacts built with the checksum
+  database switched off** (closes #112). `.github/workflows/release.yml`.
+
+  `release.yml` set `GOSUMDB: off` and a pinned `GOPROXY` at workflow scope —
+  the two overrides `ci.yml` has prohibited in place since ci-template v1.1.
+  They land harder here, because this is the workflow that publishes: a
+  release is the one artifact a consumer cannot re-verify after the fact, and
+  `GOSUMDB: off` disabled `sum.golang.org` verification for every THIRD-PARTY
+  dependency in the build whose output ships.
+
+  The exemption the override was reaching for is far narrower. Only
+  `github.com/jeremyhahn/*` cannot be in the public checksum database, and the
+  runners already inject `GOPRIVATE=github.com/jeremyhahn/*` alongside the
+  `GIT_CONFIG_*` insteadOf rewrite. `GOPRIVATE` derives both `GONOPROXY` and
+  `GONOSUMDB` from that one glob, so first-party modules stay exempt while
+  `GOSUMDB=sum.golang.org` remains ACTIVE for everything else. That glob
+  covers every first-party requirement across all four modules (go-codec,
+  go-enclave, go-frost, go-luks2, go-objstore, go-qrdb + its sdk/go,
+  go-quicraft, go-truststrap, and this repo's own sdk/go, xkey and
+  web/desktop); every other requirement is a public module.
+
+  **This does not change how the shipped artifacts resolve modules.** The
+  binaries and images are compiled inside containers that never received
+  these two variables: `docker create` in `build-binaries` forwards
+  `GOPRIVATE` and `GIT_CONFIG_*` and nothing else, and `docker build` inherits
+  no job environment at all (its credentials arrive as the `gomodauth` secret
+  mount). Module resolution for the published binaries has therefore always
+  run with the checksum database on. The removal makes the job shell agree
+  with the containers it drives, and closes the gap for anything that resolves
+  modules in the job shell itself.
+
+  The pinned `GOPROXY` is the second half of the same prohibition: it is the
+  default value today, so it buys nothing, and a pin breaks the build whenever
+  an upstream re-points a tag (go-tpm-tools v0.4.8, 2026-08-14).
+
+  The prohibition and its reasoning are now recorded in place in
+  `release.yml`, the way `ci.yml`, `coverage.yml` and `docker-tests.yml`
+  already record it.
 
 - **`xkey fido2 status` now names the credential store and says whether
   passkeys are encrypted at rest** (refs #181).
