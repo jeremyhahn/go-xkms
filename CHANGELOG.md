@@ -34,6 +34,63 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
   The first `alpine:latest` half of #135 was already resolved in `a0adcc0a`
   (PR #246); no `alpine:latest` remains anywhere in the repository.
+- **A pinUvAuthToken went on authorizing credential operations after the one
+  it was used for** (#282, refs #213). `xkey/pkg/authenticator/cmd_clientpin.go`,
+  `cmd_makecredential.go`, `cmd_getassertion.go`, `cmd_config.go`,
+  `cmd_reset.go`.
+
+  CTAP 2.1 §6.5.5.7: "when a pinUvAuthToken is used with an operation that
+  tests user presence, it is updated to remove all permissions except lbw".
+  The authenticator never performed that update. `7e567ca2` (#213) bounded how
+  *long* a token lives — 30 seconds of disuse, 10 minutes of life — but every
+  successful use refreshed the inactivity timer, so inside that window one PIN
+  entry authorized an unbounded number of registrations and assertions. #213's
+  own acceptance criterion, "a no-permissions token is refused on its second
+  use", was not met by the landed fix.
+
+  An operation that sets the `up` bit now clears the token's `userVerified`
+  flag and every permission except `lbw` — `clearUserVerifiedFlag()` plus
+  `clearPinUvAuthTokenPermissionsExceptLbw()`, per §6.1.2 step 14 and §6.2.2.
+  **This is not invalidation and does not make the token single-use.** `lbw`
+  deliberately survives, and a getAssertion with `up=false` sets no `up` bit and
+  clears nothing, so conditional UI keeps discovering credentials on one token.
+
+  The flag lives on `pinProtocolState`, not in a per-command local, so a second
+  command in the same session observes it; and it is read inside the *shared*
+  `checkPinUvAuthTokenLocked`, so the non-consuming `CanAuthorizePinUvAuthToken`
+  probe reports a cleared token as unauthorized too. Without that, a cleared
+  token could still unlock a credProtect-restricted credential or answer an
+  excludeList.
+
+  Three smaller defects on the same path:
+
+  - `authenticatorConfig`'s permission check was written `if a.pinState.protocol
+    != nil { ... }`, so it was skipped entirely when no token existed rather
+    than refusing. It now goes through `tokenHasPermission` and fails closed.
+    `7e567ca2` fixed `verifyConfigHMAC` but not this one — unreachable today,
+    one edit from an authorization bypass.
+  - `getPinToken` accepted the `permissions` (0x09) and `rpId` (0x0A)
+    parameters and silently ignored them, letting a platform believe it had
+    requested a scope the authenticator did not apply. It now returns
+    `CTAP1_ERR_INVALID_PARAMETER`, per §6.5.5.7.1.
+  - Stopping a token dropped the reference and left the bytes for the
+    collector. They are wiped first, and `authenticatorReset` now routes
+    through the same path rather than discarding the protocol state around
+    them.
+
+  **Deliberately not implemented.** The user-present time limit and its
+  `userPresent` flag: this authenticator never caches presence — every token is
+  minted `userIsPresent: false` — and §6.5.2.1 permits a zero user present time
+  limit, so the state would be dead. Recorded as a decision in the code and in
+  `xkey/docs/fido2/authenticator-security.md`.
+
+  **Adjacent gaps, filed rather than absorbed here:** no permission check
+  exists for `bioEnrollment` or `largeBlobWrite` (#318); `setPIN` / `changePIN`
+  do not invalidate an outstanding token, so one minted under the old PIN keeps
+  working after a change (#322); and authorization and clearing are two
+  separate lock acquisitions with the user-presence prompt between them, so two
+  concurrent commands can both spend one token (#323, blocked on a design
+  ruling).
 
 - **`xkey fido2 status` now names the credential store and says whether
   passkeys are encrypted at rest** (refs #181).

@@ -94,6 +94,14 @@ Both pinUvAuthProtocol 1 and 2 are supported. GetInfo advertises `pinUvAuthProto
 | - GetPINToken | Gets encrypted PIN token | Implemented |
 | - GetPINTokenWithPermissions | Gets token with permissions | Implemented |
 
+Issued pinUvAuthTokens are scoped, time limited, and cleared after use: the
+`mc` / `ga` permissions and the permissions RP ID are enforced on every
+credential operation, the token expires after 30 seconds of disuse or 10
+minutes of life, and an operation that tests user presence clears the token's
+`userVerified` flag and strips every permission except `lbw` (CTAP 2.1 §6.1.2,
+§6.2.2, §6.5.2.1, §6.5.5.7). See [Security
+Considerations](authenticator-security.md#clearing-the-pinuvauthtoken-after-a-presence-testing-operation).
+
 ### Management Commands
 
 | Command | Description | Status |

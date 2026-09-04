@@ -30,10 +30,11 @@ import (
 func livePinTokenGrant(token []byte, permissions uint8) *pinProtocolState {
 	now := time.Now()
 	return &pinProtocolState{
-		pinUvAuthToken:   token,
-		tokenPermissions: permissions,
-		tokenIssuedAt:    now,
-		tokenLastUsed:    now,
+		pinUvAuthToken:    token,
+		tokenPermissions:  permissions,
+		tokenIssuedAt:     now,
+		tokenLastUsed:     now,
+		tokenUserVerified: true,
 	}
 }
 

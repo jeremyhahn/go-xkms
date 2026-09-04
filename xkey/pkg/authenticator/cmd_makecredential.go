@@ -255,6 +255,7 @@ func (a *Authenticator) HandleMakeCredential(data []byte) ([]byte, error) {
 	}
 
 	pinAuthValid := false
+	tokenAuthUsed := false
 	if len(req.PINUVAuthParam) > 0 && req.PINUVAuthProtocol > 0 {
 		// Per CTAP 2.1 §6.1.2 the token must carry the mc permission and, if
 		// it is already bound to a permissions RP ID, that RP ID must match
@@ -270,6 +271,9 @@ func (a *Authenticator) HandleMakeCredential(data []byte) ([]byte, error) {
 			return nil, err
 		}
 		pinAuthValid = true
+		// The token authorized this operation, so the "up" bit that follows
+		// consumes it (CTAP 2.1 §6.1.2 step 14).
+		tokenAuthUsed = true
 		if a.logger != nil {
 			a.logger.Info("MakeCredential pinUvAuthParam verified")
 		}
@@ -370,6 +374,14 @@ func (a *Authenticator) HandleMakeCredential(data []byte) ([]byte, error) {
 			reason = "key backend (biometrics)"
 		}
 		a.logger.Info("MakeCredential UP implicitly satisfied", slog.String("by", reason))
+	}
+
+	// CTAP 2.1 §6.1.2 step 14: the "up" bit is set in every makeCredential
+	// response, so clear the token's userVerified flag and strip every
+	// permission except lbw. One user verification authorizes one credential
+	// operation; a replay of this same token is refused from here on.
+	if tokenAuthUsed {
+		a.consumePinUvAuthToken()
 	}
 
 	if excluded {
@@ -1504,12 +1516,14 @@ func (a *Authenticator) MakeCredential(
 	// user presence is implicitly satisfied through the PIN exchange.
 	// Otherwise, explicitly request user presence.
 	pinAuthValid := false
+	tokenAuthUsed := false
 	if len(req.PINUVAuthParam) > 0 && req.PINUVAuthProtocol > 0 {
 		if err := a.AuthorizePinUvAuthToken(req.ClientDataHash, req.PINUVAuthParam,
 			PINPermissionMakeCredential, req.RP.ID); err != nil {
 			return nil, err
 		}
 		pinAuthValid = true
+		tokenAuthUsed = true
 	}
 
 	// An in-process caller may assert its trust to get past the "a PIN is set,
@@ -1559,6 +1573,12 @@ func (a *Authenticator) MakeCredential(
 			return nil, err
 		}
 		upPerformed = true
+	}
+
+	// CTAP 2.1 §6.1.2 step 14: consume the token now that the "up" bit is
+	// established, so it cannot authorize a second credential operation.
+	if tokenAuthUsed {
+		a.consumePinUvAuthToken()
 	}
 
 	if excluded {

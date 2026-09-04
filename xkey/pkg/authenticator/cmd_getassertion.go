@@ -696,6 +696,7 @@ func (a *Authenticator) generateAssertionResponseWithPolicy(
 	// user presence is implicitly satisfied through the PIN exchange.
 	// Otherwise, explicitly request user presence.
 	pinAuthValid := false
+	tokenAuthUsed := false
 	if len(request.PINUVAuthParam) > 0 && request.PINUVAuthProtocol > 0 {
 		// Per CTAP 2.1 §6.2.2 the token must carry the ga permission and, if it
 		// is already bound to a permissions RP ID, that RP ID must match this
@@ -707,6 +708,9 @@ func (a *Authenticator) generateAssertionResponseWithPolicy(
 			return nil, err
 		}
 		pinAuthValid = true
+		// The token authorized this assertion, so a user-presence-testing
+		// response consumes it (CTAP 2.1 §6.2.2).
+		tokenAuthUsed = true
 		debugLog("pinUvAuthParam verified")
 	}
 
@@ -849,6 +853,14 @@ func (a *Authenticator) generateAssertionResponseWithPolicy(
 			reason = "key backend (biometrics)"
 		}
 		debugLog("UP implicitly satisfied by %s", reason)
+	}
+
+	// Per CTAP 2.1 §6.2.2, only an assertion that sets the "up" bit clears the
+	// token's userVerified flag and its permissions except lbw. A silent
+	// (up=false) discovery request leaves it usable, which is what conditional
+	// UI depends on.
+	if tokenAuthUsed && upRequired {
+		a.consumePinUvAuthToken()
 	}
 
 	// Build the base UP/UV flags established by this getAssertion. These same

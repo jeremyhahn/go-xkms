@@ -172,8 +172,12 @@ func (a *Authenticator) resetState(aaguid [16]byte) {
 	a.state = newState
 }
 
-// clearPINState clears any cached PIN protocol state.
+// clearPINState clears any cached PIN protocol state. Per CTAP 2.1 §6.5.2.1
+// authenticatorReset invalidates the pinUvAuthToken:
+// stopUsingPinUvAuthTokenLocked resets its state variables and wipes the token
+// bytes before the protocol state itself is discarded.
 func (a *Authenticator) clearPINState() {
+	a.stopUsingPinUvAuthTokenLocked()
 	a.pinState = authenticatorPINState{}
 }
 

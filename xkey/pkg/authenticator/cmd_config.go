@@ -887,11 +887,11 @@ func (a *Authenticator) verifyConfigPinUvAuth(req *configRequest, subCmd uint8) 
 			return ErrPINAuthInvalid
 		}
 
-		// Verify permissions include authenticatorConfig
-		if a.pinState.protocol != nil {
-			if a.pinState.protocol.tokenPermissions&PINPermissionAuthenticatorCfg == 0 {
-				return ErrOperationDenied
-			}
+		// Verify permissions include authenticatorConfig. Guarding this on a
+		// non-nil protocol would skip the check entirely when no token exists,
+		// so it is written to fail closed instead.
+		if !a.tokenHasPermission(PINPermissionAuthenticatorCfg) {
+			return ErrOperationDenied
 		}
 	}
 
@@ -919,6 +919,20 @@ func (a *Authenticator) verifyConfigHMAC(message, authParam []byte) bool {
 	}
 
 	return hmac.Equal(expected, authParam)
+}
+
+// tokenHasPermission reports whether a usable pinUvAuthToken carries the given
+// permission. A token that has expired, or that was never minted, holds no
+// permissions at all.
+func (a *Authenticator) tokenHasPermission(permission uint8) bool {
+	a.mu.RLock()
+	defer a.mu.RUnlock()
+
+	if !a.pinUvAuthTokenUsableLocked(time.Now()) {
+		return false
+	}
+
+	return a.pinState.protocol.tokenPermissions&permission != 0
 }
 
 // extractStringParam extracts a string parameter from the params map.

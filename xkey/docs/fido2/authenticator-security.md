@@ -193,10 +193,46 @@ Per CTAP 2.1 §6.5.2.1, a token stops being usable when either timer elapses:
 These timers apply to every command a token authorizes — makeCredential,
 getAssertion, credential management and authenticator config alike.
 
-A token that has outlived either limit is discarded rather than left in place.
-Tokens are also cleared by `authenticatorReset`, and do not survive the process,
-so a power cycle invalidates them. One PIN entry therefore authorizes a bounded
-window of work, not the lifetime of the process.
+A token that has outlived either limit is discarded rather than left in place,
+and its bytes are wiped rather than merely dereferenced. Tokens are also cleared
+by `authenticatorReset`, and do not survive the process, so a power cycle
+invalidates them.
+
+### Clearing the pinUvAuthToken After a Presence-Testing Operation
+
+The timers bound *how long* a token lives; they do not bound *how much* it
+authorizes. CTAP 2.1 §6.5.5.7 closes that gap: "when a pinUvAuthToken is used
+with an operation that tests user presence, it is updated to remove all
+permissions except lbw". §6.1.2 step 14 states this for makeCredential, and
+§6.2.2 states the same for getAssertion: call `clearUserVerifiedFlag()` and
+`clearPinUvAuthTokenPermissionsExceptLbw()` once the `up` bit is set in the
+response. The token is not invalidated and is not made single-use — `lbw`
+deliberately survives.
+
+The authenticator does the same, so:
+
+- **One user verification authorizes one credential operation.** After a
+  makeCredential, or a getAssertion that collects user presence, the token
+  retains only `lbw` and its `userVerified` flag is false. The platform must
+  obtain a fresh token for the next operation — which is how conforming
+  hardware behaves, and what a platform that requests per-operation scope
+  already expects.
+- **A silent assertion costs nothing.** A getAssertion with `up=false` sets no
+  `up` bit, so it neither collects presence nor spends the token. Conditional
+  UI can keep discovering credentials with one token.
+- **The non-consuming probe agrees.** `CanAuthorizePinUvAuthToken`, used to
+  decide credProtect visibility and excludeList answers before a credential is
+  selected, reports a spent token as unauthorized, so a consumed token cannot
+  unlock a protected credential.
+
+`clearUserPresentFlag()` has no counterpart here: this authenticator never
+caches user presence in the token — every token is minted with
+`beginUsingPinUvAuthToken(userIsPresent: false)`, which §6.5.2.1 permits by
+allowing a user present time limit of zero.
+
+The superseded `getPinToken` subcommand also rejects the `permissions` and
+`rpId` parameters with `CTAP1_ERR_INVALID_PARAMETER` per §6.5.5.7.1, rather
+than ignoring a scope the platform believes it requested.
 
 ### PIN Attack Mitigations
 

@@ -201,6 +201,12 @@ type pinProtocolState struct {
 	// usage timer for pinUvAuthTokenInactivityLimit.
 	tokenLastUsed time.Time
 
+	// tokenUserVerified is the token's userVerified flag (CTAP 2.1 §6.5.2.1).
+	// beginUsingPinUvAuthTokenLocked sets it, and the credential operation that
+	// sets the "up" bit clears it along with the token's permissions, so a
+	// consumed token can no longer assert that a human was verified.
+	tokenUserVerified bool
+
 	// activeProtocol tracks which PIN protocol version is in use (1 or 2).
 	activeProtocol uint8
 
@@ -523,6 +529,14 @@ func (a *Authenticator) handleGetPINToken(req *ClientPINRequest) ([]byte, error)
 	// Check if PIN is blocked.
 	if a.state.PINRetries() <= 0 {
 		return nil, ErrPINBlocked
+	}
+
+	// CTAP 2.1 §6.5.5.7.1: the permissions and rpId parameters MUST NOT be
+	// present in getPinToken. The token this subcommand issues always carries
+	// the default permissions, so accepting either parameter would let a
+	// platform believe it had requested a scope the authenticator ignored.
+	if req.Permissions != 0 || req.RPID != "" {
+		return nil, ErrInvalidParameter
 	}
 
 	// Initialize PIN protocol if needed.
@@ -1230,6 +1244,7 @@ func (a *Authenticator) beginUsingPinUvAuthTokenLocked(token []byte, permissions
 	a.pinState.protocol.tokenRPID = rpID
 	a.pinState.protocol.tokenIssuedAt = now
 	a.pinState.protocol.tokenLastUsed = now
+	a.pinState.protocol.tokenUserVerified = true
 }
 
 // stopUsingPinUvAuthTokenLocked discards the current pinUvAuthToken along with
@@ -1240,11 +1255,17 @@ func (a *Authenticator) stopUsingPinUvAuthTokenLocked() {
 	if a.pinState.protocol == nil {
 		return
 	}
+	// Wipe the token bytes rather than only dropping the reference, so expired
+	// key material does not linger in memory until the next collection.
+	for i := range a.pinState.protocol.pinUvAuthToken {
+		a.pinState.protocol.pinUvAuthToken[i] = 0
+	}
 	a.pinState.protocol.pinUvAuthToken = nil
 	a.pinState.protocol.tokenPermissions = 0
 	a.pinState.protocol.tokenRPID = ""
 	a.pinState.protocol.tokenIssuedAt = time.Time{}
 	a.pinState.protocol.tokenLastUsed = time.Time{}
+	a.pinState.protocol.tokenUserVerified = false
 }
 
 // pinUvAuthTokenUsableLocked reports whether a pinUvAuthToken has been minted
@@ -1356,7 +1377,7 @@ func (a *Authenticator) CanAuthorizePinUvAuthToken(clientDataHash, authParam []b
 	return a.checkPinUvAuthTokenLocked(clientDataHash, authParam, permission, rpID, time.Now())
 }
 
-// checkPinUvAuthTokenLocked runs the four CTAP 2.1 checks without mutating any
+// checkPinUvAuthTokenLocked runs the five CTAP 2.1 checks without mutating any
 // state. The caller must hold a.mu for reading or writing.
 func (a *Authenticator) checkPinUvAuthTokenLocked(
 	clientDataHash, authParam []byte, permission uint8, rpID string, now time.Time) error {
@@ -1388,7 +1409,45 @@ func (a *Authenticator) checkPinUvAuthTokenLocked(
 		return ErrPINAuthInvalid
 	}
 
+	// getUserVerifiedFlagValue() must be true, per CTAP 2.1 §6.1.2 step 11;
+	// §6.2.2 requires the same of getAssertion. It is false once a credential
+	// operation has cleared the flag, which is what stops a cleared token
+	// authorizing a second one.
+	if !a.pinState.protocol.tokenUserVerified {
+		return ErrPINAuthInvalid
+	}
+
 	return nil
+}
+
+// consumePinUvAuthToken performs the pinUvAuthToken bookkeeping CTAP 2.1
+// requires once a credential operation has set the "up" bit in its response:
+// clearUserVerifiedFlag() and clearPinUvAuthTokenPermissionsExceptLbw().
+// §6.1.2 step 14 states it for makeCredential; §6.2.2 states the same for
+// getAssertion.
+//
+// The effect is that one user verification authorizes one makeCredential or
+// getAssertion. The platform must obtain a fresh token for the next one, which
+// is what §6.5.5.7 means by "when a pinUvAuthToken is used with an operation
+// that tests user presence, it is updated to remove all permissions except
+// lbw". A silent (up=false) assertion sets no "up" bit and so consumes nothing.
+//
+// clearUserPresentFlag() has no counterpart here because this authenticator
+// never caches user presence in the token: every token is minted with
+// beginUsingPinUvAuthToken(userIsPresent: false), which §6.5.2.1 permits by
+// allowing a user present time limit of zero.
+//
+// It is a no-op when no usable token exists.
+func (a *Authenticator) consumePinUvAuthToken() {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+
+	if !a.pinUvAuthTokenUsableLocked(time.Now()) {
+		return
+	}
+
+	a.pinState.protocol.tokenUserVerified = false
+	a.pinState.protocol.tokenPermissions &= PINPermissionLargeBlobWrite
 }
 
 // SetPINForTesting sets the PIN directly for testing purposes.

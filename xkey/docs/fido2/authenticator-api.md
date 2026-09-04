@@ -63,6 +63,14 @@ func (a *Authenticator) ProcessCBOR(cmd byte, data []byte) ([]byte, error)
 | CmdReset | 0x07 | No |
 | CmdSelection | 0x0B | No |
 
+**ClientPIN (0x06) subcommand notes:**
+- `getPinToken` (0x05) rejects the `permissions` (0x09) and `rpId` (0x0A)
+  parameters with `CTAP1_ERR_INVALID_PARAMETER`, per CTAP 2.1 §6.5.5.7.1. The
+  token it issues always carries the default `mc` and `ga` permissions and no
+  permissions RP ID, so accepting either parameter would let a platform believe
+  it had requested a scope the authenticator ignored. Use
+  `getPinUvAuthTokenUsingPinWithPermissions` (0x09) to request a scope.
+
 #### MakeCredential
 
 High-level credential creation API.
@@ -193,16 +201,43 @@ func (a *Authenticator) VerifyPinUvAuthToken(clientDataHash, authParam []byte) b
 #### AuthorizePinUvAuthToken
 
 Authorizes one makeCredential or getAssertion request. It checks the token's
-lifetime, the HMAC, the required permission bit, and the permissions RP ID,
-binding the request's RP ID to the token on first use. Every failure returns
-`ErrPINAuthInvalid` (`CTAP2_ERR_PIN_AUTH_INVALID`), so a caller cannot tell a
-wrong HMAC from a missing permission or an RP ID mismatch.
+lifetime, the HMAC, the required permission bit, the permissions RP ID, and the
+token's `userVerified` flag, binding the request's RP ID to the token on first
+use. Every failure returns `ErrPINAuthInvalid` (`CTAP2_ERR_PIN_AUTH_INVALID`),
+so a caller cannot tell a wrong HMAC from a missing permission, an RP ID
+mismatch, or a cleared flag.
+
+The `userVerified` check is what makes a token stop authorizing further
+credential operations. Once an operation sets the `up` bit in its response, the
+authenticator clears that flag and every permission except `lbw`, per CTAP 2.1
+§6.1.2 step 14 and §6.2.2 — so the next `AuthorizePinUvAuthToken` for `mc` or
+`ga` fails until the platform obtains a fresh token. The token is not
+invalidated: `lbw` deliberately survives. A getAssertion with `up=false` sets no
+`up` bit and clears nothing.
 
 Commands that require a permission must use this rather than
 `VerifyPinUvAuthToken`.
 
 ```go
 func (a *Authenticator) AuthorizePinUvAuthToken(
+    clientDataHash, authParam []byte, permission uint8, rpID string) error
+```
+
+#### CanAuthorizePinUvAuthToken
+
+Reports whether `AuthorizePinUvAuthToken` would succeed, running the same five
+checks without mutating anything: it binds no permissions RP ID, refreshes no
+timer, and discards no expired token.
+
+getAssertion uses it to decide whether a request counts as user-verified
+*before* it selects credentials, because CTAP 2.1 §12.1 credProtect filtering
+and excludeList answers depend on that answer. Because it shares the check with
+the authoritative call, it also reports a token whose `userVerified` flag has
+been cleared as unauthorized — a cleared token cannot unlock a credProtect
+credential or answer an excludeList.
+
+```go
+func (a *Authenticator) CanAuthorizePinUvAuthToken(
     clientDataHash, authParam []byte, permission uint8, rpID string) error
 ```
 

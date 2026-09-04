@@ -611,8 +611,10 @@ func (a *Authenticator) EstablishPINUVAuthSession() (*PINUVAuthSession, error) {
 // authenticator will use to verify the resulting pinUvAuthParam.
 //
 // The returned token is the key for Authenticate() over a MakeCredential or
-// GetAssertion clientDataHash. Treat it as secret and short-lived: it carries
-// the user's verification for the lifetime of the authenticator's power cycle.
+// GetAssertion clientDataHash. Treat it as secret and short-lived: a
+// CTAP 2.1 authenticator stops the token after 30 seconds of disuse, 10 minutes
+// of life, or the first credential operation that collects user presence
+// (Section 6.5.2.1), so obtain a token per operation rather than caching one.
 func (a *Authenticator) GetPINToken(session *PINUVAuthSession, pin string) ([]byte, error) {
 	if session == nil {
 		return nil, ErrPINTokenFailed
