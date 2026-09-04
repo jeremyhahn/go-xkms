@@ -9,6 +9,29 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Security
 
+- **`xkey fido2 status` now names the credential store and says whether
+  passkeys are encrypted at rest** (refs #181).
+  `xkey/cmd/xkey/cmd/fido2_status.go`, `xkey/pkg/ipc/protocol.go`.
+
+  Under `--storage file` a credential record is plain JSON whose `PrivateKey`
+  is a base64 PKCS#8 key, protected only by file permissions. Under
+  `--storage barrier` the same record is encrypted. **Nothing on disk
+  distinguishes them**: the barrier backend is rooted at the data directory
+  with a `fido2/xkey/` key prefix, the file backend at `<dataDir>/fido2` with
+  an `xkey/` prefix, and the two prefixes compensate for the differing roots —
+  so both layouts compose to the same path, and the file name is identical
+  either way.
+
+  The daemon is the only thing that knows which. `status` now reports the store
+  type, path, key prefix and — in words — whether records are encrypted. A
+  daemon predating the field reports `unknown` rather than defaulting to a
+  value that would read as a claim.
+
+  This is reporting only. **No credential data moves**, and the two prefixes are
+  deliberately left distinct and are now named constants with a comment saying
+  why unifying them would relocate data. The underlying plaintext-at-rest
+  exposure and the layout collision it enables remain open on #181.
+
 - **The keys that unwrap the authenticator's key hierarchy now live in
   protected memory** (#285). `xkey/pkg/authenticator/key_manager.go`.
 

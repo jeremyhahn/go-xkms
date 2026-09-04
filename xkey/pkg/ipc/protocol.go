@@ -95,6 +95,33 @@ type Response struct {
 	Pairing  *PairingResult  `json:"pairing,omitempty"`  // pairing result (for pairing responses)
 	Unlock   *UnlockResult   `json:"unlock,omitempty"`   // unlock result (for unlock responses)
 	State    *StateResult    `json:"state,omitempty"`    // live-state result (for state responses)
+	Storage  *StorageResult  `json:"storage,omitempty"`  // credential store description (for status responses)
+}
+
+// StorageResult describes the credential store a running daemon is using.
+//
+// It exists because the store a passkey lands in is not otherwise visible: the
+// encrypted and plaintext layouts compose to the same on-disk path, so the file
+// name tells an operator nothing about whether the private key inside it is
+// protected. Naming the live store is the only way to answer "are my passkeys
+// encrypted at rest" without reading the files.
+type StorageResult struct {
+	// Type is the configured store: "memory", "file" or "barrier".
+	Type string `json:"type"`
+
+	// Path is the directory backing the store. Empty for in-memory storage,
+	// which keeps nothing after the daemon exits.
+	Path string `json:"path,omitempty"`
+
+	// Prefix is the key namespace within the backend. It differs between the
+	// barrier and file layouts and compensates for their differing roots, so
+	// it is reported rather than inferred.
+	Prefix string `json:"prefix,omitempty"`
+
+	// EncryptedAtRest reports whether stored values are encrypted by the
+	// barrier. When false, credential records — including passkey private keys
+	// — are readable by anything with the file permissions.
+	EncryptedAtRest bool `json:"encrypted_at_rest"`
 }
 
 // Validate checks that the message is well-formed. It returns ErrInvalidMessage

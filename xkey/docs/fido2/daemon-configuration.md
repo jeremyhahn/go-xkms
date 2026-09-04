@@ -32,6 +32,37 @@ or `--storage barrier` to keep the store encrypted at rest. Any other value is
 rejected; `file` requires `--storage-path` and `barrier` requires one of
 `--barrier-password` / `--barrier-password-file`.
 
+### `file` stores passkey private keys in the clear
+
+A credential record under `--storage file` is plain JSON, and its `PrivateKey`
+field is a base64 PKCS#8 private key. It is protected by nothing but the file
+permissions of the directory it sits in. `--storage barrier` encrypts the same
+records at rest.
+
+**You cannot tell the two apart by looking.** The barrier backend is rooted at
+the data directory and namespaces credentials under `fido2/xkey/`; the file
+backend is rooted at `<data-dir>/fido2` and namespaces them under `xkey/`. The
+two prefixes compensate for the differing roots, so both layouts compose to the
+same path on disk — `<data-dir>/fido2/xkey/credentials/<id>` — and the file name
+is identical whether the private key inside is encrypted or in the clear.
+
+Ask the daemon instead:
+
+```console
+$ xkey fido2 status
+FIDO2 daemon: running (daemon_ready)
+Socket:       /run/user/1000/xkey/xkey.sock
+Store:        file
+Store path:   /var/lib/xkey
+Store prefix: xkey/
+At rest:      NOT encrypted — credential records, including passkey
+              private keys, are readable with your file permissions
+```
+
+Under `--storage barrier` the last line reads `encrypted by the barrier`
+instead. A daemon too old to report the field says `unknown` rather than
+guessing.
+
 ## Device identity
 
 | Flag | Default | Description |

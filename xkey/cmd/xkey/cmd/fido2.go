@@ -159,6 +159,22 @@ const (
 	FIDO2StorageTypeBarrier FIDO2StorageType = "barrier"
 )
 
+// Credential-store key prefixes.
+//
+// These are NOT interchangeable and must not be unified without moving data.
+// Each compensates for the root its backend is created with: the barrier
+// backend is rooted at the data directory, the file backend at <dataDir>/fido2,
+// so both compose to <dataDir>/fido2/xkey/... on disk. What differs between the
+// two layouts is whether the stored value is encrypted, not where it lives.
+const (
+	// fido2BarrierKeyPrefix namespaces credentials inside the barrier backend.
+	fido2BarrierKeyPrefix = "fido2/xkey/"
+
+	// fido2FileKeyPrefix namespaces credentials inside a plain file backend
+	// already rooted at the fido2 directory.
+	fido2FileKeyPrefix = "xkey/"
+)
+
 // Default FIDO2 configuration values.
 const (
 	defaultFIDO2DeviceName  = "xKey (go-xkms)"
@@ -952,7 +968,47 @@ func (d *fido2Device) HandleTypePassword(name string) (*ipc.Response, error) {
 
 // HandleStatus implements ipc.Handler. It returns the daemon ready status.
 func (d *fido2Device) HandleStatus() (*ipc.Response, error) {
-	return ipc.OKResponse(ipc.ActionDaemonReady), nil
+	resp := ipc.OKResponse(ipc.ActionDaemonReady)
+	resp.Storage = d.describeStorage()
+	return resp, nil
+}
+
+// describeStorage reports which credential store this daemon is using.
+//
+// A caller cannot work this out from the filesystem: the barrier and file
+// layouts compose to the same path — the barrier backend is rooted at the data
+// directory with a "fido2/xkey/" key prefix, the file backend at
+// <dataDir>/fido2 with an "xkey/" prefix — so the same file name holds either
+// an encrypted record or a plaintext one depending on how the daemon was
+// started. Only the daemon knows which.
+func (d *fido2Device) describeStorage() *ipc.StorageResult {
+	if d.cfg == nil {
+		return nil
+	}
+
+	switch d.cfg.StorageType {
+	case FIDO2StorageTypeBarrier:
+		return &ipc.StorageResult{
+			Type:            string(FIDO2StorageTypeBarrier),
+			Path:            d.cfg.StoragePath,
+			Prefix:          fido2BarrierKeyPrefix,
+			EncryptedAtRest: true,
+		}
+	case FIDO2StorageTypeFile:
+		return &ipc.StorageResult{
+			Type:            string(FIDO2StorageTypeFile),
+			Path:            d.cfg.StoragePath,
+			Prefix:          fido2FileKeyPrefix,
+			EncryptedAtRest: false,
+		}
+	case FIDO2StorageTypeMemory:
+		return &ipc.StorageResult{
+			Type:            string(FIDO2StorageTypeMemory),
+			EncryptedAtRest: false,
+		}
+	default:
+		return &ipc.StorageResult{Type: string(d.cfg.StorageType)}
+	}
 }
 
 // Compile-time check that fido2Device implements ipc.Handler.
@@ -1338,7 +1394,7 @@ func createFIDO2Storage(cfg *FIDO2Config) (authenticator.StatefulCredentialStora
 			return nil, err
 		}
 
-		storage, err := authenticator.NewBackendStorage(backend, "xkey/")
+		storage, err := authenticator.NewBackendStorage(backend, fido2FileKeyPrefix)
 		if err != nil {
 			_ = backend.Close()
 			return nil, err
@@ -1409,7 +1465,7 @@ func createBarrierStorage(cfg *FIDO2Config) (authenticator.StatefulCredentialSto
 
 	// Create FIDO2 credential storage using the barrier backend.
 	// Prefix "fido2/xkey/" matches the GUI's storage namespace.
-	storage, err := authenticator.NewBackendStorage(barrierBackend, "fido2/xkey/")
+	storage, err := authenticator.NewBackendStorage(barrierBackend, fido2BarrierKeyPrefix)
 	if err != nil {
 		_ = fileBackend.Close()
 		return nil, err

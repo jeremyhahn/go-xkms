@@ -16,6 +16,7 @@ package cmd
 import (
 	"errors"
 	"fmt"
+	"io"
 
 	"github.com/spf13/cobra"
 
@@ -109,5 +110,43 @@ func runFIDO2Status(cmd *cobra.Command, _ []string) error {
 
 	_, _ = fmt.Fprintf(out, "FIDO2 daemon: running (%s)\n", resp.Action)
 	_, _ = fmt.Fprintf(out, "Socket:       %s\n", socketPath)
+	printFIDO2Storage(out, resp.Storage)
 	return nil
+}
+
+// printFIDO2Storage names the credential store the daemon is using, and says
+// plainly whether credentials are encrypted at rest.
+//
+// This is the only way to answer that question: the barrier and file layouts
+// compose to the same on-disk path, so an operator inspecting the filesystem
+// sees identical file names whether the passkey private key inside is
+// barrier-encrypted or plaintext PKCS#8.
+//
+// A daemon older than this field reports nothing rather than guessing.
+func printFIDO2Storage(out io.Writer, storage *ipc.StorageResult) {
+	if storage == nil {
+		_, _ = fmt.Fprintf(out, "Store:        unknown (daemon did not report it)\n")
+		return
+	}
+
+	_, _ = fmt.Fprintf(out, "Store:        %s\n", storage.Type)
+	if storage.Path != "" {
+		_, _ = fmt.Fprintf(out, "Store path:   %s\n", storage.Path)
+	}
+	if storage.Prefix != "" {
+		_, _ = fmt.Fprintf(out, "Store prefix: %s\n", storage.Prefix)
+	}
+
+	if storage.EncryptedAtRest {
+		_, _ = fmt.Fprintf(out, "At rest:      encrypted by the barrier\n")
+		return
+	}
+
+	if storage.Type == string(FIDO2StorageTypeMemory) {
+		_, _ = fmt.Fprintf(out, "At rest:      nothing stored — credentials are lost when the daemon exits\n")
+		return
+	}
+
+	_, _ = fmt.Fprintf(out, "At rest:      NOT encrypted — credential records, including passkey\n")
+	_, _ = fmt.Fprintf(out, "              private keys, are readable with your file permissions\n")
 }
