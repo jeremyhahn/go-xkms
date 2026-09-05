@@ -7,6 +7,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **`tcg-cap-verifiedTPMRestricted` (2.23.133.11.1.3) is now defined, issued
+  and re-exported** (#358). The CA stamps it on attestation-key (AK / IAK /
+  LAK) certificates only — IDevID keys are Unrestricted by specification and
+  never carry it — so a relying party can perform the DevID §8.2 MUST check
+  before trusting a quote. `sdk/go` re-exports the TCG DevID OIDs
+  (`OIDTCGKpAIKCertificate`, `OIDTCGVerifiedTPM{Residency,Fixed,Restricted}`
+  and their `x509.OID` `*Policy` forms) so consumers can verify the policies
+  without importing `pkg/ca`.
+
 ## [0.9.2-alpha] - 2026-09-04
 
 ### Fixed

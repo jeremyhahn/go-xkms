@@ -502,10 +502,28 @@ func tcgExtKeyUsage() []x509.ExtKeyUsage {
 	return []x509.ExtKeyUsage{x509.ExtKeyUsageClientAuth, x509.ExtKeyUsageServerAuth}
 }
 
-// tcgAttestationPolicies are the TCG policy OIDs asserting that the certified
-// key was proven to reside in a TPM and to carry fixed (non-migratable)
-// attributes.
+// tcgAttestationPolicies are the TCG policy OIDs stamped on an ATTESTATION
+// key certificate (AK, IAK, LAK): the key is TPM-resident, fixed to this TPM,
+// and Restricted — it can only sign digests the TPM itself produced, so data
+// it signs is genuinely TPM internal data. TCG DevID v1 r12 §8.2 requires a
+// relying party to check verifiedTPMRestricted before trusting an
+// attestation, which is only possible if the CA stamps it.
 func tcgAttestationPolicies() []x509.OID {
+	return []x509.OID{
+		TCGVerifiedTPMResidencyPolicy,
+		TCGVerifiedTPMFixedPolicy,
+		TCGVerifiedTPMRestrictedPolicy,
+	}
+}
+
+// tcgIdentityPolicies are the TCG policy OIDs stamped on a device IDENTITY
+// key certificate (IDevID, LDevID): TPM-resident and fixed, but deliberately
+// NOT Restricted — the spec creates the identity key Unrestricted precisely
+// so it can sign arbitrary data such as a TLS CertificateVerify, and marks
+// the two classes differently "to prevent the possibility of spoofing".
+// Stamping verifiedTPMRestricted on an identity key would assert a property
+// the key does not have.
+func tcgIdentityPolicies() []x509.OID {
 	return []x509.OID{TCGVerifiedTPMResidencyPolicy, TCGVerifiedTPMFixedPolicy}
 }
 
@@ -568,7 +586,7 @@ func NewTCGDeviceIdentityProfile() ProfileProvider {
 		keyUsage:        x509.KeyUsageDigitalSignature | x509.KeyUsageKeyEncipherment,
 		extKeyUsage:     tcgExtKeyUsage(),
 		defaultValidity: tcgValidityDays,
-		policies:        tcgAttestationPolicies(),
+		policies:        tcgIdentityPolicies(),
 	}
 }
 

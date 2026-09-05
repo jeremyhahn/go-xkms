@@ -349,6 +349,43 @@ var CreateNetworkZoneExtension = pkgca.CreateNetworkZoneExtension
 var ParseNetworkZoneExtension = pkgca.ParseNetworkZoneExtension
 
 // ---------------------------------------------------------------------------
+// TCG DevID OID re-exports (TPM 2.0 Keys for Device Identity and Attestation
+// v1 r12). Consumers verifying attestation-key certificates need these to
+// check the tcg-cap-* policies without importing pkg/ca directly.
+// ---------------------------------------------------------------------------
+
+var (
+	// OIDTCGKpAIKCertificate is tcg-kp-AIKCertificate (2.23.133.8.3), the
+	// extended key usage carried by attestation-key certificates.
+	OIDTCGKpAIKCertificate = pkgca.OIDTCGKpAIKCertificate
+
+	// OIDTCGVerifiedTPMResidency is tcg-cap-verifiedTPMResidency
+	// (2.23.133.11.1.1): the CA verified the key is TPM-resident.
+	OIDTCGVerifiedTPMResidency = pkgca.OIDTCGVerifiedTPMResidency
+
+	// OIDTCGVerifiedTPMFixed is tcg-cap-verifiedTPMFixed (2.23.133.11.1.2):
+	// the CA verified the key is fixed to that TPM (fixedTPM | fixedParent).
+	OIDTCGVerifiedTPMFixed = pkgca.OIDTCGVerifiedTPMFixed
+
+	// OIDTCGVerifiedTPMRestricted is tcg-cap-verifiedTPMRestricted
+	// (2.23.133.11.1.3): the CA verified the key is Restricted. Stamped on
+	// AK / IAK / LAK certificates only, never on IDevID; a relying party
+	// MUST check it before trusting a quote (DevID §8.2).
+	OIDTCGVerifiedTPMRestricted = pkgca.OIDTCGVerifiedTPMRestricted
+
+	// TCGVerifiedTPMResidencyPolicy is OIDTCGVerifiedTPMResidency as an
+	// x509.OID, the form x509.Certificate.Policies carries.
+	TCGVerifiedTPMResidencyPolicy = pkgca.TCGVerifiedTPMResidencyPolicy
+
+	// TCGVerifiedTPMFixedPolicy is OIDTCGVerifiedTPMFixed as an x509.OID.
+	TCGVerifiedTPMFixedPolicy = pkgca.TCGVerifiedTPMFixedPolicy
+
+	// TCGVerifiedTPMRestrictedPolicy is OIDTCGVerifiedTPMRestricted as an
+	// x509.OID.
+	TCGVerifiedTPMRestrictedPolicy = pkgca.TCGVerifiedTPMRestrictedPolicy
+)
+
+// ---------------------------------------------------------------------------
 // CA error re-exports
 // ---------------------------------------------------------------------------
 

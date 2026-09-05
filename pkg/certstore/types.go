@@ -162,6 +162,8 @@ var (
 	OIDTCGVerifiedTPMResidency = asn1.ObjectIdentifier{2, 23, 133, 11, 1, 1}
 	// OIDTCGVerifiedTPMFixed is tcg-verified-tpmFixed (2.23.133.11.1.2)
 	OIDTCGVerifiedTPMFixed = asn1.ObjectIdentifier{2, 23, 133, 11, 1, 2}
+	// OIDTCGVerifiedTPMRestricted is tcg-verified-tpmRestricted (2.23.133.11.1.3)
+	OIDTCGVerifiedTPMRestricted = asn1.ObjectIdentifier{2, 23, 133, 11, 1, 3}
 
 	// OIDHardwareModuleName is id-on-hardwareModuleName (1.3.6.1.5.5.7.8.4)
 	OIDHardwareModuleName = asn1.ObjectIdentifier{1, 3, 6, 1, 5, 5, 7, 8, 4}

@@ -48,6 +48,11 @@ var (
 	// TCG Verified TPM Attributes (2.23.133.11.1)
 	OIDTCGVerifiedTPMResidency = asn1.ObjectIdentifier{2, 23, 133, 11, 1, 1}
 	OIDTCGVerifiedTPMFixed     = asn1.ObjectIdentifier{2, 23, 133, 11, 1, 2}
+	// OIDTCGVerifiedTPMRestricted is tcg-cap-verifiedTPMRestricted (2.23.133.11.1.3):
+	// the certified key is a Restricted signing key, so data it signs is TPM
+	// internal data. TCG DevID v1 r12 §8.2 requires a relying party to check
+	// for it on an IAK/LAK certificate before trusting an attestation.
+	OIDTCGVerifiedTPMRestricted = asn1.ObjectIdentifier{2, 23, 133, 11, 1, 3}
 
 	// Hardware Module Name (for SAN extension)
 	// id-on-hardwareModuleName OBJECT IDENTIFIER ::= { iso(1) identified-organization(3)
@@ -89,6 +94,8 @@ var (
 	TCGVerifiedTPMResidencyPolicy = mustParseOID("2.23.133.11.1.1")
 	// TCGVerifiedTPMFixedPolicy is the x509.OID version of OIDTCGVerifiedTPMFixed
 	TCGVerifiedTPMFixedPolicy = mustParseOID("2.23.133.11.1.2")
+	// TCGVerifiedTPMRestrictedPolicy is the x509.OID version of OIDTCGVerifiedTPMRestricted
+	TCGVerifiedTPMRestrictedPolicy = mustParseOID("2.23.133.11.1.3")
 )
 
 // mustParseOID parses an OID string and panics on error (for static initialization).

@@ -56,7 +56,13 @@ var caPolicyGoldens = map[string]string{
 	"leaf_server_profile": "e337d5c264dadb0d1346b49a6f8dda9d0ccd357fd8b88951f8d69850d62c4055",
 	"leaf_ca_profile":     "6b9899392802b2a53313bb2c26870fbbd2d54f17cbd6d1cf54e39957e803e190",
 	"tcg_ek":              "4a47bb1fde80701edac6f29a180708476aa84af184aa2721106acef86436a343",
-	"tcg_ak":              "84acb8cf843f79906c824d211cbccee6cc0f22ab38b9676e68bc4fce76d418cb",
+	// tcg_ak changed 2026-09-04 (#358): the certificatePolicies extension now
+	// carries tcg-cap-verifiedTPMRestricted (2.23.133.11.1.3) beside residency
+	// and fixed. TCG DevID v1 r12 §8.2 makes checking it a MUST for a relying
+	// party evaluating an attestation, and it was never issued. Every other
+	// field of the rendered policy is unchanged — verified by diffing the
+	// renderer's output before and after, not by re-pinning blindly.
+	"tcg_ak": "0ec0c0bbc58830068c30c639fbc94730877db25fee91c044e77f732fb8370b4e",
 }
 
 // caPolicyCase names one issuance path and the certificate it produced.

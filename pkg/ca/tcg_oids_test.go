@@ -15,6 +15,7 @@ package ca
 
 import (
 	"bytes"
+	"crypto/x509"
 	"crypto/x509/pkix"
 	"encoding/asn1"
 	"errors"
@@ -170,6 +171,68 @@ func TestPolicyOIDs_Valid(t *testing.T) {
 		s := TCGVerifiedTPMFixedPolicy.String()
 		if s != "2.23.133.11.1.2" {
 			t.Errorf("expected 2.23.133.11.1.2, got %s", s)
+		}
+	})
+
+	t.Run("TCGVerifiedTPMRestrictedPolicy_string", func(t *testing.T) {
+		t.Parallel()
+		s := TCGVerifiedTPMRestrictedPolicy.String()
+		if s != "2.23.133.11.1.3" {
+			t.Errorf("expected 2.23.133.11.1.3, got %s", s)
+		}
+		if !OIDTCGVerifiedTPMRestricted.Equal(asn1.ObjectIdentifier{2, 23, 133, 11, 1, 3}) {
+			t.Errorf("asn1 and x509 forms disagree: %v", OIDTCGVerifiedTPMRestricted)
+		}
+	})
+}
+
+// TestTCGProfiles_RestrictedStampedOnAttestationKeysOnly pins the spec
+// split the profiles encode. TCG "TPM 2.0 Keys for Device Identity and
+// Attestation" v1 r12 §8.2 requires a relying party to check for
+// tcg-cap-verifiedTPMRestricted on an IAK/LAK certificate before trusting an
+// attestation — so the attestation-key profiles MUST stamp it. The same
+// section keeps the identity key Unrestricted and marks it verifiedTPMFixed
+// instead, "to prevent the possibility of spoofing" — so the IDevID profile
+// MUST NOT stamp it. Both directions are asserted: a helper shared between
+// the two classes is exactly how the attribute could leak onto an identity
+// key, and that is the mutation this test exists to catch.
+func TestTCGProfiles_RestrictedStampedOnAttestationKeysOnly(t *testing.T) {
+	t.Parallel()
+
+	stamped := func(t *testing.T, p ProfileProvider, oid x509.OID) bool {
+		t.Helper()
+		tmpl := &x509.Certificate{}
+		if err := p.Apply(tmpl, nil); err != nil {
+			t.Fatalf("%s: Apply: %v", p.Name(), err)
+		}
+		for _, got := range tmpl.Policies {
+			if got.Equal(oid) {
+				return true
+			}
+		}
+		return false
+	}
+
+	for _, p := range []ProfileProvider{NewTCGAttestationKeyProfile(), NewTCGInitialAttestationKeyProfile()} {
+		t.Run(p.Name()+"_carries_verifiedTPMRestricted", func(t *testing.T) {
+			t.Parallel()
+			if !stamped(t, p, TCGVerifiedTPMRestrictedPolicy) {
+				t.Errorf("%s must stamp tcg-cap-verifiedTPMRestricted; a relying party is required to check for it", p.Name())
+			}
+		})
+	}
+
+	idevid := NewTCGDeviceIdentityProfile()
+	t.Run(idevid.Name()+"_does_NOT_carry_verifiedTPMRestricted", func(t *testing.T) {
+		t.Parallel()
+		if stamped(t, idevid, TCGVerifiedTPMRestrictedPolicy) {
+			t.Errorf("%s stamps verifiedTPMRestricted on an Unrestricted identity key — asserts a property the key does not have", idevid.Name())
+		}
+		// The split must not have dropped what the identity key IS entitled to.
+		for _, want := range []x509.OID{TCGVerifiedTPMResidencyPolicy, TCGVerifiedTPMFixedPolicy} {
+			if !stamped(t, idevid, want) {
+				t.Errorf("%s lost %s in the split", idevid.Name(), want.String())
+			}
 		}
 	})
 }
