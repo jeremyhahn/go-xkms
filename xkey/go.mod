@@ -30,7 +30,7 @@ require (
 	github.com/gorilla/websocket v1.5.4-0.20250319132907-e064f32e3674
 	github.com/jeremyhahn/go-luks2 v0.1.7-alpha
 	github.com/jeremyhahn/go-qrdb/sdk/go v0.16.0-alpha
-	github.com/jeremyhahn/go-truststrap v0.2.0-alpha
+	github.com/jeremyhahn/go-truststrap v0.4.0-alpha
 	github.com/jeremyhahn/go-xkms v0.9.3-alpha
 	github.com/jeremyhahn/go-xkms/sdk/go v0.9.3-alpha
 	github.com/kbinani/screenshot v0.0.0-20250624051815-089614a94018

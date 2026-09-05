@@ -1611,6 +1611,48 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `NewMemorySessionStoreWithTTL`. Variadic, defaulting to `time.Now`, with a
   usable zero value, so production behaviour and every existing call site are
   unchanged. `rest.WebAuthnStoresConfig` carries it through as `Clock`.
+- **The FIPS-approved bootstrap suite is reachable through go-xkms** (#269).
+  Noise_NK mandates X25519, which SP 800-56A Rev. 3 does not approve, so
+  go-truststrap compiles its Noise DH out under the `fips` build tag and every
+  entry point returns `ErrFIPSUnsupported`. A FIPS build had **no working
+  bootstrap handshake at all**, and because consumers reach go-truststrap only
+  through this repository, no released go-quicbaas could reach the approved one.
+
+  `pkg/trust/bootstrap` and `sdk/go/bootstrap` gain a P-256 set mirroring the
+  Noise set name for name — `P256StaticKey`, `GenerateP256StaticKey`,
+  `NewP256StaticKey`, `Encode`/`DecodeP256StaticKey`, `P256HexKeySize`,
+  `P256PublicKeySize` — plus the wire suite identifiers `SuiteNoiseNK` and
+  `SuiteP256AESGCM`. The set is re-exported **complete** on purpose: the Noise
+  set records what a partial one costs, having once exposed a generator and a
+  config without the adapter joining them, so both halves compiled and could
+  not be used together.
+
+- **`EnsureSuiteAvailable`** (#269), with the `ErrSuiteUnavailable` sentinel —
+  resolves a suite while a listener is being **configured**, so a build with no
+  usable suite says so once and actionably at startup instead of binding a
+  listener and refusing every handshake. That is go-trusted-platform#209's
+  acceptance criterion.
+
+  **It asks the library; it does not consult a FIPS predicate.** The obvious
+  `if fips.Compiled()` is wrong for the reason recorded on the certstore
+  thumbprint (#212/#219): `GODEBUG=fips140=off` turns that predicate false on a
+  GOFIPS140-built binary, so such a guard fails **open** for exactly the
+  artifacts the policy most cares about. Availability is instead derived from
+  go-truststrap, whose Noise DH is selected by build tag — a compile-time
+  property of the binary, read by attempting the operation and classifying the
+  result, cached once per process. If upstream later supports Noise under some
+  FIPS configuration, this answer changes with it, where a restated predicate
+  would go stale.
+
+  Pinned by a paired build-tagged test: `suite_nofips_test.go` asserts the Noise
+  suite is available, `suite_fips_test.go` asserts it is refused with a typed
+  error naming the approved alternative. The two assert opposite things, which
+  is what proves the answer is derived from the build rather than guessed.
+
+  **Not included: the suite selection mechanism.** Whether a consumer picks a
+  suite by explicit configuration or by negotiation with a default is a protocol
+  decision with an interop consequence, and is still open on #269. Everything
+  here is correct either way.
 
 - **PIV private-key import: `xkms.ImportPIVKey`** (#207). A PIV slot could be
   generated into or given a certificate, but an externally held private key
@@ -1799,6 +1841,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   this cannot turn the gate red. The change was then shown to do what it claims
   by injecting a six-instance finding family: **3 printed under the old cap,
   all 6 under the new configuration**.
+- **`go-truststrap` v0.2.0-alpha → v0.4.0-alpha across all three modules**
+  (#269) — root, `xkey` and `sdk/go` together, for the reason #208 took
+  x/crypto and #259 took grpc across all four: a module left behind
+  reintroduces the gap in the next artifact built from it.
+
+  **This is a breaking bootstrap wire change, and both ends must upgrade
+  together.** From v0.4.0-alpha the bootstrap handshake's first frame carries a
+  two-byte `version || suite` header; v0.2.0-alpha sent a bare Noise message 1
+  with no header and no prologue. Upstream lists "strip the header and speak the
+  old wire" among the attacks it deliberately defends against, so there is **no
+  silent fallback** — an un-upgraded peer is refused, by design.
+
+  Upstream justifies the break on the grounds that "the downstream consumers are
+  blocked today", which is true of FIPS consumers and **not** of a non-FIPS
+  Noise bootstrap, which works today. Any deployed client/server pair therefore
+  has to move in lockstep.
 
 - **`make release-alpha` cuts a correct release, and takes the version as an
   argument** (#58). The old seven-line recipe had four defects, every one of

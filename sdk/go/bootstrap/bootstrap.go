@@ -166,3 +166,72 @@ var (
 	// buffer it wrote into.
 	WipeNoiseBytes = pkgbootstrap.WipeNoiseBytes
 )
+
+// The FIPS-approved bootstrap suite, TSBOOT1_P256_AESGCM_SHA256.
+//
+// Noise_NK mandates X25519, which SP 800-56A Rev. 3 does not approve, so
+// go-truststrap compiles its Noise DH out under the `fips` build tag and a FIPS
+// build had no working bootstrap handshake at all. This set is what an
+// SDK-only consumer needs to run the approved one (go-xkms#269).
+//
+// It is re-exported COMPLETE, deliberately. The Noise set above records what a
+// partial re-export costs: the generator and the config were exposed while the
+// adapter joining them was not, so both halves compiled and could not be used
+// together. A key type without its encoder, or a suite constant without the
+// check that says whether this binary can run it, repeats that.
+
+// P256StaticKey is a P-256 static key pair for the approved handshake. Its
+// private scalar lives in protected memory; the owner must Destroy it.
+//
+// Unlike the Noise key it needs no adapter: NoiseServerConfig takes this type
+// directly in its P256StaticKey field.
+type P256StaticKey = pkgbootstrap.P256StaticKey
+
+const (
+	// P256HexKeySize is the buffer length EncodeP256StaticKey requires.
+	P256HexKeySize = pkgbootstrap.P256HexKeySize
+
+	// P256PublicKeySize is the length of the uncompressed P-256 point a client
+	// is provisioned with as the server's pinned responder key.
+	P256PublicKeySize = pkgbootstrap.P256PublicKeySize
+
+	// SuiteNoiseNK identifies Noise_NK_25519_ChaChaPoly_SHA256 on the wire. It
+	// is not FIPS-approved and is unavailable in a `fips` build.
+	SuiteNoiseNK = pkgbootstrap.SuiteNoiseNK
+
+	// SuiteP256AESGCM identifies TSBOOT1_P256_AESGCM_SHA256 on the wire.
+	SuiteP256AESGCM = pkgbootstrap.SuiteP256AESGCM
+)
+
+// ErrSuiteUnavailable is the sentinel EnsureSuiteAvailable returns when this
+// binary cannot run the named suite. Test for it with errors.Is.
+var ErrSuiteUnavailable = pkgbootstrap.ErrSuiteUnavailable
+
+// Re-exported P-256 key helpers and the suite availability check.
+var (
+	// GenerateP256StaticKey generates a P-256 static key pair with the private
+	// scalar drawn straight into protected memory. It succeeds in a FIPS
+	// build, which is the point of the suite.
+	GenerateP256StaticKey = pkgbootstrap.GenerateP256StaticKey
+
+	// NewP256StaticKey reconstructs a key from a scalar already in protected
+	// memory.
+	NewP256StaticKey = pkgbootstrap.NewP256StaticKey
+
+	// EncodeP256StaticKey hex-encodes a P-256 static private key into the
+	// caller's buffer, which must be at least P256HexKeySize bytes and should
+	// itself be protected memory. As with the Noise form there is no
+	// encode-to-string variant: a Go string cannot be wiped.
+	EncodeP256StaticKey = pkgbootstrap.EncodeP256StaticKey
+
+	// DecodeP256StaticKey decodes a hex-encoded P-256 static key into
+	// protected memory. The caller's encoded bytes remain theirs to wipe.
+	DecodeP256StaticKey = pkgbootstrap.DecodeP256StaticKey
+
+	// EnsureSuiteAvailable reports whether this binary can run a suite,
+	// returning a typed error when it cannot. Call it while CONFIGURING a
+	// bootstrap listener so a build with no usable suite says so once and
+	// actionably at startup, rather than binding a listener and refusing every
+	// handshake.
+	EnsureSuiteAvailable = pkgbootstrap.EnsureSuiteAvailable
+)

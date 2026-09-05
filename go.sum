@@ -361,6 +361,8 @@ github.com/jeremyhahn/go-quicraft v0.9.0-alpha h1:Mq2JJ9rXa09gsDbzkjEMx5LWp8HiOu
 github.com/jeremyhahn/go-quicraft v0.9.0-alpha/go.mod h1:0Z/9RFjYvzrfod+fIPzXjqPjMa92x6le2Ta3OWIRBxk=
 github.com/jeremyhahn/go-truststrap v0.2.0-alpha h1:By3+U4pXgAGtO8Og9C9jcAr99132BrcZNjpZ396NhOA=
 github.com/jeremyhahn/go-truststrap v0.2.0-alpha/go.mod h1:ScGXVFBsxtFiGhSGbvKEX3T+Zzy/+nDo9rWK49F0Odk=
+github.com/jeremyhahn/go-truststrap v0.4.0-alpha h1:aPIdCkQHq46lhhV7BbGYbEAa055Bx3xmd3hJMDT53Ns=
+github.com/jeremyhahn/go-truststrap v0.4.0-alpha/go.mod h1:+rRL4vynf2D1jh5PzesnjvdD3LPO89w4ENhvwastKwE=
 github.com/jeroenrinzema/psql-wire v0.18.0 h1:w8VZLCbyzx5UHQb3zojTBWYuOd9L2TlgrboD5jpsC4E=
 github.com/jeroenrinzema/psql-wire v0.18.0/go.mod h1:i7+aXJyIrgcXmbTkij68LdFs03w2f9kt18HIUo+eXmY=
 github.com/jmespath/go-jmespath v0.4.0 h1:BEgLn5cpjn8UN1mAw4NjwDrS35OdebyEtFe+9YPoQUg=
