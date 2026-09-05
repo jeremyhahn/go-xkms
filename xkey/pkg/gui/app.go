@@ -1174,31 +1174,16 @@ func (a *App) initializeAuthenticator() {
 	a.fido2KeyBackend = composite
 
 	// Register all available go-xkms backends as FIDO2 key backends.
-	// When barrier auto-unseal is enabled, wrap each adapter with AutoUVBackend
-	// so the authenticator reports built-in user verification (uv=true),
-	// allowing Chrome to skip its PIN dialog.
-	var autoUVProvider keybackend.BarrierStateProvider
-	if a.config.BarrierAutoUnsealEnabled {
-		autoUVProvider = &barrierAutoUVProvider{barrier: a.barrierService}
-		a.log.Info("auto-UV enabled: FIDO2 backends will report built-in user verification")
-	}
-
 	if swBackend, swErr := xkmssdk.GetBackend("software"); swErr == nil {
 		adapter := keybackend.NewBackendAdapter(swBackend.KeyProvider(), xkmssdk.BackendTypeSoftware)
 		adapter.SetLogger(a.log)
 		var backend keybackend.FIDO2KeyBackend = adapter
-		if autoUVProvider != nil {
-			backend = keybackend.NewAutoUVBackend(adapter, autoUVProvider)
-		}
 		composite.Register(xkmssdk.BackendTypeSoftware, backend)
 	}
 	if tpm2Backend, tpmErr := xkmssdk.GetBackend("tpm2"); tpmErr == nil {
 		adapter := keybackend.NewBackendAdapter(tpm2Backend.KeyProvider(), xkmssdk.BackendTypeTPM2)
 		adapter.SetLogger(a.log)
 		var backend keybackend.FIDO2KeyBackend = adapter
-		if autoUVProvider != nil {
-			backend = keybackend.NewAutoUVBackend(adapter, autoUVProvider)
-		}
 		composite.Register(xkmssdk.BackendTypeTPM2, backend)
 		a.log.Info("FIDO2 TPM2 key backend registered")
 	}
@@ -1225,9 +1210,6 @@ func (a *App) initializeAuthenticator() {
 		adapter := keybackend.NewBackendAdapter(cloudBackend.KeyProvider(), cb.bt)
 		adapter.SetLogger(a.log)
 		var backend keybackend.FIDO2KeyBackend = adapter
-		if autoUVProvider != nil {
-			backend = keybackend.NewAutoUVBackend(adapter, autoUVProvider)
-		}
 		composite.Register(cb.bt, backend)
 		a.log.Info("FIDO2 cloud key backend registered", "backend", cb.name)
 	}
@@ -3872,18 +3854,3 @@ func Run() error {
 	app := NewApp(cfg)
 	return app.Run()
 }
-
-// barrierAutoUVProvider implements keybackend.BarrierStateProvider by
-// checking whether the barrier service is currently unsealed.
-type barrierAutoUVProvider struct {
-	barrier *services.BarrierService
-}
-
-// IsAutoUVActive returns true when the barrier is unsealed, meaning
-// built-in user verification should be reported to FIDO2 clients.
-func (p *barrierAutoUVProvider) IsAutoUVActive() bool {
-	return p.barrier.IsUnsealed()
-}
-
-// Compile-time check.
-var _ keybackend.BarrierStateProvider = (*barrierAutoUVProvider)(nil)

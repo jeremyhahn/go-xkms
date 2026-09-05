@@ -225,10 +225,6 @@ type FIDO2Config struct {
 	// Unified PIN configuration
 	UnifiedPIN bool
 
-	// AutoUV enables built-in user verification so Chrome skips its PIN dialog.
-	// Activated by either: (a) global auto-unseal config, or (b) --auto-uv CLI flag.
-	AutoUV bool
-
 	// CDPEnabled enables Chrome DevTools Protocol virtual authenticator bridge.
 	CDPEnabled bool
 	// CDPHost is the Chrome DevTools host (default "localhost").
@@ -412,8 +408,6 @@ func init() {
 		"Enable unified PIN synchronization across FIDO2, PKCS#11, and file PIN systems")
 
 	// CDP bridge flags
-	fido2Cmd.Flags().Bool("auto-uv", false,
-		"Report built-in user verification so Chrome skips its PIN dialog")
 	fido2Cmd.Flags().Bool("cdp", false, "Enable Chrome DevTools virtual authenticator bridge")
 	fido2Cmd.Flags().String("cdp-host", "localhost", "Chrome DevTools host")
 	fido2Cmd.Flags().Int("cdp-port", 9222, "Chrome DevTools debugging port")
@@ -440,7 +434,6 @@ func init() {
 	_ = viper.BindPFlag("fido2.notify_command", fido2Cmd.Flags().Lookup("notify-command"))
 	_ = viper.BindPFlag("fido2.notify", fido2Cmd.Flags().Lookup("notify"))
 	_ = viper.BindPFlag("fido2.unified_pin", fido2Cmd.Flags().Lookup("unified-pin"))
-	_ = viper.BindPFlag("fido2.auto_uv", fido2Cmd.Flags().Lookup("auto-uv"))
 	_ = viper.BindPFlag("fido2.cdp", fido2Cmd.Flags().Lookup("cdp"))
 	_ = viper.BindPFlag("fido2.cdp_host", fido2Cmd.Flags().Lookup("cdp-host"))
 	_ = viper.BindPFlag("fido2.cdp_port", fido2Cmd.Flags().Lookup("cdp-port"))
@@ -550,13 +543,6 @@ func buildFIDO2Config() *FIDO2Config {
 		CDPEnabled:          viper.GetBool("fido2.cdp"),
 		CDPHost:             viper.GetString("fido2.cdp_host"),
 		CDPPort:             viper.GetInt("fido2.cdp_port"),
-	}
-
-	// Enable auto-UV if either the global config or CLI flag requests it.
-	if viper.GetBool("fido2.auto_uv") {
-		cfg.AutoUV = true
-	} else if xcfg, err := xkeyconfig.Load(); err == nil && xcfg.GUI.AutoUnseal.Enabled {
-		cfg.AutoUV = true
 	}
 
 	return cfg
@@ -679,13 +665,6 @@ func newFIDO2Device(cfg *FIDO2Config, logger *slog.Logger) (*fido2Device, error)
 	if err != nil {
 		_ = storage.Close()
 		return nil, errors.Join(ErrFIDO2AuthenticatorCreationFailed, err)
-	}
-
-	if cfg.AutoUV {
-		// When auto-unseal is configured, report built-in UV so Chrome
-		// skips its PIN dialog. The authenticator handles UV internally.
-		keyBackend = keybackend.NewAutoUVBackend(keyBackend, &staticBarrierProvider{active: true})
-		logger.Info("auto-UV enabled: built-in user verification active")
 	}
 
 	// Create authenticator configuration
@@ -1019,9 +998,6 @@ func (d *fido2Device) describeStorage() *ipc.StorageResult {
 // Compile-time check that fido2Device implements ipc.Handler.
 var _ ipc.Handler = (*fido2Device)(nil)
 
-// Compile-time check that staticBarrierProvider implements BarrierStateProvider.
-var _ keybackend.BarrierStateProvider = (*staticBarrierProvider)(nil)
-
 // eventLoop processes incoming HID packets until the context is cancelled.
 func (d *fido2Device) eventLoop(ctx context.Context) error {
 	d.logger.Info("starting FIDO2 HID event loop")
@@ -1154,17 +1130,6 @@ func (d *fido2Device) Close() error {
 	}
 
 	return nil
-}
-
-// staticBarrierProvider is a BarrierStateProvider that returns a fixed value.
-// Used by the CLI when auto-unseal is confirmed active at startup.
-type staticBarrierProvider struct {
-	active bool
-}
-
-// IsAutoUVActive reports whether built-in user verification should be active.
-func (p *staticBarrierProvider) IsAutoUVActive() bool {
-	return p.active
 }
 
 // persistCapturedCredential is the cdp.CredentialSink. It maps a credential

@@ -7,6 +7,45 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Security
+
+- **`AutoUVBackend` asserted user verification because the barrier was
+  unsealed, so an unattended device claimed a human had authenticated**
+  (#280). `xkey/pkg/authenticator/keybackend/autouv.go` (deleted),
+  `xkey/pkg/gui/app.go`, `xkey/cmd/xkey/cmd/fido2.go`.
+
+  The decorator forced `HandlesUserVerification` true whenever
+  `IsAutoUVActive()` reported the barrier open, and in `getAssertion` that is
+  the branch immediately after a verified PIN:
+
+  ```go
+  case pinAuthValid:                                          // a PIN was verified
+      flags |= FlagUV
+  case a.keyBackend.Capabilities().HandlesUserVerification:   // barrier unsealed. no human.
+      flags |= FlagUV
+  ```
+
+  Barrier auto-unseal is by definition the device unlocking its own storage
+  with **nobody present**, so the UV flag it produced was false. The comment
+  directly above that switch already states the rule it broke: the UV flag
+  tells the relying party that a human verified themselves, and downstream
+  systems make authorization decisions on it. go-quicbaas gates administrator
+  enrollment on that flag, and #215's `credProtect` level-3 enforcement
+  requires UV — both were satisfiable with no human at all. In the CLI path it
+  was not even tied to barrier state: `staticBarrierProvider{active: true}`
+  is a constant.
+
+  Removing it cannot affect unsealing. Every other method of the decorator was
+  pure delegation, and the provider only ever *read* barrier state — the
+  dependency ran barrier -> decorator, never the reverse. What changes is that
+  `getInfo` now reports `uv=false` where a PIN is the verification method, and
+  the browser collects that PIN: a real verification instead of a claimed one.
+  `HandlesUserVerification` remains for backends that genuinely verify a human
+  inside the key operation, which is the phone biometric (`pkg/phone`).
+
+  The `--auto-uv` flag and `fido2.auto_uv` setting are removed with it; their
+  only effect was to turn the assertion on.
+
 ## [0.9.3-alpha] - 2026-09-05
 
 ### Added
