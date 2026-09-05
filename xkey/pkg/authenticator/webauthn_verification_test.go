@@ -234,6 +234,7 @@ func TestWebAuthnVerification_SoftwareBackend(t *testing.T) {
 
 	adapter := keybackend.NewBackendAdapter(newMockKeyProvider(), xkms.BackendTypeSoftware)
 	config := DefaultConfig()
+	config.UserPresenceHandler = NewAutoGrantHandler()
 	config.Storage = NewMemoryStorage()
 	config.KeyBackend = adapter
 
@@ -251,6 +252,7 @@ func TestWebAuthnVerification_SoftwareBackend_ES384(t *testing.T) {
 
 	adapter := keybackend.NewBackendAdapter(newMockKeyProvider(), xkms.BackendTypeSoftware)
 	config := DefaultConfig()
+	config.UserPresenceHandler = NewAutoGrantHandler()
 	config.Storage = NewMemoryStorage()
 	config.KeyBackend = adapter
 	config.SupportedAlgorithms = []int{COSEAlgES256, COSEAlgES384}
@@ -277,6 +279,7 @@ func TestWebAuthnVerification_TPM2Backend(t *testing.T) {
 	adapter := keybackend.NewBackendAdapter(provider, xkms.BackendTypeTPM2)
 
 	config := DefaultConfig()
+	config.UserPresenceHandler = NewAutoGrantHandler()
 	config.Storage = NewMemoryStorage()
 	config.KeyBackend = adapter
 
@@ -293,6 +296,7 @@ func TestWebAuthnVerification_LegacyNilBackend(t *testing.T) {
 	t.Parallel()
 
 	config := DefaultConfig()
+	config.UserPresenceHandler = NewAutoGrantHandler()
 	config.Storage = NewMemoryStorage()
 	// KeyBackend is nil - uses legacy crypto.go path
 

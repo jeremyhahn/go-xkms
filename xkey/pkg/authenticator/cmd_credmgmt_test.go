@@ -39,6 +39,7 @@ func createCredMgmtTestAuthenticator(t *testing.T) *Authenticator {
 	t.Helper()
 	storage := NewMemoryStorage()
 	config := &Config{
+		UserPresenceHandler:        NewAutoGrantHandler(),
 		Storage:                    storage,
 		MaxResidentCredentials:     100,
 		SupportedAlgorithms:        []int{COSEAlgES256},
@@ -154,6 +155,7 @@ func buildCredMgmtRequest(t *testing.T, pinToken []byte, subCommand uint8, param
 func TestCredentialManagementNotEnabled(t *testing.T) {
 	storage := NewMemoryStorage()
 	config := &Config{
+		UserPresenceHandler:        NewAutoGrantHandler(),
 		Storage:                    storage,
 		MaxResidentCredentials:     100,
 		SupportedAlgorithms:        []int{COSEAlgES256},

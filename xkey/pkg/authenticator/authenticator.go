@@ -319,12 +319,19 @@ func NewAuthenticator(config *Config) (*Authenticator, error) {
 		}
 	}
 
-	// Set up user presence handler (default to auto-grant)
-	if config.UserPresenceHandler != nil {
-		a.upHandler = config.UserPresenceHandler
-	} else {
-		a.upHandler = NewAutoGrantHandler()
+	// User presence/verification policy is required, never defaulted.
+	//
+	// This previously installed NewAutoGrantHandler() when the field was nil.
+	// That is not "no check" -- it is a check that always answers yes, so a
+	// caller who simply did not know the field existed got an authenticator
+	// that approved every ceremony, with nothing in its construction, logs or
+	// behaviour saying so. A control either enforces or is absent; it must
+	// never fabricate a pass. Callers that genuinely want unattended approval
+	// say so with an explicit NewAutoGrantHandler().
+	if config.UserPresenceHandler == nil {
+		return nil, ErrUserPresenceHandlerRequired
 	}
+	a.upHandler = config.UserPresenceHandler
 
 	return a, nil
 }

@@ -35,6 +35,7 @@ func testPolicyKey(t *testing.T) []byte {
 // testConfig returns a Config suitable for policy testing.
 func testPolicyConfig() *Config {
 	cfg := DefaultConfig()
+	cfg.UserPresenceHandler = NewAutoGrantHandler()
 	cfg.Storage = NewMemoryStorage()
 	cfg.PINMinLength = 6
 	cfg.PINMaxRetries = 5
@@ -61,6 +62,7 @@ func TestExtractPolicyFields(t *testing.T) {
 
 func TestExtractPolicyFields_DefaultConfig(t *testing.T) {
 	cfg := DefaultConfig()
+	cfg.UserPresenceHandler = NewAutoGrantHandler()
 	cfg.Storage = NewMemoryStorage()
 	cfg.SetDefaults()
 
@@ -565,6 +567,7 @@ func TestPolicyIntegration_AuthenticatorStartup(t *testing.T) {
 
 	// Create authenticator with policy provider
 	cfg := DefaultConfig()
+	cfg.UserPresenceHandler = NewAutoGrantHandler()
 	cfg.Storage = storage
 	cfg.PolicyIntegrityProvider = provider
 
@@ -586,6 +589,7 @@ func TestPolicyIntegration_TamperDetectedOnStartup(t *testing.T) {
 
 	// Create and sign policy with initial config
 	cfg := DefaultConfig()
+	cfg.UserPresenceHandler = NewAutoGrantHandler()
 	cfg.Storage = storage
 	cfg.PolicyIntegrityProvider = provider
 
@@ -603,6 +607,7 @@ func TestPolicyIntegration_TamperDetectedOnStartup(t *testing.T) {
 
 	// Tamper: create a new authenticator with modified config
 	cfg2 := DefaultConfig()
+	cfg2.UserPresenceHandler = NewAutoGrantHandler()
 	cfg2.Storage = storage
 	cfg2.PolicyIntegrityProvider = provider
 	cfg2.PINMinLength = 12 // Changed from default
@@ -619,6 +624,7 @@ func TestPolicyIntegration_NilProviderDisablesChecking(t *testing.T) {
 	storage := NewMemoryStorage()
 
 	cfg := DefaultConfig()
+	cfg.UserPresenceHandler = NewAutoGrantHandler()
 	cfg.Storage = storage
 	// No PolicyIntegrityProvider set
 

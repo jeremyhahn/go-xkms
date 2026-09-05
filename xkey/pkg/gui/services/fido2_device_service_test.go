@@ -249,6 +249,7 @@ func TestFIDO2DeviceService_GetStatus_AuthenticatorAvailable_WithAuth(t *testing
 	svc := NewFIDO2DeviceService(slog.Default())
 
 	cfg := authenticator.DefaultConfig()
+	cfg.UserPresenceHandler = authenticator.NewAutoGrantHandler()
 	cfg.Storage = authenticator.NewMemoryStorage()
 	auth, err := authenticator.NewAuthenticator(cfg)
 	require.NoError(t, err)
@@ -273,6 +274,7 @@ func TestFIDO2DeviceService_GetStatus_UHIDFailure_WithAuthenticator_RewritesReas
 	svc := NewFIDO2DeviceService(slog.Default())
 
 	cfg := authenticator.DefaultConfig()
+	cfg.UserPresenceHandler = authenticator.NewAutoGrantHandler()
 	cfg.Storage = authenticator.NewMemoryStorage()
 	auth, err := authenticator.NewAuthenticator(cfg)
 	require.NoError(t, err)
@@ -304,6 +306,7 @@ func TestFIDO2DeviceService_GetStatus_NonUHIDFailure_WithAuthenticator_RawReason
 	svc := NewFIDO2DeviceService(slog.Default())
 
 	cfg := authenticator.DefaultConfig()
+	cfg.UserPresenceHandler = authenticator.NewAutoGrantHandler()
 	cfg.Storage = authenticator.NewMemoryStorage()
 	auth, err := authenticator.NewAuthenticator(cfg)
 	require.NoError(t, err)

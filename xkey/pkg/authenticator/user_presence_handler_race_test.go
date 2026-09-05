@@ -34,6 +34,7 @@ func TestUserPresenceHandlerConcurrentSwap(t *testing.T) {
 	const iterations = 200
 
 	config := DefaultConfig()
+	config.UserPresenceHandler = NewAutoGrantHandler()
 	config.Storage = NewMemoryStorage()
 	config.EnablePIN = false
 	config.MaxCredentials = iterations + 1

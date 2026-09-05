@@ -25,6 +25,7 @@ import (
 func TestNewAuthenticator_Success(t *testing.T) {
 	storage := NewMemoryStorage()
 	config := DefaultConfig()
+	config.UserPresenceHandler = NewAutoGrantHandler()
 	config.Storage = storage
 
 	auth, err := NewAuthenticator(config)
@@ -48,6 +49,7 @@ func TestNewAuthenticator_NilConfig(t *testing.T) {
 
 func TestNewAuthenticator_NilStorage(t *testing.T) {
 	config := DefaultConfig()
+	config.UserPresenceHandler = NewAutoGrantHandler()
 	config.Storage = nil
 
 	auth, err := NewAuthenticator(config)
@@ -59,7 +61,8 @@ func TestNewAuthenticator_NilStorage(t *testing.T) {
 func TestNewAuthenticator_AppliesDefaults(t *testing.T) {
 	storage := NewMemoryStorage()
 	config := &Config{
-		Storage: storage,
+		UserPresenceHandler: NewAutoGrantHandler(),
+		Storage:             storage,
 	}
 
 	auth, err := NewAuthenticator(config)
@@ -90,6 +93,7 @@ func TestNewAuthenticator_LoadsExistingState(t *testing.T) {
 	require.NoError(t, err)
 
 	config := DefaultConfig()
+	config.UserPresenceHandler = NewAutoGrantHandler()
 	config.Storage = storage
 
 	auth, err := NewAuthenticator(config)
@@ -114,6 +118,7 @@ func TestNewAuthenticator_AAGUIDAlwaysFromConfig(t *testing.T) {
 	// Phase 1: Create an authenticator with the default AAGUID and persist
 	// state to storage via Close.
 	config1 := DefaultConfig()
+	config1.UserPresenceHandler = NewAutoGrantHandler()
 	config1.Storage = storage
 
 	auth1, err := NewAuthenticator(config1)
@@ -138,6 +143,7 @@ func TestNewAuthenticator_AAGUIDAlwaysFromConfig(t *testing.T) {
 		0x22, 0x33, 0x44, 0x55, 0x66, 0x77, 0x88, 0x99,
 	}
 	config2 := DefaultConfig()
+	config2.UserPresenceHandler = NewAutoGrantHandler()
 	config2.Storage = storage
 	config2.AAGUID = customAAGUID
 
@@ -411,6 +417,7 @@ func TestCommandContext_Default(t *testing.T) {
 func TestProcessCBORWithContext_CanceledContext(t *testing.T) {
 	storage := NewMemoryStorage()
 	config := DefaultConfig()
+	config.UserPresenceHandler = NewAutoGrantHandler()
 	config.Storage = storage
 	config.EnablePIN = true
 	config.RequireUserPresence = true
@@ -624,6 +631,7 @@ func createTestAuthenticator(t *testing.T) *Authenticator {
 	t.Helper()
 	storage := NewMemoryStorage()
 	config := DefaultConfig()
+	config.UserPresenceHandler = NewAutoGrantHandler()
 	config.Storage = storage
 
 	auth, err := NewAuthenticator(config)
@@ -821,6 +829,7 @@ func TestHandleSelection_AlwaysAutoApproves(t *testing.T) {
 			t.Parallel()
 			storage := NewMemoryStorage()
 			config := DefaultConfig()
+			config.UserPresenceHandler = NewAutoGrantHandler()
 			config.Storage = storage
 			config.EnableUserIntentCheck = tt.enableUserIntentCheck
 			handler := &trackingUPHandler{approve: true}
@@ -848,6 +857,7 @@ func TestHandleSelection_NeverBlocks(t *testing.T) {
 	t.Parallel()
 	storage := NewMemoryStorage()
 	config := DefaultConfig()
+	config.UserPresenceHandler = NewAutoGrantHandler()
 	config.Storage = storage
 	config.EnableUserIntentCheck = true
 	config.UserPresenceHandler = &blockingUPHandler{}
@@ -889,6 +899,7 @@ func createTestAuthenticatorWithPINEnabled(t *testing.T) *Authenticator {
 	t.Helper()
 	storage := NewMemoryStorage()
 	config := DefaultConfig()
+	config.UserPresenceHandler = NewAutoGrantHandler()
 	config.Storage = storage
 	config.EnablePIN = true
 
@@ -1027,6 +1038,7 @@ func TestNeedsPINBeforeTouch_PINNotEnabled(t *testing.T) {
 	t.Parallel()
 	storage := NewMemoryStorage()
 	config := DefaultConfig()
+	config.UserPresenceHandler = NewAutoGrantHandler()
 	config.Storage = storage
 	config.EnablePIN = false // PIN feature is off
 

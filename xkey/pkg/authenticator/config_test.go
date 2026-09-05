@@ -23,6 +23,7 @@ import (
 
 func TestDefaultConfig(t *testing.T) {
 	config := DefaultConfig()
+	config.UserPresenceHandler = NewAutoGrantHandler()
 
 	require.NotNil(t, config)
 	require.Equal(t, DefaultAAGUID, config.AAGUID)

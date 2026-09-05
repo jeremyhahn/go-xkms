@@ -548,6 +548,7 @@ func TestGetAssertion_HMACSecretExtension_InvalidSalt(t *testing.T) {
 func TestGetAssertion_HMACSecretExtension_Disabled(t *testing.T) {
 	storage := NewMemoryStorage()
 	config := DefaultConfig()
+	config.UserPresenceHandler = NewAutoGrantHandler()
 	config.Storage = storage
 	config.EnableHMACSecret = false // Disable hmac-secret
 
@@ -1419,6 +1420,7 @@ func TestWebAuthnSignatureVerification(t *testing.T) {
 func TestWebAuthnSignatureVerificationWithPIN(t *testing.T) {
 	storage := NewMemoryStorage()
 	config := &Config{
+		UserPresenceHandler:    NewAutoGrantHandler(),
 		AAGUID:                 DefaultAAGUID,
 		SupportedAlgorithms:    []int{COSEAlgES256},
 		MaxCredentials:         100,
@@ -2013,6 +2015,7 @@ func TestGetAssertionPublicAPI_SignatureCountIncrement(t *testing.T) {
 func TestGetAssertion_InternalPINHash_Success(t *testing.T) {
 	storage := NewMemoryStorage()
 	config := DefaultConfig()
+	config.UserPresenceHandler = NewAutoGrantHandler()
 	config.Storage = storage
 	config.EnablePIN = true
 
@@ -2074,6 +2077,7 @@ func TestGetAssertion_InternalPINHash_Success(t *testing.T) {
 func TestGetAssertion_InternalPINHash_WrongHash(t *testing.T) {
 	storage := NewMemoryStorage()
 	config := DefaultConfig()
+	config.UserPresenceHandler = NewAutoGrantHandler()
 	config.Storage = storage
 	config.EnablePIN = true
 
@@ -2114,6 +2118,7 @@ func TestGetAssertion_InternalPINHash_WrongHash(t *testing.T) {
 func TestGetAssertion_InternalPINHash_NoPINSet(t *testing.T) {
 	storage := NewMemoryStorage()
 	config := DefaultConfig()
+	config.UserPresenceHandler = NewAutoGrantHandler()
 	config.Storage = storage
 	config.EnablePIN = true
 
@@ -2151,6 +2156,7 @@ func TestGetAssertion_InternalPINHash_NoPINSet(t *testing.T) {
 func TestGetAssertionUserIntentCheck_Approved(t *testing.T) {
 	storage := NewMemoryStorage()
 	config := DefaultConfig()
+	config.UserPresenceHandler = NewAutoGrantHandler()
 	config.Storage = storage
 	config.EnablePIN = true
 	config.RequireUserPresence = false
@@ -2211,6 +2217,7 @@ func TestGetAssertionUserIntentCheck_Approved(t *testing.T) {
 func TestGetAssertionUserIntentCheck_Denied(t *testing.T) {
 	storage := NewMemoryStorage()
 	config := DefaultConfig()
+	config.UserPresenceHandler = NewAutoGrantHandler()
 	config.Storage = storage
 	config.EnablePIN = true
 	config.RequireUserPresence = false
@@ -2270,6 +2277,7 @@ func TestGetAssertionUserIntentCheck_Denied(t *testing.T) {
 func TestGetAssertionUserIntentCheck_Disabled(t *testing.T) {
 	storage := NewMemoryStorage()
 	config := DefaultConfig()
+	config.UserPresenceHandler = NewAutoGrantHandler()
 	config.Storage = storage
 	config.EnablePIN = true
 	config.RequireUserPresence = false
@@ -2332,6 +2340,7 @@ func TestGetAssertionUserIntentCheck_Disabled(t *testing.T) {
 func TestGetAssertionUVFalse_TouchOnly(t *testing.T) {
 	storage := NewMemoryStorage()
 	config := DefaultConfig()
+	config.UserPresenceHandler = NewAutoGrantHandler()
 	config.Storage = storage
 	config.EnablePIN = true
 	config.RequireUserPresence = true
@@ -2398,6 +2407,7 @@ func TestGetAssertionUVFalse_TouchOnly(t *testing.T) {
 func TestGetAssertionUVTrue_RequiresPIN(t *testing.T) {
 	storage := NewMemoryStorage()
 	config := DefaultConfig()
+	config.UserPresenceHandler = NewAutoGrantHandler()
 	config.Storage = storage
 	config.EnablePIN = true
 

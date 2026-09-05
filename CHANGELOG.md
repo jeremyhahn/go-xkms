@@ -45,6 +45,43 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
   The `--auto-uv` flag and `fido2.auto_uv` setting are removed with it; their
   only effect was to turn the assertion on.
+- **A nil `UserPresenceHandler` installed an auto-approving one, so an
+  omitted handler silently granted every ceremony** (#317).
+  `xkey/pkg/authenticator/authenticator.go`.
+
+  ```go
+  if config.UserPresenceHandler != nil {
+      a.upHandler = config.UserPresenceHandler
+  } else {
+      a.upHandler = NewAutoGrantHandler()   // approves everything
+  }
+  ```
+
+  The nil case did not skip a check -- it substituted one that always answers
+  yes. A caller that simply did not know the field existed got an
+  authenticator granting user presence unconditionally, with nothing in its
+  construction, its logs or its behaviour saying so. It is the fail-open
+  family of #313 in its most dangerous form: the other sites omit a control,
+  this one fabricated a passing result for it.
+
+  `NewAuthenticator` now returns `ErrUserPresenceHandlerRequired` when the
+  field is nil. There is no safe default to pick: auto-granting fabricates a
+  verification, and denying everything silently disables the authenticator,
+  so the policy is stated by the caller.
+
+  Each construction site now says what it means. The GUI installs its
+  `SocketHandler` at construction instead of relying on
+  `AttachPresenceHandler` to replace an auto-grant default afterwards -- and
+  because `a.deviceNotifier` is populated in a later startup phase, that
+  handler begins with no notifier, which prompts nobody and times out. A
+  refusal is the correct direction to fail in that window.
+  `virtualdevice` keeps unattended approval, which is right for a
+  programmatically driven device with no prompt channel, but now states it at
+  the call site rather than inheriting it invisibly.
+
+  Together with #280 this closes both paths that could set UV or UP without a
+  human: the key backend asserting verification, and the handler fabricating
+  it. Neither fix is sufficient alone.
 
 ## [0.9.3-alpha] - 2026-09-05
 

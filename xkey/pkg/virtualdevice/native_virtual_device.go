@@ -185,7 +185,17 @@ func NewNativeVirtualDevice(config *NativeVirtualDeviceConfig) (*NativeVirtualDe
 		authConfig.RequireUserPresence = config.RequireUserPresence
 		authConfig.EnableUserIntentCheck = config.EnableUserIntentCheck
 		authConfig.KeyBackend = config.KeyBackend
-		authConfig.UserPresenceHandler = config.UserPresenceHandler
+		// A native virtual device has no human and no prompt channel: it is
+		// driven programmatically (CDP, tests, headless harnesses), so
+		// unattended approval is the correct policy when the caller does not
+		// supply a handler. #317 removed the auto-grant DEFAULT inside
+		// NewAuthenticator because it was invisible; stating it here keeps the
+		// behaviour while making it a choice this constructor owns.
+		if config.UserPresenceHandler != nil {
+			authConfig.UserPresenceHandler = config.UserPresenceHandler
+		} else {
+			authConfig.UserPresenceHandler = authenticator.NewAutoGrantHandler()
+		}
 
 		// Create authenticator
 		var err error

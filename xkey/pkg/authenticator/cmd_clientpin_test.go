@@ -38,6 +38,7 @@ func createTestAuthenticatorWithPIN(t *testing.T) *Authenticator {
 
 	storage := NewMemoryStorage()
 	config := &Config{
+		UserPresenceHandler: NewAutoGrantHandler(),
 		Storage:             storage,
 		EnablePIN:           true,
 		PINMinLength:        4,
@@ -1091,6 +1092,7 @@ func TestGetUvRetries(t *testing.T) {
 func TestClientPINDisabled(t *testing.T) {
 	storage := NewMemoryStorage()
 	config := &Config{
+		UserPresenceHandler: NewAutoGrantHandler(),
 		Storage:             storage,
 		EnablePIN:           false, // PIN disabled
 		SupportedAlgorithms: []int{COSEAlgES256},
@@ -2940,6 +2942,7 @@ func createTestAuthenticatorWithUV(t *testing.T, handlesUV bool) *Authenticator 
 	t.Helper()
 	storage := NewMemoryStorage()
 	config := &Config{
+		UserPresenceHandler: NewAutoGrantHandler(),
 		Storage:             storage,
 		EnablePIN:           true,
 		PINMinLength:        4,

@@ -393,6 +393,7 @@ func TestClearAllCredentials_WithListableStorageFallback(t *testing.T) {
 	storage := &nonClearableStorage{storage: baseStorage}
 
 	config := &Config{
+		UserPresenceHandler:        NewAutoGrantHandler(),
 		AAGUID:                     DefaultAAGUID,
 		SupportedAlgorithms:        []int{COSEAlgES256},
 		MaxCredentials:             100,
@@ -536,6 +537,7 @@ func TestClearAllCredentials_ListAllError(t *testing.T) {
 	}
 
 	config := &Config{
+		UserPresenceHandler:    NewAutoGrantHandler(),
 		AAGUID:                 DefaultAAGUID,
 		SupportedAlgorithms:    []int{COSEAlgES256},
 		MaxCredentials:         100,
@@ -563,6 +565,7 @@ func TestClearAllCredentials_NoListableOrClearableStorage(t *testing.T) {
 	storage := &minimalStorage{}
 
 	config := &Config{
+		UserPresenceHandler:    NewAutoGrantHandler(),
 		AAGUID:                 DefaultAAGUID,
 		SupportedAlgorithms:    []int{COSEAlgES256},
 		MaxCredentials:         100,
@@ -596,6 +599,7 @@ func TestClearAllCredentials_DeleteErrors(t *testing.T) {
 	}
 
 	config := &Config{
+		UserPresenceHandler:    NewAutoGrantHandler(),
 		AAGUID:                 DefaultAAGUID,
 		SupportedAlgorithms:    []int{COSEAlgES256},
 		MaxCredentials:         100,
@@ -627,6 +631,7 @@ func TestHandleReset_StorageSaveStateError(t *testing.T) {
 	}
 
 	config := &Config{
+		UserPresenceHandler:    NewAutoGrantHandler(),
 		AAGUID:                 DefaultAAGUID,
 		SupportedAlgorithms:    []int{COSEAlgES256},
 		MaxCredentials:         100,
@@ -892,6 +897,7 @@ func createTestAuthenticatorWithStorageForReset(t *testing.T) (*Authenticator, *
 	t.Helper()
 	storage := NewMemoryStorage()
 	config := &Config{
+		UserPresenceHandler:        NewAutoGrantHandler(),
 		AAGUID:                     DefaultAAGUID,
 		SupportedAlgorithms:        []int{COSEAlgES256},
 		MaxCredentials:             100,

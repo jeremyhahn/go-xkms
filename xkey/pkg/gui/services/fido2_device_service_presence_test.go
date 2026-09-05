@@ -79,6 +79,7 @@ func newSharedAuthenticator(t *testing.T, timeout time.Duration) *authenticator.
 	t.Helper()
 
 	config := authenticator.DefaultConfig()
+	config.UserPresenceHandler = authenticator.NewAutoGrantHandler()
 	config.Storage = authenticator.NewMemoryStorage()
 	config.EnablePIN = false
 	config.UserPresenceTimeout = timeout
@@ -192,6 +193,7 @@ func TestFIDO2DeviceService_StopRestoresPriorHandlerWhenNotAttached(t *testing.T
 	prior := newCountingPresenceHandler()
 
 	config := authenticator.DefaultConfig()
+	config.UserPresenceHandler = authenticator.NewAutoGrantHandler()
 	config.Storage = authenticator.NewMemoryStorage()
 	config.EnablePIN = false
 	config.UserPresenceTimeout = presenceTestTimeout

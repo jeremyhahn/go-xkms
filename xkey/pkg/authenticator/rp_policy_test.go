@@ -269,6 +269,7 @@ func TestRPPolicyBlockedMakeCredential(t *testing.T) {
 	policyStore := NewMemoryRPPolicyStore()
 
 	config := DefaultConfig()
+	config.UserPresenceHandler = NewAutoGrantHandler()
 	config.Storage = storage
 	config.RPPolicyStore = policyStore
 	// Disable PIN so we can test without providing pinUvAuthParam
@@ -345,6 +346,7 @@ func TestRPPolicyBlockedGetAssertion(t *testing.T) {
 	policyStore := NewMemoryRPPolicyStore()
 
 	config := DefaultConfig()
+	config.UserPresenceHandler = NewAutoGrantHandler()
 	config.Storage = storage
 	config.RPPolicyStore = policyStore
 	config.EnablePIN = false
@@ -464,6 +466,7 @@ func TestSilentAuthViaRPPolicy(t *testing.T) {
 	policyStore := NewMemoryRPPolicyStore()
 
 	config := DefaultConfig()
+	config.UserPresenceHandler = NewAutoGrantHandler()
 	config.Storage = storage
 	config.RPPolicyStore = policyStore
 	config.EnablePIN = false
@@ -559,6 +562,7 @@ func TestRPPolicyUVDiscouragedSkipsPIN(t *testing.T) {
 	require.NoError(t, err)
 
 	config := DefaultConfig()
+	config.UserPresenceHandler = NewAutoGrantHandler()
 	config.Storage = storage
 	config.RPPolicyStore = policyStore
 	config.EnablePIN = true
@@ -719,6 +723,7 @@ func TestRPPolicyUVDiscouragedSkipsPIN(t *testing.T) {
 func TestStoredCredentialRPFields(t *testing.T) {
 	storage := NewMemoryStorage()
 	config := DefaultConfig()
+	config.UserPresenceHandler = NewAutoGrantHandler()
 	config.Storage = storage
 	config.EnablePIN = false
 	config.EnableCredentialManagement = false
@@ -824,6 +829,7 @@ func TestGetAssertionSkipsPINWhenUVNotRequested(t *testing.T) {
 	require.NoError(t, err)
 
 	config := DefaultConfig()
+	config.UserPresenceHandler = NewAutoGrantHandler()
 	config.Storage = storage
 	config.EnablePIN = true
 	config.AlwaysUV = false
@@ -963,6 +969,7 @@ func TestGetInfoConfigurableTransports(t *testing.T) {
 	t.Run("custom transports in GetInfo", func(t *testing.T) {
 		storage := NewMemoryStorage()
 		config := DefaultConfig()
+		config.UserPresenceHandler = NewAutoGrantHandler()
 		config.Storage = storage
 		config.Transports = []string{"internal", "hybrid"}
 
@@ -988,6 +995,7 @@ func TestGetInfoConfigurableTransports(t *testing.T) {
 	t.Run("default transports is usb", func(t *testing.T) {
 		storage := NewMemoryStorage()
 		config := DefaultConfig()
+		config.UserPresenceHandler = NewAutoGrantHandler()
 		config.Storage = storage
 		// No custom transports set
 
@@ -1016,6 +1024,7 @@ func TestGetInfoAlwaysUVOption(t *testing.T) {
 	t.Run("alwaysUv present when enabled", func(t *testing.T) {
 		storage := NewMemoryStorage()
 		config := DefaultConfig()
+		config.UserPresenceHandler = NewAutoGrantHandler()
 		config.Storage = storage
 		config.AlwaysUV = true
 
@@ -1043,6 +1052,7 @@ func TestGetInfoAlwaysUVOption(t *testing.T) {
 	t.Run("alwaysUv absent when disabled", func(t *testing.T) {
 		storage := NewMemoryStorage()
 		config := DefaultConfig()
+		config.UserPresenceHandler = NewAutoGrantHandler()
 		config.Storage = storage
 		config.AlwaysUV = false
 
@@ -1073,6 +1083,7 @@ func TestGetInfoEnterpriseAttestationOption(t *testing.T) {
 	t.Run("ep present when enabled", func(t *testing.T) {
 		storage := NewMemoryStorage()
 		config := DefaultConfig()
+		config.UserPresenceHandler = NewAutoGrantHandler()
 		config.Storage = storage
 		config.EnableEnterpriseAttestation = true
 
@@ -1100,6 +1111,7 @@ func TestGetInfoEnterpriseAttestationOption(t *testing.T) {
 	t.Run("ep absent when disabled", func(t *testing.T) {
 		storage := NewMemoryStorage()
 		config := DefaultConfig()
+		config.UserPresenceHandler = NewAutoGrantHandler()
 		config.Storage = storage
 		config.EnableEnterpriseAttestation = false
 
@@ -1130,6 +1142,7 @@ func TestGetInfoLargeBlobExtension(t *testing.T) {
 	t.Run("largeBlobKey in extensions when enabled", func(t *testing.T) {
 		storage := NewMemoryStorage()
 		config := DefaultConfig()
+		config.UserPresenceHandler = NewAutoGrantHandler()
 		config.Storage = storage
 		config.EnableLargeBlobs = true
 
@@ -1161,6 +1174,7 @@ func TestGetInfoLargeBlobExtension(t *testing.T) {
 	t.Run("largeBlobKey absent when disabled", func(t *testing.T) {
 		storage := NewMemoryStorage()
 		config := DefaultConfig()
+		config.UserPresenceHandler = NewAutoGrantHandler()
 		config.Storage = storage
 		config.EnableLargeBlobs = false
 

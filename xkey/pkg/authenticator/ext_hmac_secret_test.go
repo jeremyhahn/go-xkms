@@ -266,6 +266,7 @@ func TestHMACSecretFullRoundTrip(t *testing.T) {
 		// Create authenticator and process
 		storage := NewMemoryStorage()
 		config := DefaultConfig()
+		config.UserPresenceHandler = NewAutoGrantHandler()
 		config.Storage = storage
 		auth, err := NewAuthenticator(config)
 		if err != nil {
@@ -321,6 +322,7 @@ func TestHMACSecretFullRoundTrip(t *testing.T) {
 		// Create authenticator
 		storage := NewMemoryStorage()
 		config := DefaultConfig()
+		config.UserPresenceHandler = NewAutoGrantHandler()
 		config.Storage = storage
 		auth, err := NewAuthenticator(config)
 		if err != nil {
@@ -409,6 +411,7 @@ func TestHMACSecretSaltAuthVerificationFailure(t *testing.T) {
 	// Create authenticator
 	storage := NewMemoryStorage()
 	config := DefaultConfig()
+	config.UserPresenceHandler = NewAutoGrantHandler()
 	config.Storage = storage
 	auth, err := NewAuthenticator(config)
 	if err != nil {
@@ -453,6 +456,7 @@ func TestHMACSecretProtocolMismatch(t *testing.T) {
 
 	storage := NewMemoryStorage()
 	config := DefaultConfig()
+	config.UserPresenceHandler = NewAutoGrantHandler()
 	config.Storage = storage
 	auth, err := NewAuthenticator(config)
 	if err != nil {
@@ -500,6 +504,7 @@ func TestHMACSecretMissingCredentialKey(t *testing.T) {
 
 	storage := NewMemoryStorage()
 	config := DefaultConfig()
+	config.UserPresenceHandler = NewAutoGrantHandler()
 	config.Storage = storage
 	auth, err := NewAuthenticator(config)
 	if err != nil {
@@ -722,6 +727,7 @@ func TestHMACSecretNilInput(t *testing.T) {
 
 	storage := NewMemoryStorage()
 	config := DefaultConfig()
+	config.UserPresenceHandler = NewAutoGrantHandler()
 	config.Storage = storage
 	auth, err := NewAuthenticator(config)
 	if err != nil {
@@ -748,6 +754,7 @@ func TestHMACSecretInvalidSharedSecret(t *testing.T) {
 
 	storage := NewMemoryStorage()
 	config := DefaultConfig()
+	config.UserPresenceHandler = NewAutoGrantHandler()
 	config.Storage = storage
 	auth, err := NewAuthenticator(config)
 	if err != nil {
@@ -1098,6 +1105,7 @@ func TestHMACSecretWithProtocolV2(t *testing.T) {
 
 	storage := NewMemoryStorage()
 	config := DefaultConfig()
+	config.UserPresenceHandler = NewAutoGrantHandler()
 	config.Storage = storage
 	auth2, err := NewAuthenticator(config)
 	if err != nil {
@@ -1168,6 +1176,7 @@ func TestHMACSecretV2OutputHasRandomIVPrefix(t *testing.T) {
 
 	storage := NewMemoryStorage()
 	config := DefaultConfig()
+	config.UserPresenceHandler = NewAutoGrantHandler()
 	config.Storage = storage
 	auth, err := NewAuthenticator(config)
 	require.NoError(t, err)
@@ -1278,6 +1287,7 @@ func TestHMACSecretV2RejectsTruncatedSaltAuth(t *testing.T) {
 
 	storage := NewMemoryStorage()
 	config := DefaultConfig()
+	config.UserPresenceHandler = NewAutoGrantHandler()
 	config.Storage = storage
 	auth, err := NewAuthenticator(config)
 	require.NoError(t, err)
@@ -1292,6 +1302,7 @@ func TestProcessHMACSecretExtension(t *testing.T) {
 	t.Run("nil input returns error", func(t *testing.T) {
 		storage := NewMemoryStorage()
 		config := DefaultConfig()
+		config.UserPresenceHandler = NewAutoGrantHandler()
 		config.Storage = storage
 		auth, err := NewAuthenticator(config)
 		require.NoError(t, err)
@@ -1307,6 +1318,7 @@ func TestProcessHMACSecretExtension(t *testing.T) {
 	t.Run("invalid credential key length returns error", func(t *testing.T) {
 		storage := NewMemoryStorage()
 		config := DefaultConfig()
+		config.UserPresenceHandler = NewAutoGrantHandler()
 		config.Storage = storage
 		auth, err := NewAuthenticator(config)
 		require.NoError(t, err)
@@ -1347,6 +1359,7 @@ func TestProcessHMACSecretExtension(t *testing.T) {
 	t.Run("unsupported protocol version returns error", func(t *testing.T) {
 		storage := NewMemoryStorage()
 		config := DefaultConfig()
+		config.UserPresenceHandler = NewAutoGrantHandler()
 		config.Storage = storage
 		auth, err := NewAuthenticator(config)
 		require.NoError(t, err)
@@ -1383,6 +1396,7 @@ func TestProcessHMACSecretExtension(t *testing.T) {
 	t.Run("protocol version 0 returns error", func(t *testing.T) {
 		storage := NewMemoryStorage()
 		config := DefaultConfig()
+		config.UserPresenceHandler = NewAutoGrantHandler()
 		config.Storage = storage
 		auth, err := NewAuthenticator(config)
 		require.NoError(t, err)
@@ -1418,6 +1432,7 @@ func TestProcessHMACSecretExtension(t *testing.T) {
 	t.Run("invalid key agreement returns error", func(t *testing.T) {
 		storage := NewMemoryStorage()
 		config := DefaultConfig()
+		config.UserPresenceHandler = NewAutoGrantHandler()
 		config.Storage = storage
 		auth, err := NewAuthenticator(config)
 		require.NoError(t, err)
@@ -1737,6 +1752,7 @@ func TestProcessHMACSecretExtensionSuccessPath(t *testing.T) {
 		// Create authenticator
 		storage := NewMemoryStorage()
 		config := DefaultConfig()
+		config.UserPresenceHandler = NewAutoGrantHandler()
 		config.Storage = storage
 		auth, err := NewAuthenticator(config)
 		require.NoError(t, err)
@@ -1798,6 +1814,7 @@ func TestProcessHMACSecretExtensionSuccessPath(t *testing.T) {
 		// Create authenticator
 		storage := NewMemoryStorage()
 		config := DefaultConfig()
+		config.UserPresenceHandler = NewAutoGrantHandler()
 		config.Storage = storage
 		auth, err := NewAuthenticator(config)
 		require.NoError(t, err)
@@ -1870,6 +1887,7 @@ func TestProcessHMACSecretExtensionDecryptionFailure(t *testing.T) {
 		// Create authenticator
 		storage := NewMemoryStorage()
 		config := DefaultConfig()
+		config.UserPresenceHandler = NewAutoGrantHandler()
 		config.Storage = storage
 		auth, err := NewAuthenticator(config)
 		require.NoError(t, err)
@@ -1910,6 +1928,7 @@ func TestProcessHMACSecretExtensionEdgeCases(t *testing.T) {
 
 		storage := NewMemoryStorage()
 		config := DefaultConfig()
+		config.UserPresenceHandler = NewAutoGrantHandler()
 		config.Storage = storage
 		auth, err := NewAuthenticator(config)
 		require.NoError(t, err)
@@ -1956,6 +1975,7 @@ func TestProcessHMACSecretExtensionEdgeCases(t *testing.T) {
 
 		storage := NewMemoryStorage()
 		config := DefaultConfig()
+		config.UserPresenceHandler = NewAutoGrantHandler()
 		config.Storage = storage
 		auth, err := NewAuthenticator(config)
 		require.NoError(t, err)
@@ -1993,6 +2013,7 @@ func TestProcessHMACSecretExtensionEdgeCases(t *testing.T) {
 
 		storage := NewMemoryStorage()
 		config := DefaultConfig()
+		config.UserPresenceHandler = NewAutoGrantHandler()
 		config.Storage = storage
 		auth, err := NewAuthenticator(config)
 		require.NoError(t, err)
@@ -2030,6 +2051,7 @@ func TestProcessHMACSecretExtensionEdgeCases(t *testing.T) {
 
 		storage := NewMemoryStorage()
 		config := DefaultConfig()
+		config.UserPresenceHandler = NewAutoGrantHandler()
 		config.Storage = storage
 		auth, err := NewAuthenticator(config)
 		require.NoError(t, err)
@@ -2065,6 +2087,7 @@ func TestProcessHMACSecretExtensionEdgeCases(t *testing.T) {
 
 		storage := NewMemoryStorage()
 		config := DefaultConfig()
+		config.UserPresenceHandler = NewAutoGrantHandler()
 		config.Storage = storage
 		auth, err := NewAuthenticator(config)
 		require.NoError(t, err)

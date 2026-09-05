@@ -1487,6 +1487,7 @@ func createTestConfigAuthenticator(t *testing.T) *Authenticator {
 
 	storage := NewMemoryStorage()
 	config := &Config{
+		UserPresenceHandler: NewAutoGrantHandler(),
 		Storage:             storage,
 		EnablePIN:           true,
 		PINMinLength:        4,
@@ -1506,6 +1507,7 @@ func createTestConfigAuthenticatorNoPIN(t *testing.T) *Authenticator {
 
 	storage := NewMemoryStorage()
 	config := &Config{
+		UserPresenceHandler: NewAutoGrantHandler(),
 		Storage:             storage,
 		EnablePIN:           false,
 		SupportedAlgorithms: []int{COSEAlgES256},

@@ -69,6 +69,7 @@ func createTestHandler(t *testing.T) (*CTAPHIDHandler, *testResponseCollector) {
 
 	storage := NewMemoryStorage()
 	config := DefaultConfig()
+	config.UserPresenceHandler = NewAutoGrantHandler()
 	config.Storage = storage
 	config.EnablePIN = true
 	config.EnableHMACSecret = true
@@ -748,6 +749,7 @@ func TestCTAPHIDHandler_Authenticator(t *testing.T) {
 func TestCTAPHIDHandler_NoResponseHandler(t *testing.T) {
 	storage := NewMemoryStorage()
 	config := DefaultConfig()
+	config.UserPresenceHandler = NewAutoGrantHandler()
 	config.Storage = storage
 
 	auth, err := NewAuthenticator(config)
@@ -987,6 +989,7 @@ func createTestHandlerWithDelay(t *testing.T, delay time.Duration) (*CTAPHIDHand
 
 	storage := NewMemoryStorage()
 	config := DefaultConfig()
+	config.UserPresenceHandler = NewAutoGrantHandler()
 	config.Storage = storage
 	config.EnablePIN = false
 	config.EnableHMACSecret = false
@@ -1250,6 +1253,7 @@ func TestCTAPHIDHandler_KeepaliveProcessingWhenPINRequired(t *testing.T) {
 
 	storage := NewMemoryStorage()
 	config := DefaultConfig()
+	config.UserPresenceHandler = NewAutoGrantHandler()
 	config.Storage = storage
 	config.EnablePIN = true
 	config.EnableHMACSecret = false
@@ -1345,6 +1349,7 @@ func TestCTAPHIDHandler_SetLogger(t *testing.T) {
 
 	storage := NewMemoryStorage()
 	config := DefaultConfig()
+	config.UserPresenceHandler = NewAutoGrantHandler()
 	config.Storage = storage
 	auth, err := NewAuthenticator(config)
 	if err != nil {
@@ -1692,6 +1697,7 @@ func TestProcessCBORCommandLocked_WithLogger(t *testing.T) {
 
 	storage := NewMemoryStorage()
 	config := DefaultConfig()
+	config.UserPresenceHandler = NewAutoGrantHandler()
 	config.Storage = storage
 	config.EnablePIN = true
 
@@ -1745,6 +1751,7 @@ func TestProcessCBORCommandLocked_WithLoggerErrorPath(t *testing.T) {
 
 	storage := NewMemoryStorage()
 	config := DefaultConfig()
+	config.UserPresenceHandler = NewAutoGrantHandler()
 	config.Storage = storage
 
 	auth, err := NewAuthenticator(config)
@@ -2077,6 +2084,7 @@ func TestProcessCBORCommandLocked_ConcurrentRequests(t *testing.T) {
 
 	storage := NewMemoryStorage()
 	config := DefaultConfig()
+	config.UserPresenceHandler = NewAutoGrantHandler()
 	config.Storage = storage
 
 	auth, err := NewAuthenticator(config)
@@ -2289,6 +2297,7 @@ func TestProcessCBORCommandLocked_GetAssertionMissingParams(t *testing.T) {
 func TestCTAPHIDCancel_AbortsUserPresence(t *testing.T) {
 	storage := NewMemoryStorage()
 	config := DefaultConfig()
+	config.UserPresenceHandler = NewAutoGrantHandler()
 	config.Storage = storage
 	config.EnablePIN = true
 	config.RequireUserPresence = true
@@ -2565,6 +2574,7 @@ func TestNoCredentialsDeferral_WithCredentials_SkipsDeferral(t *testing.T) {
 
 	storage := NewMemoryStorage()
 	config := DefaultConfig()
+	config.UserPresenceHandler = NewAutoGrantHandler()
 	config.Storage = storage
 	config.EnablePIN = false
 	config.UserPresenceHandler = NewAutoGrantHandler()
@@ -2657,6 +2667,7 @@ func TestCTAPHIDHandler_KeepaliveProcessingWhenPINRequired_GetAssertion(t *testi
 
 	storage := NewMemoryStorage()
 	config := DefaultConfig()
+	config.UserPresenceHandler = NewAutoGrantHandler()
 	config.Storage = storage
 	config.EnablePIN = true
 	config.EnableHMACSecret = false

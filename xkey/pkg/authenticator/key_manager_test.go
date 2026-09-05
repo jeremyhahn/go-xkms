@@ -46,6 +46,7 @@ func createTestKeyManagerState() (*AuthenticatorState, *Config) {
 	state.AAGUID = DefaultAAGUID
 
 	config := DefaultConfig()
+	config.UserPresenceHandler = NewAutoGrantHandler()
 	config.Storage = NewMemoryStorage()
 
 	return state, config

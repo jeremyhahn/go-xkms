@@ -90,6 +90,7 @@ func TestHandleGetInfo(t *testing.T) {
 	t.Run("includes extensions when enabled", func(t *testing.T) {
 		storage := NewMemoryStorage()
 		config := DefaultConfig()
+		config.UserPresenceHandler = NewAutoGrantHandler()
 		config.Storage = storage
 		config.EnableHMACSecret = true
 
@@ -114,6 +115,7 @@ func TestHandleGetInfo(t *testing.T) {
 	t.Run("options reflect configuration", func(t *testing.T) {
 		storage := NewMemoryStorage()
 		config := DefaultConfig()
+		config.UserPresenceHandler = NewAutoGrantHandler()
 		config.Storage = storage
 		config.EnablePIN = true
 		config.EnableResidentKey = true
@@ -168,6 +170,7 @@ func TestHandleGetInfo(t *testing.T) {
 		require.NoError(t, err)
 
 		config := DefaultConfig()
+		config.UserPresenceHandler = NewAutoGrantHandler()
 		config.Storage = storage
 		config.EnablePIN = true
 
@@ -189,6 +192,7 @@ func TestHandleGetInfo(t *testing.T) {
 	t.Run("includes minPINLength when PIN enabled", func(t *testing.T) {
 		storage := NewMemoryStorage()
 		config := DefaultConfig()
+		config.UserPresenceHandler = NewAutoGrantHandler()
 		config.Storage = storage
 		config.EnablePIN = true
 		config.PINMinLength = 6
@@ -212,6 +216,7 @@ func TestHandleGetInfo(t *testing.T) {
 	t.Run("includes remaining discoverable credentials", func(t *testing.T) {
 		storage := NewMemoryStorage()
 		config := DefaultConfig()
+		config.UserPresenceHandler = NewAutoGrantHandler()
 		config.Storage = storage
 		config.MaxResidentCredentials = 10
 
@@ -234,6 +239,7 @@ func TestHandleGetInfo(t *testing.T) {
 	t.Run("remaining decreases with stored credentials", func(t *testing.T) {
 		storage := NewMemoryStorage()
 		config := DefaultConfig()
+		config.UserPresenceHandler = NewAutoGrantHandler()
 		config.Storage = storage
 		config.MaxResidentCredentials = 10
 
@@ -279,6 +285,7 @@ func TestGetVersions(t *testing.T) {
 	t.Run("includes FIDO_2_1_PRE and FIDO_2_1 when credential management enabled", func(t *testing.T) {
 		storage := NewMemoryStorage()
 		config := DefaultConfig()
+		config.UserPresenceHandler = NewAutoGrantHandler()
 		config.Storage = storage
 		config.EnableCredentialManagement = true
 
@@ -294,6 +301,7 @@ func TestGetVersions(t *testing.T) {
 	t.Run("excludes FIDO_2_1 and FIDO_2_1_PRE when credential management disabled", func(t *testing.T) {
 		storage := NewMemoryStorage()
 		config := DefaultConfig()
+		config.UserPresenceHandler = NewAutoGrantHandler()
 		config.Storage = storage
 		config.EnableCredentialManagement = false
 
@@ -311,6 +319,7 @@ func TestGetExtensions(t *testing.T) {
 	t.Run("includes credProtect always", func(t *testing.T) {
 		storage := NewMemoryStorage()
 		config := DefaultConfig()
+		config.UserPresenceHandler = NewAutoGrantHandler()
 		config.Storage = storage
 		config.EnableHMACSecret = false
 
@@ -325,6 +334,7 @@ func TestGetExtensions(t *testing.T) {
 	t.Run("includes hmac-secret when enabled", func(t *testing.T) {
 		storage := NewMemoryStorage()
 		config := DefaultConfig()
+		config.UserPresenceHandler = NewAutoGrantHandler()
 		config.Storage = storage
 		config.EnableHMACSecret = true
 
@@ -339,6 +349,7 @@ func TestGetExtensions(t *testing.T) {
 	t.Run("excludes hmac-secret when disabled", func(t *testing.T) {
 		storage := NewMemoryStorage()
 		config := DefaultConfig()
+		config.UserPresenceHandler = NewAutoGrantHandler()
 		config.Storage = storage
 		config.EnableHMACSecret = false
 
@@ -373,6 +384,7 @@ func TestGetOptions(t *testing.T) {
 	t.Run("rk present when enabled", func(t *testing.T) {
 		storage := NewMemoryStorage()
 		config := DefaultConfig()
+		config.UserPresenceHandler = NewAutoGrantHandler()
 		config.Storage = storage
 		config.EnableResidentKey = true
 
@@ -387,6 +399,7 @@ func TestGetOptions(t *testing.T) {
 	t.Run("rk absent when disabled (default false omitted)", func(t *testing.T) {
 		storage := NewMemoryStorage()
 		config := DefaultConfig()
+		config.UserPresenceHandler = NewAutoGrantHandler()
 		config.Storage = storage
 		config.EnableResidentKey = false
 
@@ -402,6 +415,7 @@ func TestGetOptions(t *testing.T) {
 	t.Run("uv absent when PIN disabled", func(t *testing.T) {
 		storage := NewMemoryStorage()
 		config := DefaultConfig()
+		config.UserPresenceHandler = NewAutoGrantHandler()
 		config.Storage = storage
 		config.EnablePIN = false
 		config.EnableCredentialManagement = false // Must also disable to prevent PIN being forced on
@@ -426,6 +440,7 @@ func TestGetOptions(t *testing.T) {
 		require.NoError(t, err)
 
 		config := DefaultConfig()
+		config.UserPresenceHandler = NewAutoGrantHandler()
 		config.Storage = storage
 		config.EnablePIN = true
 
@@ -442,6 +457,7 @@ func TestGetOptions(t *testing.T) {
 	t.Run("makeCredUvNotRqd is true when PIN not set", func(t *testing.T) {
 		storage := NewMemoryStorage()
 		config := DefaultConfig()
+		config.UserPresenceHandler = NewAutoGrantHandler()
 		config.Storage = storage
 		config.EnablePIN = true // PIN enabled but not yet set
 
@@ -456,6 +472,7 @@ func TestGetOptions(t *testing.T) {
 	t.Run("makeCredUvNotRqd is true when PIN disabled", func(t *testing.T) {
 		storage := NewMemoryStorage()
 		config := DefaultConfig()
+		config.UserPresenceHandler = NewAutoGrantHandler()
 		config.Storage = storage
 		config.EnablePIN = false
 		config.EnableCredentialManagement = false // Must also disable to prevent PIN being forced on
@@ -471,6 +488,7 @@ func TestGetOptions(t *testing.T) {
 	t.Run("credMgmt absent when disabled", func(t *testing.T) {
 		storage := NewMemoryStorage()
 		config := DefaultConfig()
+		config.UserPresenceHandler = NewAutoGrantHandler()
 		config.Storage = storage
 		config.EnableCredentialManagement = false
 
@@ -503,6 +521,7 @@ func TestGetAlgorithms(t *testing.T) {
 	t.Run("returns supported algorithms", func(t *testing.T) {
 		storage := NewMemoryStorage()
 		config := DefaultConfig()
+		config.UserPresenceHandler = NewAutoGrantHandler()
 		config.Storage = storage
 		config.SupportedAlgorithms = []int{COSEAlgES256, COSEAlgEdDSA}
 
@@ -537,6 +556,7 @@ func TestGetRemainingDiscoverableCredentials(t *testing.T) {
 	t.Run("returns max when empty", func(t *testing.T) {
 		storage := NewMemoryStorage()
 		config := DefaultConfig()
+		config.UserPresenceHandler = NewAutoGrantHandler()
 		config.Storage = storage
 		config.MaxResidentCredentials = 25
 
@@ -565,6 +585,7 @@ func TestGetRemainingDiscoverableCredentials(t *testing.T) {
 		}
 
 		config := DefaultConfig()
+		config.UserPresenceHandler = NewAutoGrantHandler()
 		config.Storage = storage
 		config.MaxResidentCredentials = 25
 
@@ -580,6 +601,7 @@ func TestGetRemainingDiscoverableCredentials(t *testing.T) {
 	t.Run("returns zero when at limit", func(t *testing.T) {
 		storage := NewMemoryStorage()
 		config := DefaultConfig()
+		config.UserPresenceHandler = NewAutoGrantHandler()
 		config.Storage = storage
 		config.MaxResidentCredentials = 3
 
@@ -618,6 +640,7 @@ func TestGetRemainingDiscoverableCredentials(t *testing.T) {
 		require.NoError(t, err)
 
 		config := DefaultConfig()
+		config.UserPresenceHandler = NewAutoGrantHandler()
 		config.Storage = storage
 		config.MaxResidentCredentials = 25
 
@@ -637,6 +660,7 @@ func TestGetInfoPinUvAuthProtocolsV2First(t *testing.T) {
 	t.Run("PIN enabled returns protocols 2 then 1", func(t *testing.T) {
 		storage := NewMemoryStorage()
 		config := DefaultConfig()
+		config.UserPresenceHandler = NewAutoGrantHandler()
 		config.Storage = storage
 		config.EnablePIN = true
 
@@ -670,6 +694,7 @@ func TestGetInfoPinUvAuthProtocolsV2First(t *testing.T) {
 	t.Run("credential management forces PIN and includes pinUvAuthProtocols", func(t *testing.T) {
 		storage := NewMemoryStorage()
 		config := DefaultConfig()
+		config.UserPresenceHandler = NewAutoGrantHandler()
 		config.Storage = storage
 		config.EnablePIN = false                 // Explicitly disabled
 		config.EnableCredentialManagement = true // Requires UV, so PIN gets forced on
@@ -702,6 +727,7 @@ func TestGetInfoPinUvAuthProtocolsV2First(t *testing.T) {
 	t.Run("PIN and FIDO_2_1 both disabled omits pinUvAuthProtocols", func(t *testing.T) {
 		storage := NewMemoryStorage()
 		config := DefaultConfig()
+		config.UserPresenceHandler = NewAutoGrantHandler()
 		config.Storage = storage
 		config.EnablePIN = false
 		config.EnableCredentialManagement = false
@@ -729,6 +755,7 @@ func TestGetInfoPinUvAuthProtocolsV2First(t *testing.T) {
 func TestGetInfoChromeCTAP21Compliance(t *testing.T) {
 	storage := NewMemoryStorage()
 	config := DefaultConfig()
+	config.UserPresenceHandler = NewAutoGrantHandler()
 	config.Storage = storage
 	config.EnablePIN = true
 	config.EnableResidentKey = true
@@ -792,6 +819,7 @@ func TestHasUserVerification(t *testing.T) {
 	t.Run("true when PIN enabled", func(t *testing.T) {
 		storage := NewMemoryStorage()
 		config := DefaultConfig()
+		config.UserPresenceHandler = NewAutoGrantHandler()
 		config.Storage = storage
 		config.EnablePIN = true
 
@@ -805,6 +833,7 @@ func TestHasUserVerification(t *testing.T) {
 	t.Run("false when PIN disabled and no key backend", func(t *testing.T) {
 		storage := NewMemoryStorage()
 		config := DefaultConfig()
+		config.UserPresenceHandler = NewAutoGrantHandler()
 		config.Storage = storage
 		config.EnablePIN = false
 		config.EnableCredentialManagement = false // Prevent PIN being forced on
@@ -819,6 +848,7 @@ func TestHasUserVerification(t *testing.T) {
 	t.Run("FIDO_2_1 not advertised without user verification", func(t *testing.T) {
 		storage := NewMemoryStorage()
 		config := DefaultConfig()
+		config.UserPresenceHandler = NewAutoGrantHandler()
 		config.Storage = storage
 		config.EnablePIN = false
 		config.EnableCredentialManagement = false
@@ -854,6 +884,7 @@ func TestGetInfo_PINSet_CorrectOptions(t *testing.T) {
 	require.NoError(t, err)
 
 	config := DefaultConfig()
+	config.UserPresenceHandler = NewAutoGrantHandler()
 	config.Storage = storage
 	config.EnablePIN = true
 	config.EnableResidentKey = true
@@ -901,6 +932,7 @@ func TestGetInfo_PINSet_CorrectOptions(t *testing.T) {
 func TestGetInfo_PINNotSet_CorrectOptions(t *testing.T) {
 	storage := NewMemoryStorage()
 	config := DefaultConfig()
+	config.UserPresenceHandler = NewAutoGrantHandler()
 	config.Storage = storage
 	config.EnablePIN = true
 	config.EnableResidentKey = true
@@ -935,6 +967,7 @@ func TestGetInfo_PINNotSet_CorrectOptions(t *testing.T) {
 func TestGetInfo_PINDisabled_NoClientPin(t *testing.T) {
 	storage := NewMemoryStorage()
 	config := DefaultConfig()
+	config.UserPresenceHandler = NewAutoGrantHandler()
 	config.Storage = storage
 	config.EnablePIN = false
 	config.EnableCredentialManagement = false // Must disable to prevent SetDefaults forcing PIN on
@@ -996,6 +1029,7 @@ func TestGetInfo_PINSet_NoMakeCredUvNotRqd(t *testing.T) {
 	require.NoError(t, err)
 
 	config := DefaultConfig()
+	config.UserPresenceHandler = NewAutoGrantHandler()
 	config.Storage = storage
 	config.EnablePIN = true
 	config.EnableResidentKey = true
@@ -1048,6 +1082,7 @@ func TestGetInfo_PINSet_NoMakeCredUvNotRqd(t *testing.T) {
 func TestGetInfo_IncludesFirmwareVersion(t *testing.T) {
 	storage := NewMemoryStorage()
 	config := DefaultConfig()
+	config.UserPresenceHandler = NewAutoGrantHandler()
 	config.Storage = storage
 	config.FirmwareVersion = 10203
 
@@ -1076,6 +1111,7 @@ func TestGetInfo_IncludesFirmwareVersion(t *testing.T) {
 func TestGetInfo_OmitsFirmwareVersionWhenZero(t *testing.T) {
 	storage := NewMemoryStorage()
 	config := DefaultConfig()
+	config.UserPresenceHandler = NewAutoGrantHandler()
 	config.Storage = storage
 	config.FirmwareVersion = 0
 

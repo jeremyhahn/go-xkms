@@ -36,6 +36,7 @@ func createMakeCredentialTestAuthenticator(t *testing.T) *Authenticator {
 
 	storage := NewMemoryStorage()
 	config := &Config{
+		UserPresenceHandler:        NewAutoGrantHandler(),
 		AAGUID:                     DefaultAAGUID,
 		SupportedAlgorithms:        []int{COSEAlgES256, COSEAlgES384, COSEAlgEdDSA},
 		MaxCredentials:             100,
@@ -260,6 +261,7 @@ func TestMakeCredential_Errors(t *testing.T) {
 		require.NoError(t, err)
 
 		config := DefaultConfig()
+		config.UserPresenceHandler = NewAutoGrantHandler()
 		config.Storage = storage
 		config.EnablePIN = true
 
@@ -278,6 +280,7 @@ func TestMakeCredential_Limits(t *testing.T) {
 	t.Run("credential limit reached", func(t *testing.T) {
 		storage := NewMemoryStorage()
 		config := &Config{
+			UserPresenceHandler:    NewAutoGrantHandler(),
 			AAGUID:                 DefaultAAGUID,
 			SupportedAlgorithms:    []int{COSEAlgES256},
 			MaxCredentials:         2, // Very small limit for testing
@@ -312,6 +315,7 @@ func TestMakeCredential_Limits(t *testing.T) {
 	t.Run("resident key limit reached", func(t *testing.T) {
 		storage := NewMemoryStorage()
 		config := &Config{
+			UserPresenceHandler:    NewAutoGrantHandler(),
 			AAGUID:                 DefaultAAGUID,
 			SupportedAlgorithms:    []int{COSEAlgES256},
 			MaxCredentials:         10,
@@ -1074,6 +1078,7 @@ func TestStoreNewCredential_StorageFailures(t *testing.T) {
 		}
 
 		config := &Config{
+			UserPresenceHandler:    NewAutoGrantHandler(),
 			AAGUID:                 DefaultAAGUID,
 			SupportedAlgorithms:    []int{COSEAlgES256},
 			MaxCredentials:         100,
@@ -1107,6 +1112,7 @@ func TestCheckCredentialLimits_StorageErrors(t *testing.T) {
 		}
 
 		config := &Config{
+			UserPresenceHandler:    NewAutoGrantHandler(),
 			AAGUID:                 DefaultAAGUID,
 			SupportedAlgorithms:    []int{COSEAlgES256},
 			MaxCredentials:         100,
@@ -1136,6 +1142,7 @@ func TestCheckCredentialLimits_StorageErrors(t *testing.T) {
 		}
 
 		config := &Config{
+			UserPresenceHandler:    NewAutoGrantHandler(),
 			AAGUID:                 DefaultAAGUID,
 			SupportedAlgorithms:    []int{COSEAlgES256},
 			MaxCredentials:         100,
@@ -1171,6 +1178,7 @@ func TestShouldCreateDiscoverable(t *testing.T) {
 	t.Run("resident key disabled in config", func(t *testing.T) {
 		storage := NewMemoryStorage()
 		config := &Config{
+			UserPresenceHandler:    NewAutoGrantHandler(),
 			AAGUID:                 DefaultAAGUID,
 			SupportedAlgorithms:    []int{COSEAlgES256},
 			MaxCredentials:         100,
@@ -1871,6 +1879,7 @@ func TestBuildAttestationStatement(t *testing.T) {
 	t.Run("none format returns empty statement", func(t *testing.T) {
 		storage := NewMemoryStorage()
 		config := &Config{
+			UserPresenceHandler: NewAutoGrantHandler(),
 			AAGUID:              DefaultAAGUID,
 			SupportedAlgorithms: []int{COSEAlgES256},
 			MaxCredentials:      100,
@@ -1895,6 +1904,7 @@ func TestBuildAttestationStatement(t *testing.T) {
 	t.Run("empty format defaults to none", func(t *testing.T) {
 		storage := NewMemoryStorage()
 		config := &Config{
+			UserPresenceHandler: NewAutoGrantHandler(),
 			AAGUID:              DefaultAAGUID,
 			SupportedAlgorithms: []int{COSEAlgES256},
 			MaxCredentials:      100,
@@ -1931,6 +1941,7 @@ func TestBuildAttestationStatement(t *testing.T) {
 		}
 
 		config := &Config{
+			UserPresenceHandler: NewAutoGrantHandler(),
 			AAGUID:              DefaultAAGUID,
 			SupportedAlgorithms: []int{COSEAlgES256},
 			MaxCredentials:      100,
@@ -1977,6 +1988,7 @@ func TestBuildAttestationStatement(t *testing.T) {
 		}
 
 		config := &Config{
+			UserPresenceHandler: NewAutoGrantHandler(),
 			AAGUID:              DefaultAAGUID,
 			SupportedAlgorithms: []int{COSEAlgES256},
 			MaxCredentials:      100,
@@ -2015,6 +2027,7 @@ func TestBuildAttestationStatement(t *testing.T) {
 		}
 
 		config := &Config{
+			UserPresenceHandler: NewAutoGrantHandler(),
 			AAGUID:              DefaultAAGUID,
 			SupportedAlgorithms: []int{COSEAlgES256},
 			MaxCredentials:      100,
@@ -2049,6 +2062,7 @@ func TestBuildAttestationStatement(t *testing.T) {
 		mockBackend := &mockNonAttestingKeyBackend{}
 
 		config := &Config{
+			UserPresenceHandler: NewAutoGrantHandler(),
 			AAGUID:              DefaultAAGUID,
 			SupportedAlgorithms: []int{COSEAlgES256},
 			MaxCredentials:      100,
@@ -2078,6 +2092,7 @@ func TestBuildAttestationStatement(t *testing.T) {
 		}
 
 		config := &Config{
+			UserPresenceHandler: NewAutoGrantHandler(),
 			AAGUID:              DefaultAAGUID,
 			SupportedAlgorithms: []int{COSEAlgES256},
 			MaxCredentials:      100,
@@ -2111,6 +2126,7 @@ func TestBuildAttestationStatement(t *testing.T) {
 		}
 
 		config := &Config{
+			UserPresenceHandler: NewAutoGrantHandler(),
 			AAGUID:              DefaultAAGUID,
 			SupportedAlgorithms: []int{COSEAlgES256},
 			MaxCredentials:      100,
@@ -2137,6 +2153,7 @@ func TestBuildAttestationStatement(t *testing.T) {
 		storage := NewMemoryStorage()
 
 		config := &Config{
+			UserPresenceHandler: NewAutoGrantHandler(),
 			AAGUID:              DefaultAAGUID,
 			SupportedAlgorithms: []int{COSEAlgES256},
 			MaxCredentials:      100,
@@ -2174,6 +2191,7 @@ func TestMakeCredential_WithPackedAttestation(t *testing.T) {
 	}
 
 	config := &Config{
+		UserPresenceHandler:    NewAutoGrantHandler(),
 		AAGUID:                 DefaultAAGUID,
 		SupportedAlgorithms:    []int{COSEAlgES256},
 		MaxCredentials:         100,
@@ -2226,6 +2244,7 @@ func TestMakeCredential_WithTPMAttestation(t *testing.T) {
 	}
 
 	config := &Config{
+		UserPresenceHandler:    NewAutoGrantHandler(),
 		AAGUID:                 DefaultAAGUID,
 		SupportedAlgorithms:    []int{COSEAlgES256},
 		MaxCredentials:         100,
@@ -2268,6 +2287,7 @@ func TestMakeCredential_AttestationFallbackToNone(t *testing.T) {
 	mockBackend := &mockNonAttestingKeyBackend{}
 
 	config := &Config{
+		UserPresenceHandler:    NewAutoGrantHandler(),
 		AAGUID:                 DefaultAAGUID,
 		SupportedAlgorithms:    []int{COSEAlgES256},
 		MaxCredentials:         100,
@@ -2403,6 +2423,7 @@ func TestShouldGenerateHMACSecret(t *testing.T) {
 	t.Run("hmac-secret disabled in config", func(t *testing.T) {
 		storage := NewMemoryStorage()
 		config := DefaultConfig()
+		config.UserPresenceHandler = NewAutoGrantHandler()
 		config.Storage = storage
 		config.EnableHMACSecret = false
 
@@ -2432,6 +2453,7 @@ func TestShouldGenerateHMACSecret(t *testing.T) {
 func TestMakeCredential_WithRequireUserPresence(t *testing.T) {
 	storage := NewMemoryStorage()
 	config := DefaultConfig()
+	config.UserPresenceHandler = NewAutoGrantHandler()
 	config.Storage = storage
 	config.RequireUserPresence = true
 
@@ -2508,6 +2530,7 @@ func TestHandleMakeCredential_UserPresenceDenied(t *testing.T) {
 
 	storage := NewMemoryStorage()
 	config := DefaultConfig()
+	config.UserPresenceHandler = NewAutoGrantHandler()
 	config.Storage = storage
 	config.UserPresenceHandler = &denyingUPHandler{}
 
@@ -2530,6 +2553,7 @@ func TestHandleMakeCredential_UserPresenceError(t *testing.T) {
 
 	storage := NewMemoryStorage()
 	config := DefaultConfig()
+	config.UserPresenceHandler = NewAutoGrantHandler()
 	config.Storage = storage
 	config.UserPresenceHandler = &errorUPHandler{err: ErrUserPresenceTimeout}
 
@@ -2604,6 +2628,7 @@ func TestHandleMakeCredential_KeyGenerationFailure(t *testing.T) {
 
 	storage := NewMemoryStorage()
 	config := DefaultConfig()
+	config.UserPresenceHandler = NewAutoGrantHandler()
 	config.Storage = storage
 	config.KeyBackend = &failingKeyGenBackend{genErr: errors.New("key generation failed")}
 
@@ -2626,6 +2651,7 @@ func TestHandleMakeCredential_KeyExportFailure(t *testing.T) {
 
 	storage := NewMemoryStorage()
 	config := DefaultConfig()
+	config.UserPresenceHandler = NewAutoGrantHandler()
 	config.Storage = storage
 	config.KeyBackend = &failingKeyGenBackend{exportErr: errors.New("export failed")}
 
@@ -2681,6 +2707,7 @@ func TestHandleMakeCredential_PINAuthWithRequireUserPresence(t *testing.T) {
 
 	storage := NewMemoryStorage()
 	config := DefaultConfig()
+	config.UserPresenceHandler = NewAutoGrantHandler()
 	config.Storage = storage
 	config.RequireUserPresence = true
 	config.EnablePIN = true
@@ -2899,6 +2926,7 @@ func TestHandleMakeCredential_WithLogger(t *testing.T) {
 
 	storage := NewMemoryStorage()
 	config := DefaultConfig()
+	config.UserPresenceHandler = NewAutoGrantHandler()
 	config.Storage = storage
 	config.Logger = slog.Default()
 
@@ -2921,6 +2949,7 @@ func TestHandleMakeCredential_WithLoggerAndPINAuth(t *testing.T) {
 
 	storage := NewMemoryStorage()
 	config := DefaultConfig()
+	config.UserPresenceHandler = NewAutoGrantHandler()
 	config.Storage = storage
 	config.Logger = slog.Default()
 	config.EnablePIN = true
@@ -2966,6 +2995,7 @@ func TestHandleMakeCredential_WithLoggerPINRequired(t *testing.T) {
 	require.NoError(t, err)
 
 	config := DefaultConfig()
+	config.UserPresenceHandler = NewAutoGrantHandler()
 	config.Storage = storage
 	config.Logger = slog.Default()
 	config.EnablePIN = true
@@ -2988,6 +3018,7 @@ func TestHandleMakeCredential_WithLoggerInvalidPINAuth(t *testing.T) {
 
 	storage := NewMemoryStorage()
 	config := DefaultConfig()
+	config.UserPresenceHandler = NewAutoGrantHandler()
 	config.Storage = storage
 	config.Logger = slog.Default()
 	config.EnablePIN = true
@@ -3023,6 +3054,7 @@ func TestHandleMakeCredential_WithLoggerResponseBuilt(t *testing.T) {
 
 	storage := NewMemoryStorage()
 	config := DefaultConfig()
+	config.UserPresenceHandler = NewAutoGrantHandler()
 	config.Storage = storage
 	config.Logger = slog.Default()
 
@@ -3061,6 +3093,7 @@ func TestHandleMakeCredential_WithLoggerAndUPRequired(t *testing.T) {
 
 	storage := NewMemoryStorage()
 	config := DefaultConfig()
+	config.UserPresenceHandler = NewAutoGrantHandler()
 	config.Storage = storage
 	config.Logger = slog.Default()
 	config.RequireUserPresence = true
@@ -3096,6 +3129,7 @@ func TestHandleMakeCredential_WithLoggerPINAuthSkipsUP(t *testing.T) {
 
 	storage := NewMemoryStorage()
 	config := DefaultConfig()
+	config.UserPresenceHandler = NewAutoGrantHandler()
 	config.Storage = storage
 	config.Logger = slog.Default()
 	config.EnablePIN = true
@@ -3154,6 +3188,7 @@ func TestHandleMakeCredential_WithLoggerPINAuthSkipsUP(t *testing.T) {
 func TestMakeCredential_InternalPINHash_Success(t *testing.T) {
 	storage := NewMemoryStorage()
 	config := DefaultConfig()
+	config.UserPresenceHandler = NewAutoGrantHandler()
 	config.Storage = storage
 	config.EnablePIN = true
 
@@ -3211,6 +3246,7 @@ func TestMakeCredential_InternalPINHash_Success(t *testing.T) {
 func TestMakeCredential_InternalPINHash_WrongHash(t *testing.T) {
 	storage := NewMemoryStorage()
 	config := DefaultConfig()
+	config.UserPresenceHandler = NewAutoGrantHandler()
 	config.Storage = storage
 	config.EnablePIN = true
 
@@ -3253,6 +3289,7 @@ func TestMakeCredential_InternalPINHash_WrongHash(t *testing.T) {
 func TestMakeCredentialUserIntentCheck_Approved(t *testing.T) {
 	storage := NewMemoryStorage()
 	config := DefaultConfig()
+	config.UserPresenceHandler = NewAutoGrantHandler()
 	config.Storage = storage
 	config.EnablePIN = true
 	config.RequireUserPresence = false
@@ -3307,6 +3344,7 @@ func TestMakeCredentialUserIntentCheck_Approved(t *testing.T) {
 func TestMakeCredentialUserIntentCheck_Denied(t *testing.T) {
 	storage := NewMemoryStorage()
 	config := DefaultConfig()
+	config.UserPresenceHandler = NewAutoGrantHandler()
 	config.Storage = storage
 	config.EnablePIN = true
 	config.RequireUserPresence = false
@@ -3361,6 +3399,7 @@ func TestMakeCredentialUserIntentCheck_Denied(t *testing.T) {
 func TestMakeCredentialUserIntentCheck_Disabled(t *testing.T) {
 	storage := NewMemoryStorage()
 	config := DefaultConfig()
+	config.UserPresenceHandler = NewAutoGrantHandler()
 	config.Storage = storage
 	config.EnablePIN = true
 	config.RequireUserPresence = false

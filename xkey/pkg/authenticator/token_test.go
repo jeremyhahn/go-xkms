@@ -50,6 +50,7 @@ func (h *recordingUPHandler) RequestUserVerification(ctx context.Context, req *U
 // so a restart can be simulated by building a second authenticator over it.
 func newTokenTestConfig() *Config {
 	return &Config{
+		UserPresenceHandler: NewAutoGrantHandler(),
 		Storage:             NewMemoryStorage(),
 		EnablePIN:           true,
 		PINMinLength:        4,

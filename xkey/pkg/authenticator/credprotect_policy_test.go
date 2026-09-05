@@ -455,6 +455,7 @@ func TestPolicyHMACCoversSecuritySettings(t *testing.T) {
 	for name, mutate := range mutations {
 		t.Run(name, func(t *testing.T) {
 			cfg := DefaultConfig()
+			cfg.UserPresenceHandler = NewAutoGrantHandler()
 			mutate(cfg)
 			canon, err := ExtractPolicyFields(cfg).Canonical()
 			require.NoError(t, err)
@@ -477,6 +478,7 @@ func TestPolicySchemaChangeIsNotReportedAsTampering(t *testing.T) {
 	require.NoError(t, err)
 
 	cfg := DefaultConfig()
+	cfg.UserPresenceHandler = NewAutoGrantHandler()
 	pm := NewPolicyManager(cfg, provider)
 
 	state := NewAuthenticatorState()
@@ -510,12 +512,14 @@ func TestPolicySchemaChangeDoesNotSetTamperDetected(t *testing.T) {
 
 	storage := NewMemoryStorage()
 	signCfg := DefaultConfig()
+	signCfg.UserPresenceHandler = NewAutoGrantHandler()
 	state := NewAuthenticatorState()
 	require.NoError(t, NewPolicyManager(signCfg, provider).Sign(state))
 	state.SignedPolicyFields.SchemaVersion = PolicyFieldsSchemaVersion - 1
 	require.NoError(t, storage.SaveState(state))
 
 	cfg := DefaultConfig()
+	cfg.UserPresenceHandler = NewAutoGrantHandler()
 	cfg.Storage = storage
 	cfg.PolicyIntegrityProvider = provider
 
@@ -554,6 +558,7 @@ func TestPolicyMismatchNamesChangedField(t *testing.T) {
 	signed := ExtractPolicyFields(DefaultConfig())
 
 	tampered := DefaultConfig()
+	tampered.UserPresenceHandler = NewAutoGrantHandler()
 	tampered.RequireUserPresence = !tampered.RequireUserPresence
 	current := ExtractPolicyFields(tampered)
 

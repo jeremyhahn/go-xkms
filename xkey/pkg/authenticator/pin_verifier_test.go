@@ -279,6 +279,7 @@ func TestAuthenticator_VerifyPINHash_FallbackAfterRestart(t *testing.T) {
 	storage := NewMemoryStorage()
 
 	config := DefaultConfig()
+	config.UserPresenceHandler = NewAutoGrantHandler()
 	config.Storage = storage
 
 	auth1, err := NewAuthenticator(config)
@@ -303,6 +304,7 @@ func TestAuthenticator_VerifyPINHash_FallbackAfterRestart(t *testing.T) {
 	// restart). NewAuthenticator calls storage.LoadState(), which should
 	// restore the persisted PINHash.
 	config2 := DefaultConfig()
+	config2.UserPresenceHandler = NewAutoGrantHandler()
 	config2.Storage = storage
 
 	auth2, err := NewAuthenticator(config2)

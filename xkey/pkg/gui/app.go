@@ -1227,9 +1227,22 @@ func (a *App) initializeAuthenticator() {
 		attestationFormat = ucfg.FIDO2.Attestation
 	}
 
+	// User presence is collected through the GUI prompt. This is installed at
+	// construction rather than left to AttachPresenceHandler below, because a
+	// nil handler is refused outright (#317) -- and because the handler this
+	// replaces was an auto-grant default that approved every ceremony.
+	//
+	// a.deviceNotifier is not populated until a later startup phase, so this
+	// handler starts without one: a SocketHandler with no notifier prompts
+	// nobody and its requests time out, which is a refusal. Nothing can be
+	// authorized in the window before AttachPresenceHandler supplies the real
+	// notifier, which is the correct direction to fail.
+	presenceHandler := authenticator.NewSocketHandler(a.deviceNotifier, a.log)
+
 	auth, err := authenticator.NewAuthenticator(&authenticator.Config{
-		Storage:    a.fido2Storage,
-		KeyBackend: composite,
+		Storage:             a.fido2Storage,
+		KeyBackend:          composite,
+		UserPresenceHandler: presenceHandler,
 		// One product, one AAGUID: authenticator.DefaultAAGUID is the single
 		// definition every xkey entry point reports.
 		AAGUID:                     authenticator.DefaultAAGUID,

@@ -21,6 +21,13 @@ import (
 
 // User presence and verification errors.
 var (
+	// ErrUserPresenceHandlerRequired indicates Config.UserPresenceHandler was
+	// nil. There is no safe default: auto-granting fabricates a passing
+	// verification, and denying everything silently disables the
+	// authenticator. The caller states its policy explicitly.
+	ErrUserPresenceHandlerRequired = errors.New(
+		"authenticator: config.UserPresenceHandler is required")
+
 	// ErrUserPresenceDenied indicates the user explicitly denied presence confirmation.
 	ErrUserPresenceDenied = errors.New("authenticator: user presence denied")
 

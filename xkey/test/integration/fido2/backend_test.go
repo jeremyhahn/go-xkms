@@ -379,6 +379,7 @@ func TestWebAuthnFlow_AllBackends_ES256(t *testing.T) {
 			require.NoError(t, err)
 
 			config := authenticator.DefaultConfig()
+			config.UserPresenceHandler = authenticator.NewAutoGrantHandler()
 			config.Storage = authenticator.NewMemoryStorage()
 			config.KeyBackend = backend
 
@@ -414,6 +415,7 @@ func TestWebAuthnFlow_AllBackends_ES384(t *testing.T) {
 			require.NoError(t, err)
 
 			config := authenticator.DefaultConfig()
+			config.UserPresenceHandler = authenticator.NewAutoGrantHandler()
 			config.Storage = authenticator.NewMemoryStorage()
 			config.KeyBackend = backend
 			config.SupportedAlgorithms = []int{
@@ -440,6 +442,7 @@ func TestWebAuthnFlow_AllBackends_MultipleRegistrations(t *testing.T) {
 			require.NoError(t, err)
 
 			config := authenticator.DefaultConfig()
+			config.UserPresenceHandler = authenticator.NewAutoGrantHandler()
 			config.Storage = authenticator.NewMemoryStorage()
 			config.KeyBackend = backend
 
@@ -465,6 +468,7 @@ func TestWebAuthnFlow_AllBackends_SignCounterIncrements(t *testing.T) {
 			require.NoError(t, err)
 
 			config := authenticator.DefaultConfig()
+			config.UserPresenceHandler = authenticator.NewAutoGrantHandler()
 			config.Storage = authenticator.NewMemoryStorage()
 			config.KeyBackend = backend
 
@@ -577,6 +581,7 @@ func TestWebAuthnFlow_AllBackends_RejectsWrongCredential(t *testing.T) {
 			require.NoError(t, err)
 
 			config := authenticator.DefaultConfig()
+			config.UserPresenceHandler = authenticator.NewAutoGrantHandler()
 			config.Storage = authenticator.NewMemoryStorage()
 			config.KeyBackend = backend
 
@@ -662,6 +667,7 @@ func TestWebAuthnFlow_AllBackends_CrossOriginRejection(t *testing.T) {
 			require.NoError(t, err)
 
 			config := authenticator.DefaultConfig()
+			config.UserPresenceHandler = authenticator.NewAutoGrantHandler()
 			config.Storage = authenticator.NewMemoryStorage()
 			config.KeyBackend = backend
 

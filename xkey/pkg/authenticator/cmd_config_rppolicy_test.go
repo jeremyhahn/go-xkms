@@ -27,6 +27,7 @@ func createTestConfigAuthenticatorWithRPPolicyStore(t *testing.T) *Authenticator
 
 	storage := NewMemoryStorage()
 	config := &Config{
+		UserPresenceHandler: NewAutoGrantHandler(),
 		Storage:             storage,
 		EnablePIN:           true,
 		PINMinLength:        4,

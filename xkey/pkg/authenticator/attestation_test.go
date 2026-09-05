@@ -209,6 +209,7 @@ func newAttestationTestAuthenticator(t *testing.T, format string) *Authenticator
 	t.Helper()
 
 	auth, err := NewAuthenticator(&Config{
+		UserPresenceHandler:    NewAutoGrantHandler(),
 		Storage:                NewMemoryStorage(),
 		SupportedAlgorithms:    []int{COSEAlgES256},
 		MaxCredentials:         100,
@@ -409,6 +410,7 @@ func TestMakeCredential_PackedAttestationAfterRestart(t *testing.T) {
 		storage.WaitForIndex()
 
 		auth, err := NewAuthenticator(&Config{
+			UserPresenceHandler:    NewAutoGrantHandler(),
 			Storage:                storage,
 			SupportedAlgorithms:    []int{COSEAlgES256},
 			MaxCredentials:         100,

@@ -23,6 +23,7 @@ import (
 func TestComputeConfigHash(t *testing.T) {
 	t.Run("returns 32-byte hash for valid config", func(t *testing.T) {
 		cfg := DefaultConfig()
+		cfg.UserPresenceHandler = NewAutoGrantHandler()
 		cfg.Storage = NewMemoryStorage()
 
 		hash, err := ComputeConfigHash(cfg)
@@ -33,6 +34,7 @@ func TestComputeConfigHash(t *testing.T) {
 
 	t.Run("same config produces same hash (deterministic)", func(t *testing.T) {
 		cfg := DefaultConfig()
+		cfg.UserPresenceHandler = NewAutoGrantHandler()
 		cfg.Storage = NewMemoryStorage()
 
 		hash1, err := ComputeConfigHash(cfg)
@@ -46,10 +48,12 @@ func TestComputeConfigHash(t *testing.T) {
 
 	t.Run("different MinPINLength produces different hash", func(t *testing.T) {
 		cfg1 := DefaultConfig()
+		cfg1.UserPresenceHandler = NewAutoGrantHandler()
 		cfg1.Storage = NewMemoryStorage()
 		cfg1.PINMinLength = 4
 
 		cfg2 := DefaultConfig()
+		cfg2.UserPresenceHandler = NewAutoGrantHandler()
 		cfg2.Storage = NewMemoryStorage()
 		cfg2.PINMinLength = 8
 
@@ -64,10 +68,12 @@ func TestComputeConfigHash(t *testing.T) {
 
 	t.Run("different AlwaysUV produces different hash", func(t *testing.T) {
 		cfg1 := DefaultConfig()
+		cfg1.UserPresenceHandler = NewAutoGrantHandler()
 		cfg1.Storage = NewMemoryStorage()
 		cfg1.AlwaysUV = false
 
 		cfg2 := DefaultConfig()
+		cfg2.UserPresenceHandler = NewAutoGrantHandler()
 		cfg2.Storage = NewMemoryStorage()
 		cfg2.AlwaysUV = true
 
@@ -90,6 +96,7 @@ func TestComputeConfigHash(t *testing.T) {
 func TestBuildDeviceConfigExtension(t *testing.T) {
 	t.Run("builds extension with correct MinPINLength", func(t *testing.T) {
 		cfg := DefaultConfig()
+		cfg.UserPresenceHandler = NewAutoGrantHandler()
 		cfg.Storage = NewMemoryStorage()
 		cfg.PINMinLength = 6
 
@@ -101,6 +108,7 @@ func TestBuildDeviceConfigExtension(t *testing.T) {
 
 	t.Run("builds extension with correct AlwaysUV", func(t *testing.T) {
 		cfg := DefaultConfig()
+		cfg.UserPresenceHandler = NewAutoGrantHandler()
 		cfg.Storage = NewMemoryStorage()
 		cfg.AlwaysUV = true
 
@@ -112,6 +120,7 @@ func TestBuildDeviceConfigExtension(t *testing.T) {
 
 	t.Run("builds extension with PINProtocol", func(t *testing.T) {
 		cfg := DefaultConfig()
+		cfg.UserPresenceHandler = NewAutoGrantHandler()
 		cfg.Storage = NewMemoryStorage()
 
 		ext, err := BuildDeviceConfigExtension(cfg, nil)
@@ -122,6 +131,7 @@ func TestBuildDeviceConfigExtension(t *testing.T) {
 
 	t.Run("builds extension with nil attestedHash (tampered=false)", func(t *testing.T) {
 		cfg := DefaultConfig()
+		cfg.UserPresenceHandler = NewAutoGrantHandler()
 		cfg.Storage = NewMemoryStorage()
 
 		ext, err := BuildDeviceConfigExtension(cfg, nil)
@@ -134,6 +144,7 @@ func TestBuildDeviceConfigExtension(t *testing.T) {
 
 	t.Run("builds extension with matching attestedHash (tampered=false)", func(t *testing.T) {
 		cfg := DefaultConfig()
+		cfg.UserPresenceHandler = NewAutoGrantHandler()
 		cfg.Storage = NewMemoryStorage()
 
 		// Compute the attested hash from the same config
@@ -150,6 +161,7 @@ func TestBuildDeviceConfigExtension(t *testing.T) {
 
 	t.Run("builds extension with mismatched attestedHash (tampered=true)", func(t *testing.T) {
 		cfg := DefaultConfig()
+		cfg.UserPresenceHandler = NewAutoGrantHandler()
 		cfg.Storage = NewMemoryStorage()
 		cfg.PINMinLength = 4
 
@@ -178,6 +190,7 @@ func TestBuildDeviceConfigExtension(t *testing.T) {
 func TestDeviceConfigExtension_Encode(t *testing.T) {
 	t.Run("encodes to valid CBOR", func(t *testing.T) {
 		cfg := DefaultConfig()
+		cfg.UserPresenceHandler = NewAutoGrantHandler()
 		cfg.Storage = NewMemoryStorage()
 
 		ext, err := BuildDeviceConfigExtension(cfg, nil)
@@ -191,6 +204,7 @@ func TestDeviceConfigExtension_Encode(t *testing.T) {
 
 	t.Run("encoded data can be decoded back", func(t *testing.T) {
 		cfg := DefaultConfig()
+		cfg.UserPresenceHandler = NewAutoGrantHandler()
 		cfg.Storage = NewMemoryStorage()
 		cfg.PINMinLength = 6
 		cfg.AlwaysUV = true
@@ -223,6 +237,7 @@ func TestDeviceConfigExtension_Encode(t *testing.T) {
 func TestDeviceConfigExtension_IsValid(t *testing.T) {
 	t.Run("returns true when not tampered", func(t *testing.T) {
 		cfg := DefaultConfig()
+		cfg.UserPresenceHandler = NewAutoGrantHandler()
 		cfg.Storage = NewMemoryStorage()
 
 		attestedHash, err := ComputeConfigHash(cfg)
@@ -236,6 +251,7 @@ func TestDeviceConfigExtension_IsValid(t *testing.T) {
 
 	t.Run("returns false when tampered", func(t *testing.T) {
 		cfg := DefaultConfig()
+		cfg.UserPresenceHandler = NewAutoGrantHandler()
 		cfg.Storage = NewMemoryStorage()
 		cfg.PINMinLength = 4
 
@@ -261,6 +277,7 @@ func TestDeviceConfigExtension_IsValid(t *testing.T) {
 func TestDecodeDeviceConfigExtension(t *testing.T) {
 	t.Run("decodes valid CBOR to extension", func(t *testing.T) {
 		cfg := DefaultConfig()
+		cfg.UserPresenceHandler = NewAutoGrantHandler()
 		cfg.Storage = NewMemoryStorage()
 		cfg.PINMinLength = 5
 		cfg.AlwaysUV = true
@@ -296,6 +313,7 @@ func TestDecodeDeviceConfigExtension(t *testing.T) {
 func TestDeviceConfigExtension_VendorExtensions(t *testing.T) {
 	t.Run("WithVendorExtension adds vendor data", func(t *testing.T) {
 		cfg := DefaultConfig()
+		cfg.UserPresenceHandler = NewAutoGrantHandler()
 		cfg.Storage = NewMemoryStorage()
 
 		ext, err := BuildDeviceConfigExtension(cfg, nil)
@@ -310,6 +328,7 @@ func TestDeviceConfigExtension_VendorExtensions(t *testing.T) {
 
 	t.Run("HasVendorExtension returns true for existing key", func(t *testing.T) {
 		cfg := DefaultConfig()
+		cfg.UserPresenceHandler = NewAutoGrantHandler()
 		cfg.Storage = NewMemoryStorage()
 
 		ext, err := BuildDeviceConfigExtension(cfg, nil)
@@ -321,6 +340,7 @@ func TestDeviceConfigExtension_VendorExtensions(t *testing.T) {
 
 	t.Run("HasVendorExtension returns false for missing key", func(t *testing.T) {
 		cfg := DefaultConfig()
+		cfg.UserPresenceHandler = NewAutoGrantHandler()
 		cfg.Storage = NewMemoryStorage()
 
 		ext, err := BuildDeviceConfigExtension(cfg, nil)
@@ -331,6 +351,7 @@ func TestDeviceConfigExtension_VendorExtensions(t *testing.T) {
 
 	t.Run("GetVendorExtension returns correct value", func(t *testing.T) {
 		cfg := DefaultConfig()
+		cfg.UserPresenceHandler = NewAutoGrantHandler()
 		cfg.Storage = NewMemoryStorage()
 
 		ext, err := BuildDeviceConfigExtension(cfg, nil)
@@ -347,6 +368,7 @@ func TestDeviceConfigExtension_VendorExtensions(t *testing.T) {
 
 	t.Run("GetVendorExtension returns nil for missing key", func(t *testing.T) {
 		cfg := DefaultConfig()
+		cfg.UserPresenceHandler = NewAutoGrantHandler()
 		cfg.Storage = NewMemoryStorage()
 
 		ext, err := BuildDeviceConfigExtension(cfg, nil)
@@ -358,6 +380,7 @@ func TestDeviceConfigExtension_VendorExtensions(t *testing.T) {
 
 	t.Run("multiple vendor extensions can coexist", func(t *testing.T) {
 		cfg := DefaultConfig()
+		cfg.UserPresenceHandler = NewAutoGrantHandler()
 		cfg.Storage = NewMemoryStorage()
 
 		ext, err := BuildDeviceConfigExtension(cfg, nil)

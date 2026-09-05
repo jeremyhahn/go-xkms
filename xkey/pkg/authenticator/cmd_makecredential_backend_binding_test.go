@@ -244,6 +244,7 @@ func newBindingAuthenticator(t *testing.T, composite *keybackend.CompositeBacken
 
 	storage := NewMemoryStorage()
 	config := &Config{
+		UserPresenceHandler:        NewAutoGrantHandler(),
 		AAGUID:                     DefaultAAGUID,
 		SupportedAlgorithms:        []int{COSEAlgES256},
 		MaxCredentials:             100,
