@@ -443,6 +443,11 @@ var (
 	// ErrSetupSOPINVerifyFailed indicates the SO PIN verification failed during user onboarding.
 	ErrSetupSOPINVerifyFailed = errors.New("setup_wizard: SO PIN verification failed")
 
+	// ErrSetupPINServiceUnavailable indicates an operation that must authorize
+	// against the SO PIN was reached without a PIN service wired. The operation
+	// is refused: an authorization check that cannot run has not passed.
+	ErrSetupPINServiceUnavailable = errors.New("setup_wizard: PIN service unavailable, cannot verify the SO PIN")
+
 	// ErrSetupNotSOProvisioned indicates SO provisioning has not been completed yet.
 	ErrSetupNotSOProvisioned = errors.New("setup_wizard: SO provisioning not completed")
 

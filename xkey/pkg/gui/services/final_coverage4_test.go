@@ -18,6 +18,7 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"errors"
+	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
 	"log/slog"
 	"os"
 	"path/filepath"
@@ -191,6 +192,12 @@ func TestSetupWizard_FactoryReset_WithConfigFuncs(t *testing.T) {
 		return nil
 	})
 
+	// FactoryReset is credential-gated. Without a PIN service that accepts this
+	// PIN the call is refused before reaching what this test covers (#313).
+	svc.SetPINService(newWizardPINService(&wizardMockPINBackend{
+		strategy: qrdbsdk.PINStrategySoftware, soPIN: "valid-so-pin", soPINSet: true,
+	}))
+
 	err := svc.FactoryReset("valid-so-pin")
 	if err != nil {
 		assert.Contains(t, err.Error(), "factory reset completed with errors")
@@ -211,6 +218,12 @@ func TestSetupWizard_FactoryReset_TPMResetError(t *testing.T) {
 	tpmSvc := NewTPMService()
 	svc.SetTPMService(tpmSvc)
 
+	// FactoryReset is credential-gated. Without a PIN service that accepts this
+	// PIN the call is refused before reaching what this test covers (#313).
+	svc.SetPINService(newWizardPINService(&wizardMockPINBackend{
+		strategy: qrdbsdk.PINStrategySoftware, soPIN: "so-pin", soPINSet: true,
+	}))
+
 	err := svc.FactoryReset("so-pin")
 	if err != nil {
 		assert.Contains(t, err.Error(), "factory reset completed with errors")
@@ -230,6 +243,12 @@ func TestSetupWizard_FactoryReset_HMACRemoval(t *testing.T) {
 	// Create a fake HMAC file using the correct filename: xkey_policy.hmac
 	hmacPath := filepath.Join(dir, "xkey_policy.hmac")
 	_ = os.WriteFile(hmacPath, []byte("fake-hmac"), 0600)
+
+	// FactoryReset is credential-gated. Without a PIN service that accepts this
+	// PIN the call is refused before reaching what this test covers (#313).
+	svc.SetPINService(newWizardPINService(&wizardMockPINBackend{
+		strategy: qrdbsdk.PINStrategySoftware, soPIN: "so-pin", soPINSet: true,
+	}))
 
 	err := svc.FactoryReset("so-pin")
 	if err != nil {

@@ -1511,10 +1511,18 @@ func (s *SetupWizardService) FactoryReset(soPin string) (retErr error) {
 	}
 
 	// Verify SO PIN before proceeding.
-	if s.pinSvc != nil {
-		if err := s.pinSvc.VerifySOPIN(soPin); err != nil {
-			return ErrSetupSOPINVerifyFailed
-		}
+	//
+	// A missing PIN service is a refusal, not a pass. This check previously sat
+	// inside "if s.pinSvc != nil", so a SetupWizardService whose SetPINService
+	// setter had not been called accepted any non-empty string as the SO PIN
+	// and went on to wipe the TPM. The credential gate on a destructive
+	// operation must not be conditional on the collaborator that enforces it
+	// having been wired (#313).
+	if s.pinSvc == nil {
+		return ErrSetupPINServiceUnavailable
+	}
+	if err := s.pinSvc.VerifySOPIN(soPin); err != nil {
+		return ErrSetupSOPINVerifyFailed
 	}
 
 	var errs []string

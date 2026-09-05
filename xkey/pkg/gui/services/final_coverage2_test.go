@@ -17,6 +17,7 @@ import (
 	"context"
 	"encoding/base64"
 	"errors"
+	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
 	"log/slog"
 	"os"
 	"path/filepath"
@@ -150,6 +151,12 @@ func TestFinal2_FactoryReset_HMACRemoval(t *testing.T) {
 		emittedEvents = append(emittedEvents, e)
 	})
 
+	// FactoryReset is credential-gated. Without a PIN service that accepts this
+	// PIN the call is refused before reaching what this test covers (#313).
+	svc.SetPINService(newWizardPINService(&wizardMockPINBackend{
+		strategy: qrdbsdk.PINStrategySoftware, soPIN: "some-pin", soPINSet: true,
+	}))
+
 	err := svc.FactoryReset("some-pin")
 	// May have non-fatal errors collected.
 	if err != nil {
@@ -173,6 +180,12 @@ func TestFinal2_FactoryReset_TPMResetError(t *testing.T) {
 	svc.SetConfigFunc(configFunc)
 	svc.SetConfigSaveFunc(configSave)
 
+	// FactoryReset is credential-gated. Without a PIN service that accepts this
+	// PIN the call is refused before reaching what this test covers (#313).
+	svc.SetPINService(newWizardPINService(&wizardMockPINBackend{
+		strategy: qrdbsdk.PINStrategySoftware, soPIN: "pin123", soPINSet: true,
+	}))
+
 	err := svc.FactoryReset("pin123")
 	if err != nil {
 		assert.Contains(t, err.Error(), "factory reset completed with errors")
@@ -189,6 +202,12 @@ func TestFinal2_FactoryReset_ConfigSaveError(t *testing.T) {
 	svc.SetConfigSaveFunc(func(d *GUIConfigData) error {
 		return errors.New("save denied")
 	})
+
+	// FactoryReset is credential-gated. Without a PIN service that accepts this
+	// PIN the call is refused before reaching what this test covers (#313).
+	svc.SetPINService(newWizardPINService(&wizardMockPINBackend{
+		strategy: qrdbsdk.PINStrategySoftware, soPIN: "pin123", soPINSet: true,
+	}))
 
 	err := svc.FactoryReset("pin123")
 	require.Error(t, err)

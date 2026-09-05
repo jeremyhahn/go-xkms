@@ -208,6 +208,41 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   The prohibition and its reasoning are now recorded in place in
   `release.yml`, the way `ci.yml`, `coverage.yml` and `docker-tests.yml`
   already record it.
+- **`SetupWizardService.FactoryReset` refuses when no PIN service is wired,
+  instead of treating an unrunnable SO PIN check as a passing one**
+  (refs #313). `xkey/pkg/gui/services/setup_wizard_service.go`,
+  `xkey/pkg/gui/services/errors.go`.
+
+  The SO PIN verification sat inside `if s.pinSvc != nil`, and `pinSvc` is
+  supplied by the `SetPINService` **setter**, not the constructor. The shipped
+  GUI wires it (`app.go:2047`), so the shipped path was safe — but any
+  `SetupWizardService` reaching `FactoryReset` without that setter having been
+  called accepted **any non-empty string** as the SO PIN and went on to reset
+  the TPM, remove the policy HMAC and reset the GUI config. A destructive
+  operation's credential gate must not be conditional on the collaborator that
+  enforces it having been wired.
+
+  Now `s.pinSvc == nil` returns the new `ErrSetupPINServiceUnavailable`, which
+  is distinct from `ErrSetupSOPINVerifyFailed` so "the check could not run" and
+  "the check ran and said no" remain different answers.
+
+  **Seven existing tests were passing because of this defect** — they called
+  `FactoryReset` with no PIN service and drove a full wipe on an
+  unauthenticated call. Each now wires a PIN service that accepts its PIN, so
+  they still cover the post-authorization paths they were written for, and
+  assert the SO PIN was actually verified.
+
+- **An unrecognised FIDO2 key backend is refused rather than silently answered
+  with software keys** (refs #313). `xkey/cmd/xkey/cmd/fido2.go`.
+
+  `createFIDO2KeyBackend`'s `default:` returned `createFIDO2SoftwareKeyBackend`.
+  `FIDO2Config.Validate` accepts exactly `software`, `tpm2` and `phone` and runs
+  immediately before the call, so the branch is unreachable today and this
+  change is behaviour-preserving — but the two switches are in different
+  functions over the same enum, so adding a backend name to `Validate` without
+  adding a case here would have downgraded key custody from hardware-backed to
+  software without an error. The default now returns `ErrFIDO2InvalidBackend`,
+  and a test pins the two switches to the same set.
 
 - **`xkey fido2 status` now names the credential store and says whether
   passkeys are encrypted at rest** (refs #181).

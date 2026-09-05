@@ -1634,7 +1634,13 @@ func createFIDO2KeyBackend(cfg *FIDO2Config, logger *slog.Logger) (keybackend.FI
 	case "software":
 		return createFIDO2SoftwareKeyBackend(cfg, logger)
 	default:
-		return createFIDO2SoftwareKeyBackend(cfg, logger)
+		// Refuse rather than degrade. FIDO2Config.Validate accepts exactly the
+		// three names above and runs immediately before this call, so this
+		// branch is unreachable today -- but it previously answered an
+		// unrecognised backend with software keys, so adding a name to
+		// Validate's enum without adding a case here would have silently
+		// downgraded key custody from hardware to software (#313).
+		return nil, ErrFIDO2InvalidBackend
 	}
 }
 

@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/x509"
 	"errors"
+	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
 	"log/slog"
 	"testing"
 
@@ -175,6 +176,12 @@ func TestFP_SetupWizardService_FactoryReset_PanicRecovery(t *testing.T) {
 	svc.configSave = func(_ *GUIConfigData) error {
 		return nil
 	}
+
+	// FactoryReset is credential-gated. Without a PIN service that accepts this
+	// PIN the call is refused before reaching what this test covers (#313).
+	svc.SetPINService(newWizardPINService(&wizardMockPINBackend{
+		strategy: qrdbsdk.PINStrategySoftware, soPIN: "test-so-pin", soPINSet: true,
+	}))
 
 	err := svc.FactoryReset("test-so-pin")
 	require.Error(t, err)
