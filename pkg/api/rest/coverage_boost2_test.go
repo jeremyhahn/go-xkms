@@ -896,3 +896,25 @@ func TestCopyKeyHandler_InvalidJSON(t *testing.T) {
 }
 
 var _ xkms.Backend = (*xkmsmocks.MockKeyStore)(nil)
+
+// TestGenerateKeyHandler_UnknownCurve pins that an unrecognised curve is a
+// client error, not a backend one. ParseCurve's error was discarded here with
+// `_`, so the nil curve reached the backend and surfaced as its
+// "curve is required" guard rather than as a 400 naming the bad value
+// (go-xkms#153).
+func TestGenerateKeyHandler_UnknownCurve(t *testing.T) {
+	setupTestService(t, "test-backend")
+	ctx := newTestHandlerContext()
+	body, _ := json.Marshal(GenerateKeyRequest{
+		KeyID:   "curve-key",
+		Backend: "test-backend",
+		KeyType: "ecdsa",
+		Curve:   "P-999",
+	})
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/keys", strings.NewReader(string(body)))
+	w := httptest.NewRecorder()
+	ctx.GenerateKeyHandler(w, req)
+	assert.Equal(t, http.StatusBadRequest, w.Code)
+	assert.Contains(t, w.Body.String(), "P-999",
+		"the response must name the curve the caller sent")
+}

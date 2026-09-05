@@ -2273,3 +2273,32 @@ func TestGetAlgorithmString(t *testing.T) {
 		assert.Equal(t, "", result)
 	})
 }
+
+// TestBuildKeyAttributes_UnknownCurve pins that an unrecognised curve name is
+// reported as such rather than being dropped.
+//
+// buildKeyAttributes already returned an error, but ParseCurve's was discarded
+// with `_`, leaving ECCAttributes.Curve nil. The nil then travelled to the
+// backend, whose own guard reported "curve is required" -- telling the caller
+// they had omitted a field they had in fact supplied, with the offending value
+// no longer anywhere in the message (go-xkms#153).
+func TestBuildKeyAttributes_UnknownCurve(t *testing.T) {
+	t.Run("an unrecognised curve is refused and names the value", func(t *testing.T) {
+		attrs, err := buildKeyAttributes("test-key", "ecdsa", 0, "P-999", "", 0)
+		require.Error(t, err)
+		require.Nil(t, attrs)
+		assert.ErrorIs(t, err, types.ErrUnknownCurve)
+		assert.Contains(t, err.Error(), "P-999",
+			"the error must name the curve the caller sent, which is the detail the discard lost")
+	})
+
+	// The counterpart: a curve the parser accepts must still build cleanly, so
+	// the guard cannot pass by refusing everything.
+	t.Run("a recognised curve still builds", func(t *testing.T) {
+		attrs, err := buildKeyAttributes("test-key", "ecdsa", 0, "P-384", "", 0)
+		require.NoError(t, err)
+		require.NotNil(t, attrs.ECCAttributes)
+		require.NotNil(t, attrs.ECCAttributes.Curve)
+		assert.Equal(t, 384, attrs.ECCAttributes.Curve.Params().BitSize)
+	})
+}

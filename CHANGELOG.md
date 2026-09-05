@@ -44,6 +44,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   refusal is certain. A counterweight decrypts a correctly v1.5-padded
   ciphertext, so the refusal cannot pass by rejecting everything. Both
   directions are mutation-verified.
+- **An unrecognised elliptic curve on the REST key-generation path told the
+  caller they had omitted the curve they supplied** (#153). Two sites discarded
+  `types.ParseCurve`'s error with `_`, leaving `ECCAttributes.Curve` nil. The
+  nil then reached the backend, whose own guard reported *"curve is required"* —
+  so a client sending `curve: "P-999"` was told the field was missing, and the
+  offending value was gone from the message. Both sites now propagate the error:
+  the handler answers 400 and `buildKeyAttributes`, which already returned an
+  error, returns this one. `ErrUnknownCurve` names the value the caller sent.
 
 ### Security
 

@@ -373,7 +373,16 @@ func (h *HandlerContext) GenerateKeyHandler(w http.ResponseWriter, r *http.Reque
 			if curve == "" {
 				curve = "P256" // Default ECDSA curve
 			}
-			parsedCurve, _ := types.ParseCurve(curve)
+			// ParseCurve's error names the curve the caller actually sent.
+			// Discarding it left Curve nil, and the backend's own nil guard
+			// then reported "curve is required" -- blaming the caller for
+			// omitting a field they had supplied, with the offending value
+			// gone (go-xkms#153).
+			parsedCurve, curveErr := types.ParseCurve(curve)
+			if curveErr != nil {
+				writeError(w, curveErr, http.StatusBadRequest)
+				return
+			}
 			attrs.ECCAttributes = &types.ECCAttributes{
 				Curve: parsedCurve,
 			}
@@ -2169,9 +2178,15 @@ func buildKeyAttributes(keyID, keyType string, keySize int, curve, hash string, 
 		if curve == "" {
 			curve = string(types.CurveP256)
 		}
-		parsedCurve2, _ := types.ParseCurve(curve)
+		// This function already returns an error; dropping ParseCurve's meant an
+		// unrecognised curve surfaced later as the backend's "curve is
+		// required" (go-xkms#153).
+		parsedCurve, curveErr := types.ParseCurve(curve)
+		if curveErr != nil {
+			return nil, curveErr
+		}
 		attrs.ECCAttributes = &types.ECCAttributes{
-			Curve: parsedCurve2,
+			Curve: parsedCurve,
 		}
 	case types.AlgorithmEd25519.Equals(keyType):
 		attrs.KeyAlgorithm = x509.Ed25519
