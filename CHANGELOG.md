@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.9.3-alpha] - 2026-09-05
+
 ### Added
 
 - **`tcg-cap-verifiedTPMRestricted` (2.23.133.11.1.3) is now defined, issued
