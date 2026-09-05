@@ -19,12 +19,28 @@ func NewAuthenticator(config *Config) (*Authenticator, error)
 
 **Returns:**
 - `*Authenticator` - Initialized authenticator
-- `error` - ErrStorageRequired, ErrNoAlgorithms, validation errors
+- `error` - ErrNilConfig, ErrNilStorage, ErrNoAlgorithms,
+  ErrUserPresenceHandlerRequired, other validation errors
+
+`Config.UserPresenceHandler` is required. There is no default: auto-granting
+would fabricate a passing verification and denying everything would silently
+disable the authenticator, so the caller states its user-presence policy
+explicitly. A nil handler fails construction with
+`ErrUserPresenceHandlerRequired`.
 
 **Example:**
 ```go
 config := authenticator.DefaultConfig()
 config.Storage = authenticator.NewMemoryStorage()
+
+// Required: state the user-presence policy explicitly. Use an interactive
+// handler for attended use; NewAutoGrantHandler() only where unattended
+// auto-approval is a deliberate, understood choice.
+handler, err := authenticator.NewInteractiveHandler()
+if err != nil {
+    log.Fatal(err)
+}
+config.UserPresenceHandler = handler
 
 auth, err := authenticator.NewAuthenticator(config)
 if err != nil {
@@ -41,6 +57,14 @@ Processes a CTAP2 CBOR command.
 
 ```go
 func (a *Authenticator) ProcessCBOR(cmd byte, data []byte) ([]byte, error)
+```
+
+`ProcessCBORWithContext` is the cancellable variant; the context is propagated
+to user presence requests so external cancellation (e.g. CTAPHID_CANCEL) can
+abort a blocking operation:
+
+```go
+func (a *Authenticator) ProcessCBORWithContext(ctx context.Context, cmd byte, data []byte) ([]byte, error)
 ```
 
 **Parameters:**
@@ -62,6 +86,9 @@ func (a *Authenticator) ProcessCBOR(cmd byte, data []byte) ([]byte, error)
 | CmdCredentialManagement | 0x0A | Yes |
 | CmdReset | 0x07 | No |
 | CmdSelection | 0x0B | No |
+| CmdBioEnrollment | 0x09 | Yes |
+| CmdLargeBlobs | 0x0C | Yes |
+| CmdConfig | 0x0D | Yes |
 
 **ClientPIN (0x06) subcommand notes:**
 - `getPinToken` (0x05) rejects the `permissions` (0x09) and `rpId` (0x0A)
@@ -128,9 +155,10 @@ func (a *Authenticator) Close() error
 ```
 
 **Notes:**
-- Closes underlying storage
-- Clears sensitive state
-- Idempotent
+- Saves final state, then closes the key backend if one is configured
+- Does NOT close the underlying storage — the storage lifecycle is owned by
+  the caller
+- Idempotent; subsequent `ProcessCBOR` calls return `ErrAuthenticatorClosed`
 
 #### AAGUID
 
@@ -138,14 +166,6 @@ Returns the authenticator's AAGUID.
 
 ```go
 func (a *Authenticator) AAGUID() [16]byte
-```
-
-#### IsClosed
-
-Checks if authenticator has been closed.
-
-```go
-func (a *Authenticator) IsClosed() bool
 ```
 
 #### ClearAssertionState
@@ -159,34 +179,6 @@ func (a *Authenticator) ClearAssertionState()
 **Notes:**
 - Called automatically after assertion timeout
 - Clears GetNextAssertion context
-
-### Testing Methods
-
-#### SetPINForTesting
-
-Sets PIN directly for testing.
-
-```go
-func (a *Authenticator) SetPINForTesting(pin string) error
-```
-
-**Parameters:**
-- `pin` - Plain text PIN
-
-**Returns:**
-- `error` - ErrPINPolicyViolation if too short
-
-**Notes:**
-- Bypasses PIN protocol for testing
-- Not for production use
-
-#### GetPinUvAuthToken
-
-Returns current PIN token for testing.
-
-```go
-func (a *Authenticator) GetPinUvAuthToken() []byte
-```
 
 #### VerifyPinUvAuthToken
 
@@ -260,6 +252,34 @@ Returns the handler currently collecting user presence.
 func (a *Authenticator) UserPresenceHandler() UserPresenceHandler
 ```
 
+### Testing Methods
+
+#### SetPINForTesting
+
+Sets PIN directly for testing.
+
+```go
+func (a *Authenticator) SetPINForTesting(pin string) error
+```
+
+**Parameters:**
+- `pin` - Plain text PIN
+
+**Returns:**
+- `error` - ErrPINPolicyViolation if too short
+
+**Notes:**
+- Bypasses PIN protocol for testing
+- Not for production use
+
+#### GetPinUvAuthToken
+
+Returns current PIN token for testing.
+
+```go
+func (a *Authenticator) GetPinUvAuthToken() []byte
+```
+
 ---
 
 ## Types
@@ -268,23 +288,41 @@ func (a *Authenticator) UserPresenceHandler() UserPresenceHandler
 
 ```go
 type Config struct {
-    AAGUID                     [16]byte
-    SupportedAlgorithms        []int
-    MaxCredentials             int
-    MaxResidentCredentials     int
-    PINMinLength               int
-    PINMaxRetries              int
-    EnablePIN                  bool
-    EnableResidentKey          bool
-    EnableCredentialManagement bool
-    EnableHMACSecret           bool
-    UserPresenceHandler        UserPresenceHandler
-    UserPresenceTimeout        time.Duration
-    KeyBackend                 keybackend.FIDO2KeyBackend
-    AttestationFormat          string
-    Storage                    CredentialStorage
+    AAGUID                      [16]byte
+    SupportedAlgorithms         []int
+    MaxCredentials              int
+    MaxResidentCredentials      int
+    PINMinLength                int
+    PINMaxRetries               int
+    EnablePIN                   bool
+    EnableResidentKey           bool
+    EnableCredentialManagement  bool
+    EnableHMACSecret            bool
+    AlwaysUV                    bool
+    UserPresenceHandler         UserPresenceHandler // Required; nil fails NewAuthenticator
+    TokenInitWindow             time.Duration       // TOFU window for SO PIN init (0 = default)
+    UserPresenceTimeout         time.Duration
+    RequireUserPresence         bool
+    EnableUserIntentCheck       bool
+    KeyBackend                  keybackend.FIDO2KeyBackend
+    AttestationFormat           string // "none", "packed", "tpm"
+    Storage                     CredentialStorage // Required
+    Logger                      *slog.Logger
+    OnCredentialCreated         func(cred *StoredCredential)
+    OnAssertionCompleted        func(rpID string)
+    UnifiedPIN                  bool
+    PolicyIntegrityProvider     PolicyIntegrityProvider
+    RPPolicyStore               RPPolicyStore
+    Transports                  []string // GetInfo transports, default ["usb"]
+    EnableEnterpriseAttestation bool
+    EnableLargeBlobs            bool
+    FirmwareVersion             uint32
 }
 ```
+
+`UserPresenceHandler` and `Storage` are required. `DefaultConfig()` sets
+neither: construction fails with `ErrUserPresenceHandlerRequired` or
+`ErrNilStorage` until the caller supplies them.
 
 #### Methods
 
@@ -292,6 +330,7 @@ type Config struct {
 func DefaultConfig() *Config
 func (c *Config) SetDefaults()
 func (c *Config) Validate() error
+func (c *Config) SupportsAlgorithm(algorithm int) bool
 ```
 
 ### RelyingParty
@@ -437,6 +476,12 @@ type StoredCredential struct {
     HMACSecretKey   []byte // 32 bytes
     CredProtect     uint8  // Credential protection level (0-3)
     CreatedAt       int64
+
+    RPUVPolicy          string // RP userVerification requirement at creation
+    RPUPPolicy          bool   // whether the RP required user presence at creation
+    RPResidentKeyPolicy string // RP resident-key requirement at creation
+    RPAttestationPref   string // RP attestation preference at creation
+    BackendID           xkms.BackendType // key backend owning the private key
 }
 ```
 
@@ -444,24 +489,44 @@ type StoredCredential struct {
 
 ```go
 type AuthenticatorState struct {
-    AAGUID          [16]byte
-    PINHash         []byte // SHA-256(PIN)[:16]
-    PINSet          bool
-    AttestationKey  *ecdsa.PrivateKey
-    AttestationCert []byte
+    AAGUID               [16]byte
+    PINHash              []byte // the PIN itself is never stored
+    PINSet               bool
+    AttestationCert      []byte   // DER-encoded attestation leaf certificate
+    AttestationCertChain [][]byte // DER intermediates, leaf-to-root, root excluded
+
+    // SO PIN protection
+    SOPINManager       *SOPINManager
+    WrappedAK          []byte // Admin Key wrapped with the SO PIN-derived SMK
+    WrappedCMKUser     []byte // Credential Master Key wrapped with the user PIN-derived UMK
+    WrappedCMKSO       []byte // Credential Master Key wrapped with the Admin Key
+    WrappedAttestUser  []byte // attestation key wrapped with the CMK
+    WrappedAttestSO    []byte // attestation key wrapped with the Admin Key
+    AttestedConfigHash []byte
+    PINSyncPending     bool
+
+    // Policy HMAC integrity
+    PolicyHMACTag      []byte
+    SignedPolicyFields *PolicyFields
 }
 ```
+
+The device attestation signing key is deliberately absent: it is held only as
+the AES-GCM wrapped copies above and unwrapped into protected memory for the
+duration of each signature.
 
 #### Methods
 
 ```go
 func NewAuthenticatorState() *AuthenticatorState
-func (s *AuthenticatorState) PINRetries() int32
-func (s *AuthenticatorState) SetPINRetries(retries int32)
-func (s *AuthenticatorState) DecrementPINRetries()
-func (s *AuthenticatorState) UVRetries() int32
-func (s *AuthenticatorState) SetUVRetries(retries int32)
-func (s *AuthenticatorState) DecrementUVRetries()
+func (s *AuthenticatorState) PINRetries() int
+func (s *AuthenticatorState) SetPINRetries(retries int)
+func (s *AuthenticatorState) DecrementPINRetries() int
+func (s *AuthenticatorState) ResetPINRetries()
+func (s *AuthenticatorState) UVRetries() int
+func (s *AuthenticatorState) SetUVRetries(retries int)
+func (s *AuthenticatorState) DecrementUVRetries() int
+func (s *AuthenticatorState) ResetUVRetries()
 ```
 
 ---
@@ -608,7 +673,10 @@ func NewAutoGrantHandler() *AutoGrantHandler
 func NewAutoGrantHandlerWithPIN(pin string) *AutoGrantHandler
 ```
 
-Automatically approves all user presence and verification requests. Default handler when none configured.
+Automatically approves all user presence and verification requests. Never
+installed by default: `NewAuthenticator` fails with
+`ErrUserPresenceHandlerRequired` when `Config.UserPresenceHandler` is nil, so
+unattended auto-approval only happens where a caller asked for it explicitly.
 
 ### InteractiveHandler
 
@@ -739,14 +807,17 @@ const (
 
 ```go
 const (
-    CmdMakeCredential        = 0x01
-    CmdGetAssertion          = 0x02
-    CmdGetInfo               = 0x04
-    CmdClientPIN             = 0x06
-    CmdReset                 = 0x07
-    CmdGetNextAssertion      = 0x08
-    CmdCredentialManagement  = 0x0A
-    CmdSelection             = 0x0B
+    CmdMakeCredential       = 0x01
+    CmdGetAssertion         = 0x02
+    CmdGetInfo              = 0x04
+    CmdClientPIN            = 0x06
+    CmdReset                = 0x07
+    CmdGetNextAssertion     = 0x08
+    CmdBioEnrollment        = 0x09
+    CmdCredentialManagement = 0x0A
+    CmdSelection            = 0x0B
+    CmdLargeBlobs           = 0x0C
+    CmdConfig               = 0x0D
 )
 ```
 
@@ -754,19 +825,55 @@ const (
 
 ```go
 const (
-    StatusOK                 = 0x00
-    StatusInvalidCommand     = 0x01
-    StatusInvalidParameter   = 0x02
-    StatusInvalidLength      = 0x03
-    StatusInvalidSeq         = 0x04
-    StatusTimeout            = 0x05
-    StatusChannelBusy        = 0x06
-    StatusPINInvalid         = 0x31
-    StatusPINBlocked         = 0x32
-    StatusPINAuthInvalid     = 0x33
-    StatusNoCredentials      = 0x2E
-    StatusOperationDenied    = 0x27
-    StatusCredentialExcluded = 0x19
+    StatusOK                   = 0x00
+    StatusInvalidCommand       = 0x01
+    StatusInvalidParameter     = 0x02
+    StatusInvalidLength        = 0x03
+    StatusInvalidSeq           = 0x04
+    StatusTimeout              = 0x05
+    StatusChannelBusy          = 0x06
+    StatusLockRequired         = 0x0A
+    StatusInvalidChannel       = 0x0B
+    StatusCBORUnexpectedType   = 0x11
+    StatusInvalidCBOR          = 0x12
+    StatusMissingParameter     = 0x14
+    StatusLimitExceeded        = 0x15
+    StatusUnsupportedExtension = 0x16
+    StatusFPDatabaseFull       = 0x17
+    StatusLargeBlobStorageFull = 0x18
+    StatusCredentialExcluded   = 0x19
+    StatusProcessing           = 0x21
+    StatusInvalidCredential    = 0x22
+    StatusUserActionPending    = 0x23
+    StatusOperationPending     = 0x24
+    StatusNoOperations         = 0x25
+    StatusUnsupportedAlgorithm = 0x26
+    StatusOperationDenied      = 0x27
+    StatusKeyStoreFull         = 0x28
+    StatusNotBusy              = 0x29
+    StatusNoOperationPending   = 0x2A
+    StatusUnsupportedOption    = 0x2B
+    StatusInvalidOption        = 0x2C
+    StatusKeepaliveCancel      = 0x2D
+    StatusNoCredentials        = 0x2E
+    StatusUserActionTimeout    = 0x2F
+    StatusNotAllowed           = 0x30
+    StatusPINInvalid           = 0x31
+    StatusPINBlocked           = 0x32
+    StatusPINAuthInvalid       = 0x33
+    StatusPINAuthBlocked       = 0x34
+    StatusPINNotSet            = 0x35
+    StatusPINRequired          = 0x36
+    StatusPINPolicyViolation   = 0x37
+    StatusPINTokenExpired      = 0x38
+    StatusRequestTooLarge      = 0x39
+    StatusActionTimeout        = 0x3A
+    StatusUPRequired           = 0x3B
+    StatusUVBlocked            = 0x3C
+    StatusIntegrityFailure     = 0x3D
+    StatusInvalidSubcommand    = 0x3E
+    StatusUVInvalid            = 0x3F
+    StatusOtherError           = 0x7F
 )
 ```
 
@@ -786,9 +893,14 @@ const (
 ```go
 const (
     PINProtocol1          = 1
+    PINProtocol2          = 2
     PINMinLength          = 4
     PINHashSize           = 16
+    PINAuthSizeV1         = 16
+    PINAuthSizeV2         = 32
     PINTokenSize          = 32
+    AESBlockSize          = 16
+    EncryptedPINMinLength = 64
 )
 ```
 
@@ -813,10 +925,14 @@ var (
     ErrUnsupportedExtension      = errors.New("authenticator: unsupported extension")
     ErrUserPresenceRequired      = errors.New("authenticator: user presence required")
     ErrUserVerificationRequired  = errors.New("authenticator: user verification required")
+    ErrUVBlocked                 = errors.New("authenticator: UV blocked")
     ErrStorageError              = errors.New("authenticator: storage error")
     ErrCryptoError               = errors.New("authenticator: crypto error")
     ErrInvalidRPID               = errors.New("authenticator: invalid relying party ID")
     ErrCredentialExcluded        = errors.New("authenticator: credential excluded")
+
+    ErrAttestationOverrideUnsupported = errors.New("authenticator: attestation override cannot be honoured")
+    ErrAttestationUnavailable         = errors.New("authenticator: attestation statement unavailable")
 )
 ```
 
@@ -841,6 +957,10 @@ var (
 ```go
 var (
     ErrAuthenticatorClosed = errors.New("authenticator: authenticator closed")
+    ErrCBOREncodingFailed  = errors.New("authenticator: CBOR encoding failed")
+    ErrCBORDecodingFailed  = errors.New("authenticator: CBOR decoding failed")
+    ErrNotImplemented      = errors.New("authenticator: command not implemented")
+    ErrLimitExceeded       = errors.New("authenticator: limit exceeded")
 )
 ```
 
@@ -848,6 +968,8 @@ var (
 
 ```go
 var (
+    ErrUserPresenceHandlerRequired = errors.New("authenticator: config.UserPresenceHandler is required")
+
     ErrUserPresenceDenied     = errors.New("authenticator: user presence denied")
     ErrUserPresenceTimeout    = errors.New("authenticator: user presence timeout")
     ErrUserVerificationDenied = errors.New("authenticator: user verification denied")
