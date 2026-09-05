@@ -240,11 +240,22 @@ Signs a TCG-CSR-IDEVID per the TPM 2.0 Keys for Device Identity specification.
 
 **Parameters:**
 - `tcgCSRIDevID` - TCG-CSR-IDEVID structure from TPM client
-- `request` - Certificate request parameters
+- `request` - Certificate request parameters. `request.Subject` is the IDevID
+  subject; it is used unchanged.
 
 **Returns:**
-- `iakDER` - DER-encoded IAK certificate
-- `idevidDER` - DER-encoded IDevID certificate
+- `iakDER` - DER-encoded IAK certificate, subject CN
+  `IAKCommonName(model, serial)` = `iak-<model>-<serial>` (model and serial
+  read from the CSR's `ProdModel` / `ProdSerial`), the rest of the subject
+  copied from `request.Subject`
+- `idevidDER` - DER-encoded IDevID certificate, subject `request.Subject`
+
+Both certificates are persisted to the certificate store, which keys records
+by subject common name. The two names differ, so both records survive:
+`ListCertificates` returns both, either can be revoked, and the IAK can be
+read back with `IAKCertificate`. Stores written before this behavior held only
+the IDevID record (the IAK had been overwritten); re-enrollment or a re-issue
+repopulates the IAK record, no migration fabricates one.
 
 **Example:**
 ```go
@@ -254,6 +265,37 @@ iakDER, idevidDER, err := authority.SignTCGCSRIDevID(tcgCSR, &ca.CertificateRequ
     },
 })
 ```
+
+### IAKCommonName
+
+```go
+func IAKCommonName(model, serial string) string
+```
+
+Returns `iak-<model>-<serial>`, the subject common name under which
+`SignTCGCSRIDevID` issues and stores a device's IAK certificate. It is the
+single definition of that name: issuance and lookup both go through it.
+Re-exported by `sdk/go/acme` as `CAIAKCommonName`.
+
+### IAKCertificate
+
+```go
+func (ca *CA) IAKCertificate(
+    ctx context.Context,
+    model, serial string,
+) (*x509.Certificate, error)
+```
+
+Returns the IAK certificate recorded for the device identified by product
+model and serial number. Exposed through the `IAKCertificateReader` interface
+(re-exported as `sdk/go/acme.CAIAKCertificateReader`), which sits beside
+`TCGCA` rather than inside it so existing `TCGCA` implementations keep
+compiling; a caller holding a `TCGCA` type-asserts to it.
+
+**Errors:**
+- `ErrNotInitialized` - the CA has not been initialized
+- `ErrCertificateNotFound` - no IAK record for the device; the detail names
+  the looked-up common name
 
 ### IssueEKCertificate
 

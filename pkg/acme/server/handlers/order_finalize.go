@@ -930,12 +930,10 @@ func (s *RestService) finalizeTCGCSR(
 		return 0, nil, common.ServerInternal("Failed to parse certificate")
 	}
 
-	// Build the IAK certificate request
-	iakCertRequest := *tcgCSRRequest
-	iakCertRequest.Subject.CommonName = fmt.Sprintf("iak-%s-%s",
-		tcgCSR.CsrContents.ProdModel, tcgCSR.CsrContents.ProdSerial)
-
-	// Encode the IAK certificate to PEM
+	// The IAK certificate's subject is the CA's business: SignTCGCSRIDevID
+	// issues it under ca.IAKCommonName(model, serial), apart from the IDevID
+	// record, and the DER returned here is handed to the finalize hooks and
+	// the client unchanged.
 	pem = encodeCertificatePEM(iakDER)
 
 	// Encode the IDevID certificate to PEM

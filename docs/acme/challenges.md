@@ -563,10 +563,18 @@ The client must serve two endpoints:
 
 Upon successful credential activation, the CA issues:
 
-1. **IAK Certificate:** Certifies the Initial Attestation Key
-2. **IDevID Certificate:** Device Identity certificate
+1. **IAK Certificate:** Certifies the Initial Attestation Key. Subject CN
+   `iak-<model>-<serial>` (`ca.IAKCommonName`), applied by the CA when it
+   issues.
+2. **IDevID Certificate:** Device Identity certificate. Subject CN
+   `<model>-<serial>`.
 
-Both certificates are returned concatenated in PEM format.
+Both certificates are returned concatenated in PEM format, IAK first. Both are
+recorded in the CA's certificate store under their own common names, so either
+can be listed, revoked, or fetched later; the IAK is read back with
+`IAKCertificate(ctx, model, serial)`. The `TCGData.IAKCertificateDER` and
+`IDevIDCertificateDER` fields handed to the order-finalize hooks carry the same
+DER bytes.
 
 ---
 

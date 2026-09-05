@@ -83,6 +83,43 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   human: the key backend asserting verification, and the handler fabricating
   it. Neither fix is sufficient alone.
 
+### Fixed
+
+- **`SignTCGCSRIDevID` stored the IAK and the IDevID certificate under the same
+  common name, so the IDevID record overwrote the IAK record** (#371).
+  `pkg/ca/tcg.go`, `pkg/ca/interface.go`,
+  `pkg/acme/server/handlers/order_finalize.go`, `sdk/go/acme/ca.go`.
+
+  Both certificates were issued from `request.Subject` and persisted through a
+  certificate store keyed by `Subject.CommonName`; the IDevID, stored second,
+  replaced the IAK. Measured on the platform fleet on 2026-09-05: the CA held
+  no IAK certificate for any enrolled device, so nothing server-side could
+  list, revoke, or return the IAK it had signed. The ACME finalize handler
+  computed an `iak-<model>-<serial>` name for the IAK and never used it.
+
+  The IAK is now issued under `IAKCommonName(model, serial)` =
+  `iak-<model>-<serial>` (model and serial from the CSR; the rest of the
+  subject is still the request's), which is the one definition of that name:
+  the handler's dead copy is gone. The IDevID subject is unchanged, so
+  `<model>-<serial>` lookups keep working. `(*CA).IAKCertificate(ctx, model,
+  serial)` reads the record back, exposed through a new `IAKCertificateReader`
+  interface beside `TCGCA` (not inside it, so existing `TCGCA` implementations
+  keep compiling) and re-exported by `sdk/go/acme` as `CAIAKCertificateReader`
+  and `CAIAKCommonName`. `TCGData.IAKCertificateDER` still carries the IAK DER
+  to the order-finalize hooks unchanged.
+
+  Compatibility: certificate stores written before this release hold no IAK
+  record for already-enrolled devices, because it was overwritten at
+  enrollment. Re-enrollment, or the consumer's re-issue path, repopulates it;
+  no migration fabricates a record the CA never kept.
+
+  Verified by a TCG-CSR-IDEVID assembled in software that passes the CA's
+  production verification (`pkg/ca/tcg_iak_certstore_test.go`). Mutation
+  record: reverting the IAK subject to `request.Subject` fails five of the
+  twenty-one new tests, among them `TestSignTCGCSRIDevID_IAKRecordSurvivesIDevIDIssuance`
+  (one record in the store instead of two) and
+  `TestIAKCertificate_ReturnsEnrolledIAK` (`ErrCertificateNotFound`).
+
 ## [0.9.3-alpha] - 2026-09-05
 
 ### Added

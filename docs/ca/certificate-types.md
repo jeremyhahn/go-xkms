@@ -258,8 +258,17 @@ iakDER, idevidDER, err := authority.SignTCGCSRIDevID(tcgCSR, &ca.CertificateRequ
 The `SignTCGCSRIDevID` method:
 1. Verifies the TCG-CSR-IDEVID signature using IAK or IDevID key
 2. Validates TPM key attributes (restricted, fixedTPM, fixedParent)
-3. Issues IAK certificate for attestation operations
-4. Issues IDevID certificate for device identity
+3. Issues IAK certificate for attestation operations under the subject
+   `IAKCommonName(model, serial)` = `iak-<model>-<serial>` (model and serial
+   from the CSR), with the remaining subject fields copied from the request
+4. Issues IDevID certificate for device identity under the request subject
+5. Stores both certificates; because the two common names differ, the IDevID
+   record does not replace the IAK record, and `IAKCertificate(ctx, model,
+   serial)` returns the IAK later
+
+TCG DevID §8 permits the IAK subject to differ from the IDevID subject. The
+ACME enroll-01 handler names the IDevID `<model>-<serial>`, so on that path
+the IAK is `iak-<model>-<serial>`.
 
 ## TCG Object Identifiers
 

@@ -37,6 +37,7 @@ import (
 
 // Compile-time interface compliance check for TCGCA.
 var _ TCGCA = (*CA)(nil)
+var _ IAKCertificateReader = (*CA)(nil)
 
 // tcgNotAfter is the indefinite validity time per TCG TPM 2.0 Keys for Device
 // Identity and Attestation Section 8.1. Devices possessing EK/AK/IDevID
@@ -250,13 +251,61 @@ func (ca *CA) IssueAKCertificate(ctx context.Context, request *CertificateReques
 	return cert, nil
 }
 
+// IAKCommonNamePrefix distinguishes an Initial Attestation Key certificate
+// from the IDevID certificate issued in the same TCG-CSR-IDEVID enrollment.
+const IAKCommonNamePrefix = "iak-"
+
+// IAKCommonName returns the subject common name under which the IAK
+// certificate for the device identified by its product model and serial
+// number is issued and stored: "iak-<model>-<serial>".
+//
+// The IDevID certificate of the same device carries the caller's subject
+// (the ACME enroll-01 path uses "<model>-<serial>"). The certificate store
+// keys records by common name, so the two certificates of one enrollment
+// must not share a subject; TCG DevID §8 permits the IAK subject to differ
+// from the IDevID subject. This function is the single definition of the
+// IAK name: issuance (SignTCGCSRIDevID) and lookup (IAKCertificate) both
+// go through it.
+func IAKCommonName(model, serial string) string {
+	return IAKCommonNamePrefix + model + "-" + serial
+}
+
+// IAKCertificate returns the Initial Attestation Key certificate issued to
+// the device identified by its product model and serial number, as recorded
+// by SignTCGCSRIDevID.
+//
+// Returns ErrNotInitialized if the CA has not been initialized.
+// Returns ErrCertificateNotFound (with the looked-up name as detail) when the
+// store holds no IAK record for the device. Devices enrolled before the IAK
+// record was kept apart from the IDevID record have no such record until
+// they re-enroll or the certificate is re-issued.
+//
+// Thread-safe: Yes
+func (ca *CA) IAKCertificate(ctx context.Context, model, serial string) (*x509.Certificate, error) {
+	if !ca.initialized.Load() {
+		return nil, ErrNotInitialized
+	}
+	cn := IAKCommonName(model, serial)
+	if ca.certStore == nil {
+		return nil, &errs.Detail{Err: ErrCertificateNotFound, Detail: cn}
+	}
+	cert, err := ca.certStore.GetCertificate(cn)
+	if err != nil || cert == nil {
+		return nil, &errs.Detail{Err: ErrCertificateNotFound, Detail: cn}
+	}
+	return cert, nil
+}
+
 // SignTCGCSRIDevID verifies and signs a TCG-CSR-IDEVID for device identity enrollment.
 //
 // This method:
 //  1. Verifies the TCG-CSR-IDEVID signature (tries RSA-PSS then ECDSA)
 //  2. Extracts IAK and IDevID public keys from TPM public areas
-//  3. Issues an IAK certificate with TCG AIK extensions
+//  3. Issues an IAK certificate with TCG AIK extensions under the subject
+//     IAKCommonName(model, serial) -- the request subject with its common
+//     name replaced -- so that it is stored apart from the IDevID record
 //  4. Issues an IDevID certificate with permanent identifier extension
+//     under the request subject, unchanged
 func (ca *CA) SignTCGCSRIDevID(
 	ctx context.Context,
 	tcgCSR *tpm2.TCG_CSR_IDEVID,
@@ -343,9 +392,18 @@ func (ca *CA) SignTCGCSRIDevID(
 		return nil, nil, err
 	}
 
+	// The IAK is stored under its own common name. The certificate store keys
+	// records by Subject.CommonName; issuing the IAK with the request subject
+	// made the IDevID stored a few lines below overwrite it, leaving the CA
+	// unable to list, revoke or return the IAK it had signed (#371).
+	iakSubject := request.Subject.ToPkixName()
+	iakSubject.CommonName = IAKCommonName(
+		string(unpacked.CsrContents.ProdModel),
+		string(unpacked.CsrContents.ProdSerial))
+
 	iakCert, err := ca.issueTCGCertificate(signer, signingCert, &CertificateSpec{
 		Serial:             iakSerial,
-		Subject:            request.Subject.ToPkixName(),
+		Subject:            iakSubject,
 		NotBefore:          time.Now().Add(-1 * time.Minute),
 		NotAfter:           tcgNotAfter,
 		PublicKey:          iakPubKey,
@@ -401,7 +459,8 @@ func (ca *CA) SignTCGCSRIDevID(
 	// Without this, ACME enroll-01 silently signs+returns certs to the
 	// device while the CA forgets they exist — devices end up with valid
 	// certs the CA can never revoke, list, or audit. Matches SignCSR's
-	// post-signing storage call (ca.go:1349).
+	// post-signing storage call (ca.go:1349). The two subjects differ (see
+	// iakSubject above), so the second store does not replace the first.
 	if ca.certStore != nil {
 		if storeErr := ca.certStore.StoreCertificate(iakCert); storeErr != nil {
 			return nil, nil, &errs.Detail{Err: ErrTCGCertIssuanceFailed, Detail: fmt.Sprintf("store iak: %v", storeErr)}

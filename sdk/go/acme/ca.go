@@ -36,6 +36,13 @@ import (
 // full TrustedCA surface (Init, Load, SignCSR, Verify, Revoke, ...).
 type CACertificateAuthority = pkgca.TCGCA
 
+// CAIAKCertificateReader returns the Initial Attestation Key certificate a
+// CA recorded for a device at TCG-CSR-IDEVID enrollment, looked up by product
+// model and serial number. Kept beside CACertificateAuthority so existing
+// implementations keep compiling; the CA returned by CANew satisfies both.
+// Aliased to pkg/ca.IAKCertificateReader.
+type CAIAKCertificateReader = pkgca.IAKCertificateReader
+
 // =============================================================================
 // CA Configuration Types
 // =============================================================================
@@ -111,6 +118,12 @@ var CANewIntermediateCA = pkgca.NewIntermediateCA
 // CANewCA builds a root+intermediate pair from params.Identity. Aliased to
 // pkg/ca.NewCA.
 var CANewCA = pkgca.NewCA
+
+// CAIAKCommonName returns the subject common name ("iak-<model>-<serial>")
+// under which SignTCGCSRIDevID issues and stores a device's IAK certificate,
+// so a consumer can address the record without spelling the format itself.
+// Aliased to pkg/ca.IAKCommonName.
+var CAIAKCommonName = pkgca.IAKCommonName
 
 // =============================================================================
 // CA Attestation Blob Type Constants

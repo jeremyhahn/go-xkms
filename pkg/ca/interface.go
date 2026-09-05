@@ -834,6 +834,25 @@ type ProfileRegistry interface {
 	List() []string
 }
 
+// IAKCertificateReader returns the Initial Attestation Key certificate a CA
+// recorded for a device at TCG-CSR-IDEVID enrollment.
+//
+// It is kept beside TCGCA rather than inside it so that existing TCGCA
+// implementations keep compiling; *CA satisfies both. A caller holding a
+// TCGCA type-asserts to this interface when it needs the IAK back by device
+// identity, for example to re-record an attestation certificate server-side
+// without involving the device.
+type IAKCertificateReader interface {
+	// IAKCertificate returns the IAK certificate stored under
+	// IAKCommonName(model, serial).
+	//
+	// Returns ErrNotInitialized if the CA has not been initialized.
+	// Returns ErrCertificateNotFound when no IAK record exists for the device.
+	//
+	// Thread-safe: Yes
+	IAKCertificate(ctx context.Context, model, serial string) (*x509.Certificate, error)
+}
+
 // TCGCA extends TrustedCA with TCG Trusted Computing certificate operations
 // for TPM device identity (IDevID), attestation key (AK), and endorsement
 // key (EK) per TCG TPM 2.0 Keys for Device Identity and Attestation.
