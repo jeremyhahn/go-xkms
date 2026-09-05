@@ -29,6 +29,7 @@ import (
 	"time"
 
 	"github.com/fxamacker/cbor/v2"
+	"github.com/jeremyhahn/go-xkms/xkey/pkg/authenticator/keybackend"
 )
 
 // CTAP2 GetAssertion request parameter keys.
@@ -581,7 +582,66 @@ func (a *Authenticator) findMatchingCredentialsForAssertion(
 		}
 	}
 
+	// Per CTAP 2.1 §6.2 step 1, an allowList entry is applicable only when it
+	// is bound to THIS authenticator. A stored record whose key material the
+	// key backend no longer holds is not applicable — drop it here, before
+	// selection, so one stale entry sorting first cannot abort the ceremony at
+	// signing time and hide the loadable credentials behind it (#347). This
+	// also keeps numberOfCredentials and the getNextAssertion sequence scoped
+	// to the credentials that can actually sign.
+	if allowListProvided && a.keyBackend != nil {
+		matchingCreds, err = a.filterLoadableCredentials(matchingCreds)
+		if err != nil {
+			return nil, err
+		}
+	}
+
 	return matchingCreds, nil
+}
+
+// filterLoadableCredentials returns, preserving order, the credentials whose
+// key material the key backend can load. It is only meaningful when a key
+// backend is configured: inline-key credentials carry their private key inside
+// the stored record, so loading the record proves the key is present.
+//
+// The skip/abort decision branches on the typed keybackend.ErrKeyNotFound
+// sentinel, never on error strings:
+//
+//   - ErrKeyNotFound is the ordinary "not bound to this authenticator" case —
+//     a re-provisioned authenticator, a wiped key store, another device's
+//     credential still listed by the server. The entry is skipped at debug
+//     level and iteration continues.
+//   - Any other LoadKey failure means the backend itself is unhealthy (closed,
+//     I/O fault). That aborts the ceremony: silently skipping would let a
+//     flaky backend shrink the applicable set and report
+//     CTAP2_ERR_NO_CREDENTIALS for credentials that exist.
+func (a *Authenticator) filterLoadableCredentials(creds []*StoredCredential) ([]*StoredCredential, error) {
+	loadable := make([]*StoredCredential, 0, len(creds))
+	for _, cred := range creds {
+		if _, err := a.keyBackend.LoadKey(cred.CredentialID, cred.Algorithm); err != nil {
+			if errors.Is(err, keybackend.ErrKeyNotFound) {
+				debugLog("allowList credential %x not bound to this authenticator, skipping",
+					cred.CredentialID[:8])
+				if a.logger != nil {
+					a.logger.Debug("skipping allowList credential not bound to this authenticator",
+						"credential_id_prefix", fmt.Sprintf("%x", cred.CredentialID[:8]),
+						"error", err.Error())
+				}
+				continue
+			}
+			debugLog("keyBackend.LoadKey failed during credential selection: %v", err)
+			if a.logger != nil {
+				a.logger.Error("key backend LoadKey failed during credential selection",
+					"error", err.Error(),
+					"credential_id_prefix", fmt.Sprintf("%x", cred.CredentialID[:8]),
+					"algorithm", cred.Algorithm,
+					"backend_type", fmt.Sprintf("%T", a.keyBackend))
+			}
+			return nil, mapKeyBackendError(err)
+		}
+		loadable = append(loadable, cred)
+	}
+	return loadable, nil
 }
 
 // lookupCredentialsForAssertion returns every stored credential matching the

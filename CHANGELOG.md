@@ -98,6 +98,33 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **`GetAssertion` aborted on the first allowList entry whose key material the
+  key backend no longer held, so one stale credential permanently bricked
+  WebAuthn login** (#347). `xkey/pkg/authenticator/cmd_getassertion.go`.
+
+  The server's credential table survives a daemon re-provision, so it keeps
+  offering allowList entries whose keys were wiped from the key backend. The
+  stored record still loaded from credential storage, so the stale entry was
+  selected first and the ceremony died at signing time on
+  `keybackend: key not found` — the user's valid credential behind it was
+  never tried, and re-registering only appended entries after the poison one.
+  Per CTAP 2.1 §6.2 step 1 such an entry is simply not bound to this
+  authenticator and is not applicable; `CTAP2_ERR_NO_CREDENTIALS` is correct
+  only when the applicable set is empty.
+
+  Selection now probes `keyBackend.LoadKey` for every allowList candidate
+  (`filterLoadableCredentials`), branching on the typed
+  `keybackend.ErrKeyNotFound` sentinel: not-found entries are skipped at debug
+  level and iteration continues in allowList order; any other LoadKey failure
+  (backend closed, I/O fault) still aborts the ceremony, so a flaky backend
+  cannot silently shrink the applicable set. `numberOfCredentials` and the
+  `getNextAssertion` sequence now count only the credentials that can actually
+  sign. The discoverable-credential flow (no allowList) and inline-key
+  authenticators (no key backend) are unchanged.
+
+  Verified by five regression tests over a real software key-backend adapter,
+  including the field case `[stale, stale, valid]` → success with the valid
+  credential; the field-case and ordering tests fail against the pre-fix code.
 - **An unrecognised elliptic curve on the REST key-generation path told the
   caller they had omitted the curve they supplied** (#153). Two sites discarded
   `types.ParseCurve`'s error with `_`, leaving `ECCAttributes.Curve` nil. The
