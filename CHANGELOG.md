@@ -7,6 +7,27 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **Attested-peer verification primitive** — `pkg/attestation/peer`, aliased
+  in `sdk/go` as `PeerAttestationVerifier` / `PeerEvidence` / `PeerPolicy` /
+  `PeerVerdict` (#273). Answers "is the other end of this connection a
+  *currently attested* system?" from a TPM 2.0 quote: attestation-key
+  certificate chained to configured anchors and carrying
+  `tcg-cap-verifiedTPMRestricted` (TCG DevID v1 r12 §8.2, required by
+  default), signature over `TPMS_ATTEST`, nonce echo, TLS channel binding in
+  the qualifying data (`QualifyingData` = SHA-256(nonce ‖ exporter) with
+  `ChannelBinding` deriving the exporter under `EXPORTER-attested-peer`),
+  reported PCR values proven against the signed digest, required registers
+  (PCR 10 for measured userspace), baseline comparison, and a maximum
+  evidence age judged against the collector's timestamp. The verdict reports
+  every check and a typed `FailureClass` separating evidence that was present
+  and wrong (`cryptographic`) from a check that could not run (`absence`), so
+  a consumer can quarantine on the first and only deny on the second. Fails
+  closed throughout; the existing `TPM2.Quote` needed no change because it
+  already passes qualifying data through verbatim. Documented in
+  `docs/attested-peer/`.
+
 ### Security
 
 - **`AutoUVBackend` asserted user verification because the barrier was

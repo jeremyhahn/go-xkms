@@ -1,6 +1,6 @@
 # TPM 2.0 — API
 
-> **Status: NORMATIVE** · Feature: `tpm2` · Repo: `go-xkms` · Last verified: 2026-08-19
+> **Status: NORMATIVE** · Feature: `tpm2` · Repo: `go-xkms` · Last verified: 2026-09-05
 
 Transport shapes: [`../key-management/api.md`](../key-management/api.md)
 §"How the six transports are shaped".
@@ -52,6 +52,13 @@ expectation.
 
 `pkg/attestation/android` covers the phone-as-HSM key type, whose attestation
 format is Android's rather than TCG's — see the xkey phone documentation.
+
+`pkg/attestation/peer` is the **attested-peer** verifier: given a quote a peer
+produced with `TPM2.Quote`, its attestation-key certificate and the verifier's
+own policy, it renders a per-check verdict with a typed cryptographic/absence
+failure class, binding the quote to the TLS channel through the qualifying
+data. It is what a transport gate calls to admit only a currently attested
+caller — see [`docs/attested-peer/`](../attested-peer/architecture.md).
 
 ## Status and error mapping
 
