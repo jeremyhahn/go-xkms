@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.9.2-alpha] - 2026-09-04
+
 ### Fixed
 
 - **Two padding tests asserted a probabilistic outcome as if it were
