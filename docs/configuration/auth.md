@@ -129,9 +129,8 @@ storage:
 With any other backend (`pebble`, `file`, `memory`) there is no qrdb client, the
 authorizer cannot be built, and every transport authorizes every request. The
 daemon refuses to start in that combination: `Config.ComplianceGaps`
-(`pkg/config/config.go`) reports it as a posture gap, and startup aborts unless
-the operator explicitly opts into development mode with `--insecure` /
-`XKMS_INSECURE=true`.
+(`pkg/config/config.go`) reports it as a posture gap, and startup (and config
+reload) aborts. There is no override flag, environment variable, or build tag.
 
 Set `storage.backend: "qrdb"` or disable `auth.enable_rbac`.
 
@@ -470,8 +469,9 @@ shows `RBAC enabled but no qrdb identity plane; authorization is permissive`.
 
 - The storage backend is not `qrdb`, so the authorizer could not be built. Set
   `storage.backend: "qrdb"`.
-- This state is only reachable when the daemon was started with `--insecure` /
-  `XKMS_INSECURE=true`; a normal start refuses the combination. See
+- `xkmsd` refuses this combination at startup and on reload, so this state is
+  only reachable by a program that embeds `pkg/server` directly and bypasses
+  the compliance gate. See
   [RBAC requires the qrdb storage backend](#rbac-requires-the-qrdb-storage-backend).
 
 See [RBAC](../architecture/rbac.md) for the role model and permission details.

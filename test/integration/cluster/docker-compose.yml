@@ -44,11 +44,10 @@ services:
       - XKMS_CONFIG=/etc/xkms/xkmsd.yaml
       - XKMS_LOG_LEVEL=debug
       - XKMS_DATA_DIR=/data
+      # config.node.yaml serves TLS from the node's own embedded CA and enables
+      # composite auth, so it passes the secure-by-default gate on its own;
+      # cmd/xkmsd refuses any reported gap and has no override.
       # Raft identity for node 1
-      # This cluster test intentionally runs the nodes in plain-HTTP, no-auth
-      # mode to validate raft cluster formation (see cluster_test.go). The
-      # secure-by-default guard would otherwise refuse to start, so opt into
-      # the sanctioned development escape hatch.
       - XKMS_CLUSTER_ENABLED=true
       - XKMS_CLUSTER_NODE_ID=1
       - XKMS_CLUSTER_SHARD_ID=1
@@ -88,11 +87,10 @@ services:
       - XKMS_CONFIG=/etc/xkms/xkmsd.yaml
       - XKMS_LOG_LEVEL=debug
       - XKMS_DATA_DIR=/data
+      # config.node.yaml serves TLS from the node's own embedded CA and enables
+      # composite auth, so it passes the secure-by-default gate on its own;
+      # cmd/xkmsd refuses any reported gap and has no override.
       # Raft identity for node 2
-      # This cluster test intentionally runs the nodes in plain-HTTP, no-auth
-      # mode to validate raft cluster formation (see cluster_test.go). The
-      # secure-by-default guard would otherwise refuse to start, so opt into
-      # the sanctioned development escape hatch.
       - XKMS_CLUSTER_ENABLED=true
       - XKMS_CLUSTER_NODE_ID=2
       - XKMS_CLUSTER_SHARD_ID=1
@@ -134,11 +132,10 @@ services:
       - XKMS_CONFIG=/etc/xkms/xkmsd.yaml
       - XKMS_LOG_LEVEL=debug
       - XKMS_DATA_DIR=/data
+      # config.node.yaml serves TLS from the node's own embedded CA and enables
+      # composite auth, so it passes the secure-by-default gate on its own;
+      # cmd/xkmsd refuses any reported gap and has no override.
       # Raft identity for node 3
-      # This cluster test intentionally runs the nodes in plain-HTTP, no-auth
-      # mode to validate raft cluster formation (see cluster_test.go). The
-      # secure-by-default guard would otherwise refuse to start, so opt into
-      # the sanctioned development escape hatch.
       - XKMS_CLUSTER_ENABLED=true
       - XKMS_CLUSTER_NODE_ID=3
       - XKMS_CLUSTER_SHARD_ID=1

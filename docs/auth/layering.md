@@ -96,8 +96,8 @@ per-transport gates.
 
 Because the engine is qrdb's, RBAC requires `storage.backend: "qrdb"`. With any
 other backend there is no identity plane, the authorizer is nil, and every
-transport allows every request — `Config.ComplianceGaps` refuses that
-combination at startup unless `--insecure` / `XKMS_INSECURE` is set.
+transport allows every request — `Config.ComplianceGaps` reports that
+combination and the daemon refuses to start with it; there is no override.
 
 ## Identity flow on a request
 

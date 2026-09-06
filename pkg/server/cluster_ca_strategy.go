@@ -30,8 +30,11 @@ func (s *Server) clusterCAKeyProtection() clustercapkg.KeyProtection {
 	return clustercapkg.KeyProtection{
 		Mode:       clustercapkg.KeyProtectionMode(enr.CAKeyProtection),
 		Passphrase: enr.CAKeyPassphrase,
-		// Plaintext ("none") only reaches here when the operator started in
-		// insecure/development mode: ComplianceGaps refuses it otherwise.
+		// AllowInsecure is the clusterca library's own permission to write a
+		// plaintext key, and it is derived from the "none" mode alone. It is not
+		// a daemon override: config.ComplianceGaps reports "none" and cmd/xkmsd
+		// refuses to start with it, so only an embedded or test caller of this
+		// package reaches here with it set.
 		AllowInsecure: clustercapkg.KeyProtectionMode(enr.CAKeyProtection) == clustercapkg.KeyProtectNone,
 	}
 }

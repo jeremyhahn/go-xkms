@@ -3471,7 +3471,7 @@ func TestConfig_ComplianceGaps_ClusterCAKeyProtection(t *testing.T) {
 // backend leaves Server.rbacAuthorizer nil, and every transport (REST, gRPC,
 // QUIC, MCP) then admits every authenticated caller with every permission. The
 // operator asked for role enforcement and silently got none, so the daemon must
-// refuse to start unless development mode is explicitly requested.
+// refuse to start.
 func TestConfig_ComplianceGaps_RBACWithoutIdentityPlane(t *testing.T) {
 	// baseline returns a config that is compliant on every other dimension, so
 	// any gap reported is attributable to the RBAC/storage combination alone.

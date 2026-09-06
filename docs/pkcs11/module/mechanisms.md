@@ -1120,11 +1120,13 @@ crypto:
   allow_legacy_key_wrap: true
 ```
 
-`Config.ComplianceGaps` reports that as a gap, so the daemon then refuses to
-start without `--insecure` (`XKMS_INSECURE=true`). While it is off, a request
-naming one of the three is refused with a typed policy error that names the
-mechanism and the setting — not with "unsupported algorithm", which would send
-an operator looking for a missing feature.
+This is an explicit opt-in, not a compliance gap: `Config.ComplianceGaps` does
+not report it, so `xkmsd` starts either way. Which algorithms are approved is a
+property of the binary's FIPS mode (`GOFIPS140` / `GODEBUG=fips140`), under
+which `types.SetAllowLegacyKeyWrap` ignores a request to re-admit them. While
+the setting is off, a request naming one of the three is refused with a typed
+policy error that names the mechanism and the setting — not with "unsupported
+algorithm", which would send an operator looking for a missing feature.
 
 `RSAES_OAEP_SHA_1` is *not* covered by this setting. It is refused
 unconditionally in both states: OAEP has no legacy blobs to read in this

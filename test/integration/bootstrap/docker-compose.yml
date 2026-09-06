@@ -25,10 +25,13 @@ services:
       - ./scripts:/scripts:ro
     environment:
       # This suite exercises the bootstrap trust protocol (Noise handshake, SPKI
-      # pin, admin mTLS) using generated test certs at the transport layer; the
-      # daemon itself runs in development mode. Opt into the sanctioned insecure
-      # escape hatch so the secure-by-default guard does not refuse to start
-      # (auth + CA are intentionally minimal for this protocol test).
+      # pin, admin mTLS) using generated test certs at the transport layer.
+      # scripts/generate-test-certs.sh still writes a config with auth.enabled
+      # false and no ca section: config.ComplianceGaps reports both, and
+      # cmd/xkmsd refuses to start on any gap with no override flag or
+      # environment variable, so that config has to gain an authenticator and a
+      # CA before the suite can bring the daemon up. The XKMS_INSECURE opt-in
+      # this comment used to name was removed in v0.3.0-alpha.
       # The generated config enables a barrier (passphrase strategy). Provide the
       # boot passphrase so the qrdb node barrier auto-unseals at startup —
       # otherwise the data plane boots sealed and tenant operations fail with

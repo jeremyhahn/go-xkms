@@ -212,7 +212,7 @@ func TestACMEConfig_ValidateRejectsBadAudit(t *testing.T) {
 
 // TestComplianceGaps_ACMEAuditDisabled verifies that switching the trail off is
 // reported as a compliance gap, so the daemon refuses to run an unaccountable
-// CA unless the operator opts into development mode.
+// CA.
 func TestComplianceGaps_ACMEAuditDisabled(t *testing.T) {
 	secure := func() *Config {
 		return &Config{

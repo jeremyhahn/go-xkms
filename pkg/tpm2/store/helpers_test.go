@@ -347,7 +347,7 @@ func TestAvailableHashes_RetainsTPMAlgorithms(t *testing.T) {
 // TestAvailableHashes_RefusesWeakHashesByDefault asserts the weak-hash policy
 // reaches the TPM configuration path. A TPM signing key or attestation quote
 // whose digest is SHA-1 is forgeable, so "SHA-1" must not resolve unless the
-// operator set crypto.allow_weak_hashes and started the daemon with --insecure.
+// operator explicitly set crypto.allow_weak_hashes.
 func TestAvailableHashes_RefusesWeakHashesByDefault(t *testing.T) {
 	assert.NotContains(t, AvailableHashes(), "SHA-1")
 

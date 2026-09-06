@@ -55,8 +55,8 @@ tls:
 #               the required authenticator. Requires auth.jwt.public_key_file,
 #               because the login/WebAuthn ceremony issues JWTs.
 #   composite - chains several methods. Requires auth.composite.methods.
-#   noop      - no authentication at all. xkmsd refuses to start without
-#               --insecure (XKMS_INSECURE=true).
+#   noop      - no authentication at all. xkmsd refuses to start with it
+#               (config.ComplianceGaps reports it; there is no override).
 #
 # mTLS is the recommended production configuration: identity is bound to a
 # client certificate verified against tls.client_cas, and nothing extra has to

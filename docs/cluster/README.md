@@ -265,12 +265,12 @@ the stack's standard seal strategies via `raft_enrollment.ca_key_protection`:
 | `""` (auto) | TPM/HSM-sealed when available, else operator passphrase, else **refused** |
 | `tpm2` / `pkcs11` | random keystore key sealed to the TPM/HSM (unattended) |
 | `passphrase` | PBES2 with `raft_enrollment.ca_key_passphrase` (supports `credential://`) |
-| `none` | plaintext PKCS#8 — **development/testing only**; refused unless the daemon is started with `--insecure` |
+| `none` | plaintext PKCS#8 — reported by `config.ComplianceGaps`, so `xkmsd` refuses to start with it; reachable only by a program embedding `pkg/server` directly |
 
 Auto mode never silently falls back to plaintext: with no hardware and no
 passphrase it refuses to start (surfaced by `config.ComplianceGaps`). This
-mirrors the barrier's secure-by-default posture — no private key lands on disk
-in the clear unless the operator explicitly opts into an insecure configuration.
+mirrors the barrier's secure-by-default posture — `xkmsd` never writes the
+cluster CA private key to disk in the clear, and there is no override.
 
 #### Cluster CA key custody — which nodes can issue (`ca_key_strategy`)
 

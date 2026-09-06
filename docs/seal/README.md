@@ -26,8 +26,8 @@ encrypted**, and xkms adopts the node's barrier, registry, and tenant service
 as its own (`pkg/server/node_seal.go` + `qrdb_node.go`; mirrors go-quicbaas, so
 both products drive the identical shared mechanism). The daemon refuses to start
 a `qrdb` + barrier deployment that cannot auto-unseal (a passphrase strategy
-with no boot secret) unless `--insecure` is set — a plaintext data plane is
-never the silent default.
+with no boot secret); there is no override, so a plaintext data plane is never
+the default, silent or otherwise.
 
 **Own-barrier mode (fallback).** For non-`qrdb` storage (file/pebble), or when
 no auto-unseal credential is present, xkms builds its own `StorageBarrier` over

@@ -75,10 +75,10 @@ func TestSign_RefusesWeakHashRatherThanDowngrading(t *testing.T) {
 }
 
 // TestSign_WeakHashUnderPolicy asserts the escape hatch reaches the signing
-// path. An operator who set crypto.allow_weak_hashes (and therefore started
-// xkmsd with --insecure) must actually be able to produce the legacy signature
-// the gap was accepted for; otherwise the compliance gap buys nothing and the
-// operator is left with a broken deployment and a weakened posture.
+// path. An operator who set crypto.allow_weak_hashes must actually be able
+// to produce the legacy signature the opt-in exists for; otherwise the setting
+// buys nothing and the operator is left with a broken deployment and a
+// weakened posture.
 func TestSign_WeakHashUnderPolicy(t *testing.T) {
 	software, _ := setupService(t)
 	svc, err := Get()

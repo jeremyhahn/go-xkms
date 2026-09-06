@@ -82,7 +82,7 @@ acme:
 
 | Key | Default | Notes |
 |-----|---------|-------|
-| `enabled` | `true` | Tri-state: omitting the key leaves the trail on. Setting it to `false` is reported by `Config.ComplianceGaps()` and the daemon refuses to start unless `--insecure` / `XKMS_INSECURE` is set. |
+| `enabled` | `true` | Tri-state: omitting the key leaves the trail on. Setting it to `false` is reported by `Config.ComplianceGaps()` and the daemon refuses to start or reload with it; there is no override. |
 | `log_path` | `<acme.data_dir>/audit.log` | Rotated backups are written alongside it as `audit-<timestamp>.log[.gz]`. |
 | `max_size_mb` | `100` | Negative values are rejected at config validation. |
 | `max_age_days` | `365` | Shortest retention the supported regimes accept. |

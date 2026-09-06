@@ -159,8 +159,8 @@ const (
 // 10.2, HIPAA 164.312(b)), so it is enabled by default whenever the ACME
 // server is enabled: an absent "audit" section means the trail runs with the
 // defaults below, not that it is off. Turning it off is an explicit act that
-// Config.ComplianceGaps reports, and the daemon then refuses to start unless
-// the operator opts into development mode.
+// Config.ComplianceGaps reports, and the daemon then refuses to start; there
+// is no override.
 type ACMEAuditConfig struct {
 	// Enabled controls whether the audit trail is recorded. It is a pointer so
 	// an omitted "enabled" key can be told apart from an explicit "false":

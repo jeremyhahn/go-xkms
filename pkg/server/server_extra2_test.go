@@ -1454,7 +1454,7 @@ func TestErrUnknownAuthType_Error(t *testing.T) {
 // TestInitializeAuthentication_ExplicitNoneOptIn verifies the explicit opt-in
 // values documented by config.AuthConfig.CreateAuthenticator still select the
 // no-op authenticator. config.ComplianceGaps() reports these, so xkmsd still
-// refuses to start without --insecure / XKMS_INSECURE=true.
+// refuses to start with them; there is no override.
 func TestInitializeAuthentication_ExplicitNoneOptIn(t *testing.T) {
 	for _, authType := range []string{"none", "noop", "", "NONE", " none "} {
 		t.Run("type="+authType, func(t *testing.T) {
@@ -1472,10 +1472,9 @@ func TestInitializeAuthentication_ExplicitNoneOptIn(t *testing.T) {
 	}
 }
 
-// TestInitializeAuthentication_ExplicitNoneIsAComplianceGap pins the escape
-// hatch to the existing --insecure / XKMS_INSECURE mechanism: an explicit
-// no-op opt-in must remain a reported compliance gap so the daemon refuses to
-// start with it unless development mode was requested.
+// TestInitializeAuthentication_ExplicitNoneIsAComplianceGap pins that an
+// explicit no-op opt-in remains a reported compliance gap, so the daemon
+// refuses to start with it.
 func TestInitializeAuthentication_ExplicitNoneIsAComplianceGap(t *testing.T) {
 	for _, authType := range []string{"none", "noop", ""} {
 		cfg := &config.Config{Auth: config.AuthConfig{Enabled: true, Type: authType}}
@@ -1493,8 +1492,8 @@ func TestInitializeAuthentication_ExplicitNoneIsAComplianceGap(t *testing.T) {
 }
 
 // TestInitializeAuthentication_DisabledIsExplicitOptIn verifies auth.enabled=false
-// remains the other explicit unauthenticated opt-in (used by the cluster
-// docker-compose, which pairs it with XKMS_INSECURE=true). It short-circuits
+// remains the other explicit unauthenticated opt-in for embedded and test
+// callers (xkmsd itself refuses it as a compliance gap). It short-circuits
 // before auth.type is consulted at all.
 func TestInitializeAuthentication_DisabledIsExplicitOptIn(t *testing.T) {
 	s := newMinimalServer(t, &config.Config{

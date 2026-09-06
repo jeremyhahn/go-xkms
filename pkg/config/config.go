@@ -685,7 +685,8 @@ type RaftEnrollmentConfig struct {
 	//   "" (auto) — TPM/HSM-sealed when available, else passphrase, else refuse
 	//   "tpm2" / "pkcs11" — random key sealed to the TPM/HSM (unattended)
 	//   "passphrase" — PBES2 with an operator passphrase
-	//   "none" — plaintext PKCS#8 (development/testing only; refused in secure mode)
+	//   "none" — plaintext PKCS#8 (reported by ComplianceGaps, so cmd/xkmsd
+	//            refuses it; reachable only by embedded/test callers)
 	// The cluster CA keys must exist before the replicated datastore, so they
 	// live node-local and cannot be protected by the barrier; this reuses the
 	// stack's standard seal strategies instead.
@@ -1405,8 +1406,10 @@ func applyEnvOverrides(cfg *Config) {
 // PCI-DSS v4 (3.5, 4.2, 8.x), and HIPAA (§164.312(a)(2)(iv), (e)(1))
 // deployments: encryption at rest (the barrier), TLS in transit, authenticated
 // access, and a CA for certificate provisioning / mTLS trust. An empty slice
-// means the configuration meets the baseline. The daemon uses this to refuse an
-// insecure start unless the operator explicitly opts into development mode.
+// means the configuration meets the baseline. cmd/xkmsd refuses to start, and
+// refuses to reload, on any reported gap; there is no override flag,
+// environment variable, or build tag. The library itself stays permissive so
+// embedded and test callers can construct whatever posture they need.
 func (c *Config) ComplianceGaps() []string {
 	var gaps []string
 	if !c.Barrier.Enabled {
@@ -1476,8 +1479,8 @@ func (c *Config) ComplianceGaps() []string {
 	// The cluster ACME node-local CA signing keystore lives outside the barrier
 	// (it must exist before the replicated datastore) and is protected by the
 	// standard seal strategies instead. Plaintext ("none") protection writes the
-	// cluster CA private key to disk in the clear — refused unless the operator
-	// explicitly opts into development mode.
+	// cluster CA private key to disk in the clear, so it is reported and
+	// cmd/xkmsd refuses it; there is no override.
 	if c.Cluster.Enabled && c.Cluster.RaftEnrollment.ACME.Enabled &&
 		strings.EqualFold(strings.TrimSpace(c.Cluster.RaftEnrollment.CAKeyProtection), "none") {
 		gaps = append(gaps, "cluster CA key protection is plaintext (cluster.raft_enrollment.ca_key_protection=\"none\"): "+

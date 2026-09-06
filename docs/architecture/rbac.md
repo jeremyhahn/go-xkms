@@ -56,8 +56,8 @@ With any other backend (`pebble`, `file`, `memory`) there is no qrdb client, so
 `initializeAuthorization` leaves the authorizer nil and every transport
 authorizes every request — an access control the operator asked for that
 silently does nothing. `Config.ComplianceGaps` (`pkg/config/config.go`) reports
-that combination and the daemon refuses to start unless the operator explicitly
-opts into development mode with `--insecure` / `XKMS_INSECURE=true`.
+that combination and the daemon refuses to start or reload with it. There is
+no override flag, environment variable, or build tag.
 
 ## Permission model
 
@@ -164,7 +164,7 @@ ac.Users().CreateUser(ctx, ...)
 2. **Use the six canonical roles** before defining custom ones; separation of
    duties is what makes the SO/operator split meaningful.
 3. **Never run production with `enable_rbac: true` on a non-qrdb backend** —
-   the daemon refuses it, and `--insecure` should not be used to work around it.
+   the daemon refuses it, and there is no override to work around that.
 4. **Audit role changes** — role assignment flows through qrdb's HMAC-chained
    audit subsystem.
 5. **Review memberships periodically**, especially `admin` and `so`.

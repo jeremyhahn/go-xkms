@@ -227,11 +227,13 @@ with a YubiKey-gated hardware path enabled by `XKMS_FIDO2_HARDWARE=1`.
 
 ## Secure-by-Default Gate
 
-`Config.ComplianceGaps()` (`pkg/config/config.go:1214`) reports posture gaps
-that FedRAMP / PCI-DSS v4 / HIPAA do not permit, and `cmd/xkmsd/main.go:134`
-refuses to start when any are present unless the operator passes `--insecure`
-or sets `XKMS_INSECURE=true`. The same gate is re-applied on config reload
-(`main.go:266`), so a hot reload cannot downgrade a running server.
+`Config.ComplianceGaps()` (`pkg/config/config.go`) reports posture gaps that
+FedRAMP / PCI-DSS v4 / HIPAA do not permit, and `cmd/xkmsd` refuses to start
+when any are present. There is no override flag, environment variable, or
+build tag; a secure start needs no manual provisioning, because the embedded
+CA mints the TLS server certificate on first start and `xkmsd init` provisions
+the rest. The same gate is re-applied on config reload, so a hot reload cannot
+downgrade a running server.
 
 Gaps relevant to first boot:
 
