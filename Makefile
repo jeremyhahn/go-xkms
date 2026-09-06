@@ -706,6 +706,12 @@ test-webauthn-verification:
 	@echo "$(CYAN)→ Testing WebAuthn verification flow...$(RESET)"
 	@cd xkey && $(GOTEST) $(TEST_FLAGS) -run TestWebAuthnVerification ./pkg/authenticator/...
 
+.PHONY: test-authenticator
+## test-authenticator: Run the CTAP2 authenticator package unit tests
+test-authenticator:
+	@echo "$(CYAN)→ Testing CTAP2 authenticator package...$(RESET)"
+	@cd xkey && $(GOTEST) $(TEST_FLAGS) ./pkg/authenticator/...
+
 .PHONY: coverage-uhid
 ## coverage-uhid: Generate UHID package coverage report
 coverage-uhid:
@@ -1143,6 +1149,12 @@ test-quantum-primitives:
 test-ca:
 	@echo "$(CYAN)→ Testing CA package...$(RESET)"
 	@$(GOTEST) $(TEST_FLAGS) ./pkg/ca/...
+
+.PHONY: test-dns01
+## test-dns01: Run ACME DNS-01 challenge and provider unit tests
+test-dns01:
+	@echo "$(CYAN)→ Testing DNS-01 challenge providers...$(RESET)"
+	@$(GOTEST) $(TEST_FLAGS) ./pkg/acme/challenges/dns-01/...
 
 .PHONY: coverage-quantum
 ## coverage-quantum: Generate coverage report for quantum backend

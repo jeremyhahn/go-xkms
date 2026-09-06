@@ -19,6 +19,7 @@ import (
 	"net"
 	"reflect"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -31,7 +32,8 @@ type testDNSServer struct {
 	addr         string
 	handler      dns.HandlerFunc
 	responses    map[string][]dns.RR
-	forceRcode   int // Force a specific rcode for all queries
+	forceRcode   int         // Force a specific rcode for all queries
+	silent       atomic.Bool // When set, accept the query and never reply
 	mu           sync.RWMutex
 	forceRcodeMu sync.RWMutex
 }
@@ -52,6 +54,12 @@ func newTestDNSServer(t *testing.T) *testDNSServer {
 	m.addr = listener.LocalAddr().String()
 
 	m.handler = func(w dns.ResponseWriter, r *dns.Msg) {
+		if m.silent.Load() {
+			// Swallow the query so the caller reaches its context deadline
+			// without a packet leaving the host.
+			return
+		}
+
 		msg := new(dns.Msg)
 		msg.SetReply(r)
 
@@ -97,6 +105,13 @@ func newTestDNSServer(t *testing.T) *testDNSServer {
 	time.Sleep(10 * time.Millisecond)
 
 	return m
+}
+
+// setSilent makes the server stop answering, which is how a test reaches the
+// "nameserver did not respond" path without pointing at an address on the
+// public internet and hoping nothing there replies.
+func (m *testDNSServer) setSilent(silent bool) {
+	m.silent.Store(silent)
 }
 
 func (m *testDNSServer) setForceRcode(rcode int) {
@@ -163,6 +178,50 @@ func (m *testDNSServer) addNSRecord(zone, nameserver string) {
 	m.mu.Unlock()
 }
 
+// addARecord publishes an A record for a name.
+func (m *testDNSServer) addARecord(fqdn string, ip net.IP) {
+	fqdn = ToFQDN(fqdn)
+	a := &dns.A{
+		Hdr: dns.RR_Header{
+			Name:   fqdn,
+			Rrtype: dns.TypeA,
+			Class:  dns.ClassINET,
+			Ttl:    300,
+		},
+		A: ip,
+	}
+	m.mu.Lock()
+	m.responses[fqdn+"A"] = append(m.responses[fqdn+"A"], a)
+	m.mu.Unlock()
+}
+
+// addCNAMERecord publishes a CNAME record pointing fqdn at target.
+func (m *testDNSServer) addCNAMERecord(fqdn, target string) {
+	fqdn = ToFQDN(fqdn)
+	cname := &dns.CNAME{
+		Hdr: dns.RR_Header{
+			Name:   fqdn,
+			Rrtype: dns.TypeCNAME,
+			Class:  dns.ClassINET,
+			Ttl:    300,
+		},
+		Target: ToFQDN(target),
+	}
+	m.mu.Lock()
+	m.responses[fqdn+"CNAME"] = append(m.responses[fqdn+"CNAME"], cname)
+	m.mu.Unlock()
+}
+
+// addEmptyAnswer makes the server answer NOERROR with no records for a name and
+// type, the way a resolver reports "the name exists, this type does not".
+// Without it an unregistered name answers NXDOMAIN, which is a different branch.
+func (m *testDNSServer) addEmptyAnswer(fqdn string, qtype uint16) {
+	fqdn = ToFQDN(fqdn)
+	m.mu.Lock()
+	m.responses[fqdn+dns.TypeToString[qtype]] = []dns.RR{}
+	m.mu.Unlock()
+}
+
 // useAsDefaultResolver points DefaultNameservers at this server for the
 // duration of the test, so nothing in the package reaches the public internet.
 func (m *testDNSServer) useAsDefaultResolver(t *testing.T) {
@@ -176,6 +235,107 @@ func (m *testDNSServer) useAsDefaultResolver(t *testing.T) {
 func (m *testDNSServer) close() {
 	if m.server != nil {
 		m.server.Shutdown()
+	}
+}
+
+// closedDNSAddr returns a loopback address with nothing bound to it. A query
+// sent there is refused immediately, which is how a test forces a nameserver
+// failure without asking the host's resolver about a bogus hostname.
+func closedDNSAddr(t *testing.T) string {
+	t.Helper()
+
+	conn, err := net.ListenPacket("udp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("failed to reserve a loopback port: %v", err)
+	}
+	addr := conn.LocalAddr().String()
+	if err := conn.Close(); err != nil {
+		t.Fatalf("failed to release the reserved port: %v", err)
+	}
+	return addr
+}
+
+// truncatingDNSServer answers over UDP with the TC bit set and no records, and
+// answers the same address over TCP with the full response. That is the
+// exchange DNSQuery's UDP-to-TCP fallback exists for, and both transports are
+// on loopback, so the fallback is exercised without a packet leaving the host.
+type truncatingDNSServer struct {
+	udp  *dns.Server
+	tcp  *dns.Server
+	addr string
+}
+
+func newTruncatingDNSServer(t *testing.T, answer dns.RR) *truncatingDNSServer {
+	t.Helper()
+
+	// The two transports must share a port number. Taking the TCP port first
+	// and then binding UDP to it can lose a race against an unrelated socket,
+	// so retry instead of failing the suite on it.
+	var (
+		listener net.Listener
+		packets  net.PacketConn
+		err      error
+	)
+	for attempt := 0; attempt < 10; attempt++ {
+		listener, err = net.Listen("tcp", "127.0.0.1:0")
+		if err != nil {
+			t.Fatalf("failed to create tcp listener: %v", err)
+		}
+
+		packets, err = net.ListenPacket("udp", listener.Addr().String())
+		if err == nil {
+			break
+		}
+
+		if cerr := listener.Close(); cerr != nil {
+			t.Fatalf("failed to close tcp listener: %v", cerr)
+		}
+	}
+	if packets == nil {
+		t.Fatalf("failed to bind udp and tcp to one loopback port: %v", err)
+	}
+
+	s := &truncatingDNSServer{addr: listener.Addr().String()}
+
+	s.udp = &dns.Server{
+		PacketConn: packets,
+		Handler: dns.HandlerFunc(func(w dns.ResponseWriter, r *dns.Msg) {
+			msg := new(dns.Msg)
+			msg.SetReply(r)
+			msg.Truncated = true
+			w.WriteMsg(msg)
+		}),
+	}
+
+	s.tcp = &dns.Server{
+		Listener: listener,
+		Handler: dns.HandlerFunc(func(w dns.ResponseWriter, r *dns.Msg) {
+			msg := new(dns.Msg)
+			msg.SetReply(r)
+			msg.Answer = []dns.RR{answer}
+			w.WriteMsg(msg)
+		}),
+	}
+
+	go func() {
+		_ = s.udp.ActivateAndServe()
+	}()
+	go func() {
+		_ = s.tcp.ActivateAndServe()
+	}()
+
+	// Give both servers time to start
+	time.Sleep(10 * time.Millisecond)
+
+	return s
+}
+
+func (s *truncatingDNSServer) close() {
+	if s.udp != nil {
+		s.udp.Shutdown()
+	}
+	if s.tcp != nil {
+		s.tcp.Shutdown()
 	}
 }
 

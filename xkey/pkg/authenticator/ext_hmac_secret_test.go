@@ -1854,69 +1854,126 @@ func TestProcessHMACSecretExtensionSuccessPath(t *testing.T) {
 	})
 }
 
+// hmacSecretSaltEncV1 encrypts plaintext the way a PIN protocol v1 platform
+// does — AES-256-CBC under the shared secret with a zero IV — and returns it as
+// a saltEnc value. The plaintext is encrypted verbatim, with no PKCS7 padding
+// applied, so a caller can choose exactly what the authenticator sees after
+// decryption and therefore which validation branch rejects it.
+func hmacSecretSaltEncV1(t *testing.T, sharedSecret, plaintext []byte) []byte {
+	t.Helper()
+
+	require.Zero(t, len(plaintext)%aes.BlockSize, "plaintext must be a whole number of AES blocks")
+
+	block, err := aes.NewCipher(sharedSecret)
+	require.NoError(t, err)
+
+	saltEnc := make([]byte, len(plaintext))
+	cipher.NewCBCEncrypter(block, make([]byte, aes.BlockSize)).CryptBlocks(saltEnc, plaintext)
+	return saltEnc
+}
+
+// hmacSecretPlaintext builds a fixed plaintext of the requested size whose last
+// byte — the byte PKCS7 unpadding reads as the padding length — is lastByte.
+func hmacSecretPlaintext(size int, lastByte byte) []byte {
+	plaintext := bytes.Repeat([]byte{0xA5}, size)
+	plaintext[size-1] = lastByte
+	return plaintext
+}
+
 // TestProcessHMACSecretExtensionDecryptionFailure tests decryption failure scenarios.
+//
+// Each case pins the decrypted plaintext rather than feeding random bytes to
+// the padding check. Random ciphertext decrypts to random plaintext, which
+// PKCS7 accepts about one run in 256 — dominated by a trailing 0x01 — and the
+// request then failed the salt-length check instead of the padding check
+// (go-xkms#417). Choosing the trailing byte makes the branch deterministic.
 func TestProcessHMACSecretExtensionDecryptionFailure(t *testing.T) {
 	t.Parallel()
 
-	t.Run("invalid padding in decrypted salts", func(t *testing.T) {
-		t.Parallel()
+	tests := []struct {
+		name string
+		// plaintext is what saltEnc decrypts to under the shared secret.
+		plaintext []byte
+		wantErr   error
+	}{
+		{
+			// 0x00 is not a legal PKCS7 padding length, so unpadding rejects
+			// this on every run.
+			name:      "invalid padding in decrypted salts",
+			plaintext: hmacSecretPlaintext(HMACSecretEncryptedSingleSaltSize, 0x00),
+			wantErr:   ErrHMACSecretDecryptionFailed,
+		},
+		{
+			// 0x01 is legal padding, leaving 47 plaintext bytes — neither one
+			// salt (32) nor two (64) — so the salt-length check rejects it.
+			// This is the branch the old random input reached by accident.
+			name:      "valid padding but wrong salt length",
+			plaintext: hmacSecretPlaintext(HMACSecretEncryptedSingleSaltSize, 0x01),
+			wantErr:   ErrHMACSecretInvalidSaltEnc,
+		},
+	}
 
-		// Create platform and auth helpers for proper key exchange
-		platformHelper, err := NewHMACSecretPlatformHelper()
-		require.NoError(t, err)
-		defer platformHelper.Reset()
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
 
-		authHelper, err := NewHMACSecretPlatformHelper()
-		require.NoError(t, err)
-		defer authHelper.Reset()
+			// Create platform and auth helpers for proper key exchange
+			platformHelper, err := NewHMACSecretPlatformHelper()
+			require.NoError(t, err)
+			defer platformHelper.Reset()
 
-		// Exchange keys
-		platformCOSE, err := platformHelper.GetCOSEPublicKey()
-		require.NoError(t, err)
+			authHelper, err := NewHMACSecretPlatformHelper()
+			require.NoError(t, err)
+			defer authHelper.Reset()
 
-		authCOSE, err := authHelper.GetCOSEPublicKey()
-		require.NoError(t, err)
+			// Exchange keys
+			platformCOSE, err := platformHelper.GetCOSEPublicKey()
+			require.NoError(t, err)
 
-		// Establish shared secrets
-		err = platformHelper.EstablishSharedSecret(authCOSE)
-		require.NoError(t, err)
+			authCOSE, err := authHelper.GetCOSEPublicKey()
+			require.NoError(t, err)
 
-		err = authHelper.EstablishSharedSecret(platformCOSE)
-		require.NoError(t, err)
+			// Establish shared secrets
+			err = platformHelper.EstablishSharedSecret(authCOSE)
+			require.NoError(t, err)
 
-		// Create authenticator
-		storage := NewMemoryStorage()
-		config := DefaultConfig()
-		config.UserPresenceHandler = NewAutoGrantHandler()
-		config.Storage = storage
-		auth, err := NewAuthenticator(config)
-		require.NoError(t, err)
+			err = authHelper.EstablishSharedSecret(platformCOSE)
+			require.NoError(t, err)
 
-		credentialHMACKey := make([]byte, HMACSecretKeySize)
-		_, _ = rand.Read(credentialHMACKey)
+			// Both sides must derive the same secret, or the saltEnc built
+			// below would not decrypt to the chosen plaintext.
+			require.Equal(t, platformHelper.SharedSecret(), authHelper.SharedSecret())
 
-		// Create invalid encrypted data (will have invalid padding when decrypted)
-		invalidSaltEnc := make([]byte, HMACSecretEncryptedSingleSaltSize)
-		_, _ = rand.Read(invalidSaltEnc)
+			// Create authenticator
+			storage := NewMemoryStorage()
+			config := DefaultConfig()
+			config.UserPresenceHandler = NewAutoGrantHandler()
+			config.Storage = storage
+			auth, err := NewAuthenticator(config)
+			require.NoError(t, err)
 
-		// Compute valid saltAuth for the garbage data
-		saltAuth, err := platformHelper.ComputeSaltAuth(invalidSaltEnc)
-		require.NoError(t, err)
+			credentialHMACKey := bytes.Repeat([]byte{0x5A}, HMACSecretKeySize)
 
-		input := &HMACSecretInput{
-			KeyAgreement:      platformCOSE,
-			SaltEnc:           invalidSaltEnc,
-			SaltAuth:          saltAuth,
-			PinUvAuthProtocol: PINProtocolVersion1,
-		}
+			saltEnc := hmacSecretSaltEncV1(t, platformHelper.SharedSecret(), tt.plaintext)
 
-		// Using the pre-established shared secret, this should fail at decryption
-		// because the "encrypted" data will have invalid PKCS7 padding
-		output, err := auth.ProcessHMACSecretWithSharedSecret(input, credentialHMACKey, authHelper.SharedSecret())
-		require.Error(t, err)
-		require.ErrorIs(t, err, ErrHMACSecretDecryptionFailed)
-		require.Nil(t, output)
-	})
+			// Compute valid saltAuth so the request fails on the decrypted
+			// content rather than on authentication.
+			saltAuth, err := platformHelper.ComputeSaltAuth(saltEnc)
+			require.NoError(t, err)
+
+			input := &HMACSecretInput{
+				KeyAgreement:      platformCOSE,
+				SaltEnc:           saltEnc,
+				SaltAuth:          saltAuth,
+				PinUvAuthProtocol: PINProtocolVersion1,
+			}
+
+			output, err := auth.ProcessHMACSecretWithSharedSecret(input, credentialHMACKey, authHelper.SharedSecret())
+			require.Error(t, err)
+			require.ErrorIs(t, err, tt.wantErr)
+			require.Nil(t, output)
+		})
+	}
 }
 
 // TestProcessHMACSecretExtensionEdgeCases tests edge cases for ProcessHMACSecretExtension.

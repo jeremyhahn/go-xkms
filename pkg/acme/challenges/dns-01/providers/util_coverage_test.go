@@ -16,6 +16,9 @@ package providers
 import (
 	"context"
 	"errors"
+	"net"
+	"os"
+	"path/filepath"
 	"testing"
 	"time"
 
@@ -39,9 +42,10 @@ func TestFindZoneByFQDNCacheExpired(t *testing.T) {
 
 	ctx := context.Background()
 
-	// This should miss the cache due to expiration and try DNS lookup
-	// which will fail with default nameservers but at least tests the expiration code path
-	_, err := FindZoneByFQDN(ctx, "_acme-challenge.expired-domain.com.", []string{"invalid-server:53"})
+	// This should miss the cache due to expiration and try a DNS lookup, which
+	// fails against a loopback address with nothing bound to it — no name to
+	// resolve and no packet off the host.
+	_, err := FindZoneByFQDN(ctx, "_acme-challenge.expired-domain.com.", []string{closedDNSAddr(t)})
 	require.Error(t, err)
 
 	// Clean up
@@ -49,25 +53,68 @@ func TestFindZoneByFQDNCacheExpired(t *testing.T) {
 }
 
 // TestDNSQueryWithNameserverWithoutPort tests nameserver port handling.
+//
+// The context is cancelled before the call, so the dial fails before a packet
+// is sent and the address it reports is exactly the one DNSQuery assembled.
 func TestDNSQueryWithNameserverWithoutPort(t *testing.T) {
-	ctx := context.Background()
+	tests := []struct {
+		name       string
+		nameserver string
+		wantAddr   string
+	}{
+		{
+			name:       "bare address gets the default port",
+			nameserver: "127.0.0.1",
+			wantAddr:   "127.0.0.1:53",
+		},
+		{
+			name:       "address with a port keeps it",
+			nameserver: "127.0.0.1:5353",
+			wantAddr:   "127.0.0.1:5353",
+		},
+	}
 
-	// Test with nameserver without port (should add default port)
-	_, err := DNSQuery(ctx, "example.com.", dns.TypeSOA, []string{"8.8.8.8"}, true)
-	// May succeed or fail depending on network, but should not panic
-	// The test validates the port handling code path
-	_ = err
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			ctx, cancel := context.WithCancel(context.Background())
+			cancel()
+
+			_, err := DNSQuery(ctx, "example.com.", dns.TypeSOA, []string{tt.nameserver}, true)
+			require.Error(t, err)
+			assert.Contains(t, err.Error(), tt.wantAddr)
+		})
+	}
 }
 
 // TestDNSQueryUDPTruncation tests TCP fallback on UDP truncation.
 func TestDNSQueryUDPTruncation(t *testing.T) {
-	ctx := context.Background()
+	answer := &dns.TXT{
+		Hdr: dns.RR_Header{
+			Name:   "truncated.example.com.",
+			Rrtype: dns.TypeTXT,
+			Class:  dns.ClassINET,
+			Ttl:    300,
+		},
+		Txt: []string{"only-over-tcp"},
+	}
 
-	// Query for a domain that returns many TXT records which might truncate
-	// This tests the UDP->TCP fallback code path
-	_, err := DNSQuery(ctx, "google.com.", dns.TypeTXT, []string{"8.8.8.8:53"}, true)
-	// May succeed or fail depending on network
-	_ = err
+	server := newTruncatingDNSServer(t, answer)
+	defer server.close()
+
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+
+	resp, err := DNSQuery(ctx, "truncated.example.com.", dns.TypeTXT, []string{server.addr}, true)
+	require.NoError(t, err)
+	require.NotNil(t, resp)
+
+	// The UDP reply carried the TC bit and no records, so an answer here can
+	// only have come from the TCP retry.
+	assert.False(t, resp.Truncated)
+	require.Len(t, resp.Answer, 1)
+	txt, ok := resp.Answer[0].(*dns.TXT)
+	require.True(t, ok, "expected a TXT record, got %T", resp.Answer[0])
+	assert.Equal(t, []string{"only-over-tcp"}, txt.Txt)
 }
 
 // TestWaitForCtxSuccess tests WaitForCtx with successful condition.
@@ -183,40 +230,67 @@ func TestContainsCNAMEFunction(t *testing.T) {
 }
 
 // TestGetNameserversFromConfigWithServers tests reading actual nameservers.
+//
+// The fixture is written by the test rather than read from /etc/resolv.conf:
+// the host may have no resolver configured, and if it has one its contents are
+// not this test's subject.
 func TestGetNameserversFromConfigWithServers(t *testing.T) {
-	// Test with actual /etc/resolv.conf if it exists
-	servers := GetNameserversFromConfig("/etc/resolv.conf")
-	assert.NotEmpty(t, servers)
+	configPath := filepath.Join(t.TempDir(), "resolv.conf")
+	err := os.WriteFile(configPath, []byte("nameserver 127.0.0.1\nnameserver 127.0.0.2\n"), 0o600)
+	require.NoError(t, err)
 
-	// Each server should have a port
-	for _, server := range servers {
-		assert.Contains(t, server, ":")
-	}
+	servers := GetNameserversFromConfig(configPath)
+	assert.Equal(t, []string{"127.0.0.1:53", "127.0.0.2:53"}, servers)
 }
 
 // TestDNSQueryWithMultipleNameservers tests DNS query with multiple nameservers.
 func TestDNSQueryWithMultipleNameservers(t *testing.T) {
-	ctx := context.Background()
+	server := newTestDNSServer(t)
+	defer server.close()
+	server.addARecord("multi.example.com.", net.IPv4(203, 0, 113, 5))
 
-	// Test with multiple nameservers
-	_, err := DNSQuery(ctx, "example.com.", dns.TypeA, []string{
-		"8.8.8.8:53",
-		"8.8.4.4:53",
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+
+	// The first nameserver refuses the query, so a result proves DNSQuery moved
+	// on to the second rather than giving up on the first failure.
+	resp, err := DNSQuery(ctx, "multi.example.com.", dns.TypeA, []string{
+		closedDNSAddr(t),
+		server.addr,
 	}, true)
-	// Should succeed if network is available
-	_ = err
+	require.NoError(t, err)
+	require.Len(t, resp.Answer, 1)
+	a, ok := resp.Answer[0].(*dns.A)
+	require.True(t, ok, "expected an A record, got %T", resp.Answer[0])
+	assert.Equal(t, "203.0.113.5", a.A.String())
 }
 
 // TestDNSQueryNoNameserversResponded tests handling when no nameservers respond.
 func TestDNSQueryNoNameserversResponded(t *testing.T) {
-	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
-	defer cancel()
+	t.Run("nameserver accepts the query and never answers", func(t *testing.T) {
+		server := newTestDNSServer(t)
+		defer server.close()
+		server.setSilent(true)
 
-	// Use invalid nameservers that won't respond
-	_, err := DNSQuery(ctx, "example.com.", dns.TypeA, []string{
-		"192.0.2.1:53", // TEST-NET-1, should not respond
-	}, true)
-	require.Error(t, err)
+		// The deadline is the whole point of the case: the server holds the
+		// query, so the query can only end when the context expires.
+		ctx, cancel := context.WithTimeout(context.Background(), 250*time.Millisecond)
+		defer cancel()
+
+		_, err := DNSQuery(ctx, "example.com.", dns.TypeA, []string{server.addr}, true)
+		require.Error(t, err)
+	})
+
+	t.Run("no nameservers to query", func(t *testing.T) {
+		ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+		defer cancel()
+
+		// With nothing to iterate there is no underlying error to report, which
+		// is the only way to reach the "no nameservers responded" message.
+		_, err := DNSQuery(ctx, "example.com.", dns.TypeA, nil, true)
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "no nameservers responded")
+	})
 }
 
 // TestZoneCacheMultipleEntries tests cache with multiple entries.
@@ -275,42 +349,64 @@ func TestFindBestMatchWithMultipleMatchingZones(t *testing.T) {
 
 // TestFollowCNAMEs tests the FollowCNAMEs function.
 func TestFollowCNAMEs(t *testing.T) {
-	ctx := context.Background()
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
 
 	t.Run("returns original fqdn when no CNAME exists", func(t *testing.T) {
-		// Query a domain that doesn't have a CNAME record
-		// This should return the original fqdn
-		result, err := FollowCNAMEs(ctx, "example.com.", []string{"8.8.8.8:53"})
-		// May succeed or fail depending on network
-		if err == nil {
-			assert.Equal(t, "example.com.", result)
-		}
+		server := newTestDNSServer(t)
+		defer server.close()
+		// NOERROR with no CNAME record, which is what a name that exists but
+		// is not an alias answers.
+		server.addEmptyAnswer("example.com.", dns.TypeCNAME)
+
+		result, err := FollowCNAMEs(ctx, "example.com.", []string{server.addr})
+		require.NoError(t, err)
+		assert.Equal(t, "example.com.", result)
 	})
 
 	t.Run("uses default nameservers when none provided", func(t *testing.T) {
-		// Pass empty nameservers to test default handling
-		_, err := FollowCNAMEs(ctx, "example.com.", nil)
-		// May succeed or fail depending on network
-		_ = err
+		server := newTestDNSServer(t)
+		defer server.close()
+		server.useAsDefaultResolver(t)
+		server.addCNAMERecord("alias.example.com.", "target.example.com.")
+		server.addEmptyAnswer("target.example.com.", dns.TypeCNAME)
+
+		result, err := FollowCNAMEs(ctx, "alias.example.com.", nil)
+		require.NoError(t, err)
+		assert.Equal(t, "target.example.com.", result)
 	})
 
 	t.Run("returns error when DNS query fails", func(t *testing.T) {
-		// Use invalid nameserver to force error
-		_, err := FollowCNAMEs(ctx, "example.com.", []string{"invalid-server:53"})
+		// Nothing is bound to this address, so the query is refused.
+		_, err := FollowCNAMEs(ctx, "example.com.", []string{closedDNSAddr(t)})
 		require.Error(t, err)
+	})
+
+	t.Run("detects a CNAME loop", func(t *testing.T) {
+		server := newTestDNSServer(t)
+		defer server.close()
+		server.addCNAMERecord("first.example.com.", "second.example.com.")
+		server.addCNAMERecord("second.example.com.", "first.example.com.")
+
+		_, err := FollowCNAMEs(ctx, "first.example.com.", []string{server.addr})
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "CNAME loop detected")
 	})
 }
 
-// TestFollowCNAMEsWithRealCNAME tests following CNAME records.
+// TestFollowCNAMEsWithRealCNAME tests following a chain of CNAME records to its
+// final target.
 func TestFollowCNAMEsWithRealCNAME(t *testing.T) {
-	ctx := context.Background()
+	server := newTestDNSServer(t)
+	defer server.close()
+	server.addCNAMERecord("www.example.com.", "cdn.example.com.")
+	server.addCNAMERecord("cdn.example.com.", "edge.example.com.")
+	server.addEmptyAnswer("edge.example.com.", dns.TypeCNAME)
 
-	// www.google.com typically has a CNAME to another domain
-	// This tests the actual CNAME following logic
-	result, err := FollowCNAMEs(ctx, "www.google.com.", []string{"8.8.8.8:53"})
-	// May succeed or fail depending on network
-	if err == nil {
-		// Result should be a valid fqdn
-		assert.NotEmpty(t, result)
-	}
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+
+	result, err := FollowCNAMEs(ctx, "www.example.com.", []string{server.addr})
+	require.NoError(t, err)
+	assert.Equal(t, "edge.example.com.", result)
 }
