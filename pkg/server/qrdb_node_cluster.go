@@ -92,6 +92,7 @@ func (s *Server) daemonClusterOptions() daemon.ClusterOptions {
 		Join:               s.config.Cluster.Join,
 		TrustDomain:        enr.TrustDomain,
 		AdvertiseNoisePort: enr.AdvertiseNoisePort,
+		AdvertiseNoiseHost: s.raftNoiseBindHost(),
 		Bootstrap: clusterenroll.BootstrapOptions{
 			NoiseKey:   enr.Bootstrap.NoiseKey,
 			NoiseAddr:  enr.Bootstrap.NoiseAddr,
@@ -102,6 +103,23 @@ func (s *Server) daemonClusterOptions() daemon.ClusterOptions {
 			DirectURL:  enr.Bootstrap.DirectURL,
 		},
 	}
+}
+
+// raftNoiseBindHost resolves the bind host for the Noise NK enrollment listener
+// the first node of a multi-node cluster starts: the explicit
+// cluster.raft_enrollment.advertise_noise_host when set, otherwise the server
+// bind host.
+//
+// go-qrdb's clusterenroll will not choose one (go-qrdb#167) and refuses an
+// empty value, so this is the single place xkms answers the question. The
+// fallback is Server.Host and not the Raft address host on purpose: this is a
+// LISTENER, and a node whose APIs are contained to one interface must have its
+// enrollment socket contained to the same one.
+func (s *Server) raftNoiseBindHost() string {
+	if host := s.config.Cluster.RaftEnrollment.AdvertiseNoiseHost; host != "" {
+		return host
+	}
+	return s.config.Server.Host
 }
 
 // resolveRaftMTLS supplies pkg/daemon with the inter-node mTLS material for a

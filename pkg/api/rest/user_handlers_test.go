@@ -71,7 +71,7 @@ func (m *restMockUserClient) GetUserByEmail(ctx context.Context, tenantID, email
 	if m.getUserByEmail != nil {
 		return m.getUserByEmail(ctx, tenantID, email)
 	}
-	return nil, &qrdbtransport.UserNotFoundError{ID: email}
+	return nil, &qrdbtransport.UserNotFoundError{Lookup: qrdbtransport.UserLookupKey(tenantID, email)}
 }
 
 func (m *restMockUserClient) GetUserByCertThumbprint(ctx context.Context, thumbprint string) (*qrdbtransport.User, error) {
@@ -152,6 +152,13 @@ func (m *restMockRoleClient) UnassignRole(ctx context.Context, userID uint64, ro
 }
 
 func (m *restMockRoleClient) ListPermissions(ctx context.Context) (*qrdbtransport.ListPermissionsResponse, error) {
+	return nil, errRestMockUnused
+}
+
+// ReconcileBuiltInRoles is not exercised by the user handlers under test, so
+// this mock reports the verb as unused exactly as its other unexercised methods
+// do. The real convergence lives in pkg/qrdbrole.
+func (m *restMockRoleClient) ReconcileBuiltInRoles(ctx context.Context, req *qrdbtransport.ReconcileRolesRequest) (*qrdbtransport.ReconcileRolesResponse, error) {
 	return nil, errRestMockUnused
 }
 

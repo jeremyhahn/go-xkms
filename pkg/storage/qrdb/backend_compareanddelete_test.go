@@ -24,12 +24,13 @@ import (
 )
 
 // THE SHARED storagetest CONTRACT IS NOT RUN IN THIS PACKAGE, and the reason is
-// measured, not assumed: no constructor in factory.go yields a backend that can
-// serve the verb. See TestEmbeddedConstructors_CompareAndDeleteUnavailable
-// below, which records what they do instead. Running the contract against a
-// hand-rolled fake would only be testing the fake, so what is tested here is the
-// part this package actually owns — WHICH client capability the operation
-// dispatches to, and what it does when neither is present.
+// structural rather than a judgment call: storagetest imports pkg/storage, and
+// pkg/storage imports this package, so a fixture here is an import cycle the
+// compiler refuses. TestEmbeddedConstructors_CompareAndDelete below therefore
+// restates the contract's properties in-package against the real constructors.
+// Everything else here tests the part this package actually owns — WHICH client
+// capability the operation dispatches to, and what it does when neither is
+// present.
 
 // ---------------------------------------------------------------------------
 // Fake clients for the dispatch tests
@@ -325,65 +326,92 @@ func TestBackend_CompareAndDelete_ClientLacksBothCapabilities(t *testing.T) {
 // Characterization: the embedded constructors
 // ---------------------------------------------------------------------------
 
-// CompareAndDelete IS NOT AVAILABLE FROM ANY CONSTRUCTOR IN factory.go, measured
-// 2026-08-27 against go-qrdb v0.13.0-alpha through the constructors themselves:
+// CompareAndDelete IS AVAILABLE FROM EVERY CONSTRUCTOR IN factory.go, measured
+// 2026-09-06 against go-qrdb v0.16.3-alpha through the constructors themselves.
 //
-//	memory  ->  transport: unsupported capability: statemachine: unknown opcode: 66
-//	file    ->  transport: unsupported capability: statemachine: unknown opcode: 66
-//	pebble  ->  transport: unsupported capability: statemachine: unknown opcode: 66
+// It was not, and this test used to characterize the refusal: the
+// FastStateMachine that newEmbedded builds had no handler for the guarded-delete
+// opcode (go-qrdb#175), so the guarded path refused with a
+// CapabilityUnsupportedError and fell through to the transaction, which the
+// embedded transport does not wire (#125). The characterization was written to
+// FAIL the day the state machine gained the opcode, which is exactly what
+// happened on the go-qrdb v0.16.3-alpha bump; what follows is the re-derivation
+// it asked for.
 //
-// The failure is NOT the missing transaction service that blocks PutIfAbsent and
-// CompareAndSwap (#125). Dispatch takes the preferred path exactly as designed —
-// the embedded transport does implement transport.GuardedKVClient and does
-// delegate to the KV service — and gets one layer further before stopping: the
-// FastStateMachine that newEmbedded builds has no handler for the guarded-delete
-// opcode. Transport capability and state-machine capability are different
-// questions, and go-qrdb's own CapabilityUnsupportedError doc says so; here the
-// first is satisfied and the second is not.
-//
-// This is a characterization test in the same spirit as
-// factory_cas_characterization_test.go: it records what happens TODAY, including
-// the part that is a defect. When the state machine gains the opcode this test
-// is expected to FAIL, and the failure is the point — it forces the note above
-// CompareAndDelete to be re-derived from measurement rather than left to drift.
-func TestEmbeddedConstructors_CompareAndDeleteUnavailable(t *testing.T) {
+// The properties asserted are the storagetest CompareAndDelete contract, stated
+// in-package because storagetest cannot be imported here (see the note at the
+// top of this file). PutIfAbsent and CompareAndSwap are NOT covered by this
+// change and remain unavailable through the transaction route — see
+// factory_cas_characterization_test.go.
+func TestEmbeddedConstructors_CompareAndDelete(t *testing.T) {
 	eachEmbeddedConstructor(t, func(t *testing.T, name string, b *Backend) {
 		ctx := context.Background()
-		key := "compare-and-delete-characterization"
+		key := "compare-and-delete-conformance"
+		valueA := []byte("v1")
+		valueB := []byte("v2")
+
+		// An absent key is a refusal, NOT an error: a replicated backend that
+		// errored here would stall consensus over a deterministic consequence
+		// of valid input.
+		deleted, err := b.CompareAndDelete(ctx, key, valueA)
+		require.NoError(t, err, "%s: an absent key must not be an error", name)
+		assert.False(t, deleted, "%s: an absent key must report deleted=false", name)
+
+		require.NoError(t, b.Put(ctx, key, valueA))
+
+		// A mismatched guard refuses and leaves the value untouched.
+		deleted, err = b.CompareAndDelete(ctx, key, valueB)
+		require.NoError(t, err, "%s: a mismatched guard must not be an error", name)
+		assert.False(t, deleted, "%s: a mismatched guard must report deleted=false", name)
+		stored, err := b.Get(ctx, key)
+		require.NoError(t, err)
+		assert.Equal(t, valueA, stored, "%s: a refused delete must not alter the value", name)
+
+		// nil is not a wildcard. A backend that treated it as "delete whatever
+		// is there" would turn every guarded release into an unguarded one.
+		deleted, err = b.CompareAndDelete(ctx, key, nil)
+		require.NoError(t, err, "%s: a nil guard must not be an error", name)
+		assert.False(t, deleted, "%s: a nil expected must NOT act as a wildcard", name)
+		exists, err := b.Exists(ctx, key)
+		require.NoError(t, err)
+		assert.True(t, exists, "%s: a refused delete must leave the store unchanged", name)
+
+		// A matching guard deletes.
+		deleted, err = b.CompareAndDelete(ctx, key, valueA)
+		require.NoError(t, err, "%s: a matching guard must succeed", name)
+		assert.True(t, deleted, "%s: a matching guard must report deleted=true", name)
+		exists, err = b.Exists(ctx, key)
+		require.NoError(t, err)
+		assert.False(t, exists, "%s: the key must be gone after a successful delete", name)
+	})
+}
+
+// TestEmbeddedConstructors_CompareAndDeleteTakesTheGuardedPath pins WHICH route
+// serves the verb, which the conformance test above cannot see: a transaction
+// fallback that happened to produce the same answers would satisfy it. The
+// embedded transport wires no transaction service, so if the guarded path were
+// not answering, every case above would be an error rather than a refusal --
+// asserting that a mismatched guard is a clean refusal is therefore the
+// in-package evidence that the guarded path, not the fallback, ran.
+func TestEmbeddedConstructors_CompareAndDeleteTakesTheGuardedPath(t *testing.T) {
+	eachEmbeddedConstructor(t, func(t *testing.T, name string, b *Backend) {
+		ctx := context.Background()
+		key := "compare-and-delete-route"
+
+		guarded, ok := b.client.(transport.GuardedKVClient)
+		require.True(t, ok, "%s: the embedded transport must implement GuardedKVClient", name)
 
 		require.NoError(t, b.Put(ctx, key, []byte("v1")))
 
-		deleted, err := b.CompareAndDelete(ctx, key, []byte("v1"))
-		if err == nil {
-			t.Fatalf("%s: CompareAndDelete succeeded (deleted=%v): the embedded state "+
-				"machine now serves the guarded delete, so the availability note above "+
-				"Backend.CompareAndDelete must be re-derived by measurement", name, deleted)
-		}
+		// Straight through the capability, bypassing the backend's dispatch:
+		// a refusal here would mean the state machine still lacks the opcode.
+		deleted, err := guarded.CompareAndDelete(ctx, key, []byte("v2"))
+		require.NoError(t, err, "%s: the guarded capability must serve the verb", name)
 		assert.False(t, deleted)
 
-		// Identify the cause structurally, by TYPE, not by matching the rendered
-		// message: a reworded diagnostic upstream would otherwise fail this test
-		// while the behaviour it characterizes was unchanged.
-		var backendErr *BackendError
-		require.True(t, errors.As(err, &backendErr), "want *BackendError, got %T: %v", err, err)
-		assert.Equal(t, "compare-and-delete", backendErr.Op)
-
-		// The guarded path's capability refusal must have FALLEN THROUGH to the
-		// transaction path, so the surfaced cause is no longer the state
-		// machine's capability refusal but the embedded transport's missing
-		// transaction service (#125) -- both routes exhausted. Asserting the
-		// absence of CapabilityUnsupportedError is what pins the fallthrough:
-		// if it regressed to returning the guarded error directly, this fails.
 		var unsupported *transport.CapabilityUnsupportedError
 		assert.False(t, errors.As(err, &unsupported),
-			"%s: a guarded capability refusal must fall through to the transaction "+
-				"path rather than being returned directly: %v", name, err)
-
-		// The value must survive: a refusal this backend could not evaluate must
-		// not have removed anything.
-		got, getErr := b.Get(ctx, key)
-		require.NoError(t, getErr)
-		assert.Equal(t, []byte("v1"), got)
+			"%s: the guarded path must not refuse on capability", name)
 	})
 }
 

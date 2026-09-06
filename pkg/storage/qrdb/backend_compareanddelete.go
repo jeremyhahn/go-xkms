@@ -32,18 +32,22 @@ import (
 // to the KV service. The transaction fallback covers the reverse case: a remote
 // transport whose protocol carries transactions but not yet the guarded verbs.
 //
-// NOT AVAILABLE FROM THE EMBEDDED CONSTRUCTORS in factory.go, having exhausted
-// BOTH routes, and the two failures are worth keeping straight. The guarded
-// path gets furthest: dispatch takes it, the embedded transport forwards it,
-// and the FastStateMachine that newEmbedded builds has no handler for the
-// opcode (go-qrdb #175), so it refuses with a CapabilityUnsupportedError —
-// transport
-// capability and state-machine capability being separate questions. That
-// refusal then falls through to the transaction, which fails where PutIfAbsent
-// already does: the embedded transport wires no transaction service (#125). The
-// error a caller sees is therefore that second one. Measured 2026-08-27 against
-// go-qrdb v0.13.0-alpha through the constructors themselves; see
+// AVAILABLE FROM EVERY EMBEDDED CONSTRUCTOR in factory.go, on the guarded path,
+// as of go-qrdb v0.16.3-alpha (go-xkms#406). It was not, and the history is
+// worth keeping because it is what the dispatch order above was built for: the
+// FastStateMachine newEmbedded builds had no handler for the guarded-delete
+// opcode (go-qrdb#175), so the guarded path refused with a
+// CapabilityUnsupportedError, that refusal fell through to the transaction, and
+// the transaction failed where PutIfAbsent still does — the embedded transport
+// wires no transaction service (#125) — so the error a caller saw was the
+// second one. The state machine now serves the opcode, so the guarded path
+// answers and nothing falls through. Re-measured 2026-09-06 against go-qrdb
+// v0.16.3-alpha through the constructors themselves; see
 // backend_compareanddelete_test.go.
+//
+// PutIfAbsent and CompareAndSwap are unchanged by that: they route through the
+// transaction the embedded transport still does not wire (#125), which is why
+// this verb's availability and theirs are separate questions.
 //
 // A caller cannot ask a Backend whether the operation is available; that needs
 // a capability on the interface and is an owner decision (#29). Until then the

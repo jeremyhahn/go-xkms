@@ -91,6 +91,13 @@ type ClusterOptions struct {
 	// listens on. Zero selects clusterenroll.DefaultNoisePort.
 	AdvertiseNoisePort int
 
+	// AdvertiseNoiseHost is the bind host for that advertiser. It is REQUIRED
+	// on the first node of a multi-node cluster and is passed through
+	// unchanged: go-qrdb's clusterenroll refuses to pick one (go-qrdb#167),
+	// because only the composition root knows which interface the operator
+	// contained this node to, and this package is not it.
+	AdvertiseNoiseHost string
+
 	// Bootstrap carries the join-side discovery sources used to fetch the
 	// cluster CA when this node is not the one generating it.
 	Bootstrap clusterenroll.BootstrapOptions
@@ -215,6 +222,7 @@ func (o *Options) ClusterEnrollOptions(members map[uint64]string) *clusterenroll
 		Bootstrap:   bootstrap,
 		Advertise: clusterenroll.AdvertiseOptions{
 			NoisePort: advPort,
+			NoiseHost: o.Cluster.AdvertiseNoiseHost,
 		},
 	}
 }

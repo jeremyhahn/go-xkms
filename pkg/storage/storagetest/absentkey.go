@@ -28,7 +28,10 @@ import (
 // The contract is not invented here. storage.Backend documents it on the
 // methods themselves: Get "returns ErrNotFound if the key does not exist",
 // Delete likewise, Exists "checks if a key exists". Four implementations
-// disagree about all three, which is go-xkms#252.
+// disagreed about all three, which is go-xkms#252. Exists and Get are FIXED
+// upstream as of go-qrdb v0.16.3-alpha and are now asserted unconditionally
+// (go-xkms#406); Delete is the remainder, and the only verb a fixture can
+// still declare divergent.
 //
 // # This is a characterization suite, and the distinction matters
 //
@@ -69,19 +72,6 @@ func RunAbsentKeyContract(t *testing.T, cfg Config) {
 			t.Fatalf("Exists(%q) on an absent key must not error, got %v", key, err)
 		}
 
-		if cfg.AbsentKeyDivergence {
-			if !exists {
-				t.Fatalf("Exists(%q) now correctly reports false. The engine is fixed: "+
-					"remove Config.AbsentKeyDivergence from this fixture and delete this "+
-					"branch (go-xkms#252)", key)
-			}
-			t.Logf("KNOWN DIVERGENCE (go-xkms#252): Exists reports true for a key that " +
-				"was never written. Correct answer: false. Every 'refuse if already " +
-				"present' guard built on this is INVERTED on this backend -- it refuses " +
-				"every request rather than none.")
-			return
-		}
-
 		if exists {
 			t.Fatalf("Exists(%q) reports true for a key that was never written", key)
 		}
@@ -92,28 +82,6 @@ func RunAbsentKeyContract(t *testing.T, cfg Config) {
 		b := cfg.NewBackend(t)
 
 		value, err := b.Get(ctx, key)
-
-		if cfg.AbsentKeyDivergence {
-			if errors.Is(err, storage.ErrNotFound) {
-				t.Fatalf("Get(%q) now correctly returns ErrNotFound. The engine is fixed: "+
-					"remove Config.AbsentKeyDivergence from this fixture and delete this "+
-					"branch (go-xkms#252)", key)
-			}
-			if err != nil {
-				t.Fatalf("Get(%q) returned an unexpected error %v; the divergence being "+
-					"characterized is a NIL error with no value", key, err)
-			}
-			if len(value) != 0 {
-				t.Fatalf("Get(%q) returned %d bytes for a key that was never written",
-					key, len(value))
-			}
-			t.Logf("KNOWN DIVERGENCE (go-xkms#252): Get returns (0 bytes, nil) for a key " +
-				"that was never written. Correct answer: storage.ErrNotFound. Code written " +
-				"as `if _, err := b.Get(...); errors.Is(err, ErrNotFound)` takes the wrong " +
-				"branch here, and a caller trusting the nil error operates on a " +
-				"zero-length value.")
-			return
-		}
 
 		if !errors.Is(err, storage.ErrNotFound) {
 			t.Fatalf("Get(%q) error = %v, want storage.ErrNotFound", key, err)
@@ -129,11 +97,11 @@ func RunAbsentKeyContract(t *testing.T, cfg Config) {
 
 		err := b.Delete(ctx, key)
 
-		if cfg.AbsentKeyDivergence {
+		if cfg.AbsentDeleteDivergence {
 			if errors.Is(err, storage.ErrNotFound) {
 				t.Fatalf("Delete(%q) now correctly returns ErrNotFound. The engine is "+
-					"fixed: remove Config.AbsentKeyDivergence from this fixture and delete "+
-					"this branch (go-xkms#252)", key)
+					"fixed: remove Config.AbsentDeleteDivergence from this fixture and "+
+					"delete this branch (go-xkms#252)", key)
 			}
 			if err != nil {
 				t.Fatalf("Delete(%q) returned an unexpected error %v; the divergence being "+

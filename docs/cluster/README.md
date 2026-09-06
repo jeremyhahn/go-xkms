@@ -230,11 +230,29 @@ cluster:
       directory_url: https://10.0.0.1:8443/acme/directory
     cluster_ca_cn: "Cluster Intermediate CA"   # dedicated transport intermediate
     ca_key_protection: ""                        # auto: TPM/HSM → passphrase → refuse
+    advertise_noise_host: 10.0.0.1               # bind host for the enrollment listener
+    advertise_noise_port: 63006                  # its TCP port (default)
     bootstrap:
       # how a joiner fetches the trust anchor from an existing node
       spki_pin: <base64 SPKI pin>
       server_addr: 10.0.0.1:8443
 ```
+
+#### The enrollment listener's bind host
+
+The first node of a multi-node cluster serves the Noise NK bootstrap endpoint
+that joiners fetch the trust anchor from. That endpoint is the ONE socket a
+joining node reaches before it holds any credential, so `clusterenroll` refuses
+to pick a bind host for it: a node contained to a single interface must not have
+its enrollment listener quietly opened on every interface, and only the
+configuration layer knows which containment the operator asked for.
+
+`raft_enrollment.advertise_noise_host` is that bind host, in the same sense as
+`server.host`, and it **defaults to `server.host`**. It is not
+`cluster.advertise_host`, which is the address clients dial and is deliberately
+not a bind address. A first node whose `server.host` is empty and that sets no
+`advertise_noise_host` refuses to start the advertiser rather than binding a
+wildcard.
 
 #### Cluster CA key protection
 

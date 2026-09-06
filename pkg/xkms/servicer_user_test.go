@@ -64,7 +64,7 @@ func (m *mockUserClient) GetUserByEmail(ctx context.Context, tenantID, email str
 	if m.getUserByEmail != nil {
 		return m.getUserByEmail(ctx, tenantID, email)
 	}
-	return nil, &qrdbtransport.UserNotFoundError{ID: email}
+	return nil, &qrdbtransport.UserNotFoundError{Lookup: qrdbtransport.UserLookupKey(tenantID, email)}
 }
 
 func (m *mockUserClient) GetUserByCertThumbprint(ctx context.Context, thumbprint string) (*qrdbtransport.User, error) {
@@ -137,6 +137,14 @@ func (m *mockRoleClient) UnassignRole(ctx context.Context, userID uint64, roleID
 }
 
 func (m *mockRoleClient) ListPermissions(ctx context.Context) (*qrdbtransport.ListPermissionsResponse, error) {
+	return nil, errors.New("not used")
+}
+
+// ReconcileBuiltInRoles is not exercised by the servicer under test: nothing in
+// pkg/xkms reconciles built-in roles, so this mock reports the verb as unused
+// exactly as its other unexercised methods do. The real convergence lives in
+// pkg/qrdbrole and is covered there and through the in-memory fakes that use it.
+func (m *mockRoleClient) ReconcileBuiltInRoles(ctx context.Context, req *qrdbtransport.ReconcileRolesRequest) (*qrdbtransport.ReconcileRolesResponse, error) {
 	return nil, errors.New("not used")
 }
 

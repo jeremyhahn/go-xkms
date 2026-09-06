@@ -22,6 +22,8 @@ import (
 
 	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
 	qrdbtransport "github.com/jeremyhahn/go-qrdb/sdk/go/transport"
+
+	"github.com/jeremyhahn/go-xkms/pkg/qrdbrole"
 )
 
 // QRDBFakeTransport is a minimal, correct, in-memory implementation of the
@@ -215,11 +217,11 @@ func (f *QRDBFakeTransport) GetUserByEmail(ctx context.Context, tenantID, email 
 	defer f.mu.Unlock()
 	normalized := qrdbsdk.NormalizeEmail(email)
 	if normalized == "" {
-		return nil, &qrdbtransport.UserNotFoundError{ID: email}
+		return nil, &qrdbtransport.UserNotFoundError{Lookup: qrdbtransport.UserLookupKey(tenantID, email)}
 	}
 	id, ok := f.usersByEmail[tenantID+"/"+normalized]
 	if !ok {
-		return nil, &qrdbtransport.UserNotFoundError{ID: email}
+		return nil, &qrdbtransport.UserNotFoundError{Lookup: qrdbtransport.UserLookupKey(tenantID, normalized)}
 	}
 	return f.users[id], nil
 }
@@ -230,7 +232,7 @@ func (f *QRDBFakeTransport) GetUser(ctx context.Context, id uint64) (*qrdbtransp
 	defer f.mu.Unlock()
 	u, ok := f.users[id]
 	if !ok {
-		return nil, &qrdbtransport.UserNotFoundError{ID: idString(id)}
+		return nil, &qrdbtransport.UserNotFoundError{ID: id}
 	}
 	return u, nil
 }
@@ -241,7 +243,7 @@ func (f *QRDBFakeTransport) GetUserByUsername(ctx context.Context, tenantID, use
 	defer f.mu.Unlock()
 	id, ok := f.usersByName[tenantID+"/"+username]
 	if !ok {
-		return nil, &qrdbtransport.UserNotFoundError{ID: username}
+		return nil, &qrdbtransport.UserNotFoundError{Lookup: qrdbtransport.UserLookupKey(tenantID, username)}
 	}
 	return f.users[id], nil
 }
@@ -252,7 +254,7 @@ func (f *QRDBFakeTransport) GetUserByCertThumbprint(ctx context.Context, thumbpr
 	defer f.mu.Unlock()
 	id, ok := f.usersByCert[thumbprint]
 	if !ok {
-		return nil, &qrdbtransport.UserNotFoundError{ID: thumbprint}
+		return nil, &qrdbtransport.UserNotFoundError{Lookup: "cert_spki/" + thumbprint}
 	}
 	return f.users[id], nil
 }
@@ -263,7 +265,7 @@ func (f *QRDBFakeTransport) AddCertBinding(ctx context.Context, userID uint64, t
 	defer f.mu.Unlock()
 	u, ok := f.users[userID]
 	if !ok {
-		return nil, &qrdbtransport.UserNotFoundError{ID: idString(userID)}
+		return nil, &qrdbtransport.UserNotFoundError{ID: userID}
 	}
 	f.usersByCert[thumbprint] = userID
 	return u, nil
@@ -275,7 +277,7 @@ func (f *QRDBFakeTransport) UpdateUser(ctx context.Context, req *qrdbtransport.U
 	defer f.mu.Unlock()
 	u, ok := f.users[req.ID]
 	if !ok {
-		return nil, &qrdbtransport.UserNotFoundError{ID: idString(req.ID)}
+		return nil, &qrdbtransport.UserNotFoundError{ID: req.ID}
 	}
 	if req.Username != "" {
 		delete(f.usersByName, u.TenantID+"/"+u.Username)
@@ -307,7 +309,7 @@ func (f *QRDBFakeTransport) DeleteUser(ctx context.Context, id uint64) error {
 	defer f.mu.Unlock()
 	u, ok := f.users[id]
 	if !ok {
-		return &qrdbtransport.UserNotFoundError{ID: idString(id)}
+		return &qrdbtransport.UserNotFoundError{ID: id}
 	}
 	delete(f.usersByName, u.TenantID+"/"+u.Username)
 	if u.Email != "" {
@@ -336,7 +338,7 @@ func (f *QRDBFakeTransport) EnableUser(ctx context.Context, id uint64) error {
 	defer f.mu.Unlock()
 	u, ok := f.users[id]
 	if !ok {
-		return &qrdbtransport.UserNotFoundError{ID: idString(id)}
+		return &qrdbtransport.UserNotFoundError{ID: id}
 	}
 	u.Enabled = true
 	return nil
@@ -348,7 +350,7 @@ func (f *QRDBFakeTransport) DisableUser(ctx context.Context, id uint64) error {
 	defer f.mu.Unlock()
 	u, ok := f.users[id]
 	if !ok {
-		return &qrdbtransport.UserNotFoundError{ID: idString(id)}
+		return &qrdbtransport.UserNotFoundError{ID: id}
 	}
 	u.Enabled = false
 	return nil
@@ -445,7 +447,7 @@ func (f *QRDBFakeTransport) AssignRole(ctx context.Context, userID uint64, roleI
 	defer f.mu.Unlock()
 	u, ok := f.users[userID]
 	if !ok {
-		return &qrdbtransport.UserNotFoundError{ID: idString(userID)}
+		return &qrdbtransport.UserNotFoundError{ID: userID}
 	}
 	u.RoleIDs = append(u.RoleIDs, roleID)
 	return nil
@@ -457,7 +459,7 @@ func (f *QRDBFakeTransport) UnassignRole(ctx context.Context, userID uint64, rol
 	defer f.mu.Unlock()
 	u, ok := f.users[userID]
 	if !ok {
-		return &qrdbtransport.UserNotFoundError{ID: idString(userID)}
+		return &qrdbtransport.UserNotFoundError{ID: userID}
 	}
 	kept := u.RoleIDs[:0]
 	for _, id := range u.RoleIDs {
@@ -494,6 +496,18 @@ func (f *QRDBFakeTransport) ResolvePermissions(ctx context.Context, req *qrdbtra
 	}
 	sort.Strings(perms)
 	return &qrdbtransport.ResolvePermissionsResponse{Permissions: perms}, nil
+}
+
+// ReconcileBuiltInRoles implements transport.RoleClient. It converges the
+// tenant's stored built-in roles onto the definitions the linked go-qrdb build
+// publishes: permissions the build now grants are added, permissions it no
+// longer grants are removed, custom roles are left untouched, and a tenant
+// already in agreement performs zero writes.
+//
+// The convergence itself lives in pkg/qrdbrole so every in-memory RoleClient in
+// this repository answers the verb identically.
+func (f *QRDBFakeTransport) ReconcileBuiltInRoles(ctx context.Context, req *qrdbtransport.ReconcileRolesRequest) (*qrdbtransport.ReconcileRolesResponse, error) {
+	return qrdbrole.Reconcile(ctx, f, req)
 }
 
 func idString(v uint64) string {

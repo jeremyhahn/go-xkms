@@ -29,6 +29,11 @@ import (
 // that reaches the embedded QRDB client: storage.NewMemory conforms, while
 // NewFile, NewPebble and qrdb.NewMemory diverge identically. The divergence
 // travels with the client, not with the storage medium.
+//
+// It has NARROWED. go-qrdb v0.16.3-alpha fixed Exists and Get, so those two
+// verbs are now held to the correct answer on every backend here; only Delete
+// still reports success for a key that was never written, which is what
+// AbsentDeleteDivergence declares (go-xkms#252, narrowed in #406).
 
 func TestEngineBackend_AbsentKeyContract(t *testing.T) {
 	storagetest.RunAbsentKeyContract(t, storagetest.Config{
@@ -67,7 +72,7 @@ func TestNewFile_AbsentKeyContract(t *testing.T) {
 			t.Cleanup(func() { _ = b.Close() })
 			return b
 		},
-		AbsentKeyDivergence:    true,
+		AbsentDeleteDivergence: true,
 		PutIfAbsentUnavailable: true,
 	})
 }
@@ -82,7 +87,7 @@ func TestNewPebble_AbsentKeyContract(t *testing.T) {
 			t.Cleanup(func() { _ = b.Close() })
 			return b
 		},
-		AbsentKeyDivergence:    true,
+		AbsentDeleteDivergence: true,
 		PutIfAbsentUnavailable: true,
 	})
 }

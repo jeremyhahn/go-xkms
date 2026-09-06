@@ -201,6 +201,7 @@ func (s *Server) buildClusterACMEOptions(members map[uint64]string, backends fun
 		},
 		Advertise: clusterenroll.AdvertiseOptions{
 			NoisePort: advPort,
+			NoiseHost: s.raftNoiseBindHost(),
 		},
 		Backends:    backends,
 		CAConfig:    s.config.CA,

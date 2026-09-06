@@ -61,27 +61,32 @@ type Config struct {
 	// backends whose test double is not safe for concurrent use.
 	Racers int
 
-	// AbsentKeyDivergence declares that this backend does NOT yet satisfy the
-	// absent-key contract: Exists reports true, and Get and Delete report
-	// success, for a key that was never written (go-xkms#252). Every backend
-	// reaching the embedded QRDB client sets it -- NewFile, NewPebble and
-	// qrdb.NewMemory.
+	// AbsentDeleteDivergence declares that this backend does NOT yet satisfy
+	// the absent-key contract for Delete: it reports success for a key that
+	// was never written (go-xkms#252). Every backend reaching the embedded
+	// QRDB client sets it -- NewFile, NewPebble and qrdb.NewMemory.
+	//
+	// It used to cover Exists and Get as well. Both are FIXED upstream as of
+	// go-qrdb v0.16.3-alpha -- Exists reports false and Get returns
+	// ErrNotFound -- so their characterization branches are gone and every
+	// backend is now held to the correct answer (go-xkms#406). Delete is the
+	// remainder of #252.
 	//
 	// Setting it flips RunAbsentKeyContract into characterization mode for
-	// those three verbs: the suite then asserts the WRONG answer and fails the
-	// moment it becomes right, so fixing the engines forces the flag to be
-	// removed rather than letting a stale note survive. Do not set it to make
-	// a failing backend quiet -- it is a statement that the divergence is
-	// known, filed, and deliberately not being papered over.
-	AbsentKeyDivergence bool
+	// Delete: the suite then asserts the WRONG answer and fails the moment it
+	// becomes right, so fixing the engine forces the flag to be removed rather
+	// than letting a stale note survive. Do not set it to make a failing
+	// backend quiet -- it is a statement that the divergence is known, filed,
+	// and deliberately not being papered over.
+	AbsentDeleteDivergence bool
 
 	// PutIfAbsentUnavailable declares that this backend reports PutIfAbsent as
 	// unavailable rather than performing it, because the embedded QRDB
 	// transport carries no transaction service (go-xkms#61). storage.Backend
 	// explicitly permits an implementation to do this.
 	//
-	// It is separate from AbsentKeyDivergence because the cause and the fix are
-	// different: this one fails loudly and upstream, that one is silent and
+	// It is separate from AbsentDeleteDivergence because the cause and the fix
+	// are different: this one fails loudly and upstream, that one is silent and
 	// wrong. A backend can have either without the other.
 	PutIfAbsentUnavailable bool
 }

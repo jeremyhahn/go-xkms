@@ -649,6 +649,18 @@ type RaftEnrollmentConfig struct {
 	// the Noise NK bootstrap endpoint on for peer enrollment. Defaults to 63006.
 	AdvertiseNoisePort int `yaml:"advertise_noise_port"`
 
+	// AdvertiseNoiseHost is the BIND host for that endpoint, in the same sense
+	// as Server.Host, and it defaults to Server.Host. go-qrdb's clusterenroll
+	// refuses to choose one (go-qrdb#167): the enrollment listener is the one
+	// socket a joining node reaches before it holds any credential, so a node
+	// contained to a single interface must not have it quietly opened on every
+	// interface, and only this configuration layer knows which containment the
+	// operator asked for.
+	//
+	// It is NOT Cluster.AdvertiseHost, which is the address CLIENTS dial and is
+	// deliberately not a bind address.
+	AdvertiseNoiseHost string `yaml:"advertise_noise_host"`
+
 	// Bootstrap configures how a JOINING node fetches the cluster CA bundle from
 	// an existing node. Leave empty on the first (bootstrapping) node, which
 	// generates the CA instead of fetching it.

@@ -156,6 +156,14 @@ func (f *fakeQRDBRoleClient) ResolvePermissions(ctx context.Context, req *qrdbtr
 	return nil, errors.New("not implemented in fake")
 }
 
+// ReconcileBuiltInRoles is outside this fake's stated scope -- QRDBUserStore
+// calls GetRole and nothing else -- so it reports the verb as unimplemented
+// exactly as the fake's other out-of-scope methods do. The real convergence
+// lives in pkg/qrdbrole.
+func (f *fakeQRDBRoleClient) ReconcileBuiltInRoles(ctx context.Context, req *qrdbtransport.ReconcileRolesRequest) (*qrdbtransport.ReconcileRolesResponse, error) {
+	return nil, errors.New("not implemented in fake")
+}
+
 func TestNewQRDBUserStore(t *testing.T) {
 	users := newFakeQRDBUserClient()
 	roles := newFakeQRDBRoleClient()

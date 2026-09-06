@@ -250,6 +250,10 @@ func TestFinishACME_AdvertiserOnlyForFirstNodeOfMultiNodeCluster(t *testing.T) {
 		opts := firstNodeOptions(t, t.TempDir(), softwareBackends(t))
 		opts.Members = map[uint64]string{1: "127.0.0.1:8301", 2: "127.0.0.1:8302"}
 		opts.Advertise.NoisePort = freePort(t)
+		// go-qrdb#167: clusterenroll refuses to pick a bind host for the
+		// enrollment listener, so the fixture states one exactly as the
+		// composition root does.
+		opts.Advertise.NoiseHost = "127.0.0.1"
 		p, err := New(opts, testLogger())
 		require.NoError(t, err)
 
