@@ -514,9 +514,16 @@ func (t *EmbeddedTransport) ExportKeyMaterial(ctx context.Context, req *transpor
 		return nil, &SentinelCauseError{Sentinel: ErrExportFailed, Cause: err}
 	}
 
+	// KeyType names the algorithm family of the material just exported, and it
+	// is resolved by the one canonical method so this transport cannot report a
+	// family the key is not addressed under (go-xkms#336, #402). The daemon-side
+	// producer of the same response field answers with the key's symmetric
+	// algorithm; AlgorithmString agrees with it here, because a backend only
+	// releases raw material for a single-family symmetric key -- it refuses a
+	// descriptor naming two families and refuses anything asymmetric outright.
 	return &transport.ExportKeyMaterialResponse{
 		KeyMaterial: keyMaterial,
-		KeyType:     getAlgorithmString(attrs),
+		KeyType:     attrs.AlgorithmString(),
 		KeySize:     len(keyMaterial) * 8,
 	}, nil
 }
@@ -741,23 +748,6 @@ func findKeyAttributes(ctx context.Context, ks xkms.ServiceBackend, keyID string
 	}
 
 	return nil, ErrKeyNotFound
-}
-
-// getAlgorithmString returns a human-readable algorithm string for key attributes.
-func getAlgorithmString(attr *xkms.KeyAttributes) string {
-	switch attr.KeyAlgorithm {
-	case x509.RSA:
-		return "RSA"
-	case x509.ECDSA:
-		return "ECDSA"
-	case x509.Ed25519:
-		return "Ed25519"
-	default:
-		if attr.KeyType == xkms.KeyTypeSecret {
-			return string(attr.SymmetricAlgorithm)
-		}
-		return "unknown"
-	}
 }
 
 // parseHashAlgorithm parses a hash algorithm name into a crypto.Hash value.

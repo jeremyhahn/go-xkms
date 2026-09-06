@@ -160,6 +160,16 @@ resolution order (#336). `TestKeyAttributes_AlgorithmString_AgreesWithID`
 feeds two-family literals through both methods and asserts they name the same
 family, so a change to `ID`'s order that is not mirrored fails there.
 
+The same method answers the `KeyType` field of an `ExportKeyMaterial` response
+in the xkey PKCS#11 embedded transport (`xkey/pkg/pkcs11/service.go`), which
+held the last surviving copy of the formatter — one with an `unknown` default
+and a `KeyTypeSecret` gate that the daemon-side producer of the same field
+(`pkg/xkms/servicer_key.go`) never had (#402). It is deleted rather than kept
+as a documented PKCS#11-edge exception, because it is not one: no consumer at
+that edge reads the field, and a backend releases raw key material only for a
+single-family symmetric key, so both of the copy's extra branches were
+unreachable there. **There is no fourth formatter.**
+
 ## Error semantics
 
 Typed errors only — `fmt.Errorf` is not used. The keystore vocabulary is
