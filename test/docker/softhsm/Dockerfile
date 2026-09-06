@@ -39,12 +39,17 @@ RUN git clone https://github.com/opendnssec/SoftHSMv2.git && \
 # Runtime stage
 FROM alpine:3.24
 
-# Install runtime dependencies only
+# Install runtime dependencies only. SoftHSM is C++, and the builder stage
+# gets libstdc++/libgcc for free from build-base while this stage copies only
+# /usr/local -- so the C++ runtime must be installed here explicitly or
+# libsofthsm2.so and softhsm2-util cannot load (#227).
 RUN apk --no-cache upgrade && apk add --no-cache \
     openssl \
     sqlite-libs \
     p11-kit \
-    p11-kit-server
+    p11-kit-server \
+    libstdc++ \
+    libgcc
 
 # Copy built artifacts from builder
 COPY --from=builder /build/softhsm-install/usr/local /usr/local
@@ -74,9 +79,12 @@ USER softhsm
 # Set working directory
 WORKDIR /home/softhsm
 
-# Health check to verify SoftHSM library is accessible
+# Health check that actually loads the SoftHSM library. A bare `test -f`
+# passes even when the .so cannot load (the exact failure mode of #227);
+# softhsm2-util links the same C++ runtime and opens the token store, so it
+# fails whenever the library would.
 HEALTHCHECK --interval=10s --timeout=3s --retries=3 \
-    CMD test -f /usr/local/lib/softhsm/libsofthsm2.so || exit 1
+    CMD softhsm2-util --show-slots >/dev/null 2>&1 || exit 1
 
 # Keep container running for service access
 CMD ["tail", "-f", "/dev/null"]

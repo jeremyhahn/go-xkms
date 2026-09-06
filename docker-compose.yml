@@ -30,7 +30,9 @@ services:
       - SOFTHSM2_CONF=/home/softhsm/softhsm2.conf
       - PKCS11_LIBRARY=/usr/local/lib/softhsm/libsofthsm2.so
     healthcheck:
-      test: ["CMD", "test", "-f", "/usr/local/lib/softhsm/libsofthsm2.so"]
+      # Loads the library rather than stat'ing it: a `test -f` cannot detect
+      # the "the .so will not load" failure mode (#227).
+      test: ["CMD", "softhsm2-util", "--show-slots"]
       interval: 10s
       timeout: 3s
       retries: 3
