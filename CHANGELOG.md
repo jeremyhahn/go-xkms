@@ -32,6 +32,34 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Security
 
+- **A `pinUvAuthToken` survived `setPIN`, and `changePIN` invalidated it only
+  incidentally, so a token minted before a PIN change stayed live across the
+  user's remediation** (#322). `xkey/pkg/authenticator/cmd_clientpin.go`.
+
+  CTAP 2.1 §6.5.2.1 requires the outstanding `pinUvAuthToken` to be
+  invalidated when the PIN is set or changed. `handleSetPIN` never did — and
+  the gap is reachable, because `getPinUvAuthTokenUsingUvWithPermissions`
+  mints a token against built-in user verification without asking whether a
+  PIN exists, so a live token can predate the first `setPIN`. `handleChangePIN`
+  dropped the token only as a side effect of `regeneratePINProtocolKeys`
+  discarding the whole `pinProtocolState`, which left the token bytes unwiped
+  in memory and made the guarantee hostage to any future change that keeps
+  the negotiated keys across a PIN change.
+
+  Both handlers now call `stopUsingPinUvAuthTokenLocked` — the same path
+  token expiry and `authenticatorReset` use — under the write lock they
+  already hold, after the new PIN is accepted and strictly after every
+  failure path has returned: a `changePIN` with the wrong current PIN must
+  not clear the token, or anyone unable to authenticate could still revoke
+  the legitimate session. A replayed old token is refused with
+  `CTAP2_ERR_PIN_AUTH_INVALID` and its bytes are zeroed in place.
+
+  Verified by `pin_token_invalidation_test.go`: the old token is refused
+  after a successful `setPIN`/`changePIN` while a token minted under the new
+  PIN authorizes normally, failed attempts leave the token usable, and
+  mutation checks confirm each test goes red when its invalidation call is
+  removed (the `setPIN` test also fails on unmodified `main`).
+
 - **`AutoUVBackend` asserted user verification because the barrier was
   unsealed, so an unattended device claimed a human had authenticated**
   (#280). `xkey/pkg/authenticator/keybackend/autouv.go` (deleted),

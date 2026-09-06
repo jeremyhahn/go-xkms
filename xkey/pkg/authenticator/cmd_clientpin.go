@@ -402,6 +402,19 @@ func (a *Authenticator) handleSetPIN(req *ClientPINRequest) ([]byte, error) {
 	a.state.PINSet = true
 	a.state.SetPINRetries(a.config.PINMaxRetries)
 
+	// CTAP 2.1 §6.5.2.1: a pinUvAuthToken must not outlive the PIN state it
+	// was minted under. setPIN reaches here only when no PIN was set, but a
+	// token can still be outstanding: getPinUvAuthTokenUsingUvWithPermissions
+	// mints one against the authenticator's built-in user verification and
+	// never asks whether a PIN exists. Establishing a PIN must not leave that
+	// token usable.
+	//
+	// Placed after the new PIN is accepted into a.state and before it is
+	// persisted, so a storage failure cannot leave a live token behind a PIN
+	// the authenticator already considers set. Every rejected request returned
+	// above, so a failed setPIN never discards the token.
+	a.stopUsingPinUvAuthTokenLocked()
+
 	// Save state.
 	if err := a.storage.SaveState(a.state); err != nil {
 		return nil, ErrStorageError
@@ -503,6 +516,19 @@ func (a *Authenticator) handleChangePIN(req *ClientPINRequest) ([]byte, error) {
 	pinHash := sha256.Sum256(newPIN)
 	a.state.PINHash = pinHash[:PINHashSize]
 	a.state.SetPINRetries(a.config.PINMaxRetries)
+
+	// CTAP 2.1 §6.5.2.1: the token minted under the old PIN stops being usable
+	// here. regeneratePINProtocolKeys below already achieves that as a side
+	// effect — it discards the whole pinProtocolState — but only incidentally,
+	// from a function named for the keys rather than the token, and it drops
+	// the token bytes without wiping them. Stating the invalidation makes the
+	// guarantee survive any future change that keeps the negotiated keys
+	// across a PIN change, and it zeroes the token rather than leaving the
+	// key material for the collector.
+	//
+	// Every wrong-PIN path returned above, so a failed change cannot reach
+	// this and clear a token the caller could not authenticate against.
+	a.stopUsingPinUvAuthTokenLocked()
 
 	// Regenerate PIN protocol keys for security.
 	if err := a.regeneratePINProtocolKeys(); err != nil {
