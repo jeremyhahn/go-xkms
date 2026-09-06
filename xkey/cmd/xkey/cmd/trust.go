@@ -23,7 +23,6 @@ import (
 	"errors"
 	"fmt"
 	"os"
-	"path/filepath"
 	"strings"
 	"text/tabwriter"
 	"time"
@@ -345,18 +344,31 @@ func init() {
 	RootCmd.AddCommand(trustCmd)
 }
 
-// openTrustStore creates a FileStore using config from viper.
-// Uses trust.store_path if set, otherwise defaults to {homeDir}/.xkey/data/trust/
-// to align with the xkey GUI and the browser launcher (browser.go), which
-// both read from $HOME/.xkey/data/trust.
+// trustDataSubdir is the trust store directory beneath the xKey data
+// directory, the same <dataDir>/trust the GUI opens.
+const trustDataSubdir = "trust"
+
+// trustStoreDir resolves the trust store directory. An explicit
+// trust.store_path config value wins; otherwise the store lives at
+// <dataDir>/trust with the data directory resolved through the CLI's
+// single chain (featureDataDir), so XKEY_HOME, portable mode,
+// XKEY_DATA_DIR and `data_dir` all apply. Every opener of the store —
+// openTrustStore and the browser launcher — resolves through here so the
+// path is spelled exactly once.
+func trustStoreDir() (string, error) {
+	if storePath := viper.GetString("trust.store_path"); storePath != "" {
+		return storePath, nil
+	}
+	return featureDataDir(trustDataSubdir)
+}
+
+// openTrustStore creates a FileStore at the directory trustStoreDir
+// resolves. The store constructor creates the directory on open for every
+// caller, so read and write commands share this one creating opener.
 func openTrustStore() (*truststore.FileStore, error) {
-	storePath := viper.GetString("trust.store_path")
-	if storePath == "" {
-		homeDir, err := os.UserHomeDir()
-		if err != nil {
-			return nil, &SentinelCauseError{Sentinel: ErrTrustStoreOpen, Cause: err}
-		}
-		storePath = filepath.Join(homeDir, ".xkey", "data", "trust")
+	storePath, err := trustStoreDir()
+	if err != nil {
+		return nil, &SentinelCauseError{Sentinel: ErrTrustStoreOpen, Cause: err}
 	}
 	store, err := truststore.NewFileStore(&truststore.FileStoreConfig{BaseDir: storePath})
 	if err != nil {

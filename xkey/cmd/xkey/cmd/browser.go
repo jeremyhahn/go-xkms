@@ -17,13 +17,13 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
-	"os"
 	"path/filepath"
 
 	"github.com/spf13/cobra"
 
 	"github.com/jeremyhahn/go-xkms/xkey/pkg/gui/services"
 	"github.com/jeremyhahn/go-xkms/xkey/pkg/truststore"
+	"github.com/jeremyhahn/go-xkms/xkey/pkg/xhome"
 )
 
 // Browser command errors.
@@ -96,16 +96,21 @@ func runBrowserLaunch(cmd *cobra.Command, args []string) error {
 		url = args[0]
 	}
 
-	home, err := os.UserHomeDir()
+	// The browser config and profile directories live at the xKey home
+	// root, resolved the same way the root command resolves it.
+	home, err := xhome.Resolve()
 	if err != nil {
 		return &SentinelCauseError{Sentinel: ErrBrowserLaunchFailed, Cause: err}
 	}
-
-	xkeyDir := filepath.Join(home, ".xkey")
+	xkeyDir := home.Root
 	logger := slog.Default()
 
-	// Open the trust store from the standard data directory.
-	trustStorePath := filepath.Join(xkeyDir, "data", "trust")
+	// Open the same trust store the trust command group manages, resolved
+	// through the one trust-store path resolver.
+	trustStorePath, err := trustStoreDir()
+	if err != nil {
+		return &SentinelCauseError{Sentinel: ErrBrowserLaunchFailed, Cause: err}
+	}
 	store, err := truststore.NewFileStore(&truststore.FileStoreConfig{
 		BaseDir: trustStorePath,
 	})

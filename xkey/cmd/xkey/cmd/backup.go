@@ -700,18 +700,16 @@ func writeSkippedSources(w io.Writer, skipped []backupSkippedSource) {
 }
 
 // backupDataDir returns the xkey data directory holding the GUI-visible
-// stores. It prefers the home resolved by the root command so XKEY_HOME is
-// honored, and falls back to ~/.xkey/data for direct invocations that run
-// outside the cobra lifecycle.
+// stores, resolved through the CLI's single data-dir chain (resolveDataDir)
+// so XKEY_HOME, portable mode, XKEY_DATA_DIR and `data_dir` all apply —
+// the same resolution the root command performs, without a private
+// fallback that could drift from it.
 func backupDataDir() (string, error) {
-	if resolvedHome != nil {
-		return resolvedHome.DataDir(), nil
-	}
-	home, err := os.UserHomeDir()
+	dataDir, err := resolveDataDir("")
 	if err != nil {
 		return "", &SentinelCauseError{Sentinel: ErrBackupStoreUnavailable, Cause: err}
 	}
-	return filepath.Join(home, ".xkey", "data"), nil
+	return dataDir, nil
 }
 
 // ---------------------------------------------------------------------------

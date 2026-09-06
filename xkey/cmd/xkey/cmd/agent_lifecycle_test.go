@@ -25,20 +25,68 @@ import (
 	"github.com/jeremyhahn/go-xkms/xkey/pkg/xhome"
 )
 
-// withIsolatedAgentHome points the CLI's resolved xKey home at a private
-// temporary directory for the duration of the test, restoring the
-// previous value afterwards. $HOME is redirected as well because
-// agentDataDir falls back to it when no home has been resolved.
+// withIsolatedAgentHome points the xKey home at a private temporary
+// directory for the duration of the test. Agent paths resolve through the
+// CLI's shared data-dir chain, so the override is installed with
+// xhome.SetRoot after every other chain source is neutralised; the home
+// resolved by the root command is aligned as well for the lifecycle code
+// that consults it.
 func withIsolatedAgentHome(t *testing.T) string {
 	t.Helper()
 
+	isolateDataDirSources(t)
 	root := t.TempDir()
+	xhome.SetRoot(root)
+	t.Cleanup(xhome.ResetRoot)
 	previous := resolvedHome
 	resolvedHome = &xhome.Home{Root: root}
 	t.Cleanup(func() { resolvedHome = previous })
 	t.Setenv("HOME", root)
 
 	return root
+}
+
+// mustAgentDataDir resolves the agent data directory or fails the test.
+func mustAgentDataDir(t *testing.T) string {
+	t.Helper()
+	dir, err := agentDataDir()
+	if err != nil {
+		t.Fatalf("agentDataDir: %v", err)
+	}
+	return dir
+}
+
+// mustAgentStoreDir resolves the agent enrollment store directory or
+// fails the test.
+func mustAgentStoreDir(t *testing.T) string {
+	t.Helper()
+	dir, err := agentStoreDir()
+	if err != nil {
+		t.Fatalf("agentStoreDir: %v", err)
+	}
+	return dir
+}
+
+// mustAgentCertDir resolves the agent certificate directory or fails the
+// test.
+func mustAgentCertDir(t *testing.T) string {
+	t.Helper()
+	dir, err := agentCertDir()
+	if err != nil {
+		t.Fatalf("agentCertDir: %v", err)
+	}
+	return dir
+}
+
+// mustAgentStateFile resolves the agent server state file or fails the
+// test.
+func mustAgentStateFile(t *testing.T) string {
+	t.Helper()
+	path, err := agentStateFile()
+	if err != nil {
+		t.Fatalf("agentStateFile: %v", err)
+	}
+	return path
 }
 
 // fakeAgentExecutable returns a path whose base name matches the xkey
@@ -185,11 +233,11 @@ func TestAgentStateFile_UsesResolvedHome(t *testing.T) {
 	root := withIsolatedAgentHome(t)
 
 	want := filepath.Join(root, "data", "agent", agentStateFileName)
-	if got := agentStateFile(); got != want {
+	if got := mustAgentStateFile(t); got != want {
 		t.Errorf("agentStateFile() = %q, want %q", got, want)
 	}
-	if dir := filepath.Dir(agentStateFile()); dir != agentDataDir() {
-		t.Errorf("state file is not under the agent data dir: %q vs %q", dir, agentDataDir())
+	if dir := filepath.Dir(mustAgentStateFile(t)); dir != mustAgentDataDir(t) {
+		t.Errorf("state file is not under the agent data dir: %q vs %q", dir, mustAgentDataDir(t))
 	}
 }
 
@@ -204,7 +252,7 @@ func TestClaimAgentServerState_WriteReadRelease(t *testing.T) {
 		t.Fatalf("claimAgentServerState: %v", err)
 	}
 
-	info, err := os.Stat(agentStateFile())
+	info, err := os.Stat(mustAgentStateFile(t))
 	if err != nil {
 		t.Fatalf("stat state file: %v", err)
 	}
@@ -303,10 +351,10 @@ func TestClaimAgentServerState_UnwritableDirectory(t *testing.T) {
 	// A regular file where the agent data directory belongs makes both
 	// MkdirAll and the state file creation fail deterministically,
 	// regardless of the effective user.
-	if err := os.MkdirAll(filepath.Dir(agentDataDir()), 0o700); err != nil {
+	if err := os.MkdirAll(filepath.Dir(mustAgentDataDir(t)), 0o700); err != nil {
 		t.Fatalf("prepare data dir: %v", err)
 	}
-	if err := os.WriteFile(agentDataDir(), []byte("not a directory"), 0o600); err != nil {
+	if err := os.WriteFile(mustAgentDataDir(t), []byte("not a directory"), 0o600); err != nil {
 		t.Fatalf("write blocking file: %v", err)
 	}
 
@@ -343,7 +391,7 @@ func TestUpdateAgentServerState_RecordsBoundAddress(t *testing.T) {
 		t.Errorf("ListenAddr = %q, want 127.0.0.1:34567", loaded.ListenAddr)
 	}
 
-	entries, err := os.ReadDir(agentDataDir())
+	entries, err := os.ReadDir(mustAgentDataDir(t))
 	if err != nil {
 		t.Fatalf("read agent data dir: %v", err)
 	}
@@ -380,7 +428,7 @@ func TestReadAgentServerState_UnreadablePath(t *testing.T) {
 
 	// A directory at the state file path fails the read with EISDIR for
 	// every user, including root.
-	if err := os.MkdirAll(agentStateFile(), 0o700); err != nil {
+	if err := os.MkdirAll(mustAgentStateFile(t), 0o700); err != nil {
 		t.Fatalf("create blocking directory: %v", err)
 	}
 
@@ -396,7 +444,7 @@ func TestReadAgentServerState_UnreadablePath(t *testing.T) {
 func TestReadAgentServerState_CorruptDocument(t *testing.T) {
 	withIsolatedAgentHome(t)
 
-	if err := os.MkdirAll(agentDataDir(), 0o700); err != nil {
+	if err := os.MkdirAll(mustAgentDataDir(t), 0o700); err != nil {
 		t.Fatalf("create agent data dir: %v", err)
 	}
 
@@ -411,7 +459,7 @@ func TestReadAgentServerState_CorruptDocument(t *testing.T) {
 
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
-			if err := os.WriteFile(agentStateFile(), []byte(tc.contents), 0o600); err != nil {
+			if err := os.WriteFile(mustAgentStateFile(t), []byte(tc.contents), 0o600); err != nil {
 				t.Fatalf("write state file: %v", err)
 			}
 			if _, err := readAgentServerState(); !errors.Is(err, ErrAgentStateCorrupt) {
@@ -467,7 +515,7 @@ func TestAgentServerStatus_StalePIDSelfHeals(t *testing.T) {
 	if running {
 		t.Fatal("a state file naming a dead process must not be reported as running")
 	}
-	if _, err := os.Stat(agentStateFile()); !errors.Is(err, os.ErrNotExist) {
+	if _, err := os.Stat(mustAgentStateFile(t)); !errors.Is(err, os.ErrNotExist) {
 		t.Errorf("stale state file was not removed: %v", err)
 	}
 }
@@ -486,7 +534,7 @@ func TestAgentServerStatus_RecycledPIDSelfHeals(t *testing.T) {
 	if running {
 		t.Fatal("a PID belonging to an unrelated process must not be reported as running")
 	}
-	if _, err := os.Stat(agentStateFile()); !errors.Is(err, os.ErrNotExist) {
+	if _, err := os.Stat(mustAgentStateFile(t)); !errors.Is(err, os.ErrNotExist) {
 		t.Errorf("stale state file was not removed: %v", err)
 	}
 }
@@ -494,10 +542,10 @@ func TestAgentServerStatus_RecycledPIDSelfHeals(t *testing.T) {
 func TestAgentServerStatus_CorruptStateSelfHeals(t *testing.T) {
 	withIsolatedAgentHome(t)
 
-	if err := os.MkdirAll(agentDataDir(), 0o700); err != nil {
+	if err := os.MkdirAll(mustAgentDataDir(t), 0o700); err != nil {
 		t.Fatalf("create agent data dir: %v", err)
 	}
-	if err := os.WriteFile(agentStateFile(), []byte("not json"), 0o600); err != nil {
+	if err := os.WriteFile(mustAgentStateFile(t), []byte("not json"), 0o600); err != nil {
 		t.Fatalf("write state file: %v", err)
 	}
 
@@ -508,7 +556,7 @@ func TestAgentServerStatus_CorruptStateSelfHeals(t *testing.T) {
 	if running {
 		t.Fatal("a corrupt state file must not be reported as running")
 	}
-	if _, err := os.Stat(agentStateFile()); !errors.Is(err, os.ErrNotExist) {
+	if _, err := os.Stat(mustAgentStateFile(t)); !errors.Is(err, os.ErrNotExist) {
 		t.Errorf("corrupt state file was not removed: %v", err)
 	}
 }
@@ -516,7 +564,7 @@ func TestAgentServerStatus_CorruptStateSelfHeals(t *testing.T) {
 func TestAgentServerStatus_UnreadableStateIsAnError(t *testing.T) {
 	withIsolatedAgentHome(t)
 
-	if err := os.MkdirAll(agentStateFile(), 0o700); err != nil {
+	if err := os.MkdirAll(mustAgentStateFile(t), 0o700); err != nil {
 		t.Fatalf("create blocking directory: %v", err)
 	}
 
@@ -545,7 +593,7 @@ func TestStopAgentServer_StalePIDReportsNotRunning(t *testing.T) {
 	if _, _, err := stopAgentServer(time.Second, time.Second); !errors.Is(err, ErrAgentServerNotRunning) {
 		t.Fatalf("stopAgentServer = %v, want ErrAgentServerNotRunning", err)
 	}
-	if _, err := os.Stat(agentStateFile()); !errors.Is(err, os.ErrNotExist) {
+	if _, err := os.Stat(mustAgentStateFile(t)); !errors.Is(err, os.ErrNotExist) {
 		t.Errorf("stale state file was not removed: %v", err)
 	}
 }
@@ -570,7 +618,7 @@ func TestStopAgentServer_GracefulTermination(t *testing.T) {
 	if agentServerAlive(state) {
 		t.Error("agent server is still alive after stopAgentServer returned")
 	}
-	if _, err := os.Stat(agentStateFile()); !errors.Is(err, os.ErrNotExist) {
+	if _, err := os.Stat(mustAgentStateFile(t)); !errors.Is(err, os.ErrNotExist) {
 		t.Errorf("state file was not removed: %v", err)
 	}
 }
@@ -592,7 +640,7 @@ func TestStopAgentServer_EscalatesToSIGKILL(t *testing.T) {
 	if agentServerAlive(state) {
 		t.Error("agent server is still alive after SIGKILL")
 	}
-	if _, err := os.Stat(agentStateFile()); !errors.Is(err, os.ErrNotExist) {
+	if _, err := os.Stat(mustAgentStateFile(t)); !errors.Is(err, os.ErrNotExist) {
 		t.Errorf("state file was not removed: %v", err)
 	}
 }

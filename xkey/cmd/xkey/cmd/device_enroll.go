@@ -237,7 +237,10 @@ func runDeviceEnroll(cmd *cobra.Command, args []string) error {
 
 	// Persist the credentials before probing the master so a rejected probe
 	// leaves the operator with material to inspect.
-	certDir := agentCertDir()
+	certDir, err := agentCertDir()
+	if err != nil {
+		return &SentinelCauseError{Sentinel: ErrAgentCertWriteFailed, Cause: err}
+	}
 	if err := os.MkdirAll(certDir, 0700); err != nil {
 		return &SentinelCauseError{Sentinel: ErrAgentCertWriteFailed, Cause: err}
 	}
@@ -343,7 +346,10 @@ func runDeviceConnect(cmd *cobra.Command, args []string) error {
 	tlsCA, _ := cmd.Flags().GetString("tls-ca")
 
 	// Use default cert paths if not specified.
-	certDir := agentCertDir()
+	certDir, err := agentCertDir()
+	if err != nil {
+		return &SentinelCauseError{Sentinel: ErrAgentConnectFailed, Cause: err}
+	}
 	if tlsCert == "" {
 		tlsCert = filepath.Join(certDir, "agent-cert.pem")
 	}

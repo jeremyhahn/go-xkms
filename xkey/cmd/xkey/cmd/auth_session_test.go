@@ -16,6 +16,8 @@ package cmd
 import (
 	"context"
 	"log/slog"
+	"os"
+	"path/filepath"
 	"testing"
 
 	xkms "github.com/jeremyhahn/go-xkms/sdk/go"
@@ -154,10 +156,13 @@ func TestStoreAuthTokenPair_RoundTrip(t *testing.T) {
 }
 
 func TestStoreAuthTokenPair_StorageFailure(t *testing.T) {
-	// authStoragePath resolves under $HOME; an unresolvable HOME makes
-	// storage construction fail, exercising the error path.
-	t.Setenv("HOME", "")
-	t.Setenv("USERPROFILE", "")
+	// authStoragePath resolves through the shared data-dir chain; an
+	// XKEY_HOME that cannot be created (nested under a regular file)
+	// makes resolution fail, exercising the error path.
+	isolateDataDirSources(t)
+	blocker := filepath.Join(t.TempDir(), "blocker-file")
+	require.NoError(t, os.WriteFile(blocker, []byte("x"), 0600))
+	t.Setenv("XKEY_HOME", filepath.Join(blocker, "nested"))
 
 	err := storeAuthTokenPair(context.Background(), slog.Default(), "https://example.com", tokenstore.SourcePIV,
 		&xkms.TokenPair{AccessToken: "at"})

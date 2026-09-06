@@ -34,6 +34,7 @@ import (
 
 	xkms "github.com/jeremyhahn/go-xkms/sdk/go"
 	"github.com/jeremyhahn/go-xkms/xkey/pkg/agent"
+	"github.com/jeremyhahn/go-xkms/xkey/pkg/xhome"
 )
 
 func runDetached(t *testing.T, run func(*cobra.Command, []string) error, args ...string) (string, error) {
@@ -130,19 +131,44 @@ func TestRunExtensionStatus_ReportsInstalledManifestPath(t *testing.T) {
 }
 
 func TestRunExtensionPairStatus_NotPaired(t *testing.T) {
-	t.Setenv("HOME", t.TempDir())
+	// An existing xKey home with no pairing store is a genuinely
+	// unpaired device; the read must report that without creating the
+	// extension directory.
+	root := isolatedExistingXKeyHome(t)
 
 	out, err := runDetached(t, runExtensionPairStatus)
 	require.NoError(t, err)
 	assert.Contains(t, out, "Status: Not paired")
+	assertNoPath(t, filepath.Join(root, "data", "extension"))
+}
+
+func TestRunExtensionPairStatus_NoResolvableHomeIsAnError(t *testing.T) {
+	// XKEY_HOME pointing at a directory that does not exist: a read must
+	// not create it, and must not render the unknowable as "Not paired".
+	isolateDataDirSources(t)
+	t.Setenv("XKEY_HOME", filepath.Join(t.TempDir(), "missing"))
+
+	_, err := runDetached(t, runExtensionPairStatus)
+	require.ErrorIs(t, err, ErrExtensionPairStatusFailed)
+	require.ErrorIs(t, err, xhome.ErrHomeNotResolved)
 }
 
 func TestRunExtensionUnpair_WhenNothingPaired(t *testing.T) {
-	t.Setenv("HOME", t.TempDir())
+	root := isolatedExistingXKeyHome(t)
 
 	out, err := runDetached(t, runExtensionUnpair)
 	require.NoError(t, err)
 	assert.Contains(t, out, "No extension is currently paired")
+	assertNoPath(t, filepath.Join(root, "data", "extension"))
+}
+
+func TestRunExtensionUnpair_NoResolvableHomeIsAnError(t *testing.T) {
+	isolateDataDirSources(t)
+	t.Setenv("XKEY_HOME", filepath.Join(t.TempDir(), "missing"))
+
+	_, err := runDetached(t, runExtensionUnpair)
+	require.ErrorIs(t, err, ErrExtensionUnpairFailed)
+	require.ErrorIs(t, err, xhome.ErrHomeNotResolved)
 }
 
 // ---------------------------------------------------------------
@@ -150,6 +176,7 @@ func TestRunExtensionUnpair_WhenNothingPaired(t *testing.T) {
 // ---------------------------------------------------------------
 
 func TestAgentDirs_FollowResolvedHome(t *testing.T) {
+	isolateDataDirSources(t)
 	home := t.TempDir()
 	t.Setenv("HOME", home)
 
@@ -158,9 +185,9 @@ func TestAgentDirs_FollowResolvedHome(t *testing.T) {
 	t.Cleanup(func() { resolvedHome = previous })
 
 	base := filepath.Join(home, ".xkey", "data", "agent")
-	assert.Equal(t, base, agentDataDir())
-	assert.Equal(t, filepath.Join(base, "enrollments"), agentStoreDir())
-	assert.Equal(t, filepath.Join(base, "certs"), agentCertDir())
+	assert.Equal(t, base, mustAgentDataDir(t))
+	assert.Equal(t, filepath.Join(base, "enrollments"), mustAgentStoreDir(t))
+	assert.Equal(t, filepath.Join(base, "certs"), mustAgentCertDir(t))
 }
 
 func TestRunAgentStatus_NotRunningAndNoEnrollments(t *testing.T) {
@@ -186,7 +213,7 @@ func TestRunAgentStatus_ListsEnrolledAgents(t *testing.T) {
 	resolvedHome = nil
 	t.Cleanup(func() { resolvedHome = previous })
 
-	store, err := agent.NewFileStore(agentStoreDir(), slog.Default())
+	store, err := agent.NewFileStore(mustAgentStoreDir(t), slog.Default())
 	require.NoError(t, err)
 	require.NoError(t, store.SaveAgent(&agent.AgentInfo{
 		ID:         "agent-1",

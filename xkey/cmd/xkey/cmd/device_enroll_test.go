@@ -274,7 +274,7 @@ func TestRunDeviceEnroll_IssuesAndPersistsCertificate(t *testing.T) {
 	// The master was contacted with the freshly issued credentials.
 	assert.Equal(t, "master.example.com:9443", *probed)
 
-	certDir := agentCertDir()
+	certDir := mustAgentCertDir(t)
 	keyPath := filepath.Join(certDir, deviceEnrollKeyFile)
 	certPath := filepath.Join(certDir, deviceEnrollCertFile)
 	caPath := filepath.Join(certDir, deviceEnrollCAFile)
@@ -374,7 +374,7 @@ func TestRunDeviceEnroll_CodeFailsClosed(t *testing.T) {
 	require.Error(t, err)
 	assert.ErrorIs(t, err, ErrDeviceEnrollCodeUnsupported)
 
-	_, statErr := os.Stat(filepath.Join(agentCertDir(), deviceEnrollKeyFile))
+	_, statErr := os.Stat(filepath.Join(mustAgentCertDir(t), deviceEnrollKeyFile))
 	assert.True(t, os.IsNotExist(statErr), "no key material should be written on a refused enrollment")
 }
 
@@ -392,7 +392,7 @@ func TestRunDeviceEnroll_NoCertificateAuthority(t *testing.T) {
 	require.Error(t, err)
 	assert.ErrorIs(t, err, ErrAgentCAUnavailable)
 
-	_, statErr := os.Stat(filepath.Join(agentCertDir(), deviceEnrollCertFile))
+	_, statErr := os.Stat(filepath.Join(mustAgentCertDir(t), deviceEnrollCertFile))
 	assert.True(t, os.IsNotExist(statErr))
 }
 
@@ -465,7 +465,7 @@ func TestRunDeviceEnroll_MasterRejects(t *testing.T) {
 	assert.NotContains(t, out.String(), "Enrollment complete")
 
 	// The issued material is still available to the operator.
-	_, statErr := os.Stat(filepath.Join(agentCertDir(), deviceEnrollCertFile))
+	_, statErr := os.Stat(filepath.Join(mustAgentCertDir(t), deviceEnrollCertFile))
 	assert.NoError(t, statErr)
 }
 

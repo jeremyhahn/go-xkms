@@ -80,3 +80,35 @@ func dataDirOverride(flagValue string) (string, bool) {
 
 	return "", false
 }
+
+// featureDataDir resolves the shared data directory through the ONE chain
+// above and returns the named feature's subdirectory beneath it, e.g.
+// <dataDir>/trust. Command groups that keep their state under a fixed
+// feature segment (extension, trust, auth, agent, ...) delegate here so
+// the segment is the only thing they spell; the data directory itself is
+// never hand-built from $HOME. The data directory is created if absent;
+// the feature subdirectory is left to the store that owns it.
+//
+// Delegating here is a deliberate behaviour change for groups that once
+// resolved ~/.xkey/data/<feature> directly (issue #381): they now honour
+// XKEY_HOME, portable (.xkey-home marker) mode, XKEY_DATA_DIR and the
+// config `data_dir` key exactly as pin and barrier do.
+func featureDataDir(feature string) (string, error) {
+	dataDir, err := resolveDataDir("")
+	if err != nil {
+		return "", err
+	}
+	return filepath.Join(dataDir, feature), nil
+}
+
+// featureDataDirExisting is the non-creating counterpart of featureDataDir
+// for read-only commands: it resolves through resolveDataDirExisting, so
+// inspecting a feature's state can never manufacture the data directory,
+// and fails with xhome.ErrHomeNotResolved when no xKey home exists.
+func featureDataDirExisting(feature string) (string, error) {
+	dataDir, err := resolveDataDirExisting("")
+	if err != nil {
+		return "", err
+	}
+	return filepath.Join(dataDir, feature), nil
+}

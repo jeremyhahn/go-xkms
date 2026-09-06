@@ -199,6 +199,8 @@ func TestExtensionErrors(t *testing.T) {
 		{ErrExtensionUninstallFailed, "extension: uninstall failed"},
 		{ErrExtensionInvalidBrowser, "extension: invalid browser (use chrome, firefox, or all)"},
 		{ErrExtensionHostFailed, "extension: host failed"},
+		{ErrExtensionUnpairFailed, "extension: unpair failed"},
+		{ErrExtensionPairStatusFailed, "extension: pair status failed"},
 	}
 
 	for _, tc := range tests {
@@ -216,6 +218,8 @@ func TestExtensionErrors_AreDistinct(t *testing.T) {
 		ErrExtensionUninstallFailed,
 		ErrExtensionInvalidBrowser,
 		ErrExtensionHostFailed,
+		ErrExtensionUnpairFailed,
+		ErrExtensionPairStatusFailed,
 	}
 
 	seen := make(map[string]bool, len(errs))

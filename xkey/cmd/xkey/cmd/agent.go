@@ -166,7 +166,10 @@ func runAgentStart(cmd *cobra.Command, args []string) error {
 	defer releaseState()
 
 	// Create enrollment store.
-	storeDir := agentStoreDir()
+	storeDir, err := agentStoreDir()
+	if err != nil {
+		return &SentinelCauseError{Sentinel: ErrAgentStartFailed, Cause: err}
+	}
 	store, err := agent.NewFileStore(storeDir, logger)
 	if err != nil {
 		return &SentinelCauseError{Sentinel: ErrAgentStartFailed, Cause: err}
@@ -279,7 +282,10 @@ func runAgentStatus(cmd *cobra.Command, args []string) error {
 	}
 	_, _ = fmt.Fprintln(out)
 
-	storeDir := agentStoreDir()
+	storeDir, err := agentStoreDir()
+	if err != nil {
+		return &SentinelCauseError{Sentinel: ErrAgentStatusFailed, Cause: err}
+	}
 	logger := slog.Default()
 
 	store, err := agent.NewFileStore(storeDir, logger)
@@ -313,29 +319,35 @@ func runAgentStatus(cmd *cobra.Command, args []string) error {
 	return nil
 }
 
-// agentDataDir returns the base directory holding all agent state. It
-// uses the resolved xKey home when available (the same resolution the
-// rest of the CLI performs in PersistentPreRunE), falling back to
-// $HOME/.xkey/data and finally to a temporary directory.
-func agentDataDir() string {
-	if home := resolvedHome; home != nil {
-		return filepath.Join(home.DataDir(), "agent")
-	}
-	homeDir, err := os.UserHomeDir()
-	if err != nil {
-		return filepath.Join(os.TempDir(), "xkey", "agent")
-	}
-	return filepath.Join(homeDir, ".xkey", "data", "agent")
+// agentDataSubdir is the agent state directory beneath the xKey data
+// directory.
+const agentDataSubdir = "agent"
+
+// agentDataDir returns the base directory holding all agent state,
+// <dataDir>/agent, with the data directory resolved through the CLI's
+// single chain (featureDataDir) — the same resolution the root command
+// performs, with no private $HOME fallback and no silent temporary
+// directory when the home cannot be resolved.
+func agentDataDir() (string, error) {
+	return featureDataDir(agentDataSubdir)
 }
 
 // agentStoreDir returns the directory for agent enrollment data.
-func agentStoreDir() string {
-	return filepath.Join(agentDataDir(), "enrollments")
+func agentStoreDir() (string, error) {
+	dataDir, err := agentDataDir()
+	if err != nil {
+		return "", err
+	}
+	return filepath.Join(dataDir, "enrollments"), nil
 }
 
 // agentCertDir returns the directory for agent certificates.
-func agentCertDir() string {
-	return filepath.Join(agentDataDir(), "certs")
+func agentCertDir() (string, error) {
+	dataDir, err := agentDataDir()
+	if err != nil {
+		return "", err
+	}
+	return filepath.Join(dataDir, "certs"), nil
 }
 
 func init() {

@@ -110,8 +110,12 @@ type agentServerState struct {
 // agentStateFile returns the path of the agent server run-state file.
 // It resolves under the same xKey home as the agent enrollment store so
 // that start, stop, and status always agree on a single location.
-func agentStateFile() string {
-	return filepath.Join(agentDataDir(), agentStateFileName)
+func agentStateFile() (string, error) {
+	dataDir, err := agentDataDir()
+	if err != nil {
+		return "", err
+	}
+	return filepath.Join(dataDir, agentStateFileName), nil
 }
 
 // newAgentServerState captures the run state of the current process for
@@ -144,7 +148,11 @@ func (s *agentServerState) encode() ([]byte, error) {
 // when the file cannot be decoded, and ErrAgentStateRead for any other
 // read failure (for example a permission error).
 func readAgentServerState() (*agentServerState, error) {
-	data, err := os.ReadFile(agentStateFile())
+	path, err := agentStateFile()
+	if err != nil {
+		return nil, &SentinelCauseError{Sentinel: ErrAgentStateRead, Cause: err}
+	}
+	data, err := os.ReadFile(path)
 	if err != nil {
 		if errors.Is(err, fs.ErrNotExist) {
 			return nil, ErrAgentServerNotRunning
@@ -165,7 +173,11 @@ func readAgentServerState() (*agentServerState, error) {
 // removeAgentServerState deletes the run-state file. A missing file is
 // not an error.
 func removeAgentServerState() error {
-	if err := os.Remove(agentStateFile()); err != nil && !errors.Is(err, fs.ErrNotExist) {
+	path, err := agentStateFile()
+	if err != nil {
+		return &SentinelCauseError{Sentinel: ErrAgentStateRemove, Cause: err}
+	}
+	if err := os.Remove(path); err != nil && !errors.Is(err, fs.ErrNotExist) {
 		return &SentinelCauseError{Sentinel: ErrAgentStateRemove, Cause: err}
 	}
 	return nil
@@ -202,7 +214,10 @@ func claimAgentServerState(state *agentServerState) error {
 		return err
 	}
 
-	path := agentStateFile()
+	path, err := agentStateFile()
+	if err != nil {
+		return &SentinelCauseError{Sentinel: ErrAgentStateWrite, Cause: err}
+	}
 	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
 		return &SentinelCauseError{Sentinel: ErrAgentStateWrite, Cause: err}
 	}
@@ -264,7 +279,10 @@ func updateAgentServerState(state *agentServerState) error {
 		return err
 	}
 
-	path := agentStateFile()
+	path, err := agentStateFile()
+	if err != nil {
+		return &SentinelCauseError{Sentinel: ErrAgentStateWrite, Cause: err}
+	}
 	temp, err := os.CreateTemp(filepath.Dir(path), ".server.state.*.tmp")
 	if err != nil {
 		return &SentinelCauseError{Sentinel: ErrAgentStateWrite, Cause: err}

@@ -37,7 +37,8 @@ import (
 
 func TestAuthConstants(t *testing.T) {
 	t.Run("defaultAuthStoragePath", func(t *testing.T) {
-		assert.Equal(t, "data/auth", defaultAuthStoragePath)
+		assert.Equal(t, "auth", defaultAuthStoragePath,
+			"the data segment belongs to the shared chain, not the feature constant")
 	})
 
 	t.Run("defaultAuthTimeout", func(t *testing.T) {
@@ -556,6 +557,7 @@ func TestRunAuthStatus_TokenStatus(t *testing.T) {
 // --- authStoragePath tests ---
 
 func TestAuthStoragePath(t *testing.T) {
+	isolateDataDirSources(t)
 	tmpDir := t.TempDir()
 	t.Setenv("HOME", tmpDir)
 
@@ -567,6 +569,7 @@ func TestAuthStoragePath(t *testing.T) {
 }
 
 func TestAuthStoragePath_Format(t *testing.T) {
+	isolateDataDirSources(t)
 	tmpDir := t.TempDir()
 	t.Setenv("HOME", tmpDir)
 
@@ -578,6 +581,7 @@ func TestAuthStoragePath_Format(t *testing.T) {
 }
 
 func TestAuthStoragePath_UsesHomeDir(t *testing.T) {
+	isolateDataDirSources(t)
 	tmpDir := t.TempDir()
 	t.Setenv("HOME", tmpDir)
 
@@ -589,6 +593,7 @@ func TestAuthStoragePath_UsesHomeDir(t *testing.T) {
 }
 
 func TestAuthStoragePath_DifferentHomes(t *testing.T) {
+	isolateDataDirSources(t)
 	tmpDir1 := t.TempDir()
 	tmpDir2 := t.TempDir()
 

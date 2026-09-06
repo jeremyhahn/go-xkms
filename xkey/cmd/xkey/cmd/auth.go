@@ -22,7 +22,6 @@ import (
 	"log/slog"
 	"net/mail"
 	"os"
-	"path/filepath"
 	"strings"
 	"time"
 
@@ -36,7 +35,7 @@ import (
 
 // Auth command defaults.
 const (
-	defaultAuthStoragePath = "data/auth"
+	defaultAuthStoragePath = "auth"
 	defaultAuthTimeout     = 30 * time.Second
 )
 
@@ -1084,14 +1083,13 @@ func runAuthToken(cmd *cobra.Command, args []string) error {
 	return nil
 }
 
-// authStoragePath returns the resolved path for auth data storage.
-// It uses ~/.xkey/data/auth/ as the default location.
+// authStoragePath returns the resolved path for auth data storage:
+// <dataDir>/auth, with the data directory resolved through the CLI's
+// single chain (featureDataDir). The storage backend creates the
+// directory on open for every auth command, so one creating resolver
+// serves both the login/register writers and the status/token readers.
 func authStoragePath() (string, error) {
-	home, err := os.UserHomeDir()
-	if err != nil {
-		return "", err
-	}
-	return filepath.Join(home, ".xkey", defaultAuthStoragePath), nil
+	return featureDataDir(defaultAuthStoragePath)
 }
 
 // openServerRegistry creates a file-backed server registry.

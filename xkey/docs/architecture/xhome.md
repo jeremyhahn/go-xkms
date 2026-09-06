@@ -83,6 +83,41 @@ func ResetRoot()           // Clear the override
 |----------|-------------|
 | `XKEY_HOME` | Overrides all other resolution strategies. The directory is created if it does not exist. Relative paths are resolved to absolute. |
 
+## CLI Data Directory Chain
+
+The `xkey` CLI never hard-codes `~/.xkey/data`. Every command group that
+persists state resolves the data directory through one chain in
+`xkey/cmd/xkey/cmd/datadir.go`, then appends its own feature segment:
+
+| Priority | Source | Notes |
+|----------|--------|-------|
+| 1 | The group's `--data-dir` flag | Only `pin` and `barrier` expose one. |
+| 2 | `XKEY_DATA_DIR` env var | Used as given (cleaned), whether or not it exists. |
+| 3 | Config key `data_dir` | Same handling as the env var. |
+| 4 | `Home.DataDir()` | `<root>/data` under the home resolved by the order above. |
+
+The chain has a creating variant (`resolveDataDir`, used by commands that
+initialise state) and a non-creating variant (`resolveDataDirExisting`,
+used by read-only commands so that inspecting state never manufactures an
+empty data directory). Feature groups obtain `<dataDir>/<feature>` from
+`featureDataDir` / `featureDataDirExisting`.
+
+| Group | Location | Variant |
+|-------|----------|---------|
+| `pin` | `<dataDir>/pin` | creating for `set-*`, existing for reads |
+| `barrier` | `<dataDir>` | creating |
+| `extension` | `<dataDir>/extension/pairing.json` | creating for `host`, existing for `unpair` / `pair-status` |
+| `trust` (and `browser launch`) | `trust.store_path` if set, else `<dataDir>/trust` | creating (the store creates itself on open) |
+| `auth` | `<dataDir>/auth` | creating (the storage backend creates itself on open) |
+| `agent` / `device enroll` | `<dataDir>/agent` | creating |
+| `backup` / `device sync` | `<dataDir>` | creating |
+
+Because they share the chain, all of these groups honour `XKEY_HOME`, the
+portable `.xkey-home` marker, `XKEY_DATA_DIR` and `data_dir` identically.
+A test in the CLI package (`TestNoAdHocDataDirLiterals`) fails the build
+if any command source outside `datadir.go` spells the data directory by
+hand.
+
 ## Binary Directory Marker
 
 For portable or USB deployments, place an empty `.xkey-home` file next to the xkey binary:

@@ -28,15 +28,17 @@ import (
 
 	"github.com/jeremyhahn/go-xkms/xkey/pkg/ipc"
 	"github.com/jeremyhahn/go-xkms/xkey/pkg/nativemsg"
+	"github.com/jeremyhahn/go-xkms/xkey/pkg/xhome"
 )
 
 // Extension command errors.
 var (
-	ErrExtensionInstallFailed   = errors.New("extension: install failed")
-	ErrExtensionUninstallFailed = errors.New("extension: uninstall failed")
-	ErrExtensionInvalidBrowser  = errors.New("extension: invalid browser (use chrome, firefox, or all)")
-	ErrExtensionHostFailed      = errors.New("extension: host failed")
-	ErrExtensionUnpairFailed    = errors.New("extension: unpair failed")
+	ErrExtensionInstallFailed    = errors.New("extension: install failed")
+	ErrExtensionUninstallFailed  = errors.New("extension: uninstall failed")
+	ErrExtensionInvalidBrowser   = errors.New("extension: invalid browser (use chrome, firefox, or all)")
+	ErrExtensionHostFailed       = errors.New("extension: host failed")
+	ErrExtensionUnpairFailed     = errors.New("extension: unpair failed")
+	ErrExtensionPairStatusFailed = errors.New("extension: pair status failed")
 )
 
 // allBrowsers is the ordered list of browser families supported for manifest operations.
@@ -290,10 +292,12 @@ func runExtensionHost(cmd *cobra.Command, args []string) error {
 
 	// Build a multi-writer: stderr (Chrome captures) + log file (user-visible).
 	// The log file allows diagnosing pairing failures since Chrome hides stderr.
+	// The log lives under the resolved xKey home root (XKEY_HOME, the
+	// portable marker or ~/.xkey), not a hand-built $HOME path.
 	writers := []io.Writer{os.Stderr}
-	homeDir, homeErr := os.UserHomeDir()
+	xkeyHome, homeErr := xhome.Resolve()
 	if homeErr == nil {
-		logDir := filepath.Join(homeDir, ".xkey", "logs")
+		logDir := filepath.Join(xkeyHome.Root, "logs")
 		if mkErr := os.MkdirAll(logDir, 0700); mkErr == nil {
 			logPath := filepath.Join(logDir, "native-host.log")
 			f, fErr := os.OpenFile(logPath, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0600)
@@ -321,17 +325,18 @@ func runExtensionHost(cmd *cobra.Command, args []string) error {
 
 	var pairing *nativemsg.PairingVerifier
 	if !noPairing {
-		homeDir, err := os.UserHomeDir()
+		// The host owns the pairing ceremony, so it is the one extension
+		// command allowed to create the pairing directory. The location is
+		// the same <dataDir>/extension the GUI initialises, resolved through
+		// the CLI's single data-dir chain (see featureDataDir).
+		pairingDir, err := featureDataDir(extensionDataSubdir)
 		if err != nil {
-			return &DetailError{Err: ErrExtensionHostFailed, Detail: fmt.Sprintf(": cannot determine home directory: %v", err)}
+			return &SentinelCauseError{Sentinel: ErrExtensionHostFailed, Cause: err}
 		}
-		// Use the same path as the GUI: ~/.xkey/data/extension/pairing.json.
-		// The GUI creates this directory in initializeDataDir().
-		pairingDir := filepath.Join(homeDir, ".xkey", "data", "extension")
 		if mkErr := os.MkdirAll(pairingDir, 0700); mkErr != nil {
 			return &DetailError{Err: ErrExtensionHostFailed, Detail: fmt.Sprintf(": cannot create pairing directory: %v", mkErr)}
 		}
-		statePath := filepath.Join(pairingDir, "pairing.json")
+		statePath := filepath.Join(pairingDir, extensionPairingStateFile)
 		var pairingErr error
 		pairing, pairingErr = nativemsg.NewPairingVerifier(statePath)
 		if pairingErr != nil {
@@ -348,15 +353,34 @@ func runExtensionHost(cmd *cobra.Command, args []string) error {
 	return nil
 }
 
+// extensionDataSubdir is the extension state directory beneath the xKey
+// data directory, shared with the GUI's pairing store.
+const extensionDataSubdir = "extension"
+
+// extensionPairingStateFile is the pairing state file inside
+// extensionDataSubdir.
+const extensionPairingStateFile = "pairing.json"
+
+// extensionPairingStatePath resolves the pairing state file for the
+// read-side extension commands (unpair, pair-status) without creating
+// anything: a read must not manufacture an empty pairing store. Only the
+// host, which runs the pairing ceremony, creates the directory.
+func extensionPairingStatePath() (string, error) {
+	pairingDir, err := featureDataDirExisting(extensionDataSubdir)
+	if err != nil {
+		return "", err
+	}
+	return filepath.Join(pairingDir, extensionPairingStateFile), nil
+}
+
 // runExtensionUnpair removes the paired browser extension identity, requiring
 // a new pairing ceremony before the extension can reconnect.
 func runExtensionUnpair(cmd *cobra.Command, args []string) error {
-	homeDir, err := os.UserHomeDir()
+	statePath, err := extensionPairingStatePath()
 	if err != nil {
-		return &DetailError{Err: ErrExtensionUnpairFailed, Detail: fmt.Sprintf(": cannot determine home directory: %v", err)}
+		return &SentinelCauseError{Sentinel: ErrExtensionUnpairFailed, Cause: err}
 	}
 
-	statePath := filepath.Join(homeDir, ".xkey", "data", "extension", "pairing.json")
 	pairing, err := nativemsg.NewPairingVerifier(statePath)
 	if err != nil {
 		return &SentinelCauseError{Sentinel: ErrExtensionUnpairFailed, Cause: err}
@@ -378,15 +402,14 @@ func runExtensionUnpair(cmd *cobra.Command, args []string) error {
 // runExtensionPairStatus displays the current extension pairing status,
 // including the paired origin and timestamp when an extension is paired.
 func runExtensionPairStatus(cmd *cobra.Command, args []string) error {
-	homeDir, err := os.UserHomeDir()
+	statePath, err := extensionPairingStatePath()
 	if err != nil {
-		return &DetailError{Err: ErrExtensionUnpairFailed, Detail: fmt.Sprintf(": cannot determine home directory: %v", err)}
+		return &SentinelCauseError{Sentinel: ErrExtensionPairStatusFailed, Cause: err}
 	}
 
-	statePath := filepath.Join(homeDir, ".xkey", "data", "extension", "pairing.json")
 	pairing, err := nativemsg.NewPairingVerifier(statePath)
 	if err != nil {
-		return &SentinelCauseError{Sentinel: ErrExtensionUnpairFailed, Cause: err}
+		return &SentinelCauseError{Sentinel: ErrExtensionPairStatusFailed, Cause: err}
 	}
 
 	states := pairing.GetStates()

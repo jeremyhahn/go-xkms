@@ -34,6 +34,7 @@ import (
 
 	"github.com/jeremyhahn/go-truststrap/pkg/truststrap"
 	"github.com/jeremyhahn/go-xkms/xkey/pkg/truststore"
+	"github.com/jeremyhahn/go-xkms/xkey/pkg/xhome"
 	"github.com/spf13/cobra"
 	"github.com/spf13/viper"
 	"github.com/stretchr/testify/assert"
@@ -250,14 +251,20 @@ func TestOpenTrustStore_WithViperConfig(t *testing.T) {
 
 func TestOpenTrustStore_DefaultPath(t *testing.T) {
 	resetViperForTest(t)
+	isolateDataDirSources(t)
 
-	// Do not set trust.store_path -- openTrustStore should fall back to
-	// the user home directory default. Since we are running in a CI-friendly
-	// environment, this should succeed as long as os.UserHomeDir works.
+	// Do not set trust.store_path -- openTrustStore falls back to
+	// <dataDir>/trust through the shared chain, here rooted at a private
+	// xKey home.
+	root := t.TempDir()
+	xhome.SetRoot(root)
+	t.Cleanup(xhome.ResetRoot)
+
 	store, err := openTrustStore()
 	require.NoError(t, err)
 	require.NotNil(t, store)
 	require.NoError(t, store.Close())
+	assert.DirExists(t, filepath.Join(root, "data", "trust"))
 }
 
 // --- runTrustList tests ---
