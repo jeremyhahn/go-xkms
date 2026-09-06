@@ -227,6 +227,19 @@ changelog_has_heading() {
 	awk -v h="## [$2]" 'index($0, h) == 1 { found = 1; exit } END { exit !found }' "$1"
 }
 
+# changelog_entries_pending is true when $1 holds at least one .changelog entry
+# file (any *.md except README.md). Implemented WITHOUT a pipeline on purpose:
+# `find ... | read -r _` under `set -o pipefail` fails as soon as there are
+# TWO entries -- read exits after the first line, find takes SIGPIPE and exits
+# 141, pipefail propagates it, and the assembler is skipped exactly when a
+# release has the most to assemble (opencode finding on go-xkms#388).
+# Command substitution has no writer to signal; `-print -quit` stops find at
+# the first match so the answer is O(1) regardless of how many entries exist.
+changelog_entries_pending() {
+	[ -d "$1" ] || return 1
+	[ -n "$(find "$1" -maxdepth 1 -name '*.md' ! -name 'README.md' -print -quit 2>/dev/null)" ]
+}
+
 # Sourced by the unit tests for the functions above; nothing below runs.
 if [ "${RELEASE_ALPHA_LIB:-0}" = 1 ]; then
 	return 0
@@ -328,8 +341,21 @@ for ns in "${TAG_NAMESPACES[@]}"; do
 		die "$NEXT is not greater than $ns_current, the current tag in the $label namespace"
 done
 
+# Fold any pending .changelog/unreleased entries into CHANGELOG.md under the
+# section this cut is about to publish (#354). Two properties matter: entries
+# written per-PR cannot collide with each other while open, and an entry can
+# only ever land in the section of the release that actually ships it (#361's
+# failure class). With no pending entries this is a no-op and the heading
+# check below remains the arbiter, exactly as before.
+if changelog_entries_pending .changelog/unreleased; then
+	bash scripts/changelog-assemble.sh "${NEXT#v}" ||
+		die "changelog-assemble failed; fix the entry files before cutting"
+	$GIT add CHANGELOG.md .changelog/unreleased ||
+		die "failed to stage the assembled changelog"
+fi
+
 changelog_has_heading CHANGELOG.md "${NEXT#v}" ||
-	die "CHANGELOG.md has no '## [${NEXT#v}]' section beginning a line. Add it and commit it first -- the release workflow fails the tag without it, AFTER the module tags have been pushed and become permanent"
+	die "CHANGELOG.md has no '## [${NEXT#v}]' section beginning a line. Add it (or add .changelog/unreleased entries for the assembler) and commit -- the release workflow fails the tag without it, AFTER the module tags have been pushed and become permanent"
 
 require_pins_at . "$CURRENT" "before the rewrite" ||
 	die "refusing to start a release from an inconsistent pin set"

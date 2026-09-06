@@ -1,0 +1,84 @@
+#!/usr/bin/env bash
+#
+# Unit tests for the pure functions in scripts/changelog-assemble.sh.
+set -uo pipefail
+
+ROOT=$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)
+CHANGELOG_ASSEMBLE_LIB=1 . "$ROOT/scripts/changelog-assemble.sh"
+set +e
+
+PASS=0; FAIL=0
+ok()   { PASS=$((PASS+1)); }
+bad()  { FAIL=$((FAIL+1)); echo "FAIL: $1"; }
+check(){ if [ "$1" = "$2" ]; then ok; else bad "$3 (want [$2] got [$1])"; fi; }
+
+T=$(mktemp -d)
+trap 'rm -rf "$T"' EXIT
+
+mkcl() {
+	cat > "$T/CHANGELOG.md" <<'CL'
+# Changelog
+
+## [Unreleased]
+
+## [0.1.0] - 2026-01-01
+
+### Fixed
+
+- old entry
+CL
+}
+
+# --- entry_section ------------------------------------------------------
+check "$(entry_section "$T/fixed-a-thing-123.md")" "fixed" "entry_section fixed"
+check "$(entry_section "$T/security-hole.md")" "security" "entry_section security"
+entry_section "$T/bogus-prefix.md" >/dev/null 2>&1 && bad "unknown section accepted" || ok
+entry_section "$T/nodash.md" >/dev/null 2>&1 && bad "sectionless name accepted" || ok
+
+# --- assemble: empty dir is a no-op ------------------------------------
+mkcl; mkdir -p "$T/e1"
+out=$(assemble "$T/CHANGELOG.md" "$T/e1" "0.2.0" "2026-09-05"); rc=$?
+check "$rc" "0" "empty dir rc"
+check "$out" "" "empty dir output"
+grep -q '0.2.0' "$T/CHANGELOG.md" && bad "no-op still wrote heading" || ok
+
+# --- assemble: sections in fixed order, entries spliced, files listed ---
+mkcl; mkdir -p "$T/e2"
+printf -- '- **fix one** body\n  line2\n' > "$T/e2/fixed-one-1.md"
+printf -- '- **sec one** body\n'          > "$T/e2/security-one-2.md"
+printf -- '- **fix two** body\n'          > "$T/e2/fixed-two-3.md"
+printf 'readme text\n'                    > "$T/e2/README.md"
+out=$(assemble "$T/CHANGELOG.md" "$T/e2" "0.2.0" "2026-09-05"); rc=$?
+check "$rc" "0" "assemble rc"
+check "$(printf '%s\n' "$out" | wc -l | tr -d ' ')" "3" "three files listed"
+printf '%s' "$out" | grep -q README && bad "README assembled" || ok
+grep -q '^## \[0.2.0\] - 2026-09-05$' "$T/CHANGELOG.md" || bad "version heading missing"
+# order: Unreleased, then new section, then 0.1.0; Security before Fixed
+awk '/^## |^### /{print}' "$T/CHANGELOG.md" > "$T/headings"
+check "$(cat "$T/headings" | tr '\n' '|')" "## [Unreleased]|## [0.2.0] - 2026-09-05|### Security|### Fixed|## [0.1.0] - 2026-01-01|### Fixed|" "heading order"
+grep -q 'fix one' "$T/CHANGELOG.md" && grep -q 'sec one' "$T/CHANGELOG.md" && grep -q '  line2' "$T/CHANGELOG.md" && ok || bad "entry bodies not spliced verbatim"
+# Unreleased stays empty (next line after it is blank then the new heading)
+check "$(awk '/^## \[Unreleased\]/{getline; print; exit}' "$T/CHANGELOG.md")" "" "Unreleased left empty"
+
+# --- assemble: backslashes and escapes survive verbatim (opencode finding) --
+mkcl; mkdir -p "$T/e5"
+printf -- '- **esc** path C:\\\\tmp and \\n literal and \\* star and a\\tb\n' > "$T/e5/fixed-esc-9.md"
+want=$(cat "$T/e5/fixed-esc-9.md")
+assemble "$T/CHANGELOG.md" "$T/e5" "0.2.0" "2026-09-05" >/dev/null; rc=$?
+check "$rc" "0" "escape entry rc"
+got=$(awk '/^- \*\*esc\*\*/{print; exit}' "$T/CHANGELOG.md")
+check "$got" "$want" "backslash sequences spliced verbatim (no C-escape interpretation)"
+
+# --- assemble: unknown section fails loudly, changelog untouched --------
+mkcl; mkdir -p "$T/e3"
+printf -- '- entry\n' > "$T/e3/typo-thing.md"
+before=$(cat "$T/CHANGELOG.md")
+assemble "$T/CHANGELOG.md" "$T/e3" "0.2.0" "2026-09-05" >/dev/null 2>&1 && bad "typo section accepted" || ok
+check "$(cat "$T/CHANGELOG.md")" "$before" "changelog untouched on error"
+
+# --- assemble: no Unreleased heading fails -----------------------------
+printf '# Changelog\n' > "$T/CHANGELOG.md"; mkdir -p "$T/e4"; printf -- '- x\n' > "$T/e4/fixed-x.md"
+assemble "$T/CHANGELOG.md" "$T/e4" "0.2.0" "2026-09-05" >/dev/null 2>&1 && bad "missing Unreleased accepted" || ok
+
+echo "changelog-assemble.test.sh: PASS=$PASS FAIL=$FAIL"
+[ "$FAIL" -eq 0 ]

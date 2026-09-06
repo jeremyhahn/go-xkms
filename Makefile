@@ -868,6 +868,7 @@ test-scripts:
 	@echo "$(CYAN)$(BOLD)→ Running shell script tests...$(RESET)"
 	@bash test/scripts/clean-test-containers.test.sh
 	@bash test/scripts/release-alpha.test.sh
+	@bash test/scripts/changelog-assemble.test.sh
 	@echo "$(GREEN)✓ Shell script tests passed$(RESET)"
 
 .PHONY: test-go

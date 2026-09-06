@@ -229,5 +229,20 @@ true_ "the repository's pins are all at the VERSION file's version" \
 
 # ---------------------------------------------------------------------------
 
+
+# --- changelog_entries_pending: the pipefail/SIGPIPE regression (go-xkms#388) --
+CEP=$(mktemp -d)
+mkdir -p "$CEP/none" "$CEP/readme" "$CEP/one" "$CEP/many"
+printf 'r\n' > "$CEP/readme/README.md"
+printf -- '- a\n' > "$CEP/one/fixed-a-1.md"
+for i in 1 2 3 4 5; do printf -- '- e%s\n' "$i" > "$CEP/many/fixed-e$i.md"; done
+printf 'r\n' > "$CEP/many/README.md"
+if changelog_entries_pending "$CEP/missing"; then no "missing dir reported pending"; else ok "missing dir: not pending"; fi
+if changelog_entries_pending "$CEP/none";    then no "empty dir reported pending";   else ok "empty dir: not pending"; fi
+if changelog_entries_pending "$CEP/readme";  then no "README-only reported pending"; else ok "README only: not pending"; fi
+if changelog_entries_pending "$CEP/one";     then ok "one entry: pending";            else no "one entry: not detected"; fi
+if changelog_entries_pending "$CEP/many";    then ok "five entries under pipefail: pending"; else no "five entries: assembler would be SKIPPED (SIGPIPE 141)"; fi
+rm -rf "$CEP"
+
 printf '\n%d passed, %d failed\n' "$PASS" "$FAIL"
 [ "$FAIL" -eq 0 ]

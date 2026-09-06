@@ -50,6 +50,13 @@ Tested in isolation; each is a function of its arguments alone.
 Sourcing the script with `RELEASE_ALPHA_LIB=1` defines these and returns before
 anything touches the repository.
 
+`scripts/changelog-assemble.sh` folds `.changelog/unreleased/*.md` entry files
+into `CHANGELOG.md` under the version being cut; `release-alpha.sh` invokes it
+before the heading check whenever entries are pending, and stages the result.
+Sourcing it with `CHANGELOG_ASSEMBLE_LIB=1` exposes `assemble`/`entry_section`
+for `test/scripts/changelog-assemble.test.sh`. The contributor-facing
+convention lives in `.changelog/README.md`.
+
 ## Invariants
 
 - The version is an input. No step reads the tag namespace to decide *what* to
