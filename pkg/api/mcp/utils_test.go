@@ -22,6 +22,7 @@ import (
 	"crypto/rsa"
 	"crypto/sha256"
 	"crypto/x509"
+	"strings"
 	"testing"
 
 	"github.com/jeremyhahn/go-xkms/pkg/types"
@@ -345,56 +346,66 @@ func TestGetPublicKey_UnsupportedType(t *testing.T) {
 	}
 }
 
-func TestGetAlgorithmString_SymmetricAlgorithm(t *testing.T) {
+func TestAlgorithmString_SymmetricAlgorithm(t *testing.T) {
 	attrs := &types.KeyAttributes{
 		SymmetricAlgorithm: types.SymmetricAlgorithm("aes256-gcm"),
 	}
 
-	result := getAlgorithmString(attrs)
+	result := attrs.AlgorithmString()
 	if result != "aes256-gcm" {
 		t.Errorf("expected aes256-gcm, got %s", result)
 	}
 }
 
-func TestGetAlgorithmString_AsymmetricAlgorithm(t *testing.T) {
+func TestAlgorithmString_AsymmetricAlgorithm(t *testing.T) {
 	attrs := &types.KeyAttributes{
 		KeyAlgorithm: x509.RSA,
 	}
 
-	result := getAlgorithmString(attrs)
+	result := attrs.AlgorithmString()
 	if result != "RSA" {
 		t.Errorf("expected RSA, got %s", result)
 	}
 }
 
-func TestGetAlgorithmString_ECDSAAlgorithm(t *testing.T) {
+func TestAlgorithmString_ECDSAAlgorithm(t *testing.T) {
 	attrs := &types.KeyAttributes{
 		KeyAlgorithm: x509.ECDSA,
 	}
 
-	result := getAlgorithmString(attrs)
+	result := attrs.AlgorithmString()
 	if result != "ECDSA" {
 		t.Errorf("expected ECDSA, got %s", result)
 	}
 }
 
-func TestGetAlgorithmString_UnknownAlgorithm(t *testing.T) {
+func TestAlgorithmString_UnknownAlgorithm(t *testing.T) {
 	attrs := &types.KeyAttributes{}
 
-	result := getAlgorithmString(attrs)
+	result := attrs.AlgorithmString()
 	if result != "" {
 		t.Errorf("expected empty string, got %s", result)
 	}
 }
 
-func TestGetAlgorithmString_SymmetricTakesPrecedence(t *testing.T) {
+// TestAlgorithmString_AgreesWithID pins that the algorithm this transport
+// displays for a two-family descriptor is the family KeyAttributes.ID
+// addresses the key under. The MCP transport used to carry its own
+// getAlgorithmString that gave SymmetricAlgorithm precedence over
+// KeyAlgorithm — the opposite of ID's order (go-xkms#336).
+func TestAlgorithmString_AgreesWithID(t *testing.T) {
 	attrs := &types.KeyAttributes{
 		SymmetricAlgorithm: types.SymmetricAlgorithm("chacha20-poly1305"),
 		KeyAlgorithm:       x509.RSA,
 	}
 
-	result := getAlgorithmString(attrs)
-	if result != "chacha20-poly1305" {
-		t.Errorf("expected symmetric algorithm to take precedence, got %s", result)
+	// The expected family is whatever ID resolves for the same literal:
+	// its final colon-separated segment (lowercased there for storage).
+	id := attrs.ID()
+	want := id[strings.LastIndex(id, ":")+1:]
+
+	result := attrs.AlgorithmString()
+	if !strings.EqualFold(result, want) {
+		t.Errorf("displayed algorithm %q disagrees with ID's family %q", result, want)
 	}
 }

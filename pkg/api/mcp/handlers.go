@@ -407,7 +407,7 @@ func (s *Server) listKeysFromBackend(ctx context.Context, backendName string) ([
 		keyInfo := KeyInfo{
 			KeyID:     attr.CN,
 			KeyType:   attr.KeyType.String(),
-			Algorithm: getAlgorithmString(attr),
+			Algorithm: attr.AlgorithmString(),
 			Backend:   backendName,
 		}
 

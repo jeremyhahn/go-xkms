@@ -19,7 +19,6 @@ import (
 	"crypto/ecdsa"
 	"crypto/ed25519"
 	"crypto/rsa"
-	"crypto/x509"
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
@@ -27,7 +26,6 @@ import (
 	"github.com/jeremyhahn/go-xkms/pkg/auth"
 	"github.com/jeremyhahn/go-xkms/pkg/errs"
 
-	"github.com/jeremyhahn/go-xkms/pkg/types"
 	"github.com/jeremyhahn/go-xkms/pkg/xkms"
 )
 
@@ -111,19 +109,6 @@ func getPublicKey(privKey crypto.PrivateKey) crypto.PublicKey {
 	default:
 		return nil
 	}
-}
-
-// getAlgorithmString returns the algorithm name as a string, handling both
-// symmetric and asymmetric key types. This matches the REST API's
-// getAlgorithmString implementation for consistent cross-protocol responses.
-func getAlgorithmString(attrs *types.KeyAttributes) string {
-	if attrs.SymmetricAlgorithm != "" {
-		return string(attrs.SymmetricAlgorithm)
-	}
-	if attrs.KeyAlgorithm != x509.UnknownPublicKeyAlgorithm {
-		return attrs.KeyAlgorithm.String()
-	}
-	return ""
 }
 
 // parseHashAlgorithm resolves a caller-supplied hash algorithm name for this

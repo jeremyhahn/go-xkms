@@ -306,7 +306,7 @@ func TestEncodePrivateKeyToPEM(t *testing.T) {
 	})
 }
 
-func TestGetAlgorithmString(t *testing.T) {
+func TestAlgorithmString(t *testing.T) {
 	tests := []struct {
 		name     string
 		attrs    *types.KeyAttributes
@@ -347,22 +347,33 @@ func TestGetAlgorithmString(t *testing.T) {
 			},
 			expected: "",
 		},
-		{
-			name: "Symmetric takes precedence",
-			attrs: &types.KeyAttributes{
-				SymmetricAlgorithm: types.SymmetricAES256GCM,
-				KeyAlgorithm:       x509.RSA,
-			},
-			expected: string(types.SymmetricAES256GCM),
-		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			result := getAlgorithmString(tt.attrs)
+			result := tt.attrs.AlgorithmString()
 			if result != tt.expected {
 				t.Errorf("Expected %q, got %q", tt.expected, result)
 			}
 		})
 	}
+
+	// A descriptor claiming both families must display the family
+	// KeyAttributes.ID addresses it under. This transport's local
+	// getAlgorithmString used to give SymmetricAlgorithm precedence over
+	// KeyAlgorithm — the opposite of ID's order (go-xkms#336). The expected
+	// value is computed from ID's own resolution (its final colon-separated
+	// segment, lowercased there for storage) rather than hardcoded.
+	t.Run("Two-family descriptor agrees with ID", func(t *testing.T) {
+		attrs := &types.KeyAttributes{
+			SymmetricAlgorithm: types.SymmetricAES256GCM,
+			KeyAlgorithm:       x509.RSA,
+		}
+		id := attrs.ID()
+		want := id[strings.LastIndex(id, ":")+1:]
+		result := attrs.AlgorithmString()
+		if !strings.EqualFold(result, want) {
+			t.Errorf("displayed algorithm %q disagrees with ID's family %q", result, want)
+		}
+	})
 }

@@ -541,7 +541,7 @@ func (s *Service) ListKeys(ctx context.Context, req *pb.ListKeysRequest) (*pb.Li
 			KeyId:     attr.CN,
 			Backend:   req.Backend,
 			KeyType:   attr.KeyType.String(),
-			Algorithm: getAlgorithmString(attr),
+			Algorithm: attr.AlgorithmString(),
 			Partition: string(attr.Partition),
 			CreatedAt: timestamppb.Now(), // Note: actual creation time not tracked in KeyAttributes
 		}
@@ -591,7 +591,7 @@ func (s *Service) GetKey(ctx context.Context, req *pb.GetKeyRequest) (*pb.GetKey
 				KeyId:     attr.CN,
 				Backend:   req.Backend,
 				KeyType:   attr.KeyType.String(),
-				Algorithm: getAlgorithmString(attr),
+				Algorithm: attr.AlgorithmString(),
 				Partition: string(attr.Partition),
 				CreatedAt: timestamppb.Now(),
 			}
@@ -2190,18 +2190,6 @@ func (s *Service) findKeyAttributes(ctx context.Context, ks xkms.Backend, keyID 
 	}
 
 	return nil, &errs.Message{Msg: fmt.Sprintf("key %s not found", keyID)}
-}
-
-// getAlgorithmString returns the algorithm name as a string, handling both
-// symmetric and asymmetric key types.
-func getAlgorithmString(attrs *types.KeyAttributes) string {
-	if attrs.SymmetricAlgorithm != "" {
-		return string(attrs.SymmetricAlgorithm)
-	}
-	if attrs.KeyAlgorithm != x509.UnknownPublicKeyAlgorithm {
-		return attrs.KeyAlgorithm.String()
-	}
-	return ""
 }
 
 // parseHashAlgorithm resolves a caller-supplied hash algorithm name for this

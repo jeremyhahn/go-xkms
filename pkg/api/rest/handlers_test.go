@@ -2249,13 +2249,14 @@ func TestGetPublicKey(t *testing.T) {
 	})
 }
 
-// TestGetAlgorithmString tests algorithm string generation
-func TestGetAlgorithmString(t *testing.T) {
+// TestAlgorithmString tests algorithm display-string generation via the
+// canonical types.KeyAttributes.AlgorithmString method.
+func TestAlgorithmString(t *testing.T) {
 	t.Run("returns symmetric algorithm", func(t *testing.T) {
 		attrs := &types.KeyAttributes{
 			SymmetricAlgorithm: types.SymmetricAES256GCM,
 		}
-		result := getAlgorithmString(attrs)
+		result := attrs.AlgorithmString()
 		assert.Equal(t, string(types.SymmetricAES256GCM), result)
 	})
 
@@ -2263,13 +2264,13 @@ func TestGetAlgorithmString(t *testing.T) {
 		attrs := &types.KeyAttributes{
 			KeyAlgorithm: x509.RSA,
 		}
-		result := getAlgorithmString(attrs)
+		result := attrs.AlgorithmString()
 		assert.Equal(t, "RSA", result)
 	})
 
 	t.Run("returns empty string for unknown", func(t *testing.T) {
 		attrs := &types.KeyAttributes{}
-		result := getAlgorithmString(attrs)
+		result := attrs.AlgorithmString()
 		assert.Equal(t, "", result)
 	})
 }

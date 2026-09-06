@@ -454,7 +454,7 @@ func (h *HandlerContext) ListKeysHandler(w http.ResponseWriter, r *http.Request)
 		keyInfo := KeyInfo{
 			KeyID:     attr.CN,
 			KeyType:   attr.KeyType.String(),
-			Algorithm: getAlgorithmString(attr),
+			Algorithm: attr.AlgorithmString(),
 			Backend:   backendID,
 		}
 
@@ -538,7 +538,7 @@ func (h *HandlerContext) GetKeyHandler(w http.ResponseWriter, r *http.Request) {
 		KeyInfo: KeyInfo{
 			KeyID:     targetAttr.CN,
 			KeyType:   targetAttr.KeyType.String(),
-			Algorithm: getAlgorithmString(targetAttr),
+			Algorithm: targetAttr.AlgorithmString(),
 			Backend:   backendID,
 		},
 	}
@@ -2229,18 +2229,6 @@ func getPublicKey(privKey crypto.PrivateKey) crypto.PublicKey {
 	default:
 		return nil
 	}
-}
-
-// getAlgorithmString returns the algorithm name as a string, handling both
-// symmetric and asymmetric key types.
-func getAlgorithmString(attrs *types.KeyAttributes) string {
-	if attrs.SymmetricAlgorithm != "" {
-		return string(attrs.SymmetricAlgorithm)
-	}
-	if attrs.KeyAlgorithm != x509.UnknownPublicKeyAlgorithm {
-		return attrs.KeyAlgorithm.String()
-	}
-	return ""
 }
 
 // callerTenantID returns the tenant the authenticated caller belongs to, or the

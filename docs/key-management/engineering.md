@@ -1,6 +1,6 @@
 # Key Management — Engineering Contract
 
-> **Status: NORMATIVE** · Feature: `key-management` · Repo: `go-xkms` · Last verified: 2026-09-04
+> **Status: NORMATIVE** · Feature: `key-management` · Repo: `go-xkms` · Last verified: 2026-09-06
 
 This is the file an implementing agent works from. Every identifier below was
 grepped in this repository.
@@ -147,6 +147,18 @@ the symmetric store rejected the stored PKCS#8 DER on its AES key-size check.
 Attributes naming no family resolve to the `unknown` identifier, which
 addresses no key any producer writes, and refusing them breaks callers that
 legitimately describe a key by little more than its common name.
+
+**The display path resolves the family in the same order.** The `algorithm`
+field the REST, MCP and gRPC key listings report comes from
+`KeyAttributes.AlgorithmString` (`pkg/types/types.go`, directly below `ID`),
+which walks `ID`'s switch arm for arm — `X25519Attributes`, then
+`QuantumAttributes`, then `KeyAlgorithm`, then `SymmetricAlgorithm` — and
+returns the display spelling (`RSA`, `Ed25519`, `ML-DSA-87`) or the empty
+string when no family is set. Each transport used to carry its own
+`getAlgorithmString` that gave `SymmetricAlgorithm` precedence, a third
+resolution order (#336). `TestKeyAttributes_AlgorithmString_AgreesWithID`
+feeds two-family literals through both methods and asserts they name the same
+family, so a change to `ID`'s order that is not mirrored fails there.
 
 ## Error semantics
 

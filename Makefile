@@ -976,6 +976,30 @@ test-xkms:
 	@echo "$(CYAN)→ Testing xkms package...$(RESET)"
 	@$(GOTEST) $(TEST_FLAGS) ./pkg/xkms/...
 
+.PHONY: test-types
+## test-types: Run types package unit tests
+test-types:
+	@echo "$(CYAN)→ Testing types package...$(RESET)"
+	@$(GOTEST) $(TEST_FLAGS) ./pkg/types/...
+
+.PHONY: test-rest
+## test-rest: Run REST API package unit tests
+test-rest:
+	@echo "$(CYAN)→ Testing REST API package...$(RESET)"
+	@$(GOTEST) $(TEST_FLAGS) ./pkg/api/rest/...
+
+.PHONY: test-mcp
+## test-mcp: Run MCP API package unit tests
+test-mcp:
+	@echo "$(CYAN)→ Testing MCP API package...$(RESET)"
+	@$(GOTEST) $(TEST_FLAGS) ./pkg/api/mcp/...
+
+.PHONY: test-grpc
+## test-grpc: Run gRPC API package unit tests
+test-grpc:
+	@echo "$(CYAN)→ Testing gRPC API package...$(RESET)"
+	@$(GOTEST) $(TEST_FLAGS) ./pkg/api/grpc/...
+
 .PHONY: test-storage
 ## test-storage: Run storage package unit tests
 test-storage:

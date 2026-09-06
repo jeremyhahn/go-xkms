@@ -1285,6 +1285,31 @@ func (attrs *KeyAttributes) ID() string {
 	return baseID
 }
 
+// AlgorithmString returns the display name of the algorithm family these
+// attributes describe. It resolves the family in exactly the same order as
+// ID above — X25519, then quantum, then asymmetric (KeyAlgorithm), then
+// symmetric — so the family a key is addressed under and the family reported
+// for it can never disagree. ID's switch is the canonical order; any change
+// there must be mirrored here.
+//
+// Unlike ID, which lowercases the family into a storage identifier, this
+// returns the conventional display spelling (e.g. "RSA", "Ed25519") and the
+// empty string when no family is set.
+func (attrs *KeyAttributes) AlgorithmString() string {
+	switch {
+	case attrs.X25519Attributes != nil:
+		return "X25519"
+	case attrs.QuantumAttributes != nil:
+		return string(attrs.QuantumAttributes.Algorithm)
+	case attrs.KeyAlgorithm != x509.UnknownPublicKeyAlgorithm:
+		return attrs.KeyAlgorithm.String()
+	case attrs.SymmetricAlgorithm != "":
+		return string(attrs.SymmetricAlgorithm)
+	default:
+		return ""
+	}
+}
+
 // KeyID returns the unique identifier for this key in the 4-part format:
 // backend:type:algo:keyname (e.g., "tpm2:signing:ecdsa:my-key")
 //

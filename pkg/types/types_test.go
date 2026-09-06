@@ -17,6 +17,7 @@ import (
 	"crypto"
 	"crypto/elliptic"
 	"crypto/x509"
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -459,6 +460,109 @@ func TestKeyAttributes_ID(t *testing.T) {
 		id := attrs.ID()
 		assert.Equal(t, "software:tls:test-key:unknown", id)
 	})
+}
+
+func TestKeyAttributes_AlgorithmString(t *testing.T) {
+	t.Run("X25519", func(t *testing.T) {
+		attrs := &KeyAttributes{X25519Attributes: &X25519Attributes{}}
+		assert.Equal(t, "X25519", attrs.AlgorithmString())
+	})
+
+	t.Run("Quantum", func(t *testing.T) {
+		attrs := &KeyAttributes{
+			QuantumAttributes: &QuantumAttributes{Algorithm: QuantumAlgorithmMLDSA87},
+		}
+		assert.Equal(t, "ML-DSA-87", attrs.AlgorithmString())
+	})
+
+	t.Run("Asymmetric", func(t *testing.T) {
+		attrs := &KeyAttributes{KeyAlgorithm: x509.RSA}
+		assert.Equal(t, "RSA", attrs.AlgorithmString())
+	})
+
+	t.Run("Symmetric", func(t *testing.T) {
+		attrs := &KeyAttributes{SymmetricAlgorithm: SymmetricAES256GCM}
+		assert.Equal(t, string(SymmetricAES256GCM), attrs.AlgorithmString())
+	})
+
+	t.Run("NoFamily", func(t *testing.T) {
+		attrs := &KeyAttributes{}
+		assert.Equal(t, "", attrs.AlgorithmString())
+	})
+}
+
+// TestKeyAttributes_AlgorithmString_AgreesWithID pins that AlgorithmString
+// resolves the algorithm family in the same order as ID for descriptors that
+// claim more than one family. Three call paths used to answer "which family
+// is this key" in three different orders; this test makes a fourth order
+// impossible to introduce silently (go-xkms#336).
+func TestKeyAttributes_AlgorithmString_AgreesWithID(t *testing.T) {
+	// idFamily extracts the family segment ID resolves, which ID always
+	// appends as the final colon-separated component.
+	idFamily := func(attrs *KeyAttributes) string {
+		id := attrs.ID()
+		return id[strings.LastIndex(id, ":")+1:]
+	}
+
+	tests := []struct {
+		name  string
+		attrs *KeyAttributes
+	}{
+		{
+			name: "Asymmetric_And_Symmetric",
+			attrs: &KeyAttributes{
+				KeyAlgorithm:       x509.RSA,
+				SymmetricAlgorithm: SymmetricAES256GCM,
+			},
+		},
+		{
+			name: "Ed25519_And_Symmetric",
+			attrs: &KeyAttributes{
+				KeyAlgorithm:       x509.Ed25519,
+				SymmetricAlgorithm: SymmetricChaCha20Poly1305,
+			},
+		},
+		{
+			name: "Quantum_And_Asymmetric",
+			attrs: &KeyAttributes{
+				QuantumAttributes: &QuantumAttributes{Algorithm: QuantumAlgorithmMLDSA87},
+				KeyAlgorithm:      x509.ECDSA,
+			},
+		},
+		{
+			name: "Quantum_And_Symmetric",
+			attrs: &KeyAttributes{
+				QuantumAttributes:  &QuantumAttributes{Algorithm: QuantumAlgorithmMLKEM768},
+				SymmetricAlgorithm: SymmetricAES256GCM,
+			},
+		},
+		{
+			name: "X25519_And_Quantum",
+			attrs: &KeyAttributes{
+				X25519Attributes:  &X25519Attributes{},
+				QuantumAttributes: &QuantumAttributes{Algorithm: QuantumAlgorithmMLKEM768},
+			},
+		},
+		{
+			name: "X25519_And_Symmetric",
+			attrs: &KeyAttributes{
+				X25519Attributes:   &X25519Attributes{},
+				SymmetricAlgorithm: SymmetricAES256GCM,
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := tt.attrs.AlgorithmString()
+			want := idFamily(tt.attrs)
+			// ID lowercases the family into a storage identifier;
+			// AlgorithmString keeps the display spelling. Equality up
+			// to case is agreement on the family.
+			assert.True(t, strings.EqualFold(got, want),
+				"AlgorithmString %q resolves a different family than ID %q", got, want)
+		})
+	}
 }
 
 func TestCapabilities_SupportsSymmetricEncryption(t *testing.T) {
