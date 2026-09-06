@@ -41,6 +41,12 @@ const (
 	getInfoKeyCertifications                   = 0x13
 	getInfoKeyRemainingDiscoverableCredentials = 0x14
 	getInfoKeyVendorPrototypeConfigCommands    = 0x15
+
+	// getInfoOptionPolicyTamperLocked is the vendor option ID under which
+	// getInfo reports that the SO-signed policy failed integrity verification
+	// and user-mode commands are locked. Vendor option IDs are permitted by
+	// CTAP 2.1 §6.4 and unknown ones are ignored by clients.
+	getInfoOptionPolicyTamperLocked = "policyTamperLocked"
 )
 
 // PublicKeyCredentialParameters for algorithm list in GetInfo response.
@@ -259,6 +265,16 @@ func (a *Authenticator) getOptions() map[string]bool {
 	// Only include when enterprise attestation is enabled.
 	if a.config.EnableEnterpriseAttestation {
 		options["ep"] = true
+	}
+
+	// policyTamperLocked - vendor option: the SO-signed policy failed
+	// integrity verification and user-mode commands are refused with
+	// CTAP2_ERR_INTEGRITY_FAILURE until the SO re-signs it. Present only when
+	// locked, so an unlocked device reports nothing and a client that does not
+	// know the option ignores it per CTAP 2.1 §6.4. getInfo stays reachable
+	// while locked precisely so this state can be read.
+	if a.TamperDetected.Load() {
+		options[getInfoOptionPolicyTamperLocked] = true
 	}
 
 	return options

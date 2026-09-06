@@ -1341,7 +1341,7 @@ func (a *Authenticator) buildMakeCredentialAttestation(
 
 	// Check SO attestation override for this RP.
 	if rpPolicy != nil && rpPolicy.AttestationOverride != "" {
-		format, err := a.resolveAttestationOverride(rpPolicy.AttestationOverride)
+		format, err := a.resolveAttestationOverride(rpPolicy)
 		if err != nil {
 			if a.logger != nil {
 				a.logger.Warn("MakeCredential refused: RP policy demands attestation this authenticator cannot produce",
@@ -1383,19 +1383,42 @@ func (a *Authenticator) buildMakeCredentialAttestation(
 // ErrAttestationOverrideUnsupported rather than degrading to "none" — an SO who
 // mandates attestation must get attestation or an error, never a credential
 // that tells the RP none was available.
-func (a *Authenticator) resolveAttestationOverride(preference string) (string, error) {
-	switch preference {
+//
+// "enterprise" additionally requires the entitlement the request path already
+// demands: enterprise attestation enabled on this authenticator and the RP
+// marked Enterprise in its policy. A policy that mandates enterprise attestation
+// for an RP that is not entitled to it is refused with
+// ErrEnterpriseAttestationNotEntitled rather than quietly issuing the ordinary
+// statement under the enterprise label.
+func (a *Authenticator) resolveAttestationOverride(policy *RPPolicy) (string, error) {
+	if policy == nil {
+		return "", ErrRPPolicyNil
+	}
+	switch policy.AttestationOverride {
 	case AttestationConveyanceNone:
 		return AttestationFormatNone, nil
-	case AttestationConveyanceIndirect, AttestationConveyanceDirect, AttestationConveyanceEnterprise:
-		format := a.config.AttestationFormat
-		if format == "" || format == AttestationFormatNone {
-			return "", ErrAttestationOverrideUnsupported
+	case AttestationConveyanceEnterprise:
+		if !a.config.EnableEnterpriseAttestation || !policy.Enterprise {
+			return "", ErrEnterpriseAttestationNotEntitled
 		}
-		return format, nil
+		return a.configuredAttestationFormat()
+	case AttestationConveyanceIndirect, AttestationConveyanceDirect:
+		return a.configuredAttestationFormat()
 	default:
 		return "", ErrAttestationOverrideUnsupported
 	}
+}
+
+// configuredAttestationFormat returns the statement format this authenticator
+// is configured to produce, or ErrAttestationOverrideUnsupported when it is
+// configured to produce none — the one case where a preference asking for
+// attestation cannot be honoured.
+func (a *Authenticator) configuredAttestationFormat() (string, error) {
+	format := a.config.AttestationFormat
+	if format == "" || format == AttestationFormatNone {
+		return "", ErrAttestationOverrideUnsupported
+	}
+	return format, nil
 }
 
 // makeCredentialToInt converts various integer types to int.
@@ -1447,6 +1470,10 @@ func (a *Authenticator) MakeCredential(
 	pubKeyCredParams []PublicKeyCredentialParam,
 	opts *MakeCredentialOptions,
 ) (*MakeCredentialResponse, error) {
+	if err := a.requirePolicyIntegrity(); err != nil {
+		return nil, err
+	}
+
 	req := &MakeCredentialRequest{
 		ClientDataHash:   clientDataHash,
 		RP:               rp,

@@ -637,6 +637,54 @@ or the key backend cannot produce the statement, the registration is **refused**
 mandates attestation must get attestation or an error, never a credential
 telling the relying party that none was available.
 
+`enterprise` carries one more requirement, the same one the request path
+applies to an RP that asks for enterprise attestation itself: enterprise
+attestation must be enabled on the authenticator (`enable-enterprise-attestation`)
+**and** the RP must be marked `Enterprise` in its policy. An override that
+mandates enterprise attestation for an RP not entitled to it is refused with
+`ErrEnterpriseAttestationNotEntitled` (`CTAP2_ERR_OPERATION_DENIED`). It is not
+resolved to the ordinary statement under the enterprise label, and the
+entitlement is checked before the configured format, so the refusal names the
+real reason even on an authenticator that produces no attestation at all.
+
+### Tamper Lock
+
+`Authenticator.TamperDetected` is set when the SO-signed policy HMAC fails
+verification at startup. It is enforced, not merely recorded: while it is set,
+every user-mode operation is refused with `ErrPolicyTamperLocked`
+(`CTAP2_ERR_INTEGRITY_FAILURE`). The gate is one method,
+`requirePolicyIntegrity`, and it sits in front of
+
+- the CTAP dispatch (`ProcessCBORWithContext`) for `makeCredential`,
+  `getAssertion`, `getNextAssertion`, `clientPIN`, `reset`, `bioEnrollment`,
+  `credentialManagement`, `largeBlobs` and `config`, before the request is
+  decoded, and
+- the Go API `MakeCredential` and `GetAssertion`, which do not pass through
+  the CBOR dispatch.
+
+`getInfo` and `selection` remain answerable. Both are read-only discovery, and
+refusing them would make a locked device indistinguishable from a dead one.
+`getInfo` reports the state truthfully under the vendor option
+`policyTamperLocked: true`, present only while locked; a client that does not
+know the option ignores it per CTAP 2.1 §6.4.
+
+**What sets the flag.** The authenticator opens with a policy integrity
+provider, the stored state carries a policy HMAC tag, and the tag does not
+verify over the current signed field set. A schema change (see below) does not
+set it, so a routine upgrade never locks a device.
+
+**Cost of a false positive.** The device serves no user until the Security
+Officer recovers it. Nothing is lost: credentials and PINs are untouched, and no
+reflash or reset is needed.
+
+**Recovery.** The Security Officer re-signs the policy over the configuration
+the device actually has (`PolicyManager().Sign` on the current state, then
+persist the state) and re-opens the authenticator. Startup verification then
+passes, `TamperDetected` is false, and user-mode commands are served again.
+Nothing clears the flag at runtime: verification is a startup event, and a flag
+that could be toggled in-process would be a flag an attacker with the same
+access could toggle.
+
 ### Policy Integrity HMAC
 
 The SO-signed policy HMAC covers every setting that changes the authenticator's

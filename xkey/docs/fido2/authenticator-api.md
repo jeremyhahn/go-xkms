@@ -945,8 +945,10 @@ var (
     ErrInvalidRPID               = errors.New("authenticator: invalid relying party ID")
     ErrCredentialExcluded        = errors.New("authenticator: credential excluded")
 
-    ErrAttestationOverrideUnsupported = errors.New("authenticator: attestation override cannot be honoured")
-    ErrAttestationUnavailable         = errors.New("authenticator: attestation statement unavailable")
+    ErrAttestationOverrideUnsupported   = errors.New("authenticator: attestation override cannot be honoured")
+    ErrAttestationUnavailable           = errors.New("authenticator: attestation statement unavailable")
+    ErrEnterpriseAttestationNotEntitled = errors.New("authenticator: enterprise attestation not entitled for this RP")
+    ErrPolicyTamperLocked               = errors.New("authenticator: policy tamper detected, user operations locked until the SO re-signs the policy")
 )
 ```
 

@@ -132,6 +132,8 @@ When the SO logs in and HMAC verification fails:
 
 Tamper detection is deferred until SO login. The application loads and runs normally before that point because the SO PIN is required to derive the verification key.
 
+The authenticator core enforces its own lock independently of the GUI. When the authenticator opens with a policy integrity provider and the stored HMAC fails to verify, `Authenticator.TamperDetected` is set and every user-mode CTAP command and Go API registration or assertion is refused with `CTAP2_ERR_INTEGRITY_FAILURE` until the SO re-signs the policy and the authenticator is re-opened. `getInfo` and `selection` still answer so the device stays discoverable. See [Tamper Lock](../fido2/authenticator-security.md#tamper-lock).
+
 ## Authentication Gate
 
 ### AuthMode States

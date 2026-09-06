@@ -1539,6 +1539,10 @@ func (a *Authenticator) GetAssertion(
 	allowList []CredentialDescriptor,
 	opts *GetAssertionOptions,
 ) (*GetAssertionResponse, error) {
+	if err := a.requirePolicyIntegrity(); err != nil {
+		return nil, err
+	}
+
 	req := &GetAssertionRequest{
 		ClientDataHash: clientDataHash,
 		RPID:           rpID,

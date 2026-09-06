@@ -31,6 +31,17 @@ var ErrAttestationOverrideUnsupported = errors.New("authenticator: attestation o
 // attestation statement a policy required.
 var ErrAttestationUnavailable = errors.New("authenticator: attestation statement unavailable")
 
+// ErrEnterpriseAttestationNotEntitled indicates an RP policy demands the
+// "enterprise" attestation conveyance for a relying party that is not entitled
+// to it: either enterprise attestation is disabled on this authenticator or the
+// policy does not mark the RP as an enterprise RP.
+var ErrEnterpriseAttestationNotEntitled = errors.New("authenticator: enterprise attestation not entitled for this RP")
+
+// ErrPolicyTamperLocked indicates the SO-signed policy failed integrity
+// verification at startup and user-mode operations are refused until the
+// Security Officer re-signs the policy.
+var ErrPolicyTamperLocked = errors.New("authenticator: policy tamper detected, user operations locked until the SO re-signs the policy")
+
 // ErrInvalidCommand indicates an invalid or unsupported CTAP command was received.
 var ErrInvalidCommand = errors.New("authenticator: invalid command")
 

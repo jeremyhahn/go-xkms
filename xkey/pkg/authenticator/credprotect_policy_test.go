@@ -325,12 +325,15 @@ func TestAttestationOverrideNoneIsHonoured(t *testing.T) {
 func TestResolveAttestationOverrideRejectsUnknownPreference(t *testing.T) {
 	auth := newProtectAuth(t)
 
-	_, err := auth.resolveAttestationOverride("packed")
+	_, err := auth.resolveAttestationOverride(&RPPolicy{RPID: "example.com", AttestationOverride: "packed"})
 	require.ErrorIs(t, err, ErrAttestationOverrideUnsupported,
 		"a statement format is not a conveyance preference and must be rejected")
 
-	_, err = auth.resolveAttestationOverride("nonsense")
+	_, err = auth.resolveAttestationOverride(&RPPolicy{RPID: "example.com", AttestationOverride: "nonsense"})
 	require.ErrorIs(t, err, ErrAttestationOverrideUnsupported)
+
+	_, err = auth.resolveAttestationOverride(nil)
+	require.ErrorIs(t, err, ErrRPPolicyNil)
 }
 
 // TestBuildMakeCredentialAttestationIsRaceFree exercises the bug that made the

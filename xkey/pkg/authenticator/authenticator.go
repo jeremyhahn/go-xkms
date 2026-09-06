@@ -174,7 +174,24 @@ type Authenticator struct {
 	logger *slog.Logger
 
 	// TamperDetected indicates that policy HMAC verification failed on startup.
-	// When true, user-mode operations should be locked until SO re-signs the policy.
+	//
+	// It is set by NewAuthenticator when Config.PolicyIntegrityProvider is
+	// configured, the stored state carries a policy HMAC tag, and that tag does
+	// not verify over the current PolicyFields (ErrPolicyTampered). A policy
+	// signed under an older field-set schema (ErrPolicySchemaChanged) does NOT
+	// set it, so a routine upgrade never locks a device.
+	//
+	// While set, requirePolicyIntegrity refuses every user-mode operation with
+	// ErrPolicyTamperLocked (CTAP2_ERR_INTEGRITY_FAILURE); getInfo stays
+	// reachable and reports the state under the policyTamperLocked option.
+	//
+	// The cost of a false positive is a device that serves no user until the
+	// Security Officer recovers it. The flag is never cleared at runtime; the
+	// SO re-signs the policy over the configuration the device actually has
+	// (PolicyManager().Sign on the current state, then persist the state) and
+	// re-opens the authenticator, at which point startup verification passes
+	// and the lock is gone. No reflash or reset is needed, and credentials are
+	// untouched.
 	TamperDetected atomic.Bool
 
 	// closed indicates whether the authenticator has been closed.
@@ -469,6 +486,14 @@ func (a *Authenticator) ProcessCBORWithContext(ctx context.Context, cmd byte, da
 		return a.errorResponse(StatusOtherError), ErrAuthenticatorClosed
 	}
 
+	// A tampered policy locks every user-mode command. Discovery stays open
+	// so a platform can still see the device and read its status.
+	if !tamperExemptCommands[cmd] {
+		if err := a.requirePolicyIntegrity(); err != nil {
+			return a.errorResponseFromError(err), err
+		}
+	}
+
 	// Store the command context so internal handlers can access it via
 	// commandContext(). Cleared after the handler returns.
 	a.cmdCtx.Store(&cmdCtxHolder{ctx: ctx})
@@ -520,6 +545,29 @@ func (a *Authenticator) ProcessCBORWithContext(ctx context.Context, cmd byte, da
 	}
 
 	return response, nil
+}
+
+// tamperExemptCommands are the CTAP commands that remain answerable while the
+// policy is tamper-locked. Both are read-only discovery: neither touches
+// credentials, PINs, or the policy, and refusing them would make a locked
+// device indistinguishable from a dead one.
+var tamperExemptCommands = map[byte]bool{
+	CmdGetInfo:   true,
+	CmdSelection: true,
+}
+
+// requirePolicyIntegrity returns ErrPolicyTamperLocked when the SO-signed
+// policy failed integrity verification at startup. It is the single gate that
+// makes TamperDetected enforce what its doc comment promises: user-mode
+// operations are refused until the Security Officer re-signs the policy and
+// the authenticator is re-opened against the re-signed state. Nothing reset
+// the flag in-process before this gate existed, and nothing does now — a
+// re-sign is a startup-time verification, not a runtime toggle.
+func (a *Authenticator) requirePolicyIntegrity() error {
+	if a.TamperDetected.Load() {
+		return ErrPolicyTamperLocked
+	}
+	return nil
 }
 
 // commandContext returns the context for the currently-executing CBOR command.
@@ -837,6 +885,15 @@ func errorToStatus(err error) byte {
 		return StatusUnsupportedOption
 	case errors.Is(err, ErrAttestationUnavailable):
 		return StatusOperationDenied
+	// An SO policy mandated enterprise attestation for an RP that is not
+	// entitled to it. Refused for the same reason: a credential carrying the
+	// ordinary statement under an enterprise mandate misrepresents the policy.
+	case errors.Is(err, ErrEnterpriseAttestationNotEntitled):
+		return StatusOperationDenied
+	// The SO-signed policy failed integrity verification. CTAP2 has a status
+	// for exactly this event.
+	case errors.Is(err, ErrPolicyTamperLocked):
+		return StatusIntegrityFailure
 	case errors.Is(err, ErrPINRequired):
 		return StatusPINRequired
 	case errors.Is(err, ErrPINInvalid):
