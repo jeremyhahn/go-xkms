@@ -32,6 +32,30 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Security
 
+- **The vulnerability scanner itself floated on `latest`, so what the CI
+  and release gates accepted could change between runs with no commit**
+  (#325). `.github/workflows/ci.yml`, `.github/workflows/release.yml`,
+  `.github/workflows/nightly.yml`.
+
+  Three gate invocations ran `aquasec/trivy:latest` (ci.yml's Docker job,
+  release.yml's server and CLI image gates) and three steps used
+  `aquasecurity/trivy-action@master`, while nightly.yml already pinned the
+  Gitea CLI install to `0.74.0`. A floating scanner moves the gate in both
+  directions: a new release can redden a green run mid-release with no code
+  change, or -- worse -- reclassify a finding and let a previously-red
+  artifact publish. Same doctrine as removing `alpine:latest` (#246).
+
+  All six sites now agree: the image tag is `aquasec/trivy:0.74.0` (the
+  version nightly.yml installs, also the current upstream release), the
+  action is `aquasecurity/trivy-action@v0.36.0` (repo convention pins
+  actions by tag) with an explicit `version: v0.74.0` input, since the
+  action's own default is v0.70.0. Scan flags, severities and ignore
+  policies are untouched; cross-referencing comments at each site say to
+  bump all pins together. Verified by YAML round-trip of all three
+  workflows and a grep proving zero `trivy:latest` /
+  `trivy-action@master` references remain. Note the vulnerability DB is
+  still fetched fresh at run time by design; the pin fixes the scanner's
+  classification logic, not DB freshness.
 - **A `pinUvAuthToken` survived `setPIN`, and `changePIN` invalidated it only
   incidentally, so a token minted before a PIN change stayed live across the
   user's remediation** (#322). `xkey/pkg/authenticator/cmd_clientpin.go`.

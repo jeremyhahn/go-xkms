@@ -992,9 +992,10 @@ jobs:
       # API is GitHub-only, so both steps are guarded. Neither gates -- the
       # gate is the CLI step below, which runs on both servers.
       - name: Run Trivy vulnerability scanner (SARIF for code scanning)
-        uses: aquasecurity/trivy-action@master
+        uses: aquasecurity/trivy-action@v0.36.0
         if: github.server_url == 'https://github.com'
         with:
+          version: v0.74.0
           image-ref: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ github.sha }}
           format: 'sarif'
           output: 'trivy-results.sarif'
@@ -1012,11 +1013,13 @@ jobs:
       # its own image rather than the action, because the action installs
       # itself through a nested checkout that a self-hosted runner resolves
       # against its own server. Reproduce locally with `make trivy-image`.
+      # The scanner is pinned to the version nightly.yml installs (#325);
+      # bump every trivy pin in ci.yml/release.yml/nightly.yml together.
       - name: Trivy image gate (fail on CRITICAL/HIGH)
         run: |
           docker run --rm \
             -v /var/run/docker.sock:/var/run/docker.sock \
-            aquasec/trivy:latest image \
+            aquasec/trivy:0.74.0 image \
               --format table \
               --severity CRITICAL,HIGH \
               --ignore-unfixed \

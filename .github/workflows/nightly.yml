@@ -65,8 +65,9 @@ jobs:
       # fs scan at the same severity; only the SARIF upload is GitHub-only.
       - name: Trivy scan (SARIF for code scanning)
         if: github.server_url == 'https://github.com'
-        uses: aquasecurity/trivy-action@master
+        uses: aquasecurity/trivy-action@v0.36.0
         with:
+          version: v0.74.0
           scan-type: fs
           scan-ref: .
           scanners: vuln,secret
@@ -84,8 +85,9 @@ jobs:
 
       - name: Trivy gate (fail on CRITICAL/HIGH)
         if: github.server_url == 'https://github.com'
-        uses: aquasecurity/trivy-action@master
+        uses: aquasecurity/trivy-action@v0.36.0
         with:
+          version: v0.74.0
           scan-type: fs
           scan-ref: .
           scanners: vuln,secret
@@ -108,7 +110,9 @@ jobs:
       #
       # Bump TRIVY_VERSION deliberately; `curl -sI
       # https://github.com/aquasecurity/trivy/releases/latest` reveals the
-      # current tag without an API call.
+      # current tag without an API call. This version is also pinned at the
+      # trivy-action `version:` inputs above and the aquasec/trivy image tags
+      # in ci.yml and release.yml (#325) -- bump them all together.
       - name: Install Trivy CLI (Gitea)
         if: github.server_url != 'https://github.com'
         env:

@@ -759,11 +759,12 @@ jobs:
         # --ignore-unfixed matches ci.yml's Docker job gate (09abcaa): base-
         # image CVEs with no available fix (e.g. zlib1g CVE-2023-45853,
         # marked will_not_fix upstream) fail this scan every run otherwise
-        # (task 3604).
+        # (task 3604). The scanner is pinned to the version nightly.yml
+        # installs (#325); bump every trivy pin together.
         run: |
           docker run --rm \
             -v /var/run/docker.sock:/var/run/docker.sock \
-            aquasec/trivy:latest image \
+            aquasec/trivy:0.74.0 image \
               --format table \
               --severity CRITICAL,HIGH \
               --ignore-unfixed \
@@ -870,11 +871,12 @@ jobs:
 
       - name: Trivy image gate (fail on CRITICAL/HIGH)
         # --ignore-unfixed matches ci.yml's Docker job gate (09abcaa) and the
-        # server image gate above (task 3605).
+        # server image gate above (task 3605). Scanner pinned per #325; bump
+        # every trivy pin together.
         run: |
           docker run --rm \
             -v /var/run/docker.sock:/var/run/docker.sock \
-            aquasec/trivy:latest image \
+            aquasec/trivy:0.74.0 image \
               --format table \
               --severity CRITICAL,HIGH \
               --ignore-unfixed \
