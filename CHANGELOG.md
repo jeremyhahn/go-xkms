@@ -233,6 +233,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **Live-state commands ask the running daemon and label their source** (#271).
+  `xkey pin status`, `barrier status` and the `password` status/list verbs
+  previously read the on-disk state even while a daemon held the live truth,
+  rendering "Sealed from a cold data directory" and "Sealed from a running
+  daemon" identically. They now prefer IPC, fall back to disk only when no
+  daemon answers, and print `Source:` naming which one did (machine-readable
+  `source` fields in JSON). Shipped in this release as `12ecb1fc` without a
+  changelog entry; credited retroactively.
+
 - **Two padding tests asserted a probabilistic outcome as if it were
   deterministic, reddening shared CI jobs at random** (#343, #346). Both
   corrupted the LAST ciphertext block and then required a specific unpadding
