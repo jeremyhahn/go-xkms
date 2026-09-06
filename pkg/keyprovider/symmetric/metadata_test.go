@@ -50,7 +50,7 @@ func TestNewKeyMetadata(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			attrs := &types.KeyAttributes{CN: "k", Exportable: tt.exportable, Sensitive: tt.sensitive}
 			meta := newKeyMetadata(attrs)
-			assert.Equal(t, keyMetadataSchemaVersion2, meta.SchemaVersion)
+			assert.Equal(t, keyMetadataSchemaVersion3, meta.SchemaVersion)
 			assert.Equal(t, tt.exportable, meta.Exportable)
 			assert.Equal(t, tt.sensitive, meta.Sensitive)
 		})
@@ -77,7 +77,7 @@ func TestBackend_saveKeyMetadata(t *testing.T) {
 		assert.True(t, meta.Exportable)
 		assert.True(t, meta.Sensitive,
 			"Sensitive decides whether plaintext is ever released, so it has to reach the record")
-		assert.Equal(t, keyMetadataSchemaVersion2, meta.SchemaVersion)
+		assert.Equal(t, keyMetadataSchemaVersion3, meta.SchemaVersion)
 	})
 
 	// A version 1 record predates the Sensitive field, so the JSON has no such
@@ -334,4 +334,84 @@ func TestImportKey_ExportableSurvivesReload(t *testing.T) {
 	}
 	require.NotNil(t, reloadedAttrs, "imported key must be present in ListKeys")
 	assert.True(t, reloadedAttrs.Exportable, "Exportable must survive import -> reload")
+}
+
+// TestImportKey_TenantSurvivesReload proves the tenant a key was imported
+// under comes back from ListKeys. The identifier alone cannot prove it: a
+// tenanted key without a partition and a partitioned key without a tenant
+// both produce five segments, and the segment-count parse used to read the
+// tenant back as a partition — which made a tenant's imported key invisible
+// to that tenant's scoped view (go-xkms#162, go-xkms#163). The version 3
+// record states TenantID and Partition explicitly, and ListKeys must prefer
+// it over the guess.
+func TestImportKey_TenantSurvivesReload(t *testing.T) {
+	tb := createTestBackend(t)
+	defer func() { _ = tb.Close() }()
+
+	attrs := &types.KeyAttributes{
+		CN:                 "tenant-imported-key",
+		KeyType:            types.KeyTypeSecret,
+		StoreType:          backend.STORE_SW,
+		SymmetricAlgorithm: types.SymmetricAES256GCM,
+		Exportable:         true,
+		TenantID:           "acme",
+	}
+
+	keyMaterial := make([]byte, 32)
+	_, err := rand.Read(keyMaterial)
+	require.NoError(t, err)
+
+	params, err := tb.GetImportParameters(context.Background(), attrs, backend.WrappingAlgorithmRSAES_OAEP_SHA_256)
+	require.NoError(t, err)
+
+	wrapped, err := tb.WrapKey(context.Background(), keyMaterial, params)
+	require.NoError(t, err)
+
+	require.NoError(t, tb.ImportKey(context.Background(), attrs, wrapped))
+
+	reloaded, err := tb.ListKeys(context.Background())
+	require.NoError(t, err)
+
+	var reloadedAttrs *types.KeyAttributes
+	for _, a := range reloaded {
+		if a.CN == "tenant-imported-key" {
+			reloadedAttrs = a
+		}
+	}
+	require.NotNil(t, reloadedAttrs, "imported key must be present in ListKeys")
+	assert.Equal(t, "acme", reloadedAttrs.TenantID, "TenantID must survive import -> reload")
+	assert.Empty(t, reloadedAttrs.Partition, "the tenant must not be misread as a partition")
+}
+
+// TestListKeys_PreVersion3RecordKeepsParsedValues pins the legacy behavior:
+// a record written before schema version 3 carries no tenant or partition, so
+// ListKeys must keep whatever the identifier parse produced rather than
+// overwrite it with the record's zero values. Only a record that actually
+// states the fields may replace the guess.
+func TestListKeys_PreVersion3RecordKeepsParsedValues(t *testing.T) {
+	tb := createTestBackend(t)
+	defer func() { _ = tb.Close() }()
+
+	// A five-segment identifier, stored with a version 2 record: the parse
+	// reads the first segment as the partition, exactly as it always has.
+	const keyID = "legacy-part:software:secret:legacy-key:aes256-gcm"
+	require.NoError(t, storage.SaveKey(context.Background(), tb.storage, keyID, []byte("opaque")))
+	require.NoError(t, storage.SaveKeyMetadata(context.Background(), tb.storage,
+		keyID, []byte(`{"schema_version":2,"exportable":true,"sensitive":false}`)))
+
+	reloaded, err := tb.ListKeys(context.Background())
+	require.NoError(t, err)
+
+	var reloadedAttrs *types.KeyAttributes
+	for _, a := range reloaded {
+		if a.CN == "legacy-key" {
+			reloadedAttrs = a
+		}
+	}
+	require.NotNil(t, reloadedAttrs, "legacy key must be present in ListKeys")
+	assert.Equal(t, types.Partition("legacy-part"), reloadedAttrs.Partition,
+		"a pre-version-3 record must not overwrite the parsed partition")
+	assert.Empty(t, reloadedAttrs.TenantID,
+		"a pre-version-3 record states no tenant and must not invent one")
+	assert.True(t, reloadedAttrs.Exportable)
 }

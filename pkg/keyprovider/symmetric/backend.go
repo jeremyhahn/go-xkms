@@ -293,6 +293,15 @@ func (b *Backend) ListKeys(ctx context.Context) ([]*types.KeyAttributes, error) 
 		metadata := b.loadKeyMetadata(ctx, id)
 		attr.Exportable = metadata.Exportable
 		attr.Sensitive = metadata.Sensitive
+		// TenantID and Partition are trusted only from a record that
+		// actually carries them. The segment-count parse above cannot tell
+		// a tenant from a partition -- both produce five segments -- so a
+		// version 3 record's explicit values replace the guess; an older
+		// record leaves the parsed values exactly as they always were.
+		if metadata.SchemaVersion >= keyMetadataSchemaVersion3 {
+			attr.TenantID = metadata.TenantID
+			attr.Partition = types.Partition(metadata.Partition)
+		}
 
 		attrs = append(attrs, attr)
 	}

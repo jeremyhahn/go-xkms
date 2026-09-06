@@ -1,6 +1,6 @@
 # Multi-Tenancy — Engineering Contract
 
-> **Status: NORMATIVE** · Feature: `multi-tenancy` · Repo: `go-xkms` · Last verified: 2026-08-19
+> **Status: NORMATIVE** · Feature: `multi-tenancy` · Repo: `go-xkms` · Last verified: 2026-09-06
 
 ## Exported surface — `sdk/go/transport`
 
@@ -68,6 +68,15 @@ a code change.
   it as a destructive operation with its own review.
 - **Concurrency.** Tenant scoping is per-request context; barrier operations for
   different tenants are independent.
+- **Import/export is tenant-scoped at the wrapper, not per transport.**
+  `xkms.TenantScopedBackend` implements `xkms.ImportExporter` and stamps the
+  tenant on every attribute set, so BYOK import, wrapped export and raw
+  material export address the tenant's namespace the same way `GetKey` does.
+  Callers must never reach the capability through `KeyProvider()`, which
+  returns the base provider and discards the scoping — resolve it with the
+  service layer's `importExportFor` instead. The tenant survives the read
+  path because both key providers persist it in the key metadata record
+  (PKCS#8 since its schema v1, symmetric since its schema v3).
 
 ## Error semantics
 
@@ -112,7 +121,10 @@ resolution is `pkg/xkms/backend_tenant.go`.
   `pkg/api/transport/{grpc,unix}/*_tenant_test.go`.
 - **Isolation** — `pkg/seal/tenant_volume_isolation_test.go`,
   `tenant_metadata_store_test.go`, `pkg/server/tenant_node_barrier_test.go`.
-- **Backend scoping** — `pkg/xkms/backend_tenant_test.go`.
+- **Backend scoping** — `pkg/xkms/backend_tenant_test.go`;
+  tenant-scoped import/export —
+  `pkg/xkms/servicer_key_tenant_import_test.go`,
+  `pkg/keyprovider/symmetric/metadata_test.go`.
 
 The stream interceptor test matters: tenant scoping on a streaming RPC is easy
 to get right for the first message and wrong for the rest.

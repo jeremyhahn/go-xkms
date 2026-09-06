@@ -248,7 +248,7 @@ func (s *XKMSService) ImportKey(ctx context.Context, req *transport.ImportKeyReq
 		return nil, err
 	}
 
-	importExport, ok := b.KeyProvider().(backend.ImportExportBackend)
+	importExport, ok := importExportFor(b)
 	if !ok {
 		return nil, &ErrBackendUnsupported{
 			Sentinel: ErrOperationNotSupported,
@@ -298,7 +298,7 @@ func (s *XKMSService) ExportKey(ctx context.Context, req *transport.ExportKeyReq
 		return nil, err
 	}
 
-	importExport, ok := b.KeyProvider().(backend.ImportExportBackend)
+	importExport, ok := importExportFor(b)
 	if !ok {
 		return nil, &ErrBackendUnsupported{
 			Sentinel: ErrOperationNotSupported,
@@ -379,7 +379,7 @@ func (s *XKMSService) GetImportParameters(ctx context.Context, req *transport.Ge
 		return nil, err
 	}
 
-	importExport, ok := b.KeyProvider().(backend.ImportExportBackend)
+	importExport, ok := importExportFor(b)
 	if !ok {
 		return nil, &ErrBackendUnsupported{
 			Sentinel: ErrOperationNotSupported,
@@ -458,14 +458,14 @@ func (s *XKMSService) CopyKey(ctx context.Context, req *transport.CopyKeyRequest
 		return nil, &ErrCopyKeyBackend{Role: "destination", Err: err}
 	}
 
-	srcImportExport, ok := srcB.KeyProvider().(backend.ImportExportBackend)
+	srcImportExport, ok := importExportFor(srcB)
 	if !ok {
 		return nil, &ErrBackendUnsupported{
 			Sentinel: ErrOperationNotSupported,
 			Detail:   "source backend does not support export operations",
 		}
 	}
-	dstImportExport, ok := dstB.KeyProvider().(backend.ImportExportBackend)
+	dstImportExport, ok := importExportFor(dstB)
 	if !ok {
 		return nil, &ErrBackendUnsupported{
 			Sentinel: ErrOperationNotSupported,
@@ -536,7 +536,7 @@ func (s *XKMSService) ExportKeyMaterial(ctx context.Context, req *transport.Expo
 		return nil, roleLookupError("backend", req.Backend, err)
 	}
 
-	importExport, ok := b.KeyProvider().(backend.ImportExportBackend)
+	importExport, ok := importExportFor(b)
 	if !ok {
 		return nil, &ErrBackendUnsupported{
 			Sentinel: ErrOperationNotSupported,
@@ -600,7 +600,7 @@ func (s *XKMSService) WrapKey(ctx context.Context, req *transport.WrapKeyRequest
 		return nil, err
 	}
 
-	importExport, ok := b.KeyProvider().(backend.ImportExportBackend)
+	importExport, ok := importExportFor(b)
 	if !ok {
 		return nil, &ErrBackendUnsupported{
 			Sentinel: ErrOperationNotSupported,
@@ -657,7 +657,7 @@ func (s *XKMSService) UnwrapKey(ctx context.Context, req *transport.UnwrapKeyReq
 		return nil, err
 	}
 
-	importExport, ok := b.KeyProvider().(backend.ImportExportBackend)
+	importExport, ok := importExportFor(b)
 	if !ok {
 		return nil, &ErrBackendUnsupported{
 			Sentinel: ErrOperationNotSupported,
@@ -816,7 +816,7 @@ func (s *XKMSService) wrapTargetKeyMaterial(ctx context.Context, req *transport.
 		return nil, roleLookupError("target key backend", req.TargetKeyBackend, err)
 	}
 
-	targetImportExport, ok := targetBackend.KeyProvider().(backend.ImportExportBackend)
+	targetImportExport, ok := importExportFor(targetBackend)
 	if !ok {
 		return nil, &ErrBackendUnsupported{
 			Sentinel: ErrOperationNotSupported,
@@ -890,7 +890,7 @@ func (s *XKMSService) UnwrapKeyByID(ctx context.Context, req *transport.UnwrapKe
 		return nil, roleLookupError("target key backend", req.TargetKeyBackend, err)
 	}
 
-	targetImportExport, ok := targetBackend.KeyProvider().(backend.ImportExportBackend)
+	targetImportExport, ok := importExportFor(targetBackend)
 	if !ok {
 		return nil, &ErrBackendUnsupported{
 			Sentinel: ErrOperationNotSupported,
@@ -951,7 +951,7 @@ func (s *XKMSService) UnwrapKeyByID(ctx context.Context, req *transport.UnwrapKe
 // clear. RSA-OAEP with SHA-256 is the wrapping algorithm: SHA-1 is refused
 // project-wide, and the hybrid RSA+AES variants exist for material too large
 // for a single RSA block, which a key being unwrapped here is not.
-func importKeyMaterial(ctx context.Context, target backend.ImportExportBackend, attrs *types.KeyAttributes, material []byte) error {
+func importKeyMaterial(ctx context.Context, target ImportExporter, attrs *types.KeyAttributes, material []byte) error {
 	const algorithm = backend.WrappingAlgorithmRSAES_OAEP_SHA_256
 
 	params, err := target.GetImportParameters(ctx, attrs, algorithm)

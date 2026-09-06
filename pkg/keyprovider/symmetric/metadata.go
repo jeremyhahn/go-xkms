@@ -39,6 +39,15 @@ const keyMetadataSchemaVersion1 = 1
 // module's own object store, which is client-side state.
 const keyMetadataSchemaVersion2 = 2
 
+// keyMetadataSchemaVersion3 adds TenantID and Partition. The identifier
+// cannot distinguish the two: a tenanted key without a partition and a
+// partitioned key without a tenant both produce five segments, and ListKeys'
+// segment-count parse read the tenant back as a partition — so a tenant's
+// imported key was invisible to that tenant's scoped view (go-xkms#162,
+// go-xkms#163). The record states both explicitly, exactly as the PKCS#8
+// provider's record has since its schema version 1.
+const keyMetadataSchemaVersion3 = 3
+
 // keyMetadata is the versioned record persisted alongside a symmetric key's
 // raw bytes to carry attributes that the key ID string cannot encode. It is
 // JSON-encoded to match the rest of this package's on-disk conventions (see
@@ -69,6 +78,15 @@ type keyMetadata struct {
 	// decodes to false and loadKeyMetadata corrects it to true -- see there for
 	// why an unrecorded sensitivity must be read as the protective value.
 	Sensitive bool `json:"sensitive"`
+
+	// TenantID is the tenant that owns the key, empty for an untenanted key.
+	// Present from schema version 3; readers must not trust it on an older
+	// record, where it merely decoded to its zero value.
+	TenantID string `json:"tenant_id,omitempty"`
+
+	// Partition is the key's partition, empty when unpartitioned. Present
+	// from schema version 3, under the same rule as TenantID.
+	Partition string `json:"partition,omitempty"`
 }
 
 // newKeyMetadata builds the current-schema keyMetadata record for attrs.
@@ -76,9 +94,11 @@ type keyMetadata struct {
 // only ever come from the caller's own attributes at creation time.
 func newKeyMetadata(attrs *types.KeyAttributes) *keyMetadata {
 	return &keyMetadata{
-		SchemaVersion: keyMetadataSchemaVersion2,
+		SchemaVersion: keyMetadataSchemaVersion3,
 		Exportable:    attrs.Exportable,
 		Sensitive:     attrs.Sensitive,
+		TenantID:      attrs.TenantID,
+		Partition:     string(attrs.Partition),
 	}
 }
 

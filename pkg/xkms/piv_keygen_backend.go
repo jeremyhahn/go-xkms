@@ -209,10 +209,11 @@ func (g *backendPIVKeyGenerator) ImportPIVKey(ctx context.Context, slot pivcert.
 		return nil, ErrPIVInvalidAlgorithm
 	}
 
-	// The import ceremony lives on the key provider, not on Backend: this is
-	// the same assertion xkms.ImportKey makes (service.go), so PIV import and
-	// generic key import reach a backend the one way rather than two.
-	importer, ok := g.backend.KeyProvider().(backend.ImportExportBackend)
+	// The import ceremony is resolved through importExportFor, the same
+	// capability lookup xkms.ImportKey makes (service.go), so PIV import and
+	// generic key import reach a backend the one way rather than two — and a
+	// tenant-scoped backend keeps its scoping rather than being unwrapped.
+	importer, ok := importExportFor(g.backend)
 	if !ok {
 		return nil, ErrPIVImportNotSupported
 	}

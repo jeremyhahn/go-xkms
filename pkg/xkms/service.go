@@ -1701,7 +1701,7 @@ func GetImportParameters(ctx context.Context, backendName string, attrs *types.K
 		return nil, err
 	}
 
-	importExportBackend, ok := b.KeyProvider().(backend.ImportExportBackend)
+	importExportBackend, ok := importExportFor(b)
 	if !ok {
 		return nil, &ErrBackendUnsupported{
 			Sentinel: ErrImportExportNotSupported,
@@ -1723,7 +1723,7 @@ func WrapKey(ctx context.Context, backendName string, keyMaterial []byte, params
 		return nil, err
 	}
 
-	importExportBackend, ok := b.KeyProvider().(backend.ImportExportBackend)
+	importExportBackend, ok := importExportFor(b)
 	if !ok {
 		return nil, &ErrBackendUnsupported{
 			Sentinel: ErrImportExportNotSupported,
@@ -1745,7 +1745,7 @@ func UnwrapKey(ctx context.Context, backendName string, wrapped *backend.Wrapped
 		return nil, err
 	}
 
-	importExportBackend, ok := b.KeyProvider().(backend.ImportExportBackend)
+	importExportBackend, ok := importExportFor(b)
 	if !ok {
 		return nil, &ErrBackendUnsupported{
 			Sentinel: ErrImportExportNotSupported,
@@ -1773,7 +1773,7 @@ func ImportKey(ctx context.Context, backendName string, attrs *types.KeyAttribut
 		return err
 	}
 
-	importExportBackend, ok := b.KeyProvider().(backend.ImportExportBackend)
+	importExportBackend, ok := importExportFor(b)
 	if !ok {
 		return &ErrBackendUnsupported{
 			Sentinel: ErrImportExportNotSupported,
@@ -1796,7 +1796,7 @@ func ExportKey(ctx context.Context, kid string, algorithm backend.WrappingAlgori
 		return nil, err
 	}
 
-	importExportBackend, ok := b.KeyProvider().(backend.ImportExportBackend)
+	importExportBackend, ok := importExportFor(b)
 	if !ok {
 		return nil, &ErrBackendUnsupported{Sentinel: ErrImportExportNotSupported}
 	}
@@ -1833,7 +1833,7 @@ func CopyKey(ctx context.Context, sourceKID string, destBackend string, destAttr
 		return &ErrCopyKeyBackend{Role: "destination", Err: err}
 	}
 
-	sourceImportExport, ok := sourceB.KeyProvider().(backend.ImportExportBackend)
+	sourceImportExport, ok := importExportFor(sourceB)
 	if !ok {
 		return &ErrBackendUnsupported{
 			Sentinel: ErrImportExportNotSupported,
@@ -1841,7 +1841,7 @@ func CopyKey(ctx context.Context, sourceKID string, destBackend string, destAttr
 		}
 	}
 
-	destImportExport, ok := destB.KeyProvider().(backend.ImportExportBackend)
+	destImportExport, ok := importExportFor(destB)
 	if !ok {
 		return &ErrBackendUnsupported{
 			Sentinel: ErrImportExportNotSupported,
