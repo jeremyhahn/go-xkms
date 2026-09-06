@@ -1205,6 +1205,35 @@ var (
 	// an empty string.
 	ErrPINEmpty = errors.New("PIN must not be empty")
 
+	// ErrPINInputStdinEmpty indicates --pin-stdin was given but standard input
+	// carried no PIN.
+	//
+	// Continuing with an empty PIN here would be a silent default: the
+	// ceremony that follows fails inside the authenticator with a CTAP error
+	// that names neither the PIN nor the flag that supplies it.
+	ErrPINInputStdinEmpty = errors.New("pin: --pin-stdin was given but standard input carried no PIN")
+
+	// ErrPINInputStdinRead indicates standard input could not be read.
+	ErrPINInputStdinRead = errors.New("pin: failed to read the PIN from standard input")
+
+	// ErrPINInputFlagsMissing indicates the command did not declare the PIN
+	// input flags with addPINFlags. It is a wiring defect, not operator input,
+	// and is reported rather than swallowed: a command that silently resolved
+	// no PIN would look to the operator exactly like an authenticator that
+	// needs none.
+	ErrPINInputFlagsMissing = errors.New("pin: the command does not declare the PIN input flags")
+
+	// ErrWebAuthnPINRequired indicates the authenticator refused a WebAuthn
+	// ceremony because it has a PIN set and none was supplied.
+	//
+	// It replaces the raw CTAP2_ERR_PIN_REQUIRED, which names neither the PIN
+	// nor the way to supply it: "fido2: PIN required" reads as a device fault
+	// rather than as missing input. The flag names are composed from the same
+	// constants addPINFlags declares, so a rename cannot leave this message
+	// naming a flag that no longer exists.
+	ErrWebAuthnPINRequired = errors.New("webauthn: this authenticator requires a PIN; supply it with --" +
+		pinFlagStdin + " (preferred), the " + pinEnvVar + " environment variable, or --" + pinFlagValue)
+
 	// ErrChangeSOPINFailed is the sentinel error "failed to change SO PIN".
 	ErrChangeSOPINFailed = errors.New("failed to change SO PIN")
 

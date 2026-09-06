@@ -31,6 +31,7 @@ type (
 	HIDDeviceEnumerator           = pkgfido2.HIDDeviceEnumerator
 	RelyingParty                  = pkgfido2.RelyingParty
 	User                          = pkgfido2.User
+	WebAuthnAssertion             = pkgfido2.WebAuthnAssertion
 	WebAuthnAssertionRequest      = pkgfido2.WebAuthnAssertionRequest
 	WebAuthnAttestation           = pkgfido2.WebAuthnAttestation
 	WebAuthnAuthenticationOptions = pkgfido2.WebAuthnAuthenticationOptions

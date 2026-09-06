@@ -425,6 +425,7 @@ func newAdminCreateCmdCopy() *cobra.Command {
 	cmd.Flags().Bool("user-verification", false, "")
 	cmd.Flags().String("method", "fido2", "")
 	cmd.Flags().String("cert-file", "", "")
+	addPINFlags(cmd)
 	return cmd
 }
 

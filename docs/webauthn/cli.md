@@ -1,6 +1,6 @@
 # WebAuthn Relying Party — CLI
 
-> **Status: NORMATIVE** · Feature: `webauthn` · Repo: `go-xkms` · Last verified: 2026-08-19
+> **Status: NORMATIVE** · Feature: `webauthn` · Repo: `go-xkms` · Last verified: 2026-09-05
 
 The relying party is a server component and has **no CLI verbs of its own**.
 What the CLI offers is the client side of its ceremonies.
@@ -23,6 +23,30 @@ Full verb and flag detail: [`../fido2-ctap2/cli.md`](../fido2-ctap2/cli.md).
 `xkey auth register` / `xkey auth login` run the same ceremonies with no browser
 and no human, which is how agents and CI authenticate. See
 [`../../xkey/docs/headless-webauthn/cli.md`](../../xkey/docs/headless-webauthn/cli.md).
+
+## Registering and logging in from `xkmsctl`
+
+`xkmsctl user register` / `xkmsctl user login` / `xkmsctl admin create` drive
+the full server-side WebAuthn ceremony against a local CTAP2 authenticator. An
+authenticator with a CTAP2 PIN set refuses either ceremony unless the request
+carries the PIN, so all three verbs take the same three PIN sources, in the
+same precedence order as the `xkey auth` verbs:
+
+| Source | Precedence | Notes |
+|---|---|---|
+| `--pin-stdin` | 1 | reads the PIN from standard input; keeps it out of the process list |
+| `XKMS_FIDO2_PIN` | 2 | environment variable |
+| `--pin` | 3 | visible in `ps`; local development only |
+
+```
+printf '%s' "$PIN" | xkmsctl user register admin --pin-stdin --email admin@example.com
+printf '%s' "$PIN" | xkmsctl user login admin@example.com --pin-stdin
+```
+
+An authenticator with no PIN configured needs none — supply nothing. A missing
+PIN is reported as missing input naming these sources, and a wrong PIN reports
+the authenticator's remaining attempts before lockout. This is the
+authenticator's PIN, unrelated to the PKCS#11 `XKMS_SO_PIN` / `XKMS_USER_PIN`.
 
 ## Managing credentials
 

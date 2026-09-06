@@ -40,6 +40,13 @@ import (
 // The role is resolved by the caller: admin enrollment always passes RoleAdmin,
 // while user registration passes RoleAdmin for the first user and the requested
 // role otherwise.
+//
+// pin is the authenticator's CTAP2 PIN, resolved by resolvePINInput. It sits
+// after the non-string parameters rather than beside origin so a transposition
+// of the two strings cannot compile: a positional slot adjacent to origin
+// would let a mixed-up caller send the PIN to the relying party as an origin.
+// Empty is correct for an authenticator with no PIN configured; against one
+// that has a PIN set the ceremony fails with ErrWebAuthnPINRequired.
 func webAuthnRegistration(
 	ctx context.Context,
 	cl client.Client,
@@ -48,6 +55,7 @@ func webAuthnRegistration(
 	username, email, displayName, role, origin string,
 	requireUV bool,
 	timeout time.Duration,
+	pin string,
 ) (*fido2.WebAuthnAttestation, error) {
 	// Create the xkms user in the embedded qrdb node behind the server.
 	if _, err := cl.CreateUser(ctx, &client.CreateUserRequest{
@@ -115,9 +123,10 @@ func webAuthnRegistration(
 		UserDisplayName:         displayName,
 		RequireUserVerification: requireUV,
 		Timeout:                 timeout,
+		PIN:                     pin,
 	})
 	if err != nil {
-		return nil, &WrappedError{Sentinel: ErrRegisterCredentialFailed, Err: err}
+		return nil, ceremonyFailure(ErrRegisterCredentialFailed, pin, err)
 	}
 
 	// Finish the server-side ceremony with the authenticator's attestation.
@@ -169,9 +178,18 @@ Subsequent users will receive the 'user' role by default.
 During registration, you'll need to touch your FIDO2 security key
 to create a credential that will be used for authentication.
 
+An authenticator with a CTAP2 PIN set refuses the ceremony outright unless
+the request carries the PIN, so supply it the way a browser would prompt for
+it. An authenticator with no PIN configured needs none.
+
+` + pinUsage + `
+
 Example:
   xkmsctl user register admin --email admin@example.com --display-name "Admin User"
-  xkmsctl user register operator --email operator@example.com --role operator`,
+  xkmsctl user register operator --email operator@example.com --role operator
+
+  # Register against a PIN-protected authenticator, with no PIN in the process list
+  printf '%s' "$PIN" | xkmsctl user register admin --pin-stdin --email admin@example.com`,
 	Args: cobra.ExactArgs(1),
 	Run: func(cmd *cobra.Command, args []string) {
 		username := args[0]
@@ -195,6 +213,17 @@ Example:
 
 		if displayName == "" {
 			displayName = username
+		}
+
+		// Resolve the PIN before anything reaches the network: a --pin-stdin
+		// with nothing on standard input is operator input to correct, and
+		// correcting it should not first cost a server round trip or a
+		// half-finished registration. An empty PIN is legitimate here — it is
+		// what an authenticator with no PIN configured needs.
+		pin, err := resolvePINInput(cmd)
+		if err != nil {
+			handleError(err)
+			return
 		}
 
 		// Connect to the xkms service.
@@ -268,7 +297,7 @@ Example:
 			return
 		}
 
-		att, err := webAuthnRegistration(ctx, cl, handler, printer, username, email, displayName, role, "", requireUV, timeout)
+		att, err := webAuthnRegistration(ctx, cl, handler, printer, username, email, displayName, role, "", requireUV, timeout, pin)
 		if err != nil {
 			handleError(err)
 			return
@@ -304,6 +333,43 @@ Example:
 	},
 }
 
+// loginAssertion runs the local half of the login ceremony: it derives the
+// authenticator options from the server's BeginAuthentication output, carries
+// the resolved CTAP2 PIN into the assertion request, and classifies PIN
+// failures before they reach the operator (see ceremonyFailure).
+//
+// It exists as a named function rather than inline in the command closure so
+// the one place the PIN enters fido2.WebAuthnAuthenticationOptions is
+// reachable by tests driving a real authenticator (go-xkms#309).
+func loginAssertion(
+	handler *fido2.FIDO2Handler,
+	assertionOpts protocol.CredentialAssertion,
+	requireUV bool,
+	timeout time.Duration,
+	pin string,
+) (*fido2.WebAuthnAssertion, error) {
+	rpID := assertionOpts.Response.RelyingPartyID
+
+	allowList := make([][]byte, 0, len(assertionOpts.Response.AllowedCredentials))
+	for _, cred := range assertionOpts.Response.AllowedCredentials {
+		allowList = append(allowList, cred.CredentialID)
+	}
+
+	assertion, err := handler.AuthenticateWebAuthn(fido2.WebAuthnAuthenticationOptions{
+		Challenge:               []byte(assertionOpts.Response.Challenge),
+		Origin:                  "https://" + rpID,
+		RPID:                    rpID,
+		AllowCredentialIDs:      allowList,
+		RequireUserVerification: requireUV,
+		Timeout:                 timeout,
+		PIN:                     pin,
+	})
+	if err != nil {
+		return nil, ceremonyFailure(ErrAuthenticationFailed, pin, err)
+	}
+	return assertion, nil
+}
+
 // userLoginCmd authenticates using FIDO2 and gets a JWT token
 var userLoginCmd = &cobra.Command{
 	// <email>, not <username>: the argument is passed straight to
@@ -325,9 +391,17 @@ This command drives the server-side WebAuthn authentication ceremony:
 The token is printed to stdout for use with other commands. You can store
 it in an environment variable or config file.
 
+An authenticator with a CTAP2 PIN set refuses the assertion unless the
+request carries the PIN. An authenticator with no PIN configured needs none.
+
+` + pinUsage + `
+
 Example:
   export XKMS_TOKEN=$(xkmsctl user login admin@example.com)
-  xkmsctl key list --token $XKMS_TOKEN`,
+  xkmsctl key list --token $XKMS_TOKEN
+
+  # Login against a PIN-protected authenticator, with no PIN in the process list
+  printf '%s' "$PIN" | xkmsctl user login admin@example.com --pin-stdin`,
 	Args: cobra.ExactArgs(1),
 	Run: func(cmd *cobra.Command, args []string) {
 		email := args[0]
@@ -337,6 +411,17 @@ Example:
 		timeout, _ := cmd.Flags().GetDuration("timeout")
 		devicePath, _ := cmd.Flags().GetString("device")
 		requireUV, _ := cmd.Flags().GetBool("user-verification")
+
+		// Resolve the PIN before anything reaches the network: a --pin-stdin
+		// with nothing on standard input is operator input to correct, and
+		// correcting it should not first cost a server round trip or a
+		// half-consumed challenge. An empty PIN is legitimate here — it is
+		// what an authenticator with no PIN configured needs.
+		pin, err := resolvePINInput(cmd)
+		if err != nil {
+			handleError(err)
+			return
+		}
 
 		// Connect to the xkms service.
 		cl, err := cfg.CreateClient()
@@ -373,15 +458,6 @@ Example:
 			return
 		}
 
-		challenge := []byte(assertionOpts.Response.Challenge)
-		rpID := assertionOpts.Response.RelyingPartyID
-		origin := "https://" + rpID
-
-		allowList := make([][]byte, 0, len(assertionOpts.Response.AllowedCredentials))
-		for _, cred := range assertionOpts.Response.AllowedCredentials {
-			allowList = append(allowList, cred.CredentialID)
-		}
-
 		// Step 3: Build the FIDO2 handler and drive the local authenticator.
 		fidoConfig := fido2.DefaultConfig
 		fidoConfig.DevicePath = devicePath
@@ -400,16 +476,9 @@ Example:
 			return
 		}
 
-		assertion, err := handler.AuthenticateWebAuthn(fido2.WebAuthnAuthenticationOptions{
-			Challenge:               challenge,
-			Origin:                  origin,
-			RPID:                    rpID,
-			AllowCredentialIDs:      allowList,
-			RequireUserVerification: requireUV,
-			Timeout:                 timeout,
-		})
+		assertion, err := loginAssertion(handler, assertionOpts, requireUV, timeout, pin)
 		if err != nil {
-			handleError(&WrappedError{Sentinel: ErrAuthenticationFailed, Err: err})
+			handleError(err)
 			return
 		}
 
@@ -1108,12 +1177,14 @@ func init() {
 	userRegisterCmd.Flags().Duration("timeout", 30*time.Second, "timeout for user presence")
 	userRegisterCmd.Flags().String("device", "", "specific FIDO2 device path to use")
 	userRegisterCmd.Flags().Bool("user-verification", false, "require user verification (PIN)")
+	addPINFlags(userRegisterCmd)
 
 	// login flags. The server supplies the credential allow-list during the
 	// authentication ceremony, so no credential-id/salt flags are needed.
 	userLoginCmd.Flags().Duration("timeout", 30*time.Second, "timeout for user presence")
 	userLoginCmd.Flags().String("device", "", "specific FIDO2 device path to use")
 	userLoginCmd.Flags().Bool("user-verification", false, "require user verification (PIN)")
+	addPINFlags(userLoginCmd)
 
 	// update flags
 	userUpdateCmd.Flags().Bool("enable", false, "enable the user account")

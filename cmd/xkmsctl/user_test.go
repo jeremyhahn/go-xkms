@@ -164,6 +164,7 @@ func newUserRegisterCmd() *cobra.Command {
 	cmd.Flags().Duration("timeout", 30*time.Second, "")
 	cmd.Flags().String("device", "/nonexistent/fido2-device", "")
 	cmd.Flags().Bool("user-verification", false, "")
+	addPINFlags(cmd)
 	return cmd
 }
 
@@ -172,6 +173,7 @@ func newUserLoginCmd() *cobra.Command {
 	cmd.Flags().Duration("timeout", 30*time.Second, "")
 	cmd.Flags().String("device", "/nonexistent/fido2-device", "")
 	cmd.Flags().Bool("user-verification", false, "")
+	addPINFlags(cmd)
 	return cmd
 }
 

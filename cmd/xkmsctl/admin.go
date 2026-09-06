@@ -57,8 +57,18 @@ The FIDO2 method requires --email: WebAuthn resolves the account by its
 canonical email login key. The mTLS method does not, because that admin is
 resolved by its certificate SPKI thumbprint and is created with no login key.
 
+An authenticator with a CTAP2 PIN set refuses the FIDO2 ceremony unless the
+request carries the PIN. An authenticator with no PIN configured needs none.
+The mTLS method takes no PIN: possession of the certificate key is the
+credential.
+
+` + pinUsage + `
+
 Example (FIDO2):
   xkmsctl admin create admin --email admin@example.com --display-name "Admin User"
+
+  # Enroll against a PIN-protected authenticator, with no PIN in the process list
+  printf '%s' "$PIN" | xkmsctl admin create admin --pin-stdin --email admin@example.com
 
 Example (mTLS with certificate file):
   xkmsctl admin create admin --method mtls --cert-file /path/to/client.pem
@@ -105,6 +115,15 @@ func enrollFIDO2Admin(cmd *cobra.Command, username string, cfg *Config, printer 
 		displayName = username
 	}
 
+	// Resolve the authenticator PIN before anything reaches the network: bad
+	// PIN input is operator input to correct, and correcting it should not
+	// first cost a server round trip or a half-finished enrollment. An empty
+	// PIN is what an authenticator with no PIN configured needs.
+	pin, err := resolvePINInput(cmd)
+	if err != nil {
+		return err
+	}
+
 	// Connect to the xkms service.
 	cl, err := cfg.CreateClient()
 	if err != nil {
@@ -146,7 +165,7 @@ func enrollFIDO2Admin(cmd *cobra.Command, username string, cfg *Config, printer 
 		return ErrEmailRequired
 	}
 
-	att, err := webAuthnRegistration(ctx, cl, handler, printer, username, email, displayName, string(RoleAdmin), "", requireUV, timeout)
+	att, err := webAuthnRegistration(ctx, cl, handler, printer, username, email, displayName, string(RoleAdmin), "", requireUV, timeout, pin)
 	if err != nil {
 		return err
 	}
@@ -733,6 +752,7 @@ func init() {
 	adminCreateCmd.Flags().Duration("timeout", 30*time.Second, "timeout for user presence")
 	adminCreateCmd.Flags().String("device", "", "specific FIDO2 device path to use")
 	adminCreateCmd.Flags().Bool("user-verification", false, "require user verification (PIN)")
+	addPINFlags(adminCreateCmd)
 
 	// Authentication method flag (read at runtime via cmd.Flags().GetString("method"))
 	adminCreateCmd.Flags().String("method", "fido2",
