@@ -25,6 +25,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/golang-jwt/jwt/v5"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
@@ -72,8 +73,19 @@ func testIdentity() *auth.Identity {
 		Metadata: map[string]string{
 			"username":     "alice",
 			"display_name": "Alice Admin",
+			"email":        "alice@example.com",
 		},
 	}
+}
+
+// unverifiedClaims decodes a token's claims without verifying it, so a test
+// can inspect exactly which claims were minted.
+func unverifiedClaims(t *testing.T, tokenString string) jwt.MapClaims {
+	t.Helper()
+	claims := jwt.MapClaims{}
+	_, _, err := jwt.NewParser().ParseUnverified(tokenString, claims)
+	require.NoError(t, err)
+	return claims
 }
 
 func TestNewIssuer_Validation(t *testing.T) {
@@ -130,6 +142,38 @@ func TestMint_AccessTokenVerifiesThroughJWTAuthenticator(t *testing.T) {
 	assert.ElementsMatch(t, []string{"admin", "operator"}, id.Roles)
 	assert.Equal(t, "alice", id.Metadata["username"])
 	assert.Equal(t, "Alice Admin", id.Metadata["display_name"])
+	assert.Equal(t, "alice@example.com", id.Metadata["email"])
+}
+
+// TestMint_CarriesEmailClaimOnBothTokens proves the login key rides on the
+// access token (what /auth/me reads) and on the refresh token (what a
+// rotation rebuilds the identity from).
+func TestMint_CarriesEmailClaimOnBothTokens(t *testing.T) {
+	issuer := newTestIssuer(t)
+
+	pair, err := issuer.Mint(context.Background(), testIdentity())
+	require.NoError(t, err)
+
+	assert.Equal(t, "alice@example.com", unverifiedClaims(t, pair.AccessToken)["email"])
+	assert.Equal(t, "alice@example.com", unverifiedClaims(t, pair.RefreshToken)["email"])
+}
+
+// TestMint_OmitsEmailClaimForPrincipalWithoutOne proves a principal with no
+// login key mints tokens without an email claim, not with an empty one.
+func TestMint_OmitsEmailClaimForPrincipalWithoutOne(t *testing.T) {
+	issuer := newTestIssuer(t)
+	id := testIdentity()
+	delete(id.Metadata, "email")
+
+	pair, err := issuer.Mint(context.Background(), id)
+	require.NoError(t, err)
+
+	for name, tok := range map[string]string{"access": pair.AccessToken, "refresh": pair.RefreshToken} {
+		claims := unverifiedClaims(t, tok)
+		_, present := claims["email"]
+		assert.False(t, present, "%s token must not carry an email claim: %v", name, claims)
+		assert.Equal(t, "alice", claims["username"], "%s token keeps the other identity claims", name)
+	}
 }
 
 func TestMint_RequiresSubject(t *testing.T) {
@@ -168,6 +212,7 @@ func TestRefresh_RotatesAndPreservesIdentity(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, "user-123", id.Subject)
 	assert.Equal(t, "tenant-a", id.TenantID)
+	assert.Equal(t, "alice@example.com", id.Metadata["email"], "the login key must survive rotation")
 }
 
 func TestRefresh_ReuseRevokesFamily(t *testing.T) {

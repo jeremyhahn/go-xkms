@@ -55,9 +55,15 @@ type authRefreshRequest struct {
 // authMeResponse describes the authenticated session for the web UI: who the
 // caller is, what the UI may show them, and which server capabilities exist.
 type authMeResponse struct {
-	Subject     string   `json:"subject"`
-	TenantID    string   `json:"tenant_id,omitempty"`
-	Username    string   `json:"username,omitempty"`
+	Subject  string `json:"subject"`
+	TenantID string `json:"tenant_id,omitempty"`
+	Username string `json:"username,omitempty"`
+
+	// Email is the canonical tenant-unique login key (go-qrdb #190) — the
+	// identifier a client can re-authenticate with. Absent for principals
+	// that have none (certificate-only identities, service accounts, the
+	// loopback token); never fabricated from the username.
+	Email       string   `json:"email,omitempty"`
 	DisplayName string   `json:"display_name,omitempty"`
 	AuthMethod  string   `json:"auth_method,omitempty"`
 	Roles       []string `json:"roles,omitempty"`
@@ -170,6 +176,9 @@ func (s *Server) handlePIVLogin(w http.ResponseWriter, r *http.Request) {
 			"auth_method":  "piv",
 		},
 	}
+	if user.Email != "" {
+		identity.Metadata["email"] = user.Email
+	}
 	if user.Role != "" {
 		identity.Roles = []string{user.Role}
 	}
@@ -247,6 +256,7 @@ func (s *Server) handleAuthMe(w http.ResponseWriter, r *http.Request) {
 		Subject:      identity.Subject,
 		TenantID:     identity.TenantID,
 		Username:     identity.Metadata["username"],
+		Email:        identity.Metadata["email"],
 		DisplayName:  identity.Metadata["display_name"],
 		AuthMethod:   identity.Metadata["auth_method"],
 		Roles:        identity.Roles,

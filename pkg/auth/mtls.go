@@ -38,6 +38,11 @@ type UserStore interface {
 type MTLSUser struct {
 	// Username is the user's unique login identifier.
 	Username string
+	// Email is the canonical tenant-unique login key (go-qrdb #190). It is
+	// empty for principals that have no email login key, such as bootstrap
+	// and service accounts; an empty value means "absent", never a
+	// placeholder.
+	Email string
 	// DisplayName is a human-readable name.
 	DisplayName string
 	// Role is the user's authorization role.
@@ -210,6 +215,9 @@ func (a *MTLSAuthenticator) buildIdentity(ctx context.Context, cert *x509.Certif
 				identity.Roles = []string{user.Role}
 			}
 			identity.Metadata["display_name"] = user.DisplayName
+			if user.Email != "" {
+				identity.Metadata["email"] = user.Email
+			}
 			identity.Metadata["auth_method"] = "mtls"
 			identity.Metadata["cert_serial"] = cert.SerialNumber.String()
 			identity.Metadata["cert_issuer"] = cert.Issuer.String()

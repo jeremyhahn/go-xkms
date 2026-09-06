@@ -63,11 +63,17 @@ describe('AuthClient token endpoints', () => {
 
   it('me / validate ride the token provider', async () => {
     const fake = newFakeFetch({
-      body: { subject: 'alice', permissions: {}, capabilities: {} },
+      body: {
+        subject: 'alice',
+        email: 'alice@example.com',
+        permissions: {},
+        capabilities: {},
+      },
     });
     const c = client(fake, () => 'live-token');
     const me = await c.auth.me();
     expect(me.subject).toBe('alice');
+    expect(me.email).toBe('alice@example.com');
     expect(fake.calls[0]?.headers['Authorization']).toBe('Bearer live-token');
 
     fake.respond({ body: { subject: 'alice' } });

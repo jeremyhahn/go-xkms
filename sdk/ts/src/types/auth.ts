@@ -34,6 +34,8 @@ export interface AuthMeResponse {
   subject: string;
   tenant_id?: string;
   username?: string;
+  /** Canonical tenant-unique login key; absent for principals without one. */
+  email?: string;
   display_name?: string;
   auth_method?: string;
   roles?: string[];

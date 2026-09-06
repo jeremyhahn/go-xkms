@@ -59,6 +59,7 @@ func (s *QRDBUserStore) GetByCertFingerprint(ctx context.Context, fingerprint st
 
 	return MTLSUser{
 		Username: u.Username,
+		Email:    u.Email,
 		Role:     role,
 		TenantID: u.TenantID,
 		Enabled:  u.Enabled,

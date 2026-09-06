@@ -146,6 +146,8 @@ func (a *JWTAuthenticator) AuthenticateGRPC(ctx context.Context, md metadata.MD)
 //   - roles      → Identity.Roles (preferred multi-role token)
 //   - username   → Identity.Metadata["username"]
 //   - name       → Identity.Metadata["display_name"]
+//   - email      → Identity.Metadata["email"] (the canonical login key;
+//     absent for principals that have none)
 func (a *JWTAuthenticator) validateToken(tokenString string) (*Identity, error) {
 	// Parse token with verification
 	token, err := jwt.Parse(tokenString, func(token *jwt.Token) (interface{}, error) {
@@ -202,6 +204,12 @@ func (a *JWTAuthenticator) validateToken(tokenString string) (*Identity, error) 
 	// Extract name if present
 	if name, ok := claims["name"].(string); ok {
 		identity.Metadata["display_name"] = name
+	}
+
+	// Extract the email login key if present. A token minted for a principal
+	// without one carries no claim, and the metadata key stays absent.
+	if email, ok := claims["email"].(string); ok && email != "" {
+		identity.Metadata["email"] = email
 	}
 
 	// Extract tenant_id if present

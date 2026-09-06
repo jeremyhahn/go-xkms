@@ -177,6 +177,7 @@ func TestQRDBUserStore_GetByCertFingerprint_Success(t *testing.T) {
 	users := newFakeQRDBUserClient()
 	users.byThumbprint["thumb-1"] = &qrdbtransport.User{
 		Username: "alice",
+		Email:    "alice@example.com",
 		TenantID: "tenant-a",
 		RoleIDs:  []string{"role-1"},
 		Enabled:  true,
@@ -188,6 +189,7 @@ func TestQRDBUserStore_GetByCertFingerprint_Success(t *testing.T) {
 	u, err := store.GetByCertFingerprint(context.Background(), "thumb-1")
 	require.NoError(t, err)
 	assert.Equal(t, "alice", u.Username)
+	assert.Equal(t, "alice@example.com", u.Email, "the canonical login key must be projected")
 	assert.Equal(t, "admin", u.Role)
 	assert.Equal(t, "tenant-a", u.TenantID)
 	assert.True(t, u.Enabled)
@@ -217,6 +219,25 @@ func TestQRDBUserStore_GetByCertFingerprint_NoRoleIDs(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, "bob", u.Username)
 	assert.Empty(t, u.Role, "role should be empty when the user carries no role ids")
+}
+
+// TestQRDBUserStore_GetByCertFingerprint_NoEmailLoginKey proves a user
+// created without an email login key projects an empty Email — the
+// documented "absent" state for bootstrap and service accounts — rather than
+// a value derived from the username.
+func TestQRDBUserStore_GetByCertFingerprint_NoEmailLoginKey(t *testing.T) {
+	users := newFakeQRDBUserClient()
+	users.byThumbprint["thumb-svc"] = &qrdbtransport.User{
+		Username: "svc-backup",
+		TenantID: "system",
+		Enabled:  true,
+	}
+	store := NewQRDBUserStore(users, newFakeQRDBRoleClient())
+
+	u, err := store.GetByCertFingerprint(context.Background(), "thumb-svc")
+	require.NoError(t, err)
+	assert.Equal(t, "svc-backup", u.Username)
+	assert.Empty(t, u.Email, "no login key must project as empty, never fabricated")
 }
 
 // TestQRDBUserStore_GetByCertFingerprint_RoleResolutionFails proves that a

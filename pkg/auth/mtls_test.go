@@ -367,6 +367,7 @@ func TestMTLSAuthenticator_WithUserStore_HTTP_Success(t *testing.T) {
 	store := &mockUserStore{
 		user: MTLSUser{
 			Username:    "alice",
+			Email:       "alice@example.com",
 			DisplayName: "Alice Smith",
 			Role:        "admin",
 			Enabled:     true,
@@ -391,6 +392,7 @@ func TestMTLSAuthenticator_WithUserStore_HTTP_Success(t *testing.T) {
 
 	assert.Equal(t, []string{"admin"}, identity.Roles)
 	assert.Equal(t, "Alice Smith", identity.Metadata["display_name"])
+	assert.Equal(t, "alice@example.com", identity.Metadata["email"], "the canonical login key must reach the identity")
 	assert.Equal(t, "mtls", identity.Metadata["auth_method"])
 	assert.NotEmpty(t, identity.Metadata["cert_fingerprint"])
 	assert.Equal(t, "10.0.0.1:443", identity.Metadata["remote_addr"])
@@ -735,4 +737,39 @@ func TestMTLSAuthenticator_TenantID_NoOU(t *testing.T) {
 	assert.Equal(t, "no-ou-client", identity.Subject)
 	assert.Empty(t, identity.TenantID)
 	assert.True(t, IsCrossTenant(identity))
+}
+
+// TestMTLSAuthenticator_WithUserStore_NoEmail_OmitsKey proves a cert-bound
+// user without an email login key (a bootstrap or service account) yields an
+// identity with no email key at all — absent, not empty (go-xkms#194).
+func TestMTLSAuthenticator_WithUserStore_NoEmail_OmitsKey(t *testing.T) {
+	ca, err := testutil.GenerateTestCA()
+	require.NoError(t, err)
+
+	clientCert, err := testutil.GenerateTestClientCert(ca, "svc-client")
+	require.NoError(t, err)
+
+	store := &mockUserStore{
+		user: MTLSUser{
+			Username: "svc-backup",
+			Role:     "operator",
+			Enabled:  true,
+		},
+	}
+
+	auth := NewMTLSAuthenticator(&MTLSConfig{UserStore: store})
+
+	req := &http.Request{
+		TLS: &tls.ConnectionState{
+			PeerCertificates: []*x509.Certificate{clientCert.Cert},
+		},
+		RemoteAddr: "10.0.0.2:443",
+	}
+
+	identity, err := auth.AuthenticateHTTP(req)
+	require.NoError(t, err)
+
+	assert.Equal(t, "svc-backup", identity.Subject)
+	_, present := identity.Metadata["email"]
+	assert.False(t, present, "an absent login key must not be recorded as empty: %v", identity.Metadata)
 }

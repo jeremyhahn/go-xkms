@@ -569,3 +569,49 @@ func TestDefaultJWTGenerator_DifferentCurves(t *testing.T) {
 		})
 	}
 }
+
+// TestDefaultJWTGenerator_EmailClaim proves the user's email login key is
+// minted as its own claim so the JWT authenticator can surface it on the
+// identity (go-xkms#194).
+func TestDefaultJWTGenerator_EmailClaim(t *testing.T) {
+	privateKey, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	require.NoError(t, err)
+
+	gen, err := NewDefaultJWTGenerator(&JWTGeneratorConfig{PrivateKey: privateKey})
+	require.NoError(t, err)
+
+	token, err := gen.GenerateToken(context.Background(), &mockWebAuthnUser{
+		id:          []byte("user-email"),
+		name:        "alice@example.com",
+		displayName: "Alice",
+		email:       "alice@example.com",
+	})
+	require.NoError(t, err)
+
+	claims, err := gen.VerifyToken(token)
+	require.NoError(t, err)
+	assert.Equal(t, "alice@example.com", claims["email"])
+}
+
+// TestDefaultJWTGenerator_NoEmailClaimWhenEmpty proves a user with no email
+// mints a token without the claim, not with an empty string.
+func TestDefaultJWTGenerator_NoEmailClaimWhenEmpty(t *testing.T) {
+	privateKey, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	require.NoError(t, err)
+
+	gen, err := NewDefaultJWTGenerator(&JWTGeneratorConfig{PrivateKey: privateKey})
+	require.NoError(t, err)
+
+	token, err := gen.GenerateToken(context.Background(), &mockWebAuthnUser{
+		id:          []byte("user-noemail"),
+		name:        "svc",
+		displayName: "Service",
+	})
+	require.NoError(t, err)
+
+	claims, err := gen.VerifyToken(token)
+	require.NoError(t, err)
+	_, present := claims["email"]
+	assert.False(t, present, "an empty email must not be minted as a claim: %v", claims)
+	assert.Equal(t, "svc", claims["username"])
+}

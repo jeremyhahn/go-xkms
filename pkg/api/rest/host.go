@@ -267,6 +267,9 @@ func (a *WebAuthnTokenAdapter) identityFor(user webauthn.User) *auth.Identity {
 			"display_name": user.WebAuthnDisplayName(),
 		},
 	}
+	if email := user.Email(); email != "" {
+		id.Metadata["email"] = email
+	}
 	if roleUser, ok := user.(interface{ GetRole() string }); ok {
 		if role := roleUser.GetRole(); role != "" {
 			id.Roles = []string{role}

@@ -241,18 +241,7 @@ func (i *Issuer) mintPair(ctx context.Context, id *auth.Identity, family string)
 		"nbf": now.Unix(),
 		"exp": now.Add(i.accessTTL).Unix(),
 	}
-	if id.TenantID != "" {
-		accessClaims["tenant_id"] = id.TenantID
-	}
-	if len(id.Roles) > 0 {
-		accessClaims["roles"] = id.Roles
-	}
-	if username := id.Metadata["username"]; username != "" {
-		accessClaims["username"] = username
-	}
-	if name := id.Metadata["display_name"]; name != "" {
-		accessClaims["name"] = name
-	}
+	addIdentityClaims(accessClaims, id)
 
 	accessToken, err := i.sign(accessClaims)
 	if err != nil {
@@ -276,18 +265,7 @@ func (i *Issuer) mintPair(ctx context.Context, id *auth.Identity, family string)
 		"jti": jti,
 		"fam": family,
 	}
-	if id.TenantID != "" {
-		refreshClaims["tenant_id"] = id.TenantID
-	}
-	if len(id.Roles) > 0 {
-		refreshClaims["roles"] = id.Roles
-	}
-	if username := id.Metadata["username"]; username != "" {
-		refreshClaims["username"] = username
-	}
-	if name := id.Metadata["display_name"]; name != "" {
-		refreshClaims["name"] = name
-	}
+	addIdentityClaims(refreshClaims, id)
 
 	refreshToken, err := i.sign(refreshClaims)
 	if err != nil {
@@ -309,6 +287,29 @@ func (i *Issuer) mintPair(ctx context.Context, id *auth.Identity, family string)
 		TokenType:    "Bearer",
 		ExpiresIn:    int64(i.accessTTL.Seconds()),
 	}, nil
+}
+
+// addIdentityClaims copies the identity snapshot onto a claim set. Both
+// halves of a pair carry the same snapshot so a refresh reproduces the
+// identity the original ceremony established. Empty values are omitted, so
+// a principal without an email login key mints a token without an email
+// claim rather than an empty one.
+func addIdentityClaims(claims jwt.MapClaims, id *auth.Identity) {
+	if id.TenantID != "" {
+		claims["tenant_id"] = id.TenantID
+	}
+	if len(id.Roles) > 0 {
+		claims["roles"] = id.Roles
+	}
+	if username := id.Metadata["username"]; username != "" {
+		claims["username"] = username
+	}
+	if name := id.Metadata["display_name"]; name != "" {
+		claims["name"] = name
+	}
+	if email := id.Metadata["email"]; email != "" {
+		claims["email"] = email
+	}
 }
 
 // sign signs claims with the configured crypto.Signer.
@@ -366,6 +367,9 @@ func identityFromClaims(claims jwt.MapClaims) *auth.Identity {
 	}
 	if name, ok := claims["name"].(string); ok && name != "" {
 		id.Metadata["display_name"] = name
+	}
+	if email, ok := claims["email"].(string); ok && email != "" {
+		id.Metadata["email"] = email
 	}
 	return id
 }

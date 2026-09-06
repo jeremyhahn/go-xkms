@@ -122,6 +122,12 @@ func (g *DefaultJWTGenerator) GenerateToken(ctx context.Context, user User) (str
 		"username": user.WebAuthnName(),
 	}
 
+	// The email login key rides as its own claim so the JWT authenticator
+	// can surface it on the identity; a user without one gets no claim.
+	if email := user.Email(); email != "" {
+		claims["email"] = email
+	}
+
 	// Add role if the user implements a role interface
 	if roleUser, ok := user.(interface{ GetRole() string }); ok {
 		claims["role"] = roleUser.GetRole()

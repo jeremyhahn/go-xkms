@@ -729,3 +729,67 @@ func TestJWTAuthenticator_NoTenantID(t *testing.T) {
 	assert.Empty(t, identity.TenantID)
 	assert.True(t, IsCrossTenant(identity))
 }
+
+// TestJWTAuthenticator_EmailClaim proves the canonical login key claim is
+// surfaced on the identity (go-xkms#194).
+func TestJWTAuthenticator_EmailClaim(t *testing.T) {
+	privateKey, publicKey := generateTestKeyPair(t)
+
+	auth, err := NewJWTAuthenticator(&JWTConfig{PublicKey: publicKey})
+	require.NoError(t, err)
+
+	token := createTestToken(t, privateKey, jwt.MapClaims{
+		"sub":      "user123",
+		"username": "johndoe",
+		"email":    "john@example.com",
+		"exp":      time.Now().Add(time.Hour).Unix(),
+	})
+
+	req := httptest.NewRequest(http.MethodGet, "/", nil)
+	req.Header.Set("Authorization", "Bearer "+token)
+
+	identity, err := auth.AuthenticateHTTP(req)
+	require.NoError(t, err)
+	assert.Equal(t, "john@example.com", identity.Metadata["email"])
+	assert.Equal(t, "johndoe", identity.Metadata["username"])
+}
+
+// TestJWTAuthenticator_EmailClaimAbsentOrEmpty proves a token without an
+// email claim, or with an empty one, leaves the metadata key absent rather
+// than recording an empty login key.
+func TestJWTAuthenticator_EmailClaimAbsentOrEmpty(t *testing.T) {
+	privateKey, publicKey := generateTestKeyPair(t)
+
+	auth, err := NewJWTAuthenticator(&JWTConfig{PublicKey: publicKey})
+	require.NoError(t, err)
+
+	cases := map[string]jwt.MapClaims{
+		"absent": {
+			"sub": "svc",
+			"exp": time.Now().Add(time.Hour).Unix(),
+		},
+		"empty": {
+			"sub":   "svc",
+			"email": "",
+			"exp":   time.Now().Add(time.Hour).Unix(),
+		},
+		"non-string": {
+			"sub":   "svc",
+			"email": 42,
+			"exp":   time.Now().Add(time.Hour).Unix(),
+		},
+	}
+
+	for name, claims := range cases {
+		t.Run(name, func(t *testing.T) {
+			token := createTestToken(t, privateKey, claims)
+			req := httptest.NewRequest(http.MethodGet, "/", nil)
+			req.Header.Set("Authorization", "Bearer "+token)
+
+			identity, err := auth.AuthenticateHTTP(req)
+			require.NoError(t, err)
+			_, present := identity.Metadata["email"]
+			assert.False(t, present, "email must be absent, got %q", identity.Metadata["email"])
+		})
+	}
+}

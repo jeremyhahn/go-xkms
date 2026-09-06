@@ -1,6 +1,6 @@
 # WebAuthn Relying Party — API
 
-> **Status: NORMATIVE** · Feature: `webauthn` · Repo: `go-xkms` · Last verified: 2026-08-19
+> **Status: NORMATIVE** · Feature: `webauthn` · Repo: `go-xkms` · Last verified: 2026-09-06
 
 Transport shapes: [`../key-management/api.md`](../key-management/api.md)
 §"How the six transports are shaped".
@@ -65,6 +65,32 @@ handlers return an access/refresh pair; with a plain `JWTGenerator` they return
 a single token. The selection is a type assertion in the handler, so the same
 route serves both shapes depending on server configuration — a client must
 handle the shape its deployment produces.
+
+### `GET /api/v1/auth/me`
+
+`authMeResponse` (`pkg/api/rest/handlers_auth.go`) answers "who is this token
+for", and the TypeScript `AuthMeResponse` (`sdk/ts/src/types/auth.ts`) mirrors
+it field for field:
+
+| Field | Meaning |
+|---|---|
+| `subject` | the identity's subject; always present |
+| `tenant_id` | the tenant the principal belongs to |
+| `username` | the display login name |
+| `email` | the **canonical tenant-unique login key** — the identifier a client re-authenticates with |
+| `display_name` | human-readable name |
+| `auth_method` | how *this request* authenticated (`jwt` for a bearer request), not the ceremony that minted the token |
+| `roles`, `permissions`, `capabilities` | what the UI may show and the server offers |
+
+Every field but `subject` is `omitempty`. `email` is therefore **absent, not
+empty**, for a principal that has none — a service or bootstrap account bound
+only by certificate. It is never fabricated from the username, and a client
+must treat its absence as "this principal has no email login key" rather than
+falling back to `username`.
+
+The key rides the identity from wherever the principal was established — the
+qrdb-backed mTLS user record, the WebAuthn user, or an OIDC `email` claim — and
+is minted onto both halves of a token pair, so it survives a refresh.
 
 ## Status and error mapping
 
