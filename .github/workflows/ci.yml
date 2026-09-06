@@ -522,6 +522,14 @@ jobs:
   lint:
     name: Lint
     runs-on: ubuntu-latest
+    # Backstop above golangci-lint's own 30m budget (run.timeout in
+    # .golangci.yml, #360/#363), so a genuinely hung linter fails as a job
+    # timeout instead of running to the runner's implicit limit. Sized from
+    # this job's own history on the shared fleet: 22 completed Lint jobs on
+    # 2026-09-05/06 had a median of 9.2m and a worst of 16.9m (a run killed
+    # by a fleet recreate, not by lint), so 60m is several times the worst
+    # observed job and two full per-module lint budgets.
+    timeout-minutes: 60
 
     steps:
       - name: Checkout code

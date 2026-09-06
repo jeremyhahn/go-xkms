@@ -3365,7 +3365,7 @@ lint:
 		tags="$(LINT_TAGS_xkey)"; \
 		if [ "$$m" != "xkey" ]; then tags=""; fi; \
 		echo "$(CYAN)  → golangci-lint ($$m)$${tags:+ [tags: $$tags]}$(RESET)"; \
-		if ! ( cd "$$m" && $$GOLANGCI_LINT_BIN run --timeout=10m $${tags:+--build-tags "$$tags"} ); then \
+		if ! ( cd "$$m" && $$GOLANGCI_LINT_BIN run $${tags:+--build-tags "$$tags"} ); then \
 			echo "$(RED)$(BOLD)✗ Linting failed in $$m$(RESET)"; \
 			exit 1; \
 		fi; \

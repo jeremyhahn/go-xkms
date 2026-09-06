@@ -60,6 +60,22 @@ issues:
 
 version: "2"
 
+# Lint budget: 30m of WALL CLOCK, set here so `make lint`, the module
+# Makefiles and the golangci-lint-action workflows all share one value (#360,
+# #363). golangci-lint v2 disables the timeout by default; the previous bound
+# was a hard-coded --timeout=10m in the root Makefile. --timeout measures wall
+# clock from process start (golangci-lint's own instance lock included), so on
+# the shared self-hosted fleet it measures fleet load, not linter work: the
+# root module needed 11m57s at load ~30 on 24 cores (PR #351) and was killed
+# at 10m after analysis had effectively completed ("0 issues." printed before
+# the deadline on PR #362, run 11456). 30m clears the worst observed
+# contention (~12m here, ~19m on go-trusted-platform's twin #426) with the
+# same headroom `go test -timeout 30m` already assumes for Unit Tests in
+# ci.yml, chosen for exactly this per-package-default-too-tight reason.
+# Deliberately NOT retry-on-timeout: a retry would hide a genuine slowdown.
+run:
+  timeout: 30m
+
 linters:
   default: standard
   enable:
