@@ -80,6 +80,43 @@ check "$(cat "$T/CHANGELOG.md")" "$before" "changelog untouched on error"
 printf '# Changelog\n' > "$T/CHANGELOG.md"; mkdir -p "$T/e4"; printf -- '- x\n' > "$T/e4/fixed-x.md"
 assemble "$T/CHANGELOG.md" "$T/e4" "0.2.0" "2026-09-05" >/dev/null 2>&1 && bad "missing Unreleased accepted" || ok
 
+# --- assemble: a SECOND Unreleased heading fails (go-xkms#356) ----------
+# Two concatenated changelog documents make the splice point ambiguous, so
+# the release notes are bounded by whichever heading the tool happened to
+# pick. Refuse rather than write into an ambiguous file.
+mkcl; printf '\n## [Unreleased]\n\n### Added\n\n- other document\n' >> "$T/CHANGELOG.md"
+mkdir -p "$T/e6"; printf -- '- dup entry\n' > "$T/e6/fixed-dup.md"
+before=$(cat "$T/CHANGELOG.md")
+assemble "$T/CHANGELOG.md" "$T/e6" "0.2.0" "2026-09-05" >/dev/null 2>&1 && bad "duplicate Unreleased accepted" || ok
+check "$(cat "$T/CHANGELOG.md")" "$before" "changelog untouched on duplicate Unreleased"
+
+# --- the repository's own CHANGELOG.md is extractable (go-xkms#356) ----
+# `make release` cuts a version's notes with
+#   sed -n "/## \[$VERSION\]/,/^## \[/p"
+# so a release section runs to the next line beginning `## [`. Two things
+# follow, and neither is visible by reading one section in isolation.
+CL="$ROOT/CHANGELOG.md"
+
+check "$(grep -c '^## \[Unreleased\]' "$CL")" "1" "repo CHANGELOG has exactly one [Unreleased]"
+
+# A repeated version heading restarts the sed range, so BOTH sections are
+# emitted as that one version's notes.
+check "$(grep '^## \[' "$CL" | sort | uniq -d | wc -l | tr -d ' ')" "0" \
+	"repo CHANGELOG version headings are unique"
+
+# The oldest release has no terminator unless whatever follows it is itself
+# under a `## [` heading, so it would otherwise run to end of file.
+oldest=$(grep -n '^## \[' "$CL" | tail -1 | cut -d: -f1)
+total=$(wc -l < "$CL")
+check "$([ "$oldest" -lt "$total" ] && echo yes)" "yes" \
+	"repo CHANGELOG's last '## [' heading is not the final section"
+
+# Concretely: the oldest go-xkms release must not publish the absorbed
+# go-trusted-ca appendix as its own release notes.
+notes=$(sed -n '/## \[0\.1\.0-alpha\]/,/^## \[/{/^## \[/d;p;}' "$CL")
+printf '%s' "$notes" | grep -q 'Swagger UI' \
+	&& bad "0.1.0-alpha notes swallow the go-trusted-ca appendix" || ok
+
 # --- the --root seam (go-xkms#415, #416) --------------------------------
 #
 # Assembly is destructive: the CLI deletes every entry file it splices. A

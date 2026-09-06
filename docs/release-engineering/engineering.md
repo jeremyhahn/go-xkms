@@ -69,6 +69,32 @@ operation at a scratch copy. `release-alpha.sh` passes the tree it is writing
 to, which is the repository on a real cut and the `mktemp -d` copy under
 `--dry-run`.
 
+`assemble` refuses a `CHANGELOG.md` that does not carry **exactly one**
+`## [Unreleased]` heading. `make release` extracts a version's notes with
+
+```sh
+sed -n "/## \[$VERSION\]/,/^## \[/{...;p;}" CHANGELOG.md
+```
+
+so a release section runs from its heading to the next line beginning `## [`.
+A second `[Unreleased]` makes that bound ambiguous: the notes are truncated or
+swallow a neighbouring document's entries depending on which occurrence the
+tool picks (go-xkms#356). A file that reached that state is refused rather
+than spliced into blindly.
+
+Two properties of `CHANGELOG.md` follow from that `sed`, and both are load
+bearing:
+
+- **A version heading must be unique.** The range restarts, so two `##
+  [0.1.0-alpha]` headings emit *both* sections as one release's notes.
+- **Nothing may trail the oldest release section except under a heading that
+  itself begins `## [`.** The last section has no terminator otherwise and
+  runs to end of file. This is why the absorbed go-trusted-ca history sits
+  under `## [go-trusted-ca] - merged 2026-04-16` rather than a prose heading,
+  and why its own version headings are demoted to `###`: the bracketed
+  heading bounds the oldest go-xkms release, and the demoted ones cannot be
+  mistaken for go-xkms releases.
+
 ## Invariants
 
 - The version is an input. No step reads the tag namespace to decide *what* to

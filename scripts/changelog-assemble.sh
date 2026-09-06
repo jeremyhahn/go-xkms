@@ -57,8 +57,8 @@ assemble() {
 	local changelog="$1" dir="$2" version="$3" date="$4"
 
 	[ -f "$changelog" ] || { echo "changelog-assemble: $changelog not found" >&2; return 1; }
-	grep -q '^## \[Unreleased\]' "$changelog" || {
-		echo "changelog-assemble: $changelog has no ## [Unreleased] heading" >&2; return 1; }
+	[ "$(grep -c '^## \[Unreleased\]' "$changelog")" = 1 ] || {
+		echo "changelog-assemble: $changelog needs exactly one ## [Unreleased] heading" >&2; return 1; }
 
 	local files=()
 	if [ -d "$dir" ]; then

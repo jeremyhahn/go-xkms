@@ -2,7 +2,7 @@
 
 All notable changes to this project will be documented in this file.
 
-The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
+The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
@@ -4294,30 +4294,32 @@ All interfaces expose the complete KeyStore API (17/17 methods).
 
 ---
 
-## Merged from go-trusted-ca (2026-04-16)
+## [go-trusted-ca] - merged 2026-04-16
 
 The go-trusted-ca repository was merged into go-xkms. All ACME-related
 functionality now lives under `pkg/acme/`. The following sections are
-imported from go-trusted-ca's CHANGELOG for historical reference.
+imported from go-trusted-ca's CHANGELOG for historical reference. They
+record that project's own releases under **go-trusted-ca's** numbering,
+never go-xkms's, so no go-xkms version ever shipped them.
 
-# Changelog
+This heading is bracketed, and their headings sit one level below it, on
+purpose. `make release` extracts a version's notes with
+`sed -n "/## \[<version>\]/,/^## \[/p"`, so a release section runs to the
+next line beginning `## [`. Without a bracketed heading here the oldest
+go-xkms release would run to end of file and publish this appendix as its
+own release notes (go-xkms#356).
 
-All notable changes to this project will be documented in this file.
+### go-trusted-ca [Unreleased] (at merge)
 
-The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
-and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
+#### Added
 
-## [Unreleased]
-
-### Added
-
-#### API Documentation
+##### API Documentation
 - **Swagger UI** at `/docs` for interactive API exploration
 - **ACME API OpenAPI spec** (`/openapi/acme-api.yaml`) - Full RFC 8555 documentation
 - **Admin API OpenAPI spec** (`/openapi/admin-api.yaml`) - Administrative endpoints
 - Spec switching via query parameter (`?spec=admin-api`)
 
-#### Monitoring & Observability
+##### Monitoring & Observability
 - **Grafana Dashboard** (`deploy/grafana/dashboard.json`)
   - SLO tracking (99.9% availability, 99% challenge success)
   - Error budget tracking
@@ -4326,7 +4328,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - Challenge validation rates by type
   - System resource monitoring (CPU, memory, goroutines, GC)
 
-#### Multi-Arch Docker Builds
+##### Multi-Arch Docker Builds
 - GitHub Actions workflow for automated multi-arch builds
 - Support for `linux/amd64` and `linux/arm64`
 - Trivy security scanning on every build
@@ -4335,11 +4337,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
-## [0.1.0-alpha] - 2026-01-02
+### go-trusted-ca [0.1.0-alpha](https://github.com/jeremyhahn/go-trusted-ca/releases/tag/v0.1.0-alpha) - 2026-01-02
 
-### Added
+#### Added
 
-#### ACME Server (RFC 8555 Compliant)
+##### ACME Server (RFC 8555 Compliant)
 - Full RFC 8555 ACME protocol implementation
 - Directory endpoint with capability discovery
 - Account management (create, update, deactivate, key rollover)
@@ -4347,26 +4349,26 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Certificate issuance and revocation
 - Nonce management and replay protection
 
-#### Challenge Types
+##### Challenge Types
 - **HTTP-01**: Standard domain validation via HTTP token
 - **DNS-01**: Domain validation via DNS TXT records
 - **device-attest-01**: TPM 2.0 device attestation per draft-acme-device-attest
 - **enroll-01**: TCG-compliant IDevID enrollment for TPM-equipped devices
 - **endorse-01**: Endorsement Key certificate provisioning
 
-#### Multi-Tenancy
+##### Multi-Tenancy
 - Tenant isolation with dedicated CAs
 - Per-tenant key management via go-xkms KMS
 - RBAC role-based access control
 - RBAC policies with CEL expressions
 
-#### Admin API
+##### Admin API
 - RESTful management interface
 - Tenant lifecycle management
 - Policy and role administration
 - CA status and health monitoring
 
-#### Storage Backends
+##### Storage Backends
 - All go-xkms backends supported:
   - Local filesystem (PKCS#8)
   - TPM 2.0 hardware protection
@@ -4377,32 +4379,28 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - HashiCorp Vault
 - Certificate storage via go-objstore
 
-#### Security
+##### Security
 - JWT-based authentication
 - TLS 1.3 support
 - Rate limiting with RFC 8555 compliance
 - Proxy header support (X-Forwarded-For, X-Real-IP)
 
-#### Deployment
+##### Deployment
 - Single-node embedded mode
 - Raft-based clustering via QRDB
 - Docker container support
 - Prometheus metrics endpoint
 
-#### Developer Experience
+##### Developer Experience
 - Comprehensive test coverage (90%+ on core packages)
 - Integration test suite with Docker
 - Example configurations and quickstart guide
 
-### Dependencies
+#### Dependencies
 - go-xkms v0.2.2-alpha
 - go-objstore v0.1.4-alpha
 - go-qrdb (local development)
 
-### Known Limitations
+#### Known Limitations
 - TCG-CSR-IDEVID parsing partially implemented
 - Client package coverage at 74.8% (TPM functions require integration tests)
-
----
-
-[0.1.0-alpha]: https://github.com/jeremyhahn/go-trusted-ca/releases/tag/v0.1.0-alpha
