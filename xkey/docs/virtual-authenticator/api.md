@@ -1,6 +1,6 @@
 # Virtual FIDO2 Authenticator — API
 
-> **Status: NORMATIVE** · Feature: `virtual-authenticator` · Module: `go-xkms/xkey` · Last verified: 2026-08-19
+> **Status: NORMATIVE** · Feature: `virtual-authenticator` · Module: `go-xkms/xkey` · Last verified: 2026-09-06
 
 ## The API is CTAP2 over USB HID
 
@@ -32,6 +32,34 @@ extension (`ext_deviceconfig.go`).
 
 `authenticatorGetInfo` is what a client uses to discover all of the above;
 capabilities are not assumed.
+
+### Vendor subcommands of `authenticatorConfig`
+
+`authenticatorConfig` (`0x0D`) carries a vendor-prototype range above `0x80`
+that administers the token's Security Officer role (`cmd_config.go`). The
+lifecycle ones:
+
+| Subcommand | Method it dispatches to | Requires |
+|---|---|---|
+| `setSOPIN` | `Authenticator.InitializeToken` | nothing — the token has no SO yet |
+| `changeSOPIN` | `Authenticator.ChangeSOPIN` | the current SO PIN |
+| `unlockWithSOPIN` | `Authenticator.UnlockSO` | the SO PIN |
+| `getTokenInfo` | `Authenticator.TokenFlags` | nothing — read-only, returns no secret |
+
+Every mutating vendor handler — `resetUserPIN`, `replaceAttestKey`,
+`setAttestCert`, `setRPPolicy`, `deleteRPPolicy`, `setProfile` — begins at
+`requireSOUnlocked`, which distinguishes the two refusals that would otherwise
+look identical: a token with no Security Officer at all
+(`ErrTokenUninitialized`) and a Security Officer who has not authenticated
+(`ErrKeyManagerLocked`). It never permits. The read-only policy queries
+(`getRPPolicy`, `listRPPolicies`) return no secret and are not SO-gated.
+
+`setSOPIN` carries no `pinUvAuthParam` because there is nothing yet to
+authenticate against. `InitializeToken` bounds that trust-on-first-use window
+with CTAP 2.1 §6.9's own two conditions — accepted only within
+`Config.TokenInitWindow` (10 s) of power-up, and requiring user presence. The
+offline CLI path (`xkey fido2 init-token`) constructs the authenticator itself,
+so neither bound constrains it; `cli.md` records what does.
 
 ## Two front ends
 

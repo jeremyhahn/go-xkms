@@ -1038,8 +1038,8 @@ func TestProvisionAttestation_RefusesWhileTheDaemonRuns(t *testing.T) {
 	if err == nil {
 		t.Fatalf("provisioning succeeded while the daemon was running (output: %s)", output)
 	}
-	if !errors.Is(err, ErrAttestProvisionDaemonRunning) {
-		t.Errorf("error = %v, want %v", err, ErrAttestProvisionDaemonRunning)
+	if !errors.Is(err, ErrFIDO2DaemonRunning) {
+		t.Errorf("error = %v, want %v", err, ErrFIDO2DaemonRunning)
 	}
 	if stub.calls != 0 {
 		t.Error("the CA was contacted while the daemon was running")
@@ -1085,8 +1085,8 @@ func TestFIDO2DaemonRunning_AnUnanswerableProbeIsAnError(t *testing.T) {
 	if err == nil {
 		t.Fatal("an unanswerable probe was reported as a clean result")
 	}
-	if !errors.Is(err, ErrAttestProvisionDaemonCheckFailed) {
-		t.Errorf("error = %v, want wrapped %v", err, ErrAttestProvisionDaemonCheckFailed)
+	if !errors.Is(err, ErrFIDO2DaemonCheckFailed) {
+		t.Errorf("error = %v, want wrapped %v", err, ErrFIDO2DaemonCheckFailed)
 	}
 	if running {
 		t.Error("an unanswerable probe reported a running daemon")

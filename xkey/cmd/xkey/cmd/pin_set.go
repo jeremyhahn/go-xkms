@@ -19,14 +19,26 @@ import (
 	"github.com/spf13/cobra"
 )
 
-// pinSetSOCmd sets the Security Officer PIN.
+// pinSetSOCmd sets the host PIN service's Security Officer PIN.
+//
+// This is not the virtual authenticator's Security Officer PIN. The two wear
+// the same name and are unrelated credentials over unrelated stores: this one
+// is the qrdb PIN service's, under the data directory; the authenticator's is
+// state.SOPINManager, established by `xkey fido2 init-token`. The help text
+// says so in both directions, which is the whole disambiguation — one verb
+// writing two credentials would be worse than two verbs with similar names.
 var pinSetSOCmd = &cobra.Command{
 	Use:   "set-so",
-	Short: "Set the Security Officer PIN",
+	Short: "Set the host PIN service's Security Officer PIN",
 	Long: `Set the Security Officer (SO) PIN.
 
 The SO PIN is the master credential for PIN management. It must be set
 before user PINs can be configured.
+
+This is the host PIN service's SO PIN, stored under the data directory. The
+virtual FIDO2 authenticator has its own, unrelated Security Officer credential:
+establish that one with "xkey fido2 init-token" and change it with
+"xkey fido2 change-so-pin". Setting one here does not change the other.
 
 If the SO PIN is already set, you will be prompted for the current SO PIN
 before setting the new one.

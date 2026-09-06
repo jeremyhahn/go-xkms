@@ -107,6 +107,60 @@ Anything that can reach that debugging port can drive the authenticator.
 xkey fido2 status
 ```
 
+## The token lifecycle — `init-token` and `change-so-pin`
+
+The authenticator has two credentials with different jobs. The **user PIN**
+authorises ceremonies; the **Security Officer PIN** authorises administration —
+provisioning the attestation identity, replacing the attestation key, resetting
+a forgotten user PIN, writing per-relying-party policy. These are xKey's
+`C_InitToken` and `C_SetPIN` as SO (PKCS#11 v3.0 §5.6).
+
+A device is **uninitialized** until it has an SO PIN, and an uninitialized
+device refuses every SO-gated operation. "No Security Officer PIN" is a
+refusal, never a waiver.
+
+| Verb | Purpose | Requires |
+|---|---|---|
+| `fido2 init-token` | Establish the SO PIN. Runs once. | nothing — the token has no SO yet |
+| `fido2 change-so-pin` | Replace the SO PIN. | the current SO PIN |
+
+```
+xkey fido2 init-token
+xkey fido2 change-so-pin
+```
+
+Both write the persisted device state `fido2.storage` and `fido2.storage_path`
+name — the same state the daemon reads — so both refuse while the daemon is
+running (it owns that state and would overwrite the change) and on `memory`
+storage (nothing would survive the process). `--socket` names the socket used
+for the liveness check; there are no other flags, because the storage comes from
+configuration, not from a flag the daemon would not see.
+
+`init-token` establishes and never replaces: a device that already has an SO
+PIN is refused, before you are asked to choose one. After initialization the SO
+PIN changes only through `change-so-pin`, which proves the current PIN and
+spends a persisted retry when it is wrong; `authenticatorReset` is the only way
+back to uninitialized.
+
+**`xkey pin set-so` is a different subject.** It sets the *host* PIN service's
+SO PIN, a separate credential under the data directory. Changing one does not
+change the other.
+
+### What actually authorises the first one
+
+The first SO PIN cannot be authenticated against anything — there is no
+Security Officer yet. Over CTAP that window is bounded the way CTAP 2.1 §6.9
+bounds `authenticatorReset`: only within ten seconds of power-up, and only with
+user presence. **Neither bound constrains a local operator here**, because the
+command starts the authenticator itself and the presence prompt asks the same
+person who just typed the PIN. The control that applies is the file permissions
+on the device's state directory, and `init-token` says so rather than implying
+a check that did not fire.
+
+Record the SO PIN somewhere outside the device. It is not kept in xKey's
+password store — that store is unlocked by the *user* PIN, and the SO PIN is
+what recovers a forgotten user PIN — so nothing can show it to you again.
+
 ## `xkey uhid`
 
 Device-level setup and per-relying-party policy.

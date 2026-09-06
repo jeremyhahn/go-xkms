@@ -108,6 +108,8 @@ can reach that port can use it — keep it on loopback and off shared machines.
 | PIN blocked | too many wrong attempts | the authenticator's PIN retry policy, same as real hardware |
 | a `tpm2` backend refuses to start | the TPM is unreachable | it will not fall back to software — fix the TPM |
 | it works for you but not for an agent | the agent cannot touch anything | send the PIN with the ceremony and run with `--require-touch=false`, or have the agent call `xkey touch` |
+| "this device has no Security Officer PIN" | the token was never initialized, so administrative operations are refused | `xkey fido2 init-token` — see [`cli.md`](cli.md#the-token-lifecycle--init-token-and-change-so-pin) |
+| "the FIDO2 daemon is running and owns the device state" | `init-token`, `change-so-pin` and `provision-attestation` write persisted state the running daemon would overwrite | stop the daemon, run the command, start it again |
 
 ## Where to go next
 

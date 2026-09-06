@@ -109,6 +109,35 @@ first run and the wrong one for daily use.
   and the daemon surfaces that as `ErrFIDO2PINAlreadySet` — so a restart with
   `--set-pin` against a persistent store cannot silently rewrite the PIN or
   reset its retry counter. There is no testing-only PIN setter (#377).
+- **A first SO PIN has one establishment path too.** The CTAP
+  `authenticatorConfig` vendor subcommand `setSOPIN` and the in-process
+  `Authenticator.InitializeToken` (which `xkey fido2 init-token` calls) are the
+  same method: `handleVendorSetSOPIN` passes straight through to it. It refuses
+  an initialized token with `ErrKeyManagerAlreadyInitialized` under the state
+  lock, so establishment never replaces. `Authenticator.ChangeSOPIN`
+  (`xkey fido2 change-so-pin`, vendor `changeSOPIN`) is the only successor path
+  and proves the current PIN by authenticated decryption of the wrapped Admin
+  Key, spending a persisted retry on failure. `authenticatorReset` is the only
+  way back to uninitialized (#233).
+- **`state.SOPINManager.IsSet` is the single source of truth for "initialized".**
+  Initialization *is* establishing the SO PIN; a second boolean would only be a
+  second thing to disagree. `Authenticator.TokenFlags` derives the PKCS#11
+  `CKF_TOKEN_INITIALIZED` / `CKF_SO_PIN_*` view from it, and renders an
+  uninitialized token as `uninitialized` rather than as an empty flag set — "no
+  flags" and "no Security Officer required" must never read alike.
+- **The SO PIN is never stored in the device's own password store.** That store
+  is unlocked by the user PIN, and the SO PIN's job is to reset a forgotten user
+  PIN; keeping one inside the other makes the recovery credential recoverable
+  only by the credential it recovers (#290). It is entered at the prompt and
+  held nowhere else.
+- **CTAP 2.1 §6.9's bounds on first initialization are real over a transport and
+  vacuous on the offline CLI path.** `poweredUpAt` is set in
+  `NewAuthenticator`, so a command that constructs the authenticator opens the
+  window itself, and the presence prompt asks the operator who just typed the
+  PIN. `xkey fido2 init-token` therefore names the control that does apply —
+  file permissions on the state directory — instead of reporting a bound that
+  cannot fire. Its presence handler is still explicit and interactive, never an
+  auto-grant, so a denial refuses.
 
 ## Error semantics
 

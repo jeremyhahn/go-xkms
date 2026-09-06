@@ -30,7 +30,6 @@ import (
 	"github.com/jeremyhahn/go-xkms/sdk/go/transport"
 	"github.com/jeremyhahn/go-xkms/xkey/pkg/authenticator"
 	"github.com/jeremyhahn/go-xkms/xkey/pkg/authenticator/keybackend"
-	"github.com/jeremyhahn/go-xkms/xkey/pkg/ipc"
 )
 
 // This file is the operator-facing half of xKey's Basic attestation: the
@@ -54,14 +53,6 @@ var (
 	// configured with memory storage, where a provisioned identity would be
 	// discarded when the process exits.
 	ErrAttestProvisionVolatileStorage = errors.New("provision-attestation: memory storage cannot hold an attestation identity; configure fido2.storage as 'file' or 'barrier'")
-
-	// ErrAttestProvisionDaemonRunning indicates the FIDO2 daemon holds the
-	// authenticator state, so a change written here would be overwritten.
-	ErrAttestProvisionDaemonRunning = errors.New("provision-attestation: the FIDO2 daemon is running and owns the device state; stop it first")
-
-	// ErrAttestProvisionDaemonCheckFailed indicates the daemon liveness probe
-	// itself failed, so it is not known whether the daemon holds the state.
-	ErrAttestProvisionDaemonCheckFailed = errors.New("provision-attestation: could not determine whether the FIDO2 daemon is running")
 
 	// ErrAttestProvisionAlreadyProvisioned indicates the device already
 	// presents an attestation certificate.
@@ -242,7 +233,7 @@ func runFIDO2ProvisionAttestation(cmd *cobra.Command, _ []string) error {
 		return err
 	}
 	if running {
-		return ErrAttestProvisionDaemonRunning
+		return ErrFIDO2DaemonRunning
 	}
 
 	storage, err := createFIDO2Storage(cfg)
@@ -251,21 +242,12 @@ func runFIDO2ProvisionAttestation(cmd *cobra.Command, _ []string) error {
 	}
 	defer func() { _ = storage.Close() }()
 
-	// The presence handler is a required, explicit obligation: NewAuthenticator
-	// refuses a nil handler rather than auto-granting. This flow issues only
-	// SO-gated authenticatorConfig vendor commands, none of which consult the
-	// handler, so nothing here prompts for a touch today — authorization is the
-	// interactively entered SO PIN, not a presence ceremony. The handler is
-	// still interactive, on the command's own streams, deliberately: if a
-	// future authenticator change starts requiring presence on one of these
-	// commands (token initialization already does), the operator is asked at
-	// the terminal they are already sitting at, instead of an auto-grant
-	// silently waiving a check nobody decided to waive.
-	auth, err := authenticator.NewAuthenticator(&authenticator.Config{
-		AAGUID:              authenticator.DefaultAAGUID,
-		Storage:             storage,
-		UserPresenceHandler: authenticator.NewInteractiveHandlerWithIO(cmd.InOrStdin(), out, -1),
-	})
+	// This flow issues only SO-gated authenticatorConfig vendor commands, none
+	// of which consult the presence handler, so nothing here prompts for a
+	// touch today — authorization is the interactively entered SO PIN, not a
+	// presence ceremony. newOfflineAuthenticator still installs an interactive
+	// handler rather than an auto-grant, for the reason stated there.
+	auth, err := newOfflineAuthenticator(cmd.InOrStdin(), out, storage)
 	if err != nil {
 		return &SentinelCauseError{Sentinel: ErrAttestProvisionDeviceOpenFailed, Cause: err}
 	}
@@ -610,29 +592,6 @@ func sendVendorCommand(
 		return nil, &SentinelCauseError{Sentinel: ErrAttestProvisionResponseInvalid, Cause: err}
 	}
 	return decoded, nil
-}
-
-// fido2DaemonRunning reports whether the FIDO2 daemon is listening.
-//
-// Only "the socket is not there" and "nothing is listening on it" mean the
-// daemon is absent. Any other failure leaves the question unanswered, and
-// provisioning past an unanswered question is how a device ends up with an
-// identity the daemon then overwrites, so it is an error.
-func fido2DaemonRunning(socketPath string) (bool, error) {
-	if socketPath == "" {
-		socketPath = ipc.DefaultSocketPath()
-	}
-
-	client := ipc.NewClient(socketPath)
-	defer func() { _ = client.Close() }()
-
-	if _, err := client.Status(); err != nil {
-		if errors.Is(err, ipc.ErrDaemonNotRunning) {
-			return false, nil
-		}
-		return false, &SentinelCauseError{Sentinel: ErrAttestProvisionDaemonCheckFailed, Cause: err}
-	}
-	return true, nil
 }
 
 // formatAAGUID renders an AAGUID in the canonical RFC 4122 form a relying

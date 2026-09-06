@@ -90,6 +90,10 @@ PINs provide authentication for sensitive operations. The SO PIN acts as
 the master credential, while the User PIN is for day-to-day operations.
 Both are hashed with Argon2id and persisted securely.
 
+These are the host PIN service's credentials, under the data directory. The
+virtual FIDO2 authenticator has its own Security Officer PIN, a separate
+credential over separate state: see "xkey fido2 init-token".
+
 Lockout protection automatically locks PINs after too many failed attempts
 with configurable exponential backoff.
 
