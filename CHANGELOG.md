@@ -7,6 +7,442 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.9.5-alpha] - 2026-09-06
+
+### Security
+
+- **Two SO policy controls that were recorded but never enforced now fire: the `enterprise` attestation override requires the RP's entitlement, and a tampered policy locks user-mode operations.** #216 D reported that `RPPolicy.AttestationOverride` — a WebAuthn conveyance *preference* — was written into the attestation *statement format* slot, so `direct`, `indirect` and `enterprise` all produced `fmt: none`. The vocabulary translation itself is already on main from 03c9c9ab (#215): `resolveAttestationOverride` maps the preference to the configured format and refuses with `ErrAttestationOverrideUnsupported` rather than degrading. What this adds is the one preference 03c9c9ab left fail-open: `enterprise` resolved to the configured format for any RP, so an SO mandate for enterprise attestation was honoured with the ordinary statement for an RP that was never entitled to it. `resolveAttestationOverride` now takes the policy and applies the entitlement the request path already demands — `enable-enterprise-attestation` on the authenticator **and** `Enterprise` on the RP's policy — refusing with the new typed `ErrEnterpriseAttestationNotEntitled` (`CTAP2_ERR_OPERATION_DENIED`), checked before the configured format so the refusal names the real reason. #216 E1: `Authenticator.TamperDetected` had one writer and no reader, so a device booting with a policy whose HMAC failed served makeCredential, getAssertion and credential management normally while its doc comment promised a lock. One predicate, `requirePolicyIntegrity`, now refuses every user-mode CTAP command in `ProcessCBORWithContext` before the request is decoded, and the Go API `MakeCredential` and `GetAssertion` that bypass the dispatch, with the new typed `ErrPolicyTamperLocked` (`CTAP2_ERR_INTEGRITY_FAILURE`). `getInfo` and `selection` stay answerable so a locked device remains discoverable, and `getInfo` reports the state under the vendor option `policyTamperLocked: true`, present only while locked. **What sets the flag:** the authenticator opens with a policy integrity provider and the stored HMAC tag does not verify over the current signed field set; a schema change from a routine upgrade does not set it. **Cost of a false positive:** the device serves no user until the Security Officer recovers it; credentials and PINs are untouched and no reflash or reset is needed. **Recovery:** the SO re-signs the policy over the device's actual configuration (`PolicyManager().Sign` on the current state, persist it) and re-opens the authenticator, after which verification passes and user-mode commands are served again. The flag is never cleared at runtime. Files: `xkey/pkg/authenticator/authenticator.go`, `cmd_makecredential.go`, `cmd_getassertion.go`, `cmd_getinfo.go`, `errors.go`; docs in `xkey/docs/fido2/authenticator-security.md`, `xkey/docs/fido2/authenticator-api.md`, `xkey/docs/configuration/enterprise-mode.md`. Verified by `so_policy_controls_test.go`: `direct`/`indirect` produce a packed statement, an entitled `enterprise` override produces one, each half of the entitlement removed is refused with the typed error, every user-mode command and both Go API paths refuse while locked, discovery still answers and reports the lock, and an SO re-sign clears the flag, drops the getInfo option and restores registration over CTAP. Mutation-checked: removing the entitlement check, the dispatch gate, the Go API gates, the getInfo option, or the re-sign's tag update each turns its test red. Addresses #216 D (enterprise remainder) and E1; E2 landed with 03c9c9ab, E3 is recorded as a constant that cannot mismatch, and F was retracted as dead schema.
+- **The HID no-credentials deferral answer now respects credProtect.** `HasMatchingCredentials`, which decides whether a getAssertion is answered at once or deferred to another authenticator, reported that a credential existed for an RP regardless of its protection level. That decision is observable on the HID interface, so any process that could reach it learned whether the device held a credential for `rp.example` — the existence oracle #217 closed for `excludeList` and #215 closed for assertions, surviving on a third path. The heuristic now establishes the request's user-verification state with the same non-consuming pinUvAuthToken check getAssertion uses and applies the CTAP 2.1 §12.1 rules through one shared filter (`usableCredentialsForAssertion`): a level-3 credential is invisible without user verification and a level-2 credential is invisible to an RP enumeration without it. The indexed storage backend keeps the discoverable fast path at zero storage I/O by carrying each credential's protection level in its in-memory index — recorded on every `Store`, rewritten on update, rebuilt from stored credentials on load — and `CredentialIndexer.HasDiscoverableForRP` now takes the user-verification state. An index entry whose level was never recorded is treated as level 3, so a missing level fails closed. **Behaviour change for multi-authenticator deployments:** a request this authenticator could only answer with user verification is now deferred exactly as if it held nothing; a platform that wants the protected credential obtains a pinUvAuthToken first, which already commits it to this authenticator and ends deferral. Files: `xkey/pkg/authenticator/authenticator.go`, `cmd_getassertion.go`, `config.go`, `storage_backend.go`; docs in `xkey/docs/fido2/authenticator-security.md`. Verified by `credprotect_deferral_test.go`, which runs every scenario on both the scan and the indexed path and fails on the previous code, plus index tests proving the level survives a rebuild and that an unrecorded level is protected. Closes #261.
+- **`xkey fido2 --set-pin` seeded the daemon's PIN through
+  `SetPINForTesting`, a helper documented as not-for-production, which wrote
+  the PIN hash straight into state** (#377). `xkey/pkg/authenticator/
+  cmd_clientpin.go`, `errors.go`, `xkey/cmd/xkey/cmd/fido2.go`.
+
+  Measured against the CTAP `setPIN` path (`handleSetPIN`), the helper
+  skipped four things: the "no PIN currently set" precondition, so a restart
+  with `--set-pin` against a file or barrier store silently **replaced** the
+  stored PIN; the retry-counter reset became a way to clear a partially
+  exhausted counter without proving the PIN; the outstanding-`pinUvAuthToken`
+  invalidation that #322 added to the real path (a token minted against
+  built-in UV before any PIN existed stayed usable); and the typed
+  `ErrStorageError` on persistence failure. Only the minimum-length check was
+  shared. The wire-level `pinUvAuthParam` proof was also skipped, and that one
+  is legitimate for an in-process caller — it exists to authenticate a remote
+  platform.
+
+  A first PIN now has one establishment path, `establishPINLocked`: the CTAP
+  `setPIN` subcommand reaches it after its wire proof, and the new production
+  API `Authenticator.SetInitialPIN` reaches it directly. Both enforce the
+  minimum length, reset the retry counter, invalidate and wipe any outstanding
+  `pinUvAuthToken` before persisting, and report persistence failure as
+  `ErrStorageError` with the cause joined. `SetInitialPIN` refuses an
+  authenticator that already has a PIN with the typed `ErrPINAlreadySet` — an
+  existing PIN is replaced only by `changePIN`, which proves the current one.
+  The daemon's `--set-pin` seeding calls `SetInitialPIN` and surfaces the
+  already-set case as the distinct `ErrFIDO2PINAlreadySet`, telling the
+  operator to drop the flag or change the PIN through a FIDO2 client, rather
+  than starting with a rewritten PIN. `SetPINForTesting` is deleted; every
+  test used it on a fresh authenticator, which is exactly `SetInitialPIN`'s
+  contract, so the tests migrated to the production API.
+
+  Verified by tests that fail with the defect re-introduced: removing the
+  precondition turns the refused-when-set test and the daemon's file-store
+  restart test red; dropping the shared invalidation turns the
+  `SetInitialPIN` token test **and** #322's wire `setPIN` token test red,
+  which is what proves the path is shared rather than duplicated. Also
+  covered: establishment persists and the real `getPinUvAuthToken` ceremony
+  accepts the PIN; a policy-violating PIN is refused and leaves no state or
+  token damage; a storage failure is typed; the daemon seeds on a first start,
+  refuses a short PIN, and comes back up with the persisted PIN when
+  `--set-pin` is omitted.
+- **A partial RP policy write silently cleared the SO's UV, attestation,
+  enterprise and block settings, and concurrent policy writers silently lost
+  updates** (#321, #326). `xkey/pkg/authenticator/rp_policy.go`,
+  `rp_policy_update.go` (new), `rp_policy_entity.go`,
+  `dao_rp_policy_store.go`, `rp_policy_memory.go`, `rp_policy_backend.go`,
+  `cmd_config.go`, `xkey/cmd/xkey/cmd/fido2_policy.go`.
+
+  `RPPolicyStore.SetPolicy` replaces the whole record, and both partial-field
+  callers — the CTAP `SetRPPolicy` vendor command and `xkey fido2 policy set`
+  — built the record from only the fields the request carried. Changing one
+  setting cleared every other one to its **permissive** zero value:
+  `UVOverride: "required"` reverted to "use the RP's request", the forced
+  attestation override vanished, and an RP block was lifted by any write that
+  omitted `blocked`. The wire could always express presence (the CBOR map's
+  key set, cobra's `Changed`); the domain type discarded it.
+
+  Presence now has a home of its own: `RPPolicyUpdate` carries a pointer per
+  field (nil = leave stored value unchanged, pointer-to-zero = explicit
+  clear), and `RPPolicyStore.UpdatePolicy` applies it onto the freshly-read
+  stored record in every store implementation. The stored `RPPolicy` and
+  every enforcement read stay plain, non-pointer values — no new nil checks
+  on the block-enforcement path. Both partial-field callers now build an
+  `RPPolicyUpdate` from the presence they observe while decoding; `SetPolicy`
+  remains the full-record replace used by migration and the GUI's
+  fully-populated policy form.
+
+  The read-modify-write is also no longer a racy Get-then-Save (#326):
+  `RPPolicyEntity` implements the DAO's `Versioned` contract, every save goes
+  through `SaveWithCondition` guarded on the observed version with a bounded
+  retry, and a writer that loses every retry receives the typed
+  `ErrRPPolicyConflict` instead of reporting success over a lost update.
+  Because the pinned SDK documents `SaveWithCondition` as a read followed by
+  a write rather than an atomic CAS, the store additionally serializes its
+  own writers on a mutex — the version condition catches writers using a
+  separate store instance over the same records.
+
+  Verified by regression tests that fail with the defect re-introduced: a
+  two-key CBOR vendor request and a `--blocked`-only CLI invocation against a
+  populated RP preserve every other field; blocking an RP survives unrelated
+  writes; an explicit `blocked=false` still unblocks; two concurrent
+  updaters carrying different fields both land under `-race` (100
+  iterations); and a writer that keeps losing the version race gets
+  `ErrRPPolicyConflict` after exactly the bounded number of re-reads.
+- **`XKMSService.ImportKey` dropped the request's `TenantID`, so a tenant's
+  key import bypassed tenant isolation and landed in the untenanted
+  namespace** (#163; the read-path half of #162 for symmetric keys).
+  `pkg/xkms/backend_importexport.go` (new), `pkg/xkms/backend_tenant.go`,
+  `pkg/xkms/servicer_key.go`, `pkg/xkms/service.go`,
+  `pkg/xkms/piv_keygen_backend.go`, `pkg/keyprovider/symmetric/metadata.go`,
+  `pkg/keyprovider/symmetric/backend.go`.
+
+  The service resolved a `TenantScopedBackend` from `req.TenantID` and then
+  discarded it one line later: the import/export capability was only reachable
+  through `KeyProvider()`, which returns the *base* provider and drops the
+  wrapper — and with it `scopeAttrs`, the only thing that stamps the tenant.
+  The one operation that takes key material from outside was the one the
+  tenant wrapper did not cover: a tenant's import stored under the untenanted
+  identifier (where it could collide with, and before #165 silently destroy,
+  an untenanted key of the same name), and was invisible to the importing
+  tenant's own `ListKeys`.
+
+  The fix closes the seam once for every transport rather than per-caller.
+  `TenantScopedBackend` now offers the capability itself — a new
+  `ImportExporter` interface carrying the operational surface of
+  `backend.ImportExportBackend` (the wrapper cannot satisfy the full
+  interface: `Backend.RotateKey` and `types.KeyProvider.RotateKey` share a
+  name with different signatures) — scoping every attribute set exactly as
+  `GetKey`/`GenerateRSA` always have, and refusing with the existing typed
+  `ErrBackendUnsupported`/`ErrImportExportNotSupported` when its base lacks
+  the capability. All eighteen `KeyProvider().(backend.ImportExportBackend)`
+  unwrap sites in `servicer_key.go`, `service.go` and `piv_keygen_backend.go`
+  now resolve through one `importExportFor` helper that prefers the wrapper's
+  own implementation; unscoped backends resolve through their provider
+  exactly as before, so untenanted callers are byte-for-byte unchanged.
+
+  The metadata half: an imported symmetric key's tenant was still lost on the
+  way out, because the symmetric provider's metadata record carried no
+  `TenantID`/`Partition` and its `ListKeys` reconstructs them from identifier
+  segment count — which cannot tell `acme:software:secret:k:aes256-gcm` (a
+  tenant) from a partition, and read the tenant back as a partition. The
+  record gains both fields at schema version 3 and `ListKeys` prefers a v3
+  record over the segment guess, mirroring what the PKCS#8 provider's record
+  has done since its v1 (the asymmetric leg of #162 was fixed by ff630179;
+  this change makes the tenant actually reach that record on import).
+
+  Verified by tenant/untenanted same-name collision, tenant-visibility,
+  asymmetric metadata round-trip, unsupported-provider and legacy-record
+  tests in `pkg/xkms` and `pkg/keyprovider/symmetric`; each fix test was
+  mutation-checked by re-introducing the unwrap, dropping the asymmetric
+  metadata write, and ignoring the v3 record — every mutation turns the
+  matching test red.
+
+### Added
+
+- **`cluster.raft_enrollment.advertise_noise_host` — the bind host for the
+  Noise NK enrollment listener the first node of a multi-node cluster starts**
+  (#406). go-qrdb#167 made `AdvertiseOptions.NoiseHost` required: that listener
+  is the one socket a joining node reaches before it holds any credential, so
+  clusterenroll refuses to choose a bind host, and a node contained to one
+  interface must not have it quietly opened on every interface. xkms never set
+  it, so multi-node first-node startup failed on the bump. The new setting is a
+  bind host in the same sense as `server.host` and defaults to it; it is
+  resolved once, by `Server.raftNoiseBindHost`, and reaches both the plain
+  cluster path and the ACME enrollment path. It is deliberately not
+  `cluster.advertise_host`, which is the address clients dial and is not a bind
+  address.
+- **`xkey fido2 provision-attestation` turns on the device attestation
+  identity, which was fully implemented at the CTAP layer with no path from
+  an operator to it** (#231). The `replaceAttestKey` and `setAttestCert`
+  vendor commands had no caller outside the authenticator package, so every
+  device registered with `fmt: "none"` no matter how the subsystem was
+  configured. The command drives the exchange as real CTAP2
+  `authenticatorConfig` CBOR: SO PIN unlock → CA connect → CSR from the
+  device → `SignCSR` at the xkms enterprise CA → chain install → read-back
+  verification. The private key never leaves the device, a CA failure never
+  touches it (the connect happens before key generation), re-provisioning is
+  refused without `--rotate`, and the read-back proves the stored leaf
+  certifies the key the device still holds — resolved through
+  `KeyManager.AttestationSigner()`, since the persisted state carries only
+  AES-GCM wrapped key copies. `xkey/cmd/xkey/cmd/fido2_provision_attestation.go`,
+  `xkey/docs/configuration/README.md`. Verified by end-to-end tests driving
+  the real authenticator and an in-process CA, including the CA-unreachable,
+  CA-refuses, mis-issuance, rotation and locked/uninitialized-token paths.
+
+### Changed
+
+- **Changelog entries are now per-PR files under `.changelog/unreleased/`,
+  assembled into `CHANGELOG.md` when a release is cut** (#354). Editing the
+  top of `[Unreleased]` made every merge conflict with every other open PR —
+  measured at one forced rebase plus a full CI cycle per open PR per merge —
+  and let entries land in a released section that did not ship them (#361's
+  failure class, which occurred twice). A PR now adds one
+  `<section>-<slug>.md` file; `scripts/changelog-assemble.sh` (called by
+  `release-alpha.sh` at cut time) groups the files under the new version
+  heading in fixed section order and deletes them in the same commit. A file
+  naming no known section fails the cut loudly rather than dropping the entry.
+  `## [Unreleased]` remains in `CHANGELOG.md` and stays empty by convention.
+- **go-qrdb pinned to `v0.16.3-alpha`, and every in-tree `transport.RoleClient`
+  now implements `ReconcileBuiltInRoles`** (#406). go-qrdb#354 added the method
+  to the interface, which is a breaking change for every implementor: go-xkms
+  stopped compiling against the current qrdb release, and because
+  `pkg/acme/qrdb` is reachable from `sdk/go/acme`, so did every consumer that
+  bumped qrdb (go-quicbaas#573). All four modules — root, `sdk/go`, `xkey`,
+  `web/desktop` — move to `v0.16.3-alpha` together.
+
+  The method is implemented, not stubbed. `pkg/qrdbrole` holds ONE
+  implementation of qrdb's reconciliation semantics over the `RoleClient` seam
+  — seed a built-in the tenant does not hold, replace a drifted one's
+  permission set, leave a converged one completely alone (zero writes), repair
+  Owner when present and never create it, and never touch a custom role — read
+  from `qrdbsdk.BuiltInRoles` and `qrdbsdk.AllPermissions` so the definition is
+  qrdb's rather than a copy. `pkg/acme/qrdb`'s `memoryRoleClient` and
+  `pkg/testutil`'s `QRDBFakeTransport` delegate to it; the three narrow
+  handler-test mocks report the verb as unexercised exactly as their sibling
+  methods do.
+
+- **`transport.UserNotFoundError` is populated per go-qrdb#343** in the
+  in-memory user fakes (#406): `ID` carries the numeric id for an id lookup and
+  `Lookup` carries the descriptor for a lookup by username, email or SPKI
+  thumbprint, formatted through `transport.UserLookupKey`. The field became a
+  `uint64` upstream, so the previous string assignment no longer compiled.
+
+- **The absent-key characterization narrowed to Delete** (#406, #252).
+  go-qrdb v0.16.3-alpha fixed `Exists` and `Get` for a key that was never
+  written, so `storagetest.Config.AbsentKeyDivergence` — which asserted the
+  wrong answer on purpose and was written to fail the day it became right —
+  did. Both verbs are now held to the correct answer on every backend, and the
+  flag is `AbsentDeleteDivergence`, covering the one verb still divergent.
+
+- **`CompareAndDelete` is available from every embedded constructor**, and the
+  characterization that recorded its absence is now a conformance test (#406).
+  The `FastStateMachine` gained the guarded-delete opcode (go-qrdb#175), so the
+  guarded path answers and nothing falls through to the transaction the
+  embedded transport still does not wire. `PutIfAbsent` and `CompareAndSwap`
+  are unaffected and remain unavailable (#61, #125). The availability note on
+  `Backend.CompareAndDelete` was re-derived by measurement, which is what the
+  characterization existed to force.
+
+### Fixed
+
+- **The algorithm string the REST, MCP and gRPC transports display now
+  resolves the key's family in the same order as `KeyAttributes.ID()`**
+  (#336). Presentation-only: `getAlgorithmString` was a pure formatter, could
+  not address or route a key, and no production path builds the two-family
+  descriptor that would expose the divergence — but it was a third resolution
+  order (`SymmetricAlgorithm` before `KeyAlgorithm`, the opposite of `ID()`),
+  and #158 exists precisely because contradictory family resolution silently
+  picks sides. The three identical per-transport copies are deleted and
+  replaced by one canonical `KeyAttributes.AlgorithmString()` in `pkg/types`,
+  directly below `ID()` and mirroring its switch arm for arm (X25519, quantum,
+  asymmetric, symmetric); as a side effect X25519 and quantum keys now display
+  their family instead of an empty string. `pkg/types/types.go`,
+  `pkg/api/rest/handlers.go`, `pkg/api/mcp/{handlers,utils}.go`,
+  `pkg/api/grpc/service.go`, `docs/key-management/engineering.md`. The two
+  tests that pinned the divergent order now compute their expected value from
+  `ID()` itself, and a property test in `pkg/types` iterates two-family
+  descriptors asserting `AlgorithmString()` agrees with `ID()`'s family, so a
+  fourth order cannot reappear silently.
+- **The IAK, IDevID and LDevID attribute builders no longer assign a dead
+  Endorsement Key template into `TPMAttributes.Template`** (#355).
+  `pkg/tpm2/config.go`. `IAKAttributesFromConfig`, `IDevIDAttributesFromConfig`
+  and `LDevIDAttributesFromConfig` copied `RSAEKTemplate`/`ECCEKTemplate`
+  (Restricted, `SignEncrypt: false`) — plus the platform-policy `AuthPolicy` —
+  into a field nothing on those key types' creation paths ever reads:
+  `CreateIAK` builds its restricted signing template from scratch and
+  `CreateIDevID` selects the dedicated unrestricted IDevID/LDevID template
+  constants, while only the EK and SRK creation paths consume
+  `TPMAttributes.Template`. No key was ever created from the stale value, but
+  the contradiction between descriptor and code is exactly what produced the
+  #355 misdiagnosis of restricted, non-signing identity keys — this closes
+  that misdiagnosis vector. `EKAttributesFromConfig` keeps its template, which
+  `CreateEK` genuinely consumes; function signatures (including the now
+  compatibility-only `policyDigest` parameters) and the `PlatformPolicy`
+  field are unchanged. Verified by tracing every `TPMAttributes.Template`
+  reader in the repository to EK/SRK/seal-path attributes only, by a new
+  regression test asserting the three builders leave `Template` as the zero
+  `TPMTPublic` (red when the assignment is re-introduced) while the EK builder
+  still bakes the policy digest into its template, and by the full `pkg/tpm2`
+  simulator suite.
+- **The integration harness identified the devcontainer by `/.dockerenv`, so
+  any containerised caller — including the Gitea act_runner job container —
+  impersonated it and the devcontainer was never started** (#19). That is why
+  Integration Tests was red on 39 of 40 CI runs: `run_with_server` skipped the
+  start-the-devcontainer branch, built nothing, and `devcontainer-server-wait`
+  then probed for the socket inside a devcontainer that did not exist while
+  the server was serving perfectly well. Devcontainer identity is now a
+  positive marker: `XKMS_DEVCONTAINER=1` is baked into the devcontainer image
+  (`.devcontainer/Dockerfile`) and set in its compose environment
+  (`.devcontainer/docker-compose.yml`), and all four Makefile probe sites
+  (`run_in_devcontainer`, both branches of `run_with_server`,
+  `integration-test-xkey-ssh`) test that marker instead of the ambient
+  `/.dockerenv` / `$DEVCONTAINER` side effects. Verified by evaluating both
+  predicates in all three contexts — host shell, marker-carrying container,
+  and a plain container standing in for the act_runner job: the old predicate
+  wrongly selects run-in-place inside the plain container, the new one selects
+  start-the-devcontainer there and on the host, and run-in-place only when the
+  marker is present — plus `make -n` renders and shell syntax checks of every
+  changed target. `test/integration/api/testutil.go`'s `isRunningInDocker` is
+  untouched: it genuinely asks "am I in any container" (and has no callers).
+- **`xkey device enroll-phone` requested certificate profile "idevid", which
+  no registry entry matches, so phone enrolment could not issue a certificate
+  at all** (#241). `xkey/cmd/xkey/cmd/device_enroll_phone_ca.go`,
+  `xkey/cmd/xkey/cmd/ca.go`.
+
+  The string travelled untouched from `enrollmentCertProfile` through
+  `SignCSRRequest.Profile` to `ca.Profiles().Get`, which correctly fails
+  closed with `ErrProfileNotFound` — there is no fallback profile, so the
+  command errored instead of issuing something wrong. The path is behind
+  `//go:build ble`, which is why no default build caught it.
+
+  The constant now names the `client` profile. The credential is an LDevID in
+  the IEEE 802.1AR sense presented by the phone as a client of the enterprise
+  CA, and `client` supplies exactly what that needs: DigitalSignature key
+  usage, ClientAuth EKU, finite validity — the device identity travels in the
+  CSR subject and the re-attestation cadence in `ValidityDays`. `tcg-idevid`
+  was rejected deliberately: it stamps TCG policy OIDs asserting TPM residency
+  a phone's Android Keystore key does not have, and models a never-expiring
+  manufacturer IDevID where this credential's expiry is the re-attestation
+  cadence. `fido2-attestation` certifies an authenticator attestation key, not
+  an identity key. Registering a new "idevid" profile would have duplicated
+  `client` under a second name.
+
+  The audit of the other profile names `cmd/` hardcodes found one more dead
+  one: `xkey ca issue --help` advertised "idevid" as an available profile, so
+  a user who followed the help hit the same `ErrProfileNotFound`. The help
+  now lists only registered profiles.
+
+  Tests now resolve `enrollmentCertProfile`, every profile `ca issue` help
+  advertises, and the `cert request` / `agent` profile defaults against the
+  same default registry the CA constructs, so an unregistered profile name in
+  this package can never again survive to runtime; a semantics test pins
+  DigitalSignature + ClientAuth + CA:false on the phone credential. The
+  ble-gated tests are named in the CI gate that runs `cmd/xkey/cmd` under
+  `-tags ble`, since that package is otherwise compiled but never run there.
+- **`make lint` gave golangci-lint a 10m wall-clock budget that the root
+  module exceeds whenever the shared runner is loaded, reddening whichever PR
+  is in the queue** (#360; closes #363, the same defect observed on PR #362).
+  `--timeout` measures wall clock from process start, so on the oversubscribed
+  fleet it measured fleet load rather than linter work: the root module took
+  11m57s at load ~30 on 24 cores and was killed at 10m, and run 11456 printed
+  "0 issues." before tripping the deadline on the way out. The budget now
+  lives once, as `run.timeout: 30m` in `.golangci.yml` — sized to clear the
+  worst observed contention with the same headroom `go test -timeout 30m`
+  already assumes for Unit Tests in ci.yml — and the hard-coded
+  `--timeout=10m` is removed from the root Makefile, along with the
+  `--timeout=5m` args that would have kept overriding the config in
+  `docker-tests.yml` and `coverage.yml`. Every other invocation site
+  (`sdk/go/Makefile`, the ci.yml Lint job via `make lint`) already ran with
+  no flag, so the config value is the only bound anywhere; golangci-lint v2
+  has no default timeout, and `run.timeout` is a valid key in the schema of
+  every pinned version (v2.6.2, v2.7.2, v2.12.2, v2.13.2). The ci.yml Lint
+  job gains a `timeout-minutes: 60` backstop so a genuinely hung linter fails
+  as a job timeout rather than running to the runner's implicit limit.
+  Deliberately not a retry-on-timeout, which would hide a genuine slowdown.
+  Verified with `golangci-lint config verify` and a green `make lint` over
+  the root, `sdk/go` and `web/desktop` modules.
+- **Every `xkey pin` subcommand resolved `~/.xkey` instead of `~/.xkey/data`,
+  so it read a phantom empty store and `set-so` could fork the SO PIN
+  silently** (#295). `resolvePINDataDir`'s private fallback dropped the
+  `data` segment every other subsystem uses, so on a wizard-configured
+  device `pin status` reported both PINs unset, `verify` failed against a
+  correct PIN, and `set-so` — seeing the phantom store's `soPINSet=false` —
+  accepted a new SO PIN without the current one and wrote it beside the
+  real record. Worse, `createPINService` ran `MkdirAll` on every path, so a
+  read-only `pin status` *created* the empty `~/.xkey/pin/` that made the
+  failure invisible.
+
+  The CLI now has ONE data-directory resolution chain,
+  `resolveDataDir`/`resolveDataDirExisting`
+  (`xkey/cmd/xkey/cmd/datadir.go`): flag > `XKEY_DATA_DIR` > config
+  `data_dir` > the xhome data directory — and both the pin and barrier
+  groups delegate to it, removing the drifted private copy. Read commands
+  (`status`, `verify`, `change-*`, `reset-lockout`) resolve through the new
+  non-creating `xhome.ResolveExisting` and open the store with
+  `openPINService`, which returns a typed `*PINStoreNotFoundError` instead
+  of fabricating a fresh store; only `set-so`/`set-user` may create it.
+  `pin status` now renders an absent store as `PIN store: not found`
+  (JSON: `store_present: false`) — a fresh install and a misresolved path
+  no longer print the same confident "No". Verified by a wizard-layout
+  regression test (`TestPINCommands_AddressTheWizardDataDirectory`) proving
+  status/verify/set-so all address `~/.xkey/data/pin/`, that a refused
+  `set-so` leaves the wizard's SO PIN intact, and that no phantom
+  `~/.xkey/pin/` appears; the test fails on the pre-fix resolution.
+- **`TestGRPCServer_SocketPermissions` no longer reads the socket mode inside
+  the listen→chmod window, where it flaked at 755** (#357). `Start()` creates
+  the Unix socket via `net.Listen` and sets the configured mode with a
+  separate `os.Chmod`, so the test's poll-for-existence loop could observe the
+  socket at the umask default before the chmod ran. The test now polls for the
+  condition it asserts — the mode reaching 0640 — and still fails at the
+  deadline if the server never sets it (verified by mutation: with the
+  `os.Chmod` removed the test goes red at the umask default).
+  `pkg/api/unix/grpc_server_test.go`. Verified with 200 consecutive green
+  runs. The production-side window (socket briefly world-accessible before
+  the chmod) is a separate question recorded in the issue and deliberately
+  not changed here.
+- **The `test/docker/softhsm` image shipped without the C++ runtime, so
+  `libsofthsm2.so` and `softhsm2-util` could not load inside it -- and its
+  healthcheck could not detect that** (#227). `test/docker/softhsm/Dockerfile`,
+  `docker-compose.yml`, `.devcontainer/docker-compose.yml`.
+
+  SoftHSMv2 is C++, but the runtime stage installed only
+  `openssl sqlite-libs p11-kit p11-kit-server` while copying `/usr/local` from
+  the builder -- `libstdc++.so.6`/`libgcc_s.so.1` live in the builder's
+  `/usr/lib` (pulled by `build-base`) and were never carried across, so every
+  load ended in `Error loading shared library libstdc++.so.6` plus ~250
+  relocation failures. Latent on every base version (reproduced identically on
+  the pre-#177 `alpine:3.22.1`), and invisible because the healthcheck was
+  `test -f` on the .so -- a check that cannot fail the way the container was
+  broken. The fix adds `libstdc++` and `libgcc` to the runtime `apk add` and
+  replaces the healthcheck (Dockerfile and both compose overrides) with
+  `softhsm2-util --show-slots`, which links the same runtime and opens the
+  token store, so it fails whenever the library would. Verified by building
+  the image before and after: `ldd libsofthsm2.so` goes from two
+  "Error loading shared library" lines to fully resolved, and
+  `softhsm2-util --show-slots` from RC=127 to RC=0 listing slot 0.
+  `test/docker/swtpm` was checked for the same gap and does not have it: swtpm
+  and libtpms are C, their runtime deps are installed explicitly, and its
+  healthcheck (`nc -z` on the command port) exercises the running daemon.
+- **`xkmsctl` WebAuthn login and registration could not supply a CTAP2 PIN,
+  so neither completed against a PIN-protected authenticator** (#309). The
+  identical gap #299 closed for `xkey auth register`/`login`: the fido2 layer
+  already carried `WebAuthnRegistrationOptions.PIN` and (since #299)
+  `WebAuthnAuthenticationOptions.PIN`, but `xkmsctl user register`,
+  `xkmsctl user login` and `xkmsctl admin create` never set either field, and
+  offered no way to take a PIN in.
+
+  The three verbs now accept the same three PIN sources, in the same
+  precedence order, as the xkey verbs: `--pin-stdin` (preferred — the PIN
+  stays out of the process list), the `XKMS_FIDO2_PIN` environment variable,
+  then `--pin`. The resolver is re-stated in `cmd/xkmsctl/pin_input.go`
+  because `xkmsctl` cannot import the xkey binary's command package; the flag
+  names, precedence and empty-PIN semantics mirror xkey's exactly. The PIN is
+  resolved before anything reaches the network, an empty `--pin-stdin` is
+  rejected as operator input to correct, `CTAP2_ERR_PIN_REQUIRED` with no PIN
+  supplied is reported as `ErrWebAuthnPINRequired` naming the sources rather
+  than as a device fault, and a wrong PIN keeps its
+  `fido2.PINAttemptsError` attempts-remaining annotation so a looming lockout
+  is visible. `sdk/go/fido2` additionally re-exports `WebAuthnAssertion` so
+  SDK callers can name `AuthenticateWebAuthn`'s result type.
+
+  Files: `cmd/xkmsctl/pin_input.go` (new), `cmd/xkmsctl/user.go`,
+  `cmd/xkmsctl/admin.go`, `cmd/xkmsctl/errors.go`, `sdk/go/fido2/fido2.go`.
+  Verified by ceremony tests driving the real `pkg/fido2` stack against the
+  real virtual authenticator with a PIN installed — registration and login
+  complete with the PIN, fail named without it, and report remaining attempts
+  on a wrong one — plus resolver-precedence and before-the-network guard
+  tests; each fails on the unfixed code.
+
 ### Added
 
 - **The client-side http-01 challenge responder is now an SDK surface**
