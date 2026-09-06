@@ -562,22 +562,29 @@ func TestGRPCServer_SocketPermissions(t *testing.T) {
 		_ = server.Start()
 	}()
 
-	// Wait for socket
+	// Wait for the socket to reach the configured mode, not merely to
+	// exist: Start() creates the socket via net.Listen and chmods it as a
+	// separate second step, so an existence poll can observe the socket at
+	// the umask-default mode inside that window (#357). Polling for the
+	// asserted condition removes the mid-construction read while still
+	// failing at the deadline if the server never sets the mode.
 	deadline := time.Now().Add(5 * time.Second)
+	var mode os.FileMode
+	statted := false
 	for time.Now().Before(deadline) {
-		if _, err := os.Stat(socketPath); err == nil {
-			break
+		if info, err := os.Stat(socketPath); err == nil {
+			statted = true
+			mode = info.Mode() & os.ModePerm
+			if mode == 0640 {
+				break
+			}
 		}
 		time.Sleep(10 * time.Millisecond)
 	}
 
-	// Check socket permissions
-	info, err := os.Stat(socketPath)
-	if err != nil {
-		t.Fatalf("Failed to stat socket: %v", err)
+	if !statted {
+		t.Fatalf("Socket was not created before the deadline")
 	}
-
-	mode := info.Mode() & os.ModePerm
 	if mode != 0640 {
 		t.Errorf("Socket permissions = %o, want 0640", mode)
 	}
