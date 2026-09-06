@@ -69,7 +69,7 @@ func TestNewCredential_Success(t *testing.T) {
 			if cred.Type != tc.otpType {
 				t.Errorf("expected type %q, got %q", tc.otpType, cred.Type)
 			}
-			if cred.Secret == "" {
+			if cred.SecretString() == "" {
 				t.Error("expected non-empty secret")
 			}
 			if cred.Algorithm != DefaultAlgorithm {
@@ -297,7 +297,7 @@ func TestParseURI_Success(t *testing.T) {
 			if tc.wantType == TypeHOTP && cred.Counter != tc.wantCounter {
 				t.Errorf("expected counter %d, got %d", tc.wantCounter, cred.Counter)
 			}
-			if cred.Secret == "" {
+			if cred.SecretString() == "" {
 				t.Error("expected non-empty secret")
 			}
 		})
@@ -398,15 +398,14 @@ func TestCredential_ToURI_Success(t *testing.T) {
 	}{
 		{
 			name: "TOTP with defaults",
-			cred: &Credential{
+			cred: withSecret(&Credential{
 				Type:        TypeTOTP,
 				Issuer:      "GitHub",
 				AccountName: "user@example.com",
-				Secret:      "JBSWY3DPEHPK3PXP",
 				Algorithm:   AlgorithmSHA1,
 				Digits:      6,
 				Period:      30,
-			},
+			}, "JBSWY3DPEHPK3PXP"),
 			wantParts: []string{
 				"otpauth://totp/",
 				"GitHub",
@@ -417,15 +416,14 @@ func TestCredential_ToURI_Success(t *testing.T) {
 		},
 		{
 			name: "TOTP with non-default values",
-			cred: &Credential{
+			cred: withSecret(&Credential{
 				Type:        TypeTOTP,
 				Issuer:      "AWS",
 				AccountName: "admin",
-				Secret:      "JBSWY3DPEHPK3PXP",
 				Algorithm:   AlgorithmSHA256,
 				Digits:      8,
 				Period:      60,
-			},
+			}, "JBSWY3DPEHPK3PXP"),
 			wantParts: []string{
 				"otpauth://totp/",
 				"algorithm=SHA256",
@@ -435,15 +433,14 @@ func TestCredential_ToURI_Success(t *testing.T) {
 		},
 		{
 			name: "HOTP with counter",
-			cred: &Credential{
+			cred: withSecret(&Credential{
 				Type:        TypeHOTP,
 				Issuer:      "Service",
 				AccountName: "user",
-				Secret:      "JBSWY3DPEHPK3PXP",
 				Algorithm:   AlgorithmSHA1,
 				Digits:      6,
 				Counter:     42,
-			},
+			}, "JBSWY3DPEHPK3PXP"),
 			wantParts: []string{
 				"otpauth://hotp/",
 				"counter=42",
@@ -451,15 +448,14 @@ func TestCredential_ToURI_Success(t *testing.T) {
 		},
 		{
 			name: "TOTP without issuer",
-			cred: &Credential{
+			cred: withSecret(&Credential{
 				Type:        TypeTOTP,
 				Issuer:      "",
 				AccountName: "myaccount",
-				Secret:      "JBSWY3DPEHPK3PXP",
 				Algorithm:   AlgorithmSHA1,
 				Digits:      6,
 				Period:      30,
-			},
+			}, "JBSWY3DPEHPK3PXP"),
 			wantParts: []string{
 				"otpauth://totp/myaccount",
 				"secret=JBSWY3DPEHPK3PXP",
@@ -522,8 +518,8 @@ func TestCredential_ToURI_RoundTrip(t *testing.T) {
 			if cred.AccountName != cred2.AccountName {
 				t.Errorf("account mismatch: %q vs %q", cred.AccountName, cred2.AccountName)
 			}
-			if cred.Secret != cred2.Secret {
-				t.Errorf("secret mismatch: %q vs %q", cred.Secret, cred2.Secret)
+			if cred.SecretString() != cred2.SecretString() {
+				t.Errorf("secret mismatch: %q vs %q", cred.SecretString(), cred2.SecretString())
 			}
 			if cred.Algorithm != cred2.Algorithm {
 				t.Errorf("algorithm mismatch: %q vs %q", cred.Algorithm, cred2.Algorithm)
@@ -548,36 +544,33 @@ func TestCredential_Validate_Success(t *testing.T) {
 	}{
 		{
 			name: "valid TOTP credential",
-			cred: &Credential{
+			cred: withSecret(&Credential{
 				Name:      "test",
-				Secret:    "JBSWY3DPEHPK3PXP",
 				Type:      TypeTOTP,
 				Algorithm: AlgorithmSHA1,
 				Digits:    6,
 				Period:    30,
-			},
+			}, "JBSWY3DPEHPK3PXP"),
 		},
 		{
 			name: "valid HOTP credential",
-			cred: &Credential{
+			cred: withSecret(&Credential{
 				Name:      "test",
-				Secret:    "JBSWY3DPEHPK3PXP",
 				Type:      TypeHOTP,
 				Algorithm: AlgorithmSHA256,
 				Digits:    8,
 				Counter:   0,
-			},
+			}, "JBSWY3DPEHPK3PXP"),
 		},
 		{
 			name: "valid with SHA512",
-			cred: &Credential{
+			cred: withSecret(&Credential{
 				Name:      "test",
-				Secret:    "JBSWY3DPEHPK3PXP",
 				Type:      TypeTOTP,
 				Algorithm: AlgorithmSHA512,
 				Digits:    7,
 				Period:    60,
-			},
+			}, "JBSWY3DPEHPK3PXP"),
 		},
 	}
 
@@ -598,110 +591,101 @@ func TestCredential_Validate_Errors(t *testing.T) {
 	}{
 		{
 			name: "empty name",
-			cred: &Credential{
+			cred: withSecret(&Credential{
 				Name:      "",
-				Secret:    "JBSWY3DPEHPK3PXP",
 				Type:      TypeTOTP,
 				Algorithm: AlgorithmSHA1,
 				Digits:    6,
 				Period:    30,
-			},
+			}, "JBSWY3DPEHPK3PXP"),
 			wantErr: ErrInvalidCredential,
 		},
 		{
 			name: "empty secret",
-			cred: &Credential{
+			cred: withSecret(&Credential{
 				Name:      "test",
-				Secret:    "",
 				Type:      TypeTOTP,
 				Algorithm: AlgorithmSHA1,
 				Digits:    6,
 				Period:    30,
-			},
+			}, ""),
 			wantErr: ErrInvalidSecret,
 		},
 		{
 			name: "invalid type",
-			cred: &Credential{
+			cred: withSecret(&Credential{
 				Name:      "test",
-				Secret:    "JBSWY3DPEHPK3PXP",
 				Type:      "invalid",
 				Algorithm: AlgorithmSHA1,
 				Digits:    6,
 				Period:    30,
-			},
+			}, "JBSWY3DPEHPK3PXP"),
 			wantErr: ErrInvalidType,
 		},
 		{
 			name: "invalid algorithm",
-			cred: &Credential{
+			cred: withSecret(&Credential{
 				Name:      "test",
-				Secret:    "JBSWY3DPEHPK3PXP",
 				Type:      TypeTOTP,
 				Algorithm: "MD5",
 				Digits:    6,
 				Period:    30,
-			},
+			}, "JBSWY3DPEHPK3PXP"),
 			wantErr: ErrInvalidAlgorithm,
 		},
 		{
 			name: "digits too low",
-			cred: &Credential{
+			cred: withSecret(&Credential{
 				Name:      "test",
-				Secret:    "JBSWY3DPEHPK3PXP",
 				Type:      TypeTOTP,
 				Algorithm: AlgorithmSHA1,
 				Digits:    5,
 				Period:    30,
-			},
+			}, "JBSWY3DPEHPK3PXP"),
 			wantErr: ErrInvalidDigits,
 		},
 		{
 			name: "digits too high",
-			cred: &Credential{
+			cred: withSecret(&Credential{
 				Name:      "test",
-				Secret:    "JBSWY3DPEHPK3PXP",
 				Type:      TypeTOTP,
 				Algorithm: AlgorithmSHA1,
 				Digits:    9,
 				Period:    30,
-			},
+			}, "JBSWY3DPEHPK3PXP"),
 			wantErr: ErrInvalidDigits,
 		},
 		{
 			name: "TOTP with zero period",
-			cred: &Credential{
+			cred: withSecret(&Credential{
 				Name:      "test",
-				Secret:    "JBSWY3DPEHPK3PXP",
 				Type:      TypeTOTP,
 				Algorithm: AlgorithmSHA1,
 				Digits:    6,
 				Period:    0,
-			},
+			}, "JBSWY3DPEHPK3PXP"),
 			wantErr: ErrInvalidPeriod,
 		},
 		{
 			name: "TOTP with negative period",
-			cred: &Credential{
+			cred: withSecret(&Credential{
 				Name:      "test",
-				Secret:    "JBSWY3DPEHPK3PXP",
 				Type:      TypeTOTP,
 				Algorithm: AlgorithmSHA1,
 				Digits:    6,
 				Period:    -1,
-			},
+			}, "JBSWY3DPEHPK3PXP"),
 			wantErr: ErrInvalidPeriod,
 		},
 		{
 			name: "invalid base32 secret",
-			cred: &Credential{
+			cred: withSecret(&Credential{
 				Name:      "test",
-				Secret:    "invalid!!!secret",
 				Type:      TypeTOTP,
 				Algorithm: AlgorithmSHA1,
 				Digits:    6,
 				Period:    30,
-			},
+			}, "invalid!!!secret"),
 			wantErr: ErrInvalidSecret,
 		},
 	}
@@ -742,14 +726,13 @@ func TestGenerateSecret_Success(t *testing.T) {
 			}
 
 			// Verify it's valid base32
-			cred := &Credential{
+			cred := withSecret(&Credential{
 				Name:      "test",
-				Secret:    secret,
 				Type:      TypeTOTP,
 				Algorithm: AlgorithmSHA1,
 				Digits:    6,
 				Period:    30,
-			}
+			}, secret)
 			if err := cred.Validate(); err != nil {
 				t.Errorf("generated secret is not valid base32: %v", err)
 			}
@@ -832,15 +815,14 @@ func TestGenerateCredentialID_RandomFallback(t *testing.T) {
 
 func TestCredential_HOTP_ZeroPeriod(t *testing.T) {
 	// HOTP credentials should not fail validation even with zero period
-	cred := &Credential{
+	cred := withSecret(&Credential{
 		Name:      "test",
-		Secret:    "JBSWY3DPEHPK3PXP",
 		Type:      TypeHOTP,
 		Algorithm: AlgorithmSHA1,
 		Digits:    6,
 		Period:    0, // HOTP doesn't use period
 		Counter:   0,
-	}
+	}, "JBSWY3DPEHPK3PXP")
 
 	// HOTP with zero period should still fail because period validation
 	// only applies to TOTP. Let's check the actual behavior.
@@ -1036,7 +1018,7 @@ func TestNormalizeSecret(t *testing.T) {
 
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
-			result, err := normalizeSecret(tc.input)
+			resultBytes, err := normalizeSecretBytes([]byte(tc.input))
 			if tc.wantErr {
 				if err == nil {
 					t.Error("expected error, got nil")
@@ -1045,7 +1027,7 @@ func TestNormalizeSecret(t *testing.T) {
 				if err != nil {
 					t.Errorf("unexpected error: %v", err)
 				}
-				if result != tc.wantResult {
+				if result := string(resultBytes); result != tc.wantResult {
 					t.Errorf("expected %q, got %q", tc.wantResult, result)
 				}
 			}
@@ -1270,19 +1252,18 @@ func TestCredential_BackendID_JSONRoundTrip(t *testing.T) {
 
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
-			cred := &Credential{
+			cred := withSecret(&Credential{
 				ID:          "test:user",
 				Name:        "Test (user)",
 				Issuer:      "Test",
 				AccountName: "user",
-				Secret:      "JBSWY3DPEHPK3PXP",
 				Type:        TypeTOTP,
 				Algorithm:   AlgorithmSHA1,
 				Digits:      DefaultDigits,
 				Period:      DefaultPeriod,
 				CreatedAt:   time.Now(),
 				BackendID:   tc.backendID,
-			}
+			}, "JBSWY3DPEHPK3PXP")
 
 			data, err := json.Marshal(cred)
 			if err != nil {
@@ -1316,8 +1297,8 @@ func TestCredential_BackendID_JSONRoundTrip(t *testing.T) {
 			if decoded.Name != cred.Name {
 				t.Errorf("Name mismatch: want %q, got %q", cred.Name, decoded.Name)
 			}
-			if decoded.Secret != cred.Secret {
-				t.Errorf("Secret mismatch: want %q, got %q", cred.Secret, decoded.Secret)
+			if decoded.SecretString() != cred.SecretString() {
+				t.Errorf("Secret mismatch: want %q, got %q", cred.SecretString(), decoded.SecretString())
 			}
 		})
 	}
@@ -1326,19 +1307,18 @@ func TestCredential_BackendID_JSONRoundTrip(t *testing.T) {
 func TestCredential_BackendID_StoreRoundTrip(t *testing.T) {
 	store := NewMemoryStore()
 
-	cred := &Credential{
+	cred := withSecret(&Credential{
 		ID:          "backend-test:user",
 		Name:        "BackendTest (user)",
 		Issuer:      "BackendTest",
 		AccountName: "user",
-		Secret:      "JBSWY3DPEHPK3PXP",
 		Type:        TypeTOTP,
 		Algorithm:   AlgorithmSHA1,
 		Digits:      DefaultDigits,
 		Period:      DefaultPeriod,
 		CreatedAt:   time.Now(),
 		BackendID:   "pkcs11-slot-3",
-	}
+	}, "JBSWY3DPEHPK3PXP")
 
 	if err := store.Add(cred); err != nil {
 		t.Fatalf("failed to add credential: %v", err)

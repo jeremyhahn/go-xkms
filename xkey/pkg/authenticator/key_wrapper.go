@@ -46,20 +46,53 @@ var (
 
 	// ErrInvalidWrappingKey indicates the wrapping key is invalid or has incorrect size.
 	ErrInvalidWrappingKey = errors.New("authenticator: invalid wrapping key")
+
+	// ErrInvalidUnwrapDestination indicates the destination slice passed to
+	// UnwrapInto is not exactly the plaintext length of the wrapped data.
+	ErrInvalidUnwrapDestination = errors.New("authenticator: unwrap destination has wrong length")
+
+	// ErrUnwrapNotInPlace indicates the cipher wrote the plaintext somewhere
+	// other than the caller's destination. The stray copy is wiped before this
+	// is returned; it exists so a standard-library change that breaks the
+	// in-place decrypt invariant fails closed instead of silently leaking
+	// plaintext onto the heap.
+	ErrUnwrapNotInPlace = errors.New("authenticator: unwrap did not decrypt in place")
 )
 
 // KeyWrapper defines the interface for key wrapping operations.
 // Implementations must be safe for concurrent use.
+//
+// Unwrapping deliberately cannot return a plaintext slice: the caller supplies
+// the destination, so decrypted key material lands only in memory the caller
+// owns — typically an mlocked secure.Buffer allocated before any protected-key
+// borrow is taken (go-xkms#291). An implementation must never allocate a
+// plaintext copy the caller cannot wipe.
 type KeyWrapper interface {
 	// Wrap encrypts plaintext and returns the wrapped (encrypted) data.
 	// The output format is implementation-specific but must be deterministically
-	// unwrappable by the corresponding Unwrap method.
+	// unwrappable by the corresponding UnwrapInto method.
 	Wrap(plaintext []byte) ([]byte, error)
 
-	// Unwrap decrypts wrapped data and returns the original plaintext.
+	// UnwrapInto decrypts wrapped data into dst, which must be exactly the
+	// plaintext length (aesGCMUnwrappedLen for the AES-GCM format). dst is
+	// written in place and contains no plaintext when an error is returned.
 	// Returns ErrKeyUnwrapFailed if decryption fails due to authentication failure.
 	// Returns ErrInvalidWrappedData if the wrapped data is malformed.
-	Unwrap(wrapped []byte) ([]byte, error)
+	// Returns ErrInvalidUnwrapDestination if dst has the wrong length.
+	UnwrapInto(wrapped, dst []byte) error
+}
+
+// aesGCMUnwrappedLen returns the plaintext length of AES-GCM wrapped data
+// (nonce || ciphertext || tag) without touching any key material, so an
+// UnwrapInto destination can be sized and allocated BEFORE a protected-key
+// borrow is entered. Returns ErrInvalidWrappedData if wrapped is shorter than
+// the nonce and tag overhead.
+func aesGCMUnwrappedLen(wrapped []byte) (int, error) {
+	minSize := AESGCMNonceSize + aesGCMTagSize
+	if len(wrapped) < minSize {
+		return 0, ErrInvalidWrappedData
+	}
+	return len(wrapped) - minSize, nil
 }
 
 // AESGCMKeyWrapper implements KeyWrapper using AES-256-GCM.
@@ -122,27 +155,51 @@ func (w *AESGCMKeyWrapper) Wrap(plaintext []byte) ([]byte, error) {
 	return wrapped, nil
 }
 
-// Unwrap decrypts the wrapped data using AES-256-GCM.
-// Expected input format: nonce (12 bytes) || ciphertext || tag (16 bytes).
+// UnwrapInto decrypts the wrapped data using AES-256-GCM, writing the
+// plaintext into dst in place. Expected input format: nonce (12 bytes) ||
+// ciphertext || tag (16 bytes). dst must be exactly len(wrapped) minus that
+// overhead (aesGCMUnwrappedLen); the caller allocates it, so the plaintext
+// never lands in memory the caller does not own.
+//
+// On any error dst holds no plaintext: crypto/cipher zeroes the output on an
+// authentication failure, and the in-place check below wipes a relocated copy
+// before failing closed.
 //
 // Returns ErrInvalidWrappedData if the input is too short.
+// Returns ErrInvalidUnwrapDestination if dst has the wrong length.
 // Returns ErrKeyUnwrapFailed if decryption or authentication fails.
-func (w *AESGCMKeyWrapper) Unwrap(wrapped []byte) ([]byte, error) {
-	// Minimum size: nonce + tag (empty plaintext is valid)
-	minSize := AESGCMNonceSize + aesGCMTagSize
-	if len(wrapped) < minSize {
-		return nil, ErrInvalidWrappedData
+// Returns ErrUnwrapNotInPlace if the cipher did not decrypt into dst.
+func (w *AESGCMKeyWrapper) UnwrapInto(wrapped, dst []byte) error {
+	plainLen, err := aesGCMUnwrappedLen(wrapped)
+	if err != nil {
+		return err
+	}
+	if len(dst) != plainLen {
+		return ErrInvalidUnwrapDestination
 	}
 
 	// Extract nonce and ciphertext+tag
 	nonce := wrapped[:AESGCMNonceSize]
 	ciphertext := wrapped[AESGCMNonceSize:]
 
-	// Decrypt and verify
-	plaintext, err := w.aead.Open(nil, nonce, ciphertext, nil)
+	// Decrypt and verify. Open appends to dst[:0]; cap(dst) >= plainLen, so
+	// crypto/cipher's sliceForAppend reuses dst rather than allocating —
+	// the plaintext is written directly into the caller's memory.
+	out, err := w.aead.Open(dst[:0], nonce, ciphertext, nil)
 	if err != nil {
-		return nil, ErrKeyUnwrapFailed
+		// crypto/cipher clears the output buffer on authentication failure,
+		// so dst carries no partial plaintext here.
+		return ErrKeyUnwrapFailed
 	}
 
-	return plaintext, nil
+	// Fail closed if the standard library ever stops decrypting in place:
+	// a relocated output is a heap copy of the plaintext the caller cannot
+	// see, so wipe it before reporting the broken invariant.
+	if plainLen > 0 && &out[0] != &dst[0] {
+		clearBytes(out)
+		clearBytes(dst)
+		return ErrUnwrapNotInPlace
+	}
+
+	return nil
 }

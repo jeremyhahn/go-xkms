@@ -807,7 +807,11 @@ func (a *oathStoreAdapter) Get(id string) (*backup.OATHCredentialInfo, error) {
 
 // Add writes one restored OATH credential back to the store.
 func (a *oathStoreAdapter) Add(info *backup.OATHCredentialInfo) error {
-	return a.store.Add(oathInfoToCredential(info, time.Now().UTC()))
+	cred, err := oathInfoToCredential(info, time.Now().UTC())
+	if err != nil {
+		return err
+	}
+	return a.store.Add(cred)
 }
 
 // Update replaces an existing OATH credential, preserving its creation time.
@@ -816,7 +820,11 @@ func (a *oathStoreAdapter) Update(info *backup.OATHCredentialInfo) error {
 	if err != nil {
 		return err
 	}
-	return a.store.Update(oathInfoToCredential(info, existing.CreatedAt))
+	cred, err := oathInfoToCredential(info, existing.CreatedAt)
+	if err != nil {
+		return err
+	}
+	return a.store.Update(cred)
 }
 
 // Close releases the underlying OATH store.
@@ -830,7 +838,7 @@ func oathCredentialToInfo(cred *oath.Credential) *backup.OATHCredentialInfo {
 		Name:        cred.Name,
 		Issuer:      cred.Issuer,
 		AccountName: cred.AccountName,
-		Secret:      cred.Secret,
+		Secret:      cred.SecretString(),
 		Type:        cred.Type,
 		Algorithm:   cred.Algorithm,
 		Digits:      cred.Digits,
@@ -840,14 +848,15 @@ func oathCredentialToInfo(cred *oath.Credential) *backup.OATHCredentialInfo {
 }
 
 // oathInfoToCredential converts the service-facing form back to a stored
-// credential, stamping the given creation time.
-func oathInfoToCredential(info *backup.OATHCredentialInfo, createdAt time.Time) *oath.Credential {
-	return &oath.Credential{
+// credential, stamping the given creation time. The secret is adopted into
+// protected memory; the error is oath.ErrProtectedMemory (wrapped) when that
+// allocation fails.
+func oathInfoToCredential(info *backup.OATHCredentialInfo, createdAt time.Time) (*oath.Credential, error) {
+	cred := &oath.Credential{
 		ID:          info.ID,
 		Name:        info.Name,
 		Issuer:      info.Issuer,
 		AccountName: info.AccountName,
-		Secret:      info.Secret,
 		Type:        info.Type,
 		Algorithm:   info.Algorithm,
 		Digits:      info.Digits,
@@ -855,6 +864,10 @@ func oathInfoToCredential(info *backup.OATHCredentialInfo, createdAt time.Time) 
 		Counter:     oathCounterFromInt64(info.Counter),
 		CreatedAt:   createdAt,
 	}
+	if err := cred.SetSecret(info.Secret); err != nil {
+		return nil, err
+	}
+	return cred, nil
 }
 
 // oathCounterToInt64 converts an HOTP counter to the backup service's signed

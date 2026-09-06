@@ -46,36 +46,33 @@ func TestNewGenerator_Success(t *testing.T) {
 	}{
 		{
 			name: "TOTP credential",
-			cred: &Credential{
+			cred: withSecret(&Credential{
 				Name:      "test",
-				Secret:    "JBSWY3DPEHPK3PXP",
 				Type:      TypeTOTP,
 				Algorithm: AlgorithmSHA1,
 				Digits:    6,
 				Period:    30,
-			},
+			}, "JBSWY3DPEHPK3PXP"),
 		},
 		{
 			name: "HOTP credential",
-			cred: &Credential{
+			cred: withSecret(&Credential{
 				Name:      "test",
-				Secret:    "JBSWY3DPEHPK3PXP",
 				Type:      TypeHOTP,
 				Algorithm: AlgorithmSHA256,
 				Digits:    8,
 				Counter:   0,
-			},
+			}, "JBSWY3DPEHPK3PXP"),
 		},
 		{
 			name: "SHA512 credential",
-			cred: &Credential{
+			cred: withSecret(&Credential{
 				Name:      "test",
-				Secret:    "JBSWY3DPEHPK3PXP",
 				Type:      TypeTOTP,
 				Algorithm: AlgorithmSHA512,
 				Digits:    7,
 				Period:    60,
-			},
+			}, "JBSWY3DPEHPK3PXP"),
 		},
 	}
 
@@ -100,38 +97,35 @@ func TestNewGenerator_Errors(t *testing.T) {
 	}{
 		{
 			name: "invalid credential - empty name",
-			cred: &Credential{
+			cred: withSecret(&Credential{
 				Name:      "",
-				Secret:    "JBSWY3DPEHPK3PXP",
 				Type:      TypeTOTP,
 				Algorithm: AlgorithmSHA1,
 				Digits:    6,
 				Period:    30,
-			},
+			}, "JBSWY3DPEHPK3PXP"),
 			wantErr: ErrInvalidCredential,
 		},
 		{
 			name: "invalid credential - empty secret",
-			cred: &Credential{
+			cred: withSecret(&Credential{
 				Name:      "test",
-				Secret:    "",
 				Type:      TypeTOTP,
 				Algorithm: AlgorithmSHA1,
 				Digits:    6,
 				Period:    30,
-			},
+			}, ""),
 			wantErr: ErrInvalidSecret,
 		},
 		{
 			name: "invalid credential - bad type",
-			cred: &Credential{
+			cred: withSecret(&Credential{
 				Name:      "test",
-				Secret:    "JBSWY3DPEHPK3PXP",
 				Type:      "invalid",
 				Algorithm: AlgorithmSHA1,
 				Digits:    6,
 				Period:    30,
-			},
+			}, "JBSWY3DPEHPK3PXP"),
 			wantErr: ErrInvalidType,
 		},
 	}
@@ -150,13 +144,12 @@ func TestNewGenerator_Errors(t *testing.T) {
 }
 
 func TestGenerator_GenerateCounter_RFC4226(t *testing.T) {
-	cred := &Credential{
+	cred := withSecret(&Credential{
 		Name:      "test",
-		Secret:    rfcTestSecret,
 		Type:      TypeHOTP,
 		Algorithm: AlgorithmSHA1,
 		Digits:    6,
-	}
+	}, rfcTestSecret)
 
 	gen, err := NewGenerator(cred)
 	if err != nil {
@@ -188,13 +181,12 @@ func TestGenerator_GenerateCounter_DifferentAlgorithms(t *testing.T) {
 
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
-			cred := &Credential{
+			cred := withSecret(&Credential{
 				Name:      "test",
-				Secret:    "JBSWY3DPEHPK3PXP",
 				Type:      TypeHOTP,
 				Algorithm: tc.algorithm,
 				Digits:    6,
-			}
+			}, "JBSWY3DPEHPK3PXP")
 
 			gen, err := NewGenerator(cred)
 			if err != nil {
@@ -224,13 +216,12 @@ func TestGenerator_GenerateCounter_DifferentDigits(t *testing.T) {
 
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
-			cred := &Credential{
+			cred := withSecret(&Credential{
 				Name:      "test",
-				Secret:    "JBSWY3DPEHPK3PXP",
 				Type:      TypeHOTP,
 				Algorithm: AlgorithmSHA1,
 				Digits:    tc.digits,
-			}
+			}, "JBSWY3DPEHPK3PXP")
 
 			gen, err := NewGenerator(cred)
 			if err != nil {
@@ -250,13 +241,12 @@ func TestGenerator_GenerateCounter_DifferentDigits(t *testing.T) {
 
 func TestGenerator_GenerateCounter_Errors(t *testing.T) {
 	// Test with invalid algorithm (should be caught by Validate, but test the generate path)
-	cred := &Credential{
+	cred := withSecret(&Credential{
 		Name:      "test",
-		Secret:    "JBSWY3DPEHPK3PXP",
 		Type:      TypeHOTP,
 		Algorithm: AlgorithmSHA1,
 		Digits:    6,
-	}
+	}, "JBSWY3DPEHPK3PXP")
 
 	gen, err := NewGenerator(cred)
 	if err != nil {
@@ -275,13 +265,12 @@ func TestGenerator_GenerateCounter_Errors(t *testing.T) {
 }
 
 func TestGenerator_GenerateCounter_InvalidSecret(t *testing.T) {
-	cred := &Credential{
+	cred := withSecret(&Credential{
 		Name:      "test",
-		Secret:    "JBSWY3DPEHPK3PXP",
 		Type:      TypeHOTP,
 		Algorithm: AlgorithmSHA1,
 		Digits:    6,
-	}
+	}, "JBSWY3DPEHPK3PXP")
 
 	gen, err := NewGenerator(cred)
 	if err != nil {
@@ -289,7 +278,7 @@ func TestGenerator_GenerateCounter_InvalidSecret(t *testing.T) {
 	}
 
 	// Temporarily change secret to invalid base32
-	gen.cred.Secret = "invalid!!!"
+	withSecret(gen.cred, "invalid!!!")
 	_, err = gen.GenerateCounter(0)
 	if err == nil {
 		t.Error("expected error for invalid secret")
@@ -300,14 +289,13 @@ func TestGenerator_GenerateCounter_InvalidSecret(t *testing.T) {
 }
 
 func TestGenerator_Generate_TOTP(t *testing.T) {
-	cred := &Credential{
+	cred := withSecret(&Credential{
 		Name:      "test",
-		Secret:    "JBSWY3DPEHPK3PXP",
 		Type:      TypeTOTP,
 		Algorithm: AlgorithmSHA1,
 		Digits:    6,
 		Period:    30,
-	}
+	}, "JBSWY3DPEHPK3PXP")
 
 	gen, err := NewGenerator(cred)
 	if err != nil {
@@ -324,14 +312,13 @@ func TestGenerator_Generate_TOTP(t *testing.T) {
 }
 
 func TestGenerator_Generate_HOTP(t *testing.T) {
-	cred := &Credential{
+	cred := withSecret(&Credential{
 		Name:      "test",
-		Secret:    rfcTestSecret,
 		Type:      TypeHOTP,
 		Algorithm: AlgorithmSHA1,
 		Digits:    6,
 		Counter:   0,
-	}
+	}, rfcTestSecret)
 
 	gen, err := NewGenerator(cred)
 	if err != nil {
@@ -349,14 +336,13 @@ func TestGenerator_Generate_HOTP(t *testing.T) {
 }
 
 func TestGenerator_GenerateAt_Success(t *testing.T) {
-	cred := &Credential{
+	cred := withSecret(&Credential{
 		Name:      "test",
-		Secret:    "JBSWY3DPEHPK3PXP",
 		Type:      TypeTOTP,
 		Algorithm: AlgorithmSHA1,
 		Digits:    6,
 		Period:    30,
-	}
+	}, "JBSWY3DPEHPK3PXP")
 
 	gen, err := NewGenerator(cred)
 	if err != nil {
@@ -384,14 +370,13 @@ func TestGenerator_GenerateAt_Success(t *testing.T) {
 }
 
 func TestGenerator_GenerateAt_Error_HOTP(t *testing.T) {
-	cred := &Credential{
+	cred := withSecret(&Credential{
 		Name:      "test",
-		Secret:    "JBSWY3DPEHPK3PXP",
 		Type:      TypeHOTP,
 		Algorithm: AlgorithmSHA1,
 		Digits:    6,
 		Counter:   0,
-	}
+	}, "JBSWY3DPEHPK3PXP")
 
 	gen, err := NewGenerator(cred)
 	if err != nil {
@@ -405,14 +390,13 @@ func TestGenerator_GenerateAt_Error_HOTP(t *testing.T) {
 }
 
 func TestGenerator_Validate_TOTP_Success(t *testing.T) {
-	cred := &Credential{
+	cred := withSecret(&Credential{
 		Name:      "test",
-		Secret:    "JBSWY3DPEHPK3PXP",
 		Type:      TypeTOTP,
 		Algorithm: AlgorithmSHA1,
 		Digits:    6,
 		Period:    30,
-	}
+	}, "JBSWY3DPEHPK3PXP")
 
 	gen, err := NewGenerator(cred)
 	if err != nil {
@@ -432,14 +416,13 @@ func TestGenerator_Validate_TOTP_Success(t *testing.T) {
 }
 
 func TestGenerator_Validate_TOTP_Invalid(t *testing.T) {
-	cred := &Credential{
+	cred := withSecret(&Credential{
 		Name:      "test",
-		Secret:    "JBSWY3DPEHPK3PXP",
 		Type:      TypeTOTP,
 		Algorithm: AlgorithmSHA1,
 		Digits:    6,
 		Period:    30,
-	}
+	}, "JBSWY3DPEHPK3PXP")
 
 	gen, err := NewGenerator(cred)
 	if err != nil {
@@ -457,14 +440,13 @@ func TestGenerator_Validate_TOTP_Invalid(t *testing.T) {
 }
 
 func TestGenerator_Validate_WrongLength(t *testing.T) {
-	cred := &Credential{
+	cred := withSecret(&Credential{
 		Name:      "test",
-		Secret:    "JBSWY3DPEHPK3PXP",
 		Type:      TypeTOTP,
 		Algorithm: AlgorithmSHA1,
 		Digits:    6,
 		Period:    30,
-	}
+	}, "JBSWY3DPEHPK3PXP")
 
 	gen, err := NewGenerator(cred)
 	if err != nil {
@@ -490,14 +472,13 @@ func TestGenerator_Validate_WrongLength(t *testing.T) {
 }
 
 func TestGenerator_ValidateWithSkew_TOTP(t *testing.T) {
-	cred := &Credential{
+	cred := withSecret(&Credential{
 		Name:      "test",
-		Secret:    "JBSWY3DPEHPK3PXP",
 		Type:      TypeTOTP,
 		Algorithm: AlgorithmSHA1,
 		Digits:    6,
 		Period:    30,
-	}
+	}, "JBSWY3DPEHPK3PXP")
 
 	gen, err := NewGenerator(cred)
 	if err != nil {
@@ -528,14 +509,13 @@ func TestGenerator_ValidateWithSkew_TOTP(t *testing.T) {
 }
 
 func TestGenerator_Validate_HOTP_Success(t *testing.T) {
-	cred := &Credential{
+	cred := withSecret(&Credential{
 		Name:      "test",
-		Secret:    rfcTestSecret,
 		Type:      TypeHOTP,
 		Algorithm: AlgorithmSHA1,
 		Digits:    6,
 		Counter:   0,
-	}
+	}, rfcTestSecret)
 
 	gen, err := NewGenerator(cred)
 	if err != nil {
@@ -555,14 +535,13 @@ func TestGenerator_Validate_HOTP_Success(t *testing.T) {
 }
 
 func TestGenerator_Validate_HOTP_LookAhead(t *testing.T) {
-	cred := &Credential{
+	cred := withSecret(&Credential{
 		Name:      "test",
-		Secret:    rfcTestSecret,
 		Type:      TypeHOTP,
 		Algorithm: AlgorithmSHA1,
 		Digits:    6,
 		Counter:   0,
-	}
+	}, rfcTestSecret)
 
 	gen, err := NewGenerator(cred)
 	if err != nil {
@@ -582,14 +561,13 @@ func TestGenerator_Validate_HOTP_LookAhead(t *testing.T) {
 }
 
 func TestGenerator_Validate_HOTP_Invalid(t *testing.T) {
-	cred := &Credential{
+	cred := withSecret(&Credential{
 		Name:      "test",
-		Secret:    rfcTestSecret,
 		Type:      TypeHOTP,
 		Algorithm: AlgorithmSHA1,
 		Digits:    6,
 		Counter:   0,
-	}
+	}, rfcTestSecret)
 
 	gen, err := NewGenerator(cred)
 	if err != nil {
@@ -611,14 +589,13 @@ func TestGenerator_Validate_HOTP_Invalid(t *testing.T) {
 }
 
 func TestGenerator_TimeRemaining_TOTP(t *testing.T) {
-	cred := &Credential{
+	cred := withSecret(&Credential{
 		Name:      "test",
-		Secret:    "JBSWY3DPEHPK3PXP",
 		Type:      TypeTOTP,
 		Algorithm: AlgorithmSHA1,
 		Digits:    6,
 		Period:    30,
-	}
+	}, "JBSWY3DPEHPK3PXP")
 
 	gen, err := NewGenerator(cred)
 	if err != nil {
@@ -632,14 +609,13 @@ func TestGenerator_TimeRemaining_TOTP(t *testing.T) {
 }
 
 func TestGenerator_TimeRemaining_HOTP(t *testing.T) {
-	cred := &Credential{
+	cred := withSecret(&Credential{
 		Name:      "test",
-		Secret:    "JBSWY3DPEHPK3PXP",
 		Type:      TypeHOTP,
 		Algorithm: AlgorithmSHA1,
 		Digits:    6,
 		Counter:   0,
-	}
+	}, "JBSWY3DPEHPK3PXP")
 
 	gen, err := NewGenerator(cred)
 	if err != nil {
@@ -653,14 +629,13 @@ func TestGenerator_TimeRemaining_HOTP(t *testing.T) {
 }
 
 func TestGenerator_Counter_TOTP(t *testing.T) {
-	cred := &Credential{
+	cred := withSecret(&Credential{
 		Name:      "test",
-		Secret:    "JBSWY3DPEHPK3PXP",
 		Type:      TypeTOTP,
 		Algorithm: AlgorithmSHA1,
 		Digits:    6,
 		Period:    30,
-	}
+	}, "JBSWY3DPEHPK3PXP")
 
 	gen, err := NewGenerator(cred)
 	if err != nil {
@@ -680,14 +655,13 @@ func TestGenerator_Counter_TOTP(t *testing.T) {
 }
 
 func TestGenerator_Counter_HOTP(t *testing.T) {
-	cred := &Credential{
+	cred := withSecret(&Credential{
 		Name:      "test",
-		Secret:    "JBSWY3DPEHPK3PXP",
 		Type:      TypeHOTP,
 		Algorithm: AlgorithmSHA1,
 		Digits:    6,
 		Counter:   42,
-	}
+	}, "JBSWY3DPEHPK3PXP")
 
 	gen, err := NewGenerator(cred)
 	if err != nil {
@@ -701,14 +675,13 @@ func TestGenerator_Counter_HOTP(t *testing.T) {
 }
 
 func TestGenerator_IncrementCounter_HOTP(t *testing.T) {
-	cred := &Credential{
+	cred := withSecret(&Credential{
 		Name:      "test",
-		Secret:    "JBSWY3DPEHPK3PXP",
 		Type:      TypeHOTP,
 		Algorithm: AlgorithmSHA1,
 		Digits:    6,
 		Counter:   0,
-	}
+	}, "JBSWY3DPEHPK3PXP")
 
 	gen, err := NewGenerator(cred)
 	if err != nil {
@@ -727,14 +700,13 @@ func TestGenerator_IncrementCounter_HOTP(t *testing.T) {
 }
 
 func TestGenerator_IncrementCounter_TOTP(t *testing.T) {
-	cred := &Credential{
+	cred := withSecret(&Credential{
 		Name:      "test",
-		Secret:    "JBSWY3DPEHPK3PXP",
 		Type:      TypeTOTP,
 		Algorithm: AlgorithmSHA1,
 		Digits:    6,
 		Period:    30,
-	}
+	}, "JBSWY3DPEHPK3PXP")
 
 	gen, err := NewGenerator(cred)
 	if err != nil {
@@ -750,14 +722,13 @@ func TestGenerator_IncrementCounter_TOTP(t *testing.T) {
 
 func TestGenerator_LeadingZeros(t *testing.T) {
 	// Test that codes with leading zeros are properly formatted
-	cred := &Credential{
+	cred := withSecret(&Credential{
 		Name:      "test",
-		Secret:    rfcTestSecret,
 		Type:      TypeHOTP,
 		Algorithm: AlgorithmSHA1,
 		Digits:    6,
 		Counter:   0,
-	}
+	}, rfcTestSecret)
 
 	gen, err := NewGenerator(cred)
 	if err != nil {
@@ -777,14 +748,13 @@ func TestGenerator_LeadingZeros(t *testing.T) {
 }
 
 func TestGenerator_TimeBasedConsistency(t *testing.T) {
-	cred := &Credential{
+	cred := withSecret(&Credential{
 		Name:      "test",
-		Secret:    "JBSWY3DPEHPK3PXP",
 		Type:      TypeTOTP,
 		Algorithm: AlgorithmSHA1,
 		Digits:    6,
 		Period:    30,
-	}
+	}, "JBSWY3DPEHPK3PXP")
 
 	gen, err := NewGenerator(cred)
 	if err != nil {
@@ -831,14 +801,13 @@ func TestGenerator_DifferentPeriods(t *testing.T) {
 
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
-			cred := &Credential{
+			cred := withSecret(&Credential{
 				Name:      "test",
-				Secret:    "JBSWY3DPEHPK3PXP",
 				Type:      TypeTOTP,
 				Algorithm: AlgorithmSHA1,
 				Digits:    6,
 				Period:    tc.period,
-			}
+			}, "JBSWY3DPEHPK3PXP")
 
 			gen, err := NewGenerator(cred)
 			if err != nil {

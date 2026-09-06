@@ -43,18 +43,17 @@ func newTestDAOStore(t *testing.T) *DAOStore {
 
 // testCredential creates a valid TOTP credential for testing.
 func testCredential(name, issuer string) *Credential {
-	return &Credential{
+	return withSecret(&Credential{
 		ID:          generateCredentialID(issuer, name+"@example.com"),
 		Name:        name,
 		Issuer:      issuer,
 		AccountName: name + "@example.com",
-		Secret:      "JBSWY3DPEHPK3PXP",
 		Type:        TypeTOTP,
 		Algorithm:   AlgorithmSHA1,
 		Digits:      DefaultDigits,
 		Period:      DefaultPeriod,
 		CreatedAt:   time.Now(),
-	}
+	}, "JBSWY3DPEHPK3PXP")
 }
 
 // --- Constructor tests ---
@@ -86,13 +85,13 @@ func TestDAOStore_Add_Success(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, cred.Name, got.Name)
 	assert.Equal(t, cred.Issuer, got.Issuer)
-	assert.Equal(t, cred.Secret, got.Secret)
+	assert.Equal(t, cred.SecretString(), got.SecretString())
 	assert.Equal(t, cred.Type, got.Type)
 }
 
 func TestDAOStore_Add_InvalidCredential(t *testing.T) {
 	store := newTestDAOStore(t)
-	cred := &Credential{Name: "", Secret: "JBSWY3DPEHPK3PXP", Type: TypeTOTP}
+	cred := withSecret(&Credential{Name: "", Type: TypeTOTP}, "JBSWY3DPEHPK3PXP")
 
 	err := store.Add(cred)
 	require.Error(t, err)
@@ -239,7 +238,7 @@ func TestDAOStore_Update_NotFound(t *testing.T) {
 
 func TestDAOStore_Update_InvalidCredential(t *testing.T) {
 	store := newTestDAOStore(t)
-	cred := &Credential{ID: "test", Name: "", Secret: "JBSWY3DPEHPK3PXP", Type: TypeTOTP}
+	cred := withSecret(&Credential{ID: "test", Name: "", Type: TypeTOTP}, "JBSWY3DPEHPK3PXP")
 
 	err := store.Update(cred)
 	require.Error(t, err)
@@ -399,12 +398,11 @@ func TestDAOStore_Concurrency(t *testing.T) {
 
 func TestDAOStore_ConverterRoundTrip(t *testing.T) {
 	now := time.Now().Truncate(time.Second)
-	cred := &Credential{
+	cred := withSecret(&Credential{
 		ID:          "github.com:user@example.com",
 		Name:        "GitHub (user@example.com)",
 		Issuer:      "github.com",
 		AccountName: "user@example.com",
-		Secret:      "JBSWY3DPEHPK3PXP",
 		Type:        TypeTOTP,
 		Algorithm:   AlgorithmSHA256,
 		Digits:      8,
@@ -412,24 +410,25 @@ func TestDAOStore_ConverterRoundTrip(t *testing.T) {
 		Counter:     0,
 		BackendID:   "software",
 		CreatedAt:   now,
-	}
+	}, "JBSWY3DPEHPK3PXP")
 
 	entity := credentialToEntity(cred)
 	assert.Equal(t, cred.Name, entity.Name)
 	assert.Equal(t, cred.Issuer, entity.Issuer)
 	assert.Equal(t, cred.AccountName, entity.AccountName)
-	assert.Equal(t, cred.Secret, entity.Secret)
+	assert.Equal(t, cred.SecretString(), entity.Secret)
 	assert.Equal(t, cred.Type, entity.Type)
 	assert.Equal(t, cred.Algorithm, entity.Algorithm)
 	assert.Equal(t, cred.Digits, entity.Digits)
 	assert.Equal(t, cred.Period, entity.Period)
 	assert.Equal(t, cred.BackendID, entity.BackendID)
 
-	restored := entityToCredential(entity)
+	restored, err := entityToCredential(entity)
+	require.NoError(t, err)
 	assert.Equal(t, cred.Name, restored.Name)
 	assert.Equal(t, cred.Issuer, restored.Issuer)
 	assert.Equal(t, cred.AccountName, restored.AccountName)
-	assert.Equal(t, cred.Secret, restored.Secret)
+	assert.Equal(t, cred.SecretString(), restored.SecretString())
 	assert.Equal(t, cred.Type, restored.Type)
 	assert.Equal(t, cred.Algorithm, restored.Algorithm)
 	assert.Equal(t, cred.Digits, restored.Digits)

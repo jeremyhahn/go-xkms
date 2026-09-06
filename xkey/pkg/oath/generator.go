@@ -119,38 +119,43 @@ func (g *Generator) GenerateCounter(counter uint64) (string, error) {
 		return "", ErrInvalidAlgorithm
 	}
 
-	// Canonicalised through the SAME helper Validate uses, so the two agree on
-	// what this credential's secret is. They did not: Validate accepted a
-	// secret written with grouping separators -- normalizeSecret strips them --
-	// and this decode, seeing only strings.ToUpper, then failed on it. A
-	// credential could be enrolled successfully and be unable to generate a
-	// single code, which is the defect the FIPS gates above exist to prevent,
-	// arriving by a different route.
+	// The Base32 source is copied out of protected memory into a wipeable
+	// scratch slice, canonicalised in place through the SAME helper Validate
+	// uses — so the two agree on what this credential's secret is — and
+	// decoded into a second wipeable slice. Both are wiped before returning,
+	// so the only copies of the key this call leaves behind are the ones no
+	// supported API can reach (see below). The credential's at-rest form is
+	// an mlocked secure.Buffer, not a string, so nothing here outlives the
+	// call unwiped (go-xkms#210).
 	//
-	// canonicalizeSecret rather than normalizeSecret because normalizeSecret
-	// decodes in order to validate: calling it here would decode the secret
-	// twice and leave a second plaintext copy of the key on the heap that the
-	// wipe below does not reach.
-	secret, err := base32.StdEncoding.WithPadding(base32.NoPadding).DecodeString(
-		canonicalizeSecret(g.cred.Secret),
-	)
+	// canonicalizeSecretBytes rather than normalizeSecretBytes because
+	// normalizeSecretBytes decodes in order to validate: calling it here
+	// would decode the secret twice for no additional information.
+	secretB32, err := g.cred.secretCopy()
 	if err != nil {
+		return "", err
+	}
+	defer secure.Wipe(secretB32)
+
+	enc := base32.StdEncoding.WithPadding(base32.NoPadding)
+	canonical := canonicalizeSecretBytes(secretB32)
+	secret := make([]byte, enc.DecodedLen(len(canonical)))
+	n, err := enc.Decode(secret, canonical)
+	if err != nil {
+		secure.Wipe(secret)
 		return "", ErrInvalidSecret
 	}
+	secret = secret[:n]
 	// The decoded secret is the OATH key in the clear, so its residency is
 	// bounded by this call rather than left to the collector.
 	//
 	// This wipe is deliberately PARTIAL, and the part it does not reach is
-	// named here rather than left for a reader to find:
+	// named here rather than left for a reader to find: hmac.New copies the
+	// key into its own ipad/opad blocks inside the validated module, and
+	// crypto/hmac exposes no way to clear them. That copy is NOT wipeable
+	// through any supported API.
 	//
-	//   - hmac.New copies the key into its own ipad/opad blocks inside the
-	//     validated module, and crypto/hmac exposes no way to clear them.
-	//     That copy is NOT wipeable through any supported API.
-	//   - g.cred.Secret is the Base32 source, an immutable string, which
-	//     cannot be wiped at all and outlives this call by design -- it is
-	//     what the credential store persists.
-	//
-	// The first is a resolved conflict, not an oversight. conventions/
+	// That is a resolved conflict, not an oversight. conventions/
 	// security-review.md: when a FIPS-validated primitive conflicts with the
 	// protected-memory mandate, the validated primitive wins and the mandate
 	// yields -- the worked case is crypto/pbkdf2 copying the password inside
@@ -159,11 +164,6 @@ func (g *Generator) GenerateCounter(counter uint64) (string, error) {
 	// same boundary, and hand-rolling HMAC to keep the key wipeable would
 	// forfeit validation in the exact code path this file exists to make
 	// FIPS-safe.
-	//
-	// The second is a real gap and a pre-existing one: it is a property of
-	// Credential's storage format, not of this function, and fixing it means
-	// changing the persisted type. Tracked separately -- see the issue linked
-	// from this PR -- because it is an architecture change, not a FIPS gate.
 	defer secure.Wipe(secret)
 
 	// The second FIPS panic, and the algorithm gate above does not prevent it:

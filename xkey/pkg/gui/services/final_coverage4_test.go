@@ -285,15 +285,14 @@ func (m *mockFailOATHStore) Delete(id string) error             { return m.delet
 func (m *mockFailOATHStore) Close() error                       { return nil }
 
 func TestOATH_GenerateTOTP_GenerateError(t *testing.T) {
-	badCred := &oath.Credential{
+	badCred := oathCredWithSecret(t, &oath.Credential{
 		ID:        "test",
 		Name:      "test",
 		Type:      oath.TypeTOTP,
 		Algorithm: oath.AlgorithmSHA1,
-		Secret:    "!!INVALIDSECRET!!",
 		Digits:    6,
 		Period:    30,
-	}
+	}, "!!INVALIDSECRET!!")
 	store := &mockFailOATHStore{getCred: badCred}
 	svc := NewOATHService(store)
 
@@ -303,16 +302,15 @@ func TestOATH_GenerateTOTP_GenerateError(t *testing.T) {
 }
 
 func TestOATH_GenerateHOTP_GenerateError(t *testing.T) {
-	badCred := &oath.Credential{
+	badCred := oathCredWithSecret(t, &oath.Credential{
 		ID:        "test-hotp",
 		Name:      "test-hotp",
 		Type:      oath.TypeHOTP,
 		Algorithm: oath.AlgorithmSHA1,
-		Secret:    "!!INVALIDSECRET!!",
 		Digits:    6,
 		Period:    30,
 		Counter:   0,
-	}
+	}, "!!INVALIDSECRET!!")
 	store := &mockFailOATHStore{getCred: badCred}
 	svc := NewOATHService(store)
 

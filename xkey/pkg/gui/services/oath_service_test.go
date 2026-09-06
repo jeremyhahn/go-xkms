@@ -484,19 +484,18 @@ func TestOATHService_BackendID_MappedToAccount(t *testing.T) {
 
 	// Create a credential with BackendID set (simulating what the service
 	// layer does after construction).
-	cred := &oath.Credential{
+	cred := oathCredWithSecret(t, &oath.Credential{
 		ID:          "backend-svc-test:admin",
 		Name:        "BackendSvcTest (admin)",
 		Issuer:      "BackendSvcTest",
 		AccountName: "admin",
-		Secret:      "JBSWY3DPEHPK3PXP",
 		Type:        oath.TypeTOTP,
 		Algorithm:   oath.AlgorithmSHA1,
 		Digits:      oath.DefaultDigits,
 		Period:      oath.DefaultPeriod,
 		CreatedAt:   time.Now(),
 		BackendID:   "tpm2-default",
-	}
+	}, "JBSWY3DPEHPK3PXP")
 
 	require.NoError(t, store.Add(cred))
 

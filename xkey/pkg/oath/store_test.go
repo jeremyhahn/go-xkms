@@ -23,18 +23,17 @@ import (
 )
 
 func createTestCredential(id, name string) *Credential {
-	return &Credential{
+	return withSecret(&Credential{
 		ID:          id,
 		Name:        name,
 		Issuer:      "TestIssuer",
 		AccountName: name + "@example.com",
-		Secret:      "JBSWY3DPEHPK3PXP",
 		Type:        TypeTOTP,
 		Algorithm:   AlgorithmSHA1,
 		Digits:      6,
 		Period:      30,
 		CreatedAt:   time.Now(),
-	}
+	}, "JBSWY3DPEHPK3PXP")
 }
 
 // MemoryStore Tests
@@ -86,12 +85,11 @@ func TestMemoryStore_Add_Duplicate(t *testing.T) {
 
 func TestMemoryStore_Add_InvalidCredential(t *testing.T) {
 	store := NewMemoryStore()
-	cred := &Credential{
-		ID:     "test1",
-		Name:   "", // Invalid: empty name
-		Secret: "JBSWY3DPEHPK3PXP",
-		Type:   TypeTOTP,
-	}
+	cred := withSecret(&Credential{
+		ID:   "test1",
+		Name: "", // Invalid: empty name
+		Type: TypeTOTP,
+	}, "JBSWY3DPEHPK3PXP")
 
 	err := store.Add(cred)
 	if err == nil {

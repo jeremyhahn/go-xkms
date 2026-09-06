@@ -652,11 +652,10 @@ func TestFM_SealService_SealData_DecodeFailure(t *testing.T) {
 // GenerateTOTP returns ErrOATHGenerateFailed when credential type is HOTP.
 func TestFM_OATHService_GenerateTOTP_WrongType(t *testing.T) {
 	store := &fmOATHStore{
-		getCred: &oath.Credential{
-			ID:     "test-hotp",
-			Type:   oath.TypeHOTP,
-			Secret: "JBSWY3DPEHPK3PXP",
-		},
+		getCred: oathCredWithSecret(t, &oath.Credential{
+			ID:   "test-hotp",
+			Type: oath.TypeHOTP,
+		}, "JBSWY3DPEHPK3PXP"),
 	}
 	svc := NewOATHService(store)
 	_, err := svc.GenerateTOTP("test-hotp")
@@ -667,11 +666,10 @@ func TestFM_OATHService_GenerateTOTP_WrongType(t *testing.T) {
 // GenerateHOTP returns ErrOATHGenerateFailed when credential type is TOTP.
 func TestFM_OATHService_GenerateHOTP_WrongType(t *testing.T) {
 	store := &fmOATHStore{
-		getCred: &oath.Credential{
-			ID:     "test-totp",
-			Type:   oath.TypeTOTP,
-			Secret: "JBSWY3DPEHPK3PXP",
-		},
+		getCred: oathCredWithSecret(t, &oath.Credential{
+			ID:   "test-totp",
+			Type: oath.TypeTOTP,
+		}, "JBSWY3DPEHPK3PXP"),
 	}
 	svc := NewOATHService(store)
 	_, err := svc.GenerateHOTP("test-totp")

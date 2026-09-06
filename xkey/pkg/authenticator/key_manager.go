@@ -109,12 +109,13 @@ type KeyManager struct {
 	// across the read, and a memguard failure anywhere in the process unmaps
 	// every live enclave.
 	//
-	// This does NOT make the plaintext absent from the ordinary heap. Each key
-	// arrives from KeyWrapper.Unwrap, which returns a heap []byte; it is copied
-	// into protected memory and the source wiped immediately, but the transit
-	// exists. Closing that needs an unwrap that writes into caller-supplied
-	// protected memory — filed as #291. What this closes is the LONG-LIVED
-	// exposure: material held for a whole unlocked session.
+	// Each key is decrypted DIRECTLY into its protected buffer:
+	// unwrapIntoProtected allocates the destination before the borrow on the
+	// wrapping key and KeyWrapper.UnwrapInto writes into it in place, so the
+	// plaintext never transits the ordinary Go heap (#291 closed the heap
+	// hop #285 had to leave open). This protects both the long-lived
+	// exposure — material held for a whole unlocked session — and the
+	// unwrap transit.
 	adminKey *secure.Buffer
 
 	// cmk is the Credential Master Key (unwrapped).
@@ -210,9 +211,9 @@ func (km *KeyManager) clearKeyMaterial() {
 // the field held before and wiping the caller's copy.
 //
 // The caller must not use plaintext afterwards: secure.NewBufferFromBytes
-// wipes it. Taking ownership here is deliberate — it makes the heap copy that
-// KeyWrapper.Unwrap returns short-lived by construction rather than by the
-// caller remembering to clear it.
+// wipes it. Taking ownership here is deliberate — it makes a heap copy of key
+// material short-lived by construction rather than by the caller remembering
+// to clear it.
 //
 // The caller must hold km.mu for writing.
 func adoptKeyMaterial(dst **secure.Buffer, plaintext []byte) error {
@@ -224,6 +225,63 @@ func adoptKeyMaterial(dst **secure.Buffer, plaintext []byte) error {
 	(*dst).Destroy()
 	*dst = buf
 	return nil
+}
+
+// adoptProtected installs an already-protected buffer into a key field,
+// destroying whatever the field held before. It is adoptKeyMaterial for
+// material that never existed on the ordinary heap.
+//
+// The caller must hold km.mu for writing.
+func adoptProtected(dst **secure.Buffer, buf *secure.Buffer) {
+	(*dst).Destroy()
+	*dst = buf
+}
+
+// unwrapIntoProtected unwraps AES-GCM wrapped key material directly into a
+// freshly allocated protected buffer, borrowing the protected wrapping key
+// only for the decrypt. The plaintext never exists on the ordinary Go heap.
+//
+// The order of operations is load-bearing, not stylistic: secure.NewBuffer is
+// purge-class and takes the same purgeMu that WithBytes holds as a reader, so
+// the destination MUST be allocated before the borrow on key is entered — a
+// purge-class call inside a borrow self-deadlocks (go-qrdb pkg/secure:
+// "Nested borrows are forbidden"). The AES-GCM format makes that possible:
+// the plaintext length is derivable from the wrapped data without the key,
+// and the callback then touches only a plain slice, never pkg/secure.
+//
+// On any failure the destination buffer is destroyed before returning, so no
+// half-filled protected allocation leaks. Returns ErrKeyManagerLocked when
+// key is nil, ErrKeyManagerProtectedMemory (wrapped) when the protected
+// allocation fails, and the KeyWrapper errors otherwise.
+func unwrapIntoProtected(key *secure.Buffer, wrapped []byte) (*secure.Buffer, error) {
+	plainLen, err := aesGCMUnwrappedLen(wrapped)
+	if err != nil {
+		return nil, err
+	}
+	if plainLen == 0 {
+		return nil, ErrInvalidWrappedData
+	}
+
+	dst, err := secure.NewBuffer(plainLen)
+	if err != nil {
+		return nil, &SentinelCauseError{Sentinel: ErrKeyManagerProtectedMemory, Cause: err}
+	}
+
+	// Borrow-class read, released before the withKeyWrapper borrow below.
+	// The slice stays valid for the life of dst; holding it across the
+	// callback is the documented Bytes residue (go-qrdb#74), accepted because
+	// no shape that holds the borrow instead can allocate or write without
+	// nesting.
+	raw := dst.Bytes()
+
+	if err := withKeyWrapper(key, func(w KeyWrapper) error {
+		return w.UnwrapInto(wrapped, raw)
+	}); err != nil {
+		dst.Destroy()
+		return nil, err
+	}
+
+	return dst, nil
 }
 
 // firstError returns the first non-nil error, or nil. It exists so a run of
@@ -303,27 +361,22 @@ func (km *KeyManager) UnlockWithSOPIN(pin string) error {
 		return err
 	}
 
-	// Unwrap AK using SMK
-	var ak []byte
-	unwrapErr := withKeyBytes(km.smk, func(smkBytes []byte) error {
-		akWrapper, wErr := NewAESGCMKeyWrapper(smkBytes)
-		if wErr != nil {
-			return wErr
-		}
-		var uErr error
-		ak, uErr = akWrapper.Unwrap(km.state.WrappedAK)
-		return uErr
-	})
+	// Unwrap AK using SMK, directly into protected memory: the plaintext
+	// never touches the ordinary Go heap (go-xkms#291).
+	akBuf, unwrapErr := unwrapIntoProtected(km.smk, km.state.WrappedAK)
 	if unwrapErr != nil {
+		km.clearKeyMaterial()
+		if errors.Is(unwrapErr, ErrKeyManagerProtectedMemory) {
+			// The protected allocation failing says nothing about the PIN;
+			// charging it to the retry counter would burn attempts over a
+			// memory condition the Security Officer cannot influence.
+			return unwrapErr
+		}
 		// AES-GCM authenticated unwrap failure means the SMK (and thus SO PIN)
 		// is incorrect. Map the raw crypto error to a meaningful PIN error.
-		km.clearKeyMaterial()
 		return manager.RecordFailure()
 	}
-	if err := adoptKeyMaterial(&km.adminKey, ak); err != nil {
-		km.clearKeyMaterial()
-		return err
-	}
+	adoptProtected(&km.adminKey, akBuf)
 
 	// The Admin Key unwrapped, so the SO PIN is proven. Restore the budget here
 	// rather than after the CMK unwrap below: a corrupt CMK is a state problem,
@@ -331,27 +384,16 @@ func (km *KeyManager) UnlockWithSOPIN(pin string) error {
 	// lock the token out over something the Security Officer got right.
 	manager.ConfirmVerified()
 
-	// Unwrap CMK using AK (SO copy). adoptKeyMaterial wiped ak, so the wrapper
-	// is built from the protected copy.
+	// Unwrap CMK using AK (SO copy), directly into protected memory — the
+	// wrapper is built from the protected AK inside the borrow, and the
+	// plaintext CMK never touches the ordinary Go heap (go-xkms#291).
 	if len(km.state.WrappedCMKSO) > 0 {
-		var cmk []byte
-		cmkErr := withKeyBytes(km.adminKey, func(akBytes []byte) error {
-			cmkWrapper, wErr := NewAESGCMKeyWrapper(akBytes)
-			if wErr != nil {
-				return wErr
-			}
-			var uErr error
-			cmk, uErr = cmkWrapper.Unwrap(km.state.WrappedCMKSO)
-			return uErr
-		})
+		cmkBuf, cmkErr := unwrapIntoProtected(km.adminKey, km.state.WrappedCMKSO)
 		if cmkErr != nil {
 			km.clearKeyMaterial()
 			return cmkErr
 		}
-		if err := adoptKeyMaterial(&km.cmk, cmk); err != nil {
-			km.clearKeyMaterial()
-			return err
-		}
+		adoptProtected(&km.cmk, cmkBuf)
 	}
 
 	km.unlockSource = unlockSourceSOPIN
@@ -398,22 +440,17 @@ func (km *KeyManager) UnlockWithUserPIN(pinHash []byte) error {
 		return err
 	}
 
-	// Unwrap CMK using UMK (user copy). umk was wiped by adoptKeyMaterial
-	// above, so the wrapper is built from the protected copy.
+	// Unwrap CMK using UMK (user copy), directly into protected memory. umk
+	// was wiped by adoptKeyMaterial above, so the wrapper is built from the
+	// protected copy, and the plaintext CMK never touches the ordinary Go
+	// heap (go-xkms#291).
 	if len(km.state.WrappedCMKUser) > 0 {
-		var cmk []byte
-		if err := withKeyWrapper(km.umk, func(w KeyWrapper) error {
-			var uErr error
-			cmk, uErr = w.Unwrap(km.state.WrappedCMKUser)
-			return uErr
-		}); err != nil {
+		cmkBuf, cmkErr := unwrapIntoProtected(km.umk, km.state.WrappedCMKUser)
+		if cmkErr != nil {
 			km.clearKeyMaterial()
-			return err
+			return cmkErr
 		}
-		if err := adoptKeyMaterial(&km.cmk, cmk); err != nil {
-			km.clearKeyMaterial()
-			return err
-		}
+		adoptProtected(&km.cmk, cmkBuf)
 	}
 
 	km.unlockSource = unlockSourceUserPIN
@@ -690,6 +727,11 @@ func (km *KeyManager) WrapCredentialKey(privateKeyPKCS8 []byte) ([]byte, error) 
 
 // UnwrapCredentialKey unwraps a credential private key (PKCS#8 encoded) using CMK.
 //
+// The returned slice is allocated here, outside the borrow on CMK, and the
+// decrypt writes into it in place — no plaintext copy exists that the caller
+// does not own (go-xkms#291). The caller MUST wipe it (secure.Wipe) as soon
+// as the key has been parsed or adopted into protected memory.
+//
 // Returns ErrKeyManagerLocked if the manager is not unlocked.
 // Returns ErrKeyManagerNoCMK if CMK is not available.
 func (km *KeyManager) UnwrapCredentialKey(wrapped []byte) ([]byte, error) {
@@ -704,11 +746,13 @@ func (km *KeyManager) UnwrapCredentialKey(wrapped []byte) ([]byte, error) {
 		return nil, ErrKeyManagerNoCMK
 	}
 
-	var plaintext []byte
+	plainLen, err := aesGCMUnwrappedLen(wrapped)
+	if err != nil {
+		return nil, err
+	}
+	plaintext := make([]byte, plainLen)
 	if err := withKeyWrapper(km.cmk, func(w KeyWrapper) error {
-		var uErr error
-		plaintext, uErr = w.Unwrap(wrapped)
-		return uErr
+		return w.UnwrapInto(wrapped, plaintext)
 	}); err != nil {
 		return nil, err
 	}
@@ -864,26 +908,14 @@ func (km *KeyManager) withAttestationKey(fn func(*ecdsa.PrivateKey) error) error
 		return err
 	}
 
-	// The unwrap happens under the borrow on unwrapKey; the plaintext is then
-	// hoisted OUT of it before being adopted into protected memory. That order
-	// is not cosmetic: NewBufferFromBytes is purge-class and takes the same
-	// purgeMu that WithBytes holds as a reader, so adopting from inside the
-	// borrow self-deadlocks (go-qrdb pkg/secure/buffer.go: "fn MUST NOT call
-	// back into this package"). It is also the shape every unlock path here
-	// already uses.
-	var attestKeyPKCS8 []byte
-	if err := withKeyWrapper(unwrapKey, func(wrapper KeyWrapper) error {
-		var unwrapErr error
-		attestKeyPKCS8, unwrapErr = wrapper.Unwrap(wrapped)
-		return unwrapErr
-	}); err != nil {
-		return err
-	}
-
-	// adoptKeyMaterial copies into mlocked memory and wipes the source slice,
-	// so the unwrapped plaintext exists on the Go heap only until here.
-	var buf *secure.Buffer
-	if err := adoptKeyMaterial(&buf, attestKeyPKCS8); err != nil {
+	// The destination buffer is allocated before the borrow on unwrapKey and
+	// the decrypt writes straight into it, so the PKCS#8 plaintext never
+	// exists on the ordinary Go heap (go-xkms#291). The ordering constraint
+	// that used to force a heap hop here — NewBufferFromBytes is purge-class
+	// and self-deadlocks inside a borrow — is honoured by unwrapIntoProtected
+	// allocating first.
+	buf, err := unwrapIntoProtected(unwrapKey, wrapped)
+	if err != nil {
 		return err
 	}
 	defer buf.Destroy()
@@ -968,41 +1000,55 @@ func (km *KeyManager) ChangeSOPIN(currentSMK []byte, newPIN string) error {
 		return err
 	}
 
-	ak, err := oldWrapper.Unwrap(km.state.WrappedAK)
+	// The Admin Key is decrypted directly into protected memory: the
+	// destination is allocated first, and no borrow is held here (currentSMK
+	// is the caller's heap slice), so there is no nesting hazard and no heap
+	// transit (go-xkms#291).
+	akLen, err := aesGCMUnwrappedLen(km.state.WrappedAK)
+	if err != nil || akLen == 0 {
+		return km.state.SOPINManager.RecordFailure()
+	}
+	akBuf, err := secure.NewBuffer(akLen)
 	if err != nil {
+		return &SentinelCauseError{Sentinel: ErrKeyManagerProtectedMemory, Cause: err}
+	}
+	akBytes := akBuf.Bytes()
+	if err := oldWrapper.UnwrapInto(km.state.WrappedAK, akBytes); err != nil {
+		akBuf.Destroy()
 		return km.state.SOPINManager.RecordFailure()
 	}
 
 	newSMK, err := km.state.SOPINManager.Rekey(newPIN)
 	if err != nil {
-		clearBytes(ak)
+		akBuf.Destroy()
 		return err
 	}
 
 	// Re-wrap AK with new SMK
 	newWrapper, err := NewAESGCMKeyWrapper(newSMK)
 	if err != nil {
-		clearBytes(ak)
+		akBuf.Destroy()
 		clearBytes(newSMK)
 		return err
 	}
 
-	newWrappedAK, err := newWrapper.Wrap(ak)
+	// Wrap reads the mlocked plaintext through the slice taken above; the
+	// wrapped output it returns is ciphertext and safe on the heap.
+	newWrappedAK, err := newWrapper.Wrap(akBytes)
 	if err != nil {
-		clearBytes(ak)
+		akBuf.Destroy()
 		clearBytes(newSMK)
 		return err
 	}
 
 	// Update state
 	km.state.WrappedAK = newWrappedAK
-	if err := firstError(
-		adoptKeyMaterial(&km.smk, newSMK),
-		adoptKeyMaterial(&km.adminKey, ak),
-	); err != nil {
+	if err := adoptKeyMaterial(&km.smk, newSMK); err != nil {
+		akBuf.Destroy()
 		km.clearKeyMaterial()
 		return err
 	}
+	adoptProtected(&km.adminKey, akBuf)
 
 	return nil
 }
@@ -1079,9 +1125,10 @@ func (km *KeyManager) GetCMK() ([]byte, error) {
 
 	// Return a copy to prevent external modification.
 	//
-	// This hands a caller plaintext on the ordinary heap, which is the shape
-	// #291 exists to remove. The copy is deliberate — callers mutate what they
-	// receive — so the caller owns wiping it.
+	// This hands a caller plaintext on the ordinary heap. The copy is the
+	// caller's to wipe. (An earlier comment here justified the shape by
+	// "callers mutate what they receive"; no non-test caller exists, so that
+	// rationale described nobody and is withdrawn — recorded on #291.)
 	var cmkCopy []byte
 	if err := withKeyBytes(km.cmk, func(b []byte) error {
 		cmkCopy = make([]byte, len(b))

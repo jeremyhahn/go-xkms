@@ -234,7 +234,11 @@ func runOATHSync(cmd *cobra.Command, args []string) error {
 	for _, remoteCred := range result.Credentials {
 		if _, exists := localMap[strings.ToLower(remoteCred.Name)]; !exists {
 			_, _ = fmt.Fprintf(cmd.OutOrStdout(), "  Pulling: %s\n", remoteCred.Name)
-			localCred := deviceInfoToCredential(remoteCred)
+			localCred, convErr := deviceInfoToCredential(remoteCred)
+			if convErr != nil {
+				_, _ = fmt.Fprintf(cmd.OutOrStdout(), "    Error: %v\n", convErr)
+				continue
+			}
 			if addErr := store.Add(localCred); addErr != nil {
 				_, _ = fmt.Fprintf(cmd.OutOrStdout(), "    Error: %v\n", addErr)
 				continue
@@ -415,7 +419,11 @@ func runOATHPull(cmd *cobra.Command, args []string) error {
 	imported := 0
 	skipped := 0
 	for _, remoteCred := range result.Credentials {
-		localCred := deviceInfoToCredential(remoteCred)
+		localCred, convErr := deviceInfoToCredential(remoteCred)
+		if convErr != nil {
+			_, _ = fmt.Fprintf(cmd.OutOrStdout(), "  Error importing %s: %v\n", remoteCred.Name, convErr)
+			continue
+		}
 		if err := store.Add(localCred); err != nil {
 			if errors.Is(err, oath.ErrCredentialExists) {
 				skipped++
@@ -450,7 +458,7 @@ func credentialToPhoneInfo(cred *oath.Credential) phone.OATHCredentialInfo {
 		Name:        cred.Name,
 		Issuer:      cred.Issuer,
 		AccountName: cred.AccountName,
-		Secret:      cred.Secret,
+		Secret:      cred.SecretString(),
 		Type:        cred.Type,
 		Algorithm:   cred.Algorithm,
 		Digits:      cred.Digits,
@@ -460,8 +468,9 @@ func credentialToPhoneInfo(cred *oath.Credential) phone.OATHCredentialInfo {
 }
 
 // deviceInfoToCredential converts a phone OATH credential to a local
-// OATH credential.
-func deviceInfoToCredential(info phone.OATHCredentialInfo) *oath.Credential {
+// OATH credential, adopting the secret into protected memory. The error is
+// oath.ErrProtectedMemory (wrapped) when that allocation fails.
+func deviceInfoToCredential(info phone.OATHCredentialInfo) (*oath.Credential, error) {
 	algorithm := info.Algorithm
 	if algorithm == "" {
 		algorithm = oath.DefaultAlgorithm
@@ -489,12 +498,11 @@ func deviceInfoToCredential(info phone.OATHCredentialInfo) *oath.Credential {
 		id = fmt.Sprintf("%s:%s", strings.ToLower(info.Issuer), strings.ToLower(info.AccountName))
 	}
 
-	return &oath.Credential{
+	cred := &oath.Credential{
 		ID:          id,
 		Name:        name,
 		Issuer:      info.Issuer,
 		AccountName: info.AccountName,
-		Secret:      info.Secret,
 		Type:        otpType,
 		Algorithm:   algorithm,
 		Digits:      digits,
@@ -502,4 +510,8 @@ func deviceInfoToCredential(info phone.OATHCredentialInfo) *oath.Credential {
 		Counter:     info.Counter,
 		CreatedAt:   time.Now(),
 	}
+	if err := cred.SetSecret(info.Secret); err != nil {
+		return nil, err
+	}
+	return cred, nil
 }

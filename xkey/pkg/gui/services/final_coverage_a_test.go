@@ -1196,14 +1196,13 @@ func TestFA_OATHService_GenerateTOTP_StoreGetError(t *testing.T) {
 // type is HOTP.
 func TestFA_OATHService_GenerateTOTP_NotTOTP(t *testing.T) {
 	store := &faOATHStore{
-		getCred: &oath.Credential{
+		getCred: oathCredWithSecret(t, &oath.Credential{
 			ID:        "test-id",
 			Name:      "Test",
 			Type:      oath.TypeHOTP,
-			Secret:    "JBSWY3DPEHPK3PXP",
 			Algorithm: "SHA1",
 			Digits:    6,
-		},
+		}, "JBSWY3DPEHPK3PXP"),
 	}
 	svc := NewOATHService(store)
 
@@ -1215,15 +1214,14 @@ func TestFA_OATHService_GenerateTOTP_NotTOTP(t *testing.T) {
 // oath.NewGenerator fails (bad algorithm).
 func TestFA_OATHService_GenerateTOTP_GeneratorError(t *testing.T) {
 	store := &faOATHStore{
-		getCred: &oath.Credential{
+		getCred: oathCredWithSecret(t, &oath.Credential{
 			ID:        "test-id",
 			Name:      "Test",
 			Type:      oath.TypeTOTP,
-			Secret:    "JBSWY3DPEHPK3PXP",
 			Algorithm: "INVALID",
 			Digits:    6,
 			Period:    30,
-		},
+		}, "JBSWY3DPEHPK3PXP"),
 	}
 	svc := NewOATHService(store)
 
@@ -1243,15 +1241,14 @@ func TestFA_OATHService_GenerateHOTP_StoreGetError(t *testing.T) {
 // TestFA_OATHService_GenerateHOTP_NotHOTP covers L199-200.
 func TestFA_OATHService_GenerateHOTP_NotHOTP(t *testing.T) {
 	store := &faOATHStore{
-		getCred: &oath.Credential{
+		getCred: oathCredWithSecret(t, &oath.Credential{
 			ID:        "test-id",
 			Name:      "Test",
 			Type:      oath.TypeTOTP,
-			Secret:    "JBSWY3DPEHPK3PXP",
 			Algorithm: "SHA1",
 			Digits:    6,
 			Period:    30,
-		},
+		}, "JBSWY3DPEHPK3PXP"),
 	}
 	svc := NewOATHService(store)
 
@@ -1262,14 +1259,13 @@ func TestFA_OATHService_GenerateHOTP_NotHOTP(t *testing.T) {
 // TestFA_OATHService_GenerateHOTP_GeneratorError covers L203-205.
 func TestFA_OATHService_GenerateHOTP_GeneratorError(t *testing.T) {
 	store := &faOATHStore{
-		getCred: &oath.Credential{
+		getCred: oathCredWithSecret(t, &oath.Credential{
 			ID:        "test-id",
 			Name:      "Test",
 			Type:      oath.TypeHOTP,
-			Secret:    "JBSWY3DPEHPK3PXP",
 			Algorithm: "INVALID",
 			Digits:    6,
-		},
+		}, "JBSWY3DPEHPK3PXP"),
 	}
 	svc := NewOATHService(store)
 
@@ -1342,15 +1338,14 @@ func TestFA_OATHService_GenerateHOTP_EmptyID(t *testing.T) {
 // store.Update fails after generating the code.
 func TestFA_OATHService_GenerateHOTP_UpdateError(t *testing.T) {
 	store := &faOATHStore{
-		getCred: &oath.Credential{
+		getCred: oathCredWithSecret(t, &oath.Credential{
 			ID:        "test-id",
 			Name:      "Test",
 			Type:      oath.TypeHOTP,
-			Secret:    "JBSWY3DPEHPK3PXP",
 			Algorithm: "SHA1",
 			Digits:    6,
 			Counter:   0,
-		},
+		}, "JBSWY3DPEHPK3PXP"),
 		updateErr: errors.New("update failed"),
 	}
 	svc := NewOATHService(store)
@@ -1364,15 +1359,14 @@ func TestFA_OATHService_GenerateHOTP_UpdateError(t *testing.T) {
 // (L166-181).
 func TestFA_OATHService_GenerateTOTP_Success(t *testing.T) {
 	store := &faOATHStore{
-		getCred: &oath.Credential{
+		getCred: oathCredWithSecret(t, &oath.Credential{
 			ID:        "test-id",
 			Name:      "Test",
 			Type:      oath.TypeTOTP,
-			Secret:    "JBSWY3DPEHPK3PXP",
 			Algorithm: "SHA1",
 			Digits:    6,
 			Period:    30,
-		},
+		}, "JBSWY3DPEHPK3PXP"),
 	}
 	svc := NewOATHService(store)
 
@@ -1388,15 +1382,14 @@ func TestFA_OATHService_GenerateTOTP_Success(t *testing.T) {
 // (L203-223).
 func TestFA_OATHService_GenerateHOTP_Success(t *testing.T) {
 	store := &faOATHStore{
-		getCred: &oath.Credential{
+		getCred: oathCredWithSecret(t, &oath.Credential{
 			ID:        "test-id",
 			Name:      "Test",
 			Type:      oath.TypeHOTP,
-			Secret:    "JBSWY3DPEHPK3PXP",
 			Algorithm: "SHA1",
 			Digits:    6,
 			Counter:   0,
-		},
+		}, "JBSWY3DPEHPK3PXP"),
 	}
 	svc := NewOATHService(store)
 

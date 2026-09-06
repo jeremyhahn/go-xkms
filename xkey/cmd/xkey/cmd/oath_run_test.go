@@ -90,16 +90,15 @@ func addTestCredential(t *testing.T, storePath string, cred *oath.Credential) {
 
 // totpCredential returns a valid TOTP credential for the given name.
 func totpCredential(name string) *oath.Credential {
-	return &oath.Credential{
+	return withOATHSecret(&oath.Credential{
 		ID:        strings.ToLower(name),
 		Name:      name,
 		Issuer:    "Example",
-		Secret:    "JBSWY3DPEHPK3PXP",
 		Type:      oath.TypeTOTP,
 		Algorithm: "SHA1",
 		Digits:    6,
 		Period:    30,
-	}
+	}, "JBSWY3DPEHPK3PXP")
 }
 
 var sixDigits = regexp.MustCompile(`\b\d{6}\b`)
@@ -123,7 +122,7 @@ func TestRunOATHAdd_FromIndividualFlags(t *testing.T) {
 	cred, err := fs.Get("github")
 	require.NoError(t, err)
 	assert.Equal(t, "GitHub", cred.Name)
-	assert.Equal(t, "JBSWY3DPEHPK3PXP", cred.Secret, "the secret must be normalised to upper case")
+	assert.Equal(t, "JBSWY3DPEHPK3PXP", cred.SecretString(), "the secret must be normalised to upper case")
 	assert.Equal(t, oath.TypeTOTP, cred.Type)
 	assert.Equal(t, 6, cred.Digits)
 }

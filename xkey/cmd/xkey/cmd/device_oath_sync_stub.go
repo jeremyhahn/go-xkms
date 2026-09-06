@@ -148,7 +148,7 @@ func credentialToPhoneInfo(cred *oath.Credential) phone.OATHCredentialInfo {
 		Name:        cred.Name,
 		Issuer:      cred.Issuer,
 		AccountName: cred.AccountName,
-		Secret:      cred.Secret,
+		Secret:      cred.SecretString(),
 		Type:        cred.Type,
 		Algorithm:   cred.Algorithm,
 		Digits:      cred.Digits,
@@ -158,8 +158,9 @@ func credentialToPhoneInfo(cred *oath.Credential) phone.OATHCredentialInfo {
 }
 
 // deviceInfoToCredential converts a phone OATH credential to a local
-// OATH credential.
-func deviceInfoToCredential(info phone.OATHCredentialInfo) *oath.Credential {
+// OATH credential, adopting the secret into protected memory. The error is
+// oath.ErrProtectedMemory (wrapped) when that allocation fails.
+func deviceInfoToCredential(info phone.OATHCredentialInfo) (*oath.Credential, error) {
 	algorithm := info.Algorithm
 	if algorithm == "" {
 		algorithm = oath.DefaultAlgorithm
@@ -187,12 +188,11 @@ func deviceInfoToCredential(info phone.OATHCredentialInfo) *oath.Credential {
 		id = fmt.Sprintf("%s:%s", strings.ToLower(info.Issuer), strings.ToLower(info.AccountName))
 	}
 
-	return &oath.Credential{
+	cred := &oath.Credential{
 		ID:          id,
 		Name:        name,
 		Issuer:      info.Issuer,
 		AccountName: info.AccountName,
-		Secret:      info.Secret,
 		Type:        otpType,
 		Algorithm:   algorithm,
 		Digits:      digits,
@@ -200,4 +200,8 @@ func deviceInfoToCredential(info phone.OATHCredentialInfo) *oath.Credential {
 		Counter:     info.Counter,
 		CreatedAt:   time.Now(),
 	}
+	if err := cred.SetSecret(info.Secret); err != nil {
+		return nil, err
+	}
+	return cred, nil
 }

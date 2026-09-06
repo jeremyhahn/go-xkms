@@ -106,18 +106,17 @@ func seedBackupStores(t *testing.T, home string) {
 
 	oathStore, err := oath.NewFileStore(filepath.Join(dataDir, backupOATHStoreFile))
 	require.NoError(t, err)
-	require.NoError(t, oathStore.Add(&oath.Credential{
+	require.NoError(t, oathStore.Add(withOATHSecret(&oath.Credential{
 		ID:          "oath-unit-test",
 		Name:        "UnitTestOATH",
 		Issuer:      "Example",
 		AccountName: "user@example.com",
-		Secret:      "JBSWY3DPEHPK3PXP",
 		Type:        oath.TypeTOTP,
 		Algorithm:   oath.AlgorithmSHA1,
 		Digits:      6,
 		Period:      30,
 		CreatedAt:   time.Now().UTC(),
-	}))
+	}, "JBSWY3DPEHPK3PXP")))
 	require.NoError(t, oathStore.Close())
 
 	passwordStore, err := openPasswordStore(filepath.Join(dataDir, backupPasswordStoreDir))

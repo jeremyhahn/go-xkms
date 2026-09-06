@@ -96,8 +96,8 @@ func TestBackendStore_Add_Success(t *testing.T) {
 	if retrieved.Name != cred.Name {
 		t.Errorf("expected Name %q, got %q", cred.Name, retrieved.Name)
 	}
-	if retrieved.Secret != cred.Secret {
-		t.Errorf("expected Secret %q, got %q", cred.Secret, retrieved.Secret)
+	if retrieved.SecretString() != cred.SecretString() {
+		t.Errorf("expected Secret %q, got %q", cred.SecretString(), retrieved.SecretString())
 	}
 }
 
@@ -168,12 +168,11 @@ func TestBackendStore_Add_InvalidCredential_EmptyName(t *testing.T) {
 	store := newTestBackendStore(t)
 	defer store.Close()
 
-	cred := &Credential{
-		ID:     "test1",
-		Name:   "", // Invalid
-		Secret: "JBSWY3DPEHPK3PXP",
-		Type:   TypeTOTP,
-	}
+	cred := withSecret(&Credential{
+		ID:   "test1",
+		Name: "", // Invalid
+		Type: TypeTOTP,
+	}, "JBSWY3DPEHPK3PXP")
 
 	err := store.Add(cred)
 	if err == nil {
@@ -185,15 +184,14 @@ func TestBackendStore_Add_InvalidCredential_EmptySecret(t *testing.T) {
 	store := newTestBackendStore(t)
 	defer store.Close()
 
-	cred := &Credential{
+	cred := withSecret(&Credential{
 		ID:        "test1",
 		Name:      "Test",
-		Secret:    "", // Invalid
 		Type:      TypeTOTP,
 		Algorithm: AlgorithmSHA1,
 		Digits:    6,
 		Period:    30,
-	}
+	}, "")
 
 	err := store.Add(cred)
 	if err == nil {
@@ -369,8 +367,8 @@ func TestBackendStore_List_PreservesAllFields(t *testing.T) {
 	if retrieved.Issuer != cred.Issuer {
 		t.Errorf("Issuer mismatch: expected %q, got %q", cred.Issuer, retrieved.Issuer)
 	}
-	if retrieved.Secret != cred.Secret {
-		t.Errorf("Secret mismatch: expected %q, got %q", cred.Secret, retrieved.Secret)
+	if retrieved.SecretString() != cred.SecretString() {
+		t.Errorf("Secret mismatch: expected %q, got %q", cred.SecretString(), retrieved.SecretString())
 	}
 	if retrieved.Type != cred.Type {
 		t.Errorf("Type mismatch: expected %q, got %q", cred.Type, retrieved.Type)
@@ -429,18 +427,17 @@ func TestBackendStore_Update_Counter(t *testing.T) {
 	store := newTestBackendStore(t)
 	defer store.Close()
 
-	cred := &Credential{
+	cred := withSecret(&Credential{
 		ID:        "hotp1",
 		Name:      "HOTP Credential",
 		Issuer:    "TestIssuer",
-		Secret:    "JBSWY3DPEHPK3PXP",
 		Type:      TypeHOTP,
 		Algorithm: AlgorithmSHA1,
 		Digits:    6,
 		Period:    30,
 		Counter:   0,
 		CreatedAt: time.Now(),
-	}
+	}, "JBSWY3DPEHPK3PXP")
 	store.Add(cred)
 
 	// Simulate counter increment

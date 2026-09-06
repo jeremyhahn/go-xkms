@@ -82,17 +82,16 @@ Consumers borrow the plaintext through `WithBytes`, never `Bytes`. Only
 the process purges every live enclave, and an accessor that has already
 returned cannot keep the pages mapped while the caller reads them.
 
-**What this does not protect.** `KeyWrapper.Unwrap` returns plaintext on the
-ordinary Go heap. Each key is copied into protected memory immediately and the
-source wiped, so the window is short — but the transit exists, and a heap dump
-taken during an unlock can still contain a key. Protected memory closes the
-**long-lived** exposure: material held for an entire unlocked session. It does
-not close the transit. Removing that requires an unwrap that writes into
-caller-supplied protected memory, which is tracked separately.
+**The unwrap transit is closed.** `KeyWrapper.UnwrapInto` decrypts into a
+caller-supplied destination sized before any protected-key borrow is taken, so
+an unlock writes each unwrapped key directly into mlocked memory — the
+plaintext never exists on the ordinary Go heap (go-xkms#291). The interface no
+longer has a method that can return a plaintext slice the caller does not own.
+`Wrap` still takes heap plaintext; that half is scoped separately.
 
-`GetCMK` likewise returns a heap copy, because its callers mutate what they
-receive. The copy is the caller's to wipe. It is not protected memory and is
-not documented as though it were.
+`GetCMK` returns a heap copy that is the caller's to wipe. It is not protected
+memory and is not documented as though it were. (It currently has no non-test
+caller.)
 
 ### Key Backend Comparison
 

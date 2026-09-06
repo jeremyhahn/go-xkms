@@ -253,12 +253,14 @@ func runOATHAdd(cmd *cobra.Command, args []string) error {
 			ID:        strings.ToLower(name),
 			Name:      name,
 			Issuer:    issuer,
-			Secret:    strings.ToUpper(secret),
 			Type:      otpType,
 			Algorithm: strings.ToUpper(algorithm),
 			Digits:    digits,
 			Period:    period,
 			CreatedAt: time.Now(),
+		}
+		if err := cred.SetSecret(strings.ToUpper(secret)); err != nil {
+			return &SentinelCauseError{Sentinel: ErrOATHInvalidCredential, Cause: err}
 		}
 
 		if err := cred.Validate(); err != nil {
@@ -318,7 +320,7 @@ func runOATHList(cmd *cobra.Command, args []string) error {
 			_, _ = fmt.Fprintf(out, "  Counter:   %d\n", cred.Counter)
 		}
 		if showSecrets {
-			_, _ = fmt.Fprintf(out, "  Secret:    %s\n", cred.Secret)
+			_, _ = fmt.Fprintf(out, "  Secret:    %s\n", cred.SecretString())
 		}
 		if showURI {
 			_, _ = fmt.Fprintf(out, "  URI:       %s\n", cred.ToURI())

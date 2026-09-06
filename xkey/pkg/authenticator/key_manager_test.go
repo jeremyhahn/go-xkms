@@ -181,7 +181,7 @@ func TestKeyManager_InitializeSOPIN(t *testing.T) {
 		akWrapper, err := NewAESGCMKeyWrapper(smk)
 		require.NoError(t, err)
 
-		ak, err := akWrapper.Unwrap(state.WrappedAK)
+		ak, err := unwrapForTest(akWrapper, state.WrappedAK)
 		require.NoError(t, err)
 		require.Len(t, ak, AESGCMKeySize)
 
@@ -189,7 +189,7 @@ func TestKeyManager_InitializeSOPIN(t *testing.T) {
 		cmkWrapper, err := NewAESGCMKeyWrapper(ak)
 		require.NoError(t, err)
 
-		cmk, err := cmkWrapper.Unwrap(state.WrappedCMKSO)
+		cmk, err := unwrapForTest(cmkWrapper, state.WrappedCMKSO)
 		require.NoError(t, err)
 		require.Len(t, cmk, AESGCMKeySize)
 	})
@@ -2116,13 +2116,13 @@ func TestKeyManager_InitializeSOPIN_Comprehensive(t *testing.T) {
 		akWrapper, err := NewAESGCMKeyWrapper(smk)
 		require.NoError(t, err)
 
-		ak, err := akWrapper.Unwrap(state.WrappedAK)
+		ak, err := unwrapForTest(akWrapper, state.WrappedAK)
 		require.NoError(t, err)
 
 		attestWrapper, err := NewAESGCMKeyWrapper(ak)
 		require.NoError(t, err)
 
-		attestPKCS8, err := attestWrapper.Unwrap(state.WrappedAttestSO)
+		attestPKCS8, err := unwrapForTest(attestWrapper, state.WrappedAttestSO)
 		require.NoError(t, err)
 
 		key, err := x509.ParsePKCS8PrivateKey(attestPKCS8)
@@ -2361,7 +2361,7 @@ func TestKeyManager_InitializeSOPIN_Comprehensive(t *testing.T) {
 		cmkWrapper, err := NewAESGCMKeyWrapper(cmk)
 		require.NoError(t, err)
 
-		attestPKCS8, err := cmkWrapper.Unwrap(state.WrappedAttestUser)
+		attestPKCS8, err := unwrapForTest(cmkWrapper, state.WrappedAttestUser)
 		require.NoError(t, err)
 
 		// Parse and verify

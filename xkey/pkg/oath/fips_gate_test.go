@@ -36,14 +36,13 @@ func withFIPSMode(t *testing.T, on bool) {
 func sha1Credential(t *testing.T) *Credential {
 	t.Helper()
 
-	return &Credential{
+	return withSecret(&Credential{
 		Name:      "acme",
 		Type:      TypeTOTP,
-		Secret:    "JBSWY3DPEHPK3PXP",
 		Algorithm: AlgorithmSHA1,
 		Digits:    DefaultDigits,
 		Period:    DefaultPeriod,
-	}
+	}, "JBSWY3DPEHPK3PXP")
 }
 
 // Under GODEBUG=fips140=only, crypto/hmac rejects SHA-1 by PANICKING. Every
@@ -223,7 +222,7 @@ func TestGenerator_FIPSRefusalPrecedesSecretDecode(t *testing.T) {
 	withFIPSMode(t, true)
 
 	cred := sha1Credential(t)
-	cred.Secret = "1811!!!!not-base32!!!!"
+	withSecret(cred, "1811!!!!not-base32!!!!")
 
 	g := &Generator{cred: cred}
 
@@ -245,7 +244,7 @@ func TestGenerator_InvalidSecretStillReportedForApprovedAlgorithm(t *testing.T) 
 
 	cred := sha1Credential(t)
 	cred.Algorithm = AlgorithmSHA256
-	cred.Secret = "1811!!!!not-base32!!!!"
+	withSecret(cred, "1811!!!!not-base32!!!!")
 
 	g := &Generator{cred: cred}
 
@@ -310,7 +309,7 @@ func strictFIPSChild(t *testing.T) {
 
 	// SHA-1 with a long secret: refused by algorithm, not by length.
 	long := sha1Credential(t)
-	long.Secret = longFIPSSecret
+	withSecret(long, longFIPSSecret)
 	if _, err := (&Generator{cred: long}).GenerateCounter(0); !errors.Is(err, ErrAlgorithmNotFIPSApproved) {
 		t.Fatalf("SHA-1 with a long secret: error = %v, want ErrAlgorithmNotFIPSApproved", err)
 	}
@@ -339,7 +338,7 @@ func strictFIPSChild(t *testing.T) {
 	}
 
 	// The length gate must measure the SECRET, not the string it is written
-	// in. normalizeSecret strips grouping separators, whitespace and padding,
+	// in. normalizeSecretBytes strips grouping separators, whitespace and padding,
 	// so the raw string's length is not the key's length -- and the gap is
 	// chosen by whoever supplies the credential.
 	//
@@ -347,7 +346,7 @@ func strictFIPSChild(t *testing.T) {
 	// Base32 characters; written "MFRGG-ZDFMZ-TWQ2L-KNNWA" it is 23, and
 	// DecodedLen(23) is 14 -- exactly the minimum the real key misses by two
 	// bytes. That is the form a human is most likely to type, since grouping
-	// separators are the reason normalizeSecret exists. Raised in review on
+	// separators are the reason normalizeSecretBytes exists. Raised in review on
 	// PR #76 and reproduced before fixing: Validate returned nil for it.
 	//
 	// Asserted HERE rather than in a stubbed test because the gate is
@@ -372,7 +371,7 @@ func strictFIPSChild(t *testing.T) {
 
 		inflated := sha1Credential(t)
 		inflated.Algorithm = AlgorithmSHA256 // keep the algorithm gate out of it
-		inflated.Secret = spelling.secret
+		withSecret(inflated, spelling.secret)
 
 		if err := inflated.Validate(); !errors.Is(err, ErrSecretTooShortForFIPS) {
 			t.Fatalf("%s: Validate = %v, want ErrSecretTooShortForFIPS -- a 12-byte secret "+
@@ -394,7 +393,7 @@ func strictFIPSChild(t *testing.T) {
 	// -- the fix must reject short keys, not every key containing a separator.
 	separatedLong := sha1Credential(t)
 	separatedLong.Algorithm = AlgorithmSHA256
-	separatedLong.Secret = longFIPSSecret[:8] + "-" + longFIPSSecret[8:16] + " " + longFIPSSecret[16:]
+	withSecret(separatedLong, longFIPSSecret[:8]+"-"+longFIPSSecret[8:16]+" "+longFIPSSecret[16:])
 	if _, err := (&Generator{cred: separatedLong}).GenerateCounter(0); err != nil {
 		t.Fatalf("a long secret written with separators was refused under FIPS: %v", err)
 	}
@@ -403,7 +402,7 @@ func strictFIPSChild(t *testing.T) {
 	// that refuses everything would pass every assertion above and be useless.
 	ok := sha1Credential(t)
 	ok.Algorithm = AlgorithmSHA256
-	ok.Secret = longFIPSSecret
+	withSecret(ok, longFIPSSecret)
 	code, err := (&Generator{cred: ok}).GenerateCounter(0)
 	if err != nil {
 		t.Fatalf("approved algorithm with a long secret was refused under FIPS: %v", err)
@@ -434,7 +433,7 @@ func TestStore_RefusesSHA1EnrolmentUnderFIPS(t *testing.T) {
 	store := NewMemoryStore()
 
 	sha1Cred := sha1Credential(t)
-	sha1Cred.Secret = longFIPSSecret
+	withSecret(sha1Cred, longFIPSSecret)
 	if err := store.Add(sha1Cred); !errors.Is(err, ErrAlgorithmNotFIPSApproved) {
 		t.Fatalf("Add error = %v, want ErrAlgorithmNotFIPSApproved", err)
 	}
@@ -449,7 +448,7 @@ func TestStore_RefusesSHA1EnrolmentUnderFIPS(t *testing.T) {
 	// The approved equivalent still enrols, or the gate is refusing everything.
 	approved := sha1Credential(t)
 	approved.Algorithm = AlgorithmSHA256
-	approved.Secret = longFIPSSecret
+	withSecret(approved, longFIPSSecret)
 	approved.Name = "approved"
 	approved.ID = "approved"
 	if err := store.Add(approved); err != nil {
@@ -480,7 +479,7 @@ func TestStore_RefusesSHA1UpdateUnderFIPS(t *testing.T) {
 
 	approved := sha1Credential(t)
 	approved.Algorithm = AlgorithmSHA256
-	approved.Secret = longFIPSSecret
+	withSecret(approved, longFIPSSecret)
 	if err := store.Add(approved); err != nil {
 		t.Fatalf("Add of an approved credential: %v", err)
 	}
@@ -488,7 +487,7 @@ func TestStore_RefusesSHA1UpdateUnderFIPS(t *testing.T) {
 	downgrade := sha1Credential(t)
 	downgrade.ID = approved.ID
 	downgrade.Name = approved.Name
-	downgrade.Secret = longFIPSSecret
+	withSecret(downgrade, longFIPSSecret)
 	if err := store.Update(downgrade); !errors.Is(err, ErrAlgorithmNotFIPSApproved) {
 		t.Fatalf("Update to SHA-1 under FIPS: error = %v, want ErrAlgorithmNotFIPSApproved", err)
 	}
@@ -543,7 +542,7 @@ func TestGenerator_AcceptsAnySecretValidateAccepts(t *testing.T) {
 
 	cred := sha1Credential(t)
 	cred.Algorithm = AlgorithmSHA256
-	cred.Secret = separated
+	withSecret(cred, separated)
 
 	if err := cred.Validate(); err != nil {
 		t.Fatalf("Validate() rejected the separated secret (%v); this case is about "+
@@ -560,7 +559,7 @@ func TestGenerator_AcceptsAnySecretValidateAccepts(t *testing.T) {
 	// code -- a canonicalisation that changed the key would still return here.
 	canonical := sha1Credential(t)
 	canonical.Algorithm = AlgorithmSHA256
-	canonical.Secret = encoded
+	withSecret(canonical, encoded)
 	want, err := (&Generator{cred: canonical}).GenerateCounter(0)
 	if err != nil {
 		t.Fatalf("GenerateCounter() on the canonical secret = %v", err)

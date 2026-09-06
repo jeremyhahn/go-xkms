@@ -197,26 +197,25 @@ func TestOATHPhoneSyncErrors_AreDistinct(t *testing.T) {
 // --- Credential conversion tests ---
 
 func TestCredentialToPhoneInfo(t *testing.T) {
-	cred := &oath.Credential{
+	cred := withOATHSecret(&oath.Credential{
 		ID:          "github:user@example.com",
 		Name:        "GitHub",
 		Issuer:      "GitHub",
 		AccountName: "user@example.com",
-		Secret:      "JBSWY3DPEHPK3PXP",
 		Type:        oath.TypeTOTP,
 		Algorithm:   oath.AlgorithmSHA1,
 		Digits:      6,
 		Period:      30,
 		Counter:     0,
 		CreatedAt:   time.Now(),
-	}
+	}, "JBSWY3DPEHPK3PXP")
 
 	info := credentialToPhoneInfo(cred)
 
 	assert.Equal(t, cred.Name, info.Name)
 	assert.Equal(t, cred.Issuer, info.Issuer)
 	assert.Equal(t, cred.AccountName, info.AccountName)
-	assert.Equal(t, cred.Secret, info.Secret)
+	assert.Equal(t, cred.SecretString(), info.Secret)
 	assert.Equal(t, cred.Type, info.Type)
 	assert.Equal(t, cred.Algorithm, info.Algorithm)
 	assert.Equal(t, cred.Digits, info.Digits)
@@ -225,14 +224,13 @@ func TestCredentialToPhoneInfo(t *testing.T) {
 }
 
 func TestCredentialToPhoneInfo_HOTP(t *testing.T) {
-	cred := &oath.Credential{
+	cred := withOATHSecret(&oath.Credential{
 		ID:      "myservice",
 		Name:    "MyService",
-		Secret:  "JBSWY3DPEHPK3PXP",
 		Type:    oath.TypeHOTP,
 		Digits:  8,
 		Counter: 42,
-	}
+	}, "JBSWY3DPEHPK3PXP")
 
 	info := credentialToPhoneInfo(cred)
 
@@ -253,13 +251,14 @@ func TestPhoneInfoToCredential(t *testing.T) {
 		Period:      60,
 	}
 
-	cred := deviceInfoToCredential(info)
+	cred, convErr := deviceInfoToCredential(info)
+	require.NoError(t, convErr)
 
 	assert.Equal(t, "amazon:admin@example.com", cred.ID)
 	assert.Equal(t, info.Name, cred.Name)
 	assert.Equal(t, info.Issuer, cred.Issuer)
 	assert.Equal(t, info.AccountName, cred.AccountName)
-	assert.Equal(t, info.Secret, cred.Secret)
+	assert.Equal(t, info.Secret, cred.SecretString())
 	assert.Equal(t, info.Type, cred.Type)
 	assert.Equal(t, info.Algorithm, cred.Algorithm)
 	assert.Equal(t, info.Digits, cred.Digits)
@@ -273,7 +272,8 @@ func TestPhoneInfoToCredential_Defaults(t *testing.T) {
 		Secret: "JBSWY3DPEHPK3PXP",
 	}
 
-	cred := deviceInfoToCredential(info)
+	cred, convErr := deviceInfoToCredential(info)
+	require.NoError(t, convErr)
 
 	assert.Equal(t, "simple", cred.ID)
 	assert.Equal(t, "Simple", cred.Name)
@@ -289,7 +289,8 @@ func TestPhoneInfoToCredential_EmptyNameWithIssuer(t *testing.T) {
 		Secret: "JBSWY3DPEHPK3PXP",
 	}
 
-	cred := deviceInfoToCredential(info)
+	cred, convErr := deviceInfoToCredential(info)
+	require.NoError(t, convErr)
 
 	assert.Equal(t, "TestIssuer", cred.Name)
 	assert.Equal(t, "testissuer", cred.ID)
@@ -304,7 +305,8 @@ func TestPhoneInfoToCredential_WithIssuerAndAccount(t *testing.T) {
 		Type:        "totp",
 	}
 
-	cred := deviceInfoToCredential(info)
+	cred, convErr := deviceInfoToCredential(info)
+	require.NoError(t, convErr)
 
 	assert.Equal(t, "github:user@test.com", cred.ID)
 	assert.Equal(t, "GitHub", cred.Name)
@@ -318,7 +320,8 @@ func TestPhoneInfoToCredential_HOTP(t *testing.T) {
 		Counter: 100,
 	}
 
-	cred := deviceInfoToCredential(info)
+	cred, convErr := deviceInfoToCredential(info)
+	require.NoError(t, convErr)
 
 	assert.Equal(t, oath.TypeHOTP, cred.Type)
 	assert.Equal(t, uint64(100), cred.Counter)
@@ -327,28 +330,28 @@ func TestPhoneInfoToCredential_HOTP(t *testing.T) {
 // --- Roundtrip conversion test ---
 
 func TestCredentialConversion_Roundtrip(t *testing.T) {
-	original := &oath.Credential{
+	original := withOATHSecret(&oath.Credential{
 		ID:          "test:user@example.com",
 		Name:        "TestService",
 		Issuer:      "Test",
 		AccountName: "user@example.com",
-		Secret:      "JBSWY3DPEHPK3PXP",
 		Type:        oath.TypeTOTP,
 		Algorithm:   oath.AlgorithmSHA256,
 		Digits:      8,
 		Period:      60,
 		Counter:     0,
 		CreatedAt:   time.Now(),
-	}
+	}, "JBSWY3DPEHPK3PXP")
 
 	// Convert to phone info and back
 	info := credentialToPhoneInfo(original)
-	roundtrip := deviceInfoToCredential(info)
+	roundtrip, convErr := deviceInfoToCredential(info)
+	require.NoError(t, convErr)
 
 	assert.Equal(t, original.Name, roundtrip.Name)
 	assert.Equal(t, original.Issuer, roundtrip.Issuer)
 	assert.Equal(t, original.AccountName, roundtrip.AccountName)
-	assert.Equal(t, original.Secret, roundtrip.Secret)
+	assert.Equal(t, original.SecretString(), roundtrip.SecretString())
 	assert.Equal(t, original.Type, roundtrip.Type)
 	assert.Equal(t, original.Algorithm, roundtrip.Algorithm)
 	assert.Equal(t, original.Digits, roundtrip.Digits)

@@ -116,7 +116,7 @@ func (s *DAOStore) Get(idOrName string) (*Credential, error) {
 	// Try lookup by name (case-insensitive).
 	entity, err := s.findEntityByName(ctx, idOrName)
 	if err == nil {
-		return entityToCredential(entity), nil
+		return entityToCredential(entity)
 	}
 
 	// Fall back to scanning for a matching Credential.ID (string ID).
@@ -137,7 +137,11 @@ func (s *DAOStore) List() ([]*Credential, error) {
 
 	creds := make([]*Credential, 0, len(entities))
 	for _, entity := range entities {
-		creds = append(creds, entityToCredential(entity))
+		cred, convErr := entityToCredential(entity)
+		if convErr != nil {
+			return nil, convErr
+		}
+		creds = append(creds, cred)
 	}
 
 	sort.Slice(creds, func(i, j int) bool {
@@ -266,7 +270,7 @@ func (s *DAOStore) findByCredentialID(ctx context.Context, credID string) (*Cred
 	if err != nil {
 		return nil, err
 	}
-	return entityToCredential(entity), nil
+	return entityToCredential(entity)
 }
 
 // findEntityByCredentialID scans all entities for one whose
@@ -323,7 +327,7 @@ func credentialToEntity(cred *Credential) *OATHCredentialEntity {
 		Issuer:      cred.Issuer,
 		AccountName: cred.AccountName,
 		Type:        cred.Type,
-		Secret:      cred.Secret,
+		Secret:      cred.SecretString(),
 		Algorithm:   cred.Algorithm,
 		Digits:      cred.Digits,
 		Period:      cred.Period,
@@ -334,14 +338,15 @@ func credentialToEntity(cred *Credential) *OATHCredentialEntity {
 	}
 }
 
-// entityToCredential converts an OATHCredentialEntity to a Credential.
-func entityToCredential(entity *OATHCredentialEntity) *Credential {
-	return &Credential{
+// entityToCredential converts an OATHCredentialEntity to a Credential,
+// adopting the persisted secret into protected memory. Returns
+// ErrProtectedMemory (wrapped) when the protected allocation fails.
+func entityToCredential(entity *OATHCredentialEntity) (*Credential, error) {
+	cred := &Credential{
 		ID:          generateCredentialID(entity.Issuer, entity.AccountName),
 		Name:        entity.Name,
 		Issuer:      entity.Issuer,
 		AccountName: entity.AccountName,
-		Secret:      entity.Secret,
 		Type:        entity.Type,
 		Algorithm:   entity.Algorithm,
 		Digits:      entity.Digits,
@@ -350,4 +355,8 @@ func entityToCredential(entity *OATHCredentialEntity) *Credential {
 		BackendID:   entity.BackendID,
 		CreatedAt:   entity.CreatedAt,
 	}
+	if err := cred.SetSecret(entity.Secret); err != nil {
+		return nil, err
+	}
+	return cred, nil
 }

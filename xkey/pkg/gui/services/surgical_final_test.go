@@ -257,7 +257,7 @@ func TestSurg_OATHGenerateTOTP_NewGeneratorFails(t *testing.T) {
 	svc := NewOATHService(store)
 
 	// Insert credential with invalid secret directly (bypasses Validate).
-	cred := &oath.Credential{
+	cred := oathCredWithSecret(t, &oath.Credential{
 		ID:        "bad-totp",
 		Name:      "Bad TOTP",
 		Issuer:    "Test",
@@ -265,8 +265,7 @@ func TestSurg_OATHGenerateTOTP_NewGeneratorFails(t *testing.T) {
 		Algorithm: oath.AlgorithmSHA1,
 		Digits:    6,
 		Period:    30,
-		Secret:    "!!!INVALID-BASE32!!!",
-	}
+	}, "!!!INVALID-BASE32!!!")
 	require.NoError(t, store.Add(cred))
 
 	_, err := svc.GenerateTOTP("bad-totp")
@@ -280,7 +279,7 @@ func TestSurg_OATHGenerateHOTP_NewGeneratorFails(t *testing.T) {
 	svc := NewOATHService(store)
 
 	// Insert credential with invalid secret directly (bypasses Validate).
-	cred := &oath.Credential{
+	cred := oathCredWithSecret(t, &oath.Credential{
 		ID:        "bad-hotp",
 		Name:      "Bad HOTP",
 		Issuer:    "Test",
@@ -289,8 +288,7 @@ func TestSurg_OATHGenerateHOTP_NewGeneratorFails(t *testing.T) {
 		Digits:    6,
 		Period:    0,
 		Counter:   0,
-		Secret:    "!!!INVALID-BASE32!!!",
-	}
+	}, "!!!INVALID-BASE32!!!")
 	require.NoError(t, store.Add(cred))
 
 	_, err := svc.GenerateHOTP("bad-hotp")

@@ -19,12 +19,15 @@ package oath
 import (
 	"crypto/rand"
 	"encoding/base32"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"net/url"
 	"strconv"
 	"strings"
 	"time"
+
+	secure "github.com/jeremyhahn/go-xkms/sdk/go/secure"
 )
 
 // OTP type constants.
@@ -97,6 +100,11 @@ var (
 	ErrInvalidURI            = errors.New("oath: invalid otpauth URI")
 	ErrCredentialExists      = errors.New("oath: credential already exists")
 	ErrCredentialNotFound    = errors.New("oath: credential not found")
+
+	// ErrProtectedMemory reports that the shared secret could not be placed
+	// in mlocked protected memory. The secret is never kept on the ordinary
+	// heap as a fallback (go-xkms#210).
+	ErrProtectedMemory = errors.New("oath: protected memory allocation failed")
 )
 
 // Credential represents an OATH TOTP/HOTP credential.
@@ -113,8 +121,13 @@ type Credential struct {
 	// AccountName is the user's account identifier (e.g., email).
 	AccountName string `json:"account_name"`
 
-	// Secret is the base32-encoded shared secret.
-	Secret string `json:"secret"`
+	// secret holds the Base32-encoded shared secret in mlocked, guard-paged
+	// protected memory (go-xkms#210). It is unexported so no consumer can
+	// hold the key material as an unwipeable Go string; use SetSecret to
+	// store it and SecretString to export a copy at a serialization
+	// boundary. nil means no secret is set. The persisted JSON form keeps
+	// the historical "secret" key via MarshalJSON/UnmarshalJSON.
+	secret *secure.Buffer
 
 	// Type is the OTP type: "totp" or "hotp".
 	Type string `json:"type"`
@@ -139,6 +152,154 @@ type Credential struct {
 	BackendID string `json:"backend_id,omitempty"`
 }
 
+// SetSecret stores the Base32-encoded shared secret in protected memory,
+// replacing (and destroying) any previous value. The value is stored verbatim
+// — exactly what field assignment used to do — so normalization remains the
+// business of the enrolment paths (ParseURI, NewCredentialFromManualEntry)
+// and of the use-time canonicalization in Validate and GenerateCounter.
+// An empty string clears the secret.
+//
+// The input string itself cannot be wiped; callers holding one already sit at
+// a serialization boundary (JSON, wire structs, user input) that this package
+// cannot reach.
+//
+// Returns ErrProtectedMemory (wrapped) when the protected allocation fails.
+func (c *Credential) SetSecret(secret string) error {
+	if secret == "" {
+		c.secret.Destroy()
+		c.secret = nil
+		return nil
+	}
+	buf, err := secure.NewBufferFromBytes([]byte(secret))
+	if err != nil {
+		return &SentinelCauseError{Sentinel: ErrProtectedMemory, Cause: err}
+	}
+	c.secret.Destroy()
+	c.secret = buf
+	return nil
+}
+
+// setSecretBytes adopts b — the Base32-encoded secret — into protected
+// memory, replacing any previous value. b is wiped by the adoption; the
+// caller must not reuse it. An empty b clears the secret.
+func (c *Credential) setSecretBytes(b []byte) error {
+	if len(b) == 0 {
+		c.secret.Destroy()
+		c.secret = nil
+		return nil
+	}
+	buf, err := secure.NewBufferFromBytes(b)
+	if err != nil {
+		secure.Wipe(b)
+		return &SentinelCauseError{Sentinel: ErrProtectedMemory, Cause: err}
+	}
+	c.secret.Destroy()
+	c.secret = buf
+	return nil
+}
+
+// secretCopy returns a heap copy of the Base32-encoded secret. The caller
+// owns the copy and MUST wipe it (secure.Wipe) when done. Returns
+// ErrInvalidSecret when no secret is set or the buffer has been destroyed.
+func (c *Credential) secretCopy() ([]byte, error) {
+	if c == nil || c.secret == nil {
+		return nil, ErrInvalidSecret
+	}
+	var out []byte
+	if err := c.secret.WithBytes(func(b []byte) error {
+		out = make([]byte, len(b))
+		copy(out, b)
+		return nil
+	}); err != nil {
+		return nil, &SentinelCauseError{Sentinel: ErrInvalidSecret, Cause: err}
+	}
+	return out, nil
+}
+
+// SecretString returns a copy of the Base32-encoded shared secret as a
+// string, or "" when no secret is set.
+//
+// A Go string cannot be wiped, so calling this re-mints exactly the exposure
+// the protected field exists to remove — it is for serialization boundaries
+// only (persisted entities, backup archives, sync wire formats, otpauth://
+// URIs, explicit operator display), where the surrounding format is a string
+// anyway. Everything else should leave the secret where it is.
+func (c *Credential) SecretString() string {
+	b, err := c.secretCopy()
+	if err != nil {
+		return ""
+	}
+	s := string(b)
+	secure.Wipe(b)
+	return s
+}
+
+// HasSecret reports whether the credential holds a shared secret.
+func (c *Credential) HasSecret() bool {
+	return c != nil && c.secret != nil
+}
+
+// credentialJSON is the persisted JSON form of Credential. It exists so the
+// protected in-memory secret round-trips through the historical wire format
+// unchanged: the "secret" key carries the Base32 string exactly as it did
+// when Secret was an exported string field.
+type credentialJSON struct {
+	ID          string    `json:"id"`
+	Name        string    `json:"name"`
+	Issuer      string    `json:"issuer"`
+	AccountName string    `json:"account_name"`
+	Secret      string    `json:"secret"`
+	Type        string    `json:"type"`
+	Algorithm   string    `json:"algorithm"`
+	Digits      int       `json:"digits"`
+	Period      int       `json:"period"`
+	Counter     uint64    `json:"counter"`
+	CreatedAt   time.Time `json:"created_at"`
+	BackendID   string    `json:"backend_id,omitempty"`
+}
+
+// MarshalJSON implements json.Marshaler, exporting the protected secret into
+// the historical "secret" JSON key. Serialization necessarily materializes
+// the secret on the heap; that residue belongs to the persistence boundary
+// (the same bytes are about to be written to a store), not to this type.
+func (c *Credential) MarshalJSON() ([]byte, error) {
+	return json.Marshal(credentialJSON{
+		ID:          c.ID,
+		Name:        c.Name,
+		Issuer:      c.Issuer,
+		AccountName: c.AccountName,
+		Secret:      c.SecretString(),
+		Type:        c.Type,
+		Algorithm:   c.Algorithm,
+		Digits:      c.Digits,
+		Period:      c.Period,
+		Counter:     c.Counter,
+		CreatedAt:   c.CreatedAt,
+		BackendID:   c.BackendID,
+	})
+}
+
+// UnmarshalJSON implements json.Unmarshaler, adopting the "secret" JSON key
+// into protected memory.
+func (c *Credential) UnmarshalJSON(data []byte) error {
+	var aux credentialJSON
+	if err := json.Unmarshal(data, &aux); err != nil {
+		return err
+	}
+	c.ID = aux.ID
+	c.Name = aux.Name
+	c.Issuer = aux.Issuer
+	c.AccountName = aux.AccountName
+	c.Type = aux.Type
+	c.Algorithm = aux.Algorithm
+	c.Digits = aux.Digits
+	c.Period = aux.Period
+	c.Counter = aux.Counter
+	c.CreatedAt = aux.CreatedAt
+	c.BackendID = aux.BackendID
+	return c.SetSecret(aux.Secret)
+}
+
 // NewCredential creates a new OATH credential with the given parameters.
 // It generates a random secret if none is provided.
 func NewCredential(name, issuer, otpType string) (*Credential, error) {
@@ -150,7 +311,7 @@ func NewCredential(name, issuer, otpType string) (*Credential, error) {
 		return nil, ErrInvalidType
 	}
 
-	secret, err := GenerateSecret(20) // 160-bit secret
+	secret, err := generateSecretBase32(20) // 160-bit secret
 	if err != nil {
 		return nil, err
 	}
@@ -159,12 +320,16 @@ func NewCredential(name, issuer, otpType string) (*Credential, error) {
 		ID:        generateCredentialID(issuer, name),
 		Name:      name,
 		Issuer:    issuer,
-		Secret:    secret,
 		Type:      otpType,
 		Algorithm: defaultAlgorithmForMode(),
 		Digits:    DefaultDigits,
 		Period:    DefaultPeriod,
 		CreatedAt: time.Now(),
+	}
+	// setSecretBytes wipes secret on adoption; the Base32 form never
+	// persists on the ordinary heap.
+	if err := cred.setSecretBytes(secret); err != nil {
+		return nil, err
 	}
 
 	return cred, nil
@@ -227,8 +392,10 @@ func ParseURI(uri string) (*Credential, error) {
 		return nil, &DetailError{Err: ErrInvalidURI, Detail: ": secret is required"}
 	}
 
-	// Normalize and validate secret
-	secret, err = normalizeSecret(secret)
+	// Normalize and validate the secret over a wipeable byte copy of the
+	// query value. The url.Values string itself is an input-boundary residue
+	// this package cannot wipe; every copy from here on is bytes.
+	secretBytes, err := normalizeSecretBytes([]byte(secret))
 	if err != nil {
 		return nil, err
 	}
@@ -295,13 +462,17 @@ func ParseURI(uri string) (*Credential, error) {
 		Name:        name,
 		Issuer:      issuer,
 		AccountName: accountName,
-		Secret:      strings.ToUpper(secret),
 		Type:        otpType,
 		Algorithm:   algorithm,
 		Digits:      digits,
 		Period:      period,
 		Counter:     counter,
 		CreatedAt:   time.Now(),
+	}
+	// The normalized form is already upper-case; setSecretBytes wipes it on
+	// adoption.
+	if err := cred.setSecretBytes(secretBytes); err != nil {
+		return nil, err
 	}
 
 	return cred, nil
@@ -323,7 +494,7 @@ func (c *Credential) ToURI() string {
 	}
 
 	q := u.Query()
-	q.Set("secret", c.Secret)
+	q.Set("secret", c.SecretString())
 	if c.Issuer != "" {
 		q.Set("issuer", c.Issuer)
 	}
@@ -349,7 +520,7 @@ func (c *Credential) Validate() error {
 	if c.Name == "" {
 		return &DetailError{Err: ErrInvalidCredential, Detail: ": name is required"}
 	}
-	if c.Secret == "" {
+	if !c.HasSecret() {
 		return ErrInvalidSecret
 	}
 	if c.Type != TypeTOTP && c.Type != TypeHOTP {
@@ -367,19 +538,24 @@ func (c *Credential) Validate() error {
 	if c.Algorithm == AlgorithmSHA1 && fipsMode() {
 		return ErrAlgorithmNotFIPSApproved
 	}
-	// Canonicalise BEFORE measuring. normalizeSecret strips separators,
+	// Canonicalise BEFORE measuring. normalizeSecretBytes strips separators,
 	// whitespace and padding, so the raw string's length is not the secret's
 	// length -- and the difference is attacker-controlled. A 12-byte secret is
 	// 20 Base32 characters; written "MFRGG-ZDFMZ-TWQ2L-KNNWA" it is 23, and
 	// DecodedLen(23) is 14, which clears a 14-byte minimum that the actual key
 	// misses by two bytes. Measuring the raw string made this check fail OPEN
 	// on exactly the input a human is most likely to type, since grouping
-	// separators are why normalizeSecret exists.
+	// separators are why normalizeSecretBytes exists.
 	//
 	// This is also the only decode: the base32 validity check below used to
-	// call normalizeSecret a second time and discard the result, so measuring
+	// call the normalization a second time and discard the result, so measuring
 	// the canonical value costs nothing that was not already being paid.
-	normalized, err := normalizeSecret(c.Secret)
+	secretBytes, err := c.secretCopy()
+	if err != nil {
+		return err
+	}
+	defer secure.Wipe(secretBytes)
+	normalized, err := normalizeSecretBytes(secretBytes)
 	if err != nil {
 		return err
 	}
@@ -419,7 +595,7 @@ func NewCredentialFromManualEntry(accountName, issuer, secret string) (*Credenti
 		return nil, ErrInvalidSecret
 	}
 
-	normalizedSecret, err := normalizeSecret(secret)
+	normalizedSecret, err := normalizeSecretBytes([]byte(secret))
 	if err != nil {
 		return nil, err
 	}
@@ -437,12 +613,14 @@ func NewCredentialFromManualEntry(accountName, issuer, secret string) (*Credenti
 		Name:        name,
 		Issuer:      issuer,
 		AccountName: accountName,
-		Secret:      normalizedSecret,
 		Type:        TypeTOTP,
 		Algorithm:   DefaultAlgorithm,
 		Digits:      DefaultDigits,
 		Period:      DefaultPeriod,
 		CreatedAt:   time.Now(),
+	}
+	if err := cred.setSecretBytes(normalizedSecret); err != nil {
+		return nil, err
 	}
 
 	return cred, nil
@@ -450,85 +628,123 @@ func NewCredentialFromManualEntry(accountName, issuer, secret string) (*Credenti
 
 // GenerateSecret generates a cryptographically random secret of the specified length in bytes.
 // Returns the secret as a base32-encoded string without padding.
+//
+// The returned string is for enrolment display and serialization boundaries;
+// a caller storing it on a Credential should prefer NewCredential, which
+// keeps the secret in wipeable memory throughout.
 func GenerateSecret(length int) (string, error) {
-	secret := make([]byte, length)
-	if _, err := rand.Read(secret); err != nil {
-		return "", &WrappedError{Msg: "oath: failed to generate secret", Err: err}
+	b, err := generateSecretBase32(length)
+	if err != nil {
+		return "", err
 	}
-	return base32.StdEncoding.WithPadding(base32.NoPadding).EncodeToString(secret), nil
+	s := string(b)
+	secure.Wipe(b)
+	return s, nil
 }
 
-// normalizeSecret cleans up a base32-encoded secret by:
+// generateSecretBase32 generates a cryptographically random secret and
+// returns its Base32 (no padding) encoding as a wipeable byte slice. The raw
+// key bytes are wiped before returning; the caller owns wiping the encoding
+// (adoption via setSecretBytes does so).
+func generateSecretBase32(length int) ([]byte, error) {
+	raw := make([]byte, length)
+	if _, err := rand.Read(raw); err != nil {
+		return nil, &WrappedError{Msg: "oath: failed to generate secret", Err: err}
+	}
+	enc := base32.StdEncoding.WithPadding(base32.NoPadding)
+	out := make([]byte, enc.EncodedLen(length))
+	enc.Encode(out, raw)
+	secure.Wipe(raw)
+	return out, nil
+}
+
+// normalizeSecretBytes cleans up a base32-encoded secret by:
 // - Converting to uppercase
 // - Removing spaces, dashes, and other separators
 // - Applying typo corrections for commonly confused characters
 // - Removing padding characters
 // - Validating the result is valid base32
-func normalizeSecret(secret string) (string, error) {
-	secret = canonicalizeSecret(secret)
+//
+// It works IN PLACE on secret and returns a prefix of the same backing array,
+// so no intermediate copy of the key material is minted; the validation
+// decode's scratch buffer is wiped before returning. The caller keeps
+// ownership of secret's backing array — wiping the original slice wipes the
+// canonical form too (go-xkms#210).
+func normalizeSecretBytes(secret []byte) ([]byte, error) {
+	secret = canonicalizeSecretBytes(secret)
 
-	if secret == "" {
-		return "", &DetailError{Err: ErrInvalidSecret, Detail: ": empty secret"}
+	if len(secret) == 0 {
+		return nil, &DetailError{Err: ErrInvalidSecret, Detail: ": empty secret"}
 	}
 
-	// Validate it's valid base32
-	if _, err := base32.StdEncoding.WithPadding(base32.NoPadding).DecodeString(secret); err != nil {
-		return "", &DetailError{Err: ErrInvalidSecret, Detail: ": invalid base32 secret"}
+	// Validate it's valid base32. The decode's output is the OATH key in the
+	// clear, so it lands in a scratch buffer this function wipes.
+	enc := base32.StdEncoding.WithPadding(base32.NoPadding)
+	scratch := make([]byte, enc.DecodedLen(len(secret)))
+	_, err := enc.Decode(scratch, secret)
+	secure.Wipe(scratch)
+	if err != nil {
+		return nil, &DetailError{Err: ErrInvalidSecret, Detail: ": invalid base32 secret"}
 	}
 
 	return secret, nil
 }
 
-// canonicalizeSecret applies the textual half of normalizeSecret -- the case
-// fold, separator removal, typo corrections and padding trim -- and nothing
-// else.
+// canonicalizeSecretBytes applies the textual half of normalizeSecretBytes —
+// the case fold, separator removal, typo corrections and padding trim — and
+// nothing else, IN PLACE, returning a prefix of secret's backing array.
 //
-// It is separate because the two callers need different halves. Validate wants
-// the base32 check as well, and pays one decode for it. GenerateCounter is
-// about to decode the secret anyway, and calling normalizeSecret there would
-// decode it TWICE, leaving an extra plaintext copy of the key on the heap that
-// nothing wipes -- the exact residue the wipe in GenerateCounter exists to
-// bound. Sharing the mapping rather than duplicating it is what keeps the two
-// paths agreeing on what a secret means.
+// It is separate because the two callers need different halves. Validate
+// wants the base32 check as well, and pays one decode for it (into a wiped
+// scratch buffer). GenerateCounter is about to decode the secret anyway, and
+// calling normalizeSecretBytes there would decode it twice. Sharing the
+// mapping rather than duplicating it is what keeps the two paths agreeing on
+// what a secret means.
 //
-// KNOWN LIMIT, tracked as go-xkms#210: every assignment below mints a new
-// immutable Go string, so the intermediates hold key material that cannot be
-// wiped. This function does not introduce that -- it is an extract-function
-// refactor of a sequence normalizeSecret already performed, and Credential.Secret
-// is itself a plain string the credential store persists. Fixing it properly
-// means changing Credential.Secret to a protected-memory type, which is an
-// architecture decision and is out of scope for a FIPS algorithm gate; #210
-// carries it and flags the type change as the owner's call. Recorded here rather
-// than left for the next reader to rediscover, per sdlc.md §4 -- document the
-// limit at the call site and file the wider change.
-func canonicalizeSecret(secret string) string {
-	// Convert to uppercase
-	secret = strings.ToUpper(secret)
-
-	// Remove common separators and whitespace, and apply typo corrections
+// The Base32 alphabet is pure ASCII, so the fold is a byte-wise ASCII
+// uppercase: no rune decoding, and — unlike the strings.ToUpper /
+// strings.Map / strings.TrimRight sequence this replaces — no immutable
+// intermediate copies of the key material that nothing can wipe. That
+// unwipeable-intermediates residue was the defect go-xkms#210 tracked. (One
+// deliberate divergence: a multi-byte rune whose Unicode uppercase is an
+// ASCII base32 character, such as U+017F LATIN SMALL LETTER LONG S, no
+// longer folds to it and is rejected as invalid base32 instead. No real
+// enrolment source emits those.)
+func canonicalizeSecretBytes(secret []byte) []byte {
 	// Standard base32 uses A-Z and 2-7 only. Common confusions:
 	// - 0 (zero) often confused with O
 	// - 1 (one) often confused with I or L
 	// - 8 often confused with B
-	secret = strings.Map(func(r rune) rune {
-		switch r {
-		case ' ', '-', '_', '\t', '\n', '\r':
-			return -1 // Remove separators
-		case '0':
-			return 'O' // Zero -> O
-		case '1':
-			return 'I' // One -> I
-		case '8':
-			return 'B' // Eight -> B
-		case '9':
-			return -1 // Nine has no good substitute, remove it
-		default:
-			return r
+	n := 0
+	for _, ch := range secret {
+		// ASCII uppercase fold.
+		if ch >= 'a' && ch <= 'z' {
+			ch -= 'a' - 'A'
 		}
-	}, secret)
+		switch ch {
+		case ' ', '-', '_', '\t', '\n', '\r':
+			continue // Remove separators
+		case '9':
+			continue // Nine has no good substitute, remove it
+		case '0':
+			ch = 'O' // Zero -> O
+		case '1':
+			ch = 'I' // One -> I
+		case '8':
+			ch = 'B' // Eight -> B
+		}
+		secret[n] = ch
+		n++
+	}
+	// Wipe the tail the compaction left behind, then drop it.
+	secure.Wipe(secret[n:])
+	secret = secret[:n]
 
 	// Remove padding characters - we'll decode without padding
-	return strings.TrimRight(secret, "=")
+	for len(secret) > 0 && secret[len(secret)-1] == '=' {
+		secret = secret[:len(secret)-1]
+	}
+	return secret
 }
 
 // generateCredentialID creates a unique ID from issuer and account name.

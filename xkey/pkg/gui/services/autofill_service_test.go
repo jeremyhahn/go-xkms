@@ -107,17 +107,20 @@ func newTestAutoFillService(t *testing.T) (*AutoFillService, *audit.BackendStore
 
 	// OATH store with a matching GitHub TOTP credential.
 	oathStore := oath.NewMemoryStore()
-	require.NoError(t, oathStore.Add(&oath.Credential{
+	githubCred := &oath.Credential{
 		ID:          "github:octocat",
 		Name:        "GitHub (octocat)",
 		Issuer:      "GitHub",
 		AccountName: "octocat",
-		Secret:      "JBSWY3DPEHPK3PXP",
 		Type:        oath.TypeTOTP,
 		Algorithm:   oath.AlgorithmSHA1,
 		Digits:      6,
 		Period:      30,
-	}))
+	}
+	// The secret lives in protected memory behind SetSecret (#210); it is no
+	// longer a literal field.
+	require.NoError(t, githubCred.SetSecret("JBSWY3DPEHPK3PXP"))
+	require.NoError(t, oathStore.Add(githubCred))
 	oathSvc := NewOATHService(oathStore)
 
 	// PIN service with a mock backend (for AppLockService).
