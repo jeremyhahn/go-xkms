@@ -328,9 +328,8 @@ func NewAuthenticator(config *Config) (*Authenticator, error) {
 	// behaviour saying so. A control either enforces or is absent; it must
 	// never fabricate a pass. Callers that genuinely want unattended approval
 	// say so with an explicit NewAutoGrantHandler().
-	if config.UserPresenceHandler == nil {
-		return nil, ErrUserPresenceHandlerRequired
-	}
+	// config.Validate() above already refused a nil handler with
+	// ErrUserPresenceHandlerRequired; this assignment cannot see one.
 	a.upHandler = config.UserPresenceHandler
 
 	return a, nil

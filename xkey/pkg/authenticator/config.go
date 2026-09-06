@@ -221,9 +221,12 @@ type Config struct {
 	// Default: false
 	AlwaysUV bool `yaml:"always-uv" json:"always_uv" mapstructure:"always-uv"`
 
-	// UserPresenceHandler is the handler for user presence and verification requests.
-	// If nil, an AutoGrantHandler is used (auto-approve all requests).
-	// Default: nil (auto-grant)
+	// UserPresenceHandler is the handler for user presence and verification
+	// requests. REQUIRED: NewAuthenticator returns
+	// ErrUserPresenceHandlerRequired when it is nil (#317) — there is no
+	// default, because auto-granting fabricates a verification and denying
+	// everything silently disables the authenticator. Callers that want
+	// unattended approval say so with an explicit NewAutoGrantHandler().
 	UserPresenceHandler UserPresenceHandler `yaml:"-" json:"-" mapstructure:"-"`
 
 	// TokenInitWindow bounds the trust-on-first-use window for establishing the
@@ -445,6 +448,16 @@ func (c *Config) Validate() error {
 
 	if c.Storage == nil {
 		return ErrNilStorage
+	}
+
+	// UserPresenceHandler is REQUIRED (#317). A nil handler is refused here so
+	// the guarantee lives in validation, not only in the constructor: there is
+	// no safe default, because auto-granting fabricates a verification and
+	// denying everything silently disables the authenticator.
+	// ErrUserPresenceHandlerRequired is declared beside the other user-presence
+	// errors in user_presence.go, not in this file's configuration-error block.
+	if c.UserPresenceHandler == nil {
+		return ErrUserPresenceHandlerRequired
 	}
 
 	return nil

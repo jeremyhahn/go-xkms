@@ -116,6 +116,7 @@ func TestConfig_Validate(t *testing.T) {
 			PINMinLength:           4,
 			PINMaxRetries:          8,
 			Storage:                NewMemoryStorage(),
+			UserPresenceHandler:    NewAutoGrantHandler(),
 		}
 		err := config.Validate()
 		require.ErrorIs(t, err, ErrNoAlgorithms)
@@ -129,6 +130,7 @@ func TestConfig_Validate(t *testing.T) {
 			PINMinLength:           4,
 			PINMaxRetries:          8,
 			Storage:                NewMemoryStorage(),
+			UserPresenceHandler:    NewAutoGrantHandler(),
 		}
 		err := config.Validate()
 		require.ErrorIs(t, err, ErrUnsupportedAlgorithm)
@@ -142,6 +144,7 @@ func TestConfig_Validate(t *testing.T) {
 			PINMinLength:           4,
 			PINMaxRetries:          8,
 			Storage:                NewMemoryStorage(),
+			UserPresenceHandler:    NewAutoGrantHandler(),
 		}
 		err := config.Validate()
 		require.ErrorIs(t, err, ErrInvalidMaxCredentials)
@@ -155,6 +158,7 @@ func TestConfig_Validate(t *testing.T) {
 			PINMinLength:           4,
 			PINMaxRetries:          8,
 			Storage:                NewMemoryStorage(),
+			UserPresenceHandler:    NewAutoGrantHandler(),
 		}
 		err := config.Validate()
 		require.ErrorIs(t, err, ErrInvalidMaxCredentials)
@@ -168,6 +172,7 @@ func TestConfig_Validate(t *testing.T) {
 			PINMinLength:           4,
 			PINMaxRetries:          8,
 			Storage:                NewMemoryStorage(),
+			UserPresenceHandler:    NewAutoGrantHandler(),
 		}
 		err := config.Validate()
 		require.ErrorIs(t, err, ErrInvalidMaxResidentCreds)
@@ -181,6 +186,7 @@ func TestConfig_Validate(t *testing.T) {
 			PINMinLength:           4,
 			PINMaxRetries:          8,
 			Storage:                NewMemoryStorage(),
+			UserPresenceHandler:    NewAutoGrantHandler(),
 		}
 		err := config.Validate()
 		require.ErrorIs(t, err, ErrInvalidMaxResidentCreds)
@@ -194,6 +200,7 @@ func TestConfig_Validate(t *testing.T) {
 			PINMinLength:           3,
 			PINMaxRetries:          8,
 			Storage:                NewMemoryStorage(),
+			UserPresenceHandler:    NewAutoGrantHandler(),
 		}
 		err := config.Validate()
 		require.ErrorIs(t, err, ErrInvalidPINMinLength)
@@ -207,6 +214,7 @@ func TestConfig_Validate(t *testing.T) {
 			PINMinLength:           4,
 			PINMaxRetries:          0,
 			Storage:                NewMemoryStorage(),
+			UserPresenceHandler:    NewAutoGrantHandler(),
 		}
 		err := config.Validate()
 		require.ErrorIs(t, err, ErrInvalidPINMaxRetries)
@@ -233,6 +241,7 @@ func TestConfig_Validate(t *testing.T) {
 			PINMinLength:           4,
 			PINMaxRetries:          8,
 			Storage:                NewMemoryStorage(),
+			UserPresenceHandler:    NewAutoGrantHandler(),
 		}
 		err := config.Validate()
 		require.NoError(t, err)
@@ -246,6 +255,7 @@ func TestConfig_Validate(t *testing.T) {
 			PINMinLength:           4,
 			PINMaxRetries:          8,
 			Storage:                NewMemoryStorage(),
+			UserPresenceHandler:    NewAutoGrantHandler(),
 		}
 		err := config.Validate()
 		require.NoError(t, err)
