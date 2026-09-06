@@ -279,13 +279,18 @@ jobs:
       # An `if: always()` teardown at the end of the job would be
       # repository-scoped but not RUN-scoped: compose project names,
       # container names and image tags are fixed, so it could tear down a
-      # second, concurrent run of this repository that was mid-suite (a push
-      # to an open PR triggers both `push` and `pull_request` runs, and
-      # Gitea 1.27.1 cancels any job carrying a `concurrency:` group even
-      # when the group is unoccupied -- d7f60eb4 -- so there is no working
-      # serialization to lean on). Per-run isolation (run-id-derived project
-      # names, tags and ports) plus the job-scoped teardown it would make
-      # safe are tracked in #15 for the owner to approve.
+      # second, concurrent run of this repository that was mid-suite: a push
+      # to an open PR triggers both a `push` and a `pull_request` run, and
+      # those carry DIFFERENT refs, so they key into different `concurrency:`
+      # groups and never serialize against each other. (This comment once
+      # claimed Gitea cancels any job carrying a concurrency group even when
+      # the group is unoccupied; that premise was wrong -- a workflow-level
+      # `concurrency:` block cancels only a SUPERSEDED head on the same ref,
+      # exactly as designed, see ci.yml and #392/#394. The conclusion that no
+      # cross-event serialization exists still holds, for the correct reason.)
+      # Per-run isolation (run-id-derived project names, tags and ports) plus
+      # the job-scoped teardown it would make safe are tracked in #15 for the
+      # owner to approve.
       #
       # What this job leaves behind is therefore bounded by the next run's
       # pre-suite cleanup rather than reclaimed immediately -- an acceptable
