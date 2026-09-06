@@ -25,9 +25,10 @@
 //     already SPKI-bound to an enrolled user (the first-boot admin
 //     credential), mints a token pair; validate/refresh/logout exercise it.
 //   - fido2: the real xkey CLI (auth register / auth login) drives a
-//     headless CTAP2 ceremony (xkey fido2 --require-touch=false --auto-uv)
-//     against the server's WebAuthn relying party and stores the issued
-//     token.
+//     headless CTAP2 ceremony (xkey fido2 --require-touch=false --pin=false,
+//     see VirtualAuthenticatorArgv in argv.go, with presence supplied by
+//     "xkey touch") against the server's WebAuthn relying party and stores
+//     the issued token.
 //
 // The suite is table-driven over server base URLs so a second target
 // (quicbaasd) slots in once its login-plane parity work lands; only xkmsd is

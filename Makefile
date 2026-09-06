@@ -1722,7 +1722,9 @@ integration-test-pkcs11-module:
 # fresh (plain codec_json tag - no GUI/hardware tags needed for this suite)
 # and exported as XKEY_CLI_BIN for the fido2 leg, which drives it as a real
 # subprocess ("xkey auth register" / "xkey auth login") against a headless
-# "xkey fido2 --require-touch=false --auto-uv" virtual authenticator. That
+# "xkey fido2 --require-touch=false --pin=false" virtual authenticator (the
+# argv is VirtualAuthenticatorArgv in test/integration/logins/argv.go, and
+# xkey/cmd/xkey/cmd's unit tests check it against the registered flags). That
 # authenticator opens a uhid device, so the suite runs under sudo, the same
 # requirement integration-test-xkey-ctap has for the same reason.
 integration-test-logins:

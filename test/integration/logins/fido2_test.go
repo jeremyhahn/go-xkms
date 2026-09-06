@@ -38,8 +38,9 @@ import (
 // This leg drives the real xkey CLI (auth register / auth login) through a
 // headless CTAP2 ceremony against the server's WebAuthn relying party,
 // exactly as an operator running "xkey auth login" would, minus the touch:
-// a standalone "xkey fido2 --require-touch=false --auto-uv" daemon stands in
-// for the attached security key.
+// a standalone "xkey fido2 --require-touch=false --pin=false" daemon (see
+// VirtualAuthenticatorArgv in argv.go) stands in for the attached security
+// key, and startTouchPump supplies the presence a human would.
 //
 // The public-route-vs-client_auth coupling that once broke this leg is
 // resolved: since go-qrdb v0.5.7-alpha, module-declared PUBLIC routes
@@ -124,16 +125,16 @@ func runXkey(t *testing.T, ctx context.Context, bin, home string, args ...string
 	return out.String()
 }
 
-// startVirtualAuthenticator starts "xkey fido2 --require-touch=false
-// --auto-uv" in the background, standing in for an attached CTAP2 security
-// key, and returns a cleanup function that stops it. It uses in-memory
-// credential storage (the default), so credentials live only for the
-// daemon's lifetime - exactly one register+login exchange.
+// startVirtualAuthenticator starts the xkey binary with
+// VirtualAuthenticatorArgv in the background, standing in for an attached
+// CTAP2 security key, and registers a cleanup that stops it. It uses
+// in-memory credential storage (the default), so credentials live only for
+// the daemon's lifetime - exactly one register+login exchange.
 func startVirtualAuthenticator(t *testing.T, bin, home string) {
 	t.Helper()
 	ctx, cancel := context.WithCancel(context.Background())
 
-	cmd := exec.CommandContext(ctx, bin, "fido2", "--require-touch=false", "--auto-uv", "--pin=false")
+	cmd := exec.CommandContext(ctx, bin, VirtualAuthenticatorArgv...)
 	// See runXkey: pin Dir so the daemon's relative storage paths
 	// (./data/staticpw by default) land under the per-test tmp dir instead
 	// of the repo working tree.

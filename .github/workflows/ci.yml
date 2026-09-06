@@ -469,11 +469,21 @@ jobs:
       # what require-tests.sh exists to make safe -- it asserts every name
       # matches a real test before running any, so a rename is a red job rather
       # than a silent hole.
+      #
+      # The four *HarnessArgv* tests are the logins harness guard (#409): the
+      # argv test/integration/logins execs to start the virtual authenticator
+      # is resolved against the real fido2 command tree, so a flag removed
+      # from the CLI is a red job here instead of a suite that cannot start
+      # the daemon inside the devcontainer, which no CI job runs.
       - name: xkey CLI fail-closed fingerprint (-tags ble)
         working-directory: xkey
         run: |
           ../.github/scripts/require-tests.sh ./cmd/xkey/cmd/ ble \
             TestCreateFIDO2PhoneKeyBackend_BadFingerprintIsRefused \
+            TestFIDO2Cmd_HarnessArgvIsRegistered \
+            TestFIDO2Cmd_HarnessArgvLeavesFlagsUntouched \
+            TestCheckHarnessArgv_RejectsWhatTheBinaryRejects \
+            TestCheckHarnessArgv_AcceptsBareBoolAndInheritedFlags \
             TestAllowUnattestablePairing_ResolvesTheTwoPlanes \
             TestAllowUnattestablePairing_DefaultsToRefuseOnAZeroPolicySection \
             TestNewPairedDeviceRecord_WritesNoAttestationClaimWhenThereIsNone \
