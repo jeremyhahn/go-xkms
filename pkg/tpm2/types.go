@@ -198,6 +198,21 @@ var (
 	// hash, so the two cannot both be present.
 	ErrSchemeHashUnexpected = errors.New("tpm: a key template with a TPM_ALG_NULL scheme must not name a scheme hash")
 
+	// ErrAdminWithPolicyNoAuthPolicy reports that a key template claims
+	// policy-only administration while naming no policy to enforce.
+	//
+	// With adminWithPolicy SET, the TPM authorizes ADMIN-role commands only
+	// through a policy session satisfying the object's authPolicy, and
+	// refuses the auth value with TPM_RC_AUTH_TYPE (TCG TPM 2.0 Library
+	// Part 1, section 19.6). An empty authPolicy is satisfiable by no
+	// session, because a session's policy digest starts at zero and can
+	// never equal a zero-length value. The pair therefore makes the ADMIN
+	// role -- TPM2_Certify among it -- permanently unavailable on the
+	// created object, and because the attribute is part of the template a
+	// primary key is derived from, the key cannot be recreated without it
+	// either. Creating such an object is refused rather than performed.
+	ErrAdminWithPolicyNoAuthPolicy = errors.New("tpm: a key template that sets adminWithPolicy must also name an authPolicy; the admin role would be permanently unauthorizable")
+
 	// ErrRestrictedSchemeRequired reports that a restricted signing key was
 	// requested without a scheme. A restricted signing key must name one: it may
 	// only sign data the TPM produced, and the scheme is part of what the

@@ -1518,12 +1518,11 @@ func (tpm *TPM2) Sign(
 		}
 		handle = keyAttrs.TPMAttributes.Handle
 
-		// The IDevID templates set UserWithAuth and carry no authPolicy (see
-		// CreateIDevID, which sets AdminWithPolicy but never an AuthPolicy
-		// digest), so the user role authorizes with the key's auth value. An
-		// empty auth value is passed as nil for the reason CreateSession
-		// documents: an empty TPM2B_AUTH is not the same as no auth value, and
-		// sending one answers TPM_RC_BAD_AUTH.
+		// The IDevID templates set UserWithAuth and carry no authPolicy, and
+		// CreateIDevID leaves adminWithPolicy CLEAR (#278), so the key's auth
+		// value authorizes both roles. An empty auth value is passed as nil
+		// for the reason CreateSession documents: an empty TPM2B_AUTH is not
+		// the same as no auth value, and sending one answers TPM_RC_BAD_AUTH.
 		var keyAuth []byte
 		if keyAttrs.Password != nil {
 			keyAuth = keyAttrs.Password.Bytes()

@@ -1,6 +1,6 @@
 # TPM 2.0 — Engineering Contract
 
-> **Status: NORMATIVE** · Feature: `tpm2` · Repo: `go-xkms` · Last verified: 2026-09-03
+> **Status: NORMATIVE** · Feature: `tpm2` · Repo: `go-xkms` · Last verified: 2026-09-06
 
 ## Exported surface — `pkg/tpm2`
 
@@ -60,6 +60,22 @@ whole package. `pkg/tpm2/store` holds the key-backend types (`KeyBackend` in
   struct performs no validation at all, so an off-curve point supplied by a
   broken, emulated or hostile TPM would be accepted and then used as an
   attestation identity. Never reconstruct one by hand.
+- **A template that sets `adminWithPolicy` must also name an `authPolicy`.**
+  With the attribute SET the TPM authorizes ADMIN-role commands only through a
+  policy session satisfying the object's `authPolicy` and refuses the auth
+  value with `TPM_RC_AUTH_TYPE` (TCG TPM 2.0 Library Part 1, §19.6). An empty
+  `authPolicy` is satisfiable by no session — a session's policy digest starts
+  at zero and can never equal a zero-length value — so the pair closes the
+  ADMIN role permanently, `TPM2_Certify` included. It cannot be repaired
+  after the fact: the attribute is an input to a primary key's derivation, so
+  the same key cannot be re-derived without it. `assertAdminAuthorizable`
+  (`key.go`) enforces this on the selected template *before*
+  `TPM2_CreatePrimary` and is what `CreateIDevID` calls. The IDevID templates
+  administer by auth value: `adminWithPolicy` stays CLEAR. The platform policy
+  cannot take its place — a `PolicyOR` of `PolicyPCR` and `PolicyAuthValue`
+  built for USER-role signing and unsealing carries no
+  `TPM2_PolicyCommandCode` term, without which no session can authorize an
+  ADMIN-role command.
 
 ## Error semantics
 
@@ -77,6 +93,7 @@ vocabulary. The categories that need distinguishing:
 | AK certification invalid | the AK is not bound to that EK |
 | quote signature or nonce invalid | the evidence is not fresh or not from that AK |
 | `ErrECCPublicArea` | the ECC public area does not yield a valid public key: bad parameters, an unknown curve, or a point that is not on the curve. On the `TPM2_Certify` path it is wrapped as `ErrCertifyMalformed`; the underlying `ecpoint.ErrInvalidPoint` stays reachable through `errors.Is` |
+| `ErrAdminWithPolicyNoAuthPolicy` | the template about to be created from sets `adminWithPolicy` while naming no `authPolicy`, so the object's ADMIN role would be unauthorizable by anything. Raised by `assertAdminAuthorizable` before `TPM2_CreatePrimary`; nothing is created |
 
 **Fail closed:** every one of these refuses. Nothing degrades to a software key
 or an unverified acceptance.
@@ -120,7 +137,11 @@ The suite is unusually large and deliberately structured:
   against `tpm_simulator.go`: crypto ops, key lifecycle, algorithm agility,
   attestation certify, IDevID CSR round-trip and sizing, device identity
   signing (`idevid_sign_simulator_test.go` — which bytes each of the two
-  identity keys actually signs), seal-with-PCR-policy, SSRK platform policy,
+  identity keys actually signs), IDevID admin-role authorization
+  (`idevid_admin_policy_simulator_test.go` — reads the created object's public
+  area back from its persistent handle and drives `TPM2_Certify` against it,
+  because the attribute bits alone do not prove the ADMIN role is reachable),
+  seal-with-PCR-policy, SSRK platform policy,
   capabilities, PIN enrollment.
 - **Leak suites** — object contexts, auth sessions, auth sessions under
   transport fault, general resources. These are the regression guard for the

@@ -1162,6 +1162,26 @@ func (tpm *TPM2) CreateIAK(
 	return iakAttrs, nil
 }
 
+// assertAdminAuthorizable reports whether a template's administration is
+// authorizable at all, returning ErrAdminWithPolicyNoAuthPolicy when it sets
+// adminWithPolicy while naming no authPolicy.
+//
+// The two fields are a pair: adminWithPolicy declares that the ADMIN role is
+// governed by the object's authPolicy, so a template that sets it without one
+// declares administration by a policy that does not exist. Checking the
+// template rather than the attributes catches the contradiction wherever it
+// enters -- a changed guard, an edited package template, a caller-supplied
+// public area -- and does so before TPM2_CreatePrimary, while the object can
+// still not be created. Once created the pair cannot be repaired: the
+// attribute is an input to the derivation, so the same handle cannot be
+// re-derived without it.
+func assertAdminAuthorizable(template tpm2.TPMTPublic) error {
+	if template.ObjectAttributes.AdminWithPolicy && len(template.AuthPolicy.Buffer) == 0 {
+		return ErrAdminWithPolicyNoAuthPolicy
+	}
+	return nil
+}
+
 // Creates an Initial Device IDentifier (IDevID) under the
 // Endorsement Hierarchy per TCG - TPM 2.0 Keys for Device Identity
 // and Attestation. The Endorsement Key (EK) attributes must contain
@@ -1228,13 +1248,35 @@ func (tpm *TPM2) CreateIDevID(
 		idevidTemplate = ECCIDevIDP256Template
 	}
 
-	// TPM 2.0 Keys for Device Identity and Attestation - Section 3.10 - Key
-	// Authorizations: Applications using only Policy to control key
-	// administration MUST SET the adminWithPolicy attribute when creating
-	// the key. When adminWithPolicy is CLEAR, the authValue may be used in
-	// an HMAC session to perform Admin operations.
-	if idevidAttrs.Password == nil && idevidAttrs.PlatformPolicy {
-		idevidTemplate.ObjectAttributes.AdminWithPolicy = true
+	// TPM 2.0 Keys for Device Identity and Attestation, section 3.10, Key
+	// Authorizations: applications using only Policy to control key
+	// administration MUST SET the adminWithPolicy attribute. This code path
+	// is not one of them, so the attribute stays CLEAR and the auth value
+	// authorizes the ADMIN role as well as the USER role -- which is what
+	// TPM2_Certify below relies on.
+	//
+	// The platform policy cannot play the part. It is a PolicyOR of
+	// PolicyPCR and PolicyAuthValue built for USER-role signing and
+	// unsealing, and it carries no TPM2_PolicyCommandCode term, without
+	// which no policy session can authorize an ADMIN-role command. Setting
+	// adminWithPolicy and assigning that digest was measured to fail
+	// TPM2_Certify with TPM_RC_POLICY_FAIL on matching digests, and setting
+	// it with no digest at all bricks the ADMIN role permanently:
+	// TPM_RC_AUTH_TYPE refuses the auth value, and a session's zero policy
+	// digest can never equal an empty authPolicy (#278).
+	//
+	// A guard here previously set the attribute when
+	// `idevidAttrs.Password == nil && idevidAttrs.PlatformPolicy`. It never
+	// ran: idevidAttrs comes only from IDevIDAttributesFromConfig above,
+	// which sets Password from types.NewPassword, and that constructor
+	// documents that it never returns nil. Deleting it is therefore a
+	// no-op on the created key -- the attribute is part of the template a
+	// primary key is derived from, so a live one would have re-keyed every
+	// deployed device identity.
+	if err := assertAdminAuthorizable(idevidTemplate); err != nil {
+		tpm.logger.Error("refusing to create an unadministrable IDevID",
+			slog.String("error", err.Error()))
+		return nil, nil, err
 	}
 
 	// Create IDevID Key
