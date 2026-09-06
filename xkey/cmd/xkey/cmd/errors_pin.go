@@ -41,6 +41,23 @@ func (e *PINCommandError) Unwrap() error {
 	return e.Err
 }
 
+// PINStoreNotFoundError reports that the resolved data directory holds no
+// PIN state directory. It is a distinct condition from a present-but-empty
+// store: it means either the device was never initialized or the command
+// is pointed at the wrong data directory, and it must never be rendered
+// as a confident "PIN not set".
+type PINStoreNotFoundError struct {
+	// Dir is the PIN state directory that does not exist.
+	Dir string
+}
+
+// Error returns the error message.
+func (e *PINStoreNotFoundError) Error() string {
+	return fmt.Sprintf(
+		"pin: no PIN state directory at %s (not initialized, or the wrong data directory; run 'xkey pin set-so' to initialize, or point --data-dir / XKEY_DATA_DIR at the device's data directory)",
+		e.Dir)
+}
+
 // PIN command sentinel errors.
 var (
 	ErrPINCmdReadFailed     = &PINCommandError{Operation: "read_pin", Message: "failed to read PIN"}

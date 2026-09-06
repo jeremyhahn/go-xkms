@@ -27,6 +27,8 @@ import (
 	"github.com/spf13/viper"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+
+	"github.com/jeremyhahn/go-xkms/xkey/pkg/xhome"
 )
 
 // isolatePIN gives a test its own PIN data directory and neutralises every
@@ -265,10 +267,38 @@ func TestResolvePINDataDir_HomeFallback(t *testing.T) {
 	pinDataDir = ""
 	home := t.TempDir()
 	t.Setenv("HOME", home)
+	t.Setenv(xhome.EnvHome, "")
+	xhome.ResetRoot()
 
 	got, err := resolvePINDataDir()
 	require.NoError(t, err)
-	assert.Equal(t, filepath.Join(home, ".xkey"), got)
+	assert.Equal(t, filepath.Join(home, ".xkey", "data"), got,
+		"pin must fall back to the same ~/.xkey/data every other subsystem uses (issue #295)")
+}
+
+func TestResolvePINDataDirExisting_FlagWins(t *testing.T) {
+	dir := isolatePIN(t)
+	t.Setenv("XKEY_DATA_DIR", "/env/should/lose")
+	viper.Set("data_dir", "/viper/should/lose")
+
+	got, err := resolvePINDataDirExisting()
+	require.NoError(t, err)
+	assert.Equal(t, dir, got)
+}
+
+func TestResolvePINDataDirExisting_NothingResolvableErrors(t *testing.T) {
+	isolatePIN(t)
+	pinDataDir = ""
+	t.Setenv(xhome.EnvHome, filepath.Join(t.TempDir(), "missing"))
+	xhome.ResetRoot()
+
+	_, err := resolvePINDataDirExisting()
+	require.Error(t, err)
+
+	var pinErr *PINCommandError
+	require.ErrorAs(t, err, &pinErr)
+	assert.Equal(t, "resolve_data_dir", pinErr.Operation)
+	assert.ErrorIs(t, err, xhome.ErrHomeNotResolved)
 }
 
 // --- createPINService ---
@@ -300,6 +330,127 @@ func TestCreatePINService_RejectsUnusableDataDir(t *testing.T) {
 	var pinErr *PINCommandError
 	require.ErrorAs(t, err, &pinErr)
 	assert.Equal(t, "create_pin_dir", pinErr.Operation)
+}
+
+// --- openPINService ---
+
+func TestOpenPINService_MissingStoreReturnsTypedError(t *testing.T) {
+	dir := t.TempDir()
+
+	_, err := openPINService(dir)
+	require.Error(t, err)
+
+	var notFound *PINStoreNotFoundError
+	require.ErrorAs(t, err, &notFound)
+	assert.Equal(t, filepath.Join(dir, defaultPINStateSubdir), notFound.Dir)
+
+	_, statErr := os.Stat(filepath.Join(dir, defaultPINStateSubdir))
+	assert.True(t, os.IsNotExist(statErr),
+		"opening for read must not create the pin directory")
+}
+
+func TestOpenPINService_OpensExistingStore(t *testing.T) {
+	dir := t.TempDir()
+
+	svc, err := createPINService(dir)
+	require.NoError(t, err)
+	require.NoError(t, svc.SetSOPIN("", "so-pin-one"))
+
+	opened, err := openPINService(dir)
+	require.NoError(t, err)
+	assert.True(t, opened.SOPINSet())
+	require.NoError(t, opened.VerifySOPIN("so-pin-one"))
+}
+
+// TestPINReadCommands_MissingStoreReturnsNotFound pins the read commands'
+// behavior against an absent store: a typed not-found error, never a
+// phantom fresh store (issue #295).
+func TestPINReadCommands_MissingStoreReturnsNotFound(t *testing.T) {
+	runs := map[string]func(*cobra.Command, []string) error{
+		"verify":        runPINVerify,
+		"change-so":     runPINChangeSO,
+		"change-user":   runPINChangeUser,
+		"reset-lockout": runPINResetLockout,
+	}
+
+	for name, run := range runs {
+		t.Run(name, func(t *testing.T) {
+			dir := isolatePIN(t)
+			pipePIN(t, "some-pin", "some-pin", "some-pin")
+
+			_, err := runPINCmd(t, run)
+			var notFound *PINStoreNotFoundError
+			require.ErrorAs(t, err, &notFound)
+
+			_, statErr := os.Stat(filepath.Join(dir, defaultPINStateSubdir))
+			assert.True(t, os.IsNotExist(statErr),
+				"a failed read command must not create the pin directory")
+		})
+	}
+}
+
+// TestPINCommands_AddressTheWizardDataDirectory reproduces issue #295: the
+// setup wizard persists PIN state under ~/.xkey/data/pin/, and every pin
+// subcommand run with no overrides must address that same store. On the
+// defective code the pin group resolved ~/.xkey instead, read a phantom
+// empty store, reported PINs as unset, and let set-so fork a second SO PIN
+// record without presenting the current one.
+func TestPINCommands_AddressTheWizardDataDirectory(t *testing.T) {
+	isolatePIN(t)
+	pinDataDir = ""
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv(xhome.EnvHome, "")
+	xhome.ResetRoot()
+
+	// The wizard writes through xhome: ~/.xkey/data/pin/{so-pin,user-pin}.
+	wizardDataDir := filepath.Join(home, ".xkey", "data")
+	wizard, err := createPINService(wizardDataDir)
+	require.NoError(t, err)
+	require.NoError(t, wizard.SetSOPIN("", "wizard-so-pin"))
+	require.NoError(t, wizard.SetUserPIN("wizard-so-pin", "wizard-user-pin"))
+
+	// pin status must report the store the wizard wrote.
+	out, err := runPINCmd(t, runPINStatus)
+	require.NoError(t, err)
+	assert.Contains(t, out, "SO PIN set:       Yes")
+	assert.Contains(t, out, "User PIN set:     Yes")
+
+	// ... without manufacturing the phantom ~/.xkey/pin store.
+	_, statErr := os.Stat(filepath.Join(home, ".xkey", "pin"))
+	assert.True(t, os.IsNotExist(statErr),
+		"a status read must not create ~/.xkey/pin")
+
+	// pin verify must authenticate against the wizard's store.
+	pinVerifyType = "user"
+	pipePIN(t, "wizard-user-pin")
+	out, err = runPINCmd(t, runPINVerify)
+	require.NoError(t, err)
+	assert.Contains(t, out, "User PIN: VALID")
+
+	// set-so addresses the same store, so with an SO PIN already set it
+	// demands the current one: a caller who cannot present it is refused
+	// instead of silently forking a divergent SO PIN record.
+	pipePIN(t, "not-the-so-pin", "forked-so-pin", "forked-so-pin")
+	_, err = runPINCmd(t, runPINSetSO)
+	require.Error(t, err, "set-so without the current SO PIN must be refused")
+
+	after, err := openPINService(wizardDataDir)
+	require.NoError(t, err)
+	require.NoError(t, after.VerifySOPIN("wizard-so-pin"),
+		"the wizard's SO PIN must survive a refused set-so")
+	_, statErr = os.Stat(filepath.Join(home, ".xkey", "pin"))
+	assert.True(t, os.IsNotExist(statErr), "no divergent store may appear")
+
+	// With the current SO PIN presented, rotation succeeds in place.
+	pipePIN(t, "wizard-so-pin", "rotated-so-pin", "rotated-so-pin")
+	out, err = runPINCmd(t, runPINSetSO)
+	require.NoError(t, err)
+	assert.Contains(t, out, "SO PIN set successfully.")
+
+	after, err = openPINService(wizardDataDir)
+	require.NoError(t, err)
+	require.NoError(t, after.VerifySOPIN("rotated-so-pin"))
 }
 
 // --- pin set-so / set-user ---
@@ -535,12 +686,18 @@ func TestPINVerifyHandlers_CoverBothDocumentedTypes(t *testing.T) {
 // --- pin status ---
 
 func TestRunPINStatus_TextReflectsStoreState(t *testing.T) {
-	isolatePIN(t)
+	dir := isolatePIN(t)
 
+	// No store yet: status must say so, not report a confident "not set".
 	out, err := runPINCmd(t, runPINStatus)
 	require.NoError(t, err)
-	assert.Contains(t, out, "SO PIN set:       No")
-	assert.Contains(t, out, "User PIN set:     No")
+	assert.Contains(t, out, "PIN store:        not found")
+	assert.NotContains(t, out, "SO PIN set:")
+
+	// The read must not have created the store it failed to find.
+	_, statErr := os.Stat(filepath.Join(dir, defaultPINStateSubdir))
+	assert.True(t, os.IsNotExist(statErr),
+		"a status read must not create the pin directory")
 
 	pipePIN(t, "so-pin-one", "so-pin-one")
 	_, err = runPINCmd(t, runPINSetSO)
@@ -607,18 +764,31 @@ func TestRunPINStatus_RendersZeroLockoutWhenBackendHasNoCounters(t *testing.T) {
 	assert.False(t, info.IsLocked)
 }
 
-func TestRunPINStatus_FailsWhenDataDirUnusable(t *testing.T) {
+func TestRunPINStatus_UnusableDataDirReportsStoreNotFound(t *testing.T) {
+	// A data dir that is a regular file cannot hold a pin/ directory: the
+	// store is simply not there, and status must say so rather than fail
+	// trying to create storage during a read.
 	isolatePIN(t)
 	file := filepath.Join(t.TempDir(), "regular-file")
 	require.NoError(t, os.WriteFile(file, []byte("x"), 0600))
 	pinDataDir = file
 
-	_, err := runPINCmd(t, runPINStatus)
-	require.Error(t, err)
+	out, err := runPINCmd(t, runPINStatus)
+	require.NoError(t, err)
+	assert.Contains(t, out, "PIN store:        not found")
+}
 
-	var pinErr *PINCommandError
-	require.ErrorAs(t, err, &pinErr)
-	assert.Equal(t, "create_pin_dir", pinErr.Operation)
+func TestRunPINStatus_MissingStoreJSONReportsStoreAbsent(t *testing.T) {
+	isolatePIN(t)
+	pinStatusJSON = true
+
+	out, err := runPINCmd(t, runPINStatus)
+	require.NoError(t, err)
+
+	var info pinStatusInfo
+	require.NoError(t, json.Unmarshal([]byte(out), &info))
+	assert.False(t, info.StorePresent)
+	assert.False(t, info.Initialized)
 }
 
 func TestBoolToYesNo(t *testing.T) {
@@ -665,9 +835,9 @@ func TestRunPINResetLockout_FailsWhenDataDirUnusable(t *testing.T) {
 	_, err := runPINCmd(t, runPINResetLockout)
 	require.Error(t, err)
 
-	var pinErr *PINCommandError
-	require.ErrorAs(t, err, &pinErr)
-	assert.Equal(t, "create_pin_dir", pinErr.Operation)
+	var notFound *PINStoreNotFoundError
+	require.ErrorAs(t, err, &notFound,
+		"a data dir with no store must surface as store-not-found")
 }
 
 // --- PINCommandError ---

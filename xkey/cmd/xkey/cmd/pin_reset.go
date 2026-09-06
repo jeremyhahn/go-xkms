@@ -43,14 +43,15 @@ func init() {
 func runPINResetLockout(cmd *cobra.Command, args []string) error {
 	out := cmd.OutOrStdout()
 
-	// Resolve data directory.
-	dataDir, err := resolvePINDataDir()
+	// Resolve the data directory without creating anything: these commands
+	// only consult existing PIN state.
+	dataDir, err := resolvePINDataDirExisting()
 	if err != nil {
 		return err
 	}
 
-	// Create PIN service.
-	svc, err := createPINService(dataDir)
+	// Open the existing PIN store.
+	svc, err := openPINService(dataDir)
 	if err != nil {
 		return err
 	}

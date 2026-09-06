@@ -96,6 +96,21 @@ type Home struct {
 var systemDir = "/etc/xkey"
 
 func Resolve() (*Home, error) {
+	return resolve(true)
+}
+
+// ResolveExisting probes the same strategies as Resolve, in the same
+// order, but never creates a directory: a candidate wins only if it
+// already exists. Read-only commands use it so that inspecting state
+// cannot manufacture an empty xKey home that masks a misresolved path.
+func ResolveExisting() (*Home, error) {
+	return resolve(false)
+}
+
+// resolve implements Resolve and ResolveExisting. When create is true,
+// missing XKEY_HOME and ~/.xkey/ candidates are created on first use;
+// when false, only directories that already exist can win.
+func resolve(create bool) (*Home, error) {
 	// Check test override first.
 	if ptr := override.Load(); ptr != nil && *ptr != "" {
 		return &Home{Root: *ptr}, nil
@@ -109,6 +124,9 @@ func Resolve() (*Home, error) {
 		}
 		if isDir(abs) {
 			return &Home{Root: abs}, nil
+		}
+		if !create {
+			return nil, ErrHomeNotResolved
 		}
 		// If the env var is set, treat it as authoritative even if the
 		// directory doesn't exist yet — create it.
@@ -133,8 +151,10 @@ func Resolve() (*Home, error) {
 			return &Home{Root: userDir}, nil
 		}
 		// Create the directory on first use.
-		if err := os.MkdirAll(userDir, 0700); err == nil {
-			return &Home{Root: userDir}, nil
+		if create {
+			if err := os.MkdirAll(userDir, 0700); err == nil {
+				return &Home{Root: userDir}, nil
+			}
 		}
 	}
 

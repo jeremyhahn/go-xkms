@@ -81,7 +81,8 @@ func TestRunPINStatus_NoDaemonReportsDataDirectoryAndSaysSo(t *testing.T) {
 	require.NoError(t, runPINStatus(cmd, nil))
 
 	out := buf.String()
-	assert.Contains(t, out, "SO PIN set:       No")
+	assert.Contains(t, out, "PIN store:        not found",
+		"an empty data directory holds no store; that fact must be reported, not a confident No")
 	assert.Contains(t, out, "Source: data directory ("+dataDir+") — no daemon running")
 }
 
@@ -118,7 +119,8 @@ func TestRunPINStatus_SourceDiskIgnoresALiveDaemon(t *testing.T) {
 	require.NoError(t, runPINStatus(cmd, nil))
 
 	out := buf.String()
-	assert.Contains(t, out, "SO PIN set:       No")
+	assert.Contains(t, out, "PIN store:        not found",
+		"the cold directory holds no store; that fact must be reported, not a confident No")
 	assert.Contains(t, out, "Source: data directory ("+dataDir+") — selected with --source disk")
 }
 

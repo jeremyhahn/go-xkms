@@ -14,6 +14,7 @@
 package cmd
 
 import (
+	"errors"
 	"fmt"
 	"time"
 
@@ -31,6 +32,12 @@ var (
 // stateSourceInfo names which authority answered, so a JSON consumer can
 // tell a live daemon reading from a cold data directory apart.
 type pinStatusInfo struct {
+	// StorePresent reports whether a PIN store exists at all. False means
+	// the resolved data directory holds no PIN state directory — a fresh
+	// install or a misresolved path — which is a different fact from a
+	// present store with no PINs set, and is rendered differently.
+	StorePresent bool `json:"store_present"`
+
 	Initialized     bool   `json:"initialized"`
 	SOPINSet        bool   `json:"so_pin_set"`
 	UserPINSet      bool   `json:"user_pin_set"`
@@ -102,6 +109,18 @@ func runPINStatus(cmd *cobra.Command, args []string) error {
 		return writeJSON(out, info)
 	}
 
+	if !info.StorePresent {
+		_, _ = fmt.Fprintln(out, "PIN Status:")
+		_, _ = fmt.Fprintln(out, "  PIN store:        not found")
+		_, _ = fmt.Fprintln(out)
+		_, _ = fmt.Fprintf(out, "No PIN state directory exists under %s.\n", src.Location)
+		_, _ = fmt.Fprintln(out, "Run 'xkey pin set-so' to initialize, or point --data-dir /")
+		_, _ = fmt.Fprintln(out, "XKEY_DATA_DIR at the device's data directory.")
+		_, _ = fmt.Fprintln(out)
+		writeSource(out, src)
+		return nil
+	}
+
 	_, _ = fmt.Fprintln(out, "PIN Status:")
 	_, _ = fmt.Fprintf(out, "  Initialized:      %s\n", boolToYesNo(info.Initialized))
 	_, _ = fmt.Fprintf(out, "  SO PIN set:       %s\n", boolToYesNo(info.SOPINSet))
@@ -136,6 +155,7 @@ func resolvePINStatus(cmd *cobra.Command, selection string) (pinStatusInfo, stat
 	}
 	if answered {
 		return pinStatusInfo{
+			StorePresent:    true,
 			Initialized:     state.Initialized,
 			SOPINSet:        state.SOPINSet,
 			UserPINSet:      state.UserPINSet,
@@ -157,21 +177,31 @@ func resolvePINStatus(cmd *cobra.Command, selection string) (pinStatusInfo, stat
 // readPINStatusFromDisk reports the PIN state recorded in the on-disk data
 // directory. It remains the correct answer when no daemon holds the device.
 func readPINStatusFromDisk() (pinStatusInfo, string, error) {
-	dataDir, err := resolvePINDataDir()
+	// Resolve without creating anything: a status read must not
+	// manufacture an empty store that masks a misresolved path.
+	dataDir, err := resolvePINDataDirExisting()
 	if err != nil {
 		return pinStatusInfo{}, "", err
 	}
 
-	svc, err := createPINService(dataDir)
+	svc, err := openPINService(dataDir)
 	if err != nil {
+		var notFound *PINStoreNotFoundError
+		if errors.As(err, &notFound) {
+			// No store at all. Report the fact instead of a confident
+			// "not set": a fresh install and a wrong data directory
+			// must not print the same thing.
+			return pinStatusInfo{StorePresent: false}, dataDir, nil
+		}
 		return pinStatusInfo{}, dataDir, err
 	}
 
 	info := pinStatusInfo{
-		Initialized: svc.IsInitialized(),
-		SOPINSet:    svc.SOPINSet(),
-		UserPINSet:  svc.UserPINSet(),
-		Strategy:    string(svc.Strategy()),
+		StorePresent: true,
+		Initialized:  svc.IsInitialized(),
+		SOPINSet:     svc.SOPINSet(),
+		UserPINSet:   svc.UserPINSet(),
+		Strategy:     string(svc.Strategy()),
 	}
 
 	if lockout := svc.GetLockoutStatus(); lockout != nil {

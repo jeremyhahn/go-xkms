@@ -66,22 +66,23 @@ func init() {
 }
 
 func runPINVerify(cmd *cobra.Command, args []string) error {
-	// Resolve data directory.
-	dataDir, err := resolvePINDataDir()
-	if err != nil {
-		return err
-	}
-
-	// Create PIN service.
-	svc, err := createPINService(dataDir)
-	if err != nil {
-		return err
-	}
-
-	// Dispatch to the appropriate handler.
+	// Validate the requested PIN type before touching any state.
 	handler, ok := pinVerifyHandlers[pinVerifyType]
 	if !ok {
 		return ErrPINCmdInvalidType
+	}
+
+	// Resolve the data directory without creating anything: verify only
+	// consults existing PIN state.
+	dataDir, err := resolvePINDataDirExisting()
+	if err != nil {
+		return err
+	}
+
+	// Open the existing PIN store.
+	svc, err := openPINService(dataDir)
+	if err != nil {
+		return err
 	}
 
 	return handler(cmd, svc)

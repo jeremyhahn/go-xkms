@@ -25,7 +25,6 @@ import (
 	"sync"
 
 	"github.com/spf13/cobra"
-	"github.com/spf13/viper"
 	"golang.org/x/term"
 
 	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
@@ -125,7 +124,7 @@ func init() {
 
 	// Add persistent flags available to all pin subcommands.
 	pinCmd.PersistentFlags().StringVar(&pinDataDir, "data-dir", "",
-		"data directory for PIN state (default: ~/.xkey)")
+		"data directory for PIN state (default: ~/.xkey/data)")
 }
 
 // getPINStdinReader returns the shared buffered reader for piped stdin.
@@ -138,42 +137,78 @@ func getPINStdinReader() *bufio.Reader {
 	return pinStdinReader
 }
 
-// resolvePINDataDir resolves the data directory for PIN state.
-// Priority: --data-dir flag > XKEY_DATA_DIR env > viper config > ~/.xkey
+// resolvePINDataDir resolves the data directory for PIN state through the
+// CLI's single resolution chain (see resolveDataDir).
+// Priority: --data-dir flag > XKEY_DATA_DIR env > viper config > ~/.xkey/data
+//
+// The default is the same ~/.xkey/data every other subsystem uses. A
+// private fallback here once dropped the `data` segment, so every pin
+// subcommand read a phantom empty store beside the real one (issue #295).
 func resolvePINDataDir() (string, error) {
-	if pinDataDir != "" {
-		return filepath.Clean(pinDataDir), nil
-	}
-
-	if envDir := os.Getenv("XKEY_DATA_DIR"); envDir != "" {
-		return filepath.Clean(envDir), nil
-	}
-
-	if viperDir := viper.GetString("data_dir"); viperDir != "" {
-		return filepath.Clean(viperDir), nil
-	}
-
-	homeDir, err := os.UserHomeDir()
+	dataDir, err := resolveDataDir(pinDataDir)
 	if err != nil {
 		return "", &PINCommandError{
 			Operation: "resolve_data_dir",
 			Err:       err,
 		}
 	}
-	return filepath.Join(homeDir, ".xkey"), nil
+	return dataDir, nil
 }
 
-// createPINService creates a qrdbsdk.PINService backed by a SoftwareBackend using
-// file-based storage from the resolved data directory.
+// resolvePINDataDirExisting resolves the same chain as resolvePINDataDir
+// but never creates a directory. Commands that only consult existing PIN
+// state (status, verify, change, reset-lockout) use it, so a read cannot
+// manufacture the empty store that made issue #295 invisible.
+func resolvePINDataDirExisting() (string, error) {
+	dataDir, err := resolveDataDirExisting(pinDataDir)
+	if err != nil {
+		return "", &PINCommandError{
+			Operation: "resolve_data_dir",
+			Err:       err,
+		}
+	}
+	return dataDir, nil
+}
+
+// pinStateDir returns the PIN state directory under the resolved data
+// directory.
+func pinStateDir(dataDir string) string {
+	return filepath.Join(dataDir, defaultPINStateSubdir)
+}
+
+// createPINService creates a qrdbsdk.PINService backed by a SoftwareBackend
+// using file-based storage from the resolved data directory, creating the
+// PIN state directory if it does not exist. Only commands that legitimately
+// initialize PIN state (set-so, set-user) call it; everything else opens
+// the store with openPINService.
 func createPINService(dataDir string) (*qrdbsdk.PINService, error) {
-	pinDir := filepath.Join(dataDir, defaultPINStateSubdir)
+	pinDir := pinStateDir(dataDir)
 	if err := os.MkdirAll(pinDir, 0700); err != nil {
 		return nil, &PINCommandError{
 			Operation: "create_pin_dir",
 			Err:       err,
 		}
 	}
+	return newPINService(pinDir)
+}
 
+// openPINService creates a qrdbsdk.PINService over an existing PIN state
+// directory. When the directory does not exist it returns
+// *PINStoreNotFoundError instead of fabricating a fresh store: an absent
+// store is a distinct fact ("not initialized, or wrong data directory")
+// that must never be reported as a confident "PIN not set".
+func openPINService(dataDir string) (*qrdbsdk.PINService, error) {
+	pinDir := pinStateDir(dataDir)
+	info, err := os.Stat(pinDir)
+	if err != nil || !info.IsDir() {
+		return nil, &PINStoreNotFoundError{Dir: pinDir}
+	}
+	return newPINService(pinDir)
+}
+
+// newPINService wires the file storage, PIN store adapter and software
+// backend into a qrdbsdk.PINService over pinDir.
+func newPINService(pinDir string) (*qrdbsdk.PINService, error) {
 	fileStore, err := xkms.NewFileStorageBackend(pinDir)
 	if err != nil {
 		return nil, &PINCommandError{

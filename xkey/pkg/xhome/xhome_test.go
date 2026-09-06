@@ -14,6 +14,7 @@
 package xhome
 
 import (
+	"errors"
 	"os"
 	"path/filepath"
 	"strings"
@@ -732,4 +733,81 @@ func isResolveError(err error, target **ResolveError) bool {
 		*target = re
 	}
 	return ok
+}
+
+// TestResolveExisting_ReturnsExistingUserDir verifies that ResolveExisting
+// finds an already-present ~/.xkey/ directory.
+func TestResolveExisting_ReturnsExistingUserDir(t *testing.T) {
+	ResetRoot()
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv(EnvHome, "")
+
+	xkeyDir := filepath.Join(home, userDirName)
+	if err := os.MkdirAll(xkeyDir, 0700); err != nil {
+		t.Fatalf("MkdirAll() error: %v", err)
+	}
+
+	h, err := ResolveExisting()
+	if err != nil {
+		t.Fatalf("ResolveExisting() error: %v", err)
+	}
+	if h.Root != xkeyDir {
+		t.Errorf("Root = %q, want %q", h.Root, xkeyDir)
+	}
+}
+
+// TestResolveExisting_DoesNotCreateUserDir verifies that ResolveExisting
+// never manufactures ~/.xkey/: a missing home must surface as
+// ErrHomeNotResolved, not appear as an empty directory that masks a
+// misresolved path.
+func TestResolveExisting_DoesNotCreateUserDir(t *testing.T) {
+	ResetRoot()
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv(EnvHome, "")
+
+	previousSystem := systemDir
+	systemDir = filepath.Join(home, "no-such-etc-xkey")
+	t.Cleanup(func() { systemDir = previousSystem })
+
+	if _, err := ResolveExisting(); !errors.Is(err, ErrHomeNotResolved) {
+		t.Fatalf("ResolveExisting() error = %v, want ErrHomeNotResolved", err)
+	}
+	if _, statErr := os.Stat(filepath.Join(home, userDirName)); !os.IsNotExist(statErr) {
+		t.Errorf("ResolveExisting must not create ~/.xkey (stat: %v)", statErr)
+	}
+}
+
+// TestResolveExisting_EnvExistingDirWins verifies that an existing
+// XKEY_HOME directory wins under ResolveExisting exactly as it does
+// under Resolve.
+func TestResolveExisting_EnvExistingDirWins(t *testing.T) {
+	ResetRoot()
+	dir := t.TempDir()
+	t.Setenv(EnvHome, dir)
+
+	h, err := ResolveExisting()
+	if err != nil {
+		t.Fatalf("ResolveExisting() error: %v", err)
+	}
+	if h.Root != dir {
+		t.Errorf("Root = %q, want %q", h.Root, dir)
+	}
+}
+
+// TestResolveExisting_EnvMissingDirNotResolved verifies that an XKEY_HOME
+// pointing at a directory that does not exist is reported as unresolved
+// rather than created, unlike Resolve which creates it.
+func TestResolveExisting_EnvMissingDirNotResolved(t *testing.T) {
+	ResetRoot()
+	missing := filepath.Join(t.TempDir(), "not-created")
+	t.Setenv(EnvHome, missing)
+
+	if _, err := ResolveExisting(); !errors.Is(err, ErrHomeNotResolved) {
+		t.Fatalf("ResolveExisting() error = %v, want ErrHomeNotResolved", err)
+	}
+	if _, statErr := os.Stat(missing); !os.IsNotExist(statErr) {
+		t.Errorf("ResolveExisting must not create XKEY_HOME (stat: %v)", statErr)
+	}
 }

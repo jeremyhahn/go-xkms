@@ -25,11 +25,9 @@ import (
 	"sync"
 
 	"github.com/spf13/cobra"
-	"github.com/spf13/viper"
 	"golang.org/x/term"
 
 	xkms "github.com/jeremyhahn/go-xkms/sdk/go"
-	"github.com/jeremyhahn/go-xkms/xkey/pkg/xhome"
 )
 
 const (
@@ -120,26 +118,14 @@ func init() {
 // Priority: --data-dir flag > XKEY_DATA_DIR env > viper config > ~/.xkey/data
 // The default matches the GUI and extension serve paths for unified barrier access.
 func resolveBarrierDataDir() (string, error) {
-	if barrierDataDir != "" {
-		return filepath.Clean(barrierDataDir), nil
-	}
-
-	if envDir := os.Getenv("XKEY_DATA_DIR"); envDir != "" {
-		return filepath.Clean(envDir), nil
-	}
-
-	if viperDir := viper.GetString("data_dir"); viperDir != "" {
-		return filepath.Clean(viperDir), nil
-	}
-
-	home, err := xhome.Resolve()
+	dataDir, err := resolveDataDir(barrierDataDir)
 	if err != nil {
 		return "", &BarrierError{
 			Operation: "resolve_data_dir",
 			Err:       err,
 		}
 	}
-	return home.EnsureDataDir()
+	return dataDir, nil
 }
 
 // strategyFlagToID maps the user-facing CLI strategy names to the canonical
