@@ -76,6 +76,15 @@ whole package. `pkg/tpm2/store` holds the key-backend types (`KeyBackend` in
   built for USER-role signing and unsealing carries no
   `TPM2_PolicyCommandCode` term, without which no session can authorize an
   ADMIN-role command.
+- **An identity key's CN comes from configuration, verbatim, on every path.**
+  `IAKAttributesFromConfig` (provisioning) and the cold-cache rebuild in
+  `IAKAttributes` (a fresh process attaching to an already-provisioned TPM)
+  both assign `config.IAK.CN` unchanged; an unconfigured CN is empty on both.
+  Neither path may fabricate a default, because the certificate store keys on
+  the CN and a rebuild that describes the IAK differently from provisioning
+  misses every artifact provisioning wrote (#337).
+  `TestIAKAttributes_ColdCacheEmptyCNStaysEmpty` and
+  `TestIAKAttributes_ColdCacheKeepsConfiguredCN` pin the two cases.
 
 ## Error semantics
 

@@ -429,25 +429,33 @@ func TestIAKAttributes_ColdCacheKeepsConfiguredCN(t *testing.T) {
 	assert.Equal(t, types.KeyTypeAttestation, cold.KeyType)
 }
 
-// TestIAKAttributes_ColdCacheEmptyCNFallsBack pins the default that applies
-// when no CN is configured, so fixing the configured-CN case does not quietly
-// remove it.
-//
-// Note the asymmetry this documents rather than changes: IAKAttributesFromConfig
-// -- the path provisioning uses -- assigns config.CN verbatim and applies no
-// fallback, so an unconfigured CN is recorded as "" at provisioning time and as
-// "default-device-id" after a restart. Only the configured-CN case is in scope
-// here; the empty case is reported upstream instead of being changed under a
-// bug fix.
-func TestIAKAttributes_ColdCacheEmptyCNFallsBack(t *testing.T) {
+// TestIAKAttributes_ColdCacheEmptyCNStaysEmpty proves the unconfigured-CN
+// case agrees between provisioning and restart (#337). The rebuild path used
+// to fabricate "default-device-id" for an empty CN while
+// IAKAttributesFromConfig -- the path provisioning uses -- assigns config.CN
+// verbatim, so the same TPM described its IAK differently depending on
+// whether the process provisioned it or attached to it, and certificate-store
+// lookups keyed on the CN missed artifacts written at provisioning time. The
+// CN comes from configuration on both paths: unconfigured means empty, on
+// both.
+func TestIAKAttributes_ColdCacheEmptyCNStaysEmpty(t *testing.T) {
 	h := newSimHarness(t, func(c *Config) { c.IAK.CN = "" })
 
-	h.TPM.iakAttrs = nil
+	// Provisioning caches attributes built by IAKAttributesFromConfig, which
+	// assigns the configured CN verbatim -- empty here.
+	warm, err := h.TPM.IAKAttributes()
+	require.NoError(t, err)
+	require.Empty(t, warm.CN,
+		"provisioning must record the unconfigured CN as empty")
+
+	h.TPM.iakAttrs = nil // the cold cache a restarted process sees
 
 	cold, err := h.TPM.IAKAttributes()
 	require.NoError(t, err)
-	assert.Equal(t, "default-device-id", cold.CN,
-		"an unconfigured CN must still fall back to the documented default")
+	assert.Equal(t, warm.CN, cold.CN,
+		"a rebuild must describe the IAK with the same CN provisioning recorded")
+	assert.Empty(t, cold.CN,
+		"an unconfigured CN must stay empty instead of a fabricated default")
 }
 
 // TestIAKAndIDevIDAttributes_CNSymmetry pins the two identity attribute

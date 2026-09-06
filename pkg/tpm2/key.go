@@ -119,15 +119,13 @@ func (tpm *TPM2) IAKAttributes() (*types.KeyAttributes, error) {
 			return nil, err
 		}
 		// KeyAttributes(handle) describes the key the TPM holds and does not
-		// carry a CN, so the CN has to come from configuration -- as the
-		// IDevID sibling below does unconditionally. Assigning it only in the
-		// empty-CN branch dropped every configured CN, which is the one case
-		// that matters: consumers key certificate storage on it.
-		if tpm.config.IAK.CN == "" {
-			iakAttrs.CN = "default-device-id"
-		} else {
-			iakAttrs.CN = tpm.config.IAK.CN
-		}
+		// carry a CN, so the CN has to come from configuration -- verbatim,
+		// as IAKAttributesFromConfig (the provisioning path) and the IDevID
+		// sibling below assign it. Fabricating a fallback here made the same
+		// TPM describe its IAK differently after a restart than at
+		// provisioning, so certificate-store lookups keyed on the CN missed
+		// artifacts written by the provisioning path (#337).
+		iakAttrs.CN = tpm.config.IAK.CN
 		iakAttrs.KeyType = types.KeyTypeAttestation
 		iakAttrs.StoreType = types.StoreTPM2
 
