@@ -565,22 +565,12 @@ func (a *Authenticator) executeGetAssertion(request *GetAssertionRequest) (*GetA
 // findMatchingCredentialsForAssertion finds credentials that match the request criteria.
 func (a *Authenticator) findMatchingCredentialsForAssertion(
 	request *GetAssertionRequest, uvPerformed bool) ([]*StoredCredential, error) {
-	candidates, err := a.lookupCredentialsForAssertion(request)
+	matchingCreds, err := a.usableCredentialsForAssertion(request, uvPerformed)
 	if err != nil {
 		return nil, err
 	}
 
 	allowListProvided := len(request.AllowList) > 0
-
-	// Apply the CTAP 2.1 §12.1 credProtect rules. A credential the request may
-	// not use is dropped here, so the caller reports CTAP2_ERR_NO_CREDENTIALS
-	// and never reveals that a protected credential exists.
-	matchingCreds := make([]*StoredCredential, 0, len(candidates))
-	for _, cred := range candidates {
-		if credentialProtectionSatisfied(cred, allowListProvided, uvPerformed) {
-			matchingCreds = append(matchingCreds, cred)
-		}
-	}
 
 	// Per CTAP 2.1 §6.2 step 1, an allowList entry is applicable only when it
 	// is bound to THIS authenticator. A stored record whose key material the
@@ -644,14 +634,40 @@ func (a *Authenticator) filterLoadableCredentials(creds []*StoredCredential) ([]
 	return loadable, nil
 }
 
+// usableCredentialsForAssertion returns the stored credentials the request may
+// use: every candidate lookupCredentialsForAssertion finds, with the CTAP 2.1
+// §12.1 credProtect rules applied for the request's allowList and
+// user-verification state. A credential the request may not use is dropped
+// here, so a caller reports CTAP2_ERR_NO_CREDENTIALS (or answers "no match")
+// and never reveals that a protected credential exists.
+//
+// It is the single filter behind both the assertion path and the transport's
+// deferral heuristic, so the two can never disagree about what is visible.
+func (a *Authenticator) usableCredentialsForAssertion(
+	request *GetAssertionRequest, uvPerformed bool) ([]*StoredCredential, error) {
+	candidates, err := a.lookupCredentialsForAssertion(request)
+	if err != nil {
+		return nil, err
+	}
+
+	allowListProvided := len(request.AllowList) > 0
+
+	usable := make([]*StoredCredential, 0, len(candidates))
+	for _, cred := range candidates {
+		if credProtectSatisfied(cred.CredProtect, allowListProvided, uvPerformed) {
+			usable = append(usable, cred)
+		}
+	}
+
+	return usable, nil
+}
+
 // lookupCredentialsForAssertion returns every stored credential matching the
 // request's allowList (or every discoverable credential for the RP when no
 // allowList was given), WITHOUT applying credProtect filtering.
 //
-// Callers that hand credentials to a relying party must use
-// findMatchingCredentialsForAssertion instead. This exists for the transport's
-// deferral heuristic, which asks only whether this authenticator holds anything
-// for the RP.
+// It is the raw candidate set for usableCredentialsForAssertion and nothing
+// else: no caller may hand its result to a platform, over any path.
 func (a *Authenticator) lookupCredentialsForAssertion(request *GetAssertionRequest) ([]*StoredCredential, error) {
 	var matchingCreds []*StoredCredential
 
@@ -693,9 +709,9 @@ func (a *Authenticator) lookupCredentialsForAssertion(request *GetAssertionReque
 	return matchingCreds, nil
 }
 
-// credentialProtectionSatisfied reports whether cred may be used for a request
-// with the given allowList and user-verification state, per the CTAP 2.1 §12.1
-// credProtect rules:
+// credProtectSatisfied reports whether a credential at the given credProtect
+// level may be used for a request with the given allowList and
+// user-verification state, per the CTAP 2.1 §12.1 rules:
 //
 //   - level 1 (userVerificationOptional): no restriction.
 //   - level 2 (userVerificationOptionalWithCredentialIDList): usable when the
@@ -709,8 +725,11 @@ func (a *Authenticator) lookupCredentialsForAssertion(request *GetAssertionReque
 // as protected: the caller returns CTAP2_ERR_NO_CREDENTIALS, which is
 // indistinguishable from the authenticator simply not holding it. Reporting the
 // difference would turn the protection level itself into an oracle.
-func credentialProtectionSatisfied(cred *StoredCredential, allowListProvided, uvPerformed bool) bool {
-	switch cred.CredProtect {
+//
+// It takes the level rather than the credential so the CredentialIndexer can
+// apply the identical rule from its index without loading anything.
+func credProtectSatisfied(level uint8, allowListProvided, uvPerformed bool) bool {
+	switch level {
 	case CredProtectUserVerificationRequired:
 		return uvPerformed
 	case CredProtectUserVerificationOptionalWithList:

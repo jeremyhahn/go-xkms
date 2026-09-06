@@ -207,9 +207,8 @@ func TestCredentialProtectionSatisfiedMatrix(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			cred := &StoredCredential{CredProtect: tc.level}
 			require.Equal(t, tc.want,
-				credentialProtectionSatisfied(cred, tc.allowList, tc.uv))
+				credProtectSatisfied(tc.level, tc.allowList, tc.uv))
 		})
 	}
 }
@@ -238,19 +237,27 @@ func TestCanAuthorizePinUvAuthTokenDoesNotConsumeToken(t *testing.T) {
 	require.Equal(t, before, lastUsed, "the read-only check must not refresh the inactivity timer")
 }
 
-// TestLookupCredentialsForAssertionIgnoresCredProtect pins the deliberate
-// difference between the two lookups: the transport's deferral heuristic asks
-// only whether the authenticator holds anything for the RP, and must keep
-// answering the same way for indexed and non-indexed storage backends.
-func TestLookupCredentialsForAssertionIgnoresCredProtect(t *testing.T) {
+// TestUsableCredentialsForAssertionAppliesCredProtect pins the decomposition
+// of the lookup: lookupCredentialsForAssertion is the raw candidate set, and
+// usableCredentialsForAssertion — the one filter shared by the assertion path
+// and the transport's deferral heuristic (#261) — is where §12.1 is applied.
+func TestUsableCredentialsForAssertionAppliesCredProtect(t *testing.T) {
 	auth := newProtectAuth(t)
 	registerAtCredProtectLevel(t, auth, "example.com", CredProtectUserVerificationRequired)
 
 	req := &GetAssertionRequest{RPID: "example.com", ClientDataHash: protectCDH()}
 
-	unfiltered, err := auth.lookupCredentialsForAssertion(req)
+	candidates, err := auth.lookupCredentialsForAssertion(req)
 	require.NoError(t, err)
-	require.Len(t, unfiltered, 1, "the deferral lookup must not apply credProtect filtering")
+	require.Len(t, candidates, 1, "the raw lookup returns every stored candidate")
+
+	usable, err := auth.usableCredentialsForAssertion(req, false)
+	require.NoError(t, err)
+	require.Empty(t, usable, "the shared filter must hide a level-3 credential without user verification")
+
+	usable, err = auth.usableCredentialsForAssertion(req, true)
+	require.NoError(t, err)
+	require.Len(t, usable, 1, "the shared filter must return a level-3 credential with user verification")
 
 	filtered, err := auth.findMatchingCredentialsForAssertion(req, false)
 	require.NoError(t, err)

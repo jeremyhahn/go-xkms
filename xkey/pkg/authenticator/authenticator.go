@@ -623,15 +623,39 @@ func (a *Authenticator) UserPresenceHandler() UserPresenceHandler {
 }
 
 // HasMatchingCredentials performs a read-only credential lookup against
-// storage to determine whether this authenticator has any credentials
-// matching the given GetAssertion CBOR payload. This is used by the HID
-// adapter to decide whether to defer the response (no-credentials deferral
-// for multi-authenticator coexistence).
+// storage to determine whether this authenticator has any credentials the
+// given GetAssertion CBOR payload may use. This is used by the HID adapter to
+// decide whether to defer the response (no-credentials deferral for
+// multi-authenticator coexistence).
+//
+// The answer applies the CTAP 2.1 §12.1 credProtect rules exactly as
+// getAssertion does — a level-3 credential is invisible without user
+// verification, a level-2 credential is invisible to an RP enumeration
+// without it — because the answer is observable on the transport: it decides
+// whether the request is answered at once or deferred, and any process that
+// can reach the HID interface can read that difference. Reporting a protected
+// credential here would recreate the existence oracle the assertion and
+// excludeList paths already close. User verification is established without
+// consuming the pinUvAuthToken, so the getAssertion that follows a "match"
+// still authorizes normally.
+//
+// The consequence for multi-authenticator deployments is that a request this
+// authenticator cannot answer without user verification is deferred exactly
+// as if it held nothing: a platform that wants the protected credential
+// obtains a pinUvAuthToken first, which is also what commits it to this
+// authenticator (see hasPINAuth). This is the intended behaviour, not a
+// heuristic gap.
+//
+// When the storage backend is a CredentialIndexer with a ready index, the
+// discoverable-credential case is answered from the index with zero storage
+// I/O: the index carries each credential's protection level, so the filter
+// needs no credential load. An allowList names specific credentials that are
+// loaded either way; a storage backend without a ready index is scanned.
 //
 // Returns (hasMatch, parseable, hasPINAuth, rpID):
-//   - (true, true, _, rpID):      credentials found — skip deferral, process normally
-//   - (false, true, false, rpID):  no credentials, no PIN auth — enter deferral path
-//   - (false, true, true, rpID):   no credentials, but PIN auth present — skip deferral
+//   - (true, true, _, rpID):      usable credentials found — skip deferral, process normally
+//   - (false, true, false, rpID):  no usable credentials, no PIN auth — enter deferral path
+//   - (false, true, true, rpID):   no usable credentials, but PIN auth present — skip deferral
 //     (Chrome already exchanged PINs, committed to this authenticator)
 //   - (false, false, false, ""):   parse/storage error — skip deferral, let normal
 //     processing return the appropriate error code
@@ -647,44 +671,26 @@ func (a *Authenticator) HasMatchingCredentials(data []byte) (hasMatch bool, pars
 
 	pinAuth := len(request.PINUVAuthParam) > 0
 
-	// Fast path: use the CredentialIndexer for O(1) existence checks
-	// when the storage backend maintains a ready in-memory metadata index.
-	if indexer, ok := a.storage.(CredentialIndexer); ok && indexer.IndexReady() {
-		if len(request.AllowList) > 0 {
-			// Check each allowList ID against storage
-			for _, desc := range request.AllowList {
-				if desc.Type != "public-key" {
-					continue
-				}
-				cred, loadErr := a.storage.Load(desc.ID)
-				if loadErr != nil {
-					continue
-				}
-				if cred.RPID == request.RPID {
-					return true, true, pinAuth, request.RPID
-				}
-			}
-			return false, true, pinAuth, request.RPID
+	// Establish the request's user-verification state first, as getAssertion
+	// does (CTAP 2.1 §6.2.2), because §12.1 visibility depends on it.
+	uvPerformed := a.assertionUserVerified(request)
+
+	// Fast path: the discoverable-credential flow is an O(k) index check
+	// with zero storage I/O when the backend maintains a ready index.
+	if len(request.AllowList) == 0 {
+		if indexer, ok := a.storage.(CredentialIndexer); ok && indexer.IndexReady() {
+			return indexer.HasDiscoverableForRP(request.RPID, uvPerformed), true, pinAuth, request.RPID
 		}
-		// Discoverable credential flow: O(1) index check, zero storage I/O
-		return indexer.HasDiscoverableForRP(request.RPID), true, pinAuth, request.RPID
 	}
 
-	// Fallback: full scan for non-indexed storage or index not yet ready.
-	//
-	// This asks only whether the authenticator holds anything for the RP, so it
-	// deliberately does NOT apply credProtect filtering: the CredentialIndexer
-	// fast path above answers from an in-memory index with zero storage I/O and
-	// could not filter without loading credentials, and a deferral heuristic
-	// that changed answer with the storage backend would be worse than one that
-	// consistently ignores protection levels. getAssertion enforces §12.1
-	// regardless, so a protected credential still yields no assertion.
-	creds, err := a.lookupCredentialsForAssertion(request)
+	// allowList lookups and non-indexed storage load the candidates and apply
+	// the same filter the assertion path applies.
+	usable, err := a.usableCredentialsForAssertion(request, uvPerformed)
 	if err != nil {
 		return false, false, false, ""
 	}
 
-	return len(creds) > 0, true, pinAuth, request.RPID
+	return len(usable) > 0, true, pinAuth, request.RPID
 }
 
 // NeedsPINBeforeTouch reports whether the given CBOR command will require

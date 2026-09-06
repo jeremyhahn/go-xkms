@@ -89,17 +89,27 @@ type CredentialStorage interface {
 // maintain a metadata index for fast credential existence checks.
 // Implementations avoid expensive storage I/O by consulting an in-memory
 // index built at startup and maintained on Store/Delete operations.
+//
+// The index carries each credential's credProtect level so that a visibility
+// question can be answered with the CTAP 2.1 §12.1 rules applied and without
+// loading the credential. An entry whose level was never recorded is treated
+// as level 3 (userVerificationRequired): an index that has forgotten a
+// protection level must fail closed, never open.
 type CredentialIndexer interface {
 	// IndexReady returns true when the background index build has completed.
 	// Callers should fall back to full storage scans when this returns false.
 	IndexReady() bool
 
-	// HasCredentialsForRP returns true if any credentials exist for the given RPID.
+	// HasCredentialsForRP returns true if any credentials exist for the given RPID,
+	// whatever their protection level. It is a storage-level existence check for
+	// callers inside the authenticator; it must never answer a platform request.
 	HasCredentialsForRP(rpID string) bool
 
-	// HasDiscoverableForRP returns true if any discoverable (resident)
-	// credentials exist for the given RPID.
-	HasDiscoverableForRP(rpID string) bool
+	// HasDiscoverableForRP returns true if any discoverable (resident) credential
+	// for the given RPID may be disclosed to a request without an allowList whose
+	// user-verification state is uvPerformed, per CTAP 2.1 §12.1: level 1 always,
+	// level 2 and level 3 only when uvPerformed is true.
+	HasDiscoverableForRP(rpID string, uvPerformed bool) bool
 }
 
 // StoredCredential represents a persisted FIDO2 credential.

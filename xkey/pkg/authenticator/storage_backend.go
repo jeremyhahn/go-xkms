@@ -35,11 +35,40 @@ const (
 )
 
 // credentialMeta holds non-sensitive lookup metadata for a single credential.
-// Only credential ID and discoverable flag are stored — no private keys or
-// sensitive data touch the index.
+// Only the credential ID, the discoverable flag and the credProtect level are
+// stored — no private keys or sensitive data touch the index.
 type credentialMeta struct {
 	credentialID []byte
 	discoverable bool
+	protection   indexedCredProtect
+}
+
+// indexedCredProtect is the credProtect level an index entry carries.
+//
+// It is deliberately distinct from StoredCredential.CredProtect, whose zero
+// value means "the extension was not requested" and is usable without
+// restriction (level 1). Here the zero value means "never recorded": an entry
+// built without a level, however that happened, must fail closed. Every writer
+// therefore records the level explicitly through indexedProtectionOf, and the
+// zero value is read as level 3 (userVerificationRequired) by level.
+type indexedCredProtect uint8
+
+// indexedProtectionOf maps a stored credential's protection level to its index
+// representation, resolving the unset stored value to the level 1 it denotes.
+func indexedProtectionOf(credential *StoredCredential) indexedCredProtect {
+	if credential.CredProtect == CredProtectNone {
+		return indexedCredProtect(CredProtectUserVerificationOptional)
+	}
+	return indexedCredProtect(credential.CredProtect)
+}
+
+// level returns the credProtect level to enforce for the entry, reading a
+// never-recorded level as userVerificationRequired.
+func (p indexedCredProtect) level() uint8 {
+	if p == 0 {
+		return CredProtectUserVerificationRequired
+	}
+	return uint8(p)
 }
 
 // BackendStorage adapts xkms.StorageBackend to StatefulCredentialStorage.
@@ -130,7 +159,7 @@ func (b *BackendStorage) Store(credential *StoredCredential) error {
 	}
 
 	// Update the RP index
-	b.indexUpsert(credential.RPID, credential.CredentialID, credential.Discoverable)
+	b.indexUpsert(credential)
 
 	return nil
 }
@@ -536,18 +565,20 @@ func (b *BackendStorage) HasCredentialsForRP(rpID string) bool {
 	return len(b.rpIndex[rpID]) > 0
 }
 
-// HasDiscoverableForRP returns true if any discoverable (resident) credentials
-// exist for the given RPID. This is an O(k) scan of the RP's index entries
-// (typically 1-3 credentials per RP) with zero storage I/O.
+// HasDiscoverableForRP returns true if any discoverable (resident) credential
+// for the given RPID may be disclosed to a request without an allowList whose
+// user-verification state is uvPerformed. The CTAP 2.1 §12.1 credProtect rules
+// are applied from the indexed level, so this is an O(k) scan of the RP's
+// index entries (typically 1-3 credentials per RP) with zero storage I/O.
 // Returns false if the index is not yet ready.
-func (b *BackendStorage) HasDiscoverableForRP(rpID string) bool {
+func (b *BackendStorage) HasDiscoverableForRP(rpID string, uvPerformed bool) bool {
 	if !b.indexReady.Load() {
 		return false
 	}
 	b.mu.RLock()
 	defer b.mu.RUnlock()
 	for _, meta := range b.rpIndex[rpID] {
-		if meta.discoverable {
+		if meta.discoverable && credProtectSatisfied(meta.protection.level(), false, uvPerformed) {
 			return true
 		}
 	}
@@ -591,6 +622,7 @@ func (b *BackendStorage) buildIndexAsync() {
 		scanned[cred.RPID] = append(scanned[cred.RPID], credentialMeta{
 			credentialID: cred.CredentialID,
 			discoverable: cred.Discoverable,
+			protection:   indexedProtectionOf(&cred),
 		})
 	}
 
@@ -621,25 +653,29 @@ func (b *BackendStorage) indexHasCredential(rpID string, credentialID []byte) bo
 	return false
 }
 
-// indexUpsert adds or updates a credential entry in the rpIndex.
-// Must be called with the write lock held.
-func (b *BackendStorage) indexUpsert(rpID string, credentialID []byte, discoverable bool) {
-	metas := b.rpIndex[rpID]
+// indexUpsert adds or updates the rpIndex entry for a credential that was just
+// persisted, so the index carries the same discoverable flag and credProtect
+// level as storage. Must be called with the write lock held.
+func (b *BackendStorage) indexUpsert(credential *StoredCredential) {
+	metas := b.rpIndex[credential.RPID]
+	protection := indexedProtectionOf(credential)
 
 	// Check if entry already exists (update case, e.g., signCount increment)
 	for i, meta := range metas {
-		if bytes.Equal(meta.credentialID, credentialID) {
-			metas[i].discoverable = discoverable
+		if bytes.Equal(meta.credentialID, credential.CredentialID) {
+			metas[i].discoverable = credential.Discoverable
+			metas[i].protection = protection
 			return
 		}
 	}
 
 	// New entry
-	idCopy := make([]byte, len(credentialID))
-	copy(idCopy, credentialID)
-	b.rpIndex[rpID] = append(metas, credentialMeta{
+	idCopy := make([]byte, len(credential.CredentialID))
+	copy(idCopy, credential.CredentialID)
+	b.rpIndex[credential.RPID] = append(metas, credentialMeta{
 		credentialID: idCopy,
-		discoverable: discoverable,
+		discoverable: credential.Discoverable,
+		protection:   protection,
 	})
 }
 

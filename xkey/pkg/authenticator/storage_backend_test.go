@@ -1654,7 +1654,7 @@ func TestBackendStorageRPIndex_BuiltAtInit(t *testing.T) {
 		defer func() { _ = s.Close() }()
 
 		require.False(t, s.HasCredentialsForRP("example.com"))
-		require.False(t, s.HasDiscoverableForRP("example.com"))
+		require.False(t, s.HasDiscoverableForRP("example.com", false))
 	})
 }
 
@@ -1671,7 +1671,7 @@ func TestBackendStorageRPIndex_MaintainedOnStore(t *testing.T) {
 		require.NoError(t, s.Store(createTestCredential(t, []byte{1}, "example.com", true)))
 
 		require.True(t, s.HasCredentialsForRP("example.com"))
-		require.True(t, s.HasDiscoverableForRP("example.com"))
+		require.True(t, s.HasDiscoverableForRP("example.com", false))
 	})
 
 	t.Run("overwrite updates discoverable flag", func(t *testing.T) {
@@ -1681,12 +1681,12 @@ func TestBackendStorageRPIndex_MaintainedOnStore(t *testing.T) {
 
 		// Store as discoverable
 		require.NoError(t, s.Store(createTestCredential(t, []byte{1}, "example.com", true)))
-		require.True(t, s.HasDiscoverableForRP("example.com"))
+		require.True(t, s.HasDiscoverableForRP("example.com", false))
 
 		// Overwrite as non-discoverable
 		require.NoError(t, s.Store(createTestCredential(t, []byte{1}, "example.com", false)))
 		require.True(t, s.HasCredentialsForRP("example.com"))
-		require.False(t, s.HasDiscoverableForRP("example.com"))
+		require.False(t, s.HasDiscoverableForRP("example.com", false))
 	})
 
 	t.Run("multiple RPs indexed independently", func(t *testing.T) {
@@ -1698,9 +1698,9 @@ func TestBackendStorageRPIndex_MaintainedOnStore(t *testing.T) {
 		require.NoError(t, s.Store(createTestCredential(t, []byte{2}, "b.com", false)))
 
 		require.True(t, s.HasCredentialsForRP("a.com"))
-		require.True(t, s.HasDiscoverableForRP("a.com"))
+		require.True(t, s.HasDiscoverableForRP("a.com", false))
 		require.True(t, s.HasCredentialsForRP("b.com"))
-		require.False(t, s.HasDiscoverableForRP("b.com"))
+		require.False(t, s.HasDiscoverableForRP("b.com", false))
 		require.False(t, s.HasCredentialsForRP("c.com"))
 	})
 }
@@ -1730,7 +1730,7 @@ func TestBackendStorageRPIndex_MaintainedOnDelete(t *testing.T) {
 
 		require.NoError(t, s.Delete([]byte{1}))
 		require.True(t, s.HasCredentialsForRP("example.com"))
-		require.False(t, s.HasDiscoverableForRP("example.com"))
+		require.False(t, s.HasDiscoverableForRP("example.com", false))
 	})
 
 	t.Run("deleting last credential removes RP from index", func(t *testing.T) {
@@ -1794,7 +1794,7 @@ func TestBackendStorageHasDiscoverableForRP(t *testing.T) {
 
 		require.NoError(t, s.Store(createTestCredential(t, []byte{1}, "example.com", true)))
 
-		require.True(t, s.HasDiscoverableForRP("example.com"))
+		require.True(t, s.HasDiscoverableForRP("example.com", false))
 	})
 
 	t.Run("returns false when only non-discoverable credentials exist", func(t *testing.T) {
@@ -1805,7 +1805,7 @@ func TestBackendStorageHasDiscoverableForRP(t *testing.T) {
 		require.NoError(t, s.Store(createTestCredential(t, []byte{1}, "example.com", false)))
 
 		require.True(t, s.HasCredentialsForRP("example.com"))
-		require.False(t, s.HasDiscoverableForRP("example.com"))
+		require.False(t, s.HasDiscoverableForRP("example.com", false))
 	})
 
 	t.Run("returns false for empty storage", func(t *testing.T) {
@@ -1813,7 +1813,7 @@ func TestBackendStorageHasDiscoverableForRP(t *testing.T) {
 		s := createBackendStorage(t)
 		defer func() { _ = s.Close() }()
 
-		require.False(t, s.HasDiscoverableForRP("example.com"))
+		require.False(t, s.HasDiscoverableForRP("example.com", false))
 	})
 
 	t.Run("returns false for unknown RP", func(t *testing.T) {
@@ -1822,7 +1822,7 @@ func TestBackendStorageHasDiscoverableForRP(t *testing.T) {
 		defer func() { _ = s.Close() }()
 
 		require.NoError(t, s.Store(createTestCredential(t, []byte{1}, "example.com", true)))
-		require.False(t, s.HasDiscoverableForRP("unknown.com"))
+		require.False(t, s.HasDiscoverableForRP("unknown.com", false))
 	})
 
 	t.Run("mixed discoverable and non-discoverable", func(t *testing.T) {
@@ -1834,7 +1834,7 @@ func TestBackendStorageHasDiscoverableForRP(t *testing.T) {
 		require.NoError(t, s.Store(createTestCredential(t, []byte{2}, "example.com", true)))
 		require.NoError(t, s.Store(createTestCredential(t, []byte{3}, "example.com", false)))
 
-		require.True(t, s.HasDiscoverableForRP("example.com"))
+		require.True(t, s.HasDiscoverableForRP("example.com", false))
 	})
 }
 
@@ -1875,7 +1875,7 @@ func TestBackendStorageRPIndex_ConcurrentAccess(t *testing.T) {
 			}
 			_ = s.Store(createTestCredential(t, credID, rpID, idx%3 == 0))
 			_ = s.HasCredentialsForRP(rpID)
-			_ = s.HasDiscoverableForRP(rpID)
+			_ = s.HasDiscoverableForRP(rpID, false)
 		}(i)
 	}
 	wg.Wait()

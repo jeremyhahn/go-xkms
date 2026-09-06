@@ -338,7 +338,8 @@ Per-credential protection levels:
 | 2 | userVerificationOptionalWithList | Visible in allowList or with UV |
 | 3 | userVerificationRequired | Requires user verification |
 
-These levels are enforced on the assertion path, per CTAP 2.1 §12.1:
+These levels are enforced on the assertion path and on the transport's
+no-credentials deferral heuristic, per CTAP 2.1 §12.1:
 
 | Level | Usable when |
 |-------|-------------|
@@ -363,12 +364,27 @@ pinUvAuthToken is checked before credentials are located — the order CTAP 2.1
 timer and discards no expired token, so asking the question does not spend the
 use the authoritative `AuthorizePinUvAuthToken` later commits.
 
-The transport's no-credentials deferral heuristic deliberately does **not**
-apply this filtering. It asks only whether the authenticator holds anything for
-an RP, and its fast path answers from an in-memory index that cannot filter
-without loading credentials; an answer that changed with the storage backend
-would be worse than one that consistently ignores protection levels. Assertions
-are filtered regardless, so a protected credential still yields none.
+The transport's no-credentials deferral heuristic (`HasMatchingCredentials`)
+applies the **same** filtering. Whether a getAssertion is answered at once or
+deferred to another authenticator is observable on the HID interface, so a
+deferral answer that ignored protection levels would be a third existence
+oracle beside the assertion and excludeList paths. The heuristic establishes
+the request's user-verification state with the same read-only token check,
+then reports only credentials the assertion path would return: a level-3
+credential is invisible without user verification, and a level-2 credential is
+invisible to an RP enumeration without it.
+
+The indexed storage backend keeps this decision free of storage I/O by
+recording each credential's protection level in its in-memory index at write
+time and rebuilding it from stored credentials on load. An index entry whose
+level was never recorded is treated as level 3, so a missing level fails
+closed rather than open.
+
+In a multi-authenticator deployment this means a request that this
+authenticator could only answer with user verification is deferred exactly as
+if it held nothing. A platform that wants the protected credential obtains a
+pinUvAuthToken first, which is also what commits it to this authenticator and
+ends deferral.
 
 ### excludeList and the Credential Oracle
 
