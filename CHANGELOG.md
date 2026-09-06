@@ -7,6 +7,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.10.0-alpha] - 2026-09-06
+
+### Changed
+
+- **Published to correct the version of `v0.9.5-alpha`, which carries added
+  API and was cut as a PATCH.** `v0.9.5-alpha` exports nine new symbols from
+  the published `sdk/go` module (#379), adds the configuration key
+  `cluster.raft_enrollment.advertise_noise_host` (#406) and adds the
+  `xkey fido2 provision-attestation` command (#231). Under
+  release-versioning.md §1 for pre-1.0 modules, added API moves MINOR, so the
+  version that ships those three is `0.10.0-alpha`. **This release contains no
+  functional change over `v0.9.5-alpha`** — no code differs between the two
+  tags beyond `VERSION`, the nine reciprocal `go.mod` pins and this file.
+  `v0.9.5-alpha` remains published and immutable; consumers should pin
+  `v0.10.0-alpha`, which is what its contents should have been called.
+
+
 ## [0.9.5-alpha] - 2026-09-06
 
 ### Security
@@ -179,6 +196,44 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   the real authenticator and an in-process CA, including the CA-unreachable,
   CA-refuses, mis-issuance, rotation and locked/uninitialized-token paths.
 
+- **The client-side http-01 challenge responder is now an SDK surface**
+  (#379). `pkg/acme/challenges/http-01` implemented both halves of the
+  challenge, but `sdk/go` exported only the ACME *server* half
+  (`ACMEVerifyHTTP01`), so a consumer reaching go-xkms exclusively through its
+  SDK — as go-quicbaas and go-trusted-platform are required to — could not
+  answer an http-01 challenge at all.
+
+  `sdk/go/acme` now exports `NewHTTP01Responder` and `HTTP01Responder`
+  alongside `HTTP01ResponderConfig` and the typed errors
+  `HTTP01ResponderConfigError`, `HTTP01ResponderBindError` and
+  `HTTP01ResponderShutdownError`. The responder is an instance rather than
+  process-global state, which fixes three defects the raw functions would have
+  carried into every consumer had they simply been aliased:
+
+  - **The bind is eager and its failure is returned.** `Setup` ran `net.Listen`
+    in a spawned goroutine and sent the error to a package-level log handler, so
+    a caller lacking `CAP_NET_BIND_SERVICE` for port 80, or colliding with an
+    existing listener, saw setup succeed and learned of it only as a generic
+    "authorization status is not valid". `NewHTTP01Responder` returns
+    `HTTP01ResponderBindError`, which unwraps to the underlying `net` error.
+  - **There is no readiness race.** `Setup` returned before the listener bound,
+    while the ACME client accepts the challenge immediately after provisioning
+    it, so validation could be requested before anything was listening.
+    `NewHTTP01Responder` returns only once the responder is accepting
+    connections.
+  - **Concurrent orders are safe.** `server` and `shutdownOnce` were package
+    variables, so a second order replaced the first order's listener and the
+    first `Shutdown` then stopped the second order's. Each responder now owns
+    its listener.
+
+  `Addr()` reports the bound address and `Done()`/`Err()` report the serve
+  loop's fate. `Shutdown(ctx)` stops the responder gracefully and `Close()`
+  stops it immediately; once stopped, either call is a no-op returning nil, so
+  `defer responder.Close()` stays correct after an explicit `Shutdown`, while a
+  `Shutdown` that misses its deadline leaves the responder running so `Close`
+  can force the teardown. Documented in `docs/acme/challenges.md` and
+  `docs/acme/sdk/`.
+
 ### Changed
 
 - **Changelog entries are now per-PR files under `.changelog/unreleased/`,
@@ -232,6 +287,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   are unaffected and remain unavailable (#61, #125). The availability note on
   `Backend.CompareAndDelete` was re-derived by measurement, which is what the
   characterization existed to force.
+
+### Deprecated
+
+- **`http01.Setup` and `http01.Shutdown`** (#379). They keep working and now
+  delegate to a single `Responder`, so there is one implementation rather than
+  two, and setting up a second responder retires the first instead of leaking
+  its listener. New code uses `NewHTTP01Responder`, which the deprecation notes
+  point at.
 
 ### Fixed
 
@@ -443,53 +506,32 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   on a wrong one — plus resolver-precedence and before-the-network guard
   tests; each fails on the unfixed code.
 
-### Added
+- **The ACME client's retry-after deadline keeps nanosecond precision, so the
+  client can no longer resume before the instant a server named** (#405).
+  `RateLimiter` stored the end of a `Retry-After` period through `Time.Unix()`,
+  which collapsed every deadline to the next whole-second boundary: a
+  one-second back-off held the client anywhere from ~0 ms to 1000 ms depending
+  on where in the current second the call landed, and a sub-second `Retry-After`
+  was unrepresentable. RFC 8555 §6.6 and RFC 9110 §10.2.3 both expect the value
+  to be honoured, so this was the client retrying early against a server that
+  had just asked it to back off — the failure a client-side rate limiter exists
+  to prevent. It also made `TestRateLimiter_Wait_RetryAfter` fail about one run
+  in fifty, which is how it was found, on an unrelated branch's race-detector
+  leg.
 
-- **The client-side http-01 challenge responder is now an SDK surface**
-  (#379). `pkg/acme/challenges/http-01` implemented both halves of the
-  challenge, but `sdk/go` exported only the ACME *server* half
-  (`ACMEVerifyHTTP01`), so a consumer reaching go-xkms exclusively through its
-  SDK — as go-quicbaas and go-trusted-platform are required to — could not
-  answer an http-01 challenge at all.
-
-  `sdk/go/acme` now exports `NewHTTP01Responder` and `HTTP01Responder`
-  alongside `HTTP01ResponderConfig` and the typed errors
-  `HTTP01ResponderConfigError`, `HTTP01ResponderBindError` and
-  `HTTP01ResponderShutdownError`. The responder is an instance rather than
-  process-global state, which fixes three defects the raw functions would have
-  carried into every consumer had they simply been aliased:
-
-  - **The bind is eager and its failure is returned.** `Setup` ran `net.Listen`
-    in a spawned goroutine and sent the error to a package-level log handler, so
-    a caller lacking `CAP_NET_BIND_SERVICE` for port 80, or colliding with an
-    existing listener, saw setup succeed and learned of it only as a generic
-    "authorization status is not valid". `NewHTTP01Responder` returns
-    `HTTP01ResponderBindError`, which unwraps to the underlying `net` error.
-  - **There is no readiness race.** `Setup` returned before the listener bound,
-    while the ACME client accepts the challenge immediately after provisioning
-    it, so validation could be requested before anything was listening.
-    `NewHTTP01Responder` returns only once the responder is accepting
-    connections.
-  - **Concurrent orders are safe.** `server` and `shutdownOnce` were package
-    variables, so a second order replaced the first order's listener and the
-    first `Shutdown` then stopped the second order's. Each responder now owns
-    its listener.
-
-  `Addr()` reports the bound address and `Done()`/`Err()` report the serve
-  loop's fate. `Shutdown(ctx)` stops the responder gracefully and `Close()`
-  stops it immediately; once stopped, either call is a no-op returning nil, so
-  `defer responder.Close()` stays correct after an explicit `Shutdown`, while a
-  `Shutdown` that misses its deadline leaves the responder running so `Close`
-  can force the teardown. Documented in `docs/acme/challenges.md` and
-  `docs/acme/sdk/`.
-
-### Deprecated
-
-- **`http01.Setup` and `http01.Shutdown`** (#379). They keep working and now
-  delegate to a single `Responder`, so there is one implementation rather than
-  two, and setting up a second responder retires the first instead of leaking
-  its listener. New code uses `NewHTTP01Responder`, which the deprecation notes
-  point at.
+  `retryUntil` now holds Unix nanoseconds, matching the `lastRefill` field
+  beside it, so it stays a lock-free `atomic.Int64` — a change of unit, not of
+  representation. Two further ways the limiter could resume early are fixed
+  with it: `Wait` slept once and then cleared the deadline unconditionally, so
+  a second `429` arriving mid-wait was overwritten and the client resumed on
+  the older deadline (it now re-reads after each sleep and clears with a
+  compare-and-swap on the value it saw expire, so a later deadline extends the
+  wait); and a deadline past 2262 overflowed `Time.UnixNano` to a negative
+  value that read back as "not blocked", which `storeRetryDeadline` now clamps.
+  `Stats` no longer tears between two reads of the field. `pkg/acme/client` was
+  audited for other second-granularity deadlines and has none. Verified by a
+  property test asserting `Wait` never returns before the deadline, four killed
+  mutants, and 20 consecutive `-race` runs of the package.
 
 ## [0.9.4-alpha] - 2026-09-05
 
