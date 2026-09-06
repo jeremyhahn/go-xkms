@@ -80,5 +80,50 @@ check "$(cat "$T/CHANGELOG.md")" "$before" "changelog untouched on error"
 printf '# Changelog\n' > "$T/CHANGELOG.md"; mkdir -p "$T/e4"; printf -- '- x\n' > "$T/e4/fixed-x.md"
 assemble "$T/CHANGELOG.md" "$T/e4" "0.2.0" "2026-09-05" >/dev/null 2>&1 && bad "missing Unreleased accepted" || ok
 
+# --- the --root seam (go-xkms#415, #416) --------------------------------
+#
+# Assembly is destructive: the CLI deletes every entry file it splices. A
+# caller rehearsing a release must be able to point the whole operation at a
+# scratch copy, so --root is the only thing standing between `--dry-run` and
+# the repository's real entry files. Exercised through the CLI, not the
+# `assemble` function, because the deletion lives in the CLI.
+REPO_CL_BEFORE=$(sha256sum "$ROOT/CHANGELOG.md")
+R="$T/root"
+mkdir -p "$R/.changelog/unreleased"
+printf '# Changelog\n\n## [Unreleased]\n' > "$R/CHANGELOG.md"
+printf -- '- entry under a scratch root\n' > "$R/.changelog/unreleased/fixed-root-1.md"
+printf 'notes\n' > "$R/.changelog/unreleased/README.md"
+out=$(bash "$ROOT/scripts/changelog-assemble.sh" --root "$R" 0.3.0-alpha 2026-09-06 2>&1); rc=$?
+check "$rc" "0" "--root rc"
+grep -q '^## \[0.3.0-alpha\] - 2026-09-06$' "$R/CHANGELOG.md" && ok || bad "--root did not assemble into the named tree"
+grep -q 'entry under a scratch root' "$R/CHANGELOG.md" && ok || bad "--root did not splice the entry"
+test -f "$R/.changelog/unreleased/fixed-root-1.md" && bad "--root left the assembled entry behind" || ok
+test -f "$R/.changelog/unreleased/README.md" && ok || bad "--root removed the entries README"
+
+# The repository this script lives in is NOT the tree it was pointed at.
+# Compared by content hash rather than by grepping for the version: this
+# CHANGELOG is thirteen releases long and already mentions most version
+# strings, so a grep would answer a question about its history.
+check "$(sha256sum "$ROOT/CHANGELOG.md")" "$REPO_CL_BEFORE" "--root left the repository CHANGELOG untouched"
+
+# --root=DIR is the same option.
+R2="$T/root2"
+mkdir -p "$R2/.changelog/unreleased"
+printf '# Changelog\n\n## [Unreleased]\n' > "$R2/CHANGELOG.md"
+printf -- '- x\n' > "$R2/.changelog/unreleased/fixed-x-1.md"
+bash "$ROOT/scripts/changelog-assemble.sh" "--root=$R2" 0.3.0-alpha 2026-09-06 >/dev/null 2>&1; rc=$?
+check "$rc" "0" "--root=DIR rc"
+grep -q '^## \[0.3.0-alpha\]' "$R2/CHANGELOG.md" && ok || bad "--root=DIR did not assemble"
+
+# A root that does not exist is a usage error, not a silent assembly against
+# the repository -- which is the one outcome the option exists to prevent.
+out=$(bash "$ROOT/scripts/changelog-assemble.sh" --root "$T/absent" 0.3.0-alpha 2>&1); rc=$?
+check "$rc" "2" "--root on a missing directory exits 2"
+printf '%s' "$out" | grep -q 'is not a directory' && ok || bad "--root on a missing directory says nothing useful"
+out=$(bash "$ROOT/scripts/changelog-assemble.sh" --root 2>&1); rc=$?
+check "$rc" "2" "--root with no value exits 2"
+out=$(bash "$ROOT/scripts/changelog-assemble.sh" --root "$R" 2>&1); rc=$?
+check "$rc" "2" "--root with no version exits 2"
+
 echo "changelog-assemble.test.sh: PASS=$PASS FAIL=$FAIL"
 [ "$FAIL" -eq 0 ]

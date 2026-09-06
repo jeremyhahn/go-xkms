@@ -1,7 +1,7 @@
 # Release engineering — CLI
 
 **Status:** implemented.
-**Last verified:** 2026-09-03.
+**Last verified:** 2026-09-06.
 
 ## `make release-alpha`
 
@@ -13,7 +13,7 @@ make release-alpha VERSION=<X.Y.Z-alpha> [BUMP=patch|minor|major] [DRY_RUN=1] [R
 |---|---|---|
 | `VERSION` | yes | The exact version to publish. Defaults to the `VERSION` file, which is never greater than itself, so omitting it is refused. |
 | `BUMP` | no | Declares the kind of release. Refused unless `next_version(current, BUMP)` equals `VERSION`. |
-| `DRY_RUN` | no | Rehearse everything, change nothing. |
+| `DRY_RUN` | no | Rehearse everything against a scratch copy. The working tree is left byte-identical and the index empty. |
 | `RELEASE_REMOTE` | no | Remote to publish to. Default `dev`. |
 
 ## The script directly
@@ -34,6 +34,28 @@ carry and the three tags it would publish:
 ```sh
 make release-alpha VERSION=0.9.2-alpha BUMP=patch DRY_RUN=1
 ```
+
+The preview covers the changelog as well as the pins. With entries pending in
+`.changelog/unreleased`, the diff includes the `## [X.Y.Z-alpha]` section they
+would be assembled into, and each entry a real cut would consume is named:
+
+```
+--- a/CHANGELOG.md
++++ b/CHANGELOG.md
+@@
+ ## [Unreleased]
++
++## [0.9.2-alpha] - 2026-09-06
++
++### Fixed
++
++- **thing** ...
+release-alpha: would remove .changelog/unreleased/fixed-thing-1.md
+release-alpha: DRY RUN -- would commit the diff above, then tag and atomically push:
+```
+
+The assembly runs in the scratch copy: the entry files are still there
+afterwards, `CHANGELOG.md` is unmodified, and nothing is staged.
 
 Rehearse from a feature branch, where the branch precondition would otherwise
 refuse first:

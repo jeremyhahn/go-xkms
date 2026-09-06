@@ -1,17 +1,18 @@
 # Release engineering — user guide
 
 **Status:** implemented.
-**Last verified:** 2026-09-03.
+**Last verified:** 2026-09-06.
 
 ## Cutting a release
 
 **1. Decide the version.** Pre-1.0, MINOR is where breakage lives: a breaking
 change is `0.9.1-alpha -> 0.10.0-alpha`, not `0.9.2-alpha`.
 
-**2. Write the CHANGELOG section and commit it.** Move the `## [Unreleased]`
-content under a `## [X.Y.Z-alpha]` heading at the start of a line. The release
-workflow rejects a tag without it — *after* the tags are permanent — so the
-script refuses first.
+**2. Have the CHANGELOG section, or the entries that become it.** Either write
+a `## [X.Y.Z-alpha]` heading at the start of a line and commit it, or leave the
+per-PR entry files in `.changelog/unreleased/` and let the cut assemble them
+(see `.changelog/README.md`). The release workflow rejects a tag with neither —
+*after* the tags are permanent — so the script refuses first.
 
 **3. Rehearse.**
 
@@ -19,8 +20,14 @@ script refuses first.
 make release-alpha VERSION=0.10.0-alpha BUMP=minor DRY_RUN=1
 ```
 
-Read the diff. It should touch `VERSION` and all four `go.mod` files and
-nothing else, and list the three tags.
+Read the diff. It should touch `VERSION`, all four `go.mod` files and — when
+entries are pending — `CHANGELOG.md`, and nothing else; it lists the three tags
+and names each entry file the cut would consume.
+
+The rehearsal writes nothing. It assembles into a scratch copy, so your
+`.changelog/unreleased/` entries and `CHANGELOG.md` are exactly as they were
+when it exits, and nothing is staged. `git status` afterwards is empty, and the
+real cut that follows will not trip its own clean-tree precondition.
 
 **4. Cut it.** From `main`, up to date, with a clean tree:
 
@@ -54,7 +61,17 @@ GOWORK=off go get github.com/jeremyhahn/go-xkms/sdk/go@v0.10.0-alpha
 
 ## After a failed run
 
-Nothing is published unless the final line says so. A run that failed before
-the push leaves a local release commit and possibly the three local tags — the
-refusal message names them. Remove them before retrying, so the next attempt
-does not die on "tag already exists".
+Nothing is published unless the final line says so. A run that failed after the
+release commit was created leaves that commit — unsigned, if it died at the
+signing check — and possibly the three local tags. The refusal message names
+both and the command that undoes them:
+
+```
+Nothing was pushed; undo the local state with: git tag -d <tags> && git reset --hard <base>
+```
+
+Run it before retrying, so the next attempt does not die on "tag already
+exists" or start from a tree that already holds the release.
+
+A run that failed *before* the commit, `--dry-run` included, wrote nothing at
+all: there is nothing to undo.

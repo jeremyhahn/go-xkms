@@ -1,7 +1,7 @@
 # Release engineering — API
 
 **Status:** implemented.
-**Last verified:** 2026-09-03.
+**Last verified:** 2026-09-06.
 
 No programmatic API surface: releases are cut by an operator or a project agent
 through `make release-alpha`, and nothing in the library, the SDK or any

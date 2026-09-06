@@ -1,7 +1,7 @@
 # Release engineering — architecture
 
 **Status:** implemented.
-**Last verified:** 2026-09-03 against `scripts/release-alpha.sh`.
+**Last verified:** 2026-09-06 against `scripts/release-alpha.sh`.
 
 ## What a release is
 
@@ -67,6 +67,26 @@ delete the "someone's unrelated edits were swept into the release commit" class
 outright, and they make the `git add` of the release files exact by
 construction.
 
+## The rehearsal writes to a copy, not to the repository
+
+`--dry-run` exists to answer "what would this release do" without doing it, so
+every step that writes is pointed at a `mktemp -d` copy of the files it would
+touch: `VERSION`, the four `go.mod` files, `CHANGELOG.md` and
+`.changelog/unreleased`. The diff is then a diff of the copy against the tree.
+
+The alternative — perform the step, show the result, undo it — was rejected
+before the pin rewrite was written, and the changelog assembly proved why by
+being the one step that did not follow the rule. Assembly deletes the entry
+files it splices, so rehearsing it against the repository consumed the release
+notes it was only supposed to preview, staged the deletions, and printed
+"nothing was changed" (go-xkms#415, #416). An undo path is code that runs on
+the failure path, where it is least tested; a copy has no failure path to get
+wrong, which is also why there is no restore trap.
+
+That places one constraint on anything the release calls: it must accept the
+tree to operate on. `changelog-assemble.sh --root DIR` is that seam, and it is
+the reason the option exists.
+
 The script deliberately does **not** defend the seams between its first read
 and its final push against a concurrent writer. Doing so means cutting the
 release from an isolated, disposable checkout so those races are unreachable
@@ -84,3 +104,5 @@ decision, tracked as go-xkms#211.
 | `git tag -v` to confirm signing | SSH-signed tags need an `allowedSignersFile` to verify; a correctly signed tag reports as unverifiable. The object is read instead. |
 | `git push --tags` | Publishes every local tag, including leftovers from an abandoned attempt. |
 | Non-atomic push | A partly published lockstep release cannot be withdrawn, only followed by another version. |
+| Rehearse by doing and undoing | The undo runs on the failure path, where it is least tested. A scratch copy has no failure path; the changelog step's mutation of the real tree is what this row was written from. |
+| Gate the changelog assembly out of a dry run entirely | Cheaper, but the rehearsal then hides the part of the release commit an operator most wants to read — and #361's failure class is entries landing under the wrong heading, which only a preview of the assembled section can catch. |

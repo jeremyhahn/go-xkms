@@ -9,8 +9,8 @@
 #	--version   REQUIRED. The exact version to publish, e.g. 0.9.2-alpha.
 #	--bump      Optional. patch|minor|major. Declares what KIND of release
 #	            this is; refused unless it agrees with --version.
-#	--dry-run   Rehearse every check and the pin rewrite against a scratch
-#	            copy, print the diff, change nothing.
+#	--dry-run   Rehearse every check, the pin rewrite AND the changelog
+#	            assembly against a scratch copy; print the diff, change nothing.
 #	--remote    Remote to publish to (default: dev).
 #	--branch    Branch releases are cut from (default: main).
 #
@@ -341,22 +341,10 @@ for ns in "${TAG_NAMESPACES[@]}"; do
 		die "$NEXT is not greater than $ns_current, the current tag in the $label namespace"
 done
 
-# Fold any pending .changelog/unreleased entries into CHANGELOG.md under the
-# section this cut is about to publish (#354). Two properties matter: entries
-# written per-PR cannot collide with each other while open, and an entry can
-# only ever land in the section of the release that actually ships it (#361's
-# failure class). With no pending entries this is a no-op and the heading
-# check below remains the arbiter, exactly as before.
-if changelog_entries_pending .changelog/unreleased; then
-	bash scripts/changelog-assemble.sh "${NEXT#v}" ||
-		die "changelog-assemble failed; fix the entry files before cutting"
-	$GIT add CHANGELOG.md .changelog/unreleased ||
-		die "failed to stage the assembled changelog"
-fi
-
-changelog_has_heading CHANGELOG.md "${NEXT#v}" ||
-	die "CHANGELOG.md has no '## [${NEXT#v}]' section beginning a line. Add it (or add .changelog/unreleased entries for the assembler) and commit -- the release workflow fails the tag without it, AFTER the module tags have been pushed and become permanent"
-
+# The pin set is validated BEFORE anything is written, dry run or not. It used
+# to be checked after the changelog assembly, so a tree with an inconsistent
+# pin set was refused only once its .changelog entries had already been
+# consumed and staged -- a refusal that left work behind.
 require_pins_at . "$CURRENT" "before the rewrite" ||
 	die "refusing to start a release from an inconsistent pin set"
 
@@ -364,11 +352,18 @@ printf 'release-alpha: %s -> %s (%d reciprocal pins, %d tags)\n' \
 	"$CURRENT" "$NEXT" "${#PIN_EDGES[@]}" "${#TAG_NAMESPACES[@]}"
 
 # ---------------------------------------------------------------------------
-# Rehearsal. The rewrite runs against a scratch copy, so a dry run cannot
-# leave a partially rewritten pin set behind however it exits -- which is why
-# there is no restore trap here to get wrong.
+# The tree the rest of this script writes to. A real cut writes to the
+# repository; a dry run writes to a scratch copy and nothing else, so it leaves
+# the working tree byte-identical however it exits -- which is why there is no
+# restore trap here to get wrong.
+#
+# CHANGELOG.md and .changelog/unreleased are in the copy because the assembly
+# below is DESTRUCTIVE: it deletes the entry files it splices. Rehearsing it
+# against the repository consumed the release notes it was only supposed to
+# preview, then reported "nothing was changed" (#415, #416).
 # ---------------------------------------------------------------------------
 
+WORK=.
 if [ "$DRY_RUN" = 1 ]; then
 	SCRATCH=$(mktemp -d) || die "could not create a scratch directory"
 	trap 'rm -rf "$SCRATCH"' EXIT
@@ -376,15 +371,61 @@ if [ "$DRY_RUN" = 1 ]; then
 		mkdir -p "$SCRATCH/$(dirname "$f")"
 		cp "$f" "$SCRATCH/$f"
 	done
+	if [ -f CHANGELOG.md ]; then
+		cp CHANGELOG.md "$SCRATCH/CHANGELOG.md" ||
+			die "could not copy CHANGELOG.md into the scratch directory"
+	fi
+	if [ -d .changelog/unreleased ]; then
+		mkdir -p "$SCRATCH/.changelog"
+		cp -R .changelog/unreleased "$SCRATCH/.changelog/unreleased" ||
+			die "could not copy .changelog/unreleased into the scratch directory"
+	fi
+	WORK=$SCRATCH
+fi
+
+# Fold any pending .changelog/unreleased entries into CHANGELOG.md under the
+# section this cut is about to publish (#354). Two properties matter: entries
+# written per-PR cannot collide with each other while open, and an entry can
+# only ever land in the section of the release that actually ships it (#361's
+# failure class). With no pending entries this is a no-op and the heading
+# check below remains the arbiter, exactly as before.
+if changelog_entries_pending "$WORK/.changelog/unreleased"; then
+	bash scripts/changelog-assemble.sh --root "$WORK" "${NEXT#v}" ||
+		die "changelog-assemble failed; fix the entry files before cutting"
+	if [ "$DRY_RUN" = 0 ]; then
+		$GIT add CHANGELOG.md .changelog/unreleased ||
+			die "failed to stage the assembled changelog"
+	fi
+fi
+
+changelog_has_heading "$WORK/CHANGELOG.md" "${NEXT#v}" ||
+	die "CHANGELOG.md has no '## [${NEXT#v}]' section beginning a line. Add it (or add .changelog/unreleased entries for the assembler) and commit -- the release workflow fails the tag without it, AFTER the module tags have been pushed and become permanent"
+
+# ---------------------------------------------------------------------------
+# Rehearsal
+# ---------------------------------------------------------------------------
+
+if [ "$DRY_RUN" = 1 ]; then
 	printf '%s\n' "${NEXT#v}" >"$SCRATCH/VERSION"
 	for edge in "${PIN_EDGES[@]}"; do
 		rewrite_pin "$SCRATCH" "${edge%%:*}" "${edge#*:}" "$CURRENT" "$NEXT"
 	done
 	require_pins_at "$SCRATCH" "$NEXT" "after the rehearsed rewrite" ||
 		die "the rehearsed rewrite did not move every pin -- a real release would have refused here too"
-	for f in "${RELEASE_FILES[@]}"; do
+	for f in "${RELEASE_FILES[@]}" CHANGELOG.md; do
+		[ -f "$SCRATCH/$f" ] || continue
 		diff -u --label "a/$f" --label "b/$f" "$f" "$SCRATCH/$f" || true
 	done
+	# The entry files a real cut would consume, named rather than diffed: they
+	# are still in the repository, so there is no deletion for `diff` to show.
+	if [ -d .changelog/unreleased ]; then
+		for f in .changelog/unreleased/*.md; do
+			[ -f "$f" ] || continue
+			case ${f##*/} in README.md) continue ;; esac
+			[ -f "$SCRATCH/$f" ] ||
+				printf 'release-alpha: would remove %s\n' "$f"
+		done
+	fi
 	printf 'release-alpha: DRY RUN -- would commit the diff above, then tag and atomically push:\n'
 	for ns in "${TAG_NAMESPACES[@]}"; do printf '  %s%s\n' "$ns" "$NEXT"; done
 	printf 'release-alpha: nothing was changed\n'
@@ -403,6 +444,25 @@ done
 require_pins_at . "$NEXT" "after the rewrite" ||
 	die "the rewrite did not move every pin. Nothing has been committed, tagged or pushed; 'git checkout --' the files above to undo it"
 
+# BASE_COMMIT is captured BEFORE the commit exists, because every refusal from
+# here on has a release commit to unwind as well as tags. The commit is created
+# first and the tags are signed second, so a run that dies at the signing check
+# leaves an UNSIGNED chore(release) commit on the branch; a cleanup hint naming
+# only the tags left the operator standing on it, to discover it at the push
+# where main enforces signed commits (#416).
+BASE_COMMIT=$($GIT rev-parse HEAD) || die "could not resolve the current commit"
+
+TAGS=()
+
+# cleanup_hint names everything this run created locally, in the order it must
+# be undone. Nothing has been published at any point it is reached.
+cleanup_hint() {
+	local tags=""
+	[ ${#TAGS[@]} -eq 0 ] || tags="git tag -d ${TAGS[*]} && "
+	printf 'Nothing was pushed; undo the local state with: %sgit reset --hard %s' \
+		"$tags" "$BASE_COMMIT"
+}
+
 $GIT add -- "${RELEASE_FILES[@]}" || die "could not stage the release files"
 $GIT commit -q -m "chore(release): $NEXT" || die "the release commit failed"
 RELEASE_COMMIT=$($GIT rev-parse HEAD) || die "could not resolve the release commit"
@@ -414,11 +474,10 @@ RELEASE_COMMIT=$($GIT rev-parse HEAD) || die "could not resolve the release comm
 # releases these repos. `-s` rather than `-a` because `-a` signs only when
 # tag.gpgSign happens to be set, which silently gave agents signed tags and
 # humans unsigned ones.
-TAGS=()
 for ns in "${TAG_NAMESPACES[@]}"; do
 	t="${ns}${NEXT}"
 	$GIT tag -s -m "$t" "$t" "$RELEASE_COMMIT" ||
-		die "failed to create the signed tag $t. Configure a signing key (user.signingkey + gpg.format) or release through software/scripts/agent-git.sh. Tags created so far: ${TAGS[*]:-none}; nothing was pushed"
+		die "failed to create the signed tag $t. Configure a signing key (user.signingkey + gpg.format) or release through software/scripts/agent-git.sh. $(cleanup_hint)"
 	TAGS+=("$t")
 done
 
@@ -432,9 +491,9 @@ for t in "${TAGS[@]}"; do
 	# under pipefail the resulting SIGPIPE on cat-file would read as a failed
 	# check on a tag that is correctly signed.
 	tag_object=$($GIT cat-file tag "$t") ||
-		die "created tag $t but could not read it back. Nothing was pushed; remove the local tags with: git tag -d ${TAGS[*]}"
+		die "created tag $t but could not read it back. $(cleanup_hint)"
 	grep -qE '^-----BEGIN (SSH|PGP) SIGNATURE-----' <<<"$tag_object" ||
-		die "tag $t carries no signature. Nothing was pushed; remove the local tags with: git tag -d ${TAGS[*]}"
+		die "tag $t carries no signature. $(cleanup_hint)"
 done
 
 # Exactly the refs this run created, ALL OR NOTHING.
@@ -449,6 +508,6 @@ REFSPECS=("$RELEASE_COMMIT:refs/heads/$RELEASE_BRANCH")
 for t in "${TAGS[@]}"; do REFSPECS+=("refs/tags/$t:refs/tags/$t"); done
 
 $GIT push --atomic "$REMOTE" "${REFSPECS[@]}" ||
-	die "the atomic push was refused, so NOTHING was published. The release commit and tags are still local: 'git tag -d ${TAGS[*]}' and 'git reset --hard HEAD~1' to discard them"
+	die "the atomic push was refused, so NOTHING was published. The release commit and tags are still local. $(cleanup_hint)"
 
 printf 'release-alpha: published %s to %s (%s)\n' "$NEXT" "$REMOTE" "${TAGS[*]}"

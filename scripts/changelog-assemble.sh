@@ -3,7 +3,13 @@
 # changelog-assemble.sh -- fold .changelog/unreleased/*.md into CHANGELOG.md
 # under a new version heading, and remove the assembled files.
 #
-# Usage: changelog-assemble.sh <version-without-v> [<date>]
+# Usage: changelog-assemble.sh [--root DIR] <version-without-v> [<date>]
+#
+# --root names the tree to assemble in, holding CHANGELOG.md and
+# .changelog/unreleased. It defaults to the repository this script lives in.
+# The option exists because assembly is destructive -- it deletes the entry
+# files it splices -- so a caller rehearsing a release (release-alpha.sh
+# --dry-run) must be able to point it at a scratch copy instead (#415, #416).
 #
 # Entries are files named <section>-<slug>.md where <section> selects the
 # `###` heading (security|added|changed|deprecated|removed|fixed). The file
@@ -103,10 +109,25 @@ if [ "${CHANGELOG_ASSEMBLE_LIB:-0}" = 1 ]; then
 	return 0 2>/dev/null || exit 0
 fi
 
+ROOT=""
+while [ $# -gt 0 ]; do
+	case "$1" in
+	--root) [ $# -ge 2 ] || { echo "changelog-assemble: --root needs a value" >&2; exit 2; }
+		ROOT="$2"; shift 2 ;;
+	--root=*) ROOT="${1#--root=}"; shift ;;
+	--) shift; break ;;
+	*) break ;;
+	esac
+done
+
 VERSION="${1:-}"
-[ -n "$VERSION" ] || { echo "usage: changelog-assemble.sh <version-without-v> [<date>]" >&2; exit 2; }
+[ -n "$VERSION" ] || { echo "usage: changelog-assemble.sh [--root DIR] <version-without-v> [<date>]" >&2; exit 2; }
 DATE="${2:-$(date +%Y-%m-%d)}"
-ROOT=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
+if [ -n "$ROOT" ]; then
+	[ -d "$ROOT" ] || { echo "changelog-assemble: --root '$ROOT' is not a directory" >&2; exit 2; }
+else
+	ROOT=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
+fi
 
 assembled=$(assemble "$ROOT/CHANGELOG.md" "$ROOT/.changelog/unreleased" "$VERSION" "$DATE") || exit 1
 [ -n "$assembled" ] || { echo "changelog-assemble: no entries to assemble"; exit 0; }

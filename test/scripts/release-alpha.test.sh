@@ -244,5 +244,166 @@ if changelog_entries_pending "$CEP/one";     then ok "one entry: pending";      
 if changelog_entries_pending "$CEP/many";    then ok "five entries under pipefail: pending"; else no "five entries: assembler would be SKIPPED (SIGPIPE 141)"; fi
 rm -rf "$CEP"
 
+# --- --dry-run leaves the working tree byte-identical (go-xkms#415, #416) ----
+#
+# The only end-to-end cases in this file, and they earn the exception: the
+# defect they cover is invisible to a unit test of the pure functions, because
+# it is entirely a question of WHICH TREE the impure steps write to. A dry run
+# used to assemble .changelog/unreleased into the real CHANGELOG.md and delete
+# the entry files -- while printing "nothing was changed" -- so the rehearsal
+# consumed the release notes it was only supposed to preview.
+#
+# The fixture is a throwaway git repository under mktemp -d carrying the shape
+# the script demands: a VERSION file, every declared pin edge, a CHANGELOG with
+# an Unreleased heading, pending entries, and copies of both scripts. Git runs
+# against it with the host's global and system config disabled, so the result
+# is a property of the script rather than of whoever's machine runs the suite.
+# Nothing here reaches the network: no remote is configured and no push is ever
+# attempted.
+
+section "--dry-run against a real tree (end to end)"
+
+FXROOT=$(mktemp -d)
+
+fxgit() { # fxgit <repo> <args...>
+	local r=$1
+	shift
+	GIT_CONFIG_GLOBAL=/dev/null GIT_CONFIG_NOSYSTEM=1 git -C "$r" "$@"
+}
+
+fxmod() { # fxmod <repo> <path> <module> <required...>
+	local r=$1 path=$2 self=$3 m
+	shift 3
+	mkdir -p "$r/$(dirname "$path")"
+	{
+		printf 'module %s\n\ngo 1.24\n\nrequire (\n' "$self"
+		for m in "$@"; do printf '\t%s v0.1.0-alpha\n' "$m"; done
+		printf ')\n'
+	} >"$r/$path"
+}
+
+mkfixture() { # mkfixture <repo>
+	local r=$1 x=github.com/jeremyhahn/go-xkms
+	mkdir -p "$r/scripts" "$r/.changelog/unreleased"
+	printf '0.1.0-alpha\n' >"$r/VERSION"
+	fxmod "$r" go.mod "$x" "$x/sdk/go" "$x/xkey"
+	fxmod "$r" sdk/go/go.mod "$x/sdk/go" "$x" "$x/xkey"
+	fxmod "$r" xkey/go.mod "$x/xkey" "$x" "$x/sdk/go"
+	fxmod "$r" web/desktop/go.mod "$x/web/desktop" "$x" "$x/sdk/go" "$x/xkey"
+	printf '# Changelog\n\n## [Unreleased]\n\n## [0.1.0-alpha] - 2026-01-01\n\n### Fixed\n\n- old entry\n' \
+		>"$r/CHANGELOG.md"
+	printf -- '- **thing** one ([#1](x))\n' >"$r/.changelog/unreleased/fixed-one-1.md"
+	printf -- '- **thing** two ([#2](x))\n' >"$r/.changelog/unreleased/added-two-2.md"
+	printf 'contributor notes\n' >"$r/.changelog/unreleased/README.md"
+	cp "$ROOT/scripts/release-alpha.sh" "$ROOT/scripts/changelog-assemble.sh" "$r/scripts/"
+	fxgit "$r" init -q -b main
+	fxgit "$r" add -A
+	fxgit "$r" -c user.name=test -c user.email=test@example.invalid \
+		-c commit.gpgsign=false commit -q -m "fixture"
+}
+
+# fxmanifest is the tree-identity assertion: the index and worktree state git
+# reports, plus a content hash of every file the changelog steps can touch. A
+# deletion, a rewrite and a staging all change it.
+fxmanifest() { # fxmanifest <repo>
+	fxgit "$1" status --porcelain
+	(cd "$1" && find CHANGELOG.md .changelog -type f -exec sha256sum {} + 2>&1 | LC_ALL=C sort)
+}
+
+fxrelease() { # fxrelease <repo> <args...>
+	local r=$1
+	shift
+	(cd "$r" && GIT_CONFIG_GLOBAL=/dev/null GIT_CONFIG_NOSYSTEM=1 \
+		bash scripts/release-alpha.sh "$@" 2>&1)
+}
+
+# The script reaches git through $GIT, which makes "a dry run writes nothing"
+# answerable directly rather than only by its effects: every subcommand is
+# recorded and the write verbs must not appear. A tree-identity check alone
+# cannot see a write whose content happened to match.
+cat >"$FXROOT/git-wrap" <<'WRAP'
+#!/usr/bin/env bash
+printf '%s\n' "${1:-}" >>"$GITLOG"
+exec git "$@"
+WRAP
+chmod +x "$FXROOT/git-wrap"
+
+FX="$FXROOT/dry"
+mkfixture "$FX"
+BEFORE=$(fxmanifest "$FX")
+GITLOG="$FXROOT/git-calls"
+: >"$GITLOG"
+export GITLOG GIT="$FXROOT/git-wrap"
+OUT=$(fxrelease "$FX" --version 0.2.0-alpha --bump minor --dry-run)
+RC=$?
+unset GIT
+AFTER=$(fxmanifest "$FX")
+
+eq "the dry run succeeds" "0" "$RC"
+eq "the working tree is byte-identical after a dry run" "$BEFORE" "$AFTER"
+eq "no changelog entry was consumed" "2" \
+	"$(find "$FX/.changelog/unreleased" -name '*.md' ! -name README.md | wc -l | tr -d ' ')"
+eq "the index is empty after a dry run" "" "$(fxgit "$FX" status --porcelain)"
+true_ "the git wrapper observed the dry run" test -s "$GITLOG"
+eq "a dry run runs no git write subcommand" "" \
+	"$(grep -xE 'add|commit|push|reset|checkout|stash|rm|mv' "$GITLOG")"
+false_ "CHANGELOG.md gained no section on disk" \
+	grep -q '## \[0.2.0-alpha\]' "$FX/CHANGELOG.md"
+# The rehearsal is only worth running if it still shows the operator what the
+# release would look like -- including the changelog, which is the part that
+# used to be shown by mutating it.
+true_ "the preview prints the pin diff" \
+	grep -qE '^\+[[:space:]]*github\.com/jeremyhahn/go-xkms/sdk/go v0\.2\.0-alpha' <<<"$OUT"
+true_ "the preview prints the assembled changelog section" grep -q '^+## \[0.2.0-alpha\]' <<<"$OUT"
+true_ "the preview prints the assembled entry text" grep -q '^+- \*\*thing\*\* one' <<<"$OUT"
+true_ "the preview names the entry files a real cut would consume" \
+	grep -q 'would remove .changelog/unreleased/fixed-one-1.md' <<<"$OUT"
+true_ "the preview still reports the tags" grep -q 'sdk/go/v0.2.0-alpha' <<<"$OUT"
+
+# Error handling: a malformed entry name must fail the rehearsal, and must fail
+# it without having consumed anything either.
+FXBAD="$FXROOT/bad"
+mkfixture "$FXBAD"
+printf -- '- oops\n' >"$FXBAD/.changelog/unreleased/typo-section-3.md"
+fxgit "$FXBAD" add -A
+fxgit "$FXBAD" -c user.name=test -c user.email=test@example.invalid \
+	-c commit.gpgsign=false commit -q -m "bad entry"
+BEFORE=$(fxmanifest "$FXBAD")
+OUT=$(fxrelease "$FXBAD" --version 0.2.0-alpha --bump minor --dry-run)
+RC=$?
+eq "a malformed entry name fails the dry run" "1" "$RC"
+true_ "the failure names the assembler" grep -q 'changelog-assemble failed' <<<"$OUT"
+eq "a failed dry run is byte-identical too" "$BEFORE" "$(fxmanifest "$FXBAD")"
+
+# The real path must still assemble against the repository -- the fix moves the
+# dry run off the worktree, it does not stop a release from cutting one. The
+# run is stopped at the tag-signing check by pointing gpg.program at /bin/false,
+# which is as far as a test may go: everything after it publishes.
+FXREAL="$FXROOT/real"
+mkfixture "$FXREAL"
+fxgit "$FXREAL" config gpg.program /bin/false
+fxgit "$FXREAL" config commit.gpgsign false
+fxgit "$FXREAL" config user.name test
+fxgit "$FXREAL" config user.email test@example.invalid
+BASE=$(fxgit "$FXREAL" rev-parse HEAD)
+OUT=$(fxrelease "$FXREAL" --version 0.2.0-alpha --bump minor)
+RC=$?
+eq "a real cut stops at the signing check" "1" "$RC"
+true_ "a real cut assembles the changelog against the repository" \
+	grep -q '^## \[0.2.0-alpha\]' "$FXREAL/CHANGELOG.md"
+eq "a real cut consumes the entry files" "0" \
+	"$(find "$FXREAL/.changelog/unreleased" -name '*.md' ! -name README.md | wc -l | tr -d ' ')"
+true_ "a real cut keeps the entries README" test -f "$FXREAL/.changelog/unreleased/README.md"
+true_ "a real cut moved the pins" \
+	grep -q 'go-xkms/sdk/go v0.2.0-alpha' "$FXREAL/go.mod"
+# go-xkms#416, second finding: the release commit is created BEFORE the tags,
+# so a run that dies at the signing check leaves an unsigned chore(release)
+# commit. A cleanup hint that names only the tags leaves the operator on it.
+true_ "the signing failure names the release commit to unwind" \
+	grep -q "git reset --hard $BASE" <<<"$OUT"
+eq "no tag survived the failed cut" "" "$(fxgit "$FXREAL" tag --list)"
+
+rm -rf "$FXROOT"
+
 printf '\n%d passed, %d failed\n' "$PASS" "$FAIL"
 [ "$FAIL" -eq 0 ]
