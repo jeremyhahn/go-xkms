@@ -47,9 +47,10 @@ func TestRateLimiter_Wait_RetryAfterWaitPathCoverageFinal(t *testing.T) {
 
 	rl := NewRateLimiter(config)
 
-	// Set retry-after to 2 seconds in the future to ensure it's reliably in the future
-	// (Unix timestamps have second-level precision, so we need enough margin)
-	rl.retryUntil.Store(time.Now().Unix() + 2)
+	// Deadlines are stored with nanosecond precision, so a short, exact
+	// retry-after is enough to exercise the wait path.
+	retryAfter := 200 * time.Millisecond
+	rl.retryUntil.Store(time.Now().Add(retryAfter).UnixNano())
 
 	ctx := context.Background()
 	start := time.Now()
@@ -62,9 +63,9 @@ func TestRateLimiter_Wait_RetryAfterWaitPathCoverageFinal(t *testing.T) {
 		t.Errorf("expected no error after waiting, got: %v", err)
 	}
 
-	// Verify we actually waited (should be at least 1 second given 2-second future timestamp)
-	if elapsed < 1*time.Second {
-		t.Errorf("expected wait of at least 1s, got %v", elapsed)
+	// Verify we honoured the deadline rather than resuming early.
+	if elapsed < retryAfter {
+		t.Errorf("expected wait of at least %v, got %v", retryAfter, elapsed)
 	}
 
 	// Verify retry-after was cleared
@@ -84,7 +85,7 @@ func TestRateLimiter_Wait_ContextCancelDuringRetryAfterCoverageFinal(t *testing.
 	rl := NewRateLimiter(config)
 
 	// Set retry-after to 5 seconds in the future
-	rl.retryUntil.Store(time.Now().Unix() + 5)
+	rl.retryUntil.Store(time.Now().Add(5 * time.Second).UnixNano())
 
 	// Create a context that cancels after 50ms
 	ctx, cancel := context.WithTimeout(context.Background(), 50*time.Millisecond)
@@ -153,7 +154,7 @@ func TestRateLimiter_Allow_ActiveRetryUntilCoverageFinal(t *testing.T) {
 	rl := NewRateLimiter(config)
 
 	// Set retry-after to the future (5 seconds from now)
-	futureTime := time.Now().Unix() + 5
+	futureTime := time.Now().Add(5 * time.Second).UnixNano()
 	rl.retryUntil.Store(futureTime)
 
 	// Allow should return false because we're in retry-after period (line 170-171)
@@ -443,7 +444,7 @@ func TestRateLimiter_Wait_RetryAfterExceedsMaxWaitCoverageFinal(t *testing.T) {
 	rl := NewRateLimiter(config)
 
 	// Set retry-after to 5 seconds in the future (exceeds MaxWaitTime)
-	rl.retryUntil.Store(time.Now().Unix() + 5)
+	rl.retryUntil.Store(time.Now().Add(5 * time.Second).UnixNano())
 
 	ctx := context.Background()
 

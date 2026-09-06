@@ -509,6 +509,14 @@ limiter := client.NewRateLimiter(&client.RateLimiterConfig{
 })
 ```
 
+### Retry-After Precision
+
+When `RetryAfterHeader` is enabled, a `429` response parks the limiter until the
+instant the server named. That deadline is held with nanosecond precision, so a
+sub-second `Retry-After` is honoured exactly and `Wait` never resumes early. A
+later `Retry-After` arriving while a request is already parked extends the wait
+rather than replacing it with the earlier deadline.
+
 ### Use with HTTP Transport
 
 ```go

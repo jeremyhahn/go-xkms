@@ -16,6 +16,7 @@ package client
 import (
 	"context"
 	"errors"
+	"math"
 	"net/http"
 	"sync/atomic"
 	"time"
@@ -72,7 +73,11 @@ type RateLimiter struct {
 	refillRate int64        // Tokens to add per millisecond * 1000
 	lastRefill atomic.Int64 // Last refill time in nanoseconds
 	closed     atomic.Bool
-	retryUntil atomic.Int64 // Unix time until retry is blocked
+	// retryUntil is the instant a server-supplied Retry-After period ends,
+	// as Unix nanoseconds; 0 means no period is in effect. Nanoseconds keep
+	// sub-second Retry-After values representable and match lastRefill, so the
+	// field stays a lock-free atomic.Int64.
+	retryUntil atomic.Int64
 }
 
 // NewRateLimiter creates a new rate limiter with the given configuration
@@ -116,21 +121,8 @@ func (rl *RateLimiter) Wait(ctx context.Context) error {
 		return ErrRateLimiterClosed
 	}
 
-	// Check if we're in a retry-after period
-	if retryUntil := rl.retryUntil.Load(); retryUntil > 0 {
-		waitUntil := time.Unix(retryUntil, 0)
-		if time.Now().Before(waitUntil) {
-			waitDuration := time.Until(waitUntil)
-			if waitDuration > rl.config.MaxWaitTime {
-				return ErrRateLimitExceeded
-			}
-			select {
-			case <-ctx.Done():
-				return ctx.Err()
-			case <-time.After(waitDuration):
-				rl.retryUntil.Store(0)
-			}
-		}
+	if err := rl.waitRetryAfter(ctx); err != nil {
+		return err
 	}
 
 	deadline := time.Now().Add(rl.config.MaxWaitTime)
@@ -167,13 +159,46 @@ func (rl *RateLimiter) Allow() bool {
 
 	// Check retry-after period
 	if retryUntil := rl.retryUntil.Load(); retryUntil > 0 {
-		if time.Now().Before(time.Unix(retryUntil, 0)) {
+		if time.Now().Before(time.Unix(0, retryUntil)) {
 			return false
 		}
-		rl.retryUntil.Store(0)
+		// Clear only the deadline just observed to expire; a concurrent
+		// SetRetryAfter may have installed a later one.
+		rl.retryUntil.CompareAndSwap(retryUntil, 0)
 	}
 
 	return rl.tryAcquire()
+}
+
+// waitRetryAfter blocks while a server-supplied Retry-After period is still in
+// effect. The deadline is re-read after every sleep, so a 429 that arrives while
+// we are waiting extends the wait instead of being discarded, and the deadline
+// is only cleared if it is still the one observed to have expired.
+func (rl *RateLimiter) waitRetryAfter(ctx context.Context) error {
+	for {
+		retryUntil := rl.retryUntil.Load()
+		if retryUntil == 0 {
+			return nil
+		}
+
+		remaining := time.Until(time.Unix(0, retryUntil))
+		if remaining <= 0 {
+			rl.retryUntil.CompareAndSwap(retryUntil, 0)
+			return nil
+		}
+
+		if remaining > rl.config.MaxWaitTime {
+			return ErrRateLimitExceeded
+		}
+
+		timer := time.NewTimer(remaining)
+		select {
+		case <-ctx.Done():
+			timer.Stop()
+			return ctx.Err()
+		case <-timer.C:
+		}
+	}
 }
 
 // tryAcquire attempts to acquire a token without waiting
@@ -233,8 +258,7 @@ func (rl *RateLimiter) SetRetryAfter(duration time.Duration) {
 		return
 	}
 
-	retryUntil := time.Now().Add(duration).Unix()
-	rl.retryUntil.Store(retryUntil)
+	rl.storeRetryDeadline(time.Now().Add(duration))
 }
 
 // SetRetryAfterTime sets a retry-after period to a specific time
@@ -243,7 +267,21 @@ func (rl *RateLimiter) SetRetryAfterTime(until time.Time) {
 		return
 	}
 
-	rl.retryUntil.Store(until.Unix())
+	rl.storeRetryDeadline(until)
+}
+
+// maxRetryDeadline is the latest instant time.Time.UnixNano can represent;
+// nanoseconds since the Unix epoch overflow an int64 after 2262-04-11.
+var maxRetryDeadline = time.Unix(0, math.MaxInt64)
+
+// storeRetryDeadline records the end of a retry-after period with nanosecond
+// precision, clamping deadlines beyond the representable range so an overflow
+// can never be read back as "not blocked".
+func (rl *RateLimiter) storeRetryDeadline(until time.Time) {
+	if until.After(maxRetryDeadline) {
+		until = maxRetryDeadline
+	}
+	rl.retryUntil.Store(until.UnixNano())
 }
 
 // Close closes the rate limiter
@@ -255,11 +293,13 @@ func (rl *RateLimiter) Close() {
 func (rl *RateLimiter) Stats() *RateLimiterStats {
 	rl.refill()
 
+	retryUntil := rl.retryUntil.Load()
+
 	return &RateLimiterStats{
 		AvailableTokens: float64(rl.tokens.Load()) / 1000,
 		MaxTokens:       float64(rl.maxTokens) / 1000,
 		RefillRate:      rl.config.RequestsPerSecond,
-		IsBlocked:       rl.retryUntil.Load() > 0 && time.Now().Before(time.Unix(rl.retryUntil.Load(), 0)),
+		IsBlocked:       retryUntil > 0 && time.Now().Before(time.Unix(0, retryUntil)),
 	}
 }
 

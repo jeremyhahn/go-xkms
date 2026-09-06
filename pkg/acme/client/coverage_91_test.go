@@ -794,8 +794,8 @@ func TestRateLimiter_RetryAfter_Coverage91(t *testing.T) {
 			RetryAfterHeader: true,
 		})
 
-		rl.SetRetryAfter(1 * time.Millisecond)
-		time.Sleep(5 * time.Millisecond)
+		// An already-expired deadline: Allow must clear it and admit the request.
+		rl.retryUntil.Store(time.Now().Add(-time.Millisecond).UnixNano())
 
 		if !rl.Allow() {
 			t.Error("expected Allow to return true after retry period")

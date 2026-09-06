@@ -207,7 +207,7 @@ func TestRateLimiter_SetRetryAfter(t *testing.T) {
 		}
 
 		// The retryUntil should be in the future
-		if time.Unix(retryUntil, 0).Before(time.Now()) {
+		if time.Unix(0, retryUntil).Before(time.Now()) {
 			t.Error("expected retryUntil to be in the future")
 		}
 	})
@@ -385,8 +385,8 @@ func TestRateLimiter_SetRetryAfterTime(t *testing.T) {
 		rl.SetRetryAfterTime(futureTime)
 
 		retryUntil := rl.retryUntil.Load()
-		if retryUntil != futureTime.Unix() {
-			t.Errorf("expected retryUntil = %d, got %d", futureTime.Unix(), retryUntil)
+		if retryUntil != futureTime.UnixNano() {
+			t.Errorf("expected retryUntil = %d, got %d", futureTime.UnixNano(), retryUntil)
 		}
 	})
 
@@ -704,7 +704,7 @@ func TestRateLimiter_Allow_RetryAfterExpired(t *testing.T) {
 
 		// Set retry-after in the past
 		pastTime := time.Now().Add(-1 * time.Second)
-		rl.retryUntil.Store(pastTime.Unix())
+		rl.retryUntil.Store(pastTime.UnixNano())
 
 		// Allow should clear the expired retry-after and succeed
 		allowed := rl.Allow()
