@@ -58,6 +58,11 @@ var ErrPINAuthInvalid = errors.New("authenticator: PIN auth invalid")
 // ErrPINPolicyViolation indicates the PIN does not meet policy requirements.
 var ErrPINPolicyViolation = errors.New("authenticator: PIN policy violation")
 
+// ErrPINAlreadySet indicates an initial-PIN establishment was attempted on an
+// authenticator that already has a PIN. An existing PIN is replaced only
+// through the ClientPIN changePIN ceremony, which proves the current PIN.
+var ErrPINAlreadySet = errors.New("authenticator: PIN already set")
+
 // ErrNoCredentials indicates no credentials match the request criteria.
 var ErrNoCredentials = errors.New("authenticator: no credentials")
 

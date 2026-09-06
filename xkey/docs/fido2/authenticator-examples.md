@@ -464,12 +464,27 @@ func hidExample(auth *authenticator.Authenticator) {
 
 ### Setting Initial PIN
 
+An in-process caller that already holds the operator's authority — a daemon
+seeding the PIN it was started with, a first-run wizard — establishes the
+first PIN through `SetInitialPIN`. It applies the same policy, retry reset and
+`pinUvAuthToken` invalidation as the CTAP `setPIN` ceremony and refuses with
+`ErrPINAlreadySet` when a PIN exists.
+
 ```go
 func setInitialPIN(auth *authenticator.Authenticator, pin string) error {
-    // For testing, use the helper method
-    return auth.SetPINForTesting(pin)
+    if err := auth.SetInitialPIN(pin); err != nil {
+        if errors.Is(err, authenticator.ErrPINAlreadySet) {
+            // Leave the existing PIN alone; changing it is changePIN's job.
+            return nil
+        }
+        return err
+    }
+    return nil
 }
 ```
+
+A remote platform never reaches `SetInitialPIN`; it drives the full ceremony
+below.
 
 ### Full PIN Protocol Flow
 

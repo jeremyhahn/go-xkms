@@ -1,6 +1,6 @@
 # Virtual FIDO2 Authenticator — CLI
 
-> **Status: NORMATIVE** · Feature: `virtual-authenticator` · Module: `go-xkms/xkey` · Last verified: 2026-08-19
+> **Status: NORMATIVE** · Feature: `virtual-authenticator` · Module: `go-xkms/xkey` · Last verified: 2026-09-06
 
 Binary: `xkey`. Groups: `fido2` (the daemon) and `uhid` (device setup and
 policy). Sources: `xkey/cmd/xkey/cmd/fido2.go`, `uhid.go`.
@@ -44,11 +44,24 @@ credentials are hardware-backed, `--backend` is the flag that makes that true.
 | Flag | Default | Notes |
 |---|---|---|
 | `--pin` | `true` | require a PIN |
-| `--set-pin` | `""` | set the initial PIN (needs `--pin`) |
+| `--set-pin` | `""` | establish the initial PIN when the store has none (needs `--pin`; refused if a PIN is already set) |
 | `--require-touch` | `true` | require user presence |
 | `--auto-uv` | `false` | **satisfy user verification without a human** |
 | `--unified-pin` | `true` | one PIN across xkey's subsystems |
 | `--timeout` | `30s` | how long to wait for presence |
+
+`--set-pin` is a first-PIN operation. It runs the authenticator's
+`SetInitialPIN`, the in-process counterpart of the CTAP `setPIN` ceremony,
+and refuses to start when the store already holds a PIN:
+
+```
+fido2: --set-pin refused: a PIN is already configured in this store; drop --set-pin or change the PIN through the FIDO2 client
+```
+
+With `--storage memory` every start is a first start. With `--storage file`
+or `--storage barrier`, pass `--set-pin` once; on later starts drop it, and
+change the PIN through any FIDO2 client (`changePIN`), which proves the
+current PIN before replacing it.
 
 `--auto-uv` is what makes this usable by an agent or a CI job, where there is no
 human to touch anything. On a workstation it turns "something you have plus a

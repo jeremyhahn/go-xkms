@@ -81,6 +81,11 @@ var (
 	// ErrFIDO2PINSetFailed indicates the initial PIN could not be set.
 	ErrFIDO2PINSetFailed = errors.New("fido2: PIN set failed")
 
+	// ErrFIDO2PINAlreadySet indicates --set-pin was given for a store that
+	// already holds a PIN. --set-pin establishes the first PIN only; an
+	// existing PIN is changed through the CTAP changePIN ceremony.
+	ErrFIDO2PINAlreadySet = errors.New("fido2: --set-pin refused: a PIN is already configured in this store; drop --set-pin or change the PIN through the FIDO2 client")
+
 	// ErrFIDO2BackendCreationFailed indicates the key backend could not be created.
 	ErrFIDO2BackendCreationFailed = errors.New("fido2: backend creation failed")
 
@@ -371,7 +376,7 @@ func init() {
 	fido2Cmd.Flags().Bool("pin", true,
 		"Enable PIN support (required for FIDO 2.1 credential management)")
 	fido2Cmd.Flags().String("set-pin", "",
-		"Set initial PIN (requires --pin)")
+		"Establish the initial PIN when the store has none (requires --pin; refused if a PIN is already set)")
 
 	// User presence configuration flags
 	fido2Cmd.Flags().Bool("interactive", false,
@@ -710,10 +715,19 @@ func newFIDO2Device(cfg *FIDO2Config, logger *slog.Logger) (*fido2Device, error)
 		_ = storage.Close()
 		return nil, errors.Join(ErrFIDO2AuthenticatorCreationFailed, err)
 	}
-	// Set initial PIN if configured
+	// Establish the initial PIN if configured. --set-pin is the operator
+	// seeding a first PIN, so it goes through the authenticator's
+	// SetInitialPIN: the same policy, retry-reset and pinUvAuthToken
+	// invalidation as the CTAP setPIN ceremony, minus the wire-level proof
+	// that only exists to authenticate a remote platform. It refuses to
+	// overwrite a PIN a persistent store already holds; the old testing
+	// helper silently replaced it and reset the retry counter (#377).
 	if cfg.EnablePIN && cfg.PIN != "" {
-		if err := auth.SetPINForTesting(cfg.PIN); err != nil {
+		if err := auth.SetInitialPIN(cfg.PIN); err != nil {
 			_ = auth.Close()
+			if errors.Is(err, authenticator.ErrPINAlreadySet) {
+				return nil, errors.Join(ErrFIDO2PINAlreadySet, err)
+			}
 			return nil, errors.Join(ErrFIDO2PINSetFailed, err)
 		}
 		logger.Info("initial PIN configured")

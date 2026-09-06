@@ -391,9 +391,30 @@ func (a *Authenticator) handleSetPIN(req *ClientPINRequest) ([]byte, error) {
 		return nil, err
 	}
 
+	// The wire ceremony has proven the platform holds the shared secret; the
+	// PIN policy, retry reset, token invalidation and persistence are the
+	// same for every way a first PIN comes into existence.
+	if err := a.establishPINLocked(newPIN); err != nil {
+		return nil, err
+	}
+	return a.successResponse(nil), nil
+}
+
+// establishPINLocked is the single path by which an authenticator without a
+// PIN acquires one. Both the CTAP setPIN subcommand (after its wire-level
+// pinUvAuthParam proof) and SetInitialPIN end here, so the PIN policy, the
+// retry-counter reset, the pinUvAuthToken invalidation and the persistence
+// ordering cannot drift between them.
+//
+// The caller must hold a.mu for writing.
+func (a *Authenticator) establishPINLocked(newPIN []byte) error {
+	if a.isPINSetLocked() {
+		return ErrPINAlreadySet
+	}
+
 	// Validate PIN length.
 	if len(newPIN) < a.config.PINMinLength {
-		return nil, ErrPINPolicyViolation
+		return ErrPINPolicyViolation
 	}
 
 	// Hash and store the PIN (SHA-256, left 16 bytes).
@@ -403,23 +424,49 @@ func (a *Authenticator) handleSetPIN(req *ClientPINRequest) ([]byte, error) {
 	a.state.SetPINRetries(a.config.PINMaxRetries)
 
 	// CTAP 2.1 §6.5.2.1: a pinUvAuthToken must not outlive the PIN state it
-	// was minted under. setPIN reaches here only when no PIN was set, but a
-	// token can still be outstanding: getPinUvAuthTokenUsingUvWithPermissions
-	// mints one against the authenticator's built-in user verification and
-	// never asks whether a PIN exists. Establishing a PIN must not leave that
-	// token usable.
+	// was minted under. This path runs only when no PIN was set, but a token
+	// can still be outstanding: getPinUvAuthTokenUsingUvWithPermissions mints
+	// one against the authenticator's built-in user verification and never
+	// asks whether a PIN exists. Establishing a PIN must not leave that token
+	// usable.
 	//
 	// Placed after the new PIN is accepted into a.state and before it is
 	// persisted, so a storage failure cannot leave a live token behind a PIN
-	// the authenticator already considers set. Every rejected request returned
-	// above, so a failed setPIN never discards the token.
+	// the authenticator already considers set. Every refusal returned above,
+	// so a failed establishment never discards the token.
 	a.stopUsingPinUvAuthTokenLocked()
 
 	// Save state.
 	if err := a.storage.SaveState(a.state); err != nil {
-		return nil, ErrStorageError
+		return errors.Join(ErrStorageError, err)
 	}
-	return a.successResponse(nil), nil
+	return nil
+}
+
+// SetInitialPIN establishes the authenticator's PIN when none is set. It is
+// the in-process counterpart of the CTAP ClientPIN setPIN subcommand for a
+// caller that already holds the operator's authority — the xkey daemon
+// seeding the PIN it was started with, or a first-run wizard — and it is a
+// production API, not a test hook.
+//
+// It runs the same establishment path as setPIN: the configured minimum
+// length is enforced, the retry counter is reset, any outstanding
+// pinUvAuthToken is invalidated (CTAP 2.1 §6.5.2.1) before the new state is
+// persisted, and a storage failure is reported as ErrStorageError. The one
+// thing it does not do is the wire-level ceremony — ECDH key agreement and
+// the pinUvAuthParam proof over the encrypted PIN — because that ceremony
+// exists to authenticate a remote platform to the authenticator, and an
+// in-process caller is already on the authenticator's side of that boundary.
+//
+// An authenticator that already has a PIN refuses with ErrPINAlreadySet: an
+// existing PIN is replaced only through changePIN, which proves the current
+// one. A PIN shorter than the configured minimum is refused with
+// ErrPINPolicyViolation.
+func (a *Authenticator) SetInitialPIN(pin string) error {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+
+	return a.establishPINLocked([]byte(pin))
 }
 
 // handleChangePIN changes an existing PIN.
@@ -1474,23 +1521,6 @@ func (a *Authenticator) consumePinUvAuthToken() {
 
 	a.pinState.protocol.tokenUserVerified = false
 	a.pinState.protocol.tokenPermissions &= PINPermissionLargeBlobWrite
-}
-
-// SetPINForTesting sets the PIN directly for testing purposes.
-func (a *Authenticator) SetPINForTesting(pin string) error {
-	a.mu.Lock()
-	defer a.mu.Unlock()
-
-	if len(pin) < a.config.PINMinLength {
-		return ErrPINPolicyViolation
-	}
-
-	pinHash := sha256.Sum256([]byte(pin))
-	a.state.PINHash = pinHash[:PINHashSize]
-	a.state.PINSet = true
-	a.state.SetPINRetries(a.config.PINMaxRetries)
-
-	return a.storage.SaveState(a.state)
 }
 
 // generatePlatformKeyAgreement generates a platform ECDH key pair and returns

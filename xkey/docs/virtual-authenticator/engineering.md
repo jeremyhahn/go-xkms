@@ -1,6 +1,6 @@
 # Virtual FIDO2 Authenticator — Engineering Contract
 
-> **Status: NORMATIVE** · Feature: `virtual-authenticator` · Module: `go-xkms/xkey` · Last verified: 2026-08-19
+> **Status: NORMATIVE** · Feature: `virtual-authenticator` · Module: `go-xkms/xkey` · Last verified: 2026-09-06
 
 ## Exported surface
 
@@ -51,7 +51,7 @@ Defaults are constants at `xkey/cmd/xkey/cmd/fido2.go:164-170`.
 | `--name` | `xKey (go-xkms)` | device name the OS sees |
 | `--serial` | `""` | device serial; generated when empty |
 | `--pin` | `true` | require a PIN |
-| `--set-pin` | `""` | set the initial PIN (needs `--pin`) |
+| `--set-pin` | `""` | establish the initial PIN when the store has none (needs `--pin`; refused if a PIN is already set) |
 | `--interactive` | `false` | interactive setup |
 | `--require-touch` | `true` | require user presence |
 | `--timeout` | `30s` | operation timeout |
@@ -91,6 +91,15 @@ first run and the wrong one for daily use.
 - **CTAP2 is one command at a time per channel.** The HID adapter serialises.
 - **PIN state is `state.PINHash` with a fixed size** — treat it as the
   authenticator's own credential, distinct from the barrier or the OS.
+- **A first PIN has one establishment path.** The CTAP `setPIN` subcommand
+  (after its wire-level `pinUvAuthParam` proof) and the in-process
+  `Authenticator.SetInitialPIN` (the `--set-pin` seeding) both end in
+  `establishPINLocked` (`cmd_clientpin.go`): minimum length, retry-counter
+  reset, outstanding `pinUvAuthToken` invalidation, then persistence. Neither
+  replaces an existing PIN — `SetInitialPIN` refuses with `ErrPINAlreadySet`,
+  and the daemon surfaces that as `ErrFIDO2PINAlreadySet` — so a restart with
+  `--set-pin` against a persistent store cannot silently rewrite the PIN or
+  reset its retry counter. There is no testing-only PIN setter (#377).
 
 ## Error semantics
 

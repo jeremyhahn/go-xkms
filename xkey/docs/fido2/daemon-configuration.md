@@ -75,7 +75,7 @@ guessing.
 | Flag | Default | Description |
 |------|---------|-------------|
 | `--pin` | `true` | Enable PIN support (required for FIDO 2.1 credential management) |
-| `--set-pin` | (none) | Set the initial PIN (requires `--pin`) |
+| `--set-pin` | (none) | Establish the initial PIN when the store has none (requires `--pin`; refused when a PIN is already set) |
 | `--unified-pin` | `true` | Synchronize the PIN across FIDO2, PKCS#11, and file PIN systems |
 
 The Security Officer PIN is not set here, and — despite the name — **not** by

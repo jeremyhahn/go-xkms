@@ -106,7 +106,7 @@ func TestGetRetriesDecrementedAfterFailure(t *testing.T) {
 	defer func() { _ = auth.Close() }()
 
 	// Set a PIN first.
-	if err := auth.SetPINForTesting("1234"); err != nil {
+	if err := auth.SetInitialPIN("1234"); err != nil {
 		t.Fatalf("Failed to set PIN: %v", err)
 	}
 
@@ -316,7 +316,7 @@ func TestSetPINFailsWhenAlreadySet(t *testing.T) {
 	defer func() { _ = auth.Close() }()
 
 	// Set initial PIN.
-	if err := auth.SetPINForTesting("1234"); err != nil {
+	if err := auth.SetInitialPIN("1234"); err != nil {
 		t.Fatalf("Failed to set initial PIN: %v", err)
 	}
 
@@ -416,7 +416,7 @@ func TestChangePINWithValidCurrentPIN(t *testing.T) {
 
 	// Set initial PIN.
 	initialPIN := "1234"
-	if err := auth.SetPINForTesting(initialPIN); err != nil {
+	if err := auth.SetInitialPIN(initialPIN); err != nil {
 		t.Fatalf("Failed to set initial PIN: %v", err)
 	}
 
@@ -488,7 +488,7 @@ func TestChangePINWithInvalidCurrentPIN(t *testing.T) {
 
 	// Set initial PIN.
 	initialPIN := "1234"
-	if err := auth.SetPINForTesting(initialPIN); err != nil {
+	if err := auth.SetInitialPIN(initialPIN); err != nil {
 		t.Fatalf("Failed to set initial PIN: %v", err)
 	}
 
@@ -621,7 +621,7 @@ func TestGetPINTokenWithValidPIN(t *testing.T) {
 
 	// Set PIN.
 	pin := "1234"
-	if err := auth.SetPINForTesting(pin); err != nil {
+	if err := auth.SetInitialPIN(pin); err != nil {
 		t.Fatalf("Failed to set PIN: %v", err)
 	}
 
@@ -710,7 +710,7 @@ func TestGetPINTokenWithInvalidPIN(t *testing.T) {
 	defer func() { _ = auth.Close() }()
 
 	// Set PIN.
-	if err := auth.SetPINForTesting("1234"); err != nil {
+	if err := auth.SetInitialPIN("1234"); err != nil {
 		t.Fatalf("Failed to set PIN: %v", err)
 	}
 
@@ -817,7 +817,7 @@ func TestPINBlockingAfterMaxRetries(t *testing.T) {
 	auth.state.SetPINRetries(3)
 
 	// Set PIN.
-	if err := auth.SetPINForTesting("1234"); err != nil {
+	if err := auth.SetInitialPIN("1234"); err != nil {
 		t.Fatalf("Failed to set PIN: %v", err)
 	}
 
@@ -902,7 +902,7 @@ func TestGetPinUvAuthTokenUsingPinWithPermissions(t *testing.T) {
 
 	// Set PIN.
 	pin := "1234"
-	if err := auth.SetPINForTesting(pin); err != nil {
+	if err := auth.SetInitialPIN(pin); err != nil {
 		t.Fatalf("Failed to set PIN: %v", err)
 	}
 
@@ -1001,7 +1001,7 @@ func TestUnsupportedPINProtocol(t *testing.T) {
 	defer func() { _ = auth.Close() }()
 
 	// Set PIN first.
-	if err := auth.SetPINForTesting("1234"); err != nil {
+	if err := auth.SetInitialPIN("1234"); err != nil {
 		t.Fatalf("Failed to set PIN: %v", err)
 	}
 
@@ -1162,7 +1162,7 @@ func TestVerifyPinUvAuthToken(t *testing.T) {
 
 	// Set PIN and get token.
 	pin := "1234"
-	if err := auth.SetPINForTesting(pin); err != nil {
+	if err := auth.SetInitialPIN(pin); err != nil {
 		t.Fatalf("Failed to set PIN: %v", err)
 	}
 
@@ -1365,7 +1365,7 @@ func TestHandleGetPINToken_Success(t *testing.T) {
 
 	// Set PIN.
 	pin := "123456"
-	err := auth.SetPINForTesting(pin)
+	err := auth.SetInitialPIN(pin)
 	require.NoError(t, err)
 
 	// Record initial retry count.
@@ -1481,7 +1481,7 @@ func TestHandleGetPINToken_PINBlocked(t *testing.T) {
 	defer func() { _ = auth.Close() }()
 
 	// Set PIN.
-	err := auth.SetPINForTesting("1234")
+	err := auth.SetInitialPIN("1234")
 	require.NoError(t, err)
 
 	// Exhaust all retries by setting to 0.
@@ -1527,7 +1527,7 @@ func TestHandleGetPINToken_MissingKeyAgreement(t *testing.T) {
 	defer func() { _ = auth.Close() }()
 
 	// Set PIN.
-	err := auth.SetPINForTesting("1234")
+	err := auth.SetInitialPIN("1234")
 	require.NoError(t, err)
 
 	// Get key agreement to initialize protocol.
@@ -1560,7 +1560,7 @@ func TestHandleGetPINToken_MissingPinHashEnc(t *testing.T) {
 	defer func() { _ = auth.Close() }()
 
 	// Set PIN.
-	err := auth.SetPINForTesting("1234")
+	err := auth.SetInitialPIN("1234")
 	require.NoError(t, err)
 
 	// Get key agreement.
@@ -1600,7 +1600,7 @@ func TestHandleGetPINToken_InvalidPinHash(t *testing.T) {
 
 	// Set PIN.
 	correctPIN := "1234"
-	err := auth.SetPINForTesting(correctPIN)
+	err := auth.SetInitialPIN(correctPIN)
 	require.NoError(t, err)
 
 	// Get initial retry count.
@@ -1656,7 +1656,7 @@ func TestHandleGetPINToken_RetryDecrementLogic(t *testing.T) {
 
 	// Set PIN.
 	correctPIN := "1234"
-	err := auth.SetPINForTesting(correctPIN)
+	err := auth.SetInitialPIN(correctPIN)
 	require.NoError(t, err)
 
 	// Get key agreement.
@@ -1746,7 +1746,7 @@ func TestHandleGetPINToken_BlockedAfterExhaustingRetries(t *testing.T) {
 	auth.state.SetPINRetries(2)
 
 	// Set PIN.
-	err := auth.SetPINForTesting("1234")
+	err := auth.SetInitialPIN("1234")
 	require.NoError(t, err)
 
 	// Get key agreement.
@@ -1836,7 +1836,7 @@ func TestHandleGetPINToken_MalformedPinHashEnc(t *testing.T) {
 	defer func() { _ = auth.Close() }()
 
 	// Set PIN.
-	err := auth.SetPINForTesting("1234")
+	err := auth.SetInitialPIN("1234")
 	require.NoError(t, err)
 
 	initialRetries := auth.PINRetries()
@@ -1886,7 +1886,7 @@ func TestHandleGetPINToken_RetriesResetOnSuccess(t *testing.T) {
 
 	// Set PIN.
 	correctPIN := "1234"
-	err := auth.SetPINForTesting(correctPIN)
+	err := auth.SetInitialPIN(correctPIN)
 	require.NoError(t, err)
 
 	// Get key agreement.
@@ -1956,7 +1956,7 @@ func TestHandleGetPINToken_TokenIsRandomEachTime(t *testing.T) {
 
 	// Set PIN.
 	pin := "1234"
-	err := auth.SetPINForTesting(pin)
+	err := auth.SetInitialPIN(pin)
 	require.NoError(t, err)
 
 	// Get key agreement.
@@ -2213,7 +2213,7 @@ func TestChangePINWithValidCurrentPINV2(t *testing.T) {
 
 	// Set initial PIN.
 	initialPIN := "1234"
-	err := auth.SetPINForTesting(initialPIN)
+	err := auth.SetInitialPIN(initialPIN)
 	require.NoError(t, err)
 
 	// Get key agreement.
@@ -2271,7 +2271,7 @@ func TestChangePINV2WithInvalidCurrentPIN(t *testing.T) {
 	defer func() { _ = auth.Close() }()
 
 	initialPIN := "1234"
-	err := auth.SetPINForTesting(initialPIN)
+	err := auth.SetInitialPIN(initialPIN)
 	require.NoError(t, err)
 
 	initialRetries := auth.PINRetries()
@@ -2324,7 +2324,7 @@ func TestGetPINTokenV2(t *testing.T) {
 	defer func() { _ = auth.Close() }()
 
 	pin := "1234"
-	err := auth.SetPINForTesting(pin)
+	err := auth.SetInitialPIN(pin)
 	require.NoError(t, err)
 
 	err = initKeyAgreement(t, auth)
@@ -2386,7 +2386,7 @@ func TestGetPINTokenV2WithInvalidPIN(t *testing.T) {
 	auth := createTestAuthenticatorWithPIN(t)
 	defer func() { _ = auth.Close() }()
 
-	err := auth.SetPINForTesting("1234")
+	err := auth.SetInitialPIN("1234")
 	require.NoError(t, err)
 
 	initialRetries := auth.PINRetries()
@@ -2427,7 +2427,7 @@ func TestGetPinUvAuthTokenUsingPinWithPermissionsV2(t *testing.T) {
 	defer func() { _ = auth.Close() }()
 
 	pin := "1234"
-	err := auth.SetPINForTesting(pin)
+	err := auth.SetInitialPIN(pin)
 	require.NoError(t, err)
 
 	err = initKeyAgreement(t, auth)

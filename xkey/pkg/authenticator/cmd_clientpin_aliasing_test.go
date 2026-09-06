@@ -49,7 +49,7 @@ func TestChangePIN_DoesNotWriteIntoNeighbouringDecodedBytes(t *testing.T) {
 	auth := createTestAuthenticatorWithPIN(t)
 	defer func() { _ = auth.Close() }()
 
-	if err := auth.SetPINForTesting("1234"); err != nil {
+	if err := auth.SetInitialPIN("1234"); err != nil {
 		t.Fatalf("failed to set initial PIN: %v", err)
 	}
 	if err := initKeyAgreement(t, auth); err != nil {

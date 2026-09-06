@@ -230,7 +230,7 @@ func NewTestDevice(t *testing.T, cfg *TestDeviceConfig) *TestDevice {
 
 	// Set PIN if configured
 	if cfg.EnablePIN && cfg.PIN != "" {
-		err = auth.SetPINForTesting(cfg.PIN)
+		err = auth.SetInitialPIN(cfg.PIN)
 		require.NoError(t, err)
 	}
 

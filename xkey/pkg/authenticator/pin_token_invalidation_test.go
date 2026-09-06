@@ -246,7 +246,7 @@ func TestFailedSetPINLeavesOutstandingTokenUsable(t *testing.T) {
 func TestChangePINInvalidatesOutstandingPinUvAuthToken(t *testing.T) {
 	auth := createTestAuthenticatorWithPIN(t)
 	defer func() { _ = auth.Close() }()
-	require.NoError(t, auth.SetPINForTesting("1234"))
+	require.NoError(t, auth.SetInitialPIN("1234"))
 
 	ceremony := beginPINCeremony(t, auth)
 	token := installOutstandingToken(t, auth)
@@ -274,7 +274,7 @@ func TestChangePINInvalidatesOutstandingPinUvAuthToken(t *testing.T) {
 func TestFailedChangePINLeavesOutstandingTokenUsable(t *testing.T) {
 	auth := createTestAuthenticatorWithPIN(t)
 	defer func() { _ = auth.Close() }()
-	require.NoError(t, auth.SetPINForTesting("1234"))
+	require.NoError(t, auth.SetInitialPIN("1234"))
 
 	ceremony := beginPINCeremony(t, auth)
 	token := installOutstandingToken(t, auth)

@@ -252,25 +252,38 @@ Returns the handler currently collecting user presence.
 func (a *Authenticator) UserPresenceHandler() UserPresenceHandler
 ```
 
-### Testing Methods
+#### SetInitialPIN
 
-#### SetPINForTesting
-
-Sets PIN directly for testing.
+Establishes the authenticator's PIN when none is set. It is the in-process
+counterpart of the CTAP `ClientPIN` `setPIN` subcommand for a caller that
+already holds the operator's authority — the `xkey fido2 --set-pin` seeding
+and a first-run wizard — and it is a production API, not a test hook.
 
 ```go
-func (a *Authenticator) SetPINForTesting(pin string) error
+func (a *Authenticator) SetInitialPIN(pin string) error
 ```
 
 **Parameters:**
 - `pin` - Plain text PIN
 
 **Returns:**
-- `error` - ErrPINPolicyViolation if too short
+- `error` - `ErrPINAlreadySet` if a PIN exists; `ErrPINPolicyViolation` if
+  shorter than `Config.PINMinLength`; `ErrStorageError` (with the backend's
+  cause joined) if the new state could not be persisted
 
-**Notes:**
-- Bypasses PIN protocol for testing
-- Not for production use
+**Contract:**
+- Runs the same establishment path as `setPIN`: minimum length enforced,
+  retry counter reset to `Config.PINMaxRetries`, any outstanding
+  `pinUvAuthToken` invalidated and wiped (CTAP 2.1 §6.5.2.1) before the state
+  is persisted.
+- Skips only the wire ceremony — ECDH key agreement and the `pinUvAuthParam`
+  proof over the encrypted PIN — which exists to authenticate a remote
+  platform; an in-process caller is already on the authenticator's side of
+  that boundary.
+- Never replaces an existing PIN. That is `changePIN`'s job, and it proves the
+  current PIN first.
+
+### Testing Methods
 
 #### GetPinUvAuthToken
 
@@ -921,6 +934,7 @@ var (
     ErrPINBlocked                = errors.New("authenticator: PIN blocked")
     ErrPINAuthInvalid            = errors.New("authenticator: PIN auth invalid")
     ErrPINPolicyViolation        = errors.New("authenticator: PIN policy violation")
+    ErrPINAlreadySet             = errors.New("authenticator: PIN already set")
     ErrNoCredentials             = errors.New("authenticator: no credentials")
     ErrUnsupportedExtension      = errors.New("authenticator: unsupported extension")
     ErrUserPresenceRequired      = errors.New("authenticator: user presence required")

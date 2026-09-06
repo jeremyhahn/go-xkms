@@ -362,6 +362,7 @@ func TestFIDO2Errors_Prefixes(t *testing.T) {
 		{"ErrFIDO2UHIDOpenFailed", ErrFIDO2UHIDOpenFailed, "fido2:"},
 		{"ErrFIDO2UHIDCreateFailed", ErrFIDO2UHIDCreateFailed, "fido2:"},
 		{"ErrFIDO2PINSetFailed", ErrFIDO2PINSetFailed, "fido2:"},
+		{"ErrFIDO2PINAlreadySet", ErrFIDO2PINAlreadySet, "fido2:"},
 		{"ErrFIDO2TPMOpenFailed", ErrFIDO2TPMOpenFailed, "fido2:"},
 		{"ErrFIDO2TPMBackendCreationFailed", ErrFIDO2TPMBackendCreationFailed, "fido2:"},
 		{"ErrFIDO2DeviceAlreadyRunning", ErrFIDO2DeviceAlreadyRunning, "fido2:"},
