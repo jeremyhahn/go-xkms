@@ -3,13 +3,23 @@
 # automatethethings repo (devops.md §1/§8/§9). Divergence outside the
 # repo-specific blocks below is a defect.
 #
-# v1.9 STAGED FAIL-FAST (adopted 2026-08-21, go-xkms #37). Gitea cannot cancel
-# in-flight jobs, so fail-fast comes from ORDERING: a cheap fast tier gates the
-# expensive one. Measured on run 4384, this repo's jobs are:
+# v1.9 STAGED FAIL-FAST (adopted 2026-08-21, go-xkms #37). Fail-fast comes from
+# ORDERING: a cheap fast tier gates the expensive one. Measured on run 4384,
+# this repo's jobs are:
 #
 #   fast      arch-gates 6s · build ~7m (3-way matrix, parallel) · lint 9m24s
 #   expensive race 29m33s · test 16m11s · nested-module 12m21s ·
 #             security 11m24s · build-raft ~8m30s (x2)
+#
+#   CORRECTION (2026-09-05, #392): this entry originally opened "Gitea cannot
+#   cancel in-flight jobs, so fail-fast comes from ORDERING". The premise was
+#   wrong -- a workflow-level `concurrency:` block DOES cancel here; see the
+#   concurrency block below. The ordering it introduced is unaffected and stays
+#   exactly as designed. Ordering and cancellation are COMPLEMENTARY, not
+#   alternatives: ordering bounds what a BROKEN head burns (nothing supersedes
+#   it), cancellation sheds a SUPERSEDED head. Keep both -- do not drop the
+#   expensive tier's `needs: [lint, build, arch-gates]` or the arch-gates
+#   deviation below.
 #
 # Integration Tests (17m25s) left this file entirely on 2026-08-21 -- it was
 # already advisory and is now known-red on a cause outside this repo (#61); see
@@ -42,19 +52,61 @@ name: CI
 # was folded into it (2aa8ab1, 2026-08-17); develop is a frozen archive and
 # master has never existed in this repo. Listing a branch that can also be a PR
 # head made every commit on it run CI twice — one push run and one
-# pull_request run for the same sha — and this Gitea has no working
-# supersession, so the duplicate ran to completion (issue #6).
-#
-# Do NOT add a workflow- or job-level `concurrency:` block here to dedupe runs:
-# on Gitea 1.27.1 a job carrying a concurrency group is cancelled even when the
-# group is unoccupied (measured 42/42, ruling in task #88). The group key is
-# not the problem, so no expression fixes it.
+# pull_request run for the same sha (issue #6). The `concurrency:` block added
+# in #392 does NOT dedupe those two: a push run and a pull_request run carry
+# DIFFERENT refs, so they key into different groups. (This entry originally
+# ended "and this Gitea has no working supersession, so the duplicate ran to
+# completion", followed by a "Do NOT add a `concurrency:` block" paragraph
+# citing task #88. That claim was wrong; see the concurrency block below.)
 on:
   push:
     branches: [ main ]
   pull_request:
     branches: [ main ]
   workflow_dispatch:                    # manual rerun — Gitea has no rerun API
+
+# Supersession control (#392). A newer head on the same ref cancels the older
+# run instead of both occupying the shared runner's `capacity: 3`. This repo
+# took 15 runs on ci.yml@refs/heads/main in a five-hour sample window;
+# portfolio-wide, 73% of runs are superseded but run to completion.
+#
+# MEASURED on Gitea 1.27.1 (2026-09-05); this CORRECTS the v1.5 and v1.9
+# entries above, which asserted concurrency was unusable here:
+#   - Workflow level, keyed on the REF, `cancel-in-progress: true` → Gitea
+#     cancels the OLDER run and the NEWEST completes. Verified on pull_request
+#     refs, on push/refs/heads/* refs, and end-to-end on the go-truststrap
+#     pilot (PR #49, merged 84881ef: run 12133 cancelled, run 12134 completed
+#     with all jobs reporting).
+#   - Task #88's evidence was a DIFFERENT config, and this repo's own
+#     d7f60eb4 is the record of it: JOB level, in task-worker.yml, group
+#     `task-worker-${{ github.repository }}` with NO ref component -- so every
+#     task worker in the repository shared ONE group -- and
+#     `cancel-in-progress: false`. That group was not "unoccupied"; it was
+#     saturated by its own siblings, and Gitea cannot QUEUE, so the false path
+#     cancels. It says nothing about the true path, and "no expression fixes
+#     it" did not follow from it.
+#   - Task #90 still holds, and is WHY this is the only available mechanism:
+#     1.27.1 publishes no `cancel` REST route at any path (only `rerun`,
+#     `rerun-failed-jobs`, and a run-nested job rerun).
+#   - `cancel-in-progress` does NOT evaluate expressions on 1.27.1 -- any
+#     non-empty value is truthy, so a `${{ }}` rendering "false" still cancels.
+#     Write the literal. (Group-key expressions DO evaluate.)
+#   - The group is per-REF, so a PR's runs and main's push runs never cancel
+#     each other, and two PRs never cancel each other.
+#   - Cancelling cannot block a merge: a cancelled run writes `failure` to its
+#     contexts, but the required context is `CI / CI Gate (pull_request)` and
+#     cancellation only lands on superseded SHAs the head has moved past.
+#   - ADOPTION BOUNDARY, expect it once: Gitea groups a run using the workflow
+#     file OF THAT RUN, so a run created before this block landed is in no
+#     group and the first push after adoption cannot supersede it. Check with
+#     `git show <sha>:.github/workflows/ci.yml | grep -c '^concurrency:'`
+#     before concluding a supersession failed.
+#   - release.yml deliberately does NOT get this: cancelling a release
+#     mid-publish is destructive. nightly.yml, coverage.yml, docker-tests.yml,
+#     opencode-review.yml and claude-review.yml are out of scope here too.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
 
 env:
   # PINNED (devops.md §9, documented): Go 1.27.0 reached actions/go-versions on
