@@ -217,9 +217,20 @@ func writeCertAndKeyFiles(t *testing.T, dir string) (certPath, keyPath string) {
 // the full New() constructor (which needs backends, storage, etc.).
 func newMinimalServer(t *testing.T, cfg *config.Config) *Server {
 	t.Helper()
+
+	// A live ctx, because New() always sets one and the shutdown-race checks
+	// in the startup paths read s.ctx.Err() unconditionally. Leaving it nil
+	// made this helper produce a Server that New() cannot produce, and any
+	// test whose subject ran far enough to reach one of those checks paniced
+	// on a nil context rather than failing on its own assertion.
+	ctx, cancel := context.WithCancel(context.Background())
+	t.Cleanup(cancel)
+
 	return &Server{
 		config: cfg,
 		logger: setupLogger(config.LoggingConfig{Level: "error", Format: "json"}),
+		ctx:    ctx,
+		cancel: cancel,
 	}
 }
 

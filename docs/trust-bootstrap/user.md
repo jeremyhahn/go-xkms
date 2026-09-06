@@ -1,6 +1,6 @@
 # Trust Bootstrap — User Guide
 
-> **Status: NORMATIVE** · Feature: `trust-bootstrap` · Repo: `go-xkms` · Last verified: 2026-08-19
+> **Status: NORMATIVE** · Feature: `trust-bootstrap` · Repo: `go-xkms` · Last verified: 2026-09-06
 
 ## What this is for
 
@@ -100,6 +100,28 @@ Configure the private key on the server, publish the **public** key to clients.
 prints only the public key, because a private key on stdout survives in
 scrollback, pipes and CI logs. Keep it in a file on the way back in too —
 `--key-hex` exists but puts a private key into your shell history.
+
+**On a FIPS server, generate a P-256 key instead:**
+
+```
+xkmsctl bootstrap noise generate-p256-key --output p256.key
+xkmsctl bootstrap noise show-p256-key --key-file p256.key
+```
+
+A FIPS build cannot run Noise_NK — it mandates X25519, which SP 800-56A Rev. 3
+does not approve — so the P-256 key is the only one such a server can serve.
+Point `bootstrap.noise.p256_static_key_file` at the file and distribute the
+public point to clients. A non-FIPS server can serve both suites at once by
+configuring both keys; it selects per connection from what the client offers.
+
+If you configure **neither** key, the server generates an ephemeral one at
+startup and logs a warning. It works, but the key changes on every restart, so
+every client that pinned the previous one stops connecting. Configure the file
+in production.
+
+If the server can run **no** suite at all it refuses at startup with
+`bootstrap is enabled but this build can run no handshake suite`, naming why
+each was rejected — rather than binding the port and failing every handshake.
 
 The Noise port defaults to 8445 in the library, which collides with the MCP
 port in the shipped configurations. `configs/xkmsd-local.yaml` moves it to 8447

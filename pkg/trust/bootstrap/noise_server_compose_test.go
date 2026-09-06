@@ -24,6 +24,19 @@ import "testing"
 // here could see it — a consumer would have found it at their next bump.
 func TestReExportsCompose(t *testing.T) {
 	key, err := GenerateNoiseStaticKey()
+
+	// A build that cannot run Noise has no Noise key to compose with, so the
+	// contract to check there is the refusal itself. This is an assertion, not
+	// a skip: "the generator quietly returns a key in a build with no X25519"
+	// is a real regression, and it is the one this branch still catches.
+	if !noiseRunnable(t) {
+		if err == nil {
+			key.Destroy()
+			t.Fatal("a build that cannot run Noise must not return a Noise key")
+		}
+		return
+	}
+
 	if err != nil {
 		t.Fatalf("GenerateNoiseStaticKey: %v", err)
 	}
@@ -54,4 +67,13 @@ func TestNoiseServerStaticKeyNil(t *testing.T) {
 	if got := NoiseServerStaticKey(nil); got != nil {
 		t.Fatalf("expected nil for a nil key, got %v", got)
 	}
+}
+
+// noiseRunnable reports whether this binary can run the Noise_NK suite. It is
+// false in a FIPS build by either mechanism: the `fips` build tag, which
+// compiles go-truststrap's X25519 out, and GOFIPS140 with
+// GODEBUG=fips140=only, where crypto/ecdh refuses X25519 at run time.
+func noiseRunnable(t *testing.T) bool {
+	t.Helper()
+	return EnsureSuiteAvailable(SuiteNoiseNK) == nil
 }

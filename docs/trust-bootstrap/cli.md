@@ -1,9 +1,10 @@
 # Trust Bootstrap — CLI
 
-> **Status: NORMATIVE** · Feature: `trust-bootstrap` · Repo: `go-xkms` · Last verified: 2026-08-19
+> **Status: NORMATIVE** · Feature: `trust-bootstrap` · Repo: `go-xkms` · Last verified: 2026-09-06
 
 Binary: `xkmsctl`, group `bootstrap`. Sources: `cmd/xkmsctl/bootstrap.go`,
-`bootstrap_dane.go`, `bootstrap_noise.go`, `bootstrap_spki.go`,
+`bootstrap_dane.go`, `bootstrap_noise.go`, `bootstrap_p256.go`,
+`bootstrap_spki.go`,
 `bootstrap_trust.go`.
 
 Subgroups: `bootstrap auto`, `bootstrap dane`, `bootstrap noise`,
@@ -101,23 +102,36 @@ xkmsctl bootstrap dane show-tlsa --hostname kms.example.com --port 8443
 
 ## `xkmsctl bootstrap noise`
 
+The group holds the static-key verbs for **both** bootstrap suites. The name is
+historical: `generate-key` predates the second suite.
+
 | Verb | Purpose |
 |---|---|
-| `noise generate-key` | Generate a Noise static keypair |
-| `noise show-key` | Show the public key for a private key |
+| `noise generate-key` | Generate a Noise_NK (Curve25519) static keypair |
+| `noise show-key` | Show the public key for a Noise private key |
+| `noise generate-p256-key` | Generate a P-256 static keypair for the FIPS-approved suite |
+| `noise show-p256-key` | Show the public point for a P-256 private key |
 | `noise show-spki-pin` | Show the SPKI pin of a certificate |
 
 | Flag | Applies to | Type | Default |
 |---|---|---|---|
-| `--output`, `-o` | `generate-key` | string | **required** — writes the private key at mode 0600 |
-| `--key-file` | `show-key` | string | `""` — hex-encoded private key file |
-| `--key-hex` | `show-key` | string | `""` — hex-encoded private key inline |
+| `--output`, `-o` | `generate-key`, `generate-p256-key` | string | **required** — writes the private key at mode 0600 |
+| `--key-file` | `show-key`, `show-p256-key` | string | `""` — hex-encoded private key file |
+| `--key-hex` | `show-key`, `show-p256-key` | string | `""` — hex-encoded private key inline |
 | `--cert-file` | `show-spki-pin` | string | `""` — PEM certificate |
 
 ```
 xkmsctl bootstrap noise generate-key --output noise.key
 xkmsctl bootstrap noise show-key --key-file noise.key
+
+xkmsctl bootstrap noise generate-p256-key --output p256.key
+xkmsctl bootstrap noise show-p256-key --key-file p256.key
 ```
+
+Which one you need follows the build. A FIPS server cannot run Noise_NK, so
+`generate-p256-key` is the only verb that produces a key it can serve; a
+non-FIPS server can serve both at once. See
+[`api.md`](api.md) §Two handshake suites on one port.
 
 `generate-key` writes the private key to the file named by `--output` and
 prints only the public key. Omitting `--output` is an error rather than a
@@ -130,6 +144,17 @@ reach the file.
 The **public** key is what clients need; distribute that. `--key-hex` puts a
 private key on a command line, so it lands in shell history and process
 listings — prefer `--key-file`.
+
+`generate-p256-key` and `show-p256-key` behave identically, through the same
+file-writing code: mode 0600, refusal to overwrite, and cleanup of a partial
+write. Their output is an uncompressed P-256 point (130 hex characters, leading
+`04`), not a 64-character Curve25519 key.
+
+**A length check cannot tell the two private keys apart.** Both curves use a
+32-byte scalar, so both hex-encode to 64 characters, and a Noise key handed to
+`show-p256-key` decodes cleanly into a *different, wrong* key. The check that
+catches it is comparing the public key the server serves against the one clients
+were given — which is what `show-p256-key --key-file` is for.
 
 ## `xkmsctl bootstrap spki`
 

@@ -220,6 +220,8 @@ func init() {
 	noiseCmd.AddCommand(noiseGenerateKeyCmd)
 	noiseCmd.AddCommand(noiseShowKeyCmd)
 	noiseCmd.AddCommand(noiseShowSPKIPinCmd)
+	noiseCmd.AddCommand(p256GenerateKeyCmd)
+	noiseCmd.AddCommand(p256ShowKeyCmd)
 
 	// Flags for generate-key
 	noiseGenerateKeyCmd.Flags().StringP("output", "o", "", "file to create the private key in, mode 0600 (required; must not exist; the key is never printed)")
@@ -227,6 +229,11 @@ func init() {
 	// Flags for show-key
 	noiseShowKeyCmd.Flags().String("key-file", "", "path to hex-encoded private key file")
 	noiseShowKeyCmd.Flags().String("key-hex", "", "hex-encoded private key")
+
+	// Flags for generate-p256-key / show-p256-key (the FIPS-approved suite)
+	p256GenerateKeyCmd.Flags().StringP("output", "o", "", "file to create the private key in, mode 0600 (required; must not exist; the key is never printed)")
+	p256ShowKeyCmd.Flags().String("key-file", "", "path to hex-encoded P-256 private key file")
+	p256ShowKeyCmd.Flags().String("key-hex", "", "hex-encoded P-256 private key")
 
 	// Flags for show-spki-pin
 	noiseShowSPKIPinCmd.Flags().String("cert-file", "", "path to PEM certificate file")

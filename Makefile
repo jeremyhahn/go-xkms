@@ -328,7 +328,12 @@ PKCS11_TEST_TIMEOUT ?= 10m
 XKMS_PKCS11_BACKENDS ?= software
 
 # Test configuration - include codec build tags for go-codec support
-TEST_FLAGS := -v -race -timeout 30m -tags="codec_cbor codec_json codec_msgpack tpm_simulator"
+TEST_TAGS := codec_cbor codec_json codec_msgpack tpm_simulator
+TEST_FLAGS := -v -race -timeout 30m -tags="$(TEST_TAGS)"
+# FIPS variant. The `fips` tag has to join the SAME -tags list rather than
+# arrive as a second flag: go test keeps only the last -tags it is given, so
+# appending a flag would silently drop the codec tags above.
+TEST_FLAGS_FIPS := -v -race -timeout 30m -tags="$(TEST_TAGS) fips"
 COVERAGE_FILE := $(COVERAGE_DIR)/coverage.out
 COVERAGE_HTML := $(COVERAGE_DIR)/coverage.html
 COVERAGE_THRESHOLD := 80
@@ -975,6 +980,28 @@ coverage-report:
 test-backend:
 	@echo "$(CYAN)→ Testing backend package...$(RESET)"
 	@$(GOTEST) $(TEST_FLAGS) ./pkg/backend/...
+
+.PHONY: test-server
+## test-server: Run server package unit tests
+test-server:
+	@echo "$(CYAN)→ Testing server package...$(RESET)"
+	@$(GOTEST) $(TEST_FLAGS) ./pkg/server/...
+
+.PHONY: test-server-fips
+## test-server-fips: Run server package unit tests in a FIPS build (approved bootstrap suite only)
+# The `fips` build tag is what go-truststrap keys its X25519 refusal on, so this
+# is the only lane that compiles the FIPS half of the bootstrap listener: Noise_NK
+# is unavailable and TSBOOT1_P256_AESGCM_SHA256 is the only suite offered. Without
+# it the approved handshake is never executed by any target (go-xkms#269).
+test-server-fips:
+	@echo "$(CYAN)→ Testing server package (FIPS build)...$(RESET)"
+	@$(GOTEST) $(TEST_FLAGS_FIPS) ./pkg/server/...
+
+.PHONY: test-config
+## test-config: Run config package unit tests
+test-config:
+	@echo "$(CYAN)→ Testing config package...$(RESET)"
+	@$(GOTEST) $(TEST_FLAGS) ./pkg/config/...
 
 .PHONY: test-xkms
 ## test-xkms: Run xkms package unit tests

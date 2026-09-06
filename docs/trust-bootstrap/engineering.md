@@ -1,6 +1,6 @@
 # Trust Bootstrap — Engineering Contract
 
-> **Status: NORMATIVE** · Feature: `trust-bootstrap` · Repo: `go-xkms` · Last verified: 2026-08-19
+> **Status: NORMATIVE** · Feature: `trust-bootstrap` · Repo: `go-xkms` · Last verified: 2026-09-06
 
 ## Exported surface — `pkg/trust/bootstrap`
 
@@ -103,6 +103,40 @@ server:
   noise_port: 8447        # configs/xkmsd-local.yaml
 ```
 
+Server side — the static keys the listener serves each suite with
+(`config.NoiseBootstrapConfig`, YAML key `bootstrap.noise`):
+
+```yaml
+bootstrap:
+  noise:
+    enabled: true
+    # Noise_NK (0x01). Unavailable in a FIPS build; ignored there.
+    static_key_file: /var/lib/xkms/noise.key
+    static_key_hex: ""
+    # TSBOOT1_P256_AESGCM_SHA256 (0x02), the approved suite.
+    p256_static_key_file: /var/lib/xkms/p256.key
+    p256_static_key_hex: ""
+```
+
+Each suite takes a file path or an inline hex scalar, hex first when both are
+set. A suite with neither gets an **ephemeral** key generated at startup, which
+is logged as a warning: an ephemeral responder key changes on every restart, so
+every client provisioned with the old public key fails to connect. Configure
+both explicitly in production.
+
+The struct is still named `NoiseBootstrapConfig` and still lives under the
+`bootstrap.noise` YAML key. That is historical — it predates the second suite —
+and is kept so existing configs keep parsing.
+
+**Key-loading failures are not interchangeable.** A suite that is *unavailable
+in this build* is skipped, which is the normal state of Noise_NK under FIPS. A
+suite that is *configured but whose key will not load* fails the whole listener,
+deliberately: falling through to the other suite would leave an operator looking
+at a healthy port while every client provisioned for the broken suite failed to
+connect. When no suite survives at all, construction fails with
+`*server.ErrNoBootstrapSuite`, which carries the rejection reason for each suite
+and unwraps to `bootstrap.ErrSuiteUnavailable`.
+
 **Known conflict, as shipped:** `DefaultNoisePort` is `"8445"`
 (`pkg/trust/bootstrap/bootstrap.go:98`), which is the same value the shipped
 configs use for `mcp_port`. `configs/xkmsd-local.yaml` sets `noise_port: 8447`
@@ -129,6 +163,16 @@ non-TOFU modes.
 
 ## Test strategy
 
+- **Suite availability and the listener's keys** —
+  `pkg/server/bootstrap_suite_test.go`, plus `pkg/trust/bootstrap/suite_test.go`
+  and its `suite_fips_test.go` / `suite_nofips_test.go` pair. These run under
+  **both** sets of build tags and assert the same invariants in each, because
+  the property under test is "the listener offers whatever suite this binary can
+  run" — a test that only held in one build could not distinguish that from
+  "the listener offers Noise". `make test-server` and `make test-server-fips`
+  are the two lanes; the FIPS one is the only target that compiles
+  go-truststrap's X25519 refusal, and it runs a real P-256 handshake end to end
+  rather than merely asserting the package builds.
 - **Unit** — `bootstrap_test.go`, `bootstrap_fetch_test.go`,
   `bootstrap_tofu_test.go`, `bootstrap_auto_tofu_gaps_test.go` (the auto-chain
   TOFU-exclusion behaviour has its own suite, because that is the rule most

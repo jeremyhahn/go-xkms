@@ -1312,6 +1312,13 @@ func TestLoadNoiseStaticKey_KeyFileMissing(t *testing.T) {
 // TestLoadNoiseStaticKey_Generate exercises the ephemeral key generation path
 // (no hex key, no key file configured).
 func TestLoadNoiseStaticKey_Generate(t *testing.T) {
+	// A build that cannot run Noise has no Noise key to load; assert that
+	// contract instead of the one below, which presumes the suite exists.
+	if !noiseRunnable() {
+		requireNoiseRefused(t, newMinimalServer(t, &config.Config{}))
+		return
+	}
+
 	s := newMinimalServer(t, &config.Config{
 		Bootstrap: config.BootstrapConfig{
 			Noise: config.NoiseBootstrapConfig{

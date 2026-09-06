@@ -188,6 +188,13 @@ func TestServer_FactorRegistry_NotNil(t *testing.T) {
 // ============================================================================
 
 func TestLoadNoiseStaticKey_GeneratesEphemeral(t *testing.T) {
+	// A build that cannot run Noise has no Noise key to load; assert that
+	// contract instead of the one below, which presumes the suite exists.
+	if !noiseRunnable() {
+		requireNoiseRefused(t, newMinimalServer(t, &config.Config{}))
+		return
+	}
+
 	cfg := &config.Config{
 		Bootstrap: config.BootstrapConfig{
 			Noise: config.NoiseBootstrapConfig{
@@ -203,6 +210,13 @@ func TestLoadNoiseStaticKey_GeneratesEphemeral(t *testing.T) {
 }
 
 func TestLoadNoiseStaticKey_FromHex(t *testing.T) {
+	// A build that cannot run Noise has no Noise key to load; assert that
+	// contract instead of the one below, which presumes the suite exists.
+	if !noiseRunnable() {
+		requireNoiseRefused(t, newMinimalServer(t, &config.Config{}))
+		return
+	}
+
 	// Generate a valid hex key first via the ephemeral path.
 	cfgEph := &config.Config{
 		Bootstrap: config.BootstrapConfig{
@@ -231,6 +245,13 @@ func TestLoadNoiseStaticKey_FromHex(t *testing.T) {
 }
 
 func TestLoadNoiseStaticKey_FromFile(t *testing.T) {
+	// A build that cannot run Noise has no Noise key to load; assert that
+	// contract instead of the one below, which presumes the suite exists.
+	if !noiseRunnable() {
+		requireNoiseRefused(t, newMinimalServer(t, &config.Config{}))
+		return
+	}
+
 	// Generate a valid hex key first via the ephemeral path.
 	cfgEph := &config.Config{
 		Bootstrap: config.BootstrapConfig{

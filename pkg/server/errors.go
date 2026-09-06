@@ -465,3 +465,60 @@ func (e *ErrUnknownAuthType) Error() string {
 		"server: unknown auth.type %q: valid types are \"jwt\", \"mtls\", \"composite\", "+
 			"or \"none\"/\"noop\" to disable authentication explicitly", e.Type)
 }
+
+// ErrNoBootstrapSuite reports that the bootstrap listener was enabled but this
+// binary can run neither handshake suite, so there is nothing to serve.
+//
+// It is raised while the listener is being CONFIGURED rather than at key
+// generation inside the accept loop. A FIPS build cannot run Noise_NK -- it
+// mandates X25519, which SP 800-56A Rev. 3 does not approve -- and before this
+// existed such a build bound no bootstrap listener at all while logging only
+// the key-generation failure, so the missing service looked like a connectivity
+// problem to every client and like nothing at all to the operator.
+//
+// Both fields carry the reason the corresponding suite was rejected, each
+// wrapping bootstrap.ErrSuiteUnavailable, and both are exposed through Unwrap
+// so errors.Is reaches them.
+type ErrNoBootstrapSuite struct {
+	// Noise is why Noise_NK_25519_ChaChaPoly_SHA256 is unavailable.
+	Noise error
+
+	// P256 is why TSBOOT1_P256_AESGCM_SHA256 is unavailable. The approved
+	// suite is available in every build, so a non-nil value here means
+	// go-truststrap itself could not generate a key.
+	P256 error
+}
+
+// Error returns the error message.
+func (e *ErrNoBootstrapSuite) Error() string {
+	return fmt.Sprintf(
+		"server: bootstrap is enabled but this build can run no handshake suite: "+
+			"Noise_NK: %v; TSBOOT1_P256_AESGCM_SHA256: %v", e.Noise, e.P256)
+}
+
+// Unwrap exposes both rejection reasons so errors.Is and errors.As reach the
+// suite-level sentinels behind them.
+func (e *ErrNoBootstrapSuite) Unwrap() []error {
+	return []error{e.Noise, e.P256}
+}
+
+// ErrP256KeyLength reports a configured P-256 bootstrap static key whose
+// hex-encoded form is the wrong length -- a truncated file, a stray character,
+// or a value that is not a scalar at all.
+//
+// It does NOT catch a Curve25519 key pasted into the P-256 field: both curves
+// use a 32-byte scalar, so both encode to 64 hex characters. That mistake
+// produces a valid key that simply is not the one clients pinned, and it is
+// caught by comparing the served public key against the distributed one, not
+// by any length check.
+type ErrP256KeyLength struct {
+	Got  int
+	Want int
+}
+
+// Error returns the error message.
+func (e *ErrP256KeyLength) Error() string {
+	return fmt.Sprintf(
+		"server: P-256 bootstrap static key is %d hex characters, want %d",
+		e.Got, e.Want)
+}

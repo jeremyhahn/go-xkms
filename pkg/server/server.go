@@ -67,6 +67,7 @@ import (
 	"github.com/jeremyhahn/go-xkms/pkg/storage"
 	filestorage "github.com/jeremyhahn/go-xkms/pkg/storage/file"
 	pinadapter "github.com/jeremyhahn/go-xkms/pkg/storage/pinadapter"
+	"github.com/jeremyhahn/go-xkms/pkg/trust/bootstrap"
 	clustercapkg "github.com/jeremyhahn/go-xkms/pkg/trust/clusterca"
 	"github.com/jeremyhahn/go-xkms/pkg/types"
 	"github.com/jeremyhahn/go-xkms/pkg/webauthn"
@@ -146,6 +147,16 @@ type Server struct {
 	// when Stop drains within its deadline.
 	noiseBootstrapKey *noiseproto.StaticKey
 
+	// p256BootstrapKey is the same thing for the FIPS-approved suite,
+	// TSBOOT1_P256_AESGCM_SHA256, which the same listener serves on the same
+	// port -- the suite is chosen per connection from the client's first
+	// frame, not per listener. It has the identical lifetime rule as
+	// noiseBootstrapKey and is claimed, destroyed and retained beside it.
+	//
+	// Either key may be nil: a suite whose key is absent is not offered, and
+	// a FIPS build has no Noise key at all.
+	p256BootstrapKey *bootstrap.P256StaticKey
+
 	// retainedNoiseKeys holds static keys a shutdown could not prove
 	// unreferenced. They are never destroyed: the pages stay locked for the
 	// life of the process, which is the deliberate trade against freeing
@@ -158,6 +169,10 @@ type Server struct {
 	// not look identical in the source, and holding the owner is what would
 	// let a future reclamation path exist at all.
 	retainedNoiseKeys []*noiseproto.StaticKey
+
+	// retainedP256Keys is the same retention set for the approved suite's
+	// keys, kept separate only because the two are different types.
+	retainedP256Keys []*bootstrap.P256StaticKey
 
 	// shutdownOnce/shutdownErr latch the shutdown outcome: concurrent callers
 	// must not both close shutdownCh, and must not reach different
@@ -2829,42 +2844,50 @@ func (s *Server) startNoiseBootstrap() {
 		maxConns = 100
 	}
 
-	// Load static key from file or hex config. Ownership stays here until it
-	// is published to the Server below: every early return between the two
-	// points has to release the protected pages, and the pre-publication
-	// cancellation path is a normal shutdown race, not an exceptional one.
-	staticKey, err := s.loadNoiseStaticKey()
+	// Resolve which handshake suites this build can offer and load a static
+	// key for each, BEFORE the listener is constructed. A build that can serve
+	// no suite says so once, here, instead of binding a port and then refusing
+	// every handshake (go-xkms#269, go-trusted-platform#209).
+	//
+	// Ownership stays here until the keys are published to the Server below:
+	// every early return between the two points has to release the protected
+	// pages, and the pre-publication cancellation path is a normal shutdown
+	// race, not an exceptional one.
+	keys, err := s.loadBootstrapKeys()
 	if err != nil {
-		s.logger.Error("Failed to load Noise static key", slog.Any("error", err))
+		s.logger.Error("Failed to load bootstrap static keys", slog.Any("error", err))
 		return
 	}
-	// This goroutine owns the key ONLY until it publishes it below.
+	// This goroutine owns the keys ONLY until it publishes them below.
 	//
-	// It used to own it outright, on the stated premise that "Start blocks
+	// It used to own them outright, on the stated premise that "Start blocks
 	// until the server has stopped". That premise is false:
 	// noiseboot.Server.Start binds the listener, launches its accept loop in
 	// a goroutine, and returns nil. Destroying on the way out of this
 	// function therefore freed the protected pages while the published server
-	// and every future handshake still aliased staticKey.DHKey — a
-	// use-after-free reachable by any client that connected afterwards.
+	// and every future handshake still aliased the key — a use-after-free
+	// reachable by any client that connected afterwards.
 	//
 	// So ownership moves to the Server at publication, and Shutdown destroys
-	// the key once Stop has confirmed the workers exited. Every exit path
-	// BEFORE publication still has to release it, which is what published
+	// the keys once Stop has confirmed the workers exited. Every exit path
+	// BEFORE publication still has to release them, which is what published
 	// tracks.
 	published := false
 	defer func() {
 		if !published {
-			staticKey.Destroy()
+			keys.destroy()
 		}
 	}()
 
 	serverCfg := &noiseboot.ServerConfig{
 		ListenAddr: addr,
-		// The embedded DHKey aliases the protected private scalar, so the
-		// bootstrap server reads it in place. It stays valid until Shutdown
-		// stops the server and destroys the key.
-		StaticKey:      &staticKey.DHKey,
+		// Both keys alias protected private scalars, so the bootstrap server
+		// reads them in place. They stay valid until Shutdown stops the server
+		// and destroys them. A nil key means that suite is not offered, and
+		// the listener refuses its suite byte per connection; loadBootstrapKeys
+		// has already guaranteed at least one is set.
+		StaticKey:      bootstrap.NoiseServerStaticKey(keys.noise),
+		P256StaticKey:  keys.p256,
 		CABundler:      bundler,
 		MaxConnections: maxConns,
 		ReadTimeout:    readTimeout,
@@ -2913,7 +2936,8 @@ func (s *Server) startNoiseBootstrap() {
 	cancelled = s.ctx.Err() != nil
 	if !cancelled {
 		s.noiseBootstrapServer = server
-		s.noiseBootstrapKey = staticKey
+		s.noiseBootstrapKey = keys.noise
+		s.p256BootstrapKey = keys.p256
 		published = true
 	}
 	s.mu.Unlock()
@@ -2944,8 +2968,8 @@ func (s *Server) startNoiseBootstrap() {
 		// Retained rather than freed, and deliberately kept reachable: see
 		// the note on retention in Shutdown.
 		published = true
-		s.retainNoiseKey(staticKey)
-		s.logger.Warn("retaining the Noise bootstrap static key: the stop " +
+		s.retainBootstrapKeys(keys)
+		s.logger.Warn("retaining the bootstrap static keys: the stop " +
 			"deadline expired during startup teardown")
 	}
 }
@@ -2961,6 +2985,27 @@ func (s *Server) retainNoiseKey(key *noiseproto.StaticKey) {
 	defer s.mu.Unlock()
 
 	s.retainedNoiseKeys = append(s.retainedNoiseKeys, key)
+}
+
+// retainBootstrapKeys parks both of a listener's static keys under the same
+// rule retainNoiseKey applies to one: a key a shutdown could not prove
+// unreferenced is kept, not freed. Nil fields are skipped, so a build that
+// offered only one suite retains only that suite's key.
+func (s *Server) retainBootstrapKeys(keys *bootstrapKeys) {
+	if keys == nil {
+		return
+	}
+
+	s.retainNoiseKey(keys.noise)
+
+	if keys.p256 == nil {
+		return
+	}
+
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	s.retainedP256Keys = append(s.retainedP256Keys, keys.p256)
 }
 
 // loadNoiseStaticKey loads the Noise static key from config. The returned key
@@ -3196,9 +3241,10 @@ func (s *Server) shutdown() error {
 	unixGRPC := s.unixGRPCServer
 	restSrv := s.restServer
 	noiseSrv := s.noiseBootstrapServer
-	noiseKey := s.noiseBootstrapKey
+	noiseKeys := &bootstrapKeys{noise: s.noiseBootstrapKey, p256: s.p256BootstrapKey}
 	s.noiseBootstrapServer = nil
 	s.noiseBootstrapKey = nil
+	s.p256BootstrapKey = nil
 	raftAdv := s.raftClusterAdvertiser
 	metricsSrv := s.metricsServer
 	s.mu.Unlock()
@@ -3247,14 +3293,12 @@ func (s *Server) shutdown() error {
 		cancelNoise()
 
 		if joined {
-			noiseKey.Destroy()
+			noiseKeys.destroy()
 		} else {
 			incomplete = append(incomplete, "noise bootstrap handshake workers")
-			if noiseKey != nil {
-				s.retainNoiseKey(noiseKey)
-				s.logger.Warn("retaining the Noise bootstrap static key: the stop " +
-					"deadline expired, so a handshake may still be reading it")
-			}
+			s.retainBootstrapKeys(noiseKeys)
+			s.logger.Warn("retaining the bootstrap static keys: the stop " +
+				"deadline expired, so a handshake may still be reading them")
 		}
 	}
 
@@ -3304,11 +3348,11 @@ func (s *Server) shutdown() error {
 	// only in a log line was the last place an incomplete shutdown could
 	// still report success.
 	s.mu.RLock()
-	retained := len(s.retainedNoiseKeys)
+	retained := len(s.retainedNoiseKeys) + len(s.retainedP256Keys)
 	s.mu.RUnlock()
 	if retained > 0 {
 		incomplete = append(incomplete,
-			fmt.Sprintf("%d retained noise static key(s)", retained))
+			fmt.Sprintf("%d retained bootstrap static key(s)", retained))
 	}
 
 	close(s.shutdownCh)

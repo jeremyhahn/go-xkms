@@ -1,6 +1,6 @@
 # Trust Bootstrap — API
 
-> **Status: NORMATIVE** · Feature: `trust-bootstrap` · Repo: `go-xkms` · Last verified: 2026-08-19
+> **Status: NORMATIVE** · Feature: `trust-bootstrap` · Repo: `go-xkms` · Last verified: 2026-09-06
 
 Transport shapes: [`../key-management/api.md`](../key-management/api.md)
 §"How the six transports are shaped".
@@ -45,8 +45,35 @@ design and by necessity.
 
 The Noise serving side is `pkg/trust/bootstrap/noise_server.go`, listening on
 the configured `noise_port`. It is not an HTTP endpoint: the client completes a
-Noise_NK handshake pinned to the server's static public key, and the bundle is
-delivered in-band on that channel.
+handshake pinned to the server's static public key, and the bundle is delivered
+in-band on that channel.
+
+### Two handshake suites on one port
+
+The listener speaks two suites and selects **per connection**, from the suite
+byte in the client's first frame. There is no separate port and no separate
+listener:
+
+| Suite | Wire byte | Handshake | FIPS |
+|---|---|---|---|
+| `SuiteNoiseNK` | `0x01` | `Noise_NK_25519_ChaChaPoly_SHA256` | **no** — mandates X25519, which SP 800-56A Rev. 3 does not approve |
+| `SuiteP256AESGCM` | `0x02` | `TSBOOT1_P256_AESGCM_SHA256` | yes |
+
+A suite whose static key is not configured is simply not offered, and a
+connection selecting it is refused with go-truststrap's `ErrUnsupportedSuite`.
+A FIPS build cannot run Noise_NK at all, so there the P-256 suite is the only
+one the listener serves.
+
+Which suites a binary *can* run is resolved while the listener is being
+configured, not at key generation — see
+[`architecture.md`](architecture.md) §Suite availability is resolved at
+construction.
+
+**Wire compatibility:** the two-byte `version || suite` header arrived with
+go-truststrap v0.4.0-alpha. Peers older than that sent a bare Noise message 1
+with no header and no prologue, and are refused by design — upstream lists
+"strip the header and speak the old wire" among the downgrade attacks it
+defends against. Both ends of a bootstrap pair move together.
 
 ## The client side
 

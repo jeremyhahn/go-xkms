@@ -1,6 +1,6 @@
 # Trust Bootstrap — Architecture
 
-> **Status: NORMATIVE** · Feature: `trust-bootstrap` · Repo: `go-xkms` · Last verified: 2026-08-19
+> **Status: NORMATIVE** · Feature: `trust-bootstrap` · Repo: `go-xkms` · Last verified: 2026-09-06
 
 ## The problem
 
@@ -121,6 +121,44 @@ through the anchor, not through the connection.
   substitute them is total compromise.
 - **Nothing is cached inside the library.** A caller that caches a bundle owns
   the staleness and the revocation problem.
+
+## Suite availability is resolved at construction
+
+The bootstrap listener speaks two handshake suites (see
+[`api.md`](api.md) §Two handshake suites on one port). Which ones a given binary
+*can* run is a property of the build, so it is resolved while the listener is
+being configured rather than at key generation inside the accept loop. An
+operator whose build can serve nothing learns it once, at startup, with a typed
+error naming both suites — not from every client that later fails to connect.
+
+**Availability is asked of the library, not of a FIPS predicate.** The obvious
+`if fips.Compiled()` is wrong for the reason already recorded on the certstore
+thumbprint: `GODEBUG=fips140=off` turns that predicate false on a
+GOFIPS140-built binary, so the guard fails *open* for exactly the artifacts the
+policy most cares about. `EnsureSuiteAvailable` instead attempts the key
+generation and classifies the result, caching it per process. That reads the
+build's real behaviour, cannot disagree with the code that will run the
+handshake, and tracks upstream if go-truststrap's FIPS support later changes.
+It is also why both FIPS mechanisms are covered by one implementation: the
+`fips` build tag, which compiles go-truststrap's X25519 out, and
+`GODEBUG=fips140=only`, where `crypto/ecdh` refuses X25519 at run time, produce
+different errors but the same answer.
+
+**A rejected suite and a broken key are not the same failure.** A suite this
+build cannot run is skipped silently; a suite that is configured but whose key
+will not load fails the whole listener. Falling through in the second case would
+leave an operator looking at a healthy port while every client provisioned for
+the broken suite failed to connect — a silent downgrade presented as success.
+
+### Rejected: a compatibility shim for the old wire
+
+go-truststrap v0.4.0-alpha's first frame carries a `version || suite` header;
+before it, the Noise bootstrap sent a bare Noise message 1. Upstream lists
+"strip the header and speak the old wire" among the downgrade attacks it
+deliberately defends against, so there is no silent fallback and an
+un-upgraded peer is refused. Adding a shim here to accept the old wire would
+reintroduce exactly the downgrade upstream closed. Owner-ruled: clean
+integration, both bootstrap ends move together.
 
 ## What this feature deliberately does not do
 

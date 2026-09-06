@@ -1007,7 +1007,17 @@ type BootstrapConfig struct {
 	DANE  DANEBootstrapConfig  `yaml:"dane"`
 }
 
-// NoiseBootstrapConfig configures the Noise_NK bootstrap server/client.
+// NoiseBootstrapConfig configures the bootstrap listener.
+//
+// The listener speaks two handshake suites and selects per connection on the
+// suite byte in the client's first frame, so this struct carries a static key
+// for each: Noise_NK (Curve25519) and TSBOOT1_P256_AESGCM_SHA256. The name is
+// historical -- it predates the second suite -- and is kept because it is the
+// `bootstrap.noise` YAML key operators already have in their configs.
+//
+// A suite whose key is absent is simply not offered. A FIPS build cannot run
+// Noise_NK at all (X25519 is not approved under SP 800-56A Rev. 3), so there
+// the P-256 key is the only one that has any effect.
 type NoiseBootstrapConfig struct {
 	// Enabled controls whether Noise bootstrap is active
 	Enabled bool `yaml:"enabled"`
@@ -1017,6 +1027,14 @@ type NoiseBootstrapConfig struct {
 
 	// StaticKeyHex is an inline hex-encoded Noise static private key
 	StaticKeyHex string `yaml:"static_key_hex"`
+
+	// P256StaticKeyFile is the path to the hex-encoded P-256 static private
+	// key file for the FIPS-approved suite.
+	P256StaticKeyFile string `yaml:"p256_static_key_file"`
+
+	// P256StaticKeyHex is an inline hex-encoded P-256 static private key for
+	// the FIPS-approved suite.
+	P256StaticKeyHex string `yaml:"p256_static_key_hex"`
 
 	// MaxConnections is the maximum concurrent bootstrap connections (default: 100)
 	MaxConnections int `yaml:"max_connections"`
