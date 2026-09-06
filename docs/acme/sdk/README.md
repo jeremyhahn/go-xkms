@@ -169,6 +169,36 @@ if err != nil {
 | `Directory()` | Get | ACME directory resource |
 | `Nonce()` | Get | Replay protection nonces |
 
+### Challenge Responders
+
+Both halves of a challenge are exported, so a consumer that imports only
+`sdk/go` can run an ACME client as well as talk to an ACME server.
+
+| Symbol | Half | Description |
+|--------|------|-------------|
+| `NewHTTP01Responder(HTTP01ResponderConfig)` | client | Binds a listener and serves the key authorization at the well-known http-01 path. Returns a typed error if the bind fails. |
+| `HTTP01Responder` | client | The bound responder: `Addr`, `KeyAuth`, `Done`, `Err`, `Shutdown(ctx)`, `Close`. |
+| `ACMEVerifyHTTP01` | server | Fetches the key authorization from a client under validation. |
+| `ACMEComputeDNS01ChallengeValue` | client | Computes the dns-01 TXT record value. |
+| `ACMEVerifyDNS01` | server | Resolves and checks the dns-01 TXT record. |
+
+```go
+responder, err := trustedca.NewHTTP01Responder(trustedca.HTTP01ResponderConfig{
+    Addr:    "80",
+    KeyAuth: keyAuth,
+})
+if err != nil {
+    return err
+}
+defer func() { _ = responder.Close() }()
+```
+
+The bind is eager, so a nil error means the responder is already serving and
+the order may be accepted at once. Each responder owns its own listener, so
+concurrent orders are safe. See
+[`docs/acme/challenges.md`](../challenges.md#http-01-challenge) for the full
+contract and the deprecated process-global alternative.
+
 ### Admin Services
 
 | Service | Method | Description |

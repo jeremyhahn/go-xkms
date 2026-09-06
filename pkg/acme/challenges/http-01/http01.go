@@ -69,16 +69,32 @@ func (e ErrKeyAuthorizationMismatch) Error() string {
 }
 
 var (
-	serverMu              sync.Mutex
-	server                *http.Server
-	shutdownOnce          sync.Once
-	serverShutdownTimeout = 15 * time.Second
-	// fatalHandler allows tests to override fatal error behavior
-	// Uses log.Printf instead of log.Fatalf to avoid process termination
+	// serverMu guards activeResponder and fatalHandler.
+	serverMu sync.Mutex
+
+	// activeResponder is the single Responder owned by the deprecated
+	// process-global Setup/Shutdown pair. Callers that need more than one
+	// concurrent order use NewResponder directly and hold their own.
+	activeResponder *Responder
+
+	serverShutdownTimeout = DefaultShutdownTimeout
+
+	// fatalHandler reports an error the deprecated Setup/Shutdown signature
+	// cannot return. Uses log.Printf instead of log.Fatalf to avoid process
+	// termination; tests override it to observe the error.
 	fatalHandler = func(format string, v ...interface{}) {
 		log.Printf("ERROR: "+format, v...)
 	}
 )
+
+// fatalf reports through the current fatalHandler under serverMu, so a test
+// swapping the handler cannot race the call site.
+func fatalf(format string, v ...interface{}) {
+	serverMu.Lock()
+	handler := fatalHandler
+	serverMu.Unlock()
+	handler(format, v...)
+}
 
 // Verify performs http-01 challenge verification as defined in RFC 8555.
 //
@@ -148,70 +164,68 @@ func Verify(
 
 // Setup initializes an HTTP server to respond to http-01 challenges.
 //
-// The server listens on the specified port and serves the key authorization
-// at the well-known challenge path. This function is typically called by
-// ACME clients to prepare for challenge validation.
+// Deprecated: Setup owns a single process-global responder and cannot report a
+// bind failure, because its signature has no error to return; the failure
+// reaches the caller only as a rejected authorization. Use NewResponder, which
+// binds eagerly, returns a typed error, exposes the bound address, and lets
+// concurrent orders each hold their own responder.
+//
+// Setup is retained for existing callers and delegates to NewResponder. A bind
+// failure is reported through the package fatal handler. Setting up a second
+// responder while one is active shuts the first one down rather than leaking
+// its listener.
 //
 // Parameters:
 //   - port: Port number to listen on (e.g., "80", "8080")
 //   - keyAuth: Key authorization to serve in response to challenge requests
-//
-// The server runs in a background goroutine and can be stopped using Shutdown().
 func Setup(port, keyAuth string) {
-
-	mux := http.NewServeMux()
-	mux.HandleFunc(wellKnownChallengePath, challengeHandlerHTTPx(keyAuth))
 
 	slog.Info("Setting up http-01 challenge", slog.String("port", port))
 
-	serverMu.Lock()
-	// Reset shutdownOnce for new server instance
-	shutdownOnce = sync.Once{}
-	server = &http.Server{
-		Addr:         port,
-		Handler:      mux,
-		ReadTimeout:  5 * time.Second,
-		WriteTimeout: 10 * time.Second,
-		IdleTimeout:  120 * time.Second,
+	responder, err := NewResponder(ResponderConfig{Addr: port, KeyAuth: keyAuth})
+	if err != nil {
+		fatalf("Failed to listen on %s: %v", port, err)
+		return
 	}
-	currentServer := server
+
+	serverMu.Lock()
+	previous := activeResponder
+	activeResponder = responder
 	serverMu.Unlock()
 
-	go func() {
-		listener, err := net.Listen("tcp", fmt.Sprintf(":%s", port))
-		if err != nil {
-			fatalHandler("Failed to listen on %s: %v", port, err)
-			return
+	if previous != nil {
+		if err := previous.Close(); err != nil {
+			fatalf("Server shutdown failed: %v", err)
 		}
-		if err := currentServer.Serve(listener); err != nil && err != http.ErrServerClosed {
-			fatalHandler("HTTP server error: %v", err)
-			return
-		}
-	}()
+	}
 }
 
-// Shutdown gracefully stops the HTTP challenge server.
+// Shutdown gracefully stops the HTTP challenge server started by Setup.
+//
+// Deprecated: use Responder.Shutdown, which takes a context and returns the
+// shutdown error instead of routing it to the package fatal handler.
 //
 // The function initiates a graceful shutdown with a timeout, allowing
 // in-flight requests to complete. This function is safe to call multiple
 // times; subsequent calls are no-ops.
 func Shutdown() {
 	slog.Info("Shutting down HTTP challenge server")
+
 	serverMu.Lock()
-	currentServer := server
-	once := &shutdownOnce
+	responder := activeResponder
+	activeResponder = nil
 	serverMu.Unlock()
 
-	once.Do(func() {
-		if currentServer == nil {
-			return
-		}
-		ctx, cancel := context.WithTimeout(context.Background(), serverShutdownTimeout)
-		defer cancel()
-		if err := currentServer.Shutdown(ctx); err != nil {
-			fatalHandler("Server shutdown failed: %v", err)
-		}
-	})
+	if responder == nil {
+		return
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), serverShutdownTimeout)
+	defer cancel()
+
+	if err := responder.Shutdown(ctx); err != nil {
+		fatalf("Server shutdown failed: %v", err)
+	}
 }
 
 // challengeHandlerHTTPx returns an HTTP handler function that serves the key authorization

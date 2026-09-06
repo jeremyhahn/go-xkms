@@ -7,6 +7,54 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **The client-side http-01 challenge responder is now an SDK surface**
+  (#379). `pkg/acme/challenges/http-01` implemented both halves of the
+  challenge, but `sdk/go` exported only the ACME *server* half
+  (`ACMEVerifyHTTP01`), so a consumer reaching go-xkms exclusively through its
+  SDK — as go-quicbaas and go-trusted-platform are required to — could not
+  answer an http-01 challenge at all.
+
+  `sdk/go/acme` now exports `NewHTTP01Responder` and `HTTP01Responder`
+  alongside `HTTP01ResponderConfig` and the typed errors
+  `HTTP01ResponderConfigError`, `HTTP01ResponderBindError` and
+  `HTTP01ResponderShutdownError`. The responder is an instance rather than
+  process-global state, which fixes three defects the raw functions would have
+  carried into every consumer had they simply been aliased:
+
+  - **The bind is eager and its failure is returned.** `Setup` ran `net.Listen`
+    in a spawned goroutine and sent the error to a package-level log handler, so
+    a caller lacking `CAP_NET_BIND_SERVICE` for port 80, or colliding with an
+    existing listener, saw setup succeed and learned of it only as a generic
+    "authorization status is not valid". `NewHTTP01Responder` returns
+    `HTTP01ResponderBindError`, which unwraps to the underlying `net` error.
+  - **There is no readiness race.** `Setup` returned before the listener bound,
+    while the ACME client accepts the challenge immediately after provisioning
+    it, so validation could be requested before anything was listening.
+    `NewHTTP01Responder` returns only once the responder is accepting
+    connections.
+  - **Concurrent orders are safe.** `server` and `shutdownOnce` were package
+    variables, so a second order replaced the first order's listener and the
+    first `Shutdown` then stopped the second order's. Each responder now owns
+    its listener.
+
+  `Addr()` reports the bound address and `Done()`/`Err()` report the serve
+  loop's fate. `Shutdown(ctx)` stops the responder gracefully and `Close()`
+  stops it immediately; once stopped, either call is a no-op returning nil, so
+  `defer responder.Close()` stays correct after an explicit `Shutdown`, while a
+  `Shutdown` that misses its deadline leaves the responder running so `Close`
+  can force the teardown. Documented in `docs/acme/challenges.md` and
+  `docs/acme/sdk/`.
+
+### Deprecated
+
+- **`http01.Setup` and `http01.Shutdown`** (#379). They keep working and now
+  delegate to a single `Responder`, so there is one implementation rather than
+  two, and setting up a second responder retires the first instead of leaking
+  its listener. New code uses `NewHTTP01Responder`, which the deprecation notes
+  point at.
+
 ## [0.9.4-alpha] - 2026-09-05
 
 ### Added

@@ -112,15 +112,50 @@ func Verify(
 
 ### Client Setup
 
+The client half of the challenge is a short-lived HTTP server serving the key
+authorization. It is reachable from the SDK, so a consumer that imports only
+`sdk/go` can answer an http-01 challenge:
+
 ```go
-import "github.com/jeremyhahn/go-xkms/pkg/acme/challenges/http-01"
+import trustedca "github.com/jeremyhahn/go-xkms/sdk/go/acme"
 
-// Start HTTP server to respond to challenges
-http01.Setup("80", keyAuth)
-
-// After challenge completion
-http01.Shutdown()
+responder, err := trustedca.NewHTTP01Responder(trustedca.HTTP01ResponderConfig{
+    Addr:    "80",       // a bare port, or any net.Listen address such as "127.0.0.1:8080"
+    KeyAuth: keyAuth,
+})
+if err != nil {
+    return err          // nothing is listening; do not accept the challenge
+}
+defer func() { _ = responder.Close() }()
 ```
+
+The listener is bound before `NewHTTP01Responder` returns, so:
+
+- A bind failure — no `CAP_NET_BIND_SERVICE` for port 80, or the port already
+  held — arrives as a typed `HTTP01ResponderBindError` at the call, not as a
+  rejected authorization several round trips later.
+- The responder is already answering when the call returns, so the order may be
+  accepted immediately without racing the server's validation request.
+- Each responder owns its listener, so concurrent orders each take their own on
+  their own address and cannot disturb one another.
+
+`Addr()` reports the bound address, which is where a kernel-assigned port shows
+up when the configuration asked for port 0. `Shutdown(ctx)` stops the responder
+gracefully and `Close()` stops it immediately. Once the responder has stopped,
+either call is a no-op returning nil, so the deferred `Close` above stays
+correct after an explicit `Shutdown`; a `Shutdown` that misses its deadline
+returns `HTTP01ResponderShutdownError` and leaves the responder running, so
+`Close` can force the teardown.
+
+Wiring the responder into an order goes through the `ChallengeSetup` and
+`ChallengeCleanup` seams of `ACMECertificateRequest`; see
+[`sdk/go/acme/http01_responder.go`](../../sdk/go/acme/http01_responder.go) for a
+complete example.
+
+The process-global `http01.Setup` / `http01.Shutdown` pair in
+`pkg/acme/challenges/http-01` is **deprecated**. It cannot report a bind
+failure, because its signature has no error to return, and it holds one
+responder for the whole process, so two concurrent orders clobber each other.
 
 ### Error Types
 
@@ -128,6 +163,9 @@ http01.Shutdown()
 |-------|-------------|
 | `ErrUnexpectedHTTPStatus` | HTTP response status is not 200 OK |
 | `ErrKeyAuthorizationMismatch` | Response body doesn't match expected keyAuth |
+| `HTTP01ResponderConfigError` | A required `HTTP01ResponderConfig` field is missing |
+| `HTTP01ResponderBindError` | The responder could not take the address; unwraps to the `net` error |
+| `HTTP01ResponderShutdownError` | A graceful shutdown did not finish before its deadline |
 
 ### Wildcard Domains
 
