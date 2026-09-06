@@ -664,23 +664,50 @@ signature by the *credential* key over a zeroed AAGUID, and it conveys no device
 provenance.
 
 This requires provisioning, because the chain must come from an attestation CA
-the relying party trusts. There is no built-in root:
+the relying party trusts. There is no built-in root.
 
-1. Set an SO PIN and unlock with it.
-2. Run the `replaceAttestKey` vendor command. The device generates a P-256
-   attestation key — the private key never leaves it — and returns a PKCS#10
-   certificate signing request carrying Subject-OU
-   `Authenticator Attestation` and the `id-fido-gen-ce-aaguid` extension.
-3. Have your attestation CA issue a certificate for that request. It must meet
-   the §8.2.1 requirements: X.509 v3, Subject-C and Subject-O naming the vendor,
-   Subject-OU exactly `Authenticator Attestation`, Basic Constraints CA:false,
-   and a non-critical `id-fido-gen-ce-aaguid` extension holding this
-   authenticator's AAGUID.
-4. Install the chain with the `setAttestCert` vendor command: the leaf under
-   `attestCert`, any intermediates (leaf-to-root, excluding the root) under
-   `attestCertChain`. The device re-runs every check a relying party would, and
-   rejects a chain that would fail on arrival.
-5. Configure the relying party to trust your root.
+`xkey fido2 provision-attestation` runs the whole exchange:
+
+```bash
+# The daemon owns the device state, so stop it first.
+xkey fido2 provision-attestation
+```
+
+It prompts for the SO PIN — provisioning the attestation identity is a Security
+Officer operation, using it is not — and then:
+
+1. Asks the device for an attestation key. The device generates a P-256 key and
+   returns a PKCS#10 certificate signing request carrying Subject-OU
+   `Authenticator Attestation` and the `id-fido-gen-ce-aaguid` extension. **The
+   private key never leaves the device.**
+2. Submits the request to the xkms enterprise CA resolved from `--xkmsd-url`,
+   `XKMSD_URL` or `xkmsd.address`. Use `--profile` and `--validity-days` to name
+   the certificate profile the CA should issue under.
+3. Installs the issued leaf and its intermediates, dropping the CA's own trust
+   anchor: WebAuthn `x5c` runs from the leaf up to but excluding the root.
+4. Reads the chain back out of the persisted device state and verifies it — the
+   leaf certifies the key the device holds, and vouches for the device's AAGUID
+   — then reports the AAGUID, the certificate and the root.
+
+The certificate the CA issues must meet the §8.2.1 requirements: X.509 v3,
+Subject-C and Subject-O naming the vendor, Subject-OU exactly
+`Authenticator Attestation`, Basic Constraints CA:false, and a non-critical
+`id-fido-gen-ce-aaguid` extension holding this authenticator's AAGUID. A
+certificate that misses any of them, or that certifies some other key, is
+refused at install rather than silently disabling attestation at the first
+registration.
+
+Finally, configure the relying party to trust your root.
+
+The command refuses rather than half-provisioning a device:
+
+| Situation | Behaviour |
+|-----------|-----------|
+| CA unreachable | Fails before the device generates anything; the device is left exactly as it was |
+| CA refuses to issue | No certificate installed; the device keeps registering with `none`, and the command can simply be run again |
+| Device already has a certificate | Refused. `--rotate` replaces the identity, which invalidates every statement issued under the old key |
+| FIDO2 daemon running | Refused; the daemon owns the state and would overwrite the change |
+| `fido2.storage` is `memory` | Refused; the identity would be discarded with the process |
 
 Until a certificate is installed the device registers credentials with `none`.
 Provisioning is not a prerequisite for registration; it is a prerequisite for
