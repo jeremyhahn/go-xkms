@@ -91,7 +91,12 @@ type SetupChoices struct {
 	SealerBackend      string `json:"sealer_backend"`     // "tpm2", "passphrase", "" (auto)
 	QuickSetup         bool   `json:"quick_setup"`        // True when quick setup flow is used
 	DeploymentMode     string `json:"deployment_mode"`    // "personal" or "enterprise"
-	SavePinsToStore    bool   `json:"save_pins_to_store"` // Save PINs to password store (manual setup option)
+	SavePinsToStore    bool   `json:"save_pins_to_store"` // Save the User PIN to the password store (manual setup option); never the SO PIN (#290)
+	// SOPINRecorded is the operator's acknowledgement that a wizard-generated
+	// SO PIN has been recorded somewhere outside this device. Quick setup
+	// refuses to apply until it is true: the SO PIN is shown once and the
+	// device keeps no retrievable copy (#290).
+	SOPINRecorded bool `json:"so_pin_recorded"`
 
 	// Enterprise policy fields (used by ApplySOProvisioning).
 	OrganizationName         string `json:"organization_name"`
@@ -237,6 +242,10 @@ func pinMeetsComplexity(pin string) bool {
 // SO PIN: 16 characters with full complexity (uppercase, lowercase, digits,
 // special characters). User PIN: 12 characters with full complexity.
 // Both PINs are guaranteed to contain at least one character from each class.
+//
+// The returned SO PIN is the operator's one chance to record it: the wizard
+// displays it once and the device never keeps a retrievable copy (#290).
+// ApplySetup only persists what verification needs, through the PIN service.
 func (s *SetupWizardService) GenerateSetupPINs() (*GeneratedPINs, error) {
 	soPin, err := generateRandomPIN(16)
 	if err != nil {
@@ -488,6 +497,15 @@ func (s *SetupWizardService) ApplySetup(choices *SetupChoices) (*SetupResult, er
 	}
 	if choices.UserPin == "" {
 		return nil, ErrSetupUserPINRequired
+	}
+
+	// Quick setup applies a wizard-generated SO PIN the operator has never
+	// typed. It is displayed once and never persisted on the device (#290),
+	// so refuse to apply until the operator has acknowledged recording it
+	// out of band. Manual setup needs no acknowledgement: the operator chose
+	// and confirmed the SO PIN themselves.
+	if choices.QuickSetup && !choices.SOPINRecorded {
+		return nil, ErrSetupSOPINNotRecorded
 	}
 
 	result := &SetupResult{
@@ -829,23 +847,19 @@ func (s *SetupWizardService) ApplySetup(choices *SetupChoices) (*SetupResult, er
 	}
 
 	// Step 8: Configure password protection.
-	// In quick-setup personal mode, save auto-generated PINs to the
-	// password store so the user can retrieve them after the app locks.
+	// In quick-setup personal mode, save the auto-generated User PIN to the
+	// password store so the user can retrieve it after the app locks.
+	//
+	// The SO PIN is deliberately NOT saved anywhere on the device (#290). It
+	// is the recovery credential for a forgotten User PIN, and the password
+	// store is unlocked by the User PIN — storing it there would put the
+	// recovery credential behind the thing it recovers. The wizard shows the
+	// generated SO PIN once and requires the operator to acknowledge
+	// recording it out of band (see SOPINRecorded); only the PIN service's
+	// verifier persists.
 	s.emitProgress(8, "Configuring password protection")
-	savePins := (choices.QuickSetup && choices.DeploymentMode == "personal") || choices.SavePinsToStore
-	if dataDirReady && savePins && s.staticPwSvc != nil {
-		if choices.SOPin != "" {
-			if _, err := s.staticPwSvc.AddPasswordV2(AddPasswordParams{
-				Name:       "SO PIN",
-				Password:   choices.SOPin,
-				Notes:      "Security Officer PIN — auto-generated during setup. Required to change the User PIN.",
-				FolderPath: "xKey",
-			}); err != nil {
-				slog.Warn("wizard: failed to save SO PIN to password store", "error", err)
-				result.Warnings = append(result.Warnings,
-					fmt.Sprintf("failed to save SO PIN to password store: %v", err))
-			}
-		}
+	saveUserPin := (choices.QuickSetup && choices.DeploymentMode == "personal") || choices.SavePinsToStore
+	if dataDirReady && saveUserPin && s.staticPwSvc != nil {
 		if choices.UserPin != "" {
 			if _, err := s.staticPwSvc.AddPasswordV2(AddPasswordParams{
 				Name:       "User PIN",

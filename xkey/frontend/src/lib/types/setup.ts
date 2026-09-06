@@ -54,7 +54,14 @@ export interface SetupChoices {
   so_pin: string;
   user_pin: string;
   use_user_pin_as_master: boolean;
+  /** Manual setup: save the User PIN to the password store. Never the SO PIN (#290). */
   save_pins_to_store: boolean;
+  /**
+   * Quick setup: the operator has acknowledged recording the generated SO PIN
+   * somewhere outside this device. The backend refuses ApplySetup for a quick
+   * setup until this is true; the SO PIN is shown once and never stored (#290).
+   */
+  so_pin_recorded: boolean;
   set_hierarchy_auth: boolean;
   enable_auto_unseal?: boolean;
   storage_type: string;

@@ -4503,6 +4503,7 @@ export namespace services {
 	    quick_setup: boolean;
 	    deployment_mode: string;
 	    save_pins_to_store: boolean;
+	    so_pin_recorded: boolean;
 	    organization_name: string;
 	    min_pin_length: number;
 	    pin_max_attempts: number;
@@ -4552,6 +4553,7 @@ export namespace services {
 	        this.quick_setup = source["quick_setup"];
 	        this.deployment_mode = source["deployment_mode"];
 	        this.save_pins_to_store = source["save_pins_to_store"];
+	        this.so_pin_recorded = source["so_pin_recorded"];
 	        this.organization_name = source["organization_name"];
 	        this.min_pin_length = source["min_pin_length"];
 	        this.pin_max_attempts = source["pin_max_attempts"];

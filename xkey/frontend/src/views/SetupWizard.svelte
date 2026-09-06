@@ -50,7 +50,6 @@
   let userPinTimer = 0;
   let soPinTimerInterval: ReturnType<typeof setInterval> | null = null;
   let userPinTimerInterval: ReturnType<typeof setInterval> | null = null;
-  let quickSetupAcknowledged = false;
 
   /** Labels for personal setup backend steps (must match setupTotalSteps in Go). */
   const setupStepLabels = [
@@ -204,6 +203,12 @@
     if (pins) {
       setChoice('so_pin', pins.so_pin);
       setChoice('user_pin', pins.user_pin);
+      // A freshly generated SO PIN has not been recorded yet, whatever the
+      // operator acknowledged for a previous generation. It is shown once on
+      // the credentials step and never stored on the device (#290).
+      setChoice('so_pin_recorded', false);
+      showSOPin = false;
+      showUserPin = false;
     }
     // Auto-select sealer backend based on TPM availability
     if (probe && (probe.tpm_available || probe.tpm_device_exists)) {
@@ -1020,11 +1025,11 @@
       {:else if flow === 'setup' && step === 4 && isQuickSetup && choices.deployment_mode === 'personal'}
         <div class="step-content">
           <h2 class="text-headline-medium">Generated Credentials</h2>
-          <p class="text-body-large">Your PINs have been securely generated and will be saved to the password store automatically.</p>
+          <p class="text-body-large">Your PINs have been securely generated. Record the SO PIN now — this is the only time it will be shown.</p>
 
-          <div class="info-banner info">
-            <Icon path={mdiInformation} size={18} />
-            <span class="text-body-small">Both the SO PIN and User PIN will be stored in the <strong>xKey</strong> folder of your password store during setup. You can view them there after setup completes.</span>
+          <div class="info-banner warning">
+            <Icon path={mdiAlert} size={18} />
+            <span class="text-body-small">The SO PIN is your recovery credential: it is what resets a forgotten User PIN. It is <strong>never stored on this device</strong>, because the password store is unlocked by the User PIN it exists to recover. Keep it somewhere outside xKey, such as a printed sheet or another password manager.</span>
           </div>
 
           <div class="section-group">
@@ -1033,7 +1038,19 @@
               <span class="text-title-medium">Security Officer (SO) PIN</span>
               <span class="badge badge-success text-label-small">16 chars — auto-generated</span>
             </div>
-            <p class="text-body-medium">Stored in password store → xKey folder. Required to change the User PIN.</p>
+            <div class="credential-row">
+              <code class="credential-value" data-testid="wizard-generated-so-pin">{showSOPin ? choices.so_pin : '•'.repeat(choices.so_pin.length)}</code>
+              <button class="btn-icon" type="button" on:click={() => { showSOPin = !showSOPin; }} title={showSOPin ? 'Hide SO PIN' : 'Show SO PIN'} aria-label={showSOPin ? 'Hide SO PIN' : 'Show SO PIN'}>
+                <Icon path={showSOPin ? mdiEyeOff : mdiEye} size={18} />
+              </button>
+              <button class="btn-icon" type="button" on:click={() => copyPin('so')} title="Copy SO PIN (clears after 30s)" aria-label="Copy SO PIN">
+                <Icon path={soPinCopied ? mdiCheck : mdiContentCopy} size={18} />
+              </button>
+              {#if soPinCopied}
+                <span class="text-label-small credential-timer">clears in {soPinTimer}s</span>
+              {/if}
+            </div>
+            <p class="text-body-medium">Shown once. Not stored on this device. Required to change or reset the User PIN.</p>
           </div>
 
           <div class="section-group">
@@ -1042,17 +1059,29 @@
               <span class="text-title-medium">User PIN</span>
               <span class="badge badge-success text-label-small">12 chars — auto-generated</span>
             </div>
-            <p class="text-body-medium">Stored in password store → xKey folder. Used to unlock the app.</p>
+            <div class="credential-row">
+              <code class="credential-value" data-testid="wizard-generated-user-pin">{showUserPin ? choices.user_pin : '•'.repeat(choices.user_pin.length)}</code>
+              <button class="btn-icon" type="button" on:click={() => { showUserPin = !showUserPin; }} title={showUserPin ? 'Hide User PIN' : 'Show User PIN'} aria-label={showUserPin ? 'Hide User PIN' : 'Show User PIN'}>
+                <Icon path={showUserPin ? mdiEyeOff : mdiEye} size={18} />
+              </button>
+              <button class="btn-icon" type="button" on:click={() => copyPin('user')} title="Copy User PIN (clears after 30s)" aria-label="Copy User PIN">
+                <Icon path={userPinCopied ? mdiCheck : mdiContentCopy} size={18} />
+              </button>
+              {#if userPinCopied}
+                <span class="text-label-small credential-timer">clears in {userPinTimer}s</span>
+              {/if}
+            </div>
+            <p class="text-body-medium">Used to unlock the app. Also saved to the <strong>xKey</strong> folder of your password store for reference.</p>
           </div>
 
           <label class="toggle-row acknowledge-row">
-            <input type="checkbox" bind:checked={quickSetupAcknowledged} />
-            <span class="text-body-large">I understand my PINs will be saved to the password store.</span>
+            <input type="checkbox" data-testid="wizard-so-pin-recorded" checked={choices.so_pin_recorded} on:change={(e) => setChoice('so_pin_recorded', e.currentTarget.checked)} />
+            <span class="text-body-large">I have recorded the SO PIN somewhere outside this device. I understand it will not be shown again and cannot be recovered from xKey.</span>
           </label>
 
           <div class="step-actions">
             <button class="btn btn-text" on:click={prevStep}>Back</button>
-            <button class="btn btn-primary" disabled={!quickSetupAcknowledged} on:click={() => navigateStep(6)}>Continue to Summary</button>
+            <button class="btn btn-primary" disabled={!choices.so_pin_recorded} on:click={() => navigateStep(6)}>Continue to Summary</button>
           </div>
         </div>
 
@@ -1080,7 +1109,7 @@
             {#if !soPinSupported}
               <div class="info-banner info">
                 <Icon path={mdiInformation} size={18} />
-                <span class="text-body-small">The detected TPM 2.0 PIN backend binds authorization to the platform SRK directly, so this value is not stored as a separate Security Officer PIN. It is still used below to set TPM hierarchy passwords (if enabled) and can be saved to your password store for reference.</span>
+                <span class="text-body-small">The detected TPM 2.0 PIN backend binds authorization to the platform SRK directly, so this value is not stored as a separate Security Officer PIN. It is still used below to set TPM hierarchy passwords (if enabled). It is never saved to your password store.</span>
               </div>
             {/if}
 
@@ -1107,9 +1136,9 @@
 
               <label class="toggle-row" style="margin-top: 12px;">
                 <input type="checkbox" checked={choices.save_pins_to_store} on:change={(e) => setChoice('save_pins_to_store', e.currentTarget.checked)} />
-                <span class="text-body-large">Save PINs to password store</span>
+                <span class="text-body-large">Save User PIN to password store</span>
               </label>
-              <span class="field-help text-body-small">Store the SO PIN and User PIN in the password store for easy retrieval. You can delete them later.</span>
+              <span class="field-help text-body-small">Store the User PIN in the password store for easy retrieval. You can delete it later. The SO PIN is never stored on this device: it is the credential that resets a forgotten User PIN, and the password store is unlocked by the User PIN.</span>
 
               {#if choices.use_user_pin_as_master}
                 <div class="info-banner info">
@@ -1627,7 +1656,7 @@
           {#if isQuickSetup && choices.deployment_mode === 'personal'}
             <div class="info-banner warning" style="margin-bottom: 1rem;">
               <Icon path={mdiAlert} size={18} />
-              <span class="text-body-small"><strong>Important:</strong> After setup completes, check the <strong>xKey</strong> folder in your password store for your User PIN. Note it down before the app lock screen activates — you'll need it to unlock the app.</span>
+              <span class="text-body-small"><strong>Important:</strong> After setup completes, check the <strong>xKey</strong> folder in your password store for your User PIN. Note it down before the app lock screen activates — you'll need it to unlock the app. Your SO PIN was shown once on the previous step and is not stored anywhere on this device.</span>
             </div>
           {/if}
 
@@ -2450,5 +2479,52 @@
     border-radius: var(--radius-md);
     background: var(--color-surface-container);
     border: 1px solid var(--color-outline-variant);
+  }
+
+  /* One-time display of a generated credential (#290). */
+  .credential-row {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    margin: 8px 0;
+  }
+
+  .credential-value {
+    flex: 1;
+    min-width: 0;
+    padding: 8px 12px;
+    font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+    font-size: 1rem;
+    letter-spacing: 0.08em;
+    overflow-wrap: anywhere;
+    border-radius: var(--radius-md);
+    background: var(--color-surface-container);
+    border: 1px solid var(--color-outline-variant);
+    color: var(--color-on-surface);
+    user-select: all;
+  }
+
+  .credential-timer {
+    color: var(--color-on-surface-variant);
+    white-space: nowrap;
+  }
+
+  .btn-icon {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 36px;
+    height: 36px;
+    padding: 0;
+    border: 1px solid var(--color-outline-variant);
+    border-radius: var(--radius-md);
+    background: transparent;
+    color: var(--color-on-surface-variant);
+    cursor: pointer;
+  }
+
+  .btn-icon:hover {
+    background: var(--color-surface-container);
+    color: var(--color-on-surface);
   }
 </style>

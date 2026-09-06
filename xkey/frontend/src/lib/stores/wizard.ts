@@ -40,6 +40,7 @@ const defaultChoices: SetupChoices = {
   user_pin: '',
   use_user_pin_as_master: true,
   save_pins_to_store: false,
+  so_pin_recorded: false,
   set_hierarchy_auth: false,
   storage_type: 'barrier',
   barrier_password: '',

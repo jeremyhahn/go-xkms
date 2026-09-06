@@ -334,6 +334,14 @@ var (
 
 	// ErrSetupPINGenerationFailed indicates that random PIN generation failed.
 	ErrSetupPINGenerationFailed = errors.New("setup_wizard: PIN generation failed")
+
+	// ErrSetupSOPINNotRecorded indicates that quick setup was asked to apply a
+	// wizard-generated SO PIN before the operator acknowledged recording it
+	// out of band. The SO PIN is the device's recovery credential and is
+	// shown exactly once; the device never keeps a retrievable copy (#290),
+	// so applying without the acknowledgement would initialize a device whose
+	// recovery credential nobody holds.
+	ErrSetupSOPINNotRecorded = errors.New("setup_wizard: generated SO PIN must be acknowledged as recorded out of band before setup can apply")
 )
 
 // BarrierService errors.

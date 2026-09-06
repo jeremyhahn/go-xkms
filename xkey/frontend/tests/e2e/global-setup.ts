@@ -114,6 +114,9 @@ export default async function globalSetup(_config: FullConfig): Promise<void> {
             user_pin: userPin,
             use_user_pin_as_master: true,
             save_pins_to_store: false,
+            // Quick setup refuses to apply until the generated SO PIN is
+            // acknowledged as recorded out of band (#290).
+            so_pin_recorded: true,
             set_hierarchy_auth: false,
             storage_type: 'barrier',
             barrier_password: '',
