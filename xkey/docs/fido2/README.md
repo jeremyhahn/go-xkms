@@ -566,7 +566,7 @@ small numbers, not `0x80`-range values (`pkg/authenticator/cmd_config.go`):
 | VendorCmdResetUserPIN | 0x04 | SO resets user PIN (requires SO unlock) |
 | VendorCmdReplaceAttestKey | 0x05 | Replace attestation key (requires SO unlock) |
 | VendorCmdGetSOPINRetries | 0x06 | Query SO PIN retry status |
-| VendorCmdSetRPPolicy | 0x07 | Set a per-RP policy (requires SO unlock) |
+| VendorCmdSetRPPolicy | 0x07 | Set or partially update a per-RP policy — only keys present in the request change, so a two-key request cannot clear the other overrides or lift a block (requires SO unlock) |
 | VendorCmdGetRPPolicy | 0x08 | Get a per-RP policy |
 | VendorCmdDeleteRPPolicy | 0x09 | Delete a per-RP policy (requires SO unlock) |
 | VendorCmdListRPPolicies | 0x0A | List all per-RP policies |

@@ -1562,6 +1562,9 @@ type mockRPPolicyStore struct {
 }
 
 func (m *mockRPPolicyStore) SetPolicy(policy *authenticator.RPPolicy) error { return m.setErr }
+func (m *mockRPPolicyStore) UpdatePolicy(update *authenticator.RPPolicyUpdate) error {
+	return m.setErr
+}
 func (m *mockRPPolicyStore) GetPolicy(rpID string) (*authenticator.RPPolicy, error) {
 	return nil, m.getErr
 }

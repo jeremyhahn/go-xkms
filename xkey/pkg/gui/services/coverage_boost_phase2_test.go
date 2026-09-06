@@ -49,7 +49,8 @@ type phase2RPPolicyStore struct {
 	listErr   error
 }
 
-func (m *phase2RPPolicyStore) SetPolicy(_ *authenticator.RPPolicy) error { return m.setErr }
+func (m *phase2RPPolicyStore) SetPolicy(_ *authenticator.RPPolicy) error          { return m.setErr }
+func (m *phase2RPPolicyStore) UpdatePolicy(_ *authenticator.RPPolicyUpdate) error { return m.setErr }
 func (m *phase2RPPolicyStore) GetPolicy(_ string) (*authenticator.RPPolicy, error) {
 	if m.getResult != nil {
 		return m.getResult, nil

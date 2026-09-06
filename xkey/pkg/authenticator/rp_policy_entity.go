@@ -13,7 +13,11 @@
 
 package authenticator
 
-import "time"
+import (
+	"time"
+
+	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
+)
 
 // RPPolicyEntity is the DAO entity representation of a per-RP authentication
 // policy. It mirrors RPPolicy with DAO-compatible field tags for indexed
@@ -62,6 +66,11 @@ type RPPolicyEntity struct {
 
 	// UpdatedAt is when the policy was last modified.
 	UpdatedAt time.Time `json:"updated_at"`
+
+	// Version is the optimistic-concurrency version, incremented on every
+	// save and compared by SaveWithCondition (dao.ConditionVersion) so a
+	// concurrent writer is detected instead of silently overwritten.
+	Version int64 `json:"version"`
 }
 
 // EntityID returns the DAO entity identifier.
@@ -69,3 +78,12 @@ func (e *RPPolicyEntity) EntityID() uint64 { return e.ID }
 
 // SetEntityID sets the DAO entity identifier.
 func (e *RPPolicyEntity) SetEntityID(id uint64) { e.ID = id }
+
+// GetVersion returns the optimistic-concurrency version.
+func (e *RPPolicyEntity) GetVersion() int64 { return e.Version }
+
+// SetVersion sets the optimistic-concurrency version.
+func (e *RPPolicyEntity) SetVersion(version int64) { e.Version = version }
+
+// Compile-time check: the DAO's ConditionVersion guard requires Versioned.
+var _ qrdbsdk.DAOVersioned = (*RPPolicyEntity)(nil)

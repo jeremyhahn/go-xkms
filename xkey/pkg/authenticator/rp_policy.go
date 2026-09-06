@@ -52,8 +52,19 @@ type RPPolicy struct {
 // RPPolicyStore persists per-RP policies.
 // Implementations must be safe for concurrent use.
 type RPPolicyStore interface {
-	// SetPolicy creates or updates a per-RP policy.
+	// SetPolicy stores a COMPLETE per-RP policy, replacing any stored
+	// record wholesale. Callers that hold only some of the fields must use
+	// UpdatePolicy instead: a partial policy passed here silently clears
+	// every field it does not carry, including an RP block.
 	SetPolicy(policy *RPPolicy) error
+
+	// UpdatePolicy applies a partial update onto the stored policy for
+	// update.RPID, creating the policy if none exists. Fields the update
+	// does not carry keep their stored values. Implementations perform the
+	// read-modify-write atomically with respect to other writers and
+	// return ErrRPPolicyConflict when a concurrent writer wins every
+	// bounded retry.
+	UpdatePolicy(update *RPPolicyUpdate) error
 
 	// GetPolicy retrieves the policy for a specific RPID.
 	// Returns ErrRPPolicyNotFound if no policy exists for the RPID.

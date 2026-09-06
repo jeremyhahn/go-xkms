@@ -51,6 +51,27 @@ func (m *MemoryRPPolicyStore) SetPolicy(policy *RPPolicy) error {
 	return nil
 }
 
+// UpdatePolicy applies a partial update onto the stored policy for
+// update.RPID, creating the policy if none exists. Fields the update does not
+// carry keep their stored values. The read-modify-write runs under the write
+// lock, so it is atomic with respect to other writers.
+func (m *MemoryRPPolicyStore) UpdatePolicy(update *RPPolicyUpdate) error {
+	if err := update.Validate(); err != nil {
+		return err
+	}
+
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	if m.closed {
+		return ErrRPPolicyStoreClosed
+	}
+
+	m.policies[update.RPID] = applyRPPolicyUpdate(m.policies[update.RPID], update)
+
+	return nil
+}
+
 // GetPolicy retrieves the policy for a specific RPID.
 func (m *MemoryRPPolicyStore) GetPolicy(rpID string) (*RPPolicy, error) {
 	if rpID == "" {

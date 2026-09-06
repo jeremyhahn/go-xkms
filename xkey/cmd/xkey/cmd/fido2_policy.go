@@ -293,16 +293,24 @@ func runRPPolicySet(cmd *cobra.Command, args []string) error {
 		return ErrRPPolicyRPIDRequired
 	}
 
-	policy := &authenticator.RPPolicy{
+	// Only flags the user actually set on the command line are applied; an
+	// unset flag leaves the stored value unchanged instead of overwriting it
+	// with the flag default, so `--blocked` alone cannot clear the SO's UV,
+	// UP and attestation overrides — and setting anything else cannot lift an
+	// RP block (#321). An explicit zero (`--uv "" --blocked=false`) still
+	// takes effect.
+	update := &authenticator.RPPolicyUpdate{
 		RPID: rpid,
 	}
 
 	// UV override.
-	uv, err := cmd.Flags().GetString("uv")
-	if err != nil {
-		return err
+	if cmd.Flags().Changed("uv") {
+		uv, err := cmd.Flags().GetString("uv")
+		if err != nil {
+			return err
+		}
+		update.UVOverride = &uv
 	}
-	policy.UVOverride = uv
 
 	// UP override.
 	upStr, err := cmd.Flags().GetString("up")
@@ -313,38 +321,45 @@ func runRPPolicySet(cmd *cobra.Command, args []string) error {
 		switch strings.ToLower(upStr) {
 		case "true":
 			v := true
-			policy.UPOverride = &v
+			update.UPOverride = &v
 		case "false":
 			v := false
-			policy.UPOverride = &v
+			update.UPOverride = &v
 		default:
 			return ErrRPPolicyInvalidUPOverride
 		}
 	}
 
 	// Attestation override.
-	att, err := cmd.Flags().GetString("attestation")
-	if err != nil {
-		return err
+	if cmd.Flags().Changed("attestation") {
+		att, err := cmd.Flags().GetString("attestation")
+		if err != nil {
+			return err
+		}
+		update.AttestationOverride = &att
 	}
-	policy.AttestationOverride = att
 
 	// Enterprise flag.
-	enterprise, err := cmd.Flags().GetBool("enterprise")
-	if err != nil {
-		return err
+	if cmd.Flags().Changed("enterprise") {
+		enterprise, err := cmd.Flags().GetBool("enterprise")
+		if err != nil {
+			return err
+		}
+		update.Enterprise = &enterprise
 	}
-	policy.Enterprise = enterprise
 
 	// Blocked flag.
-	blocked, err := cmd.Flags().GetBool("blocked")
-	if err != nil {
-		return err
+	if cmd.Flags().Changed("blocked") {
+		blocked, err := cmd.Flags().GetBool("blocked")
+		if err != nil {
+			return err
+		}
+		update.Blocked = &blocked
 	}
-	policy.Blocked = blocked
 
-	// Validate the policy using the authenticator's own validation.
-	if err := policy.Validate(); err != nil {
+	// Validate the update using the authenticator's own validation before
+	// touching storage.
+	if err := update.Validate(); err != nil {
 		return err
 	}
 
@@ -354,7 +369,7 @@ func runRPPolicySet(cmd *cobra.Command, args []string) error {
 		return err
 	}
 
-	if err := store.SetPolicy(policy); err != nil {
+	if err := store.UpdatePolicy(update); err != nil {
 		return errors.Join(ErrRPPolicySetFailed, err)
 	}
 

@@ -106,6 +106,11 @@ Device-level setup and per-relying-party policy.
 | `uhid profile set` | Set the device profile |
 | `uhid profile show` | Show the device profile |
 
+`policy set` applies only the flags given on the command line. A flag left
+unset keeps the stored value; an explicit zero (`--blocked=false`, `--uv ""`)
+takes effect. Blocking a relying party therefore survives later writes that
+do not mention `--blocked`.
+
 ```
 xkey uhid setup
 xkey uhid policy list

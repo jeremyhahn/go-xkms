@@ -647,32 +647,37 @@ func handleVendorSetRPPolicy(a *Authenticator, params map[interface{}]interface{
 		return nil, ErrRPPolicyInvalidRPID
 	}
 
-	policy := &RPPolicy{RPID: rpID}
+	// Every field is optional at the wire level, so the request is a partial
+	// update: a key present in the CBOR map (even carrying a zero value) sets
+	// the field, and an absent key leaves the stored value unchanged. The
+	// presence observed while decoding is captured in an RPPolicyUpdate so a
+	// two-key request cannot silently clear the SO's other overrides or lift
+	// an RP block (#321).
+	update := &RPPolicyUpdate{RPID: rpID}
 
-	// Extract optional fields
 	if uvOverride, err := extractStringParam(params, vendorParamKeyUVOverride); err == nil {
-		policy.UVOverride = uvOverride
+		update.UVOverride = &uvOverride
 	}
 	if attestOverride, err := extractStringParam(params, vendorParamKeyAttestOverride); err == nil {
-		policy.AttestationOverride = attestOverride
+		update.AttestationOverride = &attestOverride
 	}
 	if upOverrideRaw, ok := params[vendorParamKeyUPOverride]; ok {
 		if upVal, ok := upOverrideRaw.(bool); ok {
-			policy.UPOverride = &upVal
+			update.UPOverride = &upVal
 		}
 	}
 	if enterpriseRaw, ok := params[vendorParamKeyEnterprise]; ok {
 		if epVal, ok := enterpriseRaw.(bool); ok {
-			policy.Enterprise = epVal
+			update.Enterprise = &epVal
 		}
 	}
 	if blockedRaw, ok := params[vendorParamKeyBlocked]; ok {
 		if blVal, ok := blockedRaw.(bool); ok {
-			policy.Blocked = blVal
+			update.Blocked = &blVal
 		}
 	}
 
-	if err := a.rpPolicyStore.SetPolicy(policy); err != nil {
+	if err := a.rpPolicyStore.UpdatePolicy(update); err != nil {
 		return nil, err
 	}
 

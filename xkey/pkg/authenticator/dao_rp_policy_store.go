@@ -16,6 +16,7 @@ package authenticator
 import (
 	"context"
 	"sort"
+	"sync"
 	"sync/atomic"
 	"time"
 
@@ -31,12 +32,19 @@ const (
 // backed by a kvstore.KVStore. Each RP policy is stored as an RPPolicyEntity
 // with RPID as a unique index for deterministic deduplication.
 //
-// All methods are safe for concurrent use via the atomic closed flag and
-// the DAO's internal concurrency guarantees.
+// All methods are safe for concurrent use. Reads are lock-free via the
+// atomic closed flag and the DAO's internal concurrency guarantees. Writes
+// additionally serialize on writeMu: the DAO's SaveWithCondition evaluates
+// its condition with a read followed by a write, so two in-process writers
+// could both observe the same version and both save. The mutex makes this
+// store's own read-modify-write atomic; the version condition remains to
+// detect writers going through a different store instance over the same
+// records.
 type DAORPPolicyStore struct {
-	closed atomic.Bool
-	dao    qrdbsdk.GenericDAO[*RPPolicyEntity]
-	idGen  *qrdbsdk.FieldHashGenerator
+	closed  atomic.Bool
+	writeMu sync.Mutex
+	dao     qrdbsdk.GenericDAO[*RPPolicyEntity]
+	idGen   *qrdbsdk.FieldHashGenerator
 }
 
 // Compile-time interface compliance check.
@@ -73,10 +81,18 @@ func (s *DAORPPolicyStore) computeID(rpID string) uint64 {
 	return s.idGen.NextID(entity)
 }
 
-// SetPolicy creates or updates a per-RP policy (upsert behavior).
+// rpPolicyCASMaxAttempts bounds the optimistic-concurrency retry loop in
+// saveWithVersionCheck. Each attempt re-reads the stored record, so an
+// exhausted loop means a writer kept racing this one; the caller receives
+// ErrRPPolicyConflict rather than a silent lost update.
+const rpPolicyCASMaxAttempts = 5
+
+// SetPolicy stores a complete per-RP policy, replacing any stored record
+// wholesale (upsert behavior). Partial updates must go through UpdatePolicy.
 // Returns ErrRPPolicyNil if the policy is nil.
 // Returns ErrRPPolicyInvalidRPID if the RPID is empty.
 // Returns ErrRPPolicyStoreClosed if the store has been closed.
+// Returns ErrRPPolicyConflict if concurrent writers won every bounded retry.
 func (s *DAORPPolicyStore) SetPolicy(policy *RPPolicy) error {
 	if s.closed.Load() {
 		return ErrRPPolicyStoreClosed
@@ -90,27 +106,91 @@ func (s *DAORPPolicyStore) SetPolicy(policy *RPPolicy) error {
 		return err
 	}
 
-	now := time.Now().UTC()
-	entity := policyToEntity(policy)
+	return s.saveWithVersionCheck(policy.RPID, func(*RPPolicy) *RPPolicy {
+		return policy
+	})
+}
 
-	entityID := s.computeID(policy.RPID)
-
-	// Check if existing entity exists to preserve CreatedAt.
-	existing, err := s.dao.Get(context.Background(), entityID)
-	if err == nil && existing != nil {
-		entity.CreatedAt = existing.CreatedAt
-	} else {
-		entity.CreatedAt = now
+// UpdatePolicy applies a partial update onto the stored policy for
+// update.RPID, creating the policy if none exists. Fields the update does not
+// carry keep their stored values, so a caller changing one setting cannot
+// silently clear the SO's other overrides or lift an RP block.
+// Returns ErrRPPolicyUpdateNil if the update is nil.
+// Returns ErrRPPolicyInvalidRPID if the RPID is empty.
+// Returns ErrRPPolicyStoreClosed if the store has been closed.
+// Returns ErrRPPolicyConflict if concurrent writers won every bounded retry.
+func (s *DAORPPolicyStore) UpdatePolicy(update *RPPolicyUpdate) error {
+	if s.closed.Load() {
+		return ErrRPPolicyStoreClosed
 	}
 
-	entity.UpdatedAt = now
-	entity.SetEntityID(entityID)
-
-	if err := s.dao.Save(context.Background(), entity); err != nil {
-		return wrapStorageError(err)
+	if err := update.Validate(); err != nil {
+		return err
 	}
 
-	return nil
+	return s.saveWithVersionCheck(update.RPID, func(existing *RPPolicy) *RPPolicy {
+		return applyRPPolicyUpdate(existing, update)
+	})
+}
+
+// saveWithVersionCheck performs a compare-and-swap write of the policy for
+// rpID. Each attempt reads the stored entity, derives the policy to store via
+// mutate (which receives nil when no policy exists yet), and saves it
+// conditioned on the stored version still being the one observed by the read.
+// A failed condition means a concurrent writer landed in between; the attempt
+// is retried against the fresh record up to rpPolicyCASMaxAttempts times, and
+// ErrRPPolicyConflict is returned when the retries are exhausted — never a
+// silent success over a lost update (#326).
+//
+// writeMu serializes in-process writers because SaveWithCondition is itself a
+// read followed by a write (see the struct doc); the version condition guards
+// against writers using a different store instance over the same records.
+func (s *DAORPPolicyStore) saveWithVersionCheck(rpID string, mutate func(existing *RPPolicy) *RPPolicy) error {
+	s.writeMu.Lock()
+	defer s.writeMu.Unlock()
+
+	entityID := s.computeID(rpID)
+
+	for attempt := 0; attempt < rpPolicyCASMaxAttempts; attempt++ {
+		var observedVersion int64
+		var createdAt time.Time
+		var current *RPPolicy
+
+		existing, err := s.dao.Get(context.Background(), entityID)
+		switch {
+		case err == nil && existing != nil:
+			observedVersion = existing.GetVersion()
+			createdAt = existing.CreatedAt
+			current = entityToPolicy(existing)
+		case err != nil && !qrdbsdk.IsDAONotFound(err):
+			return wrapStorageError(err)
+		}
+
+		now := time.Now().UTC()
+		if createdAt.IsZero() {
+			createdAt = now
+		}
+
+		entity := policyToEntity(mutate(current))
+		entity.CreatedAt = createdAt
+		entity.UpdatedAt = now
+		entity.SetEntityID(entityID)
+		entity.SetVersion(observedVersion + 1)
+
+		err = s.dao.SaveWithCondition(context.Background(), entity, qrdbsdk.Condition{
+			Target:   qrdbsdk.ConditionVersion,
+			Operator: qrdbsdk.OpEqual,
+			Value:    observedVersion,
+		})
+		if err == nil {
+			return nil
+		}
+		if !qrdbsdk.IsDAOConditionFailed(err) {
+			return wrapStorageError(err)
+		}
+	}
+
+	return ErrRPPolicyConflict
 }
 
 // GetPolicy retrieves the policy for a specific RPID.

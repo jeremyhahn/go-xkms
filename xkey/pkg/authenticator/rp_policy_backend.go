@@ -86,6 +86,49 @@ func (b *BackendRPPolicyStore) SetPolicy(policy *RPPolicy) error {
 	return nil
 }
 
+// UpdatePolicy applies a partial update onto the stored policy for
+// update.RPID, creating the policy if none exists. Fields the update does not
+// carry keep their stored values. The read-modify-write runs under the write
+// lock, which is this store's concurrency guarantee for all writers sharing
+// the instance.
+func (b *BackendRPPolicyStore) UpdatePolicy(update *RPPolicyUpdate) error {
+	if err := update.Validate(); err != nil {
+		return err
+	}
+
+	b.mu.Lock()
+	defer b.mu.Unlock()
+
+	if b.closed {
+		return ErrRPPolicyStoreClosed
+	}
+
+	var existing *RPPolicy
+	key := b.policyKey(update.RPID)
+	data, err := b.backend.Get(context.Background(), key)
+	switch {
+	case err == nil:
+		var stored RPPolicy
+		if err := json.Unmarshal(data, &stored); err != nil {
+			return ErrDeserializationFailed
+		}
+		existing = &stored
+	case !errors.Is(err, xkms.ErrStorageNotFound):
+		return wrapStorageError(err)
+	}
+
+	merged, err := json.Marshal(applyRPPolicyUpdate(existing, update))
+	if err != nil {
+		return ErrSerializationFailed
+	}
+
+	if err := b.backend.Put(context.Background(), key, merged); err != nil {
+		return wrapStorageError(err)
+	}
+
+	return nil
+}
+
 // GetPolicy retrieves the policy for a specific RPID from the backend storage.
 func (b *BackendRPPolicyStore) GetPolicy(rpID string) (*RPPolicy, error) {
 	if rpID == "" {
