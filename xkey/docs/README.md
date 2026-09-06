@@ -175,8 +175,9 @@ sudo xkey fido2 --backend phone --phone-device "John's Pixel"
 ### Unattended Mode
 
 ```bash
-# Never block on a touch; let Chrome skip its PIN dialog
-sudo xkey fido2 --require-touch=false --auto-uv
+# A PIN-verified ceremony asks for no touch; the client supplies the PIN
+# (xkey auth ... --pin-stdin, or Chrome's own PIN dialog)
+sudo xkey fido2 --require-touch=false --notify none
 
 # No /dev/uhid and no sudo — drive Chrome's virtual authenticator
 xkey fido2 --cdp --cdp-port 9222

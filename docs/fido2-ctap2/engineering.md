@@ -1,6 +1,6 @@
 # FIDO2 / CTAP2 Client — Engineering Contract
 
-> **Status: NORMATIVE** · Feature: `fido2-ctap2` · Repo: `go-xkms` · Last verified: 2026-08-19
+> **Status: NORMATIVE** · Feature: `fido2-ctap2` · Repo: `go-xkms` · Last verified: 2026-09-06
 
 ## Exported surface — `pkg/fido2`
 
@@ -61,9 +61,11 @@ relying party.
 
 ## Invariants
 
-- **Every ceremony requires user presence.** There is no flag that removes it;
-  the automation path (xkey `--auto-uv`) supplies the gesture, it does not skip
-  it.
+- **Every ceremony requires user presence.** There is no flag that removes it,
+  and none that fabricates verification. xkey's unattended path supplies the
+  gesture rather than skipping it: a scripted `xkey touch` answers the daemon's
+  presence request, or a verified CTAP2 PIN stands in for the touch when the
+  daemon runs with `--require-touch=false`.
 - **`UnlockWithKey` is deterministic** for a fixed credential and salt: the same
   inputs always yield the same derived key, and no other authenticator can
   produce it. That is what makes it usable as a key source.

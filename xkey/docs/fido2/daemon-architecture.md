@@ -41,9 +41,11 @@ Chrome started with remote debugging, and only for that Chrome.
 A CTAP2 ceremony that requires user presence has to get an answer from
 somewhere. The daemon has three ways to produce one:
 
-1. **Touch not required** — `--require-touch=false` approves presence
-   immediately. `--auto-uv` additionally reports built-in user verification, so
-   Chrome does not raise its own PIN dialog.
+1. **PIN in place of touch** — `--require-touch=false` skips the presence
+   request after a verified PIN, because the PIN was the deliberate act. A
+   ceremony that carried no PIN still asks. The daemon never reports user
+   verification it did not perform: `getInfo` says `uv=false` where a PIN is
+   the verification method, so a browser collects the PIN in its own dialog.
 2. **Interactive** — `--interactive` prompts on the terminal.
 3. **Socket** — the default for service deployments. The notifier tells the
    user, and the request blocks on `SocketHandler` until something calls the

@@ -60,8 +60,9 @@ xkey unlock --pin "$PIN"          # visible in the process list; avoid
 xkey touch
 xkey touch --password DatabaseProd
 
-# Run the authenticator so it never blocks on a touch
-sudo xkey fido2 --require-touch=false --auto-uv
+# Run the authenticator so a PIN-verified ceremony never blocks on a touch;
+# a ceremony with no PIN still waits for `xkey touch`
+sudo xkey fido2 --require-touch=false --notify none
 ```
 
 `unlock` reports what it released, for example `Unlocked: app lock, barrier`,

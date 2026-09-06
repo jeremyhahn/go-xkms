@@ -17,8 +17,8 @@ sudo xkey fido2 --backend phone
 # With PIN and interactive mode
 sudo xkey fido2 --backend software --pin --set-pin 123456 --interactive
 
-# Unattended: never block on a touch, and let Chrome skip its PIN dialog
-sudo xkey fido2 --require-touch=false --auto-uv
+# Unattended: a PIN-verified ceremony asks for no touch; the client sends the PIN
+sudo xkey fido2 --require-touch=false --notify none
 ```
 
 ## Command Reference
@@ -75,7 +75,6 @@ subcommands documented below.
 |------|---------|-------------|
 | `--interactive` | `false` | Enable interactive mode (prompt for touch/PIN) |
 | `--require-touch` | `true` | Require touch even after PIN verification (like a hardware YubiKey) |
-| `--auto-uv` | `false` | Report built-in user verification so Chrome skips its PIN dialog |
 | `--timeout` | `30s` | Timeout for user presence requests |
 
 ### Key Backend Options
@@ -120,24 +119,33 @@ over the config file.
 
 ## User Presence Modes
 
-### Auto-Grant Mode
+### Unattended Mode
 
-`--require-touch` defaults to `true`, so out of the box a ceremony waits for a
-touch — it is not auto-granted. Turn presence off explicitly to have all user
-presence requests approved automatically:
-
-```bash
-sudo xkey fido2 --require-touch=false
-```
-
-Adding `--auto-uv` also reports built-in user verification, so Chrome skips its
-PIN dialog and the ceremony completes with no interaction at all:
+`--require-touch` defaults to `true`, so out of the box every ceremony waits
+for a touch, exactly like a hardware key. Turning it off narrows that to
+ceremonies that carried no PIN: after a verified PIN the daemon asks for no
+touch, because the PIN was the deliberate act.
 
 ```bash
-sudo xkey fido2 --require-touch=false --auto-uv
+sudo xkey fido2 --require-touch=false --notify none
 ```
 
-This combination is what makes the daemon suitable for:
+The PIN comes from the client. A browser collects it in its own dialog; the
+CLI takes it without a terminal:
+
+```bash
+printf '%s' "$XKEY_PIN" | xkey auth login --pin-stdin \
+    --server https://kms.example.com:8443 --email agent-build@example.com
+```
+
+A ceremony that carries no PIN still asks for presence, and a script answers
+it with `xkey touch` against the daemon's IPC socket. Nothing reports user
+verification the daemon did not perform: the UV flag is set only when a PIN
+was verified or the key backend verified a human itself (a paired phone's
+biometric). The flag that once claimed built-in verification for Chrome's
+benefit was removed because that claim was false.
+
+This is what makes the daemon suitable for:
 
 - Automated testing and CI/CD pipelines
 - Development and debugging

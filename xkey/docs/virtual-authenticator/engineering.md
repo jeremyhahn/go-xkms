@@ -65,7 +65,6 @@ Defaults are constants at `xkey/cmd/xkey/cmd/fido2.go:164-170`.
 | `--notify-command` | `""` | custom notification command |
 | `--notify` | `dialog` | `dialog`, `passive`, `log`, or `none` |
 | `--unified-pin` | `true` | share one PIN across xkey subsystems |
-| `--auto-uv` | `false` | satisfy user verification without a human |
 | `--cdp` | `false` | Chrome DevTools virtual-authenticator bridge |
 | `--cdp-host` | `localhost` | DevTools host |
 | `--cdp-port` | `9222` | DevTools debugging port |
@@ -78,9 +77,19 @@ first run and the wrong one for daily use.
 
 - **The device is a real CTAP2 authenticator**, not an emulation of a specific
   vendor's. `--attestation` reports what it is.
-- **User presence is required unless explicitly disabled.** `--require-touch`
-  defaults true and `--auto-uv` defaults false. Both are deliberate defaults;
-  changing either removes a human from the loop.
+- **User presence is required, and the handler that collects it is named,
+  never defaulted.** `NewAuthenticator` returns
+  `ErrUserPresenceHandlerRequired` without one. The daemon installs a
+  `SocketHandler` (answered by a dialog or `xkey touch`) or, under
+  `--interactive`, an `InteractiveHandler`; a programmatic device passes
+  `NewAutoGrantHandler()` explicitly at its construction site.
+  `--require-touch` defaults true and only ever narrows the request: off, a
+  verified PIN stands in for the touch, and a ceremony with no PIN still asks.
+- **User verification is performed, never asserted.** The UV flag is set when
+  the ceremony carried a verified PIN or the key backend verified a human
+  itself; `getInfo` reports `uv=false` where a PIN is the verification method
+  so a browser collects it. No flag or setting reports verification the
+  authenticator did not do.
 - **The relying party cannot distinguish backends.** `software`, `tpm2` and
   `phone` present identically over CTAP2, so the strength claim is the
   operator's to make honestly.

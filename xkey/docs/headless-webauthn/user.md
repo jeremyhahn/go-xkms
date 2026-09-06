@@ -1,6 +1,6 @@
 # Headless WebAuthn — User Guide
 
-> **Status: NORMATIVE** · Feature: `headless-webauthn` · Module: `go-xkms/xkey` · Last verified: 2026-09-04
+> **Status: NORMATIVE** · Feature: `headless-webauthn` · Module: `go-xkms/xkey` · Last verified: 2026-09-06
 
 ## What this is for
 
@@ -93,18 +93,24 @@ outcome.
 
 ```
 xkey fido2 --storage file --storage-path "$XDG_DATA_HOME/xkey" \
-           --backend tpm2 --auto-uv --notify none &
+           --backend tpm2 --require-touch=false --notify none &
 
-xkey auth register --server "$XKMS" --spki-pin "$PIN" \
+# $PIN is the server's SPKI pin; $XKEY_PIN is the authenticator's CTAP2 PIN.
+printf '%s' "$XKEY_PIN" | xkey auth register --pin-stdin \
+                   --server "$XKMS" --spki-pin "$PIN" \
                    --setup-token "$SETUP_TOKEN" --email agent-build@example.com
-xkey auth login --server "$XKMS" --email agent-build@example.com
+printf '%s' "$XKEY_PIN" | xkey auth login --pin-stdin \
+                   --server "$XKMS" --email agent-build@example.com
 
 xkmsctl --server "$XKMS" --token "$(xkey auth token --server "$XKMS")" key list
 ```
 
-`--auto-uv` satisfies user verification with no human, and `--notify none` stops
-it waiting for a prompt nobody will see. Both are right here and wrong on a
-laptop.
+The PIN sent with each ceremony is the user verification, and
+`--require-touch=false` tells the daemon not to ask for a touch on top of it.
+`--notify none` stops it prompting for someone who is not there. Both flags are
+right here and wrong on a laptop. There is no flag that reports a verification
+nobody performed: a ceremony that carries no PIN waits for `xkey touch`, and
+its credential is registered without user verification.
 
 `--backend tpm2` is what makes this credential better than a file: it cannot be
 copied off the machine.
@@ -118,7 +124,7 @@ copied off the machine.
 | enrolment created an account nobody asked for | `--username` defaulted to the OS user, which the server looked up as an email and missed | pass `--email`; the OS-user default is gone |
 | a bare 401 with no detail | intentional — the server does not say why | read the client's error, then the server log |
 | routes return 404 | the server has no token issuer configured | server-side |
-| it hangs at login | the authenticator is waiting for a touch | `--auto-uv`, and `--notify none` |
+| it hangs at login | the authenticator is waiting for a touch: no PIN was sent, or `--require-touch` is still on | send the PIN with `--pin-stdin` and run the daemon with `--require-touch=false`; or answer with `xkey touch` |
 | the token works, then stops | the session expired | `xkey auth refresh` |
 | 429 | login rate limiter | back off |
 

@@ -1,6 +1,6 @@
 # Agent Automation — CLI
 
-> **Status: NORMATIVE** · Feature: `agent-automation` · Module: `go-xkms/xkey` · Last verified: 2026-09-03
+> **Status: NORMATIVE** · Feature: `agent-automation` · Module: `go-xkms/xkey` · Last verified: 2026-09-06
 
 Binary: `xkey`. This feature is a set of flags and two verbs rather than a
 command group of its own.
@@ -11,8 +11,7 @@ On `xkey fido2` ([`../virtual-authenticator/cli.md`](../virtual-authenticator/cl
 
 | Flag | Default | Use it when |
 |---|---|---|
-| `--auto-uv` | `false` | nobody is there to verify |
-| `--require-touch=false` | `true` | nobody is there to touch |
+| `--require-touch=false` | `true` | nobody is there to touch; the PIN on the ceremony stands in |
 | `--notify none` | `dialog` | nobody is there to see a prompt |
 | `--notify log` | `dialog` | nobody is there, but you want a record |
 | `--cdp` | `false` | driving a browser in tests |
@@ -20,10 +19,37 @@ On `xkey fido2` ([`../virtual-authenticator/cli.md`](../virtual-authenticator/cl
 
 ```
 xkey fido2 --storage file --storage-path "$XDG_DATA_HOME/xkey" \
-           --backend tpm2 --auto-uv --notify none
+           --backend tpm2 --require-touch=false --notify none
 ```
 
+There is no flag that satisfies user verification without a human. The PIN
+sent with each ceremony is the verification, and the daemon reports it
+because it checked it.
+
+## The PIN on the ceremony
+
+`xkey auth register` and `xkey auth login` take the authenticator's CTAP2 PIN
+three ways, in precedence order:
+
+| Source | Notes |
+|---|---|
+| `--pin-stdin` | read the PIN from standard input |
+| `XKEY_PIN` | environment variable |
+| `--pin` | **visible in the process list** |
+
+```
+printf '%s' "$XKEY_PIN" | xkey auth login --pin-stdin \
+    --server "$XKMS" --email agent-build@example.com
+```
+
+Use `--pin-stdin`. The `--pin` flag exists and its own help text warns that the
+value shows up in `ps`. Note that `--pin` is the authenticator's PIN and
+`--spki-pin` is the server's public-key pin; they are unrelated.
+
 ## `xkey unlock`
+
+For an xkey instance that owns an app lock — the GUI or the headless app.
+`xkey fido2` owns none.
 
 | Flag | Type | Default | Notes |
 |---|---|---|---|
@@ -35,18 +61,17 @@ xkey fido2 --storage file --storage-path "$XDG_DATA_HOME/xkey" \
 printf '%s' "$XKEY_PIN" | xkey unlock --pin-stdin
 ```
 
-Use `--pin-stdin`. The `--pin` flag exists and its own help text warns that the
-value shows up in `ps`.
-
 ### `unlock` confirms the state it reports
 
-`unlock` prints `Unlocked` and exits zero only when the daemon confirms it is
-unlocked afterwards. Specifically:
+`unlock` prints what it released, for example `Unlocked: app lock, barrier`,
+and exits zero only when the daemon confirms it is unlocked afterwards.
+Specifically:
 
 | Daemon outcome | Exit | Output |
 |---|---|---|
-| unlock granted, daemon reports unlocked | `0` | `Unlocked` |
+| unlock granted, daemon reports unlocked | `0` | `Unlocked: …` |
 | unlock granted, daemon still reports locked | non-zero | `unlock: the daemon is still locked` |
+| unlock released the app lock, barrier still sealed | non-zero | `unlock: incomplete`, naming what stayed locked |
 | unlock refused | non-zero | `unlock: failed: <the daemon's reason>` |
 | daemon owns no app lock (e.g. `xkey fido2`) | `0` | `Unlocked` plus `Lock state could not be confirmed: this daemon does not report one` |
 
@@ -76,9 +101,13 @@ xkey touch
 xkey touch --password upstream-portal
 ```
 
-A synthetic touch. With `--password` it types the named entry from the vault
-through the keyboard layer — which is how a non-browser context gets a stored
-password.
+A synthetic touch: it approves the daemon's pending user-presence request. That
+is how a ceremony that carries no PIN completes unattended — a script calls
+`xkey touch` when the request is pending, or in a loop, since a touch with
+nothing pending is a no-op as long as the daemon has no `--default-password`
+(with one, a bare touch types it). With `--password` it types the named entry
+from the vault through the keyboard layer — which is how a non-browser context
+gets a stored password.
 
 ## `xkey agent`
 
@@ -92,46 +121,50 @@ xkey agent --help
 ## A complete CI setup
 
 ```
-# 1. the authenticator, unattended
+# 1. the authenticator, unattended: a PIN-verified ceremony asks for no touch
 xkey fido2 --storage file --storage-path "$XDG_DATA_HOME/xkey" \
-           --backend tpm2 --auto-uv --notify none &
+           --backend tpm2 --require-touch=false --notify none &
 
-# 2. unlock without a terminal, and stop if it did not take
-printf '%s' "$XKEY_PIN" | xkey unlock --pin-stdin
-
-# 3. trust the server's CA once, then enrol and sign in
+# 2. trust the server's CA once, then enrol and sign in, sending the PIN each time
 xkey trust add ca-chain.crt --purpose user-ca --source "file:ca-chain.crt"
-xkey auth register --server "$XKMS" \
+printf '%s' "$XKEY_PIN" | xkey auth register --pin-stdin --server "$XKMS" \
                    --setup-token "$SETUP_TOKEN" --email agent-build@example.com
-xkey auth login --server "$XKMS" --email agent-build@example.com
+printf '%s' "$XKEY_PIN" | xkey auth login --pin-stdin --server "$XKMS" \
+                   --email agent-build@example.com
 
-# 4. use it
+# 3. use it
 export XKEY_IPC_SOCKET="$XDG_RUNTIME_DIR/xkey/xkey.sock"
 xkmsctl --server "$XKMS" --token "$(xkey auth token --server "$XKMS")" key list
 ```
 
-Step 1's flags are the automation. Step 2 exits non-zero if the daemon is still
-locked, so the ceremony never starts on a false premise. Step 3's `trust add` is
-what lets `auth` verify the server by its CA; pass `--spki-pin` instead when you
-have no CA bundle, or `--tls-ca ca-chain.crt` to trust the file without adding
-it to the store. Step 4's environment variable is how the SDK finds the running
-xkey instead of wanting a key file.
+Step 1's flags are the automation. Step 2 sends the authenticator PIN with each
+ceremony; the daemon verifies it, sets UV because it did, and asks for no touch
+because `--require-touch` is off. Step 2's `trust add` is what lets `auth`
+verify the server by its CA; pass `--spki-pin` instead when you have no CA
+bundle, or `--tls-ca ca-chain.crt` to trust the file without adding it to the
+store. Step 3's environment variable is how the SDK finds the running xkey
+instead of wanting a key file.
+
+The variant with no PIN (`xkey fido2 --pin=false …`) needs presence supplied
+instead: run `xkey touch --socket "$XDG_RUNTIME_DIR/xkey/xkey.sock"` in a loop
+beside the ceremony. The credential it produces carries no user verification,
+and a relying party that requires UV will refuse it.
 
 ## What you are trading
 
-`--auto-uv` turns "a person has this key and used it" into "this machine has
-this key". With `--backend tpm2` that is a machine-bound credential that can act
-on its own — which is what you want for an agent, and is the reason not to run
-these flags on a workstation.
+`--require-touch=false` turns "a person has this key and touched it" into "this
+machine has this key and knows its PIN". With `--backend tpm2` that is a
+machine-bound credential that can act on its own — which is what you want for
+an agent, and is the reason not to run these flags on a workstation.
 
 Anything that can open the IPC socket while the authenticator is unlocked can
 use the credential. The socket's file permissions are the access control.
 
 ## Exit codes
 
-`0` on success. Non-zero for a wrong PIN, a socket that is not there (the daemon
-is not running, or `--socket` disagrees), or a ceremony that timed out because
-presence was required and `--auto-uv` was not set.
+`0` on success. Non-zero for a wrong or missing PIN, a socket that is not there
+(the daemon is not running, or `--socket` disagrees), or a ceremony that timed
+out because a touch was required and nobody supplied it.
 
 ## Parity coverage
 

@@ -1,6 +1,6 @@
 # Virtual FIDO2 Authenticator — User Guide
 
-> **Status: NORMATIVE** · Feature: `virtual-authenticator` · Module: `go-xkms/xkey` · Last verified: 2026-08-19
+> **Status: NORMATIVE** · Feature: `virtual-authenticator` · Module: `go-xkms/xkey` · Last verified: 2026-09-06
 
 ## What this does
 
@@ -52,13 +52,18 @@ find it.
 ## The flag that changes the security story
 
 ```
---auto-uv
+--require-touch=false
 ```
 
-It satisfies user verification without a human. That is exactly what an agent or
-a CI job needs — there is nobody there to touch anything — and it is exactly
-what you do not want on your laptop, where it converts "something you have and a
-deliberate act" into "something the machine has".
+It tells the authenticator not to ask for a touch after a verified PIN. That is
+what an agent or a CI job needs — there is nobody there to touch anything, but
+the job can send the PIN with the ceremony — and it is what you do not want on
+your laptop, where the touch is the deliberate act that proves you are there.
+
+There is no flag that satisfies user verification without a human. The PIN is
+the verification; the authenticator reports it because it checked it. A
+ceremony that carries no PIN still waits for a touch, which a script can supply
+with `xkey touch`.
 
 Same for `--require-touch=false`, more narrowly.
 
@@ -102,7 +107,7 @@ can reach that port can use it — keep it on loopback and off shared machines.
 | "no credentials" on a site you registered with | credentials are per relying party, and were lost or are in another store | check `--storage` and `--storage-path` |
 | PIN blocked | too many wrong attempts | the authenticator's PIN retry policy, same as real hardware |
 | a `tpm2` backend refuses to start | the TPM is unreachable | it will not fall back to software — fix the TPM |
-| it works for you but not for an agent | the agent cannot touch anything | that is what `--auto-uv` is for |
+| it works for you but not for an agent | the agent cannot touch anything | send the PIN with the ceremony and run with `--require-touch=false`, or have the agent call `xkey touch` |
 
 ## Where to go next
 

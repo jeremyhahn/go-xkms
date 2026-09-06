@@ -45,8 +45,7 @@ credentials are hardware-backed, `--backend` is the flag that makes that true.
 |---|---|---|
 | `--pin` | `true` | require a PIN |
 | `--set-pin` | `""` | establish the initial PIN when the store has none (needs `--pin`; refused if a PIN is already set) |
-| `--require-touch` | `true` | require user presence |
-| `--auto-uv` | `false` | **satisfy user verification without a human** |
+| `--require-touch` | `true` | **require a touch even after a verified PIN** |
 | `--unified-pin` | `true` | one PIN across xkey's subsystems |
 | `--timeout` | `30s` | how long to wait for presence |
 
@@ -63,9 +62,12 @@ or `--storage barrier`, pass `--set-pin` once; on later starts drop it, and
 change the PIN through any FIDO2 client (`changePIN`), which proves the
 current PIN before replacing it.
 
-`--auto-uv` is what makes this usable by an agent or a CI job, where there is no
-human to touch anything. On a workstation it turns "something you have plus a
-deliberate act" into "something the machine has". Use it where you mean it.
+`--require-touch=false` is what makes this usable by an agent or a CI job,
+where there is no human to touch anything but the job can send the PIN with
+the ceremony. On a workstation it removes the deliberate act that proves you
+are there. Use it where you mean it. There is no flag that reports user
+verification the authenticator did not perform; a ceremony with no PIN still
+waits for a touch, which `xkey touch` can supply.
 
 ### Identity and notifications
 
@@ -143,8 +145,9 @@ xkey fido2 \
 Persistent storage, keys in the TPM, honest attestation, a PIN, a touch, and a
 prompt the human actually sees.
 
-For an agent or CI, the same but with `--auto-uv` and `--notify none` — because
-there is nobody there, which is the point.
+For an agent or CI, the same but with `--require-touch=false` and
+`--notify none`, and the PIN sent with each ceremony — because there is nobody
+there, which is the point.
 
 ## Exit codes
 

@@ -1,6 +1,6 @@
 # Headless WebAuthn — CLI
 
-> **Status: NORMATIVE** · Feature: `headless-webauthn` · Module: `go-xkms/xkey` · Last verified: 2026-09-04
+> **Status: NORMATIVE** · Feature: `headless-webauthn` · Module: `go-xkms/xkey` · Last verified: 2026-09-06
 
 Binary: `xkey`, group `auth` (`xkey/cmd/xkey/cmd/auth.go`). Needs a running
 `xkey fido2` daemon to hold the credential — see
@@ -152,7 +152,7 @@ xkmsctl --server https://kms.example.com:8443 --token "$TOKEN" key list
 
 ```
 xkey fido2 --storage file --storage-path "$XDG_DATA_HOME/xkey" \
-           --backend tpm2 --auto-uv --notify none &
+           --backend tpm2 --require-touch=false --notify none &
 
 # $SPKI_PIN is the server's SPKI pin; $CTAP_PIN is the authenticator's PIN.
 printf '%s' "$CTAP_PIN" | xkey auth register --pin-stdin \
@@ -163,8 +163,11 @@ printf '%s' "$CTAP_PIN" | xkey auth login --pin-stdin \
 xkmsctl --server "$XKMS" --token "$(xkey auth token --server "$XKMS")" key list
 ```
 
-`--auto-uv` and `--notify none` are what make it work unattended, and are
-exactly what you would not set on a workstation.
+`--require-touch=false` and `--notify none` are what make it work unattended,
+and are exactly what you would not set on a workstation. The PIN on each
+ceremony is the user verification: the daemon asks for no touch after
+verifying it, and reports UV because it did. Nothing here claims a
+verification that did not happen.
 
 ## Exit codes
 

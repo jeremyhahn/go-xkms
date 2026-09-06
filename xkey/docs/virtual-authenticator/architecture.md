@@ -1,6 +1,6 @@
 # Virtual FIDO2 Authenticator — Architecture
 
-> **Status: NORMATIVE** · Feature: `virtual-authenticator` · Module: `go-xkms/xkey` · Last verified: 2026-08-19
+> **Status: NORMATIVE** · Feature: `virtual-authenticator` · Module: `go-xkms/xkey` · Last verified: 2026-09-06
 
 ## The problem
 
@@ -79,7 +79,7 @@ browser / ssh / sudo / any WebAuthn consumer
 Linux UHID  ←→  xkey/pkg/uhid
    ▼
 xkey/pkg/authenticator — CTAP2 commands, PIN protocol, extensions
-   ├── user presence:  touch, notification, or automation (--auto-uv)
+   ├── user presence:  a handler named at construction (socket + xkey touch, terminal, auto-grant)
    ├── credentials:    DAO credential store
    └── key material:   key_manager → keybackend → software | tpm2 | pkcs11 | phone
 ```
@@ -94,12 +94,20 @@ bridge, for driving browser tests without a real device on the bus.
   puts them in a paired device's TEE. The CTAP2 surface is identical, so a
   relying party cannot tell — which is what makes the choice yours to make
   honestly.
-- **User presence is the security property, and `--auto-uv` removes the human
-  from it.** That flag exists for agents and CI, where there is no human to
-  touch anything. Enabling it on a workstation converts "something you have and
-  a deliberate act" into "something the machine has".
-- **`--require-touch` defaults to true**, and turning it off has the same effect
-  in a narrower way.
+- **User presence is the security property, and the presence handler is
+  where it lives.** The authenticator refuses to construct without one; the
+  daemon installs a socket handler answered by a dialog or `xkey touch`, or a
+  terminal handler under `--interactive`. Programmatic devices
+  (`xkey/pkg/virtualdevice`, the CDP bridge) name an auto-grant handler at
+  their own construction site, so the decision to drop the human is visible
+  in the code that made it, never a default.
+- **User verification is never asserted, only performed.** The UV flag is set
+  when a PIN was verified in the ceremony or the key backend verified a human
+  itself (a paired phone's biometric). The flag that once reported built-in
+  verification so a browser would skip its PIN dialog was removed: it turned
+  "a person verified themselves" into "this machine had its key material".
+- **`--require-touch` defaults to true.** Turning it off skips the touch only
+  after a verified PIN; a ceremony with no PIN still asks for presence.
 - **`--attestation` decides what the authenticator says about itself.** It does
   not claim to be someone else's hardware.
 - **The PIN protects the authenticator, not the machine.** `--unified-pin`

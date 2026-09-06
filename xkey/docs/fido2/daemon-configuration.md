@@ -94,13 +94,14 @@ for the lifecycle, the trust-on-first-use window and the lockout semantics.
 | Flag | Default | Description |
 |------|---------|-------------|
 | `--require-touch` | `true` | Require touch even after PIN verification |
-| `--auto-uv` | `false` | Report built-in user verification so Chrome skips its PIN dialog |
 | `--interactive` | `false` | Prompt on the terminal for each request |
 | `--timeout` | `30s` | How long a user presence request waits before failing |
 
 Presence is required by default. For unattended operation either set
-`--require-touch=false --auto-uv`, or leave the default and have a script call
-`xkey touch` when a request is pending.
+`--require-touch=false` and send the PIN with the ceremony (`xkey auth login
+--pin-stdin`, or a browser's PIN dialog), or leave the default and have a
+script call `xkey touch` when a request is pending. There is no flag that
+reports user verification the daemon did not perform.
 
 ## Key backend
 
@@ -152,8 +153,8 @@ sudo xkey fido2 \
   --storage file --storage-path /var/lib/xkey \
   --notify dialog
 
-# CI: nothing to approve, nothing to click
-sudo xkey fido2 --require-touch=false --auto-uv --storage memory
+# CI: the PIN travels with the ceremony, so there is nothing to approve or click
+sudo xkey fido2 --require-touch=false --notify none --storage memory
 
 # Headless host: log instead of a dialog nobody can see
 sudo xkey fido2 --storage file --storage-path /var/lib/xkey --notify log

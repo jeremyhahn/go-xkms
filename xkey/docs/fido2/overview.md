@@ -41,8 +41,8 @@ sudo xkey fido2 --backend software
 # TPM-backed keys
 sudo xkey fido2 --backend tpm2
 
-# Unattended: never block on a touch
-sudo xkey fido2 --require-touch=false --auto-uv
+# Unattended: a PIN-verified ceremony asks for no touch; the client sends the PIN
+sudo xkey fido2 --require-touch=false --notify none
 
 # No /dev/uhid and no sudo — drive Chrome's virtual authenticator instead
 xkey fido2 --cdp --cdp-port 9222
