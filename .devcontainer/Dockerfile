@@ -528,6 +528,14 @@ RUN OPENSC_LIB=$(find /usr -name "opensc-pkcs11.so" 2>/dev/null | head -1) && \
     fi
 
 # Set environment variables
+#
+# XKMS_DEVCONTAINER is the positive devcontainer identity marker. The
+# Makefile's run_in_devcontainer / run_with_server helpers test it instead
+# of /.dockerenv, which is true in ANY container -- including a CI job
+# container -- and made the act_runner job impersonate the devcontainer so
+# the harness never started one (go-xkms #19). Baked into the image so every
+# shell and every `docker compose exec` inside this container sees it.
+ENV XKMS_DEVCONTAINER=1
 ENV GOPATH=/go
 # /usr/local/openssl-4.0.1/bin leads PATH so `openssl` resolves to 4.0.1 by
 # default everywhere in the image. This only changes command *resolution*;

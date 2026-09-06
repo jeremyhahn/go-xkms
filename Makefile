@@ -2125,9 +2125,22 @@ comma := ,
 COMPOSE_PROJECT := $(COMPOSE_NS)-devcontainer
 DOCKER_COMPOSE := $(call compose,devcontainer) -f .devcontainer/docker-compose.yml
 
+# Devcontainer identity is a POSITIVE marker, never an ambient side effect.
+#
+# XKMS_DEVCONTAINER=1 is baked into the devcontainer image
+# (.devcontainer/Dockerfile) and set again in its compose environment
+# (.devcontainer/docker-compose.yml), so it is present in every shell that
+# runs inside THE go-xkms devcontainer and nowhere else. These helpers used
+# to test `[ -f /.dockerenv ]` (plus $DEVCONTAINER), which answers "am I in
+# ANY container", not "am I the devcontainer": on a Gitea act_runner the job
+# itself runs in a container, so that probe made the job container
+# impersonate the devcontainer, the start-the-devcontainer branch was
+# skipped, and the suite then waited on a socket probe inside a devcontainer
+# that was never started (go-xkms #19, red on 39 of 40 runs).
+
 # Helper to run command in devcontainer (auto-starts if needed)
 define run_in_devcontainer
-	@if [ -f "/.dockerenv" ] || [ -n "$$DEVCONTAINER" ]; then \
+	@if [ -n "$$XKMS_DEVCONTAINER" ]; then \
 		$(1); \
 	else \
 		echo "$(CYAN)$(BOLD)→ Starting devcontainer...$(RESET)"; \
@@ -2177,7 +2190,7 @@ endef
 # That script probes for a live listener before doing anything, so when the
 # compose service IS up it no-ops and leaves it alone.
 define run_with_server
-	@if [ ! -f "/.dockerenv" ] && [ -z "$$DEVCONTAINER" ]; then \
+	@if [ -z "$$XKMS_DEVCONTAINER" ]; then \
 		echo "$(CYAN)$(BOLD)→ Starting devcontainer...$(RESET)"; \
 		{ $(DOCKER_COMPOSE) up -d devcontainer --wait 2>/dev/null || $(DOCKER_COMPOSE) up -d devcontainer; } && \
 		echo "$(CYAN)$(BOLD)→ Building PKCS#11 shared library in devcontainer...$(RESET)" && \
@@ -2186,7 +2199,7 @@ define run_with_server
 		{ echo "$(RED)✗ Could not build the PKCS#11 module; the suite would run against a stale .so$(RESET)"; exit 1; }; \
 	fi
 	$(call compose_up_xkms_server)
-	@if [ -f "/.dockerenv" ] || [ -n "$$DEVCONTAINER" ]; then \
+	@if [ -n "$$XKMS_DEVCONTAINER" ]; then \
 		echo "$(CYAN)$(BOLD)→ Building PKCS#11 shared library...$(RESET)"; \
 		mkdir -p build/lib && GOFIPS140=$(GOFIPS140) CGO_ENABLED=1 go build -buildmode=c-shared -o build/lib/libxkms_pkcs11.so ./cmd/pkcs11-module || \
 			{ echo "$(RED)✗ Could not build the PKCS#11 module; the suite would run against a stale .so$(RESET)"; exit 1; }; \
@@ -2285,10 +2298,12 @@ devcontainer-server-up:
 #
 # That is how #19 read as "server not ready" across 39 consecutive runs while
 # the server was serving perfectly well and no devcontainer had ever been
-# started -- on a Gitea runner the job is itself containerised, so the
-# `[ -f /.dockerenv ]` test upstream reads as "already inside the
-# devcontainer" and skips starting one. A probe that cannot say which of two
-# things failed sends everyone to the wrong component.
+# started -- on a Gitea runner the job is itself containerised, so the old
+# `[ -f /.dockerenv ]` test upstream read as "already inside the
+# devcontainer" and skipped starting one. The upstream helpers now test the
+# positive XKMS_DEVCONTAINER marker instead (see the comment above
+# run_in_devcontainer), but this guard stays: a probe that cannot say which
+# of two things failed sends everyone to the wrong component.
 devcontainer-server-wait:
 	@echo "$(CYAN)$(BOLD)→ Waiting for xkms-server on $(XKMS_UNIX_SOCKET)...$(RESET)"
 	@if [ -z "$$($(DOCKER_COMPOSE) ps -q devcontainer 2>/dev/null)" ]; then \
@@ -2411,7 +2426,7 @@ integration-test-xkey-touch:
 ## integration-test-xkey-ssh: Run SSH agent and key management integration tests
 ## Tests standalone mode and xkmsd server modes (Unix socket, gRPC)
 integration-test-xkey-ssh:
-	@if [ -f "/.dockerenv" ] || [ -n "$$DEVCONTAINER" ]; then \
+	@if [ -n "$$XKMS_DEVCONTAINER" ]; then \
 		echo "$(CYAN)$(BOLD)→ Rebuilding xkms-server for SSH tests...$(RESET)"; \
 		$(DOCKER_COMPOSE) build xkms-server; \
 		echo "$(CYAN)$(BOLD)→ Starting xkms-server...$(RESET)"; \

@@ -59,6 +59,12 @@ services:
       # into XKMS_GRPC_TLS_CA.
       - xkms-data:/xkms-data:ro
     environment:
+      # Positive devcontainer identity marker, also baked into the image
+      # (.devcontainer/Dockerfile). Set here too so a container created from
+      # a pre-marker image still carries it. The Makefile tests this instead
+      # of /.dockerenv, which is true in ANY container and made the CI job
+      # container impersonate the devcontainer (go-xkms #19).
+      - XKMS_DEVCONTAINER=1
       - GOPATH=/go
       # In-house modules resolve from Gitea tags (dependency-resolution.md §6).
       # The read-only token comes from the gitignored .devcontainer/.env.
