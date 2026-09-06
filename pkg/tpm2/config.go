@@ -530,10 +530,18 @@ func SRKAttributesFromConfig(config SRKConfig) (*types.KeyAttributes, error) {
 	return attrs, nil
 }
 
+// IAKAttributesFromConfig builds the Initial Attestation Key attributes from
+// the platform configuration. TPMAttributes.Template is deliberately left as
+// the zero TPMTPublic: CreateIAK constructs the restricted signing template
+// itself and never reads the field, and the vestigial EK template formerly
+// assigned here misled readers into concluding the IAK was created from an
+// EK template (#355). The policyDigest parameter is retained for signature
+// stability; platform policy is conveyed by the PlatformPolicy field and
+// applied by CreateIAK.
 func IAKAttributesFromConfig(
 	soPIN types.Password,
 	config *IAKConfig,
-	policyDigest *tpm2.TPM2BDigest) (*types.KeyAttributes, error) {
+	_ *tpm2.TPM2BDigest) (*types.KeyAttributes, error) {
 
 	algorithm, err := types.ParseKeyAlgorithm(config.KeyAlgorithm)
 	if err != nil {
@@ -559,17 +567,6 @@ func IAKAttributesFromConfig(
 		return nil, ErrInvalidHashFunction
 	}
 
-	var ekTemplate tpm2.TPMTPublic
-	if algorithm == x509.RSA {
-		ekTemplate = tpm2.RSAEKTemplate
-	} else {
-		ekTemplate = tpm2.ECCEKTemplate
-	}
-
-	if config.PlatformPolicy && policyDigest != nil {
-		ekTemplate.AuthPolicy = *policyDigest
-	}
-
 	attrs := &types.KeyAttributes{
 		CN:                 config.CN,
 		Debug:              config.Debug,
@@ -587,7 +584,6 @@ func IAKAttributesFromConfig(
 			HashAlg:       tpmHashAlg,
 			Hierarchy:     tpm2.TPMRHEndorsement,
 			HierarchyAuth: soPIN,
-			Template:      ekTemplate,
 		},
 	}
 
@@ -610,9 +606,15 @@ func IAKAttributesFromConfig(
 	return attrs, nil
 }
 
+// IDevIDAttributesFromConfig builds the Initial Device Identifier key
+// attributes from the platform configuration. TPMAttributes.Template is
+// deliberately left as the zero TPMTPublic: CreateIDevID selects the
+// dedicated unrestricted IDevID templates itself and never reads the field
+// (#355). The policyDigest parameter is retained for signature stability;
+// platform policy is conveyed by the PlatformPolicy field.
 func IDevIDAttributesFromConfig(
 	config IDevIDConfig,
-	policyDigest *tpm2.TPM2BDigest) (*types.KeyAttributes, error) {
+	_ *tpm2.TPM2BDigest) (*types.KeyAttributes, error) {
 
 	// Use the CN if specified, otherwise generate a default to model-serial
 	// naming convention.
@@ -646,17 +648,6 @@ func IDevIDAttributesFromConfig(
 		return nil, ErrInvalidHashFunction
 	}
 
-	var ekTemplate tpm2.TPMTPublic
-	if algorithm == x509.RSA {
-		ekTemplate = tpm2.RSAEKTemplate
-	} else {
-		ekTemplate = tpm2.ECCEKTemplate
-	}
-
-	if config.PlatformPolicy && policyDigest != nil {
-		ekTemplate.AuthPolicy = *policyDigest
-	}
-
 	attrs := &types.KeyAttributes{
 		CN:                 config.CN,
 		Debug:              config.Debug,
@@ -672,7 +663,6 @@ func IDevIDAttributesFromConfig(
 			HandleType: tpm2.TPMHTPersistent,
 			HashAlg:    hashAlg,
 			Hierarchy:  tpm2.TPMRHEndorsement,
-			Template:   ekTemplate,
 		},
 	}
 
@@ -695,9 +685,16 @@ func IDevIDAttributesFromConfig(
 	return attrs, nil
 }
 
+// LDevIDAttributesFromConfig builds Locally significant Device Identifier
+// key attributes from the platform configuration. TPMAttributes.Template is
+// deliberately left as the zero TPMTPublic: an LDevID is created through the
+// same CreateIDevID path, which selects its own unrestricted template and
+// never reads the field (#355). The policyDigest parameter is retained for
+// signature stability; platform policy is conveyed by the PlatformPolicy
+// field.
 func LDevIDAttributesFromConfig(
 	config LDevIDConfig,
-	policyDigest *tpm2.TPM2BDigest) (*types.KeyAttributes, error) {
+	_ *tpm2.TPM2BDigest) (*types.KeyAttributes, error) {
 
 	if config.CN == "" {
 		config.CN = "ldevid"
@@ -727,17 +724,6 @@ func LDevIDAttributesFromConfig(
 		return nil, ErrInvalidHashFunction
 	}
 
-	var ekTemplate tpm2.TPMTPublic
-	if algorithm == x509.RSA {
-		ekTemplate = tpm2.RSAEKTemplate
-	} else {
-		ekTemplate = tpm2.ECCEKTemplate
-	}
-
-	if config.PlatformPolicy && policyDigest != nil {
-		ekTemplate.AuthPolicy = *policyDigest
-	}
-
 	attrs := &types.KeyAttributes{
 		CN:                 config.CN,
 		Debug:              config.Debug,
@@ -753,7 +739,6 @@ func LDevIDAttributesFromConfig(
 			HandleType: tpm2.TPMHTPersistent,
 			HashAlg:    hashAlg,
 			Hierarchy:  tpm2.TPMRHEndorsement,
-			Template:   ekTemplate,
 		},
 	}
 

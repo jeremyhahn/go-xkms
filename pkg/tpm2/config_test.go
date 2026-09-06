@@ -1889,3 +1889,96 @@ func TestFileIntegritySum_InvalidPCRBank(t *testing.T) {
 	_, err := ParsePCRBankCryptoHash(tpm.config.PlatformPCRBank)
 	assert.Error(t, err)
 }
+
+// TestSigningKeyAttrBuildersLeaveTemplateZero locks in the fix for #355: the
+// IAK, IDevID and LDevID attribute builders formerly assigned an Endorsement
+// Key template (Restricted, SignEncrypt false) into TPMAttributes.Template.
+// Nothing on those key types' creation paths ever read the field -- CreateIAK
+// and CreateIDevID construct their own templates -- but the dead assignment
+// misled readers into diagnosing the signing keys as EK-derived. The builders
+// must now leave Template as the zero TPMTPublic, so any future write to the
+// field is a deliberate act. PlatformPolicy enabled with a non-nil digest is
+// the exact condition that previously baked an AuthPolicy into the dead
+// template.
+func TestSigningKeyAttrBuildersLeaveTemplateZero(t *testing.T) {
+	policyDigest := &tpm2.TPM2BDigest{Buffer: []byte{0xAA, 0xBB, 0xCC}}
+	zeroTemplate := tpm2.TPMTPublic{}
+
+	t.Run("IAK", func(t *testing.T) {
+		attrs, err := IAKAttributesFromConfig(
+			store.NewPassword([]byte("so-pin")),
+			&IAKConfig{
+				CN:                 "iak-template-zero",
+				Hash:               "SHA-256",
+				KeyAlgorithm:       x509.RSA.String(),
+				SignatureAlgorithm: x509.SHA256WithRSAPSS.String(),
+				Handle:             0x81010002,
+				PlatformPolicy:     true,
+				RSAConfig:          &store.RSAConfig{KeySize: 2048},
+			},
+			policyDigest)
+		require.NoError(t, err)
+		assert.Equal(t, zeroTemplate, attrs.TPMAttributes.Template,
+			"IAKAttributesFromConfig must not populate TPMAttributes.Template; CreateIAK builds its own template")
+		assert.True(t, attrs.PlatformPolicy,
+			"PlatformPolicy must still be conveyed by the attribute field")
+	})
+
+	t.Run("IDevID", func(t *testing.T) {
+		attrs, err := IDevIDAttributesFromConfig(
+			IDevIDConfig{
+				CN:                 "idevid-template-zero",
+				Hash:               "SHA-256",
+				KeyAlgorithm:       x509.RSA.String(),
+				SignatureAlgorithm: x509.SHA256WithRSAPSS.String(),
+				Handle:             0x81020000,
+				PlatformPolicy:     true,
+				RSAConfig:          &store.RSAConfig{KeySize: 2048},
+			},
+			policyDigest)
+		require.NoError(t, err)
+		assert.Equal(t, zeroTemplate, attrs.TPMAttributes.Template,
+			"IDevIDAttributesFromConfig must not populate TPMAttributes.Template; CreateIDevID selects the IDevID templates")
+		assert.True(t, attrs.PlatformPolicy,
+			"PlatformPolicy must still be conveyed by the attribute field")
+	})
+
+	t.Run("LDevID", func(t *testing.T) {
+		attrs, err := LDevIDAttributesFromConfig(
+			LDevIDConfig{
+				CN:                 "ldevid-template-zero",
+				Hash:               "SHA-256",
+				KeyAlgorithm:       x509.ECDSA.String(),
+				SignatureAlgorithm: x509.ECDSAWithSHA256.String(),
+				Handle:             0x81020001,
+				PlatformPolicy:     true,
+				ECCConfig:          &store.ECCConfig{Curve: "P-256"},
+			},
+			policyDigest)
+		require.NoError(t, err)
+		assert.Equal(t, zeroTemplate, attrs.TPMAttributes.Template,
+			"LDevIDAttributesFromConfig must not populate TPMAttributes.Template; CreateIDevID selects the LDevID template")
+		assert.True(t, attrs.PlatformPolicy,
+			"PlatformPolicy must still be conveyed by the attribute field")
+	})
+
+	// The Endorsement Key is created FROM its template (CreateEK reads
+	// TPMAttributes.Template), so EKAttributesFromConfig must keep
+	// populating it -- including the platform policy digest.
+	t.Run("EK keeps its template", func(t *testing.T) {
+		attrs, err := EKAttributesFromConfig(
+			EKConfig{
+				CN:             "ek-template-kept",
+				KeyAlgorithm:   x509.RSA.String(),
+				Handle:         0x81010001,
+				PlatformPolicy: true,
+				RSAConfig:      &store.RSAConfig{KeySize: 2048},
+			},
+			policyDigest, nil)
+		require.NoError(t, err)
+		assert.Equal(t, tpm2.TPMAlgRSA, attrs.TPMAttributes.Template.Type,
+			"EKAttributesFromConfig must keep assigning the EK template")
+		assert.Equal(t, policyDigest.Buffer, attrs.TPMAttributes.Template.AuthPolicy.Buffer,
+			"the platform policy digest must still be baked into the EK template")
+	})
+}
