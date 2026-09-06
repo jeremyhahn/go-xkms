@@ -163,7 +163,6 @@ profile determines the key usage and extended key usage fields.
 Available profiles:
   server   TLS server certificate (ServerAuth)
   client   TLS client certificate (ClientAuth)
-  idevid   IEEE 802.1AR device identity certificate
 
 SANs are specified in the format TYPE:VALUE, separated by commas:
   DNS:example.com       DNS name
@@ -311,7 +310,7 @@ func init() {
 		"TLS CA certificate file used to verify the xkmsd server")
 
 	// Issue command flags
-	caIssueCmd.Flags().String("profile", "", "certificate profile (server, client, idevid)")
+	caIssueCmd.Flags().String("profile", "", "certificate profile (server, client)")
 	caIssueCmd.Flags().String("cn", "", "common name for the certificate subject")
 	caIssueCmd.Flags().String("organization", "", "organization for the certificate subject")
 	caIssueCmd.Flags().String("san", "", "subject alternative names (comma-separated TYPE:VALUE pairs)")

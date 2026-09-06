@@ -481,7 +481,10 @@ jobs:
             TestPairThenReconnectThenReattest_Interop \
             TestReconnectRefusesADeviceThatCannotProveLiveness \
             TestReconnectEnforcesLivenessBeforeTheSessionIsUsable \
-            TestPairedDeviceBackendConfigCarriesEveryIdentityCheck
+            TestPairedDeviceBackendConfigCarriesEveryIdentityCheck \
+            TestEnrollmentCertProfileIsRegistered \
+            TestEnrollmentCertProfileSemantics \
+            TestEnrollmentCertProfileFormerNameFailsClosed
 
       # The attestation DECISION's own suite. It used to live in cmd/xkey/cmd
       # behind `//go:build ble`, reachable only through the named list above --

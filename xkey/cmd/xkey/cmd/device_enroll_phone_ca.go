@@ -38,10 +38,20 @@ const (
 )
 
 // enrollmentCertProfile is the certificate profile requested for a device
-// credential. It is an LDevID in the IEEE 802.1AR sense -- a locally
-// significant, re-issuable device identity -- which is what the idevid profile
-// models here.
-const enrollmentCertProfile = "idevid"
+// credential. The credential is an LDevID in the IEEE 802.1AR sense -- a
+// locally significant, re-issuable device identity the phone presents as a
+// client of this enterprise CA -- so it is issued under the client profile:
+// DigitalSignature key usage, ClientAuth EKU, finite validity. The device
+// identity travels in the CSR subject and the re-attestation cadence in
+// ValidityDays; the profile contributes only the usages.
+//
+// The tcg-idevid profile is deliberately NOT used: it stamps TCG policy OIDs
+// asserting the key is TPM-resident and TPM-fixed, and a phone's key lives in
+// the Android Keystore (TEE or StrongBox), not a TPM -- the certificate would
+// assert hardware properties the key does not have. It also models a
+// manufacturer IDevID with no well-defined expiration, where this credential's
+// expiry IS the re-attestation cadence.
+const enrollmentCertProfile = "client"
 
 // androidAttestationRoots builds the pool the phone's chain must reach.
 //
