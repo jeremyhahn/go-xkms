@@ -7,6 +7,528 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.11.0-alpha] - 2026-09-06
+
+### Security
+
+- **The OATH TOTP shared secret and the FIDO2 key-unwrap transit are moved
+  into protected memory: the secret is no longer an unwipeable Go string at
+  rest or through normalization, and unwrapped keys no longer cross the
+  ordinary Go heap on their way into protected buffers** (#210, #291). `xkey/pkg/oath/credential.go`, `xkey/pkg/oath/generator.go`,
+  `xkey/pkg/oath/dao_store.go`, `xkey/pkg/authenticator/key_wrapper.go`,
+  `xkey/pkg/authenticator/key_manager.go`, plus the consumers in
+  `xkey/cmd/xkey/cmd/`.
+
+  **#210** — `Credential.Secret` was an immutable Go string, copied through
+  three more strings on every normalization (`strings.ToUpper`,
+  `strings.Map`, `strings.TrimRight`); none of the intermediates could ever
+  be wiped. The field is now an mlocked `secure.Buffer` behind
+  `SetSecret`/`SecretString`/`HasSecret` accessors, normalization runs
+  byte-wise IN PLACE on a caller-owned slice (the Base32 alphabet is ASCII,
+  so the fold needs no rune decoding and mints no copies), and every scratch
+  decode is wiped. The persisted JSON keeps the historical `"secret"` key via
+  marshal hooks, so existing stores load unchanged; `SecretString` is
+  documented as serialization-boundary-only, since a handed-out string is the
+  caller's residue. An equivalence corpus proves the byte normalization
+  computes exactly what the string implementation computed (one deliberate
+  divergence, U+017F-style Unicode folds, is asserted as rejected).
+
+  **#291** — `KeyWrapper.Unwrap(wrapped) ([]byte, error)` returned decrypted
+  plaintext on the heap, and #285 then copied it into protected memory,
+  leaving the transit copy for the GC. The interface can no longer express
+  that: `UnwrapInto(wrapped, dst []byte)` decrypts in place into
+  caller-owned memory (asserted, failing closed with a wipe if the cipher
+  ever relocates), and `unwrapIntoProtected` sizes the destination from the
+  ciphertext alone — `len(wrapped) − nonce − tag` — so the `secure.Buffer`
+  is allocated BEFORE the borrow on the wrapping key, honouring go-qrdb's
+  purge-lock nesting rule that made the heap hop look load-bearing. Every
+  unlock path (SO, user, attestation, SO-PIN change) now decrypts straight
+  into mlocked memory; the plaintext never exists on the ordinary Go heap.
+
+  Verified by wipe tests (adoption zeroes the source; a replaced or cleared
+  secret's buffer is destroyed; a failed unwrap leaves an all-zero
+  destination), by round-trip tests through the new seam, and by deadlock
+  regression tests that re-run every borrow-crossing path under the test
+  timeout — re-introducing the nested-borrow allocation hangs them, which
+  the timeout turns into a failure. Closes #210, #291.
+- **The setup wizard no longer stores the generated SO PIN in the device's
+  own password store** (#290). The SO PIN is the recovery credential that
+  resets a forgotten User PIN, and the password store is unlocked by the
+  User PIN, so the copy was unreachable in every situation the SO role
+  exists for (a forgotten User PIN after a lock or restart, a sealed
+  barrier, a wiped store) and readable by anything that could drive the IPC
+  socket once the store was open. Quick setup now shows the generated SO PIN
+  once on the Generated Credentials step (masked, with reveal and copy) and
+  requires the operator to acknowledge recording it out of band; `ApplySetup`
+  refuses a quick setup without that acknowledgement with the new typed
+  `ErrSetupSOPINNotRecorded`, before any step runs. Only the PIN service's
+  verifier persists; the User PIN copy in the `xKey` folder is unchanged.
+  Frontend contract: `SetupChoices` gains `so_pin_recorded` (bool);
+  `save_pins_to_store` now saves the User PIN only. No reader of the stored
+  entry existed to migrate. New feature folder `xkey/docs/setup-wizard/`.
+  Files: `xkey/pkg/gui/services/setup_wizard_service.go`, `errors.go`,
+  `xkey/frontend/src/views/SetupWizard.svelte`, `lib/types/setup.ts`,
+  `lib/stores/wizard.ts`, `tests/e2e/global-setup.ts`. Verification:
+  `setup_wizard_so_pin_test.go` asserts the store holds no `SO PIN` entry
+  and no entry with the value after a quick-setup and a manual opt-in run,
+  with the User PIN entry as positive control; reinstating the write turns
+  both red, deleting the gate turns the acknowledgement test red.
+
+### Added
+
+- **`AgentOptions.SocketDir` lets the caller of the SDK's ephemeral SSH signing
+  agent choose where its socket goes.** `StartAgent` bound its socket under a
+  directory of its own choosing in the OS temporary directory, which is exactly
+  the location a sandbox mount policy will not admit — so a consumer that runs
+  the signing client in a container (go-quicbaas's `sdlc` job runner mounts the
+  socket read-only and names it `SSH_AUTH_SOCK`, with no credential in argv or
+  environment) could not use the agent at all. Setting `SocketDir` puts the
+  socket inside a tree the caller's own policy already allows, and
+  `SockPath` is `<SocketDir>/agent.sock`, computable before the call, because a
+  mount specification has to name the socket before there is a session to ask.
+
+  It gives the caller the **location**, never the directory. The session
+  creates `SocketDir` itself with `os.Mkdir` (mode 0700 — never more
+  permissive, since the process umask can only clear bits), binds the socket
+  inside it with mode 0600, and removes the directory with the socket on `Stop` or
+  context cancellation. That is what keeps the reason a 0600 socket is safe — no
+  other user can traverse into its directory — a construction rather than a
+  claim inherited from whoever made the directory first. An existing path is
+  refused with `*SocketDirExistsError` (`*AgentSocketDirExistsError` through the
+  SDK, unwrapping to `fs.ErrExist`), whether it holds a directory, a file or a
+  socket from a crashed run: adopting one puts a signing oracle somewhere this
+  package cannot vouch for, and clearing one would delete whatever the caller
+  keeps there, up to and including another live agent. `os.Mkdir` makes the test
+  and the claim the same syscall, so nothing can slip between them.
+
+  The parent is checked and never created, by the same rule a supplied
+  `WorkDir` passes — an existing, non-symlink, self-owned directory that is not
+  group- or world-writable, else `*InsecureWorkDirError`. Creating the socket's
+  own directory closes the substitution window inside it; nothing closes one in
+  a parent another user can write to, where the whole directory can be renamed
+  away and the container would then sign through somebody else's agent.
+  `SocketDir` and `WorkDir` are mutually exclusive, since they say opposite
+  things about who owns the directory and therefore about whether it survives
+  shutdown. A relative `SocketDir` resolves against this process's directory
+  on entry, once, so `SockPath` stays absolute and means the same thing to a
+  process with its own working directory and PID namespace.
+
+  Default behaviour is unchanged: an empty `SocketDir` still lands in the OS
+  temporary directory. Sixteen tests across `pkg/ssh/agent` and the SDK cover
+  the honoured path and its modes, every refusal, removal on both exit paths,
+  and a client signing from a different working directory;
+  `pkg/ssh/agent` coverage is 94.4%. Documented in
+  `docs/ssh-agent-sessions/`. (#444)
+- **`/api/v1/auth/me` returns the canonical email login key.** Since #190 made
+  email the tenant-unique key the stack resolves accounts by, a client asking
+  "who am I" got back a username it cannot re-authenticate with — a UI
+  pre-filling a WebAuthn re-auth prompt had to display one identifier while the
+  ceremony required another. `authMeResponse`
+  (`pkg/api/rest/handlers_auth.go`) and the TypeScript `AuthMeResponse`
+  (`sdk/ts/src/types/auth.ts`) now carry `email`, fed from
+  `Identity.Metadata["email"]`. Every path that establishes an identity
+  populates it alongside `username`: the qrdb-backed mTLS user projection
+  (`pkg/auth/mtls.go`, `pkg/auth/qrdb_userstore.go`), the PIV certificate
+  login, the WebAuthn token adapter (`pkg/api/rest/host.go`) and JWT generator
+  (`pkg/webauthn/jwt_generator.go`), and the JWT authenticator's claim
+  extraction (`pkg/auth/jwt.go`). The token issuer
+  (`pkg/auth/token/issuer.go`) mints and re-reads an `email` claim on both
+  halves of a pair — through one shared claim builder rather than two copies of
+  the same block — so the key survives a refresh. OIDC already mapped the
+  standard `email` claim and needed no change. An absent email stays absent: a
+  principal with none (a service or bootstrap account bound only by
+  certificate) yields no field rather than a value fabricated from the
+  username. Verified by `make test-rest` (1046 passing), `./pkg/auth/...`,
+  `./pkg/webauthn/...` and the TypeScript SDK suite; documented in
+  `docs/webauthn/api.md`. (#194)
+- **`xkey fido2 init-token` establishes the authenticator's Security Officer
+  PIN, and `xkey fido2 change-so-pin` changes it.** The whole token lifecycle
+  was already implemented — #306 shipped `Authenticator.InitializeToken` and
+  `ChangeSOPIN`, xKey's `C_InitToken` and `C_SetPIN` as SO (PKCS#11 v3.0 §5.6)
+  — but their only caller was the CTAP `authenticatorConfig` vendor dispatch
+  (`xkey/pkg/authenticator/cmd_config.go`), which nothing on the host could
+  reach. A device therefore stayed permanently uninitialized, and every
+  SO-gated capability refused: `xkey fido2 provision-attestation` stopped at
+  "this device has no Security Officer PIN", `replaceAttestKey`,
+  `setAttestCert`, the user-PIN reset and the per-RP policy writes were all
+  gated behind a credential nothing could establish. `xkey pin set-so` looked
+  like the missing verb and is not — it drives the qrdb host PIN service over a
+  file store under the data directory, an unrelated credential (#233).
+
+  The two commands (`xkey/cmd/xkey/cmd/fido2_init_token.go`) call
+  `InitializeToken` and `ChangeSOPIN` directly, the way `--set-pin` drives
+  `SetInitialPIN` for the user PIN (#411): the in-process counterpart of the
+  wire ceremony, not a second establishment mechanism. The vendor handlers pass
+  straight through to the same two methods, so there is exactly one path to a
+  Security Officer credential and one place its preconditions hold.
+  `init-token` establishes and never replaces — an initialized token is refused
+  with `ErrTokenAlreadyInitialized`, before the operator is prompted, and the
+  authoritative guard under the state lock still refuses a race. After that the
+  PIN changes only through `change-so-pin`, which proves the current one by
+  authenticated decryption of the wrapped Admin Key and spends a persisted
+  retry when it is wrong.
+
+  The SO PIN is not written to the device's own password store. That store is
+  unlocked by the *user* PIN and the SO PIN's job is to reset a forgotten user
+  PIN, so keeping one inside the other would make the recovery credential
+  recoverable only by the credential it recovers (#290, #432). It is typed at
+  the prompt and held nowhere else, and it is never echoed into output.
+
+  `init-token` names the control that actually applies. `InitializeToken`
+  bounds first initialization with CTAP 2.1 §6.9's post-power-up window and a
+  user-presence check, and neither constrains a local operator: the command
+  constructs the authenticator, so it opens the window itself, and the presence
+  prompt asks the same person who just typed the PIN. The banner says so and
+  names the file permissions on the state directory instead — a bound that
+  cannot fire must not be reported as one that held. The presence handler is
+  still explicit and interactive rather than an auto-grant, so a denial refuses.
+
+  The offline-device plumbing both verbs share with `provision-attestation`
+  moved to `xkey/cmd/xkey/cmd/fido2_offline_device.go`: the daemon-liveness
+  refusal (`ErrFIDO2DaemonRunning`, `ErrFIDO2DaemonCheckFailed`, renamed from
+  their `ErrAttestProvision*` spellings because the probe is not
+  provisioning-specific) and the authenticator construction. Verified by
+  `make test-xkey`; ten new tests drive the real CLI end to end, and the
+  mutation checks confirm each is non-vacuous — removing the establishment call
+  reddens six, removing the already-initialized refusal reddens exactly its
+  own, and substituting an auto-grant presence handler reddens the denial test.
+  Documented in `xkey/docs/virtual-authenticator/`. (#233)
+
+### Fixed
+
+- **`CHANGELOG.md` is one document again, and every release's notes are now
+  bounded by the right heading.** The file held two concatenated changelog
+  documents — the go-trusted-ca history imported at the 2026-04-16 merge kept
+  its own `# Changelog` H1, "Keep a Changelog" header block and
+  `## [Unreleased]` — so `## [Unreleased]` matched twice and every tool that
+  splices on it picked a different occurrence. `make release` extracts a
+  version's notes as everything between its heading and the next line
+  beginning `## [`, and because that `sed` range *restarts*, the duplicate
+  `## [0.1.0-alpha]` heading meant `v0.1.0-alpha` published 141 entries: its
+  own 97 plus 44 belonging to go-trusted-ca. It now publishes 97.
+  The imported sections are retained verbatim under
+  `## [go-trusted-ca] - merged 2026-04-16` with their headings demoted one
+  level, so they bound the oldest go-xkms release instead of being swept into
+  it and can never be read as a go-xkms version. The duplicate header block is
+  gone, the surviving one cites Keep a Changelog 1.1.0, and the colliding
+  `[0.1.0-alpha]:` link definition is now an inline link. All 734 entries keep
+  the exact heading path they had; `scripts/changelog-assemble.sh` now refuses
+  a file that does not carry exactly one `## [Unreleased]` heading (#356).
+- **Compliance-gate comments no longer promise a development-mode opt-in that does not exist**: The `Config.ComplianceGaps` doc comment, the cluster CA key-protection and `ca_key_protection: "none"` comments in `pkg/config/config.go`, and the `ACMEAuditConfig` comment in `pkg/config/acme.go` all said the daemon refuses an insecure start "unless the operator explicitly opts into development mode". No such opt-in exists: `cmd/xkmsd` refuses to start and to reload on any reported gap, with no flag, environment variable, or build tag that relaxes it (the `--insecure` / `XKMS_INSECURE` override was removed with the v0.3.0-alpha secure-by-default work and the daemon has said "there is no override" since). A documented escape hatch that is not there sends an operator looking for a switch and then concluding the gate is broken. The comments now state the actual behaviour, and `TestComplianceGate_NoDevelopmentBypass` pins it in the three places an opt-in could be introduced — package comments, environment variables, and `Config` field names — so the wording cannot drift back without the code changing with it. Files: `pkg/config/config.go`, `pkg/config/acme.go`, `pkg/config/acme_audit_test.go`, `pkg/config/config_test.go`, `pkg/config/compliance_gate_bypass_test.go`. Verified with `make test-config`; each of the three pinned surfaces was mutated in turn (stale comment restored, an `XKMS_INSECURE` early return, a `DevMode` field) and the test went red for each. The same sweep rewrote every operator-facing reference to the removed `--insecure` / `XKMS_INSECURE` override in `docs/` (acme audit, rbac, auth bootstrap and layering, configuration/auth, cluster, seal, pkcs11 mechanisms) and `examples/config.example.yaml`, the `pkg/server` cluster CA and `pkg/trust/clusterca` comments that called the library's `AllowInsecure` field a development mode, and four test doc comments in `pkg/server`, `pkg/xkms`, and `pkg/tpm2/store` that repeated the claim. The two integration compose files that still said they opt into "the sanctioned development escape hatch" were corrected as well: `test/integration/cluster/docker-compose.yml` mounts a `config.node.yaml` that passes the gate on its own, and `test/integration/bootstrap/docker-compose.yml` now records that its generated config (auth disabled, no CA) is refused by the gate and needs an authenticator and a CA before the suite can start the daemon. Fixes #389.
+- **The `extension`, `trust` and `auth` command groups resolved
+  `~/.xkey/data/<feature>` by hand, so under `XKEY_HOME`, portable mode or
+  `XKEY_DATA_DIR` they read and wrote a different location than the GUI,
+  the wizard and every other CLI group** (#381, split from #295). Each
+  group built its path from `os.UserHomeDir()` with no override at all
+  (trust honoured only `trust.store_path`); the segment was correct on a
+  default install and silently wrong everywhere else. The browser
+  launcher carried a second spelling of the trust store path, and the
+  `agent` and `backup` groups kept private `~/.xkey/data` fallbacks
+  beside the root-resolved home — `agent` even fell back to a temporary
+  directory when the home was unresolvable.
+
+  All of them now delegate to the one CLI chain from #295
+  (`xkey/cmd/xkey/cmd/datadir.go`) through two new helpers,
+  `featureDataDir` / `featureDataDirExisting`, which return
+  `<dataDir>/<feature>` so a group spells only its feature segment:
+  `extension host` resolves creating and remains the only extension
+  command that creates the pairing directory, while `unpair` and
+  `pair-status` resolve non-creating and fail with a typed error (new
+  `ErrExtensionPairStatusFailed`) instead of rendering an unresolvable
+  home as "Not paired"; `trustStoreDir` is the single trust-store
+  resolver shared by `openTrustStore` and `browser launch`;
+  `authStoragePath` drops the `data/` prefix from its constant; and
+  `agentDataDir`/`agentStoreDir`/`agentCertDir`/`agentStateFile` return an
+  error rather than a temporary directory. **Deliberate behaviour
+  change:** these groups now honour `XKEY_HOME`, the portable
+  `.xkey-home` marker, `XKEY_DATA_DIR` and the `data_dir` config key
+  exactly as `pin` and `barrier` do; a device that had been relying on
+  the hand-built default while running under one of those overrides will
+  now address the overridden location. Verified by per-group truth-table
+  tests (flag-less chain: `XKEY_DATA_DIR` > `data_dir` > `XKEY_HOME` >
+  `~/.xkey/data`), read-side tests proving `pair-status`/`unpair` create
+  nothing and read a pairing placed under `XKEY_DATA_DIR` or `XKEY_HOME`,
+  and a grep gate (`TestNoAdHocDataDirLiterals`) that scans the command
+  sources and fails on any hand-spelled data-directory literal outside
+  `datadir.go`; restoring the old `auth` and `extension` literals turns
+  the gate and the truth tables red.
+- **The DNS-01 provider unit tests no longer query the internet, so their
+  result depends on the code rather than on the runner's network** (#418).
+  `pkg/acme/challenges/dns-01/providers/{util_coverage_test,propagation_test}.go`.
+  `TestDNSQueryNoNameserversResponded` asserted that a query to `192.0.2.1`
+  (RFC 5737 documentation space) fails — an assertion about the network, not
+  about `DNSQuery`: anything that answers or synthesizes a reply, as the
+  runner's network did on PR #414, turns "no nameserver responded" into a
+  successful query and fails the test while the code is correct. Five tests in
+  the package queried `8.8.8.8`/`8.8.4.4` from the unit suite, four of them
+  discarding their own error (`_ = err`) and so asserting nothing while still
+  blocking on a live lookup, and a sixth asserted on the host's
+  `/etc/resolv.conf`. Every one now runs against a local `miekg/dns` server on
+  `127.0.0.1:0` — the `testDNSServer` the package already had, extended with a
+  silent mode, A/CNAME records, empty-NOERROR answers, a helper for a loopback
+  address with nothing bound to it, and a UDP-truncating server paired with a
+  TCP server on one port — and asserts the response instead of discarding it,
+  so the UDP-to-TCP fallback, the nameserver-fallthrough loop, CNAME chasing,
+  CNAME loop detection and the default-port rule are covered for the first
+  time. The whole package now passes in a loopback-only network namespace, and
+  with a resolver answering `192.0.2.1:53` inside that namespace — which
+  reproduces the CI failure exactly against the old tests
+  (`util_coverage_test.go:219`, "An error is expected but got nil"). Mutating
+  `DNSQuery` to return a nil error on nameserver exhaustion, to drop the TCP
+  fallback, or to stop appending the default port each turns the matching test
+  red. New `make test-dns01` target.
+- **`release-alpha.sh --dry-run` no longer assembles the changelog against the
+  real tree**: a rehearsal folded `.changelog/unreleased/*.md` into the real
+  `CHANGELOG.md`, deleted every entry file it spliced, staged both, and then
+  printed `release-alpha: nothing was changed` — so the command an operator
+  runs *because* it is safe was the one that consumed the release notes, and
+  the real cut that followed died on its own clean-tree precondition. The
+  changelog assembly now runs where the pin rewrite always did: in a
+  `mktemp -d` copy of `VERSION`, the four `go.mod` files, `CHANGELOG.md` and
+  `.changelog/unreleased`, so a dry run leaves the working tree byte-identical
+  and the index empty however it exits, while still previewing the assembled
+  `## [X.Y.Z-alpha]` section in the diff and naming each entry a real cut would
+  consume. `scripts/changelog-assemble.sh` grew the `--root DIR` option that
+  makes this expressible — assembly is destructive, so a caller must be able to
+  point it at a copy. The pin set is now validated before anything is written,
+  so a tree that will be refused is refused with its entries intact. Relatedly,
+  a run that dies at the tag-signing check now names the *release commit* as
+  well as the tags in its cleanup hint (`git tag -d ... && git reset --hard
+  <base>`): the commit is created before the tags are signed, so the tag-only
+  hint left the operator standing on an unsigned `chore(release)` commit, to
+  discover it at the push where `main` enforces signed commits. Verified by an
+  end-to-end case in `test/scripts/release-alpha.test.sh` that asserts a
+  before/after manifest of `.changelog/` and `CHANGELOG.md` is identical across
+  a `--dry-run`, and that the run issues no git write subcommand at all. The
+  irony is noted: the release-notes tooling ate the release notes, and this
+  entry is one of the files a dry run would have deleted. Fixes #415, #416.
+- **A FIPS build now serves a bootstrap handshake instead of binding no
+  listener at all.** #296 brought go-truststrap to `v0.4.0-alpha` and re-exported
+  the approved suite (`SuiteP256AESGCM` / `TSBOOT1_P256_AESGCM_SHA256`) plus
+  `EnsureSuiteAvailable` from `pkg/trust/bootstrap`, but nothing consumed them:
+  `pkg/server` still imported `noiseproto` directly and loaded a Noise_NK static
+  key unconditionally. Noise_NK mandates X25519, which SP 800-56A Rev. 3 does not
+  approve, so in a FIPS build `loadNoiseStaticKey` failed and
+  `startNoiseBootstrap` logged the error and returned — no listener on the port,
+  no refused handshake, nothing for an operator to see but a connection timeout
+  on every client. The approved suite was available in the same binary and needed
+  only a key.
+
+  **Measured before the change**, in `pkg/server`: built `-tags fips`,
+  `loadNoiseStaticKey` returns `noise: X25519 is unavailable in FIPS build`;
+  built `GOFIPS140=v1.0.0` with `GODEBUG=fips140=only` — the mode
+  `.github/workflows/release.yml` actually ships, which passes no `fips` tag —
+  it returns `noise: invalid key size: crypto/ecdh: use of X25519 is not allowed
+  in FIPS 140-only mode`. `p256proto.GenerateStaticKey()` succeeded in both. The
+  two mechanisms produce different errors and the same answer, which is why
+  availability is derived by attempting the operation rather than by a FIPS
+  predicate.
+
+  The listener now resolves which suites the binary can run **while it is being
+  configured**, loads a static key for each, and passes both to
+  `noiseboot.ServerConfig`, which dispatches per connection on the suite byte in
+  the client's first frame (go-trusted-platform#209's acceptance criterion). A
+  suite the build cannot run is skipped; a suite that is configured but whose key
+  will not load fails the whole listener rather than silently downgrading to the
+  other one; a build that can run neither fails with the new typed
+  `*server.ErrNoBootstrapSuite`, which names both rejection reasons and unwraps
+  to `bootstrap.ErrSuiteUnavailable`.
+
+  New configuration under `bootstrap.noise`: `p256_static_key_file` and
+  `p256_static_key_hex`, alongside the existing Noise pair. New CLI verbs
+  `xkmsctl bootstrap noise generate-p256-key` and `show-p256-key`, reusing the
+  Noise verbs' file handling (mode 0600, refuses to overwrite, cleans up a
+  partial write). Both keys are claimed, destroyed and retained together on
+  shutdown under the rule the Noise key already had — only a confirmed drain
+  permits destroying protected pages a handshake may still alias — and the
+  incomplete-shutdown accounting now counts both.
+
+  Files: `pkg/server/bootstrap_suite.go` (new), `pkg/server/server.go`,
+  `pkg/server/errors.go`, `pkg/config/config.go`,
+  `cmd/xkmsctl/bootstrap_p256.go` (new), `cmd/xkmsctl/bootstrap.go`; docs in
+  `docs/trust-bootstrap/` (all five files); `Makefile` gains `test-server`,
+  `test-server-fips` and `test-config`.
+
+  Verified by `pkg/server/bootstrap_suite_test.go`, which runs under **both**
+  sets of build tags and asserts the same invariants in each: the approved suite
+  is always offered, the Noise key is loaded exactly when the build can run
+  Noise, and a real `noiseboot.Client` completes a P-256 handshake against the
+  listener and receives the CA bundle — an executed handshake, not a compile
+  check. `make test-server-fips` is the lane that compiles go-truststrap's
+  refusal; it did not exist before, so the FIPS half of this code had never been
+  built by any target. Mutation-checked three ways, each turning its tests red:
+  disabling the P-256 arm reproduces the exact pre-fix "no handshake suite"
+  failure under `-tags fips`; letting a broken configured key fall through
+  defeats the silent-downgrade guard; removing `P256StaticKey` from the listener
+  config leaves a FIPS build with no server published.
+
+  Four pre-existing `loadNoiseStaticKey` tests and the `newMinimalServer` helper
+  were corrected rather than skipped: the helper left `s.ctx` nil, which no
+  `New()` can produce, so a subject that ran far enough to reach a shutdown-race
+  check paniced instead of failing its own assertion; the four Noise tests now
+  assert the build's actual contract (the loader must refuse and return no key)
+  instead of presuming the suite exists.
+
+  Also fixed, in the same feature and the same defect class:
+  `pkg/trust/bootstrap`'s `TestReExportsCompose` called `GenerateNoiseStaticKey`
+  and failed the test on error, so the package was **red under `-tags fips` on
+  `main`** before this branch (measured at 73ff6280) — nothing ran it that way,
+  because no target passed the tag. It now asserts the refusal in a build that
+  cannot run Noise, and composes the re-exports in one that can.
+
+  **Not addressed here:** the bootstrap *client*. `pkg/trust/bootstrap`'s
+  `fetchNoise` goes through `truststrap.NewNoiseBootstrapper`, whose
+  `truststrap.NoiseConfig` carries no suite or P-256 field, so a FIPS client
+  still cannot offer the approved suite through `Fetch`. The lower-level
+  `noiseboot.ClientConfig` does support it; adopting it means replacing the
+  high-level facade in a live path, which is an architectural call, not a bug
+  fix. Tracked upstream as go-truststrap#44. Refs #269.
+- **The `logins` integration harness could not start its virtual
+  authenticator: it still exec'd `--auto-uv`, a flag removed from the xkey
+  CLI** (#409). `test/integration/logins/fido2_test.go` ran
+  `xkey fido2 --require-touch=false --auto-uv --pin=false`; #365 removed
+  `--auto-uv`, so Cobra rejected the unknown flag and every fido2 leg of the
+  suite was dark. No CI job noticed, because the suite runs only inside the
+  devcontainer.
+
+  Nothing replaces the flag, because nothing in this ceremony needs it. The
+  relying party's `user_verification` defaults to `preferred`, so the xkey
+  client sets `options.uv=false` (`webauthn_ceremony.go`) and the
+  authenticator's `deriveRPUVPolicy` reads the request as `discouraged`; the
+  server applies no UV check of its own. What CTAP2 does require is user
+  presence, and the harness already supplies it with its `xkey touch` pump.
+  A no-PIN ceremony therefore completes and simply carries no UV — which is
+  the honest outcome #280 removed `--auto-uv` to get.
+
+  The exec argv moves to `test/integration/logins/argv.go`
+  (`VirtualAuthenticatorArgv`). That file carries no build tag on purpose:
+  the rest of the package is behind `integration && logins`, so the argv was
+  unreachable to every test that runs in CI. Untagged, it is reachable from
+  `xkey/cmd/xkey/cmd`, whose new `fido2_harness_test.go` resolves it against
+  the real Cobra command tree — the subcommand must resolve to `fido2`, every
+  word must be a registered flag, every value must be one the flag accepts,
+  and the live flags are restored afterwards so the guard cannot leak state
+  into the package's other tests. A flag removed or renamed on the CLI is now
+  a red unit test instead of a suite that will not start. The four tests are
+  named in CI's existing `require-tests.sh` list for `cmd/xkey/cmd`, the only
+  step that runs that package.
+
+  The `doc.go` and `integration-test-logins` Makefile comments no longer
+  document the removed flag. `CHANGELOG.md`'s `--auto-uv` mention is the
+  entry recording its removal and is left alone; the remaining `.md`
+  references belong to the #376 docs sweep.
+- **`TestProcessHMACSecretExtensionDecryptionFailure` no longer feeds random
+  bytes to a PKCS7 check, so it stops failing about one run in 256** (#417).
+  `xkey/pkg/authenticator/ext_hmac_secret_test.go`. The "invalid padding in
+  decrypted salts" case built `saltEnc` as raw randomness and relied on it
+  decrypting to something PKCS7 rejects; AES-CBC decryption of random
+  ciphertext yields random plaintext, which PKCS7 accepts whenever the final
+  byte is an `n` in 1..16 whose last `n` bytes all equal `n` — dominated by
+  `n = 1`. On those runs the request reached the salt-length check instead and
+  failed with `ErrHMACSecretInvalidSaltEnc`, landing on unrelated PRs (#414)
+  and reading as their regression. The test now encrypts a chosen plaintext
+  under the established shared secret with the protocol-v1 zero IV, so the
+  trailing byte — the one unpadding reads as the padding length — is fixed:
+  `0x00` is not a legal length and must fail the padding check, while `0x01`
+  is legal padding that leaves 47 bytes, neither one salt (32) nor two (64),
+  and must fail the length check. That second case is a new subtest for a
+  branch previously reached only by accident. Measured over 5120 consecutive
+  runs of the test: 20 failures before, 0 after; swapping the two error
+  returns in `decryptSalts` turns both subtests red. New `make
+  test-authenticator` target.
+- **The IAK CN no longer diverges between provisioning and restart: an
+  unconfigured CN is empty on both paths instead of becoming
+  `"default-device-id"` after a cold-cache rebuild** (#337).
+  `pkg/tpm2/key.go`.
+
+  `IAKAttributesFromConfig` — the path provisioning uses — assigns
+  `config.IAK.CN` verbatim, but `IAKAttributes`' cold-cache rebuild (every
+  fresh process attaching to an already-provisioned TPM) fabricated
+  `"default-device-id"` when the configured CN was empty. The same TPM
+  therefore described its IAK differently depending on whether the process
+  provisioned it or attached to it, and certificate-store lookups keyed on
+  the CN missed artifacts written at provisioning time. The fallback occurred
+  exactly once in the repository, was documented nowhere, and provisioning
+  never produced it — no artifact created by the normal path carries it, so
+  removing it changes only the rebuild path's fabricated value. The rebuild
+  now assigns `config.IAK.CN` verbatim, exactly as provisioning and the
+  IDevID sibling do. No consumer requires a non-empty CN: the certificate
+  store keys on whatever CN the attributes carry (consistent again), and
+  `pkg/ca`'s `attestationBlobKey` already derives a stable key for an empty
+  CN. Verified by `TestIAKAttributes_ColdCacheEmptyCNStaysEmpty`, which
+  provisions, clears the cache, rebuilds from the simulator TPM and asserts
+  the two paths agree (it fails against the removed fallback), alongside the
+  existing configured-CN cold-cache test.
+
+  Nothing about sealing or unsealing changes: `Seal` and `Unseal` default to
+  the Platform SRK and the CN `platform-sealing-key`, never to the IAK
+  attributes.
+
+  Upgrade note, for a deployment that leaves `iak.cn` unset (no shipped
+  configuration sets it): an IAK certificate or attestation blob that a
+  *restarted* process wrote was stored under the fabricated
+  `"default-device-id"`, while everything the provisioning process wrote was
+  stored under the empty CN. The store was already split between the two.
+  Both paths now use the provisioning value, so anything written under
+  `"default-device-id"` is no longer found and must be re-imported or
+  re-published.
+- **`CreateIDevID` no longer carries a guard that could set `adminWithPolicy`
+  on a key with no `authPolicy`, and now refuses to create one that would**
+  (#278). `pkg/tpm2/key.go`, `pkg/tpm2/types.go`, `pkg/tpm2/tpm.go`. With
+  `adminWithPolicy` SET the TPM authorizes ADMIN-role commands only through a
+  policy session satisfying the object's `authPolicy` and refuses the auth
+  value with `TPM_RC_AUTH_TYPE` (TCG TPM 2.0 Library Part 1, section 19.6); an
+  empty `authPolicy` is satisfiable by no session, because a session's policy
+  digest starts at zero and can never equal a zero-length value. The pair
+  therefore closes the ADMIN role — `TPM2_Certify`, which `CreateIDevID`
+  itself issues — permanently, and cannot be undone afterwards, since the
+  attribute is an input to a primary key's derivation. The guard that set it
+  (`idevidAttrs.Password == nil && idevidAttrs.PlatformPolicy`) never ran:
+  `CreateIDevID` builds those attributes from `IDevIDAttributesFromConfig`
+  alone, which sets `Password` from `types.NewPassword`, and that constructor
+  documents that it never returns nil — so **no created key changes and no
+  deployed device identity is re-keyed**. Per TCG section 3.10 the attribute
+  is mandatory only for applications administering a key by policy alone, and
+  the platform policy cannot serve: it is a `PolicyOR` of `PolicyPCR` and
+  `PolicyAuthValue` built for USER-role signing and unsealing, carrying no
+  `TPM2_PolicyCommandCode` term, without which no session can authorize an
+  ADMIN-role command. The dead guard is replaced by `assertAdminAuthorizable`,
+  which runs on the selected template before `TPM2_CreatePrimary` and returns
+  the new `ErrAdminWithPolicyNoAuthPolicy` rather than minting an
+  unadministrable key — so the obvious tightening of the dead predicate now
+  fails loudly at provisioning instead of bricking the ADMIN role of every
+  device it touches. A stale comment in `Sign` that described the attribute as
+  set is corrected. Verified on the TPM simulator: a `platform-policy: true`
+  IDevID is read back from its persistent handle with `adminWithPolicy` CLEAR
+  and an empty `authPolicy`, and a `TPM2_Certify` against it under password
+  auth succeeds, proving the ADMIN role is reachable; reviving a live guard
+  makes the same test fail with `TPM_RC_AUTH_TYPE`.
+- **The xkey PKCS#11 embedded transport now reports an exported key's
+  algorithm family through the one canonical resolution instead of a private
+  formatter** (#402, split from #336). `xkey/pkg/pkcs11`'s `getAlgorithmString`
+  was the fourth copy of the family question #336 reduced to one method, and
+  the last one outside the root module. It was kept out of #336's scope on the
+  possibility that it was a PKCS#11-edge mapping whose spellings a consumer
+  depended on; it is not. Nothing at that edge reads the field — the module's
+  only consumer of the response (`pkg/pkcs11/module/module.go`
+  `secretKeyValue`) takes `KeyMaterial` and ignores `KeyType`, and the value is
+  never compared against a `CKK_*` or any other constant — while the
+  daemon-side producer of the same wire field (`pkg/xkms/servicer_key.go`)
+  answers with the key's symmetric algorithm, with neither the `"unknown"`
+  default nor the `KeyTypeSecret` gate the xkey copy carried. Those two
+  branches were unreachable at the one call site anyway: a backend releases raw
+  material only for a single-family symmetric key, refusing a descriptor that
+  names two families (#158) and refusing anything asymmetric outright. So the
+  formatter is deleted and `ExportKeyMaterial` calls
+  `KeyAttributes.AlgorithmString()`, whose agreement with `ID()` is already
+  pinned in `pkg/types`. The one reachable output is unchanged; the divergence
+  that could have reappeared is gone. `xkey/pkg/pkcs11/service.go`,
+  `xkey/pkg/pkcs11/service_exportkeymaterial_test.go`. The new tests assert the
+  reported family against a literal and against the family segment of the key's
+  own `ID()`, so a transport that grows a private opinion again fails rather
+  than agreeing with itself, and cover the refusals that produce no family at
+  all.
+
 ## [0.10.0-alpha] - 2026-09-06
 
 ### Changed
