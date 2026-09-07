@@ -267,7 +267,7 @@ GOMODCACHE_HOST := $(shell go env GOMODCACHE 2>/dev/null || echo $(HOME)/go/pkg/
 GITEA_MODULE_ENV := -e GOWORK=off \
                     -e GOPRIVATE='github.com/jeremyhahn/*' \
                     -e GIT_CONFIG_COUNT=1 \
-                    -e GIT_CONFIG_KEY_0='url.http://x:$(GITEA_GO_TOKEN)@198.51.100.91:3001/jeremyhahn/.insteadOf' \
+                    -e GIT_CONFIG_KEY_0='url.http://x:$(GITEA_GO_TOKEN)@git.example.internal/jeremyhahn/.insteadOf' \
                     -e GIT_CONFIG_VALUE_0='https://github.com/jeremyhahn/' \
                     -v $(GOMODCACHE_HOST):/root/go/pkg/mod:cached
 
@@ -3038,7 +3038,7 @@ stage-gomodauth:
 		{ \
 			printf 'export GOPRIVATE=%s\n' 'github.com/jeremyhahn/*'; \
 			printf 'export GIT_CONFIG_COUNT=1\n'; \
-			printf 'export GIT_CONFIG_KEY_0=%s\n' 'url.http://x:$(GITEA_GO_TOKEN)@198.51.100.91:3001/jeremyhahn/.insteadOf'; \
+			printf 'export GIT_CONFIG_KEY_0=%s\n' 'url.http://x:$(GITEA_GO_TOKEN)@git.example.internal/jeremyhahn/.insteadOf'; \
 			printf 'export GIT_CONFIG_VALUE_0=%s\n' 'https://github.com/jeremyhahn/'; \
 		} > $(GOMODAUTH_FILE); \
 	fi
