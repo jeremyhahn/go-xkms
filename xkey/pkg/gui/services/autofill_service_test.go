@@ -72,6 +72,7 @@ func (m *autofillMockBarrier) IsInitialized() bool          { return true }
 func (m *autofillMockBarrier) IsUnsealed() bool             { return m.unsealed }
 func (m *autofillMockBarrier) Unseal(_, _ string) error     { return nil }
 func (m *autofillMockBarrier) Initialize(_, _ string) error { return nil }
+func (m *autofillMockBarrier) Seal() error                  { m.unsealed = false; return nil }
 
 // newTestAutoFillService creates a fully wired AutoFillService for testing.
 // It populates the static password store with test entries and the OATH

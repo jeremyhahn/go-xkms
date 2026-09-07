@@ -131,6 +131,47 @@ flowchart TD
     VERIFY -->|Fail| ERR([ErrAuthFailed])
 ```
 
+The right-hand branch — barrier already unsealed, so verify through
+`PINService` — is reached only by an installation that has no barrier at all.
+An installation with a barrier is always sealed when the app is locked,
+because locking seals it. See [App Lock and Inactivity](#app-lock-and-inactivity).
+
+## App Lock and Inactivity
+
+`AppLockService.Lock` seals the barrier, and every route into the lock goes
+through it: the inactivity timer, the lock button, and the OS screen-lock
+signal. A lock that only blanked the interface would leave the barrier's data
+encryption key resident in the process, so it protected nothing against
+anything with access to the machine.
+
+Sealing on lock also settles which credential the lock screen checks. The
+screen prompts for one secret and sends one value, while `Unlock` chooses its
+verifier from the barrier's seal state: the barrier credential while the
+barrier is sealed, the PIN service's credential once it is not. Those are two
+independent credential stores whose values nothing binds together — a
+`passphrase` barrier alongside a `tpm2` PIN strategy is two different secrets
+— so a lock that left the barrier open sent the unlock to a verifier the user
+was never prompted for. With the barrier sealed on every lock, each unlock
+takes the same route the startup unlock takes.
+
+This matters beyond the failed unlock. The `tpm2` PIN backend verifies against
+the PlatformSRK's auth value, and every failed attempt spends one of the TPM's
+dictionary-attack retries — three on typical hardware, after which the TPM
+enters a lockout that blocks all SRK-auth operations until the recovery
+interval elapses or `TPM2_DictionaryAttackLockReset` is run.
+
+The app is locked whether or not the barrier could be sealed: refusing to lock
+because the key could not be zeroed would leave the interface open, which is
+worse. A seal failure is reported as `ErrAppLockBarrierSealFailed` rather than
+being swallowed, so a lock weaker than it claims to be is visible.
+
+Unlocking after an in-process lock reopens the existing barrier rather than
+building a replacement. The post-unseal hook wires every barrier-backed store
+once per process and hands each one a backend wrapping the live barrier; a
+replacement would leave all of them bound to the sealed object with no route
+back, so the app would unlock while every encrypted store stayed unreadable
+until restart.
+
 ### PIN Verification Chain
 
 ```mermaid

@@ -111,7 +111,7 @@ incoming FIDO2 PIN hashes without ever holding the raw PIN.
 - **SetUserPIN**: Verifies the PIN matches the PlatformSRK's existing auth, then caches the FIDO2 hash. The `soPIN` parameter is ignored (exists to satisfy the interface).
 - **Lockout**: Real TPM dictionary attack counters are queried via `GetLockoutInfo()`. Auth failures return `ErrPINInvalidWithStatus` (with remaining attempts) or `ErrTPMLocked` when the DA counter is exhausted.
 - **SO PIN**: Not stored or supported. `SetSOPIN`, `ChangeSOPIN`, and `VerifySOPIN` all return `ErrPINNotSet`.
-- **Initialization**: `IsInitialized()` returns `platformStore.IsProvisioned()`. If the platform is provisioned at construction time, `UserPINSet()` is optimistically set to `true`.
+- **Initialization**: `IsInitialized()` returns `platformStore.IsProvisioned()`. `UserPINSet()` is reported only when the platform is provisioned AND `IsAuthReady()` is true. A readable SRK proves nothing about its auth value — one left by a prior TPM owner looks identical — so reporting a PIN as set from provisioning alone would claim a credential the backend has never seen and cannot check, and every attempt against it spends one of the TPM's dictionary-attack retries. Verification itself stays available whenever the SRK is provisioned, and a successful `SetUserPIN`/`VerifyUserPIN` confirms the auth value.
 
 ### First-Boot SRK Enrollment
 
@@ -134,17 +134,30 @@ successfully before the TPM2 PIN backend is usable end-to-end.
 | `IsInitialized()` | The SRK object exists in the TPM. May be `true` when the SRK was created by a prior TPM owner with unknown auth. Using this alone to activate the TPM2 PIN backend is insufficient. |
 | `IsAuthReady()` | The SRK's auth value is known-good — set by this application or confirmed via `VerifyAuth`. This is the correct predicate for selecting the TPM2 PIN backend. |
 
-`SetAuthReady(bool)` lets the daemon restore a previously confirmed auth-ready
-state from persisted config (e.g. when `PINStrategy == "tpm2"` is loaded at
-startup) without re-running enrollment.
+`SetAuthReady(bool)` is an explicit override for a caller that has confirmed
+the auth value by other means. It must NOT be used to infer readiness from
+persisted configuration: a persisted `PINStrategy == "tpm2"` records which
+backend was selected before, not that this session has confirmed the SRK's
+auth value. Asserting readiness from it marks an unverified SRK known-good,
+which suppresses enrollment and makes the PIN backend claim a credential
+nobody has checked.
+
+`VerifyAuth` and `ChangeAuth` set readiness themselves when they succeed, so
+a confirmed auth value survives the rest of the process without any override.
+A `ChangeAuth` that fails clears it: changing the auth evicts the persistent
+SRK before recreating it, so a failure part-way leaves what the SRK holds
+unknown.
 
 Boot lifecycle:
 
 1. **First boot** — call `EnrollPlatformSRK(userPIN)`. The SRK is created
    with `userPIN` as its authorization value and `authReady` is marked.
 2. **Subsequent boots** — `EnrollPlatformSRK` returns
-   `ErrPlatformSRKAlreadyEnrolled` (when `authReady`), or the daemon restores
-   `authReady` from persisted `PINStrategy` via `SetAuthReady(true)`.
+   `ErrPlatformSRKAlreadyEnrolled` when `authReady`. Otherwise the auth value
+   is unconfirmed for this process, and the first successful `VerifyAuth`
+   confirms it. A persisted `PINStrategy` does NOT restore `authReady`: it
+   records which backend was selected before, not that the SRK's auth has been
+   checked.
 
 ### PlatformAuthProvider interface
 
@@ -155,8 +168,12 @@ type PlatformAuthProvider interface {
     GetLockoutInfo() (failedAttempts, maxFail, interval, recovery int, err error)
     DictionaryAttackLockoutReset(lockoutAuth []byte) error
     IsProvisioned() bool
+    IsAuthReady() bool
 }
 ```
+
+`IsProvisioned` and `IsAuthReady` answer different questions and the backend
+needs both: the SRK existing is not evidence about its auth value.
 
 The pin package detects TPM authorization failures (`TPM_RC_BAD_AUTH`, `TPM_RC_AUTH_FAIL`) via string matching on the error message, keeping the package decoupled from `go-tpm` types.
 

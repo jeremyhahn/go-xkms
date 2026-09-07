@@ -165,8 +165,10 @@ func NewPlatformKeyStore(
 
 	// Probe the TPM for a previously created SRK to determine initialization
 	// state. Note: initialized means "SRK exists", NOT "auth is in a known
-	// good state." Callers that need auth confirmation must check IsAuthReady()
-	// or use the persisted PIN strategy from the app config.
+	// good state." Callers that need auth confirmation must check
+	// IsAuthReady(); a persisted PIN strategy is not a substitute, because it
+	// records which backend was selected before rather than that the auth
+	// value has been checked.
 	//
 	// When the SRK exists, populate its Name via TPM2_ReadPublic so that
 	// downstream TPM2_Load calls have a valid ParentHandle Name. Without this,
@@ -452,6 +454,11 @@ func (pks *PlatformKeyStore) VerifyAuth(userPIN string) error {
 
 	err := pks.tpm.VerifyAuth(pks.srkAttrs.TPMAttributes.Handle, []byte(userPIN))
 	if err == nil {
+		// The SRK accepted this auth value, which is the definition of the
+		// auth being in a known-good state. Recording it here means a PIN
+		// backend built later in the process reports the credential as
+		// known rather than regressing to "unset" and refusing to check it.
+		pks.authReady.Store(true)
 		return nil
 	}
 	if errors.Is(err, ErrAuthFailed) || isTPMAuthError(err) {
@@ -474,11 +481,25 @@ func (pks *PlatformKeyStore) ChangeAuth(currentPIN, newPIN string) error {
 		return err
 	}
 
-	return pks.tpm.ChangeAuth(
+	if err := pks.tpm.ChangeAuth(
 		pks.srkAttrs.TPMAttributes.Handle,
 		[]byte(currentPIN),
 		[]byte(newPIN),
-	)
+	); err != nil {
+		// The verification above marked the auth known-good, but changing it
+		// evicts the persistent SRK before recreating and re-persisting it.
+		// A failure part-way can leave no key at the expected handle, so what
+		// the SRK now holds is unknown and must not keep reporting ready:
+		// callers use that flag to skip enrollment and to decide a credential
+		// exists to check against.
+		pks.authReady.Store(false)
+		return err
+	}
+
+	// The new auth value is the one this application just installed, so the
+	// auth is in a known-good state.
+	pks.authReady.Store(true)
+	return nil
 }
 
 // GetLockoutInfo returns real TPM dictionary attack lockout counters by
@@ -518,9 +539,11 @@ func (pks *PlatformKeyStore) IsAuthReady() bool {
 	return pks.authReady.Load()
 }
 
-// SetAuthReady explicitly sets the auth-ready state. This is called by the
-// application layer when restoring a previously confirmed TPM2 PIN backend
-// selection from persisted config (e.g., GUIConfig.PINStrategy == "tpm2").
+// SetAuthReady explicitly sets the auth-ready state, for a caller that has
+// confirmed the SRK's auth value by other means. Persisted configuration is
+// not such a means: a recorded PIN strategy says which backend was selected
+// before, not that this session checked the auth. VerifyAuth and ChangeAuth
+// set this themselves on success, and a failed ChangeAuth clears it.
 func (pks *PlatformKeyStore) SetAuthReady(ready bool) {
 	pks.authReady.Store(ready)
 }

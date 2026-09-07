@@ -23,13 +23,17 @@ import (
 
 // fakePlatformAuth is a minimal pintpm2.PlatformAuthProvider for selector
 // tests. provisioned controls IsProvisioned.
-type fakePlatformAuth struct{ provisioned bool }
+type fakePlatformAuth struct {
+	provisioned bool
+	authReady   bool
+}
 
 func (f *fakePlatformAuth) VerifyAuth(string) error                     { return nil }
 func (f *fakePlatformAuth) ChangeAuth(string, string) error             { return nil }
 func (f *fakePlatformAuth) GetLockoutInfo() (int, int, int, int, error) { return 0, 0, 0, 0, nil }
 func (f *fakePlatformAuth) DictionaryAttackLockoutReset([]byte) error   { return nil }
 func (f *fakePlatformAuth) IsProvisioned() bool                         { return f.provisioned }
+func (f *fakePlatformAuth) IsAuthReady() bool                           { return f.authReady }
 
 var _ pintpm2.PlatformAuthProvider = (*fakePlatformAuth)(nil)
 

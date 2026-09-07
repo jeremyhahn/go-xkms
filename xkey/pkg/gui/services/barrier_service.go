@@ -332,6 +332,32 @@ func (s *BarrierService) Initialize(password, strategyID string) error {
 func (s *BarrierService) Unseal(password, strategyID string) error {
 	s.mu.Lock()
 
+	// Re-unseal in place when this process already holds the barrier and
+	// merely sealed it (the app-lock path). The downstream stores wired by
+	// the post-unseal hook hold a BarrierBackend wrapping THIS object, and
+	// the hook runs at most once per process, so constructing a replacement
+	// barrier here would leave every one of them bound to the sealed object
+	// with no route back. Unsealing the existing object restores them all
+	// and reuses the open base backend instead of opening a second one.
+	//
+	// This runs before strategyID is resolved because the strategy is not an
+	// input here: the barrier reads it from the sealed root key blob and
+	// looks it up in its own registry. Resolving a "best available" strategy
+	// first would let a TPM-capable machine pick a different ID than the one
+	// the barrier was sealed with and fall through to the rebuild below,
+	// stranding every store for the sake of an argument that is not used.
+	if s.barrier != nil && s.barrier.IsSealed() {
+		if err := s.barrier.Unseal(s.context(), xkms.SealCredentials{Secret: []byte(password)}); err != nil {
+			s.mu.Unlock()
+			s.logBarrierEvent(audit.OpBarrierUnsealed, false, err, map[string]any{"strategy": s.lastStrategy})
+			return err
+		}
+		s.log.Info("barrier re-unsealed in place", slog.String("strategy", s.lastStrategy))
+		s.logBarrierEvent(audit.OpBarrierUnsealed, true, nil, map[string]any{"strategy": s.lastStrategy})
+		s.mu.Unlock()
+		return nil
+	}
+
 	// When the frontend calls Unseal with only a password, strategyID
 	// may be empty. Fall back to the best available strategy so the
 	// manual unseal dialog works without passing a strategy explicitly.

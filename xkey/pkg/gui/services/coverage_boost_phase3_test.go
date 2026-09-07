@@ -1134,7 +1134,12 @@ func TestCoverageBoostPhase3_AppLockService_Unlock_BarrierConfigured_NotInitiali
 		sealed:      true,
 	}
 
-	pinSvc := newWizardPINService(&wizardMockPINBackend{})
+	// A backend holding no credential reports the canonical sentinel from
+	// VerifyUserPIN; it does not accept whatever it is handed. Stating the
+	// behaviour as well as the flag is what makes this a PIN-not-set case.
+	pinSvc := newWizardPINService(&wizardMockPINBackend{
+		verifyUserErr: qrdbsdk.ErrPINNotSet,
+	})
 
 	svc := NewAppLockService(pinSvc, barrier)
 	svc.LockForStartup()

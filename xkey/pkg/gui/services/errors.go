@@ -408,6 +408,12 @@ var (
 	// initialized during unlock. This is a critical error that prevents
 	// data from being stored securely.
 	ErrAppLockBarrierInitFailed = errors.New("app_lock: barrier initialization failed - encrypted storage unavailable")
+
+	// ErrAppLockBarrierSealFailed indicates the barrier could not be sealed
+	// while locking the app. The app is still locked when this is returned:
+	// the interface is inaccessible, but the barrier's data encryption key
+	// is still resident, so the lock is weaker than it claims to be.
+	ErrAppLockBarrierSealFailed = errors.New("app_lock: barrier seal failed - app locked with encryption key still resident")
 )
 
 // CustodianService errors.

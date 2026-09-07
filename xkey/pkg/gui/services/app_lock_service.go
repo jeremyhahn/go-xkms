@@ -15,11 +15,14 @@ package services
 
 import (
 	"context"
+	"errors"
 	"log/slog"
 	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
+
+	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
 
 	"github.com/jeremyhahn/go-xkms/xkey/pkg/ipc"
 )
@@ -75,16 +78,26 @@ type barrierUnsealer interface {
 	IsUnsealed() bool
 	Initialize(password, strategyID string) error
 	Unseal(password, strategyID string) error
+	Seal() error
 }
 
 // AppLockService manages a global app-level lock with PIN-based unlock.
 // When locked, the frontend prevents access to sensitive operations.
 // When unlocked, the user has full access until the inactivity timer fires.
 //
-// On startup the service is locked. If the barrier is sealed, Unlock
-// delegates to BarrierService.Unseal (which fires the post-unseal hook
-// to initialize data-dependent services). When the barrier is already
-// unsealed (or absent), Unlock verifies the PIN via PINService.
+// Locking seals the barrier. A lock that only blanked the interface would
+// leave the data encryption key resident in the process, so it protected
+// nothing, and it left Unlock choosing between two different secrets: the
+// barrier credential while the barrier was sealed, and the PIN service's
+// credential once it was not. That choice is what made the same keystrokes
+// succeed at startup and fail after an inactivity lock. Sealing on lock
+// makes the lock mean what it says and, as a consequence, routes every
+// unlock through the credential the startup unlock uses.
+//
+// On startup the service is locked and the barrier is sealed, so Unlock
+// delegates to BarrierService.Unseal (which fires the post-unseal hook to
+// initialize data-dependent services). The PIN path remains for
+// installations that have no barrier at all.
 type AppLockService struct {
 	ctx              context.Context
 	log              *slog.Logger
@@ -97,6 +110,28 @@ type AppLockService struct {
 	pinSvc           *PINService
 	barrierSvc       barrierUnsealer
 	barrierStrategy  string
+
+	// transitionMu serializes Lock, Unlock and AutoUnlock so the locked flag
+	// and the barrier's seal state always change together. Without it a lock
+	// in progress is observable as "locked" while the barrier is still open,
+	// which sends a concurrent unlock down the PIN path — the exact route
+	// this service exists to keep closed — and lets that unlock clear the
+	// flag while the lock is still sealing.
+	transitionMu sync.Mutex
+
+	// emitMu orders notifications so front ends observe transitions in the
+	// order they happened. It is acquired while transitionMu is still held
+	// and released after the listener returns, so a slow listener delays
+	// later notifications without stalling the state transitions themselves.
+	emitMu sync.Mutex
+
+	// autoLockUnit is the real-time duration of one "minute" of the
+	// inactivity timeout, in nanoseconds. It exists so a test can drive the
+	// actual time.AfterFunc path — the one that fires in production —
+	// instead of calling a lock method the timer does not use. It is atomic
+	// because the timer arms from whichever goroutine last recorded
+	// activity. Zero means one minute.
+	autoLockUnit atomic.Int64
 }
 
 // NewAppLockService creates a new AppLockService that starts in the
@@ -113,6 +148,7 @@ func NewAppLockService(pinSvc *PINService, barrierSvc barrierUnsealer) *AppLockS
 	svc.locked.Store(false)
 	svc.autoLockMinutes.Store(15)
 	svc.lockOnScreenLock.Store(true)
+	svc.autoLockUnit.Store(int64(time.Minute))
 	return svc
 }
 
@@ -153,6 +189,9 @@ func (s *AppLockService) SetLockOnScreenLock(enabled bool) {
 // before the frontend is loaded. No event is emitted; the frontend will
 // read the initial lock state via GetStatus on mount.
 func (s *AppLockService) LockForStartup() {
+	s.transitionMu.Lock()
+	defer s.transitionMu.Unlock()
+
 	s.stopAutoLockTimer()
 	s.locked.Store(true)
 	s.log.Info("app locked for startup")
@@ -161,28 +200,64 @@ func (s *AppLockService) LockForStartup() {
 // Lock sets the app to the locked state. Returns ErrAppLockAlreadyLocked
 // if the app is already locked.
 func (s *AppLockService) Lock() error {
+	s.transitionMu.Lock()
 	if s.locked.Load() {
+		s.transitionMu.Unlock()
 		return ErrAppLockAlreadyLocked
 	}
 	s.stopAutoLockTimer()
+	sealErr := s.sealBarrier()
+	// The flag flips only once the barrier is closed, so the app is never
+	// observable as locked while its data encryption key is still resident.
 	s.locked.Store(true)
-	s.log.Info("app locked")
+	// Claim the notification slot before releasing the state lock so
+	// notifications cannot overtake one another, then release the state lock
+	// so the listener does not stall the next transition.
+	s.emitMu.Lock()
+	s.transitionMu.Unlock()
+	defer s.emitMu.Unlock()
+
+	s.log.Info("app locked", "barrier_sealed", sealErr == nil)
 	if s.emitFunc != nil {
 		s.emitFunc("app:locked", nil)
 	}
+	return sealErr
+}
+
+// sealBarrier seals the barrier so a locked app no longer holds the data
+// encryption key. It reports nil when there is nothing to seal: no barrier
+// is wired, the barrier was never initialized, or it is already sealed.
+func (s *AppLockService) sealBarrier() error {
+	if s.barrierSvc == nil {
+		return nil
+	}
+	if !s.barrierSvc.IsInitialized() || !s.barrierSvc.IsUnsealed() {
+		return nil
+	}
+	if err := s.barrierSvc.Seal(); err != nil {
+		s.log.Error("app lock: barrier seal failed", "error", err)
+		return &SentinelCauseError{Sentinel: ErrAppLockBarrierSealFailed, Cause: err}
+	}
+	s.log.Debug("app lock: barrier sealed")
 	return nil
 }
 
-// Unlock verifies the provided PIN and, on success, transitions the app
-// to the unlocked state. When a barrier is configured and still sealed,
-// the PIN is used as the barrier password to unseal it (which triggers
-// the post-unseal hook for data directory initialization). When the
-// barrier is already unsealed (or absent), PIN verification is delegated
-// to PINService.
+// Unlock verifies the provided credential and, on success, transitions the
+// app to the unlocked state. When a barrier is configured and sealed — which
+// is every locked state on an installation that has one, because Lock seals
+// it — the credential is the barrier password. The first unseal of a process
+// also fires the post-unseal hook that initializes data-dependent services;
+// later unlocks reopen the barrier the stores are already bound to and skip
+// it. When there is no barrier at all, verification is delegated to
+// PINService.
 func (s *AppLockService) Unlock(pin string) error {
 	if pin == "" {
 		return ErrAppLockPINRequired
 	}
+
+	s.transitionMu.Lock()
+	defer s.transitionMu.Unlock()
+
 	if !s.locked.Load() {
 		return ErrAppLockAlreadyUnlocked
 	}
@@ -215,14 +290,13 @@ func (s *AppLockService) Unlock(pin string) error {
 			s.log.Error("app unlock: PIN service not configured")
 			return ErrAppLockSetupIncomplete
 		}
-		status, statusErr := s.pinSvc.GetPINStatus()
-		if statusErr != nil || status == nil || !status.UserPINSet {
-			s.log.Error("app unlock: user PIN not set - setup incomplete",
-				"barrier_configured", barrierConfigured,
-				"barrier_initialized", barrierInitialized)
-			return ErrAppLockSetupIncomplete
-		}
 		if err := s.pinSvc.VerifyUserPIN(pin); err != nil {
+			if errors.Is(err, qrdbsdk.ErrPINNotSet) {
+				s.log.Error("app unlock: user PIN not set - setup incomplete",
+					"barrier_configured", barrierConfigured,
+					"barrier_initialized", barrierInitialized)
+				return ErrAppLockSetupIncomplete
+			}
 			s.log.Warn("app unlock: PIN verification failed", "error", err)
 			return err
 		}
@@ -252,15 +326,19 @@ func (s *AppLockService) Unlock(pin string) error {
 			s.log.Error("app unlock: PIN service not configured")
 			return ErrAppLockPINInvalid
 		}
-		// Check if PIN is actually set before attempting verification.
-		// This provides a clearer error message when setup is incomplete.
-		if status, statusErr := s.pinSvc.GetPINStatus(); statusErr == nil && !status.UserPINSet {
-			s.log.Error("app unlock: user PIN not set - setup incomplete",
-				"barrier_configured", barrierConfigured,
-				"barrier_initialized", barrierInitialized)
-			return ErrAppLockSetupIncomplete
-		}
+		// Ask the backend rather than pre-checking whether a PIN is
+		// "set". A backend that cannot verify says so with ErrPINNotSet
+		// without touching the hardware, which still yields the clearer
+		// setup-incomplete message. Pre-checking would instead refuse a
+		// TPM whose SRK is provisioned but whose auth this session has not
+		// yet confirmed — a credential the backend can in fact check.
 		if err := s.pinSvc.VerifyUserPIN(pin); err != nil {
+			if errors.Is(err, qrdbsdk.ErrPINNotSet) {
+				s.log.Error("app unlock: user PIN not set - setup incomplete",
+					"barrier_configured", barrierConfigured,
+					"barrier_initialized", barrierInitialized)
+				return ErrAppLockSetupIncomplete
+			}
 			s.log.Warn("app unlock: PIN verification failed", "error", err)
 			return err
 		}
@@ -348,8 +426,13 @@ func (s *AppLockService) HandleUnlock(pin string) *ipc.UnlockResult {
 // where the barrier was unsealed automatically. No event is emitted
 // because the app was never visibly locked to the user.
 func (s *AppLockService) AutoUnlock() {
+	s.transitionMu.Lock()
 	s.locked.Store(false)
 	s.resetAutoLockTimer()
+	s.emitMu.Lock()
+	s.transitionMu.Unlock()
+	defer s.emitMu.Unlock()
+
 	s.log.Info("app auto-unlocked")
 	if s.emitFunc != nil {
 		s.emitFunc("app:unlocked", nil)
@@ -394,11 +477,31 @@ func (s *AppLockService) resetAutoLockTimer() {
 		s.autoLockTimer.Stop()
 	}
 
-	s.autoLockTimer = time.AfterFunc(time.Duration(mins)*time.Minute, func() {
-		if err := s.Lock(); err == nil {
-			s.log.Info("app auto-locked after inactivity", "minutes", mins)
-		}
+	unit := time.Duration(s.autoLockUnit.Load())
+	if unit <= 0 {
+		unit = time.Minute
+	}
+
+	s.autoLockTimer = time.AfterFunc(time.Duration(mins)*unit, func() {
+		s.autoLockNow(mins)
 	})
+}
+
+// autoLockNow is the body the inactivity timer runs when it fires. It is a
+// named method so a regression test can exercise the inactivity lock through
+// the same code the timer executes.
+func (s *AppLockService) autoLockNow(mins int32) {
+	switch err := s.Lock(); {
+	case err == nil:
+		s.log.Info("app auto-locked after inactivity", "minutes", mins)
+	case errors.Is(err, ErrAppLockAlreadyLocked):
+		// Raced with a manual lock; nothing to report.
+	default:
+		// The app IS locked; only the seal failed. Report it rather than
+		// dropping the event, which would hide the weaker lock.
+		s.log.Warn("app auto-locked after inactivity, barrier not sealed",
+			"minutes", mins, "error", err)
+	}
 }
 
 // stopAutoLockTimer cancels the auto-lock timer.

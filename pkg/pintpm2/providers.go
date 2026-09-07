@@ -35,6 +35,14 @@ type PlatformAuthProvider interface {
 
 	// IsProvisioned returns true if the TPM is provisioned with a PlatformSRK.
 	IsProvisioned() bool
+
+	// IsAuthReady returns true when the PlatformSRK's auth value is in a
+	// known-good state: it was set by this application or confirmed by a
+	// successful verification. IsProvisioned alone is not sufficient — an
+	// SRK left by a prior TPM owner is readable but its auth value is
+	// unknown, and treating that as a configured user PIN makes the
+	// backend claim a PIN it cannot verify.
+	IsAuthReady() bool
 }
 
 // isAuthError returns true if the error indicates a TPM authorization failure.

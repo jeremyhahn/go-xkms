@@ -478,11 +478,13 @@ func TestAppLockService_Unlock_SetupIncomplete_BarrierNotInitializedAndPINNotSet
 	pinSvc.SetContext(context.Background())
 
 	backend := &mockPINBackend{
-		strategy:      qrdbsdk.PINStrategySoftware,
-		soPINSet:      false,
-		userPINSet:    false, // PIN not set - setup incomplete
-		initialized:   false,
-		verifyUserErr: errors.New("pin not set"),
+		strategy:    qrdbsdk.PINStrategySoftware,
+		soPINSet:    false,
+		userPINSet:  false, // PIN not set - setup incomplete
+		initialized: false,
+		// The canonical sentinel every real backend returns when it holds no
+		// credential; an ad-hoc error here would not model any of them.
+		verifyUserErr: qrdbsdk.ErrPINNotSet,
 		lockoutStatus: &qrdbsdk.PINLockoutStatus{MaxAttempts: 5},
 	}
 	pSvc := qrdbsdk.NewPINService(backend, slog.Default())
@@ -512,6 +514,12 @@ type mockBarrierService struct {
 	unsealCalled   bool
 	unsealPassword string
 	unsealErr      error
+	sealCalled     bool
+	sealErr        error
+
+	// sealHook, when set, runs at the start of Seal so a test can observe
+	// the service's state at the instant the barrier is being closed.
+	sealHook func()
 }
 
 // IsInitialized returns whether the mock barrier storage directory exists.
@@ -533,6 +541,19 @@ func (m *mockBarrierService) Initialize(password, _ string) error {
 	}
 	m.initialized = true
 	m.sealed = false
+	return nil
+}
+
+// Seal simulates sealing the barrier, zeroing its data encryption key.
+func (m *mockBarrierService) Seal() error {
+	if m.sealHook != nil {
+		m.sealHook()
+	}
+	m.sealCalled = true
+	if m.sealErr != nil {
+		return m.sealErr
+	}
+	m.sealed = true
 	return nil
 }
 

@@ -62,12 +62,17 @@ type TPM2Backend struct {
 // NewTPM2Backend creates a new TPM2Backend that delegates PIN verification
 // to the PlatformAuthProvider.
 //
-// User PIN state is detected by querying platformStore.IsProvisioned().
-// The actual PIN value is not known until the user calls SetUserPIN or
-// VerifyUserPIN with the correct PIN.
+// The user PIN is reported as set only when the PlatformSRK is provisioned
+// AND its auth value is in a known-good state (IsAuthReady). A provisioned
+// SRK on its own proves nothing about the auth value: an SRK left behind by
+// a prior TPM owner is readable while its auth is unknown, so reporting a
+// PIN as set from IsProvisioned alone makes the backend claim a credential
+// it has never seen and cannot verify. Verification itself remains available
+// whenever the SRK is provisioned; a successful SetUserPIN or VerifyUserPIN
+// confirms the auth value and flips the reported state.
 func NewTPM2Backend(platformStore PlatformAuthProvider) *TPM2Backend {
 	b := &TPM2Backend{platformStore: platformStore}
-	if platformStore.IsProvisioned() {
+	if platformStore.IsProvisioned() && platformStore.IsAuthReady() {
 		b.userPINSet.Store(true)
 	}
 	return b
@@ -109,15 +114,33 @@ func (b *TPM2Backend) ChangeUserPIN(currentUserPIN, newUserPIN string) error {
 	if err := validatePINLength(newUserPIN); err != nil {
 		return err
 	}
-	if !b.userPINSet.Load() {
+	if !b.platformStore.IsProvisioned() {
 		return qrdbsdk.ErrPINNotSet
 	}
 	if err := b.platformStore.ChangeAuth(currentUserPIN, newUserPIN); err != nil {
+		// A change can fail after the SRK has already been evicted, which
+		// leaves what it holds unknown; the provider reports that by
+		// dropping its readiness. Re-read it rather than keeping a cached
+		// "set" that the provider no longer stands behind, and drop the
+		// cached FIDO2 hash with it: VerifyFIDO2Hash is consulted directly
+		// by callers that never see UserPINSet, so leaving the old digest
+		// behind would keep accepting a PIN this backend can no longer
+		// vouch for.
+		ready := b.platformStore.IsAuthReady()
+		b.userPINSet.Store(ready)
+		if !ready {
+			if guard := b.fido2Guard.Swap(nil); guard != nil {
+				guard.Free()
+			}
+		}
 		if isAuthError(err) {
 			return b.buildAuthFailureError()
 		}
 		return err
 	}
+	// ChangeAuth proved the current auth value and installed the new one, so
+	// the credential is now known either way.
+	b.userPINSet.Store(true)
 	b.cacheFIDO2Hash([]byte(newUserPIN))
 	return nil
 }
@@ -130,7 +153,7 @@ func (b *TPM2Backend) VerifySOPIN(_ string) error { return qrdbsdk.ErrPINNotSet 
 // On failure the DA lockout status is queried and surfaced via
 // qrdbsdk.PINTPMLockedError or qrdbsdk.PINInvalidWithStatusError.
 func (b *TPM2Backend) VerifyUserPIN(p string) error {
-	if !b.userPINSet.Load() {
+	if !b.platformStore.IsProvisioned() {
 		return qrdbsdk.ErrPINNotSet
 	}
 	if err := b.platformStore.VerifyAuth(p); err != nil {
@@ -139,6 +162,10 @@ func (b *TPM2Backend) VerifyUserPIN(p string) error {
 		}
 		return err
 	}
+	// The supplied PIN is the SRK auth value. Record that the credential is
+	// now known so UserPINSet reports the confirmed state rather than a
+	// guess derived from SRK presence.
+	b.userPINSet.Store(true)
 	guard := b.fido2Guard.Load()
 	if guard == nil || guard.IsFreed() {
 		b.cacheFIDO2Hash([]byte(p))
@@ -153,7 +180,10 @@ func (b *TPM2Backend) IsInitialized() bool { return b.platformStore.IsProvisione
 // SOPINSet returns false. The TPM2 backend does not use SO PINs.
 func (b *TPM2Backend) SOPINSet() bool { return false }
 
-// UserPINSet reports whether the user PIN has been configured.
+// UserPINSet reports whether the PlatformSRK's auth value is known to be
+// the user PIN — either confirmed by a successful SetUserPIN/VerifyUserPIN
+// in this process, or reported auth-ready by the provider at construction.
+// It is deliberately NOT derived from SRK presence alone.
 func (b *TPM2Backend) UserPINSet() bool { return b.userPINSet.Load() }
 
 // GetLockoutStatus returns the TPM dictionary-attack protection state

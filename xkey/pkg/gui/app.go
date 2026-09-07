@@ -2768,7 +2768,13 @@ func (a *App) startup(ctx context.Context) {
 	// If the system bus is unavailable (headless, CI), we log and continue.
 	if a.config.AppLockOnScreenLock {
 		slm, slmErr := notify.NewScreenLockMonitor(a.log, func() {
-			_ = a.appLockService.Lock()
+			// Locking seals the barrier, so this can report that the app
+			// locked with the encryption key still resident. The app is
+			// locked either way; say so rather than discarding it.
+			if err := a.appLockService.Lock(); err != nil &&
+				!errors.Is(err, services.ErrAppLockAlreadyLocked) {
+				a.log.Warn("screen lock: app locked but barrier not sealed", "error", err)
+			}
 		})
 		if slmErr != nil {
 			a.log.Warn("screen lock monitor unavailable", "error", slmErr)
@@ -3126,10 +3132,12 @@ func (a *App) postDataDirStartup() {
 // An SRK from a prior TPM owner may exist (IsInitialized=true) but have unknown
 // auth. Using IsInitialized alone would select TPM2 and break every PIN check.
 // guiTPMProvider adapts the xKey GUI's TPM accessor and wizard/GUIConfig
-// auth-readiness model to the shared xkmssdk.PINTPMProvider contract. TPM2 is
-// usable only when the SRK is initialized AND its auth was confirmed this
-// session (wizard) or restored from a prior session that persisted
-// PINStrategy="tpm2".
+// auth-readiness model to the shared xkmssdk.PINTPMProvider contract. A
+// persisted PINStrategy="tpm2" keeps the TPM backend selected across
+// restarts, but it does not make the SRK's auth value confirmed: that comes
+// only from this session setting or verifying it. The backend reports the
+// credential as unset until then, so an unverified SRK is never offered
+// attempts that would spend the TPM's dictionary-attack retries.
 type guiTPMProvider struct{ app *App }
 
 // PlatformAuth implements xkmssdk.PINTPMProvider.
@@ -3148,7 +3156,16 @@ func (p guiTPMProvider) PlatformAuth() (xkmssdk.TPMPlatformAuthProvider, bool) {
 			p.app.log.Warn("PIN backend: TPM2 SRK exists but auth not confirmed, falling back to software")
 			return nil, false
 		}
-		pks.SetAuthReady(true)
+		// The persisted strategy says tpm2, so keep selecting the TPM
+		// backend across restarts. Do NOT assert readiness on the key
+		// store: this session has not verified the SRK auth value, and
+		// SetAuthReady is consumed elsewhere (enrollment skips, key
+		// creation) as proof that the auth is known-good. Marking an
+		// unverified SRK ready makes the PIN backend claim a credential it
+		// has never seen, and every attempt against it spends one of the
+		// TPM's dictionary-attack retries. The backend reports the PIN as
+		// unset until a successful verification confirms the auth value.
+		p.app.log.Warn("PIN backend: TPM2 selected from persisted strategy, SRK auth unconfirmed this session")
 	}
 	concrete, ok := pks.(*xkmssdk.PlatformKeyStore)
 	if !ok {

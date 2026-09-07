@@ -101,8 +101,11 @@ type PlatformKeyStorer interface {
 	// whether TPM2-based PIN verification is available.
 	IsAuthReady() bool
 
-	// SetAuthReady explicitly sets the auth-ready state. Called by the app
-	// layer when restoring a confirmed TPM2 PIN backend from persisted config.
+	// SetAuthReady explicitly sets the auth-ready state, for a caller that
+	// has confirmed the SRK's auth value by other means. Persisted
+	// configuration is not such a means: a recorded PIN strategy says which
+	// backend was chosen before, not that this session confirmed the auth.
+	// VerifyAuth and ChangeAuth set this themselves on success.
 	SetAuthReady(ready bool)
 }
 

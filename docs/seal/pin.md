@@ -184,16 +184,21 @@ a no-op. An empty `userPIN` is rejected with `ErrPlatformSRKEnrollEmptyPIN`.
 object exists; it can be `true` even when the SRK was created by a prior TPM
 owner with unknown auth. `IsAuthReady()` is the correct gate for activating the
 TPM2 PIN backend — it is only `true` when the auth value is known-good.
-`SetAuthReady(bool)` restores a previously confirmed state from persisted config
-(e.g. `PINStrategy == "tpm2"`) without re-running enrollment.
+`SetAuthReady(bool)` is an explicit override for a caller that has confirmed the
+auth value by other means. Persisted configuration is not such a means:
+`PINStrategy == "tpm2"` records which backend was selected before, not that this
+session has confirmed the SRK's auth. `VerifyAuth` and `ChangeAuth` set readiness
+themselves on success, and a failed `ChangeAuth` clears it because changing the
+auth evicts the SRK before recreating it.
 
 Boot lifecycle:
 
 1. **First boot** — call `EnrollPlatformSRK(userPIN)`. The SRK is created with
    `userPIN` as auth and `authReady` is marked.
 2. **Subsequent boots** — `EnrollPlatformSRK` returns
-   `ErrPlatformSRKAlreadyEnrolled` (when `authReady`), or the daemon calls
-   `SetAuthReady(true)` after loading a persisted `PINStrategy == "tpm2"`.
+   `ErrPlatformSRKAlreadyEnrolled` when `authReady`. Otherwise the auth value
+   is unconfirmed for this process and the first successful `VerifyAuth`
+   confirms it. A persisted `PINStrategy == "tpm2"` does not confirm it.
 
 ## FIDO2 Integration
 

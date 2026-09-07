@@ -33,6 +33,10 @@ type mockPlatformAuth struct {
 
 	provisioned atomic.Bool
 
+	// authReady mirrors PlatformKeyStore.IsAuthReady: the SRK auth value is
+	// in a known-good state because this app set it or confirmed it.
+	authReady atomic.Bool
+
 	failedAttempts int
 	maxFail        int
 	interval       int
@@ -54,6 +58,10 @@ func newMockPlatformAuth(authValue string, provisioned bool) *mockPlatformAuth {
 		maxFail:   10,
 	}
 	m.provisioned.Store(provisioned)
+	// A provisioned mock models a TPM whose SRK auth this app configured, so
+	// its auth is ready. Tests covering an SRK with an unknown auth value
+	// clear this explicitly.
+	m.authReady.Store(provisioned)
 	return m
 }
 
@@ -107,6 +115,10 @@ func (m *mockPlatformAuth) DictionaryAttackLockoutReset(lockoutAuth []byte) erro
 
 func (m *mockPlatformAuth) IsProvisioned() bool {
 	return m.provisioned.Load()
+}
+
+func (m *mockPlatformAuth) IsAuthReady() bool {
+	return m.authReady.Load()
 }
 
 func (m *mockPlatformAuth) setLockoutInfo(failed, maxFail, interval, recovery int) {

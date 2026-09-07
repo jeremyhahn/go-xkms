@@ -449,8 +449,11 @@ previous TPM owner left an SRK with unknown auth.
 | `IsInitialized()` | The SRK object exists in the TPM. May be `true` even when the SRK was created by a prior owner with unknown auth. Insufficient alone for activating the TPM2 PIN backend. |
 | `IsAuthReady()` | The SRK's auth value is known-good — set by this application or confirmed via `VerifyAuth`. This is the correct gate for selecting the TPM2 PIN backend. |
 
-`SetAuthReady(bool)` restores a previously confirmed auth-ready state from
-persisted configuration (e.g. `PINStrategy == "tpm2"`) without re-running the
+`SetAuthReady(bool)` is an explicit override for a caller that has confirmed the
+auth value by other means. Persisted configuration is not such a means:
+`PINStrategy == "tpm2"` records which backend was selected before, not that this
+session confirmed the SRK's auth. `VerifyAuth` and `ChangeAuth` set readiness on
+success, and a failed `ChangeAuth` clears it. The override does not re-run the
 full enrollment on every boot.
 
 Boot lifecycle:
@@ -458,8 +461,9 @@ Boot lifecycle:
 1. **First boot**: `EnrollPlatformSRK(userPIN)` — SRK created with `userPIN`,
    `authReady` set.
 2. **Subsequent boots**: `EnrollPlatformSRK` returns
-   `ErrPlatformSRKAlreadyEnrolled` when `authReady`, or the daemon calls
-   `SetAuthReady(true)` after loading a persisted `PINStrategy == "tpm2"`.
+   `ErrPlatformSRKAlreadyEnrolled` when `authReady`. Otherwise the auth value
+   is unconfirmed for this process and the first successful `VerifyAuth`
+   confirms it. A persisted `PINStrategy == "tpm2"` does not confirm it.
 
 ### Auth Probe — VerifyAuth
 

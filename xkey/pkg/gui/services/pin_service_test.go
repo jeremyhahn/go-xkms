@@ -19,6 +19,7 @@ import (
 	"crypto/subtle"
 	"errors"
 	"log/slog"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -44,6 +45,10 @@ type mockPINBackend struct {
 	resetLockoutErr error
 
 	lockoutStatus *qrdbsdk.PINLockoutStatus
+
+	// verifyUserCalls counts VerifyUserPIN calls so a test can assert that
+	// an unlock never reached the PIN verification path.
+	verifyUserCalls atomic.Int32
 }
 
 func (m *mockPINBackend) Strategy() qrdbsdk.PINStrategyID             { return m.strategy }
@@ -57,9 +62,12 @@ func (m *mockPINBackend) SetUserPIN(_, _ string) error    { return m.setUserPINE
 func (m *mockPINBackend) ChangeSOPIN(_, _ string) error   { return m.changeSOPINErr }
 func (m *mockPINBackend) ChangeUserPIN(_, _ string) error { return m.changeUserErr }
 func (m *mockPINBackend) VerifySOPIN(_ string) error      { return m.verifySOErr }
-func (m *mockPINBackend) VerifyUserPIN(_ string) error    { return m.verifyUserErr }
-func (m *mockPINBackend) ResetLockout(_ string) error     { return m.resetLockoutErr }
-func (m *mockPINBackend) SetMaxAttempts(_ int)            {}
+func (m *mockPINBackend) VerifyUserPIN(_ string) error {
+	m.verifyUserCalls.Add(1)
+	return m.verifyUserErr
+}
+func (m *mockPINBackend) ResetLockout(_ string) error { return m.resetLockoutErr }
+func (m *mockPINBackend) SetMaxAttempts(_ int)        {}
 
 // mockPINBackendWithFIDO2 extends mockPINBackend to implement the
 // qrdbsdk.FIDO2HashVerifier interface. It stores a reference hash and compares

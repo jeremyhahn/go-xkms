@@ -1145,8 +1145,9 @@ func TestPlatformKeyStore_IsAuthReady(t *testing.T) {
 }
 
 func TestPlatformKeyStore_SetAuthReady(t *testing.T) {
-	// SetAuthReady allows the app layer to restore auth-ready state from
-	// persisted config (e.g., GUIConfig.PINStrategy == "tpm2") on restart.
+	// SetAuthReady is an explicit override for a caller that has confirmed
+	// the SRK's auth value by other means. It is not a way to infer readiness
+	// from persisted configuration.
 	mock := &mockTPMForPKS{
 		config:        testConfigForPKS(false),
 		readHandleErr: nil, // SRK exists

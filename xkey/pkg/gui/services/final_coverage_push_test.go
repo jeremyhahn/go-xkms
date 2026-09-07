@@ -735,11 +735,13 @@ func TestFinalCoveragePush_AppLockService_Unlock_PINNotSet(t *testing.T) {
 	pinSvc := NewPINService()
 	pinSvc.SetContext(context.Background())
 	backend := &mockPINBackend{
-		strategy:      qrdbsdk.PINStrategySoftware,
-		soPINSet:      false,
-		userPINSet:    false,
-		initialized:   true,
-		verifyUserErr: nil,
+		strategy:    qrdbsdk.PINStrategySoftware,
+		soPINSet:    false,
+		userPINSet:  false,
+		initialized: true,
+		// A backend holding no credential reports the canonical sentinel
+		// rather than accepting whatever it is handed.
+		verifyUserErr: qrdbsdk.ErrPINNotSet,
 		lockoutStatus: &qrdbsdk.PINLockoutStatus{MaxAttempts: 5},
 	}
 	pSvc := qrdbsdk.NewPINService(backend, slog.Default())
