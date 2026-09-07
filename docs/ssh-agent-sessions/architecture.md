@@ -1,6 +1,6 @@
 # SSH Agent Sessions — Architecture
 
-> **Status: NORMATIVE** · Feature: `ssh-agent-sessions` · Repo: `go-xkms` · Last verified: 2026-08-20
+> **Status: NORMATIVE** · Feature: `ssh-agent-sessions` · Repo: `go-xkms` · Last verified: 2026-09-06
 
 ## The problem
 
@@ -58,6 +58,15 @@ scratch area *goes* — socket and temp `known_hosts` side by side — so `conne
 creates it. `agent.Request.WorkDir` must already exist, because a session that
 conjured a directory would not own it and would therefore leave it behind on
 every run.
+
+`agent.Request.SocketDir` is the third point on that same axis, and the one the
+SDK exposes: a directory the session **creates**, owns, and removes. It exists
+because ownership and location are separable questions that the `WorkDir`
+option ran together. A caller can need the socket somewhere specific — inside a
+tree its sandbox mount policy admits, rather than in the OS temporary directory
+— without needing, or being able to vouch for, the directory the socket binds
+in. So the caller names the location and the session still makes the directory,
+which is what keeps the 0700 guarantee a construction rather than a claim.
 
 ## Boundaries
 
@@ -122,17 +131,36 @@ hardware included, and the typed report is sufficient for this consumer class.
 
 ## Rejected alternatives
 
-**Let the caller choose the socket's directory.** The SDK deliberately has no
-`WorkDir` option. A socket's own permissions do not protect its pathname — the
-containing directory decides who can unlink and re-bind it — and validating a
-supplied directory is inherently check-then-use: an attacker controlling any
-ancestor redirects the path between the check and the bind, and validating
-every component moves the same race one level up. The honest fix is an anchored
-no-follow bind, which `net.Listen("unix", path)` cannot express because it takes
-a pathname rather than a directory descriptor. So the session creates its own
-directory, with a unique name, and the option that could not be made safe is
-simply absent. `pkg/ssh/connect` keeps a directory parameter because it supplies
-one it created itself.
+**Let the caller hand over an existing directory to bind in.** The SDK has no
+such option, and `SocketDir` is not one: it names where the session creates its
+directory, not a directory to adopt. A socket's own permissions do not protect
+its pathname — the containing directory decides who can unlink and re-bind it —
+and validating a supplied directory is inherently check-then-use: an attacker
+controlling it redirects the path between the check and the bind, and
+validating every component moves the same race one level up. The honest fix is
+an anchored no-follow bind, which `net.Listen("unix", path)` cannot express
+because it takes a pathname rather than a directory descriptor. So the session
+always creates the directory it binds in, and the option that could not be made
+safe is still absent. `pkg/ssh/connect` keeps a directory parameter because it
+supplies one it created itself.
+
+**Put the socket wherever the caller says, unconditionally.** Rejected as the
+shape of the location option, because the parent still decides something the
+session cannot: a directory created inside a world-writable parent can be
+renamed away and replaced whole, and the child reading `SSH_AUTH_SOCK` would
+then reach somebody else's agent. The parent is therefore held to the same test
+a supplied `WorkDir` passes. This does refuse the OS temporary directory as a
+`SocketDir` parent, which is not an inconsistency — a caller that wants that
+location leaves `SocketDir` empty and gets it, through `os.MkdirTemp`, on the
+platform's own per-user isolation rather than on a claim this package would be
+making about a directory anyone can write to.
+
+**Return a directory the caller then populates, or let it pre-create the
+directory and pass it.** Both were the same thing in different clothes: an
+existing directory at bind time, which is the case above. Refusing an existing
+path with `os.Mkdir` is what makes "the session owns this directory" a fact
+established by the same syscall that tests it, rather than a stat followed by a
+hope.
 
 **Serve on a caller-supplied listener.** Would let a consumer share one socket
 across sessions, at the cost of making the lifetime contract the caller's

@@ -1,6 +1,6 @@
 # SSH Agent Sessions — Engineering Contract
 
-> **Status: NORMATIVE** · Feature: `ssh-agent-sessions` · Repo: `go-xkms` · Last verified: 2026-08-20
+> **Status: NORMATIVE** · Feature: `ssh-agent-sessions` · Repo: `go-xkms` · Last verified: 2026-09-06
 
 ## Exported surface — `sdk/go/client/ssh`
 
@@ -8,24 +8,32 @@ The SDK is the only surface a consumer may reach.
 
 ```go
 type AgentOptions struct {
-	Signers []gossh.Signer // no WorkDir: see architecture.md
+	Signers   []gossh.Signer // identities to serve
+	SocketDir string         // where the session CREATES its socket directory; empty = OS temp
 }
 
 type AgentSession = pkgagent.Session
 
 func StartAgent(ctx context.Context, opts AgentOptions) (*AgentSession, error)
 
-type AgentInputError   = pkgagent.InputError   // missing or invalid option
-type AgentWorkDirError = pkgagent.WorkDirError // temp dir could not be created
-type AgentListenError  = pkgagent.ListenError  // socket could not be bound
+type AgentInputError             = pkgagent.InputError            // missing or invalid option
+type AgentWorkDirError           = pkgagent.WorkDirError          // the directory could not be created
+type AgentListenError            = pkgagent.ListenError           // socket could not be bound
+type AgentSocketDirExistsError   = pkgagent.SocketDirExistsError  // SocketDir already exists
+type AgentInsecureSocketDirError = pkgagent.InsecureWorkDirError  // SocketDir's parent is not private
 ```
+
+There is still no option for an **existing** directory to bind in: `SocketDir`
+is a location, and the session always creates the directory it binds inside.
+See [`architecture.md`](architecture.md).
 
 ## Exported surface — `pkg/ssh/agent`
 
 ```go
 type Request struct {
-	Signers []ssh.Signer
-	WorkDir string
+	Signers   []ssh.Signer
+	WorkDir   string // an EXISTING directory the caller owns and keeps
+	SocketDir string // a directory the session creates, owns and removes
 }
 
 type Session struct {
@@ -45,6 +53,8 @@ func (r ShutdownReport) Clean() bool
 func (s *Session) Stop(ctx context.Context) ShutdownReport
 
 func Serve(ctx context.Context, socketPath string, a sshagent.Agent) error // pre-existing
+
+type SocketDirExistsError struct{ Path string } // unwraps to fs.ErrExist
 
 // The raw binder is deliberately NOT exported. net.Listen binds before the
 // socket mode is applied, so for an arbitrary path there is a window in which
@@ -132,22 +142,56 @@ func Serve(ctx context.Context, socketPath string, a sshagent.Agent) error // pr
    caller's behalf — the session must not leave behind what it does not own.
 13. **No host-key state is read or written.** Any change adding it belongs in
    `pkg/ssh/connect`.
+14. **`SocketDir` gives the caller the location, never the directory.** The
+   session creates `SocketDir` itself with `os.Mkdir` (mode 0700; the mode is
+   not restated afterwards, because the process umask can only CLEAR bits, so
+   what lands is never more permissive than 0700 — and "no group or other
+   access" is the whole of what the socket's safety rests on), binds
+   `agent.sock` inside it, and removes the directory with the socket when the
+   session ends. Because it is created here, the invariant behind mode 0600 —
+   that no other user can traverse into the socket's directory — holds exactly
+   as it does for the default temporary directory; nothing is inherited from a
+   directory somebody else made. Consequences, each load-bearing:
+   - **An existing path is refused**, with `*SocketDirExistsError` (unwrapping
+     to `fs.ErrExist`), whether it holds a directory, a file, or a socket.
+     Adopting one would put a signing oracle in a directory on terms this
+     package cannot see; clearing one would delete whatever the caller keeps
+     there, up to and including another live agent. `os.Mkdir` makes the test
+     and the claim the same operation, so there is no window between them.
+   - **The parent is checked, never created**, by the same `checkWorkDir` a
+     supplied `WorkDir` passes: an existing, non-symlink, self-owned directory
+     that is not group- or world-writable, else `*InsecureWorkDirError`.
+     Creating the socket's own directory closes the substitution window inside
+     it; nothing closes one in a parent another user can write to, where the
+     whole directory can be renamed away and replaced.
+   - **`SocketDir` and `WorkDir` are mutually exclusive** —
+     `*InputError{Field: "SocketDir (WorkDir is also set)"}`. They say opposite
+     things about who owns the directory, and therefore about whether it
+     survives shutdown; preferring one silently would leave the caller
+     believing the other.
+   - **`SocketPath(SocketDir)` is known before the call**, which is why the
+     option exists: a consumer that must name the socket in a container mount
+     specification cannot wait for the session to start to learn it. A relative
+     `SocketDir` is resolved against *this* process's directory on entry, once,
+     so the resulting `SockPath` is absolute and means the same thing to a
+     process with its own working directory and PID namespace.
 
 ## Errors
 
 | Error | Raised when |
 |---|---|
-| `*InputError{Field}` | `Signers` empty or containing a nil (including typed-nil) entry; `WorkDir` supplied but not an existing directory |
-| `*InsecureWorkDirError{Path, Reason}` | supplied `WorkDir` is a symlink, foreign-owned, or group/world-writable |
+| `*InputError{Field}` | `Signers` empty or containing a nil (including typed-nil) entry; `WorkDir` supplied but not an existing directory; `SocketDir`'s parent not an existing directory; both `WorkDir` and `SocketDir` supplied |
+| `*InsecureWorkDirError{Path, Reason}` | supplied `WorkDir`, or the parent of `SocketDir`, is a symlink, foreign-owned, or group/world-writable |
+| `*SocketDirExistsError{Path}` | `SocketDir` already exists. Unwraps to `fs.ErrExist`; nothing at the path is created, adopted or removed |
 | `*UnsupportedAlgorithmError{Algorithm}` | an RSA signer that cannot select an algorithm, so only SHA-1 would remain |
-| `*WorkDirError{Err}` | the temporary work directory could not be created |
+| `*WorkDirError{Err}` | the session's directory could not be created — the temporary one, or `SocketDir` for a reason other than occupancy |
 | `*ListenError{Err}` | the socket directory, bind, or chmod failed; or the path is occupied — `errors.Is` the cause against `ErrSocketInUse` (a live agent is listening) or `ErrPathOccupied` (not a socket) |
 | `*UnknownKeyError{Format}` | a sign request names a key the session does not serve |
 | `*AcceptError{Err}` | the listener failed for a reason other than shutdown |
 | `ErrUnsupported` | `Add` / `Remove` / `Lock` / `Unlock` — the agent is read-only |
 
-All are typed; none are `fmt.Errorf`. `WorkDirError`, `ListenError`, and
-`AcceptError` implement `Unwrap`.
+All are typed; none are `fmt.Errorf`. `WorkDirError`, `ListenError`,
+`AcceptError` and `SocketDirExistsError` implement `Unwrap`.
 
 ## Configuration
 
@@ -159,7 +203,8 @@ session needs arrives in `AgentOptions`. The only environment involved is the
 
 | Tier | Location | Covers |
 |---|---|---|
-| unit | `sdk/go/client/ssh/agent_test.go` | The SDK surface, hermetically — in-process ssh-agent protocol, no external binary. A key generated through the SDK is advertised on the socket and its signatures verify under it; the agent refuses every mutating request; both lifetime paths, including a client held across `Stop` losing its ability to sign; cancelled context; typed bind failure. |
+| unit | `sdk/go/client/ssh/agent_test.go` | The SDK surface, hermetically — in-process ssh-agent protocol, no external binary. A key generated through the SDK is advertised on the socket and its signatures verify under it; the agent refuses every mutating request; both lifetime paths, including a client held across `Stop` losing its ability to sign; cancelled context; typed bind failure; and the `SocketDir` contract as a consumer meets it — honoured path and modes, refusal of an existing path and of an insecure parent through the SDK's own error aliases, removal on `Stop`, and signing from another working directory. |
+| unit | `pkg/ssh/agent/session_socketdir_test.go` | `SocketDir` end to end: the socket lands at the predicted path with a 0700 directory and a 0600 socket and signs; the directory goes on both exit paths and the parent survives; an existing directory, an existing file, an impossible name, a missing parent, a world-writable parent, a symlinked parent and a request carrying both directory options are each refused with their own typed error and create nothing; a relative `SocketDir` resolves once, against this process, and the socket then signs for a client in a different working directory. |
 | unit | `pkg/ssh/agent/session_test.go` | Bind-before-return (a *connectable* socket, not merely a path), signature round-trip, `Env` handoff, socket mode, Stop idempotence and Stop-after-cancel, borrowed vs. owned work dir, multi-identity, frozen signers, live clients disconnected on both exit paths, and every input / bind / work-dir / dead-context failure branch. |
 | integration | `test/integration/sshagent/git_signing_test.go` (`-tags integration`, `make integration-test-sshagent`) | The consumer scenario end to end: a real `git commit -S` under `SSH_AUTH_SOCK`, `git verify-commit` against an allowed-signers file naming that key, a disk walk asserting no private-key material was written, socket and work dir gone after ctx cancel. A negative twin runs the identical git invocation with no session and requires it to fail, so a pass proves the session is what made signing work. |
 
@@ -177,4 +222,4 @@ the signature returned by `SignWithFlags` still yields a commit carrying a
 `gpgsig` header — only `verify-commit` catches it. Asserting the header alone
 would pass a mutant that signs garbage.
 
-`pkg/ssh/agent` coverage: 95.8%.
+`pkg/ssh/agent` coverage: 94.4%.

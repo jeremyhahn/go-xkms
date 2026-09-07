@@ -1,6 +1,6 @@
 # SSH Agent Sessions — API
 
-> **Status: NORMATIVE** · Feature: `ssh-agent-sessions` · Repo: `go-xkms` · Last verified: 2026-08-20
+> **Status: NORMATIVE** · Feature: `ssh-agent-sessions` · Repo: `go-xkms` · Last verified: 2026-09-06
 
 ## Transport coverage
 
@@ -66,16 +66,38 @@ cmd.Env = append(os.Environ(), sess.Env...)
 | Field | Type | Required | Meaning |
 |---|---|---|---|
 | `Signers` | `[]gossh.Signer` | yes | Identities to serve. At least one, none nil. Copied on entry. |
+| `SocketDir` | `string` | no | Where the session **creates** its socket directory. Empty — the default — is the OS temporary directory. |
 
-There is deliberately **no `WorkDir` option**. The session always creates its
-own private directory and removes it when the session ends. A caller-chosen
-directory cannot be validated safely: the socket's 0600 mode does not protect
-its *pathname* — the containing directory governs who may replace it — and
-checking that directory is inherently check-then-use, since an attacker
-controlling any ancestor can redirect the path between the check and the bind.
-Closing it properly needs an anchored no-follow bind, which
-`net.Listen("unix", path)` cannot express. An option whose validation looks
-like a guarantee and is not is worse than no option.
+`SocketDir` is what a caller sets when the socket must be somewhere its own
+policy admits: mounted into a sandboxed container, or under a tenant's root,
+where a path in the OS temporary directory is not reachable. The session
+creates the directory with mode 0700 (never more permissive; the process umask
+can only clear bits), binds the socket inside it with mode 0600, and removes
+the directory with the socket when the session ends. The resulting `SockPath` is `<SocketDir>/agent.sock` — computable before the call,
+which is the point: a container mount specification has to name the socket
+before there is a session to ask.
+
+```go
+sess, err := xkmsssh.StartAgent(ctx, xkmsssh.AgentOptions{
+	Signers:   []gossh.Signer{signer},
+	SocketDir: filepath.Join(projectRoot, ".xkms-agent"),
+})
+```
+
+There is deliberately **no option for an existing directory to bind in**. The
+session always creates the directory it binds inside, and `SocketDir` must not
+already exist. A directory somebody else made cannot be validated safely: the
+socket's 0600 mode does not protect its *pathname* — the containing directory
+governs who may replace it — and checking that directory is inherently
+check-then-use, since anyone who controls it can redirect the path between the
+check and the bind. Closing that properly needs an anchored no-follow bind,
+which `net.Listen("unix", path)` cannot express. An option whose validation
+looks like a guarantee and is not is worse than no option.
+
+What moves with `SocketDir` is the **parent**, and the parent is checked for
+exactly what a parent can still do — hold a directory another user renames away
+and replaces. It must exist and be private to this user: not a symlink, owned
+by this user, not writable by group or other.
 
 ### `AgentSession`
 
@@ -102,14 +124,16 @@ attach. See [`architecture.md`](architecture.md) for the full residual.
 
 | Error | Meaning |
 |---|---|
-| `*AgentInputError` | `Signers` empty or containing a nil entry, or a `WorkDir` that is not an existing directory; `Field` names it |
-| `*AgentWorkDirError` | the temporary work directory could not be created |
+| `*AgentInputError` | `Signers` empty or containing a nil entry, or the parent of `SocketDir` is not an existing directory; `Field` names it |
+| `*AgentSocketDirExistsError` | `SocketDir` already exists — a directory, a file, or a socket. Nothing at the path is created, adopted or removed. `Path` names it; unwraps to `fs.ErrExist` |
+| `*AgentInsecureSocketDirError` | the parent of `SocketDir` is a symlink, owned by another user, or writable by group or other |
+| `*AgentWorkDirError` | the session's directory could not be created |
 | `*AgentListenError` | the socket could not be bound. `errors.Is` the cause against `ErrAgentSocketInUse` (a live agent already listening — usually a reused `WorkDir`) or `ErrAgentPathOccupied` (the path holds something that is not a socket; it is never deleted) |
 | `context.Canceled` / `context.DeadlineExceeded` | `ctx` was already dead at the call; no session is returned |
 
-Match the first three with `errors.As` and the context errors with
-`errors.Is`. The three typed errors are re-exported by the SDK, so a consumer
-handles failures without importing `pkg/`.
+Match the typed errors with `errors.As` and the context errors with
+`errors.Is`. Every one of them is re-exported by the SDK, so a consumer handles
+failures without importing `pkg/`.
 
 ## Wire protocol
 

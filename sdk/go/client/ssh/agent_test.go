@@ -17,6 +17,7 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"io/fs"
 	"net"
 	"os"
 	"path/filepath"
@@ -248,5 +249,206 @@ func TestStartAgent_ContextCancelEndsTheSession(t *testing.T) {
 	}
 	if _, serr := os.Stat(workDir); !errors.Is(serr, os.ErrNotExist) {
 		t.Fatalf("agent work dir outlived its context: %v", serr)
+	}
+}
+
+// privateAgentDir returns a temp directory this user alone can write to, which
+// is what StartAgent requires of a SocketDir's parent: a directory another user
+// can write to is one in which the session's own directory can be swapped out
+// between the bind and the child process's connect. t.TempDir does not promise
+// the mode, so it is stated here — which is exactly what a consumer laying out
+// a tenant root has to do.
+func privateAgentDir(t *testing.T) string {
+	t.Helper()
+	dir := t.TempDir()
+	if err := os.Chmod(dir, 0o700); err != nil {
+		t.Fatalf("chmod %s: %v", dir, err)
+	}
+	return dir
+}
+
+// TestStartAgent_SocketDirIsHonoured is go-xkms#444: a consumer that cannot
+// admit the OS temporary directory to its mount policy names where the socket
+// goes, and gets a path it could compute before the call. The modes are part of
+// the contract, not an implementation detail — 0700 on the directory is what
+// keeps another user away from the socket, whatever the socket's own mode is.
+func TestStartAgent_SocketDirIsHonoured(t *testing.T) {
+	signer, _ := newAgentSigner(t, "socket-dir")
+	dir := filepath.Join(privateAgentDir(t), "agent")
+
+	sess, err := sdkssh.StartAgent(context.Background(), sdkssh.AgentOptions{
+		Signers:   []gossh.Signer{signer},
+		SocketDir: dir,
+	})
+	if err != nil {
+		t.Fatalf("StartAgent: %v", err)
+	}
+	defer sess.Stop(context.Background())
+
+	want := filepath.Join(dir, "agent.sock")
+	if sess.SockPath != want {
+		t.Fatalf("socket path: got %q, want %q", sess.SockPath, want)
+	}
+	if sess.Env[0] != "SSH_AUTH_SOCK="+want {
+		t.Fatalf("Env must carry the chosen socket, got %v", sess.Env)
+	}
+
+	di, err := os.Stat(dir)
+	if err != nil {
+		t.Fatalf("stat the session's directory: %v", err)
+	}
+	// No group or other access is the invariant, not the exact mode: the
+	// directory is created 0700 and the process umask can only clear bits.
+	if di.Mode().Perm()&0o077 != 0 {
+		t.Fatalf("session directory grants access to group or other: %#o", di.Mode().Perm())
+	}
+	si, err := os.Lstat(sess.SockPath)
+	if err != nil {
+		t.Fatalf("stat the socket: %v", err)
+	}
+	if si.Mode().Perm() != 0o600 {
+		t.Fatalf("socket mode: got %#o, want 0600", si.Mode().Perm())
+	}
+	if si.Mode()&os.ModeSocket == 0 {
+		t.Fatal("the path must be a socket")
+	}
+
+	// A path is not an agent until something signs through it.
+	payload := []byte("signed through a caller-located socket")
+	sig, err := dialAgent(t, sess).Sign(signer.PublicKey(), payload)
+	if err != nil {
+		t.Fatalf("Sign: %v", err)
+	}
+	if err := signer.PublicKey().Verify(payload, sig); err != nil {
+		t.Fatalf("signature did not verify under the served key: %v", err)
+	}
+}
+
+// TestStartAgent_SocketDirExistingPathIsRefused pins the refusal. The session
+// owns what it binds in, so it will not adopt a directory somebody else made —
+// and will not clear one either, because that would delete whatever the caller
+// keeps there, up to and including another live agent.
+func TestStartAgent_SocketDirExistingPathIsRefused(t *testing.T) {
+	signer, _ := newAgentSigner(t, "socket-dir-exists")
+	dir := filepath.Join(privateAgentDir(t), "agent")
+	if err := os.Mkdir(dir, 0o700); err != nil {
+		t.Fatalf("pre-create the path: %v", err)
+	}
+	keeper := filepath.Join(dir, "keep-me")
+	if err := os.WriteFile(keeper, []byte("caller's file"), 0o600); err != nil {
+		t.Fatalf("write the caller's file: %v", err)
+	}
+
+	_, err := sdkssh.StartAgent(context.Background(), sdkssh.AgentOptions{
+		Signers:   []gossh.Signer{signer},
+		SocketDir: dir,
+	})
+	var exists *sdkssh.AgentSocketDirExistsError
+	if !errors.As(err, &exists) {
+		t.Fatalf("an existing path must be refused as *AgentSocketDirExistsError, got %#v", err)
+	}
+	if exists.Path != dir {
+		t.Fatalf("the error must name the path: got %q, want %q", exists.Path, dir)
+	}
+	if !errors.Is(err, fs.ErrExist) {
+		t.Fatal("the error must match the standard fs.ErrExist sentinel")
+	}
+	if _, serr := os.Stat(keeper); serr != nil {
+		t.Fatalf("a refused path must never be cleared: %v", serr)
+	}
+}
+
+// TestStartAgent_SocketDirInsecureParentIsRefused covers what creating the
+// directory cannot fix. In a parent another user can write to, the session's
+// own directory can be renamed away and replaced wholesale, and the child
+// reading SSH_AUTH_SOCK would then be talking to somebody else's agent.
+func TestStartAgent_SocketDirInsecureParentIsRefused(t *testing.T) {
+	signer, _ := newAgentSigner(t, "socket-dir-parent")
+	parent := privateAgentDir(t)
+	if err := os.Chmod(parent, 0o707); err != nil {
+		t.Fatalf("chmod: %v", err)
+	}
+
+	_, err := sdkssh.StartAgent(context.Background(), sdkssh.AgentOptions{
+		Signers:   []gossh.Signer{signer},
+		SocketDir: filepath.Join(parent, "agent"),
+	})
+	var insecure *sdkssh.AgentInsecureSocketDirError
+	if !errors.As(err, &insecure) {
+		t.Fatalf("a world-writable parent must be refused, got %#v", err)
+	}
+	if !strings.Contains(insecure.Error(), "group or other") {
+		t.Fatalf("the error must say why: %v", insecure)
+	}
+}
+
+// TestStartAgent_SocketDirIsRemovedOnStop is the other half of ownership: the
+// caller named a location inside its own tree, and gets it back empty. A
+// leftover socket there is an unattended signing oracle in a directory the
+// caller keeps.
+func TestStartAgent_SocketDirIsRemovedOnStop(t *testing.T) {
+	signer, _ := newAgentSigner(t, "socket-dir-cleanup")
+	parent := privateAgentDir(t)
+	dir := filepath.Join(parent, "agent")
+
+	sess, err := sdkssh.StartAgent(context.Background(), sdkssh.AgentOptions{
+		Signers:   []gossh.Signer{signer},
+		SocketDir: dir,
+	})
+	if err != nil {
+		t.Fatalf("StartAgent: %v", err)
+	}
+	if report := sess.Stop(context.Background()); !report.Clean() {
+		t.Fatalf("clean shutdown expected, %d handler(s) abandoned", report.Abandoned)
+	}
+
+	if _, err := os.Stat(dir); !errors.Is(err, fs.ErrNotExist) {
+		t.Fatalf("the session must remove the directory it created, stat gave %v", err)
+	}
+	if _, err := os.Stat(parent); err != nil {
+		t.Fatalf("the parent belongs to the caller and must survive: %v", err)
+	}
+}
+
+// TestStartAgent_SocketDirServesAnotherWorkingDirectory is the consumer
+// scenario behind the option: the socket is read by a process running somewhere
+// else entirely — a container with its own working directory and PID namespace
+// — so the path must be absolute and must not resolve against whoever reads it.
+func TestStartAgent_SocketDirServesAnotherWorkingDirectory(t *testing.T) {
+	signer, _ := newAgentSigner(t, "socket-dir-cwd")
+	base := privateAgentDir(t)
+	t.Chdir(base)
+
+	sess, err := sdkssh.StartAgent(context.Background(), sdkssh.AgentOptions{
+		Signers:   []gossh.Signer{signer},
+		SocketDir: "agent",
+	})
+	if err != nil {
+		t.Fatalf("StartAgent: %v", err)
+	}
+	defer sess.Stop(context.Background())
+
+	if !filepath.IsAbs(sess.SockPath) {
+		t.Fatalf("SockPath must be absolute for a reader elsewhere, got %q", sess.SockPath)
+	}
+	resolved, err := filepath.EvalSymlinks(base)
+	if err != nil {
+		t.Fatalf("resolve the base: %v", err)
+	}
+	if want := filepath.Join(resolved, "agent", "agent.sock"); sess.SockPath != want {
+		t.Fatalf("a relative SocketDir resolves once, against this process: got %q, want %q",
+			sess.SockPath, want)
+	}
+
+	// Sign from a different working directory, which is all a container's cwd
+	// amounts to from the socket's point of view.
+	t.Chdir(privateAgentDir(t))
+	payload := []byte("signed from another working directory")
+	sig, err := dialAgent(t, sess).Sign(signer.PublicKey(), payload)
+	if err != nil {
+		t.Fatalf("Sign: %v", err)
+	}
+	if err := signer.PublicKey().Verify(payload, sig); err != nil {
+		t.Fatalf("signature did not verify under the served key: %v", err)
 	}
 }

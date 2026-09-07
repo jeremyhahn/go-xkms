@@ -15,6 +15,8 @@ package agent
 
 import (
 	"context"
+	"errors"
+	"io/fs"
 	"os"
 	"path/filepath"
 
@@ -45,6 +47,30 @@ type Request struct {
 	// ownership. Pass only a directory this process created, or one whose
 	// whole ancestry is under this user's control.
 	WorkDir string
+
+	// SocketDir names the directory the session CREATES for its socket, giving
+	// a caller the location without giving it the directory. The session makes
+	// it with mode 0700, binds agent.sock inside it, and removes it — the
+	// directory included — when the session ends. The resulting socket path is
+	// SocketPath(SocketDir), known before the call, so a caller that has to
+	// name the socket somewhere else (a container mount specification) can do
+	// so without waiting for the session to start.
+	//
+	// It must not already exist: the session owns what it binds in, and a
+	// directory somebody else made is one whose entries somebody else may be
+	// able to replace. An existing path is refused with a *SocketDirExistsError
+	// rather than adopted or cleared.
+	//
+	// This is what a caller wants when the socket has to live somewhere
+	// specific — mounted into a sandbox, or under a tenant's own root — rather
+	// than in the OS temporary directory. The parent directory must already
+	// exist and pass checkWorkDir: creating the socket's own directory closes
+	// the substitution window inside it, but nothing this package does closes
+	// one in a parent that another user can write to.
+	//
+	// Mutually exclusive with WorkDir, which is the opposite bargain: an
+	// existing directory the caller owns and keeps.
+	SocketDir string
 }
 
 // Session is a running agent-only session: a socket serving the requested
@@ -118,6 +144,11 @@ func SocketPath(workDir string) string { return filepath.Join(workDir, socketNam
 // immediately and a bind failure arrives as an error rather than as a socket
 // that never appears.
 //
+// The socket lives in the OS temporary directory by default. A caller that
+// needs it somewhere specific -- under a tenant's own root, or in a directory
+// it will mount into a sandbox -- names that location with req.SocketDir,
+// which the session creates, owns, and removes with the socket inside it.
+//
 // No connection target is involved and no host-key state is touched: this
 // serves a key, nothing more.
 func StartSession(ctx context.Context, req Request) (*Session, error) {
@@ -141,20 +172,14 @@ func StartSession(ctx context.Context, req Request) (*Session, error) {
 	signers := make([]ssh.Signer, len(req.Signers))
 	copy(signers, req.Signers)
 
-	workDir := req.WorkDir
-	ownsWorkDir := false
-	if workDir == "" {
-		dir, err := os.MkdirTemp("", "xkms-ssh-agent-")
-		if err != nil {
-			return nil, &WorkDirError{Err: err}
-		}
-		workDir = dir
-		ownsWorkDir = true
-	} else if err := checkWorkDir(workDir); err != nil {
-		// Only a caller-supplied directory is checked. The temp directory the
-		// branch above creates is already private by construction on Unix, and
-		// off Unix it inherits the platform's per-user temp isolation -- which
-		// is the OS's guarantee, not one this package would be inventing.
+	if req.WorkDir != "" && req.SocketDir != "" {
+		// The two say incompatible things about who owns the directory, and
+		// silently preferring one would leave a caller convinced of the other.
+		return nil, &InputError{Field: "SocketDir (WorkDir is also set)"}
+	}
+
+	workDir, ownsWorkDir, err := sessionDir(req)
+	if err != nil {
 		return nil, err
 	}
 
@@ -264,6 +289,75 @@ func (s *Session) Stop(ctx context.Context) ShutdownReport {
 	return ShutdownReport{Joined: true}
 }
 
+// sessionDir resolves the directory the agent socket is bound in and reports
+// whether the session owns it. An owned directory is removed when the session
+// ends; a caller's is left exactly as it was found.
+//
+// The three forms differ only in who made the directory, which is the whole of
+// the security argument: the socket's own 0600 mode does not protect its
+// pathname -- the containing directory decides who may unlink and re-bind it --
+// so the directory has to be one nobody else can write to. A directory this
+// process just created is that by construction. A caller's is that only if the
+// caller says so, which is why Request.WorkDir is documented as a warranty.
+func sessionDir(req Request) (string, bool, error) {
+	switch {
+	case req.SocketDir != "":
+		// Absolute first: the path is checked, created and then handed out as
+		// SSH_AUTH_SOCK, and a relative one would mean a different directory
+		// to a child process with its own working directory.
+		abs, err := filepath.Abs(req.SocketDir)
+		if err != nil {
+			return "", false, &WorkDirError{Err: err}
+		}
+		// The parent is checked, never created. Creating a caller's tree would
+		// mean inventing directories with permissions nobody chose, in a place
+		// nobody vouched for -- and the parent is exactly where a substitution
+		// this package cannot prevent would come from: creating the socket's
+		// own directory closes the window inside it, nothing closes one in a
+		// parent another user can write to.
+		if err := checkWorkDir(filepath.Dir(abs), "SocketDir"); err != nil {
+			return "", false, err
+		}
+		// Mkdir, not MkdirAll: it fails when anything already occupies the
+		// path, so a success means THIS call created the directory, with this
+		// mode, and there was never a moment in which somebody else was inside
+		// it. MkdirAll would instead accept an existing directory silently and
+		// invent any missing parents.
+		//
+		// The mode is not restated afterwards. The process umask can only
+		// CLEAR bits, so what lands is never more permissive than 0700 -- and
+		// "no group or other access" is the whole of what the socket's safety
+		// rests on, since the mode of the socket itself does not govern who can
+		// reach its pathname. An owner-narrowing umask is the caller's own
+		// setting and would fail the bind below with an error naming the path.
+		// This is also exactly what os.MkdirTemp gives the default branch.
+		if err := os.Mkdir(abs, 0o700); err != nil {
+			if errors.Is(err, fs.ErrExist) {
+				return "", false, &SocketDirExistsError{Path: abs}
+			}
+			return "", false, &WorkDirError{Err: err}
+		}
+		return abs, true, nil
+
+	case req.WorkDir != "":
+		// Only a caller-supplied directory is checked. The temp directory the
+		// default branch creates is already private by construction on Unix,
+		// and off Unix it inherits the platform's per-user temp isolation --
+		// which is the OS's guarantee, not one this package would be inventing.
+		if err := checkWorkDir(req.WorkDir, "WorkDir"); err != nil {
+			return "", false, err
+		}
+		return req.WorkDir, false, nil
+
+	default:
+		dir, err := os.MkdirTemp("", "xkms-ssh-agent-")
+		if err != nil {
+			return "", false, &WorkDirError{Err: err}
+		}
+		return dir, true, nil
+	}
+}
+
 // usableSigner reports whether a signer can actually be served. A typed nil
 // (a nil *T boxed in an ssh.Signer) is not caught by an interface nil check,
 // and the first PublicKey call would panic -- inside the serving goroutine,
@@ -299,17 +393,17 @@ func usableSigner(s ssh.Signer) (ok bool) {
 // That also closes the window between bind and chmod in Listen, during which
 // the socket's mode is whatever the process umask left it: in a 0700
 // directory nobody else can traverse in to reach it.
-func checkWorkDir(dir string) error {
+func checkWorkDir(dir, field string) error {
 	info, err := os.Lstat(dir)
 	if err != nil {
-		return &InputError{Field: "WorkDir"}
+		return &InputError{Field: field}
 	}
 	if info.Mode()&os.ModeSymlink != 0 {
 		// A symlink can be re-pointed between this check and the bind.
 		return &InsecureWorkDirError{Path: dir, Reason: "is a symlink"}
 	}
 	if !info.IsDir() {
-		return &InputError{Field: "WorkDir"}
+		return &InputError{Field: field}
 	}
 	if info.Mode().Perm()&0o022 != 0 {
 		return &InsecureWorkDirError{Path: dir, Reason: "is writable by group or other"}

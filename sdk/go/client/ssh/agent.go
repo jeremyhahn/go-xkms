@@ -55,6 +55,19 @@ var ErrAgentSocketInUse = pkgagent.ErrSocketInUse
 // never removed. Match it with errors.Is.
 var ErrAgentPathOccupied = pkgagent.ErrPathOccupied
 
+// AgentSocketDirExistsError reports that the directory named by
+// AgentOptions.SocketDir already exists. The session creates that directory
+// itself so that it owns what the socket sits in; an existing one is refused
+// rather than adopted or cleared. It unwraps to fs.ErrExist.
+type AgentSocketDirExistsError = pkgagent.SocketDirExistsError
+
+// AgentInsecureSocketDirError reports that the parent of AgentOptions.SocketDir
+// cannot hold an agent socket safely — it is a symlink, is owned by another
+// user, or is writable by group or other. A directory another user can write to
+// is one in which the session's own directory can be replaced between the bind
+// and the child process's connect.
+type AgentInsecureSocketDirError = pkgagent.InsecureWorkDirError
+
 // AgentOptions configures StartAgent. Signers come from Client.Keys().Signer —
 // one per identity the agent should advertise.
 type AgentOptions struct {
@@ -63,22 +76,51 @@ type AgentOptions struct {
 	// TPM, a PKCS#11 token, a remote xkms that signs over the wire — keeps it:
 	// the agent socket carries signature requests, never key material.
 	Signers []gossh.Signer
+
+	// SocketDir names the directory the session creates for its socket. Empty
+	// — the default — puts it in the OS temporary directory, unchanged from
+	// before this option existed.
+	//
+	// Set it when the socket has to be somewhere specific: mounted into a
+	// sandboxed container, or under a tenant's own root, where a path in the
+	// OS temporary directory is outside what the caller's mount policy admits.
+	// The session creates the directory with mode 0700, binds the socket
+	// inside it with mode 0600, and removes the directory with the socket when
+	// the session ends. The resulting path is SockPath — predictable before
+	// the call as <SocketDir>/agent.sock — and absolute, so a process with its
+	// own working directory and PID namespace can use it as SSH_AUTH_SOCK.
+	//
+	// The directory must not already exist: the caller chooses the location,
+	// the session owns the directory. An existing path is refused with an
+	// *AgentSocketDirExistsError, never adopted (its contents are on terms
+	// this package cannot see) and never cleared (that would delete somebody
+	// else's live agent). The parent must exist and be private to this user —
+	// not a symlink, owned by this user, not writable by group or other — or
+	// the call fails with an *AgentInsecureSocketDirError.
+	//
+	// What the option does NOT do is hand the caller the directory the socket
+	// binds in. That distinction is the whole of the safety argument, and the
+	// note below explains why.
+	SocketDir string
 }
 
-// There is deliberately no WorkDir option here.
+// There is deliberately no option for an existing directory to bind in.
 //
-// The session always creates its own private directory. A caller-chosen one
-// cannot be validated safely: a socket's 0600 mode does not protect its
-// pathname — the containing directory governs who may replace it — and
-// checking the directory is inherently check-then-use, because an attacker
-// controlling any ancestor can redirect the path between the check and the
-// bind. Validating every component only moves the same race one level up.
+// SocketDir is a location, not a directory: the session always binds inside a
+// directory it created itself. An existing caller-chosen one cannot be
+// validated safely — a socket's 0600 mode does not protect its pathname, the
+// containing directory governs who may replace it, and checking that directory
+// is inherently check-then-use, because anyone controlling it can swap what the
+// path names between the check and the bind. Validating every component only
+// moves the same race one level up.
 //
 // Closing that properly needs an anchored, no-follow bind, which the net
 // package cannot express: net.Listen("unix", path) takes a pathname, not a
-// directory descriptor. Rather than ship a check that looks like a guarantee
-// and is not, the option is absent and the directory is one this process just
-// created, with a unique name, inside a location the OS already controls.
+// directory descriptor. So the check that could not be made into a guarantee is
+// not offered as one. What SocketDir moves is the parent, and the parent is
+// checked for exactly what a parent can still do — hold a directory another
+// user may replace — while the directory holding the socket remains one this
+// process created, with mode 0700, in the same call that binds inside it.
 
 // StartAgent serves the given signers over an ephemeral in-process SSH agent
 // socket and returns the live session. There is no connection target: this is
@@ -89,9 +131,10 @@ type AgentOptions struct {
 //
 // The socket exists by the time StartAgent returns, so the path can go straight
 // into a child process's environment. It lives in a private directory this
-// process creates and removes; the caller does not choose the location, because
-// a directory anyone else can reach is a directory in which the socket can be
-// substituted.
+// process creates and removes. The caller may choose where that directory goes
+// — opts.SocketDir, for a socket that has to be reachable by a sandbox — but
+// never hand over an existing directory, because a directory anyone else can
+// reach is a directory in which the socket can be substituted.
 //
 // Lifetime: the session ends at the first of (*AgentSession).Stop or
 // cancellation of ctx. Either way the socket file is removed, along with the
@@ -107,5 +150,8 @@ type AgentOptions struct {
 // caller that does have a connection target wants StartConnect, which layers
 // pin seeding and first-contact sync over this same agent.
 func StartAgent(ctx context.Context, opts AgentOptions) (*AgentSession, error) {
-	return pkgagent.StartSession(ctx, pkgagent.Request{Signers: opts.Signers})
+	return pkgagent.StartSession(ctx, pkgagent.Request{
+		Signers:   opts.Signers,
+		SocketDir: opts.SocketDir,
+	})
 }

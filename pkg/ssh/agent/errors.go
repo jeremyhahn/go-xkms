@@ -13,7 +13,10 @@
 
 package agent
 
-import "errors"
+import (
+	"errors"
+	"io/fs"
+)
 
 // ErrUnsupported is returned by the mutating agent operations (Add / Remove /
 // Lock / Unlock) — this agent is read-only.
@@ -100,3 +103,23 @@ type AcceptError struct {
 
 func (e *AcceptError) Error() string { return "ssh/agent: accept: " + e.Err.Error() }
 func (e *AcceptError) Unwrap() error { return e.Err }
+
+// SocketDirExistsError reports that the directory named by Request.SocketDir
+// already exists. The session creates that directory itself, with mode 0700,
+// so that it owns what the socket sits in — an existing one was made by
+// somebody else, on terms this package cannot see, and binding inside it would
+// put a signing oracle in a directory whose contents another process may
+// already be able to replace. It also could not be removed at shutdown without
+// destroying whatever else that directory holds.
+//
+// It unwraps to fs.ErrExist, so errors.Is(err, fs.ErrExist) matches.
+type SocketDirExistsError struct {
+	Path string
+}
+
+func (e *SocketDirExistsError) Error() string {
+	return "ssh/agent: socket directory " + e.Path +
+		" already exists; the session creates the directory it binds in"
+}
+
+func (e *SocketDirExistsError) Unwrap() error { return fs.ErrExist }

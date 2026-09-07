@@ -405,7 +405,7 @@ func serveListener(ctx context.Context, ln net.Listener, a sshagent.Agent, t *tr
 // replaced outright. Prefer StartSession, which owns a private directory rather
 // than requiring the caller to supply one.
 func Serve(ctx context.Context, socketPath string, a sshagent.Agent) error {
-	if err := checkWorkDir(filepath.Dir(socketPath)); err != nil {
+	if err := checkWorkDir(filepath.Dir(socketPath), "socketPath"); err != nil {
 		return err
 	}
 	ln, err := listen(socketPath)

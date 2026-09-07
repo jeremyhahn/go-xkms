@@ -1,6 +1,6 @@
 # SSH Agent Sessions — Usage
 
-> **Status: NORMATIVE** · Feature: `ssh-agent-sessions` · Repo: `go-xkms` · Last verified: 2026-08-20
+> **Status: NORMATIVE** · Feature: `ssh-agent-sessions` · Repo: `go-xkms` · Last verified: 2026-09-06
 
 Use an agent-only session when you have a key in xkms and a tool that speaks
 the ssh-agent protocol but does not connect anywhere: `git commit -S` under
@@ -111,6 +111,60 @@ sess, err := xkmsssh.StartAgent(ctx, xkmsssh.AgentOptions{
 })
 ```
 
+## Putting the socket where a sandbox can reach it
+
+By default the socket lands in the OS temporary directory. That is the wrong
+place when the process that must read it is a container, and the mount policy
+admitting directories into that container does not admit `/tmp` — which is the
+usual arrangement, and the right one.
+
+Set `SocketDir` to a directory **inside a tree the policy already allows**. The
+session creates that directory (mode 0700 — never more permissive, whatever
+your umask), binds the socket in it (mode 0600), and removes both when the
+session ends:
+
+```go
+sockDir := filepath.Join(projectRoot, ".xkms-agent")
+
+sess, err := xkmsssh.StartAgent(ctx, xkmsssh.AgentOptions{
+	Signers:   []gossh.Signer{signer},
+	SocketDir: sockDir,
+})
+if err != nil {
+	return err
+}
+defer sess.Stop(context.Background())
+
+// sess.SockPath is filepath.Join(sockDir, "agent.sock") -- and you knew that
+// before the call, so a mount specification can name it without waiting for
+// the session to start.
+mounts = append(mounts, Mount{
+	Source: sess.SockPath, Target: "/run/ssh-agent.sock", ReadOnly: true,
+})
+```
+
+Three rules, and each of them will fail your call rather than surprise you
+later:
+
+- **The directory must not already exist.** The session creates it, because
+  that is what makes 0700 a fact rather than something inherited from whoever
+  made it first. An existing path — directory, file, or a socket from a crashed
+  run — is refused with `*AgentSocketDirExistsError`, and nothing there is
+  touched. Use a fresh name per session; a timestamp or a request id is enough.
+- **Its parent must exist and be private to you** — not a symlink, owned by
+  you, not group- or world-writable — or you get
+  `*AgentInsecureSocketDirError`. In a parent others can write to, your
+  directory can be renamed away and replaced, and the container would then be
+  signing with somebody else's agent.
+- **Keep the path short.** A unix socket path is limited to roughly 108 bytes,
+  and a deeply nested tenant or project root can exceed it; that arrives as an
+  `*AgentListenError`.
+
+Mount the socket read-only and name it to the container as `SSH_AUTH_SOCK`. The
+container needs no key material and no credential in its environment or argv:
+what crosses the mount is a signing request, and the private half stays exactly
+where it lives.
+
 ## Lifetime — the part to get right
 
 The session ends at the first of `Stop` or cancellation of the context you
@@ -152,6 +206,9 @@ if r := sess.Stop(ctx); !r.Clean() {
 |---|---|
 | `*AgentInputError` on `Signers` | no signers, or a nil entry in the slice |
 | `context.Canceled` on `StartAgent` | the context was already cancelled or expired when you called; a session under a dead context is refused rather than returned half-dead |
+| `*AgentSocketDirExistsError` | the `SocketDir` you named already exists. It is neither adopted nor cleared — adopting it would put the socket in a directory on terms xkms cannot see, and clearing it would delete whatever you keep there. Name a fresh directory per session |
+| `*AgentInsecureSocketDirError` | the **parent** of your `SocketDir` is a symlink, owned by another user, or writable by group or other. Note that this rules out the OS temporary directory as a parent; leave `SocketDir` empty if that is where you want the socket |
+| `*AgentInputError` on `SocketDir` | the parent of your `SocketDir` does not exist (it is not created for you), or you set both `SocketDir` and `WorkDir`, which say opposite things about who owns the directory |
 | `*AgentInputError` on `WorkDir` | the `WorkDir` you supplied is not an existing directory. It is not created for you: the session does not own what it did not create, so a typo would leave a directory behind on every run |
 | `*AgentListenError` wrapping `ErrAgentSocketInUse` | a session is already running in that `WorkDir`. Give each session its own directory, or leave `WorkDir` empty and let it pick one |
 | `*AgentListenError` wrapping `ErrAgentPathOccupied` | `<WorkDir>/agent.sock` holds something this session will not use — a file that is not a socket, or a socket left by a crashed run. It is never removed for you, because clearing one cannot be done without a window where another process could lose its live socket. Delete it yourself, or use a different `WorkDir` |
