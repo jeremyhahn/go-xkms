@@ -183,13 +183,13 @@ build: builder-image
 		-v $(SOURCES_ROOT):/sources:cached \
 		-w /sources/go-xkms/xkey/frontend \
 		$(BUILDER_IMAGE) \
-		bash -c "npm install --silent && node ./node_modules/vite/bin/vite.js build"
+		bash -c "npm ci --silent && node ./node_modules/vite/bin/vite.js build"
 	@echo "$(CYAN)$(BOLD)Building browser extension...$(RESET)"
 	@docker run --rm \
 		-v $(SOURCES_ROOT):/sources:cached \
 		-w /sources/go-xkms/xkey/extension \
 		$(BUILDER_IMAGE) \
-		bash -c "set -e && rm -rf node_modules && npm install --silent && node node_modules/typescript/lib/tsc.js && cp manifest.json dist/ && cp src/popup.html dist/ && mkdir -p dist/icons && (cp -r src/icons/* dist/icons/ 2>/dev/null || true)"
+		bash -c "set -e && rm -rf node_modules && npm ci --silent && node node_modules/typescript/lib/tsc.js && cp manifest.json dist/ && cp src/popup.html dist/ && mkdir -p dist/icons && (cp -r src/icons/* dist/icons/ 2>/dev/null || true)"
 	@echo "$(CYAN)$(BOLD)Building xKey binary...$(RESET)"
 	@mkdir -p $(BIN_DIR)
 	@docker run --rm \
@@ -274,7 +274,7 @@ dev-browser-e2e-clean:
 ## frontend-install: Install frontend npm dependencies
 frontend-install:
 	@echo "$(CYAN)Installing frontend dependencies...$(RESET)"
-	@cd $(FRONTEND_DIR) && npm install
+	@cd $(FRONTEND_DIR) && npm ci
 	@echo "$(GREEN)Frontend dependencies installed$(RESET)"
 
 .PHONY: frontend-build

@@ -431,13 +431,13 @@ build-xkey:
 		-v $(CURDIR):/workspace:cached \
 		-w /workspace/xkey/frontend \
 		$(XKEY_BUILDER_IMAGE) \
-		bash -c "npm install --silent && node ./node_modules/vite/bin/vite.js build && chown -R $(shell id -u):$(shell id -g) dist/ node_modules/"
+		bash -c "npm ci --silent && node ./node_modules/vite/bin/vite.js build && chown -R $(shell id -u):$(shell id -g) dist/ node_modules/"
 	@echo "$(CYAN)$(BOLD)→ Building xkey browser extension...$(RESET)"
 	@docker run --rm \
 		-v $(CURDIR):/workspace:cached \
 		-w /workspace/xkey/extension \
 		$(XKEY_BUILDER_IMAGE) \
-		bash -c "set -e && rm -rf node_modules && npm install --silent && node node_modules/typescript/lib/tsc.js && cp manifest.json dist/ && cp src/popup.html dist/ && mkdir -p dist/icons && (cp -r src/icons/* dist/icons/ 2>/dev/null || true) && chown -R $(shell id -u):$(shell id -g) dist/ node_modules/"
+		bash -c "set -e && rm -rf node_modules && npm ci --silent && node node_modules/typescript/lib/tsc.js && cp manifest.json dist/ && cp src/popup.html dist/ && mkdir -p dist/icons && (cp -r src/icons/* dist/icons/ 2>/dev/null || true) && chown -R $(shell id -u):$(shell id -g) dist/ node_modules/"
 	@echo "$(CYAN)$(BOLD)→ Building xkey binary...$(RESET)"
 	@mkdir -p $(BIN_DIR)
 	@docker run --rm \
@@ -481,7 +481,7 @@ ifeq ($(NPM),)
 	@echo "$(YELLOW)⚠ npm not found; skipping build-sdk-ts$(RESET)"
 else
 	@echo "$(CYAN)$(BOLD)→ Building @go-xkms/sdk...$(RESET)"
-	@cd $(SDK_TS_DIR) && npm install --silent && npm run build && npm test
+	@cd $(SDK_TS_DIR) && npm ci --silent && npm run build && npm test
 	@echo "$(GREEN)✓ @go-xkms/sdk built$(RESET)"
 endif
 
@@ -492,7 +492,7 @@ ifeq ($(NPM),)
 	@echo "$(YELLOW)⚠ npm not found; skipping build-web$(RESET)"
 else
 	@echo "$(CYAN)$(BOLD)→ Installing web/app dependencies...$(RESET)"
-	@cd $(WEB_APP_DIR) && npm install --silent
+	@cd $(WEB_APP_DIR) && npm ci --silent
 	@# npm rewrites file: deps to relative symlinks; force absolute symlinks so
 	@# resolution survives regardless of the working directory, then assert the
 	@# entrypoints resolve before building.
@@ -548,11 +548,11 @@ ifeq ($(NPM),)
 	@echo "$(YELLOW)⚠ npm not found; skipping test-web$(RESET)"
 else
 	@echo "$(CYAN)$(BOLD)→ Testing @go-xkms/sdk...$(RESET)"
-	@cd $(SDK_TS_DIR) && npm install --silent && npm run test:coverage
+	@cd $(SDK_TS_DIR) && npm ci --silent && npm run test:coverage
 	@echo "$(CYAN)$(BOLD)→ Testing @go-xkms/svelte-auth...$(RESET)"
-	@cd $(SVELTE_AUTH_DIR) && npm install --silent && npm run test:coverage
+	@cd $(SVELTE_AUTH_DIR) && npm ci --silent && npm run test:coverage
 	@echo "$(CYAN)$(BOLD)→ Type-checking and testing web/app...$(RESET)"
-	@cd $(WEB_APP_DIR) && npm install --silent && npm run check && npm run test:coverage
+	@cd $(WEB_APP_DIR) && npm ci --silent && npm run check && npm run test:coverage
 	@echo "$(GREEN)✓ web UI tests passed$(RESET)"
 endif
 
@@ -565,7 +565,7 @@ ifeq ($(NPM),)
 	@echo "$(YELLOW)⚠ npm not found; skipping test-web-e2e$(RESET)"
 else
 	@echo "$(CYAN)$(BOLD)→ Running web console e2e (mock API tier)...$(RESET)"
-	@cd $(WEB_APP_DIR) && npm install --silent && npx playwright install --with-deps chromium && npm run e2e
+	@cd $(WEB_APP_DIR) && npm ci --silent && npx playwright install --with-deps chromium && npm run e2e
 	@echo "$(GREEN)✓ web e2e (mock tier) passed$(RESET)"
 endif
 
@@ -578,7 +578,7 @@ ifeq ($(NPM),)
 	@echo "$(YELLOW)⚠ npm not found; skipping integration-test-web$(RESET)"
 else
 	@echo "$(CYAN)$(BOLD)→ Running web console e2e (live server tier)...$(RESET)"
-	@cd test/integration/web && npm install --silent && npx playwright install --with-deps chromium && npx playwright test
+	@cd test/integration/web && npm ci --silent && npx playwright install --with-deps chromium && npx playwright test
 	@echo "$(GREEN)✓ web e2e (live tier) passed$(RESET)"
 endif
 
@@ -589,7 +589,7 @@ ifeq ($(NPM),)
 	@echo "$(YELLOW)⚠ npm not found; skipping coverage-sdk-ts$(RESET)"
 else
 	@echo "$(CYAN)$(BOLD)→ Coverage: @go-xkms/sdk...$(RESET)"
-	@cd $(SDK_TS_DIR) && npm install --silent && npm run test:coverage
+	@cd $(SDK_TS_DIR) && npm ci --silent && npm run test:coverage
 endif
 
 .PHONY: coverage-svelte-auth
@@ -599,7 +599,7 @@ ifeq ($(NPM),)
 	@echo "$(YELLOW)⚠ npm not found; skipping coverage-svelte-auth$(RESET)"
 else
 	@echo "$(CYAN)$(BOLD)→ Coverage: @go-xkms/svelte-auth...$(RESET)"
-	@cd $(SVELTE_AUTH_DIR) && npm install --silent && npm run test:coverage
+	@cd $(SVELTE_AUTH_DIR) && npm ci --silent && npm run test:coverage
 endif
 
 .PHONY: coverage-web-app
@@ -609,7 +609,7 @@ ifeq ($(NPM),)
 	@echo "$(YELLOW)⚠ npm not found; skipping coverage-web-app$(RESET)"
 else
 	@echo "$(CYAN)$(BOLD)→ Coverage: web/app SPA...$(RESET)"
-	@cd $(WEB_APP_DIR) && npm install --silent && npm run test:coverage
+	@cd $(WEB_APP_DIR) && npm ci --silent && npm run test:coverage
 endif
 
 .PHONY: coverage-web
@@ -2206,7 +2206,7 @@ integration-test-webauthn-browser:
 	@CGO_ENABLED=1 $(GO) build -tags "pkcs8 frost webauthn fido2 codec_cbor codec_json codec_msgpack" -o $(BIN_DIR)/xkmsd ./cmd/xkmsd/
 	@echo "$(CYAN)$(BOLD)→ Chrome virtual authenticator → real RP (/api/v1/webauthn/*)$(RESET)"
 	@cd test/integration/webauthn-browser && \
-		npm install --no-fund --no-audit && \
+		npm ci --no-fund --no-audit && \
 		npx playwright install chromium chromium-headless-shell && \
 		XKMSD_BIN="$(abspath $(BIN_DIR)/xkmsd)" npx playwright test
 

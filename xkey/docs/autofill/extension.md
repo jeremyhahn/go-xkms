@@ -115,7 +115,7 @@ Manifest directories are created with mode `0755`. Manifest files are written wi
 
 ```bash
 cd xkey/extension
-npm install
+npm ci
 npm run build
 ```
 

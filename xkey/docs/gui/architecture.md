@@ -465,7 +465,7 @@ func SaveGUIConfig(cfg *GUIConfig) error {
 # Build GUI application
 build-gui:
 	@echo "Building xKey GUI..."
-	cd frontend && npm install && npm run build
+	cd frontend && npm ci && npm run build
 	wails build -platform $(GOOS)/$(GOARCH) -o xkey
 
 # Development mode with hot reload
