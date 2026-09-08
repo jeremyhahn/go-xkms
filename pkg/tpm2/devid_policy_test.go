@@ -210,3 +210,84 @@ func TestDevIDPolicyNVIndex_CoversEveryTemplateAndRefusesTheRest(t *testing.T) {
 	assert.True(t, errors.Is(err, ErrDevIDPolicyUnsupported),
 		"an unsupported algorithm must be refused before any digest is produced")
 }
+
+// Table 20 - Example Delegation Policies, "with leading HASH ID": the exact
+// bytes the Policy NV Index holds. The table's row labels abbreviate; the
+// values are the PolicyOR of Figure 10 (Sign, Certify) and of Figure 11
+// (Quote, GetSessionAuditDigest, Certify, ActivateCredential), in that order.
+var tcgSigningDelegationPolicy = map[tpm2.TPMAlgID]string{
+	tpm2.TPMAlgSHA256: "000b40c1aaa7c28fb8be9c09bdbc16c9200a40b84331068ab30f481b5a9b6efc13e0",
+	tpm2.TPMAlgSHA384: "000c999953e6f6127688bed63e4cd8878d37a17b9160792aca579c72045f4aafa417e6382ddd462d17ecc2e9c7d4a41a3fa2",
+	tpm2.TPMAlgSHA512: "000d979cc3e14ba33c7699e8d6bf6032466a87500f826f0f4ceb87b1ad718311de4337b315cf9345f3f6fd10a64dcb0c588deb1217e0575640a46d6a936c1d9a6aca",
+}
+
+var tcgAttestationDelegationPolicy = map[tpm2.TPMAlgID]string{
+	tpm2.TPMAlgSHA256: "000bfad163be7f26cedb312ea7bcbbbf521f666ca84b592de8e6c048bb07beae774e",
+	tpm2.TPMAlgSHA384: "000c27a17d1b2062e61c3cf9431ca9a73b0e2db1310d4f54a3aadf9caaa04ea31d11e6f184ffd952c9687c3607db2f887757",
+	tpm2.TPMAlgSHA512: "000d91680fba6601542a6db7d4c69682452031ee5122d817a477fbfdf9e8158cc0f4bcf862e480ca84e3fbb3f2fd9abdae472c8f61ae9b027e443ab875141bcea2d8",
+}
+
+func TestDevIDSigningDelegation_MatchesTCGTable20(t *testing.T) {
+	for alg, want := range tcgSigningDelegationPolicy {
+		t.Run(fmt.Sprintf("0x%04x", uint16(alg)), func(t *testing.T) {
+			delegation, err := DevIDSigningDelegation(alg, tpm2.TPMCCSign)
+			require.NoError(t, err)
+			payload, err := DevIDDelegationPolicyPayload(alg, delegation.Digest)
+			require.NoError(t, err)
+			assert.Equal(t, mustHex(t, want), payload,
+				"the Signing Delegation Policy is PolicyOR(PolicyCommandCode(Sign), PolicyCommandCode(Certify)) behind its hash ID")
+		})
+	}
+}
+
+func TestDevIDAttestationDelegation_MatchesTCGTable20(t *testing.T) {
+	for alg, want := range tcgAttestationDelegationPolicy {
+		t.Run(fmt.Sprintf("0x%04x", uint16(alg)), func(t *testing.T) {
+			delegation, err := DevIDAttestationDelegation(alg, tpm2.TPMCCQuote)
+			require.NoError(t, err)
+			payload, err := DevIDDelegationPolicyPayload(alg, delegation.Digest)
+			require.NoError(t, err)
+			assert.Equal(t, mustHex(t, want), payload,
+				"the Attestation Delegation Policy is PolicyOR over Quote, GetSessionAuditDigest, Certify, ActivateCredential behind its hash ID")
+		})
+	}
+}
+
+// The digest is the same whichever admitted command the session will walk;
+// only the assertions differ. A command outside the set, an empty set and an
+// algorithm without a template are all refused before any digest exists.
+func TestDevIDCommandDelegation_DigestIsCommandIndependentAndRefusesTheRest(t *testing.T) {
+	forSign, err := DevIDSigningDelegation(tpm2.TPMAlgSHA256, tpm2.TPMCCSign)
+	require.NoError(t, err)
+	forCertify, err := DevIDSigningDelegation(tpm2.TPMAlgSHA256, tpm2.TPMCCCertify)
+	require.NoError(t, err)
+	assert.Equal(t, forSign.Digest, forCertify.Digest, "one policy, two ways of satisfying it")
+	assert.Equal(t, tpm2.TPMAlgSHA256, forSign.NameAlg)
+	assert.NotNil(t, forSign.Satisfy)
+
+	single, err := DevIDCommandDelegation(tpm2.TPMAlgSHA256, tpm2.TPMCCQuote, tpm2.TPMCCQuote)
+	require.NoError(t, err)
+	assert.NotEqual(t, single.Digest, forSign.Digest)
+	assert.Len(t, single.Digest, 32)
+
+	_, err = DevIDSigningDelegation(tpm2.TPMAlgSHA256, tpm2.TPMCCQuote)
+	assert.ErrorIs(t, err, ErrDevIDPolicySession, "Quote is not in the signing delegation")
+	_, err = DevIDCommandDelegation(tpm2.TPMAlgSHA256, tpm2.TPMCCSign)
+	assert.ErrorIs(t, err, ErrDevIDPolicySession, "an empty command set delegates nothing")
+	_, err = DevIDCommandDelegation(tpm2.TPMAlgSHA1, tpm2.TPMCCSign, tpm2.TPMCCSign)
+	assert.ErrorIs(t, err, ErrDevIDPolicyUnsupported, "no template exists for SHA1")
+}
+
+func TestDevIDDelegationPolicyPayload_RefusesAWrongLengthDigest(t *testing.T) {
+	_, err := DevIDDelegationPolicyPayload(tpm2.TPMAlgSHA256, make([]byte, 48))
+	assert.ErrorIs(t, err, ErrDevIDPolicyDigestCompute, "a SHA384-sized digest is not a SHA256 TPMT_HA")
+	_, err = DevIDDelegationPolicyPayload(tpm2.TPMAlgSHA256, nil)
+	assert.ErrorIs(t, err, ErrDevIDPolicyDigestCompute)
+	_, err = DevIDDelegationPolicyPayload(tpm2.TPMAlgSHA1, make([]byte, 20))
+	assert.ErrorIs(t, err, ErrDevIDPolicyUnsupported)
+
+	payload, err := DevIDDelegationPolicyPayload(tpm2.TPMAlgSHA384, make([]byte, 48))
+	require.NoError(t, err)
+	assert.Equal(t, 0x32, len(payload), "Template I-2 dataSize")
+	assert.Equal(t, []byte{0x00, 0x0c}, payload[:2], "TPM_ALG_SHA384 leads the TPMT_HA")
+}

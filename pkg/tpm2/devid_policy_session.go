@@ -14,6 +14,7 @@
 package tpm2
 
 import (
+	"errors"
 	"fmt"
 	"log/slog"
 
@@ -41,7 +42,8 @@ import (
 //
 // Only TPM_CC_Certify and TPM_CC_ActivateCredential have branches in the
 // policy; any other command is refused here rather than producing a session
-// the TPM would reject with TPM_RC_POLICY_FAIL.
+// the TPM would reject with TPM_RC_POLICY_FAIL. Delegated USER-role access,
+// the policy's fourth branch, is DevIDDelegatedSession.
 //
 // endorsementAuth is the Endorsement Hierarchy authorization value the
 // Privacy Administrator holds. PolicySecret proves knowledge of it to the TPM
@@ -59,6 +61,42 @@ func (tpm *TPM2) DevIDAdminSession(
 			Detail: fmt.Sprintf("no ADMIN-role branch exists for command 0x%08x; the key policy admits only TPM_CC_Certify and TPM_CC_ActivateCredential", uint32(command))}
 	}
 
+	role := fmt.Sprintf("ADMIN 0x%08x", uint32(command))
+	return tpm.devidPolicySession(kind, nameAlg, role, func(session tpm2.Session) error {
+		_, err := tpm2.PolicySecret{
+			AuthHandle: tpm2.AuthHandle{
+				Handle: tpm2.TPMRHEndorsement,
+				Auth:   tpm2.PasswordAuth(endorsementAuth),
+			},
+			NonceTPM:      session.NonceTPM(),
+			PolicySession: session.Handle(),
+		}.Execute(tpm.transport)
+		if err != nil {
+			return devidPolicyStepError("PolicySecret(endorsement)", err)
+		}
+		_, err = tpm2.PolicyCommandCode{
+			PolicySession: session.Handle(),
+			Code:          command,
+		}.Execute(tpm.transport)
+		if err != nil {
+			return devidPolicyStepError("PolicyCommandCode", err)
+		}
+		return nil
+	})
+}
+
+// devidPolicySession is the one builder behind every IDevID/IAK key policy
+// session. It opens a policy session in the key's nameAlg, lets walk execute
+// the assertions of one branch, then executes TPM2_PolicyOR over the four
+// branches (section 7.3.6.6) so the session digest equals the key's
+// authPolicy. On any failure the session is closed and ErrDevIDPolicySession
+// returned; walk reports its own step through devidPolicyStepError.
+func (tpm *TPM2) devidPolicySession(
+	kind DevIDKeyKind,
+	nameAlg tpm2.TPMAlgID,
+	role string,
+	walk func(session tpm2.Session) error) (tpm2.Session, func() error, error) {
+
 	branches, err := DevIDKeyPolicyBranches(kind, nameAlg)
 	if err != nil {
 		return nil, nil, err
@@ -68,32 +106,19 @@ func (tpm *TPM2) DevIDAdminSession(
 	if err != nil {
 		return nil, nil, &errs.Detail{Err: ErrDevIDPolicySession, Detail: fmt.Sprintf("%v", err)}
 	}
-	fail := func(step string, stepErr error) (tpm2.Session, func() error, error) {
+	fail := func(stepErr error) (tpm2.Session, func() error, error) {
 		if closeErr := closer(); closeErr != nil {
 			tpm.logger.Error("devid: failed to close policy session after error",
-				slog.String("step", step), slog.String("error", closeErr.Error()))
+				slog.String("role", role), slog.String("error", closeErr.Error()))
 		}
-		return nil, nil, &errs.Detail{Err: ErrDevIDPolicySession, Detail: fmt.Sprintf("%s: %v", step, stepErr)}
+		if errors.Is(stepErr, ErrDevIDPolicySession) {
+			return nil, nil, stepErr
+		}
+		return nil, nil, &errs.Detail{Err: ErrDevIDPolicySession, Detail: fmt.Sprintf("%v", stepErr)}
 	}
 
-	_, err = tpm2.PolicySecret{
-		AuthHandle: tpm2.AuthHandle{
-			Handle: tpm2.TPMRHEndorsement,
-			Auth:   tpm2.PasswordAuth(endorsementAuth),
-		},
-		NonceTPM:      session.NonceTPM(),
-		PolicySession: session.Handle(),
-	}.Execute(tpm.transport)
-	if err != nil {
-		return fail("PolicySecret(endorsement)", err)
-	}
-
-	_, err = tpm2.PolicyCommandCode{
-		PolicySession: session.Handle(),
-		Code:          command,
-	}.Execute(tpm.transport)
-	if err != nil {
-		return fail("PolicyCommandCode", err)
+	if err := walk(session); err != nil {
+		return fail(err)
 	}
 
 	_, err = tpm2.PolicyOr{
@@ -101,12 +126,12 @@ func (tpm *TPM2) DevIDAdminSession(
 		PHashList:     branches,
 	}.Execute(tpm.transport)
 	if err != nil {
-		return fail("PolicyOR", err)
+		return fail(devidPolicyStepError("PolicyOR", err))
 	}
 
-	tpm.logger.Debug("devid: ADMIN-role policy session built",
+	tpm.logger.Debug("devid: key policy session built",
 		slog.String("kind", kind.String()),
-		slog.String("command", fmt.Sprintf("0x%08x", uint32(command))))
+		slog.String("role", role))
 
 	return session, closer, nil
 }

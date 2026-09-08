@@ -82,6 +82,23 @@ need to do anything for enrollment to work, but you do need to know that a
 leaked signing password does not let anyone re-enroll the device as something
 else.
 
+**Binding an identity key to the platform state.** `idevid.platform-policy`
+and `iak.platform-policy` (the default configuration sets the first) do not
+change the key. They provision the key's *Policy NV Index* — the reserved
+index the TCG specification assigns to each key — with a Delegation Policy
+that says "the platform PCR holds the value it holds now". Signing with a
+key that has no `password` then goes through that delegation, and stops
+working when the platform state moves: a firmware or boot-chain change. That
+refusal is the binding. To resume after a legitimate change, the Privacy
+Administrator (anyone holding `ek.hierarchy-auth`) rewrites the delegation
+for the new state; the key and its certificates are untouched. A key with a
+`password` keeps signing with the password regardless — the specification
+keeps the password as a way to use the key — so if platform state is to be
+the only way, give the key no password you keep. A separate device Owner can
+also define the index and write their own delegation through the SDK
+(`DefineDevIDPolicyNV`, `WriteDevIDDelegationPolicy`), for example the
+specification's example policy that lets any local process sign.
+
 **Naming.** Both keys are named by one rule. Set `idevid.cn` / `iak.cn` to
 choose a name explicitly. Leave them unset and the name is
 `<idevid.model>-<idevid.serial>` for both keys — the same device information

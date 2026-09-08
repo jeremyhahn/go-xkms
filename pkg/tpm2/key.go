@@ -132,6 +132,12 @@ func (tpm *TPM2) IAKAttributes() (*types.KeyAttributes, error) {
 		}
 		iakAttrs.KeyType = types.KeyTypeAttestation
 		iakAttrs.StoreType = types.StoreTPM2
+		// PlatformPolicy selects the key's USER-role session (devidKeySession):
+		// with it clear, a key that has no authValue is used with the empty
+		// password regardless of platform state. It comes from the same
+		// configuration field IAKAttributesFromConfig reads at provisioning,
+		// so a restarted process binds the key exactly as provisioning did.
+		iakAttrs.PlatformPolicy = tpm.config.IAK.PlatformPolicy
 
 		// Set signature algorithm from config
 		sigAlgo, err := types.ParseSignatureAlgorithm(tpm.config.IAK.SignatureAlgorithm)
@@ -185,6 +191,14 @@ func (tpm *TPM2) IDevIDAttributes() (*types.KeyAttributes, error) {
 			return nil, err
 		}
 		idevidAttrs.SignatureAlgorithm = signatureAlgorithm
+		// KeyAttributes(handle) labels every key KeyTypeTPM. The key type is
+		// what routes an IDevID to its persistent-handle signing path and to
+		// devidKeySession; left generic, a rebuilt IDevID was treated as a
+		// stored key pair with no parent. Both fields come from the same
+		// values IDevIDAttributesFromConfig assigns at provisioning; see the
+		// IAK rebuild above for why PlatformPolicy must survive a restart.
+		idevidAttrs.KeyType = types.KeyTypeIDevID
+		idevidAttrs.PlatformPolicy = tpm.config.IDevID.PlatformPolicy
 		tpm.idevidAttrs = idevidAttrs
 	}
 	return tpm.idevidAttrs, nil
@@ -956,6 +970,16 @@ func (tpm *TPM2) CreateIAK(
 		return nil, err
 	}
 
+	// Platform binding for an IAK is the platform Delegation Policy in its
+	// Policy NV Index (section 7.2.4), never a different key policy: the
+	// key above is Template H-0 either way.
+	if iakAttrs.PlatformPolicy {
+		if err := tpm.provisionDevIDPlatformDelegation(DevIDKeyAttestation, template.NameAlg, hierarchyAuth); err != nil {
+			tpm.logger.Error("failed to provision the IAK platform delegation", slog.String("error", err.Error()))
+			return nil, err
+		}
+	}
+
 	// Extract public area
 	iakPub, err := iakPrimary.OutPublic.Contents()
 	if err != nil {
@@ -1516,6 +1540,16 @@ func (tpm *TPM2) CreateIDevID(
 	if err != nil {
 		tpm.logger.Error("failed to persist IDevID", slog.String("error", err.Error()))
 		return nil, nil, err
+	}
+
+	// Platform binding for an IDevID is the platform Delegation Policy in
+	// its Policy NV Index (section 7.2.4), never a different key policy: the
+	// key above is Template H-0 either way.
+	if idevidAttrs.PlatformPolicy {
+		if err := tpm.provisionDevIDPlatformDelegation(DevIDKeySigning, idevidTemplate.NameAlg, hierarchyAuth); err != nil {
+			tpm.logger.Error("failed to provision the IDevID platform delegation", slog.String("error", err.Error()))
+			return nil, nil, err
+		}
 	}
 
 	// Extract public area

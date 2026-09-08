@@ -435,6 +435,36 @@ func (tpm *TPM2) CreateSession(
 	return session, closer, nil
 }
 
+// devidKeySession answers the USER-role authorization for an IDevID or IAK.
+// A non-empty authValue is the password path Template H-0 keeps open
+// (userWithAuth SET, section 7.2.4) and is used whenever it exists. With no
+// authValue and PlatformPolicy set, the key is used through the platform
+// Delegation Policy the Owner wrote into its Policy NV Index at
+// provisioning, so the session fails once the platform state moves. With
+// neither, the empty authValue is presented as no auth value at all, for the
+// reason CreateSession documents.
+func (tpm *TPM2) devidKeySession(
+	kind DevIDKeyKind,
+	keyAttrs *types.KeyAttributes) (tpm2.Session, func() error, error) {
+
+	noopCloser := func() error { return nil }
+
+	var keyAuth []byte
+	if keyAttrs.Password != nil {
+		if _, err := keyAttrs.Password.String(); err != nil {
+			return nil, noopCloser, err
+		}
+		keyAuth = keyAttrs.Password.Bytes()
+	}
+	if len(keyAuth) > 0 {
+		return tpm2.PasswordAuth(keyAuth), noopCloser, nil
+	}
+	if keyAttrs.PlatformPolicy {
+		return tpm.devidPlatformDelegatedSession(kind, keyAttrs)
+	}
+	return tpm2.PasswordAuth(nil), noopCloser, nil
+}
+
 // loadPlatformPolicyPin returns the platform policy pin recorded beside the
 // object's key blobs, or nil when the object carries none.
 //
@@ -539,10 +569,18 @@ func (tpm *TPM2) createKeySession(
 	// authPolicy, not the platform policy, so a platform-policy session
 	// could never satisfy it. Its USER role is authorized by the authValue
 	// (TCG "TPM 2.0 Keys for Device Identity and Attestation" v1.00 r12,
-	// section 7.2.4); binding it to platform state is done through the
-	// Delegation Policy NV index, not by re-pointing this session.
-	_, isDevID := devidKeyKindOf(keyAttrs.KeyType)
-	if keyAttrs.PlatformPolicy && !isDevID {
+	// section 7.2.4), or -- when the configuration asks for platform binding
+	// and no authValue is set -- by the platform Delegation Policy through
+	// the key's Policy NV Index (section 7.3).
+	if kind, isDevID := devidKeyKindOf(keyAttrs.KeyType); isDevID {
+		session, closer, err = tpm.devidKeySession(kind, keyAttrs)
+		if err != nil {
+			if closer == nil {
+				closer = noopCloser
+			}
+			return session, closer, err
+		}
+	} else if keyAttrs.PlatformPolicy {
 
 		// Determine whether the key has a meaningful (non-empty) auth value.
 		// See CreateSession for the full rationale on why empty auth must be

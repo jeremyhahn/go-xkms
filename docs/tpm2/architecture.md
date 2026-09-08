@@ -28,6 +28,7 @@ sealed unlock — need the rest:
 | NV storage | `nvram.go`, `nv_extend.go` |
 | Attestation | `attestation.go`, `certify_verify.go`, `eventlog.go` |
 | IDevID / TCG enrollment | `cert_idevid.go`, `idevid_csr.go`, `tcg_csr_serverside.go`, `cert_convert.go` |
+| IDevID / IAK key policy and delegation | `devid_policy.go`, `devid_policy_session.go`, `devid_delegation.go` |
 | Platform provisioning | `platform.go`, `platform_keystore.go`, `platform_types.go`, `provision.go` |
 | Capabilities | `capabilities.go`, `capability_device.go`, `version.go` |
 | Simulator | `tpm_simulator.go`, `tpm_simulator_stub.go` |
@@ -141,8 +142,29 @@ TPM. It is the mechanism behind the ACME `enroll-01` challenge.
   The digests are computed offline through go-tpm's trial-policy calculator
   and pinned to the specification's own Tables 14–19; the two implementations
   agreeing is the evidence the policy on the key is the one the specification
-  defines. The Delegation NV index itself is an owner operation ("SHOULD NOT
-  be populated by the OEM", §7.3.5) and is not part of provisioning.
+  defines.
+- **Platform binding of a device identity key is a delegation, not a
+  different key.** The specification fixes the key's policy, so "only use this
+  IDevID when the platform is in its measured state" cannot be written into
+  the key. §7.3 puts it in a reserved Policy NV Index instead: the Owner
+  defines the index (§7.3.5, Owner authorization), the Privacy Administrator
+  writes a Delegation Policy into it (§7.2.4, `PolicySecret` on the
+  Endorsement Hierarchy), and a user reaches the key's fourth policy branch by
+  satisfying that policy and executing `TPM2_PolicyAuthorizeNV`. Two things
+  follow. The delegation can be replaced without touching the key — after a
+  firmware update the Privacy Administrator writes the new state's
+  `PolicyPCR` and signing resumes with the same identity. And the index is
+  only trusted through its Name: `TPM2_PolicyAuthorizeNV` extends the Name
+  the index actually has, so an index with any other public area — one
+  attribute bit, a different `authPolicy` — produces a digest the key policy
+  does not contain, and this library refuses to define or write such an
+  index (`ErrDevIDPolicyNVIndex`) rather than let the refusal surface later
+  as an unexplained `TPM_RC_POLICY_FAIL`. `platform-policy` on an IDevID or
+  IAK is exactly this delegation, provisioned by the operator as Owner and
+  Privacy Administrator at once ("SHOULD NOT be populated by the OEM",
+  §7.3.5 — the operator running provisioning is the Owner). The authValue
+  remains a USER path on Template H-0 (§7.2.4); the library does not forget
+  it on the Owner's behalf.
 - **A quote proves state at a moment**, bound to a nonce. A quote without a
   fresh nonce proves nothing about now.
 - **PCR selection is the security policy.** Sealing to firmware PCRs survives

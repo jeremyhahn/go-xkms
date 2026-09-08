@@ -16,6 +16,7 @@ The package is large; the map in [`architecture.md`](architecture.md)
 | NV storage | `nvram.go`, `nv_extend.go` |
 | attest / certify | `attestation.go`, `certify_verify.go`, `eventlog.go` |
 | IDevID / TCG enrollment | `cert_idevid.go`, `idevid_csr.go`, `tcg_csr_serverside.go`, `cert_convert.go` |
+| IDevID / IAK key policy and delegation | `devid_policy.go`, `devid_policy_session.go`, `devid_delegation.go` |
 | provision the platform | `platform.go`, `platform_keystore.go`, `platform_types.go`, `provision.go` |
 | ask what this TPM can do | `capabilities.go`, `capability_device.go`, `version.go` |
 | lockout state | `lockout.go` |
@@ -139,12 +140,42 @@ whole package. `pkg/tpm2/store` holds the key-backend types (`KeyBackend` in
   branch — `PolicySecret(TPM_RH_ENDORSEMENT)`, `PolicyCommandCode(command)`,
   `PolicyOR(the four branches)` — so it authorizes exactly one command as the
   Privacy Administrator; a session built for one command answers
-  `TPM_RC_POLICY_CC` when used for another. The USER role — signing — is the
-  authValue on every path, which is why `createKeySession` never builds a
+  `TPM_RC_POLICY_CC` when used for another. `createKeySession` never builds a
   platform-policy session for a DevID key: that session's digest could not
-  equal the key's `authPolicy`. Binding a DevID key to platform state is the
-  Delegation Policy NV index of §7.3.5, an owner operation that is not part of
-  provisioning.
+  equal the key's `authPolicy`. The USER role is the authValue when one is
+  set, and otherwise the delegated session below.
+- **Delegated use of an IDevID or IAK goes through its Policy NV Index, and
+  that is what `platform-policy` on an identity key means.** §7.3: the key
+  policy's fourth branch is `TPM2_PolicyAuthorizeNV` over the Name of the
+  reserved index (§7.3.2: DS1 `0x01C90010` / DA1 `0x01C90018` for SHA256).
+  `DefineDevIDPolicyNV` defines it to NV Policy Template I-0/I-1..I-3
+  (`0x220F1008`, dataSize `2 + digest`, `authPolicy` = PolicyUser) under
+  **Owner** authorization (§7.3.5) and is idempotent; an index whose Name is
+  not the specification's (Table 18 once written, the same public area before
+  its first write) is refused with `ErrDevIDPolicyNVIndex` — one attribute
+  bit off is a different Name, and a different Name can never delegate the
+  key. `WriteDevIDDelegationPolicy` writes the Delegation Policy as a
+  `TPMT_HA` — two bytes of hash ID, then the digest, `DevIDDelegationPolicyPayload`
+  — under a `PolicySecret(TPM_RH_ENDORSEMENT)` session, so only the Privacy
+  Administrator chooses it (§7.2.4), and may replace it at any time (§7.3.1).
+  `DevIDDelegatedSession` satisfies a `DevIDDelegation` in a session, runs
+  `TPM2_PolicyAuthorizeNV`, then the key policy's `PolicyOR`; the TPM honours
+  it only if the index holds exactly the digest the session reached
+  (`TPM_RC_VALUE` otherwise, kept in the error chain). `DevIDSigningDelegation`
+  and `DevIDAttestationDelegation` are the specification's example policies,
+  pinned to Table 20. **`platform-policy: true` on `idevid` or `iak`** does not
+  change the key — it is Template H-0 regardless — it makes `CreateIDevID` /
+  `CreateIAK` define the index and write `DevIDPlatformDelegation`:
+  `TPM2_PolicyPCR` over the platform PCR at its current value, in the key's
+  nameAlg (`platformPCRDigest`). With no authValue configured, `createKeySession`
+  then hands out the delegated session for that key, so signing stops when the
+  platform state moves and resumes once the Privacy Administrator writes the
+  new state's policy. With an authValue configured, the authValue is used
+  (§7.2.4 keeps it as a USER path on Template H-0); making platform state the
+  *only* path means an authValue nobody knows, which is the Owner's choice.
+  `provisionDevIDPlatformDelegation` uses the hierarchy authorization for both
+  the Owner define and the Privacy Administrator write, because `Provision`
+  sets one value on both hierarchies (`SetHierarchyAuth`).
 - **An identity key's CN is resolved by one rule on every path.**
   `DevIDCommonName` (`config.go`): an explicit `cn` wins; otherwise the
   device's model and serial number — the Platform Identity Information the
@@ -181,7 +212,9 @@ vocabulary. The categories that need distinguishing:
 | `ErrDevIDTemplateSuiteUnsupported` | a crypto suite the specification defines no template for: a `nameAlg` with no Policy NV Index, or a scheme H-1 does not allow for the key's purpose |
 | `ErrDevIDPolicyUnsupported` | a key kind or `nameAlg` for which the specification defines no template or Policy NV Index (only SHA256, SHA384 and SHA512 are defined) |
 | `ErrDevIDPolicyDigestCompute` | the trial-policy computation of a key policy or NV Index Name failed inside go-tpm |
-| `ErrDevIDPolicySession` | the ADMIN-role policy session could not be built: a command with no branch in the key policy, a `PolicySecret` refused for a wrong endorsement auth, or a TPM error on a policy command |
+| `ErrDevIDPolicySession` | a key policy session could not be built: a command with no branch in the key policy, a `PolicySecret` refused for a wrong endorsement auth, a delegation in another hash algorithm or with nothing to satisfy, or a TPM refusal of a policy step — the step is named and the TPM response code stays in the chain (`TPM_RC_VALUE` at `PolicyAuthorizeNV` is "the index holds a different policy"; at `PolicyPCR`, "the platform moved") |
+| `ErrDevIDPolicyNVIndex` | the Policy NV Index exists with a public area other than Template I-0/I-1..I-3, so its Name is not Table 18's and nothing written into it can delegate the key. Raised by `DefineDevIDPolicyNV` and `WriteDevIDDelegationPolicy`; nothing is written |
+| `ErrDevIDDelegation` | the TPM refused to define the index (wrong Owner auth, NV exhausted) or to write it (wrong endorsement auth, index not defined) |
 | `ErrDevIDCNUnresolved` | neither `cn` nor both a device model and serial number were available to name an IDevID or IAK |
 | `store.ErrEmptyKeyCN` | a key-store operation was attempted with an empty CN, which would compose a storage key of the bare extension |
 | `ErrDevIDProvisionEKCert` | `Install` was asked for an IDevID and the EK certificate could not be read from NV RAM or the certificate store. The TCG-CSR-IDEVID carries it (§6.2.2 step 4b) and the CA verifies it (step 6b); without it the ceremony cannot complete and no key is minted. The cause (`ErrEndorsementCertNotFound`, a TPM error) is reachable through `errors.Is` |
@@ -228,6 +261,9 @@ CA on this release still enrolls a device on the previous one.
   (`configs/xkmsd-integration.yaml`) documents this at length because it has
   cost time before.
 - **Hierarchy authorizations** — endorsement, lockout, owner. Platform-held.
+- **`idevid.platform-policy` / `iak.platform-policy`** — provisions the key's
+  Policy NV Index with the platform Delegation Policy (see Invariants). The
+  default configuration sets it on the IDevID. It does not alter the key.
 - **PCR selection and policy** — `pkg/seal/policy` and `pcr.go`.
 - **Session encryption** — TPM2 session encryption is configurable; see the
   legacy `docs/configuration/tpm2-session-encryption.md` pending its own
@@ -256,7 +292,9 @@ The suite is unusually large and deliberately structured:
   PolicyActivateCredential, the Policy NV Index Names, PolicyDelegationNV and
   the final PolicyOR) to the digests TCG publishes in Tables 14–19 of *TPM 2.0
   Keys for Device Identity and Attestation* v1.00 r12, across SHA256/384/512
-  where the specification prints them. go-tpm's `PolicyUpdate` and the
+  where the specification prints them, and the example Delegation Policies
+  "with leading HASH ID" to Table 20 (whose row labels abbreviate: the values
+  are the `PolicyOR`s of Figures 10 and 11). go-tpm's `PolicyUpdate` and the
   specification are two independent implementations; the suite is the proof
   they agree. The specification is checked in under `docs/references/`.
   `devid_template_test.go` does the same for the §7.3.4 creation templates,
@@ -270,6 +308,10 @@ The suite is unusually large and deliberately structured:
   (`idevid_admin_policy_simulator_test.go` — reads the created object's public
   area back from its persistent handle and drives `TPM2_Certify` against it,
   because the attribute bits alone do not prove the ADMIN role is reachable),
+  Delegation Policy NV (`devid_delegation_simulator_test.go` — defines the
+  index, checks its Name against Table 18, writes Table 20's policy, signs
+  through `TPM2_PolicyAuthorizeNV`, and proves a foreign index, a wrong
+  authorization, a replaced policy and a moved platform are each refused),
   device identity key derivation (`devid_template_simulator_test.go` --
   measures that `unique` changes the created key's Name, that every shipped
   suite creates and that no two suites derive the same key, that H-2's

@@ -41,21 +41,32 @@ The authValue may **use** the key; only the policy may **administer** it
 | `DevIDKeyPolicyBranches(kind, nameAlg)` | the four constituent digests, in the order `TPM2_PolicyOR` must receive them |
 | `DevIDPolicyNVIndex` / `DevIDPolicyNVPublic` / `DevIDPolicyNVName` | the reserved Policy NV Index (§7.3.2), its Template I-1..I-3 public area, and its Name (§7.3.6.5) |
 | `(*TPM2).DevIDAdminSession(kind, nameAlg, command, endorsementAuth)` | the policy session that authorizes the ADMIN role for exactly one command — `TPM_CC_Certify` or `TPM_CC_ActivateCredential` — as the Privacy Administrator. Any other command is refused before a session is opened; the TPM answers `TPM_RC_POLICY_CC` if the session is used for a command it was not built for |
+| `(*TPM2).DefineDevIDPolicyNV(kind, nameAlg, ownerAuth)` | defines the key kind's Policy NV Index to Template I-0/I-1..I-3 under Owner authorization (§7.3.5). Idempotent; an existing index with any other Name is refused with `ErrDevIDPolicyNVIndex` |
+| `(*TPM2).WriteDevIDDelegationPolicy(kind, nameAlg, policyDigest, endorsementAuth)` | writes a Delegation Policy into the index as the Privacy Administrator (§7.2.4), as a `TPMT_HA`. Replaces whatever the index held |
+| `(*TPM2).DevIDDelegatedSession(kind, nameAlg, delegation)` | the USER-role session of a delegated entity (§7.3): satisfies the delegation, `TPM2_PolicyAuthorizeNV`, `PolicyOR`. Refused, with the TPM's code in the chain, when the index holds a different policy or the delegation's assertions fail |
+| `DevIDDelegation` · `DevIDCommandDelegation(nameAlg, command, allowed...)` · `DevIDSigningDelegation` · `DevIDAttestationDelegation` | a Delegation Policy as its digest plus the assertions that reach it. The two named ones are the specification's examples (§7.3.7, Table 20): Sign + Certify; Quote + GetSessionAuditDigest + Certify + ActivateCredential |
+| `(*TPM2).DevIDPlatformDelegation(nameAlg)` | `TPM2_PolicyPCR` over the platform PCR at its current value — what `platform-policy` on an IDevID/IAK provisions into the index |
+| `DevIDDelegationPolicyPayload(nameAlg, digest)` | the bytes the index stores: hash algorithm ID, then digest (§7.3.5 NOTE) |
 | `DevIDCommonName(cn, platform)` | the one naming rule for both keys: explicit `cn`, else `model-serial`, else `ErrDevIDCNUnresolved` |
 | `DevIDTemplateSpec` · `.Template()` | builds the §7.3.4 creation template for a crypto suite: H-1 RSA, H-2 P-256, H-3 P-384, H-4 P-521. `Kind` picks IDevID or IAK, `DeviceString` supplies the optional §7.3.1 per-device string. `authPolicy` is left empty; the creation path assigns it per `nameAlg` |
 | `DevIDUniqueString(kind, deviceString)` | the §7.3.1 Table 2 `unique` bytes: `'IDEVID'` or `'IAK'`, unpadded and not NUL terminated, followed by the printable-ASCII device string |
 | `DevIDUniqueIDevID` / `DevIDUniqueIAK` | those two required strings |
 | `RSASSAAKTemplate`, `RSAPSSAKTemplate`, `ECCAKP256Template`, `ECCAKP384Template`, `ECCAKP521Template`, `RSASSAIDevIDTemplate`, `RSAPSSIDevIDTemplate`, `ECCIDevIDP256Template`, `ECCIDevIDP384Template`, `ECCIDevIDP521Template` | the suites as package values, built by `DevIDTemplateSpec` with no device string |
 
-`CreateIDevID` and `CreateIAK` call all of this themselves; the functions are
-exported so a verifier or an out-of-process provisioner can reproduce the
-policy a device *should* carry and compare it to the public area the device
-presents. Re-exported through `sdk/go` with a `TPM`/`TPMDevID` prefix.
+`CreateIDevID` and `CreateIAK` call the policy computation themselves and,
+when the key's configuration sets `platform-policy`, define and write its
+Policy NV Index with the platform delegation. The functions are exported so a
+verifier or an out-of-process provisioner can reproduce the policy a device
+*should* carry and compare it to the public area the device presents, and so
+a device Owner can define the index and write a Delegation Policy of their
+own after provisioning. Re-exported through `sdk/go` with a
+`TPM`/`TPMDevID` prefix; the `*TPM2` methods are reached on the backend.
 
 Errors: `ErrDevIDTemplateNonConformant`, `ErrDevIDUniqueString`,
 `ErrDevIDUniqueStringTooLong`, `ErrDevIDTemplateSuiteUnsupported`,
 `ErrDevIDPolicyUnsupported`, `ErrDevIDPolicyDigestCompute`,
-`ErrDevIDPolicySession`, `ErrDevIDCNUnresolved`
+`ErrDevIDPolicySession`, `ErrDevIDPolicyNVIndex`, `ErrDevIDDelegation`,
+`ErrDevIDCNUnresolved`
 (`pkg/tpm2`); `ErrEmptyKeyCN` (`pkg/tpm2/store`). All refuse; nothing degrades.
 
 ## The one place TPM evidence crosses the wire

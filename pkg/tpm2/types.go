@@ -229,6 +229,19 @@ var (
 	// delegated USER role through its Policy NV Index.
 	ErrDevIDPolicySession = errors.New("tpm: failed to build the TCG IDevID/IAK policy session")
 
+	// ErrDevIDPolicyNVIndex reports that the reserved Policy NV Index for an
+	// IDevID/IAK key exists with a public area other than NV Policy Template
+	// I-0/I-1..I-3 (section 7.3.5), so its Name -- and therefore the
+	// PolicyDelegationNV branch of every key policy derived from it (section
+	// 7.3.6.4) -- does not match the specification's Table 18. Nothing written
+	// to such an index can delegate anything; it is refused instead.
+	ErrDevIDPolicyNVIndex = errors.New("tpm: the TCG IDevID/IAK Policy NV Index does not match the specification's template")
+
+	// ErrDevIDDelegation reports a TPM refusal while defining the Policy NV
+	// Index under Owner authorization or writing a Delegation Policy into it
+	// as the Privacy Administrator (sections 7.2.4, 7.3.5).
+	ErrDevIDDelegation = errors.New("tpm: failed to define or write the TCG IDevID/IAK Delegation Policy NV index")
+
 	// ErrDevIDCNUnresolved reports that neither an explicit cn nor a device
 	// model and serial number were available to name an IDevID or IAK. The
 	// name is refused rather than defaulted because the key stores key on it.

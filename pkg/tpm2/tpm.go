@@ -1518,23 +1518,12 @@ func (tpm *TPM2) Sign(
 		}
 		handle = keyAttrs.TPMAttributes.Handle
 
-		// The IDevID templates set userWithAuth, so the key's auth value
-		// authorizes the USER role, which is the role TPM2_Sign runs under.
-		// They also set adminWithPolicy and carry the IDevID/IAK Key Policy as
-		// their authPolicy, which is what puts the ADMIN role out of the auth
-		// value's reach (TCG "TPM 2.0 Keys for Device Identity and
-		// Attestation" v1.00 r12, section 7.2.4); signing is unaffected. An
-		// empty auth value is passed as nil for the reason CreateSession
-		// documents: an empty TPM2B_AUTH is not the same as no auth value, and
-		// sending one answers TPM_RC_BAD_AUTH.
-		var keyAuth []byte
-		if keyAttrs.Password != nil {
-			keyAuth = keyAttrs.Password.Bytes()
-		}
-		if len(keyAuth) == 0 {
-			keyAuth = nil
-		}
-		signAuth = tpm2.PasswordAuth(keyAuth)
+		// signAuth is left nil on purpose: the USER role of an IDevID is
+		// answered by createKeySession below, which presents the authValue
+		// when one is set and otherwise, for a platform-bound IDevID, the
+		// delegated session through the key's Policy NV Index (TCG "TPM 2.0
+		// Keys for Device Identity and Attestation" v1.00 r12, sections 7.2.4
+		// and 7.3). Choosing here would duplicate that rule.
 
 	default:
 

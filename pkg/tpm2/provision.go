@@ -811,15 +811,31 @@ func (tpm *TPM2) GoldenMeasurements() ([]byte, error) {
 	return gold, nil
 }
 
-// Reads the current PCR value and returns it's digest buffer
+// PlatformPolicyDigestHash reads the current value of the platform PCR and
+// returns its digest in the PCR bank's own algorithm: the pcrDigest a
+// TPM2_PolicyPCR session in that algorithm is checked against.
 func (tpm *TPM2) PlatformPolicyDigestHash() ([]byte, error) {
 
 	hashAlgID, err := ParsePCRBankAlgID(tpm.config.PlatformPCRBank)
 	if err != nil {
 		return nil, err
 	}
+	return tpm.platformPCRDigest(hashAlgID)
+}
 
-	cryptoHashAlg, err := hashAlgID.Hash()
+// platformPCRDigest reads the platform PCR from the configured bank and
+// digests its value with hashAlg. TPM2_PolicyPCR compares against a digest
+// in the session's hash algorithm, which is the bank algorithm for the
+// platform policy and the key's nameAlg for a DevID platform delegation, so
+// the algorithm is the caller's choice and the PCR read is not.
+func (tpm *TPM2) platformPCRDigest(hashAlg tpm2.TPMAlgID) ([]byte, error) {
+
+	bank, err := ParsePCRBankAlgID(tpm.config.PlatformPCRBank)
+	if err != nil {
+		return nil, err
+	}
+
+	cryptoHashAlg, err := hashAlg.Hash()
 	if err != nil {
 		return nil, err
 	}
@@ -827,7 +843,7 @@ func (tpm *TPM2) PlatformPolicyDigestHash() ([]byte, error) {
 	pcrReadRsp, err := tpm2.PCRRead{
 		PCRSelectionIn: tpm2.TPMLPCRSelection{
 			PCRSelections: []tpm2.TPMSPCRSelection{{
-				Hash:      hashAlgID,
+				Hash:      bank,
 				PCRSelect: tpm2.PCClientCompatible.PCRs(uint(tpm.config.PlatformPCR)),
 			},
 			},
@@ -836,6 +852,10 @@ func (tpm *TPM2) PlatformPolicyDigestHash() ([]byte, error) {
 	if err != nil {
 		tpm.logger.Error("PCRRead failed", slog.String("error", err.Error()))
 		return nil, err
+	}
+	if len(pcrReadRsp.PCRValues.Digests) == 0 {
+		return nil, &errs.Detail{Err: ErrPlatformPolicyDigestCompute,
+			Detail: fmt.Sprintf("PCR %d is not present in bank 0x%04x", tpm.config.PlatformPCR, uint16(bank))}
 	}
 	buffer := pcrReadRsp.PCRValues.Digests[0].Buffer
 

@@ -466,6 +466,8 @@ var (
 	ErrTPMDevIDPolicyUnsupported      = tpm2.ErrDevIDPolicyUnsupported
 	ErrTPMDevIDPolicyDigestCompute    = tpm2.ErrDevIDPolicyDigestCompute
 	ErrTPMDevIDPolicySession          = tpm2.ErrDevIDPolicySession
+	ErrTPMDevIDPolicyNVIndex          = tpm2.ErrDevIDPolicyNVIndex
+	ErrTPMDevIDDelegation             = tpm2.ErrDevIDDelegation
 	ErrTPMDevIDCNUnresolved           = tpm2.ErrDevIDCNUnresolved
 	ErrTPMDevIDTemplateNonConformant  = tpm2.ErrDevIDTemplateNonConformant
 	ErrTPMDevIDProvisionEKCert        = tpm2.ErrDevIDProvisionEKCert
@@ -558,6 +560,36 @@ var DevIDKeyPolicyDigest = tpm2.DevIDKeyPolicyDigest
 // DevIDPolicyNVIndex returns the reserved Policy NV Index (section 7.3.2)
 // that carries a key kind's Delegation Policy for a nameAlg.
 var DevIDPolicyNVIndex = tpm2.DevIDPolicyNVIndex
+
+// DevIDPolicyNVName returns the Name of a key kind's Policy NV Index
+// (section 7.3.6.5, Table 18), the value an Owner-defined index must carry
+// before anything written into it can delegate the key.
+var DevIDPolicyNVName = tpm2.DevIDPolicyNVName
+
+// TPMDevIDDelegation is a Delegation Policy (section 7.3): the digest the
+// Privacy Administrator writes into the Policy NV Index and the assertions a
+// delegated session runs to reach it. Built by DevIDCommandDelegation,
+// DevIDSigningDelegation, DevIDAttestationDelegation or
+// (*tpm2.TPM2).DevIDPlatformDelegation; consumed by
+// (*tpm2.TPM2).DevIDDelegatedSession and WriteDevIDDelegationPolicy.
+type TPMDevIDDelegation = tpm2.DevIDDelegation
+
+// DevIDCommandDelegation builds a Delegation Policy admitting exactly the
+// listed commands, satisfied for command.
+var DevIDCommandDelegation = tpm2.DevIDCommandDelegation
+
+// DevIDSigningDelegation is the specification's example IDevID Delegation
+// Policy (section 7.3.7, Table 20): Sign and Certify.
+var DevIDSigningDelegation = tpm2.DevIDSigningDelegation
+
+// DevIDAttestationDelegation is the specification's example IAK Delegation
+// Policy (section 7.3.7, Table 20): Quote, GetSessionAuditDigest, Certify
+// and ActivateCredential.
+var DevIDAttestationDelegation = tpm2.DevIDAttestationDelegation
+
+// DevIDDelegationPolicyPayload returns the TPMT_HA the Policy NV Index
+// stores for a Delegation Policy digest: hash algorithm ID, then digest.
+var DevIDDelegationPolicyPayload = tpm2.DevIDDelegationPolicyPayload
 
 // DevIDCommonName resolves the Common Name an IDevID or IAK is stored and
 // certified under: an explicit cn, else the device's model and serial number,
