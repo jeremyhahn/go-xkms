@@ -4640,7 +4640,7 @@ away.
 - Quantum-safe signing support (post-quantum cryptography)
 - Key encapsulation mechanisms (KEM) for quantum resistance
 
-## [0.1.0-alpha] - 2025-01-15
+## [0.1.0-alpha] - 2025-11-14
 
 ### Overview
 
