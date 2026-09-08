@@ -76,8 +76,6 @@ import (
 	"crypto/rand"
 	"crypto/rsa"
 	"crypto/x509"
-	"crypto/x509/pkix"
-	"encoding/asn1"
 	"encoding/pem"
 	"errors"
 	"fmt"
@@ -89,12 +87,6 @@ import (
 
 	"github.com/jeremyhahn/go-xkms/pkg/types"
 )
-
-// OID for Subject Alternative Name extension (2.5.29.17)
-var oidSubjectAltName = asn1.ObjectIdentifier{2, 5, 29, 17}
-
-// OID for Hardware Module Name (RFC 4108)
-var oidHardwareModuleName = asn1.ObjectIdentifier{1, 3, 6, 1, 5, 5, 7, 8, 4}
 
 // CreateCSR creates a new certificate signing request for the given request.
 //
@@ -338,9 +330,26 @@ func addSANsExtension(template *x509.CertificateRequest, sans *SubjectAlternativ
 		}
 	}
 
-	// Handle hardware module name as custom extension if present
+	// A hardware module name is a subjectAltName otherName, which crypto/x509
+	// cannot encode. Supplying the extension ourselves means crypto/x509 skips
+	// its own, so the standard names above have to be encoded into the same
+	// extension -- before this they were silently dropped from any request that
+	// named a hardware module.
 	if sans.HardwareModuleName != nil {
-		ext, err := buildHardwareModuleNameExtension(sans.HardwareModuleName)
+		value, err := MarshalHardwareModuleName(
+			sans.HardwareModuleName.HWType,
+			[]byte(sans.HardwareModuleName.HWSerialNumber))
+		if err != nil {
+			return &errs.Wrapped{Msg: "failed to build hardware module name extension", Err: err}
+		}
+		ext, err := BuildSubjectAltName(
+			template.Subject,
+			template.DNSNames,
+			template.EmailAddresses,
+			template.IPAddresses,
+			template.URIs,
+			[]OtherName{{TypeID: OIDHardwareModuleName, Value: value}},
+		)
 		if err != nil {
 			return &errs.Wrapped{Msg: "failed to build hardware module name extension", Err: err}
 		}
@@ -348,78 +357,6 @@ func addSANsExtension(template *x509.CertificateRequest, sans *SubjectAlternativ
 	}
 
 	return nil
-}
-
-// hardwareModuleName is the ASN.1 structure for RFC 4108 hardware module identification.
-// HardwareModuleName ::= SEQUENCE {
-//
-//	hwType OBJECT IDENTIFIER,
-//	hwSerialNum OCTET STRING
-//
-// }
-type hardwareModuleName struct {
-	HWType         asn1.ObjectIdentifier
-	HWSerialNumber []byte
-}
-
-// buildHardwareModuleNameExtension creates an X.509 extension for hardware module identification.
-//
-// This implements RFC 4108 which defines how TPM and HSM devices can be identified
-// in certificates. The hardware module name includes:
-//   - HWType: OID identifying the hardware type (e.g., 2.23.133.1 for TCG Platform)
-//   - HWSerialNumber: Unique serial number of the hardware module
-func buildHardwareModuleNameExtension(hwInfo *HardwareModuleInfo) (pkix.Extension, error) {
-	// Build the HardwareModuleName ASN.1 structure
-	hwName := hardwareModuleName{
-		HWType:         hwInfo.HWType,
-		HWSerialNumber: []byte(hwInfo.HWSerialNumber),
-	}
-
-	// Marshal to ASN.1
-	hwNameBytes, err := asn1.Marshal(hwName)
-	if err != nil {
-		return pkix.Extension{}, &errs.Wrapped{Msg: "failed to marshal hardware module name", Err: err}
-	}
-
-	// Build the otherName structure for SAN
-	// otherName [0] IMPLICIT SEQUENCE {
-	//     type-id OBJECT IDENTIFIER,
-	//     value [0] EXPLICIT ANY
-	// }
-	otherName := struct {
-		TypeID asn1.ObjectIdentifier
-		Value  asn1.RawValue
-	}{
-		TypeID: oidHardwareModuleName,
-		Value: asn1.RawValue{
-			Class:      asn1.ClassContextSpecific,
-			Tag:        0,
-			IsCompound: true,
-			Bytes:      hwNameBytes,
-		},
-	}
-
-	otherNameBytes, err := asn1.MarshalWithParams(otherName, "tag:0")
-	if err != nil {
-		return pkix.Extension{}, &errs.Wrapped{Msg: "failed to marshal otherName", Err: err}
-	}
-
-	// Build GeneralNames sequence containing the otherName
-	generalNames, err := asn1.Marshal(asn1.RawValue{
-		Class:      asn1.ClassUniversal,
-		Tag:        asn1.TagSequence,
-		IsCompound: true,
-		Bytes:      otherNameBytes,
-	})
-	if err != nil {
-		return pkix.Extension{}, &errs.Wrapped{Msg: "failed to marshal GeneralNames", Err: err}
-	}
-
-	return pkix.Extension{
-		Id:       oidSubjectAltName,
-		Critical: false,
-		Value:    generalNames,
-	}, nil
 }
 
 // getSignatureAlgorithm determines the appropriate signature algorithm based on the public key type.

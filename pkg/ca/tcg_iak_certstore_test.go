@@ -52,7 +52,16 @@ const (
 	softwareCSRModel  = "SuperMicro X10"
 	softwareCSRSerial = "SN-371"
 	tcgStructVersion  = uint32(0x00000100)
+
+	// softwareCSRManufacturer is the TCG TPM manufacturer code the fixture's
+	// endorsement key certificate records, "STM " in the TCG's id:<hex> form.
+	softwareCSRManufacturer = "id:53544D20"
 )
+
+// softwareCSREKAuthorityKeyID is the authority key identifier of the fixture's
+// endorsement key certificate. It is fixed so that the hardware module name
+// derived from it can be pinned byte for byte.
+var softwareCSREKAuthorityKeyID = []byte{0xA1, 0xB2, 0xC3, 0xD4, 0xE5}
 
 // softwareTCGCSR is a TCG-CSR-IDEVID built without a TPM. Both keys are
 // software ECDSA P-256 keys whose public areas carry the object attributes
@@ -65,21 +74,35 @@ type softwareTCGCSR struct {
 
 // eccPublicArea encodes an ECDSA P-256 public key as a TPMT_PUBLIC with the
 // fixed, TPM-resident, signing attributes; restricted selects the IAK shape.
+//
+// adminWithPolicy and the §7.3.6.6 IDevID/IAK Key Policy are part of the shape:
+// TCG DevID v1 r12 §4 obliges the CA to verify "key Attributes and Policies",
+// and a public area without them is refused before it reaches issuance.
 func eccPublicArea(t *testing.T, pub *ecdsa.PublicKey, restricted bool) []byte {
 	t.Helper()
+	kind := tpm2.DevIDKeySigning
+	if restricted {
+		kind = tpm2.DevIDKeyAttestation
+	}
+	policy, err := tpm2.DevIDKeyPolicyDigest(kind, gotpm.TPMAlgSHA256)
+	if err != nil {
+		t.Fatalf("compute devid key policy: %v", err)
+	}
 	uncompressed, err := pub.Bytes()
 	if err != nil {
 		t.Fatalf("encode public key: %v", err)
 	}
 	coordLen := (len(uncompressed) - 1) / 2
 	area := gotpm.TPMTPublic{
-		Type:    gotpm.TPMAlgECC,
-		NameAlg: gotpm.TPMAlgSHA256,
+		Type:       gotpm.TPMAlgECC,
+		NameAlg:    gotpm.TPMAlgSHA256,
+		AuthPolicy: gotpm.TPM2BDigest{Buffer: policy},
 		ObjectAttributes: gotpm.TPMAObject{
 			FixedTPM:            true,
 			FixedParent:         true,
 			SensitiveDataOrigin: true,
 			UserWithAuth:        true,
+			AdminWithPolicy:     true,
 			SignEncrypt:         true,
 			Restricted:          restricted,
 		},
@@ -136,6 +159,15 @@ func certifySubjectWithIAK(t *testing.T, iakKey *ecdsa.PrivateKey, subjectPub []
 // in which the IDevID key signs the CSR contents.
 func buildSoftwareTCGCSR(t *testing.T, model, serial string) *softwareTCGCSR {
 	t.Helper()
+	return buildSoftwareTCGCSRWithEK(t, model, serial, true)
+}
+
+// buildSoftwareTCGCSRWithEK is buildSoftwareTCGCSR with control over whether
+// the request carries an endorsement key certificate at all. TCG DevID v1 r12
+// §6.2.2 step 4b puts one in every request; withEKCert=false builds the
+// malformed request the CA has to refuse.
+func buildSoftwareTCGCSRWithEK(t *testing.T, model, serial string, withEKCert bool) *softwareTCGCSR {
+	t.Helper()
 
 	iakKey, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
 	if err != nil {
@@ -154,15 +186,27 @@ func buildSoftwareTCGCSR(t *testing.T, model, serial string) *softwareTCGCSR {
 	if err != nil {
 		t.Fatalf("generate ek key: %v", err)
 	}
+	// A TCG EK certificate records the TPM manufacturer and carries an
+	// authority key identifier; TCG DevID v1 r12 §8.1 builds the DevID
+	// hardwareModuleName out of both, plus this certificate's serial number.
 	ekTemplate := &x509.Certificate{
-		SerialNumber: big.NewInt(1),
-		Subject:      pkix.Name{CommonName: "ek-" + serial},
-		NotBefore:    time.Now().Add(-time.Hour),
-		NotAfter:     time.Now().Add(time.Hour),
+		SerialNumber: big.NewInt(0x0102030405),
+		Subject: pkix.Name{
+			CommonName: "ek-" + serial,
+			ExtraNames: []pkix.AttributeTypeAndValue{
+				{Type: OIDTCGAttributeTPMManufacturer, Value: softwareCSRManufacturer},
+			},
+		},
+		AuthorityKeyId: softwareCSREKAuthorityKeyID,
+		NotBefore:      time.Now().Add(-time.Hour),
+		NotAfter:       time.Now().Add(time.Hour),
 	}
 	ekDER, err := x509.CreateCertificate(rand.Reader, ekTemplate, ekTemplate, &ekKey.PublicKey, ekKey)
 	if err != nil {
 		t.Fatalf("create ek certificate: %v", err)
+	}
+	if !withEKCert {
+		ekDER = nil
 	}
 
 	content := &tpm2.TCG_IDEVID_CONTENT{

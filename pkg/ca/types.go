@@ -309,17 +309,28 @@ type CertificateRequest struct {
 	// Not serialized as it contains parsed certificate data.
 	IssuerCert *x509.Certificate `yaml:"-" json:"-"`
 
-	// ProdModel is the TPM product model string for TCG certificate extensions.
-	// Used by IssueEKCertificate to add the TPM model extension.
+	// ProdModel is the device's product model string. IssueEKCertificate
+	// records it under tcg-at-platformModel.
 	ProdModel string `yaml:"prod-model" json:"prod_model" mapstructure:"prod-model"`
 
-	// ProdSerial is the TPM product serial string for TCG certificate extensions.
-	// Used by IssueEKCertificate to add the TPM version extension.
+	// ProdSerial is the device's product serial number. It is written into the
+	// subject's serialNumber attribute, where TCG DevID v1 r12 §8.1 asks for
+	// the device's unique serial number, not into an extension.
 	ProdSerial string `yaml:"prod-serial" json:"prod_serial" mapstructure:"prod-serial"`
 
 	// PermanentID is an optional permanent identifier for TCG certificates.
-	// When set, a PermanentIdentifier extension is added to the certificate.
+	// When set, an RFC 4043 permanentIdentifier otherName is added to the
+	// certificate's subjectAltName.
 	PermanentID string `yaml:"permanent-id" json:"permanent_id" mapstructure:"permanent-id"`
+
+	// TPMManufacturer is the TCG TPM manufacturer code of the device's TPM,
+	// e.g. "id:49465800". IssueEKCertificate records it under
+	// tcg-at-tpmManufacturer; SignTCGCSRIDevID uses it as the first component
+	// of the TCG DevID v1 r12 §8.1 hardwareModuleName when — and only when —
+	// the endorsement key certificate in the request records no code of its
+	// own. The code in the certificate always wins, and a DevID enrollment with
+	// neither is refused with ErrTCGEKManufacturerUnknown.
+	TPMManufacturer string `yaml:"tpm-manufacturer" json:"tpm_manufacturer" mapstructure:"tpm-manufacturer"`
 
 	// IssuerKeyStoreType indicates the CA's keystore backend type for TCG extensions.
 	// When set, adds a tp-issuerKeyStore extension. Common values: "TPM2", "PKCS8", "PKCS11".

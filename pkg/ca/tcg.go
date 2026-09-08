@@ -99,41 +99,66 @@ func (ca *CA) IssueEKCertificate(ctx context.Context, request *CertificateReques
 	}
 
 	// Add TCG TPM Specification extension
-	if specExt, err := CreateTPMSpecificationExtension(TCGTPMSpecification{
+	specExt, err := CreateTPMSpecificationExtension(TCGTPMSpecification{
 		Family:   "2.0",
 		Level:    0,
 		Revision: 0,
-	}); err == nil {
-		extraExtensions = append(extraExtensions, specExt)
+	})
+	if err != nil {
+		return nil, &errs.Joined{Lead: ErrTCGMandatoryExtension, Detail: "tpm specification", Cause: err}
+	}
+	extraExtensions = append(extraExtensions, specExt)
+
+	// The TPM manufacturer this endorsement key belongs to. A DevID enrollment
+	// reads it back out of this certificate to build the hardwareModuleName of
+	// TCG DevID v1 r12 §8.1, so a certificate issued without it forces the
+	// enrolling device's operator to supply the code again by configuration.
+	if request.TPMManufacturer != "" {
+		manufacturerExt, err := CreateTPMManufacturerExtension(request.TPMManufacturer)
+		if err != nil {
+			return nil, &errs.Joined{Lead: ErrTCGMandatoryExtension, Detail: "tpm manufacturer", Cause: err}
+		}
+		extraExtensions = append(extraExtensions, manufacturerExt)
 	}
 
-	// Add TPM device information extensions if provided
+	// The device's model. It was written under tcg-at-tpmModel (2.23.133.2.2)
+	// and the device serial under tcg-at-tpmVersion (2.23.133.2.3), which name
+	// the TPM's own model and firmware version rather than the platform's.
 	if request.ProdModel != "" {
-		if modelExt, err := CreateTPMModelExtension(request.ProdModel); err == nil {
-			extraExtensions = append(extraExtensions, modelExt)
+		modelExt, err := CreatePlatformModelExtension(request.ProdModel)
+		if err != nil {
+			return nil, &errs.Joined{Lead: ErrTCGMandatoryExtension, Detail: "platform model", Cause: err}
 		}
-	}
-	if request.ProdSerial != "" {
-		if versionExt, err := CreateTPMVersionExtension(request.ProdSerial); err == nil {
-			extraExtensions = append(extraExtensions, versionExt)
-		}
+		extraExtensions = append(extraExtensions, modelExt)
 	}
 
-	// Add Permanent Identifier extension if provided
+	// The permanent identifier is an RFC 4043 otherName inside subjectAltName,
+	// not a standalone extension under the otherName's own OID -- an encoding
+	// no relying party looks for. The assigner stays absent: the TCG assigner
+	// tcg-on-ekPermIdSha256 asserts the value is a digest of an EK certificate,
+	// which a caller-supplied identifier is not.
+	var otherNames []OtherName
 	if request.PermanentID != "" {
-		if permIDExt, err := CreatePermanentIdentifierExtension(request.PermanentID, nil); err == nil {
-			extraExtensions = append(extraExtensions, permIDExt)
+		permID, err := MarshalPermanentIdentifier(request.PermanentID, nil)
+		if err != nil {
+			return nil, &errs.Joined{Lead: ErrTCGMandatoryExtension, Detail: "permanent identifier", Cause: err}
 		}
+		otherNames = append(otherNames, OtherName{TypeID: OIDPermanentIdentifier, Value: permID})
 	}
 
 	// Add Trusted Platform extensions
-	if keyStoreExt, err := CreateTPKeyStoreExtension("TPM2"); err == nil {
-		extraExtensions = append(extraExtensions, keyStoreExt)
+	keyStoreExt, err := CreateTPKeyStoreExtension("TPM2")
+	if err != nil {
+		return nil, &errs.Joined{Lead: ErrTCGMandatoryExtension, Detail: "key store", Cause: err}
 	}
+	extraExtensions = append(extraExtensions, keyStoreExt)
+
 	if issuerKeyStoreType != "" {
-		if issuerKeyStoreExt, err := CreateTPIssuerKeyStoreExtension(issuerKeyStoreType); err == nil {
-			extraExtensions = append(extraExtensions, issuerKeyStoreExt)
+		issuerKeyStoreExt, err := CreateTPIssuerKeyStoreExtension(issuerKeyStoreType)
+		if err != nil {
+			return nil, &errs.Joined{Lead: ErrTCGMandatoryExtension, Detail: "issuer key store", Cause: err}
 		}
+		extraExtensions = append(extraExtensions, issuerKeyStoreExt)
 	}
 
 	// Issue the EK certificate per the TCG EK Credential Profile. The profile
@@ -148,9 +173,12 @@ func (ca *CA) IssueEKCertificate(ctx context.Context, request *CertificateReques
 		return nil, err
 	}
 
+	ekSubject := request.Subject.ToPkixName()
+	applyDeviceSerialNumber(&ekSubject, []byte(request.ProdSerial))
+
 	cert, err := ca.issueTCGCertificate(signer, signingCert, &CertificateSpec{
 		Serial:             serial,
-		Subject:            request.Subject.ToPkixName(),
+		Subject:            ekSubject,
 		NotBefore:          time.Now().Add(-1 * time.Minute),
 		NotAfter:           tcgNotAfter,
 		PublicKey:          ekPubKey,
@@ -159,6 +187,7 @@ func (ca *CA) IssueEKCertificate(ctx context.Context, request *CertificateReques
 		Request:            request,
 		SANS:               request.SANS,
 		ExtraExtensions:    extraExtensions,
+		OtherNames:         otherNames,
 	})
 	if err != nil {
 		return nil, err
@@ -376,8 +405,30 @@ func (ca *CA) SignTCGCSRIDevID(
 
 	sigAlg := determineSignatureAlgorithm(signer.Public())
 
+	// The two subjectAltName otherNames TCG DevID v1 r12 §8.1 requires on both
+	// credentials, derived from the endorsement key certificate the CSR carries
+	// (§6.2.2 step 4b makes that certificate part of the request).
+	//
+	// This is a SHALL, so a CSR from which they cannot be derived is refused
+	// rather than certified without them.
+	ekCert, err := x509.ParseCertificate(unpacked.CsrContents.EkCert)
+	if err != nil {
+		return nil, nil, &errs.Detail{Err: ErrTCGInvalidEKCert, Detail: fmt.Sprintf("%v", err)}
+	}
+	deviceIdentity, err := TCGDeviceIdentityFromEKCertificate(ekCert, request.TPMManufacturer)
+	if err != nil {
+		return nil, nil, err
+	}
+	otherNames, err := deviceIdentity.OtherNames()
+	if err != nil {
+		return nil, nil, &errs.Joined{Lead: ErrTCGMandatoryExtension, Detail: "subject alternative name", Cause: err}
+	}
+
 	// Build IAK certificate extensions
-	iakExtensions := buildIAKExtensions(unpacked, issuerKeyStoreType)
+	iakExtensions, err := buildIAKExtensions(unpacked, issuerKeyStoreType)
+	if err != nil {
+		return nil, nil, err
+	}
 
 	// Generate IAK serial number
 	iakSerial, err := ca.serialGen.Generate(ctx)
@@ -400,6 +451,7 @@ func (ca *CA) SignTCGCSRIDevID(
 	iakSubject.CommonName = IAKCommonName(
 		string(unpacked.CsrContents.ProdModel),
 		string(unpacked.CsrContents.ProdSerial))
+	applyDeviceSerialNumber(&iakSubject, unpacked.CsrContents.ProdSerial)
 
 	iakCert, err := ca.issueTCGCertificate(signer, signingCert, &CertificateSpec{
 		Serial:             iakSerial,
@@ -411,6 +463,7 @@ func (ca *CA) SignTCGCSRIDevID(
 		Profile:            iakProfile,
 		Request:            request,
 		ExtraExtensions:    iakExtensions,
+		OtherNames:         otherNames,
 	})
 	if err != nil {
 		return nil, nil, &errs.Detail{Err: ErrTCGCertIssuanceFailed, Detail: fmt.Sprintf("iak: %v", err)}
@@ -418,10 +471,16 @@ func (ca *CA) SignTCGCSRIDevID(
 
 	// Build IDevID certificate extensions and append any caller-supplied extras
 	// (e.g. the SDN network-zone extension from the platform layer).
-	idevidExtensions := buildIDevIDExtensions(unpacked, issuerKeyStoreType)
+	idevidExtensions, err := buildIDevIDExtensions(unpacked, issuerKeyStoreType)
+	if err != nil {
+		return nil, nil, err
+	}
 	if len(request.ExtraExtensions) > 0 {
 		idevidExtensions = append(idevidExtensions, request.ExtraExtensions...)
 	}
+
+	idevidSubject := request.Subject.ToPkixName()
+	applyDeviceSerialNumber(&idevidSubject, unpacked.CsrContents.ProdSerial)
 
 	// Generate IDevID serial number
 	idevidSerial, err := ca.serialGen.Generate(ctx)
@@ -439,7 +498,7 @@ func (ca *CA) SignTCGCSRIDevID(
 
 	idevidCert, err := ca.issueTCGCertificate(signer, signingCert, &CertificateSpec{
 		Serial:             idevidSerial,
-		Subject:            request.Subject.ToPkixName(),
+		Subject:            idevidSubject,
 		NotBefore:          time.Now().Add(-1 * time.Minute),
 		NotAfter:           tcgNotAfter,
 		PublicKey:          pubKey,
@@ -448,6 +507,7 @@ func (ca *CA) SignTCGCSRIDevID(
 		Request:            request,
 		SANS:               request.SANS,
 		ExtraExtensions:    idevidExtensions,
+		OtherNames:         otherNames,
 	})
 	if err != nil {
 		return nil, nil, &errs.Detail{Err: ErrTCGCertIssuanceFailed, Detail: fmt.Sprintf("idevid: %v", err)}
@@ -534,8 +594,34 @@ func (ca *CA) issueTCGCertificate(
 	return cert, nil
 }
 
-// buildIAKExtensions builds the TCG extensions for an IAK certificate.
-func buildIAKExtensions(unpacked *tpm2.UNPACKED_TCG_CSR_IDEVID, issuerKeyStoreType string) []pkix.Extension {
+// applyDeviceSerialNumber writes the device's serial number into the subject
+// distinguished name, where TCG DevID v1 r12 §8.1 (spec text line 2800) asks
+// for it: "The subject field's DN encoding SHOULD include the 'serialNumber'
+// attribute with the device's unique serial number."
+//
+// A serial number the caller set explicitly is left alone; the CSR's product
+// serial is what the device asserted about itself and the caller's subject is
+// the CA's own decision about the same device.
+func applyDeviceSerialNumber(subject *pkix.Name, prodSerial []byte) {
+	if subject.SerialNumber != "" || len(prodSerial) == 0 {
+		return
+	}
+	subject.SerialNumber = string(prodSerial)
+}
+
+// buildIAKExtensions builds the extensions for an IAK certificate.
+//
+// The TCG policy assertions -- tcg-cap-verifiedTPMResidency and
+// tcg-cap-verifiedTPMRestricted -- are NOT here. TCG DevID v1 r12 §8.2 (spec
+// text lines 3000-3013) defines them as certificate POLICY object identifiers
+// carrying "No data", and the IAK profile stamps them into certificatePolicies.
+// They were also written as standalone boolean-valued extensions, an encoding
+// §8.2 does not define and no relying party reads.
+//
+// Every extension below is mandatory for the credential, so a failure to build
+// one refuses issuance rather than issuing a certificate that asserts less than
+// the CA verified.
+func buildIAKExtensions(unpacked *tpm2.UNPACKED_TCG_CSR_IDEVID, issuerKeyStoreType string) ([]pkix.Extension, error) {
 	extensions := []pkix.Extension{
 		{
 			// TCG AIK Certificate marker
@@ -545,90 +631,63 @@ func buildIAKExtensions(unpacked *tpm2.UNPACKED_TCG_CSR_IDEVID, issuerKeyStoreTy
 		},
 	}
 
-	// Add TPM model extension if available
-	if len(unpacked.CsrContents.ProdModel) > 0 {
-		if ext, err := CreateTPMModelExtension(string(unpacked.CsrContents.ProdModel)); err == nil {
-			extensions = append(extensions, ext)
-		}
+	platform, err := buildPlatformExtensions(unpacked, issuerKeyStoreType)
+	if err != nil {
+		return nil, err
 	}
-
-	// Add TPM version/serial extension if available
-	if len(unpacked.CsrContents.ProdSerial) > 0 {
-		if ext, err := CreateTPMVersionExtension(string(unpacked.CsrContents.ProdSerial)); err == nil {
-			extensions = append(extensions, ext)
-		}
-	}
-
-	// Add Verified TPM Residency extension (key proven to reside in TPM)
-	if ext, err := CreateVerifiedTPMResidencyExtension(true); err == nil {
-		extensions = append(extensions, ext)
-	}
-
-	// Add Verified TPM Fixed extension (key is non-migratable)
-	if ext, err := CreateVerifiedTPMFixedExtension(true); err == nil {
-		extensions = append(extensions, ext)
-	}
-
-	// Add Trusted Platform extensions
-	if ext, err := CreateTPKeyStoreExtension("TPM2"); err == nil {
-		extensions = append(extensions, ext)
-	}
-	if issuerKeyStoreType != "" {
-		if ext, err := CreateTPIssuerKeyStoreExtension(issuerKeyStoreType); err == nil {
-			extensions = append(extensions, ext)
-		}
-	}
-
-	return extensions
+	return append(extensions, platform...), nil
 }
 
-// buildIDevIDExtensions builds the TCG extensions for an IDevID certificate.
-func buildIDevIDExtensions(unpacked *tpm2.UNPACKED_TCG_CSR_IDEVID, issuerKeyStoreType string) []pkix.Extension {
+// buildIDevIDExtensions builds the extensions for an IDevID certificate.
+//
+// The RFC 4108 hardwareModuleName and RFC 4043 permanentIdentifier that TCG
+// DevID v1 r12 §8.1 requires are not here either: both are subjectAltName
+// otherNames, carried through CertificateSpec.OtherNames so that one extension
+// holds them alongside the certificate's DNS and IP names.
+func buildIDevIDExtensions(unpacked *tpm2.UNPACKED_TCG_CSR_IDEVID, issuerKeyStoreType string) ([]pkix.Extension, error) {
+	return buildPlatformExtensions(unpacked, issuerKeyStoreType)
+}
+
+// buildPlatformExtensions builds the device and keystore extensions shared by
+// the IAK and IDevID certificates of one enrollment.
+//
+// The product model is written under tcg-at-platformModel (2.23.133.2.5). It
+// was written under tcg-at-tpmModel (2.23.133.2.2) and the product serial under
+// tcg-at-tpmVersion (2.23.133.2.3), which name the TPM's own model and firmware
+// version -- a reader taking those at face value would attribute the device's
+// model to its TPM. The product serial has no extension at all: TCG DevID v1
+// r12 §8.1 (spec text line 2800) puts it in the subject, "The subject field's DN
+// encoding SHOULD include the 'serialNumber' attribute with the device's unique
+// serial number", which is where SignTCGCSRIDevID now writes it.
+func buildPlatformExtensions(
+	unpacked *tpm2.UNPACKED_TCG_CSR_IDEVID,
+	issuerKeyStoreType string,
+) ([]pkix.Extension, error) {
 	var extensions []pkix.Extension
 
-	// Add TPM model extension
 	if len(unpacked.CsrContents.ProdModel) > 0 {
-		if ext, err := CreateTPMModelExtension(string(unpacked.CsrContents.ProdModel)); err == nil {
-			extensions = append(extensions, ext)
+		ext, err := CreatePlatformModelExtension(string(unpacked.CsrContents.ProdModel))
+		if err != nil {
+			return nil, &errs.Joined{Lead: ErrTCGMandatoryExtension, Detail: "platform model", Cause: err}
 		}
-	}
-
-	// Add TPM version extension
-	if len(unpacked.CsrContents.ProdSerial) > 0 {
-		if ext, err := CreateTPMVersionExtension(string(unpacked.CsrContents.ProdSerial)); err == nil {
-			extensions = append(extensions, ext)
-		}
-	}
-
-	// Build permanent identifier from product model and serial
-	permanentID := fmt.Sprintf("%s-%s",
-		string(unpacked.CsrContents.ProdModel),
-		string(unpacked.CsrContents.ProdSerial))
-	if ext, err := CreatePermanentIdentifierExtension(permanentID, nil); err == nil {
 		extensions = append(extensions, ext)
 	}
 
-	// Add Verified TPM Residency extension
-	if ext, err := CreateVerifiedTPMResidencyExtension(true); err == nil {
-		extensions = append(extensions, ext)
+	ext, err := CreateTPKeyStoreExtension("TPM2")
+	if err != nil {
+		return nil, &errs.Joined{Lead: ErrTCGMandatoryExtension, Detail: "key store", Cause: err}
 	}
+	extensions = append(extensions, ext)
 
-	// Add Verified TPM Fixed extension
-	if ext, err := CreateVerifiedTPMFixedExtension(true); err == nil {
-		extensions = append(extensions, ext)
-	}
-
-	// Add Trusted Platform extensions
-	if ext, err := CreateTPKeyStoreExtension("TPM2"); err == nil {
-		extensions = append(extensions, ext)
-	}
 	if issuerKeyStoreType != "" {
-		if ext, err := CreateTPIssuerKeyStoreExtension(issuerKeyStoreType); err == nil {
-			extensions = append(extensions, ext)
+		ext, err := CreateTPIssuerKeyStoreExtension(issuerKeyStoreType)
+		if err != nil {
+			return nil, &errs.Joined{Lead: ErrTCGMandatoryExtension, Detail: "issuer key store", Cause: err}
 		}
+		extensions = append(extensions, ext)
 	}
 
-	return extensions
+	return extensions, nil
 }
 
 // VerifyQuote verifies a TPM quote signature and validates that the nonce matches.

@@ -688,26 +688,23 @@ func TestCreateTPMSpecificationExtension_ZeroValues(t *testing.T) {
 }
 
 // =============================================================================
-// Create Extension Tests - Hardware Module Name
+// Value Encoding Tests - Hardware Module Name (subjectAltName otherName)
 // =============================================================================
 
-func TestCreateHardwareModuleNameExtension_Success(t *testing.T) {
+func TestMarshalHardwareModuleName_Success(t *testing.T) {
 	t.Parallel()
 
 	hwType := asn1.ObjectIdentifier{2, 23, 133, 1, 2}
 	serial := []byte{0x01, 0x02, 0x03, 0x04, 0x05}
 
-	ext, err := CreateHardwareModuleNameExtension(hwType, serial)
+	value, err := MarshalHardwareModuleName(hwType, serial)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
 
-	requireValidExtension(t, ext, OIDHardwareModuleName)
-
-	// Round-trip
-	parsed, err := ParseHardwareModuleNameExtension(ext.Value)
+	parsed, err := ParseHardwareModuleNameExtension(value)
 	if err != nil {
-		t.Fatalf("failed to parse extension: %v", err)
+		t.Fatalf("failed to parse hardware module name: %v", err)
 	}
 	if !parsed.HWType.Equal(hwType) {
 		t.Errorf("HWType mismatch: expected %v, got %v", hwType, parsed.HWType)
@@ -717,28 +714,26 @@ func TestCreateHardwareModuleNameExtension_Success(t *testing.T) {
 	}
 }
 
-func TestCreateHardwareModuleNameExtension_EmptySerial(t *testing.T) {
+func TestMarshalHardwareModuleName_ZeroLengthSerial(t *testing.T) {
 	t.Parallel()
 
 	hwType := asn1.ObjectIdentifier{2, 23, 133, 1, 2}
 
-	ext, err := CreateHardwareModuleNameExtension(hwType, []byte{})
+	value, err := MarshalHardwareModuleName(hwType, []byte{})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
 
-	requireValidExtension(t, ext, OIDHardwareModuleName)
-
-	parsed, err := ParseHardwareModuleNameExtension(ext.Value)
+	parsed, err := ParseHardwareModuleNameExtension(value)
 	if err != nil {
-		t.Fatalf("failed to parse extension: %v", err)
+		t.Fatalf("failed to parse hardware module name: %v", err)
 	}
 	if !parsed.HWType.Equal(hwType) {
 		t.Errorf("HWType mismatch: expected %v, got %v", hwType, parsed.HWType)
 	}
 }
 
-func TestCreateHardwareModuleNameExtension_LargeSerial(t *testing.T) {
+func TestMarshalHardwareModuleName_LargeSerial(t *testing.T) {
 	t.Parallel()
 
 	hwType := asn1.ObjectIdentifier{1, 3, 6, 1, 4, 1, 29377}
@@ -747,16 +742,14 @@ func TestCreateHardwareModuleNameExtension_LargeSerial(t *testing.T) {
 		serial[i] = byte(i)
 	}
 
-	ext, err := CreateHardwareModuleNameExtension(hwType, serial)
+	value, err := MarshalHardwareModuleName(hwType, serial)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
 
-	requireValidExtension(t, ext, OIDHardwareModuleName)
-
-	parsed, err := ParseHardwareModuleNameExtension(ext.Value)
+	parsed, err := ParseHardwareModuleNameExtension(value)
 	if err != nil {
-		t.Fatalf("failed to parse extension: %v", err)
+		t.Fatalf("failed to parse hardware module name: %v", err)
 	}
 	if !bytes.Equal(parsed.HWSerial, serial) {
 		t.Errorf("HWSerial length mismatch: expected %d bytes, got %d bytes", len(serial), len(parsed.HWSerial))
@@ -764,26 +757,23 @@ func TestCreateHardwareModuleNameExtension_LargeSerial(t *testing.T) {
 }
 
 // =============================================================================
-// Create Extension Tests - Permanent Identifier
+// Value Encoding Tests - Permanent Identifier (subjectAltName otherName)
 // =============================================================================
 
-func TestCreatePermanentIdentifierExtension_Success(t *testing.T) {
+func TestMarshalPermanentIdentifier_Success(t *testing.T) {
 	t.Parallel()
 
 	identifier := "device-serial-12345"
 	assigner := asn1.ObjectIdentifier{1, 3, 6, 1, 4, 1, 29377}
 
-	ext, err := CreatePermanentIdentifierExtension(identifier, assigner)
+	value, err := MarshalPermanentIdentifier(identifier, assigner)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
 
-	requireValidExtension(t, ext, OIDPermanentIdentifier)
-
-	// Round-trip
-	parsed, err := ParsePermanentIdentifierExtension(ext.Value)
+	parsed, err := ParsePermanentIdentifierExtension(value)
 	if err != nil {
-		t.Fatalf("failed to parse extension: %v", err)
+		t.Fatalf("failed to parse permanent identifier: %v", err)
 	}
 	if parsed.IdentifierValue != identifier {
 		t.Errorf("IdentifierValue mismatch: expected %q, got %q", identifier, parsed.IdentifierValue)
@@ -793,88 +783,40 @@ func TestCreatePermanentIdentifierExtension_Success(t *testing.T) {
 	}
 }
 
-func TestCreatePermanentIdentifierExtension_EmptyIdentifier(t *testing.T) {
+func TestMarshalPermanentIdentifier_EmptyIdentifier(t *testing.T) {
 	t.Parallel()
 
 	assigner := asn1.ObjectIdentifier{1, 2, 3}
 
-	ext, err := CreatePermanentIdentifierExtension("", assigner)
+	value, err := MarshalPermanentIdentifier("", assigner)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
 
-	requireValidExtension(t, ext, OIDPermanentIdentifier)
-
-	parsed, err := ParsePermanentIdentifierExtension(ext.Value)
+	parsed, err := ParsePermanentIdentifierExtension(value)
 	if err != nil {
-		t.Fatalf("failed to parse extension: %v", err)
+		t.Fatalf("failed to parse permanent identifier: %v", err)
 	}
 	if parsed.IdentifierValue != "" {
 		t.Errorf("expected empty IdentifierValue, got %q", parsed.IdentifierValue)
 	}
 }
 
-func TestCreatePermanentIdentifierExtension_NilAssigner(t *testing.T) {
+func TestMarshalPermanentIdentifier_NilAssigner(t *testing.T) {
 	t.Parallel()
 
-	ext, err := CreatePermanentIdentifierExtension("some-id", nil)
+	value, err := MarshalPermanentIdentifier("some-id", nil)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
 
-	requireValidExtension(t, ext, OIDPermanentIdentifier)
-}
-
-// =============================================================================
-// Create Extension Tests - Boolean Extensions
-// =============================================================================
-
-func TestCreateVerifiedTPMResidencyExtension_True(t *testing.T) {
-	t.Parallel()
-
-	ext, err := CreateVerifiedTPMResidencyExtension(true)
+	parsed, err := ParsePermanentIdentifierExtension(value)
 	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
+		t.Fatalf("failed to parse permanent identifier: %v", err)
 	}
-
-	requireValidExtension(t, ext, OIDTCGVerifiedTPMResidency)
-	requireBoolExtensionValue(t, ext.Value, true)
-}
-
-func TestCreateVerifiedTPMResidencyExtension_False(t *testing.T) {
-	t.Parallel()
-
-	ext, err := CreateVerifiedTPMResidencyExtension(false)
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
+	if len(parsed.Assigner) != 0 {
+		t.Errorf("expected no assigner, got %v", parsed.Assigner)
 	}
-
-	requireValidExtension(t, ext, OIDTCGVerifiedTPMResidency)
-	requireBoolExtensionValue(t, ext.Value, false)
-}
-
-func TestCreateVerifiedTPMFixedExtension_True(t *testing.T) {
-	t.Parallel()
-
-	ext, err := CreateVerifiedTPMFixedExtension(true)
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-
-	requireValidExtension(t, ext, OIDTCGVerifiedTPMFixed)
-	requireBoolExtensionValue(t, ext.Value, true)
-}
-
-func TestCreateVerifiedTPMFixedExtension_False(t *testing.T) {
-	t.Parallel()
-
-	ext, err := CreateVerifiedTPMFixedExtension(false)
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-
-	requireValidExtension(t, ext, OIDTCGVerifiedTPMFixed)
-	requireBoolExtensionValue(t, ext.Value, false)
 }
 
 func TestCreateTPFIPS140Extension_True(t *testing.T) {
@@ -1167,12 +1109,12 @@ func TestParseHardwareModuleNameExtension_Roundtrip(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
 
-			ext, err := CreateHardwareModuleNameExtension(tt.hwType, tt.serial)
+			value, err := MarshalHardwareModuleName(tt.hwType, tt.serial)
 			if err != nil {
-				t.Fatalf("create failed: %v", err)
+				t.Fatalf("marshal failed: %v", err)
 			}
 
-			parsed, parseErr := ParseHardwareModuleNameExtension(ext.Value)
+			parsed, parseErr := ParseHardwareModuleNameExtension(value)
 			if parseErr != nil {
 				t.Fatalf("parse failed: %v", parseErr)
 			}
@@ -1235,12 +1177,12 @@ func TestParsePermanentIdentifierExtension_Roundtrip(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
 
-			ext, err := CreatePermanentIdentifierExtension(tt.identifier, tt.assigner)
+			value, err := MarshalPermanentIdentifier(tt.identifier, tt.assigner)
 			if err != nil {
-				t.Fatalf("create failed: %v", err)
+				t.Fatalf("marshal failed: %v", err)
 			}
 
-			parsed, parseErr := ParsePermanentIdentifierExtension(ext.Value)
+			parsed, parseErr := ParsePermanentIdentifierExtension(value)
 			if parseErr != nil {
 				t.Fatalf("parse failed: %v", parseErr)
 			}
@@ -1288,10 +1230,6 @@ func TestAllCreateExtensions_AreNonCritical(t *testing.T) {
 
 	// Build all extensions and verify none are marked critical
 	spec := TCGTPMSpecification{Family: "2.0", Level: 0, Revision: 164}
-	hwType := asn1.ObjectIdentifier{2, 23, 133, 1, 2}
-	serial := []byte{0x01}
-	assigner := asn1.ObjectIdentifier{1, 2, 3}
-
 	type extensionBuilder struct {
 		name    string
 		builder func() (pkix.Extension, error)
@@ -1305,10 +1243,6 @@ func TestAllCreateExtensions_AreNonCritical(t *testing.T) {
 		{name: "PlatformManufacturer", builder: func() (pkix.Extension, error) { return CreatePlatformManufacturerExtension("Dell") }},
 		{name: "PlatformModel", builder: func() (pkix.Extension, error) { return CreatePlatformModelExtension("R750") }},
 		{name: "PlatformVersion", builder: func() (pkix.Extension, error) { return CreatePlatformVersionExtension("1.0") }},
-		{name: "HardwareModuleName", builder: func() (pkix.Extension, error) { return CreateHardwareModuleNameExtension(hwType, serial) }},
-		{name: "PermanentIdentifier", builder: func() (pkix.Extension, error) { return CreatePermanentIdentifierExtension("id", assigner) }},
-		{name: "VerifiedTPMResidency", builder: func() (pkix.Extension, error) { return CreateVerifiedTPMResidencyExtension(true) }},
-		{name: "VerifiedTPMFixed", builder: func() (pkix.Extension, error) { return CreateVerifiedTPMFixedExtension(true) }},
 		{name: "TPKeyStore", builder: func() (pkix.Extension, error) { return CreateTPKeyStoreExtension("TPM2") }},
 		{name: "TPIssuerKeyStore", builder: func() (pkix.Extension, error) { return CreateTPIssuerKeyStoreExtension("PKCS11") }},
 		{name: "TPFIPS140", builder: func() (pkix.Extension, error) { return CreateTPFIPS140Extension(true) }},
@@ -1341,10 +1275,6 @@ func TestAllCreateExtensions_HaveDistinctOIDs(t *testing.T) {
 	t.Parallel()
 
 	spec := TCGTPMSpecification{Family: "2.0", Level: 0, Revision: 164}
-	hwType := asn1.ObjectIdentifier{2, 23, 133, 1, 2}
-	serial := []byte{0x01}
-	assigner := asn1.ObjectIdentifier{1, 2, 3}
-
 	type namedExt struct {
 		name string
 		ext  pkix.Extension
@@ -1372,14 +1302,6 @@ func TestAllCreateExtensions_HaveDistinctOIDs(t *testing.T) {
 	addExt("PlatformModel", ext, err)
 	ext, err = CreatePlatformVersionExtension("1.0")
 	addExt("PlatformVersion", ext, err)
-	ext, err = CreateHardwareModuleNameExtension(hwType, serial)
-	addExt("HardwareModuleName", ext, err)
-	ext, err = CreatePermanentIdentifierExtension("id", assigner)
-	addExt("PermanentIdentifier", ext, err)
-	ext, err = CreateVerifiedTPMResidencyExtension(true)
-	addExt("VerifiedTPMResidency", ext, err)
-	ext, err = CreateVerifiedTPMFixedExtension(true)
-	addExt("VerifiedTPMFixed", ext, err)
 	ext, err = CreateTPKeyStoreExtension("TPM2")
 	addExt("TPKeyStore", ext, err)
 	ext, err = CreateTPIssuerKeyStoreExtension("PKCS11")

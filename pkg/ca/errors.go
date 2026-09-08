@@ -280,6 +280,23 @@ var (
 
 	// ErrTCGCSRUnmarshalFailed indicates the packed CSR could not be unmarshaled.
 	ErrTCGCSRUnmarshalFailed = errors.New("ca: failed to unmarshal tcg-csr-idevid")
+
+	// ErrTCGEKManufacturerUnknown indicates the TCG TPM manufacturer code
+	// cannot be determined for the endorsement key.
+	//
+	// TCG DevID v1 r12 §8.1 makes the manufacturer code the first component of
+	// the hwSerialNum that identifies the TPM inside subjectAltName, and the
+	// extension is a SHALL. Issuing without it would put a name in the
+	// certificate that does not identify the TPM it claims to.
+	ErrTCGEKManufacturerUnknown = errors.New("ca: tcg tpm manufacturer code unknown")
+
+	// ErrTCGMandatoryExtension indicates an extension TCG DevID v1 r12 §8.1
+	// requires could not be built, so no certificate was issued.
+	//
+	// A DevID certificate missing its subjectAltName says nothing about which
+	// TPM holds the key; a relying party reading it would conclude only that
+	// the CA had verified less than it did. Issuance refuses instead.
+	ErrTCGMandatoryExtension = errors.New("ca: mandatory tcg certificate extension could not be built")
 )
 
 // FIDO2 attestation errors indicate that a certificate signing request cannot

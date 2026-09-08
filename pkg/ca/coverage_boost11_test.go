@@ -545,20 +545,20 @@ func TestCreateTPMSpecificationExtension_Success_B11(t *testing.T) {
 	assert.NotEmpty(t, ext.Value)
 }
 
-// TestCreateHardwareModuleNameExtension_Success_B11 exercises the success path.
-func TestCreateHardwareModuleNameExtension_Success_B11(t *testing.T) {
+// TestMarshalHardwareModuleName_Success_B11 exercises the success path.
+func TestMarshalHardwareModuleName_Success_B11(t *testing.T) {
 	t.Parallel()
-	ext, err := CreateHardwareModuleNameExtension(asn1.ObjectIdentifier{1, 2, 3, 4}, []byte{0x01, 0x02, 0x03})
+	value, err := MarshalHardwareModuleName(asn1.ObjectIdentifier{1, 2, 3, 4}, []byte{0x01, 0x02, 0x03})
 	require.NoError(t, err)
-	assert.NotEmpty(t, ext.Value)
+	assert.NotEmpty(t, value)
 }
 
-// TestCreatePermanentIdentifierExtension_Success_B11 exercises the success path.
-func TestCreatePermanentIdentifierExtension_Success_B11(t *testing.T) {
+// TestMarshalPermanentIdentifier_Success_B11 exercises the success path.
+func TestMarshalPermanentIdentifier_Success_B11(t *testing.T) {
 	t.Parallel()
-	ext, err := CreatePermanentIdentifierExtension("perm-id-b11", asn1.ObjectIdentifier{1, 2, 3, 4})
+	value, err := MarshalPermanentIdentifier("perm-id-b11", asn1.ObjectIdentifier{1, 2, 3, 4})
 	require.NoError(t, err)
-	assert.NotEmpty(t, ext.Value)
+	assert.NotEmpty(t, value)
 }
 
 // TestCreatePlatformManufacturerExtension_Success_B11 exercises the success path.
@@ -581,22 +581,6 @@ func TestCreatePlatformModelExtension_Success_B11(t *testing.T) {
 func TestCreatePlatformVersionExtension_Success_B11(t *testing.T) {
 	t.Parallel()
 	ext, err := CreatePlatformVersionExtension("1.0")
-	require.NoError(t, err)
-	assert.NotEmpty(t, ext.Value)
-}
-
-// TestCreateVerifiedTPMResidencyExtension_Success_B11 exercises the success path.
-func TestCreateVerifiedTPMResidencyExtension_Success_B11(t *testing.T) {
-	t.Parallel()
-	ext, err := CreateVerifiedTPMResidencyExtension(true)
-	require.NoError(t, err)
-	assert.NotEmpty(t, ext.Value)
-}
-
-// TestCreateVerifiedTPMFixedExtension_Success_B11 exercises the success path.
-func TestCreateVerifiedTPMFixedExtension_Success_B11(t *testing.T) {
-	t.Parallel()
-	ext, err := CreateVerifiedTPMFixedExtension(true)
 	require.NoError(t, err)
 	assert.NotEmpty(t, ext.Value)
 }

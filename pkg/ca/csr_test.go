@@ -14,6 +14,7 @@
 package ca
 
 import (
+	"bytes"
 	"crypto"
 	"crypto/ecdsa"
 	"crypto/ed25519"
@@ -21,6 +22,7 @@ import (
 	"crypto/rand"
 	"crypto/rsa"
 	"crypto/x509"
+	"crypto/x509/pkix"
 	"encoding/asn1"
 	"encoding/pem"
 	"errors"
@@ -570,7 +572,7 @@ func TestAddSANsExtension_InvalidURI(t *testing.T) {
 }
 
 func TestAddSANsExtension_HardwareModuleName(t *testing.T) {
-	template := &x509.CertificateRequest{}
+	template := &x509.CertificateRequest{Subject: pkix.Name{CommonName: "device.example.com"}}
 	sans := &SubjectAlternativeNames{
 		DNS: []string{"device.example.com"},
 		HardwareModuleName: &HardwareModuleInfo{
@@ -599,8 +601,42 @@ func TestAddSANsExtension_HardwareModuleName(t *testing.T) {
 	if !ext.Id.Equal(expectedOID) {
 		t.Errorf("Extension OID = %v, want %v", ext.Id, expectedOID)
 	}
+	// RFC 5280 section 4.2.1.6: subjectAltName is critical only when the
+	// subject distinguished name is empty. This request names a subject.
 	if ext.Critical {
-		t.Error("SAN extension should not be critical")
+		t.Error("SAN extension should not be critical when the subject is present")
+	}
+
+	// The DNS name must survive into the extension this package encodes:
+	// crypto/x509 skips its own subjectAltName once one is supplied, so a
+	// hardware module name used to silently drop every other name.
+	var names asn1.RawValue
+	if _, err := asn1.Unmarshal(ext.Value, &names); err != nil {
+		t.Fatalf("decode GeneralNames: %v", err)
+	}
+	if !bytes.Contains(names.Bytes, []byte("device.example.com")) {
+		t.Error("the DNS name was dropped from the subject alternative name extension")
+	}
+}
+
+func TestAddSANsExtension_HardwareModuleName_EmptySubjectIsCritical(t *testing.T) {
+	template := &x509.CertificateRequest{}
+	sans := &SubjectAlternativeNames{
+		DNS: []string{"device.example.com"},
+		HardwareModuleName: &HardwareModuleInfo{
+			HWType:         asn1.ObjectIdentifier{2, 23, 133, 1, 2},
+			HWSerialNumber: "TPM1234567890",
+		},
+	}
+
+	if err := addSANsExtension(template, sans); err != nil {
+		t.Fatalf("addSANsExtension failed: %v", err)
+	}
+	if len(template.ExtraExtensions) != 1 {
+		t.Fatalf("ExtraExtensions length = %d, want 1", len(template.ExtraExtensions))
+	}
+	if !template.ExtraExtensions[0].Critical {
+		t.Error("RFC 5280 section 4.2.1.6 requires a critical subjectAltName when the subject is empty")
 	}
 }
 

@@ -40,6 +40,12 @@ var (
 	OIDTCGCredentialType                = asn1.ObjectIdentifier{2, 23, 133, 2, 23}
 	OIDTCGCredentialSpecification       = asn1.ObjectIdentifier{2, 23, 133, 2, 24}
 
+	// OIDTCGHwTypeTPM2 is the TCG-registered hardware module type of a TPM 2.0
+	// (2.23.133.1.2). TCG DevID v1 r12 §8.1 (spec text line 2899): "The TCG
+	// registered OID (2.23.133.1.2) represents the hwType of TPM 2.0." It is the
+	// hwType of the RFC 4108 HardwareModuleName carried inside subjectAltName.
+	OIDTCGHwTypeTPM2 = asn1.ObjectIdentifier{2, 23, 133, 1, 2}
+
 	// TCG Certificate Types (2.23.133.8)
 	OIDTCGKpEKCertificate       = asn1.ObjectIdentifier{2, 23, 133, 8, 1}
 	OIDTCGKpPlatformCertificate = asn1.ObjectIdentifier{2, 23, 133, 8, 2}
@@ -61,6 +67,14 @@ var (
 
 	// Permanent Identifier (for SAN extension)
 	OIDPermanentIdentifier = asn1.ObjectIdentifier{1, 3, 6, 1, 5, 5, 7, 8, 3}
+
+	// OIDTCGOnEKPermIdSha256 is tcg-on-ekPermIdSha256 (2.23.133.12.1), the
+	// assigner of the RFC 4043 PermanentIdentifier a DevID certificate carries.
+	// TCG DevID v1 r12 §8.1 (spec text line 2949): "The assigner value is the
+	// TCG OID 2.23.133.12.1 (tcg-on-ekPermIdSha256)", and (line 2958)
+	// "IDevID/IAK certificates SHALL include both assigner and identifierValue
+	// fields."
+	OIDTCGOnEKPermIdSha256 = asn1.ObjectIdentifier{2, 23, 133, 12, 1}
 
 	// Legacy aliases for backward compatibility
 	OIDTCGSpecification  = OIDTCGAttributeTPMSpecification
@@ -238,64 +252,34 @@ func CreatePlatformVersionExtension(version string) (pkix.Extension, error) {
 	}, nil
 }
 
-// CreateHardwareModuleNameExtension creates an X.509 extension for hardware module name.
-func CreateHardwareModuleNameExtension(hwType asn1.ObjectIdentifier, serial []byte) (pkix.Extension, error) {
-	hwName := TCGHardwareModuleName{
-		HWType:   hwType,
-		HWSerial: serial,
-	}
-	value, err := asn1.Marshal(hwName)
+// MarshalHardwareModuleName encodes an RFC 4108 HardwareModuleName for use as
+// the value of a subjectAltName otherName.
+//
+// TCG DevID v1 r12 §8.1 (spec text lines 2874-2896) places the
+// hardwareModuleName inside subjectAltName as an otherName under
+// id-on-hardwareModuleName, not in a standalone extension of its own, so this
+// returns the encoded value and leaves placing it to BuildSubjectAltName.
+func MarshalHardwareModuleName(hwType asn1.ObjectIdentifier, serial []byte) ([]byte, error) {
+	value, err := asn1.Marshal(TCGHardwareModuleName{HWType: hwType, HWSerial: serial})
 	if err != nil {
-		return pkix.Extension{}, ErrTCGExtensionEncoding
+		return nil, ErrTCGExtensionEncoding
 	}
-	return pkix.Extension{
-		Id:       OIDHardwareModuleName,
-		Critical: false,
-		Value:    value,
-	}, nil
+	return value, nil
 }
 
-// CreatePermanentIdentifierExtension creates an X.509 extension for permanent identifier.
-func CreatePermanentIdentifierExtension(identifier string, assigner asn1.ObjectIdentifier) (pkix.Extension, error) {
-	permID := TCGPermanentIdentifier{
-		IdentifierValue: identifier,
-		Assigner:        assigner,
-	}
-	value, err := asn1.Marshal(permID)
+// MarshalPermanentIdentifier encodes an RFC 4043 PermanentIdentifier for use as
+// the value of a subjectAltName otherName.
+//
+// TCG DevID v1 r12 §8.1 (spec text line 2958): "IDevID/IAK certificates SHALL
+// include both assigner and identifierValue fields", inside subjectAltName. A
+// nil assigner encodes the LDevID/LAK form the same section permits and is
+// rejected for an IDevID/IAK by the caller, not here.
+func MarshalPermanentIdentifier(identifier string, assigner asn1.ObjectIdentifier) ([]byte, error) {
+	value, err := asn1.Marshal(TCGPermanentIdentifier{IdentifierValue: identifier, Assigner: assigner})
 	if err != nil {
-		return pkix.Extension{}, ErrTCGExtensionEncoding
+		return nil, ErrTCGExtensionEncoding
 	}
-	return pkix.Extension{
-		Id:       OIDPermanentIdentifier,
-		Critical: false,
-		Value:    value,
-	}, nil
-}
-
-// CreateVerifiedTPMResidencyExtension creates an X.509 extension indicating TPM key residency.
-func CreateVerifiedTPMResidencyExtension(verified bool) (pkix.Extension, error) {
-	value, err := asn1.Marshal(verified)
-	if err != nil {
-		return pkix.Extension{}, ErrTCGExtensionEncoding
-	}
-	return pkix.Extension{
-		Id:       OIDTCGVerifiedTPMResidency,
-		Critical: false,
-		Value:    value,
-	}, nil
-}
-
-// CreateVerifiedTPMFixedExtension creates an X.509 extension indicating non-migratable TPM key.
-func CreateVerifiedTPMFixedExtension(fixed bool) (pkix.Extension, error) {
-	value, err := asn1.Marshal(fixed)
-	if err != nil {
-		return pkix.Extension{}, ErrTCGExtensionEncoding
-	}
-	return pkix.Extension{
-		Id:       OIDTCGVerifiedTPMFixed,
-		Critical: false,
-		Value:    value,
-	}, nil
+	return value, nil
 }
 
 // ParseTPMSpecificationExtension parses a TPM specification extension value.

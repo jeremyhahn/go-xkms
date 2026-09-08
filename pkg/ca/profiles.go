@@ -20,6 +20,7 @@ package ca
 
 import (
 	"crypto/x509"
+	"encoding/asn1"
 	"sort"
 	"strings"
 	"sync"
@@ -169,6 +170,11 @@ type baseProfile struct {
 	// certificate it issues, such as the TCG verified-TPM-residency and
 	// verified-TPM-fixed policies.
 	policies []x509.OID
+
+	// unknownExtKeyUsage are extended key usage OIDs crypto/x509 has no
+	// x509.ExtKeyUsage constant for, such as the TCG DevID §8.1 extended key
+	// usage. They are encoded into the same extension as extKeyUsage.
+	unknownExtKeyUsage []asn1.ObjectIdentifier
 }
 
 // Name returns the profile name.
@@ -207,6 +213,7 @@ func (p *baseProfile) Apply(template *x509.Certificate, request *CertificateRequ
 
 	template.KeyUsage = p.keyUsage
 	template.ExtKeyUsage = p.extKeyUsage
+	template.UnknownExtKeyUsage = p.unknownExtKeyUsage
 	template.BasicConstraintsValid = p.basicConstraintsValid
 	template.Policies = p.policies
 
@@ -503,15 +510,21 @@ func tcgExtKeyUsage() []x509.ExtKeyUsage {
 }
 
 // tcgAttestationPolicies are the TCG policy OIDs stamped on an ATTESTATION
-// key certificate (AK, IAK, LAK): the key is TPM-resident, fixed to this TPM,
-// and Restricted — it can only sign digests the TPM itself produced, so data
-// it signs is genuinely TPM internal data. TCG DevID v1 r12 §8.2 requires a
-// relying party to check verifiedTPMRestricted before trusting an
-// attestation, which is only possible if the CA stamps it.
+// key certificate (AK, IAK, LAK): the key is TPM-resident and Restricted — it
+// can only sign digests the TPM itself produced, so data it signs is genuinely
+// TPM internal data. TCG DevID v1 r12 §8.2 requires a relying party to check
+// verifiedTPMRestricted before trusting an attestation, which is only possible
+// if the CA stamps it.
+//
+// verifiedTPMFixed is deliberately absent. §8.2 (spec text lines 3010-3013):
+// tcg-cap-verifiedTPMRestricted "MUST NOT be combined with TCG-CE-FixedTPM",
+// and symmetrically tcg-cap-verifiedTPMFixed "MUST NOT be combined with
+// TCG-CE-FixedTPM-RestrictedKey". The restricted assertion already states that
+// the CA "has verified both the fixedTPM and Restricted bits are set", so the
+// pair is not merely prohibited but redundant.
 func tcgAttestationPolicies() []x509.OID {
 	return []x509.OID{
 		TCGVerifiedTPMResidencyPolicy,
-		TCGVerifiedTPMFixedPolicy,
 		TCGVerifiedTPMRestrictedPolicy,
 	}
 }
@@ -525,6 +538,29 @@ func tcgAttestationPolicies() []x509.OID {
 // the key does not have.
 func tcgIdentityPolicies() []x509.OID {
 	return []x509.OID{TCGVerifiedTPMResidencyPolicy, TCGVerifiedTPMFixedPolicy}
+}
+
+// tcgAttestationExtKeyUsage and tcgIdentityExtKeyUsage are the TCG extended
+// key usage a DevID credential carries beside the TLS usages.
+//
+// TCG DevID v1 r12 §8.1 (spec text line 2977): Extended Key Usage "SHOULD be
+// populated with the one TCG OID most appropriate for the type of key used,
+// either 'TCG-CE-FixedTPM' or 'TCG-CE-FixedTPM-RestrictedKey'. Refer to section
+// 8.2 for the details of these OIDs." §8.2 gives those two OIDs as
+// tcg-cap-verifiedTPMFixed (2.23.133.11.1.2) for a key whose fixedTPM bit was
+// verified and tcg-cap-verifiedTPMRestricted (2.23.133.11.1.3) for a key whose
+// fixedTPM and Restricted bits were both verified — so an attestation key takes
+// the restricted OID and an identity key the fixed one, exactly one each.
+//
+// The TLS client and server usages stay: §8.1 is explicit that these
+// credentials authenticate TLS connections, and RFC 5280 section 4.2.1.12
+// requires every purpose a certificate is used for to appear.
+func tcgAttestationExtKeyUsage() []asn1.ObjectIdentifier {
+	return []asn1.ObjectIdentifier{OIDTCGVerifiedTPMRestricted}
+}
+
+func tcgIdentityExtKeyUsage() []asn1.ObjectIdentifier {
+	return []asn1.ObjectIdentifier{OIDTCGVerifiedTPMFixed}
 }
 
 // tcgValidityDays is the validity a TCG credential is issued for. TCG device
@@ -555,11 +591,12 @@ func NewTCGEndorsementKeyProfile() ProfileProvider {
 // certification structures.
 func NewTCGAttestationKeyProfile() ProfileProvider {
 	return &baseProfile{
-		name:            ProfileNameTCGAttestationKey,
-		keyUsage:        x509.KeyUsageDigitalSignature,
-		extKeyUsage:     tcgExtKeyUsage(),
-		defaultValidity: tcgValidityDays,
-		policies:        tcgAttestationPolicies(),
+		name:               ProfileNameTCGAttestationKey,
+		keyUsage:           x509.KeyUsageDigitalSignature,
+		extKeyUsage:        tcgExtKeyUsage(),
+		unknownExtKeyUsage: tcgAttestationExtKeyUsage(),
+		defaultValidity:    tcgValidityDays,
+		policies:           tcgAttestationPolicies(),
 	}
 }
 
@@ -567,26 +604,33 @@ func NewTCGAttestationKeyProfile() ProfileProvider {
 // attestation key (IAK) certificate issued from a TCG-CSR-IDEVID.
 func NewTCGInitialAttestationKeyProfile() ProfileProvider {
 	return &baseProfile{
-		name:            ProfileNameTCGInitialAK,
-		keyUsage:        x509.KeyUsageDigitalSignature,
-		extKeyUsage:     tcgExtKeyUsage(),
-		defaultValidity: tcgValidityDays,
-		policies:        tcgAttestationPolicies(),
+		name:               ProfileNameTCGInitialAK,
+		keyUsage:           x509.KeyUsageDigitalSignature,
+		extKeyUsage:        tcgExtKeyUsage(),
+		unknownExtKeyUsage: tcgAttestationExtKeyUsage(),
+		defaultValidity:    tcgValidityDays,
+		policies:           tcgAttestationPolicies(),
 	}
 }
 
 // NewTCGDeviceIdentityProfile creates the profile for the initial device
 // identity (IDevID) certificate issued from a TCG-CSR-IDEVID.
 //
-// Key usage adds KeyEncipherment to DigitalSignature because an IDevID is used
-// both to authenticate the device and to establish keys with it.
+// Key usage is DigitalSignature alone. TCG DevID v1 r12 §8.1 Table 22 (spec
+// text lines 2844-2851) gives an IDevID "digitalSignature (only) is
+// RECOMMENDED" and reserves the encryption usages for a Combined key —
+// "digitalSignature and dataEncipherment (Combined IDevID)". This CA refuses a
+// CSR whose IDevID key has the TPM Decrypt attribute set (§4.2
+// "Not-decrypting"), so the key certified here is never a Combined key and
+// keyEncipherment would advertise a capability the key does not have.
 func NewTCGDeviceIdentityProfile() ProfileProvider {
 	return &baseProfile{
-		name:            ProfileNameTCGDeviceIdentity,
-		keyUsage:        x509.KeyUsageDigitalSignature | x509.KeyUsageKeyEncipherment,
-		extKeyUsage:     tcgExtKeyUsage(),
-		defaultValidity: tcgValidityDays,
-		policies:        tcgIdentityPolicies(),
+		name:               ProfileNameTCGDeviceIdentity,
+		keyUsage:           x509.KeyUsageDigitalSignature,
+		extKeyUsage:        tcgExtKeyUsage(),
+		unknownExtKeyUsage: tcgIdentityExtKeyUsage(),
+		defaultValidity:    tcgValidityDays,
+		policies:           tcgIdentityPolicies(),
 	}
 }
 

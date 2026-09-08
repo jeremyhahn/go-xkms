@@ -323,17 +323,42 @@ var CreateTPMSpecificationExtension = pkgca.CreateTPMSpecificationExtension
 // ParseTPMSpecificationExtension parses a TCG TPM specification extension.
 var ParseTPMSpecificationExtension = pkgca.ParseTPMSpecificationExtension
 
-// CreateHardwareModuleNameExtension creates a hardware module name SAN extension.
-var CreateHardwareModuleNameExtension = pkgca.CreateHardwareModuleNameExtension
+// MarshalHardwareModuleName encodes an RFC 4108 hardware module name for use
+// as a subjectAltName otherName value.
+var MarshalHardwareModuleName = pkgca.MarshalHardwareModuleName
 
-// ParseHardwareModuleNameExtension parses a hardware module name SAN extension.
+// ParseHardwareModuleNameExtension parses an RFC 4108 hardware module name.
 var ParseHardwareModuleNameExtension = pkgca.ParseHardwareModuleNameExtension
 
-// CreatePermanentIdentifierExtension creates a permanent identifier extension.
-var CreatePermanentIdentifierExtension = pkgca.CreatePermanentIdentifierExtension
+// MarshalPermanentIdentifier encodes an RFC 4043 permanent identifier for use
+// as a subjectAltName otherName value.
+var MarshalPermanentIdentifier = pkgca.MarshalPermanentIdentifier
 
-// ParsePermanentIdentifierExtension parses a permanent identifier extension.
+// ParsePermanentIdentifierExtension parses an RFC 4043 permanent identifier.
 var ParsePermanentIdentifierExtension = pkgca.ParsePermanentIdentifierExtension
+
+// BuildSubjectAltName encodes a subjectAltName extension carrying otherNames
+// beside the standard name forms.
+var BuildSubjectAltName = pkgca.BuildSubjectAltName
+
+// OtherName is one subjectAltName GeneralName of CHOICE otherName.
+type OtherName = pkgca.OtherName
+
+// TCGDeviceIdentity is the hardware module name and permanent identifier a TCG
+// DevID certificate carries inside subjectAltName.
+type TCGDeviceIdentity = pkgca.TCGDeviceIdentity
+
+// TCGDeviceIdentityFromEKCertificate derives both TCG DevID §8.1 names from an
+// endorsement key certificate.
+var TCGDeviceIdentityFromEKCertificate = pkgca.TCGDeviceIdentityFromEKCertificate
+
+// TCGDeviceIdentityFromEKPublicKey derives both TCG DevID §8.1 names for a TPM
+// with no endorsement key certificate.
+var TCGDeviceIdentityFromEKPublicKey = pkgca.TCGDeviceIdentityFromEKPublicKey
+
+// TCGTPMManufacturer returns the TCG TPM manufacturer code an endorsement key
+// certificate records.
+var TCGTPMManufacturer = pkgca.TCGTPMManufacturer
 
 // CreateTenantIDExtension creates a tenant identifier extension.
 var CreateTenantIDExtension = pkgca.CreateTenantIDExtension
@@ -602,8 +627,6 @@ var (
 	CreateTPFIPS140Extension            = pkgca.CreateTPFIPS140Extension
 	CreateTPKeyStoreExtension           = pkgca.CreateTPKeyStoreExtension
 	CreateTPIssuerKeyStoreExtension     = pkgca.CreateTPIssuerKeyStoreExtension
-	CreateVerifiedTPMFixedExtension     = pkgca.CreateVerifiedTPMFixedExtension
-	CreateVerifiedTPMResidencyExtension = pkgca.CreateVerifiedTPMResidencyExtension
 )
 
 // --- Defaults ---

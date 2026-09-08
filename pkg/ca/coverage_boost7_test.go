@@ -25,7 +25,6 @@ import (
 	"crypto/rsa"
 	"crypto/x509"
 	"crypto/x509/pkix"
-	"encoding/asn1"
 	"encoding/pem"
 	"errors"
 	"math/big"
@@ -677,28 +676,10 @@ func TestCABundle_ContainsValidPEM_B7(t *testing.T) {
 // tcg_oids.go — bool-false round-trip on Residency/Fixed extensions
 // =============================================================================
 
-func TestVerifiedTPMExtensions_BoolFalseRoundtrip_B7(t *testing.T) {
-	t.Parallel()
-
-	tests := []struct {
-		name    string
-		builder func(bool) (pkix.Extension, error)
-	}{
-		{"Residency", CreateVerifiedTPMResidencyExtension},
-		{"Fixed", CreateVerifiedTPMFixedExtension},
-	}
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			t.Parallel()
-			ext, err := tt.builder(false)
-			require.NoError(t, err)
-			var decoded bool
-			_, err = asn1.Unmarshal(ext.Value, &decoded)
-			require.NoError(t, err)
-			assert.False(t, decoded)
-		})
-	}
-}
+// The tcg-cap-* assertions are certificate POLICY identifiers carrying "No
+// data" (TCG DevID v1 r12 §8.2). The boolean-valued standalone extensions this
+// test covered are gone; the assertions are pinned on issued certificates by
+// the certificate policy regression suite in certpolicy_test.go.
 
 // =============================================================================
 // types helpers — randomSerial used in tests

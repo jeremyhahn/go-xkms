@@ -114,6 +114,14 @@ type CertificateSpec struct {
 	// configuration representation. They are appended to the fields above.
 	SANS *SubjectAlternativeNames
 
+	// OtherNames are subjectAltName entries of GeneralName CHOICE otherName,
+	// which crypto/x509 cannot express. Supplying any of them makes this
+	// package encode the whole subjectAltName extension, standard names
+	// included, because crypto/x509 skips its own once the extension is
+	// present. The TCG DevID hardwareModuleName and permanentIdentifier are
+	// carried this way.
+	OtherNames []OtherName
+
 	// ExtraExtensions are caller-owned extensions — TCG device attributes, a
 	// Certificate Transparency poison or SCT list, a network-zone extension —
 	// appended after the CA and the profile have added their own.
@@ -192,6 +200,31 @@ func (iss *Issuer) Template(spec *CertificateSpec) (*x509.Certificate, error) {
 	}
 
 	applyRevocationEndpoints(template, iss.Identity)
+
+	// An otherName can only reach the certificate through an extension this
+	// package encodes, and that extension carries every other name too.
+	if len(spec.OtherNames) > 0 {
+		for _, ext := range spec.ExtraExtensions {
+			if ext.Id.Equal(oidSubjectAltNameExt) {
+				return nil, &errs.Detail{
+					Err:    ErrInvalidCertificate,
+					Detail: "subject alternative names were supplied both as otherNames and as a pre-encoded extension",
+				}
+			}
+		}
+		ext, err := BuildSubjectAltName(
+			template.Subject,
+			template.DNSNames,
+			template.EmailAddresses,
+			template.IPAddresses,
+			template.URIs,
+			spec.OtherNames,
+		)
+		if err != nil {
+			return nil, err
+		}
+		template.ExtraExtensions = append(template.ExtraExtensions, ext)
+	}
 
 	template.ExtraExtensions = append(template.ExtraExtensions, spec.ExtraExtensions...)
 

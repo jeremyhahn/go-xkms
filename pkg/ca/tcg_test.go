@@ -332,19 +332,29 @@ func TestIssueEKCertificate_WithExtensions(t *testing.T) {
 		t.Fatalf("IssueEKCertificate() with extensions returned unexpected error: %v", err)
 	}
 
-	// Verify TPM Model extension is present
-	if !hasExtensionOID(cert, OIDTCGAttributeTPMModel) {
-		t.Error("certificate missing TPM Model extension")
+	// The device's model is a platform attribute, not the TPM's own model.
+	if !hasExtensionOID(cert, OIDTCGAttributePlatformModel) {
+		t.Error("certificate missing platform model extension")
+	}
+	if hasExtensionOID(cert, OIDTCGAttributeTPMModel) {
+		t.Error("the product model must not be written under tcg-at-tpmModel")
+	}
+	if hasExtensionOID(cert, OIDTCGAttributeTPMVersion) {
+		t.Error("the product serial must not be written under tcg-at-tpmVersion")
 	}
 
-	// Verify TPM Version extension is present
-	if !hasExtensionOID(cert, OIDTCGAttributeTPMVersion) {
-		t.Error("certificate missing TPM Version extension")
+	// TCG DevID v1 r12 §8.1 puts the device's serial number in the subject.
+	if cert.Subject.SerialNumber != "SN-12345" {
+		t.Errorf("Subject.SerialNumber = %q, want %q", cert.Subject.SerialNumber, "SN-12345")
 	}
 
-	// Verify Permanent Identifier extension is present
-	if !hasExtensionOID(cert, OIDPermanentIdentifier) {
-		t.Error("certificate missing Permanent Identifier extension")
+	// The permanent identifier is an RFC 4043 otherName inside subjectAltName,
+	// not a standalone extension under the otherName's own OID.
+	if hasExtensionOID(cert, OIDPermanentIdentifier) {
+		t.Error("permanentIdentifier must not be a standalone extension")
+	}
+	if !hasExtensionOID(cert, asn1.ObjectIdentifier{2, 5, 29, 17}) {
+		t.Error("certificate missing the subjectAltName carrying the permanent identifier")
 	}
 
 	// Verify TPM Specification extension is present
@@ -595,24 +605,29 @@ func TestIssueAKCertificate_ExternalSigner_ECDSA(t *testing.T) {
 	}
 
 	// Verify policy OIDs (TCGVerifiedTPMResidencyPolicy, TCGVerifiedTPMFixedPolicy)
+	// TCG DevID v1 r12 §8.2: an attestation key asserts residency and
+	// restricted; verifiedTPMFixed "MUST NOT be combined" with restricted.
 	if len(cert.Policies) < 2 {
 		t.Fatalf("len(Policies) = %d, want >= 2", len(cert.Policies))
 	}
 	foundResidency := false
-	foundFixed := false
+	foundRestricted := false
 	for _, policy := range cert.Policies {
 		if policy.Equal(TCGVerifiedTPMResidencyPolicy) {
 			foundResidency = true
 		}
+		if policy.Equal(TCGVerifiedTPMRestrictedPolicy) {
+			foundRestricted = true
+		}
 		if policy.Equal(TCGVerifiedTPMFixedPolicy) {
-			foundFixed = true
+			t.Error("verifiedTPMFixed must not be combined with verifiedTPMRestricted")
 		}
 	}
 	if !foundResidency {
 		t.Error("certificate missing TCGVerifiedTPMResidencyPolicy in Policies")
 	}
-	if !foundFixed {
-		t.Error("certificate missing TCGVerifiedTPMFixedPolicy in Policies")
+	if !foundRestricted {
+		t.Error("certificate missing TCGVerifiedTPMRestrictedPolicy in Policies")
 	}
 
 	// Verify NotAfter is TCG indefinite validity
@@ -1088,8 +1103,13 @@ func TestIssuerTemplate_SANsAppendToExistingNames(t *testing.T) {
 }
 
 // =============================================================================
-// buildIAKExtensions Tests
+// buildIAKExtensions / buildIDevIDExtensions Tests
 // =============================================================================
+//
+// These cover only what the two builders still own. The TCG DevID v1 r12 §8.1
+// subjectAltName and the §8.2 certificate policies are asserted on the ISSUED
+// certificate in tcg_conformance_test.go, which is where a reader can see what
+// a relying party actually receives.
 
 func TestBuildIAKExtensions(t *testing.T) {
 	unpacked := &tpm2.UNPACKED_TCG_CSR_IDEVID{
@@ -1100,112 +1120,73 @@ func TestBuildIAKExtensions(t *testing.T) {
 		},
 	}
 
-	extensions := buildIAKExtensions(unpacked, "TPM2")
+	extensions, err := buildIAKExtensions(unpacked, "TPM2")
+	if err != nil {
+		t.Fatalf("buildIAKExtensions: %v", err)
+	}
 
-	// Build a map of extension OIDs for easy lookup
 	extMap := make(map[string]pkix.Extension)
 	for _, ext := range extensions {
 		extMap[ext.Id.String()] = ext
 	}
 
-	// Verify AIK Certificate marker
 	if _, ok := extMap[OIDTCGKpAIKCertificate.String()]; !ok {
 		t.Error("missing AIK Certificate marker extension")
 	}
-
-	// Verify TPM Model extension
-	if _, ok := extMap[OIDTCGAttributeTPMModel.String()]; !ok {
-		t.Error("missing TPM Model extension")
+	if _, ok := extMap[OIDTCGAttributePlatformModel.String()]; !ok {
+		t.Error("missing platform model extension")
 	}
-
-	// Verify TPM Version extension
-	if _, ok := extMap[OIDTCGAttributeTPMVersion.String()]; !ok {
-		t.Error("missing TPM Version extension")
-	}
-
-	// Verify Verified TPM Residency extension
-	if _, ok := extMap[OIDTCGVerifiedTPMResidency.String()]; !ok {
-		t.Error("missing Verified TPM Residency extension")
-	}
-
-	// Verify Verified TPM Fixed extension
-	if _, ok := extMap[OIDTCGVerifiedTPMFixed.String()]; !ok {
-		t.Error("missing Verified TPM Fixed extension")
-	}
-
-	// Verify TP KeyStore extension
 	if _, ok := extMap[OIDTPKeyStore.String()]; !ok {
 		t.Error("missing TP KeyStore extension")
 	}
-
-	// Verify TP Issuer KeyStore extension
 	if _, ok := extMap[OIDTPIssuerKeyStore.String()]; !ok {
 		t.Error("missing TP Issuer KeyStore extension")
+	}
+
+	// The device's model is not the TPM's model, and the device's serial number
+	// is not the TPM's firmware version.
+	if _, ok := extMap[OIDTCGAttributeTPMModel.String()]; ok {
+		t.Error("the product model must not be written under tcg-at-tpmModel")
+	}
+	if _, ok := extMap[OIDTCGAttributeTPMVersion.String()]; ok {
+		t.Error("the product serial must not be written under tcg-at-tpmVersion")
+	}
+
+	// TCG DevID v1 r12 §8.2: the tcg-cap-* assertions are certificate policy
+	// identifiers carrying "No data", never standalone extensions.
+	if _, ok := extMap[OIDTCGVerifiedTPMResidency.String()]; ok {
+		t.Error("verifiedTPMResidency must not be a standalone extension")
+	}
+	if _, ok := extMap[OIDTCGVerifiedTPMFixed.String()]; ok {
+		t.Error("verifiedTPMFixed must not be a standalone extension")
 	}
 }
 
 func TestBuildIAKExtensions_EmptyProdFields(t *testing.T) {
 	unpacked := &tpm2.UNPACKED_TCG_CSR_IDEVID{
-		CsrContents: tpm2.UNPACKED_TCG_IDEVID_CONTENT{
-			ProdModel:  nil,
-			ProdSerial: nil,
-		},
+		CsrContents: tpm2.UNPACKED_TCG_IDEVID_CONTENT{},
 	}
 
-	extensions := buildIAKExtensions(unpacked, "")
+	extensions, err := buildIAKExtensions(unpacked, "")
+	if err != nil {
+		t.Fatalf("buildIAKExtensions: %v", err)
+	}
 
 	extMap := make(map[string]pkix.Extension)
 	for _, ext := range extensions {
 		extMap[ext.Id.String()] = ext
 	}
 
-	// Should still have AIK marker
 	if _, ok := extMap[OIDTCGKpAIKCertificate.String()]; !ok {
 		t.Error("missing AIK Certificate marker extension with empty prod fields")
 	}
-
-	// Should NOT have model or version extensions
-	if _, ok := extMap[OIDTCGAttributeTPMModel.String()]; ok {
-		t.Error("should not have TPM Model extension when ProdModel is empty")
+	if _, ok := extMap[OIDTCGAttributePlatformModel.String()]; ok {
+		t.Error("should not have a platform model extension when ProdModel is empty")
 	}
-	if _, ok := extMap[OIDTCGAttributeTPMVersion.String()]; ok {
-		t.Error("should not have TPM Version extension when ProdSerial is empty")
-	}
-
-	// Should NOT have Issuer KeyStore when empty
 	if _, ok := extMap[OIDTPIssuerKeyStore.String()]; ok {
 		t.Error("should not have TP Issuer KeyStore extension when issuerKeyStoreType is empty")
 	}
-
-	// Should still have residency and fixed
-	if _, ok := extMap[OIDTCGVerifiedTPMResidency.String()]; !ok {
-		t.Error("missing Verified TPM Residency extension")
-	}
-	if _, ok := extMap[OIDTCGVerifiedTPMFixed.String()]; !ok {
-		t.Error("missing Verified TPM Fixed extension")
-	}
 }
-
-func TestBuildIAKExtensions_NoIssuerKeyStoreType(t *testing.T) {
-	unpacked := &tpm2.UNPACKED_TCG_CSR_IDEVID{
-		CsrContents: tpm2.UNPACKED_TCG_IDEVID_CONTENT{
-			ProdModel:  []byte("Model"),
-			ProdSerial: []byte("Serial"),
-		},
-	}
-
-	extensions := buildIAKExtensions(unpacked, "")
-
-	for _, ext := range extensions {
-		if ext.Id.Equal(OIDTPIssuerKeyStore) {
-			t.Error("should not include TP Issuer KeyStore extension when issuerKeyStoreType is empty")
-		}
-	}
-}
-
-// =============================================================================
-// buildIDevIDExtensions Tests
-// =============================================================================
 
 func TestBuildIDevIDExtensions(t *testing.T) {
 	unpacked := &tpm2.UNPACKED_TCG_CSR_IDEVID{
@@ -1215,102 +1196,33 @@ func TestBuildIDevIDExtensions(t *testing.T) {
 		},
 	}
 
-	extensions := buildIDevIDExtensions(unpacked, "PKCS11")
+	extensions, err := buildIDevIDExtensions(unpacked, "PKCS11")
+	if err != nil {
+		t.Fatalf("buildIDevIDExtensions: %v", err)
+	}
 
 	extMap := make(map[string]pkix.Extension)
 	for _, ext := range extensions {
 		extMap[ext.Id.String()] = ext
 	}
 
-	// IDevID should NOT have AIK marker (that's for IAK only)
 	if _, ok := extMap[OIDTCGKpAIKCertificate.String()]; ok {
 		t.Error("IDevID extensions should not include AIK Certificate marker")
 	}
-
-	// Verify TPM Model extension
-	if _, ok := extMap[OIDTCGAttributeTPMModel.String()]; !ok {
-		t.Error("missing TPM Model extension")
+	if _, ok := extMap[OIDTCGAttributePlatformModel.String()]; !ok {
+		t.Error("missing platform model extension")
 	}
-
-	// Verify TPM Version extension
-	if _, ok := extMap[OIDTCGAttributeTPMVersion.String()]; !ok {
-		t.Error("missing TPM Version extension")
-	}
-
-	// Verify Permanent Identifier extension
-	if ext, ok := extMap[OIDPermanentIdentifier.String()]; !ok {
-		t.Error("missing Permanent Identifier extension")
-	} else {
-		// Parse and verify the permanent identifier value
-		permID, err := ParsePermanentIdentifierExtension(ext.Value)
-		if err != nil {
-			t.Fatalf("failed to parse Permanent Identifier: %v", err)
-		}
-		expectedID := "DeviceModel-100-DEV-SERIAL-001"
-		if permID.IdentifierValue != expectedID {
-			t.Errorf("PermanentIdentifier = %q, want %q", permID.IdentifierValue, expectedID)
-		}
-	}
-
-	// Verify Verified TPM Residency extension
-	if _, ok := extMap[OIDTCGVerifiedTPMResidency.String()]; !ok {
-		t.Error("missing Verified TPM Residency extension")
-	}
-
-	// Verify Verified TPM Fixed extension
-	if _, ok := extMap[OIDTCGVerifiedTPMFixed.String()]; !ok {
-		t.Error("missing Verified TPM Fixed extension")
-	}
-
-	// Verify TP KeyStore extension
 	if _, ok := extMap[OIDTPKeyStore.String()]; !ok {
 		t.Error("missing TP KeyStore extension")
 	}
-
-	// Verify TP Issuer KeyStore extension
 	if _, ok := extMap[OIDTPIssuerKeyStore.String()]; !ok {
 		t.Error("missing TP Issuer KeyStore extension")
 	}
-}
 
-func TestBuildIDevIDExtensions_EmptyProdFields(t *testing.T) {
-	unpacked := &tpm2.UNPACKED_TCG_CSR_IDEVID{
-		CsrContents: tpm2.UNPACKED_TCG_IDEVID_CONTENT{
-			ProdModel:  nil,
-			ProdSerial: nil,
-		},
-	}
-
-	extensions := buildIDevIDExtensions(unpacked, "")
-
-	extMap := make(map[string]pkix.Extension)
-	for _, ext := range extensions {
-		extMap[ext.Id.String()] = ext
-	}
-
-	// Should NOT have model or version
-	if _, ok := extMap[OIDTCGAttributeTPMModel.String()]; ok {
-		t.Error("should not have TPM Model extension when ProdModel is empty")
-	}
-	if _, ok := extMap[OIDTCGAttributeTPMVersion.String()]; ok {
-		t.Error("should not have TPM Version extension when ProdSerial is empty")
-	}
-
-	// Should still have permanent identifier (constructed from empty strings)
-	if _, ok := extMap[OIDPermanentIdentifier.String()]; !ok {
-		t.Error("missing Permanent Identifier extension even with empty prod fields")
-	}
-
-	// Verify permanent ID is built from empty model and serial
-	if ext, ok := extMap[OIDPermanentIdentifier.String()]; ok {
-		permID, err := ParsePermanentIdentifierExtension(ext.Value)
-		if err != nil {
-			t.Fatalf("failed to parse Permanent Identifier: %v", err)
-		}
-		// Empty model-empty serial => "-"
-		if permID.IdentifierValue != "-" {
-			t.Errorf("PermanentIdentifier = %q, want %q", permID.IdentifierValue, "-")
-		}
+	// The permanent identifier is a subjectAltName otherName derived from the
+	// endorsement key, not a standalone extension holding model and serial.
+	if _, ok := extMap[OIDPermanentIdentifier.String()]; ok {
+		t.Error("permanentIdentifier must not be a standalone extension")
 	}
 }
 
@@ -1322,7 +1234,10 @@ func TestBuildIDevIDExtensions_NoIssuerKeyStoreType(t *testing.T) {
 		},
 	}
 
-	extensions := buildIDevIDExtensions(unpacked, "")
+	extensions, err := buildIDevIDExtensions(unpacked, "")
+	if err != nil {
+		t.Fatalf("buildIDevIDExtensions: %v", err)
+	}
 
 	for _, ext := range extensions {
 		if ext.Id.Equal(OIDTPIssuerKeyStore) {

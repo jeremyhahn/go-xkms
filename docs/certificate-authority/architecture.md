@@ -1,6 +1,6 @@
 # Certificate Authority — Architecture
 
-> **Status: NORMATIVE** · Feature: `certificate-authority` · Repo: `go-xkms` · Last verified: 2026-08-19
+> **Status: NORMATIVE** · Feature: `certificate-authority` · Repo: `go-xkms` · Last verified: 2026-09-08
 
 ## The problem
 
@@ -115,6 +115,14 @@ SPKI pin, or Noise. See [`../trust-bootstrap/`](../trust-bootstrap/architecture.
   that every issuer is trusted.
 - **Attestation import is not attestation trust.** `ImportAttestation*` stores
   evidence; `VerifyAttestationQuote` is the check. Storing is not verifying.
+- **A TCG DevID enrollment proves TPM residency, not TPM provenance.** The
+  stateless verifier establishes that the IDevID and IAK are Template H-0 keys
+  in one TPM, and that the IAK certified the IDevID. It does not verify the
+  endorsement key certificate against the manufacturer's roots, which TCG
+  DevID v1 r12 §6.2.2 step 7b calls for; nothing in this repository does. Until
+  a manufacturer truststore exists, a device that supplies its own EK
+  certificate is trusted to name its own TPM, and the hardwareModuleName in
+  the issued certificate inherits that limit.
 - **Multi-keystore CAs** (`pkg/ca/multi_keystore*.go`) let one CA identity hold
   parallel keys of different algorithms in different backends. Each is a
   distinct trust root even though they share a name — `CABundleFiltered(storeType, keyAlgorithm)`
@@ -131,3 +139,7 @@ SPKI pin, or Noise. See [`../trust-bootstrap/`](../trust-bootstrap/architecture.
   bind *to* identities the CA does not define.
 - **It is not a public web PKI CA.** No CT log submission, no OCSP responder,
   no CAA enforcement in the current tree; the ACME roadmap tracks those.
+- **It does not anchor endorsement key certificates.** No manufacturer
+  truststore, no vendor root distribution, no AIA walk for EK issuers. Adding
+  one is an architecture decision about where manufacturer roots come from and
+  what an unanchored enrollment should do, not a local change to the CSR path.

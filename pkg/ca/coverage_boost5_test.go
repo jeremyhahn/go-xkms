@@ -189,27 +189,19 @@ func TestIssueCertificate_IntermediateCA_FullChain(t *testing.T) {
 }
 
 // =============================================================================
-// buildHardwareModuleNameExtension — exercise it directly
+// MarshalHardwareModuleName — exercise it directly
 // =============================================================================
 
-func TestBuildHardwareModuleNameExtension_DirectCall(t *testing.T) {
-	hwInfo := &HardwareModuleInfo{
-		HWType:         []int{2, 23, 133, 2, 1},
-		HWSerialNumber: "SN-DIRECT-001",
-	}
-	ext, err := buildHardwareModuleNameExtension(hwInfo)
+func TestMarshalHardwareModuleName_DirectCall(t *testing.T) {
+	value, err := MarshalHardwareModuleName([]int{2, 23, 133, 2, 1}, []byte("SN-DIRECT-001"))
 	require.NoError(t, err)
-	assert.NotEmpty(t, ext.Value)
+	assert.NotEmpty(t, value)
 }
 
-func TestBuildHardwareModuleNameExtension_EmptySerial(t *testing.T) {
-	hwInfo := &HardwareModuleInfo{
-		HWType:         []int{2, 23, 133, 2, 1},
-		HWSerialNumber: "",
-	}
-	ext, err := buildHardwareModuleNameExtension(hwInfo)
+func TestMarshalHardwareModuleName_EmptySerial(t *testing.T) {
+	value, err := MarshalHardwareModuleName([]int{2, 23, 133, 2, 1}, nil)
 	require.NoError(t, err)
-	assert.NotEmpty(t, ext.Value)
+	assert.NotEmpty(t, value)
 }
 
 // =============================================================================

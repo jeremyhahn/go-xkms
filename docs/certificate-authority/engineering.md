@@ -1,6 +1,6 @@
 # Certificate Authority — Engineering Contract
 
-> **Status: NORMATIVE** · Feature: `certificate-authority` · Repo: `go-xkms` · Last verified: 2026-08-19
+> **Status: NORMATIVE** · Feature: `certificate-authority` · Repo: `go-xkms` · Last verified: 2026-09-08
 
 ## Exported surface — `pkg/ca`
 
@@ -71,6 +71,31 @@ and the `…WithXSigner` variants.
 **`CATCGEnrollment`** —
 `VerifyTCG_CSR_IDevIDBytes(packedCSR []byte, sigAlg x509.SignatureAlgorithm) (blob, secret, plain []byte, err error)`.
 
+**TCG DevID certificate conformance** (`tcg.go`, `tcg_oids.go`,
+`tcg_devid_name.go`, `san.go`) — the IDevID and IAK certificates
+`SignTCGCSRIDevID` issues conform to TCG *TPM 2.0 Keys for Device Identity and
+Attestation* v1.00 r12 §8.1 and §8.2:
+
+- `TCGDeviceIdentityFromEKCertificate(ekCert, manufacturerOverride)` and
+  `TCGDeviceIdentityFromEKPublicKey(ekPubDER)` derive the §8.1 pair. The
+  hwSerialNum is `<TCG TPM manufacturer code>:<EK AKI>:<EK cert serial>`, the
+  two binary components rendered as lowercase hexadecimal; the
+  identifierValue is `hex(SHA-256(EK certificate DER))`. Without an EK
+  certificate both are SHA-256 digests of the DER SubjectPublicKeyInfo, the
+  identifier over `"EkPubkey" || key`.
+- `TCGTPMManufacturer(ekCert)` reads tcg-at-tpmManufacturer (2.23.133.2.1)
+  from the subject, the subjectDirectoryAttributes extension, or a
+  directoryName inside subjectAltName, in that order.
+- `BuildSubjectAltName(subject, dns, email, ip, uri, others)` is the only
+  GeneralNames encoder in go-xkms. `CertificateSpec.OtherNames` routes
+  otherNames through it; crypto/x509 has none and skips its own
+  subjectAltName once one is supplied, so the standard names are encoded here
+  too.
+- `OtherName`, `MarshalHardwareModuleName`, `MarshalPermanentIdentifier`,
+  `ParseHardwareModuleNameExtension`, `ParsePermanentIdentifierExtension`,
+  and the OIDs `OIDTCGHwTypeTPM2` (2.23.133.1.2) and
+  `OIDTCGOnEKPermIdSha256` (2.23.133.12.1).
+
 Constructors are `pkg/ca/constructors.go`; configuration types are
 `pkg/ca/config.go` (`Identity`, and the CA config it hangs off).
 
@@ -90,6 +115,26 @@ Constructors are `pkg/ca/constructors.go`; configuration types are
   fails at the far end.
 - **Concurrency.** Issuance is safe for concurrent use; `Init` is not, and is
   documented as a startup-only call.
+- **A TCG DevID certificate carries its §8.1 subjectAltName or it is not
+  issued.** The hardwareModuleName and permanentIdentifier are a SHALL and are
+  derived from the endorsement key certificate the CSR carries, so a request
+  without one, or whose TPM manufacturer code cannot be determined, is refused
+  (`ErrTCGInvalidEKCert`, `ErrTCGEKManufacturerUnknown`). Extension
+  construction never swallows an error: `ErrTCGMandatoryExtension` refuses
+  issuance instead.
+- **The §8.2 assertions are certificate policies, not extensions, and the
+  fixed and restricted assertions are mutually exclusive.** An IAK carries
+  verifiedTPMResidency and verifiedTPMRestricted; an IDevID carries
+  verifiedTPMResidency and verifiedTPMFixed. §8.2 makes each pairing with the
+  other a MUST NOT.
+- **The device serial number lives in the subject, the device model under
+  tcg-at-platformModel.** Neither belongs under tcg-at-tpmModel or
+  tcg-at-tpmVersion, which name the TPM's own model and firmware version.
+- **The EK certificate chain is NOT verified against a manufacturer
+  truststore.** §6.2.2 step 7b calls for it and no code path in this
+  repository does it; what enrollment proves today is residency in *a* TPM,
+  not in one a manufacturer vouched for. Tracked as an open gap, not a
+  property to rely on.
 
 ## Error semantics
 
@@ -105,7 +150,8 @@ and `pkg/api/mcp/handlers_ca.go` / `handlers_ca_tcg.go`.
 
 **Fail-closed paths:** uninitialized CA; a CSR that fails policy; a revoked or
 expired issuer; an attestation quote that does not verify; a TCG CSR whose
-IDevID signature does not check. None of these fall back to issuing.
+IDevID signature does not check; a TCG CSR with no EK certificate or with no
+determinable TPM manufacturer code. None of these fall back to issuing.
 
 ## Configuration
 
