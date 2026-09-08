@@ -20,6 +20,7 @@ import (
 	"encoding/json"
 	"errors"
 	"strconv"
+	"strings"
 	"sync"
 
 	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
@@ -518,64 +519,57 @@ func isKVNotFound(err error) bool {
 
 // isUserNotFound reports whether err means the user record is absent.
 //
-// Unlike isKVNotFound this still falls back to matching the message text, and
-// therefore still fails OPEN: an unrecognised transport failure is reported as
-// "no such user".
+// Classification is typed, and fails CLOSED: anything not recognised is a
+// failure to answer, never an answer of "absent" (#183). A user reported
+// absent on the strength of a transport failure makes the registration
+// ceremony CREATE a duplicate account, and lets a consumer's rollback guard
+// delete a credential it did not create.
 //
-// It is left that way deliberately. The typed check below is the contract we
-// want, but UserClient.GetUser and GetUserByEmail — the two methods this
-// classifies — document no not-found error at all, while the neighbouring
-// GetUserByUsername documents ErrNotFound. Their implementations live outside
-// this repository and this package's tests use hand-written fakes, so what a
-// real missing user produces cannot be observed from here. Inverting the
-// default without that answer would turn every genuine not-found into an
-// error and break registration, which is worse than what is here now.
-//
-// Note also that qrdbsdk.ErrNotFound is an ErrorCode constant, not a sentinel
-// error — errors.Is cannot match it, so IsDAONotFound is the only typed probe
-// the SDK offers here. That is recorded on go-qrdb#286 too.
-//
-// Tracked upstream as go-qrdb#286. When that confirms the contract, delete the
-// text fallback and leave the typed check.
+// What a missing user looks like depends on the transport (go-qrdb#286,
+// measured on the SDK this module pins): REST returns
+// *transport.UserNotFoundError; gRPC, MCP and the embedded transport return
+// *transport.KeyNotFoundError; the embedded DAO path is IsDAONotFound. QUIC
+// carries the service's message opaquely inside *transport.RequestError
+// (go-qrdb#289 keeps that one open), so for it, and only for it, the message
+// is matched against the two canonical forms the user service emits, by
+// exact prefix. "connection not found", "tenant not found: x" or "host not
+// found: dial tcp" start with none of them.
 func isUserNotFound(err error) bool {
 	if err == nil {
 		return false
 	}
+	var userNotFound *qrdbtransport.UserNotFoundError
+	if errors.As(err, &userNotFound) {
+		return true
+	}
+	var keyNotFound *qrdbtransport.KeyNotFoundError
+	if errors.As(err, &keyNotFound) {
+		return true
+	}
 	if qrdbsdk.IsDAONotFound(err) {
 		return true
 	}
-	msg := err.Error()
-	for _, needle := range []string{"not found", "ErrCodeNotFound", "no rows"} {
-		if containsFold(msg, needle) {
-			return true
-		}
+	var request *qrdbtransport.RequestError
+	if errors.As(err, &request) && request.Err != nil {
+		return isCanonicalUserNotFoundMessage(request.Err.Error())
 	}
 	return false
 }
 
-// containsFold reports case-insensitive substring containment without
-// allocating a lowered copy of the input.
-func containsFold(haystack, needle string) bool {
-	if len(needle) > len(haystack) {
-		return false
-	}
-	for i := 0; i+len(needle) <= len(haystack); i++ {
-		match := true
-		for j := 0; j < len(needle); j++ {
-			h := haystack[i+j]
-			n := needle[j]
-			if h >= 'A' && h <= 'Z' {
-				h += 'a' - 'A'
-			}
-			if n >= 'A' && n <= 'Z' {
-				n += 'a' - 'A'
-			}
-			if h != n {
-				match = false
-				break
-			}
-		}
-		if match {
+// userNotFoundCanonicalPrefixes are the message forms qrdb's user service
+// emits for a missing user: the pre-0.16.3 "user not found: <id>" and the
+// typed error's own "user: not found: <lookup>". They are matched by exact
+// prefix, and only on the opaque transport path above.
+var userNotFoundCanonicalPrefixes = []string{
+	"user not found: ",
+	"user: not found: ",
+}
+
+// isCanonicalUserNotFoundMessage reports whether msg is, by exact prefix,
+// one of the user service's own not-found messages.
+func isCanonicalUserNotFoundMessage(msg string) bool {
+	for _, prefix := range userNotFoundCanonicalPrefixes {
+		if strings.HasPrefix(msg, prefix) {
 			return true
 		}
 	}

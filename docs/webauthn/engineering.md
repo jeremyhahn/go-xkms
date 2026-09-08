@@ -1,6 +1,6 @@
 # WebAuthn Relying Party — Engineering Contract
 
-> **Status: NORMATIVE** · Feature: `webauthn` · Repo: `go-xkms` · Last verified: 2026-09-04
+> **Status: NORMATIVE** · Feature: `webauthn` · Repo: `go-xkms` · Last verified: 2026-09-08
 
 ## Exported surface — `pkg/webauthn`
 
@@ -104,6 +104,18 @@ failure.
 **Deliberate ambiguity toward the client:** the transport maps these to a
 uniform 401 so a caller cannot distinguish "no such user" from "wrong
 authenticator". The distinction stays in the logs.
+
+**Not-found is decided by type, never by text (#183).** The qrdb-backed
+stores map a missing record to `ErrUserNotFound` / `ErrCredentialNotFound`
+only when the SDK returns its typed not-found: `*transport.UserNotFoundError`
+(REST), `*transport.KeyNotFoundError` (gRPC, MCP, embedded), or the embedded
+DAO's not-found. QUIC carries the user service's message opaquely inside
+`*transport.RequestError` (go-qrdb#289), and for that path alone the message
+is matched by exact prefix against the service's two canonical forms. Any
+other failure, including one whose text happens to say "not found", is
+returned as an error. A false absence is what licenses a consumer's rollback
+to delete a credential it did not create, and what makes the registration
+ceremony create a duplicate account; a false error costs a retry.
 
 ## Persistence
 

@@ -16,6 +16,7 @@ package webauthn
 import (
 	"context"
 	"errors"
+	"fmt"
 	"testing"
 
 	qrdbtransport "github.com/jeremyhahn/go-qrdb/sdk/go/transport"
@@ -400,43 +401,46 @@ func TestQRDBAdapter_ListUserCredIDs_CorruptIndex(t *testing.T) {
 
 // ----- helper predicate coverage -----
 
-// TestIsUserNotFound covers the user-record classifier, which still matches on
-// message text and therefore still fails open. See isUserNotFound and
-// go-qrdb#286 — the fallback stays until the UserClient contract is confirmed.
+// TestIsUserNotFound covers the user-record classifier. It is typed and
+// fails closed (#183): the typed not-found of every transport is an
+// absence, the opaque QUIC form is recognised only by the user service's
+// own canonical message, and a failure that merely mentions "not found" is
+// a failure.
 func TestIsUserNotFound(t *testing.T) {
 	cases := []struct {
+		name string
 		err  error
 		want bool
 	}{
-		{nil, false},
-		{errors.New("user not found"), true},
-		{errors.New("ErrCodeNotFound"), true},
-		{errors.New("sql: no rows in result set"), true},
-		{errors.New("transport unavailable"), false},
-	}
-	for _, c := range cases {
-		if got := isUserNotFound(c.err); got != c.want {
-			t.Fatalf("isUserNotFound(%v) = %v want %v", c.err, got, c.want)
-		}
-	}
-}
+		{"nil", nil, false},
+		{"REST typed", &qrdbtransport.UserNotFoundError{ID: 42}, true},
+		{"gRPC/MCP/embedded typed", &qrdbtransport.KeyNotFoundError{Key: "42"}, true},
+		{"typed, wrapped", fmt.Errorf("lookup: %w", &qrdbtransport.UserNotFoundError{ID: 42}), true},
+		{"QUIC opaque, canonical pre-0.16.3 message",
+			&qrdbtransport.RequestError{Method: "GetUser", Err: errors.New("user not found: 42")}, true},
+		{"QUIC opaque, canonical typed message",
+			&qrdbtransport.RequestError{Method: "GetUserByEmail", Err: errors.New("user: not found: email/a@b")}, true},
 
-func TestContainsFold(t *testing.T) {
-	cases := []struct {
-		hay, needle string
-		want        bool
-	}{
-		{"NOT FOUND", "not found", true},
-		{"prefix Not Found suffix", "not found", true},
-		{"short", "longer-needle", false},
-		{"abc", "abc", true},
-		{"abc", "xyz", false},
-		{"", "", true},
+		// Failures to answer. Each of these classified as "absent" before #183.
+		{"bare text", errors.New("user not found"), false},
+		{"the qrdb code in prose", errors.New("ErrCodeNotFound"), false},
+		{"driver no rows", errors.New("sql: no rows in result set"), false},
+		{"connection not found", errors.New("connection not found"), false},
+		{"tenant not found", errors.New("tenant not found: t1"), false},
+		{"host not found", errors.New("host not found: dial tcp 10.0.0.1:7443"), false},
+		{"QUIC opaque, a different subject", &qrdbtransport.RequestError{Method: "GetUser",
+			Err: errors.New("tenant not found: t1")}, false},
+		{"QUIC opaque, not-found buried in prose", &qrdbtransport.RequestError{Method: "GetUser",
+			Err: errors.New("route to user not found: 42")}, false},
+		{"QUIC opaque, no message", &qrdbtransport.RequestError{Method: "GetUser", StatusCode: 500}, false},
+		{"transport unavailable", errors.New("transport unavailable"), false},
 	}
 	for _, c := range cases {
-		if got := containsFold(c.hay, c.needle); got != c.want {
-			t.Fatalf("containsFold(%q,%q) = %v want %v", c.hay, c.needle, got, c.want)
-		}
+		t.Run(c.name, func(t *testing.T) {
+			if got := isUserNotFound(c.err); got != c.want {
+				t.Fatalf("isUserNotFound(%v) = %v want %v", c.err, got, c.want)
+			}
+		})
 	}
 }
 

@@ -91,18 +91,57 @@ func TestMapNotFoundCredReportsAGenuineMiss(t *testing.T) {
 	}
 }
 
-// TestUserAndKVClassifiersAreDistinct pins the deliberate asymmetry. The KV
-// classifier is typed and fails closed; the user classifier still matches text
-// and fails open, because UserClient's not-found contract is unconfirmed
-// (go-qrdb#286). Collapsing them in either direction is a behaviour change:
-// one way re-opens the KV path, the other breaks registration.
-func TestUserAndKVClassifiersAreDistinct(t *testing.T) {
-	looksLikeNotFound := errors.New("transport failed: no rows")
-
-	if isKVNotFound(looksLikeNotFound) {
-		t.Fatal("the KV classifier must not match on message text")
+// TestUserAndKVClassifiersBothFailClosed pins that the two classifiers now
+// agree: neither matches on message text. Until #183 the user classifier
+// fell back to a substring probe, so a transport failure that mentioned
+// "not found" made the registration ceremony create a duplicate account.
+func TestUserAndKVClassifiersBothFailClosed(t *testing.T) {
+	for _, looksLikeNotFound := range []error{
+		errors.New("transport failed: no rows"),
+		errors.New("connection not found"),
+		errors.New("dial tcp 10.0.0.1:7443: connect: host not found"),
+	} {
+		if isKVNotFound(looksLikeNotFound) {
+			t.Fatalf("the KV classifier must not match on message text: %v", looksLikeNotFound)
+		}
+		if isUserNotFound(looksLikeNotFound) {
+			t.Fatalf("the user classifier must not match on message text: %v", looksLikeNotFound)
+		}
 	}
-	if !isUserNotFound(looksLikeNotFound) {
-		t.Fatal("the user classifier still matches on text; see go-qrdb#286 before changing this")
+}
+
+// TestMapNotFoundRefusesTransportFailure is the user-store half of
+// TestMapNotFoundCredRefusesTransportFailure: a store that cannot answer
+// produces an error, never ErrUserNotFound, which is what licenses the
+// ceremony's implicit account creation.
+func TestMapNotFoundRefusesTransportFailure(t *testing.T) {
+	transportErr := errors.New("qrdb: session not found, reconnecting")
+
+	got := mapNotFound(transportErr)
+
+	if errors.Is(got, ErrUserNotFound) {
+		t.Fatal("a transport failure must not be reported as a missing user")
+	}
+	if !errors.Is(got, transportErr) {
+		t.Fatalf("the underlying failure must be preserved for the caller, got %v", got)
+	}
+}
+
+// TestMapNotFoundReportsAGenuineMissOnEveryTransportShape is the positive
+// half for the user store: each shape a missing user takes on the pinned
+// SDK still maps to ErrUserNotFound, so the inversion has not broken
+// registration on any transport.
+func TestMapNotFoundReportsAGenuineMissOnEveryTransportShape(t *testing.T) {
+	for name, err := range map[string]error{
+		"REST":            &qrdbtransport.UserNotFoundError{ID: 7},
+		"gRPC/MCP/embed":  &qrdbtransport.KeyNotFoundError{Key: "7"},
+		"QUIC canonical":  &qrdbtransport.RequestError{Method: "GetUser", Err: errors.New("user not found: 7")},
+		"wrapped by qrdb": fmt.Errorf("users: %w", &qrdbtransport.UserNotFoundError{ID: 7}),
+	} {
+		t.Run(name, func(t *testing.T) {
+			if got := mapNotFound(err); !errors.Is(got, ErrUserNotFound) {
+				t.Fatalf("a genuinely absent user must map to ErrUserNotFound, got %v", got)
+			}
+		})
 	}
 }

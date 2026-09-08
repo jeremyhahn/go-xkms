@@ -25,6 +25,11 @@ import (
 	qrdbtransport "github.com/jeremyhahn/go-qrdb/sdk/go/transport"
 )
 
+// errFakeUserNotFound is what the fake user client answers for a missing
+// user: the typed not-found the real transports return (go-qrdb#286), not
+// a bare message, because the store classifies by type since #183.
+var errFakeUserNotFound error = &qrdbtransport.UserNotFoundError{ID: 0}
+
 // ----- in-memory qrdbtransport.UserClient stub -----
 
 type fakeUserClient struct {
@@ -92,7 +97,7 @@ func (f *fakeUserClient) GetUser(ctx context.Context, id uint64) (*qrdbtransport
 	defer f.mu.Unlock()
 	u, ok := f.byID[id]
 	if !ok {
-		return nil, errors.New("user not found")
+		return nil, errFakeUserNotFound
 	}
 	return u, nil
 }
@@ -102,7 +107,7 @@ func (f *fakeUserClient) GetUserByUsername(ctx context.Context, tenantID, userna
 	defer f.mu.Unlock()
 	u, ok := f.byUname[f.keyFor(tenantID, username)]
 	if !ok {
-		return nil, errors.New("user not found")
+		return nil, errFakeUserNotFound
 	}
 	return u, nil
 }
@@ -111,17 +116,17 @@ func (f *fakeUserClient) GetUserByEmail(ctx context.Context, tenantID, email str
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	if qrdbsdk.NormalizeEmail(email) == "" {
-		return nil, errors.New("user not found")
+		return nil, errFakeUserNotFound
 	}
 	u, ok := f.byEmail[f.emailKeyFor(tenantID, email)]
 	if !ok {
-		return nil, errors.New("user not found")
+		return nil, errFakeUserNotFound
 	}
 	return u, nil
 }
 
 func (f *fakeUserClient) GetUserByCertThumbprint(ctx context.Context, thumbprint string) (*qrdbtransport.User, error) {
-	return nil, errors.New("user not found")
+	return nil, errFakeUserNotFound
 }
 
 // UpdateUser models the real store: a non-empty field replaces, and a changed
@@ -133,7 +138,7 @@ func (f *fakeUserClient) UpdateUser(ctx context.Context, req *qrdbtransport.Upda
 	defer f.mu.Unlock()
 	u, ok := f.byID[req.ID]
 	if !ok {
-		return nil, errors.New("user not found")
+		return nil, errFakeUserNotFound
 	}
 	if req.Name != "" {
 		u.Name = req.Name
@@ -157,7 +162,7 @@ func (f *fakeUserClient) DeleteUser(ctx context.Context, id uint64) error {
 	defer f.mu.Unlock()
 	u, ok := f.byID[id]
 	if !ok {
-		return errors.New("user not found")
+		return errFakeUserNotFound
 	}
 	delete(f.byID, id)
 	delete(f.byUname, f.keyFor(u.TenantID, u.Username))
@@ -181,7 +186,7 @@ func (f *fakeUserClient) AddCertBinding(ctx context.Context, userID uint64, thum
 	defer f.mu.Unlock()
 	u, ok := f.byID[userID]
 	if !ok {
-		return nil, errors.New("user not found")
+		return nil, errFakeUserNotFound
 	}
 	return u, nil
 }
