@@ -1121,10 +1121,50 @@ func assertAdminAuthorizable(template tpm2.TPMTPublic) error {
 // that names something else -- an AES symmetric definition, a KDF -- which
 // H-1 through H-4 do not allow and which does change the key.
 func assertDevIDTemplateConformant(kind DevIDKeyKind, template tpm2.TPMTPublic) error {
-	a := template.ObjectAttributes
-	fail := func(what string) error {
+	fail := devidConformanceFailure(kind)
+
+	if err := assertDevIDAttributesConformant(kind, template); err != nil {
+		return err
+	}
+	switch template.Type {
+	case tpm2.TPMAlgRSA:
+		return assertDevIDRSAParmsConformant(kind, template, fail)
+	case tpm2.TPMAlgECC:
+		return assertDevIDECCParmsConformant(kind, template, fail)
+	default:
+		return fail(fmt.Sprintf(
+			"type must be TPM_ALG_RSA (H-1) or TPM_ALG_ECC (H-2..H-4), not %s",
+			algorithmName(template.Type)))
+	}
+}
+
+// devidConformanceFailure builds the refusal for one key kind, so that every
+// rule below reports the same error with the failing rule as its detail.
+func devidConformanceFailure(kind DevIDKeyKind) func(string) error {
+	return func(what string) error {
 		return &errs.Detail{Err: ErrDevIDTemplateNonConformant, Detail: fmt.Sprintf("%s: %s", kind, what)}
 	}
+}
+
+// assertDevIDAttributesConformant checks the TPMA_OBJECT bits and the
+// authPolicy of an IDevID or IAK: Template H-0 (section 7.3.4.1) plus the
+// section 7.2.4 authorization bits, and the section 7.3.6.6 IDevID/IAK Key
+// Policy for the key's nameAlg.
+//
+// It is separate from the parameter and unique checks because these are the
+// only rules that hold for a key that already exists. TPM2_CreatePrimary
+// consumes inPublic.unique as derivation input and returns an outPublic whose
+// unique field holds the generated public key, so the section 7.3.1 string is
+// present in a template and gone from the key made out of it. The attributes
+// and the policy, by contrast, are carried through into outPublic unchanged,
+// which is what lets a CA verify them on a public area it received.
+//
+// AssertDevIDKeyConformant is the CA-side caller; assertDevIDTemplateConformant
+// runs this and then the creation-only rules.
+func assertDevIDAttributesConformant(kind DevIDKeyKind, template tpm2.TPMTPublic) error {
+	a := template.ObjectAttributes
+	fail := devidConformanceFailure(kind)
+
 	if !a.FixedTPM || !a.FixedParent || !a.SensitiveDataOrigin || !a.SignEncrypt {
 		return fail("fixedTPM, fixedParent, sensitiveDataOrigin and sign must all be SET")
 	}
@@ -1151,16 +1191,7 @@ func assertDevIDTemplateConformant(kind DevIDKeyKind, template tpm2.TPMTPublic) 
 	if !bytes.Equal(template.AuthPolicy.Buffer, want) {
 		return fail("authPolicy is not the IDevID/IAK Key Policy for the template's nameAlg")
 	}
-	switch template.Type {
-	case tpm2.TPMAlgRSA:
-		return assertDevIDRSAParmsConformant(kind, template, fail)
-	case tpm2.TPMAlgECC:
-		return assertDevIDECCParmsConformant(kind, template, fail)
-	default:
-		return fail(fmt.Sprintf(
-			"type must be TPM_ALG_RSA (H-1) or TPM_ALG_ECC (H-2..H-4), not %s",
-			algorithmName(template.Type)))
-	}
+	return nil
 }
 
 // assertDevIDRSAParmsConformant checks the TPMS_RSA_PARMS and unique field of

@@ -17,13 +17,54 @@ import (
 // These functions don't require TPM access and can be used by ACME servers
 // to verify TCG-CSR-IDEVID requests from clients.
 
+// AssertDevIDKeyConformant refuses a public area carried in a TCG-CSR-IDEVID
+// whose key is not the IDevID or IAK the TCG specification defines.
+//
+// This is the CA's half of TCG "TPM 2.0 Keys for Device Identity and
+// Attestation" v1.00 r12 §6.2.2 steps 7d and 7e — "Verify the attributes of the
+// IDevID key public area" and "Verify the attributes of the IAK public area" —
+// which §4 makes an obligation rather than a courtesy: "the OEM CA MUST be
+// diligent in verifying all aspects of TPM binding to the device and verifying
+// key Attributes and Policies."
+//
+// The attributes required are §4.1 for an AK and §4.2 for a DevID key —
+// Restricted (AK only), Signing, Not-decrypting, FixedTPM — and the Template
+// H-0 shape of §7.3.4.1 including userWithAuth and adminWithPolicy. The policy
+// checked is the §7.3.6.6 IDevID/IAK Key Policy for the key's own nameAlg. A
+// key whose authPolicy is anything else is administered by a policy the
+// specification did not write, so certifying it would attest to a binding the
+// CA cannot describe; it is refused with ErrDevIDTemplateNonConformant.
+//
+// This shares assertDevIDAttributesConformant with the provisioning path, so a
+// CA cannot accept a key its own provisioning would refuse to create. It stops
+// short of the creation-only rules that path also applies -- the section 7.3.1
+// unique string, and the H-1 through H-4 scheme, symmetric, exponent and kdf --
+// because those describe a template, not a key. Section 7.3.1 is explicit: "At
+// the time of key creation, the unique field MUST be set to one of the strings
+// shown in Table 2." TPM2_CreatePrimary consumes that string as derivation
+// input and returns an outPublic whose unique field holds the generated public
+// key, and outPublic is what a TCG-CSR-IDEVID carries; demanding the string
+// here would refuse every genuine device.
+func AssertDevIDKeyConformant(kind DevIDKeyKind, public *tpm2.TPMTPublic) error {
+	if public == nil {
+		return &errs.Detail{Err: ErrDevIDTemplateNonConformant, Detail: "no public area supplied"}
+	}
+	return assertDevIDAttributesConformant(kind, *public)
+}
+
 // VerifyTCG_CSR_IDevID_Stateless verifies a TCG-CSR-IDEVID using stateless verification.
 // This is a server-side verification that doesn't require TPM access.
 //
 // Per TCG TPM 2.0 Keys for Device Identity and Attestation Section 6.2.2:
-// 1. Extract IDevID public key and verify the signature on TCG-CSR-IDEVID
-// 2. Verify the attributes of the IDevID key public area (unrestricted, fixedTPM, fixedParent, signing)
-// 3. Verify the attributes of the IAK public area (restricted, fixedTPM, fixedParent, signing)
+// 1. Extract IDevID public key and verify the signature on TCG-CSR-IDEVID (7a)
+// 2. Verify the attributes and policy of the IDevID key public area (7d)
+// 3. Verify the attributes and policy of the IAK public area (7e)
+//
+// Step 7b, verifying the EK certificate against the TPM manufacturer's public
+// key, is NOT done here and is not done by this function's callers either. The
+// CSR carries the EK certificate and nothing anchors it, so what this function
+// returns is a key proven resident in *a* TPM, not in a TPM the manufacturer
+// vouched for.
 //
 // Returns:
 // - Public key of the IDevID
@@ -56,19 +97,8 @@ func VerifyTCG_CSR_IDevID_Stateless(
 	if err != nil {
 		return nil, nil, err
 	}
-
-	// Verify IAK attributes (must be restricted)
-	if !iakPub.ObjectAttributes.Restricted {
-		return nil, nil, ErrInvalidAKAttributes
-	}
-	if !iakPub.ObjectAttributes.FixedTPM {
-		return nil, nil, ErrInvalidAKAttributes
-	}
-	if !iakPub.ObjectAttributes.FixedParent {
-		return nil, nil, ErrInvalidAKAttributes
-	}
-	if !iakPub.ObjectAttributes.SignEncrypt {
-		return nil, nil, ErrInvalidAKAttributes
+	if err := AssertDevIDKeyConformant(DevIDKeyAttestation, iakPub); err != nil {
+		return nil, nil, err
 	}
 
 	// Parse IDevID public area (used for signing)
@@ -76,19 +106,8 @@ func VerifyTCG_CSR_IDevID_Stateless(
 	if err != nil {
 		return nil, nil, err
 	}
-
-	// Verify IDevID attributes (must be unrestricted)
-	if idevidPub.ObjectAttributes.Restricted {
-		return nil, nil, ErrInvalidAKAttributes
-	}
-	if !idevidPub.ObjectAttributes.FixedTPM {
-		return nil, nil, ErrInvalidAKAttributes
-	}
-	if !idevidPub.ObjectAttributes.FixedParent {
-		return nil, nil, ErrInvalidAKAttributes
-	}
-	if !idevidPub.ObjectAttributes.SignEncrypt {
-		return nil, nil, ErrInvalidAKAttributes
+	if err := AssertDevIDKeyConformant(DevIDKeySigning, idevidPub); err != nil {
+		return nil, nil, err
 	}
 
 	// Re-pack CSR contents to verify signature
@@ -182,19 +201,8 @@ func VerifyTCG_CSR_IAK_Stateless(
 	if err != nil {
 		return nil, nil, err
 	}
-
-	// Verify IAK attributes per TCG spec
-	if !iakPub.ObjectAttributes.Restricted {
-		return nil, nil, ErrInvalidAKAttributes
-	}
-	if !iakPub.ObjectAttributes.FixedTPM {
-		return nil, nil, ErrInvalidAKAttributes
-	}
-	if !iakPub.ObjectAttributes.FixedParent {
-		return nil, nil, ErrInvalidAKAttributes
-	}
-	if !iakPub.ObjectAttributes.SignEncrypt {
-		return nil, nil, ErrInvalidAKAttributes
+	if err := AssertDevIDKeyConformant(DevIDKeyAttestation, iakPub); err != nil {
+		return nil, nil, err
 	}
 
 	// Re-pack CSR contents to verify signature

@@ -4,6 +4,7 @@
 package tpm2
 
 import (
+	"bytes"
 	"crypto"
 	"crypto/ecdsa"
 	"crypto/elliptic"
@@ -616,51 +617,6 @@ func TestVerifyRSASignatureStateless_SHA512PSS(t *testing.T) {
 // IAK/IDevID attribute validation tests for VerifyTCG_CSR_*_Stateless
 // ---------------------------------------------------------------------------
 
-// createRSATPMPublicForCSR creates an RSA TPM public area for CSR tests
-func createRSATPMPublicForCSR(pub *rsa.PublicKey, restricted bool) tpm2.TPMTPublic {
-	modBytes := pub.N.Bytes()
-	keySize := 2048 / 8
-	if len(modBytes) < keySize {
-		padded := make([]byte, keySize)
-		copy(padded[keySize-len(modBytes):], modBytes)
-		modBytes = padded
-	}
-
-	return tpm2.TPMTPublic{
-		Type:    tpm2.TPMAlgRSA,
-		NameAlg: tpm2.TPMAlgSHA256,
-		ObjectAttributes: tpm2.TPMAObject{
-			FixedTPM:            true,
-			FixedParent:         true,
-			SensitiveDataOrigin: true,
-			UserWithAuth:        true,
-			SignEncrypt:         true,
-			Restricted:          restricted,
-		},
-		Parameters: tpm2.NewTPMUPublicParms(
-			tpm2.TPMAlgRSA,
-			&tpm2.TPMSRSAParms{
-				Scheme: tpm2.TPMTRSAScheme{
-					Scheme: tpm2.TPMAlgRSAPSS,
-					Details: tpm2.NewTPMUAsymScheme(
-						tpm2.TPMAlgRSAPSS,
-						&tpm2.TPMSSigSchemeRSAPSS{
-							HashAlg: tpm2.TPMAlgSHA256,
-						},
-					),
-				},
-				KeyBits: 2048,
-			},
-		),
-		Unique: tpm2.NewTPMUPublicID(
-			tpm2.TPMAlgRSA,
-			&tpm2.TPM2BPublicKeyRSA{
-				Buffer: modBytes,
-			},
-		),
-	}
-}
-
 // createRSATPMPublicForCSRWithAttrs creates an RSA TPM public area with custom attributes
 func createRSATPMPublicForCSRWithAttrs(pub *rsa.PublicKey, attrs tpm2.TPMAObject) tpm2.TPMTPublic {
 	modBytes := pub.N.Bytes()
@@ -870,128 +826,222 @@ func TestVerifyTCG_CSR_IDevID_Stateless_InvalidHashAlgo(t *testing.T) {
 	assert.Error(t, err)
 }
 
-// TestVerifyTCG_CSR_IDevID_Stateless_IAKNotRestricted tests IAK attribute validation
+// devidConformantAttrs is the TPMA_OBJECT of a conformant IDevID or IAK:
+// Template H-0 (TCG DevID v1 r12 §7.3.4.1) plus the §7.2.4 authorization bits,
+// with Restricted selecting the key kind.
+func devidConformantAttrs(kind DevIDKeyKind) tpm2.TPMAObject {
+	return tpm2.TPMAObject{
+		FixedTPM:            true,
+		FixedParent:         true,
+		SensitiveDataOrigin: true,
+		UserWithAuth:        true,
+		AdminWithPolicy:     true,
+		SignEncrypt:         true,
+		Restricted:          kind == DevIDKeyAttestation,
+	}
+}
+
+// devidConformantRSAPublic builds a public area the CA accepts, so that a
+// negative test can flip exactly one field and know which rule refused it.
+func devidConformantRSAPublic(t *testing.T, pub *rsa.PublicKey, kind DevIDKeyKind) tpm2.TPMTPublic {
+	t.Helper()
+	area := createRSATPMPublicForCSRWithAttrs(pub, devidConformantAttrs(kind))
+	policy, err := DevIDKeyPolicyDigest(kind, area.NameAlg)
+	require.NoError(t, err)
+	area.AuthPolicy = tpm2.TPM2BDigest{Buffer: policy}
+	return area
+}
+
+// The negative tests below each start from a public area the CA accepts and
+// change exactly one thing, so the refusal they observe is the rule they name.
+// TCG DevID v1 r12 §4 obliges the CA to verify "key Attributes and Policies";
+// §4.1 lists an AK as Restricted, Signing, Not-decrypting, FixedTPM and §4.2 a
+// DevID key as the same but Not-Restricted.
+
+// TestVerifyTCG_CSR_IDevID_Stateless_IAKNotRestricted tests §4.1 Restricted.
 func TestVerifyTCG_CSR_IDevID_Stateless_IAKNotRestricted(t *testing.T) {
 	rsaKey, err := rsa.GenerateKey(rand.Reader, 2048)
 	require.NoError(t, err)
 
-	// Create IAK public area (NOT restricted - should fail)
-	iakPub := createRSATPMPublicForCSR(&rsaKey.PublicKey, false)
-	iakPubBytes := tpm2.Marshal(iakPub)
+	iakPub := devidConformantRSAPublic(t, &rsaKey.PublicKey, DevIDKeyAttestation)
+	iakPub.ObjectAttributes.Restricted = false
+	idevidPub := devidConformantRSAPublic(t, &rsaKey.PublicKey, DevIDKeySigning)
 
-	// Create IDevID public area (unrestricted - correct)
-	idevidPub := createRSATPMPublicForCSR(&rsaKey.PublicKey, false)
-	idevidPubBytes := tpm2.Marshal(idevidPub)
-
-	csr := buildTestCSRWithPubAreas(iakPubBytes, idevidPubBytes, make([]byte, 256))
+	csr := buildTestCSRWithPubAreas(tpm2.Marshal(iakPub), tpm2.Marshal(idevidPub), make([]byte, 256))
 
 	_, _, err = VerifyTCG_CSR_IDevID_Stateless(csr, x509.SHA256WithRSAPSS)
-	assert.Error(t, err)
-	assert.ErrorIs(t, err, ErrInvalidAKAttributes)
+	assert.ErrorIs(t, err, ErrDevIDTemplateNonConformant)
+	assert.Contains(t, err.Error(), "Restricted must be true")
 }
 
-// TestVerifyTCG_CSR_IDevID_Stateless_IAKNotFixedTPM tests IAK FixedTPM validation
+// TestVerifyTCG_CSR_IDevID_Stateless_IAKNotFixedTPM tests §4.1 FixedTPM.
 func TestVerifyTCG_CSR_IDevID_Stateless_IAKNotFixedTPM(t *testing.T) {
 	rsaKey, err := rsa.GenerateKey(rand.Reader, 2048)
 	require.NoError(t, err)
 
-	iakPub := createRSATPMPublicForCSRWithAttrs(&rsaKey.PublicKey, tpm2.TPMAObject{
-		Restricted:          true,
-		FixedTPM:            false, // Should fail
-		FixedParent:         true,
-		SignEncrypt:         true,
-		SensitiveDataOrigin: true,
-	})
-	iakPubBytes := tpm2.Marshal(iakPub)
+	iakPub := devidConformantRSAPublic(t, &rsaKey.PublicKey, DevIDKeyAttestation)
+	iakPub.ObjectAttributes.FixedTPM = false
+	idevidPub := devidConformantRSAPublic(t, &rsaKey.PublicKey, DevIDKeySigning)
 
-	idevidPub := createRSATPMPublicForCSR(&rsaKey.PublicKey, false)
-	idevidPubBytes := tpm2.Marshal(idevidPub)
-
-	csr := buildTestCSRWithPubAreas(iakPubBytes, idevidPubBytes, make([]byte, 256))
+	csr := buildTestCSRWithPubAreas(tpm2.Marshal(iakPub), tpm2.Marshal(idevidPub), make([]byte, 256))
 
 	_, _, err = VerifyTCG_CSR_IDevID_Stateless(csr, x509.SHA256WithRSAPSS)
-	assert.Error(t, err)
-	assert.ErrorIs(t, err, ErrInvalidAKAttributes)
+	assert.ErrorIs(t, err, ErrDevIDTemplateNonConformant)
 }
 
-// TestVerifyTCG_CSR_IDevID_Stateless_IAKNotFixedParent tests IAK FixedParent validation
+// TestVerifyTCG_CSR_IDevID_Stateless_IAKNotFixedParent tests fixedParent.
 func TestVerifyTCG_CSR_IDevID_Stateless_IAKNotFixedParent(t *testing.T) {
 	rsaKey, err := rsa.GenerateKey(rand.Reader, 2048)
 	require.NoError(t, err)
 
-	iakPub := createRSATPMPublicForCSRWithAttrs(&rsaKey.PublicKey, tpm2.TPMAObject{
-		Restricted:          true,
-		FixedTPM:            true,
-		FixedParent:         false, // Should fail
-		SignEncrypt:         true,
-		SensitiveDataOrigin: true,
-	})
-	iakPubBytes := tpm2.Marshal(iakPub)
+	iakPub := devidConformantRSAPublic(t, &rsaKey.PublicKey, DevIDKeyAttestation)
+	iakPub.ObjectAttributes.FixedParent = false
+	idevidPub := devidConformantRSAPublic(t, &rsaKey.PublicKey, DevIDKeySigning)
 
-	idevidPub := createRSATPMPublicForCSR(&rsaKey.PublicKey, false)
-	idevidPubBytes := tpm2.Marshal(idevidPub)
-
-	csr := buildTestCSRWithPubAreas(iakPubBytes, idevidPubBytes, make([]byte, 256))
+	csr := buildTestCSRWithPubAreas(tpm2.Marshal(iakPub), tpm2.Marshal(idevidPub), make([]byte, 256))
 
 	_, _, err = VerifyTCG_CSR_IDevID_Stateless(csr, x509.SHA256WithRSAPSS)
-	assert.Error(t, err)
-	assert.ErrorIs(t, err, ErrInvalidAKAttributes)
+	assert.ErrorIs(t, err, ErrDevIDTemplateNonConformant)
 }
 
-// TestVerifyTCG_CSR_IDevID_Stateless_IAKNotSignEncrypt tests IAK SignEncrypt validation
+// TestVerifyTCG_CSR_IDevID_Stateless_IAKNotSignEncrypt tests §4.1 Signing.
 func TestVerifyTCG_CSR_IDevID_Stateless_IAKNotSignEncrypt(t *testing.T) {
 	rsaKey, err := rsa.GenerateKey(rand.Reader, 2048)
 	require.NoError(t, err)
 
-	iakPub := createRSATPMPublicForCSRWithAttrs(&rsaKey.PublicKey, tpm2.TPMAObject{
-		Restricted:          true,
-		FixedTPM:            true,
-		FixedParent:         true,
-		SignEncrypt:         false, // Should fail - no signing capability
-		SensitiveDataOrigin: true,
-	})
-	iakPubBytes := tpm2.Marshal(iakPub)
+	iakPub := devidConformantRSAPublic(t, &rsaKey.PublicKey, DevIDKeyAttestation)
+	iakPub.ObjectAttributes.SignEncrypt = false
+	idevidPub := devidConformantRSAPublic(t, &rsaKey.PublicKey, DevIDKeySigning)
 
-	idevidPub := createRSATPMPublicForCSR(&rsaKey.PublicKey, false)
-	idevidPubBytes := tpm2.Marshal(idevidPub)
-
-	csr := buildTestCSRWithPubAreas(iakPubBytes, idevidPubBytes, make([]byte, 256))
+	csr := buildTestCSRWithPubAreas(tpm2.Marshal(iakPub), tpm2.Marshal(idevidPub), make([]byte, 256))
 
 	_, _, err = VerifyTCG_CSR_IDevID_Stateless(csr, x509.SHA256WithRSAPSS)
-	assert.Error(t, err)
-	assert.ErrorIs(t, err, ErrInvalidAKAttributes)
+	assert.ErrorIs(t, err, ErrDevIDTemplateNonConformant)
 }
 
-// TestVerifyTCG_CSR_IDevID_Stateless_IDevIDRestricted tests IDevID must NOT be restricted
+// TestVerifyTCG_CSR_IDevID_Stateless_IDevIDRestricted tests §4.2 Not-Restricted.
 func TestVerifyTCG_CSR_IDevID_Stateless_IDevIDRestricted(t *testing.T) {
 	rsaKey, err := rsa.GenerateKey(rand.Reader, 2048)
 	require.NoError(t, err)
 
-	// Valid IAK (restricted)
-	iakPub := createRSATPMPublicForCSRWithAttrs(&rsaKey.PublicKey, tpm2.TPMAObject{
-		Restricted:          true,
-		FixedTPM:            true,
-		FixedParent:         true,
-		SignEncrypt:         true,
-		SensitiveDataOrigin: true,
-	})
-	iakPubBytes := tpm2.Marshal(iakPub)
+	iakPub := devidConformantRSAPublic(t, &rsaKey.PublicKey, DevIDKeyAttestation)
+	idevidPub := devidConformantRSAPublic(t, &rsaKey.PublicKey, DevIDKeySigning)
+	idevidPub.ObjectAttributes.Restricted = true
 
-	// Invalid IDevID (restricted - should fail)
-	idevidPub := createRSATPMPublicForCSRWithAttrs(&rsaKey.PublicKey, tpm2.TPMAObject{
-		Restricted:          true, // IDevID must NOT be restricted
-		FixedTPM:            true,
-		FixedParent:         true,
-		SignEncrypt:         true,
-		SensitiveDataOrigin: true,
-	})
-	idevidPubBytes := tpm2.Marshal(idevidPub)
-
-	csr := buildTestCSRWithPubAreas(iakPubBytes, idevidPubBytes, make([]byte, 256))
+	csr := buildTestCSRWithPubAreas(tpm2.Marshal(iakPub), tpm2.Marshal(idevidPub), make([]byte, 256))
 
 	_, _, err = VerifyTCG_CSR_IDevID_Stateless(csr, x509.SHA256WithRSAPSS)
-	assert.Error(t, err)
-	assert.ErrorIs(t, err, ErrInvalidAKAttributes)
+	assert.ErrorIs(t, err, ErrDevIDTemplateNonConformant)
+	assert.Contains(t, err.Error(), "IDevID: Restricted must be false")
+}
+
+// TestVerifyTCG_CSR_IDevID_Stateless_IDevIDDecrypting tests §4.2 Not-decrypting.
+//
+// A key with Decrypt SET is a Combined key. The CA does not certify one: §8.1
+// Table 22 gives a Combined IDevID a different key usage, and issuing the plain
+// IDevID profile over it would describe the key wrongly.
+func TestVerifyTCG_CSR_IDevID_Stateless_IDevIDDecrypting(t *testing.T) {
+	rsaKey, err := rsa.GenerateKey(rand.Reader, 2048)
+	require.NoError(t, err)
+
+	iakPub := devidConformantRSAPublic(t, &rsaKey.PublicKey, DevIDKeyAttestation)
+	idevidPub := devidConformantRSAPublic(t, &rsaKey.PublicKey, DevIDKeySigning)
+	idevidPub.ObjectAttributes.Decrypt = true
+
+	csr := buildTestCSRWithPubAreas(tpm2.Marshal(iakPub), tpm2.Marshal(idevidPub), make([]byte, 256))
+
+	_, _, err = VerifyTCG_CSR_IDevID_Stateless(csr, x509.SHA256WithRSAPSS)
+	assert.ErrorIs(t, err, ErrDevIDTemplateNonConformant)
+	assert.Contains(t, err.Error(), "decrypt must be CLEAR")
+}
+
+// TestVerifyTCG_CSR_IDevID_Stateless_IDevIDNoAdminWithPolicy tests §7.2.4.
+func TestVerifyTCG_CSR_IDevID_Stateless_IDevIDNoAdminWithPolicy(t *testing.T) {
+	rsaKey, err := rsa.GenerateKey(rand.Reader, 2048)
+	require.NoError(t, err)
+
+	iakPub := devidConformantRSAPublic(t, &rsaKey.PublicKey, DevIDKeyAttestation)
+	idevidPub := devidConformantRSAPublic(t, &rsaKey.PublicKey, DevIDKeySigning)
+	idevidPub.ObjectAttributes.AdminWithPolicy = false
+
+	csr := buildTestCSRWithPubAreas(tpm2.Marshal(iakPub), tpm2.Marshal(idevidPub), make([]byte, 256))
+
+	_, _, err = VerifyTCG_CSR_IDevID_Stateless(csr, x509.SHA256WithRSAPSS)
+	assert.ErrorIs(t, err, ErrDevIDTemplateNonConformant)
+	assert.Contains(t, err.Error(), "adminWithPolicy must be SET")
+}
+
+// TestVerifyTCG_CSR_IDevID_Stateless_ForeignAuthPolicy is the §4 policy check:
+// a key administered by a policy the specification did not write is refused,
+// and one byte of difference is enough.
+func TestVerifyTCG_CSR_IDevID_Stateless_ForeignAuthPolicy(t *testing.T) {
+	rsaKey, err := rsa.GenerateKey(rand.Reader, 2048)
+	require.NoError(t, err)
+
+	iakPub := devidConformantRSAPublic(t, &rsaKey.PublicKey, DevIDKeyAttestation)
+	idevidPub := devidConformantRSAPublic(t, &rsaKey.PublicKey, DevIDKeySigning)
+	idevidPub.AuthPolicy.Buffer[0] ^= 0x01
+
+	csr := buildTestCSRWithPubAreas(tpm2.Marshal(iakPub), tpm2.Marshal(idevidPub), make([]byte, 256))
+
+	_, _, err = VerifyTCG_CSR_IDevID_Stateless(csr, x509.SHA256WithRSAPSS)
+	assert.ErrorIs(t, err, ErrDevIDTemplateNonConformant)
+	assert.Contains(t, err.Error(), "authPolicy is not the IDevID/IAK Key Policy")
+}
+
+// TestVerifyTCG_CSR_IDevID_Stateless_IAKPolicyOnIDevID proves the two policies
+// are not interchangeable: they differ only in the NV index named by the
+// PolicyAuthorizeNV branch, and swapping them must still be refused.
+func TestVerifyTCG_CSR_IDevID_Stateless_IAKPolicyOnIDevID(t *testing.T) {
+	rsaKey, err := rsa.GenerateKey(rand.Reader, 2048)
+	require.NoError(t, err)
+
+	iakPolicy, err := DevIDKeyPolicyDigest(DevIDKeyAttestation, tpm2.TPMAlgSHA256)
+	require.NoError(t, err)
+
+	iakPub := devidConformantRSAPublic(t, &rsaKey.PublicKey, DevIDKeyAttestation)
+	idevidPub := devidConformantRSAPublic(t, &rsaKey.PublicKey, DevIDKeySigning)
+	idevidPub.AuthPolicy = tpm2.TPM2BDigest{Buffer: iakPolicy}
+
+	csr := buildTestCSRWithPubAreas(tpm2.Marshal(iakPub), tpm2.Marshal(idevidPub), make([]byte, 256))
+
+	_, _, err = VerifyTCG_CSR_IDevID_Stateless(csr, x509.SHA256WithRSAPSS)
+	assert.ErrorIs(t, err, ErrDevIDTemplateNonConformant)
+}
+
+// TestAssertDevIDKeyConformant_AcceptsARealKeysUniqueField pins the boundary
+// between the creation rules and the rules a CA can apply.
+//
+// Section 7.3.1 requires the unique field to hold 'IDEVID' or 'IAK' "at the
+// time of key creation". TPM2_CreatePrimary consumes that as derivation input
+// and returns an outPublic whose unique field holds the generated public key,
+// and outPublic is what a TCG-CSR-IDEVID carries. A CA that demanded the
+// section 7.3.1 string of a received public area would refuse every genuine
+// device, so this asserts the opposite: a conformant key whose unique field is
+// its own public key is accepted.
+func TestAssertDevIDKeyConformant_AcceptsARealKeysUniqueField(t *testing.T) {
+	rsaKey, err := rsa.GenerateKey(rand.Reader, 2048)
+	require.NoError(t, err)
+
+	for _, kind := range []DevIDKeyKind{DevIDKeySigning, DevIDKeyAttestation} {
+		area := devidConformantRSAPublic(t, &rsaKey.PublicKey, kind)
+
+		unique, err := area.Unique.RSA()
+		require.NoError(t, err)
+		require.NotEmpty(t, unique.Buffer, "the fixture must carry a real modulus, not a template string")
+		require.False(t, bytes.HasPrefix(unique.Buffer, []byte("IDEVID")))
+		require.False(t, bytes.HasPrefix(unique.Buffer, []byte("IAK")))
+
+		assert.NoError(t, AssertDevIDKeyConformant(kind, &area),
+			"%s: a created key's public area must not be judged by the creation-template rules", kind)
+	}
+}
+
+// TestAssertDevIDKeyConformant_NilPublicArea refuses a missing public area
+// rather than treating "nothing to check" as "nothing wrong".
+func TestAssertDevIDKeyConformant_NilPublicArea(t *testing.T) {
+	err := AssertDevIDKeyConformant(DevIDKeySigning, nil)
+	assert.ErrorIs(t, err, ErrDevIDTemplateNonConformant)
 }
 
 // TestVerifyTCG_CSR_IDevID_Stateless_UnsupportedKeyType tests unsupported key type
@@ -1000,13 +1050,7 @@ func TestVerifyTCG_CSR_IDevID_Stateless_UnsupportedKeyType(t *testing.T) {
 	require.NoError(t, err)
 
 	// Valid IAK
-	iakPub := createRSATPMPublicForCSRWithAttrs(&rsaKey.PublicKey, tpm2.TPMAObject{
-		Restricted:          true,
-		FixedTPM:            true,
-		FixedParent:         true,
-		SignEncrypt:         true,
-		SensitiveDataOrigin: true,
-	})
+	iakPub := devidConformantRSAPublic(t, &rsaKey.PublicKey, DevIDKeyAttestation)
 	iakPubBytes := tpm2.Marshal(iakPub)
 
 	// Create IDevID with unsupported algorithm type (SymCipher)
@@ -1033,14 +1077,14 @@ func TestVerifyTCG_CSR_IAK_Stateless_NotRestricted(t *testing.T) {
 	require.NoError(t, err)
 
 	// IAK NOT restricted - should fail for IAK enrollment strategy
-	iakPub := createRSATPMPublicForCSR(&rsaKey.PublicKey, false)
-	iakPubBytes := tpm2.Marshal(iakPub)
+	iakPub := devidConformantRSAPublic(t, &rsaKey.PublicKey, DevIDKeyAttestation)
+	iakPub.ObjectAttributes.Restricted = false
 
-	csr := buildTestCSRWithAttestPub(iakPubBytes, make([]byte, 256))
+	csr := buildTestCSRWithAttestPub(tpm2.Marshal(iakPub), make([]byte, 256))
 
 	_, _, err = VerifyTCG_CSR_IAK_Stateless(csr, x509.SHA256WithRSAPSS)
-	assert.Error(t, err)
-	assert.ErrorIs(t, err, ErrInvalidAKAttributes)
+	assert.ErrorIs(t, err, ErrDevIDTemplateNonConformant)
+	assert.Contains(t, err.Error(), "Restricted must be true")
 }
 
 // TestVerifyTCG_CSR_IAK_Stateless_UnsupportedKeyType tests unsupported key type for IAK

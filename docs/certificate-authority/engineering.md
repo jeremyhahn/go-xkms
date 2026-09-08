@@ -130,6 +130,16 @@ Constructors are `pkg/ca/constructors.go`; configuration types are
 - **The device serial number lives in the subject, the device model under
   tcg-at-platformModel.** Neither belongs under tcg-at-tpmModel or
   tcg-at-tpmVersion, which name the TPM's own model and firmware version.
+- **A CSR whose keys are not Template H-0 with the §7.3.6.6 key policy is
+  refused.** `tpm2.AssertDevIDKeyConformant` applies to a received public area
+  the attribute and policy half of the rule provisioning applies before
+  `TPM2_CreatePrimary`: Restricted per key kind, Signing, decrypt CLEAR,
+  fixedTPM, fixedParent, userWithAuth, adminWithPolicy, and `authPolicy ==
+  DevIDKeyPolicyDigest(kind, nameAlg)`. The creation-only rules — the §7.3.1
+  unique string and the H-1..H-4 parameters — are not applied to a received
+  public area: `TPM2_CreatePrimary` consumes the unique string as derivation
+  input and returns a public area holding the generated key instead, so
+  demanding it server-side would refuse every genuine device.
 - **The EK certificate chain is NOT verified against a manufacturer
   truststore.** §6.2.2 step 7b calls for it and no code path in this
   repository does it; what enrollment proves today is residency in *a* TPM,
@@ -150,8 +160,10 @@ and `pkg/api/mcp/handlers_ca.go` / `handlers_ca_tcg.go`.
 
 **Fail-closed paths:** uninitialized CA; a CSR that fails policy; a revoked or
 expired issuer; an attestation quote that does not verify; a TCG CSR whose
-IDevID signature does not check; a TCG CSR with no EK certificate or with no
-determinable TPM manufacturer code. None of these fall back to issuing.
+IDevID signature does not check; a TCG CSR with no EK certificate, with no
+determinable TPM manufacturer code, or whose IDevID/IAK public area departs
+from TCG Template H-0 or carries a foreign `authPolicy`. None of these fall
+back to issuing.
 
 ## Configuration
 

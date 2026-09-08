@@ -596,6 +596,11 @@ var UnpackProdCaData = tpm2.UnpackProdCaData
 // Stateless server-side CSR verification function re-exports
 // ---------------------------------------------------------------------------
 
+// AssertDevIDKeyConformant refuses a public area carried in a TCG-CSR-IDEVID
+// whose attributes or policy are not those TCG DevID v1 r12 §4 and §7.3.4.1
+// require of an IDevID or IAK.
+var AssertDevIDKeyConformant = tpm2.AssertDevIDKeyConformant
+
 // VerifyTCG_CSR_IDevID_Stateless verifies a TCG-CSR-IDEVID without TPM access.
 var VerifyTCG_CSR_IDevID_Stateless = tpm2.VerifyTCG_CSR_IDevID_Stateless
 

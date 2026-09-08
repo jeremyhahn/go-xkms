@@ -2154,3 +2154,50 @@ func TestInstallPreservesExistingKeys(t *testing.T) {
 			"EK handle should be preserved after re-running Install")
 	})
 }
+
+// createRSATPMPublicForCSR creates an RSA TPM public area for the CSR
+// simulator tests. It lives here because these are its only callers; the
+// untagged build must not carry it (lint: unused).
+func createRSATPMPublicForCSR(pub *rsa.PublicKey, restricted bool) tpm2.TPMTPublic {
+	modBytes := pub.N.Bytes()
+	keySize := 2048 / 8
+	if len(modBytes) < keySize {
+		padded := make([]byte, keySize)
+		copy(padded[keySize-len(modBytes):], modBytes)
+		modBytes = padded
+	}
+
+	return tpm2.TPMTPublic{
+		Type:    tpm2.TPMAlgRSA,
+		NameAlg: tpm2.TPMAlgSHA256,
+		ObjectAttributes: tpm2.TPMAObject{
+			FixedTPM:            true,
+			FixedParent:         true,
+			SensitiveDataOrigin: true,
+			UserWithAuth:        true,
+			SignEncrypt:         true,
+			Restricted:          restricted,
+		},
+		Parameters: tpm2.NewTPMUPublicParms(
+			tpm2.TPMAlgRSA,
+			&tpm2.TPMSRSAParms{
+				Scheme: tpm2.TPMTRSAScheme{
+					Scheme: tpm2.TPMAlgRSAPSS,
+					Details: tpm2.NewTPMUAsymScheme(
+						tpm2.TPMAlgRSAPSS,
+						&tpm2.TPMSSigSchemeRSAPSS{
+							HashAlg: tpm2.TPMAlgSHA256,
+						},
+					),
+				},
+				KeyBits: 2048,
+			},
+		),
+		Unique: tpm2.NewTPMUPublicID(
+			tpm2.TPMAlgRSA,
+			&tpm2.TPM2BPublicKeyRSA{
+				Buffer: modBytes,
+			},
+		),
+	}
+}
