@@ -31,6 +31,15 @@ provisioning time. A device whose provisioning config lacks it cannot produce
 a certifiable IDevID, and says so (`ErrDevIDPolicySession`) rather than
 emitting an unverifiable CSR. See `user.md`, "Identity keys".
 
+The identity keys themselves also changed shape, and no flag says so: they now
+carry the `'IDEVID'` / `'IAK'` `unique` strings of TCG §7.3.1, an RSA IDevID
+names no signature scheme, and `tpm.device-string` in the server configuration
+appends the optional per-device string. All three are inputs to how the TPM
+derives the key, so a device provisioned before this release presents a
+different key to `ca tcg sign` than it did and needs its certificates
+re-issued. See `user.md`, "Upgrading a device provisioned before this
+release".
+
 ## Checking what you are actually talking to
 
 Two things are worth confirming on any TPM deployment, because a healthy TPM, a

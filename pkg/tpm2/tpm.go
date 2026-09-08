@@ -1518,11 +1518,15 @@ func (tpm *TPM2) Sign(
 		}
 		handle = keyAttrs.TPMAttributes.Handle
 
-		// The IDevID templates set UserWithAuth and carry no authPolicy, and
-		// CreateIDevID leaves adminWithPolicy CLEAR (#278), so the key's auth
-		// value authorizes both roles. An empty auth value is passed as nil
-		// for the reason CreateSession documents: an empty TPM2B_AUTH is not
-		// the same as no auth value, and sending one answers TPM_RC_BAD_AUTH.
+		// The IDevID templates set userWithAuth, so the key's auth value
+		// authorizes the USER role, which is the role TPM2_Sign runs under.
+		// They also set adminWithPolicy and carry the IDevID/IAK Key Policy as
+		// their authPolicy, which is what puts the ADMIN role out of the auth
+		// value's reach (TCG "TPM 2.0 Keys for Device Identity and
+		// Attestation" v1.00 r12, section 7.2.4); signing is unaffected. An
+		// empty auth value is passed as nil for the reason CreateSession
+		// documents: an empty TPM2B_AUTH is not the same as no auth value, and
+		// sending one answers TPM_RC_BAD_AUTH.
 		var keyAuth []byte
 		if keyAttrs.Password != nil {
 			keyAuth = keyAttrs.Password.Bytes()
@@ -1900,6 +1904,24 @@ func (tpm *TPM2) SignValidate(
 			return nil, err
 		}
 
+		// The padding scheme comes from the key when the key fixes one, and
+		// from the key's configured signature algorithm when it does not.
+		// Copying the key's scheme field into inScheme verbatim was wrong for
+		// exactly one shape, and it is the shape TCG "TPM 2.0 Keys for Device
+		// Identity and Attestation" v1.00 r12, Template H-1 requires of an
+		// IDevID: a key whose scheme is TPM_ALG_NULL names no scheme to copy,
+		// and TPM2_Sign refuses a TPM_ALG_NULL inScheme on such a key with
+		// TPM_RC_SCHEME -- for a key that constrains nothing, the command has
+		// to say what to sign with (TCG TPM 2.0 Library Part 3, section 12.1).
+		// rsaSignScheme is the same resolution the crypto.Signer path uses.
+		schemeAlg, err := rsaSignScheme(rsaDetails.Scheme, store.IsRSAPSS(keyAttrs.SignatureAlgorithm))
+		if err != nil {
+			tpm.logger.Error("failed to resolve RSA signature scheme",
+				slog.String("error", err.Error()),
+				slog.String("cn", keyAttrs.CN))
+			return nil, err
+		}
+
 		signResponse, err := tpm2.Sign{
 			KeyHandle: tpm2.AuthHandle{
 				Handle: keyAttrs.TPMAttributes.Handle,
@@ -1910,9 +1932,9 @@ func (tpm *TPM2) SignValidate(
 				Buffer: digest,
 			},
 			InScheme: tpm2.TPMTSigScheme{
-				Scheme: rsaDetails.Scheme.Scheme,
+				Scheme: schemeAlg,
 				Details: tpm2.NewTPMUSigScheme(
-					rsaDetails.Scheme.Scheme, &tpm2.TPMSSchemeHash{
+					schemeAlg, &tpm2.TPMSSchemeHash{
 						HashAlg: keyAttrs.TPMAttributes.HashAlg,
 					}),
 			},
@@ -1929,8 +1951,11 @@ func (tpm *TPM2) SignValidate(
 			return nil, err
 		}
 
+		// The signature is unpacked as the shape that was asked of the TPM,
+		// which is the only shape it can be. Deriving the two separately is
+		// how a signature gets requested as one shape and read as another.
 		var rsaSig *tpm2.TPMSSignatureRSA
-		if store.IsRSAPSS(keyAttrs.SignatureAlgorithm) {
+		if schemeAlg == tpm2.TPMAlgRSAPSS {
 			rsaSig, err = signResponse.Signature.Signature.RSAPSS()
 			if err != nil {
 				return nil, err

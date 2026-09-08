@@ -74,10 +74,64 @@ whole package. `pkg/tpm2/store` holds the key-backend types (`KeyBackend` in
   `devid_policy_test.go`. It depends on the nameAlg, so the static templates
   ship it empty and `CreateIDevID`/`CreateIAK` assign it;
   `assertDevIDTemplateConformant` (`key.go`) then refuses any template whose
-  attributes or policy depart from H-0, *before* `TPM2_CreatePrimary`, because
+  attributes, policy, `unique`, scheme, symmetric definition, exponent, KDF or
+  curve depart from H-0 through H-4, *before* `TPM2_CreatePrimary`, because
   every one of those values is an input to the primary's derivation and cannot
   be corrected once the key exists. `assertAdminAuthorizable` remains the
   narrower guard underneath it.
+- **One builder produces every DevID template.** `DevIDTemplateSpec.Template`
+  (`devid_template.go`) is the only place a Recoverable IDevID/IAK template is
+  assembled; the package variables (`RSASSAAKTemplate`,
+  `ECCIDevIDP384Template`, …) and both creation paths derive from it. They did
+  not: `CreateIAK` built inline copies of the templates the package exported,
+  so the two disagreed the moment either changed.
+  - `unique` is the string §7.3.1 Table 2 requires — `'IDEVID'` or `'IAK'`,
+    unpadded, not NUL terminated — optionally followed by the printable-ASCII
+    `tpm.device-string`, which is a property of the device and so is shared by
+    both its keys. `DevIDUniqueString` builds and validates it; the combined
+    length is bounded by the crypto suite's `unique` field (the RSA modulus
+    size, or an ECC coordinate).
+  - An RSA IDevID's scheme is `TPM_ALG_NULL` (H-1, "Signing"), so
+    `TPM2_Sign` is told the padding and digest per command — see
+    `rsaSignScheme` / `rsaSchemeHash`, which both the `crypto.Signer` path and
+    `SignValidate` use. An IAK names RSASSA or RSAPSS with a hash, because a
+    Restricted signing key may not name `TPM_ALG_NULL` (TPM 2.0 Library
+    Part 1, §25.2.3).
+  - `symmetric->algorithm`, `exponent` and `kdf->scheme` are stated rather
+    than left to the Go zero value. go-tpm tags those fields
+    `gotpm:"nullable"` and writes `TPM_ALG_NULL` for the zero value, so this
+    is the same key on the wire today (measured in `devid_template_test.go`);
+    it is stated so that a field deciding a device's identity does not depend
+    on a struct tag.
+  - Suites: H-1 RSA, H-2 P-256, H-3 P-384 (nameAlg SHA-384), H-4 P-521
+    (nameAlg SHA-512).
+  - **H-5 (SM2 P-256) is not supported.** It requires nameAlg
+    `TPM_ALG_SM3_256`, which the TPMs this library is tested against do not
+    implement — the reference simulator refuses such a template with
+    `TPM_RC_HASH` — and `crypto/elliptic` has no SM2 curve, so a key on it
+    could not be returned as the `*ecdsa.PublicKey` the creation API produces.
+    Shipping an untestable template would be worse than saying so. A
+    configuration asking for it is refused rather than substituted: an
+    `idevid.ecc.curve` / `iak.ecc.curve` of `SM2` fails in `types.ParseCurve`
+    with `types.ErrUnknownCurve`, and any curve reaching `eccTemplate` without
+    a template — P-224 is the only one that can — is refused with
+    `ErrDevIDTemplateSuiteUnsupported`, whose message names H-5 and why.
+    `TestDevIDTemplate_SM2IsNotImplemented` re-measures both halves, so the
+    day a TPM or Go gains SM2 the test says so.
+  - **Known departure, deliberate, and the specification's own resolution.**
+    H-2 through H-4 state both `scheme->scheme = TPM_ALG_ECDSA` and
+    `scheme->details = NULL`, a pair no TPM can carry: the details of an ECDSA
+    `TPMT_ECC_SCHEME` are a `TPMS_SIG_SCHEME_ECDSA` whose `hashAlg` is a
+    `TPMI_ALG_HASH` with no `+` decoration. `TPM2_CreatePrimary` answers
+    `TPM_RC_HASH` for all three curves; `devid_template_simulator_test.go`
+    measures it and exists to stop anyone "fixing" it back. The scheme stays
+    ECDSA — the constraint Table 5 states — and the details name the
+    template's nameAlg, which is the pairing §14 (Annex B, Table 24, the IEEE
+    802.1AR PICS) uses when it names the conformance suites: "the ECDSA
+    P-256/SHA-256 signature suite" (ECDSA256) and "the ECDSA P-384/SHA-384
+    signature suite" (ECDSA384). Table 24 lists no P-521 row, being a subset
+    of 802.1AR's PICS, so H-4's own nameAlg (SHA-512, Table 7) supplies that
+    pairing by the same rule.
 - **ADMIN-role commands on an IDevID or IAK run under `DevIDAdminSession`.**
   `TPM2_Certify` (objectHandle) and `TPM2_ActivateCredential`
   (activateHandle) authorize the key at the ADMIN role, which the authValue is
@@ -121,7 +175,10 @@ vocabulary. The categories that need distinguishing:
 | quote signature or nonce invalid | the evidence is not fresh or not from that AK |
 | `ErrECCPublicArea` | the ECC public area does not yield a valid public key: bad parameters, an unknown curve, or a point that is not on the curve. On the `TPM2_Certify` path it is wrapped as `ErrCertifyMalformed`; the underlying `ecpoint.ErrInvalidPoint` stays reachable through `errors.Is` |
 | `ErrAdminWithPolicyNoAuthPolicy` | the template about to be created from sets `adminWithPolicy` while naming no `authPolicy`, so the object's ADMIN role would be unauthorizable by anything. Raised by `assertAdminAuthorizable` before `TPM2_CreatePrimary`; nothing is created |
-| `ErrDevIDTemplateNonConformant` | the IDevID or IAK template about to be created from departs from TCG Template H-0 in an attribute or in its `authPolicy`. Raised by `assertDevIDTemplateConformant` before `TPM2_CreatePrimary`; nothing is created |
+| `ErrDevIDTemplateNonConformant` | the IDevID or IAK template about to be created from departs from TCG Templates H-0 through H-4 in an attribute, its `authPolicy`, its `unique` string, its scheme, its symmetric definition, its exponent, its KDF or its curve. Raised by `assertDevIDTemplateConformant` before `TPM2_CreatePrimary`; nothing is created |
+| `ErrDevIDUniqueString` | a `unique` string that is not §7.3.1 Table 2's, or a `tpm.device-string` that is not printable ASCII |
+| `ErrDevIDUniqueStringTooLong` | the required string plus the device string exceeds the crypto suite's `unique` field |
+| `ErrDevIDTemplateSuiteUnsupported` | a crypto suite the specification defines no template for: a `nameAlg` with no Policy NV Index, or a scheme H-1 does not allow for the key's purpose |
 | `ErrDevIDPolicyUnsupported` | a key kind or `nameAlg` for which the specification defines no template or Policy NV Index (only SHA256, SHA384 and SHA512 are defined) |
 | `ErrDevIDPolicyDigestCompute` | the trial-policy computation of a key policy or NV Index Name failed inside go-tpm |
 | `ErrDevIDPolicySession` | the ADMIN-role policy session could not be built: a command with no branch in the key policy, a `PolicySecret` refused for a wrong endorsement auth, or a TPM error on a policy command |
@@ -174,6 +231,9 @@ The suite is unusually large and deliberately structured:
   where the specification prints them. go-tpm's `PolicyUpdate` and the
   specification are two independent implementations; the suite is the proof
   they agree. The specification is checked in under `docs/references/`.
+  `devid_template_test.go` does the same for the §7.3.4 creation templates,
+  pinning H-1 through H-4 field by field and running one mutation per field
+  the specification fixes through `assertDevIDTemplateConformant`.
 - **Simulator suites** (`*_simulator_test.go`) — the whole device surface
   against `tpm_simulator.go`: crypto ops, key lifecycle, algorithm agility,
   attestation certify, IDevID CSR round-trip and sizing, device identity
@@ -182,6 +242,11 @@ The suite is unusually large and deliberately structured:
   (`idevid_admin_policy_simulator_test.go` — reads the created object's public
   area back from its persistent handle and drives `TPM2_Certify` against it,
   because the attribute bits alone do not prove the ADMIN role is reachable),
+  device identity key derivation (`devid_template_simulator_test.go` --
+  measures that `unique` changes the created key's Name, that every shipped
+  suite creates and that no two suites derive the same key, that H-2's
+  `scheme->details = NULL` is refused by the TPM, and that the key
+  `CreateIDevID` persists is the one `DevIDTemplateSpec` derives),
   seal-with-PCR-policy, SSRK platform policy,
   capabilities, PIN enrollment.
 - **Leak suites** — object contexts, auth sessions, auth sessions under

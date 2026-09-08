@@ -112,6 +112,17 @@ TPM. It is the mechanism behind the ACME `enroll-01` challenge.
   which is how a restricted key is kept from signing a forged attestation;
   `ErrRestrictedSignRefused` reports that refusal rather than passing on a
   ticket the TPM never issued.
+- **A DevID template is built once, and every field of it is a derivation
+  input.** `DevIDTemplateSpec` (`devid_template.go`) is the single place a
+  Recoverable IDevID/IAK template is assembled; the exported package templates
+  and both creation paths derive from it, and `assertDevIDTemplateConformant`
+  re-checks the result immediately before `TPM2_CreatePrimary`. The
+  alternative -- a template transcribed at each call site -- is what let
+  `CreateIAK`'s inline copy drift from the template the package exported. The
+  consequence to hold onto is that `unique`, the scheme, the attributes and
+  the policy are not descriptions of a key: they *are* the key. Changing any
+  of them re-keys the device, which is why they are pinned by tests against
+  the specification's tables rather than left to review.
 - **A device identity key's password can use it but cannot administer it.**
   TCG "TPM 2.0 Keys for Device Identity and Attestation" v1.00 r12 §7.2.4 is
   explicit that the recommended templates "enable the IDevID/IAK key's
@@ -119,7 +130,8 @@ TPM. It is the mechanism behind the ACME `enroll-01` challenge.
   the key": `userWithAuth` SET, `adminWithPolicy` SET. Someone who learns the
   signing password can sign — they cannot certify, re-certify, or release a
   credential against the key. The IDevID and IAK are created from that
-  template (§7.3.4.1, Template H-0) with the §7.3.6.6 IDevID/IAK Key Policy as
+  template (§7.3.4.1, Template H-0, over the H-1 through H-4 crypto suites)
+  with the §7.3.6.6 IDevID/IAK Key Policy as
   their `authPolicy`: a `PolicyOR` whose branches let the *Privacy
   Administrator* — whoever holds `endorsementAuth` — use the key, certify it
   (`TPM2_Certify`), release a credential to it (`TPM2_ActivateCredential`), or

@@ -28,8 +28,9 @@ use it. Each row below links to the feature that owns it.
 ## Device identity key authorization
 
 The IDevID and IAK are created to TCG *TPM 2.0 Keys for Device Identity and
-Attestation* v1.00 r12, Template H-0, and carry the specification's
-IDevID/IAK Key Policy as their `authPolicy` (`pkg/tpm2/devid_policy.go`).
+Attestation* v1.00 r12, Template H-0 over the H-1 through H-4 crypto suites
+(`pkg/tpm2/devid_template.go`), and carry the specification's IDevID/IAK Key
+Policy as their `authPolicy` (`pkg/tpm2/devid_policy.go`).
 The authValue may **use** the key; only the policy may **administer** it
 (§7.2.4). The surface an integrator can reach:
 
@@ -41,14 +42,20 @@ The authValue may **use** the key; only the policy may **administer** it
 | `DevIDPolicyNVIndex` / `DevIDPolicyNVPublic` / `DevIDPolicyNVName` | the reserved Policy NV Index (§7.3.2), its Template I-1..I-3 public area, and its Name (§7.3.6.5) |
 | `(*TPM2).DevIDAdminSession(kind, nameAlg, command, endorsementAuth)` | the policy session that authorizes the ADMIN role for exactly one command — `TPM_CC_Certify` or `TPM_CC_ActivateCredential` — as the Privacy Administrator. Any other command is refused before a session is opened; the TPM answers `TPM_RC_POLICY_CC` if the session is used for a command it was not built for |
 | `DevIDCommonName(cn, platform)` | the one naming rule for both keys: explicit `cn`, else `model-serial`, else `ErrDevIDCNUnresolved` |
+| `DevIDTemplateSpec` · `.Template()` | builds the §7.3.4 creation template for a crypto suite: H-1 RSA, H-2 P-256, H-3 P-384, H-4 P-521. `Kind` picks IDevID or IAK, `DeviceString` supplies the optional §7.3.1 per-device string. `authPolicy` is left empty; the creation path assigns it per `nameAlg` |
+| `DevIDUniqueString(kind, deviceString)` | the §7.3.1 Table 2 `unique` bytes: `'IDEVID'` or `'IAK'`, unpadded and not NUL terminated, followed by the printable-ASCII device string |
+| `DevIDUniqueIDevID` / `DevIDUniqueIAK` | those two required strings |
+| `RSASSAAKTemplate`, `RSAPSSAKTemplate`, `ECCAKP256Template`, `ECCAKP384Template`, `ECCAKP521Template`, `RSASSAIDevIDTemplate`, `RSAPSSIDevIDTemplate`, `ECCIDevIDP256Template`, `ECCIDevIDP384Template`, `ECCIDevIDP521Template` | the suites as package values, built by `DevIDTemplateSpec` with no device string |
 
 `CreateIDevID` and `CreateIAK` call all of this themselves; the functions are
 exported so a verifier or an out-of-process provisioner can reproduce the
 policy a device *should* carry and compare it to the public area the device
 presents. Re-exported through `sdk/go` with a `TPM`/`TPMDevID` prefix.
 
-Errors: `ErrDevIDTemplateNonConformant`, `ErrDevIDPolicyUnsupported`,
-`ErrDevIDPolicyDigestCompute`, `ErrDevIDPolicySession`, `ErrDevIDCNUnresolved`
+Errors: `ErrDevIDTemplateNonConformant`, `ErrDevIDUniqueString`,
+`ErrDevIDUniqueStringTooLong`, `ErrDevIDTemplateSuiteUnsupported`,
+`ErrDevIDPolicyUnsupported`, `ErrDevIDPolicyDigestCompute`,
+`ErrDevIDPolicySession`, `ErrDevIDCNUnresolved`
 (`pkg/tpm2`); `ErrEmptyKeyCN` (`pkg/tpm2/store`). All refuse; nothing degrades.
 
 ## The one place TPM evidence crosses the wire

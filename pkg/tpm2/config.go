@@ -147,8 +147,26 @@ var (
 )
 
 type Config struct {
-	CommandAddress string    `yaml:"command-address,omitempty" json:"command_address" mapstructure:"command-address"`
-	Device         string    `yaml:"device,omitempty" json:"device" mapstructure:"device"`
+	CommandAddress string `yaml:"command-address,omitempty" json:"command_address" mapstructure:"command-address"`
+	Device         string `yaml:"device,omitempty" json:"device" mapstructure:"device"`
+	// DeviceString is the optional per-device unique string of TCG "TPM 2.0
+	// Keys for Device Identity and Attestation" v1.00 r12, section 7.3.1: "a
+	// sequence of printable ASCII octets, unique per device, that are
+	// concatenated to the required unique string" of the IDevID and IAK key
+	// templates ('IDEVID' and 'IAK', Table 2). It describes the device rather
+	// than either key, so both keys use this one value.
+	//
+	// It is an input to both keys' derivation, so changing it on a provisioned
+	// device produces different keys under different Names -- new identities
+	// needing new certificates -- and the OEM MUST keep it available: "If the
+	// device string is included, that string MUST be stored on the device so
+	// that it is available each time Primary keys are recreated." Where it is
+	// kept is the OEM's choice; TPM NV Index 0x01C90020 is reserved for that
+	// purpose (section 7.3.3) and this package reads the value from
+	// configuration.
+	//
+	// Empty, the default, uses the Table 2 required string alone.
+	DeviceString   string    `yaml:"device-string,omitempty" json:"device_string" mapstructure:"device-string"`
 	EncryptSession bool      `yaml:"encrypt-sessions" json:"encrypt_sessions" mapstructure:"encrypt-sessions"`
 	EK             *EKConfig `yaml:"ek" json:"ek" mapstructure:"ek"`
 	// FileIntegrity is DEPRECATED. Use Linux IMA (PCR 10) instead by adding 10 to GoldenPCRs.

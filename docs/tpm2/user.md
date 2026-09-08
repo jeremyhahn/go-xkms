@@ -90,11 +90,41 @@ serial are available, provisioning refuses with `ErrDevIDCNUnresolved` rather
 than inventing a name: the key store files artifacts under the name, and a
 fabricated default would put every device on the same file.
 
-**Upgrading a device provisioned before this rule.** The key attributes and
-policy are inputs to how the TPM derives a primary key, so an IDevID or IAK
-created under the previous templates is a *different key* from the one the
-current code derives — there is no in-place migration, by the nature of
-primary keys. Re-provision the device and re-issue its identity certificates.
+**Signing.** An RSA IDevID names no signature scheme, which is what Template
+H-1 requires of a signing DevID. The padding and digest are chosen per signing
+operation, so the same device identity key signs a certificate with PKCS#1
+v1.5 and a TLS 1.3 handshake with RSA-PSS. An IAK is the opposite by design:
+it is a Restricted key, it names its scheme, and it signs only what the TPM
+itself produced.
+
+**Curves.** `idevid.ecc.curve` and `iak.ecc.curve` accept `P-256`, `P-384` and
+`P-521` — Templates H-2, H-3 and H-4, each with the nameAlg the specification
+pairs it with (SHA-256, SHA-384, SHA-512). SM2 is not available: Template H-5
+needs SM3-256, which the toolchain does not implement.
+
+**The device string.** `tpm.device-string` is the optional per-device string
+of §7.3.1, appended to the `'IDEVID'` and `'IAK'` strings the templates
+require. It is printable ASCII, one value for the device rather than one per
+key, and the combined string must fit the crypto suite's `unique` field — for
+P-256 that is 32 octets in all, so 26 after `'IDEVID'`. Leave it empty unless
+you have a reason to set it: it changes the keys.
+
+```yaml
+tpm:
+  device-string: "SN-0000-0001"
+```
+
+**Upgrading a device provisioned before this release.** The key attributes,
+the policy, the `unique` string and the RSA scheme are all inputs to how the
+TPM derives a primary key, so an IDevID or IAK created under the previous
+templates is a *different key* from the one the current code derives — there
+is no in-place migration, by the nature of primary keys. Re-provision the
+device and re-issue its identity certificates. Do it once: every change in
+this release that moves a derivation input lands together. The old
+certificates remain valid for the old keys, which the new code cannot
+reproduce. Setting `tpm.device-string` afterwards re-keys again, so choose it
+before provisioning a fleet.
+
 Separately, an IAK provisioned with `iak.cn` unset was stored under an empty
 name; it is now named `<model>-<serial>`, and artifacts under the old empty
 name are not found by the new one. A configured `iak.cn` is unaffected.

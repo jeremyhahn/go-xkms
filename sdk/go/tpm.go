@@ -61,6 +61,11 @@ type IAKConfig = tpm2.IAKConfig
 // IDevIDConfig holds Initial Device Identifier configuration.
 type IDevIDConfig = tpm2.IDevIDConfig
 
+// DevIDTemplateSpec names the crypto suite of a TCG Recoverable IDevID/IAK
+// key creation template (Templates H-1 through H-4, section 7.3.4). Its
+// Template method builds the TPMT_PUBLIC.
+type DevIDTemplateSpec = tpm2.DevIDTemplateSpec
+
 // DevIDKeyKind selects between the two TCG device identity key kinds -- the
 // signing IDevID and the attestation IAK -- whose key policies differ only in
 // the Policy NV Index their DelegationNV branch is bound to.
@@ -360,8 +365,17 @@ var (
 	// RSAPSSAKTemplate is the RSA-PSS Attestation Key template.
 	RSAPSSAKTemplate = tpm2.RSAPSSAKTemplate
 
-	// ECCAKP256Template is the ECC P-256 Attestation Key template.
+	// ECCAKP256Template is the ECC P-256 Attestation Key template (TCG DevID
+	// Template H-2).
 	ECCAKP256Template = tpm2.ECCAKP256Template
+
+	// ECCAKP384Template is the ECC P-384 Attestation Key template (TCG DevID
+	// Template H-3).
+	ECCAKP384Template = tpm2.ECCAKP384Template
+
+	// ECCAKP521Template is the ECC P-521 Attestation Key template (TCG DevID
+	// Template H-4).
+	ECCAKP521Template = tpm2.ECCAKP521Template
 
 	// RSASSAIDevIDTemplate is the RSA-SSA IDevID key template.
 	RSASSAIDevIDTemplate = tpm2.RSASSAIDevIDTemplate
@@ -369,8 +383,17 @@ var (
 	// RSAPSSIDevIDTemplate is the RSA-PSS IDevID key template.
 	RSAPSSIDevIDTemplate = tpm2.RSAPSSIDevIDTemplate
 
-	// ECCIDevIDP256Template is the ECC P-256 IDevID key template.
+	// ECCIDevIDP256Template is the ECC P-256 IDevID key template (TCG DevID
+	// Template H-2).
 	ECCIDevIDP256Template = tpm2.ECCIDevIDP256Template
+
+	// ECCIDevIDP384Template is the ECC P-384 IDevID key template (TCG DevID
+	// Template H-3).
+	ECCIDevIDP384Template = tpm2.ECCIDevIDP384Template
+
+	// ECCIDevIDP521Template is the ECC P-521 IDevID key template (TCG DevID
+	// Template H-4).
+	ECCIDevIDP521Template = tpm2.ECCIDevIDP521Template
 
 	// AES128CFBTemplate is the AES-128-CFB symmetric key template.
 	AES128CFBTemplate = tpm2.AES128CFBTemplate
@@ -445,6 +468,9 @@ var (
 	ErrTPMDevIDPolicySession          = tpm2.ErrDevIDPolicySession
 	ErrTPMDevIDCNUnresolved           = tpm2.ErrDevIDCNUnresolved
 	ErrTPMDevIDTemplateNonConformant  = tpm2.ErrDevIDTemplateNonConformant
+	ErrTPMDevIDUniqueString           = tpm2.ErrDevIDUniqueString
+	ErrTPMDevIDUniqueStringTooLong    = tpm2.ErrDevIDUniqueStringTooLong
+	ErrTPMDevIDTemplateSuiteUnsupport = tpm2.ErrDevIDTemplateSuiteUnsupported
 	ErrTPMSSRKConfigNil               = tpm2.ErrSSRKConfigNil
 	ErrTPMCommandNotSupported         = tpm2.ErrCommandNotSupported
 	ErrTPMInvalidSignature            = tpm2.ErrInvalidSignature
@@ -510,6 +536,12 @@ var IAKAttributesFromConfig = tpm2.IAKAttributesFromConfig
 
 // IDevIDAttributesFromConfig creates IDevID key attributes from config.
 var IDevIDAttributesFromConfig = tpm2.IDevIDAttributesFromConfig
+
+// DevIDUniqueString returns the unique-field bytes TCG "TPM 2.0 Keys for
+// Device Identity and Attestation" v1.00 r12, section 7.3.1 Table 2 requires
+// of an IDevID or IAK key template: 'IDEVID' or 'IAK', optionally followed by
+// the device's own printable-ASCII string.
+var DevIDUniqueString = tpm2.DevIDUniqueString
 
 // DevIDKeyPolicyDigest computes the TCG IDevID/IAK Key Policy (section
 // 7.3.6.6) attached as authPolicy to every IDevID and IAK this library

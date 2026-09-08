@@ -235,12 +235,32 @@ var (
 	ErrDevIDCNUnresolved = errors.New("tpm: an IDevID/IAK common name requires either cn or both a device model and serial number")
 
 	// ErrDevIDTemplateNonConformant reports an IDevID or IAK template whose
-	// TPMA_OBJECT or authPolicy departs from TCG "TPM 2.0 Keys for Device
-	// Identity and Attestation" v1.00 r12, Template H-0 (section 7.3.4.1).
-	// The attributes are inputs to a primary key's derivation, so a
-	// non-conformant key cannot be repaired after creation; it is refused
-	// before TPM2_CreatePrimary instead.
+	// TPMA_OBJECT, authPolicy, unique, scheme, symmetric or exponent departs
+	// from TCG "TPM 2.0 Keys for Device Identity and Attestation" v1.00 r12,
+	// Templates H-0 through H-4 (sections 7.3.4.1-7.3.4.5). Every one of those
+	// fields is an input to a primary key's derivation, so a non-conformant
+	// key cannot be repaired after creation; it is refused before
+	// TPM2_CreatePrimary instead.
 	ErrDevIDTemplateNonConformant = errors.New("tpm: the IDevID/IAK template does not conform to TCG Template H-0")
+
+	// ErrDevIDUniqueString reports that the unique field of an IDevID or IAK
+	// template is not the string TCG "TPM 2.0 Keys for Device Identity and
+	// Attestation" v1.00 r12, section 7.3.1 Table 2 requires of the key's
+	// purpose -- 'IDEVID' or 'IAK', optionally followed by a per-device string
+	// of printable ASCII, never NUL terminated.
+	ErrDevIDUniqueString = errors.New("tpm: the IDevID/IAK unique string is not the one TCG section 7.3.1 Table 2 requires")
+
+	// ErrDevIDUniqueStringTooLong reports a combined unique string larger than
+	// the unique field of the chosen crypto suite, which section 7.3.1 forbids:
+	// "The combined string size MUST NOT be larger than the allowed unique size
+	// for the crypto suite selected."
+	ErrDevIDUniqueStringTooLong = errors.New("tpm: the IDevID/IAK unique string is larger than the crypto suite's unique field")
+
+	// ErrDevIDTemplateSuiteUnsupported reports a crypto suite for which the
+	// specification defines no Recoverable IDevID/IAK key template: a hash
+	// algorithm with no reserved Policy NV Index (section 7.3.2), or a scheme
+	// Templates H-1 through H-4 do not allow for the key's purpose.
+	ErrDevIDTemplateSuiteUnsupported = errors.New("tpm: no TCG IDevID/IAK key template exists for this crypto suite")
 
 	// ErrRestrictedSchemeRequired reports that a restricted signing key was
 	// requested without a scheme. A restricted signing key must name one: it may
@@ -383,234 +403,111 @@ var (
 		NameAlg:   tpm2.TPMAlgSHA512,
 	})
 
-	// Attestation Key
-	// See TPM 2.0 Keys for Device Identity and Attestation
-	// Section 4.1: Verifying TPM Protection of an Attestation Key
-	// An AK MUST have the following characteristics:
-	// - Restricted
-	// - Signing
-	// - Not-decrypting
-	// - FixedTPM
+	// The Recoverable IDevID and IAK key templates of TCG "TPM 2.0 Keys for
+	// Device Identity and Attestation" v1.00 r12, section 7.3.4.
+	//
+	// Each is Template H-0 (section 7.3.4.1) over the crypto suite named by
+	// its H-x table: H-1 RSA 2048 (section 7.3.4.2), H-2 ECC NIST P256
+	// (7.3.4.3), H-3 ECC NIST P384 (7.3.4.4), H-4 ECC NIST P521 (7.3.4.5).
+	// H-5 ECC SM2 P256 (7.3.4.6) is not implemented; devid_template.go says
+	// why. The IAK is Restricted and the IDevID is not, which is the whole
+	// point of having two keys (sections 4.1 and 4.2): an IAK may sign only
+	// what the TPM produced, an IDevID signs whatever its owner hands it.
+	//
+	// They are built by DevIDTemplateSpec so that this file and the creation
+	// paths in key.go cannot drift apart: before these were derived, CreateIAK
+	// carried its own inline copies, and #455's adminWithPolicy reached the
+	// inline ones only. Every field is a derivation input, so two spellings of
+	// "the AK template" are two different keys.
+	//
+	// AuthPolicy is deliberately absent here: it is the IDevID/IAK Key Policy
+	// for the template's nameAlg (section 7.3.6.6), it is computed by
+	// DevIDKeyPolicyDigest, and the creation path assigns it immediately
+	// before TPM2_CreatePrimary. assertDevIDTemplateConformant refuses a
+	// template that still has it empty.
+	//
+	// The unique field carries the required string of section 7.3.1 Table 2 --
+	// 'IAK' or 'IDEVID', unpadded and not NUL terminated. A deployment adding
+	// the optional per-device string builds its template through
+	// DevIDTemplateSpec rather than using these; the string is a derivation
+	// input, so the two keys differ.
 
-	// RSA SSA AK Template (restricted signing, not decrypting, fixedtpm)
-	RSASSAAKTemplate = tpm2.TPMTPublic{
-		Type:    tpm2.TPMAlgRSA,
-		NameAlg: tpm2.TPMAlgSHA256,
-		ObjectAttributes: tpm2.TPMAObject{
-			FixedTPM:            true,
-			FixedParent:         true,
-			SensitiveDataOrigin: true,
-			UserWithAuth:        true,
-			Restricted:          true,
-			SignEncrypt:         true,
-		},
-		Parameters: tpm2.NewTPMUPublicParms(
-			tpm2.TPMAlgRSA,
-			&tpm2.TPMSRSAParms{
-				Scheme: tpm2.TPMTRSAScheme{
-					Scheme: tpm2.TPMAlgRSASSA,
-					Details: tpm2.NewTPMUAsymScheme(
-						tpm2.TPMAlgRSASSA,
-						&tpm2.TPMSSigSchemeRSASSA{
-							HashAlg: tpm2.TPMAlgSHA256,
-						},
-					),
-				},
-				KeyBits: 2048,
-			},
-		),
-		Unique: tpm2.NewTPMUPublicID(
-			tpm2.TPMAlgRSA,
-			&tpm2.TPM2BPublicKeyRSA{
-				Buffer: make([]byte, 256),
-			},
-		),
-	}
+	// RSASSAAKTemplate is Template H-1 for an IAK signing PKCS#1 v1.5.
+	RSASSAAKTemplate = mustDevIDTemplate(DevIDTemplateSpec{
+		Kind:      DevIDKeyAttestation,
+		Algorithm: x509.RSA,
+		Scheme:    tpm2.TPMAlgRSASSA,
+	})
 
-	// RSA PSS AK Template (restricted signing, not decrypting, fixedtpm)
-	RSAPSSAKTemplate = tpm2.TPMTPublic{
-		Type:    tpm2.TPMAlgRSA,
-		NameAlg: tpm2.TPMAlgSHA256,
-		ObjectAttributes: tpm2.TPMAObject{
-			FixedTPM:            true,
-			FixedParent:         true,
-			SensitiveDataOrigin: true,
-			UserWithAuth:        true,
-			Restricted:          true,
-			SignEncrypt:         true,
-		},
-		AuthPolicy: tpm2.TPM2BDigest{},
-		Parameters: tpm2.NewTPMUPublicParms(
-			tpm2.TPMAlgRSA,
-			&tpm2.TPMSRSAParms{
-				Scheme: tpm2.TPMTRSAScheme{
-					Scheme: tpm2.TPMAlgRSAPSS,
-					Details: tpm2.NewTPMUAsymScheme(
-						tpm2.TPMAlgRSAPSS,
-						&tpm2.TPMSSigSchemeRSAPSS{
-							HashAlg: tpm2.TPMAlgSHA256,
-						},
-					),
-				},
-				KeyBits: 2048,
-			},
-		),
-		Unique: tpm2.NewTPMUPublicID(
-			tpm2.TPMAlgRSA,
-			&tpm2.TPM2BPublicKeyRSA{
-				Buffer: make([]byte, 256),
-			},
-		),
-	}
+	// RSAPSSAKTemplate is Template H-1 for an IAK signing RSA-PSS.
+	RSAPSSAKTemplate = mustDevIDTemplate(DevIDTemplateSpec{
+		Kind:      DevIDKeyAttestation,
+		Algorithm: x509.RSA,
+		Scheme:    tpm2.TPMAlgRSAPSS,
+	})
 
-	// ECC P256 AK Template (restricted signing, not decrypting, fixedtpm)
-	ECCAKP256Template = tpm2.TPMTPublic{
-		Type:    tpm2.TPMAlgECC,
-		NameAlg: tpm2.TPMAlgSHA256,
-		ObjectAttributes: tpm2.TPMAObject{
-			FixedTPM:            true,
-			FixedParent:         true,
-			SensitiveDataOrigin: true,
-			UserWithAuth:        true,
-			Restricted:          true,
-			SignEncrypt:         true,
-		},
-		Parameters: tpm2.NewTPMUPublicParms(
-			tpm2.TPMAlgECC,
-			&tpm2.TPMSECCParms{
-				CurveID: tpm2.TPMECCNistP256,
-				Scheme: tpm2.TPMTECCScheme{
-					Scheme: tpm2.TPMAlgECDSA,
-					Details: tpm2.NewTPMUAsymScheme(
-						tpm2.TPMAlgECDSA,
-						&tpm2.TPMSSigSchemeECDSA{
-							HashAlg: tpm2.TPMAlgSHA256,
-						},
-					),
-				},
-			},
-		),
-	}
+	// ECCAKP256Template is Template H-2 for an IAK.
+	ECCAKP256Template = mustDevIDTemplate(DevIDTemplateSpec{
+		Kind:      DevIDKeyAttestation,
+		Algorithm: x509.ECDSA,
+		Curve:     elliptic.P256(),
+	})
 
-	// IDevID Key
-	// See TPM 2.0 Keys for Device Identity and Attestation
-	// Section 4.1: Verifying TPM Protection of a DevID Key
-	// A DevID MUST have the following characteristics:
-	// - Not-Restricted
-	// - Signing
-	// - Not-decrypting
-	// - FixedTPM
+	// ECCAKP384Template is Template H-3 for an IAK.
+	ECCAKP384Template = mustDevIDTemplate(DevIDTemplateSpec{
+		Kind:      DevIDKeyAttestation,
+		Algorithm: x509.ECDSA,
+		Curve:     elliptic.P384(),
+	})
 
-	// RSA SSA IDevID Template (non-restricted signing, not decrypting, fixedtpm)
-	RSASSAIDevIDTemplate = tpm2.TPMTPublic{
-		Type:    tpm2.TPMAlgRSA,
-		NameAlg: tpm2.TPMAlgSHA256,
-		ObjectAttributes: tpm2.TPMAObject{
-			FixedTPM:            true,
-			FixedParent:         true,
-			SensitiveDataOrigin: true,
-			UserWithAuth:        true,
-			AdminWithPolicy:     true,
-			SignEncrypt:         true,
-		},
-		Parameters: tpm2.NewTPMUPublicParms(
-			tpm2.TPMAlgRSA,
-			&tpm2.TPMSRSAParms{
-				Scheme: tpm2.TPMTRSAScheme{
-					Scheme: tpm2.TPMAlgRSASSA,
-					Details: tpm2.NewTPMUAsymScheme(
-						tpm2.TPMAlgRSASSA,
-						&tpm2.TPMSSigSchemeRSASSA{
-							HashAlg: tpm2.TPMAlgSHA256,
-						},
-					),
-				},
-				KeyBits: 2048,
-			},
-		),
-		Unique: tpm2.NewTPMUPublicID(
-			tpm2.TPMAlgRSA,
-			&tpm2.TPM2BPublicKeyRSA{
-				Buffer: make([]byte, 256),
-			},
-		),
-	}
+	// ECCAKP521Template is Template H-4 for an IAK.
+	ECCAKP521Template = mustDevIDTemplate(DevIDTemplateSpec{
+		Kind:      DevIDKeyAttestation,
+		Algorithm: x509.ECDSA,
+		Curve:     elliptic.P521(),
+	})
 
-	// RSA PSS IDevID Template (non-restricted signing, not decrypting, fixedtpm)
-	// The IDevID templates carry the TPMA_OBJECT values of TCG "TPM 2.0 Keys
-	// for Device Identity and Attestation" v1.00 r12, Template H-0
-	// (section 7.3.4.1): fixedTPM, fixedParent, sensitiveDataOrigin,
-	// userWithAuth AND adminWithPolicy set; Restricted clear for a signing
-	// DevID; sign set, decrypt clear. userWithAuth lets the authValue USE the
-	// key; adminWithPolicy makes the ADMIN role reachable only through the
-	// IDevID/IAK Key Policy (section 7.2.4), which CreateIDevID computes and
-	// assigns as AuthPolicy at creation time -- it depends on the nameAlg, so
-	// it cannot live in a static template. AuthPolicy is left empty here on
-	// purpose; assertAdminAuthorizable refuses to create a key from a template
-	// that still has it empty.
-	RSAPSSIDevIDTemplate = tpm2.TPMTPublic{
-		Type:    tpm2.TPMAlgRSA,
-		NameAlg: tpm2.TPMAlgSHA256,
-		ObjectAttributes: tpm2.TPMAObject{
-			FixedTPM:            true,
-			FixedParent:         true,
-			SensitiveDataOrigin: true,
-			UserWithAuth:        true,
-			AdminWithPolicy:     true,
-			SignEncrypt:         true,
-		},
-		AuthPolicy: tpm2.TPM2BDigest{},
-		Parameters: tpm2.NewTPMUPublicParms(
-			tpm2.TPMAlgRSA,
-			&tpm2.TPMSRSAParms{
-				Scheme: tpm2.TPMTRSAScheme{
-					Scheme: tpm2.TPMAlgRSAPSS,
-					Details: tpm2.NewTPMUAsymScheme(
-						tpm2.TPMAlgRSAPSS,
-						&tpm2.TPMSSigSchemeRSAPSS{
-							HashAlg: tpm2.TPMAlgSHA256,
-						},
-					),
-				},
-				KeyBits: 2048,
-			},
-		),
-		Unique: tpm2.NewTPMUPublicID(
-			tpm2.TPMAlgRSA,
-			&tpm2.TPM2BPublicKeyRSA{
-				Buffer: make([]byte, 256),
-			},
-		),
-	}
+	// RSASSAIDevIDTemplate is Template H-1 for an IDevID.
+	//
+	// Its scheme is TPM_ALG_NULL, as H-1 requires of a signing DevID, so the
+	// padding and digest are chosen per TPM2_Sign command. That is what lets
+	// one device identity key serve a certificate signed PKCS#1 v1.5 and the
+	// RSA-PSS a TLS 1.3 handshake requires. The name kept the SSA suffix
+	// because a deployment configured for PKCS#1 v1.5 still selects it.
+	RSASSAIDevIDTemplate = mustDevIDTemplate(DevIDTemplateSpec{
+		Kind:      DevIDKeySigning,
+		Algorithm: x509.RSA,
+	})
 
-	// ECC P256 IDevID Template (non-restricted signing, not decrypting, fixedtpm)
-	ECCIDevIDP256Template = tpm2.TPMTPublic{
-		Type:    tpm2.TPMAlgECC,
-		NameAlg: tpm2.TPMAlgSHA256,
-		ObjectAttributes: tpm2.TPMAObject{
-			FixedTPM:            true,
-			FixedParent:         true,
-			SensitiveDataOrigin: true,
-			UserWithAuth:        true,
-			AdminWithPolicy:     true,
-			SignEncrypt:         true,
-		},
-		Parameters: tpm2.NewTPMUPublicParms(
-			tpm2.TPMAlgECC,
-			&tpm2.TPMSECCParms{
-				CurveID: tpm2.TPMECCNistP256,
-				Scheme: tpm2.TPMTECCScheme{
-					Scheme: tpm2.TPMAlgECDSA,
-					Details: tpm2.NewTPMUAsymScheme(
-						tpm2.TPMAlgECDSA,
-						&tpm2.TPMSSigSchemeECDSA{
-							HashAlg: tpm2.TPMAlgSHA256,
-						},
-					),
-				},
-			},
-		),
-	}
+	// RSAPSSIDevIDTemplate is Template H-1 for an IDevID whose configuration
+	// names RSA-PSS. It is identical to RSASSAIDevIDTemplate -- H-1 gives a
+	// signing DevID no scheme to differ in -- and both names are kept so the
+	// selection in CreateIDevID still reads as the choice it makes.
+	RSAPSSIDevIDTemplate = mustDevIDTemplate(DevIDTemplateSpec{
+		Kind:      DevIDKeySigning,
+		Algorithm: x509.RSA,
+	})
+
+	// ECCIDevIDP256Template is Template H-2 for an IDevID.
+	ECCIDevIDP256Template = mustDevIDTemplate(DevIDTemplateSpec{
+		Kind:      DevIDKeySigning,
+		Algorithm: x509.ECDSA,
+		Curve:     elliptic.P256(),
+	})
+
+	// ECCIDevIDP384Template is Template H-3 for an IDevID.
+	ECCIDevIDP384Template = mustDevIDTemplate(DevIDTemplateSpec{
+		Kind:      DevIDKeySigning,
+		Algorithm: x509.ECDSA,
+		Curve:     elliptic.P384(),
+	})
+
+	// ECCIDevIDP521Template is Template H-4 for an IDevID.
+	ECCIDevIDP521Template = mustDevIDTemplate(DevIDTemplateSpec{
+		Kind:      DevIDKeySigning,
+		Algorithm: x509.ECDSA,
+		Curve:     elliptic.P521(),
+	})
 
 	// AES Templates
 

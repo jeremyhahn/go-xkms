@@ -1309,10 +1309,14 @@ func TestRSASSAAKTemplateExtended(t *testing.T) {
 		assert.Equal(t, tpm2.TPMKeyBits(2048), rsaDetail.KeyBits)
 	})
 
-	t.Run("unique buffer has correct size", func(t *testing.T) {
+	// TCG "TPM 2.0 Keys for Device Identity and Attestation" v1.00 r12,
+	// section 7.3.1, Table 2: an IAK's unique field is 'IAK' (49 41 4B),
+	// unpadded and not NUL terminated. It used to be 256 zero bytes -- a key
+	// no other implementation of the specification could recreate.
+	t.Run("unique carries the Table 2 IAK string", func(t *testing.T) {
 		rsaUnique, err := RSASSAAKTemplate.Unique.RSA()
 		assert.NoError(t, err)
-		assert.Equal(t, 256, len(rsaUnique.Buffer))
+		assert.Equal(t, []byte{0x49, 0x41, 0x4B}, rsaUnique.Buffer)
 	})
 }
 
@@ -1349,10 +1353,15 @@ func TestECCAKP256TemplateExtended(t *testing.T) {
 }
 
 func TestRSASSAIDevIDTemplateExtended(t *testing.T) {
-	t.Run("has RSASSA scheme", func(t *testing.T) {
+	// Template H-1 (section 7.3.4.2, Table 4): "scheme->scheme = TPM_ALG_NULL
+	// (Signing)". An IDevID names no scheme; TPM2_Sign is told which padding
+	// and digest to use per command. The template used to pin RSASSA/SHA-256,
+	// which barred the same device identity key from producing the RSA-PSS
+	// signature a TLS 1.3 handshake requires.
+	t.Run("names no scheme, per Template H-1", func(t *testing.T) {
 		rsaDetail, err := RSASSAIDevIDTemplate.Parameters.RSADetail()
 		assert.NoError(t, err)
-		assert.Equal(t, tpm2.TPMAlgRSASSA, rsaDetail.Scheme.Scheme)
+		assert.Equal(t, tpm2.TPMAlgNull, rsaDetail.Scheme.Scheme)
 	})
 
 	t.Run("has 2048-bit key size", func(t *testing.T) {
@@ -1363,10 +1372,13 @@ func TestRSASSAIDevIDTemplateExtended(t *testing.T) {
 }
 
 func TestRSAPSSIDevIDTemplateExtended(t *testing.T) {
-	t.Run("has RSAPSS scheme", func(t *testing.T) {
+	// As for RSASSAIDevIDTemplate: Template H-1 gives a signing DevID no
+	// scheme, so the two RSA IDevID templates are identical and the RSA-PSS
+	// choice is made per TPM2_Sign command instead.
+	t.Run("names no scheme, per Template H-1", func(t *testing.T) {
 		rsaDetail, err := RSAPSSIDevIDTemplate.Parameters.RSADetail()
 		assert.NoError(t, err)
-		assert.Equal(t, tpm2.TPMAlgRSAPSS, rsaDetail.Scheme.Scheme)
+		assert.Equal(t, tpm2.TPMAlgNull, rsaDetail.Scheme.Scheme)
 	})
 
 	t.Run("has empty auth policy", func(t *testing.T) {

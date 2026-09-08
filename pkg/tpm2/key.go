@@ -780,6 +780,7 @@ func (tpm *TPM2) CreateIAK(
 	var hierarchyAuth, ekAuth, iakAuth, signature []byte
 	var err error
 	var isRSAPSS bool
+	var inScheme tpm2.TPMTSigScheme
 
 	if ekAttrs.TPMAttributes.HierarchyAuth != nil {
 		// Check if hierarchy auth is valid (error passwords return error from String())
@@ -830,37 +831,23 @@ func (tpm *TPM2) CreateIAK(
 		return nil, err
 	}
 
-	// Build signing scheme based on key algorithm
-	// Use platform PCR bank hash algorithm for consistency with TPM PCR banks
-	var inScheme tpm2.TPMTSigScheme
-	if iakAttrs.KeyAlgorithm == x509.RSA {
-
-		inScheme = tpm2.TPMTSigScheme{
-			Scheme: tpm2.TPMAlgRSASSA,
-			Details: tpm2.NewTPMUSigScheme(
-				tpm2.TPMAlgRSASSA, &tpm2.TPMSSchemeHash{
-					HashAlg: pcrBankHashAlg,
-				}),
-		}
-
-	} else {
-
-		// ECDSA
-		inScheme = tpm2.TPMTSigScheme{
-			Scheme: tpm2.TPMAlgECDSA,
-			Details: tpm2.NewTPMUSigScheme(
-				tpm2.TPMAlgECDSA,
-				&tpm2.TPMSSchemeHash{
-					HashAlg: pcrBankHashAlg,
-				},
-			),
-		}
-	}
-
-	// Define the AK template
-	// Build template from scratch to ensure all fields are properly initialized
-	// and avoid issues with shared slices from template constants
-	var template tpm2.TPMTPublic
+	// The IAK is Template H-0 over its configured crypto suite: TCG "TPM 2.0
+	// Keys for Device Identity and Attestation" v1.00 r12, section 7.3.4,
+	// Templates H-1 (RSA) and H-2 through H-4 (ECC P-256, P-384, P-521).
+	//
+	// It is built by the same DevIDTemplateSpec the package templates in
+	// types.go are built from, so there is one spelling of "the IAK template"
+	// in this package. This code used to carry its own inline copies, which is
+	// how the exported templates and the created key came to disagree: #455
+	// added adminWithPolicy to the inline ones only. Every field of a
+	// TPMT_PUBLIC is an input to the derivation, so two spellings are two
+	// different keys.
+	//
+	// nameAlg is the platform PCR bank's hash algorithm rather than the H-x
+	// table's, because the same algorithm has to name the key policy, the PCR
+	// selection recorded in the creation data and the scheme TPM2_CertifyCreation
+	// signs under. H-1 through H-4 pair a suite with a nameAlg; the pairing is
+	// the templates' default here and the PCR bank overrides it.
 	var keyBits tpm2.TPMKeyBits
 	if iakAttrs.RSAAttributes != nil && iakAttrs.RSAAttributes.KeySize > 0 {
 		if iakAttrs.RSAAttributes.KeySize > math.MaxUint16 {
@@ -868,153 +855,37 @@ func (tpm *TPM2) CreateIAK(
 		}
 		keyBits = tpm2.TPMKeyBits(iakAttrs.RSAAttributes.KeySize) // #nosec G115 -- Bounds checked above
 	} else {
-		keyBits = 2048 // Default RSA key size
+		keyBits = tpm2.TPMKeyBits(DefaultRSAKeyBits)
 	}
 
-	if iakAttrs.KeyAlgorithm == x509.RSA { //nolint:staticcheck // QF1003: if-else preferred over switch
-		if types.IsRSAPSS(iakAttrs.SignatureAlgorithm) {
-			template = tpm2.TPMTPublic{
-				Type:    tpm2.TPMAlgRSA,
-				NameAlg: pcrBankHashAlg,
-				ObjectAttributes: tpm2.TPMAObject{
-					FixedTPM:            true,
-					FixedParent:         true,
-					SensitiveDataOrigin: true,
-					UserWithAuth:        true,
-					AdminWithPolicy:     true,
-					Restricted:          true,
-					SignEncrypt:         true,
-				},
-				Parameters: tpm2.NewTPMUPublicParms(
-					tpm2.TPMAlgRSA,
-					&tpm2.TPMSRSAParms{
-						Symmetric: tpm2.TPMTSymDefObject{
-							Algorithm: tpm2.TPMAlgNull,
-						},
-						Scheme: tpm2.TPMTRSAScheme{
-							Scheme: tpm2.TPMAlgRSAPSS,
-							Details: tpm2.NewTPMUAsymScheme(
-								tpm2.TPMAlgRSAPSS,
-								&tpm2.TPMSSigSchemeRSAPSS{
-									HashAlg: pcrBankHashAlg,
-								},
-							),
-						},
-						KeyBits:  keyBits,
-						Exponent: 0, // Use default exponent (65537)
-					},
-				),
-				Unique: tpm2.NewTPMUPublicID(
-					tpm2.TPMAlgRSA,
-					&tpm2.TPM2BPublicKeyRSA{
-						Buffer: make([]byte, keyBits/8),
-					},
-				),
-			}
-			inScheme = tpm2.TPMTSigScheme{
-				Scheme: tpm2.TPMAlgRSAPSS,
-				Details: tpm2.NewTPMUSigScheme(
-					tpm2.TPMAlgRSAPSS, &tpm2.TPMSSchemeHash{
-						HashAlg: pcrBankHashAlg,
-					}),
-			}
-			isRSAPSS = true
-		} else {
-			template = tpm2.TPMTPublic{
-				Type:    tpm2.TPMAlgRSA,
-				NameAlg: pcrBankHashAlg,
-				ObjectAttributes: tpm2.TPMAObject{
-					FixedTPM:            true,
-					FixedParent:         true,
-					SensitiveDataOrigin: true,
-					UserWithAuth:        true,
-					AdminWithPolicy:     true,
-					Restricted:          true,
-					SignEncrypt:         true,
-				},
-				Parameters: tpm2.NewTPMUPublicParms(
-					tpm2.TPMAlgRSA,
-					&tpm2.TPMSRSAParms{
-						Symmetric: tpm2.TPMTSymDefObject{
-							Algorithm: tpm2.TPMAlgNull,
-						},
-						Scheme: tpm2.TPMTRSAScheme{
-							Scheme: tpm2.TPMAlgRSASSA,
-							Details: tpm2.NewTPMUAsymScheme(
-								tpm2.TPMAlgRSASSA,
-								&tpm2.TPMSSigSchemeRSASSA{
-									HashAlg: pcrBankHashAlg,
-								},
-							),
-						},
-						KeyBits:  keyBits,
-						Exponent: 0, // Use default exponent (65537)
-					},
-				),
-				Unique: tpm2.NewTPMUPublicID(
-					tpm2.TPMAlgRSA,
-					&tpm2.TPM2BPublicKeyRSA{
-						Buffer: make([]byte, keyBits/8),
-					},
-				),
-			}
-			inScheme = tpm2.TPMTSigScheme{
-				Scheme: tpm2.TPMAlgRSASSA,
-				Details: tpm2.NewTPMUSigScheme(
-					tpm2.TPMAlgRSASSA, &tpm2.TPMSSchemeHash{
-						HashAlg: pcrBankHashAlg,
-					}),
-			}
-		}
+	isRSAPSS = iakAttrs.KeyAlgorithm == x509.RSA && types.IsRSAPSS(iakAttrs.SignatureAlgorithm)
 
-	} else if iakAttrs.KeyAlgorithm == x509.ECDSA {
-		template = tpm2.TPMTPublic{
-			Type:    tpm2.TPMAlgECC,
-			NameAlg: pcrBankHashAlg,
-			ObjectAttributes: tpm2.TPMAObject{
-				FixedTPM:            true,
-				FixedParent:         true,
-				SensitiveDataOrigin: true,
-				UserWithAuth:        true,
-				AdminWithPolicy:     true,
-				Restricted:          true,
-				SignEncrypt:         true,
-			},
-			Parameters: tpm2.NewTPMUPublicParms(
-				tpm2.TPMAlgECC,
-				&tpm2.TPMSECCParms{
-					Symmetric: tpm2.TPMTSymDefObject{
-						Algorithm: tpm2.TPMAlgNull,
-					},
-					Scheme: tpm2.TPMTECCScheme{
-						Scheme: tpm2.TPMAlgECDSA,
-						Details: tpm2.NewTPMUAsymScheme(
-							tpm2.TPMAlgECDSA,
-							&tpm2.TPMSSigSchemeECDSA{
-								HashAlg: pcrBankHashAlg,
-							},
-						),
-					},
-					CurveID: tpm2.TPMECCNistP256,
-				},
-			),
-			Unique: tpm2.NewTPMUPublicID(
-				tpm2.TPMAlgECC,
-				&tpm2.TPMSECCPoint{
-					X: tpm2.TPM2BECCParameter{Buffer: make([]byte, 32)},
-					Y: tpm2.TPM2BECCParameter{Buffer: make([]byte, 32)},
-				},
-			),
-		}
-		inScheme = tpm2.TPMTSigScheme{
-			Scheme: tpm2.TPMAlgECDSA,
-			Details: tpm2.NewTPMUSigScheme(
-				tpm2.TPMAlgECDSA,
-				&tpm2.TPMSSchemeHash{
-					HashAlg: pcrBankHashAlg,
-				},
-			),
-		}
+	iakSpec := DevIDTemplateSpec{
+		Kind:         DevIDKeyAttestation,
+		Algorithm:    iakAttrs.KeyAlgorithm,
+		KeyBits:      uint16(keyBits), // #nosec G115 -- TPMKeyBits is a uint16
+		NameAlg:      pcrBankHashAlg,
+		DeviceString: tpm.config.DeviceString,
+	}
+	if iakAttrs.ECCAttributes != nil {
+		iakSpec.Curve = iakAttrs.ECCAttributes.Curve
+	}
+	if isRSAPSS {
+		iakSpec.Scheme = tpm2.TPMAlgRSAPSS
+	}
+
+	template, err := iakSpec.Template()
+	if err != nil {
+		tpm.logger.Error("failed to build the IAK template", slog.String("error", err.Error()))
+		return nil, err
+	}
+
+	// TPM2_CertifyCreation below signs under the key's own scheme, which a
+	// Restricted key always names, so inScheme repeats it rather than choosing
+	// one (TCG TPM 2.0 Library Part 3, section 12.1).
+	inScheme, err = devidCertifyScheme(template)
+	if err != nil {
+		return nil, err
 	}
 
 	// Create PCR selection for creation data using the platform PCR bank
@@ -1224,11 +1095,31 @@ func assertAdminAuthorizable(template tpm2.TPMTPublic) error {
 //	                                                  SET   for an IAK
 //	authPolicy == the IDevID/IAK Key Policy for the template's nameAlg
 //
+// and, from the H-1 through H-4 tables (sections 7.3.4.2-7.3.4.5):
+//
+//	unique             == 'IDEVID' or 'IAK', optionally followed by the
+//	                      device string (section 7.3.1, Table 2)
+//	symmetric          == TPM_ALG_NULL
+//	scheme             == TPM_ALG_NULL for an RSA DevID; RSASSA or RSAPSS
+//	                      with a hash for an RSA AK; ECDSA with a hash for ECC
+//	exponent           == 0                            (RSA)
+//	kdf                == TPM_ALG_NULL                 (ECC)
+//
 // Every one of these is an input to the primary key's derivation, so a
 // departure cannot be corrected after the fact; the only safe moment to
 // enforce the shape is before the key exists. The policy comparison is what
 // stops a template that reached here with a stale or foreign authPolicy from
-// producing a key whose ADMIN role answers to the wrong policy.
+// producing a key whose ADMIN role answers to the wrong policy, and the
+// unique comparison is what stops a key that no other implementation of the
+// specification could recreate.
+//
+// The symmetric and kdf checks are on the Go values rather than on the wire.
+// A template that omits those fields marshals identically to one that names
+// TPM_ALG_NULL, because go-tpm tags them gotpm:"nullable" and writes
+// TPM_ALG_NULL for the Go zero value (measured in devid_template_test.go), so
+// omission is not the departure this catches. What it catches is a template
+// that names something else -- an AES symmetric definition, a KDF -- which
+// H-1 through H-4 do not allow and which does change the key.
 func assertDevIDTemplateConformant(kind DevIDKeyKind, template tpm2.TPMTPublic) error {
 	a := template.ObjectAttributes
 	fail := func(what string) error {
@@ -1260,7 +1151,161 @@ func assertDevIDTemplateConformant(kind DevIDKeyKind, template tpm2.TPMTPublic) 
 	if !bytes.Equal(template.AuthPolicy.Buffer, want) {
 		return fail("authPolicy is not the IDevID/IAK Key Policy for the template's nameAlg")
 	}
+	switch template.Type {
+	case tpm2.TPMAlgRSA:
+		return assertDevIDRSAParmsConformant(kind, template, fail)
+	case tpm2.TPMAlgECC:
+		return assertDevIDECCParmsConformant(kind, template, fail)
+	default:
+		return fail(fmt.Sprintf(
+			"type must be TPM_ALG_RSA (H-1) or TPM_ALG_ECC (H-2..H-4), not %s",
+			algorithmName(template.Type)))
+	}
+}
+
+// assertDevIDRSAParmsConformant checks the TPMS_RSA_PARMS and unique field of
+// Template H-1 (section 7.3.4.2, Table 4).
+func assertDevIDRSAParmsConformant(
+	kind DevIDKeyKind, template tpm2.TPMTPublic, fail func(string) error) error {
+
+	parms, err := template.Parameters.RSADetail()
+	if err != nil {
+		return fail("the parameters are not a TPMS_RSA_PARMS")
+	}
+	if parms.Symmetric.Algorithm != tpm2.TPMAlgNull {
+		return fail(fmt.Sprintf("symmetric->algorithm must be TPM_ALG_NULL, not %s",
+			algorithmName(parms.Symmetric.Algorithm)))
+	}
+	if parms.Exponent != 0 {
+		return fail(fmt.Sprintf("exponent must be 0, not %d", parms.Exponent))
+	}
+	if kind == DevIDKeyAttestation {
+		// "TPM_ALG_RSASSA (AK - PKCSV1_5)" or "TPM_ALG_RSAPSS (AK)" with
+		// "TPM_ALG_SHA256 (AK)" details. A Restricted signing key must name a
+		// scheme (Part 1, section 25.2.3), and rsaKeySchemeHash reports
+		// whether the one it names carries a usable hash.
+		if _, fixed, err := rsaKeySchemeHash(parms.Scheme); err != nil || !fixed {
+			return fail("an AK's scheme must be TPM_ALG_RSASSA or TPM_ALG_RSAPSS with a hash algorithm")
+		}
+	} else if parms.Scheme.Scheme != tpm2.TPMAlgNull {
+		// "scheme->scheme = TPM_ALG_NULL (Signing)", "scheme->details = NULL".
+		return fail(fmt.Sprintf("a DevID's scheme must be TPM_ALG_NULL, not %s",
+			algorithmName(parms.Scheme.Scheme)))
+	}
+	unique, err := template.Unique.RSA()
+	if err != nil {
+		return fail("the unique field is not a TPM2B_PUBLIC_KEY_RSA")
+	}
+	return assertDevIDUniqueConformant(kind, unique.Buffer, fail)
+}
+
+// assertDevIDECCParmsConformant checks the TPMS_ECC_PARMS and unique field of
+// Templates H-2 through H-4 (sections 7.3.4.3-7.3.4.5, Tables 5-7).
+func assertDevIDECCParmsConformant(
+	kind DevIDKeyKind, template tpm2.TPMTPublic, fail func(string) error) error {
+
+	parms, err := template.Parameters.ECCDetail()
+	if err != nil {
+		return fail("the parameters are not a TPMS_ECC_PARMS")
+	}
+	if parms.Symmetric.Algorithm != tpm2.TPMAlgNull {
+		return fail(fmt.Sprintf("symmetric->algorithm must be TPM_ALG_NULL, not %s",
+			algorithmName(parms.Symmetric.Algorithm)))
+	}
+	if parms.KDF.Scheme != tpm2.TPMAlgNull {
+		return fail(fmt.Sprintf("kdf->scheme must be TPM_ALG_NULL, not %s",
+			algorithmName(parms.KDF.Scheme)))
+	}
+	// "scheme->scheme = TPM_ALG_ECDSA" for both kinds. The tables also say
+	// "scheme->details = NULL", which no TPM can represent -- see
+	// DevIDTemplateSpec.eccTemplate -- so the details carry a hash and
+	// eccKeySchemeHash is what confirms it is a usable one.
+	if _, fixed, err := eccKeySchemeHash(parms.Scheme); err != nil || !fixed {
+		return fail("the scheme must be TPM_ALG_ECDSA with a hash algorithm")
+	}
+	if _, ok := devidUniqueSizes[parms.CurveID]; !ok {
+		return fail(fmt.Sprintf(
+			"curveID %s has no template; H-2 through H-4 define P-256, P-384 and P-521",
+			curveName(parms.CurveID)))
+	}
+	unique, err := template.Unique.ECC()
+	if err != nil {
+		return fail("the unique field is not a TPMS_ECC_POINT")
+	}
+	return assertDevIDUniqueConformant(kind, unique.X.Buffer, fail)
+}
+
+// assertDevIDUniqueConformant checks the unique field against section 7.3.1,
+// Table 2: the required string for the key's purpose, optionally followed by a
+// printable-ASCII device string, and not NUL terminated.
+//
+// It is deliberately a prefix rule rather than an equality one. The device
+// string is an OEM value this package does not hold at every point a template
+// passes through, so the rule that can always be enforced is that the required
+// string is there, that it is there unpadded, and that whatever follows is
+// printable ASCII. A zero-filled unique -- what this package created before
+// the string was implemented -- fails on the very first octet.
+func assertDevIDUniqueConformant(kind DevIDKeyKind, unique []byte, fail func(string) error) error {
+	required, ok := devidUniqueStrings[kind]
+	if !ok {
+		return fail("no unique string is defined for this key kind")
+	}
+	if !bytes.HasPrefix(unique, []byte(required)) {
+		return fail(fmt.Sprintf("unique must begin with the required string %q (section 7.3.1, Table 2)", required))
+	}
+	// Whatever follows the required string is the device string, and it has
+	// to satisfy the same rule the builder applies to it. The reason is
+	// reported as a template non-conformance rather than passed through, so
+	// that one error identifies every way a template can be refused here.
+	if _, err := DevIDUniqueString(kind, string(unique[len(required):])); err != nil {
+		return fail(fmt.Sprintf("the device string following %q is not admissible: %v", required, err))
+	}
 	return nil
+}
+
+// devidCertifyScheme returns the TPMT_SIG_SCHEME to hand
+// TPM2_CertifyCreation for a key created from an IAK template.
+//
+// A Restricted signing key always names a scheme, and TPM2_Sign and the
+// commands built on it require inScheme to repeat it exactly (TCG TPM 2.0
+// Library Part 3, section 12.1), so the scheme is read back off the template
+// rather than assembled a second time from the configuration that built it.
+func devidCertifyScheme(template tpm2.TPMTPublic) (tpm2.TPMTSigScheme, error) {
+	switch template.Type {
+	case tpm2.TPMAlgRSA:
+		parms, err := template.Parameters.RSADetail()
+		if err != nil {
+			return tpm2.TPMTSigScheme{}, err
+		}
+		hashAlg, _, err := rsaKeySchemeHash(parms.Scheme)
+		if err != nil {
+			return tpm2.TPMTSigScheme{}, err
+		}
+		return tpm2.TPMTSigScheme{
+			Scheme: parms.Scheme.Scheme,
+			Details: tpm2.NewTPMUSigScheme(parms.Scheme.Scheme,
+				&tpm2.TPMSSchemeHash{HashAlg: hashAlg}),
+		}, nil
+
+	case tpm2.TPMAlgECC:
+		parms, err := template.Parameters.ECCDetail()
+		if err != nil {
+			return tpm2.TPMTSigScheme{}, err
+		}
+		hashAlg, _, err := eccKeySchemeHash(parms.Scheme)
+		if err != nil {
+			return tpm2.TPMTSigScheme{}, err
+		}
+		return tpm2.TPMTSigScheme{
+			Scheme: tpm2.TPMAlgECDSA,
+			Details: tpm2.NewTPMUSigScheme(tpm2.TPMAlgECDSA,
+				&tpm2.TPMSSchemeHash{HashAlg: hashAlg}),
+		}, nil
+
+	default:
+		return tpm2.TPMTSigScheme{}, &errs.Detail{Err: ErrDevIDTemplateNonConformant,
+			Detail: fmt.Sprintf("cannot certify a key of type %s", algorithmName(template.Type))}
+	}
 }
 
 // Creates an Initial Device IDentifier (IDevID) under the
@@ -1318,15 +1363,38 @@ func (tpm *TPM2) CreateIDevID(
 		idevidAuth = idevidAttrs.Password.Bytes()
 	}
 
-	var idevidTemplate tpm2.TPMTPublic
+	// The IDevID is Template H-0 over its configured crypto suite: TCG "TPM
+	// 2.0 Keys for Device Identity and Attestation" v1.00 r12, section 7.3.4,
+	// Templates H-1 (RSA) and H-2 through H-4 (ECC P-256, P-384, P-521). It is
+	// built by the same DevIDTemplateSpec the package templates in types.go
+	// are built from, which is what carries the required 'IDEVID' unique
+	// string of section 7.3.1 and the device string that may follow it.
+	//
+	// The RSA branch keys off the EK's algorithm rather than the IDevID's
+	// because the enrollment ceremony unpacks the AK's certification signature
+	// under this key's configured padding; the selection is left as it was.
+	idevidSpec := DevIDTemplateSpec{
+		Kind:         DevIDKeySigning,
+		Algorithm:    idevidAttrs.KeyAlgorithm,
+		DeviceString: tpm.config.DeviceString,
+	}
 	if ekAttrs.KeyAlgorithm == x509.RSA {
-		if types.IsRSAPSS(idevidAttrs.SignatureAlgorithm) {
-			idevidTemplate = RSAPSSIDevIDTemplate
-		} else {
-			idevidTemplate = RSASSAIDevIDTemplate
+		idevidSpec.Algorithm = x509.RSA
+	}
+	if idevidAttrs.RSAAttributes != nil && idevidAttrs.RSAAttributes.KeySize > 0 {
+		if idevidAttrs.RSAAttributes.KeySize > math.MaxUint16 {
+			return nil, nil, ErrInvalidKeySize
 		}
-	} else if idevidAttrs.KeyAlgorithm == x509.ECDSA {
-		idevidTemplate = ECCIDevIDP256Template
+		idevidSpec.KeyBits = uint16(idevidAttrs.RSAAttributes.KeySize) // #nosec G115 -- Bounds checked above
+	}
+	if idevidAttrs.ECCAttributes != nil {
+		idevidSpec.Curve = idevidAttrs.ECCAttributes.Curve
+	}
+
+	idevidTemplate, err := idevidSpec.Template()
+	if err != nil {
+		tpm.logger.Error("failed to build the IDevID template", slog.String("error", err.Error()))
+		return nil, nil, err
 	}
 
 	// TCG "TPM 2.0 Keys for Device Identity and Attestation" v1.00 r12,

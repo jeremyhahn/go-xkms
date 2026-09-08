@@ -169,43 +169,11 @@ func TestDevIDAdminSession_RequiresTheEndorsementAuth(t *testing.T) {
 	assert.ErrorIs(t, err, ErrDevIDPolicySession)
 }
 
-// The policy is assigned on the creation path, so a template that arrives
-// with the wrong shape is refused rather than shipped. Each case mutates the
-// global template in a way the specification's Template H-0 forbids.
-func TestCreateIDevID_RefusesANonConformantTemplate(t *testing.T) {
-	cases := []struct {
-		name   string
-		mutate func(*tpm2.TPMTPublic)
-	}{
-		{"adminWithPolicy cleared", func(p *tpm2.TPMTPublic) { p.ObjectAttributes.AdminWithPolicy = false }},
-		{"userWithAuth cleared", func(p *tpm2.TPMTPublic) { p.ObjectAttributes.UserWithAuth = false }},
-		{"restricted set", func(p *tpm2.TPMTPublic) { p.ObjectAttributes.Restricted = true }},
-	}
-	for _, tc := range cases {
-		t.Run(tc.name, func(t *testing.T) {
-			original := RSASSAIDevIDTemplate
-			t.Cleanup(func() { RSASSAIDevIDTemplate = original })
-			tc.mutate(&RSASSAIDevIDTemplate)
-
-			h := newSimHarness(t, func(c *Config) {
-				c.IdentityProvisioningStrategy = string(EnrollmentStrategyIAK_IDEVID_SINGLE_PASS)
-				c.IDevID = idevidTestConfig("device-id-001", x509.SHA256WithRSA.String())
-			})
-			iakAttrs, err := h.TPM.IAKAttributes()
-			require.NoError(t, err)
-			ekPub, err := h.TPM.EKRSA()
-			require.NoError(t, err)
-
-			idevidAttrs, csr, err := h.TPM.CreateIDevID(iakAttrs, selfSignedCertForKey(t, ekPub), nil)
-			require.Error(t, err, "a non-conformant IDevID template must not create a key")
-			assert.ErrorIs(t, err, ErrDevIDTemplateNonConformant)
-			assert.Nil(t, idevidAttrs)
-			assert.Nil(t, csr)
-
-			_, err = tpm2.ReadPublic{
-				ObjectHandle: tpm2.TPMHandle(h.TPM.config.IDevID.Handle),
-			}.Execute(h.TPM.transport)
-			assert.Error(t, err, "the refusal happened before TPM2_CreatePrimary; nothing exists at the handle")
-		})
-	}
-}
+// The IDevID template is no longer a mutable package variable the creation
+// path reads: CreateIDevID builds it from DevIDTemplateSpec, which cannot
+// produce a non-conformant template, and assertDevIDTemplateConformant
+// re-checks the result before TPM2_CreatePrimary. The mutation cases this test
+// used to inject through RSASSAIDevIDTemplate now live where the two seams
+// actually are -- devid_template_test.go for the guard, one mutation per
+// forbidden field, and devid_template_simulator_test.go for the proof that the
+// template the creation path builds is the template the key is derived from.

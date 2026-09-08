@@ -15,16 +15,15 @@
   Tables 14–19 (`devid_policy_test.go`). The specification is checked in
   under `docs/references/`.
 
-  **Upgrade note — this re-keys every IDevID and IAK.** `adminWithPolicy`
-  and `authPolicy` are inputs to a primary key's derivation, so a device
-  provisioned before this change holds identity keys that no longer match
-  what `CreateIDevID`/`CreateIAK` derive. Those devices must be
-  re-provisioned and their IDevID/IAK certificates re-issued; their existing
-  certificates remain valid for the old keys but the old keys cannot be
-  re-derived by the new code. There is no in-place migration, by the nature
-  of primary keys. `ErrDevIDTemplateNonConformant` refuses, before
-  `TPM2_CreatePrimary`, any template whose attributes or policy depart from
-  Template H-0.
+  **This re-keys every IDevID and IAK.** `adminWithPolicy` and `authPolicy`
+  are inputs to a primary key's derivation, so a device provisioned before
+  this change holds identity keys that `CreateIDevID`/`CreateIAK` can no
+  longer derive. The key-template change in this same release moves further
+  derivation inputs, so the two share **one** upgrade note: see *Upgrade
+  note* under "IDevID and IAK key creation templates now match TCG …" in
+  `changed-tcg-devid-key-templates-1.md`. Re-provision once, for both.
+  `ErrDevIDTemplateNonConformant` refuses, before `TPM2_CreatePrimary`, any
+  template whose attributes or policy depart from Template H-0.
 
 - **One naming rule for both device identity keys.** `DevIDCommonName`
   resolves an IDevID or IAK Common Name as: explicit `cn`, else the device's
