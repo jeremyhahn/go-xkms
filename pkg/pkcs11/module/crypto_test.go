@@ -5844,12 +5844,14 @@ func TestCryptoManager_Sign_ECDSA_ProducesVerifiableRawSignature(t *testing.T) {
 		t.Fatalf("Sign failed: %v", err)
 	}
 
-	// P-256: two 32-byte field elements, never DER.
+	// P-256: two 32-byte field elements, never DER. A DER-encoded P-256
+	// signature is 70 to 72 bytes, so the length alone rules DER out, and the
+	// reassembly below proves the halves are the signature. Do not add a
+	// first-byte check for the DER SEQUENCE tag: r is uniform, so its leading
+	// byte is 0x30 in one signature of every 256, and that check failed
+	// 4 times in 600 runs on an unchanged tree.
 	if len(sig) != 64 {
 		t.Fatalf("expected a 64-byte raw r||s signature, got %d bytes", len(sig))
-	}
-	if sig[0] == 0x30 {
-		t.Fatal("the signature is still ASN.1 DER; section 6.3.1 requires raw r||s")
 	}
 
 	pub, err := engine.publicKey(keyID)
