@@ -1167,3 +1167,57 @@ func TestPlatformKeyStore_SetAuthReady(t *testing.T) {
 	pks.SetAuthReady(false)
 	assert.False(t, pks.IsAuthReady(), "app layer cleared auth ready")
 }
+
+// A PIN change evicts the persistent SRK before recreating it. When the
+// recreate fails, IsProvisioned must report what the handle actually holds,
+// and the next Initialize must take the branch that matches (#448).
+func TestPlatformKeyStore_ChangeAuthFailure_ReconcilesProvisionedState(t *testing.T) {
+	t.Run("SRKGone_ReportsUnprovisionedAndRecreates", func(t *testing.T) {
+		mock := &mockTPMForPKS{
+			config:        testConfigForPKS(false),
+			changeAuthErr: ErrAuthChangeRecreate,
+		}
+		pks, err := NewPlatformKeyStore(slog.Default(), mock, &mockKeyBackendForPKS{}, mock.config, "")
+		require.NoError(t, err)
+		require.True(t, pks.IsProvisioned(), "an SRK exists before the change")
+
+		// The evict succeeded and the recreate did not: nothing is at the handle.
+		mock.readHandleErr = errors.New("TPM_RC_HANDLE: the handle references a non-existent object")
+		err = pks.ChangeAuth("old-pin", "new-pin")
+		require.ErrorIs(t, err, ErrAuthChangeRecreate)
+
+		assert.False(t, pks.IsProvisioned(), "no key at the handle: the store must not report provisioned")
+		assert.False(t, pks.IsAuthReady())
+
+		// A retry through Initialize must recreate the SRK, not try to verify
+		// auth against a key that is not there.
+		mock.readHandleErr = nil
+		mock.createSRKCalled.Store(false)
+		require.NoError(t, pks.Initialize("", "new-pin"))
+		assert.True(t, mock.createSRKCalled.Load(), "Initialize must take the clean-recreate branch")
+		assert.True(t, pks.IsProvisioned())
+		assert.True(t, pks.IsAuthReady())
+	})
+
+	t.Run("SRKStillPresent_StaysProvisionedButNotAuthReady", func(t *testing.T) {
+		mock := &mockTPMForPKS{
+			config:        testConfigForPKS(false),
+			changeAuthErr: ErrAuthChangeRecreate,
+		}
+		pks, err := NewPlatformKeyStore(slog.Default(), mock, &mockKeyBackendForPKS{}, mock.config, "")
+		require.NoError(t, err)
+
+		err = pks.ChangeAuth("old-pin", "new-pin")
+		require.ErrorIs(t, err, ErrAuthChangeRecreate)
+
+		assert.True(t, pks.IsProvisioned(), "the handle still holds a key, so the store is still provisioned")
+		assert.False(t, pks.IsAuthReady(), "but what auth it holds is unknown")
+
+		// Here the retry must NOT recreate: the key exists, only its auth is
+		// unknown, and ensureSRKAuth is the branch that resolves that.
+		mock.createSRKCalled.Store(false)
+		require.NoError(t, pks.Initialize("", "new-pin"))
+		assert.False(t, mock.createSRKCalled.Load(), "an existing SRK is verified, not recreated")
+		assert.True(t, pks.IsAuthReady())
+	})
+}

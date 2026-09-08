@@ -493,6 +493,13 @@ func (pks *PlatformKeyStore) ChangeAuth(currentPIN, newPIN string) error {
 		// callers use that flag to skip enrollment and to decide a credential
 		// exists to check against.
 		pks.authReady.Store(false)
+		// The same failure decides whether an SRK exists at all. Re-probe the
+		// handle and let IsProvisioned report what is actually there, so a
+		// retry through Initialize takes the clean-recreate branch when the
+		// key is gone instead of ensureSRKAuth, which assumes an SRK to
+		// verify against and fails at ReadHandle (#448). Recovery itself is
+		// left to that retry: this path reports, it does not re-provision.
+		pks.reconcileSRKPresence()
 		return err
 	}
 
@@ -500,6 +507,24 @@ func (pks *PlatformKeyStore) ChangeAuth(currentPIN, newPIN string) error {
 	// auth is in a known-good state.
 	pks.authReady.Store(true)
 	return nil
+}
+
+// reconcileSRKPresence sets initialized from whether the persistent SRK
+// handle currently holds an object, refreshing the cached Name when it does.
+// It is the same probe the constructor runs, applied after an operation that
+// may have evicted the key.
+func (pks *PlatformKeyStore) reconcileSRKPresence() {
+	handle := pks.srkAttrs.TPMAttributes.Handle
+	srkName, _, err := pks.tpm.ReadHandle(handle)
+	if err != nil {
+		pks.logger.Warn("platform SRK is no longer present after a failed auth change; the store is unprovisioned until Initialize recreates it",
+			slog.Uint64("handle", uint64(handle)),
+			slog.String("error", err.Error()))
+		pks.initialized.Store(false)
+		return
+	}
+	pks.srkAttrs.TPMAttributes.Name = srkName
+	pks.initialized.Store(true)
 }
 
 // GetLockoutInfo returns real TPM dictionary attack lockout counters by

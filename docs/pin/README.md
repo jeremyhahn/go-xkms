@@ -131,7 +131,7 @@ successfully before the TPM2 PIN backend is usable end-to-end.
 
 | Predicate | Meaning |
 |-----------|---------|
-| `IsInitialized()` | The SRK object exists in the TPM. May be `true` when the SRK was created by a prior TPM owner with unknown auth. Using this alone to activate the TPM2 PIN backend is insufficient. |
+| `IsInitialized()` | The SRK object exists in the TPM. May be `true` when the SRK was created by a prior TPM owner with unknown auth. Using this alone to activate the TPM2 PIN backend is insufficient. A failed `ChangeAuth` re-probes the handle and resets this from what is actually there: a PIN change evicts the SRK before recreating it, so when the recreate fails the key may be gone, and the next `Initialize` must recreate rather than verify (#448). |
 | `IsAuthReady()` | The SRK's auth value is known-good — set by this application or confirmed via `VerifyAuth`. This is the correct predicate for selecting the TPM2 PIN backend. |
 
 `SetAuthReady(bool)` is an explicit override for a caller that has confirmed
