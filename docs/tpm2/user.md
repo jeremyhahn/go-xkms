@@ -129,6 +129,19 @@ Separately, an IAK provisioned with `iak.cn` unset was stored under an empty
 name; it is now named `<model>-<serial>`, and artifacts under the old empty
 name are not found by the new one. A configured `iak.cn` is unaffected.
 
+**Provisioning either completes or refuses.** With an `idevid` section
+configured, `Install` needs the TPM's EK certificate: the enrollment CSR
+carries it and the CA checks it before issuing an identity. If the
+certificate is not in NV RAM (`ek.cert-handle`) or the certificate store,
+provisioning stops with `ErrDevIDProvisionEKCert` and mints no IDevID —
+previously it logged "continuing without it" and reported success, leaving a
+device that could not enroll. Write the manufacturer's certificate first
+(`ProvisionEKCert`, or the SDK's equivalent), or install without the IDevID
+step if the platform is not meant to carry an identity. A failed key creation
+or an unreadable key handle is reported the same way
+(`ErrDevIDProvisionIDevID`, `ErrDevIDProvisionIAK`,
+`ErrDevIDProvisionLookup`) rather than skipped.
+
 ## The lockout counter
 
 Failed authorizations advance a counter that survives reboots. When it fills,

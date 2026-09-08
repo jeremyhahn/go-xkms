@@ -399,57 +399,15 @@ func (tpm *TPM2) Install(soPIN types.Password, opts *InstallOptions) error {
 			return ekErr
 		}
 		ekAttrs.TPMAttributes.HierarchyAuth = soPIN
-		var iakAttrs *types.KeyAttributes
-		iakAttrs, err := tpm.IAKAttributes()
-		if err != nil {
-			if err == tpm2.TPMRC(0x18b) {
-				// TPM_RC_HANDLE (handle 1): the handle is not correct for the use
-				// This means the IAK doesn't exist yet - create it
-				tpm.logger.Info("Creating Initial Attestation Key")
-				iakAttrs, err = tpm.CreateIAK(ekAttrs, nil)
-				if err != nil {
-					return err
-				}
-			} else {
-				return err
-			}
+		if err := tpm.installIAK(ekAttrs); err != nil {
+			return err
 		}
-		_ = iakAttrs
 	}
 
 	// Create IDevID if it doesnt exist and is configured
-	if opts.IDevID {
-		if tpm.config.IDevID != nil {
-			iakAttrs, iakErr := tpm.IAKAttributes()
-			if iakErr != nil {
-				return iakErr
-			}
-			if _, err := tpm.IDevIDAttributes(); err != nil {
-				if err == tpm2.TPMRC(0x18b) {
-					// TPM_RC_HANDLE (handle 1): the handle is not correct for the use
-					// This means the IDevID doesn't exist yet - create it
-					tpm.logger.Info("Creating Initial Device Identity Key")
-					// Get EK certificate for IDevID CSR (optional, may not exist)
-					ekCert, _ := tpm.EKCertificate()
-					if _, _, err := tpm.CreateIDevID(iakAttrs, ekCert, nil); err != nil {
-						// IDevID creation is optional (unlike EK/SRK/IAK):
-						// CreateIDevID requires a non-nil EK certificate to
-						// populate the TCG-CSR-IDEVID structure (see
-						// createIDevIDContent/ErrInvalidEKCert), but many
-						// platforms - software simulators, or hardware whose
-						// manufacturer cert hasn't been provisioned into NV
-						// RAM or downloaded yet - have no EK cert available
-						// at install time. Failing to mint an IDevID must
-						// not abort provisioning of the rest of the
-						// platform; log and continue, consistent with the
-						// "Ignore other errors" handling below for a
-						// pre-existing IDevID lookup failure.
-						tpm.logger.Warn("failed to create IDevID (continuing without it)",
-							slog.String("error", err.Error()))
-					}
-				}
-				// Ignore other errors - IDevID creation is optional
-			}
+	if opts.IDevID && tpm.config.IDevID != nil {
+		if err := tpm.installIDevID(); err != nil {
+			return err
 		}
 	}
 
@@ -461,6 +419,63 @@ func (tpm *TPM2) Install(soPIN types.Password, opts *InstallOptions) error {
 	}
 
 	// Platform is provisioned
+	return nil
+}
+
+// tpmRCHandle is TPM_RC_HANDLE for handle 1: the handle is not correct for
+// the use. Reading the public area of an unpopulated persistent handle answers
+// with it, so on the provisioning path it means "absent, create it".
+const tpmRCHandle = tpm2.TPMRC(0x18b)
+
+// installIAK ensures the Initial Attestation Key exists at its persistent
+// handle, creating it when the TPM reports the handle empty (TCG "TPM 2.0 Keys
+// for Device Identity and Attestation" v1.00 r12, section 6.1.2 step 1).
+//
+// The ceremony either completes or the device has no identity: any lookup
+// answer other than TPM_RC_HANDLE, and any creation failure, is returned as a
+// typed error and provisioning stops.
+func (tpm *TPM2) installIAK(ekAttrs *types.KeyAttributes) error {
+	if _, err := tpm.IAKAttributes(); err == nil {
+		return nil
+	} else if err != tpmRCHandle {
+		return &errs.Joined{Lead: ErrDevIDProvisionLookup, Detail: "IAK", Cause: err}
+	}
+	tpm.logger.Info("Creating Initial Attestation Key")
+	if _, err := tpm.CreateIAK(ekAttrs, nil); err != nil {
+		return &errs.Joined{Lead: ErrDevIDProvisionIAK, Cause: err}
+	}
+	return nil
+}
+
+// installIDevID ensures the Initial Device Identity key exists at its
+// persistent handle, creating it when the TPM reports the handle empty
+// (section 6.2.2 step 2).
+//
+// The EK certificate is mandatory: the TCG-CSR-IDEVID carries it (section
+// 6.2.2 step 4b) and the CA verifies it before issuing (step 6b). A platform
+// without one cannot complete the ceremony, so provisioning refuses with
+// ErrDevIDProvisionEKCert rather than minting a key it can never enroll --
+// previously the certificate lookup error was discarded and a failed IDevID
+// creation was logged and skipped, leaving the device without an identity
+// while Install reported success.
+func (tpm *TPM2) installIDevID() error {
+	iakAttrs, err := tpm.IAKAttributes()
+	if err != nil {
+		return &errs.Joined{Lead: ErrDevIDProvisionLookup, Detail: "IAK", Cause: err}
+	}
+	if _, err := tpm.IDevIDAttributes(); err == nil {
+		return nil
+	} else if err != tpmRCHandle {
+		return &errs.Joined{Lead: ErrDevIDProvisionLookup, Detail: "IDevID", Cause: err}
+	}
+	tpm.logger.Info("Creating Initial Device Identity Key")
+	ekCert, err := tpm.EKCertificate()
+	if err != nil {
+		return &errs.Joined{Lead: ErrDevIDProvisionEKCert, Cause: err}
+	}
+	if _, _, err := tpm.CreateIDevID(iakAttrs, ekCert, nil); err != nil {
+		return &errs.Joined{Lead: ErrDevIDProvisionIDevID, Cause: err}
+	}
 	return nil
 }
 

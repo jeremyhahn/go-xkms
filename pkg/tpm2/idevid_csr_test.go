@@ -4981,7 +4981,7 @@ func TestCreateIDevIDContent_ValidInput(t *testing.T) {
 		},
 	}
 
-	content, err := tpm.createIDevIDContent(ekCert, akAttrs, idevidAttrs)
+	content, err := tpm.createIDevIDContent(ekCert, akAttrs, idevidAttrs, akAttrs)
 	require.NoError(t, err)
 	require.NotNil(t, content)
 
@@ -5048,28 +5048,39 @@ func TestCreateIDevIDContent_InvalidHash(t *testing.T) {
 		},
 	}
 
-	// Test with various invalid hash functions
-	invalidHashes := []crypto.Hash{
-		crypto.MD5,
-		crypto.MD4,
-		crypto.SHA224, // Not supported in our ParseHashSize
-		crypto.RIPEMD160,
+	idevidAttrs := &types.KeyAttributes{
+		Hash: crypto.SHA256,
+		TPMAttributes: &types.TPMAttributes{
+			BPublic:     tpm2.New2B(RSASSATemplate),
+			CertifyInfo: []byte("idevid-certify-info"),
+			Signature:   []byte("idevid-signature"),
+		},
 	}
 
-	for _, invalidHash := range invalidHashes {
-		idevidAttrs := &types.KeyAttributes{
-			Hash: invalidHash,
+	// hashAlgoId and hashSz describe the signer's hash (section 13.1), so a
+	// signer whose HashAlg is not a hash algorithm cannot produce a CSR.
+	invalidSignerHashes := []tpm2.TPMAlgID{
+		tpm2.TPMAlgID(0),
+		tpm2.TPMAlgRSA,
+		tpm2.TPMAlgAES,
+		tpm2.TPMAlgNull,
+	}
+
+	for _, invalidHash := range invalidSignerHashes {
+		signerAttrs := &types.KeyAttributes{
 			TPMAttributes: &types.TPMAttributes{
-				BPublic:     tpm2.New2B(RSASSATemplate),
-				CertifyInfo: []byte("idevid-certify-info"),
-				Signature:   []byte("idevid-signature"),
+				BPublic: tpm2.New2B(RSASSATemplate),
+				HashAlg: invalidHash,
 			},
 		}
 
-		_, err := tpm.createIDevIDContent(ekCert, akAttrs, idevidAttrs)
-		assert.Error(t, err)
-		assert.Equal(t, ErrInvalidHashFunction, err)
+		_, err := tpm.createIDevIDContent(ekCert, akAttrs, idevidAttrs, signerAttrs)
+		require.Error(t, err)
+		assert.ErrorIs(t, err, ErrInvalidHashFunction)
 	}
+
+	_, err := tpm.createIDevIDContent(ekCert, akAttrs, idevidAttrs, nil)
+	assert.ErrorIs(t, err, ErrInvalidKeyAttributes, "a nil signer has no hash to describe")
 }
 
 func TestCreateIDevIDContent_DifferentHashAlgorithms(t *testing.T) {
@@ -5103,28 +5114,34 @@ func TestCreateIDevIDContent_DifferentHashAlgorithms(t *testing.T) {
 	tests := []struct {
 		name         string
 		hash         crypto.Hash
+		hashAlg      tpm2.TPMAlgID
 		expectedSize uint32
 	}{
-		{"SHA1", crypto.SHA1, 20},
-		{"SHA256", crypto.SHA256, 32},
-		{"SHA384", crypto.SHA384, 48},
-		{"SHA512", crypto.SHA512, 64},
+		{"SHA1", crypto.SHA1, tpm2.TPMAlgSHA1, 20},
+		{"SHA256", crypto.SHA256, tpm2.TPMAlgSHA256, 32},
+		{"SHA384", crypto.SHA384, tpm2.TPMAlgSHA384, 48},
+		{"SHA512", crypto.SHA512, tpm2.TPMAlgSHA512, 64},
 	}
 
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
+			// The IDevID signs (single-pass strategy): hashAlgoId and hashSz
+			// must follow its hash, not the IAK's SHA-256 above.
 			idevidAttrs := &types.KeyAttributes{
 				Hash: tc.hash,
 				TPMAttributes: &types.TPMAttributes{
 					BPublic:     tpm2.New2B(RSASSATemplate),
 					CertifyInfo: []byte("idevid-certify-info"),
 					Signature:   []byte("idevid-signature"),
+					HashAlg:     tc.hashAlg,
 				},
 			}
 
-			content, err := tpm.createIDevIDContent(ekCert, akAttrs, idevidAttrs)
+			content, err := tpm.createIDevIDContent(ekCert, akAttrs, idevidAttrs, idevidAttrs)
 			require.NoError(t, err)
 			assert.Equal(t, tc.expectedSize, content.HashSz)
+			assert.Equal(t, uint32(tc.hashAlg), content.HashAlgoId,
+				"hashAlgoId must name the signer's hash")
 		})
 	}
 }
@@ -5167,7 +5184,7 @@ func TestCreateIDevIDContent_EmptyFields(t *testing.T) {
 		},
 	}
 
-	content, err := tpm.createIDevIDContent(ekCert, akAttrs, idevidAttrs)
+	content, err := tpm.createIDevIDContent(ekCert, akAttrs, idevidAttrs, akAttrs)
 	require.NoError(t, err)
 
 	// When config Model/Serial are empty, ResolvePlatformAttributes falls back
@@ -5227,7 +5244,7 @@ func TestCreateIDevIDContent_LargeData(t *testing.T) {
 		},
 	}
 
-	content, err := tpm.createIDevIDContent(ekCert, akAttrs, idevidAttrs)
+	content, err := tpm.createIDevIDContent(ekCert, akAttrs, idevidAttrs, akAttrs)
 	require.NoError(t, err)
 	assert.Equal(t, uint32(4096), content.EkCertSZ)
 	assert.NotEmpty(t, content.AttestPubSZ)

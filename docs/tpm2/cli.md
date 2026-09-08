@@ -31,6 +31,14 @@ provisioning time. A device whose provisioning config lacks it cannot produce
 a certifiable IDevID, and says so (`ErrDevIDPolicySession`) rather than
 emitting an unverifiable CSR. See `user.md`, "Identity keys".
 
+Two further changes on the device side that a CA operator will see: the
+packed CSR's first four bytes are now `01 00 01 00` (§13.1's structure
+version for an IDevID CSR) instead of `00 00 01 00` — `xkmsctl ca tcg sign`
+and the ACME `enroll-01` path accept both — and a device whose EK certificate
+is missing no longer produces a CSR at all; its `xkmsd` install stops with
+`ErrDevIDProvisionEKCert`. See `user.md`, "Provisioning either completes or
+refuses".
+
 The identity keys themselves also changed shape, and no flag says so: they now
 carry the `'IDEVID'` / `'IAK'` `unique` strings of TCG §7.3.1, an RSA IDevID
 names no signature scheme, and `tpm.device-string` in the server configuration

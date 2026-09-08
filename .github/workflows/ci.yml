@@ -1151,6 +1151,51 @@ jobs:
           SOFTHSM2_CONF: ${{ github.workspace }}/softhsm2.conf
         run: go test -race -short -timeout 30m -tags="pkcs8,awskms,gcpkms,azurekv,pkcs11,vault,codec_cbor,codec_json,codec_msgpack" ./...
 
+  # Job 7b: pkg/tpm2 on the in-process TPM simulator
+  #
+  # The unit job's package list greps `pkg/tpm2$` OUT (Makefile test-go), so
+  # until this job existed no simulator suite ran in CI at all -- not the TCG
+  # specification vectors in devid_policy_test.go, not the CSR structure test
+  # against section 13.1, not the provisioning fail-closed tests. A
+  # specification pinned only on developer machines is not law.
+  # `make test-tpm2-simulator` is the single entry point; the suite measures
+  # ~90 s on a workstation and the target bounds it at 20 minutes.
+  #
+  # Deliberately `needs` nothing: the suite is cheap and independent of the
+  # fast tier, so a staged wait would add latency without saving runner time.
+  # It is not yet in the ci-gate needs list; adding it there is the step that
+  # makes it a required check.
+  tpm2-simulator:
+    name: TPM2 Simulator Tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: ${{ env.GO_VERSION }}
+          cache: true
+
+      - name: Install dependencies
+        run: go mod download
+
+      - name: Install simulator build dependencies
+        run: |
+          sudo apt-get update
+          # libssl-dev: go-tpm-tools/simulator compiles the reference TPM
+          # with cgo and links it against -lcrypto. libicu-dev and
+          # libusb-1.0-0-dev: see the "build" job's comment.
+          sudo apt-get install -y libssl-dev libicu-dev libusb-1.0-0-dev
+
+      - name: Run pkg/tpm2 on the simulator
+        env:
+          CGO_ENABLED: 1
+        run: make test-tpm2-simulator
+
   # Job 8 (FIPS 140-3 gate) IS NOT HERE ON PURPOSE. Do not re-add it without
   # reading go-xkms #23 first.
   #
@@ -1176,7 +1221,7 @@ jobs:
     name: CI Gate
     runs-on: ubuntu-latest
     if: always()
-    needs: [test, nested-module-test, lint, security, build, build-raft, arch-gates, docker, race]
+    needs: [test, nested-module-test, lint, security, build, build-raft, arch-gates, docker, race, tpm2-simulator]
 
     steps:
       - name: Fail closed on any non-success
@@ -1201,6 +1246,7 @@ jobs:
           check build-raft       "${{ needs.build-raft.result }}"
           check arch-gates       "${{ needs.arch-gates.result }}"
           check race             "${{ needs.race.result }}"
+          check tpm2-simulator   "${{ needs.tpm2-simulator.result }}"
           # docker carries `if: github.event_name == 'push'`, so 'skipped' is
           # legitimate on a pull_request and only there. On a push a skip means
           # the job never ran -- fail closed rather than pass vacuously.

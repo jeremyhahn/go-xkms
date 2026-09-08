@@ -468,6 +468,12 @@ var (
 	ErrTPMDevIDPolicySession          = tpm2.ErrDevIDPolicySession
 	ErrTPMDevIDCNUnresolved           = tpm2.ErrDevIDCNUnresolved
 	ErrTPMDevIDTemplateNonConformant  = tpm2.ErrDevIDTemplateNonConformant
+	ErrTPMDevIDProvisionEKCert        = tpm2.ErrDevIDProvisionEKCert
+	ErrTPMDevIDProvisionIAK           = tpm2.ErrDevIDProvisionIAK
+	ErrTPMDevIDProvisionIDevID        = tpm2.ErrDevIDProvisionIDevID
+	ErrTPMDevIDProvisionLookup        = tpm2.ErrDevIDProvisionLookup
+	ErrTPMTCGCSRAttestation           = tpm2.ErrTCGCSRAttestation
+	ErrTPMTCGCSRPad                   = tpm2.ErrTCGCSRPad
 	ErrTPMDevIDUniqueString           = tpm2.ErrDevIDUniqueString
 	ErrTPMDevIDUniqueStringTooLong    = tpm2.ErrDevIDUniqueStringTooLong
 	ErrTPMDevIDTemplateSuiteUnsupport = tpm2.ErrDevIDTemplateSuiteUnsupported

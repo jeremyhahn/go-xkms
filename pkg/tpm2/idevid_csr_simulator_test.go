@@ -155,8 +155,8 @@ func TestTCGCSR_IAKStrategy_IsSignedByTheIAK(t *testing.T) {
 	csr := h.csr(t)
 
 	t.Run("carries the device identity the CA will certify", func(t *testing.T) {
-		assert.Equal(t, uint32(0x00000100), bytesToUint32(csr.StructVer),
-			"the structure version must be 1.0")
+		assert.Equal(t, TCGCSRIDevIDStructVer, bytesToUint32(csr.StructVer),
+			"the structure version must be 1.0 of an IDevID CSR, 0x01000100 (section 13.1)")
 		assert.NotEmpty(t, csr.Signature, "the CSR must be signed")
 
 		assert.Equal(t, []byte("xkms-test-device"), csr.CsrContents.ProdModel)
@@ -304,9 +304,10 @@ func TestTCGCSR_SinglePassStrategy_IsSignedByTheIDevID(t *testing.T) {
 		padSz := bytesToUint32(csr.CsrContents.PadSz)
 		require.Equal(t, int(padSz), len(csr.CsrContents.Pad),
 			"the declared padding size must match the padding carried")
-		for i, b := range csr.CsrContents.Pad {
-			require.Equal(t, byte('='), b, "padding byte %d must be the '=' filler", i)
-		}
+		require.Less(t, padSz, uint32(TCGCSRAlignment),
+			"section 13.1: the pad is what brings the structure to a multiple of 16 bytes, never more")
+		require.Zero(t, bytesToUint32(csr.Contents)%TCGCSRAlignment,
+			"section 13.1: the padded structure size is a multiple of 16 bytes")
 
 		encoded, err := csr.Marshal()
 		require.NoError(t, err)

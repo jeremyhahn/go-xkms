@@ -184,9 +184,37 @@ vocabulary. The categories that need distinguishing:
 | `ErrDevIDPolicySession` | the ADMIN-role policy session could not be built: a command with no branch in the key policy, a `PolicySecret` refused for a wrong endorsement auth, or a TPM error on a policy command |
 | `ErrDevIDCNUnresolved` | neither `cn` nor both a device model and serial number were available to name an IDevID or IAK |
 | `store.ErrEmptyKeyCN` | a key-store operation was attempted with an empty CN, which would compose a storage key of the bare extension |
+| `ErrDevIDProvisionEKCert` | `Install` was asked for an IDevID and the EK certificate could not be read from NV RAM or the certificate store. The TCG-CSR-IDEVID carries it (§6.2.2 step 4b) and the CA verifies it (step 6b); without it the ceremony cannot complete and no key is minted. The cause (`ErrEndorsementCertNotFound`, a TPM error) is reachable through `errors.Is` |
+| `ErrDevIDProvisionIDevID`, `ErrDevIDProvisionIAK` | `CreateIDevID` / `CreateIAK` failed during `Install`. Previously the IDevID failure was logged as "continuing without it" and `Install` returned nil |
+| `ErrDevIDProvisionLookup` | reading the IDevID or IAK persistent handle answered something other than TPM_RC_HANDLE. Only that code means "absent, create it"; anything else — a transport fault, a lockout — is a fault and is not treated as a provisioned key |
+| `ErrTCGCSRAttestation` | the TPM refused the quote that fills the CSR's `prodCaData`. Absence — no transport to quote over — is still an absent field (`prodCaDataSz` 0), which §13.1 allows; a refusal is not |
+| `ErrTCGCSRPad` | the TPM's RNG could not supply the §13.1 random pad |
 
 **Fail closed:** every one of these refuses. Nothing degrades to a software key
 or an unverified acceptance.
+
+## TCG-CSR-IDEVID wire structure
+
+`CreateTCG_CSR_IDEVID` (`idevid_csr.go`) emits the §13.1 structure:
+`TCG_CSR_IDEVID.structVer` = `TCGCSRIDevIDStructVer` (`0x01000100`, the
+leading `0x01` identifies an IDevID CSR; §13.2's LDevID CSR carries `0x02`),
+`contents` = the byte length of `csrContents`, `sigSz` = the signature length;
+`csrContents.structVer` = `TCGIDevIDContentStructVer` (`0x00000100`),
+`hashAlgoId` and `hashSz` = the **signer's** hash (the IAK under
+`EnrollmentStrategyIAK`, the IDevID under single-pass — the algorithm
+`HashSequence` digests the contents with and the one the CA re-hashes with),
+twelve four-byte payload sizes in the specification's order, `padSz`, the
+payloads with no delimiters, then `padSz` bytes of random data from the TPM's
+RNG bringing the structure to a multiple of `TCGCSRAlignment` (16) when
+`idevid.pad` is set. The signature is over the packed `csrContents` bytes.
+
+Two departures remain and are recorded, not hidden: §13.1 describes the
+signature as "DER encoded ... including algorithm ID" while the CSR carries
+the raw TPM signature (PKCS#1 v1.5 / PSS bytes for RSA, ASN.1 `r,s` for
+ECDSA) — changing it changes every verifier in `pkg/ca` and `pkg/acme`; and
+`idevid.pad=false` emits an unpadded structure the specification's typedef
+does not describe. `UnmarshalIDevIDCSR` accepts both structure versions so a
+CA on this release still enrolls a device on the previous one.
 
 ## Configuration
 
@@ -248,7 +276,14 @@ The suite is unusually large and deliberately structured:
   `scheme->details = NULL` is refused by the TPM, and that the key
   `CreateIDevID` persists is the one `DevIDTemplateSpec` derives),
   seal-with-PCR-policy, SSRK platform policy,
-  capabilities, PIN enrollment.
+  capabilities, PIN enrollment, the §13.1 wire structure
+  (`tcg_csr_structure_simulator_test.go` — a reader written from the
+  specification's field list, independent of the packer, checks every
+  version, size prefix, payload order, the pad and the signature of a CSR the
+  device actually built) and provisioning fail-closed
+  (`devid_provision_simulator_test.go` — `Install` with an IDevID configured
+  and no EK certificate, a transport fault on the lookup, and a fault on
+  `TPM2_CreatePrimary`, each of which returned nil before).
 - **Leak suites** — object contexts, auth sessions, auth sessions under
   transport fault, general resources. These are the regression guard for the
   package's hardest rule.
@@ -259,6 +294,15 @@ The suite is unusually large and deliberately structured:
 
 Hardware runs need a real TPM; the simulator covers everything else, one client
 at a time.
+
+**Running it.** `make test` greps `pkg/tpm2` out of its package list, so the
+package has its own targets: `make test-tpm2-simulator` (the whole package
+under `codec_cbor codec_json codec_msgpack tpm_simulator`, bounded at
+`TPM2_SIMULATOR_TIMEOUT`, default 20 minutes, against a run of about 90
+seconds on a workstation), `make coverage-tpm2-simulator` (mocks and tests
+excluded from the profile) and `make bench-tpm2-simulator`. The CI job
+`tpm2-simulator` runs the first on every push and pull request; the simulator
+is cgo and links `-lcrypto`, so the job installs `libssl-dev`.
 
 ## Observability
 

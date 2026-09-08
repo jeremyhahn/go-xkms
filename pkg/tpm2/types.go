@@ -243,6 +243,42 @@ var (
 	// TPM2_CreatePrimary instead.
 	ErrDevIDTemplateNonConformant = errors.New("tpm: the IDevID/IAK template does not conform to TCG Template H-0")
 
+	// ErrDevIDProvisionEKCert reports that device identity provisioning could
+	// not obtain the endorsement key certificate. The TCG-CSR-IDEVID carries
+	// the EK certificate (TCG "TPM 2.0 Keys for Device Identity and
+	// Attestation" v1.00 r12, section 6.1.2 step 2b and section 6.2.2 step
+	// 4b) and the CA verifies it before issuing; without it the ceremony
+	// cannot complete, so provisioning refuses rather than continuing without
+	// an identity.
+	ErrDevIDProvisionEKCert = errors.New("tpm: device identity provisioning requires the endorsement key certificate")
+
+	// ErrDevIDProvisionIAK reports that the Initial Attestation Key could not
+	// be created during provisioning (section 6.1.2 step 1).
+	ErrDevIDProvisionIAK = errors.New("tpm: failed to provision the initial attestation key")
+
+	// ErrDevIDProvisionIDevID reports that the Initial Device Identity key
+	// could not be created during provisioning (section 6.2.2 step 2). A
+	// device without an IDevID has no identity; provisioning fails closed
+	// instead of logging and continuing.
+	ErrDevIDProvisionIDevID = errors.New("tpm: failed to provision the initial device identity key")
+
+	// ErrDevIDProvisionLookup reports that provisioning could not determine
+	// whether an IDevID or IAK already exists at its persistent handle. Only
+	// TPM_RC_HANDLE means "absent, create it"; every other answer is a fault
+	// that must not be mistaken for a provisioned key.
+	ErrDevIDProvisionLookup = errors.New("tpm: failed to determine whether a device identity key exists")
+
+	// ErrTCGCSRAttestation reports that the platform attestation carried in
+	// the TCG-CSR-IDEVID prodCaData field (section 13.1) could not be
+	// produced. A quote the TPM refused is a fault; the CSR is not emitted
+	// with the attestation silently missing.
+	ErrTCGCSRAttestation = errors.New("tpm: failed to produce the platform attestation carried by the TCG-CSR-IDEVID")
+
+	// ErrTCGCSRPad reports that the random pad bytes the TCG-CSR-IDEVID
+	// structure ends with (section 13.1: "padSz bytes of random data") could
+	// not be read from the TPM's random number generator.
+	ErrTCGCSRPad = errors.New("tpm: failed to generate the TCG-CSR-IDEVID pad")
+
 	// ErrDevIDUniqueString reports that the unique field of an IDevID or IAK
 	// template is not the string TCG "TPM 2.0 Keys for Device Identity and
 	// Attestation" v1.00 r12, section 7.3.1 Table 2 requires of the key's
@@ -633,6 +669,24 @@ var vendors = map[TCGVendorID]string{
 func (id TCGVendorID) String() string {
 	return vendors[id]
 }
+
+// Structure constants of the TCG-CSR-IDEVID, from TCG "TPM 2.0 Keys for
+// Device Identity and Attestation" v1.00 r12, section 13.1.
+const (
+	// TCGCSRIDevIDStructVer is TCG_CSR_IDEVID.structVer for version 1.0 of the
+	// structure: "Version 1.0 = 0x01000100". The first byte, 0x01, identifies
+	// an IDevID CSR; an LDevID CSR (section 13.2) carries 0x02 there.
+	TCGCSRIDevIDStructVer uint32 = 0x01000100
+
+	// TCGIDevIDContentStructVer is TCG_IDEVID_CONTENT.structVer for version
+	// 1.0 of the content structure: "Version 1.0 = 0x00000100".
+	TCGIDevIDContentStructVer uint32 = 0x00000100
+
+	// TCGCSRAlignment is the byte multiple the padded TCG_IDEVID_CONTENT
+	// structure is brought to: "padSz bytes of random data here to make the
+	// structure size a multiple of 16 bytes".
+	TCGCSRAlignment = 16
+)
 
 // TPM 2.0 Keys for Device Identity and Attestation -
 // Section 13.1 - TCG-CSR-IDEVID

@@ -50,7 +50,7 @@ func (tpm *TPM2) CreateTCG_CSR_IDEVID(
 
 	tcgContent := &TCG_IDEVID_CONTENT{}
 
-	content, err := tpm.createIDevIDContent(ekCert, akAttrs, idevidAttrs)
+	content, err := tpm.createIDevIDContent(ekCert, akAttrs, idevidAttrs, signerAttrs)
 	if err != nil {
 		return TCG_CSR_IDEVID{}, err
 	}
@@ -88,12 +88,15 @@ func (tpm *TPM2) CreateTCG_CSR_IDEVID(
 	var padding []byte
 	var padSz uint32
 	if tpm.config.IDevID.Pad {
-		// Payload is followed by padSz bytes here to make the structure a
-		// multiple of 16 bytes.
-		padSz = uint32((16 - baseSz%16) % 16) // #nosec G115 -- result is < 16
-		padding = make([]byte, padSz)
-		for i := uint32(0); i < padSz; i++ {
-			padding[i] = '='
+		// Section 13.1: "Payload is followed by padSz bytes of random data
+		// here to make the structure size a multiple of 16 bytes." The pad
+		// is drawn from the TPM's RNG; a fixed filler byte was a departure.
+		padSz = uint32((TCGCSRAlignment - baseSz%TCGCSRAlignment) % TCGCSRAlignment) // #nosec G115 -- result is < 16
+		if padSz > 0 {
+			padding, err = tpm.RandomBytes(int(padSz))
+			if err != nil {
+				return TCG_CSR_IDEVID{}, &errs.Joined{Lead: ErrTCGCSRPad, Cause: err}
+			}
 		}
 	}
 
@@ -104,7 +107,7 @@ func (tpm *TPM2) CreateTCG_CSR_IDEVID(
 	}
 	contents := uint32(totalSz) // #nosec G115 -- bounds checked above
 
-	binary.BigEndian.PutUint32(tcgContent.StructVer[:], 0x00000100)
+	binary.BigEndian.PutUint32(tcgContent.StructVer[:], TCGIDevIDContentStructVer)
 	binary.BigEndian.PutUint32(tcgContent.HashAlgoId[:], content.HashAlgoId)
 	binary.BigEndian.PutUint32(tcgContent.HashSz[:], content.HashSz)
 
@@ -177,8 +180,12 @@ func (tpm *TPM2) CreateTCG_CSR_IDEVID(
 		return TCG_CSR_IDEVID{}, err
 	}
 
+	// Section 13.1: TCG_CSR_IDEVID.structVer "Version 1.0 = 0x01000100"; the
+	// leading 0x01 is what tells an IDevID CSR from an LDevID CSR (0x02). The
+	// content structure's own version, 0x00000100, was previously written
+	// here too, so the outer header announced no CSR type at all.
 	tcgCSR := TCG_CSR_IDEVID{}
-	binary.BigEndian.PutUint32(tcgCSR.StructVer[:], 0x00000100)
+	binary.BigEndian.PutUint32(tcgCSR.StructVer[:], TCGCSRIDevIDStructVer)
 	binary.BigEndian.PutUint32(tcgCSR.Contents[:], contents)
 	if len(signature) > math.MaxUint32 {
 		return TCG_CSR_IDEVID{}, &errs.Message{Msg: fmt.Sprintf("signature too large: %d", len(signature))}
@@ -190,11 +197,21 @@ func (tpm *TPM2) CreateTCG_CSR_IDEVID(
 	return tcgCSR, nil
 }
 
-// Create the TCG_CSR_IDEVID content structure
+// Create the TCG_CSR_IDEVID content structure.
+//
+// signerAttrs is the key that signs the CSR -- the IAK under
+// EnrollmentStrategyIAK, the IDevID under the single-pass strategy. Section
+// 13.1 defines hashAlgoId as the "TCG algorithm identifier for CSR hash" and
+// hashSz as the "Size, in bytes, of hash used", so both describe the signer's
+// hash: that is the algorithm HashSequence digests the contents with and the
+// one the CA re-hashes with to verify the signature. They used to be taken
+// from two different keys (the IAK's algorithm, the IDevID's size), which
+// only agreed while both keys happened to use the same hash.
 func (tpm *TPM2) createIDevIDContent(
 	ekCert *x509.Certificate,
 	akAttrs *types.KeyAttributes,
-	idevidAttrs *types.KeyAttributes) (*UNPACKED_TCG_IDEVID_CONTENT, error) {
+	idevidAttrs *types.KeyAttributes,
+	signerAttrs *types.KeyAttributes) (*UNPACKED_TCG_IDEVID_CONTENT, error) {
 
 	if ekCert == nil {
 		return nil, ErrInvalidEKCert
@@ -209,9 +226,16 @@ func (tpm *TPM2) createIDevIDContent(
 	if akAttrs == nil {
 		return nil, ErrIAKConfigNil
 	}
+	if signerAttrs == nil || signerAttrs.TPMAttributes == nil {
+		return nil, ErrInvalidKeyAttributes
+	}
 	ekCertRaw := ekCert.Raw
 
-	hashSz, err := ParseHashSize(idevidAttrs.Hash)
+	csrHash, err := signerAttrs.TPMAttributes.HashAlg.Hash()
+	if err != nil {
+		return nil, &errs.Joined{Lead: ErrInvalidHashFunction, Cause: err}
+	}
+	hashSz, err := ParseHashSize(csrHash)
 	if err != nil {
 		return nil, err
 	}
@@ -233,12 +257,14 @@ func (tpm *TPM2) createIDevIDContent(
 
 	// Generate attestation data (Quote + PCRs) for ProdCaData
 	// This carries the device's attestation state to the CA during enrollment
+	//
+	// Section 13.1 allows the field to be absent (prodCaDataSz 0), and
+	// createProdCaData reports absence -- no transport to quote over -- as a
+	// nil payload without error. A quote the TPM refused is not absence; the
+	// CSR is not emitted with the attestation silently dropped.
 	prodCaData, prodCaDataSz, err := tpm.createProdCaData()
 	if err != nil {
-		// Log warning but continue - attestation data is optional during enrollment
-		tpm.logger.Warn("failed to create ProdCaData attestation", slog.String("error", err.Error()))
-		prodCaData = nil
-		prodCaDataSz = 0
+		return nil, &errs.Joined{Lead: ErrTCGCSRAttestation, Cause: err}
 	}
 
 	akBPublic := akAttrs.TPMAttributes.BPublic
@@ -282,9 +308,9 @@ func (tpm *TPM2) createIDevIDContent(
 	// the HashSz, PadSz, and Pad fields. They will be populated
 	// during the packing operation.
 	return &UNPACKED_TCG_IDEVID_CONTENT{
-		StructVer:                 uint32(0x00000100),
-		HashAlgoId:                uint32(akAttrs.TPMAttributes.HashAlg),
-		HashSz:                    uint32(hashSz),
+		StructVer:                 TCGIDevIDContentStructVer,
+		HashAlgoId:                uint32(signerAttrs.TPMAttributes.HashAlg),
+		HashSz:                    hashSz,
 		ProdModelSz:               uint32(len(platformAttrs.Model)),  // #nosec G115 -- Bounds checked above
 		ProdSerialSz:              uint32(len(platformAttrs.Serial)), // #nosec G115 -- Bounds checked above
 		ProdCaDataSz:              prodCaDataSz,

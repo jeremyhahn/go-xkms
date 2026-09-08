@@ -1267,6 +1267,43 @@ test-rand-tpm2:
 test-rand-all: test-rand test-rand-tpm2
 	@echo "$(GREEN)✓ All crypto/rand unit tests complete$(RESET)"
 
+# pkg/tpm2 on the in-process TPM simulator.
+#
+# test-go greps `pkg/tpm2$` OUT of its package list, so nothing in this
+# package -- the TCG specification vectors, the CSR structure test, the
+# provisioning fail-closed tests -- runs under `make test`. These targets are
+# the single entry point for the suite, and the CI job `tpm2-simulator` calls
+# the first one. The simulator is cgo (go-tpm-tools links -lcrypto), so the
+# suite runs without -race: measured at ~90 s on a workstation without it, and
+# the 20-minute timeout bounds a loaded runner rather than a healthy run.
+TPM2_SIMULATOR_TAGS := codec_cbor codec_json codec_msgpack tpm_simulator
+TPM2_SIMULATOR_TIMEOUT ?= 20m
+
+.PHONY: test-tpm2-simulator
+## test-tpm2-simulator: Run the pkg/tpm2 unit suite against the TPM simulator
+test-tpm2-simulator:
+	@echo "$(CYAN)→ Testing tpm2 package on the simulator...$(RESET)"
+	@$(GO) test -timeout $(TPM2_SIMULATOR_TIMEOUT) -tags="$(TPM2_SIMULATOR_TAGS)" ./pkg/tpm2/...
+	@echo "$(GREEN)✓ tpm2 simulator tests passed$(RESET)"
+
+.PHONY: coverage-tpm2-simulator
+## coverage-tpm2-simulator: Generate a pkg/tpm2 coverage report from the simulator suite
+coverage-tpm2-simulator:
+	@echo "$(CYAN)→ Generating tpm2 simulator coverage report...$(RESET)"
+	@mkdir -p $(COVERAGE_DIR)
+	@$(GO) test -timeout $(TPM2_SIMULATOR_TIMEOUT) -tags="$(TPM2_SIMULATOR_TAGS)" \
+		-coverprofile=$(COVERAGE_DIR)/tpm2-simulator.raw -covermode=atomic ./pkg/tpm2/...
+	@grep -v -E "/mocks/|_test\.go" $(COVERAGE_DIR)/tpm2-simulator.raw > $(COVERAGE_DIR)/tpm2-simulator.out
+	@$(GO) tool cover -html=$(COVERAGE_DIR)/tpm2-simulator.out -o $(COVERAGE_DIR)/tpm2-simulator.html
+	@$(GO) tool cover -func=$(COVERAGE_DIR)/tpm2-simulator.out | tail -1
+	@echo "$(GREEN)✓ Coverage report: $(COVERAGE_DIR)/tpm2-simulator.html$(RESET)"
+
+.PHONY: bench-tpm2-simulator
+## bench-tpm2-simulator: Run the pkg/tpm2 benchmarks against the TPM simulator
+bench-tpm2-simulator:
+	@echo "$(CYAN)→ Running tpm2 simulator benchmarks...$(RESET)"
+	@$(GO) test -timeout $(TPM2_SIMULATOR_TIMEOUT) -tags="$(TPM2_SIMULATOR_TAGS)" -bench=. -benchmem -run=^$$ ./pkg/tpm2/...
+
 .PHONY: test-importexport
 ## test-importexport: Run import/export unit tests for all backends
 test-importexport:
