@@ -24,6 +24,7 @@ import (
 	"time"
 
 	"github.com/jeremyhahn/go-xkms/xkey/pkg/attestation"
+	"github.com/jeremyhahn/go-xkms/xkey/pkg/xhome"
 	"github.com/spf13/cobra"
 	"github.com/spf13/viper"
 	"gopkg.in/yaml.v3"
@@ -511,6 +512,31 @@ func saveDevicesConfig(cfg *DevicesConfig) error {
 	return os.WriteFile(configPath, data, 0600)
 }
 
+// lookupUserHome returns the home directory of the named account. It is a
+// variable so tests can stand in for the account database.
+var lookupUserHome = func(name string) (string, error) {
+	u, err := user.Lookup(name)
+	if err != nil {
+		return "", err
+	}
+	return u.HomeDir, nil
+}
+
+// resolveInvokingUserHome resolves the xKey home the way every other
+// command does (XKEY_HOME, portable mode, ~/.xkey/, /etc/xkey), except
+// that under sudo the per-user strategy is evaluated against the invoking
+// user's home rather than root's, so that `sudo xkey device pair` and the
+// user's own GUI session read the same devices file. An unresolvable home
+// is an error, never a silent fallback (#442).
+func resolveInvokingUserHome() (*xhome.Home, error) {
+	if sudoUser := os.Getenv("SUDO_USER"); sudoUser != "" {
+		if homeDir, err := lookupUserHome(sudoUser); err == nil && homeDir != "" {
+			return xhome.ResolveForUser(homeDir)
+		}
+	}
+	return xhome.Resolve()
+}
+
 // getDevicesConfigPath returns the path to the devices configuration file.
 // When running under sudo, it resolves to the invoking user's home directory
 // (via SUDO_USER) so that pair and fido2 commands use the same config file.
@@ -518,23 +544,11 @@ func saveDevicesConfig(cfg *DevicesConfig) error {
 // Migration: if the legacy phone.yaml exists but devices.yaml does not,
 // the old file is automatically renamed.
 func getDevicesConfigPath() (string, error) {
-	homeDir := ""
-	if sudoUser := os.Getenv("SUDO_USER"); sudoUser != "" {
-		// Running under sudo: use the invoking user's home directory
-		// so config is shared between `xkey device pair` and `sudo xkey fido2`
-		if u, err := user.Lookup(sudoUser); err == nil {
-			homeDir = u.HomeDir
-		}
+	home, err := resolveInvokingUserHome()
+	if err != nil {
+		return "", err
 	}
-	if homeDir == "" {
-		var err error
-		homeDir, err = os.UserHomeDir()
-		if err != nil {
-			return "", err
-		}
-	}
-
-	configDir := filepath.Join(homeDir, ".xkey")
+	configDir := home.Root
 	newPath := filepath.Join(configDir, devicesConfigFileName)
 	legacyPath := filepath.Join(configDir, legacyPhoneConfigFileName)
 

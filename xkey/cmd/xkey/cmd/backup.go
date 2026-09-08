@@ -33,6 +33,7 @@ import (
 	"github.com/jeremyhahn/go-xkms/xkey/pkg/oath"
 	xkeysync "github.com/jeremyhahn/go-xkms/xkey/pkg/sync"
 	"github.com/jeremyhahn/go-xkms/xkey/pkg/truststore"
+	"github.com/jeremyhahn/go-xkms/xkey/pkg/xhome"
 	"github.com/spf13/cobra"
 )
 
@@ -1082,13 +1083,19 @@ func classifyBackupDecryptError(err error) error {
 // Key material
 // ---------------------------------------------------------------------------
 
-// getBackupDir returns the default backup directory (~/.xkey/backups/).
+// backupsDirName is the backup directory under the xKey home.
+const backupsDirName = "backups"
+
+// getBackupDir returns the default backup directory, backups/ under the
+// resolved xKey home, so a backup lands inside the home that XKEY_HOME or
+// portable mode selected and not under $HOME regardless (#442). A home
+// that cannot be resolved is an error, never a silent fallback.
 func getBackupDir() (string, error) {
-	home, err := os.UserHomeDir()
+	home, err := xhome.Resolve()
 	if err != nil {
 		return "", err
 	}
-	return filepath.Join(home, ".xkey", "backups"), nil
+	return filepath.Join(home.Root, backupsDirName), nil
 }
 
 // deriveKey derives a 32-byte key from a password using SHA-256.

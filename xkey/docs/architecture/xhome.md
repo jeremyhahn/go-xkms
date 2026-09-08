@@ -39,6 +39,20 @@ func Resolve() (*Home, error)
 
 Probes the resolution strategies in order and returns a `Home` pointing at the first valid directory. Directories for strategies 1 and 3 are created automatically with 0700 permissions if they do not exist.
 
+### ResolveForUser
+
+```go
+func ResolveForUser(homeDir string) (*Home, error)
+```
+
+Probes the same strategies in the same order, but evaluates strategy 3
+(`~/.xkey/`) against `homeDir` instead of the current process's home. A
+command running under `sudo` passes the invoking user's home (looked up from
+`SUDO_USER`) so that it shares state with that user's own session rather
+than with root's; `XKEY_HOME` and the portable marker still take precedence.
+An empty `homeDir` skips strategy 3. `xkey device` uses it for the shared
+`devices.yaml`.
+
 ### Home
 
 ```go
@@ -117,6 +131,13 @@ portable `.xkey-home` marker, `XKEY_DATA_DIR` and `data_dir` identically.
 A test in the CLI package (`TestNoAdHocDataDirLiterals`) fails the build
 if any command source outside `datadir.go` spells the data directory by
 hand.
+
+The home **root** is addressed the same way. `backup` keeps its default
+directory at `<root>/backups` and `device` keeps the shared `devices.yaml`
+at `<root>/devices.yaml`, both under `Resolve()` (or `ResolveForUser` under
+`sudo`), never under `$HOME/.xkey` directly (#442). A companion gate
+(`TestNoAdHocHomeRootLiterals`) fails the build on a quoted `".xkey"` path
+segment in any command source.
 
 ## Binary Directory Marker
 

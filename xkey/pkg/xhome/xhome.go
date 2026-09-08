@@ -96,7 +96,23 @@ type Home struct {
 var systemDir = "/etc/xkey"
 
 func Resolve() (*Home, error) {
-	return resolve(true)
+	return resolve(true, os.UserHomeDir)
+}
+
+// ResolveForUser probes the same strategies as Resolve, in the same order,
+// but the per-user strategy (~/.xkey/) is evaluated against homeDir instead
+// of the current process's home directory. A command that runs under sudo
+// uses it to share state with the invoking user's own session rather than
+// with root's: the invoking user's home is passed in, and XKEY_HOME and
+// portable mode still take precedence exactly as they do for Resolve. An
+// empty homeDir skips the per-user strategy.
+func ResolveForUser(homeDir string) (*Home, error) {
+	return resolve(true, func() (string, error) {
+		if homeDir == "" {
+			return "", ErrHomeNotResolved
+		}
+		return homeDir, nil
+	})
 }
 
 // ResolveExisting probes the same strategies as Resolve, in the same
@@ -104,13 +120,15 @@ func Resolve() (*Home, error) {
 // already exists. Read-only commands use it so that inspecting state
 // cannot manufacture an empty xKey home that masks a misresolved path.
 func ResolveExisting() (*Home, error) {
-	return resolve(false)
+	return resolve(false, os.UserHomeDir)
 }
 
-// resolve implements Resolve and ResolveExisting. When create is true,
-// missing XKEY_HOME and ~/.xkey/ candidates are created on first use;
-// when false, only directories that already exist can win.
-func resolve(create bool) (*Home, error) {
+// resolve implements Resolve, ResolveForUser and ResolveExisting. When
+// create is true, missing XKEY_HOME and ~/.xkey/ candidates are created on
+// first use; when false, only directories that already exist can win.
+// userHome supplies the home directory the per-user strategy is evaluated
+// against; an error from it skips that strategy.
+func resolve(create bool, userHome func() (string, error)) (*Home, error) {
 	// Check test override first.
 	if ptr := override.Load(); ptr != nil && *ptr != "" {
 		return &Home{Root: *ptr}, nil
@@ -145,7 +163,7 @@ func resolve(create bool) (*Home, error) {
 	}
 
 	// Strategy 3: ~/.xkey/ (per-user default).
-	if home, err := os.UserHomeDir(); err == nil {
+	if home, err := userHome(); err == nil {
 		userDir := filepath.Join(home, userDirName)
 		if isDir(userDir) {
 			return &Home{Root: userDir}, nil

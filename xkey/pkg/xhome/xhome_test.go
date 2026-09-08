@@ -811,3 +811,56 @@ func TestResolveExisting_EnvMissingDirNotResolved(t *testing.T) {
 		t.Errorf("ResolveExisting must not create XKEY_HOME (stat: %v)", statErr)
 	}
 }
+
+// ResolveForUser evaluates the per-user strategy against the home it is
+// given, which is what lets a command run under sudo share the invoking
+// user's ~/.xkey/ instead of root's.
+func TestResolveForUser_UsesTheGivenHome(t *testing.T) {
+	ResetRoot()
+	t.Setenv(EnvHome, "")
+	t.Setenv("HOME", filepath.Join(t.TempDir(), "process-home-must-not-be-used"))
+
+	invokingHome := t.TempDir()
+	h, err := ResolveForUser(invokingHome)
+	if err != nil {
+		t.Fatalf("ResolveForUser() error: %v", err)
+	}
+	want := filepath.Join(invokingHome, userDirName)
+	if h.Root != want {
+		t.Errorf("Root = %q, want %q", h.Root, want)
+	}
+	if !isDir(want) {
+		t.Errorf("the per-user directory must be created on first use, as Resolve does")
+	}
+}
+
+// XKEY_HOME is authoritative for ResolveForUser exactly as it is for
+// Resolve: a user who set it (sudo -E) is not redirected to ~/.xkey/.
+func TestResolveForUser_EnvOverrideStillWins(t *testing.T) {
+	ResetRoot()
+	envDir := t.TempDir()
+	t.Setenv(EnvHome, envDir)
+
+	h, err := ResolveForUser(t.TempDir())
+	if err != nil {
+		t.Fatalf("ResolveForUser() error: %v", err)
+	}
+	if h.Root != envDir {
+		t.Errorf("Root = %q, want XKEY_HOME %q", h.Root, envDir)
+	}
+}
+
+// An empty home skips the per-user strategy rather than resolving to
+// "/.xkey"; with no system directory either, resolution fails closed.
+func TestResolveForUser_EmptyHomeFailsClosed(t *testing.T) {
+	ResetRoot()
+	t.Setenv(EnvHome, "")
+	saved := systemDir
+	systemDir = filepath.Join(t.TempDir(), "no-system-dir")
+	t.Cleanup(func() { systemDir = saved })
+
+	h, err := ResolveForUser("")
+	if !errors.Is(err, ErrHomeNotResolved) {
+		t.Fatalf("ResolveForUser(\"\") = %v, %v; want ErrHomeNotResolved", h, err)
+	}
+}

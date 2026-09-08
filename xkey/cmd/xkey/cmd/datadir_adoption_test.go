@@ -674,11 +674,21 @@ var dataDirLiteralPatterns = []*regexp.Regexp{
 	regexp.MustCompile(`=\s*"data/`),
 }
 
-// TestNoAdHocDataDirLiterals is the grep gate from issue #381: no command
-// group may spell ~/.xkey/data (or <something>/data/<feature>) by hand.
-// It scans the package sources on disk, so a regressed literal in any
-// command file fails the suite even if no behavioural test covers it.
-func TestNoAdHocDataDirLiterals(t *testing.T) {
+// homeRootLiteralPatterns match a command spelling the xKey home root by
+// hand -- filepath.Join(home, ".xkey") -- the shape #381's gate did not
+// model and that #442 found surviving in backup.go and device.go. The
+// home root is xhome.Resolve().Root (or ResolveForUser under sudo); a
+// literal here ignores XKEY_HOME and portable mode.
+var homeRootLiteralPatterns = []*regexp.Regexp{
+	// A quoted ".xkey" path segment. Prose such as "~/.xkey/backups" in a
+	// help string does not match: the segment is not quoted on its own.
+	regexp.MustCompile(`"\.xkey"`),
+}
+
+// scanCommandSources reports every line of a non-test command source
+// (datadir.go excepted, it is the resolver) that matches one of patterns.
+func scanCommandSources(t *testing.T, patterns []*regexp.Regexp) []string {
+	t.Helper()
 	entries, err := os.ReadDir(".")
 	require.NoError(t, err)
 
@@ -694,7 +704,7 @@ func TestNoAdHocDataDirLiterals(t *testing.T) {
 		content, err := os.ReadFile(name)
 		require.NoError(t, err)
 		for lineNo, line := range strings.Split(string(content), "\n") {
-			for _, pattern := range dataDirLiteralPatterns {
+			for _, pattern := range patterns {
 				if pattern.MatchString(line) {
 					violations = append(violations,
 						name+":"+strconv.Itoa(lineNo+1)+": "+strings.TrimSpace(line))
@@ -703,9 +713,45 @@ func TestNoAdHocDataDirLiterals(t *testing.T) {
 			}
 		}
 	}
-
 	require.Greater(t, scanned, 0, "the gate must actually scan the command sources")
+	return violations
+}
+
+// TestNoAdHocDataDirLiterals is the grep gate from issue #381: no command
+// group may spell ~/.xkey/data (or <something>/data/<feature>) by hand.
+// It scans the package sources on disk, so a regressed literal in any
+// command file fails the suite even if no behavioural test covers it.
+func TestNoAdHocDataDirLiterals(t *testing.T) {
+	violations := scanCommandSources(t, dataDirLiteralPatterns)
 	assert.Empty(t, violations,
 		"hand-spelled data directory paths; resolve through datadir.go instead:\n%s",
 		strings.Join(violations, "\n"))
+}
+
+// TestNoAdHocHomeRootLiterals is the companion gate from issue #442: no
+// command may spell the xKey home root by hand either.
+func TestNoAdHocHomeRootLiterals(t *testing.T) {
+	violations := scanCommandSources(t, homeRootLiteralPatterns)
+	assert.Empty(t, violations,
+		"hand-spelled xKey home roots; resolve through xhome instead:\n%s",
+		strings.Join(violations, "\n"))
+}
+
+// The home-root pattern must catch the two literals #442 removed and must
+// not catch the help text that legitimately describes the default paths.
+func TestHomeRootLiteralPatterns_MatchTheShapeAndNotProse(t *testing.T) {
+	caught := []string{
+		`return filepath.Join(home, ".xkey", "backups"), nil`,
+		`configDir := filepath.Join(homeDir, ".xkey")`,
+	}
+	for _, line := range caught {
+		assert.True(t, homeRootLiteralPatterns[0].MatchString(line), line)
+	}
+	prose := []string{
+		`Long: "List all backup files in the default backup directory (~/.xkey/backups/).",`,
+		`"Output file path (default: ~/.xkey/backups/backup-{timestamp}.xkb)")`,
+	}
+	for _, line := range prose {
+		assert.False(t, homeRootLiteralPatterns[0].MatchString(line), line)
+	}
 }
