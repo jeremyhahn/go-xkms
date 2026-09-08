@@ -1,6 +1,6 @@
 # TPM 2.0 — API
 
-> **Status: NORMATIVE** · Feature: `tpm2` · Repo: `go-xkms` · Last verified: 2026-09-05
+> **Status: NORMATIVE** · Feature: `tpm2` · Repo: `go-xkms` · Last verified: 2026-09-08
 
 Transport shapes: [`../key-management/api.md`](../key-management/api.md)
 §"How the six transports are shaped".
@@ -24,6 +24,32 @@ use it. Each row below links to the feature that owns it.
 | EK / AK certificate issuance, TCG CSR, device enrollment | [`../certificate-authority/api.md`](../certificate-authority/api.md) |
 | `enroll-01` attested ACME enrollment | [`../acme-issuance/api.md`](../acme-issuance/api.md) |
 | Backend capabilities (`HardwareBacked`, `Attestation`, `SecurityLevel: 3`) | [`../crypto-backends/api.md`](../crypto-backends/api.md) |
+
+## Device identity key authorization
+
+The IDevID and IAK are created to TCG *TPM 2.0 Keys for Device Identity and
+Attestation* v1.00 r12, Template H-0, and carry the specification's
+IDevID/IAK Key Policy as their `authPolicy` (`pkg/tpm2/devid_policy.go`).
+The authValue may **use** the key; only the policy may **administer** it
+(§7.2.4). The surface an integrator can reach:
+
+| Symbol | What it is |
+|---|---|
+| `DevIDKeyKind` · `DevIDKeySigning` / `DevIDKeyAttestation` | which key: the Unrestricted IDevID or the Restricted IAK. They differ only in the Policy NV Index their DelegationNV branch is bound to |
+| `DevIDKeyPolicyDigest(kind, nameAlg)` | the §7.3.6.6 `PolicyOR` digest assigned as `authPolicy`. Pinned to Tables 14–19 of the specification; computable offline |
+| `DevIDKeyPolicyBranches(kind, nameAlg)` | the four constituent digests, in the order `TPM2_PolicyOR` must receive them |
+| `DevIDPolicyNVIndex` / `DevIDPolicyNVPublic` / `DevIDPolicyNVName` | the reserved Policy NV Index (§7.3.2), its Template I-1..I-3 public area, and its Name (§7.3.6.5) |
+| `(*TPM2).DevIDAdminSession(kind, nameAlg, command, endorsementAuth)` | the policy session that authorizes the ADMIN role for exactly one command — `TPM_CC_Certify` or `TPM_CC_ActivateCredential` — as the Privacy Administrator. Any other command is refused before a session is opened; the TPM answers `TPM_RC_POLICY_CC` if the session is used for a command it was not built for |
+| `DevIDCommonName(cn, platform)` | the one naming rule for both keys: explicit `cn`, else `model-serial`, else `ErrDevIDCNUnresolved` |
+
+`CreateIDevID` and `CreateIAK` call all of this themselves; the functions are
+exported so a verifier or an out-of-process provisioner can reproduce the
+policy a device *should* carry and compare it to the public area the device
+presents. Re-exported through `sdk/go` with a `TPM`/`TPMDevID` prefix.
+
+Errors: `ErrDevIDTemplateNonConformant`, `ErrDevIDPolicyUnsupported`,
+`ErrDevIDPolicyDigestCompute`, `ErrDevIDPolicySession`, `ErrDevIDCNUnresolved`
+(`pkg/tpm2`); `ErrEmptyKeyCN` (`pkg/tpm2/store`). All refuse; nothing degrades.
 
 ## The one place TPM evidence crosses the wire
 

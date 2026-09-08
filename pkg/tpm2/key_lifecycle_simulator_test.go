@@ -429,33 +429,61 @@ func TestIAKAttributes_ColdCacheKeepsConfiguredCN(t *testing.T) {
 	assert.Equal(t, types.KeyTypeAttestation, cold.KeyType)
 }
 
-// TestIAKAttributes_ColdCacheEmptyCNStaysEmpty proves the unconfigured-CN
-// case agrees between provisioning and restart (#337). The rebuild path used
-// to fabricate "default-device-id" for an empty CN while
-// IAKAttributesFromConfig -- the path provisioning uses -- assigns config.CN
-// verbatim, so the same TPM described its IAK differently depending on
-// whether the process provisioned it or attached to it, and certificate-store
-// lookups keyed on the CN missed artifacts written at provisioning time. The
-// CN comes from configuration on both paths: unconfigured means empty, on
-// both.
-func TestIAKAttributes_ColdCacheEmptyCNStaysEmpty(t *testing.T) {
-	h := newSimHarness(t, func(c *Config) { c.IAK.CN = "" })
+// TestIAKAttributes_ColdCacheEmptyCNDerivesFromDeviceIdentity pins the one
+// naming rule both DevID keys share (DevIDCommonName): with no iak.cn, the IAK
+// is named from the device's configured model and serial number -- the same
+// input IDevIDAttributesFromConfig names the IDevID from -- and a rebuild
+// after a restart resolves to the identical value, so the certificate store
+// finds what provisioning wrote (#337). Nothing fabricates a fixed default,
+// which is what would collapse every device onto one storage key (#440).
+func TestIAKAttributes_ColdCacheEmptyCNDerivesFromDeviceIdentity(t *testing.T) {
+	h := newSimHarness(t, func(c *Config) {
+		c.IAK.CN = ""
+		c.IDevID = idevidTestConfig("", c.IAK.SignatureAlgorithm) // Model "xkms-test-device", Serial "SN-0000-0001"
+	})
+	const want = "xkms-test-device-SN-0000-0001"
 
-	// Provisioning caches attributes built by IAKAttributesFromConfig, which
-	// assigns the configured CN verbatim -- empty here.
 	warm, err := h.TPM.IAKAttributes()
 	require.NoError(t, err)
-	require.Empty(t, warm.CN,
-		"provisioning must record the unconfigured CN as empty")
+	require.Equal(t, want, warm.CN,
+		"provisioning must name an unconfigured IAK from the device's model and serial")
 
 	h.TPM.iakAttrs = nil // the cold cache a restarted process sees
-
 	cold, err := h.TPM.IAKAttributes()
 	require.NoError(t, err)
 	assert.Equal(t, warm.CN, cold.CN,
 		"a rebuild must describe the IAK with the same CN provisioning recorded")
-	assert.Empty(t, cold.CN,
-		"an unconfigured CN must stay empty instead of a fabricated default")
+	assert.Equal(t, want, cold.CN)
+}
+
+// TestIDevIDAttributes_ColdCacheEmptyCNDerivesFromDeviceIdentity is the IDevID
+// half of the naming rule: with no idevid.cn, provisioning names the key
+// model-serial, and the cold-cache rebuild a restarted process performs
+// resolves to the identical value through the same DevIDCommonName call. A
+// rebuild that read the raw config CN would describe the key as "" and miss
+// every artifact provisioning wrote under "edge-001".
+func TestIDevIDAttributes_ColdCacheEmptyCNDerivesFromDeviceIdentity(t *testing.T) {
+	h := newSimHarness(t, func(c *Config) {
+		c.IdentityProvisioningStrategy = string(EnrollmentStrategyIAK_IDEVID_SINGLE_PASS)
+		c.IDevID = idevidTestConfig("", c.IAK.SignatureAlgorithm) // Model "xkms-test-device", Serial "SN-0000-0001"
+	})
+	const want = "xkms-test-device-SN-0000-0001"
+
+	iakAttrs, err := h.TPM.IAKAttributes()
+	require.NoError(t, err)
+	ekPub, err := h.TPM.EKRSA()
+	require.NoError(t, err)
+	warm, _, err := h.TPM.CreateIDevID(iakAttrs, selfSignedCertForKey(t, ekPub), nil)
+	require.NoError(t, err)
+	require.Equal(t, want, warm.CN,
+		"provisioning must name an unconfigured IDevID from the device's model and serial")
+
+	h.TPM.idevidAttrs = nil // the cold cache a restarted process sees
+	cold, err := h.TPM.IDevIDAttributes()
+	require.NoError(t, err)
+	assert.Equal(t, warm.CN, cold.CN,
+		"a rebuild must describe the IDevID with the same CN provisioning recorded")
+	assert.Equal(t, want, cold.CN)
 }
 
 // TestIAKAndIDevIDAttributes_CNSymmetry pins the two identity attribute

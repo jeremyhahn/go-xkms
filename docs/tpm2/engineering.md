@@ -1,6 +1,6 @@
 # TPM 2.0 — Engineering Contract
 
-> **Status: NORMATIVE** · Feature: `tpm2` · Repo: `go-xkms` · Last verified: 2026-09-06
+> **Status: NORMATIVE** · Feature: `tpm2` · Repo: `go-xkms` · Last verified: 2026-09-08
 
 ## Exported surface — `pkg/tpm2`
 
@@ -60,31 +60,49 @@ whole package. `pkg/tpm2/store` holds the key-backend types (`KeyBackend` in
   struct performs no validation at all, so an off-curve point supplied by a
   broken, emulated or hostile TPM would be accepted and then used as an
   attestation identity. Never reconstruct one by hand.
-- **A template that sets `adminWithPolicy` must also name an `authPolicy`.**
-  With the attribute SET the TPM authorizes ADMIN-role commands only through a
-  policy session satisfying the object's `authPolicy` and refuses the auth
-  value with `TPM_RC_AUTH_TYPE` (TCG TPM 2.0 Library Part 1, §19.6). An empty
-  `authPolicy` is satisfiable by no session — a session's policy digest starts
-  at zero and can never equal a zero-length value — so the pair closes the
-  ADMIN role permanently, `TPM2_Certify` included. It cannot be repaired
-  after the fact: the attribute is an input to a primary key's derivation, so
-  the same key cannot be re-derived without it. `assertAdminAuthorizable`
-  (`key.go`) enforces this on the selected template *before*
-  `TPM2_CreatePrimary` and is what `CreateIDevID` calls. The IDevID templates
-  administer by auth value: `adminWithPolicy` stays CLEAR. The platform policy
-  cannot take its place — a `PolicyOR` of `PolicyPCR` and `PolicyAuthValue`
-  built for USER-role signing and unsealing carries no
-  `TPM2_PolicyCommandCode` term, without which no session can authorize an
-  ADMIN-role command.
-- **An identity key's CN comes from configuration, verbatim, on every path.**
-  `IAKAttributesFromConfig` (provisioning) and the cold-cache rebuild in
-  `IAKAttributes` (a fresh process attaching to an already-provisioned TPM)
-  both assign `config.IAK.CN` unchanged; an unconfigured CN is empty on both.
-  Neither path may fabricate a default, because the certificate store keys on
-  the CN and a rebuild that describes the IAK differently from provisioning
-  misses every artifact provisioning wrote (#337).
-  `TestIAKAttributes_ColdCacheEmptyCNStaysEmpty` and
-  `TestIAKAttributes_ColdCacheKeepsConfiguredCN` pin the two cases.
+- **An IDevID or IAK is created from TCG Template H-0, with its key policy
+  assigned at creation.** TCG *TPM 2.0 Keys for Device Identity and
+  Attestation* v1.00 r12 §7.3.4.1 fixes the object attributes: `fixedTPM`,
+  `fixedParent`, `sensitiveDataOrigin`, `sign`, `userWithAuth` **and**
+  `adminWithPolicy` SET; `decrypt` CLEAR; `Restricted` CLEAR for the signing
+  IDevID and SET for the IAK. The split of roles is the point (§7.2.4): the
+  authValue can *use* the key, only a policy can *administer* it. The
+  `authPolicy` is the IDevID/IAK Key Policy of §7.3.6.6 — a `TPM2_PolicyOR`
+  over PolicyUser, PolicyCertify, PolicyActivateCredential and
+  PolicyDelegationNV — computed by `DevIDKeyPolicyDigest` for the template's
+  `nameAlg` and pinned to the specification's published Tables 14–19 in
+  `devid_policy_test.go`. It depends on the nameAlg, so the static templates
+  ship it empty and `CreateIDevID`/`CreateIAK` assign it;
+  `assertDevIDTemplateConformant` (`key.go`) then refuses any template whose
+  attributes or policy depart from H-0, *before* `TPM2_CreatePrimary`, because
+  every one of those values is an input to the primary's derivation and cannot
+  be corrected once the key exists. `assertAdminAuthorizable` remains the
+  narrower guard underneath it.
+- **ADMIN-role commands on an IDevID or IAK run under `DevIDAdminSession`.**
+  `TPM2_Certify` (objectHandle) and `TPM2_ActivateCredential`
+  (activateHandle) authorize the key at the ADMIN role, which the authValue is
+  now refused for with `TPM_RC_AUTH_TYPE`. The session walks the matching
+  branch — `PolicySecret(TPM_RH_ENDORSEMENT)`, `PolicyCommandCode(command)`,
+  `PolicyOR(the four branches)` — so it authorizes exactly one command as the
+  Privacy Administrator; a session built for one command answers
+  `TPM_RC_POLICY_CC` when used for another. The USER role — signing — is the
+  authValue on every path, which is why `createKeySession` never builds a
+  platform-policy session for a DevID key: that session's digest could not
+  equal the key's `authPolicy`. Binding a DevID key to platform state is the
+  Delegation Policy NV index of §7.3.5, an owner operation that is not part of
+  provisioning.
+- **An identity key's CN is resolved by one rule on every path.**
+  `DevIDCommonName` (`config.go`): an explicit `cn` wins; otherwise the
+  device's model and serial number — the Platform Identity Information the
+  TCG-CSR-IDEVID carries (§7.2.3 step 4a) and 802.1AR binds a DevID Subject to
+  (§2.3.4) — joined as `model-serial`; otherwise `ErrDevIDCNUnresolved`.
+  `IDevIDAttributesFromConfig`, `CreateIAK` and the cold-cache rebuild in
+  `IAKAttributes` all call it, so a rebuild can never describe a key
+  differently from provisioning (#337), and the IAK and IDevID of one device
+  never disagree about which device they name. Nothing fabricates a fixed
+  default: the key store composes its storage key from the CN, and
+  `store.FileBackend` refuses an empty one (`ErrEmptyKeyCN`) rather than
+  collapsing every nameless key onto the bare extension (#440).
 
 ## Error semantics
 
@@ -103,6 +121,12 @@ vocabulary. The categories that need distinguishing:
 | quote signature or nonce invalid | the evidence is not fresh or not from that AK |
 | `ErrECCPublicArea` | the ECC public area does not yield a valid public key: bad parameters, an unknown curve, or a point that is not on the curve. On the `TPM2_Certify` path it is wrapped as `ErrCertifyMalformed`; the underlying `ecpoint.ErrInvalidPoint` stays reachable through `errors.Is` |
 | `ErrAdminWithPolicyNoAuthPolicy` | the template about to be created from sets `adminWithPolicy` while naming no `authPolicy`, so the object's ADMIN role would be unauthorizable by anything. Raised by `assertAdminAuthorizable` before `TPM2_CreatePrimary`; nothing is created |
+| `ErrDevIDTemplateNonConformant` | the IDevID or IAK template about to be created from departs from TCG Template H-0 in an attribute or in its `authPolicy`. Raised by `assertDevIDTemplateConformant` before `TPM2_CreatePrimary`; nothing is created |
+| `ErrDevIDPolicyUnsupported` | a key kind or `nameAlg` for which the specification defines no template or Policy NV Index (only SHA256, SHA384 and SHA512 are defined) |
+| `ErrDevIDPolicyDigestCompute` | the trial-policy computation of a key policy or NV Index Name failed inside go-tpm |
+| `ErrDevIDPolicySession` | the ADMIN-role policy session could not be built: a command with no branch in the key policy, a `PolicySecret` refused for a wrong endorsement auth, or a TPM error on a policy command |
+| `ErrDevIDCNUnresolved` | neither `cn` nor both a device model and serial number were available to name an IDevID or IAK |
+| `store.ErrEmptyKeyCN` | a key-store operation was attempted with an empty CN, which would compose a storage key of the bare extension |
 
 **Fail closed:** every one of these refuses. Nothing degrades to a software key
 or an unverified acceptance.
@@ -142,6 +166,14 @@ constraint that makes barrier recovery keys worth having
 The suite is unusually large and deliberately structured:
 
 - **Unit** — one `_test.go` per file.
+- **Specification vectors** — `devid_policy_test.go` pins every step of the
+  IDevID/IAK Key Policy computation (PolicyUser, PolicyCertify,
+  PolicyActivateCredential, the Policy NV Index Names, PolicyDelegationNV and
+  the final PolicyOR) to the digests TCG publishes in Tables 14–19 of *TPM 2.0
+  Keys for Device Identity and Attestation* v1.00 r12, across SHA256/384/512
+  where the specification prints them. go-tpm's `PolicyUpdate` and the
+  specification are two independent implementations; the suite is the proof
+  they agree. The specification is checked in under `docs/references/`.
 - **Simulator suites** (`*_simulator_test.go`) — the whole device surface
   against `tpm_simulator.go`: crypto ops, key lifecycle, algorithm agility,
   attestation certify, IDevID CSR round-trip and sizing, device identity

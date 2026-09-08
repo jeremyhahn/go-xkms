@@ -61,6 +61,11 @@ type IAKConfig = tpm2.IAKConfig
 // IDevIDConfig holds Initial Device Identifier configuration.
 type IDevIDConfig = tpm2.IDevIDConfig
 
+// DevIDKeyKind selects between the two TCG device identity key kinds -- the
+// signing IDevID and the attestation IAK -- whose key policies differ only in
+// the Policy NV Index their DelegationNV branch is bound to.
+type DevIDKeyKind = tpm2.DevIDKeyKind
+
 // LDevIDConfig holds Local Device Identifier configuration.
 type LDevIDConfig = tpm2.LDevIDConfig
 
@@ -287,6 +292,14 @@ const (
 	// EnrollmentStrategyIAK is the IAK-only enrollment strategy.
 	TPMEnrollmentStrategyIAK = tpm2.EnrollmentStrategyIAK
 
+	// TPMDevIDKeySigning is the IDevID kind: an Unrestricted signing key
+	// (TCG "TPM 2.0 Keys for Device Identity and Attestation" v1.00 r12,
+	// Template H-0).
+	TPMDevIDKeySigning = tpm2.DevIDKeySigning
+
+	// TPMDevIDKeyAttestation is the IAK kind: a Restricted signing key.
+	TPMDevIDKeyAttestation = tpm2.DevIDKeyAttestation
+
 	// EnrollmentStrategyIAK_IDEVID_SINGLE_PASS is the combined IAK+IDevID enrollment.
 	TPMEnrollmentStrategyIAK_IDEVID_SINGLE_PASS = tpm2.EnrollmentStrategyIAK_IDEVID_SINGLE_PASS
 
@@ -427,6 +440,11 @@ var (
 	ErrTPMEKConfigNil                 = tpm2.ErrEKConfigNil
 	ErrTPMIAKConfigNil                = tpm2.ErrIAKConfigNil
 	ErrTPMIDevIDConfigNil             = tpm2.ErrIDevIDConfigNil
+	ErrTPMDevIDPolicyUnsupported      = tpm2.ErrDevIDPolicyUnsupported
+	ErrTPMDevIDPolicyDigestCompute    = tpm2.ErrDevIDPolicyDigestCompute
+	ErrTPMDevIDPolicySession          = tpm2.ErrDevIDPolicySession
+	ErrTPMDevIDCNUnresolved           = tpm2.ErrDevIDCNUnresolved
+	ErrTPMDevIDTemplateNonConformant  = tpm2.ErrDevIDTemplateNonConformant
 	ErrTPMSSRKConfigNil               = tpm2.ErrSSRKConfigNil
 	ErrTPMCommandNotSupported         = tpm2.ErrCommandNotSupported
 	ErrTPMInvalidSignature            = tpm2.ErrInvalidSignature
@@ -492,6 +510,21 @@ var IAKAttributesFromConfig = tpm2.IAKAttributesFromConfig
 
 // IDevIDAttributesFromConfig creates IDevID key attributes from config.
 var IDevIDAttributesFromConfig = tpm2.IDevIDAttributesFromConfig
+
+// DevIDKeyPolicyDigest computes the TCG IDevID/IAK Key Policy (section
+// 7.3.6.6) attached as authPolicy to every IDevID and IAK this library
+// creates, for a key kind and nameAlg. Pinned to the specification's
+// published Tables 14-19.
+var DevIDKeyPolicyDigest = tpm2.DevIDKeyPolicyDigest
+
+// DevIDPolicyNVIndex returns the reserved Policy NV Index (section 7.3.2)
+// that carries a key kind's Delegation Policy for a nameAlg.
+var DevIDPolicyNVIndex = tpm2.DevIDPolicyNVIndex
+
+// DevIDCommonName resolves the Common Name an IDevID or IAK is stored and
+// certified under: an explicit cn, else the device's model and serial number,
+// else ErrTPMDevIDCNUnresolved.
+var DevIDCommonName = tpm2.DevIDCommonName
 
 // LDevIDAttributesFromConfig creates LDevID key attributes from config.
 var LDevIDAttributesFromConfig = tpm2.LDevIDAttributesFromConfig

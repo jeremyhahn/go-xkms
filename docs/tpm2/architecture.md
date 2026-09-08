@@ -1,6 +1,6 @@
 # TPM 2.0 — Architecture
 
-> **Status: NORMATIVE** · Feature: `tpm2` · Repo: `go-xkms` · Last verified: 2026-08-19
+> **Status: NORMATIVE** · Feature: `tpm2` · Repo: `go-xkms` · Last verified: 2026-09-08
 
 ## The problem
 
@@ -98,7 +98,8 @@ TPM. It is the mechanism behind the ACME `enroll-01` challenge.
   manufacturer root you accept — `pkg/attestation/truststore`.
 - **Restricted and unrestricted signing keys are not interchangeable, and the
   device identity keys are one of each.** TCG "TPM 2.0 Keys for Device Identity
-  and Attestation" v1.10 r9 makes the IAK/AK/LAK *Restricted* — they may sign
+  and Attestation" v1.00 r12 (checked in under `docs/references/`) makes the
+  IAK/AK/LAK *Restricted* — they may sign
   nothing but a digest the TPM produced, which is what makes an attestation
   unforgeable — and the IDevID/LDevID *Unrestricted*, precisely so a device can
   sign arbitrary data such as a TLS `CertificateVerify` with its own identity.
@@ -111,6 +112,25 @@ TPM. It is the mechanism behind the ACME `enroll-01` challenge.
   which is how a restricted key is kept from signing a forged attestation;
   `ErrRestrictedSignRefused` reports that refusal rather than passing on a
   ticket the TPM never issued.
+- **A device identity key's password can use it but cannot administer it.**
+  TCG "TPM 2.0 Keys for Device Identity and Attestation" v1.00 r12 §7.2.4 is
+  explicit that the recommended templates "enable the IDevID/IAK key's
+  authValue password to authorize use of the key but not administration of
+  the key": `userWithAuth` SET, `adminWithPolicy` SET. Someone who learns the
+  signing password can sign — they cannot certify, re-certify, or release a
+  credential against the key. The IDevID and IAK are created from that
+  template (§7.3.4.1, Template H-0) with the §7.3.6.6 IDevID/IAK Key Policy as
+  their `authPolicy`: a `PolicyOR` whose branches let the *Privacy
+  Administrator* — whoever holds `endorsementAuth` — use the key, certify it
+  (`TPM2_Certify`), release a credential to it (`TPM2_ActivateCredential`), or
+  delegate use through a reserved Policy NV index (§7.3.5). Every ADMIN-role
+  command therefore runs under `DevIDAdminSession`, which walks exactly one
+  branch and is refused by the TPM for any other command (`TPM_RC_POLICY_CC`).
+  The digests are computed offline through go-tpm's trial-policy calculator
+  and pinned to the specification's own Tables 14–19; the two implementations
+  agreeing is the evidence the policy on the key is the one the specification
+  defines. The Delegation NV index itself is an owner operation ("SHOULD NOT
+  be populated by the OEM", §7.3.5) and is not part of provisioning.
 - **A quote proves state at a moment**, bound to a nonce. A quote without a
   fresh nonce proves nothing about now.
 - **PCR selection is the security policy.** Sealing to firmware PCRs survives

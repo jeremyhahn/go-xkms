@@ -1,6 +1,6 @@
 # TPM 2.0 — CLI
 
-> **Status: NORMATIVE** · Feature: `tpm2` · Repo: `go-xkms` · Last verified: 2026-08-19
+> **Status: NORMATIVE** · Feature: `tpm2` · Repo: `go-xkms` · Last verified: 2026-09-08
 
 `xkmsctl` has **no `tpm` command group**. The TPM is reached through whichever
 feature is using it, by selecting it as the backend or strategy:
@@ -18,6 +18,18 @@ feature is using it, by selecting it as the backend or strategy:
 
 The desktop companion does have a group — `xkey tpm` — covering PCR policies
 and TPM state from the client side. See the xkey documentation.
+
+## Device identity enrollment: no flags changed, the ceremony did
+
+`xkmsctl ca tcg sign` (`cmd/xkmsctl/ca_tcg.go`) is the CA side: it signs a
+packed `TCG_CSR_IDEVID` to issue the IAK and IDevID certificates. Its flags
+are unchanged. What changed is the device side that produced the CSR: the
+`TPM2_Certify` proving the IDevID lives in the same TPM as the IAK now runs
+under the IDevID's ADMIN-role policy as the Privacy Administrator, which
+requires the endorsement hierarchy authorization (`ek.hierarchy-auth`) at
+provisioning time. A device whose provisioning config lacks it cannot produce
+a certifiable IDevID, and says so (`ErrDevIDPolicySession`) rather than
+emitting an unverifiable CSR. See `user.md`, "Identity keys".
 
 ## Checking what you are actually talking to
 

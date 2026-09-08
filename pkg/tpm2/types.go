@@ -213,6 +213,35 @@ var (
 	// either. Creating such an object is refused rather than performed.
 	ErrAdminWithPolicyNoAuthPolicy = errors.New("tpm: a key template that sets adminWithPolicy must also name an authPolicy; the admin role would be permanently unauthorizable")
 
+	// ErrDevIDPolicyUnsupported reports a key kind or hash algorithm for which
+	// TCG "TPM 2.0 Keys for Device Identity and Attestation" v1.00 r12 defines
+	// no recoverable-key template or Policy NV Index (sections 7.3.2, 7.3.4).
+	// Computing a policy for it would produce a digest nothing can check.
+	ErrDevIDPolicyUnsupported = errors.New("tpm: no TCG IDevID/IAK policy template exists for this key kind and hash algorithm")
+
+	// ErrDevIDPolicyDigestCompute reports a failure inside the trial-policy
+	// computation of an IDevID/IAK Key Policy or Policy NV Index Name
+	// (section 7.3.6).
+	ErrDevIDPolicyDigestCompute = errors.New("tpm: failed to compute the TCG IDevID/IAK key policy digest")
+
+	// ErrDevIDPolicySession reports a failure while building the policy
+	// session that authorizes the ADMIN role of an IDevID/IAK key, or the
+	// delegated USER role through its Policy NV Index.
+	ErrDevIDPolicySession = errors.New("tpm: failed to build the TCG IDevID/IAK policy session")
+
+	// ErrDevIDCNUnresolved reports that neither an explicit cn nor a device
+	// model and serial number were available to name an IDevID or IAK. The
+	// name is refused rather than defaulted because the key stores key on it.
+	ErrDevIDCNUnresolved = errors.New("tpm: an IDevID/IAK common name requires either cn or both a device model and serial number")
+
+	// ErrDevIDTemplateNonConformant reports an IDevID or IAK template whose
+	// TPMA_OBJECT or authPolicy departs from TCG "TPM 2.0 Keys for Device
+	// Identity and Attestation" v1.00 r12, Template H-0 (section 7.3.4.1).
+	// The attributes are inputs to a primary key's derivation, so a
+	// non-conformant key cannot be repaired after creation; it is refused
+	// before TPM2_CreatePrimary instead.
+	ErrDevIDTemplateNonConformant = errors.New("tpm: the IDevID/IAK template does not conform to TCG Template H-0")
+
 	// ErrRestrictedSchemeRequired reports that a restricted signing key was
 	// requested without a scheme. A restricted signing key must name one: it may
 	// only sign data the TPM produced, and the scheme is part of what the
@@ -481,6 +510,7 @@ var (
 			FixedParent:         true,
 			SensitiveDataOrigin: true,
 			UserWithAuth:        true,
+			AdminWithPolicy:     true,
 			SignEncrypt:         true,
 		},
 		Parameters: tpm2.NewTPMUPublicParms(
@@ -507,6 +537,17 @@ var (
 	}
 
 	// RSA PSS IDevID Template (non-restricted signing, not decrypting, fixedtpm)
+	// The IDevID templates carry the TPMA_OBJECT values of TCG "TPM 2.0 Keys
+	// for Device Identity and Attestation" v1.00 r12, Template H-0
+	// (section 7.3.4.1): fixedTPM, fixedParent, sensitiveDataOrigin,
+	// userWithAuth AND adminWithPolicy set; Restricted clear for a signing
+	// DevID; sign set, decrypt clear. userWithAuth lets the authValue USE the
+	// key; adminWithPolicy makes the ADMIN role reachable only through the
+	// IDevID/IAK Key Policy (section 7.2.4), which CreateIDevID computes and
+	// assigns as AuthPolicy at creation time -- it depends on the nameAlg, so
+	// it cannot live in a static template. AuthPolicy is left empty here on
+	// purpose; assertAdminAuthorizable refuses to create a key from a template
+	// that still has it empty.
 	RSAPSSIDevIDTemplate = tpm2.TPMTPublic{
 		Type:    tpm2.TPMAlgRSA,
 		NameAlg: tpm2.TPMAlgSHA256,
@@ -515,6 +556,7 @@ var (
 			FixedParent:         true,
 			SensitiveDataOrigin: true,
 			UserWithAuth:        true,
+			AdminWithPolicy:     true,
 			SignEncrypt:         true,
 		},
 		AuthPolicy: tpm2.TPM2BDigest{},
@@ -550,6 +592,7 @@ var (
 			FixedParent:         true,
 			SensitiveDataOrigin: true,
 			UserWithAuth:        true,
+			AdminWithPolicy:     true,
 			SignEncrypt:         true,
 		},
 		Parameters: tpm2.NewTPMUPublicParms(

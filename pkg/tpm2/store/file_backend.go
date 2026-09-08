@@ -42,9 +42,22 @@ func NewFileBackend(logger *slog.Logger, backend storage.Backend) KeyBackend {
 	}
 }
 
+// storageKey composes the storage key for a key's artifact: the Common Name
+// plus the artifact's extension. It refuses an empty CN, because "" + ext is
+// a valid-looking key that every nameless key would share.
+func storageKey(attrs *types.KeyAttributes, ext string) (string, error) {
+	if attrs == nil || attrs.CN == "" {
+		return "", ErrEmptyKeyCN
+	}
+	return attrs.CN + ext, nil
+}
+
 // Get retrieves key data from storage
 func (fb *FileBackend) Get(attrs *types.KeyAttributes, ext types.FSExtension) ([]byte, error) {
-	key := attrs.CN + string(ext)
+	key, err := storageKey(attrs, string(ext))
+	if err != nil {
+		return nil, err
+	}
 	data, err := fb.storage.Get(context.Background(), key)
 	if err != nil {
 		return nil, &errs.Wrapped{Msg: fmt.Sprintf("failed to read key %s", key), Err: err}
@@ -54,7 +67,10 @@ func (fb *FileBackend) Get(attrs *types.KeyAttributes, ext types.FSExtension) ([
 
 // Save writes key data to storage
 func (fb *FileBackend) Save(attrs *types.KeyAttributes, data []byte, ext types.FSExtension, overwrite bool) error {
-	key := attrs.CN + string(ext)
+	key, err := storageKey(attrs, string(ext))
+	if err != nil {
+		return err
+	}
 
 	// Check if key exists when overwrite is false
 	if !overwrite {
@@ -87,7 +103,10 @@ func (fb *FileBackend) Delete(attrs *types.KeyAttributes) error {
 
 	var lastErr error
 	for _, ext := range extensions {
-		key := attrs.CN + ext
+		key, err := storageKey(attrs, ext)
+		if err != nil {
+			return err
+		}
 		if err := fb.storage.Delete(context.Background(), key); err != nil {
 			// Ignore "not found" errors - the file may not exist
 			// Check for both storage.ErrNotFound and OS-level not found errors

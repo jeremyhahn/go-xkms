@@ -71,6 +71,12 @@ var (
 	// ErrCertNotFound indicates a certificate was not found
 	ErrCertNotFound = errors.New("certificate not found")
 
+	// ErrEmptyKeyCN reports a storage operation on key attributes with no
+	// Common Name. The storage key is the CN plus an extension, so an empty CN
+	// would degenerate to the bare extension -- one slot shared by every key
+	// that lacks a name, last writer wins. Refused rather than composed.
+	ErrEmptyKeyCN = errors.New("store: key attributes carry no common name; refusing to compose a storage key from an empty CN")
+
 	// ErrCorruptCopy indicates a corrupt copy operation
 	ErrCorruptCopy = errors.New("corrupt copy")
 

@@ -1,6 +1,7 @@
 package tpm2
 
 import (
+	"bytes"
 	"crypto"
 	"crypto/ecdsa"
 	"crypto/elliptic"
@@ -125,7 +126,10 @@ func (tpm *TPM2) IAKAttributes() (*types.KeyAttributes, error) {
 		// TPM describe its IAK differently after a restart than at
 		// provisioning, so certificate-store lookups keyed on the CN missed
 		// artifacts written by the provisioning path (#337).
-		iakAttrs.CN = tpm.config.IAK.CN
+		iakAttrs.CN, err = DevIDCommonName(tpm.config.IAK.CN, devidPlatformFromConfig(tpm.config.IDevID))
+		if err != nil {
+			return nil, err
+		}
 		iakAttrs.KeyType = types.KeyTypeAttestation
 		iakAttrs.StoreType = types.StoreTPM2
 
@@ -175,7 +179,11 @@ func (tpm *TPM2) IDevIDAttributes() (*types.KeyAttributes, error) {
 		if err != nil {
 			return nil, err
 		}
-		idevidAttrs.CN = tpm.config.IDevID.CN
+		idevidAttrs.CN, err = DevIDCommonName(tpm.config.IDevID.CN,
+			&PlatformAttributes{Model: tpm.config.IDevID.Model, Serial: tpm.config.IDevID.Serial})
+		if err != nil {
+			return nil, err
+		}
 		idevidAttrs.SignatureAlgorithm = signatureAlgorithm
 		tpm.idevidAttrs = idevidAttrs
 	}
@@ -805,6 +813,11 @@ func (tpm *TPM2) CreateIAK(
 		return nil, &errs.Detail{Err: ErrIAKConfigFailed, Detail: fmt.Sprintf("%v", err)}
 	}
 	iakAttrs.Parent = ekAttrs
+	// One naming rule for both DevID keys: an explicit iak.cn, else the
+	// device's model and serial number, else refusal (see DevIDCommonName).
+	if iakAttrs.CN, err = DevIDCommonName(tpm.config.IAK.CN, devidPlatformFromConfig(tpm.config.IDevID)); err != nil {
+		return nil, err
+	}
 
 	if iakAttrs.Password != nil {
 		iakAuth = iakAttrs.Password.Bytes()
@@ -868,6 +881,7 @@ func (tpm *TPM2) CreateIAK(
 					FixedParent:         true,
 					SensitiveDataOrigin: true,
 					UserWithAuth:        true,
+					AdminWithPolicy:     true,
 					Restricted:          true,
 					SignEncrypt:         true,
 				},
@@ -914,6 +928,7 @@ func (tpm *TPM2) CreateIAK(
 					FixedParent:         true,
 					SensitiveDataOrigin: true,
 					UserWithAuth:        true,
+					AdminWithPolicy:     true,
 					Restricted:          true,
 					SignEncrypt:         true,
 				},
@@ -961,6 +976,7 @@ func (tpm *TPM2) CreateIAK(
 				FixedParent:         true,
 				SensitiveDataOrigin: true,
 				UserWithAuth:        true,
+				AdminWithPolicy:     true,
 				Restricted:          true,
 				SignEncrypt:         true,
 			},
@@ -1013,6 +1029,22 @@ func (tpm *TPM2) CreateIAK(
 	iakAttrs.TPMAttributes.PCRSelection = pcrSelection
 
 	// Create Attestation Primary Key
+	// TCG "TPM 2.0 Keys for Device Identity and Attestation" v1.00 r12,
+	// section 7.3.4: the IAK's authPolicy is the IDevID/IAK Key Policy for
+	// the attestation kind, whose DelegationNV branch is bound to Policy
+	// Index DA1..DA3 rather than DS1..DS3. Assigned on the template the
+	// primary is derived from; refused if the rest of the template is not
+	// Template H-0 with Restricted SET.
+	iakPolicy, err := DevIDKeyPolicyDigest(DevIDKeyAttestation, pcrBankHashAlg)
+	if err != nil {
+		return nil, err
+	}
+	template.AuthPolicy = tpm2.TPM2BDigest{Buffer: iakPolicy}
+	if err := assertDevIDTemplateConformant(DevIDKeyAttestation, template); err != nil {
+		tpm.logger.Error("refusing to create a non-conformant IAK", slog.String("error", err.Error()))
+		return nil, err
+	}
+
 	iakPrimary, err := tpm2.CreatePrimary{
 		PrimaryHandle: tpm2.AuthHandle{
 			Handle: tpm2.TPMRHEndorsement,
@@ -1180,6 +1212,57 @@ func assertAdminAuthorizable(template tpm2.TPMTPublic) error {
 	return nil
 }
 
+// assertDevIDTemplateConformant refuses an IDevID or IAK template that does
+// not match TCG "TPM 2.0 Keys for Device Identity and Attestation" v1.00 r12,
+// Template H-0 (section 7.3.4.1), evaluated on the exact template about to be
+// handed to TPM2_CreatePrimary:
+//
+//	fixedTPM, fixedParent, sensitiveDataOrigin, sign  SET
+//	userWithAuth, adminWithPolicy                     SET   (section 7.2.4)
+//	decrypt                                           CLEAR
+//	Restricted                                        CLEAR for a signing DevID,
+//	                                                  SET   for an IAK
+//	authPolicy == the IDevID/IAK Key Policy for the template's nameAlg
+//
+// Every one of these is an input to the primary key's derivation, so a
+// departure cannot be corrected after the fact; the only safe moment to
+// enforce the shape is before the key exists. The policy comparison is what
+// stops a template that reached here with a stale or foreign authPolicy from
+// producing a key whose ADMIN role answers to the wrong policy.
+func assertDevIDTemplateConformant(kind DevIDKeyKind, template tpm2.TPMTPublic) error {
+	a := template.ObjectAttributes
+	fail := func(what string) error {
+		return &errs.Detail{Err: ErrDevIDTemplateNonConformant, Detail: fmt.Sprintf("%s: %s", kind, what)}
+	}
+	if !a.FixedTPM || !a.FixedParent || !a.SensitiveDataOrigin || !a.SignEncrypt {
+		return fail("fixedTPM, fixedParent, sensitiveDataOrigin and sign must all be SET")
+	}
+	if !a.UserWithAuth {
+		return fail("userWithAuth must be SET so the authValue can use the key")
+	}
+	if !a.AdminWithPolicy {
+		return fail("adminWithPolicy must be SET so only the key policy can administer the key")
+	}
+	if a.Decrypt {
+		return fail("decrypt must be CLEAR")
+	}
+	wantRestricted := kind == DevIDKeyAttestation
+	if a.Restricted != wantRestricted {
+		return fail(fmt.Sprintf("Restricted must be %v", wantRestricted))
+	}
+	if err := assertAdminAuthorizable(template); err != nil {
+		return err
+	}
+	want, err := DevIDKeyPolicyDigest(kind, template.NameAlg)
+	if err != nil {
+		return err
+	}
+	if !bytes.Equal(template.AuthPolicy.Buffer, want) {
+		return fail("authPolicy is not the IDevID/IAK Key Policy for the template's nameAlg")
+	}
+	return nil
+}
+
 // Creates an Initial Device IDentifier (IDevID) under the
 // Endorsement Hierarchy per TCG - TPM 2.0 Keys for Device Identity
 // and Attestation. The Endorsement Key (EK) attributes must contain
@@ -1246,32 +1329,18 @@ func (tpm *TPM2) CreateIDevID(
 		idevidTemplate = ECCIDevIDP256Template
 	}
 
-	// TPM 2.0 Keys for Device Identity and Attestation, section 3.10, Key
-	// Authorizations: applications using only Policy to control key
-	// administration MUST SET the adminWithPolicy attribute. This code path
-	// is not one of them, so the attribute stays CLEAR and the auth value
-	// authorizes the ADMIN role as well as the USER role -- which is what
-	// TPM2_Certify below relies on.
-	//
-	// The platform policy cannot play the part. It is a PolicyOR of
-	// PolicyPCR and PolicyAuthValue built for USER-role signing and
-	// unsealing, and it carries no TPM2_PolicyCommandCode term, without
-	// which no policy session can authorize an ADMIN-role command. Setting
-	// adminWithPolicy and assigning that digest was measured to fail
-	// TPM2_Certify with TPM_RC_POLICY_FAIL on matching digests, and setting
-	// it with no digest at all bricks the ADMIN role permanently:
-	// TPM_RC_AUTH_TYPE refuses the auth value, and a session's zero policy
-	// digest can never equal an empty authPolicy (#278).
-	//
-	// A guard here previously set the attribute when
-	// `idevidAttrs.Password == nil && idevidAttrs.PlatformPolicy`. It never
-	// ran: idevidAttrs comes only from IDevIDAttributesFromConfig above,
-	// which sets Password from types.NewPassword, and that constructor
-	// documents that it never returns nil. Deleting it is therefore a
-	// no-op on the created key -- the attribute is part of the template a
-	// primary key is derived from, so a live one would have re-keyed every
-	// deployed device identity.
-	if err := assertAdminAuthorizable(idevidTemplate); err != nil {
+	// TCG "TPM 2.0 Keys for Device Identity and Attestation" v1.00 r12,
+	// section 7.3.4: the template's authPolicy is the IDevID/IAK Key Policy
+	// for the key's nameAlg. With adminWithPolicy SET this is the only thing
+	// that can authorize the ADMIN role, so it is assigned here, on the
+	// template the primary key is derived from, and never anywhere else.
+	keyPolicy, err := DevIDKeyPolicyDigest(DevIDKeySigning, idevidTemplate.NameAlg)
+	if err != nil {
+		return nil, nil, err
+	}
+	idevidTemplate.AuthPolicy = tpm2.TPM2BDigest{Buffer: keyPolicy}
+
+	if err := assertDevIDTemplateConformant(DevIDKeySigning, idevidTemplate); err != nil {
 		tpm.logger.Error("refusing to create an unadministrable IDevID",
 			slog.String("error", err.Error()))
 		return nil, nil, err
@@ -1358,11 +1427,22 @@ func (tpm *TPM2) CreateIDevID(
 
 	// Certify the new IDevID primary key using the AK to sign the
 	// TPMB_Attest structure
+	// TPM2_Certify authorizes objectHandle at the ADMIN role (TCG TPM 2.0
+	// Part 3, section 18.2). With adminWithPolicy SET the authValue cannot
+	// do that -- the TPM answers TPM_RC_AUTH_TYPE -- so the IDevID is
+	// certified under the Certify branch of its key policy, as the Privacy
+	// Administrator (section 7.3.6.2). The IAK signs at the USER role, which
+	// its authValue still authorizes.
+	adminSession, closeAdmin, err := tpm.DevIDAdminSession(
+		DevIDKeySigning, idevidTemplate.NameAlg, tpm2.TPMCCCertify, hierarchyAuth)
+	if err != nil {
+		return nil, nil, err
+	}
 	certify := tpm2.Certify{
 		ObjectHandle: tpm2.AuthHandle{
 			Handle: primaryKey.ObjectHandle,
 			Name:   primaryKey.Name,
-			Auth:   tpm2.PasswordAuth(idevidAuth),
+			Auth:   adminSession,
 		},
 		SignHandle: tpm2.AuthHandle{
 			Handle: akAttrs.TPMAttributes.Handle,
@@ -1377,6 +1457,9 @@ func (tpm *TPM2) CreateIDevID(
 		},
 	}
 	rspCert, err := certify.Execute(tpm.transport)
+	if closeErr := closeAdmin(); closeErr != nil {
+		tpm.logger.Warn("failed to close IDevID admin policy session", slog.String("error", closeErr.Error()))
+	}
 	if err != nil {
 		return nil, nil, err
 	}

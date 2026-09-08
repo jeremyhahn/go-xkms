@@ -535,7 +535,14 @@ func (tpm *TPM2) createKeySession(
 	// callable closer.
 	noopCloser := func() error { return nil }
 
-	if keyAttrs.PlatformPolicy {
+	// An IDevID or IAK carries the TCG IDevID/IAK Key Policy as its
+	// authPolicy, not the platform policy, so a platform-policy session
+	// could never satisfy it. Its USER role is authorized by the authValue
+	// (TCG "TPM 2.0 Keys for Device Identity and Attestation" v1.00 r12,
+	// section 7.2.4); binding it to platform state is done through the
+	// Delegation Policy NV index, not by re-pointing this session.
+	_, isDevID := devidKeyKindOf(keyAttrs.KeyType)
+	if keyAttrs.PlatformPolicy && !isDevID {
 
 		// Determine whether the key has a meaningful (non-empty) auth value.
 		// See CreateSession for the full rationale on why empty auth must be

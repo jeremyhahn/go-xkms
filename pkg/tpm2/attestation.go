@@ -136,9 +136,9 @@ func (tpm *TPM2) CertifyKey(
 	}
 
 	// Determine target key auth
-	var targetAuth []byte
+	var targetAuthValue []byte
 	if keyAttrs.Password != nil {
-		targetAuth = keyAttrs.Password.Bytes()
+		targetAuthValue = keyAttrs.Password.Bytes()
 	}
 
 	// Determine IAK auth
@@ -149,11 +149,40 @@ func (tpm *TPM2) CertifyKey(
 
 	// Execute TPM2_Certify: the IAK signs a TPMS_ATTEST structure
 	// containing the Name of the target key
+	// TPM2_Certify authorizes objectHandle at the ADMIN role. For an
+	// ordinary key that is its authValue. For an IDevID or IAK -- which carry
+	// the TCG IDevID/IAK Key Policy with adminWithPolicy SET -- the authValue
+	// is refused, and the Certify branch of the key policy, satisfied as the
+	// Privacy Administrator, is what authorizes it (section 7.3.6.2). The IAK
+	// signs at the USER role either way, under its authValue.
+	targetAuth := tpm2.PasswordAuth(targetAuthValue)
+	if kind, isDevID := devidKeyKindOf(keyAttrs.KeyType); isDevID {
+		targetPublic, err := targetPubResp.OutPublic.Contents()
+		if err != nil {
+			return nil, &errs.Wrapped{Msg: "failed to parse target key public", Err: err}
+		}
+		var hierarchyAuth []byte
+		if tpm.iakAttrs.Parent != nil && tpm.iakAttrs.Parent.TPMAttributes != nil &&
+			tpm.iakAttrs.Parent.TPMAttributes.HierarchyAuth != nil {
+			hierarchyAuth = tpm.iakAttrs.Parent.TPMAttributes.HierarchyAuth.Bytes()
+		}
+		adminSession, closeAdmin, err := tpm.DevIDAdminSession(
+			kind, targetPublic.NameAlg, tpm2.TPMCCCertify, hierarchyAuth)
+		if err != nil {
+			return nil, err
+		}
+		defer func() {
+			if closeErr := closeAdmin(); closeErr != nil {
+				tpm.logger.Error("failed to close DevID admin policy session", slog.String("error", closeErr.Error()))
+			}
+		}()
+		targetAuth = adminSession
+	}
 	certify := tpm2.Certify{
 		ObjectHandle: tpm2.AuthHandle{
 			Handle: targetHandle,
 			Name:   targetPubResp.Name,
-			Auth:   tpm2.PasswordAuth(targetAuth),
+			Auth:   targetAuth,
 		},
 		SignHandle: tpm2.AuthHandle{
 			Handle: tpm.iakAttrs.TPMAttributes.Handle,
@@ -523,10 +552,33 @@ func (tpm *TPM2) ActivateCredential(
 		slog.Int("credential_blob_len", len(credentialBlob)),
 		slog.Int("encrypted_secret_len", len(encryptedSecret)))
 
+	// TPM2_ActivateCredential authorizes activateHandle at the ADMIN role
+	// (TCG TPM 2.0 Part 3, section 12.6). The IAK carries the TCG IDevID/IAK
+	// Key Policy with adminWithPolicy SET, so its authValue cannot do that;
+	// the ActivateCredential branch of the policy, satisfied as the Privacy
+	// Administrator with endorsementAuth, is what releases the credential
+	// (section 7.3.6.3). keyHandle is the EK, at the USER role, under the
+	// EK policy session built above.
+	iakNameAlg, err := ParsePCRBankAlgID(tpm.config.PlatformPCRBank)
+	if err != nil {
+		return nil, err
+	}
+	iakAdmin, closeIAKAdmin, err := tpm.DevIDAdminSession(
+		DevIDKeyAttestation, iakNameAlg, tpm2.TPMCCActivateCredential, hierarchyAuth)
+	if err != nil {
+		return nil, err
+	}
+	defer func() {
+		if closeErr := closeIAKAdmin(); closeErr != nil {
+			tpm.logger.Error("failed to close IAK admin policy session", slog.String("error", closeErr.Error()))
+		}
+	}()
+
 	activateCredentialsResponse, err := tpm2.ActivateCredential{
-		ActivateHandle: tpm2.NamedHandle{
+		ActivateHandle: tpm2.AuthHandle{
 			Handle: keyAttrs.TPMAttributes.Handle,
 			Name:   keyAttrs.TPMAttributes.Name,
+			Auth:   iakAdmin,
 		},
 		KeyHandle: tpm2.AuthHandle{
 			Handle: ekAttrs.TPMAttributes.Handle,

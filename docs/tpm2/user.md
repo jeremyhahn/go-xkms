@@ -1,6 +1,6 @@
 # TPM 2.0 — User Guide
 
-> **Status: NORMATIVE** · Feature: `tpm2` · Repo: `go-xkms` · Last verified: 2026-08-19
+> **Status: NORMATIVE** · Feature: `tpm2` · Repo: `go-xkms` · Last verified: 2026-09-08
 
 ## What a TPM gives you that software cannot
 
@@ -67,6 +67,37 @@ chains to a manufacturer you trust. Two caveats that matter:
 Enrolling a whole machine by its TPM is the ACME `enroll-01` path — the server
 encrypts a secret to the TPM's endorsement key and only the real chip can
 recover it. See [`../acme-issuance/user.md`](../acme-issuance/user.md).
+
+## Identity keys: the password uses them, the platform administers them
+
+The IDevID and IAK follow TCG *TPM 2.0 Keys for Device Identity and
+Attestation* v1.00 r12 (the document is in `docs/references/`). The
+consequence you will notice: an IDevID or IAK `password` lets a holder
+**sign** with the key, and nothing more. Certifying the key, re-certifying
+it, or releasing an enrollment credential against it requires the
+**endorsement hierarchy authorization** — `ek.hierarchy-auth` — because
+those are ADMIN-role operations, and the key's policy reserves them for the
+Privacy Administrator. Provisioning uses that authorization itself; you do not
+need to do anything for enrollment to work, but you do need to know that a
+leaked signing password does not let anyone re-enroll the device as something
+else.
+
+**Naming.** Both keys are named by one rule. Set `idevid.cn` / `iak.cn` to
+choose a name explicitly. Leave them unset and the name is
+`<idevid.model>-<idevid.serial>` for both keys — the same device information
+the TCG-CSR-IDEVID carries to the CA. If neither a name nor both model and
+serial are available, provisioning refuses with `ErrDevIDCNUnresolved` rather
+than inventing a name: the key store files artifacts under the name, and a
+fabricated default would put every device on the same file.
+
+**Upgrading a device provisioned before this rule.** The key attributes and
+policy are inputs to how the TPM derives a primary key, so an IDevID or IAK
+created under the previous templates is a *different key* from the one the
+current code derives — there is no in-place migration, by the nature of
+primary keys. Re-provision the device and re-issue its identity certificates.
+Separately, an IAK provisioned with `iak.cn` unset was stored under an empty
+name; it is now named `<model>-<serial>`, and artifacts under the old empty
+name are not found by the new one. A configured `iak.cn` is unaffected.
 
 ## The lockout counter
 

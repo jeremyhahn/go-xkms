@@ -75,15 +75,18 @@ func TestAssertAdminAuthorizable_AcceptsEveryAuthorizableCombination(t *testing.
 	}
 }
 
-// TestIDevIDTemplates_ShipAnAuthorizableAdminRole proves every IDevID template
-// this package creates a key from leaves the attribute and the policy
-// agreeing with each other, which is the assertion issue #278 asked for.
+// TestIDevIDTemplates_ShipTheTCGAdminPolicyShape pins the IDevID templates to
+// TCG "TPM 2.0 Keys for Device Identity and Attestation" v1.00 r12, Template
+// H-0 (section 7.3.4.1): userWithAuth SET so the authValue can USE the key,
+// adminWithPolicy SET so only a policy can ADMINISTER it (section 7.2.4).
 //
-// UserWithAuth is asserted alongside because the auth value is what
-// administers these keys: with adminWithPolicy CLEAR and no authPolicy, both
-// roles are reached through it, and a template that dropped UserWithAuth
-// would leave the object unusable in the other direction.
-func TestIDevIDTemplates_ShipAnAuthorizableAdminRole(t *testing.T) {
+// The templates deliberately ship with an EMPTY authPolicy. The IDevID/IAK
+// Key Policy depends on the key's nameAlg, so CreateIDevID computes and
+// assigns it at creation. That makes the raw template unauthorizable on its
+// own -- assertAdminAuthorizable must refuse it -- which is the invariant that
+// stops anyone creating a key from the template without going through the
+// path that assigns the policy.
+func TestIDevIDTemplates_ShipTheTCGAdminPolicyShape(t *testing.T) {
 	templates := map[string]tpm2.TPMTPublic{
 		"RSASSAIDevIDTemplate":  RSASSAIDevIDTemplate,
 		"RSAPSSIDevIDTemplate":  RSAPSSIDevIDTemplate,
@@ -92,12 +95,25 @@ func TestIDevIDTemplates_ShipAnAuthorizableAdminRole(t *testing.T) {
 
 	for name, template := range templates {
 		t.Run(name, func(t *testing.T) {
-			assert.False(t, template.ObjectAttributes.AdminWithPolicy,
-				"the IDevID templates administer by auth value, not by policy")
+			a := template.ObjectAttributes
+			assert.True(t, a.AdminWithPolicy,
+				"section 7.2.4: adminWithPolicy SET disables the ADMIN role with authValue")
+			assert.True(t, a.UserWithAuth,
+				"section 7.2.4: userWithAuth SET enables the USER role via authValue")
+			assert.True(t, a.FixedTPM && a.FixedParent && a.SensitiveDataOrigin && a.SignEncrypt,
+				"Template H-0: fixedTPM, fixedParent, sensitiveDataOrigin, sign")
+			assert.False(t, a.Restricted, "Template H-0: DevID (signing): Restricted = 0")
+			assert.False(t, a.Decrypt, "Template H-0: decrypt = 0")
 			assert.Empty(t, template.AuthPolicy.Buffer,
-				"an IDevID template names no policy, so it must not claim policy administration")
-			assert.True(t, template.ObjectAttributes.UserWithAuth,
-				"the auth value must authorize the user role")
+				"the key policy is per-nameAlg and is assigned by CreateIDevID, not by the template")
+			assert.ErrorIs(t, assertAdminAuthorizable(template), ErrAdminWithPolicyNoAuthPolicy,
+				"a raw template must be refused until the policy is assigned")
+
+			// Assigning the policy CreateIDevID computes makes the template
+			// authorizable, and the value is the specification's.
+			policy, err := DevIDKeyPolicyDigest(DevIDKeySigning, template.NameAlg)
+			require.NoError(t, err)
+			template.AuthPolicy = tpm2.TPM2BDigest{Buffer: policy}
 			assert.NoError(t, assertAdminAuthorizable(template))
 		})
 	}

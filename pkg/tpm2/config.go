@@ -606,6 +606,41 @@ func IAKAttributesFromConfig(
 	return attrs, nil
 }
 
+// DevIDCommonName resolves the Common Name an IDevID or IAK is stored and
+// certified under. An explicitly configured name wins. Otherwise the name is
+// derived from the device's Platform Identity Information -- its model and
+// serial number -- which is what TCG "TPM 2.0 Keys for Device Identity and
+// Attestation" v1.00 r12 carries in the TCG-CSR-IDEVID (section 7.2.3, step
+// 4a) and what IEEE 802.1AR binds a DevID certificate's Subject to (section
+// 2.3.4). One rule serves both key kinds, so the IAK and the IDevID of one
+// device can never disagree about which device they name.
+//
+// An empty result is refused rather than defaulted: the key stores compose
+// their storage key from the CN, so an empty CN would collapse every such key
+// onto one slot, and a fixed default would do the same across devices.
+// devidPlatformFromConfig returns the Platform Identity Information the
+// IDevID configuration carries -- its configured model and serial number --
+// as the input to DevIDCommonName for the IAK. It deliberately does not
+// consult DMI discovery: IDevIDAttributesFromConfig names the IDevID from the
+// same configured values, so using the same input is what keeps the two keys'
+// names symmetric and deterministic. Discovery belongs to the CSR path.
+func devidPlatformFromConfig(config *IDevIDConfig) *PlatformAttributes {
+	if config == nil {
+		return nil
+	}
+	return &PlatformAttributes{Model: config.Model, Serial: config.Serial}
+}
+
+func DevIDCommonName(cn string, platform *PlatformAttributes) (string, error) {
+	if cn != "" {
+		return cn, nil
+	}
+	if platform != nil && platform.Model != "" && platform.Serial != "" {
+		return fmt.Sprintf("%s-%s", platform.Model, platform.Serial), nil
+	}
+	return "", ErrDevIDCNUnresolved
+}
+
 // IDevIDAttributesFromConfig builds the Initial Device Identifier key
 // attributes from the platform configuration. TPMAttributes.Template is
 // deliberately left as the zero TPMTPublic: CreateIDevID selects the
@@ -616,13 +651,11 @@ func IDevIDAttributesFromConfig(
 	config IDevIDConfig,
 	_ *tpm2.TPM2BDigest) (*types.KeyAttributes, error) {
 
-	// Use the CN if specified, otherwise generate a default to model-serial
-	// naming convention.
-	if config.CN == "" {
-		if config.Model != "" && config.Serial != "" {
-			config.CN = fmt.Sprintf("%s-%s", config.Model, config.Serial)
-		}
+	cn, err := DevIDCommonName(config.CN, &PlatformAttributes{Model: config.Model, Serial: config.Serial})
+	if err != nil {
+		return nil, err
 	}
+	config.CN = cn
 
 	algorithm, err := types.ParseKeyAlgorithm(config.KeyAlgorithm)
 	if err != nil {
