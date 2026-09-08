@@ -540,24 +540,31 @@ jobs:
           echo "Created release assets:"
           ls -lh xkmsctl-* xkmsd-* xkey-* 2>/dev/null || ls -lh xkmsctl-* xkmsd-*
 
+      # Idempotent on purpose (#447). The generic release action deleted an
+      # existing asset and re-uploaded it, which Gitea answers with 404, so a
+      # re-run of this workflow failed on every leg that had already
+      # succeeded. scripts/release-assets.sh leaves an asset that is already
+      # present with the same SHA-256 alone, replaces one whose digest
+      # differs, and adds one that is absent, so a re-run after one flaked
+      # leg completes the release instead of breaking the rest of it.
       - name: Upload release assets
-        uses: softprops/action-gh-release@v2
-        with:
-          tag_name: ${{ env.RELEASE_TAG }}
-          files: |
-            xkmsctl-${{ needs.create-release.outputs.version }}-linux-${{ matrix.arch }}${{ matrix.variant == 'fips' && '-fips' || '' }}
-            xkmsctl-${{ needs.create-release.outputs.version }}-linux-${{ matrix.arch }}${{ matrix.variant == 'fips' && '-fips' || '' }}.sha256
-            xkmsd-${{ needs.create-release.outputs.version }}-linux-${{ matrix.arch }}${{ matrix.variant == 'fips' && '-fips' || '' }}
-            xkmsd-${{ needs.create-release.outputs.version }}-linux-${{ matrix.arch }}${{ matrix.variant == 'fips' && '-fips' || '' }}.sha256
-
-      - name: Upload xkey release assets
-        if: matrix.variant == 'standard'
-        uses: softprops/action-gh-release@v2
-        with:
-          tag_name: ${{ env.RELEASE_TAG }}
-          files: |
-            xkey-${{ needs.create-release.outputs.version }}-linux-${{ matrix.arch }}
-            xkey-${{ needs.create-release.outputs.version }}-linux-${{ matrix.arch }}.sha256
+        env:
+          RELEASE_API: ${{ github.server_url }}/api/v1
+          RELEASE_REPO: ${{ github.repository }}
+          RELEASE_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          V="${{ needs.create-release.outputs.version }}"
+          A="${{ matrix.arch }}"
+          SUFFIX="${{ matrix.variant == 'fips' && '-fips' || '' }}"
+          files=(
+            "xkmsctl-${V}-linux-${A}${SUFFIX}" "xkmsctl-${V}-linux-${A}${SUFFIX}.sha256"
+            "xkmsd-${V}-linux-${A}${SUFFIX}"   "xkmsd-${V}-linux-${A}${SUFFIX}.sha256"
+          )
+          if [ "${{ matrix.variant }}" = "standard" ]; then
+            files+=("xkey-${V}-linux-${A}" "xkey-${V}-linux-${A}.sha256")
+          fi
+          scripts/release-assets.sh upload "${files[@]}"
 
   build-docker:
     name: Build Docker Server Image
@@ -907,50 +914,56 @@ jobs:
           cache-from: ${{ github.server_url == 'https://github.com' && 'type=gha' || '' }}
           cache-to: ${{ github.server_url == 'https://github.com' && 'type=gha,mode=max' || '' }}
 
+  # Runs whenever the release exists, not only when every matrix leg went
+  # green in THIS run (#447): it checks the release for the complete asset
+  # set the matrix produces and fails on what is genuinely missing, so a
+  # re-run that fills in the one leg that flaked gets its master checksums
+  # even though the other legs were uploaded by the previous attempt. The
+  # `gh` CLI it used before does not speak to Gitea, so the download was
+  # silently empty on every release cut here.
   create-checksums:
     name: Create Master Checksums
     needs: [create-release, build-binaries]
+    if: always() && needs.create-release.result == 'success'
     runs-on: ubuntu-latest
+    env:
+      RELEASE_API: ${{ github.server_url }}/api/v1
+      RELEASE_REPO: ${{ github.repository }}
+      RELEASE_TOKEN: ${{ secrets.GITHUB_TOKEN }}
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
         with:
           ref: ${{ env.RELEASE_TAG }}
 
-      - name: Download release assets
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: |
-          # Get the tag name
-          TAG_NAME=${RELEASE_TAG}
+      - name: Verify the release carries every matrix asset
+        run: scripts/release-assets.sh verify "${{ needs.create-release.outputs.version }}"
 
-          # Download all release assets
-          gh release download ${TAG_NAME} --pattern "*.sha256" --dir checksums || true
+      - name: Download the per-asset checksums
+        run: scripts/release-assets.sh download checksums '*.sha256'
 
       - name: Create master checksums file
         run: |
-          if [ -d checksums ]; then
-            cd checksums
-            cat *.sha256 > ../checksums.txt 2>/dev/null || echo "No checksums found" > ../checksums.txt
-            cd ..
-          else
-            echo "No checksums directory found" > checksums.txt
-          fi
-
+          set -euo pipefail
+          cat checksums/*.sha256 | sort -k2 > checksums.txt
           echo "Master checksums file created:"
           cat checksums.txt
 
       - name: Upload master checksums to release
-        uses: softprops/action-gh-release@v2
-        with:
-          tag_name: ${{ env.RELEASE_TAG }}
-          files: checksums.txt
+        run: scripts/release-assets.sh upload checksums.txt
 
   announce-release:
     name: Announce Release
-    needs: [create-release, build-binaries, build-docker, build-docker-cli]
+    # Gated on the checksums job rather than on this run's build matrix, so
+    # a recovery run whose only job was the flaked leg still announces once
+    # the release is verified complete (#447).
+    needs: [create-release, create-checksums, build-docker, build-docker-cli]
     runs-on: ubuntu-latest
-    if: success()
+    if: >-
+      always() &&
+      needs.create-checksums.result == 'success' &&
+      needs.build-docker.result == 'success' &&
+      needs.build-docker-cli.result == 'success'
     steps:
       - name: Update release notes
         uses: actions/github-script@v7

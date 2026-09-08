@@ -1,7 +1,7 @@
 # Release engineering — user guide
 
 **Status:** implemented.
-**Last verified:** 2026-09-06.
+**Last verified:** 2026-09-08.
 
 ## Cutting a release
 
@@ -75,3 +75,27 @@ exists" or start from a tree that already holds the release.
 
 A run that failed *before* the commit, `--dry-run` included, wrote nothing at
 all: there is nothing to undo.
+
+## When the release workflow fails after the tag is pushed
+
+`release.yml` runs on the tag push. Its build matrix has four legs (amd64 and
+arm64, standard and FIPS), each uploading its own binaries and per-asset
+`.sha256` files; `Create Master Checksums` then verifies the release carries
+every asset the matrix produces and uploads `checksums.txt`.
+
+If one leg fails for a reason unrelated to the code (the shared runner's
+QEMU toolcache race is the known one), **re-run the workflow** — from the
+run's page, or `POST /repos/<owner>/<repo>/actions/runs/<id>/rerun`, the only
+rerun endpoint Gitea exposes. Every job runs again, and that is fine:
+
+- a leg whose assets are already on the release finds each one present with
+  the same SHA-256 and leaves it alone;
+- the leg that flaked uploads what was missing;
+- the checksums job checks the release, not this run, so it completes once
+  the asset set is whole, and the announcement follows.
+
+A tag cannot be re-cut (versioning §3), so this is the only recovery path;
+before #447 it did not exist, and one flaked leg cost the release its
+checksums for good. If `Verify the release carries every matrix asset` still
+fails after the re-run, something is genuinely missing: the step names it.
+

@@ -1,13 +1,23 @@
 # Release engineering — engineering
 
 **Status:** implemented.
-**Last verified:** 2026-09-06.
+**Last verified:** 2026-09-08.
 
 ## Surface
 
 `scripts/release-alpha.sh`, driven by `make release-alpha`. It is the only
 supported way to cut a release; nothing imports it as a library except its own
 test.
+
+`scripts/release-assets.sh`, driven by `.github/workflows/release.yml`, is the
+workflow's view of a Gitea release's assets: `list`, `expected VERSION` (the
+asset names the build matrix produces — the one statement of the matrix
+outside the workflow), `verify VERSION` (exit 1 naming what the release
+lacks), `download DIR [GLOB]`, and `upload FILE...`, which is idempotent: an
+asset present with the same SHA-256 is left alone, one with a different
+digest is replaced, one that is absent is added. It reads `RELEASE_API`,
+`RELEASE_REPO`, `RELEASE_TAG` and `RELEASE_TOKEN` from the environment, and
+`DRY_RUN=1` makes `upload` print its decisions without changing anything.
 
 ## Declared constants
 
@@ -142,7 +152,14 @@ makes the common single-operator mistake impossible instead.
 ## Tests
 
 `make test-scripts` (also reached by `make test`) runs
-`test/scripts/release-alpha.test.sh`. Most of it covers the pure functions —
+`test/scripts/release-alpha.test.sh` and `test/scripts/release-assets.test.sh`.
+The latter stands up a local HTTP stub of the two Gitea endpoints the asset
+script uses and asserts the whole decision table: `expected` is the matrix,
+`verify` names exactly the missing assets, `download` honours the glob, and
+`upload` skips an identical asset, replaces a differing one (DELETE then POST)
+and adds an absent one, with the requests the stub recorded as the evidence.
+
+The rest of this section is about `release-alpha.test.sh`. Most of it covers the pure functions —
 the `v0.7.9 -> v0.7.10` carry, the `0.9.10 > 0.9.9` ordering that lexical
 comparison gets wrong, the `replace`-block-first shape of `xkey/go.mod`, and
 stale, deleted and missing-file edges.
