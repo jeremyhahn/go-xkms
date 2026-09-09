@@ -15,15 +15,16 @@ package pkcs8
 
 import (
 	"context"
+	"crypto"
 	"crypto/rand"
 	"crypto/x509"
 	"errors"
+	"github.com/jeremyhahn/go-xkms/pkg/backend"
 	"strings"
 	"testing"
 
 	"github.com/jeremyhahn/go-xkms/pkg/errs"
 
-	"github.com/jeremyhahn/go-xkms/pkg/backend"
 	"github.com/jeremyhahn/go-xkms/pkg/storage"
 	"github.com/jeremyhahn/go-xkms/pkg/types"
 )
@@ -262,10 +263,11 @@ func TestListKeys_UnknownKeyTypeDefaultsToTLS(t *testing.T) {
 	}
 }
 
-// TestListKeys_UnknownAlgorithmDefaultsToRSA verifies that a key ID with
-// an unrecognized algorithm segment is defaulted to RSA-2048 rather than
-// left as UnknownPublicKeyAlgorithm.
-func TestListKeys_UnknownAlgorithmDefaultsToRSA(t *testing.T) {
+// TestListKeys_UnknownAlgorithmIsReportedUnknown pins #154: a key ID whose
+// algorithm segment this backend does not recognise is listed with
+// KeyAlgorithm unset and no RSAAttributes. The previous behaviour renamed
+// it to RSA-2048, so a listing lied about what the key was.
+func TestListKeys_UnknownAlgorithmIsReportedUnknown(t *testing.T) {
 	be, _ := createTestBackend(t)
 	defer func() { _ = be.Close() }()
 
@@ -281,11 +283,58 @@ func TestListKeys_UnknownAlgorithmDefaultsToRSA(t *testing.T) {
 	if len(keys) != 1 {
 		t.Fatalf("expected 1 key, got %d", len(keys))
 	}
-	if keys[0].KeyAlgorithm != x509.RSA {
-		t.Errorf("expected unrecognized algorithm to default to RSA, got %v", keys[0].KeyAlgorithm)
+	if keys[0].KeyAlgorithm != x509.UnknownPublicKeyAlgorithm {
+		t.Errorf("an unrecognised algorithm must be reported as unknown, got %v", keys[0].KeyAlgorithm)
 	}
-	if keys[0].RSAAttributes == nil || keys[0].RSAAttributes.KeySize != 2048 {
-		t.Errorf("expected default RSAAttributes with 2048-bit key size, got %+v", keys[0].RSAAttributes)
+	if keys[0].RSAAttributes != nil {
+		t.Errorf("an unrecognised algorithm must not be given RSA attributes, got %+v", keys[0].RSAAttributes)
+	}
+	if keys[0].X25519Attributes != nil {
+		t.Errorf("an unrecognised algorithm must not be given X25519 attributes")
+	}
+}
+
+// TestListKeys_ReportsX25519AsX25519 pins the other half of #154: a real
+// X25519 key generated through this backend is listed in the shape that
+// GenerateKey accepts and the software backend's validateKeyType requires
+// on re-import -- X25519Attributes set, KeyAlgorithm unset -- rather than
+// as RSA-2048.
+func TestListKeys_ReportsX25519AsX25519(t *testing.T) {
+	be, _ := createTestBackend(t)
+	defer func() { _ = be.Close() }()
+
+	ctx := context.Background()
+	attrs := &types.KeyAttributes{
+		CN:               "list-x25519.com",
+		KeyType:          backend.KEY_TYPE_TLS,
+		StoreType:        backend.STORE_SW,
+		X25519Attributes: &types.X25519Attributes{},
+		Hash:             crypto.SHA256,
+	}
+	if _, err := be.GenerateKey(ctx, attrs); err != nil {
+		t.Fatalf("GenerateKey failed: %v", err)
+	}
+
+	keys, err := be.ListKeys(ctx)
+	if err != nil {
+		t.Fatalf("ListKeys failed: %v", err)
+	}
+	if len(keys) != 1 {
+		t.Fatalf("expected 1 key, got %d", len(keys))
+	}
+	listed := keys[0]
+	if listed.X25519Attributes == nil {
+		t.Fatal("an X25519 key must be listed with X25519Attributes set")
+	}
+	if listed.KeyAlgorithm != x509.UnknownPublicKeyAlgorithm {
+		t.Errorf("an X25519 key carries no x509 public-key algorithm, got %v", listed.KeyAlgorithm)
+	}
+	if listed.RSAAttributes != nil {
+		t.Errorf("an X25519 key must not be described as RSA, got %+v", listed.RSAAttributes)
+	}
+	// The listing round-trips: the attributes it reports address the key.
+	if _, err := be.GetKey(ctx, listed); err != nil {
+		t.Fatalf("GetKey with the listed attributes failed: %v", err)
 	}
 }
 

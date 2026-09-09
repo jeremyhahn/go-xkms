@@ -511,6 +511,20 @@ func (b *PKCS8Backend) ListKeys(ctx context.Context) ([]*types.KeyAttributes, er
 			attr.ECCAttributes = &types.ECCAttributes{Curve: curve}
 		case "ed25519":
 			attr.KeyAlgorithm = x509.Ed25519
+		case "x25519":
+			// An X25519 agreement key is declared by X25519Attributes with
+			// KeyAlgorithm left unset: that is the shape GenerateKey accepts
+			// and the software backend's validateKeyType requires on
+			// re-import (#154). It used to fall through to the RSA default
+			// below and be listed as RSA-2048.
+			attr.X25519Attributes = &types.X25519Attributes{}
+		default:
+			// An algorithm this backend does not produce is reported as
+			// unknown: KeyAlgorithm stays UnknownPublicKeyAlgorithm and no
+			// algorithm attributes are attached. Renaming it to RSA-2048, as
+			// the defaults block once did, told a caller the key was
+			// something it is not, and every re-import driven off the
+			// listing then failed for the wrong reason (#154).
 		}
 
 		// Ensure we have valid defaults
@@ -519,10 +533,6 @@ func (b *PKCS8Backend) ListKeys(ctx context.Context) ([]*types.KeyAttributes, er
 		}
 		if attr.StoreType == "" {
 			attr.StoreType = types.StoreSoftware
-		}
-		if attr.KeyAlgorithm == x509.UnknownPublicKeyAlgorithm {
-			attr.KeyAlgorithm = x509.RSA
-			attr.RSAAttributes = &types.RSAAttributes{KeySize: 2048}
 		}
 
 		// Overlay the persisted record. It is authoritative for the tenant and

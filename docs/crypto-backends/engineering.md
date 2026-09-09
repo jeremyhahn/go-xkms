@@ -1,6 +1,6 @@
 # Crypto Backends — Engineering Contract
 
-> **Status: NORMATIVE** · Feature: `crypto-backends` · Repo: `go-xkms` · Last verified: 2026-09-03
+> **Status: NORMATIVE** · Feature: `crypto-backends` · Repo: `go-xkms` · Last verified: 2026-09-08
 
 ## Exported surface
 
@@ -92,6 +92,14 @@ can be stricter than the backend's ceiling.
   configured. The server (`initializeKeyStore`) resolves through the rule in
   both cases so a `default_backend` naming a backend absent from the build is
   not fatal, and logs a warning naming the configured and resolved backends.
+
+- **A listing never renames a key's algorithm.** `PKCS8Backend.ListKeys`
+  reconstructs attributes from the storage identifier: an `x25519` key is
+  listed with `X25519Attributes` set and `KeyAlgorithm` unset (the shape
+  `GenerateKey` accepts and the software backend's key-type validation
+  requires on re-import), and an algorithm the backend does not produce is
+  listed with `KeyAlgorithm` unset. It used to default both to RSA-2048
+  (#154).
 
 ## Error semantics
 
