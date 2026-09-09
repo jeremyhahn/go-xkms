@@ -187,9 +187,19 @@ func setViperDefaults(v *viper.Viper, defaults *Config) {
 	v.SetDefault("state", defaults.State)
 }
 
-// unmarshalAndValidate decodes the viper state into a Config and validates it.
+// unmarshalAndValidate decodes the viper state onto a DefaultConfig-initialised
+// Config and validates it.
+//
+// Decoding onto the defaults rather than a zero struct is what gives a partial
+// section leaf-key merge semantics. setViperDefaults registers each section as
+// one opaque default value, so as soon as a file names a section, that section's
+// default is out of the picture and every key the file omits would otherwise
+// land on its Go zero value — false for the policy Require* gates, 0 for
+// pin_max_attempts (#114). Decoding onto the defaults means an omitted key
+// keeps its default while an explicit value, including an explicit false or
+// zero, still wins.
 func unmarshalAndValidate(v *viper.Viper) (*Config, error) {
-	cfg := &Config{}
+	cfg := DefaultConfig()
 	if err := v.Unmarshal(cfg); err != nil {
 		return nil, errors.Join(ErrConfigLoadFailed, err)
 	}

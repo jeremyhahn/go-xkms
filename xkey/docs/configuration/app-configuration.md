@@ -12,6 +12,34 @@ xKey uses a single YAML configuration file that merges all subsystem settings (C
 
 If neither file exists, `DefaultConfig()` is returned. This is a valid first-run state.
 
+## Partial Sections Merge Over Defaults
+
+A file does not have to be complete. Each section is merged over
+`DefaultConfig()` **key by key**: a key the file sets wins, and a key the
+file omits keeps its default — whether or not the file names the key's
+section. The loader decodes onto a `DefaultConfig()`-initialised struct, so
+this holds for every section and every nesting depth.
+
+```yaml
+policy:
+  min_pin_length: 8     # set: 8
+                        # omitted: require_user_pin, require_so_pin,
+                        # require_encrypted_storage stay true;
+                        # pin_max_attempts stays 5
+```
+
+Three consequences worth knowing:
+
+- **An explicit zero value is honoured.** `require_user_pin: false` or
+  `pin_max_attempts: 0` is a deliberate setting and is not replaced by the
+  default. Omission means "default"; writing the value means "this value".
+- **Lists replace, they do not append.** `allowed_backends: [tpm2]` yields
+  exactly `[tpm2]`, not the default list with `tpm2` added.
+- **The `Require*` policy gates cannot be switched off by omission.**
+  Tightening one policy value never silently relaxes the rest of the
+  section (#114). Turning a gate off takes an explicit `false`, which is
+  visible in the file and, in enterprise mode, covered by the policy HMAC.
+
 ## Environment Variable Overrides
 
 All config fields can be overridden via environment variables with the `XKEY_` prefix. Nested keys use underscores:
