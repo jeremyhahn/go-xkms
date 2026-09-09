@@ -97,16 +97,20 @@ func (p *SSHProxy) Start() error {
 		return &AgentError{Operation: "start_ssh_proxy", Err: err}
 	}
 
+	// done is closed by the accept loop when it returns; Stop waits on it,
+	// so the loop's last read of the proxy happens before Stop returns.
+	done := make(chan struct{})
+
 	p.mu.Lock()
 	p.listener = listener
-	p.done = make(chan struct{})
+	p.done = done
 	p.conns = make(map[net.Conn]struct{})
 	p.mu.Unlock()
 
 	p.running.Store(true)
 	p.logger.Info("SSH proxy started", "socket", p.socketPath)
 
-	go p.acceptLoop()
+	go p.acceptLoop(listener, done)
 
 	return nil
 }
@@ -120,17 +124,25 @@ func (p *SSHProxy) Stop() error {
 	p.logger.Info("stopping SSH proxy")
 
 	p.mu.Lock()
-	if p.listener != nil {
-		_ = p.listener.Close()
-	}
+	listener, done := p.listener, p.done
 	for conn := range p.conns {
 		_ = conn.Close()
 	}
 	p.mu.Unlock()
 
+	// Closing the listener makes Accept return; the loop sees running
+	// false and exits, closing done. Waiting on it is what makes Stop a
+	// synchronisation point: before this, Stop could return while the
+	// accept goroutine was still winding down, and the race detector
+	// reported the caller's next write against that goroutine's last read
+	// (TestSSHProxy_StartStop, 1 in 40 runs).
+	if listener != nil {
+		_ = listener.Close()
+	}
+	<-done
+
 	// Wait for all connection handlers to finish.
 	p.wg.Wait()
-	close(p.done)
 
 	_ = os.Remove(p.socketPath)
 	p.logger.Info("SSH proxy stopped")
@@ -148,10 +160,12 @@ func (p *SSHProxy) IsRunning() bool {
 }
 
 // acceptLoop accepts connections on the Unix socket and spawns a handler
-// goroutine for each.
-func (p *SSHProxy) acceptLoop() {
+// goroutine for each. It owns the listener it was started with and closes
+// done when it returns, which Stop waits on.
+func (p *SSHProxy) acceptLoop(listener net.Listener, done chan struct{}) {
+	defer close(done)
 	for {
-		conn, err := p.listener.Accept()
+		conn, err := listener.Accept()
 		if err != nil {
 			if !p.running.Load() {
 				return
