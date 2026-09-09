@@ -689,6 +689,7 @@ jobs:
             -severity medium \
             -confidence medium \
             -exclude-dir=test -exclude-dir=testdata -exclude-dir=vendor \
+            -stdout -verbose=text \
             -fmt sarif -out gosec-results.sarif ./...
 
       - name: Upload gosec results to GitHub Security
