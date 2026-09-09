@@ -175,7 +175,7 @@ func New(cfg *Config, opts ...Option) (Resolver, error) {
 		StrategyEmbedded:   r.tlsEmbedded,
 		StrategyCAFile:     r.tlsFromPEM(r.pemCAFile),
 		StrategyProviderCA: r.tlsFromPEM(r.pemProviderCA),
-		StrategyTOFU:       r.tlsFromPEM(r.pemTOFU),
+		StrategyTOFU:       r.tlsTOFU,
 	}
 	r.pemDispatch = map[Strategy]pemStrategyFunc{
 		StrategyDANE:       r.pemDANE,
@@ -357,6 +357,23 @@ func (r *resolver) tlsSPKI(ctx context.Context, scope *ScopeConfig, endpoint str
 		return nil, err
 	}
 	return bootstrap.NewSPKIPinTLSConfig(pin)
+}
+
+// tlsTOFU builds a trust-on-first-use *tls.Config keyed by the endpoint:
+// the first connection captures and persists the leaf's SPKI pin, every
+// later one must present it. This is the endpoint verifier the strategy's
+// own documentation describes; the PEM path (pemTOFU) keeps fetching a CA
+// bundle, the same split dane and spki already have (#139).
+func (r *resolver) tlsTOFU(ctx context.Context, scope *ScopeConfig, endpoint string) (*tls.Config, error) {
+	if r.tofuPinStore == nil {
+		return nil, ErrTOFUPinStoreRequired{}
+	}
+	host, port, err := endpointHostPort(scope, endpoint)
+	if err != nil {
+		return nil, err
+	}
+	return bootstrap.NewTOFUTLSConfig(ctx, r.tofuPinStore,
+		net.JoinHostPort(host, strconv.Itoa(int(port))), r.tofuConfirmFunc)
 }
 
 // tlsEmbedded returns a *tls.Config that verifies against the OS trust

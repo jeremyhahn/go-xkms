@@ -1,6 +1,6 @@
 # Trust Bootstrap — User Guide
 
-> **Status: NORMATIVE** · Feature: `trust-bootstrap` · Repo: `go-xkms` · Last verified: 2026-09-06
+> **Status: NORMATIVE** · Feature: `trust-bootstrap` · Repo: `go-xkms` · Last verified: 2026-09-08
 
 ## What this is for
 
@@ -139,6 +139,15 @@ It is deliberately excluded from the `auto` chain: if DANE and SPKI both fail,
 falling back to TOFU would turn a detected attack into a silently accepted one.
 Enabling it under `auto` takes two explicit steps in configuration, and that is
 by design.
+
+TOFU works on two paths. Fetching a CA bundle (`bootstrap tofu`) pins the
+bundle server. Verifying an endpoint directly — a BMC or any device that
+presents a self-signed certificate and serves no bundle — uses the same pin
+store through the resolver's TLS path (`tofu` in a scope's strategies with
+the device as the endpoint) or through `NewTOFUTLSConfig` from the SDK. The
+first connection records the device's key; if the recorded key ever changes
+you get a pin-mismatch error and should investigate before clearing the pin
+(#139).
 
 ## Troubleshooting
 

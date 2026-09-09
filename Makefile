@@ -3385,6 +3385,7 @@ check-insecure-tls:
 		| grep -Pv '^[^:]+:[0-9]+:[[:space:]]*//' \
 		| grep -v 'pkg/crypto/spki/spki.go' \
 		| grep -v 'pkg/trust/fetcher/spki.go' \
+		| grep -v 'pkg/trust/bootstrap/tofu_tls.go' \
 		|| true); \
 	if [ -n "$$violations" ]; then \
 		echo "$(RED)$(BOLD)✗ FORBIDDEN InsecureSkipVerify outside allowlist:$(RESET)"; \

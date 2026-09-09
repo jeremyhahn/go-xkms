@@ -1,6 +1,6 @@
 # Trust Bootstrap — API
 
-> **Status: NORMATIVE** · Feature: `trust-bootstrap` · Repo: `go-xkms` · Last verified: 2026-09-06
+> **Status: NORMATIVE** · Feature: `trust-bootstrap` · Repo: `go-xkms` · Last verified: 2026-09-08
 
 Transport shapes: [`../key-management/api.md`](../key-management/api.md)
 §"How the six transports are shaped".
@@ -18,6 +18,7 @@ bundle — is an endpoint.
 | Fetch CA bundle (authenticated route) | `GET /api/v1/ca/bundle` | `GetCABundle` | same as REST | `xkms.ca.bundle` | `CAService.GetCABundle` | session |
 | Noise bootstrap channel | — | — | — | — | `pkg/trust/bootstrap/noise_server.go` | pinned static key |
 | Client-side dispatch (`auto`/`dane`/`noise`/`spki`/`direct`/`tofu`) | n/a — client-side | n/a | n/a | n/a | `bootstrap.Fetch` | anchor-dependent |
+| Endpoint TLS verifiers (`dane`/`spki`/`tofu`) | n/a — client-side | n/a | n/a | n/a | `NewDANETLSConfig`, `NewSPKIPinTLSConfig`, `NewTOFUTLSConfig`; `resolver.TLSConfig` | anchor-dependent |
 
 ### Why the gaps are gaps and not omissions
 

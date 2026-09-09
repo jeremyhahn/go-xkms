@@ -1,6 +1,6 @@
 # Trust Bootstrap — Architecture
 
-> **Status: NORMATIVE** · Feature: `trust-bootstrap` · Repo: `go-xkms` · Last verified: 2026-09-06
+> **Status: NORMATIVE** · Feature: `trust-bootstrap` · Repo: `go-xkms` · Last verified: 2026-09-08
 
 ## The problem
 
@@ -100,6 +100,15 @@ client                                              server
              every later connection verifies it exactly like spki
 ```
 
+The resolver (`pkg/trust/resolver`) dispatches each strategy twice: once for
+the PEM path (`CAPool`, a bundle fetch) and once for the TLS path
+(`TLSConfig`, an endpoint verifier). `dane`, `spki` and, since #139, `tofu`
+are endpoint verifiers on the TLS path — `tofu` pins the peer's leaf keyed
+by the endpoint (or the scope's server-url) through `NewTOFUTLSConfig` —
+while on the PEM path they fetch a bundle. That is what lets `tofu` verify a
+device that serves no bundle at all, such as a BMC with a self-signed
+certificate.
+
 `GET /v1/ca/bootstrap` is public and unauthenticated by design — a client with
 no trust cannot authenticate. It is safe because the client verifies the bundle
 through the anchor, not through the connection.
@@ -115,7 +124,10 @@ through the anchor, not through the connection.
   has a publicly trusted certificate; it is documented in the code as
   "last-resort fallback only".
 - **`tofu` trusts whoever answers first.** Its pin store is the security
-  boundary; a writable pin store is a trust-rewrite primitive.
+  boundary; a writable pin store is a trust-rewrite primitive. A pin store
+  that cannot answer is therefore an error on the TLS path, never a fresh
+  capture: reading a store failure as "first use" would let a broken store
+  hand every endpoint a new pin.
 - **The Noise static key and the SPKI pin are secrets in the integrity sense,
   not the confidentiality sense.** Publishing them is fine; letting an attacker
   substitute them is total compromise.

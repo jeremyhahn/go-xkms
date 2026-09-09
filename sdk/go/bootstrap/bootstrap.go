@@ -101,6 +101,27 @@ var (
 	// NewSPKIPinTLSConfig builds a client *tls.Config whose sole certificate
 	// verification is a SHA-256 SubjectPublicKeyInfo pin match.
 	NewSPKIPinTLSConfig = pkgbootstrap.NewSPKIPinTLSConfig
+
+	// NewTOFUTLSConfig builds a client *tls.Config whose sole certificate
+	// verification is trust-on-first-use SPKI pinning against a PinStore,
+	// keyed by endpoint: the first connection captures and persists the
+	// leaf's pin, every later one must present it.
+	NewTOFUTLSConfig = pkgbootstrap.NewTOFUTLSConfig
+)
+
+// ErrTOFUPinStoreRequired is returned by NewTOFUTLSConfig when no pin store
+// is supplied.
+var ErrTOFUPinStoreRequired = pkgbootstrap.ErrTOFUPinStoreRequired
+
+// Typed errors of the TOFU TLS verifier.
+type (
+	// TOFUEndpointError reports an endpoint that is not a "host:port".
+	TOFUEndpointError = pkgbootstrap.TOFUEndpointError
+	// TOFUPinStoreError reports a pin store failure other than "no pin".
+	TOFUPinStoreError = pkgbootstrap.TOFUPinStoreError
+	// TOFUPinMismatchError reports a presented chain that does not carry
+	// the pin recorded for the endpoint.
+	TOFUPinMismatchError = pkgbootstrap.TOFUPinMismatchError
 )
 
 // NewStoragePinStore creates a StoragePinStore backed by the given storage.Backend.

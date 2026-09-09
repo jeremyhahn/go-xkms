@@ -1,6 +1,6 @@
 # Trust Bootstrap — Engineering Contract
 
-> **Status: NORMATIVE** · Feature: `trust-bootstrap` · Repo: `go-xkms` · Last verified: 2026-09-06
+> **Status: NORMATIVE** · Feature: `trust-bootstrap` · Repo: `go-xkms` · Last verified: 2026-09-08
 
 ## Exported surface — `pkg/trust/bootstrap`
 
@@ -19,7 +19,24 @@ const (
 const DefaultNoisePort = "8445"
 
 func Fetch(ctx context.Context, cfg Config) (*CABundle, error)
+
+// Trust-verified client *tls.Config constructors (custom-verifier pattern).
+func NewDANETLSConfig(ctx context.Context, cfg *DANEConfig, hostname string, port uint16) (*tls.Config, error)
+func NewSPKIPinTLSConfig(pin string) (*tls.Config, error)
+func NewTOFUTLSConfig(ctx context.Context, pinStore truststrap.PinStore, endpoint string,
+	confirm func(ctx context.Context, pin *truststrap.Pin) error) (*tls.Config, error)
 ```
+
+`NewTOFUTLSConfig` (#139) is the endpoint-level TOFU verifier, keyed by
+`"host:port"`: the first connection captures the leaf's SHA-256 SPKI pin,
+offers it to `confirm` (an error refuses the connection and persists
+nothing), and persists it through `pinStore`; every later connection must
+present that pin. The verifier runs in `VerifyConnection` with session
+tickets disabled, so a resumed session cannot bypass it, and a pin store
+that fails for any reason other than "no pin recorded" is an error, never a
+fresh capture. The `Pin` record it writes is the one truststrap's
+bundle-fetching TOFU bootstrapper writes (`Source: "tofu"`), so the TLS
+path and the bundle path share one store.
 
 `Mode` values **match the canonical CLI verb and the SDK accessor name** by
 design (`bootstrap.go:57-59`). Renaming one without the others is a defect.
@@ -66,6 +83,20 @@ func (e *FetchError) Error() string
 func (e *FetchError) Is(target error) bool   // matches ErrFetch
 func (e *FetchError) Unwrap() error          // the truststrap-typed cause
 ```
+
+The TOFU TLS verifier has its own typed errors:
+
+```go
+var ErrTOFUPinStoreRequired = errors.New("trust bootstrap: tofu requires a pin store")
+
+type TOFUEndpointError struct{ Endpoint, Reason string }              // not a "host:port"
+type TOFUPinStoreError struct{ Op, Host string; Port int; Err error }  // Get/Put failed, NOT first use
+type TOFUPinMismatchError struct{ Host string; Port int; Stored, Presented string; Err error }
+```
+
+`TOFUPinMismatchError` unwraps to `spkipin.ErrSPKIPinMismatch`; a refused
+confirmation surfaces as truststrap's `TOFURejectedError` carrying the pin
+that was offered; no certificates presented is `spkipin.ErrNoCertificates`.
 
 Use `errors.Is(err, ErrFetch)` for "any fetch-level failure" and
 `errors.As`/`errors.Unwrap` to recover the truststrap cause for finer dispatch.
